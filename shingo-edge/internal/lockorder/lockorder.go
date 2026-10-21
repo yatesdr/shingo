@@ -48,6 +48,7 @@ type (
 	Config          struct{}
 	Backup          struct{}
 	SpecChange      struct{}
+	StationBins     struct{}
 	CoreNodes       struct{}
 	PayloadBinTypes struct{}
 	SceneGraph      struct{}
@@ -87,6 +88,7 @@ func (NodeLocks) Rank() int       { return 50 }
 func (Config) Rank() int          { return 100 }
 func (Backup) Rank() int          { return 101 }
 func (SpecChange) Rank() int      { return 102 }
+func (StationBins) Rank() int     { return 105 }
 func (CoreNodes) Rank() int       { return 110 }
 func (PayloadBinTypes) Rank() int { return 111 }
 func (SceneGraph) Rank() int      { return 112 }
@@ -128,6 +130,7 @@ func (NodeLocks) Name() string       { return "engine.nodeLocks.mu" }
 func (Config) Name() string          { return "config.Config.mu" }
 func (Backup) Name() string          { return "backup.Service.mu" }
 func (SpecChange) Name() string      { return "www.specChangeMu" }
+func (StationBins) Name() string     { return "service.binNodesMu" }
 func (CoreNodes) Name() string       { return "engine.coreNodesMu" }
 func (PayloadBinTypes) Name() string { return "engine.payloadBinTypesMu" }
 func (SceneGraph) Name() string      { return "engine.sceneGraphMu" }

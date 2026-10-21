@@ -34,17 +34,16 @@ const styleSelectColumns = `id, name, description, COALESCE(process_id, 0) as pr
 
 // liveStyles is the WHERE fragment for "styles an operator may still choose".
 //
-// It is deliberately NOT applied to every read. Of the 23 sites in shingo-edge
-// that name the styles table, only six filter, and the split is the whole point
+// It is deliberately NOT applied to every read. Of the sites in shingo-edge
+// that name the styles table, few filter, and the split is the whole point
 // of soft delete:
 //
 //   - PICKERS filter. ListStyles and ListStylesByProcess feed dropdowns
 //     and the changeover target list. A retired
 //     part number must not be selectable, and a tombstone must not resolve by
 //     name or a re-created style becomes ambiguous with its own predecessor.
-//     Same for the three joins that decide live behaviour rather than render
-//     text: claims.IsPairedOnDeckNode, walk.PayloadsForManualSwapNodes and the
-//     sim readiness gate.
+//     Same for the two joins that decide live behaviour rather than render
+//     text: claims.IsPairedOnDeckNode and the sim readiness gate.
 //
 //   - DISPLAY JOINS DO NOT FILTER. The eight LEFT JOIN styles in changeovers.go
 //     and the three in counters.go exist to resolve a name or a process_id for
@@ -282,6 +281,25 @@ const cloneClaimColumns = `core_node_name, role, swap_mode, payload_code,
 	index_robot_supplies, key_route, key_task, changeover_carryover_disposition,
 	source_preset_id, source_preset_version`
 
+// notLoaderClaim is the WHERE fragment the style copy (cloneStyleTx) selects
+// by, beside liveClaims: no stored loader claim. The INSERT never meets
+// UpsertClaim, so the rows the write gate refuses are left behind rather than
+// spread to another style:
+//
+//   - a manual_swap claim. The mode is retired as a persisted value: it is not
+//     in protocol.ConfigurableSwapModes, so UpsertClaim refuses it, and the
+//     first non-empty loader sync quarantines any stored row
+//     (QuarantineLoaderClaims). A row exists only until that sync, and copied
+//     before it it would be a second authority for loader configuration Core
+//     owns, on a style the quarantine has never seen.
+//   - a RETIRED claim. `liveClaims` is the flow composer's soft delete: a
+//     claim a changeover's history still points at is kept rather than
+//     dropped, and every live read skips it. Copying one would revive a
+//     deleted claim.
+//
+// Pinned by TestCloneStyle_LeavesWithheldConfigurationBehind (store).
+const notLoaderClaim = ` swap_mode != '` + string(protocol.SwapModeManualSwap) + `'`
+
 // cloneStyleTx inserts a new style in src's process and copies every one of
 // src's LIVE style_node_claims verbatim, less what the write gate refuses
 // (below), within the caller's transaction, stamping the copies with the given
@@ -301,33 +319,16 @@ func cloneStyleTx(tx *sql.Tx, kinds domain.CoreNodeKinds, src *Style, name, desc
 	if err != nil {
 		return 0, err
 	}
-	// THE COPY IS VERBATIM EXCEPT FOR WHAT THE WRITE GATE REFUSES. This INSERT
-	// never meets UpsertClaim, so the stored rows the gate refuses are left
-	// behind here rather than spread to a brand-new style:
-	//
-	//   - a manual_swap claim. The mode is retired as a persisted value: it is not
-	//     in protocol.ConfigurableSwapModes, so UpsertClaim refuses it, and the
-	//     first loader sync quarantines any stored row (QuarantineLoaderClaims). A
-	//     row exists only until that sync — unbounded when Core never answers —
-	//     and copied in that window it would be a second authority for loader
-	//     configuration Core owns, on a style the quarantine has never seen. Those
-	//     rows are not selected.
-	//   - a RETIRED claim. `liveClaims` is the flow composer's soft delete: a
-	//     claim a changeover's history still points at is kept rather than
-	//     dropped, and every live read skips it. Cloning one would revive a
-	//     deleted claim onto a brand-new style.
-	//
-	// Pinned by TestCloneStyle_LeavesWithheldConfigurationBehind (store).
-	//
-	// The dedicated-spot check is the caller's, once its transaction has
-	// written everything (CloneStyle).
+	// The copy is verbatim less what notLoaderClaim leaves behind (a stored
+	// loader claim, a retired claim). The dedicated-spot check is the caller's,
+	// once its transaction has written everything (CloneStyle).
 	//
 	// The copies are ATTRIBUTED to this write rather than carrying src's: a
 	// clone is its own act, by whoever asked for it.
 	_, err = tx.Exec(`INSERT INTO style_node_claims (style_id, source, called_by, updated_at, `+cloneClaimColumns+`)
 		SELECT ?, ?, ?, datetime('now'), `+cloneClaimColumns+` FROM style_node_claims
-		WHERE style_id = ? AND swap_mode != ? AND`+liveClaims,
-		newID, source, calledBy, src.ID, string(protocol.SwapModeManualSwap))
+		WHERE style_id = ? AND`+notLoaderClaim+` AND`+liveClaims,
+		newID, source, calledBy, src.ID)
 	if err != nil {
 		return 0, err
 	}

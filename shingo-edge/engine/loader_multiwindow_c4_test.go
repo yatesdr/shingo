@@ -42,7 +42,7 @@ func mustMultiWindowLoader(t *testing.T, id string, windows []string, payloads .
 		ps[i] = domain.PayloadCode(p)
 		thresholds[domain.PayloadCode(p)] = 100
 	}
-	l, err := domain.NewSharedWindowLoader(domain.LoaderID(id), id, domain.RoleProduce, domain.ReplenishmentThreshold,
+	l, err := domain.NewSharedWindowLoader(domain.LoaderID(id), domain.RoleProduce, domain.ReplenishmentThreshold,
 		ws, ps,
 		domain.WithInboundSource("EMPTY-SUPER"),
 		domain.WithUOPThreshold(thresholds))
@@ -76,8 +76,6 @@ func TestMultiWindow_DemandOfN_ExactlyNAcrossWindows(t *testing.T) {
 	t.Parallel()
 	db := testEngineDB(t)
 	eng := testEngine(t, db)
-	mw := true
-	eng.cfg.LoadersMultiWindow = &mw
 
 	windows := []string{"MW-W1", "MW-W2", "MW-W3"}
 	seedWindowNodes(t, db, "MW-PROC", windows)
@@ -114,8 +112,6 @@ func TestRace_MultiWindow_NeverExceedsWindowCount(t *testing.T) {
 	t.Parallel()
 	db := testEngineDB(t)
 	eng := testEngine(t, db)
-	mw := true
-	eng.cfg.LoadersMultiWindow = &mw
 
 	windows := []string{"RMW-W1", "RMW-W2", "RMW-W3", "RMW-W4"}
 	seedWindowNodes(t, db, "RMW-PROC", windows)

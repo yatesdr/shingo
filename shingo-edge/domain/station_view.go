@@ -1,6 +1,9 @@
 package domain
 
-import "time"
+import (
+	"encoding/json"
+	"time"
+)
 
 // NodeBinState is the bin information fetched from Core via telemetry
 // and folded into a StationNodeView. Reflects the current bin (if any)
@@ -42,19 +45,36 @@ type CurtainPoint struct {
 // claim-and-orders context needed for the HMI's node tile, plus the
 // most recent release-error string surfaced as a chip when applicable.
 type StationNodeView struct {
-	Node           Node          `json:"node"`
-	Runtime        *RuntimeState `json:"runtime,omitempty"`
-	ActiveClaim    *NodeClaim    `json:"active_claim,omitempty"`
-	TargetClaim    *NodeClaim    `json:"target_claim,omitempty"`
-	ChangeoverTask *NodeTask     `json:"changeover_task,omitempty"`
+	Node    Node          `json:"node"`
+	Runtime *RuntimeState `json:"runtime,omitempty"`
+	// ActiveClaim is the claim the node answers to. On a loader tile it is the
+	// loader's synthesised claim, kept on the Go tile for the engine and the
+	// Production page's template; the station's JSON leaves it off a loader
+	// tile (MarshalJSON), where the board reads Loader instead.
+	ActiveClaim *NodeClaim `json:"active_claim,omitempty"`
+	// Loader is the Core loader this node is a window or position of, as the
+	// board reads it. Nil on every other tile; its presence is what makes a
+	// tile a loader tile. Pinned by TestStationView_ModelReadsAreWireKeys.
+	Loader         *TileLoader `json:"loader,omitempty"`
+	TargetClaim    *NodeClaim  `json:"target_claim,omitempty"`
+	ChangeoverTask *NodeTask   `json:"changeover_task,omitempty"`
 	// CanSkip offers the operator's ABANDON - SKIP THIS STEP on this node: its
 	// changeover task is waiting for material, its supply is still queued, and
 	// nothing is moving at the node. Decided by domain.AbandonRefusal, the same
 	// rule the abandon refuses on, so the button is never offered for a step
 	// the server would refuse.
-	CanSkip  bool          `json:"can_skip"`
-	Orders   []Order       `json:"orders"`
+	CanSkip bool    `json:"can_skip"`
+	Orders  []Order `json:"orders"`
+	// BinState is Core's bin at the node. The Production page marshals it
+	// whole and prints its count; the station's JSON carries its own shape
+	// (stationBinState: stocked in place of the count).
 	BinState *NodeBinState `json:"bin_state,omitempty"`
+	// BinStocked is whether the bin holds parts, set when BinState was read
+	// from the Edge's copy of Core's node-bins feed, which carries that and no
+	// count (BinState.UOPRemaining is then 0 and means nothing). Nil when the
+	// bin was read over HTTP and stocked is its count above zero. Not
+	// serialised: the station's JSON carries it as bin_state.stocked.
+	BinStocked *bool `json:"-"`
 	// SwapReady is true when both tracked orders for a two-robot swap are
 	// in "staged" status — i.e. both robots are holding at their wait
 	// points and a single coordinated release can move both forward.
@@ -86,11 +106,6 @@ type StationNodeView struct {
 	// from the tag cache. Not serialised: the board reads CurtainOK.
 	CurtainPoints []CurtainPoint `json:"-"`
 
-	// ChangeoverLoadDirective tells a loader's card what to load during a
-	// changeover — see the type. Nil when there is no changeover, the claim
-	// has the flag off, or no bin type could be resolved: a card that always
-	// shows a directive is a card whose directive nobody reads.
-	ChangeoverLoadDirective *ChangeoverLoadDirective `json:"changeover_load_directive,omitempty"`
 	// ChildOfNode is set when this tile is rendered on a station only because
 	// the node it EXTENDS lives here — a press-index position with no
 	// operator_station_id of its own, shown under its press. Carries the
@@ -152,95 +167,18 @@ type StationNodeView struct {
 	// of being surprised by a robot heading somewhere unexpected. Empty/false
 	// on everything else.
 	ContainmentFlagged bool `json:"containment_flagged,omitempty"`
-	// ActiveStylePayloads / AllStylePayloads are the manual_swap loader-board
-	// unions across EVERY active process sharing this node's CoreNodeName (not
-	// just this station's process): active = payloads the running styles need,
-	// all = every covered payload (the preload list). Populated only for
-	// manual_swap nodes. This is what lets an operator at a loader shared by
-	// two cells (SNF2 + SNF3) see both cells' payloads instead of one.
-	ActiveStylePayloads []string `json:"active_style_payloads,omitempty"`
-	AllStylePayloads    []string `json:"all_style_payloads,omitempty"`
-	// OperatorDriven is true when the loader's replenishment mode is operator —
-	// a person stages it, and the board defaults to preload. Read from the Core-
-	// owned loader aggregate (Loader.IsOperatorDriven).
-	//
-	// It used to come from an Edge-only operator_driven_loaders table. That
-	// table outlived its readers: the supply decision moved onto the loader row
-	// and stopped consulting it, leaving a toggle on the claim editor that wrote
-	// a row nobody read. Deleted.
-	OperatorDriven bool `json:"operator_driven,omitempty"`
-	// HomeLocationLoader is true when this loader uses the dedicated-position
-	// LAYOUT — each payload pinned to its own physical position. The board then
-	// renders one card per home (position × its payload) across the station's
-	// loader nodes, instead of one window with a card per payload. Orthogonal to
-	// OperatorDriven (this is layout; that is type).
-	//
-	// Read from the Core-owned loader aggregate: bin_loaders.layout →
-	// Loader.IsDedicated() → service/station_service.go, the SAME resolver the
-	// runtime uses, so the board and the engine cannot disagree. It does NOT come
-	// from the Edge-only home_location_loaders table — that copy was orphaned by
-	// the loader move to Core, had no reader, and was dropped by Edge v2
-	// (2026-09-27).
-	HomeLocationLoader bool `json:"home_location_loader,omitempty"`
-	// LeavesBare marks a window of the stage-1 half of a two-stage unloader
-	// (Loader.LeavesBare, Core-owned). The board's CLEAR there is one tap,
-	// "Full off", with no dunnage picker and no type on it: it posts a blank
-	// code and Core stamps the cart's own marker. False for every other node.
-	LeavesBare bool `json:"leaves_bare,omitempty"`
-	// PulledDirectly marks a window of a two-stage unloader's stage 2 whose
-	// finished carts the process pulls straight off it (Loader.PulledDirectly,
-	// Core-owned): its CLEAR sends the cart nowhere, and the board says the
-	// cart waits for the line.
-	PulledDirectly bool `json:"pulled_directly,omitempty"`
-	// BoardHidesIdle and BoardShowsAllParts are how the station's board draws,
-	// Core-owned settings on the loader (Loader.BoardHidesIdle,
-	// Loader.BoardShowsAllParts). Both used to be read off OperatorDriven, so
-	// an operator-ordered station could never hide a loaded home. OperatorDriven
-	// still keeps an empty spot on screen when idle cards are hidden, because
-	// that is where the operator orders the next empty.
-	BoardHidesIdle     bool `json:"board_hides_idle,omitempty"`
-	BoardShowsAllParts bool `json:"board_shows_all_parts,omitempty"`
-	// HasBufferPartial is true when this is a dedicated home position with a
-	// tracked bin (UOP > 0) AND the loader's buffer slot holds a partial with
-	// the same payload. When set, the HMI shows the "Clear Bin" button so the
-	// operator can zero the home bin and trigger the consolidation move sequence.
-	HasBufferPartial bool `json:"has_buffer_partial,omitempty"`
-	// WindowGroupAnchor is the LoaderID this node belongs to when it is one window
-	// of a shared MULTI-window loader, resolved from the Core aggregate (not the
-	// legacy per-node claim). Empty for a single-window/legacy loader or a non-loader
-	// node. This is what lets the operator board show "Window N of <loader>" and know
-	// the node is part of a shared demand budget — the membership that the
-	// claim-derived fields above structurally cannot express (multi-window refactor
-	// C4b, the view-path cutover). Populated only for manual_swap nodes.
-	WindowGroupAnchor string `json:"window_group_anchor,omitempty"`
-	// WindowNodes is the sibling window set of this node's shared loader — every
-	// window's core_node_name — populated alongside WindowGroupAnchor. One
-	// physical bin per window; the windows share the loader's single empty-in
-	// budget (one demand of N → N empties across the set, never 2N).
-	//
-	// NOT "in loader order", which is what this used to say. Core's operator-defined
-	// window order does not survive the trip: it has no field on the wire and no
-	// column in the Edge cache, so the order here is whatever the cache read
-	// produced, which is by node NAME. Nothing renders this field today (no
-	// consumer in any page or template), so the wrong claim misled readers rather
-	// than the board.
-	WindowNodes []string `json:"window_nodes,omitempty"`
-	// ActivePayloadLineside maps an active-style payload code to the current
-	// lineside UOP for it — the bin at the consuming node plus parts pulled to
-	// the line (active buckets), summed across ALL active consume nodes for that
-	// payload in this process. Populated only for manual_swap loader nodes; the
-	// transitional board shows it on ACTIVE cards in place of "no demand" so the
-	// operator sees how much the running styles still have lineside.
-	ActivePayloadLineside map[string]int `json:"active_payload_lineside,omitempty"`
-	// StarvedPayloads marks active-style payloads whose lineside UOP has
-	// dropped into the danger zone (service.linesideStarved). The operator
-	// board renders these cards red so the operator preloads before the line
-	// runs dry. Populated only for manual_swap loader nodes.
-	StarvedPayloads map[string]bool `json:"starved_payloads,omitempty"`
+	// BufferPartial names the buffer spot a clear of this home would bring
+	// home: set on a dedicated home holding a stocked bin of its part when a
+	// spot of its loader's buffer holds a stocked bin of the same part, the
+	// first such spot in the plant's order, which is the one ClearLoaderHome
+	// takes. The HMI offers CLEAR BIN on it. Stamped by
+	// StationService.StampBins; pinned by
+	// TestStationView_BinsStampedFromTheOneRead (www).
+	BufferPartial *BufferPartial `json:"buffer_partial,omitempty"`
 	// SupplyRefusals maps a payload code to the loader operator's standing
 	// statement that they cannot fill the call on that card, keyed the same way
-	// the card is: (this node, that payload). Populated for manual_swap loader
-	// nodes on BOTH layouts — a shared window's payload card and a dedicated
+	// the card is: (this node, that payload). Populated for loader tiles on
+	// BOTH layouts — a shared window's payload card and a dedicated
 	// home's position card reach the same key.
 	//
 	// The card renders red-DORMANT when a refusal is present: same hue as the
@@ -338,6 +276,221 @@ type OperatorStationView struct {
 	// flow_composer_enabled gate on Process ("HMI setup") decides whether it
 	// offers setting a style up or only the ones already made.
 	Composer *ComposerData `json:"composer,omitempty"`
+	// Serves is what the board's loaders serve: one row per served cell's
+	// claim and part, of the board's role (consume rows where a loader fills
+	// cells, produce rows where an unloader empties them). Nil, so absent, on a
+	// board with no loader tile or when the read failed; empty, so [], when it
+	// was read and nothing is served. The board draws each served cell's coverage
+	// from it: its cells row, which parts run, and a Load card's colour and
+	// reason (operator-board-model.js coverage). Built by StationService.servedRows.
+	Serves []ServedRow `json:"serves,omitzero"`
+	// Empties is what the outbound group of the board's consume loader holds:
+	// per bin type, the empties standing in it, and the group's open spots.
+	// Absent on a board with no such loader, for a stage-1 unloader (its group
+	// is stage 2's windows, not an empties source), and when the bins could
+	// not be read. Stamped by StationService.StampBins.
+	Empties *Empties `json:"empties,omitempty"`
+	// Bins says whether this view's bins are known: false while the Edge holds
+	// no copy of Core's node-bins feed from a Core that serves it, or when the
+	// read over HTTP failed. With it false an absent bin_state means nothing.
+	// AsOf is set when the held copy has not been current for longer than
+	// engine.FeedAsOfAfter; the copy is drawn all the same. Absent where the
+	// view was built with no bins stamp. Stamped by www stampStationBins.
+	Bins *BinsKnown `json:"bins,omitempty"`
+}
+
+// BinsKnown is whether a view's bins are known, and as of when.
+type BinsKnown struct {
+	Known bool       `json:"known"`
+	AsOf  *time.Time `json:"as_of,omitempty"`
+}
+
+// BufferPartial is the buffer spot holding the partial a home's clear would
+// bring home.
+type BufferPartial struct {
+	Node string `json:"node"`
+}
+
+// The states of a buffer spot, as a loader's buffer strip draws them
+// (StationService.StampBins decides them).
+const (
+	// SpotPartial: a bin holding parts of a part stands there.
+	SpotPartial = "partial"
+	// SpotEmpty: an emptied bin stands there (occupied, no part, not
+	// stocked), or a home's clear is in flight to the spot: its emptied
+	// carrier is on the way, and the glass draws the spot as coming from the
+	// home's orders, where the clear's Order A stands.
+	SpotEmpty = "empty"
+	// SpotOpen: nothing stands there.
+	SpotOpen = "open"
+	// SpotUnknown: the board cannot place what stands there (a part that is
+	// not stocked, or a stocked bin with no part), or the spot was not read.
+	SpotUnknown = "unknown"
+)
+
+// BufferSpot is one buffer spot of a dedicated loader and what stands there.
+type BufferSpot struct {
+	Node  string `json:"node"`
+	State string `json:"state"`
+}
+
+// Empties is a consume loader's outbound group as the board reads it.
+type Empties struct {
+	// Group is the outbound group's name.
+	Group string       `json:"group"`
+	Rows  []EmptiesRow `json:"rows"`
+}
+
+// EmptiesRow is one bin type's line: the empties of the type standing in the
+// group, and the group's open spots (one count for the group, on every row).
+type EmptiesRow struct {
+	BinType string `json:"bin_type"`
+	Have    int    `json:"have"`
+	Spots   int    `json:"spots"`
+}
+
+// TileLoader is a loader tile's facts as the board reads them: the Core
+// loader the node belongs to, at this node. It replaces the synthesised claim
+// on the station's JSON and the loader fields that used to ride beside it.
+type TileLoader struct {
+	// Role is Core's: produce (a loader filling cells) or consume (an
+	// unloader emptying them).
+	Role string `json:"role"`
+	// Layout is Core's: shared_window or dedicated_positions.
+	Layout string `json:"layout"`
+	// Replenishment is Core's: operator (a person stages it) or threshold.
+	Replenishment string `json:"replenishment"`
+	// OutboundDest is where the loader's bins go; blank when Core names none,
+	// and then the board offers no PULL FROM MARKET (the door refuses it,
+	// engine/operator_window_pullback.go).
+	OutboundDest string `json:"outbound_dest"`
+	// Parts are the parts loadable at this node: the loader's set on a shared
+	// window, the position's own part at a dedicated home, none at a buffer.
+	Parts []TileLoaderPart `json:"parts"`
+	// Carriers are the bin types an unloader's CLEAR panels offer for this
+	// node's parts, from Core's payload-to-bin-type catalog. Consume role only.
+	Carriers []string `json:"carriers,omitempty"`
+	// LeavesBare marks a stage-1 window of a two-stage unloader: its CLEAR is
+	// one tap, "Full off", with no type.
+	LeavesBare bool `json:"leaves_bare"`
+	// PulledDirectly marks a stage-2 window whose finished carts the process
+	// pulls straight off it.
+	PulledDirectly bool `json:"pulled_directly"`
+	// BoardHidesIdle and BoardShowsAllParts are how the station's board draws,
+	// Core-owned settings on the loader (Loader.BoardHidesIdle,
+	// Loader.BoardShowsAllParts). Both used to be read off the replenishment,
+	// so an operator-ordered station could never hide a loaded home. An
+	// operator loader still keeps an empty spot on screen when idle cards are
+	// hidden, because that is where the operator orders the next empty.
+	BoardHidesIdle     bool `json:"board_hides_idle"`
+	BoardShowsAllParts bool `json:"board_shows_all_parts"`
+	// Buffer is a dedicated loader's buffer spots in the plant's order (Core's
+	// bin_loader_homes sort order), each with what stands there. Carried ONCE
+	// per loader, on the tile of its first home on the board in that order;
+	// absent on every other tile and on a loader with no buffer spot. Stamped
+	// by StationService.StampBins (stripTile).
+	Buffer []BufferSpot `json:"buffer,omitempty"`
+}
+
+// TileLoaderPart is one part a loader tile can load.
+type TileLoaderPart struct {
+	Code string `json:"code"`
+}
+
+// ServedRow is one served cell's claim of one part, as the board reads it.
+type ServedRow struct {
+	// Cell is the served process's name.
+	Cell string `json:"cell"`
+	// Part is the payload code.
+	Part string `json:"part"`
+	// Role is the claim's role: consume (the cell uses the part) or produce
+	// (the cell makes it).
+	Role string `json:"role"`
+	// Carrier is the part's bin type from Core's catalog; blank when unknown.
+	Carrier string `json:"carrier"`
+	// HaveUOP is the cell's count of the part at the node: the node's bin
+	// when the bin holds this part, plus the active piles of this part. Nil
+	// when the node's runtime could not be read; below 0 is overpack.
+	HaveUOP *int `json:"have_uop"`
+	// CapacityUOP is the claim's bin capacity.
+	CapacityUOP int `json:"capacity_uop"`
+	// Incoming is true for a row of the cell's target style.
+	Incoming bool `json:"incoming"`
+	// Node is the cell's position (the Core node name).
+	Node          string `json:"node"`
+	ProcessID     int64  `json:"process_id"`
+	ProcessNodeID int64  `json:"process_node_id"`
+	// ReorderUOP is the level the claim acts on (NodeClaim.DemandLevel).
+	ReorderUOP int `json:"reorder_uop"`
+	// Waiting is true while the cell waits on this part from outside: it has
+	// an order for it queued with Core's reason (every row), or Core's sourcing
+	// verdict for an incoming style lists it missing (incoming consume rows).
+	// See StationService.markWaiting.
+	Waiting bool `json:"waiting"`
+}
+
+// stationBinState is a tile's bin as the station's JSON carries it:
+// NodeBinState with Stocked in place of the count. The board asks only
+// whether a bin holds parts, never how many; the Production page marshals
+// NodeBinState itself and prints the count. Pinned by
+// TestStationNodeView_JSONShape.
+type stationBinState struct {
+	BinID             int64   `json:"bin_id,omitempty"`
+	BinLabel          string  `json:"bin_label,omitempty"`
+	BinTypeCode       string  `json:"bin_type_code,omitempty"`
+	Bare              bool    `json:"bare,omitempty"`
+	PayloadCode       string  `json:"payload_code,omitempty"`
+	Stocked           bool    `json:"stocked"`
+	Manifest          *string `json:"manifest,omitempty"`
+	ManifestConfirmed bool    `json:"manifest_confirmed"`
+	Occupied          bool    `json:"occupied"`
+	// UOPCapacity, HeldSince and HeldFor are NodeBinState's: the part's
+	// capacity, so the board can say a carrier is partial from the tile's own
+	// count (runtime.remaining_uop_cached), and a held partial's line and when it
+	// entered its home. None of them ticks.
+	UOPCapacity int    `json:"uop_capacity,omitempty"`
+	HeldSince   string `json:"held_since,omitempty"`
+	HeldFor     string `json:"held_for,omitempty"`
+	// HeldUOP is Core's count of a HELD partial, the one count the board reads:
+	// a carrier waiting in its partial home is drawn from by nothing, so its
+	// count does not tick. 0 for every carrier that is not held.
+	HeldUOP int `json:"held_uop,omitempty"`
+}
+
+// MarshalJSON is the station's JSON for a tile: a loader tile carries no
+// active_claim (the board reads Loader), and the bin carries Stocked rather
+// than its count (stationBinState; BinStocked when the bin came from the
+// Edge's copy of the feed, which has no count). The Go tile keeps both for the engine and
+// the Production page's template, which reads neither through JSON but the
+// bin, which it marshals as a NodeBinState. Pinned by
+// TestStationNodeView_JSONShape.
+func (v StationNodeView) MarshalJSON() ([]byte, error) {
+	type plain StationNodeView
+	p := plain(v)
+	if p.Loader != nil {
+		p.ActiveClaim = nil
+	}
+	var bin *stationBinState
+	if b := p.BinState; b != nil {
+		stocked := b.UOPRemaining > 0
+		if p.BinStocked != nil {
+			stocked = *p.BinStocked
+		}
+		bin = &stationBinState{
+			BinID: b.BinID, BinLabel: b.BinLabel, BinTypeCode: b.BinTypeCode, Bare: b.Bare,
+			PayloadCode: b.PayloadCode, Stocked: stocked, Manifest: b.Manifest,
+			ManifestConfirmed: b.ManifestConfirmed, Occupied: b.Occupied,
+			UOPCapacity: b.UOPCapacity, HeldSince: b.HeldSince, HeldFor: b.HeldFor,
+		}
+		if b.HeldSince != "" {
+			bin.HeldUOP = b.UOPRemaining
+		}
+		p.BinState = nil
+	}
+	return json.Marshal(struct {
+		plain
+		BinState *stationBinState `json:"bin_state,omitempty"`
+	}{p, bin})
 }
 
 // ReleasePurpose is one decision a node owes: "ready", "tooling_done" or

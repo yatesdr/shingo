@@ -20,10 +20,9 @@ import (
 //
 // BuildView assembles ~15 fields across five sequential sections, and before
 // this test the coverage was per-field and thin: SupplyRefusedForMe,
-// SupplyRefusals, LinesideActive/Inactive, LastReleaseError, SwapReady,
-// OperatorDriven and HomeLocationLoader had no assertion through BuildView at
-// all. Several of them have unit tests one layer down — ComputeSwapReady and
-// activePayloadLineside are both tested directly — but nothing checked that
+// SupplyRefusals, LinesideActive/Inactive, LastReleaseError and SwapReady had
+// no assertion through BuildView at all. Several of them have unit tests one
+// layer down — ComputeSwapReady is tested directly — but nothing checked that
 // BuildView wires the result onto the right tile, and the WIRING is what a
 // restructuring of a 189-statement function breaks.
 //

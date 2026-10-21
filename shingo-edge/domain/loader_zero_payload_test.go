@@ -21,14 +21,14 @@ func TestSharedWindowZeroPayloads_ByRole(t *testing.T) {
 	t.Parallel()
 	windows := []Window{{Node: "UNL-W1"}}
 
-	l, err := NewSharedWindowLoader("loader:ZP-produce", "ZP", RoleProduce, ReplenishmentOperator, windows, nil)
+	l, err := NewSharedWindowLoader("loader:ZP-produce", RoleProduce, ReplenishmentOperator, windows, nil)
 	if err == nil {
 		t.Errorf("produce shared_window with zero payloads built %+v; want the constructor to refuse it", l)
 	} else if !strings.Contains(err.Error(), "shared_window needs at least one payload") {
 		t.Errorf("produce zero-payload error = %q, want the at-least-one-payload refusal", err)
 	}
 
-	u, err := NewSharedWindowLoader("loader:ZP-consume", "ZP", RoleConsume, ReplenishmentOperator, windows, nil)
+	u, err := NewSharedWindowLoader("loader:ZP-consume", RoleConsume, ReplenishmentOperator, windows, nil)
 	if err != nil {
 		t.Fatalf("consume shared_window with zero payloads: %v; want it built", err)
 	}
@@ -51,7 +51,7 @@ func TestSharedWindowZeroPayloads_ByRole(t *testing.T) {
 // the windows.
 func TestSharedWindow_BlankPayloadReads(t *testing.T) {
 	t.Parallel()
-	l, err := NewSharedWindowLoader("loader:BP", "BP", RoleConsume, ReplenishmentOperator,
+	l, err := NewSharedWindowLoader("loader:BP", RoleConsume, ReplenishmentOperator,
 		[]Window{{Node: "UNL-W1"}}, []PayloadCode{"PART-A"})
 	if err != nil {
 		t.Fatalf("build: %v", err)

@@ -60,8 +60,9 @@ const (
 )
 
 // Loader is the aggregate root: a bin loader (produce) or unloader (consume)
-// anchored at a core node. config_gen is bumped on every config-affecting write
-// and rides the downward sync so Edge can detect stale config.
+// anchored at a core node. bin_loaders.config_gen is still bumped on every
+// config-affecting write and no longer read: the downward sync stopped carrying
+// it, and the column stays because a previous build's loaderCols names it.
 type Loader struct {
 	ID            int64      `json:"id"`
 	Name          string     `json:"name"`
@@ -70,7 +71,6 @@ type Loader struct {
 	Replenishment string     `json:"replenishment"`
 	OutboundDest  string     `json:"outbound_dest"`
 	InboundSource string     `json:"inbound_source"`
-	ConfigGen     int64      `json:"config_gen"`
 	ArchivedAt    *time.Time `json:"archived_at,omitempty"` // soft-delete marker; nil = active (step 7)
 	// ChangeoverLoadDirective commandeers this loader's card during a
 	// changeover: rather than offering every payload it serves, the card names
@@ -202,7 +202,7 @@ type Config struct {
 }
 
 // loaderCols is every loader read's column list.
-const loaderCols = `id, name, role, layout, replenishment, outbound_dest, inbound_source, config_gen, archived_at, funnel_windows, changeover_load_directive, accept_partials, auto_push, second_stage_loader_id, fed_directly, pulled_directly, board_hides_idle, board_shows_all_parts`
+const loaderCols = `id, name, role, layout, replenishment, outbound_dest, inbound_source, archived_at, funnel_windows, changeover_load_directive, accept_partials, auto_push, second_stage_loader_id, fed_directly, pulled_directly, board_hides_idle, board_shows_all_parts`
 
 type scanner interface{ Scan(...any) error }
 
@@ -211,7 +211,7 @@ func scanLoader(s scanner) (Loader, error) {
 	var archivedAt sql.NullTime
 	var secondStageID sql.NullInt64
 	err := s.Scan(&l.ID, &l.Name, &l.Role, &l.Layout, &l.Replenishment,
-		&l.OutboundDest, &l.InboundSource, &l.ConfigGen, &archivedAt, &l.FunnelWindows,
+		&l.OutboundDest, &l.InboundSource, &archivedAt, &l.FunnelWindows,
 		&l.ChangeoverLoadDirective, &l.AcceptPartials, &l.AutoPush, &secondStageID, &l.FedDirectly, &l.PulledDirectly,
 		&l.BoardHidesIdle, &l.BoardShowsAllParts)
 	if archivedAt.Valid {
@@ -339,8 +339,8 @@ func UpdateLoader(db *sql.DB, l Loader) error {
 // homes/payloads rows are left intact (a hard DELETE would have cascaded them away).
 // Active reads (ListLoaders) filter on archived_at IS NULL, so an archived loader stops
 // syncing to Edge and driving demand; analytics read bin_uop_ledger, which is preserved.
-// Idempotent: re-archiving just re-stamps archived_at. config_gen bumps so the next
-// downward sync drops the loader from the Edge cache.
+// Idempotent: re-archiving just re-stamps archived_at. The next downward sync drops
+// the loader from the Edge cache because ListLoaders no longer returns it.
 //
 // A soft-retire + recreate now lands cleanly: identity is the surrogate id, so a
 // replacement loader gets a fresh id and never collides with the archived one (the
@@ -610,8 +610,9 @@ type Quota struct {
 }
 
 // UpsertQuota sets how many carriers of one bin type a loader wants, and bumps
-// config_gen so the plant re-syncs. want=0 is a legitimate value meaning "none
-// of this type"; RemoveQuota is how a line is dropped entirely.
+// config_gen. The quota stays on Core (dispatch's finder reads it); it is not on
+// the loader wire. want=0 is a legitimate value meaning "none of this type";
+// RemoveQuota is how a line is dropped entirely.
 func UpsertQuota(db *sql.DB, q Quota) error {
 	_, err := db.Exec(`
 		INSERT INTO bin_loader_quotas (loader_id, bin_type_id, want)
@@ -633,8 +634,8 @@ func RemoveQuota(db *sql.DB, loaderID, binTypeID int64) error {
 }
 
 // ListQuotas returns a loader's declared carrier mix with the bin-type CODES
-// joined on, because the code is what travels on the wire and what a person
-// reads — the id is a local key.
+// joined on, because the code is what dispatch's finder fetches by and what a
+// person reads — the id is a local key.
 func ListQuotas(db *sql.DB, loaderID int64) ([]Quota, error) {
 	rows, err := db.Query(`SELECT q.loader_id, q.bin_type_id, bt.code, q.want
 		FROM bin_loader_quotas q JOIN bin_types bt ON bt.id = q.bin_type_id
@@ -733,9 +734,9 @@ func GetConfig(db *sql.DB, id int64) (*Config, error) {
 // in one query.
 //
 // The alternative — walking a loader's homes and resolving each id separately —
-// is what the downward config sync does, and it costs a query per window. That
-// is tolerable on a sync that runs when config changes and unreasonable on a
-// decision that runs every time a loop drops below its threshold.
+// costs a query per window, on the downward config sync (BuildLoaderInfos),
+// the demand derivation, and a decision that runs every time a loop drops
+// below its threshold (dispatch/loader_replenish.go). All three use this.
 //
 // A home whose node has vanished is simply absent from the map, matching the
 // sync's disposition: skip the member rather than fail the whole answer.

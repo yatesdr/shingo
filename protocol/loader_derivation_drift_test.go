@@ -60,18 +60,16 @@ var loaderModeReaders = map[string]modeReader{
 		"it. A Core-owned loader window has no per-style claim, so the synthesised one carries the " +
 		"node-kind fact in the field that stores it. Deleting this stamp does not remove a " +
 		"branch; it makes every Core-owned loader board stop working"},
-	"shingo-edge/store/processes/walk.go": {1, "write", "PayloadsForLoader WRITES the mode into a " +
-		"WalkOpts filter — a query predicate against the stored column, which is where the fact lives"},
 	"shingo-edge/store/claim_quarantine.go": {2, "write", "the quarantine's predicate, " +
 		"WRITTEN into SQL twice — the count the empty-set guard asks for and the move itself. Same " +
-		"case as walk.go above: the subject is the PERSISTED COLUMN, not a resolved node. " +
+		"case as styles.go below: the subject is the PERSISTED COLUMN, not a resolved node. " +
 		"IsLoaderNode answers 'is this claim a loader' about a claim already in hand; this asks the " +
 		"database which rows carry the value at all, which is the one question that cannot be asked " +
 		"of an object because the rows are what it is looking for"},
-	"shingo-edge/store/processes/styles.go": {1, "write", "cloneStyleTx's filter, WRITTEN into SQL: " +
-		"a clone must not copy a stored loader claim onto a new style. Same case " +
-		"as claim_quarantine.go above — the subject is the PERSISTED COLUMN, and the rows are what the " +
-		"query is looking for"},
+	"shingo-edge/store/processes/styles.go": {1, "write", "notLoaderClaim, the filter cloneStyleTx " +
+		"selects by, WRITTEN into SQL: a clone does not carry a stored loader claim onto another style " +
+		"(Core's loader owns that node). Same case as claim_quarantine.go above — the subject is the " +
+		"PERSISTED COLUMN, and the rows are what the query is looking for"},
 
 	"shingo-core/cmd/simcalc/main.go": {1, "shape", "fleetMovesPerSwap costs each step-list shape in " +
 		"floor crossings and robots. It switches over every mode because the shape is the question"},

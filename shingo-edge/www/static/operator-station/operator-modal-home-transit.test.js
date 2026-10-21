@@ -1,4 +1,4 @@
-// Unit tests for the manual_swap demand queue in renderModal (operator-modal.js) —
+// Unit tests for the loader demand queue in renderModal (operator-modal.js) —
 // the per-payload label the modal prints while a consume node's own empty-out
 // (U2) is leaving.
 //
@@ -13,7 +13,7 @@
 //
 // Runs under plain Node (no npm): extracts the real renderModal out of
 // operator-modal.js in a vm, with the collaborators it reaches for on the
-// manual_swap path stubbed. Exit 0 = pass, 1 = any failure. Run via the Go
+// loader path stubbed. Exit 0 = pass, 1 = any failure. Run via the Go
 // wrapper operator_modal_home_transit_test.go.
 
 'use strict';
@@ -49,6 +49,8 @@ function extractFn(src, name) {
 
 const modalSrc = fs.readFileSync(path.join(__dirname, 'operator-modal.js'), 'utf8');
 const windowSrc = fs.readFileSync(path.join(__dirname, 'operator-window-state.js'), 'utf8');
+const modelSrc = fs.readFileSync(path.join(__dirname, 'operator-board-model.js'), 'utf8')
+    .replace(/^export\s+/gm, '');
 const statusSrc = fs.readFileSync(path.join(__dirname, 'order-status.js'), 'utf8')
     .replace(/^export\s+/gm, '');
 
@@ -67,6 +69,7 @@ const ctx = {
 };
 vm.createContext(ctx);
 vm.runInContext(statusSrc, ctx);
+vm.runInContext(modelSrc, ctx);
 vm.runInContext('var PRESS_MAX_MS = 2000; var pressInFlight = false; var pressStartedAt = 0; var pendingEntry = null;', ctx);
 vm.runInContext(extractFn(modalSrc, 'pressIsStale'), ctx);
 vm.runInContext(extractFn(modalSrc, 'actionBtn'), ctx);
@@ -84,7 +87,7 @@ function labelFor(html, code) {
 function render(role, coreNode, allowed, orders) {
     ctx.renderModal({
         node: { id: 7, name: coreNode, core_node_name: coreNode },
-        active_claim: { swap_mode: 'manual_swap', role: role, allowed_payload_codes: allowed, uop_capacity: 0 },
+        loader: { role: role, layout: 'dedicated_positions', parts: allowed.map(c => ({ code: c })) },
         bin_state: null,
         orders: orders,
     });

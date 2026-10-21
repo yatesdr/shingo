@@ -21,9 +21,9 @@ func TestCachedWindowsComeBackInTheOperatorArrangement(t *testing.T) {
 		LoaderKey: "loader:1", Role: "produce", Name: "L1",
 		Layout: "shared_window", Replenishment: "threshold",
 		Positions: []protocol.LoaderPosition{
-			{CoreNodeName: "W-A", Kind: "window", Ordinal: 3},
-			{CoreNodeName: "W-Z", Kind: "window", Ordinal: 1},
-			{CoreNodeName: "W-M", Kind: "window", Ordinal: 2},
+			{CoreNodeName: "W-A", Ordinal: 3},
+			{CoreNodeName: "W-Z", Ordinal: 1},
+			{CoreNodeName: "W-M", Ordinal: 2},
 		},
 	}}); err != nil {
 		t.Fatalf("write the cache: %v", err)
@@ -48,9 +48,9 @@ func TestCachedWindowsFallBackToNaturalNameOrder(t *testing.T) {
 		LoaderKey: "loader:2", Role: "produce", Name: "L2",
 		Layout: "shared_window", Replenishment: "threshold",
 		Positions: []protocol.LoaderPosition{
-			{CoreNodeName: "W10", Kind: "window"},
-			{CoreNodeName: "W2", Kind: "window"},
-			{CoreNodeName: "W1", Kind: "window"},
+			{CoreNodeName: "W10"},
+			{CoreNodeName: "W2"},
+			{CoreNodeName: "W1"},
 		},
 	}}); err != nil {
 		t.Fatalf("write the cache: %v", err)
@@ -83,66 +83,35 @@ func assertWindows(t *testing.T, got []CoreLoaderPosition, want []string, why st
 	}
 }
 
-// THE CARRIER MIX HAS TO SURVIVE THE TRIP. It is declared on Core, carried on
-// the wire, and read from the Edge cache — the same four hops the operator's
-// window arrangement had to make, and that one was accepted, stored,
-// transmitted and thrown away at the last of them.
-//
-// Two facts, and they answer different questions. The QUOTA is intent and
-// belongs to the loader: how many carriers of each type it wants on hand. The
-// CAPABILITY is physical and belongs to the window: what that slot can take.
-// Empty capability means the window takes anything.
-func TestCarrierMixSurvivesTheSync(t *testing.T) {
+// TestTheSyncCachesNoFactTheEdgeDoesNotRead pins what the loader sync leaves out
+// of the cache: the loader's config generation. Nothing on the Edge reads it,
+// so the sync leaves core_loaders.config_gen at its default. (Each position's
+// kind and the carrier mix have no place in the schema since Edge v27:
+// loader_wire_drop_migration_test.go.)
+func TestTheSyncCachesNoFactTheEdgeDoesNotRead(t *testing.T) {
 	db := testDB(t)
 
 	if err := db.ReplaceCoreLoaders([]protocol.LoaderInfo{{
 		LoaderKey: "loader:9", Role: "produce", Name: "MIX",
 		Layout: "shared_window", Replenishment: "operator",
 		Positions: []protocol.LoaderPosition{
-			// A window that only fits one type, and one that fits two.
-			{CoreNodeName: "W1", Kind: "window", Ordinal: 0, BinTypes: []string{"32x32"}},
-			{CoreNodeName: "W2", Kind: "window", Ordinal: 1, BinTypes: []string{"45x48", "45x48-TOTE"}},
-			// And one with nothing declared — takes anything.
-			{CoreNodeName: "W3", Kind: "window", Ordinal: 2},
+			{CoreNodeName: "W1", Ordinal: 0},
+			{CoreNodeName: "W2", Ordinal: 1},
 		},
-		Quota: []protocol.LoaderQuota{
-			{BinTypeCode: "45x48", Want: 3},
-			{BinTypeCode: "32x32", Want: 1},
-			{BinTypeCode: "45x48-TOTE", Want: 1},
-		},
+		Payloads: []protocol.LoaderPayloadInfo{{PayloadCode: "PART-A"}},
 	}}); err != nil {
 		t.Fatalf("write the cache: %v", err)
 	}
 
+	var configGen int
+	if err := db.QueryRow(`SELECT config_gen FROM core_loaders WHERE loader_key = 'loader:9'`).Scan(&configGen); err != nil {
+		t.Fatalf("read config_gen: %v", err)
+	}
+	if configGen != 0 {
+		t.Errorf("cached config_gen = %d, want 0: the Edge reads none of it", configGen)
+	}
 	l, err := db.GetCoreLoader("loader:9")
-	if err != nil || l == nil {
-		t.Fatalf("read the cache: %v", err)
-	}
-
-	if len(l.Quota) != 3 {
-		t.Fatalf("quota lines = %d, want 3 — the declared mix did not survive the trip", len(l.Quota))
-	}
-	want := map[string]int{"32x32": 1, "45x48": 3, "45x48-TOTE": 1}
-	for _, q := range l.Quota {
-		if want[q.BinTypeCode] != q.Want {
-			t.Errorf("quota %s = %d, want %d", q.BinTypeCode, q.Want, want[q.BinTypeCode])
-		}
-	}
-
-	byNode := map[string][]string{}
-	for _, p := range l.Positions {
-		byNode[p.PositionNode] = p.BinTypes
-	}
-	if got := byNode["W1"]; len(got) != 1 || got[0] != "32x32" {
-		t.Errorf("W1 capability = %v, want [32x32]", got)
-	}
-	if got := byNode["W2"]; len(got) != 2 {
-		t.Errorf("W2 capability = %v, want two types — a slot can fit more than one, "+
-			"which is why capability is a set and not a column", got)
-	}
-	if got := byNode["W3"]; len(got) != 0 {
-		t.Errorf("W3 capability = %v, want none — an undeclared window takes anything, "+
-			"and that has to stay the meaning of empty or every existing loader "+
-			"would suddenly accept nothing", got)
+	if err != nil || l == nil || len(l.Positions) != 2 || len(l.Payloads) != 1 {
+		t.Fatalf("read the cache = %+v, %v; want the loader with its two windows and one payload", l, err)
 	}
 }

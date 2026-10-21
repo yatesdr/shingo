@@ -41,7 +41,8 @@ type homeConsolidation struct {
 // partial into the home.
 //
 // Pre-conditions (enforced here):
-//   - nodeID must be a produce, dedicated-home loader position.
+//   - nodeID must be a home (a position with a pinned payload) of a
+//     dedicated-position loader, of either role: no role is checked.
 //   - The home must hold a tracked bin with UOP > 0.
 //   - The loader's buffer position must hold a partial with matching payload.
 func (e *Engine) ClearLoaderHome(nodeID int64) error {
@@ -73,7 +74,6 @@ func (e *Engine) ClearLoaderHome(nodeID int64) error {
 	// payload assigned yet — also carries no payload, and used to be collected
 	// here as a buffer; Core excludes it from the loader's source pool, so a
 	// carrier moved onto one is parked where nothing will source it.
-	// Position.IsBuffer falls back to the old inference when Core did not say.
 	// Exclude the home node itself (guard for loaders where the home has no pinned
 	// payload — shouldn't happen given the check above, but defence-in-depth).
 	var bufferNodes []string
@@ -131,10 +131,7 @@ func (e *Engine) ClearLoaderHome(nodeID int64) error {
 	// and take the new generation stamp with it — the clear started the carrier's
 	// next life on Core. The carrier stays until Order A lifts it, known-empty:
 	// the operator's clear says so, through the lineside doorway.
-	var claimIDPtr *int64
-	if claim.ID != 0 {
-		claimIDPtr = &claim.ID
-	}
+	claimIDPtr := persistedClaimID(claim)
 	if err := e.carrierClearedInPlace(nodeID, node.CoreNodeName, claimIDPtr, cleared.BinID, cleared.DeltaEpoch); err != nil {
 		log.Printf("home_consolidation: set delta for node %d: %v", nodeID, err)
 	}
@@ -184,89 +181,5 @@ func (e *Engine) dispatchBufferConsolidation(c homeConsolidation) {
 
 	if err := e.db.SetProcessNodeRuntimeActiveOrder(c.homeProcessNodeID, &order.ID); err != nil {
 		log.Printf("home_consolidation: update runtime for home node %d: %v", c.homeProcessNodeID, err)
-	}
-}
-
-// EnrichHomeBufferPartials sets HasBufferPartial on any StationNodeView that is a
-// dedicated-home loader tile AND has a matching partial in the loader's buffer slot.
-// Called from the operator-station view handler after enrichViewBinState so BinState
-// is already populated. Makes one FetchNodeBins call across all buffer positions to
-// keep the overhead bounded regardless of how many home tiles are on the board.
-func (e *Engine) EnrichHomeBufferPartials(nodes []domain.StationNodeView) {
-	if !e.coreClient.Available() {
-		return
-	}
-
-	type homeEntry struct {
-		idx     int
-		payload string
-		buffers []string
-	}
-	var homes []homeEntry
-	seen := make(map[string]bool)
-	var allBuffers []string
-
-	for i := range nodes {
-		n := &nodes[i]
-		if !n.HomeLocationLoader {
-			continue
-		}
-		if n.BinState == nil || !n.BinState.Occupied || n.BinState.UOPRemaining <= 0 || n.BinState.PayloadCode == "" {
-			continue
-		}
-		l, err := e.loaders().LoaderForNode(domain.NodeID(n.Node.CoreNodeName))
-		if err != nil || l == nil || !l.IsDedicated() {
-			continue
-		}
-		// Skip buffer positions (no pinned payload in the loader aggregate). They
-		// are not homes and should not be candidates for consolidation.
-		pinnedPayload, hasPinned := l.PayloadAt(domain.NodeID(n.Node.CoreNodeName))
-		if !hasPinned || pinnedPayload == "" {
-			continue
-		}
-		var bufs []string
-		for _, pos := range l.Positions() {
-			// Same question as ClearLoaderHome asks, so the list the HMI offers
-			// and the list the action uses cannot disagree.
-			if !pos.IsBuffer() {
-				continue
-			}
-			name := string(pos.Node)
-			if name == n.Node.CoreNodeName {
-				continue // don't list self as a buffer
-			}
-			bufs = append(bufs, name)
-			if !seen[name] {
-				seen[name] = true
-				allBuffers = append(allBuffers, name)
-			}
-		}
-		if len(bufs) == 0 {
-			continue
-		}
-		homes = append(homes, homeEntry{i, n.BinState.PayloadCode, bufs})
-	}
-
-	if len(homes) == 0 {
-		return
-	}
-
-	bins, _, err := e.coreClient.FetchNodeBins(allBuffers)
-	if err != nil {
-		return
-	}
-	bufMap := make(map[string]NodeBinInfo, len(bins))
-	for _, b := range bins {
-		bufMap[b.NodeName] = b
-	}
-
-	for _, h := range homes {
-		for _, bName := range h.buffers {
-			info := bufMap[bName]
-			if info.Occupied && info.PayloadCode == h.payload && info.UOPRemaining > 0 {
-				nodes[h.idx].HasBufferPartial = true
-				break
-			}
-		}
 	}
 }

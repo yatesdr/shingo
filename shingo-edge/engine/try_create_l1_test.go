@@ -11,7 +11,7 @@ import (
 // LoaderStore (the Core-owned aggregate), the same way the hot path does.
 func resolveLoader(t *testing.T, eng *Engine, payload string) *domain.Loader {
 	t.Helper()
-	l, err := eng.loaderStore.LoaderForPayload(domain.PayloadCode(payload), domain.RoleProduce, true)
+	l, err := eng.loaderStore.LoaderForPayload(domain.PayloadCode(payload), domain.RoleProduce)
 	if err != nil || l == nil {
 		t.Fatalf("resolve loader for %s: loader=%v err=%v", payload, l, err)
 	}
@@ -26,7 +26,7 @@ func resolveLoader(t *testing.T, eng *Engine, payload string) *domain.Loader {
 // TestTryCreateL1_BoundedByNodeWindowCapAndReturnsCreated pins the post-PR-0
 // chokepoint contract: stageOperatorEmpty fires (desired - inFlight) for the payload
 // BUT never lets total in-flight empties at the core node exceed the window's
-// physical slot count (manualSwapWindowSlots). At a one-window loader that means
+// physical slot count (one per window). At a one-window loader that means
 // at most one empty inbound at a time — a desired > 1 is serialized over the
 // fill/release cycle, not queued at the window. The per-payload in-flight guard
 // remains as the dedup contract; the node cap is the dominant bound.
@@ -34,7 +34,7 @@ func TestTryCreateL1_BoundedByNodeWindowCapAndReturnsCreated(t *testing.T) {
 	t.Parallel()
 	db := testEngineDB(t)
 	eng := testEngine(t, db)
-	_, nodeID, _ := seedActiveManualSwapLoader(t, db, "CLAMP-PROC", "CLAMP-LOADER", "PART-Z")
+	_, nodeID, _ := seedLoaderNode(t, db, "CLAMP-PROC", "CLAMP-LOADER")
 	seedCoreLoader(t, eng, sharedLoaderInfo("CLAMP-LOADER", "produce", "threshold", "PART-Z", 0, 0))
 	loader := resolveLoader(t, eng, "PART-Z")
 
@@ -57,8 +57,8 @@ func TestTryCreateL1_BoundedByNodeWindowCapAndReturnsCreated(t *testing.T) {
 			n++
 		}
 	}
-	if n != manualSwapWindowSlots {
-		t.Errorf("expected %d in-flight L1 order(s) (window cap), got %d", manualSwapWindowSlots, n)
+	if n != 1 {
+		t.Errorf("expected 1 in-flight L1 order (the one-bin window), got %d", n)
 	}
 }
 
@@ -81,7 +81,7 @@ func TestOperatorPushIsNotSuppressedAtAnOperatorDrivenLoader(t *testing.T) {
 	t.Parallel()
 	db := testEngineDB(t)
 	eng := testEngine(t, db)
-	_, nodeID, _ := seedActiveManualSwapLoader(t, db, "TR-PROC", "TR-LOADER", "PART-T")
+	_, nodeID, _ := seedLoaderNode(t, db, "TR-PROC", "TR-LOADER")
 
 	// Operator-driven in the aggregate: replenishment=operator.
 	seedCoreLoader(t, eng, sharedLoaderInfo("TR-LOADER", "produce", "operator", "PART-T", 0, 0))

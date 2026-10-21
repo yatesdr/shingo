@@ -38,7 +38,7 @@ func TestBuildView_CarriesLeavesBare(t *testing.T) {
 			if len(view.Nodes) != 1 {
 				t.Fatalf("nodes = %d, want 1", len(view.Nodes))
 			}
-			if got := view.Nodes[0].LeavesBare; got != tc.leavesBare {
+			if got := view.Nodes[0].Loader.LeavesBare; got != tc.leavesBare {
 				t.Errorf("tile leaves_bare = %v, want %v", got, tc.leavesBare)
 			}
 		})

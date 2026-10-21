@@ -294,12 +294,18 @@ func TestStationView_BuildsInOnePass(t *testing.T) {
 // state a real plant's non-curtain styles are in), so the read the "32" note
 // describes is skipped. A plant that flags its styles pays it again on the
 // first poll; the hold still covers the steady ones.
-const stationPollQueryBudget = 31
+//
+// 30 SINCE THE STORED LOADER-CLAIM UNION WENT. The two that left are the
+// union's reads (the live styles, then every live claim), made on every poll of
+// every board for the payload sets of stored loader claims, which Core's
+// loader answers where it names the node.
+const stationPollQueryBudget = 29
 
 // stationSteadyPollQueryBudget is every poll after the first at the same
 // fixture: the first also materialises runtime rows and reads the curtained
-// nodes, and neither repeats. 19 before the curtain moved and 19 after.
-const stationSteadyPollQueryBudget = 19
+// nodes, and neither repeats. 19 before the curtain moved and 19 after; 17
+// since the stored loader-claim union went (the same two reads).
+const stationSteadyPollQueryBudget = 17
 
 // stationViewByteBudget is the WHOLE view's serialised size, pre-gzip, at the
 // budget fixture's plant.

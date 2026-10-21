@@ -13,7 +13,7 @@ import (
 // the robot drop (the operator still confirms the physical load/unload separately).
 func TestLoader_SynthClaim(t *testing.T) {
 	t.Parallel()
-	l, err := NewSharedWindowLoader("loader:UNLD", "Supermarket Unloader", RoleConsume, ReplenishmentOperator,
+	l, err := NewSharedWindowLoader("loader:UNLD", RoleConsume, ReplenishmentOperator,
 		[]Window{{Node: "SMN_01"}, {Node: "SMN_02"}}, []PayloadCode{"P-A", "P-B"},
 		WithInboundSource("Supermarket Area"), WithOutboundDest("Supermarket Empty Totes"))
 	if err != nil {
@@ -42,7 +42,7 @@ func TestLoader_SynthClaim(t *testing.T) {
 	if c.AutoPush {
 		t.Error("AutoPush = true on a loader built without WithAutoPush; want false")
 	}
-	ap, err := NewSharedWindowLoader("loader:UNLD-AP", "AP", RoleConsume, ReplenishmentOperator,
+	ap, err := NewSharedWindowLoader("loader:UNLD-AP", RoleConsume, ReplenishmentOperator,
 		[]Window{{Node: "SMN_03"}}, []PayloadCode{"P-A"}, WithAutoPush(true))
 	if err != nil {
 		t.Fatalf("build auto-push loader: %v", err)

@@ -67,22 +67,6 @@ type Config struct {
 	Sim       SimConfig       `yaml:"sim"`
 	Logging   LoggingConfig   `yaml:"logging"`
 
-	// LoadersMultiWindow — DEPRECATED. The setting moved onto the loader itself:
-	// Core's bin_loaders.funnel_windows, synced down and read by
-	// engine.multiWindowFor. A plant-wide key could only answer for every loader
-	// at once, so a plant needing the funnel for one loader imposed it on all.
-	//
-	// What survives here is an OFF switch and nothing more. An explicit
-	// `loaders_multi_window: false` still funnels every loader in the plant, so a
-	// site that set it does not silently start spreading the day this ships. It
-	// cannot force spreading ON against a loader configured to funnel — the
-	// loader is the authority; this is a brake.
-	//
-	// Leave it unset. Nil, and `true`, both mean "let each loader decide", which
-	// is what the old default did anyway. Deploy 9 deletes the key once no
-	// deployed config sets it.
-	LoadersMultiWindow *bool `yaml:"loaders_multi_window"`
-
 	// UOPAccumulatingCTAAfter is how long a node may sit unbound with counts
 	// accumulating before the operator chip starts telling the operator to do
 	// something about it.
@@ -694,10 +678,6 @@ func (c *Config) Clone() *Config {
 	out.Sim.Processes = cloneSlice(c.Sim.Processes)
 	out.Sim.Operators.Changeovers = cloneSlice(c.Sim.Operators.Changeovers)
 	out.Logging.StderrSubsystems = cloneSlice(c.Logging.StderrSubsystems)
-	if c.LoadersMultiWindow != nil {
-		v := *c.LoadersMultiWindow
-		out.LoadersMultiWindow = &v
-	}
 	if c.Demand.HysteresisPercent != nil {
 		v := *c.Demand.HysteresisPercent
 		out.Demand.HysteresisPercent = &v
@@ -776,7 +756,6 @@ func (c *Config) assignFrom(from *Config) {
 	c.Backup = from.Backup
 	c.Sim = from.Sim
 	c.Logging = from.Logging
-	c.LoadersMultiWindow = from.LoadersMultiWindow
 	c.UOPAccumulatingCTAAfter = from.UOPAccumulatingCTAAfter
 	c.Demand = from.Demand
 	c.PlantClaims = from.PlantClaims

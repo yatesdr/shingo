@@ -21,8 +21,8 @@ func TestUnloaderSweep_ZeroPayloadSharedWindow_ZeroReads(t *testing.T) {
 	nodeID := coreUnloaderWindow(t, eng, "ZPS-W1", protocol.LoaderInfo{
 		Name: "ZPS", LoaderKey: "loader:ZPS", Role: "consume", Layout: "shared_window",
 		Replenishment: protocol.LoaderReplenishmentOperator, InboundSource: "FG-SUPER",
-		OutboundDest: "EMPTY-TOTES", ConfigGen: 1,
-		Positions: []protocol.LoaderPosition{{CoreNodeName: "ZPS-W1", Kind: "window"}},
+		OutboundDest: "EMPTY-TOTES",
+		Positions:    []protocol.LoaderPosition{{CoreNodeName: "ZPS-W1"}},
 	})
 	ls, err := eng.loaderStore.Loaders(domain.RoleConsume)
 	if err != nil || len(ls) != 1 || len(ls[0].PayloadSet()) != 0 {

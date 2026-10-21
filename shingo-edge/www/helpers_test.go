@@ -89,6 +89,9 @@ type stubEngine struct {
 	// plcMgr is what PLCManager returns: nil unless a test puts a manager
 	// (with a seeded tag cache) here.
 	plcMgr *plc.Manager
+	// nodeBins is what LocalNodeBins answers: nothing held and a Core without
+	// the feed unless a test sets it.
+	nodeBins engine.NodeBinsState
 
 	// Spy fields — populated by stub methods so handler tests can assert on
 	// the values that flowed through. Add new fields here as needed; keep
@@ -162,11 +165,12 @@ type stubEngine struct {
 	speaksFeeds bool
 }
 
-func (s *stubEngine) AppConfig() *config.Config     { return s.cfg }
-func (s *stubEngine) ConfigPath() string            { return s.cfgPath }
-func (s *stubEngine) CoreAPI() *engine.CoreClient   { return nil }
-func (s *stubEngine) PLCManager() *plc.Manager      { return s.plcMgr }
-func (s *stubEngine) OrderManager() *orders.Manager { return s.orderMgr }
+func (s *stubEngine) AppConfig() *config.Config           { return s.cfg }
+func (s *stubEngine) ConfigPath() string                  { return s.cfgPath }
+func (s *stubEngine) CoreAPI() *engine.CoreClient         { return nil }
+func (s *stubEngine) LocalNodeBins() engine.NodeBinsState { return s.nodeBins }
+func (s *stubEngine) PLCManager() *plc.Manager            { return s.plcMgr }
+func (s *stubEngine) OrderManager() *orders.Manager       { return s.orderMgr }
 
 // A REAL reconciliation service over testDB. It used to return nil, which made
 // every handler that touches it untestable — apiReplayOutbox panicked on the
@@ -234,7 +238,6 @@ func (s *stubEngine) LoadBin(int64, string, *int64, []protocol.IngestManifestIte
 func (s *stubEngine) ClearBin(int64, string, bool) error                                 { return nil }
 func (s *stubEngine) RecordBinCount(int64, int, string) error                            { return nil }
 func (s *stubEngine) ClearLoaderHome(int64) error                                        { return nil }
-func (s *stubEngine) EnrichHomeBufferPartials([]domain.StationNodeView)                  {}
 func (s *stubEngine) FetchMarketBins(int64) ([]engine.MarketBinInfo, error)              { return nil, nil }
 func (s *stubEngine) PullFromMarket(int64, string) error                                 { return nil }
 func (s *stubEngine) PushEmptyOut(int64) error                                           { return nil }

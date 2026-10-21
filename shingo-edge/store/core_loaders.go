@@ -26,7 +26,6 @@ type CoreLoader struct {
 	Replenishment string
 	OutboundDest  string
 	InboundSource string
-	ConfigGen     int64
 	// FunnelWindows: take one window at a time rather than spreading empties
 	// across all of them. Synced from Core, which owns the setting; false (spread)
 	// on a row written by a Core that predates the field, which is the behaviour
@@ -56,40 +55,22 @@ type CoreLoader struct {
 	BoardShowsAllParts bool
 	Positions          []CoreLoaderPosition
 	Payloads           []CoreLoaderPayload
-	// Quota is the declared carrier mix. Empty means none declared, which is
-	// today's behaviour: the loader takes whatever compatible carrier it finds.
-	Quota []CoreLoaderQuota
 }
 
 // CoreLoaderPosition is one home of a cached loader (position node NAME). For a
 // dedicated loader it carries one payload; for a shared_window loader it is a
-// window (no payload — the shared set lives in Payloads). Kind makes that
-// explicit (protocol.LoaderPositionKind*), synced from Core; empty on rows
-// written by a pre-Kind Core, in which case the parent loader's Layout is
-// authoritative.
+// window (no payload — the shared set lives in Payloads). Which it is, is the
+// parent loader's Layout.
 type CoreLoaderPosition struct {
 	PositionNode string
 	PayloadCode  string
-	Kind         string
-	// HomeKind is 'home' | 'buffer', synced from Core. EMPTY MEANS UNKNOWN, not
-	// home: a Core predating the field sends blank for buffer slots too, so a
-	// reader must fall back to the old empty-payload inference rather than
-	// treating blank as a positive answer.
+	// HomeKind is 'home' | 'buffer', synced from Core (domain.Position.IsBuffer).
 	HomeKind     string
 	UOPThreshold int
 	// Ordinal is where the operator dragged this window, synced from Core.
 	// Zero on every row means nothing was arranged (or the Core that sent it
 	// predates the field), which falls through to a number-aware name sort.
 	Ordinal int
-	// BinTypes is what this window can PHYSICALLY take, synced from Core.
-	// EMPTY MEANS ANYTHING — the state every window is in until configured.
-	BinTypes []string
-}
-
-// CoreLoaderQuota is one line of a loader's declared carrier mix.
-type CoreLoaderQuota struct {
-	BinTypeCode string
-	Want        int
 }
 
 // CoreLoaderPayload is one entry in a shared_window allowed set.
@@ -101,6 +82,12 @@ type CoreLoaderPayload struct {
 // ReplaceCoreLoaders fully replaces the cached Core loader config (full-state
 // sync: delete all, re-insert) atomically. On any error the tx rolls back, so
 // the previous last-known-good cache is preserved rather than half-written.
+//
+// Four facts Core's loader wire carried are not cached: the loader's config
+// generation, each position's kind and window bin types, and the carrier mix.
+// Nothing on the Edge reads them. Edge v27 dropped the position kind column
+// and the two carrier-mix tables; core_loaders.config_gen stays, unwritten at
+// its default, because a rolled-back build's statements name it.
 func (db *DB) ReplaceCoreLoaders(loaders []protocol.LoaderInfo) error {
 	tx, err := db.Begin()
 	if err != nil {
@@ -108,7 +95,7 @@ func (db *DB) ReplaceCoreLoaders(loaders []protocol.LoaderInfo) error {
 	}
 	defer tx.Rollback()
 
-	for _, t := range []string{"core_loader_window_bin_types", "core_loader_quotas", "core_loader_positions", "core_loader_payloads", "core_loaders"} {
+	for _, t := range []string{"core_loader_positions", "core_loader_payloads", "core_loaders"} {
 		if _, err := tx.Exec("DELETE FROM " + t); err != nil {
 			return fmt.Errorf("clear %s: %w", t, err)
 		}
@@ -116,9 +103,9 @@ func (db *DB) ReplaceCoreLoaders(loaders []protocol.LoaderInfo) error {
 
 	for _, l := range loaders {
 		if _, err := tx.Exec(
-			`INSERT INTO core_loaders (loader_key, role, name, layout, replenishment, outbound_dest, inbound_source, config_gen, funnel_windows, changeover_load_directive, leaves_bare, auto_push, pulled_directly, board_hides_idle, board_shows_all_parts, synced_at)
-			 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,datetime('now'))`,
-			l.LoaderKey, l.Role, l.Name, l.Layout, l.Replenishment, l.OutboundDest, l.InboundSource, l.ConfigGen, l.FunnelWindows, l.ChangeoverLoadDirective,
+			`INSERT INTO core_loaders (loader_key, role, name, layout, replenishment, outbound_dest, inbound_source, funnel_windows, changeover_load_directive, leaves_bare, auto_push, pulled_directly, board_hides_idle, board_shows_all_parts, synced_at)
+			 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,datetime('now'))`,
+			l.LoaderKey, l.Role, l.Name, l.Layout, l.Replenishment, l.OutboundDest, l.InboundSource, l.FunnelWindows, l.ChangeoverLoadDirective,
 			l.LeavesBare, l.AutoPush, l.PulledDirectly, l.BoardHidesIdle, l.BoardShowsAllParts,
 		); err != nil {
 			return fmt.Errorf("insert core_loader %s/%s: %w", l.LoaderKey, l.Role, err)
@@ -126,26 +113,10 @@ func (db *DB) ReplaceCoreLoaders(loaders []protocol.LoaderInfo) error {
 		for _, p := range l.Positions {
 			// min_stock column left dormant (bin-count floor retired) — defaults to 0.
 			if _, err := tx.Exec(
-				`INSERT INTO core_loader_positions (loader_key, position_node, payload_code, kind, home_kind, uop_threshold, ordinal) VALUES (?,?,?,?,?,?,?)`,
-				l.LoaderKey, p.CoreNodeName, p.PayloadCode, p.Kind, p.HomeKind, p.UOPThreshold, p.Ordinal,
+				`INSERT INTO core_loader_positions (loader_key, position_node, payload_code, home_kind, uop_threshold, ordinal) VALUES (?,?,?,?,?,?)`,
+				l.LoaderKey, p.CoreNodeName, p.PayloadCode, p.HomeKind, p.UOPThreshold, p.Ordinal,
 			); err != nil {
 				return fmt.Errorf("insert position %s: %w", p.CoreNodeName, err)
-			}
-			for _, bt := range p.BinTypes {
-				if _, err := tx.Exec(
-					`INSERT INTO core_loader_window_bin_types (loader_key, position_node, bin_type_code) VALUES (?,?,?)`,
-					l.LoaderKey, p.CoreNodeName, bt,
-				); err != nil {
-					return fmt.Errorf("insert window bin type %s/%s: %w", p.CoreNodeName, bt, err)
-				}
-			}
-		}
-		for _, q := range l.Quota {
-			if _, err := tx.Exec(
-				`INSERT INTO core_loader_quotas (loader_key, bin_type_code, want) VALUES (?,?,?)`,
-				l.LoaderKey, q.BinTypeCode, q.Want,
-			); err != nil {
-				return fmt.Errorf("insert quota %s/%s: %w", l.LoaderKey, q.BinTypeCode, err)
 			}
 		}
 		for _, p := range l.Payloads {
@@ -162,7 +133,7 @@ func (db *DB) ReplaceCoreLoaders(loaders []protocol.LoaderInfo) error {
 
 // ListCoreLoaders returns every cached loader assembled with positions+payloads.
 func (db *DB) ListCoreLoaders() ([]CoreLoader, error) {
-	rows, err := db.Query(`SELECT loader_key, role, name, layout, replenishment, outbound_dest, inbound_source, config_gen, funnel_windows, changeover_load_directive, leaves_bare, auto_push, pulled_directly, board_hides_idle, board_shows_all_parts FROM core_loaders ORDER BY loader_key`)
+	rows, err := db.Query(`SELECT loader_key, role, name, layout, replenishment, outbound_dest, inbound_source, funnel_windows, changeover_load_directive, leaves_bare, auto_push, pulled_directly, board_hides_idle, board_shows_all_parts FROM core_loaders ORDER BY loader_key`)
 	if err != nil {
 		return nil, fmt.Errorf("list core_loaders: %w", err)
 	}
@@ -180,7 +151,7 @@ func (db *DB) ListCoreLoaders() ([]CoreLoader, error) {
 
 // GetCoreLoader returns the cached loader with loaderKey, or nil.
 func (db *DB) GetCoreLoader(loaderKey string) (*CoreLoader, error) {
-	rows, err := db.Query(`SELECT loader_key, role, name, layout, replenishment, outbound_dest, inbound_source, config_gen, funnel_windows, changeover_load_directive, leaves_bare, auto_push, pulled_directly, board_hides_idle, board_shows_all_parts FROM core_loaders WHERE loader_key=?`, loaderKey)
+	rows, err := db.Query(`SELECT loader_key, role, name, layout, replenishment, outbound_dest, inbound_source, funnel_windows, changeover_load_directive, leaves_bare, auto_push, pulled_directly, board_hides_idle, board_shows_all_parts FROM core_loaders WHERE loader_key=?`, loaderKey)
 	if err != nil {
 		return nil, fmt.Errorf("get core_loader %s: %w", loaderKey, err)
 	}
@@ -203,7 +174,7 @@ func scanCoreLoaders(rows *sql.Rows) ([]CoreLoader, error) {
 	for rows.Next() {
 		var l CoreLoader
 		if err := rows.Scan(&l.LoaderKey, &l.Role, &l.Name, &l.Layout, &l.Replenishment,
-			&l.OutboundDest, &l.InboundSource, &l.ConfigGen, &l.FunnelWindows,
+			&l.OutboundDest, &l.InboundSource, &l.FunnelWindows,
 			&l.ChangeoverLoadDirective, &l.LeavesBare, &l.AutoPush, &l.PulledDirectly,
 			&l.BoardHidesIdle, &l.BoardShowsAllParts); err != nil {
 			return nil, fmt.Errorf("scan core_loader: %w", err)
@@ -230,13 +201,13 @@ func scanCoreLoaders(rows *sql.Rows) ([]CoreLoader, error) {
 // This read used to be `ORDER BY position_node` — plain name order, with the
 // operator's arrangement discarded because there was no column to put it in.
 func (db *DB) attachCoreLoaderChildren(l *CoreLoader) error {
-	prows, err := db.Query(`SELECT position_node, payload_code, kind, home_kind, uop_threshold, ordinal FROM core_loader_positions WHERE loader_key=?`, l.LoaderKey)
+	prows, err := db.Query(`SELECT position_node, payload_code, home_kind, uop_threshold, ordinal FROM core_loader_positions WHERE loader_key=?`, l.LoaderKey)
 	if err != nil {
 		return fmt.Errorf("list positions %s: %w", l.LoaderKey, err)
 	}
 	for prows.Next() {
 		var p CoreLoaderPosition
-		if err := prows.Scan(&p.PositionNode, &p.PayloadCode, &p.Kind, &p.HomeKind, &p.UOPThreshold, &p.Ordinal); err != nil {
+		if err := prows.Scan(&p.PositionNode, &p.PayloadCode, &p.HomeKind, &p.UOPThreshold, &p.Ordinal); err != nil {
 			prows.Close()
 			return err
 		}
@@ -252,44 +223,6 @@ func (db *DB) attachCoreLoaderChildren(l *CoreLoader) error {
 			windoworder.Window{Ordinal: l.Positions[j].Ordinal, Name: l.Positions[j].PositionNode},
 		)
 	})
-
-	btrows, err := db.Query(`SELECT position_node, bin_type_code FROM core_loader_window_bin_types WHERE loader_key=? ORDER BY position_node, bin_type_code`, l.LoaderKey)
-	if err != nil {
-		return fmt.Errorf("list window bin types %s: %w", l.LoaderKey, err)
-	}
-	caps := map[string][]string{}
-	for btrows.Next() {
-		var node, code string
-		if err := btrows.Scan(&node, &code); err != nil {
-			btrows.Close()
-			return err
-		}
-		caps[node] = append(caps[node], code)
-	}
-	btrows.Close()
-	if err := btrows.Err(); err != nil {
-		return err
-	}
-	for i := range l.Positions {
-		l.Positions[i].BinTypes = caps[l.Positions[i].PositionNode]
-	}
-
-	qrows, err := db.Query(`SELECT bin_type_code, want FROM core_loader_quotas WHERE loader_key=? ORDER BY bin_type_code`, l.LoaderKey)
-	if err != nil {
-		return fmt.Errorf("list quotas %s: %w", l.LoaderKey, err)
-	}
-	for qrows.Next() {
-		var q CoreLoaderQuota
-		if err := qrows.Scan(&q.BinTypeCode, &q.Want); err != nil {
-			qrows.Close()
-			return err
-		}
-		l.Quota = append(l.Quota, q)
-	}
-	qrows.Close()
-	if err := qrows.Err(); err != nil {
-		return err
-	}
 
 	yrows, err := db.Query(`SELECT payload_code, uop_threshold FROM core_loader_payloads WHERE loader_key=? ORDER BY payload_code`, l.LoaderKey)
 	if err != nil {

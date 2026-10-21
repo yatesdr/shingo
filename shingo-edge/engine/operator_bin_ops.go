@@ -120,30 +120,25 @@ func (e *Engine) requestEmptyOrigin(node *processes.Node, claim *processes.NodeC
 }
 
 // loadablePayloads returns the payload codes an operator may load or request at
-// this manual_swap loader node. Post-cutover the loader's payload set is
-// Core-owned, so this resolves it from the aggregate — the SAME resolver the
+// this manual_swap loader node: the Core loader's set at the node, else the
+// claim's own list. Resolved from the loader store — the SAME resolver the
 // operator board uses in station_service — so the board and this gate never
 // disagree: the operator must be able to load every payload their board offers.
 //
 // It is deliberately NOT gated by which style is active — a loader responds to
 // what is called for, not the running style: a shared loader (e.g. SNF2 + SNF3)
 // must accept either cell's payload, and an operator-driven loader stages ahead
-// for upcoming styles. The aggregate's set is style-agnostic by construction.
+// for upcoming styles. The loader's set is style-agnostic by construction.
 //
-// Fallback order keeps the operator from being stranded with zero loadable cards
-// when the loader isn't (yet) in the aggregate — legacy / not-migrated nodes use
-// the per-style edge claim union (PayloadsForLoader), then the claim's own list,
-// and a union read error fails open to the active claim. This is the pre-cutover
-// behaviour, preserved only for the non-aggregate path.
+// The claim's own list answers only where the loader names no payload for the
+// node, or the node is no Core loader's (a stored claim before the first
+// non-empty loader sync). Pinned by TestLoadablePayloads_PrefersAggregateOverStaleClaim.
 //
 // RESOLVED BY NODE, NOT BY THE CLAIM'S ROLE. Which role a loader is, is Core's
-// fact, and asking the aggregate for it through the stored claim's copy is how a
-// live loader becomes invisible: a claim left saying "produce" over a loader Core
-// now runs as consume misses the lookup entirely, and this falls all the way back
-// to the retired claim's payload list. LoaderForNode cannot be ambiguous —
-// bin_loader_homes is UNIQUE on position_node_id, so a node belongs to exactly one
-// loader whatever its role. The claim's role still keys the legacy union below,
-// which is a query over stored claims and is the right key for that.
+// fact, and asking the loader store for it through a claim's copy of it is how
+// a live loader becomes invisible. LoaderForNode cannot be ambiguous —
+// bin_loader_homes is UNIQUE on position_node_id, so a node belongs to exactly
+// one loader whatever its role.
 func (e *Engine) loadablePayloads(node *processes.Node, claim *processes.NodeClaim) []string {
 	if l, err := e.loaders().LoaderForNode(domain.NodeID(node.CoreNodeName)); err == nil && l != nil {
 		// Scoped to THIS node: a dedicated home loads only its own pinned payload,
@@ -152,15 +147,7 @@ func (e *Engine) loadablePayloads(node *processes.Node, claim *processes.NodeCla
 			return codes
 		}
 	}
-	_, all, _, err := processes.PayloadsForLoader(e.db.DB, node.CoreNodeName, claim.Role)
-	if err != nil {
-		e.logFn("loader: payload union read for %s failed, using active claim: %v", node.CoreNodeName, err)
-		return claim.AllowedPayloads()
-	}
-	if len(all) == 0 {
-		return claim.AllowedPayloads()
-	}
-	return all
+	return claim.AllowedPayloads()
 }
 
 // LoadBin marks a bin at a manual_swap node as loaded with the given manifest.
@@ -342,12 +329,7 @@ func (e *Engine) LoadBin(nodeID int64, payloadCode string, uopCount *int64, mani
 	// to outbound. active_bin_id comes from Core's LoadBin response — that's the
 	// authoritative pointer to the bin physically at this slot, regardless
 	// of whether any order was tracking it.
-	// claim.ID is 0 for a synthesized Core-loader claim (no style_node_claim row);
-	// pass nil rather than a 0 foreign key into the runtime's active_claim_id.
-	var claimIDPtr *int64
-	if claim.ID != 0 {
-		claimIDPtr = &claim.ID
-	}
+	claimIDPtr := persistedClaimID(claim)
 	var activeBinID *int64
 	var deltaEpoch int64
 	if loadResp != nil && loadResp.BinID > 0 {
@@ -566,15 +548,11 @@ func (e *Engine) ClearBin(nodeID int64, binTypeCode string, unload bool) error {
 		} else if inFlight {
 			log.Printf("bin_ops: skipping empty-out at node %s — order %d is already moving this carrier out",
 				node.Name, existingID)
-		} else if nerr := e.createUnloaderEmptyOut(node, claim); nerr != nil {
+		} else if nerr := e.createUnloaderEmptyOut(node, claim, cleared.BinID); nerr != nil {
 			notSent = nerr
 		}
 	}
-	// claim.ID is 0 for a synthesized Core-loader claim — pass nil, not a 0 FK.
-	var claimIDPtr *int64
-	if claim.ID != 0 {
-		claimIDPtr = &claim.ID
-	}
+	claimIDPtr := persistedClaimID(claim)
 	if e.inventoryDelta != nil {
 		// Take the new generation stamp with the zeroed count. The clear ended
 		// this carrier's life on Core and started the next one; keeping the old
@@ -678,7 +656,7 @@ func (e *Engine) PushEmptyOut(nodeID int64) error {
 	// removal of whatever carrier stands on the window, never a fetch for a part.
 	// See createUnloaderEmptyOut. Nowhere to send it is a refusal here: the
 	// push is the whole operation and nothing has been committed.
-	if err := e.createUnloaderEmptyOut(node, claim); err != nil {
+	if err := e.createUnloaderEmptyOut(node, claim, bins[0].BinID); err != nil {
 		return err
 	}
 	// Re-arm the delivery seam — mirrors ClearBin's gate at its tail, with the
@@ -739,11 +717,21 @@ func (e *Engine) emptyOutInFlight(nodeID int64) (existingID int64, inFlight bool
 //
 // The carrier rule's own doc says a removal leg passes payloadCode "", and the
 // ALN_006 removal ruling (allocator) binds by node, never by the order's payload
-// tag. lookupPayloadMeta does not backfill a manual_swap claim, so "" reaches the
-// wire. The operator board attributes the move by source_node instead (cardModel
-// in operator-window-state.js, and the modal's demand queue). Pinned by
+// tag. CreateMoveOrderForBin sends the carried payload as given and never
+// back-fills it from a claim, so "" reaches the wire. The operator board
+// attributes the move by source_node instead (cardModel in
+// operator-window-state.js, and the modal's demand queue). Pinned by
 // TestEmptyOut_EnvelopeNamesNoPart and, Core side,
 // TestPayloadlessEmptyOut_SourcesAResidentThePartCouldNotCarry.
+//
+// IT NAMES ITS BIN. binID is Core's id for the carrier: the one the CLEAR's
+// reply says it cleared, or the one PUSH EMPTY's own read found on the window.
+// Core then lifts that carrier and no other, ends the move skipped once it has
+// left the window, and types the order by it before dispatch claims it (Core's
+// orders.named_bin_id: counted as coming into a levelled group, judged on its
+// own type's level). 0 from a Core that sends no id moves whatever stands
+// there, as before. Pinned by TestEmptyOut_ClearNamesTheBinItCleared and
+// TestEmptyOut_PushEmptyNamesTheBinItRead.
 //
 // NO OUTBOUND IS AN ERROR, not a quiet return. It used to return nothing, so a
 // CLEAR at an unloader with no outbound (or one pointing at itself) told the
@@ -752,7 +740,7 @@ func (e *Engine) emptyOutInFlight(nodeID int64) (existingID int64, inFlight bool
 // ClearBin (which has already cleared, and says so) and PushEmptyOut (where the
 // move is the whole operation, so it is a refusal). A failure to CREATE the move
 // is still only logged.
-func (e *Engine) createUnloaderEmptyOut(node *processes.Node, claim *processes.NodeClaim) error {
+func (e *Engine) createUnloaderEmptyOut(node *processes.Node, claim *processes.NodeClaim, binID int64) error {
 	outbound, ok := e.outboundFor(node, claim, domain.RoleConsume)
 	if !ok {
 		return fmt.Errorf("%s has nowhere to send the empty carrier: it stays in the window until it is moved by hand", node.Name)
@@ -760,7 +748,7 @@ func (e *Engine) createUnloaderEmptyOut(node *processes.Node, claim *processes.N
 	nodeID := node.ID
 	// NoDemand: the side-cycle's empty-out is the system's own consequence of a
 	// clear, not a demand anybody expressed.
-	order, err := e.orderMgr.CreateMoveOrderWithPayloadCode(&nodeID, 1, node.CoreNodeName, outbound, "", true,
+	order, err := e.orderMgr.CreateMoveOrderForBin(&nodeID, node.CoreNodeName, outbound, "", binID,
 		ordermgr.NoDemand())
 	if err != nil {
 		e.logFn("side-cycle: create U2 (empty-out) for unloader %s: %v", node.Name, err)
@@ -775,12 +763,12 @@ func (e *Engine) createUnloaderEmptyOut(node *processes.Node, claim *processes.N
 	return nil
 }
 
-// RequestEmptyBin delivers an empty bin to a produce node. A loader window and
-// a legacy line with no swap mode issue a single retrieve order; the swap modes
+// RequestEmptyBin delivers an empty bin to a produce node. A loader window
+// issues a single retrieve order through the never-2N seam; the swap modes
 // (single_robot, two_robot, two_robot_press_index, sequential) plan and apply
 // exactly what the produce request would, without its guards about the parts,
 // so the robot choreography and the checks on the line are the produce
-// request's. Returns the primary order (the plain empty, the first swap leg, or
+// request's. Any other mode is refused. Returns the primary order (the plain empty, the first swap leg, or
 // the first prime); a second leg is tracked on the runtime row.
 func (e *Engine) RequestEmptyBin(nodeID int64, payloadCode string) (*orders.Order, error) {
 	node, runtime, claim, err := e.loadActiveNode(nodeID)
@@ -833,9 +821,6 @@ func (e *Engine) RequestEmptyBin(nodeID int64, payloadCode string) (*orders.Orde
 	//     created by the produce request's own path, which reads the claim and
 	//     not this argument. The code is neither required nor checked there: a
 	//     check of an argument nothing reads refuses requests for no reason.
-	//
-	//   - a legacy line with no swap mode: one retrieve that carries the code,
-	//     so it is required and checked against the loadable set.
 	if claim.IsLoaderNode() {
 		if payloadCode != "" && !slices.Contains(e.loadablePayloads(node, claim), payloadCode) {
 			return nil, fmt.Errorf("payload %q not in allowed list for node %s", payloadCode, node.Name)
@@ -843,7 +828,11 @@ func (e *Engine) RequestEmptyBin(nodeID int64, payloadCode string) (*orders.Orde
 		reqOrigin := e.requestEmptyOrigin(node, claim, runtime.RemainingUOPCached, 1)
 		return e.requestEmptyAtManualSwapLoader(nodeID, node, claim, payloadCode, reqOrigin)
 	}
-	return e.requestEmptyAtLegacyLine(nodeID, node, runtime, claim, payloadCode)
+	// A mode outside the configurable set: the retired "simple", or blank. No
+	// door stores one and neither plant holds one; it had an arm of its own
+	// here, a plain retrieve. Pinned by
+	// TestRequestEmptyBin_AModeOutsideTheConfigurableSetIsRefused.
+	return nil, fmt.Errorf("node %s: swap mode %q takes no request; set the line's swap mode", node.Name, claim.SwapMode)
 }
 
 // requestEmptyAtManualSwapLoader is RequestEmptyBin's manual_swap arm, lifted out
@@ -925,78 +914,6 @@ func (e *Engine) requestEmptyAtManualSwapLoader(
 	}
 }
 
-// requestEmptyAtLegacyLine is RequestEmptyBin's arm for a legacy line with no
-// swap mode: one retrieve of an empty, no plan.
-//
-// Split from the manual_swap arm above for the funlen ceiling — see that function
-// for why the arm moved rather than being shaved. The two are genuinely different
-// mechanisms that shared only a name: one reserves through the per-loader never-2N
-// seam, the other guards a single physical slot.
-//
-// A SWAP-MODE LINE DOES NOT COME HERE. It goes through the produce request's own
-// path (produceRequest), with the guards about the parts left out: this button
-// asks for an empty whatever is counted. So the line is read before anything is
-// decided, as the produce request reads it: a bare line gets the plain empty, a
-// press with a bare paired position gets its primes and no swap, a keep-staged
-// spot gets its refill and return, a bin left on single-robot outbound staging is
-// moved first, and a position still being worked refuses. Before, this button
-// built the swap blind, and on a bare line that swap's lift held at Core for
-// good. Springfield PLN_004, 2026-08-26: the full swap minted here with the
-// paired position bare, its index leg parked in sourcing, and the pair was
-// cancelled eight times without one completed cycle.
-func (e *Engine) requestEmptyAtLegacyLine(
-	nodeID int64,
-	node *processes.Node,
-	runtime *processes.RuntimeState,
-	claim *processes.NodeClaim,
-	payloadCode string,
-) (*orders.Order, error) {
-	// Anti-spam (manual_swap is handled above via the reservation seam): one
-	// physical slot, so reject a second request while a retrieve_empty is already
-	// non-terminal at this CORE NODE (delivery_node, not process_node — a shared
-	// node has many process_node rows for one slot; see
-	// [[shingo_manual_swap_core_node_scoping]]). The board greys its request button
-	// the instant a request fires; this is belt-and-suspenders for double-tap races
-	// and direct API callers. Fail closed on a read error.
-	inFlightEmpties, err := e.countActiveOrdersAtNode(node.CoreNodeName, func(o orders.Order) bool {
-		return o.RetrieveEmpty
-	})
-	if err != nil {
-		return nil, fmt.Errorf("node %s: check in-flight empties: %w", node.Name, err)
-	}
-	if inFlightEmpties > 0 {
-		return nil, fmt.Errorf("node %s: an empty bin is already inbound", node.Name)
-	}
-
-	// A single retrieve. Core queues if no empty is immediately available.
-	//
-	// Source group is the loader's claim.InboundSource (the supermarket the
-	// operator is configured to pull empties from). Without this, Core's
-	// planTransport falls back to a global FIFO scan and can return a
-	// payload-matching empty bin from anywhere — including the empty-tote
-	// return area (Hopkinsville, 2026-05-14, Mission #51 pulled SMN_07
-	// instead of from Supermarket Area).
-	if payloadCode == "" {
-		return nil, fmt.Errorf("no payload code specified")
-	}
-	if !slices.Contains(e.loadablePayloads(node, claim), payloadCode) {
-		return nil, fmt.Errorf("payload %q not in allowed list for node %s", payloadCode, node.Name)
-	}
-	autoConfirm := claim.AutoConfirm || e.cfg.Web.AutoConfirm
-	reqOrigin := e.requestEmptyOrigin(node, claim, runtime.RemainingUOPCached, 1)
-	order, err := e.orderMgr.CreateRetrieveOrder(
-		&nodeID, true, 1, node.CoreNodeName, claim.InboundSource, "",
-		"standard", payloadCode, autoConfirm, false, reqOrigin,
-	)
-	if err != nil {
-		return nil, err
-	}
-	if err := e.db.SetProcessNodeRuntimeActiveOrder(nodeID, &order.ID); err != nil {
-		log.Printf("bin_ops: update runtime orders for node %d: %v", nodeID, err)
-	}
-	return order, nil
-}
-
 // RequestFullBin requests a full bin of the given payload to be delivered to a
 // manual_swap consume node. Core queues the order if no full bins of that
 // payload are available. Routed through the reservation seam, so it shares the
@@ -1044,39 +961,13 @@ func (e *Engine) RequestFullBin(nodeID int64, payloadCode string) (*orders.Order
 	// window — same rule as the produce side, and it means a full is no longer
 	// sent to a window that already holds one.
 	//
-	// Source stays claim.InboundSource (the FG supermarket the unloader pulls
-	// from; without it Core's planTransport falls back to global FIFO and can pull
-	// from the wrong supermarket).
-	//
-	// THE CLAIM WINS HERE, AND IT IS NOT EQUAL TO THE AGGREGATE. This comment used
-	// to say the two were "believed equal — the produce branch uses it". They are
-	// not, and the belief was never checked. style_node_claims.inbound_source and
-	// bin_loaders' are authored on different screens with no cross-check between
-	// them, so nothing makes them agree. Driven against a real store: a stored
-	// consume claim carrying OLD-FG-MARKET beside a live loader carrying
-	// NEW-FG-MARKET resolves the stored claim, and the order this creates carries
-	// OLD-FG-MARKET while `dl` two lines below says NEW.
-	//
-	// They ARE equal for a SYNTHESIZED claim, which copies the aggregate's value —
-	// which is why the produce branch gets away with reading the aggregate and
-	// this one would not. So the question is whether a STORED claim can still
-	// reach this line, and it can, by two paths:
-	//
-	//   1. Before the first node-list sync of a boot. The quarantine that removes
-	//      stored loader claims runs only in SetCoreLoaders, so a legacy row
-	//      survives startup, migration and every operator tap until a node-list
-	//      RESPONSE arrives. Unbounded when Core never answers — which is a
-	//      condition this plant has been in.
-	//   2. CloneStyle. cloneStyleTx copies swap_mode with a raw
-	//      INSERT that never sees the upsert allowlist, so cloning a style that
-	//      still carries a loader claim mints another one. See styles.go.
-	//
-	// SO FLIPPING THIS TO PREFER THE AGGREGATE IS A LIVE ROUTING CHANGE, not a
-	// severing: it would move which supermarket a real unloader pulls from at any
-	// plant holding such a row. A blank or wrong source here is the shape of
-	// Hopkinsville 2026-05-14 — planTransport falls back to a global FIFO scan
-	// and pulls from the wrong market. That decision wants plant data behind it,
-	// so it is stated rather than taken.
+	// Source is the unloader's inbound source (the FG supermarket it pulls from;
+	// without it Core's planTransport falls back to global FIFO and can pull from
+	// the wrong supermarket, the shape of Hopkinsville 2026-05-14). The loader
+	// answers, not the claim: at a node Core's loader set names, claimAtNode
+	// already returns the loader's own claim, and a stored claim's
+	// inbound_source, authored on another screen with no cross-check, is not
+	// read. Pinned by TestRequestFullBin_PullsFromTheUnloadersInboundSource.
 	dl, lerr := e.loaders().LoaderAt(domain.NodeID(node.CoreNodeName), domain.RoleConsume)
 	if lerr != nil {
 		return nil, fmt.Errorf("node %s: resolve unloader: %w", node.Name, lerr)
@@ -1092,7 +983,7 @@ func (e *Engine) RequestFullBin(nodeID int64, payloadCode string) (*orders.Order
 		made := 0
 		for _, deliveryNode := range deliveryNodes {
 			order, cerr := e.orderMgr.CreateRetrieveOrder(
-				&nodeID, false, 1, deliveryNode, claim.InboundSource, "",
+				&nodeID, false, 1, deliveryNode, dl.InboundSource(), "",
 				"standard", payloadCode, autoConfirm, true, reqOrigin,
 			)
 			if cerr != nil {

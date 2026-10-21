@@ -39,6 +39,11 @@ func (e *Engine) ApplyNodeList(resp *protocol.NodeListResponse) {
 	if resp.SceneRevision != "" {
 		e.holdFeed(protocol.FeedScene, e.SceneRevision(), "")
 	}
+	// The groups and loaders this reply carried may move the bins watch list;
+	// reading it rebuilds it, and a moved list is published at once.
+	if e.binWatchSource != nil {
+		e.binWatchSource()
+	}
 }
 
 // ApplyCatalog applies one catalog message from Core and, when it carries a

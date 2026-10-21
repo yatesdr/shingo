@@ -24,7 +24,7 @@ func pushLoader(t *testing.T, id string, windows []string, inbound string) *doma
 	for i, w := range windows {
 		ws[i] = domain.Window{Node: domain.NodeID(w)}
 	}
-	l, err := domain.NewSharedWindowLoader(domain.LoaderID(id), id, domain.RoleProduce, domain.ReplenishmentOperator,
+	l, err := domain.NewSharedWindowLoader(domain.LoaderID(id), domain.RoleProduce, domain.ReplenishmentOperator,
 		ws, []domain.PayloadCode{"P1"}, domain.WithInboundSource(inbound))
 	if err != nil {
 		t.Fatalf("build loader: %v", err)
@@ -70,7 +70,7 @@ func TestStageOperatorEmpty_OperatorDrivenFiresWithPrefixedTrace(t *testing.T) {
 	eng.debugFn = func(f string, a ...any) { debug = append(debug, fmt.Sprintf(f, a...)) }
 	seedWindowNodes(t, db, "LP-PROC", []string{"LP-W1"})
 	l := pushLoader(t, "LP", []string{"LP-W1"}, "EMPTY-SUPER")
-	if !l.IsOperatorDriven() {
+	if !l.UsesOperatorStaging() {
 		t.Fatal("fixture premise: loader must be operator-driven")
 	}
 

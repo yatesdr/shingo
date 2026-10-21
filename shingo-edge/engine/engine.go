@@ -105,6 +105,14 @@ type Engine struct {
 	// containment is the held copy of Core's containment feed, for readers
 	// (LocalContainment); nil until one is received or loaded at boot.
 	containment atomic.Pointer[protocol.ContainmentSnapshot]
+	// nodeBins is the held copy of Core's node-bins feed for this Edge's
+	// watched nodes (node_bins.go); nil until a snapshot is applied. Memory
+	// only: after a restart nothing is held and Core sends it again.
+	nodeBins atomic.Pointer[nodeBinsCopy]
+	// binWatchSource is the bins watch list: the names this Edge's operator
+	// stations draw (StationService.WatchedBinNodes). Nil publishes an empty
+	// list.
+	binWatchSource func() []string
 
 	cfg         *config.Config
 	configPath  string
@@ -174,10 +182,14 @@ type Engine struct {
 	// geometry or the NGRP membership. Read on every station poll to build the
 	// cell picture's version; see scene_geometry.go's PlantGeneration.
 	plantGeneration atomic.Uint64
-	nodeSyncFn      func()
-	catalogSyncFn   func()
-	sendFn          func(*protocol.Envelope) error
-	kafkaReconnFn   func() error
+	// loaderGeneration moves each time SetCoreLoaders replaces the loader
+	// cache, so a station board knows its bin list (buffer spots, outbound
+	// groups) may have moved. In memory: the list is rebuilt after a restart.
+	loaderGeneration atomic.Uint64
+	nodeSyncFn       func()
+	catalogSyncFn    func()
+	sendFn           func(*protocol.Envelope) error
+	kafkaReconnFn    func() error
 	// plantClaimsFn publishes one process's plant.claims report so Core's
 	// mirror follows an active-style flip within one message instead of
 	// waiting for the snapshot. Wired at the composition root; nil in
@@ -325,18 +337,20 @@ func New(c Config) *Engine {
 	e.reconciliation = newReconciliationService(e.db)
 	e.coreSync = newCoreSyncService(e)
 	e.stationService = service.NewStationService(e.db)
-	// Wire the operator view to the SAME flag-selected loader resolver the runtime
-	// uses, so the board's window-group membership and the empties it spreads can
-	// never disagree (multi-window C4b). Lazy via loaders() so the flag dual is
-	// honoured; the not-found sentinel is mapped to a clean miss for the view.
+	// Wire the operator view to the SAME loader resolver the runtime uses, so the
+	// board and the engine never disagree about which loader a node belongs to.
+	// Lazy via loaders(); the not-found sentinel is mapped to a clean miss for
+	// the view.
 	e.stationService.SetLoaderResolver(stationLoaderResolver{e})
 	// Wire the parked-ticks alarm (P2-C7) onto the operator tile: BuildView reads
 	// the live alarm map so the chip renders on load and on every refresh.
 	e.stationService.SetStrandedResolver(e.StrandedAlarmDetail)
 	e.stationService.SetKeepStagedResolver(e.KeepStagedNote)
-	// The changeover load directive names a BIN TYPE, so it needs the payload
-	// -> dunnage catalog Core delivers with every node-list sync.
+	// A served row names its part's bin type, and an unloader tile its CLEAR
+	// panels' carriers, both from the payload-to-bin-type catalog Core
+	// delivers with every node-list sync.
 	e.stationService.SetBinTypeResolver(e.BinTypeForPayload)
+	e.stationService.SetCarrierCatalog(e.PayloadBinTypes)
 	// A station's node list is matched by core_node_name everywhere, so a name
 	// Core does not have configures a row that resolves to nothing. Give the
 	// service the live name set to check against.
@@ -347,6 +361,11 @@ func New(c Config) *Engine {
 	e.stationService.SetSceneGeometryResolver(e.SceneGeometry)
 	e.stationService.SetCoreNodeGroupResolver(e.CoreNodeGroups)
 	e.stationService.SetPlantGenerationResolver(e.PlantGeneration)
+	e.stationService.SetLoaderGenerationResolver(e.loaderGeneration.Load)
+	// The bins watch list is the stations' bin lists together; a rebuild that
+	// moves it publishes it at once (node_bins.go).
+	e.binWatchSource = e.stationService.WatchedBinNodes
+	e.stationService.SetBinNodesChangedFunc(e.binWatchChanged)
 	e.stationService.SetNodeRetirer(e.RetireNode)
 	e.changeoverService = service.NewChangeoverService(e.db)
 	e.adminService = service.NewAdminService(e.db)

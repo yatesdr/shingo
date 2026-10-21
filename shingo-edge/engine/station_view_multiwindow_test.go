@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"shingo/protocol"
+	"shingoedge/domain"
 	"shingoedge/store"
 	"shingoedge/store/processes"
 	"shingoedge/store/stations"
@@ -50,13 +51,12 @@ func buildMultiWindowStation(t *testing.T, db *store.DB, procName, windowNode st
 	return sid
 }
 
-// TestBuildView_SharedWindow_TagsWindowGroup pins the view-path cutover (C4b):
-// a manual_swap node that is one window of a shared MULTI-window loader gets its
-// WindowGroupAnchor + WindowNodes populated from the Core aggregate — the
-// membership the legacy per-node claim reads structurally cannot express. This is
-// what lets the per-window operator board show "this window belongs to <loader>"
-// and know it draws on a shared demand budget.
-func TestBuildView_SharedWindow_TagsWindowGroup(t *testing.T) {
+// TestBuildView_SharedWindow_CarriesTheLoader: a node that is one window of a
+// shared multi-window loader carries the loader as the board reads it, from the
+// Core aggregate: its role, layout, replenishment, outbound and parts. The
+// board draws each window of the station from its own tile, so no window-group
+// anchor or sibling list rides the tile (they had no reader).
+func TestBuildView_SharedWindow_CarriesTheLoader(t *testing.T) {
 	t.Parallel()
 	db := testEngineDB(t)
 	eng := testEngine(t, db)
@@ -70,11 +70,11 @@ func TestBuildView_SharedWindow_TagsWindowGroup(t *testing.T) {
 	// One shared_window loader with three windows; the station holds MW-W2.
 	eng.SetCoreLoaders([]protocol.LoaderInfo{{
 		Name: "MW", LoaderKey: "loader:MW-LOADER", Role: "produce", Layout: "shared_window", Replenishment: "threshold",
-		OutboundDest: "FG-MARKET", InboundSource: "EMPTY-SUPER", ConfigGen: 1,
+		OutboundDest: "FG-MARKET", InboundSource: "EMPTY-SUPER",
 		Positions: []protocol.LoaderPosition{
-			{CoreNodeName: "MW-W1", Kind: protocol.LoaderPositionKindWindow},
-			{CoreNodeName: "MW-W2", Kind: protocol.LoaderPositionKindWindow},
-			{CoreNodeName: "MW-W3", Kind: protocol.LoaderPositionKindWindow},
+			{CoreNodeName: "MW-W1"},
+			{CoreNodeName: "MW-W2"},
+			{CoreNodeName: "MW-W3"},
 		},
 		Payloads: []protocol.LoaderPayloadInfo{{PayloadCode: "PART-A", UOPThreshold: 100}},
 	}})
@@ -86,44 +86,14 @@ func TestBuildView_SharedWindow_TagsWindowGroup(t *testing.T) {
 	if len(view.Nodes) != 1 {
 		t.Fatalf("nodes = %d, want 1", len(view.Nodes))
 	}
-	nv := view.Nodes[0]
-	if nv.WindowGroupAnchor != "loader:MW-LOADER" {
-		t.Errorf("WindowGroupAnchor = %q, want loader:MW-LOADER (the loader identity token)", nv.WindowGroupAnchor)
+	l := view.Nodes[0].Loader
+	if l == nil {
+		t.Fatal("the window's tile carries no loader")
 	}
-	if want := []string{"MW-W1", "MW-W2", "MW-W3"}; !slices.Equal(nv.WindowNodes, want) {
-		t.Errorf("WindowNodes = %v, want %v", nv.WindowNodes, want)
-	}
-}
-
-// TestBuildView_SingleWindowLoader_NoWindowGroup is the parity half: a loader
-// with a single window (no homes configured — the legacy single-node shape) must
-// NOT be tagged with a window group, so the view is byte-identical to the
-// pre-cutover render for every loader that isn't actually multi-window.
-func TestBuildView_SingleWindowLoader_NoWindowGroup(t *testing.T) {
-	t.Parallel()
-	db := testEngineDB(t)
-	eng := testEngine(t, db)
-	eng.loaderStore = newLoaderStore(eng) // explicit aggregate loader store
-	eng.stationService.SetLoaderResolver(stationLoaderResolver{eng})
-
-	// The station's node IS the loader's anchor (single-window: no positions).
-	sid := buildMultiWindowStation(t, db, "SW-PROC", "SW-LOADER")
-	eng.SetCoreLoaders([]protocol.LoaderInfo{{
-		Name: "SW", LoaderKey: "loader:SW-LOADER", Role: "produce", Layout: "shared_window", Replenishment: "threshold",
-		OutboundDest: "FG-MARKET", InboundSource: "EMPTY-SUPER", ConfigGen: 1,
-		Positions: []protocol.LoaderPosition{{CoreNodeName: "SW-LOADER", Kind: protocol.LoaderPositionKindWindow}},
-		Payloads:  []protocol.LoaderPayloadInfo{{PayloadCode: "PART-A", UOPThreshold: 100}},
-	}})
-
-	view, err := eng.stationService.BuildView(context.Background(), sid)
-	if err != nil {
-		t.Fatalf("BuildView: %v", err)
-	}
-	if len(view.Nodes) != 1 {
-		t.Fatalf("nodes = %d, want 1", len(view.Nodes))
-	}
-	if nv := view.Nodes[0]; nv.WindowGroupAnchor != "" || nv.WindowNodes != nil {
-		t.Errorf("single-window loader tagged a group: anchor=%q windows=%v, want empty",
-			nv.WindowGroupAnchor, nv.WindowNodes)
+	want := domain.TileLoader{Role: "produce", Layout: "shared_window", Replenishment: "threshold",
+		OutboundDest: "FG-MARKET", Parts: []domain.TileLoaderPart{{Code: "PART-A"}}}
+	if l.Role != want.Role || l.Layout != want.Layout || l.Replenishment != want.Replenishment ||
+		l.OutboundDest != want.OutboundDest || !slices.Equal(l.Parts, want.Parts) || l.Carriers != nil {
+		t.Errorf("loader = %+v, want %+v", *l, want)
 	}
 }

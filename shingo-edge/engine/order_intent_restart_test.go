@@ -84,9 +84,9 @@ func pullbackLoader(window string) protocol.LoaderInfo {
 	return protocol.LoaderInfo{
 		Name: window, LoaderKey: "loader:" + window, Role: string(protocol.ClaimRoleProduce),
 		Layout: "shared_window", Replenishment: "operator", InboundSource: "EMPTY-SUPER",
-		OutboundDest: "PB-MARKET", ConfigGen: 1,
-		Positions: []protocol.LoaderPosition{{CoreNodeName: window, Kind: "window"}},
-		Payloads:  []protocol.LoaderPayloadInfo{{PayloadCode: "PB-PART"}},
+		OutboundDest: "PB-MARKET",
+		Positions:    []protocol.LoaderPosition{{CoreNodeName: window}},
+		Payloads:     []protocol.LoaderPayloadInfo{{PayloadCode: "PB-PART"}},
 	}
 }
 
@@ -171,10 +171,10 @@ func TestPullbackIntentSurvivesRestart(t *testing.T) {
 func consolidationLoader() protocol.LoaderInfo {
 	return protocol.LoaderInfo{
 		Name: "LDR-CLH", LoaderKey: "loader:clh", Role: string(protocol.ClaimRoleProduce),
-		Layout: "dedicated_positions", Replenishment: "operator", ConfigGen: 1,
+		Layout: "dedicated_positions", Replenishment: "operator",
 		Positions: []protocol.LoaderPosition{
-			{CoreNodeName: "CLH-HOME", PayloadCode: "CLH-PART", Kind: "position", HomeKind: "home"},
-			{CoreNodeName: "CLH-BUF", Kind: "position", HomeKind: "buffer"},
+			{CoreNodeName: "CLH-HOME", PayloadCode: "CLH-PART", HomeKind: "home"},
+			{CoreNodeName: "CLH-BUF", HomeKind: "buffer"},
 		},
 		Payloads: []protocol.LoaderPayloadInfo{{PayloadCode: "CLH-PART"}},
 	}

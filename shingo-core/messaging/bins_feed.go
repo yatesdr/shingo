@@ -2,6 +2,7 @@ package messaging
 
 import (
 	"fmt"
+	"log"
 	"sort"
 	_ "sync" // the plain lock inlines only where sync is imported (protocol/lockcheck)
 	"time"
@@ -309,6 +310,7 @@ func (s *CoreDataService) buildNodeBins(station string) (snap *protocol.NodeBins
 	}
 	first := firstBins(atNodes)
 	snap = &protocol.NodeBinsSnapshot{Rows: nodeBinsRows(names, resolved, first)}
+	s.markHeldLines(snap.Rows)
 	if snap.Groups, err = s.groupLines(station, listDigest, groups, names, resolved, first); err != nil {
 		return nil, true, err
 	}
@@ -363,7 +365,33 @@ func binRow(name string, b *bins.Bin) protocol.NodeBinsRow {
 	row.Stocked = b.UOPRemaining > 0
 	row.TotesOnCart = b.TotesOnCart
 	row.TotesPerLayer = b.TotesPerLayer
+	if b.PayloadCode != "" {
+		row.UOPCapacity = b.UOPCapacity
+	}
+	if b.HeldSince != nil {
+		row.HeldSince = b.HeldSince.UTC().Format(time.RFC3339)
+		row.HeldUOP = b.UOPRemaining
+	}
 	return row
+}
+
+// markHeldLines names the line each held partial row waits for: one read per
+// HELD partial (HeldPartialInfo), none where no held partial stands. A failed
+// read costs the row its line, never the snapshot.
+func (s *CoreDataService) markHeldLines(rows []protocol.NodeBinsRow) {
+	for i := range rows {
+		if rows[i].HeldSince == "" {
+			continue
+		}
+		_, line, held, err := s.db.HeldPartialInfo(rows[i].BinID)
+		if err != nil {
+			log.Printf("bins: held-partial read for bin %d: %v", rows[i].BinID, err)
+			continue
+		}
+		if held {
+			rows[i].HeldFor = line
+		}
+	}
 }
 
 // BinsChanged is called after a known write to a bin: a bin event (binID and

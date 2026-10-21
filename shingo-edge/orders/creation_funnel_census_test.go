@@ -286,9 +286,8 @@ var edgeCreationSites = map[string]string{
 	// loader and unloader side-cycles
 	"engine/loader_outbound_guard.go:fileLoadedOutbound":                "CreateMoveOrderWithPayloadCode",
 	"engine/operator_bin_ops.go:RequestFullBin":                         "CreateRetrieveOrder",
-	"engine/operator_bin_ops.go:createUnloaderEmptyOut":                 "CreateMoveOrderWithPayloadCode",
+	"engine/operator_bin_ops.go:createUnloaderEmptyOut":                 "CreateMoveOrderForBin",
 	"engine/operator_bin_ops.go:requestEmptyAtManualSwapLoader":         "CreateRetrieveOrder",
-	"engine/operator_bin_ops.go:requestEmptyAtLegacyLine":               "CreateRetrieveOrder",
 	"engine/operator_demand_loader.go:stageOperatorEmpty":               "CreateRetrieveOrder",
 	"engine/operator_demand_unloader.go:fireUnloaderFulls":              "CreateRetrieveOrder",
 	"engine/operator_home_consolidation.go:ClearLoaderHome":             "CreateMoveOrderWithPayloadCode",

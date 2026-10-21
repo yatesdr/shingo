@@ -216,14 +216,6 @@ func (db *DB) ListDeliveredRetrieveByDeliveryNode(deliveryNode string, retrieveE
 	return orders.ListDeliveredRetrieveByDeliveryNode(db.DB, deliveryNode, retrieveEmpty)
 }
 
-// ListActiveOrdersByDeliveryNode returns non-terminal orders whose delivery_node
-// is the given core node name, across every process_node row. The manual_swap
-// side-cycle in-flight / dedup checks use it so a shared loader/unloader counts
-// orders at its physical slot regardless of which process_node staged them.
-func (db *DB) ListActiveOrdersByDeliveryNode(deliveryNode string) ([]orders.Order, error) {
-	return orders.ListActiveByDeliveryNode(db.DB, deliveryNode)
-}
-
 // LiveOrderPlacing reports whether a live order is placing a carrier at the
 // core node, in one statement. See orders.PlacingAt.
 func (db *DB) LiveOrderPlacing(coreNode string) (orders.Placing, error) {

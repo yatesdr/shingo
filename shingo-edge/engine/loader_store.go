@@ -34,18 +34,12 @@ var ErrLoaderNotFound = errors.New("loader not found")
 // Defined at the consumer (engine) — idiomatic Go, and it keeps the engine from
 // importing store internals.
 type LoaderStore interface {
-	// LoaderForPayload resolves a loader of the given role whose payload set
-	// contains payload. activeOnly is vestigial — the Core-owned aggregate is
-	// always current, so it is ignored; kept on the signature for callers that
-	// still pass it.
-	LoaderForPayload(payload domain.PayloadCode, role domain.LoaderRole, activeOnly bool) (*domain.Loader, error)
+	// LoaderForPayload resolves the first loader of the given role whose payload
+	// set contains payload.
+	LoaderForPayload(payload domain.PayloadCode, role domain.LoaderRole) (*domain.Loader, error)
 	// LoaderAt resolves the loader of the given role that contains coreNode
-	// (its anchor or a member window/position).
+	// (a member window or position).
 	LoaderAt(coreNode domain.NodeID, role domain.LoaderRole) (*domain.Loader, error)
-	// LoaderByKey resolves the loader of the given role whose identity token is key
-	// (step-4 cutover: the threshold signal carries LoaderKey, so a synthetic loader
-	// with no anchor node resolves by its token instead of core_node_name).
-	LoaderByKey(key domain.LoaderID, role domain.LoaderRole) (*domain.Loader, error)
 	// Loaders returns every loader of the given role.
 	Loaders(role domain.LoaderRole) ([]*domain.Loader, error)
 	// LoaderForNode resolves the loader (of ANY role) that contains coreNode as a
@@ -86,7 +80,7 @@ func projectCoreLoader(l store.CoreLoader) (*domain.Loader, error) {
 			payloadSet = append(payloadSet, domain.PayloadCode(p.PayloadCode))
 			uopThreshold[domain.PayloadCode(p.PayloadCode)] = p.UOPThreshold
 		}
-		return domain.NewSharedWindowLoader(id, l.Name, role, repl, windows, payloadSet,
+		return domain.NewSharedWindowLoader(id, role, repl, windows, payloadSet,
 			domain.WithInboundSource(l.InboundSource),
 			domain.WithUOPThreshold(uopThreshold),
 			domain.WithFunnelWindows(l.FunnelWindows),
@@ -110,7 +104,7 @@ func projectCoreLoader(l store.CoreLoader) (*domain.Loader, error) {
 		// FunnelWindows is not passed: positions never share a budget, so it is
 		// meaningless here. ChangeoverLoadDirective is: a home-location station
 		// can be opted in like any other (TestChangeoverLoadOrigin_DedicatedLoader).
-		return domain.NewDedicatedPositionsLoader(id, l.Name, role, repl, positions,
+		return domain.NewDedicatedPositionsLoader(id, role, repl, positions,
 			domain.WithInboundSource(l.InboundSource),
 			domain.WithChangeoverLoadDirective(l.ChangeoverLoadDirective),
 			domain.WithLeavesBare(l.LeavesBare),
@@ -171,7 +165,7 @@ func (s *aggregateLoaderStore) snapshot() []*domain.Loader {
 	return nil
 }
 
-func (s *aggregateLoaderStore) LoaderForPayload(payload domain.PayloadCode, role domain.LoaderRole, _ bool) (*domain.Loader, error) {
+func (s *aggregateLoaderStore) LoaderForPayload(payload domain.PayloadCode, role domain.LoaderRole) (*domain.Loader, error) {
 	for _, l := range s.snapshot() {
 		if l.Role() == role && l.ServesPayload(payload) {
 			return l, nil
@@ -183,15 +177,6 @@ func (s *aggregateLoaderStore) LoaderForPayload(payload domain.PayloadCode, role
 func (s *aggregateLoaderStore) LoaderAt(coreNode domain.NodeID, role domain.LoaderRole) (*domain.Loader, error) {
 	for _, l := range s.snapshot() {
 		if l.Role() == role && l.Contains(coreNode) {
-			return l, nil
-		}
-	}
-	return nil, ErrLoaderNotFound
-}
-
-func (s *aggregateLoaderStore) LoaderByKey(key domain.LoaderID, role domain.LoaderRole) (*domain.Loader, error) {
-	for _, l := range s.snapshot() {
-		if l.Role() == role && l.ID() == key {
 			return l, nil
 		}
 	}
@@ -238,18 +223,10 @@ func newLoaderStore(e *Engine) LoaderStore {
 // stationLoaderResolver adapts the engine's LoaderStore to the
 // service.LoaderResolver consumer interface used by the operator view. It resolves
 // at call time through loaders() so the lazy init is honoured, and maps the
-// ErrLoaderNotFound sentinel to a clean (nil, nil) miss so BuildView keeps its
-// claim-derived fields for nodes that aren't aggregate loaders. Satisfies
+// ErrLoaderNotFound sentinel to a clean (nil, nil) miss so BuildView takes the
+// stored claim at a node that is not an aggregate loader's. Satisfies
 // service.LoaderResolver structurally — no service import, no cycle.
 type stationLoaderResolver struct{ e *Engine }
-
-func (r stationLoaderResolver) LoaderAt(coreNode domain.NodeID, role domain.LoaderRole) (*domain.Loader, error) {
-	l, err := r.e.loaders().LoaderAt(coreNode, role)
-	if errors.Is(err, ErrLoaderNotFound) {
-		return nil, nil
-	}
-	return l, err
-}
 
 func (r stationLoaderResolver) LoaderForNode(coreNode domain.NodeID) (*domain.Loader, error) {
 	l, err := r.e.loaders().LoaderForNode(coreNode)

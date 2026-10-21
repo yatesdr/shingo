@@ -13,14 +13,14 @@ func apiLoaderFixture(t *testing.T, eng *Engine, id string, windows []string, pa
 	t.Helper()
 	positions := make([]protocol.LoaderPosition, len(windows))
 	for i, w := range windows {
-		positions[i] = protocol.LoaderPosition{CoreNodeName: w, Kind: protocol.LoaderPositionKindWindow}
+		positions[i] = protocol.LoaderPosition{CoreNodeName: w}
 	}
 	eng.SetCoreLoaders([]protocol.LoaderInfo{{
 		Name: id, LoaderKey: "loader:" + id, Role: "produce",
 		Layout: "shared_window", Replenishment: "operator",
-		InboundSource: "EMPTY-SUPER", ConfigGen: 1,
-		Positions: positions,
-		Payloads:  []protocol.LoaderPayloadInfo{{PayloadCode: payload}},
+		InboundSource: "EMPTY-SUPER",
+		Positions:     positions,
+		Payloads:      []protocol.LoaderPayloadInfo{{PayloadCode: payload}},
 	}})
 }
 
@@ -38,8 +38,6 @@ func TestCreateRetrieveForAPI_BatchIsCappedByTheLoaderBudget(t *testing.T) {
 	t.Parallel()
 	db := testEngineDB(t)
 	eng := testEngine(t, db)
-	mw := true
-	eng.cfg.LoadersMultiWindow = &mw
 
 	windows := []string{"API-W1", "API-W2"}
 	seedWindowNodes(t, db, "API-PROC", windows)

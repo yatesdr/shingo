@@ -1116,9 +1116,8 @@ type SceneEdgeInfo struct {
 // NOT folded into NodeInfo — so the loader and its positions/payloads arrive
 // together. The loader's identity is LoaderKey (the surrogate token); it has no
 // node id of its own. Edge keys on node NAMES, so Positions carry core_node_name
-// (Core resolves its position_node_id → name when building this). ConfigGen rides
-// every config write so Edge can detect stale config. Names per D4: layout =
-// shared_window | dedicated_positions; replenishment = auto | operator.
+// (Core resolves its position_node_id → name when building this). layout =
+// shared_window | dedicated_positions; replenishment = operator | threshold.
 type LoaderInfo struct {
 	Name string `json:"name"`
 	// LoaderKey is the loader's IDENTITY — the opaque token Core mints from
@@ -1133,7 +1132,6 @@ type LoaderInfo struct {
 	Replenishment string `json:"replenishment"`
 	OutboundDest  string `json:"outbound_dest,omitempty"`
 	InboundSource string `json:"inbound_source,omitempty"`
-	ConfigGen     int64  `json:"config_gen"`
 	// FunnelWindows restricts a shared_window loader to ONE window at a time:
 	// empties funnel to its first window on a budget of 1 instead of spreading one
 	// bin per window. Stated as the restriction so the zero value — which is also
@@ -1174,23 +1172,16 @@ type LoaderInfo struct {
 	BoardShowsAllParts bool                `json:"board_shows_all_parts,omitempty"`
 	Positions          []LoaderPosition    `json:"positions,omitempty"`
 	Payloads           []LoaderPayloadInfo `json:"payloads,omitempty"`
-	// Quota is the declared carrier mix — how many of each bin type this loader
-	// wants on hand. Empty means none declared, which is today's behaviour.
-	Quota []LoaderQuota `json:"quota,omitempty"`
 }
 
 // LoaderPosition is one home of a loader. For a dedicated_positions loader it is
 // a position node bound to exactly one payload; for a shared_window loader it is
 // one window of the shared cluster, carrying no per-position payload (the shared
-// set rides LoaderInfo.Payloads). Kind makes that distinction EXPLICIT on the
-// wire so a consumer reading a single position need not re-derive it from the
-// payload being empty — the empty-payload-means-window convention that already
-// mis-wires the Edge. Kind is set by Core from the parent loader's Layout (the
-// single authoritative discriminator); see LoaderPositionKind* below.
+// set rides LoaderInfo.Payloads). Which of the two a position is comes from the
+// parent loader's Layout, the one discriminator.
 type LoaderPosition struct {
 	CoreNodeName string `json:"core_node_name"`
 	PayloadCode  string `json:"payload_code"`
-	Kind         string `json:"kind,omitempty"`
 	// HomeKind separates the two DIFFERENT things a blank PayloadCode can mean
 	// on a dedicated loader: a kept-partial BUFFER slot, and a HOME position the
 	// operator dragged in but has not assigned a payload to yet.
@@ -1201,13 +1192,13 @@ type LoaderPosition struct {
 	// Edge inferred "buffer" from an empty payload and reached the opposite
 	// answer for an unpinned home.
 	//
-	// That is the same re-derivation Kind above was added to stop, one level
-	// down. Kind resolved window-vs-dedicated; this resolves home-vs-buffer.
+	// Window-vs-dedicated is the parent loader's Layout; this resolves
+	// home-vs-buffer within a dedicated loader.
 	//
-	// Additive and unsentinelled, like Ordinal and BinTypes: a Core that
-	// predates the field sends nothing, every position decodes "", and the
-	// reader falls back to the empty-payload inference — exactly what it did
-	// before. See LoaderHomeKind* below.
+	// Additive and unsentinelled, like Ordinal: a Core that predates the field
+	// sends nothing, every position decodes "", and the reader falls back to
+	// the empty-payload inference — exactly what it did before. See
+	// LoaderHomeKind* below.
 	HomeKind     string `json:"home_kind,omitempty"`
 	UOPThreshold int    `json:"uop_threshold"`
 	// Ordinal is where the operator put this window. An admin screen lets them
@@ -1225,37 +1216,7 @@ type LoaderPosition struct {
 	// through to its name ordering — which is exactly what it did before. See
 	// shingo/shared/windoworder for the rule both sides share.
 	Ordinal int `json:"ordinal,omitempty"`
-	// BinTypes is what this window can PHYSICALLY take, as bin-type codes.
-	// EMPTY MEANS ANYTHING, which is what every window does today and keeps
-	// doing until somebody says otherwise — so an older Core that sends nothing
-	// reads as "no constraint", the same shape as the ordinal above.
-	//
-	// A set, not one type: a slot that fits a 45x48 may also fit a tote of the
-	// same footprint. Per window rather than per loader because it is a fact
-	// about the floor, not about intent — intent is the loader's quota.
-	BinTypes []string `json:"bin_types,omitempty"`
 }
-
-// LoaderQuota is one line of a loader's declared carrier mix: how many carriers
-// of a bin type it wants on hand.
-//
-// A PREFERENCE, NOT A CAP. The never-2N budget still bounds how many carriers
-// exist at a loader; this only decides which type to fetch next inside that
-// bound. An absent quota means no declared mix, which is today's behaviour.
-type LoaderQuota struct {
-	BinTypeCode string `json:"bin_type_code"`
-	Want        int    `json:"want"`
-}
-
-// LoaderPositionKind values for LoaderPosition.Kind. A window belongs to a
-// shared_window loader's shared budget and carries no payload; a dedicated
-// position carries one payload (possibly unassigned == empty). Empty Kind on the
-// wire means "from a Core that predates this field" — the reader falls back to
-// the parent loader's Layout, which remains authoritative.
-const (
-	LoaderPositionKindWindow    = "window"
-	LoaderPositionKindDedicated = "dedicated"
-)
 
 // LoaderHomeKind values for LoaderPosition.HomeKind, mirroring Core's
 // bin_loader_homes.home_kind. A HOME is a payload-pinned position (or one

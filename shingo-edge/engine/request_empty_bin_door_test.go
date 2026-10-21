@@ -110,3 +110,61 @@ func TestRequestEmptyBin_SwapModeNeedsNoPayloadCode(t *testing.T) {
 		t.Fatalf("plain orders %+v, want the one empty for the claim's part %s", plain, ksPart)
 	}
 }
+
+// A produce claim stored with a mode outside the configurable set (the retired
+// "simple", or blank: no door writes one now, and neither plant holds one) is
+// refused, and nothing is created. It used to take a legacy arm of its own: one
+// plain retrieve of an empty, with its own in-flight check.
+func TestRequestEmptyBin_AModeOutsideTheConfigurableSetIsRefused(t *testing.T) {
+	t.Parallel()
+	for _, mode := range []string{"simple", ""} {
+		db := testEngineDB(t)
+		_, nodeID, _, claimID := seedProduceNode(t, db, "two_robot")
+		eng := testEngine(t, db)
+		_, err := db.Exec(`UPDATE style_node_claims SET swap_mode = ? WHERE id = ?`, mode, claimID)
+		testutil.MustNoErr(t, err, "store a retired mode")
+
+		_, err = eng.RequestEmptyBin(nodeID, "WIDGET-A")
+		if err == nil || !strings.Contains(err.Error(), "no request") {
+			t.Errorf("mode %q: empty-bin request = %v, want the refusal", mode, err)
+		}
+		if n := countOrdersByType(t, db, string(protocol.OrderTypeRetrieve)); n != 0 {
+			t.Errorf("mode %q: retrieve orders = %d after the refusal, want 0", mode, n)
+		}
+	}
+}
+
+// TestRequestEmptyBin_LoaderPullsFromItsInboundSource: REQUEST EMPTY at a
+// produce manual_swap loader pulls the empty from the Core loader's
+// InboundSource, the same field RequestFullBin reads on the consume side. The
+// stored claim names EMPTY-SUPER and the Core loader LOADER-SRC; the loader's
+// wins (the claim the engine acts on at a loader node is built from the Core
+// loader, claimAtNode). A loader that names no inbound source sends the
+// retrieve with no source group (Core then plans it from any compatible
+// empty); the operator's request is not refused for it.
+func TestRequestEmptyBin_LoaderPullsFromItsInboundSource(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct{ name, inbound string }{
+		{"loader names a source", "LOADER-SRC"},
+		{"loader names none", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			db := testEngineDB(t)
+			eng := testEngine(t, db)
+			nodeID := seedCapManualSwap(t, db, "RES-PROC", "RES-LOADER", protocol.ClaimRoleProduce, []string{"P1"}, 0, false)
+			info := sharedLoaderInfo("RES-LOADER", "produce", "operator", "P1", 0, 0)
+			info.InboundSource = tc.inbound
+			seedCoreLoader(t, eng, info)
+
+			order, err := eng.RequestEmptyBin(nodeID, "P1")
+			testutil.MustNoErr(t, err, "request empty")
+			if !order.RetrieveEmpty || order.OrderType != orders.TypeRetrieve {
+				t.Fatalf("order = %s retrieve_empty=%v, want a retrieve of an empty", order.OrderType, order.RetrieveEmpty)
+			}
+			if order.SourceNode != tc.inbound {
+				t.Errorf("source group = %q, want the loader's inbound source %q", order.SourceNode, tc.inbound)
+			}
+		})
+	}
+}

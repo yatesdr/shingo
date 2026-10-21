@@ -88,7 +88,7 @@ func mustSharedLoader(t *testing.T, id string, payloads ...string) *domain.Loade
 	for i, p := range payloads {
 		ps[i] = domain.PayloadCode(p)
 	}
-	l, err := domain.NewSharedWindowLoader(domain.LoaderID(id), id, domain.RoleProduce, domain.ReplenishmentThreshold,
+	l, err := domain.NewSharedWindowLoader(domain.LoaderID(id), domain.RoleProduce, domain.ReplenishmentThreshold,
 		[]domain.Window{{Node: domain.NodeID(id)}}, ps, domain.WithInboundSource("EMPTY-SUPER"))
 	if err != nil {
 		t.Fatalf("build loader %s: %v", id, err)
@@ -238,8 +238,6 @@ func TestWithLoaderBudget_PropOccupancyLive(t *testing.T) {
 	t.Parallel()
 	db := testEngineDB(t)
 	eng := testEngine(t, db)
-	mw := true
-	eng.cfg.LoadersMultiWindow = &mw
 
 	windows := []string{"OCC-W1", "OCC-W2", "OCC-W3"}
 	seedWindowNodes(t, db, "OCC-PROC", windows)
@@ -397,8 +395,6 @@ func TestCreateUnloaderFullIn_PayloadSpecificGuard(t *testing.T) {
 			t.Parallel()
 			db := testEngineDB(t)
 			eng := testEngine(t, db)
-			mw := true
-			eng.cfg.LoadersMultiWindow = &mw
 			seedWindowNodes(t, db, "ULD-PROC", tc.windows)
 
 			// Core reports a resident FULL of PART-A on the first window only.
@@ -408,13 +404,13 @@ func TestCreateUnloaderFullIn_PayloadSpecificGuard(t *testing.T) {
 			for i, w := range tc.windows {
 				ws[i] = domain.Window{Node: domain.NodeID(w)}
 			}
-			unloader, err := domain.NewSharedWindowLoader("ULD", "ULD", domain.RoleConsume, domain.ReplenishmentOperator,
+			unloader, err := domain.NewSharedWindowLoader("ULD", domain.RoleConsume, domain.ReplenishmentOperator,
 				ws, []domain.PayloadCode{"PART-A", "PART-B"}, domain.WithInboundSource("FG-SUPER"))
 			if err != nil {
 				t.Fatalf("build unloader: %v", err)
 			}
 
-			eng.createUnloaderFullInViaSeam(unloader, tc.askPayload)
+			eng.createUnloaderFullIns(unloader, []domain.PayloadCode{domain.PayloadCode(tc.askPayload)})
 
 			if got := inFlightFulls(t, db, tc.windows); got != tc.wantCreated {
 				t.Fatalf("U1 for %s with a resident PART-A full on ULD-W1: created %d, want %d — %s",
@@ -472,8 +468,6 @@ func TestCreateUnloaderFullIn_HoldsWhenOccupancyReadFails(t *testing.T) {
 			t.Parallel()
 			db := testEngineDB(t)
 			eng := testEngine(t, db)
-			mw := true
-			eng.cfg.LoadersMultiWindow = &mw
 			windows := []string{"ULD-RF-W1", "ULD-RF-W2"}
 			seedWindowNodes(t, db, "ULD-RF-PROC", windows)
 			eng.coreClient = tc.setup(t)
@@ -482,13 +476,13 @@ func TestCreateUnloaderFullIn_HoldsWhenOccupancyReadFails(t *testing.T) {
 			for i, w := range windows {
 				ws[i] = domain.Window{Node: domain.NodeID(w)}
 			}
-			unloader, err := domain.NewSharedWindowLoader("ULD-RF", "ULD-RF", domain.RoleConsume, domain.ReplenishmentOperator,
+			unloader, err := domain.NewSharedWindowLoader("ULD-RF", domain.RoleConsume, domain.ReplenishmentOperator,
 				ws, []domain.PayloadCode{"PART-A"}, domain.WithInboundSource("FG-SUPER"))
 			if err != nil {
 				t.Fatalf("build unloader: %v", err)
 			}
 
-			eng.createUnloaderFullInViaSeam(unloader, "PART-A")
+			eng.createUnloaderFullIns(unloader, []domain.PayloadCode{"PART-A"})
 
 			if got := inFlightFulls(t, db, windows); got != 0 {
 				t.Fatalf("occupancy read failed (%s): U1 created %d fulls, want 0 — "+
@@ -506,20 +500,18 @@ func TestCreateUnloaderFullIn_FiresWhenCoreNotConfigured(t *testing.T) {
 	t.Parallel()
 	db := testEngineDB(t)
 	eng := testEngine(t, db)
-	mw := true
-	eng.cfg.LoadersMultiWindow = &mw
 	windows := []string{"ULD-NC-W1"}
 	seedWindowNodes(t, db, "ULD-NC-PROC", windows)
 	eng.coreClient = stubCoreClient("")
 
-	unloader, err := domain.NewSharedWindowLoader("ULD-NC", "ULD-NC", domain.RoleConsume, domain.ReplenishmentOperator,
+	unloader, err := domain.NewSharedWindowLoader("ULD-NC", domain.RoleConsume, domain.ReplenishmentOperator,
 		[]domain.Window{{Node: domain.NodeID("ULD-NC-W1")}}, []domain.PayloadCode{"PART-A"},
 		domain.WithInboundSource("FG-SUPER"))
 	if err != nil {
 		t.Fatalf("build unloader: %v", err)
 	}
 
-	eng.createUnloaderFullInViaSeam(unloader, "PART-A")
+	eng.createUnloaderFullIns(unloader, []domain.PayloadCode{"PART-A"})
 
 	if got := inFlightFulls(t, db, windows); got != 1 {
 		t.Fatalf("no Core configured: U1 created %d fulls, want 1 — an Edge with no Core telemetry must keep running, not stall", got)

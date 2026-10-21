@@ -47,9 +47,12 @@ export function findNodeByID(id) {
     return _view.nodes.find(n => n.node.id === id) || null;
 }
 
+// claimedNodes is the tiles the board draws: a loader's window or position
+// (tile.loader: a loader tile carries no claim), a node with a claim, or a node
+// with changeover work.
 export function claimedNodes() {
     if (!_view || !_view.nodes) return [];
-    return _view.nodes.filter(n => n.active_claim || n.changeover_task);
+    return _view.nodes.filter(n => n.loader || n.active_claim || n.changeover_task);
 }
 
 export function isReplenishing(entry) {

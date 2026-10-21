@@ -14,8 +14,8 @@ import (
 // holding PART-U sends a U2 whose order.request carries payload_code "". A named
 // part makes Core judge the carrier against it (tier 4), turns a home removal
 // into a pool Drain (tier 2), and gates the destination through
-// payloadAllowedAt — see createUnloaderEmptyOut. lookupPayloadMeta does not
-// backfill a node with no stored claim, so the envelope carries exactly what
+// payloadAllowedAt — see createUnloaderEmptyOut. CreateMoveOrderForBin never
+// back-fills a blank payload, so the envelope carries exactly what
 // createUnloaderEmptyOut passed. Red before D2 ("PART-U").
 func TestEmptyOut_EnvelopeNamesNoPart(t *testing.T) {
 	t.Parallel()

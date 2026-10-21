@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"slices"
 	"strings"
 	"testing"
 
@@ -260,54 +259,6 @@ func TestClearBin_NoEmptyOut_WhenWindowEmpty(t *testing.T) {
 	}
 }
 
-// TestLoadablePayloads_NotGatedByActiveStyle pins that the server gate is the
-// loader-wide union of every configured payload — active OR inactive style. The
-// active-vs-all split is a board display concern, not a load-validation one: a
-// loader responds to what is called for, not to the running style. This is what
-// fixed the plant error (payload "…" not in allowed list for node) — loading a
-// payload that belongs to a style other than the one currently running is no
-// longer rejected.
-//
-// It also used to assert the gate was unchanged by the Edge-only operator-driven
-// flag. That flag is gone: the supply mode moved onto the Core-owned loader row
-// and the table it lived in had no readers left. The orthogonality it was
-// pinning still holds and still matters — HOW a loader is supplied must not
-// narrow WHAT it may be asked to load — but the loader aggregate is where that
-// belongs now, and it is pinned there rather than here.
-func TestLoadablePayloads_NotGatedByActiveStyle(t *testing.T) {
-	t.Parallel()
-	db := testEngineDB(t)
-	eng := testEngine(t, db)
-
-	// Active style claims PART-A; a second (inactive) style on the same loader
-	// claims PART-B. Loader-wide union = {PART-A, PART-B}.
-	procID, nodeID, _ := seedActiveManualSwapLoader(t, db, "SNF2", "LOADER", "PART-A")
-	inactive, err := db.CreateStyle("INACTIVE", "", procID)
-	if err != nil {
-		t.Fatalf("create inactive style: %v", err)
-	}
-	if _, err := upsertClaimRetiredMode(db, processes.NodeClaimInput{
-		StyleID: inactive, CoreNodeName: "LOADER",
-		Role: protocol.ClaimRoleProduce, SwapMode: protocol.SwapModeManualSwap,
-		PayloadCode: "PART-B", AllowedPayloadCodes: []string{"PART-B"},
-		InboundSource: "EMPTY-SUPER", OutboundDestination: "FG-MARKET", UOPCapacity: 100,
-	}); err != nil {
-		t.Fatalf("upsert inactive claim: %v", err)
-	}
-
-	node, _, claim, err := loadActiveNode(db, nodeID)
-	if err != nil {
-		t.Fatalf("loadActiveNode: %v", err)
-	}
-
-	// Normal loader: PART-B (an inactive style's payload) is loadable too — the
-	// gate is the full configured set, not the active style.
-	if got := eng.loadablePayloads(node, claim); !slices.Equal(got, []string{"PART-A", "PART-B"}) {
-		t.Errorf("normal loader: loadablePayloads = %v, want [PART-A PART-B] (not gated by active style)", got)
-	}
-
-}
-
 // seedLegacySimpleClaim seeds a process/node/style/claim carrying the retired
 // "simple" swap mode as a legacy DB row (via upsertClaimRetiredMode). "simple"
 // is no longer a configurable mode after the ingress lockdown, but legacy rows
@@ -441,32 +392,5 @@ func TestPushEmptyOut_DoubleTap_StillExactlyOneMove(t *testing.T) {
 	n, _ := countMovesTo(t, db, nodeID, "EMPTY-STORE")
 	if n != 1 {
 		t.Errorf("move orders after double-tap = %d, want exactly 1 (guard must block second)", n)
-	}
-}
-
-// TestLoadablePayloads_NormalLoaderAcceptsSharedActiveDemand pins that even a
-// NORMAL (non-transitional) loader is not gated to one node's active style: a
-// loader physically shared by two cells (SNF2 → PART-A, SNF3 → PART-B) must
-// accept either cell's active payload, because the system can demand either at
-// any time. Pre-fix, loading at the SNF2 node rejected PART-B ("not in allowed
-// list") even though SNF3's active style legitimately calls for it.
-func TestLoadablePayloads_NormalLoaderAcceptsSharedActiveDemand(t *testing.T) {
-	t.Parallel()
-	db := testEngineDB(t)
-	eng := testEngine(t, db)
-
-	// Two active processes share LOADER with disjoint active payloads.
-	_, snf2Node, _ := seedActiveManualSwapLoader(t, db, "SNF2", "LOADER", "PART-A")
-	seedActiveManualSwapLoader(t, db, "SNF3", "LOADER", "PART-B")
-
-	node, _, claim, err := loadActiveNode(db, snf2Node)
-	if err != nil {
-		t.Fatalf("loadActiveNode: %v", err)
-	}
-
-	// At SNF2's node, both active payloads are loadable — the loader-wide active
-	// union, not just SNF2's own claim (PART-A).
-	if got := eng.loadablePayloads(node, claim); !slices.Equal(got, []string{"PART-A", "PART-B"}) {
-		t.Errorf("normal shared loader: loadablePayloads = %v, want [PART-A PART-B] (active union across cells)", got)
 	}
 }

@@ -30,6 +30,8 @@ func (e *Engine) SetCoreLoaders(loaders []protocol.LoaderInfo) error {
 			e.logFn("core_loaders: loader-store snapshot refresh failed — keeping last-known-good: %v", err)
 		}
 	}
+	// The board bin lists read the loaders; they rebuild on the next read.
+	e.loaderGeneration.Add(1)
 	// AFTER the cache and the snapshot, never before. A node whose stored claim
 	// moves must be resolvable through the aggregate on the very next read, and
 	// the aggregate is only current once Refresh has run.
@@ -79,13 +81,14 @@ func (e *Engine) reconcileLoaderClaims(loaders []protocol.LoaderInfo) {
 		return
 	}
 	// Silent when nothing moved — the steady state once a non-empty sync has run,
-	// because nothing after it writes a manual_swap row (UpsertClaim refuses one).
-	// Before it the population is NOT zero: rows survive from Edge boot to the
-	// first non-empty loader set — unbounded while Core is unreachable or sends
-	// an empty one. A style cloned in that window does NOT inherit them:
-	// cloneStyleTx's SELECT excludes manual_swap rows (store/processes/styles.go, pinned by
-	// TestCloneStyle_LeavesWithheldConfigurationBehind). This loop is what
-	// empties the rows that remain in the source style.
+	// because no door writes a manual_swap row after it: UpsertClaim refuses one,
+	// and the style copy (cloneStyleTx) does not select one (notLoaderClaim in
+	// store/processes/styles.go, pinned by
+	// TestCloneStyle_LeavesWithheldConfigurationBehind). Before it the
+	// population is NOT zero: rows survive from an upgrade from before the
+	// quarantine, or a restored old database, until the first non-empty loader
+	// set. This loop is what empties them. The loader cache is durable, so this
+	// window opens once per database, not once per boot.
 	for _, m := range moved {
 		e.logFn("core_loaders: quarantined style_node_claims id=%d node=%s style=%d payload=%q — %s. "+
 			"The row is in %s; restore it with INSERT ... SELECT if this was wrong.",

@@ -8,7 +8,9 @@ package protocol
 // THE ROW CARRIES NO COUNT. A count ticks wherever a cell draws straight from
 // a watched node, and a ticking value inside the digest would send the whole
 // snapshot on every heartbeat. Stocked (a count above zero) is the one fact
-// derived from it. No time and nothing about who asked is in it either, so two
+// derived from it. The one count it carries is a held partial's (HeldUOP),
+// which nothing draws from while it waits. No time that moves and nothing
+// about who asked is in it either (a held partial's arrival is fixed), so two
 // Edges watching the same nodes are sent the same rows.
 
 // BinWatchList is the sorted, de-duplicated list of Core node names one Edge's
@@ -48,6 +50,16 @@ type NodeBinsRow struct {
 	Stocked       bool `json:"stocked"`
 	TotesOnCart   *int `json:"totes_on_cart,omitempty"`
 	TotesPerLayer *int `json:"totes_per_layer,omitempty"`
+	// UOPCapacity is the capacity of the carrier's part, so a board can say a
+	// carrier is partial from its own count; 0 with no part. HeldSince,
+	// HeldFor and HeldUOP are set for a HELD partial only, an unfinished
+	// carrier waiting in a partial home of its part to be called back: when
+	// it entered the home (RFC 3339), the line whose claim keeps it there, and
+	// its count. None of them ticks: nothing draws from a held partial.
+	UOPCapacity int    `json:"uop_capacity,omitempty"`
+	HeldSince   string `json:"held_since,omitempty"`
+	HeldFor     string `json:"held_for,omitempty"`
+	HeldUOP     int    `json:"held_uop,omitempty"`
 }
 
 // NodeBinsGroup is one outbound group, with levels, of a consume loader that

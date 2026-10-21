@@ -82,27 +82,27 @@ const catalog = [
 ];
 
 // ── confirmUnloadSwap: the CLEAR at an unloader window ──
-view = { payload_bin_types: catalog };
+// The panels take the tile's carrier list (loader.carriers). Which types a
+// window's parts give, and the whole catalog when they match none, is the
+// server's (service carriersFor, pinned by TestCarriersFor).
 
-let p = open(function () { ctx.confirmUnloadSwap(11, ['PART-A', 'PART-B'], 0); });
+let p = open(function () { ctx.confirmUnloadSwap(11, ['TOTE-S', 'TOTE-L'], 0); });
 eq(p.texts[0], 'Full pulled, empty filled?', 'clear: title');
 eq(p.buttons, ['TOTE-S', 'TOTE-L', 'CANCEL'], 'clear: two types for the node payloads -> a picker');
 eq(p.click('TOTE-L'), [{ url: '/api/process-nodes/11/clear-bin', body: { bin_type_code: 'TOTE-L' } }],
     'clear: a picked type posts that code');
 
-p = open(function () { ctx.confirmUnloadSwap(12, ['PART-C'], 0); });
+p = open(function () { ctx.confirmUnloadSwap(12, ['RACK-C'], 0); });
 eq(p.buttons, ['CONFIRM SWAP', 'CANCEL'], 'clear: one type -> auto-fill, one button');
 eq(p.click('CONFIRM SWAP'), [{ url: '/api/process-nodes/12/clear-bin', body: { bin_type_code: 'RACK-C' } }],
     'clear: the auto-filled type is posted');
 
-view = { payload_bin_types: [] };
-p = open(function () { ctx.confirmUnloadSwap(13, ['PART-A'], 0); });
+p = open(function () { ctx.confirmUnloadSwap(13, [], 0); });
 eq(p.buttons, ['CONFIRM SWAP', 'CANCEL'], 'clear: no catalog -> one button');
 eq(p.click('CONFIRM SWAP'), [{ url: '/api/process-nodes/13/clear-bin', body: undefined }],
     'clear: no catalog -> blank code (no body)');
 
-view = { payload_bin_types: catalog };
-p = open(function () { ctx.confirmUnloadSwap(14, ['PART-C'], 7); });
+p = open(function () { ctx.confirmUnloadSwap(14, ['RACK-C'], 7); });
 eq(p.texts.indexOf('This slot still counts 7. Confirming writes it to zero.') >= 0, true,
     'clear: the discard count is stated');
 
@@ -122,7 +122,7 @@ function noTypeOnPanel(p, label) {
         });
     });
 }
-p = open(function () { ctx.confirmUnloadSwap(15, ['PART-A', 'PART-B'], 0, true); });
+p = open(function () { ctx.confirmUnloadSwap(15, ['TOTE-S', 'TOTE-L'], 0, true); });
 eq(p.texts[0], 'Full bin on the cart', 'stage 1: title');
 eq(p.buttons, ['Full off', 'CANCEL'], 'stage 1: one button, no picker');
 eq(p.texts.indexOf('The cart goes on to Stage 2. The next full is on its way.') >= 0, true,
@@ -130,7 +130,7 @@ eq(p.texts.indexOf('The cart goes on to Stage 2. The next full is on its way.') 
 noTypeOnPanel(p, 'stage 1');
 eq(p.click('Full off'), [{ url: '/api/process-nodes/15/clear-bin', body: undefined }],
     'stage 1: blank code (no body) — Core stamps the cart');
-p = open(function () { ctx.confirmUnloadSwap(16, ['PART-C'], 5, true); });
+p = open(function () { ctx.confirmUnloadSwap(16, ['RACK-C'], 5, true); });
 eq(p.buttons, ['Full off', 'CANCEL'], 'stage 1: a single-type node does not auto-fill its type either');
 noTypeOnPanel(p, 'stage 1 single-type');
 eq(p.click('Full off'), [{ url: '/api/process-nodes/16/clear-bin', body: undefined }],
@@ -139,30 +139,27 @@ eq(p.texts.indexOf('This slot still counts 5. Confirming writes it to zero.') >=
     'stage 1: the discard count is still stated');
 
 // ── confirmPushEmpty: the empty-carrier panel ──
-p = open(function () { ctx.confirmPushEmpty(21, ['PART-A', 'PART-B']); });
+p = open(function () { ctx.confirmPushEmpty(21, ['TOTE-S', 'TOTE-L']); });
 eq(p.texts[0], 'Empty bin in slot', 'empty: title');
 eq(p.buttons, ['PUSH EMPTY', 'PUSH AS TOTE-S', 'PUSH AS TOTE-L', 'CANCEL'],
     'empty: PUSH EMPTY and PUSH AS <type> for the node payloads are both offered');
 eq(p.click('PUSH EMPTY'), [{ url: '/api/process-nodes/21/push-empty', body: undefined }],
     'empty: PUSH EMPTY posts push-empty');
-p = open(function () { ctx.confirmPushEmpty(21, ['PART-A', 'PART-B']); });
+p = open(function () { ctx.confirmPushEmpty(21, ['TOTE-S', 'TOTE-L']); });
 eq(p.click('PUSH AS TOTE-S'), [{ url: '/api/process-nodes/21/clear-bin', body: { bin_type_code: 'TOTE-S' } }],
     'empty: PUSH AS posts clear-bin with the type');
 
-// A node with no payloads (a zero-payload loader's SynthClaim carries []) gets
-// the whole catalog: every distinct bin_type_code in payload_bin_types.
-p = open(function () { ctx.confirmPushEmpty(22, []); });
+// A window whose parts match nothing in the catalog carries the whole catalog
+// (carriersFor), and the panel offers every type in it.
+p = open(function () { ctx.confirmPushEmpty(22, ['TOTE-S', 'TOTE-L', 'RACK-C']); });
 eq(p.buttons, ['PUSH EMPTY', 'PUSH AS TOTE-S', 'PUSH AS TOTE-L', 'PUSH AS RACK-C', 'CANCEL'],
-    'empty: no payloads -> the full catalog');
-p = open(function () { ctx.confirmPushEmpty(23, ['PART-UNMAPPED']); });
-eq(p.buttons, ['PUSH EMPTY', 'PUSH AS TOTE-S', 'PUSH AS TOTE-L', 'PUSH AS RACK-C', 'CANCEL'],
-    'empty: payloads that match nothing -> the full catalog');
+    'empty: the window\'s carriers, each a PUSH AS');
 
 // ── stage 2: a bare cart in the window ──
 // One tap, Send on, with a blank code: Core stamps the cart back to the type
 // it is the marker of. No PUSH EMPTY (it would send the cart on still bare) and
 // no PUSH AS picker — there is no type to pick, and none is shown.
-p = open(function () { ctx.confirmPushEmpty(25, ['PART-A', 'PART-B'], true); });
+p = open(function () { ctx.confirmPushEmpty(25, ['TOTE-S', 'TOTE-L'], true); });
 eq(p.texts[0], 'Cart, no bin', 'stage 2: title');
 eq(p.buttons, ['Send on', 'CANCEL'], 'stage 2: bare -> one tap, no PUSH EMPTY, no PUSH AS');
 eq(p.texts.indexOf('Put an empty bin on it, then send it on.') >= 0, true,
@@ -171,14 +168,13 @@ noTypeOnPanel(p, 'stage 2');
 eq(p.click('Send on'), [{ url: '/api/process-nodes/25/clear-bin', body: undefined }],
     'stage 2: Send on posts clear-bin with a blank code');
 p = open(function () { ctx.confirmPushEmpty(27, [], true); });
-eq(p.buttons, ['Send on', 'CANCEL'], 'stage 2: a zero-payload loader offers no catalog either');
+eq(p.buttons, ['Send on', 'CANCEL'], 'stage 2: no carriers, no picker either');
 noTypeOnPanel(p, 'stage 2 zero-payload');
 p = open(function () { ctx.confirmPushEmpty(26, [], false); });
 eq(p.buttons[0], 'PUSH EMPTY', 'stage 2: a carrier that is not bare keeps PUSH EMPTY');
 
-view = { payload_bin_types: [] };
-p = open(function () { ctx.confirmPushEmpty(24, ['PART-A']); });
-eq(p.buttons, ['PUSH EMPTY', 'CANCEL'], 'empty: no catalog -> PUSH EMPTY only');
+p = open(function () { ctx.confirmPushEmpty(24, []); });
+eq(p.buttons, ['PUSH EMPTY', 'CANCEL'], 'empty: no carriers (no catalog from Core) -> PUSH EMPTY only');
 
 if (failed) { console.error(passed + ' passed, ' + failed + ' FAILED'); process.exit(1); }
 console.log('operator-render clear panels: ' + passed + ' passed');

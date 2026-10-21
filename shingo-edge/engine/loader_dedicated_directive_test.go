@@ -10,8 +10,8 @@ import (
 // TestChangeoverLoadOrigin_DedicatedLoader: what the changeover load
 // directive decides at a dedicated_positions (home-location) loader whose Core
 // row has it set, during a changeover. The two readers of the setting are the
-// station check (stationTakesLoadDirective — the same Loader the station
-// view's copy reads) and the empty-request attribution (changeoverLoadOrigin).
+// station check (stationTakesLoadDirective, through the loader cache) and the
+// empty-request attribution (changeoverLoadOrigin).
 // Both read the setting, so an empty requested at a home during the changeover
 // is the changeover's demand. The dedicated projection branch used to drop the
 // setting, and both read false.
@@ -27,10 +27,10 @@ func TestChangeoverLoadOrigin_DedicatedLoader(t *testing.T) {
 	node := &processes.Node{ID: 1, ProcessID: processID, CoreNodeName: "CLD-H1", Name: "CLD-H1"}
 	eng.SetCoreLoaders([]protocol.LoaderInfo{{
 		Name: "LDR-CLD", LoaderKey: "loader:902", Role: string(protocol.ClaimRoleProduce),
-		Layout: "dedicated_positions", Replenishment: "operator", ConfigGen: 1,
+		Layout: "dedicated_positions", Replenishment: "operator",
 		ChangeoverLoadDirective: true,
 		Positions: []protocol.LoaderPosition{
-			{CoreNodeName: "CLD-H1", PayloadCode: "PART-A", Kind: "position", HomeKind: "home"},
+			{CoreNodeName: "CLD-H1", PayloadCode: "PART-A", HomeKind: "home"},
 		},
 	}})
 

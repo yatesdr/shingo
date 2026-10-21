@@ -429,79 +429,63 @@ func TestPinCoreOwnedLoader_L2LandingClearsAndRePushes(t *testing.T) {
 }
 
 // TestLanding_RePushesOnlyItsOwnLoader: an L2 landing re-pushes the loader that
-// owns the node and no other, at a cost of ONE Core occupancy read — for a
-// Core-owned loader and for one still holding a stored claim alike. The push
+// owns the node and no other, at a cost of ONE Core occupancy read. The push
 // used to walk every operator-staged produce loader (the push that preceded
-// rePushOwnLoader), one read
-// each, for a landing that frees exactly one window.
+// rePushOwnLoader), one read each, for a landing that frees exactly one window.
 func TestLanding_RePushesOnlyItsOwnLoader(t *testing.T) {
 	t.Parallel()
-	for _, stored := range []bool{false, true} {
-		name := "core_owned"
-		if stored {
-			name = "stored_claim"
-		}
-		t.Run(name, func(t *testing.T) {
-			t.Parallel()
-			db := testEngineDB(t)
-			eng := testEngine(t, db)
-			eng.orderMgr = orders.NewManager(db, &orderEmitter{bus: eng.Events}, "test.station")
-			eng.wireEventHandlers()
-			core := newSCCore(t)
-			eng.coreClient = stubCoreClient(core.srv.URL)
+	db := testEngineDB(t)
+	eng := testEngine(t, db)
+	eng.orderMgr = orders.NewManager(db, &orderEmitter{bus: eng.Events}, "test.station")
+	eng.wireEventHandlers()
+	core := newSCCore(t)
+	eng.coreClient = stubCoreClient(core.srv.URL)
 
-			prefix := "RP-" + name
-			own := prefix + "-MSWAP-NODE"
-			other := prefix + "-OTHER"
-			seedCoreLoader(t, eng,
-				sharedLoaderInfo(own, "produce", "operator", "PART-RP", 0, 0),
-				sharedLoaderInfo(other, "produce", "operator", "PART-RP", 0, 0))
-			var nodeID int64
-			if stored {
-				nodeID, _ = seedManualSwapClaim(t, db, prefix, protocol.ClaimRoleProduce, "PART-RP", "FG-MARKET")
-			} else {
-				procID, err := db.CreateProcess(prefix+"-PROC", "", "", "", false)
-				testutil.MustNoErr(t, err, "create process")
-				nodeID, err = db.CreateProcessNode(processes.NodeInput{
-					ProcessID: procID, CoreNodeName: own, Code: "RP", Name: own, Sequence: 1, Enabled: true,
-				})
-				testutil.MustNoErr(t, err, "create node")
-				_, err = db.EnsureProcessNodeRuntime(nodeID)
-				testutil.MustNoErr(t, err, "ensure runtime")
-			}
-			// The other loader's window: a process node here, free, nothing in
-			// flight — a push that walked every loader would stage an empty there.
-			otherProc, err := db.CreateProcess(prefix+"-OTHER-PROC", "", "", "", false)
-			testutil.MustNoErr(t, err, "create other process")
-			_, err = db.CreateProcessNode(processes.NodeInput{
-				ProcessID: otherProc, CoreNodeName: other, Code: "RO", Name: other, Sequence: 1, Enabled: true,
-			})
-			testutil.MustNoErr(t, err, "create other node")
-			if _, _, claim, err := eng.loadActiveNode(nodeID); err != nil || claim == nil || (claim.ID != 0) != stored {
-				t.Fatalf("fixture: claim at %s = %+v, want stored=%v", own, claim, stored)
-			}
-			core.set(own, true, "")
-			core.set(other, false, "")
+	prefix := "RP"
+	own := prefix + "-MSWAP-NODE"
+	other := prefix + "-OTHER"
+	seedCoreLoader(t, eng,
+		sharedLoaderInfo(own, "produce", "operator", "PART-RP", 0, 0),
+		sharedLoaderInfo(other, "produce", "operator", "PART-RP", 0, 0))
+	procID, err := db.CreateProcess(prefix+"-PROC", "", "", "", false)
+	testutil.MustNoErr(t, err, "create process")
+	nodeID, err := db.CreateProcessNode(processes.NodeInput{
+		ProcessID: procID, CoreNodeName: own, Code: "RP", Name: own, Sequence: 1, Enabled: true,
+	})
+	testutil.MustNoErr(t, err, "create node")
+	_, err = db.EnsureProcessNodeRuntime(nodeID)
+	testutil.MustNoErr(t, err, "ensure runtime")
+	// The other loader's window: a process node here, free, nothing in
+	// flight — a push that walked every loader would stage an empty there.
+	otherProc, err := db.CreateProcess(prefix+"-OTHER-PROC", "", "", "", false)
+	testutil.MustNoErr(t, err, "create other process")
+	_, err = db.CreateProcessNode(processes.NodeInput{
+		ProcessID: otherProc, CoreNodeName: other, Code: "RO", Name: other, Sequence: 1, Enabled: true,
+	})
+	testutil.MustNoErr(t, err, "create other node")
+	if _, _, claim, err := eng.loadActiveNode(nodeID); err != nil || claim == nil || claim.ID != 0 {
+		t.Fatalf("fixture: claim at %s = %+v, want the loader's", own, claim)
+	}
+	core.set(own, true, "")
+	core.set(other, false, "")
 
-			testutil.MustNoErr(t, eng.LoadBin(nodeID, "PART-RP", nil, scManifest), "LoadBin")
-			moves := scMovesFrom(t, db, own)
-			if len(moves) != 1 {
-				t.Fatalf("L2s leaving %s = %d, want 1", own, len(moves))
-			}
-			core.set(own, false, "")
-			readsBefore := core.nodeBinReads()
-			scLand(t, eng, db, moves[0])
+	testutil.MustNoErr(t, eng.LoadBin(nodeID, "PART-RP", nil, scManifest), "LoadBin")
+	moves := scMovesFrom(t, db, own)
+	if len(moves) != 1 {
+		t.Fatalf("L2s leaving %s = %d, want 1", own, len(moves))
+	}
+	core.set(own, false, "")
+	readsBefore := core.nodeBinReads()
+	scLand(t, eng, db, moves[0])
 
-			if n := scActiveEmptiesTo(t, db, own); n != 1 {
-				t.Errorf("empties staged at the landing loader = %d, want 1 (its own landing re-pushes it)", n)
-			}
-			if n := scActiveEmptiesTo(t, db, other); n != 0 {
-				t.Errorf("empties staged at the OTHER loader = %d, want 0 (a landing frees only its own window)", n)
-			}
-			if n := core.nodeBinReads() - readsBefore; n != 1 {
-				t.Errorf("node-bins reads on the landing = %d, want 1", n)
-			}
-		})
+	if n := scActiveEmptiesTo(t, db, own); n != 1 {
+		t.Errorf("empties staged at the landing loader = %d, want 1 (its own landing re-pushes it)", n)
+	}
+	if n := scActiveEmptiesTo(t, db, other); n != 0 {
+		t.Errorf("empties staged at the OTHER loader = %d, want 0 (a landing frees only its own window)", n)
+	}
+	if n := core.nodeBinReads() - readsBefore; n != 1 {
+		t.Errorf("node-bins reads on the landing = %d, want 1", n)
 	}
 }
 
@@ -646,23 +630,22 @@ func TestPinDoubleTapGuard_ClearAfterPushEmptySkips(t *testing.T) {
 
 // ── A3.4: the three outbound-resolve sites ───────────────────────────────
 
-// scStoredWithCore seeds a stored manual_swap claim whose outbound is claimDest,
-// then a Core loader for the same node whose outbound is coreDest. The claim is
-// seeded AFTER the loader sync so the quarantine does not move it — the shape
-// that survives until a node-list response arrives, or a style clone re-mints.
-func scStoredWithCore(t *testing.T, prefix string, role protocol.ClaimRole, claimDest, coreDest string) (*Engine, *store.DB, int64, string) {
+// scLoaderWithOutbound seeds a Core loader of the given role at one window whose
+// outbound is dest ("" for none), and the window's process node. The window's
+// claim is the loader's (SynthClaim), carrying dest.
+func scLoaderWithOutbound(t *testing.T, prefix string, role protocol.ClaimRole, dest string) (*Engine, *store.DB, int64, string) {
 	t.Helper()
 	db := testEngineDB(t)
 	eng := testEngine(t, db)
 	core := prefix + "-MSWAP-NODE"
-	if coreDest != "" {
-		info := sharedLoaderInfo(core, string(role), "operator", "PART-OB", 0, 0)
-		info.OutboundDest = coreDest
-		seedCoreLoader(t, eng, info)
-	}
-	nodeID, _ := seedManualSwapClaim(t, db, prefix, role, "PART-OB", claimDest)
-	if _, _, claim, err := eng.loadActiveNode(nodeID); err != nil || claim == nil || claim.ID == 0 {
-		t.Fatalf("fixture: want the STORED claim at %s, got %+v", core, claim)
+	info := sharedLoaderInfo(core, string(role), "operator", "PART-OB", 0, 0)
+	info.OutboundDest = dest
+	seedCoreLoader(t, eng, info)
+	_, nodeID, _ := seedLoaderNode(t, db, prefix+"-PROC", core)
+	_, err := db.EnsureProcessNodeRuntime(nodeID)
+	testutil.MustNoErr(t, err, "ensure runtime")
+	if _, _, claim, err := eng.loadActiveNode(nodeID); err != nil || claim == nil || claim.ID != 0 || claim.OutboundDestination != dest {
+		t.Fatalf("fixture: want the loader's claim at %s with outbound %q, got %+v", core, dest, claim)
 	}
 	return eng, db, nodeID, core
 }
@@ -676,17 +659,17 @@ func scDestsFrom(t *testing.T, db *store.DB, core string) []string {
 	return out
 }
 
-// TestPinOutbound_CoreOverridesTheClaim_AtAllThreeSites: where the stored claim
-// and Core's loader disagree, every move routes to Core's outbound — LOAD with
-// no L1 to confirm, createUnloaderEmptyOut, and LOAD confirming an L1 (the
-// l1_completion case, which filed its L2 from the L1's completion until the B3
-// close-out; LOAD files it now).
-func TestPinOutbound_CoreOverridesTheClaim_AtAllThreeSites(t *testing.T) {
+// TestPinOutbound_RoutesToTheLoadersOutbound_AtAllThreeSites: every move routes
+// to the Core loader's outbound — LOAD with no L1 to confirm,
+// createUnloaderEmptyOut, and LOAD confirming an L1 (the l1_completion case,
+// which filed its L2 from the L1's completion until the B3 close-out; LOAD files
+// it now). A stored claim at the window is not read (claimAtNode).
+func TestPinOutbound_RoutesToTheLoadersOutbound_AtAllThreeSites(t *testing.T) {
 	t.Parallel()
 
 	t.Run("load_fallback", func(t *testing.T) {
 		t.Parallel()
-		eng, db, nodeID, core := scStoredWithCore(t, "OBF", protocol.ClaimRoleProduce, "OLD-DEST", "NEW-DEST")
+		eng, db, nodeID, core := scLoaderWithOutbound(t, "OBF", protocol.ClaimRoleProduce, "NEW-DEST")
 		c := newSCCore(t)
 		c.set(core, true, "")
 		eng.coreClient = stubCoreClient(c.srv.URL)
@@ -698,7 +681,7 @@ func TestPinOutbound_CoreOverridesTheClaim_AtAllThreeSites(t *testing.T) {
 
 	t.Run("unloader_empty_out", func(t *testing.T) {
 		t.Parallel()
-		eng, db, nodeID, core := scStoredWithCore(t, "OBU", protocol.ClaimRoleConsume, "OLD-DEST", "NEW-DEST")
+		eng, db, nodeID, core := scLoaderWithOutbound(t, "OBU", protocol.ClaimRoleConsume, "NEW-DEST")
 		c := newSCCore(t)
 		c.set(core, true, "")
 		eng.coreClient = stubCoreClient(c.srv.URL)
@@ -710,7 +693,7 @@ func TestPinOutbound_CoreOverridesTheClaim_AtAllThreeSites(t *testing.T) {
 
 	t.Run("l1_completion", func(t *testing.T) {
 		t.Parallel()
-		eng, db, nodeID, core := scStoredWithCore(t, "OBC", protocol.ClaimRoleProduce, "OLD-DEST", "NEW-DEST")
+		eng, db, nodeID, core := scLoaderWithOutbound(t, "OBC", protocol.ClaimRoleProduce, "NEW-DEST")
 		eng.orderMgr = orders.NewManager(db, &orderEmitter{bus: eng.Events}, "test.station")
 		eng.wireEventHandlers()
 		c := newSCCore(t)
@@ -732,7 +715,7 @@ func TestPinOutbound_BlankFilesNothing_AtAllThreeSites(t *testing.T) {
 
 	t.Run("load_fallback", func(t *testing.T) {
 		t.Parallel()
-		eng, db, nodeID, core := scStoredWithCore(t, "OBBF", protocol.ClaimRoleProduce, "", "")
+		eng, db, nodeID, core := scLoaderWithOutbound(t, "OBBF", protocol.ClaimRoleProduce, "")
 		c := newSCCore(t)
 		c.set(core, true, "")
 		eng.coreClient = stubCoreClient(c.srv.URL)
@@ -744,7 +727,7 @@ func TestPinOutbound_BlankFilesNothing_AtAllThreeSites(t *testing.T) {
 
 	t.Run("unloader_empty_out", func(t *testing.T) {
 		t.Parallel()
-		eng, db, nodeID, core := scStoredWithCore(t, "OBBU", protocol.ClaimRoleConsume, "", "")
+		eng, db, nodeID, core := scLoaderWithOutbound(t, "OBBU", protocol.ClaimRoleConsume, "")
 		c := newSCCore(t)
 		c.set(core, true, "")
 		eng.coreClient = stubCoreClient(c.srv.URL)
@@ -760,7 +743,7 @@ func TestPinOutbound_BlankFilesNothing_AtAllThreeSites(t *testing.T) {
 
 	t.Run("l1_completion", func(t *testing.T) {
 		t.Parallel()
-		eng, db, nodeID, core := scStoredWithCore(t, "OBBC", protocol.ClaimRoleProduce, "", "")
+		eng, db, nodeID, core := scLoaderWithOutbound(t, "OBBC", protocol.ClaimRoleProduce, "")
 		eng.orderMgr = orders.NewManager(db, &orderEmitter{bus: eng.Events}, "test.station")
 		eng.wireEventHandlers()
 		c := newSCCore(t)
@@ -791,7 +774,7 @@ func TestPinOutbound_SameNodeFilesNothing_AtTheTwoGuardedSites(t *testing.T) {
 
 	t.Run("unloader_empty_out", func(t *testing.T) {
 		t.Parallel()
-		eng, db, nodeID, core := scStoredWithCore(t, "OBSU", protocol.ClaimRoleConsume, "OBSU-MSWAP-NODE", "")
+		eng, db, nodeID, core := scLoaderWithOutbound(t, "OBSU", protocol.ClaimRoleConsume, "OBSU-MSWAP-NODE")
 		c := newSCCore(t)
 		c.set(core, true, "")
 		eng.coreClient = stubCoreClient(c.srv.URL)
@@ -805,7 +788,7 @@ func TestPinOutbound_SameNodeFilesNothing_AtTheTwoGuardedSites(t *testing.T) {
 
 	t.Run("l1_completion", func(t *testing.T) {
 		t.Parallel()
-		eng, db, nodeID, core := scStoredWithCore(t, "OBSC", protocol.ClaimRoleProduce, "OBSC-MSWAP-NODE", "")
+		eng, db, nodeID, core := scLoaderWithOutbound(t, "OBSC", protocol.ClaimRoleProduce, "OBSC-MSWAP-NODE")
 		eng.orderMgr = orders.NewManager(db, &orderEmitter{bus: eng.Events}, "test.station")
 		eng.wireEventHandlers()
 		c := newSCCore(t)
@@ -824,7 +807,7 @@ func TestPinOutbound_SameNodeFilesNothing_AtTheTwoGuardedSites(t *testing.T) {
 // c0c525c0 it filed a move from the window to itself (flat bug).
 func TestLoadFallback_RefusesASameNodeL2(t *testing.T) {
 	t.Parallel()
-	eng, db, nodeID, core := scStoredWithCore(t, "OBSF", protocol.ClaimRoleProduce, "OBSF-MSWAP-NODE", "")
+	eng, db, nodeID, core := scLoaderWithOutbound(t, "OBSF", protocol.ClaimRoleProduce, "OBSF-MSWAP-NODE")
 	c := newSCCore(t)
 	c.set(core, true, "")
 	eng.coreClient = stubCoreClient(c.srv.URL)

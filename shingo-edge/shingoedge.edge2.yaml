@@ -35,8 +35,6 @@ line_id: line1
 database_path: /data/shingoedge.db
 core_api: http://core:8083
 
-loaders_multi_window: false
-
 warlink:
   enabled: false
   mode: poll

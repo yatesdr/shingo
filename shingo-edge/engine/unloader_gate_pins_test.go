@@ -20,9 +20,8 @@ import (
 // unloader's free window too: 1 + 2 reads and a U1 at W3 in this fixture.
 //
 // The fixture has two operator-drained consume loaders: L (windows N, N2) and M
-// (window W3). N carries a STORED consume claim with AutoPush on, seeded after
-// the loader sync so the quarantine does not move it: SynthClaim never sets
-// AutoPush, so a stored claim is the only way to switch a gate on at this base.
+// (window W3). L carries auto_push, which every L window's claim takes through
+// SynthClaim; M does not.
 
 type ugFixture struct {
 	eng        *Engine
@@ -46,25 +45,22 @@ func newUGFixture(t *testing.T, prefix string) *ugFixture {
 
 	f := &ugFixture{eng: eng, db: db, core: core,
 		nCore: prefix + "-N", n2Core: prefix + "-N2", w3Core: prefix + "-W3"}
-	unloader := func(key string, windows ...string) protocol.LoaderInfo {
+	unloader := func(key string, auto bool, windows ...string) protocol.LoaderInfo {
 		info := protocol.LoaderInfo{
 			Name: key, LoaderKey: "loader:" + key, Role: "consume", Layout: "shared_window",
-			Replenishment: "operator", InboundSource: "FG-SUPER", OutboundDest: "EMPTY-TOTES", ConfigGen: 1,
-			Payloads: []protocol.LoaderPayloadInfo{{PayloadCode: "PART-UG"}},
+			Replenishment: "operator", InboundSource: "FG-SUPER", OutboundDest: "EMPTY-TOTES",
+			Payloads: []protocol.LoaderPayloadInfo{{PayloadCode: "PART-UG"}}, AutoPush: auto,
 		}
 		for _, w := range windows {
-			info.Positions = append(info.Positions, protocol.LoaderPosition{CoreNodeName: w, Kind: "window"})
+			info.Positions = append(info.Positions, protocol.LoaderPosition{CoreNodeName: w})
 		}
 		return info
 	}
-	seedCoreLoader(t, eng, unloader(prefix+"-L", f.nCore, f.n2Core), unloader(prefix+"-M", f.w3Core))
+	seedCoreLoader(t, eng, unloader(prefix+"-L", true, f.nCore, f.n2Core), unloader(prefix+"-M", false, f.w3Core))
 
 	var err error
 	f.nProcessID, err = db.CreateProcess(prefix+"-PROC", "", "", "", false)
 	testutil.MustNoErr(t, err, "create process")
-	styleID, err := db.CreateStyle(prefix+"-STYLE", "", f.nProcessID)
-	testutil.MustNoErr(t, err, "create style")
-	testutil.MustNoErr(t, db.SetActiveStyle(f.nProcessID, &styleID), "activate style")
 	node := func(core string, seq int) int64 {
 		id, nerr := db.CreateProcessNode(processes.NodeInput{
 			ProcessID: f.nProcessID, CoreNodeName: core, Code: core, Name: core, Sequence: seq, Enabled: true,
@@ -75,16 +71,10 @@ func newUGFixture(t *testing.T, prefix string) *ugFixture {
 		return id
 	}
 	f.n, f.n2, f.w3 = node(f.nCore, 1), node(f.n2Core, 2), node(f.w3Core, 3)
-	_, err = upsertClaimRetiredMode(db, processes.NodeClaimInput{
-		StyleID: styleID, CoreNodeName: f.nCore, Role: protocol.ClaimRoleConsume,
-		SwapMode: protocol.SwapModeManualSwap, PayloadCode: "PART-UG", UOPCapacity: 100,
-		InboundSource: "FG-SUPER", OutboundDestination: "EMPTY-TOTES", AutoPush: true,
-	})
-	testutil.MustNoErr(t, err, "stored AutoPush claim at N")
 	_, _, claim, err := eng.loadActiveNode(f.n)
 	testutil.MustNoErr(t, err, "load N")
-	if claim == nil || claim.ID == 0 || !claim.AutoPush {
-		t.Fatalf("fixture: want a stored AutoPush claim at %s, got %+v", f.nCore, claim)
+	if claim == nil || claim.ID != 0 || !claim.AutoPush {
+		t.Fatalf("fixture: want L's synthesized AutoPush claim at %s, got %+v", f.nCore, claim)
 	}
 	core.set(f.n2Core, false, "")
 	core.set(f.w3Core, false, "")
@@ -152,7 +142,7 @@ func TestPinUnloaderGate_U2Landed(t *testing.T) {
 	testutil.MustNoErr(t, err, "read N")
 	_, _, claim, err := f.eng.loadActiveNode(f.n)
 	testutil.MustNoErr(t, err, "load N")
-	testutil.MustNoErr(t, f.eng.createUnloaderEmptyOut(nNode, claim), "the U2, without the tap's own gate")
+	testutil.MustNoErr(t, f.eng.createUnloaderEmptyOut(nNode, claim, 0), "the U2, without the tap's own gate")
 	moves := scMovesFrom(t, f.db, f.nCore)
 	if len(moves) != 1 {
 		t.Fatalf("fixture: U2s leaving %s = %d, want 1", f.nCore, len(moves))
@@ -172,19 +162,18 @@ func TestPinUnloaderGate_U2Landed(t *testing.T) {
 	}
 }
 
-// TestPinUnloaderGate_OffAtACoreOwnedWindow: the same CLEAR at a window with no
-// stored claim — the shape every unloader has after the claim quarantine —
-// fires nothing, because SynthClaim never sets AutoPush. This is live behaviour
-// at both plants until the loader carries the flag (P1).
-func TestPinUnloaderGate_OffAtACoreOwnedWindow(t *testing.T) {
+// TestPinUnloaderGate_OffAtALoaderWithoutAutoPush: the same CLEAR at a window of
+// an unloader whose auto_push is off (M) fires nothing, and reads nothing:
+// SynthClaim carries the loader's flag, off by default.
+func TestPinUnloaderGate_OffAtALoaderWithoutAutoPush(t *testing.T) {
 	t.Parallel()
 	f := newUGFixture(t, "UGO")
-	f.core.set(f.n2Core, true, "PART-UG")
+	f.core.set(f.w3Core, true, "PART-UG")
 	f.core.set(f.nCore, false, "")
 	before := f.core.nodeBinReads()
-	testutil.MustNoErr(t, f.eng.ClearBin(f.n2, "", false), "ClearBin at N2 (synthesized claim)")
-	if got := f.fulls(t, f.nCore) + f.fulls(t, f.w3Core); got != 0 {
-		t.Errorf("U1s after CLEAR at a Core-owned window = %d, want 0 (AutoPush is off on SynthClaim)", got)
+	testutil.MustNoErr(t, f.eng.ClearBin(f.w3, "", false), "ClearBin at W3 (M, auto_push off)")
+	if got := f.fulls(t, f.nCore) + f.fulls(t, f.n2Core) + f.fulls(t, f.w3Core); got != 0 {
+		t.Errorf("U1s after CLEAR at a loader without auto_push = %d, want 0", got)
 	}
 	if reads := f.core.nodeBinReads() - before; reads != 0 {
 		t.Errorf("node-bins reads = %d, want 0", reads)

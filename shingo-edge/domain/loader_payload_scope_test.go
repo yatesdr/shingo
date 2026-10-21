@@ -13,7 +13,7 @@ import (
 // cards" board bug (every position was being fed the whole loader's payload set).
 func TestLoader_LoadablePayloadCodesAt_Dedicated(t *testing.T) {
 	t.Parallel()
-	l, err := NewDedicatedPositionsLoader("loader:7", "Supermarket Dedicated Locations",
+	l, err := NewDedicatedPositionsLoader("loader:7",
 		RoleProduce, ReplenishmentOperator, []Position{
 			{Node: "SMN_014", Payload: "SYN-PART13E.06"},
 			{Node: "SMN_015", Payload: "SYN-PART12E.06"},
@@ -24,8 +24,8 @@ func TestLoader_LoadablePayloadCodesAt_Dedicated(t *testing.T) {
 	}
 
 	// Whole-loader set is unchanged (used by non-node-scoped callers).
-	if got := l.LoadablePayloadCodes(); len(got) != 2 {
-		t.Errorf("LoadablePayloadCodes() = %v, want the 2 pinned payloads", got)
+	if got := l.loadablePayloadCodes(); len(got) != 2 {
+		t.Errorf("loadablePayloadCodes() = %v, want the 2 pinned payloads", got)
 	}
 
 	// Per-position scoping: each home offers ONLY its pinned payload.
@@ -67,7 +67,7 @@ func TestLoader_LoadablePayloadCodesAt_Dedicated(t *testing.T) {
 // position) shows one card per home, not the whole catalog at every home.
 func TestLoader_SynthClaim_DedicatedScopesPayload(t *testing.T) {
 	t.Parallel()
-	l, err := NewDedicatedPositionsLoader("loader:7", "Supermarket Dedicated Locations",
+	l, err := NewDedicatedPositionsLoader("loader:7",
 		RoleProduce, ReplenishmentOperator, []Position{
 			{Node: "SMN_014", Payload: "SYN-PART13E.06"},
 			{Node: "SMN_015", Payload: "SYN-PART12E.06"},
@@ -94,7 +94,7 @@ func TestLoader_SynthClaim_DedicatedScopesPayload(t *testing.T) {
 // regress markets/drains.
 func TestLoader_LoadablePayloadCodesAt_SharedUnchanged(t *testing.T) {
 	t.Parallel()
-	l, err := NewSharedWindowLoader("loader:6", "SMN_001", RoleProduce, ReplenishmentOperator,
+	l, err := NewSharedWindowLoader("loader:6", RoleProduce, ReplenishmentOperator,
 		[]Window{{Node: "SMN_001"}}, []PayloadCode{"P-A", "P-B", "P-C"})
 	if err != nil {
 		t.Fatalf("build loader: %v", err)

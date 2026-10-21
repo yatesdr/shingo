@@ -37,11 +37,17 @@ type recordingLoaderStore struct {
 	unloader    *domain.Loader
 }
 
-func (r *recordingLoaderStore) LoaderForPayload(payload domain.PayloadCode, role domain.LoaderRole, _ bool) (*domain.Loader, error) {
+func (r *recordingLoaderStore) LoaderForPayload(payload domain.PayloadCode, role domain.LoaderRole) (*domain.Loader, error) {
 	if role == domain.RoleConsume {
 		r.asked = append(r.asked, string(payload))
 	}
 	return r.unloader, nil
+}
+
+// LoaderForNode answers a clean miss: the press the trigger fires from is no
+// loader's window, and claimAtNode asks the loader store before the stored claim.
+func (r *recordingLoaderStore) LoaderForNode(domain.NodeID) (*domain.Loader, error) {
+	return nil, ErrLoaderNotFound
 }
 
 // mustNode reads a process node or fails the test.

@@ -49,8 +49,8 @@ import (
 // forklift driver works, and the code knew it long before it said so:
 // plantspec.Claim's loader predicate was documented as "a forklift-managed
 // loader/unloader claim" while being named IsManualSwap after the field it
-// read; store/processes.PayloadsForLoader implements the word "loader" as
-// WalkOpts{SwapMode: manual_swap}; and domain.Loader.SynthClaim stamps this
+// read; the Edge's store/processes.PayloadsForLoader (since deleted) spelt the
+// word "loader" as WalkOpts{SwapMode: manual_swap}; and domain.Loader.SynthClaim stamps this
 // mode onto an in-memory claim for a thing that has no swap at all, purely so
 // the branches engage. Every author wrote "loader" in the comment and
 // "manual_swap" in the code, so the concept had no name and a reader had to

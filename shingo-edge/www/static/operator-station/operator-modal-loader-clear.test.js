@@ -44,13 +44,15 @@ vm.createContext(ctx);
 vm.runInContext(extractFn(src, 'loaderOffersClear'), ctx);
 const offers = (bin, remaining) => vm.runInContext('loaderOffersClear', ctx)(bin, remaining);
 
-eq(offers({ occupied: true, payload_code: 'SHIM', uop_remaining: 0 }, 0), true,
+eq(offers({ occupied: true, payload_code: 'SHIM', stocked: false }, 0), true,
     'a labelled carrier at 0: CLEAR is offered (the only way out)');
-eq(offers({ occupied: true, payload_code: 'SHIM', uop_remaining: -2 }, 0), true,
+eq(offers({ occupied: true, payload_code: 'SHIM', stocked: false }, -2), true,
     'a labelled carrier below 0: CLEAR is offered');
-eq(offers({ occupied: true, payload_code: 'SHIM', uop_remaining: 12 }, 12), true,
+eq(offers({ occupied: true, payload_code: 'SHIM', stocked: true }, 0), false,
+    'a labelled carrier Core counts stocked, the Edge at 0: no CLEAR (the count is still coming)');
+eq(offers({ occupied: true, payload_code: 'SHIM', stocked: true }, 12), true,
     'a carrier with units: CLEAR is offered, as before');
-eq(offers({ occupied: true, payload_code: '', uop_remaining: 0 }, 0), false,
+eq(offers({ occupied: true, payload_code: '', stocked: false }, 0), false,
     'an empty unlabelled carrier: nothing to clear, LOAD is the action');
 eq(offers({ occupied: false }, 0), false, 'no carrier: no CLEAR');
 eq(offers(null, 5), false, 'no bin state: no CLEAR');

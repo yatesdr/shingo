@@ -21,7 +21,7 @@ func TestCoreLoadersCache_OptionsSurviveReopen(t *testing.T) {
 		LoaderKey: "loader:OPT", Role: "consume", Name: "OPT", Layout: "shared_window",
 		Replenishment: "operator", FunnelWindows: true, ChangeoverLoadDirective: true,
 		LeavesBare: true, AutoPush: true,
-		Positions: []protocol.LoaderPosition{{CoreNodeName: "OPT-W1", Kind: "window"}},
+		Positions: []protocol.LoaderPosition{{CoreNodeName: "OPT-W1"}},
 		Payloads:  []protocol.LoaderPayloadInfo{{PayloadCode: "PART-A"}},
 	}}), "write the cache")
 	testutil.MustNoErr(t, db.Close(), "close")

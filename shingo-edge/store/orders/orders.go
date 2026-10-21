@@ -869,24 +869,6 @@ func ListDeliveredRetrieveByDeliveryNode(db *sql.DB, deliveryNode string, retrie
 	return scanOrders(rows)
 }
 
-// ListActiveByDeliveryNode returns non-terminal orders whose delivery_node
-// matches the given (core) node name, regardless of which process_node row
-// tracks them. The manual_swap side-cycle in-flight / dedup checks use this: a
-// loader or unloader has one core node (one physical slot) but many process_node
-// rows across styles/cells, so a process-node-scoped count misses orders staged
-// against a sibling row — under-counting in-flight empties/fulls and letting the
-// slot be over-committed. See also ListDeliveredRetrieveByDeliveryNode.
-func ListActiveByDeliveryNode(db *sql.DB, deliveryNode string) ([]Order, error) {
-	rows, err := db.Query(fmt.Sprintf(`SELECT `+selectCols+` `+joinClause+`
-		WHERE o.delivery_node = ? AND o.status NOT IN (%s)
-		ORDER BY o.created_at`, protocol.TerminalStatusSQLList()), deliveryNode)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	return scanOrders(rows)
-}
-
 // Placing is PlacingAt's answer.
 type Placing int
 
@@ -950,7 +932,7 @@ func PlacingAt(db *sql.DB, coreNode string) (Placing, error) {
 // ListActiveByDeliveryNodeSet returns non-terminal orders whose delivery_node is
 // in the given set, in a SINGLE query (one snapshot). The multi-window
 // reservation seam counts in-flight empties across a loader's whole delivery-node
-// cluster with this — a loop of per-node ListActiveByDeliveryNode would take N
+// cluster with this — a loop of per-node reads would take N
 // separate snapshots and reopen the count→fire race window between them. An empty
 // set returns no orders (callers treat that as "nothing in flight"). Duplicate
 // node names are harmless (the IN set dedups them).
@@ -1312,4 +1294,30 @@ func SetWaitPoint(db *sql.DB, uuid string, stationWait *int, waitKind string) er
 	_, err := db.Exec(`UPDATE orders SET station_wait=?, wait_kind=?, updated_at=datetime('now') WHERE uuid=?`,
 		stationWait, waitKind, uuid)
 	return err
+}
+
+// ListQueuedWithReasonAt returns the orders tracked at a set of process nodes
+// that are queued with Core's reason for the wait: what a served cell is
+// waiting on, in ONE query. QueueReason is non-empty only while an order is
+// queued (domain.Order.QueueReason). No ids, no statement.
+func ListQueuedWithReasonAt(db *sql.DB, processNodeIDs []int64) ([]Order, error) {
+	if len(processNodeIDs) == 0 {
+		return nil, nil
+	}
+	args := make([]any, 0, len(processNodeIDs)+1)
+	marks := make([]string, 0, len(processNodeIDs))
+	for _, id := range processNodeIDs {
+		args = append(args, id)
+		marks = append(marks, "?")
+	}
+	args = append(args, string(protocol.StatusQueued))
+	rows, err := db.Query(`SELECT `+selectCols+` `+joinClause+`
+		WHERE o.process_node_id IN (`+strings.Join(marks, ",")+`)
+		  AND o.status = ? AND o.queue_reason != ''
+		ORDER BY o.created_at`, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanOrders(rows)
 }

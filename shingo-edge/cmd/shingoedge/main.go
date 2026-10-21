@@ -489,6 +489,16 @@ func setupKafkaSubscribers(eng *engine.Engine, msgClient *messaging.Client, cfg 
 			log.Printf("edge_handler: containment snapshot: %v", err)
 		}
 	})
+	// Core's node-bins feed: the bins at the nodes this Edge's stations draw,
+	// sent to this Edge alone after it publishes its watch list, after a change
+	// at a watched node, and when its held digest differs. The station view
+	// reads the copy held here. Registered here in the same place the subject
+	// joins EdgeInboundSubjects.
+	router.RegisterSubject(subjectRouter, protocol.SubjectBinsSnapshot, func(_ *protocol.Envelope, snap *protocol.NodeBinsSnapshot) {
+		if err := eng.ApplyNodeBinsSnapshot(*snap); err != nil {
+			log.Printf("edge_handler: node-bins snapshot: %v", err)
+		}
+	})
 	// Core's whole open refusal set, sent to this Edge when its refusals digest
 	// differs from Core's. Merged per field, not copied; a failed apply is
 	// logged by the engine and the next heartbeat's digest asks again.

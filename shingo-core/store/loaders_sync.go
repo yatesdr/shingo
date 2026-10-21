@@ -39,9 +39,9 @@ func (db *DB) DemandRegistryStations() ([]string, error) {
 }
 
 // BuildLoaderInfos assembles every Core-owned loader into the protocol shape
-// carried on NodeListResponse.Loaders. Each dedicated position's node id is
-// resolved to its name; a position whose node has vanished is skipped (the sync
-// stays best-effort rather than failing the whole node list).
+// carried on NodeListResponse.Loaders. Each home's position node id (a window
+// or a dedicated position) is resolved to its name; a home whose node has
+// vanished is skipped rather than failing the whole node list.
 func (db *DB) BuildLoaderInfos() ([]protocol.LoaderInfo, error) {
 	ls, err := db.ListLoaders()
 	if err != nil {
@@ -57,7 +57,6 @@ func (db *DB) BuildLoaderInfos() ([]protocol.LoaderInfo, error) {
 			Replenishment: l.Replenishment,
 			OutboundDest:  l.OutboundDest,
 			InboundSource: l.InboundSource,
-			ConfigGen:     l.ConfigGen,
 			FunnelWindows: l.FunnelWindows,
 
 			ChangeoverLoadDirective: l.ChangeoverLoadDirective,
@@ -73,33 +72,18 @@ func (db *DB) BuildLoaderInfos() ([]protocol.LoaderInfo, error) {
 			BoardShowsAllParts: l.BoardShowsAllParts,
 		}
 
-		// A home's kind is fully determined by the parent loader's layout: a
-		// shared_window loader's homes are physical WINDOWS (no per-position
-		// payload — the shared set rides info.Payloads); a dedicated loader's
-		// homes are dedicated positions. Deriving it here, at the single
-		// projection point, keeps Layout the one source of truth and stamps the
-		// wire so the Edge never sniffs empty payload to guess.
-		positionKind := protocol.LoaderPositionKindDedicated
-		if l.Layout == loaders.LayoutSharedWindow {
-			positionKind = protocol.LoaderPositionKindWindow
-		}
-
 		homes, err := db.ListLoaderHomes(l.ID)
-		if err != nil {
-			return nil, err
-		}
-		// What each window can physically take. Absent = takes anything.
-		capabilities, err := db.ListLoaderHomeBinTypes(l.ID)
 		if err != nil {
 			return nil, err
 		}
 		// Every member's name in ONE query, rather than a lookup per home.
 		//
-		// This sync runs on a timer — the node list, and this slice with it, is
-		// re-sent every other heartbeat tick (~2 min) whether or not anything
-		// changed. A per-home read made that a lookup for each position at every
-		// plant, forever, to rebuild a projection that is almost always identical
-		// to the one before it.
+		// This projection is rebuilt on every node-list request and, per
+		// station, whenever the nodes feed's memo expires (feedMemoStation in
+		// messaging/feeds.go, two minutes), whether or not anything changed. A
+		// per-home read made that a lookup for each position at every plant,
+		// forever, to rebuild a projection that is almost always identical to
+		// the one before it.
 		//
 		// The absent-node behaviour is preserved exactly: MemberNodeNames INNER
 		// JOINs nodes, so a home pointing at a deleted node is simply not in the
@@ -132,14 +116,12 @@ func (db *DB) BuildLoaderInfos() ([]protocol.LoaderInfo, error) {
 			info.Positions = append(info.Positions, protocol.LoaderPosition{
 				CoreNodeName: name,
 				PayloadCode:  h.PayloadCode,
-				Kind:         positionKind,
 				HomeKind:     homeKind,
 				UOPThreshold: h.UOPThreshold,
 				// The operator's arrangement, carried down. It was persisted
 				// here and read by the admin screen, and stopped at this
 				// function — everything below re-sorted by name.
-				Ordinal:  h.SortOrder,
-				BinTypes: capabilities[h.PositionNodeID],
+				Ordinal: h.SortOrder,
 			})
 		}
 
@@ -151,17 +133,6 @@ func (db *DB) BuildLoaderInfos() ([]protocol.LoaderInfo, error) {
 			info.Payloads = append(info.Payloads, protocol.LoaderPayloadInfo{
 				PayloadCode:  p.PayloadCode,
 				UOPThreshold: p.UOPThreshold,
-			})
-		}
-
-		quotas, err := db.ListLoaderQuotas(l.ID)
-		if err != nil {
-			return nil, err
-		}
-		for _, q := range quotas {
-			info.Quota = append(info.Quota, protocol.LoaderQuota{
-				BinTypeCode: q.BinTypeCode,
-				Want:        q.Want,
 			})
 		}
 

@@ -215,13 +215,14 @@ func TestClaim_DeleteRetiresWhenHistoryReferencesIt(t *testing.T) {
 	if _, err := db.GetStyleNodeClaimByNode(sid, "PLN_01"); !errors.Is(err, sql.ErrNoRows) {
 		t.Fatalf("GetStyleNodeClaimByNode on a retired claim: err = %v, want ErrNoRows", err)
 	}
-	var walked int
-	if err := processes.WalkClaims(db.DB, processes.WalkOpts{}, func(processes.WalkCtx) bool { walked++; return false }); err != nil {
-		t.Fatalf("walk: %v", err)
+	// The station view's served read skips it too, with its style running.
+	testutil.MustNoErr(t, db.SetActiveStyle(pid, &sid), "db.SetActiveStyle")
+	served, err := processes.ListServedClaims(db.DB)
+	testutil.MustNoErr(t, err, "processes.ListServedClaims")
+	if len(served) != 0 {
+		t.Fatalf("ListServedClaims read %d retired claim(s)", len(served))
 	}
-	if walked != 0 {
-		t.Fatalf("WalkClaims visited %d retired claim(s)", walked)
-	}
+	testutil.MustNoErr(t, db.SetActiveStyle(pid, nil), "db.SetActiveStyle")
 	// The routing backfill ignores it, and the delete guard no longer holds
 	// its source.
 	runBackfillOnce(t, db)

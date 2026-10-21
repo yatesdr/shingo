@@ -39,9 +39,10 @@ func TestRegression_LoadBin_SeedsActiveBinEpochFromCoreResponse(t *testing.T) {
 	defer srv.Close()
 
 	db := testEngineDB(t)
-	_, nodeID, _ := seedActiveManualSwapLoader(t, db, "SNF2", "LOADER", "PART-A")
+	_, nodeID, _ := seedLoaderNode(t, db, "SNF2", "LOADER")
 
 	eng := testEngine(t, db)
+	seedCoreLoader(t, eng, sharedLoaderInfo("LOADER", "produce", "operator", "PART-A", 0, 0))
 	sink := &fakeDeltaSink{db: db}
 	eng.SetInventoryDeltaSink(sink)
 	eng.coreClient = stubCoreClient(srv.URL)
@@ -208,8 +209,9 @@ func (p *loadBinWireProbe) server(t *testing.T) *httptest.Server {
 func loadBinTestEngine(t *testing.T, srv *httptest.Server) (*Engine, *store.DB, int64) {
 	t.Helper()
 	db := testEngineDB(t)
-	_, nodeID, _ := seedActiveManualSwapLoader(t, db, "SNF2", "LOADER", "PART-A")
+	_, nodeID, _ := seedLoaderNode(t, db, "SNF2", "LOADER")
 	eng := testEngine(t, db)
+	seedCoreLoader(t, eng, sharedLoaderInfo("LOADER", "produce", "operator", "PART-A", 0, 0))
 	eng.SetInventoryDeltaSink(&fakeDeltaSink{db: db})
 	eng.coreClient = stubCoreClient(srv.URL)
 	return eng, db, nodeID

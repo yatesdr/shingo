@@ -37,19 +37,21 @@ function extractFn(src, name) {
 const src = fs.readFileSync(path.join(__dirname, 'operator-render.js'), 'utf8');
 const ctx = {};
 vm.createContext(ctx);
+// The tile's loader is read through the board model (operator-board-model.js).
+vm.runInContext(extractFn(fs.readFileSync(path.join(__dirname, 'operator-board-model.js'), 'utf8'), 'loaderOf'), ctx);
 vm.runInContext(extractFn(src, 'pulledDirectlyNote'), ctx);
 const note = ctx.pulledDirectlyNote;
 
 const cart = { occupied: true, payload_code: '' };
-eq(note({ pulled_directly: true, bin_state: cart }), 'The cart waits here for the line',
+eq(note({ loader: { pulled_directly: true }, bin_state: cart }), 'The cart waits here for the line',
     'a finished cart on a pulled-directly window waits for the line');
-eq(note({ pulled_directly: false, bin_state: cart }), '',
+eq(note({ loader: { pulled_directly: false }, bin_state: cart }), '',
     'the option off: no sentence, the window sends its cart on as today');
-eq(note({ pulled_directly: true, bin_state: { occupied: false } }), '',
+eq(note({ loader: { pulled_directly: true }, bin_state: { occupied: false } }), '',
     'an empty window says nothing');
-eq(note({ pulled_directly: true, bin_state: { occupied: true, payload_code: 'PART-X' } }), '',
+eq(note({ loader: { pulled_directly: true }, bin_state: { occupied: true, payload_code: 'PART-X' } }), '',
     'a cart still carrying parts is not finished');
-eq(note({ pulled_directly: true }), '', 'no bin state: nothing to say');
+eq(note({ loader: { pulled_directly: true } }), '', 'no bin state: nothing to say');
 
 console.log('operator pulled directly: ' + passed + ' passed, ' + failed + ' failed');
 process.exit(failed ? 1 : 0);

@@ -29,6 +29,18 @@ func seedNode(t *testing.T, db *store.DB, name string) int64 {
 	return nodeID
 }
 
+// configGen reads bin_loaders.config_gen. The column is still bumped on every
+// loader config write; no Go field carries it since the downward sync stopped
+// sending it, so the pins read the column.
+func configGen(t *testing.T, db *store.DB, id int64) int64 {
+	t.Helper()
+	var gen int64
+	if err := db.DB.QueryRow(`SELECT config_gen FROM bin_loaders WHERE id=$1`, id).Scan(&gen); err != nil {
+		t.Fatalf("read config_gen loader=%d: %v", id, err)
+	}
+	return gen
+}
+
 func produceLoader(name string) loaders.Loader {
 	return loaders.Loader{
 		Name: name, Role: loaders.RoleProduce,
@@ -53,8 +65,9 @@ func TestLoaderCRUD(t *testing.T) {
 	if got.Name != "LDR-1" || got.Layout != loaders.LayoutDedicatedPositions {
 		t.Errorf("GetLoader = %+v, want LDR-1 / dedicated_positions", got)
 	}
-	if got.ConfigGen != 1 {
-		t.Errorf("fresh loader config_gen = %d, want 1", got.ConfigGen)
+	gen1 := configGen(t, db, id)
+	if gen1 != 1 {
+		t.Errorf("fresh loader config_gen = %d, want 1", gen1)
 	}
 
 	byName, err := db.GetLoaderByName("LDR-1", loaders.RoleProduce)
@@ -72,8 +85,8 @@ func TestLoaderCRUD(t *testing.T) {
 	if got2.Layout != loaders.LayoutSharedWindow || got2.OutboundDest != "OVERFLOW-MARKET" {
 		t.Errorf("after update = %+v, want shared_window / OVERFLOW-MARKET", got2)
 	}
-	if got2.ConfigGen <= got.ConfigGen {
-		t.Errorf("config_gen did not advance on update: %d -> %d", got.ConfigGen, got2.ConfigGen)
+	if gen2 := configGen(t, db, id); gen2 <= gen1 {
+		t.Errorf("config_gen did not advance on update: %d -> %d", gen1, gen2)
 	}
 
 	all, err := db.ListLoaders()
@@ -153,7 +166,7 @@ func TestPayloadSetAndConfigGen(t *testing.T) {
 	db := testdb.Open(t)
 	id, _ := db.CreateLoader(produceLoader("SW"))
 
-	gen := func() int64 { l, _ := db.GetLoader(id); return l.ConfigGen }
+	gen := func() int64 { return configGen(t, db, id) }
 	g0 := gen()
 
 	if err := db.UpsertLoaderPayload(loaders.Payload{LoaderID: id, PayloadCode: "PART-X", UOPThreshold: 100}); err != nil {

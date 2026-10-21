@@ -14,20 +14,6 @@ import (
 	storeorders "shingoedge/store/orders"
 )
 
-// manualSwapWindowSlots is how many bins a single manual_swap core node can
-// physically stage at its window — one (one physical slot per window/position).
-//
-// The LOADER empty path no longer reads this constant: withLoaderBudget
-// derives the budget from the delivery-node SET cardinality (one bin per node),
-// so a multi-window loader's budget grows to N when delivery spreads
-// without a magic number, and the per-payload dedup + capacity cap are unified in
-// the seam. The unloader's full-in derives its budget the same way
-// (decideLoaderBudget), so no production path reads the constant. It remains as
-// the expected one-window cap in the capacity tests (loader_capacity_cap_test.go,
-// try_create_l1_test.go), and it documents the one-bin-per-node physical model
-// the operator-path anti-spam guard also encodes (operator_bin_ops.go).
-const manualSwapWindowSlots = 1
-
 // A produce loader's automatic replenishment is now decided entirely on Core.
 // The Edge used to receive a below-threshold signal and work out how many
 // carriers were needed and where they went; that half is gone, and Core creates
@@ -76,8 +62,9 @@ func (e *Engine) loaderBudgetLock(loaderID string) *lockcheck.Mutex[lockorder.Lo
 // not this function: it decides every payload of an unloader from one read.
 // Core's own threshold replenishment no longer passes through here at all: it
 // does not run here any more. It is NOT a universal chokepoint.
-// Per the 2026-07-31 census this creates loader-window retrieves WITHOUT passing
-// through here: RequestEmptyBin's simple mode. The HTTP order API used to be
+// RequestEmptyBin on a line that is no loader goes through the produce
+// request, never this seam, and delivers to the line's own node, not a loader
+// window. The HTTP order API used to be
 // named here too and no longer belongs — Deploy 1b routed it through the seam
 // (api_retrieve.go). The changeover paths (changeover_applier.go,
 // operator_node_changeover.go) also create retrieves outside this seam; whether
@@ -155,7 +142,7 @@ func (e *Engine) withLoaderBudget(loader *domain.Loader, payload domain.PayloadC
 	}
 	// The Loader owns the reservation shape: which nodes the count spans and the
 	// budget. multiWindowFor gates whether THIS shared loader spreads across its
-	// windows (budget = SlotCount) or takes one at a time (budget 1); member
+	// windows (budget = the window count) or takes one at a time (budget 1); member
 	// routes a dedicated reservation to the position the signal named —
 	// see domain.Loader.ReservationTarget.
 	nodes, budget := loader.ReservationTarget(member, payload, e.multiWindowFor(loader))
@@ -355,17 +342,12 @@ func (d *loaderBudgetDecision) logFired(e *Engine, snap *loaderSnapshot, created
 // Edge config key, which could only answer for every loader at once; a plant
 // that needed the funnel for one loader imposed it on all of them.
 //
-// THE CONFIG KEY IS DEPRECATED AND SURVIVES ONLY AS A PLANT-WIDE OFF SWITCH.
-// An explicit `loaders_multi_window: false` still funnels every loader,
-// because deleting the key outright would silently switch such a plant to
-// spreading — a live behaviour change nobody asked for, delivered by a
-// deployment that only changed a default. It cannot turn spreading ON against a
-// loader that is configured to funnel: the loader is the authority, and the key
-// is a brake, never an accelerator. Deploy 9 removes it once no config sets it.
+// The plant-wide config key that once braked every loader to the funnel
+// (loaders_multi_window: false) is gone: no plant's Edge config set it, the
+// dev rigs no longer carry it, and a file that still does loads and ignores it
+// (config.TestLoad_ARetiredKeyStillLoads). Pinned by
+// TestFunnelWindows_TheLoaderDecides.
 func (e *Engine) multiWindowFor(l *domain.Loader) bool {
-	if e.cfg != nil && e.cfg.LoadersMultiWindow != nil && !*e.cfg.LoadersMultiWindow {
-		return false
-	}
 	return l == nil || !l.FunnelWindows()
 }
 

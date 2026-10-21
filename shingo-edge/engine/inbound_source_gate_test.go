@@ -20,8 +20,7 @@ func blankInboundLoaderInfo(coreNode, role, payload string) protocol.LoaderInfo 
 		Replenishment: "threshold",
 		InboundSource: "", // press/forklift-fed: no source to pull from
 		OutboundDest:  "EMPTY-TOTES",
-		ConfigGen:     1,
-		Positions:     []protocol.LoaderPosition{{CoreNodeName: coreNode, Kind: "window"}},
+		Positions:     []protocol.LoaderPosition{{CoreNodeName: coreNode}},
 		Payloads:      []protocol.LoaderPayloadInfo{{PayloadCode: payload}},
 	}
 }
@@ -35,14 +34,14 @@ func TestCreateUnloaderFullIn_NoInboundSkipsAutoPull(t *testing.T) {
 	t.Parallel()
 	db := testEngineDB(t)
 	eng := testEngine(t, db)
-	_, nodeID, _ := seedActiveManualSwapLoader(t, db, "DRAIN-PROC", "DRAIN-NODE", "PART-D")
+	_, nodeID, _ := seedLoaderNode(t, db, "DRAIN-PROC", "DRAIN-NODE")
 	seedCoreLoader(t, eng, blankInboundLoaderInfo("DRAIN-NODE", "consume", "PART-D"))
 
-	l, err := eng.loaderStore.LoaderForPayload(domain.PayloadCode("PART-D"), domain.RoleConsume, true)
+	l, err := eng.loaderStore.LoaderForPayload(domain.PayloadCode("PART-D"), domain.RoleConsume)
 	if err != nil || l == nil {
 		t.Fatalf("resolve consume loader: loader=%v err=%v", l, err)
 	}
-	eng.createUnloaderFullInViaSeam(l, "PART-D")
+	eng.createUnloaderFullIns(l, []domain.PayloadCode{"PART-D"})
 
 	ords, err := db.ListActiveOrdersByProcessNode(nodeID)
 	if err != nil {
@@ -62,7 +61,7 @@ func TestTryCreateL1_NoInboundSkips(t *testing.T) {
 	t.Parallel()
 	db := testEngineDB(t)
 	eng := testEngine(t, db)
-	_, nodeID, _ := seedActiveManualSwapLoader(t, db, "DL-PROC", "DL-NODE", "PART-DL")
+	_, nodeID, _ := seedLoaderNode(t, db, "DL-PROC", "DL-NODE")
 	seedCoreLoader(t, eng, blankInboundLoaderInfo("DL-NODE", "produce", "PART-DL"))
 
 	loader := resolveLoader(t, eng, "PART-DL") // produce-role resolve
@@ -74,5 +73,31 @@ func TestTryCreateL1_NoInboundSkips(t *testing.T) {
 		if o.RetrieveEmpty {
 			t.Errorf("blank-inbound loader must not auto-create an L1; found order %d", o.ID)
 		}
+	}
+}
+
+// TestRequestFullBin_PullsFromTheUnloadersInboundSource pins where the
+// operator's REQUEST FULL at an unloader window pulls from: the unloader's own
+// inbound source, which a blank would turn into Core's global FIFO scan.
+func TestRequestFullBin_PullsFromTheUnloadersInboundSource(t *testing.T) {
+	t.Parallel()
+	db := testEngineDB(t)
+	eng := testEngine(t, db)
+	nodeID := coreUnloaderWindow(t, eng, "RFS-W1", protocol.LoaderInfo{
+		Name: "RFS", LoaderKey: "loader:RFS", Role: "consume", Layout: "shared_window",
+		Replenishment: protocol.LoaderReplenishmentOperator, InboundSource: "FG-SUPER",
+		OutboundDest: "EMPTY-TOTES",
+		Positions:    []protocol.LoaderPosition{{CoreNodeName: "RFS-W1"}},
+		Payloads:     []protocol.LoaderPayloadInfo{{PayloadCode: "PART-A"}},
+	})
+	stub := newSweepBinsStub(t, nil, "", false)
+	eng.coreClient = stubCoreClient(stub.srv.URL)
+
+	order, err := eng.RequestFullBin(nodeID, "PART-A")
+	if err != nil || order == nil {
+		t.Fatalf("RequestFullBin = %+v, %v; want one full ordered", order, err)
+	}
+	if order.SourceNode != "FG-SUPER" {
+		t.Errorf("full ordered from %q, want the unloader's inbound source FG-SUPER", order.SourceNode)
 	}
 }

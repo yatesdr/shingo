@@ -5,87 +5,77 @@ import (
 	"testing"
 
 	"shingo/protocol"
+	"shingoedge/store/processes"
 )
 
-// TestLoadablePayloads_PrefersAggregateOverStaleClaim pins the post-cutover
-// invariant that the load/request gate reads the loader's Core-owned payload set
-// (the aggregate) — the SAME source the operator board shows — and NOT the
-// per-style edge style_node_claims the cutover left behind.
+// TestLoadablePayloads_PrefersAggregateOverStaleClaim pins that the load/request
+// gate reads the loader's Core-owned payload set at the node — the SAME source
+// the operator board shows — and not a claim's own narrower list.
 //
 // Reproduces Springfield 2026-06-17: SMN_001's per-style claims held narrow
 // allowed lists that omitted a payload since added to the loader on the Core
 // board. The board offered it; the gate (reading the stale claim union) rejected
-// it with "payload ... not in allowed list for node". With the aggregate as the
-// source of truth, the gate accepts every payload the board offers.
+// it with "payload ... not in allowed list for node". With the loader as the
+// source of truth, the gate accepts every payload the board offers, whatever
+// claim it is handed, and the claim the engine resolves at the node is the
+// loader's own.
 func TestLoadablePayloads_PrefersAggregateOverStaleClaim(t *testing.T) {
 	t.Parallel()
 	db := testEngineDB(t)
 	eng := testEngine(t, db)
 
-	// THE SYNC COMES FIRST, AND THE ORDER IS LOAD-BEARING. seedCoreLoader is
-	// SetCoreLoaders, the live node-list path, and that path now quarantines every
-	// stored manual_swap claim — so seeding the claim before the sync would have
-	// the sync move it, and this test would be handed a SYNTHESIZED claim carrying
-	// the aggregate's own list rather than the stale one it is about.
-	//
-	// Sync-then-save is also the only way the state still arises in the field: an
-	// operator saving a loader cell through the compare grid between two node-list
-	// syncs. The scenario, the subject and the assertions below are unchanged.
-	//
-	// Core-owned aggregate: the loader now carries a broader set — PART-NEW was
-	// added on the board after the per-style edge config was frozen.
+	// The loader carries the broader set: PART-NEW was added on the Core board.
 	seedCoreLoader(t, eng, protocol.LoaderInfo{
 		Name: "LDR", LoaderKey: "loader:LDR", Role: "produce",
 		Layout: "shared_window", Replenishment: "operator",
-		InboundSource: "EMPTY-SUPER", OutboundDest: "FG-MARKET", ConfigGen: 2,
-		Positions: []protocol.LoaderPosition{{CoreNodeName: "LDR", Kind: "window"}},
+		InboundSource: "EMPTY-SUPER", OutboundDest: "FG-MARKET",
+		Positions: []protocol.LoaderPosition{{CoreNodeName: "LDR"}},
 		Payloads: []protocol.LoaderPayloadInfo{
 			{PayloadCode: "PART-OLD"}, {PayloadCode: "PART-NEW"},
 		},
 	})
-
-	// Stale per-style edge claim: this loader node's allowed list is just PART-OLD
-	// (what the per-style picker held before it was retired).
-	_, nodeID, _ := seedActiveManualSwapLoader(t, db, "PROC", "LDR", "PART-OLD")
+	_, nodeID, _ := seedLoaderNode(t, db, "PROC", "LDR")
 
 	node, _, claim, err := eng.loadActiveNode(nodeID)
 	if err != nil {
 		t.Fatalf("loadActiveNode: %v", err)
 	}
-	// Precondition: the resolved claim is the real, stale one — its own list omits
-	// PART-NEW, so a claim-derived gate would (wrongly) reject it.
-	if got := claim.AllowedPayloads(); !slices.Equal(got, []string{"PART-OLD"}) {
-		t.Fatalf("precondition: claim.AllowedPayloads() = %v, want the stale [PART-OLD]", got)
+	if claim == nil || claim.ID != 0 || !slices.Equal(claim.AllowedPayloads(), []string{"PART-NEW", "PART-OLD"}) {
+		t.Fatalf("claim at LDR = %+v, want the loader's synthesized claim allowing [PART-NEW PART-OLD]", claim)
 	}
 
-	got := eng.loadablePayloads(node, claim)
-	if !slices.Contains(got, "PART-NEW") {
-		t.Errorf("loadablePayloads = %v; want PART-NEW from the Core aggregate "+
-			"(the board offers it, so the gate must accept it)", got)
+	// A claim whose own list omits PART-NEW, as the stale per-style claim did.
+	stale := &processes.NodeClaim{
+		CoreNodeName: "LDR", Role: protocol.ClaimRoleProduce, SwapMode: protocol.SwapModeManualSwap,
+		PayloadCode: "PART-OLD", AllowedPayloadCodes: []string{"PART-OLD"},
 	}
-	if !slices.Contains(got, "PART-OLD") {
-		t.Errorf("loadablePayloads = %v; want it to still include PART-OLD", got)
+	for name, c := range map[string]*processes.NodeClaim{"resolved": claim, "stale": stale} {
+		got := eng.loadablePayloads(node, c)
+		if !slices.Contains(got, "PART-NEW") || !slices.Contains(got, "PART-OLD") {
+			t.Errorf("loadablePayloads with the %s claim = %v; want the loader's set, PART-NEW and PART-OLD "+
+				"(the board offers both, so the gate must accept both)", name, got)
+		}
 	}
 }
 
-// TestLoadablePayloads_FallsBackToClaimWhenNotInAggregate pins the preserved
-// pre-cutover behaviour: a manual_swap node absent from the Core aggregate
-// (legacy / not yet migrated) falls back to the per-style edge claim union, so an
-// unmigrated loader still resolves payloads rather than stranding the operator.
+// TestLoadablePayloads_FallsBackToClaimWhenNotInAggregate pins the other arm:
+// at a node no Core loader names, the gate reads the claim's own list.
 func TestLoadablePayloads_FallsBackToClaimWhenNotInAggregate(t *testing.T) {
 	t.Parallel()
 	db := testEngineDB(t)
 	eng := testEngine(t, db)
 
-	_, nodeID, _ := seedActiveManualSwapLoader(t, db, "PROC", "LDR", "PART-OLD")
-	// No seedCoreLoader — the loader is absent from the aggregate.
-
-	node, _, claim, err := eng.loadActiveNode(nodeID)
+	_, nodeID, _ := seedLoaderNode(t, db, "PROC", "LDR")
+	// No seedCoreLoader — no loader names LDR.
+	node, err := db.GetProcessNode(nodeID)
 	if err != nil {
-		t.Fatalf("loadActiveNode: %v", err)
+		t.Fatalf("get node: %v", err)
 	}
-	got := eng.loadablePayloads(node, claim)
-	if !slices.Equal(got, []string{"PART-OLD"}) {
-		t.Errorf("loadablePayloads = %v; want fallback to the claim union [PART-OLD]", got)
+	claim := &processes.NodeClaim{
+		CoreNodeName: "LDR", Role: protocol.ClaimRoleProduce, SwapMode: protocol.SwapModeManualSwap,
+		PayloadCode: "PART-OLD", AllowedPayloadCodes: []string{"PART-OLD"},
+	}
+	if got := eng.loadablePayloads(node, claim); !slices.Equal(got, []string{"PART-OLD"}) {
+		t.Errorf("loadablePayloads = %v; want the claim's own list [PART-OLD]", got)
 	}
 }

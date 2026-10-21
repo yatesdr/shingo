@@ -332,14 +332,12 @@ func ListClaims(db DBTX, styleID int64) ([]NodeClaim, error) {
 // It exists so a per-process reader (the plant-claims publisher) does not
 // issue one ListClaims per style. On a store pinned to one connection that
 // loop was 1 + styles queries per process, and Press 4 and Press 6 at
-// Springfield are headed for 40-90 styles each. Same shape as
-// PayloadsForManualSwapNodes in walk.go, which replaced a per-style walk
-// after a 44-second board build.
+// Springfield are headed for 40-90 styles each.
 //
 // The style filter is a semi-join rather than a JOIN so claimSelect and
 // scanNodeClaim are reused verbatim: both tables carry id and created_at, and
-// a hand-qualified copy of the column list is exactly the drift walk.go's
-// comment warns about. The subquery applies liveStyles — a retired style's
+// a hand-qualified copy of the column list could drift from the scan order.
+// The subquery applies liveStyles — a retired style's
 // claims must not reach Core, exactly as ListStylesByProcess would not have
 // visited them — and the outer WHERE applies liveClaims, so a retired claim
 // (one changeover history still points at) reads as absent here exactly as
@@ -617,8 +615,8 @@ func upsertClaim(db DBTX, kinds domain.CoreNodeKinds, in NodeClaimInput) (int64,
 	// operator-visible error, which is why the rows were quarantined FIRST and
 	// the allowlist closed after. Once a loader sync has run the grid has no
 	// loader cell to offer, so nothing reaches this arm. Before the first
-	// non-empty sync the rows are still stored — and cloneStyleTx copies them into
-	// any style cloned meanwhile — so a click there gets the allowlist's refusal
+	// non-empty sync the rows are still stored (neither style copy carries one to
+	// another style: notLoaderClaim), so a click there gets the allowlist's refusal
 	// instead.
 	//
 	// It stays as an assert rather than a branch: the invariant is about what a
@@ -1124,4 +1122,70 @@ func StampClaimPresetProvenance(db *sql.DB, styleID, presetID int64, version int
 		return 0, err
 	}
 	return res.RowsAffected()
+}
+
+// ServedClaim is a live claim of a process's running or incoming style, with
+// the process and the style it belongs to: one input row of the station
+// view's served pass.
+type ServedClaim struct {
+	Claim       NodeClaim
+	ProcessID   int64
+	ProcessName string
+	// StyleName is what Core's sourcing verdict is keyed by, with the process
+	// name.
+	StyleName string
+	// Incoming is true for the process's target style when it is not the
+	// running one.
+	Incoming bool
+}
+
+// ListServedClaims returns the live claims of every process's running style
+// and of its incoming style (a target that is not the running one), in ONE
+// query: per process in name order, the running style's claims then the
+// incoming style's, each in (sequence, core_node_name) order, the order
+// ListClaims gives. A retired style or claim reads as absent, as in
+// ListClaims. Every claim is returned, loader claims included: which of them
+// a board serves is the caller's question (service isLoaderClaim).
+//
+// The styles are a derived table whose columns name none of the claim's, so
+// claimSelect and scanNodeClaim are reused verbatim.
+func ListServedClaims(db *sql.DB) ([]ServedClaim, error) {
+	rows, err := db.Query(`SELECT ` + claimSelect + `, x.pid, x.pname, x.sname, x.incoming
+		FROM style_node_claims
+		JOIN (
+			SELECT p.id AS pid, p.name AS pname, s.id AS sid, s.name AS sname, 0 AS incoming
+			FROM processes p JOIN styles s ON s.id = p.active_style_id AND s.deleted_at IS NULL
+			UNION ALL
+			SELECT p.id, p.name, s.id, s.name, 1
+			FROM processes p JOIN styles s ON s.id = p.target_style_id AND s.deleted_at IS NULL
+			WHERE p.active_style_id IS NULL OR p.target_style_id != p.active_style_id
+		) x ON x.sid = style_node_claims.style_id
+		WHERE` + liveClaims + `
+		ORDER BY x.pname, x.pid, x.incoming, style_node_claims.sequence, style_node_claims.core_node_name`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []ServedClaim
+	for rows.Next() {
+		var sc ServedClaim
+		c, err := scanNodeClaim(servedScanner{rows, &sc})
+		if err != nil {
+			return nil, err
+		}
+		sc.Claim = c
+		out = append(out, sc)
+	}
+	return out, rows.Err()
+}
+
+// servedScanner scans a claim row's own columns into scanNodeClaim's
+// destinations and the derived table's into the ServedClaim.
+type servedScanner struct {
+	rows *sql.Rows
+	sc   *ServedClaim
+}
+
+func (s servedScanner) Scan(dest ...any) error {
+	return s.rows.Scan(append(dest, &s.sc.ProcessID, &s.sc.ProcessName, &s.sc.StyleName, &s.sc.Incoming)...)
 }

@@ -19,13 +19,10 @@ import (
 // *Loader through a LoaderStore, and the older (node, claim) shim it replaced is
 // gone. Anything describing this type as inert is out of date.
 //
-// Why it exists: today "what loader is this node part of, and what is its
-// budget" is re-derived in five places (the resolver, the in-flight counter, the
-// station view, the HMI renderer, the demand emitter) from a core_node_name plus
-// scattered boolean predicates — and two of those derivations already disagree
-// for a shared loader that has window homes. A single typed aggregate that owns
-// its windows, its payload set, and its slot count makes multi-window fall out
-// instead of being patched into a node-keyed world.
+// Why it exists: "what loader is this node part of, and what is its budget" is
+// answered once, by a typed aggregate that owns its windows, its payload set and
+// its slot count, rather than re-derived per caller from a core_node_name and
+// scattered boolean predicates.
 
 // ── Typed domain identifiers ────────────────────────────────────────
 //
@@ -36,20 +33,20 @@ import (
 // convert at the boundary; this is deliberately NOT a repo-wide rename.
 
 type (
-	// LoaderID is the stable identity of a bin-loader aggregate. Today it is the
-	// loader's anchor core_node_name; callers treat it opaquely so a future
-	// switch to a UUID is invisible to them. Distinct from NodeID so a physical
-	// node can never be passed where a loader identity is expected.
+	// LoaderID is the stable identity of a bin-loader aggregate: Core's
+	// loader_key token ("loader:<id>"), never a node name. Callers treat it
+	// opaquely. Distinct from NodeID so a physical node can never be passed
+	// where a loader identity is expected.
 	LoaderID string
 
-	// NodeID is a physical node's core_node_name — a shared loader's window, a
-	// dedicated loader's position, or an anchor. The order delivery_node lives
-	// in this space.
+	// NodeID is a physical node's core_node_name — a shared loader's window or
+	// a dedicated loader's position. The order delivery_node lives in this
+	// space.
 	NodeID string
 
 	// PayloadCode identifies a payload (part) type. The empty value means
-	// "unassigned" — a positive PositionKind, never the empty string, marks a
-	// window (the convention C0 replaces).
+	// "unassigned"; whether a member is a window or a position is the loader's
+	// LoaderLayout, never an empty payload.
 	PayloadCode string
 )
 
@@ -92,29 +89,11 @@ const (
 	ReplenishmentThreshold LoaderReplenishment = protocol.LoaderReplenishmentThreshold
 )
 
-// PositionKind is the EXPLICIT marker that replaces the empty-payload-means-window
-// convention. A window belongs to a shared_window loader's shared budget and
-// carries no per-position payload; a dedicated position carries exactly one
-// payload (which may be empty == not yet assigned by the operator). Empty payload
-// alone is ambiguous between "window" and "unassigned dedicated position"; the
-// kind disambiguates. On the wire and the Edge cache the kind is materialized
-// (protocol.LoaderPosition.Kind, core_loader_positions.kind); in code the
-// authoritative discriminator stays LoaderLayout, and kind is derived from it at
-// the single Core projection point (BuildLoaderInfos).
-type PositionKind string
-
-const (
-	PositionKindWindow    PositionKind = "window"
-	PositionKindDedicated PositionKind = "dedicated"
-)
-
 // ── Member types ────────────────────────────────────────────────────
 
 // Window is one load point of a shared_window loader. Every window presents the
 // same shared demand; an empty may be delivered to ANY free window, and all
-// windows draw on the loader's single budget. Currently one physical bin per
-// window (the manualSwapWindowSlots=1 assumption B3 retires at the LOADER level,
-// not the window level).
+// windows draw on the loader's single budget. One physical bin per window.
 type Window struct {
 	Node NodeID
 }
@@ -126,9 +105,7 @@ type Position struct {
 	Node    NodeID
 	Payload PayloadCode // "" when the operator hasn't assigned a payload yet
 	// HomeKind is Core's own classification of this position: HomeKindHome or
-	// HomeKindBuffer. EMPTY MEANS UNKNOWN — a Core predating the field on the
-	// wire — and callers must fall back to the blank-payload inference rather
-	// than reading blank as "home"; an older Core sends blank for buffers too.
+	// HomeKindBuffer. Core sends one on every position.
 	//
 	// It exists because Payload == "" answers two questions at once: a BUFFER
 	// slot pins no payload, and so does a HOME the operator has dragged in but
@@ -139,28 +116,17 @@ type Position struct {
 	UOPThreshold int
 }
 
-// Position home kinds, mirroring Core's bin_loader_homes.home_kind. Blank is a
-// third state — "this Core did not say" — and IsBuffer treats it as such.
+// Position home kinds, mirroring Core's bin_loader_homes.home_kind.
 const (
 	HomeKindHome   = protocol.LoaderHomeKindHome
 	HomeKindBuffer = protocol.LoaderHomeKindBuffer
 )
 
-// IsBuffer reports whether this position is a kept-partial BUFFER slot.
-//
-// Prefers Core's answer and falls back to the old inference only when Core did
-// not give one. That fallback is the pre-field behaviour verbatim, so an Edge
-// talking to an older Core behaves exactly as it did — and an Edge talking to a
-// current Core stops calling an unassigned home a buffer.
+// IsBuffer reports whether this position is a kept-partial BUFFER slot: Core's
+// answer, never inferred from an empty payload (an unassigned home pins no
+// payload either). Pinned by TestPositionIsBuffer.
 func (p Position) IsBuffer() bool {
-	switch p.HomeKind {
-	case HomeKindBuffer:
-		return true
-	case HomeKindHome:
-		return false
-	default:
-		return p.Payload == ""
-	}
+	return p.HomeKind == HomeKindBuffer
 }
 
 // ── The aggregate ───────────────────────────────────────────────────
@@ -176,7 +142,7 @@ func (p Position) IsBuffer() bool {
 //     empty node ids, and empty payloads in the shared set are rejected by the
 //     constructors (a consume shared loader may declare zero payloads — see
 //     NewSharedWindowLoader);
-//   - SlotCount is DERIVED, never passed, so a slot count below the member count
+//   - the slot count is DERIVED, never passed, so a slot count below the member count
 //     cannot be expressed.
 //
 // The reservation seam and the resolver hang off this type. Immutable
@@ -184,14 +150,13 @@ func (p Position) IsBuffer() bool {
 // cannot mutate the aggregate's state.
 type Loader struct {
 	id            LoaderID
-	name          string
 	role          LoaderRole
 	layout        LoaderLayout
 	replenishment LoaderReplenishment
 	windows       []Window      // shared_window only
 	positions     []Position    // dedicated_positions only
 	payloadSet    []PayloadCode // shared_window only — the shared allowed set
-	slotCount     int           // total physical slots; the shared-window empty-in budget
+	slotCount     int           // total physical slots: a shared loader's empty-in budget (N windows, never 2N); a dedicated loader's position count
 
 	// Optional runtime config carried so the empty-in / completion paths need
 	// neither the legacy claim nor a second lookup. Set via LoaderOption.
@@ -201,7 +166,7 @@ type Loader struct {
 	funnelWindows           bool                // shared_window only: take one window at a time instead of spreading (see FunnelWindows)
 	changeoverLoadDirective bool                // a changeover commandeers this station's card (see ChangeoverLoadDirective)
 	leavesBare              bool                // stage 1 of a two-stage unloader: its CLEAR leaves the cart bare (see LeavesBare)
-	autoPush                bool                // a freed window re-pulls this unloader's next full (see AutoPush)
+	autoPush                bool                // a freed window re-pulls this unloader's next full (see WithAutoPush)
 	pulledDirectly          bool                // stage 2 whose finished carts the process pulls off its windows (see PulledDirectly)
 	boardHidesIdle          bool                // the board leaves off spots with nothing to do (see BoardHidesIdle)
 	boardShowsAllParts      bool                // the board lists every part, not only the running style's (see BoardShowsAllParts)
@@ -219,8 +184,7 @@ func WithInboundSource(src string) LoaderOption {
 
 // WithOutboundDest sets the market a loader's FILLED bin (L2) / an unloader's
 // EMPTIED bin (U2) is sent to on completion (claim.OutboundDestination /
-// CoreLoader.OutboundDest). The completion handlers read this off the aggregate
-// instead of the legacy claim once the legacy path is retired (step 5).
+// CoreLoader.OutboundDest). The completion handlers read it off the aggregate.
 func WithOutboundDest(dst string) LoaderOption {
 	return func(l *Loader) { l.outboundDest = dst }
 }
@@ -251,7 +215,7 @@ func WithFunnelWindows(funnel bool) LoaderOption {
 // NewSharedWindowLoader builds a shared_window loader: N windows presenting one
 // shared payload set, drawing on one budget (= the window count). Returns an
 // error rather than a half-built aggregate on any invariant violation.
-func NewSharedWindowLoader(id LoaderID, name string, role LoaderRole, repl LoaderReplenishment, windows []Window, payloadSet []PayloadCode, opts ...LoaderOption) (*Loader, error) {
+func NewSharedWindowLoader(id LoaderID, role LoaderRole, repl LoaderReplenishment, windows []Window, payloadSet []PayloadCode, opts ...LoaderOption) (*Loader, error) {
 	if id == "" {
 		return nil, fmt.Errorf("loader: empty id")
 	}
@@ -282,7 +246,6 @@ func NewSharedWindowLoader(id LoaderID, name string, role LoaderRole, repl Loade
 	}
 	l := &Loader{
 		id:            id,
-		name:          name,
 		role:          role,
 		layout:        LayoutSharedWindow,
 		replenishment: repl,
@@ -300,7 +263,7 @@ func NewSharedWindowLoader(id LoaderID, name string, role LoaderRole, repl Loade
 // N independent one-bin positions, each its own node and payload. A position with
 // an empty payload is legal (the operator has not assigned one yet) — what is
 // rejected is an empty node id or zero positions.
-func NewDedicatedPositionsLoader(id LoaderID, name string, role LoaderRole, repl LoaderReplenishment, positions []Position, opts ...LoaderOption) (*Loader, error) {
+func NewDedicatedPositionsLoader(id LoaderID, role LoaderRole, repl LoaderReplenishment, positions []Position, opts ...LoaderOption) (*Loader, error) {
 	if id == "" {
 		return nil, fmt.Errorf("loader: empty id")
 	}
@@ -317,7 +280,6 @@ func NewDedicatedPositionsLoader(id LoaderID, name string, role LoaderRole, repl
 	}
 	l := &Loader{
 		id:            id,
-		name:          name,
 		role:          role,
 		layout:        LayoutDedicatedPositions,
 		replenishment: repl,
@@ -333,7 +295,6 @@ func NewDedicatedPositionsLoader(id LoaderID, name string, role LoaderRole, repl
 // ── Accessors (the fields are unexported; these are read-only) ───────
 
 func (l *Loader) ID() LoaderID                       { return l.id }
-func (l *Loader) Name() string                       { return l.name }
 func (l *Loader) Role() LoaderRole                   { return l.role }
 func (l *Loader) Layout() LoaderLayout               { return l.layout }
 func (l *Loader) Replenishment() LoaderReplenishment { return l.replenishment }
@@ -447,13 +408,6 @@ func (l *Loader) MisconfiguredThreshold() bool {
 	return l.replenishment == ReplenishmentThreshold && !l.hasConfiguredThreshold()
 }
 
-// SlotCount is the loader's total physical bin slots — for a shared_window loader
-// this is the shared empty-in budget (one demand of N → exactly N empties across
-// all windows, never 2N). For a dedicated loader it is the position count; each
-// position is independently one-bin, so the per-reservation budget there is 1
-// (the seam scopes a dedicated reservation to a single position node).
-func (l *Loader) SlotCount() int { return l.slotCount }
-
 func (l *Loader) IsShared() bool    { return l.layout == LayoutSharedWindow }
 func (l *Loader) IsDedicated() bool { return l.layout == LayoutDedicatedPositions }
 
@@ -527,19 +481,6 @@ func (l *Loader) BoardHidesIdle() bool { return l.boardHidesIdle }
 // takes, rather than only what a running style needs.
 func (l *Loader) BoardShowsAllParts() bool { return l.boardShowsAllParts }
 
-// AutoPush reports whether a freed window re-pulls this unloader's next full.
-// SynthClaim carries it onto the claim the operator doors and the completion
-// chain read.
-func (l *Loader) AutoPush() bool { return l.autoPush }
-
-// IsOperatorDriven reports whether the loader's replenishment is operator-driven
-// (replenishment = operator) — the operator stages/clears at the board rather than
-// the automatic threshold path supplying it.
-func (l *Loader) IsOperatorDriven() bool { return l.replenishment == ReplenishmentOperator }
-
-// Windows returns a copy of the shared_window load points (nil for dedicated).
-func (l *Loader) Windows() []Window { return append([]Window(nil), l.windows...) }
-
 // Positions returns a copy of the dedicated positions (nil for shared_window).
 func (l *Loader) Positions() []Position { return append([]Position(nil), l.positions...) }
 
@@ -547,12 +488,12 @@ func (l *Loader) Positions() []Position { return append([]Position(nil), l.posit
 // a dedicated loader's payloads live per-position).
 func (l *Loader) PayloadSet() []PayloadCode { return append([]PayloadCode(nil), l.payloadSet...) }
 
-// LoadablePayloadCodes returns the flattened set of payload codes an operator may
+// loadablePayloadCodes returns the flattened set of payload codes an operator may
 // load or request at this loader: the shared allowed set (shared_window) plus any
 // dedicated-position payloads. This is the Core-owned source of truth that the
 // load/request gates and the operator board both read, so they never disagree
 // about what is loadable. SynthClaim seeds its AllowedPayloadCodes from the same set.
-func (l *Loader) LoadablePayloadCodes() []string {
+func (l *Loader) loadablePayloadCodes() []string {
 	codes := make([]string, 0, len(l.payloadSet)+len(l.positions))
 	for _, p := range l.payloadSet {
 		codes = append(codes, string(p))
@@ -579,11 +520,11 @@ func (l *Loader) PayloadAt(coreNode NodeID) (PayloadCode, bool) {
 	return "", false
 }
 
-// LoadablePayloadCodesAt scopes LoadablePayloadCodes to a SPECIFIC member node.
+// LoadablePayloadCodesAt scopes loadablePayloadCodes to a SPECIFIC member node.
 // For a dedicated_positions loader each position is a one-payload home, so the
 // loadable set AT that node is just its own pinned payload (an unpinned home or a
 // buffer slot has none → nil). For a shared_window loader every window offers the
-// whole shared set, so it returns LoadablePayloadCodes() unchanged. This is the
+// whole shared set, so it returns loadablePayloadCodes() unchanged. This is the
 // per-node truth the operator board and the load/request gate must read for a
 // dedicated loader: a home must advertise (and the gate accept) only its own part,
 // never the other positions' parts. SynthClaim seeds AllowedPayloadCodes from it.
@@ -594,7 +535,7 @@ func (l *Loader) LoadablePayloadCodesAt(coreNode NodeID) []string {
 		}
 		return nil
 	}
-	return l.LoadablePayloadCodes()
+	return l.loadablePayloadCodes()
 }
 
 // SynthClaim builds an in-memory, NON-PERSISTED manual_swap NodeClaim that
@@ -676,12 +617,12 @@ func (l *Loader) ServesPayload(p PayloadCode) bool {
 // across and caps to. The per-layout semantics live here so the seam stays
 // layout-agnostic:
 //
-//   - shared_window, multiWindow=false: funnel to the loader's anchor (its ID)
+//   - shared_window, multiWindow=false: funnel to the loader's first window
 //     with a budget of 1 — behaviour-identical to the pre-multi-window resolver
 //     (FINAL-ADJUDICATION flip-trigger #3: don't fragment the budget before
 //     delivery spreads / the board renders the windows).
 //   - shared_window, multiWindow=true: spread across the loader's windows —
-//     budget = SlotCount, delivered round-robin to free windows. A loader with a
+//     budget = the window count, delivered round-robin to free windows. A loader with a
 //     single window (no homes configured) still resolves to one node / budget 1,
 //     so flipping the flag only changes loaders actually configured multi-window.
 //   - dedicated_positions: the payload maps to ONE independent one-bin position;

@@ -23,10 +23,10 @@ import (
 //	             configuration and SynthClaim serves it, so a stored loader
 //	             claim is a second authority; SetCoreLoaders quarantines any
 //	             that appear and the upsert allowlist no longer accepts one.
-//	             The READ paths that tolerate such a row are still live —
-//	             PayloadsForLoader unions over stored claims, loadActiveNode's
-//	             short-circuit prefers one, the board renders one — and the
-//	             tests below are what pin them.
+//	             A stored row is read only at a node no Core loader names
+//	             (claimAtNode asks the loader first), the state before the
+//	             first non-empty sync; the tests below that seed one pin
+//	             that arm.
 //
 // For a retired mode it upserts with a configurable placeholder (to pass the
 // allowlist), then rewrites swap_mode directly — exactly the pre-lockdown row

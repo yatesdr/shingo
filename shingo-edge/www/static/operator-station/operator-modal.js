@@ -11,6 +11,8 @@ import { openKeypad } from './operator-keypad.js';
 import { openReleasePrompt } from './operator-release.js';
 import { isActive, isPreDispatch } from './order-status.js';
 import { isOwnEmptyOut } from './operator-window-state.js';
+import { loaderOf, partCodes, carriersOf } from './operator-board-model.js';
+import { confirmUnloadSwap } from './operator-render.js';
 
 const nodeModal = document.getElementById('node-modal');
 const nodeModalContent = document.getElementById('node-modal-content');
@@ -113,7 +115,9 @@ export function renderModal(entry) {
         pendingEntry = entry;
         return;
     }
+    // A loader tile carries its loader and no claim; every other tile its claim.
     const claim = entry.active_claim;
+    const loader = loaderOf(entry);
     const runtime = entry.runtime || {};
     const remaining = runtime.remaining_uop_cached != null ? runtime.remaining_uop_cached : 0;
     const capacity = claim ? claim.uop_capacity : 0;
@@ -125,11 +129,11 @@ export function renderModal(entry) {
     html += '<div class="modal-header">';
     html += '<div class="modal-node-name">' + esc(entry.node.name) + '</div>';
 
-    if (claim && claim.swap_mode === 'manual_swap') {
+    if (loader) {
         const binState = entry.bin_state;
         const binLabel = binState && binState.bin_label ? binState.bin_label : 'No bin';
         const binPayload = binState && binState.payload_code ? binState.payload_code : '';
-        const roleLabel = claim.role === 'produce' ? 'Loader' : 'Unloader';
+        const roleLabel = loader.role === 'produce' ? 'Loader' : 'Unloader';
         html += '<div class="modal-payload">' + roleLabel + ' - Bin: ' + esc(binLabel) + (binPayload ? ' (' + esc(binPayload) + ')' : '') + '</div>';
         html += '<div class="modal-fill-row">';
         html += '<div class="modal-fill-text" style="font-size:18px;font-weight:600">' + (remaining > 0 ? 'LOADED (' + remaining + ' UoP)' : 'EMPTY') + '</div>';
@@ -274,13 +278,11 @@ export function renderModal(entry) {
             '<div style="color:#888;font-size:12px;margin-top:4px">' +
             'The changeover moves a bin through this position. There is nothing to release here — ' +
             'work it from ' + esc(entry.child_of_node) + '.</div></div>';
-    } else if (claim) {
-        if (claim.swap_mode === 'manual_swap') {
+    } else if (loader || claim) {
+        if (loader) {
             const binState = entry.bin_state;
             const hasBin = binState && binState.occupied;
-            const allowed = (claim.allowed_payload_codes && claim.allowed_payload_codes.length > 0)
-                ? claim.allowed_payload_codes
-                : (claim.payload_code ? [claim.payload_code] : []);
+            const allowed = partCodes(entry);
 
             const activeOrders = (entry.orders || []).filter(o => isActive(o.status));
             const hasDemand = activeOrders.length > 0;
@@ -304,7 +306,7 @@ export function renderModal(entry) {
             // L2 move-out directly, so any allowed payload is a valid pick.
             // Treat each card as if it were delivered for the purpose of
             // click-handling.
-            const parkedEmptyAtLoader = claim.role === 'produce' &&
+            const parkedEmptyAtLoader = loader.role === 'produce' &&
                 hasBin && binState && !binState.payload_code;
 
             // Symmetric unloader case: full bin parked at unloader, U1 was
@@ -313,18 +315,18 @@ export function renderModal(entry) {
             // downstream — but the matching payload card should signal "this
             // is here, ready" instead of leaving the operator to think the
             // demand is unmet.
-            const parkedFullPayload = (claim.role === 'consume' && hasBin && binState && binState.payload_code)
+            const parkedFullPayload = (loader.role === 'consume' && hasBin && binState && binState.payload_code)
                 ? binState.payload_code : null;
 
             html += '<div class="os-demand-queue">';
             html += '<div style="font-size:13px;color:#999;margin-bottom:8px;text-transform:uppercase;letter-spacing:1px">';
-            html += claim.role === 'produce' ? 'Load Queue' : 'Unload Queue';
+            html += loader.role === 'produce' ? 'Load Queue' : 'Unload Queue';
             html += '</div>';
 
             if (delivered) {
                 html += '<div style="background:#1a3a1a;border:1px solid #2a5a2a;border-radius:6px;padding:10px;margin-bottom:10px;display:flex;align-items:center;gap:8px">';
                 html += '<span style="font-size:14px;font-weight:700;color:#6f6">[READY]</span>';
-                html += '<span style="color:#6f6;font-weight:600">Bin delivered - ready for ' + (claim.role === 'produce' ? 'loading' : 'unloading') + '</span>';
+                html += '<span style="color:#6f6;font-weight:600">Bin delivered - ready for ' + (loader.role === 'produce' ? 'loading' : 'unloading') + '</span>';
                 html += '</div>';
             } else if (inTransit) {
                 html += '<div style="background:#2a2a1a;border:1px solid #5a5a2a;border-radius:6px;padding:10px;margin-bottom:10px;display:flex;align-items:center;gap:8px">';
@@ -383,16 +385,16 @@ export function renderModal(entry) {
 
                 var parkedFullThisCode = parkedFullPayload === code;
                 // BANDAID — pull this manual-request path when proper demand
-                // signals land for manual_swap loaders / unloaders.
+                // signals land for loaders / unloaders.
                 //
                 // Idle-state clickability: when there's no bin and no order
                 // for this payload, let the operator tap the card to issue a
                 // Request Empty (produce loader) or Request Full (consume
-                // unloader). Otherwise the manual_swap HMI has no way to
+                // unloader). Otherwise the loader HMI has no way to
                 // create demand from the station — operators get a wall of
                 // "no demand" cards with nothing actionable.
                 //
-                // Long term, manual_swap demand should flow in automatically
+                // Long term, loader demand should flow in automatically
                 // (auto_push drains unloaders; upstream consume-side
                 // reorder feeds loaders), so the operator never has
                 // to manually request a bin from this screen. (The kanban
@@ -408,7 +410,7 @@ export function renderModal(entry) {
                 var clickable = !!payloadDelivered || parkedEmptyAtLoader || canRequest;
                 var requestUrl = '';
                 if (canRequest) {
-                    requestUrl = claim.role === 'produce'
+                    requestUrl = loader.role === 'produce'
                         ? '/api/process-nodes/' + entry.node.id + '/request-empty|' + code
                         : '/api/process-nodes/' + entry.node.id + '/request-full|' + code;
                 }
@@ -472,7 +474,7 @@ export function renderModal(entry) {
                 } else if (isActive) {
                     html += 'active demand';
                 } else if (canRequest) {
-                    html += claim.role === 'produce' ? 'TAP TO REQUEST EMPTY' : 'TAP TO REQUEST FULL';
+                    html += loader.role === 'produce' ? 'TAP TO REQUEST EMPTY' : 'TAP TO REQUEST FULL';
                 } else {
                     html += 'no demand';
                 }
@@ -501,9 +503,15 @@ export function renderModal(entry) {
                 }
             }
 
+            // CLEAR BIN. An unloader's goes through the CLEAR panel the board's
+            // tap opens, which names the carrier type (a bug fixed: it posted
+            // clear-bin with no type, around the panel); a loader's posts as it
+            // always did.
             if (loaderOffersClear(binState, remaining)) {
-                html += actionBtn('CLEAR BIN', 'empty-tools', true,
-                    '/api/process-nodes/' + entry.node.id + '/clear-bin');
+                html += loader.role === 'consume'
+                    ? actionBtn('CLEAR BIN', 'empty-tools', true, 'unload-panel:' + entry.node.id)
+                    : actionBtn('CLEAR BIN', 'empty-tools', true,
+                        '/api/process-nodes/' + entry.node.id + '/clear-bin');
             }
         } else {
             const btn = cellCardAction(entry, claim, remaining);
@@ -615,10 +623,8 @@ export function renderModal(entry) {
     // Only on loader windows, matching what the server will accept — a node that
     // is not a manual-swap window renders no loader card, so a refusal against it
     // could not have come from a person looking at one.
-    if (claim && claim.swap_mode === 'manual_swap') {
-        const refusable = (claim.allowed_payload_codes && claim.allowed_payload_codes.length > 0)
-            ? claim.allowed_payload_codes
-            : (claim.payload_code ? [claim.payload_code] : []);
+    if (loader) {
+        const refusable = partCodes(entry);
         if (refusable.length > 0) {
             const standing = entry.supply_refusals || {};
             html += '<div class="modal-divider"></div>';
@@ -646,13 +652,13 @@ export function renderModal(entry) {
 
 // loaderOffersClear decides whether a loader window's modal offers CLEAR BIN:
 // for a carrier with units, as always, and for one that came back labelled but
-// reading 0 (Core's count, in binState). That carrier has no outbound move
+// not stocked (Core's count at 0 or below, binState.stocked false). That carrier has no outbound move
 // coming; LOAD refuses it and names the clear (row L item 5), so the clear must
 // be on the card. Pure, so operator-modal-loader-clear.test.js drives it.
 function loaderOffersClear(binState, remaining) {
     if (!binState || !binState.occupied) return false;
     if (remaining > 0) return true;
-    return !!binState.payload_code && binState.uop_remaining <= 0;
+    return !!binState.payload_code && !binState.stocked;
 }
 
 // cellCardAction decides the ONE button a swap cell's card offers, and returns
@@ -804,7 +810,7 @@ function cellCardAction(entry, claim, remaining) {
             return { label: confirmLabel, cls: 'request', enabled: true,
                 action: '/api/confirm-delivery/' + delivered.id };
         }
-        // Same guard as the manual_swap branch above: a half-built complex
+        // Same guard as the loader branch above: a half-built complex
         // order can carry a delivered status with a missing/zero ID. Render
         // disabled so the operator refreshes rather than hits the chi 404 path.
         return { label: 'CONFIRM (refresh)', cls: 'close', enabled: false, action: '' };
@@ -1128,9 +1134,21 @@ const ACTION_HANDLERS = {
         const sid = getSelectedNodeID();
         const entry = sid !== null ? findNodeByID(sid) : null;
         if (!entry) return;
-        const claim = entry.active_claim;
         closeModal();
-        openLoadBin(entry.node.id, [code], claim ? claim.uop_capacity || 0 : 0);
+        // A loader tile carries no capacity: the load modal takes the part's.
+        openLoadBin(entry.node.id, [code], 0);
+    },
+
+    // An unloader's CLEAR BIN: the CLEAR panel the board's tap opens, with the
+    // window's carrier types (operator-render.js confirmUnloadSwap).
+    'unload-panel': () => {
+        const sid = getSelectedNodeID();
+        const entry = sid !== null ? findNodeByID(sid) : null;
+        if (!entry) return;
+        const loader = loaderOf(entry) || {};
+        closeModal();
+        confirmUnloadSwap(entry.node.id, carriersOf(entry),
+            entry.runtime && entry.runtime.remaining_uop_cached, !!loader.leaves_bare);
     },
 
     'keypad': (arg) => {

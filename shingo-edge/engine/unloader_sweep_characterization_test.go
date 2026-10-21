@@ -14,6 +14,7 @@ import (
 	"shingo/protocol"
 	"shingoedge/domain"
 	"shingoedge/orders"
+	"shingoedge/store/processes"
 )
 
 // Characterisation pins for the unloader auto-push sweep (pushUnloadersViaSeam)
@@ -71,12 +72,12 @@ func newSweepBinsStub(t *testing.T, resident map[string]string, mode string, rev
 }
 
 // unloaderInfo builds a shared_window consume loader over windows serving
-// payloads, operator replenishment (the sweep's only drained mode), pulling
+// payloads, operator replenishment (what Core stores for every unloader), pulling
 // from FG-SUPER.
 func unloaderInfo(name string, windows, payloads []string) protocol.LoaderInfo {
 	pos := make([]protocol.LoaderPosition, len(windows))
 	for i, w := range windows {
-		pos[i] = protocol.LoaderPosition{CoreNodeName: w, Kind: "window"}
+		pos[i] = protocol.LoaderPosition{CoreNodeName: w}
 	}
 	ps := make([]protocol.LoaderPayloadInfo, len(payloads))
 	for i, p := range payloads {
@@ -90,7 +91,6 @@ func unloaderInfo(name string, windows, payloads []string) protocol.LoaderInfo {
 		Replenishment: protocol.LoaderReplenishmentOperator,
 		InboundSource: "FG-SUPER",
 		OutboundDest:  "EMPTY-TOTES",
-		ConfigGen:     1,
 		Positions:     pos,
 		Payloads:      ps,
 	}
@@ -156,7 +156,6 @@ func TestUnloaderSweep_NoInboundSource_ZeroReads(t *testing.T) {
 	// Positive control: the same loader WITH an inbound source reads both, so
 	// the zeros above are the gate and not a stub or counter that never counts.
 	info.InboundSource = "FG-SUPER"
-	info.ConfigGen = 2
 	seedCoreLoader(t, eng, info)
 	counter.Reset()
 	eng.pushUnloadersViaSeam()
@@ -175,8 +174,8 @@ func TestUnloaderSweep_ZeroPayloads_ZeroReads(t *testing.T) {
 	seedWindowNodes(t, db, "ZP-PROC", []string{"ZP-P1"})
 	seedCoreLoader(t, eng, protocol.LoaderInfo{
 		Name: "ZP", LoaderKey: "loader:ZP", Role: "consume", Layout: "dedicated_positions",
-		Replenishment: protocol.LoaderReplenishmentOperator, InboundSource: "FG-SUPER", ConfigGen: 1,
-		Positions: []protocol.LoaderPosition{{CoreNodeName: "ZP-P1", PayloadCode: "PART-A", Kind: "position"}},
+		Replenishment: protocol.LoaderReplenishmentOperator, InboundSource: "FG-SUPER",
+		Positions: []protocol.LoaderPosition{{CoreNodeName: "ZP-P1", PayloadCode: "PART-A"}},
 	})
 	ls, err := eng.loaderStore.Loaders(domain.RoleConsume)
 	if err != nil || len(ls) != 1 {
@@ -492,12 +491,11 @@ func TestUnloaderSweep_GuardMatchesRowsByNodeName(t *testing.T) {
 // TestUnloaderSweep_NodeBinsCallCount pins the sweep's Core read cost: one
 // node-bins GET per unloader in L_auto — operator replenishment, an inbound
 // source, and at least one payload — over its whole DeliveryNodes set, however
-// many payloads and windows it has. A threshold consume loader and a no-inbound
-// loader cost nothing.
+// many payloads and windows it has. A no-inbound loader costs nothing.
 //
 //	spread loader: P=2, W=2 → 1
 //	funnel loader: P=2, W=1 → 1 (reads both windows, counts the first)
-//	threshold / no-inbound  → 0
+//	no-inbound              → 0
 //	sweep total             → 2 = L_auto
 //
 // Before the one-pass sweep it was Σ P·(W+1) = 6 + 4 = 10: one guard read per
@@ -507,16 +505,14 @@ func TestUnloaderSweep_NodeBinsCallCount(t *testing.T) {
 	t.Parallel()
 	db := testEngineDB(t)
 	eng := testEngine(t, db)
-	seedWindowNodes(t, db, "CC-PROC", []string{"SP-W1", "SP-W2", "FU-W1", "FU-W2", "TH-W1", "NI-W1"})
+	seedWindowNodes(t, db, "CC-PROC", []string{"SP-W1", "SP-W2", "FU-W1", "FU-W2", "NI-W1"})
 	funnel := unloaderInfo("FU", []string{"FU-W1", "FU-W2"}, []string{"PART-C", "PART-D"})
 	funnel.FunnelWindows = true
-	threshold := unloaderInfo("TH", []string{"TH-W1"}, []string{"PART-E"})
-	threshold.Replenishment = protocol.LoaderReplenishmentThreshold
 	noInbound := unloaderInfo("NIB", []string{"NI-W1"}, []string{"PART-F"})
 	noInbound.InboundSource = ""
 	seedCoreLoader(t, eng,
 		unloaderInfo("SP", []string{"SP-W1", "SP-W2"}, []string{"PART-A", "PART-B"}),
-		funnel, threshold, noInbound)
+		funnel, noInbound)
 	stub := newSweepBinsStub(t, nil, "", false)
 	eng.coreClient = stubCoreClient(stub.srv.URL)
 
@@ -586,4 +582,56 @@ func TestUnloaderSweep_FunnelCountsOnlyItsTargetWindow(t *testing.T) {
 	if got := fullsByWindow(t, eng, windows); fmt.Sprint(got) != fmt.Sprint(want) {
 		t.Fatalf("U1s = %v, want %v (the new one at FN-W1)", got, want)
 	}
+}
+
+// TestUnloaderSweep_ReplenishmentDoesNotGateTheDrain: the Edge does not read a
+// consume loader's stored replenishment. Core refuses threshold on a consume
+// loader (service.ErrConsumeThreshold) and neither plant holds one, so the skip
+// the sweep and the re-pull gates once kept for it is gone: a consume loader
+// stored as threshold is drained by the sweep and by its own re-pulls exactly as
+// an operator one is.
+func TestUnloaderSweep_ReplenishmentDoesNotGateTheDrain(t *testing.T) {
+	t.Parallel()
+	entries := map[string]func(eng *Engine, window string){
+		"sweep": func(eng *Engine, _ string) { eng.pushUnloadersViaSeam() },
+		"own re-pull": func(eng *Engine, window string) {
+			eng.rePushOwnUnloader(mustProcessNode(t, eng, window))
+		},
+		"own re-pull if uncovered": func(eng *Engine, window string) {
+			eng.rePushOwnUnloaderIfUncovered(mustProcessNode(t, eng, window), "")
+		},
+	}
+	for name, run := range entries {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			for _, repl := range []string{protocol.LoaderReplenishmentOperator, protocol.LoaderReplenishmentThreshold} {
+				db := testEngineDB(t)
+				eng := testEngine(t, db)
+				windows := []string{"RG-W1"}
+				seedWindowNodes(t, db, "RG-PROC", windows)
+				info := unloaderInfo("RG", windows, []string{"PART-A"})
+				info.Replenishment = repl
+				seedCoreLoader(t, eng, info)
+				stub := newSweepBinsStub(t, nil, "", false)
+				eng.coreClient = stubCoreClient(stub.srv.URL)
+
+				run(eng, windows[0])
+
+				want := map[string][]string{"RG-W1": {"PART-A"}}
+				if got := fullsByWindow(t, eng, windows); fmt.Sprint(got) != fmt.Sprint(want) {
+					t.Errorf("replenishment %s: U1s = %v, want %v", repl, got, want)
+				}
+			}
+		})
+	}
+}
+
+// mustProcessNode reads the process node at a core node name.
+func mustProcessNode(t *testing.T, eng *Engine, coreNode string) *processes.Node {
+	t.Helper()
+	n, err := eng.db.GetProcessNodeByCoreNodeName(coreNode)
+	if err != nil || n == nil {
+		t.Fatalf("process node %s: %v", coreNode, err)
+	}
+	return n
 }

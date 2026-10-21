@@ -22,8 +22,9 @@ import (
 // a full scan, with no error anywhere else.
 
 // TestLiveDeliveryNodeIndex_ServesTheBoundForLineRead asserts the PLAN for the
-// two shapes orders.ListActiveByDeliveryNodeSet and
-// orders.ListActiveByDeliveryNode issue.
+// set shape orders.ListActiveByDeliveryNodeSet issues, and the single-name
+// shape (its last reader, the legacy empty request, is gone; the plan is kept
+// so a read of one node that comes back does not scan).
 func TestLiveDeliveryNodeIndex_ServesTheBoundForLineRead(t *testing.T) {
 	t.Parallel()
 	db, err := Open(filepath.Join(t.TempDir(), "idx.db"))

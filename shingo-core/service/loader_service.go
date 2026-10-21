@@ -2,8 +2,8 @@
 // refactor: Core authors loader config; the Nodes-page Create-Loader UI and the
 // per-payload UOP-threshold editors call this). Every mutating call re-derives
 // demand_registry from the aggregate and fires the threshold monitor, so a
-// config edit engages immediately; the Edge re-pulls the new LoaderInfos on its
-// next node-list sync (config_gen bumps on each write).
+// config edit engages immediately; the Edge takes the new LoaderInfos with the
+// node list, which Core re-sends when the nodes digest it quotes changes.
 
 package service
 
@@ -27,21 +27,20 @@ type ThresholdNotifier interface {
 
 // ErrConsumeThreshold refuses a consume loader set to threshold replenishment.
 //
-// The combination is storable — the CHECK constraint on replenishment is
-// role-blind — and it produces a loader that does nothing at all. Core derives
-// its thresholds into demand_registry and would fire retrieve orders at it;
-// all three loader-resolution tiers on the threshold path ask for the produce
-// role, so a consume loader is never resolved. Meanwhile the drain that IS a
-// consume loader's job is skipped for exactly this replenishment value. So the
-// unloader neither drains nor replenishes, and the existing misconfiguration
+// The combination is storable (the CHECK constraint on replenishment is
+// role-blind), and its thresholds would mean nothing. Core derives them into
+// demand_registry and would fire retrieve orders at the loader, but all three
+// loader-resolution tiers on the threshold path ask for the produce role, so a
+// consume loader is never resolved. The Edge drains a consume loader whatever
+// its stored replenishment, so the loader drains like any other while the
+// thresholds it shows are acted on by nothing. The existing misconfiguration
 // warning stays silent, because that one only catches threshold mode with no
-// threshold VALUE — and this loader has values.
+// threshold VALUE, and this loader has values.
 //
-// Nothing about that is visible from the outside. The loader appears configured,
-// the boot log says nothing, and the operator finds out when bins stop moving.
-// Refusing it at the door is the whole fix: a consume threshold mode may exist
-// one day (the drain is a kanban problem too), and when it does, this error is
-// what a reader will grep to find every place that has to change.
+// Refusing it at the door keeps a setting off the page that nothing reads. A
+// consume threshold mode may exist one day (the drain is a kanban problem
+// too), and when it does, this error is what a reader will grep to find every
+// place that has to change.
 var ErrConsumeThreshold = errors.New("an unloader cannot be threshold-driven: consume loaders drain, and nothing acts on a consume threshold")
 
 // checkReplenishment rejects the one role/replenishment pair that is storable

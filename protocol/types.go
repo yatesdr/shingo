@@ -296,8 +296,8 @@ const (
 	//
 	// Broadcast rather than routed, and that is the design rather than a
 	// shortcut. Routing would need Core to answer "which edges host cells short
-	// of this payload", which means either retaining process identity through
-	// PayloadsForLoader or joining on inbound_source — a column that may hold a
+	// of this payload", which means either carrying each Edge's served cells to
+	// Core or joining on inbound_source — a column that may hold a
 	// node GROUP name. Broadcasting removes the question: every edge receives
 	// every refusal and filters locally to "a cell here has an outstanding call
 	// for that part", which is the same predicate the loader's own endpoint
@@ -421,6 +421,7 @@ func EdgeInboundSubjects() []string {
 		SubjectSupplyRefusalSnapshot,
 		SubjectOrderProjected,
 		SubjectContainmentSnapshot,
+		SubjectBinsSnapshot,
 	}
 }
 

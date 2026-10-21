@@ -199,7 +199,7 @@ func edgeSharedTargets(t *testing.T, names, payloadSet []string, funnel bool, me
 	for i, p := range payloadSet {
 		set[i] = domain.PayloadCode(p)
 	}
-	l, err := domain.NewSharedWindowLoader("loader:parity", "parity", domain.RoleProduce,
+	l, err := domain.NewSharedWindowLoader("loader:parity", domain.RoleProduce,
 		domain.ReplenishmentThreshold, windows, set, domain.WithFunnelWindows(funnel))
 	if err != nil {
 		t.Fatalf("build edge shared loader %v/%v: %v", names, payloadSet, err)
@@ -214,7 +214,7 @@ func edgeDedicatedTargets(t *testing.T, names, pinned []string, member, ask stri
 	for i, n := range names {
 		positions[i] = domain.Position{Node: domain.NodeID(n), Payload: domain.PayloadCode(pinned[i])}
 	}
-	l, err := domain.NewDedicatedPositionsLoader("loader:parity", "parity", domain.RoleProduce,
+	l, err := domain.NewDedicatedPositionsLoader("loader:parity", domain.RoleProduce,
 		domain.ReplenishmentThreshold, positions)
 	if err != nil {
 		t.Fatalf("build edge dedicated loader %v: %v", names, err)

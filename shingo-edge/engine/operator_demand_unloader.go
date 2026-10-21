@@ -81,7 +81,7 @@ func occupancyUnverifiable(outcome string) bool {
 // that from the order table for this payload alone, and the Core read happens only
 // when a pull is possible (TestPinFold_ProduceRelease).
 func (e *Engine) MaybeCreateUnloaderFullIn(payloadCode string) {
-	loader, err := e.loaderStore.LoaderForPayload(domain.PayloadCode(payloadCode), domain.RoleConsume, true)
+	loader, err := e.loaderStore.LoaderForPayload(domain.PayloadCode(payloadCode), domain.RoleConsume)
 	if err != nil || loader == nil {
 		return
 	}
@@ -89,12 +89,6 @@ func (e *Engine) MaybeCreateUnloaderFullIn(payloadCode string) {
 		e.debugFn("side-cycle: unloader %s — a full-in of %s is already in flight; release offers nothing", loader.ID(), payloadCode)
 		return
 	}
-	e.createUnloaderFullInViaSeam(loader, payloadCode)
-}
-
-// createUnloaderFullInViaSeam offers one payload to the unloader: the P=1 case
-// of createUnloaderFullIns.
-func (e *Engine) createUnloaderFullInViaSeam(loader *domain.Loader, payloadCode string) {
 	e.createUnloaderFullIns(loader, []domain.PayloadCode{domain.PayloadCode(payloadCode)})
 }
 
@@ -292,11 +286,11 @@ func (e *Engine) fireUnloaderFulls(loader *domain.Loader, payloadCode string, ta
 // one pass. The never-2N budget makes it idempotent, so it is safe on any
 // window-free event or as a startup sweep — already-covered windows create nothing.
 //
-// A consume loader has a single mode: the window-queue DRAIN (operator). It pulls a
-// full whenever a window frees and one is waiting — operator-paced via never-2N.
-// The only thing skipped is a (dormant) consume threshold loader: consume-side UOP
-// thresholds aren't emitted yet, so threshold-mode consume loaders are left for that
-// future kanban work rather than auto-drained here.
+// A consume loader has a single mode: the window-queue DRAIN. It pulls a full
+// whenever a window frees and one is waiting — operator-paced via never-2N. Its
+// stored replenishment is not read: Core refuses threshold on a consume loader
+// (service.ErrConsumeThreshold), so every unloader is drained alike. Pinned by
+// TestUnloaderSweep_ReplenishmentDoesNotGateTheDrain.
 func (e *Engine) pushUnloadersViaSeam() {
 	loaders, err := e.loaderStore.Loaders(domain.RoleConsume)
 	if err != nil {
@@ -304,9 +298,6 @@ func (e *Engine) pushUnloadersViaSeam() {
 		return
 	}
 	for _, l := range loaders {
-		if l.Replenishment() == domain.ReplenishmentThreshold {
-			continue // dormant consume-threshold mode — no auto drain yet (future kanban)
-		}
 		e.createUnloaderFullIns(l, l.PayloadSet())
 	}
 }

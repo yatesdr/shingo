@@ -126,11 +126,21 @@ func curtainPointReleased(cache curtainTagCache, p domain.CurtainPoint) bool {
 
 // enrichViewContainmentTargets stamps each node whose core node is named as a
 // containment destination by some producing claim, with that claim's outbound
-// destination â€” the release target a verified bin walks to. The claims
+// destination — the release target a verified bin walks to — and each tile
+// whose bin's payload Core holds contained with the CONTAINED chip. The claims
 // themselves are read once for the whole call; per-node it's a map lookup.
 // Ambiguous destinations (claims disagreeing about the outbound) stamp
 // nothing: the tile renders without the action, which is the safe face of a
-// config problem â€” the release verb refuses the same shape independently.
+// config problem — the release verb refuses the same shape independently.
+//
+// WHERE CORE'S HALF COMES FROM. A destination's group children and the active
+// flags are Core's. From a Core that speaks feeds they are read from the
+// Edge's copy of the containment feed, with no call to Core, for the station
+// view and the Production page alike; with no copy held yet nothing is read
+// instead (no chip, and a tile under a group destination has no target until
+// the copy arrives). From a Core with no feeds nothing is ever held, so the
+// two direct reads stand: the flags, and one children read per destination.
+// Pinned by TestContainmentStamp_ReadsTheHeldCopyWhenCoreSpeaksFeeds.
 func enrichViewContainmentTargets(eng ServiceAccess, views []domain.OperatorStationView) {
 	claims, err := eng.StyleService().ListContainmentClaims()
 	if err != nil {
@@ -139,25 +149,8 @@ func enrichViewContainmentTargets(eng ServiceAccess, views []domain.OperatorStat
 	coverage := containmentCoverage(claims)
 	// GROUP-AWARE MATCHING: a destination may be a node GROUP, whose bins sit
 	// on the group's children (Core mints their names group-prefixed, so the
-	// suffix matches too). One children read per distinct destination,
-	// resolved once for the whole call. CoreAPI may be nil (a test stub, or a
-	// dev edge with no Core configured) — the group half just degrades, the
-	// exact-match half still works.
-	coreAPI := eng.CoreAPI()
-	kids := make(map[string][]string, len(coverage))
-	for dest := range coverage {
-		if coreAPI == nil {
-			continue
-		}
-		children, cerr := coreAPI.FetchNodeChildren(dest, false)
-		if cerr == nil {
-			for _, ch := range children {
-				if ch.NodeType != "NGRP" {
-					kids[dest] = append(kids[dest], ch.Name)
-				}
-			}
-		}
-	}
+	// suffix matches too).
+	kids, flagged := containmentFromCore(eng, coverage)
 	match := func(dest, nodeName string) bool {
 		if dest == nodeName {
 			return true
@@ -168,21 +161,6 @@ func enrichViewContainmentTargets(eng ServiceAccess, views []domain.OperatorStat
 			}
 		}
 		return false
-	}
-	// THE FLAG'S PRESENCE ON THE FLOOR: which payloads Core currently holds
-	// contained — one read for the whole call. A tile whose bin's payload is
-	// flagged renders the CONTAINED chip: its next FG-bound delivery diverts
-	// automatically, and the operator sees that coming instead of being
-	// surprised by a robot headed somewhere unexpected.
-	flagged := make(map[string]bool)
-	if coreAPI != nil {
-		if state, err := coreAPI.GetContainment(); err == nil && state != nil {
-			for _, row := range state.Containment {
-				if row.Active {
-					flagged[row.PayloadCode] = true
-				}
-			}
-		}
 	}
 	for i := range views {
 		for j := range views[i].Nodes {
@@ -212,6 +190,69 @@ func enrichViewContainmentTargets(eng ServiceAccess, views []domain.OperatorStat
 			if binPayload != "" && flagged[binPayload] {
 				views[i].Nodes[j].ContainmentFlagged = true
 			}
+		}
+	}
+}
+
+// feedSpeaker is what the containment stamp asks of the engine beyond
+// ServiceAccess: whether the last heartbeat ack came from a Core that sends
+// feeds. Asserted, as the containment page asserts containmentFeedEngine, so
+// no interface widens for it; a stub without it reads as a Core with none.
+type feedSpeaker interface {
+	CoreSpeaksFeeds() bool
+}
+
+// containmentFromCore is Core's half of the containment stamp: the children of
+// each covered destination that is a group, and the payloads Core holds
+// contained. See enrichViewContainmentTargets for where each comes from.
+func containmentFromCore(eng ServiceAccess, coverage map[string]map[string]string) (kids map[string][]string, flagged map[string]bool) {
+	kids = make(map[string][]string, len(coverage))
+	flagged = make(map[string]bool)
+	if fs, ok := eng.(feedSpeaker); ok && fs.CoreSpeaksFeeds() {
+		state, held := eng.LocalContainment()
+		if !held {
+			return kids, flagged
+		}
+		for _, d := range state.Destinations {
+			if _, covered := coverage[d.Node]; covered && len(d.Children) > 0 {
+				kids[d.Node] = d.Children
+			}
+		}
+		markFlagged(flagged, state.Containment)
+		return kids, flagged
+	}
+	// A Core with no feeds. CoreAPI may be nil (a test stub, or a dev edge
+	// with no Core configured): the group half just degrades, the exact-match
+	// half still works.
+	coreAPI := eng.CoreAPI()
+	if coreAPI == nil {
+		return kids, flagged
+	}
+	for dest := range coverage {
+		children, cerr := coreAPI.FetchNodeChildren(dest, false)
+		if cerr != nil {
+			continue
+		}
+		for _, ch := range children {
+			if ch.NodeType != "NGRP" {
+				kids[dest] = append(kids[dest], ch.Name)
+			}
+		}
+	}
+	if state, err := coreAPI.GetContainment(); err == nil && state != nil {
+		markFlagged(flagged, state.Containment)
+	}
+	return kids, flagged
+}
+
+// markFlagged adds the payloads whose containment flag is active. A tile whose
+// bin's payload is flagged renders the CONTAINED chip: its next FG-bound
+// delivery diverts automatically, and the operator sees that coming instead of
+// being surprised by a robot headed somewhere unexpected.
+func markFlagged(flagged map[string]bool, rows []engine.ContainmentRow) {
+	for _, row := range rows {
+		if row.Active {
+			flagged[row.PayloadCode] = true
 		}
 	}
 }

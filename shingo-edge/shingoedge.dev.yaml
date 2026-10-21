@@ -13,14 +13,6 @@ line_id: line1
 database_path: /data/shingoedge.db
 core_api: http://core:8083
 
-# Multi-window loader delivery (C4). On: a shared_window loader spreads its empties
-# across its window homes (budget = window count, round-robin to free windows, never
-# 2N). Off (production default): empties funnel to the loader's anchor, budget 1 —
-# behaviour-identical to the pre-multi-window resolver. The dev sim turns it on so
-# the demo's 3-window PLK_001 exercises the spread; flipping it changes only loaders
-# actually configured with window homes.
-loaders_multi_window: true
-
 warlink:
   enabled: false                    # sim starts the poller explicitly (T1.3); HMI apply is ignored in sim (F2)
   mode: poll

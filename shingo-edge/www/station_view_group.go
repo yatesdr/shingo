@@ -13,8 +13,9 @@ import (
 // view into one.
 //
 // Why this exists: Edge serialises every DB operation on a single connection
-// (store.Open sets SetMaxOpenConns(1)), and one station view costs roughly 8
-// queries per tile. Nothing stopped N clients from each starting their own
+// (store.Open sets SetMaxOpenConns(1)), and one station view is a few dozen
+// statements whatever its tile count (TestStationView_BuildsInOnePass holds it
+// under stationPollQueryBudget). Nothing stopped N clients from each starting their own
 // build of the same station — a second kiosk tab, a rejoining browser, a
 // postAction refresh, or (worst) a client that timed out and immediately
 // retried while the abandoned build kept running. Those builds queue behind

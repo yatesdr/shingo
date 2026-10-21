@@ -82,13 +82,6 @@ func RenderDefaults() string {
 	}
 	b.WriteString(fmt.Sprintf("demand.default_hysteresis_percent = %g\n", DefaultHysteresisPercent))
 	b.WriteString(fmt.Sprintf("demand.min_hysteresis_uop = %d\n", MinHysteresisUOP))
-	// The key is deprecated and now only answers half the question — the loader's
-	// own funnel_windows answers the other half — so what the snapshot reports is
-	// whether the key is FORCING the funnel plant-wide, not what any given loader
-	// ends up doing. Reporting a plain resolved bool here would state a conclusion
-	// this file can no longer reach.
-	b.WriteString(fmt.Sprintf("loaders_multi_window.forces_funnel = %v\n",
-		cfg.LoadersMultiWindow != nil && !*cfg.LoadersMultiWindow))
 	// Same reason: the raw field reads "0s", which looks like "no delay — always
 	// ask" and means the opposite.
 	b.WriteString(fmt.Sprintf("uop_accumulating_cta_after.resolved = %v\n",

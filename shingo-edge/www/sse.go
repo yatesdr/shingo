@@ -404,6 +404,13 @@ func (h *EventHub) SetupEngineListeners(eng *engine.Engine) {
 			if p, ok := evt.Payload.(engine.ContainmentUpdatedEvent); ok {
 				sseEvt = SSEEvent{Type: "containment", Data: p}
 			}
+		case engine.EventNodeBinsUpdated:
+			// The Edge's copy of Core's node-bins feed changed: the nodes and
+			// groups it names. A station refetches when it draws one of them. A
+			// state change, so durable like containment, not lossy.
+			if p, ok := evt.Payload.(engine.NodeBinsUpdatedEvent); ok {
+				sseEvt = SSEEvent{Type: "bins", Data: p}
+			}
 		default:
 			return
 		}

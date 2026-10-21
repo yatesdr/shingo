@@ -21,8 +21,8 @@ func TestProjectCoreLoader_BranchesOnLayout(t *testing.T) {
 			LoaderKey: "loader:WELD-1", Role: "produce", Layout: "shared_window",
 			InboundSource: "EMPTY-SUPER", OutboundDest: "FG-MARKET",
 			Positions: []store.CoreLoaderPosition{
-				{PositionNode: "WELD-1-W1", PayloadCode: "", Kind: "window"},
-				{PositionNode: "WELD-1-W2", PayloadCode: "", Kind: "window"},
+				{PositionNode: "WELD-1-W1", PayloadCode: ""},
+				{PositionNode: "WELD-1-W2", PayloadCode: ""},
 			},
 			Payloads: []store.CoreLoaderPayload{{PayloadCode: "PART-A"}, {PayloadCode: "PART-B"}},
 		})
@@ -32,8 +32,8 @@ func TestProjectCoreLoader_BranchesOnLayout(t *testing.T) {
 		if !l.IsShared() {
 			t.Fatalf("layout = %v, want shared_window", l.Layout())
 		}
-		ws := l.Windows()
-		if len(ws) != 2 || ws[0].Node != "WELD-1-W1" || ws[1].Node != "WELD-1-W2" {
+		ws := l.DeliveryNodes()
+		if len(ws) != 2 || ws[0] != "WELD-1-W1" || ws[1] != "WELD-1-W2" {
 			t.Errorf("windows = %+v, want [WELD-1-W1 WELD-1-W2]", ws)
 		}
 		ps := l.PayloadSet()
@@ -51,8 +51,8 @@ func TestProjectCoreLoader_BranchesOnLayout(t *testing.T) {
 		l, err := projectCoreLoader(store.CoreLoader{
 			LoaderKey: "loader:SLN-2", Role: "produce", Layout: "dedicated_positions",
 			Positions: []store.CoreLoaderPosition{
-				{PositionNode: "HOME-1", PayloadCode: "PART-A", Kind: "dedicated", UOPThreshold: 80},
-				{PositionNode: "HOME-2", PayloadCode: "PART-B", Kind: "dedicated", UOPThreshold: 90},
+				{PositionNode: "HOME-1", PayloadCode: "PART-A", UOPThreshold: 80},
+				{PositionNode: "HOME-2", PayloadCode: "PART-B", UOPThreshold: 90},
 			},
 		})
 		if err != nil {
@@ -80,7 +80,7 @@ func TestProjectCoreLoader_BranchesOnLayout(t *testing.T) {
 		// (BuildLoaderInfos). Pin the fail-closed contract.
 		if _, err := projectCoreLoader(store.CoreLoader{
 			LoaderKey: "loader:LEG-1", Role: "produce", Layout: "",
-			Positions: []store.CoreLoaderPosition{{PositionNode: "LEG-1-P", PayloadCode: "PART-X", Kind: "dedicated"}},
+			Positions: []store.CoreLoaderPosition{{PositionNode: "LEG-1-P", PayloadCode: "PART-X"}},
 		}); err == nil {
 			t.Fatal("projectCoreLoader with blank layout should error (fail closed), got nil")
 		}

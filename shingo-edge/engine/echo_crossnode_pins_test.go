@@ -295,7 +295,7 @@ func TestPinEcho_SharedWindowL1ToASiblingWindow(t *testing.T) {
 		testutil.MustNoErr(t, err, "ensure runtime")
 	}
 	info := sharedLoaderInfo(x, "produce", "operator", "PART-SW", 0, 0)
-	info.Positions = append(info.Positions, protocol.LoaderPosition{CoreNodeName: w, Kind: "window"})
+	info.Positions = append(info.Positions, protocol.LoaderPosition{CoreNodeName: w})
 	seedCoreLoader(t, eng, info)
 	core.set(x, true, "") // X holds a carrier; W is free
 	core.set(w, false, "")

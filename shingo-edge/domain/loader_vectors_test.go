@@ -86,7 +86,7 @@ func buildLoader(t *testing.T, c loadervectors.TargetCase) *domain.Loader {
 		for _, p := range c.Loader.PayloadSet {
 			set = append(set, domain.PayloadCode(p.Code))
 		}
-		l, err := domain.NewSharedWindowLoader(id, "vector", domain.RoleProduce, domain.ReplenishmentThreshold,
+		l, err := domain.NewSharedWindowLoader(id, domain.RoleProduce, domain.ReplenishmentThreshold,
 			windows, set, domain.WithFunnelWindows(c.Loader.FunnelWindows))
 		if err != nil {
 			t.Fatalf("build shared loader for vector %q: %v", c.Name, err)
@@ -101,7 +101,7 @@ func buildLoader(t *testing.T, c loadervectors.TargetCase) *domain.Loader {
 				Payload: domain.PayloadCode(h.Payload),
 			})
 		}
-		l, err := domain.NewDedicatedPositionsLoader(id, "vector", domain.RoleProduce, domain.ReplenishmentThreshold,
+		l, err := domain.NewDedicatedPositionsLoader(id, domain.RoleProduce, domain.ReplenishmentThreshold,
 			positions, domain.WithFunnelWindows(c.Loader.FunnelWindows))
 		if err != nil {
 			t.Fatalf("build dedicated loader for vector %q: %v", c.Name, err)

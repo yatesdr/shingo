@@ -57,9 +57,15 @@ func TestFakeHandshakeWithRealManager(t *testing.T) {
 	}
 
 	// The counter tag must be in the manager's cache (proves ListTags shape +
-	// key-prefix stripping line up with applyTags/ReadTag).
-	v, err := mgr.ReadTag("PRESS-1", "PRESS-1_COUNTER")
-	if err != nil {
+	// key-prefix stripping line up with applyTags/ReadTag). The poll marks the
+	// PLC Connected and releases its lock before applyTags fills the cache, so
+	// the tag lands a moment after IsConnected turns true: wait for it.
+	var v any
+	var err error
+	if !waitFor(2*time.Second, func() bool {
+		v, err = mgr.ReadTag("PRESS-1", "PRESS-1_COUNTER")
+		return err == nil
+	}) {
 		t.Fatalf("ReadTag after handshake: %v", err)
 	}
 	if _, ok := toInt(v); !ok {

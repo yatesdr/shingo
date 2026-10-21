@@ -19,7 +19,7 @@ import (
 // "destination occupied" and cancelled. The fix is two-fold and both parts are
 // pinned here: (1) the per-node capacity cap in withLoaderBudget bounds total
 // in-flight empties at a core node to its physical window slots
-// (manualSwapWindowSlots); (2) fallback-no-sweep stops an unrelated signal,
+// (one per window); (2) fallback-no-sweep stops an unrelated signal,
 // resolved by payload-first-match, from fanning across the resolved loader's
 // whole catalog. The unloader (consume) analog is covered too.
 
@@ -90,13 +90,12 @@ func capActiveOrders(t *testing.T, db *store.DB, nodeID int64, wantEmpty bool) [
 	return out
 }
 
-// seedActiveManualSwapLoader creates a process with one active style + a produce
-// manual_swap claim + matching process_node, all targeting coreNode for payload.
-// The process_node is what loader resolution needs (node identity); the
-// style/claim remain for the bin-op tests that assert on them. Loader CONFIG now
-// comes from the Core-loader cache — a test that exercises resolution must also
-// call eng.SetCoreLoaders with the matching loader (which warms the cache gate).
-func seedActiveManualSwapLoader(t *testing.T, db *store.DB, procName, coreNode, payload string) (procID, nodeID, styleID int64) {
+// seedLoaderNode creates a process with one active style and a process_node at
+// coreNode: a loader window's node as a station holds it. It writes no claim:
+// the window's claim is the one SynthClaim builds from the Core loader, so a test
+// that exercises the window must also seed that loader (seedCoreLoader), which
+// warms the cache gate.
+func seedLoaderNode(t *testing.T, db *store.DB, procName, coreNode string) (procID, nodeID, styleID int64) {
 	t.Helper()
 	var err error
 	procID, err = db.CreateProcess(procName, "", "", "", false)
@@ -120,19 +119,6 @@ func seedActiveManualSwapLoader(t *testing.T, db *store.DB, procName, coreNode, 
 	}
 	if err := db.SetActiveStyle(procID, &styleID); err != nil {
 		t.Fatalf("set active style for %s: %v", procName, err)
-	}
-	if _, err := upsertClaimRetiredMode(db, processes.NodeClaimInput{
-		StyleID:             styleID,
-		CoreNodeName:        coreNode,
-		Role:                protocol.ClaimRoleProduce,
-		SwapMode:            protocol.SwapModeManualSwap,
-		PayloadCode:         payload,
-		AllowedPayloadCodes: []string{payload},
-		InboundSource:       "EMPTY-SUPER",
-		OutboundDestination: "FG-MARKET",
-		UOPCapacity:         100,
-	}); err != nil {
-		t.Fatalf("upsert claim for %s: %v", coreNode, err)
 	}
 	return procID, nodeID, styleID
 }
@@ -158,8 +144,7 @@ func sharedLoaderInfo(coreNode, role, repl, payload string, _ int, uopThreshold 
 		Replenishment: repl,
 		InboundSource: "EMPTY-SUPER",
 		OutboundDest:  "FG-MARKET",
-		ConfigGen:     1,
-		Positions:     []protocol.LoaderPosition{{CoreNodeName: coreNode, Kind: "window"}},
+		Positions:     []protocol.LoaderPosition{{CoreNodeName: coreNode}},
 		Payloads:      []protocol.LoaderPayloadInfo{{PayloadCode: payload, UOPThreshold: uopThreshold}},
 	}
 }
@@ -180,8 +165,7 @@ func multiPayloadLoaderInfo(coreNode, role, repl string, payloads []string, _ in
 		Replenishment: repl,
 		InboundSource: "EMPTY-SUPER",
 		OutboundDest:  "FG-MARKET",
-		ConfigGen:     1,
-		Positions:     []protocol.LoaderPosition{{CoreNodeName: coreNode, Kind: "window"}},
+		Positions:     []protocol.LoaderPosition{{CoreNodeName: coreNode}},
 		Payloads:      ps,
 	}
 }
@@ -208,8 +192,8 @@ func TestUnloaderCapacityCap_AutoPushBoundedByWindowSlots(t *testing.T) {
 	testutil.MustNoErr(t, err, "read unloader node")
 	eng.rePushOwnUnloader(node)
 
-	if got := len(capActiveOrders(t, db, nodeID, false)); got > manualSwapWindowSlots {
-		t.Errorf("AutoPush unloader staged %d full-in orders, exceeds window cap %d", got, manualSwapWindowSlots)
+	if got := len(capActiveOrders(t, db, nodeID, false)); got > 1 {
+		t.Errorf("AutoPush unloader staged %d full-in orders, exceeds the one-bin window", got)
 	}
 }
 
@@ -226,7 +210,7 @@ func TestUnloaderCapacityCap_SweepPushBoundedByWindowSlots(t *testing.T) {
 
 	eng.SweepPushUnloaders()
 
-	if got := len(capActiveOrders(t, db, nodeID, false)); got > manualSwapWindowSlots {
-		t.Errorf("AutoPush unloader startup sweep staged %d full-in orders, exceeds window cap %d", got, manualSwapWindowSlots)
+	if got := len(capActiveOrders(t, db, nodeID, false)); got > 1 {
+		t.Errorf("AutoPush unloader startup sweep staged %d full-in orders, exceeds the one-bin window", got)
 	}
 }

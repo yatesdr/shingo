@@ -617,14 +617,13 @@ func (e *Engine) rePushOwnLoader(node *processes.Node) {
 // exactly one window, and pulled a full into any OTHER unloader that happened to
 // have a free window. Each unloader's own taps, the lineside-release event and the
 // startup SweepPushUnloaders are its re-pull triggers; nothing depends on another
-// unloader's tap. A dormant consume threshold loader is skipped, as the sweep
-// skips it. Pinned by TestPinUnloaderGate_*.
+// unloader's tap. Pinned by TestPinUnloaderGate_*.
 func (e *Engine) rePushOwnUnloader(node *processes.Node) {
 	l, err := e.loaders().LoaderForNode(domain.NodeID(node.CoreNodeName))
 	if err != nil || l == nil {
 		return
 	}
-	if l.Role() != domain.RoleConsume || l.Replenishment() == domain.ReplenishmentThreshold {
+	if l.Role() != domain.RoleConsume {
 		return
 	}
 	e.createUnloaderFullIns(l, l.PayloadSet())
@@ -657,7 +656,7 @@ func (e *Engine) rePushOwnUnloaderIfUncovered(node *processes.Node, held string)
 	if err != nil || l == nil {
 		return
 	}
-	if l.Role() != domain.RoleConsume || l.Replenishment() == domain.ReplenishmentThreshold {
+	if l.Role() != domain.RoleConsume {
 		return
 	}
 	payloads := l.PayloadSet()

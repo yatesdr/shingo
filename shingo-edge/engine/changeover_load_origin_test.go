@@ -34,7 +34,7 @@ func TestChangeoverLoadOrigin(t *testing.T) {
 			Name: "LDR-CLO", LoaderKey: "loader:901", Role: string(protocol.ClaimRoleProduce),
 			Layout: "shared_window", Replenishment: "operator",
 			ChangeoverLoadDirective: on,
-			Positions:               []protocol.LoaderPosition{{CoreNodeName: "SMN_014", Kind: "window"}},
+			Positions:               []protocol.LoaderPosition{{CoreNodeName: "SMN_014"}},
 			Payloads:                []protocol.LoaderPayloadInfo{{PayloadCode: "PART-A"}},
 		}})
 	}

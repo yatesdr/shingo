@@ -1,7 +1,6 @@
 package service
 
 import (
-	"errors"
 	"strings"
 	"testing"
 
@@ -104,10 +103,6 @@ type stubLoaderResolver struct {
 	loader *domain.Loader
 }
 
-func (r stubLoaderResolver) LoaderAt(domain.NodeID, domain.LoaderRole) (*domain.Loader, error) {
-	return nil, errors.New("not used by SetNodes")
-}
-
 func (r stubLoaderResolver) LoaderForNode(core domain.NodeID) (*domain.Loader, error) {
 	if r.loader != nil && r.loader.Contains(core) {
 		return r.loader, nil
@@ -123,7 +118,7 @@ func TestSetNodes_AcceptsANameInsideALoaderWindow(t *testing.T) {
 	svc, id, _ := crossProcessFixture(t)
 
 	loader, err := domain.NewSharedWindowLoader(
-		domain.LoaderID("LD-SHARED"), "Shared windows", domain.RoleConsume,
+		domain.LoaderID("LD-SHARED"), domain.RoleConsume,
 		domain.ReplenishmentOperator,
 		[]domain.Window{{Node: "FGN_001"}, {Node: "FGN_002"}},
 		nil, // a consume loader may declare no payloads
@@ -147,7 +142,7 @@ func TestSetNodes_LoaderWiredStillRefusesABarePosition(t *testing.T) {
 	svc, id, _ := crossProcessFixture(t)
 
 	loader, err := domain.NewSharedWindowLoader(
-		domain.LoaderID("LD-SHARED"), "Shared windows", domain.RoleConsume,
+		domain.LoaderID("LD-SHARED"), domain.RoleConsume,
 		domain.ReplenishmentOperator,
 		[]domain.Window{{Node: "FGN_002"}},
 		nil,

@@ -865,7 +865,7 @@ CREATE TABLE IF NOT EXISTS core_loaders (
     replenishment  TEXT    NOT NULL DEFAULT '',
     outbound_dest  TEXT    NOT NULL DEFAULT '',
     inbound_source TEXT    NOT NULL DEFAULT '',
-    config_gen     INTEGER NOT NULL DEFAULT 0,
+    config_gen     INTEGER NOT NULL DEFAULT 0,  -- unread, left at 0: a rolled-back build's loader statements name it (Edge v27)
     funnel_windows INTEGER NOT NULL DEFAULT 0,  -- 1 = one window at a time; 0 = spread across windows (the default everywhere)
     -- 1 = a changeover commandeers this station's card and names the carrier the
     -- incoming style needs. Core owns it (bin_loaders); this is the mirror.
@@ -890,29 +890,11 @@ CREATE TABLE IF NOT EXISTS core_loader_positions (
     loader_key     TEXT    NOT NULL,   -- the owning loader's identity token
     position_node  TEXT    NOT NULL,   -- the position node NAME (a real node)
     payload_code   TEXT    NOT NULL,
-    kind           TEXT    NOT NULL DEFAULT '',  -- 'window' | 'dedicated' (synced from Core; Layout is authoritative if empty)
     home_kind      TEXT    NOT NULL DEFAULT '',  -- 'home' | 'buffer' (synced from Core); '' = pre-field Core, fall back to classifying by empty payload
     min_stock      INTEGER NOT NULL DEFAULT 0,
     uop_threshold  INTEGER NOT NULL DEFAULT 0,
     ordinal        INTEGER NOT NULL DEFAULT 0,   -- where the operator dragged this window; 0 everywhere = nothing arranged, fall back to a number-aware name sort
     PRIMARY KEY (loader_key, position_node)
-);
--- What each window can PHYSICALLY take, synced from Core. A window with no rows
--- here takes anything, which is what every window does until somebody says
--- otherwise.
-CREATE TABLE IF NOT EXISTS core_loader_window_bin_types (
-    loader_key     TEXT NOT NULL,
-    position_node  TEXT NOT NULL,
-    bin_type_code  TEXT NOT NULL,
-    PRIMARY KEY (loader_key, position_node, bin_type_code)
-);
--- The loader's declared carrier mix: how many of each type it wants on hand.
--- A PREFERENCE, not a cap — never-2N still bounds how many carriers exist.
-CREATE TABLE IF NOT EXISTS core_loader_quotas (
-    loader_key    TEXT    NOT NULL,
-    bin_type_code TEXT    NOT NULL,
-    want          INTEGER NOT NULL DEFAULT 0,
-    PRIMARY KEY (loader_key, bin_type_code)
 );
 CREATE TABLE IF NOT EXISTS core_loader_payloads (
     loader_key     TEXT    NOT NULL,   -- the owning loader's identity token
@@ -1128,9 +1110,9 @@ CREATE TABLE IF NOT EXISTS supply_refusals_open (
     -- matching the demand grain, which keys on the name and not a row id.
     --
     -- Note carefully: this is who answered, NOT who was told. Resolving the
-    -- addressee — which cells a loader is currently supplying — is unbuilt;
-    -- PayloadsForLoader computes the loader→process mapping and then discards it
-    -- into flat string sets. There is deliberately no column for the addressee
+    -- addressee (which cells a loader is currently supplying) is the station
+    -- view's to work out per build (its served rows), not this table's. There is
+    -- deliberately no column for the addressee
     -- until something can write one.
     ack_process_id TEXT NOT NULL DEFAULT '',
 

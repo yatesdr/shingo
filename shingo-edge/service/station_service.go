@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"slices"
 	"strings"
 	_ "sync" // the plain lock inlines only where sync is imported (protocol/lockcheck)
 	"time"
@@ -121,19 +122,18 @@ func pressPositionClaimsForBoard(
 
 // LoaderResolver resolves the Core-owned loader aggregate a node belongs to, for
 // the operator view. It is consumer-defined HERE (service sits below engine, so it
-// cannot import the engine's LoaderStore); the engine injects its flag-selected
+// cannot import the engine's LoaderStore); the engine injects its
 // LoaderStore via SetLoaderResolver. Routing the view through the SAME resolver the
 // runtime uses is deliberate — it keeps "what loader is this node part of" a single
 // source of truth (the B1 goal) instead of re-deriving it from the cache in the view.
 //
 // Contract: a clean miss returns (nil, nil) — the node is not a known aggregate
-// loader, and BuildView keeps its legacy claim-derived fields. A non-nil error is a
-// real failure; the view degrades to legacy rather than inventing a grouping.
+// loader, and BuildView takes the node's stored claim. A non-nil error is a
+// real failure; the view takes the stored claim rather than inventing a loader.
 type LoaderResolver interface {
-	LoaderAt(coreNode domain.NodeID, role domain.LoaderRole) (*domain.Loader, error)
 	// LoaderForNode resolves the loader (any role) a node belongs to, so the view
-	// can treat a Core-owned loader's window/position as a manual_swap loader node
-	// even when it has no per-style edge claim. (nil, nil) on a clean miss.
+	// can treat a Core-owned loader's window or position as a loader tile even
+	// when it has no per-style edge claim. (nil, nil) on a clean miss.
 	LoaderForNode(coreNode domain.NodeID) (*domain.Loader, error)
 }
 
@@ -146,9 +146,8 @@ type LoaderResolver interface {
 type StationService struct {
 	db *store.DB
 	// loaders resolves a node's parent loader aggregate for the operator view.
-	// Optional: nil leaves the multi-window view fields empty (legacy behaviour),
-	// so the lighter test constructors that don't wire it compile and pass
-	// unchanged. The engine injects the live resolver via SetLoaderResolver.
+	// Optional: nil makes no tile a loader tile, so the lighter test
+	// constructors that don't wire it compile and pass unchanged. The engine injects the live resolver via SetLoaderResolver.
 	loaders LoaderResolver
 	// stranded resolves a node's active parked-ticks alarm sentence (P2-C8) by
 	// core node name. Optional: nil leaves StrandedAlarm empty. The engine injects
@@ -157,11 +156,13 @@ type StationService struct {
 	// keepStaged resolves a line's keep-staged keeper sentence; nil leaves
 	// KeepStagedNote empty. The engine injects KeepStagedNote.
 	keepStaged func(coreNodeName string) string
-	// binTypes resolves a payload code to its dunnage code, for the
-	// changeover load directive. Optional, and OPTIONAL MATTERS: unset means
-	// no bin type resolves, which means no directive — a card that cannot
-	// name the carrier says nothing rather than guessing one.
+	// binTypes resolves a payload code to its bin type, for a served row's
+	// carrier. Optional: unset leaves every carrier blank, which the board reads
+	// as unknown rather than guessing one.
 	binTypes func(payloadCode string) string
+	// carrierCatalog is Core's payload-to-bin-type catalog, for an unloader
+	// tile's carriers. Optional: unset leaves carriers empty.
+	carrierCatalog func() []protocol.PayloadBinTypeInfo
 	// coreNodes reports the Core node names this edge currently knows, as a set.
 	// Optional, and the nil-safety is load-bearing rather than incidental — see
 	// unknownCoreNodes for why an unwired or empty resolver must accept
@@ -186,6 +187,16 @@ type StationService struct {
 	// picture leaving the poll exists to remove, so the version must not pay
 	// it. Optional; unset reads as 0, which is stable and therefore safe.
 	plantGeneration func() uint64
+	// loaderGeneration is the engine's counter for its copy of Core's
+	// loaders, which the board's bin lists read. Optional; unset reads as 0.
+	loaderGeneration func() uint64
+
+	// bins is every station's bin list, held until the plant moves. See
+	// station_bins.go.
+	binsMu lockcheck.Mutex[lockorder.StationBins]
+	bins   binNodes
+	// binNodesChanged runs when a rebuild moves the watched names.
+	binNodesChanged func()
 
 	// sceneMemo is composerScene's derived adjacency, computed once per
 	// geometry cache rather than per request; sceneMemoFor is the cache it
@@ -221,15 +232,15 @@ const touchThrottle = 15 * time.Second
 
 // NewStationService constructs a StationService wrapping the shared
 // *store.DB. The loader resolver is wired separately via SetLoaderResolver so
-// existing call sites (and tests) that don't need multi-window view fields stay
+// existing call sites (and tests) that need no loader tiles stay
 // unchanged.
 func NewStationService(db *store.DB) *StationService {
 	return &StationService{db: db}
 }
 
-// SetLoaderResolver injects the loader-aggregate resolver used to populate the
-// multi-window view fields (WindowGroupAnchor / WindowNodes). The engine calls
-// this once at startup with its flag-selected LoaderStore.
+// SetLoaderResolver injects the loader-aggregate resolver the view reads a
+// node's Core loader through (its claim and its loader fields). The engine calls
+// this once at startup with its LoaderStore.
 func (s *StationService) SetLoaderResolver(r LoaderResolver) { s.loaders = r }
 
 // SetNodeRetirer injects the engine's node retire, so a station sync that
@@ -238,9 +249,15 @@ func (s *StationService) SetLoaderResolver(r LoaderResolver) { s.loaders = r }
 // startup.
 func (s *StationService) SetNodeRetirer(r func(int64) error) { s.nodeRetirer = r }
 
-// SetBinTypeResolver injects the payload -> dunnage lookup the changeover load
-// directive needs. Optional; unset leaves every directive nil.
+// SetBinTypeResolver injects the payload-to-bin-type lookup a served row's
+// carrier reads. Optional; unset leaves every carrier blank.
 func (s *StationService) SetBinTypeResolver(r func(payloadCode string) string) { s.binTypes = r }
+
+// SetCarrierCatalog injects Core's payload-to-bin-type catalog, which an
+// unloader tile's carriers are read from. Optional; unset leaves them empty.
+func (s *StationService) SetCarrierCatalog(r func() []protocol.PayloadBinTypeInfo) {
+	s.carrierCatalog = r
+}
 
 // SetCoreNodeResolver injects the set of Core node names this edge knows, used
 // to refuse a station node list that names something Core does not have.
@@ -412,25 +429,8 @@ func (s *StationService) loaderHolds(coreNodeName string) bool {
 	return l.Contains(domain.NodeID(coreNodeName))
 }
 
-// binTypeForPayload is the nil-safe read. An unwired resolver answers "unknown"
-// for every payload, and BuildChangeoverLoadDirective drops an unknown rather
-// than naming a carrier it cannot identify.
-// stationTakesLoadDirective asks the Core-owned loader this node belongs to
-// whether a changeover should commandeer its card.
-//
-// A clean miss (no loader, or no resolver wired) is false: a node Core does not
-// know as a loader has no station setup to have opted in.
-func (s *StationService) stationTakesLoadDirective(coreNodeName string) bool {
-	if s.loaders == nil || coreNodeName == "" {
-		return false
-	}
-	l, err := s.loaders.LoaderForNode(domain.NodeID(coreNodeName))
-	if err != nil || l == nil {
-		return false
-	}
-	return l.ChangeoverLoadDirective()
-}
-
+// binTypeForPayload is the nil-safe read: "" is unknown, never a guess, and a
+// served row with an unknown carrier says so (ServedRow.Carrier).
 func (s *StationService) binTypeForPayload(payloadCode string) string {
 	if s.binTypes == nil {
 		return ""
@@ -668,8 +668,8 @@ func (s *StationService) releaseRemovedPositions(stationNodes []processes.Node, 
 //
 // Phase 6.1 introduced this method as a thin delegate; Phase 6.4a
 // moved the body in from the (now-deleted) outer
-// store/station_views.go::BuildOperatorStationView. The two helpers
-// (ComputeSwapReady, LookupLastReleaseError) stay in store/ so the
+// store/station_views.go::BuildOperatorStationView. Its helpers
+// (ComputeSwapReady, ReleasesAsPair) stay in store/ so the
 // existing test file station_views_test.go can continue exercising
 // them directly without import-cycle gymnastics.
 // BuildView assembles the operator-station view.
@@ -677,7 +677,7 @@ func (s *StationService) releaseRemovedPositions(stationNodes []processes.Node, 
 // ctx is honoured at the tile-loop boundary so a build whose requester has gone
 // away stops instead of running to completion. That matters more here than the
 // usual "be a good citizen": Edge serialises every DB operation on one
-// connection (store.Open sets SetMaxOpenConns(1)), and a tile costs ~8 queries,
+// connection (store.Open sets SetMaxOpenConns(1)), and a build's reads all queue on it,
 // so an abandoned 22-tile build holds the connection against work someone is
 // still waiting on. Before this, a browser abort freed only the browser — the
 // handler took no context, so each timed-out poll ADDED an orphan build and
@@ -716,27 +716,11 @@ func (s *StationService) BuildView(ctx context.Context, stationID int64) (*store
 			return nil, err
 		}
 		tile := s.buildNodeTile(node, process, b, childOf, nodeTaskMap)
-		// A loader's card becomes a LOADING INSTRUCTION during a changeover:
-		// which empty bin type the changing-over cells are waiting for.
-		//
-		// BUILT FROM CHANGEOVER STATE, not from delivered orders. The obvious
-		// hook — the U1-confirm path that watches for arrivals — matches
-		// RETRIEVE orders only, and a changeover's evac arrivals are COMPLEX
-		// ones, so a card wired there would stay silent through exactly the
-		// window it exists for.
-		//
-		// Applied here rather than inside buildNodeTile because it needs the
-		// view's active changeover, which the tile builder is not given.
-		if view.ActiveChangeover != nil && tile.ActiveClaim != nil {
-			tile.ChangeoverLoadDirective = domain.BuildChangeoverLoadDirective(
-				view.ActiveChangeover.ID, s.stationTakesLoadDirective(node.CoreNodeName),
-				tile.ActiveClaim, b.targetClaimList, s.binTypeForPayload)
-		}
 		tile.CurtainPoints = s.curtainPoints(node, b, stationNodes)
 		view.Nodes = append(view.Nodes, tile)
 	}
 
-	s.applyLoaderLineside(view)
+	view.Serves = s.servedRows(view.Nodes)
 
 	return view, nil
 }
@@ -951,105 +935,6 @@ func (s *StationService) liveClaims(processID int64) []processes.NodeClaim {
 	return rows
 }
 
-// THE QUARTER-BIN HEURISTIC USED TO LIVE HERE and is deleted, not disabled.
-//
-// The deleted linesideStarved(capacityUOP, linesideUOP) returned linesideUOP < capacityUOP/4.
-// It was a guess with no relationship to the number that actually triggers
-// replenishment, so the board could go red while the reorder logic was content
-// or stay calm while it was not. The starvation test now reads the Core-owned
-// loader aggregate's configured UOP threshold for the payload — the same number
-// the demand sweep uses — so the board and the replenishment logic can no longer
-// disagree about what "low" means.
-//
-// Time-to-empty escalation (SHINGO_TODO "Starvation alert time-to-empty
-// escalation") slots in beside that comparison, in the view assembly.
-
-// activePayloadLineside sums the current lineside UOP per payload across EVERY
-// active-style CONSUME node on the Edge — not just this station's process — so a
-// loader's payloads pick up the lineside at whatever cell consumes them, even
-// when that cell is a different process. Per node it counts the bin at the
-// consuming node (RemainingUOPCached) plus parts already pulled to the line
-// (active lineside buckets). "All active, summed": every active consume claim
-// for a payload contributes, so a loader feeding multiple cells sees the
-// combined lineside. A consume claim with several allowed payloads attributes
-// its node's total to each (rare; the common case is one payload per node). All
-// reads are local Edge state — no Core round-trip.
-// wanted=false short-circuits: the caller has no tile that would read the result,
-// and this is a plant-wide scan.
-func (s *StationService) activePayloadLineside(wanted bool) map[string]int {
-	out := map[string]int{}
-	if !wanted {
-		return out
-	}
-	// Walk first, WITHOUT touching the DB per visit, then satisfy every visit
-	// from two batched reads. The per-visit GetProcessNodeRuntime +
-	// ListActiveLinesideBuckets were 2 queries per active consume claim
-	// plant-wide, on the one connection store.Open allows.
-	//
-	// Visits are collected with their MULTIPLICITY preserved, not deduplicated by
-	// node: the original recomputed the node total on every visit and added it to
-	// each of that claim's payloads, so a node reached by two claims contributed
-	// twice. Deduplicating here would silently change the sums.
-	type visit struct {
-		nodeID   int64
-		payloads []string
-	}
-	var visits []visit
-	nodeIDs := make([]int64, 0, 8)
-	_ = processes.WalkClaims(s.db.DB, processes.WalkOpts{
-		ActiveOnly:  true,
-		Role:        protocol.ClaimRoleConsume,
-		ResolveNode: true,
-	}, func(ctx processes.WalkCtx) bool {
-		if ctx.Node.ID == 0 {
-			return false
-		}
-		payloads := ctx.Claim.AllowedPayloads()
-		if len(payloads) == 0 {
-			return false
-		}
-		visits = append(visits, visit{nodeID: ctx.Node.ID, payloads: payloads})
-		nodeIDs = append(nodeIDs, ctx.Node.ID)
-		return false // collect all
-	})
-	if len(visits) == 0 {
-		return out
-	}
-
-	// Best-effort, matching the per-node calls this replaces: a read error there
-	// contributed 0 for that node. A failed batch contributes 0 for every node,
-	// which is a wider blast radius, so it is logged rather than silent.
-	runtimes, err := processes.RuntimesForNodes(s.db.DB, nodeIDs)
-	if err != nil {
-		log.Printf("station view: lineside runtime batch failed, lineside totals will read low: %v", err)
-	}
-	buckets, err := lineside.ListActiveForNodes(s.db.DB, nodeIDs)
-	if err != nil {
-		log.Printf("station view: lineside bucket batch failed, lineside totals will read low: %v", err)
-	}
-
-	totals := make(map[int64]int, len(nodeIDs))
-	for _, id := range nodeIDs {
-		if _, done := totals[id]; done {
-			continue
-		}
-		total := 0
-		if rt := runtimes[id]; rt != nil {
-			total += rt.RemainingUOPCached
-		}
-		for _, b := range buckets[id] {
-			total += b.Qty
-		}
-		totals[id] = total
-	}
-	for _, v := range visits {
-		for _, p := range v.payloads {
-			out[p] += totals[v.nodeID]
-		}
-	}
-	return out
-}
-
 // ── Per-station CRUD ────────────────────────────────────────────────
 
 // List returns every operator_stations row.
@@ -1205,13 +1090,8 @@ func (s *StationService) newStationView(stationID int64) (*store.OperatorStation
 // group states the invariant -- one read per board, never per tile -- instead of
 // leaving it a convention eleven separate locals have to keep.
 type boardData struct {
-	loaderPayloads map[string]map[protocol.ClaimRole]processes.PayloadSet
-	activeClaims   map[string]processes.NodeClaim
-	targetClaims   map[string]processes.NodeClaim
-	// targetClaimList is targetClaims as a slice, computed once: the load
-	// directive is a question about the whole incoming style, not about the
-	// tile being built.
-	targetClaimList     []processes.NodeClaim
+	activeClaims        map[string]processes.NodeClaim
+	targetClaims        map[string]processes.NodeClaim
 	pressPositionClaims map[int64]*processes.NodeClaim
 	runtimes            map[int64]*processes.RuntimeState
 	boardOrders         map[int64][]orders.Order
@@ -1227,18 +1107,9 @@ type boardData struct {
 func (s *StationService) prefetchBoardData(
 	process *processes.Process, nodes []processes.Node, nodeTaskMap map[int64]processes.NodeTask,
 ) *boardData {
-	// Loader payload sets, computed ONCE for the whole board. PayloadsForLoader
-	// walks every process/style/claim, so calling it per manual_swap tile made an
-	// N-home board do N walks (14 homes → ~44s on the Springfield bin loader). One
-	// walk, keyed by (core node, role); each tile just looks itself up below.
-	loaderPayloads, err := processes.PayloadsForManualSwapNodes(s.db.DB)
-	if err != nil {
-		loaderPayloads = nil // fail-open: tiles fall back to the claim-derived set
-	}
-	// Per-tile lookups hoisted to one query each for the whole board. Same
-	// motivation as loaderPayloads above: every read serialises on one
-	// connection, so a query inside the tile loop is a query multiplied by the
-	// tile count (22 on the Springfield bin loader).
+	// Per-tile lookups hoisted to one query each for the whole board: every
+	// read serialises on one connection, so a query inside the tile loop is a
+	// query multiplied by the tile count (22 on the Springfield bin loader).
 	//
 	// Claims are safe to index by core node name because style_node_claims
 	// declares UNIQUE(style_id, core_node_name) — at most one claim per
@@ -1254,12 +1125,8 @@ func (s *StationService) prefetchBoardData(
 		targetClaims, _ = claimsByCoreNode(s.db.DB, *process.TargetStyleID)
 	}
 	// Press-index fan-out claims, computed ONCE for the whole board for the same
-	// reason as loaderPayloads/runtimes/boardOrders above — never a query inside
+	// reason as runtimes/boardOrders above — never a query inside
 	// the tile loop. Empty (and free) on any board without an active changeover.
-	targetClaimList := make([]processes.NodeClaim, 0, len(targetClaims))
-	for _, c := range targetClaims {
-		targetClaimList = append(targetClaimList, c)
-	}
 	pressPositionClaims := pressPositionClaimsForBoard(s.db.DB, nodes, nodeTaskMap, activeClaims, targetClaims)
 	nodeIDs := make([]int64, 0, len(nodes))
 	nodeKeys := make([]orders.NodeKey, 0, len(nodes))
@@ -1326,10 +1193,8 @@ func (s *StationService) prefetchBoardData(
 		strandedBuckets = nil
 	}
 	return &boardData{
-		loaderPayloads:      loaderPayloads,
 		activeClaims:        activeClaims,
 		targetClaims:        targetClaims,
-		targetClaimList:     targetClaimList,
 		pressPositionClaims: pressPositionClaims,
 		runtimes:            runtimes,
 		boardOrders:         boardOrders,
@@ -1337,115 +1202,6 @@ func (s *StationService) prefetchBoardData(
 		byPayload:           byPayload,
 		activeBuckets:       activeBuckets,
 		strandedBuckets:     strandedBuckets,
-	}
-}
-
-// isLoaderProduceTile reports whether this board card is a loader's supply
-// window — the only card the lineside pass has anything to say about.
-//
-// One predicate because applyLoaderLineside asks the question twice: once to
-// decide whether the plant-wide scan is worth running at all, and again to pick
-// the cards to write its answer onto. Those two must agree exactly — a scan run
-// for a tile the loop then skips is pure cost, and a tile the loop writes to
-// without the scan having run reads its badges off an empty map — and when they
-// were written out separately, in opposite polarity fifteen lines apart, nothing
-// but care kept them in step.
-func isLoaderProduceTile(nv *store.StationNodeView) bool {
-	return nv.ActiveClaim.IsLoaderNode() && nv.ActiveClaim.Role == protocol.ClaimRoleProduce
-}
-
-// applyLoaderLineside is the board's last pass: lineside UOP per active
-// payload, attached to the manual_swap loader tiles that can render it.
-//
-// Lineside UOP per active payload, attached to manual_swap loader nodes so
-// the transitional board can show real numbers on ACTIVE cards instead of a
-// meaningless "no demand" (the loader is operator-driven). Computed once for
-// the process's active style; all local Edge data.
-// Gate on the board actually having a tile that consumes the result.
-// activePayloadLineside is a PLANT-WIDE scan — every active consume claim on
-// the edge, not just this station's — so a board with no manual_swap produce
-// tile was paying the full cost and then discarding every value. The gate and
-// the loop below must agree exactly about which tiles qualify, and they now do
-// so by construction: both call isLoaderProduceTile. They used to be two
-// hand-written copies in opposite polarity, kept in step by nothing but care.
-func (s *StationService) applyLoaderLineside(view *store.OperatorStationView) {
-	wantsLineside := false
-	for i := range view.Nodes {
-		if isLoaderProduceTile(&view.Nodes[i]) {
-			wantsLineside = true
-			break
-		}
-	}
-	// Runs whenever the board HAS a loader tile, not only when the lineside scan
-	// returned rows. An empty result is itself an answer — no active consume
-	// claim wants any of these parts — and the loop below has to see it to strip
-	// the ACTIVE badge off every card. Gating on len>0 left a stopped line
-	// showing a board where everything still claimed to be running.
-	if lineside := s.activePayloadLineside(wantsLineside); wantsLineside {
-		for i := range view.Nodes {
-			nv := &view.Nodes[i]
-			if !isLoaderProduceTile(nv) {
-				continue
-			}
-			// THE LOADER AGGREGATE IS CORE-OWNED AND CARRIES THE THRESHOLD.
-			// Resolved here rather than threading it down from the block above,
-			// which resolves the same aggregate for the payload set — one extra
-			// lookup per loader tile, and it keeps the threshold read next to the
-			// comparison that uses it.
-			var loader *domain.Loader
-			if s.loaders != nil && nv.Node.CoreNodeName != "" {
-				loader, _ = s.loaders.LoaderAt(
-					domain.NodeID(nv.Node.CoreNodeName),
-					domain.LoaderRole(nv.ActiveClaim.Role))
-			}
-
-			m := map[string]int{}
-			starved := map[string]bool{}
-			// ACTIVE MEANS A RUNNING STYLE CONSUMES IT. The keys of `lineside`
-			// are exactly the payloads some ACTIVE consume claim allows, because
-			// activePayloadLineside walks active claims only — so membership here
-			// is the honest active test, and it is rebuilt below.
-			active := make([]string, 0, len(nv.ActiveStylePayloads))
-			for _, p := range nv.ActiveStylePayloads {
-				v, ok := lineside[p]
-				if !ok {
-					continue
-				}
-				active = append(active, p)
-				m[p] = v
-				// The CONFIGURED threshold, not a heuristic. This was
-				// lineside < UOPCapacity/4 — a quarter-bin guess that had no
-				// relationship to the number that actually triggers
-				// replenishment, so the board could go red while the reorder
-				// logic was content, or stay calm while it was not.
-				//
-				// Zero means the loader is not on a UOP-threshold policy at all.
-				// No threshold, no claim about starvation: staying silent is
-				// correct where nobody has said what "low" means.
-				if loader != nil {
-					if t := loader.UOPThresholdFor(domain.PayloadCode(p)); t > 0 && v < t {
-						starved[p] = true
-					}
-				}
-			}
-			// REPLACES THE PINNED SET WITH THE GENUINELY ACTIVE ONE. The block
-			// above overwrites ActiveStylePayloads with LoadablePayloadCodesAt —
-			// the parts this position is CONFIGURED for — which made
-			// isActiveStylePayload always true on a dedicated-home board and every
-			// card read ACTIVE. Measured at Springfield: 7 of 22 positions were
-			// genuinely active and all 22 claimed to be.
-			//
-			// AllStylePayloads deliberately keeps the pinned set: "what can this
-			// position hold" and "what does a running style want now" are
-			// different questions, and collapsing them is what broke the badge.
-			nv.ActiveStylePayloads = active
-			if len(m) > 0 {
-				nv.ActivePayloadLineside = m
-			}
-			if len(starved) > 0 {
-				nv.StarvedPayloads = starved
-			}
-		}
 	}
 }
 
@@ -1561,7 +1317,7 @@ func (s *StationService) adoptChangeoverParticipants(
 
 // buildNodeTile assembles one tile: its claims, runtime, orders, swap-readiness,
 // lineside buckets, release error, stranded chip, refusals, and -- for a
-// manual_swap node -- its loader aggregate fields.
+// loader window or position -- the loader as the board reads it.
 //
 // Every board-wide read it needs is already on b. It issues no query of its own,
 // which is the property the whole prefetch exists to preserve: a query here is a
@@ -1578,7 +1334,20 @@ func (s *StationService) buildNodeTile(
 		runtime, _ = s.db.EnsureProcessNodeRuntime(node.ID)
 	}
 	nodeView.Runtime = runtime
-	if process.ActiveStyleID != nil && node.CoreNodeName != "" {
+	// Core's loader first: a window or position of a Core loader reads as that
+	// loader's synthesized manual_swap claim, whatever stored claim also sits at
+	// the node, through the SAME resolver the runtime uses (engine claimAtNode),
+	// so the view and the engine never disagree, and the tile carries the
+	// loader's facts as the board reads them (Loader). A node no Core loader
+	// names resolves to nil (clean miss) and takes its stored active claim. Pinned by
+	// TestLoaderPrecedence_CoreLoaderWinsOverAStoredClaim (engine).
+	if s.loaders != nil && node.CoreNodeName != "" {
+		if l, lerr := s.loaders.LoaderForNode(domain.NodeID(node.CoreNodeName)); lerr == nil && l != nil {
+			nodeView.ActiveClaim = l.SynthClaim(domain.NodeID(node.CoreNodeName))
+			nodeView.Loader = s.tileLoader(l, node.CoreNodeName)
+		}
+	}
+	if nodeView.ActiveClaim == nil && process.ActiveStyleID != nil && node.CoreNodeName != "" {
 		if c, ok := b.activeClaims[node.CoreNodeName]; ok {
 			claim := c
 			nodeView.ActiveClaim = &claim
@@ -1588,17 +1357,6 @@ func (s *StationService) buildNodeTile(
 		if c, ok := b.targetClaims[node.CoreNodeName]; ok {
 			claim := c
 			nodeView.TargetClaim = &claim
-		}
-	}
-	// Core-owned-loader fallback: a window/position of a Core loader with no
-	// per-style edge claim still reads as a manual_swap loader node, so the
-	// operator board renders (and the runtime treats it as a loader). Synthesize
-	// the claim from the aggregate via the SAME resolver the runtime uses, so the
-	// view and the engine never disagree. A node that isn't an aggregate loader
-	// resolves to nil (clean miss) and keeps its plain-node view.
-	if nodeView.ActiveClaim == nil && s.loaders != nil && node.CoreNodeName != "" {
-		if l, lerr := s.loaders.LoaderForNode(domain.NodeID(node.CoreNodeName)); lerr == nil && l != nil {
-			nodeView.ActiveClaim = l.SynthClaim(domain.NodeID(node.CoreNodeName))
 		}
 	}
 	// Press-index fan-out fallback — the same move as the loader fallback
@@ -1685,77 +1443,78 @@ func (s *StationService) buildNodeTile(
 			break
 		}
 	}
-	s.applyManualSwapLoaderFields(&nodeView, node, b)
+	applyLoaderRefusals(&nodeView, node, b)
 	return nodeView
 }
 
-// applyManualSwapLoaderFields adds the loader-aggregate half of a manual_swap
-// tile: the payload sets, the dedicated/window flags and the window grouping.
+// applyLoaderRefusals adds a loader window's standing refusals, from the one
+// snapshot taken for the board. Role-agnostic on purpose: an unloader states
+// the same kind of thing about empties that a loader states about parts, and
+// only the WORDING differs, which lives on the render side.
+func applyLoaderRefusals(nodeView *store.StationNodeView, node processes.Node, b *boardData) {
+	if !nodeView.ActiveClaim.IsLoaderNode() {
+		return
+	}
+	if forThisWindow := b.refusals[node.CoreNodeName]; len(forThisWindow) > 0 {
+		nodeView.SupplyRefusals = forThisWindow
+	}
+}
+
+// tileLoader is the board's reading of the Core loader at a node: what the
+// station's JSON carries in place of the synthesised claim. Resolved by node,
+// not by a claim's role, through the SAME resolver the runtime uses, so the
+// board and the engine never disagree about which loader a window belongs to.
 //
-// Multi-process loader-board unions: for a manual_swap node, resolve
-// the active-style and all-style payload sets across EVERY active
-// process sharing this CoreNodeName (PayloadsForLoader walks all
-// processes), so a loader shared by two cells surfaces both cells'
-// payloads, not just this station's. Plus the transitional flag the
-// board reads to default into preload mode.
-func (s *StationService) applyManualSwapLoaderFields(
-	nodeView *store.StationNodeView, node processes.Node, b *boardData,
-) {
-	if nodeView.ActiveClaim.IsLoaderNode() {
-		if rp, ok := b.loaderPayloads[node.CoreNodeName][nodeView.ActiveClaim.Role]; ok {
-			nodeView.ActiveStylePayloads = rp.Active
-			nodeView.AllStylePayloads = rp.All
-		}
-		// Standing b.refusals for this window's cards, from the one snapshot
-		// taken above. Role-agnostic on purpose: an unloader states the same
-		// kind of thing about empties that a loader states about parts, and
-		// the mechanism carries over unchanged — only the WORDING differs,
-		// and that lives on the render side.
-		if forThisWindow := b.refusals[node.CoreNodeName]; len(forThisWindow) > 0 {
-			nodeView.SupplyRefusals = forThisWindow
-		}
-		// Operator-driven (board defaults to preload) + dedicated-position layout +
-		// window-group membership all come from the Core aggregate — the SAME resolver
-		// the runtime uses — so the board and the engine never disagree. A node absent
-		// from the aggregate resolves to nil (exactly as for the runtime), leaving the
-		// operator/layout fields false.
-		// RESOLVED BY NODE, NOT BY THE CLAIM'S ROLE — the same substitution as
-		// the engine's loadablePayloads, and it has to be the same or the board
-		// and the gate disagree about which loader this window belongs to. Role
-		// is Core's fact; routing the lookup through the stored claim's copy of it
-		// makes a live loader invisible whenever the two disagree, and the tile
-		// then renders its unconfigured defaults while looking configured.
-		if s.loaders != nil {
-			if loader, err := s.loaders.LoaderForNode(domain.NodeID(node.CoreNodeName)); err == nil && loader != nil {
-				nodeView.OperatorDriven = loader.IsOperatorDriven()
-				nodeView.HomeLocationLoader = loader.IsDedicated()
-				nodeView.LeavesBare = loader.LeavesBare()
-				nodeView.PulledDirectly = loader.PulledDirectly()
-				nodeView.BoardHidesIdle = loader.BoardHidesIdle()
-				nodeView.BoardShowsAllParts = loader.BoardShowsAllParts()
-				// Core owns the loader's payload set — the board shows it (the edge claim
-				// is just the node now). Overrides the claim-derived set above; falls back
-				// to it only when the loader carries no Core payloads (legacy / not migrated).
-				// Scoped to THIS node (the same per-node set the load/request gate uses):
-				// a dedicated home shows only its own pinned payload, not the loader's
-				// other positions' parts, so the board and the engine never disagree.
-				if codes := loader.LoadablePayloadCodesAt(domain.NodeID(node.CoreNodeName)); len(codes) > 0 {
-					nodeView.ActiveStylePayloads = codes
-					nodeView.AllStylePayloads = codes
-				}
-				if loader.IsShared() {
-					if wins := loader.Windows(); len(wins) > 1 {
-						nodeView.WindowGroupAnchor = string(loader.ID())
-						names := make([]string, len(wins))
-						for i, w := range wins {
-							names[i] = string(w.Node)
-						}
-						nodeView.WindowNodes = names
-					}
-				}
+// Parts are scoped to THIS node, the same per-node set the load and request
+// gates use: a dedicated home shows only its own pinned part, a buffer none.
+func (s *StationService) tileLoader(l *domain.Loader, coreNode string) *domain.TileLoader {
+	codes := l.LoadablePayloadCodesAt(domain.NodeID(coreNode))
+	parts := make([]domain.TileLoaderPart, 0, len(codes))
+	for _, c := range codes {
+		parts = append(parts, domain.TileLoaderPart{Code: c})
+	}
+	tl := &domain.TileLoader{
+		Role:               string(l.Role()),
+		Layout:             string(l.Layout()),
+		Replenishment:      string(l.Replenishment()),
+		OutboundDest:       l.OutboundDest(),
+		Parts:              parts,
+		LeavesBare:         l.LeavesBare(),
+		PulledDirectly:     l.PulledDirectly(),
+		BoardHidesIdle:     l.BoardHidesIdle(),
+		BoardShowsAllParts: l.BoardShowsAllParts(),
+	}
+	if l.Role() == domain.RoleConsume && s.carrierCatalog != nil {
+		tl.Carriers = carriersFor(s.carrierCatalog(), codes)
+	}
+	return tl
+}
+
+// carriersFor is the bin types an unloader's CLEAR panels offer for a node's
+// parts: the catalog's types for those parts, in catalog order, each once;
+// every type in the catalog when the parts match none (or there are no parts),
+// so an operator is never left in front of an empty menu on a node nobody has
+// finished configuring. The rule the board's panels applied to the plant-wide
+// catalog before they read this list. Pinned by TestCarriersFor.
+func carriersFor(catalog []protocol.PayloadBinTypeInfo, parts []string) []string {
+	pick := func(match func(protocol.PayloadBinTypeInfo) bool) []string {
+		var out []string
+		seen := map[string]bool{}
+		for _, e := range catalog {
+			if !seen[e.BinTypeCode] && match(e) {
+				seen[e.BinTypeCode] = true
+				out = append(out, e.BinTypeCode)
 			}
 		}
+		return out
 	}
+	out := pick(func(e protocol.PayloadBinTypeInfo) bool {
+		return len(parts) == 0 || slices.Contains(parts, e.PayloadCode)
+	})
+	if len(out) == 0 {
+		out = pick(func(protocol.PayloadBinTypeInfo) bool { return true })
+	}
+	return out
 }
 
 // countWaits is the board's sentence for a sequential position the line has

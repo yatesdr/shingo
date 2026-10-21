@@ -175,9 +175,6 @@ func TestBuildLoaderInfos(t *testing.T) {
 	if li.LoaderKey == "" || li.Layout != "dedicated_positions" || li.Role != "produce" {
 		t.Errorf("loader info = %+v", li)
 	}
-	if li.ConfigGen < 1 {
-		t.Errorf("config_gen not carried: %d", li.ConfigGen)
-	}
 	if len(li.Positions) != 1 {
 		t.Fatalf("positions = %d, want 1", len(li.Positions))
 	}
@@ -187,11 +184,6 @@ func TestBuildLoaderInfos(t *testing.T) {
 	}
 	if p.PayloadCode != "PART-A" || p.UOPThreshold != 100 {
 		t.Errorf("position = %+v, want PART-A/thr100", p)
-	}
-	// Kind is derived from the parent loader's layout (dedicated here), stamped
-	// on the wire so the Edge never sniffs an empty payload to classify.
-	if p.Kind != protocol.LoaderPositionKindDedicated {
-		t.Errorf("position kind = %q, want %q (derived from layout)", p.Kind, protocol.LoaderPositionKindDedicated)
 	}
 }
 
@@ -550,8 +542,7 @@ func TestPinBuildLoaderInfos_AZeroPayloadUnloader(t *testing.T) {
 	}
 
 	li := findLoaderInfo(t, db, id)
-	if len(li.Positions) != 1 || li.Positions[0].CoreNodeName != "HLPIN-S2-WIN" ||
-		li.Positions[0].Kind != protocol.LoaderPositionKindWindow {
+	if len(li.Positions) != 1 || li.Positions[0].CoreNodeName != "HLPIN-S2-WIN" {
 		t.Errorf("positions = %+v, want the one window", li.Positions)
 	}
 	if len(li.Payloads) != 0 {
@@ -595,7 +586,7 @@ func TestBuildLoaderInfos_StageOneLeavesBare(t *testing.T) {
 // TestPinLoaderInfo_WireKeys pins the JSON key set Core sends for an unloader
 // with every optional field at its zero value and no members: every omitempty
 // field (the flow endpoints, funnel_windows, changeover_load_directive,
-// leaves_bare, auto_push, positions, payloads, quota) is absent, so a
+// leaves_bare, auto_push, pulled_directly, positions, payloads) is absent, so a
 // Core that adds one ships the same bytes for every loader that does not set it.
 func TestPinLoaderInfo_WireKeys(t *testing.T) {
 	t.Parallel()
@@ -620,7 +611,7 @@ func TestPinLoaderInfo_WireKeys(t *testing.T) {
 		keys = append(keys, k)
 	}
 	sort.Strings(keys)
-	want := "config_gen,layout,loader_key,name,replenishment,role"
+	want := "layout,loader_key,name,replenishment,role"
 	if got := strings.Join(keys, ","); got != want {
 		t.Errorf("LoaderInfo keys = %s, want %s", got, want)
 	}

@@ -123,6 +123,11 @@ const (
 	// the one held. The containment page reloads on it; an identical re-send
 	// does not fire it.
 	EventContainmentUpdated
+
+	// EventNodeBinsUpdated fires when a node-bins snapshot from Core changed
+	// the Edge's copy: it names the nodes whose row or assignment changed and
+	// the groups whose wants changed. An identical re-send does not fire it.
+	EventNodeBinsUpdated
 )
 
 // Event is the envelope emitted by the Engine's EventBus.
@@ -218,6 +223,15 @@ type WarLinkEvent struct {
 type ContainmentUpdatedEvent struct {
 	eventbus.PayloadBase
 	Digest string `json:"digest"`
+}
+
+// NodeBinsUpdatedEvent names what a node-bins snapshot changed in the copy:
+// the nodes whose row or assignment moved, and the groups whose wants moved.
+// A station refetches its view when it draws one of them.
+type NodeBinsUpdatedEvent struct {
+	eventbus.PayloadBase
+	Nodes  []string `json:"nodes"`
+	Groups []string `json:"groups"`
 }
 
 // CoreNodesUpdatedEvent is emitted when the core node list is received.

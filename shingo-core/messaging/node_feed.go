@@ -93,7 +93,7 @@ func (s *CoreDataService) buildNodeList(stationID string, strict bool) (*protoco
 	//
 	// Sending the node list WITHOUT loaders is not "degraded but safe" — the Edge
 	// cannot distinguish an absent Loaders field from "no loaders configured", and
-	// ReplaceCoreLoaders(nil) truncates all five cache tables. Send nothing; the
+	// ReplaceCoreLoaders(nil) truncates every loader cache table. Send nothing; the
 	// Edge keeps its last-known-good cache and the next heartbeat asks again.
 	loaderInfos, lerr := s.db.BuildLoaderInfos()
 	if lerr != nil {

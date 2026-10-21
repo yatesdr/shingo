@@ -54,8 +54,13 @@ func assertInterfaceWidth(t *testing.T, name string, rt reflect.Type, want []str
 	}
 }
 
-// TestServiceAccessWidth pins Edge's narrow surface at 21 methods. The
+// TestServiceAccessWidth pins Edge's narrow surface at 22 methods. The
 // interface's own doc comment states the same number; keep them together.
+//
+// The 22nd is LocalNodeBins, added 2026-10-14 with the node-bins feed (owner
+// approved, read-only, as LocalContainment is): the station view stamps its
+// bins from the Edge's held copy of Core's node-bins feed instead of calling
+// Core on every build.
 //
 // The 21st is LocalContainment, added 2026-10-09 with the containment feed
 // (owner approved, read-only): the containment page renders the Edge's held
@@ -80,6 +85,7 @@ func TestServiceAccessWidth(t *testing.T) {
 		"ScenePointNames",
 		"Reconciliation",
 		"LocalContainment",
+		"LocalNodeBins",
 		"ShiftService",
 		"SourcingStateForProcess",
 		"StationService",
@@ -90,8 +96,16 @@ func TestServiceAccessWidth(t *testing.T) {
 }
 
 // TestEngineOrchestrationWidth pins Edge's wide surface at 75 methods -
-// ServiceAccess's 21 embedded, plus 54 orchestration verbs of its own.
+// ServiceAccess's 22 embedded, plus 53 orchestration verbs of its own.
+// (2026-10-14: 74 -> 75 with ServiceAccess's LocalNodeBins, embedded.)
 // (2026-10-09: 74 -> 75 with ServiceAccess's LocalContainment, embedded.)
+//
+// 2026-10-14 (owner approved): EnrichHomeBufferPartials
+// was REMOVED, the count 75 -> 74. It was the station view's second Core read
+// of a board's bins, made for the buffer spots alone; the view now reads its
+// tiles, buffer spots and outbound-group members in one node-bins call
+// (StationService.BinNodes, StationService.StampBins) and no engine verb is
+// left on the view's path.
 //
 // 2026-09-27 (fact-owners Lane G): FlipABNode and SetActivePullSide were
 // REMOVED — two entries, the count 77 → 75. The release trunk flips the
@@ -165,13 +179,13 @@ func TestEngineOrchestrationWidth(t *testing.T) {
 		"CreateRetrieveForAPI",
 		"DeleteProcess",
 		"DeliverNewMaterialForChangeover",
-		"EnrichHomeBufferPartials",
 		"EnsureTagPublished",
 		"EvacuateNode",
 		"FetchMarketBins",
 		"FlowFingerprint",
 		"LoadBin",
 		"LocalContainment",
+		"LocalNodeBins",
 		"OrderManager",
 		"OrderService",
 		"PLCManager",

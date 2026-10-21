@@ -526,8 +526,8 @@ func charSPArmUnloader(h *relHarness) {
 	h.t.Helper()
 	seedCoreLoader(h.t, h.eng, protocol.LoaderInfo{
 		Name: charSPUnloaderNode, LoaderKey: "loader:" + charSPUnloaderNode, Role: "consume", Layout: "shared_window",
-		Replenishment: "operator", InboundSource: "SYN-FG-SUPER", OutboundDest: "SYN-EMPTY-OUT", ConfigGen: 1,
-		Positions: []protocol.LoaderPosition{{CoreNodeName: charSPUnloaderNode, Kind: "window"}},
+		Replenishment: "operator", InboundSource: "SYN-FG-SUPER", OutboundDest: "SYN-EMPTY-OUT",
+		Positions: []protocol.LoaderPosition{{CoreNodeName: charSPUnloaderNode}},
 		Payloads:  []protocol.LoaderPayloadInfo{{PayloadCode: fxPart}},
 	})
 	pid, err := h.db.CreateProcess("SYN-UNL-PROC", "", "", "", false)

@@ -31,7 +31,7 @@ func TestNewLoader_RejectsInvalidStates(t *testing.T) {
 	}
 	for _, tc := range shared {
 		t.Run(tc.name, func(t *testing.T) {
-			if l, err := NewSharedWindowLoader(tc.id, "n", tc.role, ReplenishmentThreshold, tc.windows, tc.payload); err == nil {
+			if l, err := NewSharedWindowLoader(tc.id, tc.role, ReplenishmentThreshold, tc.windows, tc.payload); err == nil {
 				t.Fatalf("expected error, got loader %+v", l)
 			}
 		})
@@ -50,7 +50,7 @@ func TestNewLoader_RejectsInvalidStates(t *testing.T) {
 	}
 	for _, tc := range dedicated {
 		t.Run(tc.name, func(t *testing.T) {
-			if l, err := NewDedicatedPositionsLoader(tc.id, "n", tc.role, ReplenishmentThreshold, tc.positions); err == nil {
+			if l, err := NewDedicatedPositionsLoader(tc.id, tc.role, ReplenishmentThreshold, tc.positions); err == nil {
 				t.Fatalf("expected error, got loader %+v", l)
 			}
 		})
@@ -58,11 +58,11 @@ func TestNewLoader_RejectsInvalidStates(t *testing.T) {
 }
 
 // TestNewSharedWindowLoader_Valid confirms a well-formed shared loader builds and
-// that the budget (SlotCount) is DERIVED from the window count — it cannot be set
+// that the budget (the slot count) is DERIVED from the window count — it cannot be set
 // to a mismatching value because it is never a parameter.
 func TestNewSharedWindowLoader_Valid(t *testing.T) {
 	t.Parallel()
-	l, err := NewSharedWindowLoader("WELD-1", "Weld 1 loader", RoleProduce, ReplenishmentThreshold,
+	l, err := NewSharedWindowLoader("WELD-1", RoleProduce, ReplenishmentThreshold,
 		[]Window{{Node: "WELD-1-W1"}, {Node: "WELD-1-W2"}, {Node: "WELD-1-W3"}},
 		[]PayloadCode{"PART-A", "PART-B"})
 	if err != nil {
@@ -71,8 +71,8 @@ func TestNewSharedWindowLoader_Valid(t *testing.T) {
 	if l.ID() != "WELD-1" || !l.IsShared() || l.IsDedicated() {
 		t.Errorf("identity/layout wrong: id=%s shared=%v", l.ID(), l.IsShared())
 	}
-	if l.SlotCount() != 3 {
-		t.Errorf("SlotCount = %d, want 3 (= window count)", l.SlotCount())
+	if l.slotCount != 3 {
+		t.Errorf("slot count = %d, want 3 (= window count)", l.slotCount)
 	}
 	if got := l.DeliveryNodes(); len(got) != 3 || got[0] != "WELD-1-W1" || got[2] != "WELD-1-W3" {
 		t.Errorf("DeliveryNodes = %v, want the three window nodes", got)
@@ -83,11 +83,11 @@ func TestNewSharedWindowLoader_Valid(t *testing.T) {
 }
 
 // TestNewDedicatedPositionsLoader_Valid confirms a well-formed dedicated loader
-// builds, derives SlotCount from the position count, and accepts an unassigned
+// builds, derives the slot count from the position count, and accepts an unassigned
 // (empty-payload) position — which is legal, distinct from a window.
 func TestNewDedicatedPositionsLoader_Valid(t *testing.T) {
 	t.Parallel()
-	l, err := NewDedicatedPositionsLoader("SLN-2", "Home loader", RoleProduce, ReplenishmentOperator,
+	l, err := NewDedicatedPositionsLoader("SLN-2", RoleProduce, ReplenishmentOperator,
 		[]Position{{Node: "HOME-1", Payload: "PART-A"}, {Node: "HOME-2", Payload: ""}})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -95,16 +95,16 @@ func TestNewDedicatedPositionsLoader_Valid(t *testing.T) {
 	if !l.IsDedicated() || l.IsShared() {
 		t.Errorf("layout wrong: dedicated=%v", l.IsDedicated())
 	}
-	if l.SlotCount() != 2 {
-		t.Errorf("SlotCount = %d, want 2 (= position count)", l.SlotCount())
+	if l.slotCount != 2 {
+		t.Errorf("slot count = %d, want 2 (= position count)", l.slotCount)
 	}
-	if !l.IsOperatorDriven() {
-		t.Errorf("replenishment=operator should report IsOperatorDriven")
+	if !l.UsesOperatorStaging() {
+		t.Errorf("replenishment=operator should report UsesOperatorStaging")
 	}
 	if got := l.DeliveryNodes(); len(got) != 2 || got[0] != "HOME-1" || got[1] != "HOME-2" {
 		t.Errorf("DeliveryNodes = %v, want the two position nodes", got)
 	}
-	if len(l.Windows()) != 0 || len(l.PayloadSet()) != 0 {
+	if len(l.windows) != 0 || len(l.PayloadSet()) != 0 {
 		t.Errorf("dedicated loader should carry positions, no windows/shared set: %+v", l)
 	}
 }
@@ -131,7 +131,7 @@ func TestUsesOperatorStaging_TheSwitchMeansWhatItSays(t *testing.T) {
 	windows := []Window{{Node: "W1"}}
 	payloads := []PayloadCode{"P1"}
 
-	configured, err := NewSharedWindowLoader("CFG", "n", RoleProduce, ReplenishmentThreshold,
+	configured, err := NewSharedWindowLoader("CFG", RoleProduce, ReplenishmentThreshold,
 		windows, payloads, WithUOPThreshold(map[PayloadCode]int{"P1": 100}))
 	if err != nil {
 		t.Fatalf("build configured: %v", err)
@@ -146,7 +146,7 @@ func TestUsesOperatorStaging_TheSwitchMeansWhatItSays(t *testing.T) {
 	// Threshold switched ON with nothing configured: the threshold path still
 	// owns it and simply has nothing to fire on. It does NOT become an
 	// operator-staged loader behind the operator's back.
-	bare, err := NewSharedWindowLoader("BARE", "n", RoleProduce, ReplenishmentThreshold, windows, payloads)
+	bare, err := NewSharedWindowLoader("BARE", RoleProduce, ReplenishmentThreshold, windows, payloads)
 	if err != nil {
 		t.Fatalf("build bare: %v", err)
 	}
@@ -160,7 +160,7 @@ func TestUsesOperatorStaging_TheSwitchMeansWhatItSays(t *testing.T) {
 			"and a loader nobody feeds")
 	}
 
-	operator, err := NewSharedWindowLoader("OPS", "n", RoleProduce, ReplenishmentOperator, windows, payloads)
+	operator, err := NewSharedWindowLoader("OPS", RoleProduce, ReplenishmentOperator, windows, payloads)
 	if err != nil {
 		t.Fatalf("build operator: %v", err)
 	}
@@ -183,7 +183,7 @@ func TestReservationTarget(t *testing.T) {
 	t.Parallel()
 
 	// MULTI-WINDOW shared.
-	shared, err := NewSharedWindowLoader("WELD-1", "n", RoleProduce, ReplenishmentThreshold,
+	shared, err := NewSharedWindowLoader("WELD-1", RoleProduce, ReplenishmentThreshold,
 		[]Window{{Node: "WELD-1-W1"}, {Node: "WELD-1-W2"}}, []PayloadCode{"P1"})
 	if err != nil {
 		t.Fatalf("build shared: %v", err)
@@ -206,7 +206,7 @@ func TestReservationTarget(t *testing.T) {
 	}
 
 	// SINGLE-WINDOW shared.
-	single, err := NewSharedWindowLoader("LDR-1", "n", RoleProduce, ReplenishmentThreshold,
+	single, err := NewSharedWindowLoader("LDR-1", RoleProduce, ReplenishmentThreshold,
 		[]Window{{Node: "LDR-1"}}, []PayloadCode{"P1"})
 	if err != nil {
 		t.Fatalf("build single: %v", err)
@@ -216,7 +216,7 @@ func TestReservationTarget(t *testing.T) {
 	}
 
 	// DEDICATED with TWO same-payload positions.
-	ded, err := NewDedicatedPositionsLoader("DECK", "n", RoleProduce, ReplenishmentThreshold,
+	ded, err := NewDedicatedPositionsLoader("DECK", RoleProduce, ReplenishmentThreshold,
 		[]Position{{Node: "POS-1", Payload: "PA"}, {Node: "POS-2", Payload: "PA"}, {Node: "POS-3", Payload: "PB"}})
 	if err != nil {
 		t.Fatalf("build dedicated: %v", err)
@@ -238,16 +238,12 @@ func TestReservationTarget(t *testing.T) {
 	}
 }
 
-// TestPositionIsBuffer pins the three-state classification, which is the whole
+// TestPositionIsBuffer pins the classification, which is the whole
 // point of carrying home_kind: an unpinned HOME and a BUFFER slot both have an
 // empty payload, and before Core said which was which the Edge called both of
 // them buffers. Core keeps them apart — InSourcePool leaves an unassigned home
 // out of the loader's source pool — so a carrier moved onto one is parked where
 // nothing will source it.
-//
-// The blank case is a FALLBACK, not a default answer. A Core predating the field
-// sends blank for buffers too, so blank must reproduce the old inference exactly
-// rather than resolve to "home".
 func TestPositionIsBuffer(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
@@ -264,10 +260,6 @@ func TestPositionIsBuffer(t *testing.T) {
 			"a pinned home is not a buffer"},
 		{"core says home, UNPINNED", Position{HomeKind: HomeKindHome}, false,
 			"THE BUG: an unassigned home has no payload but is not a buffer, and Core excludes it from the source pool"},
-		{"pre-field core, no payload", Position{}, true,
-			"fallback to the old inference — blank must not read as home"},
-		{"pre-field core, pinned", Position{Payload: "PA"}, false,
-			"fallback to the old inference"},
 	} {
 		if got := tc.pos.IsBuffer(); got != tc.want {
 			t.Errorf("%s: IsBuffer() = %v, want %v — %s", tc.name, got, tc.want, tc.why)
@@ -280,7 +272,7 @@ func TestPositionIsBuffer(t *testing.T) {
 // are empty.
 func TestLoaderFlowOptions(t *testing.T) {
 	t.Parallel()
-	l, err := NewDedicatedPositionsLoader("DECK", "n", RoleProduce, ReplenishmentThreshold,
+	l, err := NewDedicatedPositionsLoader("DECK", RoleProduce, ReplenishmentThreshold,
 		[]Position{{Node: "POS-1", Payload: "PA"}},
 		WithInboundSource("SYN_BUF_Deck"), WithOutboundDest("SYN_SM_Comp"))
 	if err != nil {
@@ -292,8 +284,11 @@ func TestLoaderFlowOptions(t *testing.T) {
 	if l.InboundSource() != "SYN_BUF_Deck" {
 		t.Errorf("InboundSource = %q, want SYN_BUF_Deck", l.InboundSource())
 	}
-	bare, _ := NewSharedWindowLoader("L", "n", RoleProduce, ReplenishmentThreshold,
+	bare, err := NewSharedWindowLoader("L", RoleProduce, ReplenishmentThreshold,
 		[]Window{{Node: "L"}}, []PayloadCode{"P1"})
+	if err != nil {
+		t.Fatalf("NewSharedWindowLoader: %v", err)
+	}
 	if bare.OutboundDest() != "" || bare.InboundSource() != "" {
 		t.Errorf("unset outbound/inbound should be empty, got %q/%q", bare.OutboundDest(), bare.InboundSource())
 	}
@@ -303,15 +298,10 @@ func TestLoaderFlowOptions(t *testing.T) {
 // must not corrupt the aggregate's internal state.
 func TestLoader_AccessorsReturnCopies(t *testing.T) {
 	t.Parallel()
-	l, err := NewSharedWindowLoader("L", "n", RoleProduce, ReplenishmentThreshold,
+	l, err := NewSharedWindowLoader("L", RoleProduce, ReplenishmentThreshold,
 		[]Window{{Node: "W1"}}, []PayloadCode{"P1"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
-	}
-	ws := l.Windows()
-	ws[0].Node = "TAMPERED"
-	if l.Windows()[0].Node != "W1" {
-		t.Errorf("Windows() leaked internal state: %v", l.Windows())
 	}
 	ps := l.PayloadSet()
 	ps[0] = "TAMPERED"
@@ -334,7 +324,7 @@ func TestPayloadsMissingThreshold_PartialCoverageIsTheOneThatHides(t *testing.T)
 	windows := []Window{{Node: "W1"}}
 	set := []PayloadCode{"P1", "P2", "P3", "P4", "P5"}
 
-	partial, err := NewSharedWindowLoader("PART", "n", RoleProduce, ReplenishmentThreshold,
+	partial, err := NewSharedWindowLoader("PART", RoleProduce, ReplenishmentThreshold,
 		windows, set, WithUOPThreshold(map[PayloadCode]int{"P1": 100, "P3": 50, "P5": 25}))
 	if err != nil {
 		t.Fatalf("build: %v", err)
@@ -352,7 +342,7 @@ func TestPayloadsMissingThreshold_PartialCoverageIsTheOneThatHides(t *testing.T)
 			"a loader nobody feeds and two parts nobody orders")
 	}
 
-	full, err := NewSharedWindowLoader("FULL", "n", RoleProduce, ReplenishmentThreshold,
+	full, err := NewSharedWindowLoader("FULL", RoleProduce, ReplenishmentThreshold,
 		windows, []PayloadCode{"P1"}, WithUOPThreshold(map[PayloadCode]int{"P1": 100}))
 	if err != nil {
 		t.Fatalf("build: %v", err)
@@ -363,7 +353,7 @@ func TestPayloadsMissingThreshold_PartialCoverageIsTheOneThatHides(t *testing.T)
 
 	// An OPERATOR loader has no thresholds by design — reporting them missing
 	// would put a permanent complaint on every correctly-configured loader.
-	ops, err := NewSharedWindowLoader("OPS", "n", RoleProduce, ReplenishmentOperator, windows, set)
+	ops, err := NewSharedWindowLoader("OPS", RoleProduce, ReplenishmentOperator, windows, set)
 	if err != nil {
 		t.Fatalf("build: %v", err)
 	}

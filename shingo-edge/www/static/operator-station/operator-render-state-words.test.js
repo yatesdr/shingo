@@ -58,11 +58,15 @@ const ctx = vm.createContext({
     el: function (tag, props) { return fakeEl(props); },
     getView: function () { return view; },
     claimedNodes: function () {
-        return (view && view.nodes || []).filter(n => n.active_claim || n.changeover_task);
+        return (view && view.nodes || []).filter(n => n.loader || n.active_claim || n.changeover_task);
     },
     mountFlowPanel() {}, syncFlowPanel() {}, openFlowPanel() {},
     isActive: function () { return false; },
 });
+// The board model the header and the grid read the layout from
+// (operator-board-model.js): pure, so it runs as it ships.
+vm.runInContext(fs.readFileSync(path.join(__dirname, 'operator-board-model.js'), 'utf8')
+    .replace(/^export\s+/gm, ''), ctx);
 vm.runInContext(src + '\nthis.renderHeader = renderHeader; this.renderFooter = renderFooter; this.renderGrid = renderGrid;', ctx);
 
 function findChip(root) {

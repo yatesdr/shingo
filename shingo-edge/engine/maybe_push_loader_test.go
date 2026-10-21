@@ -10,7 +10,7 @@ func TestRePushOwnLoader_StagesOneEmptyForOperatorDrivenLoaderOnly(t *testing.T)
 	t.Parallel()
 	db := testEngineDB(t)
 	eng := testEngine(t, db)
-	_, nodeID, _ := seedActiveManualSwapLoader(t, db, "PUSH-PROC", "PUSH-LOADER", "PART-P")
+	_, nodeID, _ := seedLoaderNode(t, db, "PUSH-PROC", "PUSH-LOADER")
 	// Threshold-driven WITH a configured threshold → no operator push.
 	seedCoreLoader(t, eng, sharedLoaderInfo("PUSH-LOADER", "produce", "threshold", "PART-P", 0, 100))
 
@@ -64,8 +64,8 @@ func TestSweepPushLoaders_OnlyOperatorStagedLoaders(t *testing.T) {
 	t.Parallel()
 	db := testEngineDB(t)
 	eng := testEngine(t, db)
-	_, opNode, _ := seedActiveManualSwapLoader(t, db, "T-PROC", "T-LOADER", "PART-A")
-	_, thrNode, _ := seedActiveManualSwapLoader(t, db, "P-PROC", "P-LOADER", "PART-B")
+	_, opNode, _ := seedLoaderNode(t, db, "T-PROC", "T-LOADER")
+	_, thrNode, _ := seedLoaderNode(t, db, "P-PROC", "P-LOADER")
 	// T-LOADER operator-driven; P-LOADER threshold-driven WITH a threshold configured.
 	seedCoreLoader(t, eng,
 		sharedLoaderInfo("T-LOADER", "produce", "operator", "PART-A", 0, 0),
@@ -106,7 +106,7 @@ func TestRePushOwnLoader_ThresholdLoaderIsNotFedByThePush(t *testing.T) {
 	t.Parallel()
 	db := testEngineDB(t)
 	eng := testEngine(t, db)
-	_, nodeID, _ := seedActiveManualSwapLoader(t, db, "FB-PROC", "FB-LOADER", "PART-F")
+	_, nodeID, _ := seedLoaderNode(t, db, "FB-PROC", "FB-LOADER")
 	// Threshold switched on, no threshold value configured.
 	seedCoreLoader(t, eng, sharedLoaderInfo("FB-LOADER", "produce", "threshold", "PART-F", 0, 0))
 

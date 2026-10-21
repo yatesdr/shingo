@@ -14,7 +14,7 @@ import (
 // TestCrossCreator_UnloaderBudget_OperatorAndAutomatic is the never-2N property
 // stated across CREATORS rather than within one. Two independent paths can order
 // a full into the same unloader window — the operator's RequestFullBin button and
-// the automatic createUnloaderFullInViaSeam — and the invariant is a property of
+// the automatic createUnloaderFullIns — and the invariant is a property of
 // the window, not of either caller. Whichever fires first, the second must find
 // the budget spent.
 //
@@ -46,7 +46,7 @@ func TestCrossCreator_UnloaderBudget_OperatorAndAutomatic(t *testing.T) {
 			}
 
 			fire := map[string]func(){
-				"automatic": func() { eng.createUnloaderFullInViaSeam(uld, "PART-A") },
+				"automatic": func() { eng.createUnloaderFullIns(uld, []domain.PayloadCode{"PART-A"}) },
 				"operator":  func() { _, _ = eng.RequestFullBin(nodeID, "PART-A") },
 			}
 
@@ -144,7 +144,11 @@ func TestCensus_RetrieveOrderCreatorSites(t *testing.T) {
 	// gone, and its primes are created by createPrimes, which took over
 	// applyProducePlan's own site when the empty to a bare press line came to
 	// carry primes too.
-	const want = 12
+	//
+	// 11 since REQUEST EMPTY BIN refuses a mode outside the configurable set:
+	// requestEmptyAtLegacyLine, the retrieve it made for one, is gone. It was
+	// never behind withLoaderBudget (the line, not a loader window).
+	const want = 11
 	sites := retrieveCreatorSites(t)
 	if len(sites) != want {
 		t.Errorf("retrieve-order creator sites = %d, expected %d.\nA creator was added or removed. Re-run the census and update this count WITH the seam's scope comment.\nSites:\n  %s",

@@ -27,12 +27,13 @@ const ctx = vm.createContext({});
 vm.runInContext(src + '\nthis.cardModel = cardModel; this.headerModel = headerModel; this.nodeFacts = nodeFacts;', ctx);
 const cardModel = ctx.cardModel, headerModel = ctx.headerModel, nodeFacts = ctx.nodeFacts;
 
-// entry builder: role + bin (none | empty | {payload}) + orders [{status, payload_code}]
+// entry builder: a loader tile of a role + bin (none | empty | {payload}) + orders
+// [{status, payload_code}]. A loader tile carries its loader, not a claim.
 function entry(role, bin, orders) {
     let bin_state = null;
     if (bin === 'empty') bin_state = { occupied: true, payload_code: '' };
     else if (bin && bin.payload) bin_state = { occupied: true, payload_code: bin.payload };
-    return { active_claim: { role: role }, bin_state: bin_state, orders: orders || [] };
+    return { loader: { role: role }, bin_state: bin_state, orders: orders || [] };
 }
 function card(e, code) { return cardModel(e, code); }
 

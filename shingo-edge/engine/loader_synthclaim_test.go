@@ -33,8 +33,8 @@ func TestCoreLoaderNode_NoEdgeClaim_ResolvesAsManualSwap(t *testing.T) {
 	// Core owns the unloader (consume, shared_window) with SMN-U1 as a window.
 	seedCoreLoader(t, eng, protocol.LoaderInfo{
 		Name: "Supermarket Unloader", LoaderKey: "loader:UNLD", Role: "consume", Layout: "shared_window",
-		Replenishment: "operator", OutboundDest: "Empty Totes", InboundSource: "FG Area", ConfigGen: 1,
-		Positions: []protocol.LoaderPosition{{CoreNodeName: "SMN-U1", Kind: "window"}},
+		Replenishment: "operator", OutboundDest: "Empty Totes", InboundSource: "FG Area",
+		Positions: []protocol.LoaderPosition{{CoreNodeName: "SMN-U1"}},
 		Payloads:  []protocol.LoaderPayloadInfo{{PayloadCode: "PART-A"}, {PayloadCode: "PART-B"}},
 	})
 

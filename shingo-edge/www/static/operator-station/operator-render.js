@@ -3,6 +3,9 @@ import { formatClock, serverNow } from '/static/shared/utils.js';
 import { getView, claimedNodes, isReplenishing } from './operator-state.js';
 import { isActive } from './order-status.js';
 import { cardModel, headerModel, nodeFacts, ROLE_WORDS } from './operator-window-state.js';
+import { loaderOf, tileRole, partCodes, carriersOf, isOperatorReplenished, showsAllParts } from './operator-board-model.js';
+import { isDedicated, isUnloaderWindow, boardLayout, cardParts } from './operator-board-model.js';
+import { partState, changeoverInstruction, windowWords } from './operator-board-model.js';
 import { mountFlowPanel, openFlowPanel, syncFlowPanel } from './operator-flow.js';
 import { ensureComposer } from './composer-boot.js';
 import { confirmResumeKeepStaged } from './operator-supply-refusal.js';
@@ -77,9 +80,9 @@ export function renderHeader() {
     mountFlowPanel();
     syncFlowPanel(view);
 
-    // Bin-loader board mode (single manual_swap claim) is operated by a
-    // forklift driver — strip the changeover/cutover buttons. Those flows
-    // belong on a regular operator station, not this view.
+    // A loader's board is operated by a forklift driver: its header carries
+    // the loader's acts, not the changeover/cutover buttons, which belong on a
+    // regular operator station (boardLayout's header).
     //
     // HMI Tier 2 (post-F'-Phase-2): the changeover-wide RELEASE header
     // button was removed. Each node tile is the release surface during
@@ -98,13 +101,14 @@ export function renderHeader() {
     // place, stranding it with neither an automatic nor a manual completion.
     // PLC-driven cutover is now removed entirely; CATID auto-arm handles the
     // START side and the operator always owns the FINISH.
-    if (isHomeLocationLoader()) {
+    const header = boardLayout(claimedNodes()).header;
+    if (header === 'pull-full-from-home') {
         // Dedicated home loader (forklift-operated): the operator's header action
         // is consolidating homes, not a changeover. Surface the buffer chain here
         // in place of CHANGEOVER so it's discoverable instead of hidden behind a
         // per-card condition.
         headerActions.appendChild(headerBtn('PULL FULL FROM HOME', 'pull-full-home', openPullFullFromHomePicker));
-    } else if (!isBoardMode()) {
+    } else if (header === 'changeover') {
         if (view.active_changeover) {
             headerActions.appendChild(headerBtn('CUTOVER', 'cutover', confirmCutover));
             // CANCEL during active changeover: aborts every in-flight evac+
@@ -121,13 +125,6 @@ export function renderHeader() {
     }
 
     headerActions.appendChild(headerBtn('REFRESH', 'refresh', loadViewRef));
-}
-
-function isBoardMode() {
-    const nodes = claimedNodes();
-    return nodes.length === 1
-        && nodes[0].active_claim
-        && nodes[0].active_claim.swap_mode === 'manual_swap';
 }
 
 // CHANGEOVER OPENS THE PICK-A-PART MODAL on every station (pick-a-part U4):
@@ -238,33 +235,19 @@ export function renderGrid() {
         return;
     }
 
-    // Loader board mode: all claimed nodes are manual_swap loaders. Branch on the
-    // LAYOUT flag — home-location (dedicated per-payload positions) renders one
-    // card per home across all positions; single-window renders the one slot's
-    // payloads. A station is one layout (the engineer's pick), so if any loader
-    // node is home-location the whole board renders that way.
-    const manualSwapNodes = nodes.filter(function(n) {
-        return n.active_claim && n.active_claim.swap_mode === 'manual_swap';
-    });
-    const allManualSwap = manualSwapNodes.length >= 1 && manualSwapNodes.length === nodes.length;
-    // A consume (drain) shared-window loader renders as physical SLOTS — the node
-    // grid below (one tile per window, showing the bin/part actually present), NOT
-    // the loader payload board. An unloader operator just clears whatever full bin
-    // lands in a slot, so a card-per-allowed-payload catalog (often the whole plant's
-    // parts) is pure noise. Home-location (dedicated-position) unloaders keep their
-    // per-position board; produce-side loaders keep the payload board.
-    const drainSlots = allManualSwap
-        && !manualSwapNodes.some(function(n) { return n.home_location_loader; })
-        && manualSwapNodes.every(function(n) { return n.active_claim.role === 'consume'; });
-    if (allManualSwap && !drainSlots) {
+    // The layout comes from the tiles (boardLayout): a loader's board draws a
+    // card per home and part, or per window and part; a shared unloader's
+    // windows, and a station that mixes loaders with presses, the node grid.
+    const layout = boardLayout(nodes);
+    if (layout.kind === 'homes' || layout.kind === 'payload') {
         grid.classList.add('os-board-mode');
         document.body.classList.add('os-board-mode-active');
         grid.style.removeProperty('--os-cols');
         grid.style.removeProperty('--os-rows');
-        if (manualSwapNodes.some(function(n) { return n.home_location_loader; })) {
-            renderHomeLocationBoard(manualSwapNodes);
+        if (layout.kind === 'homes') {
+            renderDedicatedPositionsBoard(layout.loaders);
         } else {
-            renderPayloadBoard(manualSwapNodes[0]);
+            renderPayloadBoard(layout.loaders);
         }
         const restored = grid.querySelector('.os-board-cards');
         if (restored) restored.scrollTop = savedScrollTop;
@@ -287,56 +270,16 @@ export function renderGrid() {
 // headerModel(entry) — so the loader/unloader wording is one table and the header
 // can't contradict the cards. operator-render is the render layer that consumes them.
 
-// confirmUnloadSwap gates the unloader swap behind an explicit operator
-// confirmation. The swap (clear-bin) is irreversible mid-shift — it confirms
-// the inbound full was received, sends the empty back, and pulls the next full
-// — so the operator must declare the full pulled / bin empty before it fires.
-// Reuses the os-co-picker overlay styling already used by the changeover/cutover
-// confirmations so the look is consistent.
-//
-// allowedPayloadCodes is the node's claim.allowed_payload_codes. The dunnage
-// picker options are the distinct bin_type_codes mapped to those payloads via
-// the view-level payload_bin_types catalog. A node configured for tote-payloads
-// only resolves to totes; a node with no payload restriction shows all dunnage
-// types in the catalog.
-//
-// discarding is the count the clear is about to throw away — the Edge's own
-// remaining_uop_cached for the carrier in the window. The overlay says the
-// number because the clear does not refuse on it and should not: an unloader
-// clears full finished bins by design, and Core records the discard durably in
-// bin_uop_ledger as clear_for_reuse. What was missing was the operator seeing
-// what they were discarding at the moment they discarded it. Pass 0 or null
-// when there is nothing to say and the line is omitted.
-//
-// leavesBare is the tile's leaves_bare: true only at a window of the stage-1
-// half of a two-stage unloader. There the cart goes on to stage 2 with no bin
-// on it, so there is nothing to pick — the CLEAR is one tap, Full off, and
-// posts a blank code; Core stamps the cart from its own type. The panel names
-// no type: the marker Core stamps is bookkeeping, never an operator's word.
-// dunnageTypesFor derives the distinct carrier types a node may declare, from
-// the view-level payload_bin_types catalog narrowed to the node's payloads.
-//
-// ONE SPELLING, because two panels ask it now: the swap confirmation and the
-// empty-carrier panel beside it. It lived inline in the first, and the second
-// would have been a copy — which is how the two would drift into offering an
-// operator different type lists for the same carrier at the same window.
-//
-// The fallback is deliberate: a node whose payloads match nothing in the
-// catalog shows ALL dunnage codes rather than none, so the operator is never
-// stuck in front of an empty menu on a node nobody has finished configuring.
-// pulledDirectlyNote is the card's sentence at a window of a two-stage
-// unloader's stage 2 pulled directly by the process: its finished cart is not
-// sent anywhere, it waits on the window for the line. Empty for every other
-// window, and while the window holds no cart or a cart still carrying parts.
 // partialLine is the one rendering rule for a carrier left unfinished: its part
 // set, its count above 0 and below the part's capacity, wherever it stands. A
 // held one (waiting in its partial home) says whose and since when; one at its
-// line says it is being finished. Empty for every other carrier. Read from the
-// node-bins row the board already fetches; nothing is inferred from the order
-// that brought it.
-function partialLine(bs, atLine) {
+// line says it is being finished. Empty for every other carrier. The station's
+// bin carries no count (stationBinState): n is the tile's own count
+// (runtime.remaining_uop_cached), and a held carrier's is Core's held_uop, which
+// does not tick. Nothing is inferred from the order that brought it.
+function partialLine(bs, atLine, count) {
     if (!bs || !bs.occupied || !bs.payload_code || !(bs.uop_capacity > 0)) return '';
-    var n = bs.uop_remaining;
+    var n = bs.held_since ? bs.held_uop : count;
     if (!(n > 0 && n < bs.uop_capacity)) return '';
     var s = 'PARTIAL — ' + n + ' of ' + bs.payload_code;
     if (bs.held_since) {
@@ -392,44 +335,53 @@ function confirmUnloadHeld(nodeID, line, count) {
     document.body.appendChild(overlay);
 }
 
+// pulledDirectlyNote is the card's sentence at a window of a two-stage
+// unloader's stage 2 pulled directly by the process: its finished cart is not
+// sent anywhere, it waits on the window for the line. Empty for every other
+// window, and while the window holds no cart or a cart still carrying parts.
 function pulledDirectlyNote(entry) {
-    if (!entry || !entry.pulled_directly) return '';
+    const loader = loaderOf(entry);
+    if (!loader || !loader.pulled_directly) return '';
     var b = entry.bin_state;
     if (!b || !b.occupied || b.payload_code) return '';
     return 'The cart waits here for the line';
 }
 
-function dunnageTypesFor(allowedPayloadCodes) {
-    var view = getView();
-    var catalog = (view && view.payload_bin_types) || [];
-    var seen = {};
-    var binTypeCodes = [];
-    catalog.forEach(function(e) {
-        if (!seen[e.bin_type_code] &&
-                (allowedPayloadCodes && allowedPayloadCodes.length > 0
-                    ? allowedPayloadCodes.indexOf(e.payload_code) >= 0
-                    : true)) {
-            seen[e.bin_type_code] = true;
-            binTypeCodes.push(e.bin_type_code);
-        }
-    });
-    if (binTypeCodes.length === 0) {
-        catalog.forEach(function(e) {
-            if (!seen[e.bin_type_code]) {
-                seen[e.bin_type_code] = true;
-                binTypeCodes.push(e.bin_type_code);
-            }
-        });
-    }
-    return binTypeCodes;
-}
-
-function confirmUnloadSwap(nodeID, allowedPayloadCodes, discarding, leavesBare) {
+// confirmUnloadSwap gates the unloader swap behind an explicit operator
+// confirmation. The swap (clear-bin) is irreversible mid-shift — it confirms
+// the inbound full was received, sends the empty back, and pulls the next full
+// — so the operator must declare the full pulled / bin empty before it fires.
+// Reuses the os-co-picker overlay styling already used by the changeover/cutover
+// confirmations so the look is consistent.
+//
+// carriers is the tile's carrier list (loader.carriers): the bin types Core's
+// catalog gives the window's parts, or every type in the catalog when its parts
+// match none, so the operator is never stuck in front of an empty menu on a
+// node nobody has finished configuring (service carriersFor). Empty when Core
+// sent no catalog: the panel then asks no type.
+//
+// discarding is the count the clear is about to throw away — the Edge's own
+// remaining_uop_cached for the carrier in the window. The overlay says the
+// number because the clear does not refuse on it and should not: an unloader
+// clears full finished bins by design, and Core records the discard durably in
+// bin_uop_ledger as clear_for_reuse. What was missing was the operator seeing
+// what they were discarding at the moment they discarded it. Pass 0 or null
+// when there is nothing to say and the line is omitted.
+//
+// leavesBare is the tile's loader.leaves_bare: true only at a window of the
+// stage-1 half of a two-stage unloader. There the cart goes on to stage 2 with
+// no bin on it, so there is nothing to pick — the CLEAR is one tap, Full off,
+// and posts a blank code; Core stamps the cart from its own type. The panel
+// names no type: the marker Core stamps is bookkeeping, never an operator's word.
+//
+// Exported for the node modal's CLEAR BIN on an unloader, which goes through
+// this panel (operator-modal.js).
+export function confirmUnloadSwap(nodeID, carriers, discarding, leavesBare) {
     if (leavesBare) {
         confirmFullOff(nodeID, discarding);
         return;
     }
-    var binTypeCodes = dunnageTypesFor(allowedPayloadCodes);
+    var binTypeCodes = carriers || [];
 
     const overlay = el('div', { className: 'os-co-picker-overlay' });
     const panel = el('div', { className: 'os-co-picker' });
@@ -525,13 +477,13 @@ function confirmSendOn(nodeID) {
         'Send on', 'Goes to the empties supermarket. No type to pick — it\'s the cart it came in as.');
 }
 
-// confirmPushEmpty shows a confirmation panel for an empty carrier sitting in a
-// drain slot. Tapping PUSH EMPTY fires the push-empty endpoint so the carrier is
+// confirmPushEmpty shows a confirmation panel for an empty carrier sitting in an
+// unloader window. Tapping PUSH EMPTY fires the push-empty endpoint so the carrier is
 // sent to the supermarket and the node can request a fresh full bin.
 //
 // bare is the carrier's bin_state.bare: a stage-2 cart with no bin on it gets
 // the one-tap Send on panel instead (confirmSendOn).
-function confirmPushEmpty(nodeID, allowedPayloadCodes, bare) {
+function confirmPushEmpty(nodeID, carriers, bare) {
     if (bare) {
         confirmSendOn(nodeID);
         return;
@@ -570,7 +522,7 @@ function confirmPushEmpty(nodeID, allowedPayloadCodes, bare) {
     // a carrier's real type is a correction; retyping a carrier so a refused
     // order will go through would be a lie about a physical object, and this
     // panel only ever offers the types the node's payloads actually use.
-    const dunnage = dunnageTypesFor(allowedPayloadCodes);
+    const dunnage = carriers || [];
     if (dunnage.length > 0) {
         panel.appendChild(el('div', { className: 'os-co-picker-subtitle',
             textContent: 'Or push it out and correct the carrier type:' }));
@@ -621,15 +573,6 @@ function confirmClearLoaderHome(nodeID) {
     document.body.appendChild(overlay);
 }
 
-// isHomeLocationLoader reports whether this station is a dedicated home-location
-// loader (manual_swap positions each pinned to a payload). Gates the header
-// "PULL FULL FROM HOME" action so it only appears where the buffer chain applies.
-function isHomeLocationLoader() {
-    return claimedNodes().some(function(n) {
-        return n.active_claim && n.active_claim.swap_mode === 'manual_swap' && n.home_location_loader;
-    });
-}
-
 // openPullFullFromHomePicker is the header entry point to the buffer chain. It
 // lists ONLY the homes that can actually run it — a loaded home ("full") whose
 // loader buffer holds a matching partial to backfill (the same gate as the
@@ -640,8 +583,7 @@ function isHomeLocationLoader() {
 function openPullFullFromHomePicker() {
     var eligible = claimedNodes().filter(function(n) {
         var bs = (n && n.bin_state) || {};
-        return n.active_claim && n.home_location_loader
-            && bs.occupied && bs.payload_code && n.has_buffer_partial;
+        return isDedicated(n) && bs.occupied && bs.payload_code && !!n.buffer_partial;
     });
 
     var overlay = el('div', { className: 'os-co-picker-overlay' });
@@ -770,9 +712,10 @@ function waitedLabel(created) {
 // the operator orders the next empty (the card opens the modal with REQUEST
 // EMPTY), so it stays. A loaded spot with nothing ordered has nothing to do.
 function idleCardHidden(entry, cs) {
-    if (!entry.board_hides_idle || cs.cls !== 'os-board-nodemand') return false;
+    var loader = loaderOf(entry);
+    if (!loader || !loader.board_hides_idle || cs.cls !== 'os-board-nodemand') return false;
     var occupied = !!(entry.bin_state && entry.bin_state.occupied);
-    if (entry.operator_driven && !occupied) return false;
+    if (isOperatorReplenished(entry) && !occupied) return false;
     return true;
 }
 
@@ -780,30 +723,32 @@ function idleCardHidden(entry, cs) {
 // loader board. Returns the card element, or null when the station hides idle
 // cards and this one is (idleCardHidden). counters.queuePos tracks the per-payload queue badge
 // across cards. The card's STATE (status/detail/action/badge facts) comes from
-// cardModel (operator-window-state.js); this function is presentation only — DOM,
-// the coverage badge, and idle-card hiding.
+// cardModel (operator-window-state.js) and what the part is at the served cells
+// from partState (operator-board-model.js); this function is presentation only —
+// DOM, the coverage badge of a loader that lists every part, and idle-card hiding.
 function buildLoaderCard(entry, code, counters, opts) {
-    var claim = entry.active_claim;
+    var allParts = showsAllParts(entry);
+    var ps = partState(entry, code, getView());
     var card = el('div', { className: 'os-board-card' });
     var cs = cardModel(entry, code);
 
-    // Coverage (ACTIVE = a running style needs this now; PRELOAD = covered only
-    // by an inactive style) — drives the badge + the all-parts idle override.
-    // NOT gated on board_shows_all_parts: every consumer below carries its own
-    // gate, and the downtime escalation needs the same fact on a board that
-    // lists only the running style's parts, where PRELOAD is never drawn.
-    var activeStylePayloads = entry.active_style_payloads || [];
-    var isActiveStylePayload = activeStylePayloads.indexOf(code) !== -1;
+    // Coverage (ACTIVE = a running style of a served cell uses it now; PRELOAD =
+    // only an inactive style does) — drives the badge + the operator board's idle
+    // override. NOT gated on the loader being one a person stages: every consumer
+    // below carries its own gate, and the downtime escalation needs the same fact
+    // on a normal board, where the ACTIVE/PRELOAD badge is deliberately not drawn.
+    var isActiveStylePayload = ps.active;
 
-    // Downtime escalation is scoped to active-style payloads — a queued call on a
-    // payload no running style consumes is not costing the line anything. With NO
-    // active-style list at all there is nothing to scope BY, and staying quiet would
-    // hide real downtime behind missing style data, so an unscoped board escalates.
-    var downtimeInScope = isActiveStylePayload || activeStylePayloads.length === 0;
+    // Downtime escalation is scoped to running parts — a queued call on a part no
+    // running style uses is not costing the line anything. When the board could
+    // not look (no view.serves) there is nothing to scope BY, and staying quiet
+    // would hide real downtime behind missing data, so it escalates (ps.inScope).
+    var downtimeInScope = ps.inScope;
 
-    // A board listing every part: on an idle card, "NO DEMAND" says less than
-    // whether a running style needs the part. Show that instead.
-    if (entry.board_shows_all_parts && cs.cls === 'os-board-nodemand') {
+    // A board listing every part (loader.board_shows_all_parts): on an idle card,
+    // "NO DEMAND" says less than whether a running style needs the part. Show
+    // that instead.
+    if (allParts && cs.cls === 'os-board-nodemand') {
         if (isActiveStylePayload) {
             cs.statusText = 'ACTIVE'; cs.statusClass = 'os-board-tag-lineside'; cs.detail = '';
         } else {
@@ -814,21 +759,21 @@ function buildLoaderCard(entry, code, counters, opts) {
     // Hide what has nothing to do, when the station is set to: a wall of grey
     // idle cards buries the handful the operator can act on. It is a setting
     // of its own (Core: bin_loaders.board_hides_idle). It used to be read off
-    // operator_driven, so an operator-ordered station could never hide a loaded
-    // home. The home board counts what this hides in its subtitle.
+    // the loader's replenishment, so an operator-ordered station could never
+    // hide a loaded home. The home board counts what this hides in its subtitle.
     if (idleCardHidden(entry, cs)) return null;
 
     card.classList.add(cs.cls);
     if (cs.loadNow) card.classList.add('os-board-load-now');
 
-    // ACTIVE badge on EVERY board. It used to be operator_driven-only, reasoning that a
+    // ACTIVE badge on EVERY board. It used to be operator-loader-only, reasoning that a
     // normal board renders only active-style payloads so the label adds nothing — but
     // redundant to the code is not redundant to a driver reading a wall of part numbers
     // from a forklift position, who otherwise has to KNOW that rule to trust the board. Say
     // it on the card. PRELOAD only where every part is listed: a board of the running
     // style's parts has no preload cards to contrast against, so an unpaired PRELOAD
     // badge would be noise.
-    if (isActiveStylePayload || entry.board_shows_all_parts) {
+    if (isActiveStylePayload || allParts) {
         card.appendChild(el('span', {
             className: 'os-board-cov ' + (isActiveStylePayload ? 'os-board-cov-active' : 'os-board-cov-preload'),
             textContent: isActiveStylePayload ? 'ACTIVE' : 'PRELOAD',
@@ -837,7 +782,7 @@ function buildLoaderCard(entry, code, counters, opts) {
     // The coverage TINT goes with listing every part. It exists to make that board's
     // IDLE cards read as actionable (.os-board-nodemand.os-board-cov-on-*); on a board
     // of the running style's parts it would repaint NO DEMAND cards blue for no reason.
-    if (entry.board_shows_all_parts) {
+    if (allParts) {
         card.classList.add(isActiveStylePayload ? 'os-board-cov-on-active' : 'os-board-cov-on-preload');
     }
 
@@ -845,23 +790,19 @@ function buildLoaderCard(entry, code, counters, opts) {
     card.appendChild(el('span', { className: 'os-board-tag ' + cs.statusClass, textContent: cs.statusText }));
     card.appendChild(el('div', { className: 'os-board-detail', textContent: cs.detail }));
 
-    // NOT GATED ON operator_driven, and that gate is why this was invisible.
+    // NOT GATED ON the loader being an operator's: a dedicated-home board once
+    // threw the answer away and an active part running short drew whatever the
+    // status precedence gave it, green when a bin happened to be parked at the
+    // home. Reported from Springfield: the cell was starving and the loader card
+    // read healthy.
     //
-    // The server computes lineside and starvation for EVERY manual-swap produce
-    // loader — a plant-wide walk of every active consume claim — and the client
-    // then rendered it only on transitional boards. A dedicated-home board paid
-    // for the scan and threw the answer away, so an active part below its
-    // configured threshold drew whatever the status precedence gave it, which is
-    // green when a bin happens to be parked at the home. Reported from
-    // Springfield: the cell was starving and the loader card read healthy.
-    //
-    // isActiveStylePayload still gates it, and now means something: the server
-    // no longer overwrites the active set with the position's pinned parts, so
-    // a card only claims ACTIVE when a running style actually consumes it.
+    // The count is the served cells' (partState.lineside, from view.serves); the
+    // mark is the part's coverage: exposed or out at a served cell with no
+    // stocked bin of it on this board. Counts are what the board goes on: Core's
+    // reorder threshold sits at or above a bin, so every running part read low.
     if (isActiveStylePayload) {
-        var lsMap = entry.active_payload_lineside || {};
-        var lsUOP = lsMap[code] != null ? lsMap[code] : 0;
-        var starved = (entry.starved_payloads || {})[code] === true;
+        var lsUOP = ps.lineside;
+        var starved = ps.short;
         card.appendChild(el('div', {
             className: 'os-board-lineside' + (starved ? ' os-board-lineside--starved' : ''),
             textContent: 'Lineside ' + lsUOP + ' UoP' + (starved ? ' — PRELOAD' : ''),
@@ -949,15 +890,16 @@ function buildLoaderCard(entry, code, counters, opts) {
     if (cs.action === 'load') {
         card.style.cursor = 'pointer';
         card.addEventListener('click', function() {
-            openLoadBinRef(entry.node.id, [code], claim.uop_capacity || 0);
+            // A loader tile carries no capacity: the load modal takes the part's.
+            openLoadBinRef(entry.node.id, [code], 0);
         });
     } else if (cs.action === 'unload') {
         card.style.cursor = 'pointer';
         card.addEventListener('click', function() {
             var held = entry.bin_state && entry.bin_state.held_since;
-            if (held) { confirmUnloadHeld(entry.node.id, entry.bin_state.held_for, entry.bin_state.uop_remaining); return; }
-            confirmUnloadSwap(entry.node.id, entry.active_claim && entry.active_claim.allowed_payload_codes,
-                entry.runtime && entry.runtime.remaining_uop_cached, !!entry.leaves_bare);
+            if (held) { confirmUnloadHeld(entry.node.id, entry.bin_state.held_for, entry.bin_state.held_uop); return; }
+            confirmUnloadSwap(entry.node.id, carriersOf(entry),
+                entry.runtime && entry.runtime.remaining_uop_cached, !!loaderOf(entry).leaves_bare);
         });
     } else {
         card.style.cursor = 'pointer';
@@ -967,31 +909,6 @@ function buildLoaderCard(entry, code, counters, opts) {
     }
 
     return card;
-}
-
-// allowedPayloadsFor resolves the payload list a loader entry's cards come from:
-// the multi-process active/all union (transitional shows all, normal shows
-// active), falling back to the single claim's list.
-function allowedPayloadsFor(entry) {
-    var claim = entry.active_claim;
-    var modeList = entry.board_shows_all_parts ? entry.all_style_payloads : entry.active_style_payloads;
-    var allowed = (modeList && modeList.length > 0)
-        ? modeList
-        : ((claim.allowed_payload_codes && claim.allowed_payload_codes.length > 0)
-            ? claim.allowed_payload_codes
-            : (claim.payload_code ? [claim.payload_code] : []));
-    // Every part listed: sort ACTIVE-style payloads ahead of PRELOAD-only, alpha
-    // tiebreak (deterministic — some field kiosks predate V8 stable sort).
-    if (entry.board_shows_all_parts) {
-        var activeSet = entry.active_style_payloads || [];
-        allowed = allowed.slice().sort(function(a, b) {
-            var aRank = activeSet.indexOf(a) !== -1 ? 0 : 1;
-            var bRank = activeSet.indexOf(b) !== -1 ? 0 : 1;
-            if (aRank !== bRank) return aRank - bRank;
-            return a < b ? -1 : (a > b ? 1 : 0);
-        });
-    }
-    return allowed;
 }
 
 // buildChangeoverLoadDirective renders the "load this" banner.
@@ -1013,92 +930,101 @@ function buildChangeoverLoadDirective(d) {
     return wrap;
 }
 
-function renderPayloadBoard(entry) {
-    const claim = entry.active_claim;
+// windowLabel is the line a card carries naming the window or home it stands
+// for, and what stands there.
+function windowLabel(entry) {
+    var bs = entry.bin_state || {};
+    var binTxt = bs.occupied ? (bs.payload_code ? 'LOADED' : 'EMPTY') : 'AWAITING';
+    return el('div', { className: 'os-board-home', textContent: esc(entry.node.name) + ' · ' + binTxt });
+}
+
+// renderPayloadBoard draws a shared loader's windows: a card per window and
+// part. With one window it is the board it always was. With several, every
+// window's cards are drawn, each carrying its window's line (a bug fixed: only
+// the first window was drawn, so a delivered empty at the second never showed
+// LOAD).
+function renderPayloadBoard(entries) {
+    const view = getView();
+    const entry = entries[0];
     const runtime = entry.runtime || {};
     const remaining = runtime.remaining_uop_cached != null ? runtime.remaining_uop_cached : 0;
     const binState = entry.bin_state;
-    const hasBin = binState && binState.occupied;
     const binLabel = binState && binState.bin_label ? binState.bin_label : 'No bin';
     const binPayload = binState && binState.payload_code ? binState.payload_code : '';
-    const roleLabel = claim.role === 'produce' ? 'Loader' : 'Unloader';
+    const role = tileRole(entry);
+    const roleLabel = role === 'produce' ? 'Loader' : 'Unloader';
+    const several = entries.length > 1;
 
     // Header status badge from the shared model — same facts the cards read, so the
     // badge can't contradict a card. Worded by role (loader awaits a BIN, unloader a FULL).
+    // One window's bin is the board's; several windows each say theirs on their cards.
     var hb = headerModel(entry);
 
     var infoBar = el('div', { className: 'os-board-header' });
     infoBar.innerHTML =
         '<div>' +
-            '<div style="font-size:42px;font-weight:700;color:#fff">' + esc(entry.node.name) + ' - ' + roleLabel + '</div>' +
-            '<div style="font-size:20px;color:#aab;margin-top:6px">Manual Swap | ' +
-                (claim.allowed_payload_codes ? claim.allowed_payload_codes.length : 0) + ' payloads configured</div>' +
+            '<div style="font-size:42px;font-weight:700;color:#fff">' +
+                entries.map(function(e) { return esc(e.node.name); }).join(' · ') + ' - ' + roleLabel + '</div>' +
+            '<div style="font-size:20px;color:#aab;margin-top:6px">' +
+                (several ? entries.length + ' windows | ' : '') +
+                partCodes(entry).length + ' payloads configured</div>' +
         '</div>' +
+        (several ? '' :
         '<div style="text-align:right">' +
             '<div style="font-size:28px;font-weight:600;color:#fff">Bin: ' + esc(binLabel) + '</div>' +
             (binPayload ? '<div style="font-size:20px;color:#aab;margin-top:4px">' + esc(binPayload) + ' | UoP: ' + remaining + '</div>' : '') +
             '<div style="display:inline-block;font-size:22px;font-weight:700;padding:8px 20px;border-radius:6px;margin-top:8px;' +
                 hb.color + '">' + hb.text +
             '</div>' +
-        '</div>';
+        '</div>');
     grid.appendChild(infoBar);
 
-    // CHANGEOVER LOADING DIRECTIVE. During a changeover the loader's ordinary
-    // question — "which of my payloads would you like to load" — is the wrong
-    // one: the changing-over cells are waiting for one specific empty carrier,
-    // and any other choice puts a bin nobody asked for on the window and
-    // blocks the one that is needed.
-    //
-    // Server-computed (domain.BuildChangeoverLoadDirective) rather than
-    // derived here, so the board and the engine cannot disagree about what is
-    // being asked for, and so it is testable without a browser.
-    var directive = entry.changeover_load_directive;
-    if (directive && directive.bin_type_codes && directive.bin_type_codes.length) {
+    // CHANGEOVER LOADING INSTRUCTION. While a served cell waits on what this
+    // loader makes, the loader's ordinary question — "which of my payloads would
+    // you like to load" — is the wrong one: the cell is waiting for one specific
+    // carrier, and any other choice puts a bin nobody asked for on the window
+    // and blocks the one that is needed. Drawn from the waiting rows of
+    // view.serves when the station's directive setting is on
+    // (changeoverInstruction).
+    var directive = changeoverInstruction(entry, view);
+    if (directive) {
         grid.appendChild(buildChangeoverLoadDirective(directive));
     }
 
-    // Payload cards come from the active/all union (transitional shows all, a
-    // normal loader shows active), falling back to the claim list — see
-    // allowedPayloadsFor. Each card's state comes from cardModel via buildLoaderCard;
-    // facts here are only for the request-bar guard.
-    var allowed = allowedPayloadsFor(entry);
-    var facts = nodeFacts(entry);
-
-    // Manual request / jumpstart button — ALL bin loaders (rendered just below,
+    // Manual request / jumpstart button — ALL loaders (rendered just below,
     // above the cards). One button, not per-card: the operator is asking for a
-    // bin to be brought to the node, not picking a payload. Use cases:
-    //   - transitional loader staging an empty proactively;
-    //   - a NORMAL (automated kanban) loader whose queue was cancelled in Core
-    //     and now sits idle with no demand — this is the operator's jumpstart.
+    // bin to be brought to the loader, not picking a payload. Use cases:
+    //   - an operator loader staging an empty proactively;
+    //   - a threshold loader whose queue was cancelled in Core and now sits idle
+    //     with no demand — this is the operator's jumpstart.
     //
-    // Anti-spam: a manual_swap node has ONE physical bin slot, so at most one bin
-    // may be inbound at a time. canRequest is the single guard — allowed only
-    // when no bin is parked (!hasBin) AND nothing is already inbound (!hasDemand,
-    // which covers any non-terminal order at the node, including a bin en route,
-    // and on a normal loader is exactly the "queue cancelled / idle" state). The
-    // instant a request fires, hasDemand flips true on the next SSE refresh and
-    // the button greys out, so repeated taps can't stack the queue. The server
-    // enforces the same rule (RequestEmptyBin rejects when an empty is already in
-    // flight) as defense-in-depth against double-tap races and direct callers.
-    var canRequest = !hasBin && !facts.hasDemand;
+    // Anti-spam: each window holds ONE bin, so the button is offered while some
+    // window of the loader's role on this board has no bin parked and nothing
+    // inbound (the gate the server applies across the loader's windows reads
+    // the same set: a bug fixed, the button read only the first window). The
+    // instant a request fires, the window's demand flips true on the next SSE
+    // refresh and the button greys out when no window is left, so repeated taps
+    // can't stack the queue. The server enforces the same rule (RequestEmptyBin
+    // rejects when no empty can be staged) as defense-in-depth against
+    // double-tap races and direct callers. The request posts for the first
+    // window: the server stages at whichever window is free.
+    var reqWindows = entries.filter(function(e) { return tileRole(e) === role; });
+    var holdsBin = function(e) { return !!(e.bin_state && e.bin_state.occupied); };
+    var canRequest = reqWindows.some(function(e) { return !holdsBin(e) && !nodeFacts(e).hasDemand; });
 
     // Payload for the request splits by role:
-    //   - produce (bin loader): an empty bin is a generic carrier, so the
-    //     request is payload-AGNOSTIC — post NO payload_code. Core sources any
-    //     compatible empty and LoadBin binds the real payload when the operator
-    //     fills it. (Replaces the old allowed[0] default, which fabricated a
-    //     payload nobody asked for and could tag/stage the wrong card — see
-    //     RequestEmptyBin. Assumes a single-carrier loader; a multi-carrier
-    //     loader would need a carrier picker here.)
+    //   - produce (loader): an empty bin is a generic carrier, so the request is
+    //     payload-AGNOSTIC — post NO payload_code. Core sources any compatible
+    //     empty and LoadBin binds the real payload when the operator fills it.
+    //     (Replaces the old allowed[0] default, which fabricated a payload nobody
+    //     asked for and could tag/stage the wrong card — see RequestEmptyBin.
+    //     Assumes a single-carrier loader; a multi-carrier loader would need a
+    //     carrier picker here.)
     //   - consume (unloader): REQUEST FULL pulls a SPECIFIC payload's full bin,
-    //     so it still needs a code. claim.payload_code is blank on manual_swap,
-    //     so fall to the first allowed.
-    var isProduce = claim.role === 'produce';
-    var requestPayload = isProduce
-        ? ''
-        : ((claim.payload_code && allowed.indexOf(claim.payload_code) !== -1)
-            ? claim.payload_code
-            : (allowed.length > 0 ? allowed[0] : ''));
+    //     so it needs a code: the first part the board lists for the window.
+    var allowed = cardParts(entry, view.serves);
+    var isProduce = role === 'produce';
+    var requestPayload = isProduce ? '' : (allowed.length > 0 ? allowed[0] : '');
 
     // Render the bar when the action is expressible: always for a loader (the
     // empty needs no payload), and for an unloader only when there's a payload
@@ -1106,7 +1032,7 @@ function renderPayloadBoard(entry) {
     if (isProduce || requestPayload) {
         var reqBar = el('div', { className: 'os-board-reqbar' });
         var reqLabel = isProduce ? 'REQUEST EMPTY' : 'REQUEST FULL';
-        var reqReason = hasBin ? 'bin at node' : (facts.hasDemand ? 'bin already inbound' : '');
+        var reqReason = reqWindows.every(holdsBin) ? 'bin at node' : 'bin already inbound';
         var reqBtn = el('button', {
             className: 'os-board-request-btn' + (canRequest ? '' : ' disabled'),
             textContent: canRequest ? reqLabel : reqLabel + ' — ' + reqReason,
@@ -1124,11 +1050,12 @@ function renderPayloadBoard(entry) {
         }
         reqBar.appendChild(reqBtn);
 
-        // PULL FROM MARKET — produce loaders with an outbound_destination.
+        // PULL FROM MARKET — produce loaders with an outbound destination.
         // Pulls a specific bin from the supermarket back to this window; Edge
         // auto-clears (zeroes UoP) when the bin is delivered so the operator
-        // doesn't need a separate Clear Bin step.
-        if (isProduce && claim.outbound_destination) {
+        // doesn't need a separate Clear Bin step. The door refuses a loader with
+        // none (engine/operator_window_pullback.go), so the button is not drawn.
+        if (isProduce && loaderOf(entry).outbound_dest) {
             var pullBtn = el('button', {
                 className: 'os-board-request-btn',
                 textContent: 'PULL FROM MARKET',
@@ -1144,46 +1071,55 @@ function renderPayloadBoard(entry) {
 
     var cardGrid = el('div', { className: 'os-board-cards' });
 
-    // One card per payload, via the shared Card builder (also used by the
-    // home-location board). buildLoaderCard returns null for an idle card the
-    // station hides.
+    // One card per window and part, via the shared Card builder (also used by
+    // the dedicated-positions board). buildLoaderCard returns null for an idle
+    // card the station hides.
     var counters = { queuePos: 1 };
     var rendered = 0;
-    allowed.forEach(function(code) {
-        var card = buildLoaderCard(entry, code, counters);
-        if (card) { cardGrid.appendChild(card); rendered++; }
+    var configured = 0;
+    entries.forEach(function(w) {
+        var parts = w === entry ? allowed : cardParts(w, view.serves);
+        configured += parts.length;
+        parts.forEach(function(code) {
+            var card = buildLoaderCard(w, code, counters);
+            if (!card) return;
+            if (several) card.insertBefore(windowLabel(w), card.firstChild);
+            cardGrid.appendChild(card);
+            rendered++;
+        });
     });
 
     // Column count tracks the cards actually shown (a demand-driven loader can
-    // render fewer than `allowed`), so the grid doesn't reserve empty columns.
+    // render fewer than its parts), so the grid doesn't reserve empty columns.
     var cols = rendered <= 3 ? Math.max(rendered, 1) : (rendered <= 6 ? 3 : 4);
     cardGrid.style.setProperty('--os-board-cols', cols);
 
     if (rendered === 0) {
         cardGrid.appendChild(el('div', {
             style: 'color:#666;font-style:italic;padding:24px;text-align:center;grid-column:1/-1',
-            // allowed empty → nothing configured; allowed non-empty but nothing
-            // rendered → a normal loader with no active demand (all idle cards
-            // filtered). Distinct copy so the operator knows which it is.
-            textContent: allowed.length === 0 ? 'No payloads configured' : 'No active demand'
+            // no parts → nothing configured; parts but nothing rendered → a
+            // threshold loader with no active demand (all idle cards filtered).
+            // Distinct copy so the operator knows which it is.
+            textContent: configured === 0 ? 'No payloads configured' : 'No active demand'
         }));
     }
 
     grid.appendChild(cardGrid);
 }
 
-// renderHomeLocationBoard renders a home-location loader: each station position
-// (node) is a dedicated home for one payload, so we show one card per
-// (home × its payload) across all the station's loader nodes — N homes on one
-// screen, the whole loader at a glance. Each card is backed by its own node's
-// bin state + actions and carries a home label. Idle homes stay on screen
-// unless the station hides them (idleCardHidden), and then the subtitle counts
-// them.
-function renderHomeLocationBoard(nodes) {
-    // Home-location is a role-neutral layout: produce loaders OR consume unloaders
-    // (dedicated finished-goods exits). Title reflects whichever this station is.
+// renderDedicatedPositionsBoard renders a dedicated-positions loader: each station
+// position (node) is a home for one part, so we show one card per (home × its
+// part) across all the station's loader nodes — N homes on one screen, the
+// whole loader at a glance. Each card is backed by its own node's bin state +
+// actions and carries a home label. Idle homes stay on screen unless the
+// station hides them (idleCardHidden), and then the subtitle counts them.
+function renderDedicatedPositionsBoard(nodes) {
+    // Dedicated positions are a role-neutral layout: produce loaders OR consume
+    // unloaders (dedicated finished-goods exits). Title reflects whichever this
+    // station is.
+    var serves = getView().serves;
     var roles = {};
-    nodes.forEach(function(n) { if (n.active_claim) roles[n.active_claim.role] = true; });
+    nodes.forEach(function(n) { roles[tileRole(n)] = true; });
     var title = (roles.produce && roles.consume) ? 'Stations'
         : roles.consume ? 'Unloader' : 'Bin Loader';
 
@@ -1196,24 +1132,19 @@ function renderHomeLocationBoard(nodes) {
     var rendered = 0;
     var idle = 0;
     nodes.forEach(function(node) {
-        if (!node.active_claim) return;
-        allowedPayloadsFor(node).forEach(function(code) {
+        cardParts(node, serves).forEach(function(code) {
             var card = buildLoaderCard(node, code, counters, { sourceBadge: true });
             if (!card) { idle++; return; }
             // Home label (physical position) + its own bin state, prepended so a
             // wall of cards stays scannable by home.
             var bs = node.bin_state || {};
-            var binTxt = bs.occupied ? (bs.payload_code ? 'LOADED' : 'EMPTY') : 'AWAITING';
-            card.insertBefore(el('div', {
-                className: 'os-board-home',
-                textContent: esc(node.node.name) + ' · ' + binTxt,
-            }), card.firstChild);
+            card.insertBefore(windowLabel(node), card.firstChild);
             // "Clear Bin" — only for home tiles with a buffer partial of the same
             // payload. Shows the consolidation confirmation overlay on tap. The card
             // also pulses (os-board-card--ready) so the operator can spot at a glance
             // which loaded homes are ready to consolidate — the same set the header
             // "PULL FULL FROM HOME" picker offers.
-            if (node.has_buffer_partial && bs.occupied && bs.payload_code && code === bs.payload_code) {
+            if (node.buffer_partial && bs.occupied && bs.payload_code && code === bs.payload_code) {
                 card.classList.add('os-board-card--ready');
                 var clearBtn = el('button', {
                     className: 'os-co-picker-btn',
@@ -1263,18 +1194,10 @@ function gridDimensions() {
     return { cols: 4, rows: Math.max(2, Math.ceil(count / 4)) };
 }
 
-// isDrainSlot reports a consume (drain) shared-window loader slot — the same class
-// renderGrid's drainSlots routes to the per-window slot view. Drives the slot-only
-// click (tap a parked full → confirm swap; empty = no-op) and the board palette below.
-function isDrainSlot(entry) {
-    const c = entry.active_claim;
-    return !!c && c.swap_mode === 'manual_swap' && c.role === 'consume'
-        && !entry.home_location_loader;
-}
-
-// drainColorClass maps a drain slot to the loader-board card palette (not the
-// saturated fill colors): full parked = green, full inbound = amber, empty = neutral.
-function drainColorClass(entry) {
+// unloaderWindowColour maps an unloader window (isUnloaderWindow) to the
+// loader-board card palette (not the saturated fill colors): full parked = green,
+// full inbound = amber, empty = neutral.
+function unloaderWindowColour(entry) {
     const bs = entry.bin_state;
     const awaiting = (entry.orders || []).some(o => isActive(o.status));
     if (bs && bs.occupied && bs.payload_code) return 'os-drain-ready';
@@ -1284,6 +1207,7 @@ function drainColorClass(entry) {
 
 function createNodeButton(entry) {
     const claim = entry.active_claim;
+    const loader = loaderOf(entry);
     const runtime = entry.runtime || {};
     const remaining = runtime.remaining_uop_cached != null ? runtime.remaining_uop_cached : 0;
     const capacity = claim ? claim.uop_capacity : 0;
@@ -1303,16 +1227,17 @@ function createNodeButton(entry) {
     const inboundOrders = (entry.orders || []).filter(o =>
         o.status === 'in_transit' || o.status === 'staged'
     );
-    const drain = isDrainSlot(entry);
+    const unloaderWindow = isUnloaderWindow(entry);
     let stateClass;
-    if (drain) {
-        // A drain (consume) slot owns its OWN palette (idle/awaiting/ready); the
+    if (unloaderWindow) {
+        // An unloader window owns its OWN palette (idle/awaiting/ready); the
         // generic order-state colors below are loader/press semantics. Critically,
-        // an in_transit order at a drain is the OUTbound empty (U2) leaving after a
+        // an in_transit order there is the OUTbound empty (U2) leaving after a
         // clear, NOT a full arriving — so 'os-in-transit' (purple = inbound) would be
-        // a lie. drainColorClass maps any active order to amber 'awaiting'. (An AMR-fed
-        // unloader's inbound U1 also reads as amber 'awaiting' — the palette's intent.)
-        stateClass = drainColorClass(entry);
+        // a lie. unloaderWindowColour maps any active order to amber 'awaiting'. (An
+        // AMR-fed unloader's inbound U1 also reads as amber 'awaiting' — the
+        // palette's intent.)
+        stateClass = unloaderWindowColour(entry);
     } else if (releaseReady) {
         stateClass = 'os-release-ready';
     } else if (inChangeover) {
@@ -1423,9 +1348,9 @@ function createNodeButton(entry) {
 
     // Banner label for the priority states. The full-tile background
     // already signals "something is up"; the label says what.
-    if (releaseReady && !drain) {
+    if (releaseReady && !unloaderWindow) {
         btn.appendChild(el('span', { className: 'os-node-banner', textContent: 'RELEASE READY' }));
-    } else if (inChangeover && !drain) {
+    } else if (inChangeover && !unloaderWindow) {
         btn.appendChild(el('span', { className: 'os-node-banner', textContent: 'CHANGEOVER' }));
     }
 
@@ -1437,33 +1362,16 @@ function createNodeButton(entry) {
         btn.appendChild(el('span', { className: 'os-node-icon', textContent: icon }));
     }
 
-    if (claim && claim.swap_mode === 'manual_swap') {
+    if (loader) {
         const binState = entry.bin_state;
         const binLabel = binState && binState.bin_label ? binState.bin_label : '';
-        const binPayload = binState && binState.payload_code ? binState.payload_code : '';
-        // "Awaiting stock" = any non-terminal order. Just 'queued' lost the
-        // indicator the moment the order advanced (sourcing, dispatched,
-        // in_transit, delivered-awaiting-confirm).
+        // "Awaiting stock" = any non-terminal order: the words go on saying it
+        // while the order moves through its statuses (windowWords).
         const hasActiveOrder = (entry.orders || []).some(o => isActive(o.status));
-        let statusText;
-        if (isDrainSlot(entry) && binState && binState.occupied && binPayload) {
-            // Drain slot with a full PARKED → show the part that's here to clear, even
-            // if a NEXT full is queued/inbound (hasActiveOrder). "AWAITING" must not
-            // mask a present full — the green tile + tap-to-confirm already say "act".
-            statusText = binPayload;
-        } else if (hasActiveOrder) {
-            statusText = 'AWAITING ' + ((ROLE_WORDS[claim.role] && ROLE_WORDS[claim.role].awaiting) || 'STOCK');
-        } else if (binPayload) {
-            statusText = binPayload;
-        } else if (remaining > 0) {
-            statusText = 'LOADED';
-        } else if (binState && binState.occupied) {
-            statusText = 'EMPTY';
-        } else {
-            statusText = 'NO BIN';
-        }
+        const awaiting = (ROLE_WORDS[loader.role] && ROLE_WORDS[loader.role].awaiting) || 'STOCK';
+        const statusText = windowWords(entry, awaiting, hasActiveOrder);
         btn.appendChild(el('span', { className: 'os-node-remaining', textContent: statusText }));
-        const partialHere = partialLine(binState, false);
+        const partialHere = partialLine(binState, false, remaining);
         if (partialHere) btn.appendChild(el('span', { className: 'os-node-partial', textContent: partialHere }));
         if (binLabel) {
             const labelEl = el('span', { className: 'os-node-payload', textContent: binLabel });
@@ -1492,25 +1400,24 @@ function createNodeButton(entry) {
         }
         const payloadText = claim ? (claim.payload_code || 'Unassigned') : '';
         appendETAPills(btn, inboundOrders, entry.bin_state);
-        const partialAtLine = partialLine(entry.bin_state, true);
+        const partialAtLine = partialLine(entry.bin_state, true, remaining);
         if (partialAtLine) btn.appendChild(el('span', { className: 'os-node-partial', textContent: partialAtLine }));
         btn.appendChild(el('span', { className: 'os-node-payload', textContent: payloadText }));
     }
 
-    if (isDrainSlot(entry)) {
-        // Drain slot tap logic:
-        //   full parked  → confirm-swap panel (with optional dunnage picker)
+    if (unloaderWindow) {
+        // Unloader window tap logic:
+        //   full parked  → confirm-swap panel (with optional carrier picker)
         //   empty parked → push-empty confirmation panel
         //   no bin       → no-op
         btn.addEventListener('click', () => {
             const bs = entry.bin_state;
             const fullPresent = bs && bs.occupied && bs.payload_code;
             const emptyPresent = bs && bs.occupied && !bs.payload_code;
-            if (bs && bs.held_since) { confirmUnloadHeld(entry.node.id, bs.held_for, bs.uop_remaining); return; }
-            if (fullPresent) confirmUnloadSwap(entry.node.id, entry.active_claim && entry.active_claim.allowed_payload_codes,
-                entry.runtime && entry.runtime.remaining_uop_cached, !!entry.leaves_bare);
-            else if (emptyPresent) confirmPushEmpty(entry.node.id,
-                entry.active_claim && entry.active_claim.allowed_payload_codes, !!bs.bare);
+            if (bs && bs.held_since) { confirmUnloadHeld(entry.node.id, bs.held_for, bs.held_uop); return; }
+            if (fullPresent) confirmUnloadSwap(entry.node.id, carriersOf(entry),
+                entry.runtime && entry.runtime.remaining_uop_cached, !!loader.leaves_bare);
+            else if (emptyPresent) confirmPushEmpty(entry.node.id, carriersOf(entry), !!bs.bare);
         });
     } else {
         btn.addEventListener('click', () => openModalRef(entry.node.id));
@@ -1577,13 +1484,13 @@ function isReleaseReady(entry) {
 
 function nodeColorClass(entry) {
     const claim = entry.active_claim;
-    if (!claim) return 'os-unclaimed';
     const remaining = entry.runtime ? entry.runtime.remaining_uop_cached : 0;
-    if (claim.swap_mode === 'manual_swap') {
+    if (loaderOf(entry)) {
         const hasActiveOrder = entry.orders && entry.orders.some(o => isActive(o.status));
         if (hasActiveOrder) return 'os-mid';
         return remaining > 0 ? 'os-full' : 'os-empty';
     }
+    if (!claim) return 'os-unclaimed';
     const capacity = claim.uop_capacity || 1;
     if (remaining <= 0) return 'os-empty';
     const pct = remaining / capacity;

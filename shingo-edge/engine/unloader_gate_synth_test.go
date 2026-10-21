@@ -12,8 +12,7 @@ import (
 // unloader_gate_synth_test.go — the three re-pull gates at a Core-owned unloader
 // (NO stored claim): the gate's AutoPush comes from the loader Core owns, through
 // SynthClaim, and the pull reaches only that unloader. The companion of
-// unloader_gate_pins_test.go, whose fixture had to switch a gate on with a stored
-// claim because SynthClaim carried no AutoPush.
+// unloader_gate_pins_test.go (the same layout, M without auto_push).
 
 // newSynthUGFixture is newUGFixture's layout — unloader L (N, N2), unloader M (W3)
 // — with no stored claim anywhere and L's auto_push set to lAuto. M's auto_push is
@@ -32,11 +31,11 @@ func newSynthUGFixture(t *testing.T, prefix string, lAuto bool) *ugFixture {
 	unloader := func(key string, auto bool, windows ...string) protocol.LoaderInfo {
 		info := protocol.LoaderInfo{
 			Name: key, LoaderKey: "loader:" + key, Role: "consume", Layout: "shared_window",
-			Replenishment: "operator", InboundSource: "FG-SUPER", OutboundDest: "EMPTY-TOTES", ConfigGen: 1,
+			Replenishment: "operator", InboundSource: "FG-SUPER", OutboundDest: "EMPTY-TOTES",
 			Payloads: []protocol.LoaderPayloadInfo{{PayloadCode: "PART-UG"}}, AutoPush: auto,
 		}
 		for _, w := range windows {
-			info.Positions = append(info.Positions, protocol.LoaderPosition{CoreNodeName: w, Kind: "window"})
+			info.Positions = append(info.Positions, protocol.LoaderPosition{CoreNodeName: w})
 		}
 		return info
 	}
@@ -100,7 +99,7 @@ func TestUnloaderGate_SynthClaimAutoPush_U2Landed(t *testing.T) {
 	testutil.MustNoErr(t, err, "read N")
 	_, _, claim, err := f.eng.loadActiveNode(f.n)
 	testutil.MustNoErr(t, err, "load N")
-	testutil.MustNoErr(t, f.eng.createUnloaderEmptyOut(nNode, claim), "the U2")
+	testutil.MustNoErr(t, f.eng.createUnloaderEmptyOut(nNode, claim, 0), "the U2")
 	moves := scMovesFrom(t, f.db, f.nCore)
 	if len(moves) != 1 {
 		t.Fatalf("fixture: U2s leaving %s = %d, want 1", f.nCore, len(moves))

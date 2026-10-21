@@ -23,29 +23,21 @@ func loadActiveNode(db *store.DB, nodeID int64) (*processes.Node, *processes.Run
 	return node, runtime, claim, nil
 }
 
-// loadActiveNode (Engine method) wraps the package loadActiveNode with a
-// Core-owned-loader fallback: when a node has no per-style edge claim but IS a
-// window/position of a Core loader, it returns a SYNTHESIZED manual_swap claim so
-// the operator load/clear/request paths treat the node as a loader without a
-// per-style style_node_claim. This completes the Core-owned loader refactor — Core
-// owns the loader; the edge needs no style_node_claim to operate it. The synthetic
-// claim has ID==0; callers that persist active_claim_id MUST guard on ID==0.
+// loadActiveNode (Engine method) is the package loadActiveNode with the node's
+// claim resolved by claimAtNode: at a window or position of a Core loader it
+// returns the claim SYNTHESIZED from that loader, so the operator
+// load/clear/request paths treat the node as a loader without a per-style
+// style_node_claim. Core owns the loader; the edge needs no style_node_claim to
+// operate it. The synthetic claim has ID==0; callers that persist
+// active_claim_id MUST guard on ID==0.
 //
-// WHICH AUTHORITY WINS: THE PERSISTED CLAIM, SILENTLY. Two things can answer
-// "is this node a loader?" — a stored style_node_claim and Core's loader
-// aggregate — and the short-circuit below decides it. When a per-style claim
-// exists it is returned and synthLoaderClaim is never consulted, so a node
-// carrying a stored manual_swap claim reads as a loader EVEN IF Core's aggregate
-// says it is not one, including when Core's derived loader has been archived.
-// That state existed in the field: Springfield's SMN_001 held stored
-// manual_swap claims whose Core loader was archived 2026-07-30.
-//
-// NOT GATED HERE, AND NO LONGER NEEDING TO BE. The loader sync does the
-// reconciling now: reconcileLoaderClaims moves every stored manual_swap row to
-// style_node_claims_quarantine on the first non-empty loader set, so this
-// short-circuit only meets one before that sync. A node whose Core loader is
-// gone — SMN_001 among them — stops being a loader after it, and LOAD, CLEAR
-// and the loader requests refuse with "no active claim" (requireLoaderClaim).
+// WHERE CORE'S LOADER SET NAMES THE NODE, THE LOADER ANSWERS (claimAtNode). A
+// stored claim at that node is not read. A stored manual_swap row can exist only
+// before the first non-empty loader sync (reconcileLoaderClaims quarantines
+// every one, and no door writes another), and at a node Core no longer calls a
+// loader it is the claim this returns until that sync moves it. After it, a node
+// whose Core loader is gone stops being a loader, and LOAD, CLEAR and the loader
+// requests refuse with "no active claim" (requireLoaderClaim).
 func (e *Engine) loadActiveNode(nodeID int64) (*processes.Node, *processes.RuntimeState, *processes.NodeClaim, error) {
 	node, err := e.db.GetProcessNode(nodeID)
 	if err != nil {
@@ -58,11 +50,14 @@ func (e *Engine) loadActiveNode(nodeID int64) (*processes.Node, *processes.Runti
 	return node, runtime, e.claimAtNode(node), nil
 }
 
-// claimAtNode is THE claim resolver for a node the engine acts on: the stored
-// per-style claim when one exists, otherwise the claim synthesized from the Core
-// loader the node belongs to, otherwise nil. The operator doors (loadActiveNode)
-// and the order-completion chain (orderCompletionCtx.Claim) both read it, so a
-// node is a loader to one exactly when it is a loader to the other.
+// claimAtNode is THE claim resolver for a node the engine acts on: the claim
+// synthesized from the Core loader the node belongs to when Core's loader set
+// names it, otherwise the stored per-style claim, otherwise nil. The operator
+// doors (loadActiveNode) and the order-completion chain
+// (orderCompletionCtx.Claim) both read it, so a node is a loader to one exactly
+// when it is a loader to the other. The board's tile asks the same question in
+// the same order (service buildNodeTile). Pinned by
+// TestLoaderPrecedence_CoreLoaderWinsOverAStoredClaim.
 //
 // THE COMPLETION CHAIN USED TO READ STORED CLAIMS ONLY. After the claim
 // quarantine every loader window is Core-owned and has no stored row, so
@@ -72,16 +67,17 @@ func (e *Engine) loadActiveNode(nodeID int64) (*processes.Node, *processes.Runti
 // TestPinD3b_ConfirmedL1AtACoreOwnedLoader_FilesOneL2 and
 // TestPinCoreOwnedLoader_L2LandingClearsAndRePushes.
 //
-// The synthesized arm is a lookup in the loader store's in-memory snapshot — no
-// SQLite read, no Core round trip — and runs only when no stored claim exists.
+// The loader arm is a lookup in the loader store's in-memory snapshot — no
+// SQLite read, no Core round trip; the stored claim is read only at a node no
+// Core loader names.
 func (e *Engine) claimAtNode(node *processes.Node) *processes.NodeClaim {
 	if node == nil {
 		return nil
 	}
-	if claim := requestedClaimAtNode(e.db, node); claim != nil {
+	if claim := e.synthLoaderClaim(node.CoreNodeName); claim != nil {
 		return claim
 	}
-	return e.synthLoaderClaim(node.CoreNodeName)
+	return requestedClaimAtNode(e.db, node)
 }
 
 // requireLoaderClaim is the shared precondition of every operator action that
@@ -117,9 +113,9 @@ func requireLoaderClaim(node *processes.Node, claim *processes.NodeClaim) error 
 }
 
 // synthLoaderClaim returns a synthesized manual_swap NodeClaim for a node that is a
-// member of a Core-owned loader but has no per-style edge claim, or nil if the node
-// belongs to no loader. Resolved through the SAME LoaderStore the runtime uses, so
-// the synthesized view never diverges from dispatch. See domain.Loader.SynthClaim.
+// member of a Core-owned loader, or nil if the node belongs to no loader. Resolved
+// through the SAME LoaderStore the runtime uses, so the synthesized view never
+// diverges from dispatch. See domain.Loader.SynthClaim.
 func (e *Engine) synthLoaderClaim(coreNodeName string) *processes.NodeClaim {
 	if coreNodeName == "" {
 		return nil
@@ -275,4 +271,15 @@ func loadChangeoverNodeTask(db *store.DB, changeoverID int64, node *processes.No
 		return nil, nil, err
 	}
 	return changeoverTask, nodeTask, nil
+}
+
+// persistedClaimID is the claim's stored row id, for the runtime's
+// active_claim_id, or nil for a claim with no row: one synthesized from a Core
+// loader (Loader.SynthClaim, ID 0). A 0 foreign key is never written.
+func persistedClaimID(claim *processes.NodeClaim) *int64 {
+	if claim == nil || claim.ID == 0 {
+		return nil
+	}
+	id := claim.ID
+	return &id
 }

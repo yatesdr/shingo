@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"sort"
+	"strings"
 	"testing"
 
 	"shingoedge/domain"
@@ -103,5 +104,50 @@ func TestEnrichViewBinState_BareCartCarriesNoMarkerCode(t *testing.T) {
 	}
 	if real.BinTypeCode != "CART-A" {
 		t.Errorf("carrier bin_type_code = %q, want CART-A", real.BinTypeCode)
+	}
+}
+
+// TestEnrichViewBinState_ProductionTileJSONIsPinned holds the Production
+// page's JSON for a tile's bin (the template marshals BinState whole,
+// `{{json .BinState}}`, and prints its count) byte for byte: a tote cart at a
+// count of 0 standing on a base, and a full. The station view's reads moving
+// (one node-bins call per board, or Core's feed) must not reach this page,
+// which keeps its own read. Built twice and compared before the literal is.
+func TestEnrichViewBinState_ProductionTileJSONIsPinned(t *testing.T) {
+	t.Parallel()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if _, err := w.Write([]byte(`[
+			{"node_name":"PT-1","bin_id":9,"bin_label":"CART-9","bin_type_code":"TOTE-1","payload_code":"PART-A",
+			 "uop_remaining":0,"delta_epoch":4,"manifest":"{\"items\":[]}","manifest_confirmed":true,"occupied":true,
+			 "totes_on_cart":0,"totes_per_layer":4},
+			{"node_name":"PT-2","bin_id":10,"bin_label":"BIN-10","bin_type_code":"KD-1","payload_code":"PART-B",
+			 "uop_remaining":48,"manifest_confirmed":false,"occupied":true}]`)); err != nil {
+			t.Errorf("stub Core write: %v", err)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	build := func() string {
+		views := []domain.OperatorStationView{{Nodes: []domain.StationNodeView{
+			{Node: domain.Node{CoreNodeName: "PT-1"}}, {Node: domain.Node{CoreNodeName: "PT-2"}},
+		}}}
+		enrichViewBinState(engine.NewCoreClient(srv.URL), views)
+		var out []string
+		for _, n := range views[0].Nodes {
+			raw, err := json.Marshal(n.BinState)
+			if err != nil {
+				t.Fatalf("marshal: %v", err)
+			}
+			out = append(out, string(raw))
+		}
+		return strings.Join(out, "\n")
+	}
+	got := build()
+	if again := build(); again != got {
+		t.Fatalf("two builds differ:\n%s\n%s", got, again)
+	}
+	want := `{"bin_id":9,"bin_label":"CART-9","bin_type_code":"TOTE-1","payload_code":"PART-A","uop_remaining":0,"manifest":"{\"items\":[]}","manifest_confirmed":true,"occupied":true}` + "\n" +
+		`{"bin_id":10,"bin_label":"BIN-10","bin_type_code":"KD-1","payload_code":"PART-B","uop_remaining":48,"manifest_confirmed":false,"occupied":true}`
+	if got != want {
+		t.Errorf("the Production page's bin JSON moved:\n got %s\nwant %s", got, want)
 	}
 }

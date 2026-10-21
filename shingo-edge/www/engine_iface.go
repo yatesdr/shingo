@@ -24,7 +24,7 @@ import (
 // captures the architectural role distinction surfaced in three
 // independent dev reviews: most edge handlers do pure CRUD through
 // services and have no business reaching engine-level orchestration.
-// ServiceAccess gives those handlers a 21-method surface; orchestration
+// ServiceAccess gives those handlers a 22-method surface; orchestration
 // handlers take EngineOrchestration explicitly via h.orchestration.
 // The count is asserted by a test in this package — change it there when
 // you change it here.
@@ -87,6 +87,11 @@ type ServiceAccess interface {
 	// with its received and confirmed times; false when nothing is held. The
 	// containment page renders from it with no call to Core. Read-only.
 	LocalContainment() (*engine.ContainmentState, bool)
+	// LocalNodeBins is the Edge's held copy of Core's node-bins feed for the
+	// nodes its stations draw, with its times, whether anything is held and
+	// whether Core serves the feed. The station view stamps its bins from it
+	// while Core does. Read-only.
+	LocalNodeBins() engine.NodeBinsState
 }
 
 // EngineOrchestration is the wide interface for handlers that drive
@@ -127,7 +132,6 @@ type EngineOrchestration interface {
 	ClearBin(nodeID int64, binTypeCode string, unload bool) error
 	RecordBinCount(nodeID int64, actualUOP int, actor string) error
 	ClearLoaderHome(nodeID int64) error
-	EnrichHomeBufferPartials(nodes []domain.StationNodeView)
 	FetchMarketBins(nodeID int64) ([]engine.MarketBinInfo, error)
 	PullFromMarket(nodeID int64, sourceCoreName string) error
 	PushEmptyOut(nodeID int64) error

@@ -23,7 +23,7 @@ func mustFunnelLoader(t *testing.T, id string, windows []string, payloads ...str
 		ps[i] = domain.PayloadCode(p)
 		thresholds[domain.PayloadCode(p)] = 100
 	}
-	l, err := domain.NewSharedWindowLoader(domain.LoaderID(id), id, domain.RoleProduce, domain.ReplenishmentThreshold,
+	l, err := domain.NewSharedWindowLoader(domain.LoaderID(id), domain.RoleProduce, domain.ReplenishmentThreshold,
 		ws, ps,
 		domain.WithInboundSource("EMPTY-SUPER"),
 		domain.WithUOPThreshold(thresholds),
@@ -128,15 +128,11 @@ func TestFunnelWindows_ProjectedFromCoreCache(t *testing.T) {
 	}
 }
 
-// TestFunnelWindows_ConfigKeyIsABrakeNotAnAccelerator pins the deprecated
-// plant-wide key to exactly one power: it can still force every loader to funnel
-// (so a site that set `loaders_multi_window: false` does not silently start
-// spreading), and it cannot force a funnelling loader to spread.
-//
-// The asymmetry is the safety property. A deprecated key that could turn
-// behaviour ON would let a stale config override the loader that a person
-// configured deliberately.
-func TestFunnelWindows_ConfigKeyIsABrakeNotAnAccelerator(t *testing.T) {
+// TestFunnelWindows_TheLoaderDecides: each loader answers for itself, from
+// Core's funnel_windows on its own row. There is no plant-wide key left to
+// brake a spreading loader into the funnel (it used to be
+// loaders_multi_window: false, which no plant set).
+func TestFunnelWindows_TheLoaderDecides(t *testing.T) {
 	t.Parallel()
 	db := testEngineDB(t)
 	eng := testEngine(t, db)
@@ -147,34 +143,10 @@ func TestFunnelWindows_ConfigKeyIsABrakeNotAnAccelerator(t *testing.T) {
 	spread := mustMultiWindowLoader(t, "FWB-SPREAD", spreadWins, "P1")
 	funnel := mustFunnelLoader(t, "FWB-FUNNEL", funnelWins, "P1")
 
-	// Unset: every loader decides for itself.
-	eng.cfg.LoadersMultiWindow = nil
 	if !eng.multiWindowFor(spread) {
-		t.Error("key unset: spreading loader should spread")
+		t.Error("a loader set to spread should spread")
 	}
 	if eng.multiWindowFor(funnel) {
-		t.Error("key unset: funnelling loader should funnel")
-	}
-
-	// Explicit true: still every loader for itself. The key cannot lift a
-	// loader's own funnel setting.
-	on := true
-	eng.cfg.LoadersMultiWindow = &on
-	if !eng.multiWindowFor(spread) {
-		t.Error("key true: spreading loader should spread")
-	}
-	if eng.multiWindowFor(funnel) {
-		t.Error("key true: the key must not override a loader configured to funnel")
-	}
-
-	// Explicit false: the brake. Everything funnels, including the loader that
-	// asked to spread — that is the behaviour a site that set the key already has.
-	off := false
-	eng.cfg.LoadersMultiWindow = &off
-	if eng.multiWindowFor(spread) {
-		t.Error("key false: the plant-wide brake must funnel every loader")
-	}
-	if eng.multiWindowFor(funnel) {
-		t.Error("key false: funnelling loader should funnel")
+		t.Error("a loader set to funnel should funnel")
 	}
 }

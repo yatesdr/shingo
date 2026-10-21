@@ -371,13 +371,9 @@ func (db *DB) migrate() error {
 	// what a versioned migration drops is removed with the drop (see
 	// frozen_chain_pin_test.go).
 
-	// Multi-window C0: explicit position kind on the cached loader aggregate
-	// ('window' | 'dedicated'), synced from Core's LoaderPosition.Kind, so the
-	// resolver never sniffs an empty payload to tell a shared-window window from
-	// an unassigned dedicated position. Idempotent — duplicate ADD COLUMN fails
-	// silently. Empty on rows from a pre-Kind Core; the parent loader's layout
-	// stays authoritative (C1 branches on Layout).
-	db.Exec("ALTER TABLE core_loader_positions ADD COLUMN kind TEXT NOT NULL DEFAULT ''")
+	// REMOVED 2026-10-14: the ALTER that added core_loader_positions.kind, a
+	// copy of a wire fact nothing on the Edge reads. Edge v25 drops the column;
+	// this step re-ran on every boot and would have put it straight back.
 
 	// Loader identity cutover (step 4): the cached loader's opaque identity token
 	// ("loader:<id>"), synced from Core's LoaderInfo.LoaderKey. projectCoreLoader keys
@@ -433,16 +429,10 @@ func (db *DB) migrate() error {
 	// idempotent and so an edge that never had the table is unaffected.
 	db.Exec("DROP TABLE IF EXISTS operator_driven_loaders")
 
-	// The loader carrier mix, synced from Core: what each window can physically
-	// take, and how many of each type the loader wants on hand. Created here as
-	// well as in the DDL so an existing edge picks them up without a rebuild.
-	// Both start empty and empty is current behaviour.
-	db.Exec(`CREATE TABLE IF NOT EXISTS core_loader_window_bin_types (
-		loader_key TEXT NOT NULL, position_node TEXT NOT NULL, bin_type_code TEXT NOT NULL,
-		PRIMARY KEY (loader_key, position_node, bin_type_code))`)
-	db.Exec(`CREATE TABLE IF NOT EXISTS core_loader_quotas (
-		loader_key TEXT NOT NULL, bin_type_code TEXT NOT NULL, want INTEGER NOT NULL DEFAULT 0,
-		PRIMARY KEY (loader_key, bin_type_code))`)
+	// REMOVED 2026-10-14: the CREATE TABLE IF NOT EXISTS of
+	// core_loader_window_bin_types and of core_loader_quotas, the loader carrier
+	// mix nothing on the Edge reads. Edge v25 drops both tables; these steps
+	// re-ran on every boot and would have put them straight back.
 
 	// 6. Data fixups
 	//
@@ -1860,6 +1850,54 @@ func edgeMigrations() []migrate.Migration {
 				err := q.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('style_node_claims')
 					WHERE name = 'strict_pack'`).Scan(&n)
 				return err == nil && n == 1
+			},
+		},
+		{
+			// The loader wire facts nothing on the Edge reads leave the cache
+			// schema: the carrier mix (core_loader_window_bin_types,
+			// core_loader_quotas) and each position's kind. The loader sync
+			// stopped writing them before this; Core stops sending them. The
+			// frozen-chain steps that re-created all three on every boot were
+			// removed in the same change.
+			//
+			// core_loaders.config_gen STAYS, unread at its default 0: the
+			// previous build's loader sync and loader reads name it, and
+			// without it a rolled-back Edge would start with no loaders. Pinned
+			// by TestV27_ThePreviousBuildsLoaderStatementsStillRun.
+			//
+			// A rolled-back Edge's boot re-creates the two tables and the
+			// column (its frozen chain still has the steps); rolled forward
+			// again, this version is already applied and does not run twice,
+			// so they stay, empty and unread.
+			//
+			// Guarded per object, and NO Verify, as v3: a re-added object stays
+			// visible to the double-boot schema proof instead of being quietly
+			// re-dropped.
+			//
+			// RENUMBERED 22 -> 27: main's curtain, board-settings and
+			// partial-destination steps took 22 through 24 first, its
+			// routing-set backfill took 25, and its strict pack took 26.
+			Version: 27,
+			Name:    "drop_loader_carrier_mix_and_position_kind",
+			Fn: func(tx *sql.Tx) error {
+				for _, stmt := range []string{
+					`DROP TABLE IF EXISTS core_loader_window_bin_types`,
+					`DROP TABLE IF EXISTS core_loader_quotas`,
+				} {
+					if _, err := tx.Exec(stmt); err != nil {
+						return err
+					}
+				}
+				var n int
+				if err := tx.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('core_loader_positions')
+					WHERE name = 'kind'`).Scan(&n); err != nil {
+					return err
+				}
+				if n == 0 {
+					return nil
+				}
+				_, err := tx.Exec(`ALTER TABLE core_loader_positions DROP COLUMN kind`)
+				return err
 			},
 		},
 	}

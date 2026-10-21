@@ -6,9 +6,9 @@ import (
 )
 
 // The batched list must return exactly what the per-node calls return, node by
-// node. Same discipline as the PayloadsForManualSwapNodes equivalence test: the
-// batch exists purely to cut query count on a connection that serialises every
-// read, so any behaviour difference is a bug rather than a trade-off.
+// node: the batch exists purely to cut query count on a connection that
+// serialises every read, so any behaviour difference is a bug rather than a
+// trade-off.
 func TestListForNodes_MatchesPerNodeCalls(t *testing.T) {
 	t.Parallel()
 	db := openTestDB(t)

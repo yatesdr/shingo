@@ -23,12 +23,12 @@ func TestLoadersFromCore_SharedWindow(t *testing.T) {
 	// Seed the loader into the Core-loader cache and warm the aggregate snapshot.
 	seedCoreLoader(t, eng, protocol.LoaderInfo{
 		Name: "L", LoaderKey: "loader:AGG-LOADER", Role: "produce", Layout: "shared_window", Replenishment: "threshold",
-		OutboundDest: "FG-MARKET", InboundSource: "EMPTY-SUPER", ConfigGen: 1,
-		Positions: []protocol.LoaderPosition{{CoreNodeName: "AGG-LOADER", Kind: "window"}},
+		OutboundDest: "FG-MARKET", InboundSource: "EMPTY-SUPER",
+		Positions: []protocol.LoaderPosition{{CoreNodeName: "AGG-LOADER"}},
 		Payloads:  []protocol.LoaderPayloadInfo{{PayloadCode: "PART-A", UOPThreshold: 100}},
 	})
 
-	l, err := eng.loaders().LoaderForPayload("PART-A", domain.RoleProduce, true)
+	l, err := eng.loaders().LoaderForPayload("PART-A", domain.RoleProduce)
 	if err != nil || l == nil {
 		t.Fatalf("LoaderForPayload(PART-A) = %v, %v; want the cached loader", l, err)
 	}
@@ -41,7 +41,7 @@ func TestLoadersFromCore_SharedWindow(t *testing.T) {
 	if l.InboundSource() != "EMPTY-SUPER" || l.OutboundDest() != "FG-MARKET" {
 		t.Errorf("inbound/outbound = %q/%q, want EMPTY-SUPER/FG-MARKET", l.InboundSource(), l.OutboundDest())
 	}
-	if got := l.Windows(); len(got) != 1 || got[0].Node != "AGG-LOADER" {
+	if got := l.DeliveryNodes(); len(got) != 1 || got[0] != "AGG-LOADER" {
 		t.Errorf("windows = %+v, want one at AGG-LOADER", got)
 	}
 	if !l.ServesPayload("PART-A") {
@@ -50,7 +50,7 @@ func TestLoadersFromCore_SharedWindow(t *testing.T) {
 	if got := l.UOPThresholdFor("PART-A"); got != 100 {
 		t.Errorf("UOPThresholdFor(PART-A) = %d, want 100 (cache threshold)", got)
 	}
-	if _, err := eng.loaders().LoaderForPayload("NOPE", domain.RoleProduce, true); !errors.Is(err, ErrLoaderNotFound) {
+	if _, err := eng.loaders().LoaderForPayload("NOPE", domain.RoleProduce); !errors.Is(err, ErrLoaderNotFound) {
 		t.Errorf("LoaderForPayload(NOPE) err = %v, want ErrLoaderNotFound", err)
 	}
 }
@@ -65,16 +65,16 @@ func TestLoadersFromCore_DedicatedAndUnloader(t *testing.T) {
 	eng := testEngine(t, db)
 
 	seedCoreLoader(t, eng,
-		protocol.LoaderInfo{Name: "HL", LoaderKey: "loader:HL-LOADER", Role: "produce", Layout: "dedicated_positions", Replenishment: "operator", ConfigGen: 1,
-			Positions: []protocol.LoaderPosition{{CoreNodeName: "POS-1", PayloadCode: "PART-H", Kind: "dedicated", UOPThreshold: 80}}},
-		protocol.LoaderInfo{Name: "U", LoaderKey: "loader:UNL-1", Role: "consume", Layout: "shared_window", Replenishment: "operator", ConfigGen: 1,
-			Positions: []protocol.LoaderPosition{{CoreNodeName: "UNL-1", Kind: "window"}},
+		protocol.LoaderInfo{Name: "HL", LoaderKey: "loader:HL-LOADER", Role: "produce", Layout: "dedicated_positions", Replenishment: "operator",
+			Positions: []protocol.LoaderPosition{{CoreNodeName: "POS-1", PayloadCode: "PART-H", UOPThreshold: 80}}},
+		protocol.LoaderInfo{Name: "U", LoaderKey: "loader:UNL-1", Role: "consume", Layout: "shared_window", Replenishment: "operator",
+			Positions: []protocol.LoaderPosition{{CoreNodeName: "UNL-1"}},
 			Payloads:  []protocol.LoaderPayloadInfo{{PayloadCode: "PART-U"}}},
 	)
 
 	// dedicated_positions: resolves by payload to its position, carries the per-position
 	// threshold + the dedicated layout, and replenishment=operator → operator-driven.
-	l, err := eng.loaders().LoaderForPayload("PART-H", domain.RoleProduce, true)
+	l, err := eng.loaders().LoaderForPayload("PART-H", domain.RoleProduce)
 	if err != nil || l == nil {
 		t.Fatalf("LoaderForPayload(PART-H) = %v, %v; want the dedicated loader", l, err)
 	}
@@ -87,12 +87,12 @@ func TestLoadersFromCore_DedicatedAndUnloader(t *testing.T) {
 	if got := l.UOPThresholdFor("PART-H"); got != 80 {
 		t.Errorf("UOPThresholdFor(PART-H) = %d, want 80 (position threshold)", got)
 	}
-	if !l.IsOperatorDriven() {
+	if !l.UsesOperatorStaging() {
 		t.Error("replenishment=operator loader should be operator-driven")
 	}
 
 	// unloader: consume — always operator (the window-queue drain).
-	u, err := eng.loaders().LoaderForPayload("PART-U", domain.RoleConsume, true)
+	u, err := eng.loaders().LoaderForPayload("PART-U", domain.RoleConsume)
 	if err != nil || u == nil {
 		t.Fatalf("LoaderForPayload(PART-U, consume) = %v, %v; want the unloader", u, err)
 	}
@@ -111,13 +111,10 @@ func TestLoadersFromCore_DedicatedAndUnloader(t *testing.T) {
 	}
 }
 
-// TestLoaderIdentityCutover_ResolveByKey pins the step-4 cutover: a SYNTHETIC loader
-// (identity is a loader_key token, anchor name is not a node) resolves by LoaderByKey,
-// its ID() IS the token (not core_node_name), and the anchor name does not resolve as
-// the identity — while its real windows still resolve via LoaderAt (the member path).
-// This is the atomic flip the threshold signal relies on; a synthetic loader could not
-// be resolved by LoaderAt(anchor) at all.
-func TestLoaderIdentityCutover_ResolveByKey(t *testing.T) {
+// TestLoaderIdentity_IsTheLoaderKey pins a loader's identity: ID() is Core's
+// loader_key token, the loader resolves by its member windows (LoaderAt), and
+// the token itself is never resolved as a node.
+func TestLoaderIdentity_IsTheLoaderKey(t *testing.T) {
 	t.Parallel()
 	db := testEngineDB(t)
 	eng := testEngine(t, db)
@@ -132,14 +129,13 @@ func TestLoaderIdentityCutover_ResolveByKey(t *testing.T) {
 		}
 	}
 
-	// PLK_SYN is a synthetic identity (no process_node); loader_key is the real identity.
 	if err := db.ReplaceCoreLoaders([]protocol.LoaderInfo{{
 		Name: "Syn", LoaderKey: "loader:77", Role: "produce",
-		Layout: "shared_window", Replenishment: "threshold", ConfigGen: 1,
+		Layout: "shared_window", Replenishment: "threshold",
 		Payloads: []protocol.LoaderPayloadInfo{{PayloadCode: "PART-A", UOPThreshold: 100}},
 		Positions: []protocol.LoaderPosition{
-			{CoreNodeName: "CUT-W1", Kind: protocol.LoaderPositionKindWindow},
-			{CoreNodeName: "CUT-W2", Kind: protocol.LoaderPositionKindWindow},
+			{CoreNodeName: "CUT-W1"},
+			{CoreNodeName: "CUT-W2"},
 		},
 	}}); err != nil {
 		t.Fatalf("seed cache: %v", err)
@@ -148,20 +144,35 @@ func TestLoaderIdentityCutover_ResolveByKey(t *testing.T) {
 	// Refresh()es the immutable snapshot from ListCoreLoaders).
 	eng.loaderStore = newAggregateLoaderStore(eng.db, eng.logFn)
 
-	// Resolves by the IDENTITY token; ID() is the token, not core_node_name.
-	l, err := eng.loaders().LoaderByKey("loader:77", domain.RoleProduce)
-	if err != nil || l == nil {
-		t.Fatalf("LoaderByKey(loader:77) = %v, %v; want the loader", l, err)
+	at, err := eng.loaders().LoaderAt("CUT-W1", domain.RoleProduce)
+	if err != nil || at == nil || at.ID() != "loader:77" {
+		t.Fatalf("LoaderAt(CUT-W1) = %v, %v; want the loader, whose ID is the token loader:77", at, err)
 	}
-	if l.ID() != "loader:77" {
-		t.Errorf("loader ID = %q, want loader:77 (the token, not the synthetic core_node_name)", l.ID())
+	got, err := eng.loaders().LoaderAt("loader:77", domain.RoleProduce)
+	if got != nil {
+		t.Errorf("LoaderAt(loader:77) resolved %v; the identity token is not a node", got.ID())
 	}
-	// The synthetic anchor name is NOT the identity.
-	if got, _ := eng.loaders().LoaderByKey("PLK_SYN", domain.RoleProduce); got != nil {
-		t.Errorf("LoaderByKey(PLK_SYN) resolved %v; the anchor name is not the loader key", got)
+	if !errors.Is(err, ErrLoaderNotFound) {
+		t.Errorf("LoaderAt(loader:77) err = %v, want ErrLoaderNotFound", err)
 	}
-	// But its real windows still resolve via the member path.
-	if at, err := eng.loaders().LoaderAt("CUT-W1", domain.RoleProduce); err != nil || at == nil || at.ID() != "loader:77" {
-		t.Errorf("LoaderAt(CUT-W1) = %v, %v; want the loader by its window", at, err)
+}
+
+// TestLoaderResolution_RoutesToSignaledCoreNode pins the loader store's two
+// lookups when the same payload is loaded at two loaders: LoaderAt resolves the
+// loader at the node it is given (not the alphabetically-first one), and
+// LoaderForPayload, with no node named, resolves the first serving loader.
+func TestLoaderResolution_RoutesToSignaledCoreNode(t *testing.T) {
+	t.Parallel()
+	db := testEngineDB(t)
+	eng := testEngine(t, db)
+	seedCoreLoader(t, eng,
+		sharedLoaderInfo("LOADER-A", "produce", "threshold", "SHARED", 0, 100),
+		sharedLoaderInfo("LOADER-B", "produce", "threshold", "SHARED", 0, 100))
+
+	if got, err := eng.loaders().LoaderAt("LOADER-B", domain.RoleProduce); err != nil || got == nil || got.ID() != "loader:LOADER-B" {
+		t.Errorf("LoaderAt(LOADER-B) resolved %v (err=%v), want loader:LOADER-B via exact member match", got, err)
+	}
+	if got, err := eng.loaders().LoaderForPayload("SHARED", domain.RoleProduce); err != nil || got == nil || got.ID() != "loader:LOADER-A" {
+		t.Errorf("LoaderForPayload(SHARED) resolved %v (err=%v), want first-match loader:LOADER-A", got, err)
 	}
 }

@@ -33,8 +33,8 @@ func newCycleUnloader(t *testing.T, prefix string) *ugFixture {
 	f := &ugFixture{eng: eng, db: db, core: core, nCore: prefix + "-N"}
 	seedCoreLoader(t, eng, protocol.LoaderInfo{
 		Name: prefix, LoaderKey: "loader:" + prefix, Role: "consume", Layout: "shared_window",
-		Replenishment: "operator", InboundSource: "FG-SUPER", OutboundDest: "EMPTY-TOTES", ConfigGen: 1,
-		Positions: []protocol.LoaderPosition{{CoreNodeName: f.nCore, Kind: "window"}},
+		Replenishment: "operator", InboundSource: "FG-SUPER", OutboundDest: "EMPTY-TOTES",
+		Positions: []protocol.LoaderPosition{{CoreNodeName: f.nCore}},
 		Payloads:  []protocol.LoaderPayloadInfo{{PayloadCode: "PART-AC"}}, AutoPush: true,
 	})
 	var err error
@@ -222,8 +222,8 @@ func TestAutoPushLanding_MultiPayloadWindowCountCovers(t *testing.T) {
 	f := newCycleUnloader(t, "ACM")
 	seedCoreLoader(t, f.eng, protocol.LoaderInfo{
 		Name: "ACM", LoaderKey: "loader:ACM", Role: "consume", Layout: "shared_window",
-		Replenishment: "operator", InboundSource: "FG-SUPER", OutboundDest: "EMPTY-TOTES", ConfigGen: 2,
-		Positions: []protocol.LoaderPosition{{CoreNodeName: f.nCore, Kind: "window"}},
+		Replenishment: "operator", InboundSource: "FG-SUPER", OutboundDest: "EMPTY-TOTES",
+		Positions: []protocol.LoaderPosition{{CoreNodeName: f.nCore}},
 		Payloads:  []protocol.LoaderPayloadInfo{{PayloadCode: "PART-AC"}, {PayloadCode: "PART-AD"}}, AutoPush: true,
 	})
 	f.deliveredFullAt(t, f.n, f.nCore, "PART-AC")

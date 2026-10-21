@@ -1,5 +1,5 @@
-// operator-window-state.js — the single source of truth for a manual_swap
-// (loader / unloader) WINDOW's state on the operator board.
+// operator-window-state.js — the single source of truth for a loader or
+// unloader WINDOW's state on the operator board.
 //
 // One phase derivation + one per-role word table, so the header badge and the
 // per-payload cards always tell the SAME story, and the loader/unloader wording
@@ -9,7 +9,7 @@
 //
 // Pure + import-free on purpose: it unit-tests under plain Node (the test strips
 // `export` and runs it in a vm — see operator-window-state.test.js), and it keeps
-// rendering concerns (DOM, transitional coverage badges, idle-card hiding) in
+// rendering concerns (DOM, the operator board's coverage badges, idle-card hiding) in
 // operator-render.js, which consumes this.
 //
 // Incident cases preserved + pinned by the test (do not regress):
@@ -54,17 +54,18 @@ export const ROLE_WORDS = {
 function words(role) { return ROLE_WORDS[role] || ROLE_WORDS.produce; }
 
 // nodeFacts derives the role-neutral node-level facts from one station node view
-// (the manual_swap entry). The per-card model and the header both build on these, so
-// they can never disagree about what's physically at the window.
+// (a loader tile). The per-card model and the header both build on these, so
+// they can never disagree about what's physically at the window. The role is the
+// loader's (tile.loader): a loader tile carries no claim.
 export function nodeFacts(entry) {
-    const claim = entry.active_claim || {};
+    const loader = entry.loader || {};
     const bs = entry.bin_state || {};
     const activeOrders = (entry.orders || []).filter(function (o) { return isActiveStatus(o.status); });
     const binPresent = !!bs.occupied;
     const binEmpty = binPresent && !bs.payload_code;
     const binLoaded = binPresent && !!bs.payload_code;
     return {
-        role: claim.role,
+        role: loader.role,
         binPresent: binPresent,
         binEmpty: binEmpty,
         binLoaded: binLoaded,
@@ -72,8 +73,8 @@ export function nodeFacts(entry) {
         activeOrders: activeOrders,
         hasDemand: activeOrders.length > 0,
         // consume-role swap affordances (a loaded full to pull / an empty to return)
-        canClearLoaded: claim.role === 'consume' && binLoaded,
-        canSwapEmpty: claim.role === 'consume' && binEmpty,
+        canClearLoaded: loader.role === 'consume' && binLoaded,
+        canSwapEmpty: loader.role === 'consume' && binEmpty,
         // produce: an empty bin parked with no order yet is still loadable
         canLoadEmpty: binEmpty && activeOrders.length === 0,
     };
@@ -87,9 +88,9 @@ export function nodeFacts(entry) {
 // blank move arriving from another node is not this node's carrier leaving, so
 // neither counts (operator-window-state.test.js cases 24–27).
 export function isOwnEmptyOut(entry, o) {
-    const claim = entry.active_claim || {};
+    const loader = entry.loader || {};
     const coreNode = (entry.node && entry.node.core_node_name) || '';
-    return claim.role === 'consume' && coreNode !== '' &&
+    return loader.role === 'consume' && coreNode !== '' &&
         o.order_type === 'move' && o.source_node === coreNode;
 }
 
@@ -196,7 +197,7 @@ export function cardModel(entry, code) {
         // orders count — the agnostic blank-payload empty must not stamp a number on every card.
         queueCount: payloadOrders.length, delivered: payloadDelivered, inTransit: payloadInTransit,
         // sourceNode is where badgeOrder is pulling FROM — the supermarket or buffer
-        // slot the carrier is coming out of. On a home-location board this replaces the
+        // slot the carrier is coming out of. On a dedicated-positions board this replaces the
         // queue ordinal: each home is its own one-bin slot, so "3rd in the queue" says
         // nothing an operator can act on, while "which supermarket slot is feeding me"
         // does. Empty when no real per-payload order backs the card.

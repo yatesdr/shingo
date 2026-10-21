@@ -255,6 +255,7 @@ Data messages use the envelope's existing `cor` (correlation ID) field for reque
 | `supply.refusal_state` | Core -> Edge | `SupplyRefusalState` | Core broadcasts the refusal's state so the cell can answer; station-broadcast, filtered per-process on arrival |
 | `containment.snapshot` | Core -> Edge | `ContainmentSnapshot` | Core's whole containment state (flags, held bins, what stands at each containment destination) with its digest; broadcast after a containment write, unicast when an Edge's heartbeat quotes a different `containment` digest. An Edge older than the subject logs "no handler" once per broadcast |
 | `bins.watch` | Edge -> Core | `BinWatchList` | The Core node names an edge's operator stations draw, sorted, each once, with their digest. Core keeps the latest per edge in memory, quotes its digest on every heartbeat ack (`bin_watch`) and answers each list with that edge's `bins` snapshot |
+| `bins.snapshot` | Core -> Edge | `NodeBinsSnapshot` | The bins at the nodes one edge watches (one row per watched name: occupied, bin, type, part, manifest, stocked, tote numbers, the part's capacity, a held partial's arrival, line and count; no other count, no time that moves) and its consume loaders' outbound-group lines, with their digest, under feed key `bins`. Sent to that edge alone on receipt of its watch list, after a change at a watched node, and when its heartbeat quotes a different `bins` digest. The edge holds it in memory only |
 | `supply.refusal_snapshot` | Core -> Edge | `SupplyRefusalSnapshot` | Core's whole open refusal set, sent to one Edge whose `refusals` feed digest differs from Core's; the Edge merges it per field and re-sends what it owns that Core is missing |
 | `transit.bin_picked_up` | Core -> Edge | `BinPickedUp` | The robot has the bin — the pickup half of a transit, distinct from delivery |
 | `transit.bin_landed` | Core -> Edge | `BinLanded` | A carrier came to rest at a node a station binds at — the drop half of a transit; the only door that binds a carrier Core placed (Lane H) |
@@ -503,9 +504,11 @@ each once.
 
 `NodeBinsSnapshot` (core -> one edge): `digest`, `rows` and `groups`. One row per watched name: `node`,
 `occupied`, `bin_id`, `bin_label`, `bin_type_code`, `bare`, `payload_code`, `manifest`, `manifest_confirmed`,
-`stocked`, `totes_on_cart`, `totes_per_layer`. A node Core does not know, or one with no bin, is `occupied: false`
-and nothing else. **No count is in a row**: `stocked` is the bin's count above zero, so a count that moves without
-crossing zero sends nothing. No time and nothing about the asker is in it. Each group line is an outbound group,
+`stocked`, `totes_on_cart`, `totes_per_layer`, `uop_capacity` (the part's), and for a held partial only (an
+unfinished carrier waiting in a partial home of its part) `held_since`, `held_for` and `held_uop`. A node Core does
+not know, or one with no bin, is `occupied: false` and nothing else. **No count is in a row** but a held partial's,
+which nothing draws from while it waits: `stocked` is the bin's count above zero, so a count that moves without
+crossing zero sends nothing. No time that moves and nothing about the asker is in it. Each group line is an outbound group,
 with levels, of a consume loader with a watched window: `group`, `wants` (`bin_type`, `layers`, `want`) and
 `assignments` (`node`, `bin_type`, `layers`). A plant with no levels sends `groups: []`.
 
@@ -587,9 +590,8 @@ slice, consumed by the Edge cache (`core_loaders`) — the loader resolvers' rea
 | Name | `name` | string | Loader display name. |
 | Loader Key | `loader_key` | string | The loader's opaque IDENTITY token (`"loader:<id>"`, minted from the Core surrogate id). The loader has no node of its own — its delivery targets are the member nodes in `positions`, and the Edge cache + threshold signal key on this token. |
 | Role | `role` | string | `"produce"` (loader) or `"consume"` (unloader). |
-| Layout | `layout` | string | `"shared_window"` or `"dedicated_positions"`. The single authoritative discriminator. |
-| Replenishment | `replenishment` | string | `"auto"` or `"operator"`. |
-| Config Gen | `config_gen` | int | Bumped on every config write so Edge can detect stale config. |
+| Layout | `layout` | string | `"shared_window"` or `"dedicated_positions"`. The one discriminator between a window and a dedicated position. |
+| Replenishment | `replenishment` | string | `"operator"` or `"threshold"`. |
 | Positions | `positions` | LoaderPosition[] | Member homes: windows (shared) or dedicated positions. |
 | Payloads | `payloads` | LoaderPayloadInfo[] | The shared allowed set (shared_window only). |
 
@@ -599,11 +601,9 @@ slice, consumed by the Edge cache (`core_loaders`) — the loader resolvers' rea
 |---|---|---|---|
 | Core Node Name | `core_node_name` | string | The position/window node NAME (Edge's key space). |
 | Payload Code | `payload_code` | string | The bound payload (dedicated); empty for a window or an unassigned position. |
-| Kind | `kind` | string | `"window"` or `"dedicated"`. Set by Core from the parent loader's `layout`. Makes the window-vs-position distinction **explicit** so a reader need not infer it from an empty `payload_code` (which is ambiguous between a window and an unassigned dedicated position). Empty only from a Core that predates this field; then `layout` is authoritative. |
-| Min Stock | `min_stock` | int | Per-position bin-count floor. |
 | UOP Threshold | `uop_threshold` | int | Per-position UOP-threshold replenishment trigger (0 = off). |
 
-**LoaderPayloadInfo:** `payload_code` (string), `min_stock` (int), `uop_threshold` (int) — one entry per payload in a shared_window loader's allowed set.
+**LoaderPayloadInfo:** `payload_code` (string), `uop_threshold` (int) — one entry per payload in a shared_window loader's allowed set.
 
 #### CatalogPayloadsRequest
 

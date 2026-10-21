@@ -74,22 +74,22 @@ func TestTier1_SnapshotCarriesThresholdAndTransitional(t *testing.T) {
 		sharedLoaderInfo("OP-LDR", "produce", "operator", "PART-B", 1, 0),
 	)
 
-	a, err := eng.loaders().LoaderForPayload("PART-A", domain.RoleProduce, true)
+	a, err := eng.loaders().LoaderForPayload("PART-A", domain.RoleProduce)
 	if err != nil || a == nil {
 		t.Fatalf("resolve AUTO-LDR: %v", err)
 	}
 	if got := a.UOPThresholdFor("PART-A"); got != 150 {
 		t.Errorf("UOPThresholdFor(PART-A) = %d, want 150 (threaded off the cache)", got)
 	}
-	if a.IsOperatorDriven() {
+	if a.UsesOperatorStaging() {
 		t.Error("replenishment=auto loader must not be operator-driven")
 	}
 
-	op, err := eng.loaders().LoaderForPayload("PART-B", domain.RoleProduce, true)
+	op, err := eng.loaders().LoaderForPayload("PART-B", domain.RoleProduce)
 	if err != nil || op == nil {
 		t.Fatalf("resolve OP-LDR: %v", err)
 	}
-	if !op.IsOperatorDriven() {
+	if !op.UsesOperatorStaging() {
 		t.Error("replenishment=operator loader must be operator-driven")
 	}
 	if got := op.UOPThresholdFor("PART-B"); got != 0 {
@@ -98,7 +98,10 @@ func TestTier1_SnapshotCarriesThresholdAndTransitional(t *testing.T) {
 
 	// Survives a refresh: the field is re-threaded, not stale.
 	seedCoreLoader(t, eng, sharedLoaderInfo("AUTO-LDR", "produce", "threshold", "PART-A", 2, 222))
-	a2, _ := eng.loaders().LoaderForPayload("PART-A", domain.RoleProduce, true)
+	a2, err := eng.loaders().LoaderForPayload("PART-A", domain.RoleProduce)
+	if err != nil {
+		t.Fatalf("LoaderForPayload(PART-A) after refresh: %v", err)
+	}
 	if a2 == nil || a2.UOPThresholdFor("PART-A") != 222 {
 		t.Errorf("after refresh UOPThresholdFor(PART-A) = %v, want 222", a2)
 	}
@@ -115,10 +118,10 @@ func TestTier1_DedicatedLoaderKeepsLayoutViaAggregate(t *testing.T) {
 
 	seedCoreLoader(t, eng, protocol.LoaderInfo{
 		Name: "DECK", LoaderKey: "loader:DECK", Role: "produce", Layout: "dedicated_positions",
-		Replenishment: "threshold", ConfigGen: 1,
+		Replenishment: "threshold",
 		Positions: []protocol.LoaderPosition{
-			{CoreNodeName: "D1", PayloadCode: "STUD", Kind: "dedicated"},
-			{CoreNodeName: "D2", PayloadCode: "STUD", Kind: "dedicated"},
+			{CoreNodeName: "D1", PayloadCode: "STUD"},
+			{CoreNodeName: "D2", PayloadCode: "STUD"},
 		},
 	})
 

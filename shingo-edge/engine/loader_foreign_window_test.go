@@ -31,8 +31,7 @@ func foreignWindowLoaderInfo(coreNode, payload string) protocol.LoaderInfo {
 		Layout:        "shared_window",
 		Replenishment: "auto",
 		InboundSource: "FG-SUPER",
-		ConfigGen:     1,
-		Positions:     []protocol.LoaderPosition{{CoreNodeName: coreNode, Kind: "window"}},
+		Positions:     []protocol.LoaderPosition{{CoreNodeName: coreNode}},
 		Payloads:      []protocol.LoaderPayloadInfo{{PayloadCode: payload}},
 	}
 }
@@ -50,11 +49,11 @@ func TestUnloaderSweep_ForeignWindowSkipsNotErrors(t *testing.T) {
 	eng.logFn = func(f string, a ...any) { logs = append(logs, fmt.Sprintf(f, a...)) }
 	seedCoreLoader(t, eng, foreignWindowLoaderInfo("FGN_FOREIGN", "PART-F"))
 
-	l, err := eng.loaderStore.LoaderForPayload(domain.PayloadCode("PART-F"), domain.RoleConsume, true)
+	l, err := eng.loaderStore.LoaderForPayload(domain.PayloadCode("PART-F"), domain.RoleConsume)
 	if err != nil || l == nil {
 		t.Fatalf("resolve consume loader: loader=%v err=%v", l, err)
 	}
-	eng.createUnloaderFullInViaSeam(l, "PART-F")
+	eng.createUnloaderFullIns(l, []domain.PayloadCode{"PART-F"})
 
 	for _, line := range logs {
 		if strings.Contains(line, "failed") {
@@ -83,7 +82,7 @@ func TestLoaderL1_ForeignWindowSkipsNotErrors(t *testing.T) {
 	info.Replenishment = "operator"
 	seedCoreLoader(t, eng, info)
 
-	l, err := eng.loaderStore.LoaderForPayload(domain.PayloadCode("PART-FK"), domain.RoleProduce, true)
+	l, err := eng.loaderStore.LoaderForPayload(domain.PayloadCode("PART-FK"), domain.RoleProduce)
 	if err != nil || l == nil {
 		t.Fatalf("resolve produce loader: loader=%v err=%v", l, err)
 	}
@@ -110,11 +109,11 @@ func TestForeignWindow_DebugLineNamesTheWindow(t *testing.T) {
 	eng.debugFn = func(f string, a ...any) { debugLines = append(debugLines, strings.TrimSpace(fmt.Sprintf(f, a...))) }
 	seedCoreLoader(t, eng, foreignWindowLoaderInfo("FGN_TRACE", "PART-FT"))
 
-	l, err := eng.loaderStore.LoaderForPayload(domain.PayloadCode("PART-FT"), domain.RoleConsume, true)
+	l, err := eng.loaderStore.LoaderForPayload(domain.PayloadCode("PART-FT"), domain.RoleConsume)
 	if err != nil || l == nil {
 		t.Fatalf("resolve consume loader: loader=%v err=%v", l, err)
 	}
-	eng.createUnloaderFullInViaSeam(l, "PART-FT")
+	eng.createUnloaderFullIns(l, []domain.PayloadCode{"PART-FT"})
 
 	found := false
 	for _, line := range debugLines {

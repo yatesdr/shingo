@@ -57,6 +57,11 @@ type feedBook struct {
 	// coreSpeaksFeeds is true once an ack carried a Feeds map. Until then,
 	// and whenever an older Core answers, the Edge keeps its own timers.
 	coreSpeaksFeeds bool
+	// binWatchCarried is true while the last ack carried BinWatch (a Core
+	// serving the node-bins feed), and binWatchQuoted is the digest it quoted
+	// (node_bins.go).
+	binWatchCarried bool
+	binWatchQuoted  string
 	// lastAck is the local (monotonic) time of the last ack; lastServerTS is
 	// Core's stamp on it.
 	lastAck      time.Time
@@ -177,6 +182,14 @@ func digestPersists(key string) bool {
 	return key == protocol.FeedContainment || key == protocol.FeedCatalog
 }
 
+// feedCopyKept reports whether a feed has a feed_copy row at all. The node-bins
+// copy has none: it changes with every delivery, a row would be a SQLite
+// write per bin movement, and after a restart the Edge quotes "" and Core
+// sends it again. Pinned by TestNodeBins_NoSQLiteWrite.
+func feedCopyKept(key string) bool {
+	return key != protocol.FeedBins
+}
+
 // persistedRow is the feed_copy row for a hold, with the digest and body left
 // out where they do not persist.
 func persistedRow(key string, h *feedHold) store.FeedCopy {
@@ -235,6 +248,9 @@ func (e *Engine) FeedDigests() map[string]string {
 	e.noteHeld(protocol.FeedScene, rev)
 	out[protocol.FeedScene] = rev
 	out[protocol.FeedCatalog] = e.heldDigest(protocol.FeedCatalog)
+	// Always named, "" while nothing is held: Core drops an Edge's watch list
+	// when its heartbeat does not name the key (a build without the feed).
+	out[protocol.FeedBins] = e.heldDigest(protocol.FeedBins)
 	return out
 }
 
@@ -259,8 +275,8 @@ func (e *Engine) heldDigest(key string) string {
 
 // holdFeed records a feed Core sent, AFTER its apply returned nil. body is the
 // encoded copy for a feed whose data lives only here (containment), else "".
-// The row is written when the digest changed; an identical re-send only moves
-// the received time in memory.
+// The row is written when the digest changed, for every feed that keeps one
+// (feedCopyKept); an identical re-send only moves the received time in memory.
 func (e *Engine) holdFeed(key, digest, body string) {
 	now := time.Now()
 	e.feeds.mu.Lock()
@@ -273,7 +289,7 @@ func (e *Engine) holdFeed(key, digest, body string) {
 		row = persistedRow(key, h)
 	}
 	e.feeds.mu.Unlock()
-	if changed {
+	if changed && feedCopyKept(key) {
 		if err := e.db.SaveFeedCopy(row); err != nil {
 			e.logFn("feeds: save %s: %v", key, err)
 		}
@@ -322,7 +338,7 @@ func (e *Engine) OnCoreAck(ack *protocol.EdgeHeartbeatAck) {
 			continue
 		}
 		h.confirmedAt = now
-		if now.Sub(h.persistedAt) >= feedConfirmPersistEvery {
+		if feedCopyKept(key) && now.Sub(h.persistedAt) >= feedConfirmPersistEvery {
 			h.persistedAt = now
 			persist = append(persist, persistedRow(key, h))
 		}
@@ -334,6 +350,7 @@ func (e *Engine) OnCoreAck(ack *protocol.EdgeHeartbeatAck) {
 		}
 	}
 	e.answerClaims(ack.Claims)
+	e.answerBinWatch(ack.BinWatch)
 	if gap {
 		e.reconcileAfterGap(reconcile)
 	}

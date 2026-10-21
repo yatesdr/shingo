@@ -26,7 +26,7 @@ import (
 // of a layout distinction.
 //
 // The layout fact now lives on the Core aggregate (bin_loaders.layout →
-// Loader.IsDedicated() → StationNodeView.HomeLocationLoader). Nothing in the
+// the tile's loader.layout). Nothing in the
 // REFUSAL path reads it, which is the property that made the axis inert and is
 // still true. Restoring the two runs means driving them from a Core loader
 // aggregate, not from the dropped table.

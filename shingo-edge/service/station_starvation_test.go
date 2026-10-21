@@ -32,7 +32,7 @@ func TestStarvationUsesTheConfiguredThreshold(t *testing.T) {
 	// A dedicated-positions loader, which is the layout the defect was found on:
 	// the threshold rides on the Position, not on a shared per-payload map.
 	loader, err := domain.NewDedicatedPositionsLoader(
-		domain.LoaderID("loader:test"), "Test Loader",
+		domain.LoaderID("loader:test"),
 		domain.RoleProduce, domain.ReplenishmentThreshold,
 		[]domain.Position{{Node: domain.NodeID("SMN_TEST"), Payload: part, UOPThreshold: 500}},
 	)
