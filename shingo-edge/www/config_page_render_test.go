@@ -32,7 +32,7 @@ func renderConfigPage(t *testing.T, seed func(c *config.Config), boot bool, afte
 		f(stub.cfg)
 		stub.cfg.Unlock()
 	}
-	stub.plcMgr = plc.NewManager(nil, stub.cfg, nil, nil)
+	stub.plcMgr = plc.NewManager(nil, stub.cfg.WarLink, stub.cfg.PollRate, stub.cfg.Counter.JumpThreshold, nil, nil)
 	h.tmpl = template.Must(template.New("").Funcs(templateFuncs()).
 		ParseFS(templatesFS, "templates/*.html", "templates/partials/*.html"))
 	w := httptest.NewRecorder()

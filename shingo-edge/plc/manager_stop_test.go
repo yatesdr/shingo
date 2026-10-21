@@ -35,8 +35,7 @@ func (e *countingEmitter) count() int {
 func TestStop_NoTickAfterReturn(t *testing.T) {
 	t.Parallel()
 	em := &countingEmitter{}
-	r := newTickRigEmitting(t, em)
-	r.mgr.cfg.PollRate = 5 * time.Millisecond
+	r := newTickRigAt(t, em, 5*time.Millisecond)
 
 	// The counter climbs on its own for the whole test, before and after
 	// Stop, so a poll that outlived Stop would find a change to record.
@@ -78,7 +77,7 @@ func TestStop_NoTickAfterReturn(t *testing.T) {
 		t.Errorf("at Stop: %d snapshots recorded, %d deltas emitted; want equal (a tick was in flight)", atStop, emittedAtStop)
 	}
 
-	time.Sleep(20 * r.mgr.cfg.PollRate)
+	time.Sleep(20 * r.cfg.PollRate)
 	if got := snapshots(); got != atStop {
 		t.Errorf("snapshots after Stop = %d, want %d: the poll recorded a tick after Stop returned", got, atStop)
 	}

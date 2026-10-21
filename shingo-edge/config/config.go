@@ -599,6 +599,37 @@ func (c *Config) StationID() string {
 	return c.stationID()
 }
 
+// AutoConfirm reports the station's auto-confirm setting under the read lock.
+//
+// The engine's loops, its event subscribers and the HTTP handlers read it on
+// their own goroutines while a save may rewrite it (applyStation → Adopt). A
+// direct c.Web.AutoConfirm read there is a data race with the save; this
+// accessor is the whole fix, the same shape StationID uses.
+func (c *Config) AutoConfirm() bool {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.Web.AutoConfirm
+}
+
+// WarLinkSettings returns the WarLink link's settings by value under the read
+// lock. Callers hold a copy: nothing they do to it reaches the live config,
+// and a save replacing it cannot race them.
+func (c *Config) WarLinkSettings() WarLinkConfig {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.WarLink
+}
+
+// MessagingSettings returns the messaging settings by value under the read
+// lock, for a service that wants them and must not hold a pointer into the
+// live config (the Kafka client reads brokers on its reader goroutine while a
+// save may replace them).
+func (c *Config) MessagingSettings() MessagingConfig {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.Messaging
+}
+
 // KafkaGroupID returns the Kafka consumer group ID for this edge.
 //
 // ALWAYS DERIVED. There is no configured override any more, and removing it is
@@ -691,21 +722,22 @@ func (c *Config) Clone() *Config {
 
 // Adopt swaps a saved copy into this (the live) config, under the write lock.
 // Not `*c = *from` (that would overwrite the mutexes, and vet flags it) and
-// not a new pointer: the messaging client and the backup service hold
-// pointers into the live config. from must not be used after (its slices and
-// pointers are taken, not copied).
+// not a new pointer: the backup service holds a pointer into the live config,
+// and reads what it needs under the read lock. from must not be used after
+// (its slices and pointers are taken, not copied).
 //
-// ONLY A LEAF THAT DIFFERS IS WRITTEN. The engine's loops read the live
-// config without the lock (e.cfg.Web.AutoConfirm, ApplyWarLinkConfig's
-// e.cfg.WarLink, cfg.StationID() users), as they always have. A swap that
-// rewrote every field raced each of them on values the save did not change
-// (a same-value write is still a race); the per-item doors it replaced wrote
-// only their own fields. Writing only what the draft changed keeps a save's
-// writes to the fields its sections own. It walks the struct by reflection,
-// so no field can be left out of the swap (the same approach as Core's
-// ReplaceFrom). TestConfig_CloneAndAdoptCoverEveryField proves every field
-// lands; TestRace_AdoptLeavesUnchangedFieldsAlone proves the rest are left
-// alone.
+// ONLY A LEAF THAT DIFFERS IS WRITTEN, so a save's writes stay inside the
+// fields its sections own. That is a blast-radius rule, not the safety
+// mechanism: every reader of a leaf a save can change now takes c.mu through
+// an accessor (StationID, AutoConfirm, WarLinkSettings, MessagingSettings) or
+// holds a value a save handed it (plc.Manager's WarLink settings, the Kafka
+// client's MessagingSettings snapshot). Reading a live leaf directly without
+// the lock is the defect the 2026-10-20 stop fixed — the WarLink poll loop on
+// one side and apiSaveConfig's Adopt on the other; do not add another.
+// It walks the struct by reflection, so no field can be left out of the swap
+// (the same approach as Core's ReplaceFrom).
+// TestConfig_CloneAndAdoptCoverEveryField proves every field lands;
+// TestRace_AdoptLeavesUnchangedFieldsAlone proves the rest are left alone.
 func (c *Config) Adopt(from *Config) {
 	c.mu.Lock()
 	defer c.mu.Unlock()

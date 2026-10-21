@@ -31,7 +31,7 @@ import (
 // PLC whose fetch returns tags must end the poll with those tags readable.
 func TestReconcilePLC_FetchedTagsReachValues(t *testing.T) {
 	t.Parallel()
-	mgr := NewManager(nil, config.Defaults(), &mockEmitter{}, nil)
+	mgr := newTestManager(nil, config.Defaults(), &mockEmitter{}, nil)
 	mgr.wl = &mockWarlinkClient{
 		plcs: []WarlinkPLC{{Name: "PRESS-1", Status: "Connected"}},
 		tags: map[string]map[string]WarlinkTag{
@@ -88,7 +88,7 @@ func TestReconcilePLC_FetchedTagsReachValues(t *testing.T) {
 // publish the values of a PLC that is not talking.
 func TestReconcilePLC_ConnectionLevelTagErrorStillSkipsApplyTags(t *testing.T) {
 	t.Parallel()
-	mgr := NewManager(nil, config.Defaults(), &mockEmitter{}, nil)
+	mgr := newTestManager(nil, config.Defaults(), &mockEmitter{}, nil)
 	mgr.wl = &mockWarlinkClient{
 		plcs: []WarlinkPLC{{Name: "PRESS-2", Status: "Connected"}},
 		tags: map[string]map[string]WarlinkTag{

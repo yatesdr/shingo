@@ -78,7 +78,7 @@ func TestOperatorStationView_CarriesCurtainState(t *testing.T) {
 	yes, no := true, false
 
 	// Both curtains bypassed (FALSE is the release value here).
-	mgr := plc.NewManager(nil, config.Defaults(), nil, nil)
+	mgr := plc.NewManager(nil, config.Defaults().WarLink, config.Defaults().PollRate, config.Defaults().Counter.JumpThreshold, nil, nil)
 	mgr.SetTagValueForTest("SYN-PLC", "CUR_BACK", false)
 	mgr.SetTagValueForTest("SYN-PLC", "CUR_OWN", false)
 	stub.plcMgr = mgr
@@ -94,7 +94,7 @@ func TestOperatorStationView_CarriesCurtainState(t *testing.T) {
 	expect(got, front, "front (its back position still safe)", &yes)
 
 	// The cache has no value for the back position's tag: held, not absent.
-	bare := plc.NewManager(nil, config.Defaults(), nil, nil)
+	bare := plc.NewManager(nil, config.Defaults().WarLink, config.Defaults().PollRate, config.Defaults().Counter.JumpThreshold, nil, nil)
 	bare.SetTagValueForTest("SYN-PLC", "CUR_OWN", false)
 	stub.plcMgr = bare
 	got = curtainOK()

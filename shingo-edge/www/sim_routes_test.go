@@ -32,7 +32,7 @@ func TestSimOverrun_RouteSetsListsAndClears(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	fake := simwarlink.NewFakeClient(ctx, cfg, clock.NewManual(time.Unix(0, 0)))
-	mgr := plc.NewManager(nil, config.Defaults(), nil, fake)
+	mgr := plc.NewManager(nil, config.Defaults().WarLink, config.Defaults().PollRate, config.Defaults().Counter.JumpThreshold, nil, fake)
 	// Discovered as the poll would discover them.
 	mgr.SetTagValueForTest("PRESS-1", "PRESS-1_COUNTER", int64(0))
 	mgr.SetTagValueForTest("WELD-1", "WELD-1_COUNTER", int64(0))

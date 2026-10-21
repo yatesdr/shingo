@@ -90,10 +90,24 @@ type Manager struct {
 
 	mu      lockcheck.RWMutex[lockorder.PLCManager]
 	db      *store.DB
-	cfg     *config.Config
 	emitter EventEmitter
 	wl      WarlinkClient
 	plcs    map[string]*ManagedPLC
+
+	// counterPollRate and counterJumpThreshold are the counter loop's values,
+	// taken by value at construction. No save door writes Config.PollRate or
+	// Config.Counter.JumpThreshold, so they are boot constants; taking them as
+	// values is what lets the Manager stop holding the live *config.Config.
+	counterPollRate      time.Duration
+	counterJumpThreshold int64
+
+	// warLink is the link's settings, replaced whole by ApplyWarLink and read by
+	// the WarLink poll goroutine and StartWarLinkPoller. Copy-on-write, the same
+	// hook pattern as tickNotify. The poll loop used to read Config.WarLink
+	// itself; a save writes those leaves under the config's own lock and the
+	// loop holds no lock, so a save that changed host or poll rate raced the
+	// loop on the live struct. The manager no longer holds the live pointer.
+	warLink atomic.Pointer[config.WarLinkConfig]
 
 	DebugLog DebugLogFunc
 
@@ -198,28 +212,49 @@ func (m *Manager) SetTagValueForTest(plcName, tagName string, value any) {
 	}
 }
 
-// NewManager creates a PLC manager. If wl is nil the default WarLink HTTP
-// client is built from config (production behavior); sim mode injects a fake
+// NewManager creates a PLC manager. warLink is the link's settings as of
+// construction, held by value (ApplyWarLink replaces them at runtime).
+// counterPollRate and counterJumpThreshold are the counter loop's values; no
+// save door writes them, and taking them by value is what lets the manager
+// stop holding the live *config.Config. If wl is nil the default WarLink HTTP
+// client is built from warLink (production behavior); sim mode injects a fake
 // WarlinkClient here so the real poll pipeline runs against it (D3). The
 // ReplaceClient path remains for runtime HMI reconfiguration only.
-func NewManager(db *store.DB, cfg *config.Config, emitter EventEmitter, wl WarlinkClient) *Manager {
-	if wl == nil {
-		wl = NewWarlinkClient(fmt.Sprintf("http://%s:%d/api", cfg.WarLink.Host, cfg.WarLink.Port))
-	}
-	return &Manager{
-		db:      db,
-		cfg:     cfg,
-		emitter: emitter,
-		wl:      wl,
-		plcs:    make(map[string]*ManagedPLC),
+func NewManager(db *store.DB, warLink config.WarLinkConfig, counterPollRate time.Duration, counterJumpThreshold int64, emitter EventEmitter, wl WarlinkClient) *Manager {
+	m := &Manager{
+		db:                   db,
+		emitter:              emitter,
+		wl:                   wl,
+		plcs:                 make(map[string]*ManagedPLC),
+		counterPollRate:      counterPollRate,
+		counterJumpThreshold: counterJumpThreshold,
 
 		stopChan: make(chan struct{}),
 	}
+	m.warLink.Store(&warLink)
+	if wl == nil {
+		wl = NewWarlinkClient(m.baseURL())
+		m.wl = wl
+	}
+	return m
 }
 
-// baseURL returns the WarLink base URL built from host+port config.
+// ApplyWarLink replaces the link's settings. Called by the engine after a save
+// adopts a new config, and by nothing else: the settings are a value, so the
+// poll loop reading them can never race a config write.
+func (m *Manager) ApplyWarLink(settings config.WarLinkConfig) {
+	m.warLink.Store(&settings)
+}
+
+// warLinkSettings returns the link's current settings by value.
+func (m *Manager) warLinkSettings() config.WarLinkConfig {
+	return *m.warLink.Load()
+}
+
+// baseURL returns the WarLink base URL built from the current host+port.
 func (m *Manager) baseURL() string {
-	return fmt.Sprintf("http://%s:%d/api", m.cfg.WarLink.Host, m.cfg.WarLink.Port)
+	s := m.warLinkSettings()
+	return fmt.Sprintf("http://%s:%d/api", s.Host, s.Port)
 }
 
 // ReplaceClient swaps the WarLink client (used when config changes at runtime).
@@ -230,8 +265,8 @@ func (m *Manager) ReplaceClient(wl WarlinkClient) {
 }
 
 // StartWarLinkPoller starts the goroutine that fetches PLC and tag data from WarLink.
-// The mode is determined by Config.WarLink.Mode: "sse" for server-sent events,
-// anything else (including the default "") for HTTP polling.
+// The mode is determined by the WarLink settings' Mode: "sse" for server-sent
+// events, anything else (including the default "") for HTTP polling.
 func (m *Manager) StartWarLinkPoller() {
 	m.mu.Lock()
 	if m.warlinkRunning {
@@ -243,7 +278,7 @@ func (m *Manager) StartWarLinkPoller() {
 	m.mu.Unlock()
 
 	m.warlinkWg.Add(1)
-	if m.cfg.WarLink.Mode == "sse" {
+	if m.warLinkSettings().Mode == "sse" {
 		go m.sseLoop()
 	} else {
 		go m.warlinkPollLoop()
@@ -297,7 +332,7 @@ func (m *Manager) warlinkPollLoop() {
 	defer m.warlinkWg.Done()
 
 	getPollRate := func() time.Duration {
-		d := m.cfg.WarLink.PollRate
+		d := m.warLinkSettings().PollRate
 		if d <= 0 {
 			return 2 * time.Second
 		}
@@ -621,7 +656,7 @@ func (m *Manager) Stop() {
 
 func (m *Manager) pollLoop() {
 	defer m.wg.Done()
-	pollRate := m.cfg.PollRate
+	pollRate := m.counterPollRate
 	if pollRate <= 0 {
 		pollRate = config.DefaultPollRate
 	}
@@ -699,7 +734,7 @@ func (m *Manager) pollReportingPoint(rp counters.ReportingPoint) bool {
 
 	m.emitter.EmitCounterRead(rp.ID, rp.PLCName, rp.TagName, newCount)
 
-	delta, anomaly := CalculateDelta(rp.LastCount, newCount, m.cfg.Counter.JumpThreshold)
+	delta, anomaly := CalculateDelta(rp.LastCount, newCount, m.counterJumpThreshold)
 	if delta == 0 && anomaly == "" {
 		return false
 	}

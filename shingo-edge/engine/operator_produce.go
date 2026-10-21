@@ -206,7 +206,7 @@ func (e *Engine) produceRequest(node *processes.Node, runtime *processes.Runtime
 // delivery does, so a second request waits for it.
 func (e *Engine) applyProduceEmptyLine(node *processes.Node, claim *processes.NodeClaim, plan *ProducePlan, origin ordermgr.Origin) (*NodeOrderResult, error) {
 	nodeID := node.ID
-	autoConfirm := claim.AutoConfirm || e.cfg.Web.AutoConfirm
+	autoConfirm := claim.AutoConfirm || e.cfg.AutoConfirm()
 	var order *orders.Order
 	var err error
 	if plan.FromSpot {
@@ -245,7 +245,7 @@ func (e *Engine) applyProduceEmptyLine(node *processes.Node, claim *processes.No
 // No re-read: both creates return the stored row and nothing below rewrites it.
 func (e *Engine) createPrimes(node *processes.Node, claim *processes.NodeClaim, primes []SimplePrime, quantity int64, origin ordermgr.Origin) ([]*orders.Order, error) {
 	nodeID := node.ID
-	autoConfirm := claim.AutoConfirm || e.cfg.Web.AutoConfirm
+	autoConfirm := claim.AutoConfirm || e.cfg.AutoConfirm()
 	var out []*orders.Order
 	for _, p := range primes {
 		var po *orders.Order

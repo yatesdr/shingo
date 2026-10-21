@@ -141,7 +141,7 @@ func TestSSE_RESTBootstrapAndValueChange(t *testing.T) {
 	setTestURL(cfg, ts.URL)
 	cfg.WarLink.Mode = "sse"
 
-	m := NewManager(nil, cfg, emitter, nil)
+	m := newTestManager(nil, cfg, emitter, nil)
 
 	m.StartWarLinkPoller()
 
@@ -197,7 +197,7 @@ func TestSSE_StatusChange(t *testing.T) {
 	setTestURL(cfg, ts.URL)
 	cfg.WarLink.Mode = "sse"
 
-	m := NewManager(nil, cfg, emitter, nil)
+	m := newTestManager(nil, cfg, emitter, nil)
 
 	m.StartWarLinkPoller()
 
@@ -258,7 +258,7 @@ func TestSSE_HealthEvent(t *testing.T) {
 	setTestURL(cfg, ts.URL)
 	cfg.WarLink.Mode = "sse"
 
-	m := NewManager(nil, cfg, emitter, nil)
+	m := newTestManager(nil, cfg, emitter, nil)
 
 	m.StartWarLinkPoller()
 
@@ -304,7 +304,7 @@ func TestSSE_StopCancellation(t *testing.T) {
 	setTestURL(cfg, ts.URL)
 	cfg.WarLink.Mode = "sse"
 
-	m := NewManager(nil, cfg, emitter, nil)
+	m := newTestManager(nil, cfg, emitter, nil)
 
 	m.StartWarLinkPoller()
 
@@ -361,7 +361,7 @@ func TestSSE_Reconnection(t *testing.T) {
 	setTestURL(cfg, ts.URL)
 	cfg.WarLink.Mode = "sse"
 
-	m := NewManager(nil, cfg, emitter, nil)
+	m := newTestManager(nil, cfg, emitter, nil)
 
 	m.StartWarLinkPoller()
 
@@ -398,7 +398,7 @@ func TestSSE_PollModeDefault(t *testing.T) {
 	setTestURL(cfg, ts.URL)
 	cfg.WarLink.Mode = "" // default = poll
 
-	m := NewManager(nil, cfg, emitter, nil)
+	m := newTestManager(nil, cfg, emitter, nil)
 
 	m.StartWarLinkPoller()
 
@@ -446,7 +446,7 @@ func TestSSE_ValueChangeCreatesUnknownPLC(t *testing.T) {
 	setTestURL(cfg, ts.URL)
 	cfg.WarLink.Mode = "sse"
 
-	m := NewManager(nil, cfg, emitter, nil)
+	m := newTestManager(nil, cfg, emitter, nil)
 
 	m.StartWarLinkPoller()
 
@@ -538,7 +538,7 @@ func TestSSE_StallReconnects(t *testing.T) {
 	setTestURL(cfg, ts.URL)
 	cfg.WarLink.Mode = "sse"
 
-	m := NewManager(nil, cfg, emitter, nil)
+	m := newTestManager(nil, cfg, emitter, nil)
 	// This manager's own stall timeout, not a package global — see
 	// Manager.SetSSETimingsForTest.
 	m.SetSSETimingsForTest(150*time.Millisecond, 0)

@@ -540,7 +540,7 @@ func main() {
 	// this assignment is the only thing that ever sets it.
 	cfg.Messaging.Kafka.GroupID = cfg.KafkaGroupID()
 	log.Printf("shingoedge: kafka consumer group=%s (derived from station identity)", cfg.Messaging.Kafka.GroupID)
-	msgClient := messaging.NewClient(&cfg.Messaging)
+	msgClient := messaging.NewClient(cfg.MessagingSettings)
 	// Partition key = this edge's identity. Inert today (topics are created
 	// with NumPartitions=1) and inert under the writer's default balancer,
 	// which is why the balancer moved to Hash alongside it — see

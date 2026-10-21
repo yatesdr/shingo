@@ -49,7 +49,7 @@ func TestFakeHandshakeWithRealManager(t *testing.T) {
 
 	// db=nil is safe: the WarLink poll loop does discovery only; reporting-point
 	// polling (which touches the DB) is a separate loop not started here.
-	mgr := plc.NewManager(nil, cfg, nopEmitter{}, fake)
+	mgr := plc.NewManager(nil, cfg.WarLink, cfg.PollRate, cfg.Counter.JumpThreshold, nopEmitter{}, fake)
 	mgr.StartWarLinkPoller()
 	defer mgr.StopWarLinkPoller()
 

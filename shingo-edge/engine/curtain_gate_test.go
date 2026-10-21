@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"shingoedge/config"
 	"shingoedge/plc"
 	"shingoedge/store/processes"
 )
@@ -85,7 +86,7 @@ func boolPtr(v bool) *bool { return &v }
 func curtainGateFixture(t *testing.T, client plc.WarlinkClient) (*Engine, *processes.Node) {
 	t.Helper()
 	db := testEngineDB(t)
-	eng := &Engine{db: db, plcMgr: plc.NewManager(nil, nil, nil, client),
+	eng := &Engine{db: db, plcMgr: plc.NewManager(nil, config.WarLinkConfig{}, 0, 0, nil, client),
 		logFn: func(string, ...any) {}, debugFn: func(string, ...any) {}}
 	return eng, nil
 }

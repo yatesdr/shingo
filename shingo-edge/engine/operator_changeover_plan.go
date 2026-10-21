@@ -426,7 +426,7 @@ func (e *Engine) PreviewChangeoverPlan(processID, toStyleID int64) (changeover.P
 		}
 		diffs = legDiffs(plan.diffs, readsLessLeaving(reads, live, spots, nil))
 	}
-	return BuildChangeoverPlan(diffs, plan.nodes, e.cfg.Web.AutoConfirm, e.activePullSnapshot(plan.nodes), plan.tooling), nil
+	return BuildChangeoverPlan(diffs, plan.nodes, e.cfg.AutoConfirm(), e.activePullSnapshot(plan.nodes), plan.tooling), nil
 }
 
 // binTypeSnapshot pre-resolves canonical bin type codes for every

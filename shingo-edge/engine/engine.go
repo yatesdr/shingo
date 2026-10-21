@@ -397,7 +397,7 @@ func (e *Engine) Start() {
 	orderEmit := &orderEmitter{bus: e.Events}
 
 	// Create managers
-	e.plcMgr = plc.NewManager(e.db, e.cfg, plcEmit, e.warlinkClient)
+	e.plcMgr = plc.NewManager(e.db, e.cfg.WarLink, e.cfg.PollRate, e.cfg.Counter.JumpThreshold, plcEmit, e.warlinkClient)
 	e.orderMgr = orders.NewManager(e.db, orderEmit, e.cfg.StationID())
 
 	// Wire debug logging to subsystems
@@ -427,7 +427,7 @@ func (e *Engine) Start() {
 	// kick to begin pulling empties.
 
 	// Start WarLink poller and counter polling
-	if e.cfg.WarLink.Enabled {
+	if e.cfg.WarLinkSettings().Enabled {
 		e.plcMgr.StartWarLinkPoller()
 	}
 	e.watch = liveness.New(e.logFn)
@@ -604,6 +604,11 @@ func (e *Engine) Stop() {
 // ApplyWarLinkConfig stops and restarts the WarLink poller/SSE to match the current config.
 // Always stops first to handle mode switches (poll→sse or sse→poll) cleanly.
 // Rebuilds the WarLink HTTP client in case host/port changed.
+//
+// The settings are read ONCE, by value, and handed to the manager. The poll
+// loop reads that value and never this config: a save writes here under the
+// config's lock, and the loop holds no lock, so a lock-free read of these
+// leaves was a race (config save vs. a running poll loop).
 func (e *Engine) ApplyWarLinkConfig() {
 	// In sim mode the PLC manager holds an injected fake WarLink client; a
 	// single visit to the HMI PLC-settings page would otherwise swap it for a
@@ -612,11 +617,13 @@ func (e *Engine) ApplyWarLinkConfig() {
 		e.logFn("[sim] ignoring WarLink config apply — keeping the injected sim client")
 		return
 	}
+	link := e.cfg.WarLinkSettings()
+	e.plcMgr.ApplyWarLink(link)
 	e.plcMgr.StopWarLinkPoller()
 	e.plcMgr.ReplaceClient(plc.NewWarlinkClient(
-		fmt.Sprintf("http://%s:%d/api", e.cfg.WarLink.Host, e.cfg.WarLink.Port),
+		fmt.Sprintf("http://%s:%d/api", link.Host, link.Port),
 	))
-	if e.cfg.WarLink.Enabled {
+	if link.Enabled {
 		e.plcMgr.StartWarLinkPoller()
 	}
 }

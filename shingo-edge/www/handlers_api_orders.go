@@ -75,7 +75,7 @@ func (h *Handlers) apiCreateRetrieveOrder(w http.ResponseWriter, r *http.Request
 		StagingNode:   req.StagingNode,
 		LoadType:      req.LoadType,
 		PayloadCode:   req.PayloadCode,
-		AutoConfirm:   h.engine.AppConfig().Web.AutoConfirm,
+		AutoConfirm:   h.engine.AppConfig().AutoConfirm(),
 		Count:         count,
 	})
 	if err != nil {
@@ -150,7 +150,7 @@ func (h *Handlers) apiCreateMoveOrder(w http.ResponseWriter, r *http.Request) {
 	// Origin type for why that is the distinction the class records.
 	order, err := h.engine.OrderManager().CreateMoveOrder(
 		processNodeID, req.Quantity, req.SourceNode, req.DeliveryNode,
-		h.engine.AppConfig().Web.AutoConfirm, ordermgr.NoDemand(),
+		h.engine.AppConfig().AutoConfirm(), ordermgr.NoDemand(),
 	)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())

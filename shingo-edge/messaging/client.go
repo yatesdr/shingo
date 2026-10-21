@@ -41,8 +41,16 @@ const writerBatchTimeout = 10 * time.Millisecond
 
 // Client is the Kafka messaging client.
 type Client struct {
-	mu         lockcheck.RWMutex[lockorder.MessagingClient]
-	cfg        *config.MessagingConfig
+	mu lockcheck.RWMutex[lockorder.MessagingClient]
+
+	// messaging returns the Edge's messaging settings by value, taken under
+	// the config's read lock. The client used to hold &cfg.Messaging — a
+	// pointer into the live config — and read its brokers from the reader
+	// goroutine. A save that replaced the brokers wrote that same memory with
+	// only the config's lock held, which the reader never took: a data race
+	// on a save while connected. The pointer is gone; every read is a copy.
+	messaging func() config.MessagingConfig
+
 	kafkaW     *kafkago.Writer
 	kafkaR     *kafkago.Reader
 	stopChan   chan struct{}
@@ -81,30 +89,34 @@ type Client struct {
 	DebugLog DebugLogFunc
 }
 
-// NewClient creates a messaging client based on config.
-func NewClient(cfg *config.MessagingConfig) *Client {
+// NewClient creates a messaging client over a settings source. messaging must
+// return the current settings by value under the config's lock — pass
+// (*config.Config).MessagingSettings — so nothing here holds a pointer into
+// the live config.
+func NewClient(messaging func() config.MessagingConfig) *Client {
 	return &Client{
-		cfg:      cfg,
-		stopChan: make(chan struct{}),
+		messaging: messaging,
+		stopChan:  make(chan struct{}),
 	}
 }
 
 // Connect establishes the Kafka connection.
 func (c *Client) Connect() error {
+	m := c.messaging() // outside c.mu: the config's lock is never taken under it
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	if len(c.cfg.Kafka.Brokers) == 0 {
+	if len(m.Kafka.Brokers) == 0 {
 		return fmt.Errorf("no kafka brokers configured")
 	}
 
 	c.kafkaW = &kafkago.Writer{
-		Addr:         kafkago.TCP(c.cfg.Kafka.Brokers...),
+		Addr:         kafkago.TCP(m.Kafka.Brokers...),
 		Balancer:     &kafkago.Hash{},
 		RequiredAcks: kafkago.RequireOne,
 		BatchTimeout: writerBatchTimeout,
 	}
-	c.DebugLog.Log("connected to brokers %v", c.cfg.Kafka.Brokers)
+	c.DebugLog.Log("connected to brokers %v", m.Kafka.Brokers)
 	return nil
 }
 
@@ -112,10 +124,11 @@ func (c *Client) Connect() error {
 // current config values. This is needed after broker addresses are changed
 // at runtime because kafkago.TCP resolves the address at creation time.
 func (c *Client) Reconnect() error {
+	m := c.messaging() // outside c.mu: the config's lock is never taken under it
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	if len(c.cfg.Kafka.Brokers) == 0 {
+	if len(m.Kafka.Brokers) == 0 {
 		return fmt.Errorf("no kafka brokers configured")
 	}
 
@@ -124,14 +137,14 @@ func (c *Client) Reconnect() error {
 	}
 
 	c.kafkaW = &kafkago.Writer{
-		Addr:         kafkago.TCP(c.cfg.Kafka.Brokers...),
+		Addr:         kafkago.TCP(m.Kafka.Brokers...),
 		Balancer:     &kafkago.Hash{},
 		RequiredAcks: kafkago.RequireOne,
 		BatchTimeout: writerBatchTimeout,
 	}
 
-	log.Printf("kafka writer reconnected to %v", c.cfg.Kafka.Brokers)
-	c.DebugLog.Log("reconnected to brokers %v", c.cfg.Kafka.Brokers)
+	log.Printf("kafka writer reconnected to %v", m.Kafka.Brokers)
+	c.DebugLog.Log("reconnected to brokers %v", m.Kafka.Brokers)
 	return nil
 }
 
@@ -182,6 +195,7 @@ func (c *Client) PublishEnvelope(topic string, env interface{ Encode() ([]byte, 
 // The consumer goroutine automatically reconnects on errors with
 // exponential backoff capped at 5 seconds.
 func (c *Client) Subscribe(topic string, handler func(payload []byte)) error {
+	m := c.messaging() // outside c.mu: the config's lock is never taken under it
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -189,11 +203,11 @@ func (c *Client) Subscribe(topic string, handler func(payload []byte)) error {
 		return fmt.Errorf("kafka not connected")
 	}
 	c.kafkaR = kafkago.NewReader(kafkago.ReaderConfig{
-		Brokers: c.cfg.Kafka.Brokers,
+		Brokers: m.Kafka.Brokers,
 		Topic:   topic,
-		GroupID: c.cfg.Kafka.GroupID,
+		GroupID: m.Kafka.GroupID,
 	})
-	c.DebugLog.Log("subscribed to topic=%s group=%s", topic, c.cfg.Kafka.GroupID)
+	c.DebugLog.Log("subscribed to topic=%s group=%s", topic, m.Kafka.GroupID)
 	go c.readLoop(topic, handler)
 	return nil
 }
@@ -232,15 +246,17 @@ func (c *Client) readLoop(topic string, handler func(payload []byte)) {
 			case <-timer.C:
 			}
 
-			// Recreate the reader
+			// Recreate the reader from a fresh copy of the settings: a save
+			// may have replaced the brokers since the reader was built.
+			m := c.messaging() // outside c.mu: the config's lock is never taken under it
 			c.mu.Lock()
 			if c.kafkaR != nil {
 				c.kafkaR.Close()
 			}
 			c.kafkaR = kafkago.NewReader(kafkago.ReaderConfig{
-				Brokers: c.cfg.Kafka.Brokers,
+				Brokers: m.Kafka.Brokers,
 				Topic:   topic,
-				GroupID: c.cfg.Kafka.GroupID,
+				GroupID: m.Kafka.GroupID,
 			})
 			c.mu.Unlock()
 			c.DebugLog.Log("reader reconnected for topic=%s", topic)

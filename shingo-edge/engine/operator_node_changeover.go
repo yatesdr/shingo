@@ -130,7 +130,7 @@ func (e *Engine) StageNodeChangeoverMaterial(processID, nodeID int64) (*orders.O
 	// so the changeover retrieve honours the configured supermarket; empty
 	// preserves Core's global FIFO fallback for legacy claims.
 	retrieveEmpty := toClaim.Role == protocol.ClaimRoleProduce
-	order, err := e.orderMgr.CreateRetrieveOrder(&ctx.node.ID, retrieveEmpty, 1, toClaim.CoreNodeName, toClaim.InboundSource, "", "standard", toClaim.PayloadCode, e.cfg.Web.AutoConfirm, false,
+	order, err := e.orderMgr.CreateRetrieveOrder(&ctx.node.ID, retrieveEmpty, 1, toClaim.CoreNodeName, toClaim.InboundSource, "", "standard", toClaim.PayloadCode, e.cfg.AutoConfirm(), false,
 		e.changeoverOrigin(ctx.changeover.ID))
 	if err != nil {
 		return nil, err

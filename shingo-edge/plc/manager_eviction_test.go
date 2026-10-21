@@ -15,7 +15,7 @@ func TestWarlinkPollEvictsPLCsRemovedUpstream(t *testing.T) {
 	t.Parallel()
 	cfg := config.Defaults()
 	emitter := &mockEmitter{}
-	mgr := NewManager(nil, cfg, emitter, nil)
+	mgr := newTestManager(nil, cfg, emitter, nil)
 	client := &mockWarlinkClient{
 		plcs: []WarlinkPLC{
 			{Name: "keep_PLC", Status: "Connected"},
@@ -56,7 +56,7 @@ func TestWarlinkPollEvictsPLCsRemovedUpstream(t *testing.T) {
 func TestWarlinkPollEvictsAlreadyDisconnectedPLC(t *testing.T) {
 	t.Parallel()
 	cfg := config.Defaults()
-	mgr := NewManager(nil, cfg, &mockEmitter{}, nil)
+	mgr := newTestManager(nil, cfg, &mockEmitter{}, nil)
 	client := &mockWarlinkClient{
 		plcs: []WarlinkPLC{{Name: "flaky_PLC", Status: "Disconnected"}},
 	}
@@ -88,7 +88,7 @@ func TestWarlinkPollEvictionEmitsDisconnectOnce(t *testing.T) {
 	t.Parallel()
 	cfg := config.Defaults()
 	emitter := &mockEmitter{}
-	mgr := NewManager(nil, cfg, emitter, nil)
+	mgr := newTestManager(nil, cfg, emitter, nil)
 	client := &mockWarlinkClient{
 		plcs: []WarlinkPLC{{Name: "gone_PLC", Status: "Connected"}},
 	}
@@ -119,7 +119,7 @@ func TestWarlinkPollEvictionEmitsDisconnectOnce(t *testing.T) {
 func TestSSEResurrectedPLCNeverHasEmptyStatus(t *testing.T) {
 	t.Parallel()
 	cfg := config.Defaults()
-	mgr := NewManager(nil, cfg, &mockEmitter{}, nil)
+	mgr := newTestManager(nil, cfg, &mockEmitter{}, nil)
 	client := &mockWarlinkClient{plcs: []WarlinkPLC{{Name: "gone_PLC", Status: "Connected"}}}
 	mgr.wl = client
 

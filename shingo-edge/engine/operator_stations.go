@@ -179,7 +179,7 @@ func (e *Engine) requestNodeFromClaim(node *processes.Node, runtime *processes.R
 
 	autoConfirm := false
 	if claim != nil {
-		autoConfirm = claim.AutoConfirm || e.cfg.Web.AutoConfirm
+		autoConfirm = claim.AutoConfirm || e.cfg.AutoConfirm()
 	}
 	// ONE CELL, ONE DECISION AT A TIME. The occupancy read, the plan and the
 	// apply run under the cell's prime lock, as the produce request does: a

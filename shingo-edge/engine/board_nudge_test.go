@@ -77,7 +77,7 @@ func TestBoardNudge_CurtainTagMoved(t *testing.T) {
 	eng := testEngine(t, testEngineDB(t))
 	n := boardNudges(eng)
 	// As engine.New builds it: the manager emits through the engine's bus.
-	mgr := plc.NewManager(eng.db, eng.cfg, &plcEmitter{bus: eng.Events}, nil)
+	mgr := plc.NewManager(eng.db, eng.cfg.WarLink, eng.cfg.PollRate, eng.cfg.Counter.JumpThreshold, &plcEmitter{bus: eng.Events}, nil)
 
 	mgr.WatchCurtainTag("PLC-1", "CURTAIN_A")
 	mgr.SetTagValueForTest("PLC-1", "CURTAIN_A", false)

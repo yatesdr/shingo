@@ -27,7 +27,7 @@ import (
 // WarLink's authoritative list within one interval.
 func TestSSEReconcileLoop_PromotesStaleConnecting(t *testing.T) {
 	cfg := config.Defaults()
-	mgr := NewManager(nil, cfg, &mockEmitter{}, nil)
+	mgr := newTestManager(nil, cfg, &mockEmitter{}, nil)
 
 	// WarLink's truth: the PLC is up.
 	mgr.wl = &mockWarlinkClient{
@@ -74,7 +74,7 @@ func TestSSEReconcileLoop_PromotesStaleConnecting(t *testing.T) {
 // and every reconnect would add another, each polling WarLink forever.
 func TestSSEReconcileLoop_StopsWithContext(t *testing.T) {
 	cfg := config.Defaults()
-	mgr := NewManager(nil, cfg, &mockEmitter{}, nil)
+	mgr := newTestManager(nil, cfg, &mockEmitter{}, nil)
 	mgr.wl = &mockWarlinkClient{plcs: []WarlinkPLC{}, tags: map[string]map[string]WarlinkTag{}}
 
 	mgr.SetSSETimingsForTest(0, 5*time.Millisecond)
@@ -120,7 +120,7 @@ func (f *failingWarlinkClient) ListPLCs(ctx context.Context) ([]WarlinkPLC, erro
 // people chasing, so the reconcile must not manufacture one.
 func TestSSEReconcile_RESTFailureDoesNotFlapConnection(t *testing.T) {
 	cfg := config.Defaults()
-	mgr := NewManager(nil, cfg, &mockEmitter{}, nil)
+	mgr := newTestManager(nil, cfg, &mockEmitter{}, nil)
 	fc := &failingWarlinkClient{}
 	fc.plcs = []WarlinkPLC{{Name: "P42_SNF1_PLC", Status: "Connected"}}
 	fc.tags = map[string]map[string]WarlinkTag{}

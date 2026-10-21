@@ -66,7 +66,7 @@ func TestProductionTick_PollPassStatementBudget(t *testing.T) {
 	t.Cleanup(func() { db.Close() })
 	cfg := config.Defaults()
 	cfg.Messaging.StationID = "stn-test"
-	mgr := NewManager(db, cfg, &mockEmitter{}, nil)
+	mgr := newTestManager(db, cfg, &mockEmitter{}, nil)
 	proc, err := db.CreateProcess("PROC-A", "", "", "", false)
 	if err != nil {
 		t.Fatal(err)

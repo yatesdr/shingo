@@ -1093,14 +1093,21 @@ func TestPinEdgeConfig_LegacyOnlyStationSaves(t *testing.T) {
 
 // TestRace_ConfigSaveLeavesUnchangedFieldsAlone: a door save of one section
 // while a goroutine reads OTHER fields of the live config lock-free, as the
-// engine's loops do (e.cfg.Web.AutoConfirm, e.cfg.WarLink in
-// ApplyWarLinkConfig, cfg.StationID()). The swap writes only the leaves the
-// save changed, so -race stays clean. Run: go test -race -run TestRace_ ./www/
+// engine's one-shot readers do. The swap writes only the leaves the save
+// changed, so -race stays clean. Run: go test -race -run TestRace_ ./www/
+//
+// The leaves read here must be ones a `plc` save does NOT write. This test
+// used to read WarLink.Host and WarLink.Enabled while posting plc.host — the
+// save writes Host on every pass, and (the posted section omits `enabled`)
+// flips Enabled true→false on the first, so the reader read exactly what the
+// writer wrote and -race failed. That is the pin doing its job: it is a test
+// of unchanged leaves, so it reads unchanged leaves.
 func TestRace_ConfigSaveLeavesUnchangedFieldsAlone(t *testing.T) {
 	rig := newPinRig(t, false)
 	rig.cfg.Lock()
 	rig.cfg.StationUID = "pin.uid"
 	rig.cfg.Messaging.Kafka.Brokers = []string{"b1:9092"}
+	rig.cfg.Timezone = "America/Chicago"
 	rig.cfg.Unlock()
 	stop := make(chan struct{})
 	var wg sync.WaitGroup
@@ -1113,10 +1120,10 @@ func TestRace_ConfigSaveLeavesUnchangedFieldsAlone(t *testing.T) {
 				return
 			default:
 			}
+			// A `plc` save writes WarLink.Host/Enabled and nothing else here.
 			_ = rig.cfg.Web.AutoConfirm
-			_ = rig.cfg.WarLink.Host
-			_ = rig.cfg.WarLink.Enabled
 			_ = rig.cfg.StationUID
+			_ = rig.cfg.Timezone
 			_ = len(rig.cfg.Messaging.Kafka.Brokers)
 		}
 	}()

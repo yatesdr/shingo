@@ -39,6 +39,7 @@ import (
 
 	"shingo/protocol"
 	"shingo/protocol/testutil"
+	"shingoedge/config"
 	"shingoedge/messaging"
 	"shingoedge/orders"
 	"shingoedge/plc"
@@ -270,7 +271,7 @@ func newRelHarness(t *testing.T) *relHarness {
 	eng.points = fc
 
 	wl := &scriptedWarLink{value: curtainSafe}
-	eng.plcMgr = plc.NewManager(nil, nil, nil, wl)
+	eng.plcMgr = plc.NewManager(nil, config.WarLinkConfig{}, 0, 0, nil, wl)
 
 	h := &relHarness{
 		t: t, db: db, eng: eng, counter: counter, core: fc, wl: wl,

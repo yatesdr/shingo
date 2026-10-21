@@ -627,7 +627,7 @@ func (e *Engine) commitMaterial(p release.MaterialPlan, ml *materialLoad, qty in
 	// (§R.87): it joins that cell's episode, never mints one. The carrier's
 	// OWN payload, when Core has told us what it is.
 	order, err := e.orderMgr.CreateMoveOrderWithUOP(&nodeID, qty, claim.CoreNodeName, claim.OutboundDestination,
-		string(runtime.LinesidePayloadCode), remainingUOP, claim.AutoConfirm || e.cfg.Web.AutoConfirm,
+		string(runtime.LinesidePayloadCode), remainingUOP, claim.AutoConfirm || e.cfg.AutoConfirm(),
 		e.cellEpisodeOrigin(node, claim))
 	if err != nil {
 		return nil, err

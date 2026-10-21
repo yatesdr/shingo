@@ -27,6 +27,11 @@ type tickRig struct {
 	proc int64
 	sty  int64
 
+	// cfg is the rig's own config, kept for the values the manager took by
+	// value at construction (the station id, the poll cadence). The manager
+	// holds no pointer to it.
+	cfg *config.Config
+
 	// The transport: a production tick shipper over the rig's store, with a
 	// publisher that records every message.
 	shipper *messaging.TickShipper
@@ -43,7 +48,7 @@ func (r *tickRig) ship() *messaging.TickShipper {
 			r.sent = append(r.sent, append([]byte(nil), b...))
 			r.mu.Unlock()
 			return nil
-		}, r.mgr.cfg.StationID())
+		}, r.cfg.StationID())
 		if err != nil {
 			r.t.Fatalf("NewTickShipper: %v", err)
 		}
@@ -72,12 +77,23 @@ func newTickRig(t *testing.T) *tickRig {
 // the pins that read what the poll emits as well as what it ships.
 func newTickRigEmitting(t *testing.T, em EventEmitter) *tickRig {
 	t.Helper()
+	return newTickRigAt(t, em, 0)
+}
+
+// newTickRigAt is newTickRigEmitting with the counter loop's cadence chosen
+// before the manager is built: the manager takes it by value, so a test that
+// wants a faster loop must say so here, not write through a config afterwards.
+func newTickRigAt(t *testing.T, em EventEmitter, pollRate time.Duration) *tickRig {
+	t.Helper()
 	db := testdb.Open(t)
 	cfg := config.Defaults()
 	cfg.Messaging.StationID = "stn-test"
 	// A small threshold so a jump is cheap to produce.
 	cfg.Counter.JumpThreshold = 100
-	mgr := NewManager(db, cfg, em, nil)
+	if pollRate > 0 {
+		cfg.PollRate = pollRate
+	}
+	mgr := newTestManager(db, cfg, em, nil)
 
 	proc, err := db.CreateProcess("PROC-A", "", "", "", false)
 	if err != nil {
@@ -92,7 +108,7 @@ func newTickRigEmitting(t *testing.T, em EventEmitter) *tickRig {
 		t.Fatalf("create reporting point: %v", err)
 	}
 	mgr.plcs[rigPLC] = &ManagedPLC{Name: rigPLC, Status: "Connected", Values: map[string]TagValue{}}
-	return &tickRig{t: t, db: db, mgr: mgr, rpID: rpID, proc: proc, sty: sty}
+	return &tickRig{t: t, db: db, mgr: mgr, rpID: rpID, proc: proc, sty: sty, cfg: cfg}
 }
 
 // setCount puts a counter value into the WarLink cache.

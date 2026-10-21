@@ -19,7 +19,7 @@ func TestRace_WarlinkClientSwap(t *testing.T) {
 	}
 	cfg := config.Defaults()
 	emitter := &mockEmitter{}
-	mgr := NewManager(nil, cfg, emitter, nil)
+	mgr := newTestManager(nil, cfg, emitter, nil)
 	mgr.wl = &mockWarlinkClient{}
 
 	const iterations = 200

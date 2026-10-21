@@ -158,7 +158,7 @@ func (e *Engine) planHeldPullingLeg(co *processes.Changeover, held *processes.No
 		return changeover.NodeAction{}, false
 	}
 	diff := ChangeoverNodeDiff{CoreNodeName: pullingCore, Situation: SituationSwap, FromClaim: from, ToClaim: to}
-	plan := BuildChangeoverPlan([]ChangeoverNodeDiff{diff}, nodes, e.cfg.Web.AutoConfirm,
+	plan := BuildChangeoverPlan([]ChangeoverNodeDiff{diff}, nodes, e.cfg.AutoConfirm(),
 		map[string]bool{pullingCore: true, partnerCore: false}, planToolingChangeover(fromClaims, toClaims))
 	if len(plan.Actions) != 1 || plan.Actions[0].Err != nil {
 		log.Printf("changeover: %s's held leg did not plan: %+v", pullingCore, plan.Actions)

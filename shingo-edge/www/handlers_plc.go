@@ -43,15 +43,16 @@ func (h *Handlers) apiWarLinkStatus(w http.ResponseWriter, r *http.Request) {
 	if err := mgr.WarLinkError(); err != nil {
 		errStr = err.Error()
 	}
-	mode := cfg.WarLink.Mode
+	link := cfg.WarLinkSettings()
+	mode := link.Mode
 	if mode == "" {
 		mode = "sse"
 	}
 	writeJSON(w, map[string]any{
 		"connected": mgr.IsWarLinkConnected(),
-		"host":      cfg.WarLink.Host,
-		"port":      cfg.WarLink.Port,
-		"enabled":   cfg.WarLink.Enabled,
+		"host":      link.Host,
+		"port":      link.Port,
+		"enabled":   link.Enabled,
 		"mode":      mode,
 		"error":     errStr,
 	})

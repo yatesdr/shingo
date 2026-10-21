@@ -486,7 +486,7 @@ func (e *Engine) PreviewFlow(ctx context.Context, processID int64, req FlowPrevi
 	if err != nil {
 		return nil, err
 	}
-	orderPlan, skipped := BuildChangeoverPlanReporting(plan.diffs, plan.nodes, e.cfg.Web.AutoConfirm, e.activePullSnapshot(plan.nodes), plan.tooling)
+	orderPlan, skipped := BuildChangeoverPlanReporting(plan.diffs, plan.nodes, e.cfg.AutoConfirm(), e.activePullSnapshot(plan.nodes), plan.tooling)
 
 	findings = append(findings, domain.ValidateFlowChangeoverReadiness(fromClaims, toClaims)...)
 
