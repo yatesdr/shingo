@@ -110,7 +110,7 @@ func (e *Engine) cancelProcessChangeoverInternal(processID int64, nextStyleID *i
 	//
 	// The parks ride the spots' read; a redirect, which reads no spots here,
 	// reads the parks alone, and only when there are any.
-	var parkRows map[string]NodeBinInfo
+	var parkRows map[string]protocol.NodeBinsRow
 	if nextStyleID == nil || *nextStyleID == 0 {
 		var reads map[string]spotRead
 		reads, parkRows = e.readSpotsAnd(spots, parkNames(parks))

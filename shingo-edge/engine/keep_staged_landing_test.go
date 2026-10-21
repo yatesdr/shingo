@@ -169,6 +169,7 @@ func TestKeepStagedLanding_OneReturnPerBin_AndAReturnOrdersNothing(t *testing.T)
 	}
 	rows["SPOT"] = NodeBinInfo{Occupied: true, PayloadCode: "PART-NEW"}
 	fx.eng.coreClient = stubCoreClient(ksNodeBinsStub(t, rows).URL)
+	fx.holdRows(t, rows)
 
 	fx.eng.sweepCellLevels()
 	_, returns := liveSpot(t, fx, "SPOT")
@@ -180,6 +181,7 @@ func TestKeepStagedLanding_OneReturnPerBin_AndAReturnOrdersNothing(t *testing.T)
 	testutil.MustNoErr(t, err, "rows")
 	rows["SPOT"] = NodeBinInfo{} // the return lifted the bin
 	fx.eng.coreClient = stubCoreClient(ksNodeBinsStub(t, rows).URL)
+	fx.holdRows(t, rows)
 	land(t, fx, returns[0].ID)
 	after, err := fx.db.ListActiveOrdersByProcessNode(fx.nodeIDs["L1"])
 	testutil.MustNoErr(t, err, "rows")

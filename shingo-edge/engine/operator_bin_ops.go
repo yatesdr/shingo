@@ -200,41 +200,34 @@ func (e *Engine) LoadBin(nodeID int64, payloadCode string, uopCount *int64, mani
 	// outbound). The card stays clickable in stale views — server has to
 	// refuse rather than rely on the UI gate.
 	//
-	// Available() SAYS A URL IS CONFIGURED, NOT THAT CORE IS ANSWERING. Past it,
-	// an unreachable Core returns no bins, which used to produce the same
-	// refusal as a genuinely empty node: "no bin at node X — request an empty
-	// bin first". That is a positive claim about the physical world the Edge did
-	// not verify, told to an operator standing in front of the bin, and it
-	// prescribes a corrective action that the request path then refuses too
-	// (claimOccupancy assumes occupied on the same failure). Refusing is right;
-	// saying why is the part that was missing.
+	// FROM THE BINS TABLE (site 4 of the reads), under the decision rule. A
+	// table that may not be decided from, or a window it holds no row for,
+	// refuses with its own sentence (BinsNotCurrent), never "no bin at node X —
+	// request an empty bin first": that is a positive claim about the physical
+	// world the Edge did not verify, told to an operator standing in front of
+	// the bin, and it prescribes a corrective action that the request path then
+	// refuses too.
 	//
 	// THE BIN IT CHECKED IS THE BIN IT LOADS: its id rides the load request, so
 	// Core writes the carrier this check found empty rather than whichever one
-	// its own query returns first. Without a check (Core not configured) no id
-	// is sent, and a node holding several carriers answers 409.
+	// its own query returns first.
 	//
 	// AND IT SAYS WHAT IT READ: the carrier's generation and that it carries no
 	// part (protocol.LoadExpectBare: a labelled carrier is answered above
 	// without a load). Core refuses the LOAD when either has changed since,
-	// rather than loading over what stands there now.
-	var checkedBinID, checkedEpoch int64
-	var expect string
-	if e.coreClient.Available() {
-		bins, reachable, ferr := e.coreClient.FetchNodeBins([]string{node.CoreNodeName})
-		if !reachable {
-			return fmt.Errorf("cannot check node %s — Core %s. The bin may well be there; "+
-				"this is a read that did not complete, not an empty window",
-				node.Name, OccupancyOutcome(reachable, ferr))
-		}
-		if len(bins) == 0 || !bins[0].Occupied {
-			return fmt.Errorf("no bin at node %s — request an empty bin first", node.Name)
-		}
-		if bins[0].PayloadCode != "" {
-			return e.loadOntoLabelledCarrier(node, claim, bins[0])
-		}
-		checkedBinID, checkedEpoch, expect = bins[0].BinID, bins[0].DeltaEpoch, protocol.LoadExpectBare
+	// rather than loading over what stands there now, and its refusal's rows
+	// redraw the table before its sentence shows.
+	row, err := e.binsRowAt(node.CoreNodeName)
+	if err != nil {
+		return err
 	}
+	if !row.Occupied {
+		return fmt.Errorf("no bin at node %s — request an empty bin first", node.Name)
+	}
+	if row.PayloadCode != "" {
+		return e.loadOntoLabelledCarrier(node, claim, row)
+	}
+	checkedBinID, checkedEpoch, expect := row.BinID, row.Epoch, protocol.LoadExpectBare
 
 	// Validate payload code against the loader-wide loadable set (see
 	// loadablePayloads) — the loader fills what the system/operator calls for
@@ -688,23 +681,23 @@ func (e *Engine) PushEmptyOut(nodeID int64) error {
 	if claim.Role != protocol.ClaimRoleConsume {
 		return fmt.Errorf("node %s is not a consume node", node.Name)
 	}
-	// FAILS CLOSED, AND THAT IS CORRECT — no bins means refuse, never "push
-	// anyway". What was wrong was the sentence: an unreachable Core also returns
-	// no bins, and the operator was told the window is empty on a read nobody
-	// completed. Same decision, a message that says what happened.
-	bins, reachable, ferr := e.coreClient.FetchNodeBins([]string{node.CoreNodeName})
-	if !reachable {
-		return fmt.Errorf("cannot check node %s — Core %s. The carrier may still be there; "+
-			"nothing was pushed", node.Name, OccupancyOutcome(reachable, ferr))
+	// FAILS CLOSED — no bin means refuse, never "push anyway". The window is
+	// read from the bins table (site 5 of the reads): a table that may not be
+	// decided from, or a window it holds no row for, refuses with its own
+	// sentence (BinsNotCurrent), never "no bin": the carrier may still be there,
+	// and nothing is pushed.
+	row, err := e.binsRowAt(node.CoreNodeName)
+	if err != nil {
+		return err
 	}
-	if len(bins) == 0 || !bins[0].Occupied {
+	if !row.Occupied {
 		return fmt.Errorf("node %s has no bin to push", node.Name)
 	}
 	// Only push if the bin is actually empty (no payload). A full bin sitting
 	// in the window means the operator confirmed earlier but the AMR is still
 	// staging — don't evict it.
-	if bins[0].PayloadCode != "" {
-		return fmt.Errorf("node %s bin is not empty (payload=%q)", node.Name, bins[0].PayloadCode)
+	if row.PayloadCode != "" {
+		return fmt.Errorf("node %s bin is not empty (payload=%q)", node.Name, row.PayloadCode)
 	}
 	// Double-tap guard: the order layer has no dedup for move orders, so two
 	// rapid taps would each call createUnloaderEmptyOut and create two U2
@@ -720,7 +713,7 @@ func (e *Engine) PushEmptyOut(nodeID int64) error {
 	// removal of whatever carrier stands on the window, never a fetch for a part.
 	// See createUnloaderEmptyOut. Nowhere to send it is a refusal here: the
 	// push is the whole operation and nothing has been committed.
-	if err := e.createUnloaderEmptyOut(node, claim, bins[0].BinID); err != nil {
+	if err := e.createUnloaderEmptyOut(node, claim, row.BinID); err != nil {
 		return err
 	}
 	// Re-arm the delivery seam — mirrors ClearBin's gate at its tail, with the
@@ -1086,12 +1079,12 @@ func (e *Engine) stationTakesLoadDirective(coreNodeName string) bool {
 // loadOntoLabelledCarrier answers a LOAD at a window whose carrier already
 // carries a label: nil when the load is in fact done, else the refusal that
 // names what frees the window.
-func (e *Engine) loadOntoLabelledCarrier(node *processes.Node, claim *processes.NodeClaim, b NodeBinInfo) error {
+func (e *Engine) loadOntoLabelledCarrier(node *processes.Node, claim *processes.NodeClaim, b protocol.NodeBinsRow) error {
 	// A LABELLED CARRIER AT 0 has no outbound move coming: Core will not send a
 	// carrier with no units, and LOAD will not fill one with a label. The
-	// operator clears it, then loads (row L item 5). (<= 0: a ledger can go
-	// negative.) With units it is stock, and waits.
-	if b.UOPRemaining <= 0 {
+	// operator clears it, then loads (row L item 5). (Not stocked: at or below
+	// 0, as a ledger can go negative.) With units it is stock, and waits.
+	if !b.Stocked {
 		return fmt.Errorf("bin at node %s is labelled %s but holds 0 — confirm it is empty, CLEAR it, then load", node.Name, b.PayloadCode)
 	}
 	// A LOAD WHOSE REPLY WAS LOST. Core loaded the carrier and the reply timed

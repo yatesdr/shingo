@@ -22,7 +22,7 @@ func secondReleaseWorld(t *testing.T, mode protocol.SwapMode, count int) *relHar
 	rt, err := h.db.GetProcessNodeRuntime(h.nodeID)
 	testutil.MustNoErr(t, err, "runtime")
 	testutil.MustNoErr(t, h.db.SetProcessNodeRuntime(h.nodeID, rt.ActiveClaimID, count), "the bin's count")
-	h.core.binAt = &NodeBinInfo{NodeName: fxPress, BinID: fxBin, PayloadCode: fxPart, UOPRemaining: count, Occupied: true}
+	h.binAtPress(count)
 	return h
 }
 

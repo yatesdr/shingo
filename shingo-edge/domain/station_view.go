@@ -7,10 +7,9 @@ import (
 	"shingo/protocol"
 )
 
-// NodeBinState is the bin information fetched from Core via telemetry
-// and folded into a StationNodeView. Reflects the current bin (if any)
-// at the corresponding Core node — what's loaded, how full, whether
-// the manifest has been confirmed.
+// NodeBinState is Core's bin at a node, from its row in the bins table, folded
+// into a StationNodeView: what is loaded, whether it holds parts, whether the
+// manifest has been confirmed.
 type NodeBinState struct {
 	BinID       int64  `json:"bin_id,omitempty"`
 	BinLabel    string `json:"bin_label,omitempty"`
@@ -30,6 +29,12 @@ type NodeBinState struct {
 	UOPCapacity int    `json:"uop_capacity,omitempty"`
 	HeldSince   string `json:"held_since,omitempty"`
 	HeldFor     string `json:"held_for,omitempty"`
+	// Stocked and Partial are the row's (protocol.NodeBinsRow): the bin holds
+	// parts, and fewer than its part's capacity. Set on the Production page,
+	// whose bin modal shows them in place of a count; nil and false on the
+	// station view, whose JSON carries its own stocked (stationBinState).
+	Stocked *bool `json:"stocked,omitempty"`
+	Partial bool  `json:"partial,omitempty"`
 }
 
 // CurtainPoint is one curtained node's interlock settings, as the view
@@ -68,8 +73,8 @@ type StationNodeView struct {
 	CanSkip bool    `json:"can_skip"`
 	Orders  []Order `json:"orders"`
 	// BinState is Core's bin at the node. The Production page marshals it
-	// whole and prints its count; the station's JSON carries its own shape
-	// (stationBinState: stocked in place of the count).
+	// whole and shows whether it holds parts (Stocked, Partial); the station's
+	// JSON carries its own shape (stationBinState: stocked in place of the count).
 	BinState *NodeBinState `json:"bin_state,omitempty"`
 	// BinStocked is whether the bin holds parts, set when BinState was read
 	// from the Edge's copy of Core's node-bins feed, which carries that and no
@@ -495,7 +500,8 @@ type ServedRow struct {
 // stationBinState is a tile's bin as the station's JSON carries it:
 // NodeBinState with Stocked in place of the count, and the cart's tote
 // numbers. The board asks only whether a bin holds parts, never how many; the
-// Production page marshals NodeBinState itself and prints the count. Pinned by
+// Production page marshals NodeBinState itself, with its Stocked and Partial.
+// Pinned by
 // TestStationNodeView_JSONShape.
 type stationBinState struct {
 	BinID             int64   `json:"bin_id,omitempty"`

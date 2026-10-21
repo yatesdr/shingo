@@ -2,10 +2,7 @@ package engine
 
 import (
 	"bytes"
-	"encoding/json"
 	"log"
-	"net/http"
-	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -18,8 +15,8 @@ import (
 // 2026-05-18.md). When the operator picks PULL PARTS LINESIDE on a
 // release whose order.BinID is nil (REP / complex orders whose
 // OrderDelivered reply didn't carry binID), Edge must resolve the bin
-// currently sitting at the slot via Core's BinAtLineside lookup and
-// thread that resolved id into the CaptureEvent so the paired
+// currently sitting at the slot from the bins table (site 14 of the reads)
+// and thread that resolved id into the CaptureEvent so the paired
 // BinUOPDelta(capture_reduction) lands on the right bin row.
 //
 // Without this resolve the delta is dropped at the BinID==0 gate in
@@ -28,23 +25,6 @@ import (
 func TestReleaseCaptureLineside_NilBinID_ResolvesFromCore(t *testing.T) {
 	t.Parallel()
 	const resolvedBinID int64 = 7777
-
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Core returns the bin currently at this lineside slot; the new
-		// bin_id field is what Edge needs to thread the capture_reduction
-		// delta to the right row.
-		_ = json.NewEncoder(w).Encode([]NodeBinInfo{
-			{
-				NodeName:     "REL-NIL-RESOLVE-NODE",
-				BinID:        resolvedBinID,
-				BinLabel:     "RESOLVED-BIN",
-				PayloadCode:  "PART-NIL-RES",
-				UOPRemaining: 96,
-				Occupied:     true,
-			},
-		})
-	}))
-	defer srv.Close()
 
 	db := testEngineDB(t)
 	_, nodeID, _, claimID := seedConsumeNode(t, db, consumeNodeConfig{
@@ -58,7 +38,10 @@ func TestReleaseCaptureLineside_NilBinID_ResolvesFromCore(t *testing.T) {
 	_ = db.UpdateProcessNodeRuntimeOrders(nodeID, nil, &orderID)
 
 	eng := testEngine(t, db)
-	eng.coreClient = stubCoreClient(srv.URL)
+	// No HTTP read: the bin at the slot is the table's.
+	eng.coreClient = stubCoreClient(testCoreURL)
+	holdActableBins(t, eng, protocol.NodeBinsRow{Node: "REL-NIL-RESOLVE-NODE", BinID: resolvedBinID,
+		BinLabel: "RESOLVED-BIN", PayloadCode: "PART-NIL-RES", Stocked: true, Partial: true, UOPCapacity: 200, Occupied: true})
 	eng.wireEventHandlers()
 	sink := &fakeDeltaSink{db: db}
 	eng.SetInventoryDeltaSink(sink)
@@ -93,7 +76,7 @@ func TestReleaseCaptureLineside_NilBinID_ResolvesFromCore(t *testing.T) {
 	}
 	bc := sink.binCalls[0]
 	if bc.BinID != resolvedBinID {
-		t.Errorf("bin call BinID = %d, want %d (resolved via BinAtLineside)", bc.BinID, resolvedBinID)
+		t.Errorf("bin call BinID = %d, want %d (resolved from the bins table)", bc.BinID, resolvedBinID)
 	}
 	if bc.Delta != -96 {
 		t.Errorf("bin call delta = %d, want -96", bc.Delta)
@@ -104,22 +87,33 @@ func TestReleaseCaptureLineside_NilBinID_ResolvesFromCore(t *testing.T) {
 }
 
 // TestReleaseCaptureLineside_NilBinID_Unresolvable_FallsBackToZero
-// pins the safety-net path: when order.BinID is nil AND BinAtLineside
-// can't return a bin (Core unreachable, or empty slot), the wire shape
-// reverts to the legacy RemainingUOP=&0 so Core's SyncOrClearForReleased(0)
-// wipes the manifest the old way. Without the fallback the bin row
-// would silently keep its original count — the exact silent-drop bug.
+// pins the safety-net path: when order.BinID is nil AND the bins table
+// can't name a bin (an empty slot, or a table that may not be decided
+// from), the wire shape reverts to the legacy RemainingUOP=&0 so Core's
+// SyncOrClearForReleased(0) wipes the manifest the old way. Without the
+// fallback the bin row would silently keep its original count — the exact
+// silent-drop bug.
 func TestReleaseCaptureLineside_NilBinID_Unresolvable_FallsBackToZero(t *testing.T) {
 	t.Parallel()
-	// Core returns an unoccupied slot (no bin to resolve). Treat as
-	// "no bin at slot, fall back to &0 wipe".
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_ = json.NewEncoder(w).Encode([]NodeBinInfo{
-			{NodeName: "REL-NIL-FB-NODE", Occupied: false},
+	for _, tc := range []struct {
+		name string
+		hold func(t *testing.T, eng *Engine)
+	}{
+		// The table holds an unoccupied slot (no bin to resolve).
+		{"empty slot", func(t *testing.T, eng *Engine) {
+			holdActableBins(t, eng, protocol.NodeBinsRow{Node: "REL-NIL-FB-NODE"})
+		}},
+		// No table held: not actable, the same fallback.
+		{"not actable", func(*testing.T, *Engine) {}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			releaseUnresolvableFallsBackToZero(t, tc.hold)
 		})
-	}))
-	defer srv.Close()
+	}
+}
 
+func releaseUnresolvableFallsBackToZero(t *testing.T, hold func(*testing.T, *Engine)) {
 	db := testEngineDB(t)
 	_, nodeID, _, claimID := seedConsumeNode(t, db, consumeNodeConfig{
 		Prefix: "REL-NIL-FB", PayloadCode: "PART-FB", UOPCapacity: 100, InitialUOP: 100,
@@ -129,7 +123,8 @@ func TestReleaseCaptureLineside_NilBinID_Unresolvable_FallsBackToZero(t *testing
 	_ = db.UpdateProcessNodeRuntimeOrders(nodeID, nil, &orderID)
 
 	eng := testEngine(t, db)
-	eng.coreClient = stubCoreClient(srv.URL)
+	eng.coreClient = stubCoreClient(testCoreURL)
+	hold(t, eng)
 
 	pending, _ := db.ListPendingOutbox(100)
 	for _, m := range pending {
@@ -149,7 +144,7 @@ func TestReleaseCaptureLineside_NilBinID_Unresolvable_FallsBackToZero(t *testing
 	}
 	rel := decodeOrderRelease(t, releases[0])
 	if rel.RemainingUOP == nil {
-		t.Fatalf("wire RemainingUOP = nil, want &0 — fallback must fire when BinAtLineside can't resolve")
+		t.Fatalf("wire RemainingUOP = nil, want &0 — fallback must fire when the table names no bin")
 	}
 	if *rel.RemainingUOP != 0 {
 		t.Errorf("wire RemainingUOP = %d, want 0", *rel.RemainingUOP)
@@ -165,14 +160,7 @@ func TestReleaseCaptureLineside_NilBinID_EmitsErrorLog(t *testing.T) {
 	// No t.Parallel — stdlib log.SetOutput is global and parallel
 	// tests would race with each other for the captured writer.
 	//
-	// Core returns an empty slot so BinID stays 0 through to capture.go.
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_ = json.NewEncoder(w).Encode([]NodeBinInfo{
-			{NodeName: "REL-NIL-LOG-NODE", Occupied: false},
-		})
-	}))
-	defer srv.Close()
-
+	// The table holds an empty slot so BinID stays 0 through to capture.go.
 	db := testEngineDB(t)
 	_, nodeID, _, claimID := seedConsumeNode(t, db, consumeNodeConfig{
 		Prefix: "REL-NIL-LOG", PayloadCode: "PART-LOG", UOPCapacity: 50, InitialUOP: 50,
@@ -182,7 +170,8 @@ func TestReleaseCaptureLineside_NilBinID_EmitsErrorLog(t *testing.T) {
 	_ = db.UpdateProcessNodeRuntimeOrders(nodeID, nil, &orderID)
 
 	eng := testEngine(t, db)
-	eng.coreClient = stubCoreClient(srv.URL)
+	eng.coreClient = stubCoreClient(testCoreURL)
+	holdActableBins(t, eng, protocol.NodeBinsRow{Node: "REL-NIL-LOG-NODE"})
 
 	pending, _ := db.ListPendingOutbox(100)
 	for _, m := range pending {

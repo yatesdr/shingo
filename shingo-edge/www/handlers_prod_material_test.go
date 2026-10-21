@@ -8,7 +8,6 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"shingo/protocol/testutil"
-	"shingoedge/store"
 	"shingoedge/store/processes"
 	"shingoedge/store/shifts"
 )
@@ -209,13 +208,4 @@ func TestBuildStationViews_ProcessWithStation(t *testing.T) {
 	if len(views) != 1 {
 		t.Fatalf("expected 1 view, got %d", len(views))
 	}
-}
-
-func TestEnrichViewBinState_NilCoreAPIIsNoop(t *testing.T) {
-	// Nil coreAPI must short-circuit without panicking, even with empty
-	// or populated views.
-	enrichViewBinState(nil, nil)
-	enrichViewBinState(nil, []store.OperatorStationView{
-		{Nodes: []store.StationNodeView{}},
-	})
 }

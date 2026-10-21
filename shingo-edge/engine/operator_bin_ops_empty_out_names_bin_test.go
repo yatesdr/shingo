@@ -19,7 +19,7 @@ import (
 // it before dispatch claims it (orders.named_bin_id).
 
 const (
-	emptyOutReadBinID    = 41 // what the node-bins read sees on the window
+	emptyOutReadBinID    = 41 // what node-bins and the bins table see on the window
 	emptyOutClearedBinID = 42 // what the clear answers it cleared
 )
 
@@ -104,11 +104,12 @@ func TestEmptyOut_ClearNamesTheBinItCleared(t *testing.T) {
 }
 
 // TestEmptyOut_PushEmptyNamesTheBinItRead: PUSH EMPTY's empty-out names the bin
-// its own node-bins read found empty on the window.
+// the bins table holds empty on the window (site 5 of the reads).
 func TestEmptyOut_PushEmptyNamesTheBinItRead(t *testing.T) {
 	t.Parallel()
 	const window = "EON-W2"
 	eng, nodeID := emptyOutWindow(t, window)
+	holdActableBins(t, eng, protocol.NodeBinsRow{Node: window, Occupied: true, BinID: emptyOutReadBinID})
 	testutil.MustNoErr(t, eng.PushEmptyOut(nodeID), "PushEmptyOut")
 
 	moves := emptyOutMoves(t, eng, window)

@@ -22,12 +22,15 @@ import (
 )
 
 // MarketBinInfo describes one bin available in the outbound supermarket for
-// a loader's pull-back picker.
+// a loader's pull-back picker: what its row in the bins table carries, which
+// is whether it holds parts and fewer than its part's capacity, never a count.
 type MarketBinInfo struct {
-	NodeName     string `json:"node_name"`
-	NodeLabel    string `json:"node_label"`
-	PayloadCode  string `json:"payload_code"`
-	UOPRemaining int    `json:"uop_remaining"`
+	NodeName    string `json:"node_name"`
+	NodeLabel   string `json:"node_label"`
+	PayloadCode string `json:"payload_code"`
+	Stocked     bool   `json:"stocked"`
+	Partial     bool   `json:"partial"`
+	UOPCapacity int    `json:"uop_capacity,omitempty"`
 }
 
 // FetchMarketBins returns the bins currently sitting in the outbound
@@ -37,7 +40,8 @@ type MarketBinInfo struct {
 // Steps:
 //  1. Resolve the loader's outbound_destination from the active claim.
 //  2. Its members: the market's group row on the bins copy (groupMembers).
-//  3. Fetch bin states for those members.
+//  3. Their rows in the bins table (site 12 of the reads), under the decision
+//     rule: a table that may not be decided from is refused with its sentence.
 //  4. Return occupied children that hold a bin with a payload.
 func (e *Engine) FetchMarketBins(nodeID int64) ([]MarketBinInfo, error) {
 	node, _, claim, err := e.loadActiveNode(nodeID)
@@ -59,26 +63,24 @@ func (e *Engine) FetchMarketBins(nodeID int64) ([]MarketBinInfo, error) {
 		return nil, nil
 	}
 
-	bins, _, err := e.coreClient.FetchNodeBins(childNames)
+	rows, err := e.binsForDecision(childNames...)
 	if err != nil {
-		return nil, fmt.Errorf("fetch market bins: %w", err)
-	}
-
-	labelByName := make(map[string]string, len(childNames))
-	for _, c := range childNames {
-		labelByName[c] = c
+		return nil, err
 	}
 
 	var result []MarketBinInfo
-	for _, b := range bins {
-		if !b.Occupied || b.PayloadCode == "" {
+	for _, c := range childNames {
+		b, ok := rows[c]
+		if !ok || !b.Occupied || b.PayloadCode == "" {
 			continue
 		}
 		result = append(result, MarketBinInfo{
-			NodeName:     b.NodeName,
-			NodeLabel:    labelByName[b.NodeName],
-			PayloadCode:  b.PayloadCode,
-			UOPRemaining: b.UOPRemaining,
+			NodeName:    c,
+			NodeLabel:   c,
+			PayloadCode: b.PayloadCode,
+			Stocked:     b.Stocked,
+			Partial:     b.Partial,
+			UOPCapacity: b.UOPCapacity,
 		})
 	}
 	return result, nil
@@ -121,26 +123,26 @@ func (e *Engine) PullFromMarket(nodeID int64, sourceCoreName string) error {
 		return fmt.Errorf("node %s is not in the outbound market for %s", sourceCoreName, node.Name)
 	}
 
-	// Check the source actually has a bin to pull. The unreachable arm is split
-	// out of the three-way OR: it used to share "no bin at market slot X" with
-	// the two arms that actually looked, so a read that never completed told the
-	// operator the slot was empty. No order is created either way.
-	bins, reachable, ferr := e.coreClient.FetchNodeBins([]string{sourceCoreName})
-	if !reachable {
-		return fmt.Errorf("cannot check market slot %s — Core %s; nothing was pulled",
-			sourceCoreName, OccupancyOutcome(reachable, ferr))
+	// Check the source actually has a bin to pull, from its row in the bins
+	// table (site 13 of the reads). A table that may not be decided from
+	// refuses with its own sentence (BinsNotCurrent), never "no bin at market
+	// slot X": a read that could not answer must not tell the operator the slot
+	// is empty. No order is created either way.
+	slot, err := e.binsRowAt(sourceCoreName)
+	if err != nil {
+		return err
 	}
-	if len(bins) == 0 || !bins[0].Occupied {
+	if !slot.Occupied {
 		return fmt.Errorf("no bin at market slot %s", sourceCoreName)
 	}
-	payload := bins[0].PayloadCode
+	payload := slot.PayloadCode
 
 	// NoDemand: a pullback is an operator moving stock between market and window.
 	// It serves no cell's level and belongs to no episode. The move names the bin
 	// the read above found: Core refuses it when that bin has left the slot, and
 	// lifts it and no other.
 	order, err := e.orderMgr.CreateMoveOrderWithPayloadCodeForBin(&nodeID, 1,
-		sourceCoreName, node.CoreNodeName, payload, bins[0].BinID, true, ordermgr.NoDemand())
+		sourceCoreName, node.CoreNodeName, payload, slot.BinID, true, ordermgr.NoDemand())
 	if err != nil {
 		return fmt.Errorf("pull from market: create order: %w", err)
 	}

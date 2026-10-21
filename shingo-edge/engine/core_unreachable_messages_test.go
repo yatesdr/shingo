@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -78,9 +79,12 @@ func TestPushEmptyOut_UnreachableCoreSaysSoInsteadOfClaimingTheSlotIsEmpty(t *te
 		t.Errorf("message = %q. That is a claim about the physical world made from a read that "+
 			"never completed, told to an operator looking at the carrier.", err)
 	}
-	if !strings.Contains(err.Error(), "http_error") {
-		t.Errorf("message = %q, want the occupancy outcome named so an incident is "+
-			"reconstructable from logs", err)
+	// CHANGED (site 5 of the reads): the window is read from the bins table,
+	// and a table that cannot be decided from says so — the reason is the
+	// error's (BinsNotCurrent.Why), for the log.
+	var nc *BinsNotCurrent
+	if !errors.As(err, &nc) || err.Error() != "Core's picture of PUSH-NODE is not current — try again" {
+		t.Errorf("message = %q, want the not-current sentence", err)
 	}
 }
 
@@ -100,7 +104,9 @@ func TestLoadBin_UnreachableCoreDoesNotPrescribeAWrongFix(t *testing.T) {
 			"assumes occupied), so following this instruction produces a second contradictory "+
 			"refusal.", err)
 	}
-	if !strings.Contains(err.Error(), "http_error") {
-		t.Errorf("message = %q, want the occupancy outcome named", err)
+	// CHANGED (site 4 of the reads): the window is read from the bins table,
+	// and a table that cannot be decided from says so (BinsNotCurrent).
+	if err.Error() != "Core's picture of LOAD-NODE is not current — try again" {
+		t.Errorf("message = %q, want the not-current sentence", err)
 	}
 }

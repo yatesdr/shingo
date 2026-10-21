@@ -30,6 +30,7 @@ func pullFixture(t *testing.T, tracked, pct int) (*simOperator, *machineFixture)
 	eng := testEngine(t, f.db)
 	core := newSCCore(t)
 	eng.coreClient = stubCoreClient(core.srv.URL)
+	core.bind(t, eng)
 	core.setCount("ALN_003", true, "PANEL-B", tracked)
 	op := newTestSimOperator(clock.NewManual(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)))
 	op.e = eng

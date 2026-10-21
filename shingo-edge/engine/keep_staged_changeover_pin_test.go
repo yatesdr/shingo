@@ -141,6 +141,11 @@ func (c pinCase) seed(t *testing.T) *coFixture {
 	}
 	fx := seedKeepStagedChangeover(t, from, to, rows)
 	fx.eng.coreClient = stubCoreClient(pinNodeBinsStub(t, rows, omit).URL)
+	omitted := []string{}
+	for n := range omit {
+		omitted = append(omitted, n)
+	}
+	fx.holdRows(t, rows, omitted...)
 	if !c.staging {
 		_, err := fx.db.DB.Exec(`UPDATE style_node_claims SET inbound_staging='STAGE' WHERE inbound_staging=?`, pinSpot)
 		testutil.MustNoErr(t, err, "move the staging off the spot")

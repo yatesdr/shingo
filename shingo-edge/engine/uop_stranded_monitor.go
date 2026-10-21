@@ -18,6 +18,7 @@
 package engine
 
 import (
+	"errors"
 	"fmt"
 	"log"
 	"time"
@@ -44,9 +45,9 @@ var strandedScanInterval = 60 * time.Second
 // pending_uop_delta readings taken while unbound (capped at strandedWindow+1);
 // the window is "growing" iff those are strictly increasing. alarmed dedups the
 // log/emit to once per growth window. since marks when the node first went
-// unbound-with-pending, for the staged-age the operator sees. carrier caches the
-// physical bin label resolved at fire time so per-scan detail refreshes don't
-// re-hit Core.
+// unbound-with-pending, for the staged-age the operator sees. carrier keeps the
+// bin label resolved at fire time (from the bins table) for the per-scan detail
+// refreshes.
 type strandedNodeState struct {
 	samples []int
 	alarmed bool
@@ -295,8 +296,8 @@ func (sm *strandedMonitor) evaluate(node *processes.Node, claim *processes.NodeC
 	}
 
 	if fire {
-		// Resolve the physical carrier once per window (rare) — cached for the
-		// per-scan detail refreshes so a lit tile doesn't hammer Core.
+		// Resolve the carrier once per window (rare) from the bins table, kept
+		// for the per-scan detail refreshes.
 		st.carrier = sm.resolveCarrier(node.CoreNodeName)
 	}
 	unbound := now.Sub(st.since)
@@ -324,18 +325,23 @@ func (sm *strandedMonitor) clear(coreNodeName string) {
 	sm.eng.strandedAlarms.Delete(coreNodeName)
 }
 
-// resolveCarrier best-effort resolves the physical bin's label at the node from
-// Core. Returns "" when Core is unconfigured/unreachable or the node is empty —
-// the alarm still fires, just without the carrier label.
+// resolveCarrier is the label of the bin the bins table holds at the node (a
+// process node, on the watch list): "" when the node is empty or the table may
+// not be decided from (BinsActable) — the alarm still fires, without the
+// carrier label, and the skip is logged with the table's reason. Memory only.
 func (sm *strandedMonitor) resolveCarrier(coreNodeName string) string {
-	if sm.eng.coreClient == nil {
+	row, err := sm.eng.binsRowAt(coreNodeName)
+	if err != nil {
+		var nc *BinsNotCurrent
+		if errors.As(err, &nc) {
+			sm.eng.logFn("parked ticks: %s: no carrier label (%s)", coreNodeName, nc.Why)
+		}
 		return ""
 	}
-	bin, known, err := sm.eng.coreClient.BinAtLineside(coreNodeName)
-	if err != nil || !known || bin == nil {
+	if !row.Occupied {
 		return ""
 	}
-	return bin.BinLabel
+	return row.BinLabel
 }
 
 // StrandedAlarmDetail returns the active parked-ticks alarm sentence for a core

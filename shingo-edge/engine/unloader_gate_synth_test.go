@@ -25,6 +25,7 @@ func newSynthUGFixture(t *testing.T, prefix string, lAuto bool) *ugFixture {
 	eng.wireEventHandlers()
 	core := newSCCore(t)
 	eng.coreClient = stubCoreClient(core.srv.URL)
+	core.bind(t, eng)
 
 	f := &ugFixture{eng: eng, db: db, core: core,
 		nCore: prefix + "-N", n2Core: prefix + "-N2", w3Core: prefix + "-W3"}
@@ -84,7 +85,7 @@ func TestUnloaderGate_SynthClaimAutoPush_ClearAndPushEmpty(t *testing.T) {
 		f.core.set(f.nCore, true, "")
 		before := f.core.nodeBinReads()
 		testutil.MustNoErr(t, f.eng.PushEmptyOut(f.n), "PushEmptyOut")
-		f.checkGate(t, "PUSH EMPTY", f.core.nodeBinReads()-before, 1+1, 1, 0)
+		f.checkGate(t, "PUSH EMPTY", f.core.nodeBinReads()-before, 1, 1, 0) // the gate; the tap reads the table
 	})
 }
 

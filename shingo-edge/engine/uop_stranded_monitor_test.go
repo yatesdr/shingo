@@ -357,3 +357,34 @@ func TestProduceHoldSweep_AnUnreadableOrderKeepsThePile(t *testing.T) {
 	assertSeat(t, eng, nodeID, 0, 3000, "WIDGET-A")
 	assertDrops(t, eng.db)
 }
+
+// TestStrandedCarrier_LabelFromCore pins the parked-ticks alarm's carrier
+// label (site 15 of the reads): the label of the bin the bins table holds at
+// the node, and blank — the alarm still fires, unlabelled — when the node is
+// empty, is not watched, or the table may not be decided from. No HTTP read:
+// the Core client points nowhere.
+func TestStrandedCarrier_LabelFromCore(t *testing.T) {
+	t.Parallel()
+	eng := testEngine(t, testEngineDB(t))
+	eng.coreClient = stubCoreClient(testCoreURL)
+	sm := &strandedMonitor{eng: eng, states: map[int64]*strandedNodeState{}}
+	if got := sm.resolveCarrier("LINE-P"); got != "" {
+		t.Errorf("no table held: label %q, want blank", got)
+	}
+	holdActableBins(t, eng,
+		protocol.NodeBinsRow{Node: "LINE-P", Occupied: true, BinID: 7, BinLabel: "BIN-7"},
+		protocol.NodeBinsRow{Node: "LINE-EMPTY"})
+	if got := sm.resolveCarrier("LINE-P"); got != "BIN-7" {
+		t.Errorf("a bin at the node: label %q, want BIN-7", got)
+	}
+	if got := sm.resolveCarrier("LINE-EMPTY"); got != "" {
+		t.Errorf("an empty node: label %q, want blank", got)
+	}
+	if got := sm.resolveCarrier("LINE-UNWATCHED"); got != "" {
+		t.Errorf("a node the table holds no row for: label %q, want blank", got)
+	}
+	eng.feeds.now = func() time.Time { return time.Now().Add(ActableAckWithin + time.Second) }
+	if got := sm.resolveCarrier("LINE-P"); got != "" {
+		t.Errorf("table not actable (ack aged out): label %q, want blank", got)
+	}
+}

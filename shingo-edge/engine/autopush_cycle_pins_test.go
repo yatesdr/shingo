@@ -30,6 +30,7 @@ func newCycleUnloader(t *testing.T, prefix string) *ugFixture {
 	eng.wireEventHandlers()
 	core := newSCCore(t)
 	eng.coreClient = stubCoreClient(core.srv.URL)
+	core.bind(t, eng)
 	f := &ugFixture{eng: eng, db: db, core: core, nCore: prefix + "-N"}
 	seedCoreLoader(t, eng, protocol.LoaderInfo{
 		Name: prefix, LoaderKey: "loader:" + prefix, Role: "consume", Layout: "shared_window",
@@ -205,8 +206,8 @@ func TestPinAutoPushGate_PushEmptyFillsASiblingNothingElseTriggered(t *testing.T
 
 	before := f.core.nodeBinReads()
 	testutil.MustNoErr(t, f.eng.PushEmptyOut(f.n), "PushEmptyOut at N")
-	if reads := f.core.nodeBinReads() - before; reads != 1+1 {
-		t.Errorf("PUSH EMPTY at N: node-bins reads = %d, want 1 (the tap) + 1 (the gate)", reads)
+	if reads := f.core.nodeBinReads() - before; reads != 1 {
+		t.Errorf("PUSH EMPTY at N: node-bins reads = %d, want 1 (the gate; the tap reads the table)", reads)
 	}
 	if got := f.fulls(t, f.n2Core); got != 1 {
 		t.Errorf("PUSH EMPTY at N: U1s to N2 = %d, want 1", got)

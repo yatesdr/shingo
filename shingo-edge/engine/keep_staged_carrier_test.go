@@ -100,6 +100,7 @@ func TestKeepStagedCarrier_AWrongCarrierAtEveryDecision(t *testing.T) {
 		// An empty of a carrier neither part rides reached the spot by hand.
 		rows["SPOT"] = wrong
 		fx.eng.coreClient = stubCoreClient(ksNodeBinsStub(t, rows).URL)
+		fx.holdRows(t, rows)
 		testutil.MustNoErr(t, fx.eng.CancelProcessChangeover(fx.processID), "cancel")
 		// It goes back where the leaving style's spares come from (returnTo).
 		got := readSpotTraffic(t, fx, "SPOT")
@@ -156,6 +157,7 @@ func TestKeepStagedCarrier_ACancelDecidesTheSameAtAnyClock(t *testing.T) {
 			testutil.MustNoErr(t, err, "the start's stamp")
 			rows["SPOT"] = NodeBinInfo{Occupied: true, BinTypeCode: ksTypeB}
 			fx.eng.coreClient = stubCoreClient(ksNodeBinsStub(t, rows).URL)
+			fx.holdRows(t, rows)
 
 			testutil.MustNoErr(t, fx.eng.CancelProcessChangeover(fx.processID), "cancel")
 

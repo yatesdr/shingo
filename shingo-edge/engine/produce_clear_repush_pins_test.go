@@ -26,6 +26,7 @@ func TestProduceClear_RePushesOnlyItsOwnLoader(t *testing.T) {
 	eng.wireEventHandlers()
 	core := newSCCore(t)
 	eng.coreClient = stubCoreClient(core.srv.URL)
+	core.bind(t, eng)
 
 	const wa, wb = "PCR-WA", "PCR-WB"
 	seedCoreLoader(t, eng,

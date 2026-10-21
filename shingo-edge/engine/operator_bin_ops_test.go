@@ -188,6 +188,7 @@ func TestClearBin_FiresEmptyOut_AMRFed(t *testing.T) {
 	// case is gone). This proves that fall-through creates no second empty-out.
 	eng.orderMgr = orders.NewManager(db, &orderEmitter{bus: eng.Events}, "test.station")
 	eng.coreClient = stubCoreClient(srv.URL)
+	holdProcessNodes(t, eng, true, "PART-CLR")
 	eng.wireEventHandlers()
 
 	testutil.MustNoErr(t, eng.ClearBin(unloaderNodeID, "", false, nil), "ClearBin")
@@ -222,6 +223,7 @@ func TestClearBin_FiresEmptyOut_PressFed(t *testing.T) {
 
 	eng := testEngine(t, db)
 	eng.coreClient = stubCoreClient(srv.URL)
+	holdProcessNodes(t, eng, true, "PRESS-PART")
 
 	// No U1 order exists — the press fed the window directly.
 	testutil.MustNoErr(t, eng.ClearBin(unloaderNodeID, "", false, nil), "ClearBin")
@@ -249,6 +251,7 @@ func TestClearBin_NoEmptyOut_WhenWindowEmpty(t *testing.T) {
 
 	eng := testEngine(t, db)
 	eng.coreClient = stubCoreClient(srv.URL)
+	holdProcessNodes(t, eng, false, "")
 
 	if err := eng.ClearBin(unloaderNodeID, "", false, nil); err == nil || !strings.Contains(err.Error(), "no bin at node") {
 		t.Errorf("ClearBin on an empty window = %v, want Core's no-bin refusal", err)
@@ -314,6 +317,7 @@ func TestPushEmptyOut_EmptyWindow_CreatesExactlyOneMove(t *testing.T) {
 
 	eng := testEngine(t, db)
 	eng.coreClient = stubCoreClient(srv.URL)
+	holdProcessNodes(t, eng, true, "")
 
 	if err := eng.PushEmptyOut(nodeID); err != nil {
 		t.Fatalf("PushEmptyOut: %v", err)
@@ -336,6 +340,7 @@ func TestPushEmptyOut_FullWindow_ReturnsError(t *testing.T) {
 
 	eng := testEngine(t, db)
 	eng.coreClient = stubCoreClient(srv.URL)
+	holdProcessNodes(t, eng, true, "PART-FULL")
 
 	if err := eng.PushEmptyOut(nodeID); err == nil {
 		t.Fatal("PushEmptyOut on a full window: want error, got nil")
@@ -358,6 +363,7 @@ func TestPushEmptyOut_NonManualSwapNode_ReturnsError(t *testing.T) {
 
 	eng := testEngine(t, db)
 	eng.coreClient = stubCoreClient(srv.URL)
+	holdProcessNodes(t, eng, true, "")
 
 	if err := eng.PushEmptyOut(nodeID); err == nil {
 		t.Fatal("PushEmptyOut on non-manual_swap node: want error, got nil")
@@ -381,6 +387,7 @@ func TestPushEmptyOut_DoubleTap_StillExactlyOneMove(t *testing.T) {
 
 	eng := testEngine(t, db)
 	eng.coreClient = stubCoreClient(srv.URL)
+	holdProcessNodes(t, eng, true, "")
 
 	if err := eng.PushEmptyOut(nodeID); err != nil {
 		t.Fatalf("first PushEmptyOut: %v", err)

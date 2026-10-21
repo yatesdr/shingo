@@ -57,17 +57,18 @@ func TestPinFold_SingleWindowCycleReads(t *testing.T) {
 }
 
 // TestPinFold_SingleWindowPushEmptyReads: PUSH EMPTY at a single-window
-// auto_push unloader. The tap reads the window (it must refuse a full carrier);
-// the gate counts the tapped window held, is covered, and reads nothing. At
-// f9a854cb the gate read Core too and pulled nothing — the carrier is resident.
+// auto_push unloader. The tap reads the window from the bins table (it must
+// refuse a full carrier; site 5 of the reads, no node-bins read since); the gate
+// counts the tapped window held, is covered, and reads nothing. At f9a854cb the
+// gate read Core too and pulled nothing — the carrier is resident.
 func TestPinFold_SingleWindowPushEmptyReads(t *testing.T) {
 	t.Parallel()
 	f := newCycleUnloader(t, "FLP")
 	f.core.set(f.nCore, true, "")
 	before := f.core.nodeBinReads()
 	testutil.MustNoErr(t, f.eng.PushEmptyOut(f.n), "PushEmptyOut")
-	if reads := f.core.nodeBinReads() - before; reads != 1 {
-		t.Errorf("PUSH EMPTY: node-bins reads = %d, want 1 (the tap; the gate is covered locally)", reads)
+	if reads := f.core.nodeBinReads() - before; reads != 0 {
+		t.Errorf("PUSH EMPTY: node-bins reads = %d, want 0 (the tap reads the table; the gate is covered locally)", reads)
 	}
 	if got := f.fulls(t, f.nCore); got != 0 {
 		t.Errorf("PUSH EMPTY: U1s = %d, want 0 (carrier resident)", got)

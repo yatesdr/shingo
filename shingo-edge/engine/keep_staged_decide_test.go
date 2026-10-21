@@ -63,10 +63,10 @@ func TestDecideSpot_CountsOnlyThisPart(t *testing.T) {
 		{ID: 1, OrderType: protocol.OrderTypeRetrieve, Status: protocol.StatusQueued, DeliveryNode: "SPOT",
 			SourceNode: "SRC", PayloadCode: "PART-OLD", ProcessNodeID: &pn},
 	}
-	if got := spotComing(rows, c); got != 0 {
+	if got := spotComing(rows, c, nil); got != 0 {
 		t.Fatalf("coming = %d with only another part's refill on its way, want 0", got)
 	}
-	plan, _ := decideSpot(c, spotFacts{read: spotRead{known: true}, coming: spotComing(rows, c)})
+	plan, _ := decideSpot(c, spotFacts{read: spotRead{known: true}, coming: spotComing(rows, c, nil)})
 	if plan.refills != 1 {
 		t.Fatalf("refills = %d, want 1: another part's refill does not fill this spot", plan.refills)
 	}

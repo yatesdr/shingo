@@ -242,7 +242,7 @@ func parkNames(parks []parkedBin) []string {
 // Attributed to the line, never in its runtime slots, and created under the
 // line's prime lock, as every other order the line's cell decides. One move per
 // park node: one node holds one bin.
-func (e *Engine) finishParkedTrips(parks []parkedBin, rows map[string]NodeBinInfo, origin ordermgr.Origin) {
+func (e *Engine) finishParkedTrips(parks []parkedBin, rows map[string]protocol.NodeBinsRow, origin ordermgr.Origin) {
 	done := map[string]bool{}
 	for _, p := range parks {
 		row, read := rows[p.park]

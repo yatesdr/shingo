@@ -23,8 +23,9 @@ import (
 // call for the station's whole list (StationService.BinNodes), pinned by
 // TestStationView_OneNodeBinsReadPerBuild. This is the mixed-version path.
 //
-// The Production page does not come here: it keeps its own read
-// (enrichViewBinState), whose count it prints.
+// The Production page does not come here: it reads the same copy by the same
+// display rule (enrichViewBinState) and, having no "as of" to show, draws no
+// bin from a copy that rule calls old.
 func stampStationBins(eng ServiceAccess, stationID int64, view *domain.OperatorStationView) {
 	svc := eng.StationService()
 	held := eng.LocalNodeBins()

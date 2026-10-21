@@ -1190,18 +1190,48 @@ func (s servedScanner) Scan(dest ...any) error {
 	return s.rows.Scan(append(dest, &s.sc.ProcessID, &s.sc.ProcessName, &s.sc.StyleName, &s.sc.Incoming)...)
 }
 
-// ListProduceOutboundDestinations returns, per process id, the distinct
-// outbound destinations its live produce claims name across every live style,
-// sorted: the markets a produce loader's pull-back picks from. Every style, not
-// the running one, so the bins watch list built from it does not move with a
-// changeover (a static superset; StationService.buildBinNodes).
-func ListProduceOutboundDestinations(db DBTX) (map[int64][]string, error) {
-	rows, err := db.Query(`SELECT DISTINCT s.process_id, c.outbound_destination
+// ListClaimWatchPlaces returns, per process id, the distinct places its live
+// claims name across every live style that an Edge decision reads from the
+// bins table, sorted. Every style, not the running one, so the bins watch list
+// built from it does not move with a changeover (a static superset;
+// StationService.buildBinNodes). Each column with its readers:
+//   - a produce claim's outbound_destination: the markets a produce loader's
+//     pull-back lists and checks (engine operator_window_pullback.go);
+//   - keep_staged_node: the keep-staged spots, read by a save that stops
+//     keeping one (Engine.spotsCleared), the keeper (keepSpot) and a
+//     changeover's start, preview and cancel (readSpotsAnd);
+//   - inbound_staging and outbound_staging: where a cancelled changeover leg
+//     or a cancelled order leaves a carrier standing, read by the cancel's
+//     park (readSpotsAnd, finishParkedTrips) and a cancelled order's carrier
+//     sent back (sendCarrierBack).
+//
+// One statement.
+func ListClaimWatchPlaces(db DBTX) (map[int64][]string, error) {
+	rows, err := db.Query(`SELECT DISTINCT process_id, place FROM (
+		SELECT s.process_id, c.outbound_destination AS place
 		FROM style_node_claims c
 		JOIN styles s ON s.id = c.style_id
 		WHERE s.deleted_at IS NULL AND` + liveClaims + `
 		AND c.role = 'produce' AND c.outbound_destination <> ''
-		ORDER BY s.process_id, c.outbound_destination`)
+		UNION ALL
+		SELECT s.process_id, c.keep_staged_node
+		FROM style_node_claims c
+		JOIN styles s ON s.id = c.style_id
+		WHERE s.deleted_at IS NULL AND` + liveClaims + `
+		AND c.keep_staged_node <> ''
+		UNION ALL
+		SELECT s.process_id, c.inbound_staging
+		FROM style_node_claims c
+		JOIN styles s ON s.id = c.style_id
+		WHERE s.deleted_at IS NULL AND` + liveClaims + `
+		AND c.inbound_staging <> ''
+		UNION ALL
+		SELECT s.process_id, c.outbound_staging
+		FROM style_node_claims c
+		JOIN styles s ON s.id = c.style_id
+		WHERE s.deleted_at IS NULL AND` + liveClaims + `
+		AND c.outbound_staging <> '')
+		ORDER BY process_id, place`)
 	if err != nil {
 		return nil, err
 	}

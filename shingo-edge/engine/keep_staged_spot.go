@@ -76,17 +76,42 @@ type spotRead struct {
 	// force when the spot was read; nil before the first one arrives. An empty
 	// is judged against it (spareIsRight).
 	catalog []protocol.PayloadBinTypeInfo
-	// count is the bin's count as Core holds it: a partial of the claim's own
-	// part is a produce spare (spareIsRight).
-	count int
+	// partial is the bin holding parts, fewer than its part's capacity: a
+	// partial of the claim's own part is a produce spare (spareIsRight). The
+	// row's Partial, which carries no count.
+	partial bool
+	// inbound is the orders Core counts as on their way to the spot in the
+	// same read (the row's Inbound, by Edge order UUID): an order the line's
+	// rows show ended is still coming while the read predates its landing
+	// (spotComing). Nil over HTTP.
+	inbound map[string]bool
 }
 
 // readOfRow is a spot's read from its row in a node-bins answer, with the
-// catalog an empty is judged against. Every decision point reads the spot
-// through it.
+// catalog an empty is judged against: the REQUEST's read until it moves onto
+// the bins table. partial is the count above zero and below the row's
+// capacity, the crossing the table's Partial carries.
 func readOfRow(b NodeBinInfo, catalog []protocol.PayloadBinTypeInfo) spotRead {
 	return spotRead{known: true, occupied: b.Occupied, payload: b.PayloadCode, bare: b.Bare,
-		binType: b.BinTypeCode, binID: b.BinID, catalog: catalog, count: b.UOPRemaining}
+		binType: b.BinTypeCode, binID: b.BinID, catalog: catalog,
+		partial: b.UOPRemaining > 0 && b.UOPRemaining < b.UOPCapacity}
+}
+
+// readOfBinsRow is a spot's read from its row in the bins table, with the
+// catalog an empty is judged against. known is the row's state: a name Core
+// has no node for (unknown) is not a bare spot, and a group is no spot at all
+// (this is the check spotNodeKnown made of Core's node list).
+func readOfBinsRow(r protocol.NodeBinsRow, catalog []protocol.PayloadBinTypeInfo) spotRead {
+	known := r.State == protocol.BinsStateEmpty || r.State == protocol.BinsStateOccupied
+	var inbound map[string]bool
+	if len(r.Inbound) > 0 {
+		inbound = make(map[string]bool, len(r.Inbound))
+		for _, in := range r.Inbound {
+			inbound[in.OrderUUID] = true
+		}
+	}
+	return spotRead{known: known, occupied: r.Occupied, payload: r.PayloadCode, bare: r.Bare,
+		binType: r.BinTypeCode, binID: r.BinID, catalog: catalog, partial: r.Partial, inbound: inbound}
 }
 
 // spotFacts is everything the keeper decides a spot from, read before deciding
@@ -194,7 +219,7 @@ func spareIsRight(c *processes.NodeClaim, read spotRead) bool {
 	// brings one when the part has a home, and it is the spare once it stands
 	// here. A partial of any other part is not.
 	if carriesEmpty(c) && read.payload != "" {
-		return read.payload == c.PayloadCode && read.count > 0 && read.count < c.UOPCapacity
+		return read.payload == c.PayloadCode && read.partial
 	}
 	if read.payload != spareCarries(c) {
 		return false
@@ -229,11 +254,19 @@ func worksTheCell(o *domain.Order, c *processes.NodeClaim) bool {
 // orders bound for the spot, for the claim's part, in the claim's role. Matching
 // part and role is what keeps a refill for the outgoing style from counting for
 // the incoming one.
-func spotComing(rows []domain.Order, c *processes.NodeClaim) int {
+//
+// A REFILL THE ROWS SHOW ENDED IS STILL COMING WHILE CORE'S READ HAS IT
+// INBOUND (inbound, the spot row's Inbound from the same bins table read). The
+// table is pushed a moment after an order ends, so for that moment a delivered
+// refill's row is terminal while the read still shows the spot bare; counting
+// it by the read's own inbound list keeps the read and the order fact from the
+// same snapshot, where a torn read can show "inbound and occupied" and never
+// "neither", and no second refill is ordered behind it.
+func spotComing(rows []domain.Order, c *processes.NodeClaim, inbound map[string]bool) int {
 	n := 0
 	for i := range rows {
 		o := &rows[i]
-		if !isSpotRefill(o, c) || ordermgr.IsTerminal(o.Status) {
+		if !isSpotRefill(o, c) || (ordermgr.IsTerminal(o.Status) && !inbound[o.UUID]) {
 			continue
 		}
 		if o.PayloadCode == c.PayloadCode && o.RetrieveEmpty == carriesEmpty(c) {
@@ -298,7 +331,7 @@ func (e *Engine) readSpotAtRequest(node *processes.Node, claim *processes.NodeCl
 			node.Name, spotNode(claim), err)
 	}
 	s.leaving = spotLeaving(rows, spotNode(claim), claim.CoreNodeName) > 0
-	s.coming = spotComing(rows, claim)
+	s.coming = spotComing(rows, claim, read.inbound)
 	return s, nil
 }
 

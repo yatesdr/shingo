@@ -25,8 +25,8 @@ func TestRegression_LoadBin_SeedsActiveBinEpochFromCoreResponse(t *testing.T) {
 	t.Parallel()
 
 	const wantEpoch = 7
-	// Core stub: POST = LoadBin (returns the delta epoch); GET = FetchNodeBins
-	// (an occupied, empty bin so LoadBin's occupancy gate passes).
+	// Core stub: POST = LoadBin (returns the delta epoch). LoadBin's occupancy
+	// gate reads the bins table: an occupied, empty bin there.
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodPost {
 			_ = json.NewEncoder(w).Encode(BinLoadResponse{
@@ -46,6 +46,7 @@ func TestRegression_LoadBin_SeedsActiveBinEpochFromCoreResponse(t *testing.T) {
 	sink := &fakeDeltaSink{db: db}
 	eng.SetInventoryDeltaSink(sink)
 	eng.coreClient = stubCoreClient(srv.URL)
+	holdActableBins(t, eng, protocol.NodeBinsRow{Node: "LOADER", Occupied: true, BinID: 42})
 
 	manifest := []protocol.IngestManifestItem{{PartNumber: "PN-1", Quantity: 100, Description: "x"}}
 	err := eng.LoadBin(nodeID, "PART-A", declaredUOP(100), manifest)
@@ -214,6 +215,8 @@ func loadBinTestEngine(t *testing.T, srv *httptest.Server) (*Engine, *store.DB, 
 	seedCoreLoader(t, eng, sharedLoaderInfo("LOADER", "produce", "operator", "PART-A", 0, 0))
 	eng.SetInventoryDeltaSink(&fakeDeltaSink{db: db})
 	eng.coreClient = stubCoreClient(srv.URL)
+	// LOAD's occupancy check reads the bins table: an empty carrier there.
+	holdActableBins(t, eng, protocol.NodeBinsRow{Node: "LOADER", Occupied: true, BinID: 42})
 	return eng, db, nodeID
 }
 

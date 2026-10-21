@@ -88,8 +88,9 @@ func (db *DB) ListProduceContainmentDestinations() (map[int64]string, error) {
 	return processes.ListProduceContainmentDestinations(db.DB)
 }
 
-// ListProduceOutboundDestinations returns, per process id, the outbound
-// destinations its live produce claims name across every live style.
-func (db *DB) ListProduceOutboundDestinations() (map[int64][]string, error) {
-	return processes.ListProduceOutboundDestinations(db.DB)
+// ListClaimWatchPlaces returns, per process id, the places its live claims
+// name across every live style that an Edge decision reads from the bins table
+// (processes.ListClaimWatchPlaces).
+func (db *DB) ListClaimWatchPlaces() (map[int64][]string, error) {
+	return processes.ListClaimWatchPlaces(db.DB)
 }

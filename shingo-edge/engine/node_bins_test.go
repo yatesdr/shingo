@@ -3,6 +3,7 @@ package engine
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"slices"
 	"testing"
 	"time"
@@ -466,4 +467,185 @@ func TestNodeBins_ApplyRowsPatchesTheCopyKeepsItsDigest(t *testing.T) {
 	if len(events) != 1 || !slices.Equal(events[0].Nodes, []string{"SMN_F1"}) {
 		t.Errorf("events = %+v, want one naming SMN_F1", events)
 	}
+}
+
+// holdActableBins gives eng a bins copy it may decide from: rows as Core
+// answered this Edge's current watch list (its list digest), confirmed by a
+// heartbeat ack taken now. A decision site's test holds what Core says here
+// instead of answering an HTTP read.
+func holdActableBins(t *testing.T, eng *Engine, rows ...protocol.NodeBinsRow) {
+	t.Helper()
+	if err := pushBins(eng, rows...); err != nil {
+		t.Fatalf("holdActableBins: %v", err)
+	}
+}
+
+// pushBins is holdActableBins for a fake Core that pushes its table from its
+// own goroutine (an HTTP handler that changed a bin): an error instead of a
+// test failure.
+func pushBins(eng *Engine, rows ...protocol.NodeBinsRow) error {
+	_, own, ok := eng.binWatchList()
+	if !ok {
+		return errors.New("the watch list has no digest")
+	}
+	for i := range rows {
+		if rows[i].State == "" {
+			rows[i].State = protocol.BinsStateEmpty
+			if rows[i].Occupied {
+				rows[i].State = protocol.BinsStateOccupied
+			}
+		}
+	}
+	snap := protocol.NodeBinsSnapshot{ListDigest: own, Rows: rows, Groups: []protocol.NodeBinsGroup{}}
+	var err error
+	if snap.Digest, err = protocol.NodeBinsDigest(snap); err != nil {
+		return fmt.Errorf("digest: %w", err)
+	}
+	if err := eng.ApplyNodeBinsSnapshot(snap); err != nil {
+		return fmt.Errorf("apply: %w", err)
+	}
+	ackHeld(eng)
+	if ok, why := eng.BinsActable(); !ok {
+		return fmt.Errorf("the copy is not actable (%s)", why)
+	}
+	return nil
+}
+
+// TestBinsForDecision_FailsClosed: a decision reads rows only from a copy it
+// may decide from; otherwise every name is refused with Actable's reason and
+// the operator's sentence. A name with no row is absent (binsForDecision) or
+// refused as unwatched (binsRowAt); an unknown name is a row, never empty.
+func TestBinsForDecision_FailsClosed(t *testing.T) {
+	t.Parallel()
+	eng := testEngine(t, testEngineDB(t))
+	_, err := eng.binsForDecision("SMN_A1")
+	var nc *BinsNotCurrent
+	if !errors.As(err, &nc) || nc.Node != "SMN_A1" || nc.Why != NotActableNothingHeld {
+		t.Fatalf("nothing held: err = %v, want BinsNotCurrent{SMN_A1, %q}", err, NotActableNothingHeld)
+	}
+	if got, want := err.Error(), "Core's picture of SMN_A1 is not current — try again"; got != want {
+		t.Errorf("sentence = %q, want %q", got, want)
+	}
+	holdActableBins(t, eng,
+		protocol.NodeBinsRow{Node: "SMN_A1", Occupied: true, BinID: 7},
+		protocol.NodeBinsRow{Node: "SMN_GONE", State: protocol.BinsStateUnknown})
+	rows, err := eng.binsForDecision("SMN_A1", "SMN_GONE", "SMN_NOT_WATCHED")
+	if err != nil {
+		t.Fatalf("actable: %v", err)
+	}
+	if rows["SMN_A1"].BinID != 7 || rows["SMN_GONE"].State != protocol.BinsStateUnknown {
+		t.Errorf("rows = %+v", rows)
+	}
+	if _, ok := rows["SMN_NOT_WATCHED"]; ok {
+		t.Error("a name the copy holds no row for was answered")
+	}
+	if _, err := eng.binsRowAt("SMN_NOT_WATCHED"); !errors.As(err, &nc) || nc.Why != NotActableUnwatched {
+		t.Errorf("binsRowAt unwatched: %v, want BinsNotCurrent{%q}", err, NotActableUnwatched)
+	}
+	eng.feeds.now = func() time.Time { return time.Now().Add(ActableAckWithin + time.Second) }
+	if _, err := eng.binsRowAt("SMN_A1"); !errors.As(err, &nc) || nc.Why != NotActableAckOld {
+		t.Errorf("ack aged out: %v, want BinsNotCurrent{%q}", err, NotActableAckOld)
+	}
+}
+
+// holdActableContainment gives eng a containment copy it may decide from: the
+// destinations as Core sent them, confirmed by a heartbeat ack taken now.
+func holdActableContainment(t *testing.T, eng *Engine, dests ...protocol.ContainmentDestination) {
+	t.Helper()
+	snap := protocol.ContainmentSnapshot{Flags: []protocol.PayloadContainmentRow{}, HeldBins: []protocol.HeldBinRow{},
+		Destinations: dests}
+	var err error
+	if snap.Digest, err = protocol.ContainmentDigest(snap); err != nil {
+		t.Fatalf("holdActableContainment: digest: %v", err)
+	}
+	if err := eng.ApplyContainmentSnapshot(snap); err != nil {
+		t.Fatalf("holdActableContainment: apply: %v", err)
+	}
+	ackHeld(eng)
+	if _, err := eng.containmentForDecision("any"); err != nil {
+		t.Fatalf("holdActableContainment: not actable: %v", err)
+	}
+}
+
+// ackHeld is a heartbeat ack, taken now, from a Core that holds every feed
+// digest eng holds and eng's watch list: each held copy is confirmed by it.
+func ackHeld(eng *Engine) {
+	feeds := map[string]string{}
+	eng.feeds.mu.Lock()
+	for key, h := range eng.feeds.held {
+		feeds[key] = h.digest
+	}
+	eng.feeds.mu.Unlock()
+	_, own, _ := eng.binWatchList()
+	eng.OnCoreAck(&protocol.EdgeHeartbeatAck{Feeds: feeds, BinWatch: quote(own)})
+}
+
+// binsRowsOf is what Core's bins table says for rows written as node-bins
+// answers (the HTTP stubs' tables), plus an empty row for each name in also
+// that rows leaves out (the stubs answer any name as an empty node Core has).
+// Stocked is the count above zero, Partial above zero and below the row's
+// capacity; Epoch the delta epoch. Sorted by name.
+func binsRowsOf(rows map[string]NodeBinInfo, also ...string) []protocol.NodeBinsRow {
+	names := map[string]bool{}
+	for n := range rows {
+		names[n] = true
+	}
+	for _, n := range also {
+		if n != "" {
+			names[n] = true
+		}
+	}
+	sorted := make([]string, 0, len(names))
+	for n := range names {
+		sorted = append(sorted, n)
+	}
+	slices.Sort(sorted)
+	out := make([]protocol.NodeBinsRow, 0, len(sorted))
+	for _, n := range sorted {
+		b := rows[n]
+		r := protocol.NodeBinsRow{Node: n, State: protocol.BinsStateEmpty, Occupied: b.Occupied}
+		if b.Occupied {
+			r.State = protocol.BinsStateOccupied
+			r.BinID, r.BinLabel, r.BinTypeCode, r.Bare, r.PayloadCode = b.BinID, b.BinLabel, b.BinTypeCode, b.Bare, b.PayloadCode
+			r.Stocked = b.UOPRemaining > 0
+			r.Partial = b.UOPRemaining > 0 && b.UOPRemaining < b.UOPCapacity
+			r.UOPCapacity, r.Epoch = b.UOPCapacity, b.DeltaEpoch
+			r.Manifest, r.ManifestConfirmed = b.Manifest, b.ManifestConfirmed
+			r.TotesOnCart, r.TotesPerLayer = b.TotesOnCart, b.TotesPerLayer
+			r.HeldSince, r.HeldFor = b.HeldSince, b.HeldFor
+			if b.HeldSince != "" {
+				r.HeldUOP = b.UOPRemaining
+			}
+		}
+		out = append(out, r)
+	}
+	return out
+}
+
+// holdCoreRows holds, as a table eng may decide from, what an HTTP stub's
+// node-bins table says (binsRowsOf): the fixtures that answered node-bins
+// over HTTP hold the same answer for the sites that read the table.
+func holdCoreRows(t *testing.T, eng *Engine, rows map[string]NodeBinInfo, also ...string) {
+	t.Helper()
+	holdActableBins(t, eng, binsRowsOf(rows, also...)...)
+}
+
+// holdProcessNodes holds, as a table eng may decide from, the answer
+// fakeCoreBinServer gives for any node: every process node in eng's store
+// occupied (or not) by one bin carrying payload, bin 77.
+func holdProcessNodes(t *testing.T, eng *Engine, occupied bool, payload string) {
+	t.Helper()
+	nodes, err := eng.db.ListProcessNodes()
+	if err != nil {
+		t.Fatalf("holdProcessNodes: %v", err)
+	}
+	rows := map[string]NodeBinInfo{}
+	for _, n := range nodes {
+		b := NodeBinInfo{NodeName: n.CoreNodeName, Occupied: occupied}
+		if occupied {
+			b.PayloadCode, b.BinID = payload, 77
+		}
+		rows[n.CoreNodeName] = b
+	}
+	holdCoreRows(t, eng, rows)
 }

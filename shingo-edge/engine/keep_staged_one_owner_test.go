@@ -27,7 +27,9 @@ import (
 // restubSpot makes Core answer the line and the spot as given.
 func restubSpot(t *testing.T, fx *coFixture, line, spot NodeBinInfo) {
 	t.Helper()
-	fx.eng.coreClient = stubCoreClient(pinNodeBinsStub(t, map[string]NodeBinInfo{"L1": line, pinSpot: spot}, nil).URL)
+	rows := map[string]NodeBinInfo{"L1": line, pinSpot: spot}
+	fx.eng.coreClient = stubCoreClient(pinNodeBinsStub(t, rows, nil).URL)
+	fx.holdRows(t, rows)
 }
 
 // changeoverLegs is the live complex legs of the line.

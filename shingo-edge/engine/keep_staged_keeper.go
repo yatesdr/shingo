@@ -32,8 +32,8 @@ import (
 // nothing while a leg still drops onto the spot, and stops on a cancel.
 //
 // COST. One indexed read of the line's orders (ListKeptSpotRows) and, unless the
-// rows alone settle it (paused, or a leg dropping onto the spot), one node-bins
-// read for the spot, per keep-staged line per sweep.
+// rows alone settle it (paused, or a leg dropping onto the spot), the spot's row
+// from the bins table (memory), per keep-staged line per sweep.
 
 // keepSpot runs the keeper for one keep-staged line.
 //
@@ -69,15 +69,17 @@ func (e *Engine) keepSpot(node *processes.Node, claim *processes.NodeClaim) {
 		e.setKeepStagedNote(claim.CoreNodeName, note)
 		return
 	}
-	if e.coreClient == nil || !e.coreClient.Available() {
+	// The spot from the bins table (site 3 of the reads), unattended: a table
+	// that may not be decided from, or a spot it holds no row for, skips this
+	// pass, logged; a spot Core does not know is decided on no more than a
+	// failed read was.
+	row, err := e.binsRowAt(spot)
+	if err != nil {
+		e.logFn("keep-staged: node %s: the spot %s: the bins table cannot answer (%s) — the next pass re-asks",
+			node.Name, spot, binsWhy(err))
 		return
 	}
-	bins, _, ferr := e.coreClient.FetchNodeBins([]string{spot})
-	if ferr != nil {
-		e.logFn("keep-staged: node %s: read the spot %s: %v — the next pass re-asks", node.Name, spot, ferr)
-		return
-	}
-	read := spotOf(claim, bins, e.spotNodeKnown, e.PayloadBinTypes())
+	read := readOfBinsRow(row, e.PayloadBinTypes())
 	if !read.known {
 		return
 	}
@@ -96,7 +98,7 @@ func (e *Engine) spotFactsOf(claim *processes.NodeClaim, read spotRead, rows []d
 	spot := spotNode(claim)
 	f := spotFacts{
 		read:   read.lessLeaving(spotLeaving(rows, spot, claim.CoreNodeName)),
-		coming: spotComing(rows, claim),
+		coming: spotComing(rows, claim, read.inbound),
 		paused: spotPause(rows, claim, resumed),
 	}
 	f.drops = e.legDropsOnSpot(rows, claim)

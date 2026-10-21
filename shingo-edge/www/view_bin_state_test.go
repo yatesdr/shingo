@@ -2,45 +2,39 @@ package www
 
 import (
 	"encoding/json"
-	"net/http"
-	"net/http/httptest"
 	"sort"
 	"strings"
 	"testing"
+	"time"
 
+	"shingo/protocol"
 	"shingoedge/domain"
 	"shingoedge/engine"
 )
 
-// view_bin_state_test.go — what enrichViewBinState copies from Core's
-// node-bins row onto the tile's bin_state. The board reads bin_state and
-// nothing else about the carrier, so a field missing here is a field the
-// board cannot see.
+// view_bin_state_test.go — what enrichViewBinState copies from the bins
+// table's row onto the Production page's bin_state. The page reads bin_state
+// and nothing else about the carrier, so a field missing here is a field the
+// page cannot see.
+
+// heldBins is a bins table held now, confirmed now, holding rows.
+func heldBins(rows ...protocol.NodeBinsRow) engine.NodeBinsState {
+	st := engine.NodeBinsState{Rows: map[string]protocol.NodeBinsRow{}, Held: true,
+		ReceivedAt: time.Now(), ConfirmedAt: time.Now(), CoreSpeaksBins: true}
+	for _, r := range rows {
+		st.Rows[r.Node] = r
+	}
+	return st
+}
 
 func TestEnrichViewBinState_CopiesTheNodeBinsRow(t *testing.T) {
 	t.Parallel()
-	var reads int
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/api/telemetry/node-bins" {
-			http.NotFound(w, r)
-			return
-		}
-		reads++
-		// Every key the row can carry, including bare, so the test shows
-		// which of them reach bin_state.
-		_ = json.NewEncoder(w).Encode([]map[string]any{{
-			"node_name": "VB-W1", "bin_id": 5, "bin_label": "BIN-5", "bin_type_code": "HALF-CARRIER",
-			"bare": true, "payload_code": "", "uop_remaining": 0, "occupied": true, "manifest_confirmed": false,
-		}})
-	}))
-	t.Cleanup(srv.Close)
-
 	views := []domain.OperatorStationView{{Nodes: []domain.StationNodeView{{Node: domain.Node{CoreNodeName: "VB-W1"}}}}}
-	enrichViewBinState(engine.NewCoreClient(srv.URL), views)
+	enrichViewBinState(heldBins(protocol.NodeBinsRow{
+		Node: "VB-W1", State: protocol.BinsStateOccupied, BinID: 5, BinLabel: "BIN-5", BinTypeCode: "HALF-CARRIER",
+		Bare: true, Occupied: true, Epoch: 3,
+	}), time.Now(), views)
 
-	if reads != 1 {
-		t.Errorf("node-bins reads = %d, want 1", reads)
-	}
 	bs := views[0].Nodes[0].BinState
 	if bs == nil {
 		t.Fatal("bin_state not set")
@@ -61,14 +55,9 @@ func TestEnrichViewBinState_CopiesTheNodeBinsRow(t *testing.T) {
 		got = append(got, k)
 	}
 	sort.Strings(got)
-	want := []string{"bare", "bin_id", "bin_label", "manifest_confirmed", "occupied", "uop_remaining"}
-	if len(got) != len(want) {
+	want := []string{"bare", "bin_id", "bin_label", "manifest_confirmed", "occupied", "stocked", "uop_remaining"}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Fatalf("bin_state keys = %v, want %v", got, want)
-	}
-	for i := range want {
-		if got[i] != want[i] {
-			t.Fatalf("bin_state keys = %v, want %v", got, want)
-		}
 	}
 }
 
@@ -80,20 +69,13 @@ func TestEnrichViewBinState_CopiesTheNodeBinsRow(t *testing.T) {
 // still reaches the tile.
 func TestEnrichViewBinState_BareCartCarriesNoMarkerCode(t *testing.T) {
 	t.Parallel()
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if err := json.NewEncoder(w).Encode([]map[string]any{
-			{"node_name": "VB-S2", "bin_id": 7, "bin_label": "CART-7", "bin_type_code": "CART-A-BARE", "bare": true, "occupied": true},
-			{"node_name": "VB-S1", "bin_id": 8, "bin_label": "CART-8", "bin_type_code": "CART-A", "occupied": true},
-		}); err != nil {
-			t.Errorf("encode: %v", err)
-		}
-	}))
-	t.Cleanup(srv.Close)
-
 	views := []domain.OperatorStationView{{Nodes: []domain.StationNodeView{
 		{Node: domain.Node{CoreNodeName: "VB-S2"}}, {Node: domain.Node{CoreNodeName: "VB-S1"}},
 	}}}
-	enrichViewBinState(engine.NewCoreClient(srv.URL), views)
+	enrichViewBinState(heldBins(
+		protocol.NodeBinsRow{Node: "VB-S2", BinID: 7, BinLabel: "CART-7", BinTypeCode: "CART-A-BARE", Bare: true, Occupied: true},
+		protocol.NodeBinsRow{Node: "VB-S1", BinID: 8, BinLabel: "CART-8", BinTypeCode: "CART-A", Occupied: true},
+	), time.Now(), views)
 
 	bare, real := views[0].Nodes[0].BinState, views[0].Nodes[1].BinState
 	if bare == nil || real == nil {
@@ -109,28 +91,27 @@ func TestEnrichViewBinState_BareCartCarriesNoMarkerCode(t *testing.T) {
 
 // TestEnrichViewBinState_ProductionTileJSONIsPinned holds the Production
 // page's JSON for a tile's bin (the template marshals BinState whole,
-// `{{json .BinState}}`, and prints its count) byte for byte: a tote cart at a
-// count of 0 standing on a base, and a full. The station view's reads moving
-// (one node-bins call per board, or Core's feed) must not reach this page,
-// which keeps its own read. Built twice and compared before the literal is.
+// `{{json .BinState}}`) byte for byte: a tote cart with no parts, a partial
+// and a held partial. CHANGED from the HTTP read it replaced: no count
+// (uop_remaining is 0 but for a held partial's declared count), stocked and
+// partial in its place. Built twice and compared before the literal is.
 func TestEnrichViewBinState_ProductionTileJSONIsPinned(t *testing.T) {
 	t.Parallel()
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if _, err := w.Write([]byte(`[
-			{"node_name":"PT-1","bin_id":9,"bin_label":"CART-9","bin_type_code":"TOTE-1","payload_code":"PART-A",
-			 "uop_remaining":0,"delta_epoch":4,"manifest":"{\"items\":[]}","manifest_confirmed":true,"occupied":true,
-			 "totes_on_cart":0,"totes_per_layer":4},
-			{"node_name":"PT-2","bin_id":10,"bin_label":"BIN-10","bin_type_code":"KD-1","payload_code":"PART-B",
-			 "uop_remaining":48,"manifest_confirmed":false,"occupied":true}]`)); err != nil {
-			t.Errorf("stub Core write: %v", err)
-		}
-	}))
-	t.Cleanup(srv.Close)
+	manifest := `{"items":[]}`
+	held := heldBins(
+		protocol.NodeBinsRow{Node: "PT-1", State: protocol.BinsStateOccupied, BinID: 9, BinLabel: "CART-9", BinTypeCode: "TOTE-1",
+			PayloadCode: "PART-A", Epoch: 4, Manifest: &manifest, ManifestConfirmed: true, Occupied: true},
+		protocol.NodeBinsRow{Node: "PT-2", State: protocol.BinsStateOccupied, BinID: 10, BinLabel: "BIN-10", BinTypeCode: "KD-1",
+			PayloadCode: "PART-B", Occupied: true, Stocked: true, Partial: true, UOPCapacity: 60},
+		protocol.NodeBinsRow{Node: "PT-3", State: protocol.BinsStateOccupied, BinID: 11, BinLabel: "BIN-11", BinTypeCode: "KD-1",
+			PayloadCode: "PART-B", Occupied: true, Stocked: true, Partial: true, UOPCapacity: 60,
+			HeldSince: "2026-10-19T08:00:00Z", HeldFor: "LINE-1", HeldUOP: 12},
+	)
 	build := func() string {
 		views := []domain.OperatorStationView{{Nodes: []domain.StationNodeView{
-			{Node: domain.Node{CoreNodeName: "PT-1"}}, {Node: domain.Node{CoreNodeName: "PT-2"}},
+			{Node: domain.Node{CoreNodeName: "PT-1"}}, {Node: domain.Node{CoreNodeName: "PT-2"}}, {Node: domain.Node{CoreNodeName: "PT-3"}},
 		}}}
-		enrichViewBinState(engine.NewCoreClient(srv.URL), views)
+		enrichViewBinState(held, time.Now(), views)
 		var out []string
 		for _, n := range views[0].Nodes {
 			raw, err := json.Marshal(n.BinState)
@@ -145,9 +126,46 @@ func TestEnrichViewBinState_ProductionTileJSONIsPinned(t *testing.T) {
 	if again := build(); again != got {
 		t.Fatalf("two builds differ:\n%s\n%s", got, again)
 	}
-	want := `{"bin_id":9,"bin_label":"CART-9","bin_type_code":"TOTE-1","payload_code":"PART-A","uop_remaining":0,"manifest":"{\"items\":[]}","manifest_confirmed":true,"occupied":true}` + "\n" +
-		`{"bin_id":10,"bin_label":"BIN-10","bin_type_code":"KD-1","payload_code":"PART-B","uop_remaining":48,"manifest_confirmed":false,"occupied":true}`
+	want := `{"bin_id":9,"bin_label":"CART-9","bin_type_code":"TOTE-1","payload_code":"PART-A","uop_remaining":0,"manifest":"{\"items\":[]}","manifest_confirmed":true,"occupied":true,"stocked":false}` + "\n" +
+		`{"bin_id":10,"bin_label":"BIN-10","bin_type_code":"KD-1","payload_code":"PART-B","uop_remaining":0,"manifest_confirmed":false,"occupied":true,"uop_capacity":60,"stocked":true,"partial":true}` + "\n" +
+		`{"bin_id":11,"bin_label":"BIN-11","bin_type_code":"KD-1","payload_code":"PART-B","uop_remaining":12,"manifest_confirmed":false,"occupied":true,"uop_capacity":60,"held_since":"2026-10-19T08:00:00Z","held_for":"LINE-1","stocked":true,"partial":true}`
 	if got != want {
 		t.Errorf("the Production page's bin JSON moved:\n got %s\nwant %s", got, want)
+	}
+}
+
+// TestEnrichViewBinState_OnlyACurrentTable: with no table held, or one Core
+// has not confirmed for longer than the screens' limit, no tile gets a
+// bin_state (the page shows what it showed when Core could not be read); a
+// name the table holds no row for gets none either.
+func TestEnrichViewBinState_OnlyACurrentTable(t *testing.T) {
+	t.Parallel()
+	tiles := func() []domain.OperatorStationView {
+		return []domain.OperatorStationView{{Nodes: []domain.StationNodeView{
+			{Node: domain.Node{CoreNodeName: "OT-1"}}, {Node: domain.Node{CoreNodeName: "OT-UNWATCHED"}},
+		}}}
+	}
+	row := protocol.NodeBinsRow{Node: "OT-1", State: protocol.BinsStateOccupied, BinID: 3, Occupied: true}
+
+	views := tiles()
+	enrichViewBinState(engine.NodeBinsState{}, time.Now(), views)
+	if views[0].Nodes[0].BinState != nil {
+		t.Error("nothing held: a tile got a bin_state")
+	}
+	enrichViewBinState(engine.NodeBinsState{}, time.Now(), nil)
+
+	views = tiles()
+	enrichViewBinState(heldBins(row), time.Now().Add(engine.FeedAsOfAfter+time.Second), views)
+	if views[0].Nodes[0].BinState != nil {
+		t.Error("a table older than the screens' limit: a tile got a bin_state")
+	}
+
+	views = tiles()
+	enrichViewBinState(heldBins(row), time.Now(), views)
+	if bs := views[0].Nodes[0].BinState; bs == nil || bs.BinID != 3 {
+		t.Errorf("a current table: bin_state = %+v, want bin 3", bs)
+	}
+	if views[0].Nodes[1].BinState != nil {
+		t.Error("a name with no row got a bin_state")
 	}
 }

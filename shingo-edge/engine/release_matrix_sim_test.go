@@ -82,7 +82,7 @@ func TestReleaseMatrixSim(t *testing.T) {
 				statuses(h, "removal", S)
 				// The sim operator presses a same-part swap once the bin is
 				// done (binNotDone): the pulled side has run out.
-				h.core.binAt = &NodeBinInfo{NodeName: fxPress, BinID: fxBin, PayloadCode: fxPart, UOPRemaining: 0, Occupied: true}
+				h.binAtPress(0)
 			},
 			act: simPress("removal"), probe: probes(pPull)},
 	})

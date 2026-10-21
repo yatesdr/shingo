@@ -165,7 +165,7 @@ const document = {
 // ── the network: every request is captured, and answered ─────────────────────
 
 let requests = [];
-const marketBins = [{ node_name: 'MARKET-GROUP.SMN_M1', payload_code: 'PART-A', uop_remaining: 40 }];
+const marketBins = [{ node_name: 'MARKET-GROUP.SMN_M1', payload_code: 'PART-A', stocked: true, partial: true, uop_capacity: 48 }];
 const manifests = {
     'PART-A': { uop_capacity: 24, items: [{ part_number: 'PN-A1', parts_per_cycle: 2, description: 'left' }] },
 };
@@ -504,7 +504,8 @@ const loadBody = { payload_code: 'PART-A', uop_count: 24,
     await tap(barButtons()[1]);
     eq(requests.map(r => r.method + ' ' + r.url), ['GET /api/process-nodes/1/market-bins'],
         'PULL FROM MARKET: the picker reads the market');
-    await tapOverlay('SMN_M1PART-AUoP: 40');
+    // CHANGED (the bins table carries no count): the bin says Partial.
+    await tapOverlay('SMN_M1PART-APartial');
     eq(posts(), [{ method: 'POST', url: '/api/process-nodes/1/pull-from-market',
         body: { source_core_node: 'MARKET-GROUP.SMN_M1' } }],
     'PULL FROM MARKET: a bin\'s tap posts pull-from-market with its full node name');

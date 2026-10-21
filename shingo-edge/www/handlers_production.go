@@ -14,56 +14,51 @@ import (
 	"shingoedge/plc"
 )
 
-// enrichViewBinState fetches bin state from Core and attaches it to each node in the views.
-func enrichViewBinState(coreAPI *engine.CoreClient, views []domain.OperatorStationView) {
-	if coreAPI == nil || !coreAPI.Available() {
+// enrichViewBinState stamps each tile's bin_state from the bins table this
+// Edge holds (held, LocalNodeBins) while the table is current by the screens'
+// rule (engine.CurrentAt): the row's carrier, and whether it holds parts
+// (Stocked) and fewer than its part's capacity (Partial). Never a count: the
+// row carries none (a held partial's declared count excepted, HeldUOP). With
+// no table held, or one Core has not confirmed for longer than
+// engine.FeedAsOfAfter, no tile gets a bin_state, as when Core could not be
+// read: this page has no "as of" to draw beside an old one. No call to Core.
+func enrichViewBinState(held engine.NodeBinsState, now time.Time, views []domain.OperatorStationView) {
+	if !held.Held {
 		return
 	}
-	var nodeNames []string
-	for _, v := range views {
-		for _, n := range v.Nodes {
-			if n.Node.CoreNodeName != "" {
-				nodeNames = append(nodeNames, n.Node.CoreNodeName)
-			}
-		}
-	}
-	if len(nodeNames) == 0 {
+	if _, old := engine.CurrentAt(held.ReceivedAt, held.ConfirmedAt, now); old {
 		return
-	}
-	bins, _, err := coreAPI.FetchNodeBins(nodeNames)
-	if err != nil || len(bins) == 0 {
-		return
-	}
-	binMap := make(map[string]engine.NodeBinInfo, len(bins))
-	for _, b := range bins {
-		binMap[b.NodeName] = b
 	}
 	for i := range views {
 		for j := range views[i].Nodes {
-			name := views[i].Nodes[j].Node.CoreNodeName
-			if info, ok := binMap[name]; ok {
-				// A bare cart's type is the marker Core stamps between the
-				// stages of a two-stage unloader: bookkeeping, never an
-				// operator's word. Only the bare flag travels to the pages
-				// (TestEnrichViewBinState_BareCartCarriesNoMarkerCode).
-				binTypeCode := info.BinTypeCode
-				if info.Bare {
-					binTypeCode = ""
-				}
-				views[i].Nodes[j].BinState = &domain.NodeBinState{
-					BinID:             info.BinID,
-					BinLabel:          info.BinLabel,
-					BinTypeCode:       binTypeCode,
-					Bare:              info.Bare,
-					PayloadCode:       info.PayloadCode,
-					UOPRemaining:      info.UOPRemaining,
-					Manifest:          info.Manifest,
-					ManifestConfirmed: info.ManifestConfirmed,
-					Occupied:          info.Occupied,
-					UOPCapacity:       info.UOPCapacity,
-					HeldSince:         info.HeldSince,
-					HeldFor:           info.HeldFor,
-				}
+			row, ok := held.Rows[views[i].Nodes[j].Node.CoreNodeName]
+			if !ok || views[i].Nodes[j].Node.CoreNodeName == "" {
+				continue
+			}
+			// A bare cart's type is the marker Core stamps between the stages
+			// of a two-stage unloader: bookkeeping, never an operator's word.
+			// Only the bare flag travels to the pages
+			// (TestEnrichViewBinState_BareCartCarriesNoMarkerCode).
+			binTypeCode := row.BinTypeCode
+			if row.Bare {
+				binTypeCode = ""
+			}
+			stocked := row.Stocked
+			views[i].Nodes[j].BinState = &domain.NodeBinState{
+				BinID:             row.BinID,
+				BinLabel:          row.BinLabel,
+				BinTypeCode:       binTypeCode,
+				Bare:              row.Bare,
+				PayloadCode:       row.PayloadCode,
+				UOPRemaining:      row.HeldUOP,
+				Manifest:          row.Manifest,
+				ManifestConfirmed: row.ManifestConfirmed,
+				Occupied:          row.Occupied,
+				UOPCapacity:       row.UOPCapacity,
+				HeldSince:         row.HeldSince,
+				HeldFor:           row.HeldFor,
+				Stocked:           &stocked,
+				Partial:           row.Partial,
 			}
 		}
 	}
@@ -399,7 +394,7 @@ func (h *Handlers) handleProduction(w http.ResponseWriter, r *http.Request) {
 	} else {
 		stationViews = buildStationViews(r.Context(), h.engine, activeProcess)
 	}
-	enrichViewBinState(h.engine.CoreAPI(), stationViews)
+	enrichViewBinState(h.engine.LocalNodeBins(), time.Now(), stationViews)
 	enrichViewContainmentTargets(h.engine, stationViews)
 
 	if activeProcess != nil {
@@ -506,7 +501,7 @@ func (h *Handlers) handleProductionPartial(w http.ResponseWriter, r *http.Reques
 	} else {
 		stationViews = buildStationViews(r.Context(), h.engine, activeProcess)
 	}
-	enrichViewBinState(h.engine.CoreAPI(), stationViews)
+	enrichViewBinState(h.engine.LocalNodeBins(), time.Now(), stationViews)
 	enrichViewContainmentTargets(h.engine, stationViews)
 
 	var activeProcessID int64

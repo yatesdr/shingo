@@ -55,7 +55,7 @@ func TestReleaseMatrixSingleRobot(t *testing.T) {
 			build: func(h *relHarness) {
 				h.singleRobot(protocol.ClaimRoleConsume)
 				statuses(h, "swap", S)
-				h.core.binAt = &NodeBinInfo{NodeName: fxPress, BinID: fxBin, PayloadCode: fxPart, UOPRemaining: fxCount, Occupied: true}
+				h.binAtPress(fxCount)
 			},
 			act: orderClick("swap", dispPull(5)), probe: probes(pUOP, pEnv)},
 	})

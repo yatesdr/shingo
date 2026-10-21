@@ -24,6 +24,7 @@ func TestEmptyOut_EnvelopeNamesNoPart(t *testing.T) {
 	db := testEngineDB(t)
 	eng := testEngine(t, db)
 	eng.coreClient = stubCoreClient(srv.URL)
+	holdProcessNodes(t, eng, true, "PART-U")
 
 	procID, err := db.CreateProcess("D2-PROC", "", "", "", false)
 	testutil.MustNoErr(t, err, "create process")

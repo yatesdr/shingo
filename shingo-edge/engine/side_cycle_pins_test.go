@@ -57,6 +57,35 @@ type scCore struct {
 	// (409, {"error": refuseLoad}), as its carrier rule answers a LOAD onto a
 	// carrier the part may not ride.
 	refuseLoad string
+	// eng, once bound (bind), is the Edge this Core pushes its bins table to
+	// after every change to a window, as Core's bins push does: the sites that
+	// decide from the table read what node-bins would have answered.
+	eng *Engine
+}
+
+// bind makes c push its bins table to eng now and after every change.
+func (c *scCore) bind(t *testing.T, eng *Engine) {
+	t.Helper()
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.eng = eng
+	if err := c.pushLocked(); err != nil {
+		t.Fatalf("scCore: push the bins table: %v", err)
+	}
+}
+
+// pushLocked holds the windows as eng's bins table, each as node-bins answers
+// it (bin 77, epoch 5); nothing before bind.
+func (c *scCore) pushLocked() error {
+	if c.eng == nil {
+		return nil
+	}
+	rows := map[string]NodeBinInfo{}
+	for n, win := range c.windows {
+		rows[n] = NodeBinInfo{NodeName: n, Occupied: win.occupied, PayloadCode: win.payload, BinID: 77,
+			UOPRemaining: win.uop, DeltaEpoch: 5}
+	}
+	return pushBins(c.eng, binsRowsOf(rows)...)
 }
 
 // nodeBinReads is how many node-bins requests Core has served so far.
@@ -78,6 +107,7 @@ func (c *scCore) set(node string, occupied bool, payload string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.windows[node] = &scWindow{occupied: occupied, payload: payload}
+	_ = c.pushLocked()
 }
 
 // setCount is set with the carrier's count as well.
@@ -85,6 +115,7 @@ func (c *scCore) setCount(node string, occupied bool, payload string, uop int) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.windows[node] = &scWindow{occupied: occupied, payload: payload, uop: uop}
+	_ = c.pushLocked()
 }
 
 // clearCount is how many bin-clear requests Core has accepted so far.
@@ -124,6 +155,7 @@ func (c *scCore) serve(w http.ResponseWriter, r *http.Request) {
 			win.payload = req.PayloadCode
 			win.uop = 40
 		}
+		_ = c.pushLocked()
 		_ = json.NewEncoder(w).Encode(BinLoadResponse{
 			Status: "ok", BinID: 77, PayloadCode: req.PayloadCode, UOPRemaining: 40, DeltaEpoch: 3,
 		})
@@ -141,6 +173,7 @@ func (c *scCore) serve(w http.ResponseWriter, r *http.Request) {
 		win.payload = ""
 		win.uop = 0
 		c.clears++
+		_ = c.pushLocked()
 		_ = json.NewEncoder(w).Encode(map[string]any{"status": "ok", "bin_id": 77, "delta_epoch": 4, "cleared_payload_code": cleared})
 	default:
 		_ = json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
@@ -181,6 +214,7 @@ func scLoaderEngine(t *testing.T, window string) (*Engine, *store.DB, *scCore, *
 	eng.wireEventHandlers()
 	core := newSCCore(t)
 	eng.coreClient = stubCoreClient(core.srv.URL)
+	core.bind(t, eng)
 	logs := &scLog{}
 	eng.logFn = logs.fn
 
@@ -307,8 +341,8 @@ func TestPinD3a_LoadAfterEcho_ConfirmsTheL1AndFilesOneL2(t *testing.T) {
 	scDeliver(t, eng, db, l1)
 	readsBefore := core.nodeBinReads()
 	testutil.MustNoErr(t, eng.LoadBin(nodeID, "", nil, scManifest), "LoadBin")
-	if n := core.nodeBinReads() - readsBefore; n != 1 {
-		t.Errorf("node-bins reads during LOAD = %d, want 1 (the occupancy check) — the L2's part "+
+	if n := core.nodeBinReads() - readsBefore; n != 0 {
+		t.Errorf("node-bins reads during LOAD = %d, want 0 (the occupancy check reads the bins table) — the L2's part "+
 			"comes from LOAD's hand, not a second read", n)
 	}
 
@@ -443,6 +477,7 @@ func TestLanding_RePushesOnlyItsOwnLoader(t *testing.T) {
 	eng.wireEventHandlers()
 	core := newSCCore(t)
 	eng.coreClient = stubCoreClient(core.srv.URL)
+	core.bind(t, eng)
 
 	prefix := "RP"
 	own := prefix + "-MSWAP-NODE"
@@ -602,6 +637,7 @@ func TestPinDoubleTapGuard_KeysOnAnyMoveAtTheProcessNode(t *testing.T) {
 
 	eng := testEngine(t, db)
 	eng.coreClient = stubCoreClient(srv.URL)
+	holdProcessNodes(t, eng, true, "")
 	err = eng.PushEmptyOut(nodeID)
 	if err == nil || !strings.Contains(err.Error(), "already has an empty-out in flight") {
 		t.Errorf("PushEmptyOut with an arriving move tracked here = %v, want the in-flight refusal", err)
@@ -624,6 +660,7 @@ func TestPinDoubleTapGuard_ClearAfterPushEmptySkips(t *testing.T) {
 
 	eng := testEngine(t, db)
 	eng.coreClient = stubCoreClient(srv.URL)
+	holdProcessNodes(t, eng, true, "")
 	testutil.MustNoErr(t, eng.PushEmptyOut(nodeID), "PushEmptyOut")
 	testutil.MustNoErr(t, eng.ClearBin(nodeID, "", false, nil), "ClearBin after PUSH EMPTY")
 	if n, _ := countMovesTo(t, db, nodeID, "EMPTY-TOTES"); n != 1 {
@@ -676,6 +713,7 @@ func TestPinOutbound_RoutesToTheLoadersOutbound_AtAllThreeSites(t *testing.T) {
 		c := newSCCore(t)
 		c.set(core, true, "")
 		eng.coreClient = stubCoreClient(c.srv.URL)
+		c.bind(t, eng)
 		testutil.MustNoErr(t, eng.LoadBin(nodeID, "PART-OB", nil, scManifest), "LoadBin")
 		if got := scDestsFrom(t, db, core); len(got) != 1 || got[0] != "NEW-DEST" {
 			t.Errorf("L2 destinations = %v, want [NEW-DEST]", got)
@@ -688,6 +726,7 @@ func TestPinOutbound_RoutesToTheLoadersOutbound_AtAllThreeSites(t *testing.T) {
 		c := newSCCore(t)
 		c.set(core, true, "")
 		eng.coreClient = stubCoreClient(c.srv.URL)
+		c.bind(t, eng)
 		testutil.MustNoErr(t, eng.PushEmptyOut(nodeID), "PushEmptyOut")
 		if got := scDestsFrom(t, db, core); len(got) != 1 || got[0] != "NEW-DEST" {
 			t.Errorf("U2 destinations = %v, want [NEW-DEST]", got)
@@ -702,6 +741,7 @@ func TestPinOutbound_RoutesToTheLoadersOutbound_AtAllThreeSites(t *testing.T) {
 		c := newSCCore(t)
 		c.set(core, true, "")
 		eng.coreClient = stubCoreClient(c.srv.URL)
+		c.bind(t, eng)
 		scDeliveredRetrieve(t, db, "obc-l1", orders.TypeRetrieve, nodeID, true, core)
 		testutil.MustNoErr(t, eng.LoadBin(nodeID, "PART-OB", nil, scManifest), "LoadBin")
 		if got := scDestsFrom(t, db, core); len(got) != 1 || got[0] != "NEW-DEST" {
@@ -722,6 +762,7 @@ func TestPinOutbound_BlankFilesNothing_AtAllThreeSites(t *testing.T) {
 		c := newSCCore(t)
 		c.set(core, true, "")
 		eng.coreClient = stubCoreClient(c.srv.URL)
+		c.bind(t, eng)
 		testutil.MustNoErr(t, eng.LoadBin(nodeID, "PART-OB", nil, scManifest), "LoadBin")
 		if got := scDestsFrom(t, db, core); len(got) != 0 {
 			t.Errorf("L2 destinations = %v, want none", got)
@@ -734,6 +775,7 @@ func TestPinOutbound_BlankFilesNothing_AtAllThreeSites(t *testing.T) {
 		c := newSCCore(t)
 		c.set(core, true, "")
 		eng.coreClient = stubCoreClient(c.srv.URL)
+		c.bind(t, eng)
 		// PUSH EMPTY with nowhere to push is refused, not reported done: the
 		// empty-out IS the operation, and nothing was committed.
 		if err := eng.PushEmptyOut(nodeID); err == nil {
@@ -752,6 +794,7 @@ func TestPinOutbound_BlankFilesNothing_AtAllThreeSites(t *testing.T) {
 		c := newSCCore(t)
 		c.set(core, true, "")
 		eng.coreClient = stubCoreClient(c.srv.URL)
+		c.bind(t, eng)
 		l1 := scDeliveredRetrieve(t, db, "obbc-l1", orders.TypeRetrieve, nodeID, true, core)
 		testutil.MustNoErr(t, db.SetProcessNodeRuntimeActiveOrder(nodeID, &l1), "point runtime at L1")
 		testutil.MustNoErr(t, eng.LoadBin(nodeID, "PART-OB", nil, scManifest), "LoadBin")
@@ -781,6 +824,7 @@ func TestPinOutbound_SameNodeFilesNothing_AtTheTwoGuardedSites(t *testing.T) {
 		c := newSCCore(t)
 		c.set(core, true, "")
 		eng.coreClient = stubCoreClient(c.srv.URL)
+		c.bind(t, eng)
 		if err := eng.PushEmptyOut(nodeID); err == nil {
 			t.Error("PushEmptyOut with a same-node outbound returned nil, want a refusal")
 		}
@@ -797,6 +841,7 @@ func TestPinOutbound_SameNodeFilesNothing_AtTheTwoGuardedSites(t *testing.T) {
 		c := newSCCore(t)
 		c.set(core, true, "")
 		eng.coreClient = stubCoreClient(c.srv.URL)
+		c.bind(t, eng)
 		scDeliveredRetrieve(t, db, "obsc-l1", orders.TypeRetrieve, nodeID, true, core)
 		testutil.MustNoErr(t, eng.LoadBin(nodeID, "PART-OB", nil, scManifest), "LoadBin")
 		if got := scDestsFrom(t, db, core); len(got) != 0 {
@@ -814,6 +859,7 @@ func TestLoadFallback_RefusesASameNodeL2(t *testing.T) {
 	c := newSCCore(t)
 	c.set(core, true, "")
 	eng.coreClient = stubCoreClient(c.srv.URL)
+	c.bind(t, eng)
 	testutil.MustNoErr(t, eng.LoadBin(nodeID, "PART-OB", nil, scManifest), "LoadBin")
 	if got := scDestsFrom(t, db, core); len(got) != 0 {
 		t.Errorf("L2 destinations = %v, want none — a same-node move is refused at every creator", got)

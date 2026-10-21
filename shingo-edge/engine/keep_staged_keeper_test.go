@@ -2,6 +2,7 @@ package engine
 
 import (
 	"testing"
+	"time"
 
 	"shingo/protocol"
 	"shingo/protocol/testutil"
@@ -213,4 +214,64 @@ func TestKeepStagedKeeper_ProduceRefillsUnderCoresSpelling(t *testing.T) {
 	if n != 2 {
 		t.Fatalf("orders to the spot = %d after three sweeps, want the 2 already coming", n)
 	}
+}
+
+// THE KEEPER DECIDES FROM THE BINS TABLE (site 3 of the reads), and a refill
+// whose row has ended while Core's read still has it inbound is still coming:
+// the table is pushed a moment after an order ends, so for that moment the
+// read shows the spot bare while the line's rows show the refill confirmed.
+// Counted by the read's own inbound list, no second refill is ordered behind
+// it; with the read no longer holding it inbound, the bare spot is refilled.
+// A table that may not be decided from orders nothing.
+func TestKeepStagedKeeper_DecidesFromTheTable(t *testing.T) {
+	t.Parallel()
+	landedRefill := func(t *testing.T, eng *Engine, db *store.DB, nodeID int64) string {
+		t.Helper()
+		o, err := eng.orderMgr.CreateRetrieveOrder(&nodeID, false, 1, ksSpot, ksMarket, "", "standard", ksPart, true, false,
+			orders.Attached("floor-landed"))
+		testutil.MustNoErr(t, err, "refill")
+		testutil.MustNoErr(t, db.UpdateOrderStatus(o.ID, string(protocol.StatusConfirmed)), "the refill landed")
+		return o.UUID
+	}
+	line := protocol.NodeBinsRow{Node: ksLine, Occupied: true, PayloadCode: ksPart, Stocked: true}
+
+	t.Run("a landed refill the read still has inbound", func(t *testing.T) {
+		t.Parallel()
+		eng, db, nodeID := keeperCell(t)
+		eng.coreClient = stubCoreClient(testCoreURL)
+		uuid := landedRefill(t, eng, db, nodeID)
+		holdActableBins(t, eng, line, protocol.NodeBinsRow{Node: ksSpot,
+			Inbound: []protocol.NodeBinsInbound{{OrderUUID: uuid, Payload: ksPart, From: ksMarket}}})
+		eng.sweepCellLevels()
+		if got := readSpotOrders(t, db, nodeID); got.refills != 0 {
+			t.Fatalf("refills = %d behind a refill Core still has inbound, want 0", got.refills)
+		}
+		// The next read: the refill stands on the spot, and it is the spare.
+		holdActableBins(t, eng, line, protocol.NodeBinsRow{Node: ksSpot, Occupied: true, PayloadCode: ksPart, Stocked: true})
+		eng.sweepCellLevels()
+		if got := readSpotOrders(t, db, nodeID); got.refills != 0 {
+			t.Fatalf("refills = %d with the spare standing, want 0", got.refills)
+		}
+	})
+	t.Run("a landed refill the read no longer has inbound", func(t *testing.T) {
+		t.Parallel()
+		eng, db, nodeID := keeperCell(t)
+		eng.coreClient = stubCoreClient(testCoreURL)
+		landedRefill(t, eng, db, nodeID)
+		holdActableBins(t, eng, line, protocol.NodeBinsRow{Node: ksSpot})
+		eng.sweepCellLevels()
+		if got := readSpotOrders(t, db, nodeID); got.refills != 1 {
+			t.Fatalf("refills = %d on a bare spot nothing is coming to, want 1", got.refills)
+		}
+	})
+	t.Run("a table that may not be decided from", func(t *testing.T) {
+		t.Parallel()
+		eng, db, nodeID := keeperCell(t)
+		eng.coreClient = stubCoreClient(testCoreURL)
+		eng.feeds.now = func() time.Time { return time.Now().Add(ActableAckWithin + time.Second) }
+		eng.sweepCellLevels()
+		if got := readSpotOrders(t, db, nodeID); got.refills != 0 {
+			t.Fatalf("refills = %d from a table not actable, want 0", got.refills)
+		}
+	})
 }

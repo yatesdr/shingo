@@ -107,6 +107,7 @@ func TestClearBin_DoubleTapCreatesOneEmptyOut(t *testing.T) {
 
 	eng := testEngine(t, db)
 	eng.coreClient = stubCoreClient(srv.URL)
+	holdProcessNodes(t, eng, true, "TAP-PART")
 
 	testutil.MustNoErr(t, eng.ClearBin(nodeID, "", false, nil), "ClearBin first tap")
 	// The second tap must not mint a second move for one physical carrier — and

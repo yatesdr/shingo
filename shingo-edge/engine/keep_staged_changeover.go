@@ -276,46 +276,50 @@ func keepStagedSpotNames(claimSets ...[]processes.NodeClaim) []string {
 	return out
 }
 
-// readSpots asks Core about every spot in ONE call. A spot Core does not
-// answer for, or does not have, reads unknown.
+// readSpots reads every spot from the bins table. A spot the table cannot
+// answer for, or Core does not have, reads unknown.
 func (e *Engine) readSpots(changes []spotChange) map[string]spotRead {
 	reads, _ := e.readSpotsAnd(changes, nil)
 	return reads
 }
 
-// readSpotsAnd is readSpots with more nodes in the same call: also's rows come
-// back whole, by node name. Nothing to ask about, no call.
-func (e *Engine) readSpotsAnd(changes []spotChange, also []string) (map[string]spotRead, map[string]NodeBinInfo) {
+// readSpotsAnd is readSpots with more nodes in the same read: also's rows come
+// back whole, by node name (a changeover's parks; staging is on the watch
+// list).
+//
+// FROM THE BINS TABLE (site 1 of the reads), under the decision rule. A table
+// that may not be decided from answers nothing: every spot reads unknown, so a
+// start or a preview refuses (errUnknownSpots, the changeover's fail-closed
+// sentence) and a cancel orders no spot or park move, logged, as a failed read
+// did. A name the table holds no row for is unknown (a spot) or absent (also).
+func (e *Engine) readSpotsAnd(changes []spotChange, also []string) (map[string]spotRead, map[string]protocol.NodeBinsRow) {
 	reads := make(map[string]spotRead, len(changes))
-	extra := map[string]NodeBinInfo{}
-	if len(changes)+len(also) == 0 || e.coreClient == nil || !e.coreClient.Available() {
+	extra := map[string]protocol.NodeBinsRow{}
+	if len(changes)+len(also) == 0 {
 		return reads, extra
 	}
 	names := make([]string, 0, len(changes)+len(also))
-	isSpot := make(map[string]bool, len(changes))
 	for _, ch := range changes {
 		names = append(names, ch.spot)
-		isSpot[ch.spot] = true
 	}
-	isAlso := make(map[string]bool, len(also))
-	for _, n := range also {
-		isAlso[n] = true
-		if !isSpot[n] {
-			names = append(names, n)
-		}
-	}
-	rows, _, err := e.coreClient.FetchNodeBins(names)
+	names = append(names, also...)
+	rows, err := e.binsForDecision(names...)
 	if err != nil {
-		e.logFn("keep-staged: read %d node(s) at changeover: %v — no spot orders this time", len(names), err)
+		e.logFn("keep-staged: %d node(s) at changeover: the bins table cannot answer (%s) — no spot orders this time",
+			len(names), binsWhy(err))
 		return reads, extra
 	}
 	catalog := e.PayloadBinTypes()
-	for _, b := range rows {
-		if isSpot[b.NodeName] && e.spotNodeKnown(b.NodeName) {
-			reads[b.NodeName] = readOfRow(b, catalog)
+	for _, ch := range changes {
+		if r, ok := rows[ch.spot]; ok {
+			if read := readOfBinsRow(r, catalog); read.known {
+				reads[ch.spot] = read
+			}
 		}
-		if isAlso[b.NodeName] {
-			extra[b.NodeName] = b
+	}
+	for _, n := range also {
+		if r, ok := rows[n]; ok {
+			extra[n] = r
 		}
 	}
 	return reads, extra
@@ -412,7 +416,14 @@ func (e *Engine) abortSpotOrdersNotFlown(spots []spotChange) ([]domain.Order, ma
 // spot: whatever stands there is the running style's. And not for a spot the
 // running style still keeps after the save — a spot moved from one cell to
 // another in one save is the new keeper's, and its own request judges the
-// spare there. One node-bins read for every spot the save left.
+// spare there.
+//
+// FROM THE BINS TABLE, UNATTENDED: the spots are on the watch list
+// (ListClaimWatchPlaces), read under BinsActable. A table that may not be
+// decided from, a spot it holds no row for (the lists rebuilt since the save
+// and the spot left them) and a spot Core does not know leave the spare where
+// it stands, logged, as a failed read did; the board names a bin a person must
+// move.
 func (e *Engine) spotsCleared(moved []processes.KeptSpot) {
 	if len(moved) == 0 {
 		return
@@ -453,25 +464,27 @@ func (e *Engine) spotsCleared(moved []processes.KeptSpot) {
 		}
 		left = append(left, gone{k, node})
 	}
-	if len(left) == 0 || e.coreClient == nil || !e.coreClient.Available() {
+	if len(left) == 0 {
 		return
 	}
 	names := make([]string, 0, len(left))
 	for _, g := range left {
 		names = append(names, g.k.Spot)
 	}
-	rows, _, err := e.coreClient.FetchNodeBins(names)
+	rows, err := e.binsForDecision(names...)
 	if err != nil {
-		e.logFn("keep-staged: read %d spot(s) left by a save: %v — spares left where they stand", len(names), err)
+		e.logFn("keep-staged: %d spot(s) left by a save: the bins table cannot answer (%s) — spares left where they stand",
+			len(names), binsWhy(err))
 		return
 	}
 	for _, g := range left {
-		read := spotRead{}
-		for _, b := range rows {
-			if b.NodeName == g.k.Spot && e.spotNodeKnown(b.NodeName) {
-				read = readOfRow(b, nil) // target zero: whatever stands there goes, so nothing is judged
-			}
+		row, ok := rows[g.k.Spot]
+		if !ok {
+			e.logFn("keep-staged: spot %s left by %s: the bins table holds no row for it — spare left where it stands",
+				g.k.Spot, g.k.Line)
+			continue
 		}
+		read := readOfBinsRow(row, nil) // target zero: whatever stands there goes, so nothing is judged
 		if !read.known || !read.occupied {
 			continue
 		}

@@ -7,7 +7,9 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
+	"shingo/protocol"
 	"shingo/protocol/testutil"
 	"shingoedge/domain"
 	"shingoedge/store/processes"
@@ -26,15 +28,14 @@ import (
 //	                       release target, and an ambiguous claim set is
 //	                       refused rather than guessed.
 //
-// The Core stub answers /api/telemetry/node-bins (the occupancy read the
-// verbs gate on) and /api/telemetry/bin-quality-hold (recorded, asserted).
+// The Core stub answers /api/telemetry/bin-quality-hold (recorded, asserted).
+// What stands at a node is the bins table's (holdActableBins), and at a
+// containment node the containment copy's (holdActableContainment).
 
 type holdStubCore struct {
-	mu        sync.Mutex
-	bins      []NodeBinInfo
-	holds     []int64
-	unholds   []int64
-	nodesSeen []string
+	mu      sync.Mutex
+	holds   []int64
+	unholds []int64
 }
 
 func (s *holdStubCore) server() *httptest.Server {
@@ -42,9 +43,6 @@ func (s *holdStubCore) server() *httptest.Server {
 		s.mu.Lock()
 		defer s.mu.Unlock()
 		switch {
-		case strings.HasPrefix(r.URL.Path, "/api/telemetry/node-bins"):
-			s.nodesSeen = append(s.nodesSeen, r.URL.Query().Get("nodes"))
-			_ = json.NewEncoder(w).Encode(s.bins)
 		case r.URL.Path == "/api/telemetry/bin-quality-hold":
 			var body struct {
 				BinID int64 `json:"bin_id"`
@@ -61,12 +59,6 @@ func (s *holdStubCore) server() *httptest.Server {
 			http.NotFound(w, r)
 		}
 	}))
-}
-
-func (s *holdStubCore) setBin(b NodeBinInfo) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.bins = []NodeBinInfo{b}
 }
 
 func (s *holdStubCore) holdCalls() (holds, unholds []int64) {
@@ -128,7 +120,7 @@ func TestSendBinToQualityHold_HoldsThePresentBin(t *testing.T) {
 	eng.coreClient = stubCoreClient(srv.URL)
 
 	nodeID := seedHoldNode(t, eng.db, "PLN-HOLD")
-	stub.setBin(NodeBinInfo{NodeName: "PLN-HOLD", BinID: 42, PayloadCode: "PART-HOLD", Occupied: true})
+	holdActableBins(t, eng, protocol.NodeBinsRow{Node: "PLN-HOLD", BinID: 42, PayloadCode: "PART-HOLD", Occupied: true})
 
 	order, err := eng.SendBinToQualityHold(nodeID, "station-3")
 	if err != nil {
@@ -161,10 +153,21 @@ func TestSendBinToQualityHold_RefusesWithoutRouteOrBin(t *testing.T) {
 
 	nodeID := seedHoldNode(t, eng.db, "PLN-HOLD2")
 
+	// Nothing held in the bins table: refused with the not-current sentence
+	// (site 8 of the reads), and nothing is moved.
+	if _, err := eng.SendBinToQualityHold(nodeID, "s"); err == nil ||
+		err.Error() != "Core's picture of PLN-HOLD2 is not current — try again" {
+		t.Errorf("hold with no table: err = %v, want the not-current sentence", err)
+	}
+
 	// No bin at the node: nothing to hold.
-	stub.setBin(NodeBinInfo{NodeName: "PLN-HOLD2", Occupied: false})
-	if _, err := eng.SendBinToQualityHold(nodeID, "s"); err == nil {
-		t.Error("hold with no bin must be refused")
+	holdActableBins(t, eng, protocol.NodeBinsRow{Node: "PLN-HOLD2"},
+		protocol.NodeBinsRow{Node: "PLN-NOROUTE", BinID: 7, PayloadCode: "PART-X", Occupied: true})
+	if _, err := eng.SendBinToQualityHold(nodeID, "s"); err == nil || !strings.Contains(err.Error(), "no bin at node") {
+		t.Errorf("hold with no bin: err = %v, want the no-bin refusal", err)
+	}
+	if moves := emptyOutMoves(t, eng, "PLN-HOLD2"); len(moves) != 0 {
+		t.Errorf("refused holds created moves: %+v", moves)
 	}
 
 	// A bin, but the claim has no containment route (reseed without one).
@@ -190,7 +193,7 @@ func TestSendBinToQualityHold_RefusesWithoutRouteOrBin(t *testing.T) {
 	}
 	_, err = eng.db.EnsureProcessNodeRuntime(node2)
 	testutil.MustNoErr(t, err, "ensure runtime")
-	stub.setBin(NodeBinInfo{NodeName: "PLN-NOROUTE", BinID: 7, PayloadCode: "PART-X", Occupied: true})
+	// (the table holds a bin at PLN-NOROUTE, above)
 	_, err = eng.SendBinToQualityHold(node2, "s")
 	if err == nil || !strings.Contains(err.Error(), "no containment destination") {
 		t.Errorf("err = %v, want the configure-the-claim refusal", err)
@@ -222,7 +225,8 @@ func TestReleaseFromContainment_AmbiguityAndHappyPath(t *testing.T) {
 	testutil.MustNoErr(t, err, "ensure runtime")
 
 	// Happy path: the bin is standing at the containment node.
-	stub.setBin(NodeBinInfo{NodeName: "CONT-1", BinID: 42, PayloadCode: "PART-HOLD", Occupied: true})
+	holdActableContainment(t, eng, protocol.ContainmentDestination{Node: "CONT-1", Children: []string{},
+		Bins: []protocol.ContainmentBin{{Node: "CONT-1", BinID: 42, PayloadCode: "PART-HOLD"}}})
 	order, err := eng.ReleaseFromContainment("CONT-1", 42, "quality")
 	if err != nil {
 		t.Fatalf("ReleaseFromContainment: %v", err)
@@ -236,7 +240,7 @@ func TestReleaseFromContainment_AmbiguityAndHappyPath(t *testing.T) {
 	}
 
 	// Stale screen: the bin is gone from the node — refused, not walked.
-	stub.setBin(NodeBinInfo{NodeName: "CONT-1", Occupied: false})
+	holdActableContainment(t, eng, protocol.ContainmentDestination{Node: "CONT-1", Children: []string{}, Bins: []protocol.ContainmentBin{}})
 	if _, err := eng.ReleaseFromContainment("CONT-1", 42, "quality"); err == nil ||
 		!strings.Contains(err.Error(), "not at") {
 		t.Errorf("err = %v, want the stale-screen refusal", err)
@@ -260,7 +264,8 @@ func TestReleaseFromContainment_AmbiguityAndHappyPath(t *testing.T) {
 	if err != nil {
 		t.Fatalf("upsert second producer's claim: %v", err)
 	}
-	stub.setBin(NodeBinInfo{NodeName: "CONT-1", BinID: 42, PayloadCode: "PART-HOLD", Occupied: true})
+	holdActableContainment(t, eng, protocol.ContainmentDestination{Node: "CONT-1", Children: []string{},
+		Bins: []protocol.ContainmentBin{{Node: "CONT-1", BinID: 42, PayloadCode: "PART-HOLD"}}})
 	order2, err := eng.ReleaseFromContainment("CONT-1", 42, "quality")
 	if err != nil {
 		t.Fatalf("release through a shared group: %v", err)
@@ -270,13 +275,27 @@ func TestReleaseFromContainment_AmbiguityAndHappyPath(t *testing.T) {
 	}
 
 	// The other payload's bin releases to the OTHER producer's outbound.
-	stub.setBin(NodeBinInfo{NodeName: "CONT-1", BinID: 99, PayloadCode: "PART-OTHER", Occupied: true})
+	holdActableContainment(t, eng, protocol.ContainmentDestination{Node: "CONT-1", Children: []string{},
+		Bins: []protocol.ContainmentBin{{Node: "CONT-1", BinID: 99, PayloadCode: "PART-OTHER"}}})
 	order3, err := eng.ReleaseFromContainment("CONT-1", 99, "quality")
 	if err != nil {
 		t.Fatalf("release the second payload: %v", err)
 	}
 	if order3.DeliveryNode != "FG-2" {
 		t.Errorf("PART-OTHER release went to %s, want FG-2", order3.DeliveryNode)
+	}
+
+	// A copy that may not be decided from (Core has not answered for longer
+	// than the decision rule allows) refuses with its sentence, and nothing
+	// is walked (site 9 of the reads: the containment copy, under Actable).
+	before := len(emptyOutMoves(t, eng, "CONT-1"))
+	eng.feeds.now = func() time.Time { return time.Now().Add(ActableAckWithin + time.Second) }
+	_, err = eng.ReleaseFromContainment("CONT-1", 99, "quality")
+	if err == nil || err.Error() != "Core's picture of CONT-1 is not current — try again" {
+		t.Errorf("not actable: err = %v, want the not-current sentence", err)
+	}
+	if after := len(emptyOutMoves(t, eng, "CONT-1")); after != before {
+		t.Errorf("not actable: moves %d → %d, want none created", before, after)
 	}
 }
 
@@ -298,9 +317,16 @@ func TestRecallContainedPayload_EachMoveNamesItsBinAndHold(t *testing.T) {
 	_, err = eng.db.CreateProcessNode(processes.NodeInput{ProcessID: procID, CoreNodeName: "FG-1", Code: "FG1",
 		Name: "FG outbound", Sequence: 1, Enabled: true})
 	testutil.MustNoErr(t, err, "fg node")
-	stub.setBin(NodeBinInfo{NodeName: "FG-1", BinID: 43, PayloadCode: "PART-HOLD", Occupied: true})
-
+	// Nothing held in the bins table: the claim's refusal is the not-current
+	// sentence, and nothing is recalled (site 10 of the reads).
 	created, refusals, err := eng.RecallContainedPayload("PART-HOLD", "quality-lead")
+	testutil.MustNoErr(t, err, "RecallContainedPayload, no table")
+	if created != 0 || len(refusals) != 1 || refusals[0] != "Core's picture of FG-1 is not current — try again" {
+		t.Fatalf("recall with no table = %d created, refusals %v, want none and the not-current sentence", created, refusals)
+	}
+
+	holdActableBins(t, eng, protocol.NodeBinsRow{Node: "FG-1", BinID: 43, PayloadCode: "PART-HOLD", Occupied: true})
+	created, refusals, err = eng.RecallContainedPayload("PART-HOLD", "quality-lead")
 	testutil.MustNoErr(t, err, "RecallContainedPayload")
 	if created != 1 || len(refusals) != 0 {
 		t.Fatalf("recall = %d created, refusals %v, want one", created, refusals)

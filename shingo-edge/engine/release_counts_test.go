@@ -35,7 +35,7 @@ func TestReleaseCosts(t *testing.T) {
 	withBin := func(b func(h *relHarness)) func(h *relHarness) {
 		return func(h *relHarness) {
 			b(h)
-			h.core.binAt = &NodeBinInfo{NodeName: fxPress, BinID: fxBin, PayloadCode: fxPart, UOPRemaining: fxCount, Occupied: true}
+			h.binAtPress(fxCount)
 		}
 	}
 	paths := []path{
@@ -43,9 +43,9 @@ func TestReleaseCosts(t *testing.T) {
 			withCurtain(curtainSafe, pairAt(pairSpec{mode: protocol.SwapModeTwoRobot}, "evac", S, "supply", S)), pairClick(dispEmpty)},
 		{"pair click / press-index 2-pos, curtain armed",
 			withCurtain(curtainSafe, pairAt(pairSpec{mode: protocol.SwapModeTwoRobotPressIndex}, "evac", S, "supply", S)), pairClick(dispEmpty)},
-		{"pair click / two_robot consume, PULL PARTS (BinAtLineside)",
+		{"pair click / two_robot consume, PULL PARTS (the bin from the table)",
 			withBin(pairAt(pairSpec{mode: protocol.SwapModeTwoRobot, role: protocol.ClaimRoleConsume}, "evac", S, "supply", S)), pairClick(dispPull(5))},
-		{"per-order click / two_robot consume evac, PULL PARTS (BinAtLineside)",
+		{"per-order click / two_robot consume evac, PULL PARTS (the bin from the table)",
 			withBin(pairAt(pairSpec{mode: protocol.SwapModeTwoRobot, role: protocol.ClaimRoleConsume}, "evac", S, "supply", S)), orderClick("evac", dispPull(5))},
 		{"per-order click / two_robot produce evac, curtain armed",
 			withCurtain(curtainSafe, pairAt(pairSpec{mode: protocol.SwapModeTwoRobot}, "evac", S, "supply", S)), orderClick("evac", dispEmpty)},

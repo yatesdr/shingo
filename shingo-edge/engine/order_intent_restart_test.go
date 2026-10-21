@@ -106,8 +106,11 @@ func armPullback(t *testing.T) *pullbackFixture {
 	f.eng = newIntentEngine(t, f.db)
 	f.eng.coreClient = stubCoreClient(f.srv.URL)
 	f.eng.SetCoreLoaders([]protocol.LoaderInfo{pullbackLoader("PB-WIN")})
-	// The market's members, as Core answers a watched group on the bins feed.
-	holdGroupRow(t, f.eng, "PB-MARKET", "PB-MKT-1")
+	// The market's members, as Core answers a watched group on the bins feed,
+	// and the bin on its slot: the pull's source check reads the table.
+	holdActableBins(t, f.eng,
+		protocol.NodeBinsRow{Node: "PB-MARKET", State: protocol.BinsStateGroup, Members: []string{"PB-MKT-1"}},
+		protocol.NodeBinsRow{Node: "PB-MKT-1", BinID: 88, Occupied: true, PayloadCode: "PB-PART", Stocked: true})
 
 	testutil.MustNoErr(t, f.eng.PullFromMarket(f.nodeID, "PB-MKT-1"), "PullFromMarket")
 	all, err := f.db.ListActiveOrdersByProcessNode(f.nodeID)

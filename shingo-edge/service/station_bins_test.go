@@ -441,3 +441,64 @@ func TestBinNodes_TheWatchCarriesTheProduceMarkets(t *testing.T) {
 		t.Errorf("station A's own list %v carries the market; only the watch list should", got)
 	}
 }
+
+// TestBinNodes_TheWatchCarriesTheSpotsAndTheStaging: the watch list carries the
+// keep-staged spot and the inbound and outbound staging of every live claim of
+// a process on it, across every style (a static superset), for the engine's
+// decisions there (ListClaimWatchPlaces names each reader); no station's own
+// list carries them.
+func TestBinNodes_TheWatchCarriesTheSpotsAndTheStaging(t *testing.T) {
+	db, _ := countingDB(t)
+	svc, a, _ := binsPlant(t, db)
+	all, err := db.ListProcessNodes()
+	if err != nil {
+		t.Fatalf("list nodes: %v", err)
+	}
+	var node *processes.Node
+	for i := range all {
+		if all[i].CoreNodeName == "H1" {
+			node = &all[i]
+		}
+	}
+	if node == nil {
+		t.Fatal("no H1")
+	}
+	styleID, err := db.CreateStyle("STYLE-SPOT", "", node.ProcessID) // not the running style
+	if err != nil {
+		t.Fatalf("create style: %v", err)
+	}
+	id, err := db.UpsertStyleNodeClaim(domain.CoreNodeKinds{}, processes.NodeClaimInput{
+		StyleID: styleID, CoreNodeName: "H1", Role: protocol.ClaimRoleConsume,
+		SwapMode: protocol.SwapModeTwoRobot, PayloadCode: "PART-A", UOPCapacity: 10,
+		InboundSource: "SMN_IN", InboundStaging: "SPOT-1", OutboundDestination: "SMN_OUT",
+	})
+	if err != nil {
+		t.Fatalf("claim: %v", err)
+	}
+	if _, err := db.DB.Exec(`UPDATE style_node_claims SET keep_staged_node='SPOT-1' WHERE id=?`, id); err != nil {
+		t.Fatalf("keep the spot: %v", err)
+	}
+	// And a second claim's staging, written straight to the row: the cancel's
+	// park and a cancelled order's carrier are read there.
+	id2, err := db.UpsertStyleNodeClaim(domain.CoreNodeKinds{}, processes.NodeClaimInput{
+		StyleID: styleID, CoreNodeName: "H2", Role: protocol.ClaimRoleConsume,
+		SwapMode: protocol.SwapModeTwoRobot, PayloadCode: "PART-B", UOPCapacity: 10,
+		InboundSource: "SMN_IN", InboundStaging: "IN-STG", OutboundDestination: "SMN_OUT",
+	})
+	if err != nil {
+		t.Fatalf("claim H2: %v", err)
+	}
+	if _, err := db.DB.Exec(`UPDATE style_node_claims SET outbound_staging='OUT-STG' WHERE id=?`, id2); err != nil {
+		t.Fatalf("outbound staging: %v", err)
+	}
+	svc.InvalidateBinNodes()
+	watched := svc.WatchedBinNodes()
+	for _, n := range []string{"SPOT-1", "IN-STG", "OUT-STG"} {
+		if !slices.Contains(watched, n) {
+			t.Errorf("watch list %v lacks %s", watched, n)
+		}
+	}
+	if got := svc.BinNodes(a); slices.Contains(got, "SPOT-1") || slices.Contains(got, "OUT-STG") {
+		t.Errorf("station A's own list %v carries a claim's place; only the watch list should", got)
+	}
+}

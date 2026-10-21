@@ -62,6 +62,7 @@ func TestSingleRobotCancel_FinishesTheParkedBinsTrip(t *testing.T) {
 			rows["L1"] = NodeBinInfo{}
 			rows[out] = NodeBinInfo{Occupied: true, PayloadCode: "PART-OLD"}
 			fx.eng.coreClient = stubCoreClient(ksNodeBinsStub(t, rows).URL)
+			fx.holdRows(t, rows)
 
 			testutil.MustNoErr(t, fx.eng.CancelProcessChangeover(fx.processID), "cancel")
 

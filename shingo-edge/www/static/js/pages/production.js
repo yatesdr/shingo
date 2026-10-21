@@ -41,6 +41,20 @@ async function releaseNodeWithPrompt(nodeID) {
     }
 }
 
+// binContents is the word for what a bin holds, from its row in the bins
+// table: stocked (above zero) and partial (above zero, below its part's
+// capacity). A held partial says its declared count.
+function binContents(binState) {
+    // OWNER-WORDS
+    if (binState.held_since) return 'Partial, held (' + (binState.uop_remaining || 0) + ' declared)';
+    // OWNER-WORDS
+    if (!binState.stocked) return 'Empty';
+    // OWNER-WORDS
+    if (binState.partial) return 'Partial';
+    // OWNER-WORDS
+    return binState.uop_capacity > 0 ? 'Full' : 'Has parts';
+}
+
 function viewBinContents() {
     // Invoked via data-action="viewBinContents". The bin state is
     // JSON in the data-bin-state attribute on the clicked element.
@@ -51,7 +65,10 @@ function viewBinContents() {
     var body = document.getElementById('view-bin-body');
     var html = '<div style="display:grid;grid-template-columns:1fr 1fr;gap:0.5rem;margin-bottom:1rem">';
     html += '<div><div style="color:var(--text-muted);font-size:0.8rem">Payload</div><strong>' + escapeHtml(binState.payload_code || 'empty') + '</strong></div>';
-    html += '<div><div style="color:var(--text-muted);font-size:0.8rem">UoP Remaining</div><strong>' + (binState.uop_remaining || 0) + '</strong></div>';
+    // The bins table carries whether the bin holds parts and whether fewer
+    // than its part's capacity, never a count (binContents).
+    // OWNER-WORDS
+    html += '<div><div style="color:var(--text-muted);font-size:0.8rem">Contents</div><strong>' + binContents(binState) + '</strong></div>';
     html += '<div><div style="color:var(--text-muted);font-size:0.8rem">Bin Type</div>' + escapeHtml(binState.bare ? 'Cart, no bin' : (binState.bin_type_code || '-')) + '</div>';
     html += '<div><div style="color:var(--text-muted);font-size:0.8rem">Confirmed</div>' + (binState.manifest_confirmed ? 'Yes' : 'No') + '</div>';
     html += '</div>';
@@ -60,11 +77,10 @@ function viewBinContents() {
             var manifest = typeof binState.manifest === 'string' ? JSON.parse(binState.manifest) : binState.manifest;
             var items = manifest.items || [];
             if (items.length > 0) {
-                // Parts only. The manifest carries no count — the bin's count
-                // is uop_remaining (shown above) x the payload template's
-                // parts_per_cycle, and this page has the former but not the
-                // latter. A "Qty" column reading item.qty would print 0 for
-                // every line, which is worse than not printing it.
+                // Parts only. The manifest carries no count, and neither does
+                // the bins table this page reads (Contents above says whether
+                // the bin holds parts). A "Qty" column reading item.qty would
+                // print 0 for every line, which is worse than not printing it.
                 html += '<table class="table" style="font-size:0.85rem"><thead><tr><th>Part</th></tr></thead><tbody>';
                 items.forEach(function(item) {
                     html += '<tr><td>' + escapeHtml(item.catid || item.part_number || '') + '</td></tr>';

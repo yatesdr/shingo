@@ -328,13 +328,21 @@ func (e *Engine) publishBinWatch(quoted string, force bool) {
 }
 
 // BinsActable is Actable for this Edge's bins copy: whether a decision may be
-// taken from it now, and why not. Used by nothing yet; the decision sites that
-// move onto the copy read it first and refuse with its reason.
+// taken from it now, and why not. Every decision site reads it first, through
+// binsForDecision and binsRowAt.
 func (e *Engine) BinsActable() (ok bool, why string) {
+	_, why = e.actableCopy()
+	return why == "", why
+}
+
+// actableCopy is the held copy when it may be decided from, else nil and
+// Actable's reason: the copy the rule judged, so a reader cannot judge one
+// snapshot and read the next.
+func (e *Engine) actableCopy() (*nodeBinsCopy, string) {
 	c := e.nodeBins.Load()
 	_, ownList, listOK := e.binWatchList()
 	if !listOK {
-		return false, NotActableOtherList
+		return nil, NotActableOtherList
 	}
 	e.feeds.mu.Lock()
 	var received, confirmed time.Time
@@ -347,7 +355,90 @@ func (e *Engine) BinsActable() (ok bool, why string) {
 	if c != nil {
 		copyList = c.snap.ListDigest
 	}
-	return Actable(c != nil, copyList, ownList, received, confirmed, lastAck, now)
+	if ok, why := Actable(c != nil, copyList, ownList, received, confirmed, lastAck, now); !ok {
+		return nil, why
+	}
+	return c, ""
+}
+
+// NotActableUnwatched is binsRowAt's reason for a name the copy holds no row
+// for: it is not on this Edge's watch list, so Core was never asked about it.
+const NotActableUnwatched = "not on the watch list"
+
+// BinsNotCurrent is a decision about Node refused because the bins copy cannot
+// answer for it now: the copy is not actable (Why is Actable's reason), or it
+// holds no row for the node (NotActableUnwatched). Its sentence is what an
+// operator door shows; an unattended pass logs it with Why and skips.
+type BinsNotCurrent struct {
+	Node string
+	Why  string
+}
+
+func (err *BinsNotCurrent) Error() string {
+	// OWNER-WORDS
+	return fmt.Sprintf("Core's picture of %s is not current — try again", err.Node)
+}
+
+// binsWhy is the reason a BinsNotCurrent carries, for a log line; any other
+// error's text.
+func binsWhy(err error) string {
+	var nc *BinsNotCurrent
+	if errors.As(err, &nc) {
+		return nc.Why
+	}
+	return err.Error()
+}
+
+// binsForDecision is the bins copy's rows for a decision about names, by
+// name, when the copy may be decided from (BinsActable); a *BinsNotCurrent
+// naming the first name otherwise. A name the copy holds no row for is absent
+// from the map, and each caller reads an absent name as its own fail-closed
+// answer, never as empty. An unknown name is present, with State unknown and
+// Occupied false. Memory only: no statement, no call — but for a miss.
+//
+// A MISS REBUILDS THE WATCH LIST. A claim edit moves no generation the
+// station lists are keyed on, so a place a save just named (a keep-staged
+// spot, a market) is not watched until the lists rebuild. On a non-blank name
+// with no row the lists are dropped and rebuilt now (the two statements of a
+// rebuild), as groupMembers does: when the place is new the list moves, is
+// published at once, and the decision after Core's answer finds the row.
+func (e *Engine) binsForDecision(names ...string) (map[string]protocol.NodeBinsRow, error) {
+	c, why := e.actableCopy()
+	if c == nil {
+		node := ""
+		if len(names) > 0 {
+			node = names[0]
+		}
+		return nil, &BinsNotCurrent{Node: node, Why: why}
+	}
+	out := make(map[string]protocol.NodeBinsRow, len(names))
+	missed := false
+	for _, n := range names {
+		if r, ok := c.rows[n]; ok {
+			out[n] = r
+		} else if n != "" {
+			missed = true
+		}
+	}
+	if missed && e.stationService != nil {
+		e.stationService.InvalidateBinNodes()
+		e.stationService.WatchedBinNodes()
+	}
+	return out, nil
+}
+
+// binsRowAt is binsForDecision for one node, with a name the copy holds no
+// row for refused as well (NotActableUnwatched).
+func (e *Engine) binsRowAt(node string) (protocol.NodeBinsRow, error) {
+	rows, err := e.binsForDecision(node)
+	if err != nil {
+		return protocol.NodeBinsRow{}, err
+	}
+	r, ok := rows[node]
+	if !ok {
+		return protocol.NodeBinsRow{}, &BinsNotCurrent{Node: node, Why: NotActableUnwatched}
+	}
+	return r, nil
 }
 
 // groupMembers is a group's members as Core answers them on the bins copy: the

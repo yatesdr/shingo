@@ -69,8 +69,8 @@ func pinOutcome(t *testing.T, bug, got, today, want string) {
 // ── Fake Core (HTTP) ─────────────────────────────────────────────────────
 
 // fakeCore answers the Core HTTP reads a release makes and counts them per
-// path. node-bins (BinAtLineside) answers with binAt when set; everything else
-// is a 404, which every Core read on the release path treats as "no answer".
+// path. node-bins answers with binAt when set (binAtPress), for the reads still
+// made there; everything else is a 404, which every Core read on the release path treats as "no answer".
 type fakeCore struct {
 	srv   *httptest.Server
 	mu    sync.Mutex
@@ -560,4 +560,14 @@ func (h *relHarness) counts() actCounts {
 
 func (c actCounts) String() string {
 	return fmt.Sprintf("sqlite reads=%d writes=%d warlink=%d coreHTTP=%d", c.reads, c.writes, c.warlink, c.coreHTTP)
+}
+
+// binAtPress puts the fixture's bin on the press as Core reports it: over
+// node-bins (binAt, for the reads still made there) and in the bins table, for
+// the sites that decide from it (a release's capture names the bin from it).
+func (h *relHarness) binAtPress(count int) {
+	h.core.mu.Lock()
+	h.core.binAt = &NodeBinInfo{NodeName: fxPress, BinID: fxBin, PayloadCode: fxPart, UOPRemaining: count, Occupied: true}
+	h.core.mu.Unlock()
+	holdActableBins(h.t, h.eng, protocol.NodeBinsRow{Node: fxPress, BinID: fxBin, PayloadCode: fxPart, Stocked: count > 0, Occupied: true})
 }

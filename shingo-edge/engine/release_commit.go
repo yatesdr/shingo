@@ -227,20 +227,21 @@ func (e *Engine) releaseOrderWithFullLineside(order *storeorders.Order, node *pr
 
 	// The bin the capture_reduction emit and the manifest-sync fallback
 	// name. order.BinID is usually set by Core's OrderDelivered reply; when
-	// it is not, PULL PARTS LINESIDE asks Core which bin is at this slot, and
-	// if Core cannot say, resolvedBinID stays 0 and the legacy-&0 fallback
-	// fires so the bin doesn't return with its original UOP intact.
+	// it is not, PULL PARTS LINESIDE takes the bin the bins table holds at
+	// this slot, and if the table cannot say (not actable, or no bin there),
+	// resolvedBinID stays 0 and the legacy-&0 fallback fires so the bin
+	// doesn't return with its original UOP intact.
 	var resolvedBinID int64
 	if order.BinID != nil {
 		resolvedBinID = *order.BinID
-	} else if disp.Mode == uop.DispositionCaptureLineside && len(disp.LinesideCapture) > 0 && e.coreClient.Available() {
-		bin, _, err := e.coreClient.BinAtLineside(node.CoreNodeName)
+	} else if disp.Mode == uop.DispositionCaptureLineside && len(disp.LinesideCapture) > 0 {
+		row, err := e.binsRowAt(node.CoreNodeName)
 		switch {
 		case err != nil:
-			e.logRelease("order=%d node=%s — BinAtLineside resolve failed (%v); capture_reduction will skip and manifest-sync fallback will fire",
-				orderID, node.Name, err)
-		case bin != nil:
-			resolvedBinID = bin.BinID
+			e.logRelease("order=%d node=%s — no bin from the bins table (%s); capture_reduction will skip and manifest-sync fallback will fire",
+				orderID, node.Name, binsWhy(err))
+		case row.Occupied:
+			resolvedBinID = row.BinID
 		}
 	}
 

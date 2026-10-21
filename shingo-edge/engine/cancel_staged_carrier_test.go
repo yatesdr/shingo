@@ -81,9 +81,10 @@ func TestCancelledAtItsStagingWait_SendsTheCarrierBack(t *testing.T) {
 		t.Fatalf("carrier left waiting = (%+v, %v), want STG-1 back to SRC-LOADER", p, ok)
 	}
 
-	eng.coreClient = stubCoreClient(ksNodeBinsStub(t, map[string]NodeBinInfo{
-		"STG-1": {Occupied: true, PayloadCode: "PART-NEW"},
-	}).URL)
+	// The carrier on the staging node, from the bins table (staging is on
+	// the watch list; the cancel's park read, site 1 of the reads).
+	eng.coreClient = stubCoreClient(testCoreURL)
+	holdActableBins(t, eng, protocol.NodeBinsRow{Node: "STG-1", Occupied: true, PayloadCode: "PART-NEW"})
 	eng.sendCarrierBack(p)
 
 	live, err := db.ListActiveOrders()

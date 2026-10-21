@@ -187,7 +187,7 @@ func releasePinCells() []relCell {
 	withBinAt := func(b func(h *relHarness)) func(h *relHarness) {
 		return func(h *relHarness) {
 			b(h)
-			h.core.binAt = &NodeBinInfo{NodeName: fxPress, BinID: fxBin, PayloadCode: fxPart, UOPRemaining: fxCount, Occupied: true}
+			h.binAtPress(fxCount)
 		}
 	}
 

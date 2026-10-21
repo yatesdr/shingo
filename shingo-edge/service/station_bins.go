@@ -95,14 +95,14 @@ func (s *StationService) heldBinNodes() binNodes {
 		log.Printf("station view: read process nodes for the bin lists: %v", err)
 		return binNodes{}
 	}
-	markets, err := s.db.ListProduceOutboundDestinations()
+	places, err := s.db.ListClaimWatchPlaces()
 	if err != nil {
 		s.binsMu.Unlock()
-		log.Printf("station view: read produce outbound destinations for the bin lists: %v", err)
+		log.Printf("station view: read the claims' places for the bin lists: %v", err)
 		return binNodes{}
 	}
 	built := s.buildBinNodes(rows)
-	built.all = withMarkets(built.all, rows, markets)
+	built.all = withClaimPlaces(built.all, rows, places)
 	built.key, built.loaded = key, true
 	changed := !slices.Equal(built.all, s.bins.all) || !s.bins.loaded
 	s.bins = built
@@ -561,15 +561,16 @@ func assignmentAt(groups []protocol.NodeBinsGroup, node string) *domain.TileAssi
 	return nil
 }
 
-// withMarkets adds to the watch list the outbound destinations of the produce
-// claims of every process with a node on it (ListProduceOutboundDestinations,
-// across every live style): the markets a produce loader's pull-back lists
-// and checks against (engine operator_window_pullback.go), which Core answers
-// as a group row with its members. Watch list only: no board draws a market,
-// so no station's own list carries it. Static between claim edits, never moved
-// by a changeover; a claim edit that adds one is picked up when a reader finds
-// its group unwatched (InvalidateBinNodes) or the plant next moves.
-func withMarkets(all []string, rows []processes.Node, markets map[int64][]string) []string {
+// withClaimPlaces adds to the watch list the places the claims of every
+// process with a node on it name, across every live style, that an engine
+// decision reads from the bins table (ListClaimWatchPlaces names each column
+// and its reader): the produce markets, which Core answers as a group row
+// with its members, the keep-staged spots and the staging nodes. Watch list
+// only: no board draws them, so no station's own list carries them. Static
+// between claim edits, never moved by a changeover; a claim edit that adds one
+// is picked up when a reader finds it unwatched (InvalidateBinNodes) or the
+// plant next moves.
+func withClaimPlaces(all []string, rows []processes.Node, places map[int64][]string) []string {
 	set := make(map[string]bool, len(all))
 	for _, n := range all {
 		set[n] = true
@@ -578,7 +579,7 @@ func withMarkets(all []string, rows []processes.Node, markets map[int64][]string
 		if n.CoreNodeName == "" {
 			continue
 		}
-		for _, m := range markets[n.ProcessID] {
+		for _, m := range places[n.ProcessID] {
 			set[m] = true
 		}
 	}

@@ -50,6 +50,7 @@ func newBinDoneWorld(t *testing.T, tracked int, produce bool) *binDoneWorld {
 	eng := testEngine(t, f.db)
 	core := newSCCore(t)
 	eng.coreClient = stubCoreClient(core.srv.URL)
+	core.bind(t, eng)
 	core.setCount("ALN_003", true, "PANEL-B", tracked)
 
 	w := &binDoneWorld{f: f}

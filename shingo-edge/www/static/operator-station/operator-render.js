@@ -710,6 +710,18 @@ function openPullFullFromHomePicker() {
 // outbound supermarket and presents a picker so the operator can pull one back
 // to the loader window. Used during cell launches to recover bins from the
 // market before resuming normal empty-request / load-full flow.
+// marketBinContents is the pull-back picker's word for what a market bin
+// holds, from its row in the bins table (stocked, partial), as the Production
+// page's bin modal says it.
+function marketBinContents(b) {
+    // OWNER-WORDS
+    if (!b.stocked) return 'Empty';
+    // OWNER-WORDS
+    if (b.partial) return 'Partial';
+    // OWNER-WORDS
+    return b.uop_capacity > 0 ? 'Full' : 'Has parts';
+}
+
 function showPullFromMarketPicker(nodeID) {
     const overlay = el('div', { className: 'os-co-picker-overlay' });
     const panel = el('div', { className: 'os-co-picker' });
@@ -752,7 +764,9 @@ function showPullFromMarketPicker(nodeID) {
                 var payloadEl = el('div', { textContent: b.payload_code });
                 payloadEl.style.cssText = 'font-size:17px;font-weight:600;margin-top:5px;';
 
-                var uopEl = el('div', { textContent: 'UoP: ' + b.uop_remaining });
+                // The bins table says whether the bin holds parts and fewer
+                // than its part's capacity, never how many (marketBinContents).
+                var uopEl = el('div', { textContent: marketBinContents(b) });
                 uopEl.style.cssText = 'font-size:13px;margin-top:3px;opacity:0.7;';
 
                 btn.appendChild(nodeEl);

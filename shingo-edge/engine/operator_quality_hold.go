@@ -76,16 +76,16 @@ func (e *Engine) SendBinToQualityHold(nodeID int64, actor string) (*orders.Order
 		actor = "operator"
 	}
 
-	// The bin standing at the node, from the same read the station screen
-	// renders. No bin, nothing to hold.
-	binsAtNode, _, err := e.coreClient.FetchNodeBins([]string{node.CoreNodeName})
+	// The bin standing at the node, from the bins table the station screen
+	// draws (site 8 of the reads), under the decision rule: a table that may
+	// not be decided from refuses with its sentence. No bin, nothing to hold.
+	bin, err := e.binsRowAt(node.CoreNodeName)
 	if err != nil {
-		return nil, fmt.Errorf("read bin at node: %w", err)
+		return nil, err
 	}
-	if len(binsAtNode) == 0 || !binsAtNode[0].Occupied {
+	if !bin.Occupied {
 		return nil, fmt.Errorf("no bin at node %s to hold", node.Name)
 	}
-	bin := binsAtNode[0]
 
 	// Double-tap guard (the U2 empty-out guard's shape): the order layer has
 	// no dedup for move orders, so a second tap while one is in flight would
@@ -216,18 +216,22 @@ func (e *Engine) ReleaseFromContainment(containmentNodeName string, binID int64,
 	// route their contained bins to one spot with different FG drops — and
 	// the BIN'S PAYLOAD is what disambiguates whose outbound a release uses.
 	// So the bin is read before the claim set is narrowed, and only claims
-	// whose payload set covers the carried payload survive it.
-	binsAtNode, _, err := e.coreClient.FetchNodeBins([]string{containmentNodeName})
+	// whose payload set covers the carried payload survive it. The bins at a
+	// containment node are the containment copy's (every destination with
+	// what stands on it and on its children), under the decision rule: a copy
+	// that may not be decided from refuses with its sentence.
+	snap, err := e.containmentForDecision(containmentNodeName)
 	if err != nil {
-		return nil, fmt.Errorf("read bins at %s: %w", containmentNodeName, err)
+		return nil, err
 	}
 	found := false
 	var payloadCode string
-	for _, b := range binsAtNode {
-		if b.Occupied && b.BinID == binID {
-			found = true
-			payloadCode = b.PayloadCode
-			break
+	for _, d := range snap.Destinations {
+		for _, b := range d.Bins {
+			if b.Node == containmentNodeName && b.BinID == binID {
+				found = true
+				payloadCode = b.PayloadCode
+			}
 		}
 	}
 	if !found {
@@ -314,44 +318,46 @@ func (e *Engine) RecallContainedPayload(payloadCode, actor string) (int, []strin
 		if claim.OutboundDestination == "" {
 			continue
 		}
-		binsAtOutbound, _, err := e.coreClient.FetchNodeBins([]string{claim.OutboundDestination})
+		// The bin at the FG outbound, from its row in the bins table (site 10
+		// of the reads; the produce claims' outbound destinations are on the
+		// watch list). A table that cannot answer for it is that claim's
+		// refusal, with its sentence; the other claims still recall.
+		b, err := e.binsRowAt(claim.OutboundDestination)
 		if err != nil {
-			refusals = append(refusals, fmt.Sprintf("%s: read failed: %v", claim.OutboundDestination, err))
+			refusals = append(refusals, err.Error())
 			continue
 		}
-		for _, b := range binsAtOutbound {
-			if !b.Occupied || b.PayloadCode != payloadCode {
-				continue
-			}
-			var nodeID int64
-			if qerr := e.db.DB.QueryRow(`SELECT id FROM process_nodes WHERE core_node_name = ?`, claim.OutboundDestination).Scan(&nodeID); qerr != nil {
-				refusals = append(refusals, fmt.Sprintf("bin %d at %s: node is not a process node", b.BinID, claim.OutboundDestination))
-				continue
-			}
-			// One move at a time per node (the double-tap guard): a bin whose
-			// node already has an active move is either leaving or arriving.
-			if existing, lerr := e.db.ListActiveOrdersByProcessNodeAndType(nodeID, protocol.OrderTypeMove); lerr != nil {
-				refusals = append(refusals, fmt.Sprintf("bin %d at %s: in-flight check failed: %v", b.BinID, claim.OutboundDestination, lerr))
-				continue
-			} else if len(existing) > 0 {
-				refusals = append(refusals, fmt.Sprintf("bin %d at %s: a move order (%d) is already in flight", b.BinID, claim.OutboundDestination, existing[0].ID))
-				continue
-			}
-			// One Core act, as the station's hold: the move names the bin read
-			// above and asks for its hold (CreateHoldMoveOrder).
-			order, merr := e.orderMgr.CreateHoldMoveOrder(&nodeID, claim.OutboundDestination, claim.ContainmentDestination,
-				payloadCode, b.BinID, actor, ordermgr.NoDemand())
-			if merr != nil {
-				refusals = append(refusals, fmt.Sprintf("bin %d at %s: %v", b.BinID, claim.OutboundDestination, merr))
-				continue
-			}
-			if uerr := e.db.UpdateProcessNodeRuntimeOrders(nodeID, &order.ID, nil); uerr != nil {
-				log.Printf("quality-hold: update runtime orders for node %d: %v", nodeID, uerr)
-			}
-			log.Printf("quality-hold: recall order %d carries bin %d (%s) from %s to containment %s (by %s)",
-				order.ID, b.BinID, payloadCode, claim.OutboundDestination, claim.ContainmentDestination, actor)
-			created++
+		if !b.Occupied || b.PayloadCode != payloadCode {
+			continue
 		}
+		var nodeID int64
+		if qerr := e.db.DB.QueryRow(`SELECT id FROM process_nodes WHERE core_node_name = ?`, claim.OutboundDestination).Scan(&nodeID); qerr != nil {
+			refusals = append(refusals, fmt.Sprintf("bin %d at %s: node is not a process node", b.BinID, claim.OutboundDestination))
+			continue
+		}
+		// One move at a time per node (the double-tap guard): a bin whose
+		// node already has an active move is either leaving or arriving.
+		if existing, lerr := e.db.ListActiveOrdersByProcessNodeAndType(nodeID, protocol.OrderTypeMove); lerr != nil {
+			refusals = append(refusals, fmt.Sprintf("bin %d at %s: in-flight check failed: %v", b.BinID, claim.OutboundDestination, lerr))
+			continue
+		} else if len(existing) > 0 {
+			refusals = append(refusals, fmt.Sprintf("bin %d at %s: a move order (%d) is already in flight", b.BinID, claim.OutboundDestination, existing[0].ID))
+			continue
+		}
+		// One Core act, as the station's hold: the move names the bin read
+		// above and asks for its hold (CreateHoldMoveOrder).
+		order, merr := e.orderMgr.CreateHoldMoveOrder(&nodeID, claim.OutboundDestination, claim.ContainmentDestination,
+			payloadCode, b.BinID, actor, ordermgr.NoDemand())
+		if merr != nil {
+			refusals = append(refusals, fmt.Sprintf("bin %d at %s: %v", b.BinID, claim.OutboundDestination, merr))
+			continue
+		}
+		if uerr := e.db.UpdateProcessNodeRuntimeOrders(nodeID, &order.ID, nil); uerr != nil {
+			log.Printf("quality-hold: update runtime orders for node %d: %v", nodeID, uerr)
+		}
+		log.Printf("quality-hold: recall order %d carries bin %d (%s) from %s to containment %s (by %s)",
+			order.ID, b.BinID, payloadCode, claim.OutboundDestination, claim.ContainmentDestination, actor)
+		created++
 	}
 	return created, refusals, nil
 }

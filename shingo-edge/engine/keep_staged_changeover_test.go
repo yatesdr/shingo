@@ -5,6 +5,7 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	"shingo/protocol"
 	"shingo/protocol/testutil"
@@ -38,6 +39,8 @@ type coFixture struct {
 	processID int64
 	toStyleID int64
 	nodeIDs   map[string]int64
+	// places is every node the claims name, for the bins table (holdRows).
+	places []string
 }
 
 // seedKeepStagedChangeover builds a process with an active style A and a style
@@ -102,7 +105,37 @@ func seedKeepStagedChangeover(t *testing.T, from, to []coClaim, rows map[string]
 	}
 	testutil.MustNoErr(t, db.SetActiveStyle(procID, &styleA), "active style")
 	eng.coreClient = stubCoreClient(ksNodeBinsStub(t, rows).URL)
+	// The same answer in the bins table, for the sites that read it, with an
+	// empty row for every place the claims name that rows leaves out.
+	for _, c := range append(append([]coClaim(nil), from...), to...) {
+		fx.places = append(fx.places, c.line, c.spot, c.source, "KSCO-DEST", "KSCO-OUT-"+c.line, "KSCO-PAIR-"+c.line)
+	}
+	fx.holdRows(t, rows)
 	return fx
+}
+
+// holdRows holds what Core says now, rows, as the bins table (holdCoreRows),
+// with an empty row for every place the fixture's claims name that rows leaves
+// out; a name in omit gets no row at all (Core did not answer for it).
+func (fx *coFixture) holdRows(t *testing.T, rows map[string]NodeBinInfo, omit ...string) {
+	t.Helper()
+	skip := map[string]bool{}
+	for _, n := range omit {
+		skip[n] = true
+	}
+	answered := map[string]NodeBinInfo{}
+	for n, b := range rows {
+		if !skip[n] {
+			answered[n] = b
+		}
+	}
+	var places []string
+	for _, p := range fx.places {
+		if !skip[p] {
+			places = append(places, p)
+		}
+	}
+	holdCoreRows(t, fx.eng, answered, places...)
 }
 
 // spotTraffic is every plain order to or from a spot: refills by the line they
@@ -285,6 +318,7 @@ func TestKeepStagedChangeover_CancelPutsTheSpotBack(t *testing.T) {
 			testutil.MustNoErr(t, fx.db.UpdateOrderStatus(got.returns[0].ID, string(protocol.StatusConfirmed)), "the return went")
 			rows["SPOT"] = NodeBinInfo{Occupied: true, PayloadCode: "PART-NEW"}
 			fx.eng.coreClient = stubCoreClient(ksNodeBinsStub(t, rows).URL)
+			fx.holdRows(t, rows)
 
 			testutil.MustNoErr(t, fx.eng.CancelProcessChangeover(fx.processID), "cancel")
 
@@ -418,6 +452,47 @@ func TestKeepStagedSave_LeavingTheSpotSendsTheSpareBack(t *testing.T) {
 			}
 			if len(got.refills) != 0 {
 				t.Errorf("a save that leaves the spot ordered refills: %v", got.refills)
+			}
+		})
+	}
+}
+
+// THE SAVE THAT LEAVES A SPOT, FAIL-CLOSED (site 2 of the reads). The spot is
+// read from the bins table: a table that may not be decided from, and a spot
+// Core does not know, leave the spare where it stands — no return, no refill.
+// No HTTP read: the Core client points nowhere.
+func TestKeepStagedSave_LeavingTheSpotReadsTheTable(t *testing.T) {
+	t.Parallel()
+	for _, c := range []struct {
+		name string
+		prep func(fx *coFixture)
+		want int
+	}{
+		{"the table answers", func(*coFixture) {}, 1},
+		{"the table may not be decided from", func(fx *coFixture) {
+			fx.eng.feeds.now = func() time.Time { return time.Now().Add(ActableAckWithin + time.Second) }
+		}, 0},
+		{"Core does not know the spot", func(fx *coFixture) {
+			holdActableBins(t, fx.eng, protocol.NodeBinsRow{Node: "L1", Occupied: true, PayloadCode: "PART-A"},
+				protocol.NodeBinsRow{Node: "SPOT", State: protocol.BinsStateUnknown})
+		}, 0},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			fx := seedKeepStagedChangeover(t,
+				[]coClaim{{"L1", "SPOT", "SRC", "PART-A", protocol.ClaimRoleConsume, protocol.SwapModeTwoRobot, true, false}},
+				nil,
+				map[string]NodeBinInfo{"L1": {Occupied: true, PayloadCode: "PART-A"}, "SPOT": {Occupied: true, PayloadCode: "PART-A"}})
+			fx.eng.coreClient = stubCoreClient(testCoreURL)
+			c.prep(fx)
+			p, err := fx.db.GetProcess(fx.processID)
+			testutil.MustNoErr(t, err, "process")
+			claim, err := fx.db.GetStyleNodeClaimByNode(*p.ActiveStyleID, "L1")
+			testutil.MustNoErr(t, err, "claim")
+			testutil.MustNoErr(t, fx.eng.StyleService().DeleteClaim(claim.ID), "delete claim")
+			got := readSpotTraffic(t, fx, "SPOT")
+			if len(got.returns) != c.want || len(got.refills) != 0 {
+				t.Errorf("returns = %d, refills = %d; want %d, 0", len(got.returns), len(got.refills), c.want)
 			}
 		})
 	}

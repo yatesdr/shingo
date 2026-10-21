@@ -42,6 +42,7 @@ func newUGFixture(t *testing.T, prefix string) *ugFixture {
 	eng.wireEventHandlers()
 	core := newSCCore(t)
 	eng.coreClient = stubCoreClient(core.srv.URL)
+	core.bind(t, eng)
 
 	f := &ugFixture{eng: eng, db: db, core: core,
 		nCore: prefix + "-N", n2Core: prefix + "-N2", w3Core: prefix + "-W3"}
@@ -121,15 +122,15 @@ func TestPinUnloaderGate_Clear(t *testing.T) {
 	f.checkGate(t, "CLEAR", f.core.nodeBinReads()-before, 1, 1, 0) // the gate's read; the clear answers hadBin
 }
 
-// TestPinUnloaderGate_PushEmpty: PUSH EMPTY at N (an empty carrier on it). Same
-// shape: one read by the tap, one by the gate.
+// TestPinUnloaderGate_PushEmpty: PUSH EMPTY at N (an empty carrier on it). One
+// read, by the gate; the tap reads the bins table (site 5 of the reads).
 func TestPinUnloaderGate_PushEmpty(t *testing.T) {
 	t.Parallel()
 	f := newUGFixture(t, "UGP")
 	f.core.set(f.nCore, true, "")
 	before := f.core.nodeBinReads()
 	testutil.MustNoErr(t, f.eng.PushEmptyOut(f.n), "PushEmptyOut")
-	f.checkGate(t, "PUSH EMPTY", f.core.nodeBinReads()-before, 1+1, 1, 0)
+	f.checkGate(t, "PUSH EMPTY", f.core.nodeBinReads()-before, 1, 1, 0)
 }
 
 // TestPinUnloaderGate_U2Landed: N's U2 lands at the empties destination. The

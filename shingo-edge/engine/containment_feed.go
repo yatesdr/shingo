@@ -3,6 +3,7 @@ package engine
 import (
 	"encoding/json"
 	"fmt"
+	"time"
 
 	"shingo/protocol"
 	"shingo/protocol/clock"
@@ -85,4 +86,24 @@ func (e *Engine) LocalContainment() (*ContainmentState, bool) {
 		ReceivedAt:   received,
 		ConfirmedAt:  confirmed,
 	}, true
+}
+
+// containmentForDecision is the containment copy for a decision about node:
+// the snapshot when it may be decided from, by the bins copy's rule (Actable)
+// with no watch list to answer (the feed is plant-wide), and a
+// *BinsNotCurrent naming node otherwise. A copy kept across a restart is not
+// actable until an ack confirms it. Memory only.
+func (e *Engine) containmentForDecision(node string) (*protocol.ContainmentSnapshot, error) {
+	snap := e.containment.Load()
+	e.feeds.mu.Lock()
+	var received, confirmed time.Time
+	if h := e.feeds.held[protocol.FeedContainment]; h != nil {
+		received, confirmed = h.receivedAt, h.confirmedAt
+	}
+	lastAck, now := e.feeds.lastAck, e.feeds.clock()
+	e.feeds.mu.Unlock()
+	if ok, why := Actable(snap != nil, "", "", received, confirmed, lastAck, now); !ok {
+		return nil, &BinsNotCurrent{Node: node, Why: why}
+	}
+	return snap, nil
 }
