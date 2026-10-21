@@ -1076,7 +1076,14 @@ function positionsTable() {
         if (!c || !c.on || !c.mode) continue;
         const advSet = advancedCount(n);
         rows.push('<tr class="' + (S.selected === n ? 'selrow' : '') + '" data-row="' + n + '">' +
-            '<td class="pos">' + esc(n) + '<small>' + esc(rowWord(n)) +
+            // THE POSITION IS A CONTROL: a picker of where it may move
+            // (composer-model positionChoices, the HMI's rule too) and a delete.
+            // Both are draft edits like every other chip; on the running style
+            // the save refuses one that would leave a bin behind, and says how
+            // to move the bin in Core first.
+            '<td class="pos">' + picker(n, 'position', esc(n), 'pd-posname', n) +
+                '<button class="pd-rmpos" data-act="rmpos" data-node="' + esc(n) + '" title="Take ' + esc(n) +
+                ' off this flow">×</button><small>' + esc(rowWord(n)) +
                 (S.shapeDraft && (S.shapeDraft.unmapped || []).includes(n) ? ' · check' : '') + '</small></td>' +
             '<td>' + roleCell(n, c.role) + '</td>' +
             '<td>' + picker(n, 'mode', gl(c.mode, 22, {}) + esc(M().modeLabels()[c.mode] || '')) + '</td>' +
@@ -1523,6 +1530,13 @@ function optionsFor(node, kind) {
     // A kind may carry arguments: "col:staging:parkOld", "via:1".
     const parts = String(kind).split(':');
     switch (parts[0]) {
+        // Where this position may move: this station's free line positions,
+        // never another station's node, never a node the flow already uses.
+        case 'position':
+            return M().positionChoices(S.model, node).map(to => ({
+                value: to, label: to, on: false,
+                action: { type: 'movePosition', from: node, to: to },
+            }));
         case 'role':
             return ['consume', 'produce'].map(r => ({
                 value: r, label: r, on: c.role === r,
@@ -1667,6 +1681,7 @@ function routingFieldOf(kind) {
 // that instead of the generic line.
 function pickerEmptyWord(kind) {
     if (String(kind).split(':')[0] === 'via' && !mapOf()) return 'No plant map on this Edge yet';
+    if (kind === 'position') return 'No free position on this station to move to';
     const note = S.model ? M().routingNote(S.model, routingFieldOf(kind), 0) : '';
     return note || 'Nothing to choose here yet.';
 }
@@ -6216,6 +6231,7 @@ function onClick(e) {
             case 'discard': selectStyle(S.styleID); return;
             case 'advanced': openAdvanced(btn.dataset.node); return;
             case 'rmpart': apply({ type: 'removePart', payloadCode: btn.dataset.part }); return;
+            case 'rmpos': apply({ type: 'removePosition', node: btn.dataset.node }); return;
             // The route's own two verbs. Both compute the whole new list and
             // hand it to setVia, because the order is the route and the model
             // has one action for it.

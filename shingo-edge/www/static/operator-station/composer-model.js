@@ -500,6 +500,39 @@ function hasCandidate(state, node, key) {
     return backPositions(state).some(n => n !== node && !taken.has(n));
 }
 
+// positionChoices is where a position may move: THIS STATION'S OWN LINE
+// POSITIONS, the same answer on the desktop and the HMI. A position is this
+// station's when it is bound to the moving row's station (the server marks
+// each position's station_id on the cell picture) or bound to none (a back or
+// staging slot the press shares); a node bound to another station of the
+// process — an unloader's windows — is never offered. The HMI's picture holds
+// only its own station's positions, so the rule draws the same list there.
+//
+// Refused, as the flow already uses them: the row's own node, every other
+// row, and every pair, third position, staging and park any row names
+// (including this row's own — moving onto your own partner is not a move).
+function positionChoices(state, node) {
+    const cell = state.cells[node];
+    if (!cell || !cell.on) return [];
+    const stationOf = n => {
+        const p = state.positions.find(x => x.core_node_name === n);
+        return (p && p.station_id) || 0;
+    };
+    const station = stationOf(node);
+    const used = new Set();
+    for (const n of Object.keys(state.cells)) {
+        const c = state.cells[n];
+        if (!c.on) continue;
+        used.add(n);
+        for (const k of ['paired', 'secondPaired', 'staging', 'parkOld']) if (c[k]) used.add(c[k]);
+    }
+    return state.positions.map(p => p.core_node_name).filter(n => {
+        if (used.has(n)) return false;
+        const st = stationOf(n);
+        return st === 0 || st === station;
+    });
+}
+
 // ── init ─────────────────────────────────────────────────────────────────────
 function init(opts) {
     const positions = (opts.positions || []).slice()
@@ -638,6 +671,26 @@ function reduce(state, action) {
                 if (s.cells[p] && !s.cells[p].on) s.cells[p] = Object.assign(blankCell(), { role: s.cells[p].role });
             }
             if (s.selected === action.node) s.selected = null;
+            break;
+        }
+
+        // A POSITION MOVES WHOLE. The cell at `from` lands at `to` with every
+        // field it had — mode, part, routing, partners, staging, park, key
+        // route, evacuation, partial home, role — and `from` is left blank.
+        // The Advanced block is MATERIALISED on the move: `to` has no stored
+        // claim, so the server's carry-through would otherwise reset the
+        // reorder point, allowed payloads, evac nodes, keep-staged and strict
+        // pack to their defaults without a word. draftFlow diffs the move as
+        // remove + add, and SaveFlow upserts before it deletes. Only a target
+        // positionChoices offers is taken.
+        case 'movePosition': {
+            const from = s.cells[action.from];
+            if (!from || !from.on || !positionChoices(state, action.from).includes(action.to)) break;
+            const moved = clone(from);
+            moved.advanced = advancedFor(state, action.from);
+            s.cells[action.to] = moved;
+            s.cells[action.from] = Object.assign(blankCell(), { role: from.role });
+            if (s.selected === action.from) s.selected = action.to;
             break;
         }
 
@@ -2153,7 +2206,7 @@ function savedBody(styleId, stationId) {
         partOffers, styleFacts,
         routingNote, routingRoleOf, stagingFieldUsed,
         presetCells, presetMoved, suggestedMoves, shapeDiff, orderSentences, orderTrip, viaWaypoints,
-        advancedFor, advancedShows, advancedSet,
+        advancedFor, advancedShows, advancedSet, positionChoices,
         flowSaveBody, mintBody, savedBody,
     };
 

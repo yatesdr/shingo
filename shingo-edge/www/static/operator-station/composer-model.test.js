@@ -1875,6 +1875,52 @@ test('a stale recipe applied with its suggestion lands on the last-used spots, p
     assert.strictEqual(M.presetMoved(STALE_RECIPE, {}), STALE_RECIPE, 'no moves: the recipe as stored');
 });
 
+// ── a position moves whole (W1) ──────────────────────────────────────────────
+// Springfield Press 6, 2026-10-21: the running style had to move from
+// PLN_006/007 to PLN_010/012 and the screens had no way to say it.
+test('movePosition carries every field to the new node, Advanced included, and blanks the old', () => {
+    const s0 = initStyle(7);
+    const was = s0.cells.PLN_01;
+    const adv = M.advancedFor(s0, 'PLN_01');
+    const s = M.reduce(s0, { type: 'movePosition', from: 'PLN_01', to: 'PLN_03' });
+    assert.deepStrictEqual(s.cells.PLN_03, Object.assign({}, was, { advanced: adv }),
+        'every field moved, and the Advanced block materialised so the new node does not reset to defaults');
+    assert.strictEqual(s.cells.PLN_01.on, false);
+    assert.strictEqual(s.cells.PLN_01.mode, null);
+    const names = M.toCells(s).map(c => c.core_node_name);
+    assert.ok(names.includes('PLN_03') && !names.includes('PLN_01'), 'the flow names PLN_03 and not PLN_01: ' + names);
+    assert.strictEqual(M.toCells(s).find(c => c.core_node_name === 'PLN_03').paired_core_node, 'PLN_02',
+        'the pair moves with the position');
+});
+
+test('movePosition refuses a node the flow already uses, and changes nothing', () => {
+    const s0 = initStyle(7);
+    for (const to of ['PLN_02', 'PLN_04', 'PLN_05', 'PLN_01']) {
+        const s = M.reduce(s0, { type: 'movePosition', from: 'PLN_01', to: to });
+        assert.deepStrictEqual(M.toCells(s), M.toCells(s0), 'moving PLN_01 onto ' + to + ' changed the flow');
+    }
+});
+
+test('positionChoices offers this station’s free positions and never another station’s node', () => {
+    const positions = [
+        { core_node_name: 'PLN_01', kind: 'front', sequence: 1, station_id: 5 },
+        { core_node_name: 'PLN_02', kind: 'back', sequence: 2 },
+        { core_node_name: 'PLN_03', kind: 'front', sequence: 3, station_id: 5 },
+        { core_node_name: 'PLN_04', kind: 'front', sequence: 4, station_id: 5 },
+        { core_node_name: 'PLN_05', kind: 'back', sequence: 5 },
+        { core_node_name: 'PLN_06', kind: 'front', sequence: 6, station_id: 5 },
+        { core_node_name: 'PLN_07', kind: 'back', sequence: 7 },
+        { core_node_name: 'ULN_002', kind: 'front', sequence: 8, station_id: 9 },
+    ];
+    const f = FIXTURES.styles['7'];
+    const s = M.init({ styleId: 7, styleName: f.name, positions: positions, routing: ROUTING, claims: f.claims,
+        parts: f.parts, flowspec: FLOWSPEC, groups: GROUPS, scene: SCENE, advanced: f.advanced || {} });
+    assert.deepStrictEqual(M.positionChoices(s, 'PLN_01'), ['PLN_03', 'PLN_06', 'PLN_07'],
+        'own station and stationless only; not the row itself, another row, or any pair');
+    const moved = M.reduce(s, { type: 'movePosition', from: 'PLN_01', to: 'ULN_002' });
+    assert.deepStrictEqual(M.toCells(moved), M.toCells(s), 'a move onto another station’s node is refused');
+});
+
 // ── report ───────────────────────────────────────────────────────────────────
 if (failures) {
     console.error('\n' + failures + ' failed, ' + checks + ' passed');
