@@ -178,6 +178,29 @@ func TestSendDue_StreakEndsWhenCoreHoldsTheLastSend(t *testing.T) {
 	}
 }
 
+// TestSendDue_FollowsTheBookClock: the Edge's resend guard reads the feed
+// book's clock (feeds.now), as Core's compare reads its own, not the wall
+// clock. Run the book's clock past the guard and the same digest goes again;
+// on the wall clock the second send would still be held back.
+func TestSendDue_FollowsTheBookClock(t *testing.T) {
+	t.Parallel()
+	e := testEngine(t, testEngineDB(t))
+	clock := time.Date(2026, 10, 19, 12, 0, 0, 0, time.UTC)
+	e.feeds.now = func() time.Time { return clock }
+	const key = "claims:PR1"
+	if !e.sendDue(key, "d1", "") {
+		t.Fatal("first send: held back")
+	}
+	clock = clock.Add(time.Minute)
+	if e.sendDue(key, "d1", "") {
+		t.Error("one book minute later: sent, want held back by the guard")
+	}
+	clock = clock.Add(time.Minute + time.Second)
+	if !e.sendDue(key, "d1", "") {
+		t.Error("the book's clock past the guard: held back, want a send")
+	}
+}
+
 // TestOnCoreAck_StampsTheEdgeClock: an ack is stamped with this Edge's clock
 // and carries Core's, so with the Edge's clock run ahead of or behind Core's
 // the pair LastCoreAck returns differs by exactly the shift — the offset

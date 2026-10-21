@@ -46,6 +46,16 @@ const (
 	FeedBins = "bins"
 )
 
+// AllFeeds is every feed key, in the order the Edge's Core-link page lists
+// them. Each side's coverage test asserts that every key here has that side's
+// row (the Edge's feed descriptor, Core's memo scope), so a new feed missing
+// from either fails a test instead of taking a silent default.
+// TestAllFeeds_NamesEveryFeedConst keeps this list and the constants above
+// one set.
+func AllFeeds() []string {
+	return []string{FeedContainment, FeedRefusals, FeedNodes, FeedScene, FeedCatalog, FeedBins}
+}
+
 // SceneRevisionNone is the scene revision of a plant with no scene an Edge can
 // cache — no points, no edges, or one without the other (the Edge keeps
 // geometry only when a response carries both). An Edge that receives it clears

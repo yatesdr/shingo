@@ -10,6 +10,7 @@ import (
 	"shingo/protocol"
 	"shingo/protocol/clock"
 	"shingo/protocol/lockcheck"
+	"shingo/protocol/resend"
 	"shingocore/internal/lockorder"
 )
 
@@ -39,14 +40,6 @@ const (
 	// the cadence the node list was re-asked at before feeds, and node edits
 	// still push through NodeStructureChanged, so it costs no freshness.
 	feedMemoStation = 2 * time.Minute
-	// feedResendGuard skips a send when the same digest of the same key went to
-	// the same station this recently: the copy is in flight, and the next
-	// heartbeat may simply predate its arrival. It also bounds a key that never
-	// converges at one send per two minutes, which was the old re-ask's cost.
-	feedResendGuard = 2 * time.Minute
-	// feedFlagAfter is how many sends in a row, with no heartbeat in between
-	// quoting the last one back, mark a key as not converging.
-	feedFlagAfter = 3
 )
 
 // feedMemoEntry is one built feed: the value and its digest, kept together so
@@ -57,14 +50,14 @@ type feedMemoEntry struct {
 	at     time.Time
 }
 
-// feedSendRecord is the last send of one key to one station. digest and at
-// are the heartbeat compare's send and its resend guard; pushed and pushedAt
-// are the last send made outside the compare (a bins push), kept apart so a
-// lost push does not hold back the heartbeat send that heals it.
+// feedSendRecord is the last send of one key to one station. The Record is
+// the heartbeat compare's send under the shared resend guard (protocol/resend;
+// two minutes, which was the old re-ask's cost for a key that never converges);
+// pushed and pushedAt are the last send made outside the compare (a bins push),
+// kept apart so a lost push does not hold back the heartbeat send that heals
+// it.
 type feedSendRecord struct {
-	digest   string
-	at       time.Time
-	streak   int
+	resend.Record
 	flagged  bool
 	pushed   string
 	pushedAt time.Time
@@ -88,24 +81,38 @@ func newFeedState() *feedState {
 	}
 }
 
+// feedScope is how one feed's build is memoised: for each station apart or
+// once for the plant, and for how long.
+type feedScope struct {
+	perStation bool
+	ttl        time.Duration
+}
+
+// feedScopes has one row per feed Core serves and NO DEFAULT: a key without a
+// row is neither memoised nor served (feedCurrent leaves it out of the ack, as
+// a key this Core does not know). The default it replaces memoised any key
+// plant-wide, so a per-station feed left out would have answered station B
+// with station A's build. TestFeedScopes_CoverAllFeeds pins a row per key.
+var feedScopes = map[string]feedScope{
+	protocol.FeedContainment: {ttl: feedMemoPlant},
+	protocol.FeedRefusals:    {ttl: feedMemoPlant},
+	protocol.FeedNodes:       {perStation: true, ttl: feedMemoStation},
+	protocol.FeedScene:       {perStation: true, ttl: feedMemoStation},
+	protocol.FeedCatalog:     {ttl: feedMemoPlant},
+	protocol.FeedBins:        {perStation: true, ttl: feedMemoBins},
+}
+
 // memoKey scopes the per-station feeds to their station.
 func memoKey(station, key string) string {
-	switch key {
-	case protocol.FeedNodes, protocol.FeedScene, protocol.FeedBins:
+	if feedScopes[key].perStation {
 		return key + "@" + station
 	}
 	return key
 }
 
-func memoTTL(key string) time.Duration {
-	switch key {
-	case protocol.FeedNodes, protocol.FeedScene:
-		return feedMemoStation
-	case protocol.FeedBins:
-		return feedMemoBins
-	}
-	return feedMemoPlant
-}
+// memoTTL is how long a feed's build is memoised: zero, never, for a key
+// with no row.
+func memoTTL(key string) time.Duration { return feedScopes[key].ttl }
 
 // drop forgets a plant-wide feed's memo, so the next read rebuilds it. Called
 // after a known write to that feed's data.
@@ -143,13 +150,14 @@ func (f *feedState) lastSent(station, key string) string {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	rec := f.sent[[2]string{station, key}]
-	switch {
-	case rec == nil:
+	if rec == nil {
 		return ""
-	case rec.pushedAt.After(rec.at):
+	}
+	digest, at := rec.Last()
+	if rec.pushedAt.After(at) {
 		return rec.pushed
 	}
-	return rec.digest
+	return digest
 }
 
 func (f *feedState) lookup(station, key string, now time.Time) (feedMemoEntry, bool) {
@@ -189,37 +197,29 @@ func (f *feedState) compare(station, key, current, held string, now time.Time) b
 	defer f.mu.Unlock()
 	rk := [2]string{station, key}
 	rec := f.sent[rk]
-	if current == held {
-		if rec != nil {
-			rec.streak = 0
-			if rec.flagged {
-				rec.flagged = false
-				f.clearFlagLocked(station, key)
-			}
-		}
-		return false
-	}
-	if rec != nil && (held == rec.digest || (rec.pushed != "" && held == rec.pushed)) {
-		rec.streak = 0
+	converged := current == held
+	if rec != nil && (converged || rec.IsLast(held) || (rec.pushed != "" && held == rec.pushed)) {
+		rec.Converged()
 		if rec.flagged {
 			rec.flagged = false
 			f.clearFlagLocked(station, key)
 		}
 	}
-	if rec != nil && rec.digest == current && now.Sub(rec.at) < feedResendGuard {
+	if converged {
 		return false
 	}
 	if rec == nil {
 		rec = &feedSendRecord{}
 		f.sent[rk] = rec
 	}
-	rec.digest, rec.at = current, now
-	rec.streak++
-	if rec.streak >= feedFlagAfter && !rec.flagged {
+	if !rec.Send(current, now) {
+		return false
+	}
+	if rec.NotConverging() && !rec.flagged {
 		rec.flagged = true
 		log.Printf("core_feeds: %s sent to %s %d times in a row without converging (digest %s, edge holds %q)",
-			key, station, rec.streak, current, held)
-		f.setFlagLocked(station, key, fmt.Sprintf("%s not converging: sent %d times", key, rec.streak))
+			key, station, rec.Streak(), current, held)
+		f.setFlagLocked(station, key, fmt.Sprintf("%s not converging: sent %d times", key, rec.Streak()))
 	}
 	return true
 }
@@ -299,9 +299,13 @@ func (s *CoreDataService) answerFeeds(station string, held map[string]string) ma
 }
 
 // feedCurrent returns the memoised build of one feed, building it on a miss.
-// ok is false when the key is unknown to this Core or its read failed; a failed
-// read is never memoised, so the next heartbeat tries again.
+// ok is false when the key has no scope row, is unknown to this Core, or its
+// read failed; a failed read is never memoised, so the next heartbeat tries
+// again.
 func (s *CoreDataService) feedCurrent(station, key string, now time.Time) (feedMemoEntry, bool) {
+	if _, scoped := feedScopes[key]; !scoped {
+		return feedMemoEntry{}, false
+	}
 	if e, ok := s.feeds.lookup(station, key, now); ok {
 		return e, true
 	}

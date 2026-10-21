@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"shingo/protocol"
+	"shingoedge/domain"
 	"shingoedge/engine"
 )
 
@@ -191,5 +192,49 @@ func TestCoreLinkSummary_BeforeAck(t *testing.T) {
 	got := coreLinkSummary(coreLinkStatus{ExpiredDrops: 4})
 	if got != "No heartbeat ack from Core yet | expired drops 4" {
 		t.Errorf("summary = %q", got)
+	}
+}
+
+// TestAsOfCopies_Characterised pins what each of the Edge's as-of copies says
+// for the same feed times, before they become one rule. Four take the later of
+// arrival and confirmation (binsAsOf, stampStationCatalog, containmentAsOf, and
+// the engine's crossingsLocked, pinned beside it in feed_aging_test.go);
+// coreLinkFeedNote takes the confirmation, else the arrival. They disagree in
+// one row: a copy that arrived just now on top of an old confirmation is
+// current to the station and "as of" to Diagnostics.
+func TestAsOfCopies_Characterised(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, 10, 19, 12, 0, 0, 0, time.UTC)
+	old := now.Add(-engine.FeedAsOfAfter - time.Second)
+	fresh := now.Add(-engine.FeedAsOfAfter + time.Second)
+	cases := []struct {
+		name                string
+		received, confirmed time.Time
+		// stale is the station screens' verdict; linkStale is Diagnostics'.
+		stale, linkStale bool
+	}{
+		{"confirmed recently over an old arrival", old, fresh, false, false},
+		{"arrived recently, never confirmed", fresh, time.Time{}, false, false},
+		{"arrived long ago, never confirmed", old, time.Time{}, true, true},
+		{"old arrival, old confirmation", old, old, true, true},
+		{"arrived recently over an old confirmation", fresh, old, false, true},
+	}
+	for _, c := range cases {
+		gotBins := binsAsOf(engine.NodeBinsState{Held: true, ReceivedAt: c.received, ConfirmedAt: c.confirmed}, now) != nil
+		v := &domain.OperatorStationView{}
+		stampStationCatalog(catalogFeedFake{received: c.received, confirmed: c.confirmed, speaks: true}, v, now)
+		gotCatalog := v.Catalog != nil && v.Catalog.AsOf != nil
+		gotContainment := containmentAsOf(&engine.ContainmentState{ReceivedAt: c.received, ConfirmedAt: c.confirmed}, now) != ""
+		eng := &stubEngine{statusCoreLink: stubCoreLink{
+			received:  map[string]time.Time{protocol.FeedBins: c.received},
+			confirmed: map[string]time.Time{protocol.FeedBins: c.confirmed},
+		}}
+		gotLink := strings.HasPrefix(coreLinkFeedNote(eng, protocol.FeedBins, now), "as of")
+		if gotBins != c.stale || gotCatalog != c.stale || gotContainment != c.stale {
+			t.Errorf("%s: bins %v catalog %v containment %v, want all %v", c.name, gotBins, gotCatalog, gotContainment, c.stale)
+		}
+		if gotLink != c.linkStale {
+			t.Errorf("%s: Diagnostics as-of %v, want %v", c.name, gotLink, c.linkStale)
+		}
 	}
 }

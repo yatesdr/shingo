@@ -116,3 +116,34 @@ func TestFeedAging_NothingHeldIsNeverACrossing(t *testing.T) {
 		t.Fatalf("with nothing held: %d nudges, %d containment announcements; want none", *nudges, *containment)
 	}
 }
+
+// TestFeedAging_CrossingsTakeTheLaterTime pins the feed book's own as-of rule
+// (crossingsLocked), the fifth copy beside the four the www package pins in
+// TestAsOfCopies_Characterised: a copy is stale when the later of its arrival
+// and Core's last confirmation is older than FeedAsOfAfter.
+func TestFeedAging_CrossingsTakeTheLaterTime(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, 10, 19, 12, 0, 0, 0, time.UTC)
+	old := now.Add(-FeedAsOfAfter - time.Second)
+	fresh := now.Add(-FeedAsOfAfter + time.Second)
+	cases := []struct {
+		name                string
+		received, confirmed time.Time
+		stale               bool
+	}{
+		{"confirmed recently over an old arrival", old, fresh, false},
+		{"arrived recently, never confirmed", fresh, time.Time{}, false},
+		{"arrived long ago, never confirmed", old, time.Time{}, true},
+		{"old arrival, old confirmation", old, old, true},
+		{"arrived recently over an old confirmation", fresh, old, false},
+	}
+	for _, c := range cases {
+		b := &feedBook{held: map[string]*feedHold{
+			protocol.FeedBins: {digest: "d", receivedAt: c.received, confirmedAt: c.confirmed},
+		}}
+		b.crossingsLocked(now)
+		if got := b.stale[protocol.FeedBins]; got != c.stale {
+			t.Errorf("%s: stale %v, want %v", c.name, got, c.stale)
+		}
+	}
+}

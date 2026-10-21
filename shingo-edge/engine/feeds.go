@@ -8,6 +8,7 @@ import (
 
 	"shingo/protocol"
 	"shingo/protocol/lockcheck"
+	"shingo/protocol/resend"
 	"shingoedge/internal/lockorder"
 	"shingoedge/store"
 )
@@ -67,14 +68,15 @@ type feedBook struct {
 	lastAck      time.Time
 	lastServerTS time.Time
 	// sent and flags are the Edge's side of the resend guard, for the data
-	// this Edge owns and sends to Core (its plant claims): the same rule
-	// Core applies to its feeds.
-	sent  map[string]*feedSendRecord
+	// this Edge owns and sends to Core (its plant claims, its bins watch
+	// list): the same rule Core applies to its feeds (protocol/resend).
+	sent  map[string]*resend.Record
 	flags map[string]string
 	// reconcile is what an ack after a gap runs; nil means StartupReconcile.
 	// A field so a test can count it.
 	reconcile func() error
-	// now is this Edge's clock for stamping acks; nil means time.Now. A field
+	// now is this Edge's feed clock (clock): it stamps acks, ages the held
+	// copies and times the resend guard; nil means time.Now. A field
 	// so a test can run the Edge's clock ahead of or behind Core's — the rig
 	// cannot shift one container's wall clock.
 	now func() time.Time
@@ -144,7 +146,8 @@ func (e *Engine) ageFeeds() {
 	e.announceCrossings(board, containment)
 }
 
-// clock is the time an ack is stamped with on this Edge.
+// clock is this Edge's feed clock: the time an ack is stamped with, the held
+// copies are aged against, and the resend guard reads.
 func (b *feedBook) clock() time.Time {
 	if b.now != nil {
 		return b.now()
@@ -152,56 +155,40 @@ func (b *feedBook) clock() time.Time {
 	return time.Now()
 }
 
-const (
-	// feedResendGuard skips a send of the same digest of the same key this
-	// recently; feedFlagAfter sends in a row without Core quoting it back
-	// flag the key. Core applies the same two numbers to its feeds.
-	feedResendGuard = 2 * time.Minute
-	feedFlagAfter   = 3
-)
-
-// feedSendRecord is the last send of one Edge-owned key to Core.
-type feedSendRecord struct {
-	digest string
-	at     time.Time
-	streak int
-}
-
 // sendDue reports whether an Edge-owned key whose digest Core does not hold
-// should be sent now, and records the send. The same digest inside the guard
-// is in flight and is held back; a third send in a row raises a flag. quoted is
-// the digest Core holds for the key: when it is the one sent last, that send
-// converged and the streak starts over (Core's rule, messaging/feeds.go compare,
-// mirrored): a key whose value moves on every heartbeat is not stuck.
+// should be sent now, and records the send, under the resend guard Core applies
+// to its feeds (protocol/resend) and on the book's clock, as Core's compare
+// reads its own. The same digest inside the guard is in flight and is held
+// back; a third send in a row raises a flag. quoted is the digest Core holds
+// for the key: when it is the one sent last, that send converged and the
+// streak starts over: a key whose value moves on every heartbeat is not stuck.
 func (e *Engine) sendDue(key, digest, quoted string) bool {
-	now := time.Now()
+	now := e.feeds.clock()
 	e.feeds.mu.Lock()
 	defer e.feeds.mu.Unlock()
 	if e.feeds.sent == nil {
-		e.feeds.sent = map[string]*feedSendRecord{}
+		e.feeds.sent = map[string]*resend.Record{}
 	}
 	rec := e.feeds.sent[key]
-	if rec != nil && quoted == rec.digest {
-		rec.streak = 0
+	if rec != nil && rec.IsLast(quoted) {
+		rec.Converged()
 		delete(e.feeds.flags, key)
 	}
-	if rec != nil && rec.digest == digest && now.Sub(rec.at) < feedResendGuard {
-		return false
-	}
 	if rec == nil {
-		rec = &feedSendRecord{}
+		rec = &resend.Record{}
 		e.feeds.sent[key] = rec
 	}
-	rec.digest, rec.at = digest, now
-	rec.streak++
-	if rec.streak >= feedFlagAfter {
+	if !rec.Send(digest, now) {
+		return false
+	}
+	if rec.NotConverging() {
 		if e.feeds.flags == nil {
 			e.feeds.flags = map[string]string{}
 		}
 		if _, flagged := e.feeds.flags[key]; !flagged {
-			e.logFn("feeds: %s sent to Core %d times in a row without converging", key, rec.streak)
+			e.logFn("feeds: %s sent to Core %d times in a row without converging", key, rec.Streak())
 		}
-		e.feeds.flags[key] = fmt.Sprintf("%s not converging: sent %d times", key, rec.streak)
+		e.feeds.flags[key] = fmt.Sprintf("%s not converging: sent %d times", key, rec.Streak())
 	}
 	return true
 }
@@ -212,7 +199,7 @@ func (e *Engine) converged(key string) {
 	e.feeds.mu.Lock()
 	defer e.feeds.mu.Unlock()
 	if rec := e.feeds.sent[key]; rec != nil {
-		rec.streak = 0
+		rec.Converged()
 	}
 	delete(e.feeds.flags, key)
 }

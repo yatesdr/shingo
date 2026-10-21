@@ -1,6 +1,10 @@
 package protocol
 
 import (
+	"go/ast"
+	"go/parser"
+	"go/token"
+	"strings"
 	"testing"
 	"time"
 )
@@ -289,5 +293,42 @@ func TestClaimsDigest_Golden(t *testing.T) {
 	active.Styles = []PlantClaimsStyle{{StyleID: "S1", Claims: []PlantClaim{claim}, Active: true}}
 	if got := d(ClaimsDigest(active)); got == base {
 		t.Errorf("active style change left the digest at %s", base)
+	}
+}
+
+// TestAllFeeds_NamesEveryFeedConst: AllFeeds lists every Feed* constant in
+// feeds.go once, so a seventh feed declared without joining it fails here, and
+// through AllFeeds each side's coverage test fails where its row is missing.
+func TestAllFeeds_NamesEveryFeedConst(t *testing.T) {
+	t.Parallel()
+	f, err := parser.ParseFile(token.NewFileSet(), "feeds.go", nil, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	listed := map[string]int{}
+	for _, k := range AllFeeds() {
+		listed[k]++
+	}
+	consts := 0
+	for _, decl := range f.Decls {
+		gd, ok := decl.(*ast.GenDecl)
+		if !ok || gd.Tok != token.CONST {
+			continue
+		}
+		for _, spec := range gd.Specs {
+			for i, name := range spec.(*ast.ValueSpec).Names {
+				lit, ok := spec.(*ast.ValueSpec).Values[i].(*ast.BasicLit)
+				if !strings.HasPrefix(name.Name, "Feed") || !ok {
+					continue
+				}
+				consts++
+				if v := strings.Trim(lit.Value, "\"`"); listed[v] != 1 {
+					t.Errorf("%s = %s is listed %d times in AllFeeds, want once", name.Name, lit.Value, listed[v])
+				}
+			}
+		}
+	}
+	if consts != len(AllFeeds()) {
+		t.Errorf("feeds.go declares %d Feed* constants, AllFeeds lists %d", consts, len(AllFeeds()))
 	}
 }

@@ -219,3 +219,95 @@ func TestAnswerFeeds_BinsWithNoListIsUnknown(t *testing.T) {
 		t.Errorf("answer = %v, sent %v; want neither", got, resp.sent)
 	}
 }
+
+// TestFeedMemo_ScopeAndTTLCharacterised pins each feed's memo scope and
+// lifetime, read from its feedScopes row. The last row is the hazard the table
+// removed: a key with no row was memoised plant-wide for feedMemoPlant, so a
+// per-station feed left out would have answered station B with station A's
+// build. It now has no lifetime (never memoised), and feedCurrent does not
+// serve it (TestAnswerFeeds_NoScopeRowIsAbsent).
+func TestFeedMemo_ScopeAndTTLCharacterised(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		key        string
+		perStation bool
+		ttl        time.Duration
+	}{
+		{protocol.FeedContainment, false, feedMemoPlant},
+		{protocol.FeedRefusals, false, feedMemoPlant},
+		{protocol.FeedNodes, true, feedMemoStation},
+		{protocol.FeedScene, true, feedMemoStation},
+		{protocol.FeedCatalog, false, feedMemoPlant},
+		{protocol.FeedBins, true, feedMemoBins},
+		{"not-a-feed", false, 0},
+	}
+	for _, c := range cases {
+		if got := memoKey("edge.a", c.key) != memoKey("edge.b", c.key); got != c.perStation {
+			t.Errorf("%s: per-station %v, want %v", c.key, got, c.perStation)
+		}
+		if got := memoTTL(c.key); got != c.ttl {
+			t.Errorf("%s: ttl %v, want %v", c.key, got, c.ttl)
+		}
+	}
+}
+
+// TestAnswerFeeds_NoScopeRowIsAbsent: a key with no feedScopes row is not
+// served and not memoised, the unknown key's answer
+// (TestAnswerFeeds_UnknownKeyIsAbsent). feedCurrent refuses it before the
+// build, so a build arm whose row was forgotten is not served either; for the
+// keys protocol lists, TestFeedScopes_CoverAllFeeds keeps that case unreachable.
+func TestAnswerFeeds_NoScopeRowIsAbsent(t *testing.T) {
+	t.Parallel()
+	resp := &captureFeedsResponder{}
+	s := &CoreDataService{resp: resp, feeds: newFeedState()}
+	if _, ok := s.feedCurrent("edge.test", "no-such-feed", time.Now()); ok {
+		t.Error("feedCurrent served a key with no scope row")
+	}
+	if len(s.feeds.memo) != 0 || len(resp.sent) != 0 {
+		t.Errorf("memo %v, sent %v; want neither", s.feeds.memo, resp.sent)
+	}
+}
+
+// coreFeedAsks is the Core-inbound subject the Edge asks for or publishes each
+// feed on, where one exists: the boot burst's node-list and catalog requests,
+// the Edge's own refusals (a table both sides write), the bins watch list.
+// Containment has none: the Edge only receives it.
+var coreFeedAsks = map[string]string{
+	protocol.FeedRefusals: protocol.SubjectSupplyRefusal,
+	protocol.FeedNodes:    protocol.SubjectNodeListRequest,
+	protocol.FeedScene:    protocol.SubjectNodeListRequest,
+	protocol.FeedCatalog:  protocol.SubjectCatalogPayloadsRequest,
+	protocol.FeedBins:     protocol.SubjectBinsWatch,
+}
+
+// TestFeedScopes_CoverAllFeeds: every feed key has a scope row and no row
+// names a key protocol does not list, and each subject the Edge asks or
+// publishes a feed on is one Core's boot coverage registers
+// (protocol.CoreInboundSubjects).
+func TestFeedScopes_CoverAllFeeds(t *testing.T) {
+	t.Parallel()
+	inbound := map[string]bool{}
+	for _, s := range protocol.CoreInboundSubjects() {
+		inbound[s] = true
+	}
+	listed := map[string]bool{}
+	for _, key := range protocol.AllFeeds() {
+		listed[key] = true
+		if sc, ok := feedScopes[key]; !ok || sc.ttl <= 0 {
+			t.Errorf("%s: scope row %+v (present %v), want a row with a lifetime", key, sc, ok)
+		}
+		if ask, ok := coreFeedAsks[key]; ok && !inbound[ask] {
+			t.Errorf("%s: ask subject %s is not in CoreInboundSubjects", key, ask)
+		}
+	}
+	for key := range feedScopes {
+		if !listed[key] {
+			t.Errorf("scope row %s is not in protocol.AllFeeds", key)
+		}
+	}
+	for key := range coreFeedAsks {
+		if !listed[key] {
+			t.Errorf("ask row %s is not in protocol.AllFeeds", key)
+		}
+	}
+}
