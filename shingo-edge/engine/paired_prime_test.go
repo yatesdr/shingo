@@ -51,7 +51,7 @@ func TestPairedPrime_EveryButtonPrimesOnceThenHolds(t *testing.T) {
 			t.Parallel()
 			eng, db, nodeID := seedCensusCell(t, d.role, protocol.SwapModeTwoRobotPressIndex, d.uop)
 			var calls atomic.Int32
-			eng.coreClient = stubCoreClient(censusStub(t, &calls, ksLine).URL)
+			bridgeCore(t, eng, censusStub(t, &calls, ksLine).URL)
 			holdPlaces(t, eng, occupiedAt(ksLine))
 
 			testutil.MustNoErr(t, pressDoor(eng, nodeID, d.door), "first press")
@@ -82,7 +82,7 @@ func TestPairedPrime_NothingWhileASwapWorksTheCell(t *testing.T) {
 			t.Parallel()
 			eng, db, nodeID := seedCensusCell(t, d.role, protocol.SwapModeTwoRobotPressIndex, d.uop)
 			var calls atomic.Int32
-			eng.coreClient = stubCoreClient(censusStub(t, &calls, ksLine).URL)
+			bridgeCore(t, eng, censusStub(t, &calls, ksLine).URL)
 			holdPlaces(t, eng, occupiedAt(ksLine))
 			// A swap leg still working the cell, in the line's runtime slot: the
 			// bin it lifted from the paired position is what made it bare.

@@ -67,6 +67,17 @@ func (h *Handlers) handleConfig(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// The Core link is the last heartbeat ack: the Edge has no address to
+	// test, it reaches Core over the broker.
+	// OWNER-WORDS
+	coreLive, coreLiveClass := "not heard from", "warn"
+	if ce, ok := h.orchestration.(interface{ LastCoreAck() (time.Time, time.Time) }); ok {
+		if local, _ := ce.LastCoreAck(); !local.IsZero() {
+			// OWNER-WORDS
+			coreLive, coreLiveClass = fmt.Sprintf("last answered %s ago", durationText(time.Since(local).Round(time.Second))), "ok"
+		}
+	}
+
 	backupStatus := map[string]any{"available": false}
 	if h.backup != nil {
 		st := h.backup.Status()
@@ -88,6 +99,8 @@ func (h *Handlers) handleConfig(w http.ResponseWriter, r *http.Request) {
 		"PLCLive":            plcLive,
 		"PLCLiveClass":       plcLiveClass,
 		"PollRateText":       durationText(cfg.WarLink.PollRate),
+		"CoreLive":           coreLive,
+		"CoreLiveClass":      coreLiveClass,
 		"MessagingLive":      msgLive,
 		"MessagingLiveClass": msgLiveClass,
 		"Shifts":             shiftList,

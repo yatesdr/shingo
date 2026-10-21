@@ -238,7 +238,7 @@ func TestKeepStagedKeeper_DecidesFromTheTable(t *testing.T) {
 	t.Run("a landed refill the read still has inbound", func(t *testing.T) {
 		t.Parallel()
 		eng, db, nodeID := keeperCell(t)
-		eng.coreClient = stubCoreClient(testCoreURL)
+		coreNeverAnswers(t, eng)
 		uuid := landedRefill(t, eng, db, nodeID)
 		holdActableBins(t, eng, line, protocol.NodeBinsRow{Node: ksSpot,
 			Inbound: []protocol.NodeBinsInbound{{OrderUUID: uuid, Payload: ksPart, From: ksMarket}}})
@@ -256,7 +256,7 @@ func TestKeepStagedKeeper_DecidesFromTheTable(t *testing.T) {
 	t.Run("a landed refill the read no longer has inbound", func(t *testing.T) {
 		t.Parallel()
 		eng, db, nodeID := keeperCell(t)
-		eng.coreClient = stubCoreClient(testCoreURL)
+		coreNeverAnswers(t, eng)
 		landedRefill(t, eng, db, nodeID)
 		holdActableBins(t, eng, line, protocol.NodeBinsRow{Node: ksSpot})
 		eng.sweepCellLevels()
@@ -267,7 +267,7 @@ func TestKeepStagedKeeper_DecidesFromTheTable(t *testing.T) {
 	t.Run("a table that may not be decided from", func(t *testing.T) {
 		t.Parallel()
 		eng, db, nodeID := keeperCell(t)
-		eng.coreClient = stubCoreClient(testCoreURL)
+		coreNeverAnswers(t, eng)
 		eng.feeds.now = func() time.Time { return time.Now().Add(ActableAckWithin + time.Second) }
 		eng.sweepCellLevels()
 		if got := readSpotOrders(t, db, nodeID); got.refills != 0 {

@@ -26,7 +26,7 @@ import (
 // that orders an operator's empty on its own count.
 func (e *Engine) askLoaderEmpties(dl *domain.Loader, payload domain.PayloadCode, count int, member domain.NodeID, origin orders.Origin) (*protocol.LoaderEmptiesResponse, error) {
 	if !e.CoreAnswers(protocol.AskLoaderEmpties) {
-		return nil, fmt.Errorf("Core does not answer the %s ask yet", protocol.AskLoaderEmpties)
+		return nil, doesNotAnswer(protocol.AskLoaderEmpties)
 	}
 	a, err := e.Ask(protocol.AskLoaderEmpties, protocol.LoaderEmptiesRequest{
 		LoaderKey: string(dl.ID()), PayloadCode: string(payload), MemberNode: string(member),

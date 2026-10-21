@@ -188,7 +188,7 @@ func TestLineCount_TicksAfterTheReplyAreNotLost(t *testing.T) {
 		})
 	}))
 	defer srv.Close()
-	eng.coreClient = stubCoreClient(srv.URL)
+	bridgeCore(t, eng, srv.URL)
 
 	testutil.MustNoErr(t, eng.RecordBinCount(nodeID, 50, "line-operator"), "RecordBinCount")
 	if got := runtimeCount(t, eng, nodeID); got != 50 {

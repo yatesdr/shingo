@@ -26,7 +26,8 @@ func (h *relHarness) restart() {
 	eng.wireEventHandlers()
 	mut := uop.New(h.db, "test.station", h.db, h.db)
 	eng.SetInventoryDeltaSink(mut)
-	eng.coreClient = h.eng.coreClient
+	bridgeCore(h.t, eng, h.core.srv.URL)
+	eng.cfg.SimCoreAPI = h.core.srv.URL
 	eng.points = h.core // the fake Core carries over (fakeCore.ReleasePoints)
 	eng.plcMgr = h.eng.plcMgr
 	h.eng, h.mutator = eng, mut

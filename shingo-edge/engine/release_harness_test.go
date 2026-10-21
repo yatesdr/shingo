@@ -260,7 +260,8 @@ func newRelHarness(t *testing.T) *relHarness {
 	// The fake Core always answers, so the act waits for its answer: a fake
 	// slowed by a loaded machine must not read as "no point from Core" (G3). A
 	// cell that wants G3 sets pointsDown, which answers 503 at once.
-	eng.coreClient = stubCoreClient(fc.srv.URL)
+	bridgeCore(t, eng, fc.srv.URL)
+	eng.cfg.SimCoreAPI = fc.srv.URL // the sim operator's oracle reads
 	// Core's points, from the fake Core, counted as a round trip each: the
 	// read-ask's answer (releasePointsAsker) in the act's place.
 	eng.points = fc

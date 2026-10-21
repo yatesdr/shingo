@@ -176,7 +176,7 @@ func TestRequest_ColdPressWithFullCell(t *testing.T) {
 		db := testEngineDB(t)
 		eng := testEngine(t, db)
 		nodeID := seedPressIndexProduce(t, db)
-		eng.coreClient = stubCoreClient(pressIndexBinsStub(t, "PRESS-HEAD", "PRESS-DECK").URL)
+		bridgeCore(t, eng, pressIndexBinsStub(t, "PRESS-HEAD", "PRESS-DECK").URL)
 		holdPlaces(t, eng, occupiedAt("PRESS-HEAD", "PRESS-DECK"))
 		_, err := eng.RequestProduceSwap(nodeID, 0)
 		if err == nil || !strings.Contains(err.Error(), "has no parts to finalize") {
@@ -191,7 +191,7 @@ func TestRequest_ColdPressWithFullCell(t *testing.T) {
 		db := testEngineDB(t)
 		eng := testEngine(t, db)
 		nodeID := seedPressIndexProduce(t, db)
-		eng.coreClient = stubCoreClient(pressIndexBinsStub(t, "PRESS-HEAD", "PRESS-DECK").URL)
+		bridgeCore(t, eng, pressIndexBinsStub(t, "PRESS-HEAD", "PRESS-DECK").URL)
 		holdPlaces(t, eng, occupiedAt("PRESS-HEAD", "PRESS-DECK"))
 		if _, err := eng.RequestEmptyBin(nodeID, "WIDGET-A"); err != nil {
 			t.Fatalf("empty-bin request: %v", err)

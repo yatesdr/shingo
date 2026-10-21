@@ -39,7 +39,7 @@ func TestReleaseCaptureLineside_NilBinID_ResolvesFromCore(t *testing.T) {
 
 	eng := testEngine(t, db)
 	// No HTTP read: the bin at the slot is the table's.
-	eng.coreClient = stubCoreClient(testCoreURL)
+	coreNeverAnswers(t, eng)
 	holdActableBins(t, eng, protocol.NodeBinsRow{Node: "REL-NIL-RESOLVE-NODE", BinID: resolvedBinID,
 		BinLabel: "RESOLVED-BIN", PayloadCode: "PART-NIL-RES", Stocked: true, Partial: true, UOPCapacity: 200, Occupied: true})
 	eng.wireEventHandlers()
@@ -123,7 +123,7 @@ func releaseUnresolvableFallsBackToZero(t *testing.T, hold func(*testing.T, *Eng
 	_ = db.UpdateProcessNodeRuntimeOrders(nodeID, nil, &orderID)
 
 	eng := testEngine(t, db)
-	eng.coreClient = stubCoreClient(testCoreURL)
+	coreNeverAnswers(t, eng)
 	hold(t, eng)
 
 	pending, _ := db.ListPendingOutbox(100)
@@ -170,7 +170,7 @@ func TestReleaseCaptureLineside_NilBinID_EmitsErrorLog(t *testing.T) {
 	_ = db.UpdateProcessNodeRuntimeOrders(nodeID, nil, &orderID)
 
 	eng := testEngine(t, db)
-	eng.coreClient = stubCoreClient(testCoreURL)
+	coreNeverAnswers(t, eng)
 	holdActableBins(t, eng, protocol.NodeBinsRow{Node: "REL-NIL-LOG-NODE"})
 
 	pending, _ := db.ListPendingOutbox(100)

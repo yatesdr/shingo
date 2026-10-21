@@ -9,10 +9,19 @@ import "shingo/protocol"
 func (e *Engine) SetPayloadBinTypes(entries []protocol.PayloadBinTypeInfo) {
 	e.payloadBinTypesMu.Lock()
 	e.payloadBinTypes = entries
+	e.payloadBinTypesHeld = true
 	e.payloadBinTypesMu.Unlock()
 	// The carriers a tile offers are read from this catalog, and nothing else
 	// says it moved.
 	e.nudgeBoards()
+}
+
+// payloadBinTypesKnown reports whether Core's catalog has arrived (with the
+// node list), an empty one included.
+func (e *Engine) payloadBinTypesKnown() bool {
+	e.payloadBinTypesMu.RLock()
+	defer e.payloadBinTypesMu.RUnlock()
+	return e.payloadBinTypesHeld
 }
 
 // PayloadBinTypes returns the cached payload→dunnage mapping. Used by the

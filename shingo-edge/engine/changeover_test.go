@@ -1047,16 +1047,16 @@ func TestChangeover_PressIndex_CoreUnavailable_RefusesStart(t *testing.T) {
 		t.Fatalf("upsert to claim: %v", err)
 	}
 
-	// testEngine wires no coreClient → Available() returns false.
+	// testEngine holds no catalog from Core (no node list yet): the gate refuses.
 	eng := testEngine(t, db)
 	eng.wireEventHandlers()
 
 	_, err = eng.StartProcessChangeover(processID, toStyleID, "test", "core down")
 	if err == nil {
-		t.Fatal("expected StartProcessChangeover to refuse with Core unavailable; got nil")
+		t.Fatal("expected StartProcessChangeover to refuse before Core is heard from; got nil")
 	}
-	if !strings.Contains(err.Error(), "Core unavailable") {
-		t.Errorf("err = %q, want substring %q", err.Error(), "Core unavailable")
+	if !strings.Contains(err.Error(), "Core not heard from yet") {
+		t.Errorf("err = %q, want substring %q", err.Error(), "Core not heard from yet")
 	}
 	if !strings.Contains(err.Error(), "PI-NODE") {
 		t.Errorf("err = %q, want substring naming the node %q", err.Error(), "PI-NODE")

@@ -132,14 +132,14 @@ func TestConfigPage_LiveWords(t *testing.T) {
 // TestConfigPage_RestartNoticeRendered: the notice is computed server-side at
 // render from the boot snapshot (the page hands it to settingsPage).
 func TestConfigPage_RestartNoticeRendered(t *testing.T) {
-	html := renderConfigPage(t, func(c *config.Config) { c.CoreAPI = "http://a.test" }, true)
+	html := renderConfigPage(t, func(c *config.Config) { c.Timezone = "America/Chicago" }, true)
 	if !strings.Contains(html, `data-restart="[]"`) {
 		t.Errorf("fresh boot: restart notice not empty")
 	}
-	html = renderConfigPage(t, func(c *config.Config) { c.CoreAPI = "http://a.test" }, true,
-		func(c *config.Config) { c.CoreAPI = "http://b.test" })
-	if !strings.Contains(html, `data-restart="[&#34;Core address&#34;]"`) {
-		t.Errorf("Core address changed since boot: notice not rendered")
+	html = renderConfigPage(t, func(c *config.Config) { c.Timezone = "America/Chicago" }, true,
+		func(c *config.Config) { c.Timezone = "America/New_York" })
+	if !strings.Contains(html, `data-restart="[&#34;Plant timezone&#34;]"`) {
+		t.Errorf("Plant timezone changed since boot: notice not rendered")
 	}
 }
 

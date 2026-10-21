@@ -68,7 +68,7 @@ func oneSwapCell(t *testing.T, role protocol.ClaimRole, mode protocol.SwapMode, 
 		}
 	}))
 	t.Cleanup(srv.Close)
-	eng.coreClient = stubCoreClient(srv.URL)
+	bridgeCore(t, eng, srv.URL)
 	if dry {
 		// Core's feed names the part absent: no bin of it anywhere.
 		testutil.MustNoErr(t, db.ReplaceSourcingState([]protocol.SourcingState{{ProcessID: "OS-PROC", StyleID: "OS-STYLE",

@@ -87,13 +87,13 @@ func (e *Engine) ClearLoaderHome(nodeID int64) (string, error) {
 }
 
 // sendHomeClear is the home clear's one send: an ask (clear_home, which Core
-// answers once per envelope and replays on a repeat) when the last ack names
-// it, the clear-home door otherwise, for one release. Either way the answer is
-// the door's body at its status. ErrAskPending past AskWait; late then takes
-// the answer when it comes, in this process.
+// answers once per envelope and replays on a repeat), refused when the last
+// ack does not name it. The answer is the door's body at its status.
+// ErrAskPending past AskWait; late then takes the answer when it comes, in
+// this process.
 func (e *Engine) sendHomeClear(req protocol.ClearHomeRequest, late func(*protocol.ClearHomeResponse, int)) (*protocol.ClearHomeResponse, int, error) {
 	if !e.CoreAnswers(protocol.AskClearHome) {
-		return e.coreClient.ClearHome(req)
+		return nil, 0, doesNotAnswer(protocol.AskClearHome)
 	}
 	a, err := e.AskLate(protocol.AskClearHome, req, AskWait, func(a *protocol.EdgeAnswer) {
 		if ans, status, derr := homeClearAnswer(a); derr == nil {
@@ -146,7 +146,10 @@ func (e *Engine) afterHomeClear(nodeID int64, node *processes.Node, claim *proce
 		case status == http.StatusBadRequest && ans.Error != "":
 			return "", &HomeClearInvalid{Sentence: ans.Error}
 		}
-		return "", fmt.Errorf("clear home %s: %s", node.Name, coreErrorText("", ans.Error, status))
+		if ans.Error != "" {
+			return "", fmt.Errorf("clear home %s: %s", node.Name, ans.Error)
+		}
+		return "", fmt.Errorf("clear home %s: Core answered %d", node.Name, status)
 	}
 	log.Printf("home_clear: node %s cleared by Core (%s arm, job %s)", node.Name, ans.Arm, ans.ParentUUID)
 	return homeClearSentence(ans.Arm), nil

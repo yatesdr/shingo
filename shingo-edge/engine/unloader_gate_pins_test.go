@@ -41,7 +41,7 @@ func newUGFixture(t *testing.T, prefix string) *ugFixture {
 	eng.orderMgr = orders.NewManager(db, &orderEmitter{bus: eng.Events}, "test.station")
 	eng.wireEventHandlers()
 	core := newSCCore(t)
-	eng.coreClient = stubCoreClient(core.srv.URL)
+	bridgeCore(t, eng, core.srv.URL)
 	core.bind(t, eng)
 
 	f := &ugFixture{eng: eng, db: db, core: core,

@@ -53,6 +53,11 @@ function makeContext() {
                 return state.postFails ? Promise.reject(new Error('refused')) : Promise.resolve({});
             },
         },
+        // The hold clear posts through postAct (ask-act.js), the same act.
+        postAct: () => {
+            state.posts++;
+            return state.postFails ? Promise.reject(new Error('refused')) : Promise.resolve({});
+        },
         // A dialog the test opens and closes: modalOpen is true while the
         // promise is pending, as the confirm overlay is in the DOM.
         confirm: () => new Promise((resolve) => {
@@ -69,7 +74,7 @@ function makeContext() {
         clearTimeout: () => {},
         console, parseInt, JSON, Math, Array, Object, String, Number, Boolean, Promise, Error,
     });
-    const src = SRC.replace(/^import \{[^}]+\} from [^\n]+\n+/m, '');
+    const src = SRC.replace(/^import \{[^}]+\} from [^\n]+\n+/gm, '');
     vm.runInContext(src, context);
     const fire = () => {
         const sub = state.sse[0];

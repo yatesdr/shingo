@@ -1,12 +1,11 @@
-// handlers_system_config.go — the Configuration page's test doors (Core
-// address, a Kafka broker) and the change-password door. The settings
+// handlers_system_config.go — the Configuration page's test door (a Kafka
+// broker) and the change-password door. The settings
 // themselves are saved through the one door, PUT /api/config
 // (handlers_config_save.go).
 
 package www
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"net"
@@ -15,36 +14,6 @@ import (
 
 	"shingo/protocol/auth"
 )
-
-// --- Core API ---
-
-func (h *Handlers) apiTestCoreAPI(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		CoreAPI string `json:"core_api"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	if req.CoreAPI == "" {
-		writeJSON(w, map[string]any{"connected": false, "error": "no URL"})
-		return
-	}
-	ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
-	defer cancel()
-	httpReq, err := http.NewRequestWithContext(ctx, "GET", req.CoreAPI+"/api/health", nil)
-	if err != nil {
-		writeJSON(w, map[string]any{"connected": false, "error": err.Error()})
-		return
-	}
-	resp, err := http.DefaultClient.Do(httpReq)
-	if err != nil {
-		writeJSON(w, map[string]any{"connected": false, "error": err.Error()})
-		return
-	}
-	resp.Body.Close()
-	writeJSON(w, map[string]any{"connected": resp.StatusCode < 500})
-}
 
 func (h *Handlers) apiTestKafka(w http.ResponseWriter, r *http.Request) {
 	var req struct {

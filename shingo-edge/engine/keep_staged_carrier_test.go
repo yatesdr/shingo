@@ -99,7 +99,7 @@ func TestKeepStagedCarrier_AWrongCarrierAtEveryDecision(t *testing.T) {
 		startKSChangeover(t, fx)
 		// An empty of a carrier neither part rides reached the spot by hand.
 		rows["SPOT"] = wrong
-		fx.eng.coreClient = stubCoreClient(ksNodeBinsStub(t, rows).URL)
+		bridgeCore(t, fx.eng, ksNodeBinsStub(t, rows).URL)
 		fx.holdRows(t, rows)
 		testutil.MustNoErr(t, fx.eng.CancelProcessChangeover(fx.processID), "cancel")
 		// It goes back where the leaving style's spares come from (returnTo).
@@ -156,7 +156,7 @@ func TestKeepStagedCarrier_ACancelDecidesTheSameAtAnyClock(t *testing.T) {
 				stamp.Add(c.start).Format(time.RFC3339), coID)
 			testutil.MustNoErr(t, err, "the start's stamp")
 			rows["SPOT"] = NodeBinInfo{Occupied: true, BinTypeCode: ksTypeB}
-			fx.eng.coreClient = stubCoreClient(ksNodeBinsStub(t, rows).URL)
+			bridgeCore(t, fx.eng, ksNodeBinsStub(t, rows).URL)
 			fx.holdRows(t, rows)
 
 			testutil.MustNoErr(t, fx.eng.CancelProcessChangeover(fx.processID), "cancel")

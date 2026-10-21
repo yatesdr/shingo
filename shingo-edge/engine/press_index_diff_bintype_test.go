@@ -97,7 +97,7 @@ func startDiffBinTypeChangeover(t *testing.T, db *store.DB) (eng *Engine, proces
 	// node list, which is what the planner reads.
 	srv := httptest.NewServer(http.NotFoundHandler())
 	t.Cleanup(srv.Close)
-	eng.coreClient = stubCoreClient(srv.URL)
+	bridgeCore(t, eng, srv.URL)
 	eng.SetPayloadBinTypes([]protocol.PayloadBinTypeInfo{
 		{PayloadCode: "PART-OLD", BinTypeCode: "TOTE"},
 		{PayloadCode: "PART-NEW", BinTypeCode: "BIN"},

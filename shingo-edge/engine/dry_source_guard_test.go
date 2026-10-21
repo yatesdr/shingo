@@ -83,7 +83,7 @@ func TestDrySourceGuard_RefusesOnlyTrueAbsence(t *testing.T) {
 			nodeID := seedLineSwapClaim(t, db, tc.prefix, protocol.SwapModeTwoRobot)
 			eng := testEngine(t, db)
 			testutil.MustNoErr(t, db.ReplaceSourcingState(tc.feed), "the feed Core sent")
-			eng.coreClient = stubCoreClient(preflightStub(t, `{"missing":["PART-C"],"absent":["PART-C"],"available":[]}`).URL)
+			bridgeCore(t, eng, preflightStub(t, `{"missing":["PART-C"],"absent":["PART-C"],"available":[]}`).URL)
 
 			res, err := eng.RequestNodeMaterial(nodeID, 1)
 			reqs := complexRequestsOnTheWire(t, db)

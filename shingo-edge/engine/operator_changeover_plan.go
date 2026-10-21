@@ -359,7 +359,8 @@ func (e *Engine) aimEvacsAtResidentHome(diffs []ChangeoverNodeDiff, state func(c
 }
 
 // refusePressIndexWhenCoreUnavailable returns an operator-readable error
-// when Core is unavailable AND any diff touches a press-index claim.
+// when Core's catalog has not arrived (payloadBinTypesKnown: no node list from
+// Core yet) AND any diff touches a press-index claim.
 // Without Core's bin-type catalog, both fan-out passes can't detect
 // different-bin-type changeovers and silently fall back to the
 // same-bin-type choreography (wrong robots, wrong steps) or to no
@@ -371,7 +372,7 @@ func (e *Engine) aimEvacsAtResidentHome(diffs []ChangeoverNodeDiff, state func(c
 // ONLY Drop and Add, so the old Swap/Evacuate-scoped gate would have
 // waved through exactly the changeover that needed it.
 func (e *Engine) refusePressIndexWhenCoreUnavailable(diffs []ChangeoverNodeDiff) error {
-	if e.coreClient != nil && e.coreClient.Available() {
+	if e.payloadBinTypesKnown() {
 		return nil
 	}
 	for _, d := range diffs {
@@ -381,7 +382,8 @@ func (e *Engine) refusePressIndexWhenCoreUnavailable(diffs []ChangeoverNodeDiff)
 		if !isPressIndexClaim(d.FromClaim) && !isPressIndexClaim(d.ToClaim) {
 			continue
 		}
-		return fmt.Errorf("changeover refused: Core unavailable; cannot determine bin types for press-index changeover at %s", d.CoreNodeName)
+		// OWNER-WORDS
+		return fmt.Errorf("changeover refused: Core not heard from yet; cannot determine bin types for press-index changeover at %s", d.CoreNodeName)
 	}
 	return nil
 }

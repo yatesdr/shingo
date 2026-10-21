@@ -161,10 +161,9 @@ func (e *Engine) handleNodeOrderDelivered(delivered OrderDeliveredEvent) {
 				log.Printf("market_pullback: record the clear at %s: %v", node.CoreNodeName, err)
 			}
 		}
-		// An ask when Core answers bin.clear, the bin-clear door otherwise; an
-		// answer after the wait is taken the same way when it comes.
-		cleared, err := askOrDoorLate(e, protocol.AskBinClear, req,
-			func() (*BinClearResponse, error) { return e.coreClient.ClearBin(req) }, answered)
+		// An ask (bin.clear); an answer after the wait is taken the same way
+		// when it comes.
+		cleared, err := askLateOrRefuse(e, protocol.AskBinClear, req, answered)
 		if errors.Is(err, ErrAskPending) {
 			log.Printf("market_pullback: auto-clear at %s sent to Core, not answered yet", node.CoreNodeName)
 			return

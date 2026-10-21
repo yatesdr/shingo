@@ -32,7 +32,7 @@ func TestClearBin_DeclaredLayersReachCore(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 	eng := testEngine(t, testEngineDB(t))
-	eng.coreClient = stubCoreClient(srv.URL)
+	bridgeCore(t, eng, srv.URL)
 	info := sharedLoaderInfo("HLC-L", "consume", "operator", "PART-HL", 0, 0)
 	info.InboundSource = ""
 	info.OutboundDest = "EMPTY-TOTES"

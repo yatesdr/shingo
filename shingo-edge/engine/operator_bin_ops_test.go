@@ -187,7 +187,7 @@ func TestClearBin_FiresEmptyOut_AMRFed(t *testing.T) {
 	// retrieve now falls through to normal_replenishment (the unloader_full_in
 	// case is gone). This proves that fall-through creates no second empty-out.
 	eng.orderMgr = orders.NewManager(db, &orderEmitter{bus: eng.Events}, "test.station")
-	eng.coreClient = stubCoreClient(srv.URL)
+	bridgeCore(t, eng, srv.URL)
 	holdProcessNodes(t, eng, true, "PART-CLR")
 	eng.wireEventHandlers()
 
@@ -222,7 +222,7 @@ func TestClearBin_FiresEmptyOut_PressFed(t *testing.T) {
 	unloaderNodeID, _ := seedManualSwapClaim(t, db, "U2-PRESS", "consume", "PRESS-PART", "EMPTY-TOTES")
 
 	eng := testEngine(t, db)
-	eng.coreClient = stubCoreClient(srv.URL)
+	bridgeCore(t, eng, srv.URL)
 	holdProcessNodes(t, eng, true, "PRESS-PART")
 
 	// No U1 order exists — the press fed the window directly.
@@ -250,7 +250,7 @@ func TestClearBin_NoEmptyOut_WhenWindowEmpty(t *testing.T) {
 	unloaderNodeID, _ := seedManualSwapClaim(t, db, "U2-EMPTY", "consume", "PART-X", "EMPTY-TOTES")
 
 	eng := testEngine(t, db)
-	eng.coreClient = stubCoreClient(srv.URL)
+	bridgeCore(t, eng, srv.URL)
 	holdProcessNodes(t, eng, false, "")
 
 	if err := eng.ClearBin(unloaderNodeID, "", false, nil); err == nil || !strings.Contains(err.Error(), "no bin at node") {
@@ -316,7 +316,7 @@ func TestPushEmptyOut_EmptyWindow_CreatesExactlyOneMove(t *testing.T) {
 	nodeID, _ := seedManualSwapClaim(t, db, "PE-OK", "consume", "PART-PE", "EMPTY-STORE")
 
 	eng := testEngine(t, db)
-	eng.coreClient = stubCoreClient(srv.URL)
+	bridgeCore(t, eng, srv.URL)
 	holdProcessNodes(t, eng, true, "")
 
 	if err := eng.PushEmptyOut(nodeID); err != nil {
@@ -339,7 +339,7 @@ func TestPushEmptyOut_FullWindow_ReturnsError(t *testing.T) {
 	nodeID, _ := seedManualSwapClaim(t, db, "PE-FULL", "consume", "PART-FULL", "EMPTY-STORE")
 
 	eng := testEngine(t, db)
-	eng.coreClient = stubCoreClient(srv.URL)
+	bridgeCore(t, eng, srv.URL)
 	holdProcessNodes(t, eng, true, "PART-FULL")
 
 	if err := eng.PushEmptyOut(nodeID); err == nil {
@@ -362,7 +362,7 @@ func TestPushEmptyOut_NonManualSwapNode_ReturnsError(t *testing.T) {
 	nodeID := seedLegacySimpleClaim(t, db, "SMP", "consume")
 
 	eng := testEngine(t, db)
-	eng.coreClient = stubCoreClient(srv.URL)
+	bridgeCore(t, eng, srv.URL)
 	holdProcessNodes(t, eng, true, "")
 
 	if err := eng.PushEmptyOut(nodeID); err == nil {
@@ -386,7 +386,7 @@ func TestPushEmptyOut_DoubleTap_StillExactlyOneMove(t *testing.T) {
 	nodeID, _ := seedManualSwapClaim(t, db, "PE-DUP", "consume", "PART-DUP", "EMPTY-STORE")
 
 	eng := testEngine(t, db)
-	eng.coreClient = stubCoreClient(srv.URL)
+	bridgeCore(t, eng, srv.URL)
 	holdProcessNodes(t, eng, true, "")
 
 	if err := eng.PushEmptyOut(nodeID); err != nil {

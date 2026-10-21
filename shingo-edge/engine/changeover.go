@@ -231,7 +231,7 @@ func pressHasBarePosition(d ChangeoverNodeDiff, state func(coreNode string) Node
 // geometry rarely changes between styles, so missing catalog data is far more
 // likely than an actual change. Callers treat unknown as "same" and leave the
 // position alone. refusePressIndexWhenCoreUnavailable refuses a press-index
-// changeover only when no Core is configured; with a Core configured, a payload
+// changeover only before Core's catalog has arrived; once it has, a payload
 // the catalog has no row for reads as "same", and if its carrier really changes
 // at the index the position keeps the old carrier type. That is the known
 // exposure of reading bin types from the catalog rather than asking Core.
@@ -257,8 +257,8 @@ func binTypesDiffer(from, to *processes.NodeClaim, binTypes map[string]string) b
 // ── IT IS NOT !binTypesDiffer, AND THE UNKNOWN CASE IS WHY ────────────────
 //
 // binTypesDiffer answers "same" when either code is unresolved. Nothing refuses
-// that case once a Core is configured (refusePressIndexWhenCoreUnavailable
-// refuses only when none is), so for press-index unknown is read as "same" and
+// that case once Core's catalog has arrived (refusePressIndexWhenCoreUnavailable
+// refuses only before it has), so for press-index unknown is read as "same" and
 // the position is left alone: the lesser error there.
 //
 // The sequential skip has the opposite exposure. It has no such gate, and acting

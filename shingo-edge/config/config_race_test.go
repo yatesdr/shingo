@@ -34,14 +34,14 @@ func TestRace_AdoptLeavesUnchangedFieldsAlone(t *testing.T) {
 	}()
 	for i := 0; i < 50; i++ {
 		draft := live.Clone()
-		draft.CoreAPI = "http://core.test/" + string(rune('a'+i%26))
+		draft.SimCoreAPI = "http://core.test/" + string(rune('a'+i%26))
 		live.Adopt(draft)
 	}
 	close(stop)
 	wg.Wait()
 	live.RLock()
 	defer live.RUnlock()
-	if live.CoreAPI == "" || live.WarLink.Host != "localhost" || len(live.Messaging.Kafka.Brokers) != 1 {
-		t.Errorf("after adopt: core=%q host=%q brokers=%v", live.CoreAPI, live.WarLink.Host, live.Messaging.Kafka.Brokers)
+	if live.SimCoreAPI == "" || live.WarLink.Host != "localhost" || len(live.Messaging.Kafka.Brokers) != 1 {
+		t.Errorf("after adopt: core=%q host=%q brokers=%v", live.SimCoreAPI, live.WarLink.Host, live.Messaging.Kafka.Brokers)
 	}
 }

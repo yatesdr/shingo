@@ -1,4 +1,5 @@
 import { api, confirm, createSSE, delegateActions, toast } from '/static/js/shingoedge.js';
+import { postAct } from '/static/js/ask-act.js';
 
 // Quality Containment page: Verify Good releases one verified bin from its
 // containment node to the claim's outbound; Recall walks a contained
@@ -45,7 +46,15 @@ async function unholdHeldBin(el) {
     if (!binID) return;
     if (!await confirmHolding('Clear the hold on bin #' + binID + '? It returns to the ordinary flow — use only when the hold is stale or was a mistake.')) return;
     try {
-        await api.post('/api/containment/unhold', { bin_id: binID });
+        var answer = await postAct('/api/containment/unhold', { bin_id: binID });
+        // A 202 pending answer: sent to Core, not known to be done (ask-act.js).
+        // No reload over the notice: the containment feed's push reloads the
+        // page when Core's answer lands.
+        if (answer && answer.pending) {
+            toast(answer.notice, 'info');
+            applyHeldReload();
+            return;
+        }
         toast('Hold cleared on bin #' + binID, 'success');
         window.location.reload();
     } catch (e) {

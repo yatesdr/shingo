@@ -26,7 +26,7 @@ func TestProduceClear_RePushesOnlyItsOwnLoader(t *testing.T) {
 	eng.orderMgr = orders.NewManager(db, &orderEmitter{bus: eng.Events}, "test.station")
 	eng.wireEventHandlers()
 	core := newSCCore(t)
-	eng.coreClient = stubCoreClient(core.srv.URL)
+	bridgeCore(t, eng, core.srv.URL)
 	core.bind(t, eng)
 
 	const wa, wb = "PCR-WA", "PCR-WB"

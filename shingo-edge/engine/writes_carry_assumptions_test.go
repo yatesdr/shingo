@@ -2,7 +2,6 @@ package engine
 
 import (
 	"encoding/json"
-	"errors"
 	"net/http"
 	"net/http/httptest"
 	"slices"
@@ -66,7 +65,7 @@ func assumeEngine(t *testing.T) (*Engine, *assumeCore, int64) {
 	nodeID, _ := seedManualSwapClaim(t, db, "ASM", "consume", "PART-AS", "EMPTY-TOTES")
 	eng := testEngine(t, db)
 	eng.SetInventoryDeltaSink(&fakeDeltaSink{db: db})
-	eng.coreClient = stubCoreClient(core.srv.URL)
+	bridgeCore(t, eng, core.srv.URL)
 	rt, err := db.EnsureProcessNodeRuntime(nodeID)
 	testutil.MustNoErr(t, err, "ensure runtime")
 	bin := int64(4242)
@@ -241,27 +240,5 @@ func TestWrites_ARefusedTapRedrawsCoresRow(t *testing.T) {
 				t.Errorf("redrawn = %v, want the node", redrawn)
 			}
 		})
-	}
-}
-
-// TestCoreClient_ARefusalCarriesItsRows: each write door's refusal decodes to a
-// *CoreRefusal with Core's sentence and its rows.
-func TestCoreClient_ARefusalCarriesItsRows(t *testing.T) {
-	t.Parallel()
-	row := occupiedRow("ASM-MSWAP-NODE", 5151, 3)
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusConflict)
-		_ = json.NewEncoder(w).Encode(map[string]any{"error": "refused", "rows": []protocol.NodeBinsRow{row}})
-	}))
-	t.Cleanup(srv.Close)
-	c := NewCoreClient(srv.URL)
-	_, loadErr := c.LoadBin(&BinLoadRequest{NodeName: "ASM-MSWAP-NODE"})
-	_, countErr := c.RecordBinCount(protocol.BinCountRequest{NodeName: "ASM-MSWAP-NODE"})
-	_, clearErr := c.ClearBin(protocol.BinClearRequest{NodeName: "ASM-MSWAP-NODE"})
-	for name, err := range map[string]error{"load": loadErr, "count": countErr, "clear": clearErr} {
-		var r *CoreRefusal
-		if !errors.As(err, &r) || r.Status != http.StatusConflict || r.Sentence != "refused" || len(r.Rows) != 1 || r.Rows[0].BinID != 5151 {
-			t.Errorf("%s: err = %#v, want a 409 refusal carrying Core's row", name, err)
-		}
 	}
 }

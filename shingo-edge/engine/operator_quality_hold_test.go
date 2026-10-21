@@ -117,7 +117,7 @@ func TestSendBinToQualityHold_HoldsThePresentBin(t *testing.T) {
 	stub := &holdStubCore{}
 	srv := stub.server()
 	t.Cleanup(srv.Close)
-	eng.coreClient = stubCoreClient(srv.URL)
+	bridgeCore(t, eng, srv.URL)
 
 	nodeID := seedHoldNode(t, eng.db, "PLN-HOLD")
 	holdActableBins(t, eng, protocol.NodeBinsRow{Node: "PLN-HOLD", BinID: 42, PayloadCode: "PART-HOLD", Occupied: true})
@@ -149,7 +149,7 @@ func TestSendBinToQualityHold_RefusesWithoutRouteOrBin(t *testing.T) {
 	stub := &holdStubCore{}
 	srv := stub.server()
 	t.Cleanup(srv.Close)
-	eng.coreClient = stubCoreClient(srv.URL)
+	bridgeCore(t, eng, srv.URL)
 
 	nodeID := seedHoldNode(t, eng.db, "PLN-HOLD2")
 
@@ -206,7 +206,7 @@ func TestReleaseFromContainment_AmbiguityAndHappyPath(t *testing.T) {
 	stub := &holdStubCore{}
 	srv := stub.server()
 	t.Cleanup(srv.Close)
-	eng.coreClient = stubCoreClient(srv.URL)
+	bridgeCore(t, eng, srv.URL)
 
 	nodeID := seedHoldNode(t, eng.db, "PLN-REL")
 	// The containment node is a registered process node too (the floor
@@ -309,7 +309,7 @@ func TestRecallContainedPayload_EachMoveNamesItsBinAndHold(t *testing.T) {
 	stub := &holdStubCore{}
 	srv := stub.server()
 	t.Cleanup(srv.Close)
-	eng.coreClient = stubCoreClient(srv.URL)
+	bridgeCore(t, eng, srv.URL)
 
 	seedHoldNode(t, eng.db, "PLN-RECALL")
 	procID, err := eng.db.CreateProcess("FG-PROC", "fg", "", "", false)

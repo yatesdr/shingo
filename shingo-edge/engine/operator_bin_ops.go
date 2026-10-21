@@ -265,11 +265,9 @@ func (e *Engine) LoadBin(nodeID int64, payloadCode string, uopCount *int64, mani
 		UOPCount:    uopCount,
 		Manifest:    items,
 	}
-	// The LOAD goes as an ask when Core answers it (bin.load), through the
-	// bin-load door otherwise. An answer that comes after the tap's wait runs
-	// the same follow-up then (afterLoad), in this process.
-	loadResp, err := askOrDoorLate(e, protocol.AskBinLoad, req,
-		func() (*BinLoadResponse, error) { return e.coreClient.LoadBin(req) },
+	// The LOAD is an ask (bin.load). An answer that comes after the tap's wait
+	// runs the same follow-up then (afterLoad), in this process.
+	loadResp, err := askLateOrRefuse(e, protocol.AskBinLoad, req,
 		func(late *BinLoadResponse, lerr error) {
 			if lerr != nil {
 				log.Printf("bin_ops: LOAD at node %s, answered late: %v", node.CoreNodeName, e.refused(lerr))
@@ -538,11 +536,9 @@ func (e *Engine) ClearBin(nodeID int64, binTypeCode string, unload bool, layers 
 	// Core refuses it when another stands there, rather than clearing that one.
 	req := protocol.BinClearRequest{NodeName: node.CoreNodeName,
 		BinID: e.boardBinID(node.CoreNodeName), BinTypeCode: binTypeCode, Unload: unload, Layers: layers}
-	// The CLEAR goes as an ask when Core answers it (bin.clear), through the
-	// bin-clear door otherwise. An answer that comes after the tap's wait runs
-	// the same follow-up then (afterClear), in this process.
-	cleared, err := askOrDoorLate(e, protocol.AskBinClear, req,
-		func() (*BinClearResponse, error) { return e.coreClient.ClearBin(req) },
+	// The CLEAR is an ask (bin.clear). An answer that comes after the tap's
+	// wait runs the same follow-up then (afterClear), in this process.
+	cleared, err := askLateOrRefuse(e, protocol.AskBinClear, req,
 		func(late *BinClearResponse, lerr error) {
 			if lerr != nil {
 				log.Printf("bin_ops: CLEAR at node %s, answered late: %v", node.CoreNodeName, e.refused(lerr))

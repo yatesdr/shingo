@@ -83,7 +83,7 @@ func TestRuntimeBinding_ReleaseDoesNotPreloadIncomingBin(t *testing.T) {
 	const incomingBin int64 = 9001
 	srv := mockBinUOPServer(t, map[int64]int{incomingBin: 1200})
 	eng := testEngine(t, db)
-	eng.coreClient = stubCoreClient(srv.URL)
+	bridgeCore(t, eng, srv.URL)
 
 	orderID, err := db.CreateOrder("uuid-rc-nopre", orders.TypeRetrieve,
 		&nodeID, false, 1, "RC-NOPRE-NODE", "", "", "", false, "", "", "")

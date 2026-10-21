@@ -69,7 +69,6 @@ func TestConfigShots(t *testing.T) {
 	// A synthetic, fully set config: every section has something to show.
 	cfgPath := filepath.Join(t.TempDir(), "shingoedge.yaml")
 	cfg := config.Defaults()
-	cfg.CoreAPI = "http://core.invalid:8080"
 	cfg.StationUID = "stn-5f0c2a9e41d7b3c8"
 	cfg.Namespace = "shots"
 	cfg.LineID = "press400"

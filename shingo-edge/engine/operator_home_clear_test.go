@@ -82,7 +82,7 @@ func TestClearLoaderHome_OneRequestRecordsTheZeroAndCreatesNothing(t *testing.T)
 			testutil.MustNoErr(t, db.SetProcessNodeRuntimeWithBinAndEpoch(nodeID, nil, &binID, 3, 12), "the home's full carrier")
 			srv, clears, others, req := homeClearCore(t, c.status, c.body)
 			eng := newIntentEngine(t, db)
-			eng.coreClient = stubCoreClient(srv.URL)
+			bridgeCore(t, eng, srv.URL)
 
 			said, err := eng.ClearLoaderHome(nodeID)
 			var refused *HomeClearRefused
@@ -138,7 +138,7 @@ func TestClearLoaderHome_ARefusalRedrawsTheHomeFromCoresRow(t *testing.T) {
 	srv, _, _, _ := homeClearCore(t, http.StatusConflict, protocol.ClearHomeResponse{Status: "error",
 		Error: "CLR-HOME is already being cleared", Rows: []protocol.NodeBinsRow{cores}})
 	eng := newIntentEngine(t, db)
-	eng.coreClient = stubCoreClient(srv.URL)
+	bridgeCore(t, eng, srv.URL)
 	testutil.MustNoErr(t, eng.ApplyNodeBinsSnapshot(protocol.NodeBinsSnapshot{Digest: "d-home",
 		Rows: []protocol.NodeBinsRow{{Node: "CLR-HOME", State: protocol.BinsStateOccupied, Occupied: true, BinID: 41, Epoch: 3}}}), "hold the copy")
 

@@ -31,13 +31,7 @@
     <!-- Core connection -->
     <div class="set-sect">
         <h2>Core connection</h2>
-        {{if not .Config.CoreAPI}}<span class="set-cnt warn"><i></i>no address set</span>{{end}}
-        <span class="set-spacer"></span>
-        <button type="button" class="set-btn" data-action="testCore">Test connection</button>
-    </div>
-    <div class="set-fld">
-        <label for="cf-core">Core address<small>where this Edge reads nodes, bins and payloads · applies after a restart</small></label>
-        <div class="v"><input id="cf-core" class="set-inp wide" type="text" data-field="core_api" value="{{.Config.CoreAPI}}" placeholder="http://core:8080" spellcheck="false" autocomplete="off"><span class="set-dim" id="core-test" role="status"></span></div>
+        <span class="set-cnt{{if .CoreLiveClass}} {{.CoreLiveClass}}{{end}}" id="core-live"><i></i><span>{{.CoreLive}}</span></span>
     </div>
     <div class="set-fld">
         <label>Node list and payload catalog<small>refreshed about every 2 minutes without help · use after a change on Core</small></label>

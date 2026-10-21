@@ -176,15 +176,17 @@ func freePositionName(t *testing.T, db *store.DB, processID int64, claims []proc
 	return ""
 }
 
-// realFlowRouter is the real engine behind the real router, with Core
-// unreachable on purpose — refusePressIndexWhenCoreUnavailable keys on "CoreAPI
-// is not empty", so a blank one would refuse every press-index preview by name
-// and this test would never reach the save.
+// realFlowRouter is the real engine behind the real router, with Core's
+// catalog marked arrived — refusePressIndexWhenCoreUnavailable keys on it, so
+// without it every press-index preview is refused by name and this test would
+// never reach the save.
 func realFlowRouter(t *testing.T, db *store.DB) (*Handlers, *chi.Mux) {
 	t.Helper()
 	cfg := config.Defaults()
-	cfg.CoreAPI = "http://core.invalid"
 	eng := engine.New(engine.Config{AppConfig: cfg, DB: db, LogFunc: t.Logf})
+	// Core's catalog has arrived (empty): the press-index changeover's gate
+	// opens on it, as it opened on a configured Core address.
+	eng.SetPayloadBinTypes(nil)
 	eng.Start()
 	t.Cleanup(eng.Stop)
 	var pbt []protocol.PayloadBinTypeInfo

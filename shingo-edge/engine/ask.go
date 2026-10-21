@@ -33,11 +33,24 @@ import (
 //
 // ONLY WHAT CORE ANSWERS IS ASKED. The heartbeat ack names the kinds this Core
 // answers (EdgeHeartbeatAck.Asks); CoreAnswers(kind) is false for any other,
-// and the caller takes the kind's HTTP door, as for a Core without the pair.
+// and the act is refused (ErrCoreDoesNotAnswer): there is no other way to
+// Core. A Core older than this Edge answers no kind; Core deploys first.
 
 // ErrAskPending is an ask whose answer did not arrive within the wait. It was
 // sent; the answer will be applied when it comes.
 var ErrAskPending = errors.New("sent; Core has not answered yet")
+
+// ErrCoreDoesNotAnswer is an act refused before anything was sent: the last
+// heartbeat ack did not name its kind (no ack yet, or a Core older than this
+// Edge). Wrapped with the kind by doesNotAnswer.
+var ErrCoreDoesNotAnswer = errors.New("Core does not answer it")
+
+// doesNotAnswer is the refusal of an ask of kind that the last ack did not
+// name: nothing was sent.
+func doesNotAnswer(kind string) error {
+	// OWNER-WORDS
+	return fmt.Errorf("Core does not answer the %s ask yet: %w", kind, ErrCoreDoesNotAnswer)
+}
 
 // askForgetSlack is how long past an ask's expiry the Edge keeps its pending
 // entry: Core's late answer (AnswerExpired) still crosses the broker.
@@ -211,12 +224,10 @@ func (e *Engine) PendingAsks() int {
 // re-measured at a plant after deploy, beside the bins push cost.
 const AskWait = 2 * time.Second
 
-// askInto turns an answer into what the kind's HTTP door returned: the
-// response decoded into T when Core did the act, else a *CoreRefusal with the
-// status, the sentence, the rows and (a count's) epoch refresh, exactly the
-// error the door's CoreClient method gave. The rows were already applied by
-// HandleEdgeAnswer; applying a refusal's rows again (Engine.refused) changes
-// nothing.
+// askInto turns an answer into the kind's response: decoded into T when Core
+// did the act, else a *CoreRefusal with the status, the sentence, the rows and
+// (a count's) epoch refresh. The rows were already applied by HandleEdgeAnswer;
+// applying a refusal's rows again (Engine.refused) changes nothing.
 func askInto[T any](a *protocol.EdgeAnswer) (*T, error) {
 	if a == nil {
 		return nil, fmt.Errorf("no answer")
@@ -242,13 +253,12 @@ func askInto[T any](a *protocol.EdgeAnswer) (*T, error) {
 	return nil, r
 }
 
-// askOrDoor sends req as an ask of kind when Core answers that kind, and
-// through the kind's HTTP door (door) otherwise: an older Core, for one
-// release, until the door is deleted with its last old Core. ErrAskPending
-// means the ask is out and unanswered after AskWait.
-func askOrDoor[T any](e *Engine, kind string, req any, door func() (*T, error)) (*T, error) {
+// askOrRefuse sends req as an ask of kind and decodes its answer, when Core
+// answers that kind; refused before sending otherwise (doesNotAnswer).
+// ErrAskPending means the ask is out and unanswered after AskWait.
+func askOrRefuse[T any](e *Engine, kind string, req any) (*T, error) {
 	if !e.CoreAnswers(kind) {
-		return door()
+		return nil, doesNotAnswer(kind)
 	}
 	a, err := e.Ask(kind, req, AskWait)
 	if err != nil {
@@ -280,13 +290,12 @@ func askAppliersByKind() map[string]askApplier {
 	}
 }
 
-// askOrDoorLate is askOrDoor for a tap with a follow-up: after accepted (the
-// door's response) the caller runs it at once; for an answer that comes after
-// AskWait, late runs it then, with the answer in the door's shapes. The door
-// path never pends.
-func askOrDoorLate[T any](e *Engine, kind string, req any, door func() (*T, error), late func(*T, error)) (*T, error) {
+// askLateOrRefuse is askOrRefuse for a tap with a follow-up: after an answer
+// within the wait the caller runs it at once; for an answer that comes after
+// AskWait, late runs it then, with the answer decoded as askInto does.
+func askLateOrRefuse[T any](e *Engine, kind string, req any, late func(*T, error)) (*T, error) {
 	if !e.CoreAnswers(kind) {
-		return door()
+		return nil, doesNotAnswer(kind)
 	}
 	a, err := e.AskLate(kind, req, AskWait, func(a *protocol.EdgeAnswer) { late(askInto[T](a)) })
 	if err != nil {
@@ -300,8 +309,7 @@ func askOrDoorLate[T any](e *Engine, kind string, req any, door func() (*T, erro
 // A read that is a computed answer at the moment of a decision rides the ask
 // pair like a write, with AskWait for its answer. An answer still pending is
 // the site's "cannot check now", as an unreachable Core was over HTTP: each
-// site fails closed on it. A Core that does not answer the kind is the same:
-// these reads have no HTTP door left on the Edge.
+// site fails closed on it. A Core that does not answer the kind is the same.
 
 // preflightAsker is service.PreflightCorePoster over the preflight read-ask
 // (protocol.AskPreflight): the changeover start's inventory gate and the
@@ -356,7 +364,7 @@ func (p preflightAsker) PreflightInventory(station string, payloads []string) (*
 // Core choosing the oldest, as when Core could not be read.
 func (e *Engine) HeldPartials(payloadCode string) ([]protocol.HeldPartial, error) {
 	if !e.CoreAnswers(protocol.AskHeldPartials) {
-		return nil, fmt.Errorf("held partials: Core does not answer the %s ask", protocol.AskHeldPartials)
+		return nil, fmt.Errorf("held partials: %w", doesNotAnswer(protocol.AskHeldPartials))
 	}
 	a, err := e.Ask(protocol.AskHeldPartials, protocol.HeldPartialsRequest{PayloadCode: payloadCode}, AskWait)
 	if err != nil {

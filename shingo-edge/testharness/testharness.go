@@ -97,7 +97,7 @@ func NewEdgeWithCoreAPI(t *testing.T, stationID, coreAPI string) *Edge {
 		StationUID: stationID,
 		Namespace:  "test",
 		LineID:     "edge-test",
-		CoreAPI:    coreAPI,
+		SimCoreAPI: coreAPI,
 		Messaging: config.MessagingConfig{
 			StationID: stationID,
 		},

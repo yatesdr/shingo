@@ -101,19 +101,20 @@ func TestComposerShots(t *testing.T) {
 	stationID := seeded.Stations["screen-a4"]
 
 	cfg := config.Defaults()
-	// CORE HAS TO LOOK REACHABLE. refusePressIndexWhenCoreUnavailable keys on
-	// CoreClient.Available(), which is "CoreAPI is not empty", and with it empty
-	// every press-index changeover is refused by name — "cannot determine bin
-	// types" — so the preview answers 400 and the bar shows a refusal where the
-	// reference shows "Preview OK · N orders". Nothing here calls Core: the
-	// preview reads bin types from SetPayloadBinTypes below and its preflight
-	// stays "unchecked".
-	cfg.CoreAPI = "http://core.invalid"
+	// CORE HAS TO HAVE BEEN HEARD FROM. refusePressIndexWhenCoreUnavailable keys
+	// on Core's catalog having arrived, and without it every press-index
+	// changeover is refused by name — "cannot determine bin types" — so the
+	// preview answers 400 and the bar shows a refusal where the reference shows
+	// "Preview OK · N orders". Nothing here calls Core: the preview reads bin
+	// types from SetPayloadBinTypes below and its preflight stays "unchecked".
 	cfg.StationUID = "shots.press400"
 	cfg.Namespace = "shots"
 	cfg.LineID = "press400"
 	cfg.Messaging.StationID = cfg.StationUID
 	eng := engine.New(engine.Config{AppConfig: cfg, DB: db, LogFunc: t.Logf})
+	// Core's catalog has arrived (empty): the press-index changeover's gate
+	// opens on it, as it opened on a configured Core address.
+	eng.SetPayloadBinTypes(nil)
 	eng.Start()
 	t.Cleanup(eng.Stop)
 

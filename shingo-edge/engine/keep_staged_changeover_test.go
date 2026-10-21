@@ -104,7 +104,7 @@ func seedKeepStagedChangeover(t *testing.T, from, to []coClaim, rows map[string]
 		upsert(styleB, c)
 	}
 	testutil.MustNoErr(t, db.SetActiveStyle(procID, &styleA), "active style")
-	eng.coreClient = stubCoreClient(ksNodeBinsStub(t, rows).URL)
+	bridgeCore(t, eng, ksNodeBinsStub(t, rows).URL)
 	// The same answer in the bins table, for the sites that read it, with an
 	// empty row for every place the claims name that rows leaves out.
 	for _, c := range append(append([]coClaim(nil), from...), to...) {
@@ -317,7 +317,7 @@ func TestKeepStagedChangeover_CancelPutsTheSpotBack(t *testing.T) {
 			// The return went, and the keeper's refill of the incoming part landed.
 			testutil.MustNoErr(t, fx.db.UpdateOrderStatus(got.returns[0].ID, string(protocol.StatusConfirmed)), "the return went")
 			rows["SPOT"] = NodeBinInfo{Occupied: true, PayloadCode: "PART-NEW"}
-			fx.eng.coreClient = stubCoreClient(ksNodeBinsStub(t, rows).URL)
+			bridgeCore(t, fx.eng, ksNodeBinsStub(t, rows).URL)
 			fx.holdRows(t, rows)
 
 			testutil.MustNoErr(t, fx.eng.CancelProcessChangeover(fx.processID), "cancel")
@@ -483,7 +483,7 @@ func TestKeepStagedSave_LeavingTheSpotReadsTheTable(t *testing.T) {
 				[]coClaim{{"L1", "SPOT", "SRC", "PART-A", protocol.ClaimRoleConsume, protocol.SwapModeTwoRobot, true, false}},
 				nil,
 				map[string]NodeBinInfo{"L1": {Occupied: true, PayloadCode: "PART-A"}, "SPOT": {Occupied: true, PayloadCode: "PART-A"}})
-			fx.eng.coreClient = stubCoreClient(testCoreURL)
+			coreNeverAnswers(t, fx.eng)
 			c.prep(fx)
 			p, err := fx.db.GetProcess(fx.processID)
 			testutil.MustNoErr(t, err, "process")

@@ -2,7 +2,6 @@ package engine
 
 import (
 	"encoding/json"
-	"net/http"
 	"testing"
 
 	"shingo/protocol"
@@ -77,44 +76,11 @@ func seedProduceNode(t *testing.T, db *store.DB, swapMode protocol.SwapMode) (pr
 	return processID, nodeID, styleID, claimID
 }
 
-// testCoreURL is the base URL for a CoreClient that must look configured and
-// must never answer.
-//
-// A LITERAL IP, NOT A HOSTNAME. Several tests set a CoreClient purely so
-// Available() is true (it reads only "baseURL is not empty" —
-// core_client.go:69-71), and then the paths under test make real calls:
-// operator_changeover_plan.go:378 fetches a payload manifest per claim. This
-// used to be "http://test-core", a bare name with no record, and on Windows
-// each attempt walks DNS -> LLMNR -> NetBIOS before failing:
-// TestPreviewFlow_PreflightStates spent 20.96 of 21.9s inside GetAddrInfoW,
-// and TestFlowPreview_DraftEqualsSavedPreview 33.7s, against 0.13-0.34s for
-// their siblings without a client.
-//
-// 127.0.0.1:1 never reaches a resolver and refuses immediately on every OS,
-// which is the behaviour these tests actually want: Core is configured and
-// unreachable. ".invalid" would also work on most stacks but still goes
-// through name resolution, and some of them answer it slowly.
+// testCoreURL is a stub Core that is never there: a bridged ask to it
+// (bridgeCore) is out and never answered, as against a Core that does not
+// answer. A literal IP that refuses at once on every OS, not a name a
+// resolver walks.
 const testCoreURL = "http://127.0.0.1:1"
-
-// stubCoreClient is the Core client an engine test gets for its stub Core: an
-// httptest server, testCoreURL, a closed server's URL, or "" for none. It is
-// NewCoreClient without the three-second deadline.
-//
-// A stub answers in microseconds on an idle machine, but under -race on a
-// starved CPU one round trip has taken 5.9 s. The production client then
-// reports Core unreachable, the engine takes its Core-down path, and the test
-// answers differently under load from the same code. With no deadline the
-// engine waits for the stub's real answer. A refused or closed address still
-// fails at once, and a stub that never answers is caught by go test -timeout,
-// which prints every goroutine.
-//
-// The CoreClient's own tests keep NewCoreClient: the client they build is what
-// they test.
-func stubCoreClient(baseURL string) *CoreClient {
-	c := NewCoreClient(baseURL)
-	c.http = &http.Client{}
-	return c
-}
 
 // testEngine creates a minimal Engine with a real order manager backed by the
 // given SQLite DB. The engine is suitable for testing RequestProduceSwap and

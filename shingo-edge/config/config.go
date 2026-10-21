@@ -58,14 +58,18 @@ type Config struct {
 
 	Timezone string `yaml:"timezone"` // IANA timezone for shift/hourly bucketing (e.g. "America/Chicago")
 
-	CoreAPI   string          `yaml:"core_api"` // Core HTTP base URL (e.g. "http://192.168.1.10:8080")
-	WarLink   WarLinkConfig   `yaml:"warlink"`
-	Web       WebConfig       `yaml:"web"`
-	Messaging MessagingConfig `yaml:"messaging"`
-	Counter   CounterConfig   `yaml:"counter"`
-	Backup    BackupConfig    `yaml:"backup"`
-	Sim       SimConfig       `yaml:"sim"`
-	Logging   LoggingConfig   `yaml:"logging"`
+	// SimCoreAPI is Core's address for the sim operator's oracle reads (GET
+	// /api/nodes, /api/bins/by-node: engine/sim_core_oracle.go), read by sim
+	// builds only. The Edge reaches Core by the ask pair and Core's feeds; it
+	// has no HTTP client to Core.
+	SimCoreAPI string          `yaml:"core_api"`
+	WarLink    WarLinkConfig   `yaml:"warlink"`
+	Web        WebConfig       `yaml:"web"`
+	Messaging  MessagingConfig `yaml:"messaging"`
+	Counter    CounterConfig   `yaml:"counter"`
+	Backup     BackupConfig    `yaml:"backup"`
+	Sim        SimConfig       `yaml:"sim"`
+	Logging    LoggingConfig   `yaml:"logging"`
 
 	// UOPAccumulatingCTAAfter is how long a node may sit unbound with counts
 	// accumulating before the operator chip starts telling the operator to do
@@ -748,7 +752,7 @@ func (c *Config) assignFrom(from *Config) {
 	c.DatabasePath = from.DatabasePath
 	c.PollRate = from.PollRate
 	c.Timezone = from.Timezone
-	c.CoreAPI = from.CoreAPI
+	c.SimCoreAPI = from.SimCoreAPI
 	c.WarLink = from.WarLink
 	c.Web = from.Web
 	c.Messaging = from.Messaging

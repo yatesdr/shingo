@@ -723,7 +723,7 @@ func operatorHasWorkAt(wantsEmpty bool, binID int64, stocked bool) bool {
 // observable market state instead of the fragile EventOrderStatusChanged trigger that
 // fired 0. Runs from reconcile() (single goroutine) so marketSlots needs no lock.
 func (op *simOperator) clearNegativeBins() {
-	if !op.e.coreClient.Available() {
+	if op.e.cfg.SimCoreAPI == "" {
 		return
 	}
 	if op.marketSlots == nil {
@@ -736,7 +736,7 @@ func (op *simOperator) clearNegativeBins() {
 	// no Edge-facing row carries (the bins table has no count, and the market's
 	// slots are not on the watch list), so it is Core's own bin read
 	// (sim_core_oracle.go), sim builds only.
-	bins, err := readSimFloorBins(op.e.coreClient.baseURL, op.marketSlots)
+	bins, err := readSimFloorBins(op.e.cfg.SimCoreAPI, op.marketSlots)
 	if err != nil || len(bins) == 0 {
 		return
 	}
@@ -750,9 +750,7 @@ func (op *simOperator) clearNegativeBins() {
 			// supermarket slots, not a claim's window. So the stamp is dropped on
 			// purpose rather than by omission.
 			req := protocol.BinClearRequest{NodeName: slot, BinID: b.BinID}
-			if _, err := askOrDoor(op.e, protocol.AskBinClear, req, func() (*BinClearResponse, error) {
-				return op.e.coreClient.ClearBin(req)
-			}); op.e.refused(err) == nil {
+			if _, err := askOrRefuse[BinClearResponse](op.e, protocol.AskBinClear, req); op.e.refused(err) == nil {
 				cleared++
 			}
 		}
@@ -809,7 +807,7 @@ func (op *simOperator) collectMarketSlots() []string {
 	// One read of Core's node list for the whole walk (sim_core_oracle.go); a
 	// failed read leaves every market a single slot, as an unanswered children
 	// read did.
-	tree, err := readSimNodeTree(op.e.coreClient.baseURL)
+	tree, err := readSimNodeTree(op.e.cfg.SimCoreAPI)
 	if err != nil {
 		op.e.debugFn("[sim] market slots: read Core's nodes: %v", err)
 		tree = &simNodeTree{}
@@ -1012,7 +1010,7 @@ func (op *simOperator) consumeDisposition(nodeID int64) (ReleaseDisposition, boo
 	// AN ORACLE READ: the parts a person counts in the bin in front of them,
 	// the simulated floor's count (Core's own bin read, sim_core_oracle.go);
 	// the bins table carries no count.
-	bins, ferr := readSimFloorBins(op.e.coreClient.baseURL, []string{node.CoreNodeName})
+	bins, ferr := readSimFloorBins(op.e.cfg.SimCoreAPI, []string{node.CoreNodeName})
 	b := bins[node.CoreNodeName]
 	switch {
 	case ferr == nil && b.Occupied && b.UOPRemaining <= 0:

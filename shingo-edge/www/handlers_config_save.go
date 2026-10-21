@@ -50,7 +50,7 @@ import (
 
 // configSections are the wire sections, in the order they are applied and
 // their errors reported.
-var configSections = []string{"station", "core", "plc", "messaging", "backups"}
+var configSections = []string{"station", "plc", "messaging", "backups"}
 
 // configBoot is what the process booted with, for the restart-only fields.
 // Taken once in NewRouter. Nil (handler tests build &Handlers{} directly)
@@ -58,7 +58,6 @@ var configSections = []string{"station", "core", "plc", "messaging", "backups"}
 type configBoot struct {
 	stationID string
 	timezone  string
-	coreAPI   string
 }
 
 func newConfigBoot(cfg *config.Config) *configBoot {
@@ -66,7 +65,7 @@ func newConfigBoot(cfg *config.Config) *configBoot {
 		return nil
 	}
 	c := cfg.Clone()
-	return &configBoot{stationID: c.StationID(), timezone: c.Timezone, coreAPI: c.CoreAPI}
+	return &configBoot{stationID: c.StationID(), timezone: c.Timezone}
 }
 
 // restartPending lists the restart-only fields whose live value (which equals
@@ -89,9 +88,6 @@ func (h *Handlers) restartPending() []string {
 	if c.Timezone != h.boot.timezone {
 		out = append(out, "Plant timezone")
 	}
-	if c.CoreAPI != h.boot.coreAPI {
-		out = append(out, "Core address")
-	}
 	return out
 }
 
@@ -111,12 +107,6 @@ type stationSection struct {
 	StationID   string  `json:"station_id"`
 	Timezone    *string `json:"timezone"`
 	AutoConfirm bool    `json:"auto_confirm"`
-}
-
-// coreSection: the Core address. Restart-only (E2, R20). A blank is stored
-// blank, as its own door did (lead ruling L8).
-type coreSection struct {
-	CoreAPI string `json:"core_api"`
 }
 
 // plcSection: the WarLink link. As its own door: a blank host, a zero port, a
@@ -299,13 +289,6 @@ func applyConfigSection(draft *config.Config, name string, body json.RawMessage,
 			return nil
 		}
 		applyStation(draft, s, errs)
-	case "core":
-		var s coreSection
-		if err := decodeSection(body, &s); err != nil {
-			errs.add("core", err.Error())
-			return nil
-		}
-		draft.CoreAPI = s.CoreAPI
 	case "plc":
 		var s plcSection
 		if err := decodeSection(body, &s); err != nil {

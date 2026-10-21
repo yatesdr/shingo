@@ -1,5 +1,6 @@
 import { api, createSSE, delegateActions, escapeHtml, hideModal, navigateToProcess, prompt, showModal, toast } from '/static/js/shingoedge.js';
 import { productionStreamHandlers } from '/static/js/pages/production-refresh.js';
+import { postAct } from '/static/js/ask-act.js';
 
 // Production page — operator-facing actions for the per-process node grid.
 //
@@ -118,8 +119,10 @@ async function submitRequestEmpty() {
     var payloadCode = document.getElementById('re-payload').value;
     if (!payloadCode) { toast('Select a payload', 'warning'); return; }
     try {
-        await api.post('/api/process-nodes/' + nodeID + '/request-empty', {payload_code: payloadCode});
+        var answer = await postAct('/api/process-nodes/' + nodeID + '/request-empty', {payload_code: payloadCode});
         hideModal('request-empty-modal');
+        // A 202 pending answer: sent to Core, not known to be done (ask-act.js).
+        if (answer && answer.pending) { toast(answer.notice, 'info'); return; }
         toast('Empty bin requested', 'success');
     } catch(e) {
         toast('Error: ' + e, 'error');
@@ -236,8 +239,10 @@ async function submitLoadBin() {
             if (isNaN(uopCount)) { toast('UoP count must be a number', 'warning'); return; }
             body.uop_count = uopCount;
         }
-        await api.post('/api/process-nodes/' + nodeID + '/load-bin', body);
+        var answer = await postAct('/api/process-nodes/' + nodeID + '/load-bin', body);
         closeLoadBinModal();
+        // A 202 pending answer: sent to Core, not known to be done (ask-act.js).
+        if (answer && answer.pending) { toast(answer.notice, 'info'); return; }
         toast('Bin loaded', 'success');
     } catch(e) {
         toast('Error: ' + e, 'error');

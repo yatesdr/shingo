@@ -53,7 +53,9 @@ func answerEmpties(t *testing.T, eng *Engine) *coreEmpties {
 				return
 			case <-time.After(2 * time.Millisecond):
 			}
-			c.serve(t, eng)
+			if eng.PendingAsks() > 0 { // only while an ask is out
+				c.serve(t, eng)
+			}
 		}
 	}()
 	t.Cleanup(func() { close(stop); <-done })

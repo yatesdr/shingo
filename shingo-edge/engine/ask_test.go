@@ -3,6 +3,7 @@ package engine
 import (
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -182,18 +183,20 @@ func TestAskInto_TheDoorsReturnShapes(t *testing.T) {
 	}
 }
 
-// TestAskOrDoor_TheDoorForACoreWithoutTheKind: a kind the last ack did not
-// name goes through its HTTP door, and nothing is put on the outbox.
-func TestAskOrDoor_TheDoorForACoreWithoutTheKind(t *testing.T) {
+// TestAskOrRefuse_ACoreWithoutTheKindIsRefused: a kind the last ack did not
+// name is refused before anything is sent (ErrCoreDoesNotAnswer, naming the
+// kind), and nothing is put on the outbox.
+func TestAskOrRefuse_ACoreWithoutTheKindIsRefused(t *testing.T) {
 	t.Parallel()
 	e, _ := binsEngine(t, testEngineDB(t))
-	called := 0
-	got, err := askOrDoor(e, protocol.AskBinCount, protocol.BinCountRequest{}, func() (*BinCountResponse, error) {
-		called++
-		return &BinCountResponse{BinID: 1}, nil
-	})
-	if err != nil || called != 1 || got.BinID != 1 {
-		t.Errorf("door: called %d, got %+v, %v", called, got, err)
+	got, err := askOrRefuse[BinCountResponse](e, protocol.AskBinCount, protocol.BinCountRequest{})
+	if got != nil || !errors.Is(err, ErrCoreDoesNotAnswer) || !strings.Contains(err.Error(), protocol.AskBinCount) {
+		t.Errorf("a kind Core does not answer: %+v, %v, want ErrCoreDoesNotAnswer naming %s", got, err, protocol.AskBinCount)
+	}
+	if _, err := askLateOrRefuse(e, protocol.AskBinClear, protocol.BinClearRequest{}, func(*BinClearResponse, error) {
+		t.Error("the follow-up ran for an ask never sent")
+	}); !errors.Is(err, ErrCoreDoesNotAnswer) {
+		t.Errorf("late form: %v, want ErrCoreDoesNotAnswer", err)
 	}
 	msgs, lerr := e.db.ListPendingOutbox(10)
 	if lerr != nil {
@@ -204,10 +207,11 @@ func TestAskOrDoor_TheDoorForACoreWithoutTheKind(t *testing.T) {
 	}
 }
 
-// TestAskOrDoorLate_TheFollowUpRunsOnALateAnswer: past the wait the tap hears
-// ErrAskPending and its follow-up does not run; the answer, when it comes, runs
-// it with the door's shapes (the CLEAR's afterClear is such a follow-up).
-func TestAskOrDoorLate_TheFollowUpRunsOnALateAnswer(t *testing.T) {
+// TestAskLateOrRefuse_TheFollowUpRunsOnALateAnswer: past the wait the tap
+// hears ErrAskPending and its follow-up does not run; the answer, when it
+// comes, runs it with the kind's shapes (the CLEAR's afterClear is such a
+// follow-up).
+func TestAskLateOrRefuse_TheFollowUpRunsOnALateAnswer(t *testing.T) {
 	e, _ := binsEngine(t, testEngineDB(t))
 	e.OnCoreAck(&protocol.EdgeHeartbeatAck{Feeds: map[string]string{}, Asks: []string{protocol.AskBinClear}})
 	var got *BinClearResponse
@@ -217,11 +221,7 @@ func TestAskOrDoorLate_TheFollowUpRunsOnALateAnswer(t *testing.T) {
 	// AskWait is 2 s; a tap that is answered after it pends.
 	done := make(chan error, 1)
 	go func() {
-		_, err := askOrDoorLate(e, protocol.AskBinClear, protocol.BinClearRequest{NodeName: "N1"},
-			func() (*BinClearResponse, error) {
-				t.Error("the door was used for a kind Core answers")
-				return nil, nil
-			}, followUp)
+		_, err := askLateOrRefuse(e, protocol.AskBinClear, protocol.BinClearRequest{NodeName: "N1"}, followUp)
 		done <- err
 	}()
 	if err := <-done; !errors.Is(err, ErrAskPending) {

@@ -39,7 +39,6 @@ import (
 // The enforced guard is engine_iface_width_test.go in this package.
 type ServiceAccess interface {
 	// ── Subsystem accessors ────────────────────────────────────────
-	CoreAPI() *engine.CoreClient
 	AppConfig() *config.Config
 	ConfigPath() string
 	PLCManager() *plc.Manager

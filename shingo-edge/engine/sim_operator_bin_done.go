@@ -32,7 +32,7 @@ func (op *simOperator) binNotDone(nodeID int64) string {
 		// The count consumeDisposition will declare from: the parts a person
 		// counts in the bin, an oracle read of the simulated floor
 		// (readSimFloorBins), as consumeDisposition reads it.
-		bins, err := readSimFloorBins(op.e.coreClient.baseURL, []string{node.CoreNodeName})
+		bins, err := readSimFloorBins(op.e.cfg.SimCoreAPI, []string{node.CoreNodeName})
 		b := bins[node.CoreNodeName]
 		switch {
 		case err != nil:

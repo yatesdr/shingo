@@ -162,16 +162,18 @@ type Engine struct {
 	catalogService    *service.CatalogService
 	orderService      *service.OrderService
 
-	coreClient  *CoreClient
 	coreNodes   map[string]protocol.NodeInfo
 	coreNodesMu lockcheck.RWMutex[lockorder.CoreNodes]
 	// coreNodeGroups is NGRP name → bare member names, retained from the
 	// "Group.Child" form Core qualifies group children with before
 	// SetCoreNodes strips it (see there). Rebuilt on every sync; read by the
 	// cell picture's dock strip. Guarded by coreNodesMu.
-	coreNodeGroups    map[string][]string
-	payloadBinTypes   []protocol.PayloadBinTypeInfo
-	payloadBinTypesMu lockcheck.RWMutex[lockorder.PayloadBinTypes]
+	coreNodeGroups  map[string][]string
+	payloadBinTypes []protocol.PayloadBinTypeInfo
+	// payloadBinTypesHeld is whether Core's catalog has arrived at all (an
+	// empty catalog included): the press-index changeover's gate.
+	payloadBinTypesHeld bool
+	payloadBinTypesMu   lockcheck.RWMutex[lockorder.PayloadBinTypes]
 	// The vendor map's own universe — see scene_graph.go. In-memory only and
 	// re-delivered on every node-list sync, like the catalog above.
 	scenePoints  []protocol.ScenePointInfo
@@ -337,7 +339,6 @@ func New(c Config) *Engine {
 	// value keeps a version computed before a restart from ever matching one
 	// computed after it. See PlantGeneration.
 	e.plantGeneration.Store(uint64(clock.Now().UnixNano()))
-	e.coreClient = NewCoreClient(c.AppConfig.CoreAPI)
 	e.reconciliation = newReconciliationService(e.db)
 	e.coreSync = newCoreSyncService(e)
 	e.stationService = service.NewStationService(e.db)
@@ -630,9 +631,6 @@ func (e *Engine) ApplyWarLinkConfig() {
 
 // DB returns the database handle.
 func (e *Engine) DB() *store.DB { return e.db }
-
-// CoreAPI returns the Core HTTP client for telemetry requests.
-func (e *Engine) CoreAPI() *CoreClient { return e.coreClient }
 
 // Config returns the app config.
 func (e *Engine) AppConfig() *config.Config { return e.cfg }

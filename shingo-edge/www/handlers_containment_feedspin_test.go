@@ -87,15 +87,10 @@ func (s *containmentCoreStub) snapshot() map[string]int {
 	return out
 }
 
-// containmentPinEngine is the shared stub with a real CoreClient pointed at the
-// Core stub. The shared stub's CoreAPI returns nil, which the containment page
-// cannot survive.
+// containmentPinEngine is the shared stub the containment pins drive.
 type containmentPinEngine struct {
 	*stubEngine
-	core *engine.CoreClient
 }
-
-func (e *containmentPinEngine) CoreAPI() *engine.CoreClient { return e.core }
 
 // seedContainmentPinClaims declares two containment destinations on produce
 // claims: FP-GRP (a group node in the Edge's Core node map) releasing to
@@ -175,7 +170,7 @@ func newContainmentPinHandlers(t *testing.T) (*Handlers, *containmentCoreStub) {
 	core.bins["FP-GRP.A"] = []map[string]any{{"node_name": "FP-GRP.A", "bin_id": 11, "bin_label": "FP-BIN-11", "payload_code": "FP-PART", "uop_remaining": 7, "occupied": true}}
 	core.bins["FP-GRP.B"] = []map[string]any{{"node_name": "FP-GRP.B", "bin_id": 13, "bin_label": "FP-BIN-13", "occupied": false}}
 	core.bins["FP-PLAIN"] = []map[string]any{{"node_name": "FP-PLAIN", "bin_id": 12, "bin_label": "FP-BIN-12", "payload_code": "FP-PART", "uop_remaining": 3, "occupied": true}}
-	h.engine = &containmentPinEngine{stubEngine: stub, core: engine.NewCoreClient(core.srv.URL)}
+	h.engine = &containmentPinEngine{stubEngine: stub}
 	h.tmpl = template.Must(template.New("").Funcs(templateFuncs()).
 		ParseFS(templatesFS, "templates/*.html", "templates/partials/*.html"))
 	seedContainmentPinClaims(t)

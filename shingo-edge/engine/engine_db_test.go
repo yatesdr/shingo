@@ -3,8 +3,6 @@ package engine
 import (
 	"encoding/json"
 	"fmt"
-	"net/http"
-	"net/http/httptest"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -52,7 +50,6 @@ func newCoverageEngine(t *testing.T) *Engine {
 		logFn:    func(string, ...any) {},
 		debugFn:  func(string, ...any) {},
 	}
-	eng.coreClient = NewCoreClient("")
 	eng.reconciliation = newReconciliationService(eng.db)
 	eng.coreSync = newCoreSyncService(eng)
 	eng.orderMgr = orders.NewManager(db, ordertestutil.NoOpOrderEmitter{}, cfg.StationID())
@@ -71,9 +68,6 @@ func TestEngine_Accessors(t *testing.T) {
 	eng := newCoverageEngine(t)
 	if eng.DB() == nil {
 		t.Error("DB() returned nil")
-	}
-	if eng.CoreAPI() == nil {
-		t.Error("CoreAPI() returned nil")
 	}
 	if eng.AppConfig() == nil {
 		t.Error("AppConfig() returned nil")
@@ -394,154 +388,6 @@ func TestOrderEmitter_AllEvents(t *testing.T) {
 }
 
 // ── core_client.go ──────────────────────────────────────────────────
-
-func TestCoreClient_AvailableAndSetBaseURL(t *testing.T) {
-	t.Parallel()
-	c := NewCoreClient("")
-	if c.Available() {
-		t.Error("new empty-url client should not be Available")
-	}
-	c.SetBaseURL("http://example.com/")
-	if !c.Available() {
-		t.Error("after SetBaseURL, should be Available")
-	}
-	// Trailing slash should have been trimmed.
-	if c.baseURL != "http://example.com" {
-		t.Errorf("baseURL = %q, want http://example.com (no trailing slash)", c.baseURL)
-	}
-	c.SetBaseURL("") // reset → unavailable
-	if c.Available() {
-		t.Error("SetBaseURL(\"\") should disable the client")
-	}
-}
-
-func TestCoreClient_NoBaseURL_GracefulDegrade(t *testing.T) {
-	t.Parallel()
-	c := NewCoreClient("")
-
-	// Writes should return errors when Core isn't configured.
-	if _, err := c.LoadBin(&BinLoadRequest{NodeName: "N1"}); err == nil {
-		t.Error("LoadBin with no base-url should error")
-	}
-	if _, err := c.ClearBin(protocol.BinClearRequest{NodeName: "N1"}); err == nil {
-		t.Error("ClearBin with no base-url should error")
-	}
-}
-
-func TestCoreClient_LoadBin_Success(t *testing.T) {
-	t.Parallel()
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost {
-			t.Errorf("method = %s, want POST", r.Method)
-		}
-		json.NewEncoder(w).Encode(BinLoadResponse{
-			Status:       "ok",
-			BinID:        42,
-			BinLabel:     "B42",
-			PayloadCode:  "WIDGET",
-			UOPRemaining: 100,
-		})
-	}))
-	defer srv.Close()
-
-	c := NewCoreClient(srv.URL)
-	resp, err := c.LoadBin(&BinLoadRequest{
-		NodeName:    "N1",
-		PayloadCode: "WIDGET",
-		UOPCount:    declaredUOP(100),
-	})
-	if err != nil {
-		t.Fatalf("LoadBin: %v", err)
-	}
-	if resp.BinID != 42 || resp.BinLabel != "B42" {
-		t.Errorf("LoadBin response = %+v", resp)
-	}
-}
-
-func TestCoreClient_LoadBin_ErrorStatus(t *testing.T) {
-	t.Parallel()
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		json.NewEncoder(w).Encode(BinLoadResponse{Status: "error", Detail: "bin already loaded"})
-	}))
-	defer srv.Close()
-	c := NewCoreClient(srv.URL)
-	if _, err := c.LoadBin(&BinLoadRequest{NodeName: "N1"}); err == nil || !strings.Contains(err.Error(), "bin already loaded") {
-		t.Errorf("LoadBin err = %v, want detail surfaced", err)
-	}
-}
-
-func TestCoreClient_LoadBin_Non200(t *testing.T) {
-	t.Parallel()
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusInternalServerError)
-		json.NewEncoder(w).Encode(BinLoadResponse{})
-	}))
-	defer srv.Close()
-	c := NewCoreClient(srv.URL)
-	if _, err := c.LoadBin(&BinLoadRequest{NodeName: "N1"}); err == nil {
-		t.Error("Non-200 should error")
-	}
-}
-
-func TestCoreClient_LoadBin_NetworkError(t *testing.T) {
-	t.Parallel()
-	srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
-	url := srv.URL
-	srv.Close()
-	c := NewCoreClient(url)
-	if _, err := c.LoadBin(&BinLoadRequest{NodeName: "N1"}); err == nil {
-		t.Error("network error should surface")
-	}
-}
-
-func TestCoreClient_ClearBin_Success(t *testing.T) {
-	t.Parallel()
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
-	}))
-	defer srv.Close()
-	c := NewCoreClient(srv.URL)
-	if _, err := c.ClearBin(protocol.BinClearRequest{NodeName: "N1"}); err != nil {
-		t.Errorf("ClearBin: %v", err)
-	}
-}
-
-func TestCoreClient_ClearBin_ErrorStatus(t *testing.T) {
-	t.Parallel()
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		json.NewEncoder(w).Encode(map[string]string{"status": "error", "detail": "nope"})
-	}))
-	defer srv.Close()
-	c := NewCoreClient(srv.URL)
-	if _, err := c.ClearBin(protocol.BinClearRequest{NodeName: "N1"}); err == nil || !strings.Contains(err.Error(), "nope") {
-		t.Errorf("ClearBin err = %v", err)
-	}
-}
-
-func TestCoreClient_ClearBin_Non200NoDetail(t *testing.T) {
-	t.Parallel()
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{}) // no detail
-	}))
-	defer srv.Close()
-	c := NewCoreClient(srv.URL)
-	_, err := c.ClearBin(protocol.BinClearRequest{NodeName: "N1"})
-	if err == nil || !strings.Contains(err.Error(), "core returned") {
-		t.Errorf("ClearBin err = %v, want 'core returned ...'", err)
-	}
-}
-
-func TestCoreClient_ClearBin_NetworkError(t *testing.T) {
-	t.Parallel()
-	srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
-	url := srv.URL
-	srv.Close()
-	c := NewCoreClient(url)
-	if _, err := c.ClearBin(protocol.BinClearRequest{NodeName: "N1"}); err == nil {
-		t.Error("network error should surface")
-	}
-}
 
 // ── core_sync_service.go ────────────────────────────────────────────
 

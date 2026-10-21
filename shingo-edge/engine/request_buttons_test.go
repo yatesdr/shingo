@@ -99,7 +99,7 @@ func (w *buttonWorld) serveCore() {
 		_ = json.NewEncoder(rw).Encode(out)
 	}))
 	w.t.Cleanup(srv.Close)
-	w.eng.coreClient = stubCoreClient(srv.URL)
+	bridgeCore(w.t, w.eng, srv.URL)
 	w.push()
 }
 

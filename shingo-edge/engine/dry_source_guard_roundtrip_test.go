@@ -80,7 +80,7 @@ func TestDrySourceGuard_NoRoundTripOnAnyRequest(t *testing.T) {
 			nodeID := tc.seed(t, db)
 			var calls atomic.Int64
 			eng := testEngine(t, db)
-			eng.coreClient = stubCoreClient(countingPreflightStub(t, &calls).URL)
+			bridgeCore(t, eng, countingPreflightStub(t, &calls).URL)
 
 			var err error
 			if tc.produce {

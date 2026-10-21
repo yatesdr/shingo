@@ -46,18 +46,19 @@ func TestComposerModelCharacterization(t *testing.T) {
 	// un-adopted destination is refused) and the composer gate is opened,
 	// which is what PreviewFlow checks before it plans anything.
 	//
-	// CoreAPI is set to an unreachable host on purpose, exactly as the shots
-	// harness does: refusePressIndexWhenCoreUnavailable keys on "CoreAPI is
-	// not empty", so with it blank every press-index preview is refused by
-	// name and style 7 would plan nothing. Nothing here calls Core — bin types
+	// Core's catalog is marked arrived, exactly as the shots harness does:
+	// refusePressIndexWhenCoreUnavailable keys on it, so without it every
+	// press-index preview is refused by name and style 7 would plan nothing. Nothing here calls Core — bin types
 	// come from SetPayloadBinTypes and the preflight stays unchecked.
 	testdb.SeedRoutingSet(t, db, seeded.ProcessID, "test")
 	if err := db.SetFlowComposerEnabled(seeded.ProcessID, true); err != nil {
 		t.Fatalf("open the gate: %v", err)
 	}
 	cfg := config.Defaults()
-	cfg.CoreAPI = "http://core.invalid"
 	eng := engine.New(engine.Config{AppConfig: cfg, DB: db, LogFunc: t.Logf})
+	// Core's catalog has arrived (empty): the press-index changeover's gate
+	// opens on it, as it opened on a configured Core address.
+	eng.SetPayloadBinTypes(nil)
 	eng.Start()
 	t.Cleanup(eng.Stop)
 	var pbt []protocol.PayloadBinTypeInfo

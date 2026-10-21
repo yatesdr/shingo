@@ -113,7 +113,7 @@ func seedCell(t *testing.T, role protocol.ClaimRole, mode protocol.SwapMode, kee
 	testutil.MustNoErr(t, err, "runtime")
 	testutil.MustNoErr(t, db.SetProcessNodeRuntime(nodeID, &claimID, 30), "runtime claim")
 
-	eng.coreClient = stubCoreClient(ksNodeBinsStub(t, rows).URL)
+	bridgeCore(t, eng, ksNodeBinsStub(t, rows).URL)
 	// The same answer in the bins table, for the sites that read it, with an
 	// empty row for every place the claim names that rows leaves out.
 	holdCoreRows(t, eng, rows, ksLine, ksSpot, ksMarket, ksDest, "KS-OUT", ksPair)
@@ -296,7 +296,7 @@ func TestKeepStagedRequest_UnknownSpotOrdersNothing(t *testing.T) {
 	t.Parallel()
 	eng, db, nodeID, _ := keepStagedCell(t, protocol.ClaimRoleConsume, protocol.SwapModeTwoRobot,
 		map[string]NodeBinInfo{ksLine: {Occupied: true, PayloadCode: ksPart}})
-	eng.coreClient = stubCoreClient(headOccupancyStub(t, true).URL) // answers every name
+	bridgeCore(t, eng, headOccupancyStub(t, true).URL) // answers every name
 	holdPlaces(t, eng, everyAs(true))
 	eng.coreNodesMu.Lock()
 	eng.coreNodes = map[string]protocol.NodeInfo{ksLine: {Name: ksLine}}

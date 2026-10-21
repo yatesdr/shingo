@@ -28,7 +28,7 @@ import (
 func restubSpot(t *testing.T, fx *coFixture, line, spot NodeBinInfo) {
 	t.Helper()
 	rows := map[string]NodeBinInfo{"L1": line, pinSpot: spot}
-	fx.eng.coreClient = stubCoreClient(pinNodeBinsStub(t, rows, nil).URL)
+	bridgeCore(t, fx.eng, pinNodeBinsStub(t, rows, nil).URL)
 	fx.holdRows(t, rows)
 }
 

@@ -52,9 +52,6 @@ func (e *Engine) RecordBinCount(nodeID int64, actualUOP int, actor string) error
 	if err != nil {
 		return err
 	}
-	if e.coreClient == nil {
-		return fmt.Errorf("core API not configured")
-	}
 	counted, rt, err := e.declareCount(nodeID, node.CoreNodeName, rt, actualUOP, actor)
 	if err != nil {
 		return fmt.Errorf("record count: %w", err)
@@ -139,15 +136,13 @@ func seatEpoch(rt *processes.RuntimeState, binID int64) int64 {
 	return rt.ActiveBinEpoch
 }
 
-// sendCount is the count's one send: an ask (protocol.AskBinCount) when Core
-// answers it, the bin-count door otherwise (an older Core, for one release).
-// ErrAskPending when Core has not answered within AskWait: the count is out,
+// sendCount is the count's one send: an ask (protocol.AskBinCount), refused
+// when Core does not answer it. ErrAskPending when Core has not answered
+// within AskWait: the count is out,
 // and Core's answer, when it comes, redraws the tile from its rows; the
 // corrected number reaches the seat by Core's own UOPAdjustment broadcast,
 // which the count enqueues in its transaction, so the late answer needs no
 // applier of its own.
 func (e *Engine) sendCount(req protocol.BinCountRequest) (*BinCountResponse, error) {
-	return askOrDoor(e, protocol.AskBinCount, req, func() (*BinCountResponse, error) {
-		return e.coreClient.RecordBinCount(req)
-	})
+	return askOrRefuse[BinCountResponse](e, protocol.AskBinCount, req)
 }

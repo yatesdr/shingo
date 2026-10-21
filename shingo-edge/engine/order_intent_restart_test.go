@@ -104,7 +104,7 @@ func armPullback(t *testing.T) *pullbackFixture {
 	f.db = openIntentDB(t, f.path)
 	f.nodeID = seedIntentNode(t, f.db, "PB-PROC", "PB-WIN")
 	f.eng = newIntentEngine(t, f.db)
-	f.eng.coreClient = stubCoreClient(f.srv.URL)
+	bridgeCore(t, f.eng, f.srv.URL)
 	f.eng.SetCoreLoaders([]protocol.LoaderInfo{pullbackLoader("PB-WIN")})
 	// The market's members, as Core answers a watched group on the bins feed,
 	// and the bin on its slot: the pull's source check reads the table.
@@ -154,7 +154,7 @@ func TestPullbackIntentSurvivesRestart(t *testing.T) {
 	db := openIntentDB(t, f.path)
 	defer db.Close()
 	eng := newIntentEngine(t, db)
-	eng.coreClient = stubCoreClient(f.srv.URL)
+	bridgeCore(t, eng, f.srv.URL)
 	eng.SetCoreLoaders([]protocol.LoaderInfo{pullbackLoader("PB-WIN")})
 
 	deliverTo(eng, f.order, f.nodeID)

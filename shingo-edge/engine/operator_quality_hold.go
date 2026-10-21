@@ -363,14 +363,11 @@ func (e *Engine) RecallContainedPayload(payloadCode, actor string) (int, []strin
 }
 
 // SetBinQualityHold sets or clears a bin's quality-hold marker on Core: an ask
-// (bin.quality_hold) when the last ack names it, the bin-quality-hold door
-// otherwise, for one release. ErrAskPending when Core has not answered within
+// (bin.quality_hold). ErrAskPending when Core has not answered within
 // AskWait; the marker is then Core's to set when the ask arrives, and the
 // containment feed shows it.
 func (e *Engine) SetBinQualityHold(binID int64, hold bool, by string) error {
 	req := map[string]any{"bin_id": binID, "hold": hold, "by": by}
-	_, err := askOrDoor(e, protocol.AskQualityHold, req, func() (*struct{}, error) {
-		return &struct{}{}, e.coreClient.SetBinQualityHold(binID, hold, by)
-	})
+	_, err := askOrRefuse[struct{}](e, protocol.AskQualityHold, req)
 	return err
 }

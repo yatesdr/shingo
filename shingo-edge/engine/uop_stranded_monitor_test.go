@@ -366,7 +366,7 @@ func TestProduceHoldSweep_AnUnreadableOrderKeepsThePile(t *testing.T) {
 func TestStrandedCarrier_LabelFromCore(t *testing.T) {
 	t.Parallel()
 	eng := testEngine(t, testEngineDB(t))
-	eng.coreClient = stubCoreClient(testCoreURL)
+	coreNeverAnswers(t, eng)
 	sm := &strandedMonitor{eng: eng, states: map[int64]*strandedNodeState{}}
 	if got := sm.resolveCarrier("LINE-P"); got != "" {
 		t.Errorf("no table held: label %q, want blank", got)

@@ -67,7 +67,7 @@ func emptyOutWindow(t *testing.T, window string) (*Engine, int64) {
 	t.Helper()
 	db := testEngineDB(t)
 	eng := testEngine(t, db)
-	eng.coreClient = stubCoreClient(emptyOutCoreServer(t).URL)
+	bridgeCore(t, eng, emptyOutCoreServer(t).URL)
 	procID, err := db.CreateProcess(window+"-PROC", "", "", "", false)
 	testutil.MustNoErr(t, err, "create process")
 	nodeID, err := db.CreateProcessNode(processes.NodeInput{

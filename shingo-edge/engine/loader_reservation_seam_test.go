@@ -57,9 +57,9 @@ func mustSharedLoader(t *testing.T, id string, payloads ...string) *domain.Loade
 // SCOPE, because this test is easy to over-read. It covers the ORDER-COUNTING
 // budget only, on a single-window loader at budget 1:
 //
-//   - No coreClient is installed, so Available() is false and the seam's
-//     resident-bin gate never runs. Occupancy is covered by
-//     TestWithLoaderBudget_PropOccupancyLive.
+//   - The bins table holds the window empty throughout, so the resident-bin
+//     gate always passes and the order count is the bound. Occupancy is
+//     covered by TestWithLoaderBudget_PropOccupancyLive.
 //   - Budget above 1 is covered by the occupancy-live property, multi-window.
 //
 // (An earlier version of this comment said the budget=N property "lands in C4
@@ -72,6 +72,7 @@ func TestWithLoaderBudget_PropNeverExceedsBudget(t *testing.T) {
 	eng := testEngine(t, db)
 	nodeID := seedCapManualSwap(t, db, "PROP", "PROP-LDR", protocol.ClaimRoleProduce, []string{"P1", "P2"}, 0, false)
 	loader := mustSharedLoader(t, "PROP-LDR", "P1", "P2")
+	holdCoreRows(t, eng, map[string]NodeBinInfo{}, "PROP-LDR")
 
 	const budget = 1
 	payloads := []domain.PayloadCode{"P1", "P2"}

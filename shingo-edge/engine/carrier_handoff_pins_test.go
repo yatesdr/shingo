@@ -166,7 +166,7 @@ func releaseEmptyAt(t *testing.T, eng *Engine, nodeID, claimID int64, node strin
 	b := bin
 	testutil.MustNoErr(t, eng.db.SetProcessNodeRuntimeWithBin(nodeID, &claimID, &b, count), "bind the outgoing bin")
 	srv := mockBinUOPServer(t, map[int64]int{})
-	eng.coreClient = stubCoreClient(srv.URL)
+	bridgeCore(t, eng, srv.URL)
 	orderID, err := eng.db.CreateOrder("uuid-rel-"+node, orders.TypeRetrieve,
 		&nodeID, false, 1, node, "", "", "", false, "", "", "")
 	testutil.MustNoErr(t, err, "create order")

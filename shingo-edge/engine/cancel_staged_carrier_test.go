@@ -83,7 +83,7 @@ func TestCancelledAtItsStagingWait_SendsTheCarrierBack(t *testing.T) {
 
 	// The carrier on the staging node, from the bins table (staging is on
 	// the watch list; the cancel's park read, site 1 of the reads).
-	eng.coreClient = stubCoreClient(testCoreURL)
+	coreNeverAnswers(t, eng)
 	holdActableBins(t, eng, protocol.NodeBinsRow{Node: "STG-1", Occupied: true, PayloadCode: "PART-NEW"})
 	eng.sendCarrierBack(p)
 

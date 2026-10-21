@@ -23,7 +23,7 @@ func pullbackTable(t *testing.T) (*Engine, int64) {
 	db := testEngineDB(t)
 	nodeID := seedIntentNode(t, db, "PB-PROC", "PB-WIN")
 	eng := newIntentEngine(t, db)
-	eng.coreClient = stubCoreClient(testCoreURL)
+	coreNeverAnswers(t, eng)
 	eng.SetCoreLoaders([]protocol.LoaderInfo{pullbackLoader("PB-WIN")})
 	return eng, nodeID
 }

@@ -46,7 +46,7 @@ func newMintFixture(t *testing.T) mintFixture {
 		id, err := svc.CreateFromCandidate(plant.ProcessID, "Standard", c.ShapeKey, "test")
 		testutil.MustNoErr(t, err, "name the recipe")
 		eng := testEngine(t, db)
-		eng.coreClient = stubCoreClient(testCoreURL)
+		coreNeverAnswers(t, eng)
 		// The station mints only where HMI setup is on.
 		enableComposer(t, db, plant.ProcessID)
 		return mintFixture{db: db, eng: eng, plant: plant, preset: id, members: c.Members}

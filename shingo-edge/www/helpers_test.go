@@ -174,7 +174,6 @@ type stubEngine struct {
 
 func (s *stubEngine) AppConfig() *config.Config           { return s.cfg }
 func (s *stubEngine) ConfigPath() string                  { return s.cfgPath }
-func (s *stubEngine) CoreAPI() *engine.CoreClient         { return nil }
 func (s *stubEngine) LocalNodeBins() engine.NodeBinsState { return s.nodeBins }
 func (s *stubEngine) PLCManager() *plc.Manager            { return s.plcMgr }
 func (s *stubEngine) OrderManager() *orders.Manager       { return s.orderMgr }
@@ -532,7 +531,6 @@ func newAdminRouter(t *testing.T) (*Handlers, *chi.Mux) {
 			r.Post("/core-nodes/sync", h.apiSyncCoreNodes)
 			r.Post("/payload-catalog/sync", h.apiSyncPayloadCatalog)
 
-			r.Post("/config/core-api/test", h.apiTestCoreAPI)
 			r.Post("/config/kafka/test", h.apiTestKafka)
 			r.Post("/config/password", h.apiChangePassword)
 		})

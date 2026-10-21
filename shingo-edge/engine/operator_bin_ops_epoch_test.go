@@ -45,7 +45,7 @@ func TestRegression_LoadBin_SeedsActiveBinEpochFromCoreResponse(t *testing.T) {
 	seedCoreLoader(t, eng, sharedLoaderInfo("LOADER", "produce", "operator", "PART-A", 0, 0))
 	sink := &fakeDeltaSink{db: db}
 	eng.SetInventoryDeltaSink(sink)
-	eng.coreClient = stubCoreClient(srv.URL)
+	bridgeCore(t, eng, srv.URL)
 	holdActableBins(t, eng, protocol.NodeBinsRow{Node: "LOADER", Occupied: true, BinID: 42})
 
 	manifest := []protocol.IngestManifestItem{{PartNumber: "PN-1", Quantity: 100, Description: "x"}}
@@ -89,7 +89,7 @@ func TestClearBin_TakesTheEpochCoreReturns(t *testing.T) {
 
 	eng := testEngine(t, db)
 	eng.SetInventoryDeltaSink(&fakeDeltaSink{db: db})
-	eng.coreClient = stubCoreClient(srv.URL)
+	bridgeCore(t, eng, srv.URL)
 
 	rt, err := db.EnsureProcessNodeRuntime(nodeID)
 	if err != nil || rt == nil {
@@ -142,7 +142,7 @@ func TestClearBin_IgnoresTheEpochWhenADifferentCarrierIsBound(t *testing.T) {
 
 	eng := testEngine(t, db)
 	eng.SetInventoryDeltaSink(&fakeDeltaSink{db: db})
-	eng.coreClient = stubCoreClient(srv.URL)
+	bridgeCore(t, eng, srv.URL)
 
 	rt, err := db.EnsureProcessNodeRuntime(nodeID)
 	if err != nil || rt == nil {
@@ -214,7 +214,7 @@ func loadBinTestEngine(t *testing.T, srv *httptest.Server) (*Engine, *store.DB, 
 	eng := testEngine(t, db)
 	seedCoreLoader(t, eng, sharedLoaderInfo("LOADER", "produce", "operator", "PART-A", 0, 0))
 	eng.SetInventoryDeltaSink(&fakeDeltaSink{db: db})
-	eng.coreClient = stubCoreClient(srv.URL)
+	bridgeCore(t, eng, srv.URL)
 	// LOAD's occupancy check reads the bins table: an empty carrier there.
 	holdActableBins(t, eng, protocol.NodeBinsRow{Node: "LOADER", Occupied: true, BinID: 42})
 	return eng, db, nodeID

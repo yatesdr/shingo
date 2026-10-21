@@ -379,7 +379,7 @@ func TestApiConfig_ListPayloadCatalog(t *testing.T) {
 
 // ═══════════════════════════════════════════════════════════════════════
 // PLC / WarLink — ListPLCs, WarLinkStatus, SyncCoreNodes, SyncPayloadCatalog
-// TestCoreAPI (empty URL path), TestKafka (validation)
+// TestKafka (validation)
 // ═══════════════════════════════════════════════════════════════════════
 
 func TestApiConfig_SyncCoreNodes(t *testing.T) {
@@ -398,21 +398,6 @@ func TestApiConfig_SyncPayloadCatalog(t *testing.T) {
 	resp := doRequest(t, router, "POST", "/api/payload-catalog/sync", nil, cookie)
 	assertStatus(t, resp, http.StatusOK)
 	assertJSONPath(t, resp, "status", "ok")
-}
-
-func TestApiConfig_TestCoreAPI_EmptyURL(t *testing.T) {
-	h, router := newAdminRouter(t)
-	cookie := authCookie(t, h)
-
-	body := map[string]string{"core_api": ""}
-	resp := doRequest(t, router, "POST", "/api/config/core-api/test", body, cookie)
-	assertStatus(t, resp, http.StatusOK)
-
-	var result map[string]any
-	decodeJSON(t, resp, &result)
-	if result["connected"] != false {
-		t.Errorf("empty URL should not be connected, got %v", result["connected"])
-	}
 }
 
 func TestApiConfig_TestKafka_EmptyBroker(t *testing.T) {
@@ -482,22 +467,12 @@ func TestApiConfig_GetCoreNodes_GroupCarriesMembers(t *testing.T) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════
-// Config endpoints — UpdateCoreAPI, UpdateMessaging, UpdateStationID,
+// Config endpoints — UpdateMessaging, UpdateStationID,
 // UpdateAutoConfirm, UpdateWarLink
 // Re-pointed by U3 at the one save door, PUT /api/config, each posting its
 // old body as that door's section; the assertions are the same (lead ruling
 // L5 keeps `status` and the top-level `error` on the new door).
 // ═══════════════════════════════════════════════════════════════════════
-
-func TestApiConfig_UpdateCoreAPI(t *testing.T) {
-	h, router := newAdminRouter(t)
-	cookie := authCookie(t, h)
-
-	body := map[string]any{"core": map[string]string{"core_api": "http://core.test:8080"}}
-	resp := doRequest(t, router, "PUT", "/api/config", body, cookie)
-	assertStatus(t, resp, http.StatusOK)
-	assertJSONPath(t, resp, "status", "ok")
-}
 
 func TestApiConfig_UpdateMessaging(t *testing.T) {
 	h, router := newAdminRouter(t)

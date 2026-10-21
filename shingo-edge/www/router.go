@@ -529,7 +529,6 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger, backupSvc *backup.Servi
 				// (core-api, messaging, station-id, timezone, auto-confirm, warlink,
 				// backups/config), R4. Shifts keep their own door above.
 				r.Put("/config", h.apiSaveConfig)
-				r.Post("/config/core-api/test", h.apiTestCoreAPI)
 				r.Post("/config/kafka/test", h.apiTestKafka)
 				r.Post("/config/password", h.apiChangePassword)
 				r.Get("/backups", h.apiListBackups)

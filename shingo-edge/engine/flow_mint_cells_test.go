@@ -126,7 +126,7 @@ func seedMintCell(t *testing.T, cell mintCell) mintCellFixture {
 		id, err := svc.CreateFromCells(pid, "Standard", "test", g.Shape)
 		testutil.MustNoErr(t, err, "name the generated recipe")
 		eng := testEngine(t, db)
-		eng.coreClient = stubCoreClient(testCoreURL)
+		coreNeverAnswers(t, eng)
 		enableComposer(t, db, pid)
 		return mintCellFixture{db: db, eng: eng, process: pid, running: run, preset: id}
 	}

@@ -25,7 +25,7 @@ func TestBinTypeSnapshot_ReadsSyncedCatalogNotCore(t *testing.T) {
 	t.Cleanup(srv.Close)
 
 	eng := testEngine(t, testEngineDB(t))
-	eng.coreClient = stubCoreClient(srv.URL)
+	bridgeCore(t, eng, srv.URL)
 	eng.SetPayloadBinTypes([]protocol.PayloadBinTypeInfo{
 		{PayloadCode: "PART-A", BinTypeCode: "TYPE-1"},
 		{PayloadCode: "PART-B", BinTypeCode: "TYPE-2"},

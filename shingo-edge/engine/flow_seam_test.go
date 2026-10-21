@@ -30,7 +30,7 @@ type seamScenario struct {
 }
 
 func seamScenarios() []seamScenario {
-	withCore := func(eng *Engine) { eng.coreClient = stubCoreClient(testCoreURL) }
+	withCore := func(t *testing.T, eng *Engine) { coreNeverAnswers(t, eng) }
 	return []seamScenario{
 		{"simple swap with staging", func(t *testing.T, db *store.DB, _ *Engine) (int64, int64) {
 			p, _, _, to, _, _ := seedChangeoverScenario(t, db)
@@ -53,12 +53,12 @@ func seamScenarios() []seamScenario {
 			return p, to
 		}},
 		{"marked press (tooling decoration)", func(t *testing.T, db *store.DB, eng *Engine) (int64, int64) {
-			withCore(eng)
+			withCore(t, eng)
 			p, _, to := seedMarkedPressScenario(t, db)
 			return p, to
 		}},
 		{"disjoint press (cross-mode fan-out)", func(t *testing.T, db *store.DB, eng *Engine) (int64, int64) {
-			withCore(eng)
+			withCore(t, eng)
 			p, to := seedDisjointPressScenario(t, db)
 			return p, to
 		}},

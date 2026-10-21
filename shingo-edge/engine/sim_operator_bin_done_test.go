@@ -49,7 +49,8 @@ func newBinDoneWorld(t *testing.T, tracked int, produce bool) *binDoneWorld {
 	}), "catalog ASSY")
 	eng := testEngine(t, f.db)
 	core := newSCCore(t)
-	eng.coreClient = stubCoreClient(core.srv.URL)
+	bridgeCore(t, eng, core.srv.URL)
+	eng.cfg.SimCoreAPI = core.srv.URL // the sim operator's oracle reads
 	core.bind(t, eng)
 	core.setCount("ALN_003", true, "PANEL-B", tracked)
 

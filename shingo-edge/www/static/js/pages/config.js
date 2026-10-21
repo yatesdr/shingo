@@ -117,10 +117,6 @@ const sections = {
         validate: (d) => stationErrors(d, legacyStationID),
         body: (d) => stationBody(d, legacyStationID),
     },
-    core: {
-        read: () => ({ core_api: val('core_api') }),
-        write: (v) => setVal('core_api', v.core_api),
-    },
     plc: {
         read: () => ({
             enabled: sw('plc_enabled'),
@@ -327,19 +323,6 @@ function note(msg, ok) {
     n.className = ok === false ? 'set-err' : 'set-note';
 }
 
-async function testCore() {
-    const out = $('#core-test');
-    const url = val('core_api');
-    if (!url) { out.textContent = 'Enter an address first.'; return; }
-    out.textContent = 'Testing…';
-    try {
-        const res = await api.post('/api/config/core-api/test', { core_api: url });
-        out.textContent = res.connected ? 'Core answered.' : ('No answer: ' + (res.error || 'failed') + '.');
-    } catch (e) {
-        out.textContent = String(e);
-    }
-}
-
 async function syncWith(btn, url, what) {
     const out = $('#core-sync');
     btn.disabled = true;
@@ -502,7 +485,7 @@ root.addEventListener('click', () => { Promise.resolve().then(() => { syncVisibi
 
 delegateActions(document.body, {
     flip, pickMode, addBroker, removeBroker, addShift, removeShift, toggleStorage, removeSecret,
-    testCore, syncCoreNodes, syncPayloadCatalog, testBrokers,
+    syncCoreNodes, syncPayloadCatalog, testBrokers,
     testBackup, runBackup, listBackups, stageRestore,
     openPassword, closePassword, changePassword,
 });

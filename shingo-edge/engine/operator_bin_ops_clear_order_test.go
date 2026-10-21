@@ -76,7 +76,7 @@ func TestClearBin_EmptyOutIsCreatedAfterTheClearCommits(t *testing.T) {
 
 	srv, movesAtClear := clearOrderServer(t, db, nodeID, "ORD-PART")
 	eng := testEngine(t, db)
-	eng.coreClient = stubCoreClient(srv.URL)
+	bridgeCore(t, eng, srv.URL)
 
 	testutil.MustNoErr(t, eng.ClearBin(nodeID, "", false, nil), "ClearBin")
 
@@ -106,7 +106,7 @@ func TestClearBin_DoubleTapCreatesOneEmptyOut(t *testing.T) {
 	nodeID, _ := seedManualSwapClaim(t, db, "U2-TAP", "consume", "TAP-PART", "EMPTY-TOTES")
 
 	eng := testEngine(t, db)
-	eng.coreClient = stubCoreClient(srv.URL)
+	bridgeCore(t, eng, srv.URL)
 	holdProcessNodes(t, eng, true, "TAP-PART")
 
 	testutil.MustNoErr(t, eng.ClearBin(nodeID, "", false, nil), "ClearBin first tap")

@@ -83,7 +83,7 @@ func spokenForFixture(t *testing.T, occupied bool) (*Engine, *store.DB, int64) {
 	bin := int64(24)
 	testutil.MustNoErr(t, db.SetProcessNodeRuntimeWithBin(nodeID, &claimID, &bin, 13), "seed runtime")
 
-	eng.coreClient = stubCoreClient(headOccupancyStub(t, occupied).URL)
+	bridgeCore(t, eng, headOccupancyStub(t, occupied).URL)
 	holdPlaces(t, eng, everyAs(occupied))
 	return eng, db, nodeID
 }
@@ -251,7 +251,7 @@ func TestConsumeDowngrade_OnlyOnAnActableEmptyRow(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			t.Parallel()
 			eng, _, nodeID := spokenForFixture(t, false)
-			eng.coreClient = stubCoreClient(testCoreURL)
+			coreNeverAnswers(t, eng)
 			c.hold(eng)
 			res, err := eng.requestNodeMaterialFor(nodeID, 1, protocol.EpisodeTriggerOperator)
 			testutil.MustNoErr(t, err, "request")

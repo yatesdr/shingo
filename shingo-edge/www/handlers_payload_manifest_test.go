@@ -10,21 +10,12 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"shingo/protocol"
-	"shingoedge/engine"
 	"shingoedge/store/catalog"
 )
 
-// manifestPinEngine is the stub engine with a CoreClient pointed at a Core
-// that does not answer, so a handler that still asked Core would see it fail.
-type manifestPinEngine struct {
-	*stubEngine
-	core *engine.CoreClient
-}
-
-func (e *manifestPinEngine) CoreAPI() *engine.CoreClient { return e.core }
-
 // TestAPIPayloadManifest_ServesTheCatalogCopy: the load modal's manifest is
-// read from the Edge's copy of Core's catalog feed, with Core unreachable. A
+// read from the Edge's copy of Core's catalog feed (the Edge has no HTTP way
+// to Core). A
 // row with lines answers them and the row's UOP capacity; a row with none
 // answers the payload as a one-line template of itself (ratio 1, the payload's
 // description), which is what Core's manifest endpoint answered for it; a
@@ -33,9 +24,6 @@ func (e *manifestPinEngine) CoreAPI() *engine.CoreClient { return e.core }
 func TestAPIPayloadManifest_ServesTheCatalogCopy(t *testing.T) {
 	t.Parallel()
 	h, _ := newTestHandlers(t)
-	closed := httptest.NewServer(http.NotFoundHandler())
-	closed.Close()
-	h.engine = &manifestPinEngine{stubEngine: h.engine.(*stubEngine), core: engine.NewCoreClient(closed.URL)}
 
 	lines := []protocol.ManifestItem{
 		{PartNumber: "PN-MF1", PartsPerCycle: 2, Description: "left"},

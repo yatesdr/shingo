@@ -284,7 +284,6 @@ func routeFixtures() map[string]routeFixture {
 		"POST /api/payload-catalog/sync":      {want: 200, req: at("/api/payload-catalog/sync", nil)},
 		"PUT /api/shifts":                     {want: 200, req: at("/api/shifts", []map[string]any{{"shift_number": 1, "name": "First", "start_time": "06:00", "end_time": "14:00"}})},
 		"PUT /api/config":                     {want: 400, req: at("/api/config", map[string]any{})},
-		"POST /api/config/core-api/test":      {want: 200, req: at("/api/config/core-api/test", map[string]any{"core_api": "http://core.invalid"})},
 		"POST /api/config/kafka/test":         {want: 400, req: at("/api/config/kafka/test", map[string]any{"brokers": []string{}})},
 		"POST /api/config/password":           {want: 400, req: at("/api/config/password", map[string]any{"current": "wrong", "new": "x"})},
 		"POST /api/backups/test":              {want: 501, req: at("/api/backups/test", map[string]any{})},

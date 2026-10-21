@@ -151,7 +151,6 @@ func newBinsRig(t *testing.T) *binsRig {
 	t.Cleanup(func() { _ = db.Close() })
 	core, srv := newCoreStub(t, binsRigRows)
 	cfg := config.Defaults()
-	cfg.CoreAPI = srv.URL
 	eng := engine.New(engine.Config{AppConfig: cfg, DB: db, LogFunc: t.Logf})
 	dbg, err := debuglog.New(64, nil)
 	if err != nil {
@@ -164,6 +163,7 @@ func newBinsRig(t *testing.T) *binsRig {
 		t.Fatalf("NewRouter returned %T, not a *chi.Mux", router)
 	}
 	rig := &binsRig{eng: eng, db: db, counter: counter, core: core, router: mux, stations: map[string]int64{}}
+	bridgeAsks(t, eng, srv.URL)
 	rig.station(t, "LDR", "SMN_H1", "SMN_H2")
 	rig.station(t, "UNL", "ULN_1", "ULN_2")
 	nodes := []protocol.NodeInfo{}

@@ -245,7 +245,7 @@ func scLoaderEngine(t *testing.T, window string) (*Engine, *store.DB, *scCore, *
 	eng.orderMgr = orders.NewManager(db, &orderEmitter{bus: eng.Events}, "test.station")
 	eng.wireEventHandlers()
 	core := newSCCore(t)
-	eng.coreClient = stubCoreClient(core.srv.URL)
+	bridgeCore(t, eng, core.srv.URL)
 	core.bind(t, eng)
 	logs := &scLog{}
 	eng.logFn = logs.fn
@@ -509,7 +509,7 @@ func TestLanding_RePushesOnlyItsOwnLoader(t *testing.T) {
 	eng.orderMgr = orders.NewManager(db, &orderEmitter{bus: eng.Events}, "test.station")
 	eng.wireEventHandlers()
 	core := newSCCore(t)
-	eng.coreClient = stubCoreClient(core.srv.URL)
+	bridgeCore(t, eng, core.srv.URL)
 	core.bind(t, eng)
 
 	prefix := "RP"
@@ -669,7 +669,7 @@ func TestPinDoubleTapGuard_KeysOnAnyMoveAtTheProcessNode(t *testing.T) {
 	testutil.MustNoErr(t, err, "create arriving move")
 
 	eng := testEngine(t, db)
-	eng.coreClient = stubCoreClient(srv.URL)
+	bridgeCore(t, eng, srv.URL)
 	holdProcessNodes(t, eng, true, "")
 	err = eng.PushEmptyOut(nodeID)
 	if err == nil || !strings.Contains(err.Error(), "already has an empty-out in flight") {
@@ -692,7 +692,7 @@ func TestPinDoubleTapGuard_ClearAfterPushEmptySkips(t *testing.T) {
 	nodeID, _ := seedManualSwapClaim(t, db, "DT-PEC", "consume", "PART-DP", "EMPTY-TOTES")
 
 	eng := testEngine(t, db)
-	eng.coreClient = stubCoreClient(srv.URL)
+	bridgeCore(t, eng, srv.URL)
 	holdProcessNodes(t, eng, true, "")
 	testutil.MustNoErr(t, eng.PushEmptyOut(nodeID), "PushEmptyOut")
 	testutil.MustNoErr(t, eng.ClearBin(nodeID, "", false, nil), "ClearBin after PUSH EMPTY")
@@ -745,7 +745,7 @@ func TestPinOutbound_RoutesToTheLoadersOutbound_AtAllThreeSites(t *testing.T) {
 		eng, db, nodeID, core := scLoaderWithOutbound(t, "OBF", protocol.ClaimRoleProduce, "NEW-DEST")
 		c := newSCCore(t)
 		c.set(core, true, "")
-		eng.coreClient = stubCoreClient(c.srv.URL)
+		bridgeCore(t, eng, c.srv.URL)
 		c.bind(t, eng)
 		testutil.MustNoErr(t, eng.LoadBin(nodeID, "PART-OB", nil, scManifest), "LoadBin")
 		if got := scDestsFrom(t, db, core); len(got) != 1 || got[0] != "NEW-DEST" {
@@ -758,7 +758,7 @@ func TestPinOutbound_RoutesToTheLoadersOutbound_AtAllThreeSites(t *testing.T) {
 		eng, db, nodeID, core := scLoaderWithOutbound(t, "OBU", protocol.ClaimRoleConsume, "NEW-DEST")
 		c := newSCCore(t)
 		c.set(core, true, "")
-		eng.coreClient = stubCoreClient(c.srv.URL)
+		bridgeCore(t, eng, c.srv.URL)
 		c.bind(t, eng)
 		testutil.MustNoErr(t, eng.PushEmptyOut(nodeID), "PushEmptyOut")
 		if got := scDestsFrom(t, db, core); len(got) != 1 || got[0] != "NEW-DEST" {
@@ -773,7 +773,7 @@ func TestPinOutbound_RoutesToTheLoadersOutbound_AtAllThreeSites(t *testing.T) {
 		eng.wireEventHandlers()
 		c := newSCCore(t)
 		c.set(core, true, "")
-		eng.coreClient = stubCoreClient(c.srv.URL)
+		bridgeCore(t, eng, c.srv.URL)
 		c.bind(t, eng)
 		scDeliveredRetrieve(t, db, "obc-l1", orders.TypeRetrieve, nodeID, true, core)
 		testutil.MustNoErr(t, eng.LoadBin(nodeID, "PART-OB", nil, scManifest), "LoadBin")
@@ -794,7 +794,7 @@ func TestPinOutbound_BlankFilesNothing_AtAllThreeSites(t *testing.T) {
 		eng, db, nodeID, core := scLoaderWithOutbound(t, "OBBF", protocol.ClaimRoleProduce, "")
 		c := newSCCore(t)
 		c.set(core, true, "")
-		eng.coreClient = stubCoreClient(c.srv.URL)
+		bridgeCore(t, eng, c.srv.URL)
 		c.bind(t, eng)
 		testutil.MustNoErr(t, eng.LoadBin(nodeID, "PART-OB", nil, scManifest), "LoadBin")
 		if got := scDestsFrom(t, db, core); len(got) != 0 {
@@ -807,7 +807,7 @@ func TestPinOutbound_BlankFilesNothing_AtAllThreeSites(t *testing.T) {
 		eng, db, nodeID, core := scLoaderWithOutbound(t, "OBBU", protocol.ClaimRoleConsume, "")
 		c := newSCCore(t)
 		c.set(core, true, "")
-		eng.coreClient = stubCoreClient(c.srv.URL)
+		bridgeCore(t, eng, c.srv.URL)
 		c.bind(t, eng)
 		// PUSH EMPTY with nowhere to push is refused, not reported done: the
 		// empty-out IS the operation, and nothing was committed.
@@ -826,7 +826,7 @@ func TestPinOutbound_BlankFilesNothing_AtAllThreeSites(t *testing.T) {
 		eng.wireEventHandlers()
 		c := newSCCore(t)
 		c.set(core, true, "")
-		eng.coreClient = stubCoreClient(c.srv.URL)
+		bridgeCore(t, eng, c.srv.URL)
 		c.bind(t, eng)
 		l1 := scDeliveredRetrieve(t, db, "obbc-l1", orders.TypeRetrieve, nodeID, true, core)
 		testutil.MustNoErr(t, db.SetProcessNodeRuntimeActiveOrder(nodeID, &l1), "point runtime at L1")
@@ -856,7 +856,7 @@ func TestPinOutbound_SameNodeFilesNothing_AtTheTwoGuardedSites(t *testing.T) {
 		eng, db, nodeID, core := scLoaderWithOutbound(t, "OBSU", protocol.ClaimRoleConsume, "OBSU-MSWAP-NODE")
 		c := newSCCore(t)
 		c.set(core, true, "")
-		eng.coreClient = stubCoreClient(c.srv.URL)
+		bridgeCore(t, eng, c.srv.URL)
 		c.bind(t, eng)
 		if err := eng.PushEmptyOut(nodeID); err == nil {
 			t.Error("PushEmptyOut with a same-node outbound returned nil, want a refusal")
@@ -873,7 +873,7 @@ func TestPinOutbound_SameNodeFilesNothing_AtTheTwoGuardedSites(t *testing.T) {
 		eng.wireEventHandlers()
 		c := newSCCore(t)
 		c.set(core, true, "")
-		eng.coreClient = stubCoreClient(c.srv.URL)
+		bridgeCore(t, eng, c.srv.URL)
 		c.bind(t, eng)
 		scDeliveredRetrieve(t, db, "obsc-l1", orders.TypeRetrieve, nodeID, true, core)
 		testutil.MustNoErr(t, eng.LoadBin(nodeID, "PART-OB", nil, scManifest), "LoadBin")
@@ -891,7 +891,7 @@ func TestLoadFallback_RefusesASameNodeL2(t *testing.T) {
 	eng, db, nodeID, core := scLoaderWithOutbound(t, "OBSF", protocol.ClaimRoleProduce, "OBSF-MSWAP-NODE")
 	c := newSCCore(t)
 	c.set(core, true, "")
-	eng.coreClient = stubCoreClient(c.srv.URL)
+	bridgeCore(t, eng, c.srv.URL)
 	c.bind(t, eng)
 	testutil.MustNoErr(t, eng.LoadBin(nodeID, "PART-OB", nil, scManifest), "LoadBin")
 	if got := scDestsFrom(t, db, core); len(got) != 0 {

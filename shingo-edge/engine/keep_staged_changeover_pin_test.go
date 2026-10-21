@@ -140,7 +140,7 @@ func (c pinCase) seed(t *testing.T) *coFixture {
 		omit[pinSpot] = true
 	}
 	fx := seedKeepStagedChangeover(t, from, to, rows)
-	fx.eng.coreClient = stubCoreClient(pinNodeBinsStub(t, rows, omit).URL)
+	bridgeCore(t, fx.eng, pinNodeBinsStub(t, rows, omit).URL)
 	omitted := []string{}
 	for n := range omit {
 		omitted = append(omitted, n)

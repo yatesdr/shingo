@@ -294,50 +294,6 @@ func seedPinUID(c *config.Config) { c.StationUID = "pin.uid" }
 
 // ── Core API ─────────────────────────────────────────────────────────────
 
-func TestPinEdgeConfig_CoreAPI(t *testing.T) {
-	runPinCases(t, []pinCase{
-		{
-			// E2 (R20): restart-only, and the notice says so. R4: one save is
-			// one backup request (the old door requested none).
-			name:   "set",
-			body:   map[string]any{"core": map[string]string{"core_api": "http://core.test:8080"}},
-			status: 200, resp: okSaved(nil, []any{"Core address"}), wrote: true,
-			saved:   map[string]any{"core_api": "http://core.test:8080"},
-			backups: oneBackup,
-			live: func(t *testing.T, c *config.Config) {
-				if c.CoreAPI != "http://core.test:8080" {
-					t.Errorf("live CoreAPI = %q", c.CoreAPI)
-				}
-			},
-		},
-		{
-			// L8: a blank Core address is still saved.
-			name:   "blank_accepted",
-			seed:   func(c *config.Config) { c.CoreAPI = "http://old.test" },
-			body:   map[string]any{"core": map[string]string{"core_api": ""}},
-			status: 200, resp: okSaved(nil, []any{"Core address"}), wrote: true,
-			saved:   map[string]any{"core_api": ""},
-			backups: oneBackup,
-			live: func(t *testing.T, c *config.Config) {
-				if c.CoreAPI != "" {
-					t.Errorf("live CoreAPI = %q, want blank", c.CoreAPI)
-				}
-			},
-		},
-		{
-			name:    "bad_json",
-			seed:    func(c *config.Config) { c.CoreAPI = "http://old.test" },
-			rawBody: `{"core": {"core_api": 7}}`,
-			status:  400, resp: map[string]any{"ok": false}, wrote: false,
-			live: func(t *testing.T, c *config.Config) {
-				if c.CoreAPI != "http://old.test" {
-					t.Errorf("live CoreAPI = %q, want untouched", c.CoreAPI)
-				}
-			},
-		},
-	})
-}
-
 // ── Messaging (brokers) ──────────────────────────────────────────────────
 
 func TestPinEdgeConfig_Messaging(t *testing.T) {
@@ -969,7 +925,6 @@ func TestPinEdgeConfig_OneSaveManySections(t *testing.T) {
 	rig.boot()
 	resp := doRequest(t, rig.r, "PUT", "/api/config", map[string]any{
 		"station":   map[string]any{"station_uid": "pin.uid2", "timezone": "America/Chicago", "auto_confirm": true},
-		"core":      map[string]any{"core_api": "http://core.test:8080"},
 		"plc":       map[string]any{"host": "wl.test", "port": 9000, "enabled": true, "mode": "sse"},
 		"messaging": map[string]any{"brokers": []string{"b1:9092"}},
 		"backups":   map[string]any{"enabled": false, "schedule_interval": "2h"},
@@ -977,7 +932,7 @@ func TestPinEdgeConfig_OneSaveManySections(t *testing.T) {
 	assertStatus(t, resp, 200)
 	var got map[string]any
 	decodeJSON(t, resp, &got)
-	if !reflect.DeepEqual(got["restart"], []any{"Station UID", "Plant timezone", "Core address"}) {
+	if !reflect.DeepEqual(got["restart"], []any{"Station UID", "Plant timezone"}) {
 		t.Errorf("restart = %#v", got["restart"])
 	}
 	if !reflect.DeepEqual(got["applied"], []any{"Station", "PLC link", "Messaging", "Backups"}) {
@@ -994,7 +949,7 @@ func TestPinEdgeConfig_OneSaveManySections(t *testing.T) {
 		t.Fatal("not written")
 	}
 	for path, want := range map[string]any{"station_uid": "pin.uid2", "timezone": "America/Chicago",
-		"core_api": "http://core.test:8080", "warlink.host": "wl.test", "backup.schedule_interval": "2h0m0s"} {
+		"warlink.host": "wl.test", "backup.schedule_interval": "2h0m0s"} {
 		if v, _ := yamlAt(m, path); v != want {
 			t.Errorf("saved %s = %#v, want %#v", path, v, want)
 		}
@@ -1006,11 +961,11 @@ func TestPinEdgeConfig_OneSaveManySections(t *testing.T) {
 func TestPinEdgeConfig_ErrorAnywhereWritesNothing(t *testing.T) {
 	rig := newPinRig(t, true)
 	rig.cfg.Lock()
-	rig.cfg.CoreAPI = "http://old.test"
+	rig.cfg.Timezone = "America/Chicago"
 	rig.cfg.Unlock()
 	resp := doRequest(t, rig.r, "PUT", "/api/config", map[string]any{
-		"core": map[string]any{"core_api": "http://new.test"},
-		"plc":  map[string]any{"mode": "invalid"},
+		"station": map[string]any{"station_uid": "pin.uid2", "timezone": "America/New_York"},
+		"plc":     map[string]any{"mode": "invalid"},
 	}, rig.cookie)
 	assertStatus(t, resp, 400)
 	resp.Body.Close()
@@ -1019,8 +974,8 @@ func TestPinEdgeConfig_ErrorAnywhereWritesNothing(t *testing.T) {
 	}
 	rig.cfg.RLock()
 	defer rig.cfg.RUnlock()
-	if rig.cfg.CoreAPI != "http://old.test" {
-		t.Errorf("live CoreAPI = %q, want untouched", rig.cfg.CoreAPI)
+	if rig.cfg.Timezone != "America/Chicago" {
+		t.Errorf("live timezone = %q, want untouched", rig.cfg.Timezone)
 	}
 	if n := len(rig.backups.got()); n != 0 || rig.spy.applies != 0 {
 		t.Errorf("backups=%d applies=%d, want 0/0", n, rig.spy.applies)
@@ -1067,7 +1022,7 @@ func TestPinEdgeConfig_SaveWaitsForSaveMutex(t *testing.T) {
 	done := make(chan int, 1)
 	go func() {
 		req := httptest.NewRequest("PUT", "/api/config",
-			strings.NewReader(`{"core":{"core_api":"http://late.test"}}`)).WithContext(context.Background())
+			strings.NewReader(`{"plc":{"host":"late.test"}}`)).WithContext(context.Background())
 		req.Header.Set("Content-Type", "application/json")
 		req.AddCookie(rig.cookie)
 		w := httptest.NewRecorder()
@@ -1167,7 +1122,7 @@ func TestRace_ConfigSaveLeavesUnchangedFieldsAlone(t *testing.T) {
 	}()
 	for i := 0; i < 5; i++ {
 		resp := doRequest(t, rig.r, "PUT", "/api/config",
-			map[string]any{"core": map[string]string{"core_api": fmt.Sprintf("http://core.test:%d", 8080+i)}}, rig.cookie)
+			map[string]any{"plc": map[string]any{"host": fmt.Sprintf("wl%d.test", i)}}, rig.cookie)
 		assertStatus(t, resp, 200)
 		resp.Body.Close()
 	}
@@ -1175,7 +1130,7 @@ func TestRace_ConfigSaveLeavesUnchangedFieldsAlone(t *testing.T) {
 	wg.Wait()
 	rig.cfg.RLock()
 	defer rig.cfg.RUnlock()
-	if rig.cfg.CoreAPI != "http://core.test:8084" {
-		t.Errorf("live CoreAPI = %q", rig.cfg.CoreAPI)
+	if rig.cfg.WarLink.Host != "wl4.test" {
+		t.Errorf("live WarLink host = %q", rig.cfg.WarLink.Host)
 	}
 }

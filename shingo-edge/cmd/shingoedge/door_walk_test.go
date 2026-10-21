@@ -464,10 +464,12 @@ func newWalk(t *testing.T) *walk {
 	seeded := testdb.SeedPlant(t, db, fx, "Press A1")
 
 	cfg := config.Defaults()
-	cfg.CoreAPI = "http://core.invalid"
 	cfg.StationUID = "walk.edge"
 	cfg.Messaging.StationID = cfg.StationUID
 	eng := engine.New(engine.Config{AppConfig: cfg, DB: db, LogFunc: func(string, ...any) {}})
+	// Core's catalog has arrived (empty): the press-index changeover's gate
+	// opens on it, as it opened on a configured Core address.
+	eng.SetPayloadBinTypes(nil)
 	eng.Start()
 	t.Cleanup(eng.Stop)
 
