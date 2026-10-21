@@ -3,6 +3,15 @@
 One line per change. If a change needs a paragraph to explain, the paragraph
 belongs in the commit message or in `docs/` — this file is the index.
 
+## 2026-10-21 — A new counter starts counting from its first read
+
+Edge only; no migration. Not deployed.
+
+- A reporting point's first read seeds its count and charges nothing to the bound bins
+- A first read of 0 is a read; a failed read is not
+- A process whose counter moves to another tag has the style's own reporting point re-pointed to it, which seeds again
+- The old tag no longer keeps counting onto the same style beside the new one
+
 ## 2026-10-20 — Strict pack: a produce bin stops counting at its pack
 
 Core and Edge (Edge v26; no Core migration). Deploy Core before Edge. Not deployed.

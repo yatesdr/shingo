@@ -72,6 +72,19 @@ func newTickRig(t *testing.T) *tickRig {
 // the pins that read what the poll emits as well as what it ships.
 func newTickRigEmitting(t *testing.T, em EventEmitter) *tickRig {
 	t.Helper()
+	r := newUnreadTickRig(t, em, 0)
+	r.pass(0)
+	return r
+}
+
+// newUnreadTickRig is the rig with its reporting point as first wiring leaves
+// it: created, never read (last_poll_at NULL, last_count 0). Every other rig
+// has been read once, at 0: a pin about how the counter moves starts from a
+// point that is counting, not from first wiring, whose read seeds and charges
+// nothing (TestCounterSeed_*). The poll rate is the pins' signature; this rig
+// keeps the default cadence.
+func newUnreadTickRig(t *testing.T, em EventEmitter, _ time.Duration) *tickRig {
+	t.Helper()
 	db := testdb.Open(t)
 	cfg := config.Defaults()
 	cfg.Messaging.StationID = "stn-test"

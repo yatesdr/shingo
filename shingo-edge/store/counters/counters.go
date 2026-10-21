@@ -252,8 +252,18 @@ func CreateReportingPoint(db *sql.DB, plcName, tagName string, styleID int64) (i
 }
 
 // UpdateReportingPoint modifies a reporting_point row.
+//
+// A CHANGE OF PLC OR TAG MAKES THE POINT UNREAD (last_poll_at NULL), in the same
+// statement: the new tag's running total is unrelated to the count stored for
+// the old one, so its first read seeds (plc pollReportingPoint) instead of
+// charging the difference. A re-point on the same tag keeps its read. SQLite
+// reads the right-hand side against the row as it was, so the CASE compares the
+// stored names, not the new ones.
 func UpdateReportingPoint(db *sql.DB, id int64, plcName, tagName string, styleID int64, enabled bool) error {
-	_, err := db.Exec(`UPDATE reporting_points SET plc_name=?, tag_name=?, style_id=?, enabled=? WHERE id=?`, plcName, tagName, styleID, enabled, id)
+	_, err := db.Exec(`UPDATE reporting_points SET
+		last_poll_at = CASE WHEN plc_name = ? AND tag_name = ? THEN last_poll_at ELSE NULL END,
+		plc_name=?, tag_name=?, style_id=?, enabled=? WHERE id=?`,
+		plcName, tagName, plcName, tagName, styleID, enabled, id)
 	return err
 }
 
