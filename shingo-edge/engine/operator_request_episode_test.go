@@ -21,6 +21,7 @@ func TestRequestEmptyBin_OpensACellEpisodeForTheOperator(t *testing.T) {
 	t.Parallel()
 	db := testEngineDB(t)
 	eng := testEngine(t, db)
+	answerEmpties(t, eng)
 	nodeID := seedCapManualSwap(t, db, "EPIS", "LOADER-EP", protocol.ClaimRoleProduce, []string{"P1"}, 2, false)
 	seedCoreLoader(t, eng, sharedLoaderInfo("LOADER-EP", "produce", "threshold", "P1", 0, 100))
 
@@ -49,6 +50,7 @@ func TestRequestEmptyBin_EpisodeRecordsTheOperatorTrigger(t *testing.T) {
 	t.Parallel()
 	db := testEngineDB(t)
 	eng := testEngine(t, db)
+	answerEmpties(t, eng)
 	nodeID := seedCapManualSwap(t, db, "EPIS2", "LOADER-EP2", protocol.ClaimRoleProduce, []string{"P1"}, 2, false)
 	seedCoreLoader(t, eng, sharedLoaderInfo("LOADER-EP2", "produce", "threshold", "P1", 0, 100))
 

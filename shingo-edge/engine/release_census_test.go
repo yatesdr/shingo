@@ -139,8 +139,6 @@ var orderCreationSites = map[string]string{
 	"loader_outbound_guard.go:fileLoadedOutbound":                 "loader outbound move, filed at the LOAD (no wait)",
 	"operator_bin_ops.go:RequestFullBin":                          "operator: full bin to a loader window",
 	"operator_bin_ops.go:createUnloaderEmptyOut":                  "unloader empty-out (no wait)",
-	"operator_bin_ops.go:requestEmptyAtManualSwapLoader":          "operator: empty to a manual-swap loader",
-	"operator_demand_loader.go:stageOperatorEmpty":                "loader demand: stage an empty",
 	"operator_demand_unloader.go:fireUnloaderFulls":               "unloader demand: fulls",
 	"operator_node_changeover.go:DeliverNewMaterialForChangeover": "changeover node: deliver new material (no wait: a drop finishes, S7)",
 	"operator_node_changeover.go:EvacuateNode":                    "changeover node: evacuate (a wait in front of a curtained pickup, S7) — door 4 on its fallback arm",

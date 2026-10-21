@@ -34,50 +34,6 @@ func inFlightEmpties(t *testing.T, db *store.DB, nodes []string) int {
 	return n
 }
 
-// TestRace_LoaderBudget_ConcurrentSignalsAndOperator is the seam's concurrency
-// gate. An L1 push (stageOperatorEmpty) and an operator REQUEST (HTTP
-// path → RequestEmptyBin) hammer ONE loader from many goroutines. The seam must
-// serialise count→fire per loader so the loader's in-flight empties never exceed
-// its budget (1 here — a single delivery node). Run under -race: the
-// detector covers the seam's own shared state (the keyed mutex map), the
-// assertion covers the logical never-2N invariant. Pre-seam this races to 2+.
-func TestRace_LoaderBudget_ConcurrentSignalsAndOperator(t *testing.T) {
-	t.Parallel()
-	db := testEngineDB(t)
-	eng := testEngine(t, db)
-	nodeID := seedCapManualSwap(t, db, "RACE", "LOADER-1", protocol.ClaimRoleProduce, []string{"P1"}, 2, false)
-	// Seed the Core-loader cache so BOTH the L1 push (stageOperatorEmpty) and the
-	// operator path (RequestEmptyBin) resolve the SAME aggregate loader — and lock
-	// the same loader_key mutex. (Without this both paths no-op/error and the race
-	// would be vacuous.)
-	seedCoreLoader(t, eng, sharedLoaderInfo("LOADER-1", "produce", "threshold", "P1", 0, 100))
-	dl, err := eng.loaders().LoaderAt("LOADER-1", domain.RoleProduce)
-	if err != nil || dl == nil {
-		t.Fatalf("loader did not resolve from the aggregate: %v", err)
-	}
-
-	const goroutines = 24
-	var wg sync.WaitGroup
-	wg.Add(goroutines)
-	for g := range goroutines {
-		go func(g int) {
-			defer wg.Done()
-			if g%2 == 0 {
-				// L1 push: wants 2, seam caps to the budget (1)
-				_, _ = eng.stageOperatorEmpty(dl, "P1", 2, "", orders.Origin{})
-			} else {
-				// operator path: a single empty request through the same seam
-				_, _ = eng.RequestEmptyBin(nodeID, "P1")
-			}
-		}(g)
-	}
-	wg.Wait()
-
-	if got := inFlightEmpties(t, db, []string{"LOADER-1"}); got > 1 {
-		t.Fatalf("loader budget violated: %d in-flight empties at a 1-slot loader after %d concurrent ops (want <= 1)", got, goroutines)
-	}
-}
-
 // mustSharedLoader builds a SINGLE-window shared loader for the seam tests.
 // ReservationTarget resolves it to that one window with a budget of 1, whether or
 // not multi-window delivery is enabled. Use mustMultiWindowLoader when the test
@@ -108,8 +64,7 @@ func mustSharedLoader(t *testing.T, id string, payloads ...string) *domain.Loade
 //   - No coreClient is installed, so Available() is false and the seam's
 //     resident-bin gate never runs. Occupancy is covered by
 //     TestWithLoaderBudget_PropOccupancyLive.
-//   - Budget above 1 is covered by TestMultiWindow_DemandOfN_ExactlyNAcrossWindows
-//     and the occupancy-live property, both multi-window.
+//   - Budget above 1 is covered by the occupancy-live property, multi-window.
 //
 // (An earlier version of this comment said the budget=N property "lands in C4
 // when ReservationTarget widens to the window cluster." That shipped —
@@ -230,8 +185,10 @@ func (s *occupancyStub) isOccupied(node string) bool {
 //	    property can take: a bin arriving at a window that already has an empty
 //	    inbound is legitimate and must not fail the run.
 //
-// Demands go through stageOperatorEmpty, the production caller, rather than a
-// hand-rolled fire closure — same idiom as the multi-window tests. Occupancy
+// Demands go through withLoaderBudget with a fire closure that orders one empty
+// per window it is handed, as its remaining empties caller (CreateRetrieveForAPI
+// at a loader window) does; an operator's empties are Core's to size now
+// (loader.empties). Occupancy
 // flips between steps, so the run exercises bins arriving and leaving underneath
 // in-flight orders rather than a fixed world.
 func TestWithLoaderBudget_PropOccupancyLive(t *testing.T) {
@@ -262,8 +219,17 @@ func TestWithLoaderBudget_PropOccupancyLive(t *testing.T) {
 		case 0, 1: // a demand for a random payload
 			payload := payloads[rng.Intn(len(payloads))]
 			_, before := windowCounts(t, db, windows)
-			if _, err := eng.stageOperatorEmpty(loader, domain.PayloadCode(payload), rng.Intn(len(windows)+1), "", orders.Origin{}); err != nil {
-				t.Fatalf("step %d: stageOperatorEmpty: %v", step, err)
+			if _, err := eng.withLoaderBudget(loader, domain.PayloadCode(payload), rng.Intn(len(windows)+1), "", true, func(deliveryNodes []string) (int, error) {
+				made := 0
+				for _, dn := range deliveryNodes {
+					if _, cerr := eng.orderMgr.CreateRetrieveOrder(nil, true, 1, dn, "EMPTY-SUPER", "", "standard", payload, false, true, orders.NoDemand()); cerr != nil {
+						return made, cerr
+					}
+					made++
+				}
+				return made, nil
+			}); err != nil {
+				t.Fatalf("step %d: withLoaderBudget: %v", step, err)
 			}
 			_, after := windowCounts(t, db, windows)
 			for _, w := range windows { // property B

@@ -241,6 +241,7 @@ func scLoaderEngine(t *testing.T, window string) (*Engine, *store.DB, *scCore, *
 	t.Helper()
 	db := testEngineDB(t)
 	eng := testEngine(t, db)
+	answerEmpties(t, eng)
 	eng.orderMgr = orders.NewManager(db, &orderEmitter{bus: eng.Events}, "test.station")
 	eng.wireEventHandlers()
 	core := newSCCore(t)
@@ -409,8 +410,8 @@ func TestPinD3a_LoadAfterEcho_ConfirmsTheL1AndFilesOneL2(t *testing.T) {
 	if fresh != 1 {
 		t.Errorf("new empties staged by the L2 landing = %d, want 1 (the produce re-push)", fresh)
 	}
-	decisions := logs.matching("loader_budget loader=loader:" + window)
-	if len(decisions) == 0 || !strings.Contains(decisions[len(decisions)-1], "to_fire=1") {
+	decisions := logs.matching("loader_push: loader=loader:" + window)
+	if len(decisions) == 0 || !strings.Contains(decisions[len(decisions)-1], "created=1") {
 		t.Errorf("landing push decisions = %q, want the last to fire 1 — nothing stranded holds the window", decisions)
 	}
 }
@@ -497,13 +498,14 @@ func TestPinCoreOwnedLoader_L2LandingClearsAndRePushes(t *testing.T) {
 }
 
 // TestLanding_RePushesOnlyItsOwnLoader: an L2 landing re-pushes the loader that
-// owns the node and no other, at a cost of ONE Core occupancy read. The push
+// owns the node and no other, at a cost of ONE empties ask to Core. The push
 // used to walk every operator-staged produce loader (the push that preceded
-// rePushOwnLoader), one read each, for a landing that frees exactly one window.
+// rePushOwnLoader), one Core read each, for a landing that frees exactly one window.
 func TestLanding_RePushesOnlyItsOwnLoader(t *testing.T) {
 	t.Parallel()
 	db := testEngineDB(t)
 	eng := testEngine(t, db)
+	asks := answerEmpties(t, eng)
 	eng.orderMgr = orders.NewManager(db, &orderEmitter{bus: eng.Events}, "test.station")
 	eng.wireEventHandlers()
 	core := newSCCore(t)
@@ -544,7 +546,7 @@ func TestLanding_RePushesOnlyItsOwnLoader(t *testing.T) {
 		t.Fatalf("L2s leaving %s = %d, want 1", own, len(moves))
 	}
 	core.set(own, false, "")
-	readsBefore := core.nodeBinReads()
+	asksBefore := asks.asks.Load()
 	scLand(t, eng, db, moves[0])
 
 	if n := scActiveEmptiesTo(t, db, own); n != 1 {
@@ -553,8 +555,8 @@ func TestLanding_RePushesOnlyItsOwnLoader(t *testing.T) {
 	if n := scActiveEmptiesTo(t, db, other); n != 0 {
 		t.Errorf("empties staged at the OTHER loader = %d, want 0 (a landing frees only its own window)", n)
 	}
-	if n := core.nodeBinReads() - readsBefore; n != 1 {
-		t.Errorf("node-bins reads on the landing = %d, want 1", n)
+	if n := asks.asks.Load() - asksBefore; n != 1 {
+		t.Errorf("empties asks on the landing = %d, want 1", n)
 	}
 }
 

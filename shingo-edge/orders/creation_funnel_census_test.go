@@ -286,13 +286,11 @@ var edgeCreationSites = map[string]string{
 	"engine/operator_node_changeover.go:StageNodeChangeoverMaterial":     "CreateComplexOrder,CreateRetrieveOrder",
 	"engine/wiring_status_changed.go:handleSequentialBackfill":           "CreateComplexOrder",
 	// loader and unloader side-cycles
-	"engine/loader_outbound_guard.go:fileLoadedOutbound":        "CreateMoveOrderWithPayloadCodeForBin",
-	"engine/operator_bin_ops.go:RequestFullBin":                 "CreateRetrieveOrder",
-	"engine/operator_bin_ops.go:createUnloaderEmptyOut":         "CreateMoveOrderForBin",
-	"engine/operator_bin_ops.go:requestEmptyAtManualSwapLoader": "CreateRetrieveOrder",
-	"engine/operator_demand_loader.go:stageOperatorEmpty":       "CreateRetrieveOrder",
-	"engine/operator_demand_unloader.go:fireUnloaderFulls":      "CreateRetrieveOrder",
-	"engine/operator_window_pullback.go:PullFromMarket":         "CreateMoveOrderWithPayloadCodeForBin",
+	"engine/loader_outbound_guard.go:fileLoadedOutbound":   "CreateMoveOrderWithPayloadCodeForBin",
+	"engine/operator_bin_ops.go:RequestFullBin":            "CreateRetrieveOrder",
+	"engine/operator_bin_ops.go:createUnloaderEmptyOut":    "CreateMoveOrderForBin",
+	"engine/operator_demand_unloader.go:fireUnloaderFulls": "CreateRetrieveOrder",
+	"engine/operator_window_pullback.go:PullFromMarket":    "CreateMoveOrderWithPayloadCodeForBin",
 	// keep-staged spot and a cancelled changeover's parked trips (main, 2026-10-03/04)
 	"engine/keep_staged_spot.go:refillSpot":              "CreateRetrieveOrder",
 	"engine/keep_staged_spot.go:returnSpare":             "CreateMoveOrderForBin",

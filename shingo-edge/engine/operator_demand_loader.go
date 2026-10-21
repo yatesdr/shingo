@@ -18,8 +18,10 @@ import (
 // The Edge used to receive a below-threshold signal and work out how many
 // carriers were needed and where they went; that half is gone, and Core creates
 // the orders itself. What is left here is the OPERATOR side: the opportunistic
-// window-free push (rePushOwnLoader, SweepPushLoaders), the operator's own requests, and the
-// unloader path — all still through the withLoaderBudget seam.
+// window-free push (rePushOwnLoader, SweepPushLoaders) and the operator's own
+// REQUEST EMPTY, both asked of Core (loader.empties, askLoaderEmpties), which
+// counts and orders them; and the unloader path and the HTTP order API at a
+// loader window, still through the withLoaderBudget seam.
 //
 // Two earlier retirements, kept as gravestones because their names still appear
 // in incident records: the bin-count produce DemandSignal trigger
@@ -54,10 +56,10 @@ func (e *Engine) loaderBudgetLock(loaderID string) *lockcheck.Mutex[lockorder.Lo
 // between the count and the create.
 //
 // SCOPE — this is the never-2N guarantee only for the writers that route
-// through here: stageOperatorEmpty (the opportunistic push, via
-// maybeStageLoaderEmpty, from rePushOwnLoader and SweepPushLoaders), RequestEmptyBin's manual_swap branch
-// and RequestFullBin (operator), and CreateRetrieveForAPI (the HTTP order API,
-// since Deploy 1b). The automatic U1 (createUnloaderFullIns) takes the same
+// through here: RequestFullBin (operator) and CreateRetrieveForAPI (the HTTP
+// order API, since Deploy 1b). An operator's empties at a loader (the push and
+// RequestEmptyBin's manual_swap branch) are Core's to count and order: they ask
+// (askLoaderEmpties) and create nothing here. The automatic U1 (createUnloaderFullIns) takes the same
 // per-loader mutex and the same count/cap/target step (decideLoaderBudget) but
 // not this function: it decides every payload of an unloader from one read.
 // Core's own threshold replenishment no longer passes through here at all: it
@@ -361,8 +363,8 @@ func nodeIDStrings(ns []domain.NodeID) []string {
 	return out
 }
 
-// resolveOwnWindow is the window-resolve step both fire closures (L1 and U1)
-// share: it maps a delivery window to this Edge's process_node id.
+// resolveOwnWindow is the unloader U1 fire closure's window-resolve step: it
+// maps a delivery window to this Edge's process_node id.
 //
 // One plant, several Edges: Core broadcasts the loader config to every Edge,
 // and each Edge holds process_node rows only for its own windows. A sweep on
@@ -371,7 +373,7 @@ func nodeIDStrings(ns []domain.NodeID) []string {
 // arm logs skipFmt at debug and returns ok=false with no error, and the caller
 // skips the window rather than failing the sweep. Any other read error comes
 // back wrapped in errFmt, and the caller aborts its fire loop on it
-// (TestStageOperatorEmpty_ResolveReadErrorAbortsLoop).
+// (TestCreateUnloaderFullIn_ResolveReadErrorAborts).
 //
 // skipFmt takes the window (%s); errFmt takes the window (%s) and the read
 // error (%w). Each caller keeps its own wording.
@@ -387,68 +389,37 @@ func (e *Engine) resolveOwnWindow(deliveryNode, skipFmt, errFmt string) (nodeID 
 	return node.ID, true, nil
 }
 
-// stageOperatorEmpty creates loader empties opportunistically when a window
-// frees up on an operator-driven loader. THIS PATH STAYS on the Edge: it is
-// driven by what the operator physically did, which Core does not observe.
+// stageOperatorEmpty asks Core for loader empties when a window frees up on an
+// operator-driven loader: the push is driven by what the operator physically
+// did, which Core does not observe, so the Edge asks; Core counts what is in
+// flight, which windows are spoken for and what stands on them, and orders the
+// rest (askLoaderEmpties). Returns how many Core made.
 //
-// It takes the resolved *domain.Loader (the Loader is the unit of resolution);
-// the count→fire atomicity, the per-payload dedup, the capacity cap, and the
-// decision record all live in withLoaderBudget. count is the desired total
-// in-flight for the payload. No operator-driven gate applies: this IS the
-// operator-driven supply path.
-//
-// origin attributes the L1s this call creates and comes from the CALLER, not a
-// lookup here. The opportunistic push serves no demand episode and passes
-// orders.NoDemand().
+// count is the desired total in flight for the payload, as Core reads it: the
+// asking episode's own outstanding orders are subtracted there. origin
+// attributes what Core makes and comes from the CALLER; the opportunistic push
+// serves no demand episode and passes orders.NoDemand().
 func (e *Engine) stageOperatorEmpty(loader *domain.Loader, payload domain.PayloadCode, count int, member domain.NodeID, origin orders.Origin) (int, error) {
-	if loader == nil {
+	if loader == nil || count <= 0 {
 		return 0, nil
 	}
 	coreNode := string(loader.ID())
 	if loader.InboundSource() == "" {
 		// No inbound source to pull empties from — a forklift/press-fed loader is
-		// supplied directly (operator stages empties at the window). Skip auto-L1; nothing
-		// to queue. Symmetric to the unloader's no-inbound gate in createUnloaderFullIns.
+		// supplied directly (operator stages empties at the window). Nothing to
+		// ask for. Symmetric to the unloader's no-inbound gate in createUnloaderFullIns.
 		e.debugFn("loader_push: loader=%s payload=%s skipped — no inbound source (fed directly)",
 			coreNode, payload)
 		return 0, nil
 	}
-	created, err := e.withLoaderBudget(loader, payload, count, member, true, func(deliveryNodes []string) (int, error) {
-		made := 0
-		for i, deliveryNode := range deliveryNodes {
-			nodeID, ok, rerr := e.resolveOwnWindow(deliveryNode,
-				"loader_push: window %s has no process_node here — another Edge's window; skipped",
-				"loader_push: no process_node for delivery target %s: %w")
-			if rerr != nil {
-				return made, rerr
-			}
-			if !ok {
-				continue // another Edge's window
-			}
-			order, cerr := e.orderMgr.CreateRetrieveOrder(
-				&nodeID, true, 1, deliveryNode, loader.InboundSource(), "",
-				"standard", string(payload), false, true, origin,
-			)
-			if cerr != nil {
-				return made, fmt.Errorf("loader_push: create L1 %d/%d loader=%s payload=%s: %w",
-					i+1, len(deliveryNodes), coreNode, payload, cerr)
-			}
-			made++
-			// Burst tripwire stays DELIVERY-NODE-keyed (orthogonal to loader identity):
-			// one empty per physical window, so a flood at a single node trips it even
-			// when the loader identity is now an opaque token.
-			e.recordL1Burst(deliveryNode, 1)
-			e.debugFn("loader_push: L1 order %d (%d/%d) loader=%s payload=%s window=%s",
-				order.ID, i+1, len(deliveryNodes), coreNode, payload, deliveryNode)
-		}
-		return made, nil
-	})
+	res, err := e.askLoaderEmpties(loader, payload, count, member, origin)
 	if err != nil {
-		e.logFn("loader_push: loader=%s payload=%s reservation failed after %d created: %v",
-			coreNode, payload, created, err)
-		return created, err
+		e.logFn("loader_push: loader=%s payload=%s ask: %v", coreNode, payload, err)
+		return 0, err
 	}
-	return created, nil
+	e.logFn("loader_push: loader=%s payload=%q want=%d created=%d held=%v skipped=%q",
+		coreNode, payload, res.Want, len(res.Created), res.HeldBy, res.Skipped)
+	return len(res.Created), nil
 }
 
 // maybeStageLoaderEmpty stages one empty at an operator-driven loader if none is
@@ -471,11 +442,10 @@ func (e *Engine) maybeStageLoaderEmpty(loader *domain.Loader) {
 	if len(loader.PayloadSet()) == 0 && len(loader.Positions()) == 0 {
 		return // misconfigured loader — nothing to stage against
 	}
-	// No separate advisory in-flight pre-check: the reservation seam owns the
-	// never-2N dedup atomically across the loader's delivery nodes, so a push for a
-	// loader that already has an empty in flight resolves to to_fire=0 and fires
-	// nothing. The empty is staged payload-AGNOSTIC (blank code) — the operator
-	// picks the payload at LoadBin.
+	// No separate advisory in-flight pre-check: Core counts what is in flight and
+	// what stands on the windows, so a push for a loader that already has an empty
+	// coming makes none (HeldBy names the window). The empty is staged
+	// payload-AGNOSTIC (blank code) — the operator picks the payload at LoadBin.
 	if _, err := e.stageOperatorEmpty(loader, "", 1, "", orders.NoDemand()); err != nil { // opportunistic push: payload-agnostic, no member
 		e.logFn("loader-push: stage empty at loader=%s failed: %v", loader.ID(), err)
 	}

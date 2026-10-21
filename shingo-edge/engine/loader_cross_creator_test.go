@@ -148,7 +148,13 @@ func TestCensus_RetrieveOrderCreatorSites(t *testing.T) {
 	// 11 since REQUEST EMPTY BIN refuses a mode outside the configurable set:
 	// requestEmptyAtLegacyLine, the retrieve it made for one, is gone. It was
 	// never behind withLoaderBudget (the line, not a loader window).
-	const want = 11
+	//
+	// 9 since an operator's empties at a loader are Core's to order (the
+	// loader.empties ask, askLoaderEmpties): stageOperatorEmpty (the window-free
+	// push) and requestEmptyAtManualSwapLoader (REQUEST EMPTY at a loader) create
+	// nothing here. Behind withLoaderBudget still: CreateRetrieveForAPI at a
+	// loader window, RequestFullBin and the unloader's U1.
+	const want = 9
 	sites := retrieveCreatorSites(t)
 	if len(sites) != want {
 		t.Errorf("retrieve-order creator sites = %d, expected %d.\nA creator was added or removed. Re-run the census and update this count WITH the seam's scope comment.\nSites:\n  %s",

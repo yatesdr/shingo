@@ -9,8 +9,8 @@ import (
 )
 
 // produce_clear_repush_pins_test.go — CLEAR at a produce (loader) window
-// re-pushes only the loader that owns the window (rePushOwnLoader): one Core
-// node-bins read, and nothing staged at another loader.
+// re-pushes only the loader that owns the window (rePushOwnLoader): one
+// empties ask to Core, and nothing staged at another loader.
 //
 // BEFORE (pinned at e83cccd1) it walked EVERY operator-staged produce loader with
 // a read each, and staged an empty at any of them that had a free window —
@@ -22,6 +22,7 @@ func TestProduceClear_RePushesOnlyItsOwnLoader(t *testing.T) {
 	t.Parallel()
 	db := testEngineDB(t)
 	eng := testEngine(t, db)
+	asks := answerEmpties(t, eng)
 	eng.orderMgr = orders.NewManager(db, &orderEmitter{bus: eng.Events}, "test.station")
 	eng.wireEventHandlers()
 	core := newSCCore(t)
@@ -48,7 +49,7 @@ func TestProduceClear_RePushesOnlyItsOwnLoader(t *testing.T) {
 	core.set(wa, true, "PART-PC") // the carrier being cleared stays on WA
 	core.set(wb, false, "")
 
-	before := core.nodeBinReads()
+	before := asks.asks.Load()
 	testutil.MustNoErr(t, eng.ClearBin(waID, "", false, nil), "ClearBin at a produce window")
 	if n := scActiveEmptiesTo(t, db, wb); n != 0 {
 		t.Errorf("empties staged at the OTHER loader's window %s = %d, want 0", wb, n)
@@ -56,7 +57,10 @@ func TestProduceClear_RePushesOnlyItsOwnLoader(t *testing.T) {
 	if n := scActiveEmptiesTo(t, db, wa); n != 0 {
 		t.Errorf("empties staged at %s = %d, want 0 (its carrier is still resident)", wa, n)
 	}
-	if reads := core.nodeBinReads() - before; reads != 1 {
-		t.Errorf("node-bins reads during the produce CLEAR = %d, want 1 (the own loader)", reads)
+	if n := asks.asks.Load() - before; n != 1 {
+		t.Errorf("empties asks during the produce CLEAR = %d, want 1 (the own loader)", n)
+	}
+	if ask := asks.lastAsk(); ask.LoaderKey != "loader:"+wa {
+		t.Errorf("the CLEAR asked for empties at %q, want the own loader loader:%s", ask.LoaderKey, wa)
 	}
 }

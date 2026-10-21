@@ -5,8 +5,6 @@ import (
 	"strings"
 	"testing"
 
-	"shingo/protocol/testutil"
-
 	"shingoedge/domain"
 	"shingoedge/orders"
 )
@@ -58,47 +56,6 @@ func TestStageOperatorEmpty_NilLoader(t *testing.T) {
 	}
 }
 
-// TestStageOperatorEmpty_OperatorDrivenFiresWithPrefixedTrace: an
-// operator-replenished loader is NOT suppressed on this path (it is the
-// operator-driven supply path), the origin the caller passes lands on the order,
-// and the per-order debug line carries the literal loader_push: prefix.
-func TestStageOperatorEmpty_OperatorDrivenFiresWithPrefixedTrace(t *testing.T) {
-	t.Parallel()
-	db := testEngineDB(t)
-	eng := testEngine(t, db)
-	var debug []string
-	eng.debugFn = func(f string, a ...any) { debug = append(debug, fmt.Sprintf(f, a...)) }
-	seedWindowNodes(t, db, "LP-PROC", []string{"LP-W1"})
-	l := pushLoader(t, "LP", []string{"LP-W1"}, "EMPTY-SUPER")
-	if !l.UsesOperatorStaging() {
-		t.Fatal("fixture premise: loader must be operator-driven")
-	}
-
-	created, err := eng.stageOperatorEmpty(l, "P1", 1, "", orders.Attached("EP-LP-1"))
-	if created != 1 || err != nil {
-		t.Fatalf("operator-driven loader: created=%d err=%v, want 1, nil", created, err)
-	}
-	list, lerr := db.ListActiveOrdersByDeliveryNodeSet([]string{"LP-W1"})
-	if lerr != nil || len(list) != 1 {
-		t.Fatalf("orders at LP-W1: %d err=%v, want 1", len(list), lerr)
-	}
-	o := list[0]
-	if !o.RetrieveEmpty || o.PayloadCode != "P1" || o.SourceNode != "EMPTY-SUPER" || o.OriginID != "EP-LP-1" {
-		t.Errorf("L1 = retrieve_empty=%v payload=%q source=%q origin=%q, want true P1 EMPTY-SUPER EP-LP-1",
-			o.RetrieveEmpty, o.PayloadCode, o.SourceNode, o.OriginID)
-	}
-	wantLine := fmt.Sprintf("loader_push: L1 order %d (1/1) loader=LP payload=P1 window=LP-W1", o.ID)
-	found := false
-	for _, d := range debug {
-		if d == wantLine {
-			found = true
-		}
-	}
-	if !found {
-		t.Errorf("debug trace %v, want the line %q", debug, wantLine)
-	}
-}
-
 // TestStageOperatorEmpty_NoInboundTracePrefix: the no-inbound skip reads no
 // Core occupancy, creates nothing, and says so under the loader_push: prefix.
 func TestStageOperatorEmpty_NoInboundTracePrefix(t *testing.T) {
@@ -116,65 +73,6 @@ func TestStageOperatorEmpty_NoInboundTracePrefix(t *testing.T) {
 	want := "loader_push: loader=LN payload=P1 skipped — no inbound source (fed directly)"
 	if len(debug) != 1 || debug[0] != want {
 		t.Errorf("debug trace %v, want exactly [%q]", debug, want)
-	}
-}
-
-// TestStageOperatorEmpty_ResolveReadErrorAbortsLoop pins the resolve step's
-// error arm (the ErrNoRows arm is TestLoaderL1_ForeignWindowSkipsNotErrors).
-// A process_node read that fails for any other reason stops the fire loop at
-// that window: later windows are not attempted, the count made so far is
-// returned with a wrapped error, and the failure is logged under loader_push:.
-func TestStageOperatorEmpty_ResolveReadErrorAbortsLoop(t *testing.T) {
-	t.Parallel()
-	for _, tc := range []struct {
-		name        string
-		corrupt     string
-		wantCreated int
-		wantAt      map[string]int
-	}{
-		{name: "first_window_bad_stops_before_second", corrupt: "RE-W1", wantCreated: 0, wantAt: map[string]int{}},
-		{name: "second_window_bad_keeps_first", corrupt: "RE-W2", wantCreated: 1, wantAt: map[string]int{"RE-W1": 1}},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			db := testEngineDB(t)
-			eng := testEngine(t, db)
-			var logs []string
-			eng.logFn = func(f string, a ...any) { logs = append(logs, fmt.Sprintf(f, a...)) }
-			windows := []string{"RE-W1", "RE-W2"}
-			seedWindowNodes(t, db, "RE-PROC", windows)
-			corruptProcessNodeRow(t, eng, tc.corrupt)
-			l := pushLoader(t, "RE", windows, "EMPTY-SUPER")
-
-			created, err := eng.stageOperatorEmpty(l, "P1", 2, "", orders.NoDemand())
-
-			if created != tc.wantCreated {
-				t.Errorf("created = %d, want %d", created, tc.wantCreated)
-			}
-			wantErr := "loader_push: no process_node for delivery target " + tc.corrupt + ": "
-			if err == nil || !strings.Contains(err.Error(), wantErr) {
-				t.Errorf("err = %v, want it to contain %q", err, wantErr)
-			}
-			list, lerr := db.ListActiveOrdersByDeliveryNodeSet(windows)
-			testutil.MustNoErr(t, lerr, "list active orders")
-			at := map[string]int{}
-			for _, o := range list {
-				at[o.DeliveryNode]++
-			}
-			if fmt.Sprint(at) != fmt.Sprint(tc.wantAt) {
-				t.Errorf("orders by window = %v, want %v", at, tc.wantAt)
-			}
-			wantLog := fmt.Sprintf("loader_push: loader=RE payload=P1 reservation failed after %d created: ", tc.wantCreated)
-			found := false
-			for _, l := range logs {
-				if strings.HasPrefix(l, wantLog) {
-					found = true
-				}
-			}
-			if !found {
-				t.Errorf("logs %v, want a line starting %q", logs, wantLog)
-			}
-		})
 	}
 }
 

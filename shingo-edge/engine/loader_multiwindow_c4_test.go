@@ -1,8 +1,6 @@
 package engine
 
 import (
-	"shingoedge/orders"
-	"sync"
 	"testing"
 
 	"shingoedge/domain"
@@ -66,72 +64,4 @@ func windowCounts(t *testing.T, db *store.DB, windows []string) (total int, per 
 		}
 	}
 	return total, per
-}
-
-// TestMultiWindow_DemandOfN_ExactlyNAcrossWindows is the multi-window acceptance: with the
-// multi-window flag on, a shared loader's N windows share one budget of N, and
-// one demand of N fires EXACTLY N empties — spread one per window, never 2N and
-// never two at the same window. A second demand at a full loader fires nothing.
-func TestMultiWindow_DemandOfN_ExactlyNAcrossWindows(t *testing.T) {
-	t.Parallel()
-	db := testEngineDB(t)
-	eng := testEngine(t, db)
-
-	windows := []string{"MW-W1", "MW-W2", "MW-W3"}
-	seedWindowNodes(t, db, "MW-PROC", windows)
-	loader := mustMultiWindowLoader(t, "MW-LDR", windows, "P1")
-
-	created, err := eng.stageOperatorEmpty(loader, "P1", 3, "", orders.Origin{})
-	if err != nil || created != 3 {
-		t.Fatalf("one demand of 3: created=%d err=%v, want 3", created, err)
-	}
-	total, per := windowCounts(t, db, windows)
-	if total != 3 {
-		t.Fatalf("in-flight total = %d, want exactly 3 (never 2N)", total)
-	}
-	for _, w := range windows {
-		if per[w] != 1 {
-			t.Errorf("window %s has %d empties, want exactly 1 (one bin per window)", w, per[w])
-		}
-	}
-
-	// Loader full → a second demand fires nothing.
-	created, err = eng.stageOperatorEmpty(loader, "P1", 3, "", orders.Origin{})
-	if err != nil || created != 0 {
-		t.Errorf("full loader: created=%d err=%v, want 0", created, err)
-	}
-	if total, _ := windowCounts(t, db, windows); total != 3 {
-		t.Errorf("after second demand: total = %d, want 3", total)
-	}
-}
-
-// TestRace_MultiWindow_NeverExceedsWindowCount hammers a multi-window loader from
-// many goroutines under -race: the cluster in-flight must never exceed the window
-// count, and no window may hold more than one empty.
-func TestRace_MultiWindow_NeverExceedsWindowCount(t *testing.T) {
-	t.Parallel()
-	db := testEngineDB(t)
-	eng := testEngine(t, db)
-
-	windows := []string{"RMW-W1", "RMW-W2", "RMW-W3", "RMW-W4"}
-	seedWindowNodes(t, db, "RMW-PROC", windows)
-	loader := mustMultiWindowLoader(t, "RMW-LDR", windows, "P1")
-
-	var wg sync.WaitGroup
-	for range 24 {
-		wg.Go(func() {
-			_, _ = eng.stageOperatorEmpty(loader, "P1", len(windows), "", orders.Origin{})
-		})
-	}
-	wg.Wait()
-
-	total, per := windowCounts(t, db, windows)
-	if total > len(windows) {
-		t.Fatalf("cluster in-flight %d exceeds window count %d (budget violated)", total, len(windows))
-	}
-	for w, c := range per {
-		if c > 1 {
-			t.Errorf("window %s holds %d empties, want <= 1", w, c)
-		}
-	}
 }

@@ -905,13 +905,14 @@ func (e *Engine) RequestEmptyBin(nodeID int64, payloadCode string) (*orders.Orde
 // the same trap for the next person with a legitimate guard to add, so the arm
 // moves out instead and the caller gets headroom rather than a fresh tripwire.
 //
-// The seam, unchanged: an operator request and a kanban signal can't both pass the
-// in-flight count and both fire — the never-2N invariant. The seam owns the count,
-// the budget, and the create atomically; want=1 (the operator asks for one empty),
-// autoConfirm forced off (the operator confirms after loading, matching the
-// side-cycle path). Budget exhausted (a retrieve_empty already inbound across the
-// loader's cluster) means the seam fires nothing and we surface the familiar
-// "already inbound" error.
+// CORE ORDERS THE EMPTY. The operator asks for one (want=1) through the
+// loader.empties ask (askLoaderEmpties): Core counts what is in flight across the
+// loader, what stands on its windows and which are spoken for, and makes the
+// order or says why not (Skipped, or HeldBy per window). The order is Core's,
+// projected here; the node's runtime points at it when the projection is in
+// (it is enqueued before the answer, on the same stream). A manual_swap
+// loader's empty never auto-confirms on Core's side either: the operator
+// confirms after loading.
 func (e *Engine) requestEmptyAtManualSwapLoader(
 	nodeID int64,
 	node *processes.Node,
@@ -919,56 +920,45 @@ func (e *Engine) requestEmptyAtManualSwapLoader(
 	payloadCode string,
 	reqOrigin ordermgr.Origin,
 ) (*orders.Order, error) {
-	{
-		// Resolve the loader from the Core aggregate — the SAME read-model the
-		// demand/threshold path uses — so the never-2N seam locks on the loader_key
-		// token, the identity every entry point now shares. Pre-cutover this built a
-		// throwaway single-window loader keyed on the node NAME, so the operator path
-		// and the automatic path locked different mutexes (BUG-1). LoaderAt resolves a
-		// manual_swap node via Contains (window or position).
-		dl, lerr := e.loaders().LoaderAt(domain.NodeID(node.CoreNodeName), domain.RoleProduce)
-		if lerr != nil || dl == nil {
-			return nil, fmt.Errorf("node %s: not a configured loader: %w", node.Name, lerr)
-		}
-		// member = the operator's node. A dedicated loader routes the empty to that
-		// specific position; a shared loader IGNORES member (ReservationTarget) and the
-		// seam stages at a free window — the deliberate behaviour choice (see the impl
-		// log): consistent with the shared multi-window model, where an empty may go to
-		// any free window. The InboundSource is the aggregate's (== the old claim's).
-		var created *orders.Order
-		n, rerr := e.withLoaderBudget(dl, domain.PayloadCode(payloadCode), 1, domain.NodeID(node.CoreNodeName), true, func(deliveryNodes []string) (int, error) {
-			made := 0
-			for _, deliveryNode := range deliveryNodes {
-				// autoConfirm=false, skipAutoConfirm=true: a manual_swap loader needs the
-				// OPERATOR to confirm after physically loading the bin. claim.AutoConfirm is
-				// true on these claims (mandatory for the robot-drop signal), but that flag
-				// means "robot confirms it dropped the bin", not "operator confirmed they
-				// loaded parts". Auto-confirming here fires L2/U2 (move back to supermarket)
-				// before the operator has finished. Matches the automatic side-cycle paths
-				// (MaybeCreateUnloaderFullIn and the loader push).
-				order, cerr := e.orderMgr.CreateRetrieveOrder(
-					&nodeID, true, 1, deliveryNode, dl.InboundSource(), "",
-					"standard", payloadCode, false, true, reqOrigin,
-				)
-				if cerr != nil {
-					return made, cerr
-				}
-				created = order
-				if uerr := e.db.SetProcessNodeRuntimeActiveOrder(nodeID, &order.ID); uerr != nil {
-					log.Printf("bin_ops: update runtime orders for node %d: %v", nodeID, uerr)
-				}
-				made++
-			}
-			return made, nil
-		})
-		if rerr != nil {
-			return nil, fmt.Errorf("node %s: request empty: %w", node.Name, rerr)
-		}
-		if n == 0 || created == nil {
-			return nil, fmt.Errorf("node %s: an empty bin is already inbound", node.Name)
-		}
-		return created, nil
+	// Resolve the loader from the Core aggregate — the SAME read-model the
+	// demand/threshold path uses — so the ask names the loader_key every entry
+	// point shares. LoaderAt resolves a manual_swap node via Contains (window or
+	// position).
+	dl, lerr := e.loaders().LoaderAt(domain.NodeID(node.CoreNodeName), domain.RoleProduce)
+	if lerr != nil || dl == nil {
+		return nil, fmt.Errorf("node %s: not a configured loader: %w", node.Name, lerr)
 	}
+	// member = the operator's node. A dedicated loader routes the empty to that
+	// position; a shared loader orders to a free window.
+	res, err := e.askLoaderEmpties(dl, domain.PayloadCode(payloadCode), 1, domain.NodeID(node.CoreNodeName), reqOrigin)
+	if err != nil {
+		return nil, fmt.Errorf("node %s: request empty: %w", node.Name, err)
+	}
+	if len(res.Created) == 0 {
+		return nil, fmt.Errorf("%s", noEmptiesSentence(node.Name, res))
+	}
+	order, gerr := e.db.GetOrderByUUID(res.Created[0])
+	if gerr != nil || order == nil {
+		// Made on Core and not yet projected here: the board shows it when the
+		// projection lands. The tap's answer is the order Core named.
+		log.Printf("bin_ops: node %s: empty %s ordered on Core, not yet projected: %v", node.Name, res.Created[0], gerr)
+		return &orders.Order{UUID: res.Created[0], ProcessNodeID: &nodeID, RetrieveEmpty: true}, nil
+	}
+	// The asker's tile tracks it. The projection guesses the window it
+	// delivers to, and on a shared loader that can be a sibling's; the order
+	// is the node that asked, as an Edge-made one was, and a later projection
+	// keeps a stored node (UpsertProjection).
+	if order.ProcessNodeID == nil || *order.ProcessNodeID != nodeID {
+		if uerr := e.db.UpdateOrderProcessNode(order.ID, &nodeID); uerr != nil {
+			log.Printf("bin_ops: track empty %s at node %d: %v", order.UUID, nodeID, uerr)
+		} else {
+			order.ProcessNodeID = &nodeID
+		}
+	}
+	if uerr := e.db.SetProcessNodeRuntimeActiveOrder(nodeID, &order.ID); uerr != nil {
+		log.Printf("bin_ops: update runtime orders for node %d: %v", nodeID, uerr)
+	}
+	return order, nil
 }
 
 // RequestFullBin requests a full bin of the given payload to be delivered to a

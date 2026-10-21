@@ -4,7 +4,6 @@ import (
 	"testing"
 
 	"shingoedge/domain"
-	"shingoedge/orders"
 	"shingoedge/store"
 )
 
@@ -32,67 +31,6 @@ func mustFunnelLoader(t *testing.T, id string, windows []string, payloads ...str
 		t.Fatalf("build funnel loader: %v", err)
 	}
 	return l
-}
-
-// TestFunnelWindows_TwoLoadersOnePlantDisagree is the whole point of moving this
-// setting off the plant-wide config key and onto the loader.
-//
-// Two shared-window loaders, same plant, same engine, same config: one spreads
-// its empties across its three windows, the other keeps a single carrier at its
-// first window. Before the setting moved, this shape could not be expressed —
-// one boolean answered for every loader in the plant, so the second loader's
-// operator either imposed the funnel on the first or went without.
-func TestFunnelWindows_TwoLoadersOnePlantDisagree(t *testing.T) {
-	t.Parallel()
-	db := testEngineDB(t)
-	eng := testEngine(t, db)
-
-	spreadWins := []string{"FW-S1", "FW-S2", "FW-S3"}
-	funnelWins := []string{"FW-F1", "FW-F2", "FW-F3"}
-	seedWindowNodes(t, db, "FW-PROC", append(append([]string{}, spreadWins...), funnelWins...))
-
-	spread := mustMultiWindowLoader(t, "FW-SPREAD", spreadWins, "P1")
-	funnel := mustFunnelLoader(t, "FW-FUNNEL", funnelWins, "P1")
-
-	// Ask each for three. The spreader has room for three; the funnel has room
-	// for one, whatever it is asked for.
-	created, err := eng.stageOperatorEmpty(spread, "P1", 3, "", orders.Origin{})
-	if err != nil || created != 3 {
-		t.Fatalf("spreading loader, demand of 3: created=%d err=%v, want 3", created, err)
-	}
-	created, err = eng.stageOperatorEmpty(funnel, "P1", 3, "", orders.Origin{})
-	if err != nil || created != 1 {
-		t.Fatalf("funnelling loader, demand of 3: created=%d err=%v, want 1", created, err)
-	}
-
-	total, per := windowCounts(t, db, spreadWins)
-	if total != 3 {
-		t.Errorf("spreading loader in-flight = %d, want 3", total)
-	}
-	for _, w := range spreadWins {
-		if per[w] != 1 {
-			t.Errorf("spreading loader window %s holds %d, want 1", w, per[w])
-		}
-	}
-
-	total, per = windowCounts(t, db, funnelWins)
-	if total != 1 {
-		t.Errorf("funnelling loader in-flight = %d, want 1", total)
-	}
-	if per[funnelWins[0]] != 1 {
-		t.Errorf("funnelling loader: first window holds %d, want 1 (the funnel target)", per[funnelWins[0]])
-	}
-	for _, w := range funnelWins[1:] {
-		if per[w] != 0 {
-			t.Errorf("funnelling loader: window %s holds %d, want 0 — nothing goes past the first", w, per[w])
-		}
-	}
-
-	// And the funnelling loader stays at one until its window clears.
-	created, err = eng.stageOperatorEmpty(funnel, "P1", 3, "", orders.Origin{})
-	if err != nil || created != 0 {
-		t.Errorf("funnelling loader, second demand: created=%d err=%v, want 0", created, err)
-	}
 }
 
 // TestFunnelWindows_ProjectedFromCoreCache pins the last hop: the setting Core

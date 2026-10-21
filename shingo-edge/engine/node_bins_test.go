@@ -576,8 +576,15 @@ func ackHeld(eng *Engine) {
 		feeds[key] = h.digest
 	}
 	eng.feeds.mu.Unlock()
+	// The same Core: the kinds it answered, it still answers.
+	asks := []string{}
+	eng.asks.mu.Lock()
+	for k := range eng.asks.kinds {
+		asks = append(asks, k)
+	}
+	eng.asks.mu.Unlock()
 	_, own, _ := eng.binWatchList()
-	eng.OnCoreAck(&protocol.EdgeHeartbeatAck{Feeds: feeds, BinWatch: quote(own)})
+	eng.OnCoreAck(&protocol.EdgeHeartbeatAck{Feeds: feeds, BinWatch: quote(own), Asks: asks})
 }
 
 // binsRowsOf is what Core's bins table says for rows written as node-bins

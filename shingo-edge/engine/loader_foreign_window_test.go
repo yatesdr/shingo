@@ -7,7 +7,6 @@ import (
 
 	"shingo/protocol"
 	"shingoedge/domain"
-	"shingoedge/orders"
 )
 
 // One plant, several Edges: Core broadcasts the loader config to every Edge,
@@ -59,35 +58,6 @@ func TestUnloaderSweep_ForeignWindowSkipsNotErrors(t *testing.T) {
 		if strings.Contains(line, "failed") {
 			t.Errorf("a foreign window must fail the sweep for no one; error log: %s", line)
 		}
-	}
-	ords, oerr := db.ListActiveOrders()
-	if oerr != nil {
-		t.Fatalf("list orders: %v", oerr)
-	}
-	if len(ords) != 0 {
-		t.Errorf("no order may be created against a window this Edge does not own; found %d", len(ords))
-	}
-}
-
-// TestLoaderL1_ForeignWindowSkipsNotErrors: the symmetric L1 case — a produce
-// loader's window with no process_node row here skips rather than failing the
-// reservation, so a co-deployed loader on another Edge cannot wedge this one's
-// empties.
-func TestLoaderL1_ForeignWindowSkipsNotErrors(t *testing.T) {
-	t.Parallel()
-	db := testEngineDB(t)
-	eng := testEngine(t, db)
-	info := foreignWindowLoaderInfo("PLK_FOREIGN", "PART-FK")
-	info.Role = "produce"
-	info.Replenishment = "operator"
-	seedCoreLoader(t, eng, info)
-
-	l, err := eng.loaderStore.LoaderForPayload(domain.PayloadCode("PART-FK"), domain.RoleProduce)
-	if err != nil || l == nil {
-		t.Fatalf("resolve produce loader: loader=%v err=%v", l, err)
-	}
-	if created, cerr := eng.stageOperatorEmpty(l, "PART-FK", 1, "", orders.Origin{}); cerr != nil || created != 0 {
-		t.Errorf("foreign-window loader L1: created=%d err=%v, want 0, nil", created, cerr)
 	}
 	ords, oerr := db.ListActiveOrders()
 	if oerr != nil {

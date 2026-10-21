@@ -12,44 +12,37 @@ import (
 // These guard the two correctness bugs the refactor closes plus the prerequisites
 // the deletion depends on. See TIER1-BRIEF.md.
 
-// Gate 1 (BUG-1, never-2N mutex hole): the operator path (RequestEmptyBin) and the
-// L1 push (stageOperatorEmpty on the aggregate loader) must lock the SAME per-loader
-// mutex for one physical loader, or the seam doesn't mutually exclude them. The seam
-// keys loaderBudgetLock on string(loader.ID()); pre-fix the operator path built its loader
-// from the claim (ID = node NAME) while the demand path used the aggregate (ID = token),
-// so the two fired through different mutexes. This counts the distinct reservation-lock
-// keys used for one loader after driving BOTH paths — must be exactly 1. Deterministic
-// (no race): pre-fix it observes 2 keys, post-fix 1.
-func TestTier1_BUG1_OperatorAndDemandShareLockKey(t *testing.T) {
+// Gate 1 (BUG-1, one identity for one loader): the operator path (RequestEmptyBin)
+// and the L1 push (stageOperatorEmpty on the aggregate loader) must name the SAME
+// loader for one physical loader. Pre-fix the operator path built its loader from
+// the claim (ID = node NAME) while the push used the aggregate (ID = token), and the
+// two were counted apart. The count is Core's now (the loader.empties ask), so the
+// identity is the ask's loader_key: both paths must send the token.
+func TestTier1_BUG1_OperatorAndDemandShareLoaderKey(t *testing.T) {
 	t.Parallel()
 	db := testEngineDB(t)
 	eng := testEngine(t, db)
+	core := answerEmpties(t, eng)
 
 	// Single-window real-node loader: node "PLK_X1", aggregate token "loader:PLK_X1".
 	nodeID := seedCapManualSwap(t, db, "PROC-X1", "PLK_X1", protocol.ClaimRoleProduce, []string{"PART-X"}, 2, false)
 	seedCoreLoader(t, eng, sharedLoaderInfo("PLK_X1", "produce", "threshold", "PART-X", 0, 100))
 
-	// Operator path: RequestEmptyBin resolves the loader and reserves through the seam.
 	if _, err := eng.RequestEmptyBin(nodeID, "PART-X"); err != nil {
 		t.Fatalf("RequestEmptyBin: %v", err)
 	}
-	// L1 push: the aggregate resolver + stageOperatorEmpty reserve through the same seam.
+	if got := core.lastAsk().LoaderKey; got != "loader:PLK_X1" {
+		t.Errorf("operator path asked for loader %q, want the loader_key token loader:PLK_X1 (not the node name)", got)
+	}
 	dl, err := eng.loaders().LoaderAt("PLK_X1", domain.RoleProduce)
 	if err != nil || dl == nil {
 		t.Fatalf("LoaderAt(PLK_X1) = %v, %v", dl, err)
 	}
-	if _, err := eng.stageOperatorEmpty(dl, "PART-X", 1, "", orders.Origin{}); err != nil {
+	if _, err := eng.stageOperatorEmpty(dl, "PART-X", 1, "", orders.NoDemand()); err != nil {
 		t.Fatalf("stageOperatorEmpty: %v", err)
 	}
-
-	var keys []string
-	eng.loaderResv.Range(func(k, _ any) bool { keys = append(keys, k.(string)); return true })
-	if len(keys) != 1 {
-		t.Errorf("reservation lock used %d distinct keys %v for one physical loader; want 1 "+
-			"(operator + automatic paths must share the loader_key token, or never-2N is not enforced — BUG-1)", len(keys), keys)
-	}
-	if len(keys) == 1 && keys[0] != "loader:PLK_X1" {
-		t.Errorf("lock key = %q, want the loader_key token loader:PLK_X1 (not the node name)", keys[0])
+	if got := core.lastAsk().LoaderKey; got != "loader:PLK_X1" {
+		t.Errorf("push asked for loader %q, want loader:PLK_X1", got)
 	}
 }
 

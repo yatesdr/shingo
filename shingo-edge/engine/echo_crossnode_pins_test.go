@@ -280,6 +280,7 @@ func TestPinEcho_SharedWindowL1ToASiblingWindow(t *testing.T) {
 	t.Parallel()
 	db := testEngineDB(t)
 	eng := testEngine(t, db)
+	answerEmpties(t, eng)
 	eng.orderMgr = orders.NewManager(db, &orderEmitter{bus: eng.Events}, "test.station")
 	eng.wireEventHandlers()
 	core := newSCCore(t)
