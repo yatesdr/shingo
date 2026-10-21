@@ -176,9 +176,8 @@ func declaredUOP(n int64) *int64 { return &n }
 // what makes that visible: the field is a pointer, so absence is nil and a
 // declared zero is a pointer to zero.
 type loadBinWireProbe struct {
-	got          *BinLoadRequest
-	manifestHits int
-	resolvedUOP  int
+	got         *BinLoadRequest
+	resolvedUOP int
 }
 
 func (p *loadBinWireProbe) server(t *testing.T) *httptest.Server {
@@ -192,12 +191,6 @@ func (p *loadBinWireProbe) server(t *testing.T) *httptest.Server {
 			_ = json.NewEncoder(w).Encode(BinLoadResponse{
 				Status: "ok", BinID: 42, PayloadCode: "PART-A",
 				UOPRemaining: p.resolvedUOP, DeltaEpoch: 1,
-			})
-		case strings.HasSuffix(r.URL.Path, "/manifest"):
-			p.manifestHits++
-			_ = json.NewEncoder(w).Encode(protocol.PayloadManifestResponse{
-				UOPCapacity: 40,
-				Items:       []protocol.ManifestItem{{PartNumber: "PN-1", PartsPerCycle: 5}},
 			})
 		default:
 			_ = json.NewEncoder(w).Encode([]NodeBinInfo{{NodeName: "LOADER", Occupied: true, PayloadCode: ""}})
@@ -244,11 +237,6 @@ func TestLoadBin_UndeclaredCountTravelsAsAbsence(t *testing.T) {
 		t.Errorf("uop_count = %d, want it ABSENT — an undeclared count is a question for Core, "+
 			"and sending a number makes it indistinguishable from one somebody counted",
 			*probe.got.UOPCount)
-	}
-	if probe.manifestHits != 0 {
-		t.Errorf("Edge fetched the payload template %d time(s); it must not — Core owns that "+
-			"resolution now, and a second answer here is the one with no way to report failure",
-			probe.manifestHits)
 	}
 }
 

@@ -15,7 +15,6 @@
 package scenarios
 
 import (
-	"net/http/httptest"
 	"testing"
 	"time"
 
@@ -53,7 +52,9 @@ const (
 type kscCore struct {
 	eng *coreengine.Engine
 	sim *simulator.SimulatorBackend
-	url string
+	// doors is the door bodies Core's router serves and its ask server
+	// answers through (registerAsks).
+	doors *www.Doors
 }
 
 func startKeepStagedCore(t *testing.T) kscCore {
@@ -69,12 +70,11 @@ func startKeepStagedCore(t *testing.T) kscCore {
 	t.Cleanup(eng.Stop)
 	dbg, err := debuglog.New(64, nil)
 	mustNil(t, err, "debuglog")
-	r, stop, err := www.NewRouter(eng, www.NewDoors(eng), dbg)
+	doors := www.NewDoors(eng)
+	_, stop, err := www.NewRouter(eng, doors, dbg)
 	mustNil(t, err, "core router")
 	t.Cleanup(stop)
-	srv := httptest.NewServer(r)
-	t.Cleanup(srv.Close)
-	return kscCore{eng: eng, sim: sim, url: srv.URL}
+	return kscCore{eng: eng, sim: sim, doors: doors}
 }
 
 func TestScenario_KeepStagedCell_CallChangeoverCancel(t *testing.T) {
@@ -126,7 +126,7 @@ func TestScenario_KeepStagedCell_CallChangeoverCancel(t *testing.T) {
 	full("KSC-B3", kscPartB, slots[4])
 
 	// ── Edge: one line node, two styles keeping the same spot ──
-	edge := edgeharness.NewEdgeWithCoreAPI(t, "edge.test", core.url)
+	edge := edgeharness.NewEdge(t, "edge.test")
 	processID, err := edge.DB.CreateProcess("KSC-PROC", "keep-staged cell", "", "", false)
 	mustNil(t, err, "process")
 	stationID, err := edge.DB.CreateOperatorStation(stations.Input{
@@ -171,12 +171,15 @@ func TestScenario_KeepStagedCell_CallChangeoverCancel(t *testing.T) {
 	router.Register(coreRouter, protocol.TypeOrderCancel, coreHandler.HandleOrderCancel)
 	router.Register(coreRouter, protocol.TypeOrderReceipt, coreHandler.HandleOrderReceipt)
 	router.Register(coreRouter, protocol.TypeOrderRelease, coreHandler.HandleOrderRelease)
+	askKinds := registerAsks(dataSubjects(coreRouter), coreDB, core.doors, coreHandler)
 	coreIngestor.Dispatch = func(env *protocol.Envelope) { coreRouter.Dispatch(env, env.Type) }
 	bus := harness.NewBus(t,
 		harness.EdgeSide{EdgeStore: edge.DB, EdgeIngestor: edge.Ingestor},
 		harness.CoreSide{CoreStore: coreDB, CoreIngestor: coreIngestor},
 	)
-	bus.SetBinsPush(harness.StartBinsPush(t, coreDB, edge.Engine, 20*time.Millisecond))
+	push := harness.StartBinsPush(t, coreDB, edge.Engine, 20*time.Millisecond)
+	bus.SetBinsPush(push)
+	push.AnswerAsks(askKinds)
 	settle := func() {
 		for i := 0; i < 20; i++ {
 			if bus.PumpAll() == 0 {

@@ -387,8 +387,6 @@ func TestOrderEmitter_AllEvents(t *testing.T) {
 	}
 }
 
-// ── core_client.go ──────────────────────────────────────────────────
-
 // ── core_sync_service.go ────────────────────────────────────────────
 
 func TestCoreSyncService_StartupReconcileCallsAllHooks(t *testing.T) {

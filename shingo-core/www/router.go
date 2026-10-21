@@ -74,20 +74,20 @@ type Handlers struct {
 //
 //	/events                — SSE stream (outside compression middleware)
 //	/                      — Public pages (dashboard, login, nodes, orders, robots, etc.)
-//	/api/* (public)        — JSON reads (nodes, orders, bins, payloads, telemetry) and the Edge's machine doors
+//	/api/* (public)        — JSON reads (nodes, orders, bins, payloads, telemetry)
 //	/api/* (protected)     — Write API (test orders, payloads, bins, nodegroups, fleet, recovery)
 //	/* (protected)         — Admin pages (test-orders, config, diagnostics, CRUD forms)
 //
-// Auth boundary: h.requireAuth middleware. The public /api group is not
-// read-only: it holds the Edge's unauthenticated machine doors, writes among
-// them — bin-load, bin-clear, clear-home, bin-count and bin-quality-hold under
-// /telemetry — beside POST reads that compute an answer (/release/points,
-// /inventory/preflight). Everything after requireAuth needs a login.
+// Auth boundary: h.requireAuth middleware. The public /api group is reads.
+// An Edge's acts (the LOAD, the CLEAR, the count, the hold, the home clear,
+// the reads that compute an answer) are asks over the broker, answered through
+// www.Doors (AskDoors); none is routed here. Everything after requireAuth
+// needs a login.
 // Handlers live in handlers_*.go files grouped by domain (bins, nodes, payloads, etc.).
 //
 // doors is the door bodies the ask server answers through (NewDoors over the
 // same engine): its event hub is the router's, so a write that came by an ask
-// redraws Core's own pages as one that came by HTTP does.
+// redraws Core's own pages.
 func NewRouter(eng *engine.Engine, doors *Doors, dbg *debuglog.Logger) (http.Handler, func(), error) {
 	hub := doors.hub
 	hub.Start()
@@ -364,7 +364,6 @@ func NewRouter(eng *engine.Engine, doors *Doors, dbg *debuglog.Logger) (http.Han
 			// Quality containment: the flag rows + held bins (public read —
 			// the Edge's containment screens render state, they do not hold
 			// Core credentials). The write is session-gated below.
-			r.Get("/containment", h.apiGetContainment)
 			r.Get("/payloads/detail", h.apiGetPayload)
 			r.Get("/payloads/manifest", h.apiListManifest)
 			r.Get("/payloads/by-node", h.apiPayloadsByNode)
@@ -375,21 +374,13 @@ func NewRouter(eng *engine.Engine, doors *Doors, dbg *debuglog.Logger) (http.Han
 			r.Get("/bins/detail", h.apiBinDetail)
 
 			// Telemetry
-			r.Get("/telemetry/held-partials", h.apiTelemetryHeldPartials)
 			// What releasing an order would let its robot do next, per act
 			// (handlers_release_points.go).
-			r.Post("/release/points", h.apiReleasePoints)
-			r.Get("/telemetry/payload/{code}/manifest", h.apiTelemetryPayloadManifest)
-			r.Post("/telemetry/bin-load", h.apiBinLoad)
-			r.Post("/telemetry/bin-clear", h.apiBinClear)
 			// A dedicated loader home's clear: the Edge's one request, Core authors
 			// the orders (engine/clear_home.go).
-			r.Post("/telemetry/clear-home", h.apiClearHome)
-			r.Post("/telemetry/bin-count", h.apiBinCount)
 			// Quality containment: the per-bin hold marker, set by the Edge's
 			// station action when its operator sends a bin to containment.
 			// Machine path (telemetry group), like bin-load/bin-clear.
-			r.Post("/telemetry/bin-quality-hold", h.apiBinQualityHold)
 			r.Get("/telemetry/e-maint", h.apiEMaintRobotTelemetry)
 			r.Get("/telemetry/e-maint/download", h.apiEMaintRobotTelemetryDownload)
 
@@ -403,7 +394,6 @@ func NewRouter(eng *engine.Engine, doors *Doors, dbg *debuglog.Logger) (http.Han
 			r.Get("/core/health", h.apiCoreHealth)
 			r.Get("/inventory/rejected-deltas", h.apiInventoryRejectedDeltas)
 			r.Get("/inventory/invariant", h.apiInventoryInvariant)
-			r.Post("/inventory/preflight", h.apiInventoryPreflight)
 			r.Get("/buckets", h.apiBuckets)
 
 			// Audit (Item 10) — bin_uop_ledger read endpoints

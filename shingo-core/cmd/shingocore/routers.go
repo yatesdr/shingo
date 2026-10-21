@@ -137,61 +137,22 @@ func buildProtocolRouter(
 	return r, nil
 }
 
-// askDoor is one kind Core answers: the door body that answers it, the HTTP
-// door whose body that is ("" for a kind answered only as an ask), and whether
-// a repeat of the same ask is answered by re-sending the first answer instead
-// of acting again.
-type askDoor struct {
-	kind   string
-	door   asks.Door
-	http   string
-	replay bool
-}
-
-// askDoors is every kind Core answers (protocol.AskKinds), each over the body
-// its HTTP door answers through (www.Doors), or its own body for the one kind
-// with no HTTP door (the reseat). Only the home clear replays: it
-// authors orders and refuses a second clear of a live one ("already being
-// cleared", engine/clear_home.go), so a repeat must get its first answer, not
-// that refusal. Every other kind's repeat is harmless (the reads) or refused
-// by the assertion fields its request carries (bin_id, epoch, expect).
-// Pinned by TestCensus_AskKinds.
-func askDoors(d *www.Doors) []askDoor {
-	return []askDoor{
-		{protocol.AskBinLoad, d.AskBinLoad, "POST /api/telemetry/bin-load", false},
-		{protocol.AskBinCount, d.AskBinCount, "POST /api/telemetry/bin-count", false},
-		{protocol.AskBinClear, d.AskBinClear, "POST /api/telemetry/bin-clear", false},
-		{protocol.AskQualityHold, d.AskQualityHold, "POST /api/telemetry/bin-quality-hold", false},
-		{protocol.AskClearHome, d.AskClearHome, "POST /api/telemetry/clear-home", true},
-		{protocol.AskPreflight, d.AskPreflight, "POST /api/inventory/preflight", false},
-		{protocol.AskReleasePoints, d.AskReleasePoints, "POST /api/release/points", false},
-		{protocol.AskHeldPartials, d.AskHeldPartials, "GET /api/telemetry/held-partials", false},
-		// No HTTP door: Core re-announces the carrier through the landing
-		// verb, and a repeat re-announces it again, which the seat's
-		// placed_seq guard and its same-carrier rule make harmless.
-		{protocol.AskReseat, d.AskReseat, "", false},
-		// Born on the ask: no HTTP door. Not a replay kind — a repeat is
-		// bounded by the asking episode's own outstanding orders and by the
-		// windows already spoken for (ReplenishLoader).
-		{protocol.AskLoaderEmpties, d.AskLoaderEmpties, "", false},
-	}
-}
-
-// buildAskServer returns the ask server answering every kind of askDoors
-// through reply, with db for the replay, and asserts it answers exactly
+// buildAskServer returns the ask server answering every kind of
+// www.Doors.AskDoors through reply, with db for the replay, and asserts it
+// answers exactly
 // protocol.AskKinds: a kind the Edge may ask that no door answers, or a door
 // answering a kind the list does not fence, is a composition root that is
 // incomplete.
 func buildAskServer(db asks.Store, reply asks.Reply, d *www.Doors) (*asks.Server, error) {
 	s := asks.New(db, reply)
-	for _, a := range askDoors(d) {
-		s.Register(a.kind, a.door, a.replay)
+	for _, a := range d.AskDoors() {
+		s.Register(a.Kind, a.Door, a.Replay)
 	}
 	want := append([]string(nil), protocol.AskKinds()...)
 	sort.Strings(want)
 	if got := s.Kinds(); !slices.Equal(got, want) {
 		return nil, fmt.Errorf("ask server answers %v, protocol.AskKinds is %v — "+
-			"register each kind once in askDoors", got, want)
+			"register each kind once in www.Doors.AskDoors", got, want)
 	}
 	return s, nil
 }

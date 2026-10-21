@@ -24,7 +24,7 @@ import (
 //
 // Call sites:
 //   - wiring.go "CMS transaction logging" subscription -> RecordMovementTransactions
-//   - www/handlers_telemetry.go apiBinClear -> ClearForReuseAndBookDeparture
+//   - www/handlers_telemetry.go binClear (the bin.clear ask) -> ClearForReuseAndBookDeparture
 //
 // There is deliberately no *Engine method wrapping
 // material.FindCMSBoundary. The one that used to live here collapsed

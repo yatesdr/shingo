@@ -15,8 +15,8 @@ import (
 	"shingocore/store/nodes"
 )
 
-// clear_home.go — the Edge's one request "clear home H with partial P"
-// (POST /api/telemetry/clear-home), and the door that answers it.
+// clear_home.go — the Edge's one request "clear home H with partial P" (the
+// clear_home ask, www.Doors.AskClearHome), and what answers it.
 //
 // The checks the Edge used to make before it touched anything moved here: the
 // node is a pinned home of a dedicated loader, its carrier holds stock, and a

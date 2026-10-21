@@ -1,14 +1,10 @@
-// The Edge↔Core HTTP contract: the request/response types for the direct
-// HTTP calls shingo-edge's CoreClient makes on Core's public /api group.
-//
-// ONE TYPE PER WIRE SHAPE, BOTH SIDES OF THE SOCKET. Core's handlers encode
-// these; the Edge decodes and encodes the very same types. Before this file
-// the two sides each kept a private copy, and every field agreement was an
-// accident that had held so far: Core wrote a map, Edge read a struct, and
-// nothing connected the two except review. The copies are still visible at
-// the Edge's call sites as aliases (`type X = protocol.X` in
-// shingo-edge/engine/core_client.go) so the Edge's ~25 use sites compile
-// unchanged; the definitions live here, once.
+// The bodies of the asks an Edge sends Core (protocol/ask.go) and of Core's
+// answers: one type per shape, both sides of the broker. Core's door bodies
+// (shingo-core www.Doors) encode the answers; the Edge decodes them and
+// encodes the requests. They were the Edge↔Core HTTP contract's types, and
+// the bytes are unchanged: the machine doors that carried them over HTTP are
+// gone, the asks carry the same bodies. NodeBinInfo is the old node-bins
+// answer's row, kept as the shape the Edge's test fixtures speak.
 //
 // BYTE SHAPE IS THE CONTRACT. These types replace map[string]any replies on
 // Core's side, so the struct must emit exactly the bytes the map did:
@@ -22,15 +18,9 @@
 //     the old key order.
 //   - A struct reply that already existed (NodeBinInfo) keeps its original
 //     field order and tags verbatim.
-//   - The one deviation, deliberate and decode-equivalent: the manifest
-//     endpoint's empty-code/unknown-payload arms used to OMIT
-//     bin_type_code while its other arms always wrote it (possibly "").
-//     PayloadManifestResponse.BinTypeCode carries omitempty, so those two
-//     arms drop "bin_type_code":"" — a key absent and a key present-but-
-//     empty decode identically, and no Edge consumer reads the difference.
 //
 // The JSON field names are the keys Core's handlers read and wrote before
-// this file existed; moving the types changed nothing on the wire.
+// these types existed; moving them changed nothing on the wire.
 
 package protocol
 
@@ -110,25 +100,7 @@ type BinLoadItem struct {
 	Description string `json:"description"`
 }
 
-// PayloadManifestResponse is the full response from Core's manifest endpoint.
-//
-// BinTypeCode lets press-index changeover detect "from bin type → to
-// bin type" changes without a separate Core endpoint. Empty when Core
-// has no payload_bin_types rule for this payload (the existing
-// advisory pattern: no rules = any compatible bin). Empty value is
-// treated by the planner as "unknown bin type" — the comparator falls
-// back to "same" so the existing same-bin-type choreography ships.
-//
-// Field order (alphabetical) matches the map reply this struct replaced, so
-// the byte stream keeps the old key order. Items must be non-nil to encode
-// "items":[] rather than null.
-type PayloadManifestResponse struct {
-	BinTypeCode string         `json:"bin_type_code,omitempty"`
-	Items       []ManifestItem `json:"items"`
-	UOPCapacity int            `json:"uop_capacity"`
-}
-
-// BinLoadRequest is the request body for loading a bin via HTTP.
+// BinLoadRequest is a LOAD's body (the bin.load ask).
 type BinLoadRequest struct {
 	NodeName string `json:"node_name"`
 	// BinID disambiguates when a node holds more than one bin; 0 means "the

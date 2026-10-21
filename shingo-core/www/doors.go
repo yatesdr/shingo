@@ -1,15 +1,15 @@
 package www
 
-// doors.go — the bodies of the doors an Edge calls, wire-free: one body, two
-// adapters. Each body takes the asking station and its decoded request and
-// returns an asks.Result in the door's own terms (the HTTP status it answers
-// with, the sentence of a refusal, the response body, the rows a refusal
-// carries). The HTTP handler (handlers_telemetry.go, handlers_containment.go,
-// handlers_release_points.go, handlers_inventory_preflight.go) decodes the
-// request, calls the body and writes the Result; the ask (protocol/ask.go)
-// decodes the same request type from the ask's body, calls the same body, and
-// the ask server sends the Result as the answer. The composition root
-// registers each kind (cmd/shingocore/routers.go, askDoors).
+// doors.go — the bodies of the doors an Edge asks, wire-free. Each body takes
+// the asking station and its decoded request and returns an asks.Result in
+// the door's own terms (the status it answers with, the sentence of a
+// refusal, the response body, the rows a refusal carries). The ask
+// (protocol/ask.go) decodes the request type from the ask's body, calls the
+// body, and the ask server sends the Result as the answer. AskDoors is every
+// kind and its body; the composition root registers them
+// (cmd/shingocore/routers.go, buildAskServer). There is no HTTP door: the
+// machine doors that served the same bodies over unauthenticated HTTP are
+// gone.
 //
 // WHY HERE AND NOT IN A PACKAGE OF THEIR OWN: the bodies are the doors' code
 // as it was, over what the doors already reach — the engine's services
@@ -85,17 +85,6 @@ func (d *Doors) refuseAt(node string, status int, msg string) asks.Result {
 	return asks.Result{Status: status, Sentence: msg, Rows: d.engine.NodeService().BinsRows(node)}
 }
 
-// serveDoor is a door's HTTP adapter: decode the request (a body that does not
-// decode is a 400 with bad's sentence), call the body, write its Result.
-func serveDoor[T any](w http.ResponseWriter, r *http.Request, bad func(error) string, body func(T) asks.Result) {
-	var req T
-	if err := decodeDoor(r.Body, &req); err != nil {
-		writeResult(w, badRequest(bad(err)))
-		return
-	}
-	writeResult(w, body(req))
-}
-
 // askDoor is a door's ask adapter: the same decode over the ask's body (a
 // body that does not decode is AnswerBad with the same sentence), the same
 // body.
@@ -107,20 +96,36 @@ func askDoor[T any](raw json.RawMessage, bad func(error) string, body func(T) as
 	return body(req)
 }
 
-// writeResult writes a door's Result as the doors always have: JSON, the
-// status (an accept's implicit), and the body — a refusal with no body of its
-// own is written as doorRefusal, the sentence and its rows, which with no
-// rows is the bytes jsonError writes.
-func writeResult(w http.ResponseWriter, res asks.Result) {
-	body := res.Body
-	if body == nil && res.Status != http.StatusOK {
-		body = doorRefusal{Error: res.Sentence, Rows: res.Rows}
+// AskDoor is one kind Core answers on the ask pair: the body it answers
+// through, and whether a repeat of the same ask is answered by re-sending the
+// first answer instead of acting again.
+type AskDoor struct {
+	Kind   string
+	Door   asks.Door
+	Replay bool
+}
+
+// AskDoors is every kind Core answers (protocol.AskKinds, in its order), each
+// over its body. Only the home clear replays: it authors orders and refuses a
+// second clear of a live one ("already being cleared", engine/clear_home.go),
+// so a repeat must get its first answer, not that refusal. Every other kind's
+// repeat is harmless (the reads, the reseat's re-announce) or refused by the
+// assertion fields its request carries (bin_id, epoch, expect), or bounded by
+// the asking episode's outstanding orders (the empties). Pinned by
+// TestCensus_AskKinds.
+func (d *Doors) AskDoors() []AskDoor {
+	return []AskDoor{
+		{protocol.AskBinLoad, d.AskBinLoad, false},
+		{protocol.AskBinCount, d.AskBinCount, false},
+		{protocol.AskBinClear, d.AskBinClear, false},
+		{protocol.AskQualityHold, d.AskQualityHold, false},
+		{protocol.AskClearHome, d.AskClearHome, true},
+		{protocol.AskPreflight, d.AskPreflight, false},
+		{protocol.AskReleasePoints, d.AskReleasePoints, false},
+		{protocol.AskHeldPartials, d.AskHeldPartials, false},
+		{protocol.AskReseat, d.AskReseat, false},
+		{protocol.AskLoaderEmpties, d.AskLoaderEmpties, false},
 	}
-	w.Header().Set("Content-Type", "application/json")
-	if res.Status != http.StatusOK {
-		w.WriteHeader(res.Status)
-	}
-	_ = json.NewEncoder(w).Encode(body)
 }
 
 // errText is a decode refusal's sentence: the decoder's own.
@@ -129,56 +134,53 @@ func errText(err error) string { return err.Error() }
 // The ask adapters, one per kind (protocol.AskKinds); station is the asking
 // Edge's, from the ask's envelope.
 
-// AskBinLoad answers protocol.AskBinLoad: POST /api/telemetry/bin-load's body.
+// AskBinLoad answers protocol.AskBinLoad: the LOAD's body (binLoad).
 func (d *Doors) AskBinLoad(_ string, raw json.RawMessage) asks.Result {
 	return askDoor(raw, errText, d.binLoad)
 }
 
-// AskBinCount answers protocol.AskBinCount: POST /api/telemetry/bin-count's
-// body.
+// AskBinCount answers protocol.AskBinCount: the count's body (binCount).
 func (d *Doors) AskBinCount(_ string, raw json.RawMessage) asks.Result {
 	return askDoor(raw, errText, d.binCount)
 }
 
-// AskBinClear answers protocol.AskBinClear: POST /api/telemetry/bin-clear's
-// body.
+// AskBinClear answers protocol.AskBinClear: the CLEAR's body (binClear).
 func (d *Doors) AskBinClear(_ string, raw json.RawMessage) asks.Result {
 	return askDoor(raw, errText, d.binClear)
 }
 
-// AskQualityHold answers protocol.AskQualityHold: POST
-// /api/telemetry/bin-quality-hold's body.
+// AskQualityHold answers protocol.AskQualityHold: the hold marker's body
+// (binQualityHold).
 func (d *Doors) AskQualityHold(_ string, raw json.RawMessage) asks.Result {
 	return askDoor(raw, errText, d.binQualityHold)
 }
 
-// AskClearHome answers protocol.AskClearHome: POST /api/telemetry/clear-home's
-// body, for the asking station.
+// AskClearHome answers protocol.AskClearHome: the home clear's body
+// (clearHome), for the asking station.
 func (d *Doors) AskClearHome(station string, raw json.RawMessage) asks.Result {
 	return askDoor(raw, errText, func(req protocol.ClearHomeRequest) asks.Result {
 		return d.clearHome(station, req)
 	})
 }
 
-// AskPreflight answers protocol.AskPreflight: POST /api/inventory/preflight's
-// body, for the asking station.
+// AskPreflight answers protocol.AskPreflight: the preflight read's body
+// (preflight), for the asking station.
 func (d *Doors) AskPreflight(station string, raw json.RawMessage) asks.Result {
 	return askDoor(raw, preflightDecodeErr, func(req protocol.PreflightRequest) asks.Result {
 		return d.preflight(context.Background(), station, req)
 	})
 }
 
-// AskReleasePoints answers protocol.AskReleasePoints: POST /api/release/points'
-// body, for the asking station.
+// AskReleasePoints answers protocol.AskReleasePoints: the release points
+// read's body (releasePoints), for the asking station.
 func (d *Doors) AskReleasePoints(station string, raw json.RawMessage) asks.Result {
 	return askDoor(raw, releasePointsDecodeErr, func(req protocol.ReleasePointsRequest) asks.Result {
 		return d.releasePoints(station, req)
 	})
 }
 
-// AskHeldPartials answers protocol.AskHeldPartials: GET
-// /api/telemetry/held-partials' read, the ?payload= it takes as the
-// request's payload_code.
+// AskHeldPartials answers protocol.AskHeldPartials: the held partials read's
+// body (heldPartials), for the request's payload_code.
 func (d *Doors) AskHeldPartials(_ string, raw json.RawMessage) asks.Result {
 	return askDoor(raw, errText, func(req protocol.HeldPartialsRequest) asks.Result {
 		return d.heldPartials(req.PayloadCode)

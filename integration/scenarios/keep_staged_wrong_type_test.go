@@ -73,7 +73,7 @@ func TestScenario_KeepStagedWrongTypeEmpty_CoreMoveIsTheExit(t *testing.T) {
 	rightEmpty := &corebins.Bin{BinTypeID: right.ID, Label: "KSE-RIGHT-EMPTY", NodeID: &slot.ID, Status: "available"}
 	mustNil(t, coreDB.CreateBin(rightEmpty), "a right empty in the market")
 
-	edge := edgeharness.NewEdgeWithCoreAPI(t, "edge.test", core.url)
+	edge := edgeharness.NewEdge(t, "edge.test")
 	processID, err := edge.DB.CreateProcess("KSE-PROC", "", "", "", false)
 	mustNil(t, err, "process")
 	nodeID, err := edge.DB.CreateProcessNode(processes.NodeInput{
@@ -100,12 +100,15 @@ func TestScenario_KeepStagedWrongTypeEmpty_CoreMoveIsTheExit(t *testing.T) {
 	router.Register(coreRouter, protocol.TypeComplexOrderRequest, coreHandler.HandleComplexOrderRequest)
 	router.Register(coreRouter, protocol.TypeOrderCancel, coreHandler.HandleOrderCancel)
 	router.Register(coreRouter, protocol.TypeOrderReceipt, coreHandler.HandleOrderReceipt)
+	askKinds := registerAsks(dataSubjects(coreRouter), coreDB, core.doors, coreHandler)
 	coreIngestor.Dispatch = func(env *protocol.Envelope) { coreRouter.Dispatch(env, env.Type) }
 	bus := harness.NewBus(t,
 		harness.EdgeSide{EdgeStore: edge.DB, EdgeIngestor: edge.Ingestor},
 		harness.CoreSide{CoreStore: coreDB, CoreIngestor: coreIngestor},
 	)
-	bus.SetBinsPush(harness.StartBinsPush(t, coreDB, edge.Engine, 20*time.Millisecond))
+	push := harness.StartBinsPush(t, coreDB, edge.Engine, 20*time.Millisecond)
+	bus.SetBinsPush(push)
+	push.AnswerAsks(askKinds)
 	settle := func() {
 		for i := 0; i < 40; i++ {
 			if bus.PumpAll() == 0 {

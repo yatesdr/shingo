@@ -27,7 +27,6 @@ package scenarios
 import (
 	"encoding/json"
 	"fmt"
-	"net/http/httptest"
 	"runtime"
 	"strings"
 	"sync"
@@ -206,12 +205,11 @@ func startKsrCoreOnDeck(t *testing.T, fl *deckFleet) kscCore {
 	t.Cleanup(eng.Stop)
 	dbg, err := debuglog.New(64, nil)
 	mustNil(t, err, "debuglog")
-	r, stop, err := www.NewRouter(eng, www.NewDoors(eng), dbg)
+	doors := www.NewDoors(eng)
+	_, stop, err := www.NewRouter(eng, doors, dbg)
 	mustNil(t, err, "core router")
 	t.Cleanup(stop)
-	srv := httptest.NewServer(r)
-	t.Cleanup(srv.Close)
-	return kscCore{eng: eng, sim: fl.SimulatorBackend, url: srv.URL}
+	return kscCore{eng: eng, sim: fl.SimulatorBackend, doors: doors}
 }
 
 type ksrOpts struct {
@@ -386,7 +384,7 @@ func newKsrCell(t *testing.T, o ksrOpts) *ksrCell {
 		kicks.starting.Lock()
 		defer kicks.starting.Unlock()
 		before := kicks.count()
-		c.edge = edgeharness.NewEdgeWithCoreAPI(t, "edge.test", c.core.url)
+		c.edge = edgeharness.NewEdge(t, "edge.test")
 		// The level keeper's loop has started on its own goroutine: wait for
 		// its ticker.
 		for i := 0; kicks.count() == before; i++ {
@@ -515,12 +513,15 @@ func newKsrCell(t *testing.T, o ksrOpts) *ksrCell {
 	router.Register(coreRouter, protocol.TypeData, func(env *protocol.Envelope, p *protocol.Data) {
 		subjects.Dispatch(env, p)
 	})
+	askKinds := registerAsks(subjects, coreDB, c.core.doors, coreHandler)
 	coreIngestor.Dispatch = func(env *protocol.Envelope) { coreRouter.Dispatch(env, env.Type) }
 	c.bus = harness.NewBus(t,
 		harness.EdgeSide{EdgeStore: edge.DB, EdgeIngestor: edge.Ingestor},
 		harness.CoreSide{CoreStore: coreDB, CoreIngestor: coreIngestor},
 	)
-	c.bus.SetBinsPush(harness.StartBinsPush(t, coreDB, edge.Engine, 20*time.Millisecond))
+	push := harness.StartBinsPush(t, coreDB, edge.Engine, 20*time.Millisecond)
+	c.bus.SetBinsPush(push)
+	push.AnswerAsks(askKinds)
 	c.registerEdge()
 	if o.buriedB || o.mirror {
 		mustNil(t, edgemessaging.NewPlantClaimsPublisher(edge.DB, "edge.test", 0).PublishChanged(c.processID),

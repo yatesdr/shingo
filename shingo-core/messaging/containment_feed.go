@@ -19,8 +19,7 @@ import (
 
 // buildContainmentSnapshot reads the whole containment state and digests it.
 // Any read error fails the build: a digest of a partial read would confirm a
-// copy nobody read. Empty lists are sent as [] so the Edge's copy and Core's
-// GET /api/containment read alike.
+// copy nobody read. Empty lists are sent as [], never null.
 func (s *CoreDataService) buildContainmentSnapshot() (*protocol.ContainmentSnapshot, error) {
 	flags, err := s.db.ListPayloadContainment()
 	if err != nil {

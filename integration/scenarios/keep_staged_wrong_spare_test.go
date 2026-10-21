@@ -80,7 +80,7 @@ func TestScenario_KeepStagedWrongSpare_APersonsMoveIsTheExit(t *testing.T) {
 	full("KSW-LINE-BIN", partA, lineNode)
 
 	// ── Edge: one keep-staged two-robot consume claim ──
-	edge := edgeharness.NewEdgeWithCoreAPI(t, "edge.test", core.url)
+	edge := edgeharness.NewEdge(t, "edge.test")
 	processID, err := edge.DB.CreateProcess("KSW-PROC", "", "", "", false)
 	mustNil(t, err, "process")
 	nodeID, err := edge.DB.CreateProcessNode(processes.NodeInput{
@@ -108,12 +108,15 @@ func TestScenario_KeepStagedWrongSpare_APersonsMoveIsTheExit(t *testing.T) {
 	router.Register(coreRouter, protocol.TypeOrderCancel, coreHandler.HandleOrderCancel)
 	router.Register(coreRouter, protocol.TypeOrderReceipt, coreHandler.HandleOrderReceipt)
 	router.Register(coreRouter, protocol.TypeOrderRelease, coreHandler.HandleOrderRelease)
+	askKinds := registerAsks(dataSubjects(coreRouter), coreDB, core.doors, coreHandler)
 	coreIngestor.Dispatch = func(env *protocol.Envelope) { coreRouter.Dispatch(env, env.Type) }
 	bus := harness.NewBus(t,
 		harness.EdgeSide{EdgeStore: edge.DB, EdgeIngestor: edge.Ingestor},
 		harness.CoreSide{CoreStore: coreDB, CoreIngestor: coreIngestor},
 	)
-	bus.SetBinsPush(harness.StartBinsPush(t, coreDB, edge.Engine, 20*time.Millisecond))
+	push := harness.StartBinsPush(t, coreDB, edge.Engine, 20*time.Millisecond)
+	bus.SetBinsPush(push)
+	push.AnswerAsks(askKinds)
 	settle := func() {
 		for i := 0; i < 40; i++ {
 			if bus.PumpAll() == 0 {

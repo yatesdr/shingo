@@ -576,7 +576,7 @@ func countFence(tx *sql.Tx, binID, epoch int64) (countFenceValue, error) {
 // is announced once, and the row commits or rolls back with the count.
 //
 // The line door used to announce nothing and the bins page announced after the
-// commit; see www binRecordCount and apiBinCount.
+// commit; see www binRecordCount and binCount (the bin.count ask).
 //
 // It is addressed as bumpEpoch's announcement is (announceLifecycle): the
 // landing's rule for a placement with no order, the address read by the

@@ -75,20 +75,6 @@ type Edge struct {
 // list — a benign goroutine until eng.Stop closes its stop channel.
 func NewEdge(t *testing.T, stationID string) *Edge {
 	t.Helper()
-	return NewEdgeWithCoreAPI(t, stationID, "")
-}
-
-// NewEdgeWithCoreAPI is NewEdge with the Core HTTP API configured. Needed by
-// scenarios that exercise paths gated on Core availability — a press-index
-// changeover START refuses outright when no Core is configured
-// (refusePressIndexWhenCoreUnavailable), so the V2 sim gate cannot run against
-// the default harness. Point coreAPI at an httptest.Server serving the
-// telemetry endpoints the scenario touches (claimOccupancy hits
-// /api/telemetry/node-bins). Press-index planning reads bin types from the
-// catalog Core sends with the node list (Engine.SetPayloadBinTypes), not over
-// HTTP. Empty string = disabled, identical to NewEdge.
-func NewEdgeWithCoreAPI(t *testing.T, stationID, coreAPI string) *Edge {
-	t.Helper()
 	db := OpenDB(t)
 
 	// StationID is set explicitly on both fields: the harness hands a station
@@ -97,7 +83,6 @@ func NewEdgeWithCoreAPI(t *testing.T, stationID, coreAPI string) *Edge {
 		StationUID: stationID,
 		Namespace:  "test",
 		LineID:     "edge-test",
-		SimCoreAPI: coreAPI,
 		Messaging: config.MessagingConfig{
 			StationID: stationID,
 		},
@@ -107,8 +92,9 @@ func NewEdgeWithCoreAPI(t *testing.T, stationID, coreAPI string) *Edge {
 		DB:        db,
 		LogFunc:   t.Logf,
 	})
-	// No Core runs here (a coreAPI is a telemetry stub), so the release act's
-	// point is answered from the Edge's own rows, as Core's rule reads them.
+	// No Core answers the read-asks here unless a scenario wires them, so the
+	// release act's point is answered from the Edge's own rows, as Core's rule
+	// reads them.
 	eng.SetReleasePointSource(releasefake.DB{DB: db})
 	// Nor any Core to ask the changeover preflight: every payload reads
 	// stocked, as a scenario's fully stocked Core answered it over HTTP.
@@ -138,6 +124,9 @@ func NewEdgeWithCoreAPI(t *testing.T, stationID, coreAPI string) *Edge {
 	router.RegisterSubject(subjectRouter, protocol.SubjectBinReturn, func(_ *protocol.Envelope, br *protocol.BinReturn) {
 		eng.HandleBinReturn(*br)
 	})
+	// Core's answers to this Edge's asks, as the production composition root
+	// routes them (cmd/shingoedge/main.go): applied by kind, handed to a waiter.
+	router.RegisterSubject(subjectRouter, protocol.SubjectEdgeAnswer, eng.HandleEdgeAnswer)
 	// Core's sourceability feed, as the production composition root routes it
 	// (cmd/shingoedge/main.go). Without it a cross-module scenario could not see
 	// what the per-station feed does to an Edge's cache.

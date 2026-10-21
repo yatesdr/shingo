@@ -31,6 +31,18 @@ type BinsPush struct {
 	core *coremessaging.CoreDataService
 	edge *edgeengine.Engine
 	mu   sync.Mutex
+	// asks is the ask kinds the push's ack says Core answers (AnswerAsks):
+	// none until a scenario wires Core's asks (the scenarios' registerAsks).
+	asks []string
+}
+
+// AnswerAsks makes every later ack say Core answers kinds, as a Core whose
+// ask server answers them does, and acks once now.
+func (p *BinsPush) AnswerAsks(kinds []string) {
+	p.mu.Lock()
+	p.asks = kinds
+	p.mu.Unlock()
+	p.Push()
 }
 
 // StartBinsPush pushes coreDB's bins to edge now and every interval until the
@@ -87,11 +99,5 @@ func (p *BinsPush) Push() {
 		return
 	}
 	feeds := p.edge.FeedDigests()
-	p.edge.OnCoreAck(&protocol.EdgeHeartbeatAck{Feeds: feeds, BinWatch: &listDigest, Asks: AskKindsAnswered})
+	p.edge.OnCoreAck(&protocol.EdgeHeartbeatAck{Feeds: feeds, BinWatch: &listDigest, Asks: p.asks})
 }
-
-// AskKindsAnswered is the ask kinds the push's ack says Core answers: none.
-// The harness carries no ask (no Core answers one here), so every Edge door
-// takes its HTTP arm, and the read-asks fail closed or take the source a
-// scenario set (SetPreflightSource, SetReleasePointSource).
-var AskKindsAnswered []string

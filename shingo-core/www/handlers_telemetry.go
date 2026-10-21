@@ -10,7 +10,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
 	"shingo/protocol"
@@ -20,14 +19,6 @@ import (
 	"shingocore/fleet"
 	"shingocore/service"
 )
-
-// apiTelemetryHeldPartials lists the held partials of one part, oldest held
-// first: a finish-later claim's REQUEST shows them for the operator to pick.
-// GET /api/telemetry/held-partials?payload=CODE — the adapter over
-// Doors.heldPartials, which the held_partials ask answers through too.
-func (h *Handlers) apiTelemetryHeldPartials(w http.ResponseWriter, r *http.Request) {
-	writeResult(w, h.doors().heldPartials(r.URL.Query().Get("payload")))
-}
 
 // heldPartials is the held-partials read's body: 400 with no payload, 500 on
 // a failed read, else the list.
@@ -41,78 +32,6 @@ func (d *Doors) heldPartials(payload string) asks.Result {
 		return refused(http.StatusInternalServerError, fmt.Sprintf("held partials of %s: %v", payload, err))
 	}
 	return accepted(list)
-}
-
-// apiTelemetryPayloadManifest returns the default manifest template and UOP capacity for a payload.
-// GET /api/telemetry/payload/{code}/manifest
-func (h *Handlers) apiTelemetryPayloadManifest(w http.ResponseWriter, r *http.Request) {
-	code := chi.URLParam(r, "code")
-	if code == "" {
-		h.jsonOK(w, protocol.PayloadManifestResponse{Items: []protocol.ManifestItem{}})
-		return
-	}
-	payloads := h.engine.PayloadService()
-	payload, err := payloads.GetByCode(code)
-	if err != nil {
-		h.jsonOK(w, protocol.PayloadManifestResponse{Items: []protocol.ManifestItem{}})
-		return
-	}
-	// parts_per_cycle, not a count. Edge multiplies by the bin's UoP to get
-	// the physical number of a part. The value is unchanged from the old
-	// `quantity` key — what was wrong was reading a ratio as a count, which
-	// the old name invited and Edge's load screen did. Core and Edge change
-	// this key in the same release; there is no both-keys transition.
-	// Include the canonical bin type code so press-index changeover on
-	// Edge can detect from→to bin type changes without a dedicated
-	// lookup endpoint. Empty when no payload_bin_types rule exists for
-	// this payload (existing advisory pattern: no rules = any
-	// compatible bin); Edge treats empty as "unknown" → falls back to
-	// same-bin-type behaviour.
-	binTypeCode := ""
-	if binTypes, btErr := payloads.ListBinTypes(payload.ID); btErr == nil && len(binTypes) > 0 {
-		// Pick the first bin type as canonical. If a payload accepts
-		// multiple bin types, the press-index detection treats them as
-		// "the same canonical type" — which matches the production
-		// reality (a press only ever runs one bin type at a time).
-		binTypeCode = binTypes[0].Code
-	}
-	items, err := payloads.ListManifest(payload.ID)
-	if err != nil || len(items) == 0 {
-		// No manifest template — return a single entry with the payload code as part number
-		h.jsonOK(w, protocol.PayloadManifestResponse{
-			BinTypeCode: binTypeCode,
-			// One part per cycle: with no template to say otherwise, a bin of
-			// this payload holds uop_remaining of the part. The old shape said
-			// Quantity: UOPCapacity, which is the same claim written as a
-			// full-bin count.
-			Items: []protocol.ManifestItem{
-				{PartNumber: code, PartsPerCycle: 1, Description: payload.Description},
-			},
-			UOPCapacity: payload.UOPCapacity,
-		})
-		return
-	}
-	result := make([]protocol.ManifestItem, len(items))
-	for i, item := range items {
-		result[i] = protocol.ManifestItem{
-			PartNumber:    item.PartNumber,
-			PartsPerCycle: item.PartsPerCycle,
-			Description:   item.Description,
-		}
-	}
-	h.jsonOK(w, protocol.PayloadManifestResponse{
-		BinTypeCode: binTypeCode,
-		Items:       result,
-		UOPCapacity: payload.UOPCapacity,
-	})
-}
-
-// apiBinLoad sets the manifest on the bin at a node. Direct HTTP replacement
-// for bin loading — synchronous, returns updated bin state.
-// POST /api/telemetry/bin-load — the adapter over Doors.binLoad, which the
-// bin.load ask answers through too.
-func (h *Handlers) apiBinLoad(w http.ResponseWriter, r *http.Request) {
-	serveDoor(w, r, errText, h.doors().binLoad)
 }
 
 // binLoad is the LOAD's body.
@@ -256,38 +175,6 @@ func loaderCarrierRefusal(r *service.CarrierRefusedError) string {
 	return fmt.Sprintf("%s may not ride a %s carrier (%s). Nothing was loaded.", r.Payload, r.BinType, allowed)
 }
 
-// apiBinCount records a count an operator made at the LINE, against the bin at
-// a node. POST /api/telemetry/bin-count
-//
-// This is the missing half of a channel that ran one way. A count only ever
-// travels with a DECLARATION — somebody or some lifecycle event deciding a
-// number — and Core had two doors for declaring one downward (clear/load, and
-// the cycle count on the bins page) while the Edge had none for declaring one
-// upward except as a rider on an order release. An operator at the line who
-// noticed a carrier's count was wrong outside a release had nowhere to say so,
-// and the number that IS authoritative — the one at the line, next to the
-// carrier — could not reach Core's ledger.
-//
-// It is the same act as the cycle count on the bins page and it goes through
-// the same service, so it lands the same audit rows, clears the same
-// go-count-this flag, and enqueues the same UOPAdjustment to every station,
-// inside the count's transaction. (Until the record-count fence it broadcast
-// nothing, and this comment said it did.) The only difference is who is
-// standing where when they say it.
-//
-// The reply carries the fence (as_of_net, as_of_seq, as_of_station) along with
-// the count and epoch, so the station that took the count rebases on the same
-// point in its stream as the broadcast will, whichever of the two it applies
-// first. Writing the reply's number over its count would lose the ticks it
-// consumed while the request was out.
-//
-// Not an epoch bump; see store/bins.RecordCount for why.
-//
-// The adapter over Doors.binCount, which the bin.count ask answers through too.
-func (h *Handlers) apiBinCount(w http.ResponseWriter, r *http.Request) {
-	serveDoor(w, r, errText, h.doors().binCount)
-}
-
 // binCount is the count's body.
 func (d *Doors) binCount(req protocol.BinCountRequest) asks.Result {
 	if req.NodeName == "" {
@@ -377,42 +264,6 @@ type doorRefusal struct {
 	EpochRefresh *protocol.BinEpochRefresh `json:"epoch_refresh,omitempty"`
 	Error        string                    `json:"error"`
 	Rows         []protocol.NodeBinsRow    `json:"rows,omitempty"`
-}
-
-// apiBinClear clears the manifest on the bin at a node, resetting it to empty.
-// POST /api/telemetry/bin-clear
-//
-// Optional bin_type_code: when present the carrier's bin_type_id is updated
-// atomically with the manifest clear (dunnage floating — operator declared
-// which dunnage type they just loaded). An unknown code returns 400; the code
-// is not checked against the types the node admits. Absent → bin_type_id is
-// unchanged (existing behaviour).
-//
-// Optional layers: the height the person declared, in layers of totes. The
-// cart's count of totes is written as layers × its own type's totes per layer
-// after the clear and any stamp, in the clear's transaction, with a ledger
-// row; a type that says no totes per layer gets no write. A negative height is
-// refused with 400 before anything is written. Absent → nothing is declared
-// and the clear is the statements it always was.
-//
-// TWO CARTS IGNORE THE CODE, and are stamped inside the clear's transaction
-// instead (bins.ResolveBareStampTx):
-//   - at a window of a stage 1 (a loader naming a second stage) the cart takes
-//     its own type's bare marker. A stage 1 never re-types a cart to a real
-//     type, and several cart types run through one stage 1 with nothing
-//     configured. A stage 1 with nowhere to send the cart is refused with 409
-//     BEFORE the clear: after it, the Edge's empty-out has no destination and a
-//     bare cart would sit on the window.
-//   - a bare cart anywhere else (stage 2's SEND ON) takes its carrier back. An
-//     older Edge still posts PUSH AS <type> here; the cart gets its own type
-//     regardless, because a bare cart is a known cart.
-//
-// cleared_bin_type_code in the answer is the cart's type as an operator knows
-// it — the carrier, never a marker.
-//
-// The adapter over Doors.binClear, which the bin.clear ask answers through too.
-func (h *Handlers) apiBinClear(w http.ResponseWriter, r *http.Request) {
-	serveDoor(w, r, errText, h.doors().binClear)
 }
 
 // binClear is the CLEAR's body.
@@ -647,24 +498,6 @@ func eMaintReport(robots []fleet.RobotStatus, now time.Time, reportID string) ma
 		"robot_count":  len(robots),
 		"robots":       entries,
 	}
-}
-
-// apiClearHome clears a dedicated loader's home: Core declares the carrier on
-// it empty and brings a buffer partial of the home's part to it, choosing how
-// (engine.ClearLoaderHome).
-// POST /api/telemetry/clear-home
-//
-// 200 carries the arm, the clear's parent uuid, and the carrier's id and new
-// delta epoch — the arm "none", with the sentence in detail, when the zero is
-// recorded and no job could take the carrier. The only 409 is a second clear
-// of a home whose clear is live; a request naming no clearable home is 400.
-//
-// The adapter over Doors.clearHome, for the request's station; the clear_home
-// ask answers through the same body for the asking station.
-func (h *Handlers) apiClearHome(w http.ResponseWriter, r *http.Request) {
-	serveDoor(w, r, errText, func(req protocol.ClearHomeRequest) asks.Result {
-		return h.doors().clearHome(req.Station, req)
-	})
 }
 
 // clearHome is a home clear's body, for station. The engine's answer is the

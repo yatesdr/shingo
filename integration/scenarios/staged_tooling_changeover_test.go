@@ -22,8 +22,6 @@ package scenarios
 
 import (
 	"encoding/json"
-	"net/http"
-	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -34,17 +32,6 @@ import (
 	"shingoedge/store/stations"
 	edgeharness "shingoedge/testharness"
 )
-
-func stagedStubCore(t *testing.T) *httptest.Server {
-	t.Helper()
-	mux := http.NewServeMux()
-	mux.HandleFunc("/api/inventory/preflight", func(w http.ResponseWriter, r *http.Request) {
-		_ = json.NewEncoder(w).Encode(map[string]any{"missing": []string{}})
-	})
-	srv := httptest.NewServer(mux)
-	t.Cleanup(srv.Close)
-	return srv
-}
 
 // stagedSeed builds a 3-node press-index cell on both styles. markedNodes is the
 // OUTGOING claim's marked selection, by CORE NODE NAME; toStaging is the incoming
@@ -57,8 +44,7 @@ type stagedSeed struct {
 
 func seedStagedPress(t *testing.T, markedNodes []string, toStaging string) stagedSeed {
 	t.Helper()
-	core := stagedStubCore(t)
-	edge := edgeharness.NewEdgeWithCoreAPI(t, "edge.test", core.URL)
+	edge := edgeharness.NewEdge(t, "edge.test")
 	// One bin type for both styles' parts, from the catalog Core sends with
 	// the node list (the planner does not ask Core over HTTP).
 	edge.Engine.SetPayloadBinTypes([]protocol.PayloadBinTypeInfo{

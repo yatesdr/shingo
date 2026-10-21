@@ -7,9 +7,8 @@ import "shingo/protocol"
 //
 // The definition lives in protocol, because the same row travels to every Edge
 // on the containment snapshot; this alias keeps the containment handlers' name
-// (www may not import store) and makes GET /api/containment and the snapshot one
-// type, so their JSON cannot drift apart. store keeps the name through an alias
-// of this alias.
+// (www may not import store) and makes the snapshot's rows and the page's one
+// type. store keeps the name through an alias of this alias.
 type PayloadContainmentRow = protocol.PayloadContainmentRow
 
 // HeldBinRow is one held bin as the containment screens read it. The bin's

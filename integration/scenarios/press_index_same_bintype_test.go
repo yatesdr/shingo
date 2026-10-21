@@ -22,9 +22,6 @@ package scenarios
 
 import (
 	"context"
-	"encoding/json"
-	"net/http"
-	"net/http/httptest"
 	"testing"
 
 	"shingo/protocol"
@@ -37,29 +34,9 @@ import (
 	edgeorders "shingoedge/orders"
 )
 
-// stubCore serves the endpoint a press-index changeover start touches. The
-// occupancy is not asked of Core over HTTP (the Edge decides from its bins
-// table; none held reads every node occupied, which keeps the full swap
-// choreography rather than the empty-station downgrade), nor are the bin types:
-// the planner reads the catalog Core sends with the node list, seeded below.
-func stubCore(t *testing.T) *httptest.Server {
-	t.Helper()
-	mux := http.NewServeMux()
-	// Changeover-start preflight: fully stocked ("missing" empty). The start
-	// path HARD-fails on a preflight transport error (unlike the advisory it
-	// returns on missing stock), so the endpoint must exist.
-	mux.HandleFunc("/api/inventory/preflight", func(w http.ResponseWriter, r *http.Request) {
-		_ = json.NewEncoder(w).Encode(map[string]any{"missing": []string{}})
-	})
-	srv := httptest.NewServer(mux)
-	t.Cleanup(srv.Close)
-	return srv
-}
-
 func TestScenario_V2_SameBinTypePressIndex_EndToEnd(t *testing.T) {
 	const stationID = "edge.test"
-	core := stubCore(t)
-	edge := edgeharness.NewEdgeWithCoreAPI(t, stationID, core.URL)
+	edge := edgeharness.NewEdge(t, stationID)
 	// SAME type for both payloads, which is what makes this the same-bin-type
 	// scenario.
 	edge.Engine.SetPayloadBinTypes([]protocol.PayloadBinTypeInfo{

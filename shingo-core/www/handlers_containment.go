@@ -6,12 +6,11 @@ package www
 // Edge's containment screens can render the state without holding Core
 // credentials (Core has no machine-auth path — see auth.go).
 //
-// The per-bin hold has its own write: apiBinQualityHold below, on the
-// telemetry machine path (POST /api/telemetry/bin-quality-hold, beside
-// bin-load and bin-clear, router.go), which the Edge's station action calls
-// when its operator sends a bin to containment. It sets or clears the
-// bins.quality_hold marker (v100); the move order the same action creates
-// carries the bin, and its provenance is the audit.
+// The per-bin hold has its own write: binQualityHold below, the
+// bin.quality_hold ask's body (Doors.AskQualityHold), which the Edge's release
+// of a held bin asks (its hold is born with its move). It sets or clears the
+// bins.quality_hold marker (v100); the move order carries the bin, and its
+// provenance is the audit.
 
 import (
 	"encoding/json"
@@ -19,30 +18,7 @@ import (
 	"strings"
 
 	"shingocore/asks"
-	"shingocore/domain"
 )
-
-// containmentState is the GET's body: the flag rows and the bins currently
-// carrying the hold marker, one read for every screen that needs the
-// picture.
-type containmentState struct {
-	Containment []domain.PayloadContainmentRow `json:"containment"`
-	HeldBins    []domain.HeldBinRow            `json:"held_bins"`
-}
-
-func (h *Handlers) apiGetContainment(w http.ResponseWriter, r *http.Request) {
-	rows, err := h.engine.PayloadService().ListContainment()
-	if err != nil {
-		h.jsonError(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	held, err := h.engine.PayloadService().ListHeldBins()
-	if err != nil {
-		h.jsonError(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	json.NewEncoder(w).Encode(containmentState{Containment: rows, HeldBins: held})
-}
 
 func (h *Handlers) apiSetPayloadContainment(w http.ResponseWriter, r *http.Request) {
 	var req struct {
@@ -104,27 +80,6 @@ type qualityHoldRequest struct {
 	BinID int64  `json:"bin_id"`
 	Hold  bool   `json:"hold"`
 	By    string `json:"by"`
-}
-
-// apiBinQualityHold is the machine path (telemetry group) the Edge's station
-// action calls: set or clear one bin's hold marker. Keyed by bin_id — the
-// Edge reads the bin off the node and carries Core's authoritative id, the
-// same id its containment move order binds. The adapter over
-// Doors.binQualityHold, which the bin.quality_hold ask answers through too.
-func (h *Handlers) apiBinQualityHold(w http.ResponseWriter, r *http.Request) {
-	var req qualityHoldRequest
-	if err := decodeDoor(r.Body, &req); err != nil {
-		writeResult(w, badRequest(errText(err)))
-		return
-	}
-	res := h.doors().binQualityHold(req)
-	if res.Status == http.StatusOK {
-		// The accept is a bare encode with no Content-Type of its own, as it
-		// always was (TestBinQualityHoldDoor_AcceptHasNoContentType).
-		_ = json.NewEncoder(w).Encode(res.Body)
-		return
-	}
-	writeResult(w, res)
 }
 
 // binQualityHold is the hold's body: the marker set or cleared, {"ok": true};
