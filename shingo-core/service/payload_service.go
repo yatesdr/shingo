@@ -89,6 +89,15 @@ func ValidatePayloadCapacity(p *payloads.Payload) error {
 // below 1 (ValidatePayloadCapacity) and a CODE change while bins still carry
 // the old one. Every other field is freely editable.
 func (s *PayloadService) Update(p *payloads.Payload) error {
+	if err := s.checkUpdate(p); err != nil {
+		return err
+	}
+	return s.db.UpdatePayload(p)
+}
+
+// checkUpdate is Update's refusals: a capacity below 1, and a code change
+// while bins still carry the old code.
+func (s *PayloadService) checkUpdate(p *payloads.Payload) error {
 	if err := ValidatePayloadCapacity(p); err != nil {
 		return err
 	}
@@ -97,7 +106,52 @@ func (s *PayloadService) Update(p *payloads.Payload) error {
 			return err
 		}
 	}
-	return s.db.UpdatePayload(p)
+	return nil
+}
+
+// PayloadSets is what a save states about a payload's carrier types and its
+// manifest (payloads.Sets): a nil field leaves the stored set standing, a
+// non-nil one, empty included, replaces it.
+type PayloadSets = payloads.Sets
+
+// CreateWithSets inserts a payload template with the carrier types and the
+// manifest the save states, in one transaction, so a refused manifest (a
+// cat-id conflict) leaves no payload behind. The sets are checked first, as
+// SetBinTypes and ReplaceManifest check them. Like Create, it does not check
+// the capacity: the door that creates calls ValidatePayloadCapacity.
+func (s *PayloadService) CreateWithSets(p *payloads.Payload, sets PayloadSets) error {
+	if err := s.checkSets(sets); err != nil {
+		return err
+	}
+	return s.db.CreatePayloadWithSets(p, sets)
+}
+
+// UpdateWithSets is Update with the carrier types and the manifest the save
+// states, the row and both sets committed together or not at all.
+func (s *PayloadService) UpdateWithSets(p *payloads.Payload, sets PayloadSets) error {
+	if err := s.checkUpdate(p); err != nil {
+		return err
+	}
+	if err := s.checkSets(sets); err != nil {
+		return err
+	}
+	return s.db.UpdatePayloadWithSets(p, sets)
+}
+
+// checkSets refuses a stated set SetBinTypes or ReplaceManifest would refuse:
+// a bare carrier type, a manifest line with no part or no ratio.
+func (s *PayloadService) checkSets(sets PayloadSets) error {
+	if sets.BinTypeIDs != nil {
+		if err := CheckNoBareInPayloadRule(s.db, *sets.BinTypeIDs); err != nil {
+			return err
+		}
+	}
+	if sets.Manifest != nil {
+		if err := ValidateManifestLines(*sets.Manifest); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // Delete removes a payload template, refusing while bins still carry its code.

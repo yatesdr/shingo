@@ -127,6 +127,11 @@ func DescriptionsByCode(db *sql.DB) (map[string]string, error) {
 
 // Create inserts a new payload template and sets p.ID on success.
 func Create(db *sql.DB, p *Payload) error {
+	return createRow(db, p)
+}
+
+// createRow is Create's INSERT, on a database or inside a transaction.
+func createRow(db helpers.QueryRower, p *Payload) error {
 	id, err := helpers.InsertID(db, `INSERT INTO payloads (code, description, uop_capacity, robot_group, advanced_load_sequence,
 		near_empty_enabled, near_empty_robot_group, near_empty_threshold_pct, tote_layers, uop_per_tote)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING id`,
@@ -144,12 +149,89 @@ func Create(db *sql.DB, p *Payload) error {
 // that does not edit a column writes back what it read. Pin:
 // TestPayloadDoors_UpdateRoundTrip.
 func Update(db *sql.DB, p *Payload) error {
+	return updateRow(db, p)
+}
+
+// execer is the write surface updateRow and the set writers need: a database
+// or a transaction.
+type execer interface {
+	Exec(query string, args ...any) (sql.Result, error)
+}
+
+// updateRow is Update's UPDATE, on a database or inside a transaction.
+func updateRow(db execer, p *Payload) error {
 	_, err := db.Exec(`UPDATE payloads SET code=$1, description=$2, uop_capacity=$3, robot_group=$4,
 		advanced_load_sequence=$5, near_empty_enabled=$6, near_empty_robot_group=$7,
 		near_empty_threshold_pct=$8, tote_layers=$9, uop_per_tote=$10, updated_at=NOW() WHERE id=$11`,
 		p.Code, p.Description, p.UOPCapacity, p.RobotGroup, p.AdvancedLoadSequence,
 		p.NearEmptyEnabled, p.NearEmptyRobotGroup, p.NearEmptyThresholdPct, p.ToteLayers, p.UOPPerTote, p.ID)
 	return err
+}
+
+// Sets is what a save states about a payload's two sets: its carrier types and
+// its manifest. A nil field is a set the save did not state, and the stored
+// one stands; a non-nil one, empty included, replaces it.
+type Sets struct {
+	BinTypeIDs *[]int64
+	Manifest   *[]Line
+}
+
+// CreateWithSets inserts a payload and the sets the save states, in one
+// transaction: a refusal from any part of it (a cat-id conflict in the
+// manifest, which only the manifest write can see) leaves no payload behind.
+// p.ID is set only when the whole save committed. Pin:
+// TestPayloadSave_CreateCommitsTogetherOrNotAtAll.
+func CreateWithSets(db *sql.DB, p *Payload, sets Sets) error {
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback() //nolint:errcheck // no-op after Commit
+	row := *p
+	if err := createRow(tx, &row); err != nil {
+		return err
+	}
+	if err := writeSetsTx(tx, row.ID, sets); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	p.ID = row.ID
+	return nil
+}
+
+// UpdateWithSets writes a payload's row and the sets the save states, in one
+// transaction: the row, its carrier types and its manifest change together or
+// not at all. Pin: TestPayloadSave_UpdateCommitsTogetherOrNotAtAll.
+func UpdateWithSets(db *sql.DB, p *Payload, sets Sets) error {
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback() //nolint:errcheck // no-op after Commit
+	if err := updateRow(tx, p); err != nil {
+		return err
+	}
+	if err := writeSetsTx(tx, p.ID, sets); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// writeSetsTx replaces the sets the save states, carrier types first.
+func writeSetsTx(tx *sql.Tx, payloadID int64, sets Sets) error {
+	if sets.BinTypeIDs != nil {
+		if err := setBinTypesTx(tx, payloadID, *sets.BinTypeIDs); err != nil {
+			return err
+		}
+	}
+	if sets.Manifest != nil {
+		if err := replaceManifestTx(tx, payloadID, *sets.Manifest); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // Delete removes a payload template.
@@ -206,7 +288,15 @@ func SetBinTypes(db *sql.DB, payloadID int64, binTypeIDs []int64) error {
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
+	defer tx.Rollback() //nolint:errcheck // no-op after Commit
+	if err := setBinTypesTx(tx, payloadID, binTypeIDs); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// setBinTypesTx is SetBinTypes inside the caller's transaction.
+func setBinTypesTx(tx *sql.Tx, payloadID int64, binTypeIDs []int64) error {
 	if _, err := tx.Exec(`DELETE FROM payload_bin_types WHERE payload_id=$1`, payloadID); err != nil {
 		return err
 	}
@@ -216,10 +306,7 @@ func SetBinTypes(db *sql.DB, payloadID int64, binTypeIDs []int64) error {
 			return err
 		}
 	}
-	if err := recomputeUndeclaredCarriersTx(tx, payloadID); err != nil {
-		return err
-	}
-	return tx.Commit()
+	return recomputeUndeclaredCarriersTx(tx, payloadID)
 }
 
 // recomputeUndeclaredCarriersTx re-derives bins.undeclared_carrier_at for every

@@ -214,42 +214,67 @@ func clampPct(v int) int {
 	return v
 }
 
+// templateManifestLine is one manifest line on a template API save.
+type templateManifestLine struct {
+	PartNumber    string `json:"part_number"`
+	CATID         string `json:"catid"`
+	PartsPerCycle int64  `json:"parts_per_cycle"`
+}
+
+// templateSets is what a template API save states about the payload's carrier
+// types and manifest. AN ABSENT LIST IS NOT AN EMPTY ONE: a key the request
+// left out leaves the stored set standing (nothing, on a create), and a list,
+// empty included, replaces it. The payloads page sends a list only once it
+// has loaded it, so a save before the edit form's lists arrive, or after
+// their load failed, keeps what is stored. Pins:
+// TestPayloadDoors_UpdateRoundTrip, payloads.edit-save.test.js.
+func templateSets(binTypeIDs *[]int64, manifest *[]templateManifestLine) service.PayloadSets {
+	sets := service.PayloadSets{BinTypeIDs: binTypeIDs}
+	if manifest != nil {
+		lines := make([]service.ManifestLine, 0, len(*manifest))
+		for _, it := range *manifest {
+			lines = append(lines, service.ManifestLine{
+				PartNumber: it.PartNumber, CATID: it.CATID, PartsPerCycle: it.PartsPerCycle,
+			})
+		}
+		sets.Manifest = &lines
+	}
+	return sets
+}
+
+// payloadSaveError answers a template API save that wrote nothing: the row,
+// the carrier types and the manifest commit together, so whichever part
+// refused, none of it was saved. A refused carrier type keeps its "bin types:"
+// prefix; a cat-id conflict is a question (409); a capacity or a manifest line
+// is the caller's error.
+func (h *Handlers) payloadSaveError(w http.ResponseWriter, err error) {
+	switch {
+	case errors.Is(err, service.ErrBareTypeInPayloadRule):
+		h.jsonError(w, "bin types: "+err.Error(), payloadRuleWriteStatus(err))
+	case errors.Is(err, service.ErrPayloadCapacity):
+		h.jsonError(w, err.Error(), payloadWriteStatus(err))
+	default:
+		h.manifestWriteError(w, err)
+	}
+}
+
 func (h *Handlers) apiCreatePayloadTemplate(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Code                 string        `json:"code"`
-		Description          string        `json:"description"`
-		UOPCapacity          int           `json:"uop_capacity"`
-		RobotGroup           string        `json:"robot_group"`
-		NearEmptyEnabled     bool          `json:"near_empty_enabled"`
-		NearEmptyRobotGroup  string        `json:"near_empty_robot_group"`
-		NearEmptyThreshold   int           `json:"near_empty_threshold_pct"`
-		AdvancedLoadSequence string        `json:"advanced_load_sequence"`
-		ToteLayers           optionalCount `json:"tote_layers"`
-		UOPPerTote           optionalCount `json:"uop_per_tote"`
-		BinTypeIDs           []int64       `json:"bin_type_ids"`
-		Manifest             []struct {
-			PartNumber    string `json:"part_number"`
-			CATID         string `json:"catid"`
-			PartsPerCycle int64  `json:"parts_per_cycle"`
-		} `json:"manifest"`
+		Code                 string                  `json:"code"`
+		Description          string                  `json:"description"`
+		UOPCapacity          int                     `json:"uop_capacity"`
+		RobotGroup           string                  `json:"robot_group"`
+		NearEmptyEnabled     bool                    `json:"near_empty_enabled"`
+		NearEmptyRobotGroup  string                  `json:"near_empty_robot_group"`
+		NearEmptyThreshold   int                     `json:"near_empty_threshold_pct"`
+		AdvancedLoadSequence string                  `json:"advanced_load_sequence"`
+		ToteLayers           optionalCount           `json:"tote_layers"`
+		UOPPerTote           optionalCount           `json:"uop_per_tote"`
+		BinTypeIDs           *[]int64                `json:"bin_type_ids"`
+		Manifest             *[]templateManifestLine `json:"manifest"`
 	}
 	if !h.parseJSON(w, r, &req) {
 		return
-	}
-
-	lines := make([]service.ManifestLine, 0, len(req.Manifest))
-	for _, it := range req.Manifest {
-		lines = append(lines, service.ManifestLine{
-			PartNumber: it.PartNumber, CATID: it.CATID, PartsPerCycle: it.PartsPerCycle,
-		})
-	}
-	if len(lines) > 0 {
-		// Ahead of creating the payload, not because the service will not check
-		// again, but so a bad line does not leave a payload row behind.
-		if err := service.ValidateManifestLines(lines); err != nil {
-			h.jsonError(w, err.Error(), http.StatusBadRequest)
-			return
-		}
 	}
 
 	p := &domain.Payload{
@@ -278,22 +303,9 @@ func (h *Handlers) apiCreatePayloadTemplate(w http.ResponseWriter, r *http.Reque
 		h.jsonError(w, verr.Error(), http.StatusBadRequest)
 		return
 	}
-	if err := h.engine.PayloadService().Create(p); err != nil {
-		h.jsonError(w, err.Error(), http.StatusInternalServerError)
+	if err := h.engine.PayloadService().CreateWithSets(p, templateSets(req.BinTypeIDs, req.Manifest)); err != nil {
+		h.payloadSaveError(w, err)
 		return
-	}
-
-	if len(req.BinTypeIDs) > 0 {
-		if err := h.engine.PayloadService().SetBinTypes(p.ID, req.BinTypeIDs); err != nil {
-			h.jsonError(w, "bin types: "+err.Error(), payloadRuleWriteStatus(err))
-			return
-		}
-	}
-	if len(lines) > 0 {
-		if err := h.engine.PayloadService().ReplaceManifest(p.ID, lines); err != nil {
-			h.manifestWriteError(w, err)
-			return
-		}
 	}
 
 	// Response is the payload with any "saved unverified" warnings appended.
@@ -307,33 +319,22 @@ func (h *Handlers) apiCreatePayloadTemplate(w http.ResponseWriter, r *http.Reque
 
 func (h *Handlers) apiUpdatePayloadTemplate(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		ID                   int64         `json:"id"`
-		Code                 string        `json:"code"`
-		Description          string        `json:"description"`
-		UOPCapacity          int           `json:"uop_capacity"`
-		RobotGroup           string        `json:"robot_group"`
-		NearEmptyEnabled     bool          `json:"near_empty_enabled"`
-		NearEmptyRobotGroup  string        `json:"near_empty_robot_group"`
-		NearEmptyThreshold   int           `json:"near_empty_threshold_pct"`
-		AdvancedLoadSequence string        `json:"advanced_load_sequence"`
-		ToteLayers           optionalCount `json:"tote_layers"`
-		UOPPerTote           optionalCount `json:"uop_per_tote"`
-		BinTypeIDs           []int64       `json:"bin_type_ids"`
-		Manifest             []struct {
-			PartNumber    string `json:"part_number"`
-			CATID         string `json:"catid"`
-			PartsPerCycle int64  `json:"parts_per_cycle"`
-		} `json:"manifest"`
+		ID                   int64                   `json:"id"`
+		Code                 string                  `json:"code"`
+		Description          string                  `json:"description"`
+		UOPCapacity          int                     `json:"uop_capacity"`
+		RobotGroup           string                  `json:"robot_group"`
+		NearEmptyEnabled     bool                    `json:"near_empty_enabled"`
+		NearEmptyRobotGroup  string                  `json:"near_empty_robot_group"`
+		NearEmptyThreshold   int                     `json:"near_empty_threshold_pct"`
+		AdvancedLoadSequence string                  `json:"advanced_load_sequence"`
+		ToteLayers           optionalCount           `json:"tote_layers"`
+		UOPPerTote           optionalCount           `json:"uop_per_tote"`
+		BinTypeIDs           *[]int64                `json:"bin_type_ids"`
+		Manifest             *[]templateManifestLine `json:"manifest"`
 	}
 	if !h.parseJSON(w, r, &req) {
 		return
-	}
-
-	lines := make([]service.ManifestLine, 0, len(req.Manifest))
-	for _, it := range req.Manifest {
-		lines = append(lines, service.ManifestLine{
-			PartNumber: it.PartNumber, CATID: it.CATID, PartsPerCycle: it.PartsPerCycle,
-		})
 	}
 
 	p, err := h.engine.PayloadService().Get(req.ID)
@@ -363,18 +364,8 @@ func (h *Handlers) apiUpdatePayloadTemplate(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	if err := h.engine.PayloadService().Update(p); err != nil {
-		h.jsonError(w, err.Error(), payloadWriteStatus(err))
-		return
-	}
-
-	if err := h.engine.PayloadService().SetBinTypes(p.ID, req.BinTypeIDs); err != nil {
-		h.jsonError(w, "bin types: "+err.Error(), payloadRuleWriteStatus(err))
-		return
-	}
-
-	if err := h.engine.PayloadService().ReplaceManifest(p.ID, lines); err != nil {
-		h.manifestWriteError(w, err)
+	if err := h.engine.PayloadService().UpdateWithSets(p, templateSets(req.BinTypeIDs, req.Manifest)); err != nil {
+		h.payloadSaveError(w, err)
 		return
 	}
 

@@ -120,7 +120,15 @@ func ReplaceManifest(db *sql.DB, payloadID int64, lines []Line) error {
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
+	defer tx.Rollback() //nolint:errcheck // no-op after Commit
+	if err := replaceManifestTx(tx, payloadID, lines); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// replaceManifestTx is ReplaceManifest inside the caller's transaction.
+func replaceManifestTx(tx *sql.Tx, payloadID int64, lines []Line) error {
 	if _, err := tx.Exec(`DELETE FROM payload_manifest WHERE payload_id=$1`, payloadID); err != nil {
 		return err
 	}
@@ -133,7 +141,7 @@ func ReplaceManifest(db *sql.DB, payloadID int64, lines []Line) error {
 			return err
 		}
 	}
-	return tx.Commit()
+	return nil
 }
 
 func insertManifestLine(tx *sql.Tx, payloadID int64, l Line, partID int64) (int64, error) {

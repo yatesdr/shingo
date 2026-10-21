@@ -471,8 +471,19 @@ function submitPLCreate(el, evt) {
   return false;
 }
 
+// _pleLoaded says which of the edit form's two lists arrived for the payload
+// now open. The form opens before either does; a save sends a list only once
+// it has loaded, so a save sent before the answer, or after a failed one,
+// leaves the stored list standing instead of replacing it with nothing (the
+// server reads an absent list that way: templateSets). The token drops an
+// answer that arrives for a payload the form has since moved off.
+var _pleLoaded = { token: 0, manifest: false, binTypes: false };
+
 function openEditPayloadModal(btn) {
   var d = btn.dataset;
+  var token = ++_pleLoaded.token;
+  _pleLoaded.manifest = false;
+  _pleLoaded.binTypes = false;
   var plId = parseInt(d.id);
   document.getElementById('pl-edit-id').value = d.id;
   document.getElementById('pl-edit-code').value = d.code;
@@ -493,8 +504,8 @@ function openEditPayloadModal(btn) {
   document.getElementById('ple-manifest-rows').innerHTML = '<span class="text-muted" style="font-size:0.8rem">Loading...</span>';
   // Clear any stale bin-type selection synchronously so the modal opens with
   // nothing selected (matches the create modal); the async fetch below sets the
-  // real selection, and a fetch failure then leaves it cleared rather than a
-  // bogus option[0]. Fixes "bin type resets to 0 on edit".
+  // real selection. Until it has, or when it fails, a save leaves the stored
+  // carrier types out (_pleLoaded), so the cleared boxes are never sent.
   setSelectedBinTypes('ple-bin-types', []);
   refreshToteHint('ple');
   loadRobotGroups();
@@ -506,6 +517,7 @@ function openEditPayloadModal(btn) {
       return r.json();
     })
     .then(function(resp) {
+      if (token !== _pleLoaded.token) return;
       var items = (resp && resp.data) || resp || [];
       var container = document.getElementById('ple-manifest-rows');
       container.innerHTML = '';
@@ -514,11 +526,14 @@ function openEditPayloadModal(btn) {
           addManifestRow('ple-manifest-rows', item.part_number, item.catid, item.parts_per_cycle);
         });
       }
+      _pleLoaded.manifest = true;
     })
     .catch(function(err) {
+      if (token !== _pleLoaded.token) return;
       console.error('Manifest load failed:', err);
       document.getElementById('ple-manifest-rows').innerHTML =
-        '<span class="text-muted" style="font-size:0.8rem">No manifest items (load failed: ' + err.message + ')</span>';
+        '<span class="text-muted" style="font-size:0.8rem">Parts did not load (' + escapeHtml(err.message) +
+        '). Saving keeps the parts as they are.</span>';
     });
 
   fetch('/api/payloads/templates/bin-types?id=' + plId)
@@ -527,11 +542,15 @@ function openEditPayloadModal(btn) {
       return r.json();
     })
     .then(function(resp) {
-      var ids = (resp && resp.data) || resp || [];
-      setSelectedBinTypes('ple-bin-types', ids);
+      if (token !== _pleLoaded.token) return;
+      // The answer is the carrier types themselves; the boxes are keyed by id.
+      var types = (resp && resp.data) || resp || [];
+      setSelectedBinTypes('ple-bin-types', types.map(function(bt) { return Number(bt.id); }));
       refreshToteHint('ple');
+      _pleLoaded.binTypes = true;
     })
     .catch(function(err) {
+      if (token !== _pleLoaded.token) return;
       console.error('Bin types load failed:', err);
     });
 }
@@ -541,8 +560,8 @@ function closePLEditModal() {
 
 function submitPLEdit(el, evt) {
   if (evt) evt.preventDefault();
-  var manifest = collectManifestRows('ple-manifest-rows');
-  if (manifest.error) { toast(manifest.error, 'error'); return; }
+  var manifest = _pleLoaded.manifest ? collectManifestRows('ple-manifest-rows') : null;
+  if (manifest && manifest.error) { toast(manifest.error, 'error'); return; }
   var body = {
     id: parseInt(document.getElementById('pl-edit-id').value),
     code: document.getElementById('pl-edit-code').value,
@@ -554,10 +573,12 @@ function submitPLEdit(el, evt) {
     near_empty_threshold_pct: parseInt(document.getElementById('ple-near-empty-pct').value) || 0,
     advanced_load_sequence: document.getElementById('pl-edit-load-sequence').value,
     tote_layers: toteCount('ple-tote-layers'),
-    uop_per_tote: toteCount('ple-uop-per-tote'),
-    bin_type_ids: getSelectedBinTypes('ple-bin-types'),
-    manifest: manifest.items
+    uop_per_tote: toteCount('ple-uop-per-tote')
   };
+  // A list rides the save only once it has loaded (_pleLoaded); left out, the
+  // stored one stands.
+  if (_pleLoaded.binTypes) body.bin_type_ids = getSelectedBinTypes('ple-bin-types');
+  if (manifest) body.manifest = manifest.items;
   console.log('Saving payload:', JSON.stringify(body));
   fetch('/api/payloads/templates/update', {
     method: 'POST',

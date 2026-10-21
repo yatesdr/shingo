@@ -21,6 +21,18 @@ func (db *DB) GetPayloadByCode(code string) (*payloads.Payload, error) {
 }
 func (db *DB) ListPayloads() ([]*payloads.Payload, error) { return payloads.List(db.DB) }
 
+// CreatePayloadWithSets inserts a payload with the sets the save states, in one
+// transaction. See payloads.CreateWithSets.
+func (db *DB) CreatePayloadWithSets(p *payloads.Payload, sets payloads.Sets) error {
+	return payloads.CreateWithSets(db.DB, p, sets)
+}
+
+// UpdatePayloadWithSets writes a payload's row and the sets the save states, in
+// one transaction. See payloads.UpdateWithSets.
+func (db *DB) UpdatePayloadWithSets(p *payloads.Payload, sets payloads.Sets) error {
+	return payloads.UpdateWithSets(db.DB, p, sets)
+}
+
 // PayloadDescriptions returns a payload_code → description map for the catalog,
 // used by the inventory Replenishment Health rollup.
 func (db *DB) PayloadDescriptions() (map[string]string, error) {

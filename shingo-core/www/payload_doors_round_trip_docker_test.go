@@ -254,15 +254,15 @@ func TestPayloadDoors_UpdateRoundTrip(t *testing.T) {
 		})
 	})
 
-	// TODAY, AND A DEFECT: a save that sends neither list replaces both with
-	// nothing (the edit form sends [] when its lists never loaded). The change
-	// that makes an absent list leave the stored one standing flips the last
-	// two assertions; this records what it changes.
-	t.Run("the template API with both lists absent clears both today", func(t *testing.T) {
+	// An absent list is not an empty one: a save that sends neither leaves both
+	// standing (the edit form leaves out a list it never loaded). It used to
+	// replace both with nothing.
+	t.Run("the template API with both lists absent leaves both standing", func(t *testing.T) {
 		t.Parallel()
 		h, db := testHandlers(t)
-		id, _, _, _ := seedDoorPayload(t, h, db, "PLD-BARE")
+		id, a, b, _ := seedDoorPayload(t, h, db, "PLD-BARE")
 		before := payloadRowJSON(t, db, id)
+		lines := payloadManifestJSON(t, db, id, true)
 
 		rec := postJSON(t, h.apiUpdatePayloadTemplate, "/api/payloads/templates/update", map[string]any{
 			"id": id, "code": "PLD-BARE", "description": "seeded", "uop_capacity": 40, "robot_group": "RG-1",
@@ -272,8 +272,20 @@ func TestPayloadDoors_UpdateRoundTrip(t *testing.T) {
 			t.Fatalf("api update: status %d; body=%s", rec.Code, rec.Body.String())
 		}
 		requireSame(t, "row after the API", payloadRowJSON(t, db, id), before)
-		requireSame(t, "carriers after a save that sent none", payloadBinTypeIDs(t, db, id), []int64{})
-		requireSame(t, "lines after a save that sent none", payloadManifestJSON(t, db, id, false), []map[string]any{})
+		requireSame(t, "carriers after a save that sent none", payloadBinTypeIDs(t, db, id), []int64{a, b})
+		requireSame(t, "lines after a save that sent none (ids included)", payloadManifestJSON(t, db, id, true), lines)
+
+		// Empty lists, sent, are a statement: both are replaced with nothing.
+		rec = postJSON(t, h.apiUpdatePayloadTemplate, "/api/payloads/templates/update", map[string]any{
+			"id": id, "code": "PLD-BARE", "description": "seeded", "uop_capacity": 40, "robot_group": "RG-1",
+			"near_empty_enabled": true, "near_empty_robot_group": "RG-NE", "near_empty_threshold_pct": 20,
+			"bin_type_ids": []int64{}, "manifest": []map[string]any{},
+		})
+		if rec.Code != http.StatusOK {
+			t.Fatalf("api update with empty lists: status %d; body=%s", rec.Code, rec.Body.String())
+		}
+		requireSame(t, "carriers after a save that sent an empty list", payloadBinTypeIDs(t, db, id), []int64{})
+		requireSame(t, "lines after a save that sent an empty list", payloadManifestJSON(t, db, id, false), []map[string]any{})
 	})
 
 	t.Run("the importer skips a code that exists and writes nothing on it", func(t *testing.T) {
