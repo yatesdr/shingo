@@ -61,10 +61,11 @@ func IsStationWaitKind(kind string) bool {
 // have one home (pinned by TestWaitOwnershipIsDeclaredOnce).
 //
 // It records what the vacated-slot rule counted when it admitted a drop, or
-// what Core must see leave a node (the sibling stamp, a home clear's partial
-// move). Partner is 0 for an own-lift (a) grant, which is never held — one
-// robot lifts before it drops — and for a home clear's stamp, which Core holds
-// before dispatch (shingo-core dispatch/clear_home.go, clearDropHeld).
+// what Core must see leave a node (the sibling stamp, a home clear's moves).
+// Partner is 0 for an own-lift (a) grant, which is never held — one robot
+// lifts before it drops — and for a home clear's stamps, which Core holds
+// before dispatch (clearDropHeld) or at a trade leg's stored vacate wait
+// (shingo-core dispatch/clear_home.go).
 type VacateStamp struct {
 	Node    string `json:"node"`
 	Bin     int64  `json:"bin"`

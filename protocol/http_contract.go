@@ -275,12 +275,11 @@ type ClearHomeRequest struct {
 }
 
 // ClearHomeResponse is Core's answer to a home clear. Status "ok" carries the
-// arm Core chose — ClearArmNone, with the sentence in Detail, when no job could
-// take the carrier — and a refusal (the one-live-clear fence, or a request
-// naming no clearable home) carries the sentence in Error. BinID and
-// DeltaEpoch name the home's carrier and its new generation stamp whenever
-// Core zeroed it — the Edge's carrierClearedInPlace takes them — and are 0 when
-// nothing was zeroed.
+// arm Core chose, and a refusal (the one-live-clear fence, or a request naming
+// no clearable home, or a trade that cannot be born) carries the sentence in
+// Error. BinID and DeltaEpoch name the home's carrier and its new generation
+// stamp whenever Core zeroed it — the Edge's carrierClearedInPlace takes them,
+// on a refusal too — and are 0 when nothing was zeroed.
 type ClearHomeResponse struct {
 	// Field order alphabetical, as the other replies here.
 	Arm        string `json:"arm,omitempty"`
@@ -300,8 +299,12 @@ const (
 	// ClearArmSpot: Core moves the home's carrier to an open buffer spot, then
 	// brings the partial home.
 	ClearArmSpot = "spot"
-	// ClearArmNone: no pull and no open spot. The zero is recorded and no job is
-	// born; the partial stays on its spot (the two-robot trade, the pair brief).
+	// ClearArmTrade: no pull and no open spot. Two robots each lift one bin and
+	// set it where the other lifted: the empty goes to the partial's spot and
+	// the partial comes home.
+	ClearArmTrade = "trade"
+	// ClearArmNone: no longer answered by Core (the trade replaced it); the Edge
+	// still reads it until its own sentence for the trade lands.
 	ClearArmNone = "none"
 )
 

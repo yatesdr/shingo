@@ -143,13 +143,14 @@ func (e *Engine) wireLaneGateHandlers() {
 	}, EventOrderSkipped)
 
 	// VACATE HOLDS (PopVacateHeld, dispatch/vacate_hold.go). The lift is the
-	// event, narrowed to the holds that name the lifted bin; the order-terminal
+	// event, narrowed to the holds that name the lifted bin and to the lifting
+	// order itself when its plan holds after its lift; the order-terminal
 	// events re-ask every hold, because a lifter's moot end releases its
 	// sibling's and a cancel or failure is written on the row. Each re-asks the
 	// fact from the lift's own column, so a replayed pickup that moves nothing
 	// releases nothing, and the CAS under the append refuses a second release.
 	eventbus.SubscribeTyped(e.Events, func(evt eventbus.TypedEvent[EventType, BinEnteredTransitEvent]) {
-		e.dispatcher.RedriveVacateWaits(evt.Payload.BinID)
+		e.dispatcher.RedriveVacateOnLift(evt.Payload.BinID, evt.Payload.OrderID)
 	}, EventBinEnteredTransit)
 	// A home clear's re-run rides the same events and the same one read: an
 	// order ending is how a pull that held the clear's empty lets it go. The

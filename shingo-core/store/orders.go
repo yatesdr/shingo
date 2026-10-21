@@ -1904,9 +1904,15 @@ func (db *DB) ListOrdersByOrigin(originID string, limit int) ([]*orders.Order, b
 	return orders.ListByOrigin(db.DB, originID, limit)
 }
 
-// VacateWaitCandidates: see orders.VacateWaitCandidates.
+// VacateWaitCandidates: see orders.VacateWaitCandidates (no lifting order).
 func (db *DB) VacateWaitCandidates(binID int64) ([]*orders.Order, error) {
-	return orders.VacateWaitCandidates(db.DB, binID)
+	return orders.VacateWaitCandidates(db.DB, binID, 0)
+}
+
+// VacateLiftCandidates is VacateWaitCandidates for a lift: binID was lifted by
+// orderID's pickup. See orders.VacateWaitCandidates.
+func (db *DB) VacateLiftCandidates(binID, orderID int64) ([]*orders.Order, error) {
+	return orders.VacateWaitCandidates(db.DB, binID, orderID)
 }
 
 // LiveClearForHome: see orders.LiveClearForHome.

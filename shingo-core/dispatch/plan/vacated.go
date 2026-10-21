@@ -76,9 +76,10 @@ import (
 // Two stamps are not grants. The sibling stamp (VacateKindSibling) is written
 // at a release only where arm Y used to refuse — the leg's sibling staged with
 // a grant pending, this leg dropping on a bin that sibling claimed — and no slot
-// claim credits it (PartnerStamp). A home clear's partial move carries a stamp
-// with Partner 0 on its drop (dispatch/clear_home.go): the compound advance
-// holds that move before dispatch until the home's carrier has left.
+// claim credits it (PartnerStamp). A home clear's moves carry a stamp with
+// Partner 0 on their drops (dispatch/clear_home.go): the compound advance
+// holds the partial's move before dispatch until the home's carrier has left,
+// and a trade leg holds its drop after its own lift, at a stored vacate wait.
 //
 // It names its node, and is honoured only while the step still drops there. Five
 // writers can re-point a drop, one of them at release; each clears the stamp as

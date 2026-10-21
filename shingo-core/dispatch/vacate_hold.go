@@ -47,15 +47,19 @@ import (
 // so no slot claim ever credits it (plan.PartnerStamp).
 //
 // A home clear's partial move (clear_home.go) waits on the same fact BEFORE
-// any robot is sent: its drop carries the stamp, the compound advance holds it
-// (clearDropHeld), and RedriveVacateWaits advances its parent on the lift.
-// When the lift will not come — the carrier stands on the home held by nobody
-// — the clear's re-run (RerunClears) chooses again.
+// any robot is sent on the demand and spot arms: its drop carries the stamp,
+// the compound advance holds it (clearDropHeld), and RedriveVacateWaits
+// advances its parent on the lift. When the lift will not come — the carrier
+// stands on the home held by nobody — the clear's re-run (RerunClears) chooses
+// again. On the trade both moves wait AFTER their lifts, at a stored vacate
+// wait: each robot lifts and stands under its bin, and the lift of the other
+// bin appends its drop here (redriveVacateOrder; the lifting order's own row
+// is asked too, RedriveVacateOnLift).
 //
 // ── WHAT ENDS A HOLD (the abandon sweep's bound) ────────────────────────────
 //
 //   - the lift: EventBinEnteredTransit re-drives the holds that name the bin
-//     (RedriveVacateWaits), and the 60 s floor (SweepLaneWaiters) re-reads all
+//     (RedriveVacateOnLift), and the 60 s floor (SweepLaneWaiters) re-reads all
 //     of them, so a missed event costs a minute, not a robot;
 //   - the lifter's MOOT end (skipped, as the death rule reads moot): it
 //     releases the hold (ruled 2026-10-18).
@@ -282,11 +286,22 @@ func vacateStampsAt(steps []resolvedStep, waitIndex int, storedVacate bool) []pl
 
 // RedriveVacateWaits is PopVacateHeld's re-driver: it re-asks every vacate hold
 // and lets go the ones whose fact now holds. binID narrows the pass to the
-// holds that name that bin — EventBinEnteredTransit's — and 0 asks all of them:
-// the order-terminal events (a lifter's moot end releases; its cancel or
-// failure is recorded) and the floor. Returns the orders it released.
+// holds that name that bin, and 0 asks all of them: the order-terminal events
+// (a lifter's moot end releases; its cancel or failure is recorded) and the
+// floor. Returns the orders it released.
 func (d *Dispatcher) RedriveVacateWaits(binID int64) []int64 {
-	released, _ := d.RedriveVacate(binID)
+	released, _ := d.redriveVacate(binID, 0)
+	return released
+}
+
+// RedriveVacateOnLift is EventBinEnteredTransit's re-drive: binID was lifted
+// by orderID's pickup. It asks the holds that name the bin and, in the same
+// one read, the lifting order itself when its plan holds after its lift (a
+// home clear's trade leg, whose stamp names its partner's bin: that bin may
+// have left before this robot lifted, and nothing else would ask again until
+// the floor).
+func (d *Dispatcher) RedriveVacateOnLift(binID, orderID int64) []int64 {
+	released, _ := d.redriveVacate(binID, orderID)
 	return released
 }
 
@@ -301,7 +316,11 @@ func (d *Dispatcher) RedriveVacateWaits(binID int64) []int64 {
 // whose bin has not left; per release, the append path (a station-released
 // hold) or the compound advance (a clear's partial move).
 func (d *Dispatcher) RedriveVacate(binID int64) (released, stranded []int64) {
-	cands, err := d.db.VacateWaitCandidates(binID)
+	return d.redriveVacate(binID, 0)
+}
+
+func (d *Dispatcher) redriveVacate(binID, orderID int64) (released, stranded []int64) {
+	cands, err := d.db.VacateLiftCandidates(binID, orderID)
 	if err != nil {
 		log.Printf("dispatch: vacate re-drive: could not read the held set: %v (the floor retries)", err)
 		return nil, nil
@@ -311,6 +330,20 @@ func (d *Dispatcher) RedriveVacate(binID int64) (released, stranded []int64) {
 		// is sent (clear_home.go, clearDropHeld): the lift that empties the home
 		// lets its parent advance it.
 		if o.ParentOrderID != nil && o.VendorOrderID == "" {
+			// A TRADE LEG NOT YET SENT waits on nothing before its lift: it was
+			// held with its partner (tradePartnerReady) or demoted on a fleet
+			// refusal, and this re-drive — on its floor, the vacate tick — is what
+			// sends the pair again.
+			if holdsAfterLift(o) {
+				dispatched := false
+				if err := d.advanceCompound(*o.ParentOrderID, &dispatched); err != nil {
+					log.Printf("dispatch: vacate re-drive: advance clear %d: %v", *o.ParentOrderID, err)
+				}
+				if dispatched {
+					released = append(released, o.ID)
+				}
+				continue
+			}
 			sent, held := d.redriveClearPartial(o, binID)
 			if sent {
 				released = append(released, o.ID)
@@ -319,7 +352,13 @@ func (d *Dispatcher) RedriveVacate(binID int64) (released, stranded []int64) {
 			}
 			continue
 		}
-		if d.redriveVacateOrder(o, binID) {
+		// The lifting order's own row is asked about its own stamps, which name
+		// another bin.
+		ask := binID
+		if orderID != 0 && o.ID == orderID {
+			ask = 0
+		}
+		if d.redriveVacateOrder(o, ask) {
 			released = append(released, o.ID)
 		}
 	}

@@ -4,6 +4,7 @@ package dispatch
 
 import (
 	"encoding/json"
+	"fmt"
 	"testing"
 
 	"shingo/protocol"
@@ -369,5 +370,62 @@ func TestSwapPeerTerminal_PressIndex2_R1SkippedLeavesR2(t *testing.T) {
 	if got.Status != protocol.StatusStaged {
 		t.Fatalf("R2 is %q after a MOOT R1, want staged untouched — the press was already empty, and R2 is "+
 			"the leg that refills it", got.Status)
+	}
+}
+
+// TestSwapPeerPin_LegsWithNoProcessNode_EveryTerminalIsADeath: two
+// sibling-linked plain moves with no process node, each lifting before a bare
+// vacate wait and dropping where the other lifts (the shape a home clear's
+// trade gives its two children). With no process node no leg takes a line's
+// bin (legTakesLineBin), so the moot arm never fires: a skip, a failure and a
+// cancel of either leg each cancel the live other, coded TermPeerTerminal.
+func TestSwapPeerPin_LegsWithNoProcessNode_EveryTerminalIsADeath(t *testing.T) {
+	t.Parallel()
+	db := testDBShared(t)
+	d, _ := newTestDispatcher(t, db, testdb.NewTrackingBackend())
+	leg := func(uuid, sib, from, to string, status protocol.Status) *orders.Order {
+		steps := []resolvedStep{{Action: protocol.ActionPickup, Node: from},
+			{Action: protocol.ActionWait, WaitKind: WaitKindVacate}, {Action: protocol.ActionDropoff, Node: to}}
+		j, err := json.Marshal(steps)
+		testutil.MustNoErr(t, err, "marshal "+uuid)
+		o := &orders.Order{EdgeUUID: uuid, StationID: "ST", OrderType: OrderTypeMove, Status: status, Quantity: 1,
+			SourceNode: from, DeliveryNode: to, SiblingOrderUUID: sib, StepsJSON: string(j)}
+		testutil.MustNoErr(t, db.CreateOrder(o), "create "+uuid)
+		return o
+	}
+	for _, c := range []struct {
+		kind string
+		dead protocol.Status
+	}{{SwapTerminalSkipped, StatusSkipped}, {SwapTerminalFailed, StatusFailed}, {SwapTerminalCancelled, StatusCancelled}} {
+		for _, deadIsFirst := range []bool{true, false} {
+			p := fmt.Sprintf("npn-%s-%v", c.kind, deadIsFirst)
+			first, second := p+"-1", p+"-2"
+			deadUUID, liveUUID := first, second
+			if !deadIsFirst {
+				deadUUID, liveUUID = second, first
+			}
+			status := func(u string) protocol.Status {
+				if u == deadUUID {
+					return c.dead
+				}
+				return protocol.StatusInTransit
+			}
+			leg(first, second, "NPN-S", "NPN-H", status(first))
+			leg(second, first, "NPN-H", "NPN-S", status(second))
+			dead, err := db.GetOrderByUUID(deadUUID)
+			testutil.MustNoErr(t, err, "dead leg")
+			d.HandleSwapPeerTerminal(dead.ID, c.kind)
+			live, err := db.GetOrderByUUID(liveUUID)
+			testutil.MustNoErr(t, err, "live leg")
+			if live.Status != StatusCancelled {
+				t.Errorf("%s: the other leg is %s after a %s, want cancelled", p, live.Status, c.kind)
+				continue
+			}
+			h, err := db.LatestOrderHistoryForStatus(live.ID, StatusCancelled)
+			testutil.MustNoErr(t, err, "history of "+liveUUID)
+			if h == nil || h.Code != string(protocol.TermPeerTerminal) {
+				t.Errorf("%s: the other leg's cancel = %+v, want coded %s", p, h, protocol.TermPeerTerminal)
+			}
+		}
 	}
 }

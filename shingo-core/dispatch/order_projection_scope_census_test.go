@@ -73,8 +73,10 @@ var projectionDoors = []projectionDoor{
 		name:         "the home clear's push — the clear's parent and each child, to the station that asked",
 		carriesChild: true,
 		whyThatAnswer: "the clear's children are its moves and the station's board draws them (the partial coming " +
-			"home, the empty going to its spot); nothing admits a child, so the door pushes each row itself " +
-			"(projectClear). A pushed child is a plain row to the Edge: the wire carries no parent marker",
+			"home, the empty going to its spot or, on the trade, to the partial's); nothing admits a child, so " +
+			"the door pushes each row itself (projectClear). The trade re-plans the partial's move in place and " +
+			"does not push it again: the projection carries neither its plan nor its sibling. A pushed child " +
+			"is a plain row to the Edge: the wire carries no parent marker",
 	},
 }
 

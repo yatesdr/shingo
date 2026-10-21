@@ -300,19 +300,26 @@ func TestCensus_OrderCreationDoors(t *testing.T) {
 		// THE HOME CLEAR (dispatch/clear_home.go). A station clears a dedicated
 		// loader's home; Core authors the job: a compound parent (the clear's
 		// row, delivering to the home) and plain-move children — the partial's
-		// move at confirm, the empty's move on the spot arm — written through
-		// Build(tx, ...) and CreateCompoundChildrenTx in the door's transaction.
+		// move at confirm, the empty's move on the spot arm or the trade —
+		// written through Build(tx, ...) and CreateCompoundChildrenTx in the
+		// door's transaction. On the trade the two moves are born
+		// sibling-linked (the partial's move re-planned in place,
+		// orders.BindTradeLegTx), each holding its drop after its lift on the
+		// other's.
 		//
 		// The three questions:
 		//  1. Projects to the Edge? YES, pushed by the door itself: the parent
 		//     and every child (projectClear), because none goes through
 		//     admission and the station asked for the job, so its board must
 		//     show the moves it caused. The projection census lists the door.
-		//  2. Needs the dropoff-capacity gate? Not at birth. The partial's move
-		//     is held before dispatch on the vacate fact (the home's carrier
-		//     lifted off it), and the spot is chosen free to the plain gate
-		//     (ClearSpot); from birth each child's drop counts inbound to its
-		//     node (the dig-leg arm), which keeps other orders off both.
+		//  2. Needs the dropoff-capacity gate? Not at birth. On the demand and
+		//     spot arms the partial's move is held before dispatch on the
+		//     vacate fact (the home's carrier lifted off it), and the spot is
+		//     chosen free to the plain gate (ClearSpot); on the trade each drop
+		//     is held after its lift on the vacate fact of the bin standing
+		//     there, and appended only once that bin has left. From birth each
+		//     child's drop counts inbound to its node (the dig-leg arm), which
+		//     keeps other orders off them.
 		//  3. What origin_class? no_demand, stated at birth: the station asked
 		//     for housekeeping, and no place is asking for material.
 		{"home clear", "dispatch/clear_home.go", "an Edge station clearing a dedicated loader's home — Core declares the carrier empty and brings a buffer partial home"},

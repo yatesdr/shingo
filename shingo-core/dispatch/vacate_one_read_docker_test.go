@@ -4,6 +4,7 @@ package dispatch
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 
@@ -75,5 +76,75 @@ func TestVacate_ALiftIsOneReadAndNoRowWhenNothingWaits(t *testing.T) {
 		if len(rows) != c.want || (c.want == 1 && rows[0].ID != child.ID) {
 			t.Errorf("who waits on bin %d: %d rows, want %d (the partial's move)", c.bin, len(rows), c.want)
 		}
+	}
+}
+
+// TestVacate_TheLiftAsksItsOwnTradeLegInTheSameRead: a home clear's trade leg
+// with the fleet, holding its drop on H for E, and E already gone from H (its
+// partner lifted it while nothing re-asked this leg). Its own lift of P names
+// a bin its stamp does not: the plain lift's read does not return it, so
+// nothing is appended; the lift's read that names the lifting order returns it
+// in the same one statement, and its drop is appended. The lift of a bin
+// nobody waits on, by an order that holds after no lift, is still one
+// statement.
+func TestVacate_TheLiftAsksItsOwnTradeLegInTheSameRead(t *testing.T) {
+	t.Parallel()
+	db, cfg := testdb.OpenWithConfig(t)
+	setupTestData(t, db)
+	mk := func(name string) *nodes.Node {
+		n := &nodes.Node{Name: name, Enabled: true}
+		testutil.MustNoErr(t, db.CreateNode(n), "node "+name)
+		return n
+	}
+	home, spot, else_ := mk("VTL-H"), mk("VTL-S"), mk("VTL-ELSE")
+	e := makeEmptyBin(t, db, home.ID, "VTL-E")
+	p := makeEmptyBin(t, db, spot.ID, "VTL-P")
+	other := makeEmptyBin(t, db, else_.ID, "VTL-OTHER")
+	parent := &orders.Order{EdgeUUID: orders.ClearUUIDPrefix + "vtl", StationID: "edge.vtl", OrderType: OrderTypeMove,
+		Status: StatusReshuffling, Quantity: 1, SourceNode: home.Name, DeliveryNode: home.Name}
+	testutil.MustNoErr(t, db.CreateOrder(parent), "parent")
+	stamped := time.Now().UTC().Add(-time.Minute)
+	steps, err := json.Marshal([]resolvedStep{{Action: protocol.ActionPickup, Node: spot.Name},
+		{Action: protocol.ActionWait, WaitKind: WaitKindVacate},
+		{Action: protocol.ActionDropoff, Node: home.Name, Vacate: &plan.Vacate{Node: home.Name, Bin: e.ID, StampedAt: &stamped}}})
+	testutil.MustNoErr(t, err, "steps")
+	leg := &orders.Order{EdgeUUID: "vtl-l1", StationID: "edge.vtl", OrderType: OrderTypeMove, Status: StatusDispatched,
+		Quantity: 1, ParentOrderID: &parent.ID, Sequence: 2, BinID: &p.ID, SourceNode: spot.Name,
+		DeliveryNode: home.Name, StepsJSON: string(steps)}
+	testutil.MustNoErr(t, db.CreateOrder(leg), "the trade leg")
+	testutil.MustNoErr(t, db.UpdateOrderVendor(leg.ID, "V-vtl-l1", "CREATED", ""), "with the fleet")
+	vhLift(t, db, e.ID)
+	vhLift(t, db, p.ID)
+
+	cdb, counter, err := store.OpenCounting(cfg)
+	testutil.MustNoErr(t, err, "counting db")
+	t.Cleanup(func() { cdb.Close() })
+	backend := testdb.NewTrackingBackend()
+	d, _ := newTestDispatcher(t, cdb, backend)
+
+	counter.Reset()
+	if got := d.RedriveVacateOnLift(other.ID, parent.ID); len(got) != 0 {
+		t.Errorf("the lift of a bin nobody waits on released %v", got)
+	}
+	if n := counter.Count(); n != 1 {
+		t.Errorf("the lift of a bin nobody waits on cost %d statements, want 1: %v", n, counter.Statements())
+	}
+	if got := d.RedriveVacateWaits(p.ID); len(got) != 0 || len(backend.ReleaseCalls()) != 0 {
+		t.Fatalf("the plain lift's read released %v: the leg's stamp does not name the bin it lifts", got)
+	}
+	counter.Reset()
+	got := d.RedriveVacateOnLift(p.ID, leg.ID)
+	if len(got) != 1 || got[0] != leg.ID || len(backend.ReleaseCalls()) != 1 {
+		t.Fatalf("the lift naming its own trade leg released %v (%d appends), want the leg's drop appended",
+			got, len(backend.ReleaseCalls()))
+	}
+	var reads int
+	for _, s := range counter.Statements() {
+		if strings.Contains(s, "FROM orders") && strings.Contains(s, "wait_kind") {
+			reads++
+		}
+	}
+	if reads != 1 {
+		t.Errorf("the lift asked who waits %d times, want once: %v", reads, counter.Statements())
 	}
 }

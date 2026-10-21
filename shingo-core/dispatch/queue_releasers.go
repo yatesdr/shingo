@@ -220,13 +220,15 @@ var waitPopulations = []populationReleaser{
 	{
 		// The lift is the event (Core's one emitter of EventBinEnteredTransit,
 		// engine/wiring_block_completed.go), narrowed to the holds that name the
-		// bin; the order-terminal events re-ask every hold, because a lifter's
+		// bin and to the lifting order itself when it holds after its lift (a
+		// home clear's trade leg); the order-terminal events re-ask every hold,
+		// because a lifter's
 		// moot end releases one and its cancel or failure is written on the row.
 		// The floor re-reads the lift itself (bins.last_lift_at), which an event
 		// missed during a Core restart cannot take away.
 		population: PopVacateHeld,
 		owner:      OwnerCore,
-		redriver:   "Dispatcher.RedriveVacateWaits",
+		redriver:   "Dispatcher.RedriveVacateOnLift",
 		events: []string{
 			"EventBinEnteredTransit", "EventOrderCompleted", "EventOrderCancelled",
 			"EventOrderFailed", "EventOrderSkipped",

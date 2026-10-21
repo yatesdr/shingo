@@ -714,20 +714,35 @@ func (d *Dispatcher) dispatchGated(order *orders.Order, target laneGateTarget, p
 // nothing is sent. It returns the create and the pre-wait segment, whose nodes
 // the create declares.
 func (d *Dispatcher) buildGatedCreate(order *orders.Order, target laneGateTarget, plan []resolvedStep, loadSeq []string) (req fleet.CreateOrderRequest, preWait []resolvedStep, err error) {
+	req, preWait, err = d.buildUnsealedCreate(order, plan, loadSeq, "gated")
+	if err != nil {
+		return req, nil, err
+	}
+	d.dbg("lane gate: order=%d vendor=%s creating unsealed %d block(s) -> wait@%s (lane %s)",
+		order.ID, req.OrderID, len(req.Blocks), target.gatePoint, target.lane.Name)
+	return req, preWait, nil
+}
+
+// buildUnsealedCreate persists a plan with a wait in it and builds the
+// unsealed create of its pre-wait segment: the lane valve's create
+// (buildGatedCreate) and a home clear's trade leg's (dispatchToFleetCore,
+// heldTradePlan). Nothing is held and nothing is sent. what names the plan in
+// an error ("gated", "held").
+func (d *Dispatcher) buildUnsealedCreate(order *orders.Order, plan []resolvedStep, loadSeq []string, what string) (req fleet.CreateOrderRequest, preWait []resolvedStep, err error) {
 	vendorOrderID := mintVendorOrderID(order.ID)
 
 	stepsJSON, err := json.Marshal(plan)
 	if err != nil {
-		return req, nil, fmt.Errorf("marshal gated plan for order %d: %w", order.ID, err)
+		return req, nil, fmt.Errorf("marshal %s plan for order %d: %w", what, order.ID, err)
 	}
 	if err := d.db.UpdateOrderStepsJSON(order.ID, string(stepsJSON)); err != nil {
-		return req, nil, fmt.Errorf("persist gated plan for order %d: %w", order.ID, err)
+		return req, nil, fmt.Errorf("persist %s plan for order %d: %w", what, order.ID, err)
 	}
 	order.StepsJSON = string(stepsJSON)
 
 	preWait, hasWait := splitAtWait(plan)
 	if !hasWait {
-		return req, nil, fmt.Errorf("gated plan for order %d has no wait step", order.ID)
+		return req, nil, fmt.Errorf("%s plan for order %d has no wait step", what, order.ID)
 	}
 	// loadSeq comes from the CALLER, not from the payload, because the two create
 	// sites answer it differently and always did: the plain path expands the load
@@ -749,10 +764,8 @@ func (d *Dispatcher) buildGatedCreate(order *orders.Order, target laneGateTarget
 		// auto-pick, which is every order in the plant until one does.
 		KeyRoute: order.KeyRoute,
 		KeyTask:  order.KeyTask,
-		Complete: false, // unsealed: the tail is appended when the lane is safe
+		Complete: false, // unsealed: the tail is appended when Core lets it go
 	}
-	d.dbg("lane gate: order=%d vendor=%s creating unsealed %d block(s) -> wait@%s (lane %s)",
-		order.ID, vendorOrderID, len(blocks), target.gatePoint, target.lane.Name)
 	return req, preWait, nil
 }
 

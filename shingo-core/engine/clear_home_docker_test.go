@@ -4,6 +4,7 @@ package engine
 
 import (
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -13,6 +14,7 @@ import (
 	"shingo/protocol"
 	"shingo/protocol/testutil"
 	"shingocore/dispatch"
+	"shingocore/fleet"
 	"shingocore/fleet/simulator"
 	"shingocore/internal/testdb"
 	"shingocore/store"
@@ -43,12 +45,25 @@ type clearRig struct {
 	s, x     *nodes.Node
 	e, p     *bins.Bin
 	xBin     *bins.Bin
+	counter  *store.QueryCounter // set by clearRigOpts.counting
 	loaderID int64
 }
 
 func newClearRig(t *testing.T, prefix string, openSpot bool) *clearRig {
 	t.Helper()
-	db := testdb.Open(t)
+	return newClearRigWith(t, prefix, openSpot, clearRigOpts{})
+}
+
+// clearRigOpts are the rig's two variants: an engine on a statement-counting
+// database (counter set), and a fleet that wraps the simulator.
+type clearRigOpts struct {
+	counting bool
+	fleet    func(*simulator.SimulatorBackend) fleet.Backend
+}
+
+func newClearRigWith(t *testing.T, prefix string, openSpot bool, opts clearRigOpts) *clearRig {
+	t.Helper()
+	db, cfg := testdb.OpenWithConfig(t)
 	testdb.SetupStandardData(t, db)
 	r := &clearRig{db: db, part: prefix + "-PART"}
 	testutil.MustNoErr(t, db.CreatePayload(&payloads.Payload{Code: r.part, Description: "clear part", UOPCapacity: 10}), "payload")
@@ -74,7 +89,17 @@ func newClearRig(t *testing.T, prefix string, openSpot bool) *clearRig {
 		r.xBin = clearBin(t, db, r.part, r.x.ID, prefix+"-XB", 3)
 	}
 	r.sim = simulator.New()
-	r.eng = newTestEngine(t, db, r.sim)
+	var flt fleet.Backend = r.sim
+	if opts.fleet != nil {
+		flt = opts.fleet(r.sim)
+	}
+	if opts.counting {
+		cdb, counter, err := store.OpenCounting(cfg)
+		testutil.MustNoErr(t, err, "counting db")
+		t.Cleanup(func() { cdb.Close() })
+		r.db, r.counter = cdb, counter
+	}
+	r.eng = newTestEngine(t, r.db, flt)
 	r.d = r.eng.Dispatcher()
 	return r
 }
@@ -162,6 +187,27 @@ func (r *clearRig) liftAt(t *testing.T, id int64, location string) {
 func (r *clearRig) finish(t *testing.T, id int64) {
 	t.Helper()
 	r.sim.DriveState(r.reload(t, id).VendorOrderID, "FINISHED")
+}
+
+// tradeLegs are a trade's two moves, reloaded: l1 the partial's move P S→H,
+// l2 the empty's move E H→S.
+func (r *clearRig) tradeLegs(t *testing.T, parentID int64) (l1, l2 *orders.Order) {
+	t.Helper()
+	partial, empties := r.children(t, parentID)
+	if partial == nil || len(empties) != 1 {
+		t.Fatalf("children: partial=%v empties=%d, want the partial's move and one empty's move", partial, len(empties))
+	}
+	return r.reload(t, partial.ID), r.reload(t, empties[0].ID)
+}
+
+// binOn asserts a bin is recorded on a node.
+func (r *clearRig) binOn(t *testing.T, binID int64, n *nodes.Node) {
+	t.Helper()
+	b, err := r.db.GetBin(binID)
+	testutil.MustNoErr(t, err, "reload bin")
+	if b.NodeID == nil || *b.NodeID != n.ID {
+		t.Errorf("bin %s is on node %v, want %s (%d)", b.Label, b.NodeID, n.Name, n.ID)
+	}
 }
 
 // TestClearHome_SpotArm: an open buffer spot and no pull. One parent in
@@ -341,21 +387,25 @@ func TestClearHome_DemandArm_TheLoadersOwnPull(t *testing.T) {
 	}
 }
 
-// TestClearHome_FullBufferNoPull_RecordsTheZeroOnly: no open spot and nothing
-// waiting — the two-robot trade, not built (STOP 6, the gap the pair brief
-// closes). The confirm is not refused: the zero is recorded, no job is born,
-// and the answer is the arm "none" with the sentence, carrying the carrier
-// and its new epoch for the station to record.
-func TestClearHome_FullBufferNoPull_RecordsTheZeroOnly(t *testing.T) {
+// TestClearHome_FullBufferNoPull_BirthsTheTrade: no open spot and nothing
+// waiting — the two-robot trade (was: the zero recorded and nothing born).
+// The zero is recorded and named in the answer, the arm is "trade", and the
+// confirm's own advance sends both legs: the empty's move E H→S and the
+// partial's move P S→H, sibling-linked, each create its lift alone and
+// unsealed, each plan [pickup, wait(vacate), drop] stamped on the bin the other
+// lifts. Each drop is appended only once the other bin has left; both land,
+// the parent is confirmed, E stands on S and P on H, and nothing is held.
+//
+// The confirm's statements are counted here (a measurement for the report,
+// not a budget pin).
+func TestClearHome_FullBufferNoPull_BirthsTheTrade(t *testing.T) {
 	t.Parallel()
-	r := newClearRig(t, "CHF", false)
+	r := newClearRigWith(t, "CHF", false, clearRigOpts{counting: true})
+	r.counter.Reset()
 	ans := r.tap(t)
-	if ans.Status != http.StatusOK || ans.Body.Arm != protocol.ClearArmNone || ans.Body.Detail != ClearPartialStays ||
-		ans.Body.BinID != r.e.ID || ans.Body.Error != "" {
-		t.Fatalf("tap: %d %+v, want 200 arm none %q naming the carrier", ans.Status, ans.Body, ClearPartialStays)
-	}
-	if p := r.parent(t); p != nil {
-		t.Errorf("a parent was born: %+v", p)
+	t.Logf("COST: the trade's confirm issued %d statements", r.counter.Count())
+	if ans.Status != http.StatusOK || ans.Body.Arm != protocol.ClearArmTrade || ans.Body.BinID != r.e.ID || ans.Body.Error != "" {
+		t.Fatalf("tap: %d %+v, want 200 arm trade naming the carrier", ans.Status, ans.Body)
 	}
 	e, err := r.db.GetBin(r.e.ID)
 	testutil.MustNoErr(t, err, "E")
@@ -363,19 +413,74 @@ func TestClearHome_FullBufferNoPull_RecordsTheZeroOnly(t *testing.T) {
 		t.Errorf("the zero: payload=%q uop=%d epoch=%d (answer %d, before %d)",
 			e.PayloadCode, e.UOPRemaining, e.DeltaEpoch, ans.Body.DeltaEpoch, r.e.DeltaEpoch)
 	}
-	var holds int
-	testutil.MustNoErr(t, r.db.DB.QueryRow(`SELECT COUNT(*) FROM reservations WHERE bin_id IN ($1, $2)`, r.e.ID, r.p.ID).Scan(&holds), "holds")
-	if holds != 0 {
-		t.Errorf("%d holds on the carrier or the partial, want none", holds)
+	parent := r.parent(t)
+	if parent == nil || parent.Status != protocol.StatusReshuffling || parent.EdgeUUID != ans.Body.ParentUUID {
+		t.Fatalf("parent %+v, want one clear parent in reshuffling named by the answer", parent)
 	}
+	l1, l2 := r.tradeLegs(t, parent.ID)
+	if l2.Sequence != 1 || l2.SourceNode != r.home.Name || l2.DeliveryNode != r.s.Name ||
+		l2.SiblingOrderUUID != l1.EdgeUUID || l1.SiblingOrderUUID != l2.EdgeUUID {
+		t.Errorf("empty's move seq=%d %s→%s sibling=%q, partial's move sibling=%q: want E %s→%s at seq 1, the two naming each other",
+			l2.Sequence, l2.SourceNode, l2.DeliveryNode, l2.SiblingOrderUUID, l1.SiblingOrderUUID, r.home.Name, r.s.Name)
+	}
+	for _, c := range []struct {
+		o        *orders.Order
+		from, to string
+		stampBin int64
+	}{{l1, r.s.Name, r.home.Name, r.e.ID}, {l2, r.home.Name, r.s.Name, r.p.ID}} {
+		if c.o.VendorOrderID == "" {
+			t.Fatalf("order %d was not sent in the confirm (status %s cause %q)", c.o.ID, c.o.Status, c.o.QueueCause)
+		}
+		var steps []struct {
+			Action   string `json:"action"`
+			Node     string `json:"node"`
+			WaitKind string `json:"wait_kind"`
+			Vacate   *struct {
+				Node string `json:"node"`
+				Bin  int64  `json:"bin"`
+			} `json:"vacate"`
+		}
+		testutil.MustNoErr(t, json.Unmarshal([]byte(c.o.StepsJSON), &steps), "steps")
+		if len(steps) != 3 || steps[0].Action != protocol.ActionPickup || steps[0].Node != c.from ||
+			steps[1].Action != protocol.ActionWait || steps[1].WaitKind != protocol.WaitKindVacate || steps[1].Node != "" ||
+			steps[2].Action != protocol.ActionDropoff || steps[2].Node != c.to || steps[2].Vacate == nil ||
+			steps[2].Vacate.Node != c.to || steps[2].Vacate.Bin != c.stampBin {
+			t.Errorf("order %d plan %s, want [pickup %s, bare vacate wait, drop %s stamped on bin %d]",
+				c.o.ID, c.o.StepsJSON, c.from, c.to, c.stampBin)
+		}
+		sent := r.sim.GetOrder(c.o.VendorOrderID)
+		if sent == nil || sent.Complete || len(sent.Blocks) != 1 || sent.Blocks[0].Location != c.from || !IsPickupBlock(sent.Blocks[0].BinTask) {
+			t.Errorf("order %d's create = %+v, want its lift at %s alone, unsealed", c.o.ID, sent, c.from)
+		}
+	}
+
+	r.lift(t, l2.ID)
+	if got := r.reload(t, l1.ID); got.WaitIndex != 1 {
+		t.Errorf("E has left the home and the partial's move's drop is not appended (wait %d, status %s)", got.WaitIndex, got.Status)
+	}
+	if got := r.reload(t, l2.ID); got.WaitIndex != 0 {
+		t.Fatalf("the empty's move's drop on %s was appended before P left it", r.s.Name)
+	}
+	r.lift(t, l1.ID)
+	if got := r.reload(t, l2.ID); got.WaitIndex != 1 {
+		t.Fatalf("P has left %s and the empty's move's drop is not appended (wait %d, status %s)", r.s.Name, got.WaitIndex, got.Status)
+	}
+	r.finish(t, l2.ID)
+	r.finish(t, l1.ID)
+	r.eng.after.settle()
+	if got := r.reload(t, parent.ID); got.Status != protocol.StatusConfirmed {
+		t.Errorf("parent after both landed: %s, want confirmed", got.Status)
+	}
+	r.binOn(t, r.e.ID, r.s)
+	r.binOn(t, r.p.ID, r.home)
+	testdb.AssertNoHoldsAtRest(t, r.db, "after the trade")
 }
 
-// TestClearHome_CandidatesDecline_TheJobEndsAndTheZeroStands: a pull that
-// could see the home's carrier exists but its own finder declines it (its part
-// rides another carrier type), and no spot is open. The same gap, reached
-// after the birth: the job ends — nothing of it is left live, the partial's
-// hold is gone — and the answer is the arm "none" with the zero carried.
-func TestClearHome_CandidatesDecline_TheJobEndsAndTheZeroStands(t *testing.T) {
+// TestClearHome_CandidatesDecline_BirthTheTrade: a pull that could see the
+// home's carrier exists but its own finder declines it (its part rides another
+// carrier type), and no spot is open. Choose falls through to the trade (was:
+// the job ended and the zero stood): both legs go, the pull holds nothing.
+func TestClearHome_CandidatesDecline_BirthTheTrade(t *testing.T) {
 	t.Parallel()
 	r := newClearRig(t, "CHN", false)
 	other := &bins.BinType{Code: "CHN-OTHER"}
@@ -392,24 +497,19 @@ func TestClearHome_CandidatesDecline_TheJobEndsAndTheZeroStands(t *testing.T) {
 	}
 
 	ans := r.tap(t)
-	if ans.Status != http.StatusOK || ans.Body.Arm != protocol.ClearArmNone || ans.Body.BinID != r.e.ID || ans.Body.DeltaEpoch == 0 {
-		t.Fatalf("tap: %d %+v, want 200 arm none with the zero carried", ans.Status, ans.Body)
+	if ans.Status != http.StatusOK || ans.Body.Arm != protocol.ClearArmTrade || ans.Body.BinID != r.e.ID || ans.Body.DeltaEpoch == 0 {
+		t.Fatalf("tap: %d %+v, want 200 arm trade with the zero carried", ans.Status, ans.Body)
 	}
 	if pull := testdb.RequireOrder(t, r.db, "chn-pull"); pull.BinID != nil {
 		t.Errorf("the declining pull holds bin %d", *pull.BinID)
 	}
 	parent := r.parent(t)
-	if parent == nil || !protocol.IsTerminal(parent.Status) {
-		t.Fatalf("parent %+v, want the job ended", parent)
+	if parent == nil || parent.Status != protocol.StatusReshuffling {
+		t.Fatalf("parent %+v, want the job live", parent)
 	}
-	partial, _ := r.children(t, parent.ID)
-	if partial == nil || !protocol.IsTerminal(r.reload(t, partial.ID).Status) {
-		t.Errorf("the partial's move is left live")
-	}
-	var holds int
-	testutil.MustNoErr(t, r.db.DB.QueryRow(`SELECT COUNT(*) FROM reservations WHERE bin_id=$1`, r.p.ID).Scan(&holds), "holds")
-	if holds != 0 {
-		t.Errorf("%d holds left on the partial", holds)
+	l1, l2 := r.tradeLegs(t, parent.ID)
+	if l1.VendorOrderID == "" || l2.VendorOrderID == "" {
+		t.Fatalf("trade legs: partial's move vendor=%q, empty's move vendor=%q, want both sent", l1.VendorOrderID, l2.VendorOrderID)
 	}
 }
 
@@ -709,5 +809,37 @@ func TestClearHome_CrashAfterTheBirth_TheFloorChooses(t *testing.T) {
 	testutil.MustNoErr(t, err, "E")
 	if e.DeltaEpoch != epoch {
 		t.Errorf("re-zeroed: epoch %d, birth's %d", e.DeltaEpoch, epoch)
+	}
+}
+
+// TestClearPin_RerunNeverTouchesACommittedPartial: the re-run acts only on a
+// partial's move nothing has sent. With the partial's move already with the
+// fleet (a vendor order on its row) and the empty standing on the home held by
+// nobody (its move failed before the lift), neither the failure's own re-drive
+// nor the floor re-runs: the vacate re-drive reads a sent child as an order of
+// its own (redriveVacateOrder), never as a held partial, and rerunClearLocked
+// refuses a partial's move that carries a vendor order. No second empty's move
+// is born and the partial's move is left as it was.
+func TestClearPin_RerunNeverTouchesACommittedPartial(t *testing.T) {
+	t.Parallel()
+	r := newClearRig(t, "CPR", true)
+	if ans := r.tap(t); ans.Status != http.StatusOK || ans.Body.Arm != protocol.ClearArmSpot {
+		t.Fatalf("tap: %d %+v, want 200 spot", ans.Status, ans.Body)
+	}
+	parent := r.parent(t)
+	partial, empties := r.children(t, parent.ID)
+	testutil.MustNoErr(t, r.db.UpdateOrderVendor(partial.ID, "sg-committed-partial", "RUNNING", "AMR-01"),
+		"the partial's move is with the fleet")
+	first := r.reload(t, empties[0].ID)
+	testutil.MustNoErr(t, r.d.Lifecycle().Fail(first, first.StationID, "robot_fault", "the robot faulted"), "fail the empty's move")
+	r.eng.after.settle()
+	if n := r.d.RerunClears(); n != 0 {
+		t.Errorf("the floor re-ran %d clears with the partial's move committed, want 0", n)
+	}
+	if _, empties = r.children(t, parent.ID); len(empties) != 1 {
+		t.Errorf("%d empty's moves, want only the failed one", len(empties))
+	}
+	if got := r.reload(t, partial.ID); got.VendorOrderID != "sg-committed-partial" || protocol.IsTerminal(got.Status) {
+		t.Errorf("the partial's move: vendor=%q status=%s, want it left as it was", got.VendorOrderID, got.Status)
 	}
 }

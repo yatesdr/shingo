@@ -154,6 +154,20 @@ func (d *Dispatcher) HandleSwapPeerTerminal(deadOrderID int64, terminalKind stri
 		return
 	}
 
+	// A HOME CLEAR'S TRADE LEG WHOSE DROP IS ALREADY APPENDED FINISHES. Its drop
+	// was held on the other bin's lift (a stored vacate wait) and Core appended
+	// it only once that bin had left: the place it drops on is empty, so neither
+	// hazard below can happen, and cancelling it would only leave its bin on a
+	// robot. No Edge-authored leg carries a stored vacate wait (holdsAfterLift),
+	// so every other pair takes the rule whole.
+	if !protocol.IsTerminal(peer.Status) && peer.WaitIndex > 0 && holdsAfterLift(peer) {
+		log.Printf("dispatch: trade leg %d %s; its partner %d keeps going — its drop was appended once the other bin had left",
+			dead.ID, terminalKind, peer.ID)
+		d.db.AppendAudit("order", peer.ID, "trade_leg_kept", "",
+			fmt.Sprintf("partner order %d ended %s after this leg's drop was appended; this leg finishes", dead.ID, terminalKind), "system")
+		return
+	}
+
 	// ── THE DEATH RULE, WHOLE ─────────────────────────────────────────────
 	//
 	// A leg that goes terminal takes its sibling with it. ONE action, taken the
@@ -197,8 +211,14 @@ func (d *Dispatcher) HandleSwapPeerTerminal(deadOrderID int64, terminalKind stri
 		hazard = "cancelling supply so it cannot drop onto an un-cleared line"
 		role = "evac"
 	}
-	d.resolveSwapPeer(peer, dead,
-		fmt.Sprintf("coordinated swap %s (order %d) %s; %s", role, dead.ID, terminalKind, hazard))
+	reason := fmt.Sprintf("coordinated swap %s (order %d) %s; %s", role, dead.ID, terminalKind, hazard)
+	if holdsAfterLift(dead) {
+		// A home clear's trade leg: the same action, its own sentence — there is
+		// no line, and the partner's drop waits on a lift that will not come.
+		reason = fmt.Sprintf("the other leg of this trade (order %d) %s; cancelling this one, whose drop waits on that leg's lift",
+			dead.ID, terminalKind)
+	}
+	d.resolveSwapPeer(peer, dead, reason)
 }
 
 // resolveSwapPeer cancels the peer if it is still live, or surfaces the

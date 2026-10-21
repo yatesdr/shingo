@@ -483,13 +483,17 @@ func TestBinsPush_OrdersToAWatchedPlace(t *testing.T) {
 		t.Error("an order elsewhere was remembered")
 	}
 
+	// The change lands before the order that pushes it: the push is armed by
+	// BinsOrderStarted and builds binsPushDelay later, so a write after the
+	// start races the build (seen under a loaded gate: the build read the old
+	// count and sent nothing).
+	_, err = svc.db.DB.Exec(`UPDATE bins SET uop_remaining = 5 WHERE id = $1`, f.base)
+	testutil.MustNoErr(t, err, "stock the base")
+	before := resp.count("edge.b")
 	svc.BinsOrderStarted(52, "KD-1")
 	if got := svc.bins.orders[52]; !reflect.DeepEqual(got, []string{"edge.b"}) {
 		t.Errorf("order to the outbound group: remembered for %v, want [edge.b]", got)
 	}
-	_, err = svc.db.DB.Exec(`UPDATE bins SET uop_remaining = 5 WHERE id = $1`, f.base)
-	testutil.MustNoErr(t, err, "stock the base")
-	before := resp.count("edge.b")
 	settle(t, svc)
 	if got := resp.count("edge.b") - before; got != 1 {
 		t.Errorf("order to the group started: %d sends to edge.b, want 1", got)

@@ -923,7 +923,7 @@ func (d *Dispatcher) advanceCompound(parentOrderID int64, dispatched *bool) erro
 	// Its drop carries the vacate stamp (the home's carrier, the home); until
 	// that carrier has been lifted off the home the move is held here, before
 	// any robot is sent, with the cause on its row. PopVacateHeld re-drives it
-	// (RedriveVacateWaits) on the lift and on its floor. A child with no stamp
+	// (RedriveVacateOnLift) on the lift and on its floor. A child with no stamp
 	// (every dig leg) decodes nothing and asks nothing.
 	if d.clearDropHeld(next) {
 		return nil
@@ -1049,6 +1049,13 @@ func (d *Dispatcher) advanceCompound(parentOrderID int64, dispatched *bool) erro
 		return nil
 	}
 
+	// A HOME CLEAR'S TRADE LEG GOES WITH ITS PARTNER OR NOT AT ALL
+	// (clear_home.go, tradePartnerReady): a partner that cannot be sent holds
+	// this leg too, unlifted, with the partner's cause on its row.
+	if !d.tradePartnerReady(next) {
+		return nil
+	}
+
 	// Admitted — clear any cause a previous pass left, so the row does not keep
 	// claiming a wait that has ended.
 	d.setQueueReason(next, "", "", QueueParams{})
@@ -1145,6 +1152,15 @@ func (d *Dispatcher) advanceCompound(parentOrderID int64, dispatched *bool) erro
 	}
 	if dispatched != nil {
 		*dispatched = true
+	}
+	// A HOME CLEAR'S TRADE LEG IS SENT WITH ITS PARTNER, in this same call: the
+	// advance goes on once, and the partner — the next child awaiting the fleet —
+	// is sent (tradePartnerReady asked for it before this leg went). The
+	// recursion ends at the chapter-end half when no child is left unsent. No
+	// other child holds after its lift, so every other advance still sends one
+	// leg per call (TestCompoundPin_AdvanceSendsOneLegPerCall).
+	if holdsAfterLift(next) {
+		return d.advanceCompound(parentOrderID, dispatched)
 	}
 	return nil
 }
@@ -1623,6 +1639,14 @@ func (d *Dispatcher) parkLegOnFleetRefusal(parentOrderID int64, leg *orders.Orde
 	if IsConcurrentTransition(cause) {
 		log.Printf("dispatch: compound %d child %d — fleet handover lost the CAS: %v (another caller "+
 			"owns this leg; leaving it alone)", parentOrderID, leg.ID, cause)
+		return
+	}
+
+	// A HOME CLEAR'S TRADE LEG REFUSED AFTER ITS PARTNER WAS SENT IS A DEATH
+	// (clear_home.go, tradeSecondLegRefused): the partner's robot would stand
+	// under its lifted bin for a lift nobody is coming to make. Every other leg,
+	// and the first trade leg sent, takes the demote below.
+	if d.tradeSecondLegRefused(parentOrderID, leg, cause) {
 		return
 	}
 

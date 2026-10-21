@@ -715,6 +715,22 @@ func LinkSiblingsByEdgeUUID(db *sql.DB, uuidA, uuidB string) (int64, error) {
 	return res.RowsAffected()
 }
 
+// BindTradeLegTx rewrites an unsent order's plan and names its sibling in one
+// statement: a home clear's partial move becoming one leg of the two-robot
+// trade (dispatch/clear_home.go, birthClearTrade). Guarded on no vendor order
+// and a live status, so a move the fleet already has is never re-planned.
+// Reports whether the row was written.
+func BindTradeLegTx(tx *sql.Tx, id int64, stepsJSON, siblingUUID string) (bool, error) {
+	res, err := tx.Exec(fmt.Sprintf(`UPDATE orders SET steps_json=$2, sibling_order_uuid=$3, updated_at=$4
+		WHERE id=$1 AND vendor_order_id = '' AND status NOT IN (%s)`, protocol.TerminalStatusSQLList()),
+		id, stepsJSON, siblingUUID, clock.Now().UTC())
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n == 1, err
+}
+
 // ReleaseTerminalEdgeUUID blanks edge_uuid on TERMINAL orders holding it, so a
 // deterministic uuid can be minted again. Returns how many rows were cleared.
 //
@@ -2067,26 +2083,36 @@ func ActiveByBinID(db *sql.DB, binID int64) ([]*Order, error) {
 // hold can stand on. Two shapes, one population (PopVacateHeld):
 //
 //   - committed (a vendor order), staged or in transit, whose plan carries a
-//     held vacate stamp or a stored vacate wait. The plan decides whether the
-//     order is parked at that wait now (dispatch.coreOwnsWait);
+//     held vacate stamp or a stored vacate wait — and, for a stored vacate wait
+//     only, dispatched too: a home clear's trade leg is with the fleet before
+//     its robot has moved, and its partner's lift may come first. The plan
+//     decides whether the order is parked at that wait now
+//     (dispatch.coreOwnsWait);
 //   - a compound child not yet handed to the fleet whose drop carries a vacate
 //     stamp: a home clear's partial move, held before dispatch until the stamp's
 //     bin leaves (dispatch/clear_home.go, clearDropHeld).
 //
 // binID, when not 0, narrows to the rows with a stamp naming that bin — the
 // lift's read, which returns no row when nothing waits on the lifted bin. 0
-// returns them all (an order's end, the floor). One statement either way: the
+// returns them all (an order's end, the floor). orderID, when not 0, is the
+// order whose pickup lifted the bin: its own committed row comes back too when
+// its plan carries a stored vacate wait, because a trade leg's own stamp names
+// the other bin, never the one it lifts. One statement either way: the
 // redriver, the floor and the clear's re-run all ask it.
-func VacateWaitCandidates(db *sql.DB, binID int64) ([]*Order, error) {
+func VacateWaitCandidates(db *sql.DB, binID, orderID int64) ([]*Order, error) {
 	rows, err := db.Query(fmt.Sprintf(`SELECT %s FROM orders
-		WHERE ((status IN ($1, $2) AND vendor_order_id <> ''
-		         AND (steps_json LIKE '%%"held_at":%%' OR steps_json LIKE '%%"wait_kind":"vacate"%%'))
+		WHERE ((vendor_order_id <> '' AND (
+		          (status IN ($1, $2) AND (steps_json LIKE '%%"held_at":%%' OR steps_json LIKE '%%"wait_kind":"vacate"%%'))
+		       OR (status = $5 AND steps_json LIKE '%%"wait_kind":"vacate"%%')))
 		    OR (parent_order_id IS NOT NULL AND %s AND steps_json LIKE '%%"vacate":%%'))
-		  AND ($3 = 0 OR CASE WHEN steps_json LIKE '[%%' THEN EXISTS (
+		  AND ($3 = 0
+		    OR ($4 <> 0 AND id = $4 AND steps_json LIKE '%%"wait_kind":"vacate"%%')
+		    OR CASE WHEN steps_json LIKE '[%%' THEN EXISTS (
 		        SELECT 1 FROM jsonb_array_elements(steps_json::jsonb) st
 		         WHERE (st->'vacate'->>'bin')::bigint = $3) ELSE false END)
 		ORDER BY id`, SelectCols, AwaitingFleetSQL("")),
-		string(protocol.StatusStaged), string(protocol.StatusInTransit), binID)
+		string(protocol.StatusStaged), string(protocol.StatusInTransit), binID, orderID,
+		string(protocol.StatusDispatched))
 	if err != nil {
 		return nil, err
 	}

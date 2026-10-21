@@ -20,24 +20,25 @@ import (
 //
 // The checks the Edge used to make before it touched anything moved here: the
 // node is a pinned home of a dedicated loader, its carrier holds stock, and a
-// buffer spot of the same loader holds a partial of the home's part. Then,
-// under ONE hold of the scanner's lock (the Door), in this order:
+// buffer spot of the same loader holds a partial of the home's part that no
+// other order holds. Then, under ONE hold of the scanner's lock (the Door), in
+// this order:
 //
 //  1. the fence: a live clear of the home refuses the second — the ONLY 409
 //     (the parent row is the key, so it survives a restart and clears itself
 //     when the job ends). A request naming no clearable home is a 400;
-//  2. both arms' candidates read once. No pull and no open spot is the
-//     two-robot trade, not built yet (owner, STOP 6: the gap the pair brief
-//     closes): the zero is recorded, no job is born, and the answer is the arm
-//     "none" with ClearPartialStays;
+//  2. both arms' candidates read once. With no open spot, whether the trade
+//     can be born is asked too (dispatch.ClearTradeRefusal): a window that
+//     cannot take the other carrier is a 400, before anything is written;
 //  3. one transaction: the parent and the partial's move, the partial held,
 //     the carrier zeroed (dispatch.BirthClearTx, the bin manifest's clear);
-//  4. choose (dispatch.ChooseClearLocked): demand, then spot. With neither —
-//     candidates existed but none took the carrier — the job ends and the
-//     answer is the same "none": the zero stands.
+//  4. choose (dispatch.ChooseClearLocked): demand, then spot, then the trade;
+//     then the parent advanced, which sends the empty's move (both trade legs
+//     on the trade).
 //
-// Every confirm past the fence and the checks records the zero, and every
-// answer carries the carrier's id and new epoch for the station to record.
+// Every confirm past the checks records the zero, and every answer that
+// follows a zero carries the carrier's id and new epoch for the station to
+// record.
 //
 // One round trip from the Pi: the request, the answer.
 
@@ -74,9 +75,8 @@ func (e *Engine) clearLoaderHomeLocked(req protocol.ClearHomeRequest) ClearHomeA
 		return *refusal
 	}
 	d := e.dispatcher
-	// Both arms' candidates, read once: the refusal below needs them, and choose
-	// takes them as read (ClearFacts.Prepared) — nothing moves them under this
-	// hold of the Door.
+	// Both arms' candidates, read once: choose takes them as read
+	// (ClearFacts.Prepared) — nothing moves them under this hold of the Door.
 	pulls, err := d.ClearPulls(home, job.LoaderID)
 	if err != nil {
 		return clearRefused(http.StatusInternalServerError, "could not read the waiting pulls: %v", err)
@@ -85,18 +85,26 @@ func (e *Engine) clearLoaderHomeLocked(req protocol.ClearHomeRequest) ClearHomeA
 	if err != nil {
 		return clearRefused(http.StatusInternalServerError, "could not read the buffer: %v", err)
 	}
-	// THE GAP THE PAIR BRIEF CLOSES (owner, STOP 6): no pull and no open spot is
-	// the two-robot trade, which is not built. The zero is recorded (the floor
-	// fact) and no job is born; the station is told the partial stays.
-	if spot == nil && len(pulls) == 0 {
-		return e.clearZeroOnly(job)
+	// NO OPEN SPOT MAY END IN THE TRADE, so whether it can be born is asked
+	// before anything is written: a window that cannot take the other carrier
+	// is a configuration fact, refused like the checks above. Asked whenever no
+	// spot is open, pulls or not: a pull that declines the carrier leaves the
+	// trade, and by then the zero is written.
+	if spot == nil {
+		refusal, err := d.ClearTradeRefusal(job.LoaderID, home, job.PartialAt, job.Empty, job.Partial)
+		if err != nil {
+			return clearRefused(http.StatusInternalServerError, "could not read whether two robots can trade at %s: %v", home.Name, err)
+		}
+		if refusal != "" {
+			return clearRefused(http.StatusBadRequest, "no buffer spot is open and %s", refusal)
+		}
 	}
 
 	birth, epoch, err := e.birthClear(job)
 	if errors.Is(err, dispatch.ErrClearPartialPromised) {
-		// Another order outranks the clear for the partial: the job cannot be
-		// born, and the zero is still the station's fact.
-		return e.clearZeroOnly(job)
+		// resolveClearJob skipped every partial another order holds, under this
+		// same hold of the Door; nothing should have taken one since.
+		return clearRefused(http.StatusInternalServerError, "%s was promised to another order while the clear was being born", job.Partial.Label)
 	}
 	if err != nil {
 		return clearRefused(http.StatusInternalServerError, "could not start the clear: %v", err)
@@ -109,18 +117,20 @@ func (e *Engine) clearLoaderHomeLocked(req protocol.ClearHomeRequest) ClearHomeA
 		empty = job.Empty
 	}
 	arm, err := d.ChooseClearLocked(dispatch.ClearFacts{Parent: birth.Parent, Home: home,
-		LoaderID: job.LoaderID, EmptyBin: empty, PartialAt: job.PartialAt.Name,
+		LoaderID: job.LoaderID, EmptyBin: empty, PartialAt: job.PartialAt.Name, Partial: birth.Partial,
 		Prepared: true, Pulls: pulls, Spot: spot})
 	if err != nil || arm == "" {
-		// The candidates declined the empty and no spot is open: the same gap,
-		// reached after the birth. The job ends (nothing of it is left live) and
-		// the zero stands.
-		why := fmt.Sprintf("no buffer spot is open and no pull took %s", job.Empty.Label)
+		// Choose could not write its arm (the trade was asked before the birth,
+		// so "" is a fault here too). The job ends, nothing of it is left live,
+		// and the zero stands: the answer carries it for the station to record.
+		why := fmt.Sprintf("the clear could not choose where %s goes", job.Empty.Label)
 		if err != nil {
-			why = fmt.Sprintf("the clear could not choose where %s goes: %v", job.Empty.Label, err)
+			why = fmt.Sprintf("%s: %v", why, err)
 		}
 		d.EndClear(birth.Parent, why)
-		return clearStays(job.Empty.ID, epoch)
+		ans := clearRefused(http.StatusInternalServerError, "%s; %s is recorded empty", why, job.Empty.Label)
+		ans.Body.BinID, ans.Body.DeltaEpoch = job.Empty.ID, epoch
+		return ans
 	}
 	if err := d.AdvanceCompoundOrder(birth.Parent.ID); err != nil {
 		log.Printf("engine: clear %d: advance: %v", birth.Parent.ID, err)
@@ -132,7 +142,8 @@ func (e *Engine) clearLoaderHomeLocked(req protocol.ClearHomeRequest) ClearHomeA
 // resolveClearJob makes the checks the Edge used to make, against Core's own
 // records: a pinned home of a dedicated loader, one carrier on it holding
 // stock that nobody has claimed, and the partial — the named spot's, else the
-// first buffer spot's in the loader's order — of the home's part, unclaimed.
+// first buffer spot's in the loader's order — of the home's part, held by no
+// order (clearPartialOn).
 func (e *Engine) resolveClearJob(home *nodes.Node, req protocol.ClearHomeRequest) (dispatch.ClearJob, *ClearHomeAnswer) {
 	refuse := func(status int, format string, a ...any) (dispatch.ClearJob, *ClearHomeAnswer) {
 		r := clearRefused(status, format, a...)
@@ -204,39 +215,25 @@ func (e *Engine) resolveClearJob(home *nodes.Node, req protocol.ClearHomeRequest
 	return refuse(http.StatusBadRequest, "no buffer spot holds a partial of %s", h.PayloadCode)
 }
 
-// clearPartialOn is the unclaimed bin of the payload with parts left on spot.
+// clearPartialOn is the bin of the payload with parts left on spot that no
+// order holds: no claim, and no soft hold either (bins.StandsUnheld). A
+// partial another order has been promised is not the clear's to bring home;
+// skipping it here makes that case the pick's own 400 before anything is
+// written, instead of a birth the steal would refuse after the zero.
 func clearPartialOn(e *Engine, spot *nodes.Node, payload string) *bins.Bin {
 	on, err := e.db.ListBinsByNode(spot.ID)
 	if err != nil {
 		return nil
 	}
 	for _, b := range on {
-		if b.PayloadCode == payload && b.UOPRemaining > 0 && b.ClaimedBy == nil {
+		if b.PayloadCode != payload || b.UOPRemaining <= 0 || b.ClaimedBy != nil {
+			continue
+		}
+		if free, err := e.db.BinStandsUnheld(b.ID, spot.Name); err == nil && free {
 			return b
 		}
 	}
 	return nil
-}
-
-// ClearPartialStays is what the station is told when a confirm records the zero
-// and no job takes the empty: the two-robot trade's gap (STOP 6), the same
-// sentence as the station's own tap says.
-const ClearPartialStays = "the partial stays on its spot for now"
-
-// clearStays is the success answer with no job: arm none, the zero carried.
-func clearStays(binID, epoch int64) ClearHomeAnswer {
-	return ClearHomeAnswer{Status: http.StatusOK, Body: protocol.ClearHomeResponse{
-		Status: "ok", Arm: protocol.ClearArmNone, Detail: ClearPartialStays, BinID: binID, DeltaEpoch: epoch}}
-}
-
-// clearZeroOnly records the zero and births nothing: the carrier's clear (with
-// its CMS departure if owed), in one transaction.
-func (e *Engine) clearZeroOnly(job dispatch.ClearJob) ClearHomeAnswer {
-	epoch, err := e.ClearForReuseAndBookDeparture(job.Empty.ID, job.Home.ID, nil)
-	if err != nil {
-		return clearRefused(http.StatusInternalServerError, "could not record %s empty: %v", job.Empty.Label, err)
-	}
-	return clearStays(job.Empty.ID, epoch)
 }
 
 // birthClear is step 3's one transaction: the CMS departure the zero owes

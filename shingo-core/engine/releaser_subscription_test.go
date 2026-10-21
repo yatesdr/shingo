@@ -50,7 +50,7 @@ func TestDeclaredReleaserEventsAreSubscribed(t *testing.T) {
 	wiringFor := map[string]string{
 		"Dispatcher.EvaluateGroupReleases":   "wiring_lane_gate.go",
 		"Dispatcher.RedriveHeldCompoundLegs": "wiring_lane_gate.go",
-		"Dispatcher.RedriveVacateWaits":      "wiring_lane_gate.go",
+		"Dispatcher.RedriveVacateOnLift":     "wiring_lane_gate.go",
 		"fulfillment.Scanner.RunOnce":        "wiring.go",
 		"Dispatcher.AdvanceCompoundOrder":    "wiring.go",
 	}
