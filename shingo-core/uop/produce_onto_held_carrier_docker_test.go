@@ -13,12 +13,12 @@ import (
 	"shingocore/uop"
 )
 
-// The two produce writers record what a press already put into a carrier, and
-// that carrier is routinely held by then: the press's swap or removal order
-// claimed it at dispatch. Neither is a LOAD, and the held-carrier check the
-// LOAD doors run must not reach them (owner, 2026-10-18: "the two produce
-// writers" stay legal and identical). Pinned here against a carrier a
-// dispatched order claims, the hold a LOAD is refused under
+// The produce tick's bind and produce finalize record what a press already put
+// into a carrier, and that carrier is routinely held by then: the press's swap
+// or removal order claimed it at dispatch. Neither is a LOAD. Both write
+// through the produce writer (bins.RecordProducedTx), the one statement the
+// held-carrier check the LOAD doors run does not reach. Pinned here against a
+// carrier a dispatched order claims, the hold a LOAD is refused under
 // (www.TestApiBinLoad_AHeldCarrierIsRefused).
 
 func TestProduceWriters_RecordOntoAHeldCarrier(t *testing.T) {

@@ -33,8 +33,11 @@ const (
 	// loadWrite: the one statement every LOAD door reaches. It runs the check
 	// unless its caller names the exemption (heldRule).
 	loadWrite writerKind = "load: runs the held check"
-	// exemptWrite: writes a payload onto a carrier a live order may hold, on
-	// purpose. The reason says why it must.
+	// produceWrite: the produce writer, the one statement that writes a payload
+	// onto a carrier a live order may hold, on purpose. The reason says why.
+	produceWrite writerKind = "produce: the one exemption"
+	// exemptWrite: writes a payload with no held check, reached by no plant
+	// door. The reason says why.
 	exemptWrite writerKind = "exempt"
 	// notALoad: changes a count, or empties a carrier, without stamping a
 	// payload onto it. Not a LOAD door.
@@ -51,13 +54,11 @@ type writerEntry struct {
 var binContentsWriters = map[string]writerEntry{
 	"service/bin_manifest.go:writeProductionTx": {loadWrite,
 		"the LOAD write: the loader's LOAD (LoadAtLine) and the admin Load Payload " +
-			"(SetFromTemplate) pass refuseHeld; produce finalize passes producedInPlace: it " +
-			"records a press's output into the carrier the press's own order holds; not a " +
-			"person's LOAD"},
-	"uop/applier.go:bindProducedPayloadTx": {exemptWrite,
-		"a produce tick binding the carrier a press is filling: it records a press's " +
-			"output into the carrier the press's own order holds; not a person's LOAD " +
-			"(the same reason as produce finalize, RecordProducedBin)"},
+			"(SetFromTemplate) pass refuseHeld and the check runs before it"},
+	"store/bins/bin_manifest.go:RecordProducedTx": {produceWrite,
+		"the produce writer: produce finalize (RecordProducedBin) and the produce tick's " +
+			"bind record what a station made onto the carrier in hand, including one an " +
+			"order is carrying away; not a person's LOAD"},
 	"store/bins/bin_manifest.go:SetManifest": {exemptWrite,
 		"fixtures and the dev seeder only (pinned below); no plant door reaches it"},
 	"service/bin_manifest.go:emptiedCarrierSET": {notALoad,
@@ -226,10 +227,13 @@ func TestBinContentsWriters_EveryLoadDoorRunsTheHeldCheck(t *testing.T) {
 		t.Errorf("binContentsWriters lists %s, which no longer writes a bin's contents: delete the entry", k)
 	}
 
-	loads := 0
+	loads, produces := 0, 0
 	for _, e := range binContentsWriters {
-		if e.kind == loadWrite {
+		switch e.kind {
+		case loadWrite:
 			loads++
+		case produceWrite:
+			produces++
 		}
 		if e.reason == "" {
 			t.Errorf("an entry of kind %q carries no reason", e.kind)
@@ -238,11 +242,16 @@ func TestBinContentsWriters_EveryLoadDoorRunsTheHeldCheck(t *testing.T) {
 	if loads != 1 {
 		t.Errorf("%d statements are classified as the LOAD write, want exactly 1 (writeProductionTx)", loads)
 	}
+	if produces != 1 {
+		t.Errorf("%d statements are classified as the produce writer, want exactly 1 (bins.RecordProducedTx)", produces)
+	}
 }
 
 // TestBinContentsWriters_TheLoadWriteRunsTheCheck holds the LOAD write to the
-// check, and the exemption to its one user: writeProductionTx calls
+// check, and the exemption to its users: writeProductionTx calls
 // refuseHeldCarrierTx, producedInPlace is named only by RecordProducedBin, and
+// the produce writer (bins.RecordProducedTx) is called only by writeProductionTx
+// (on the producedInPlace arm) and the produce tick's bind in ApplyBinUOPDelta.
 // refuseHeld is what every other caller passes (the parameter is typed, so a
 // caller cannot pass neither).
 func TestBinContentsWriters_TheLoadWriteRunsTheCheck(t *testing.T) {
@@ -251,6 +260,7 @@ func TestBinContentsWriters_TheLoadWriteRunsTheCheck(t *testing.T) {
 
 	checks := false
 	exemptUsers := map[string]bool{}
+	produceCallers := map[string]bool{}
 	for _, pf := range files {
 		eachDecl(pf.file, func(name string, node ast.Node) {
 			fd, ok := node.(*ast.FuncDecl)
@@ -263,6 +273,9 @@ func TestBinContentsWriters_TheLoadWriteRunsTheCheck(t *testing.T) {
 					if id, ok := n.Fun.(*ast.Ident); ok && id.Name == "refuseHeldCarrierTx" &&
 						pf.rel == "service/bin_manifest.go" && name == "writeProductionTx" {
 						checks = true
+					}
+					if sel, ok := n.Fun.(*ast.SelectorExpr); ok && sel.Sel.Name == "RecordProducedTx" {
+						produceCallers[pf.rel+":"+name] = true
 					}
 				case *ast.Ident:
 					if n.Name == "producedInPlace" {
@@ -285,6 +298,20 @@ func TestBinContentsWriters_TheLoadWriteRunsTheCheck(t *testing.T) {
 	if !exemptUsers["service/bin_manifest.go:RecordProducedBin"] {
 		t.Error("RecordProducedBin no longer names producedInPlace: produce finalize would refuse " +
 			"a carrier its removal order holds, writing down that a fill which happened did not")
+	}
+	wantProduce := []string{"service/bin_manifest.go:writeProductionTx", "uop/applier.go:ApplyBinUOPDelta"}
+	for k := range produceCallers {
+		if k != wantProduce[0] && k != wantProduce[1] {
+			t.Errorf("%s calls bins.RecordProducedTx, the produce writer, which skips the held check. "+
+				"Only produce finalize and the produce tick's bind may; a LOAD goes through "+
+				"writeProductionTx with refuseHeld", k)
+		}
+	}
+	for _, k := range wantProduce {
+		if !produceCallers[k] {
+			t.Errorf("%s no longer calls bins.RecordProducedTx: a produce record has left the one "+
+				"produce writer", k)
+		}
 	}
 }
 

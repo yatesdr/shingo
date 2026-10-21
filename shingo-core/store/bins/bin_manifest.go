@@ -27,6 +27,78 @@ func SetManifest(db *sql.DB, binID int64, manifestJSON string, payloadCode strin
 	return err
 }
 
+// Produced is what a produce record writes onto a carrier besides the payload
+// code. The zero value is the produce tick's first-delta bind.
+type Produced struct {
+	// Manifest is the parts list as JSON. nil writes the payload's template
+	// manifest (templateManifestSQL), built in the statement.
+	Manifest *string
+	// Count is the carrier's new count. A record that carries a count starts
+	// the carrier's contents over, so it also unconfirms the manifest and
+	// stamps updated_at. nil leaves all three alone: the produce tick's bind
+	// writes no count (the delta applied after it owns uop_remaining), and
+	// un-confirming a carrier on a rebind would change what may source it.
+	Count *int
+	// Undeclared is the carrier verdict when the caller has already judged
+	// it. nil has the statement judge it from the same rule
+	// (UndeclaredCarrierRuleSQL), which costs no extra statement on the
+	// delta path the produce tick runs under.
+	Undeclared *bool
+	// FlagAnomaly stamps anomaly_at, keeping a standing stamp: the tick's
+	// rebind over units of another payload marks the carrier for a cycle
+	// count. It gates nothing.
+	FlagAnomaly bool
+}
+
+// templateManifestSQL is the manifest the payload named by $1 gives a bin: its
+// template lines' part numbers in template order, `{"items":[]}` when it has
+// none. It is the shape BinManifestService.resolveTemplateManifest marshals for
+// every load and produce write, built in-statement so the produce tick's bind
+// stays one UPDATE. The COALESCE matters: jsonb_agg over zero rows is NULL, and
+// an empty template must still write an empty list rather than keep the old
+// label's parts under the new code.
+const templateManifestSQL = `jsonb_build_object('items', COALESCE((
+		SELECT jsonb_agg(jsonb_build_object('part_number', pm.part_number) ORDER BY pm.id)
+		  FROM payload_manifest pm
+		  JOIN payloads p ON p.id = pm.payload_id
+		 WHERE p.code = $1), '[]'::jsonb))`
+
+// RecordProducedTx is the produce writer: the one statement that records what
+// a station made onto the carrier in hand. Produce finalize
+// (service.RecordProducedBin) and the produce tick's bind
+// (uop.InventoryDeltaService.ApplyBinUOPDelta) both write through it.
+//
+// IT IS THE ONE EXEMPTION FROM THE HELD-CARRIER CHECK. Every LOAD door runs
+// service.refuseHeldCarrierTx before its write; this statement does not, on
+// purpose. The carrier in hand is routinely one an order is carrying away: the
+// station's own swap or removal order claims it at dispatch, and the record of
+// what the station put in it lands after that, often after the lift. Refusing
+// would write down that parts which are in the carrier are not.
+// service.TestBinContentsWriters_TheLoadWriteRunsTheCheck holds its callers to
+// those two.
+//
+// payload_code and the manifest are written together, as every payload_code
+// writer on bins writes them. undeclared_carrier_at follows the carrier rule
+// for the new payload: COALESCE keeps a standing stamp (the question it
+// answers is how long the carrier has been wrong), and the ELSE arm clears a
+// stale one when the carrier moves onto a payload it may hold.
+//
+// Never touched: delta_epoch. The tick's bind must not start a new generation
+// (the station's next count would arrive stamped with the old one and be
+// discarded); finalize bumps it itself, with the announcement a bump owes.
+func RecordProducedTx(tx *sql.Tx, binID int64, payloadCode string, p Produced) error {
+	_, err := tx.Exec(`UPDATE bins b SET payload_code=$1,
+		manifest=COALESCE($2::jsonb, `+templateManifestSQL+`),
+		uop_remaining=COALESCE($3::integer, b.uop_remaining),
+		manifest_confirmed=CASE WHEN $3::integer IS NULL THEN b.manifest_confirmed ELSE false END,
+		updated_at=CASE WHEN $3::integer IS NULL THEN b.updated_at ELSE NOW() END,
+		anomaly_at=CASE WHEN $4 THEN COALESCE(b.anomaly_at, NOW()) ELSE b.anomaly_at END,
+		undeclared_carrier_at=CASE WHEN COALESCE($5::boolean, `+UndeclaredCarrierRuleSQL("$1", "b.bin_type_id")+`)
+			THEN COALESCE(b.undeclared_carrier_at, NOW()) ELSE NULL END
+		WHERE b.id=$6`, payloadCode, p.Manifest, p.Count, p.FlagAnomaly, p.Undeclared, binID)
+	return err
+}
+
 // loadedAtLayouts are the timestamp layouts resolveLoadedAt accepts, tried
 // in order. Edge's wire contract is RFC3339 UTC (produce_plan.go builds
 // now.UTC().Format(time.RFC3339)), so that's first. The rest cover zoneless

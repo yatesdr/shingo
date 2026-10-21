@@ -581,8 +581,10 @@ const (
 	// producedInPlace: the record of parts a press already put in the carrier
 	// (RecordProducedBin). It routinely lands after the removal order has
 	// claimed and lifted the carrier; refusing would write down that a fill
-	// which happened did not. Its only user is RecordProducedBin, pinned by
-	// TestBinContentsWriters_EveryLoadDoorRunsTheHeldCheck.
+	// which happened did not. It writes through the produce writer
+	// (bins.RecordProducedTx), the one statement exempt from the check. Its
+	// only user is RecordProducedBin, pinned by
+	// TestBinContentsWriters_TheLoadWriteRunsTheCheck.
 	producedInPlace
 )
 
@@ -594,6 +596,7 @@ const (
 //
 // `held` is the held-carrier rule (heldRule): a LOAD door passes refuseHeld and
 // the check runs here, in the write's transaction, before anything is written.
+// producedInPlace skips it and writes through the produce writer instead.
 func (s *BinManifestService) writeProductionTx(tx *sql.Tx, binID int64, manifestJSON, payloadCode string, uop int, by protocol.Declarer, no carrierNo, held heldRule) (int64, error) {
 	if held == refuseHeld {
 		if err := refuseHeldCarrierTx(tx, binID); err != nil {
@@ -616,12 +619,24 @@ func (s *BinManifestService) writeProductionTx(tx *sql.Tx, binID int64, manifest
 	// payload to another has been wrong continuously, and the question the
 	// timestamp answers is how long, not when it was last noticed. Same shape
 	// as bins.MarkAnomalyWithNote.
-	if _, err := tx.Exec(`UPDATE bins SET payload_code=$1, manifest=$2, uop_remaining=$3,
-		manifest_confirmed=false, updated_at=NOW(),
-		undeclared_carrier_at = CASE WHEN $5 THEN COALESCE(undeclared_carrier_at, NOW()) ELSE NULL END
-		WHERE id=$4`,
-		payloadCode, manifestJSON, uop, binID, undeclared); err != nil {
-		return 0, fmt.Errorf("set manifest bin %d: %w", binID, err)
+	//
+	// A LOAD writes here, after the held check above. Produce finalize writes
+	// through the produce writer (bins.RecordProducedTx), the one statement
+	// exempt from that check, with the same columns and the verdict judged
+	// above.
+	var werr error
+	if held == refuseHeld {
+		_, werr = tx.Exec(`UPDATE bins SET payload_code=$1, manifest=$2, uop_remaining=$3,
+			manifest_confirmed=false, updated_at=NOW(),
+			undeclared_carrier_at = CASE WHEN $5 THEN COALESCE(undeclared_carrier_at, NOW()) ELSE NULL END
+			WHERE id=$4`,
+			payloadCode, manifestJSON, uop, binID, undeclared)
+	} else {
+		werr = bins.RecordProducedTx(tx, binID, payloadCode,
+			bins.Produced{Manifest: &manifestJSON, Count: &uop, Undeclared: &undeclared})
+	}
+	if werr != nil {
+		return 0, fmt.Errorf("set manifest bin %d: %w", binID, werr)
 	}
 	newEpoch, err := s.bumpEpoch(tx, binID, by)
 	if err != nil {
@@ -680,10 +695,11 @@ func (s *BinManifestService) writeProductionTx(tx *sql.Tx, binID int64, manifest
 //
 // ── WHY IT IS HERE AND NOT AT THE DOORS ───────────────────────────────────
 //
-// setForProductionTx is the one production statement that writes a payload_code
-// onto a bin (bins.SetManifest writes one too, and only the dev seeder and test
-// fixtures call it; the emptying statements blank it), and every door that
-// loads a bin reaches it: the operator's Load Payload
+// writeProductionTx is where a payload_code is written onto a bin by every door
+// that loads one (bins.SetManifest writes one too, and only the dev seeder and
+// test fixtures call it; the emptying statements blank it; the produce tick's
+// bind writes one through bins.RecordProducedTx and judges it in that
+// statement): the operator's Load Payload
 // (BinService.LoadPayload -> SetFromTemplate), the loader's LOAD (the telemetry
 // bin-load, LoadAtLine, a person's declaration) and produce finalize
 // (RecordProducedBin, and RecordProducedBinFromTemplate through it). Only the operator door checked
@@ -1142,8 +1158,10 @@ func (e *HeldCarrierError) Error() string {
 // not an order's hold, and a LOAD accepts it (owner, 2026-10-18).
 //
 // EVERY LOAD DOOR ASKS IT, through writeProductionTx's heldRule: the loader's
-// LOAD (LoadAtLine) and the admin Load Payload (SetFromTemplate). Produce
-// finalize (RecordProducedBin) is the named exemption (producedInPlace).
+// LOAD (LoadAtLine) and the admin Load Payload (SetFromTemplate). The produce
+// writer (bins.RecordProducedTx) is the one exemption: produce finalize
+// (RecordProducedBin, through producedInPlace) and the produce tick's bind
+// write through it.
 // TestBinContentsWriters_EveryLoadDoorRunsTheHeldCheck holds every other
 // statement that writes a bin's contents to a reason.
 //
