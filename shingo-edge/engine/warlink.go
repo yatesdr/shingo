@@ -108,8 +108,15 @@ func (e *Engine) SyncProcessCounter(processID int64) error {
 
 	// Check if there's an existing RP for this exact PLC tag
 	existingRP, _ := e.db.GetReportingPointByTag(process.CounterPLCName, process.CounterTagName)
+	// THE STYLE'S OWN POINT MOVES TO THE NEW TAG when no point reads that tag
+	// yet. Creating a second point left the first counting the old tag onto the
+	// same style, so both charged its bins. Re-pointed to a different tag, it is
+	// unread again and its first read seeds (UpdateReportingPoint).
+	if existingRP == nil && err == nil && rp != nil {
+		existingRP = rp
+	}
 	if existingRP != nil {
-		// Update the existing RP to point to the new active style
+		// Point it at the active style and the process's tag.
 		oldPLC, oldTag, oldManaged := existingRP.PLCName, existingRP.TagName, existingRP.WarlinkManaged
 		if err := e.db.UpdateReportingPoint(existingRP.ID, process.CounterPLCName, process.CounterTagName, *process.ActiveStyleID, process.CounterEnabled); err != nil {
 			return err

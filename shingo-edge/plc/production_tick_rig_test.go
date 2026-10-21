@@ -83,7 +83,20 @@ func newTickRigEmitting(t *testing.T, em EventEmitter) *tickRig {
 // newTickRigAt is newTickRigEmitting with the counter loop's cadence chosen
 // before the manager is built: the manager takes it by value, so a test that
 // wants a faster loop must say so here, not write through a config afterwards.
+//
+// The reporting point has been read once, at 0: a pin about how the counter
+// moves starts from a point that is counting, not from first wiring, whose
+// read seeds and charges nothing (TestCounterSeed_*, newUnreadTickRig).
 func newTickRigAt(t *testing.T, em EventEmitter, pollRate time.Duration) *tickRig {
+	t.Helper()
+	r := newUnreadTickRig(t, em, pollRate)
+	r.pass(0)
+	return r
+}
+
+// newUnreadTickRig is the rig with its reporting point as first wiring leaves
+// it: created, never read (last_poll_at NULL, last_count 0).
+func newUnreadTickRig(t *testing.T, em EventEmitter, pollRate time.Duration) *tickRig {
 	t.Helper()
 	db := testdb.Open(t)
 	cfg := config.Defaults()

@@ -734,6 +734,25 @@ func (m *Manager) pollReportingPoint(rp counters.ReportingPoint) bool {
 
 	m.emitter.EmitCounterRead(rp.ID, rp.PLCName, rp.TagName, newCount)
 
+	// A REPORTING POINT NEVER READ SEEDS FROM ITS FIRST READ. The PLC's counter
+	// is a running total this point has never seen, so its first read is where
+	// counting starts, not parts made since a last read there never was: at
+	// first wiring the whole total would be charged to the bound bins
+	// (Springfield Press 6, 2026-10-21: 8938 onto two bins). A re-point to a
+	// different tag makes the point unread again (counters.UpdateReportingPoint).
+	// The seed stores the count and the poll time, so a first read of 0 is a
+	// read too; a failed read returned above and leaves it unread. One UPDATE,
+	// in place of the snapshot INSERT and the UPDATE a counted read writes.
+	if rp.LastPollAt == nil {
+		if err := m.db.UpdateReportingPointCounter(rp.ID, newCount); err != nil {
+			log.Printf("seed reporting point %d (%s/%s) at %d: %v", rp.ID, rp.PLCName, rp.TagName, newCount, err)
+			return false
+		}
+		m.DebugLog.Log("counter seed: rp=%d %s/%s first read %d, nothing charged", rp.ID, rp.PLCName, rp.TagName, newCount)
+		log.Printf("reporting point %d (%s/%s): first read %d, counting from here", rp.ID, rp.PLCName, rp.TagName, newCount)
+		return false
+	}
+
 	delta, anomaly := CalculateDelta(rp.LastCount, newCount, m.counterJumpThreshold)
 	if delta == 0 && anomaly == "" {
 		return false
