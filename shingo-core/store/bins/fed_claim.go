@@ -27,6 +27,32 @@ func FedClaimSQL(alias string) string {
 	                    AND pc.style_id = ` + alias + `.style_id)`
 }
 
+// FedOutsideSQL selects, as core, the press of the fed cell (FedClaimSQL) whose
+// outside position (paired_core_node) is the node named by nodeExpr: the active
+// style's claim first, then by core node name; no row when the node is no fed
+// cell's outside (a sequential partner, a second paired position and every
+// other node). One spelling for the lift's derivation (toteLiftSQL's cell) and
+// the by-contents choice's rule that a tote cart off a fed outside keeps its
+// planned drop (IsFedOutside).
+func FedOutsideSQL(nodeExpr string) string {
+	return `
+		SELECT sc.core_node_name AS core
+		  FROM style_claims sc
+		  LEFT JOIN process_styles ps ON ps.process_id = sc.process_id AND ps.style_id = sc.style_id
+		 WHERE sc.paired_core_node = ` + nodeExpr + `
+		   AND ` + FedClaimSQL("sc") + `
+		 ORDER BY COALESCE(ps.is_active, false) DESC, sc.core_node_name
+		 LIMIT 1`
+}
+
+// IsFedOutside reports whether node is a fed press cell's outside position
+// (FedOutsideSQL). One statement.
+func IsFedOutside(db *sql.DB, node string) (bool, error) {
+	var is bool
+	err := db.QueryRow(`SELECT EXISTS (`+FedOutsideSQL("$1")+`)`, node).Scan(&is)
+	return is, err
+}
+
 // FedInboundSource is where the active fed claim at a station's core node draws
 // from (style_claims.inbound_source), asked about one of its positions: the
 // claim whose outside position (paired_core_node) or second paired position is

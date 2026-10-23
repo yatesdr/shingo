@@ -30,14 +30,7 @@ const OpTotesDerived = "totes_derived"
 //   - the front's count, whether its manifest is confirmed, its totes, and its
 //     part's UOP per tote.
 var toteLiftSQL = `
-	WITH cell AS (
-		SELECT sc.core_node_name AS core
-		  FROM style_claims sc
-		  LEFT JOIN process_styles ps ON ps.process_id = sc.process_id AND ps.style_id = sc.style_id
-		 WHERE sc.paired_core_node = $1
-		   AND ` + FedClaimSQL("sc") + `
-		 ORDER BY COALESCE(ps.is_active, false) DESC, sc.core_node_name
-		 LIMIT 1),
+	WITH cell AS (` + FedOutsideSQL("$1") + `),
 	front AS (
 		SELECT COALESCE(
 			(SELECT b.id FROM bins b JOIN nodes n ON n.id = b.node_id JOIN cell ON n.name = cell.core

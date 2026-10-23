@@ -234,3 +234,9 @@ func StampHeldSinceDeclaredTx(tx *sql.Tx, binID int64) error {
 func (db *DB) IsLinePosition(nodeName string) (bool, error) {
 	return bins.IsLinePosition(db.DB, nodeName)
 }
+
+// IsFedOutside reports whether a node is a fed press cell's outside position
+// (bins.FedOutsideSQL): where a tote cart's count is exact only at its lift.
+func (db *DB) IsFedOutside(nodeName string) (bool, error) {
+	return bins.IsFedOutside(db.DB, nodeName)
+}

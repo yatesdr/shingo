@@ -95,6 +95,25 @@ type HeightLine struct {
 // below zero the group is not short of it.
 func (tl TypeLine) Short() int { return tl.Want - tl.Have }
 
+// HeightShort is how many more carts standing layers high the group wants: the
+// wanted height's want less have, held under the type's Short (a cart at a
+// height is a cart of the type), but for the tops & bottoms row (0 layers),
+// which is a line of its own. 0 for a height the group does not want. Its
+// reader is the by-contents choice (dispatch dropByContents), which takes a
+// tote cart into a group only as its own height.
+func (tl TypeLine) HeightShort(layers int) int {
+	for _, h := range tl.Heights {
+		if h.Layers != layers {
+			continue
+		}
+		if layers == 0 {
+			return h.Want - h.Have
+		}
+		return min(h.Want-h.Have, tl.Short())
+	}
+	return 0
+}
+
 // TypeLineOf reads one level type's line for group g: the keeper's count
 // (CountLevel, against the type's open maintain episode), then, for a type
 // that states its totes per layer and has wanted heights among layerWants (the
