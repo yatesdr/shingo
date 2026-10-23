@@ -716,13 +716,16 @@ function rail() {
 }
 
 // One recipe in the rail: its name, its swap and its spots. The one open as a
-// draft is marked.
+// draft is marked. A recipe naming a node the cell no longer has says so in
+// the server's words (card.stale), the same the HMI shows on its card: the
+// floor cannot set it up until it is re-saved here.
 function recipeRow(r) {
     const on = !!(S.shapeDraft && S.shapeDraft.recipe && String(S.shapeDraft.recipe.id) === String(r.id));
     const mode = M().modeLabels()[r.mode] || r.mode || '';
     return '<div class="pd-row pd-recipe' + (on ? ' on' : '') + '" data-act="recipe-open" data-preset="' + esc(r.id) + '">' +
         '<div class="n">' + esc(r.name) + '</div>' +
-        '<div class="s">' + esc([mode, r.where || ''].filter(Boolean).join(' · ')) + '</div></div>';
+        '<div class="s">' + esc([mode, r.where || ''].filter(Boolean).join(' · ')) + '</div>' +
+        (r.stale || []).map(t => '<div class="s pd-warn">' + esc(t) + '</div>').join('') + '</div>';
 }
 
 // openRecipe puts a saved recipe in the positions table as a draft. Saving it

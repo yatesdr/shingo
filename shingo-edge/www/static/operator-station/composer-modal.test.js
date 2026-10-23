@@ -403,6 +403,23 @@ spotsTest('an on-deck spot an engineer set up moves, and its chip names whose it
     tapPos('PLN_013');
     if (chips().indexOf('on deck for PLN_010: PLN_005 → PLN_013 ✕') < 0) throw new Error('chip: ' + JSON.stringify(chips()));
 });
+spotsTest('a recipe naming a node the cell lost is shown with its sentence and not offered', async () => {
+    const said = 'Two spot press index sends cell 2 to ULN_003, which is no longer a position here — ' +
+        'an engineer re-saves the recipe on the desktop';
+    const flow = press6(f => {
+        const c = card(f, 'Two spot press index');
+        f.presets.push(Object.assign({}, c, { id: '99', name: 'Two spot copy' }));
+        c.stale = [said];
+    });
+    await open(flow);
+    tap('part', { part: 'SYN-P6-X' });
+    tap('two');
+    tap('part', { part: 'SYN-P6-Y' });
+    expectIn('stale shown', said);
+    expectOut('stale offered', 'data-act="recipe" data-preset="' + card(flow, 'Two spot press index').id + '"');
+    expectIn('the live one offered', 'data-act="recipe" data-preset="99"');
+});
+
 // ── Go says what happens and draws the press ─────────────────────────────────
 test('Go says what comes off, what comes on, and Core\'s word, and draws the press', async () => {
     await open({ part_rows: ROWS, presets: [ONE] }, false);

@@ -198,6 +198,11 @@
 .os-comp-recipe .nm { font-size: 18px; font-weight: 600; }
 .os-comp-recipe .where { font-size: 13px; color: var(--os-text-dim); }
 .os-comp-recipe svg { width: 100%; height: auto; pointer-events: none; }
+/* A recipe naming a node the cell lost: shown with the server's sentence, not
+ * a tap target (the mint refuses it until an engineer re-saves it). */
+.os-comp-recipe.stale { cursor: default; border-style: dashed; }
+.os-comp-recipe.stale:hover { border-color: var(--sub-1); }
+.os-comp-recipe .why { font-size: 14px; color: var(--os-red); font-weight: 600; }
 
 /* ── Go, full screen: what happens, the press it makes, the trips ───── */
 .os-comp-go .os-comp-say { flex: 0 0 auto; padding: 16px 20px 8px; display: flex; flex-direction: column; gap: 6px; }

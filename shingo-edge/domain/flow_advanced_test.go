@@ -252,8 +252,8 @@ func TestFlowAdvanced_NoPriorTakesTheModalsValues(t *testing.T) {
 // pin that would break first if that changed.
 func TestFlowAdvanced_IsNotAPresetKey(t *testing.T) {
 	t.Parallel()
-	for _, f := range append(append([]string{}, flowPresetNodeKeys...), flowPresetNodeListKeys...) {
-		if f == "advanced" {
+	for _, f := range presetNodeFields {
+		if f.key == "advanced" {
 			t.Fatalf("advanced reached the preset key set")
 		}
 	}

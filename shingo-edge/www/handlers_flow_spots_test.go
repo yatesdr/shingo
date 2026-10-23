@@ -538,3 +538,63 @@ func TestComposerCard_ASequentialPairIsTwoSpotsWhateverTheirKind(t *testing.T) {
 		t.Errorf("SEQ_B = %+v, want a spot that stays (no recipe pairs anything else with SEQ_A)", b)
 	}
 }
+
+// A recipe naming a node the process no longer has is refused at the preview
+// and at the mint, by name, before anything is placed, and its card carries
+// the same sentence (owner, 2026-10-22: refuse and flag, never carry the last
+// style's node). Re-saved under its own name with the current routing it is
+// v2, its card is clean and it mints: the deploy note's step at Springfield,
+// where "Two spot press index" still sends cell 2 to ULN_003.
+func TestFlowMint_AStaleRecipeIsRefusedUntilReSaved(t *testing.T) {
+	f := newPress6(t)
+	unloader := *mustNode(t, f, "ULN_002").OperatorStationID
+	uln3, err := f.db.CreateProcessNode(processes.NodeInput{ProcessID: f.processID, OperatorStationID: &unloader,
+		CoreNodeName: "ULN_003", Name: "ULN_003", Sequence: 3, Enabled: true})
+	must(t, err, "ULN_003")
+	old := f.recipe(t, "Two spot copy",
+		cell("PLN_006", "PLN_005", "SMN_BUF_100", "ULN_002"),
+		cell("PLN_007", "PLN_008", "SMN_BUF_100", "ULN_003"))
+	must(t, f.db.DeleteProcessNode(uln3), "the unloader loses ULN_003")
+
+	const said = "Two spot copy sends cell 2 to ULN_003, which is no longer a position here — " +
+		"an engineer re-saves the recipe on the desktop"
+	if got := f.card(t, old)["stale"]; fmt.Sprint(got) != fmt.Sprint([]any{said}) {
+		t.Errorf("the card's stale = %v, want [%s]", got, said)
+	}
+	bodies := mintBodies(t, f.station, map[string]mintArgs{
+		"old": {old, press6Pair, nil}, "old moved": {old, press6Pair, press6Prefil},
+	})
+	for _, name := range []string{"old", "old moved"} {
+		status, out := f.preview(t, bodies[name])
+		if msg, _ := out["error"].(string); status != http.StatusUnprocessableEntity || msg != said {
+			t.Errorf("preview %s: %d %q, want 422 %q", name, status, msg, said)
+		}
+	}
+	resp := doRequest(t, f.router, "POST", "/api/processes/"+itoa(f.processID)+"/flow/mint", bodies["old"], nil)
+	assertStatus(t, resp, http.StatusUnprocessableEntity)
+	if msg, _ := decodeBody(t, resp)["error"].(string); msg != said {
+		t.Errorf("mint: %q, want %q", msg, said)
+	}
+
+	fixed := f.recipe(t, "Two spot copy",
+		cell("PLN_006", "PLN_005", "Press Buffer Zone", "ULN_002"),
+		cell("PLN_007", "PLN_008", "Press Buffer Zone", "ULN_005"))
+	p, err := f.db.GetFlowPreset(fixed)
+	must(t, err, "the re-saved recipe")
+	if p.Version != 2 {
+		t.Fatalf("the re-save is v%d, want v2 of the same name", p.Version)
+	}
+	if got, has := f.card(t, fixed)["stale"]; has {
+		t.Errorf("the re-saved card still says %v", got)
+	}
+	bodies = mintBodies(t, f.station, map[string]mintArgs{"fixed": {fixed, press6Pair, nil}})
+	resp = doRequest(t, f.router, "POST", "/api/processes/"+itoa(f.processID)+"/flow/mint", bodies["fixed"], nil)
+	assertStatus(t, resp, http.StatusOK)
+}
+
+func mustNode(t *testing.T, f press6, name string) *processes.Node {
+	t.Helper()
+	n, err := f.db.GetProcessNode(f.nodes[name])
+	must(t, err, name)
+	return n
+}

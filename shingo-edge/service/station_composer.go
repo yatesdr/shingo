@@ -628,7 +628,9 @@ func cellOrder(nodes []processes.Node) []string {
 // EACH CARD CARRIES ITS SPOTS (spots v0): where each of the recipe's places
 // may go, from the enabled recipes, the node list and the routing set this
 // read already holds, so the Spots step's rule costs the read no statement.
-// The pre-fill goes through the same rule before it ships.
+// The pre-fill goes through the same rule before it ships. And its STALE
+// sentences, from the same rows: the nodes it names that the process no
+// longer has, which the mint refuses.
 func (s *StationService) composerPresets(processID int64, claims map[int64][]processes.NodeClaim,
 	nodes func() []processes.Node, routing []domain.RoutingNode) []domain.ComposerPreset {
 
@@ -653,6 +655,7 @@ func (s *StationService) composerPresets(processID int64, claims map[int64][]pro
 	enabled, versions := domain.EnabledRecipes(rows)
 	parsed := make([][]domain.FlowCell, len(enabled))
 	rules := domain.SpotRules{Positions: positions, Lanes: domain.StagingLanes(routing)}
+	live := domain.RoutingSetOf(positions, routing)
 	for i, p := range enabled {
 		cells, err := domain.ParsePresetShape(p.FlowJSON)
 		if err != nil {
@@ -689,6 +692,9 @@ func (s *StationService) composerPresets(processID int64, claims map[int64][]pro
 		card.Spots = domain.RecipeSpots(cells, used, rules)
 		card.LastMoves = domain.LegalSpotMoves(cells, used, rules,
 			domain.RecipeLastUsedMoves(cells, versions[p.Name], claims))
+		for _, st := range domain.StaleNodes(cells, live) {
+			card.Stale = append(card.Stale, domain.StaleSentence(p.Name, st))
+		}
 		card.Slots = domain.PayloadSlots(cells)
 		sort.SliceStable(card.Slots, func(i, j int) bool { return slotAt(at, card.Slots[i]) < slotAt(at, card.Slots[j]) })
 		out = append(out, card)

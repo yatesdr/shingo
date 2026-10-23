@@ -20,6 +20,8 @@ Edge only; no migration. Not deployed.
 - Settings › HMI says moved spots are checked against the recipes
 - A recipe re-saved with new nodes or routing keeps its name as the next version
 - Another structure (mode, role, fields, slots) under that name is still refused
+- A recipe naming a node the cell lost is refused at preview and mint, by name
+- Its card and the desktop rail say why; the HMI shows it and does not offer it
 
 ## 2026-10-21 — A position changes from the desktop
 

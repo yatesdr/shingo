@@ -385,10 +385,17 @@ function picksLabel() {
 }
 
 // ── which recipe ─────────────────────────────────────────────────────────────
+// A STALE RECIPE IS SHOWN, NOT OFFERED (owner, 2026-10-22: refuse and flag).
+// One that names a node the cell no longer has carries the server's sentence
+// (card.stale) and the mint would refuse it, so its card says why and is not a
+// tap target; the screen is never skipped past it, so the operator sees the
+// sentence rather than a recipe that went missing.
+function stale(p) { return (p.stale || []).length > 0; }
+
 function toRecipe() {
     const f = fits();
     if (!f.length) { screen = 'none'; drawNone(); return; }
-    if (f.length === 1) { chooseRecipe(f[0]); return; }
+    if (f.length === 1 && !stale(f[0])) { chooseRecipe(f[0]); return; }
     screen = 'which';
     drawWhich(f);
 }
@@ -480,6 +487,12 @@ function renamedCells(p, mv) {
 
 function drawWhich(list) {
     const cards = list.map(p => {
+        if (stale(p)) {
+            return '<div class="os-comp-recipe stale" aria-disabled="true">' +
+                '<span class="nm">' + esc(p.name) + '</span>' +
+                '<span class="where">' + esc(p.where || '') + '</span>' +
+                p.stale.map(t => '<span class="why">' + esc(t) + '</span>').join('') + '</div>';
+        }
         const pic = recipePicture(p, { usedOnly: true });
         return '<button class="os-comp-recipe" data-act="recipe" data-preset="' + esc(p.id) + '">' +
             '<span class="nm">' + esc(p.name) + '</span>' +

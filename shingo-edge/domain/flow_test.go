@@ -61,9 +61,10 @@ func TestFlowCollapse_CellKeysAreThePresetKeys(t *testing.T) {
 		got = append(got, k)
 	}
 	sort.Strings(got)
-	want := append([]string{}, flowPresetNodeKeys...)
-	want = append(want, flowPresetNodeListKeys...)
-	want = append(want, "role", "swap_mode", "payload_code", "key_route")
+	want := []string{"role", "swap_mode", "payload_code", "key_route"}
+	for _, f := range presetNodeFields {
+		want = append(want, f.key)
+	}
 	sort.Strings(want)
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("cell JSON keys = %v, want exactly the preset keys plus role/swap_mode/payload_code/key_route = %v", got, want)

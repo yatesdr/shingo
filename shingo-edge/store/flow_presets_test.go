@@ -2,6 +2,7 @@ package store
 
 import (
 	"errors"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -303,5 +304,31 @@ func TestFlowPreset_RefusesMalformedAndEmpty(t *testing.T) {
 	testutil.MustNoErr(t, err, "db.ListFlowPresets")
 	if len(l) != 0 {
 		t.Fatalf("refused presets were stored: %+v", l)
+	}
+}
+
+// TestRoutingSetOf_IsRoutingSetNames: a recipe's stale nodes are read against
+// the routing set built from rows the composer and the mint already hold
+// (domain.RoutingSetOf); a preset's save asks the store's SQL
+// (RoutingSetNames). One question, two readers, held together here over a
+// deleted position and a routing row nobody has adopted.
+func TestRoutingSetOf_IsRoutingSetNames(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	pid := seedPresetProcess(t, db)
+	gone, err := db.CreateProcessNode(processes.NodeInput{ProcessID: pid, CoreNodeName: "PLN_09", Name: "PLN_09", Enabled: true})
+	testutil.MustNoErr(t, err, "CreateProcessNode")
+	testutil.MustNoErr(t, db.DeleteProcessNode(gone), "DeleteProcessNode")
+	nodes, err := db.ListProcessNodesByProcess(pid)
+	testutil.MustNoErr(t, err, "ListProcessNodesByProcess")
+	routing, err := db.ListRoutingNodes(pid)
+	testutil.MustNoErr(t, err, "ListRoutingNodes")
+	want, err := processes.RoutingSetNames(db.DB, pid)
+	testutil.MustNoErr(t, err, "RoutingSetNames")
+	if want["PLN_09"] || !want["STG_UNREVIEWED"] || !want["PLN_01"] {
+		t.Fatalf("RoutingSetNames = %v: the fixture is not the case this pins", want)
+	}
+	if got := domain.RoutingSetOf(nodes, routing); !reflect.DeepEqual(got, want) {
+		t.Errorf("RoutingSetOf = %v, RoutingSetNames = %v", got, want)
 	}
 }

@@ -85,8 +85,8 @@ type MintResult struct {
 }
 
 // MintRefusal is a mint the request cannot make: the recipe does not fit the
-// parts, a part names a node no slot has, a move goes somewhere the recipes do
-// not allow. 422, by name.
+// parts or names a node the process no longer has, a part names a node no
+// slot has, a move goes somewhere the recipes do not allow. 422, by name.
 type MintRefusal struct{ Reason string }
 
 func (e *MintRefusal) Error() string { return e.Reason }
@@ -94,7 +94,8 @@ func (e *MintRefusal) Error() string { return e.Reason }
 // ErrMintRecipe: the recipe id is not a live recipe of this process.
 var ErrMintRecipe = errors.New("no such recipe on this process")
 
-// mintPlan is a mint decided and not yet written.
+// mintPlan is a mint decided and not yet written. nodes and routing are the
+// process's node list and routing rows, as the recipe was read against them.
 type mintPlan struct {
 	process   *processes.Process
 	preset    processes.FlowPreset
@@ -103,6 +104,8 @@ type mintPlan struct {
 	placement map[string]string
 	name      string
 	moved     bool
+	nodes     []processes.Node
+	routing   []domain.RoutingNode
 }
 
 // MintedReorderSource is the reorder_point_source a minted style's claims
@@ -149,7 +152,7 @@ func (e *Engine) planMint(processID int64, req MintRequest) (*mintPlan, error) {
 			return plan, nil
 		}
 	}
-	cells, slots, nodes, err := e.recipeSlots(processID, req.PresetID, spots, plan)
+	cells, slots, err := e.recipeSlots(processID, req.PresetID, spots, plan)
 	if err != nil {
 		return nil, err
 	}
@@ -162,7 +165,7 @@ func (e *Engine) planMint(processID int64, req MintRequest) (*mintPlan, error) {
 	}
 	plan.cells, plan.placement = expandRecipe(cells, slots, codes, slotOf)
 	if plan.moved {
-		if err := e.moveSpots(plan, req.Overrides, live, nodes); err != nil {
+		if err := e.moveSpots(plan, req.Overrides, live); err != nil {
 			return nil, err
 		}
 	}
@@ -253,21 +256,32 @@ func pickedCodes(picks []PartPick) ([]string, error) {
 }
 
 // recipeSlots reads the recipe (onto plan.preset) and its slots in picture
-// order, and refuses a recipe whose slot count is not the number of parts. It
-// returns the process's node list too, which it reads for the order.
-func (e *Engine) recipeSlots(processID, presetID int64, parts int, plan *mintPlan) ([]domain.FlowCell, []domain.Slot, []processes.Node, error) {
+// order. It refuses a recipe naming a node the process no longer has, by name,
+// before anything is placed (owner, 2026-10-22: refuse and flag, never carry
+// the last style's node), and a recipe whose slot count is not the number of
+// parts. The node list and routing rows it reads go on the plan; the routing
+// read is the one statement the stale check costs a mint.
+func (e *Engine) recipeSlots(processID, presetID int64, parts int, plan *mintPlan) ([]domain.FlowCell, []domain.Slot, error) {
 	preset, err := e.db.GetFlowPreset(presetID)
 	if err != nil || preset == nil || preset.ProcessID != processID || preset.ArchivedAt != nil {
-		return nil, nil, nil, ErrMintRecipe
+		return nil, nil, ErrMintRecipe
 	}
 	plan.preset = *preset
 	cells, err := domain.ParsePresetShape(preset.FlowJSON)
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, err
 	}
 	nodes, err := e.db.ListProcessNodesByProcess(processID)
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, err
+	}
+	routing, err := e.db.ListRoutingNodes(processID)
+	if err != nil {
+		return nil, nil, err
+	}
+	plan.nodes, plan.routing = nodes, routing
+	if stale := domain.StaleNodes(cells, domain.RoutingSetOf(nodes, routing)); len(stale) > 0 {
+		return nil, nil, &MintRefusal{Reason: domain.StaleSentence(preset.Name, stale[0])}
 	}
 	order := map[string]int{}
 	for i, n := range nodes {
@@ -278,10 +292,10 @@ func (e *Engine) recipeSlots(processID, presetID int64, parts int, plan *mintPla
 		return pictureIndex(order, slots[i].Nodes[0]) < pictureIndex(order, slots[j].Nodes[0])
 	})
 	if len(slots) != parts {
-		return nil, nil, nil, &MintRefusal{Reason: fmt.Sprintf("recipe %s takes %d part%s; %d %s picked",
+		return nil, nil, &MintRefusal{Reason: fmt.Sprintf("recipe %s takes %d part%s; %d %s picked",
 			preset.Name, len(slots), plural(len(slots)), parts, wasWere(parts))}
 	}
-	return cells, slots, nodes, nil
+	return cells, slots, nil
 }
 
 // expandRecipe puts each part on its slot's positions and gives every cell the
@@ -424,21 +438,16 @@ func placeParts(picks []PartPick, codes []string, slots []domain.Slot, live []pr
 }
 
 // moveSpots applies the Spots step's moves to the plan, after checking them
-// against the recipe's places. The rule reads the process's enabled recipes
-// and its routing set's staging lanes: two statements, on a moved mint or
-// preview only (it was one, the routing-set names). The node list and the
-// claims are the plan's own.
-func (e *Engine) moveSpots(plan *mintPlan, moves map[string]string, live []processes.NodeClaim, nodes []processes.Node) error {
+// against the recipe's places. The rule reads the process's enabled recipes:
+// one statement, on a moved mint or preview only. The node list, the routing
+// rows and the claims are the plan's own.
+func (e *Engine) moveSpots(plan *mintPlan, moves map[string]string, live []processes.NodeClaim) error {
 	rows, err := e.db.ListFlowPresets(plan.process.ID, false)
 	if err != nil {
 		return err
 	}
-	routing, err := e.db.ListRoutingNodes(plan.process.ID)
-	if err != nil {
-		return err
-	}
 	enabled, versions := domain.EnabledRecipes(rows)
-	rules := domain.SpotRules{Positions: nodes, Lanes: domain.StagingLanes(routing)}
+	rules := domain.SpotRules{Positions: plan.nodes, Lanes: domain.StagingLanes(plan.routing)}
 	for _, p := range enabled {
 		// A recipe that does not parse grants nothing; the composer read
 		// logs it and offers no card for it.
