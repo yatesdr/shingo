@@ -2302,6 +2302,21 @@ func CarrierComingTo(db *sql.DB, node string, asker *Order) (bool, error) {
 	return false, rows.Err()
 }
 
+// LiveNamedMoveOff reports whether a live order other than the asker is a move
+// naming its bin (named_bin_id is written for a move alone) that lifts it from
+// node: a wrong carrier's clear or SEND BACK's move, taking the cart away
+// whether or not it has claimed it yet. One statement.
+func LiveNamedMoveOff(db *sql.DB, node string, askerID int64) (bool, error) {
+	var lifting bool
+	err := db.QueryRow(fmt.Sprintf(`SELECT EXISTS (SELECT 1 FROM orders
+		WHERE status IN (%s) AND named_bin_id IS NOT NULL AND source_node = $1 AND id <> $2)`,
+		protocol.NonTerminalStatusSQLList()), node, askerID).Scan(&lifting)
+	if err != nil {
+		return false, fmt.Errorf("live named move off %s: %w", node, err)
+	}
+	return lifting, nil
+}
+
 // LiveOrderNamingBin returns the live order, other than the asker, that names
 // bin as the one it is for (orders.named_bin_id: a move that names its carrier,
 // an operator's or a station's), or nil. One statement over the live rows: the

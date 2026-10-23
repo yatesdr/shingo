@@ -1296,6 +1296,12 @@ func (db *DB) LiveOrderNamingBin(binID, askerID int64) (*orders.Order, error) {
 	return orders.LiveOrderNamingBin(db.DB, binID, askerID)
 }
 
+// LiveNamedMoveOff reports whether a live move naming its bin lifts it from
+// node, the asker aside. See orders.LiveNamedMoveOff.
+func (db *DB) LiveNamedMoveOff(node string, askerID int64) (bool, error) {
+	return orders.LiveNamedMoveOff(db.DB, node, askerID)
+}
+
 // CarrierComingTo reports whether a live order other than the asker and its
 // partner leaves a carrier at node, in one statement. See orders.CarrierComingTo.
 func (db *DB) CarrierComingTo(node string, asker *orders.Order) (bool, error) {

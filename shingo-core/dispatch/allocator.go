@@ -87,7 +87,9 @@ const (
 	// reserveHoldingForOutside — reserveHolding whose cause is a position the
 	// cell depends on: a carrier is coming to the vacant position a pickup names
 	// (missPickup), or the carrier standing there is named by a live move taking
-	// it away (reservePickup). Rendered as waiting_for_outside, and never moot:
+	// it away (reservePickup while the move has not claimed it; missPickup once
+	// it has, or when Core's filter never returns the carrier). Rendered as
+	// waiting_for_outside, and never moot:
 	// it is demand, held for a carrier that is on its way.
 	reserveHoldingForOutside
 	// reserveMoot — the order reserved NOTHING and every missing need's node is
@@ -415,7 +417,8 @@ func (a *Allocator) reserveComplexPlan(order *orders.Order, plan *ComplexPlan) (
 // set on the press the very cart the move is taking away, and the move would
 // lift nothing. So the pair holds; the move lifts it; the position is vacant
 // and its prime is coming (missPickup's hold); the prime lands and the pair
-// takes it. A removal is exempt: it clears whatever stands on its own line.
+// takes it. Once the move is sent it claims its cart and the find stops
+// returning it, so from then missPickup holds the pair the same way. A removal is exempt: it clears whatever stands on its own line.
 // Asked only when such a pickup has found a bin (one statement).
 func (a *Allocator) reservePickup(order *orders.Order, pk pickupNeed, bin *binsstore.Bin) (*reservedPickup, reserveOutcome, error) {
 	removal := pk.kind == pickupRemoval
@@ -526,6 +529,26 @@ func (a *Allocator) missPickup(order *orders.Order, plan *ComplexPlan, pk pickup
 			if got := a.reanchorVacantPickup(order, plan, pk.stepIndex, src); got != nil {
 				return got, reserveComplete, nil
 			}
+		}
+	}
+	// A CARRIER BEING TAKEN OFF A DEPENDENT POSITION IS WAITED FOR AS OUTSIDE
+	// MATERIAL. A wrong carrier's clear and SEND BACK's move name their cart and
+	// claim it when they are sent, so from then the find no longer returns it and
+	// reservePickup's named-bin arm never sees it; a carrier Core's filter
+	// refuses (another part, a marker) is never returned at all. The node still
+	// holds bins, the position is being cleared for the carrier that follows (the
+	// prime, SEND BACK's pull), and the pair holds on waiting_for_outside, as it
+	// does while the move is unclaimed. Asked only on a miss with bins by a
+	// pickup the vacant arm above would ask about: one statement, then
+	// dependentSource only when a named move lifts there.
+	if nodeHadBins && pk.kind != pickupRemoval && !pk.potentialRelay && pk.step.BinID == 0 && pk.step.PayloadCode == "" {
+		lifting, err := a.db.LiveNamedMoveOff(pk.step.Node, order.ID)
+		if err != nil {
+			return nil, reserveHolding, err
+		}
+		if lifting && a.dependentSource(order, pk.step) != "" {
+			a.dbg("reserve: order %d pickup at %s holds: the carrier there is being taken away", order.ID, pk.step.Node)
+			return nil, reserveHoldingForOutside, nil
 		}
 	}
 	a.logReserveMiss(order.ID, pk.stepIndex, pk.step.Node, nodeHadBins)

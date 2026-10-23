@@ -267,8 +267,17 @@ func TestVacantPickup_ANamedMoveOffTheOutsideHoldsThePair(t *testing.T) {
 		t.Fatalf("the named cart is claimed by %d; the index leg must leave it to its move", *b.ClaimedBy)
 	}
 
+	// The move is sent and claims its cart before it lifts it: the find no
+	// longer returns the cart, and the pair still holds for outside material.
+	_, err := c.db.Exec(`UPDATE bins SET claimed_by = $1 WHERE id = $2`, move.ID, outside.ID)
+	testutil.MustNoErr(t, err, "the move claims its cart")
+	_, err = c.db.Exec(`UPDATE orders SET status = 'dispatched' WHERE id = $1`, move.ID)
+	testutil.MustNoErr(t, err, "the move is sent")
+	c.scan(r1, r2)
+	c.requireHolds(protocol.QueueWaitingForOutside, r1, r2)
+
 	// The move lifts it; the pull bringing tops & bottoms is coming.
-	_, err := c.db.Exec(`UPDATE bins SET node_id = $1 WHERE id = $2`, c.out.ID, outside.ID)
+	_, err = c.db.Exec(`UPDATE bins SET node_id = $1, claimed_by = NULL WHERE id = $2`, c.out.ID, outside.ID)
 	testutil.MustNoErr(t, err, "the move lifts the cart")
 	_, err = c.db.Exec(`UPDATE orders SET status = 'in_transit' WHERE id = $1`, move.ID)
 	testutil.MustNoErr(t, err, "the move travels")
@@ -285,6 +294,53 @@ func TestVacantPickup_ANamedMoveOffTheOutsideHoldsThePair(t *testing.T) {
 	if b := c.reread(landed); b.ClaimedBy == nil {
 		t.Error("the landed carrier is not the index leg's")
 	}
+}
+
+// TestVacantPickup_ACarrierBeingTakenOffHoldsForOutside: the carrier on the
+// on-deck is named by a live move taking it away (a wrong carrier's clear,
+// SEND BACK's move) that has been sent and claims it, so the find no longer
+// returns it; the pair holds on waiting_for_outside, never waiting_for_material,
+// for both roles, flipped and unflipped. And a carrier the produce filter
+// refuses (it holds the part) holds the pair on waiting_for_material while
+// nothing is taking it (an unknown seat's residual), then on
+// waiting_for_outside once its clear is live, before the clear is sent.
+//
+// MUTATION: drop missPickup's miss-with-bins arm and every row but the first
+// filter one reads waiting_for_material.
+func TestVacantPickup_ACarrierBeingTakenOffHoldsForOutside(t *testing.T) {
+	t.Parallel()
+	for _, role := range []protocol.ClaimRole{protocol.ClaimRoleProduce, protocol.ClaimRoleConsume} {
+		for _, flipped := range []bool{false, true} {
+			t.Run(string(role)+map[bool]string{false: "/unflipped", true: "/flipped"}[flipped], func(t *testing.T) {
+				t.Parallel()
+				c := newVPCell(t, "VP7", role)
+				cart := testdb.CreateBinAtNode(t, c.db, "", c.deck.ID, "VP7-ON-DECK")
+				move := &orders.Order{EdgeUUID: "vp7-move", StationID: "line-1", OrderType: protocol.OrderTypeMove,
+					Status: protocol.StatusDispatched, Quantity: 1, SourceNode: c.deck.Name, DeliveryNode: c.out.Name,
+					NamedBinID: &cart.ID}
+				testutil.MustNoErr(t, c.db.CreateOrder(move), "the named move, sent")
+				_, err := c.db.Exec(`UPDATE bins SET claimed_by = $1 WHERE id = $2`, move.ID, cart.ID)
+				testutil.MustNoErr(t, err, "the move claims its cart")
+				r1, r2 := c.submitPair("VP7", flipped, "VP7-r2", "VP7-r1")
+				c.scan(r1, r2)
+				c.requireHolds(protocol.QueueWaitingForOutside, r1, r2)
+			})
+		}
+	}
+	t.Run("produce/a carrier the filter refuses", func(t *testing.T) {
+		t.Parallel()
+		c := newVPCell(t, "VP8", protocol.ClaimRoleProduce)
+		full := prResident(t, c.db, c.deck, c.binType, c.part, "VP8-FULL-ON-DECK")
+		r1, r2 := c.submitPair("VP8", false, "VP8-r2", "VP8-r1")
+		c.scan(r1, r2)
+		c.requireHolds(protocol.QueueWaitingForMaterial, r1, r2)
+		clearMove := &orders.Order{EdgeUUID: "vp8-clear", StationID: "line-1", OrderType: protocol.OrderTypeMove,
+			Status: protocol.StatusQueued, Quantity: 1, SourceNode: c.deck.Name, DeliveryNode: c.out.Name,
+			NamedBinID: &full.ID}
+		testutil.MustNoErr(t, c.db.CreateOrder(clearMove), "its clear")
+		c.scan(r1, r2)
+		c.requireHolds(protocol.QueueWaitingForOutside, r1, r2)
+	})
 }
 
 // TestVacantPickup_PickupsTheFallbackLeavesAlone: each of these holds at the
