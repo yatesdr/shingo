@@ -32,6 +32,13 @@ func (db *DB) ListBareCartsInGroup(groupNodeID int64) ([]*bins.Bin, error) {
 	return bins.ListBareInGroup(db.DB, groupNodeID)
 }
 
+// ListDrainableCarts returns the carts of the ticked carrier states an
+// unloader's drain may move out of its inbound source, best first
+// (bins.ListDrainableInGroup).
+func (db *DB) ListDrainableCarts(groupNodeID int64, ticked []string) ([]*bins.Bin, error) {
+	return bins.ListDrainableInGroup(db.DB, groupNodeID, ticked)
+}
+
 // BinRealTypeCode is the bin's cart type as an operator knows it: the carrier
 // when the bin is bare (bins.RealTypeCode).
 func (db *DB) BinRealTypeCode(binID int64) (string, error) { return bins.RealTypeCode(db.DB, binID) }

@@ -12,6 +12,7 @@
 //	OnDeck       the on-deck carried-bin recovery  engine/engine.go
 //	Stage2Pair   one loader pair's stage-2 pull    engine/stage2_pull.go
 //	LoaderBudget one loader's count and insert      dispatch/loader_replenish.go
+//	             and its drain, acquires and all    dispatch/loader_drain.go
 //	Scan         the scanner: passes, acquires, doors   fulfillment/scanner.go
 //	LaneGate     one node group's lane gate        dispatch/lane_gate_release.go
 //	Summon, GateFail, Futility   taken under a lane gate

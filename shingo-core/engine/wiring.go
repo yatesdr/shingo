@@ -783,22 +783,25 @@ func (e *Engine) wireEventHandlers() {
 	}, EventGraceExpired)
 
 	// ── Lane-gate release evaluator ─────────────────────────────────────
-	// Registered LAST on purpose. The bus dispatches synchronously in
-	// registration order, and the evaluator has to observe the mouth rows that
-	// handlers above it release — handleBlockCompleted on a dropoff, and the
-	// bin-transit handler on a pickup. Registering it last is the cheapest way
-	// to be after all of them; see wiring_lane_gate.go.
+	// Registered after every handler that releases a mouth row, on purpose. The
+	// bus dispatches synchronously in registration order, and the evaluator has
+	// to observe the mouth rows those handlers release — handleBlockCompleted on
+	// a dropoff, and the bin-transit handler on a pickup; see
+	// wiring_lane_gate.go. It is not the last registration (this said "LAST"
+	// until W14; the window pulls below have come after it since the two-stage
+	// pull landed), and need not be: what follows it releases nothing.
 	e.wireLaneGateHandlers()
 
-	// ── Two-stage pull ──────────────────────────────────────────────────
+	// ── Core's window pulls: stage 2's and the drain ────────────────────
 	// After the completion handler above has applied the arrival, so a pull
-	// reads the cart where it landed. Both handlers only read and spawn; the
-	// pull itself runs on stage2_pull.go's tracked goroutine.
+	// reads the cart where it landed. Both handlers only read and spawn; each
+	// event reads the loaders once and runs both pulls (readWindowPulls), and
+	// the pulls themselves run on stage2_pull.go's tracked goroutines.
 	eventbus.SubscribeTyped(e.Events, func(evt eventbus.TypedEvent[EventType, BinEnteredTransitEvent]) {
-		e.onStage2WindowLeft(evt.Payload.FromNodeID)
+		e.onWindowLeft(evt.Payload.FromNodeID)
 	}, EventBinEnteredTransit)
 	eventbus.SubscribeTyped(e.Events, func(evt eventbus.TypedEvent[EventType, OrderCompletedEvent]) {
-		e.onStage2OrderCompleted(evt.Payload)
+		e.onWindowPullOrderCompleted(evt.Payload)
 	}, EventOrderCompleted)
 }
 

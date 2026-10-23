@@ -5,6 +5,7 @@ package bins_test
 import (
 	"database/sql"
 	"fmt"
+	"slices"
 	"testing"
 
 	"shingo/protocol"
@@ -12,6 +13,8 @@ import (
 	"shingocore/internal/testdb"
 	"shingocore/store/bins"
 	"shingocore/store/internal/helpers"
+	"shingocore/store/loaders"
+	"shingocore/store/nodes"
 )
 
 // TestCarrierState_GoSQLAgree is the carrier state's agreement table, the
@@ -81,5 +84,101 @@ func TestCarrierState_GoSQLAgree(t *testing.T) {
 				t.Errorf("SQL %s, Go %s, want %s: the two spellings of one state have drifted", fromSQL, fromGo, c.want)
 			}
 		})
+	}
+}
+
+// TestDrainableInGroup_EachBoxPullsItsStateOnly runs the agreement table's rows
+// through an unloader's drain population (bins.ListDrainableInGroup, W14): each
+// row a cart on its own slot of one group, and each of the four boxes ticked
+// alone must list exactly the rows of its state — the leftover box the 13 row
+// and nothing else — while all four list every row but the loaded cart and the
+// bare marker, which no box ever drains (the marker is stage 2's).
+//
+// MUTATION: drop the state arm, or compare with <> ALL, and every one-box row
+// lists the wrong carts. The marker is left out twice, by the empty finders'
+// `AND NOT bt.bare` and by its state (bare, which no box ticks), so dropping
+// either alone keeps the four-box row green.
+func TestDrainableInGroup_EachBoxPullsItsStateOnly(t *testing.T) {
+	t.Parallel()
+	db := testdb.Open(t)
+	sd := testdb.SetupStandardData(t, db)
+
+	var plain, tote int64
+	testutil.MustNoErr(t, db.QueryRow(`INSERT INTO bin_types (code) VALUES ('DRN-PLAIN') RETURNING id`).Scan(&plain), "plain type")
+	testutil.MustNoErr(t, db.QueryRow(`INSERT INTO bin_types (code, totes_per_layer) VALUES ('DRN-TOTE', 8) RETURNING id`).Scan(&tote), "tote type")
+	tx, err := db.Begin()
+	testutil.MustNoErr(t, err, "begin")
+	marker, err := bins.EnsureBareMarkerTx(tx, tote)
+	testutil.MustNoErr(t, err, "the tote's bare marker")
+	testutil.MustNoErr(t, tx.Commit(), "commit")
+	grp, err := db.CreateNodeGroup("DRN-PRESS-OUT")
+	testutil.MustNoErr(t, err, "the source group")
+	testdb.MarkGroup(t, db, grp)
+
+	n := func(v int) *int { return &v }
+	byState := map[protocol.CarrierState][]int64{}
+	for i, c := range []struct {
+		typeID      int64
+		part        string
+		totesOnCart *int
+		state       protocol.CarrierState
+	}{
+		{plain, "", nil, protocol.CarrierEmpty},
+		{plain, "", n(0), protocol.CarrierEmpty},
+		{plain, "", n(8), protocol.CarrierEmpty},
+		{plain, "", n(13), protocol.CarrierEmpty},
+		{plain, "", n(16), protocol.CarrierEmpty},
+		{tote, "", nil, protocol.CarrierUnverified},
+		{tote, "", n(0), protocol.CarrierTopsAndBottoms},
+		{tote, "", n(8), protocol.CarrierEmpty},
+		{tote, "", n(13), protocol.CarrierLeftover},
+		{tote, "", n(16), protocol.CarrierEmpty},
+		{tote, sd.Payload.Code, n(0), protocol.CarrierLoaded},
+		{marker, "", n(0), protocol.CarrierBare},
+	} {
+		slot := &nodes.Node{Name: fmt.Sprintf("DRN-PRESS-OUT-%02d", i), Enabled: true, ParentID: &grp}
+		testutil.MustNoErr(t, db.CreateNode(slot), "slot")
+		b := &bins.Bin{BinTypeID: c.typeID, Label: fmt.Sprintf("DRN-%02d", i), Status: "available", NodeID: &slot.ID}
+		testutil.MustNoErr(t, db.CreateBin(b), "bin")
+		if c.part != "" {
+			testutil.MustNoErr(t, db.SetBinManifest(b.ID, `{"items":[]}`, c.part, 10), "part")
+		}
+		var totes sql.NullInt64
+		if c.totesOnCart != nil {
+			totes = sql.NullInt64{Int64: int64(*c.totesOnCart), Valid: true}
+		}
+		_, err := db.Exec(`UPDATE bins SET totes_on_cart = $1 WHERE id = $2`, totes, b.ID)
+		testutil.MustNoErr(t, err, "totes")
+		byState[c.state] = append(byState[c.state], b.ID)
+	}
+
+	listed := func(ticked ...protocol.CarrierState) []int64 {
+		t.Helper()
+		got, err := db.ListDrainableCarts(grp, loaders.DrainStates(ticked).Ticked())
+		testutil.MustNoErr(t, err, "the drain population")
+		ids := make([]int64, len(got))
+		for i, b := range got {
+			ids[i] = b.ID
+		}
+		slices.Sort(ids)
+		return ids
+	}
+	for _, s := range loaders.Drainable {
+		want := slices.Clone(byState[s])
+		slices.Sort(want)
+		if got := listed(s); !slices.Equal(got, want) {
+			t.Errorf("the %s box alone lists %v, want %v: a box pulls its state and only its state", s, got, want)
+		}
+	}
+	var every []int64
+	for _, s := range loaders.Drainable {
+		every = append(every, byState[s]...)
+	}
+	slices.Sort(every)
+	if got := listed(loaders.Drainable[:]...); !slices.Equal(got, every) {
+		t.Errorf("all four boxes list %v, want %v: every part-less cart but the bare marker, never the loaded one", got, every)
+	}
+	if got := listed(); len(got) != 0 {
+		t.Errorf("no box ticked lists %v, want nothing", got)
 	}
 }

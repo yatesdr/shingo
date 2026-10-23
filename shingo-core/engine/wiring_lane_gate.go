@@ -91,8 +91,9 @@ func (e *Engine) wireLaneGateHandlers() {
 	// trigger: the bus dispatches synchronously in registration order, so this must
 	// come AFTER the handleBlockCompleted subscription that drops the row. Ahead of
 	// it, the evaluator would read the placer as still holding the mouth and decline
-	// to release — correct but a firing late. wireLaneGateHandlers is called at the
-	// end of wireEventHandlers to guarantee it.
+	// to release — correct but a firing late. wireLaneGateHandlers is called after
+	// every releasing handler in wireEventHandlers to guarantee it; only the
+	// window pulls, which release nothing, are registered after it.
 	eventbus.SubscribeTyped(e.Events, func(evt eventbus.TypedEvent[EventType, BlockCompletedEvent]) {
 		gate([]int64{e.dispatcher.LaneIDForNodeName(evt.Payload.Location)})
 	}, EventBlockCompleted)

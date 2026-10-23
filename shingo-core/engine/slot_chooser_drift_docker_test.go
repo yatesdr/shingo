@@ -28,7 +28,8 @@ import (
 //   - chooseDeclared, the carried-bin return's chooser (the cancelled order's
 //     automatic return and the bins page's Return button): a claim's source
 //     group, stored into through storeInto;
-//   - freeStage2Windows, the stage-2 pull's window list.
+//   - freeStage2Windows, the stage-2 pull's window list (dispatch.FreeWindows,
+//     the predicate the drain's windows meet too).
 //
 // Each candidate is storage-classed (a lane slot, or a STOR-typed window),
 // so the claim door is real. The "free" row is the control.

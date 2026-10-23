@@ -323,6 +323,24 @@ func TestCensus_OrderCreationDoors(t *testing.T) {
 		//  3. What origin_class? no_demand, stated at birth: the station asked
 		//     for housekeeping, and no place is asking for material.
 		{"home clear", "dispatch/clear_home.go", "an Edge station clearing a dedicated loader's home — Core declares the carrier empty and brings a buffer partial home"},
+		// THE LOADER DRAIN (dispatch/loader_drain.go, W14). An unloader with a
+		// drain box ticked: Core moves a part-less cart of that state from the
+		// unloader's inbound source into a free window, naming the cart, through
+		// the bin move's planner and builder (PlanMove, BirthMove).
+		//
+		// The three questions:
+		//  1. Projects to the Edge? Not its row: like the bin move it writes its
+		//     row outside admission, so no station has one. Its material notices
+		//     (order.delivered, bin_picked_up) go to the window's Edge
+		//     (Need.Projects), which binds the cart where it lands, as stage 2's
+		//     pull's do.
+		//  2. Needs the dropoff-capacity gate? Yes, through the bin move's plan
+		//     (plan.moveDestination), after the window was found free by the
+		//     predicate stage 2 shares (FreeWindows); and the scanner's re-run
+		//     before dispatch, as every move.
+		//  3. What origin_class? no_demand, stated at birth: no place asked for
+		//     material; the unloader clears a cart it was set up to clear.
+		{"loader drain", "dispatch/loader_drain.go", "nobody — an unloader with a drain box ticked has a free window and a cart of that state in its inbound source"},
 		// THE LANE SELF-HEAL DOOR IS DELETED (§R.104), and it is not merely moved:
 		// nothing takes its place, because the order it used to create does not
 		// exist. Its entry read "nobody — the lane gate finds a robot dwelling
@@ -364,6 +382,7 @@ func TestCensus_OrderCreationDoors(t *testing.T) {
 	// calls next on the way to Build.
 	onBuild := map[string]struct{ call, definedIn, next string }{
 		"bin move":                      {"BirthMove(", "dispatch/builder.go", "Build(tx, need, p)"},
+		"loader drain":                  {"BirthMove(", "dispatch/builder.go", "Build(tx, need, p)"},
 		"Edge wire intake":              {"s.birth(", "dispatch/lifecycle_service.go", "birthOwnTx("},
 		"loader replenish":              {"AdmitCoreAsk(", "dispatch/loader_replenish.go", "d.lifecycle.birth("},
 		"maintained-group level keeper": {"AdmitCoreAsk(", "dispatch/loader_replenish.go", "d.lifecycle.birth("},
@@ -391,7 +410,7 @@ func TestCensus_OrderCreationDoors(t *testing.T) {
 	// file-counting version could not make, and the reason it counted eight.
 	delegates := map[string]string{
 		"store/orders.go":     "the writer itself; every door reaches the orders table through this file, which is why there is one INSERT and not several",
-		"dispatch/builder.go": "the one builder (B2): Build over the single INSERT, and the transactions of BirthMove and of a move naming its bin (birthNamedMove); the bin move, the wire door and the two Core asks reach it now, and B3 moves the other doors to it",
+		"dispatch/builder.go": "the one builder (B2): Build over the single INSERT, and the transactions of BirthMove and of a move naming its bin (birthNamedMove); the bin move, the loader drain, the wire door and the two Core asks reach it now, and B3 moves the other doors to it",
 	}
 
 	// And no site may start writing orders without being named as a door. This
@@ -498,6 +517,7 @@ func TestCensus_OrderReceivedAtBirth(t *testing.T) {
 		"engine/bin_move.go":             {"", "a person moving one bin from Core's pages; no Edge asked; seen at dispatch"},
 		"engine/carried_bin_recovery.go": {"", "Core putting a carried bin down; no Edge asked; seen at dispatch"},
 		"dispatch/clear_home.go":         {"", "the home clear: the door's own bin push (engine/clear_home.go notifyBinChanged) rebuilds the home's watchers at birth"},
+		"dispatch/loader_drain.go":       {"", "a drain's move: Core-born, no Edge asked, as the bin move is; seen at dispatch"},
 	}
 	sources := scanCoreSources(t)
 	named := map[string]bool{"store/orders.go": true, "dispatch/builder.go": true}

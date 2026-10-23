@@ -19,6 +19,12 @@
 // freed), an order completing into a wait group (a cart arrived), and a sweep at
 // startup. Each runs the pull on a goroutine, serialized per pair, so a burst of
 // triggers makes one move per free window.
+//
+// THE SAME TRIGGERS RUN THE DRAIN (W14, dispatch.DrainLoader): a bin leaving a
+// draining unloader's window, an order completing into its inbound source, and
+// the same startup sweep. Each event reads the loaders once (readWindowPulls)
+// and runs both pulls; the two subscriptions were widened, not copied, so
+// registration order is unchanged.
 
 package engine
 
@@ -32,7 +38,6 @@ import (
 	"shingo/protocol/lockcheck"
 	"shingocore/dispatch"
 	"shingocore/internal/lockorder"
-	"shingocore/store/bins"
 	"shingocore/store/loaders"
 	"shingocore/store/nodes"
 	"shingocore/store/orders"
@@ -42,12 +47,17 @@ import (
 // and core-mnt- (the level keeper).
 const Stage2EdgeUUIDPrefix = "core-s2-"
 
-// stage2Receipt is the receipt type Core files when it confirms its own landed
-// pull.
-const stage2Receipt = "core_s2_landed"
+// stage2Receipt and drainReceipt are the receipt types Core files when it
+// confirms its own landed pull: stage 2's, and the drain's
+// (dispatch.DrainEdgeUUIDPrefix).
+const (
+	stage2Receipt = "core_s2_landed"
+	drainReceipt  = "core_drain_landed"
+)
 
-// stage2Puller serializes pulls per pair and tracks the trigger goroutines so
-// Stop can wait for them. The zero value is ready.
+// stage2Puller serializes stage 2's pulls per pair and tracks the trigger
+// goroutines of both window pulls (stage 2's and the drain's, which its own
+// loader lock serializes) so Stop can wait for them. The zero value is ready.
 type stage2Puller struct {
 	mu      lockcheck.Mutex[lockorder.Stage2Pulls]
 	locks   map[int64]*lockcheck.Mutex[lockorder.Stage2Pair] // keyed by stage-1 loader id
@@ -95,10 +105,10 @@ func (p *stage2Puller) stop() {
 // windows, one move per free window, and returns how many it made. A pair in
 // direct mode (stage 2 has no inbound source) never pulls.
 //
-// Free window: a stage-2 home with no bin on it and no non-terminal order
-// delivering there — Core's own truth, no Edge heuristic. Candidates: bare carts
-// in the wait group's subtree, unclaimed and sourceable, oldest arrival first
-// (bins.ListBareInGroup), each taken only by a window that admits it.
+// Free window: dispatch.FreeWindows over stage 2's homes, the predicate the
+// drain shares. Candidates: bare carts in the wait group's subtree, unclaimed
+// and sourceable, oldest arrival first (bins.ListBareInGroup), each taken only
+// by a window that admits it (dispatch.WindowAdmits).
 func (e *Engine) PullStage2(stage1ID int64) (int, error) {
 	lk := e.stage2.pairLock(stage1ID)
 	lk.Lock()
@@ -124,7 +134,7 @@ func (e *Engine) PullStage2(stage1ID int64) (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	types := map[int64]*bins.BinType{}
+	reads := &dispatch.WindowReads{}
 	taken := map[int64]bool{}
 	moved := 0
 	for _, w := range free {
@@ -132,7 +142,7 @@ func (e *Engine) PullStage2(stage1ID int64) (int, error) {
 			if taken[c.ID] {
 				continue
 			}
-			ok, err := e.windowAdmits(w, caps[w.ID], c, types)
+			ok, err := e.dispatcher.WindowAdmits(w, caps[w.ID], c, reads)
 			if err != nil {
 				return moved, err
 			}
@@ -142,7 +152,7 @@ func (e *Engine) PullStage2(stage1ID int64) (int, error) {
 			taken[c.ID] = true
 			// The window's Edge binds the cart when it lands, so the move
 			// projects its delivery there.
-			station := e.stage2Station(w)
+			station := e.dispatcher.WindowStation(w)
 			if _, err := e.CreateBinMove(BinMoveRequest{
 				Selection: BinSelectionByLabel, BinLabel: c.Label, DestNodeID: w.ID,
 				StationID: station, Projects: station, EdgeUUID: Stage2EdgeUUIDPrefix + uuid.New().String(),
@@ -173,104 +183,21 @@ func (e *Engine) pullPair(stage1ID int64) (*loaders.Loader, *loaders.Loader, err
 	return one, two, nil
 }
 
-// freeStage2Windows returns stage 2's windows with no bin and no non-terminal
-// order delivering there.
+// freeStage2Windows returns stage 2's free windows (dispatch.FreeWindows).
 func (e *Engine) freeStage2Windows(two *loaders.Loader) ([]*nodes.Node, error) {
 	homes, err := e.db.ListLoaderHomes(two.ID)
 	if err != nil {
 		return nil, err
 	}
-	var free []*nodes.Node
+	windows := make([]*nodes.Node, 0, len(homes))
 	for _, h := range homes {
 		w, err := e.db.GetNode(h.PositionNodeID)
 		if err != nil {
 			return nil, err
 		}
-		if !w.Enabled {
-			continue
-		}
-		n, err := e.db.CountBinsByNode(w.ID)
-		if err != nil {
-			return nil, err
-		}
-		inbound, err := e.db.CountActiveOrdersByDeliveryNode(w.Name)
-		if err != nil {
-			return nil, err
-		}
-		if n != 0 || inbound != 0 {
-			continue
-		}
-		// Another order's slot reservation: the pull's move claims a
-		// storage-classed window through ReserveStorageDropoff, which refuses a
-		// window somebody else has reserved.
-		spoken, err := e.db.SlotSpokenForByStranger(w.ID, 0)
-		if err != nil {
-			return nil, err
-		}
-		if !spoken {
-			free = append(free, w)
-		}
+		windows = append(windows, w)
 	}
-	return free, nil
-}
-
-// windowAdmits applies both carrier restrictions a cart meets at a window —
-// the node's Allowed Bin Types and the window's own capability list — with the
-// marker admitted wherever its carrier is.
-func (e *Engine) windowAdmits(w *nodes.Node, capCodes []string, c *bins.Bin, types map[int64]*bins.BinType) (bool, error) {
-	typeOf := func(id int64) (*bins.BinType, error) {
-		if bt, ok := types[id]; ok {
-			return bt, nil
-		}
-		bt, err := e.db.GetBinType(id)
-		if err != nil {
-			return nil, err
-		}
-		types[id] = bt
-		return bt, nil
-	}
-	marker, err := typeOf(c.BinTypeID)
-	if err != nil {
-		return false, err
-	}
-	allowed, err := e.db.GetEffectiveBinTypes(w.ID)
-	if err != nil {
-		return false, err
-	}
-	if !bins.TypeAdmits(allowed, marker.ID, marker.BareOf) {
-		return false, nil
-	}
-	if len(capCodes) == 0 {
-		return true, nil
-	}
-	carrierCode := ""
-	if marker.BareOf != nil {
-		carrier, err := typeOf(*marker.BareOf)
-		if err != nil {
-			return false, err
-		}
-		carrierCode = carrier.Code
-	}
-	for _, code := range capCodes {
-		if code == marker.Code || (carrierCode != "" && code == carrierCode) {
-			return true, nil
-		}
-	}
-	return false, nil
-}
-
-// stage2Station is the Edge station a pull belongs to, so the delivered notice
-// reaches the board holding the window: the window's one effective station,
-// else the plant's one Edge, else none (the move still runs; the Edge learns of
-// the cart from the bin on the window).
-func (e *Engine) stage2Station(w *nodes.Node) string {
-	if sts, err := e.db.GetEffectiveStations(w.ID); err == nil && len(sts) == 1 {
-		return sts[0]
-	}
-	if edges, err := e.db.ListEdges(); err == nil && len(edges) == 1 {
-		return edges[0].StationID
-	}
-	return ""
+	return e.dispatcher.FreeWindows(windows)
 }
 
 // pullPairsAsync runs a pull for each stage-1 id on the tracked goroutine.
@@ -285,19 +212,60 @@ func (e *Engine) pullPairsAsync(stage1IDs ...int64) {
 	}
 }
 
-// pullModePairs lists the live pairs whose stage 2 pulls from a wait group,
-// as stage-1 id → the group's node id.
-func (e *Engine) pullModePairs() (map[int64]int64, error) {
+// drainAsync runs an unloader's drain (dispatch.DrainLoader) for each loader id
+// on the same tracked goroutines: the loader's own lock serializes them, so a
+// burst of triggers makes one move per free window.
+func (e *Engine) drainAsync(loaderIDs ...int64) {
+	for _, id := range loaderIDs {
+		id := id
+		e.stage2.spawn(func() {
+			if _, err := e.dispatcher.DrainLoader(id); err != nil {
+				e.logFn("engine: drain for loader %d: %v", id, err)
+			}
+		})
+	}
+}
+
+// windowPulls is the loader set as Core's two window pulls read it, from ONE
+// read of the loaders, so an event that may concern either reads them once and
+// runs both (W14: stage 2's subscriptions widened, not copied).
+type windowPulls struct {
+	// pairs is the live pairs whose stage 2 pulls from a wait group: stage-1
+	// id → the group's node id. stage2 maps the stage-2 id back to stage 1's.
+	pairs  map[int64]int64
+	stage2 map[int64]int64
+	// drains is the unloaders with a drain box ticked and an inbound source:
+	// loader id → the source's node id. DrainLoader re-checks the row.
+	drains map[int64]int64
+}
+
+func (p windowPulls) none() bool { return len(p.pairs) == 0 && len(p.drains) == 0 }
+
+// readWindowPulls reads the loaders once and resolves each pull's group: one
+// statement, and one per pull-mode pair and per draining unloader.
+func (e *Engine) readWindowPulls() (windowPulls, error) {
 	all, err := e.db.ListLoaders()
 	if err != nil {
-		return nil, err
+		return windowPulls{}, err
 	}
 	byID := make(map[int64]*loaders.Loader, len(all))
 	for i := range all {
 		byID[all[i].ID] = &all[i]
 	}
-	out := map[int64]int64{}
+	p := windowPulls{pairs: map[int64]int64{}, stage2: map[int64]int64{}, drains: map[int64]int64{}}
+	groupOf := func(name string) (int64, bool) {
+		g, err := e.db.GetNodeByDotName(name)
+		if err != nil || g == nil {
+			return 0, false
+		}
+		return g.ID, true
+	}
 	for _, l := range all {
+		if len(l.Drains) > 0 && l.InboundSource != "" {
+			if id, ok := groupOf(l.InboundSource); ok {
+				p.drains[l.ID] = id
+			}
+		}
 		if l.SecondStageLoaderID == nil {
 			continue
 		}
@@ -305,40 +273,44 @@ func (e *Engine) pullModePairs() (map[int64]int64, error) {
 		if !ok || two.InboundSource == "" {
 			continue
 		}
-		g, err := e.db.GetNodeByDotName(two.InboundSource)
-		if err != nil || g == nil {
-			continue
+		if id, ok := groupOf(two.InboundSource); ok {
+			p.pairs[l.ID] = id
+			p.stage2[two.ID] = l.ID
 		}
-		out[l.ID] = g.ID
 	}
-	return out, nil
+	return p, nil
 }
 
 // startTwoStage is the two-stage unloaders' startup. Every pair is re-derived
 // first, so one set up before stage 1 had a group of its windows gets one now
 // rather than at its next edit (LoaderService.SyncPairs). Then a cart that
-// reached a wait group while Core was down, or a window freed then, is pulled
-// now rather than on the next event.
+// reached a wait group or a drained unloader's inbound source while Core was
+// down, or a window freed then, is pulled now rather than on the next event.
 func (e *Engine) startTwoStage() {
 	e.loaderService.SyncPairs()
-	e.sweepStage2Pulls()
+	e.sweepWindowPulls()
 }
 
-// sweepStage2Pulls is the startup trigger: every pull-mode pair, once.
-func (e *Engine) sweepStage2Pulls() {
-	pairs, err := e.pullModePairs()
+// sweepWindowPulls is the startup trigger: every pull-mode pair and every
+// draining unloader, once.
+func (e *Engine) sweepWindowPulls() {
+	p, err := e.readWindowPulls()
 	if err != nil {
-		e.logFn("engine: stage-2 startup sweep: %v", err)
+		e.logFn("engine: window pulls' startup sweep: %v", err)
 		return
 	}
-	for id := range pairs {
+	for id := range p.pairs {
 		e.pullPairsAsync(id)
+	}
+	for id := range p.drains {
+		e.drainAsync(id)
 	}
 }
 
-// onStage2WindowLeft is the pickup trigger: a bin left a node, and if that node
-// is a stage-2 window of a pull-mode pair the window may now be free.
-func (e *Engine) onStage2WindowLeft(fromNodeID int64) {
+// onWindowLeft is the pickup trigger: a bin left a node, and if that node is a
+// window of a pull-mode pair's stage 2 or of a draining unloader the window may
+// now be free.
+func (e *Engine) onWindowLeft(fromNodeID int64) {
 	if fromNodeID == 0 {
 		return
 	}
@@ -346,28 +318,43 @@ func (e *Engine) onStage2WindowLeft(fromNodeID int64) {
 	if err != nil || h == nil {
 		return
 	}
-	pairs, err := e.pullModePairs()
+	p, err := e.readWindowPulls()
 	if err != nil {
-		e.logFn("engine: stage-2 pull trigger: %v", err)
+		e.logFn("engine: window pull trigger: %v", err)
 		return
 	}
-	for stage1ID := range pairs {
-		one, err := e.db.GetLoader(stage1ID)
-		if err == nil && one != nil && one.SecondStageLoaderID != nil && *one.SecondStageLoaderID == h.LoaderID {
-			e.pullPairsAsync(stage1ID)
-		}
+	if stage1ID, ok := p.stage2[h.LoaderID]; ok {
+		e.pullPairsAsync(stage1ID)
+	}
+	if _, ok := p.drains[h.LoaderID]; ok {
+		e.drainAsync(h.LoaderID)
 	}
 }
 
-// onStage2OrderCompleted handles both halves of the completion event for the
-// pull. A core-s2- move that is DELIVERED is confirmed here: the robot set the
-// cart down on an empty window and there is no human receipt to wait for —
-// the reason the Edge's own U2/L2 moves are created autoConfirm — while a
-// delivered order stays non-terminal, so the window would count in flight until
-// the auto-confirm sweep. And an order delivering into a wait group is a cart
-// arriving there, which may be pulled.
-func (e *Engine) onStage2OrderCompleted(ev OrderCompletedEvent) {
-	if strings.HasPrefix(ev.EdgeUUID, Stage2EdgeUUIDPrefix) {
+// landedReceipt is the receipt type Core files when it confirms a landed move
+// of one of its own window pulls, by the move's prefix, or "" for any other
+// order.
+func landedReceipt(edgeUUID string) string {
+	switch {
+	case strings.HasPrefix(edgeUUID, Stage2EdgeUUIDPrefix):
+		return stage2Receipt
+	case strings.HasPrefix(edgeUUID, dispatch.DrainEdgeUUIDPrefix):
+		return drainReceipt
+	}
+	return ""
+}
+
+// onWindowPullOrderCompleted handles both halves of the completion event for
+// the window pulls. A core-s2- or core-dr- move that is DELIVERED is confirmed
+// here: the robot set the cart down on an empty window and there is no human
+// receipt to wait for — the reason the Edge's own U2/L2 moves are created
+// autoConfirm — while a delivered order stays non-terminal and keeps its bin's
+// claim, so the window would count in flight and the crew's CLEAR could not
+// source the cart until the auto-confirm sweep. And an order delivering into a
+// wait group, or into a draining unloader's inbound source, is a cart arriving
+// there, which may be pulled.
+func (e *Engine) onWindowPullOrderCompleted(ev OrderCompletedEvent) {
+	if receipt := landedReceipt(ev.EdgeUUID); receipt != "" {
 		order, err := e.db.GetOrder(ev.OrderID)
 		if err != nil || order == nil || order.Status != dispatch.StatusDelivered || e.dispatcher == nil {
 			return
@@ -377,26 +364,27 @@ func (e *Engine) onStage2OrderCompleted(ev OrderCompletedEvent) {
 		// auto-confirm gets by running after MarkDelivered returns
 		// (wiring_vendor_status.go).
 		e.stage2.spawn(func() {
-			if _, err := e.dispatcher.Lifecycle().ConfirmReceipt(order, order.StationID, stage2Receipt, 0); err != nil {
-				e.logFn("engine: confirm landed stage-2 pull %d: %v", order.ID, err)
+			if _, err := e.dispatcher.Lifecycle().ConfirmReceipt(order, order.StationID, receipt, 0); err != nil {
+				e.logFn("engine: confirm landed window pull %d: %v", order.ID, err)
 			}
 		})
 		return
 	}
-	pairs, err := e.pullModePairs()
-	if err != nil || len(pairs) == 0 {
+	p, err := e.readWindowPulls()
+	if err != nil || p.none() {
 		return
 	}
 	order, err := e.db.GetOrder(ev.OrderID)
 	if err != nil || order == nil {
 		return
 	}
-	e.pullOnArrival(order, pairs)
+	e.pullOnArrival(order, p)
 }
 
 // pullOnArrival pulls for every pair whose wait group holds the order's
-// delivery node.
-func (e *Engine) pullOnArrival(order *orders.Order, pairs map[int64]int64) {
+// delivery node, and drains every unloader whose inbound source is that node
+// or holds it.
+func (e *Engine) pullOnArrival(order *orders.Order, p windowPulls) {
 	if order.DeliveryNode == "" {
 		return
 	}
@@ -411,9 +399,14 @@ func (e *Engine) pullOnArrival(order *orders.Order, pairs map[int64]int64) {
 			break
 		}
 	}
-	for stage1ID, groupID := range pairs {
+	for stage1ID, groupID := range p.pairs {
 		if ancestors[groupID] {
 			e.pullPairsAsync(stage1ID)
+		}
+	}
+	for loaderID, sourceID := range p.drains {
+		if sourceID == node.ID || ancestors[sourceID] {
+			e.drainAsync(loaderID)
 		}
 	}
 }

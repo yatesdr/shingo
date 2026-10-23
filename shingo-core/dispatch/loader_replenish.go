@@ -444,9 +444,9 @@ func (d *Dispatcher) ReplenishLoader(req ReplenishRequest, cfg LoaderReplenishCo
 	return res, err
 }
 
-// loaderLock is one loader's decision lock (ReplenishLoader), made on first
-// use. lockorder.LoaderBudget: the lock the Edge held around the same count
-// and create (withLoaderBudget), moved here with the decision.
+// loaderLock is one loader's decision lock (ReplenishLoader, DrainLoader),
+// made on first use. lockorder.LoaderBudget: the lock the Edge held around the
+// same count and create (withLoaderBudget), moved here with the decision.
 func (d *Dispatcher) loaderLock(loaderID int64) *lockcheck.Mutex[lockorder.LoaderBudget] {
 	m, _ := d.loaderLocks.LoadOrStore(loaderID, &lockcheck.Mutex[lockorder.LoaderBudget]{})
 	return m.(*lockcheck.Mutex[lockorder.LoaderBudget])

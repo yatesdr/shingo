@@ -114,7 +114,8 @@ func (e *Engine) Start() {
 	}
 
 	// Two-stage unloaders: pairs re-derived, and pull-mode carts moved on, now
-	// rather than at the next edit or event (startTwoStage).
+	// rather than at the next edit or event; and every draining unloader's
+	// drain run once (startTwoStage).
 	e.startTwoStage()
 
 	// Scan for any orders queued before restart

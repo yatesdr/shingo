@@ -9,7 +9,11 @@
 // aggregate of its own is exactly what belongs there.
 package nodetree
 
-import "fmt"
+import (
+	"fmt"
+
+	"shingocore/store/internal/helpers"
+)
 
 // The node tree, as SQL. One definition of each walk, composed by every query
 // that needs one.
@@ -22,8 +26,10 @@ import "fmt"
 //
 // THE WALKS ARE DIFFERENT QUESTIONS, AND THE DIFFERENCE IS LOAD-BEARING:
 //
-//	DescendantsOf   everything BELOW a node.        Self EXCLUDED.
-//	AncestorsOf     a node and its parent chain.    Self INCLUDED, carries depth.
+//	DescendantsOf              everything BELOW a node.        Self EXCLUDED.
+//	UnmaintainedDescendantsOf  the same, stopping at a group
+//	                           that declares a level.          Self EXCLUDED.
+//	AncestorsOf                a node and its parent chain.    Self INCLUDED, carries depth.
 //
 // Below-a-node versus a-node-and-below is the divergence this extraction found:
 // the group-scoped empty finders exclude the group node itself (it is synthetic
@@ -57,6 +63,27 @@ func DescendantsOf(nodeParam int) string {
 			UNION ALL
 			SELECT n2.id FROM nodes n2 JOIN descendants d ON n2.parent_id = d.id
 		)`, nodeParam)
+}
+
+// UnmaintainedDescendantsOf names every node BELOW the one at the given
+// parameter index that stands in no maintained group below it: the walk stops
+// at a descendant that declares a level (helpers.DeclaresLevelSQL), which is
+// left out with everything under it. THE NODE ITSELF IS EXCLUDED, as
+// DescendantsOf's; whether it declares a level is its caller's question.
+//
+// A different question from DescendantsOf, so its own name and its own CTE
+// name: `unmaintained`, one column, `id`. Its reader is the drain's population
+// (bins.ListDrainableInGroup): an unloader never drains a maintained group
+// (owner, 2026-10-22), and one that declares a level inside the unloader's
+// inbound source is one. A maintained group is flat (the level save refuses one
+// that is not), but the walk does not lean on it: a lane or group put under one
+// later is left out with it.
+func UnmaintainedDescendantsOf(nodeParam int) string {
+	return fmt.Sprintf(`WITH RECURSIVE unmaintained(id) AS (
+			SELECT n1.id FROM nodes n1 WHERE n1.parent_id = $%d AND NOT %s
+			UNION ALL
+			SELECT n2.id FROM nodes n2 JOIN unmaintained u ON n2.parent_id = u.id WHERE NOT %s
+		)`, nodeParam, helpers.DeclaresLevelSQL("n1.id"), helpers.DeclaresLevelSQL("n2.id"))
 }
 
 // AncestorsOf names the node at the given parameter index and its parent chain
