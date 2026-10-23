@@ -350,6 +350,18 @@ func (p *Planner) BinTypeBeforeStep(steps []Step, i int) *int64 {
 // intake: this is a narrowing, and a narrowing that cannot be computed must not
 // be able to refuse an order Edge just asked for.
 func BinTypeAtNode(db stepReader, nodeName string) *int64 {
+	b := BinAtNode(db, nodeName)
+	if b == nil {
+		return nil
+	}
+	id := b.BinTypeID
+	return &id
+}
+
+// BinAtNode is the one carrier standing on nodeName, nil when it holds none or
+// more than one (or a read fails): BinTypeAtNode's answer with the cart, for a
+// caller that states it (binresolver.KnownCarrier). The same two reads.
+func BinAtNode(db stepReader, nodeName string) *bins.Bin {
 	defer observe(db, "bin-type-at-node")()
 	if nodeName == "" {
 		return nil
@@ -362,8 +374,7 @@ func BinTypeAtNode(db stepReader, nodeName string) *int64 {
 	if err != nil || len(binsAt) != 1 {
 		return nil
 	}
-	id := binsAt[0].BinTypeID
-	return &id
+	return binsAt[0]
 }
 
 // StepNode resolves a single step's node. If the node is a synthetic

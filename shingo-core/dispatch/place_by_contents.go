@@ -302,7 +302,7 @@ func (s *PlanningService) placePartialMove(order *orders.Order, pick SourceResul
 	if order.RemainingUOP != nil {
 		count = *order.RemainingUOP
 	}
-	target := partialHomeSlot(s.db, s.pure, order, b, count, order.SourceNode, order.DeliveryNode, binresolver.KnownBinType(b.BinTypeID))
+	target := partialHomeSlot(s.db, s.pure, order, b, count, order.SourceNode, order.DeliveryNode, binresolver.KnownCarrier(b))
 	if target == "" || target == order.DeliveryNode {
 		return nil
 	}

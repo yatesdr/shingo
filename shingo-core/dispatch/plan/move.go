@@ -129,14 +129,14 @@ func (p *Planner) moveDestination(b *bins.Bin, source, dest *nodes.Node, admits 
 	if !dest.Enabled {
 		return refused(Refusal{Rule: RefusedDestDisabled})
 	}
-	if blocked, v := DropoffCapacity(p.db, dest.Name, 0); blocked {
+	if blocked, v := DropoffCapacityForType(p.db, dest.Name, 0, binresolver.KnownCarrier(b)); blocked {
 		return refused(Refusal{Rule: RefusedDestFull, Capacity: v})
 	}
 	pl := Plan{Outcome: OutcomeFound, Bin: b, Node: source, Dest: dest}
 	if dest.IsSynthetic {
 		// A group: the child the carrier is put down on is chosen here, with the
 		// carrier stated, so the resolver's own fence read is the carrier rule.
-		res, err := p.StoreDestination(dest, b.PayloadCode, binresolver.KnownBinType(b.BinTypeID), domain.Anyone)
+		res, err := p.StoreDestination(dest, b.PayloadCode, binresolver.KnownCarrier(b), domain.Anyone)
 		if err != nil || res == nil || res.Node == nil {
 			if err == nil {
 				err = errors.New("the group resolver chose no child")

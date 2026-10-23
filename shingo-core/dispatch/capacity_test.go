@@ -3,6 +3,7 @@ package dispatch
 import (
 	"database/sql"
 	"errors"
+	"shingo/protocol"
 	"shingocore/domain"
 	"testing"
 
@@ -16,6 +17,7 @@ import (
 type fakeCapacityDB struct {
 	maintainLevels map[int64][]nodes.MaintainLevel
 	emptyInGroup   map[int64]int
+	tbInGroup      map[int64]int // the carts at 0, the count at TopsAndBottomsOnly
 	node           *nodes.Node
 	getNodeErr     error
 	binCount       int
@@ -34,6 +36,8 @@ type fakeCapacityDB struct {
 	effBinTypes    map[int64][]*bins.BinType
 	effBinTypesErr error
 	orderBinTypes  map[int64]int64
+	orderStates    map[int64]protocol.CarrierState
+	tbRows         map[int64]int // tops & bottoms rows by bin type id
 	// bareOf maps a bare marker to its carrier; absent = a real type.
 	bareOf map[int64]int64
 }
@@ -352,7 +356,10 @@ func (f *fakeCapacityDB) ListMaintainLevels(groupNodeID int64) ([]nodes.Maintain
 	return f.maintainLevels[groupNodeID], nil
 }
 
-func (f *fakeCapacityDB) CountEmptyBinsOfTypeInGroup(binTypeCode string, groupNodeID int64, _ domain.Height) (int, error) {
+func (f *fakeCapacityDB) CountEmptyBinsOfTypeInGroup(binTypeCode string, groupNodeID int64, h domain.Height) (int, error) {
+	if h == domain.TopsAndBottomsOnly {
+		return f.tbInGroup[groupNodeID], nil
+	}
 	return f.emptyInGroup[groupNodeID], nil
 }
 
@@ -377,9 +384,14 @@ func (f *fakeCapacityDB) BinTypeBareOf(binTypeID int64) (*int64, error) {
 	return nil, nil
 }
 
-func (f *fakeCapacityDB) BinTypeForOrder(orderID int64) (*int64, error) {
+func (f *fakeCapacityDB) BinTypeForOrder(orderID int64) (*int64, protocol.CarrierState, error) {
 	if id, ok := f.orderBinTypes[orderID]; ok {
-		return &id, nil
+		return &id, f.orderStates[orderID], nil
 	}
-	return nil, nil
+	return nil, "", nil
+}
+
+func (f *fakeCapacityDB) TopsAndBottomsWant(_, binTypeID int64) (int, bool, error) {
+	want, ok := f.tbRows[binTypeID]
+	return want, ok, nil
 }

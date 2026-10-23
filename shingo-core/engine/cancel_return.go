@@ -408,7 +408,7 @@ func (e *Engine) storeInto(src *nodes.Node, bin *bins.Bin) (*nodes.Node, string)
 	}
 	// The slot is the planner's (plan.GroupStoreSlot), the group resolver the
 	// level keeper and intake ask.
-	stated := binresolver.KnownBinType(bin.BinTypeID)
+	stated := binresolver.KnownCarrier(bin)
 	res, err := e.dispatcher.PlanGroupStoreSlot(group, bin.PayloadCode, stated)
 	if err == nil && res != nil && res.Node != nil {
 		return res.Node, ""
@@ -481,7 +481,7 @@ func (e *Engine) storeIntoLoader(home *loaders.Home, bin *bins.Bin) (*nodes.Node
 		if nerr != nil || n == nil || !n.Enabled || !takes(m) {
 			return nil
 		}
-		if blocked, _ := dispatch.CheckDropoffCapacityForType(e.db, n.Name, 0, &bin.BinTypeID); blocked {
+		if blocked, _ := dispatch.CheckDropoffCapacityForType(e.db, n.Name, 0, binresolver.KnownCarrier(bin)); blocked {
 			return nil
 		}
 		return n

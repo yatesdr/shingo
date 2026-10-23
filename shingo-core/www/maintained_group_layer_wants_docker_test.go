@@ -19,7 +19,8 @@ import (
 
 // maintained_group_layer_wants_docker_test.go — a level's wanted heights ride
 // the level's own save and go with the level's remove (the Nodes page's
-// maintained-group section).
+// maintained-group section). A height is wanted only of a type that states its
+// totes per layer, and 0 layers is the tops & bottoms row.
 
 // layerWantsOf reads a group's wanted heights through the editor's GET, as
 // "TYPE:layers=want" in the answer's order.
@@ -52,7 +53,10 @@ func TestMaintainedGroupLevel_LayerWants(t *testing.T) {
 		}), "create position")
 	}
 	tote := mintBinType(t, db, "MGLW-TOTE").ID
+	small := mintBinType(t, db, "MGLW-SMALL").ID
 	kd := mintBinType(t, db, "MGLW-KD").ID
+	_, err = db.Exec(`UPDATE bin_types SET totes_per_layer = 8 WHERE id IN ($1, $2)`, tote, small)
+	testutil.MustNoErr(t, err, "the tote types")
 
 	saveLevel := func(binTypeID int64, want int, layerWants any) int {
 		body := map[string]any{"group_node_id": grpID, "bin_type_id": binTypeID, "want": want}
@@ -60,7 +64,7 @@ func TestMaintainedGroupLevel_LayerWants(t *testing.T) {
 			body["layer_wants"] = layerWants
 		}
 		rec := postJSON(t, h.apiMaintainedGroupLevelSet, "/api/nodes/maintained-group/level", body)
-		if rec.Code != http.StatusOK && rec.Code != http.StatusBadRequest {
+		if rec.Code != http.StatusOK && rec.Code != http.StatusBadRequest && rec.Code != http.StatusConflict {
 			t.Fatalf("level save: status %d; body=%s", rec.Code, rec.Body.String())
 		}
 		return rec.Code
@@ -85,8 +89,13 @@ func TestMaintainedGroupLevel_LayerWants(t *testing.T) {
 	want("a list replaces them, a want of 0 kept", layerWantsOf(t, h, grpID),
 		[]string{"MGLW-TOTE:4=0"})
 
+	saveLevel(tote, 4, []map[string]int{{"layers": 0, "want": 1}, {"layers": 4, "want": 0}})
+	want("0 layers is the tops & bottoms row", layerWantsOf(t, h, grpID),
+		[]string{"MGLW-TOTE:0=1", "MGLW-TOTE:4=0"})
+	saveLevel(tote, 4, []map[string]int{{"layers": 4, "want": 0}})
+
 	for _, bad := range []any{
-		[]map[string]int{{"layers": 0, "want": 1}},
+		[]map[string]int{{"layers": -1, "want": 1}},
 		[]map[string]int{{"layers": 2, "want": -1}},
 		[]map[string]int{{"layers": 2, "want": 1}, {"layers": 2, "want": 3}},
 	} {
@@ -99,20 +108,28 @@ func TestMaintainedGroupLevel_LayerWants(t *testing.T) {
 	saveLevel(tote, 4, []map[string]int{})
 	want("an empty list clears them", layerWantsOf(t, h, grpID), []string{})
 
+	if code := saveLevel(kd, 2, []map[string]int{{"layers": 1, "want": 1}}); code != http.StatusConflict {
+		t.Errorf("a height on a type that states no totes per layer: status %d, want 409", code)
+	}
+	if code := saveLevel(kd, 2, []map[string]int{{"layers": 0, "want": 1}}); code != http.StatusConflict {
+		t.Errorf("tops & bottoms on a type that states no totes per layer: status %d, want 409", code)
+	}
+	want("a refused type writes nothing", layerWantsOf(t, h, grpID), []string{})
+
 	saveLevel(tote, 4, []map[string]int{{"layers": 3, "want": 2}})
-	saveLevel(kd, 2, []map[string]int{{"layers": 1, "want": 1}})
+	saveLevel(small, 1, []map[string]int{{"layers": 1, "want": 1}})
 	rec := postJSON(t, h.apiMaintainedGroupLevelRemove, "/api/nodes/maintained-group/level/remove",
 		map[string]any{"group_node_id": grpID, "bin_type_id": tote})
 	if rec.Code != http.StatusOK {
 		t.Fatalf("level remove: status %d; body=%s", rec.Code, rec.Body.String())
 	}
 	want("removing the level removes its heights and no other type's", layerWantsOf(t, h, grpID),
-		[]string{"MGLW-KD:1=1"})
+		[]string{"MGLW-SMALL:1=1"})
 
 	levels, err := db.ListMaintainLevels(grpID)
 	testutil.MustNoErr(t, err, "ListMaintainLevels")
-	if len(levels) != 1 || levels[0].BinTypeID != kd || levels[0].Want != 2 {
-		t.Errorf("levels after the remove = %+v, want KD at 2 alone: the layer wants change no level", levels)
+	if len(levels) != 2 || levels[0].BinTypeID != kd || levels[0].Want != 2 || levels[1].BinTypeID != small || levels[1].Want != 1 {
+		t.Errorf("levels after the remove = %+v, want KD at 2 and SMALL at 1: the layer wants change no level", levels)
 	}
 }
 

@@ -105,7 +105,10 @@ type CapacityDB interface {
 	// derives from, keyed on the asking order, so the two cannot answer
 	// differently about what is arriving.
 	GetEffectiveBinTypes(nodeID int64) ([]*bins.BinType, error)
-	BinTypeForOrder(orderID int64) (*int64, error)
+	BinTypeForOrder(orderID int64) (*int64, protocol.CarrierState, error)
+	// TopsAndBottomsWant is a level's tops & bottoms row, read only for a cart
+	// at 0 (binresolver.AtDeclaredLevel's row).
+	TopsAndBottomsWant(groupNodeID, binTypeID int64) (int, bool, error)
 	// BinTypeBareOf names the carrier a bare marker stands for, so a slot
 	// fenced to the carrier admits the bare cart too (bins.TypeAdmits).
 	BinTypeBareOf(binTypeID int64) (*int64, error)
@@ -176,20 +179,21 @@ type CapacityVerdict struct {
 // do not risk the drop.
 func DropoffCapacity(db CapacityDB, deliveryNode string, excludeOrderID int64) (blocked bool, block CapacityVerdict) {
 	defer observe(db, "capacity")()
-	return DropoffCapacityForType(db, deliveryNode, excludeOrderID, nil)
+	return DropoffCapacityForType(db, deliveryNode, excludeOrderID, binresolver.UnknownBinType("the capacity gate: no type named"))
 }
 
-// DropoffCapacityForType is DropoffCapacity for a caller that knows which
-// carrier type is arriving: the cancel-return's chooser (engine, through
-// dispatch.CheckDropoffCapacityForType), which asks with the carried bin's type.
-// Every other caller goes through DropoffCapacity with nil, and the NGRP arm
-// derives the type from the asking order it excludes (checkNGRPCapacity →
-// BinTypeForOrder), the same way the resolver derives it.
+// DropoffCapacityForType is DropoffCapacity for a caller that holds the
+// arriving cart: the cancel-return's chooser (engine, through
+// dispatch.CheckDropoffCapacityForType), the clear's home choice and the
+// planner's move, each stating the cart (binresolver.KnownCarrier). Every other
+// caller goes through DropoffCapacity, and the NGRP arm derives the type and
+// the cart's state from the asking order it excludes (checkNGRPCapacity →
+// BinTypeForOrder), the same way the resolver derives them.
 //
-// The type only changes the LEVEL question — physical occupancy is physical
+// The cart only changes the LEVEL question — physical occupancy is physical
 // whatever is arriving.
 func DropoffCapacityForType(db CapacityDB, deliveryNode string, excludeOrderID int64,
-	binTypeID *int64) (blocked bool, block CapacityVerdict) {
+	stated binresolver.BinTypeStatement) (blocked bool, block CapacityVerdict) {
 	if deliveryNode == "" {
 		return false, CapacityVerdict{}
 	}
@@ -204,7 +208,7 @@ func DropoffCapacityForType(db CapacityDB, deliveryNode string, excludeOrderID i
 	}
 	if node.IsSynthetic {
 		if node.NodeTypeCode == protocol.NodeClassNGRP {
-			return checkNGRPCapacity(db, node, deliveryNode, excludeOrderID, binTypeID)
+			return checkNGRPCapacity(db, node, deliveryNode, excludeOrderID, stated)
 		}
 		// LANE / _TRANSIT / future synthetic types — defer to whoever
 		// resolves them at dispatch time. _TRANSIT is never a legit
@@ -268,7 +272,7 @@ func DropoffCapacityForType(db CapacityDB, deliveryNode string, excludeOrderID i
 // read reports capacity-check-failed, not ngrp-full: both queue the order, but
 // only one of them sends an operator to go clear a group that may be empty.
 func checkNGRPCapacity(db CapacityDB, ngrp *nodes.Node, ngrpName string, excludeOrderID int64,
-	binTypeID *int64) (blocked bool, block CapacityVerdict) {
+	stated binresolver.BinTypeStatement) (blocked bool, block CapacityVerdict) {
 
 	params := Params{Destination: ngrpName}
 
@@ -280,11 +284,12 @@ func checkNGRPCapacity(db CapacityDB, ngrp *nodes.Node, ngrpName string, exclude
 	// known: an order judged against the group's total while the resolver
 	// judges its own type parks for a level its carrier is short of. Pin:
 	// TestUnloaderEmptyOut_NamedBinIsNotParkedByAnotherTypeOverLevel.
-	if binTypeID == nil && excludeOrderID != 0 {
-		if id, err := db.BinTypeForOrder(excludeOrderID); err == nil {
-			binTypeID = id
+	if stated.TypeID() == nil && excludeOrderID != 0 {
+		if id, state, err := db.BinTypeForOrder(excludeOrderID); err == nil && id != nil {
+			stated = binresolver.KnownTypeInState(*id, state)
 		}
 	}
+	binTypeID := stated.TypeID()
 
 	// ── THE LEVEL, BEFORE THE PHYSICS ───────────────────────────────────────
 	//
@@ -298,7 +303,7 @@ func checkNGRPCapacity(db CapacityDB, ngrp *nodes.Node, ngrpName string, exclude
 	// SAME PREDICATE AS THE RESOLVER, read through the same two calls. Two
 	// answers to "is this group full" is exactly the drift that puts an order in
 	// a loop between a gate that admits it and a resolver that refuses it.
-	if atLevel, err := ngrpAtDeclaredLevel(db, ngrp, binTypeID); err != nil {
+	if atLevel, err := ngrpAtDeclaredLevel(db, ngrp, stated); err != nil {
 		// Unknown is not permission, and it is not a claim of fullness either —
 		// it is the check failing, which has its own cause.
 		return true, CapacityVerdict{Cause: CauseCapacityCheckFailed, Params: params}
@@ -434,11 +439,14 @@ func BinTypeAllowedAt(db CapacityDB, nodeID int64, binTypeID *int64) (bool, erro
 // levels, asked through binresolver.AtDeclaredLevel — the resolver's own
 // function, so the gate and the resolver cannot disagree about whether a group
 // is full — with the same count the resolver passes.
-func ngrpAtDeclaredLevel(db CapacityDB, ngrp *nodes.Node, binTypeID *int64) (bool, error) {
+func ngrpAtDeclaredLevel(db CapacityDB, ngrp *nodes.Node, stated binresolver.BinTypeStatement) (bool, error) {
 	levels, err := db.ListMaintainLevels(ngrp.ID)
 	if err != nil {
 		return false, err
 	}
-	return binresolver.AtDeclaredLevel(levels, binresolver.BinTypeFrom(binTypeID, "the capacity gate: no type named"),
-		func(code string) (int, error) { return db.CountEmptyBinsOfTypeInGroup(code, ngrp.ID, domain.Height{}) })
+	return binresolver.AtDeclaredLevel(levels, stated,
+		func(code string, h domain.Height) (int, error) {
+			return db.CountEmptyBinsOfTypeInGroup(code, ngrp.ID, h)
+		},
+		func(binTypeID int64) (int, bool, error) { return db.TopsAndBottomsWant(ngrp.ID, binTypeID) })
 }

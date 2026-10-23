@@ -12,6 +12,7 @@ import (
 
 	"shingo/protocol"
 	"shingo/protocol/clock"
+	"shingocore/dispatch/binresolver"
 	"shingocore/dispatch/plan"
 	"shingocore/store"
 	"shingocore/store/bins"
@@ -326,7 +327,7 @@ func (d *Dispatcher) ClearSpot(loaderID int64, e *bins.Bin, exclude string) (*no
 		if err != nil || n == nil || !n.Enabled || n.Name == exclude {
 			continue
 		}
-		if blocked, _ := CheckDropoffCapacityForType(d.db, n.Name, 0, &e.BinTypeID); blocked {
+		if blocked, _ := CheckDropoffCapacityForType(d.db, n.Name, 0, binresolver.KnownCarrier(e)); blocked {
 			continue
 		}
 		return n, nil

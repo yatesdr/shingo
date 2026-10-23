@@ -4490,7 +4490,37 @@ func migrationList() []migration {
 		{163, "inbox.reply_outbox_id — the outbox row that answered a processed ask, so a repeat of the ask is answered by re-sending it",
 			v163InboxReplyOutboxID,
 			func(q schema.Querier) bool { return schema.ColumnExists(q, "inbox", "reply_outbox_id") }},
+		{164, "node_maintain_layer_levels.layers may be 0 — a maintained group's tops & bottoms row, a cap of its own",
+			v164TopsAndBottomsRow,
+			func(q schema.Querier) bool {
+				return schema.CheckConstraintAllows(q, "node_maintain_layer_levels",
+					"node_maintain_layer_levels_layers_check", ">= 0")
+			}},
 	}
+}
+
+// v164TopsAndBottomsRow lets a maintained group want carts at 0 layers: tops &
+// bottoms, a tote cart at a known 0 with no part (protocol.CarrierTopsAndBottoms).
+// It drops and re-adds node_maintain_layer_levels_layers_check as layers >= 0.
+//
+// THE ROW AT 0 IS A CAP, the rest are not. A type's tops & bottoms row is its
+// own line: the store caps judge a cart at 0 against the row's want, and the
+// stack level counts it never (binresolver.AtDeclaredLevel); a group that keeps
+// a type and has no row refuses it, and the group's save counts the level plus
+// the row against its enabled positions. A row of 1 layer or more is still what
+// it was at v161: which heights the group is short of, told to the unloader,
+// summed against nothing. The keeper fetches neither: tops & bottoms is made at
+// the unloader, and the card asks the crew for it.
+func v164TopsAndBottomsRow(tx *sql.Tx) error {
+	for _, s := range []string{
+		`ALTER TABLE node_maintain_layer_levels DROP CONSTRAINT IF EXISTS node_maintain_layer_levels_layers_check`,
+		`ALTER TABLE node_maintain_layer_levels ADD CONSTRAINT node_maintain_layer_levels_layers_check CHECK (layers >= 0)`,
+	} {
+		if _, err := tx.Exec(s); err != nil {
+			return fmt.Errorf("v164 tops & bottoms row: %w", err)
+		}
+	}
+	return nil
 }
 
 // v163InboxReplyOutboxID adds inbox.reply_outbox_id (one-transport, Phase 3):

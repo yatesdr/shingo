@@ -726,7 +726,7 @@ CREATE TABLE public.node_maintain_layer_levels (
     bin_type_id bigint NOT NULL,
     layers integer NOT NULL,
     want integer NOT NULL,
-    CONSTRAINT node_maintain_layer_levels_layers_check CHECK ((layers > 0)),
+    CONSTRAINT node_maintain_layer_levels_layers_check CHECK ((layers >= 0)),
     CONSTRAINT node_maintain_layer_levels_want_check CHECK ((want >= 0))
 );
 

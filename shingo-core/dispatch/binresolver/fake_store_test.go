@@ -2,6 +2,7 @@ package binresolver
 
 import (
 	"errors"
+	"shingo/protocol"
 	"shingocore/domain"
 
 	"shingocore/store/bins"
@@ -50,6 +51,15 @@ type fakeStore struct {
 	// tell", which is the untyped resolve every test predating the derivation got.
 	orderBinTypes   map[int64]int64
 	orderBinTypeErr error // injected read failure; the derivation must not refuse on it
+	// orderStates is the cart's state BinTypeForOrder answers beside the type.
+	orderStates map[int64]protocol.CarrierState
+	// tbRows are the tops & bottoms rows by bin type id (any group);
+	// tbRowReads counts TopsAndBottomsWant's reads.
+	tbRows     map[int64]int
+	tbRowReads int
+	// tbCounts are the carts at 0 per group and type, the count asked at
+	// TopsAndBottomsOnly; emptyCounts answers every other height.
+	tbCounts map[groupKey]int
 	// bareOf maps a bare marker to its carrier; absent = a real type.
 	bareOf map[int64]int64
 
@@ -277,14 +287,21 @@ func (f *fakeStore) BinTypeBareOf(binTypeID int64) (*int64, error) {
 // BinTypeForOrder defaults to "could not tell", which is what an order with
 // no bin and no holds answers in production and what leaves every pre-existing
 // resolver test untyped — the state they were all written in.
-func (f *fakeStore) BinTypeForOrder(orderID int64) (*int64, error) {
+func (f *fakeStore) BinTypeForOrder(orderID int64) (*int64, protocol.CarrierState, error) {
 	if f.orderBinTypeErr != nil {
-		return nil, f.orderBinTypeErr
+		return nil, "", f.orderBinTypeErr
 	}
 	if id, ok := f.orderBinTypes[orderID]; ok {
-		return &id, nil
+		return &id, f.orderStates[orderID], nil
 	}
-	return nil, nil
+	return nil, "", nil
+}
+
+// TopsAndBottomsWant answers from tbRows and counts the reads.
+func (f *fakeStore) TopsAndBottomsWant(_, binTypeID int64) (int, bool, error) {
+	f.tbRowReads++
+	want, ok := f.tbRows[binTypeID]
+	return want, ok, nil
 }
 
 // Compile-time check: *fakeStore satisfies Store.
@@ -303,9 +320,12 @@ func (f *fakeStore) ListMaintainLevels(groupNodeID int64) ([]nodes.MaintainLevel
 	return f.maintainLevels[groupNodeID], nil
 }
 
-func (f *fakeStore) CountEmptyBinsOfTypeInGroup(binTypeCode string, groupNodeID int64, _ domain.Height) (int, error) {
+func (f *fakeStore) CountEmptyBinsOfTypeInGroup(binTypeCode string, groupNodeID int64, h domain.Height) (int, error) {
 	if f.emptyCountErr != nil {
 		return 0, f.emptyCountErr
+	}
+	if h == domain.TopsAndBottomsOnly {
+		return f.tbCounts[groupKey{groupNodeID, binTypeCode}], nil
 	}
 	return f.emptyCounts[groupKey{groupNodeID, binTypeCode}], nil
 }

@@ -1,8 +1,13 @@
 package store
 
+import "shingo/protocol"
+
 // BinTypeForOrder answers ONE question: which bin type is this order
 // going to put down. It exists because the per-node Allowed Bin Types gate had
-// no way to find out.
+// no way to find out. Beside the type it answers what stands on that cart (its
+// carrier state), from the same bin, so the store caps judge a cart at 0 on
+// its own line (binresolver.AtDeclaredLevel); blank when the type came from no
+// one cart.
 //
 // ── WHY THIS IS A LOOKUP AND NOT A PARAMETER ────────────────────────────────
 //
@@ -51,16 +56,16 @@ package store
 // The error is returned rather than swallowed so the resolver can say a read
 // failed. A silent nil on a database fault is how an un-narrowed placement
 // becomes unexplainable after the fact.
-func (db *DB) BinTypeForOrder(orderID int64) (*int64, error) {
+func (db *DB) BinTypeForOrder(orderID int64) (*int64, protocol.CarrierState, error) {
 	if orderID == 0 {
-		return nil, nil
+		return nil, "", nil
 	}
 	order, err := db.GetOrder(orderID)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	if order == nil {
-		return nil, nil
+		return nil, "", nil
 	}
 
 	for _, carrier := range []*int64{order.BinID, order.NamedBinID} {
@@ -69,11 +74,11 @@ func (db *DB) BinTypeForOrder(orderID int64) (*int64, error) {
 		}
 		bin, err := db.GetBin(*carrier)
 		if err != nil {
-			return nil, err
+			return nil, "", err
 		}
 		if bin != nil {
 			id := bin.BinTypeID
-			return &id, nil
+			return &id, bin.CarrierState(), nil
 		}
 	}
 
@@ -82,35 +87,43 @@ func (db *DB) BinTypeForOrder(orderID int64) (*int64, error) {
 
 // heldBinType reads the bin type off the order's bin reservations, for
 // the orders whose bin_id is not the answer — a complex order's legs hold their
-// carriers well before the column means anything.
+// carriers well before the column means anything. The state is the held
+// cart's when the order holds exactly one, blank otherwise.
 //
 // SLOT AND MOUTH ROWS ARE SKIPPED, not treated as unknown: ListByOrder returns
 // both kinds and sets exactly one of BinID/NodeID, so a zero BinID is a row
 // about a PLACE, which names no bin type and says nothing either way.
-func (db *DB) heldBinType(orderID int64) (*int64, error) {
+func (db *DB) heldBinType(orderID int64) (*int64, protocol.CarrierState, error) {
 	held, err := db.ListReservationsByOrder(orderID)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	var found *int64
+	var state protocol.CarrierState
+	carts := 0
 	for _, r := range held {
 		if r.BinID == 0 {
 			continue
 		}
 		bin, err := db.GetBin(r.BinID)
 		if err != nil {
-			return nil, err
+			return nil, "", err
 		}
 		if bin == nil {
 			// A hold naming a bin that no longer exists makes the set unknowable
 			// rather than empty, and those are different facts.
-			return nil, nil
+			return nil, "", nil
 		}
 		if found != nil && *found != bin.BinTypeID {
-			return nil, nil // two types held: no single answer
+			return nil, "", nil // two types held: no single answer
 		}
 		id := bin.BinTypeID
 		found = &id
+		state = bin.CarrierState()
+		carts++
 	}
-	return found, nil
+	if carts != 1 {
+		state = ""
+	}
+	return found, state, nil
 }

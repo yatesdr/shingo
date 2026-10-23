@@ -174,12 +174,13 @@ func TestMaintainLayerWants_OneTransactionWithTheLevel(t *testing.T) {
 		nodes.MaintainLevel{GroupNodeID: grpID, BinTypeID: tote, Want: 3},
 		[]nodes.MaintainLayerWant{{Layers: 5, Want: 1}, {Layers: 3, Want: 2}}), "save with heights")
 
-	// A height the table refuses (layers > 0) fails the whole save: the level
-	// keeps its 3 and the heights stay as they were.
+	// A height the table refuses (layers >= 0, v164: 0 is the tops & bottoms
+	// row) fails the whole save: the level keeps its 3 and the heights stay as
+	// they were.
 	if err := nodes.SetMaintainLevelAndLayerWants(sdb,
 		nodes.MaintainLevel{GroupNodeID: grpID, BinTypeID: tote, Want: 9},
-		[]nodes.MaintainLayerWant{{Layers: 2, Want: 1}, {Layers: 0, Want: 1}}); err == nil {
-		t.Fatal("a 0-layer height saved; the CHECK should refuse it")
+		[]nodes.MaintainLayerWant{{Layers: 2, Want: 1}, {Layers: -1, Want: 1}}); err == nil {
+		t.Fatal("a negative height saved; the CHECK should refuse it")
 	}
 	levels, err := nodes.ListMaintainLevels(sdb, grpID)
 	testutil.MustNoErr(t, err, "ListMaintainLevels")

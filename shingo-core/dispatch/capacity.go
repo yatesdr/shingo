@@ -7,7 +7,10 @@
 
 package dispatch
 
-import "shingocore/dispatch/plan"
+import (
+	"shingocore/dispatch/binresolver"
+	"shingocore/dispatch/plan"
+)
 
 // CapacityDB is the gate's read interface; see plan.CapacityDB.
 type CapacityDB = plan.CapacityDB
@@ -41,11 +44,11 @@ func CheckDropoffCapacity(db CapacityDB, deliveryNode string, excludeOrderID int
 	return true, CapacityBlock{Cause: queueCauseOf(v.Cause), Params: queueParamsOf(v.Params)}
 }
 
-// CheckDropoffCapacityForType is CheckDropoffCapacity for a caller that knows the
-// arriving carrier's type: plan.DropoffCapacityForType, said the same way.
+// CheckDropoffCapacityForType is CheckDropoffCapacity for a caller that holds
+// the arriving cart: plan.DropoffCapacityForType, said the same way.
 func CheckDropoffCapacityForType(db CapacityDB, deliveryNode string, excludeOrderID int64,
-	binTypeID *int64) (blocked bool, block CapacityBlock) {
-	blocked, v := plan.DropoffCapacityForType(db, deliveryNode, excludeOrderID, binTypeID)
+	stated binresolver.BinTypeStatement) (blocked bool, block CapacityBlock) {
+	blocked, v := plan.DropoffCapacityForType(db, deliveryNode, excludeOrderID, stated)
 	if !blocked {
 		return false, CapacityBlock{}
 	}

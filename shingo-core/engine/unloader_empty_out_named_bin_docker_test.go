@@ -88,7 +88,7 @@ func TestUnloaderEmptyOut_NamedBinCountsAsComingBeforeItIsSourced(t *testing.T) 
 		t.Errorf("coming = %d, want 1: the empty-out names carrier %d, a UEO-C-TOTE-1, bound for %s",
 			coming, carrier, grp.Name)
 	}
-	typeID, err := db.BinTypeForOrder(o.ID)
+	typeID, _, err := db.BinTypeForOrder(o.ID)
 	testutil.MustNoErr(t, err, "the order's carrier type")
 	if typeID == nil || *typeID != types[0] {
 		t.Errorf("BinTypeForOrder = %v, want %d: the order names its carrier", typeID, types[0])

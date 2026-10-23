@@ -2,6 +2,7 @@ package nodes
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
 	"strings"
 )
@@ -126,10 +127,17 @@ func SetMaintainLevel(db *sql.DB, l MaintainLevel) error {
 // number of layers high, a maintained group wants: one row of
 // node_maintain_layer_levels.
 //
-// COMMUNICATION, NOT A CAP. The cap is the type's MaintainLevel; layer wants
-// are not summed against it, and nothing refuses a push or mints an ask on
-// them. They say which heights the group is short of, so a person at an
-// unloader can be told what to send a cart back as.
+// A HEIGHT OF 1 OR MORE IS THE STACK LEVEL SAID BY HEIGHT: the cap is the
+// type's MaintainLevel, those wants are not summed against it, and nothing
+// refuses a push or mints an ask on them. They say which heights the group is
+// short of, so a person at an unloader can be told what to send a cart back as.
+//
+// THE ROW AT 0 LAYERS IS TOPS & BOTTOMS, AND IT IS A CAP (v164): its own line
+// beside the stack level. The store caps judge a cart at 0 against its want
+// (TopsAndBottomsWant, binresolver.AtDeclaredLevel), a group that keeps the
+// type with no such row refuses one, and the save counts it against the
+// group's positions. The keeper never fetches tops & bottoms: it is made at
+// the unloader.
 //
 // A layer want belongs to its level: it is written with the level's save and
 // removed with the level (SetMaintainLevelAndLayerWants, RemoveMaintainLevel).
@@ -230,6 +238,23 @@ func ListMaintainLayerWants(db *sql.DB, groupNodeID int64) ([]MaintainLayerWant,
 		out = append(out, w)
 	}
 	return out, rows.Err()
+}
+
+// TopsAndBottomsWant is the want of the tops & bottoms row (layers 0) of one
+// level's type in a group, and false when the group has no such row: the cap
+// the tops & bottoms line is judged against (binresolver.AtDeclaredLevel). One
+// statement, asked only for a cart at 0.
+func TopsAndBottomsWant(db *sql.DB, groupNodeID, binTypeID int64) (int, bool, error) {
+	var want int
+	err := db.QueryRow(`SELECT want FROM node_maintain_layer_levels
+		WHERE group_node_id=$1 AND bin_type_id=$2 AND layers=0`, groupNodeID, binTypeID).Scan(&want)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, false, nil
+	}
+	if err != nil {
+		return 0, false, fmt.Errorf("tops & bottoms row group=%d/bin_type=%d: %w", groupNodeID, binTypeID, err)
+	}
+	return want, true, nil
 }
 
 // ListMaintainLevels returns a group's declared level with the bin-type CODES

@@ -301,9 +301,12 @@ func (f *fakeStore) GetEffectiveBinTypes(nodeID int64) ([]*bins.BinType, error) 
 // BinTypeBareOf: every type is a real one here.
 func (f *fakeStore) BinTypeBareOf(int64) (*int64, error) { return nil, nil }
 
-func (f *fakeStore) BinTypeForOrder(orderID int64) (*int64, error) {
+func (f *fakeStore) BinTypeForOrder(orderID int64) (*int64, protocol.CarrierState, error) {
 	if id, ok := f.orderBinTypes[orderID]; ok {
-		return &id, nil
+		return &id, "", nil
 	}
-	return nil, nil
+	return nil, "", nil
 }
+
+// TopsAndBottomsWant: no group here keeps a tops & bottoms row.
+func (f *fakeStore) TopsAndBottomsWant(int64, int64) (int, bool, error) { return 0, false, nil }

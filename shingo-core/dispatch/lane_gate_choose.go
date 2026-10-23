@@ -431,7 +431,7 @@ func (d *Dispatcher) carriedType(order *orders.Order, steps []resolvedStep, i in
 		b, err := d.binForStep(order, steps, j)
 		if err == nil && b.known && b.binID != 0 {
 			if bin, gErr := d.db.GetBin(b.binID); gErr == nil && bin != nil {
-				return binresolver.KnownBinType(bin.BinTypeID)
+				return binresolver.KnownCarrier(bin)
 			}
 		}
 		break

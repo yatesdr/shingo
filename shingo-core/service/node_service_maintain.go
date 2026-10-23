@@ -16,8 +16,9 @@ import (
 // modal talks to.
 //
 // The level keeper (engine/maintainer.go) holds the levels saved here. The
-// layer wants saved beside them are communication: nothing caps or sources on
-// them.
+// layer wants saved beside them tell the unloader which heights the group is
+// short of; the one at 0 layers (tops & bottoms) is a cap of its own, beside
+// the type's stack level, and the keeper fetches neither.
 //
 // TWO STORAGE HOMES, ON PURPOSE. The sets (levels, supports) are node-keyed
 // tables; the four scalars are node_properties rows written through
@@ -134,7 +135,7 @@ func MaintainedGroupPropertyWrites(s MaintainedGroupSettings) []NodePropertyWrit
 // the row on its own: most of the save-time rules are about how the parts agree,
 // and a row in isolation has nothing to disagree with.
 func (s *NodeService) SetMaintainLevel(groupNodeID, binTypeID int64, want int) (MaintainedGroupCheck, error) {
-	return s.setMaintainLevel(groupNodeID, binTypeID, want, func() error {
+	return s.setMaintainLevel(groupNodeID, binTypeID, want, nil, func() error {
 		return s.db.SetMaintainLevel(store.MaintainLevel{
 			GroupNodeID: groupNodeID, BinTypeID: binTypeID, Want: want,
 		})
@@ -147,11 +148,16 @@ type MaintainLayerWant = store.MaintainLayerWant
 
 // SetMaintainLevelAndLayerWants is SetMaintainLevel with the type's layer
 // wants replaced by layerWants in the same transaction (an empty set clears
-// them). The same rules decide the save: layer wants are communication, not
-// part of the cap, so no rule reads them and none is added for them.
+// them). The same rules decide the save, over the group as it will stand with
+// these wants: a height on a type that states no totes per layer is refused,
+// and the tops & bottoms row (0 layers) counts against the group's positions
+// beside the level.
 func (s *NodeService) SetMaintainLevelAndLayerWants(groupNodeID, binTypeID int64, want int,
 	layerWants []MaintainLayerWant) (MaintainedGroupCheck, error) {
-	return s.setMaintainLevel(groupNodeID, binTypeID, want, func() error {
+	if layerWants == nil {
+		layerWants = []MaintainLayerWant{}
+	}
+	return s.setMaintainLevel(groupNodeID, binTypeID, want, layerWants, func() error {
 		return s.db.SetMaintainLevelAndLayerWants(store.MaintainLevel{
 			GroupNodeID: groupNodeID, BinTypeID: binTypeID, Want: want,
 		}, layerWants)
@@ -159,8 +165,11 @@ func (s *NodeService) SetMaintainLevelAndLayerWants(groupNodeID, binTypeID int64
 }
 
 // setMaintainLevel is the level save's rules, then write: the write runs only
-// when nothing refused.
-func (s *NodeService) setMaintainLevel(groupNodeID, binTypeID int64, want int, write func() error) (MaintainedGroupCheck, error) {
+// when nothing refused. layerWants nil leaves the type's stored wants as they
+// are (SetMaintainLevel); non-nil replaces them, and the rules judge the group
+// with them in place.
+func (s *NodeService) setMaintainLevel(groupNodeID, binTypeID int64, want int, layerWants []MaintainLayerWant,
+	write func() error) (MaintainedGroupCheck, error) {
 	if want < 0 {
 		return MaintainedGroupCheck{
 			Refusals: []string{fmt.Sprintf("a maintained level cannot be negative (got %d)", want)},
@@ -178,9 +187,29 @@ func (s *NodeService) setMaintainLevel(groupNodeID, binTypeID int64, want int, w
 			Refusals: []string{fmt.Sprintf("%s is a bare cart type: a group keeps empties, and no finder hands out a bare cart", bt.Code)},
 		}, nil
 	}
+	// A HEIGHT IS COUNTED IN TOTES, so a type that states none cannot be wanted
+	// at one: no cart of it could ever be counted standing there.
+	if len(layerWants) > 0 && bt.TotesPerLayer == nil {
+		return MaintainedGroupCheck{
+			Refusals: []string{fmt.Sprintf("%s states no totes per layer: a height, tops & bottoms included, is counted in its totes, so it cannot be wanted at one", bt.Code)},
+		}, nil
+	}
 	post, err := s.GetMaintainedGroup(groupNodeID)
 	if err != nil {
 		return MaintainedGroupCheck{}, err
+	}
+	if layerWants != nil {
+		kept := post.LayerWants[:0]
+		for _, w := range post.LayerWants {
+			if w.BinTypeID != binTypeID {
+				kept = append(kept, w)
+			}
+		}
+		for _, w := range layerWants {
+			w.GroupNodeID, w.BinTypeID, w.BinTypeCode = groupNodeID, binTypeID, bt.Code
+			kept = append(kept, w)
+		}
+		post.LayerWants = kept
 	}
 	replaced := false
 	for i := range post.Levels {

@@ -498,7 +498,7 @@ func (r *GroupResolver) ResolveStore(group *nodes.Node, payloadCode string, stat
 	// makes that un-forgettable — a new store path gets the gate by existing.
 	stated = r.settleBinType(stated, asker, group)
 	binTypeID := stated.TypeID()
-	if err := r.groupAdmitsStore(group, payloadCode, binTypeID); err != nil {
+	if err := r.groupAdmitsStore(group, payloadCode, stated); err != nil {
 		return nil, err
 	}
 
@@ -524,7 +524,7 @@ func (r *GroupResolver) RankStore(group *nodes.Node, payloadCode string, stated 
 	asker domain.DigAsker) ([]*nodes.Node, error) {
 	stated = r.settleBinType(stated, asker, group)
 	binTypeID := stated.TypeID()
-	if err := r.groupAdmitsStore(group, payloadCode, binTypeID); err != nil {
+	if err := r.groupAdmitsStore(group, payloadCode, stated); err != nil {
 		return nil, err
 	}
 	var candidates []storageCandidate
@@ -602,7 +602,7 @@ func (r *GroupResolver) StoreFitsPaper(group, lane, slot *nodes.Node, payloadCod
 	asker domain.DigAsker) bool {
 	stated = r.settleBinType(stated, asker, group)
 	binTypeID := stated.TypeID()
-	if r.groupAdmitsStore(group, payloadCode, binTypeID) != nil {
+	if r.groupAdmitsStore(group, payloadCode, stated) != nil {
 		return false
 	}
 	return r.payloadAllowedAt(lane.ID, payloadCode) && r.binTypeAllowed(lane.ID, binTypeID) &&
@@ -612,7 +612,7 @@ func (r *GroupResolver) StoreFitsPaper(group, lane, slot *nodes.Node, payloadCod
 // groupAdmitsStore is ResolveStore's group-level refusals, asked before any
 // child: the empties-only declaration and the declared level. Moved out of
 // ResolveStore unchanged so StoreFitsPaper asks the same two.
-func (r *GroupResolver) groupAdmitsStore(group *nodes.Node, payloadCode string, binTypeID *int64) error {
+func (r *GroupResolver) groupAdmitsStore(group *nodes.Node, payloadCode string, stated BinTypeStatement) error {
 	// ── MG4-1: THE LEVEL IS A CAP, AND THIS IS WHERE IT BINDS ───────────────
 	//
 	// A maintained group holds a declared number of empty carriers. The keeper
@@ -666,7 +666,7 @@ func (r *GroupResolver) groupAdmitsStore(group *nodes.Node, payloadCode string, 
 		return fmt.Errorf("payload %s cannot be stored in empties-only node group %s", payloadCode, group.Name)
 	}
 
-	if full, err := r.atDeclaredLevel(group, binTypeID, levels); err != nil {
+	if full, err := r.atDeclaredLevel(group, stated, levels); err != nil {
 		return err
 	} else if full {
 		return &atLevelError{group: group.Name}
@@ -704,8 +704,10 @@ func (r *GroupResolver) ResolveStoreVacated(group, child *nodes.Node, vacating [
 	if payloadCode != "" && len(levels) > 0 {
 		return nil, fmt.Errorf("payload %s cannot be stored in empties-only node group %s", payloadCode, group.Name)
 	}
-	full, err := AtDeclaredLevel(levels, stated, func(code string) (int, error) {
-		return r.DB.CountEmptyBinsOfTypeInGroupExcludingNode(code, group.ID, child.ID, domain.Height{})
+	full, err := AtDeclaredLevel(levels, stated, func(code string, h domain.Height) (int, error) {
+		return r.DB.CountEmptyBinsOfTypeInGroupExcludingNode(code, group.ID, child.ID, h)
+	}, func(binTypeID int64) (int, bool, error) {
+		return r.DB.TopsAndBottomsWant(group.ID, binTypeID)
 	})
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", group.Name, err)
@@ -1097,14 +1099,14 @@ func (r *GroupResolver) settleBinType(stated BinTypeStatement, asker domain.DigA
 		return stated // already named, or a retrieve that places nothing
 	}
 	if asker.OrderID != 0 {
-		id, err := r.DB.BinTypeForOrder(asker.OrderID)
+		id, state, err := r.DB.BinTypeForOrder(asker.OrderID)
 		if err != nil {
 			log.Printf("store slot: bin type for order %d unreadable (%v) — resolving %s untyped",
 				asker.OrderID, err, group.Name)
 			return stated
 		}
 		if id != nil {
-			return KnownBinType(*id)
+			return KnownTypeInState(*id, state)
 		}
 	}
 	// THE LINE THAT ANSWERS "WHICH PATHS ARE BLIND". Reasoning about which of
@@ -1244,9 +1246,11 @@ func (r *GroupResolver) payloadAllowedAt(nodeID int64, payloadCode string) bool 
 // The levels are READ BY THE CALLER and passed in, because ResolveStore needs
 // the same list one line earlier to decide whether the group is an empties bank
 // at all. One read, two questions.
-func (r *GroupResolver) atDeclaredLevel(group *nodes.Node, binTypeID *int64, levels []nodes.MaintainLevel) (bool, error) {
-	full, err := AtDeclaredLevel(levels, BinTypeFrom(binTypeID, "the store: no type named"), func(code string) (int, error) {
-		return r.DB.CountEmptyBinsOfTypeInGroup(code, group.ID, domain.Height{})
+func (r *GroupResolver) atDeclaredLevel(group *nodes.Node, stated BinTypeStatement, levels []nodes.MaintainLevel) (bool, error) {
+	full, err := AtDeclaredLevel(levels, stated, func(code string, h domain.Height) (int, error) {
+		return r.DB.CountEmptyBinsOfTypeInGroup(code, group.ID, h)
+	}, func(binTypeID int64) (int, bool, error) {
+		return r.DB.TopsAndBottomsWant(group.ID, binTypeID)
 	})
 	if err != nil {
 		return false, fmt.Errorf("%s: %w", group.Name, err)
@@ -1254,16 +1258,28 @@ func (r *GroupResolver) atDeclaredLevel(group *nodes.Node, binTypeID *int64, lev
 	return full, nil
 }
 
-// AtDeclaredLevel is the level question with the count supplied: is a group
-// whose declared levels are levels at its level for the bin type stated, when
-// count answers how many empties of a type it holds. Pure, and exported so the
-// capacity gate (plan.ngrpAtDeclaredLevel) asks this function and not a copy of
-// it. The resolver's store passes the group as it stands (atDeclaredLevel); its
-// vacated-slot store passes the group as it will stand once a committed lift
-// has emptied one child. See atDeclaredLevel for the per-type / group-total
-// asymmetry and why each direction is chosen.
+// AtDeclaredLevel is the level question with the counts supplied: is a group
+// whose declared levels are levels at its level for the cart stated, when
+// count answers how many empties of a type it holds at a height and row the
+// want of a type's tops & bottoms row (false when it has none). Pure, and
+// exported so the capacity gate (plan.ngrpAtDeclaredLevel) asks this function
+// and not a copy of it. The resolver's store passes the group as it stands
+// (atDeclaredLevel); its vacated-slot store passes the group as it will stand
+// once a committed lift has emptied one child. See atDeclaredLevel for the
+// per-type / group-total asymmetry and why each direction is chosen.
+//
+// TWO LINES PER TYPE, AND NEITHER TAKES THE OTHER'S ROOM. A cart stated at 0
+// with no part (tops & bottoms) is judged on the type's tops & bottoms line:
+// the carts at 0 of the type in the group (count at TopsAndBottomsOnly)
+// against the row's want. A type the group keeps with no such row refuses it;
+// a type the group declares no level of does not, as on the stack line. Every
+// other cart, and a type named with no cart, is judged on the stack line as
+// before: the empties of the type at no height said, which leaves tops &
+// bottoms out (domain.Height.Admits), against the level. The row is read only
+// for a cart at 0.
 func AtDeclaredLevel(levels []nodes.MaintainLevel, stated BinTypeStatement,
-	count func(binTypeCode string) (int, error)) (bool, error) {
+	count func(binTypeCode string, h domain.Height) (int, error),
+	row func(binTypeID int64) (want int, ok bool, err error)) (bool, error) {
 	if len(levels) == 0 {
 		return false, nil
 	}
@@ -1273,11 +1289,22 @@ func AtDeclaredLevel(levels []nodes.MaintainLevel, stated BinTypeStatement,
 			if l.BinTypeID != *binTypeID {
 				continue
 			}
-			held, cerr := count(l.BinTypeCode)
+			want, h := l.Want, domain.Height{}
+			if stated.State() == protocol.CarrierTopsAndBottoms {
+				rowWant, ok, rerr := row(l.BinTypeID)
+				if rerr != nil {
+					return false, fmt.Errorf("tops & bottoms row of %s: %w", l.BinTypeCode, rerr)
+				}
+				if !ok {
+					return true, nil
+				}
+				want, h = rowWant, domain.TopsAndBottomsOnly
+			}
+			held, cerr := count(l.BinTypeCode, h)
 			if cerr != nil {
 				return false, fmt.Errorf("count %s: %w", l.BinTypeCode, cerr)
 			}
-			return held >= l.Want, nil
+			return held >= want, nil
 		}
 		// A type nobody declared. NOT refused: a maintained group is a group with
 		// a level on some types, not a group closed to every other. Declaring a
@@ -1289,7 +1316,7 @@ func AtDeclaredLevel(levels []nodes.MaintainLevel, stated BinTypeStatement,
 	want, held := 0, 0
 	for _, l := range levels {
 		want += l.Want
-		n, cerr := count(l.BinTypeCode)
+		n, cerr := count(l.BinTypeCode, domain.Height{})
 		if cerr != nil {
 			return false, fmt.Errorf("count %s: %w", l.BinTypeCode, cerr)
 		}

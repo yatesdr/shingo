@@ -38,6 +38,12 @@ func (db *DB) ListMaintainLayerWants(groupNodeID int64) ([]MaintainLayerWant, er
 	return nodes.ListMaintainLayerWants(db.DB, groupNodeID)
 }
 
+// TopsAndBottomsWant is the want of a level's tops & bottoms row, false when
+// the group has none.
+func (db *DB) TopsAndBottomsWant(groupNodeID, binTypeID int64) (int, bool, error) {
+	return nodes.TopsAndBottomsWant(db.DB, groupNodeID, binTypeID)
+}
+
 // ListMaintainLevels returns a group's declared level, bin-type codes joined on.
 func (db *DB) ListMaintainLevels(groupNodeID int64) ([]MaintainLevel, error) {
 	return nodes.ListMaintainLevels(db.DB, groupNodeID)

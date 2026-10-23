@@ -31,8 +31,9 @@ function blank(nodeID) {
   return {
     nodeID: nodeID,
     // levels: [{bin_type_id, bin_type_code, want, layer_wants: [{layers, want}]}]
-    // as edited. layer_wants are the level's wanted heights: communication,
-    // not part of the level Core holds.
+    // as edited. layer_wants are the level's wanted heights, told to the
+    // unloader; the one at 0 layers is the type's tops & bottoms row, a cap of
+    // its own beside the level (a tote type only).
     levels: [],
     // savedLevels: what the server had, for the remove-diff on save.
     savedLevels: [],
@@ -220,14 +221,31 @@ function renderLevels() {
   host.innerHTML = (rows || '<div class="text-muted" style="font-size:0.75rem">No level declared.</div>') + add;
 }
 
-// renderLayerWants draws one level's wanted heights: how many carts of the type
-// the group wants standing so many layers high. They tell the unloader what
-// to send a cart back as; they are not added up against the level, and the
-// level stays the number Core holds.
+// isToteType says whether a carrier type states its totes per layer: only such
+// a type can be wanted at a height, tops & bottoms included.
+function isToteType(id) {
+  var t = _allBinTypes.find(function (x) { return Number(x.id) === Number(id); });
+  return !!(t && Number(t.totes_per_layer) > 0);
+}
+
+// renderLayerWants draws one level's wanted heights, for a tote type only. The
+// fixed "Tops & bottoms" row is the type's row at 0 layers: how many carts at 0
+// the group keeps, a cap of its own beside the level (0 keeps none, and the
+// group then refuses one). The heights of 1 or more under it tell the unloader
+// what to send a cart back as; they are not added up against the level, and
+// the level stays the number Core holds.
 function renderLayerWants(l) {
   var id = l.bin_type_id;
   var code = escapeHtml(l.bin_type_code);
-  var rows = (l.layer_wants || []).map(function (w) {
+  if (!isToteType(id)) return '';
+  var tb = (l.layer_wants || []).find(function (w) { return w.layers === 0; });
+  var tbRow = '<div class="loader-mix-line" style="margin-left:1.5rem">'
+    + '<span class="text-sm">Tops &amp; bottoms</span>'
+    + '<input type="number" class="form-input loader-mix-want" min="0" value="' + (tb ? Number(tb.want) : 0) + '"'
+    + ' aria-label="How many ' + code + ' tops &amp; bottoms to keep"'
+    + ' data-action-change="setMaintainTopsAndBottoms" data-bin-type-id="' + id + '">'
+    + '</div>';
+  var rows = (l.layer_wants || []).filter(function (w) { return w.layers > 0; }).map(function (w) {
     return '<div class="loader-mix-line" style="margin-left:1.5rem">'
       + '<span class="text-sm">' + Number(w.layers) + ' high</span>'
       + '<input type="number" class="form-input loader-mix-want" min="0" value="' + Number(w.want) + '"'
@@ -239,7 +257,7 @@ function renderLayerWants(l) {
       + ' data-layers="' + Number(w.layers) + '">&times;</button>'
       + '</div>';
   }).join('');
-  return rows
+  return tbRow + rows
     + '<div class="loader-mix-add" style="margin-left:1.5rem">'
     + '<input type="number" class="form-input loader-mix-want" min="1" placeholder="Layers"'
     + ' id="nf-maintain-add-layers-' + id + '" aria-label="' + code + ' height in layers">'
@@ -280,6 +298,17 @@ export function setMaintainLayerWant(el) {
   var n = Number(el.value);
   if (!(n >= 0)) { n = 0; el.value = '0'; }
   l.layer_wants.forEach(function (w) { if (w.layers === layers) w.want = n; });
+}
+
+// setMaintainTopsAndBottoms sets the type's tops & bottoms row; 0 removes it,
+// so the card offers tops & bottoms only where a group keeps some.
+export function setMaintainTopsAndBottoms(el) {
+  var l = levelByID(Number(el.getAttribute('data-bin-type-id')));
+  if (!l) return;
+  var n = Number(el.value);
+  if (!(n >= 0) || Math.floor(n) !== n) { n = 0; el.value = '0'; }
+  l.layer_wants = l.layer_wants.filter(function (w) { return w.layers !== 0; });
+  if (n > 0) l.layer_wants.unshift({ layers: 0, want: n });
 }
 
 export function removeMaintainLayerWant(el) {
@@ -556,6 +585,7 @@ delegateActions(document.body, {
   removeMaintainLayerWant,
   removeMaintainLevel,
   setMaintainLayerWant,
+  setMaintainTopsAndBottoms,
   setMaintainWant,
   toggleMaintainSupport
 }, { events: ['click', 'change'] });

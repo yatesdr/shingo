@@ -1,6 +1,7 @@
 package binresolver
 
 import (
+	"shingo/protocol"
 	"shingocore/domain"
 	"shingocore/store/bins"
 	"shingocore/store/nodes"
@@ -54,6 +55,9 @@ type Store interface {
 	// that is the whole feature quietly not working.
 	ListMaintainLevels(groupNodeID int64) ([]nodes.MaintainLevel, error)
 	CountEmptyBinsOfTypeInGroup(binTypeCode string, groupNodeID int64, h domain.Height) (int, error)
+	// TopsAndBottomsWant is a level's tops & bottoms row (false: none), the cap
+	// of its own line, read only for a cart at 0 (AtDeclaredLevel).
+	TopsAndBottomsWant(groupNodeID, binTypeID int64) (int, bool, error)
 	// The same count with one node's carriers left out — the level after a
 	// committed lift empties that node (ResolveStoreVacated).
 	CountEmptyBinsOfTypeInGroupExcludingNode(binTypeCode string, groupNodeID, excludeNodeID int64, h domain.Height) (int, error)
@@ -100,8 +104,9 @@ type Store interface {
 	// its whole life inert because the type arrived as a parameter and almost
 	// nobody passed one, so the resolver now derives it from the order id the
 	// dig asker already carries. nil means "could not tell", which narrows
-	// nothing.
-	BinTypeForOrder(orderID int64) (*int64, error)
+	// nothing. The state is the cart's, from the same bin, blank when the type
+	// came from no one cart.
+	BinTypeForOrder(orderID int64) (*int64, protocol.CarrierState, error)
 
 	// BinTypeBareOf names the carrier a bare marker stands for: a marker is
 	// admitted wherever its carrier is (bins.TypeAdmits). nil for a real type.

@@ -1,6 +1,11 @@
 package binresolver
 
-import "fmt"
+import (
+	"fmt"
+
+	"shingo/protocol"
+	"shingocore/store/bins"
+)
 
 // Carrier is what a store resolution is putting down.
 //
@@ -37,11 +42,30 @@ type BinTypeStatement struct {
 	// applies) from a retrieve (nothing is, so it does not). Without it a
 	// retrieve's NoBinType would log a gap on every call.
 	placing bool
+	// state is what stands on the cart being placed, when a site holds the cart
+	// (KnownCarrier); blank when it names a type and no cart (KnownBinType).
+	// The caps read it: a cart at 0 (tops & bottoms) is judged against its own
+	// line, never the stack level (AtDeclaredLevel).
+	state protocol.CarrierState
 }
 
-// KnownBinType names the bin type being placed.
+// KnownBinType names the bin type being placed, and no cart: a keeper ask, a
+// step whose carrier is known by its type alone. The caps judge it on the
+// stack line.
 func KnownBinType(binTypeID int64) BinTypeStatement {
 	return BinTypeStatement{typeID: &binTypeID, placing: true}
+}
+
+// KnownCarrier names the cart being placed: its type and what stands on it.
+// Every site that holds the bin states it this way.
+func KnownCarrier(b *bins.Bin) BinTypeStatement {
+	return KnownTypeInState(b.BinTypeID, b.CarrierState())
+}
+
+// KnownTypeInState names the type and the cart's state, for a site that read
+// the two without the bin (store.DB.BinTypeForOrder).
+func KnownTypeInState(binTypeID int64, state protocol.CarrierState) BinTypeStatement {
+	return BinTypeStatement{typeID: &binTypeID, placing: true, state: state}
 }
 
 // BinTypeFrom lifts an already-optional id, for the callers that hold one and
@@ -69,6 +93,9 @@ var NoBinType = BinTypeStatement{}
 // TypeID is the bin type, or nil when it could not be named. nil narrows
 // nothing — see binTypeAllowed.
 func (c BinTypeStatement) TypeID() *int64 { return c.typeID }
+
+// State is what stands on the cart being placed; blank when no cart is held.
+func (c BinTypeStatement) State() protocol.CarrierState { return c.state }
 
 // gap reports whether this resolution is placing something it cannot name,
 // which is the condition worth a log line.

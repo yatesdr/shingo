@@ -188,18 +188,33 @@ func (s *NodeService) ValidateMaintainedGroup(cfg MaintainedGroupConfig) (Mainta
 // it drains, and the group can gain positions or re-enable children.
 // Maintenance off asks neither: nothing keeps the level. Pin:
 // TestMaintainedGroupSave_LevelsAndTheUnloaderOutbound.
+//
+// The levels and the tops & bottoms rows (layer wants at 0) are counted
+// together: each is a line of its own that a cart stands in, and neither takes
+// the other's room (binresolver.AtDeclaredLevel). Heights of 1 or more are not
+// counted; they are the stack level said by height.
 func roomRefusals(cfg MaintainedGroupConfig, groupName string, enabledChildren int) (refusals, warnings []string) {
-	total := 0
+	total, topsAndBottoms := 0, 0
 	for _, l := range cfg.Levels {
 		total += l.Want
 	}
+	for _, w := range cfg.LayerWants {
+		if w.Layers == 0 {
+			topsAndBottoms += w.Want
+		}
+	}
+	total += topsAndBottoms
+	carriers := fmt.Sprintf("%d carriers", total)
+	if topsAndBottoms > 0 {
+		carriers = fmt.Sprintf("%d carriers (%d of them tops & bottoms)", total, topsAndBottoms)
+	}
 	switch {
 	case cfg.Enabled && total > enabledChildren:
-		refusals = append(refusals, fmt.Sprintf("%s declares %d carriers across %d enabled position%s — more than it can hold, so its level could never be met",
-			groupName, total, enabledChildren, plural(enabledChildren, "", "s")))
+		refusals = append(refusals, fmt.Sprintf("%s declares %s across %d enabled position%s — more than it can hold, so its level could never be met",
+			groupName, carriers, enabledChildren, plural(enabledChildren, "", "s")))
 	case cfg.Enabled && enabledChildren > 0 && total == enabledChildren:
-		warnings = append(warnings, fmt.Sprintf("%s declares %d carriers across %d position%s — nothing is left free for a carrier coming back in",
-			groupName, total, enabledChildren, plural(enabledChildren, "", "s")))
+		warnings = append(warnings, fmt.Sprintf("%s declares %s across %d position%s — nothing is left free for a carrier coming back in",
+			groupName, carriers, enabledChildren, plural(enabledChildren, "", "s")))
 	}
 	return refusals, warnings
 }

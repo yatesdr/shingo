@@ -15,8 +15,10 @@ import (
 // A maintained group is an NGRP whose EMPTY-CARRIER level Core holds: so many
 // unclaimed carriers of each declared type, at all times, near the equipment that
 // consumes them. The level keeper (engine/maintainer.go) holds the levels
-// written here; the layer wants that ride a level's save are communication,
-// read by nothing that caps or sources.
+// written here. The layer wants that ride a level's save tell the unloader
+// which heights the group is short of; the one at 0 layers is the type's tops &
+// bottoms row, a cap of its own that the store caps judge a cart at 0 against.
+// Nothing sources on any of them.
 //
 // FOUR WRITE ENDPOINTS, ONE PER THING AN OPERATOR EDITS, rather than one
 // save-everything call. The section has independent halves — the four scalars,
@@ -222,16 +224,17 @@ func (h *Handlers) apiMaintainedGroupLevelSet(w http.ResponseWriter, r *http.Req
 	h.maintainedGroupOK(w, chk, service.MaintainedGroupGuard{})
 }
 
-// layerWantRows reads a level save's wanted heights: each a height of at least
-// one layer, wanted zero or more times, no height twice. A malformed list is
-// the request's fault (400), the same as a missing id; it is not one of the
-// save-time rules, which never read layer wants.
+// layerWantRows reads a level save's wanted heights: each 0 layers (the tops &
+// bottoms row) or more, wanted zero or more times, no height twice. A
+// malformed list is the request's fault (400), the same as a missing id; what
+// the group can hold, and whether the type can be wanted at a height at all,
+// are the save's rules (the service's setMaintainLevel).
 func layerWantRows(in []maintainLayerWant) ([]service.MaintainLayerWant, error) {
 	out := make([]service.MaintainLayerWant, 0, len(in))
 	seen := map[int]bool{}
 	for _, lw := range in {
-		if lw.Layers < 1 {
-			return nil, fmt.Errorf("a wanted height is at least 1 layer (got %d)", lw.Layers)
+		if lw.Layers < 0 {
+			return nil, fmt.Errorf("a wanted height is 0 layers (tops & bottoms) or more (got %d)", lw.Layers)
 		}
 		if lw.Want < 0 {
 			return nil, fmt.Errorf("the want at %d layers cannot be negative (got %d)", lw.Layers, lw.Want)

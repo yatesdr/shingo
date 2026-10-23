@@ -406,11 +406,11 @@ func (s *LifecycleService) binTypeAtIntake(order *orders.Order) binresolver.BinT
 	}
 	if order.BinID != nil {
 		if bin, err := s.db.GetBin(*order.BinID); err == nil && bin != nil {
-			return binresolver.KnownBinType(bin.BinTypeID)
+			return binresolver.KnownCarrier(bin)
 		}
 	}
-	if id := plan.BinTypeAtNode(s.db, order.SourceNode); id != nil {
-		return binresolver.KnownBinType(*id)
+	if bin := plan.BinAtNode(s.db, order.SourceNode); bin != nil {
+		return binresolver.KnownCarrier(bin)
 	}
 	return binresolver.UnknownBinType(fmt.Sprintf(
 		"intake: order not yet persisted, no bin named, and source %q does not hold exactly one carrier",

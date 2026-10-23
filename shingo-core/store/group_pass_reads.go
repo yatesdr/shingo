@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 
+	"shingo/protocol"
 	"shingocore/store/bins"
 	"shingocore/store/nodes"
 	"shingocore/store/payloads"
@@ -39,7 +40,7 @@ type GroupPassReads struct {
 	binTypes  map[int64][]*bins.BinType
 	bare      map[int64]*int64
 	binsAt    map[int64][]*bins.Bin
-	orderType map[int64]*int64
+	orderType map[int64]orderCarrier
 }
 
 type passPropKey struct {
@@ -52,7 +53,7 @@ type passPropKey struct {
 func (db *DB) GroupPassReads(groupID int64) *GroupPassReads {
 	return &GroupPassReads{DB: db, groupID: groupID, props: map[passPropKey]string{}, levels: map[int64][]nodes.MaintainLevel{},
 		payloads: map[int64][]*payloads.Payload{}, binTypes: map[int64][]*bins.BinType{}, bare: map[int64]*int64{},
-		binsAt: map[int64][]*bins.Bin{}, orderType: map[int64]*int64{}}
+		binsAt: map[int64][]*bins.Bin{}, orderType: map[int64]orderCarrier{}}
 }
 
 // slotState is the group's one read, taken on the first ask that needs it. A
@@ -179,16 +180,22 @@ func (r *GroupPassReads) ListBinsByNode(nodeID int64) ([]*bins.Bin, error) {
 	return v, err
 }
 
+// orderCarrier is one BinTypeForOrder answer, memoised.
+type orderCarrier struct {
+	typeID *int64
+	state  protocol.CarrierState
+}
+
 // BinTypeForOrder memoises an order's carrier for the pass.
-func (r *GroupPassReads) BinTypeForOrder(orderID int64) (*int64, error) {
+func (r *GroupPassReads) BinTypeForOrder(orderID int64) (*int64, protocol.CarrierState, error) {
 	if v, ok := r.orderType[orderID]; ok {
-		return v, nil
+		return v.typeID, v.state, nil
 	}
-	v, err := r.DB.BinTypeForOrder(orderID)
+	id, state, err := r.DB.BinTypeForOrder(orderID)
 	if err == nil {
-		r.orderType[orderID] = v
+		r.orderType[orderID] = orderCarrier{id, state}
 	}
-	return v, err
+	return id, state, err
 }
 
 // FindStoreSlotInLaneExcluding answers the store selector for a lane of the
