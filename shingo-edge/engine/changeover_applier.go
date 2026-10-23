@@ -352,7 +352,7 @@ func (e *Engine) clearActivePullForEvacuate(nodeID int64) {
 		return
 	}
 	claim := e.claimAtNode(node)
-	pressIndex := claim != nil && claim.PairedCoreNode != "" && claim.SwapMode == protocol.SwapModeTwoRobotPressIndex
+	pressIndex := claim.IsPressIndex() && claim.PairedCoreNode != ""
 	ids := []int64{nodeID}
 	if claim != nil && claim.PairedCoreNode != "" {
 		if nodes, lErr := e.db.ListProcessNodesByProcess(node.ProcessID); lErr == nil {

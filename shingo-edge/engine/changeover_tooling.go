@@ -119,7 +119,7 @@ func (t toolingChangeover) active() bool { return len(t.presses) > 0 }
 // with positions". Asking Positions directly at those sites would widen them to
 // every single-node cell on the line.
 func pressIndexPositions(c *processes.NodeClaim) []string {
-	if c == nil || c.SwapMode != protocol.SwapModeTwoRobotPressIndex {
+	if !c.IsPressIndex() {
 		return nil
 	}
 	return c.Positions()

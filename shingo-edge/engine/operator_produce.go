@@ -340,11 +340,12 @@ func (c cellLock) Unlock() {
 // because priming on a guess is how a position collects a carrier it has no
 // room for.
 func pairedPositionsInbound(claim *processes.NodeClaim, rows []orders.Order) map[string]bool {
-	if claim == nil || claim.SwapMode != protocol.SwapModeTwoRobotPressIndex {
+	dependent := claim.DependentPositions()
+	if len(dependent) == 0 {
 		return nil
 	}
 	inbound := map[string]bool{}
-	for _, pos := range claim.ExtensionPositions() {
+	for _, pos := range dependent {
 		for i := range rows {
 			if rows[i].DeliveryNode == pos {
 				inbound[pos] = true

@@ -90,10 +90,7 @@ func (e *Engine) claimOccupancy(claim *processes.NodeClaim) (map[string]bool, sp
 	// permissive one. The extensions come from the claim's geometry, and only
 	// for a press — a stale PairedCoreNode on some other mode is not a position
 	// this cell occupies and must not be queried.
-	names := []string{claim.CoreNodeName}
-	if claim.SwapMode == protocol.SwapModeTwoRobotPressIndex {
-		names = append(names, claim.ExtensionPositions()...)
-	}
+	names := append([]string{claim.CoreNodeName}, claim.DependentPositions()...)
 	// A KEEP-STAGED CLAIM ASKS ABOUT ITS SPOT IN THE SAME READ: one more name.
 	// The spot's row is kept whole (whether a bin stands there and what it
 	// carries) and stays out of the map, which answers only for the line's own

@@ -3,7 +3,6 @@ package engine
 import (
 	"fmt"
 
-	"shingo/protocol"
 	"shingoedge/store/processes"
 )
 
@@ -44,10 +43,7 @@ func (b *bareLine) lineHeld() bool { return b.dest == "" }
 // position on both paths.
 func barePositions(claim *processes.NodeClaim, occupancy map[string]bool) (lineBare bool, paired []string) {
 	lineBare = !isOccupied(occupancy, claim.CoreNodeName)
-	if claim.SwapMode != protocol.SwapModeTwoRobotPressIndex {
-		return lineBare, nil
-	}
-	for _, pos := range claim.ExtensionPositions() {
+	for _, pos := range claim.DependentPositions() {
 		if !isOccupied(occupancy, pos) {
 			paired = append(paired, pos)
 		}

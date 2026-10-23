@@ -210,11 +210,11 @@ func FanOutPressIndex(diffs []ChangeoverNodeDiff, binTypes map[string]string, st
 // include one whose seat says its carrier has gone. An unknown seat reads
 // occupied, as a missing occupancy answer does on REQUEST.
 func pressHasBarePosition(d ChangeoverNodeDiff, state func(coreNode string) NodeState) bool {
-	if state == nil || d.Situation != SituationSwap || !isPressIndexClaim(d.FromClaim) || !isPressIndexClaim(d.ToClaim) {
+	if state == nil || d.Situation != SituationSwap || !d.FromClaim.IsPressIndex() || !d.ToClaim.IsPressIndex() {
 		return false
 	}
 	occupancy := map[string]bool{}
-	for _, n := range append([]string{d.FromClaim.CoreNodeName}, d.FromClaim.ExtensionPositions()...) {
+	for _, n := range d.FromClaim.Positions() {
 		occupancy[n] = state(n).Seat != SeatEmpty
 	}
 	lineBare, paired := barePositions(d.FromClaim, occupancy)
@@ -346,7 +346,7 @@ func shouldFanOutPressIndex(d ChangeoverNodeDiff, binTypes map[string]string) bo
 	if d.FromClaim == nil || d.ToClaim == nil {
 		return false
 	}
-	if d.FromClaim.SwapMode != protocol.SwapModeTwoRobotPressIndex {
+	if !d.FromClaim.IsPressIndex() {
 		return false
 	}
 	return binTypesDiffer(d.FromClaim, d.ToClaim, binTypes)
@@ -515,15 +515,11 @@ func FanOutPressIndexCrossMode(diffs []ChangeoverNodeDiff, binTypes map[string]s
 	}
 	for i := range diffs {
 		d := &diffs[i]
-		if fc := d.FromClaim; fc != nil && fc.SwapMode == protocol.SwapModeTwoRobotPressIndex {
-			for _, pos := range fc.ExtensionPositions() {
-				noteFrom(pos, fc)
-			}
+		for _, pos := range d.FromClaim.DependentPositions() {
+			noteFrom(pos, d.FromClaim)
 		}
-		if tc := d.ToClaim; tc != nil && tc.SwapMode == protocol.SwapModeTwoRobotPressIndex {
-			for _, pos := range tc.ExtensionPositions() {
-				noteTo(pos, tc)
-			}
+		for _, pos := range d.ToClaim.DependentPositions() {
+			noteTo(pos, d.ToClaim)
 		}
 	}
 
@@ -659,7 +655,7 @@ func ApplyReuseCompatibleBinsShortcut(diffs []ChangeoverNodeDiff, drainState fun
 		if d.Situation != SituationSwap && d.Situation != SituationEvacuate {
 			continue
 		}
-		if d.FromClaim.SwapMode != protocol.SwapModeTwoRobotPressIndex {
+		if !d.FromClaim.IsPressIndex() {
 			continue
 		}
 		// PRODUCE ONLY. Empty is the desired state at a produce position — the

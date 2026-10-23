@@ -12,7 +12,6 @@ import (
 	"fmt"
 	"log"
 
-	"shingo/protocol"
 	"shingoedge/domain"
 	"shingoedge/engine/changeover"
 	"shingoedge/store/processes"
@@ -379,19 +378,13 @@ func (e *Engine) refusePressIndexWhenCoreUnavailable(diffs []ChangeoverNodeDiff)
 		if d.Situation == SituationUnchanged {
 			continue
 		}
-		if !isPressIndexClaim(d.FromClaim) && !isPressIndexClaim(d.ToClaim) {
+		if !d.FromClaim.IsPressIndex() && !d.ToClaim.IsPressIndex() {
 			continue
 		}
 		// OWNER-WORDS
 		return fmt.Errorf("changeover refused: Core not heard from yet; cannot determine bin types for press-index changeover at %s", d.CoreNodeName)
 	}
 	return nil
-}
-
-// isPressIndexClaim reports whether a claim is a two-robot press-index claim.
-// nil-safe: a missing claim (Drop's to-side, Add's from-side) is not one.
-func isPressIndexClaim(c *processes.NodeClaim) bool {
-	return c != nil && c.SwapMode == protocol.SwapModeTwoRobotPressIndex
 }
 
 // PreviewChangeoverPlan returns the order plan that StartProcessChangeover would
@@ -535,10 +528,7 @@ func buildParticipants(diffs []ChangeoverNodeDiff) []domain.ParticipantInput {
 	seen := make(map[string]bool, len(taskNodes))
 	for _, d := range diffs {
 		for _, claim := range []*processes.NodeClaim{d.FromClaim, d.ToClaim} {
-			if claim == nil || claim.SwapMode != protocol.SwapModeTwoRobotPressIndex {
-				continue
-			}
-			for _, position := range claim.ExtensionPositions() {
+			for _, position := range claim.DependentPositions() {
 				if taskNodes[position] || seen[position] {
 					continue
 				}

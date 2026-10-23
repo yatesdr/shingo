@@ -27,9 +27,11 @@ func pressIndexClaim(front, paired, second string) *processes.NodeClaim {
 
 // TestExtensionPositions_ScopeIsExtensionsOnly is the guard on the shared
 // derivation's deliberately narrow contract. It must return ONLY the extension
-// positions — no front node, no swap-mode filtering — because its callers differ
-// on exactly those two points and folding either in would silently change one of
-// them. Asserted from engine because that is where the callers live.
+// positions — no front node, no swap-mode filtering. The front is the callers'
+// difference (fanOutPositions prepends it, the cross-mode walk must not), and the
+// mode gate is DependentPositions', which the swap-chain callers ask; the
+// geometry callers (the cell picture, the station view) want the ungated answer.
+// Asserted from engine because that is where the callers live.
 func TestExtensionPositions_ScopeIsExtensionsOnly(t *testing.T) {
 	t.Parallel()
 
@@ -54,14 +56,14 @@ func TestExtensionPositions_ScopeIsExtensionsOnly(t *testing.T) {
 	}
 
 	// No swap-mode filtering: the derivation answers "which positions does this
-	// claim name", and each caller applies its own guard.
+	// claim name"; DependentPositions is the gated question.
 	notPressIndex := &processes.NodeClaim{
 		CoreNodeName:   "ALN_001",
 		SwapMode:       protocol.SwapModeTwoRobot,
 		PairedCoreNode: "ALN_002",
 	}
 	if got := notPressIndex.ExtensionPositions(); len(got) != 1 {
-		t.Errorf("non-press-index claim = %v; the derivation must not filter by swap mode — its callers do", got)
+		t.Errorf("non-press-index claim = %v; the derivation must not filter by swap mode — DependentPositions does", got)
 	}
 }
 

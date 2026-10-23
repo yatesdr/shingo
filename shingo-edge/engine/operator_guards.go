@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"log"
 
-	"shingo/protocol"
 	"shingoedge/domain"
 	"shingoedge/orders"
 	"shingoedge/store/processes"
@@ -85,11 +84,7 @@ func (e *Engine) guardLineRequest(node *processes.Node, runtime *processes.Runti
 	if err := e.guardNoActiveSwap(node, runtime, claim); err != nil {
 		return nil, err
 	}
-	var paired []string
-	if claim.SwapMode == protocol.SwapModeTwoRobotPressIndex {
-		paired = claim.ExtensionPositions()
-	}
-	rows, err := e.db.ListActiveOrdersByDeliveryNodeSet(append([]string{claim.CoreNodeName}, paired...))
+	rows, err := e.db.ListActiveOrdersByDeliveryNodeSet(append([]string{claim.CoreNodeName}, claim.DependentPositions()...))
 	if err != nil {
 		return nil, fmt.Errorf("node %s: cannot tell whether a bin is already on its way (%w) — the next request will re-ask",
 			node.Name, err)

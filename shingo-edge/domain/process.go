@@ -656,7 +656,7 @@ func PositionClaimFromParent(parent *NodeClaim, coreNodeName string) *NodeClaim 
 	if parent == nil || coreNodeName == "" {
 		return nil
 	}
-	if parent.SwapMode != protocol.SwapModeTwoRobotPressIndex {
+	if !parent.IsPressIndex() {
 		return nil
 	}
 	// The position must be one this parent actually names. Any other claimless node
@@ -682,12 +682,13 @@ func PositionClaimFromParent(parent *NodeClaim, coreNodeName string) *NodeClaim 
 // that extraction reached two of the sites.
 //
 // UNGATED BY SWAP MODE, deliberately. A claim occupies the nodes it names,
-// whatever mode it runs; only two_robot_press_index names more than one today,
-// so for every other mode this returns the single front node and the callers
-// that already knew that lose nothing. A caller that needs the answer only for
-// a press keeps its own mode check — see pressIndexPositions, whose gate is
-// load-bearing at its call sites — because folding a gate in here would make
-// one function answer two questions.
+// whatever mode it runs. A two_robot_press_index claim names its index
+// positions behind the front; a sequential claim names its partner in
+// PairedCoreNode too (claim_validation.go requires it), and a stale paired name
+// can survive on any mode, so this is not "the front node" for every other
+// mode. A caller that needs only the positions a swap works from asks
+// DependentPositions, which carries the mode gate; folding a gate in here would
+// make one function answer two questions.
 //
 // Nil-safe: a claim that does not exist occupies nothing, which removes a nil
 // check from every call site rather than moving it. Returns nil rather than an
@@ -718,6 +719,31 @@ func (c *NodeClaim) ExtensionPositions() []string {
 		return nil
 	}
 	return nonBlank(c.PairedCoreNode, c.SecondPairedCoreNode)
+}
+
+// IsPressIndex reports whether the claim runs two_robot_press_index: the one
+// spelling of the mode gate. Nil-safe: a missing claim (a Drop's to-side, an
+// Add's from-side) is not one.
+func (c *NodeClaim) IsPressIndex() bool {
+	return c != nil && c.SwapMode == protocol.SwapModeTwoRobotPressIndex
+}
+
+// DependentPositions is the positions this claim's swap depends on, other than
+// its own line: the extension positions of a press-index claim, which its
+// index leg lifts from and its refill sets down on, and none for every other
+// mode. A sequential claim's partner is its own claim's line, in no step this
+// claim's swap builds, and a paired name on any other mode is stale.
+//
+// It is ExtensionPositions behind the mode gate, the pair nine sites wrote by
+// hand. The definition is pinned to the step builders, not called into them:
+// TestDependentPositions_AreTheBuildersNonLinePositions builds every mode's
+// swap and finds exactly these positions among the claim's non-line nodes its
+// steps lift from or set down on.
+func (c *NodeClaim) DependentPositions() []string {
+	if !c.IsPressIndex() {
+		return nil
+	}
+	return c.ExtensionPositions()
 }
 
 // Positions is the input-shape twin of NodeClaim.Positions — the same question
@@ -1063,7 +1089,7 @@ func MarkedEvacNodes(c *NodeClaim) []string {
 // evacuating. changeoverEvacConfigOnWrongSide below exists to make that
 // visible instead of silent.
 func StagedToolingChangeover(from *NodeClaim) bool {
-	if from == nil || from.SwapMode != protocol.SwapModeTwoRobotPressIndex {
+	if !from.IsPressIndex() {
 		return false
 	}
 	return len(MarkedEvacNodes(from)) > 0

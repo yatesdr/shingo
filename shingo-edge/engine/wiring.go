@@ -29,7 +29,6 @@
 package engine
 
 import (
-	"shingo/protocol"
 	"shingo/protocol/eventbus"
 	"shingoedge/store/processes"
 )
@@ -85,5 +84,5 @@ func (e *Engine) wireEventHandlers() {
 // (TestPressIndex_ADarkPressSeatStillCounts). Every other paired claim reads
 // the bit as before.
 func isInactivePairedNode(claim *processes.NodeClaim, runtime *processes.RuntimeState) bool {
-	return claim.PairedCoreNode != "" && claim.SwapMode != protocol.SwapModeTwoRobotPressIndex && !runtime.ActivePull
+	return claim.PairedCoreNode != "" && !claim.IsPressIndex() && !runtime.ActivePull
 }

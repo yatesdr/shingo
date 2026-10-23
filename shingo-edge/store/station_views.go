@@ -3,7 +3,6 @@ package store
 import (
 	"fmt"
 
-	"shingo/protocol"
 	"shingoedge/domain"
 	"shingoedge/store/processes"
 )
@@ -168,7 +167,7 @@ func ComputeSwapReady(db *DB, claim *processes.NodeClaim, runtime *processes.Run
 	}
 	// press-index: role labels are inverted and the legs are fleet-sequenced,
 	// so accept the pair as release-ready when the SIBLING leg is parked too.
-	if claim.SwapMode == protocol.SwapModeTwoRobotPressIndex && supplyOrderID != nil {
+	if claim.IsPressIndex() && supplyOrderID != nil {
 		if sib, serr := db.GetOrder(*supplyOrderID); serr == nil && sib != nil && sib.Status == "staged" {
 			return true
 		}
