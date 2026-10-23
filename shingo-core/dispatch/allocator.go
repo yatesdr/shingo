@@ -274,86 +274,32 @@ func (a *Allocator) reserveComplexPlan(order *orders.Order, plan *ComplexPlan) (
 		if ferr != nil {
 			return nil, reserveHolding, ferr
 		}
-		if bin == nil {
-			// Relay rule: a potential relay (earlier dropoff at N) AND the node
-			// empty at reserve. An empty potential-relay node is the relay target
-			// (its bin hasn't relayed there yet) — skip, not a miss. A node WITH
-			// bins is a real source (bin!=nil would have reserved it), so bin==nil
-			// with bins
-			// present means present-but-taken → a genuine miss.
-			//
-			// EMPTY AT THIS STEP, NOT EMPTY NOW (binsAtStep — the question the
-			// destination gate and the slot claim ask too). Keep-staged combined
-			// collects the kept bin off inbound staging, stages its own carrier
-			// there, and later re-collects it. Now, the node still holds the kept
-			// bin — the one this order's first pickup takes away — and read as "has
-			// bins" the re-collect was a miss on every pass: the supply held a
-			// partial set for ever and its evac waited behind it.
-			if pk.potentialRelay {
-				remaining, _, oerr := a.binsAtStep(order, plan.ResolvedSteps, pk.stepIndex, pk.step.Node)
-				if oerr != nil {
-					return nil, reserveHolding, oerr
-				}
-				if len(remaining) == 0 {
-					continue
-				}
-			}
-			// A BARE ON-DECK EMPTY IS FETCHED FROM WHERE ITS CLAIM DRAWS EMPTIES.
-			// The Edge names a press-index leg's empty by its on-deck node, and an
-			// empty taken from there while the pair waited left a node nothing
-			// re-plans: widenSupplyPickups skips empty pickups, replay re-resolves
-			// only steps still naming a group, and this reserve held the partial
-			// set for good (carry-edge2's order 346). An empty supply pickup at a
-			// concrete node with no bins, not a removal and not a relay target,
-			// asks the planner for an empty from the claim's inbound source, as
-			// widening does for a full; the step moves there and the caller
-			// persists it. Nothing is read on a pass with no bare pickup.
-			if !nodeHadBins && pk.step.Empty && !removal && !pk.potentialRelay {
-				if got := a.reanchorBareEmpty(order, plan, pk.stepIndex); got != nil {
-					assigned = append(assigned, *got)
-					continue
-				}
-			}
-			missing++
-			if nodeHadBins {
-				anyMissWithBins = true // bins present but unavailable — sourceable eventually
-			} else if removal {
-				// The line position this leg came to clear is EMPTY. Not "taken by
-				// someone", not "not staged yet" — nothing is there.
-				lineBinGone = true
-			}
-			a.logReserveMiss(order.ID, pk.stepIndex, pk.step.Node, nodeHadBins)
+		// 3. The pickup found a bin (reservePickup) or it missed (missPickup).
+		var got *reservedPickup
+		var out reserveOutcome
+		var perr error
+		if bin != nil {
+			got, out, perr = a.reservePickup(order, pk, bin, removal)
+		} else {
+			got, out, perr = a.missPickup(order, plan, pk, nodeHadBins, removal)
+		}
+		if perr != nil {
+			return nil, reserveHolding, perr
+		}
+		if got != nil {
+			assigned = append(assigned, *got)
+		}
+		if out == reserveComplete {
 			continue
 		}
-		aerr := a.binManifest.ReserveForDispatch(bin.ID, order.ID)
-		if errors.Is(aerr, reservations.ErrReservationConflict) {
-			missing++
-			anyMissWithBins = true // the bin exists, another order holds it — retry next tick
-			a.dbg("reserve miss: order %d step %d at %s — bin %d taken by another order between find and acquire",
-				order.ID, pk.stepIndex, pk.step.Node, bin.ID)
-			continue
+		missing++
+		if nodeHadBins {
+			anyMissWithBins = true // bins present but unavailable — sourceable eventually
+		} else if removal {
+			// The line position this leg came to clear is EMPTY. Not "taken by
+			// someone", not "not staged yet" — nothing is there.
+			lineBinGone = true
 		}
-		if aerr != nil {
-			return nil, reserveHolding, fmt.Errorf("reserve order=%d bin=%d: %w", order.ID, bin.ID, aerr)
-		}
-		// Surface — never silently swallow — a removal that binds a bin whose payload
-		// differs from the order's tag. Binding it is correct (the evac clears
-		// whatever is resident, no wedge), but an off-payload resident bin is an
-		// anomaly worth an operator's eyes: a stale off-style leftover, or a
-		// mis-stamped bin (HK 2026-07-14). Proceed AND alert — never fail the order
-		// over it, and never rewrite the bin to match (account by its real payload).
-		if removal && bin.PayloadCode != "" && order.PayloadCode != "" && bin.PayloadCode != order.PayloadCode {
-			log.Printf("dispatch: order %d evac at %s binds off-payload bin %d (bin=%q order=%q) — proceeding, surfacing mismatch",
-				order.ID, pk.step.Node, bin.ID, bin.PayloadCode, order.PayloadCode)
-			a.db.AppendAudit("bin", bin.ID, "evac_payload_mismatch", "",
-				fmt.Sprintf("complex order %d evac at %s bound resident bin payload %q (order tag %q) — mismatch surfaced, evac proceeds",
-					order.ID, pk.step.Node, bin.PayloadCode, order.PayloadCode), "system")
-		}
-		a.db.AppendAudit("bin", bin.ID, "reserved", "",
-			fmt.Sprintf("complex order %d reserve at %s", order.ID, pk.step.Node), "system")
-		assigned = append(assigned, reservedPickup{
-			stepIndex: pk.stepIndex, nodeName: pk.step.Node, binID: bin.ID, confirmed: false,
-		})
 	}
 
 	// Release held bins not matched to any current need. Slot rows are reconciled
@@ -442,6 +388,87 @@ func (a *Allocator) reserveComplexPlan(order *orders.Order, plan *ComplexPlan) (
 	default:
 		return assigned, reserveHolding, nil
 	}
+}
+
+// reservePickup reserves the bin findAvailableForNeed found for one pickup:
+// the reservation, and the audits that say what was bound. reserveComplete
+// with the reservation, or reserveHolding when another order took the bin
+// between the find and the acquire (the node had it, so the need is
+// sourceable: retry next tick).
+func (a *Allocator) reservePickup(order *orders.Order, pk pickupNeed, bin *binsstore.Bin, removal bool) (*reservedPickup, reserveOutcome, error) {
+	aerr := a.binManifest.ReserveForDispatch(bin.ID, order.ID)
+	if errors.Is(aerr, reservations.ErrReservationConflict) {
+		// The bin exists, another order holds it — retry next tick.
+		a.dbg("reserve miss: order %d step %d at %s — bin %d taken by another order between find and acquire",
+			order.ID, pk.stepIndex, pk.step.Node, bin.ID)
+		return nil, reserveHolding, nil
+	}
+	if aerr != nil {
+		return nil, reserveHolding, fmt.Errorf("reserve order=%d bin=%d: %w", order.ID, bin.ID, aerr)
+	}
+	// Surface — never silently swallow — a removal that binds a bin whose payload
+	// differs from the order's tag. Binding it is correct (the evac clears
+	// whatever is resident, no wedge), but an off-payload resident bin is an
+	// anomaly worth an operator's eyes: a stale off-style leftover, or a
+	// mis-stamped bin (HK 2026-07-14). Proceed AND alert — never fail the order
+	// over it, and never rewrite the bin to match (account by its real payload).
+	if removal && bin.PayloadCode != "" && order.PayloadCode != "" && bin.PayloadCode != order.PayloadCode {
+		log.Printf("dispatch: order %d evac at %s binds off-payload bin %d (bin=%q order=%q) — proceeding, surfacing mismatch",
+			order.ID, pk.step.Node, bin.ID, bin.PayloadCode, order.PayloadCode)
+		a.db.AppendAudit("bin", bin.ID, "evac_payload_mismatch", "",
+			fmt.Sprintf("complex order %d evac at %s bound resident bin payload %q (order tag %q) — mismatch surfaced, evac proceeds",
+				order.ID, pk.step.Node, bin.PayloadCode, order.PayloadCode), "system")
+	}
+	a.db.AppendAudit("bin", bin.ID, "reserved", "",
+		fmt.Sprintf("complex order %d reserve at %s", order.ID, pk.step.Node), "system")
+	return &reservedPickup{stepIndex: pk.stepIndex, nodeName: pk.step.Node, binID: bin.ID}, reserveComplete, nil
+}
+
+// missPickup answers a pickup that found no bin: a relay target skipped (not
+// a miss), a bare on-deck empty re-anchored to its claim's inbound source
+// (reserved there), or a miss, logged. reserveComplete for the first two,
+// reserveHolding for a miss; the caller tallies the miss against the node.
+func (a *Allocator) missPickup(order *orders.Order, plan *ComplexPlan, pk pickupNeed, nodeHadBins, removal bool) (*reservedPickup, reserveOutcome, error) {
+	// Relay rule: a potential relay (earlier dropoff at N) AND the node
+	// empty at reserve. An empty potential-relay node is the relay target
+	// (its bin hasn't relayed there yet) — skip, not a miss. A node WITH
+	// bins is a real source (bin!=nil would have reserved it), so bin==nil
+	// with bins
+	// present means present-but-taken → a genuine miss.
+	//
+	// EMPTY AT THIS STEP, NOT EMPTY NOW (binsAtStep — the question the
+	// destination gate and the slot claim ask too). Keep-staged combined
+	// collects the kept bin off inbound staging, stages its own carrier
+	// there, and later re-collects it. Now, the node still holds the kept
+	// bin — the one this order's first pickup takes away — and read as "has
+	// bins" the re-collect was a miss on every pass: the supply held a
+	// partial set for ever and its evac waited behind it.
+	if pk.potentialRelay {
+		remaining, _, oerr := a.binsAtStep(order, plan.ResolvedSteps, pk.stepIndex, pk.step.Node)
+		if oerr != nil {
+			return nil, reserveHolding, oerr
+		}
+		if len(remaining) == 0 {
+			return nil, reserveComplete, nil
+		}
+	}
+	// A BARE ON-DECK EMPTY IS FETCHED FROM WHERE ITS CLAIM DRAWS EMPTIES.
+	// The Edge names a press-index leg's empty by its on-deck node, and an
+	// empty taken from there while the pair waited left a node nothing
+	// re-plans: widenSupplyPickups skips empty pickups, replay re-resolves
+	// only steps still naming a group, and this reserve held the partial
+	// set for good (carry-edge2's order 346). An empty supply pickup at a
+	// concrete node with no bins, not a removal and not a relay target,
+	// asks the planner for an empty from the claim's inbound source, as
+	// widening does for a full; the step moves there and the caller
+	// persists it. Nothing is read on a pass with no bare pickup.
+	if !nodeHadBins && pk.step.Empty && !removal && !pk.potentialRelay {
+		if got := a.reanchorBareEmpty(order, plan, pk.stepIndex); got != nil {
+			return got, reserveComplete, nil
+		}
+	}
+	a.logReserveMiss(order.ID, pk.stepIndex, pk.step.Node, nodeHadBins)
+	return nil, reserveHolding, nil
 }
 
 // reanchorBareEmpty fetches a bare on-deck empty from its claim's inbound
