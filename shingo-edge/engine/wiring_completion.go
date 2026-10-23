@@ -286,7 +286,7 @@ func applyOrderBComplex(e *Engine, ctx *orderCompletionCtx) bool {
 	// Release). Left alone, the node stayed on the outgoing claim after the
 	// swap: the ALN_007 stale pointer. Pinned by TestChangeover_Phase3SwapLifecycle.
 	if ctx.nodeTask.NextMaterialOrderID == nil {
-		if steps, err := e.storedStepsOf(ctx.order.ID); err == nil && legPlacesBinAt(steps, ctx.node.CoreNodeName) {
+		if steps, err := e.storedStepsOf(ctx.order.ID); err == nil && protocol.PlacesBinAt(steps, ctx.node.CoreNodeName) {
 			advanceClaimOnRelease(e, ctx)
 		}
 	}

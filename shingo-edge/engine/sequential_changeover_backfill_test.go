@@ -36,7 +36,7 @@ import (
 // changeover — a far worse failure, and a silent one.
 
 // ordersDroppingAt counts the orders whose stored plan sets a bin down at
-// coreNode. It decodes steps_json by hand rather than calling legPlacesBinAt, so
+// coreNode. It decodes steps_json by hand rather than calling protocol.PlacesBinAt, so
 // the pin does not assert through the same predicate the fix is built on.
 func ordersDroppingAt(t *testing.T, db *store.DB, coreNode string) []int64 {
 	t.Helper()

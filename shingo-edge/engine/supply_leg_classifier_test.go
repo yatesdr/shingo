@@ -84,7 +84,7 @@ func mkSwapLeg(t *testing.T, db *store.DB, nodeID int64, uuid string, steps []pr
 // The 3-position R2 row is the one that matters: it drops a bin on the press
 // MID-sequence and then carries on to re-index the next position, so its final
 // dropoff is the index node while the bin it supplied is still sitting on the
-// press. "Where does the leg end?" gets it wrong; legPlacesBinAt gets it right.
+// press. "Where does the leg end?" gets it wrong; protocol.PlacesBinAt gets it right.
 //
 // Each leg is stored with the delivery_node production would give it (leg A's
 // derived value, blanked when auto-confirmed; leg B's always blank) — proving

@@ -349,7 +349,7 @@ func TestClaimAdvance_OnlyTheSingleRobotOrderReachesTheSwapArm(t *testing.T) {
 						}
 						plan := BuildChangeoverPlan([]ChangeoverNodeDiff{d}, []processes.Node{node}, false, nil, toolingChangeover{})
 						for _, a := range plan.Actions {
-							reaches := a.SupplyOrder == nil && a.EvacOrder != nil && legPlacesBinAt(specSteps(a.EvacOrder), "LINE")
+							reaches := a.SupplyOrder == nil && a.EvacOrder != nil && protocol.PlacesBinAt(specSteps(a.EvacOrder), "LINE")
 							want := mode == protocol.SwapModeSingleRobot && (sit == SituationSwap || sit == SituationEvacuate)
 							if reaches != want {
 								t.Errorf("%s/%s/%s spare=%v %s: reaches the swap order's claim advance = %v, want %v",

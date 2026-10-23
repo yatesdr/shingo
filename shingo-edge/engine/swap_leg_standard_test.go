@@ -103,7 +103,7 @@ func TestEverySwapLegDepartsProvablyAndConfirmsOnPlacement(t *testing.T) {
 							}
 							assertDepartureIsProvable(t, leg.label, mode, leg.steps, cell)
 							assertConfirmFollowsPlacement(t, leg.label, leg.steps, claim.CoreNodeName, leg.auto)
-							if legPlacesBinAt(leg.steps, claim.CoreNodeName) {
+							if protocol.PlacesBinAt(leg.steps, claim.CoreNodeName) {
 								receipts++
 							}
 						}
@@ -180,7 +180,7 @@ func assertConfirmFollowsPlacement(t *testing.T, label string,
 	steps []protocol.ComplexOrderStep, processNode string, auto bool) {
 	t.Helper()
 
-	places := legPlacesBinAt(steps, processNode)
+	places := protocol.PlacesBinAt(steps, processNode)
 	if places && auto {
 		t.Errorf("%s leaves a bin on %s but AUTO-CONFIRMS. CONFIRM is the count receipt for the bin "+
 			"that just went on the machine; auto-confirming it closes the order with nobody having "+
@@ -431,7 +431,7 @@ func departsWhileOwingAPlacement(steps []protocol.ComplexOrderStep, cell map[str
 	if len(steps) == 0 {
 		return false
 	}
-	if !legPlacesBinAt(steps, processNode) {
+	if !protocol.PlacesBinAt(steps, processNode) {
 		return false
 	}
 	kind, _, ok := legDepartsAt(steps, cell)

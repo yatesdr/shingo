@@ -348,7 +348,7 @@ func (op *simOperator) legServesNode(order *storeorders.Order, coreNodeName stri
 }
 
 // legTouchesNode reports whether the leg does anything at node at all — waits,
-// picks up, or drops off. Weaker than legPlacesBinAt, and deliberately so: it
+// picks up, or drops off. Weaker than protocol.PlacesBinAt, and deliberately so: it
 // answers "is this node part of this leg's job?", not "does the bin end up here".
 // Press-index R1 serves the press by CLEARING it, so it leaves no bin behind and
 // still needs signing off.

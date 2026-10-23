@@ -208,7 +208,7 @@ func (e *Engine) cancelPreDispatchAtParticipants(plan *changeoverPlan) ([]int64,
 		if protocol.ChangeoverStartActionFor(o.Status) != protocol.ChangeoverStartCancel {
 			continue
 		}
-		if !e.orderPlacesBinAtAny(o.ID, o.DeliveryNode, nodes) {
+		if !e.orderPlacesBinAtAny(&o, nodes) {
 			continue
 		}
 		c.abort(o.ID, changeoverStartCancelReason)
@@ -292,7 +292,7 @@ func (e *Engine) cancelHeldLiftsAtChangingNodes(plan *changeoverPlan) ([]int64, 
 		if o.Status == protocol.StatusFaulted || protocol.ChangeoverStartActionFor(o.Status) == protocol.ChangeoverStartPass {
 			continue
 		}
-		if e.orderPlacesBinAtAny(o.ID, o.DeliveryNode, block) {
+		if e.orderPlacesBinAtAny(&o, block) {
 			continue
 		}
 		if ahead, _ := e.orderLiftAheadAt(&o, changing, seat); ahead != liftHeld {
@@ -397,7 +397,7 @@ func (e *Engine) nodesWithOrdersInFlight(plan *changeoverPlan) []string {
 		if !protocol.BlocksChangeoverStart(o.Status) {
 			continue
 		}
-		if e.orderPlacesBinAtAny(o.ID, o.DeliveryNode, nodes) {
+		if e.orderPlacesBinAtAny(&o, nodes) {
 			blockers = append(blockers, changeoverBlockerFor(nameOf(o.DeliveryNode), o.ID, o.Status))
 			continue
 		}

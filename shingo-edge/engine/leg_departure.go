@@ -248,7 +248,7 @@ func (e *Engine) stampDepartureIfLeftCell(order *domain.Order, location string) 
 //
 // Two halves, and neither invents a spelling:
 //
-//   - legPlacesBinAt(steps, claim.CoreNodeName) is the repo's ONE predicate for
+//   - protocol.PlacesBinAt(steps, claim.CoreNodeName) is the repo's ONE predicate for
 //     "this leg leaves a bin on the machine". It already drives confirmPolicy,
 //     the delivered gate and the standard's receipt rule.
 //   - "recorded" is the cell's runtime showing a bin. That pointer is cleared by
@@ -269,7 +269,7 @@ func (e *Engine) cellPlacementOutstanding(node *processes.Node, claim *processes
 	if node == nil || claim == nil {
 		return false
 	}
-	if !legPlacesBinAt(steps, claim.CoreNodeName) {
+	if !protocol.PlacesBinAt(steps, claim.CoreNodeName) {
 		return false
 	}
 	runtime, err := e.db.GetProcessNodeRuntime(node.ID)

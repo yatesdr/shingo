@@ -170,14 +170,14 @@ func refillCarrierPayload(fromClaim, toClaim *processes.NodeClaim) string {
 // tapped CONFIRM for a tote they could not see, and until they did the card
 // showed CONFIRM where REQUEST SWAP belonged.
 //
-// legPlacesBinAt (swap_leg_role.go) is the same predicate the supply/evac
+// protocol.PlacesBinAt is the same predicate the supply/evac
 // classifier, the delivered gate and Core's two dispatch predicates use, so all
 // of them answer "which leg supplied the press" identically.
 func confirmPolicy(claim *processes.NodeClaim, steps []protocol.ComplexOrderStep) bool {
 	if len(steps) == 0 {
 		return false
 	}
-	return !legPlacesBinAt(steps, claim.CoreNodeName)
+	return !protocol.PlacesBinAt(steps, claim.CoreNodeName)
 }
 
 // claim.OutboundDestination MAY BE AN OVERRIDE, not the claim's own row. Every

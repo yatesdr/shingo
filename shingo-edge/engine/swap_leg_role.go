@@ -10,54 +10,28 @@ import (
 	"shingoedge/store/orders"
 )
 
-// legPlacesBinAt is the supply/evac discriminator: whether this leg LEAVES A
-// BIN at node when it finishes (protocol.PlacesBinAt, its one definition).
-func legPlacesBinAt(steps []protocol.ComplexOrderStep, node string) bool {
-	return protocol.PlacesBinAt(steps, node)
-}
-
 // orderPlacesBinAtAny reports whether a live order will place a bin at any of
-// the given nodes. It is the destination question both changeover gates ask, and
-// it is TWO-ARMED because the store keeps the answer in a different column for
-// each order shape (the delivery_node comment on the orders table,
-// store/schema/sqlite_ddl.go):
+// the given nodes. It is the destination question both changeover gates ask,
+// answered by protocol.OrderPlacesBinAt, the one rule both modules read: a
+// complex order by its steps, any other order by its delivery node (the
+// delivery_node comment on the orders table, store/schema/sqlite_ddl.go, says
+// which column is authoritative for which shape). A plain order is never asked
+// for its steps, so it costs no read here.
 //
-//	steps_json == ""  simple order — delivery_node is "authoritative for SIMPLE
-//	                  orders (one bin, one destination)"
-//	steps_json != ""  complex order — delivery_node is "effectively a DISPLAY
-//	                  value; nothing correctness-critical reads it any more",
-//	                  so the steps are the only truth
-//
-// WHY THE EMPTY CASE IS NOT A BLOCK, which is the trap this function exists to
-// avoid. orderGatesCutover fails closed on empty steps, and `steps_json TEXT NOT
-// NULL DEFAULT ”` is the DDL default — so a simple order there is not
-// destination-tested at all, it is an unconditional yes. Reading steps per order
-// is fine; inheriting that default is not. Empty steps means "simple order, use
-// the delivery-node arm", never "gate".
-//
-// Fail-closed remains correct for the two cases where the shape cannot be
-// established: an unreadable row and undecodable steps. Those are "we cannot
-// prove this leg is irrelevant", which is different from "this leg has no steps
-// because simple orders never write any".
-func (e *Engine) orderPlacesBinAtAny(orderID int64, deliveryNode string, nodes []string) bool {
-	stepsJSON, err := e.db.GetOrderStepsJSON(orderID)
-	if err != nil {
-		return true // cannot read the row — cannot prove it is irrelevant
-	}
-	if stepsJSON == "" {
-		for _, n := range nodes {
-			if n != "" && n == deliveryNode {
-				return true
-			}
+// FAILS CLOSED where a complex order's shape cannot be established: an
+// unreadable row, steps never stored, and undecodable steps are "we cannot
+// prove this leg is irrelevant", which is different from "this order has no
+// steps because plain orders never write any".
+func (e *Engine) orderPlacesBinAtAny(o *orders.Order, nodes []string) bool {
+	var steps []protocol.ComplexOrderStep
+	if o.OrderType == protocol.OrderTypeComplex {
+		var err error
+		if steps, err = e.storedStepsOf(o.ID); err != nil {
+			return true // cannot read or decode the plan — cannot prove it is irrelevant
 		}
-		return false
-	}
-	steps, err := decodeSteps(stepsJSON)
-	if err != nil {
-		return true // undecodable steps fail closed, as they do at the cutover gate
 	}
 	for _, n := range nodes {
-		if legPlacesBinAt(steps, n) {
+		if protocol.OrderPlacesBinAt(o.OrderType, steps, o.DeliveryNode, n) {
 			return true
 		}
 	}
@@ -88,14 +62,13 @@ func (e *Engine) orderPlacesBinAtAny(orderID int64, deliveryNode string, nodes [
 // Pinned by TestSequentialChangeover_OnePositionGetsOneCarrier and its mirror
 // TestSequentialSteadyState_RemovalStillMintsTheBackfill.
 //
-// DeliveryNode is passed for the SIMPLE-order arm only, and a sequential Order A
-// is always complex, so in practice the steps answer. See orderPlacesBinAtAny
-// for why the empty-steps case is the delivery-node arm and never a block.
+// A sequential Order A is always complex, so its steps answer;
+// protocol.OrderPlacesBinAt reads the delivery node only for a plain order.
 func (e *Engine) orderRefillsNodeItself(order *orders.Order, coreNode string) bool {
 	if order == nil || coreNode == "" {
 		return false
 	}
-	return e.orderPlacesBinAtAny(order.ID, order.DeliveryNode, []string{coreNode})
+	return e.orderPlacesBinAtAny(order, []string{coreNode})
 }
 
 func decodeSteps(stepsJSON string) ([]protocol.ComplexOrderStep, error) {

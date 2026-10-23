@@ -34,7 +34,7 @@ import (
 // derived confirm policy (2026-09-03) a leg auto-confirms iff it leaves no bin on
 // claim.CoreNodeName — so unflipped R1, which is the pure evac, auto-confirms and
 // closes itself. Scope and receipt are decided by different predicates
-// (legTouchesNode here, legPlacesBinAt there) and the fixture guard below now
+// (legTouchesNode here, protocol.PlacesBinAt there) and the fixture guard below now
 // says so instead of pinning the old coincidence.
 func TestSimOperator_LegServesNode_ReadsStepsNotDeliveryNode(t *testing.T) {
 	db := testEngineDB(t)
@@ -53,7 +53,7 @@ func TestSimOperator_LegServesNode_ReadsStepsNotDeliveryNode(t *testing.T) {
 	if r1.DeliveryNode == press {
 		t.Fatal("fixture is not exercising the bug: R1's delivery_node must NOT be the press")
 	}
-	if legPlacesBinAt(disp.StepsA, press) || !disp.AutoConfirmA {
+	if protocol.PlacesBinAt(disp.StepsA, press) || !disp.AutoConfirmA {
 		t.Fatal("fixture drift: unflipped press-index R1 is the pure evac — it leaves no bin on the " +
 			"press, so the derived confirm policy auto-confirms it. If that changed, the receipt " +
 			"question moved and this case's subject (SCOPE, not receipt) needs re-stating")

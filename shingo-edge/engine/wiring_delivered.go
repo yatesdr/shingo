@@ -43,7 +43,7 @@ import (
 // empty (a simple order, where a missing bin id IS the SNF3-shaped gap) all
 // mean we do not know whether a bin was due here — and a check that cannot
 // tell must not report "nothing to see". The empty-list case is the sharp one:
-// `null` and `[]` decode without error and legPlacesBinAt answers false for
+// `null` and `[]` decode without error and protocol.PlacesBinAt answers false for
 // them, which is indistinguishable from a real evac leg unless it is caught
 // here.
 func (e *Engine) legLeftNoBinHereByDesign(delivered OrderDeliveredEvent) bool {
@@ -59,11 +59,11 @@ func (e *Engine) legLeftNoBinHereByDesign(delivered OrderDeliveredEvent) bool {
 	if err != nil || len(steps) == 0 {
 		// An EMPTY step list is not a leg that places nothing — it is a leg we
 		// know nothing about. `null` and `[]` both decode without error, and
-		// legPlacesBinAt answers false for them, which reads identically to a
+		// protocol.PlacesBinAt answers false for them, which reads identically to a
 		// genuine evac leg. Alarm.
 		return false
 	}
-	if legPlacesBinAt(steps, node.CoreNodeName) {
+	if protocol.PlacesBinAt(steps, node.CoreNodeName) {
 		return false
 	}
 	e.debugFn("delivered: order %d leg places no bin at %s (steps say so) — nil bin id is the plan, not a gap; no alarm",

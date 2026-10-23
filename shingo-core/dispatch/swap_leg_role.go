@@ -23,9 +23,9 @@ import (
 //
 // Ask the steps what the leg does to the LINE BIN. Nothing else answers it.
 //
-// Relationship to legPlacesBinAt in shingo-edge/engine/swap_leg_role.go: the
-// two predicates are COMPLEMENTS, not copies. Edge's answers "does this leg
-// leave a bin at the node" (true = supply); legTakesLineBin below answers "does
+// Relationship to protocol.PlacesBinAt (the Edge's supply/evac discriminator):
+// the two predicates are COMPLEMENTS, not copies. PlacesBinAt answers "does this
+// leg leave a bin at the node" (true = supply); legTakesLineBin below answers "does
 // it lift the node's bin and not put one back" (true = evac). Run the same leg
 // through both and they disagree by construction — two_robot B is TRUE here and
 // false there, press-index R2 is false here and true there. Their verification

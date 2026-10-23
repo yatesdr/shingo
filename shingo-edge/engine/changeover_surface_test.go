@@ -29,7 +29,7 @@ import (
 //     and it is worth keeping — but only stated as a guard, not as evidence.
 //   - **SimpleOrderElsewhere — passed against commit 4 trivially**, because an
 //     order with no runtime slot was invisible to the old surface anyway. It is
-//     a guard against a FUTURE legPlacesBinAt-only implementation, where empty
+//     a guard against a FUTURE protocol.PlacesBinAt-only implementation, where empty
 //     steps_json (the DDL default for every simple order) would block
 //     unconditionally. Not evidence for this commit.
 //
@@ -183,7 +183,7 @@ func TestChangeoverStart_CarrierToAnUnchangedNodeDoesNotBlock(t *testing.T) {
 }
 
 // TestChangeoverStart_SimpleOrderElsewhereDoesNotBlock is the rev-2 correction's
-// test, and the reason the surface is two-armed rather than legPlacesBinAt alone.
+// test, and the reason the surface is two-armed rather than protocol.PlacesBinAt alone.
 //
 // A simple order writes NO steps (steps_json TEXT NOT NULL DEFAULT ”), and
 // orderGatesCutover treats empty steps as an unconditional block. Inheriting that

@@ -631,7 +631,7 @@ type ChangeoverDispatch struct {
 	// infer it from field order and get press-index wrong. Single-order modes
 	// (sequential swap, press_position) and the legacy single_robot stage+swap
 	// shape carry no clean evac/supply split, so they keep using StepsA/StepsB.
-	// See swap_leg_role.go legPlacesBinAt for the steps-based definition of each
+	// See protocol.PlacesBinAt for the steps-based definition of each
 	// role.
 	Roles *changeoverSwapLegs
 }

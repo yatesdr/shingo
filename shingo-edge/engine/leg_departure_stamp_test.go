@@ -102,7 +102,7 @@ func newStampFixture(t *testing.T, mode protocol.SwapMode, secondPaired string, 
 			f.pickups = append(f.pickups, s.Node)
 		}
 	}
-	f.places = legPlacesBinAt(steps, claim.CoreNodeName)
+	f.places = protocol.PlacesBinAt(steps, claim.CoreNodeName)
 	return f
 }
 

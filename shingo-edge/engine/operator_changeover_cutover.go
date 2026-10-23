@@ -72,7 +72,7 @@ func (e *Engine) canCompleteChangeover(changeoverID int64) (bool, []domain.Block
 	// The old conjunct required EVERY linked order terminal, which is what
 	// blocked the HOP cutover on an outbound evac still driving its old bin to
 	// the market — a leg whose completion changes nothing at any node the
-	// changeover touches. The classifier is legPlacesBinAt over the order's own
+	// changeover touches. The classifier is protocol.PlacesBinAt over the order's own
 	// steps: "does this leg leave a bin at node n", the same question both
 	// sides of the wire ask. Evac legs never gate here; their physical
 	// slot-clear moment already flows into conjunct 1 (evac pickup advances a
@@ -171,7 +171,7 @@ func (e *Engine) orderGatesCutover(orderID int64, participantNames []string) boo
 		return true // an unreadable itinerary blocks
 	}
 	for _, name := range participantNames {
-		if legPlacesBinAt(steps, name) {
+		if protocol.PlacesBinAt(steps, name) {
 			return true
 		}
 	}
