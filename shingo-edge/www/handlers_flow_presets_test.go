@@ -50,33 +50,50 @@ func presetProcess(t *testing.T, name string) (int64, int64) {
 }
 
 // TestFlowPresets_ARepeatedNameIsAVersionOnlyOfTheSameShape pins owner ruling
-// F2 (2026-09-12), through the real router.
+// F2 (2026-09-12) as the owner re-keyed it on 2026-10-22 (spots v0, Q2),
+// through the real router.
 //
-// A repeated name is version n+1, which is what versions are FOR — a shape
+// A repeated name is version n+1, which is what versions are FOR — a recipe
 // changing, with every member claim's source_preset_version recording which
-// one it came from. It is wrong when the shapes DIFFER: R6's rename moves
-// every version of a name, so two lineages sharing one name could never be
-// pulled apart afterwards. And R5 made the collision easy to walk into, by
-// reducing the suggested name to the choreography's word alone — two candidate
-// shapes of one mode suggest the same word.
+// one it came from. It is wrong when the recipes are different THINGS: R6's
+// rename moves every version of a name, so two lineages sharing one name
+// could never be pulled apart afterwards.
+//
+// WHAT A RECIPE IS, for its name, is its structure: per cell the swap mode,
+// the role and which fields are filled, and the slot count. Never its node
+// names. A NAMED BEHAVIOUR CHANGE: the same structure on other nodes was
+// refused as "already a different shape", so Springfield Press 6's "Two spot
+// press index" could not be re-saved with ULN_005 for a deleted ULN_003
+// under its own name, and every fix restarted the pre-fill's lineage.
 func TestFlowPresets_ARepeatedNameIsAVersionOnlyOfTheSameShape(t *testing.T) {
 	h, router := newAdminRouter(t)
 	cookie := authCookie(t, h)
 	pid, sameShape := presetProcess(t, "PRESET-NAME")
 
-	// A SECOND STYLE OF A DIFFERENT SHAPE, on a second position.
+	// A SECOND STYLE, THE SAME STRUCTURE ON A SECOND POSITION.
 	if _, err := testDB.CreateProcessNode(processes.NodeInput{
 		ProcessID: pid, CoreNodeName: "PP_02", Name: "PP_02", Enabled: true,
 	}); err != nil {
 		t.Fatalf("create the second position: %v", err)
 	}
-	otherShape := seedStyle(t, "PRESET-NAME-other", pid)
+	otherNodes := seedStyle(t, "PRESET-NAME-other", pid)
 	if _, err := testDB.UpsertStyleNodeClaim(domain.CoreNodeKinds{}, processes.NodeClaimInput{
-		StyleID: otherShape, CoreNodeName: "PP_02", Role: "consume", SwapMode: "two_robot",
+		StyleID: otherNodes, CoreNodeName: "PP_02", Role: "consume", SwapMode: "two_robot",
 		PayloadCode: "PP-PART-2", InboundStaging: "PP_02",
 		InboundSource: "PP-SRC", OutboundDestination: "PP-DST",
 	}); err != nil {
 		t.Fatalf("seed the second claim: %v", err)
+	}
+	// A THIRD STYLE OF ANOTHER STRUCTURE: both positions, two slots.
+	twoSlots := seedStyle(t, "PRESET-NAME-pair", pid)
+	for _, n := range []string{"PP_01", "PP_02"} {
+		if _, err := testDB.UpsertStyleNodeClaim(domain.CoreNodeKinds{}, processes.NodeClaimInput{
+			StyleID: twoSlots, CoreNodeName: n, Role: "consume", SwapMode: "two_robot",
+			PayloadCode: "PP-PAIR-" + n, InboundStaging: n,
+			InboundSource: "PP-SRC", OutboundDestination: "PP-DST",
+		}); err != nil {
+			t.Fatalf("seed the pair claim %s: %v", n, err)
+		}
 	}
 
 	create := func(name string, styleID int64) *http.Response {
@@ -97,14 +114,19 @@ func TestFlowPresets_ARepeatedNameIsAVersionOnlyOfTheSameShape(t *testing.T) {
 	}
 
 	assertStatus(t, create("index", sameShape), http.StatusOK)
-	// THE SAME SHAPE AGAIN IS v2, as it always was.
+	// THE SAME RECIPE AGAIN IS v2, as it always was.
 	assertStatus(t, create("index", sameShape), http.StatusOK)
 	if got := versions(); len(got) != 2 {
 		t.Fatalf("the same shape under the same name gave %v, want two versions", got)
 	}
+	// ITS NODES CHANGED, ITS STRUCTURE NOT: v3, under its own name.
+	assertStatus(t, create("index", otherNodes), http.StatusOK)
+	if got := versions(); len(got) != 3 || got[0] != 3 {
+		t.Fatalf("the same structure on other nodes gave %v, want v3 of the same name", got)
+	}
 
-	// A DIFFERENT SHAPE UNDER THAT NAME IS REFUSED, BY NAME.
-	resp := create("index", otherShape)
+	// A DIFFERENT SLOT SHAPE UNDER THAT NAME IS REFUSED, BY NAME.
+	resp := create("index", twoSlots)
 	assertStatus(t, resp, http.StatusBadRequest)
 	msg, _ := decodeBody(t, resp)["error"].(string)
 	for _, want := range []string{"index", "already a different shape", "pick another name"} {
@@ -113,15 +135,15 @@ func TestFlowPresets_ARepeatedNameIsAVersionOnlyOfTheSameShape(t *testing.T) {
 		}
 	}
 	// AND NOTHING WAS WRITTEN. A refused name must not leave a version behind.
-	if got := versions(); len(got) != 2 {
+	if got := versions(); len(got) != 3 {
 		t.Errorf("the refused create left something: %v", got)
 	}
 
-	// The other shape under its OWN name is fine — the guard is about the name,
-	// not about the press running two shapes.
-	assertStatus(t, create("swap", otherShape), http.StatusOK)
-	if got := versions(); len(got) != 3 {
-		t.Errorf("the second shape under its own name was refused: %v", got)
+	// The other structure under its OWN name is fine — the guard is about the
+	// name, not about the press running two recipes.
+	assertStatus(t, create("pair", twoSlots), http.StatusOK)
+	if got := versions(); len(got) != 4 {
+		t.Errorf("the second structure under its own name was refused: %v", got)
 	}
 }
 

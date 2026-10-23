@@ -18,6 +18,8 @@ Edge only; no migration. Not deployed.
 - The hint and the chips name the job: "PLN_005 · on deck for PLN_010"
 - The HMI and the desktop open a recipe on the pre-fill as the server ships it
 - Settings › HMI says moved spots are checked against the recipes
+- A recipe re-saved with new nodes or routing keeps its name as the next version
+- Another structure (mode, role, fields, slots) under that name is still refused
 
 ## 2026-10-21 — A position changes from the desktop
 

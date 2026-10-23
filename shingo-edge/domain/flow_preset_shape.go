@@ -99,6 +99,37 @@ func FlowShapeKey(cells []FlowCell) string {
 	return b.String()
 }
 
+// RecipeStructureKey is what a recipe IS for its name (owner, 2026-10-22,
+// spots v0 Q2): per cell its swap mode, its role and which shape fields are
+// filled, and the recipe's slot count. Never a node name, never a routing
+// value. Two versions of one recipe may sit on other nodes and route
+// elsewhere; a different structure under the same name is a second lineage,
+// and refuseNameOfAnotherShape refuses it.
+//
+// FlowShapeKey, which keys on every node, stays what it is: the candidate
+// grouping and drift compare need the nodes.
+func RecipeStructureKey(cells []FlowCell) string {
+	sigs := make([]string, 0, len(cells))
+	for _, c := range StripFlowPayload(cells) {
+		var b strings.Builder
+		for _, f := range shapeFields {
+			v := f.of(c)
+			switch {
+			case f.field == flowspec.SwapMode || f.field == flowspec.Role:
+				b.WriteString(v)
+			case v != "":
+				b.WriteByte('1')
+			default:
+				b.WriteByte('0')
+			}
+			b.WriteByte('\x1f')
+		}
+		sigs = append(sigs, b.String())
+	}
+	sort.Strings(sigs)
+	return fmt.Sprintf("%d slots\x1e%s", len(PayloadSlots(cells)), strings.Join(sigs, "\x1e"))
+}
+
 // CompareFlowShape reports whether `got` has the preset's shape, and when it
 // does not, WHICH fields differ — one entry per difference, in position order,
 // worded as the table words them.

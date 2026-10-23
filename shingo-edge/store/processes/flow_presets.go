@@ -101,14 +101,17 @@ func CreateFlowPreset(db *sql.DB, in FlowPresetInput) (int64, error) {
 }
 
 // refuseNameOfAnotherShape is owner ruling F2 (2026-09-12): a repeated name is
-// a new VERSION of one shape, never a second shape under one name.
+// a new VERSION of one recipe, never a second recipe under one name. What a
+// recipe is, for this, is its structure (domain.RecipeStructureKey, owner
+// 2026-10-22): a version may move its nodes and its routing, and keeps its
+// name; a different structure is refused.
 //
-// It compares against the name's NEWEST version, which is what the lineage
-// currently means — an older version is the same lineage at an earlier point,
-// and a shape that has been edited twice would otherwise be refused its own
-// third version. Archived rows count: archiving hides a version from the
-// chooser and leaves every member's provenance pointing at it, so the name is
-// still spoken for.
+// It compares against the name's NEWEST version. Every version this guard let
+// in shares the newest one's structure, so that is the lineage's structure;
+// a row written before the guard keyed on structure is still compared as it
+// stands. Archived rows count: archiving hides a version from the chooser and
+// leaves every member's provenance pointing at it, so the name is still
+// spoken for.
 //
 // A shape that does not parse is not a shape to compare against, and the
 // refusal would then be about a row nobody can read. That row is already
@@ -133,8 +136,8 @@ func refuseNameOfAnotherShape(db *sql.DB, in FlowPresetInput) error {
 	if err != nil {
 		return nil // ValidateFlowPreset above already refused this
 	}
-	if domain.FlowShapeKey(held) == domain.FlowShapeKey(want) {
-		return nil // the same shape, changing: version n+1, as before
+	if domain.RecipeStructureKey(held) == domain.RecipeStructureKey(want) {
+		return nil // the same recipe, changing: version n+1
 	}
 	return fmt.Errorf("%q %w", in.Name, domain.ErrFlowPresetNameIsAnotherShape)
 }

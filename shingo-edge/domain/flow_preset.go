@@ -54,14 +54,16 @@ var ErrFlowPresetHasPayload = errors.New("a preset carries no payload — the pa
 // routing set, switched on or off (RoutingSetNames, owner ruling R4).
 var ErrFlowPresetUnknownNode = errors.New("not a position or a routing-set member of this process")
 
-// ErrFlowPresetNameIsAnotherShape refuses a name a DIFFERENT shape already
-// holds on this press (owner ruling F2, 2026-09-12).
+// ErrFlowPresetNameIsAnotherShape refuses a name a DIFFERENT recipe already
+// holds on this press (owner ruling F2, 2026-09-12; re-keyed on the recipe's
+// structure, not its nodes, 2026-10-22 — RecipeStructureKey).
 //
-// A repeated name is version n+1, which is right when the shape is the same
-// one changing — that is what versions are for, and what a member claim's
-// source_preset_version records. It is wrong when the shapes differ: the two
-// lineages then share a name and cannot be pulled apart afterwards, because a
-// rename moves every version of a name (R6). The suggested name being the mode
+// A repeated name is version n+1, which is right when the recipe is the same
+// one changing — its nodes moved, its routing re-pointed — and that is what
+// versions are for, and what a member claim's source_preset_version records.
+// It is wrong when the structures differ: the two lineages then share a name
+// and cannot be pulled apart afterwards, because a rename moves every version
+// of a name (R6). The suggested name being the mode
 // word alone (R5) makes the collision easy to walk into — two candidate shapes
 // of one choreography suggest the same word — so the refusal is at naming time,
 // where the engineer still has the field open.
