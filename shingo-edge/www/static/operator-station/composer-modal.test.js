@@ -68,13 +68,22 @@ const win = {
     addEventListener() {},
     ComposerModel: ComposerModel,
 };
+// The station loads flowspec-data.js before this module (composer-boot.js), so
+// the field words the screens print are flowspec's (F3).
+{
+    const sandbox = { window: {} };
+    vm.runInNewContext(fs.readFileSync(path.join(__dirname, 'flowspec-data.js'), 'utf8'), sandbox,
+        { filename: 'flowspec-data.js' });
+    win.FLOWSPEC = sandbox.window.FLOWSPEC;
+}
 
 let FLOW = {};
 let PREVIEW = null;
+let PIC = {};          // the options the last picture was drawn with
 const CALLS = [];
 Object.assign(global, {
     window: win, document: doc, esc,
-    renderFlowPicture: () => '<g class="picture"></g>',
+    renderFlowPicture: (v, o) => { PIC = o || {}; return '<g class="picture"></g>'; },
     setTimeout: () => 0, clearTimeout: () => {}, requestAnimationFrame: fn => fn(),
     setInterval: () => 0, clearInterval: () => {},
     AbortController: class { constructor() { this.signal = {}; } abort() {} },
@@ -274,36 +283,126 @@ test('One Part, Two Spots mints the one part with split', async () => {
     if (b.split !== true || b.preset_id !== 3 || b.parts.length !== 1) throw new Error('split body ' + JSON.stringify(b));
 });
 
-// ── spots: move, put back, swap ──────────────────────────────────────────────
+// ── spots: Press 6, on the server's own card ─────────────────────────────────
+//
+// The owner's rule (2026-10-22): the floor may pick pairings, but only the
+// ones the engineer set up in recipes, and an on-deck spot never feeds the
+// other side. The card is the station's composer read of the Press 6 fixture
+// (www/handlers_flow_spots_test.go), written by the Go wrapper; a tap looks
+// its targets up there and restates nothing.
+const PRESS6 = process.argv[2] ? JSON.parse(fs.readFileSync(process.argv[2], 'utf8')) : null;
 function tapPos(node) {
     root().handlers.click({
         target: { closest: sel => (sel === '[data-pos]' ? { dataset: { pos: node } } : null) },
         stopPropagation() {},
     });
 }
+function tapLane(node) {
+    root().handlers.click({
+        target: { closest: sel => (sel === '[data-staging]' ? { dataset: { staging: node } } : null) },
+        stopPropagation() {},
+    });
+}
 function chips() { return (html().match(/data-act="unmove" data-node="[^"]*">[^<]*/g) || []).map(c => c.split('>')[1]); }
-test('spots: a spot moves to a free place, goes back to its own, and swaps with another', async () => {
-    const two = recipe(3, 'Two spot', ['produce', 'produce']);
-    two.cells = {
-        PLN_06: { core_node_name: 'PLN_06', role: 'produce', swap_mode: 'two_robot_press_index', paired_core_node: 'PLN_05' },
-        PLN_07: { core_node_name: 'PLN_07', role: 'produce', swap_mode: 'two_robot_press_index', paired_core_node: 'PLN_08' },
-    };
-    two.slots = [{ nodes: ['PLN_06'], role: 'produce' }, { nodes: ['PLN_07'], role: 'produce' }];
-    await open({ part_rows: ROWS, presets: [two] });
-    tap('part', { part: 'PART-C' });
-    tap('split');
-    tapPos('PLN_06'); tapPos('PLN_09');
-    if (JSON.stringify(chips()) !== '["PLN_06 → PLN_09 ✕"]') throw new Error('move: ' + JSON.stringify(chips()));
-    tapPos('PLN_09'); tapPos('PLN_06');
-    if (chips().length !== 0) throw new Error('put back: ' + JSON.stringify(chips()));
-    tapPos('PLN_06'); tapPos('PLN_07');
-    if (JSON.stringify(chips().sort()) !== '["PLN_06 → PLN_07 ✕","PLN_07 → PLN_06 ✕"]') throw new Error('swap: ' + JSON.stringify(chips()));
-    tapPos('PLN_06'); tapPos('PLN_07');
-    if (chips().length !== 0) throw new Error('swap back: ' + JSON.stringify(chips()));
-    tapPos('PLN_06'); tapPos('PLN_06');
-    if (chips().length !== 0) throw new Error('tap twice moved it: ' + JSON.stringify(chips()));
+function lit() { return (PIC.targets || []).slice().sort(); }
+function hint() {
+    const m = /class="os-comp-hint">([\s\S]*?)<\/div>/.exec(html());
+    return m ? m[1].replace(/<[^>]+>/g, '') : '';
+}
+function press6(edit) {
+    const flow = JSON.parse(JSON.stringify(PRESS6));
+    if (edit) edit(flow);
+    return flow;
+}
+function card(flow, name) { return flow.presets.find(p => p.name === name); }
+async function twoOff(flow) {
+    await open(flow);
+    tap('part', { part: 'SYN-P6-X' });
+    tap('two');
+    tap('part', { part: 'SYN-P6-Y' });
+    expectIn('two off', 'Spots · Two spot press index');
+}
+async function oneOff(flow) {
+    await open(flow);
+    tap('part', { part: 'SYN-P6-Z' });
+    tap('one');
+    expectIn('one off', 'Spots · One spot press index');
+}
+function spotsTest(name, fn) {
+    test(name, async () => {
+        if (!PRESS6) throw new Error('no Press 6 read: run through www/composer_modal_test.go');
+        await fn();
+    });
+}
+spotsTest('spots open where the cell last ran the recipe, as the server shipped it', async () => {
+    await twoOff(press6());
+    if (JSON.stringify(chips().sort()) !== '["PLN_006 → PLN_010 ✕","PLN_007 → PLN_012 ✕"]') {
+        throw new Error('pre-fill: ' + JSON.stringify(chips()));
+    }
 });
-
+spotsTest('a press spot lights only the spots its recipes pair with its deck, and outlines itself', async () => {
+    await twoOff(press6());
+    tapPos('PLN_010');
+    if (PIC.selected !== 'PLN_010' || PIC.selectCard !== true) throw new Error('selection: ' + JSON.stringify(PIC));
+    if (JSON.stringify(lit()) !== '["PLN_006","PLN_009"]') throw new Error('lit: ' + JSON.stringify(lit()));
+    expectIn('hint', 'PLN_010 · where this part runs', hint());
+});
+spotsTest('the on-deck card selects its own job, and PLN_013 moves nothing', async () => {
+    await twoOff(press6());
+    tapPos('PLN_005');
+    expectIn('hint', 'PLN_005 · on deck for PLN_010', hint());
+    if (PIC.selected !== 'PLN_005' || lit().length) throw new Error('deck: ' + JSON.stringify(PIC));
+    tapPos('PLN_013');
+    if (chips().length !== 2 || chips().some(c => c.indexOf('PLN_013') >= 0)) throw new Error('moved: ' + JSON.stringify(chips()));
+    if (PIC.selected !== 'PLN_005') throw new Error('the selection went: ' + PIC.selected);
+});
+spotsTest('a press then its own deck re-selects the deck; nothing swaps', async () => {
+    await twoOff(press6());
+    tapPos('PLN_010');
+    tapPos('PLN_005');
+    if (PIC.selected !== 'PLN_005' || chips().length !== 2) throw new Error('swapped: ' + JSON.stringify(chips()));
+});
+spotsTest('a spot then another spot re-selects it; the decks never cross (was: a swap)', async () => {
+    await twoOff(press6());
+    tapPos('PLN_010');
+    tapPos('PLN_012');
+    if (PIC.selected !== 'PLN_012') throw new Error('selected ' + PIC.selected);
+    if (JSON.stringify(chips().sort()) !== '["PLN_006 → PLN_010 ✕","PLN_007 → PLN_012 ✕"]') {
+        throw new Error('swapped: ' + JSON.stringify(chips()));
+    }
+});
+spotsTest('a press spot moves to a lit spot and back, and Go sends what the chips say', async () => {
+    await twoOff(press6());
+    tapPos('PLN_010'); tapPos('PLN_009');
+    if (JSON.stringify(chips().sort()) !== '["PLN_006 → PLN_009 ✕","PLN_007 → PLN_012 ✕"]') {
+        throw new Error('move: ' + JSON.stringify(chips()));
+    }
+    tapPos('PLN_009'); tapPos('PLN_006');
+    if (JSON.stringify(chips()) !== '["PLN_007 → PLN_012 ✕"]') throw new Error('put back: ' + JSON.stringify(chips()));
+    CALLS.length = 0;
+    tap('next');
+    if (JSON.stringify(lastPreview().overrides) !== '{"PLN_007":"PLN_012"}') throw new Error('body ' + JSON.stringify(lastPreview()));
+});
+spotsTest('a lane moves only to a lane, and its chip names its job', async () => {
+    await oneOff(press6());
+    tapLane('STG_TOOL_1');
+    if (JSON.stringify(lit()) !== '["STG_TOOL_2"]') throw new Error('lit: ' + JSON.stringify(lit()));
+    tapPos('PLN_011');
+    if (chips().length) throw new Error('a lane went to a position: ' + JSON.stringify(chips()));
+    tapLane('STG_TOOL_2');
+    if (JSON.stringify(chips()) !== '["Inbound staging for PLN_009: STG_TOOL_1 → STG_TOOL_2 ✕"]') {
+        throw new Error('chip: ' + JSON.stringify(chips()));
+    }
+});
+spotsTest('an on-deck spot an engineer set up moves, and its chip names whose it is', async () => {
+    // As if a recipe paired PLN_006 with PLN_013 as well: the card's targets
+    // are all the screen reads.
+    await twoOff(press6(f => card(f, 'Two spot press index').spots.find(s => s.node === 'PLN_005').targets.push('PLN_013')));
+    tapPos('PLN_005');
+    if (JSON.stringify(lit()) !== '["PLN_013"]') throw new Error('lit: ' + JSON.stringify(lit()));
+    tapPos('PLN_013');
+    if (chips().indexOf('on deck for PLN_010: PLN_005 → PLN_013 ✕') < 0) throw new Error('chip: ' + JSON.stringify(chips()));
+});
 // ── Go says what happens and draws the press ─────────────────────────────────
 test('Go says what comes off, what comes on, and Core\'s word, and draws the press', async () => {
     await open({ part_rows: ROWS, presets: [ONE] }, false);

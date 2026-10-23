@@ -1847,32 +1847,26 @@ test('takenOff names the parts taken off this draft until they are put back', ()
 
 // ── a recipe's spots are suggested where the cell last ran it (W2) ──────────
 // The recipe names PLN_01/PLN_04; the cell has since run it on PLN_03/PLN_06.
-const STALE_RECIPE = {
+// The card's last_moves is read as shipped: the server keeps only what the
+// Spots step would accept (domain.LegalSpotMoves), so neither surface filters
+// it again (TestComposerCard_APrefillOutsideTheTargetsIsDropped is the pin).
+const MOVED_RECIPE = {
     id: '1', name: 'Two spot press index',
     cells: {
         PLN_01: { core_node_name: 'PLN_01', swap_mode: 'two_robot_press_index', role: 'produce', paired_core_node: 'PLN_02' },
         PLN_04: { core_node_name: 'PLN_04', swap_mode: 'two_robot_press_index', role: 'produce', paired_core_node: 'PLN_05' },
     },
-    last_moves: { PLN_01: 'PLN_03', PLN_04: 'PLN_06', PLN_05: 'ULN_002' },
+    last_moves: { PLN_01: 'PLN_03', PLN_04: 'PLN_06' },
 };
 
-test('suggestedMoves keeps the last-used spots the screen draws, and none for a recipe never used here', () => {
-    const here = new Set(POSITIONS.map(p => p.core_node_name));
-    assert.deepStrictEqual(M.suggestedMoves(STALE_RECIPE, here), { PLN_01: 'PLN_03', PLN_04: 'PLN_06' },
-        'a node this screen does not draw (another station’s) is not suggested');
-    assert.deepStrictEqual(M.suggestedMoves({ id: '2', cells: STALE_RECIPE.cells }, here), {},
-        'no last_moves: the recipe’s own nodes');
-});
-
-test('a stale recipe applied with its suggestion lands on the last-used spots, pairs and all', () => {
-    const here = new Set(POSITIONS.map(p => p.core_node_name));
-    const moved = M.presetMoved(STALE_RECIPE, M.suggestedMoves(STALE_RECIPE, here));
+test('a recipe applied with its pre-fill lands on the last-used spots, pairs and all', () => {
+    const moved = M.presetMoved(MOVED_RECIPE, MOVED_RECIPE.last_moves);
     const s = M.reduce(M.reduce(initStyle(7), { type: 'startBlank' }), { type: 'applyPreset', preset: moved });
     const on = Object.keys(s.cells).filter(n => s.cells[n].on).sort();
     assert.deepStrictEqual(on, ['PLN_03', 'PLN_06']);
     assert.strictEqual(s.cells.PLN_03.paired, 'PLN_02');
     assert.strictEqual(s.cells.PLN_06.paired, 'PLN_05');
-    assert.strictEqual(M.presetMoved(STALE_RECIPE, {}), STALE_RECIPE, 'no moves: the recipe as stored');
+    assert.strictEqual(M.presetMoved(MOVED_RECIPE, {}), MOVED_RECIPE, 'no moves: the recipe as stored');
 });
 
 // ── a position moves whole (W1) ──────────────────────────────────────────────

@@ -24,8 +24,8 @@
 //   second    the second part, the codes one character off the first leading
 //   reuse     the styles these parts already run in: use one, or set up
 //   which     the recipes that fit, by name, each with its picture
-//   positions the recipe's spots on the cell picture; tap one, tap where it
-//             should go instead
+//   positions the recipe's places on the cell picture; tap one, then a place
+//             marked "move here" — only where the engineer's recipes allow
 //   go        what the changeover does, the press it makes, the trips, Start
 //   none      no recipe here takes these parts — an engineer sets it up
 //   started   the tick, back to the board by itself
@@ -35,8 +35,9 @@
 // (open, resolve or mint) then changeover/start on the fingerprint it returns.
 //
 // THE HASH ENTRY. #compose=<screen>[;parts=A,B][;recipe=ID][;moves=X:Y,…]
-// [;style=ID][;split=1][;hold=1] sets LOCAL UI STATE ONLY and never writes —
-// how scripts/composer-shots.sh reaches each screen without driving the DOM.
+// [;sel=NODE][;style=ID][;split=1][;hold=1] sets LOCAL UI STATE ONLY and never
+// writes — how scripts/composer-shots.sh reaches each screen without driving
+// the DOM. sel selects a recipe place on the Spots step.
 
 import { renderFlowPicture } from './operator-flow.js';
 import { esc } from '/static/shared/esc.js';
@@ -55,8 +56,8 @@ let split = false;      // One Part, Two Spots: the one pick fills both spots
 let fresh = false;      // Set up new: do not reuse a style these parts run in
 let chosen = 0;         // the style tapped, by style id, or 0
 let recipe = null;      // the recipe (preset card) the parts mint from, or null
-let moves = {};         // the Positions screen's moves: recipe node → node
-let selected = '';      // the slot the Positions screen is moving
+let moves = {};         // the Spots step's moves: recipe node → node
+let selected = '';      // the recipe place the Spots step is moving (its recipe node)
 let preview = null;     // the last mint preview's answer
 let previewStatus = 0;
 let previewAbort = null;
@@ -396,15 +397,14 @@ function toRecipe() {
 // recipe puts the parts and may move a spot before anything is saved.
 function toPositions() { screen = 'positions'; selected = ''; drawPositions(); }
 
-// chooseRecipe takes a recipe to the Positions screen, its spots pre-filled
-// where the last style that used it on this cell has them (the card's
-// last_moves), each kept only when it is a position or lane of this station's
-// picture. A suggestion the operator sees and may change; never skipped.
+// chooseRecipe takes a recipe to the Spots step, its places pre-filled where
+// the last style that used it on this cell has them: the card's last_moves as
+// shipped, which the server has already kept to what the Spots step allows
+// (domain.LegalSpotMoves). A suggestion the operator sees and may change;
+// never skipped.
 function chooseRecipe(r) {
     recipe = r;
-    const here = new Set((cell().positions || []).map(p => p.core_node_name)
-        .concat((cell().staging || []).map(s => s.core_node_name)));
-    moves = M().suggestedMoves(r, here);
+    moves = Object.assign({}, r.last_moves || {});
     toPositions();
 }
 
@@ -496,26 +496,39 @@ function drawWhich(list) {
 }
 
 // ── spots ────────────────────────────────────────────────────────────────────
-// The recipe's spots on the cell picture; tap one, then the position or lane
-// it should use instead. Same robot moves, different spot — mode, pairing and
-// role stay the recipe's, and the server checks the move against the routing
-// set (engine.applyMoves).
+// The recipe's places on the cell picture: tap one, then a place marked "move
+// here". Same robot moves, different node — mode, pairing and role stay the
+// recipe's. Where each place may go is the card's (`spots`, domain.RecipeSpots,
+// from the engineer's recipes); the screen lights it and restates nothing, and
+// the server refuses anything else (engine.applyMoves). Nothing swaps.
+//
+// THE TAPPED CARD IS THE SELECTION, and only on this step: an on-deck card or a
+// lane is a place of its own here, so the picture outlines it alone rather than
+// its press's whole module (renderFlowPicture's selectCard).
 function drawPositions() {
-    const pic = recipePicture(recipe, { editable: true, selected: selected || null });
-    const list = Object.keys(moves).map(n =>
-        '<button class="os-chip btn" data-act="unmove" data-node="' + esc(n) + '">' +
-        esc(n + ' → ' + moves[n]) + ' ✕</button>').join('');
+    const lit = selected ? M().spotsLit(recipe, moves, selected) : [];
+    const pic = recipePicture(recipe, { editable: true, selectCard: true, targets: lit,
+        selected: selected ? (moves[selected] || selected) : null });
+    const list = Object.keys(moves).map(n => {
+        const s = placeOf(n);
+        const job = s && s.job !== 'spot' ? jobWords(s) + ': ' : '';
+        return '<button class="os-chip btn" data-act="unmove" data-node="' + esc(n) + '">' +
+            esc(job + n + ' → ' + moves[n]) + ' ✕</button>';
+    }).join('');
+    const sel = selected ? placeOf(selected) : null;
+    const here = sel ? esc(moves[sel.node] || sel.node) + ' · ' + esc(jobWords(sel)) + '. ' : '';
     show().innerHTML =
         '<div class="os-comp-full">' +
         '<div class="os-comp-hdr"><h1>Spots · ' + esc(recipe.name) + '</h1>' +
         '<span class="sub">' + esc(picksLabel()) + '</span>' +
         '<span class="sp"></span><button class="os-btn os-btn-quiet" data-act="topart">Back</button></div>' +
         '<div class="os-comp-stage">' +
-        '<div class="os-comp-hint">' + (selected
-            ? 'Now tap where ' + esc(moves[selected] || selected) + ' goes: a <b>free position or lane</b> moves it, ' +
-                '<b>another spot</b> swaps them' + (moves[selected] ? ', <b>' + esc(selected) + '</b> puts it back' : '') +
+        '<div class="os-comp-hint">' + (sel
+            ? here + (lit.length
+                ? 'Tap a spot marked <b>move here</b> to use it instead'
+                : 'Your recipes set up nowhere else for it — an engineer adds one on the desktop') +
                 ' · tap it again to leave it'
-            : 'This is where the parts go. Tap a <b>spot</b>, then where it should go · as it is? <b>Next</b>') +
+            : 'This is where the parts go. Tap one to change where it is · as it is? <b>Next</b>') +
         '</div>' +
         '<div class="os-comp-scroll"><svg id="os-comp-svg" class="os-flow-picture" viewBox="0 0 1280 ' + pic.height +
         '" width="1280" height="' + pic.height + '">' + pic.svg + '</svg></div></div>' +
@@ -523,48 +536,36 @@ function drawPositions() {
         '<button class="os-btn os-btn-primary" data-act="next">Next</button></div></div>';
 }
 
-// The nodes a slot may be moved from: the recipe's own (positions, partners,
-// lanes), after the moves so far.
-function recipeNodes() {
-    const out = new Set();
-    for (const c of renamedCells(recipe, moves)) {
-        for (const n of [c.core_node_name, c.paired_core_node, c.second_paired_core_node, c.inbound_staging, c.outbound_staging]) {
-            if (n) out.add(n);
-        }
-    }
-    return out;
+// placeOf is the card's place for a recipe node, or null.
+function placeOf(node) { return ((recipe && recipe.spots) || []).find(s => s.node === node) || null; }
+
+// jobWords names a place's job in the card's own words (cardLines, R-C): an
+// on-deck card is "on deck for PLN_010", a lane "Inbound staging for PLN_010",
+// where it now serves. A spot is "where this part runs". A place the picture
+// draws no card for — a third position, a lane chip — says its field's word
+// (flowspec's label, F3) in the same shape.
+function jobWords(s) {
+    const at = n => moves[n] || n;
+    if (s.job === 'spot') return 'where this part runs';
+    const st = pictureState(renamedCells(recipe, moves));
+    const words = M().cardLines(st, at(s.node)).join(' ');
+    if (s.of && words.indexOf(at(s.of)) >= 0) return words;
+    const row = (recipe.cells || {})[s.of] || {};
+    const field = s.job === 'third' ? 'second_paired_core_node'
+        : s.job === 'lane' ? (row.outbound_staging === s.node ? 'outbound_staging' : 'inbound_staging')
+            : '';
+    return (field ? M().fieldLabel(st, field) : 'on deck') + ' for ' + at(s.of);
 }
 
-// TAP A SPOT, THEN WHERE IT GOES. `selected` is the recipe's own name for the
-// spot (a move is kept as recipe node → where it is now):
-//
-//   - a free position or lane moves it there;
-//   - another spot of the recipe swaps the two;
-//   - its own first place puts it back;
-//   - where it is now again cancels.
-//
-// A move back to where it started is no move, so it leaves the list.
+// A TAP ON THE SPOTS STEP is the model's to decide (composer-model spotsTap):
+// a place of the recipe selects that place; a place marked "move here" takes
+// the selected one, its own node putting it back; another place selects that
+// one instead, and nothing swaps; anything else moves nothing.
 function onPositionsTap(node) {
     if (!node) return;
-    const original = n => Object.keys(moves).find(k => moves[k] === n) || n;
-    const at = n => moves[n] || n;
-    if (!selected) {
-        if (recipeNodes().has(node)) selected = original(node);
-        drawPositions();
-        return;
-    }
-    const a = selected;
-    selected = '';
-    if (node === at(a)) { drawPositions(); return; }
-    if (recipeNodes().has(node)) {
-        const b = original(node);
-        const aAt = at(a), bAt = at(b);
-        moves[a] = bAt;
-        moves[b] = aAt;
-    } else {
-        moves[a] = node;
-    }
-    for (const k of Object.keys(moves)) if (moves[k] === k) delete moves[k];
+    const t = M().spotsTap(recipe, moves, selected, node);
+    moves = t.moves;
+    selected = t.selected;
     drawPositions();
 }
 
@@ -831,6 +832,7 @@ export function openFromHash() {
         const [from, to] = pair.split(':');
         if (from && to) moves[from] = to;
     }
+    selected = opt('sel');
     // ;hold=1 stops the started screen's countdown so a screenshot can catch
     // it. Local UI state, never a write.
     const hold = /;hold=1/.test(h);

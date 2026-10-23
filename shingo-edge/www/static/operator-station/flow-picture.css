@@ -99,9 +99,17 @@
 .os-flow-picture .dock text.s.r2 { fill: var(--robot-2); }
 /* A SELECTION IS THE MODULE'S, and it fades nothing: its card(s) and every
    slot it draws take the accent outline, and the rest of the picture stays as
-   it was (the module reference, the hard-cases cell). */
+   it was (the module reference, the hard-cases cell). The Spots step narrows
+   it to the tapped card (renderFlowPicture's selectCard). */
 .os-flow-picture .node.sel rect.box,
 .os-flow-picture .stage.sel rect.box { stroke: var(--os-accent, var(--accent)); stroke-width: 2.5; }
+/* WHERE THE SELECTION MAY GO (the Spots step's targets, spots v0): a dashed
+   accent outline and "move here". Still nothing dims: a target is marked, the
+   rest of the cell is left as it was. */
+.os-flow-picture .node.tgt rect.box,
+.os-flow-picture .stage.tgt rect.box { stroke: var(--os-accent, var(--accent)); stroke-width: 2; stroke-dasharray: 6 4; }
+.os-flow-picture .node .tgtbg { fill: color-mix(in srgb, var(--os-accent, var(--accent)) 12%, transparent); }
+.os-flow-picture text.tgtlbl { fill: var(--os-accent, var(--accent)); font-size: 11px; font-weight: 600; }
 .os-flow-picture .node.bad rect.box { stroke: var(--os-red, var(--viz-coral)); stroke-width: 2.5; }
 .os-flow-picture .node .needbg { fill: var(--os-red, var(--viz-coral)); fill-opacity: .12; stroke: var(--os-red, var(--viz-coral)); }
 .os-flow-picture .node .needlbl { fill: var(--os-red, var(--viz-coral)); font-size: 11px; font-weight: 600; }

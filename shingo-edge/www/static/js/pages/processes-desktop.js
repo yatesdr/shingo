@@ -3668,7 +3668,8 @@ function drawSettings() {
             'pick a part and a recipe, and move its spots',
             stToggle('flow_composer_enabled')) +
         '<p class="pd-note">For a cell being set up. The robot moves — mode, pairing, role — stay the ' +
-        'recipe’s; the spots an operator moves are checked against the routing set below.</p>';
+        'recipe’s; the spots an operator moves are checked against your recipes: a press spot, its ' +
+        'on-deck spot and its lanes go only where a recipe here pairs them.</p>';
 
     // PARTS THIS PROCESS RUNS (pick-a-part U5, R-I): the part set the floor
     // picks from. Write-through, so it is outside the save bar's draft.
@@ -5564,14 +5565,15 @@ function openUsePreset(btn) {
 // only the apply modal's rows do (desktop-bodies flowPresetApplySave).
 //
 // THE SPOTS ARE PRE-FILLED where the last style that used this recipe on this
-// cell has them (the card's last_moves, composer-model suggestedMoves), each
-// kept only when it is a position this table draws; the recipe's own nodes
-// otherwise. The positions table it lands on is the pick step: every spot is
-// a picker, and nothing is written until Save flow.
+// cell has them: the card's last_moves as shipped, which the server keeps to
+// what the Spots step allows (domain.LegalSpotMoves) — the same pre-fill the
+// HMI opens on. The recipe's own nodes otherwise. The positions table it lands
+// on is the pick step: every spot is a picker, and nothing is written until
+// Save flow.
 function usePreset(id) {
     const card = (S.composer.presets || []).find(x => String(x.id) === String(id));
     if (!card || !S.model) return;
-    const moves = M().suggestedMoves(card, new Set(S.model.positions.map(x => x.core_node_name)));
+    const moves = card.last_moves || {};
     const p = M().presetMoved(card, moves);
     const diff = M().shapeDiff(S.model, p);
     const lines = diff.length

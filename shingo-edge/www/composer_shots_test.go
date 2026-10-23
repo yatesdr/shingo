@@ -436,6 +436,7 @@ func TestComposerShots(t *testing.T) {
 	// The second one is ARCHIVED again further down, after the station shots,
 	// which is what puts its shape back on D6's offer. See that block.
 	var presetIDs []int64
+	var pressIndexID int64
 	presetSvc := service.NewProcessService(db)
 	{
 		offer, err := presetSvc.PresetsFor(seeded.ProcessID)
@@ -451,6 +452,9 @@ func TestComposerShots(t *testing.T) {
 				t.Fatalf("name %q: %v", c.SuggestedName, err)
 			}
 			presetIDs = append(presetIDs, id)
+			if c.Mode == string(protocol.SwapModeTwoRobotPressIndex) {
+				pressIndexID = id
+			}
 			t.Logf("named %q (preset %d) over %d of %d flows", c.SuggestedName, id, len(c.Members), offer.StylesWithFlow)
 		}
 	}
@@ -513,6 +517,32 @@ func TestComposerShots(t *testing.T) {
 	modal("03-count.png", "#compose=count;parts=SHOT-PART-01", "how does the press run it?")
 	modal("04-which-one.png", "#compose=which;parts="+newPair, "Which recipe?")
 	modal("05-positions.png", fmt.Sprintf("#compose=positions;parts=%s;recipe=%d", newPair, presetIDs[0]), "Spots · ")
+	// THE SPOTS STEP WITH A DECK SELECTED (spots v0). A second press-index
+	// recipe runs PLN_01 from PLN_03, so the two-off recipe's on-deck spot
+	// PLN_02 has one place an engineer set up for it: the shot is the deck card
+	// alone outlined, PLN_03 marked "move here", nothing dimmed, and the hint in
+	// the card's words. The recipe is archived straight after, so nothing
+	// below sees it.
+	{
+		if pressIndexID == 0 {
+			t.Fatal("plant A named no press-index recipe; the deck shot has no deck")
+		}
+		shape, err := domain.PresetShapeJSON([]domain.FlowCell{{CoreNodeName: "PLN_01", Role: protocol.ClaimRoleProduce,
+			SwapMode: protocol.SwapModeTwoRobotPressIndex, PairedCoreNode: "PLN_03"}})
+		if err != nil {
+			t.Fatalf("deck recipe shape: %v", err)
+		}
+		deckRecipe, err := db.CreateFlowPreset(processes.FlowPresetInput{ProcessID: seeded.ProcessID,
+			Name: "Index from PLN_03", FlowJSON: shape, CreatedBy: "s.brown"})
+		if err != nil {
+			t.Fatalf("deck recipe: %v", err)
+		}
+		modal("05c-spots-deck-selected.png", fmt.Sprintf("#compose=positions;parts=%s;recipe=%d;sel=PLN_02", newPair, pressIndexID),
+			"PLN_02 · on deck for PLN_01", "move here")
+		if err := db.ArchiveFlowPreset(deckRecipe); err != nil {
+			t.Fatalf("archive the deck recipe: %v", err)
+		}
+	}
 	modal("06-go-mint.png", fmt.Sprintf("#compose=go;parts=%s;recipe=%d", newPair, presetIDs[0]),
 		"Change over to", "Start changeover", "Brings ")
 	modal("07-go-existing.png", "#compose=go;parts="+partsOf(idx), "Change over to "+idx, "Start changeover")

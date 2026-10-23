@@ -1921,19 +1921,57 @@ function presetCells(preset) {
     return out;
 }
 
-// suggestedMoves is the pick step's pre-fill for a recipe, the same on the HMI
-// and the desktop: the card's last_moves (recipe node → where the last style
-// that used this recipe on this cell has it, domain.RecipeLastUsedMoves), each
-// kept only when its node is one the screen draws (`here`, a Set of node
-// names). Empty when the recipe was never used here; the step then suggests
-// the recipe's own nodes. A suggestion only — the step is always shown.
-function suggestedMoves(preset, here) {
-    const out = {};
-    const lm = (preset && preset.last_moves) || {};
-    for (const from of Object.keys(lm)) {
-        if (here && here.has(lm[from])) out[from] = lm[from];
+// ── the Spots step (spots v0, 2026-10-22) ────────────────────────────────────
+//
+// THE CARD SAYS WHERE EACH PLACE MAY GO; THIS ONLY LOOKS IT UP. A recipe
+// card's `spots` (domain.RecipeSpots) gives each place of the recipe — a spot,
+// an on-deck spot, a third position, a lane — its job and its targets, decided
+// once in Go from the engineer's recipes, and the mint refuses anything else.
+// The screen keeps its moves as recipe node → node, and its pre-fill is the
+// card's last_moves as shipped (already filtered by the same rule), on the
+// HMI and the desktop alike.
+
+// spotAt is the recipe place standing at a node after the moves, or null.
+function spotAt(card, moves, node) {
+    for (const s of (card && card.spots) || []) {
+        if ((moves[s.node] || s.node) === node) return s;
     }
-    return out;
+    return null;
+}
+
+// spotsLit is where the selected place (a recipe node) may move now: its
+// targets, less the node it stands on and any node another place stands on.
+function spotsLit(card, moves, selected) {
+    const spots = (card && card.spots) || [];
+    const s = spots.find(x => x.node === selected);
+    if (!s) return [];
+    const here = moves[s.node] || s.node;
+    const taken = new Set(spots.filter(x => x.node !== s.node).map(x => moves[x.node] || x.node));
+    return (s.targets || []).filter(n => n !== here && !taken.has(n));
+}
+
+// spotsTap is one tap on the Spots step, returning the moves and the selection
+// after it:
+//
+//   - nothing selected: a place of the recipe selects that place (its own
+//     job: the on-deck card selects the on-deck spot, never its press);
+//   - the selected place again clears the selection;
+//   - a lit node moves the selected place there, and its own node puts it
+//     back (no move);
+//   - another place of the recipe selects that one instead — nothing swaps;
+//   - anything else moves nothing and keeps the selection, so the lit nodes
+//     stay lit.
+function spotsTap(card, moves, selected, node) {
+    const next = Object.assign({}, moves);
+    const at = spotAt(card, moves, node);
+    if (!selected) return { moves: next, selected: at ? at.node : '' };
+    if (at && at.node === selected) return { moves: next, selected: '' };
+    if (spotsLit(card, moves, selected).indexOf(node) >= 0) {
+        if (node === selected) delete next[selected];
+        else next[selected] = node;
+        return { moves: next, selected: '' };
+    }
+    return { moves: next, selected: at ? at.node : selected };
 }
 
 // presetMoved is the preset with its cells' nodes renamed by moves (recipe
@@ -2205,7 +2243,7 @@ function savedBody(styleId, stationId) {
         modeLabels, rowColumns, fieldRequired, fieldLabel, shortPart, robotWords,
         partOffers, styleFacts,
         routingNote, routingRoleOf, stagingFieldUsed,
-        presetCells, presetMoved, suggestedMoves, shapeDiff, orderSentences, orderTrip, viaWaypoints,
+        presetCells, presetMoved, spotsLit, spotsTap, shapeDiff, orderSentences, orderTrip, viaWaypoints,
         advancedFor, advancedShows, advancedSet, positionChoices,
         flowSaveBody, mintBody, savedBody,
     };

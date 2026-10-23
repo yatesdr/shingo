@@ -13,6 +13,11 @@ Edge only; no migration. Not deployed.
 - The mint and the preview refuse any other move by name, saying what to add
 - Spots no longer swap: two spots trading places is refused
 - The pre-fill keeps only moves the Spots step allows
+- Spots step: "move here" marks where the tapped card may go; nothing dims
+- Tapping the on-deck card selects the deck, never its press; nothing swaps
+- The hint and the chips name the job: "PLN_005 · on deck for PLN_010"
+- The HMI and the desktop open a recipe on the pre-fill as the server ships it
+- Settings › HMI says moved spots are checked against the recipes
 
 ## 2026-10-21 — A position changes from the desktop
 

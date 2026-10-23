@@ -168,9 +168,9 @@ function nameTip(name, px, size) {
     return shown[1] !== null ? '<title>' + esc(shown[1]) + '</title>' : '';
 }
 
-function posCard(x, y, name, lines, part, robots, on, sel, bad, showIo, tap) {
+function posCard(x, y, name, lines, part, robots, on, sel, bad, showIo, tap, tgt) {
     const nmPx = CARD_W - 28 - (on && showIo ? 80 : 0);
-    const cls = 'node ' + (on ? 'on' : 'off') + (sel ? ' sel' : '') + (bad ? ' bad' : '');
+    const cls = 'node ' + (on ? 'on' : 'off') + (sel ? ' sel' : '') + (bad ? ' bad' : '') + (tgt ? ' tgt' : '');
     let s = '<g class="' + cls + '" data-pos="' + esc(name) + '"' + (tap || '') +
         ' transform="translate(' + x + ',' + y + ')">';
     s += nameTip(name, nmPx, 15);
@@ -186,6 +186,9 @@ function posCard(x, y, name, lines, part, robots, on, sel, bad, showIo, tap) {
     } else if (part) {
         s += '<rect class="partbg" x="12" y="64" width="' + (CARD_W - 24) + '" height="20" rx="5"/>' +
             txt('partlbl', CARD_W / 2, 78, part, CARD_W - 40, 11, 600, 'middle');
+    } else if (tgt) {
+        s += '<rect class="tgtbg" x="12" y="64" width="' + (CARD_W - 24) + '" height="20" rx="5"/>' +
+            txt('tgtlbl', CARD_W / 2, 78, 'move here', CARD_W - 40, 11, 600, 'middle');
     }
     return s + '</g>';
 }
@@ -214,8 +217,8 @@ function deckCard(x, y, name, line, inRobot, sel, bad, tap) {
 //
 // tip, when given, is the slot's whole tooltip in place of the cut name's: a
 // slot no running leg reaches says what it is for.
-function slotCard(x, y, name, caption, shared, sel, tap, tip) {
-    let s = '<g class="stage on' + (sel ? ' sel' : '') +
+function slotCard(x, y, name, caption, shared, sel, tap, tip, tgt) {
+    let s = '<g class="stage on' + (sel ? ' sel' : '') + (tgt ? ' tgt' : '') +
         '" data-staging="' + esc(name) + '"' + (tap || '') +
         ' transform="translate(' + x + ',' + y + ')">';
     s += tip ? '<title>' + esc(tip) + '</title>' : nameTip(name, SLOT_W - 24, 13);
@@ -497,8 +500,15 @@ function drawModule(mod, at, ctx) {
     // every card and slot the module draws, and nothing else changes.
     // A position drawn only as a slot is selected with the module(s) that draw
     // it; one that has its own module is selected with that module alone.
+    //
+    // EXCEPT ON THE SPOTS STEP (opts.selectCard, spots v0): there an on-deck
+    // card or a lane is a place of its own, and outlining its press's whole
+    // module read as "the press is selected". The tapped card or slot alone
+    // takes the outline (selOf).
     const sel = !!ctx.sel && (mod.names.indexOf(ctx.sel) >= 0 ||
         ((mod.staged || []).indexOf(ctx.sel) >= 0 && !ctx.carded.has(ctx.sel)));
+    const selOf = n => (ctx.selectCard ? ctx.sel === n : sel);
+    const tgt = n => ctx.targets.has(n);
     // A card already names its position (data-pos); the tap mark is all an
     // editable picture adds. EVERY card takes it, a dashed one included: on a
     // new part every card is dashed, and a tap is how a position joins.
@@ -510,8 +520,8 @@ function drawModule(mod, at, ctx) {
         const on = !!(mod.on || (pos && pos.claim));
         s.push(bar(cx, my, CARD_W, !on));
         s.push(posCard(cx, cy, mod.name, cardLinesFor(pos, ctx.sentences),
-            null, null, on, sel, findings[mod.name], false,
-            tap()));
+            null, null, on, selOf(mod.name), findings[mod.name], false,
+            tap(), tgt(mod.name)));
         // A POSITION THAT IS ANOTHER'S STAGING carries that trip's key route
         // under its own card: the move leg arriving from here is the trip, and
         // the leg brings its robot and its waypoints with it.
@@ -533,10 +543,10 @@ function drawModule(mod, at, ctx) {
         const bx = ax + CARD_W + 16;
         s.push('<path class="press" d="M' + (ax + 26) + ' ' + (my + 5) + 'H' + (bx + CARD_W - 26) + '"/>');
         s.push(posCard(ax, cy, a.core_node_name, cardLinesFor(a, ctx.sentences),
-            a.claim && a.claim.payload_code, null, true, sel,
+            a.claim && a.claim.payload_code, null, true, selOf(mod.a),
             findings[mod.a], false, tap()));
         s.push(posCard(bx, cy, b.core_node_name, cardLinesFor(b, ctx.sentences),
-            b.claim && b.claim.payload_code, { in: inR, out: outR }, true, sel,
+            b.claim && b.claim.payload_code, { in: inR, out: outR }, true, selOf(mod.b),
             findings[mod.b], true, tap()));
         s.push(move([bx + CARD_W / 2, cy + CARD_H + GAP], [bx + CARD_W / 2, cy + CARD_H], inR, mod.a, mod.b)); // B pulls the finished part up from A
         s.push(move([bx + CARD_W, cy + 46], [bx + CARD_W + INSET, cy + 46], outR, mod.b, 'dock'));            // it leaves B for the dock
@@ -553,12 +563,12 @@ function drawModule(mod, at, ctx) {
         const deckIn = dockRobot(ctx.sentences, mod.name, 'in');
         const indexRobot = legRobot(ctx.sentences, mod.name, 'index', outRobot);
         s.push(bar(cx, my, CARD_W));
-        s.push(posCard(cx, cy, mod.name, lines, part, { in: indexRobot, out: outRobot }, true, sel,
+        s.push(posCard(cx, cy, mod.name, lines, part, { in: indexRobot, out: outRobot }, true, selOf(mod.name),
             findings[mod.name], true, tap()));
         let hRun = cy + CARD_H;
         if (mod.deck) {
             const deckLines = (ctx.sentences.cardLines && ctx.sentences.cardLines[mod.deck]) || [];
-            s.push(deckCard(cx, sy, mod.deck, deckLines[0] || '', deckIn, sel,
+            s.push(deckCard(cx, sy, mod.deck, deckLines[0] || '', deckIn, selOf(mod.deck),
                 findings[mod.deck], tap()));
             s.push(move([mx, sy + DECK_H / 2], [cx, sy + DECK_H / 2], deckIn, 'dock', mod.deck));       // next bin in, behind the one on deck
             s.push(move([mx + M_W / 2, sy], [mx + M_W / 2, cy + CARD_H], indexRobot, mod.deck, mod.name)); // index up into the press
@@ -572,9 +582,9 @@ function drawModule(mod, at, ctx) {
         if (c.inbound_staging) {
             const st = c.inbound_staging;
             const ty = mod.deck ? hRun + ROW_GAP : sy;
-            s.push(slotCard(mx, ty, st, 'Inbound staging', (ctx.use[st] || 0) > 1, sel,
+            s.push(slotCard(mx, ty, st, 'Inbound staging', (ctx.use[st] || 0) > 1, selOf(st),
                 ctx.editable ? ' data-tap="staging" data-pos="' + esc(mod.name) + '"' : '',
-                st + ' — inbound staging, used at changeover'));
+                st + ' — inbound staging, used at changeover', tgt(st)));
             hRun = ty + SLOT_H;
         }
         s.push(move([cx + CARD_W, cy + 46], [mx + M_W, cy + 46], outRobot, mod.name, 'dock')); // old bin out, to the dock
@@ -605,17 +615,17 @@ function drawModule(mod, at, ctx) {
         L.kind === 'park' && L.from === mod.name && L.to === outName) : null;
     const parkRobot = park ? (park.robot || outRobot) : null;
     s.push(bar(cx, my, CARD_W));
-    s.push(posCard(cx, cy, mod.name, lines, part, { in: inRobot, out: parkRobot || outRobot }, true, sel,
+    s.push(posCard(cx, cy, mod.name, lines, part, { in: inRobot, out: parkRobot || outRobot }, true, selOf(mod.name),
         findings[mod.name], true, tap()));
     if (inName) {
-        s.push(slotCard(mx, sy, inName, 'Inbound staging', (ctx.use[inName] || 0) > 1, sel,
-            ctx.editable ? ' data-tap="staging" data-pos="' + esc(mod.name) + '"' : ''));
+        s.push(slotCard(mx, sy, inName, 'Inbound staging', (ctx.use[inName] || 0) > 1, selOf(inName),
+            ctx.editable ? ' data-tap="staging" data-pos="' + esc(mod.name) + '"' : '', undefined, tgt(inName)));
         s.push(move([mx + 52, sy], [mx + 52, cy + CARD_H], inRobot, inName, mod.name));      // new bin in, from the lane
     }
     if (outName) {
         s.push(slotCard(mx + SLOT_W + 12, sy, outName, 'Outbound staging',
-            (ctx.use[outName] || 0) > 1, sel,
-            ctx.editable ? ' data-tap="staging" data-pos="' + esc(mod.name) + '"' : ''));
+            (ctx.use[outName] || 0) > 1, selOf(outName),
+            ctx.editable ? ' data-tap="staging" data-pos="' + esc(mod.name) + '"' : '', undefined, tgt(outName)));
     }
     if (park) {
         s.push(move([mx + M_W - 52, cy + CARD_H], [mx + M_W - 52, sy], parkRobot, mod.name, outName)); // old bin down, parked
@@ -800,6 +810,11 @@ export function pictureRows(cell) {
 // opts, all optional:
 //   selected   — the selected position; its module (every card and slot
 //                in it) takes the accent outline. Nothing dims.
+//   selectCard — the selection outlines the selected card or slot alone, not
+//                its module (the Spots step, where an on-deck card and a lane
+//                are places of their own).
+//   targets    — [node] the selection may move to: each takes a dashed
+//                accent outline and "move here". Nothing dims either.
 //   findings   — {node: shortText}; the card outlines alarm and the red pill
 //                takes the part chip's slot.
 //   sentences  — {cardLines, legs, dock} from composer-model. The COMPOSER
@@ -839,7 +854,8 @@ export function renderFlowPicture(view, opts) {
     const use = stagingUse(cell);
     const carded = new Set();
     for (const md of mods) for (const n of md.names) carded.add(n);
-    const ctx = { byName, sentences, sel, findings, editable: !!opts.editable, use, carded };
+    const ctx = { byName, sentences, sel, findings, editable: !!opts.editable, use, carded,
+        selectCard: !!opts.selectCard, targets: new Set(opts.targets || []) };
 
     // Measure pass: every module at the origin, for its width and height.
     // Draw pass: the same module at its packed place. Coordinates are
@@ -888,11 +904,14 @@ export function renderFlowPicture(view, opts) {
                 if (ux + SLOT_W > width - FIT) { ux = FIT; y += CHIP_H + 6; }
                 // EDITABLE, A CHIP NAMES ITS LANE: the station's Positions screen
                 // (pick-a-part U4) moves a recipe's slot onto an unused lane.
-                s += '<g class="stage off chip"' + (opts.editable ? ' data-staging="' + esc(n) + '"' : '') +
+                const tg = ctx.targets.has(n);
+                s += '<g class="stage off chip' + (tg ? ' tgt' : '') + (opts.selectCard && sel === n ? ' sel' : '') + '"' +
+                    (opts.editable ? ' data-staging="' + esc(n) + '"' : '') +
                     ' transform="translate(' + ux + ',' + y + ')">' +
                     nameTip(n, SLOT_W - 24, 12) +
                     '<rect class="box" width="' + SLOT_W + '" height="' + CHIP_H + '" rx="8"/>' +
-                    txt('nm', 12, 16, n, SLOT_W - 24, 12) + '</g>';
+                    txt('nm', 12, 16, n, tg ? SLOT_W - 92 : SLOT_W - 24, 12) +
+                    (tg ? txt('tgtlbl', SLOT_W - 10, 16, 'move here', 72, 10, 600, 'end') : '') + '</g>';
                 ux += SLOT_W + 8;
             }
             y += CHIP_H;
