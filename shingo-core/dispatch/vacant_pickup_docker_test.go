@@ -246,6 +246,47 @@ func TestVacantPickup_ALegThatOnlyLiftsThereIsNotComing(t *testing.T) {
 	c.requireTook(r1, r2, c.in)
 }
 
+// TestVacantPickup_ANamedMoveOffTheOutsideHoldsThePair is SEND BACK then
+// REQUEST SWAP: the cart on the on-deck is named by a live move taking it to
+// the outbound, so the index leg does not reserve it and the pair holds on
+// waiting_for_outside. The move lifts and a carrier is coming: still
+// waiting_for_outside. It lands: the pair takes it.
+func TestVacantPickup_ANamedMoveOffTheOutsideHoldsThePair(t *testing.T) {
+	t.Parallel()
+	c := newVPCell(t, "VP4", protocol.ClaimRoleProduce)
+	outside := testdb.CreateBinAtNode(t, c.db, "", c.deck.ID, "VP4-OUTSIDE")
+	move := &orders.Order{EdgeUUID: "send-back-move", StationID: "line-1", OrderType: protocol.OrderTypeMove,
+		Status: protocol.StatusQueued, Quantity: 1, SourceNode: c.deck.Name, DeliveryNode: c.out.Name,
+		NamedBinID: &outside.ID}
+	testutil.MustNoErr(t, c.db.CreateOrder(move), "the named move")
+
+	r1, r2 := c.submitPair("VP4", false, "VP4-r2", "VP4-r1")
+	c.scan(r1, r2)
+	c.requireHolds(protocol.QueueWaitingForOutside, r1, r2)
+	if b := c.reread(outside); b.ClaimedBy != nil {
+		t.Fatalf("the named cart is claimed by %d; the index leg must leave it to its move", *b.ClaimedBy)
+	}
+
+	// The move lifts it; the pull bringing tops & bottoms is coming.
+	_, err := c.db.Exec(`UPDATE bins SET node_id = $1 WHERE id = $2`, c.out.ID, outside.ID)
+	testutil.MustNoErr(t, err, "the move lifts the cart")
+	_, err = c.db.Exec(`UPDATE orders SET status = 'in_transit' WHERE id = $1`, move.ID)
+	testutil.MustNoErr(t, err, "the move travels")
+	pull := c.liveOrder("pull", protocol.OrderTypeRetrieve, protocol.StatusDispatched, c.deck.Name, nil)
+	c.scan(r1, r2)
+	c.requireHolds(protocol.QueueWaitingForOutside, r1, r2)
+
+	// It lands.
+	landed := testdb.CreateBinAtNode(t, c.db, "", c.deck.ID, "VP4-LANDED")
+	_, err = c.db.Exec(`UPDATE orders SET status = 'confirmed' WHERE id IN ($1, $2)`, move.ID, pull.ID)
+	testutil.MustNoErr(t, err, "both land")
+	c.scan(r1, r2)
+	c.requireTook(r1, r2, c.deck)
+	if b := c.reread(landed); b.ClaimedBy == nil {
+		t.Error("the landed carrier is not the index leg's")
+	}
+}
+
 // TestVacantPickup_PickupsTheFallbackLeavesAlone: each of these holds at the
 // vacant position (waiting_for_material), never fetched from the inbound
 // source: a pickup that names its part on the step (a changeover's index leg),

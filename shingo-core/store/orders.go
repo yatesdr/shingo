@@ -1290,6 +1290,12 @@ func (db *DB) UpdateOrderStepsJSON(id int64, stepsJSON string) error {
 func (db *DB) CompleteOrder(id int64) error             { return orders.Complete(db.DB, id) }
 func (db *DB) GetOrder(id int64) (*orders.Order, error) { return orders.Get(db.DB, id) }
 
+// LiveOrderNamingBin returns the live order, other than the asker, that names
+// the bin as the one it is for, or nil. See orders.LiveOrderNamingBin.
+func (db *DB) LiveOrderNamingBin(binID, askerID int64) (*orders.Order, error) {
+	return orders.LiveOrderNamingBin(db.DB, binID, askerID)
+}
+
 // CarrierComingTo reports whether a live order other than the asker and its
 // partner leaves a carrier at node, in one statement. See orders.CarrierComingTo.
 func (db *DB) CarrierComingTo(node string, asker *orders.Order) (bool, error) {

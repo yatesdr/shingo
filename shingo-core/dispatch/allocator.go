@@ -403,11 +403,39 @@ func (a *Allocator) reserveComplexPlan(order *orders.Order, plan *ComplexPlan) (
 }
 
 // reservePickup reserves the bin findAvailableForNeed found for one pickup:
-// the reservation, and the audits that say what was bound. reserveComplete
-// with the reservation, or reserveHolding when another order took the bin
-// between the find and the acquire (the node had it, so the need is
-// sourceable: retry next tick).
+// the named-bin test, the reservation, and the audits that say what was bound.
+// reserveComplete with the reservation; reserveHolding when another order
+// took the bin between the find and the acquire (the node had it, so the need
+// is sourceable: retry next tick) or names it; reserveHoldingForOutside when
+// the order naming it is a move taking it off a position the asking cell
+// depends on.
+//
+// A SUPPLY PICKUP DOES NOT TAKE A BIN ANOTHER LIVE ORDER NAMES (orders
+// named_bin_id). A named move is for that one carrier: SEND BACK's move of the
+// outside cart, a wrong carrier's clear. An index leg reserving it first would
+// set on the press the very cart the move is taking away, and the move would
+// lift nothing. So the pair holds; the move lifts it; the position is vacant
+// and its prime is coming (missPickup's hold); the prime lands and the pair
+// takes it. A removal is exempt: it clears whatever stands on its own line.
+// Asked only when such a pickup has found a bin (one statement).
 func (a *Allocator) reservePickup(order *orders.Order, pk pickupNeed, bin *binsstore.Bin, removal bool) (*reservedPickup, reserveOutcome, error) {
+	if !removal {
+		namer, err := a.db.LiveOrderNamingBin(bin.ID, order.ID)
+		if err != nil {
+			return nil, reserveHolding, err
+		}
+		if namer != nil {
+			a.dbg("reserve: order %d step %d at %s — bin %d is named by order %d, not taken",
+				order.ID, pk.stepIndex, pk.step.Node, bin.ID, namer.ID)
+			// A row naming a bin is a move (orders.named_bin_id is written for
+			// a move alone): off this pickup's node, a position the asking
+			// cell depends on, it is the outside's cart leaving.
+			if namer.SourceNode == pk.step.Node && a.dependentSource(order, pk.step) != "" {
+				return nil, reserveHoldingForOutside, nil
+			}
+			return nil, reserveHolding, nil
+		}
+	}
 	aerr := a.binManifest.ReserveForDispatch(bin.ID, order.ID)
 	if errors.Is(aerr, reservations.ErrReservationConflict) {
 		// The bin exists, another order holds it — retry next tick.
