@@ -231,6 +231,14 @@ type StationNodeView struct {
 	// terms. Gating on "lineside is low" would hold the warning until the line
 	// stops, which is the failure this project exists to fix.
 	SupplyRefusedForMe *CellSupplyRefusal `json:"supply_refused_for_me,omitempty"`
+	// SendBack is SEND BACK's line on a tote press's core position, decided
+	// in Go (SendBackLine) and rendered by the board, which spells no rule.
+	// Nil when the line is absent. Stamped by StationService.StampBins from
+	// SendBackFacts and the bins copy's rows for the outside and the core.
+	SendBack *SendBack `json:"send_back,omitempty"`
+	// SendBackFacts is the line's facts from the board's rows (the view
+	// build), nil on a tile that is no fed produce press. Not serialised.
+	SendBackFacts *SendBackFacts `json:"-"`
 }
 
 // CellSupplyRefusal is a refusal as the CUSTOMER sees it — the same fact as

@@ -126,6 +126,8 @@ type EngineOrchestration interface {
 	ReleaseOrderWithLineside(orderID int64, disp engine.ReleaseDisposition) error
 	ReleaseStagedOrders(nodeID int64, disp engine.ReleaseDisposition) error
 	ResumeKeepStaged(nodeID int64) error
+	SendBack(nodeID int64) (*engine.SendBackResult, error)
+	CancelSendBack(nodeID int64) (int, error)
 	ReleaseChangeoverWaitFor(processID, processNodeID int64, purpose release.Purpose, disp engine.ReleaseDisposition) (engine.ReleaseChangeoverWaitResult, error)
 	RequestProduceSwap(nodeID int64, pick int64) (*engine.NodeOrderResult, error)
 	LoadBin(nodeID int64, payloadCode string, uopCount *int64, manifest []protocol.IngestManifestItem) error

@@ -49,6 +49,15 @@ func routeFixtures() map[string]routeFixture {
 		"POST /api/process-nodes/{id}/keep-staged/resume": {want: 400, req: on(func(w *walk) (string, any) {
 			return pn(w) + "/keep-staged/resume", map[string]any{}
 		})},
+		// SEND BACK decides its line again under the press's lock from its own
+		// reads, and the walk has no current bins copy: refused, nothing
+		// changed. Its CANCEL finds no SEND BACK order to abort and answers so.
+		"POST /api/process-nodes/{id}/send-back": {want: 400, req: on(func(w *walk) (string, any) {
+			return pn(w) + "/send-back", map[string]any{}
+		})},
+		"POST /api/process-nodes/{id}/send-back/cancel": {want: 200, req: on(func(w *walk) (string, any) {
+			return pn(w) + "/send-back/cancel", map[string]any{}
+		})},
 		"POST /api/process-nodes/{id}/finalize": {want: 400, req: on(func(w *walk) (string, any) { return pn(w) + "/finalize", map[string]any{} })},
 		"POST /api/process-nodes/{id}/load-bin": {want: 400, req: on(func(w *walk) (string, any) {
 			return pn(w) + "/load-bin", map[string]any{"payload_code": "PART-W", "uop_count": 5}

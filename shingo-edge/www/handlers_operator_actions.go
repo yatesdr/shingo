@@ -181,6 +181,38 @@ func (h *Handlers) apiResumeKeepStaged(w http.ResponseWriter, r *http.Request) {
 	writeJSONWithTrigger(w, r, map[string]string{"status": "ok"}, "refreshMaterial")
 }
 
+// apiSendBack is SEND BACK on a tote press: {id} is the press's core position's
+// process node, as every process-node route is keyed (engine.SendBack).
+func (h *Handlers) apiSendBack(w http.ResponseWriter, r *http.Request) {
+	id, err := parseID(r, "id")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid node id")
+		return
+	}
+	result, err := h.orchestration.SendBack(id)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSONWithTrigger(w, r, result, "refreshMaterial")
+}
+
+// apiCancelSendBack is SEND BACK's CANCEL: it aborts the press's SEND BACK
+// orders that have not moved (engine.CancelSendBack).
+func (h *Handlers) apiCancelSendBack(w http.ResponseWriter, r *http.Request) {
+	id, err := parseID(r, "id")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid node id")
+		return
+	}
+	n, err := h.orchestration.CancelSendBack(id)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSONWithTrigger(w, r, map[string]int{"cancelled": n}, "refreshMaterial")
+}
+
 func (h *Handlers) apiRequestProduceSwap(w http.ResponseWriter, r *http.Request) {
 	id, err := parseID(r, "id")
 	if err != nil {

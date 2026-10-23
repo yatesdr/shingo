@@ -150,9 +150,9 @@ func TestCensus_RetrieveOrderCreatorSites(t *testing.T) {
 	// applyProducePlan's own site when the empty to a bare press line came to
 	// carry primes too.
 	//
-	// CreateTopsAndBottomsPull, SEND BACK's pull, is the same body's door
-	// (Pull) and is counted with it: a retrieve that no loader asked for, on
-	// the outside's own process node.
+	// 7 with CreateTopsAndBottomsPull, SEND BACK's pull (SendBack): the same
+	// body's door (Pull), counted with it, a retrieve that no loader asked for,
+	// on the outside's own process node.
 	//
 	// 11 since REQUEST EMPTY BIN refuses a mode outside the configurable set:
 	// requestEmptyAtLegacyLine, the retrieve it made for one, is gone. It was
@@ -169,7 +169,7 @@ func TestCensus_RetrieveOrderCreatorSites(t *testing.T) {
 	// changeover's two (createRetrieveFromSpec, StageNodeChangeoverMaterial),
 	// the press prime (createPrimes), the bare produce line's empty
 	// (applyProduceEmptyLine) and the keep-staged refill (refillSpot).
-	const want = 6
+	const want = 7
 	sites := retrieveCreatorSites(t)
 	if len(sites) != want {
 		t.Errorf("retrieve-order creator sites = %d, expected %d.\nA creator was added or removed. Re-run the census and update this count WITH the seam's scope comment.\nSites:\n  %s",

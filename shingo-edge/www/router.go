@@ -305,6 +305,8 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger, backupSvc *backup.Servi
 			r.Post("/process-nodes/{id}/release-partial", h.apiReleaseNodePartial)
 			r.Post("/process-nodes/{id}/release-staged", h.apiReleaseNodeStagedOrders)
 			r.Post("/process-nodes/{id}/keep-staged/resume", h.apiResumeKeepStaged)
+			r.Post("/process-nodes/{id}/send-back", h.apiSendBack)
+			r.Post("/process-nodes/{id}/send-back/cancel", h.apiCancelSendBack)
 			r.Post("/process-nodes/{id}/finalize", h.apiRequestProduceSwap)
 			r.Get("/held-partials", h.apiHeldPartials)
 			r.Post("/process-nodes/{id}/load-bin", h.apiLoadBin)

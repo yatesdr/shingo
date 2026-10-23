@@ -35,6 +35,10 @@ type binNodes struct {
 	// outbound is the members of each listed consume loader's outbound group,
 	// by group name, in the group's order.
 	outbound map[string][]string
+	// nodes is every process node by (process, core node), from the same
+	// read: the board finds a fed press's outside position here (SEND BACK),
+	// with no read of its own.
+	nodes map[curtainKey]processes.Node
 }
 
 // binNodesKey is the plant state a list was built from: the process_nodes
@@ -104,6 +108,12 @@ func (s *StationService) heldBinNodes() binNodes {
 	}
 	built := s.buildBinNodes(rows)
 	built.all = withClaimPlaces(built.all, rows, places)
+	built.nodes = make(map[curtainKey]processes.Node, len(rows))
+	for _, n := range rows {
+		if n.CoreNodeName != "" {
+			built.nodes[curtainKey{n.ProcessID, n.CoreNodeName}] = n
+		}
+	}
 	built.key, built.loaded = key, true
 	changed := !slices.Equal(built.all, s.bins.all) || !s.bins.loaded
 	s.bins = built
@@ -120,6 +130,20 @@ func (s *StationService) heldBinNodes() binNodes {
 // extension position has no station of its own, and a changeover adopts it
 // onto the board running it (adoptChangeoverParticipants). Listing it ahead of
 // the changeover keeps the list a function of the plant, not of the moment.
+// currentBinNodes is the held lists when they are loaded and current, with no
+// read: the view build asks it (sendBackOutsides) so a poll pays nothing for a
+// fed press's outside. Every poll refreshes the lists after the build
+// (StampBins), as the bins watch does, so they are current but for the first
+// poll after process_nodes moves.
+func (s *StationService) currentBinNodes() (binNodes, bool) {
+	s.binsMu.Lock()
+	defer s.binsMu.Unlock()
+	if s.bins.loaded && s.bins.key == s.binNodesKeyNow() {
+		return s.bins, true
+	}
+	return binNodes{}, false
+}
+
 func (s *StationService) buildBinNodes(rows []processes.Node) binNodes {
 	groups := s.GroupMembers()
 	stationsOf := map[int64][]int64{}
@@ -238,6 +262,7 @@ func (s *StationService) StampBins(view *domain.OperatorStationView, rows map[st
 	for i := range view.Nodes {
 		tile := &view.Nodes[i]
 		name := tile.Node.CoreNodeName
+		stampSendBack(tile, rows)
 		if row, ok := rows[name]; ok && name != "" {
 			tile.BinState = nodeBinState(row)
 			stocked := row.Stocked

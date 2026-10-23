@@ -226,6 +226,10 @@ func (s *stubEngine) ReleaseOrderWithLineside(orderID int64, disp engine.Release
 	return s.orderMgr.ReleaseOrder(orderID, nil, "", nil)
 }
 func (s *stubEngine) ResumeKeepStaged(int64) error { return nil }
+func (s *stubEngine) SendBack(int64) (*engine.SendBackResult, error) {
+	return &engine.SendBackResult{}, nil
+}
+func (s *stubEngine) CancelSendBack(int64) (int, error) { return 0, nil }
 
 func (s *stubEngine) ReleaseStagedOrders(_ int64, disp engine.ReleaseDisposition) error {
 	d := disp

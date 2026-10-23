@@ -799,7 +799,9 @@ func (a ChangeoverStartAction) String() string {
 // fails. Same shape as FormatQueueSentence's default arm and AllQueueCodes.
 //
 // THIS FUNCTION IS THE AUTHORITY. Both the block gate and the cancel sweep call
-// it. That is a correction: it was written as a cross-check beside two other
+// it, and so do SEND BACK's line (whether its CANCEL can act), its CANCEL
+// (which aborts only what this says Cancel) and START's SEND BACK step (shingo-edge
+// domain.SendBackLine, engine CancelSendBack and sendBackAtStart). That is a correction: it was written as a cross-check beside two other
 // predicates and nothing in production called it, so its exhaustiveness test
 // proved only that a function nobody ran was total. Springfield SNF2, 30 July,
 // is what that cost — below.

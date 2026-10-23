@@ -569,6 +569,12 @@ export function renderModal(entry) {
             if (btn) {
                 html += actionBtn(btn.label, btn.cls, btn.enabled, btn.action, btn.title);
             }
+            // SEND BACK, secondary to the card's own action: the server
+            // decides the line (send_back, domain.SendBackLine) and this
+            // renders it.
+            if (entry.send_back) {
+                html += sendBackCard(entry.send_back, entry.node.id);
+            }
 
             // Quality containment: a produce node whose claim declares a
             // containment route can park the bin standing here into it. One
@@ -1139,6 +1145,29 @@ function orderStatusChip(o) {
 
 // actionBtn is one modal button. A button whose request is in flight is drawn
 // disabled, so a repaint mid-request cannot put it back (posting).
+// sendBackCard renders a tote press's SEND BACK line, as the server decided it
+// (entry.send_back: its state, the outside, the cart's name, the outbound,
+// whether CANCEL can act, and the pull's own queue reason). It spells no rule:
+// enabled and disabled differ only in the button, and waiting shows the pull's
+// sentence, Core's, when it has one. Amber, under the green REQUEST SWAP.
+function sendBackCard(sb, nodeID) {
+    const base = '/api/process-nodes/' + nodeID + '/send-back';
+    let html = '<div class="os-send-back" style="margin:10px 0;padding:10px 14px;border-radius:8px;' +
+        'background:#2a2410;border:1px solid #6a5322;color:#ffd98a;font-size:13px;line-height:1.5">';
+    html += '<div>Outside bin · ' + esc(sb.outside) + (sb.bin ? ' · ' + esc(sb.bin) : '') + '</div>';
+    if (sb.state === 'waiting') {
+        html += '<div>' + esc(sb.queue_reason || 'SEND BACK in progress') + '</div>';
+        if (sb.can_cancel) {
+            html += actionBtn('CANCEL SEND BACK', 'empty-tools', true, base + '/cancel');
+        }
+    } else {
+        html += '<div>Sends it to ' + esc(sb.outbound) + ' and brings tops &amp; bottoms</div>';
+        html += actionBtn('SEND BACK', 'empty-tools', sb.state === 'enabled', base,
+            'A swap or another delivery is on its way to this press');
+    }
+    return html + '</div>';
+}
+
 function actionBtn(label, cls, enabled, action, title) {
     enabled = enabled && !posting.has(action);
     return '<button type="button" class="os-action-btn ' + cls + '"' +

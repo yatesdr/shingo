@@ -1109,6 +1109,10 @@ type boardData struct {
 	byPayload           map[string]domain.CellSupplyRefusal
 	activeBuckets       map[int64][]lineside.Bucket
 	strandedBuckets     map[int64][]lineside.Bucket
+	// outsides is, per tile that is a fed produce press, its outside
+	// position's process node (SEND BACK's orders are created there). The
+	// board-wide order read covers them.
+	outsides map[int64]processes.Node
 }
 
 // prefetchBoardData performs every board-wide read the tile loop depends on.
@@ -1143,6 +1147,14 @@ func (s *StationService) prefetchBoardData(
 	for _, node := range nodes {
 		nodeIDs = append(nodeIDs, node.ID)
 		nodeKeys = append(nodeKeys, orders.NodeKey{ProcessNodeID: node.ID, CoreNodeName: node.CoreNodeName})
+	}
+	// SEND BACK's orders live on each fed produce press's outside position's
+	// own process node. The ONE board-wide order read below widens to those
+	// nodes (sendBackOutsides, from the held node rows), so the line costs
+	// the board no statement.
+	outsides := s.sendBackOutsides(nodes, activeClaims)
+	for _, on := range outsides {
+		nodeKeys = append(nodeKeys, orders.NodeKey{ProcessNodeID: on.ID, CoreNodeName: on.CoreNodeName})
 	}
 	// Runtime rows: one SELECT for the board. This is the READ half of
 	// EnsureProcessNodeRuntime — the tile loop still calls Ensure for any node
@@ -1212,6 +1224,7 @@ func (s *StationService) prefetchBoardData(
 		byPayload:           byPayload,
 		activeBuckets:       activeBuckets,
 		strandedBuckets:     strandedBuckets,
+		outsides:            outsides,
 	}
 }
 
@@ -1457,6 +1470,7 @@ func (s *StationService) buildNodeTile(
 		}
 	}
 	applyLoaderRefusals(&nodeView, node, b)
+	nodeView.SendBackFacts = sendBackFacts(node, process, nodeView.ActiveClaim, runtime, b)
 	return nodeView
 }
 

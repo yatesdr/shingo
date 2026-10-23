@@ -94,8 +94,11 @@ func TestServiceAccessWidth(t *testing.T) {
 	assertInterfaceWidth(t, "ServiceAccess", reflect.TypeOf(&iface).Elem(), want)
 }
 
-// TestEngineOrchestrationWidth pins Edge's wide surface at 76 methods -
-// ServiceAccess's 22 embedded, plus 54 orchestration verbs of its own.
+// TestEngineOrchestrationWidth pins Edge's wide surface at 78 methods -
+// ServiceAccess's 22 embedded, plus 56 orchestration verbs of its own.
+// (2026-10-23: 76 -> 78, SendBack and CancelSendBack, the owner's ruling in
+// the press tranche 2 brief: the tote press's SEND BACK and its CANCEL,
+// POST /process-nodes/{id}/send-back and /send-back/cancel.)
 // (2026-10-17: 75 -> 76, ClearLoaderHome back for the home clear's tap,
 // POST /process-nodes/{id}/clear-loader-home; this header said 75 until
 // 2026-10-18.)
@@ -208,6 +211,9 @@ func TestEngineOrchestrationWidth(t *testing.T) {
 		"ReleaseStagedOrders",
 		// Added 2026-10-08: the board's RESUME on a paused keep-staged line.
 		"ResumeKeepStaged",
+		// Added 2026-10-23: a tote press's SEND BACK and its CANCEL.
+		"SendBack",
+		"CancelSendBack",
 		// Added 2026-08-25 with the changeover-wide release BUTTON, which is the
 		// condition its predecessor was retired for failing: the route exists
 		// because the operator UI calls it. See apiReleaseChangeoverProcess.
