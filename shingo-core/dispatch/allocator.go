@@ -222,7 +222,7 @@ func (a *Allocator) logReserveMiss(orderID int64, stepIndex int, node string, no
 // the scanner to retry. Pure of transitions/claims — the hard
 // claim happens later, in confirmComplexPlan.
 func (a *Allocator) reserveComplexPlan(order *orders.Order, plan *ComplexPlan) (assigned []reservedPickup, outcome reserveOutcome, err error) {
-	pickups := complexPickups(plan.ResolvedSteps)
+	pickups := complexPickups(plan.ResolvedSteps, order.ProcessNode)
 
 	held, err := a.heldReservations(order.ID)
 	if err != nil {
@@ -259,7 +259,6 @@ func (a *Allocator) reserveComplexPlan(order *orders.Order, plan *ComplexPlan) (
 		//    legitimately differ from the node's active-style tag (a stale leftover
 		//    — SPR ALN_006, 2026-07). A supply fetch at any other node stays
 		//    payload-filtered.
-		removal := isRemovalPickup(pk.step, order.ProcessNode)
 		// THE STEP'S PAYLOAD WINS, and the two halves of this decision used to
 		// disagree. resolveStepNode already resolves WHICH NODE a leg goes to
 		// through plan.StepPayload (step's if set, else the order's); this passed the
@@ -277,7 +276,7 @@ func (a *Allocator) reserveComplexPlan(order *orders.Order, plan *ComplexPlan) (
 		//
 		// Removal keeps ignoring payload entirely — it clears whatever is resident
 		// (SPR ALN_006) — and that arm is inside findAvailableForNeed, untouched.
-		bin, nodeHadBins, ferr := a.findAvailableForNeed(pk.step, resolvedStepPayload(pk.step, order.PayloadCode), removal)
+		bin, nodeHadBins, ferr := a.findAvailableForNeed(pk, resolvedStepPayload(pk.step, order.PayloadCode))
 		if ferr != nil {
 			return nil, reserveHolding, ferr
 		}
@@ -286,9 +285,9 @@ func (a *Allocator) reserveComplexPlan(order *orders.Order, plan *ComplexPlan) (
 		var out reserveOutcome
 		var perr error
 		if bin != nil {
-			got, out, perr = a.reservePickup(order, pk, bin, removal)
+			got, out, perr = a.reservePickup(order, pk, bin)
 		} else {
-			got, out, perr = a.missPickup(order, plan, pk, nodeHadBins, removal)
+			got, out, perr = a.missPickup(order, plan, pk, nodeHadBins)
 		}
 		if perr != nil {
 			return nil, reserveHolding, perr
@@ -305,7 +304,7 @@ func (a *Allocator) reserveComplexPlan(order *orders.Order, plan *ComplexPlan) (
 		missing++
 		if nodeHadBins {
 			anyMissWithBins = true // bins present but unavailable — sourceable eventually
-		} else if removal {
+		} else if pk.kind == pickupRemoval {
 			// The line position this leg came to clear is EMPTY. Not "taken by
 			// someone", not "not staged yet" — nothing is there.
 			lineBinGone = true
@@ -418,7 +417,8 @@ func (a *Allocator) reserveComplexPlan(order *orders.Order, plan *ComplexPlan) (
 // and its prime is coming (missPickup's hold); the prime lands and the pair
 // takes it. A removal is exempt: it clears whatever stands on its own line.
 // Asked only when such a pickup has found a bin (one statement).
-func (a *Allocator) reservePickup(order *orders.Order, pk pickupNeed, bin *binsstore.Bin, removal bool) (*reservedPickup, reserveOutcome, error) {
+func (a *Allocator) reservePickup(order *orders.Order, pk pickupNeed, bin *binsstore.Bin) (*reservedPickup, reserveOutcome, error) {
+	removal := pk.kind == pickupRemoval
 	if !removal {
 		namer, err := a.db.LiveOrderNamingBin(bin.ID, order.ID)
 		if err != nil {
@@ -470,7 +470,7 @@ func (a *Allocator) reservePickup(order *orders.Order, pk pickupNeed, bin *binss
 // logged. reserveComplete for a skip or a re-anchor, reserveHoldingForOutside
 // for a carrier coming, reserveHolding for a miss; the caller tallies the miss
 // against the node.
-func (a *Allocator) missPickup(order *orders.Order, plan *ComplexPlan, pk pickupNeed, nodeHadBins, removal bool) (*reservedPickup, reserveOutcome, error) {
+func (a *Allocator) missPickup(order *orders.Order, plan *ComplexPlan, pk pickupNeed, nodeHadBins bool) (*reservedPickup, reserveOutcome, error) {
 	// Relay rule: a potential relay (earlier dropoff at N) AND the node
 	// empty at reserve. An empty potential-relay node is the relay target
 	// (its bin hasn't relayed there yet) — skip, not a miss. A node WITH
@@ -508,7 +508,7 @@ func (a *Allocator) missPickup(order *orders.Order, plan *ComplexPlan, pk pickup
 	// fetches from there. Either role: a produce on-deck asks for an empty, a
 	// consume one for a full of the part. Nothing is read on a pass with no
 	// such pickup.
-	if !nodeHadBins && !removal && !pk.potentialRelay && pk.step.BinID == 0 && pk.step.PayloadCode == "" {
+	if !nodeHadBins && pk.kind != pickupRemoval && !pk.potentialRelay && pk.step.BinID == 0 && pk.step.PayloadCode == "" {
 		if src := a.dependentSource(order, pk.step); src != "" {
 			// A CARRIER COMING TO THE POSITION IS WAITED FOR, not fetched a
 			// second time: a prime, a SEND BACK pull, a previous pair's refill
@@ -850,7 +850,8 @@ func isRemovalPickup(step resolvedStep, processNode string) bool {
 // scanMu (Scanner.RunOnce serializes scan(), fulfillment/scanner.go). Do NOT call
 // the reserve reconcile from a non-serialized path, or two ticks could read
 // occupancy across each other and mis-classify a moot vs a present-but-taken node.
-func (a *Allocator) findAvailableForNeed(step resolvedStep, payloadCode string, removal bool) (bin *binsstore.Bin, nodeHadBins bool, err error) {
+func (a *Allocator) findAvailableForNeed(pk pickupNeed, payloadCode string) (bin *binsstore.Bin, nodeHadBins bool, err error) {
+	step := pk.step
 	node, err := a.db.GetNodeByDotName(step.Node)
 	if err != nil || node == nil {
 		return nil, false, nil // node unresolvable → treat as empty (miss), retry next tick
@@ -872,14 +873,14 @@ func (a *Allocator) findAvailableForNeed(step resolvedStep, payloadCode string, 
 				claimPayload = b.PayloadCode
 			}
 		}
-	case removal:
+	case pk.kind == pickupRemoval:
 		// Evac/removal: clear whatever bin is resident, regardless of its payload.
 		// The line holds exactly one bin, and its style may legitimately differ
 		// from the node's active-style tag (a stale leftover). Filtering the removal
 		// by that tag is what wedged SPR ALN_006 (2026-07). Account by the bin's
 		// real payload downstream — never rewrite the bin to match the order.
 		claimPayload = ""
-	case step.Empty:
+	case pk.kind == pickupEmptySupply:
 		// A carrier to fill can be a partial of the part being made, when the
 		// part has a partial home: finishing it comes before a fresh empty, at
 		// this node as at the finder's (tier 2b), which may have sent the step
@@ -890,8 +891,16 @@ func (a *Allocator) findAvailableForNeed(step resolvedStep, payloadCode string, 
 			return pb, nodeHadBins, nil
 		}
 		// Empty pickup leg (produce's "bring an empty to fill"): an empty carrier,
-		// dropping the payload context — same filter as the old claim path.
+		// dropping the payload context — same filter as the old claim path —
+		// and tops & bottoms only where it may be bound (plan.BindableEmpties).
 		candidates = plan.EmptyBinsOnly(bins)
+		if plan.AnyTopsAndBottoms(candidates) {
+			at, berr := a.bindAt(pk, payloadCode)
+			if berr != nil {
+				return nil, nodeHadBins, berr
+			}
+			candidates = plan.BindableEmpties(candidates, at)
+		}
 		claimPayload = ""
 	}
 	// The carrier rule for the part being fetched, read ONCE for this node's
@@ -917,6 +926,27 @@ func (a *Allocator) findAvailableForNeed(step resolvedStep, payloadCode string, 
 		}
 	}
 	return nil, nodeHadBins, nil
+}
+
+// bindAt is what the bind knows of where an empty pickup lifts, read only when
+// tops & bottoms stands there, once, outside the candidate loop: whether the
+// step's node is a claim's own position (one statement, bins.IsLinePosition),
+// and only when it is not, the height its carrier is wanted at where it is set
+// down (one statement, GetSetDownNode). At most two statements, and none on a
+// pickup with no tops & bottoms to judge.
+func (a *Allocator) bindAt(pk pickupNeed, payloadCode string) (plan.BindAt, error) {
+	line, err := a.db.IsLinePosition(pk.step.Node)
+	if err != nil {
+		return plan.BindAt{}, fmt.Errorf("is %s a line position: %w", pk.step.Node, err)
+	}
+	if line || pk.setDown == "" {
+		return plan.BindAt{LinePosition: line}, nil
+	}
+	_, h, err := a.db.GetSetDownNode(pk.setDown, payloadCode)
+	if err != nil {
+		return plan.BindAt{}, fmt.Errorf("the height wanted at %s: %w", pk.setDown, err)
+	}
+	return plan.BindAt{SetDown: h}, nil
 }
 
 // confirmComplexPlan commits a COMPLETE reserved assignment to hard claims — the

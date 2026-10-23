@@ -48,16 +48,37 @@ type pickupNeed struct {
 	stepIndex      int
 	step           resolvedStep
 	potentialRelay bool
+	// kind is what the pickup is: a removal (it lifts whatever stands on the
+	// order's own line), an empty supply (an Empty-flagged pickup) or a part
+	// supply. One value; findAvailableForNeed selects by it.
+	kind pickupKind
+	// setDown is the node the pickup's carrier is next set down on (its next
+	// dropoff), "" when none: the bind asks the height wanted there.
+	setDown string
 }
+
+// pickupKind is what a pickup fetches.
+type pickupKind int
+
+const (
+	// pickupPartSupply fetches a carrier of the step's part (the default).
+	pickupPartSupply pickupKind = iota
+	// pickupEmptySupply fetches an empty carrier (step.Empty).
+	pickupEmptySupply
+	// pickupRemoval lifts whatever stands on the order's own line node.
+	pickupRemoval
+)
 
 // complexPickups returns every pickup step with its index and potential-relay
 // flag — the full set the plan-time reserve walks, and the SINGLE relay
 // discriminator in the tree. A pickup at N is a potential relay re-grab iff an
 // EARLIER step drops at N (the order parked a bin there to re-collect); the
 // reserve confirms an ACTUAL relay only when N is also empty at reserve. Pure over
-// the step list — no live node state — which is why the fixtures in
-// distinct_bin_pure_test.go can pin it without a DB.
-func complexPickups(steps []resolvedStep) []pickupNeed {
+// the step list and the order's process node — no live node state — which is
+// why the fixtures in distinct_bin_pure_test.go can pin it without a DB. Each
+// need also says what the pickup is (a removal at processNode, an empty supply,
+// a part supply) and where its carrier is next set down.
+func complexPickups(steps []resolvedStep, processNode string) []pickupNeed {
 	dropped := make(map[string]bool, len(steps))
 	var out []pickupNeed
 	for i, s := range steps {
@@ -67,7 +88,15 @@ func complexPickups(steps []resolvedStep) []pickupNeed {
 				dropped[s.Node] = true
 			}
 		case protocol.ActionPickup:
-			out = append(out, pickupNeed{stepIndex: i, step: s, potentialRelay: s.Node != "" && dropped[s.Node]})
+			kind := pickupPartSupply
+			switch {
+			case isRemovalPickup(s, processNode):
+				kind = pickupRemoval
+			case s.Empty:
+				kind = pickupEmptySupply
+			}
+			out = append(out, pickupNeed{stepIndex: i, step: s, potentialRelay: s.Node != "" && dropped[s.Node],
+				kind: kind, setDown: nextDropoffResolved(steps, i+1)})
 		}
 	}
 	return out

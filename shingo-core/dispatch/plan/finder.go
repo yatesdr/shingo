@@ -615,8 +615,21 @@ func (f *Finder) Pick(need Need) Plan {
 	// Loader positions never arrive here: tier 2 answered them. Reads: the same
 	// ListBinsByNode + LoadBinTypeRule the node-local arm makes, in place of the
 	// plant-wide FindSourceBinFIFO + GetNode (TestFinderReads_ConcreteSourceUnchanged).
+	//
+	// AND AN EMPTY THAT NAMED A CONCRETE SOURCE (namedEmpty), for the same
+	// reason: a node set up as the source is the source, and holding nothing is
+	// the system working as intended, not a reason to fetch from anywhere in the
+	// plant (TestNamedEmpty_ConcreteSourceHoldingNothingWaits). It takes the
+	// empties standing on the node of the types the need wants (wantTypes),
+	// bound as the reserve binds them (BindableEmpties at the need's height:
+	// tops & bottoms only where the node is a line position or the height
+	// admits it), or waits there; it never reaches tier 5. Not by setting
+	// NodeLocal: that arm takes quality-held carts and drops the late seatbelt,
+	// and stays dormant. One more statement, IsLinePosition, and only when tops
+	// & bottoms stands among the empties.
 	namedFull := !moveShaped && intent == IntentFull && payloadCode != "" && srcNode != nil && !srcNode.IsSynthetic
-	if bin == nil && srcNode != nil && (namedFull || (moveShaped && (intent == IntentFull || intent == IntentEmpty))) {
+	namedEmpty := !moveShaped && intent == IntentEmpty && srcNode != nil && !srcNode.IsSynthetic
+	if bin == nil && srcNode != nil && (namedFull || namedEmpty || (moveShaped && (intent == IntentFull || intent == IntentEmpty))) {
 		// THE ERROR WAS DISCARDED HERE UNTIL MG3-1a, and it is the same collapse
 		// as the finder call sites below wearing a different shape: a failed read
 		// yields zero candidates, and zero candidates parks under
@@ -635,6 +648,19 @@ func (f *Finder) Pick(need Need) Plan {
 		if intent == IntentEmpty {
 			candidates = EmptyBinsOnly(candidates)
 			claimPayload = ""
+		}
+		if namedEmpty {
+			candidates = ofTypes(candidates, wantTypes)
+			at := BindAt{SetDown: height}
+			if AnyTopsAndBottoms(candidates) {
+				line, lerr := f.db.IsLinePosition(srcNode.Name)
+				if lerr != nil {
+					f.debug("finder: is %s a line position: %v", need.SourceNode, lerr)
+					return unreadableSource("empty", payloadCode, need.SourceNode)
+				}
+				at.LinePosition = line
+			}
+			candidates = BindableEmpties(candidates, at)
 		}
 		// The carrier rule for the part, read ONCE for this node's candidate
 		// list. An empty-intent fetch dropped its payload above and gets the

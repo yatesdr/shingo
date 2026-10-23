@@ -4,7 +4,7 @@
 // table-testable with plain values; the store-aware gather lives in the dispatch
 // package (loader_source.go).
 //
-// Three rules, nothing more:
+// Four rules, nothing more:
 //
 //   - Eligibility is payload-exact and intent-aware. A demand for part X is only
 //     ever satisfied by a bin of X — never a partial of another part Y. Drain
@@ -15,6 +15,12 @@
 //     it has rows and silent where it has none, and the resolved set rides in on
 //     Want.BinTypes rather than being read here — the package is pure, and the
 //     rule is loaded once per call by the store-aware gather.
+//
+//   - A Fill takes only a carrier its want's height admits (Want.Height,
+//     domain.Height.Admits over the candidate's carrier state): tops & bottoms
+//     is nobody's ordinary empty, and a want of tops & bottoms alone takes
+//     nothing else, a partial of X included. Drain is untouched: it never takes
+//     a part-less carrier.
 //
 //   - Order is plain FIFO of part X — oldest COALESCE(loaded_at, created_at)
 //     first. A partial is not special; it is just an older bin of X (its
@@ -27,6 +33,7 @@ package binsource
 import (
 	"time"
 
+	"shingo/protocol"
 	"shingocore/domain"
 )
 
@@ -59,6 +66,10 @@ type Want struct {
 	// candidate carrying ITS pending reservation is still eligible; one carrying
 	// anybody else's is not (B1, Rule 4).
 	Asker int64
+	// Height is the height a Fill's carrier is wanted at: the zero value (no
+	// height said) and a stack never take tops & bottoms, TopsAndBottomsOnly
+	// takes tops & bottoms and nothing else.
+	Height domain.Height
 }
 
 // Cand is one candidate bin, carrying exactly what the selector reads. Populated
@@ -84,6 +95,10 @@ type Cand struct {
 	Bare              bool
 	ManifestConfirmed bool             // required only for a FULL source (see eligible)
 	Status            domain.BinStatus // rejected set is statusUsable
+	// State is the cart's carrier state (domain.Bin.CarrierState), judged
+	// against Want.Height on a Fill. "" in a test that does not set it reads
+	// as no state the height excludes.
+	State protocol.CarrierState
 }
 
 func effectiveTime(c Cand) time.Time {
@@ -153,6 +168,9 @@ func RejectReason(c Cand, w Want) string {
 		}
 		return binTypeReject(c, w)
 	case Fill:
+		if !w.Height.Admits(c.State) {
+			return "height"
+		}
 		if isPartialOf(c, w.Payload) || isEmpty(c) {
 			return binTypeReject(c, w)
 		}

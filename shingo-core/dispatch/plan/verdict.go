@@ -175,10 +175,9 @@ func CapacityShape(err error) string {
 }
 
 // EmptyBinsOnly returns the candidates that are empty carriers (no bound
-// payload) — the set eligible for a produce node's empty pickup leg. A
-// single-carrier loader has one bin type, so any empty is interchangeable;
-// carrier-type matching for multi-carrier loaders is a known follow-up (the
-// same limitation the edge RequestEmptyBin path already TODOs).
+// payload) — the set eligible for a produce node's empty pickup leg — and keeps
+// the bare rule and nothing else. Whether tops & bottoms among them may be
+// bound is BindableEmpties', asked after it.
 //
 // A BARE CART IS NOT AN EMPTY, though it has no payload: it has no bin on it to
 // fill. This filter never composed bins.EmptyCarrierWhere, so it needs the rule
@@ -188,6 +187,65 @@ func EmptyBinsOnly(candidates []*bins.Bin) []*bins.Bin {
 	for _, b := range candidates {
 		if b.PayloadCode == "" && !b.BinTypeBare {
 			out = append(out, b)
+		}
+	}
+	return out
+}
+
+// BindAt is what a bind knows of where an empty pickup lifts: whether the node
+// is a claim's own position (its line, paired or second paired node), and the
+// height the carrier is wanted at where it is next set down.
+type BindAt struct {
+	LinePosition bool
+	SetDown      bins.Height
+}
+
+// BindableEmpties keeps the empties a pickup standing at a node may bind, after
+// EmptyBinsOnly. Tops & bottoms binds where the node is a cell's own position —
+// the house rule: a carrier on a cell's own position belongs to that cell, so a
+// press's index lifts what SEND BACK landed on its outside whatever height the
+// press would ask for — or where the set-down height admits it (a fed press's
+// core wants Layers(0)). Every other empty binds where the set-down height
+// admits it, which for any height but tops & bottoms alone is every one.
+// Otherwise it is dropped: a refill sourced from a concrete supply node holding
+// only tops & bottoms, set down on an outside that wants a stack, waits.
+// Its readers: the reserve's bind (dispatch findAvailableForNeed) and the
+// finder's named-source empties (Pick, tier 4's namedEmpty).
+func BindableEmpties(candidates []*bins.Bin, at BindAt) []*bins.Bin {
+	out := make([]*bins.Bin, 0, len(candidates))
+	for _, b := range candidates {
+		s := b.CarrierState()
+		if at.SetDown.Admits(s) || (at.LinePosition && s == protocol.CarrierTopsAndBottoms) {
+			out = append(out, b)
+		}
+	}
+	return out
+}
+
+// AnyTopsAndBottoms reports whether tops & bottoms stands among the candidates:
+// the one carrier a bind has to ask about where it stands, so the read that
+// answers (IsLinePosition) is made only when it is there.
+func AnyTopsAndBottoms(candidates []*bins.Bin) bool {
+	for _, b := range candidates {
+		if b.CarrierState() == protocol.CarrierTopsAndBottoms {
+			return true
+		}
+	}
+	return false
+}
+
+// ofTypes keeps the candidates of the wanted carrier types; nil wants any.
+func ofTypes(candidates []*bins.Bin, types []string) []*bins.Bin {
+	if len(types) == 0 {
+		return candidates
+	}
+	out := make([]*bins.Bin, 0, len(candidates))
+	for _, b := range candidates {
+		for _, t := range types {
+			if b.BinTypeCode == t {
+				out = append(out, b)
+				break
+			}
 		}
 	}
 	return out

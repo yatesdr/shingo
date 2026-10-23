@@ -69,6 +69,10 @@ type fakeFinderDB struct {
 	// wantAt is the height GetSetDownNode answers for a node name.
 	lastWant domain.Height
 	wantAt   map[string]int
+	// linePositions are the node names IsLinePosition answers true for (a
+	// claim's own positions); lineReads counts the reads.
+	linePositions map[string]bool
+	lineReads     int
 	// fencedGroups are the group node ids that turn every asker away, and
 	// fencedGroupErr makes the fence read FAIL. Both stand for a strict
 	// maintained group the need is not supported at.
@@ -349,7 +353,11 @@ func (f *fakeFinderDB) PartialHomesForPayload(string) ([]string, error) { return
 
 func (f *fakeFinderDB) GetBin(int64) (*bins.Bin, error) { return nil, sql.ErrNoRows }
 
-func (f *fakeFinderDB) IsLinePosition(string) (bool, error) { return false, nil }
+// IsLinePosition answers from linePositions and counts the reads in lineReads.
+func (f *fakeFinderDB) IsLinePosition(name string) (bool, error) {
+	f.lineReads++
+	return f.linePositions[name], nil
+}
 
 func (f *fakeFinderDB) FindPartialToFinish(string, []string, int64, reservations.DigAsker) (*bins.Bin, error) {
 	return nil, sql.ErrNoRows

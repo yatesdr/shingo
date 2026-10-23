@@ -40,6 +40,7 @@ func candFromBin(b *bins.Bin) binsource.Cand {
 		Bare:              b.BinTypeBare,
 		ManifestConfirmed: b.ManifestConfirmed,
 		Status:            b.Status,
+		State:             b.CarrierState(),
 	}
 }
 

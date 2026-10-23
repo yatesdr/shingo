@@ -3,6 +3,7 @@ package binsource
 import (
 	"testing"
 
+	"shingo/protocol"
 	"shingocore/domain"
 )
 
@@ -119,5 +120,53 @@ func TestRejectReasonFillTags(t *testing.T) {
 	otherPart.Payload, otherPart.UOP = Y, 1
 	if got := RejectReason(otherPart, want); got != "payload:"+Y {
 		t.Errorf("partial of Y for Fill = %q, want payload:%s", got, Y)
+	}
+}
+
+// TestRejectReasonFillHeight: the pool never draws tops & bottoms for an
+// ordinary Fill, and a want of tops & bottoms alone draws nothing else — not
+// an empty, not a stack, not a partial of the part.
+func TestRejectReasonFillHeight(t *testing.T) {
+	base := Cand{BinID: 9, Cap: cap10, CreatedAt: tOld, Status: domain.BinStatusAvailable}
+	topsAndBottoms := base
+	topsAndBottoms.State = protocol.CarrierTopsAndBottoms
+	empty := base
+	empty.State = protocol.CarrierEmpty
+	partial := base
+	partial.Payload, partial.UOP, partial.State = X, cap10-1, protocol.CarrierLoaded
+	for _, c := range []struct {
+		name   string
+		cand   Cand
+		height domain.Height
+		want   string
+	}{
+		{"tops & bottoms, no height said", topsAndBottoms, domain.Height{}, "height"},
+		{"tops & bottoms, a stack", topsAndBottoms, domain.Layers(3), "height"},
+		{"tops & bottoms, a want of 0", topsAndBottoms, domain.Layers(0), ""},
+		{"tops & bottoms, tops & bottoms only", topsAndBottoms, domain.TopsAndBottomsOnly, ""},
+		{"an empty, tops & bottoms only", empty, domain.TopsAndBottomsOnly, "height"},
+		{"a partial of the part, tops & bottoms only", partial, domain.TopsAndBottomsOnly, "height"},
+		{"an empty, no height said", empty, domain.Height{}, ""},
+		{"a partial of the part, no height said", partial, domain.Height{}, ""},
+	} {
+		if got := RejectReason(c.cand, Want{Payload: X, Intent: Fill, Height: c.height}); got != c.want {
+			t.Errorf("%s: %q, want %q", c.name, got, c.want)
+		}
+	}
+	// Drain never takes a part-less carrier, whatever the height.
+	if got := RejectReason(topsAndBottoms, Want{Payload: X, Intent: Drain, Height: domain.TopsAndBottomsOnly}); got != "empty-bin" {
+		t.Errorf("Drain over tops & bottoms = %q, want empty-bin", got)
+	}
+
+	pool := []Cand{topsAndBottoms, empty}
+	pool[0].BinID, pool[1].BinID = 1, 2
+	if got, ok := Source(pool, Want{Payload: X, Intent: Fill}); !ok || got.BinID != 2 {
+		t.Errorf("an ordinary Fill drew %+v (%v), want the empty", got, ok)
+	}
+	if got, ok := Source(pool, Want{Payload: X, Intent: Fill, Height: domain.TopsAndBottomsOnly}); !ok || got.BinID != 1 {
+		t.Errorf("tops & bottoms only drew %+v (%v), want tops & bottoms", got, ok)
+	}
+	if _, ok := Source(pool[:1], Want{Payload: X, Intent: Fill}); ok {
+		t.Error("an ordinary Fill drew from a pool holding only tops & bottoms")
 	}
 }

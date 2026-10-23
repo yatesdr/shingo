@@ -61,7 +61,7 @@ func TestComplexPickups_SwapRelay(t *testing.T) {
 		{Action: protocol.ActionDropoff, Node: "outDest"},    // 9 deliver old
 	}
 
-	pks := complexPickups(steps)
+	pks := complexPickups(steps, "")
 	if len(pks) != 4 {
 		t.Fatalf("complexPickups = %d pickups, want 4 (every pickup action)", len(pks))
 	}
@@ -91,7 +91,7 @@ func TestComplexPickups_DropoffBeforePickupIsRelay(t *testing.T) {
 		{Action: protocol.ActionDropoff, Node: "N"},
 		{Action: protocol.ActionPickup, Node: "N"}, // flagged potential relay
 	}
-	pks := complexPickups(steps)
+	pks := complexPickups(steps, "")
 	if len(pks) != 1 {
 		t.Fatalf("complexPickups = %d, want 1", len(pks))
 	}
@@ -103,7 +103,8 @@ func TestComplexPickups_DropoffBeforePickupIsRelay(t *testing.T) {
 // TestComplexPickups_EmptyLegIsATrueSource confirms an empty-carrier pickup leg
 // (produce "bring an empty to fill", Empty=true) at a real source with no prior
 // dropoff is a TRUE source (potentialRelay false) — the discriminator keys on
-// relay position, not payload — and carries Empty through for the reserve.
+// relay position, not payload — and carries Empty through for the reserve, as an
+// empty supply set down on the line.
 func TestComplexPickups_EmptyLegIsATrueSource(t *testing.T) {
 	t.Parallel()
 
@@ -111,8 +112,48 @@ func TestComplexPickups_EmptyLegIsATrueSource(t *testing.T) {
 		{Action: protocol.ActionPickup, Node: "emptyPool", Empty: true},
 		{Action: protocol.ActionDropoff, Node: "produceLine"},
 	}
-	pks := complexPickups(steps)
+	pks := complexPickups(steps, "")
 	if len(pks) != 1 || pks[0].potentialRelay || pks[0].step.Node != "emptyPool" || !pks[0].step.Empty {
 		t.Errorf("complexPickups = %+v, want a single non-relay empty-leg pickup at emptyPool", pks)
+	}
+	if len(pks) == 1 && (pks[0].kind != pickupEmptySupply || pks[0].setDown != "produceLine") {
+		t.Errorf("the empty leg is kind %d set down on %q, want an empty supply set down on produceLine",
+			pks[0].kind, pks[0].setDown)
+	}
+}
+
+// TestComplexPickups_KindAndSetDown: each pickup says what it is and where its
+// carrier is next set down. A pickup at the order's own process node is its
+// removal (an Empty flag there changes nothing: the line is cleared whatever
+// stands on it); an Empty-flagged pickup elsewhere is an empty supply; any other
+// is a part supply. Set-down is the next dropoff after the pickup, "" when the
+// pickup is the last step that moves anything.
+func TestComplexPickups_KindAndSetDown(t *testing.T) {
+	t.Parallel()
+
+	steps := []resolvedStep{
+		{Action: protocol.ActionPickup, Node: "line", Empty: true}, // 0 removal
+		{Action: protocol.ActionDropoff, Node: "outbound"},         // 1
+		{Action: protocol.ActionPickup, Node: "emptyPool", Empty: true},
+		{Action: "wait", Node: "line"},
+		{Action: protocol.ActionDropoff, Node: "line"},
+		{Action: protocol.ActionPickup, Node: "market"},
+	}
+	pks := complexPickups(steps, "line")
+	want := []struct {
+		kind    pickupKind
+		setDown string
+	}{{pickupRemoval, "outbound"}, {pickupEmptySupply, "line"}, {pickupPartSupply, ""}}
+	if len(pks) != len(want) {
+		t.Fatalf("complexPickups = %d pickups, want %d", len(pks), len(want))
+	}
+	for i, w := range want {
+		if pks[i].kind != w.kind || pks[i].setDown != w.setDown {
+			t.Errorf("pickup at %s: kind %d set down on %q, want kind %d set down on %q",
+				pks[i].step.Node, pks[i].kind, pks[i].setDown, w.kind, w.setDown)
+		}
+	}
+	if pks := complexPickups(steps, ""); pks[0].kind != pickupEmptySupply {
+		t.Errorf("no process node: the line pickup is kind %d, want an empty supply", pks[0].kind)
 	}
 }

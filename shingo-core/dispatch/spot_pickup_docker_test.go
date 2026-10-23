@@ -95,7 +95,7 @@ func TestSpotPickup_HowTheStepFlagJudgesTheBin(t *testing.T) {
 		step := r.step
 		step.Action = protocol.ActionPickup
 		step.Node = spot.Name
-		got, hadBins, err := d.allocator.findAvailableForNeed(step, resolvedStepPayload(step, r.order), false)
+		got, hadBins, err := d.allocator.findAvailableForNeed(complexPickups([]resolvedStep{step}, "")[0], resolvedStepPayload(step, r.order))
 		testutil.MustNoErr(t, err, r.name)
 		if !hadBins {
 			t.Fatalf("%s: fixture drift — the spot reads empty", r.name)
