@@ -21,7 +21,7 @@
             <th>ID</th>
             <th>Code</th>
             <th>Description</th>
-            <th>Dimensions (in)</th>
+            <th>Dimensions (in, W x L x H)</th>
             <th>Empty carrier robots</th>
             <th>Actions</th>
           </tr>
@@ -32,7 +32,7 @@
             <td>{{.ID}}</td>
             <td><code>{{.Code}}</code>{{if .Bare}} <span class="badge badge-empty badge-sm" title="Bare bin type: holds no container, never handed out as an empty">bare</span>{{end}}</td>
             <td>{{if .Description}}{{.Description}}{{else}}<span class="text-muted">-</span>{{end}}</td>
-            <td>{{if .WidthIn}}{{.WidthIn}} x {{.HeightIn}}{{if .LengthIn}} x {{.LengthIn}}{{end}}{{else}}<span class="text-muted">-</span>{{end}}</td>
+            <td>{{if .WidthIn}}{{.WidthIn}} x {{.LengthIn}}{{if .HeightIn}} x {{.HeightIn}}{{end}}{{else}}<span class="text-muted">-</span>{{end}}</td>
             <td>{{if .RequiredRobotGroup}}<code>{{.RequiredRobotGroup}}</code>{{else}}<span class="text-muted">Any robot</span>{{end}}</td>
             <td>
               <button class="btn btn-sm" data-action="openEditBTModal"
@@ -215,11 +215,14 @@
         </div>
       </div>
       <div class="form-group">
-        <label>Dimensions (in) <span class="tooltip-trigger" title="Physical dimensions: Width x Height x Length. Recorded for reference — carrier fit is decided by type, not by measurement.">?</span></label>
+        <label>Dimensions (in) <span class="tooltip-trigger" title="Width and length are the cart's floor size: with both entered, an unloader's card asks a cart of this type only for types of the same floor size (45 x 48 and 48 x 45 are one). Height is recorded for reference.">?</span></label>
         <div class="flex gap-05">
-          <input type="number" name="width_in" placeholder="W" step="0.1" style="flex:1">
-          <input type="number" name="height_in" placeholder="H" step="0.1" style="flex:1">
-          <input type="number" name="length_in" placeholder="L" step="0.1" style="flex:1">
+          <div style="flex:1"><label class="text-sm" for="bt-new-w">Width</label>
+            <input type="number" name="width_in" id="bt-new-w" placeholder="W" step="0.1"></div>
+          <div style="flex:1"><label class="text-sm" for="bt-new-l">Length</label>
+            <input type="number" name="length_in" id="bt-new-l" placeholder="L" step="0.1"></div>
+          <div style="flex:1"><label class="text-sm" for="bt-new-h">Height</label>
+            <input type="number" name="height_in" id="bt-new-h" placeholder="H" step="0.1"></div>
         </div>
       </div>
       <div class="form-group">
@@ -256,11 +259,14 @@
         </div>
       </div>
       <div class="form-group">
-        <label>Dimensions (in)</label>
+        <label>Dimensions (in) <span class="tooltip-trigger" title="Width and length are the cart's floor size: with both entered, an unloader's card asks a cart of this type only for types of the same floor size (45 x 48 and 48 x 45 are one). Height is recorded for reference.">?</span></label>
         <div class="flex gap-05">
-          <input type="number" name="width_in" id="bt-edit-w" placeholder="W" step="0.1" style="flex:1">
-          <input type="number" name="height_in" id="bt-edit-h" placeholder="H" step="0.1" style="flex:1">
-          <input type="number" name="length_in" id="bt-edit-l" placeholder="L" step="0.1" style="flex:1">
+          <div style="flex:1"><label class="text-sm" for="bt-edit-w">Width</label>
+            <input type="number" name="width_in" id="bt-edit-w" placeholder="W" step="0.1"></div>
+          <div style="flex:1"><label class="text-sm" for="bt-edit-l">Length</label>
+            <input type="number" name="length_in" id="bt-edit-l" placeholder="L" step="0.1"></div>
+          <div style="flex:1"><label class="text-sm" for="bt-edit-h">Height</label>
+            <input type="number" name="height_in" id="bt-edit-h" placeholder="H" step="0.1"></div>
         </div>
       </div>
       <div class="form-group">
