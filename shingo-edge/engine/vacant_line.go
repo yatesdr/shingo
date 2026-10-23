@@ -7,14 +7,14 @@ import (
 	"shingoedge/store/processes"
 )
 
-// vacantLine is what a line with a vacant position gets instead of a swap.
-// Every swap opens by lifting the bin at the line, and a press's swap then
-// indexes the paired position's bin onto the line, so with no bin at either the
-// swap has nothing to do there and its lift holds at Core. A line with no bin
-// gets one plain order bringing a bin from the claim's inbound source; a press
-// gets one more for each dependent position ChainReadiness primes; and a press
-// whose line holds a bin but whose dependent positions are not ready gets their
-// bins alone, and no swap until they are there.
+// vacantLine is what a line with a position that is not ready gets beside, or
+// instead of, its swap. Every swap opens by lifting the bin at the line, so a
+// line with no bin gets one plain order bringing a bin from the claim's inbound
+// source instead of a swap. A press's dependent positions get what
+// ChainReadiness says each needs (chain): a clear of a wrong carrier, then a
+// prime; with the line holding a bin, those go AHEAD of the swap, which is
+// queued at Core behind them (W5: the pair waits for the carrier coming to its
+// on-deck, or fetches one to a vacant on-deck itself).
 //
 // THE SAME DECISION FOR BOTH ROLES. Material handling is circular: a consume
 // line is refilled with a full of its part and a produce line with an empty, and
@@ -27,14 +27,9 @@ type vacantLine struct {
 	source string
 	// dest is the line's own position, or "" when the line holds a bin and only
 	// its dependent positions are not ready.
-	dest   string
-	primes []SimplePrime
+	dest  string
+	chain Readiness
 }
-
-// lineHeld says the line holds a bin and only its dependent positions are not
-// ready: the plan is the primes alone, and none at all is the hold (every
-// vacant position already has a bin on its way).
-func (b *vacantLine) lineHeld() bool { return b.dest == "" }
 
 // vacantPositions is the one answer, from an occupancy map, to "which of this
 // claim's positions hold no bin": the line's own, and its dependent positions.
@@ -74,6 +69,10 @@ type Readiness struct {
 	// Vacant is each position with nothing on it, a carrier coming or not.
 	Vacant []string
 }
+
+// Count is the orders the chain makes: one clear per wrong carrier, one prime
+// per position. Both plans' OrderCount add it.
+func (r Readiness) Count() int { return len(r.Clear) + len(r.Prime) }
 
 // ChainReadiness reads a claim's dependent positions (DependentPositions) and
 // says what each needs before the swap can index from it, for both roles:
@@ -143,10 +142,10 @@ func wrongCarrier(claim *processes.NodeClaim, row protocol.NodeBinsRow) bool {
 }
 
 // planVacantLine answers "this line has a position that is not ready": nil
-// when Core reports a bin at the line and ChainReadiness finds every dependent
-// position ready, else the deliveries the line and those positions need.
-// occupancy is the request's occupancy map (a missing entry reads occupied);
-// deck is what it read of the dependent positions. Pure.
+// when Core reports a bin at the line and ChainReadiness finds nothing to clear
+// or prime, else the line's delivery (when it is vacant) and the chain. occupancy
+// is the request's occupancy map (a missing entry reads occupied); deck is what
+// it read of the dependent positions. Pure.
 //
 // IT IS A PROPOSAL. The map answers a narrower question than this asks. It
 // is true in the case the decision was written for: somebody pulled the bin off
@@ -157,31 +156,32 @@ func wrongCarrier(claim *processes.NodeClaim, row protocol.NodeBinsRow) bool {
 // that is about to be occupied, and its robot can never put it down (sim
 // 2026-08-31, ALN_004: four cells locked in one run). This function is pure and
 // cannot tell the two apart; the witness is the cell's own in-flight orders. So
-// the caller gates a non-nil answer with gateLineRows when the line is vacant,
-// and with guardPairedPrimes when it is held, before it creates anything, and a
-// caller that skips that gate reintroduces the race.
+// the caller gates a vacant line's delivery with gateLineRows before it creates
+// anything, and a dependent position is primed only with nothing placing there
+// (deck.Coming), the swap that would fill it having been refused already
+// (guardLineRequest).
 //
-// A CARRIER COMING GATES THE ORDER, NOT THE SWAP. A position that is still
-// physically vacant cannot be indexed from, whether or not the bin filling it is
-// already on its way, so no swap is built for as long as the position reads
-// vacant, and only the duplicate order is skipped. Building the swap as soon as
-// the bin was on its way would hand the second press of a double-tap exactly the
-// swap whose index leg cannot source.
+// A CARRIER COMING SKIPS THE ORDER, AND THE SWAP IS QUEUED. A dependent position
+// that is vacant, or whose wrong carrier is being cleared, cannot be indexed from
+// yet, but the swap is built anyway and goes behind the chain: Core holds the
+// pair for the carrier coming there (waiting_for_outside) and fetches one to a
+// vacant on-deck with nothing coming, so the press indexes the moment it can.
+// Only the duplicate order is skipped; a second tap meets the swap in flight.
 func planVacantLine(node *processes.Node, claim *processes.NodeClaim, occupancy map[string]bool, deck Deck) (*vacantLine, error) {
 	lineVacant := !isOccupied(occupancy, claim.CoreNodeName)
 	ready := ChainReadiness(claim, occupancy, deck)
-	if !lineVacant && len(ready.Vacant) == 0 && len(ready.Clear) == 0 {
+	if !lineVacant && ready.Count() == 0 {
 		return nil, nil
 	}
 	if (lineVacant || len(ready.Prime) > 0) && claim.InboundSource == "" {
 		return nil, fmt.Errorf("node %s has no inbound source configured", node.Name)
 	}
-	b := &vacantLine{source: claim.InboundSource}
+	if len(ready.Clear) > 0 && claim.OutboundDestination == "" {
+		return nil, fmt.Errorf("node %s has no outbound destination configured", node.Name)
+	}
+	b := &vacantLine{source: claim.InboundSource, chain: ready}
 	if lineVacant {
 		b.dest = claim.CoreNodeName
-	}
-	for _, pos := range ready.Prime {
-		b.primes = append(b.primes, SimplePrime{Source: claim.InboundSource, Dest: pos})
 	}
 	return b, nil
 }

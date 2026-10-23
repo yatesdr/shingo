@@ -1,7 +1,6 @@
 package engine
 
 import (
-	"errors"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -13,10 +12,10 @@ import (
 
 // A PRESS WHOSE LINE HOLDS A BIN AND WHOSE PAIRED POSITION DOES NOT, asked by
 // every button of both roles. The answer is one decision (planVacantLine): the
-// bare position gets one plain delivery and no swap is built, a second press
-// while that bin is on its way is held with a notice, and nothing is primed
-// while a swap is still working the cell, because that swap's own legs are
-// about to fill the position.
+// vacant position gets one plain delivery and the swap is queued behind it
+// (Core holds the pair until the bin lands, W5), a second press meets the swap
+// in flight, and nothing is primed while a swap is still working the cell,
+// because that swap's own legs are about to fill the position.
 
 type pairedDoor struct {
 	name string
@@ -44,7 +43,7 @@ func pressDoor(eng *Engine, nodeID int64, door string) error {
 	return err
 }
 
-func TestPairedPrime_EveryButtonPrimesOnceThenHolds(t *testing.T) {
+func TestPairedPrime_EveryButtonPrimesThenQueuesTheSwap(t *testing.T) {
 	t.Parallel()
 	for _, d := range pairedDoors {
 		t.Run(d.name, func(t *testing.T) {
@@ -57,19 +56,27 @@ func TestPairedPrime_EveryButtonPrimesOnceThenHolds(t *testing.T) {
 			testutil.MustNoErr(t, pressDoor(eng, nodeID, d.door), "first press")
 			rows, err := db.ListActiveOrdersByProcessNode(nodeID)
 			testutil.MustNoErr(t, err, "rows")
-			if len(rows) != 1 || rows[0].OrderType == orders.TypeComplex || rows[0].DeliveryNode != censusDeck {
-				t.Fatalf("first press made %+v, want one plain delivery to %s and no swap", rows, censusDeck)
+			first, legs := rows[0], 0
+			for _, o := range rows {
+				if o.ID < first.ID {
+					first = o
+				}
+				if o.OrderType == orders.TypeComplex {
+					legs++
+				}
+			}
+			if len(rows) != 3 || legs != 2 || first.OrderType == orders.TypeComplex || first.DeliveryNode != censusDeck {
+				t.Fatalf("first press made %+v, want a plain delivery to %s first and the two-leg swap behind it",
+					rows, censusDeck)
 			}
 
-			err = pressDoor(eng, nodeID, d.door)
-			var held *PrimeInFlightError
-			if !errors.As(err, &held) || !held.Advisory() {
-				t.Fatalf("second press while the bin is on its way: %v, want the advisory hold", err)
+			if err := pressDoor(eng, nodeID, d.door); err == nil {
+				t.Fatalf("second press while the swap is in flight: want a refusal")
 			}
 			rows, err = db.ListActiveOrdersByProcessNode(nodeID)
 			testutil.MustNoErr(t, err, "rows")
-			if len(rows) != 1 {
-				t.Errorf("the line holds %d orders after the hold, want 1", len(rows))
+			if len(rows) != 3 {
+				t.Errorf("the line holds %d orders after the second press, want 3", len(rows))
 			}
 		})
 	}

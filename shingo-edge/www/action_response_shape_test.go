@@ -35,8 +35,10 @@ import (
 //
 // ── WHAT IS DELIBERATELY NOT LISTED ───────────────────────────────────────
 //
-// /request and /finalize return NodeOrderResult and it is READ — round 2 gave
-// prime_orders, order_a and order_b real consumers on the station. The
+// /request and /finalize return NodeOrderResult: the orders the request made
+// (its chain, prime_orders, and its swap, order_a and order_b), for the API's
+// callers. The station read prime_orders for the "press again when it lands"
+// notice until W6 queued the swap behind the chain and retired it. The
 // changeover /start and /preview bodies are read by changeover.js. None of
 // those are acknowledgements and none belong here.
 func TestOperatorActionsAnswerWithAnAcknowledgement(t *testing.T) {
@@ -95,9 +97,9 @@ func TestOperatorActionsAnswerWithAnAcknowledgement(t *testing.T) {
 }
 
 // cycle_mode is gone from NodeOrderResult and must not come back: it read
-// "simple" for both a primes-only produce round and a consume downgrade, so
-// the discrimination it looks like it offers is one it cannot make. Round 2
-// had to key primeNoticeText on the swap legs instead.
+// "simple" for both a produce round with no swap and a consume downgrade, so
+// the discrimination it looks like it offers is one it cannot make: a reader
+// keys on the swap legs instead.
 func TestNodeOrderResultHasNoCycleMode(t *testing.T) {
 	b, err := os.ReadFile("../engine/operator_stations.go")
 	if err != nil {
@@ -105,8 +107,8 @@ func TestNodeOrderResultHasNoCycleMode(t *testing.T) {
 	}
 	if strings.Contains(string(b), `json:"cycle_mode"`) {
 		t.Error(`cycle_mode is back on NodeOrderResult. It has no reader, and it cannot serve the ` +
-			`one it would attract: a primes-only round and a consume downgrade both report "simple". ` +
-			`Discriminate on the swap legs (see primeNoticeText), not on this.`)
+			`one it would attract: a round with no swap and a consume downgrade both report "simple". ` +
+			`Discriminate on the swap legs, not on this.`)
 	}
 }
 

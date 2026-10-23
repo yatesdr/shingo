@@ -2,7 +2,6 @@ package engine
 
 import (
 	"encoding/json"
-	"errors"
 	"strings"
 	"testing"
 
@@ -51,9 +50,10 @@ func originOnOrderRequest(t *testing.T, db *store.DB, orderUUID string) string {
 	return ""
 }
 
-// The partial-empty prime: a two_robot_press_index cell whose head is occupied
-// but whose paired position is bare mints a swap R2 can never source. These
-// pin the planner half — never mint that swap, prime the bare position instead.
+// The chain ahead of the swap: a two_robot_press_index cell whose head is
+// occupied but whose paired position is vacant gets that position's empty and
+// its swap behind it, which Core holds until the empty lands (W5). These pin
+// the planner half.
 
 const (
 	primeHead   = "PRODUCE-NODE"
@@ -70,7 +70,7 @@ func pressIndexFixtures(secondPaired string) (*processes.Node, *processes.Runtim
 	return node, runtime, claim
 }
 
-func TestBuildProducePlan_PartialEmpty_PrimesBarePairedPosition(t *testing.T) {
+func TestBuildProducePlan_VacantOnDeck_PrimeAheadOfTheSwap(t *testing.T) {
 	t.Parallel()
 	node, runtime, claim := pressIndexFixtures("")
 
@@ -79,26 +79,19 @@ func TestBuildProducePlan_PartialEmpty_PrimesBarePairedPosition(t *testing.T) {
 	if err != nil {
 		t.Fatalf("BuildProducePlan: %v", err)
 	}
-	if !plan.SuppressSwap {
-		t.Fatalf("head occupied + paired bare must suppress the swap; SuppressSwap = false")
+	if plan.Dispatch == nil || plan.Dispatch.StepsA == nil || plan.Dispatch.StepsB == nil {
+		t.Fatalf("head occupied + paired vacant builds the swap, queued behind the prime; Dispatch = %+v", plan.Dispatch)
 	}
-	if plan.Dispatch != nil {
-		t.Errorf("a primes-only plan must carry no Dispatch; got %+v", plan.Dispatch)
+	if len(plan.Chain.Prime) != 1 || plan.Chain.Prime[0] != primePaired || len(plan.Chain.Clear) != 0 {
+		t.Fatalf("chain = %+v, want exactly one prime for %s", plan.Chain, primePaired)
 	}
-	if len(plan.PrimePairedPositions) != 1 {
-		t.Fatalf("PrimePairedPositions = %+v, want exactly one entry for %s", plan.PrimePairedPositions, primePaired)
-	}
-	got := plan.PrimePairedPositions[0]
-	if got.Source != primeSource || got.Dest != primePaired {
-		t.Errorf("prime = %+v, want {Source:%s Dest:%s}", got, primeSource, primePaired)
-	}
-	// expected_orders for the episode: one row per prime, no swap legs.
-	if n := plan.OrderCount(); n != 1 {
-		t.Errorf("OrderCount() = %d, want 1 — a primes-only round creates one row per prime", n)
+	// expected_orders for the episode: the prime and both swap legs.
+	if n := plan.OrderCount(); n != 3 {
+		t.Errorf("OrderCount() = %d, want 3 — the prime and both legs", n)
 	}
 }
 
-func TestBuildProducePlan_PartialEmpty_FullCellStillSwaps(t *testing.T) {
+func TestBuildProducePlan_FullCellStillSwaps(t *testing.T) {
 	t.Parallel()
 	node, runtime, claim := pressIndexFixtures("")
 
@@ -107,9 +100,8 @@ func TestBuildProducePlan_PartialEmpty_FullCellStillSwaps(t *testing.T) {
 	if err != nil {
 		t.Fatalf("BuildProducePlan: %v", err)
 	}
-	if plan.SuppressSwap || len(plan.PrimePairedPositions) != 0 {
-		t.Fatalf("a fully occupied cell primes nothing and swaps normally; SuppressSwap=%v primes=%+v",
-			plan.SuppressSwap, plan.PrimePairedPositions)
+	if plan.Chain.Count() != 0 {
+		t.Fatalf("a fully occupied cell has no chain; chain = %+v", plan.Chain)
 	}
 	if plan.Dispatch == nil || plan.Dispatch.StepsA == nil || plan.Dispatch.StepsB == nil {
 		t.Fatalf("the ordinary press-index swap must be unchanged; Dispatch = %+v", plan.Dispatch)
@@ -119,7 +111,7 @@ func TestBuildProducePlan_PartialEmpty_FullCellStillSwaps(t *testing.T) {
 	}
 }
 
-func TestBuildProducePlan_PartialEmpty_ThreePositionPrimesBoth(t *testing.T) {
+func TestBuildProducePlan_ThreePositionPrimesBoth(t *testing.T) {
 	t.Parallel()
 	node, runtime, claim := pressIndexFixtures(primeSecond)
 
@@ -128,28 +120,22 @@ func TestBuildProducePlan_PartialEmpty_ThreePositionPrimesBoth(t *testing.T) {
 	if err != nil {
 		t.Fatalf("BuildProducePlan: %v", err)
 	}
-	if !plan.SuppressSwap {
-		t.Fatalf("SuppressSwap = false, want true")
+	if plan.Dispatch == nil {
+		t.Fatalf("the swap is built behind the chain; Dispatch = nil")
 	}
-	if len(plan.PrimePairedPositions) != 2 {
-		t.Fatalf("PrimePairedPositions = %+v, want two entries on a 3-position layout", plan.PrimePairedPositions)
+	if len(plan.Chain.Prime) != 2 || plan.Chain.Prime[0] != primePaired || plan.Chain.Prime[1] != primeSecond {
+		t.Fatalf("primes = %v, want [%s %s]", plan.Chain.Prime, primePaired, primeSecond)
 	}
-	dests := []string{plan.PrimePairedPositions[0].Dest, plan.PrimePairedPositions[1].Dest}
-	if dests[0] != primePaired || dests[1] != primeSecond {
-		t.Errorf("prime dests = %v, want [%s %s]", dests, primePaired, primeSecond)
-	}
-	if n := plan.OrderCount(); n != 2 {
-		t.Errorf("OrderCount() = %d, want 2 (one row per prime)", n)
+	if n := plan.OrderCount(); n != 4 {
+		t.Errorf("OrderCount() = %d, want 4 (two primes and both legs)", n)
 	}
 }
 
-// A cold press reads RemainingUOPCached == 0 — and at Springfield, where this
-// fix is going, the counter tag is not wired at all, so it reads 0 always. The
-// "no parts to finalize" refusal is therefore the WRONG answer for a cell with a
-// bare paired position. The planner asks no count; the produce request refuses
-// only a swap, which TestRequest_ColdPressWithFullCell and the request census's
-// cold press row pin from the request side.
-func TestBuildProducePlan_PartialEmpty_PrimesOnColdPress(t *testing.T) {
+// A cold press reads RemainingUOPCached == 0 — and at Springfield the counter
+// tag is not wired at all, so it reads 0 always. The planner asks no count: it
+// builds the chain and the swap, and the finalizing request drops the swap and
+// keeps the chain (TestRequestProduceSwap_ColdPressPrimesInOneTap).
+func TestBuildProducePlan_ColdPressPlansTheChain(t *testing.T) {
 	t.Parallel()
 	node, runtime, claim := pressIndexFixtures("")
 	runtime.RemainingUOPCached = 0
@@ -157,11 +143,11 @@ func TestBuildProducePlan_PartialEmpty_PrimesOnColdPress(t *testing.T) {
 	occ := map[string]bool{primeHead: true, primePaired: false}
 	plan, err := BuildProducePlan(node, runtime, claim, occ, Deck{})
 	if err != nil {
-		t.Fatalf("a cold press with a bare paired position must still prime, not refuse: %v", err)
+		t.Fatalf("a cold press with a vacant paired position must still plan its chain, not refuse: %v", err)
 	}
-	if !plan.SuppressSwap || len(plan.PrimePairedPositions) != 1 {
-		t.Fatalf("SuppressSwap=%v primes=%+v, want one prime with the swap suppressed",
-			plan.SuppressSwap, plan.PrimePairedPositions)
+	if len(plan.Chain.Prime) != 1 || plan.Dispatch == nil {
+		t.Fatalf("chain = %+v, Dispatch = %+v; want one prime and the swap (the request decides the count)",
+			plan.Chain, plan.Dispatch)
 	}
 }
 
@@ -202,7 +188,7 @@ func TestRequest_ColdPressWithFullCell(t *testing.T) {
 	})
 }
 
-func TestBuildProducePlan_PartialEmpty_UnknownOccupancyPrimesNothing(t *testing.T) {
+func TestBuildProducePlan_UnknownOccupancyPrimesNothing(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
 		name string
@@ -219,19 +205,18 @@ func TestBuildProducePlan_PartialEmpty_UnknownOccupancyPrimesNothing(t *testing.
 			if err != nil {
 				t.Fatalf("BuildProducePlan: %v", err)
 			}
-			if plan.SuppressSwap || len(plan.PrimePairedPositions) != 0 {
-				t.Fatalf("a missing occupancy entry reads as OCCUPIED, so nothing primes; SuppressSwap=%v primes=%+v",
-					plan.SuppressSwap, plan.PrimePairedPositions)
+			if plan.Chain.Count() != 0 || plan.Dispatch == nil {
+				t.Fatalf("a missing occupancy entry reads as OCCUPIED: no chain, the swap; chain=%+v Dispatch=%+v",
+					plan.Chain, plan.Dispatch)
 			}
 		})
 	}
 }
 
-// The chatter guard: an empty already inbound to the bare position means the
-// next request adds nothing. Without it, every press of the button while the
-// first prime is still travelling mints another order row and inflates the
-// episode.
-func TestBuildProducePlan_PartialEmpty_AlreadyPrimedAddsNothing(t *testing.T) {
+// The chatter guard: an empty already inbound to the vacant position means the
+// next request adds no prime. The swap is built: Core holds it for the carrier
+// coming to its on-deck (W5), so the press indexes the moment the empty lands.
+func TestBuildProducePlan_AlreadyPrimedAddsNoPrime(t *testing.T) {
 	t.Parallel()
 	node, runtime, claim := pressIndexFixtures("")
 
@@ -241,26 +226,17 @@ func TestBuildProducePlan_PartialEmpty_AlreadyPrimedAddsNothing(t *testing.T) {
 	if err != nil {
 		t.Fatalf("BuildProducePlan: %v", err)
 	}
-	if len(plan.PrimePairedPositions) != 0 {
-		t.Fatalf("a position with an empty already inbound must not be primed again; primes=%+v",
-			plan.PrimePairedPositions)
+	if plan.Chain.Count() != 0 {
+		t.Fatalf("a position with an empty already inbound must not be primed again; chain=%+v", plan.Chain)
 	}
-	// ...but the swap stays suppressed. The position is still physically bare
-	// until that empty lands, and R2 cannot index from a bare position whether
-	// or not a carrier is on its way to it.
-	if !plan.SuppressSwap {
-		t.Fatalf("a bare position must suppress the swap even while its prime is in flight")
-	}
-	if plan.Dispatch != nil {
-		t.Fatalf("a hold round must carry no Dispatch; got %+v", plan.Dispatch)
-	}
-	if n := plan.OrderCount(); n != 0 {
-		t.Errorf("OrderCount() = %d, want 0 — a hold round creates nothing", n)
+	if plan.Dispatch == nil || plan.OrderCount() != 2 {
+		t.Fatalf("the swap is queued while the prime travels: Dispatch=%+v orders=%d, want the two legs",
+			plan.Dispatch, plan.OrderCount())
 	}
 }
 
-// One of three bare, two already inbound: prime only the one that needs it.
-func TestBuildProducePlan_PartialEmpty_PrimesOnlyTheUnprimedPosition(t *testing.T) {
+// One of three vacant, two already inbound: prime only the one that needs it.
+func TestBuildProducePlan_PrimesOnlyTheUnprimedPosition(t *testing.T) {
 	t.Parallel()
 	node, runtime, claim := pressIndexFixtures(primeSecond)
 
@@ -270,14 +246,14 @@ func TestBuildProducePlan_PartialEmpty_PrimesOnlyTheUnprimedPosition(t *testing.
 	if err != nil {
 		t.Fatalf("BuildProducePlan: %v", err)
 	}
-	if len(plan.PrimePairedPositions) != 1 || plan.PrimePairedPositions[0].Dest != primeSecond {
-		t.Fatalf("primes = %+v, want exactly one for %s", plan.PrimePairedPositions, primeSecond)
+	if len(plan.Chain.Prime) != 1 || plan.Chain.Prime[0] != primeSecond {
+		t.Fatalf("primes = %v, want exactly one for %s", plan.Chain.Prime, primeSecond)
 	}
 }
 
-// The prime is press-index-only. Every other swap mode keeps its existing
+// The chain is press-index-only. Every other swap mode keeps its existing
 // behavior whatever the paired position reads.
-func TestBuildProducePlan_PartialEmpty_OtherModesUnaffected(t *testing.T) {
+func TestBuildProducePlan_OtherModesHaveNoChain(t *testing.T) {
 	t.Parallel()
 	for _, mode := range []protocol.SwapMode{"sequential", "single_robot", "two_robot"} {
 		t.Run(string(mode), func(t *testing.T) {
@@ -288,8 +264,8 @@ func TestBuildProducePlan_PartialEmpty_OtherModesUnaffected(t *testing.T) {
 			if err != nil {
 				t.Fatalf("BuildProducePlan: %v", err)
 			}
-			if plan.SuppressSwap || len(plan.PrimePairedPositions) != 0 {
-				t.Fatalf("%s must not prime; SuppressSwap=%v primes=%+v", mode, plan.SuppressSwap, plan.PrimePairedPositions)
+			if plan.Chain.Count() != 0 {
+				t.Fatalf("%s must not prime; chain=%+v", mode, plan.Chain)
 			}
 			if plan.Dispatch == nil {
 				t.Fatalf("%s must still dispatch", mode)
@@ -299,8 +275,9 @@ func TestBuildProducePlan_PartialEmpty_OtherModesUnaffected(t *testing.T) {
 }
 
 // A prime with nowhere to pull from is a refusal, not a silent order at ""
-// — the same reading the consume side's downgrade gives a blank InboundSource.
-func TestBuildProducePlan_PartialEmpty_NoInboundSourceRefuses(t *testing.T) {
+// — the same reading the consume side's downgrade gives a blank InboundSource;
+// and a clear with nowhere to go is one too.
+func TestBuildProducePlan_NoInboundSourceRefuses(t *testing.T) {
 	t.Parallel()
 	node, runtime, claim := pressIndexFixtures("")
 	claim.InboundSource = ""
@@ -309,16 +286,25 @@ func TestBuildProducePlan_PartialEmpty_NoInboundSourceRefuses(t *testing.T) {
 	if _, err := BuildProducePlan(node, runtime, claim, occ, Deck{}); err == nil {
 		t.Fatal("want an error when a prime is needed and the claim has no inbound source")
 	}
+	_, _, claim = pressIndexFixtures("")
+	claim.OutboundDestination = ""
+	wrong := Deck{Rows: map[string]protocol.NodeBinsRow{primePaired: {Node: primePaired,
+		State: protocol.BinsStateOccupied, Occupied: true, BinID: 9, PayloadCode: "OTHER", Stocked: true}}}
+	occ = map[string]bool{primeHead: true, primePaired: true}
+	if _, err := BuildProducePlan(node, runtime, claim, occ, wrong); err == nil ||
+		!strings.Contains(err.Error(), "no outbound destination") {
+		t.Fatalf("a clear with no outbound destination = %v, want the refusal", err)
+	}
 }
 
 // ── apply level ─────────────────────────────────────────────────────────
 
-// TestApplyProducePlan_PrimesOnly pins what the impure half does with a
-// primes-only plan: a retrieve_empty (not a move — a move hunts a full bin in
-// an empties pool), the merged auto-confirm signal, the episode's origin
-// carried onto the row, no runtime order slots written, and ProcessNodeID set
-// on the result.
-func TestApplyProducePlan_PrimesOnly(t *testing.T) {
+// TestApplyProducePlan_ChainOnly pins what the impure half does with a plan
+// whose swap was dropped (a cold press): a retrieve_empty (not a move — a move
+// hunts a full bin in an empties pool), the merged auto-confirm signal, the
+// episode's origin carried onto the row, no runtime order slots written, and
+// ProcessNodeID set on the result.
+func TestApplyProducePlan_ChainOnly(t *testing.T) {
 	t.Parallel()
 	db := testEngineDB(t)
 	nodeID, node, claim := seedSwapClaim(t, db, protocol.SwapModeTwoRobotPressIndex, "")
@@ -329,10 +315,7 @@ func TestApplyProducePlan_PrimesOnly(t *testing.T) {
 	runtime, err := db.GetProcessNodeRuntime(nodeID)
 	testutil.MustNoErr(t, err, "get runtime")
 
-	plan := &ProducePlan{
-		SuppressSwap:         true,
-		PrimePairedPositions: []SimplePrime{{Source: "MARKET-EMPTIES", Dest: "INDEX-B"}},
-	}
+	plan := &ProducePlan{Chain: Readiness{Prime: []string{"INDEX-B"}}}
 	origin := ordermgr.Attached("episode-abc")
 
 	res, err := eng.applyProducePlan(node, runtime, claim, plan, origin)
@@ -342,7 +325,7 @@ func TestApplyProducePlan_PrimesOnly(t *testing.T) {
 		t.Errorf("ProcessNodeID = %d, want %d", res.ProcessNodeID, nodeID)
 	}
 	if res.Order != nil || res.OrderA != nil || res.OrderB != nil {
-		t.Errorf("a primes-only round mints no swap legs; Order=%v OrderA=%v OrderB=%v", res.Order, res.OrderA, res.OrderB)
+		t.Errorf("a round with no swap mints no legs; Order=%v OrderA=%v OrderB=%v", res.Order, res.OrderA, res.OrderB)
 	}
 	if len(res.PrimeOrders) != 1 {
 		t.Fatalf("PrimeOrders = %+v, want one", res.PrimeOrders)
@@ -381,50 +364,38 @@ func TestApplyProducePlan_PrimesOnly(t *testing.T) {
 	}
 }
 
-// TestRequestProduceSwap_PrimesOnceThenHolds is the end-to-end chatter guard:
-// the first request primes the bare position, and a second request while that
-// empty is still in flight creates no further row. Counting rows rather than
-// inspecting the plan is the point — this is what the operator's double-tap
-// actually produces.
-func TestRequestProduceSwap_PrimesOnceThenHolds(t *testing.T) {
+// TestRequestProduceSwap_PrimeThenSwapOnce is the end-to-end chatter guard: the
+// first request primes the vacant position and queues the swap behind it, in
+// that order (the outbox's), and a second request while both are in flight
+// creates nothing: it meets the swap. Counting rows rather than inspecting the
+// plan is the point — this is what the operator's double-tap produces.
+func TestRequestProduceSwap_PrimeThenSwapOnce(t *testing.T) {
 	t.Parallel()
 	db := testEngineDB(t)
 	nodeID, _, _ := seedSwapClaim(t, db, protocol.SwapModeTwoRobotPressIndex, "")
 	_, err := db.EnsureProcessNodeRuntime(nodeID)
 	testutil.MustNoErr(t, err, "ensure runtime")
+	seedRuntimeUOP(t, db, nodeID)
 
 	eng := testEngine(t, db)
-	// Core reports the head occupied and INDEX-B bare — the incident's shape.
+	// Core reports the head occupied and INDEX-B vacant — the incident's shape.
 	holdPlaces(t, eng, occupiedAt("PRESS"))
 	eng.SetCoreNodes([]protocol.NodeInfo{{Name: "PRESS"}, {Name: "INDEX-B"}, {Name: "MARKET-EMPTIES"}})
 
 	res, err := eng.RequestProduceSwap(nodeID, 0)
 	testutil.MustNoErr(t, err, "first RequestProduceSwap")
-	if len(res.PrimeOrders) != 1 {
-		t.Fatalf("first request: PrimeOrders = %+v, want one prime (and no swap)", res.PrimeOrders)
+	if len(res.PrimeOrders) != 1 || res.OrderA == nil || res.OrderB == nil {
+		t.Fatalf("first request: primes %+v, legs %v/%v; want one prime and the swap behind it",
+			res.PrimeOrders, res.OrderA, res.OrderB)
 	}
-	if res.OrderA != nil || res.OrderB != nil {
-		t.Fatalf("first request minted a swap; the whole point is that it must not")
-	}
-
-	// The second click neither primes again nor falls through to the swap: the
-	// position is still bare, so there is nothing to index from yet.
-	res2, err := eng.RequestProduceSwap(nodeID, 0)
-	if err == nil {
-		t.Fatalf("second request: want a refusal while the prime is in flight, got %+v", res2)
-	}
-	if !strings.Contains(err.Error(), "already inbound") {
-		t.Errorf("second request error = %q, want it to say an empty is already inbound", err)
-	}
-	// TYPED AND ADVISORY. The station colours a refusal by asking the error
-	// whether it is advisory; matching on the sentence instead is how a
-	// reworded message silently turns an all-clear back into a red alarm.
-	var advisory interface{ Advisory() bool }
-	if !errors.As(err, &advisory) || !advisory.Advisory() {
-		t.Errorf("the hold refusal must report itself advisory — the system is working, "+
-			"the operator's only correct action is to wait; got %T", err)
+	if !(res.PrimeOrders[0].ID < res.OrderA.ID && res.OrderA.ID < res.OrderB.ID) {
+		t.Errorf("creation order: prime %d, legs %d and %d; want the prime first — Core ingests by outbox id",
+			res.PrimeOrders[0].ID, res.OrderA.ID, res.OrderB.ID)
 	}
 
+	if _, err := eng.RequestProduceSwap(nodeID, 0); err == nil {
+		t.Fatalf("second request: want a refusal while the swap is in flight")
+	}
 	all, err := db.ListOrders()
 	testutil.MustNoErr(t, err, "list orders")
 	empties := 0
@@ -435,6 +406,30 @@ func TestRequestProduceSwap_PrimesOnceThenHolds(t *testing.T) {
 	}
 	if empties != 1 {
 		t.Errorf("retrieve_empty rows at INDEX-B = %d, want exactly 1 across two requests", empties)
+	}
+}
+
+// TestRequestProduceSwap_ColdPressPrimesInOneTap: a cold produce press (its
+// count 0, its line holding a bin, its on-deck vacant) gets its prime and no
+// swap, in one tap: the count check drops the swap, not the chain.
+func TestRequestProduceSwap_ColdPressPrimesInOneTap(t *testing.T) {
+	t.Parallel()
+	db := testEngineDB(t)
+	nodeID, _, _ := seedSwapClaim(t, db, protocol.SwapModeTwoRobotPressIndex, "")
+	_, err := db.EnsureProcessNodeRuntime(nodeID)
+	testutil.MustNoErr(t, err, "ensure runtime")
+
+	eng := testEngine(t, db)
+	holdPlaces(t, eng, occupiedAt("PRESS"))
+	eng.SetCoreNodes([]protocol.NodeInfo{{Name: "PRESS"}, {Name: "INDEX-B"}, {Name: "MARKET-EMPTIES"}})
+
+	res, err := eng.RequestProduceSwap(nodeID, 0)
+	testutil.MustNoErr(t, err, "the cold press's one tap")
+	if len(res.PrimeOrders) != 1 || res.OrderA != nil || res.OrderB != nil || res.Order != nil {
+		t.Fatalf("cold press: primes %+v, legs %v/%v; want the prime and no swap", res.PrimeOrders, res.OrderA, res.OrderB)
+	}
+	if n := countOrdersByType(t, db, string(protocol.OrderTypeComplex)); n != 0 {
+		t.Errorf("complex orders = %d, want none: nothing counted, nothing to finalize", n)
 	}
 }
 
@@ -470,9 +465,8 @@ func TestRequestProduceSwap_UnknownPairedNodeIsNotPrimed(t *testing.T) {
 // The sibling of the above, and the reason it cannot simply refuse: an EMPTY
 // node set is not evidence that a name is wrong. A fresh Edge, a restart or a
 // Kafka gap all present that way, while Core still answers node-bins over a
-// different transport. Suppressing the prime there would hand the cell back
-// the un-sourceable swap this path exists to prevent, so the check is skipped
-// and the prime fires on telemetry alone.
+// different transport, so the check is skipped and the prime fires on
+// telemetry alone.
 func TestRequestProduceSwap_EmptyCoreNodeSetStillPrimes(t *testing.T) {
 	t.Parallel()
 	db := testEngineDB(t)
@@ -521,10 +515,7 @@ func TestApplyProducePlan_PrimeAutoConfirmIsMerged(t *testing.T) {
 			runtime, err := db.GetProcessNodeRuntime(nodeID)
 			testutil.MustNoErr(t, err, "get runtime")
 
-			plan := &ProducePlan{
-				SuppressSwap:         true,
-				PrimePairedPositions: []SimplePrime{{Source: "MARKET-EMPTIES", Dest: "INDEX-B"}},
-			}
+			plan := &ProducePlan{Chain: Readiness{Prime: []string{"INDEX-B"}}}
 			res, err := eng.applyProducePlan(node, runtime, claim, plan, ordermgr.Origin{})
 			testutil.MustNoErr(t, err, "applyProducePlan")
 			if len(res.PrimeOrders) != 1 {

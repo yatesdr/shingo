@@ -1,7 +1,7 @@
 // esc is the one escape for markup built by concatenation, quotes included:
 // this modal puts payload codes and node names inside attributes.
 import { esc } from '/static/shared/esc.js';
-import { fillColor, postAction, formatETA, withQueueCause, distinctQueueCauses, primeNoticeText, showToast, stationID } from './operator-util.js';
+import { fillColor, postAction, formatETA, withQueueCause, distinctQueueCauses, showToast, stationID } from './operator-util.js';
 import {
     confirmRefuseSupply, confirmUndoSupplyRefusal, confirmSkipChangeoverStep, REFUSE_LABEL, UNDO_LABEL,
 } from './operator-supply-refusal.js';
@@ -1294,16 +1294,8 @@ async function runModalAction(evt, action) {
         url = parts[0];
         body = { payload_code: parts[1] };
     }
-    // onResult is where a primes-only round becomes visible. Every station
-    // action funnels through this branch, so the produce swap and the consume
-    // downgrade are both covered by one hook rather than one per verb.
     const from = opening;
-    const ok = await postAction(url, body, loadViewRef, {
-        onResult: (result) => {
-            const notice = primeNoticeText(result);
-            if (notice) showToast(notice, 'info');
-        },
-    });
+    const ok = await postAction(url, body, loadViewRef);
     if (ok) closeModalFrom(from);
 }
 

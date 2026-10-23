@@ -24,7 +24,9 @@ import (
 // A line with no bin on it has nothing to lift, so whatever the role and the
 // mode the answer is one plain order bringing a bin to it: a full of the part
 // to a consume line, an empty to a produce line, plus an empty or a full for
-// each bare position of a press. Each row drives one request end to end against
+// each bare position of a press. A press whose line holds a bin gets those
+// deliveries ahead of its swap, which is built and queues at Core behind them
+// (W6). Each row drives one request end to end against
 // a Core stub that answers node-bins and counts every call, and records the
 // orders the line then holds, the Core round trips the request made and the
 // orders its demand episode expects.
@@ -236,7 +238,7 @@ func TestRequestCensus(t *testing.T) {
 		{consume, seq, doorMaterial, lineOccupied, 30, censusResult{legs: 1, trips: requestTrips, expected: 1}},
 		{consume, pi, doorMaterial, lineBare, 30, censusResult{toHead: 1, toDeck: 1, trips: requestTrips, expected: 2}},
 		{consume, pi, doorMaterial, lineOccupied, 30, censusResult{legs: 2, trips: requestTrips, expected: 2}},
-		{consume, pi, doorMaterial, lineDeckBare, 30, censusResult{toDeck: 1, trips: requestTrips, expected: 1}},
+		{consume, pi, doorMaterial, lineDeckBare, 30, censusResult{legs: 2, toDeck: 1, trips: requestTrips, expected: 3}},
 
 		// The produce request.
 		{produce, sr, doorProduce, lineBare, 30, censusResult{toHead: 1, trips: requestTrips, expected: 1}},
@@ -252,6 +254,8 @@ func TestRequestCensus(t *testing.T) {
 		{produce, pi, doorProduce, lineBare, 30, censusResult{toHead: 1, toDeck: 1, trips: requestTrips, expected: 2}},
 		{produce, pi, doorProduce, lineBare, 0, censusResult{toHead: 1, toDeck: 1, trips: requestTrips, expected: 2}},
 		{produce, pi, doorProduce, lineOccupied, 30, censusResult{legs: 2, trips: requestTrips, expected: 2}},
+		{produce, pi, doorProduce, lineDeckBare, 30, censusResult{legs: 2, toDeck: 1, trips: requestTrips, expected: 3}},
+		// A cold press (nothing counted) primes and drops its swap: one tap.
 		{produce, pi, doorProduce, lineDeckBare, 0, censusResult{toDeck: 1, trips: requestTrips, expected: 1}},
 
 		// The empty-bin request, pressed at a count of 0 as the station offers it.
@@ -263,7 +267,7 @@ func TestRequestCensus(t *testing.T) {
 		{produce, seq, doorEmptyBin, lineOccupied, 0, censusResult{legs: 1, trips: requestTrips, expected: 1}},
 		{produce, pi, doorEmptyBin, lineBare, 0, censusResult{toHead: 1, toDeck: 1, trips: requestTrips, expected: 2}},
 		{produce, pi, doorEmptyBin, lineOccupied, 0, censusResult{legs: 2, trips: requestTrips, expected: 2}},
-		{produce, pi, doorEmptyBin, lineDeckBare, 0, censusResult{toDeck: 1, trips: requestTrips, expected: 1}},
+		{produce, pi, doorEmptyBin, lineDeckBare, 0, censusResult{legs: 2, toDeck: 1, trips: requestTrips, expected: 3}},
 	}
 	for _, r := range rows {
 		name := strings.Join([]string{string(r.role), string(r.mode), r.door, r.line}, "/")
@@ -288,12 +292,13 @@ func TestRequestCensus(t *testing.T) {
 // produce request and the empty-bin request make the same row in every mode on
 // a line with no bin, and on a press at every occupancy of the line and each
 // paired position, two positions and three. Any bare position gets one plain
-// delivery and no swap is built while one is bare; only what the bin carries
-// differs, a full for consume and an empty for produce.
+// delivery; a press whose line holds a bin gets its swap too, behind them (W6),
+// and one whose line is bare gets none. Only what the bin carries differs, a
+// full for consume and an empty for produce.
 //
-// The dry-source check on a consume pair made the one difference: a Core call
-// the produce row did not make. It reads Core's sourcing feed now (D2.5), so the
-// rows are equal as they stand, on a press with every position full too.
+// The dry-source check on a consume pair once made the one difference: a Core
+// call the produce row did not make. It is retired (a dry source queues, W6),
+// so the rows are equal as they stand, on a press with every position full too.
 func TestRequestCensus_BareLineIsTheSameForBothRoles(t *testing.T) {
 	t.Parallel()
 	for _, mode := range protocol.ConfigurableSwapModes() {
@@ -336,25 +341,23 @@ func TestRequestCensus_BareLineIsTheSameForBothRoles(t *testing.T) {
 				if produce != consume || emptyBin != consume {
 					t.Errorf("material %+v, produce %+v, empty-bin %+v: want one row", consume, produce, emptyBin)
 				}
-				var want censusResult
-				switch {
-				case len(bare) == 0:
-					want = censusResult{legs: 2, trips: requestTrips, expected: 2}
-				default:
-					want = censusResult{trips: requestTrips, expected: len(bare)}
-					for _, pos := range bare {
-						switch pos {
-						case ksLine:
-							want.toHead = 1
-						case censusDeck:
-							want.toDeck = 1
-						case censusDeck2:
-							want.toDeck2 = 1
-						}
+				want := censusResult{trips: requestTrips, expected: len(bare)}
+				if !slices.Contains(bare, ksLine) {
+					want.legs = 2
+					want.expected += 2
+				}
+				for _, pos := range bare {
+					switch pos {
+					case ksLine:
+						want.toHead = 1
+					case censusDeck:
+						want.toDeck = 1
+					case censusDeck2:
+						want.toDeck2 = 1
 					}
 				}
 				if consume != want {
-					t.Errorf("got %+v, want %+v: one delivery to each bare position and no swap while one is bare", consume, want)
+					t.Errorf("got %+v, want %+v: one delivery to each bare position, and the swap behind them while the line holds a bin", consume, want)
 				}
 			})
 		}

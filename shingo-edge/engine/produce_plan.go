@@ -16,28 +16,23 @@ import (
 type ProducePlan struct {
 	// Dispatch is the shared swap-mode dispatch for sequential / single_robot /
 	// two_robot / two_robot_press_index. Produce always has a swap mode now, so
-	// Dispatch is always set — BuildProducePlan errors on a claim with no swap.
-	// Nil ONLY on a primes-only plan (SuppressSwap); every other path sets it.
+	// BuildProducePlan errors on a claim with no swap. Nil on a vacant line's
+	// plan (SimpleMove), and when a finalizing request with nothing counted
+	// drops the swap and keeps the chain (requestProduceSwapFor); the apply's
+	// swap arm runs only on a non-nil Dispatch.
 	Dispatch *SwapDispatch
 
-	// PrimePairedPositions are the fire-and-forget empty deliveries that fill
-	// a two_robot_press_index cell's vacant paired position(s) before any swap
-	// is minted, or alongside the empty to a vacant line (SimpleMove). Same type
-	// and shape as the consume side's downgrade primes (consume_plan.go) — one
-	// CreateRetrieveOrder each.
-	PrimePairedPositions []SimplePrime
-
-	// SuppressSwap says this round mints the primes and NOTHING else: no
-	// manifest, no dispatch, no runtime-slot write. An explicit flag rather
-	// than a nil Dispatch because applyProducePlan dereferences Dispatch
-	// unconditionally, and a nil there is a panic rather than a branch.
-	SuppressSwap bool
+	// Chain is what the dependent positions of a press need before its swap can
+	// index from them (ChainReadiness): the clears and the primes, created ahead
+	// of the swap, or alongside the empty to a vacant line
+	// (createClearsThenPrimes).
+	Chain Readiness
 
 	// SimpleMove is the empty-line plan (planVacantLine): Core reports no bin on the
 	// line, so there is nothing to lift and the swap collapses to one plain
 	// order bringing an empty from SimpleSource. FromSpot says SimpleSource is
 	// the keep-staged spot, whose standing spare is moved rather than retrieved.
-	// Mutually exclusive with Dispatch and SuppressSwap.
+	// Mutually exclusive with Dispatch.
 	SimpleMove   bool
 	SimpleSource string
 	FromSpot     bool
@@ -50,20 +45,17 @@ func (p *ProducePlan) OrderCount() int {
 	if p == nil {
 		return 0
 	}
-	// A primes-only round creates exactly one order row per prime and no swap
+	// One row per clear and per prime, then the line's delivery or the swap's
 	// legs. Same unit discipline as ConsumePlan.OrderCount — see that method.
-	if p.SuppressSwap {
-		return len(p.PrimePairedPositions)
-	}
-	if p.SimpleMove {
-		return 1 + len(p.PrimePairedPositions)
-	}
-	if p.Dispatch == nil {
-		return 0
-	}
-	n := 1 // StepsA
-	if p.Dispatch.StepsB != nil {
+	n := p.Chain.Count()
+	switch {
+	case p.SimpleMove:
 		n++
+	case p.Dispatch != nil:
+		n++ // StepsA
+		if p.Dispatch.StepsB != nil {
+			n++
+		}
 	}
 	return n
 }
@@ -92,31 +84,30 @@ func BuildProducePlan(node *processes.Node, runtime *processes.RuntimeState, cla
 		return nil, fmt.Errorf("node %s is not a produce node", node.Name)
 	}
 
-	// A BARE POSITION GETS A BIN, in every mode and for both roles
+	// A VACANT POSITION GETS A BIN, in every mode and for both roles
 	// (planVacantLine): a line with no bin gets an empty, as the consume side's
-	// gets a full, plus one for each vacant paired position of a press; a press
-	// whose line holds a bin and whose paired position is vacant gets that
-	// position's empty and no swap. Every swap opens by lifting the line's bin,
-	// and with none there it does nothing useful: a single-robot lift holds at
-	// Core for good, a two-robot or sequential removal is skipped by Core and a
-	// sequential backfill is never made, and a press's index leg holds at a vacant
-	// paired position. The caller gates this plan (gateLineRows,
-	// guardPairedPrimes).
+	// gets a full, instead of a swap: every swap opens by lifting the line's bin,
+	// and with none there it does nothing useful (a single-robot lift holds at
+	// Core for good, a two-robot or sequential removal is skipped and a
+	// sequential backfill is never made). A press's dependent positions get
+	// their chain (a clear of a wrong carrier, then a prime) beside the line's
+	// empty, or ahead of the swap when the line holds a bin. The caller gates a
+	// vacant line's delivery (gateLineRows).
 	bare, err := planVacantLine(node, claim, occupancy, deck)
 	if err != nil {
 		return nil, err
 	}
-	if bare != nil && bare.lineHeld() {
-		return &ProducePlan{SuppressSwap: true, PrimePairedPositions: bare.primes}, nil
-	}
-	if bare != nil {
-		return &ProducePlan{SimpleMove: true, SimpleSource: bare.source, PrimePairedPositions: bare.primes}, nil
+	if bare != nil && bare.dest != "" {
+		return &ProducePlan{SimpleMove: true, SimpleSource: bare.source, Chain: bare.chain}, nil
 	}
 
 	// NO COUNT HERE. Whether a request may ask with nothing counted is the
 	// question of the request that finalizes a filled bin (requestProduceSwapFor),
 	// not of what the line needs.
 	plan := &ProducePlan{}
+	if bare != nil {
+		plan.Chain = bare.chain
+	}
 
 	dispatch, err := BuildSwapDispatch(node, claim)
 	if err != nil {

@@ -14,26 +14,27 @@ import (
 // NodeOrderResult is what an operator's material action returns.
 //
 // NO cycle_mode. It had no reader anywhere — and worse, it could not have
-// been a useful one: a primes-only produce round and a consume downgrade both
+// been a useful one: a produce round with no swap and a consume downgrade both
 // report "simple", so the one discrimination anyone would reach for it to make
-// is the one it cannot make. Round 2 already had to key primeNoticeText on the
-// swap legs instead and write a test forbidding the cycle_mode reading. A
-// field that is unread AND fenced off by a test is not costing a line, it is
-// a trap; the round-3 body audit is what settled removing it.
+// is the one it cannot make; a reader keys on the swap legs, and a test
+// forbids the cycle_mode reading. A field that is unread AND fenced off by a
+// test is not costing a line, it is a trap; the round-3 body audit is what
+// settled removing it.
 type NodeOrderResult struct {
 	Order  *storeorders.Order `json:"order,omitempty"`
 	OrderA *storeorders.Order `json:"order_a,omitempty"`
 	OrderB *storeorders.Order `json:"order_b,omitempty"`
-	// PrimeOrders are additional simple deliveries emitted alongside Order
-	// when a press-index empty-station downgrade prime-filled the paired
-	// positions. Empty for non-press-index requests and for press-index
-	// downgrades where the paired positions were already occupied.
+	// PrimeOrders are a press's chain, created ahead of the swap or beside the
+	// delivery to a vacant line: its clears, then its primes
+	// (createClearsThenPrimes). Empty for any other claim, and for a press whose
+	// dependent positions were ready.
 	PrimeOrders   []*storeorders.Order `json:"prime_orders,omitempty"`
 	ProcessNodeID int64                `json:"process_node_id"`
 }
 
 // primary is the order a caller that reports one order names: the plain order,
-// the first leg of a swap, or the first prime of a primes-only round.
+// the first leg of a swap, or the first order of the chain when the round has
+// no swap (a cold press).
 func (r *NodeOrderResult) primary() *storeorders.Order {
 	switch {
 	case r == nil:
@@ -263,22 +264,8 @@ func (e *Engine) requestNodeFromClaim(node *processes.Node, runtime *processes.R
 		return nil, err
 	}
 	if downgraded {
-		if len(plan.PrimePairedPositions) > 0 {
-			dests := make([]string, 0, len(plan.PrimePairedPositions))
-			for _, p := range plan.PrimePairedPositions {
-				dests = append(dests, p.Dest)
-			}
-			log.Printf("[request-material] node %s empty + paired empty: priming %v alongside %s delivery (downgraded from %s)",
-				node.Name, dests, claim.CoreNodeName, plan.DowngradedFromSwapMode)
-		} else {
-			log.Printf("[request-material] node %s is empty (no bin), downgrading %s to simple delivery", node.Name, plan.DowngradedFromSwapMode)
-		}
-	}
-
-	if plan.SuppressSwap {
-		if err := guardPairedPrimes(node, claim, plan.PrimePairedPositions); err != nil {
-			return nil, err
-		}
+		log.Printf("[request-material] node %s is empty (no bin), downgrading %s to simple delivery (chain: clear %d, prime %v)",
+			node.Name, plan.DowngradedFromSwapMode, len(plan.Chain.Clear), plan.Chain.Prime)
 	}
 
 	// Do not ARM A PAIR INTO A SOURCE ALREADY KNOWN TO BE DRY. This is the
@@ -355,13 +342,6 @@ func (e *Engine) openEpisodeForConsume(
 func (e *Engine) applyConsumePlan(node *processes.Node, claim *processes.NodeClaim, plan *ConsumePlan, origin orders.Origin) (*NodeOrderResult, error) {
 	nodeID := node.ID
 
-	if plan.SuppressSwap {
-		primes, err := e.createPrimes(node, claim, plan.PrimePairedPositions, plan.Quantity, origin)
-		if err != nil {
-			return nil, err
-		}
-		return &NodeOrderResult{PrimeOrders: primes, ProcessNodeID: nodeID}, nil
-	}
 	if plan.SimpleMove {
 		order, err := e.orderMgr.CreateMoveOrder(&nodeID, plan.Quantity, plan.SimpleSource, plan.SimpleDest, plan.AutoConfirm, origin)
 		if err != nil {
@@ -374,16 +354,22 @@ func (e *Engine) applyConsumePlan(node *processes.Node, claim *processes.NodeCla
 		if err != nil {
 			return nil, err
 		}
-		// The head order is already created and is not rolled back if a prime
-		// fails; the error is returned so the operator sees that priming was
-		// incomplete.
-		primes, err := e.createPrimes(node, claim, plan.PrimePairedPositions, plan.Quantity, origin)
+		// The head order is already created and is not rolled back if a clear or
+		// a prime fails; the error is returned so the operator sees that the
+		// chain was incomplete.
+		chain, err := e.createClearsThenPrimes(node, claim, plan.Chain, plan.Quantity, origin)
 		if err != nil {
 			return nil, err
 		}
-		return &NodeOrderResult{Order: order, PrimeOrders: primes, ProcessNodeID: nodeID}, nil
+		return &NodeOrderResult{Order: order, PrimeOrders: chain, ProcessNodeID: nodeID}, nil
 	}
 
+	// THE CHAIN FIRST, THEN THE SWAP: createClearsThenPrimes says why the order
+	// is load-bearing.
+	chain, err := e.createClearsThenPrimes(node, claim, plan.Chain, plan.Quantity, origin)
+	if err != nil {
+		return nil, err
+	}
 	dispatch := plan.Dispatch
 	// BOTH UUIDS BEFORE EITHER CREATE, as the produce and changeover doors do.
 	// This door minted leg A's uuid inside its create, so A reached Core naming
@@ -444,9 +430,9 @@ func (e *Engine) applyConsumePlan(node *processes.Node, claim *processes.NodeCla
 	}
 
 	if orderB == nil {
-		return &NodeOrderResult{Order: orderA, ProcessNodeID: nodeID}, nil
+		return &NodeOrderResult{Order: orderA, PrimeOrders: chain, ProcessNodeID: nodeID}, nil
 	}
-	return &NodeOrderResult{OrderA: orderA, OrderB: orderB, ProcessNodeID: nodeID}, nil
+	return &NodeOrderResult{OrderA: orderA, OrderB: orderB, PrimeOrders: chain, ProcessNodeID: nodeID}, nil
 }
 
 // refreshOrderStation re-reads an order after the runtime-orders write

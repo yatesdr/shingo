@@ -274,10 +274,10 @@ var edgeCreationSites = map[string]string{
 	"www/handlers_api_orders.go:apiCreateComplexOrder": "CreateComplexOrder",
 	"www/handlers_api_orders.go:apiCreateMoveOrder":    "CreateMoveOrder",
 	// consume, produce and release (the planned doors)
-	"engine/operator_stations.go:applyConsumePlan":     "CreateMoveOrder",
-	"engine/operator_produce.go:applyProduceEmptyLine": "CreateMoveOrderCarryingTo,CreateRetrieveOrder",
-	"engine/operator_produce.go:dispatchPairedLeg":     "CreateComplexOrderPaired",
-	"engine/operator_produce.go:createPrimes":          "CreateMoveOrder,CreateRetrieveOrder",
+	"engine/operator_stations.go:applyConsumePlan":      "CreateMoveOrder",
+	"engine/operator_produce.go:applyProduceEmptyLine":  "CreateMoveOrderCarryingTo,CreateRetrieveOrder",
+	"engine/operator_produce.go:dispatchPairedLeg":      "CreateComplexOrderPaired",
+	"engine/operator_produce.go:createClearsThenPrimes": "CreateMoveOrder,CreateMoveOrderForBin,CreateRetrieveOrder",
 	// the release layer (main, 2026-09-30): a release's material move
 	"engine/release_commit.go:commitMaterial": "CreateMoveOrderWithUOP",
 	// changeover

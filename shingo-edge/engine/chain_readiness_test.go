@@ -127,7 +127,8 @@ func TestChainReadiness_OnlyAPressHasDependentPositions(t *testing.T) {
 
 // TestBuildPlans_ReadyOnDeckBuildsTheSwap: through both plans, an on-deck whose
 // carrier is the index's (tops & bottoms on a produce press, a full of the part
-// on a consume press) or unknown builds the swap; a wrong one does not.
+// on a consume press) or unknown builds the swap and no chain; a wrong one
+// builds the swap too, queued behind its clear and its prime (W6).
 func TestBuildPlans_ReadyOnDeckBuildsTheSwap(t *testing.T) {
 	t.Parallel()
 	node := &processes.Node{ID: 1, Name: "LINE", CoreNodeName: "LINE"}
@@ -137,18 +138,18 @@ func TestBuildPlans_ReadyOnDeckBuildsTheSwap(t *testing.T) {
 
 	for name, deck := range map[string]Deck{"tops & bottoms": rows(rowTopsAndBottom), "unknown": {}} {
 		plan, err := BuildProducePlan(node, runtime, readinessClaim(protocol.ClaimRoleProduce, ""), occupied, deck)
-		if err != nil || plan.Dispatch == nil || plan.SuppressSwap {
+		if err != nil || plan.Dispatch == nil || plan.Chain.Count() != 0 {
 			t.Errorf("produce, %s on the on-deck: plan %+v (%v), want the swap", name, plan, err)
 		}
 	}
 	for name, deck := range map[string]Deck{"a full of the part": rows(rowFullOfPart), "unknown": {}} {
 		plan, err := BuildConsumePlan(node, runtime, readinessClaim(protocol.ClaimRoleConsume, ""), 1, occupied, deck, false)
-		if err != nil || plan.Dispatch == nil || plan.SuppressSwap {
+		if err != nil || plan.Dispatch == nil || plan.Chain.Count() != 0 {
 			t.Errorf("consume, %s on the on-deck: plan %+v (%v), want the swap", name, plan, err)
 		}
 	}
 	plan, err := BuildConsumePlan(node, runtime, readinessClaim(protocol.ClaimRoleConsume, ""), 1, occupied, rows(rowEmpty), false)
-	if err != nil || plan.Dispatch != nil || !plan.SuppressSwap || len(plan.PrimePairedPositions) != 1 {
-		t.Errorf("consume, an empty on the on-deck: plan %+v (%v), want B primed behind its clear and no swap yet", plan, err)
+	if err != nil || plan.Dispatch == nil || len(plan.Chain.Clear) != 1 || len(plan.Chain.Prime) != 1 || plan.OrderCount() != 4 {
+		t.Errorf("consume, an empty on the on-deck: plan %+v (%v), want B cleared and primed ahead of the swap (4 orders)", plan, err)
 	}
 }

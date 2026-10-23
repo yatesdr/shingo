@@ -184,9 +184,10 @@ func TestDependentPositionSites_AnswerAsAtTheBase(t *testing.T) {
 
 // TestRequestProduceSwap_ALegWithNoDeliveryNodeIsSeenComing is E3. A live leg
 // whose delivery_node is blank but whose steps set a carrier on the on-deck is a
-// carrier coming to it, so the request primes nothing there and holds. Before
-// PlacingAt answered REQUEST, the paired positions were read by delivery_node
-// and the leg was invisible: the request sent a second empty to INDEX-B.
+// carrier coming to it, so the request primes nothing there; its swap is built
+// and queues at Core behind the carrier coming (W6). Before PlacingAt answered
+// REQUEST, the paired positions were read by delivery_node and the leg was
+// invisible: the request sent a second empty to INDEX-B.
 func TestRequestProduceSwap_ALegWithNoDeliveryNodeIsSeenComing(t *testing.T) {
 	t.Parallel()
 	db := testEngineDB(t)
@@ -212,8 +213,11 @@ func TestRequestProduceSwap_ALegWithNoDeliveryNodeIsSeenComing(t *testing.T) {
 	testutil.MustNoErr(t, db.UpdateOrderStatus(id, string(protocol.StatusDispatched)), "status")
 
 	res, err := eng.RequestProduceSwap(nodeID, 0)
-	if err == nil {
-		t.Fatalf("want the hold (a carrier is already coming to INDEX-B), got %+v", res)
+	if err != nil {
+		t.Fatalf("refused (%v); a carrier coming to INDEX-B queues the swap behind it", err)
+	}
+	if res.OrderA == nil || res.OrderB == nil || len(res.PrimeOrders) != 0 {
+		t.Errorf("got %+v; want the swap's two legs and no prime", res)
 	}
 	all, err := db.ListOrders()
 	testutil.MustNoErr(t, err, "list orders")

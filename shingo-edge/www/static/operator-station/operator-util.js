@@ -205,11 +205,10 @@ const pendingAsks = new Map();
 // WHY THE RESPONSE AND NOT AN EVENT. The station is event-driven: an action
 // returns, the client re-renders from the orders list, and the structured
 // response body has gone unread for so long that reaching for it needs a
-// reason. This is the reason — the primes-only outcome is the OUTCOME OF THIS
-// CLICK, not a fact about the node. Broadcast as an SSE event it would reach
-// every station watching that cell and tell operators who pressed nothing to
-// "press again when it lands". A per-click answer belongs on the reply to that
-// click.
+// reason. A caller reads it for the OUTCOME OF ITS OWN CLICK (the loader home's
+// CLEAR message, operator-render.js), which is not a fact about the node: broadcast as
+// an SSE event it would reach every station watching that cell. A per-click
+// answer belongs on the reply to that click.
 //
 // It is also symmetric with what this function already does: it parses the
 // body on failure, for `error` and for the inline `exit` action. It only ever
@@ -300,29 +299,6 @@ export async function postAction(url, body, loadView, opts) {
         showToast(err && err.name === 'AbortError' ? 'No answer — check the board before trying again' : 'Network error', 'error');
         return false;
     }
-}
-
-// primeNoticeText turns a primes-only NodeOrderResult into the sentence the
-// operator needs, or '' when the result is an ordinary swap.
-//
-// A primes-only round is the press-index partial-empty fix doing its job: the
-// cell had a bare index position, so the swap that would have wedged was not
-// minted and an empty was sent to fill the position instead. Without this the
-// operator presses REQUEST SWAP, no swap appears, and nothing says why.
-//
-// Keyed on "primes and no swap legs", not on cycle_mode: a consume downgrade
-// emits primes ALONGSIDE its delivery, and that round did do the thing the
-// operator asked for.
-export function primeNoticeText(result) {
-    if (!result) return '';
-    var primes = result.prime_orders || [];
-    if (primes.length === 0) return '';
-    if (result.order_a || result.order_b) return '';
-    var where = primes.map(function(p) {
-        var dest = p.delivery_node || 'the index position';
-        return p.source_node ? (dest + ' from ' + p.source_node) : dest;
-    }).join(' and ');
-    return 'Priming ' + where + ' — press again when it lands.';
 }
 
 // withQueueCause appends Core's typed queue-cause sentence to a status label.

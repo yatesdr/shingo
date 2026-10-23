@@ -110,18 +110,15 @@ func TestBuildConsumePlan_PressIndexAllEmptyPrimes(t *testing.T) {
 	if plan.DowngradedFromSwapMode != protocol.SwapModeTwoRobotPressIndex {
 		t.Errorf("DowngradedFromSwapMode = %q, want two_robot_press_index", plan.DowngradedFromSwapMode)
 	}
-	if len(plan.PrimePairedPositions) != 2 {
-		t.Fatalf("PrimePairedPositions = %d entries, want 2 (B and C)", len(plan.PrimePairedPositions))
+	if len(plan.Chain.Prime) != 2 || len(plan.Chain.Clear) != 0 || plan.OrderCount() != 3 {
+		t.Fatalf("chain = %+v (%d orders), want B and C primed and 3 orders", plan.Chain, plan.OrderCount())
 	}
 	wantDests := map[string]bool{claim.PairedCoreNode: true, claim.SecondPairedCoreNode: true}
-	for _, p := range plan.PrimePairedPositions {
-		if p.Source != claim.InboundSource {
-			t.Errorf("prime to %s: source = %q, want %q", p.Dest, p.Source, claim.InboundSource)
+	for _, pos := range plan.Chain.Prime {
+		if !wantDests[pos] {
+			t.Errorf("unexpected prime dest %q", pos)
 		}
-		if !wantDests[p.Dest] {
-			t.Errorf("unexpected prime dest %q", p.Dest)
-		}
-		delete(wantDests, p.Dest)
+		delete(wantDests, pos)
 	}
 	if len(wantDests) != 0 {
 		t.Errorf("missing primes for %v", wantDests)
@@ -150,8 +147,8 @@ func TestBuildConsumePlan_PressIndexHeadEmptyPairedFull(t *testing.T) {
 	if !plan.SimpleMove {
 		t.Fatalf("expected SimpleMove downgrade")
 	}
-	if len(plan.PrimePairedPositions) != 0 {
-		t.Errorf("expected no primes when paired positions are occupied; got %+v", plan.PrimePairedPositions)
+	if plan.Chain.Count() != 0 {
+		t.Errorf("expected no chain when paired positions are occupied; got %+v", plan.Chain)
 	}
 }
 

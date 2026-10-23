@@ -140,11 +140,12 @@ func (e *Engine) produceRequest(node *processes.Node, runtime *processes.Runtime
 		plan.SimpleSource, plan.FromSpot = spotNode(claim), true
 	}
 	// THE COUNT IS THE FINALIZING REQUEST'S QUESTION. It finalizes the filled bin
-	// a swap takes away, so a swap with no parts counted is refused. Only a swap:
-	// an empty to a vacant line and a press's primes take nothing away. A cold press
-	// reads RemainingUOPCached == 0 (where the counter tag is not wired it reads 0
-	// always), and a cold press with a vacant paired position is exactly the cell
-	// that needs priming.
+	// a swap takes away, so with no parts counted the swap is dropped, and the
+	// chain still goes: an empty to a vacant line and a press's clears and primes
+	// take nothing away. A cold press reads RemainingUOPCached == 0 (where the
+	// counter tag is not wired it reads 0 always), and a cold press with a vacant
+	// paired position is exactly the cell that needs priming, in one tap. With
+	// nothing to clear or prime either, the request is refused as before.
 	//
 	// THE UNWIRED COUNTER HAS A SECOND READER, and this is the place a person
 	// looking at RemainingUOPCached will be standing. binDrainedAtCoreNode asks
@@ -156,7 +157,10 @@ func (e *Engine) produceRequest(node *processes.Node, runtime *processes.Runtime
 	// column AND running a changeover), but enabling that flag before wiring the
 	// counter would skip swaps that need to happen. Wire the counter first.
 	if ask.finalizes && plan.Dispatch != nil && runtime.RemainingUOPCached <= 0 {
-		return nil, fmt.Errorf("node %s has no parts to finalize", node.Name)
+		if plan.Chain.Count() == 0 {
+			return nil, fmt.Errorf("node %s has no parts to finalize", node.Name)
+		}
+		plan.Dispatch = nil
 	}
 	if err := e.gateLineRows(node, claim, plan.SimpleMove); err != nil {
 		return nil, err
@@ -165,26 +169,20 @@ func (e *Engine) produceRequest(node *processes.Node, runtime *processes.Runtime
 		log.Printf("[produce-swap] node %s is empty (no bin), sending an empty from %s instead of a %s swap",
 			node.Name, plan.SimpleSource, claim.SwapMode)
 	}
-	if plan.SuppressSwap {
-		if err := guardPairedPrimes(node, claim, plan.PrimePairedPositions); err != nil {
-			return nil, err
-		}
-	}
-
 	e.clearStrandedPark(node, claim, cell.park)
 	e.rearmKeepStaged(node, claim)
 
 	// The evacuate-direction episode, opened after the plan exists and before
 	// any order does — same ordering and same reasoning as the consume side.
 	//
-	// A primes-only round opens the episode HERE TOO, deliberately. A prime is
-	// a supply move and this is nominally the evacuate entry point, but the
-	// cell episode is direction-agnostic by design (see openEpisodeForProduce
-	// below): this path and RequestEmptyBin already join the ONE episode for
-	// this cell's circle rather than opening a row each. Splitting a supply
-	// episode out for the primes-only round would re-create exactly the
-	// two-rows-for-one-cell shape that change removed. expected_orders comes
-	// from ProducePlan.OrderCount, which counts the primes, for both buttons.
+	// A round of clears and primes alone (a cold press) opens the episode HERE
+	// TOO, deliberately. A prime is a supply move and this is nominally the
+	// evacuate entry point, but the cell episode is direction-agnostic by design
+	// (see openEpisodeForProduce below): this path and RequestEmptyBin already
+	// join the ONE episode for this cell's circle rather than opening a row each.
+	// Splitting a supply episode out for such a round would re-create exactly
+	// the two-rows-for-one-cell shape that change removed. expected_orders comes
+	// from ProducePlan.OrderCount, which counts the chain, for both buttons.
 	//
 	// A produce node's level runs the OTHER WAY: it fills toward capacity
 	// rather than draining toward a reorder point, so "needs attention" is a
@@ -222,72 +220,74 @@ func (e *Engine) applyProduceEmptyLine(node *processes.Node, claim *processes.No
 	if err := e.db.SetProcessNodeRuntimeActiveOrder(nodeID, &order.ID); err != nil {
 		log.Printf("produce: update runtime orders for node %d: %v", nodeID, err)
 	}
-	// A press's vacant paired positions get their empties alongside, outside the
-	// runtime slots, as the consume side's downgrade primes do. The line's
-	// empty is already on its way; a failed prime is returned, not rolled back.
-	primes, err := e.createPrimes(node, claim, plan.PrimePairedPositions, 1, origin)
+	// A press's dependent positions get their chain alongside, outside the
+	// runtime slots, as the consume side's downgrade does. The line's empty is
+	// already on its way; a failed clear or prime is returned, not rolled back.
+	chain, err := e.createClearsThenPrimes(node, claim, plan.Chain, 1, origin)
 	if err != nil {
 		return nil, err
 	}
-	return &NodeOrderResult{Order: order, PrimeOrders: primes, ProcessNodeID: nodeID}, nil
+	return &NodeOrderResult{Order: order, PrimeOrders: chain, ProcessNodeID: nodeID}, nil
 }
 
-// createPrimes creates one order per vacant paired position of a press, for both
-// roles: a full to a consume press, an empty to a produce press. Attributed to
-// the head node for ownership and audit, NOT tracked in runtime slots (those
-// belong to the head's serial-order machinery for swap cycles). The merged
-// auto-confirm signal: one policy for both directions of the cell.
+// createClearsThenPrimes creates a press's chain (ChainReadiness), in this
+// order: a clear per wrong carrier on a dependent position, then a prime per
+// position, for both roles. Its caller creates the swap's legs after it.
 //
-// What the bin carries is the only role branch. A produce prime is a retrieve
-// of an empty, not a move: a move is a full-intent local relocation of the bin
-// AT a concrete source node, so it would hunt a FULL bin in what is an empties
-// pool. quantity is the request's for a consume prime; an empty is one.
+// THE ORDER IS LOAD-BEARING. The outbox drains by id over one partition, so
+// Core ingests these orders in the order they are created here, and the swap's
+// legs after them. A clear first: its named-bin move is what Core's index
+// pickup meets when it reserves, and it leaves that carrier to the move
+// instead of taking it onto the press (waiting_for_outside). A prime next: it
+// is the carrier coming to the position, which the pair then waits for rather
+// than fetching a second (W5's "coming"). The swap last, so Core never reserves
+// it against a position whose clear or prime it has not yet seen. The residual
+// is a lone failed publish re-sent after a later one (protocol/outbox), which
+// can invert two of them; accepted.
 //
-// No re-read: both creates return the stored row and nothing below rewrites it.
-func (e *Engine) createPrimes(node *processes.Node, claim *processes.NodeClaim, primes []SimplePrime, quantity int64, origin ordermgr.Origin) ([]*orders.Order, error) {
+// A clear is a named-bin move of the carrier the bins table holds there to the
+// claim's outbound (CreateMoveOrderForBin: it lifts that bin or none, and never
+// while a leg places there, which ChainReadiness already left out). A prime
+// brings a carrier from the claim's inbound source: a full to a consume press,
+// an empty to a produce press. What the prime carries is its only role branch.
+// A produce prime is a retrieve of an empty, not a move: a move is a
+// full-intent local relocation of the bin AT a concrete source node, so it
+// would hunt a FULL bin in what is an empties pool. quantity is the request's
+// for a consume prime; an empty is one.
+//
+// Each is created on the head node, as the primes always were, so START's
+// cancel and block reach them; none is tracked in runtime slots (those belong
+// to the head's serial-order machinery for swap cycles). The merged
+// auto-confirm signal for the primes; a clear is auto-confirmed, as every
+// named-bin move is. No re-read: every create returns the stored row.
+func (e *Engine) createClearsThenPrimes(node *processes.Node, claim *processes.NodeClaim, chain Readiness, quantity int64, origin ordermgr.Origin) ([]*orders.Order, error) {
 	nodeID := node.ID
 	autoConfirm := claim.AutoConfirm || e.cfg.AutoConfirm()
-	var out []*orders.Order
-	for _, p := range primes {
+	out := make([]*orders.Order, 0, chain.Count())
+	for _, row := range chain.Clear {
+		co, err := e.orderMgr.CreateMoveOrderForBin(&nodeID, row.Node, claim.OutboundDestination, row.PayloadCode, row.BinID, origin)
+		if err != nil {
+			return nil, fmt.Errorf("clear %s: %w", row.Node, err)
+		}
+		out = append(out, co)
+	}
+	for _, pos := range chain.Prime {
 		var po *orders.Order
 		var err error
 		if claim.Role == protocol.ClaimRoleProduce {
 			po, err = e.orderMgr.CreateRetrieveOrder(&nodeID, true, 1,
-				p.Dest, p.Source, "", "standard", claim.PayloadCode,
+				pos, claim.InboundSource, "", "standard", claim.PayloadCode,
 				autoConfirm, false, origin)
 		} else {
-			po, err = e.orderMgr.CreateMoveOrder(&nodeID, quantity, p.Source, p.Dest, autoConfirm, origin)
+			po, err = e.orderMgr.CreateMoveOrder(&nodeID, quantity, claim.InboundSource, pos, autoConfirm, origin)
 		}
 		if err != nil {
-			return nil, fmt.Errorf("prime %s: %w", p.Dest, err)
+			return nil, fmt.Errorf("prime %s: %w", pos, err)
 		}
 		out = append(out, po)
 	}
 	return out, nil
 }
-
-// PrimeInFlightError says a press-index swap was refused because the bin it
-// needs at a paired position is already on its way: an empty to a produce
-// press, a full to a consume press. It is ADVISORY: nothing is wrong, nothing needs
-// fixing, and the next press of the button after the bin lands will run the
-// swap.
-//
-// A distinct type rather than a message the UI matches on. The station has to
-// decide a colour, and deciding it by substring is how a reworded sentence
-// silently turns an all-clear back into a red alarm.
-type PrimeInFlightError struct {
-	NodeName string
-}
-
-func (e *PrimeInFlightError) Error() string {
-	return fmt.Sprintf("node %s: a bin is already inbound to the index position — "+
-		"the swap will run once it lands", e.NodeName)
-}
-
-// Advisory reports that this refusal is the system behaving correctly rather
-// than a fault. The handler keys on the behaviour, not on the concrete type,
-// so a second advisory refusal later needs no handler change.
-func (e *PrimeInFlightError) Advisory() bool { return true }
 
 // primeNodeLock returns the per-cell prime mutex, creating it on first use.
 // Keyed by the claim's CORE node name so every process_node row that shares
@@ -329,30 +329,6 @@ func (c cellLock) TryLock() bool {
 func (c cellLock) Unlock() {
 	c.mu.Unlock()
 	c.e.sectionEnds()
-}
-
-// guardPairedPrimes gates a plan that primes a press's vacant paired positions
-// while its line holds a bin, for both roles. No prime goes while a swap is
-// still working the cell, because that swap's own legs are what is about to
-// fill the position and a second bin there is one no robot can set down; every
-// request has already asked that (guardLineRequest). With no prime left to
-// send, every vacant position already has a bin on its way, and the request is
-// held with a notice rather than refused as a fault.
-func guardPairedPrimes(node *processes.Node, claim *processes.NodeClaim, primes []SimplePrime) error {
-	if len(primes) == 0 {
-		// HOLD. Refuse BEFORE the episode opens: an episode expecting no
-		// orders is noise, and the operator needs a sentence, not a silent
-		// success. TYPED, because this refusal is the system working; the type
-		// is what lets the station render it as a notice instead of a fault.
-		return &PrimeInFlightError{NodeName: node.Name}
-	}
-	dests := make([]string, 0, len(primes))
-	for _, p := range primes {
-		dests = append(dests, p.Dest)
-	}
-	log.Printf("[request] node %s: line occupied, paired %v bare — priming from %s, no swap this round",
-		node.Name, dests, claim.InboundSource)
-	return nil
 }
 
 // occupancyKnownNodesOnly re-reads an "empty" telemetry answer as occupied
@@ -460,29 +436,23 @@ func (e *Engine) applyProducePlan(node *processes.Node, runtime *processes.Runti
 		return e.applyProduceEmptyLine(node, claim, plan, origin)
 	}
 
-	// Primes-only round: fill the vacant paired position(s) and mint nothing
-	// else. No manifest (there is no departing bin), no dispatch, and NO
-	// runtime order slots — those belong to the head node's serial-order
-	// machinery for swap cycles, and a prime is not a swap. Same treatment the
-	// consume side's downgrade primes get.
-	//
-	// A retrieve, not a move: a move is a full-intent local relocation of the
-	// bin AT a concrete source node, so it would hunt a FULL bin in what is an
-	// empties pool. RetrieveEmpty is the intent that matches.
-	if plan.SuppressSwap {
-		primes, err := e.createPrimes(node, claim, plan.PrimePairedPositions, 1, origin)
-		if err != nil {
-			return nil, err
-		}
-		return &NodeOrderResult{PrimeOrders: primes, ProcessNodeID: nodeID}, nil
+	// THE CHAIN FIRST, THEN THE SWAP (createClearsThenPrimes says why the order
+	// is load-bearing). With no swap (a finalizing request with nothing counted)
+	// the chain is the whole round: no manifest, no dispatch, and NO runtime
+	// order slots, which belong to the head node's serial-order machinery for
+	// swap cycles.
+	chain, err := e.createClearsThenPrimes(node, claim, plan.Chain, 1, origin)
+	if err != nil {
+		return nil, err
+	}
+	if plan.Dispatch == nil {
+		return &NodeOrderResult{PrimeOrders: chain, ProcessNodeID: nodeID}, nil
 	}
 
 	// No paperwork here, in any mode: the bin keeps filling until the
 	// operator's RELEASE, which finalizes it (finalizeDepartingProduce). The
 	// runtime ORDER pointers stamp below (release resolution and the
 	// swap_ready gate depend on them).
-	// Produce always has a swap mode now (BuildProducePlan errors otherwise), so
-	// Dispatch is always set.
 	dispatch := plan.Dispatch
 	// BOTH UUIDs BEFORE EITHER CREATE. Each leg goes in already naming its
 	// partner, so neither is ever unpaired and creation order stops being a
@@ -535,9 +505,9 @@ func (e *Engine) applyProducePlan(node *processes.Node, runtime *processes.Runti
 	}
 
 	if orderB == nil {
-		return &NodeOrderResult{Order: orderA, ProcessNodeID: nodeID}, nil
+		return &NodeOrderResult{Order: orderA, PrimeOrders: chain, ProcessNodeID: nodeID}, nil
 	}
-	return &NodeOrderResult{OrderA: orderA, OrderB: orderB, ProcessNodeID: nodeID}, nil
+	return &NodeOrderResult{OrderA: orderA, OrderB: orderB, PrimeOrders: chain, ProcessNodeID: nodeID}, nil
 }
 
 // dispatchComplexLeg issues a single complex order with the right auto-

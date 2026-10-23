@@ -33,32 +33,16 @@ type ConsumePlan struct {
 	SimpleSource, SimpleDest string
 	DowngradedFromSwapMode   protocol.SwapMode // empty unless this is the case-2 downgrade
 
-	// PrimePairedPositions are additional simple deliveries emitted
-	// alongside SimpleMove for the two_robot_press_index empty-station
-	// downgrade. When the head node is empty AND the paired positions
-	// (PairedCoreNode / SecondPairedCoreNode) are also empty, one prime
-	// per empty paired position is added so the next swap cycle has bins
-	// to cascade. Each entry produces one CreateMoveOrder. Order tracking
-	// stays on the head node's runtime; primes are not sibling-linked.
-	PrimePairedPositions []SimplePrime
-
-	// SuppressSwap says this round creates the primes and nothing else: a press
-	// whose line holds a bin and whose paired position is vacant gets that
-	// position's bin, and no swap until it is there (planVacantLine). The produce
-	// plan's flag of the same name, for the same decision. No primes at all is
-	// the hold: every vacant position already has a bin on its way.
-	SuppressSwap bool
+	// Chain is what the dependent positions of a press need before its swap
+	// can index from them (ChainReadiness): the clears and the primes, created
+	// ahead of the swap, or alongside the delivery to a vacant line
+	// (createClearsThenPrimes). Order tracking stays on the head node's
+	// runtime; the chain's orders are not sibling-linked.
+	Chain Readiness
 
 	// Dispatch is the shared swap-mode dispatch for sequential / single_robot
 	// / two_robot / two_robot_press_index. Nil when SimpleMove is true.
 	Dispatch *SwapDispatch
-}
-
-// SimplePrime describes one fire-and-forget delivery move emitted as
-// part of the press-index empty-station downgrade.
-type SimplePrime struct {
-	Source string
-	Dest   string
 }
 
 // OrderCount is how many ORDER ROWS applying this plan will create.
@@ -82,18 +66,15 @@ func (p *ConsumePlan) OrderCount() int {
 	if p == nil {
 		return 0
 	}
-	if p.SuppressSwap {
-		return len(p.PrimePairedPositions)
-	}
-	if p.SimpleMove {
-		return 1 + len(p.PrimePairedPositions)
-	}
-	if p.Dispatch == nil {
-		return 0
-	}
-	n := 1 // StepsA
-	if p.Dispatch.StepsB != nil {
+	n := p.Chain.Count()
+	switch {
+	case p.SimpleMove:
 		n++
+	case p.Dispatch != nil:
+		n++ // StepsA
+		if p.Dispatch.StepsB != nil {
+			n++
+		}
 	}
 	return n
 }
@@ -113,12 +94,11 @@ func (p *ConsumePlan) OrderCount() int {
 // with gateLineRows. See the branch comment below.
 //
 // For a claim with dependent positions (a press), the planner asks
-// ChainReadiness of them and emits one prime delivery (PrimePairedPositions)
-// per position it primes so the next cycle has bins to cascade, alongside the
-// head's delivery when the head is empty and instead of the swap when it is
-// not (SuppressSwap). Entries missing from the map default to occupied=true
-// (safe — no prime emitted); deck names what stands on each dependent
-// position and which a bin is already on its way to.
+// ChainReadiness of them and carries the chain (Chain: a clear per wrong
+// carrier, a prime per position it primes) alongside the head's delivery when
+// the head is empty and ahead of the swap when it is not. Entries missing from
+// the map default to occupied=true (safe — no prime emitted); deck names what
+// stands on each dependent position and which a bin is already on its way to.
 //
 // autoConfirm is the merged claim.AutoConfirm || cfg.Web.AutoConfirm
 // signal — surfaced as a parameter so the planner stays config-free.
@@ -144,25 +124,22 @@ func BuildConsumePlan(node *processes.Node, runtime *processes.RuntimeState, cla
 	// Node-empty downgrade: a line with no bin gets the plain delivery the vacant
 	// line needs (planVacantLine) instead of a swap with nothing to lift, in every
 	// mode. requestNodeFromClaim gates it with gateLineRows before applying
-	// it. A press whose head is full and a paired position is not gets
-	// that position's bin and no swap, as a produce press does, gated with
-	// guardPairedPrimes.
+	// it. A press whose head holds a bin and whose dependent positions are not
+	// ready gets their chain ahead of the swap, as a produce press does.
 	bare, err := planVacantLine(node, claim, occupancy, deck)
 	if err != nil {
 		return nil, err
 	}
-	if bare != nil && bare.lineHeld() {
-		plan.SuppressSwap = true
-		plan.PrimePairedPositions = bare.primes
-		return plan, nil
-	}
-	if bare != nil {
+	if bare != nil && bare.dest != "" {
 		plan.SimpleMove = true
 		plan.SimpleSource = bare.source
 		plan.SimpleDest = bare.dest
 		plan.DowngradedFromSwapMode = claim.SwapMode
-		plan.PrimePairedPositions = bare.primes
+		plan.Chain = bare.chain
 		return plan, nil
+	}
+	if bare != nil {
+		plan.Chain = bare.chain
 	}
 
 	dispatch, err := BuildSwapDispatch(node, claim)

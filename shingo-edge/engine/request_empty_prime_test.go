@@ -2,7 +2,6 @@ package engine
 
 import (
 	"encoding/json"
-	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -104,45 +103,47 @@ func countOrdersByType(t *testing.T, db *store.DB, orderType string) int {
 	return n
 }
 
-// The bug, stated as the fix: a bare on-deck position gets an empty, not a swap
-// that can never source one.
-func TestRequestEmptyBin_PrimesBarePosition(t *testing.T) {
+// The bug, stated as the fix: a vacant on-deck position gets an empty, and the
+// swap is queued behind it, never ahead: Core ingests in creation order and
+// holds the pair for the empty coming to its on-deck (W5), so the index leg
+// never meets a vacant position with nothing on its way.
+func TestRequestEmptyBin_PrimesTheVacantPositionAheadOfTheSwap(t *testing.T) {
 	t.Parallel()
 	db := testEngineDB(t)
 	eng := testEngine(t, db)
 	nodeID := seedPressIndexProduce(t, db)
-	// Press holds a bin; the deck is bare — the exact Springfield shape.
+	// Press holds a bin; the deck is vacant — the exact Springfield shape.
 	bridgeCore(t, eng, pressIndexBinsStub(t, "PRESS-HEAD").URL)
 	holdPlaces(t, eng, occupiedAt("PRESS-HEAD"))
 
-	got, err := eng.RequestEmptyBin(nodeID, "WIDGET-A")
-	if err != nil {
+	if _, err := eng.RequestEmptyBin(nodeID, "WIDGET-A"); err != nil {
 		t.Fatalf("RequestEmptyBin: %v", err)
 	}
-	if got == nil {
-		t.Fatal("the prime order must come back to the caller — the HMI renders it as the notice " +
-			"telling the operator to press again when the empty lands")
+	all, err := db.ListOrders()
+	testutil.MustNoErr(t, err, "list orders")
+	var prime int64
+	var legs []int64
+	for _, o := range all {
+		switch {
+		case o.RetrieveEmpty && o.DeliveryNode == "PRESS-DECK":
+			prime = o.ID
+		case o.OrderType == protocol.OrderTypeComplex:
+			legs = append(legs, o.ID)
+		}
 	}
-	if got.DeliveryNode != "PRESS-DECK" {
-		t.Errorf("the empty must go to the BARE position, not the press; delivery_node = %q", got.DeliveryNode)
+	if prime == 0 || len(legs) != 2 {
+		t.Fatalf("want a retrieve_empty to the vacant PRESS-DECK and the two-leg swap; prime %d, legs %v", prime, legs)
 	}
-	if !got.RetrieveEmpty {
-		t.Error("a prime is a retrieve_empty: a move would hunt a FULL bin in what is an empties pool")
-	}
-
-	// THE POINT. Not "a prime was also made" — no swap at all this round. A swap
-	// minted here is the un-sourceable index leg, and it takes its evac sibling
-	// down with it when the operator gives up and cancels.
-	if n := countOrdersByType(t, db, string(protocol.OrderTypeComplex)); n != 0 {
-		t.Errorf("a bare on-deck position must suppress the swap entirely; complex orders = %d", n)
+	for _, l := range legs {
+		if l < prime {
+			t.Errorf("leg %d was created before the prime %d: the swap must queue behind it", l, prime)
+		}
 	}
 }
 
-// Double-tap. The second press must not fire a second empty at the same
-// position, and must STILL not mint the swap — the position is physically bare
-// whether or not the empty filling it is already on its way, so a swap released
-// now gets exactly the un-sourceable leg the first press avoided.
-func TestRequestEmptyBin_SecondPressHoldsRatherThanSwaps(t *testing.T) {
+// Double-tap. The second press meets the swap in flight and adds nothing: no
+// second empty at the same position, no second swap.
+func TestRequestEmptyBin_SecondPressMeetsTheSwap(t *testing.T) {
 	t.Parallel()
 	db := testEngineDB(t)
 	eng := testEngine(t, db)
@@ -153,32 +154,23 @@ func TestRequestEmptyBin_SecondPressHoldsRatherThanSwaps(t *testing.T) {
 	if _, err := eng.RequestEmptyBin(nodeID, "WIDGET-A"); err != nil {
 		t.Fatalf("first press: %v", err)
 	}
-	before := countOrdersByType(t, db, string(protocol.OrderTypeRetrieveEmpty))
+	empties := countOrdersByType(t, db, string(protocol.OrderTypeRetrieveEmpty))
+	legs := countOrdersByType(t, db, string(protocol.OrderTypeComplex))
 
-	_, err := eng.RequestEmptyBin(nodeID, "WIDGET-A")
-	if err == nil {
+	if _, err := eng.RequestEmptyBin(nodeID, "WIDGET-A"); err == nil {
 		t.Fatal("the second press has nothing to do and must say so")
 	}
-	var inFlight *PrimeInFlightError
-	if !errors.As(err, &inFlight) {
-		t.Fatalf("the refusal must be the ADVISORY type — rendered red it reads as a fault the "+
-			"operator has to fix, and the only correct response is to wait; got %T: %v", err, err)
+	if n := countOrdersByType(t, db, string(protocol.OrderTypeRetrieveEmpty)); n != empties {
+		t.Errorf("the second press must not fire a duplicate empty; retrieve_empty %d → %d", empties, n)
 	}
-	if !inFlight.Advisory() {
-		t.Error("PrimeInFlightError must report itself advisory")
-	}
-	if n := countOrdersByType(t, db, string(protocol.OrderTypeRetrieveEmpty)); n != before {
-		t.Errorf("the second press must not fire a duplicate empty; retrieve_empty %d → %d", before, n)
-	}
-	if n := countOrdersByType(t, db, string(protocol.OrderTypeComplex)); n != 0 {
-		t.Errorf("a still-bare position must keep the swap suppressed on the second press too; "+
-			"complex orders = %d", n)
+	if n := countOrdersByType(t, db, string(protocol.OrderTypeComplex)); n != legs {
+		t.Errorf("the second press must not mint a second swap; complex orders %d → %d", legs, n)
 	}
 }
 
 // The regression guard, and the more important half of this file: a WHOLE cell
-// must still swap. A guard that suppresses the swap whenever it cannot prove
-// the cell is full would take the working path down with the broken one.
+// must still swap, and prime nothing. A chain built whenever the read cannot
+// prove the cell full would send carriers at positions that hold one.
 func TestRequestEmptyBin_WholeCellStillSwaps(t *testing.T) {
 	t.Parallel()
 	db := testEngineDB(t)

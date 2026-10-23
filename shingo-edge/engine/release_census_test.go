@@ -141,7 +141,7 @@ var orderCreationSites = map[string]string{
 	"operator_node_changeover.go:EvacuateNode":                    "changeover node: evacuate (a wait in front of a curtained pickup, S7) — door 4 on its fallback arm",
 	"operator_node_changeover.go:StageNodeChangeoverMaterial":     "changeover node: stage new material",
 	"operator_produce.go:applyProduceEmptyLine":                   "produce REQUEST and REQUEST EMPTY BIN: an empty to a line Core reports bare (no wait: a drop finishes)",
-	"operator_produce.go:createPrimes":                            "every request button: a full or an empty to a press's bare paired position (no wait: a drop finishes)",
+	"operator_produce.go:createClearsThenPrimes":                  "every request button: a press's chain ahead of its swap, a named-bin move of a wrong carrier to the outbound (no wait: it lifts at a dependent position, never while a leg places there) and a full or an empty to each bare dependent position (no wait: a drop finishes)",
 	"operator_produce.go:dispatchPairedLeg":                       "produce REQUEST: a paired leg",
 	"keep_staged_spot.go:refillSpot":                              "keep-staged spot: a plain retrieve from the inbound source (no wait: it lands on staging)",
 	"keep_staged_spot.go:returnSpare":                             "keep-staged spot: a wrong or unwanted spare back to its inbound source (no wait)",
