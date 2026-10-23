@@ -466,7 +466,7 @@ func (s *StationService) boardEmpties(view *domain.OperatorStationView, outbound
 			open++
 		case row.PayloadCode == "" && !row.Stocked && !row.Bare && row.BinTypeCode != "":
 			have[row.BinTypeCode]++
-			if layers, ok := heightOf(row.NodeBinsRow); ok {
+			if layers, ok := row.Layers(); ok {
 				atHeight[height{row.BinTypeCode, layers}]++
 			}
 		}
@@ -503,20 +503,6 @@ func (s *StationService) boardEmpties(view *domain.OperatorStationView, outbound
 		return a.Layers != nil && *a.Layers < *b.Layers
 	})
 	return out
-}
-
-// heightOf is the height in layers a cart stands at: its totes are an exact
-// multiple of its type's totes per layer. A remainder, or a number not known,
-// is no height (the cart counts toward its type and toward no height, as the
-// keeper counts it).
-func heightOf(row protocol.NodeBinsRow) (int, bool) {
-	if row.TotesOnCart == nil || row.TotesPerLayer == nil || *row.TotesPerLayer <= 0 {
-		return 0, false
-	}
-	if *row.TotesOnCart%*row.TotesPerLayer != 0 {
-		return 0, false
-	}
-	return *row.TotesOnCart / *row.TotesPerLayer, true
 }
 
 // assignmentAt is the group lines' assignment for the window at node, or nil.

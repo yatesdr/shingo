@@ -527,17 +527,17 @@ func EmptyCarrierWhereInGroup(destParam, groupParam int) string {
 	return emptyCarrierWhere(fmt.Sprintf("$%d", destParam), fmt.Sprintf("$%d", groupParam))
 }
 
-// cellPositionSQL is true when the node aliased n is a claim's own position:
+// linePositionSQL is true when the node aliased n is a claim's own position:
 // its line, paired or second paired node. A carrier there belongs to that cell
 // (the rule above).
-const cellPositionSQL = `EXISTS (SELECT 1 FROM style_claims sc
+const linePositionSQL = `EXISTS (SELECT 1 FROM style_claims sc
 	                  WHERE n.name IN (sc.core_node_name, sc.paired_core_node, sc.second_paired_core_node))`
 
-// IsCellPosition reports whether nodeName is a claim's own position, by the
+// IsLinePosition reports whether nodeName is a claim's own position, by the
 // predicate the empty scan and the partial fetch exclude a carrier with.
-func IsCellPosition(db *sql.DB, nodeName string) (bool, error) {
+func IsLinePosition(db *sql.DB, nodeName string) (bool, error) {
 	var is bool
-	err := db.QueryRow(`SELECT `+cellPositionSQL+` FROM (SELECT $1::text AS name) n`, nodeName).Scan(&is)
+	err := db.QueryRow(`SELECT `+linePositionSQL+` FROM (SELECT $1::text AS name) n`, nodeName).Scan(&is)
 	return is, err
 }
 
@@ -548,7 +548,7 @@ func emptyCarrierWhere(destExpr, groupExpr string) string {
 	  AND b.node_id IS NOT NULL
 	  AND ` + BinAtLiveNodeSQL + `
 	  AND COALESCE(b.payload_code, '') = ''
-	  AND NOT ` + cellPositionSQL + `
+	  AND NOT ` + linePositionSQL + `
 	  AND b.node_id NOT IN (SELECT h.position_node_id FROM bin_loader_homes h
 	                        JOIN bin_loaders l ON l.id = h.loader_id WHERE l.archived_at IS NULL
 	                          AND NOT (h.home_kind = 'buffer' AND h.loader_id IN (
@@ -2174,7 +2174,7 @@ func FindPartialToFinish(db *sql.DB, payloadCode string, places []string, exclud
 	  AND b.uop_remaining > 0
 	  AND b.uop_remaining < COALESCE((SELECT p.uop_capacity FROM payloads p WHERE p.code = b.payload_code), 0)
 	  AND b.node_id IN (SELECT id FROM places)
-	  AND NOT `+cellPositionSQL+`
+	  AND NOT `+linePositionSQL+`
 	  AND NOT bt.bare
 	  AND NOT COALESCE(b.quality_hold, false)
 	  AND (n.parent_id IS NULL OR n.depth IS NULL OR `+helpers.ReachableSQL("n")+`)`, payloadP) +

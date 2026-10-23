@@ -1934,7 +1934,7 @@ type InboundCarrier struct {
 
 // ListTypedInboundToGroup is the inbound set CountTypedInboundToGroup counts,
 // as rows: each carrier once, in bin id order. ONE SPELLING of "coming": the
-// level keeper counts it (engine.countLevel), and an unloader's group line
+// level keeper counts it (store CountLevel), and an unloader's group line
 // reads its carriers for a wanted height and for the windows whose cart is
 // already on its way (engine.UnloaderGroupLines). Every rule documented on
 // CountTypedInboundToGroup is this statement's.

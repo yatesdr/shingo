@@ -6,7 +6,6 @@ import (
 	"shingo/protocol"
 	"shingocore/store"
 	"shingocore/store/nodes"
-	"shingocore/store/orders"
 )
 
 // unloader_lines.go — an unloader's group line: what the outbound group of an
@@ -14,8 +13,9 @@ import (
 // asked to go back as.
 //
 // THE KEEPER'S ARITHMETIC. A level type's shortfall is the keeper's own
-// (countLevel: want less resident, asked and coming), read against the same
-// open maintain episodes Maintainer.Tick reads. Nothing here is a fifth term.
+// (store.CountLevel: want less resident, asked and coming), read against the
+// same open maintain episodes Maintainer.Tick reads. Nothing here is a fifth
+// term. The line's model (store.TypeLine) lives in store beside it.
 //
 // HEIGHTS, FOR A TYPE WITH LAYER WANTS. When the type states its totes per
 // layer, each wanted height is a thing of its own: a cart counts toward a
@@ -60,28 +60,15 @@ func (e *Engine) UnloaderGroupLines(group *nodes.Node, levels []store.MaintainLe
 		return nil, fmt.Errorf("group line %s: %w", group.Name, err)
 	}
 
-	lines := make([]typeLine, 0, len(levels))
+	lines := make([]store.TypeLine, 0, len(levels))
 	inbound := map[int64]bool{}
 	for _, lv := range levels {
-		c, err := countLevel(e.db, group, lv, openByKey[protocol.MaintainEpisodeKey(group.Name, lv.BinTypeCode)])
+		tl, c, err := e.db.TypeLineOf(group, lv, openByKey[protocol.MaintainEpisodeKey(group.Name, lv.BinTypeCode)], layerWants)
 		if err != nil {
 			return nil, fmt.Errorf("group line: %w", err)
 		}
 		for _, ib := range c.Inbound {
 			inbound[ib.BinID] = true
-		}
-		tl := typeLine{code: lv.BinTypeCode, want: lv.Want, have: lv.Want - c.Short()}
-		for _, w := range layerWants {
-			if w.BinTypeID != lv.BinTypeID || w.TotesPerLayer == nil || *w.TotesPerLayer <= 0 {
-				continue
-			}
-			tl.totesPerLayer = *w.TotesPerLayer
-			tl.heights = append(tl.heights, heightLine{layers: w.Layers, want: w.Want})
-		}
-		if len(tl.heights) > 0 {
-			if err := e.countHeights(group, &tl, c.Inbound); err != nil {
-				return nil, err
-			}
 		}
 		lines = append(lines, tl)
 	}
@@ -90,53 +77,14 @@ func (e *Engine) UnloaderGroupLines(group *nodes.Node, levels []store.MaintainLe
 		Assignments: assignWindows(lines, windows, inbound)}, nil
 }
 
-// countHeights fills each wanted height's residents and comings: the carts
-// whose totes_on_cart is exactly that many layers. The comings are the type's
-// coming rows (countLevel's Inbound), so no second read spells "coming".
-func (e *Engine) countHeights(group *nodes.Node, tl *typeLine, inbound []orders.InboundCarrier) error {
-	resident, err := e.db.CountEmptyBinsOfTypeInGroupByTotes(tl.code, group.ID)
-	if err != nil {
-		return fmt.Errorf("group line: %w", err)
-	}
-	coming := map[int]int{}
-	for _, ib := range inbound {
-		if ib.TotesOnCart != nil {
-			coming[*ib.TotesOnCart]++
-		}
-	}
-	for i := range tl.heights {
-		totes := tl.heights[i].layers * tl.totesPerLayer
-		tl.heights[i].have = resident[totes] + coming[totes]
-	}
-	return nil
-}
-
-// typeLine is one level type as the walk sees it: what the group wants of it,
-// what it has (resident, asked and coming: want less the keeper's Short), and
-// its wanted heights when the type states its totes per layer.
-type typeLine struct {
-	code          string
-	want, have    int
-	totesPerLayer int // 0: the type states none, and has no heights
-	heights       []heightLine
-}
-
-// heightLine is one wanted height of a type: how many carts standing layers
-// high the group wants, and how many it has (resident and coming at exactly
-// that many totes).
-type heightLine struct {
-	layers     int
-	want, have int
-}
-
 // wantsOf is the line's wants: each level type, then its wanted heights.
-func wantsOf(lines []typeLine) []protocol.NodeBinsWant {
+func wantsOf(lines []store.TypeLine) []protocol.NodeBinsWant {
 	out := []protocol.NodeBinsWant{}
 	for _, tl := range lines {
-		out = append(out, protocol.NodeBinsWant{BinType: tl.code, Want: tl.want})
-		for _, h := range tl.heights {
-			layers := h.layers
-			out = append(out, protocol.NodeBinsWant{BinType: tl.code, Layers: &layers, Want: h.want})
+		out = append(out, protocol.NodeBinsWant{BinType: tl.Code, Want: tl.Want})
+		for _, h := range tl.Heights {
+			layers := h.Layers
+			out = append(out, protocol.NodeBinsWant{BinType: tl.Code, Layers: &layers, Want: h.Want})
 		}
 	}
 	return out
@@ -170,92 +118,25 @@ type thing struct {
 //     short: no assignment.
 //
 // The answer is in the windows' order. Pins: TestAssignWindows_*.
-func assignWindows(lines []typeLine, windows []protocol.NodeBinsRow, inbound map[int64]bool) []protocol.NodeBinsAssignment {
-	assignedType := map[string]int{}
-	assignedHeight := map[thing]int{}
-
-	typeShort := func(tl typeLine) int { return tl.want - tl.have - assignedType[tl.code] }
-	heightShort := func(tl typeLine, h heightLine) int {
-		return min(h.want-h.have-assignedHeight[thing{tl.code, h.layers}], typeShort(tl))
-	}
-	anyShort := func(tl typeLine) int {
-		s := typeShort(tl)
-		for _, h := range tl.heights {
-			s -= max(0, heightShort(tl, h))
-		}
-		return s
-	}
-	lineOf := func(code string) (typeLine, bool) {
-		for _, tl := range lines {
-			if tl.code == code {
-				return tl, true
-			}
-		}
-		return typeLine{}, false
-	}
-	// own is the cart's own thing and whether the group is still short of it.
-	own := func(row protocol.NodeBinsRow) (thing, bool) {
-		tl, ok := lineOf(row.BinTypeCode)
-		if !ok {
-			return thing{code: row.BinTypeCode}, false
-		}
-		if tl.totesPerLayer > 0 && row.TotesOnCart != nil && *row.TotesOnCart%tl.totesPerLayer == 0 {
-			layers := *row.TotesOnCart / tl.totesPerLayer
-			for _, h := range tl.heights {
-				if h.layers == layers {
-					return thing{tl.code, layers}, heightShort(tl, h) > 0
-				}
-			}
-		}
-		// No height of its own (a type with no heights, a remainder, or no
-		// number): its own thing is the type at any height, short only by
-		// what the wanted heights do not speak for. Pinned by
-		// TestAssignWindows_NoHeightOfItsOwnTakesTheLargestHeight.
-		return thing{code: tl.code}, anyShort(tl) > 0
-	}
-	// largest is the thing with the largest remaining shortfall, first in the
-	// levels' order on a tie.
-	largest := func() (thing, bool) {
-		var best thing
-		bestShort := 0
-		consider := func(t thing, short int) {
-			if short > bestShort {
-				best, bestShort = t, short
-			}
-		}
-		for _, tl := range lines {
-			for _, h := range tl.heights {
-				consider(thing{tl.code, h.layers}, heightShort(tl, h))
-			}
-			consider(thing{code: tl.code}, anyShort(tl))
-		}
-		return best, bestShort > 0
-	}
-
+func assignWindows(lines []store.TypeLine, windows []protocol.NodeBinsRow, inbound map[int64]bool) []protocol.NodeBinsAssignment {
+	w := &windowWalk{lines: lines, assignedType: map[string]int{}, assignedHeight: map[thing]int{}}
 	byNode := map[string]protocol.NodeBinsAssignment{}
-	walk := func(empty bool) {
+	pass := func(empty bool) {
 		for _, row := range windows {
 			if !row.Occupied || (row.PayloadCode == "") != empty || inbound[row.BinID] {
 				continue
 			}
-			t, short := own(row)
+			t, short := w.own(row)
 			if !short {
-				if t, short = largest(); !short {
+				if t, short = w.largest(); !short {
 					continue
 				}
 			}
-			assignedType[t.code]++
-			a := protocol.NodeBinsAssignment{Node: row.Node, BinType: t.code}
-			if t.layers > 0 {
-				assignedHeight[t]++
-				layers := t.layers
-				a.Layers = &layers
-			}
-			byNode[row.Node] = a
+			byNode[row.Node] = w.assign(row.Node, t)
 		}
 	}
-	walk(true)
-	walk(false)
+	pass(true)
+	pass(false)
 	// Answered in the windows' order, whatever order they were walked in.
 	out := []protocol.NodeBinsAssignment{}
 	for _, row := range windows {
@@ -264,4 +145,86 @@ func assignWindows(lines []typeLine, windows []protocol.NodeBinsRow, inbound map
 		}
 	}
 	return out
+}
+
+// windowWalk is the walk's running state: the group's lines, and what the walk
+// has assigned of each thing so far, subtracted from each line's shortfall.
+type windowWalk struct {
+	lines          []store.TypeLine
+	assignedType   map[string]int
+	assignedHeight map[thing]int
+}
+
+func (w *windowWalk) typeShort(tl store.TypeLine) int { return tl.Short() - w.assignedType[tl.Code] }
+
+func (w *windowWalk) heightShort(tl store.TypeLine, h store.HeightLine) int {
+	return min(h.Want-h.Have-w.assignedHeight[thing{tl.Code, h.Layers}], w.typeShort(tl))
+}
+
+func (w *windowWalk) anyShort(tl store.TypeLine) int {
+	s := w.typeShort(tl)
+	for _, h := range tl.Heights {
+		s -= max(0, w.heightShort(tl, h))
+	}
+	return s
+}
+
+func (w *windowWalk) lineOf(code string) (store.TypeLine, bool) {
+	for _, tl := range w.lines {
+		if tl.Code == code {
+			return tl, true
+		}
+	}
+	return store.TypeLine{}, false
+}
+
+// own is the cart's own thing and whether the group is still short of it.
+func (w *windowWalk) own(row protocol.NodeBinsRow) (thing, bool) {
+	tl, ok := w.lineOf(row.BinTypeCode)
+	if !ok {
+		return thing{code: row.BinTypeCode}, false
+	}
+	if layers, ok := protocol.ToteLayers(row.TotesOnCart, &tl.TotesPerLayer); ok {
+		for _, h := range tl.Heights {
+			if h.Layers == layers {
+				return thing{tl.Code, layers}, w.heightShort(tl, h) > 0
+			}
+		}
+	}
+	// No height of its own (a type with no heights, a remainder, or no
+	// number): its own thing is the type at any height, short only by
+	// what the wanted heights do not speak for. Pinned by
+	// TestAssignWindows_NoHeightOfItsOwnTakesTheLargestHeight.
+	return thing{code: tl.Code}, w.anyShort(tl) > 0
+}
+
+// largest is the thing with the largest remaining shortfall, first in the
+// levels' order on a tie.
+func (w *windowWalk) largest() (thing, bool) {
+	var best thing
+	bestShort := 0
+	consider := func(t thing, short int) {
+		if short > bestShort {
+			best, bestShort = t, short
+		}
+	}
+	for _, tl := range w.lines {
+		for _, h := range tl.Heights {
+			consider(thing{tl.Code, h.Layers}, w.heightShort(tl, h))
+		}
+		consider(thing{code: tl.Code}, w.anyShort(tl))
+	}
+	return best, bestShort > 0
+}
+
+// assign counts t against the walk and answers the window's assignment.
+func (w *windowWalk) assign(node string, t thing) protocol.NodeBinsAssignment {
+	w.assignedType[t.code]++
+	a := protocol.NodeBinsAssignment{Node: node, BinType: t.code}
+	if t.layers > 0 {
+		w.assignedHeight[t]++
+		layers := t.layers
+		a.Layers = &layers
+	}
+	return a
 }

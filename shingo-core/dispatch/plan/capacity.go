@@ -60,6 +60,7 @@ import (
 	"errors"
 
 	"shingo/protocol"
+	"shingocore/dispatch/binresolver"
 	"shingocore/store/bins"
 	"shingocore/store/nodes"
 )
@@ -428,44 +429,15 @@ func BinTypeAllowedAt(db CapacityDB, nodeID int64, binTypeID *int64) (bool, erro
 	return bareOf != nil && bins.TypeAdmits(bts, *binTypeID, bareOf), nil
 }
 
-// ngrpAtDeclaredLevel is the gate's copy of the level question, and it is a copy
-// of the CALL and not of the LOGIC: both this and the resolver's atDeclaredLevel
-// read ListMaintainLevels and CountEmptyBinsOfTypeInGroup, which is where the
-// one definition of "how full is this group" lives.
-//
-// The two cannot be one function without the resolver importing dispatch or
-// dispatch reaching into binresolver's unexported half. They can and do share
-// the reads, the per-type / group-total asymmetry, and the reason for it — see
-// binresolver.atDeclaredLevel, which carries the full account.
+// ngrpAtDeclaredLevel is the gate's level question: the group's declared
+// levels, asked through binresolver.AtDeclaredLevel — the resolver's own
+// function, so the gate and the resolver cannot disagree about whether a group
+// is full — with the same count the resolver passes.
 func ngrpAtDeclaredLevel(db CapacityDB, ngrp *nodes.Node, binTypeID *int64) (bool, error) {
 	levels, err := db.ListMaintainLevels(ngrp.ID)
 	if err != nil {
 		return false, err
 	}
-	if len(levels) == 0 {
-		return false, nil
-	}
-	if binTypeID != nil {
-		for _, l := range levels {
-			if l.BinTypeID != *binTypeID {
-				continue
-			}
-			held, cerr := db.CountEmptyBinsOfTypeInGroup(l.BinTypeCode, ngrp.ID)
-			if cerr != nil {
-				return false, cerr
-			}
-			return held >= l.Want, nil
-		}
-		return false, nil
-	}
-	want, held := 0, 0
-	for _, l := range levels {
-		want += l.Want
-		n, cerr := db.CountEmptyBinsOfTypeInGroup(l.BinTypeCode, ngrp.ID)
-		if cerr != nil {
-			return false, cerr
-		}
-		held += n
-	}
-	return held >= want, nil
+	return binresolver.AtDeclaredLevel(levels, binresolver.BinTypeFrom(binTypeID, "the capacity gate: no type named"),
+		func(code string) (int, error) { return db.CountEmptyBinsOfTypeInGroup(code, ngrp.ID) })
 }

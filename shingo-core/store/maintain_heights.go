@@ -14,7 +14,7 @@ import (
 // layer. Its comings need no read of their own: the keeper's coming is
 // orders.ListTypedInboundToGroup's rows, which carry each cart's number.
 //
-// THE KEEPER'S POPULATION, SLICED: the keeper's resident count (countLevel)
+// THE KEEPER'S POPULATION, SLICED: the keeper's resident count (CountLevel)
 // grouped by bins.totes_on_cart, composing the keeper's WHERE verbatim. A cart
 // with no number is in no bucket, and the keeper's total stays the only total.
 // Pin: TestCountsByTotes_AgreeWithTheKeepersCounts.

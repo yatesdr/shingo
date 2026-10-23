@@ -125,10 +125,7 @@ func (s *NodeService) ValidateMaintainedGroup(cfg MaintainedGroupConfig) (Mainta
 		}
 	}
 
-	total := 0
 	for _, l := range cfg.Levels {
-		total += l.Want
-
 		// The episode key is `mnt|<group>|<type code>`, and a code carrying the
 		// separator would produce a key that parses back into different
 		// components than it was built from. Refused at the only point where a
@@ -145,22 +142,9 @@ func (s *NodeService) ValidateMaintainedGroup(cfg MaintainedGroupConfig) (Mainta
 		}
 	}
 
-	// ── More than it can hold, or no room for a return ───────────────────────
-	// Past the enabled positions is a REFUSAL: a maintained group cannot stand
-	// more carriers than it has positions, so its level could never be met and
-	// the keeper would stay short of it for good. Exactly at them is a WARNING:
-	// the level can be held, but it leaves the unloader nowhere to put the next
-	// carrier it drains, and the group can gain positions or re-enable children.
-	// Maintenance off asks neither: nothing keeps the level. Pin:
-	// TestMaintainedGroupSave_LevelsAndTheUnloaderOutbound.
-	switch {
-	case cfg.Enabled && total > enabledChildren:
-		refuse("%s declares %d carriers across %d enabled position%s — more than it can hold, so its level could never be met",
-			groupName, total, enabledChildren, plural(enabledChildren, "", "s"))
-	case cfg.Enabled && enabledChildren > 0 && total == enabledChildren:
-		warn("%s declares %d carriers across %d position%s — nothing is left free for a carrier coming back in",
-			groupName, total, enabledChildren, plural(enabledChildren, "", "s"))
-	}
+	refusals, warnings := roomRefusals(cfg, groupName, enabledChildren)
+	chk.Refusals = append(chk.Refusals, refusals...)
+	chk.Warnings = append(chk.Warnings, warnings...)
 
 	// ── An unloader's outbound needs somewhere to spill ──────────────────────
 	if msg, err := s.outboundWithoutOverflow(cfg, groupName); err != nil {
@@ -192,6 +176,32 @@ func (s *NodeService) ValidateMaintainedGroup(cfg MaintainedGroupConfig) (Mainta
 	}
 
 	return chk, nil
+}
+
+// roomRefusals is the group's room against what its levels declare: more than
+// it can hold, or no room for a return.
+//
+// Past the enabled positions is a REFUSAL: a maintained group cannot stand
+// more carriers than it has positions, so its level could never be met and the
+// keeper would stay short of it for good. Exactly at them is a WARNING: the
+// level can be held, but it leaves the unloader nowhere to put the next carrier
+// it drains, and the group can gain positions or re-enable children.
+// Maintenance off asks neither: nothing keeps the level. Pin:
+// TestMaintainedGroupSave_LevelsAndTheUnloaderOutbound.
+func roomRefusals(cfg MaintainedGroupConfig, groupName string, enabledChildren int) (refusals, warnings []string) {
+	total := 0
+	for _, l := range cfg.Levels {
+		total += l.Want
+	}
+	switch {
+	case cfg.Enabled && total > enabledChildren:
+		refusals = append(refusals, fmt.Sprintf("%s declares %d carriers across %d enabled position%s — more than it can hold, so its level could never be met",
+			groupName, total, enabledChildren, plural(enabledChildren, "", "s")))
+	case cfg.Enabled && enabledChildren > 0 && total == enabledChildren:
+		warnings = append(warnings, fmt.Sprintf("%s declares %d carriers across %d position%s — nothing is left free for a carrier coming back in",
+			groupName, total, enabledChildren, plural(enabledChildren, "", "s")))
+	}
+	return refusals, warnings
 }
 
 // outboundWithoutOverflow is the refusal for levels on a live unloader's

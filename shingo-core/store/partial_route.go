@@ -232,5 +232,5 @@ func StampHeldSinceDeclaredTx(tx *sql.Tx, binID int64) error {
 // carrier by. A carrier standing there is that position's own, never a fetch
 // to send elsewhere.
 func (db *DB) IsLinePosition(nodeName string) (bool, error) {
-	return bins.IsCellPosition(db.DB, nodeName)
+	return bins.IsLinePosition(db.DB, nodeName)
 }

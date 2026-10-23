@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"shingo/protocol"
+	"shingocore/store"
 )
 
 // unloader_lines_test.go — the walk that tells each cart at an unloader's
@@ -39,7 +40,7 @@ func said(as []protocol.NodeBinsAssignment) string {
 	return strings.Join(parts, " ")
 }
 
-func requireWalk(t *testing.T, lines []typeLine, windows []protocol.NodeBinsRow, want string) {
+func requireWalk(t *testing.T, lines []store.TypeLine, windows []protocol.NodeBinsRow, want string) {
 	t.Helper()
 	if got := said(assignWindows(lines, windows, nil)); got != want {
 		t.Errorf("walk = %q, want %q", got, want)
@@ -52,9 +53,9 @@ func requireWalk(t *testing.T, lines []typeLine, windows []protocol.NodeBinsRow,
 // asked for totes.
 func TestAssignWindows_ReferenceCase(t *testing.T) {
 	t.Parallel()
-	lines := []typeLine{
-		{code: "KD-1", want: 3, have: 2},
-		{code: "TOTE-1", want: 3, have: 0},
+	lines := []store.TypeLine{
+		{Code: "KD-1", Want: 3, Have: 2},
+		{Code: "TOTE-1", Want: 3, Have: 0},
 	}
 	requireWalk(t, lines, []protocol.NodeBinsRow{
 		cart("W1", "TOTE-1", true),
@@ -67,9 +68,9 @@ func TestAssignWindows_ReferenceCase(t *testing.T) {
 // another type is shorter; once the group has its own type, as the shortest.
 func TestAssignWindows_OwnFirstThenLargestShortfall(t *testing.T) {
 	t.Parallel()
-	lines := []typeLine{
-		{code: "KD-1", want: 1, have: 0},
-		{code: "TOTE-1", want: 5, have: 0},
+	lines := []store.TypeLine{
+		{Code: "KD-1", Want: 1, Have: 0},
+		{Code: "TOTE-1", Want: 5, Have: 0},
 	}
 	requireWalk(t, lines, []protocol.NodeBinsRow{
 		cart("W1", "KD-1", true),
@@ -80,9 +81,9 @@ func TestAssignWindows_OwnFirstThenLargestShortfall(t *testing.T) {
 // Equal shortfalls go to the first level in the levels' order.
 func TestAssignWindows_TiesByTheLevelsOrder(t *testing.T) {
 	t.Parallel()
-	lines := []typeLine{
-		{code: "B-TYPE", want: 2, have: 0},
-		{code: "A-TYPE", want: 2, have: 0},
+	lines := []store.TypeLine{
+		{Code: "B-TYPE", Want: 2, Have: 0},
+		{Code: "A-TYPE", Want: 2, Have: 0},
 	}
 	requireWalk(t, lines, []protocol.NodeBinsRow{cart("W1", "OTHER-1", true)}, "W1=B-TYPE")
 }
@@ -92,9 +93,9 @@ func TestAssignWindows_TiesByTheLevelsOrder(t *testing.T) {
 // before it is asked for something else.
 func TestAssignWindows_EmptiesFirst(t *testing.T) {
 	t.Parallel()
-	lines := []typeLine{
-		{code: "KD-1", want: 1, have: 0},
-		{code: "TOTE-1", want: 1, have: 0},
+	lines := []store.TypeLine{
+		{Code: "KD-1", Want: 1, Have: 0},
+		{Code: "TOTE-1", Want: 1, Have: 0},
 	}
 	requireWalk(t, lines, []protocol.NodeBinsRow{
 		cart("W1", "KD-1", true),
@@ -105,9 +106,9 @@ func TestAssignWindows_EmptiesFirst(t *testing.T) {
 // A group short of nothing assigns nothing, and an empty window is not walked.
 func TestAssignWindows_NothingShortNothingAssigned(t *testing.T) {
 	t.Parallel()
-	lines := []typeLine{
-		{code: "KD-1", want: 2, have: 2},
-		{code: "TOTE-1", want: 1, have: 3},
+	lines := []store.TypeLine{
+		{Code: "KD-1", Want: 2, Have: 2},
+		{Code: "TOTE-1", Want: 1, Have: 3},
 	}
 	requireWalk(t, lines, []protocol.NodeBinsRow{
 		cart("W1", "KD-1", true),
@@ -124,9 +125,9 @@ func TestAssignWindows_NothingShortNothingAssigned(t *testing.T) {
 // remainder and no number is unknown, and both count to the type alone.
 func TestAssignWindows_ExactMultipleHeights(t *testing.T) {
 	t.Parallel()
-	tote := func() []typeLine {
-		return []typeLine{{code: "TOTE-1", want: 6, have: 0, totesPerLayer: 8,
-			heights: []heightLine{{layers: 3, want: 1}, {layers: 5, want: 1}}}}
+	tote := func() []store.TypeLine {
+		return []store.TypeLine{{Code: "TOTE-1", Want: 6, Have: 0, TotesPerLayer: 8,
+			Heights: []store.HeightLine{{Layers: 3, Want: 1}, {Layers: 5, Want: 1}}}}
 	}
 	// The 3-high cart is sent as 3 high (its own height); the 40-tote cart as
 	// 5 high; the remainder and the unknown as the type at any height.
@@ -150,8 +151,8 @@ func TestAssignWindows_ExactMultipleHeights(t *testing.T) {
 // height met and the type short, both go back as the type.
 func TestAssignWindows_RemainderAndUnknownCountToTheType(t *testing.T) {
 	t.Parallel()
-	lines := []typeLine{{code: "TOTE-1", want: 3, have: 1, totesPerLayer: 8,
-		heights: []heightLine{{layers: 3, want: 1, have: 1}}}}
+	lines := []store.TypeLine{{Code: "TOTE-1", Want: 3, Have: 1, TotesPerLayer: 8,
+		Heights: []store.HeightLine{{Layers: 3, Want: 1, Have: 1}}}}
 	requireWalk(t, lines, []protocol.NodeBinsRow{
 		cart("W1", "TOTE-1", false, 26),
 		cart("W2", "TOTE-1", false),
@@ -160,8 +161,8 @@ func TestAssignWindows_RemainderAndUnknownCountToTheType(t *testing.T) {
 
 	// 26 totes is 3 layers and 2 over: with 3 high still short, the cart is
 	// sent as the type it is, not as 3 high.
-	short := []typeLine{{code: "TOTE-1", want: 2, have: 0, totesPerLayer: 8,
-		heights: []heightLine{{layers: 3, want: 1}}}}
+	short := []store.TypeLine{{Code: "TOTE-1", Want: 2, Have: 0, TotesPerLayer: 8,
+		Heights: []store.HeightLine{{Layers: 3, Want: 1}}}}
 	requireWalk(t, short, []protocol.NodeBinsRow{cart("W1", "TOTE-1", false, 26)}, "W1=TOTE-1")
 }
 
@@ -171,8 +172,8 @@ func TestAssignWindows_RemainderAndUnknownCountToTheType(t *testing.T) {
 // the largest one instead of going back as the bare type.
 func TestAssignWindows_NoHeightOfItsOwnTakesTheLargestHeight(t *testing.T) {
 	t.Parallel()
-	lines := []typeLine{{code: "TOTE-1", want: 3, have: 0, totesPerLayer: 8,
-		heights: []heightLine{{layers: 5, want: 2}, {layers: 3, want: 1}}}}
+	lines := []store.TypeLine{{Code: "TOTE-1", Want: 3, Have: 0, TotesPerLayer: 8,
+		Heights: []store.HeightLine{{Layers: 5, Want: 2}, {Layers: 3, Want: 1}}}}
 	requireWalk(t, lines, []protocol.NodeBinsRow{
 		cart("W1", "TOTE-1", false),
 		cart("W2", "TOTE-1", false, 26),
@@ -183,8 +184,8 @@ func TestAssignWindows_NoHeightOfItsOwnTakesTheLargestHeight(t *testing.T) {
 // still under its own want assigns nothing.
 func TestAssignWindows_AHeightIsHeldUnderItsType(t *testing.T) {
 	t.Parallel()
-	lines := []typeLine{{code: "TOTE-1", want: 2, have: 2, totesPerLayer: 8,
-		heights: []heightLine{{layers: 3, want: 2, have: 0}}}}
+	lines := []store.TypeLine{{Code: "TOTE-1", Want: 2, Have: 2, TotesPerLayer: 8,
+		Heights: []store.HeightLine{{Layers: 3, Want: 2, Have: 0}}}}
 	requireWalk(t, lines, []protocol.NodeBinsRow{cart("W1", "TOTE-1", true, 24)}, "")
 }
 
@@ -192,10 +193,10 @@ func TestAssignWindows_AHeightIsHeldUnderItsType(t *testing.T) {
 // assignments move the running shortfall: a KD cart dressed as a tote stack.
 func TestAssignWindows_HeightsTieAheadOfAnyHeight(t *testing.T) {
 	t.Parallel()
-	lines := []typeLine{
-		{code: "KD-1", want: 1, have: 1},
-		{code: "TOTE-1", want: 2, have: 0, totesPerLayer: 8,
-			heights: []heightLine{{layers: 3, want: 1}}},
+	lines := []store.TypeLine{
+		{Code: "KD-1", Want: 1, Have: 1},
+		{Code: "TOTE-1", Want: 2, Have: 0, TotesPerLayer: 8,
+			Heights: []store.HeightLine{{Layers: 3, Want: 1}}},
 	}
 	// TOTE-1 is short 2: 3 high speaks for 1, any height for the other. The
 	// first KD ties 3 high against any height and takes 3 high; the second

@@ -2,7 +2,6 @@ package engine
 
 import (
 	"context"
-	"fmt"
 	"sort"
 	_ "sync" // the plain lock inlines only where sync is imported (protocol/lockcheck)
 	"time"
@@ -247,7 +246,7 @@ func (m *Maintainer) tickOne(g *nodes.Node, lv store.MaintainLevel, station, key
 		OriginID: episode.OriginID, OpenedAt: episode.OpenedAt,
 	}
 
-	c, err := countLevel(m.eng.db, g, lv, episode)
+	c, err := m.eng.db.CountLevel(g, lv, episode)
 	if err != nil {
 		m.eng.logFn("maintainer: %v", err)
 		return st
@@ -334,61 +333,6 @@ func (m *Maintainer) tickOne(g *nodes.Node, lv store.MaintainLevel, station, key
 		g.Name, lv.BinTypeCode, lv.Want, resident, asked, coming, gap, st.Created, st.HeldBy)
 
 	return st
-}
-
-// levelCount is one level type's four terms: what the group wants of the type
-// and the three populations the keeper subtracts from it.
-//
-// ── THE THREE POPULATIONS ───────────────────────────────────────────────────
-// Kept distinct because they answer different questions and one of them is not
-// the keeper's doing. Collapsing any two is how a level over- or under-fills
-// with nothing reporting an error.
-//   - Resident: unclaimed empties of the type standing in the group
-//     (CountEmptyBinsOfTypeInGroup, the finder's own WHERE).
-//   - Asked: the open episode's live root asks (CountLiveRootsByOrigin); 0,
-//     and not read, when no episode is open.
-//   - Coming: empties of the type on their way in that the keeper did not ask
-//     for: ListTypedInboundToGroup's carriers (Inbound), counted. The rows are
-//     kept because an unloader's group line reads them too (the totes on each,
-//     and which window carts are already on their way); the keeper only
-//     counts them.
-//
-// ONE SPELLING. The keeper's tick (tickOne) and an unloader's group line
-// (UnloaderGroupLines) both count through countLevel, so the two cannot
-// disagree about how short a group is of a type.
-type levelCount struct {
-	Level    store.MaintainLevel
-	Resident int
-	Asked    int
-	Coming   int
-	Inbound  []orders.InboundCarrier
-}
-
-// Short is the want less resident, asked and coming: the keeper's gap. At or
-// below zero the group is not short of the type.
-func (c levelCount) Short() int {
-	return c.Level.Want - c.Resident - c.Asked - c.Coming
-}
-
-// countLevel reads one level type's three populations for group g, against the
-// type's open maintain episode (zero when none is open). An error names the
-// count that failed and leaves the answer unusable.
-func countLevel(db *store.DB, g *nodes.Node, lv store.MaintainLevel, episode store.DemandOrigin) (levelCount, error) {
-	c := levelCount{Level: lv}
-	var err error
-	if c.Resident, err = db.CountEmptyBinsOfTypeInGroup(lv.BinTypeCode, g.ID); err != nil {
-		return c, fmt.Errorf("count residents %s/%s: %w", g.Name, lv.BinTypeCode, err)
-	}
-	if episode.OriginID != "" {
-		if c.Asked, err = db.CountLiveRootsByOrigin(episode.OriginID); err != nil {
-			return c, fmt.Errorf("count asks %s/%s: %w", g.Name, lv.BinTypeCode, err)
-		}
-	}
-	if c.Inbound, err = db.ListTypedInboundToGroup(g.ID, g.Name, lv.BinTypeCode); err != nil {
-		return c, fmt.Errorf("count inbound %s/%s: %w", g.Name, lv.BinTypeCode, err)
-	}
-	c.Coming = len(c.Inbound)
-	return c, nil
 }
 
 // nothingToSource asks the finder, before any ask is minted, the question the

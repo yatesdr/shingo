@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"time"
+
+	"shingo/protocol"
 )
 
 // Bin is a physical container that holds a payload at a node. Its
@@ -190,6 +192,10 @@ func (b *Bin) ParseManifest() (*Manifest, error) {
 	}
 	return &m, nil
 }
+
+// Layers is the cart's height in layers (protocol.ToteLayers): its totes on the
+// cart as a whole number of its type's totes per layer.
+func (b *Bin) Layers() (int, bool) { return protocol.ToteLayers(b.TotesOnCart, b.TotesPerLayer) }
 
 // TotesEdit is the admin bin edit's count of totes on the cart
 // (bins.totes_on_cart). A nil *TotesEdit leaves the column alone; To nil

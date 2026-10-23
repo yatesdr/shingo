@@ -704,11 +704,11 @@ func (r *GroupResolver) ResolveStoreVacated(group, child *nodes.Node, vacating [
 	if payloadCode != "" && len(levels) > 0 {
 		return nil, fmt.Errorf("payload %s cannot be stored in empties-only node group %s", payloadCode, group.Name)
 	}
-	full, err := r.atDeclaredLevelCounting(group, binTypeID, levels, func(code string) (int, error) {
+	full, err := AtDeclaredLevel(levels, stated, func(code string) (int, error) {
 		return r.DB.CountEmptyBinsOfTypeInGroupExcludingNode(code, group.ID, child.ID)
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("%s: %w", group.Name, err)
 	}
 	if full {
 		return nil, fmt.Errorf("no available slot in node group %s", group.Name)
@@ -1245,28 +1245,37 @@ func (r *GroupResolver) payloadAllowedAt(nodeID int64, payloadCode string) bool 
 // the same list one line earlier to decide whether the group is an empties bank
 // at all. One read, two questions.
 func (r *GroupResolver) atDeclaredLevel(group *nodes.Node, binTypeID *int64, levels []nodes.MaintainLevel) (bool, error) {
-	return r.atDeclaredLevelCounting(group, binTypeID, levels, func(code string) (int, error) {
+	full, err := AtDeclaredLevel(levels, BinTypeFrom(binTypeID, "the store: no type named"), func(code string) (int, error) {
 		return r.DB.CountEmptyBinsOfTypeInGroup(code, group.ID)
 	})
+	if err != nil {
+		return false, fmt.Errorf("%s: %w", group.Name, err)
+	}
+	return full, nil
 }
 
-// atDeclaredLevelCounting is atDeclaredLevel with the count supplied, so the
-// vacated-slot store can ask the same question of the group as it will stand
-// once a committed lift has emptied one child.
-func (r *GroupResolver) atDeclaredLevelCounting(group *nodes.Node, binTypeID *int64, levels []nodes.MaintainLevel,
+// AtDeclaredLevel is the level question with the count supplied: is a group
+// whose declared levels are levels at its level for the bin type stated, when
+// count answers how many empties of a type it holds. Pure, and exported so the
+// capacity gate (plan.ngrpAtDeclaredLevel) asks this function and not a copy of
+// it. The resolver's store passes the group as it stands (atDeclaredLevel); its
+// vacated-slot store passes the group as it will stand once a committed lift
+// has emptied one child. See atDeclaredLevel for the per-type / group-total
+// asymmetry and why each direction is chosen.
+func AtDeclaredLevel(levels []nodes.MaintainLevel, stated BinTypeStatement,
 	count func(binTypeCode string) (int, error)) (bool, error) {
 	if len(levels) == 0 {
 		return false, nil
 	}
 
-	if binTypeID != nil {
+	if binTypeID := stated.TypeID(); binTypeID != nil {
 		for _, l := range levels {
 			if l.BinTypeID != *binTypeID {
 				continue
 			}
 			held, cerr := count(l.BinTypeCode)
 			if cerr != nil {
-				return false, fmt.Errorf("count %s in %s: %w", l.BinTypeCode, group.Name, cerr)
+				return false, fmt.Errorf("count %s: %w", l.BinTypeCode, cerr)
 			}
 			return held >= l.Want, nil
 		}
@@ -1282,7 +1291,7 @@ func (r *GroupResolver) atDeclaredLevelCounting(group *nodes.Node, binTypeID *in
 		want += l.Want
 		n, cerr := count(l.BinTypeCode)
 		if cerr != nil {
-			return false, fmt.Errorf("count %s in %s: %w", l.BinTypeCode, group.Name, cerr)
+			return false, fmt.Errorf("count %s: %w", l.BinTypeCode, cerr)
 		}
 		held += n
 	}
