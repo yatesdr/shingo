@@ -220,8 +220,9 @@ func TestChangeoverStart_CancelReportsWhatItCancelled(t *testing.T) {
 
 	plan, err := eng.planChangeover(processID, toStyleID, false)
 	testutil.MustNoErr(t, err, "plan changeover")
-	cancelled, _, cerr := eng.cancelPreDispatchAtParticipants(plan)
-	testutil.MustNoErr(t, cerr, "cancel")
+	live, err := db.ListActiveOrders()
+	testutil.MustNoErr(t, err, "the live orders START reads")
+	cancelled := eng.cancelPreDispatchAtParticipants(plan, live, nil)
 	if len(cancelled) != 1 || cancelled[0] != orderID {
 		t.Errorf("cancelled = %v, want exactly [%d] — the abandon path needs the ID list "+
 			"to tell the operator what was taken away", cancelled, orderID)

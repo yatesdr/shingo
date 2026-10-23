@@ -153,6 +153,61 @@ func (e *Engine) SendBack(nodeID int64) (*SendBackResult, error) {
 	return &SendBackResult{Move: move, Pull: pull}, nil
 }
 
+// sendBackAtStart is START's one SEND BACK step, taken before its cancel from
+// the live orders START already read: for the fed outside of each claim the
+// changeover changes (the claims behind changingNodeSet; an Unchanged press's
+// SEND BACK is not read), SEND BACK's orders on the outside's process node
+// (plan.nodes holds it). Any in a Block status refuses START, and nothing is
+// cancelled: a faulted one with changeoverBlockerFor's faulted sentence, any
+// other with "<outside>: SEND BACK in progress — start the changeover when it
+// finishes". Otherwise the unmoved ones are returned, for the start's cancel
+// to abort with its own.
+func sendBackAtStart(plan *changeoverPlan, live []domain.Order) ([]int64, error) {
+	changing := map[string]bool{}
+	for _, n := range changingNodeSet(plan) {
+		changing[n] = true
+	}
+	claimed := map[string]bool{}
+	for i := range plan.fromClaims {
+		claimed[plan.fromClaims[i].CoreNodeName] = true
+	}
+	nodeOf := map[string]int64{}
+	for _, n := range plan.nodes {
+		nodeOf[n.CoreNodeName] = n.ID
+	}
+	var cancel []int64
+	for i := range plan.fromClaims {
+		c := &plan.fromClaims[i]
+		if !changing[c.CoreNodeName] || c.Role != protocol.ClaimRoleProduce ||
+			!domain.FedShape(c.PairedCoreNode, claimed[c.PairedCoreNode]) {
+			continue
+		}
+		id, ok := nodeOf[c.PairedCoreNode]
+		if !ok {
+			continue
+		}
+		var rows []domain.Order
+		for _, o := range live {
+			if o.ProcessNodeID != nil && *o.ProcessNodeID == id {
+				rows = append(rows, o)
+			}
+		}
+		for _, o := range domain.SendBackOrders(rows, c.PairedCoreNode) {
+			switch protocol.ChangeoverStartActionFor(o.Status) {
+			case protocol.ChangeoverStartBlock:
+				if o.Status == protocol.StatusFaulted {
+					return nil, fmt.Errorf("cannot start changeover — %s", changeoverBlockerFor(c.PairedCoreNode, o.ID, o.Status))
+				}
+				return nil, fmt.Errorf("cannot start changeover — %s: SEND BACK in progress — start the changeover when it finishes",
+					c.PairedCoreNode)
+			case protocol.ChangeoverStartCancel:
+				cancel = append(cancel, o.ID)
+			}
+		}
+	}
+	return cancel, nil
+}
+
 // sendBackRefusal is why the route did not act, in the operator's words.
 func (e *Engine) sendBackRefusal(node *processes.Node, c sendBackCell, f domain.SendBackFacts, line domain.SendBack) error {
 	switch {

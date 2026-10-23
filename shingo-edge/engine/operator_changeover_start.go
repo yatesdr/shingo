@@ -195,16 +195,19 @@ func changesNode(d ChangeoverNodeDiff) bool {
 // Best-effort per order: one failure is logged and the rest proceed. A changeover
 // half-cleared is not worse than one not cleared at all, and refusing to start
 // over a single stuck abort would put the operator back where they were.
-func (e *Engine) cancelPreDispatchAtParticipants(plan *changeoverPlan) ([]int64, []domain.Order, error) {
+//
+// live is the live orders START read once (ListActiveOrders), handed to SEND
+// BACK's step and to this; sendBack is the SEND BACK orders that step found
+// unmoved at a changing press's outside, aborted here with the rest, once.
+func (e *Engine) cancelPreDispatchAtParticipants(plan *changeoverPlan, live []domain.Order, sendBack []int64) []int64 {
+	c := e.newStartCancel()
+	for _, id := range sendBack {
+		c.abort(id, changeoverStartCancelReason+" (SEND BACK)")
+	}
 	nodes := cancelNodeSet(plan)
 	if len(nodes) == 0 {
-		return nil, nil, nil
+		return c.cancelled
 	}
-	live, err := e.db.ListActiveOrders()
-	if err != nil {
-		return nil, nil, err
-	}
-	c := e.newStartCancel()
 	chains := chainPositions(plan)
 	for i := range live {
 		o := live[i]
@@ -225,7 +228,7 @@ func (e *Engine) cancelPreDispatchAtParticipants(plan *changeoverPlan) ([]int64,
 		}
 	}
 	e.clearCancelledRuntimeSlots(plan, c.seen)
-	return c.cancelled, live, nil
+	return c.cancelled
 }
 
 // chainPositions is, per process node of a press the changeover changes, that
@@ -524,10 +527,20 @@ func (e *Engine) StartProcessChangeover(processID, toStyleID int64, calledBy, no
 	// CANCEL FIRST, THEN GATE. Reversed, the gate would refuse on the very orders
 	// the cancel is about to remove and the fix would do nothing. Both read the
 	// plan, so both run after planChangeover.
-	cancelled, live, cerr := e.cancelPreDispatchAtParticipants(plan)
-	if cerr != nil {
-		return nil, cerr
+	// ONE READ OF THE LIVE ORDERS for SEND BACK's step and the cancel: SEND
+	// BACK's own orders at a changing press's outside refuse the start while
+	// one moves, and are cancelled with the rest while none does
+	// (sendBackAtStart). The local cancel is synchronous, so the later reads
+	// meet no live SEND BACK order.
+	live, err := e.db.ListActiveOrders()
+	if err != nil {
+		return nil, err
 	}
+	sendBack, err := sendBackAtStart(plan, live)
+	if err != nil {
+		return nil, err
+	}
+	cancelled := e.cancelPreDispatchAtParticipants(plan, live, sendBack)
 	if len(cancelled) > 0 {
 		// Named at INFO, not swallowed: cancelling at initiation destroys a
 		// request the process may still need if the changeover is later
