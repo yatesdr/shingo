@@ -222,10 +222,10 @@ func (db *DB) ListDeliveredRetrieveByDeliveryNode(deliveryNode string, retrieveE
 	return orders.ListDeliveredRetrieveByDeliveryNode(db.DB, deliveryNode, retrieveEmpty)
 }
 
-// LiveOrderPlacing reports whether a live order is placing a carrier at the
-// core node, in one statement. See orders.PlacingAt.
-func (db *DB) LiveOrderPlacing(coreNode string) (orders.Placing, error) {
-	return orders.PlacingAt(db.DB, coreNode)
+// LiveOrderPlacing reports, for each node, whether a live order is placing a
+// carrier there, in one statement. See orders.PlacingAt.
+func (db *DB) LiveOrderPlacing(nodes ...string) (map[string]orders.Placing, error) {
+	return orders.PlacingAt(db.DB, nodes...)
 }
 
 // ListActiveOrdersByDeliveryNodeSet returns non-terminal orders whose

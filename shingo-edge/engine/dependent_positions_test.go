@@ -1,6 +1,8 @@
 package engine
 
 import (
+	"encoding/json"
+	"shingoedge/release"
 	"shingoedge/store/orders"
 	"slices"
 	"strings"
@@ -178,6 +180,48 @@ func TestDependentPositionSites_AnswerAsAtTheBase(t *testing.T) {
 	})
 }
 
+// TestRequestProduceSwap_ALegWithNoDeliveryNodeIsSeenComing is E3. A live leg
+// whose delivery_node is blank but whose steps set a carrier on the on-deck is a
+// carrier coming to it, so the request primes nothing there and holds. Before
+// PlacingAt answered REQUEST, the paired positions were read by delivery_node
+// and the leg was invisible: the request sent a second empty to INDEX-B.
+func TestRequestProduceSwap_ALegWithNoDeliveryNodeIsSeenComing(t *testing.T) {
+	t.Parallel()
+	db := testEngineDB(t)
+	nodeID, _, _ := seedSwapClaim(t, db, protocol.SwapModeTwoRobotPressIndex, "")
+	_, err := db.EnsureProcessNodeRuntime(nodeID)
+	testutil.MustNoErr(t, err, "ensure runtime")
+	eng := testEngine(t, db)
+	holdPlaces(t, eng, occupiedAt("PRESS"))
+	eng.SetCoreNodes([]protocol.NodeInfo{{Name: "PRESS"}, {Name: "INDEX-B"}, {Name: "MARKET-EMPTIES"}})
+	seedRuntimeUOP(t, db, nodeID)
+
+	steps := []protocol.ComplexOrderStep{
+		{Action: protocol.ActionPickup, Node: "MARKET-EMPTIES"},
+		{Action: protocol.ActionDropoff, Node: "INDEX-B"},
+	}
+	id, err := db.CreateOrder("blank-delivery-leg", protocol.OrderTypeComplex, nil, false, 1, "", "", "", "", false, "", "", "")
+	testutil.MustNoErr(t, err, "create leg")
+	facts, err := release.FactsFromSteps(steps, "PRESS").Encode()
+	testutil.MustNoErr(t, err, "facts")
+	raw, err := json.Marshal(steps)
+	testutil.MustNoErr(t, err, "steps")
+	testutil.MustNoErr(t, db.UpdateOrderStepsAndFacts(id, string(raw), facts), "store steps")
+	testutil.MustNoErr(t, db.UpdateOrderStatus(id, string(protocol.StatusDispatched)), "status")
+
+	res, err := eng.RequestProduceSwap(nodeID, 0)
+	if err == nil {
+		t.Fatalf("want the hold (a carrier is already coming to INDEX-B), got %+v", res)
+	}
+	all, err := db.ListOrders()
+	testutil.MustNoErr(t, err, "list orders")
+	for _, o := range all {
+		if o.RetrieveEmpty && o.DeliveryNode == "INDEX-B" {
+			t.Errorf("order %d primes INDEX-B a second time; the blank-delivery leg is already bringing one", o.ID)
+		}
+	}
+}
+
 // TestRequestProduceSwap_DoubleTapWhileR1TravelsIsRefused pins why hasActiveSwap
 // stays beside PlacingAt: they answer different questions. With R2 confirmed
 // and R1 still travelling (it carries the old bin out and the backfill to
@@ -203,7 +247,7 @@ func TestRequestProduceSwap_DoubleTapWhileR1TravelsIsRefused(t *testing.T) {
 	testutil.MustNoErr(t, db.UpdateOrderStatus(res.OrderB.ID, string(protocol.StatusConfirmed)), "R2 confirmed")
 	testutil.MustNoErr(t, db.UpdateOrderStatus(res.OrderA.ID, string(protocol.StatusInTransit)), "R1 travelling")
 
-	if p, err := db.LiveOrderPlacing("PRESS"); err != nil || p != orders.PlacingNone {
+	if p, err := db.LiveOrderPlacing("PRESS"); err != nil || p["PRESS"] != orders.PlacingNone {
 		t.Fatalf("placing at PRESS = %v (%v), want none: the premise of the pin", p, err)
 	}
 	_, err = eng.RequestProduceSwap(nodeID, 0)

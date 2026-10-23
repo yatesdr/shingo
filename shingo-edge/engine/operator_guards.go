@@ -6,6 +6,7 @@ import (
 
 	"shingoedge/domain"
 	"shingoedge/orders"
+	storeorders "shingoedge/store/orders"
 	"shingoedge/store/processes"
 )
 
@@ -69,8 +70,13 @@ func (e *Engine) guardNoActiveSwap(node *processes.Node, runtime *processes.Runt
 // emptied. A delivered bin is on the line, not on its way: the line reads
 // occupied and the request builds the swap that lifts it.
 //
-// One read covers the line and a press's paired positions: every live order
-// bound for any of them, in one snapshot.
+// THE DEPENDENT POSITIONS ARE ASKED BY WHAT IS PLACING THERE, NOT BY
+// delivery_node. A live leg's delivery_node is a display value Core may leave
+// blank, and a press-index leg that refills an on-deck ends elsewhere, so a
+// read by delivery_node missed the legs it had to see (E3) and the request
+// primed a position a carrier was already coming to. One PlacingAt statement
+// answers every dependent position in one snapshot; a position whose live
+// leg cannot be read reads as placing, so nothing is primed on a guess.
 //
 // LOADERS ARE EXEMPT. A loader window runs a multi-order queue on purpose, so a
 // live order there is its normal state and not a reason to refuse the next tap.
@@ -84,7 +90,7 @@ func (e *Engine) guardLineRequest(node *processes.Node, runtime *processes.Runti
 	if err := e.guardNoActiveSwap(node, runtime, claim); err != nil {
 		return nil, err
 	}
-	rows, err := e.db.ListActiveOrdersByDeliveryNodeSet(append([]string{claim.CoreNodeName}, claim.DependentPositions()...))
+	rows, err := e.db.ListActiveOrdersByDeliveryNodeSet([]string{claim.CoreNodeName})
 	if err != nil {
 		return nil, fmt.Errorf("node %s: cannot tell whether a bin is already on its way (%w) — the next request will re-ask",
 			node.Name, err)
@@ -99,7 +105,20 @@ func (e *Engine) guardLineRequest(node *processes.Node, runtime *processes.Runti
 		return nil, fmt.Errorf("node %s: order %d is already bringing a bin to %s — wait for it to land",
 			node.Name, o.ID, claim.CoreNodeName)
 	}
-	return pairedPositionsInbound(claim, rows), nil
+	dependent := claim.DependentPositions()
+	if len(dependent) == 0 {
+		return nil, nil
+	}
+	placing, err := e.db.LiveOrderPlacing(dependent...)
+	if err != nil {
+		return nil, fmt.Errorf("node %s: cannot tell whether a bin is already on its way to %v (%w) — the next request will re-ask",
+			node.Name, dependent, err)
+	}
+	inbound := make(map[string]bool, len(dependent))
+	for _, pos := range dependent {
+		inbound[pos] = placing[pos] != storeorders.PlacingNone
+	}
+	return inbound, nil
 }
 
 // guardSourceKnownDry refuses to ARM a coordinated swap pair whose supply leg

@@ -88,14 +88,14 @@ func TestLiveOrderPlacing_ReadsTheLiveRowsThroughTheLiveIndex(t *testing.T) {
 	}
 	defer db.Close()
 	counter.Reset()
-	if _, err := db.LiveOrderPlacing("A"); err != nil {
+	if _, err := db.LiveOrderPlacing("A", "B"); err != nil {
 		t.Fatalf("placing: %v", err)
 	}
 	stmts := counter.Statements()
 	if len(stmts) != 1 {
 		t.Fatalf("statements = %q, want exactly one", stmts)
 	}
-	rows, err := db.DB.Query(`EXPLAIN QUERY PLAN `+stmts[0], "A")
+	rows, err := db.DB.Query(`EXPLAIN QUERY PLAN `+stmts[0], `["A","B"]`)
 	if err != nil {
 		t.Fatalf("explain: %v", err)
 	}
@@ -163,9 +163,45 @@ func TestLiveOrderPlacing_Answers(t *testing.T) {
 			if err != nil {
 				t.Fatalf("placing: %v", err)
 			}
-			if got != tc.want {
-				t.Errorf("placing at A = %v, want %v", got, tc.want)
+			if got["A"] != tc.want {
+				t.Errorf("placing at A = %v, want %v", got["A"], tc.want)
 			}
 		})
+	}
+}
+
+// TestLiveOrderPlacing_OneStatementAnswersEachNode — the set form, as REQUEST
+// asks a press's dependent positions: one statement, an answer per asked node,
+// each node judged on its own (a leg's places name B and not A; a plain order
+// is at A only), and a node nothing places at reads none.
+func TestLiveOrderPlacing_OneStatementAnswersEachNode(t *testing.T) {
+	t.Parallel()
+	db, counter, err := OpenCounting(filepath.Join(t.TempDir(), "placing-set.db"))
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer db.Close()
+	for i, r := range [][3]string{{`[{}]`, `{"places":["B"]}`, ``}, {``, ``, `A`}} {
+		if _, err := db.DB.Exec(`INSERT INTO orders (uuid, order_type, status, steps_json, release_facts, delivery_node)
+			VALUES (?, 'complex', 'staged', ?, ?, ?)`, fmt.Sprintf("u%d", i), r[0], r[1], r[2]); err != nil {
+			t.Fatalf("insert: %v", err)
+		}
+	}
+	counter.Reset()
+	got, err := db.LiveOrderPlacing("A", "B", "C")
+	if err != nil {
+		t.Fatalf("placing: %v", err)
+	}
+	if n := len(counter.Statements()); n != 1 {
+		t.Errorf("statements = %d, want one for the whole set", n)
+	}
+	want := map[string]orders.Placing{"A": orders.PlacingCarrier, "B": orders.PlacingCarrier, "C": orders.PlacingNone}
+	if len(got) != len(want) {
+		t.Errorf("answers = %v, want one per asked node %v", got, want)
+	}
+	for n, w := range want {
+		if got[n] != w {
+			t.Errorf("placing at %s = %v, want %v", n, got[n], w)
+		}
 	}
 }

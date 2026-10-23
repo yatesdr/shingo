@@ -330,31 +330,6 @@ func (c cellLock) Unlock() {
 	c.e.sectionEnds()
 }
 
-// pairedPositionsInbound reports which of the claim's paired positions already
-// have a bin on its way: any non-terminal order bound for the position, an
-// empty to a produce press or a full to a consume press, a prime or a swap leg
-// that backfills it. A second request while the first prime is still travelling
-// adds nothing. Scoped by delivery node, so every process node sharing the
-// position is counted. Press claims only, over the rows guardLineRequest read
-// for the line and its paired positions in one query; that read fails closed,
-// because priming on a guess is how a position collects a carrier it has no
-// room for.
-func pairedPositionsInbound(claim *processes.NodeClaim, rows []orders.Order) map[string]bool {
-	dependent := claim.DependentPositions()
-	if len(dependent) == 0 {
-		return nil
-	}
-	inbound := map[string]bool{}
-	for _, pos := range dependent {
-		for i := range rows {
-			if rows[i].DeliveryNode == pos {
-				inbound[pos] = true
-			}
-		}
-	}
-	return inbound
-}
-
 // guardPairedPrimes gates a plan that primes a press's bare paired positions
 // while its line holds a bin, for both roles. No prime goes while a swap is
 // still working the cell, because that swap's own legs are what is about to

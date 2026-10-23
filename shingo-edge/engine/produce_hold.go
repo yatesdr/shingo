@@ -64,7 +64,8 @@ const (
 // read that errors, or a live leg whose release facts cannot be read, answers
 // yes, so nothing is dropped on a guess, and says so. Caller holds countMu.
 func (e *Engine) carrierComing(node *processes.Node) bool {
-	p, err := e.db.LiveOrderPlacing(node.CoreNodeName)
+	placing, err := e.db.LiveOrderPlacing(node.CoreNodeName)
+	p := placing[node.CoreNodeName]
 	switch {
 	case err != nil:
 		log.Printf("produce hold: node %s: %v -- read as a carrier coming: the hold is kept and nothing is dropped",
