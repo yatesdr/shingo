@@ -92,7 +92,8 @@ type Bin struct {
 	// it normally — the bin physically occupies its spot either way.
 	QualityHold bool `json:"quality_hold,omitempty"`
 	// TotesOnCart is bins.totes_on_cart: the totes standing on the cart,
-	// filled or empty. nil is unknown; 0 is a base. Every statement that
+	// filled or empty. nil is unknown; 0 is tops & bottoms (a tote cart with no
+	// totes on it; protocol.CarrierTopsAndBottoms). Every statement that
 	// empties a carrier writes nil (service/bin_manifest.go emptiedCarrierSET);
 	// a person declares it with the CLEAR or the admin bin edit.
 	TotesOnCart *int `json:"totes_on_cart,omitempty"`
@@ -205,5 +206,5 @@ func (b *Bin) CarrierState() protocol.CarrierState {
 
 // TotesEdit is the admin bin edit's count of totes on the cart
 // (bins.totes_on_cart). A nil *TotesEdit leaves the column alone; To nil
-// writes unknown; 0 is a base.
+// writes unknown; 0 is tops & bottoms.
 type TotesEdit struct{ To *int }

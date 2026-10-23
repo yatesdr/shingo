@@ -63,7 +63,7 @@ type NodeBinInfo struct {
 	// wherever it stands. 0 when no part is set or the part has none.
 	UOPCapacity int `json:"uop_capacity,omitempty"`
 	// TotesOnCart is Core's bins.totes_on_cart: the totes standing on the
-	// cart, filled or empty. 0 is a base, a real count, and is sent; nil is
+	// cart, filled or empty. 0 is tops & bottoms, a real count, and is sent; nil is
 	// unknown and the key is absent. TotesPerLayer is the carrier's
 	// bin_types.totes_per_layer, absent for a carrier that says none. Both
 	// omitempty pointers, so a plant that sets no tote numbers sends exactly
@@ -217,7 +217,7 @@ type BinClearRequest struct {
 	// totes. Core writes layers × the cart's own totes per layer to the
 	// cart's count of totes, after the clear and any stamp, in the clear's
 	// transaction; a carrier type that says no totes per layer gets no write.
-	// 0 declares a base. nil declares nothing and the key is absent
+	// 0 declares tops & bottoms. nil declares nothing and the key is absent
 	// (TestBinClearRequest_Golden).
 	Layers *int `json:"layers,omitempty"`
 }

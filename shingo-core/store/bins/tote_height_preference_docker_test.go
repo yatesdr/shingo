@@ -19,7 +19,9 @@ import (
 // tote_height_preference_docker_test.go — the empty finders' height ladder
 // (bins.preferredEmptyOrder), on every finder: a cart wanted at a height is
 // the exact one, else the shortest taller, else the tallest shorter, else one
-// with no count. It ranks; it never filters.
+// with no count. It ranks the stacks and filters none of them; what a want
+// keeps out is tops & bottoms alone (bins.HeightArm,
+// TestEmptyFinders_TopsAndBottomsIsNobodysOrdinaryEmpty).
 
 // toteGroup builds a group with one direct slot per cart and lands an empty
 // cart in each, in the order given, so the first has the lowest id. A nil count
@@ -143,8 +145,8 @@ func TestEmptyFinders_HeightLadder(t *testing.T) {
 	}
 }
 
-// TestEmptyFinders_OnlyShorterOrUnknownStillFound: the want ranks and never
-// filters. With a want of 5 layers and only a cart of 26 and one with no count,
+// TestEmptyFinders_OnlyShorterOrUnknownStillFound: the want ranks the stacks
+// and refuses none. With a want of 5 layers and only a cart of 26 and one with no count,
 // every finder delivers the 26; with only the unknown one left, it delivers
 // that; a cart whose type says no totes per layer is found too.
 func TestEmptyFinders_OnlyShorterOrUnknownStillFound(t *testing.T) {

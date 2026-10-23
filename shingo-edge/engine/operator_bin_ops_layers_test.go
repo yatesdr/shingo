@@ -40,7 +40,7 @@ func TestClearBin_DeclaredLayersReachCore(t *testing.T) {
 
 	three, zero := 3, 0
 	testutil.MustNoErr(t, eng.ClearBin(nodeID, "TOTE-S", false, &three), "ClearBin at 3 high")
-	testutil.MustNoErr(t, eng.ClearBin(nodeID, "TOTE-S", false, &zero), "ClearBin as a base")
+	testutil.MustNoErr(t, eng.ClearBin(nodeID, "TOTE-S", false, &zero), "ClearBin as tops & bottoms")
 	testutil.MustNoErr(t, eng.ClearBin(nodeID, "TOTE-S", false, nil), "ClearBin with no height")
 
 	mu.Lock()

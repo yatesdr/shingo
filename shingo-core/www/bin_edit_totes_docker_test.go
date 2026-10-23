@@ -74,7 +74,7 @@ func TestBinEdit_TotesOnCart(t *testing.T) {
 		expect(t, id, nil, []string{"totes_edited 40>40 ->16", "totes_edited 40>40 16>-"})
 	})
 
-	t.Run("0 is a base, and is a count", func(t *testing.T) {
+	t.Run("0 is tops & bottoms, and is a count", func(t *testing.T) {
 		id := cart("BET-CART-0")
 		update(t, id, map[string]any{"totes_on_cart": 0})
 		expect(t, id, intPtr(0), []string{"totes_edited 40>40 ->0"})

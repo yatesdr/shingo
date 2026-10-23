@@ -515,9 +515,9 @@ async function renderActions(data) {
   });
   html += '</select></div>';
   // The count of totes standing on the cart, filled or empty: blank is
-  // unknown, 0 is a base. A change of bin type blanks it on the server.
+  // unknown, 0 is tops & bottoms. A change of bin type blanks it on the server.
   var totes = (b.totes_on_cart === undefined || b.totes_on_cart === null) ? '' : String(b.totes_on_cart);
-  html += '<div class="form-group"><label title="Totes standing on the cart, filled or empty. Blank is unknown; 0 is a base. Changing the bin type blanks it.">Totes on cart</label>' +
+  html += '<div class="form-group"><label title="Totes standing on the cart, filled or empty. Blank is unknown; 0 is tops & bottoms (no totes on the cart). Changing the bin type blanks it.">Totes on cart</label>' +
     '<input type="number" id="bd-edit-totes" min="0" step="1" placeholder="unknown" value="' + esc(totes) + '" style="width:90px"></div>';
   html += '<button class="btn btn-sm" data-action="updateBinProps">Save</button>';
   html += '</div></div>';

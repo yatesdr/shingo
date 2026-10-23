@@ -100,7 +100,7 @@ func TestBinClear_DeclaresTheHeight(t *testing.T) {
 		}
 	})
 
-	t.Run("0 layers declares a base", func(t *testing.T) {
+	t.Run("0 layers declares tops & bottoms", func(t *testing.T) {
 		b := fullOfTypeAt(t, db, sd, tote, "TD-N-BASE")
 		if code := clearAt(t, h, map[string]any{"node_name": "TD-N-BASE", "layers": 0}); code != http.StatusOK {
 			t.Fatalf("clear status %d", code)
@@ -293,7 +293,7 @@ func TestNodeBins_ToteNumbers(t *testing.T) {
 	testutil.MustNoErr(t, err, "stand 16 totes")
 	b0 := fullOfTypeAt(t, db, sd, tote, "TN-N-0")
 	_, err = db.Exec(`UPDATE bins SET totes_on_cart=0 WHERE id=$1`, b0.ID)
-	testutil.MustNoErr(t, err, "stand a base")
+	testutil.MustNoErr(t, err, "stand tops & bottoms")
 	fullOfTypeAt(t, db, sd, tote, "TN-N-UNKNOWN")
 
 	for _, tc := range []struct {

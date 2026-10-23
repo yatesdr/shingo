@@ -353,7 +353,7 @@ type ContainmentKnown struct {
 }
 
 // BinTotes are a cart's tote numbers: the totes standing on it and the totes
-// a layer of its type holds. Nil is unknown; 0 totes is a base.
+// a layer of its type holds. Nil is unknown; 0 totes is tops & bottoms.
 type BinTotes struct {
 	TotesOnCart   *int
 	TotesPerLayer *int

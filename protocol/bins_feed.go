@@ -100,7 +100,7 @@ const (
 // State alone.
 //
 // TotesOnCart and TotesPerLayer are nil when the number is unknown; 0 is a
-// real count (a base: a tote cart with none on it).
+// real count (tops & bottoms: a tote cart with none on it).
 type NodeBinsRow struct {
 	Node  string `json:"node"`
 	State string `json:"state"`

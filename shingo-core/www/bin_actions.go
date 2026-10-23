@@ -343,7 +343,7 @@ func (h *Handlers) binUpdate(b *domain.Bin, params json.RawMessage) error {
 		Description *string `json:"description"`
 		BinTypeID   *int64  `json:"bin_type_id"`
 		// TotesOnCart: absent leaves the count standing, null is unknown, 0 is
-		// a base. A re-type blanks it whatever is sent (bins.Update).
+		// tops & bottoms. A re-type blanks it whatever is sent (bins.Update).
 		TotesOnCart optionalCount `json:"totes_on_cart"`
 	}
 	if err := json.Unmarshal(params, &p); err != nil && len(params) > 0 {

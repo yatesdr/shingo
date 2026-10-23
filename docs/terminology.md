@@ -210,7 +210,7 @@ One cycle of the manufacturing process supported by the bin's parts. A bin with 
 
 ### Totes on Cart
 
-How many totes stand on a tote cart, filled or empty: `bins.totes_on_cart`. **NULL is unknown** (a cart nobody has declared, or one emptied since); **0 is a base**, a cart with no totes on it. A base is a count, not a bin type: there is no base type. Every statement that empties a carrier writes it NULL; a person declares a height with the CLEAR (layers × the cart's own type's totes per layer); the admin bin edit sets it; an admin re-type blanks it; Core derives it at a tote press when the cart outside the press is lifted (what the press's build drew from it). "Bare" keeps its own two meanings and never means a base.
+How many totes stand on a tote cart, filled or empty: `bins.totes_on_cart`. **NULL is unknown** (a cart nobody has declared, or one emptied since); **0 is tops & bottoms** (below), a cart with no totes on it. It is a count, not a bin type: there is no tops & bottoms type. Every statement that empties a carrier writes it NULL; a person declares a height with the CLEAR (layers × the cart's own type's totes per layer, 0 declaring tops & bottoms); the admin bin edit sets it; an admin re-type blanks it; Core derives it at a tote press when the cart outside the press is lifted (what the press's build drew from it): an outside known at 0 stays 0, and one the count overdrew is written unknown, never 0. "Bare" is the marker only (a carrier type's bare marker: a cart with no bin on it) and never means tops & bottoms or a vacant position.
 
 ### Totes per Layer
 
@@ -218,7 +218,15 @@ How many totes make one layer on a cart of a bin type: `bin_types.totes_per_laye
 
 ### Tote Layers
 
-How many layers of totes a payload's full stack stands: `payloads.tote_layers`, NULL when the part states none. It is the height an empty is wanted at when it is set down anywhere but the press of a cell fed from behind (there, 0: a base). An empty is ranked by it and never refused for it.
+How many layers of totes a payload's full stack stands: `payloads.tote_layers`, NULL when the part states none. It is the height an empty is wanted at when it is set down anywhere but the press of a cell fed from behind (there, 0: tops & bottoms first, else the shortest stack). An empty is ranked by it and never refused for it, but for tops & bottoms, which a stack is never offered.
+
+### Tops & Bottoms
+
+A tote cart at a known 0 totes with no part on it: the cart's frame alone (`protocol.CarrierTopsAndBottoms`). It is nobody's ordinary empty: a want of no height, or of a stack, never takes it; a want of 0 (the press of a cell fed from behind) takes it first; a want of it alone (a maintained group's tops & bottoms row) takes nothing else. A maintained group keeps it on a row of its own (`node_maintain_layer_levels` at 0 layers), a cap beside the type's level that neither takes the other's room; the keeper never fetches it (it is made at the unloader, and the card asks the crew for it), and a group that keeps the type with no such row refuses one. On a cell's own position it belongs to that cell, so a press's index leg lifts it whatever height the press would ask for. An unknown count is not tops & bottoms: it is unverified.
+
+### Vacant
+
+A position with nothing standing on it. A press's on-deck (its outside or second paired position) that is vacant when the pair reserves has its carrier fetched from the claim's inbound source, unless another live order is already bringing one there, when the pair waits ("Waiting for outside material"). Never "bare", which is the marker.
 
 ### UOP per Tote
 
@@ -292,7 +300,7 @@ The node named by a claim's `inbound_staging`: where a single-robot or two-robot
 
 ### Keep-Staged Node (the spot)
 
-The node named by a claim's `keep_staged_node`: one more node the line's full or empty comes from, instead of the inbound source, with one spare kept standing on it. Naming one is what turns keep-staged on, in every swap mode (sequential, single-robot, two-robot, press-index); blank is off. A REQUEST's swap fetches its carrier from the spot when a right spare stands there, and from the inbound source when none does, as a line with no spot would; the REQUEST orders nothing for the spot. The keep-staged keeper refills the spot from the inbound source by plain retrieves when it reads it bare: on its sweep, at a lift from the spot, and at the end of an order of the line. A bin on the spot that is not a spare is left where it stands: the keeper orders nothing onto it and the board names it, and a swap that stages on the spot is held by Core (waiting for slot, dropoff occupied) until a person moves it. Only a changeover's start and cancel, and the save that clears the spot, send a spare back. It may be the same node as the claim's inbound staging (the robot waits under the spare); no other claim may name it, and a lane is refused on it as on every other leg of a claim. The flag it replaced (`keep_staged`) armed a spot on `inbound_staging`, which gave that field a second meaning.
+The node named by a claim's `keep_staged_node`: one more node the line's full or empty comes from, instead of the inbound source, with one spare kept standing on it. Naming one is what turns keep-staged on, in every swap mode (sequential, single-robot, two-robot, press-index); blank is off. A REQUEST's swap fetches its carrier from the spot when a right spare stands there, and from the inbound source when none does, as a line with no spot would; the REQUEST orders nothing for the spot. The keep-staged keeper refills the spot from the inbound source by plain retrieves when it reads it vacant: on its sweep, at a lift from the spot, and at the end of an order of the line. A bin on the spot that is not a spare is left where it stands: the keeper orders nothing onto it and the board names it, and a swap that stages on the spot is held by Core (waiting for slot, dropoff occupied) until a person moves it. Only a changeover's start and cancel, and the save that clears the spot, send a spare back. It may be the same node as the claim's inbound staging (the robot waits under the spare); no other claim may name it, and a lane is refused on it as on every other leg of a claim. The flag it replaced (`keep_staged`) armed a spot on `inbound_staging`, which gave that field a second meaning.
 
 ### Changeover
 

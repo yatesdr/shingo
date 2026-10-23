@@ -160,11 +160,12 @@ func TestEmptyingStatements_ColumnLists(t *testing.T) {
 	})
 }
 
-// TestEmptyingStatements_AFullBuiltOnABaseReadsUnknownOnceEmptied: a base is a
-// cart at 0 totes, and a full built on it carries the totes it was built with;
+// TestEmptyingStatements_AFullBuiltOnTopsAndBottomsReadsUnknownOnceEmptied: tops
+// & bottoms is a cart at 0 totes, and a full built on it carries the totes it
+// was built with;
 // what stands on it once it is emptied nobody has said, so it reads unknown,
 // not 0. Through each of the three emptying statements.
-func TestEmptyingStatements_AFullBuiltOnABaseReadsUnknownOnceEmptied(t *testing.T) {
+func TestEmptyingStatements_AFullBuiltOnTopsAndBottomsReadsUnknownOnceEmptied(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
 		name  string
@@ -193,11 +194,11 @@ func TestEmptyingStatements_AFullBuiltOnABaseReadsUnknownOnceEmptied(t *testing.
 			svc := NewBinManifestService(db, EpochAnnounce{})
 			bin := createTestBin(t, db, sd.StorageNode.ID, "BASE-"+strings.ReplaceAll(tc.name, " ", "-"), "", 0)
 			_, err := db.Exec(`UPDATE bins SET totes_on_cart=0 WHERE id=$1`, bin.ID)
-			testutil.MustNoErr(t, err, "stand the cart as a base")
+			testutil.MustNoErr(t, err, "stand the cart as tops & bottoms")
 			_, err = svc.SetForProduction(bin.ID, `{"items":[]}`, "PART-A", 100, protocol.DeclaredByLifecycle)
-			testutil.MustNoErr(t, err, "build a full on the base")
+			testutil.MustNoErr(t, err, "build a full on tops & bottoms")
 			if got := binRowJSON(t, db, bin.ID)["totes_on_cart"]; got != float64(0) {
-				t.Fatalf("the full built on a base reads totes_on_cart %v, want 0 (the load leaves the count as it stands)", got)
+				t.Fatalf("the full built on tops & bottoms reads totes_on_cart %v, want 0 (the load leaves the count as it stands)", got)
 			}
 
 			tc.empty(t, db, svc, sd, bin.ID)

@@ -130,7 +130,7 @@ CREATE TABLE IF NOT EXISTS bins (
     -- the lifted carrier's (refused as after_lift).
     lifted_at          TIMESTAMPTZ,
     -- v161: the totes standing on the cart, filled or empty. NULL is unknown;
-    -- 0 is a base. Every statement that empties a carrier writes NULL.
+    -- 0 is tops & bottoms. Every statement that empties a carrier writes NULL.
     totes_on_cart      INTEGER CHECK (totes_on_cart >= 0),
     -- v162: when a robot last lifted the bin. Every lift writes it, in the
     -- lift's own UPDATE; nothing clears it. The vacate hold's floor.

@@ -227,9 +227,10 @@ func resolveBinUOPContext(tx *sql.Tx, binID int64, detail json.RawMessage) (audi
 //
 // totes_on_cart GOES TO UNKNOWN, not to 0. It counts the totes standing on the
 // cart, filled or empty, and what stands on a cart once its contents are gone
-// nobody has said: a full built on a base (0) is not a base again once
-// emptied. A person declares the number with the CLEAR (DeclareTotesTx), after
-// this statement. Pin: TestEmptyingStatements_AFullBuiltOnABaseReadsUnknownOnceEmptied.
+// nobody has said: a full built on tops & bottoms (0) is not tops & bottoms
+// again once emptied. A person declares the number with the CLEAR
+// (DeclareTotesTx), after this statement. Pin:
+// TestEmptyingStatements_AFullBuiltOnTopsAndBottomsReadsUnknownOnceEmptied.
 const emptiedCarrierSET = `payload_code='', manifest=NULL, uop_remaining=0,
 	manifest_confirmed=false, loaded_at=NULL, undeclared_carrier_at=NULL, totes_on_cart=NULL`
 
@@ -367,7 +368,7 @@ func (s *BinManifestService) ClearForReuseTx(tx *sql.Tx, binID int64, binTypeID 
 // read from the type the cart has NOW, so a call after a stamp reads the
 // stamped type (stage 2's SEND ON: the carrier's number, not the bare
 // marker's). A type that says no totes per layer gets no write and no ledger
-// row. layers 0 declares a base.
+// row. layers 0 declares tops & bottoms.
 //
 // Called after the clear, in its transaction: the clear has just written the
 // count to unknown (emptiedCarrierSET), so a ledger row's "from" is always

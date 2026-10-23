@@ -516,7 +516,9 @@ not know, or one with no bin, is `occupied: false` and nothing else. **No count 
 which nothing draws from while it waits: `stocked` is the bin's count above zero, so a count that moves without
 crossing zero sends nothing. No time that moves and nothing about the asker is in it. Each group line is an outbound group,
 with levels, of a consume loader with a watched window: `group`, `wants` (`bin_type`, `layers`, `want`) and
-`assignments` (`node`, `bin_type`, `layers`). A plant with no levels sends `groups: []`.
+`assignments` (`node`, `bin_type`, `layers`). `layers` absent is the type at any height; a number is a wanted
+height in layers, and `0` is tops & bottoms (a tote cart with no totes on it), the type's own row, sent only where
+the group keeps one. A plant with no levels sends `groups: []`.
 
 #### EdgeStale
 

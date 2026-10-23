@@ -59,7 +59,7 @@ func TestNodeBinsSnapshot_Golden(t *testing.T) {
 				`"inbound":[{"order_uuid":"ord-2","bin_type":"KD","payload":"PART-A","from":"SM-1.L1"}]}`,
 		},
 		{
-			name: "a base: a bare cart with no totes on it",
+			name: "a bare cart at 0 totes: the marker, not tops & bottoms",
 			v: NodeBinsRow{
 				Node: "SMN_A2", State: BinsStateOccupied, Occupied: true, Bins: 1, BinID: 28, BinLabel: "TOTE-2",
 				BinTypeCode: "TOTE-BARE", Bare: true, Epoch: 1, TotesOnCart: intPtr(0),
