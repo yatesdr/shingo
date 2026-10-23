@@ -475,8 +475,10 @@ func applyToolingChangeover(p changeover.Plan, nodes []processes.Node, t tooling
 		// A CARRIED-OVER BIN IS NOT CLEARED AND REFILLED, so its leg is
 		// replaced rather than edited: there is no outbound destination to
 		// retarget and no inbound leg to hold, because the bin that comes back
-		// is the bin that left.
-		if staging := t.roundTrip[a.CoreNodeName]; staging != "" {
+		// is the bin that left. Not for an Add: its position stands empty
+		// (ApplyNodeState), so no bin leaves and the carrier it brings is held
+		// at staging below like any other.
+		if staging := t.roundTrip[a.CoreNodeName]; staging != "" && a.Situation != string(SituationAdd) {
 			setCarryoverRoundTrip(a, staging)
 			continue
 		}

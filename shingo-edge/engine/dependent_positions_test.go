@@ -142,6 +142,11 @@ func TestDependentPositionSites_AnswerAsAtTheBase(t *testing.T) {
 			if got := pressHasVacantPosition(d, vacantAt(c.vacant...)); got != c.want {
 				t.Errorf("vacant %v: %v, want %v", c.vacant, got, c.want)
 			}
+			evac := d
+			evac.Situation = SituationEvacuate
+			if got := pressHasVacantPosition(evac, vacantAt(c.vacant...)); got != c.want {
+				t.Errorf("a tooling evacuation, vacant %v: %v, want %v", c.vacant, got, c.want)
+			}
 		}
 	})
 

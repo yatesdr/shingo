@@ -101,6 +101,31 @@ func TestCarryover_OutboundStagingWalksTheSameBinOutAndBack(t *testing.T) {
 	}
 }
 
+// A VACANT CARRY-OVER POSITION HAS NO BIN TO WALK OUT. outbound_staging hops
+// the bin standing there out and back; with none standing there it is brought
+// the part's bin, held at inbound staging, and never round-tripped (a round
+// trip's lift would wait at Core for good). The occupied position still walks
+// its own bin out and back.
+func TestCarryover_AVacantPositionIsBroughtABinNotRoundTripped(t *testing.T) {
+	t.Parallel()
+	from, to := carryoverPress(domain.CarryoverOutboundStaging)
+	plan := toolingTestPlanSeated(t, []processes.NodeClaim{from}, []processes.NodeClaim{to},
+		map[string]string{"PART-A": "BIG"}, seats(map[string]Seat{"PRESS": SeatBin, "PRESS_B": SeatEmpty}),
+		"PRESS", "PRESS_B")
+
+	vacant := allSteps(actionFor(t, plan, "PRESS_B"))
+	if strings.Contains(vacant, "pickup@PRESS_B") || strings.Contains(vacant, "OUT-STAGE") {
+		t.Errorf("the vacant position is round-tripped: %s", vacant)
+	}
+	if !strings.Contains(vacant, "wait@IN-STAGE") {
+		t.Errorf("the vacant position's bin is not held at staging: %s", vacant)
+	}
+	if got, want := stepString(actionFor(t, plan, "PRESS").SupplyOrder),
+		"pickup@PRESS,dropoff@OUT-STAGE,wait@OUT-STAGE,pickup@OUT-STAGE,dropoff@PRESS"; got != want {
+		t.Errorf("the occupied position's round trip changed.\n got = %s\nwant = %s", got, want)
+	}
+}
+
 // A DIFFERENT PART IS NOT A CARRY-OVER. The disposition is never consulted:
 // the bin has to leave whatever it says, and pretending otherwise would leave
 // the wrong part on the press.

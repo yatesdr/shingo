@@ -192,8 +192,10 @@ func FanOutPressIndexDifferentBinType(diffs []ChangeoverNodeDiff, binTypes map[s
 // position, and ApplyNodeState, which runs after, turns each vacant position's
 // Swap into Add (just deliver) and leaves each held one a per-position swap.
 //
-// A Swap only. An Evacuate is the tooling choreography's. state nil (no node
-// read) splits on bin type alone.
+// A Swap or a tooling Evacuate: a marked press with a vacant position splits
+// the same way, and ApplyNodeState gives the vacant position its refill alone
+// (the decorator still holds that carrier at staging until the tooling is
+// done). state nil (no node read) splits on bin type alone.
 func FanOutPressIndex(diffs []ChangeoverNodeDiff, binTypes map[string]string, state func(coreNode string) NodeState) []ChangeoverNodeDiff {
 	out := make([]ChangeoverNodeDiff, 0, len(diffs))
 	for _, d := range diffs {
@@ -206,11 +208,13 @@ func FanOutPressIndex(diffs []ChangeoverNodeDiff, binTypes map[string]string, st
 	return out
 }
 
-// pressHasVacantPosition reports whether a press-index Swap's outgoing positions
-// include one whose seat says its carrier has gone. An unknown seat reads
-// occupied, as a missing occupancy answer does on REQUEST.
+// pressHasVacantPosition reports whether a press-index Swap's or tooling
+// Evacuate's outgoing positions include one whose seat says its carrier has
+// gone. An unknown seat reads occupied, as a missing occupancy answer does on
+// REQUEST.
 func pressHasVacantPosition(d ChangeoverNodeDiff, state func(coreNode string) NodeState) bool {
-	if state == nil || d.Situation != SituationSwap || !d.FromClaim.IsPressIndex() || !d.ToClaim.IsPressIndex() {
+	if state == nil || (d.Situation != SituationSwap && d.Situation != SituationEvacuate) ||
+		!d.FromClaim.IsPressIndex() || !d.ToClaim.IsPressIndex() {
 		return false
 	}
 	occupancy := map[string]bool{}
@@ -711,7 +715,13 @@ type NodeState struct {
 //     SituationAdd. A swap's legs lift the node's bin before they set the new
 //     one down, and a leg that lifts at an empty node waits at Core for a bin
 //     that is not coming (the allocator holds it, with no limit). There is
-//     nothing to take away, so the new style's bin is simply brought.
+//     nothing to take away, so the new style's bin is simply brought. The same
+//     holds for ONE press position's tooling Evacuate (the fan-out's
+//     per-position diff): its clearance lifts first too, and an empty
+//     position is already clear (SEND BACK dry, then START, left the outside so:
+//     the press tranche's sim, 2026-10-23). The tooling decorator holds the
+//     Add's carrier at staging until the tooling is done, as it holds every
+//     inbound leg of the cell, and gives it no carry-over round trip.
 //
 //   - ALREADY THE NEW PART IS DONE. A Swap or Add whose node already holds the
 //     incoming style's part is planned Unchanged and marked AlreadyDone. The
@@ -734,22 +744,30 @@ type NodeState struct {
 //     the same ruling as the reuse shortcut's.
 //
 // Evacuate is the tooling choreography, whose clearance does not depend on
-// what the carrier is; it is never touched. A nil state changes nothing.
+// what the carrier is: the done rule never touches it, and a whole press's
+// Evacuate is left as it is (the fan-out has already split one with a vacant
+// position). A nil state changes nothing.
 func ApplyNodeState(diffs []ChangeoverNodeDiff, state func(coreNodeName string) NodeState) []ChangeoverNodeDiff {
 	if state == nil {
 		return diffs
 	}
 	for i := range diffs {
 		d := &diffs[i]
-		if d.ToClaim == nil || (d.Situation != SituationSwap && d.Situation != SituationAdd) {
+		if d.ToClaim == nil {
+			continue
+		}
+		// One press position's tooling Evacuate takes the empty rule and never
+		// the done rule.
+		positionEvacuate := d.Situation == SituationEvacuate && d.ToClaim.SwapMode == pressPositionSwapMode
+		if d.Situation != SituationSwap && d.Situation != SituationAdd && !positionEvacuate {
 			continue
 		}
 		st := state(d.CoreNodeName)
-		if d.Situation == SituationSwap && st.Seat == SeatEmpty {
+		if st.Seat == SeatEmpty && (d.Situation == SituationSwap || positionEvacuate) {
 			d.Situation = SituationAdd
 			continue
 		}
-		if holdsTheIncomingPart(*d, st) {
+		if !positionEvacuate && holdsTheIncomingPart(*d, st) {
 			d.Situation = SituationUnchanged
 			d.AlreadyDone = true
 		}

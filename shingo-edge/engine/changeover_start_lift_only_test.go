@@ -179,24 +179,31 @@ func TestChangeoverStart_LeavesALiftOnlyOrderAloneAfterItsLift(t *testing.T) {
 }
 
 // TestApplyNodeState_EmptyIsAdd_ThreeAnswers: a Swap whose seat says its carrier has
-// gone is planned as a refill only; a seat holding a bin, or one that cannot
-// say, leaves the swap as it is. Nothing but a Swap is touched.
+// gone is planned as a refill only, and so is one press position's tooling
+// Evacuate (the fan-out's per-position diff); a seat holding a bin, or one that
+// cannot say, leaves either as it is. A whole claim's Evacuate and a Drop are
+// not touched.
 func TestApplyNodeState_EmptyIsAdd_ThreeAnswers(t *testing.T) {
 	t.Parallel()
 	to := &processes.NodeClaim{CoreNodeName: "N", PayloadCode: "NEW"}
+	position := &processes.NodeClaim{CoreNodeName: "N", PayloadCode: "NEW", SwapMode: pressPositionSwapMode}
 	for _, tc := range []struct {
 		name      string
 		situation ChangeoverSituation
+		claim     *processes.NodeClaim
 		seat      Seat
 		want      ChangeoverSituation
 	}{
-		{"swap, no bin", SituationSwap, SeatEmpty, SituationAdd},
-		{"swap, a bin", SituationSwap, SeatBin, SituationSwap},
-		{"swap, unknown", SituationSwap, SeatUnknown, SituationSwap},
-		{"evacuate, no bin", SituationEvacuate, SeatEmpty, SituationEvacuate},
-		{"drop, no bin", SituationDrop, SeatEmpty, SituationDrop},
+		{"swap, no bin", SituationSwap, to, SeatEmpty, SituationAdd},
+		{"swap, a bin", SituationSwap, to, SeatBin, SituationSwap},
+		{"swap, unknown", SituationSwap, to, SeatUnknown, SituationSwap},
+		{"a position's evacuate, no bin", SituationEvacuate, position, SeatEmpty, SituationAdd},
+		{"a position's evacuate, a bin", SituationEvacuate, position, SeatBin, SituationEvacuate},
+		{"a position's evacuate, unknown", SituationEvacuate, position, SeatUnknown, SituationEvacuate},
+		{"a claim's evacuate, no bin", SituationEvacuate, to, SeatEmpty, SituationEvacuate},
+		{"drop, no bin", SituationDrop, to, SeatEmpty, SituationDrop},
 	} {
-		diffs := []ChangeoverNodeDiff{{CoreNodeName: "N", Situation: tc.situation, ToClaim: to}}
+		diffs := []ChangeoverNodeDiff{{CoreNodeName: "N", Situation: tc.situation, ToClaim: tc.claim}}
 		got := ApplyNodeState(diffs, func(string) NodeState { return NodeState{Seat: tc.seat} })[0].Situation
 		if got != tc.want {
 			t.Errorf("%s: situation %s, want %s", tc.name, got, tc.want)

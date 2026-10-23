@@ -124,9 +124,19 @@ func outboundOf(t *testing.T, a changeover.NodeAction) string {
 // produced, tooling edits it.
 func toolingTestPlan(t *testing.T, from, to []processes.NodeClaim, binTypes map[string]string, nodeNames ...string) changeover.Plan {
 	t.Helper()
+	return toolingTestPlanSeated(t, from, to, binTypes, nil, nodeNames...)
+}
+
+// toolingTestPlanSeated is toolingTestPlan with the seats the planner reads
+// (nodeStateAt): the vacancy fan-out and ApplyNodeState run as planChangeover
+// runs them. nil reads no seat, which changes nothing.
+func toolingTestPlanSeated(t *testing.T, from, to []processes.NodeClaim, binTypes map[string]string,
+	state func(string) NodeState, nodeNames ...string) changeover.Plan {
+	t.Helper()
 	diffs := DiffStyleClaims(from, to)
-	diffs = FanOutPressIndexDifferentBinType(diffs, binTypes)
+	diffs = FanOutPressIndex(diffs, binTypes, state)
 	diffs = FanOutPressIndexCrossMode(diffs, binTypes)
+	diffs = ApplyNodeState(diffs, state)
 
 	nodes := make([]processes.Node, 0, len(nodeNames))
 	for i, n := range nodeNames {
@@ -393,6 +403,66 @@ func TestToolingSameBinTypeKeepsTheProvenShape(t *testing.T) {
 			"A leftover whole-cell action means the press is being evacuated twice, once with "+
 			"the index motion a tool change forbids.", n, strings.Join(have, ","))
 	}
+}
+
+// seats is a seat reader over named seats; a node not named reads unknown.
+func seats(at map[string]Seat) func(string) NodeState {
+	return func(n string) NodeState { return NodeState{Seat: at[n]} }
+}
+
+// TestTooling_AVacantMarkedPositionIsBroughtItsBinOnly: a marked position whose
+// seat says its carrier has gone is not lifted. Its clearance would wait at
+// Core for a bin that is not coming, and the changeover with it (the press
+// tranche's sim, 2026-10-23: SEND BACK dry, then START, left the outside
+// so). It is brought the incoming style's bin, held at inbound staging as every
+// inbound leg of the cell is. Its occupied partner is cleared as before. With
+// the same carrier the vacancy splits the press; with another the bin type
+// already has. A seat that cannot say keeps the lift.
+func TestTooling_AVacantMarkedPositionIsBroughtItsBinOnly(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name     string
+		toPart   string
+		binTypes map[string]string
+	}{
+		{"same carrier", "PART-A", map[string]string{"PART-A": "BIG"}},
+		{"another carrier", "PART-B", map[string]string{"PART-A": "BIG", "PART-B": "SMALL"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			from := pressClaim("PRESS", "PRESS_B", "PART-A")
+			from.ChangeoverEvacNodes = []string{"PRESS", "PRESS_B"}
+			to := pressClaim("PRESS", "PRESS_B", tc.toPart)
+			to.InboundStaging = "IN-STAGE"
+			plan := toolingTestPlanSeated(t, []processes.NodeClaim{from}, []processes.NodeClaim{to}, tc.binTypes,
+				seats(map[string]Seat{"PRESS": SeatBin, "PRESS_B": SeatEmpty}), "PRESS", "PRESS_B")
+
+			vacant := allSteps(actionFor(t, plan, "PRESS_B"))
+			if strings.Contains(vacant, "pickup@PRESS_B") {
+				t.Errorf("the vacant marked position is lifted: %s\nThe lift waits at Core for good.", vacant)
+			}
+			if !strings.Contains(vacant, "wait@IN-STAGE") || !strings.Contains(vacant, "PRESS_B") {
+				t.Errorf("the vacant marked position is not brought its bin, held at staging: %s", vacant)
+			}
+			occupied := allSteps(actionFor(t, plan, "PRESS"))
+			if !strings.Contains(occupied, "pickup@PRESS,") || !strings.Contains(occupied, "wait@IN-STAGE") {
+				t.Errorf("the occupied marked position is not cleared and refilled as before: %s", occupied)
+			}
+		})
+	}
+	t.Run("a seat that cannot say", func(t *testing.T) {
+		t.Parallel()
+		from := pressClaim("PRESS", "PRESS_B", "PART-A")
+		from.ChangeoverEvacNodes = []string{"PRESS", "PRESS_B"}
+		to := pressClaim("PRESS", "PRESS_B", "PART-B")
+		to.InboundStaging = "IN-STAGE"
+		plan := toolingTestPlanSeated(t, []processes.NodeClaim{from}, []processes.NodeClaim{to},
+			map[string]string{"PART-A": "BIG", "PART-B": "SMALL"},
+			seats(map[string]Seat{"PRESS": SeatBin, "PRESS_B": SeatUnknown}), "PRESS", "PRESS_B")
+		if got := allSteps(actionFor(t, plan, "PRESS_B")); !strings.Contains(got, "pickup@PRESS_B") {
+			t.Errorf("an unknown seat lost its lift: %s", got)
+		}
+	})
 }
 
 // ---------------------------------------------------------------------------
