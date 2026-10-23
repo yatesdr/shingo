@@ -42,7 +42,7 @@ type SwapDispatch struct {
 	AutoConfirmA bool
 
 	// StepsB is the second leg of a pair, nil for a mode whose swap is one
-	// order. Only a pair is checked against a dry source (guardSourceKnownDry).
+	// order.
 	StepsB       []protocol.ComplexOrderStep
 	AutoConfirmB bool
 }

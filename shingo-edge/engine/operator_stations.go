@@ -268,18 +268,14 @@ func (e *Engine) requestNodeFromClaim(node *processes.Node, runtime *processes.R
 			node.Name, plan.DowngradedFromSwapMode, len(plan.Chain.Clear), plan.Chain.Prime)
 	}
 
-	// Do not ARM A PAIR INTO A SOURCE ALREADY KNOWN TO BE DRY. This is the
-	// Springfield 2026-07-21 churn's fix at its cause: two legs that cannot
-	// source were created hundreds of times per changeover, and every mechanism
-	// downstream — including the spare that is now deleted — was coping with
-	// orders that should never have existed. Refusing here creates nothing, so
-	// nothing churns; the level keeper re-asks. A pair only: a single-robot swap
-	// is one order and waits for stock.
-	if plan.Dispatch != nil && plan.Dispatch.StepsB != nil {
-		if err := e.guardSourceKnownDry(node, claim); err != nil {
-			return nil, err
-		}
-	}
+	// A SOURCE CORE REPORTS DRY QUEUES (owner: "queue is correct, it's trying
+	// to source a part"). The pair is created and parks on waiting_for_material,
+	// and goes when stock lands. The Springfield 2026-07-21 churn that a refusal
+	// here once prevented (two legs created and cancelled together, hundreds of
+	// times in one changeover) needed the evac to die alone and cancel its
+	// supply; under the pair rule Core parks both legs of a pair together, and
+	// the episode counts the parked pair, so nothing re-arms it
+	// (TestDrySource_APairQueuesAndDoesNotReArm).
 
 	e.clearStrandedPark(node, claim, cell.park)
 	e.rearmKeepStaged(node, claim)

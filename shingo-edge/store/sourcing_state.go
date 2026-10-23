@@ -10,7 +10,6 @@ package store
 import (
 	"database/sql"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"time"
 
@@ -180,25 +179,6 @@ func (db *DB) querySourcingState(query string, args ...any) ([]protocol.Sourcing
 		out = append(out, s)
 	}
 	return out, rows.Err()
-}
-
-// PayloadKnownAbsent reports whether Core's feed names the payload absent: no bin
-// of it anywhere, free or spoken for. Absent is a plant-wide fact about the
-// payload, carried on every red verdict that misses it, so any row answers; no
-// row naming it (no feed yet, an older Core, or stock that is only spoken for)
-// is false, the side that arms. One local read: the dry-source guard's whole
-// cost, where it was a round trip to Core.
-func (db *DB) PayloadKnownAbsent(payload string) (bool, error) {
-	var hit int
-	err := db.QueryRow(`SELECT 1 FROM sourcing_state, json_each(sourcing_state.absent)
-		WHERE json_each.value = ? LIMIT 1`, payload).Scan(&hit)
-	if errors.Is(err, sql.ErrNoRows) {
-		return false, nil
-	}
-	if err != nil {
-		return false, fmt.Errorf("sourcing_state absent %s: %w", payload, err)
-	}
-	return true, nil
 }
 
 // nonEmptyStrings normalizes a nil slice to an empty one so it marshals as [].

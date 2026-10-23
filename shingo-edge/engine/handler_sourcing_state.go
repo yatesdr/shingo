@@ -100,9 +100,9 @@ func (e *Engine) SourcingStateForProcess(process string) ([]protocol.SourcingSta
 // a refusal dead-ended the operator with idle robots (Springfield NF SPOT 3,
 // 2026-06-03). Core's pair rule parks both legs of a pair together on the
 // supply's material wait, so a stockless changeover queues its pairs rather
-// than half-dispatching them. The steady-state door is different on purpose:
-// guardSourceKnownDry (operator_guards.go) refuses to arm a pair into a
-// known-dry source, because a level-keeper tick has nobody standing at it.
+// than half-dispatching them. The steady-state door queues the same way: a
+// request into a source Core reports dry arms its pair, which parks on
+// waiting_for_material until stock lands (requestNodeFromClaim).
 //
 // It reads the sourcing feed's verdict for the to-style, held here, with no
 // round trip; the start used to ask Core and refused when Core did not

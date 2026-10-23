@@ -188,16 +188,14 @@ func TestSourcingState_SnapshotWritesOnlyDifferences(t *testing.T) {
 	}
 }
 
-// D2.5 · the absent fact is cached with the verdict, a snapshot whose only
-// change is it rewrites the row, and the guard's question reads it from any row.
-func TestSourcingState_AbsentIsCachedAndAnswersTheGuard(t *testing.T) {
+// D2.5 · the absent fact is cached with the verdict, and a snapshot whose only
+// change is it rewrites the row. Nothing on the Edge reads it since the dry
+// source guard went (a request into a dry source queues); the column stays.
+func TestSourcingState_AbsentIsCachedThroughASnapshot(t *testing.T) {
 	t.Parallel()
 	db := coverageDB(t)
 	busy := srcState("SNF2", "A", "red", "BIN-X")
 	testutil.MustNoErr(t, db.ReplaceSourcingState([]protocol.SourcingState{busy}), "busy")
-	if absent, err := db.PayloadKnownAbsent("BIN-X"); err != nil || absent {
-		t.Fatalf("missing but spoken for: absent=%v (%v), want false", absent, err)
-	}
 
 	dry := busy
 	dry.Absent = []string{"BIN-X"}
@@ -206,10 +204,5 @@ func TestSourcingState_AbsentIsCachedAndAnswersTheGuard(t *testing.T) {
 	testutil.MustNoErr(t, err, "list")
 	if len(got) != 1 || len(got[0].Absent) != 1 || got[0].Absent[0] != "BIN-X" {
 		t.Fatalf("absent did not round-trip through a snapshot that changed only it: %+v", got)
-	}
-	for payload, want := range map[string]bool{"BIN-X": true, "BIN-Y": false} {
-		if absent, err := db.PayloadKnownAbsent(payload); err != nil || absent != want {
-			t.Errorf("PayloadKnownAbsent(%s) = %v (%v), want %v", payload, absent, err, want)
-		}
 	}
 }

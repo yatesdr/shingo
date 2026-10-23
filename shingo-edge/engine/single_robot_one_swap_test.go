@@ -103,24 +103,17 @@ func TestOneLiveSwap_SecondRequestIsRefused(t *testing.T) {
 	}
 }
 
-// The dry-source refusal is for arming two robots at once. A single-robot
-// swap is one order and is created against a dry part as before, to wait for
-// stock; a two-robot pair is not armed.
-func TestOneLiveSwap_DrySourceRefusesOnlyAPair(t *testing.T) {
+// A dry source queues, in every mode: a single-robot swap and a two-robot
+// pair are both created against a dry part, to wait for stock (W6: the
+// refusal that held a pair back, guardSourceKnownDry, is retired).
+func TestOneLiveSwap_DrySourceQueuesEveryMode(t *testing.T) {
 	t.Parallel()
-	for _, c := range []struct {
-		mode    protocol.SwapMode
-		refused bool
-	}{
-		{protocol.SwapModeSingleRobot, false},
-		{protocol.SwapModeTwoRobot, true},
-	} {
-		t.Run(string(c.mode), func(t *testing.T) {
+	for _, mode := range []protocol.SwapMode{protocol.SwapModeSingleRobot, protocol.SwapModeTwoRobot} {
+		t.Run(string(mode), func(t *testing.T) {
 			t.Parallel()
-			eng, nodeID := oneSwapCell(t, protocol.ClaimRoleConsume, c.mode, true)
-			err := oneSwapRequest(eng, protocol.ClaimRoleConsume, nodeID)
-			if got := err != nil && strings.Contains(err.Error(), "no "+osPart+" bin anywhere"); got != c.refused {
-				t.Fatalf("REQUEST against a dry part: err = %v, want refused=%v", err, c.refused)
+			eng, nodeID := oneSwapCell(t, protocol.ClaimRoleConsume, mode, true)
+			if err := oneSwapRequest(eng, protocol.ClaimRoleConsume, nodeID); err != nil {
+				t.Fatalf("REQUEST against a dry part: err = %v, want the swap created to wait for stock", err)
 			}
 		})
 	}
