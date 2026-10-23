@@ -989,7 +989,7 @@ func TestReturnSources_LandWhereTheFinderLooks(t *testing.T) {
 			if payload != "" {
 				found, err = db.FindSourceBinFIFO(payload, 0)
 			} else {
-				found, err = db.FindEmptyCompatibleBin("DG-Q", "", 0, bins.EmptyFence{}, reservations.Anyone, nil)
+				found, err = db.FindEmptyCompatibleBin("DG-Q", "", 0, bins.EmptyFence{}, reservations.Anyone, bins.Height{})
 			}
 			if err != nil || found == nil || found.ID != b.ID {
 				t.Errorf("%s: the bin set down at %s (declared via %s) is not what the finder finds (got %v, %v) — "+

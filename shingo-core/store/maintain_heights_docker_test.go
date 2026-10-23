@@ -9,6 +9,7 @@ import (
 	"shingo/protocol"
 	"shingo/protocol/testutil"
 	"shingocore/internal/testdb"
+	"shingocore/store/bins"
 	"shingocore/store/orders"
 )
 
@@ -44,8 +45,11 @@ func TestCountsByTotes_AgreeWithTheKeepersCounts(t *testing.T) {
 		return id
 	}
 
-	// Residents: 24, 24, 26, unknown; a loaded 24 and another type's 24 are
-	// not in the level.
+	// Residents: 24, 24, 26, unknown, and tops & bottoms (0); a loaded 24 and
+	// another type's 24 are not in the level, and tops & bottoms is in the
+	// census (its 0 bucket, the tops & bottoms row's resident) but not the
+	// keeper's resident.
+	bin(btID, "HGT-R0", slotID, 0)
 	bin(btID, "HGT-R1", slotID, 24)
 	bin(btID, "HGT-R2", slotID, 24)
 	bin(btID, "HGT-R3", slotID, 26)
@@ -54,15 +58,16 @@ func TestCountsByTotes_AgreeWithTheKeepersCounts(t *testing.T) {
 	exec(`UPDATE bins SET payload_code = 'PART-A' WHERE id = $1`, loaded)
 	bin(otherID, "HGT-R6", slotID, 24)
 
-	resident, err := db.CountEmptyBinsOfTypeInGroup("HGT-TOTE", grpID)
+	resident, err := db.CountEmptyBinsOfTypeInGroup("HGT-TOTE", grpID, bins.Height{})
 	testutil.MustNoErr(t, err, "keeper resident")
 	byTotes, err := db.CountEmptyBinsOfTypeInGroupByTotes("HGT-TOTE", grpID)
 	testutil.MustNoErr(t, err, "resident by totes")
-	if want := map[int]int{24: 2, 26: 1}; !reflect.DeepEqual(byTotes, want) {
+	if want := map[int]int{0: 1, 24: 2, 26: 1}; !reflect.DeepEqual(byTotes, want) {
 		t.Errorf("residents by totes = %v, want %v", byTotes, want)
 	}
+	// Every bucket but 0, plus the unknown, is the keeper's resident.
 	if sum := byTotes[24] + byTotes[26] + 1; sum != resident {
-		t.Errorf("residents by totes + the unknown = %d, keeper's resident = %d", sum, resident)
+		t.Errorf("residents by totes but 0 + the unknown = %d, keeper's resident = %d", sum, resident)
 	}
 
 	// Comings, one per shape the keeper counts: a plain order's own carrier,
@@ -98,6 +103,8 @@ func TestCountsByTotes_AgreeWithTheKeepersCounts(t *testing.T) {
 		mnt, protocol.MaintainEpisodeKey("HGT-GRP", "HGT-TOTE"), protocol.EpisodeKindMaintain)
 	e := bin(btID, "HGT-C5", nil, 40)
 	order("hgt-own", "HGT-SLOT", func(o *orders.Order) { o.BinID = &e; o.OriginID = mnt })
+	tb := bin(btID, "HGT-C7", nil, 0)
+	order("hgt-tops-bottoms", "HGT-SLOT", func(o *orders.Order) { o.BinID = &tb })
 	f := bin(btID, "HGT-C6", nil, 40)
 	exec(`UPDATE bins SET payload_code = 'PART-A' WHERE id = $1`, f)
 	order("hgt-loaded", "HGT-SLOT", func(o *orders.Order) { o.BinID = &f })
@@ -115,10 +122,12 @@ func TestCountsByTotes_AgreeWithTheKeepersCounts(t *testing.T) {
 		}
 		got[*r.TotesOnCart]++
 	}
-	if want := map[int]int{40: 2, 16: 1}; !reflect.DeepEqual(got, want) || unknown != 1 {
+	if want := map[int]int{0: 1, 40: 2, 16: 1}; !reflect.DeepEqual(got, want) || unknown != 1 {
 		t.Errorf("inbound rows by totes = %v and %d unknown, want %v and 1", got, unknown, want)
 	}
-	if len(rows) != coming {
-		t.Errorf("inbound rows = %d, keeper's coming = %d: the count is the rows, counted", len(rows), coming)
+	// The keeper's coming is the rows but tops & bottoms (orders.LevelComing):
+	// the cart at 0 is coming to the tops & bottoms row, not to the level.
+	if len(rows)-1 != coming {
+		t.Errorf("inbound rows = %d, keeper's coming = %d: the count is the rows but tops & bottoms", len(rows), coming)
 	}
 }

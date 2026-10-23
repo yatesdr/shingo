@@ -533,12 +533,12 @@ func TestClearHome_TheExemptionClosesWhenTheJobEnds_WithNoWrite(t *testing.T) {
 	}
 	birth, _, err := r.eng.birthClear(job)
 	testutil.MustNoErr(t, err, "birth")
-	found, err := r.db.FindEmptyCompatibleBin(r.part, "", 0, bins.EmptyFence{}, reservations.Anyone, nil)
+	found, err := r.db.FindEmptyCompatibleBin(r.part, "", 0, bins.EmptyFence{}, reservations.Anyone, bins.Height{})
 	if err != nil || found == nil || found.ID != r.e.ID {
 		t.Fatalf("with the job live and the carrier unheld, the find took %v (%v), want the home's carrier %d", found, err, r.e.ID)
 	}
 	r.d.EndClear(birth.Parent, "ended for the pin")
-	got, err := r.db.FindEmptyCompatibleBin(r.part, "", 0, bins.EmptyFence{}, reservations.Anyone, nil)
+	got, err := r.db.FindEmptyCompatibleBin(r.part, "", 0, bins.EmptyFence{}, reservations.Anyone, bins.Height{})
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		t.Fatalf("the find after the end: %v", err)
 	}

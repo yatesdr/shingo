@@ -69,29 +69,29 @@ func totes(n int) *int { return &n }
 // tote type (or any type) with the given want.
 func everyEmptyFinder(db *store.DB, code string, grpID int64) []struct {
 	name string
-	find func(want *int) (*bins.Bin, error)
+	find func(want bins.Height) (*bins.Bin, error)
 } {
 	anyone := reservations.Anyone
 	return []struct {
 		name string
-		find func(want *int) (*bins.Bin, error)
+		find func(want bins.Height) (*bins.Bin, error)
 	}{
-		{"typed, group-scoped", func(w *int) (*bins.Bin, error) {
+		{"typed, group-scoped", func(w bins.Height) (*bins.Bin, error) {
 			return bins.FindEmptyOfTypeInGroup(db.DB, code, grpID, 0, anyone, w)
 		}},
-		{"type set, group-scoped", func(w *int) (*bins.Bin, error) {
+		{"type set, group-scoped", func(w bins.Height) (*bins.Bin, error) {
 			return bins.FindEmptyOfTypesInGroup(db.DB, []string{code}, grpID, 0, anyone, w)
 		}},
-		{"untyped, group-scoped", func(w *int) (*bins.Bin, error) {
+		{"untyped, group-scoped", func(w bins.Height) (*bins.Bin, error) {
 			return bins.FindEmptyCompatibleInGroup(db.DB, "", grpID, 0, anyone, w)
 		}},
-		{"typed, plant-wide", func(w *int) (*bins.Bin, error) {
+		{"typed, plant-wide", func(w bins.Height) (*bins.Bin, error) {
 			return bins.FindEmptyOfType(db.DB, code, "", 0, bins.EmptyFence{}, anyone, w)
 		}},
-		{"type set, plant-wide", func(w *int) (*bins.Bin, error) {
+		{"type set, plant-wide", func(w bins.Height) (*bins.Bin, error) {
 			return bins.FindEmptyOfTypes(db.DB, []string{code}, "", 0, bins.EmptyFence{}, anyone, w)
 		}},
-		{"untyped, plant-wide", func(w *int) (*bins.Bin, error) {
+		{"untyped, plant-wide", func(w bins.Height) (*bins.Bin, error) {
 			return bins.FindEmptyCompatible(db.DB, "", "", 0, bins.EmptyFence{}, anyone, w)
 		}},
 	}
@@ -117,11 +117,11 @@ func TestEmptyFinders_HeightLadder(t *testing.T) {
 	tote := func(n *int) toteCart { return toteCart{code: "TH-TOTE", perLayer: 8, totes: n} }
 	grpID, ids := toteGroup(t, db, "TH", []toteCart{tote(nil), tote(totes(26)), tote(totes(48)), tote(totes(40))})
 	unknown, shorter, taller, exact := ids[0], ids[1], ids[2], ids[3]
-	five := 5
+	five := bins.Layers(5)
 
 	for _, f := range everyEmptyFinder(db, "TH-TOTE", grpID) {
 		t.Run(f.name, func(t *testing.T) {
-			b, err := f.find(nil)
+			b, err := f.find(bins.Height{})
 			if got := foundID(t, b, err); got != unknown {
 				t.Fatalf("no want took %d, want today's first by id (%d)", got, unknown)
 			}
@@ -129,7 +129,7 @@ func TestEmptyFinders_HeightLadder(t *testing.T) {
 				name string
 				want int64
 			}{{"exact", exact}, {"taller", taller}, {"shorter", shorter}, {"unknown", unknown}} {
-				b, err := f.find(&five)
+				b, err := f.find(five)
 				if got := foundID(t, b, err); got != rung.want {
 					t.Fatalf("rung %s: took %d, want %d (ladder exact %d, taller %d, shorter %d, unknown %d)",
 						rung.name, got, rung.want, exact, taller, shorter, unknown)
@@ -155,16 +155,16 @@ func TestEmptyFinders_OnlyShorterOrUnknownStillFound(t *testing.T) {
 		{code: "TS-TOTE", perLayer: 8, totes: totes(26)},
 	})
 	unknown, shorter := ids[0], ids[1]
-	five := 5
+	five := bins.Layers(5)
 	for _, f := range everyEmptyFinder(db, "TS-TOTE", grpID) {
 		t.Run(f.name, func(t *testing.T) {
-			b, err := f.find(&five)
+			b, err := f.find(five)
 			if got := foundID(t, b, err); got != shorter {
 				t.Fatalf("took %d, want the shorter cart %d: a height short of the want is still delivered", got, shorter)
 			}
 			_, err = db.Exec(`UPDATE bins SET locked = true WHERE id = $1`, shorter)
 			testutil.MustNoErr(t, err, "take the shorter cart out")
-			b, err = f.find(&five)
+			b, err = f.find(five)
 			if got := foundID(t, b, err); got != unknown {
 				t.Fatalf("took %d, want the cart with no count %d", got, unknown)
 			}
@@ -174,7 +174,7 @@ func TestEmptyFinders_OnlyShorterOrUnknownStillFound(t *testing.T) {
 	}
 
 	kdGrp, kd := toteGroup(t, db, "TK", []toteCart{{code: "TK-KD", totes: totes(3)}})
-	b, err := bins.FindEmptyOfTypeInGroup(db.DB, "TK-KD", kdGrp, 0, reservations.Anyone, &five)
+	b, err := bins.FindEmptyOfTypeInGroup(db.DB, "TK-KD", kdGrp, 0, reservations.Anyone, five)
 	if got := foundID(t, b, err); got != kd[0] {
 		t.Errorf("a type with no totes per layer: took %d, want %d", got, kd[0])
 	}
@@ -194,16 +194,16 @@ func TestEmptyFinders_CountAndFindAgreeWithAWant(t *testing.T) {
 	empty, err := nodes.CreateGroup(db.DB, "TC-EMPTY-GRP")
 	testutil.MustNoErr(t, err, "empty group")
 	testdb.MarkGroup(t, db, empty)
-	for _, want := range []*int{nil, totes(0), totes(5)} {
+	for _, want := range []bins.Height{{}, bins.Layers(0), bins.Layers(5)} {
 		for _, g := range []int64{stocked, empty} {
-			n, err := bins.CountEmptyOfTypeInGroup(db.DB, "TC-TOTE", g)
+			n, err := bins.CountEmptyOfTypeInGroup(db.DB, "TC-TOTE", g, want)
 			testutil.MustNoErr(t, err, "count")
 			b, err := bins.FindEmptyOfTypeInGroup(db.DB, "TC-TOTE", g, 0, reservations.Anyone, want)
 			found := foundID(t, b, err) != 0
 			if found != (n > 0) {
 				label := "none"
-				if want != nil {
-					label = fmt.Sprint(*want)
+				if n, ok := want.Stated(); ok {
+					label = fmt.Sprint(n)
 				}
 				t.Errorf("group %d, want %s layers: count %d but found=%v", g, label, n, found)
 			}

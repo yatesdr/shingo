@@ -3,6 +3,7 @@ package dispatch
 import (
 	"database/sql"
 	"errors"
+	"shingocore/domain"
 	"testing"
 
 	"shingocore/store/bins"
@@ -351,7 +352,7 @@ func (f *fakeCapacityDB) ListMaintainLevels(groupNodeID int64) ([]nodes.Maintain
 	return f.maintainLevels[groupNodeID], nil
 }
 
-func (f *fakeCapacityDB) CountEmptyBinsOfTypeInGroup(binTypeCode string, groupNodeID int64) (int, error) {
+func (f *fakeCapacityDB) CountEmptyBinsOfTypeInGroup(binTypeCode string, groupNodeID int64, _ domain.Height) (int, error) {
 	return f.emptyInGroup[groupNodeID], nil
 }
 

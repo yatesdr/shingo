@@ -1921,7 +1921,7 @@ func CountLiveRootsByOrigin(db *sql.DB, originID string) (int, error) {
 // The enum's drift tests hold both lists to the same source of truth.
 func CountTypedInboundToGroup(db *sql.DB, groupNodeID int64, groupNodeName, binTypeCode string) (int, error) {
 	inbound, err := ListTypedInboundToGroup(db, groupNodeID, groupNodeName, binTypeCode)
-	return len(inbound), err
+	return LevelComing(inbound), err
 }
 
 // InboundCarrier is one carrier on its way into a group: the carrier the order
@@ -1930,6 +1930,24 @@ func CountTypedInboundToGroup(db *sql.DB, groupNodeID int64, groupNodeName, binT
 type InboundCarrier struct {
 	BinID       int64
 	TotesOnCart *int
+	// State is the cart's carrier state (helpers.CarrierStateSQL, in the same
+	// statement): the keeper's coming counts every one but tops & bottoms
+	// (LevelComing), a group's tops & bottoms row counts those that are.
+	State protocol.CarrierState
+}
+
+// LevelComing is the keeper's coming: the inbound carriers that are stock of
+// the level, every one but a known tops & bottoms. An unknown count is
+// unverified, not tops & bottoms, and is coming: excluding it would leave the
+// keeper short of a cart already on its way, and it would ask again every tick.
+func LevelComing(inbound []InboundCarrier) int {
+	n := 0
+	for _, c := range inbound {
+		if c.State != protocol.CarrierTopsAndBottoms {
+			n++
+		}
+	}
+	return n
 }
 
 // ListTypedInboundToGroup is the inbound set CountTypedInboundToGroup counts,
@@ -1943,8 +1961,8 @@ func ListTypedInboundToGroup(db *sql.DB, groupNodeID int64, groupNodeName, binTy
 		return nil, nil
 	}
 	rows, err := db.Query(nodetree.DescendantsOf(1)+fmt.Sprintf(`
-		SELECT DISTINCT bin_id, totes_on_cart FROM (
-		    SELECT b.id AS bin_id, b.totes_on_cart
+		SELECT DISTINCT bin_id, totes_on_cart, state FROM (
+		    SELECT b.id AS bin_id, b.totes_on_cart, %[2]s AS state
 		      FROM orders o
 		      JOIN bins b  ON b.id = COALESCE(o.bin_id, o.named_bin_id)
 		      JOIN bin_types bt ON bt.id = b.bin_type_id
@@ -1957,7 +1975,7 @@ func ListTypedInboundToGroup(db *sql.DB, groupNodeID int64, groupNodeName, binTy
 		           SELECT 1 FROM demand_origins d
 		            WHERE d.origin_id = o.origin_id AND d.kind = $4 AND `+helpers.DemandOpenSQL("d")+`)
 		    UNION ALL
-		    SELECT ob.bin_id AS bin_id, b.totes_on_cart
+		    SELECT ob.bin_id AS bin_id, b.totes_on_cart, %[2]s AS state
 		      FROM order_bins ob
 		      JOIN orders o ON o.id = ob.order_id
 		      JOIN bins b  ON b.id = ob.bin_id
@@ -1971,7 +1989,7 @@ func ListTypedInboundToGroup(db *sql.DB, groupNodeID int64, groupNodeName, binTy
 		           SELECT 1 FROM demand_origins d
 		            WHERE d.origin_id = o.origin_id AND d.kind = $4 AND `+helpers.DemandOpenSQL("d")+`)
 		) AS inbound
-		ORDER BY bin_id`, protocol.NonTerminalStatusSQLList()),
+		ORDER BY bin_id`, protocol.NonTerminalStatusSQLList(), helpers.CarrierStateSQL("b", "bt")),
 		groupNodeID, binTypeCode, groupNodeName, protocol.EpisodeKindMaintain)
 	if err != nil {
 		return nil, fmt.Errorf("list typed inbound to group %s (%s): %w", groupNodeName, binTypeCode, err)
@@ -1980,7 +1998,7 @@ func ListTypedInboundToGroup(db *sql.DB, groupNodeID int64, groupNodeName, binTy
 	var out []InboundCarrier
 	for rows.Next() {
 		var c InboundCarrier
-		if err := rows.Scan(&c.BinID, &c.TotesOnCart); err != nil {
+		if err := rows.Scan(&c.BinID, &c.TotesOnCart, &c.State); err != nil {
 			return nil, fmt.Errorf("scan inbound carrier: %w", err)
 		}
 		out = append(out, c)

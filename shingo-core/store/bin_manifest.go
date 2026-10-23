@@ -30,8 +30,8 @@ func (db *DB) ConfirmBinManifest(binID int64, producedAt string) error {
 // A ZERO FENCE FENCES NOTHING, which is what every caller outside the source
 // finder passes: sharing is the plant default and this signature keeps it.
 func (db *DB) FindEmptyBinOfType(binTypeCode, preferZone string, excludeNodeID int64,
-	fence bins.EmptyFence, asker reservations.DigAsker, wantLayers *int) (*bins.Bin, error) {
-	return bins.FindEmptyOfType(db.DB, binTypeCode, preferZone, excludeNodeID, fence, asker, wantLayers)
+	fence bins.EmptyFence, asker reservations.DigAsker, want bins.Height) (*bins.Bin, error) {
+	return bins.FindEmptyOfType(db.DB, binTypeCode, preferZone, excludeNodeID, fence, asker, want)
 }
 
 // FindEmptyBinOfTypeOutsideGroup IS GONE, and its absence is the point.
@@ -47,31 +47,31 @@ func (db *DB) FindEmptyBinOfType(binTypeCode, preferZone string, excludeNodeID i
 // FindEmptyBinOfTypeInGroup returns an empty carrier of one bin type from within
 // a node group. See bins.FindEmptyOfTypeInGroup.
 func (db *DB) FindEmptyBinOfTypeInGroup(binTypeCode string, groupNodeID, excludeNodeID int64,
-	asker reservations.DigAsker, wantLayers *int) (*bins.Bin, error) {
-	return bins.FindEmptyOfTypeInGroup(db.DB, binTypeCode, groupNodeID, excludeNodeID, asker, wantLayers)
+	asker reservations.DigAsker, want bins.Height) (*bins.Bin, error) {
+	return bins.FindEmptyOfTypeInGroup(db.DB, binTypeCode, groupNodeID, excludeNodeID, asker, want)
 }
 
 // FindEmptyBinOfTypes / FindEmptyBinOfTypesInGroup are the typed finders for a
 // SET of bin types. See bins.FindEmptyOfTypes and bins.FindEmptyOfTypesInGroup.
 func (db *DB) FindEmptyBinOfTypes(binTypeCodes []string, preferZone string, excludeNodeID int64,
-	fence bins.EmptyFence, asker reservations.DigAsker, wantLayers *int) (*bins.Bin, error) {
-	return bins.FindEmptyOfTypes(db.DB, binTypeCodes, preferZone, excludeNodeID, fence, asker, wantLayers)
+	fence bins.EmptyFence, asker reservations.DigAsker, want bins.Height) (*bins.Bin, error) {
+	return bins.FindEmptyOfTypes(db.DB, binTypeCodes, preferZone, excludeNodeID, fence, asker, want)
 }
 
 func (db *DB) FindEmptyBinOfTypesInGroup(binTypeCodes []string, groupNodeID, excludeNodeID int64,
-	asker reservations.DigAsker, wantLayers *int) (*bins.Bin, error) {
-	return bins.FindEmptyOfTypesInGroup(db.DB, binTypeCodes, groupNodeID, excludeNodeID, asker, wantLayers)
+	asker reservations.DigAsker, want bins.Height) (*bins.Bin, error) {
+	return bins.FindEmptyOfTypesInGroup(db.DB, binTypeCodes, groupNodeID, excludeNodeID, asker, want)
 }
 
 // CountEmptyBinsOfTypeInGroup counts exactly what FindEmptyBinOfTypeInGroup can
 // see — the same WHERE, interpolated by both. The level keeper's "resident"
 // tally. See bins.CountEmptyOfTypeInGroup.
-func (db *DB) CountEmptyBinsOfTypeInGroup(binTypeCode string, groupNodeID int64) (int, error) {
-	return bins.CountEmptyOfTypeInGroup(db.DB, binTypeCode, groupNodeID)
+func (db *DB) CountEmptyBinsOfTypeInGroup(binTypeCode string, groupNodeID int64, h bins.Height) (int, error) {
+	return bins.CountEmptyOfTypeInGroup(db.DB, binTypeCode, groupNodeID, h)
 }
 
-func (db *DB) CountEmptyBinsOfTypeInGroupExcludingNode(binTypeCode string, groupNodeID, excludeNodeID int64) (int, error) {
-	return bins.CountEmptyOfTypeInGroupExcludingNode(db.DB, binTypeCode, groupNodeID, excludeNodeID)
+func (db *DB) CountEmptyBinsOfTypeInGroupExcludingNode(binTypeCode string, groupNodeID, excludeNodeID int64, h bins.Height) (int, error) {
+	return bins.CountEmptyOfTypeInGroupExcludingNode(db.DB, binTypeCode, groupNodeID, excludeNodeID, h)
 }
 
 func (db *DB) FindSourceBinFIFO(payloadCode string, excludeNodeID int64) (*bins.Bin, error) {

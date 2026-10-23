@@ -61,6 +61,7 @@ import (
 
 	"shingo/protocol"
 	"shingocore/dispatch/binresolver"
+	"shingocore/domain"
 	"shingocore/store/bins"
 	"shingocore/store/nodes"
 )
@@ -88,7 +89,7 @@ type CapacityDB interface {
 	// admitted, resolved, refused, and parked one layer deeper with a cause that
 	// says nothing about the level.
 	ListMaintainLevels(groupNodeID int64) ([]nodes.MaintainLevel, error)
-	CountEmptyBinsOfTypeInGroup(binTypeCode string, groupNodeID int64) (int, error)
+	CountEmptyBinsOfTypeInGroup(binTypeCode string, groupNodeID int64, h domain.Height) (int, error)
 
 	// ── The per-node Allowed Bin Types fence ────────────────────────────────
 	//
@@ -439,5 +440,5 @@ func ngrpAtDeclaredLevel(db CapacityDB, ngrp *nodes.Node, binTypeID *int64) (boo
 		return false, err
 	}
 	return binresolver.AtDeclaredLevel(levels, binresolver.BinTypeFrom(binTypeID, "the capacity gate: no type named"),
-		func(code string) (int, error) { return db.CountEmptyBinsOfTypeInGroup(code, ngrp.ID) })
+		func(code string) (int, error) { return db.CountEmptyBinsOfTypeInGroup(code, ngrp.ID, domain.Height{}) })
 }

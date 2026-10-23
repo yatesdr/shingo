@@ -284,7 +284,7 @@ func (f *fakeStore) ListMaintainLevels(groupNodeID int64) ([]nodes.MaintainLevel
 	return f.maintainLevels[groupNodeID], nil
 }
 
-func (f *fakeStore) CountEmptyBinsOfTypeInGroup(binTypeCode string, groupNodeID int64) (int, error) {
+func (f *fakeStore) CountEmptyBinsOfTypeInGroup(binTypeCode string, groupNodeID int64, _ domain.Height) (int, error) {
 	return f.emptyInGroup[groupNodeID], nil
 }
 

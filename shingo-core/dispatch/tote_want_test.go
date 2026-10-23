@@ -5,14 +5,15 @@ import (
 	"testing"
 
 	"shingo/protocol"
+	"shingocore/domain"
 	"shingocore/store/nodes"
 )
 
-func wantText(n *int) string {
-	if n == nil {
-		return "none"
+func wantText(h domain.Height) string {
+	if n, ok := h.Stated(); ok {
+		return fmt.Sprint(n)
 	}
-	return fmt.Sprint(*n)
+	return "none"
 }
 
 // TestToteWant_ReachesTheFinder: the height read with the set-down node is the
@@ -23,23 +24,23 @@ func wantText(n *int) string {
 // (pinned to its episode's type) reads no destination and wants none.
 func TestToteWant_ReachesTheFinder(t *testing.T) {
 	t.Parallel()
-	five := 5
+	five := domain.Layers(5)
 	for _, tc := range []struct {
 		name string
 		need SourceNeed
-		want *int
+		want domain.Height
 	}{
 		{"a complex leg from a group", SourceNeed{SourceNode: "TW-GRP", PayloadCode: "P",
-			Intent: IntentEmpty, SetDownNode: "TW-OUT"}, &five},
+			Intent: IntentEmpty, SetDownNode: "TW-OUT"}, five},
 		{"a plain retrieve, plant-wide", SourceNeed{PayloadCode: "P", Intent: IntentEmpty,
-			DeliveryNode: "TW-OUT", SetDownNode: "TW-OUT"}, &five},
+			DeliveryNode: "TW-OUT", SetDownNode: "TW-OUT"}, five},
 		{"a plain retrieve from a group", SourceNeed{SourceNode: "TW-GRP", PayloadCode: "P",
-			Intent: IntentEmpty, DeliveryNode: "TW-OUT", SetDownNode: "TW-OUT"}, &five},
+			Intent: IntentEmpty, DeliveryNode: "TW-OUT", SetDownNode: "TW-OUT"}, five},
 		{"a delivery node that is not the set-down node", SourceNeed{PayloadCode: "P",
-			Intent: IntentEmpty, DeliveryNode: "TW-OUT"}, nil},
-		{"no destination", SourceNeed{PayloadCode: "P", Intent: IntentEmpty}, nil},
+			Intent: IntentEmpty, DeliveryNode: "TW-OUT"}, domain.Height{}},
+		{"no destination", SourceNeed{PayloadCode: "P", Intent: IntentEmpty}, domain.Height{}},
 		{"a keeper ask", SourceNeed{PayloadCode: "P", Intent: IntentEmpty, OriginID: "ep-1",
-			DeliveryNode: "TW-OUT", SetDownNode: "TW-OUT"}, nil},
+			DeliveryNode: "TW-OUT", SetDownNode: "TW-OUT"}, domain.Height{}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			db := newFakeFinderDB()

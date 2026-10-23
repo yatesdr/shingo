@@ -108,7 +108,7 @@ func TestFences_F1_OutsiderPullExcluded(t *testing.T) {
 	outside := landAt(t, db, btID, far.ID, "F1-OUTSIDE")
 
 	got, err := bins.FindEmptyOfType(db.DB, "F1-45x58", "", 0,
-		bins.EmptyFence{ProcessNode: "F1-SOMEONE-ELSE"}, reservations.Anyone, nil)
+		bins.EmptyFence{ProcessNode: "F1-SOMEONE-ELSE"}, reservations.Anyone, bins.Height{})
 	testutil.MustNoErr(t, err, "outsider pull")
 	if got == nil || got.ID != outside {
 		t.Errorf("outsider got %v, want the carrier outside the fence (%d); inside is %d",
@@ -116,7 +116,7 @@ func TestFences_F1_OutsiderPullExcluded(t *testing.T) {
 	}
 
 	got, err = bins.FindEmptyOfType(db.DB, "F1-45x58", "", 0,
-		bins.EmptyFence{ProcessNode: "F1-PRESS"}, reservations.Anyone, nil)
+		bins.EmptyFence{ProcessNode: "F1-PRESS"}, reservations.Anyone, bins.Height{})
 	testutil.MustNoErr(t, err, "supported pull")
 	if got == nil || got.ID != inside {
 		t.Errorf("supported press got %v, want the group's own carrier %d", got, inside)
@@ -140,7 +140,7 @@ func TestFences_F2_TwoGroupsCannotDrainEachOther(t *testing.T) {
 	// A keeper filling A. Its own group is closed by rule (ii); B is closed by
 	// rule (i), because A's keeper is not in B's supports list either.
 	got, err := bins.FindEmptyOfType(db.DB, "F2-45x58", "", 0,
-		bins.EmptyFence{OriginGroup: "F2-A"}, reservations.Anyone, nil)
+		bins.EmptyFence{OriginGroup: "F2-A"}, reservations.Anyone, bins.Height{})
 	if got != nil {
 		t.Errorf("A's keeper reached bin %d. Neither its own group nor another maintained "+
 			"one is a source — the market and the cells are", got.ID)

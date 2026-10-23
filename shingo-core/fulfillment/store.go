@@ -56,7 +56,7 @@ type Store interface {
 	// gate and the resolver cannot disagree about whether a group can take a
 	// carrier (MG4-3). The scanner itself reads neither.
 	ListMaintainLevels(groupNodeID int64) ([]nodes.MaintainLevel, error)
-	CountEmptyBinsOfTypeInGroup(binTypeCode string, groupNodeID int64) (int, error)
+	CountEmptyBinsOfTypeInGroup(binTypeCode string, groupNodeID int64, h domain.Height) (int, error)
 	// The per-node Allowed Bin Types reads, here for the same reason and read by
 	// the scanner itself no more than the two above: the gate must not count a
 	// child free that the resolver will refuse for declaring another carrier type.

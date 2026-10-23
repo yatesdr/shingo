@@ -92,24 +92,24 @@ func TestPin_EveryEmptyFinderPrefersTheMouth(t *testing.T) {
 		find func() (*bins.Bin, error)
 	}{
 		{"typed, group-scoped", func() (*bins.Bin, error) {
-			return bins.FindEmptyOfTypeInGroup(db.DB, "ORD-45x58", grpID, 0, reservations.Anyone, nil)
+			return bins.FindEmptyOfTypeInGroup(db.DB, "ORD-45x58", grpID, 0, reservations.Anyone, bins.Height{})
 		}},
 		{"untyped, group-scoped", func() (*bins.Bin, error) {
-			return bins.FindEmptyCompatibleInGroup(db.DB, "", grpID, 0, reservations.Anyone, nil)
+			return bins.FindEmptyCompatibleInGroup(db.DB, "", grpID, 0, reservations.Anyone, bins.Height{})
 		}},
 		{"typed, plant-wide", func() (*bins.Bin, error) {
-			return bins.FindEmptyOfType(db.DB, "ORD-45x58", "", 0, bins.EmptyFence{}, reservations.Anyone, nil)
+			return bins.FindEmptyOfType(db.DB, "ORD-45x58", "", 0, bins.EmptyFence{}, reservations.Anyone, bins.Height{})
 		}},
 		{"untyped, plant-wide", func() (*bins.Bin, error) {
-			return bins.FindEmptyCompatible(db.DB, "", "", 0, bins.EmptyFence{}, reservations.Anyone, nil)
+			return bins.FindEmptyCompatible(db.DB, "", "", 0, bins.EmptyFence{}, reservations.Anyone, bins.Height{})
 		}},
 		// The set finders (a no-mix loader's) append the same ordering through
 		// their own statements.
 		{"type set, group-scoped", func() (*bins.Bin, error) {
-			return bins.FindEmptyOfTypesInGroup(db.DB, []string{"ORD-45x58"}, grpID, 0, reservations.Anyone, nil)
+			return bins.FindEmptyOfTypesInGroup(db.DB, []string{"ORD-45x58"}, grpID, 0, reservations.Anyone, bins.Height{})
 		}},
 		{"type set, plant-wide", func() (*bins.Bin, error) {
-			return bins.FindEmptyOfTypes(db.DB, []string{"ORD-45x58"}, "", 0, bins.EmptyFence{}, reservations.Anyone, nil)
+			return bins.FindEmptyOfTypes(db.DB, []string{"ORD-45x58"}, "", 0, bins.EmptyFence{}, reservations.Anyone, bins.Height{})
 		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -143,7 +143,7 @@ func TestPin_EquallyBuriedBreaksOnDepthThenID(t *testing.T) {
 	_, err := db.Exec(`UPDATE bins SET locked = true WHERE id = $1`, ids[0])
 	testutil.MustNoErr(t, err, "lock the mouth")
 
-	got, err := bins.FindEmptyOfTypeInGroup(db.DB, "TIE-45x58", grpID, 0, reservations.Anyone, nil)
+	got, err := bins.FindEmptyOfTypeInGroup(db.DB, "TIE-45x58", grpID, 0, reservations.Anyone, bins.Height{})
 	testutil.MustNoErr(t, err, "find")
 	if got == nil {
 		t.Fatal("found nothing behind a locked mouth")

@@ -85,12 +85,12 @@ func TestEmptyScan_SkipsALiveLoadersOwnPosition(t *testing.T) {
 	finders := map[string]func(db *store.DB) func() (*bins.Bin, error){
 		"FindEmptyCompatible": func(db *store.DB) func() (*bins.Bin, error) {
 			return func() (*bins.Bin, error) {
-				return db.FindEmptyCompatibleBin("", "", 0, bins.EmptyFence{}, reservations.DigAsker{}, nil)
+				return db.FindEmptyCompatibleBin("", "", 0, bins.EmptyFence{}, reservations.DigAsker{}, bins.Height{})
 			}
 		},
 		"FindEmptyOfType": func(db *store.DB) func() (*bins.Bin, error) {
 			return func() (*bins.Bin, error) {
-				return db.FindEmptyBinOfType("DEFAULT", "", 0, bins.EmptyFence{}, reservations.DigAsker{}, nil)
+				return db.FindEmptyBinOfType("DEFAULT", "", 0, bins.EmptyFence{}, reservations.DigAsker{}, bins.Height{})
 			}
 		},
 	}
@@ -187,22 +187,22 @@ func TestEmptyScan_AHomeDrawsFromItsOwnLoadersBuffer(t *testing.T) {
 	finders := map[string]func(db *store.DB, f ownBufferFixture, dest int64) func() (*bins.Bin, error){
 		"FindEmptyCompatibleInGroup": func(db *store.DB, f ownBufferFixture, dest int64) func() (*bins.Bin, error) {
 			return func() (*bins.Bin, error) {
-				return db.FindEmptyCompatibleBinInGroup("", f.grpID, dest, reservations.DigAsker{}, nil)
+				return db.FindEmptyCompatibleBinInGroup("", f.grpID, dest, reservations.DigAsker{}, bins.Height{})
 			}
 		},
 		"FindEmptyOfTypeInGroup": func(db *store.DB, f ownBufferFixture, dest int64) func() (*bins.Bin, error) {
 			return func() (*bins.Bin, error) {
-				return db.FindEmptyBinOfTypeInGroup("DEFAULT", f.grpID, dest, reservations.DigAsker{}, nil)
+				return db.FindEmptyBinOfTypeInGroup("DEFAULT", f.grpID, dest, reservations.DigAsker{}, bins.Height{})
 			}
 		},
 		"FindEmptyCompatible": func(db *store.DB, _ ownBufferFixture, dest int64) func() (*bins.Bin, error) {
 			return func() (*bins.Bin, error) {
-				return db.FindEmptyCompatibleBin("", "", dest, bins.EmptyFence{}, reservations.DigAsker{}, nil)
+				return db.FindEmptyCompatibleBin("", "", dest, bins.EmptyFence{}, reservations.DigAsker{}, bins.Height{})
 			}
 		},
 		"FindEmptyOfType": func(db *store.DB, _ ownBufferFixture, dest int64) func() (*bins.Bin, error) {
 			return func() (*bins.Bin, error) {
-				return db.FindEmptyBinOfType("DEFAULT", "", dest, bins.EmptyFence{}, reservations.DigAsker{}, nil)
+				return db.FindEmptyBinOfType("DEFAULT", "", dest, bins.EmptyFence{}, reservations.DigAsker{}, bins.Height{})
 			}
 		},
 	}
@@ -237,7 +237,7 @@ func TestEmptyScan_AHomeDrawsFromItsOwnLoadersBuffer(t *testing.T) {
 		t.Parallel()
 		db := testdb.Open(t)
 		f := loaderOwnBufferFixture(t, db)
-		n, err := db.CountEmptyBinsOfTypeInGroup("DEFAULT", f.grpID)
+		n, err := db.CountEmptyBinsOfTypeInGroup("DEFAULT", f.grpID, bins.Height{})
 		if err != nil {
 			t.Fatalf("count: %v", err)
 		}

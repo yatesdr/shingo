@@ -2,6 +2,7 @@ package binresolver
 
 import (
 	"errors"
+	"shingocore/domain"
 
 	"shingocore/store/bins"
 	"shingocore/store/nodes"
@@ -302,7 +303,7 @@ func (f *fakeStore) ListMaintainLevels(groupNodeID int64) ([]nodes.MaintainLevel
 	return f.maintainLevels[groupNodeID], nil
 }
 
-func (f *fakeStore) CountEmptyBinsOfTypeInGroup(binTypeCode string, groupNodeID int64) (int, error) {
+func (f *fakeStore) CountEmptyBinsOfTypeInGroup(binTypeCode string, groupNodeID int64, _ domain.Height) (int, error) {
 	if f.emptyCountErr != nil {
 		return 0, f.emptyCountErr
 	}
@@ -311,7 +312,7 @@ func (f *fakeStore) CountEmptyBinsOfTypeInGroup(binTypeCode string, groupNodeID 
 
 // CountEmptyBinsOfTypeInGroupExcludingNode is the group count less the empties
 // emptiesAt says stand on the excluded node.
-func (f *fakeStore) CountEmptyBinsOfTypeInGroupExcludingNode(binTypeCode string, groupNodeID, excludeNodeID int64) (int, error) {
+func (f *fakeStore) CountEmptyBinsOfTypeInGroupExcludingNode(binTypeCode string, groupNodeID, excludeNodeID int64, _ domain.Height) (int, error) {
 	if f.emptyCountErr != nil {
 		return 0, f.emptyCountErr
 	}

@@ -12,7 +12,7 @@ func TestPreferredEmptyOrder_NoWantIsToday(t *testing.T) {
 	t.Parallel()
 	for range 2 {
 		a := &emptyQueryArgs{vals: []any{"T", int64(1)}}
-		if got := preferredEmptyOrder(a, nil); got != AccessibleEmptyOrder {
+		if got := preferredEmptyOrder(a, Height{}); got != AccessibleEmptyOrder {
 			t.Errorf("no want: got\n%q\nwant today's\n%q", got, AccessibleEmptyOrder)
 		}
 		if len(a.vals) != 2 {
@@ -20,10 +20,10 @@ func TestPreferredEmptyOrder_NoWantIsToday(t *testing.T) {
 		}
 	}
 
-	five := 5
+	five := Layers(5)
 	a := &emptyQueryArgs{vals: []any{"T", int64(1)}}
-	got := preferredEmptyOrder(a, &five)
-	again := preferredEmptyOrder(&emptyQueryArgs{vals: []any{"T", int64(1)}}, &five)
+	got := preferredEmptyOrder(a, five)
+	again := preferredEmptyOrder(&emptyQueryArgs{vals: []any{"T", int64(1)}}, five)
 	if got != again {
 		t.Errorf("the same want rendered two texts:\n%q\n%q", got, again)
 	}

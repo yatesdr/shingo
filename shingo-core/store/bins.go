@@ -74,16 +74,16 @@ func (db *DB) ClaimBin(binID, orderID int64) error { return bins.Claim(db.DB, bi
 // the given payload code, preferring the given zone. excludeNodeID > 0
 // skips bins at that node (pass destination to avoid same-node retrieve).
 func (db *DB) FindEmptyCompatibleBin(payloadCode, preferZone string, excludeNodeID int64,
-	fence bins.EmptyFence, asker reservations.DigAsker, wantLayers *int) (*bins.Bin, error) {
-	return bins.FindEmptyCompatible(db.DB, payloadCode, preferZone, excludeNodeID, fence, asker, wantLayers)
+	fence bins.EmptyFence, asker reservations.DigAsker, want bins.Height) (*bins.Bin, error) {
+	return bins.FindEmptyCompatible(db.DB, payloadCode, preferZone, excludeNodeID, fence, asker, want)
 }
 
 // FindEmptyCompatibleBinInGroup is FindEmptyCompatibleBin scoped to descendants
 // of a synthetic group node. See bins.FindEmptyCompatibleInGroup for the full
 // rationale. Used by the source finder's group-scoped empty tier.
 func (db *DB) FindEmptyCompatibleBinInGroup(payloadCode string, groupNodeID, excludeNodeID int64,
-	asker reservations.DigAsker, wantLayers *int) (*bins.Bin, error) {
-	return bins.FindEmptyCompatibleInGroup(db.DB, payloadCode, groupNodeID, excludeNodeID, asker, wantLayers)
+	asker reservations.DigAsker, want bins.Height) (*bins.Bin, error) {
+	return bins.FindEmptyCompatibleInGroup(db.DB, payloadCode, groupNodeID, excludeNodeID, asker, want)
 }
 
 // FindPartialToFinish is bins.FindPartialToFinish on this store (sql.ErrNoRows

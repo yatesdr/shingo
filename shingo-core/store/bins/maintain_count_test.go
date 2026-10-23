@@ -57,19 +57,28 @@ func TestEmptyOfTypeInGroup_CountAndFindAgree(t *testing.T) {
 
 	var btID int64
 	testutil.MustNoErr(t, sdb.QueryRow(
-		`INSERT INTO bin_types (code) VALUES ('AGREE-45x58') RETURNING id`).Scan(&btID), "bin type")
+		`INSERT INTO bin_types (code, totes_per_layer) VALUES ('AGREE-45x58', 8) RETURNING id`).Scan(&btID), "bin type")
 
+	// agree asks both readers with one height on both sides, for every height
+	// a caller passes (none, a stack, 0, tops & bottoms only), and answers the
+	// count with no height said: the keeper's.
 	agree := func(t *testing.T, stage string) int {
 		t.Helper()
-		found, ferr := bins.FindEmptyOfTypeInGroup(sdb, "AGREE-45x58", grpID, 0, reservations.Anyone, nil)
-		n, cerr := bins.CountEmptyOfTypeInGroup(sdb, "AGREE-45x58", grpID)
-		testutil.MustNoErr(t, cerr, stage+": count")
-		hasFound := ferr == nil && found != nil
-		if hasFound != (n > 0) {
-			t.Fatalf("%s: find says %v but count says %d — the two readers have parted, "+
-				"which is the 'keeper counts six, press finds none' failure", stage, hasFound, n)
+		var none int
+		for _, h := range []bins.Height{{}, bins.Layers(3), bins.Layers(0), bins.TopsAndBottomsOnly} {
+			found, ferr := bins.FindEmptyOfTypeInGroup(sdb, "AGREE-45x58", grpID, 0, reservations.Anyone, h)
+			n, cerr := bins.CountEmptyOfTypeInGroup(sdb, "AGREE-45x58", grpID, h)
+			testutil.MustNoErr(t, cerr, stage+": count")
+			hasFound := ferr == nil && found != nil
+			if hasFound != (n > 0) {
+				t.Fatalf("%s, height %+v: find says %v but count says %d — the two readers have parted, "+
+					"which is the 'keeper counts six, press finds none' failure", stage, h, hasFound, n)
+			}
+			if h == (bins.Height{}) {
+				none = n
+			}
 		}
-		return n
+		return none
 	}
 
 	if got := agree(t, "empty group"); got != 0 {
@@ -146,7 +155,7 @@ func TestEmptyOfTypeInGroup_CountAndFindAgree(t *testing.T) {
 
 	// A blank code counts nothing rather than everything, matching the finder's
 	// ErrNoRows rather than matching every carrier in the group.
-	n, err := bins.CountEmptyOfTypeInGroup(sdb, "", grpID)
+	n, err := bins.CountEmptyOfTypeInGroup(sdb, "", grpID, bins.Height{})
 	testutil.MustNoErr(t, err, "count blank code")
 	if n != 0 {
 		t.Errorf("blank type code count = %d, want 0", n)
@@ -186,9 +195,9 @@ func TestEmptyOfTypeInGroup_TheyPartOnlyUnderAForeignDig(t *testing.T) {
 
 	// Before any dig: they agree, which is the ordinary state and the thing the
 	// exception is an exception TO.
-	found, ferr := bins.FindEmptyOfTypeInGroup(sdb, "PART-45x58", grpID, 0, reservations.Anyone, nil)
+	found, ferr := bins.FindEmptyOfTypeInGroup(sdb, "PART-45x58", grpID, 0, reservations.Anyone, bins.Height{})
 	testutil.MustNoErr(t, ferr, "find before")
-	n, cerr := bins.CountEmptyOfTypeInGroup(sdb, "PART-45x58", grpID)
+	n, cerr := bins.CountEmptyOfTypeInGroup(sdb, "PART-45x58", grpID, bins.Height{})
 	testutil.MustNoErr(t, cerr, "count before")
 	if found == nil || n != 1 {
 		t.Fatalf("before the dig: found=%v count=%d, want both to see the carrier", found, n)
@@ -205,8 +214,8 @@ func TestEmptyOfTypeInGroup_TheyPartOnlyUnderAForeignDig(t *testing.T) {
 		 VALUES ('mouth', $1, $2, 'confirmed', 'dig')`, lane.ID, digOrder)
 	testutil.MustNoErr(t, err, "dig hold")
 
-	found, ferr = bins.FindEmptyOfTypeInGroup(sdb, "PART-45x58", grpID, 0, reservations.Anyone, nil)
-	n, cerr = bins.CountEmptyOfTypeInGroup(sdb, "PART-45x58", grpID)
+	found, ferr = bins.FindEmptyOfTypeInGroup(sdb, "PART-45x58", grpID, 0, reservations.Anyone, bins.Height{})
+	n, cerr = bins.CountEmptyOfTypeInGroup(sdb, "PART-45x58", grpID, bins.Height{})
 	testutil.MustNoErr(t, cerr, "count after")
 
 	if found != nil || !errors.Is(ferr, sql.ErrNoRows) {

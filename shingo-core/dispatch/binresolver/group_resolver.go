@@ -705,7 +705,7 @@ func (r *GroupResolver) ResolveStoreVacated(group, child *nodes.Node, vacating [
 		return nil, fmt.Errorf("payload %s cannot be stored in empties-only node group %s", payloadCode, group.Name)
 	}
 	full, err := AtDeclaredLevel(levels, stated, func(code string) (int, error) {
-		return r.DB.CountEmptyBinsOfTypeInGroupExcludingNode(code, group.ID, child.ID)
+		return r.DB.CountEmptyBinsOfTypeInGroupExcludingNode(code, group.ID, child.ID, domain.Height{})
 	})
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", group.Name, err)
@@ -1246,7 +1246,7 @@ func (r *GroupResolver) payloadAllowedAt(nodeID int64, payloadCode string) bool 
 // at all. One read, two questions.
 func (r *GroupResolver) atDeclaredLevel(group *nodes.Node, binTypeID *int64, levels []nodes.MaintainLevel) (bool, error) {
 	full, err := AtDeclaredLevel(levels, BinTypeFrom(binTypeID, "the store: no type named"), func(code string) (int, error) {
-		return r.DB.CountEmptyBinsOfTypeInGroup(code, group.ID)
+		return r.DB.CountEmptyBinsOfTypeInGroup(code, group.ID, domain.Height{})
 	})
 	if err != nil {
 		return false, fmt.Errorf("%s: %w", group.Name, err)

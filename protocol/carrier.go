@@ -21,3 +21,56 @@ func ToteLayers(totesOnCart, totesPerLayer *int) (int, bool) {
 
 // Layers is the row's cart height (ToteLayers).
 func (r NodeBinsRow) Layers() (int, bool) { return ToteLayers(r.TotesOnCart, r.TotesPerLayer) }
+
+// CarrierState is what stands on a cart, one value: Core's finders, counts,
+// pool, bind, unloader walk, drop choice and drain read it, and so do the
+// Edge's chain readiness, card and SEND BACK line. The values are the strings
+// Core's SQL twin (store/internal/helpers CarrierStateSQL) renders, pinned equal by its
+// agreement table.
+type CarrierState string
+
+const (
+	// CarrierLoaded: the cart holds a part (its payload code is set).
+	CarrierLoaded CarrierState = "loaded"
+	// CarrierBare: the marker — a bare carrier type, nothing on it.
+	CarrierBare CarrierState = "bare"
+	// CarrierTopsAndBottoms: a tote type at a known 0 totes, no part — a tote's
+	// top and bottom on the cart, which a tote press runs on.
+	CarrierTopsAndBottoms CarrierState = "tops_bottoms"
+	// CarrierLeftover: a tote type whose known count is above 0 and not a
+	// whole number of layers ("3 high + 2").
+	CarrierLeftover CarrierState = "leftover"
+	// CarrierUnverified: a tote type whose count is not known.
+	CarrierUnverified CarrierState = "unverified"
+	// CarrierEmpty: every other part-less cart — a type that states no totes
+	// per layer, or a tote cart at a whole number of layers above 0.
+	CarrierEmpty CarrierState = "empty"
+)
+
+// CarrierStateOf is a cart's state from its part, whether its type is the bare
+// marker, its totes on the cart and its type's totes per layer (nil: unknown,
+// and a type that states none is not a tote type). The marker is judged first:
+// it is never stock, whatever it is stamped with. An ordinary empty is empty,
+// leftover or unverified, never tops & bottoms and never bare.
+func CarrierStateOf(part string, bare bool, totesOnCart, totesPerLayer *int) CarrierState {
+	switch {
+	case bare:
+		return CarrierBare
+	case part != "":
+		return CarrierLoaded
+	case totesPerLayer == nil || *totesPerLayer <= 0:
+		return CarrierEmpty
+	case totesOnCart == nil:
+		return CarrierUnverified
+	case *totesOnCart == 0:
+		return CarrierTopsAndBottoms
+	case *totesOnCart%*totesPerLayer != 0:
+		return CarrierLeftover
+	}
+	return CarrierEmpty
+}
+
+// CarrierState is the row's cart state (CarrierStateOf).
+func (r NodeBinsRow) CarrierState() CarrierState {
+	return CarrierStateOf(r.PayloadCode, r.Bare, r.TotesOnCart, r.TotesPerLayer)
+}

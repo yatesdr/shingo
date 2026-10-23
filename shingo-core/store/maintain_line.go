@@ -3,6 +3,7 @@ package store
 import (
 	"fmt"
 
+	"shingocore/store/bins"
 	"shingocore/store/nodes"
 	"shingocore/store/orders"
 )
@@ -20,11 +21,14 @@ import (
 // the keeper's doing. Collapsing any two is how a level over- or under-fills
 // with nothing reporting an error.
 //   - Resident: unclaimed empties of the type standing in the group
-//     (CountEmptyBinsOfTypeInGroup, the finder's own WHERE).
+//     (CountEmptyBinsOfTypeInGroup: the finder's own WHERE and the height arm
+//     it appends for no height said, so tops & bottoms, which is no stock of a
+//     level, is not counted).
 //   - Asked: the open episode's live root asks (CountLiveRootsByOrigin); 0,
 //     and not read, when no episode is open.
 //   - Coming: empties of the type on their way in that the keeper did not ask
-//     for: ListTypedInboundToGroup's carriers (Inbound), counted. The rows are
+//     for: ListTypedInboundToGroup's carriers (Inbound), counted by
+//     orders.LevelComing (every one but a known tops & bottoms). The rows are
 //     kept because an unloader's group line reads them too (the totes on each,
 //     and which window carts are already on their way); the keeper only
 //     counts them.
@@ -52,7 +56,7 @@ func (c LevelState) Short() int {
 func (db *DB) CountLevel(g *nodes.Node, lv MaintainLevel, episode DemandOrigin) (LevelState, error) {
 	c := LevelState{Level: lv}
 	var err error
-	if c.Resident, err = db.CountEmptyBinsOfTypeInGroup(lv.BinTypeCode, g.ID); err != nil {
+	if c.Resident, err = db.CountEmptyBinsOfTypeInGroup(lv.BinTypeCode, g.ID, bins.Height{}); err != nil {
 		return c, fmt.Errorf("count residents %s/%s: %w", g.Name, lv.BinTypeCode, err)
 	}
 	if episode.OriginID != "" {
@@ -63,7 +67,7 @@ func (db *DB) CountLevel(g *nodes.Node, lv MaintainLevel, episode DemandOrigin) 
 	if c.Inbound, err = db.ListTypedInboundToGroup(g.ID, g.Name, lv.BinTypeCode); err != nil {
 		return c, fmt.Errorf("count inbound %s/%s: %w", g.Name, lv.BinTypeCode, err)
 	}
-	c.Coming = len(c.Inbound)
+	c.Coming = orders.LevelComing(c.Inbound)
 	return c, nil
 }
 

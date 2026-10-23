@@ -197,6 +197,12 @@ func (b *Bin) ParseManifest() (*Manifest, error) {
 // cart as a whole number of its type's totes per layer.
 func (b *Bin) Layers() (int, bool) { return protocol.ToteLayers(b.TotesOnCart, b.TotesPerLayer) }
 
+// CarrierState is what stands on the cart (protocol.CarrierStateOf): loaded,
+// bare, tops & bottoms, leftover, unverified or empty.
+func (b *Bin) CarrierState() protocol.CarrierState {
+	return protocol.CarrierStateOf(b.PayloadCode, b.BinTypeBare, b.TotesOnCart, b.TotesPerLayer)
+}
+
 // TotesEdit is the admin bin edit's count of totes on the cart
 // (bins.totes_on_cart). A nil *TotesEdit leaves the column alone; To nil
 // writes unknown; 0 is a base.

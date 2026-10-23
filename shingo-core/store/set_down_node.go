@@ -12,10 +12,10 @@ import (
 // GetSetDownNode is the planner's destination read: the node an empty is set
 // down on, by name (dot-notation as nodes.GetByDotName reads it), and in the
 // same statement the height, in layers, an empty of payloadCode is wanted at
-// there (bins.ToteWantSQL): nil wants none. The want rides the read the empty
+// there (bins.ToteWantSQL): the zero Height wants none. The want rides the read the empty
 // type decider already makes, so it costs no statement.
 // Pins: TestToteWant_TheShape, TestToteWant_NoNumbersAddNoStatement.
-func (db *DB) GetSetDownNode(name, payloadCode string) (*nodes.Node, *int, error) {
+func (db *DB) GetSetDownNode(name, payloadCode string) (*nodes.Node, bins.Height, error) {
 	match, args := `n.name=$1`, []any{name, payloadCode}
 	if parent, child, dotted := strings.Cut(name, "."); dotted {
 		match, args = `n.name=$1 AND n.parent_id IN (SELECT id FROM nodes WHERE name=$3)`,
@@ -25,13 +25,12 @@ func (db *DB) GetSetDownNode(name, payloadCode string) (*nodes.Node, *int, error
 	n, err := nodes.ScanNode(scanPlus{db.QueryRow(fmt.Sprintf(`SELECT %s, %s %s WHERE %s`,
 		nodes.SelectCols, bins.ToteWantSQL(2), nodes.FromClause, match), args...), &want})
 	if err != nil {
-		return nil, nil, err
+		return nil, bins.Height{}, err
 	}
 	if !want.Valid {
-		return n, nil, nil
+		return n, bins.Height{}, nil
 	}
-	layers := int(want.Int64)
-	return n, &layers, nil
+	return n, bins.Layers(int(want.Int64)), nil
 }
 
 // scanPlus scans a row's leading columns into a caller's destinations and its

@@ -53,10 +53,10 @@ type Store interface {
 	// "how full is this group", and the keeper and the resolver disagreeing about
 	// that is the whole feature quietly not working.
 	ListMaintainLevels(groupNodeID int64) ([]nodes.MaintainLevel, error)
-	CountEmptyBinsOfTypeInGroup(binTypeCode string, groupNodeID int64) (int, error)
+	CountEmptyBinsOfTypeInGroup(binTypeCode string, groupNodeID int64, h domain.Height) (int, error)
 	// The same count with one node's carriers left out — the level after a
 	// committed lift empties that node (ResolveStoreVacated).
-	CountEmptyBinsOfTypeInGroupExcludingNode(binTypeCode string, groupNodeID, excludeNodeID int64) (int, error)
+	CountEmptyBinsOfTypeInGroupExcludingNode(binTypeCode string, groupNodeID, excludeNodeID int64, h domain.Height) (int, error)
 
 	// In-flight orders (used for storage candidate screening).
 	CountActiveOrdersByDeliveryNode(nodeName string) (int, error)
