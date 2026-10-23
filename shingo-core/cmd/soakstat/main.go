@@ -218,9 +218,14 @@ type pairStats struct {
 	// storage is bins in lane slots over lane slots, per lane group, in group
 	// order. A measurement only: a dig needs a free slot outside its own lane,
 	// and on the lane-stress rig the digs starved near 30 of 37.
-	storage          []groupFill
-	histWedges       int
-	histOldestMin    float64
+	storage       []groupFill
+	histWedges    int
+	histOldestMin float64
+	// vacatedHolds is the press tranche's wedge: a pair leg parked
+	// reserve-holding while its line holds no bin, past vacatedHoldBound on
+	// the sim clock (vacatedLineHolds). Zero is the bar.
+	vacatedHolds     int
+	vacatedOldestMin float64
 	ttdN             int
 	ttdAvgS, ttdP95S float64
 }
@@ -499,6 +504,9 @@ func pairMeasures(db *store.DB, u *unrun, violations []string, lanes []laneShape
 	if p.histWedges, p.histOldestMin, err = historyWedges(db); err != nil {
 		u.fail(measurePair, err)
 	}
+	if p.vacatedHolds, p.vacatedOldestMin, err = vacatedLineHolds(db); err != nil {
+		u.fail(measurePair, err)
+	}
 	if held, err := orders.ListHoldsAtRest(db.DB); err == nil {
 		p.holdsAtRest = len(held)
 	} else {
@@ -555,12 +563,46 @@ func historyWedges(db *store.DB) (int, float64, error) {
 	return n, oldest, nil
 }
 
+// vacatedHoldBound is how long a pair leg may hold its reserve with its line
+// empty before vacatedLineHolds counts it: a swap's own lift empties the line
+// for a few sim-seconds, and a carrier coming to it lands in a few sim-minutes.
+const vacatedHoldBound = "10 minutes"
+
+// vacatedLineHolds counts the pair legs (a sibling named) parked
+// reserve-holding while their process node (the line) holds no bin, whose last
+// history row is older than vacatedHoldBound against the newest history row
+// (the sim clock), and the oldest such age in sim-minutes. The press tranche's
+// sim reads zero here: a pair at a vacant line re-anchors or holds for a carrier
+// coming, it does not sit. -1 when the query fails.
+func vacatedLineHolds(db *store.DB) (int, float64, error) {
+	var n int
+	var oldest float64
+	err := db.DB.QueryRow(`
+		WITH now_sim AS (SELECT MAX(created_at) AS t FROM order_history),
+		     held AS (
+		       SELECT o.id, MAX(h.created_at) AS at
+		       FROM orders o JOIN order_history h ON h.order_id = o.id
+		       WHERE o.status = $1 AND o.queue_cause = $2
+		         AND o.sibling_order_uuid <> '' AND o.process_node <> ''
+		         AND NOT EXISTS (SELECT 1 FROM bins b JOIN nodes n ON n.id = b.node_id
+		                          WHERE n.name = o.process_node)
+		       GROUP BY o.id)
+		SELECT COUNT(*), COALESCE(MAX(EXTRACT(EPOCH FROM ((SELECT t FROM now_sim) - at)) / 60.0), 0)
+		FROM held WHERE at < (SELECT t FROM now_sim) - interval '`+vacatedHoldBound+`'`,
+		string(protocol.StatusQueued), string(dispatch.CauseReserveHolding)).Scan(&n, &oldest)
+	if err != nil {
+		return -1, -1, fmt.Errorf("vacated-line holds: %w", err)
+	}
+	return n, oldest, nil
+}
+
 // pairLine is the sim-pair row. A -1 is a query that failed, never a zero.
 func (p pairStats) pairLine() string {
 	return fmt.Sprintf("PAIR: dispatches %d · parks %d · wedges %d · hist-wedges %d (oldest %.1fm) · "+
+		"vacated-line holds %d (oldest %.1fm) · "+
 		"time-to-dispatch n=%d avg %.1fs p95 %.1fs · holds-at-rest %d · dig-lock-at-rest %d · storage %s",
-		p.dispatches, p.parks, p.wedges, p.histWedges, p.histOldestMin, p.ttdN, p.ttdAvgS, p.ttdP95S,
-		p.holdsAtRest, p.digLockAtRest, storageText(p.storage))
+		p.dispatches, p.parks, p.wedges, p.histWedges, p.histOldestMin, p.vacatedHolds, p.vacatedOldestMin,
+		p.ttdN, p.ttdAvgS, p.ttdP95S, p.holdsAtRest, p.digLockAtRest, storageText(p.storage))
 }
 
 // groupFill is one lane group's storage: bins in its lanes' slots, and slots.

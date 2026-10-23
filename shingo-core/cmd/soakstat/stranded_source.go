@@ -10,10 +10,10 @@ import (
 // stranded_source.go — the releaser at a chain's end: something live bringing
 // the waiter's resource (stranded.go, THE VERDICT).
 
-// want is the resource a wait needs: an empty or a bin of a part at the place it
-// draws from, or room in the group it drops into.
+// want is the resource a wait needs: an empty (or tops & bottoms) or a bin of a
+// part at the place it draws from, or room in the group it drops into.
 type want struct {
-	kind    string // "empty", "full" or "room"
+	kind    string // "empty", "tops_bottoms", "full" or "room"
 	payload string // the part, for "full"
 	place   string
 }
@@ -24,6 +24,8 @@ func (w want) String() string {
 		return "a " + w.payload + " bin to " + w.place
 	case "room":
 		return "room in " + w.place
+	case "tops_bottoms":
+		return "tops & bottoms to " + w.place
 	}
 	return "an empty to " + w.place
 }
@@ -35,6 +37,9 @@ func (re *runEnd) wantOf(o *activeOrder) (want, bool) {
 	switch o.typ {
 	case string(protocol.OrderTypeRetrieveEmpty):
 		return want{kind: "empty", place: o.src}, o.src != ""
+	case string(protocol.OrderTypeRetrieveTopsAndBottoms):
+		// SEND BACK's pull: a tops & bottoms cart at its source.
+		return want{kind: "tops_bottoms", place: o.src}, o.src != ""
 	case string(protocol.OrderTypeRetrieve):
 		return want{kind: "full", payload: o.payload, place: o.src}, o.src != ""
 	}
@@ -102,7 +107,9 @@ func brings(h *activeOrder, w want, near nearProgress) bool {
 	switch w.kind {
 	case "room":
 		return h.src != "" && within(h.src)
-	case "empty":
+	case "empty", "tops_bottoms":
+		// An order carrying no part into the place brings an empty; its height
+		// is not read here, so it is taken as bringing tops & bottoms too.
 		return h.carries == "" && within(dropOf(h))
 	}
 	return h.carries == w.payload && within(dropOf(h))
