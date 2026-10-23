@@ -300,19 +300,32 @@ func TestMintStyle_ASavedRecipeByIDIsThatStyle(t *testing.T) {
 	}
 }
 
-// The spots screen's swap is two moves naming each other's spot; each cell
-// takes the other's node, and neither is refused as "already in this recipe".
-func TestApplyMoves_ASwapTradesTwoSpots(t *testing.T) {
+// The Spots step does not swap (spots v0, 2026-10-22). Two moves naming each
+// other's spot are refused: each spot's deck would then feed the other side.
+//
+// A NAMED BEHAVIOUR CHANGE. This test was "a swap trades two spots" and
+// pinned the swap as correct: (06·05),(07·08) became (07·05),(06·08), the
+// decks crossed, and the picture drew it as normal. The owner ruled the
+// other way: an on-deck spot never feeds the other side, and the floor picks
+// only pairings the engineer set up in a recipe.
+func TestApplyMoves_ASwapIsRefused(t *testing.T) {
 	t.Parallel()
-	cells := []domain.FlowCell{
-		{CoreNodeName: "PLN_06", PairedCoreNode: "PLN_05", PayloadCode: "A"},
-		{CoreNodeName: "PLN_07", PairedCoreNode: "PLN_08", PayloadCode: "B"},
+	cell := func(head, deck, part string) domain.FlowCell {
+		return domain.FlowCell{CoreNodeName: head, PairedCoreNode: deck, PayloadCode: part,
+			Role: protocol.ClaimRoleProduce, SwapMode: protocol.SwapModeTwoRobotPressIndex}
 	}
-	allowed := map[string]bool{"PLN_05": true, "PLN_06": true, "PLN_07": true, "PLN_08": true}
-	out, placement, err := applyMoves(cells, map[string]string{"PLN_06": "A", "PLN_07": "B"},
-		map[string]string{"PLN_06": "PLN_07", "PLN_07": "PLN_06"}, allowed)
-	testutil.MustNoErr(t, err, "swap")
-	if out[0].CoreNodeName != "PLN_07" || out[1].CoreNodeName != "PLN_06" || placement["PLN_07"] != "A" || placement["PLN_06"] != "B" {
-		t.Errorf("cells = %+v placement = %v, want A on PLN_07 and B on PLN_06", out, placement)
+	cells := []domain.FlowCell{cell("PLN_06", "PLN_05", "A"), cell("PLN_07", "PLN_08", "B")}
+	station := int64(1)
+	var positions []domain.Node
+	for _, n := range []string{"PLN_05", "PLN_06", "PLN_07", "PLN_08"} {
+		positions = append(positions, domain.Node{CoreNodeName: n, OperatorStationID: &station})
+	}
+	rules := domain.SpotRules{Enabled: [][]domain.FlowCell{cells}, Positions: positions}
+	_, _, err := applyMoves(cells, map[string]string{"PLN_06": "A", "PLN_07": "B"},
+		map[string]string{"PLN_06": "PLN_07", "PLN_07": "PLN_06"}, nil, rules)
+	var refused *MintRefusal
+	want := "PLN_07 is not a press spot your recipes set up with PLN_05 on deck — an engineer adds one on the desktop"
+	if !errors.As(err, &refused) || refused.Reason != want {
+		t.Errorf("swap: %v, want refused: %q", err, want)
 	}
 }

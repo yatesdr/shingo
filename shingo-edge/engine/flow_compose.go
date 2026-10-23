@@ -148,12 +148,9 @@ type FlowSaveRequest struct {
 	SourcePresetID      *int64
 	SourcePresetVersion *int
 
-	// moved and stamp are the mint's (engine.MintStyle), never a handler's.
-	// moved says the mint carries the Positions screen's moves (R-K), which
-	// gateRefusal refuses on a gated-off cell; stamp is applied to every
-	// draft input before validation — the minted claim's cell facts
-	// (containment route, curtain) that no other style lends it.
-	moved bool
+	// stamp is the mint's (engine.MintStyle), never a handler's: it is
+	// applied to every draft input before validation — the minted claim's
+	// cell facts (containment route, curtain) that no other style lends it.
 	stamp func(*domain.NodeClaimInput)
 	// occupancy is SaveFlow's own: the bins copy read for a save to the
 	// running style, BEFORE the transaction (runningMoveOccupancy).

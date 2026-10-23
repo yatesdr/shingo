@@ -3,6 +3,17 @@
 One line per change. If a change needs a paragraph to explain, the paragraph
 belongs in the commit message or in `docs/` — this file is the index.
 
+## 2026-10-22 — The floor picks only the pairings an engineer set up
+
+Edge only; no migration. Not deployed.
+
+- A press spot moves only to a spot its recipes run with its on-deck spot
+- An on-deck spot moves only where a recipe sets it up for its press
+- A lane moves only to a lane; a spot never to a lane, a deck or another station
+- The mint and the preview refuse any other move by name, saying what to add
+- Spots no longer swap: two spots trading places is refused
+- The pre-fill keeps only moves the Spots step allows
+
 ## 2026-10-21 — A position changes from the desktop
 
 Edge only; no migration. Not deployed.

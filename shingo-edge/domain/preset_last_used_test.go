@@ -56,6 +56,16 @@ func TestRecipeLastUsedMoves(t *testing.T) {
 			t.Errorf("moves = %v, want none", got)
 		}
 	})
+	t.Run("a claim sharing no node with the cell never lays on", func(t *testing.T) {
+		claims := map[int64][]NodeClaim{
+			// The last style built from the recipe runs one cell somewhere
+			// else entirely: nothing ties PLN_006/005 to PLN_011/013.
+			2: {pressClaim(2, "PLN_011", "PLN_013", &recipeV1, day)},
+		}
+		if got := RecipeLastUsedMoves(pressRecipe(), ids, claims); got != nil {
+			t.Errorf("moves = %v, want none: the claim shares no node with either cell", got)
+		}
+	})
 	t.Run("a pre-fill that would put two spots on one node is dropped", func(t *testing.T) {
 		claims := map[int64][]NodeClaim{
 			// PLN_008 is the last style's head and the recipe's other pair.

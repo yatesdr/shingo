@@ -333,9 +333,16 @@ type ComposerPreset struct {
 	Slots []Slot `json:"slots,omitempty"`
 	// LastMoves is the pick step's pre-fill (RecipeLastUsedMoves): recipe
 	// node → the node the last style that used this recipe on this cell has
-	// it at. Absent when no style used it, and the step suggests Cells' own
-	// nodes. A suggestion only: the step is always shown.
+	// it at, kept only where Spots allows it (LegalSpotMoves), so the screen
+	// never opens on a layout the mint would refuse. Absent when no style
+	// used it, and the step suggests Cells' own nodes. A suggestion only: the
+	// step is always shown, and both surfaces read it as shipped.
 	LastMoves map[string]string `json:"last_moves,omitempty"`
+	// Spots is where each of the recipe's places may go on the Spots step
+	// (RecipeSpots): its node, its job, the spot it serves and its targets.
+	// The HMI lights the targets and restates nothing; the mint refuses any
+	// other move (RefuseSpotMoves).
+	Spots []RecipeSpot `json:"spots,omitempty"`
 }
 
 // ComposerScene is the travel graph, reduced to what a waypoint search needs.

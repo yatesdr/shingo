@@ -16,19 +16,21 @@ import "time"
 // "USED THIS RECIPE" IS PROVENANCE: a live claim whose source_preset_id is one
 // of the recipe's versions (ids). "LAST" is the style whose newest such claim
 // was written most recently (updated_at, the style id breaking a tie), and
-// then that style's WHOLE claim set is read, because a position moved since
-// (a W1 move writes a new claim with no provenance) is still where the recipe
-// now runs.
+// then that style's WHOLE claim set is read: a claim a hand edit rewrote
+// without provenance is still where the recipe now runs. (A moved head may
+// keep its provenance too; Press 6's PLN_010/012 did, 2026-10-21, so neither
+// is assumed.)
 //
 // FROM THE CLAIMS ALREADY READ: claims is every live claim of the process by
 // style, which the composer read has in hand. No statement.
 //
 // LAID ON BY SHAPE. Each recipe cell takes the unused claim of the same
 // choreography (and role, when both say one) that shares the most nodes with
-// it, the claims' order breaking a tie; its head, pairs and staging map onto
-// that claim's. A move that would put two of the recipe's nodes on one node
-// drops the whole pre-fill: a suggestion that collides is worse than the
-// recipe's own.
+// it, at least one, the claims' order breaking a tie; its head, pairs and
+// staging map onto that claim's. A move that would put two of the recipe's
+// nodes on one node drops the whole pre-fill: a suggestion that collides is
+// worse than the recipe's own. The composer then keeps only what the Spots
+// step would accept (LegalSpotMoves) before the card ships it.
 func RecipeLastUsedMoves(recipe []FlowCell, ids map[int64]bool, claims map[int64][]NodeClaim) map[string]string {
 	style, ok := lastStyleUsing(ids, claims)
 	if !ok {
@@ -38,7 +40,10 @@ func RecipeLastUsedMoves(recipe []FlowCell, ids map[int64]bool, claims map[int64
 	matched := make([]bool, len(used))
 	moves := map[string]string{}
 	for _, cell := range recipe {
-		best, bestScore := -1, -1
+		// A claim must share a node with the cell to lay on it: one that
+		// shares none is a different spot's, and laying on it would move
+		// every node of the cell at once.
+		best, bestScore := -1, 0
 		for j, c := range used {
 			if matched[j] || c.SwapMode != cell.SwapMode {
 				continue
@@ -61,7 +66,7 @@ func RecipeLastUsedMoves(recipe []FlowCell, ids map[int64]bool, claims map[int64
 			}
 		}
 	}
-	if len(moves) == 0 || collides(recipe, moves) {
+	if len(moves) == 0 || Collides(recipe, moves) {
 		return nil
 	}
 	return moves
@@ -111,26 +116,4 @@ func sharedNodes(a, b [5]string) int {
 		}
 	}
 	return n
-}
-
-// collides reports whether the moves put two of the recipe's distinct nodes on
-// one node.
-func collides(recipe []FlowCell, moves map[string]string) bool {
-	at := map[string]string{}
-	for _, c := range recipe {
-		for _, n := range cellNodes(c) {
-			if n == "" {
-				continue
-			}
-			to := n
-			if m, ok := moves[n]; ok {
-				to = m
-			}
-			if prev, taken := at[to]; taken && prev != n {
-				return true
-			}
-			at[to] = n
-		}
-	}
-	return false
 }

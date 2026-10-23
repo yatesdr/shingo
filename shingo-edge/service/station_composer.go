@@ -358,7 +358,8 @@ func (s *StationService) buildComposerData(processID int64, styles []processes.S
 	// this return is.
 	out.Palette = s.processPalette(processID)
 
-	for _, r := range s.routingNodes(processID) {
+	routing := s.routingNodes(processID)
+	for _, r := range routing {
 		if !r.Enabled {
 			// A retired lane is not an option the operator should know not to
 			// pick — but it is COUNTED on the way past, because a role whose
@@ -382,7 +383,7 @@ func (s *StationService) buildComposerData(processID int64, styles []processes.S
 		})
 	}
 
-	out.Presets = s.composerPresets(processID, claims, nodes)
+	out.Presets = s.composerPresets(processID, claims, nodes, routing)
 	return out
 }
 
@@ -623,8 +624,13 @@ func cellOrder(nodes []processes.Node) []string {
 // from where exactly this was fixed for the member counts, and invisible to the
 // budget pin because the pin read it before it started counting. Called after
 // the return, so the query happens when there is a card to order.
+//
+// EACH CARD CARRIES ITS SPOTS (spots v0): where each of the recipe's places
+// may go, from the enabled recipes, the node list and the routing set this
+// read already holds, so the Spots step's rule costs the read no statement.
+// The pre-fill goes through the same rule before it ships.
 func (s *StationService) composerPresets(processID int64, claims map[int64][]processes.NodeClaim,
-	nodes func() []processes.Node) []domain.ComposerPreset {
+	nodes func() []processes.Node, routing []domain.RoutingNode) []domain.ComposerPreset {
 
 	rows, err := s.db.ListFlowPresets(processID, false)
 	if err != nil || len(rows) == 0 {
@@ -633,37 +639,36 @@ func (s *StationService) composerPresets(processID int64, claims map[int64][]pro
 		// 41 of the poll's 86 queries, building a map nothing then indexed.
 		return nil
 	}
-	pressOrder := cellOrder(nodes())
+	positions := nodes()
+	pressOrder := cellOrder(positions)
 	at := map[string]int{}
 	for i, n := range pressOrder {
 		at[n] = i
 	}
 	members := presetMemberCounts(claims)
-	// Every version of a name is the recipe: a style built from v1 still used
-	// it once v2 is the card. The rows carry every live version.
-	versions := map[string]map[int64]bool{}
-	for _, p := range rows {
-		if versions[p.Name] == nil {
-			versions[p.Name] = map[int64]bool{}
-		}
-		versions[p.Name][p.ID] = true
-	}
-	var out []domain.ComposerPreset
 	// THE LATEST VERSION OF EACH NAME, AND ONLY IT (pick-a-part O-4): an
-	// enabled recipe is the newest non-archived version of its name. The
-	// rows arrive name, version DESC, so the first of a name is the one.
-	seenName := map[string]bool{}
-	for _, p := range rows {
-		if seenName[p.Name] {
-			continue
-		}
-		seenName[p.Name] = true
+	// enabled recipe is the newest non-archived version of its name. Every
+	// version of a name is the recipe: a style built from v1 still used it
+	// once v2 is the card.
+	enabled, versions := domain.EnabledRecipes(rows)
+	parsed := make([][]domain.FlowCell, len(enabled))
+	rules := domain.SpotRules{Positions: positions, Lanes: domain.StagingLanes(routing)}
+	for i, p := range enabled {
 		cells, err := domain.ParsePresetShape(p.FlowJSON)
 		if err != nil {
 			// A preset that does not parse is not a card to offer. It also
 			// cannot have come from this edge's own writer, so it is worth a
 			// line rather than a silent skip.
 			log.Printf("composer: preset %d (%s v%d) does not parse, no card offered: %v", p.ID, p.Name, p.Version, err)
+			continue
+		}
+		parsed[i] = cells
+		rules.Enabled = append(rules.Enabled, cells)
+	}
+	var out []domain.ComposerPreset
+	for i, p := range enabled {
+		cells := parsed[i]
+		if cells == nil {
 			continue
 		}
 		card := domain.ComposerPreset{
@@ -678,8 +683,12 @@ func (s *StationService) composerPresets(processID int64, claims map[int64][]pro
 		card.Mode = oneMode(cells)
 		card.Where = domain.PresetShapeNodeWord(cells, pressOrder)
 		card.Use = presetUse(members[p.ID])
-		// The pick step's pre-fill, off the claims already read: no statement.
-		card.LastMoves = domain.RecipeLastUsedMoves(cells, versions[p.Name], claims)
+		// The Spots step's rule and its pre-fill, off the claims already
+		// read: no statement. The pre-fill keeps only what the rule allows.
+		used := domain.RecipeUsedClaims(versions[p.Name], claims)
+		card.Spots = domain.RecipeSpots(cells, used, rules)
+		card.LastMoves = domain.LegalSpotMoves(cells, used, rules,
+			domain.RecipeLastUsedMoves(cells, versions[p.Name], claims))
 		card.Slots = domain.PayloadSlots(cells)
 		sort.SliceStable(card.Slots, func(i, j int) bool { return slotAt(at, card.Slots[i]) < slotAt(at, card.Slots[j]) })
 		out = append(out, card)
