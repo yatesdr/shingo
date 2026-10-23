@@ -412,7 +412,10 @@ func AppendBinUOP(execer BinUOPExecer, binID int64, beforeUOP *int, afterUOP int
 // BinUOPRow is one row read from bin_uop_ledger. Returned by the
 // list helpers (Item 10) so the audit UI can render timelines without
 // re-querying for every row's columns. Nullable columns surface as
-// pointers; metadata stays a raw JSON string (the UI parses it).
+// pointers; metadata stays a raw JSON string (the UI parses it). It is the
+// row's metadata column, or its detail where the row was written with the §16
+// enrichment (AppendBinUOP: the tote declares and derives, the count
+// declares): a row carries one or the other, and the timeline shows either.
 type BinUOPRow struct {
 	ID          int64   `json:"id"`
 	BinID       int64   `json:"bin_id"`
@@ -473,7 +476,7 @@ func scanBinUOPRows(rows *sql.Rows) ([]BinUOPRow, error) {
 	return out, rows.Err()
 }
 
-const binUOPSelectCols = `id, bin_id, before_uop, after_uop, op, source, order_id, payload_code, actor, node_id, station, loader_id, metadata, applied_at`
+const binUOPSelectCols = `id, bin_id, before_uop, after_uop, op, source, order_id, payload_code, actor, node_id, station, loader_id, COALESCE(metadata, detail) AS metadata, applied_at`
 
 // ListBinUOPByBin returns the audit timeline for one bin, newest
 // first. Item 10's per-bin endpoint pages on this. limit clamps the

@@ -8,7 +8,8 @@ package domain
 // build says how many totes were filled, and so how many the outside cart gave.
 //
 // A nil pointer is unknown, the one spelling of it here and in the column it is
-// read from (bins.totes_on_cart IS NULL); 0 is a real count, a base.
+// read from (bins.totes_on_cart IS NULL); 0 is a real count: tops & bottoms, a
+// tote cart with no totes on it.
 
 // ToteDrawInput is what the derivation reads when the outside cart is lifted.
 type ToteDrawInput struct {
@@ -33,7 +34,9 @@ type ToteDraw struct {
 	// Front is every tote now on the front cart, filled or empty.
 	Front *int
 	// Overdrawn: the count says more totes were filled than both carts held.
-	// Outside is then 0, and the ledger detail says so.
+	// Outside is then unknown (nil): the cart held totes and the count cannot
+	// say how many are left. Never true with a non-nil Outside. The ledger
+	// detail says so.
 	Overdrawn bool
 }
 
@@ -42,11 +45,21 @@ type ToteDraw struct {
 //	filled  = ceil(cycles / uop_per_tote)
 //	k       = the front cart's totes, unknown counted as 0
 //	drawn   = max(0, filled − k)
-//	outside = max(0, H − drawn)      H (the outside cart's totes) unknown stays unknown
+//	outside = H − drawn              H (the outside cart's totes) unknown stays unknown
 //	front   = max(k, filled)
 //
 // With no UOP per tote, or no count to trust (nil, or below 0), both are
 // unknown.
+//
+// AN OUTSIDE KNOWN AT 0 STAYS 0. It had no totes to give, so whatever the
+// count says was built, nothing was drawn from it: it is written 0 (tops &
+// bottoms) with or without a count to trust, and raises no overdraw. Asked
+// before the no-count return.
+//
+// AN OVERDRAWN OUTSIDE IS UNKNOWN, NOT 0. When drawn exceeds H the count says
+// more than the cart held, so one of the numbers is wrong and the cart's
+// totes cannot be known: writing 0 would declare it tops & bottoms, a cart the
+// keeper's rows and the unloader's card treat as a line of its own.
 //
 // UNKNOWN k COUNTS AS 0, AND THAT ONLY EVER UNDER-STATES. If the front carried
 // k > 0 totes nobody counted, the operators drew at most filled − k from the
@@ -55,7 +68,11 @@ type ToteDraw struct {
 // claims a tote that is not there. Pinned by TestDeriveToteDraw's "unknown
 // front" row.
 func DeriveToteDraw(in ToteDrawInput) ToteDraw {
+	zeroOutside := in.OutsideTotes != nil && *in.OutsideTotes == 0
 	if in.Cycles == nil || *in.Cycles < 0 || in.UOPPerTote == nil || *in.UOPPerTote < 1 {
+		if zeroOutside {
+			return ToteDraw{Outside: new(int)}
+		}
 		return ToteDraw{}
 	}
 	filled := (*in.Cycles + *in.UOPPerTote - 1) / *in.UOPPerTote
@@ -68,9 +85,14 @@ func DeriveToteDraw(in ToteDrawInput) ToteDraw {
 	if in.OutsideTotes == nil {
 		return out
 	}
+	if zeroOutside {
+		out.Outside = new(int)
+		return out
+	}
 	outside := *in.OutsideTotes - max(0, filled-k)
 	if outside < 0 {
-		outside, out.Overdrawn = 0, true
+		out.Overdrawn = true
+		return out
 	}
 	out.Outside = &outside
 	return out

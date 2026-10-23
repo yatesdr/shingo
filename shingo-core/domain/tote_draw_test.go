@@ -15,7 +15,9 @@ func countText(n *int) string {
 func ptr(n int) *int { return &n }
 
 // TestDeriveToteDraw is the derivation's table: 8 totes a layer, 5 high, UOP
-// per tote 10, capacity 400. H is the outside cart's totes, k the front's.
+// per tote 10, capacity 400. H is the outside cart's totes, k the front's. An
+// outside at 0 (tops & bottoms) stays 0 and never overdraws; an overdrawn
+// outside is unknown, never 0.
 func TestDeriveToteDraw(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
@@ -32,7 +34,9 @@ func TestDeriveToteDraw(t *testing.T) {
 		{"nothing built", ptr(0), ptr(40), 0, ptr(40), ptr(0), false},
 		{"unknown front", nil, ptr(40), 135, ptr(26), ptr(14), false},
 		{"unknown outside", ptr(0), nil, 135, nil, ptr(14), false},
-		{"over-draw", ptr(26), ptr(26), 800, ptr(0), ptr(80), true},
+		{"over-draw: the outside is unknown, not 0", ptr(26), ptr(26), 800, nil, ptr(80), true},
+		{"an outside at 0 stays 0", ptr(0), ptr(0), 135, ptr(0), ptr(14), false},
+		{"an outside at 0 with the front short: no overdraw", ptr(0), ptr(0), 400, ptr(0), ptr(40), false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			got := DeriveToteDraw(ToteDrawInput{Cycles: ptr(tc.cycles), UOPPerTote: ptr(10),
@@ -44,12 +48,15 @@ func TestDeriveToteDraw(t *testing.T) {
 			if got.Overdrawn != tc.overdrawn {
 				t.Errorf("overdrawn %v, want %v", got.Overdrawn, tc.overdrawn)
 			}
+			if got.Overdrawn && got.Outside != nil {
+				t.Errorf("overdrawn with an outside of %d: the two are exclusive", *got.Outside)
+			}
 		})
 	}
 }
 
 // TestDeriveToteDraw_NoRuleIsUnknown: with no UOP per tote, or no count to
-// trust, neither cart gets a number.
+// trust, neither cart gets a number; but an outside known at 0 stays 0.
 func TestDeriveToteDraw_NoRuleIsUnknown(t *testing.T) {
 	t.Parallel()
 	for name, in := range map[string]ToteDrawInput{
@@ -59,6 +66,11 @@ func TestDeriveToteDraw_NoRuleIsUnknown(t *testing.T) {
 	} {
 		if got := DeriveToteDraw(in); got.Outside != nil || got.Front != nil || got.Overdrawn {
 			t.Errorf("%s: outside %s front %s overdrawn %v, want both unknown",
+				name, countText(got.Outside), countText(got.Front), got.Overdrawn)
+		}
+		in.OutsideTotes = ptr(0)
+		if got := DeriveToteDraw(in); countText(got.Outside) != "0" || got.Front != nil || got.Overdrawn {
+			t.Errorf("%s, an outside at 0: outside %s front %s overdrawn %v, want 0, unknown, no overdraw",
 				name, countText(got.Outside), countText(got.Front), got.Overdrawn)
 		}
 	}
@@ -77,10 +89,12 @@ func TestDeriveToteDraw_UnknownFrontNeverClaimsMore(t *testing.T) {
 			for k := 0; k <= 40; k++ {
 				truth := DeriveToteDraw(ToteDrawInput{Cycles: ptr(cycles), UOPPerTote: ptr(10),
 					FrontTotes: ptr(k), OutsideTotes: ptr(h)})
-				if *written.Outside > *truth.Outside || *written.Front > *truth.Front {
-					t.Fatalf("H %d, cycles %d, a real front of %d: wrote outside %d front %d, "+
-						"truly outside %d front %d", h, cycles, k, *written.Outside, *written.Front,
-						*truth.Outside, *truth.Front)
+				// Unknown claims nothing; a truth that overdraws is not a cart.
+				if written.Outside != nil && truth.Outside != nil && *written.Outside > *truth.Outside ||
+					*written.Front > *truth.Front {
+					t.Fatalf("H %d, cycles %d, a real front of %d: wrote outside %s front %d, "+
+						"truly outside %s front %d", h, cycles, k, countText(written.Outside), *written.Front,
+						countText(truth.Outside), *truth.Front)
 				}
 			}
 		}
