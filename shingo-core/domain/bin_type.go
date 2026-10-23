@@ -7,11 +7,11 @@ import "time"
 // BinTypeCode copy on Bin is the most common joined field, so most
 // rendering paths don't need to follow the pointer.
 //
-// The three dimensions are DESCRIPTIVE. Nothing in the system decides whether a
-// carrier fits a slot by comparing them — fit is type identity everywhere, and
-// LengthIn arriving (v90) does not change that. They exist so a plant's carrier
-// catalogue can be read off the schema instead of parsed out of codes like
-// "45x58x32", which is where the third number lived until now.
+// The three dimensions are a plant's carrier catalogue, read off the schema
+// instead of parsed out of codes like "45x58x32". One reader compares them: the
+// unloader's card asks a cart only for types of its own floor size (FloorSize,
+// width × length, when both are entered; engine assignWindows). A slot's fit is
+// still type identity everywhere else.
 type BinType struct {
 	ID          int64   `json:"id"`
 	Code        string  `json:"code"`
@@ -51,6 +51,22 @@ type BinType struct {
 	CreatedAt     time.Time `json:"created_at"`
 	UpdatedAt     time.Time `json:"updated_at"`
 }
+
+// FloorSize is a carrier's floor, its width and length as entered, held in
+// order so that a 45 × 48 and a 48 × 45 are one size.
+type FloorSize struct{ short, long float64 }
+
+// FloorSize is the type's floor size; false unless both its width and its
+// length are entered (above 0). A type with none has no size to compare.
+func (bt BinType) FloorSize() (FloorSize, bool) {
+	if bt.WidthIn <= 0 || bt.LengthIn <= 0 {
+		return FloorSize{}, false
+	}
+	return FloorSize{min(bt.WidthIn, bt.LengthIn), max(bt.WidthIn, bt.LengthIn)}, true
+}
+
+// Same reports whether two floor sizes are one, whatever the orientation.
+func (f FloorSize) Same(o FloorSize) bool { return f == o }
 
 // BareStamp is what a CLEAR does to a cart's type in a two-stage unloader,
 // decided by the caller from where the cart stands and resolved by the store

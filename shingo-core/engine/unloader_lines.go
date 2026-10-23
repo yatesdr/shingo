@@ -46,9 +46,11 @@ import (
 //
 // COST per call with levels: the open maintain episodes (one read); per level
 // type the keeper's counts (resident, coming, and asked while an episode is
-// open: two or three reads); the group's layer wants (one read); per type with
-// a wanted height and totes per layer, its residents by totes (one read). The
-// comings at a height are read off the keeper's own coming rows.
+// open: two or three reads); the types in play (one read: the level types and
+// the window carts' types, each with its floor size and the group's layer
+// wants of it, ListTypesInPlay); per type with a wanted height and totes per
+// layer, its residents by totes (one read). The comings at a height are read
+// off the keeper's own coming rows.
 func (e *Engine) UnloaderGroupLines(group *nodes.Node, levels []store.MaintainLevel,
 	windows []protocol.NodeBinsRow) (*protocol.NodeBinsGroup, error) {
 	if len(levels) == 0 {
@@ -62,9 +64,31 @@ func (e *Engine) UnloaderGroupLines(group *nodes.Node, levels []store.MaintainLe
 	for _, o := range open {
 		openByKey[o.EpisodeKey] = o
 	}
-	layerWants, err := e.db.ListMaintainLayerWants(group.ID)
+	codes := make([]string, 0, len(levels)+len(windows))
+	seen := map[string]bool{}
+	for _, lv := range levels {
+		if !seen[lv.BinTypeCode] {
+			seen[lv.BinTypeCode] = true
+			codes = append(codes, lv.BinTypeCode)
+		}
+	}
+	for _, w := range windows {
+		if w.BinTypeCode != "" && !seen[w.BinTypeCode] {
+			seen[w.BinTypeCode] = true
+			codes = append(codes, w.BinTypeCode)
+		}
+	}
+	types, err := e.db.ListTypesInPlay(group.ID, codes)
 	if err != nil {
 		return nil, fmt.Errorf("group line %s: %w", group.Name, err)
+	}
+	var layerWants []store.MaintainLayerWant
+	sizes := map[string]domain.FloorSize{}
+	for _, t := range types {
+		layerWants = append(layerWants, t.LayerWants...)
+		if fs, ok := t.Type.FloorSize(); ok {
+			sizes[t.Type.Code] = fs
+		}
 	}
 
 	lines := make([]store.TypeLine, 0, len(levels))
@@ -81,7 +105,7 @@ func (e *Engine) UnloaderGroupLines(group *nodes.Node, levels []store.MaintainLe
 	}
 
 	return &protocol.NodeBinsGroup{Group: group.Name, Wants: wantsOf(lines),
-		Assignments: assignWindows(lines, windows, inbound)}, nil
+		Assignments: assignWindows(lines, windows, inbound, sizes)}, nil
 }
 
 // wantsOf is the line's wants: each level type, then its wanted heights.
@@ -139,10 +163,17 @@ func (t thing) layers() *int {
 //     remaining shortfall, ties by the levels' order (within a type, its
 //     heights from the lowest, then the type at any height). Nothing short:
 //     no assignment. A bare cart is not walked: it is nobody's empty.
+//   - THE CART'S FLOOR SIZE BOUNDS THE ASK. A cart whose type has its width and
+//     length entered (sizes, domain.BinType.FloorSize) is asked only for types
+//     of the same floor size, orientation-blind, and never for a type with no
+//     size: a 45 × 48 cart comes back as a 45 × 48 knockdown, tote cart or
+//     basket, never as a 36 × 36. A cart whose type has no size is asked as
+//     before. Tops & bottoms is a height of its tote type, inside its size.
 //
 // The answer is in the windows' order. Pins: TestAssignWindows_*.
-func assignWindows(lines []store.TypeLine, windows []protocol.NodeBinsRow, inbound map[int64]bool) []protocol.NodeBinsAssignment {
-	w := &windowWalk{lines: lines, assignedType: map[string]int{}, assignedHeight: map[thing]int{}}
+func assignWindows(lines []store.TypeLine, windows []protocol.NodeBinsRow, inbound map[int64]bool,
+	sizes map[string]domain.FloorSize) []protocol.NodeBinsAssignment {
+	w := &windowWalk{lines: lines, sizes: sizes, assignedType: map[string]int{}, assignedHeight: map[thing]int{}}
 	byNode := map[string]protocol.NodeBinsAssignment{}
 	pass := func(empty bool) {
 		for _, row := range windows {
@@ -152,7 +183,7 @@ func assignWindows(lines []store.TypeLine, windows []protocol.NodeBinsRow, inbou
 			}
 			t, short := w.own(row)
 			if !short {
-				if t, short = w.largest(); !short {
+				if t, short = w.largest(w.fits(row)); !short {
 					continue
 				}
 			}
@@ -171,12 +202,27 @@ func assignWindows(lines []store.TypeLine, windows []protocol.NodeBinsRow, inbou
 	return out
 }
 
-// windowWalk is the walk's running state: the group's lines, and what the walk
-// has assigned of each thing so far, subtracted from each line's shortfall.
+// windowWalk is the walk's running state: the group's lines, the floor size of
+// each type in play that has one, and what the walk has assigned of each thing
+// so far, subtracted from each line's shortfall.
 type windowWalk struct {
 	lines          []store.TypeLine
+	sizes          map[string]domain.FloorSize
 	assignedType   map[string]int
 	assignedHeight map[thing]int
+}
+
+// fits is the types a cart may be asked for: every type for a cart whose type
+// has no floor size, else the types of its own floor size only.
+func (w *windowWalk) fits(row protocol.NodeBinsRow) func(code string) bool {
+	own, ok := w.sizes[row.BinTypeCode]
+	if !ok {
+		return func(string) bool { return true }
+	}
+	return func(code string) bool {
+		fs, ok := w.sizes[code]
+		return ok && fs.Same(own)
+	}
 }
 
 func (w *windowWalk) typeShort(tl store.TypeLine) int { return tl.Short() - w.assignedType[tl.Code] }
@@ -260,9 +306,9 @@ func (w *windowWalk) own(row protocol.NodeBinsRow) (thing, bool) {
 	return thing{code: tl.Code}, w.anyShort(tl) > 0
 }
 
-// largest is the thing with the largest remaining shortfall, first in the
-// levels' order on a tie.
-func (w *windowWalk) largest() (thing, bool) {
+// largest is the thing with the largest remaining shortfall among the types
+// fits admits, first in the levels' order on a tie.
+func (w *windowWalk) largest(fits func(code string) bool) (thing, bool) {
 	var best thing
 	bestShort := 0
 	consider := func(t thing, short int) {
@@ -271,6 +317,9 @@ func (w *windowWalk) largest() (thing, bool) {
 		}
 	}
 	for _, tl := range w.lines {
+		if !fits(tl.Code) {
+			continue
+		}
 		for _, h := range tl.Heights {
 			consider(heightOf(tl, h), w.heightShort(tl, h))
 		}

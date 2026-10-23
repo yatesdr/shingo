@@ -12,6 +12,7 @@ type (
 	MaintainLevel     = nodes.MaintainLevel
 	MaintainLayerWant = nodes.MaintainLayerWant
 	MaintainSupport   = nodes.MaintainSupport
+	TypeInPlay        = nodes.TypeInPlay
 )
 
 // SetMaintainLevel declares how many empty carriers of one type a maintained
@@ -36,6 +37,12 @@ func (db *DB) RemoveMaintainLevel(groupNodeID, binTypeID int64) error {
 // totes per layer joined on.
 func (db *DB) ListMaintainLayerWants(groupNodeID int64) ([]MaintainLayerWant, error) {
 	return nodes.ListMaintainLayerWants(db.DB, groupNodeID)
+}
+
+// ListTypesInPlay reads the bin types named by codes, with their dimensions and
+// the group's layer wants of each, in one statement (nodes.ListTypesInPlay).
+func (db *DB) ListTypesInPlay(groupNodeID int64, codes []string) ([]TypeInPlay, error) {
+	return nodes.ListTypesInPlay(db.DB, groupNodeID, codes)
 }
 
 // TopsAndBottomsWant is the want of a level's tops & bottoms row, false when

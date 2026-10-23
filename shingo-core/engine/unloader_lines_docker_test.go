@@ -253,3 +253,30 @@ func TestUnloaderGroupLines_CountsAreTheKeepers(t *testing.T) {
 			st.Gap, st.Resident, st.Asked, st.Coming, got.Assignments)
 	}
 }
+
+// A window cart whose type is no level of the group still reads its floor
+// size, in the same one types read: a full 45 x 48 cart of a type the group
+// keeps no level of is asked for the 45 x 48 knockdown the group is short of,
+// never the 36 x 36 it is shortest of. Six statements, as the reference case:
+// the open episodes, the types in play, and resident and coming per level type.
+func TestUnloaderGroupLines_AWindowCartReadsItsSizeThoughNoLevel(t *testing.T) {
+	t.Parallel()
+	f := newLinesFixture(t, "LINES-SIZE")
+	var small int64
+	testutil.MustNoErr(t, f.db.QueryRow(`INSERT INTO bin_types (code, width_in, length_in) VALUES ('SMALL-L', 36, 36)
+		RETURNING id`).Scan(&small), "36 x 36 type")
+	_, err := f.db.Exec(`INSERT INTO bin_types (code, width_in, length_in) VALUES ('WIN-L', 48, 45)`)
+	testutil.MustNoErr(t, err, "the window cart's type")
+	_, err = f.db.Exec(`UPDATE bin_types SET width_in = 45, length_in = 48 WHERE id = $1`, f.kd)
+	testutil.MustNoErr(t, err, "size the knockdown")
+	levels := f.levels(t, map[int64]int{small: 5, f.kd: 1}, nil)
+
+	got := f.lines(t, levels, []protocol.NodeBinsRow{cart("W1", "WIN-L", true)})
+	want := []protocol.NodeBinsAssignment{{Node: "W1", BinType: "KD-L"}}
+	if !reflect.DeepEqual(got.Assignments, want) {
+		t.Errorf("assignments = %+v, want %+v", got.Assignments, want)
+	}
+	if n := f.counter.Count(); n != 6 {
+		t.Errorf("statements = %d, want 6:\n%v", n, f.counter.Statements())
+	}
+}

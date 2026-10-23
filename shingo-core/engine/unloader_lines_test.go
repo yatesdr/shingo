@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"shingo/protocol"
+	"shingocore/domain"
 	"shingocore/store"
 )
 
@@ -51,7 +52,7 @@ func said(as []protocol.NodeBinsAssignment) string {
 
 func requireWalk(t *testing.T, lines []store.TypeLine, windows []protocol.NodeBinsRow, want string) {
 	t.Helper()
-	if got := said(assignWindows(lines, windows, nil)); got != want {
+	if got := said(assignWindows(lines, windows, nil, nil)); got != want {
 		t.Errorf("walk = %q, want %q", got, want)
 	}
 }
@@ -124,7 +125,7 @@ func TestAssignWindows_NothingShortNothingAssigned(t *testing.T) {
 		{Node: "W2"},
 		cart("W3", "TOTE-1", false),
 	}, "")
-	if as := assignWindows(lines, nil, nil); as == nil || len(as) != 0 {
+	if as := assignWindows(lines, nil, nil, nil); as == nil || len(as) != 0 {
 		t.Errorf("no windows: %v, want an empty list", as)
 	}
 }
@@ -300,4 +301,69 @@ func TestAssignWindows_ABareCartIsAssignedNothing(t *testing.T) {
 	bare := cart("W1", "TOTE-1", false)
 	bare.Bare = true
 	requireWalk(t, lines, []protocol.NodeBinsRow{bare}, "")
+}
+
+// sizes is the floor sizes the walk's tests give their types: three 45 x 48
+// types (a knockdown, a tote cart and a basket, the tote entered the other way
+// round) and a 36 x 36 knockdown; NODIM has none entered.
+func sizes() map[string]domain.FloorSize {
+	out := map[string]domain.FloorSize{}
+	for code, wl := range map[string][2]float64{"KD-45": {45, 48}, "TOTE-1": {48, 45}, "WB-45": {45, 48}, "KD-36": {36, 36}} {
+		fs, _ := domain.BinType{WidthIn: wl[0], LengthIn: wl[1]}.FloorSize()
+		out[code] = fs
+	}
+	return out
+}
+
+func requireSizedWalk(t *testing.T, lines []store.TypeLine, windows []protocol.NodeBinsRow, want string) {
+	t.Helper()
+	if got := said(assignWindows(lines, windows, nil, sizes())); got != want {
+		t.Errorf("walk = %q, want %q", got, want)
+	}
+}
+
+// THE CART'S FLOOR SIZE BOUNDS THE ASK. A 45 x 48 knockdown goes back as its
+// own type while the group is short of it; then as the largest shortfall among
+// 45 x 48 types (the tote cart, entered 48 x 45), never as the 36 x 36 the
+// group is shortest of, and never as a type with no size.
+func TestAssignWindows_ACartIsAskedWithinItsFloorSize(t *testing.T) {
+	t.Parallel()
+	lines := []store.TypeLine{
+		{Code: "KD-36", Want: 9, Have: 0},
+		{Code: "NODIM", Want: 8, Have: 0},
+		{Code: "KD-45", Want: 1, Have: 0},
+		{Code: "TOTE-1", Want: 2, Have: 0},
+		{Code: "WB-45", Want: 1, Have: 0},
+	}
+	requireSizedWalk(t, lines, []protocol.NodeBinsRow{
+		cart("W1", "KD-45", true),
+		cart("W2", "KD-45", true),
+		cart("W3", "KD-45", true),
+		cart("W4", "KD-45", true),
+		cart("W5", "KD-45", true),
+	}, "W1=KD-45 W2=TOTE-1 W3=TOTE-1 W4=WB-45")
+
+	// The reference case with sizes: the full tote cart (48 x 45) is asked for
+	// totes, its own size; the full 36 x 36 knockdown is never asked for totes
+	// and, its own type met, is asked for nothing.
+	ref := []store.TypeLine{
+		{Code: "KD-36", Want: 3, Have: 2},
+		{Code: "TOTE-1", Want: 3, Have: 0},
+	}
+	requireSizedWalk(t, ref, []protocol.NodeBinsRow{
+		cart("W1", "TOTE-1", true),
+		cart("W2", "KD-36", true),
+		cart("W3", "KD-36", false),
+	}, "W1=TOTE-1 W3=KD-36")
+}
+
+// A cart whose type has no size is asked as before: the largest shortfall of
+// any type, sized or not.
+func TestAssignWindows_ACartWithNoSizeAsToday(t *testing.T) {
+	t.Parallel()
+	lines := []store.TypeLine{
+		{Code: "KD-36", Want: 9, Have: 0},
+		{Code: "NODIM", Want: 1, Have: 1},
+	}
+	requireSizedWalk(t, lines, []protocol.NodeBinsRow{cart("W1", "NODIM", true)}, "W1=KD-36")
 }

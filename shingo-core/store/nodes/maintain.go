@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+
+	"shingocore/domain"
 )
 
 // Maintained-group config: the level a node group holds in EMPTY CARRIERS, and
@@ -255,6 +257,60 @@ func TopsAndBottomsWant(db *sql.DB, groupNodeID, binTypeID int64) (int, bool, er
 		return 0, false, fmt.Errorf("tops & bottoms row group=%d/bin_type=%d: %w", groupNodeID, binTypeID, err)
 	}
 	return want, true, nil
+}
+
+// TypeInPlay is a bin type an unloader's group line reads (ListTypesInPlay):
+// the type's dimensions and totes per layer, and the group's layer wants of it
+// (by height, none when it wants none).
+type TypeInPlay struct {
+	Type       domain.BinType
+	LayerWants []MaintainLayerWant
+}
+
+// ListTypesInPlay reads, in one statement, the bin types named by codes (a
+// group's level types and the types of the carts at its unloader's windows)
+// with their width, length and totes per layer, and group groupNodeID's layer
+// wants of each, by code and then height. It is the group line's one types
+// read, in place of ListMaintainLayerWants there: the floor sizes ride the
+// read the heights already made.
+func ListTypesInPlay(db *sql.DB, groupNodeID int64, codes []string) ([]TypeInPlay, error) {
+	if len(codes) == 0 {
+		return nil, nil
+	}
+	args := make([]any, 0, len(codes)+1)
+	args = append(args, groupNodeID)
+	for _, c := range codes {
+		args = append(args, c)
+	}
+	rows, err := db.Query(`
+		SELECT bt.id, bt.code, bt.width_in, bt.length_in, bt.totes_per_layer, w.layers, w.want
+		  FROM bin_types bt
+		  LEFT JOIN node_maintain_layer_levels w ON w.bin_type_id = bt.id AND w.group_node_id = $1
+		 WHERE bt.code IN (`+placeholders(2, len(codes))+`)
+		 ORDER BY bt.code, w.layers`, args...)
+	if err != nil {
+		return nil, fmt.Errorf("list types in play group=%d: %w", groupNodeID, err)
+	}
+	defer rows.Close()
+	var out []TypeInPlay
+	for rows.Next() {
+		var (
+			bt           domain.BinType
+			layers, want sql.NullInt64
+		)
+		if err := rows.Scan(&bt.ID, &bt.Code, &bt.WidthIn, &bt.LengthIn, &bt.TotesPerLayer, &layers, &want); err != nil {
+			return nil, fmt.Errorf("scan type in play: %w", err)
+		}
+		if len(out) == 0 || out[len(out)-1].Type.ID != bt.ID {
+			out = append(out, TypeInPlay{Type: bt})
+		}
+		if layers.Valid {
+			t := &out[len(out)-1]
+			t.LayerWants = append(t.LayerWants, MaintainLayerWant{GroupNodeID: groupNodeID, BinTypeID: bt.ID,
+				BinTypeCode: bt.Code, Layers: int(layers.Int64), Want: int(want.Int64), TotesPerLayer: bt.TotesPerLayer})
+		}
+	}
+	return out, rows.Err()
 }
 
 // ListMaintainLevels returns a group's declared level with the bin-type CODES
