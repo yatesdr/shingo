@@ -35,14 +35,34 @@ func FedClaimSQL(alias string) string {
 // the by-contents choice's rule that a tote cart off a fed outside keeps its
 // planned drop (IsFedOutside).
 func FedOutsideSQL(nodeExpr string) string {
+	return fedOutsideSQL(nodeExpr, "")
+}
+
+// FedOutsideCarryingSQL is FedOutsideSQL for a fed claim that carries the part
+// payloadExpr names (ClaimCarriesSQL): SEND BACK's pull lands tops & bottoms of
+// the press's own part on its outside (ToteCarrierFor).
+func FedOutsideCarryingSQL(nodeExpr, payloadExpr string) string {
+	return fedOutsideSQL(nodeExpr, "\n\t\t   AND "+ClaimCarriesSQL("sc", payloadExpr))
+}
+
+func fedOutsideSQL(nodeExpr, also string) string {
 	return `
 		SELECT sc.core_node_name AS core
 		  FROM style_claims sc
 		  LEFT JOIN process_styles ps ON ps.process_id = sc.process_id AND ps.style_id = sc.style_id
 		 WHERE sc.paired_core_node = ` + nodeExpr + `
-		   AND ` + FedClaimSQL("sc") + `
+		   AND ` + FedClaimSQL("sc") + also + `
 		 ORDER BY COALESCE(ps.is_active, false) DESC, sc.core_node_name
 		 LIMIT 1`
+}
+
+// ClaimCarriesSQL is whether a style_claims row (alias) carries the part
+// payloadExpr names: its payload, or one of its allowed payloads. One spelling
+// for the height an empty is wanted at (ToteWantSQL) and the fed outside a
+// tops & bottoms pull lands on (FedOutsideCarryingSQL).
+func ClaimCarriesSQL(alias, payloadExpr string) string {
+	return `(` + alias + `.payload_code = ` + payloadExpr + `
+	                    OR (` + alias + `.allowed_payload_codes <> '[]' AND ` + alias + `.allowed_payload_codes::jsonb ? ` + payloadExpr + `))`
 }
 
 // IsFedOutside reports whether node is a fed press cell's outside position

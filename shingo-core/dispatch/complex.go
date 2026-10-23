@@ -384,7 +384,7 @@ func queueParamsForCapacity(d *capacityDetail, payloadCode, deliveryNode string)
 		p.Payload = payloadCode
 		p.Group = d.Group
 	case capacityBin:
-		p.Kind = "empty"
+		p.Kind = plan.KindEmpty
 		p.Group = d.Group
 	default: // capacityUnknown — say only what we know.
 		p.Group = d.Group

@@ -240,3 +240,9 @@ func (db *DB) IsLinePosition(nodeName string) (bool, error) {
 func (db *DB) IsFedOutside(nodeName string) (bool, error) {
 	return bins.IsFedOutside(db.DB, nodeName)
 }
+
+// ToteCarrierFor is the press whose outside outside is and the tote carrier of
+// part, one read (bins.ToteCarrierFor): a tops & bottoms pull's.
+func (db *DB) ToteCarrierFor(part, outside string) (bins.ToteCarrier, error) {
+	return bins.ToteCarrierFor(db.DB, part, outside)
+}

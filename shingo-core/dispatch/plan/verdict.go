@@ -6,6 +6,7 @@ import (
 
 	"shingo/protocol"
 	"shingocore/dispatch/binresolver"
+	"shingocore/domain"
 	"shingocore/store/bins"
 )
 
@@ -65,7 +66,9 @@ var Causes = []Cause{
 // Params are the facts a waiting verdict's operator sentence is built from: the
 // subset of dispatch.QueueParams the planner fills, field for field.
 type Params struct {
-	Payload       string
+	Payload string
+	// Kind is what the need waits for when it is not a full (parkKind):
+	// KindEmpty, KindTopsAndBottoms, or "" for a full.
 	Kind          string
 	Group         string
 	Reserved      bool
@@ -190,6 +193,26 @@ func EmptyBinsOnly(candidates []*bins.Bin) []*bins.Bin {
 		}
 	}
 	return out
+}
+
+// The Kind values a wait carries (Params.Kind). The operator sentence reads
+// them (dispatch materialSentence).
+const (
+	KindEmpty          = "empty"
+	KindTopsAndBottoms = "tops_bottoms"
+)
+
+// parkKind is the Kind a need's wait carries, at every park the finder writes:
+// tops & bottoms for a need stating that height, an empty for any other empty,
+// "" for a full.
+func parkKind(need Need) string {
+	switch {
+	case need.Intent != IntentEmpty:
+		return ""
+	case need.Want.Height == domain.TopsAndBottomsOnly:
+		return KindTopsAndBottoms
+	}
+	return KindEmpty
 }
 
 // BindAt is what a bind knows of where an empty pickup lifts: whether the node

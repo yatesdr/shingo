@@ -66,12 +66,18 @@ func DescendantsOf(nodeParam int) string {
 // what the inheritance lookups order by — "the nearest ancestor that has any
 // rows" is `ORDER BY depth ASC LIMIT 1`.
 func AncestorsOf(nodeParam int) string {
-	return fmt.Sprintf(`WITH RECURSIVE ancestors AS (
-			SELECT id, parent_id, 0 AS depth FROM nodes WHERE id = $%d
+	return AncestorsOfExpr(fmt.Sprintf("$%d", nodeParam))
+}
+
+// AncestorsOfExpr is AncestorsOf anchored on an SQL expression for the node's
+// id (a sub-select by name, say) rather than a parameter.
+func AncestorsOfExpr(nodeExpr string) string {
+	return `WITH RECURSIVE ancestors AS (
+			SELECT id, parent_id, 0 AS depth FROM nodes WHERE id = ` + nodeExpr + `
 			UNION ALL
 			SELECT n.id, n.parent_id, a.depth + 1 FROM nodes n
 			JOIN ancestors a ON n.id = a.parent_id
-		)`, nodeParam)
+		)`
 }
 
 // AncestorsWithinDepth is AncestorsOf with the recursion BOUNDED: it stops after

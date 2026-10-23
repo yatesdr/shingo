@@ -244,17 +244,6 @@ func unreadableSource(kind, payloadCode, where string) Plan {
 	}
 }
 
-// nodeLocalKind is the QueueParams.Kind a node-local need renders with: "empty"
-// for an empty pull, blank otherwise — matching the tier's own none-found park
-// two lines below, so an unreadable and an empty node read the same way in every
-// respect except the one that differs.
-func nodeLocalKind(intent Intent) string {
-	if intent == IntentEmpty {
-		return "empty"
-	}
-	return ""
-}
-
 // FindSourceForNeed runs the tier cascade for one NEED. Same cascade, same
 // no-fall-through edges as FindSource -- which is now a two-line adapter over
 // this -- but callable per-need, which is what lets a complex order's distinct
@@ -268,6 +257,9 @@ func (f *Finder) Pick(need Need) Plan {
 	// exactly need.NodeLocal, and the tier-5 gate on !moveShaped is what makes
 	// plant-wide widening unreachable by type for node-local needs.
 	moveShaped := need.NodeLocal
+	// exact: the need states its empty (Need.Want). It skips a partial to
+	// finish and never widens plant-wide.
+	exact := need.Exact()
 
 	// Destination resolved once — excludeNodeID (prevent same-node retrieve) and
 	// preferZone (zone-preferring empty fallback). Kills the four open-coded
@@ -311,7 +303,7 @@ func (f *Finder) Pick(need Need) Plan {
 				Outcome:   OutcomeWait,
 				QueueCode: protocol.QueueWaitingForMaterial,
 				Cause:     CauseLoaderSourceUnreadable,
-				Params:    Params{Payload: payloadCode, Group: need.SourceNode},
+				Params:    Params{Kind: parkKind(need), Payload: payloadCode, Group: need.SourceNode},
 			}
 		}
 		if n == nil {
@@ -320,7 +312,7 @@ func (f *Finder) Pick(need Need) Plan {
 				Outcome:   OutcomeWait,
 				QueueCode: protocol.QueueWaitingForMaterial,
 				Cause:     CauseFinderSourceMissing,
-				Params: Params{Kind: nodeLocalKind(intent), Payload: payloadCode,
+				Params: Params{Kind: parkKind(need), Payload: payloadCode,
 					Group: need.SourceNode, SourceMissing: true},
 			}
 		}
@@ -440,7 +432,7 @@ func (f *Finder) Pick(need Need) Plan {
 		if intent == IntentEmpty {
 			loaderIntent = binsource.Fill
 		}
-		chosen, node, isLoaderPos, passed, lerr := f.sourceFromDedicatedLoader(srcNode, payloadCode, loaderIntent, need.Asker.OrderID, need.LiftFrom)
+		chosen, node, isLoaderPos, passed, lerr := f.sourceFromDedicatedLoader(srcNode, payloadCode, loaderIntent, need.Asker.OrderID, need.Want.Height, need.LiftFrom)
 		passedOver = passed
 		if lerr != nil {
 			// WAIT, NOT FAIL, and this arm is the callee's own stated disposition
@@ -462,7 +454,7 @@ func (f *Finder) Pick(need Need) Plan {
 				Outcome:   OutcomeWait,
 				QueueCode: protocol.QueueWaitingForMaterial,
 				Cause:     CauseLoaderSourceUnreadable,
-				Params:    Params{Payload: payloadCode, Group: need.SourceNode},
+				Params:    Params{Kind: parkKind(need), Payload: payloadCode, Group: need.SourceNode},
 			}
 		}
 		if isLoaderPos {
@@ -476,7 +468,7 @@ func (f *Finder) Pick(need Need) Plan {
 					Outcome:   OutcomeWait,
 					QueueCode: protocol.QueueWaitingForMaterial,
 					Cause:     CauseFinderPoolEmpty,
-					Params:    Params{Payload: payloadCode, Group: need.SourceNode},
+					Params:    Params{Kind: parkKind(need), Payload: payloadCode, Group: need.SourceNode},
 				}
 			}
 			bin, binNode = chosen, node
@@ -498,8 +490,9 @@ func (f *Finder) Pick(need Need) Plan {
 	// oldest-held partial of it standing there — or in the need's own source
 	// group — is taken before a fresh empty. REQUEST, a changeover's fetch and
 	// the keeper's refill all ask here, as every empty-intent need does. A part
-	// with no home asks nothing new.
-	if bin == nil && intent == IntentEmpty && payloadCode != "" {
+	// with no home asks nothing new. An exact need does not: it would hand a
+	// partial of the part to a need for tops & bottoms.
+	if bin == nil && intent == IntentEmpty && payloadCode != "" && !exact {
 		also := ""
 		if srcNode != nil && srcNode.IsSynthetic {
 			also = srcNode.Name
@@ -536,14 +529,14 @@ func (f *Finder) Pick(need Need) Plan {
 			// The fence could not be read, so whether this need may be served is
 			// unknown. Unknown parks — it does not serve.
 			f.debug("finder: fence check for group %s unreadable: %v", need.SourceNode, ferr)
-			return unreadableSource("empty", payloadCode, need.SourceNode)
+			return unreadableSource(parkKind(need), payloadCode, need.SourceNode)
 		} else if fenced {
 			f.debug("finder: group %s is fenced against %q — parking", need.SourceNode, need.ProcessNode)
 			return Plan{
 				Outcome:   OutcomeWait,
 				QueueCode: protocol.QueueWaitingForMaterial,
 				Cause:     CauseFinderGroupFenced,
-				Params: Params{Kind: "empty", Payload: payloadCode, Group: need.SourceNode,
+				Params: Params{Kind: parkKind(need), Payload: payloadCode, Group: need.SourceNode,
 					Reserved: true},
 			}
 		}
@@ -563,7 +556,7 @@ func (f *Finder) Pick(need Need) Plan {
 			// group's contents, so none of the "the group has none of X" causes
 			// would be true.
 			f.debug("finder: group empty search for %s unreadable: %v", need.SourceNode, gerr)
-			return unreadableSource("empty", payloadCode, need.SourceNode)
+			return unreadableSource(parkKind(need), payloadCode, need.SourceNode)
 		}
 		if groupBin == nil {
 			cause := CauseFinderGroupEmpty
@@ -580,7 +573,7 @@ func (f *Finder) Pick(need Need) Plan {
 				Outcome:   OutcomeWait,
 				QueueCode: protocol.QueueWaitingForMaterial,
 				Cause:     cause,
-				Params:    Params{Kind: "empty", Payload: payloadCode, Group: need.SourceNode},
+				Params:    Params{Kind: parkKind(need), Payload: payloadCode, Group: need.SourceNode},
 			}
 		}
 		bin = groupBin
@@ -642,7 +635,7 @@ func (f *Finder) Pick(need Need) Plan {
 		candidates, lberr := f.db.ListBinsByNode(srcNode.ID)
 		if lberr != nil {
 			f.debug("finder: node-local candidates at %s unreadable: %v", need.SourceNode, lberr)
-			return unreadableSource(nodeLocalKind(intent), payloadCode, need.SourceNode)
+			return unreadableSource(parkKind(need), payloadCode, need.SourceNode)
 		}
 		claimPayload := payloadCode
 		if intent == IntentEmpty {
@@ -656,7 +649,7 @@ func (f *Finder) Pick(need Need) Plan {
 				line, lerr := f.db.IsLinePosition(srcNode.Name)
 				if lerr != nil {
 					f.debug("finder: is %s a line position: %v", need.SourceNode, lerr)
-					return unreadableSource("empty", payloadCode, need.SourceNode)
+					return unreadableSource(parkKind(need), payloadCode, need.SourceNode)
 				}
 				at.LinePosition = line
 			}
@@ -675,7 +668,7 @@ func (f *Finder) Pick(need Need) Plan {
 			var btErr error
 			if binTypes, btErr = f.db.LoadBinTypeRule(claimPayload); btErr != nil {
 				f.debug("finder: carrier rule for %q unreadable: %v", claimPayload, btErr)
-				return unreadableSource(nodeLocalKind(intent), payloadCode, need.SourceNode)
+				return unreadableSource(parkKind(need), payloadCode, need.SourceNode)
 			}
 		}
 		onlyPartials := false
@@ -741,10 +734,7 @@ func (f *Finder) Pick(need Need) Plan {
 			bin, binNode, atNamedNode, foreignCarrier = foreign, srcNode, true, true
 		}
 		if bin == nil {
-			params := Params{Payload: payloadCode, Group: need.SourceNode}
-			if intent == IntentEmpty {
-				params.Kind = "empty"
-			}
+			params := Params{Kind: parkKind(need), Payload: payloadCode, Group: need.SourceNode}
 			cause := CauseFinderNodeEmpty
 			switch {
 			case onlyPartials:
@@ -766,13 +756,15 @@ func (f *Finder) Pick(need Need) Plan {
 	}
 
 	// ── Tier 5: plant-wide fallback (retrieve-shaped only) ────────────────
-	// Move-shaped needs never reach here (tier 4 is terminal for a move).
-	if bin == nil && !moveShaped {
+	// Move-shaped needs never reach here (tier 4 is terminal for a move), and
+	// neither does an exact one: tops & bottoms is pulled from the press's own
+	// inbound source or not at all.
+	if bin == nil && !moveShaped && !exact {
 		if intent == IntentFull {
 			b, err := f.db.FindSourceBinFIFO(payloadCode, excludeID)
 			if sourceSearchFailed(err) {
 				f.debug("finder: plant-wide full search for %s unreadable: %v", payloadCode, err)
-				return unreadableSource("", payloadCode, "")
+				return unreadableSource(parkKind(need), payloadCode, "")
 			}
 			if b == nil {
 				return Plan{
@@ -804,14 +796,14 @@ func (f *Finder) Pick(need Need) Plan {
 			}
 			if sourceSearchFailed(err) {
 				f.debug("finder: plant-wide empty search unreadable: %v", err)
-				return unreadableSource("empty", payloadCode, "")
+				return unreadableSource(parkKind(need), payloadCode, "")
 			}
 			if b == nil {
 				return Plan{
 					Outcome:   OutcomeWait,
 					QueueCode: protocol.QueueWaitingForMaterial,
 					Cause:     cause,
-					Params:    Params{Kind: "empty", Payload: payloadCode},
+					Params:    Params{Kind: parkKind(need), Payload: payloadCode},
 				}
 			}
 			bin = b
@@ -819,10 +811,11 @@ func (f *Finder) Pick(need Need) Plan {
 	}
 
 	if bin == nil {
-		params := Params{Payload: payloadCode}
+		params := Params{Kind: parkKind(need), Payload: payloadCode}
 		cause := CauseFinderPlantEmpty
-		if intent == IntentEmpty {
-			params = Params{Kind: "empty", Payload: payloadCode}
+		if exact {
+			// Its source is the whole scope it had: name it.
+			params.Group = need.SourceNode
 		}
 		return Plan{
 			Outcome:   OutcomeWait,
@@ -944,7 +937,7 @@ func (f *Finder) Pick(need Need) Plan {
 				Outcome:   OutcomeWait,
 				QueueCode: protocol.QueueStorageRearranging,
 				Cause:     CauseFinderAccessibilityUnreadable,
-				Params:    Params{Kind: "empty", Payload: payloadCode},
+				Params:    Params{Payload: payloadCode},
 			}
 		}
 		accessible, err := f.db.IsSlotAccessible(*bin.NodeID)
@@ -992,7 +985,7 @@ func (f *Finder) Pick(need Need) Plan {
 //   - isLoaderPos=true, bin=nil → a loader position but no eligible bin of X in
 //     the pool; the caller QUEUES (must not fall through to the global scan).
 //   - isLoaderPos=true, bin!=nil → the chosen bin and the node it is parked at.
-func (f *Finder) sourceFromDedicatedLoader(srcNode *nodes.Node, payloadCode string, intent binsource.Intent, asker int64, liftFrom []int64) (bin *bins.Bin, binNode *nodes.Node, isLoaderPos bool, passedOver *bins.Bin, err error) {
+func (f *Finder) sourceFromDedicatedLoader(srcNode *nodes.Node, payloadCode string, intent binsource.Intent, asker int64, height domain.Height, liftFrom []int64) (bin *bins.Bin, binNode *nodes.Node, isLoaderPos bool, passedOver *bins.Bin, err error) {
 	// The source node is the one FindSourceForNeed already resolved. This used
 	// to look the name up a second time, and filed a name matching no node as a
 	// read failure (TestMissingSourcePin_*); both answers are now given once, at
@@ -1069,7 +1062,9 @@ func (f *Finder) sourceFromDedicatedLoader(srcNode *nodes.Node, payloadCode stri
 			return nil, nil, true, nil, fmt.Errorf("load bin-type rule for loader %d payload %q: %w", home.LoaderID, payloadCode, btErr)
 		}
 	}
-	want := binsource.Want{Payload: payloadCode, Intent: intent, BinTypes: binTypes, Asker: asker}
+	// height is a stated want's (Need.Want; tops & bottoms rejects every other
+	// candidate), the zero value for every other need.
+	want := binsource.Want{Payload: payloadCode, Intent: intent, BinTypes: binTypes, Asker: asker, Height: height}
 	best, ok := binsource.Source(cands, want)
 	if !ok {
 		// The pool came up empty. Say WHY, in two halves, because "no eligible

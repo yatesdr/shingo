@@ -1,0 +1,72 @@
+[
+ {
+  "name": "two-position",
+  "why": "A tote press and the cart outside it: the paired position is no claim's, so the press is fed from behind and SEND BACK's line may show.",
+  "claims": [
+   {
+    "node": "PRESS",
+    "role": "produce",
+    "paired": "OUT"
+   }
+  ],
+  "ask": "PRESS",
+  "want_fed": true
+ },
+ {
+  "name": "three-position",
+  "why": "A three-position press: the paired position (the middle) is no claim's, and the second paired position is never the outside, so the shape reads fed by its paired position alone.",
+  "claims": [
+   {
+    "node": "PRESS",
+    "role": "produce",
+    "paired": "MID",
+    "second_paired": "BACK"
+   }
+  ],
+  "ask": "PRESS",
+  "want_fed": true
+ },
+ {
+  "name": "sequential",
+  "why": "Two presses that alternate name each other as paired, and each is a claim of the same process and style: neither is the other's outside.",
+  "claims": [
+   {
+    "node": "SEQ-A",
+    "role": "produce",
+    "paired": "SEQ-B"
+   },
+   {
+    "node": "SEQ-B",
+    "role": "produce",
+    "paired": "SEQ-A"
+   }
+  ],
+  "ask": "SEQ-A",
+  "want_fed": false
+ },
+ {
+  "name": "consume",
+  "why": "The shape is role-blind: a consume press fed from behind reads fed. SEND BACK's line refuses it by its own role test.",
+  "claims": [
+   {
+    "node": "PRESS",
+    "role": "consume",
+    "paired": "OUT"
+   }
+  ],
+  "ask": "PRESS",
+  "want_fed": true
+ },
+ {
+  "name": "blank paired",
+  "why": "A claim with no paired position has no outside.",
+  "claims": [
+   {
+    "node": "PRESS",
+    "role": "produce"
+   }
+  ],
+  "ask": "PRESS",
+  "want_fed": false
+ }
+]

@@ -1,8 +1,12 @@
 package dispatch
 
 import (
+	"errors"
+	"fmt"
+
 	"shingo/protocol"
 	"shingocore/dispatch/plan"
+	"shingocore/domain"
 	"shingocore/store"
 	"shingocore/store/bins"
 	"shingocore/store/nodes"
@@ -106,12 +110,13 @@ func sourceResultOf(p plan.Plan) SourceResult {
 // dispatch calls it.
 type SourceFinder struct {
 	picker *plan.Finder
+	db     FinderDB
 }
 
 // NewSourceFinder constructs a SourceFinder. resolver may be nil — the NGRP tier
 // self-guards on it, exactly as the intake planners do (s.resolver != nil).
 func NewSourceFinder(db FinderDB, resolver NodeResolver, dbg func(string, ...any)) *SourceFinder {
-	return &SourceFinder{picker: plan.NewFinder(db, resolver, dbg)}
+	return &SourceFinder{picker: plan.NewFinder(db, resolver, dbg), db: db}
 }
 
 // FindSourceForNeed runs the tier cascade for one NEED (plan.Finder.Pick) and
@@ -138,8 +143,15 @@ func (f *SourceFinder) FindSourceForNeed(need SourceNeed) SourceResult {
 // than widening; an NGRP capacity/buried error queues (or reshuffles) scoped —
 // none of these fall through to tier 5. Those "no fall-through" edges are the
 // bugs the collapse fixes; keep them exact.
+//
+// A TOPS & BOTTOMS PULL STATES ITS WANT (Need.Want): the part's tote carrier at
+// tops & bottoms only, for the fed press whose outside it lands on, which is
+// the need's ProcessNode (so a strict group that supports the press serves it).
+// Asked here on every find, the scanner's replay included, since no column
+// carries the type; a pull that no longer resolves fails with the sentence
+// intake would have refused it with (toteCarrierFor).
 func (f *SourceFinder) FindSource(order *orders.Order, intent Intent) SourceResult {
-	return f.FindSourceForNeed(SourceNeed{
+	need := SourceNeed{
 		SourceNode:   order.SourceNode,
 		PayloadCode:  order.PayloadCode,
 		DeliveryNode: order.DeliveryNode,
@@ -162,7 +174,46 @@ func (f *SourceFinder) FindSource(order *orders.Order, intent Intent) SourceResu
 		// would mean a compound parent excluded from its OWN dig — unable to see
 		// the carrier that dig uncovered for it.
 		Asker: digAskerFor(order),
-	})
+	}
+	if order.SourceIntent == SourceIntentTopsAndBottoms {
+		tc, refusal, err := toteCarrierFor(f.db, order.PayloadCode, order.DeliveryNode)
+		switch {
+		case err != nil:
+			return sourceResultOf(plan.Plan{
+				Outcome:   plan.OutcomeWait,
+				QueueCode: protocol.QueueWaitingForMaterial,
+				Cause:     plan.CauseFinderSourceUnreadable,
+				Params:    plan.Params{Kind: plan.KindTopsAndBottoms, Payload: order.PayloadCode, Group: order.SourceNode},
+			})
+		case refusal != "":
+			return sourceResultOf(plan.Plan{Outcome: plan.OutcomeStructural, TermCode: codeStructural,
+				Err: errors.New(refusal)})
+		}
+		need.Want = plan.Want{Type: tc.Type, Height: domain.TopsAndBottomsOnly}
+		need.ProcessNode = tc.Core
+	}
+	return f.FindSourceForNeed(need)
+}
+
+// toteCarrierFor answers a tops & bottoms pull of part to outside in one read
+// (store ToteCarrierFor): the fed press and the tote carrier, or the sentence
+// it is refused with when the delivery is no fed press's outside carrying the
+// part, or the part names no tote carrier, or more than one. err is a read
+// that did not answer, which is no refusal. Its askers: the intake guard
+// (decideTransport) and every find (FindSource).
+func toteCarrierFor(db FinderDB, part, outside string) (tc bins.ToteCarrier, refusal string, err error) {
+	if tc, err = db.ToteCarrierFor(part, outside); err != nil {
+		return tc, "", err
+	}
+	switch {
+	case tc.Core == "":
+		return tc, fmt.Sprintf("%s is not the outside position of a press fed with %s", outside, part), nil
+	case tc.Types == 0:
+		return tc, fmt.Sprintf("%s names no tote carrier", part), nil
+	case tc.Types > 1:
+		return tc, fmt.Sprintf("%s names more than one tote carrier", part), nil
+	}
+	return tc, "", nil
 }
 
 // queueCauseOf names a planner cause in dispatch's queue vocabulary. The value is

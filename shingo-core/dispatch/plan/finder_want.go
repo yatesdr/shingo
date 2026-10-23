@@ -70,6 +70,11 @@ func (f *Finder) wantedEmpty(need Need) (types []string, height domain.Height) {
 	if need.Intent != IntentEmpty {
 		return nil, domain.Height{}
 	}
+	// A STATED WANT IS THE ANSWER (Need.Want), before any derivation: the
+	// caller has already decided the type and the height.
+	if need.Exact() {
+		return []string{need.Want.Type}, need.Want.Height
+	}
 
 	// ── FIRST ARM: THE TYPE IS PINNED, NOT DERIVED ──────────────────────────
 	//

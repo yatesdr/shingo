@@ -370,6 +370,27 @@ func (s *PlanningService) decideTransport(order *orders.Order, payloadCode strin
 	isEmpty := SourcesEmpty(order.SourceIntent)
 	isMove := order.SourceIntent == SourceIntentLocal
 
+	// A TOPS & BOTTOMS PULL IS REFUSED AT INTAKE when it cannot resolve
+	// (toteCarrierFor: no fed press's outside carrying the part, no tote
+	// carrier, more than one) or names no inbound source: it would wait for
+	// ever, or widen. A read that did not answer is no refusal; the find asks
+	// again and waits.
+	if order.SourceIntent == SourceIntentTopsAndBottoms {
+		tc, refusal, err := toteCarrierFor(s.db, order.PayloadCode, order.DeliveryNode)
+		switch {
+		case err == nil && refusal != "":
+			d.refused = &planningError{Code: codeStructural, Detail: refusal}
+			return d
+		case order.SourceNode == "":
+			press := tc.Core
+			if press == "" {
+				press = order.DeliveryNode
+			}
+			d.refused = &planningError{Code: codeMissingSource, Detail: fmt.Sprintf("%s names no inbound source", press)}
+			return d
+		}
+	}
+
 	// move's named-source validations are load-bearing and MUST run BEFORE the
 	// shared capacity gate: a missing/same-node move is invalid regardless of
 	// capacity (it would produce a fleet order with src == dst, which the fleet

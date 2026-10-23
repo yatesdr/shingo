@@ -353,6 +353,11 @@ func (f *fakeFinderDB) PartialHomesForPayload(string) ([]string, error) { return
 
 func (f *fakeFinderDB) GetBin(int64) (*bins.Bin, error) { return nil, sql.ErrNoRows }
 
+// No fed press stands in this fake: a tops & bottoms pull would be refused.
+func (f *fakeFinderDB) ToteCarrierFor(string, string) (bins.ToteCarrier, error) {
+	return bins.ToteCarrier{}, nil
+}
+
 // IsLinePosition answers from linePositions and counts the reads in lineReads.
 func (f *fakeFinderDB) IsLinePosition(name string) (bool, error) {
 	f.lineReads++

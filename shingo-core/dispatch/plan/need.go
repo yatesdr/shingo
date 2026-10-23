@@ -37,8 +37,8 @@ type Intent int
 const (
 	// IntentFull needs a bin holding the order's payload (retrieve, move).
 	IntentFull Intent = iota
-	// IntentEmpty needs an empty compatible carrier (retrieve_empty, and
-	// retrieve_tops_bottoms: SourcesEmpty).
+	// IntentEmpty needs an empty compatible carrier (retrieve_empty), or one at a
+	// stated want (Need.Want: retrieve_tops_bottoms).
 	IntentEmpty
 )
 
@@ -135,7 +135,22 @@ type Need struct {
 	// waits, as before). nil for every need but the supply of a swap whose
 	// returning carrier has nowhere else to land (Dispatcher.returnLiftFrom).
 	LiftFrom []int64
+	// Want is an empty stated, not derived: its type and height. The zero
+	// value states nothing and the type and height derive as they always have
+	// (Finder.wantedEmpty). Stated, the need is EXACT: it takes that type at
+	// that height or waits, never a partial to finish (tier 2b) and never the
+	// plant-wide scan (tier 5). A tops & bottoms pull states one (FindSource).
+	Want Want
 }
+
+// Want is a stated empty: a carrier type and the height it is wanted at.
+type Want struct {
+	Type   string
+	Height domain.Height
+}
+
+// Exact reports whether the need states its empty (Need.Want).
+func (n Need) Exact() bool { return n.Want.Type != "" }
 
 // Outcome is the closed disposition set FindSource returns.
 type Outcome int
@@ -266,6 +281,10 @@ type FinderDB interface {
 	LoadBinTypeRule(payloadCode string) (domain.BinTypeRule, error)
 	MaintainedGroupsSupporting(processNode string) ([]int64, error)
 	NodeIsUnderAny(nodeID int64, roots []int64) (bool, error)
+	// ToteCarrierFor is a tops & bottoms pull's one read: the fed press whose
+	// outside the delivery is, and the part's tote carrier (dispatch
+	// toteCarrierFor).
+	ToteCarrierFor(part, outside string) (bins.ToteCarrier, error)
 
 	IsSlotAccessible(slotNodeID int64) (bool, error)
 	GetLoaderHomeByPositionNode(positionNodeID int64) (*loaders.Home, error)

@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"shingo/protocol"
+	"shingocore/dispatch/plan"
 	"shingocore/store"
 )
 
@@ -248,7 +249,10 @@ func outsideSentence(p QueueParams) string {
 func materialSentence(p QueueParams) string {
 	var s string
 	switch {
-	case p.Kind == "empty":
+	// Before the payload arm: the pull names the press's part.
+	case p.Kind == plan.KindTopsAndBottoms:
+		s = "Waiting for tops & bottoms"
+	case p.Kind == plan.KindEmpty:
 		s = "Waiting for an empty bin"
 	case p.Payload != "":
 		s = fmt.Sprintf("Waiting for material: %s", p.Payload)

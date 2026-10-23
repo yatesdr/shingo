@@ -49,6 +49,20 @@ func TestFormatQueueSentence_Snapshot(t *testing.T) {
 			want:   "Waiting for an empty bin",
 		},
 		{
+			// SEND BACK's pull names the press's part, and the kind is tested
+			// before the payload, so it never reads as a wait for the part.
+			name:   "material tops & bottoms in its source",
+			code:   protocol.QueueWaitingForMaterial,
+			params: QueueParams{Kind: "tops_bottoms", Payload: "SYN-PART02B.06", Group: "SUPER-A"},
+			want:   "Waiting for tops & bottoms in SUPER-A",
+		},
+		{
+			name:   "material tops & bottoms, no source named",
+			code:   protocol.QueueWaitingForMaterial,
+			params: QueueParams{Kind: "tops_bottoms", Payload: "SYN-PART02B.06"},
+			want:   "Waiting for tops & bottoms",
+		},
+		{
 			// (F7) Was "Waiting for an empty bin" — the old branch tested
 			// Payload == "" alongside the empty kind, so an unclassified FULL
 			// wait told the operator to go find an empty. It now claims nothing

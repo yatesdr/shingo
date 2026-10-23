@@ -23,8 +23,7 @@ func ToteWantSQL(payloadParam int) string {
 	return fmt.Sprintf(`(SELECT CASE WHEN EXISTS (
 	            SELECT 1 FROM style_claims sc
 	             WHERE sc.core_node_name = n.name
-	               AND (sc.payload_code = p.code
-	                    OR (sc.allowed_payload_codes <> '[]' AND sc.allowed_payload_codes::jsonb ? p.code))
+	               AND `+ClaimCarriesSQL("sc", "p.code")+`
 	               AND `+FedClaimSQL("sc")+`)
 	          THEN 0 ELSE p.tote_layers END
 	     FROM payloads p WHERE p.code = $%d AND p.tote_layers IS NOT NULL)`, payloadParam)
