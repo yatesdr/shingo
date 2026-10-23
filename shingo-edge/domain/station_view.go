@@ -551,6 +551,7 @@ type stationOrder struct {
 	ETA            *string            `json:"eta"`
 	AutoConfirm    bool               `json:"auto_confirm"`
 	QueueReason    string             `json:"queue_reason"`
+	QueueCode      string             `json:"queue_code"`
 	SiblingOrderID *int64             `json:"sibling_order_id,omitempty"`
 	LaneHeld       bool               `json:"lane_held"`
 	Departed       bool               `json:"departed"`
@@ -566,7 +567,7 @@ func stationOrders(orders []Order) []stationOrder {
 		out[i] = stationOrder{
 			ID: o.ID, OrderType: o.OrderType, Status: o.Status, PayloadCode: o.PayloadCode,
 			SourceNode: o.SourceNode, DeliveryNode: o.DeliveryNode, ETA: o.ETA, AutoConfirm: o.AutoConfirm,
-			QueueReason: o.QueueReason, SiblingOrderID: o.SiblingOrderID, LaneHeld: o.LaneHeld,
+			QueueReason: o.QueueReason, QueueCode: o.QueueCode, SiblingOrderID: o.SiblingOrderID, LaneHeld: o.LaneHeld,
 			Departed: o.Departed, CreatedAt: o.CreatedAt,
 		}
 	}

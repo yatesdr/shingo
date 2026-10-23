@@ -231,7 +231,7 @@ func fullOrder() domain.Order {
 // engine and the Production page's template.
 var stationOrderKeys = []string{
 	"auto_confirm", "created_at", "delivery_node", "departed", "eta", "id", "lane_held", "order_type",
-	"payload_code", "queue_reason", "sibling_order_id", "source_node", "status",
+	"payload_code", "queue_code", "queue_reason", "sibling_order_id", "source_node", "status",
 }
 
 // TestStationView_OrderRowsCarryTheKeysTheGlassReads: a tile's order on the

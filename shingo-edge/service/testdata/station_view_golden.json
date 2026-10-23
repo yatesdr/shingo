@@ -91,6 +91,7 @@
           "eta": null,
           "auto_confirm": false,
           "queue_reason": "",
+          "queue_code": "",
           "lane_held": false,
           "departed": false,
           "created_at": "<ts>"

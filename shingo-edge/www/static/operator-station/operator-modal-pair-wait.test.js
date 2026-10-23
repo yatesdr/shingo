@@ -67,6 +67,7 @@ const ctx = vm.createContext({
     formatETA: () => ({ empty: true, text: '' }),
 });
 vm.runInContext(modalSrc.match(/const WAITING_BASE = '[^']*';/)[0].replace('const ', 'var '), ctx);
+vm.runInContext(modalSrc.match(/const OUTSIDE_WAIT = '[^']*';/)[0].replace('const ', 'var '), ctx);
 vm.runInContext(modalSrc.match(/const TO_MARKET_LABEL = '[^']*';/)[0].replace('const ', 'var '), ctx);
 vm.runInContext(extractFn(utilSrc, 'distinctQueueCauses').replace('export function', 'function'), ctx);
 for (const fn of ['changeoverReleasePurpose', 'changeoverReleaseAction', 'blockerPhrase', 'waitingLabel', 'statusWordOf', 'pairWaitingLabel',
@@ -128,6 +129,19 @@ eq(pairWaitingLabel([
     { status: 'faulted' },
 ]), BASE + ' — 1 of 2 parked; the other leg faulted, recovering',
     'an id-less leg is still positioned and explained');
+
+// ── A PAIR CORE HOLDS FOR ITS ON-DECK (W5's waiting_for_outside) ─────────
+// Keyed on the queue code, never the sentence: both legs carry it (Core parks
+// the pair whole), and the label leads with what the cell is waiting for.
+eq(pairWaitingLabel([
+    { id: 20, status: 'queued', queue_code: 'waiting_for_outside', queue_reason: 'Waiting for outside material: PANEL-A' },
+    { id: 21, status: 'queued', queue_code: 'waiting_for_outside', queue_reason: 'Waiting for outside material: PANEL-A' },
+]), 'WAITING FOR OUTSIDE MATERIAL — 0 of 2 parked — Waiting for outside material: PANEL-A',
+    'a pair held for its on-deck reads WAITING FOR OUTSIDE MATERIAL');
+eq(pairWaitingLabel([
+    { id: 22, status: 'queued', queue_code: 'waiting_for_material', queue_reason: 'Waiting for outside material' },
+    { id: 23, status: 'queued', queue_code: 'waiting_for_material' },
+]).indexOf(BASE), 0, 'the sentence alone does not make the label: the code does');
 
 // Both parked and nothing said about why: the position alone is still more than
 // the bare base, and no reason is invented.

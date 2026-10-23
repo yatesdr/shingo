@@ -1017,6 +1017,9 @@ function isStationReleasable(o) {
 }
 
 const WAITING_BASE = 'WAITING FOR OTHER ROBOT';
+// OUTSIDE_WAIT is a pair Core holds for its on-deck (queue code
+// waiting_for_outside): a carrier coming to it, or one a move is taking away.
+const OUTSIDE_WAIT = 'WAITING FOR OUTSIDE MATERIAL';
 
 // blockerPhrase is what ONE leg is doing, without the base label.
 //
@@ -1073,14 +1076,19 @@ function waitingLabel(blocker) {
 //
 // Anything that is not a resolvable pair falls through to waitingLabel, so every
 // single-blocker shape it pins renders exactly as it did.
+//
+// A PAIR CORE HOLDS FOR ITS ON-DECK says so first: WAITING FOR OUTSIDE MATERIAL
+// in place of the other-robot base, keyed on the queue code
+// (waiting_for_outside), never on the sentence, which is Core's to reword.
 function pairWaitingLabel(pair) {
     const legs = (pair || []).filter(Boolean);
     if (legs.length < 2) return waitingLabel(legs[0] || null);
 
     const parked = legs.filter(function (o) { return o.status === 'staged'; });
     const moving = legs.filter(function (o) { return o.status !== 'staged'; });
+    const outside = legs.some(function (o) { return o.queue_code === 'waiting_for_outside'; });
 
-    let label = WAITING_BASE + ' — ' + parked.length + ' of ' + legs.length + ' parked';
+    let label = (outside ? OUTSIDE_WAIT : WAITING_BASE) + ' — ' + parked.length + ' of ' + legs.length + ' parked';
     if (moving.length === 1) {
         const phrase = blockerPhrase(moving[0]);
         const who = moving[0].id ? 'order ' + moving[0].id : 'the other leg';
