@@ -84,6 +84,12 @@ const (
 	// into) — hold the partials and retry (demand is operator-driven, so a
 	// sourceable need is worth waiting for).
 	reserveHolding
+	// reserveHoldingForOutside — reserveHolding whose cause is a position the
+	// cell depends on: a carrier is coming to the vacant position a pickup names
+	// (missPickup), or the carrier standing there is named by a live move taking
+	// it away (reservePickup). Rendered as waiting_for_outside, and never moot:
+	// it is demand, held for a carrier that is on its way.
+	reserveHoldingForOutside
 	// reserveMoot — the order reserved NOTHING and every missing need's node is
 	// genuinely empty (no bins). This is the old "no_source_bin" case (e.g. a swap
 	// evac whose line bin was removed to quality hold before dispatch): the work is
@@ -232,6 +238,7 @@ func (a *Allocator) reserveComplexPlan(order *orders.Order, plan *ComplexPlan) (
 	// replacement cannot be recognised by counting reservations. See the moot case
 	// below.
 	lineBinGone := false
+	holdForOutside := false // a pickup holds for the carrier at a dependent position
 	for _, pk := range pickups {
 		// 1. Reuse a held bin that already satisfies this pickup (same node, same
 		//    empty-status). Owner-aware — does not go through BinUnavailableReason.
@@ -292,6 +299,9 @@ func (a *Allocator) reserveComplexPlan(order *orders.Order, plan *ComplexPlan) (
 		if out == reserveComplete {
 			continue
 		}
+		if out == reserveHoldingForOutside {
+			holdForOutside = true
+		}
 		missing++
 		if nodeHadBins {
 			anyMissWithBins = true // bins present but unavailable — sourceable eventually
@@ -322,6 +332,8 @@ func (a *Allocator) reserveComplexPlan(order *orders.Order, plan *ComplexPlan) (
 	switch {
 	case missing == 0:
 		return assigned, reserveComplete, nil
+	case holdForOutside:
+		return assigned, reserveHoldingForOutside, nil
 	case lineBinGone && legTakesLineBin(plan.ResolvedSteps, order.ProcessNode):
 		// AN EVAC WHOSE LINE BIN IS GONE IS MOOT EVEN IF IT HOLDS ITS REPLACEMENT.
 		//
@@ -425,9 +437,11 @@ func (a *Allocator) reservePickup(order *orders.Order, pk pickupNeed, bin *binss
 }
 
 // missPickup answers a pickup that found no bin: a relay target skipped (not
-// a miss), a vacant dependent pickup re-anchored to its claim's inbound source
-// (reserved there), or a miss, logged. reserveComplete for the first two,
-// reserveHolding for a miss; the caller tallies the miss against the node.
+// a miss), a vacant dependent pickup held for the carrier coming to it or
+// re-anchored to its claim's inbound source (reserved there), or a miss,
+// logged. reserveComplete for a skip or a re-anchor, reserveHoldingForOutside
+// for a carrier coming, reserveHolding for a miss; the caller tallies the miss
+// against the node.
 func (a *Allocator) missPickup(order *orders.Order, plan *ComplexPlan, pk pickupNeed, nodeHadBins, removal bool) (*reservedPickup, reserveOutcome, error) {
 	// Relay rule: a potential relay (earlier dropoff at N) AND the node
 	// empty at reserve. An empty potential-relay node is the relay target
@@ -461,13 +475,26 @@ func (a *Allocator) missPickup(order *orders.Order, plan *ComplexPlan, pk pickup
 	// relay target, at a node holding no bins, naming no bin (a named pickup
 	// holds for the bin it names), carrying no step payload (a spot pickup; a
 	// changeover's index leg, which names the part it lifts) asks where its
-	// claim draws from (vacantPickupSource, which answers only at the outside
+	// claim draws from (dependentSource, which answers only at the outside
 	// or second paired position of a fed claim), and reanchorVacantPickup
 	// fetches from there. Either role: a produce on-deck asks for an empty, a
 	// consume one for a full of the part. Nothing is read on a pass with no
 	// such pickup.
 	if !nodeHadBins && !removal && !pk.potentialRelay && pk.step.BinID == 0 && pk.step.PayloadCode == "" {
-		if src := a.vacantPickupSource(order, pk.step); src != "" {
+		if src := a.dependentSource(order, pk.step); src != "" {
+			// A CARRIER COMING TO THE POSITION IS WAITED FOR, not fetched a
+			// second time: a prime, a SEND BACK pull, a previous pair's refill
+			// still travelling (store CarrierComingTo, the one statement; the
+			// asking leg and its partner are not counted, so a pair never waits
+			// on its own refill).
+			coming, err := a.db.CarrierComingTo(pk.step.Node, order)
+			if err != nil {
+				return nil, reserveHolding, err
+			}
+			if coming {
+				a.dbg("reserve: order %d pickup at %s holds: a carrier is coming to it", order.ID, pk.step.Node)
+				return nil, reserveHoldingForOutside, nil
+			}
 			if got := a.reanchorVacantPickup(order, plan, pk.stepIndex, src); got != nil {
 				return got, reserveComplete, nil
 			}
@@ -477,13 +504,13 @@ func (a *Allocator) missPickup(order *orders.Order, plan *ComplexPlan, pk pickup
 	return nil, reserveHolding, nil
 }
 
-// vacantPickupSource is where a vacant pickup's claim draws from, when the
-// pickup's node is the outside or second paired position of a fed claim active
+// dependentSource is where a pickup's claim draws from, when the pickup's node
+// is the outside or second paired position of a fed claim active
 // at the order's process node (store FedInboundSource: the shape and the
 // source in one statement, so a sequential partner never qualifies). Blank for
 // any other node, a claim that names no source, a pickup already at its source,
 // or a read that failed (logged; the next pass asks again).
-func (a *Allocator) vacantPickupSource(order *orders.Order, step resolvedStep) string {
+func (a *Allocator) dependentSource(order *orders.Order, step resolvedStep) string {
 	if a.finder == nil || order.ProcessNode == "" {
 		return ""
 	}
@@ -499,7 +526,7 @@ func (a *Allocator) vacantPickupSource(order *orders.Order, step resolvedStep) s
 }
 
 // reanchorVacantPickup fetches the carrier a vacant dependent pickup names
-// from src, its claim's inbound source (vacantPickupSource): one pick, one
+// from src, its claim's inbound source (dependentSource): one pick, one
 // reservation. The need is the step's own: an empty for an Empty-flagged
 // pickup (a produce on-deck), else a full of the step's part (a consume
 // on-deck), set down where the step's next dropoff sets it. On a find the step

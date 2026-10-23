@@ -2236,3 +2236,50 @@ func VacateWaitCandidates(db *sql.DB, binID, orderID int64) ([]*Order, error) {
 	defer rows.Close()
 	return ScanOrders(rows)
 }
+
+// CarrierComingTo reports whether a live order other than the asker and its
+// partner leaves a carrier at node: protocol.OrderPlacesBinAt over the live
+// rows, read in one statement. It reads the non-terminal rows (the status term
+// spelled as NonTerminalStatusSQLList renders it, so idx_orders_status serves
+// it) whose delivery_node is node or any of whose steps names it, and decides
+// each in Go by its type: a complex order by PlacesBinAt over its steps (a leg
+// that lifts from node and sets nothing down there is not coming), any other
+// by its delivery node. A complex row whose steps do not decode reads as
+// coming.
+//
+// THE PARTNER IS EXCLUDED IN EITHER DIRECTION: a row whose edge_uuid is the
+// asker's sibling_order_uuid, and a row whose sibling_order_uuid is the asker's
+// edge_uuid. The supply → evac back-link is best-effort, so either side may be
+// the one carrying it, and a pair must never wait on its own refill.
+func CarrierComingTo(db *sql.DB, node string, asker *Order) (bool, error) {
+	rows, err := db.Query(`SELECT order_type, steps_json, delivery_node FROM orders
+		WHERE status IN (`+protocol.NonTerminalStatusSQLList()+`)
+		  AND id <> $2
+		  AND NOT ($3 <> '' AND edge_uuid = $3)
+		  AND NOT ($4 <> '' AND sibling_order_uuid = $4)
+		  AND (delivery_node = $1
+		       OR CASE WHEN steps_json LIKE '[%' THEN steps_json::jsonb @> jsonb_build_array(jsonb_build_object('node', $1::text))
+		               ELSE false END)`,
+		node, asker.ID, asker.SiblingOrderUUID, asker.EdgeUUID)
+	if err != nil {
+		return false, fmt.Errorf("carriers coming to %s: %w", node, err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var orderType protocol.OrderType
+		var stepsJSON, deliveryNode string
+		if err := rows.Scan(&orderType, &stepsJSON, &deliveryNode); err != nil {
+			return false, fmt.Errorf("carriers coming to %s: %w", node, err)
+		}
+		var steps []protocol.ComplexOrderStep
+		if orderType == protocol.OrderTypeComplex && stepsJSON != "" {
+			if err := json.Unmarshal([]byte(stepsJSON), &steps); err != nil {
+				return true, nil // undecodable: read as coming, so nothing is fetched on a guess
+			}
+		}
+		if protocol.OrderPlacesBinAt(orderType, steps, deliveryNode, node) {
+			return true, nil
+		}
+	}
+	return false, rows.Err()
+}

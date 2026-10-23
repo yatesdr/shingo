@@ -1290,6 +1290,12 @@ func (db *DB) UpdateOrderStepsJSON(id int64, stepsJSON string) error {
 func (db *DB) CompleteOrder(id int64) error             { return orders.Complete(db.DB, id) }
 func (db *DB) GetOrder(id int64) (*orders.Order, error) { return orders.Get(db.DB, id) }
 
+// CarrierComingTo reports whether a live order other than the asker and its
+// partner leaves a carrier at node, in one statement. See orders.CarrierComingTo.
+func (db *DB) CarrierComingTo(node string, asker *orders.Order) (bool, error) {
+	return orders.CarrierComingTo(db.DB, node, asker)
+}
+
 // OrderStationUnaware reports orders.station_unaware for one order: whether its
 // station has no row for it, so a notice about it goes nowhere. One read, for
 // the notice paths that do not already hold the order.

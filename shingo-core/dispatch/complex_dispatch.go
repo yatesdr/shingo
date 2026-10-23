@@ -649,6 +649,14 @@ func (d *Dispatcher) reserveComplexSources(order *orders.Order, resolvedSteps []
 			QueueParams{Payload: order.PayloadCode, Partial: holdingPartials})
 		d.dbg("complex: order %d incomplete reserve — holding %d partial(s), retrying next tick", order.ID, len(assigned))
 		return nil, nil, dispatchStep{done: true, err: fmt.Errorf("complex order %d reserve incomplete", order.ID)}
+	case reserveHoldingForOutside:
+		// The pair holds for the carrier at a position its cell depends on:
+		// coming there, or named by a move taking it away. parkPair copies this
+		// wait to the partner whole, so both legs read waiting_for_outside.
+		d.setQueueReason(order, protocol.QueueWaitingForOutside, CauseHoldingForOutside,
+			QueueParams{Payload: order.PayloadCode})
+		d.dbg("complex: order %d holds for outside material, retrying next tick", order.ID)
+		return nil, nil, dispatchStep{done: true, err: fmt.Errorf("complex order %d holds for outside material", order.ID)}
 	}
 
 	return plan, assigned, dispatchStep{}

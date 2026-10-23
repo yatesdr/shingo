@@ -492,6 +492,11 @@ const (
 	// distinguishes "holding part of the set" from "holding nothing and blocked on
 	// every need" — the SPR ALN_006 lie was rendering the second as the first.
 	CauseReserveHolding QueueCause = "reserve-holding"
+	// CauseHoldingForOutside — the complex reserve holds a pickup at a position
+	// its cell depends on, for the carrier there: one is coming to the vacant
+	// position, or the one standing there is named by a live move taking it
+	// away (reserveHoldingForOutside). Rendered as waiting_for_outside.
+	CauseHoldingForOutside QueueCause = "holding-for-outside"
 	// CauseComplexSlotReserve — the multi-slot reserve did not complete. It was
 	// "slot-reserve", one character from CauseStoreSlotContended's "slot-reserved"
 	// and a different fact; see the type doc for why this one moved and that one

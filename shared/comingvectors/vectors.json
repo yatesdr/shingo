@@ -1,0 +1,1629 @@
+[
+  {
+    "name": "plain/move off the on-deck to the outbound",
+    "order_type": "move",
+    "delivery_node": "OUT",
+    "places": {
+      "OUT": true
+    }
+  },
+  {
+    "name": "plain/retrieve to the on-deck",
+    "order_type": "retrieve",
+    "delivery_node": "B",
+    "places": {
+      "B": true
+    }
+  },
+  {
+    "name": "plain/retrieve_empty to the on-deck",
+    "order_type": "retrieve_empty",
+    "delivery_node": "B",
+    "places": {
+      "B": true
+    }
+  },
+  {
+    "name": "plain/store to the outbound",
+    "order_type": "store",
+    "delivery_node": "OUT",
+    "places": {
+      "OUT": true
+    }
+  },
+  {
+    "name": "sequential/consume/changeover/A",
+    "order_type": "complex",
+    "steps": [
+      {
+        "action": "wait",
+        "node": "LINE",
+        "wait_kind": "station",
+        "purpose": "ready"
+      },
+      {
+        "action": "pickup",
+        "node": "LINE"
+      },
+      {
+        "action": "dropoff",
+        "node": "OUT"
+      },
+      {
+        "action": "pickup",
+        "node": "IN",
+        "payload_code": "NEXT"
+      },
+      {
+        "action": "dropoff",
+        "node": "LINE"
+      }
+    ],
+    "places": {
+      "IN": false,
+      "LINE": true,
+      "OUT": true
+    }
+  },
+  {
+    "name": "sequential/consume/steady/A",
+    "order_type": "complex",
+    "steps": [
+      {
+        "action": "wait",
+        "node": "LINE",
+        "wait_kind": "station",
+        "purpose": "swap"
+      },
+      {
+        "action": "pickup",
+        "node": "LINE"
+      },
+      {
+        "action": "dropoff",
+        "node": "OUT"
+      }
+    ],
+    "places": {
+      "LINE": false,
+      "OUT": true
+    }
+  },
+  {
+    "name": "sequential/produce/changeover/A",
+    "order_type": "complex",
+    "steps": [
+      {
+        "action": "wait",
+        "node": "LINE",
+        "wait_kind": "station",
+        "purpose": "ready"
+      },
+      {
+        "action": "pickup",
+        "node": "LINE"
+      },
+      {
+        "action": "dropoff",
+        "node": "OUT"
+      },
+      {
+        "action": "pickup",
+        "node": "IN",
+        "empty": true,
+        "payload_code": "NEXT"
+      },
+      {
+        "action": "dropoff",
+        "node": "LINE"
+      }
+    ],
+    "places": {
+      "IN": false,
+      "LINE": true,
+      "OUT": true
+    }
+  },
+  {
+    "name": "sequential/produce/steady/A",
+    "order_type": "complex",
+    "steps": [
+      {
+        "action": "wait",
+        "node": "LINE",
+        "wait_kind": "station",
+        "purpose": "swap"
+      },
+      {
+        "action": "pickup",
+        "node": "LINE"
+      },
+      {
+        "action": "dropoff",
+        "node": "OUT"
+      }
+    ],
+    "places": {
+      "LINE": false,
+      "OUT": true
+    }
+  },
+  {
+    "name": "single_robot/consume/changeover/B",
+    "order_type": "complex",
+    "steps": [
+      {
+        "action": "pickup",
+        "node": "IN",
+        "payload_code": "NEXT"
+      },
+      {
+        "action": "dropoff",
+        "node": "IN-STG",
+        "exclusive_slot": true
+      },
+      {
+        "action": "wait",
+        "node": "LINE",
+        "wait_kind": "station",
+        "purpose": "ready"
+      },
+      {
+        "action": "pickup",
+        "node": "LINE"
+      },
+      {
+        "action": "dropoff",
+        "node": "OUT-STG",
+        "exclusive_slot": true
+      },
+      {
+        "action": "pickup",
+        "node": "IN-STG"
+      },
+      {
+        "action": "dropoff",
+        "node": "LINE"
+      },
+      {
+        "action": "pickup",
+        "node": "OUT-STG"
+      },
+      {
+        "action": "dropoff",
+        "node": "OUT"
+      }
+    ],
+    "places": {
+      "IN": false,
+      "IN-STG": false,
+      "LINE": true,
+      "OUT": true,
+      "OUT-STG": false
+    }
+  },
+  {
+    "name": "single_robot/consume/steady/A",
+    "order_type": "complex",
+    "steps": [
+      {
+        "action": "pickup",
+        "node": "IN"
+      },
+      {
+        "action": "dropoff",
+        "node": "IN-STG",
+        "exclusive_slot": true
+      },
+      {
+        "action": "wait",
+        "node": "LINE",
+        "wait_kind": "station",
+        "purpose": "swap"
+      },
+      {
+        "action": "pickup",
+        "node": "LINE"
+      },
+      {
+        "action": "dropoff",
+        "node": "OUT-STG",
+        "exclusive_slot": true
+      },
+      {
+        "action": "pickup",
+        "node": "IN-STG"
+      },
+      {
+        "action": "dropoff",
+        "node": "LINE"
+      },
+      {
+        "action": "pickup",
+        "node": "OUT-STG"
+      },
+      {
+        "action": "dropoff",
+        "node": "OUT"
+      }
+    ],
+    "places": {
+      "IN": false,
+      "IN-STG": false,
+      "LINE": true,
+      "OUT": true,
+      "OUT-STG": false
+    }
+  },
+  {
+    "name": "single_robot/produce/changeover/B",
+    "order_type": "complex",
+    "steps": [
+      {
+        "action": "pickup",
+        "node": "IN",
+        "empty": true,
+        "payload_code": "NEXT"
+      },
+      {
+        "action": "dropoff",
+        "node": "IN-STG",
+        "exclusive_slot": true
+      },
+      {
+        "action": "wait",
+        "node": "LINE",
+        "wait_kind": "station",
+        "purpose": "ready"
+      },
+      {
+        "action": "pickup",
+        "node": "LINE"
+      },
+      {
+        "action": "dropoff",
+        "node": "OUT-STG",
+        "exclusive_slot": true
+      },
+      {
+        "action": "pickup",
+        "node": "IN-STG"
+      },
+      {
+        "action": "dropoff",
+        "node": "LINE"
+      },
+      {
+        "action": "pickup",
+        "node": "OUT-STG"
+      },
+      {
+        "action": "dropoff",
+        "node": "OUT"
+      }
+    ],
+    "places": {
+      "IN": false,
+      "IN-STG": false,
+      "LINE": true,
+      "OUT": true,
+      "OUT-STG": false
+    }
+  },
+  {
+    "name": "single_robot/produce/steady/A",
+    "order_type": "complex",
+    "steps": [
+      {
+        "action": "pickup",
+        "node": "IN",
+        "empty": true
+      },
+      {
+        "action": "dropoff",
+        "node": "IN-STG",
+        "exclusive_slot": true
+      },
+      {
+        "action": "wait",
+        "node": "LINE",
+        "wait_kind": "station",
+        "purpose": "swap"
+      },
+      {
+        "action": "pickup",
+        "node": "LINE"
+      },
+      {
+        "action": "dropoff",
+        "node": "OUT-STG",
+        "exclusive_slot": true
+      },
+      {
+        "action": "pickup",
+        "node": "IN-STG"
+      },
+      {
+        "action": "dropoff",
+        "node": "LINE"
+      },
+      {
+        "action": "pickup",
+        "node": "OUT-STG"
+      },
+      {
+        "action": "dropoff",
+        "node": "OUT"
+      }
+    ],
+    "places": {
+      "IN": false,
+      "IN-STG": false,
+      "LINE": true,
+      "OUT": true,
+      "OUT-STG": false
+    }
+  },
+  {
+    "name": "two_robot/consume/changeover/evac",
+    "order_type": "complex",
+    "steps": [
+      {
+        "action": "wait",
+        "node": "LINE",
+        "wait_kind": "station",
+        "purpose": "ready"
+      },
+      {
+        "action": "pickup",
+        "node": "LINE"
+      },
+      {
+        "action": "dropoff",
+        "node": "OUT"
+      }
+    ],
+    "places": {
+      "LINE": false,
+      "OUT": true
+    }
+  },
+  {
+    "name": "two_robot/consume/changeover/supply",
+    "order_type": "complex",
+    "steps": [
+      {
+        "action": "pickup",
+        "node": "IN",
+        "payload_code": "NEXT"
+      },
+      {
+        "action": "dropoff",
+        "node": "IN-STG",
+        "exclusive_slot": true
+      },
+      {
+        "action": "wait",
+        "node": "IN-STG",
+        "wait_kind": "station",
+        "purpose": "ready"
+      },
+      {
+        "action": "pickup",
+        "node": "IN-STG"
+      },
+      {
+        "action": "dropoff",
+        "node": "LINE"
+      }
+    ],
+    "places": {
+      "IN": false,
+      "IN-STG": false,
+      "LINE": true
+    }
+  },
+  {
+    "name": "two_robot/consume/steady/A",
+    "order_type": "complex",
+    "steps": [
+      {
+        "action": "pickup",
+        "node": "IN"
+      },
+      {
+        "action": "dropoff",
+        "node": "IN-STG",
+        "exclusive_slot": true
+      },
+      {
+        "action": "wait",
+        "node": "IN-STG",
+        "wait_kind": "station",
+        "purpose": "swap"
+      },
+      {
+        "action": "pickup",
+        "node": "IN-STG"
+      },
+      {
+        "action": "dropoff",
+        "node": "LINE"
+      }
+    ],
+    "places": {
+      "IN": false,
+      "IN-STG": false,
+      "LINE": true
+    }
+  },
+  {
+    "name": "two_robot/consume/steady/B",
+    "order_type": "complex",
+    "steps": [
+      {
+        "action": "wait",
+        "node": "LINE",
+        "wait_kind": "station",
+        "purpose": "swap"
+      },
+      {
+        "action": "pickup",
+        "node": "LINE"
+      },
+      {
+        "action": "dropoff",
+        "node": "OUT"
+      }
+    ],
+    "places": {
+      "LINE": false,
+      "OUT": true
+    }
+  },
+  {
+    "name": "two_robot/produce/changeover/evac",
+    "order_type": "complex",
+    "steps": [
+      {
+        "action": "wait",
+        "node": "LINE",
+        "wait_kind": "station",
+        "purpose": "ready"
+      },
+      {
+        "action": "pickup",
+        "node": "LINE"
+      },
+      {
+        "action": "dropoff",
+        "node": "OUT"
+      }
+    ],
+    "places": {
+      "LINE": false,
+      "OUT": true
+    }
+  },
+  {
+    "name": "two_robot/produce/changeover/supply",
+    "order_type": "complex",
+    "steps": [
+      {
+        "action": "pickup",
+        "node": "IN",
+        "empty": true,
+        "payload_code": "NEXT"
+      },
+      {
+        "action": "dropoff",
+        "node": "IN-STG",
+        "exclusive_slot": true
+      },
+      {
+        "action": "wait",
+        "node": "IN-STG",
+        "wait_kind": "station",
+        "purpose": "ready"
+      },
+      {
+        "action": "pickup",
+        "node": "IN-STG"
+      },
+      {
+        "action": "dropoff",
+        "node": "LINE"
+      }
+    ],
+    "places": {
+      "IN": false,
+      "IN-STG": false,
+      "LINE": true
+    }
+  },
+  {
+    "name": "two_robot/produce/steady/A",
+    "order_type": "complex",
+    "steps": [
+      {
+        "action": "pickup",
+        "node": "IN",
+        "empty": true
+      },
+      {
+        "action": "dropoff",
+        "node": "IN-STG",
+        "exclusive_slot": true
+      },
+      {
+        "action": "wait",
+        "node": "IN-STG",
+        "wait_kind": "station",
+        "purpose": "swap"
+      },
+      {
+        "action": "pickup",
+        "node": "IN-STG"
+      },
+      {
+        "action": "dropoff",
+        "node": "LINE"
+      }
+    ],
+    "places": {
+      "IN": false,
+      "IN-STG": false,
+      "LINE": true
+    }
+  },
+  {
+    "name": "two_robot/produce/steady/B",
+    "order_type": "complex",
+    "steps": [
+      {
+        "action": "wait",
+        "node": "LINE",
+        "wait_kind": "station",
+        "purpose": "swap"
+      },
+      {
+        "action": "pickup",
+        "node": "LINE"
+      },
+      {
+        "action": "dropoff",
+        "node": "OUT"
+      }
+    ],
+    "places": {
+      "LINE": false,
+      "OUT": true
+    }
+  },
+  {
+    "name": "two_robot_press_index/consume/3-position/changeover/evac",
+    "order_type": "complex",
+    "steps": [
+      {
+        "action": "wait",
+        "node": "LINE",
+        "wait_kind": "station",
+        "purpose": "ready"
+      },
+      {
+        "action": "pickup",
+        "node": "LINE"
+      },
+      {
+        "action": "dropoff",
+        "node": "OUT"
+      },
+      {
+        "action": "pickup",
+        "node": "IN",
+        "payload_code": "NEXT"
+      },
+      {
+        "action": "dropoff",
+        "node": "C"
+      }
+    ],
+    "places": {
+      "C": true,
+      "IN": false,
+      "LINE": false,
+      "OUT": true
+    }
+  },
+  {
+    "name": "two_robot_press_index/consume/3-position/changeover/supply",
+    "order_type": "complex",
+    "steps": [
+      {
+        "action": "wait",
+        "node": "B",
+        "wait_kind": "station",
+        "purpose": "ready"
+      },
+      {
+        "action": "pickup",
+        "node": "B",
+        "payload_code": "PART"
+      },
+      {
+        "action": "dropoff",
+        "node": "LINE"
+      },
+      {
+        "action": "pickup",
+        "node": "C",
+        "payload_code": "PART"
+      },
+      {
+        "action": "dropoff",
+        "node": "B"
+      }
+    ],
+    "places": {
+      "B": true,
+      "C": false,
+      "LINE": true
+    }
+  },
+  {
+    "name": "two_robot_press_index/consume/3-position/steady/A",
+    "order_type": "complex",
+    "steps": [
+      {
+        "action": "wait",
+        "node": "LINE",
+        "wait_kind": "station",
+        "purpose": "swap"
+      },
+      {
+        "action": "pickup",
+        "node": "LINE"
+      },
+      {
+        "action": "dropoff",
+        "node": "OUT"
+      },
+      {
+        "action": "pickup",
+        "node": "IN"
+      },
+      {
+        "action": "dropoff",
+        "node": "C"
+      }
+    ],
+    "places": {
+      "C": true,
+      "IN": false,
+      "LINE": false,
+      "OUT": true
+    }
+  },
+  {
+    "name": "two_robot_press_index/consume/3-position/steady/B",
+    "order_type": "complex",
+    "steps": [
+      {
+        "action": "wait",
+        "node": "B",
+        "wait_kind": "station",
+        "purpose": "swap"
+      },
+      {
+        "action": "pickup",
+        "node": "B"
+      },
+      {
+        "action": "dropoff",
+        "node": "LINE"
+      },
+      {
+        "action": "pickup",
+        "node": "C"
+      },
+      {
+        "action": "dropoff",
+        "node": "B"
+      }
+    ],
+    "places": {
+      "B": true,
+      "C": false,
+      "LINE": true
+    }
+  },
+  {
+    "name": "two_robot_press_index/consume/changeover/evac",
+    "order_type": "complex",
+    "steps": [
+      {
+        "action": "wait",
+        "node": "LINE",
+        "wait_kind": "station",
+        "purpose": "ready"
+      },
+      {
+        "action": "pickup",
+        "node": "LINE"
+      },
+      {
+        "action": "dropoff",
+        "node": "OUT"
+      },
+      {
+        "action": "pickup",
+        "node": "IN",
+        "payload_code": "NEXT"
+      },
+      {
+        "action": "dropoff",
+        "node": "B"
+      }
+    ],
+    "places": {
+      "B": true,
+      "IN": false,
+      "LINE": false,
+      "OUT": true
+    }
+  },
+  {
+    "name": "two_robot_press_index/consume/changeover/supply",
+    "order_type": "complex",
+    "steps": [
+      {
+        "action": "wait",
+        "node": "B",
+        "wait_kind": "station",
+        "purpose": "ready"
+      },
+      {
+        "action": "pickup",
+        "node": "B",
+        "payload_code": "PART"
+      },
+      {
+        "action": "dropoff",
+        "node": "LINE"
+      }
+    ],
+    "places": {
+      "B": false,
+      "LINE": true
+    }
+  },
+  {
+    "name": "two_robot_press_index/consume/flipped/3-position/changeover/evac",
+    "order_type": "complex",
+    "steps": [
+      {
+        "action": "wait",
+        "node": "LINE",
+        "wait_kind": "station",
+        "purpose": "ready"
+      },
+      {
+        "action": "pickup",
+        "node": "LINE"
+      },
+      {
+        "action": "dropoff",
+        "node": "OUT"
+      }
+    ],
+    "places": {
+      "LINE": false,
+      "OUT": true
+    }
+  },
+  {
+    "name": "two_robot_press_index/consume/flipped/3-position/changeover/supply",
+    "order_type": "complex",
+    "steps": [
+      {
+        "action": "wait",
+        "node": "B",
+        "wait_kind": "station",
+        "purpose": "ready"
+      },
+      {
+        "action": "pickup",
+        "node": "B",
+        "payload_code": "PART"
+      },
+      {
+        "action": "dropoff",
+        "node": "LINE"
+      },
+      {
+        "action": "pickup",
+        "node": "C",
+        "payload_code": "PART"
+      },
+      {
+        "action": "dropoff",
+        "node": "B"
+      },
+      {
+        "action": "pickup",
+        "node": "IN",
+        "payload_code": "NEXT"
+      },
+      {
+        "action": "dropoff",
+        "node": "C"
+      }
+    ],
+    "places": {
+      "B": true,
+      "C": true,
+      "IN": false,
+      "LINE": true
+    }
+  },
+  {
+    "name": "two_robot_press_index/consume/flipped/3-position/steady/A",
+    "order_type": "complex",
+    "steps": [
+      {
+        "action": "wait",
+        "node": "LINE",
+        "wait_kind": "station",
+        "purpose": "swap"
+      },
+      {
+        "action": "pickup",
+        "node": "LINE"
+      },
+      {
+        "action": "dropoff",
+        "node": "OUT"
+      }
+    ],
+    "places": {
+      "LINE": false,
+      "OUT": true
+    }
+  },
+  {
+    "name": "two_robot_press_index/consume/flipped/3-position/steady/B",
+    "order_type": "complex",
+    "steps": [
+      {
+        "action": "wait",
+        "node": "B",
+        "wait_kind": "station",
+        "purpose": "swap"
+      },
+      {
+        "action": "pickup",
+        "node": "B"
+      },
+      {
+        "action": "dropoff",
+        "node": "LINE"
+      },
+      {
+        "action": "pickup",
+        "node": "C"
+      },
+      {
+        "action": "dropoff",
+        "node": "B"
+      },
+      {
+        "action": "pickup",
+        "node": "IN"
+      },
+      {
+        "action": "dropoff",
+        "node": "C"
+      }
+    ],
+    "places": {
+      "B": true,
+      "C": true,
+      "IN": false,
+      "LINE": true
+    }
+  },
+  {
+    "name": "two_robot_press_index/consume/flipped/changeover/evac",
+    "order_type": "complex",
+    "steps": [
+      {
+        "action": "wait",
+        "node": "LINE",
+        "wait_kind": "station",
+        "purpose": "ready"
+      },
+      {
+        "action": "pickup",
+        "node": "LINE"
+      },
+      {
+        "action": "dropoff",
+        "node": "OUT"
+      }
+    ],
+    "places": {
+      "LINE": false,
+      "OUT": true
+    }
+  },
+  {
+    "name": "two_robot_press_index/consume/flipped/changeover/supply",
+    "order_type": "complex",
+    "steps": [
+      {
+        "action": "wait",
+        "node": "B",
+        "wait_kind": "station",
+        "purpose": "ready"
+      },
+      {
+        "action": "pickup",
+        "node": "B",
+        "payload_code": "PART"
+      },
+      {
+        "action": "dropoff",
+        "node": "LINE"
+      },
+      {
+        "action": "pickup",
+        "node": "IN",
+        "payload_code": "NEXT"
+      },
+      {
+        "action": "dropoff",
+        "node": "B"
+      }
+    ],
+    "places": {
+      "B": true,
+      "IN": false,
+      "LINE": true
+    }
+  },
+  {
+    "name": "two_robot_press_index/consume/flipped/steady/A",
+    "order_type": "complex",
+    "steps": [
+      {
+        "action": "wait",
+        "node": "LINE",
+        "wait_kind": "station",
+        "purpose": "swap"
+      },
+      {
+        "action": "pickup",
+        "node": "LINE"
+      },
+      {
+        "action": "dropoff",
+        "node": "OUT"
+      }
+    ],
+    "places": {
+      "LINE": false,
+      "OUT": true
+    }
+  },
+  {
+    "name": "two_robot_press_index/consume/flipped/steady/B",
+    "order_type": "complex",
+    "steps": [
+      {
+        "action": "wait",
+        "node": "B",
+        "wait_kind": "station",
+        "purpose": "swap"
+      },
+      {
+        "action": "pickup",
+        "node": "B"
+      },
+      {
+        "action": "dropoff",
+        "node": "LINE"
+      },
+      {
+        "action": "pickup",
+        "node": "IN"
+      },
+      {
+        "action": "dropoff",
+        "node": "B"
+      }
+    ],
+    "places": {
+      "B": true,
+      "IN": false,
+      "LINE": true
+    }
+  },
+  {
+    "name": "two_robot_press_index/consume/steady/A",
+    "order_type": "complex",
+    "steps": [
+      {
+        "action": "wait",
+        "node": "LINE",
+        "wait_kind": "station",
+        "purpose": "swap"
+      },
+      {
+        "action": "pickup",
+        "node": "LINE"
+      },
+      {
+        "action": "dropoff",
+        "node": "OUT"
+      },
+      {
+        "action": "pickup",
+        "node": "IN"
+      },
+      {
+        "action": "dropoff",
+        "node": "B"
+      }
+    ],
+    "places": {
+      "B": true,
+      "IN": false,
+      "LINE": false,
+      "OUT": true
+    }
+  },
+  {
+    "name": "two_robot_press_index/consume/steady/B",
+    "order_type": "complex",
+    "steps": [
+      {
+        "action": "wait",
+        "node": "B",
+        "wait_kind": "station",
+        "purpose": "swap"
+      },
+      {
+        "action": "pickup",
+        "node": "B"
+      },
+      {
+        "action": "dropoff",
+        "node": "LINE"
+      }
+    ],
+    "places": {
+      "B": false,
+      "LINE": true
+    }
+  },
+  {
+    "name": "two_robot_press_index/produce/3-position/changeover/evac",
+    "order_type": "complex",
+    "steps": [
+      {
+        "action": "wait",
+        "node": "LINE",
+        "wait_kind": "station",
+        "purpose": "ready"
+      },
+      {
+        "action": "pickup",
+        "node": "LINE"
+      },
+      {
+        "action": "dropoff",
+        "node": "OUT"
+      },
+      {
+        "action": "pickup",
+        "node": "IN",
+        "empty": true,
+        "payload_code": "NEXT"
+      },
+      {
+        "action": "dropoff",
+        "node": "C"
+      }
+    ],
+    "places": {
+      "C": true,
+      "IN": false,
+      "LINE": false,
+      "OUT": true
+    }
+  },
+  {
+    "name": "two_robot_press_index/produce/3-position/changeover/supply",
+    "order_type": "complex",
+    "steps": [
+      {
+        "action": "wait",
+        "node": "B",
+        "wait_kind": "station",
+        "purpose": "ready"
+      },
+      {
+        "action": "pickup",
+        "node": "B",
+        "payload_code": "PART"
+      },
+      {
+        "action": "dropoff",
+        "node": "LINE"
+      },
+      {
+        "action": "pickup",
+        "node": "C",
+        "payload_code": "PART"
+      },
+      {
+        "action": "dropoff",
+        "node": "B"
+      }
+    ],
+    "places": {
+      "B": true,
+      "C": false,
+      "LINE": true
+    }
+  },
+  {
+    "name": "two_robot_press_index/produce/3-position/steady/A",
+    "order_type": "complex",
+    "steps": [
+      {
+        "action": "wait",
+        "node": "LINE",
+        "wait_kind": "station",
+        "purpose": "swap"
+      },
+      {
+        "action": "pickup",
+        "node": "LINE"
+      },
+      {
+        "action": "dropoff",
+        "node": "OUT"
+      },
+      {
+        "action": "pickup",
+        "node": "IN",
+        "empty": true
+      },
+      {
+        "action": "dropoff",
+        "node": "C"
+      }
+    ],
+    "places": {
+      "C": true,
+      "IN": false,
+      "LINE": false,
+      "OUT": true
+    }
+  },
+  {
+    "name": "two_robot_press_index/produce/3-position/steady/B",
+    "order_type": "complex",
+    "steps": [
+      {
+        "action": "wait",
+        "node": "B",
+        "wait_kind": "station",
+        "purpose": "swap"
+      },
+      {
+        "action": "pickup",
+        "node": "B",
+        "empty": true
+      },
+      {
+        "action": "dropoff",
+        "node": "LINE"
+      },
+      {
+        "action": "pickup",
+        "node": "C",
+        "empty": true
+      },
+      {
+        "action": "dropoff",
+        "node": "B"
+      }
+    ],
+    "places": {
+      "B": true,
+      "C": false,
+      "LINE": true
+    }
+  },
+  {
+    "name": "two_robot_press_index/produce/changeover/evac",
+    "order_type": "complex",
+    "steps": [
+      {
+        "action": "wait",
+        "node": "LINE",
+        "wait_kind": "station",
+        "purpose": "ready"
+      },
+      {
+        "action": "pickup",
+        "node": "LINE"
+      },
+      {
+        "action": "dropoff",
+        "node": "OUT"
+      },
+      {
+        "action": "pickup",
+        "node": "IN",
+        "empty": true,
+        "payload_code": "NEXT"
+      },
+      {
+        "action": "dropoff",
+        "node": "B"
+      }
+    ],
+    "places": {
+      "B": true,
+      "IN": false,
+      "LINE": false,
+      "OUT": true
+    }
+  },
+  {
+    "name": "two_robot_press_index/produce/changeover/supply",
+    "order_type": "complex",
+    "steps": [
+      {
+        "action": "wait",
+        "node": "B",
+        "wait_kind": "station",
+        "purpose": "ready"
+      },
+      {
+        "action": "pickup",
+        "node": "B",
+        "payload_code": "PART"
+      },
+      {
+        "action": "dropoff",
+        "node": "LINE"
+      }
+    ],
+    "places": {
+      "B": false,
+      "LINE": true
+    }
+  },
+  {
+    "name": "two_robot_press_index/produce/flipped/3-position/changeover/evac",
+    "order_type": "complex",
+    "steps": [
+      {
+        "action": "wait",
+        "node": "LINE",
+        "wait_kind": "station",
+        "purpose": "ready"
+      },
+      {
+        "action": "pickup",
+        "node": "LINE"
+      },
+      {
+        "action": "dropoff",
+        "node": "OUT"
+      }
+    ],
+    "places": {
+      "LINE": false,
+      "OUT": true
+    }
+  },
+  {
+    "name": "two_robot_press_index/produce/flipped/3-position/changeover/supply",
+    "order_type": "complex",
+    "steps": [
+      {
+        "action": "wait",
+        "node": "B",
+        "wait_kind": "station",
+        "purpose": "ready"
+      },
+      {
+        "action": "pickup",
+        "node": "B",
+        "payload_code": "PART"
+      },
+      {
+        "action": "dropoff",
+        "node": "LINE"
+      },
+      {
+        "action": "pickup",
+        "node": "C",
+        "payload_code": "PART"
+      },
+      {
+        "action": "dropoff",
+        "node": "B"
+      },
+      {
+        "action": "pickup",
+        "node": "IN",
+        "empty": true,
+        "payload_code": "NEXT"
+      },
+      {
+        "action": "dropoff",
+        "node": "C"
+      }
+    ],
+    "places": {
+      "B": true,
+      "C": true,
+      "IN": false,
+      "LINE": true
+    }
+  },
+  {
+    "name": "two_robot_press_index/produce/flipped/3-position/steady/A",
+    "order_type": "complex",
+    "steps": [
+      {
+        "action": "wait",
+        "node": "LINE",
+        "wait_kind": "station",
+        "purpose": "swap"
+      },
+      {
+        "action": "pickup",
+        "node": "LINE"
+      },
+      {
+        "action": "dropoff",
+        "node": "OUT"
+      }
+    ],
+    "places": {
+      "LINE": false,
+      "OUT": true
+    }
+  },
+  {
+    "name": "two_robot_press_index/produce/flipped/3-position/steady/B",
+    "order_type": "complex",
+    "steps": [
+      {
+        "action": "wait",
+        "node": "B",
+        "wait_kind": "station",
+        "purpose": "swap"
+      },
+      {
+        "action": "pickup",
+        "node": "B",
+        "empty": true
+      },
+      {
+        "action": "dropoff",
+        "node": "LINE"
+      },
+      {
+        "action": "pickup",
+        "node": "C",
+        "empty": true
+      },
+      {
+        "action": "dropoff",
+        "node": "B"
+      },
+      {
+        "action": "pickup",
+        "node": "IN",
+        "empty": true
+      },
+      {
+        "action": "dropoff",
+        "node": "C"
+      }
+    ],
+    "places": {
+      "B": true,
+      "C": true,
+      "IN": false,
+      "LINE": true
+    }
+  },
+  {
+    "name": "two_robot_press_index/produce/flipped/changeover/evac",
+    "order_type": "complex",
+    "steps": [
+      {
+        "action": "wait",
+        "node": "LINE",
+        "wait_kind": "station",
+        "purpose": "ready"
+      },
+      {
+        "action": "pickup",
+        "node": "LINE"
+      },
+      {
+        "action": "dropoff",
+        "node": "OUT"
+      }
+    ],
+    "places": {
+      "LINE": false,
+      "OUT": true
+    }
+  },
+  {
+    "name": "two_robot_press_index/produce/flipped/changeover/supply",
+    "order_type": "complex",
+    "steps": [
+      {
+        "action": "wait",
+        "node": "B",
+        "wait_kind": "station",
+        "purpose": "ready"
+      },
+      {
+        "action": "pickup",
+        "node": "B",
+        "payload_code": "PART"
+      },
+      {
+        "action": "dropoff",
+        "node": "LINE"
+      },
+      {
+        "action": "pickup",
+        "node": "IN",
+        "empty": true,
+        "payload_code": "NEXT"
+      },
+      {
+        "action": "dropoff",
+        "node": "B"
+      }
+    ],
+    "places": {
+      "B": true,
+      "IN": false,
+      "LINE": true
+    }
+  },
+  {
+    "name": "two_robot_press_index/produce/flipped/steady/A",
+    "order_type": "complex",
+    "steps": [
+      {
+        "action": "wait",
+        "node": "LINE",
+        "wait_kind": "station",
+        "purpose": "swap"
+      },
+      {
+        "action": "pickup",
+        "node": "LINE"
+      },
+      {
+        "action": "dropoff",
+        "node": "OUT"
+      }
+    ],
+    "places": {
+      "LINE": false,
+      "OUT": true
+    }
+  },
+  {
+    "name": "two_robot_press_index/produce/flipped/steady/B",
+    "order_type": "complex",
+    "steps": [
+      {
+        "action": "wait",
+        "node": "B",
+        "wait_kind": "station",
+        "purpose": "swap"
+      },
+      {
+        "action": "pickup",
+        "node": "B",
+        "empty": true
+      },
+      {
+        "action": "dropoff",
+        "node": "LINE"
+      },
+      {
+        "action": "pickup",
+        "node": "IN",
+        "empty": true
+      },
+      {
+        "action": "dropoff",
+        "node": "B"
+      }
+    ],
+    "places": {
+      "B": true,
+      "IN": false,
+      "LINE": true
+    }
+  },
+  {
+    "name": "two_robot_press_index/produce/steady/A",
+    "order_type": "complex",
+    "steps": [
+      {
+        "action": "wait",
+        "node": "LINE",
+        "wait_kind": "station",
+        "purpose": "swap"
+      },
+      {
+        "action": "pickup",
+        "node": "LINE"
+      },
+      {
+        "action": "dropoff",
+        "node": "OUT"
+      },
+      {
+        "action": "pickup",
+        "node": "IN",
+        "empty": true
+      },
+      {
+        "action": "dropoff",
+        "node": "B"
+      }
+    ],
+    "places": {
+      "B": true,
+      "IN": false,
+      "LINE": false,
+      "OUT": true
+    }
+  },
+  {
+    "name": "two_robot_press_index/produce/steady/B",
+    "order_type": "complex",
+    "steps": [
+      {
+        "action": "wait",
+        "node": "B",
+        "wait_kind": "station",
+        "purpose": "swap"
+      },
+      {
+        "action": "pickup",
+        "node": "B",
+        "empty": true
+      },
+      {
+        "action": "dropoff",
+        "node": "LINE"
+      }
+    ],
+    "places": {
+      "B": false,
+      "LINE": true
+    }
+  }
+]

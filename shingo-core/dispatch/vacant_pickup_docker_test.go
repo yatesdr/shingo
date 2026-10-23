@@ -12,6 +12,7 @@ import (
 	"shingocore/store"
 	"shingocore/store/bins"
 	"shingocore/store/nodes"
+	"shingocore/store/orders"
 	"shingocore/store/plantclaims"
 )
 
@@ -176,6 +177,73 @@ func TestVacantPickup_APairNeverWaitsOnItsOwnRefill(t *testing.T) {
 			}
 		}
 	}
+}
+
+// liveOrder stands another live order for the coming read: placing at the
+// on-deck by its steps (a complex leg) or its delivery node (a plain one).
+func (c vpCell) liveOrder(uuid string, orderType protocol.OrderType, status protocol.Status, delivery string, steps []resolvedStep) *orders.Order {
+	c.t.Helper()
+	raw := ""
+	if steps != nil {
+		j, err := json.Marshal(steps)
+		testutil.MustNoErr(c.t, err, "steps")
+		raw = string(j)
+	}
+	o := &orders.Order{EdgeUUID: uuid, StationID: "line-1", OrderType: orderType, Status: status, Quantity: 1,
+		PayloadCode: c.part, DeliveryNode: delivery, ProcessNode: c.press.Name, StepsJSON: raw}
+	testutil.MustNoErr(c.t, c.db.CreateOrder(o), "order "+uuid)
+	return o
+}
+
+// TestVacantPickup_ACarrierComingIsWaitedFor: another live order placing a
+// carrier at the vacant on-deck holds the pair, both legs on
+// waiting_for_outside (parkPair copies the wait to the partner): a previous
+// pair's refill still travelling, and a prime the market cannot fill yet
+// (queued). Cancelled, it is no longer coming and the pair fetches its own.
+func TestVacantPickup_ACarrierComingIsWaitedFor(t *testing.T) {
+	t.Parallel()
+	for _, c := range []struct {
+		name string
+		make func(c vpCell) *orders.Order
+	}{
+		{"a previous pair's refill still travelling", func(c vpCell) *orders.Order {
+			return c.liveOrder("prev-r1", protocol.OrderTypeComplex, protocol.StatusInTransit, c.deck.Name,
+				prResolved(prWait(c.press.Name), prPick(c.press.Name), prDrop(c.out.Name), prPick(c.refill.Name), prDrop(c.deck.Name)))
+		}},
+		{"a prime the market cannot fill yet (queued)", func(c vpCell) *orders.Order {
+			return c.liveOrder("prime", protocol.OrderTypeRetrieve, protocol.StatusQueued, c.deck.Name, nil)
+		}},
+		{"a complex leg whose delivery node is blank", func(c vpCell) *orders.Order {
+			return c.liveOrder("blank-leg", protocol.OrderTypeComplex, protocol.StatusDispatched, "",
+				prResolved(prPick(c.refill.Name), prDrop(c.deck.Name)))
+		}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			cell := newVPCell(t, "VP2", protocol.ClaimRoleProduce)
+			coming := c.make(cell)
+			r1, r2 := cell.submitPair("VP2", false, "VP2-r2", "VP2-r1")
+			cell.scan(r1, r2)
+			cell.requireHolds(protocol.QueueWaitingForOutside, r1, r2)
+
+			_, err := cell.db.Exec(`UPDATE orders SET status = 'cancelled' WHERE id = $1`, coming.ID)
+			testutil.MustNoErr(t, err, "cancel the coming order")
+			cell.scan(r1, r2)
+			cell.requireTook(r1, r2, cell.in)
+		})
+	}
+}
+
+// TestVacantPickup_ALegThatOnlyLiftsThereIsNotComing: a live leg that lifts
+// from the on-deck and sets nothing down there is not a carrier coming to it.
+func TestVacantPickup_ALegThatOnlyLiftsThereIsNotComing(t *testing.T) {
+	t.Parallel()
+	c := newVPCell(t, "VP3", protocol.ClaimRoleProduce)
+	c.liveOrder("lifter", protocol.OrderTypeComplex, protocol.StatusInTransit, c.out.Name,
+		prResolved(prPick(c.deck.Name), prDrop(c.out.Name)))
+	r1, r2 := c.submitPair("VP3", false, "VP3-r2", "VP3-r1")
+	c.scan(r1, r2)
+	c.requireTook(r1, r2, c.in)
 }
 
 // TestVacantPickup_PickupsTheFallbackLeavesAlone: each of these holds at the

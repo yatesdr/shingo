@@ -948,6 +948,11 @@ var causeReleasers = []causeReleaser{
 		what:        "the rest of the reserve set becomes available",
 	},
 	{
+		cause:       CauseHoldingForOutside,
+		populations: []WaitPopulation{PopAcquiring},
+		what:        "the carrier coming to the position lands, or the move naming the carrier there lifts it",
+	},
+	{
 		cause:       CauseComplexSlotReserve,
 		populations: []WaitPopulation{PopAcquiring},
 		what:        "the remaining destination slots free",

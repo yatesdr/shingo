@@ -222,10 +222,22 @@ func FormatQueueSentence(code protocol.QueueCode, p QueueParams) string {
 		s = partnerSentence(p)
 	case protocol.QueueFleetUnavailable:
 		s = "Robot system not responding — retrying"
+	case protocol.QueueWaitingForOutside:
+		s = outsideSentence(p)
 	default:
 		return ""
 	}
 	return withStep(code, p, s)
+}
+
+// outsideSentence is a swap leg holding for the carrier at a position its cell
+// depends on: one is coming there, or the one standing there is being moved
+// away (reserveHoldingForOutside). The part, when the order names one.
+func outsideSentence(p QueueParams) string {
+	if p.Payload != "" {
+		return fmt.Sprintf("Waiting for outside material: %s", p.Payload)
+	}
+	return "Waiting for outside material"
 }
 
 // materialSentence covers the three material shapes: an empty carrier, a named

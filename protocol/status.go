@@ -51,6 +51,13 @@ const (
 	// QueueFleetUnavailable: the fleet rejected the dispatch — waiting on the robot
 	// system (transient; the order re-queues and retries).
 	QueueFleetUnavailable QueueCode = "fleet_unavailable"
+	// QueueWaitingForOutside: a swap leg holds for the carrier at a position its
+	// cell depends on (a press's outside or second paired position): a carrier
+	// is coming to that position, or the one standing there is named by a move
+	// taking it away. Set by Core's reserve (dispatch reserveHoldingForOutside);
+	// for the Edge to show as WAITING FOR OUTSIDE MATERIAL, by the code, never
+	// the sentence.
+	QueueWaitingForOutside QueueCode = "waiting_for_outside"
 )
 
 // Canonical order status constants shared by core and edge.
@@ -138,6 +145,7 @@ func AllQueueCodes() []QueueCode {
 		QueueStorageRearranging,
 		QueueWaitingForPartner,
 		QueueFleetUnavailable,
+		QueueWaitingForOutside,
 	}
 }
 
