@@ -530,7 +530,7 @@ func (d *Dispatcher) dispatchToFleet(order *orders.Order, env *protocol.Envelope
 // A failed write still dispatches with the right group; the reverse would be the
 // bad trade.
 func (d *Dispatcher) payloadForDispatch(order *orders.Order) string {
-	if order.PayloadCode != "" || order.SourceIntent == SourceIntentEmpty {
+	if order.PayloadCode != "" || SourcesEmpty(order.SourceIntent) {
 		return order.PayloadCode
 	}
 	// Read the bin id fresh. The scanner writes it moments before calling here,
@@ -695,7 +695,7 @@ func (d *Dispatcher) dispatchToFleetCore(order *orders.Order, sourceNode, destNo
 			// assertDeclaredEveryLaneItEnters refuses on the wire.
 			plan = buildUnloadOnlyPlan(destNode.Name)
 		} else {
-			plan = buildTransportPlan(sourceNode.Name, destNode.Name, order.SourceIntent == SourceIntentEmpty)
+			plan = buildTransportPlan(sourceNode.Name, destNode.Name, SourcesEmpty(order.SourceIntent))
 		}
 		// THE PLAN KEEPS THE GROUP ITS DROP WAS CHOSEN FROM (plainGroupDrop),
 		// stamped as a complex group drop's step is, so the gate's release asks

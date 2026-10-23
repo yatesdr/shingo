@@ -37,7 +37,8 @@ type Intent int
 const (
 	// IntentFull needs a bin holding the order's payload (retrieve, move).
 	IntentFull Intent = iota
-	// IntentEmpty needs an empty compatible carrier (retrieve_empty).
+	// IntentEmpty needs an empty compatible carrier (retrieve_empty, and
+	// retrieve_tops_bottoms: SourcesEmpty).
 	IntentEmpty
 )
 

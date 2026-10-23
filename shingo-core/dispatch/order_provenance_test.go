@@ -52,7 +52,8 @@ func TestStage4_SourceIntentForType(t *testing.T) {
 	}{
 		{OrderTypeRetrieve, SourceIntentFull},       // full payload-matched bin
 		{OrderTypeRetrieveEmpty, SourceIntentEmpty}, // generic empty carrier
-		{OrderTypeMove, SourceIntentLocal},          // bin AT a concrete node
+		{OrderTypeRetrieveTopsAndBottoms, SourceIntentTopsAndBottoms},
+		{OrderTypeMove, SourceIntentLocal}, // bin AT a concrete node
 		// An unrecognised type must fall to full, NOT local: local exempts an
 		// order from the scanner's payload guard, so a stray mapping there is
 		// the expensive direction to be wrong in.
@@ -62,6 +63,69 @@ func TestStage4_SourceIntentForType(t *testing.T) {
 	for _, c := range cases {
 		if got := SourceIntentForType(c.typ); got != c.want {
 			t.Errorf("SourceIntentForType(%s) = %q, want %q", c.typ, got, c.want)
+		}
+	}
+}
+
+// TestPlainFamily_EveryTypeHasItsIntentAndItsPlanner: the plain family is one
+// list, and each member has its own arm in SourceIntentForType (no default
+// sends a new member to the full finder), is planned by planTransport and is
+// decided ahead of its row. A type added to PlainFamily without an entry here
+// fails the count.
+func TestPlainFamily_EveryTypeHasItsIntentAndItsPlanner(t *testing.T) {
+	t.Parallel()
+	want := map[protocol.OrderType]string{
+		OrderTypeRetrieve:               SourceIntentFull,
+		OrderTypeRetrieveEmpty:          SourceIntentEmpty,
+		OrderTypeRetrieveTopsAndBottoms: SourceIntentTopsAndBottoms,
+		OrderTypeMove:                   SourceIntentLocal,
+	}
+	if len(PlainFamily) != len(want) {
+		t.Fatalf("PlainFamily has %d types, this pin names %d: give the new type its intent here and in SourceIntentForType",
+			len(PlainFamily), len(want))
+	}
+	s := newPlanningService(nil, nil, nil, nil, nil, nil, nil)
+	for _, typ := range PlainFamily {
+		intent, ok := want[typ]
+		if !ok {
+			t.Errorf("%s is plain and this pin does not name its intent", typ)
+			continue
+		}
+		if got := SourceIntentForType(typ); got != intent {
+			t.Errorf("SourceIntentForType(%s) = %q, want %q", typ, got, intent)
+		}
+		if !s.Handles(typ) || !s.decidesAhead(typ) {
+			t.Errorf("%s: planned %v, decided ahead %v; want both", typ, s.Handles(typ), s.decidesAhead(typ))
+		}
+	}
+}
+
+// TestSourcesEmpty: the one test of an empty carrier's intent. Tops & bottoms
+// is one; a full, a move and a carried bin are not.
+func TestSourcesEmpty(t *testing.T) {
+	t.Parallel()
+	for intent, want := range map[string]bool{
+		SourceIntentEmpty: true, SourceIntentTopsAndBottoms: true,
+		SourceIntentFull: false, SourceIntentLocal: false, SourceIntentOnDeck: false,
+	} {
+		if got := SourcesEmpty(intent); got != want {
+			t.Errorf("SourcesEmpty(%q) = %v, want %v", intent, got, want)
+		}
+	}
+}
+
+// TestCarrierPullIntent_NoCoreAskIsTopsAndBottoms: a Core-authored carrier pull
+// is an empty or a full. Tops & bottoms is a station's pull (SEND BACK) and a
+// Core ask stating it is refused, so the loader's == SourceIntentEmpty tests
+// never meet it.
+func TestCarrierPullIntent_NoCoreAskIsTopsAndBottoms(t *testing.T) {
+	t.Parallel()
+	if _, ok := carrierPullIntent(OrderTypeRetrieveTopsAndBottoms); ok {
+		t.Error("carrierPullIntent accepted retrieve_tops_bottoms; a Core ask is only an empty or a full")
+	}
+	for _, typ := range []protocol.OrderType{OrderTypeRetrieve, OrderTypeRetrieveEmpty} {
+		if _, ok := carrierPullIntent(typ); !ok {
+			t.Errorf("carrierPullIntent refused %s", typ)
 		}
 	}
 }

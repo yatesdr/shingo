@@ -231,7 +231,7 @@ func (d *Dispatcher) robotGroupForOrder(order *orders.Order) string {
 	// The CARRIER's own requirement is deliberately left standing: a bare FG
 	// rack is exactly the case that must not be relaxed, and it is the reason
 	// bin_types.required_robot_group exists.
-	if order.SourceIntent == SourceIntentEmpty {
+	if SourcesEmpty(order.SourceIntent) {
 		facts.payloadCode = ""
 		facts.payloadGroup, facts.nearEmptyGroup = "", ""
 		facts.allowNearEmpty, facts.thresholdPct = false, 0

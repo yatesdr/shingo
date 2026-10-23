@@ -413,7 +413,7 @@ func (s *Scanner) fulfill(order *orders.Order, pick *dispatch.SourceResult) bool
 	// either turned a legitimate wait into a hard "cannot match a source bin"
 	// failure [A6]. A blank payload on a full-payload (retrieve) source stays a
 	// construction bug. Stage 4: keyed on SourceIntent data, not OrderType.
-	if payloadCode == "" && order.SourceIntent != dispatch.SourceIntentEmpty && order.SourceIntent != dispatch.SourceIntentLocal {
+	if payloadCode == "" && !dispatch.SourcesEmpty(order.SourceIntent) && order.SourceIntent != dispatch.SourceIntentLocal {
 		// Empty PayloadCode on a retrieve/move order is a construction
 		// bug — the order was queued without the key the fulfiller
 		// needs. Returning silently here would leave the order forever
@@ -435,7 +435,7 @@ func (s *Scanner) fulfill(order *orders.Order, pick *dispatch.SourceResult) bool
 	// a closed outcome and, on Found, the bin AND its node together (which
 	// deleted the old post-claim source-node re-resolve + its rollback).
 	intent := dispatch.IntentFull
-	if order.SourceIntent == dispatch.SourceIntentEmpty {
+	if dispatch.SourcesEmpty(order.SourceIntent) {
 		intent = dispatch.IntentEmpty
 	}
 	var res dispatch.SourceResult

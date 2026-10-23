@@ -177,14 +177,17 @@ func newPlanningService(db *store.DB, resolver NodeResolver, finder *SourceFinde
 		waitChanged:    waitChanged,
 		handlers:       make(map[protocol.OrderType]PlanningHandler),
 	}
-	// One planTransport folds the three simple families (retrieve,
-	// retrieve_empty, move). The handler map is type-keyed, but planTransport
-	// reads order.SourceIntent (the label→data field), so one handler serves all
-	// three types.
-	s.Register(OrderTypeRetrieve, s.planTransport)
-	s.Register(OrderTypeRetrieveEmpty, s.planTransport)
-	s.Register(OrderTypeMove, s.planTransport)
-	s.ahead = map[protocol.OrderType]bool{OrderTypeRetrieve: true, OrderTypeRetrieveEmpty: true, OrderTypeMove: true}
+	// One planTransport folds the plain family (PlainFamily). The handler map
+	// is type-keyed, but planTransport reads order.SourceIntent (the label→data
+	// field), so one handler serves every plain type, and each is decided ahead
+	// of its row.
+	s.ahead = map[protocol.OrderType]bool{}
+	for _, t := range PlainFamily {
+		s.Register(t, s.planTransport)
+	}
+	for _, t := range PlainFamily {
+		s.ahead[t] = true
+	}
 	return s
 }
 
@@ -294,11 +297,12 @@ func (s *PlanningService) setQueueReason(order *orders.Order, code protocol.Queu
 	WriteQueueDetail(s.db, log.Printf, "dispatch", order, code, cause, params, s.waitChanged)
 }
 
-// planTransport is the single planner for the three "simple" transport families —
-// retrieve, retrieve_empty, and move — folded into one. It parameterizes on
-// order.SourceIntent (the label→data field stamped once at intake by
-// SourceIntentForType): SourceIntentEmpty sources an empty carrier (IntentEmpty,
-// Empty pickup step); SourceIntentLocal is a node-local move (an explicit branch
+// planTransport is the single planner for the plain family (PlainFamily) —
+// retrieve, retrieve_empty, retrieve_tops_bottoms and move — folded into one. It
+// parameterizes on order.SourceIntent (the label→data field stamped once at
+// intake by SourceIntentForType): an intent that SourcesEmpty sources an empty
+// carrier (IntentEmpty, Empty pickup step; tops & bottoms states its want in
+// FindSource); SourceIntentLocal is a node-local move (an explicit branch
 // carrying move's own source_node/same-node validations and synthetic-NGRP-dest
 // resolution); SourceIntentFull is a payload-matched retrieve.
 //
@@ -363,7 +367,7 @@ func (d transportDecision) Plan() plan.Plan {
 // dig, which is what a fresh id is too: no dig names it.
 func (s *PlanningService) decideTransport(order *orders.Order, payloadCode string) transportDecision {
 	var d transportDecision
-	isEmpty := order.SourceIntent == SourceIntentEmpty
+	isEmpty := SourcesEmpty(order.SourceIntent)
 	isMove := order.SourceIntent == SourceIntentLocal
 
 	// move's named-source validations are load-bearing and MUST run BEFORE the
@@ -510,7 +514,7 @@ func (s *PlanningService) holdFullOnForeignCarrier(pick SourceResult) {
 // applyTransport disposes of a decision on the born row: every write
 // planTransport makes, in the order it made them.
 func (s *PlanningService) applyTransport(order *orders.Order, env *protocol.Envelope, d transportDecision) (*PlanningResult, *planningError) {
-	isEmpty := order.SourceIntent == SourceIntentEmpty
+	isEmpty := SourcesEmpty(order.SourceIntent)
 	isMove := order.SourceIntent == SourceIntentLocal
 
 	// Persist the operator's declared release-correction count onto the order so the

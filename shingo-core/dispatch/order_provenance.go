@@ -2,6 +2,7 @@ package dispatch
 
 import (
 	"log"
+	"slices"
 
 	"github.com/google/uuid"
 
@@ -10,14 +11,19 @@ import (
 )
 
 // SourceIntent is the Stage-4 data home for the sourcing reads that used to
-// branch on OrderType — retrieve_empty's empty-carrier intent, move's node-local
-// sourcing, and the empty-payload guard's exemptions. It is set ONCE at intake
-// (the label→data carve-out, via SourceIntentForType) and read downstream as
-// data by the source finder and the scanner. Stored as a plain string column.
+// branch on OrderType — an empty carrier's intent (retrieve_empty's, and
+// tops & bottoms'), move's node-local sourcing, and the empty-payload guard's
+// exemptions. It is set ONCE at intake (the label→data carve-out, via
+// SourceIntentForType) and read downstream as data by the source finder and the
+// scanner. Stored as a plain string column.
 const (
 	SourceIntentFull  = ""      // retrieve: a payload-matched FULL bin (the default)
 	SourceIntentEmpty = "empty" // retrieve_empty: an empty compatible carrier
 	SourceIntentLocal = "local" // move: the bin AT a concrete source node (node-local)
+	// SourceIntentTopsAndBottoms is retrieve_tops_bottoms': tops & bottoms of
+	// the fed press's tote carrier and nothing else (FindSource states the
+	// want). An empty carrier in every other respect (SourcesEmpty).
+	SourceIntentTopsAndBottoms = "tops_bottoms"
 	// SourceIntentOnDeck is the carried-bin recovery: the bin is already on the
 	// pinned robot's deck, so there is nothing to source and nothing to pick
 	// up. It is the one intent that changes the PLAN rather than the search —
@@ -25,20 +31,45 @@ const (
 	SourceIntentOnDeck = "on_deck"
 )
 
+// PlainFamily is the plain order types: one transport each, planned by
+// planTransport. The one list the planner registers (NewPlanningService), the
+// decide-ahead set is built from, and the coordinated tripwire checks
+// (AssertSimpleNotCoordinated); SourceIntentForType names an intent for each.
+var PlainFamily = []protocol.OrderType{
+	OrderTypeRetrieve, OrderTypeRetrieveEmpty, OrderTypeRetrieveTopsAndBottoms, OrderTypeMove,
+}
+
 // SourceIntentForType maps an order's type to its sourcing intent. It is called
 // only at intake, where reading the type to stamp the data field is the legitimate
 // label→data conversion (Stage-5 forbidigo carve-out) — every downstream reader
 // keys on order.SourceIntent, never the type.
+//
+// One arm per plain type (PlainFamily, pinned), and no default: a type added to
+// the family without an arm here is caught by the pin, not sent quietly to the
+// full finder. Every other type (complex, sourced per leg; an unknown one, which
+// intake refuses) is full, the direction that keeps the scanner's payload guard.
 func SourceIntentForType(t protocol.OrderType) string {
 	switch t {
+	case OrderTypeRetrieve:
+		return SourceIntentFull
 	case OrderTypeRetrieveEmpty:
 		return SourceIntentEmpty
+	case OrderTypeRetrieveTopsAndBottoms:
+		return SourceIntentTopsAndBottoms
 	case OrderTypeMove:
 		return SourceIntentLocal
-	default:
-		// Retrieve (full) falls here — a payload-matched full bin via the finder.
-		return SourceIntentFull
 	}
+	return SourceIntentFull
+}
+
+// SourcesEmpty is the one test of whether an intent sources an empty carrier:
+// retrieve_empty's and tops & bottoms'. Every sourcing reader that used to ask
+// for SourceIntentEmpty asks this, so the tops & bottoms pull plans, gates,
+// dispatches, picks its robot group and replays from the queue as the empty it
+// is. A Core ask's empty (loader_replenish) is not one of them: a loader asks
+// only for an empty or a full (carrierPullIntent).
+func SourcesEmpty(intent string) bool {
+	return intent == SourceIntentEmpty || intent == SourceIntentTopsAndBottoms
 }
 
 // carrierPullIntent is the sourcing intent of a Core-authored carrier pull
@@ -150,12 +181,9 @@ func IsCoordinated(order *orders.Order) bool {
 // Stage-5 forbidigo carve-out) — a plain-family label stamped coordinated is a
 // construction bug we want surfaced.
 func AssertSimpleNotCoordinated(order *orders.Order) {
-	switch order.OrderType {
-	case OrderTypeRetrieve, OrderTypeRetrieveEmpty, OrderTypeMove:
-		if order.Coordinated {
-			log.Printf("CONSTRUCTION BUG: plain-family order %d (%s) is stamped coordinated — "+
-				"the dispatch discriminator (IsCoordinated) will route it to the coordinated tail "+
-				"(role gate + complex reserve/confirm). Fix the intake stamp.", order.ID, order.OrderType)
-		}
+	if order.Coordinated && slices.Contains(PlainFamily, order.OrderType) {
+		log.Printf("CONSTRUCTION BUG: plain-family order %d (%s) is stamped coordinated — "+
+			"the dispatch discriminator (IsCoordinated) will route it to the coordinated tail "+
+			"(role gate + complex reserve/confirm). Fix the intake stamp.", order.ID, order.OrderType)
 	}
 }

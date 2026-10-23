@@ -40,7 +40,10 @@ func ProjectionFor(o *orders.Order) protocol.OrderProjection {
 		PayloadDesc:  o.PayloadDesc,
 		// The Edge keeps this as its own column rather than deriving it from the
 		// type. Sent explicitly for the same reason: the two have drifted before.
-		RetrieveEmpty: o.OrderType == OrderTypeRetrieveEmpty, //nolint:forbidigo // derives a wire field, not a route
+		// A tops & bottoms pull is an empty carrier's too, as the Edge sets it:
+		// the intent says so; the type still answers for a row that names no
+		// intent.
+		RetrieveEmpty: o.OrderType == OrderTypeRetrieveEmpty || SourcesEmpty(o.SourceIntent), //nolint:forbidigo // derives a wire field, not a route
 		OriginID:      o.OriginID,
 		OriginClass:   o.OriginClass,
 		QueueReason:   o.QueueReason,
