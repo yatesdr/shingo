@@ -56,6 +56,13 @@ func (db *DB) ListMaintainLevels(groupNodeID int64) ([]MaintainLevel, error) {
 	return nodes.ListMaintainLevels(db.DB, groupNodeID)
 }
 
+// DeclaresLevel reports whether a group declares a level, in one read: the
+// maintained-source test the loader save and the drain share
+// (nodes.DeclaresLevel).
+func (db *DB) DeclaresLevel(groupNodeID int64) (bool, error) {
+	return nodes.DeclaresLevel(db.DB, groupNodeID)
+}
+
 // MaintainedGroupIDs is every group that declares a level, in one read.
 func (db *DB) MaintainedGroupIDs() (map[int64]bool, error) {
 	return nodes.MaintainedGroupIDs(db.DB)

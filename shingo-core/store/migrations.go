@@ -4496,7 +4496,39 @@ func migrationList() []migration {
 				return schema.CheckConstraintAllows(q, "node_maintain_layer_levels",
 					"node_maintain_layer_levels_layers_check", ">= 0")
 			}},
+		{165, "bin_loaders.drains_empty, drains_tops_bottoms, drains_leftover, drains_unverified - the part-less carts an unloader pulls from its inbound source beside its fulls, one box per carrier state; all off",
+			v165LoaderDrainStates,
+			func(q schema.Querier) bool {
+				all := true
+				for _, c := range v165DrainColumns {
+					all = all && schema.ColumnExists(q, "bin_loaders", c)
+				}
+				return all
+			}},
 	}
+}
+
+// v165DrainColumns are the four columns v165 adds, in the order the loader
+// page draws their boxes; the verify closure checks each one.
+var v165DrainColumns = []string{"drains_empty", "drains_tops_bottoms", "drains_leftover", "drains_unverified"}
+
+// v165LoaderDrainStates gives an unloader four boxes, one per part-less
+// carrier state it may drain from its inbound source beside its fulls
+// (protocol.CarrierState: empty, tops & bottoms, leftover, unverified; a bare
+// marker is never drained, it is stage 2's). They are read into one value at
+// the row boundary (loaders.DrainStates) and nowhere else; the Edge is not
+// told (LoaderInfo does not carry them), because Core's pull is the only
+// reader (dispatch.DrainLoader). bin_loaders is migration-created (v34), so
+// there is no baseline column to declare. Every existing row reads all four
+// off, so nothing drains until a plant ticks a box. ROLLBACK is the previous
+// binary plus DROP COLUMN on all four; nothing else reads them.
+func v165LoaderDrainStates(tx *sql.Tx) error {
+	for _, c := range v165DrainColumns {
+		if _, err := tx.Exec(`ALTER TABLE bin_loaders ADD COLUMN IF NOT EXISTS ` + c + ` BOOLEAN NOT NULL DEFAULT false`); err != nil {
+			return fmt.Errorf("v165 bin_loaders.%s: %w", c, err)
+		}
+	}
+	return nil
 }
 
 // v164TopsAndBottomsRow lets a maintained group want carts at 0 layers: tops &

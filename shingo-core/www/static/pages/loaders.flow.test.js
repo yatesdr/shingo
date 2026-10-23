@@ -731,6 +731,70 @@ await (async function settingsSaveThroughTheApi() {
     check('a rename carries board_hides_idle through, not flattened', off.board_hides_idle === true && off.board_shows_all_parts === false);
 })();
 
+// The four drain boxes (W14). Beside Accept partials on a single unloader that
+// has an inbound source, with the owner's labels and two help lines; each box
+// saves as ticked; the set round-trips, and saving any other setting sends it
+// back unchanged (the update is a full-row write, so a flattened set would
+// untick every box on the next rename).
+(function drainBoxes() {
+    const h = load({ auth: true });
+    h.set("binTypeCatalog = []");
+    const item = function (l) { return { loader: l, homes: [], payloads: [], window_bin_types: {} }; };
+    const html = h.ctx.settingsHtml(item(unloader({ inbound_source: 'PRESS-OUT' })), null);
+    ['Drain empty bins', 'Drain tops &amp; bottoms', 'Drain leftover totes (not a whole layer)',
+        'Drain tote bins with an unverified count',
+        'Tote bins nobody counted are drained by the unverified box.',
+        'Drains carts that land in this unloader&#39;s inbound source. Point it at a press&#39;s outbound, not a stock group.',
+    ].forEach(function (w) { check('drain words: "' + w + '"', html.indexOf(w) >= 0); });
+    const at = function (w) { return html.indexOf(w); };
+    check('the four boxes sit beside Accept partials: after it, before the next full row',
+        at('Accept partly used bins') < at('Drain empty bins') &&
+        at('Drain tote bins with an unverified count') < at('Pull the next full automatically'));
+    check('the unverified line is under "Drain empty bins", before the next box',
+        at('Drain empty bins') < at('Tote bins nobody counted') && at('Tote bins nobody counted') < at('Drain tops'));
+    check('the source line is under the four', at('Drains carts that land') > at('Drain tote bins with an unverified count'));
+    check('each box is a row that saves as ticked',
+        (html.match(/data-action-change="saveStationSetting" data-loader-id="20" data-field="drain-/g) || []).length === 4);
+
+    const shape = function (l) { return h.ctx.formShape(h.ctx.formStateFromLoader(l)); };
+    check('no boxes on a loader, on a pair, or on an unloader with no source',
+        !shape(loader({ inbound_source: 'IN-G' })).drains &&
+        !shape(unloader({ inbound_source: 'IN-G', second_stage_loader_id: 8 })).drains && !shape(unloader()).drains);
+    check('no boxes on one spot per part (nothing drains there)',
+        !shape(unloader({ inbound_source: 'IN-G', layout: 'dedicated_positions' })).drains);
+    check('a ticked box stays drawn when its source is gone, so it can be unticked',
+        shape(unloader({ drain_states: ['leftover'] })).drains === true);
+
+    const stored = unloader({ inbound_source: 'PRESS-OUT', outbound_dest: 'EMPTIES', drain_states: ['unverified', 'empty'] });
+    const on = h.ctx.settingsHtml(item(stored), null);
+    check('a stored set draws its boxes ticked and only those',
+        /data-field="drain-empty" checked/.test(on) && /data-field="drain-unverified" checked/.test(on) &&
+        !/data-field="drain-leftover" checked/.test(on) && !/data-field="drain-tops_bottoms" checked/.test(on));
+    const set = function (b) { return JSON.stringify(b.drain_states); };
+    check('ticking a box adds its state, in the order the server keeps',
+        set(h.ctx.settingUpdate(stored, 'drain-leftover', true)) === '["empty","leftover","unverified"]');
+    check('unticking a box drops that state only', set(h.ctx.settingUpdate(stored, 'drain-empty', false)) === '["unverified"]');
+    const other = h.ctx.settingUpdate(stored, 'autoPush', true);
+    check('saving any other setting sends the set back unchanged', set(other) === '["empty","unverified"]' && other.auto_push === true);
+    check('a rename sends the set back unchanged', set(h.ctx.settingUpdate(stored, 'name', 'UNL-B')) === '["empty","unverified"]');
+    check('naming a place sends the set back unchanged', set(h.ctx.placeUpdate(stored, 'outbound', 'EMPTIES-2')) === '["empty","unverified"]');
+    check('a loader never sends a drain box', set(h.ctx.settingUpdate(loader({ drain_states: ['empty'] }), 'funnel', true)) === '[]');
+})();
+
+await (async function drainBoxSavesThroughTheApi() {
+    const h = load({ auth: true });
+    h.set('loaderData = ' + JSON.stringify([{ loader: unloader({ inbound_source: 'PRESS-OUT', drain_states: ['empty'] }), homes: [], payloads: [] }]));
+    const cb = makeEl('', 'input');
+    cb.type = 'checkbox';
+    cb.checked = true;
+    cb.setAttribute('data-loader-id', '20');
+    cb.setAttribute('data-field', 'drain-leftover');
+    await h.ctx.saveStationSetting(cb);
+    check('a ticked drain box saves at once: one update carrying the whole set and the source',
+        h.posts.length === 1 && h.posts[0].url === '/api/loader/update' &&
+        JSON.stringify(h.posts[0].body.drain_states) === '["empty","leftover"]' && h.posts[0].body.inbound_source === 'PRESS-OUT');
+})();
+
 (function binsPageBareCheckboxGone() {
     check('bins page: the bare checkbox is gone from both forms',
         binsHtml.indexOf('name="bare"') < 0 && binsHtml.indexOf('bt-edit-bare') < 0);

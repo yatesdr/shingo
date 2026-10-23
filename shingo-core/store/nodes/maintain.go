@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"shingocore/domain"
+	"shingocore/store/internal/helpers"
 )
 
 // Maintained-group config: the level a node group holds in EMPTY CARRIERS, and
@@ -337,6 +338,18 @@ func ListMaintainLevels(db *sql.DB, groupNodeID int64) ([]MaintainLevel, error) 
 		out = append(out, l)
 	}
 	return out, rows.Err()
+}
+
+// DeclaresLevel reports whether a group declares a level, in one statement
+// (helpers.DeclaresLevelSQL): whether ListMaintainLevels would answer non-empty.
+// It is the one test of a maintained inbound source: the loader save refuses
+// an unloader whose source is one (service ErrFullsFromAnEmptiesBank).
+func DeclaresLevel(db *sql.DB, groupNodeID int64) (bool, error) {
+	var declares bool
+	if err := db.QueryRow(`SELECT `+helpers.DeclaresLevelSQL("$1"), groupNodeID).Scan(&declares); err != nil {
+		return false, fmt.Errorf("read whether group %d declares a level: %w", groupNodeID, err)
+	}
+	return declares, nil
 }
 
 // MaintainedGroupIDs is the set of groups that declare a level — the groups

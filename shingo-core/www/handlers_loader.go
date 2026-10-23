@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net/http"
 
+	"shingo/protocol"
 	"shingocore/service"
 )
 
@@ -15,10 +16,19 @@ func loaderWriteStatus(err error) int {
 	if errors.Is(err, service.ErrConsumeThreshold) || errors.Is(err, service.ErrAcceptPartialsProduce) ||
 		errors.Is(err, service.ErrAcceptPartialsPartialHome) ||
 		errors.Is(err, service.ErrAutoPushProduce) || errors.Is(err, service.ErrWindowInAnotherGroup) ||
-		errors.Is(err, service.ErrQuotaBare) || errors.Is(err, service.ErrInboundSourceUnresolved) {
+		errors.Is(err, service.ErrQuotaBare) || errors.Is(err, service.ErrInboundSourceUnresolved) ||
+		drainRefusal(err) {
 		return http.StatusBadRequest
 	}
 	return http.StatusInternalServerError
+}
+
+// drainRefusal reports whether err is a drain box refused where it cannot hold
+// (service/loader_drains.go).
+func drainRefusal(err error) bool {
+	return errors.Is(err, service.ErrDrainProduce) || errors.Is(err, service.ErrDrainNoSource) ||
+		errors.Is(err, service.ErrDrainTwoStage) || errors.Is(err, service.ErrDrainIntoItsSource) ||
+		errors.Is(err, service.ErrNotDrainable)
 }
 
 // Loader-config write API (loader refactor: Core authors the bin_loaders
@@ -54,6 +64,9 @@ func (h *Handlers) apiCreateLoader(w http.ResponseWriter, r *http.Request) {
 		// PulledDirectly: a stage 2's finished carts are pulled straight off
 		// its windows by the process; the outbound is stored blank.
 		PulledDirectly bool `json:"pulled_directly"`
+		// DrainStates: the part-less carrier states an unloader drains from
+		// its inbound source (the four drain boxes). Absent drains nothing.
+		DrainStates []protocol.CarrierState `json:"drain_states"`
 	}
 	if !h.parseJSON(w, r, &req) {
 		return
@@ -67,6 +80,7 @@ func (h *Handlers) apiCreateLoader(w http.ResponseWriter, r *http.Request) {
 		OutboundDest: req.OutboundDest, InboundSource: req.InboundSource, FunnelWindows: req.FunnelWindows,
 		ChangeoverLoadDirective: req.ChangeoverLoadDirective,
 		AcceptPartials:          req.AcceptPartials, AutoPush: req.AutoPush, FedDirectly: req.FedDirectly, PulledDirectly: req.PulledDirectly,
+		Drains: req.DrainStates,
 	})
 	if err != nil {
 		h.jsonError(w, "create loader: "+err.Error(), loaderWriteStatus(err))
@@ -85,6 +99,9 @@ func (h *Handlers) apiCreateTwoStageLoader(w http.ResponseWriter, r *http.Reques
 		Name           string `json:"name"`
 		AcceptPartials bool   `json:"accept_partials"`
 		AutoPush       bool   `json:"auto_push"`
+		// DrainStates is refused when it names any state: neither half of a
+		// pair drains. Absent, as the page sends it, is nothing.
+		DrainStates []protocol.CarrierState `json:"drain_states"`
 	}
 	if !h.parseJSON(w, r, &req) {
 		return
@@ -94,7 +111,7 @@ func (h *Handlers) apiCreateTwoStageLoader(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	s1, s2, err := h.engine.LoaderService().CreateTwoStage(service.TwoStageCreate{
-		Name: req.Name, AcceptPartials: req.AcceptPartials, AutoPush: req.AutoPush,
+		Name: req.Name, AcceptPartials: req.AcceptPartials, AutoPush: req.AutoPush, Drains: req.DrainStates,
 	})
 	if err != nil {
 		h.jsonError(w, "create two-stage unloader: "+err.Error(), loaderWriteStatus(err))
@@ -133,6 +150,10 @@ func (h *Handlers) apiUpdateLoader(w http.ResponseWriter, r *http.Request) {
 		// draws. A full-row write like the rest: absent reads as false.
 		BoardHidesIdle     bool `json:"board_hides_idle"`
 		BoardShowsAllParts bool `json:"board_shows_all_parts"`
+		// DrainStates: the drain boxes, as the set of carrier states ticked.
+		// A full-row write like the rest: absent drains nothing, so the page
+		// sends the stored set back with every other setting.
+		DrainStates []protocol.CarrierState `json:"drain_states"`
 	}
 	if !h.parseJSON(w, r, &req) {
 		return
@@ -147,6 +168,7 @@ func (h *Handlers) apiUpdateLoader(w http.ResponseWriter, r *http.Request) {
 		FunnelWindows: req.FunnelWindows, ChangeoverLoadDirective: req.ChangeoverLoadDirective,
 		AcceptPartials: req.AcceptPartials, AutoPush: req.AutoPush, FedDirectly: req.FedDirectly, PulledDirectly: req.PulledDirectly,
 		BoardHidesIdle: req.BoardHidesIdle, BoardShowsAllParts: req.BoardShowsAllParts,
+		Drains: req.DrainStates,
 	}); err != nil {
 		h.jsonError(w, "update loader: "+err.Error(), loaderWriteStatus(err))
 		return

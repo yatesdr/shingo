@@ -169,6 +169,10 @@ type LoaderCreate struct {
 	// windows by the process. Refused here: only a pair's stage 2 takes it,
 	// and a pair is made by CreateTwoStage and set on the box afterwards.
 	PulledDirectly bool
+	// Drains: the part-less carrier states an unloader drains from its inbound
+	// source beside its fulls (loaders.DrainStates), refused where a box cannot
+	// hold (checkDrains). Absent drains nothing.
+	Drains []protocol.CarrierState
 }
 
 // CreateLoader is Create with the settings Update takes, refused on the same
@@ -211,8 +215,12 @@ func (s *LoaderService) CreateLoader(in LoaderCreate) (int64, error) {
 	if err := s.checkFlowEndpoints(in.Role, inbound, in.OutboundDest); err != nil {
 		return 0, err
 	}
+	drains, err := loaders.NewDrainStates(in.Drains)
+	if err != nil {
+		return 0, err
+	}
 	hidesIdle, showsAll := boardDefaults(replenishment)
-	id, err := s.db.CreateLoader(loaders.Loader{
+	l := loaders.Loader{
 		Name: in.Name, Role: in.Role, Layout: layout,
 		Replenishment: replenishment, OutboundDest: in.OutboundDest,
 		InboundSource: inbound, FunnelWindows: in.FunnelWindows,
@@ -220,7 +228,12 @@ func (s *LoaderService) CreateLoader(in LoaderCreate) (int64, error) {
 		AcceptPartials:          in.AcceptPartials, AutoPush: in.AutoPush, FedDirectly: in.FedDirectly,
 		PulledDirectly: in.PulledDirectly,
 		BoardHidesIdle: hidesIdle, BoardShowsAllParts: showsAll,
-	})
+		Drains: drains,
+	}
+	if err := s.checkDrains(&l); err != nil {
+		return 0, err
+	}
+	id, err := s.db.CreateLoader(l)
 	if err != nil {
 		return 0, err
 	}
@@ -279,6 +292,10 @@ type LoaderUpdate struct {
 	// BoardShowsAllParts: the Edge board lists every part the station takes,
 	// not only what a running style needs. Display only; any station.
 	BoardShowsAllParts bool
+	// Drains: the part-less carrier states an unloader drains from its inbound
+	// source (loaders.DrainStates). A full-row write like the rest: absent
+	// drains nothing. Checked on every save that leaves a box on (checkDrains).
+	Drains []protocol.CarrierState
 }
 
 // checkAcceptPartials refuses accept_partials where it cannot hold: a produce
@@ -361,6 +378,12 @@ func (s *LoaderService) Update(in LoaderUpdate) error {
 	cur.AutoPush = in.AutoPush
 	cur.BoardHidesIdle = in.BoardHidesIdle
 	cur.BoardShowsAllParts = in.BoardShowsAllParts
+	if cur.Drains, err = loaders.NewDrainStates(in.Drains); err != nil {
+		return err
+	}
+	if err := s.checkDrains(cur); err != nil {
+		return err
+	}
 	// The groups Core made for a pair are named after stage 1, and syncPair
 	// finds them by that name. Find them under the OLD name before the rename
 	// lands and carry them over, or the sync would make second, empty groups and
@@ -621,8 +644,57 @@ var ErrSourceIsALane = errors.New(protocol.MsgLaneIsNotASource)
 // ErrFullsFromAnEmptiesBank is returned when a CONSUME loader's inbound source
 // (where its fulls come from) names a maintained group. A maintained group is an
 // empties bank: the store resolver refuses a carrier holding a part there, so
-// fulls could be pulled from it but never put back into it.
-var ErrFullsFromAnEmptiesBank = errors.New(protocol.MsgFullsFromAnEmptiesBank)
+// fulls could be pulled from it but never put back into it. And an unloader
+// never drains one (owner, 2026-10-22: "unloader should not drain the source
+// levels or kanban maintainer"), so the sentence says so too: this is the one
+// refusal, whatever the drain boxes say, and no second one is spelled for them.
+// The Edge's claim save says the shared stem (protocol.MsgFullsFromAnEmptiesBank)
+// alone, because an Edge claim has no drain boxes.
+var ErrFullsFromAnEmptiesBank = errors.New(protocol.MsgFullsFromAnEmptiesBank + ", and its drain boxes drain nothing from one")
+
+// checkFlowEndpoints is the second half of the save-time check: not whether the
+// endpoints exist (checkInboundSource) but whether they are the KIND of node a
+// source can be. Two refusals, both about places a bin could be put and never
+// found again:
+//
+//   - a LANE as the inbound source or the outbound destination (ErrSourceIsALane);
+//   - a MAINTAINED GROUP as an unloader's inbound source (ErrFullsFromAnEmptiesBank):
+//     the empties-only store refusal (binresolver.ResolveStore) means a full of
+//     the part can be retrieved from it but not returned to it.
+//
+// The maintained test is store.DeclaresLevel, the one the drain re-asks of the
+// same source before it pulls (a level can be declared after the save).
+//
+// A blank endpoint is valid, as it is for checkInboundSource.
+func (s *LoaderService) checkFlowEndpoints(role, inboundSource, outboundDest string) error {
+	for _, name := range []string{inboundSource, outboundDest} {
+		if name == "" {
+			continue
+		}
+		n, err := s.db.GetNodeByDotName(name)
+		if err != nil || n == nil {
+			continue // existence is checkInboundSource's question
+		}
+		if n.NodeTypeCode == protocol.NodeClassLANE {
+			return fmt.Errorf("%w: %q", ErrSourceIsALane, name)
+		}
+	}
+	if role != loaders.RoleConsume || inboundSource == "" {
+		return nil
+	}
+	n, err := s.db.GetNodeByDotName(inboundSource)
+	if err != nil || n == nil {
+		return nil
+	}
+	maintained, err := s.db.DeclaresLevel(n.ID)
+	if err != nil {
+		return fmt.Errorf("read maintained levels of %s: %w", inboundSource, err)
+	}
+	if maintained {
+		return fmt.Errorf("%w: %q", ErrFullsFromAnEmptiesBank, inboundSource)
+	}
+	return nil
+}
 
 // checkInboundSource resolve-checks a claim's inbound source at SAVE TIME.
 // MG3-3.
@@ -652,47 +724,6 @@ var ErrFullsFromAnEmptiesBank = errors.New(protocol.MsgFullsFromAnEmptiesBank)
 // be edited in any order; refusing a save on it would make the form unusable
 // during a reconfiguration. Existence is the part that is always knowable and
 // always wrong when it fails.
-// checkFlowEndpoints is the second half of the save-time check: not whether the
-// endpoints exist (checkInboundSource) but whether they are the KIND of node a
-// source can be. Two refusals, both about places a bin could be put and never
-// found again:
-//
-//   - a LANE as the inbound source or the outbound destination (ErrSourceIsALane);
-//   - a MAINTAINED GROUP as an unloader's inbound source (ErrFullsFromAnEmptiesBank):
-//     the empties-only store refusal (binresolver.ResolveStore) means a full of
-//     the part can be retrieved from it but not returned to it.
-//
-// A blank endpoint is valid, as it is for checkInboundSource.
-func (s *LoaderService) checkFlowEndpoints(role, inboundSource, outboundDest string) error {
-	for _, name := range []string{inboundSource, outboundDest} {
-		if name == "" {
-			continue
-		}
-		n, err := s.db.GetNodeByDotName(name)
-		if err != nil || n == nil {
-			continue // existence is checkInboundSource's question
-		}
-		if n.NodeTypeCode == protocol.NodeClassLANE {
-			return fmt.Errorf("%w: %q", ErrSourceIsALane, name)
-		}
-	}
-	if role != loaders.RoleConsume || inboundSource == "" {
-		return nil
-	}
-	n, err := s.db.GetNodeByDotName(inboundSource)
-	if err != nil || n == nil {
-		return nil
-	}
-	levels, err := s.db.ListMaintainLevels(n.ID)
-	if err != nil {
-		return fmt.Errorf("read maintained levels of %s: %w", inboundSource, err)
-	}
-	if len(levels) > 0 {
-		return fmt.Errorf("%w: %q", ErrFullsFromAnEmptiesBank, inboundSource)
-	}
-	return nil
-}
-
 func (s *LoaderService) checkInboundSource(inboundSource string) error {
 	if inboundSource == "" {
 		return nil

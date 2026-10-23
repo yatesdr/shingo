@@ -30,6 +30,7 @@ import (
 	"log"
 	"strings"
 
+	"shingo/protocol"
 	"shingocore/store/bins"
 	"shingocore/store/loaders"
 	"shingocore/store/nodes"
@@ -66,6 +67,10 @@ type TwoStageCreate struct {
 	Name           string
 	AcceptPartials bool
 	AutoPush       bool
+	// Drains is refused when it names any state: neither half of a pair
+	// drains (ErrDrainTwoStage). Taken so the create door says so rather than
+	// dropping a box it was sent.
+	Drains []protocol.CarrierState
 }
 
 // CreateTwoStage creates both stages and the link. Returns the stage-1 and
@@ -73,6 +78,9 @@ type TwoStageCreate struct {
 func (s *LoaderService) CreateTwoStage(in TwoStageCreate) (stage1, stage2 int64, err error) {
 	if in.Name == "" {
 		return 0, 0, errors.New("name is required")
+	}
+	if len(in.Drains) > 0 {
+		return 0, 0, ErrDrainTwoStage
 	}
 	stage2, err = s.db.CreateLoader(loaders.Loader{
 		Name: in.Name + stage2Suffix, Role: loaders.RoleConsume, Layout: loaders.LayoutSharedWindow,

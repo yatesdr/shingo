@@ -128,6 +128,11 @@ function formShape(state) {
     // what an UNLOADER is fed; the service refuses both on a loader.
     partials: saved && unloader,
     autoPush: saved && unloader,
+    // The drain boxes drain what lands in an unloader's inbound source into
+    // its shared windows: asked of a single unloader with one (the service
+    // refuses a box on a loader, a pair, or with no source). A ticked box
+    // stays drawn whatever else changed, so it can always be unticked.
+    drains: saved && unloader && !pair && ((!dedicated && !!state.inbound) || (state.drains || []).length > 0),
     fedDirectly: saved,
     // An unloader drains when a window is cleared; only a loader has a supply
     // mode to choose, and only a loader has a changeover card to commandeer.
@@ -289,6 +294,8 @@ function formStateFromLoader(l) {
     changeoverLoadDirective: !!l.changeover_load_directive,
     acceptPartials: !!l.accept_partials,
     autoPush: !!l.auto_push,
+    // The drain boxes as the set the server keeps (drain_states), one value.
+    drains: drainSet(l.drain_states || [], '', false),
     replenishment: l.replenishment || 'operator',
     fedDirectly: fedDirectlyOf(l),
     pulledDirectly: !!l.pulled_directly,
@@ -314,6 +321,8 @@ function loaderPayload(state) {
     // Unloaders only; the server refuses true on a loader.
     accept_partials: unloader && !!state.acceptPartials,
     auto_push: unloader && !!state.autoPush,
+    // Unloaders only, like the two above; sent back whole with every save.
+    drain_states: unloader ? (state.drains || []).slice() : [],
     fed_directly: !!state.fedDirectly,
     // A pair's stage 2 only; the server refuses it anywhere else.
     pulled_directly: !!state.pulledDirectly,
@@ -325,11 +334,37 @@ function loaderPayload(state) {
 }
 
 // settingUpdate is one ticked Settings row as an update body: the stored row
-// with that one field changed.
+// with that one field changed. A drain box's field names its state
+// (DRAIN_FIELD), and ticking it changes the one set.
 function settingUpdate(loader, field, value) {
   const state = formStateFromLoader(loader);
-  state[field] = value;
+  if (field.indexOf(DRAIN_FIELD) === 0) {
+    state.drains = drainSet(state.drains, field.slice(DRAIN_FIELD.length), !!value);
+  } else {
+    state[field] = value;
+  }
   return loaderPayload(normalizeForm(state));
+}
+
+// DRAIN_BOXES are an unloader's four drain boxes, in the order the server
+// keeps the set (loaders.Drainable): each a part-less carrier state it pulls
+// from its inbound source beside its fulls, which stay its job, always on.
+const DRAIN_BOXES = [
+  ['empty', 'Drain empty bins'],
+  ['tops_bottoms', 'Drain tops & bottoms'],
+  ['leftover', 'Drain leftover totes (not a whole layer)'],
+  ['unverified', 'Drain tote bins with an unverified count'],
+];
+const DRAIN_FIELD = 'drain-';
+const DRAIN_HELP = "Drains carts that land in this unloader's inbound source. Point it at a press's outbound, not a stock group.";
+const DRAIN_EMPTY_HELP = 'Tote bins nobody counted are drained by the unverified box.';
+
+// drainSet is the set drains with one state set on or off, in DRAIN_BOXES'
+// order, each once; a state no box drains is left out.
+function drainSet(drains, state, on) {
+  return DRAIN_BOXES.map(function (b) { return b[0]; }).filter(function (s) {
+    return s === state ? on : drains.indexOf(s) >= 0;
+  });
 }
 
 // placeUpdate is one place slot filled (or cleared, with ''). Naming a source
@@ -763,6 +798,17 @@ function settingCheck(loaderID, field, on, text) {
   return h`<label class="form-check loader-setting" for="${id}"><input type="checkbox" id="${id}" data-action-change="saveStationSetting" data-loader-id="${loaderID}" data-field="${field}"${raw(on ? ' checked' : '')}> ${text}</label>`;
 }
 
+// drainChecksHtml is the four drain boxes, beside Accept partials, each a
+// settingCheck that saves as ticked, with the owner's two help lines: one
+// under "Drain empty bins", one under the four.
+function drainChecksHtml(loaderID, drains) {
+  const rows = DRAIN_BOXES.map(function (b) {
+    const row = settingCheck(loaderID, DRAIN_FIELD + b[0], drains.indexOf(b[0]) >= 0, b[1]);
+    return b[0] === 'empty' ? row + h`<div class="form-hint">${DRAIN_EMPTY_HELP}</div>` : row;
+  }).join('');
+  return rows + h`<div class="form-hint">${DRAIN_HELP}</div>`;
+}
+
 // settingName is the Settings card's name row. THE NAME IS SAFE TO EDIT HERE,
 // and that is a property of the aggregate, not a courtesy: a loader is
 // Shingo-owned and keyed on its id everywhere (homes, payloads, the stage
@@ -800,6 +846,7 @@ function settingsHtml(item, s2) {
   first += settingName(lid, state.name);
   if (shape.supply) first += supplyHtml(state);
   if (shape.partials) first += settingCheck(lid, 'acceptPartials', state.acceptPartials, 'Accept partly used bins, not only full ones');
+  if (shape.drains) first += drainChecksHtml(lid, state.drains);
   if (shape.autoPush) first += settingCheck(lid, 'autoPush', state.autoPush, 'Pull the next full automatically when a window frees');
   if (shape.fedDirectly) first += settingCheck(lid, 'fedDirectly', state.fedDirectly, 'Fed directly by the process');
   // Stage 2's outbound mirror. Its own row because it saves stage 2.
