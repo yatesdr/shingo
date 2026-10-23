@@ -761,10 +761,13 @@ func TestFanOutCrossMode_PressIndex3PosToSingleRobot_SynthesizesBackMiddleDrops(
 }
 
 // Direction B mirror: from is single_robot, to is press-index 3-pos.
-// Front position has a normal Swap diff. Middle and back only exist on
-// the to-claim's extension fields; the cross-mode fan-out synthesizes
-// Adds so new bins get delivered to those positions from InboundSource.
-func TestFanOutCrossMode_SingleRobotToPressIndex3Pos_SynthesizesBackMiddleAdds(t *testing.T) {
+// Front position has a normal Swap diff. Middle and back only exist on the
+// to-claim's extension fields, and nothing the outgoing style holds says what
+// stands there, so the cross-mode fan-out plans each as the per-position Swap,
+// its from-claim synthesized from the incoming claim: whatever stands there
+// leaves and the new style's carrier comes. ApplyNodeState, which runs next,
+// turns a vacant one into an Add and leaves an unknown seat the Swap.
+func TestFanOutCrossMode_SingleRobotToPressIndex3Pos_PlansEachIncomingPositionFromItsSeat(t *testing.T) {
 	t.Parallel()
 	from := crossModeNonPressIndex("FRONT", "PART-A", "single_robot")
 	to := crossModeFromPressIndex("PART-B", "FRONT", "MIDDLE", "BACK")
@@ -774,7 +777,7 @@ func TestFanOutCrossMode_SingleRobotToPressIndex3Pos_SynthesizesBackMiddleAdds(t
 	out := FanOutPressIndexCrossMode(diffs, nil)
 
 	if len(out) != 3 {
-		t.Fatalf("expected 3 diffs (front + 2 synthesized adds), got %d", len(out))
+		t.Fatalf("expected 3 diffs (front + 2 synthesized positions), got %d", len(out))
 	}
 	for _, d := range out {
 		switch d.CoreNodeName {
@@ -783,28 +786,47 @@ func TestFanOutCrossMode_SingleRobotToPressIndex3Pos_SynthesizesBackMiddleAdds(t
 				t.Errorf("FRONT: situation = %q, want SituationSwap untouched", d.Situation)
 			}
 		case "MIDDLE", "BACK":
-			if d.Situation != SituationAdd {
-				t.Errorf("%s: situation = %q, want SituationAdd", d.CoreNodeName, d.Situation)
+			if d.Situation != SituationSwap {
+				t.Errorf("%s: situation = %q, want SituationSwap", d.CoreNodeName, d.Situation)
 			}
-			if d.FromClaim != nil {
-				t.Errorf("%s: FromClaim must be nil for add-only", d.CoreNodeName)
+			if d.FromClaim == nil || d.ToClaim == nil {
+				t.Fatalf("%s: want both claims synthesized from the incoming claim, got from=%v to=%v", d.CoreNodeName, d.FromClaim, d.ToClaim)
 			}
-			if d.ToClaim == nil {
-				t.Errorf("%s: ToClaim must be non-nil for synthesized add", d.CoreNodeName)
+			if d.FromClaim.PayloadCode != "PART-B" || d.FromClaim.OutboundDestination != "DEST" || d.ToClaim.InboundSource != "MARKET" {
+				t.Errorf("%s: from %+v to %+v, want both the incoming claim's", d.CoreNodeName, d.FromClaim, d.ToClaim)
 			}
-			if d.ToClaim != nil && d.ToClaim.InboundSource != "MARKET" {
-				t.Errorf("%s: synthesized ToClaim.InboundSource = %q, want parent's MARKET",
-					d.CoreNodeName, d.ToClaim.InboundSource)
+			// A synthesized claim clears InboundStaging so the Add it becomes
+			// at a vacant seat routes through the direct-Retrieve fallback
+			// (delivery to the position node) rather than a stage order.
+			if d.ToClaim.InboundStaging != "" {
+				t.Errorf("%s: synthesized ToClaim must clear InboundStaging, got %q", d.CoreNodeName, d.ToClaim.InboundStaging)
 			}
-			// Synthesized Add claim must clear InboundStaging so the
-			// SituationAdd planner branch routes through the
-			// direct-Retrieve fallback (delivery to position node)
-			// rather than building a stage order.
-			if d.ToClaim != nil && d.ToClaim.InboundStaging != "" {
-				t.Errorf("%s: synthesized ToClaim must clear InboundStaging, got %q (would route to staging instead of position)",
-					d.CoreNodeName, d.ToClaim.InboundStaging)
+			if disp := BuildSwapChangeoverSteps(d.FromClaim, d.ToClaim, "", ""); disp.rejected() {
+				t.Errorf("%s: the per-position Swap builds nothing", d.CoreNodeName)
 			}
 		}
+	}
+
+	// Through the seats: BACK vacant, MIDDLE holding a bin, FRONT unknown.
+	planned := ApplyNodeState(out, func(n string) NodeState {
+		switch n {
+		case "BACK":
+			return NodeState{Seat: SeatEmpty}
+		case "MIDDLE":
+			return NodeState{Seat: SeatBin}
+		}
+		return NodeState{}
+	})
+	for _, d := range planned {
+		want := map[string]ChangeoverSituation{"FRONT": SituationSwap, "MIDDLE": SituationSwap, "BACK": SituationAdd}[d.CoreNodeName]
+		if d.Situation != want {
+			t.Errorf("%s: planned %q, want %q", d.CoreNodeName, d.Situation, want)
+		}
+	}
+	if planned := ApplyNodeState(FanOutPressIndexCrossMode([]ChangeoverNodeDiff{
+		{CoreNodeName: "FRONT", Situation: SituationSwap, FromClaim: &from, ToClaim: &to},
+	}, nil), func(string) NodeState { return NodeState{} }); planned[1].Situation != SituationSwap || planned[2].Situation != SituationSwap {
+		t.Errorf("unknown seats: %q %q, want both the Swap", planned[1].Situation, planned[2].Situation)
 	}
 }
 
@@ -839,8 +861,9 @@ func TestFanOutCrossMode_PressIndex3PosToTwoRobot_SynthesizesBackMiddleDrops(t *
 // The same-mode fan-out doesn't fire (bin types match); the cross-mode
 // fan-out picks up the position-count delta. Here the from-style is
 // 2-pos, to-style is 3-pos: BACK only appears in to-claim's extension,
-// so the cross-mode fan-out synthesizes Add for it.
-func TestFanOutCrossMode_PressIndex2PosToPressIndex3Pos_SynthesizesAddForNewPosition(t *testing.T) {
+// so the cross-mode fan-out plans it as the mirror case's per-position
+// Swap (an Add once ApplyNodeState reads it vacant).
+func TestFanOutCrossMode_PressIndex2PosToPressIndex3Pos_PlansTheNewPositionAsASwap(t *testing.T) {
 	t.Parallel()
 	from := crossModeFromPressIndex("PART-A", "FRONT", "MIDDLE", "")
 	to := crossModeFromPressIndex("PART-B", "FRONT", "MIDDLE", "BACK")
@@ -850,7 +873,7 @@ func TestFanOutCrossMode_PressIndex2PosToPressIndex3Pos_SynthesizesAddForNewPosi
 	out := FanOutPressIndexCrossMode(diffs, nil)
 
 	if len(out) != 2 {
-		t.Fatalf("expected 2 diffs (front untouched + back add), got %d", len(out))
+		t.Fatalf("expected 2 diffs (front untouched + back), got %d", len(out))
 	}
 	var backDiff *ChangeoverNodeDiff
 	for i := range out {
@@ -861,11 +884,11 @@ func TestFanOutCrossMode_PressIndex2PosToPressIndex3Pos_SynthesizesAddForNewPosi
 	if backDiff == nil {
 		t.Fatal("expected synthesized BACK diff")
 	}
-	if backDiff.Situation != SituationAdd {
-		t.Errorf("BACK situation = %q, want SituationAdd", backDiff.Situation)
+	if backDiff.Situation != SituationSwap {
+		t.Errorf("BACK situation = %q, want SituationSwap", backDiff.Situation)
 	}
-	if backDiff.FromClaim != nil {
-		t.Error("BACK FromClaim must be nil (from-style didn't have this position)")
+	if backDiff.FromClaim == nil || backDiff.FromClaim.PayloadCode != "PART-B" {
+		t.Errorf("BACK FromClaim = %+v, want the incoming claim's (the from-style didn't have this position)", backDiff.FromClaim)
 	}
 	if backDiff.ToClaim == nil {
 		t.Error("BACK ToClaim must be non-nil")

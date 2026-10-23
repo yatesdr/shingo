@@ -158,9 +158,11 @@ func TestDependentPositionSites_AnswerAsAtTheBase(t *testing.T) {
 		if len(got) != 2 || got["B"] != SituationDrop || got["C"] != SituationDrop {
 			t.Errorf("press → stale two_robot: %v, want B and C dropped", got)
 		}
+		// W4: an incoming-only position is the per-position Swap (an Add once
+		// ApplyNodeState reads it vacant); before W4 it was an Add here.
 		got = situations([]ChangeoverNodeDiff{{CoreNodeName: "LINE", Situation: SituationSwap, FromClaim: stale, ToClaim: press2}})
-		if len(got) != 1 || got["B"] != SituationAdd {
-			t.Errorf("stale two_robot → press2: %v, want B added", got)
+		if len(got) != 1 || got["B"] != SituationSwap {
+			t.Errorf("stale two_robot → press2: %v, want B planned as the Swap", got)
 		}
 		if got = situations([]ChangeoverNodeDiff{{CoreNodeName: "LINE", Situation: SituationSwap, FromClaim: stale, ToClaim: seq}}); len(got) != 0 {
 			t.Errorf("stale two_robot → sequential: %v, want nothing", got)

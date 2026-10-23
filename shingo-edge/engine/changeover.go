@@ -431,7 +431,7 @@ func synthesizePressPositionClaim(parent *processes.NodeClaim, coreNodeName stri
 	return domain.SynthesizePositionClaim(parent, coreNodeName)
 }
 
-// FanOutPressIndexCrossMode emits per-position Drop or Add diffs for
+// FanOutPressIndexCrossMode emits per-position Drop or Swap diffs for
 // press-index positions that aren't covered by any existing diff after
 // the same-mode different-bin-type fan-out has run. Handles the cases
 // the same-mode fan-out doesn't:
@@ -443,13 +443,19 @@ func synthesizePressPositionClaim(parent *processes.NodeClaim, coreNodeName stri
 //     PairedCoreNode/SecondPairedCoreNode fields and would otherwise
 //     leave bins on the press unmoved.
 //   - Mirror cross-mode: to-claim is press-index, from-claim is not.
-//     Synthesize Add diffs for the press-index extension positions so
-//     the new style gets its bins delivered.
+//     Synthesize a per-position Swap for each extension position the
+//     incoming style claims, its from-claim synthesized from the incoming
+//     claim (buildPressIndexPerPositionSwap builds nothing for a nil
+//     from-claim): whatever stands there leaves, and the new style's carrier
+//     comes. ApplyNodeState, which runs next with the same seats, turns a
+//     vacant one into an Add; an unknown seat stays the Swap. Never an Add
+//     onto a position nobody read: that set a carrier down on whatever stood
+//     there.
 //   - Same-mode position-count delta with same bin types: both sides
 //     are press-index, bin types match (so the same-mode fan-out
 //     didn't fire), but position counts differ (e.g. 3-pos to 2-pos).
-//     Synthesize Drop for the dropped position; Add for the added
-//     position.
+//     Synthesize Drop for the dropped position; the added position is
+//     planned as the mirror case's.
 //   - Shared extension position across a FRONT-NODE MOVE, different bin
 //     types: both styles are press-index and both name the same back
 //     position, but their front nodes differ (PLN_01 → PLN_03, both paired
@@ -469,11 +475,13 @@ func synthesizePressPositionClaim(parent *processes.NodeClaim, coreNodeName stri
 // SituationAdd and SituationSwap branches in planNodeAction. Drop and
 // Add don't read SwapMode (the per-position claim's SwapMode =
 // press_position is cosmetic there): Drop calls BuildReleaseSteps using
-// OutboundDestination; Add calls planFallbackStagingAction which uses
-// InboundSource (and InboundStaging if set; synthesized claims clear
-// InboundStaging so the direct-Retrieve fallback fires, delivering to
-// the position node directly). Swap DOES read it, routing to
-// buildPressIndexPerPositionSwap — the single-order evac+refill.
+// OutboundDestination, and Core moots it at a vacant position (dispatch
+// reserveMoot); Add, which ApplyNodeState makes of a vacant Swap, calls
+// planFallbackStagingAction which uses InboundSource (and InboundStaging
+// if set; synthesized claims clear InboundStaging so the direct-Retrieve
+// fallback fires, delivering to the position node directly). Swap DOES
+// read it, routing to buildPressIndexPerPositionSwap — the single-order
+// evac+refill.
 //
 // Diff list ordering: appended after the input diffs in stable order
 // (sorted by position name) so test assertions are deterministic and
@@ -572,14 +580,15 @@ func FanOutPressIndexCrossMode(diffs []ChangeoverNodeDiff, binTypes map[string]s
 				FromClaim:    synthesizePressPositionClaim(s.fromClaim, pos),
 			})
 		case s.toClaim != nil:
-			// To-side wants it; from-side didn't have it.
-			// Synthesize Add — new bin delivered from
-			// InboundSource directly to position (Add branch's
-			// fallback Retrieve order, since synthesized claim
-			// clears InboundStaging).
+			// To-side wants it; from-side didn't have it, so nothing says
+			// what stands there. The per-position Swap, its from-claim the
+			// incoming claim's: whatever stands there goes to the incoming
+			// claim's outbound and the new carrier comes. ApplyNodeState turns
+			// it into an Add (a plain delivery) when the seat is vacant.
 			added = append(added, ChangeoverNodeDiff{
 				CoreNodeName: pos,
-				Situation:    SituationAdd,
+				Situation:    SituationSwap,
+				FromClaim:    synthesizePressPositionClaim(s.toClaim, pos),
 				ToClaim:      synthesizePressPositionClaim(s.toClaim, pos),
 			})
 		}
