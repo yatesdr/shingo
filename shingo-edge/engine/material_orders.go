@@ -912,19 +912,30 @@ func buildPressIndexChangeoverSwap(fromClaim, toClaim *processes.NodeClaim, tool
 		r1 = append(r1, refillPickup(fromClaim, toClaim))
 		r1 = append(r1, protocol.ComplexOrderStep{Action: "dropoff", Node: backPosition})
 	}
+	// R2's on-deck pickups name, as the step's payload, the part the leg
+	// already carries on the order (carriesFromPayload below): the outgoing
+	// style's carrier is what stands there. The answer Core's bind gives is the
+	// same (a step payload overrides the order's with the same value); what the
+	// step says is that this pickup names its part, so Core's vacant-pickup
+	// fallback never re-anchors a changeover's index leg to a carrier of the
+	// part from the inbound source (dispatch reanchorVacantPickup: a pickup
+	// carrying a step payload is excluded).
+	onDeck := func(node string) protocol.ComplexOrderStep {
+		return protocol.ComplexOrderStep{Action: "pickup", Node: node, PayloadCode: fromClaim.PayloadCode}
+	}
 	var r2 []protocol.ComplexOrderStep
 	if fromClaim.SecondPairedCoreNode != "" {
 		r2 = []protocol.ComplexOrderStep{
 			stationWait(fromClaim.PairedCoreNode, release.PurposeReady),
-			{Action: "pickup", Node: fromClaim.PairedCoreNode},
+			onDeck(fromClaim.PairedCoreNode),
 			{Action: "dropoff", Node: fromClaim.CoreNodeName},
-			{Action: "pickup", Node: fromClaim.SecondPairedCoreNode},
+			onDeck(fromClaim.SecondPairedCoreNode),
 			{Action: "dropoff", Node: fromClaim.PairedCoreNode},
 		}
 	} else {
 		r2 = []protocol.ComplexOrderStep{
 			stationWait(fromClaim.PairedCoreNode, release.PurposeReady),
-			{Action: "pickup", Node: fromClaim.PairedCoreNode},
+			onDeck(fromClaim.PairedCoreNode),
 			{Action: "dropoff", Node: fromClaim.CoreNodeName},
 		}
 	}
