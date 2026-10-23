@@ -95,6 +95,7 @@ var sanctionedLegReaders = map[string]string{
 	"store/migrations.go":              "the schema",
 	"store/bins/bins.go":               "the empty scan leaves a cell's own positions alone, a press-index cell's paired positions included",
 	"store/bins/tote_want.go":          "the height an empty is wanted at: 0 at the press of a cell fed from its paired position (FedClaimSQL's shape test), read with the set-down node",
+	"store/bins/fed_claim.go":          "the fed press's shape (FedClaimSQL) and where it draws from for a vacant pickup at its outside or second paired position (FedInboundSource)",
 	"store/bins/tote_lift.go":          "the lift's tote hook: is the node a fed cell's outside position (FedClaimSQL), and which press is its front",
 	"store/sourceability/read.go":      "the two-minute pass's claim load carries inbound_source for the forecaster (D2.1); the verdict does not read it",
 }

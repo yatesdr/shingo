@@ -1,0 +1,269 @@
+//go:build docker
+
+package dispatch
+
+import (
+	"encoding/json"
+	"testing"
+
+	"shingo/protocol"
+	"shingo/protocol/testutil"
+	"shingocore/internal/testdb"
+	"shingocore/store"
+	"shingocore/store/bins"
+	"shingocore/store/nodes"
+	"shingocore/store/plantclaims"
+)
+
+// vacant_pickup_docker_test.go — a press pair whose index leg names a vacant
+// on-deck position: Core waits for a carrier coming to it, holds for a carrier
+// named by a move taking it away, and otherwise fetches the carrier from the
+// claim's inbound source (reanchorVacantPickup), for both roles, flipped and
+// unflipped; and every pickup the fallback must leave alone.
+
+// vpCell is one fed press cell, its claim mirrored for station line-1: the
+// press, its on-deck (DECK), the claim's inbound source (IN, holding the
+// carrier the fallback fetches), the node R1's refill fetches from (REFILL)
+// and the outbound (OUT).
+type vpCell struct {
+	t                            *testing.T
+	db                           *store.DB
+	d                            *Dispatcher
+	role                         protocol.ClaimRole
+	part                         string
+	binType                      int64
+	press, deck, in, refill, out *nodes.Node
+	inCarrier                    *bins.Bin
+}
+
+func newVPCell(t *testing.T, prefix string, role protocol.ClaimRole) vpCell {
+	t.Helper()
+	db := testDB(t)
+	sd := testdb.SetupStandardData(t, db)
+	d, _ := newTestDispatcher(t, db, testdb.NewTrackingBackend())
+	c := vpCell{t: t, db: db, d: d, role: role, part: sd.Payload.Code, binType: sd.BinType.ID,
+		press: prNode(t, db, prefix+"-PRESS"), deck: prNode(t, db, prefix+"-DECK"),
+		in: prNode(t, db, prefix+"-IN"), refill: prNode(t, db, prefix+"-REFILL"), out: prNode(t, db, prefix+"-OUT")}
+	prResident(t, db, c.press, sd.BinType.ID, c.part, prefix+"-ON-PRESS")
+	c.inCarrier = c.carrierAt(c.in, prefix+"-AT-IN")
+	c.carrierAt(c.refill, prefix+"-AT-REFILL")
+	c.claim(t, "", nil)
+	return c
+}
+
+// carrierAt stands the carrier the role's index carries at node: an empty for
+// produce, a full of the part for consume.
+func (c vpCell) carrierAt(node *nodes.Node, label string) *bins.Bin {
+	c.t.Helper()
+	if c.role == protocol.ClaimRoleConsume {
+		return prResident(c.t, c.db, node, c.binType, c.part, label)
+	}
+	return testdb.CreateBinAtNode(c.t, c.db, "", node.ID, label)
+}
+
+// reread is b as the store holds it now.
+func (c vpCell) reread(b *bins.Bin) *bins.Bin {
+	c.t.Helper()
+	got, err := c.db.GetBin(b.ID)
+	testutil.MustNoErr(c.t, err, "re-read "+b.Label)
+	return got
+}
+
+// claim mirrors the press's claim; extra rows ride the same report.
+func (c vpCell) claim(t *testing.T, secondPaired string, extra []plantclaims.ClaimRow) {
+	t.Helper()
+	rows := append([]plantclaims.ClaimRow{{
+		ProcessID: "VP-PROC", StyleID: "VP-STYLE", CoreNodeName: c.press.Name, Role: c.role,
+		SwapMode: protocol.SwapModeTwoRobotPressIndex, PayloadCode: c.part, InboundSource: c.in.Name,
+		OutboundDestination: c.out.Name, PairedCoreNode: c.deck.Name, SecondPairedCoreNode: secondPaired,
+	}}, extra...)
+	_, err := c.db.ReplacePlantClaimsFromStation("VP-PROC", "line-1",
+		[]plantclaims.StyleRow{{ProcessID: "VP-PROC", StyleID: "VP-STYLE", IsActive: true}}, rows, nil, 0)
+	testutil.MustNoErr(t, err, "the press's claim")
+}
+
+// pickDeck is the index leg's on-deck pickup as the Edge's steady-state
+// builder writes it: Empty-flagged on a produce press, plain on a consume one.
+func (c vpCell) pickDeck() protocol.ComplexOrderStep {
+	s := prPick(c.deck.Name)
+	s.Empty = c.role == protocol.ClaimRoleProduce
+	return s
+}
+
+func (c vpCell) pickRefill() protocol.ComplexOrderStep {
+	s := prPick(c.refill.Name)
+	s.Empty = c.role == protocol.ClaimRoleProduce
+	return s
+}
+
+// submitPair sends the steady-state pair (R1 lifts the press and, unflipped,
+// refills the on-deck; R2 indexes the on-deck onto the press and, flipped,
+// refills it), each leg naming the partner it is given ("" for a blank link).
+func (c vpCell) submitPair(prefix string, flipped bool, r1Names, r2Names string) (r1, r2 string) {
+	r1, r2 = prefix+"-r1", prefix+"-r2"
+	r1Steps := []protocol.ComplexOrderStep{prWait(c.press.Name), prPick(c.press.Name), prDrop(c.out.Name)}
+	r2Steps := []protocol.ComplexOrderStep{prWait(c.deck.Name), c.pickDeck(), prDrop(c.press.Name)}
+	if flipped {
+		r2Steps = append(r2Steps, c.pickRefill(), prDrop(c.deck.Name))
+	} else {
+		r1Steps = append(r1Steps, c.pickRefill(), prDrop(c.deck.Name))
+	}
+	prSubmitLeg(c.d, r1, r1Names, c.part, c.press.Name, r1Steps...)
+	prSubmitLeg(c.d, r2, r2Names, c.part, c.press.Name, r2Steps...)
+	return r1, r2
+}
+
+func (c vpCell) scan(uuids ...string) {
+	for range 3 {
+		prScanPass(c.t, c.d, c.db, uuids...)
+	}
+}
+
+// requireTook says the pair went to the fleet with the index leg's on-deck
+// pickup moved to the carrier at want.
+func (c vpCell) requireTook(r1, r2 string, want *nodes.Node) {
+	c.t.Helper()
+	l1, l2 := prReloadUUID(c.t, c.db, r1), prReloadUUID(c.t, c.db, r2)
+	if l1.VendorOrderID == "" || l2.VendorOrderID == "" {
+		c.t.Fatalf("the pair did not go: r1 %s code %q cause %q, r2 %s code %q cause %q", l1.Status, l1.QueueCode,
+			l1.QueueCause, l2.Status, l2.QueueCode, l2.QueueCause)
+	}
+	var steps []protocol.ComplexOrderStep
+	testutil.MustNoErr(c.t, json.Unmarshal([]byte(l2.StepsJSON), &steps), "r2 steps")
+	if steps[1].Node != want.Name {
+		c.t.Errorf("the index leg's on-deck pickup is at %s, want %s", steps[1].Node, want.Name)
+	}
+}
+
+// requireHolds says both legs hold, unsent, on the code given.
+func (c vpCell) requireHolds(code protocol.QueueCode, uuids ...string) {
+	c.t.Helper()
+	for _, u := range uuids {
+		o := prReloadUUID(c.t, c.db, u)
+		if o.VendorOrderID != "" || o.QueueCode != string(code) {
+			c.t.Errorf("%s: %s vendor %q code %q cause %q, want held on %s", u, o.Status, o.VendorOrderID,
+				o.QueueCode, o.QueueCause, code)
+		}
+	}
+}
+
+// TestVacantPickup_APairNeverWaitsOnItsOwnRefill: with nothing else coming to
+// the vacant on-deck, the pair fetches the index leg's carrier from the claim's
+// inbound source, never waiting on its own R1's refill to that position, for
+// both roles, flipped and unflipped, and whichever side carries the sibling
+// link (it is best-effort from the supply back to the evac). A consume pair
+// fetches a full of the part.
+func TestVacantPickup_APairNeverWaitsOnItsOwnRefill(t *testing.T) {
+	t.Parallel()
+	for _, role := range []protocol.ClaimRole{protocol.ClaimRoleProduce, protocol.ClaimRoleConsume} {
+		for _, flipped := range []bool{false, true} {
+			for _, link := range []string{"both", "r1 only", "r2 only"} {
+				name := string(role) + map[bool]string{false: "/unflipped", true: "/flipped"}[flipped] + "/" + link
+				t.Run(name, func(t *testing.T) {
+					t.Parallel()
+					c := newVPCell(t, "VP1", role)
+					r1Names, r2Names := "VP1-r2", "VP1-r1"
+					switch link {
+					case "r1 only":
+						r2Names = ""
+					case "r2 only":
+						r1Names = ""
+					}
+					r1, r2 := c.submitPair("VP1", flipped, r1Names, r2Names)
+					c.scan(r1, r2)
+					c.requireTook(r1, r2, c.in)
+				})
+			}
+		}
+	}
+}
+
+// TestVacantPickup_PickupsTheFallbackLeavesAlone: each of these holds at the
+// vacant position (waiting_for_material), never fetched from the inbound
+// source: a pickup that names its part on the step (a changeover's index leg),
+// a pickup that names its bin, and a sequential cell's partner position.
+func TestVacantPickup_PickupsTheFallbackLeavesAlone(t *testing.T) {
+	t.Parallel()
+	t.Run("a changeover's index leg names the part it lifts", func(t *testing.T) {
+		t.Parallel()
+		c := newVPCell(t, "VP5", protocol.ClaimRoleProduce)
+		pick := prPick(c.deck.Name)
+		pick.PayloadCode = c.part
+		prSubmitLeg(c.d, "co-r2", "", c.part, c.press.Name, prWait(c.deck.Name), pick, prDrop(c.press.Name))
+		c.scan("co-r2")
+		c.requireHolds(protocol.QueueWaitingForMaterial, "co-r2")
+	})
+	t.Run("a pickup that names its bin", func(t *testing.T) {
+		t.Parallel()
+		c := newVPCell(t, "VP6", protocol.ClaimRoleProduce)
+		// The cart the pickup names stands on the on-deck when the order is
+		// made (intake sends a named pickup to wherever its bin stands), and
+		// leaves before the reserve: the pickup holds for the cart it names.
+		named := testdb.CreateBinAtNode(t, c.db, "", c.deck.ID, "VP6-NAMED")
+		pick := c.pickDeck()
+		pick.BinID = named.ID
+		prSubmitLeg(c.d, "named-r2", "", c.part, c.press.Name, prWait(c.deck.Name), pick, prDrop(c.press.Name))
+		_, err := c.db.Exec(`UPDATE bins SET node_id = $1 WHERE id = $2`, c.out.ID, named.ID)
+		testutil.MustNoErr(t, err, "the named cart leaves the on-deck")
+		c.scan("named-r2")
+		c.requireHolds(protocol.QueueWaitingForMaterial, "named-r2")
+		if b := c.reread(c.inCarrier); b.ClaimedBy != nil {
+			t.Errorf("the inbound source's carrier is claimed by %d: a named pickup fetched another", *b.ClaimedBy)
+		}
+	})
+	t.Run("a sequential partner", func(t *testing.T) {
+		t.Parallel()
+		c := newVPCell(t, "VP7", protocol.ClaimRoleProduce)
+		// The on-deck is a core node of the same style: a sequential pair.
+		c.claim(t, "", []plantclaims.ClaimRow{{ProcessID: "VP-PROC", StyleID: "VP-STYLE", CoreNodeName: c.deck.Name,
+			Role: protocol.ClaimRoleProduce, SwapMode: protocol.SwapModeSequential, PayloadCode: c.part,
+			InboundSource: c.in.Name, OutboundDestination: c.out.Name, PairedCoreNode: c.press.Name, Seq: 1}})
+		prSubmitLeg(c.d, "seq-leg", "", c.part, c.press.Name, prWait(c.deck.Name), c.pickDeck(), prDrop(c.press.Name))
+		c.scan("seq-leg")
+		c.requireHolds(protocol.QueueWaitingForMaterial, "seq-leg")
+	})
+}
+
+// TestVacantPickup_TheSecondPairedPositionToo: on a three-position press the
+// back position is a dependent position as well.
+func TestVacantPickup_TheSecondPairedPositionToo(t *testing.T) {
+	t.Parallel()
+	c := newVPCell(t, "VP8", protocol.ClaimRoleProduce)
+	back := prNode(t, c.db, "VP8-BACK")
+	c.claim(t, back.Name, nil)
+	prSubmitLeg(c.d, "back-leg", "", c.part, c.press.Name, prWait(back.Name),
+		protocol.ComplexOrderStep{Action: protocol.ActionPickup, Node: back.Name, Empty: true}, prDrop(c.deck.Name))
+	c.scan("back-leg")
+	o := prReloadUUID(t, c.db, "back-leg")
+	var steps []protocol.ComplexOrderStep
+	testutil.MustNoErr(t, json.Unmarshal([]byte(o.StepsJSON), &steps), "steps")
+	if o.VendorOrderID == "" || steps[1].Node != c.in.Name {
+		t.Errorf("the back position's pickup: %s vendor %q at %s, want sent from %s", o.Status, o.VendorOrderID, steps[1].Node, c.in.Name)
+	}
+}
+
+// TestVacantPickup_TheStampedOnDeckPickupBindsAsBefore: the step payload a
+// changeover's index leg now carries on its on-deck pickup is the order's own
+// part, so the bin Core binds there is the one it bound without it.
+func TestVacantPickup_TheStampedOnDeckPickupBindsAsBefore(t *testing.T) {
+	t.Parallel()
+	for _, stamped := range []bool{false, true} {
+		t.Run(map[bool]string{false: "as before", true: "stamped"}[stamped], func(t *testing.T) {
+			t.Parallel()
+			c := newVPCell(t, "VP9", protocol.ClaimRoleProduce)
+			standing := testdb.CreateBinAtNode(t, c.db, "", c.deck.ID, "VP9-STANDING")
+			pick := prPick(c.deck.Name)
+			if stamped {
+				pick.PayloadCode = c.part
+			}
+			prSubmitLeg(c.d, "co-r2", "", c.part, c.press.Name, prWait(c.deck.Name), pick, prDrop(c.press.Name))
+			c.scan("co-r2")
+			o := prReloadUUID(t, c.db, "co-r2")
+			b, err := c.db.GetBin(standing.ID)
+			testutil.MustNoErr(t, err, "the standing carrier")
+			if o.VendorOrderID == "" || b.ClaimedBy == nil || *b.ClaimedBy != o.ID {
+				t.Errorf("%s vendor %q, standing carrier claimed by %v: want the leg sent with it", o.Status, o.VendorOrderID, b.ClaimedBy)
+			}
+		})
+	}
+}

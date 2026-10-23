@@ -14,8 +14,8 @@ type ComplexPlan struct {
 	// dispatcher persists this as StepsJSON so HandleOrderRelease can replay
 	// per-segment.
 	ResolvedSteps []resolvedStep
-	// Reanchored: the reserve moved a bare on-deck empty pickup to an empty at
-	// its claim's inbound source (Allocator.reanchorBareEmpty). The caller
+	// Reanchored: the reserve moved a vacant dependent pickup to a carrier at
+	// its claim's inbound source (Allocator.reanchorVacantPickup). The caller
 	// persists ResolvedSteps, as it does a widened plan.
 	Reanchored bool
 }

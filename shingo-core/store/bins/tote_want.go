@@ -7,25 +7,6 @@ import (
 // tote_want.go — the height an empty cart is wanted at, read with the node it
 // is set down on.
 
-// FedClaimSQL is the shape test of a press cell that is fed from behind: a
-// style_claims row (alias) whose paired position is set and is NOT itself a
-// core node of the same process and style. Its core node is the press; its
-// paired position is the outside position the totes are drawn from.
-//
-// A SEQUENTIAL PAIR IS NOT ONE. Two press positions that alternate name each
-// other as paired, and each is a core node of the same process and style, so
-// neither reads as the other's outside position. The shape decides this, never
-// a swap-mode string (Core reads none). A second paired position
-// (second_paired_core_node) is never the outside position here.
-// Pins: TestToteWant_TheShape, TestToteLift_SequentialPartnerIsNoOutside.
-func FedClaimSQL(alias string) string {
-	return alias + `.paired_core_node <> ''
-	  AND NOT EXISTS (SELECT 1 FROM style_claims pc
-	                  WHERE pc.core_node_name = ` + alias + `.paired_core_node
-	                    AND pc.process_id = ` + alias + `.process_id
-	                    AND pc.style_id = ` + alias + `.style_id)`
-}
-
 // ToteWantSQL is the height, in layers, an empty set down on node n is wanted
 // at, for the payload in parameter payloadParam:
 //   - none (NULL) when the payload states no tote layers: a plant that sets no

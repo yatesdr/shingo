@@ -6,6 +6,7 @@ package store
 import (
 	"time"
 
+	"shingocore/store/bins"
 	"shingocore/store/plantclaims"
 )
 
@@ -77,8 +78,8 @@ func (db *DB) PlantClaimsReportDigests(stationID string) (map[string]string, err
 	return plantclaims.ReportDigests(db.DB, stationID)
 }
 
-// ClaimInboundSource is where the active claim at a station's core node draws
-// from. See plantclaims.ClaimInboundSource.
-func (db *DB) ClaimInboundSource(stationID, coreNodeName string) (string, error) {
-	return plantclaims.ClaimInboundSource(db.DB, stationID, coreNodeName)
+// FedInboundSource is where the active fed claim at a station's core node draws
+// from, asked about one of its positions. See bins.FedInboundSource.
+func (db *DB) FedInboundSource(stationID, coreNodeName, position string) (string, error) {
+	return bins.FedInboundSource(db.DB, stationID, coreNodeName, position)
 }
