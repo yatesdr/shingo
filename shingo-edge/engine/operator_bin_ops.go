@@ -53,7 +53,7 @@ import (
 // expected is the number of orders this press creates, the episode's
 // denominator: one for a loader's empty or full, the plan's own count for a
 // produce line's empty-bin request, which can be a swap of two legs or an empty
-// with a prime for each bare paired position.
+// with a prime for each vacant paired position.
 func (e *Engine) operatorRequestOrigin(node *processes.Node, claim *processes.NodeClaim, remaining, expected int) ordermgr.Origin {
 	// Discretionary means the operator asked while still above the reorder
 	// point — a pull they chose rather than one the level forced. Same

@@ -11,10 +11,10 @@ import (
 // over.
 //
 // REQUEST has always answered a bare press position with a plain delivery to
-// it and no swap (planBareLine). The changeover read only the front's seat, so
+// it and no swap (planVacantLine). The changeover read only the front's seat, so
 // a press whose BACK was bare planned the press's own swap, whose index leg
 // lifts at the back and holds there at Core for a bin that is not coming. Both
-// paths now read barePositions: a press with any bare position is planned
+// paths now read vacantPositions: a press with any bare position is planned
 // position by position, a bare position is just delivered to, and a held one
 // gets its own swap.
 

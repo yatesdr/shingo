@@ -157,6 +157,16 @@ func readSpotOrders(t *testing.T, db *store.DB, nodeID int64) spotOrders {
 	return got
 }
 
+// onDeckCarrier is the carrier a press's index carries off its on-deck for the
+// role: a full of the part for consume, an empty for produce. ChainReadiness
+// judges any other carrier there wrong.
+func onDeckCarrier(role protocol.ClaimRole) protocol.NodeBinInfo {
+	if role == protocol.ClaimRoleConsume {
+		return protocol.NodeBinInfo{Occupied: true, PayloadCode: ksPart, UOPRemaining: 40, UOPCapacity: 40}
+	}
+	return protocol.NodeBinInfo{Occupied: true}
+}
+
 func TestKeepStagedRequest_AsksOnlyForTheLine(t *testing.T) {
 	t.Parallel()
 	occupiedLine := protocol.NodeBinInfo{Occupied: true, PayloadCode: ksPart}
@@ -191,7 +201,7 @@ func TestKeepStagedRequest_AsksOnlyForTheLine(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			t.Parallel()
 			eng, db, nodeID, _ := keepStagedCell(t, c.role, c.mode,
-				map[string]protocol.NodeBinInfo{ksLine: occupiedLine, ksPair: occupiedLine, ksSpot: c.spot})
+				map[string]protocol.NodeBinInfo{ksLine: occupiedLine, ksPair: onDeckCarrier(c.role), ksSpot: c.spot})
 			var err error
 			if c.role == protocol.ClaimRoleProduce {
 				_, err = eng.RequestProduceSwap(nodeID, 0)
@@ -259,7 +269,7 @@ func TestKeepStagedRequest_ASpareOnItsWayIsWaitedFor(t *testing.T) {
 		t.Run(string(c.mode), func(t *testing.T) {
 			t.Parallel()
 			eng, db, nodeID, _ := keepStagedCell(t, protocol.ClaimRoleConsume, c.mode,
-				map[string]protocol.NodeBinInfo{ksLine: {Occupied: true, PayloadCode: ksPart}, ksPair: {Occupied: true, PayloadCode: ksPart}, ksSpot: {}})
+				map[string]protocol.NodeBinInfo{ksLine: {Occupied: true, PayloadCode: ksPart}, ksPair: onDeckCarrier(protocol.ClaimRoleConsume), ksSpot: {}})
 			_, err := eng.orderMgr.CreateRetrieveOrder(&nodeID, false, 1, ksSpot, ksMarket, "", "standard", ksPart, true, false,
 				orders.Attached("coming"))
 			testutil.MustNoErr(t, err, "a refill on its way")

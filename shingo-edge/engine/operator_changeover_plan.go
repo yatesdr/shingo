@@ -276,7 +276,7 @@ func (e *Engine) planChangeoverFrom(processID, toStyleID int64, fromClaims, toCl
 //  3. Same-mode fan-out (FanOutPressIndex). Expands a press-index parent
 //     diff into per-position diffs when the from- and to-claim payloads
 //     have different bin type codes, or when a position holds no bin
-//     (barePositions, the answer REQUEST's planBareLine reads).
+//     (vacantPositions, the answer REQUEST's planVacantLine reads).
 //
 //  4. Cross-mode / extension-position fan-out. Picks up press-index
 //     extension positions (PairedCoreNode / SecondPairedCoreNode)

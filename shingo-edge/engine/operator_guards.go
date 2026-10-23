@@ -64,7 +64,7 @@ func (e *Engine) guardNoActiveSwap(node *processes.Node, runtime *processes.Runt
 // line's core node, not departed and not delivered, refuses the request, from
 // any process node: two stations can share one physical position, and a bin one
 // of them sent is as much on its way as a bin this one sent. The swap guard
-// above reads only this node's slots, and the bare-line gate only this node's
+// above reads only this node's slots, and the vacant-line gate only this node's
 // rows, so a sibling station's bin was invisible to both and the request made a
 // second delivery, which Core then held behind the first until the line next
 // emptied. A delivered bin is on the line, not on its way: the line reads
@@ -203,15 +203,15 @@ func (e *Engine) guardSourceKnownDry(node *processes.Node, claim *processes.Node
 		"can be committed; load the payload and this will arm itself", node.Name, payload)
 }
 
-// gateLineRows is the bare-line gate, the same for both roles, over one read of
-// the line's own rows. Only a plan that brings a bin to a bare line (bare) pays
+// gateLineRows is the vacant-line gate, the same for both roles, over one read of
+// the line's own rows. Only a plan that brings a bin to a vacant line (vacant) pays
 // the read.
 //
 // THE GATE REFUSES THE BARE-LINE DELIVERY WHILE THIS POSITION IS STILL
-// MID-CYCLE. "Core reports no bin on it" and "this position is bare" are
-// different sentences, and planBareLine reads the first as the second. They
+// MID-CYCLE. "Core reports no bin on it" and "this position is vacant" are
+// different sentences, and planVacantLine reads the first as the second. They
 // agree whenever a person has pulled a carrier off by hand, which is the case
-// the bare-line delivery was written for. They stop agreeing during a swap:
+// the vacant-line delivery was written for. They stop agreeing during a swap:
 // between the robot lifting the old carrier and setting the new one down, the
 // position genuinely holds no bin AND already has one on its way. Core, asked
 // in that window, correctly says empty.
@@ -221,7 +221,7 @@ func (e *Engine) guardSourceKnownDry(node *processes.Node, claim *processes.Node
 // dropoff then re-bound a bin at 05:51:50, which re-armed the consume tick's
 // evaluator. At 05:51:52 the cell asked for material with both runtime
 // pointers empty and Core reporting the position free, so Edge downgraded to a
-// bare delivery. Two seconds later the in-flight swap set its own bin down, and
+// vacant-line delivery. Two seconds later the in-flight swap set its own bin down, and
 // the second robot arrived at a full position it could not place onto. That
 // second order then sat in the cell's ActiveOrderID, so the removal that would
 // have freed the position could never be raised: machine, robot and carrier
@@ -265,8 +265,8 @@ func (e *Engine) guardSourceKnownDry(node *processes.Node, claim *processes.Node
 // position a robot is standing at is the failure this exists to stop — but it
 // means the floor's escape from a stuck cell is terminalizing that order
 // (abandon / force-complete / cancel), not re-asking.
-func (e *Engine) gateLineRows(node *processes.Node, claim *processes.NodeClaim, bare bool) error {
-	if !bare || claim.IsLoaderNode() {
+func (e *Engine) gateLineRows(node *processes.Node, claim *processes.NodeClaim, vacant bool) error {
+	if !vacant || claim.IsLoaderNode() {
 		return nil
 	}
 	rows, err := e.db.ListActiveOrdersByProcessNode(node.ID)
@@ -462,7 +462,7 @@ func (e *Engine) catidResolutionHint(processID int64) string {
 // still working this cell. Pure Edge-DB check — no Core round-trip.
 //
 // It asks orderWorksTheCell, the same predicate CanAcceptOrders and
-// the bare-line gate's rows (gateLineRows) ask, so the three cannot disagree about
+// the vacant-line gate's rows (gateLineRows) ask, so the three cannot disagree about
 // whether a cell is busy. A departed leg — a robot driving a bin to the
 // supermarket — is live but is not the cell's.
 func hasActiveSwap(e *Engine, runtime *processes.RuntimeState) bool {

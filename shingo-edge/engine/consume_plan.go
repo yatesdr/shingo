@@ -43,10 +43,10 @@ type ConsumePlan struct {
 	PrimePairedPositions []SimplePrime
 
 	// SuppressSwap says this round creates the primes and nothing else: a press
-	// whose line holds a bin and whose paired position is bare gets that
-	// position's bin, and no swap until it is there (planBareLine). The produce
+	// whose line holds a bin and whose paired position is vacant gets that
+	// position's bin, and no swap until it is there (planVacantLine). The produce
 	// plan's flag of the same name, for the same decision. No primes at all is
-	// the hold: every bare position already has a bin on its way.
+	// the hold: every vacant position already has a bin on its way.
 	SuppressSwap bool
 
 	// Dispatch is the shared swap-mode dispatch for sequential / single_robot
@@ -109,23 +109,23 @@ func (p *ConsumePlan) OrderCount() int {
 // operator_stations.go behavior — so a manually removed bin doesn't
 // strand the operator behind a swap that has nothing to swap out. That
 // downgrade is a PROPOSAL, not a decision: telemetry alone cannot tell a
-// bare position from one a robot is mid-swap on, so the caller gates it
+// vacant position from one a robot is mid-swap on, so the caller gates it
 // with gateLineRows. See the branch comment below.
 //
-// For two_robot_press_index, the planner also consults occupancy for
-// PairedCoreNode and SecondPairedCoreNode and emits one prime delivery
-// (PrimePairedPositions) per empty paired position so the next cycle has
-// bins to cascade, alongside the head's delivery when the head is empty and
-// instead of the swap when it is not (SuppressSwap). Paired entries missing
-// from the map default to occupied=true (safe — no prime emitted); inbound
-// names the paired positions a bin is already on its way to.
+// For a claim with dependent positions (a press), the planner asks
+// ChainReadiness of them and emits one prime delivery (PrimePairedPositions)
+// per position it primes so the next cycle has bins to cascade, alongside the
+// head's delivery when the head is empty and instead of the swap when it is
+// not (SuppressSwap). Entries missing from the map default to occupied=true
+// (safe — no prime emitted); deck names what stands on each dependent
+// position and which a bin is already on its way to.
 //
 // autoConfirm is the merged claim.AutoConfirm || cfg.Web.AutoConfirm
 // signal — surfaced as a parameter so the planner stays config-free.
 //
 // Validation errors are returned verbatim (no additional wrapping) so
 // apply-time error surfaces stay diff-stable.
-func BuildConsumePlan(node *processes.Node, runtime *processes.RuntimeState, claim *processes.NodeClaim, quantity int64, occupancy, inbound map[string]bool, autoConfirm bool) (*ConsumePlan, error) {
+func BuildConsumePlan(node *processes.Node, runtime *processes.RuntimeState, claim *processes.NodeClaim, quantity int64, occupancy map[string]bool, deck Deck, autoConfirm bool) (*ConsumePlan, error) {
 	if claim == nil {
 		return nil, fmt.Errorf("node %s has no active claim", node.Name)
 	}
@@ -141,13 +141,13 @@ func BuildConsumePlan(node *processes.Node, runtime *processes.RuntimeState, cla
 		AutoConfirm: autoConfirm,
 	}
 
-	// Node-empty downgrade: a line with no bin gets the plain delivery the bare
-	// line needs (planBareLine) instead of a swap with nothing to lift, in every
+	// Node-empty downgrade: a line with no bin gets the plain delivery the vacant
+	// line needs (planVacantLine) instead of a swap with nothing to lift, in every
 	// mode. requestNodeFromClaim gates it with gateLineRows before applying
 	// it. A press whose head is full and a paired position is not gets
 	// that position's bin and no swap, as a produce press does, gated with
 	// guardPairedPrimes.
-	bare, err := planBareLine(node, claim, occupancy, inbound)
+	bare, err := planVacantLine(node, claim, occupancy, deck)
 	if err != nil {
 		return nil, err
 	}

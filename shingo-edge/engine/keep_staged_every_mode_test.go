@@ -156,9 +156,9 @@ func TestKeepStagedNode_TheSpotCostsNoRoundTrip(t *testing.T) {
 	t.Parallel()
 	for _, role := range []protocol.ClaimRole{protocol.ClaimRoleConsume, protocol.ClaimRoleProduce} {
 		for _, mode := range protocol.ConfigurableSwapModes() {
-			for _, bareLine := range []bool{false, true} {
+			for _, vacantLine := range []bool{false, true} {
 				name := string(role) + "/" + string(mode)
-				if bareLine {
+				if vacantLine {
 					name += "/bare line"
 				}
 				t.Run(name, func(t *testing.T) {
@@ -166,7 +166,7 @@ func TestKeepStagedNode_TheSpotCostsNoRoundTrip(t *testing.T) {
 					trips := map[bool]int{}
 					for _, kept := range []bool{false, true} {
 						w := newButtonWorld(t, role, mode)
-						if bareLine {
+						if vacantLine {
 							w.bare(ksLine)
 						}
 						if kept {

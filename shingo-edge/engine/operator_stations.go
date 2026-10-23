@@ -73,16 +73,28 @@ func (e *Engine) requestNodeMaterialFor(nodeID int64, quantity int64, trigger st
 	return e.requestNodeFromClaim(node, runtime, claim, quantity, trigger)
 }
 
+// cellRead is one bins-table read of a claim's cell (claimOccupancy).
+type cellRead struct {
+	// occupancy is keyed by core node name, every position asked in it: the
+	// line and its dependent positions.
+	occupancy map[string]bool
+	// deck is the row the table answered for each dependent position (what
+	// stands there, for ChainReadiness); a position it could not answer for
+	// has none.
+	deck map[string]protocol.NodeBinsRow
+	spot spotRead
+	park protocol.NodeBinsRow
+}
+
 // claimOccupancy reads, from the bins table, occupancy for the head node plus
-// any paired positions on the claim, and the claim's spot and park. Returns a
-// map keyed by core node name, every requested name in it; a name the table
-// cannot answer for reads occupied — the safe default that suppresses both the
-// downgrade and any paired-prime emission, so a table that is not current
-// cannot dispatch phantom deliveries.
-func (e *Engine) claimOccupancy(claim *processes.NodeClaim) (map[string]bool, spotRead, protocol.NodeBinsRow) {
+// the claim's dependent positions, the rows standing at those positions, and
+// the claim's spot and park. A name the table cannot answer for reads occupied
+// — the safe default that suppresses both the downgrade and any paired-prime
+// emission, so a table that is not current cannot dispatch phantom deliveries.
+func (e *Engine) claimOccupancy(claim *processes.NodeClaim) cellRead {
 	occ := map[string]bool{}
 	if claim == nil {
-		return occ, spotRead{}, protocol.NodeBinsRow{}
+		return cellRead{occupancy: occ}
 	}
 	// The head node unconditionally, EVEN IF BLANK: the map is keyed by the
 	// names asked about and isOccupied treats a missing key as occupied, so
@@ -129,7 +141,7 @@ func (e *Engine) claimOccupancy(claim *processes.NodeClaim) (map[string]bool, sp
 		for _, n := range names {
 			occ[n] = true
 		}
-		return occ, spotRead{}, protocol.NodeBinsRow{}
+		return cellRead{occupancy: occ}
 	}
 	for _, n := range names {
 		r, ok := rows[n]
@@ -145,15 +157,22 @@ func (e *Engine) claimOccupancy(claim *processes.NodeClaim) (map[string]bool, sp
 			occ[n] = r.Occupied
 		}
 	}
-	var park protocol.NodeBinsRow
+	cell := cellRead{occupancy: occ}
+	for _, pos := range claim.DependentPositions() {
+		if r, ok := rows[pos]; ok {
+			if cell.deck == nil {
+				cell.deck = map[string]protocol.NodeBinsRow{}
+			}
+			cell.deck[pos] = r
+		}
+	}
 	if parkAsked(claim) && claim.OutboundStaging != claim.CoreNodeName {
-		park = rows[claim.OutboundStaging]
+		cell.park = rows[claim.OutboundStaging]
 	}
-	var read spotRead
 	if r, ok := rows[spot]; ok && spot != "" {
-		read = readOfBinsRow(r, e.PayloadBinTypes())
+		cell.spot = readOfBinsRow(r, e.PayloadBinTypes())
 	}
-	return occ, read, park
+	return cell
 }
 
 // requestNodeFromClaim constructs orders using style_node_claims routing.
@@ -198,33 +217,34 @@ func (e *Engine) requestNodeFromClaim(node *processes.Node, runtime *processes.R
 			return nil, err
 		}
 	}
-	inbound, err := e.guardLineRequest(node, runtime, claim)
+	coming, err := e.guardLineRequest(node, runtime, claim)
 	if err != nil {
 		return nil, err
 	}
 
 	// Read through occupancyKnownNodesOnly, as the produce request reads it: Core
 	// answers a node it does not have as present and empty, and a head or paired
-	// position named wrong would read bare on every request.
-	occ, spot, park := e.claimOccupancy(claim)
-	occupancy := e.occupancyKnownNodesOnly(occ, node.Name)
+	// position named wrong would read vacant on every request.
+	cell := e.claimOccupancy(claim)
+	occupancy := e.occupancyKnownNodesOnly(cell.occupancy, node.Name)
+	deck := Deck{Rows: cell.deck, Coming: coming}
 
 	// The evac leg lifts whatever is ON the cell, which is not always the style
 	// being requested — see swap_evac_dest.go. Blank override = today's behaviour.
 	swapClaim := withResidentEvacDest(claim, e.residentEvacDest(runtime, claim))
-	atSpot, err := e.readSpotAtRequest(node, claim, spot)
+	atSpot, err := e.readSpotAtRequest(node, claim, cell.spot)
 	if err != nil {
 		return nil, err
 	}
 	planClaim, takeSpare := requestClaim(claim, swapClaim, atSpot)
 
-	plan, err := BuildConsumePlan(node, runtime, planClaim, quantity, occupancy, inbound, autoConfirm)
+	plan, err := BuildConsumePlan(node, runtime, planClaim, quantity, occupancy, deck, autoConfirm)
 	if err != nil {
 		return nil, err
 	}
 	if !takeSpare && takesComingSpare(claim, atSpot, plan.Dispatch) {
 		takeSpare = true
-		if plan, err = BuildConsumePlan(node, runtime, swapClaim, quantity, occupancy, inbound, autoConfirm); err != nil {
+		if plan, err = BuildConsumePlan(node, runtime, swapClaim, quantity, occupancy, deck, autoConfirm); err != nil {
 			return nil, err
 		}
 	}
@@ -232,7 +252,7 @@ func (e *Engine) requestNodeFromClaim(node *processes.Node, runtime *processes.R
 	// IN FLIGHT, and it is the decision that mints a second delivery into a
 	// position a robot is on its way to fill. Gate it here (gateLineRows, as the
 	// produce request does), before the log line below, so "downgrading … to
-	// simple delivery" keeps meaning what it says: the position is bare AND
+	// simple delivery" keeps meaning what it says: the position is vacant AND
 	// nothing is coming. Here and not in BuildConsumePlan because the planner is
 	// pure and the witness is a DB read.
 	downgraded := plan.DowngradedFromSwapMode != ""
@@ -274,7 +294,7 @@ func (e *Engine) requestNodeFromClaim(node *processes.Node, runtime *processes.R
 		}
 	}
 
-	e.clearStrandedPark(node, claim, park)
+	e.clearStrandedPark(node, claim, cell.park)
 	e.rearmKeepStaged(node, claim)
 
 	// The demand episode is opened HERE — after the plan exists and before any

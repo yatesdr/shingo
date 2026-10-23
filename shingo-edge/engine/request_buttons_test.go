@@ -78,7 +78,7 @@ func (w *buttonWorld) push() {
 	holdPlaces(w.t, w.eng, func(n string) (protocol.NodeBinInfo, bool) {
 		w.mu.Lock()
 		defer w.mu.Unlock()
-		return protocol.NodeBinInfo{NodeName: n, Occupied: w.occ[n]}, true
+		return censusCarrier(w.role, n, w.occ[n]), true
 	})
 }
 

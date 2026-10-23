@@ -32,7 +32,7 @@ func TestBuildProducePlan_NoSwapModeErrors(t *testing.T) {
 	node, runtime, claim := produceFixtures("")
 
 	// Produce with no swap mode (retired simple-produce) must fail loud.
-	if _, err := BuildProducePlan(node, runtime, claim, nil, nil); err == nil {
+	if _, err := BuildProducePlan(node, runtime, claim, nil, Deck{}); err == nil {
 		t.Fatal("BuildProducePlan: want error for a produce claim with no swap mode")
 	}
 }
@@ -41,7 +41,7 @@ func TestBuildProducePlan_Sequential(t *testing.T) {
 	t.Parallel()
 	node, runtime, claim := produceFixtures("sequential")
 
-	plan, err := BuildProducePlan(node, runtime, claim, nil, nil)
+	plan, err := BuildProducePlan(node, runtime, claim, nil, Deck{})
 	if err != nil {
 		t.Fatalf("BuildProducePlan: %v", err)
 	}
@@ -60,7 +60,7 @@ func TestBuildProducePlan_TwoRobotPressIndex_OK(t *testing.T) {
 	t.Parallel()
 	node, runtime, claim := produceFixtures("two_robot_press_index")
 
-	plan, err := BuildProducePlan(node, runtime, claim, nil, nil)
+	plan, err := BuildProducePlan(node, runtime, claim, nil, Deck{})
 	if err != nil {
 		t.Fatalf("BuildProducePlan: %v", err)
 	}
@@ -74,7 +74,7 @@ func TestBuildProducePlan_PreconditionErrors(t *testing.T) {
 	node, runtime, claim := produceFixtures("")
 
 	t.Run("nil_claim", func(t *testing.T) {
-		if _, err := BuildProducePlan(node, runtime, nil, nil, nil); err == nil {
+		if _, err := BuildProducePlan(node, runtime, nil, nil, Deck{}); err == nil {
 			t.Fatalf("expected error for nil claim")
 		}
 	})
@@ -82,7 +82,7 @@ func TestBuildProducePlan_PreconditionErrors(t *testing.T) {
 	t.Run("wrong_role", func(t *testing.T) {
 		c := *claim
 		c.Role = protocol.ClaimRoleConsume
-		if _, err := BuildProducePlan(node, runtime, &c, nil, nil); err == nil {
+		if _, err := BuildProducePlan(node, runtime, &c, nil, Deck{}); err == nil {
 			t.Fatalf("expected error for non-produce role")
 		}
 	})

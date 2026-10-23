@@ -186,10 +186,10 @@ func FanOutPressIndexDifferentBinType(diffs []ChangeoverNodeDiff, binTypes map[s
 // FanOutPressIndex is the same-mode fan-out with the second reason to split a
 // press: a position holds no bin. The press's own swap indexes every position
 // as one motion, and its legs lift at each position before setting down, so
-// one bare position stalls the whole swap at Core. REQUEST answers that with
-// planBareLine (a plain delivery to each bare position, no swap); the
-// changeover answers it the same way, from the same barePositions: split per
-// position, and ApplyNodeState, which runs after, turns each bare position's
+// one vacant position stalls the whole swap at Core. REQUEST answers that with
+// planVacantLine (a plain delivery to each vacant position, no swap); the
+// changeover answers it the same way, from the same vacantPositions: split per
+// position, and ApplyNodeState, which runs after, turns each vacant position's
 // Swap into Add (just deliver) and leaves each held one a per-position swap.
 //
 // A Swap only. An Evacuate is the tooling choreography's. state nil (no node
@@ -197,7 +197,7 @@ func FanOutPressIndexDifferentBinType(diffs []ChangeoverNodeDiff, binTypes map[s
 func FanOutPressIndex(diffs []ChangeoverNodeDiff, binTypes map[string]string, state func(coreNode string) NodeState) []ChangeoverNodeDiff {
 	out := make([]ChangeoverNodeDiff, 0, len(diffs))
 	for _, d := range diffs {
-		if !shouldFanOutPressIndex(d, binTypes) && !pressHasBarePosition(d, state) {
+		if !shouldFanOutPressIndex(d, binTypes) && !pressHasVacantPosition(d, state) {
 			out = append(out, d)
 			continue
 		}
@@ -206,10 +206,10 @@ func FanOutPressIndex(diffs []ChangeoverNodeDiff, binTypes map[string]string, st
 	return out
 }
 
-// pressHasBarePosition reports whether a press-index Swap's outgoing positions
+// pressHasVacantPosition reports whether a press-index Swap's outgoing positions
 // include one whose seat says its carrier has gone. An unknown seat reads
 // occupied, as a missing occupancy answer does on REQUEST.
-func pressHasBarePosition(d ChangeoverNodeDiff, state func(coreNode string) NodeState) bool {
+func pressHasVacantPosition(d ChangeoverNodeDiff, state func(coreNode string) NodeState) bool {
 	if state == nil || d.Situation != SituationSwap || !d.FromClaim.IsPressIndex() || !d.ToClaim.IsPressIndex() {
 		return false
 	}
@@ -217,8 +217,8 @@ func pressHasBarePosition(d ChangeoverNodeDiff, state func(coreNode string) Node
 	for _, n := range d.FromClaim.Positions() {
 		occupancy[n] = state(n).Seat != SeatEmpty
 	}
-	lineBare, paired := barePositions(d.FromClaim, occupancy)
-	return lineBare || len(paired) > 0
+	lineVacant, paired := vacantPositions(d.FromClaim, occupancy)
+	return lineVacant || len(paired) > 0
 }
 
 // binTypesDiffer reports whether two claims' payloads resolve to different bin

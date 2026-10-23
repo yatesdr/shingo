@@ -115,7 +115,7 @@ func legDepartsAt(steps []protocol.ComplexOrderStep, cell map[string]bool) (kind
 
 // orderWorksTheCell is the ONE admission predicate, and it is one function
 // because its five readers must never disagree: CanAcceptOrders and
-// hasActiveSwap ask it about the runtime SLOTS, the bare-line gate
+// hasActiveSwap ask it about the runtime SLOTS, the vacant-line gate
 // (gateLineRows) and sweepNodeLevel ask it about the durable ROWS at the node, and the
 // station card asks it (as `!o.departed`) about the orders it lists.
 //

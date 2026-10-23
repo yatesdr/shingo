@@ -53,7 +53,7 @@ func (e *Engine) requestProduceSwapPick(nodeID int64, trigger string, pick int64
 
 // produceAsk is how the two buttons onto a produce line differ. Everything else
 // about them, from the occupancy read to the orders, is one path, so a line
-// with no bin, a press with a bare paired position and a keep-staged spot get
+// with no bin, a press with a vacant paired position and a keep-staged spot get
 // the same answer whichever button was pressed.
 type produceAsk struct {
 	// trigger is the episode's trigger for a request that finalizes.
@@ -90,7 +90,7 @@ func (e *Engine) produceRequest(node *processes.Node, runtime *processes.Runtime
 	// The partial-empty prime reads two things and then writes: what is
 	// physically on the cell's positions, and what empties are already on
 	// their way to them. Both reads and the create that follows sit inside one
-	// per-cell lock so a double-tap cannot fire two empties at one bare
+	// per-cell lock so a double-tap cannot fire two empties at one vacant
 	// position. Cheap: these are operator clicks and autoreorder ticks, not a
 	// hot path.
 	mu := e.primeNodeLock(claim)
@@ -105,30 +105,31 @@ func (e *Engine) produceRequest(node *processes.Node, runtime *processes.Runtime
 			return nil, err
 		}
 	}
-	inbound, err := e.guardLineRequest(node, runtime, claim)
+	coming, err := e.guardLineRequest(node, runtime, claim)
 	if err != nil {
 		return nil, err
 	}
 
-	occ, spot, park := e.claimOccupancy(claim)
-	occupancy := e.occupancyKnownNodesOnly(occ, node.Name)
+	cell := e.claimOccupancy(claim)
+	occupancy := e.occupancyKnownNodesOnly(cell.occupancy, node.Name)
+	deck := Deck{Rows: cell.deck, Coming: coming}
 
 	// See swap_evac_dest.go: the outgoing carrier goes to ITS home, not the
 	// requested style's. Blank override = today's behaviour.
 	swapClaim := withResidentEvacDest(claim, e.residentEvacDest(runtime, claim))
-	atSpot, err := e.readSpotAtRequest(node, claim, spot)
+	atSpot, err := e.readSpotAtRequest(node, claim, cell.spot)
 	if err != nil {
 		return nil, err
 	}
 	planClaim, takeSpare := requestClaim(claim, swapClaim, atSpot)
 
-	plan, err := BuildProducePlan(node, runtime, planClaim, occupancy, inbound)
+	plan, err := BuildProducePlan(node, runtime, planClaim, occupancy, deck)
 	if err != nil {
 		return nil, err
 	}
 	if !takeSpare && takesComingSpare(claim, atSpot, plan.Dispatch) {
 		takeSpare = true
-		if plan, err = BuildProducePlan(node, runtime, swapClaim, occupancy, inbound); err != nil {
+		if plan, err = BuildProducePlan(node, runtime, swapClaim, occupancy, deck); err != nil {
 			return nil, err
 		}
 	}
@@ -140,9 +141,9 @@ func (e *Engine) produceRequest(node *processes.Node, runtime *processes.Runtime
 	}
 	// THE COUNT IS THE FINALIZING REQUEST'S QUESTION. It finalizes the filled bin
 	// a swap takes away, so a swap with no parts counted is refused. Only a swap:
-	// an empty to a bare line and a press's primes take nothing away. A cold press
+	// an empty to a vacant line and a press's primes take nothing away. A cold press
 	// reads RemainingUOPCached == 0 (where the counter tag is not wired it reads 0
-	// always), and a cold press with a bare paired position is exactly the cell
+	// always), and a cold press with a vacant paired position is exactly the cell
 	// that needs priming.
 	//
 	// THE UNWIRED COUNTER HAS A SECOND READER, and this is the place a person
@@ -170,7 +171,7 @@ func (e *Engine) produceRequest(node *processes.Node, runtime *processes.Runtime
 		}
 	}
 
-	e.clearStrandedPark(node, claim, park)
+	e.clearStrandedPark(node, claim, cell.park)
 	e.rearmKeepStaged(node, claim)
 
 	// The evacuate-direction episode, opened after the plan exists and before
@@ -221,7 +222,7 @@ func (e *Engine) applyProduceEmptyLine(node *processes.Node, claim *processes.No
 	if err := e.db.SetProcessNodeRuntimeActiveOrder(nodeID, &order.ID); err != nil {
 		log.Printf("produce: update runtime orders for node %d: %v", nodeID, err)
 	}
-	// A press's bare paired positions get their empties alongside, outside the
+	// A press's vacant paired positions get their empties alongside, outside the
 	// runtime slots, as the consume side's downgrade primes do. The line's
 	// empty is already on its way; a failed prime is returned, not rolled back.
 	primes, err := e.createPrimes(node, claim, plan.PrimePairedPositions, 1, origin)
@@ -231,7 +232,7 @@ func (e *Engine) applyProduceEmptyLine(node *processes.Node, claim *processes.No
 	return &NodeOrderResult{Order: order, PrimeOrders: primes, ProcessNodeID: nodeID}, nil
 }
 
-// createPrimes creates one order per bare paired position of a press, for both
+// createPrimes creates one order per vacant paired position of a press, for both
 // roles: a full to a consume press, an empty to a produce press. Attributed to
 // the head node for ownership and audit, NOT tracked in runtime slots (those
 // belong to the head's serial-order machinery for swap cycles). The merged
@@ -330,12 +331,12 @@ func (c cellLock) Unlock() {
 	c.e.sectionEnds()
 }
 
-// guardPairedPrimes gates a plan that primes a press's bare paired positions
+// guardPairedPrimes gates a plan that primes a press's vacant paired positions
 // while its line holds a bin, for both roles. No prime goes while a swap is
 // still working the cell, because that swap's own legs are what is about to
 // fill the position and a second bin there is one no robot can set down; every
 // request has already asked that (guardLineRequest). With no prime left to
-// send, every bare position already has a bin on its way, and the request is
+// send, every vacant position already has a bin on its way, and the request is
 // held with a notice rather than refused as a fault.
 func guardPairedPrimes(node *processes.Node, claim *processes.NodeClaim, primes []SimplePrime) error {
 	if len(primes) == 0 {
@@ -360,7 +361,7 @@ func guardPairedPrimes(node *processes.Node, claim *processes.NodeClaim, primes 
 // Core reports an unknown node as a PRESENT entry with Occupied=false
 // (shingo-core/www/handlers_telemetry.go) — "there is no bin at a place that
 // does not exist", which is true and is the wrong sentence to prime on. A
-// typo'd or scenesync-reaped PairedCoreNode would read bare forever and take a
+// typo'd or scenesync-reaped PairedCoreNode would read vacant forever and take a
 // carrier every cycle. The missing-entry default already covers a node Core
 // declined to answer about; this covers the node Core answered about and does
 // not have.
@@ -459,7 +460,7 @@ func (e *Engine) applyProducePlan(node *processes.Node, runtime *processes.Runti
 		return e.applyProduceEmptyLine(node, claim, plan, origin)
 	}
 
-	// Primes-only round: fill the bare paired position(s) and mint nothing
+	// Primes-only round: fill the vacant paired position(s) and mint nothing
 	// else. No manifest (there is no departing bin), no dispatch, and NO
 	// runtime order slots — those belong to the head node's serial-order
 	// machinery for swap cycles, and a prime is not a swap. Same treatment the

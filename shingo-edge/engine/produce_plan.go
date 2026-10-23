@@ -21,8 +21,8 @@ type ProducePlan struct {
 	Dispatch *SwapDispatch
 
 	// PrimePairedPositions are the fire-and-forget empty deliveries that fill
-	// a two_robot_press_index cell's bare paired position(s) before any swap
-	// is minted, or alongside the empty to a bare line (SimpleMove). Same type
+	// a two_robot_press_index cell's vacant paired position(s) before any swap
+	// is minted, or alongside the empty to a vacant line (SimpleMove). Same type
 	// and shape as the consume side's downgrade primes (consume_plan.go) — one
 	// CreateRetrieveOrder each.
 	PrimePairedPositions []SimplePrime
@@ -33,7 +33,7 @@ type ProducePlan struct {
 	// unconditionally, and a nil there is a panic rather than a branch.
 	SuppressSwap bool
 
-	// SimpleMove is the empty-line plan (planBareLine): Core reports no bin on the
+	// SimpleMove is the empty-line plan (planVacantLine): Core reports no bin on the
 	// line, so there is nothing to lift and the swap collapses to one plain
 	// order bringing an empty from SimpleSource. FromSpot says SimpleSource is
 	// the keep-staged spot, whose standing spare is moved rather than retrieved.
@@ -74,16 +74,17 @@ func (p *ProducePlan) OrderCount() int {
 //
 // occupancy maps core node names to their telemetry-reported occupied state
 // (from engine.claimOccupancy, the bins table), same source and same
-// missing-entry-means-occupied reading as the consume side. inbound marks
-// paired positions that already have a bin on its way, so a second request
-// while the first prime is still travelling adds nothing.
+// missing-entry-means-occupied reading as the consume side. deck is what the
+// request read of the dependent positions (ChainReadiness): what stands on
+// each and whether a carrier is already on its way, so a second request while
+// the first prime is still travelling adds nothing.
 //
 // Validation errors are returned verbatim (no additional wrapping) so
 // apply-time error surfaces stay diff-stable.
 //
 // The plan carries no manifest: the departing bin is finalized at the
 // operator's RELEASE (finalizeDepartingProduce), not at the call for parts.
-func BuildProducePlan(node *processes.Node, runtime *processes.RuntimeState, claim *processes.NodeClaim, occupancy, inbound map[string]bool) (*ProducePlan, error) {
+func BuildProducePlan(node *processes.Node, runtime *processes.RuntimeState, claim *processes.NodeClaim, occupancy map[string]bool, deck Deck) (*ProducePlan, error) {
 	if claim == nil {
 		return nil, fmt.Errorf("node %s has no active claim", node.Name)
 	}
@@ -92,16 +93,16 @@ func BuildProducePlan(node *processes.Node, runtime *processes.RuntimeState, cla
 	}
 
 	// A BARE POSITION GETS A BIN, in every mode and for both roles
-	// (planBareLine): a line with no bin gets an empty, as the consume side's
-	// gets a full, plus one for each bare paired position of a press; a press
-	// whose line holds a bin and whose paired position is bare gets that
+	// (planVacantLine): a line with no bin gets an empty, as the consume side's
+	// gets a full, plus one for each vacant paired position of a press; a press
+	// whose line holds a bin and whose paired position is vacant gets that
 	// position's empty and no swap. Every swap opens by lifting the line's bin,
 	// and with none there it does nothing useful: a single-robot lift holds at
 	// Core for good, a two-robot or sequential removal is skipped by Core and a
-	// sequential backfill is never made, and a press's index leg holds at a bare
+	// sequential backfill is never made, and a press's index leg holds at a vacant
 	// paired position. The caller gates this plan (gateLineRows,
 	// guardPairedPrimes).
-	bare, err := planBareLine(node, claim, occupancy, inbound)
+	bare, err := planVacantLine(node, claim, occupancy, deck)
 	if err != nil {
 		return nil, err
 	}

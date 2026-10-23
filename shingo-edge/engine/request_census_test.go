@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -127,6 +128,18 @@ func seedCensusPress(t *testing.T, role protocol.ClaimRole, mode protocol.SwapMo
 	return eng, db, nodeID
 }
 
+// censusCarrier is what a census line holds where occupied: on a press's
+// on-deck, the carrier its index carries for the role (a full of the part for
+// consume, an empty for produce; ChainReadiness judges any other carrier there
+// wrong), and elsewhere a bin with no part.
+func censusCarrier(role protocol.ClaimRole, node string, occupied bool) protocol.NodeBinInfo {
+	b := protocol.NodeBinInfo{NodeName: node, Occupied: occupied}
+	if occupied && role == protocol.ClaimRoleConsume && (node == censusDeck || node == censusDeck2) {
+		b.PayloadCode, b.UOPRemaining, b.UOPCapacity = ksPart, 40, 40
+	}
+	return b
+}
+
 // runCensusRow seeds the line, presses the door and reads what it left.
 func runCensusRow(t *testing.T, role protocol.ClaimRole, mode protocol.SwapMode, door, line string, uop int) censusResult {
 	t.Helper()
@@ -148,7 +161,9 @@ func runCensusPress(t *testing.T, role protocol.ClaimRole, mode protocol.SwapMod
 	eng, db, nodeID := seedCensusPress(t, role, mode, uop, threePos)
 	var calls atomic.Int32
 	bridgeCore(t, eng, censusStub(t, &calls, occupied...).URL)
-	holdPlaces(t, eng, occupiedAt(occupied...))
+	holdPlaces(t, eng, func(n string) (protocol.NodeBinInfo, bool) {
+		return censusCarrier(role, n, slices.Contains(occupied, n)), true
+	})
 
 	var err error
 	switch door {

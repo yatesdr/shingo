@@ -47,7 +47,7 @@ func TestDependentPositionSites_AnswerAsAtTheBase(t *testing.T) {
 	press3, press2 := pressIndexClaim("LINE", "B", "C"), pressIndexClaim("LINE", "B", "")
 	stale, seq := staleTwoRobotClaim(), sequentialPartnerClaim()
 
-	t.Run("barePositions (vacant_line.go): a press's paired positions only", func(t *testing.T) {
+	t.Run("vacantPositions (vacant_line.go): a press's paired positions only", func(t *testing.T) {
 		t.Parallel()
 		vacant := map[string]bool{"LINE": false, "B": false, "C": false}
 		for _, c := range []struct {
@@ -55,7 +55,7 @@ func TestDependentPositionSites_AnswerAsAtTheBase(t *testing.T) {
 			claim *processes.NodeClaim
 			want  []string
 		}{{"press3", press3, []string{"B", "C"}}, {"press2", press2, []string{"B"}}, {"stale two_robot", stale, nil}, {"sequential", seq, nil}} {
-			lineBare, paired := barePositions(c.claim, vacant)
+			lineBare, paired := vacantPositions(c.claim, vacant)
 			if !lineBare || !slices.Equal(paired, c.want) {
 				t.Errorf("%s: lineBare=%v paired=%v, want true %v", c.name, lineBare, paired, c.want)
 			}
@@ -70,7 +70,7 @@ func TestDependentPositionSites_AnswerAsAtTheBase(t *testing.T) {
 			claim *processes.NodeClaim
 			want  []string
 		}{{"press3", press3, []string{"B", "C", "LINE"}}, {"stale two_robot", stale, []string{"LINE"}}, {"sequential", seq, []string{"LINE"}}} {
-			occ, _, _ := eng.claimOccupancy(c.claim)
+			occ := eng.claimOccupancy(c.claim).occupancy
 			if got := sortedKeys(occ); !slices.Equal(got, c.want) {
 				t.Errorf("%s: asked %v, want %v", c.name, got, c.want)
 			}
@@ -124,7 +124,7 @@ func TestDependentPositionSites_AnswerAsAtTheBase(t *testing.T) {
 		}
 	})
 
-	t.Run("pressHasBarePosition (changeover.go): the front and every extension are read", func(t *testing.T) {
+	t.Run("pressHasVacantPosition (changeover.go): the front and every extension are read", func(t *testing.T) {
 		t.Parallel()
 		d := ChangeoverNodeDiff{CoreNodeName: "LINE", Situation: SituationSwap, FromClaim: press3, ToClaim: press3}
 		vacantAt := func(names ...string) func(string) NodeState {
@@ -139,7 +139,7 @@ func TestDependentPositionSites_AnswerAsAtTheBase(t *testing.T) {
 			vacant []string
 			want   bool
 		}{{nil, false}, {[]string{"LINE"}, true}, {[]string{"B"}, true}, {[]string{"C"}, true}} {
-			if got := pressHasBarePosition(d, vacantAt(c.vacant...)); got != c.want {
+			if got := pressHasVacantPosition(d, vacantAt(c.vacant...)); got != c.want {
 				t.Errorf("vacant %v: %v, want %v", c.vacant, got, c.want)
 			}
 		}

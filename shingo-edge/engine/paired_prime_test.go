@@ -12,7 +12,7 @@ import (
 )
 
 // A PRESS WHOSE LINE HOLDS A BIN AND WHOSE PAIRED POSITION DOES NOT, asked by
-// every button of both roles. The answer is one decision (planBareLine): the
+// every button of both roles. The answer is one decision (planVacantLine): the
 // bare position gets one plain delivery and no swap is built, a second press
 // while that bin is on its way is held with a notice, and nothing is primed
 // while a swap is still working the cell, because that swap's own legs are
