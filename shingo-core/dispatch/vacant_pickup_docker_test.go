@@ -4,6 +4,7 @@ package dispatch
 
 import (
 	"encoding/json"
+	"fmt"
 	"testing"
 
 	"shingo/protocol"
@@ -341,6 +342,85 @@ func TestVacantPickup_ACarrierBeingTakenOffHoldsForOutside(t *testing.T) {
 		c.scan(r1, r2)
 		c.requireHolds(protocol.QueueWaitingForOutside, r1, r2)
 	})
+}
+
+// TestVacantPickup_TheRefillFromTheSameSourceKeepsItsCarrier: the claim's
+// inbound source is a group of two empties, the on-deck is vacant with nothing
+// coming, and the pair's refill of the on-deck draws from that group too
+// (flipped, the index leg's own later pickup; unflipped, the other leg's),
+// already resolved to the slot the fallback's finder ranks first. The
+// fallback leaves that carrier to the refill and takes the other, and the pair
+// goes. Before, it took the refill's carrier and the pair held its partial set
+// for good (the press tranche's sim, 2026-10-23, run 2, PRESS-1).
+//
+// MUTATION: answer reserveComplexPlan's misses in step order, inline with the
+// finds, and flipped holds (its fallback runs before its own refill reserves).
+// Unflipped goes either way: the outside leg leads the pair's pass and reserves
+// its refill first.
+func TestVacantPickup_TheRefillFromTheSameSourceKeepsItsCarrier(t *testing.T) {
+	t.Parallel()
+	for _, flipped := range []bool{false, true} {
+		t.Run(map[bool]string{false: "unflipped", true: "flipped"}[flipped], func(t *testing.T) {
+			t.Parallel()
+			c := newVPCell(t, "VP9", protocol.ClaimRoleProduce)
+			grpID, err := c.db.CreateNodeGroup("VP9-EMPTIES")
+			testutil.MustNoErr(t, err, "the inbound group")
+			testdb.MarkGroup(t, c.db, grpID)
+			grp, err := c.db.GetNode(grpID)
+			testutil.MustNoErr(t, err, "read the group")
+			slots := map[string]bool{}
+			var first string
+			for i := 1; i <= 2; i++ {
+				s := &nodes.Node{Name: fmt.Sprintf("VP9-EMPTIES-%d", i), Enabled: true, ParentID: &grpID}
+				testutil.MustNoErr(t, c.db.CreateNode(s), "slot")
+				// An empty of the claim's carrier, as the refill's group
+				// resolution asks for (it reads the carrier type the leg carries).
+				e := &bins.Bin{BinTypeID: c.binType, Label: fmt.Sprintf("VP9-E%d", i), NodeID: &s.ID, Status: "available"}
+				testutil.MustNoErr(t, c.db.CreateBin(e), "an empty in the group")
+				slots[s.Name] = true
+				if first == "" {
+					first = s.Name
+				}
+			}
+			c.in = grp
+			c.claim(t, "", nil)
+
+			// The refill arrives resolved, as the plant's did (run 2's order 390:
+			// the group's slot its finder ranks first), before the fallback runs.
+			refill := prPick(first)
+			refill.Empty = true
+			r1Steps := []protocol.ComplexOrderStep{prWait(c.press.Name), prPick(c.press.Name), prDrop(c.out.Name)}
+			r2Steps := []protocol.ComplexOrderStep{prWait(c.deck.Name), c.pickDeck(), prDrop(c.press.Name)}
+			if flipped {
+				r2Steps = append(r2Steps, refill, prDrop(c.deck.Name))
+			} else {
+				r1Steps = append(r1Steps, refill, prDrop(c.deck.Name))
+			}
+			prSubmitLeg(c.d, "VP9-r1", "VP9-r2", c.part, c.press.Name, r1Steps...)
+			prSubmitLeg(c.d, "VP9-r2", "VP9-r1", c.part, c.press.Name, r2Steps...)
+			for range 3 {
+				c.scan("VP9-r1", "VP9-r2")
+			}
+
+			l1, l2 := prReloadUUID(t, c.db, "VP9-r1"), prReloadUUID(t, c.db, "VP9-r2")
+			if l1.VendorOrderID == "" || l2.VendorOrderID == "" {
+				t.Fatalf("the pair did not go: r1 %s %q %q, r2 %s %q %q", l1.Status, l1.QueueCode, l1.QueueReason,
+					l2.Status, l2.QueueCode, l2.QueueReason)
+			}
+			var s1, s2 []protocol.ComplexOrderStep
+			testutil.MustNoErr(t, json.Unmarshal([]byte(l1.StepsJSON), &s1), "r1 steps")
+			testutil.MustNoErr(t, json.Unmarshal([]byte(l2.StepsJSON), &s2), "r2 steps")
+			refills := s1
+			if flipped {
+				refills = s2
+			}
+			index, refilled := s2[1].Node, refills[3].Node
+			if !slots[index] || !slots[refilled] || index == refilled {
+				t.Errorf("the index leg took the carrier at %s and the refill the one at %s; want one each from %v",
+					index, refilled, slots)
+			}
+		})
+	}
 }
 
 // TestVacantPickup_PickupsTheFallbackLeavesAlone: each of these holds at the

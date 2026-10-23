@@ -57,6 +57,13 @@ type pickupNeed struct {
 	setDown string
 }
 
+// missedPickup is a pickup whose find came back empty, held for missPickup
+// until every find of the order has run (reserveComplexPlan).
+type missedPickup struct {
+	pk          pickupNeed
+	nodeHadBins bool
+}
+
 // pickupKind is what a pickup fetches.
 type pickupKind int
 

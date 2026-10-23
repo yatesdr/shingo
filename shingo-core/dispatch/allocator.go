@@ -1,12 +1,14 @@
 package dispatch
 
 import (
+	"cmp"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
 	"shingocore/dispatch/plan"
 	"shingocore/domain"
+	"slices"
 
 	"shingo/protocol"
 	"shingocore/service"
@@ -241,6 +243,27 @@ func (a *Allocator) reserveComplexPlan(order *orders.Order, plan *ComplexPlan) (
 	// below.
 	lineBinGone := false
 	holdForOutside := false // a pickup holds for the carrier at a dependent position
+	// tally books one pickup's answer.
+	tally := func(pk pickupNeed, nodeHadBins bool, got *reservedPickup, out reserveOutcome) {
+		if got != nil {
+			assigned = append(assigned, *got)
+		}
+		if out == reserveComplete {
+			return
+		}
+		if out == reserveHoldingForOutside {
+			holdForOutside = true
+		}
+		missing++
+		if nodeHadBins {
+			anyMissWithBins = true // bins present but unavailable — sourceable eventually
+		} else if pk.kind == pickupRemoval {
+			// The line position this leg came to clear is EMPTY. Not "taken by
+			// someone", not "not staged yet" — nothing is there.
+			lineBinGone = true
+		}
+	}
+	var misses []missedPickup
 	for _, pk := range pickups {
 		// 1. Reuse a held bin that already satisfies this pickup (same node, same
 		//    empty-status). Owner-aware — does not go through BinUnavailableReason.
@@ -282,36 +305,34 @@ func (a *Allocator) reserveComplexPlan(order *orders.Order, plan *ComplexPlan) (
 		if ferr != nil {
 			return nil, reserveHolding, ferr
 		}
-		// 3. The pickup found a bin (reservePickup) or it missed (missPickup).
-		var got *reservedPickup
-		var out reserveOutcome
-		var perr error
-		if bin != nil {
-			got, out, perr = a.reservePickup(order, pk, bin)
-		} else {
-			got, out, perr = a.missPickup(order, plan, pk, nodeHadBins)
+		// 3. The pickup found a bin (reservePickup), or it missed and is answered
+		//    after every find (missPickup, below).
+		if bin == nil {
+			misses = append(misses, missedPickup{pk: pk, nodeHadBins: nodeHadBins})
+			continue
 		}
+		got, out, perr := a.reservePickup(order, pk, bin)
 		if perr != nil {
 			return nil, reserveHolding, perr
 		}
-		if got != nil {
-			assigned = append(assigned, *got)
-		}
-		if out == reserveComplete {
-			continue
-		}
-		if out == reserveHoldingForOutside {
-			holdForOutside = true
-		}
-		missing++
-		if nodeHadBins {
-			anyMissWithBins = true // bins present but unavailable — sourceable eventually
-		} else if pk.kind == pickupRemoval {
-			// The line position this leg came to clear is EMPTY. Not "taken by
-			// someone", not "not staged yet" — nothing is there.
-			lineBinGone = true
-		}
+		tally(pk, nodeHadBins, got, out)
 	}
+	// 4. MISSES ARE ANSWERED AFTER EVERY FIND. A vacant position's fallback
+	//    (reanchorVacantPickup) fetches from its claim's inbound source, and the
+	//    leg's own refill of that position may be resolved to a carrier there (a
+	//    flipped index leg). Answered in step order, the fallback took the
+	//    refill's carrier first and the pair held its partial set for good (the
+	//    press tranche's sim, 2026-10-23, run 2, PRESS-1). Answered after, the
+	//    refill holds its carrier and the finder passes it over.
+	for _, m := range misses {
+		got, out, perr := a.missPickup(order, plan, m.pk, m.nodeHadBins)
+		if perr != nil {
+			return nil, reserveHolding, perr
+		}
+		tally(m.pk, m.nodeHadBins, got, out)
+	}
+	// Back in step order, as the confirm reads them (Order.BinID is the first).
+	slices.SortFunc(assigned, func(x, y reservedPickup) int { return cmp.Compare(x.stepIndex, y.stepIndex) })
 
 	// Release held bins not matched to any current need. Slot rows are reconciled
 	// (and released) by reserveComplexSlots — skip them here.
@@ -582,9 +603,11 @@ func (a *Allocator) dependentSource(order *orders.Order, step resolvedStep) stri
 // pickup (a produce on-deck), else a full of the step's part (a consume
 // on-deck), set down where the step's next dropoff sets it. On a find the step
 // is moved to the carrier's node and the plan is marked for the caller to
-// persist (ComplexPlan.Reanchored). Nil when nothing is found or another order
-// took the carrier first: the need is then a miss as before, and the next pass
-// asks again.
+// persist (ComplexPlan.Reanchored). It runs after the order's finds
+// (reserveComplexPlan), so a carrier another of its pickups is resolved to is
+// already reserved and never found here. Nil when nothing is found or another
+// order took the carrier first: the need is then a miss as before, and the next
+// pass asks again.
 func (a *Allocator) reanchorVacantPickup(order *orders.Order, plan *ComplexPlan, stepIndex int, src string) *reservedPickup {
 	step := plan.ResolvedSteps[stepIndex]
 	intent := IntentFull
