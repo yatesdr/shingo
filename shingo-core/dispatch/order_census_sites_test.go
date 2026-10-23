@@ -190,7 +190,7 @@ func TestCensus_DropoffCapacityGateSites(t *testing.T) {
 		"dispatch/capacity.go:CheckDropoffCapacity":                   "dispatch's face on the planner's gate",
 		"dispatch/complex_dispatch.go:reserveComplexDestination":      "complex: the final dropoff and each intermediate one",
 		"dispatch/loader_place.go:placeForContainment":                "quality containment: whether the containment node has room",
-		"dispatch/place_by_contents.go:placePartialMove":              "produce partials: whether a concrete partial home has room for a move's unfinished carrier (blocked keeps the authored drop)",
+		"dispatch/place_by_contents.go:placeByContentsMove":           "the by-contents choice: whether the drop a move's carrier goes to by what it holds (a partial home, a maintained group) has room (blocked keeps the authored drop)",
 		"dispatch/loader_place.go:placeForDedicatedLoader":            "dedicated loader: the home it would place at",
 		"dispatch/loader_place.go:tryPlaceFromHomeSource":             "dedicated loader: a home-sourced placement",
 		"dispatch/loader_place.go:homeForPayload":                     "dedicated loader: choosing a home for a payload",

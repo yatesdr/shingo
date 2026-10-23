@@ -223,11 +223,11 @@ func TestPartialHome_ContainmentGoesFirst(t *testing.T) {
 
 	b := makeLoaderBin(t, db, "PART-QC", fgn.ID, "qc-partial", 4, time.Now().UTC())
 	o := containmentOrder(t, db, "qc-partial-1", fgn.Name, "PROD-QC", &b.ID)
-	if got := partialHomeSlot(db, nil, o, b, 4, "PROD-QC", fgn.Name, binresolver.NoBinType); got != "" {
+	if got := partialHome(db, nil, o, b, 4, "PROD-QC", fgn.Name, binresolver.NoBinType); got != "" {
 		t.Errorf("contained: the partial goes to %q, want containment's drop kept", got)
 	}
 	testutil.MustNoErr(t, db.SetPayloadContainment("PART-QC", "", "tester", false), "lift containment")
-	if got := partialHomeSlot(db, nil, o, b, 4, "PROD-QC", fgn.Name, binresolver.NoBinType); got != home.Name {
+	if got := partialHome(db, nil, o, b, 4, "PROD-QC", fgn.Name, binresolver.NoBinType); got != home.Name {
 		t.Errorf("not contained: the partial goes to %q, want its home %s", got, home.Name)
 	}
 }

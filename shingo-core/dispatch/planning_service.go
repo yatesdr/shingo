@@ -339,6 +339,11 @@ type transportDecision struct {
 	// destNode: the destination row, read once the pick found a bin.
 	destNode *nodes.Node
 	destErr  error
+	// byContents: a move that names its bin, its drop chosen by what the bin
+	// holds before the gate (byContentsDrop); nil keeps the authored one.
+	// byContentsWhy is the log's sentence.
+	byContents    *nodes.Node
+	byContentsWhy string
 	// group: a group destination's chosen child, or why none (groupErr).
 	group    *nodes.Node
 	groupErr error
@@ -395,7 +400,17 @@ func (s *PlanningService) decideTransport(order *orders.Order, payloadCode strin
 	// first lets a buried retrieve plan a compound that drives a bin into an
 	// occupied line, laundering the deadlock_gate_test invariant through the
 	// compound machinery. Gate first, then resolve.
-	if d.blocked, d.capacity = CheckDropoffCapacity(s.db, order.DeliveryNode, order.ID); d.blocked {
+	//
+	// A MOVE THAT NAMES ITS BIN (a clear, SEND BACK's move) HAS ITS DROP CHOSEN
+	// FIRST, by what the bin holds (byContentsDrop), so the gate asks about the
+	// drop the carrier will take and not the one the station authored.
+	gateNode := order.DeliveryNode
+	if isMove {
+		if d.byContents, d.byContentsWhy = s.byContentsDrop(order); d.byContents != nil {
+			gateNode = d.byContents.Name
+		}
+	}
+	if d.blocked, d.capacity = CheckDropoffCapacity(s.db, gateNode, order.ID); d.blocked {
 		return d
 	}
 
@@ -408,7 +423,7 @@ func (s *PlanningService) decideTransport(order *orders.Order, payloadCode strin
 		return d
 	}
 
-	if d.destNode, d.destErr = s.db.GetNodeByDotName(order.DeliveryNode); d.destErr != nil {
+	if d.destNode, d.destErr = s.db.GetNodeByDotName(gateNode); d.destErr != nil {
 		return d
 	}
 
@@ -561,10 +576,21 @@ func (s *PlanningService) applyTransport(order *orders.Order, env *protocol.Enve
 				log.Printf("dispatch: update order %d delivery_node: %v", order.ID, err)
 			}
 		}
-		// An unfinished carrier goes to its claim's partial home instead
-		// (place_by_contents.go): the count is the one this move declares.
+		// The carrier goes where it goes by what it holds instead
+		// (place_by_contents.go): chosen before the gate for a move that names
+		// its bin, else here, by the count this move declares.
 		if isMove {
-			if home := s.placePartialMove(order, d.pick); home != nil {
+			home := d.byContents
+			switch {
+			case home != nil:
+				log.Printf("dispatch: move %d: %s", order.ID, d.byContentsWhy)
+			case order.NamedBinID == nil || order.RemainingUOP != nil:
+				// A move that names its bin was asked before the gate by the
+				// bin's own count; it is asked again only for a count it
+				// declares, which the decision could not see.
+				home = s.placeByContentsMove(order, d.pick)
+			}
+			if home != nil {
 				destNode = home
 				order.DeliveryNode = home.Name
 				if err := s.db.UpdateOrderDeliveryNode(order.ID, home.Name); err != nil {

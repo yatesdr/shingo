@@ -214,12 +214,12 @@ func (d *Dispatcher) holdRelease(env *protocol.Envelope, order *orders.Order, p 
 	if err := d.syncManifestForRelease(env, order, p); err != nil {
 		return
 	}
-	// The count is final now, as on a release that goes at once: an unfinished
-	// carrier the segment lifts off the line goes to its claim's partial home
+	// The count is final now, as on a release that goes at once: the carrier
+	// the segment lifts off the line goes where it goes by what it holds
 	// (place_by_contents.go), and the held segment appends from the re-pointed
 	// plan. The re-point moves a drop off the line, never the held drop onto it,
 	// so the holds' step indexes stand.
-	if d.placePartialAtRelease(order, steps, order.WaitIndex) {
+	if d.placeByContentsAtRelease(order, steps, order.WaitIndex) {
 		if again, ok := decodeSteps(order.StepsJSON); ok {
 			steps = again
 		}
