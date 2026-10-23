@@ -422,9 +422,11 @@ func bufferPartialFor(l *domain.Loader, node string, rows map[string]BoardBin) *
 //
 // With the group's line from the Edge's copy (groups), a type's row carries
 // the group's want of it, and each wanted height has a row of its own: the
-// empties of the type standing at exactly that height (heightOf), and the
-// want. With no line, nothing more. Pinned by TestStampBins_Empties and
-// TestStampBins_EmptiesWantsAndHeights.
+// empties of the type standing at exactly that height (NodeBinsRow.Layers),
+// and the want. With no line, nothing more. A cart at 0 with no part (tops &
+// bottoms) is counted under the type's tops & bottoms row (its height at 0)
+// only, never in the type's empties: it is no stock of the type's level.
+// Pinned by TestStampBins_Empties and TestStampBins_EmptiesWantsAndHeights.
 func (s *StationService) boardEmpties(view *domain.OperatorStationView, outbound map[string][]string,
 	rows map[string]BoardBin, groups []protocol.NodeBinsGroup) *domain.Empties {
 	group := ""
@@ -465,6 +467,10 @@ func (s *StationService) boardEmpties(view *domain.OperatorStationView, outbound
 		case !row.Occupied:
 			open++
 		case row.PayloadCode == "" && !row.Stocked && !row.Bare && row.BinTypeCode != "":
+			if row.CarrierState() == protocol.CarrierTopsAndBottoms {
+				atHeight[height{row.BinTypeCode, 0}]++
+				continue
+			}
 			have[row.BinTypeCode]++
 			if layers, ok := row.Layers(); ok {
 				atHeight[height{row.BinTypeCode, layers}]++

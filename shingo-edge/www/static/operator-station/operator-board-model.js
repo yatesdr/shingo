@@ -247,24 +247,29 @@ export function heightOf(bin) {
     return { layers: Math.floor(bin.totes_on_cart / bin.totes_per_layer), extra: bin.totes_on_cart % bin.totes_per_layer };
 }
 
+// heightWords is a height's words, one spelling for every place a height is
+// said: "tops & bottoms" at 0 layers (a tote cart with no totes on it), "N
+// high" above.
+export function heightWords(layers) {
+    return layers === 0 ? 'tops & bottoms' : layers + ' high';
+}
+
 // heightLabel is a cart's height as its spot line says it: "3 high" on an
-// exact multiple, "3 high + 2" with two totes over, the bin's name alone at 0
-// (a base), "Unknown" with no number, and nothing for a type with no totes per
-// layer.
+// exact multiple, "3 high + 2" with two totes over, "tops & bottoms" at 0,
+// "Unknown" with no number, and nothing for a type with no totes per layer.
 export function heightLabel(bin) {
     if (!bin || typeof bin.totes_per_layer !== 'number') return '';
     if (typeof bin.totes_on_cart !== 'number') return 'Unknown';
-    if (bin.totes_on_cart === 0) return bin.bin_type_code || '';
     const h = heightOf(bin);
-    return h.layers + ' high' + (h.extra > 0 ? ' + ' + h.extra : '');
+    return h.extra > 0 ? h.layers + ' high + ' + h.extra : heightWords(h.layers);
 }
 
-// choiceLabel is a CLEAR choice's words: the bin's name, with its height
-// ("TOTE-1 · 3 high"); the bin's name alone at 0 layers, a base, and no
-// "Base" (a "-BARE" type and that word are one at twenty feet).
+// choiceLabel is a CLEAR choice's words: the bin's name, with its height where
+// it names one ("TOTE-1 · 3 high", "TOTE-1 · tops & bottoms"); the bin's name
+// alone for the plain type, which declares no height.
 export function choiceLabel(choice) {
     if (!choice) return '';
-    return choice.bin_type + (choice.layers > 0 ? ' · ' + choice.layers + ' high' : '');
+    return choice.bin_type + (typeof choice.layers === 'number' ? ' · ' + heightWords(choice.layers) : '');
 }
 
 // wantedHeights is the heights the board's empties group wants of a bin type,
@@ -279,18 +284,21 @@ export function wantedHeights(view, binType) {
     return out.sort(function (a, b) { return a - b; });
 }
 
-// clearChoices is what the CLEAR panels offer for a window's bin types: one
-// choice per type, {bin_type}; for a type the group wants heights of, in place
-// of its one choice, the bin's name (layers 0, a base) and the bin's name with
-// each wanted height, {bin_type, layers}. A choice with layers posts them with
-// the CLEAR; one without posts none.
+// clearChoices is what the CLEAR panels offer for a window's bin types: per
+// type, the plain type, {bin_type}, which posts no layers on every window;
+// then, for a type the group wants heights of, each wanted height,
+// {bin_type, layers}, lowest first; and last, tops & bottoms ({bin_type,
+// layers: 0}), only where the group has a "Tops & bottoms" row (a wanted
+// height at 0). Only that choice declares 0. A choice with layers posts them
+// with the CLEAR; one without posts none. A type the group wants no heights of
+// keeps its one choice, so a window with one type keeps its one tap.
 export function clearChoices(view, carriers) {
     const out = [];
     (carriers || []).forEach(function (t) {
+        out.push({ bin_type: t });
         const heights = wantedHeights(view, t);
-        if (heights.length === 0) { out.push({ bin_type: t }); return; }
-        if (heights.indexOf(0) === -1) heights.unshift(0);
-        heights.forEach(function (h) { out.push({ bin_type: t, layers: h }); });
+        heights.forEach(function (h) { if (h > 0) out.push({ bin_type: t, layers: h }); });
+        if (heights.indexOf(0) !== -1) out.push({ bin_type: t, layers: 0 });
     });
     return out;
 }

@@ -474,9 +474,10 @@ eq([NOBIN, FULLBIN('PART-A'), EMPTYBIN('KD-1'), EMPTYBIN(''), { occupied: true, 
     const T = (on, per) => ({ occupied: true, payload_code: '', stocked: false, bin_type_code: 'TOTE-1',
         totes_on_cart: on, totes_per_layer: per });
     eq([T(24, 8), T(26, 8), T(0, 8), T(null, 8), { occupied: true, bin_type_code: 'KD-1' }].map(M.heightLabel),
-        ['3 high', '3 high + 2', 'TOTE-1', 'Unknown', ''],
-        'the spot line\'s height: "3 high" on an exact multiple, "3 high + 2" over, the bin\'s name alone at 0, ' +
+        ['3 high', '3 high + 2', 'tops & bottoms', 'Unknown', ''],
+        'the spot line\'s height: "3 high" on an exact multiple, "3 high + 2" over, "tops & bottoms" at 0, ' +
         '"Unknown" with no number, nothing for a type with no totes per layer');
+    eq([0, 1, 3].map(M.heightWords), ['tops & bottoms', '1 high', '3 high'], 'heightWords: one spelling of a height');
     // clearHighlight's rungs with heights.
     const cart = b => bt(1, 'SMN_C1', { role: 'consume', bin: b });
     eq(M.clearHighlight(Object.assign({ assignment: { bin_type: 'TOTE-1', layers: 3 } }, cart(T(16, 8))), []),
@@ -485,18 +486,27 @@ eq([NOBIN, FULLBIN('PART-A'), EMPTYBIN('KD-1'), EMPTYBIN(''), { occupied: true, 
         'clearHighlight: like for like, a tote cart at its own height');
     eq(M.clearHighlight(cart(T(26, 8)), []), { bin_type: 'TOTE-1' },
         'clearHighlight: like for like, a cart over a whole layer names no height');
-    // The panels' choices: a type the group wants heights of shows its name (a
-    // base) and each wanted height; any other type its one choice.
+    // The panels' choices: a type the group wants heights of shows its plain
+    // name (no layers) and each wanted height; any other type its one choice.
     const view = { empties: { group: 'G', rows: [{ bin_type: 'TOTE-1', have: 1, spots: 0 },
         { bin_type: 'TOTE-1', layers: 3, have: 1, want: 2, spots: 0 }, { bin_type: 'TOTE-1', layers: 5, have: 0, want: 1, spots: 0 },
         { bin_type: 'KD-1', have: 0, spots: 0 }] } };
     const choices = M.clearChoices(view, ['TOTE-1', 'KD-1']);
     eq(choices.map(M.choiceLabel), ['TOTE-1', 'TOTE-1 · 3 high', 'TOTE-1 · 5 high', 'KD-1'],
-        'the CLEAR choices: the bin\'s name and each wanted height, no "Base"; a type with no heights keeps its one');
-    eq(choices.map(c => c.layers), [0, 3, 5, undefined], 'the bin\'s name alone is a base, layers 0; KD-1 posts none');
+        'the CLEAR choices: the bin\'s name and each wanted height; a type with no heights keeps its one');
+    eq(choices.map(c => c.layers), [undefined, 3, 5, undefined],
+        'the plain type posts no layers on every window, and no tops & bottoms where the group has no row');
     eq(choices.map(c => M.isLit(c, { bin_type: 'TOTE-1', layers: 3 })), [false, true, false, false], 'the assignment lights its height');
-    eq(choices.map(c => M.isLit(c, { bin_type: 'TOTE-1' })), [false, false, false, false],
-        'a type with no height named lights nothing where the type has height buttons');
+    eq(choices.map(c => M.isLit(c, { bin_type: 'TOTE-1' })), [true, false, false, false],
+        'a type with no height named lights the plain type');
+    // A group with a "Tops & bottoms" row: that choice, last, the only one to declare 0.
+    const withRow = { empties: { group: 'G', rows: view.empties.rows.concat([{ bin_type: 'TOTE-1', layers: 0, have: 0, want: 1, spots: 0 }]) } };
+    const rowChoices = M.clearChoices(withRow, ['TOTE-1']);
+    eq(rowChoices.map(M.choiceLabel), ['TOTE-1', 'TOTE-1 · 3 high', 'TOTE-1 · 5 high', 'TOTE-1 · tops & bottoms'],
+        'a group with a tops & bottoms row: the plain type, each height, and tops & bottoms');
+    eq(rowChoices.map(c => c.layers), [undefined, 3, 5, 0], 'only tops & bottoms declares 0');
+    eq(rowChoices.map(c => M.isLit(c, { bin_type: 'TOTE-1', layers: 0 })), [false, false, false, true],
+        'an assignment of tops & bottoms lights it');
     eq(choices.map(c => M.isLit(c, { bin_type: 'KD-1' })), [false, false, false, true], 'a type with one button lights it');
     eq(M.clearChoices({}, ['TOTE-1']), [{ bin_type: 'TOTE-1' }], 'no group line (a Core that sends none): today\'s one choice');
 

@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"shingo/protocol"
+	"shingocore/domain"
 	"shingocore/store"
 	"shingocore/store/nodes"
 )
@@ -20,10 +21,16 @@ import (
 // HEIGHTS, FOR A TYPE WITH LAYER WANTS. When the type states its totes per
 // layer, each wanted height is a thing of its own: a cart counts toward a
 // height only when its totes_on_cart is exactly that many layers of the type's
-// totes per layer. A cart with a remainder, or with no number, counts toward
-// its type and toward no height. Asks carry no number, so they count toward
-// the type alone. A type with layer wants and no totes per layer has no
-// heights: no cart can be counted at one.
+// totes per layer. A leftover cart (a remainder) or an unverified one (no
+// number) counts toward its type and toward no height. Asks carry no number,
+// so they count toward the type alone. A type with layer wants and no totes
+// per layer has no heights: no cart can be counted at one.
+//
+// TOPS & BOTTOMS IS A LINE OF ITS OWN. The wanted height at 0 layers is the
+// type's tops & bottoms row: its shortfall is its own (want, less the carts
+// at 0 standing and coming, less the walk's), never capped by the type's,
+// never taken from the type's any-height shortfall, and an assignment to it
+// is not one of the type's.
 //
 // KEYED ON LEVELS, NOT ON TOTE NUMBERS. A group with no levels gets no line and
 // costs no statement; a group with levels gets an assignment for every bin
@@ -90,11 +97,21 @@ func wantsOf(lines []store.TypeLine) []protocol.NodeBinsWant {
 	return out
 }
 
-// thing is what a cart can be sent back as: a level type (layers 0: any
-// height) or a wanted height of one.
+// thing is what a cart can be sent back as: a level type at any height (the
+// zero Height) or at a wanted height of it, tops & bottoms (Layers(0))
+// included. A comparable value, so it keys the walk's counts.
 type thing struct {
 	code   string
-	layers int
+	height domain.Height
+}
+
+// layers is the height a thing ships as (protocol.NodeBinsAssignment.Layers):
+// n for a wanted height, 0 included, nil for any height.
+func (t thing) layers() *int {
+	if n, ok := t.height.Stated(); ok {
+		return &n
+	}
+	return nil
 }
 
 // assignWindows is the walk: what each cart at a window is asked to go back as.
@@ -102,7 +119,9 @@ type thing struct {
 //   - A running shortfall per thing: want less what the group has, less what
 //     this walk has assigned. A height's shortfall is also held under its
 //     type's, since a cart at a height is a cart of the type. A type's
-//     any-height shortfall is what its wanted heights do not speak for.
+//     any-height shortfall is what its wanted heights do not speak for. The
+//     tops & bottoms row is its own line: held under nothing, taken from
+//     nothing.
 //   - A window whose cart is already on its way into the group (inbound: its
 //     empty-out names it, so the keeper's coming counts it) is not walked. Its
 //     choice was made at its CLEAR, and walking it would count it twice. Pin:
@@ -110,12 +129,16 @@ type thing struct {
 //   - Windows holding an empty are walked first (it is already what it is;
 //     sending it as it stands is no work), then windows holding a full, each
 //     in the order given (the plant's).
-//   - A cart is assigned its own thing while the group is still short of it:
-//     its height, when its type has heights and its number is an exact
-//     multiple at a wanted height; otherwise its type. Otherwise the thing with
-//     the largest remaining shortfall, ties by the levels' order (within a
-//     type, its heights from the lowest, then the type at any height). Nothing
-//     short: no assignment.
+//   - A cart is assigned its own thing while the group is still short of it.
+//     A cart is a tote cart by its own row (its type's totes per layer and its
+//     carrier state), never by whether the group wants heights of its type.
+//     Tops & bottoms: the row. An empty at whole layers: its height when that
+//     height is wanted, else its type. A full tote cart has none: the stack
+//     leaves with the parts. A full knockdown, a leftover and an unverified
+//     cart: the type at any height. Otherwise the thing with the largest
+//     remaining shortfall, ties by the levels' order (within a type, its
+//     heights from the lowest, then the type at any height). Nothing short:
+//     no assignment. A bare cart is not walked: it is nobody's empty.
 //
 // The answer is in the windows' order. Pins: TestAssignWindows_*.
 func assignWindows(lines []store.TypeLine, windows []protocol.NodeBinsRow, inbound map[int64]bool) []protocol.NodeBinsAssignment {
@@ -123,7 +146,8 @@ func assignWindows(lines []store.TypeLine, windows []protocol.NodeBinsRow, inbou
 	byNode := map[string]protocol.NodeBinsAssignment{}
 	pass := func(empty bool) {
 		for _, row := range windows {
-			if !row.Occupied || (row.PayloadCode == "") != empty || inbound[row.BinID] {
+			if !row.Occupied || (row.PayloadCode == "") != empty || inbound[row.BinID] ||
+				row.CarrierState() == protocol.CarrierBare {
 				continue
 			}
 			t, short := w.own(row)
@@ -157,16 +181,40 @@ type windowWalk struct {
 
 func (w *windowWalk) typeShort(tl store.TypeLine) int { return tl.Short() - w.assignedType[tl.Code] }
 
+// heightShort is a wanted height's running shortfall: held under its type's,
+// but for the tops & bottoms row (0 layers), which is its own.
 func (w *windowWalk) heightShort(tl store.TypeLine, h store.HeightLine) int {
-	return min(h.Want-h.Have-w.assignedHeight[thing{tl.Code, h.Layers}], w.typeShort(tl))
+	own := h.Want - h.Have - w.assignedHeight[heightOf(tl, h)]
+	if h.Layers == 0 {
+		return own
+	}
+	return min(own, w.typeShort(tl))
 }
 
+// anyShort is the type's any-height shortfall: what its wanted stack heights
+// do not speak for. The tops & bottoms row speaks for none of it.
 func (w *windowWalk) anyShort(tl store.TypeLine) int {
 	s := w.typeShort(tl)
 	for _, h := range tl.Heights {
-		s -= max(0, w.heightShort(tl, h))
+		if h.Layers > 0 {
+			s -= max(0, w.heightShort(tl, h))
+		}
 	}
 	return s
+}
+
+func heightOf(tl store.TypeLine, h store.HeightLine) thing {
+	return thing{tl.Code, domain.Layers(h.Layers)}
+}
+
+// wanted is the type's wanted height at layers, if it has one.
+func wanted(tl store.TypeLine, layers int) (store.HeightLine, bool) {
+	for _, h := range tl.Heights {
+		if h.Layers == layers {
+			return h, true
+		}
+	}
+	return store.HeightLine{}, false
 }
 
 func (w *windowWalk) lineOf(code string) (store.TypeLine, bool) {
@@ -178,22 +226,36 @@ func (w *windowWalk) lineOf(code string) (store.TypeLine, bool) {
 	return store.TypeLine{}, false
 }
 
-// own is the cart's own thing and whether the group is still short of it.
+// own is the cart's own thing and whether the group is still short of it;
+// false with no thing for a cart that has none.
 func (w *windowWalk) own(row protocol.NodeBinsRow) (thing, bool) {
 	tl, ok := w.lineOf(row.BinTypeCode)
 	if !ok {
-		return thing{code: row.BinTypeCode}, false
+		return thing{}, false
 	}
-	if layers, ok := protocol.ToteLayers(row.TotesOnCart, &tl.TotesPerLayer); ok {
-		for _, h := range tl.Heights {
-			if h.Layers == layers {
-				return thing{tl.Code, layers}, w.heightShort(tl, h) > 0
+	tote := row.TotesPerLayer != nil && *row.TotesPerLayer > 0
+	switch row.CarrierState() {
+	case protocol.CarrierTopsAndBottoms:
+		// The row while the group is short of it; never its type at any height.
+		if h, ok := wanted(tl, 0); ok {
+			return heightOf(tl, h), w.heightShort(tl, h) > 0
+		}
+		return thing{}, false
+	case protocol.CarrierLoaded:
+		if tote {
+			// A full tote cart: the stack leaves with the parts.
+			return thing{}, false
+		}
+	case protocol.CarrierEmpty:
+		if layers, ok := row.Layers(); ok && layers > 0 {
+			if h, ok := wanted(tl, layers); ok {
+				return heightOf(tl, h), w.heightShort(tl, h) > 0
 			}
 		}
 	}
-	// No height of its own (a type with no heights, a remainder, or no
-	// number): its own thing is the type at any height, short only by
-	// what the wanted heights do not speak for. Pinned by
+	// No height of its own (a full knockdown, a height not wanted, a leftover
+	// or an unverified cart): its own thing is the type at any height, short
+	// only by what the wanted heights do not speak for. Pinned by
 	// TestAssignWindows_NoHeightOfItsOwnTakesTheLargestHeight.
 	return thing{code: tl.Code}, w.anyShort(tl) > 0
 }
@@ -210,21 +272,23 @@ func (w *windowWalk) largest() (thing, bool) {
 	}
 	for _, tl := range w.lines {
 		for _, h := range tl.Heights {
-			consider(thing{tl.Code, h.Layers}, w.heightShort(tl, h))
+			consider(heightOf(tl, h), w.heightShort(tl, h))
 		}
 		consider(thing{code: tl.Code}, w.anyShort(tl))
 	}
 	return best, bestShort > 0
 }
 
-// assign counts t against the walk and answers the window's assignment.
+// assign counts t against the walk and answers the window's assignment: a
+// wanted height ships its layers, 0 included, and any height ships none. Tops
+// & bottoms is not one of its type's.
 func (w *windowWalk) assign(node string, t thing) protocol.NodeBinsAssignment {
-	w.assignedType[t.code]++
-	a := protocol.NodeBinsAssignment{Node: node, BinType: t.code}
-	if t.layers > 0 {
+	a := protocol.NodeBinsAssignment{Node: node, BinType: t.code, Layers: t.layers()}
+	if t.height != (domain.Height{}) {
 		w.assignedHeight[t]++
-		layers := t.layers
-		a.Layers = &layers
+	}
+	if n, ok := t.height.Stated(); !ok || n > 0 {
+		w.assignedType[t.code]++
 	}
 	return a
 }

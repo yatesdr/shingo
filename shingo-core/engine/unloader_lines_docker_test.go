@@ -88,6 +88,14 @@ func (f linesFixture) levels(t *testing.T, wants map[int64]int, layers map[int64
 
 func intp(n int) *int { return &n }
 
+// toteL states a window's row as a cart of TOTE-L, 8 totes to a layer, as the
+// bins feed does: a tote cart by its own row.
+func toteL(r protocol.NodeBinsRow) protocol.NodeBinsRow {
+	perLayer := 8
+	r.TotesPerLayer = &perLayer
+	return r
+}
+
 // The reference case on a database: 2 KD empties resident, nothing of the
 // totes. The empty KD at the last window takes KD to 3 of 3; both fulls are
 // asked for totes. Six statements: the open episodes, the layer wants, and
@@ -101,7 +109,7 @@ func TestUnloaderGroupLines_ReferenceCase(t *testing.T) {
 	levels := f.levels(t, map[int64]int{f.kd: 3, f.tote: 3}, nil)
 
 	got := f.lines(t, levels, []protocol.NodeBinsRow{
-		cart("W1", "TOTE-L", true),
+		toteL(cart("W1", "TOTE-L", true)),
 		cart("W2", "KD-L", true),
 		cart("W3", "KD-L", false),
 	})
@@ -124,8 +132,9 @@ func TestUnloaderGroupLines_ReferenceCase(t *testing.T) {
 // (a remainder) and unknown count toward the type; only the 24 counts at 3
 // high. A cart coming in at 40 (5 high) counts at 5 high. The group wants 6
 // totes, 3 high x2 and 5 high x1: short 2 of the type, 1 at 3 high, none at
-// 5 high, so a 5-high cart at a window is asked for 3 high and the next for
-// the type at any height. One more statement than the plain case for the
+// 5 high. A full 5-high cart at a window has no height of its own (its stack
+// leaves with the parts), so it is asked for the largest shortfall, 3 high,
+// and the next for the type at any height. One more statement than the plain case for the
 // type with heights: its residents by totes (its comings at a height are read
 // off the keeper's own coming rows).
 func TestUnloaderGroupLines_HeightsCountOnAnExactMultiple(t *testing.T) {
@@ -147,9 +156,9 @@ func TestUnloaderGroupLines_HeightsCountOnAnExactMultiple(t *testing.T) {
 	})
 
 	got := f.lines(t, levels, []protocol.NodeBinsRow{
-		cart("W1", "TOTE-L", true, 40),
-		cart("W2", "TOTE-L", true, 40),
-		cart("W3", "TOTE-L", true, 40),
+		toteL(cart("W1", "TOTE-L", true, 40)),
+		toteL(cart("W2", "TOTE-L", true, 40)),
+		toteL(cart("W3", "TOTE-L", true, 40)),
 	})
 	want := &protocol.NodeBinsGroup{
 		Group: "LINES-H",

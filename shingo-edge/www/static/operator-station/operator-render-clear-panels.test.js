@@ -184,9 +184,10 @@ eq(p.buttons, ['PUSH EMPTY', 'CANCEL'], 'empty: no carriers (no catalog from Cor
 
 
 // ── heights: a type the empties group wants heights of ──
-// In place of its one button, the bin's name (a base, layers 0) and the bin's
-// name with each wanted height, each posting the CLEAR with its layers; the
-// lit one from clearHighlight; a type with no wanted heights unchanged.
+// The bin's name (the plain type, no layers) and the bin's name with each
+// wanted height, each height posting the CLEAR with its layers; tops & bottoms
+// only where the group has its row; the lit one from clearHighlight; a type
+// with no wanted heights unchanged.
 view = { empties: { group: 'G', rows: [{ bin_type: 'TOTE-S', have: 0, spots: 1 },
     { bin_type: 'TOTE-S', layers: 3, have: 0, want: 2, spots: 1 }, { bin_type: 'RACK-C', have: 0, spots: 1 }] } };
 p = open(function () { ctx.confirmUnloadSwap(31, ['TOTE-S', 'RACK-C'], 0, false, { bin_type: 'TOTE-S', layers: 3 }); });
@@ -198,8 +199,8 @@ eq(litOf(p), ['TOTE-S · 3 high'], 'heights: the assignment\'s height is lit');
 eq(p.click('TOTE-S · 3 high'), [{ url: '/api/process-nodes/31/clear-bin', body: { bin_type_code: 'TOTE-S', layers: 3 } }],
     'heights: a height posts the CLEAR with its type and layers');
 p = open(function () { ctx.confirmUnloadSwap(31, ['TOTE-S', 'RACK-C'], 0, false, null); });
-eq(p.click('TOTE-S'), [{ url: '/api/process-nodes/31/clear-bin', body: { bin_type_code: 'TOTE-S', layers: 0 } }],
-    'heights: the bin\'s name alone declares a base, layers 0');
+eq(p.click('TOTE-S'), [{ url: '/api/process-nodes/31/clear-bin', body: { bin_type_code: 'TOTE-S' } }],
+    'heights: the plain type posts no layers');
 p = open(function () { ctx.confirmUnloadSwap(31, ['TOTE-S', 'RACK-C'], 0, false, null); });
 eq(p.click('RACK-C'), [{ url: '/api/process-nodes/31/clear-bin', body: { bin_type_code: 'RACK-C' } }],
     'heights: a type with none wanted posts no layers');
@@ -224,6 +225,28 @@ eq(p.buttons, ['Send on', 'Send on · 3 high', 'CANCEL'], 'heights: stage 2 Send
 noTypeOnPanel(p, 'stage 2 with heights');
 eq(p.click('Send on · 3 high'), [{ url: '/api/process-nodes/35/clear-bin', body: { layers: 3 } }],
     'heights: Send on at a height posts its layers and no type (the cart\'s type is Core\'s)');
+p = open(function () { ctx.confirmPushEmpty(35, ['TOTE-S'], true, null); });
+eq(p.click('Send on'), [{ url: '/api/process-nodes/35/clear-bin', body: undefined }],
+    'heights: the plain Send on posts no layers');
+// A group with a "Tops & bottoms" row: that choice on CLEAR, PUSH AS and Send on,
+// declaring 0.
+view = { empties: { group: 'G', rows: [{ bin_type: 'TOTE-S', have: 0, spots: 1 },
+    { bin_type: 'TOTE-S', layers: 3, have: 0, want: 2, spots: 1 }, { bin_type: 'TOTE-S', layers: 0, have: 0, want: 1, spots: 1 },
+    { bin_type: 'RACK-C', have: 0, spots: 1 }] } };
+p = open(function () { ctx.confirmUnloadSwap(37, ['TOTE-S', 'RACK-C'], 0, false, { bin_type: 'TOTE-S', layers: 0 }); });
+eq(p.buttons, ['TOTE-S', 'TOTE-S · 3 high', 'TOTE-S · tops & bottoms', 'RACK-C', 'CANCEL'],
+    'tops & bottoms row: the CLEAR offers it after the heights');
+eq(litOf(p), ['TOTE-S · tops & bottoms'], 'tops & bottoms row: an assignment of tops & bottoms is lit');
+eq(p.click('TOTE-S · tops & bottoms'), [{ url: '/api/process-nodes/37/clear-bin', body: { bin_type_code: 'TOTE-S', layers: 0 } }],
+    'tops & bottoms row: it posts layers 0');
+p = open(function () { ctx.confirmPushEmpty(38, ['TOTE-S'], false, null); });
+eq(p.buttons, ['PUSH EMPTY', 'PUSH AS TOTE-S', 'PUSH AS TOTE-S · 3 high', 'PUSH AS TOTE-S · tops & bottoms', 'CANCEL'],
+    'tops & bottoms row: PUSH AS offers it');
+p = open(function () { ctx.confirmPushEmpty(39, ['TOTE-S'], true, null); });
+eq(p.buttons, ['Send on', 'Send on · 3 high', 'Send on · tops & bottoms', 'CANCEL'],
+    'tops & bottoms row: stage 2 Send on offers it, naming no type');
+eq(p.click('Send on · tops & bottoms'), [{ url: '/api/process-nodes/39/clear-bin', body: { layers: 0 } }],
+    'tops & bottoms row: Send on · tops & bottoms posts layers 0');
 // A Core that sends no group lines: today's panels.
 view = { empties: { group: 'G', rows: [{ bin_type: 'TOTE-S', have: 0, spots: 1 }] } };
 p = open(function () { ctx.confirmUnloadSwap(36, ['TOTE-S'], 0, false, { bin_type: 'TOTE-S' }); });

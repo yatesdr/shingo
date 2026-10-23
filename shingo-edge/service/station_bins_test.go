@@ -59,7 +59,7 @@ func binsPlant(t *testing.T, db *store.DB) (*StationService, int64, int64) {
 	svc := NewStationService(db)
 	svc.SetLoaderResolver(loaderSet{homes, unl, stage1})
 	svc.SetCoreNodeGroupResolver(func() map[string][]string {
-		return map[string][]string{"GRP": {"M1", "M2"}, "GRP2": {"X1"}}
+		return map[string][]string{"GRP": {"M1", "M2", "M3"}, "GRP2": {"X1"}}
 	})
 	stationWith := func(code string, nodes ...string) (int64, int64) {
 		pid, err := db.CreateProcess(code+"-PROC", "", "", "", false)
@@ -97,7 +97,7 @@ func TestBinNodes_TheBoardsWholeList(t *testing.T) {
 	if got, want := svc.BinNodes(a), []string{"F1", "F2", "H1", "H2"}; !slices.Equal(got, want) {
 		t.Errorf("station A list = %v, want %v", got, want)
 	}
-	if got, want := svc.BinNodes(b), []string{"M1", "M2", "P2", "S1", "U1"}; !slices.Equal(got, want) {
+	if got, want := svc.BinNodes(b), []string{"M1", "M2", "M3", "P2", "S1", "U1"}; !slices.Equal(got, want) {
 		t.Errorf("station B list = %v, want %v", got, want)
 	}
 }
@@ -339,6 +339,8 @@ func TestStampBins_EmptiesWantsAndHeights(t *testing.T) {
 			TotesOnCart: n(16), TotesPerLayer: n(8)},
 		"M1": {NodeName: "M1", Occupied: true, BinTypeCode: "TOTE-1", TotesOnCart: n(24), TotesPerLayer: n(8)},
 		"M2": {NodeName: "M2", Occupied: true, BinTypeCode: "TOTE-1", TotesOnCart: n(19), TotesPerLayer: n(8)},
+		// Tops & bottoms: under the row at 0 only, never in TOTE-1's have.
+		"M3": {NodeName: "M3", Occupied: true, BinTypeCode: "TOTE-1", TotesOnCart: n(0), TotesPerLayer: n(8)},
 	}
 	groups := []protocol.NodeBinsGroup{{Group: "GRP",
 		Wants: []protocol.NodeBinsWant{{BinType: "TOTE-1", Want: 4}, {BinType: "TOTE-1", Layers: n(3), Want: 2},
@@ -356,7 +358,7 @@ func TestStampBins_EmptiesWantsAndHeights(t *testing.T) {
 	svc.StampBins(v, httpBins(rows), true, groups)
 	want := `{"group":"GRP","rows":[{"bin_type":"KD-1","have":0,"spots":0},` +
 		`{"bin_type":"TOTE-1","have":2,"want":4,"spots":0},` +
-		`{"bin_type":"TOTE-1","layers":0,"have":0,"want":1,"spots":0},` +
+		`{"bin_type":"TOTE-1","layers":0,"have":1,"want":1,"spots":0},` +
 		`{"bin_type":"TOTE-1","layers":3,"have":1,"want":2,"spots":0}]}`
 	if got := stampJSON(t, v.Empties); got != want {
 		t.Errorf("empties = %s\nwant %s", got, want)

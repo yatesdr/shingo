@@ -4,7 +4,7 @@ import { getView, claimedNodes, isReplenishing, getLink } from './operator-state
 import { isActive } from './order-status.js';
 import { ROLE_WORDS, clearRunning, CLEAR_RUNNING } from './operator-window-state.js';
 import { loaderOf, carriersOf, isDedicated, isUnloaderWindow, boardLayout, isBoard, staleSign } from './operator-board-model.js';
-import { clearChoices, choiceLabel, isLit, clearHighlight } from './operator-board-model.js';
+import { clearChoices, choiceLabel, heightWords, isLit, clearHighlight } from './operator-board-model.js';
 import { windowWords } from './operator-board-model.js';
 import { renderBoard, resetBoard } from './operator-board.js';
 import { mountFlowPanel, openFlowPanel, syncFlowPanel } from './operator-flow.js';
@@ -404,11 +404,13 @@ function confirmUnloadHeld(nodeID, line, count) {
 // lit is the choice the board's card says to send back, {bin_type, layers?}
 // (clearHighlight): that button is lit, every button still tappable.
 //
-// HEIGHTS (clearChoices): a type the empties group wants heights of shows, in
-// place of its one button, the bin's name (a base, layers 0) and the bin's
-// name with each wanted height ("TOTE-1 · 3 high"); each posts the CLEAR with
-// its type and layers. A type with no wanted heights keeps its one button and
-// posts no layers, as before. Pinned by operator-render-clear-panels.test.js.
+// HEIGHTS (clearChoices): a type the empties group wants heights of shows the
+// bin's name (the plain type, posting no layers), the bin's name with each
+// wanted height ("TOTE-1 · 3 high"), and, where the group has a "Tops &
+// bottoms" row, "TOTE-1 · tops & bottoms" (layers 0); each height posts the
+// CLEAR with its type and layers. A type with no wanted heights keeps its one
+// button and posts no layers, as before. Pinned by
+// operator-render-clear-panels.test.js.
 //
 // Exported for the node modal's CLEAR BIN on an unloader, which goes through
 // this panel (operator-modal.js).
@@ -479,33 +481,33 @@ function clearBody(choice) {
 // next, and CANCEL. No type appears on it anywhere — Core stamps the cart from
 // its own type, so there is nothing for the operator to pick or read.
 //
-// heights, when given, are the choices that replace the one button (stage 2's
-// Send on for a type the group wants heights of): the button's label alone (a
-// base) and with each height ("Send on · 3 high"), each posting the CLEAR with
-// its layers and still no type, so no type is named on the panel.
+// heights, when given, are the wanted heights offered beside the one button
+// (stage 2's Send on for a type the group wants heights of): the label alone,
+// posting no layers as it always has, then the label with each height ("Send
+// on · 3 high", "Send on · tops & bottoms"), each posting the CLEAR with its
+// layers and still no type, so no type is named on the panel.
 function oneTapPanel(nodeID, title, subtitles, label, after, heights, lit) {
     const overlay = el('div', { className: 'os-co-picker-overlay' });
     const panel = el('div', { className: 'os-co-picker os-co-picker--one-tap' });
     panel.appendChild(el('div', { className: 'os-co-picker-title', textContent: title }));
     subtitles.forEach(function(s) { panel.appendChild(s); });
-    if (heights && heights.length > 0) {
-        heights.forEach(function(choice) {
-            const btn = el('button', { className: 'os-co-picker-btn' + (isLit(choice, lit) ? ' os-co-picker-btn--lit' : ''),
-                textContent: label + (choice.layers > 0 ? ' · ' + choice.layers + ' high' : '') });
-            btn.addEventListener('click', function() {
-                overlay.remove();
-                postAction('/api/process-nodes/' + nodeID + '/clear-bin', { layers: choice.layers }, loadViewRef);
-            });
-            panel.appendChild(btn);
-        });
-    } else {
-        const go = el('button', { className: 'os-co-picker-btn', textContent: label });
-        go.addEventListener('click', function() {
+    const many = heights && heights.length > 0;
+    const plainLit = many && !!lit && typeof lit.layers !== 'number';
+    const go = el('button', { className: 'os-co-picker-btn' + (plainLit ? ' os-co-picker-btn--lit' : ''), textContent: label });
+    go.addEventListener('click', function() {
+        overlay.remove();
+        postAction('/api/process-nodes/' + nodeID + '/clear-bin', undefined, loadViewRef);
+    });
+    panel.appendChild(go);
+    (heights || []).forEach(function(choice) {
+        const btn = el('button', { className: 'os-co-picker-btn' + (isLit(choice, lit) ? ' os-co-picker-btn--lit' : ''),
+            textContent: label + ' · ' + heightWords(choice.layers) });
+        btn.addEventListener('click', function() {
             overlay.remove();
-            postAction('/api/process-nodes/' + nodeID + '/clear-bin', undefined, loadViewRef);
+            postAction('/api/process-nodes/' + nodeID + '/clear-bin', { layers: choice.layers }, loadViewRef);
         });
-        panel.appendChild(go);
-    }
+        panel.appendChild(btn);
+    });
     panel.appendChild(el('div', { className: 'os-co-picker-subtitle', textContent: after }));
     const cancel = el('button', { className: 'os-co-picker-btn cancel', textContent: 'CANCEL' });
     cancel.addEventListener('click', () => overlay.remove());
@@ -532,9 +534,12 @@ function confirmFullOff(nodeID, discarding) {
 // the operator puts an empty bin on it and sends it on. Plain PUSH EMPTY would
 // send the cart on still bare, and a PUSH AS picker asks a question the cart
 // already answers, so it is one tap — or, where the group wants heights of the
-// window's type, one tap per height (the type stays Core's).
+// window's type, one tap per height beside it (the type stays Core's).
 function confirmSendOn(nodeID, carriers, lit) {
-    const heights = clearChoices(getView(), carriers).filter(function (c) { return typeof c.layers === 'number'; });
+    const heights = [];
+    clearChoices(getView(), carriers).forEach(function (c) {
+        if (typeof c.layers === 'number' && !heights.some(function (h) { return h.layers === c.layers; })) heights.push(c);
+    });
     oneTapPanel(nodeID, 'Cart, no bin',
         [el('div', { className: 'os-co-picker-subtitle', textContent: 'Put an empty bin on it, then send it on.' })],
         'Send on', 'Goes to the empties supermarket. No type to pick — it\'s the cart it came in as.', heights, lit);
