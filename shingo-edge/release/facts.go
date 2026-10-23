@@ -18,7 +18,7 @@ import (
 // guard's evac arm) gets the same answer the steps would give.
 type Facts struct {
 	// Places is every node the leg leaves a bin at: a dropoff there with no
-	// later pickup from it (PlacesBinAt).
+	// later pickup from it (protocol.PlacesBinAt).
 	Places []string `json:"places,omitempty"`
 	// Departs maps each node the leg lifts a bin at, in the segment between its
 	// first station wait and its next wait of any kind, to that pickup's step
@@ -53,12 +53,12 @@ const (
 func FactsFromSteps(steps []protocol.ComplexOrderStep, processNode string) Facts {
 	var f Facts
 	// Places: every node the leg sets a bin down on and does not take it
-	// back from (PlacesBinAt), in the order the leg first visits it.
+	// back from (protocol.PlacesBinAt), in the order the leg first visits it.
 	seen := map[string]bool{}
 	for _, s := range steps {
 		if s.Action == protocol.ActionDropoff && s.Node != "" && !seen[s.Node] {
 			seen[s.Node] = true
-			if PlacesBinAt(steps, s.Node) {
+			if protocol.PlacesBinAt(steps, s.Node) {
 				f.Places = append(f.Places, s.Node)
 			}
 		}
@@ -110,7 +110,7 @@ func FactsFromSteps(steps []protocol.ComplexOrderStep, processNode string) Facts
 	return f
 }
 
-// PlacesBinAt is the package's PlacesBinAt, answered from the stored facts.
+// PlacesBinAt is protocol.PlacesBinAt, answered from the stored facts.
 func (f Facts) PlacesBinAt(node string) bool {
 	return node != "" && slices.Contains(f.Places, node)
 }
@@ -158,62 +158,4 @@ func DecodeFacts(raw string) (Facts, error) {
 		return Facts{}, fmt.Errorf("decode release facts: %w", err)
 	}
 	return f, nil
-}
-
-// PlacesBinAt reports whether this leg LEAVES A BIN at node when it finishes:
-//
-//	the leg has a dropoff at node with no LATER pickup FROM node.
-//
-// That is the whole definition, and the "later" matters — a leg may set a bin
-// down at a node and take it away again (or take one away and set a fresh one
-// down), so only the last bin-moving action at node decides the answer.
-//
-// This is the supply/evac discriminator. "Where does the leg END?" is the wrong
-// question and got press-index wrong: a 3-position R2 sets a bin on the press
-// MID-sequence and then carries on to re-index the next position, so it ends at
-// the index node while being the leg that supplies the press. Ask where the bin
-// comes to rest, not where the robot does.
-//
-// Verified against BuildTwoRobotSwapSteps / BuildTwoRobotPressIndexSwapSteps
-// (material_orders.go) — the builders are the source of truth for these shapes,
-// and engine/supply_leg_classifier_test.go drives its table straight off them:
-//
-//	leg                    | steps                                          | at press | role
-//	-----------------------|------------------------------------------------|----------|-------
-//	two_robot A            | …pickup(STAGE) dropoff(PRESS)                   | true     | supply
-//	two_robot B            | wait(PRESS) pickup(PRESS) dropoff(OUT)          | false    | evac
-//	press-index R1 (2&3)   | wait(PRESS) pickup(PRESS) dropoff(OUT)          |          |
-//	                       |   pickup(IN) dropoff(B|C)                       | false    | evac
-//	press-index R2, 2-pos  | wait(B) pickup(B) dropoff(PRESS)                | true     | supply
-//	press-index R2, 3-pos  | wait(B) pickup(B) dropoff(PRESS)                |          |
-//	                       |   pickup(C) dropoff(B)                          | true     | supply
-//	FLIPPED R1 (2&3)       | wait(PRESS) pickup(PRESS) dropoff(OUT)          | false    | evac
-//	FLIPPED R2, 2-pos      | wait(B) pickup(B) dropoff(PRESS)                |          |
-//	                       |   pickup(IN) dropoff(B)                         | true     | supply
-//	FLIPPED R2, 3-pos      | wait(B) pickup(B) dropoff(PRESS)                |          |
-//	                       |   pickup(C) dropoff(B) pickup(IN) dropoff(C)    | true     | supply
-//
-// The FLIPPED rows make the point that the flip does not move the roles: it
-// moves the supermarket trip from R1 to R2, and the press pickup and dropoff
-// - which is what decides the role - stay where they were.
-//
-// The 3-position R2 row is the one a "final dropoff" test gets wrong: its last
-// dropoff is the index node B, but the bin it left on the press is still there.
-func PlacesBinAt(steps []protocol.ComplexOrderStep, node string) bool {
-	if node == "" {
-		return false
-	}
-	placed := false
-	for _, s := range steps {
-		if s.Node != node {
-			continue
-		}
-		switch s.Action {
-		case protocol.ActionDropoff:
-			placed = true
-		case protocol.ActionPickup:
-			placed = false // taken back off; a later dropoff can set it down again
-		}
-	}
-	return placed
 }

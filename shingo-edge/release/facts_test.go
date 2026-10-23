@@ -36,7 +36,7 @@ func renderFacts(f Facts) string {
 
 // TestFactsFromSteps pins the facts for the shapes the step builders produce
 // (material_orders.go): the answers the release questions read. Places is
-// PlacesBinAt by construction; Departs is "the segment after the first station
+// protocol.PlacesBinAt by construction; Departs is "the segment after the first station
 // wait lifts a bin at the node"; Touches is "every pickup and dropoff after the
 // first station wait" — the definitions the doors used before the facts were
 // stored (segmentAfterFirstStationWaitLifts, binTouchesAfterFirstStationWait).
@@ -72,10 +72,10 @@ func TestFactsFromSteps(t *testing.T) {
 			if got := renderFacts(FactsFromSteps(c.steps, "PRESS")); got != c.want {
 				t.Errorf("\n got  %s\n want %s", got, c.want)
 			}
-			// Places is PlacesBinAt for every node the steps name.
+			// Places is protocol.PlacesBinAt for every node the steps name.
 			f := FactsFromSteps(c.steps, "PRESS")
 			for _, s := range c.steps {
-				if f.PlacesBinAt(s.Node) != PlacesBinAt(c.steps, s.Node) {
+				if f.PlacesBinAt(s.Node) != protocol.PlacesBinAt(c.steps, s.Node) {
 					t.Errorf("Facts.PlacesBinAt(%s) disagrees with PlacesBinAt", s.Node)
 				}
 			}

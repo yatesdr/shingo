@@ -11,9 +11,9 @@ import (
 )
 
 // legPlacesBinAt is the supply/evac discriminator: whether this leg LEAVES A
-// BIN at node when it finishes (release.PlacesBinAt, its one definition).
+// BIN at node when it finishes (protocol.PlacesBinAt, its one definition).
 func legPlacesBinAt(steps []protocol.ComplexOrderStep, node string) bool {
-	return release.PlacesBinAt(steps, node)
+	return protocol.PlacesBinAt(steps, node)
 }
 
 // orderPlacesBinAtAny reports whether a live order will place a bin at any of
