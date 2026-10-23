@@ -25,6 +25,7 @@
 package scenarios
 
 import (
+	"cmp"
 	"encoding/json"
 	"fmt"
 	"runtime"
@@ -235,6 +236,24 @@ type ksrOpts struct {
 	// mirror: the Edge's claims reach Core's mirror over the wire, as in the
 	// plant (the buried cases need it too).
 	mirror bool
+	// flipped: every press-index claim of both styles has the index robot
+	// fetch the replacement (IndexRobotSupplies): R1 only takes the press's
+	// bin away, R2 indexes forward and then refills the paired position.
+	flipped bool
+	// modeB is style B's swap mode, for a changeover across modes (B a press,
+	// A not, or the reverse). Blank is A's mode. A press on either side gets
+	// the paired position's node.
+	modeB protocol.SwapMode
+	// sameB: style B claims what A claims (A's part, carrier and market), so
+	// a changeover from A to B leaves the line's claim Unchanged.
+	sameB bool
+	// dryA: A's market is stocked with nothing, so the line's source is dry
+	// until a case lands stock in it.
+	dryA bool
+	// bareSpot: no spare is parked on the spot. A plain cell's spot is the
+	// inbound staging of every mode, and a two-robot or single-robot supply
+	// stages its carrier there.
+	bareSpot bool
 }
 
 func newKsrCell(t *testing.T, o ksrOpts) *ksrCell {
@@ -276,7 +295,7 @@ func newKsrCell(t *testing.T, o ksrOpts) *ksrCell {
 	if o.pair {
 		pair = node(&corenodes.Node{Name: ksrPair})
 	}
-	if o.mode == protocol.SwapModeTwoRobotPressIndex {
+	if o.mode == protocol.SwapModeTwoRobotPressIndex || o.modeB == protocol.SwapModeTwoRobotPressIndex {
 		deck = node(&corenodes.Node{Name: ksrDeck})
 	}
 	// The outbound destination is a group of slots: each swap's evac leaves a
@@ -329,7 +348,7 @@ func newKsrCell(t *testing.T, o ksrOpts) *ksrCell {
 	if o.strayEmptyB {
 		stray := &corebins.Bin{BinTypeID: c.typeB.ID, Label: "KSR-STRAY", NodeID: &spot.ID, Status: "available"}
 		mustNil(t, coreDB.CreateBin(stray), "stray empty")
-	} else {
+	} else if !o.bareSpot {
 		stock("KSR-A-SPARE", ksrPartA, c.typeA, spot)
 	}
 	if o.pair {
@@ -340,7 +359,7 @@ func newKsrCell(t *testing.T, o ksrOpts) *ksrCell {
 		// own: the swap indexes it forward and refills the deck behind it.
 		stock("KSR-A-DECK", ksrPartA, c.typeA, deck)
 	}
-	for i := 0; i < 4; i++ {
+	for i := 0; i < 4 && !o.dryA; i++ {
 		stock(fmt.Sprintf("KSR-A%d", i+1), ksrPartA, c.typeA, slotsA[i])
 	}
 	if o.buriedB {
@@ -433,14 +452,19 @@ func newKsrCell(t *testing.T, o ksrOpts) *ksrCell {
 	c.styleB, err = edge.DB.CreateStyle("KSR-B", "", c.processID)
 	mustNil(t, err, "style B")
 	mustNil(t, edge.DB.SetActiveStyle(c.processID, &c.styleA), "active style")
+	partB, mktB := ksrPartB, ksrMktB
+	if o.sameB {
+		partB, mktB = ksrPartA, ksrMktA
+	}
 	for _, pos := range positions {
 		for _, s := range []struct {
 			style      int64
 			part, mkt  string
 			claimIDOut *int64
-		}{{c.styleA, ksrPartA, ksrMktA, &c.claimA}, {c.styleB, ksrPartB, ksrMktB, nil}} {
+			mode       protocol.SwapMode
+		}{{c.styleA, ksrPartA, ksrMktA, &c.claimA, o.mode}, {c.styleB, partB, mktB, nil, cmp.Or(o.modeB, o.mode)}} {
 			in := processes.NodeClaimInput{
-				StyleID: s.style, CoreNodeName: pos, Role: o.role, SwapMode: o.mode,
+				StyleID: s.style, CoreNodeName: pos, Role: o.role, SwapMode: s.mode,
 				PayloadCode: s.part, UOPCapacity: 40, ReorderPoint: 10,
 				InboundSource: s.mkt, InboundStaging: ksrSpot, OutboundStaging: ksrOutStg,
 				OutboundDestination: ksrDest, KeepStagedNode: domain.Ptr(""), AutoReorder: domain.Ptr(true),
@@ -450,7 +474,7 @@ func newKsrCell(t *testing.T, o ksrOpts) *ksrCell {
 				// also the inbound staging, the robot waiting under the spare; the
 				// other two have no staging hop, so it is a node of its own.
 				in.KeepStagedNode = domain.Ptr(ksrSpot)
-				if o.mode == protocol.SwapModeSequential || o.mode == protocol.SwapModeTwoRobotPressIndex {
+				if s.mode == protocol.SwapModeSequential || s.mode == protocol.SwapModeTwoRobotPressIndex {
 					in.InboundStaging = ""
 				}
 				// A sequential cell here, unless pair, is one position with no partner, as the
@@ -460,8 +484,11 @@ func newKsrCell(t *testing.T, o ksrOpts) *ksrCell {
 				// start and the cancel, and the recovery after; the leg fetching
 				// from the spot is pinned in the Edge's changeover tests.
 			}
-			if o.mode == protocol.SwapModeTwoRobotPressIndex {
+			if s.mode == protocol.SwapModeTwoRobotPressIndex {
 				in.PairedCoreNode = ksrDeck
+				if o.flipped {
+					in.IndexRobotSupplies = domain.Ptr(true)
+				}
 			}
 			if o.pair {
 				in.PairedCoreNode = map[string]string{ksrLine: ksrPair, ksrPair: ksrLine}[pos]
