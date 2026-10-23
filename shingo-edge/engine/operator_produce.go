@@ -98,9 +98,10 @@ func (e *Engine) produceRequest(node *processes.Node, runtime *processes.Runtime
 	defer mu.Unlock()
 
 	// Asked again under the lock, for the reason RequestNodeMaterial gives: a
-	// changeover start holds a keep-staged line's lock, so this request may be let
-	// in only after the changeover is armed.
-	if spotNode(claim) != "" {
+	// changeover start holds the lock of a keep-staged line and of a press it
+	// changes (startLocksLine), so this request may be let in only after the
+	// changeover is armed.
+	if startLocksLine(claim) {
 		if err := e.guardStyleTransition(node, claim); err != nil {
 			return nil, err
 		}

@@ -207,13 +207,13 @@ func (e *Engine) requestNodeFromClaim(node *processes.Node, runtime *processes.R
 	defer mu.Unlock()
 
 	// A CHANGEOVER CAN ARM WHILE THIS REQUEST WAITS FOR THE CELL. A changeover
-	// start holds a keep-staged line's prime lock from its pre-dispatch cancel to
-	// its last spot order, so a request that passed the guard above can be let in
+	// start holds the prime lock of a keep-staged line and of a press it changes
+	// for its whole body, so a request that passed the guard above can be let in
 	// only after the changeover is armed. Asked again under the lock, it is
 	// refused like any request against an armed changeover instead of building an
-	// outgoing-style swap that no changeover leg owns. Keep-staged lines only:
-	// theirs is the lock a start holds.
-	if spotNode(claim) != "" {
+	// outgoing-style swap that no changeover leg owns. The lines a start locks
+	// only (startLocksLine): a keep-staged line or a press.
+	if startLocksLine(claim) {
 		if err := e.guardStyleTransition(node, claim); err != nil {
 			return nil, err
 		}

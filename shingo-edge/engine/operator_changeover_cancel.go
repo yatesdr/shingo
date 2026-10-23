@@ -42,7 +42,7 @@ func (e *Engine) cancelProcessChangeoverInternal(processID int64, nextStyleID *i
 	// Under the spots' cell locks from the abort to the reconcile: the target
 	// style clears in between, and a request on one of those lines may run again
 	// from then. Released before a redirect, whose start takes them itself.
-	unlock := e.lockKeepStagedCells(spotLines(spots))
+	unlock := e.lockCells(spotLines(spots))
 	locked := true
 	release := func() {
 		if locked {

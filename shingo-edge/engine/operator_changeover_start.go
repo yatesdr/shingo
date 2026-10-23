@@ -128,9 +128,11 @@ func cancelNodeSet(plan *changeoverPlan) []string {
 
 // changingNodeSet is the CHANGED diff nodes alone: the nodes whose bin the
 // changeover's own swaps lift. An order with a lift still ahead at one of them
-// wants the same bin (orderLiftAheadAt). Not the press-index positions, whose
-// orders are never cancelled, and not the keep-staged spots, whose decision
-// already counts a return with the fleet as the spare leaving (readsLessLeaving).
+// wants the same bin (orderLiftAheadAt). Not the keep-staged spots, whose
+// decision already counts a return with the fleet as the spare leaving
+// (readsLessLeaving). A press's dependent positions are in it only as the
+// fanned-out per-position diff nodes they become; the start's one cancel of
+// orders AT them is a queued swap's clear and prime (chainOrder).
 func changingNodeSet(plan *changeoverPlan) []string {
 	out := make([]string, 0, len(plan.diffs))
 	for _, diff := range plan.diffs {
@@ -203,12 +205,13 @@ func (e *Engine) cancelPreDispatchAtParticipants(plan *changeoverPlan) ([]int64,
 		return nil, nil, err
 	}
 	c := e.newStartCancel()
+	chains := chainPositions(plan)
 	for i := range live {
 		o := live[i]
 		if protocol.ChangeoverStartActionFor(o.Status) != protocol.ChangeoverStartCancel {
 			continue
 		}
-		if !e.orderPlacesBinAtAny(&o, nodes) {
+		if !e.orderPlacesBinAtAny(&o, nodes) && !chainOrder(&o, chains) {
 			continue
 		}
 		c.abort(o.ID, changeoverStartCancelReason)
@@ -223,6 +226,49 @@ func (e *Engine) cancelPreDispatchAtParticipants(plan *changeoverPlan) ([]int64,
 	}
 	e.clearCancelledRuntimeSlots(plan, c.seen)
 	return c.cancelled, live, nil
+}
+
+// chainPositions is, per process node of a press the changeover changes, that
+// press's dependent positions: where a queued swap's clear and prime act
+// (createClearsThenPrimes).
+func chainPositions(plan *changeoverPlan) map[int64][]string {
+	changing := map[string]bool{}
+	for _, n := range changingNodeSet(plan) {
+		changing[n] = true
+	}
+	out := map[int64][]string{}
+	for i := range plan.fromClaims {
+		c := &plan.fromClaims[i]
+		if !c.IsPressIndex() || !changing[c.CoreNodeName] {
+			continue
+		}
+		for _, n := range plan.nodes {
+			if n.CoreNodeName == c.CoreNodeName {
+				out[n.ID] = c.DependentPositions()
+			}
+		}
+	}
+	return out
+}
+
+// chainOrder is whether o is a changing press's queued clear or prime: a simple
+// order on the press's process node that places at, or lifts from, one of its
+// dependent positions. It is cancelled with the start's other cancels, once
+// (startCancel). Never a complex order: the index legs act at those positions
+// too, and are the swap's, not the chain's. A moving prime is not cancelled
+// (its status is not Cancel's) and blocks the start, as every carrier coming to
+// a position the changeover acts on does; a moving clear neither, and need not:
+// its bin is named, and Core leaves it to the move.
+func chainOrder(o *domain.Order, chains map[int64][]string) bool {
+	if o.ProcessNodeID == nil || o.OrderType == protocol.OrderTypeComplex {
+		return false
+	}
+	for _, pos := range chains[*o.ProcessNodeID] {
+		if o.DeliveryNode == pos || o.SourceNode == pos {
+			return true
+		}
+	}
+	return false
 }
 
 // changeoverStartCancelReason is the one reason every order cancelled at a
@@ -432,10 +478,12 @@ func (e *Engine) StartProcessChangeover(processID, toStyleID int64, calledBy, no
 	if err != nil {
 		return nil, err
 	}
-	// The keep-staged cells are decided under their prime locks from the cancel
-	// below, which clears their spots of orders not yet flown, to the last spot
-	// order, so a request on one of those lines cannot add to a spot between.
-	defer e.lockKeepStagedCells(keepStagedLines(plan.fromClaims, plan.toClaims))()
+	// The keep-staged cells and the changing presses are decided under their
+	// prime locks, taken once for the whole start (startLockedLines): from the
+	// cancel below, which clears the spots of orders not yet flown and a press's
+	// queued clear and prime, to the last spot order, so a request on one of
+	// those lines cannot add to what the start is deciding between.
+	defer e.lockCells(startLockedLines(plan))()
 	// Every keep-staged spot either style names, read in ONE call under those
 	// locks and before anything is cancelled. A start that cannot tell what stands
 	// on a spot cannot decide whether its leg takes the spare, so it refuses, as a

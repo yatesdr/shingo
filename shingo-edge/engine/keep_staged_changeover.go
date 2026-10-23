@@ -209,11 +209,13 @@ func errUnknownSpots(spots []string) error {
 		strings.Join(spots, ", "))
 }
 
-// lockKeepStagedCells takes the prime lock of every line in lines, in name
-// order, and returns their release. A changeover start or cancel holds them
-// from its read of the spots to its last spot order, as a request holds its
-// cell's, so neither decides a spot from rows the other is about to write.
-func (e *Engine) lockKeepStagedCells(lines []string) func() {
+// lockCells takes the prime lock of every line in lines, once each, in name
+// order, and returns their release. A changeover start holds its lines'
+// (startLockedLines) for its whole body and a changeover cancel its spots'
+// lines, as a request holds its cell's, so neither decides a spot, or cancels
+// a press's chain, from rows the other is about to write. primeNodeLock is not
+// re-entrant: a line named twice is locked once.
+func (e *Engine) lockCells(lines []string) func() {
 	sorted := append([]string(nil), lines...)
 	sort.Strings(sorted)
 	var held []cellLock
@@ -232,14 +234,29 @@ func (e *Engine) lockKeepStagedCells(lines []string) func() {
 	}
 }
 
-// keepStagedLines is every line node whose outgoing or incoming claim keeps a
-// spot.
-func keepStagedLines(claimSets ...[]processes.NodeClaim) []string {
+// startLocksLine is the one predicate for the lines a changeover's start may
+// hold the cell lock of: a line that keeps a spot, or a press (whose dependent
+// positions are where the start cancels a queued swap's clear and prime). A
+// request on such a line asks guardStyleTransition again under its lock, since
+// it may have been let in only after the start armed the changeover.
+func startLocksLine(claim *processes.NodeClaim) bool {
+	return claim != nil && (spotNode(claim) != "" || claim.IsPressIndex())
+}
+
+// startLockedLines is the lines a changeover's start holds for its whole body:
+// every line either style's claim keeps a spot on, and every press line the
+// changeover changes (changingNodeSet), each through startLocksLine.
+func startLockedLines(plan *changeoverPlan) []string {
+	changing := map[string]bool{}
+	for _, n := range changingNodeSet(plan) {
+		changing[n] = true
+	}
 	var out []string
-	for _, claims := range claimSets {
+	for _, claims := range [][]processes.NodeClaim{plan.fromClaims, plan.toClaims} {
 		for i := range claims {
-			if spotNode(&claims[i]) != "" {
-				out = append(out, claims[i].CoreNodeName)
+			c := &claims[i]
+			if startLocksLine(c) && (spotNode(c) != "" || changing[c.CoreNodeName]) {
+				out = append(out, c.CoreNodeName)
 			}
 		}
 	}
