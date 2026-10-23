@@ -230,6 +230,41 @@ func TestCreateRetrieveOrder_HappyPath(t *testing.T) {
 	}
 }
 
+// TestCreateTopsAndBottomsPull_TheTypeEverywhereTheBodyWritesIt: SEND BACK's
+// pull goes through the one retrieve body, and its type is on the row, the
+// wire, the log line and the created event, with RetrieveEmpty set (an empty
+// carrier's), quantity 1, no load type, auto-confirmed.
+func TestCreateTopsAndBottomsPull_TheTypeEverywhereTheBodyWritesIt(t *testing.T) {
+	t.Parallel()
+	db := testManagerDB(t)
+	emitter := &capturingEmitter{}
+	mgr := NewManager(db, emitter, "edge.station")
+	var logged []string
+	mgr.DebugLog = func(format string, args ...any) { logged = append(logged, fmt.Sprintf(format, args...)) }
+
+	order, err := mgr.CreateTopsAndBottomsPull(nil, "PRESS-OUT", "SUPER-A", "PL-TOTE", NoDemand())
+	testutil.MustNoErr(t, err, "CreateTopsAndBottomsPull")
+	if order.OrderType != TypeRetrieveTopsAndBottoms || !order.RetrieveEmpty || !order.AutoConfirm ||
+		order.Quantity != 1 || order.LoadType != "" || order.DeliveryNode != "PRESS-OUT" || order.SourceNode != "SUPER-A" {
+		t.Errorf("the row: %+v", order)
+	}
+	var req protocol.OrderRequest
+	decodeOnlyOutboxPayload(t, db, protocol.TypeOrderRequest, &req)
+	if req.OrderType != protocol.OrderTypeRetrieveTopsAndBottoms || !req.RetrieveEmpty || req.PayloadCode != "PL-TOTE" {
+		t.Errorf("the wire: %+v", req)
+	}
+	if len(emitter.created) != 1 || emitter.created[0] != "retrieve_tops_bottoms:"+order.UUID {
+		t.Errorf("created events: %v", emitter.created)
+	}
+	found := false
+	for _, l := range logged {
+		found = found || strings.HasPrefix(l, "create: type=retrieve_tops_bottoms ")
+	}
+	if !found {
+		t.Errorf("no create line names the type: %v", logged)
+	}
+}
+
 func TestCreateRetrieveOrder_PayloadMetaFromStyleClaim(t *testing.T) {
 	t.Parallel()
 	db := testManagerDB(t)

@@ -8,10 +8,37 @@ import (
 // edge and core agree on the wire shape and Go callers get compile-time
 // distinction from raw strings.
 const (
-	TypeRetrieve = protocol.OrderTypeRetrieve
-	TypeMove     = protocol.OrderTypeMove
-	TypeComplex  = protocol.OrderTypeComplex
+	TypeRetrieve               = protocol.OrderTypeRetrieve
+	TypeRetrieveTopsAndBottoms = protocol.OrderTypeRetrieveTopsAndBottoms
+	TypeMove                   = protocol.OrderTypeMove
+	TypeComplex                = protocol.OrderTypeComplex
 )
+
+// Pull names what a retrieve brings: a full of its part, an empty carrier, or
+// tops & bottoms (SEND BACK's pull). The one retrieve body takes it and maps it
+// to the order's type and the wire's RetrieveEmpty (wire).
+type Pull int
+
+const (
+	PullFull Pull = iota
+	PullEmpty
+	PullTopsAndBottoms
+)
+
+// wire is the order type and RetrieveEmpty flag a pull is stored and sent
+// with: a full and an empty are a retrieve with the flag off or on (Core
+// promotes retrieve plus the flag to retrieve_empty); tops & bottoms is its
+// own type, an empty carrier's, so the flag is on as the Edge's column reads
+// it.
+func (p Pull) wire() (protocol.OrderType, bool) {
+	switch p {
+	case PullEmpty:
+		return TypeRetrieve, true
+	case PullTopsAndBottoms:
+		return TypeRetrieveTopsAndBottoms, true
+	}
+	return TypeRetrieve, false
+}
 
 // Order statuses aliased from protocol.
 //

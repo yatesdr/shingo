@@ -160,7 +160,8 @@ func TestCensus_EdgeWireShapes(t *testing.T) {
 var constructors = []string{"createRetrieveOrder", "createMoveOrder", "createComplexOrder"}
 
 func isCreateOrderName(n string) bool {
-	return (strings.HasPrefix(n, "Create") || strings.HasPrefix(n, "create")) && strings.Contains(n, "Order")
+	return (strings.HasPrefix(n, "Create") || strings.HasPrefix(n, "create")) &&
+		(strings.Contains(n, "Order") || strings.HasSuffix(n, "Pull"))
 }
 
 // TestCensus_EdgeConstructorFunnel pins every Create*Order method on Manager
@@ -213,6 +214,7 @@ func TestCensus_EdgeConstructorFunnel(t *testing.T) {
 	}
 	sitesEqual(t, "the Edge's constructor funnel", got, map[string]string{
 		"CreateRetrieveOrder":                  "createRetrieveOrder",
+		"CreateTopsAndBottomsPull":             "createRetrieveOrder",
 		"CreateMoveOrder":                      "createMoveOrder",
 		"CreateMoveOrderWithPayloadCode":       "createMoveOrder",
 		"CreateMoveOrderWithUOP":               "createMoveOrder",

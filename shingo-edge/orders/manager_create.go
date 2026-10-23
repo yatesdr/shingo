@@ -25,19 +25,36 @@ import (
 // origin is REQUIRED. There is no unattributed twin of this any more — see the
 // Origin type, and see specimen (c) for what the twin cost.
 func (m *Manager) CreateRetrieveOrder(processNodeID *int64, retrieveEmpty bool, quantity int64, deliveryNode, sourceNode, stagingNode, loadType, payloadCode string, autoConfirm, skipAutoConfirm bool, origin Origin) (*orders.Order, error) {
-	return m.createRetrieveOrder(processNodeID, retrieveEmpty, quantity,
+	pull := PullFull
+	if retrieveEmpty {
+		pull = PullEmpty
+	}
+	return m.createRetrieveOrder(processNodeID, pull, quantity,
 		deliveryNode, sourceNode, stagingNode, loadType, payloadCode, autoConfirm, skipAutoConfirm, origin)
 }
 
-// createRetrieveOrder is the one body.
-func (m *Manager) createRetrieveOrder(processNodeID *int64, retrieveEmpty bool, quantity int64,
+// CreateTopsAndBottomsPull creates SEND BACK's pull: tops & bottoms of payload
+// (the running style's part) from source (the claim's inbound source) to
+// delivery (the press's outside position), quantity 1, no load type, on the
+// process node given (the outside's own: it never touches the press's runtime
+// slots). Auto-confirmed: the outside has no tile and no operator receives it.
+// Core plans it as an empty at exactly that height (retrieve_tops_bottoms).
+func (m *Manager) CreateTopsAndBottomsPull(processNodeID *int64, delivery, source, payload string, origin Origin) (*orders.Order, error) {
+	return m.createRetrieveOrder(processNodeID, PullTopsAndBottoms, 1, delivery, source, "", "", payload, true, false, origin)
+}
+
+// createRetrieveOrder is the one body. pull is what it brings (Pull.wire): it
+// decides the row's type, the wire's type and flag, the log line and the
+// created event, so no caller and no line here names a type of its own.
+func (m *Manager) createRetrieveOrder(processNodeID *int64, pull Pull, quantity int64,
 	deliveryNode, sourceNode, stagingNode, loadType, payloadCode string,
 	autoConfirm, skipAutoConfirm bool, origin Origin) (*orders.Order, error) {
 	orderUUID := uuid.New().String()
+	orderType, retrieveEmpty := pull.wire()
 
 	payloadDesc, payloadCode := m.lookupPayloadMeta(processNodeID, payloadCode)
 
-	orderID, err := m.db.CreateOrder(orderUUID, TypeRetrieve,
+	orderID, err := m.db.CreateOrder(orderUUID, orderType,
 		processNodeID, retrieveEmpty,
 		quantity, deliveryNode, stagingNode, sourceNode, loadType, autoConfirm, payloadCode,
 		origin.ID, origin.Class)
@@ -47,7 +64,7 @@ func (m *Manager) createRetrieveOrder(processNodeID *int64, retrieveEmpty bool, 
 
 	env, envErr := m.sender.build(protocol.TypeOrderRequest, &protocol.OrderRequest{
 		OrderUUID:       orderUUID,
-		OrderType:       TypeRetrieve,
+		OrderType:       orderType,
 		PayloadDesc:     payloadDesc,
 		PayloadCode:     payloadCode,
 		RetrieveEmpty:   retrieveEmpty,
@@ -62,8 +79,8 @@ func (m *Manager) createRetrieveOrder(processNodeID *int64, retrieveEmpty bool, 
 	})
 	m.enqueueAndAutoSubmit(orderID, orderUUID, env, envErr)
 
-	m.DebugLog.Log("create: type=%s id=%d uuid=%s delivery=%s", TypeRetrieve, orderID, orderUUID, deliveryNode)
-	m.emitter.EmitOrderCreated(orderID, orderUUID, TypeRetrieve, nil, processNodeID)
+	m.DebugLog.Log("create: type=%s id=%d uuid=%s delivery=%s", orderType, orderID, orderUUID, deliveryNode)
+	m.emitter.EmitOrderCreated(orderID, orderUUID, orderType, nil, processNodeID)
 
 	return m.db.GetOrder(orderID)
 }
