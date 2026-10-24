@@ -9,9 +9,9 @@
 // in operator-flow.modes.test.js; every card inside its frame, no two
 // overlapping and every text inside its card in operator-flow.geometry.test.js.
 //
-// operator-flow.js imports shared/scene-geom.js and the station's util/state
-// modules. vm runs a script: scene-geom's exports are stripped to plain
-// declarations and evaluated first, then the flow module with its imports
+// operator-flow.js imports the station's util/state modules and reads the
+// model off window. vm runs a script: the model first, scene-geom's exports
+// stripped to plain declarations, then the flow module with its imports
 // stripped and the two local helpers it uses stubbed. Exit 0 = pass.
 
 'use strict';
@@ -55,6 +55,22 @@ function load() {
     const src = raw.replace(/^import[^;]+;\s*/mg, '').replace(/^export /mg, '');
     if (src === raw) throw new Error('operator-flow.js no longer starts its imports/exports at line start; update load()');
     vm.runInContext(src + '\n__out = { renderFlowPicture, pictureRows, CARD_W, CARD_H };', ctx);
+    // THE MODULE PICTURE, BY NAME. Every changeover cell here — plant A's
+    // press and the synthetic shapes — is drawn by relation on the board now
+    // (relationScope); what this file holds is the module picture's order,
+    // dock and route strips, which still draw every cell the gate leaves alone
+    // and every fallback. So every render asks for it (relation: false) on
+    // the caller's own opts object, which is where the picture reports its
+    // height, and so do the row words, which are the module picture's world Y
+    // here. The relation picture's pins are in operator-flow.geometry.test.js.
+    const draw = ctx.__out.renderFlowPicture;
+    ctx.__out.renderFlowPicture = (view, opts) => {
+        opts = opts || {};
+        if (opts.relation === undefined) opts.relation = false;
+        return draw(view, opts);
+    };
+    const rows = ctx.__out.pictureRows;
+    ctx.__out.pictureRows = (cell, opts) => rows(cell, Object.assign({ relation: false }, opts || {}));
     return ctx.__out;
 }
 

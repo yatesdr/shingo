@@ -157,6 +157,13 @@
   --viz-orange: #c2410c;          /* between amber and coral in the ramp; see dark block */
   --viz-coral: #e11d48;
   --viz-green: #059669;
+  /* Recipe group identities (recipe groups, 2026-10-24): Left Hand and Right
+   * Hand on a two-off, as the L/R tag on the cell picture's cards and nowhere
+   * else. An identity like a robot ("this one, not that one"), so a token of
+   * its own rather than the accent, a robot hue or a status; it aliases a
+   * mark hue, so it follows the theme with it. */
+  --group-1: var(--viz-sky);
+  --group-2: var(--viz-orange);
 
   /* Chip ink — the LABEL colour of a health chip, chosen independently of the
    * chip's fill. This group exists because a chip that colours its label with
@@ -499,6 +506,8 @@
   --viz-orange: #f97316;          /* sits between amber and coral in the band ramp */
   --viz-coral: #fb7185;
   --viz-green: #34d399;
+  --group-1: var(--viz-sky);       /* recipe group identities: see the light block */
+  --group-2: var(--viz-orange);
 
   /* Chip ink (dark) — see the light block for what this group is for.
    * Dark needed no new hues: on a dark surface a 15-20% wash of a bright mark

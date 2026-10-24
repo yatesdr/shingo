@@ -1470,7 +1470,9 @@ function dockNotes(state) {
     };
 }
 
-function cardLines(state, node) {
+// cardLines is a position card's caption, line by line. relation says the card
+// is drawn on the relation picture (operator-flow's relationPlacement).
+function cardLines(state, node, relation) {
     const c = state.cells[node];
     if (!c) return [];
     // A MODE WITH NO CARD LINE IS A CARD, NOT A CRASH. CARDLINE holds the four
@@ -1511,7 +1513,7 @@ function cardLines(state, node) {
     // picture (sentencesFromView; operator-display.html loads no
     // flowspec-data.js) cannot read a row, and the cell view marks every
     // partner "deck", so there it keeps the press words rather than guess.
-    if (!state.flowspec) return legacyCardWords(state, node);
+    if (!state.flowspec) return legacyCardWords(state, node, relation);
     let press = false;
     for (const p of state.positions) {
         const o = state.cells[p.core_node_name];
@@ -1522,13 +1524,19 @@ function cardLines(state, node) {
         if (o.staging === node) return ['Inbound staging', 'for ' + p.core_node_name];
         if (o.parkOld === node) return ['Outbound staging', 'for ' + p.core_node_name];
     }
+    // A POSITION NOTHING NAMES HAS NO CAPTION ON THE RELATION PICTURE, as the
+    // mock draws every idle card. It said its Kind there too, and Kind is not
+    // the row: Press 6's back line, PLN_013, 014 and 015, is Kind "front", and
+    // its three faded cards read "front position". The relation picture has
+    // no row words anywhere (pictureRows). Kind stays the module picture's
+    // word, and its fallback's.
+    if (relation) return [];
     if (!press) return ['position'];
-    const pos = state.positions.find(p => p.core_node_name === node);
-    return [(pos && pos.kind === 'back') ? 'back position' : 'front position'];
+    return kindWords(state, node);
 }
 
 // legacyCardWords is cardLines' caption for a model with no flowspec.
-function legacyCardWords(state, node) {
+function legacyCardWords(state, node, relation) {
     for (const p of state.positions) {
         const o = state.cells[p.core_node_name];
         if (!o || !o.on || !o.mode) continue;
@@ -1536,6 +1544,12 @@ function legacyCardWords(state, node) {
         if (o.staging === node) return ['Inbound staging', 'for ' + p.core_node_name];
         if (o.parkOld === node) return ['Outbound staging', 'for ' + p.core_node_name];
     }
+    return relation ? [] : kindWords(state, node);
+}
+
+// kindWords is an idle press position's caption off the relation picture:
+// CellPosition.Kind, as the schematic always read it.
+function kindWords(state, node) {
     const pos = state.positions.find(p => p.core_node_name === node);
     return [(pos && pos.kind === 'back') ? 'back position' : 'front position'];
 }
@@ -1561,7 +1575,7 @@ function pressIndexRow(state, cell) {
 //
 // The base picture travels through untouched (Object.assign over it), so the
 // positions keep their geometry, their kind and their partner captions; only
-// the claim is the draft's.
+// the claim is the draft's — and so is each lane's `serves`, below.
 function pictureCells(state, base) {
     base = base || { positions: [] };
     const positions = (base.positions || []).map(p => {
@@ -1570,7 +1584,13 @@ function pictureCells(state, base) {
         return Object.assign({}, p, {
             claim: on ? {
                 swap_mode: c.mode, payload_code: c.part || '',
-                paired_core_node: c.paired || '', inbound_staging: c.staging || '',
+                paired_core_node: c.paired || '',
+                // THE THIRD IS A CARD (F8): the relation picture draws a press
+                // index's second paired position in its own grid cell, with the
+                // chevrons it acts, so the adapter carries it by the server's
+                // name like every field the picture reads.
+                second_paired_core_node: c.secondPaired || '',
+                inbound_staging: c.staging || '',
                 outbound_staging: c.parkOld || '', inbound_source: c.source || '',
                 outbound_destination: c.dest || '',
                 // THE ROUTE STRIP'S FIELD, and the picture reads it by the
@@ -1583,7 +1603,233 @@ function pictureCells(state, base) {
             } : null,
         });
     });
-    return Object.assign({}, base, { positions: positions });
+    // THE BAND IS PLACED BY THE CLAIMS THAT USE IT, AND THESE ARE THE DRAFT'S.
+    // The board's picture arrives with each lane's `serves` from Go (every
+    // position whose running claim stages there, inbound or outbound); a draft
+    // replaces every claim, so it replaces `serves` the same way, and a lane the
+    // draft names that the base does not carry joins the list. Without this a
+    // draft's band would sit under the running flow's spots. A lane that is a
+    // position is a card of its own and never in this list.
+    const isPos = new Set(positions.map(p => p.core_node_name));
+    const serves = {};
+    for (const p of positions) {
+        const c = p.claim;
+        if (!c) continue;
+        for (const n of [c.inbound_staging, c.outbound_staging]) {
+            if (!n || isPos.has(n)) continue;
+            serves[n] = serves[n] || [];
+            if (serves[n].indexOf(p.core_node_name) < 0) serves[n].push(p.core_node_name);
+        }
+    }
+    const staging = (base.staging || []).map(s => Object.assign({}, s, { serves: serves[s.core_node_name] || [] }));
+    const listed = new Set(staging.map(s => s.core_node_name));
+    for (const n of Object.keys(serves)) {
+        if (!listed.has(n)) staging.push({ core_node_name: n, serves: serves[n] });
+    }
+    return Object.assign({}, base, { positions: positions, staging: staging });
+}
+
+// ── the picture by relation ──────────────────────────────────────────────────
+//
+// relationLayout is where each card of a changeover cell's picture stands
+// (SYNTH round 2, rows 12-15): which spot is left or right of which, which
+// row stands nearest the press, each position in a cell of its own — and
+// nothing to scale (owner, 2026-10-23: "whats important is showing relation
+// to points"). Pure and here, beside pictureCells, so the node pins, the HMI
+// and the desktop call one copy; operator-flow.js draws what it returns.
+//
+// THE RULE, as an engineer checks it:
+//
+//   (a) Only the picture's own positions are placed. A staging lane that is
+//       not a position goes in a band under the grid.
+//   (b) Start with every position in one cell. Cut the plan at its widest
+//       remaining gap — between two neighbouring x values (a new column) or
+//       two neighbouring y values (a new row), a north-south gap counting
+//       1.25 times its size — and only while two positions still share a cell.
+//       So spots that line up (a drifting weld line, a deck just off its
+//       back line) stay on one line, and spots side by side however close
+//       are split. A column is a run of x values, never a distance: no gap on
+//       the floor is ever an empty column.
+//   (c) A spot alone in its column makes no row: it takes the row it stands
+//       nearest, and the row nearer the grid's middle when it stands 30-70 %
+//       of the way between two (so an on-deck spot between rows lines up with
+//       the press spots it stands between). An on-deck spot whose pairing is
+//       known takes its press spot's row instead — the caller's `pairs` when
+//       given ({deck: [press, ...]}, held fixed while the operator moves
+//       places: the lead's D11), else the picture's own claims. A deck whose
+//       known presses stand in several rows keeps the band rule, and a row
+//       change that would put two positions in one cell is not made.
+//   (d) A cell where no two spots share a row is one row, in the line's order,
+//       north end on the left (`turned`).
+//   (e) Lanes in the band sit centred under the spots whose claims use them
+//       (`staging[].serves` — every claim, never partner_of), pushed right where
+//       two would touch; a lane no claim uses goes at the end, offered.
+//
+// FALLBACK: a position off the map, or two on one point, and there is no
+// grid — `fallback` is the sentence the picture prints over today's module
+// picture instead (the lead's D12).
+//
+// Returns {cells: {node: {c, r}}, ncols, nrows, band: [{node, c, offered}],
+// fallback: '' | sentence, turned}. Column 0 is the west, row 0 the north; a
+// band lane's c is a column position, fractional when it is centred between.
+
+const ROW_BIAS = 1.25;   // a north-south gap weighs a quarter more: front and back is the relation named first
+const LANE_MIN = 0.6;    // two band lanes' centres, in columns: 116-wide slots at a 210 pitch, a gap between
+
+function isNum(v) { return typeof v === 'number' && isFinite(v); }
+
+// hasCoords is the ONE coordinates predicate: the cell is on the plant map,
+// every position of it. The module picture's order and the row words read it
+// too; they read two different tests before, and disagreed on a cell whose
+// geometry flag was false while its x values were set.
+function hasCoords(cell) {
+    const ps = (cell && cell.positions) || [];
+    return !!(cell && cell.geometry) && ps.length > 0 && ps.every(p => isNum(p.x) && isNum(p.y));
+}
+
+// relationPairs is the picture's own pairing: each claimed position's paired
+// and second paired position that is a position with no claim of its own.
+function relationPairs(cell) {
+    const ps = (cell && cell.positions) || [];
+    const isPos = new Set(ps.map(p => p.core_node_name));
+    const claimed = new Set(ps.filter(p => p.claim && p.claim.swap_mode).map(p => p.core_node_name));
+    const out = {};
+    for (const p of ps) {
+        const c = p.claim;
+        if (!c || !c.swap_mode) continue;
+        for (const n of [c.paired_core_node, c.second_paired_core_node]) {
+            if (!n || !isPos.has(n) || claimed.has(n)) continue;
+            out[n] = out[n] || [];
+            if (out[n].indexOf(p.core_node_name) < 0) out[n].push(p.core_node_name);
+        }
+    }
+    return out;
+}
+
+// offMapSentence says which positions put the cell on the fallback.
+function offMapSentence(positions) {
+    const off = positions.filter(p => !(isNum(p.x) && isNum(p.y))).map(p => p.core_node_name);
+    if (!off.length || off.length === positions.length) return 'Shown in order: this cell is not on the plant map.';
+    if (off.length === 1) return 'Shown in order: ' + off[0] + ' is not on the plant map.';
+    const named = off.length > 3 ? off.slice(0, 2).concat([(off.length - 2) + ' more']) : off;
+    return 'Shown in order: ' + named.slice(0, -1).join(', ') + ' and ' + named[named.length - 1] +
+        ' are not on the plant map.';
+}
+
+function relationLayout(cell, opts) {
+    const positions = ((cell && cell.positions) || []).filter(p => p && p.core_node_name);
+    const out = { cells: {}, ncols: 0, nrows: 0, band: [], fallback: '', turned: false };
+    if (!positions.length) return out;
+    if (!hasCoords(cell)) { out.fallback = offMapSentence(positions); return out; }
+    const pts = positions.map(p => ({ n: p.core_node_name, x: p.x, y: p.y }));
+
+    // (b) the cuts, widest first; equal weights cut x first, then west/south first.
+    const gapsOf = (vals, axis) => {
+        const v = [...new Set(vals)].sort((a, b) => a - b);
+        const g = [];
+        for (let i = 1; i < v.length; i++) g.push({ axis: axis, at: (v[i - 1] + v[i]) / 2, size: v[i] - v[i - 1] });
+        return g;
+    };
+    const weight = g => (g.axis === 'y' ? ROW_BIAS : 1) * g.size;
+    const gaps = gapsOf(pts.map(p => p.x), 'x').concat(gapsOf(pts.map(p => p.y), 'y'))
+        .sort((a, b) => weight(b) - weight(a) || (a.axis === b.axis ? a.at - b.at : (a.axis === 'x' ? -1 : 1)));
+    const cutX = [], cutY = [];
+    const place = () => {
+        const cells = {};
+        for (const p of pts) cells[p.n] = { c: cutX.filter(v => v < p.x).length, r: cutY.filter(v => v > p.y).length };
+        return cells;
+    };
+    const clash = cells => {
+        const seen = {};
+        for (const p of pts) {
+            const k = cells[p.n].c + ',' + cells[p.n].r;
+            if (seen[k]) return [seen[k], p.n];
+            seen[k] = p.n;
+        }
+        return null;
+    };
+    let cells = place();
+    for (const g of gaps) {
+        if (!clash(cells)) break;
+        (g.axis === 'x' ? cutX : cutY).push(g.at);
+        cells = place();
+    }
+    const point = clash(cells);
+    if (point) {
+        out.fallback = 'Shown in order: ' + point[0] + ' and ' + point[1] + ' stand on one point of the plant map.';
+        return out;
+    }
+
+    // (c) a spot alone in its column takes a row the others make.
+    const perCol = {};
+    for (const p of pts) perCol[cells[p.n].c] = (perCol[cells[p.n].c] || 0) + 1;
+    const lone = p => perCol[cells[p.n].c] === 1;
+    const lines = {};
+    for (const p of pts) if (!lone(p)) (lines[cells[p.n].r] = lines[cells[p.n].r] || []).push(p.y);
+    const rows = Object.keys(lines).map(Number).sort((a, b) => a - b)
+        .map(r => ({ r: r, y: lines[r].reduce((a, b) => a + b, 0) / lines[r].length }));
+    if (rows.length) {
+        const mid = (rows.length - 1) / 2;
+        for (const p of pts) {
+            if (!lone(p)) continue;
+            let k = 0;
+            if (p.y <= rows[rows.length - 1].y) k = rows.length - 1;
+            else if (p.y < rows[0].y) {
+                const i = rows.findIndex((row, j) => j + 1 < rows.length && p.y <= row.y && p.y >= rows[j + 1].y);
+                const f = (rows[i].y - p.y) / (rows[i].y - rows[i + 1].y);
+                k = f > 0.3 && f < 0.7 ? (Math.abs(i - mid) <= Math.abs(i + 1 - mid) ? i : i + 1) : (f < 0.5 ? i : i + 1);
+            }
+            cells[p.n].r = rows[k].r;
+        }
+    }
+    // ...and a deck whose pairing is known takes its press spot's row.
+    const pairs = (opts && opts.pairs) || relationPairs(cell);
+    for (const p of pts) {
+        const presses = (pairs[p.n] || []).filter(n => n !== p.n && cells[n]);
+        const rs = [...new Set(presses.map(n => cells[n].r))];
+        if (rs.length !== 1) continue;
+        const c = cells[p.n].c, to = rs[0];
+        if (pts.some(q => q.n !== p.n && cells[q.n].c === c && cells[q.n].r === to)) continue;
+        cells[p.n].r = to;
+    }
+    const used = [...new Set(pts.map(p => cells[p.n].r))].sort((a, b) => a - b);
+    for (const p of pts) cells[p.n].r = used.indexOf(cells[p.n].r);
+    out.ncols = cutX.length + 1;
+    out.nrows = used.length;
+
+    // (d) a line is one row, north on the left.
+    const perRow = {};
+    for (const p of pts) perRow[cells[p.n].r] = (perRow[cells[p.n].r] || 0) + 1;
+    if (out.nrows > 1 && Object.keys(perRow).every(r => perRow[r] === 1)) {
+        for (const p of pts) cells[p.n] = { c: cells[p.n].r, r: 0 };
+        out.ncols = out.nrows;
+        out.nrows = 1;
+        out.turned = true;
+    }
+    out.cells = cells;
+
+    // (e) the band.
+    const isPos = new Set(pts.map(p => p.n));
+    const seen = new Set();
+    const usedLanes = [], offered = [];
+    for (const s of (cell.staging || [])) {
+        const n = s && s.core_node_name;
+        if (!n || isPos.has(n) || seen.has(n)) continue;
+        seen.add(n);
+        const by = (s.serves || []).filter(x => cells[x]);
+        if (by.length) usedLanes.push({ node: n, c: by.reduce((a, x) => a + cells[x].c, 0) / by.length });
+        else offered.push(n);
+    }
+    usedLanes.sort((a, b) => a.c - b.c || (a.node < b.node ? -1 : a.node > b.node ? 1 : 0));
+    offered.sort();
+    let last = -Infinity;
+    const put = (node, c, isOffered) => {
+        last = Math.max(c, last + LANE_MIN);
+        out.band.push({ node: node, c: Math.round(last * 100) / 100, offered: isOffered });
+    };
+    for (const l of usedLanes) put(l.node, l.c, false);
+    for (const n of offered) put(n, out.band.length ? last + LANE_MIN : 0, true);
+    return out;
 }
 
 // ── robot drives via ─────────────────────────────────────────────────────────
@@ -2238,7 +2484,7 @@ function savedBody(styleId, stationId) {
 (function () {
     const api = {
         init, reduce, toCells, takenOff, applyPreview,
-        legs, dockNotes, cellRobots, cardLines, pictureCells, bar,
+        legs, dockNotes, cellRobots, cardLines, pictureCells, relationLayout, hasCoords, bar,
         findings, findingShort,
         modeLabels, rowColumns, fieldRequired, fieldLabel, shortPart, robotWords,
         partOffers, styleFacts,

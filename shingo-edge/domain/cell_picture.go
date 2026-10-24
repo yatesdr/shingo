@@ -1,6 +1,7 @@
 package domain
 
 import (
+	"slices"
 	"sort"
 )
 
@@ -15,9 +16,12 @@ import (
 
 // CellPicture is one station's cell. Positions is every press position in
 // process_nodes.sequence order; Geometry says whether every one of them was
-// placed on the map, and when it is false the renderer draws them evenly
-// spaced under a "positions not to scale" caption. It is never nil for a
-// station: a cell with no nodes is an empty picture, not a missing one.
+// placed on the map. The relation picture reads the coordinates for which
+// spot stands beside which, never for distances; when Geometry is false it
+// draws the module picture in sequence order with one line saying so ("Shown
+// in order: PLN_008 is not on the plant map", operator-flow.js). It is never
+// nil for a station: a cell with no nodes is an empty picture, not a missing
+// one.
 type CellPicture struct {
 	Positions []CellPosition `json:"positions"`
 	Geometry  bool           `json:"geometry"`
@@ -97,6 +101,12 @@ type CellStaging struct {
 	PartnerOf   string `json:"partner_of,omitempty"`
 	PartnerKind string `json:"partner_kind,omitempty"`
 	Field       string `json:"field,omitempty"`
+	// Serves is EVERY position whose running claim stages here, inbound or
+	// outbound, in picture order (SYNTH-round2 row 20): the relation picture
+	// centres the lane under all of them. PartnerOf names the first only, and
+	// Hopkinsville's SLN_010 serves ALN_011 and ALN_012. Empty on an offered
+	// lane.
+	Serves []string `json:"serves,omitempty"`
 }
 
 // CellPosition is one press position. X/Y are the bin location's scene
@@ -401,7 +411,8 @@ func BuildCellPicture(in CellPictureInput) *CellPicture {
 
 // stagingCards is the staging list: the lanes the running claims park at, then
 // the ones the routing set offers, minus anything that is a position of this
-// cell.
+// cell, each with the positions it serves. From the claims in hand: no
+// statement.
 //
 // SORTED BY NAME, not by the order the claims happened to iterate in: the
 // claims arrive from a map, and a band of cards that reshuffled itself between
@@ -434,7 +445,8 @@ func stagingCards(in CellPictureInput, positions []CellPosition) []CellStaging {
 	}
 	// In picture order, so "first" is the same position on every read: a map
 	// range over the claims captioned a shared lane for a different position
-	// each time.
+	// each time. The same walk gathers each lane's full set of users.
+	serves := map[string][]string{}
 	for _, p := range positions {
 		c, ok := in.Claims[p.CoreNodeName]
 		if !ok {
@@ -442,12 +454,18 @@ func stagingCards(in CellPictureInput, positions []CellPosition) []CellStaging {
 		}
 		add(c.InboundStaging, p.CoreNodeName, "inbound_staging")
 		add(c.OutboundStaging, p.CoreNodeName, "outbound_staging")
+		for _, lane := range []string{c.InboundStaging, c.OutboundStaging} {
+			if lane != "" && !isPosition[lane] && !slices.Contains(serves[lane], p.CoreNodeName) {
+				serves[lane] = append(serves[lane], p.CoreNodeName)
+			}
+		}
 	}
 	for _, name := range in.StagingOffers {
 		add(name, "", "")
 	}
 	out := make([]CellStaging, 0, len(byName))
-	for _, card := range byName {
+	for name, card := range byName {
+		card.Serves = serves[name]
 		out = append(out, card)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].CoreNodeName < out[j].CoreNodeName })

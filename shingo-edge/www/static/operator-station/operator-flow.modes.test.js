@@ -56,8 +56,13 @@ function load() {
 const m = load();
 
 // renderOne draws the picture the board draws — read-only, nothing editable,
-// no frame (the picture's rest width).
-function renderOne(view, opts) { return m.renderFlowPicture(view, opts); }
+// no frame (the picture's rest width) — as MODULES. Every view here is a
+// changeover cell, which the board now draws by relation (relationScope); this
+// file characterises the module picture, which still draws every cell the
+// gate leaves alone and every fallback, so it asks for it by name. The
+// relation picture's per-mode chevrons are pinned in
+// operator-flow.geometry.test.js.
+function renderOne(view, opts) { return m.renderFlowPicture(view, Object.assign({ relation: false }, opts || {})); }
 
 function count(svg, re) { return (svg.match(re) || []).length; }
 

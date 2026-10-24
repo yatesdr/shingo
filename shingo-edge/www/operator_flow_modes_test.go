@@ -308,7 +308,7 @@ vm.runInContext(fs.readFileSync(%q, 'utf8'), ctx);
 vm.runInContext(fs.readFileSync(%q, 'utf8'), ctx);
 vm.runInContext(fs.readFileSync(%q, 'utf8').replace(/^export /mg, ''), ctx);
 const flow = fs.readFileSync(%q, 'utf8').replace(/^import[^;]+;\s*/mg, '').replace(/^export /mg, '');
-vm.runInContext(flow + '\n__out = { renderFlowPicture, sentencesFromModel };', ctx);
+vm.runInContext(flow + '\n__out = { renderFlowPicture, sentencesFromModel, relationPlacement };', ctx);
 const F = ctx.__out, M = ctx.window.ComposerModel;
 const out = {};
 for (const inp of JSON.parse(fs.readFileSync(%q, 'utf8'))) {
@@ -328,8 +328,10 @@ for (const inp of JSON.parse(fs.readFileSync(%q, 'utf8'))) {
     processClaims: (comp.styles || []).reduce((all, x) => all.concat(x.claims || []), []),
     advanced: st.advanced || {},
   });
-  const dob = { selected: null, findings: {}, editable: true, frame: { w: 1084 }, sentences: F.sentencesFromModel(model) };
-  out[inp.name + '-desktop'] = F.renderFlowPicture({ cell: M.pictureCells(model, cell) }, dob) + '\n<!-- height ' + dob.height + ' -->\n';
+  const pic = M.pictureCells(model, cell);
+  const dob = { selected: null, findings: {}, editable: true, frame: { w: 1084 } };
+  dob.sentences = F.sentencesFromModel(model, !!F.relationPlacement(pic, dob));
+  out[inp.name + '-desktop'] = F.renderFlowPicture({ cell: pic }, dob) + '\n<!-- height ' + dob.height + ' -->\n';
 }
 process.stdout.write(JSON.stringify(out));
 `, st+"/flowspec-data.js", st+"/composer-model.js", abs("..", "..", "shared", "scene-geom.js"),

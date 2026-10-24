@@ -2,6 +2,7 @@ package domain
 
 import (
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -258,5 +259,43 @@ func TestBuildCellPicture_ASharedLaneIsCaptionedInPictureOrder(t *testing.T) {
 		if len(pic.Staging) != 1 || pic.Staging[0].PartnerOf != "PLN_01" {
 			t.Fatalf("read %d: staging %+v, want one SLN_07 card for PLN_01", i, pic.Staging)
 		}
+	}
+}
+
+// A LANE NAMES EVERY SPOT IT SERVES (SYNTH-round2 row 20): the relation
+// picture centres a lane under the spots whose running claims stage at it,
+// in or out, all of them, in picture order. PartnerOf keeps its first claim.
+// Asserted on the wire, where the picture lane reads it.
+func TestBuildCellPicture_ALaneNamesEverySpotItServes(t *testing.T) {
+	pic := BuildCellPicture(CellPictureInput{
+		StationID: 5,
+		Nodes:     stagingNodes("ALN_011", "ALN_012", "ALN_013", "ALN_014"),
+		Claims: map[string]NodeClaim{
+			"ALN_011": {CoreNodeName: "ALN_011", SwapMode: protocol.SwapModeSingleRobot, InboundStaging: "SLN_010", OutboundStaging: "SLN_010"},
+			"ALN_012": {CoreNodeName: "ALN_012", SwapMode: protocol.SwapModeTwoRobot, InboundStaging: "SLN_010"},
+			"ALN_013": {CoreNodeName: "ALN_013", SwapMode: protocol.SwapModeSingleRobot, InboundStaging: "SLN_011", OutboundStaging: "SLN_010"},
+			"ALN_014": {CoreNodeName: "ALN_014", SwapMode: protocol.SwapModeTwoRobot, InboundStaging: "SLN_011"},
+		},
+		StagingOffers: []string{"SLN_012"},
+	})
+	raw, err := json.Marshal(pic.Staging)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	var cards []map[string]any
+	if err := json.Unmarshal(raw, &cards); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	got := map[string]string{}
+	for _, c := range cards {
+		got[c["core_node_name"].(string)] = fmt.Sprint(c["serves"], " ", c["partner_of"])
+	}
+	want := map[string]string{
+		"SLN_010": "[ALN_011 ALN_012 ALN_013] ALN_011",
+		"SLN_011": "[ALN_013 ALN_014] ALN_013",
+		"SLN_012": "<nil> <nil>",
+	}
+	if fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Errorf("staging serves = %v, want %v", got, want)
 	}
 }

@@ -201,6 +201,20 @@ other first. The separation from the accent is carried by ROLE, not by hue —
 an accent mark is a border or a filled control, a robot mark is a stroked path
 or a chevron, and no element is both.
 
+### Recipe group identities
+
+| Token | Value | What it is |
+|---|---|---|
+| `--group-1` | `var(--viz-sky)` | a recipe's first group (Left Hand on a two-off) — the fill of its L tag on the cell picture's cards |
+| `--group-2` | `var(--viz-orange)` | its second group (Right Hand) — the fill of the R tag |
+
+A recipe group is an identity in the robot hues' sense — "this one, not that
+one" — so it has a token of its own rather than the accent, a robot hue or a
+status, and it is drawn **on the tag only**: the card's border and fill stay
+steel. The tokens alias mark hues, so they follow the theme with them (both
+blocks of `tokens.css` declare them). `--viz-orange` sits near the warning
+hue; the tag's shape and its letter carry the difference.
+
 ### The ink on a fill, and the scrim (U9)
 
 **Two tokens that did not exist, so every component wrote the literal instead.**

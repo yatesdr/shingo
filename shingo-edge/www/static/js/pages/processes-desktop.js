@@ -12,7 +12,7 @@
 //
 // THE DESKTOP VERB IS SAVE (SPEC §0.5). This page never calls changeover/start.
 
-import { renderFlowPicture, pictureRows, sentencesFromModel, moduleOf } from '/static/operator-station/operator-flow.js';
+import { renderFlowPicture, pictureRows, relationPlacement, sentencesFromModel, moduleOf } from '/static/operator-station/operator-flow.js';
 import { esc } from '/static/shared/esc.js';
 import {
     makeProjector, rotate90For, dist2, cubicLength, cubicPathD, laneKey,
@@ -797,7 +797,36 @@ function bindRailSearch() {
 
 // The model's own cell shape, in the shape renderFlowPicture draws — the same
 // adapter the station uses, from the same place.
-function cellFromModel() { return M().pictureCells(S.model, S.composer.cell); }
+function cellFromModel() { return M().pictureCells(S.model, draftCell()); }
+
+// draftCell is the cell a draft is drawn over: the process's whole cell, or —
+// in a recipe draft — the recipe's own station's (SYNTH round 2 row 23).
+//
+// A RECIPE IS ONE STATION'S. The composer read's cell is process-wide, so a
+// press whose process also holds an unloader station carries that station's
+// windows from across the plant, and drawn by relation they put far columns
+// on the recipe's picture. The ★ heads — the draft's own
+// cells — name the station; its positions and the stationless ones (the back
+// and staging slots a press shares) are the recipe's picture. A filter over
+// the read the page already holds: no request.
+function draftCell() {
+    const base = S.composer.cell || { positions: [] };
+    if (!S.shapeDraft || !S.model) return base;
+    const station = {};
+    for (const p of (base.positions || [])) station[p.core_node_name] = p.station_id || 0;
+    const heads = new Set(M().toCells(S.model).map(c => station[c.core_node_name]).filter(Boolean));
+    if (!heads.size) return base;
+    return Object.assign({}, base, {
+        positions: (base.positions || []).filter(p => !p.station_id || heads.has(p.station_id)),
+    });
+}
+
+// pictureOpts is how this page asks for the picture: by relation when the
+// process has a recipe — the floor sets this cell up, so the engineer sees the
+// picture the floor sees — and otherwise as the scope gate decides.
+function pictureOpts() {
+    return ((S.composer && S.composer.presets) || []).length ? { relation: true } : {};
+}
 
 // PICTURE_H is the height of a frame the picture reported nothing for — an
 // empty cell, whose one line of text sits inside it.
@@ -808,27 +837,33 @@ const PICTURE_W_FALLBACK = 1084;   // the main column at the spec's 1440, for a 
 function drawPicture(pass) {
     const svg = $('pd-svg');
     if (!svg || !S.model) return;
-    // THE PICTURE IS DRAWN AT THE FRAME'S WIDTH AND ITS OWN HEIGHT. The
-    // renderer lays out in absolute pixels and wraps its modules at the width
-    // it is given, so the width is the frame's (.pd-pic, the svg's parent —
-    // the svg's own width is whatever the last draw set). The height is not
-    // the frame's to choose: the picture reports it through opts.height, and
-    // the svg is set to exactly that size with a viewBox to match, so a card
-    // is CARD_W wide on screen and nothing is ever scaled to fit. The frame
-    // takes that height whole (.pd-pic does not shrink); when it and the
-    // table come to more than the window, the main column scrolls.
+    // THE PICTURE IS DRAWN INTO THE FRAME'S WIDTH AT ITS OWN SIZE. The
+    // renderer lays out in absolute pixels — the module picture wraps at the
+    // width it is given, the relation picture centres in it — so the width
+    // asked for is the frame's (.pd-pic, the svg's parent — the svg's own
+    // width is whatever the last draw set). The size is not the frame's to
+    // choose: the picture reports it through opts.height and opts.width (wider
+    // than the frame when a relation grid is), and the svg is set to exactly
+    // that size with a viewBox to match, so a card is CARD_W wide on screen
+    // and nothing is ever scaled to fit. The frame takes that height whole
+    // (.pd-pic does not shrink) and scrolls a wider picture sideways; when it
+    // and the table come to more than the window, the main column scrolls.
     const frameEl = svg.parentNode;
     const w = Math.round((frameEl && frameEl.clientWidth) || PICTURE_W_FALLBACK);
     const fs = M().findings(S.model);
     const byNode = {};
     for (const f of fs) if (f.node && !byNode[f.node]) byNode[f.node] = f.short;
     const p = process();
-    const o = {
+    const cell = cellFromModel();
+    const o = Object.assign({
         selected: S.selected, findings: byNode, editable: true, frame: { w: w },
-        sentences: sentencesFromModel(S.model),
-    };
-    const markup = renderFlowPicture({ cell: cellFromModel(), station: { name: p ? p.name : '' } }, o);
+    }, pictureOpts());
+    o.sentences = sentencesFromModel(S.model, !!relationPlacement(cell, o));
+    const markup = renderFlowPicture({ cell: cell, station: { name: p ? p.name : '' } }, o);
     const h = Math.round(o.height || PICTURE_H);
+    // A RELATION GRID WIDER THAN THE COLUMN IS DRAWN WIDER, never shrunk: the
+    // svg takes the picture's own width and .pd-pic scrolls it sideways.
+    const pw = Math.round(o.width || w);
 
     // AN UNCHANGED PICTURE IS NOT REDRAWN, and that is what stops the pulse.
     //
@@ -856,10 +891,10 @@ function drawPicture(pass) {
     // Hung off the node, a fresh element simply has no cache and is always
     // written; only a redraw of the SAME element with the same bytes is
     // skipped, which is the case this is for.
-    const viewBox = '0 0 ' + w + ' ' + h;
+    const viewBox = '0 0 ' + pw + ' ' + h;
     if (svg.getAttribute('viewBox') !== viewBox) {
         svg.setAttribute('viewBox', viewBox);
-        svg.setAttribute('width', String(w));
+        svg.setAttribute('width', String(pw));
         svg.setAttribute('height', String(h));
     }
     if (markup !== svg.pdMarkup) {
@@ -1070,7 +1105,7 @@ function positionsTable() {
     // The front/back word under each position (rowWord). pictureRows reads the
     // cell's coordinates and nothing about the frame, so the table computes it
     // here, as it draws, rather than waiting for the picture to.
-    S.picRows = pictureRows(cellFromModel());
+    S.picRows = pictureRows(cellFromModel(), pictureOpts());
     const rows = [];
     const used = usedPositions();
     for (const pos of S.model.positions) {
@@ -1191,13 +1226,14 @@ function roleCell(node, role) {
 // ONE WORD, ONE MEANING. The sub-label under a position is which ROW of the
 // picture it was drawn in, and nothing else. It used to be CellPosition.Kind,
 // which answers a different question — is this a partner slot for any style
-// this process runs — and at Hopkinsville the two disagree: PLN_01 and PLN_04
-// are Kind "front" and are drawn in the BACK row, so the table said front
-// under a picture that said BACK. What a position does for the running style
+// this process runs — and on Press 6 the two disagree: PLN_013, 014 and 015
+// are Kind "front" and stand in its back line, so the table said front under
+// a picture that drew them at the back. What a position does for the running style
 // is said by the paired-back line at the foot of the table.
 //
-// A middle row, and a picture with only one row, get no word: the renderer
-// declines to label those and a guess printed in a table is still a guess.
+// A middle row, a picture with only one row, and every position of a cell
+// drawn by relation get no word: the renderer declines to label those and a
+// guess printed in a table is still a guess.
 function rowWord(node) {
     return S.picRows[node] || '';
 }

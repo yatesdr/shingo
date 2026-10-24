@@ -115,6 +115,36 @@
 .os-flow-picture .node .needlbl { fill: var(--os-red, var(--viz-coral)); font-size: 11px; font-weight: 600; }
 .os-flow-picture .half { cursor: pointer; }
 
+/* ── the picture by relation (recipe groups, 2026-10-24) ──────────────────
+ *
+ * .faint IS "NOT IN PLAY", A CLASS OF ITS OWN. On the relation picture what the
+ * screen is not about fades — the card, its chevrons and its tag at .3, the
+ * border dashed — and .off keeps meaning "no claim": a faint card may run a
+ * claim the screen is not about, and a card marked "move here" is never
+ * faint. This is the guide's cell-picture rule for a changeover cell (07
+ * Visual principles); a cell with no changeover keeps the old one, where a
+ * selection outlines and dims nothing.
+ *
+ * .gtag IS A RECIPE GROUP'S TAG: the L/R letter on its cards' top-left corner,
+ * over the border, filled with that group's identity token (--group-1 /
+ * --group-2, shared/tokens.css). A group is an identity like a robot — "this
+ * one, not that one" — so it borrows neither the accent nor a status, and it
+ * is drawn nowhere but on the tag: the card's border and fill stay steel.
+ *
+ * .fbl IS THE FALLBACK'S LINE, opposite the legend: why a changeover cell is
+ * shown in order rather than placed. */
+.os-flow-picture .node.faint,
+.os-flow-picture .stage.faint { opacity: .3; }
+.os-flow-picture .node.faint rect.box,
+.os-flow-picture .stage.faint rect.box { stroke-dasharray: 5 5; }
+/* A faint card's bar is drawn beside it, so it fades by the same .3. */
+.os-flow-picture .press.faint { opacity: .27; }
+.os-flow-picture .press.dim.faint { opacity: .135; }
+.os-flow-picture .node .gtag text { fill: var(--elev-base); font-size: 11px; font-weight: 800; }
+.os-flow-picture .gtag.g1 rect { fill: var(--group-1); }
+.os-flow-picture .gtag.g2 rect { fill: var(--group-2); }
+.os-flow-picture text.fbl { fill: var(--os-text-muted, var(--text-muted)); font-size: 12px; font-weight: 500; }
+
 /* ── the staging slots, and the route strip ────────────────────────────────
  *
  * A STAGING SLOT IS QUIETER AND SHORTER THAN A POSITION, deliberately. It is

@@ -557,6 +557,21 @@ test('the picture says press words only on a press-index cell', () => {
     assert.deepStrictEqual(M.cardLines(s, 'PLN_03'), ['position'], 'no press-index cell: no front/back word');
 });
 
+// ON THE RELATION PICTURE A POSITION NOTHING NAMES HAS NO CAPTION, press cell
+// or not, with flowspec or without: Kind is not the row there. A named one
+// keeps its words.
+test('cardLines on the relation picture: an idle card has no caption', () => {
+    let s = initStyle(7);
+    assert.deepStrictEqual(M.cardLines(s, 'PLN_03', true), [], 'press index: no Kind word');
+    assert.deepStrictEqual(M.cardLines(s, 'PLN_02', true), ['on deck for PLN_01'], 'a named card keeps its words');
+    assert.deepStrictEqual(M.cardLines(Object.assign({}, s, { flowspec: null }), 'PLN_03', true), [], 'without flowspec');
+    assert.deepStrictEqual(M.cardLines(Object.assign({}, s, { flowspec: null }), 'PLN_03'), ['front position'],
+        'off the relation picture, without flowspec, Kind');
+    s = M.reduce(s, { type: 'setMode', node: 'PLN_01', mode: 'sequential' });
+    s = M.reduce(s, { type: 'setMode', node: 'PLN_04', mode: 'sequential' });
+    assert.deepStrictEqual(M.cardLines(s, 'PLN_03', true), [], 'no press-index cell');
+});
+
 test('cardLines are the reference CARDLINE, verbatim', () => {
     const s = initStyle(7);
     assert.deepStrictEqual(M.cardLines(s, 'PLN_01'),
@@ -1825,6 +1840,62 @@ test('pictureCells carries the chosen key route onto the drawn claim', () => {
     const cleared = M.reduce(s, { type: 'setVia', node: node, via: [] });
     const bare = M.pictureCells(cleared, { positions: [{ core_node_name: node }] });
     assert.deepStrictEqual(bare.positions[0].claim.key_route, []);
+});
+
+// THE BAND IS PLACED BY serves, AND A DRAFT WRITES ITS OWN (the lead's D15).
+// The board's picture arrives with each lane's serves from Go; a draft
+// replaces every position's claim with its own, so it replaces serves the
+// same way — every claim that stages at the lane, inbound or outbound, never
+// partner_of — and adds a lane the draft names that the base does not carry.
+test('pictureCells writes each lane\'s serves from the draft\'s own claims', () => {
+    const io = { inbound_source: 'Supermarket Empty Totes', outbound_destination: 'Supermarket Area' };
+    const s = M.init({
+        positions: [
+            { core_node_name: 'ALN_01', kind: 'front', sequence: 1 },
+            { core_node_name: 'ALN_02', kind: 'front', sequence: 2 },
+            { core_node_name: 'ALN_03', kind: 'front', sequence: 3 },
+            { core_node_name: 'ALN_04', kind: 'front', sequence: 4 },
+        ],
+        claims: [
+            Object.assign({ core_node_name: 'ALN_01', swap_mode: 'two_robot', inbound_staging: 'SLN_01' }, io),
+            Object.assign({ core_node_name: 'ALN_02', swap_mode: 'two_robot', inbound_staging: 'SLN_02' }, io),
+            Object.assign({ core_node_name: 'ALN_03', swap_mode: 'single_robot', inbound_staging: 'SLN_02',
+                outbound_staging: 'SLN_04' }, io),
+            // A lane that is a position is a card, not a band slot: no serves.
+            Object.assign({ core_node_name: 'ALN_04', swap_mode: 'two_robot', inbound_staging: 'ALN_01' }, io),
+        ],
+        routing: [], groups: {},
+    });
+    const base = {
+        positions: ['ALN_01', 'ALN_02', 'ALN_03', 'ALN_04'].map((n, i) => ({ core_node_name: n, kind: 'front', sequence: i + 1 })),
+        staging: [
+            // the running flow's serves, which the draft replaces
+            { core_node_name: 'SLN_01', partner_of: 'ALN_09', field: 'inbound_staging', serves: ['ALN_09'] },
+            { core_node_name: 'SLN_02', partner_of: 'ALN_02', field: 'inbound_staging', serves: ['ALN_02'] },
+            { core_node_name: 'SLN_03' },
+        ],
+    };
+    const drawn = M.pictureCells(s, base);
+    const serves = {};
+    for (const st of drawn.staging) serves[st.core_node_name] = st.serves;
+    assert.deepStrictEqual(serves, { SLN_01: ['ALN_01'], SLN_02: ['ALN_02', 'ALN_03'], SLN_03: [], SLN_04: ['ALN_03'] });
+    assert.strictEqual(drawn.staging[0].partner_of, 'ALN_09', 'partner_of travels through untouched, and nothing reads it');
+    assert.deepStrictEqual(base.staging[0].serves, ['ALN_09'], 'the base picture is not written to');
+});
+
+// THE THIRD IS DRAWN (F8, the lead's D14): the relation picture draws a press
+// index's second paired position as a card of its own, so the adapter carries
+// the field by the server's name.
+test('pictureCells carries the third position of a press index', () => {
+    const s = M.init({
+        positions: POSITIONS,
+        claims: [{ core_node_name: 'PLN_01', swap_mode: 'two_robot_press_index', paired_core_node: 'PLN_02',
+            second_paired_core_node: 'PLN_05', inbound_source: 'Supermarket Empty Totes', outbound_destination: 'Supermarket Area' }],
+        routing: [], groups: {},
+    });
+    const drawn = M.pictureCells(s, { positions: POSITIONS });
+    assert.strictEqual(drawn.positions[0].claim.second_paired_core_node, 'PLN_05');
+    assert.strictEqual(drawn.positions[0].claim.paired_core_node, 'PLN_02');
 });
 
 // ── a part taken off is named until it is put back ──────────────────────────

@@ -298,11 +298,13 @@ function loadPage(loadOpts) {
     // are read whenever the table draws; a stub cell has no rows to name.
     global.pictureRows = () => ({});
     global.sentencesFromModel = () => { throw new Error('sentencesFromModel must not run in this pin'); };
+    global.relationPlacement = () => { throw new Error('relationPlacement must not run in this pin'); };
     global.moduleOf = () => { throw new Error('moduleOf must not run in this pin'); };
     for (const fn of ['makeProjector', 'rotate90For', 'dist2', 'cubicLength', 'cubicPathD', 'laneKey']) {
         global[fn] = () => { throw new Error(fn + ' must not run in this pin'); };
     }
     win.pictureCalls = [];
+    win.pictureViews = [];
     if (loadOpts.realPicture) {
         // The picture pins draw for real: operator-flow.js's own renderer,
         // row words, sentences and module membership, so what the page sizes
@@ -311,10 +313,12 @@ function loadPage(loadOpts) {
         global.renderFlowPicture = (view, opts) => {
             const markup = flow.renderFlowPicture(view, opts);
             win.pictureCalls.push(opts);
+            win.pictureViews.push(view);
             return markup;
         };
         global.pictureRows = flow.pictureRows;
         global.sentencesFromModel = flow.sentencesFromModel;
+        global.relationPlacement = flow.relationPlacement;
         global.moduleOf = flow.moduleOf;
     }
     global.showModal = sheetOpener;
@@ -352,7 +356,7 @@ function loadFlow() {
     vm.runInContext(geom.replace(/^export /mg, ''), ctx);
     const raw = fs.readFileSync(path.join(dir, 'operator-flow.js'), 'utf8');
     const src = raw.replace(/^import[^;]+;\s*/mg, '').replace(/^export /mg, '');
-    vm.runInContext(src + '\n__out = { renderFlowPicture, pictureRows, sentencesFromModel, ' +
+    vm.runInContext(src + '\n__out = { renderFlowPicture, pictureRows, sentencesFromModel, relationPlacement, ' +
         'moduleOf: typeof moduleOf === "function" ? moduleOf : undefined };', ctx);
     return ctx.__out;
 }
@@ -2345,6 +2349,59 @@ async function mainAsync() {
         if (r < 0 || st < 0 || r > st) throw new Error('rail order: ' + h.slice(h.indexOf('pd-rail'), h.indexOf('pd-rail') + 600));
         if (h.indexOf('data-act="recipe-open" data-preset="7"') < 0) throw new Error('no row for recipe 7');
         if (h.indexOf('data-act="new-recipe"') < 0) throw new Error('no + New recipe');
+    });
+
+    // A PROCESS WITH A RECIPE IS DRAWN BY RELATION, AND A RECIPE IS ONE
+    // STATION'S (SYNTH round 2 rows 17 and 23). The composer read's cell is
+    // process-wide: here a press station's spots, the stationless on-deck slot
+    // it shares, and an unloader station's window across the plant. The style picture
+    // draws all of them, by relation, because the process has a recipe; the
+    // recipe draft draws the recipe's own station and the stationless slot,
+    // and never the unloader's window, which would stand two far columns off.
+    await pin('the recipe draft draws its own station, by relation', async () => {
+        const io = { inbound_source: 'SMN_010', outbound_destination: 'DN_001' };
+        const head = Object.assign({ core_node_name: 'PLN_02', role: 'produce', swap_mode: 'two_robot_press_index',
+            paired_core_node: 'PLN_01', payload_code: 'PART-A' }, io);
+        const composer = {
+            styles: [{ id: 1, name: 'Style A', claims: [head], parts: ['PART-A'], advanced: {} }],
+            routing: [
+                { core_node_name: 'SMN_010', role: 'source', label: 'SMN_010', enabled: true, sequence: 1 },
+                { core_node_name: 'DN_001', role: 'destination', label: 'DN_001', enabled: true, sequence: 2 },
+            ],
+            presets: [{ id: 7, name: 'Two up', mode: 'two_robot_press_index', where: 'PLN_02',
+                cells: { PLN_02: Object.assign({}, head, { payload_code: '' }) } }],
+            palette: ['PART-A'],
+            cell: {
+                geometry: true,
+                positions: [
+                    { core_node_name: 'PLN_01', kind: 'back', sequence: 1, x: 10, y: 20.5 },
+                    { core_node_name: 'PLN_02', kind: 'front', sequence: 2, x: 11, y: 20, station_id: 18 },
+                    { core_node_name: 'PLN_03', kind: 'front', sequence: 3, x: 12, y: 20, station_id: 18 },
+                    { core_node_name: 'ULN_02', kind: 'front', sequence: 4, x: 100, y: 20, station_id: 25 },
+                ],
+                groups: {},
+            },
+        };
+        const { pic, svg } = pictureFrame(1084);
+        const { doc, main, win } = loadPage({ composer, extraIds: { 'pd-svg': svg }, realPicture: true });
+        main.appendChild(pic);
+        await settle();
+        const names = () => (win.pictureViews[win.pictureViews.length - 1].cell.positions || []).map(p => p.core_node_name).join(' ');
+        const last = () => win.pictureCalls[win.pictureCalls.length - 1] || {};
+        if (!win.pictureCalls.length) throw new Error('setup: the page never drew the picture');
+        if (last().relation !== true) throw new Error('the style picture of a process with a recipe asked for relation: ' + last().relation);
+        if (names() !== 'PLN_01 PLN_02 PLN_03 ULN_02') throw new Error('the style picture draws the whole process cell; it drew ' + names());
+        const row = makeElement('');
+        row.dataset.act = 'recipe-open';
+        row.dataset.preset = '7';
+        main.appendChild(row);
+        bubble(row, 'click', doc);
+        await settle();
+        if (names() !== 'PLN_01 PLN_02 PLN_03') throw new Error('the recipe draft drew ' + names() + ' — want its station and the stationless slot');
+        if (last().relation !== true) throw new Error('the recipe draft asked for relation: ' + last().relation);
+        if (/data-pos="ULN_02"/.test(svg.innerHTML) || !/data-pos="PLN_01"/.test(svg.innerHTML)) {
+            throw new Error('the recipe draft markup: ' + (svg.innerHTML.match(/data-pos="[^"]+"/g) || []).join(' '));
+        }
     });
 
     // A STYLE BUILT ON THE HMI REACHES THE RAIL WITHOUT A RELOAD: the rail's

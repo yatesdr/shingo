@@ -1,6 +1,20 @@
-// operator-flow.js — the read-only picture of the cell: one module per
-// position, laid out like that swap mode's glyph, with the dock the bins come
-// from and go to.
+// operator-flow.js — the picture of the cell, with the dock the bins come from
+// and go to. Two pictures, one function: a changeover cell drawn by relation,
+// every other cell as one module per position, laid out like that swap mode's
+// glyph.
+//
+// THE PICTURE BY RELATION (recipe groups, 2026-10-24; SYNTH round 2 rows
+// 12-20). A cell with a changeover — a claim in one of the four choreographies
+// — is drawn as cards in a grid, one position to a cell, placed by
+// composer-model.js's relationLayout from the plant map's left and right and
+// its front and back, never its distances: "whats important is showing
+// relation to points" (owner, 2026-10-23). Every position is a card (what is
+// not in play fades, which replaces usedOnly), each move is a chevron pair on
+// the card doing it, a recipe group's L/R tag sits on its cards, and the lanes
+// that are not positions stand in a band under the grid. relationScope is the
+// gate; a market, a loader or an unloader keeps the module picture byte for
+// byte, and a changeover cell the map cannot place falls back to it with one
+// line in the margin saying why. See drawRelation.
 //
 // THE MODULE PICTURE. The drawing used to place position cards on a to-scale
 // projection of the cell (schematic when that failed), hang the staging lanes
@@ -23,29 +37,33 @@
 // and the legend — drawn inside the picture — lists only the robots the flow
 // uses.
 //
-// NOTHING IS MEASURED TO PLACE A BOX. Every size is a constant from the
-// reference's numbers table, modules sit on a grid that wraps at the frame's
-// width, and a long name is cut in the middle — both ends kept, the full name
-// the tooltip — so nothing can overlap or run off its card at any width. What
-// the frame's width decides is the wrap; what it does NOT decide is the
-// height.
+// NOTHING IS MEASURED TO PLACE A BOX. Every size is a constant — the module
+// picture's from the reference's numbers table, the relation picture's one
+// card and one gap a column — and a long name is cut in the middle, both ends
+// kept and the full name the tooltip, so nothing can overlap or run off its
+// card at any width. On the module picture the frame's width decides the
+// wrap. The relation picture never wraps and never shrinks: a grid wider than
+// the frame makes the picture wider, and the caller's frame scrolls sideways.
 //
-// THE PICTURE REPORTS ITS OWN HEIGHT. The layout consumes the frame's width
+// THE PICTURE REPORTS ITS OWN SIZE. The layout consumes the frame's width
 // and nothing else; the height comes out of the packing (rows of fixed-size
-// modules over the dock band) and is written back to the caller through
-// opts.height. The desktop sizes its frame from it; the station's flow panel
-// scrolls instead of scaling. Nothing in this file reads the frame's height.
+// modules or cards over the dock band) and is written back to the caller
+// through opts.height, and the width — the frame's, or the relation grid's
+// when that is wider — through opts.width. The desktop sizes its frame from
+// them; the station's flow panel scrolls instead of scaling. Nothing in this
+// file reads the frame's height.
 //
 // DATA COMES FROM THE STATION VIEW, and only from there: view.cell (positions
 // with their scene coordinates, kinds and the running claim on each — built in
 // Go by domain.BuildCellPicture), view.current_style, view.station. The move
 // sentences and the dock notes come from composer-model.js — this file
-// computes no sentence of its own (see sentencesFromView below). A staging
-// node is a slot in the module that stages there even when it is a position
-// of the cell; a position with no claim of its own is then drawn only as that
-// slot, never as a card as well.
+// computes no sentence of its own (see sentencesFromView below). On the module
+// picture a staging node is a slot in the module that stages there even when
+// it is a position of the cell; a position with no claim of its own is then
+// drawn only as that slot, never as a card as well. On the relation picture
+// every position is a card in its own cell, a staging position included, and
+// only a lane that is not a position is a slot (in the band).
 
-import { isCoord } from '/static/shared/scene-geom.js';
 import { el } from './operator-util.js';
 // The QUOTE-SAFE escape, not operator-util's. This file builds attributes by
 // concatenation — data-pos, data-tap, transform — and the base's escaper
@@ -285,7 +303,7 @@ function oneStrip(route, x, top, robot) {
 //
 // modulesOf maps the cell onto module descriptors — which positions group
 // into which module, and what orders them. It reads no sentences, so
-// pictureRows can ask it for the row words without drawing anything.
+// moduleOf can ask it for a selection's members without drawing anything.
 //
 // THE PAIR IS ONE MODULE. A press-index position and its unclaimed partner
 // draw as one module, the on-deck card inside it, so layout cannot pull the
@@ -393,17 +411,23 @@ function modulesOf(cell, usedOnly) {
     // whatever row it stands — a running index press in the back row is
     // line-side, and drawing it after idle cards would swap front and back.
     // An unclaimed front-row card is line-side too. What goes after is a
-    // position in pictureRows' back row (world Y with coordinates, Kind
+    // position in worldRows' back row (world Y with coordinates, Kind
     // without — never the grid) that no claim covers and no other module
     // draws: a back-row staging position stands alone at the end, while an
     // on-deck card or the B of an A/B pair stays inside its module.
-    const coords = positions.length > 0 && positions.every(p => isCoord(p.x));
-    const rows = pictureRows(cell);
+    //
+    // "WITH COORDINATES" IS THE MODEL'S ONE PREDICATE (hasCoords: the cell on
+    // the map, every position of it), the one the row words and the relation
+    // picture's fallback read too. This read x alone, so a cell the server
+    // said was off the map but whose x values were set sorted by x here and
+    // was worded by Kind beside it.
+    const coords = window.ComposerModel.hasCoords(cell);
+    const rows = worldRows(cell);
     const back = mod => mod.names.every(n => rows[n] === 'back' &&
         !(byName[n].claim && byName[n].claim.swap_mode)) ? 1 : 0;
     const key = mod => {
         const p = byName[mod.names[0]];
-        if (coords && isCoord(p.x)) return p.x;
+        if (coords) return p.x;
         return p.sequence || 0;
     };
     mods.sort((a, b) => back(a) - back(b) || key(a) - key(b) ||
@@ -710,11 +734,14 @@ function dockLine(label, groups, budget) {
 // opts. The dock's robots travel with the notes — dockNotes derives them from
 // the same facts its words come from, and the renderer only colours by them.
 
-export function sentencesFromModel(state) {
+//
+// relation says the sentences are for the relation picture (relationPlacement):
+// a card nothing names has no caption there.
+export function sentencesFromModel(state, relation) {
     const M = typeof window !== 'undefined' ? window.ComposerModel : null;
     if (!M || !state) return null;
     const cardLines = {};
-    for (const p of state.positions) cardLines[p.core_node_name] = M.cardLines(state, p.core_node_name);
+    for (const p of state.positions) cardLines[p.core_node_name] = M.cardLines(state, p.core_node_name, relation);
     const robots = {};
     for (const p of state.positions) {
         const r = M.cellRobots(state, p.core_node_name);
@@ -737,7 +764,7 @@ export function sentencesFromModel(state) {
     };
 }
 
-export function sentencesFromView(view) {
+export function sentencesFromView(view, relation) {
     const M = typeof window !== 'undefined' ? window.ComposerModel : null;
     const cell = (view && view.cell) || null;
     if (!M || !cell || !cell.positions) return null;
@@ -750,19 +777,45 @@ export function sentencesFromView(view) {
         groups: cell.groups || {},
         routing: [],
     });
-    return sentencesFromModel(state);
+    return sentencesFromModel(state, relation);
 }
 
 // pictureRows is which row of the PRESS each position stands in: 'front' for
-// the line-side row, 'back' for the far one, '' for a middle row or a cell
-// with one row. Every caption beside the picture that says "front" or "back"
-// has to come from here.
+// the row nearest the aisle, 'back' for the far one, '' for a middle row or a
+// cell with one row. Every caption beside the picture that says "front" or
+// "back" has to come from here. opts takes renderFlowPicture's `relation` and
+// `pairs`, so the words follow the picture the caller draws.
+//
+// A CELL THE RELATION PICTURE DRAWS AND PLACES HAS NO ROW WORDS. Its grid's
+// rows are the press's — the layout never wraps, and its rows come from the
+// plant map (relationLayout) — but which of them faces the aisle, the
+// operator's side, is not in x and y: the map has no aisle, and a press can
+// face any way. A word there would be a guess. Everywhere else, worldRows.
+export function pictureRows(cell, opts) {
+    if (!relationPlacement(cell, opts)) return worldRows(cell);
+    const out = {};
+    for (const p of (cell.positions || [])) out[p.core_node_name] = '';
+    return out;
+}
+
+// relationPlacement is the relation layout of a cell the relation picture
+// draws and places, or null where it does not: the module picture, and the
+// fallback for a cell the map cannot place.
+export function relationPlacement(cell, opts) {
+    if (!drawnByRelation(cell, opts)) return null;
+    const lay = window.ComposerModel.relationLayout(cell, { pairs: opts && opts.pairs });
+    return lay.fallback || !lay.ncols ? null : lay;
+}
+
+// worldRows is the row words of a cell the relation picture does not place —
+// the module picture's, whose order reads them too.
 //
 // FROM THE COORDINATES, NEVER FROM THE GRID. The module grid wraps at the
 // frame's width, so a grid row is a fact about the screen, not the press: the
 // same cell is one row at 1280 and three at 640. The rows are the positions'
 // world Y — the line side is the higher Y, the top of the projection
-// (makeProjector draws [x, −y]) — clustered within ROW_TOL metres.
+// (makeProjector draws [x, −y]) — clustered within ROW_TOL metres of each
+// row's first.
 //
 // WITHOUT COORDINATES, THE KIND. A cell with no geometry, or with a position
 // off the map, has no world Y to read; the schematic has always stood the
@@ -778,12 +831,12 @@ export function sentencesFromView(view) {
 // exists.
 const ROW_TOL = 0.5;
 
-export function pictureRows(cell) {
+function worldRows(cell) {
     const positions = (cell && cell.positions) || [];
     const out = {};
     positions.forEach(p => { out[p.core_node_name] = ''; });
     if (!positions.length) return out;
-    if (!(cell.geometry && positions.every(p => isCoord(p.x) && isCoord(p.y)))) {
+    if (!window.ComposerModel.hasCoords(cell)) {
         const back = positions.filter(p => p.kind === 'back').length;
         if (back === 0 || back === positions.length) return out;
         positions.forEach(p => { out[p.core_node_name] = p.kind === 'back' ? 'back' : 'front'; });
@@ -802,36 +855,466 @@ export function pictureRows(cell) {
     return out;
 }
 
+// ── the picture by relation ────────────────────────────────────────────────
+//
+// relationScope is the gate (SYNTH round 2 row 17): a cell with a claim in
+// one of the four choreographies the model's MODES names is a changeover
+// cell, drawn by relation on every surface that draws it — the station's flow
+// panel, the HMI's recipe steps, the desktop. A cell with none (a market, a
+// loader, an unloader, a legacy manual_swap or simple row) keeps the module
+// picture. One predicate, so "recipe surfaces only" — the owner's
+// alternative, decided at the real-cell renders — is one caller's
+// `relation: false`.
+export function relationScope(cell) {
+    const M = typeof window !== 'undefined' ? window.ComposerModel : null;
+    const modes = M ? M.modeLabels() : {};
+    return ((cell && cell.positions) || []).some(p => !!(p.claim && modes[p.claim.swap_mode]));
+}
+
+// drawnByRelation is renderFlowPicture's choice: `relation` when the caller
+// says, the gate when it does not.
+function drawnByRelation(cell, opts) {
+    const r = opts && opts.relation;
+    return r === true || (r !== false && relationScope(cell));
+}
+
+// THE RELATION PICTURE'S NUMBERS. A card is the module card's width with a
+// chevron row more height (the lead's D13: 112 and 76 here, 92 and 56 on the
+// module picture, so a cell the gate leaves alone draws as it did). Columns
+// are one card and one gap: six fit the HMI's 1240 (6 x 188 + 5 x 22 = 1238).
+const R_CARD_H = 112;      // name, two lines, the chevron row, the chip
+const R_DECK_H = 76;       // an on-deck or third card: name, one line, the chevron row
+const R_GX = 22, R_GY = 22;
+const R_PITCH = CARD_W + R_GX;
+const R_ROW = BAR + R_CARD_H + R_GY;
+const R_SLOT_H = 58;       // a band lane: name, caption, the chevron row
+const R_BAND_GAP = 28;     // the grid's last row to the band
+const R_CHEV_Y = { card: 76, deck: 58, slot: 48 };   // the chevron row's centre line
+const R_CHIP_Y = 86;       // the part chip, the findings pill, "move here"
+
+// chevPair is one move drawn on the card that makes it (SYNTH row 19): a pair
+// of slender chevrons centred on (cx, cy), pointing the way the bin goes —
+// r, l, d, or u (up, in from the aisle) — in the robot's colour. data-of names
+// the claim whose choreography it is and data-robot / data-dir what it says,
+// so a reader of the markup need not work a move out from a rotation. The
+// pair is 14.4 along its way and 10 across.
+const CHEV_DIR = { r: [1, 0, 0], l: [-1, 0, 180], d: [0, 1, 90], u: [0, -1, -90] };
+function chevPair(cx, cy, dir, robot, of) {
+    const d = CHEV_DIR[dir];
+    let s = '<g class="cv" data-of="' + esc(of) + '" data-robot="' + robot + '" data-dir="' + dir + '">';
+    for (const o of [-1.2, 7.2]) {
+        s += '<path class="sc r' + robot + '" d="M-6 -5L0 0L-6 5" transform="translate(' +
+            (cx + d[0] * o).toFixed(1) + ' ' + (cy + d[1] * o).toFixed(1) + ') rotate(' + d[2] + ')"/>';
+    }
+    return s + '</g>';
+}
+
+// chevRow centres a card's moves under its words, side by side, 14 apart.
+// Nothing is drawn in the gaps between cards.
+function chevRow(list, w, cy) {
+    if (!list || !list.length) return '';
+    const wide = list.map(v => (v.dir === 'r' || v.dir === 'l' ? 14.4 : 10));
+    let x = (w - (wide.reduce((a, b) => a + b, 0) + 14 * (list.length - 1))) / 2;
+    let s = '';
+    list.forEach((v, i) => { s += chevPair(x + wide[i] / 2, cy, v.dir, v.robot, v.of); x += wide[i] + 14; });
+    return s;
+}
+
+// groupTag is a recipe group's letter on its card's top-left corner, over the
+// border (the mock's .gtag), filled with the group's identity token — the
+// one place --group-1 / --group-2 are drawn.
+function groupTag(tag) {
+    if (!tag || !tag.letter) return '';
+    const w = Math.max(18, 8 + 7 * String(tag.letter).length);
+    return '<g class="gtag g' + (Number(tag.group) || 1) + '"><rect x="4" y="-9" width="' + w + '" height="18" rx="5"/>' +
+        '<text x="' + (4 + w / 2) + '" y="4" text-anchor="middle">' + esc(tag.letter) + '</text></g>';
+}
+
+// relCard is one position in its grid cell: the 10-05 card's content — the
+// name, the model's lines, the in/out marks, the part chip or findings pill
+// or "move here" — and a chevron row under the words. A feeder (an on-deck or
+// third position) is the shorter card, as on the module picture. The bar is
+// the press: over a spot, never over a feeder or a lane.
+function relCard(x, y, name, lines, o) {
+    const feeder = !!o.feeder;
+    const h = feeder ? R_DECK_H : R_CARD_H;
+    const marks = o.io || [];
+    const nmPx = CARD_W - 28 - (marks.length === 2 ? 80 : marks.length === 1 ? 44 : 0);
+    const cls = 'node ' + (o.on ? 'on' : 'off') + (feeder ? ' deck' : '') + (o.faint ? ' faint' : '') +
+        (o.sel ? ' sel' : '') + (o.bad ? ' bad' : '') + (o.tgt ? ' tgt' : '');
+    // THE BAR IS THE CARD'S NEIGHBOUR, NOT ITS CONTENT: drawn before the card,
+    // in picture coordinates, as the module picture's bar() draws it, so
+    // everything inside a card's group lies inside its box. It fades with its
+    // card (.press.faint), which it did for free while it sat inside the group.
+    let s = o.bar ? '<path class="press' + (o.on ? '' : ' dim') + (o.faint ? ' faint' : '') + '" d="M' + (x + 26) + ' ' + (y - 7) +
+        'H' + (x + CARD_W - 26) + '"/>' : '';
+    s += '<g class="' + cls + '" data-pos="' + esc(name) + '"' + (o.tap || '') +
+        ' transform="translate(' + x + ',' + y + ')">';
+    s += nameTip(name, nmPx, 15);
+    s += '<rect class="box" width="' + CARD_W + '" height="' + h + '" rx="12"/>';
+    s += txt('nm', 14, feeder ? 24 : 26, name, nmPx, 15);
+    (lines || []).slice(0, feeder ? 1 : 2).forEach((l, i) => {
+        s += txt('ln', 14, (feeder ? 42 : 43) + i * 14, l, CARD_W - 28, 12, 500);
+    });
+    if (!feeder) {
+        const chip = (bg, lbl, text) => '<rect class="' + bg + '" x="12" y="' + R_CHIP_Y + '" width="' + (CARD_W - 24) +
+            '" height="20" rx="5"/>' + txt(lbl, CARD_W / 2, R_CHIP_Y + 14, text, CARD_W - 40, 11, 600, 'middle');
+        if (o.bad) s += chip('needbg', 'needlbl', o.bad);
+        else if (o.part) s += chip('partbg', 'partlbl', o.part);
+        else if (o.tgt) s += chip('tgtbg', 'tgtlbl', 'move here');
+    }
+    if (marks.length === 2) s += io('in', marks[0], CARD_W - 80, 10) + io('out', marks[1], CARD_W - 46, 10);
+    else if (marks.length === 1) s += io('in', marks[0], CARD_W - 46, 10);
+    s += chevRow(o.chev, CARD_W, feeder ? R_CHEV_Y.deck : R_CHEV_Y.card);
+    s += groupTag(o.tag);
+    return s + '</g>';
+}
+
+// relSlot is a lane in the band: the module slot's name and caption (a shared
+// lane keeps the caption's first word and the "shared" tag), a chevron row
+// under them. An offered lane is dashed and says it is not used.
+function relSlot(x, y, name, caption, o) {
+    const cls = 'stage ' + (o.offered ? 'off' : 'on') + (o.faint ? ' faint' : '') + (o.sel ? ' sel' : '') + (o.tgt ? ' tgt' : '');
+    let s = '<g class="' + cls + '" data-staging="' + esc(name) + '"' + (o.tap || '') +
+        ' transform="translate(' + x + ',' + y + ')">';
+    s += nameTip(name, SLOT_W - 24, 13);
+    s += '<rect class="box" width="' + SLOT_W + '" height="' + R_SLOT_H + '" rx="10"/>';
+    s += txt('nm', 12, 19, name, SLOT_W - 24, 13);
+    if (o.tgt) {
+        s += txt('tgtlbl', 12, 35, 'move here', SLOT_W - 22, 11, 600);
+    } else if (o.shared) {
+        s += txt('ln', 12, 35, caption.split(' ')[0], TAG_X - 12, 11, 500);
+        s += '<rect class="tagbg" x="' + TAG_X + '" y="24.5" width="46" height="14" rx="7"/>' +
+            '<text class="tag" x="' + (TAG_X + 23) + '" y="35" text-anchor="middle">shared</text>';
+    } else {
+        s += txt('ln', 12, 35, caption, SLOT_W - 22, 11, 500);
+    }
+    s += chevRow(o.chev, SLOT_W, R_CHEV_Y.slot);
+    return s + '</g>';
+}
+
+// drawRelation is the relation picture of one cell, laid out by lay
+// (relationLayout). It returns the cards, the band and their height and
+// width; renderFlowPicture puts the legend over it and the dock under it.
+//
+// THE CHOREOGRAPHY IS THE CLAIMS', AND ITS ROBOTS THE MODEL'S. Which cards
+// carry which moves (SYNTH row 19): a 2-Robot Index's on-deck card Robot 1 up
+// and Robot 2 toward its press spot, the press card one Robot 2 from the
+// deck's side, a third Robot 1 up and Robot 2 toward the deck; a 2-Robot
+// Swap's lane Robot 1 up and its spot Robot 1 from the lane's side; a 1-Robot
+// Swap's in-lane Robot 1 up, its spot from the in-lane's side and its
+// out-lane from the spot's; a Sequential A/B's B card Robot 1 up and A
+// nothing. The direction is the grid's — target cell less source cell,
+// horizontal when its columns are at least its rows (a tie is horizontal) —
+// and the robot is legRobot's or dockRobot's, never a template's.
+function drawRelation(cell, sentences, lay, opts, width) {
+    const positions = cell.positions || [];
+    const byName = {};
+    positions.forEach(p => { byName[p.core_node_name] = p; });
+    const claimOf = n => (byName[n] && byName[n].claim && byName[n].claim.swap_mode ? byName[n].claim : null);
+    const modes = window.ComposerModel.modeLabels();
+    const heads = positions.map(p => p.core_node_name).filter(claimOf);
+    const stagingBy = {};
+    for (const st of (cell.staging || [])) if (st && st.core_node_name) stagingBy[st.core_node_name] = st;
+    const bandAt = {};
+    for (const b of lay.band) bandAt[b.node] = b;
+    const at = n => lay.cells[n] || (bandAt[n] ? { c: bandAt[n].c, r: lay.nrows } : null);
+
+    // What each claim names: its feeders (a press index's on-deck and third
+    // positions that run no claim of their own), its lanes, and the pairs of
+    // a Sequential A/B (built as the module picture builds them).
+    const named = new Set();
+    const feeder = {};
+    const laneUse = {};
+    const seqB = {};
+    const seqUsed = new Set();
+    for (const h of heads) {
+        const c = claimOf(h);
+        named.add(h);
+        for (const f of ['paired_core_node', 'second_paired_core_node', 'inbound_staging', 'outbound_staging']) {
+            if (c[f]) named.add(c[f]);
+        }
+        if (c.swap_mode === 'two_robot_press_index') {
+            for (const n of [c.paired_core_node, c.second_paired_core_node]) {
+                if (n && byName[n] && !claimOf(n) && !feeder[n]) feeder[n] = h;
+            }
+        }
+        for (const f of ['inbound_staging', 'outbound_staging']) {
+            if (c[f]) (laneUse[c[f]] = laneUse[c[f]] || []).push(f);
+        }
+        if (c.swap_mode === 'sequential') {
+            const q = c.paired_core_node, qc = claimOf(q);
+            if (qc && qc.swap_mode === 'sequential' && !seqUsed.has(h) && !seqUsed.has(q)) {
+                seqUsed.add(h); seqUsed.add(q); seqB[q] = h;
+            }
+        }
+    }
+
+    // ── the chevrons ──
+    const show = opts.chevrons ? new Set(opts.chevrons) : new Set(heads);
+    const chev = {};
+    const dirOf = (a, b) => {
+        const A = at(a), B = at(b);
+        if (!A || !B) return '';
+        const dc = B.c - A.c, dr = B.r - A.r;
+        if (!dc && !dr) return '';
+        return Math.abs(dc) >= Math.abs(dr) ? (dc > 0 ? 'r' : 'l') : (dr > 0 ? 'd' : 'u');
+    };
+    const add = (n, robot, dir, of) => {
+        if (!n || !dir || !at(n)) return;
+        const l = (chev[n] = chev[n] || []);
+        if (!l.some(v => v.robot === robot && v.dir === dir)) l.push({ robot: robot, dir: dir, of: of });
+    };
+    for (const h of heads) {
+        if (!show.has(h) && !(seqB[h] && show.has(seqB[h]))) continue;
+        const c = claimOf(h);
+        const inR = dockRobot(sentences, h, 'in');
+        if (c.swap_mode === 'two_robot_press_index') {
+            const idx = legRobot(sentences, h, 'index', dockRobot(sentences, h, 'out'));
+            const d = feeder[c.paired_core_node] === h ? c.paired_core_node : '';
+            const t = feeder[c.second_paired_core_node] === h ? c.second_paired_core_node : '';
+            if (d) { add(d, inR, 'u', h); add(d, idx, dirOf(d, h), h); add(h, idx, dirOf(d, h), h); }
+            if (t) { add(t, inR, 'u', h); if (d) add(t, idx, dirOf(t, d), h); }
+        } else if (c.swap_mode === 'two_robot' || c.swap_mode === 'single_robot') {
+            const lin = c.inbound_staging;
+            if (lin && at(lin)) {
+                add(lin, inR, 'u', h);
+                add(h, legRobot(sentences, h, 'move', inR), dirOf(lin, h), h);
+            }
+            const lout = c.swap_mode === 'single_robot' ? c.outbound_staging : '';
+            if (lout && at(lout)) {
+                const park = (sentences.legs || []).find(L => L.kind === 'park' && L.from === h && L.to === lout);
+                add(lout, (park && park.robot) || dockRobot(sentences, h, 'out'), dirOf(h, lout), h);
+            }
+        } else if (c.swap_mode === 'sequential' && seqB[h]) {
+            add(h, inR, 'u', h);
+        }
+    }
+
+    // ── what is drawn full ──
+    const active = opts.active ? new Set(opts.active) : named;
+    const targets = new Set(opts.targets || []);
+    const findings = opts.findings || {};
+    const members = h => {
+        const c = claimOf(h);
+        const out = [h];
+        if (c.swap_mode === 'two_robot_press_index') {
+            if (feeder[c.paired_core_node] === h) out.push(c.paired_core_node);
+            if (c.inbound_staging) out.push(c.inbound_staging);
+        } else if (c.swap_mode === 'two_robot' || c.swap_mode === 'single_robot') {
+            if (c.inbound_staging) out.push(c.inbound_staging);
+            if (c.swap_mode === 'single_robot' && c.outbound_staging) out.push(c.outbound_staging);
+        } else if (seqB[h]) out.push(seqB[h]);
+        else for (const b of Object.keys(seqB)) if (seqB[b] === h) out.push(b);
+        return out;
+    };
+    // A SELECTION OUTLINES WHAT ITS MODULE WOULD: the claim and everything it
+    // names, or — on the Spots step (selectCard) — the tapped card alone.
+    const sel = opts.selected || null;
+    let selSet = new Set();
+    if (sel && opts.selectCard) selSet = new Set([sel]);
+    else if (sel) {
+        const own = claimOf(sel) ? [sel] : heads.filter(h => members(h).indexOf(sel) >= 0);
+        selSet = new Set(own.length ? [].concat(...own.map(members)) : [sel]);
+    }
+    const faint = n => !active.has(n) && !targets.has(n) && !selSet.has(n);
+    const tapPos = opts.editable ? ' data-tap="pos"' : '';
+
+    // ── where the grid stands ──
+    const gridW = lay.ncols * CARD_W + (lay.ncols - 1) * R_GX;
+    const bandRight = lay.band.reduce((m, b) => Math.max(m, b.c * R_PITCH + CARD_W / 2 + SLOT_W / 2), 0);
+    const contentW = Math.max(gridW, bandRight);
+    const span = width - 2 * FIT;
+    let gx0 = FIT, pictureW = width;
+    if (contentW <= span) {
+        gx0 = FIT + Math.floor((span - gridW) / 2);
+        if (gx0 + bandRight > width - FIT) gx0 = width - FIT - Math.ceil(bandRight);
+    } else {
+        pictureW = Math.ceil(contentW) + 2 * FIT;
+    }
+    const gy0 = FIT + 22;                               // under the legend's line
+
+    let s = '';
+    for (const p of positions) {
+        const n = p.core_node_name;
+        const g = lay.cells[n];
+        if (!g) continue;
+        const c = claimOf(n);
+        const fd = !c && feeder[n];
+        const lane = !c && !fd && named.has(n);
+        const x = gx0 + g.c * R_PITCH;
+        const y = gy0 + g.r * R_ROW + BAR + (fd ? (R_CARD_H - R_DECK_H) / 2 : 0);
+        let marks = [];
+        if (c && modes[c.swap_mode]) {
+            const outR = dockRobot(sentences, n, 'out');
+            if (c.swap_mode === 'two_robot_press_index') {
+                marks = [legRobot(sentences, n, 'index', outR), outR];
+            } else if (c.swap_mode === 'sequential') {
+                marks = seqB[n] ? [dockRobot(sentences, n, 'in'), outR] : [];
+            } else {
+                const park = c.swap_mode === 'single_robot' && c.outbound_staging ? (sentences.legs || []).find(L =>
+                    L.kind === 'park' && L.from === n && L.to === c.outbound_staging) : null;
+                marks = [legRobot(sentences, n, 'move', dockRobot(sentences, n, 'in')), (park && (park.robot || outR)) || outR];
+            }
+        } else if (fd) {
+            marks = [dockRobot(sentences, fd, 'in')];
+        }
+        s += relCard(x, y, n, cardLinesFor(p, sentences), {
+            feeder: !!fd, on: !!c || named.has(n), bar: !fd && !lane, io: marks,
+            part: c && modes[c.swap_mode] ? (c.payload_code || null) : null,
+            faint: faint(n), sel: selSet.has(n), bad: findings[n], tgt: targets.has(n),
+            tap: tapPos, chev: chev[n], tag: opts.tags && opts.tags[n],
+        });
+    }
+    let bottom = gy0 + lay.nrows * R_ROW - R_GY;
+
+    // ── the band ──
+    if (lay.band.length) {
+        const by = bottom + R_BAND_GAP;
+        let strip = 0;
+        for (const b of lay.band) {
+            const st = stagingBy[b.node] || {};
+            const serves = (st.serves || []).filter(n => lay.cells[n]);
+            const use = laneUse[b.node] || [];
+            const field = use.indexOf('inbound_staging') >= 0 ? 'inbound_staging'
+                : use.indexOf('outbound_staging') >= 0 ? 'outbound_staging' : (st.field || '');
+            const caption = b.offered ? 'not used'
+                : field === 'outbound_staging' ? 'Outbound staging' : field === 'inbound_staging' ? 'Inbound staging' : 'Staging';
+            const x = Math.round(gx0 + b.c * R_PITCH + CARD_W / 2 - SLOT_W / 2);
+            s += relSlot(x, by, b.node, caption, {
+                offered: b.offered, shared: serves.length > 1,
+                faint: b.offered ? !targets.has(b.node) && !selSet.has(b.node) : faint(b.node),
+                sel: selSet.has(b.node), tgt: targets.has(b.node), chev: chev[b.node],
+                tap: opts.editable && serves.length ? ' data-tap="staging" data-pos="' + esc(serves[0]) + '"' : '',
+            });
+            // THE ROUTE STRIP hangs under the lane its trip arrives at, as on
+            // the module picture: the first claim that stages here and chose a
+            // route. (A lane that is a position is a card in the grid, where a
+            // strip would run into the row below; it is not drawn there.)
+            const rider = serves.map(n => claimOf(n)).find(c => c && c.inbound_staging === b.node && (c.key_route || []).length);
+            if (rider) {
+                const h = serves.find(n => claimOf(n) === rider);
+                s += oneStrip(rider.key_route, x + 22, by + R_SLOT_H,
+                    legRobot(sentences, h, 'move', dockRobot(sentences, h, 'in')));
+                strip = Math.max(strip, stripRoom(Math.min(rider.key_route.length, STRIP_SLOTS)) + 8);
+            }
+        }
+        bottom = by + R_SLOT_H + strip;
+    }
+    return { svg: s, bottom: bottom, width: pictureW };
+}
+
+// ── the dock and the legend, both pictures' ────────────────────────────────
+
+// dockBand draws the dock along the frame's width with its rule at dockY.
+//
+// It names a robot only where that robot makes the trip — the notes and
+// their robots come from the model (dockNotes), which derives both from
+// the same choreography facts.
+function dockBand(sentences, width, dockY, editable) {
+    const span = width - 2 * FIT;
+    const half = Math.floor(span / 2);
+    const budget = Math.floor((half - 80) / 5.9);
+    const din = dockLine(sentences.dock.inLabel || sentences.dock.inNote, sentences.dock.inGroups, budget);
+    const dout = dockLine(sentences.dock.outLabel || sentences.dock.outNote, sentences.dock.outGroups, budget);
+    // ONE MARK, ONE ROBOT. A side two robots use (a mixed flow's OUT) has no
+    // one robot's colour to take — colour is the robot, and a teal mark would
+    // say Robot 1 makes Robot 2's trips — so its mark stays the muted default
+    // and the note's words carry each robot in its own colour.
+    const rcls = r => r ? ' r' + r : '';
+    const tapIn = editable ? ' data-tap="dock" data-dock="in"' : '';
+    const tapOut = editable ? ' data-tap="dock" data-dock="out"' : '';
+    return '<g class="dock"><line x1="' + FIT + '" y1="' + dockY + '" x2="' + (width - FIT) + '" y2="' + dockY + '"/>' +
+        '<g class="half"' + tapIn + ' transform="translate(' + FIT + ',' + dockY + ')">' +
+        '<g class="io' + rcls(sentences.dock.inRobot) + '" transform="translate(16,26)">' + IN + '</g>' +
+        '<text class="k" x="36" y="36">IN</text>' +
+        '<text class="v" x="70" y="30">' + esc(sentences.dock.srcs.join(' · ') || '—') + '</text>' +
+        '<text class="s' + rcls(sentences.dock.inRobot) + '" x="70" y="48">' + din + '</text>' +
+        '<text class="s" x="70" y="64">' + esc(truncList('', (sentences.dock.inMembers || '').split(', ').filter(Boolean), budget)) + '</text></g>' +
+        '<g class="half"' + tapOut + ' transform="translate(' + (FIT + half + 10) + ',' + dockY + ')">' +
+        '<g class="io' + rcls(sentences.dock.outRobot) + '" transform="translate(16,26)">' + OUT + '</g>' +
+        '<text class="k" x="36" y="36">OUT</text>' +
+        '<text class="v" x="80" y="30">' + esc(sentences.dock.dsts.join(' · ') || '—') + '</text>' +
+        '<text class="s' + rcls(sentences.dock.outRobot) + '" x="80" y="48">' + dout + '</text>' +
+        '<text class="s" x="80" y="64">' + esc(truncList('', (sentences.dock.outMembers || '').split(', ').filter(Boolean), budget)) + '</text></g></g>';
+}
+
+// legendOf draws the robot legend in the frame's top right corner.
+//
+// Only the robots the flow uses: the dock's robots plus every robot a leg
+// names. A 1-robot cell lists Robot 1 and nothing else — Robot 2 is not
+// in this flow, and a legend listing it would be a colour with no referent.
+// A cell with no flow lists no robot, for the same reason.
+function legendOf(sentences, width) {
+    const robots = new Set();
+    for (const g of [...(sentences.dock.inGroups || []), ...(sentences.dock.outGroups || [])]) {
+        if (g.robot) robots.add(g.robot);
+    }
+    for (const L of (sentences.legs || [])) robots.add(L.robot === 2 ? 2 : 1);
+    let lg = '', lx = width - FIT;
+    for (const r of [...robots].sort((a, b) => b - a)) {
+        lx -= 76;
+        lg += '<g class="lg" transform="translate(' + lx + ',' + (FIT + 4) + ')">' +
+            '<path class="sc r' + r + '" d="M2 -4.2L7 0L2 4.2"/>' +
+            '<path class="sc r' + r + '" d="M9.2 -4.2L14.2 0L9.2 4.2"/>' +
+            '<text class="lgt" x="24" y="4">Robot ' + r + '</text></g>';
+    }
+    return { svg: lg, w: width - FIT - lx };
+}
+
 // ── render ─────────────────────────────────────────────────────────────────
 
 // renderFlowPicture returns the SVG inner markup for one station view, and
-// reports the picture's own height by writing opts.height (see the header).
+// reports the picture's own size by writing opts.height and opts.width (see
+// the header).
 //
 // opts, all optional:
-//   selected   — the selected position; its module (every card and slot
-//                in it) takes the accent outline. Nothing dims.
+//   relation   — true: draw by relation (a recipe surface asks for it);
+//                false: the module picture whatever the cell; absent: the
+//                scope gate (relationScope) decides.
+//   selected   — the selected position. On the module picture its module
+//                (every card and slot in it) takes the accent outline; on the
+//                relation picture its claim's cards do. Nothing dims for it.
 //   selectCard — the selection outlines the selected card or slot alone, not
 //                its module (the Spots step, where an on-deck card and a lane
 //                are places of their own).
 //   targets    — [node] the selection may move to: each takes a dashed
-//                accent outline and "move here". Nothing dims either.
+//                accent outline and "move here", and is never faded.
 //   findings   — {node: shortText}; the card outlines alarm and the red pill
 //                takes the part chip's slot.
 //   sentences  — {cardLines, legs, dock} from composer-model. The COMPOSER
 //                passes its live state's, so the copy an operator is editing
 //                is the copy they read; every other caller leaves it out and
 //                this derives the same thing from the view through the same
-//                model (sentencesFromView).
+//                model (sentencesFromView). Sentences passed for a relation
+//                picture say so (relationPlacement), as these do.
 //   editable   — marks the cards, slots and dock halves tappable (data-tap)
-//                and draws the unused-staging chips line, which is a desktop
-//                affordance: the station screen leaves it out.
-//   frame      — {w} the picture wraps at. The height is the picture's own
-//                (opts.height); the caller sizes its box from that. Absent =
-//                the station's 1280.
+//                and, on the module picture, draws the unused-staging chips
+//                line, which is a desktop affordance: the station screen
+//                leaves it out.
+//   frame      — {w}: the frame the picture is drawn into. The module picture
+//                wraps at it; the relation picture centres in it, or is wider
+//                when its grid is, and the dock and legend span the frame.
+//                Absent = the station's 1280.
+//   usedOnly   — the module picture leaves out an idle position (see
+//                modulesOf). The relation picture draws every position and
+//                fades what is not in play instead.
+// The relation picture's own (each ignored by the module picture):
+//   active     — [node] drawn full; every other card and band lane takes
+//                .faint. Absent: every node a claim on the picture names.
+//   tags       — {node: {letter, group}}: a recipe group's L/R tag on that
+//                card, filled with --group-1 / --group-2.
+//   chevrons   — [claim head] whose choreography is drawn as chevrons.
+//                Absent: every claim's; [] draws none.
+//   pairs      — {deck: [press, ...]} for the layout's deck rule, held fixed
+//                by the caller so the grid does not re-flow while the
+//                operator moves places (the lead's D11). Absent: the claims'.
 export function renderFlowPicture(view, opts) {
     opts = opts || {};
     const cell = (view && view.cell) || { positions: [] };
-    const sentences = opts.sentences || sentencesFromView(view) || {
+    const lay = drawnByRelation(cell, opts) ? window.ComposerModel.relationLayout(cell, { pairs: opts.pairs }) : null;
+    const placed = lay && !lay.fallback && lay.ncols ? lay : null;
+    const sentences = opts.sentences || sentencesFromView(view, !!placed) || {
         cardLines: {}, legs: [], dock: {
             srcs: [], dsts: [], inNote: 'Inbound source', outNote: 'Outbound destination',
             inLabel: 'Inbound source', outLabel: 'Outbound destination', inGroups: [], outGroups: [],
@@ -839,14 +1322,29 @@ export function renderFlowPicture(view, opts) {
             inRobot: 1, outRobot: 1,
         },
     };
+    const width = (opts.frame && opts.frame.w) || STATION_FRAME.w;
+    opts.width = width;
+
+    // THE RELATION PICTURE, where it is drawn and the map can place it. A
+    // changeover cell it cannot place (a position off the map, two on one
+    // point) is drawn as modules below, with the layout's sentence in the
+    // margin (the lead's D12).
+    if (placed) {
+        const r = drawRelation(cell, sentences, placed, opts, width);
+        const dockY = r.bottom + 26;
+        opts.height = dockY + DOCK_BAND;
+        opts.width = r.width;
+        return legendOf(sentences, width).svg + r.svg + dockBand(sentences, width, dockY, !!opts.editable);
+    }
+    const fallback = (lay && lay.fallback) || '';
+
     const sel = opts.selected || null;
     const findings = opts.findings || {};
     const { mods, byName } = modulesOf(cell, !!opts.usedOnly);
     if (!mods.length) {
-        const g = { x: ((opts.frame && opts.frame.w) || STATION_FRAME.w) / 2 };
+        const g = { x: width / 2 };
         return '<text class="mlbl" x="' + g.x + '" y="246" text-anchor="middle">No positions on this station yet</text>';
     }
-    const width = (opts.frame && opts.frame.w) || STATION_FRAME.w;
 
     // Which staging places are drawn as slots, so the rest — lanes in the
     // routing set this flow does not use — can be counted on the chips line.
@@ -919,57 +1417,24 @@ export function renderFlowPicture(view, opts) {
     }
 
     // ── the dock ────────────────────────────────────────────────────────────
-    //
-    // It names a robot only where that robot makes the trip — the notes and
-    // their robots come from the model (dockNotes), which derives both from
-    // the same choreography facts.
     const dock_y = y + 26;
-    const half = Math.floor(span / 2);
-    const budget = Math.floor((half - 80) / 5.9);
-    const din = dockLine(sentences.dock.inLabel || sentences.dock.inNote, sentences.dock.inGroups, budget);
-    const dout = dockLine(sentences.dock.outLabel || sentences.dock.outNote, sentences.dock.outGroups, budget);
-    // ONE MARK, ONE ROBOT. A side two robots use (a mixed flow's OUT) has no
-    // one robot's colour to take — colour is the robot, and a teal mark would
-    // say Robot 1 makes Robot 2's trips — so its mark stays the muted default
-    // and the note's words carry each robot in its own colour.
-    const rcls = r => r ? ' r' + r : '';
-    const tapIn = opts.editable ? ' data-tap="dock" data-dock="in"' : '';
-    const tapOut = opts.editable ? ' data-tap="dock" data-dock="out"' : '';
-    s += '<g class="dock"><line x1="' + FIT + '" y1="' + dock_y + '" x2="' + (width - FIT) + '" y2="' + dock_y + '"/>' +
-        '<g class="half"' + tapIn + ' transform="translate(' + FIT + ',' + dock_y + ')">' +
-        '<g class="io' + rcls(sentences.dock.inRobot) + '" transform="translate(16,26)">' + IN + '</g>' +
-        '<text class="k" x="36" y="36">IN</text>' +
-        '<text class="v" x="70" y="30">' + esc(sentences.dock.srcs.join(' · ') || '—') + '</text>' +
-        '<text class="s' + rcls(sentences.dock.inRobot) + '" x="70" y="48">' + din + '</text>' +
-        '<text class="s" x="70" y="64">' + esc(truncList('', (sentences.dock.inMembers || '').split(', ').filter(Boolean), budget)) + '</text></g>' +
-        '<g class="half"' + tapOut + ' transform="translate(' + (FIT + half + 10) + ',' + dock_y + ')">' +
-        '<g class="io' + rcls(sentences.dock.outRobot) + '" transform="translate(16,26)">' + OUT + '</g>' +
-        '<text class="k" x="36" y="36">OUT</text>' +
-        '<text class="v" x="80" y="30">' + esc(sentences.dock.dsts.join(' · ') || '—') + '</text>' +
-        '<text class="s' + rcls(sentences.dock.outRobot) + '" x="80" y="48">' + dout + '</text>' +
-        '<text class="s" x="80" y="64">' + esc(truncList('', (sentences.dock.outMembers || '').split(', ').filter(Boolean), budget)) + '</text></g></g>';
+    s += dockBand(sentences, width, dock_y, !!opts.editable);
     opts.height = dock_y + DOCK_BAND;
 
-    // ── the legend ──────────────────────────────────────────────────────────
+    // ── the legend, and the fallback's line beside it ───────────────────────
     //
-    // Only the robots the flow uses: the dock's robots plus every robot a leg
-    // names. A 1-robot cell lists Robot 1 and nothing else — Robot 2 is not
-    // in this flow, and a legend listing it would be a colour with no referent.
-    // A cell with no flow lists no robot, for the same reason.
-    const robots = new Set();
-    for (const g of [...(sentences.dock.inGroups || []), ...(sentences.dock.outGroups || [])]) {
-        if (g.robot) robots.add(g.robot);
+    // THE FALLBACK SAYS WHY IT IS IN ORDER. A changeover cell the relation
+    // picture cannot place is drawn as modules in sequence order, and the line
+    // in the margin opposite the legend names the position that put it here —
+    // "Shown in order: PLN_008 is not on the plant map." — so the operator
+    // reads an order, not a plan, and an engineer knows which point to fix.
+    const lg = legendOf(sentences, width);
+    if (fallback) {
+        const shown = fit(fallback, width - 2 * FIT - lg.w - 24, 12, 500);
+        lg.svg += '<text class="fbl" x="' + FIT + '" y="' + (FIT + 8) + '">' +
+            (shown[1] !== null ? '<title>' + esc(shown[1]) + '</title>' : '') + esc(shown[0]) + '</text>';
     }
-    for (const L of (sentences.legs || [])) robots.add(L.robot === 2 ? 2 : 1);
-    let lg = '', lx = width - FIT;
-    for (const r of [...robots].sort((a, b) => b - a)) {
-        lx -= 76;
-        lg += '<g class="lg" transform="translate(' + lx + ',' + (FIT + 4) + ')">' +
-            '<path class="sc r' + r + '" d="M2 -4.2L7 0L2 4.2"/>' +
-            '<path class="sc r' + r + '" d="M9.2 -4.2L14.2 0L9.2 4.2"/>' +
-            '<text class="lgt" x="24" y="4">Robot ' + r + '</text></g>';
-    }
-    return lg + s;
+    return lg.svg + s;
 }
 
 // ── panel ──────────────────────────────────────────────────────────────────
@@ -1002,8 +1467,11 @@ export function closeFlowPanel() {
 //
 // THE SVG IS THE PICTURE'S OWN SIZE. The viewBox and the element's width and
 // height are all the picture's, one user unit to one pixel, and the panel's
-// stage scrolls a taller picture (operator.css); it never scales one, so the
-// cards stay their fixed size on the kiosk whatever the cell needs.
+// stage scrolls a taller picture — or a relation grid wider than the frame,
+// sideways (operator.css) — and never scales one, so the cards stay their
+// fixed size on the kiosk whatever the cell needs. A changeover cell is drawn
+// by relation here too (the scope gate): one cell, one picture, on the board
+// and on the recipe steps.
 export function syncFlowPanel(view) {
     const p = panel();
     if (!p) return;
@@ -1019,8 +1487,9 @@ export function syncFlowPanel(view) {
         const o = { frame: { w: STATION_FRAME.w }, usedOnly: true };
         svg.innerHTML = renderFlowPicture(view, o);
         const h = o.height || STATION_FRAME.h;
-        svg.setAttribute('viewBox', '0 0 ' + STATION_FRAME.w + ' ' + h);
-        svg.setAttribute('width', String(STATION_FRAME.w));
+        const w = o.width || STATION_FRAME.w;
+        svg.setAttribute('viewBox', '0 0 ' + w + ' ' + h);
+        svg.setAttribute('width', String(w));
         svg.setAttribute('height', String(h));
     }
     p.hidden = false;

@@ -97,10 +97,17 @@ holding bins and dims the others; the material layer's `?highlight=` deep-link
 reuses the same machinery. Dim the peers (lower opacity / desaturate) — do not
 grey out the whole canvas. The context stays readable; the focus just wins.
 
-**The cell picture is the exception: its selection dims nothing.** Selecting
-a position outlines its whole module in the accent and leaves every other
-module as it was. Each module is a choreography the engineer reads against
-the selected one, and fading them made the rest of the cell look disabled.
-The only dimmed mark on that picture is the bar over a position not in the
-flow (see Glyphs › The cell picture).
+**The recipe picture fades what is not in play; a cell with no changeover
+keeps the old rule: a selection outlines and dims nothing.** A changeover
+cell is drawn by relation (see Glyphs › The cell picture by relation), and
+there the cards the screen is not about — not in the recipe group hovered,
+not a place the selected spot may take — take `.faint` (opacity .3, dashed),
+a class of its own so `.off` keeps meaning "no claim"; a target is never
+faint (owner, 2026-10-22: "non selected nodes are faded"). On the module
+picture, which every other cell keeps, selecting a position outlines its
+whole module in the accent and leaves every other module as it was: each
+module is a choreography the engineer reads against the selected one, and
+fading them made the rest of the cell look disabled. The only dimmed mark on
+that picture is the bar over a position not in the flow (see Glyphs › The
+cell picture).
 
