@@ -487,6 +487,15 @@ test('dockNotes and cellRobots in a mixed flow name each cell its own robot', ()
     assert.strictEqual(M.robotWords(s), 'Robot 1 and Robot 2');
 });
 
+// Two cells staging at one lane bring both bins up through it: the dock note
+// names the lane once (a weld line whose neighbours share a lane read
+// "SLN_010, SLN_010" before, which is two lanes of one name).
+test('dockNotes names a lane two cells share once', () => {
+    const s = initStyle(11);
+    for (const n of ['PLN_03', 'PLN_06']) s.cells[n] = Object.assign({}, s.cells[n], { staging: 'SLN_SHARED' });
+    assert.strictEqual(M.dockNotes(s).in.note, 'Inbound source · Robot 1 → SLN_SHARED');
+});
+
 // The third line under the group name is the GROUP'S MEMBER NODES, which is
 // what the read-only picture draws (operator-flow.js dockNotes: inMembers =
 // groups[srcs[0]]). It used to be the positions — the same names the note

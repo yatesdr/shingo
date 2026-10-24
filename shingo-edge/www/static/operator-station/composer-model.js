@@ -1438,11 +1438,14 @@ function dockNotes(state) {
     // `Outbound destination · Robot 1 ← PLN_01 · Robot 2 ← PLN_03`. A flow
     // whose cells agree has one group, and the note reads as it always has.
     const side = (dir, label, arrow, targetOf) => {
+        // A LANE TWO CELLS SHARE IS NAMED ONCE: Robot 1 brings both bins up
+        // through it, and "SLN_010, SLN_010" read as two lanes of one name.
         const byRobot = new Map();
         for (const cell of act) {
             const r = dockRobotsOf(cell[1])[dir];
             if (!byRobot.has(r)) byRobot.set(r, []);
-            byRobot.get(r).push(targetOf(cell));
+            const t = targetOf(cell);
+            if (byRobot.get(r).indexOf(t) < 0) byRobot.get(r).push(t);
         }
         const groups = [...byRobot.keys()].sort().map(r => ({
             robot: r, head: 'Robot ' + r + ' ' + arrow + ' ', targets: byRobot.get(r),
