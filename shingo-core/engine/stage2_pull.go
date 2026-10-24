@@ -24,7 +24,9 @@
 // draining unloader's window, an order completing into its inbound source, and
 // the same startup sweep. Each event reads the loaders once (readWindowPulls)
 // and runs both pulls; the two subscriptions were widened, not copied, so
-// registration order is unchanged.
+// registration order is unchanged. One more runs it outside the events: the
+// loader save that leaves a box on (www apiUpdateLoader), which is the crew
+// ticking it.
 
 package engine
 

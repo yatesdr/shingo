@@ -2,6 +2,7 @@ package www
 
 import (
 	"errors"
+	"log"
 	"net/http"
 
 	"shingo/protocol"
@@ -172,6 +173,16 @@ func (h *Handlers) apiUpdateLoader(w http.ResponseWriter, r *http.Request) {
 	}); err != nil {
 		h.jsonError(w, "update loader: "+err.Error(), loaderWriteStatus(err))
 		return
+	}
+	// A box the save leaves on drains now, not at the next window freeing,
+	// arrival or restart: ticking it is the crew asking for exactly that. The
+	// drain takes the loader's own lock (dispatch.DrainLoader), as a www door
+	// reaches ReplenishLoader. A save with every box off calls nothing. The
+	// save is stored whatever the drain answers, so its error is logged.
+	if len(req.DrainStates) > 0 {
+		if _, err := h.engine.Dispatcher().DrainLoader(req.ID); err != nil {
+			log.Printf("update loader %d: drain at the save: %v", req.ID, err)
+		}
 	}
 	h.jsonSuccess(w)
 }

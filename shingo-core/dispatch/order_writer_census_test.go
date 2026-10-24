@@ -340,7 +340,7 @@ func TestCensus_OrderCreationDoors(t *testing.T) {
 		//     before dispatch, as every move.
 		//  3. What origin_class? no_demand, stated at birth: no place asked for
 		//     material; the unloader clears a cart it was set up to clear.
-		{"loader drain", "dispatch/loader_drain.go", "nobody — an unloader with a drain box ticked has a free window and a cart of that state in its inbound source"},
+		{"loader drain", "dispatch/loader_drain.go", "nobody, or the crew's save that ticks a drain box — an unloader with a drain box ticked has a free window and a cart of that state in its inbound source"},
 		// THE LANE SELF-HEAL DOOR IS DELETED (§R.104), and it is not merely moved:
 		// nothing takes its place, because the order it used to create does not
 		// exist. Its entry read "nobody — the lane gate finds a robot dwelling
