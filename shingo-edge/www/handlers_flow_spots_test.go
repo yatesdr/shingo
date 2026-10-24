@@ -353,6 +353,53 @@ func TestFlowMint_ThePrefillAloneMints(t *testing.T) {
 	}
 }
 
+// press6GroupedJSON is "Two spot press index" as an engineer saves it with
+// groups (SYNTH-round2 §2, on this fixture's source): the cells exactly as
+// the plain recipe has them, and beside them Left Hand on PLN_006 or PLN_010
+// with PLN_005 on deck, Right Hand on PLN_007 or PLN_012 with PLN_008 on
+// deck and its own reorder point.
+const press6GroupedJSON = `{"cells":[
+ {"core_node_name":"PLN_006","role":"produce","swap_mode":"two_robot_press_index","paired_core_node":"PLN_005","inbound_source":"SMN_BUF_100","outbound_destination":"ULN_002"},
+ {"core_node_name":"PLN_007","role":"produce","swap_mode":"two_robot_press_index","paired_core_node":"PLN_008","inbound_source":"SMN_BUF_100","outbound_destination":"ULN_005"}],
+"groups":[
+ {"of":"PLN_006","name":"Left Hand","spots":[
+  {"core_node_name":"PLN_006","paired_core_node":["PLN_005"]},
+  {"core_node_name":"PLN_010","paired_core_node":["PLN_005"]}]},
+ {"of":"PLN_007","name":"Right Hand","spots":[
+  {"core_node_name":"PLN_007","paired_core_node":["PLN_008"]},
+  {"core_node_name":"PLN_012","paired_core_node":["PLN_008"]}],
+  "advanced":{"reorder_point":1,"auto_reorder":true}}]}`
+
+// TestFlowMint_ARecipeCarryingGroupsMintsItsCells is the rollback pin: a
+// recipe whose flow_json carries `groups` beside its cells is stored, read
+// and minted by its cells. Written green at spots-v0, where the key is
+// unknown and ignored, and kept green after it: a binary rolled back past
+// recipe groups runs every grouped recipe as its cells and takes none off
+// the floor (SYNTH-round2 row 1, which is why groups sit beside the cells).
+func TestFlowMint_ARecipeCarryingGroupsMintsItsCells(t *testing.T) {
+	f := newPress6(t)
+	id, err := f.db.CreateFlowPreset(processes.FlowPresetInput{ProcessID: f.processID, Name: "Two spot grouped",
+		FlowJSON: press6GroupedJSON, CreatedBy: "test"})
+	must(t, err, "store the grouped recipe")
+	bodies := mintBodies(t, f.station, map[string]mintArgs{"unmoved": {id, press6Pair, nil}})
+	resp := doRequest(t, f.router, "POST", "/api/processes/"+itoa(f.processID)+"/flow/mint", bodies["unmoved"], nil)
+	assertStatus(t, resp, http.StatusOK)
+	got := flowBody(t, resp)
+	if got["minted"] != true {
+		t.Fatalf("mint = %v, want a minted style", got)
+	}
+	claims, err := f.db.ListStyleNodeClaims(int64(got["style_id"].(float64)))
+	must(t, err, "claims")
+	cells := map[string]string{}
+	for _, c := range claims {
+		cells[c.CoreNodeName] = c.PairedCoreNode + " → " + c.OutboundDestination
+	}
+	want := map[string]string{"PLN_006": "PLN_005 → ULN_002", "PLN_007": "PLN_008 → ULN_005"}
+	if !maps.Equal(cells, want) {
+		t.Errorf("minted claims = %v, want the recipe's cells %v", cells, want)
+	}
+}
+
 // An archived version is not an enabled recipe: its pairings are no longer
 // known, so a spot that only it paired is refused.
 func TestFlowMint_AnArchivedRecipeGrantsNothing(t *testing.T) {

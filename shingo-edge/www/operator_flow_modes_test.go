@@ -3,9 +3,13 @@ package www
 import (
 	"context"
 	"encoding/json"
+	"flag"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
+	"strings"
 	"testing"
 
 	"shingo/protocol"
@@ -191,4 +195,189 @@ func TestOperatorFlowPerModeCharacterisation(t *testing.T) {
 		t.Fatalf("per-mode characterisation failed:\n%s\nerror: %v", out, err)
 	}
 	t.Logf("per-mode: %s", out)
+}
+
+var updateFlowPictureGolden = flag.Bool("update-flow-picture-golden", false,
+	"rewrite testdata/flow-picture/*.svg from the current renderer")
+
+// TestFlowPicture_PlantAGolden pins the markup renderFlowPicture draws for
+// every station of plant A, two ways: the board's flow panel (read-only, the
+// running style, 1280 wide — syncFlowPanel's options) and the desktop's
+// picture of the running style (editable, the desktop's 1084 frame, the
+// model the desktop's initModel builds over the composer read).
+//
+// A WHOLE-MARKUP PIN, and its job is to say what moved. The recipe-groups
+// tranche draws a changeover cell by relation and leaves every other cell on
+// the module picture, so this golden changes where that tranche says it does
+// and nowhere else; the order fix on the module picture changes it again,
+// named in its own commit.
+//
+// Regenerate with
+//
+//	go test ./www -run TestFlowPicture_PlantAGolden -update-flow-picture-golden
+//
+// and read the diff: a regenerated golden pins nothing unless someone read it.
+func TestFlowPicture_PlantAGolden(t *testing.T) {
+	nodePath, err := exec.LookPath("node")
+	if err != nil {
+		t.Skipf("node not on PATH; skipping the picture golden")
+	}
+	fx := scenefixtures.A()
+	db := testdb.Open(t)
+	svc := service.NewStationService(db)
+	svc.SetBinTypeResolver(testdb.BinTypeOf(fx))
+	svc.SetCoreNodeGroupResolver(func() map[string][]string { return testdb.GroupsOf(fx) })
+	geom := testdb.SceneGeometryOf(fx)
+	svc.SetSceneGeometryResolver(func() *domain.SceneGeometry { return geom })
+
+	dir := t.TempDir()
+	type input struct {
+		Name    string `json:"name"`
+		Board   string `json:"board"`
+		Desktop string `json:"desktop"`
+		Active  int64  `json:"active"`
+	}
+	var inputs []input
+	for _, proc := range fx.Processes {
+		seeded := testdb.SeedPlant(t, db, fx, proc.Name)
+		testdb.SeedRoutingSet(t, db, seeded.ProcessID, "golden")
+		process, err := db.GetProcess(seeded.ProcessID)
+		if err != nil || process == nil {
+			t.Fatalf("process %s: %v", proc.Name, err)
+		}
+		var active int64
+		if process.ActiveStyleID != nil {
+			active = *process.ActiveStyleID
+		}
+		desktop, err := svc.ComposerForProcess(seeded.ProcessID)
+		if err != nil {
+			t.Fatalf("ComposerForProcess %s: %v", proc.Name, err)
+		}
+		codes := make([]string, 0, len(seeded.Stations))
+		for code := range seeded.Stations {
+			codes = append(codes, code)
+		}
+		sort.Strings(codes)
+		for _, code := range codes {
+			pic, err := svc.CellPictureForStation(seeded.Stations[code])
+			if err != nil {
+				t.Fatalf("CellPictureForStation %s: %v", code, err)
+			}
+			name := "a-" + code
+			write := func(suffix string, v any) string {
+				raw, err := json.Marshal(v)
+				if err != nil {
+					t.Fatalf("marshal %s: %v", name, err)
+				}
+				p := filepath.Join(dir, name+suffix+".json")
+				if err := os.WriteFile(p, raw, 0o644); err != nil {
+					t.Fatalf("write %s: %v", p, err)
+				}
+				return p
+			}
+			inputs = append(inputs, input{Name: name, Board: write("-board", map[string]any{"cell": pic}),
+				Desktop: write("-desktop", desktop), Active: active})
+		}
+	}
+	list, err := json.Marshal(inputs)
+	if err != nil {
+		t.Fatalf("marshal inputs: %v", err)
+	}
+	listPath := filepath.Join(dir, "inputs.json")
+	if err := os.WriteFile(listPath, list, 0o644); err != nil {
+		t.Fatalf("write inputs: %v", err)
+	}
+	abs := func(parts ...string) string {
+		p, err := filepath.Abs(filepath.Join(parts...))
+		if err != nil {
+			t.Fatalf("resolve %v: %v", parts, err)
+		}
+		return filepath.ToSlash(p)
+	}
+	st := abs("static", "operator-station")
+	harness := fmt.Sprintf(`
+'use strict';
+const fs = require('fs');
+const vm = require('vm');
+const ctx = { console, Math, Set, Map, Number, isFinite, JSON, Object, Array, String,
+  document: { getElementById() { return null; } }, window: { location: { hash: '' } },
+  el() { return {}; }, getView() { return null; },
+  esc(s) { return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); } };
+vm.createContext(ctx);
+vm.runInContext(fs.readFileSync(%q, 'utf8'), ctx);
+vm.runInContext(fs.readFileSync(%q, 'utf8'), ctx);
+vm.runInContext(fs.readFileSync(%q, 'utf8').replace(/^export /mg, ''), ctx);
+const flow = fs.readFileSync(%q, 'utf8').replace(/^import[^;]+;\s*/mg, '').replace(/^export /mg, '');
+vm.runInContext(flow + '\n__out = { renderFlowPicture, sentencesFromModel };', ctx);
+const F = ctx.__out, M = ctx.window.ComposerModel;
+const out = {};
+for (const inp of JSON.parse(fs.readFileSync(%q, 'utf8'))) {
+  const board = JSON.parse(fs.readFileSync(inp.board, 'utf8'));
+  const bo = { frame: { w: 1280 }, usedOnly: true };
+  out[inp.name + '-board'] = F.renderFlowPicture(board, bo) + '\n<!-- height ' + bo.height + ' -->\n';
+  const comp = JSON.parse(fs.readFileSync(inp.desktop, 'utf8'));
+  const st = (comp.styles || []).find(s => s.id === inp.active);
+  if (!st) continue;
+  const cell = comp.cell || { positions: [] };
+  const model = M.init({
+    styleId: st.id, styleName: st.name,
+    positions: (cell.positions || []).map(p => ({ core_node_name: p.core_node_name, kind: p.kind, sequence: p.sequence })),
+    routing: comp.routing || [], routingOff: comp.routing_off || {}, scene: comp.map || null,
+    claims: st.claims || [], parts: [], palette: comp.palette || [], catid: st.catid || '',
+    lastRun: st.last_run || null, flowspec: ctx.window.FLOWSPEC, groups: cell.groups || {},
+    processClaims: (comp.styles || []).reduce((all, x) => all.concat(x.claims || []), []),
+    advanced: st.advanced || {},
+  });
+  const dob = { selected: null, findings: {}, editable: true, frame: { w: 1084 }, sentences: F.sentencesFromModel(model) };
+  out[inp.name + '-desktop'] = F.renderFlowPicture({ cell: M.pictureCells(model, cell) }, dob) + '\n<!-- height ' + dob.height + ' -->\n';
+}
+process.stdout.write(JSON.stringify(out));
+`, st+"/flowspec-data.js", st+"/composer-model.js", abs("..", "..", "shared", "scene-geom.js"),
+		st+"/operator-flow.js", filepath.ToSlash(listPath))
+	harnessPath := filepath.Join(dir, "golden.js")
+	if err := os.WriteFile(harnessPath, []byte(harness), 0o644); err != nil {
+		t.Fatalf("write harness: %v", err)
+	}
+	raw, err := exec.Command(nodePath, harnessPath).Output()
+	if err != nil {
+		var stderr []byte
+		if ee, ok := err.(*exec.ExitError); ok {
+			stderr = ee.Stderr
+		}
+		t.Fatalf("render the goldens: %v\n%s", err, stderr)
+	}
+	var got map[string]string
+	if err := json.Unmarshal(raw, &got); err != nil {
+		t.Fatalf("decode the renders: %v", err)
+	}
+	if len(got) == 0 {
+		t.Fatal("rendered no picture; the harness has drifted")
+	}
+	goldDir := filepath.Join("testdata", "flow-picture")
+	names := make([]string, 0, len(got))
+	for n := range got {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+	for _, n := range names {
+		path := filepath.Join(goldDir, n+".svg")
+		if *updateFlowPictureGolden {
+			if err := os.MkdirAll(goldDir, 0o755); err != nil {
+				t.Fatalf("mkdir %s: %v", goldDir, err)
+			}
+			if err := os.WriteFile(path, []byte(got[n]), 0o644); err != nil {
+				t.Fatalf("write %s: %v", path, err)
+			}
+			continue
+		}
+		want, err := os.ReadFile(path)
+		if err != nil {
+			t.Errorf("%s: no golden (%v); regenerate with -update-flow-picture-golden and read it", n, err)
+			continue
+		}
+		if string(want) != got[n] {
+			t.Errorf("%s: the picture's markup moved from %s; regenerate only for a named change", n, path)
+		}
+	}
+	t.Logf("pictures pinned: %s", strings.Join(names, ", "))
 }
