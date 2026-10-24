@@ -25,9 +25,9 @@
 // ── vocabulary ───────────────────────────────────────────────────────────────
 // "Robot 1" / "Robot 2", never the short forms. SPEC §0.7.
 const MODES = {
-    two_robot_press_index: '2‑robot index',
-    two_robot: '2‑robot swap',
-    single_robot: '1‑robot swap',
+    two_robot_press_index: '2‑Robot Index',
+    two_robot: '2‑Robot Swap',
+    single_robot: '1‑Robot Swap',
     sequential: 'Sequential A/B',
 };
 

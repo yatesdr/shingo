@@ -153,7 +153,7 @@ is called what the claim calls it"); these are the nouns around the fields.
 | **flow** | — | what one part does on this process: which positions it works, how each swaps, where its bins come from and go |
 | **preset** | — | a named **shape** of flow. A preset is never a part and never names one; parts are applied to it |
 | **screen** | station, for an HMI | see Operator Station above |
-| **1‑robot swap**, **2‑robot swap**, **2‑robot index**, **Sequential A/B** | Single-robot swap, Two-robot swap, 2-Robot Press Index | the chip's word, everywhere, server refusals included. Go's `SwapModeWord` and `composer-model.js`'s `MODES` are the one table (pinned, see Drift detection) and keep its non-breaking hyphen |
+| **1‑Robot Swap**, **2‑Robot Swap**, **2‑Robot Index**, **Sequential A/B** | Single-robot swap, Two-robot swap, 2-Robot Press Index | the chip's word, everywhere, server refusals included. Go's `SwapModeWord` and `composer-model.js`'s `MODES` are the one table (pinned, see Drift detection) and keep its non-breaking hyphen |
 | **Add a position** | — | one phrase on every door that turns a position on in a flow (the table's *+ Add a position*, the free-position menu, the empty bar's *Add a position below, or use a preset*) |
 | a node name, in full | `PLN_01` → `P01` | the plant named its nodes; a shortened name is a second name nobody can search for. Too long for its box, it is cut in the middle with the full name in the tooltip |
 

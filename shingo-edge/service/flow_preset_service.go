@@ -212,7 +212,7 @@ func (s *ProcessService) PresetsFor(processID int64) (*PresetsView, error) {
 	// preset's own row reports and whose control is `Apply to parts…`.
 	//
 	// Offering it twice was worse than noise. The first D6 shot showed the one
-	// drifted member of `2‑robot index · PLN_01 / PLN_04` sitting under FOUND
+	// drifted member of `2‑Robot Index · PLN_01 / PLN_04` sitting under FOUND
 	// IN YOUR FLOWS as a shape to name — with a suggested name of `2‑robot
 	// index · PLN_01 / PLN_04`, character for character, because the field it
 	// drifted on is not one a suggested name is built from. Naming it would

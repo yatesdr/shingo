@@ -5442,7 +5442,7 @@ function candidateRow(c) {
     //
     // THE SAME SHAPE CELL AS THE PRESETS TABLE (owner ruling R5, 2026-09-12).
     // The suggested name is the mode word alone now, so a row that drew only
-    // the name would offer `2‑robot swap` with nothing to say WHICH swap —
+    // the name would offer `2‑Robot Swap` with nothing to say WHICH swap —
     // and two candidate shapes of one mode would be two identical rows. The
     // positions come off the shape, here as there.
     return '<tr data-cand="' + esc(c.shape_key) + '">' +

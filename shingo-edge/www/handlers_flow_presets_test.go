@@ -173,7 +173,7 @@ func TestFlowPresets_CreateReadArchive(t *testing.T) {
 	// in the name: every card and row draws them off the SHAPE, beside
 	// whatever the preset ends up called, so a name carrying them said them
 	// twice and said them wrong the moment an engineer typed their own.
-	if name, _ := cand["suggested_name"].(string); name != "2‑robot swap" {
+	if name, _ := cand["suggested_name"].(string); name != "2‑Robot Swap" {
 		t.Errorf("suggested name = %q, want the mode word alone", name)
 	}
 	if _, ok := cand["shape"]; !ok {

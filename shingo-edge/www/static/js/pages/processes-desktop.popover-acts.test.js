@@ -1427,7 +1427,7 @@ async function mainAsync() {
         const opts = wireOptions(pop);
         bubble(chip(main, 'PLN_01', 'col:staging:staging'), 'click', doc);
         if (pop.hidden !== false) throw new Error('a click on the staging chip did not open its menu');
-        const want = '<div class="none">required for 1‑robot swap</div>' +
+        const want = '<div class="none">required for 1‑Robot Swap</div>' +
             '<button data-opt="1" class="">SLN_010<span class="use"> · used by PLN_02</span></button>' +
             '<button data-opt="2" class="">SLN_011</button>';
         if (pop.innerHTML !== want) {
@@ -1441,7 +1441,7 @@ async function mainAsync() {
             throw new Error('picking the shared staging node did not set it');
         }
         checks++;
-        console.log('ok: the staging menu says "required for 1‑robot swap" and marks a node another position uses');
+        console.log('ok: the staging menu says "required for 1‑Robot Swap" and marks a node another position uses');
     }
 
     // A STAGING FIELD THE MODE FORBIDS DOES NOT USE THE NODE. A two-robot swap
@@ -1461,7 +1461,7 @@ async function mainAsync() {
         await drain();
         bubble(chip(main, 'PLN_01', 'col:staging:staging'), 'click', doc);
         if (pop.hidden !== false) throw new Error('a click on the staging chip did not open its menu');
-        const want = '<div class="none">required for 1‑robot swap</div>' +
+        const want = '<div class="none">required for 1‑Robot Swap</div>' +
             '<button data-opt="1" class="">SLN_010<span class="use"> · used by PLN_02</span></button>' +
             '<button data-opt="2" class="">SLN_011</button>';
         if (pop.innerHTML !== want) {
@@ -1548,22 +1548,22 @@ async function mainAsync() {
         return b;
     }
     const settle = async () => { for (let i = 0; i < 12; i++) await drain(); };
-    // Picks "2‑robot swap" off the mode chip's own menu, by real clicks.
+    // Picks "2‑Robot Swap" off the mode chip's own menu, by real clicks.
     function pickTwoRobot(main, pop, doc) {
         const opts = wireOptions(pop);
         bubble(chip(main, 'PLN_01', 'mode'), 'click', doc);
-        const two = pop.innerHTML.match(/data-opt="(\d+)"(?:(?!<\/button>).)*2‑robot swap<\/button>/);
-        if (!two) throw new Error('setup: the mode menu has no 2‑robot swap: ' + pop.innerHTML);
+        const two = pop.innerHTML.match(/data-opt="(\d+)"(?:(?!<\/button>).)*2‑Robot Swap<\/button>/);
+        if (!two) throw new Error('setup: the mode menu has no 2‑Robot Swap: ' + pop.innerHTML);
         bubble(opts.find(b => b.dataset.opt === two[1]), 'click', doc);
     }
 
     await pin('the subtitle names the draft\'s mode, not the saved one', async () => {
         const { root, pop, main, doc } = loadPage({ flowspec: true, composer: savedComposer() });
         await settle();
-        const before = '<div class="sub">1‑robot swap · 1 position · last run 09-12';
+        const before = '<div class="sub">1‑Robot Swap · 1 position · last run 09-12';
         if (root.innerHTML.indexOf(before) < 0) throw new Error('setup: the subtitle is not the saved flow\'s');
         pickTwoRobot(main, pop, doc);
-        const want = '<div class="sub">2‑robot swap · 1 position · last run 09-12';
+        const want = '<div class="sub">2‑Robot Swap · 1 position · last run 09-12';
         if (root.innerHTML.indexOf(want) < 0) {
             const got = (root.innerHTML.match(/<div class="sub">[^<]*/) || [''])[0];
             throw new Error('the subtitle does not follow the draft: got ' + JSON.stringify(got) +

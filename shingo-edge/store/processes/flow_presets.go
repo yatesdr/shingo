@@ -147,7 +147,7 @@ func refuseNameOfAnotherShape(db *sql.DB, in FlowPresetInput) error {
 //
 // EVERY VERSION, because a name is not a property of a version. UNIQUE is per
 // (process, name, version), so renaming one row of a two-version name would
-// leave two presets that mean one shape's history — `2‑robot index v1` and
+// leave two presets that mean one shape's history — `2‑Robot Index v1` and
 // whatever v2 was renamed to — with no way to tell from either list that they
 // are the same lineage. The id is what provenance points at and the id does
 // not move, so a member claim's source_preset_id keeps resolving to the same

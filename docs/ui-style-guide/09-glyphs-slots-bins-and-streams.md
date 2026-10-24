@@ -88,9 +88,9 @@ template names a robot.
 
 | Mode | Module |
 |---|---|
-| 1‑robot swap | position card over a row of two staging slots, inbound left and outbound right; the new bin rises from the inbound slot and the old bin parks down into the outbound slot, both Robot 1. No move to the dock beside the park: the out-stub by the card's side is only for an old bin that leaves with no park leg drawn |
-| 2‑robot swap | position card over its inbound staging slot; the old bin leaves by the side (Robot 2's out-stub). **No outbound slot**, even when the claim names one: Robot 2 takes the old bin straight to the dock, and a slot would draw a trip this choreography never makes |
-| 2‑robot index | position card over its on-deck card, one module, so no layout can split the pair; next bin in behind the deck, index up into the press, old bin out by the side. An inbound staging the claim names is a slot under the on-deck card (under the press card when there is no deck), captioned `Inbound staging`, with **no chevron**: the running choreography has no leg to it, and its tooltip says it is used at changeover. A partner that runs a claim of its own keeps its own module, and the press draws without a deck |
+| 1‑Robot Swap | position card over a row of two staging slots, inbound left and outbound right; the new bin rises from the inbound slot and the old bin parks down into the outbound slot, both Robot 1. No move to the dock beside the park: the out-stub by the card's side is only for an old bin that leaves with no park leg drawn |
+| 2‑Robot Swap | position card over its inbound staging slot; the old bin leaves by the side (Robot 2's out-stub). **No outbound slot**, even when the claim names one: Robot 2 takes the old bin straight to the dock, and a slot would draw a trip this choreography never makes |
+| 2‑Robot Index | position card over its on-deck card, one module, so no layout can split the pair; next bin in behind the deck, index up into the press, old bin out by the side. An inbound staging the claim names is a slot under the on-deck card (under the press card when there is no deck), captioned `Inbound staging`, with **no chevron**: the running choreography has no leg to it, and its tooltip says it is used at changeover. A partner that runs a claim of its own keeps its own module, and the press draws without a deck |
 | Sequential A/B | A and B side by side in one double-width module under one line-side bar |
 | no claim | the position card, dashed, its bar dimmed. The bar of a position not in the flow is the only thing in the picture that is ever dimmed |
 
@@ -158,7 +158,7 @@ Robot 1 alone, and a cell with no flow lists nobody.
 
 **Words: the card carries the moves; a move carries no label.** Each position
 card reads its move sentences from the model's one card-line table
-(`CARDLINE` in `composer-model.js`; a 1‑robot swap reads "Robot 1 moves in ·
+(`CARDLINE` in `composer-model.js`; a 1‑Robot Swap reads "Robot 1 moves in ·
 Robot 1 clears old"). Chevrons are unlabelled, and a staging name appears
 once, on its slot, with the field it is as the caption (`Inbound staging`,
 `Outbound staging`). A **line-side bar** sits above every position card: the
@@ -186,7 +186,7 @@ staging. One physical spot
 legitimately serves several positions, so the composer raises a warning
 finding — "staging shared by several positions" — that is shown beside the
 picture and never blocks the save, the same answer the server's claim
-validation gives. A 2‑robot swap's outbound staging does not count: its
+validation gives. A 2‑Robot Swap's outbound staging does not count: its
 module draws no slot for it.
 
 **The dock and the key routes.** The dock strip runs under the modules: an IN

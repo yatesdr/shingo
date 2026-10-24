@@ -108,7 +108,7 @@ the second. Expanding a row lists EVERY member, in step and drifted alike,
 because "which parts run this shape" is the question the row was clicked to
 answer. **The positions belong to the shape, not to the name**: a preset is
 called whatever the engineer typed — the suggestion is the choreography's word
-alone, `2‑robot index` — so every card and every row draws the shape's own
+alone, `2‑Robot Index` — so every card and every row draws the shape's own
 positions beside it (`PLN_01 / PLN_04 · used by 7 parts`), and two presets a
 word apart are still told apart at a glance. **Naming a shape is not declaring
 which parts run it**: `Save as preset…` on one part's flow stamps nobody and

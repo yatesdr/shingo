@@ -627,7 +627,7 @@ test('bar: preview OK with one order says 1 order', () => {
 // joined by a dash.
 test('bar: one server finding reads 1 to fix and its sentence once', () => {
     let s = initStyle(7);
-    const msg = '1‑robot swap requires inbound staging';
+    const msg = '1‑Robot Swap requires inbound staging';
     s = M.applyPreview(s, {
         order_count: 2, unresolved: [], actions: [], fingerprint: 'abc',
         preflight: { state: 'ok', missing: [] },

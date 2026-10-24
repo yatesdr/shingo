@@ -26,7 +26,7 @@ Extend this pattern to:
    chips and cards from it. The validator's refusals name a mode by the same
    word (`swapModeLabel` returns `SwapModeWord`; only loader and unloader
    claims, which have no chip, keep their own), so an operator who picked
-   `2‑robot index` reads `2‑robot index` in the refusal. A suggested preset
+   `2‑Robot Index` reads `2‑Robot Index` in the refusal. A suggested preset
    name is a control and uses it too.
 7. **Shape-field words** (shipped, U10) — `TestShapeFieldWordsMatchTheModel`
    pins `domain.shapeFields` to `composer-model.js`'s `SHAPE_FIELDS`: the same

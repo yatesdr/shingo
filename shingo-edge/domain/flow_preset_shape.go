@@ -217,15 +217,15 @@ func ParsePresetShape(flowJSON string) ([]FlowCell, error) {
 }
 
 // SuggestPresetName is the migration offer's suggested name: THE MODE WORD
-// ALONE — `2‑robot index` (owner ruling R5, 2026-09-12).
+// ALONE — `2‑Robot Index` (owner ruling R5, 2026-09-12).
 //
 // THE POSITIONS ARE NOT IN THE NAME, because they are not a property of the
 // name. Every card and every row draws the shape's positions itself, always
 // and beside whatever the preset is called, so a name that carried them said
 // them twice on every surface that shows both — and said them WRONG the moment
 // an engineer typed a name of their own, which they may. The 200x56 strip card
-// could not hold `2‑robot index · PLN_01 / PLN_04` either and ellipsised it to
-// `2-robot index · PL...`, which is the mode word with a stump attached.
+// could not hold `2‑Robot Index · PLN_01 / PLN_04` either and ellipsised it to
+// `2-Robot Index · PL...`, which is the mode word with a stump attached.
 //
 // A SUGGESTION AND NOTHING MORE: the engineer types over it, and nothing reads
 // it back. A shape whose cells disagree on a mode has no mode word and so gets
@@ -310,11 +310,11 @@ func PresetShapeNodeWord(cells []FlowCell, pressOrder []string) string {
 func SwapModeWord(mode protocol.SwapMode) string {
 	switch mode {
 	case protocol.SwapModeTwoRobotPressIndex:
-		return "2‑robot index"
+		return "2‑Robot Index"
 	case protocol.SwapModeTwoRobot:
-		return "2‑robot swap"
+		return "2‑Robot Swap"
 	case protocol.SwapModeSingleRobot:
-		return "1‑robot swap"
+		return "1‑Robot Swap"
 	case protocol.SwapModeSequential:
 		return "Sequential A/B"
 	}

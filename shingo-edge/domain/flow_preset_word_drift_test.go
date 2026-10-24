@@ -48,6 +48,24 @@ func TestSwapModeWordsMatchTheModel(t *testing.T) {
 	}
 }
 
+// TestSwapModeWordsAreTitleCase is which words the two tables hold (owner,
+// 2026-10-22: "make sure when we do it stuff isnt lowercase like 1 robot swap
+// 1 Robot Swap"). The test above only says the tables agree; this says what
+// they agree on, with the non-breaking hyphen kept (U+2011).
+func TestSwapModeWordsAreTitleCase(t *testing.T) {
+	want := map[protocol.SwapMode]string{
+		protocol.SwapModeTwoRobotPressIndex: "2‑Robot Index",
+		protocol.SwapModeTwoRobot:           "2‑Robot Swap",
+		protocol.SwapModeSingleRobot:        "1‑Robot Swap",
+		protocol.SwapModeSequential:         "Sequential A/B",
+	}
+	for mode, w := range want {
+		if got := SwapModeWord(mode); got != w {
+			t.Errorf("SwapModeWord(%s) = %q, want %q", mode, got, w)
+		}
+	}
+}
+
 // TestShapeFieldWordsMatchTheModel holds shapeFields to composer-model.js's
 // SHAPE_FIELDS — the same eleven fields, the same words, in the same order.
 //
