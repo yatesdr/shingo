@@ -126,9 +126,11 @@ it stands — a running index press in the back row is still line-side — and
 every unclaimed front-row card. After it come the back-row positions no claim
 covers and no module draws: a back position no claim names stands alone at
 the end, while an on-deck card, the B of an A/B pair, or a staging position
-drawn as a slot stays inside its module, so a pair is never split. Within each group modules run left to right
-by the world X of their lead position when every position has coordinates,
-and by `sequence` when any does not, the node name breaking a tie. They wrap at the frame's width; a row is as tall as its tallest
+drawn as a slot stays inside its module, so a pair is never split. Within each group modules run along the
+station's longer axis by their lead position when every position has
+coordinates — west first on an east–west station, north first on a
+north–south one, so a line's drift never scrambles it — and by `sequence`
+when any does not, the node name breaking a tie. They wrap at the frame's width; a row is as tall as its tallest
 module and is centred. **Front and back come from the coordinates, never from
 the module grid** (`worldRows`): a module row is a fact about the screen — the
 same cell is one row at 1280 and three at 640 — while the press's rows are its

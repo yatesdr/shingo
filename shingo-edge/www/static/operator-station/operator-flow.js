@@ -401,11 +401,18 @@ function modulesOf(cell, usedOnly) {
             if (deckOf[d] === mod.name) { mod.deck = d; mod.names.push(d); }
         }
     }
-    // ORDER: line-side modules left to right by world X when the cell has
-    // coordinates, by sequence when it does not; then the back positions that
-    // are not inside a module, in the same order among themselves. Where the
-    // plant's handedness mirrors the picture's, the row mirrors with it — the
-    // order is what the operator walks, not the distance.
+    // ORDER: line-side modules along the station's longer axis when the cell
+    // has coordinates — west first on an east-west station, north first on a
+    // north-south one — and by sequence when it does not; then the back
+    // positions that are not inside a module, in the same order among
+    // themselves. Where the plant's handedness mirrors the picture's, the row
+    // mirrors with it — the order is what the operator walks, not the
+    // distance.
+    //
+    // THE LONGER AXIS, NOT WORLD X ALONE. A weld line that runs north to south
+    // drifts a few tenths of a metre east and west, and sorting it by x read
+    // that drift as the order: five spots 1.5 m apart came out third, fifth,
+    // first, fourth, second. Along its length is the order the line has.
     //
     // LINE-SIDE IS WHERE THE FLOW WORKS: every module a claim covers, in
     // whatever row it stands — a running index press in the back row is
@@ -422,11 +429,14 @@ function modulesOf(cell, usedOnly) {
     // said was off the map but whose x values were set sorted by x here and
     // was worded by Kind beside it.
     const coords = window.ComposerModel.hasCoords(cell);
+    const span = k => Math.max(...positions.map(p => p[k])) - Math.min(...positions.map(p => p[k]));
+    const northSouth = coords && span('y') > span('x');
     const rows = worldRows(cell);
     const back = mod => mod.names.every(n => rows[n] === 'back' &&
         !(byName[n].claim && byName[n].claim.swap_mode)) ? 1 : 0;
     const key = mod => {
         const p = byName[mod.names[0]];
+        if (northSouth) return -p.y;
         if (coords) return p.x;
         return p.sequence || 0;
     };

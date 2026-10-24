@@ -587,6 +587,32 @@ console.log('the frame — the station keeps its own, the desktop asks for the c
         };
     };
     const want = [['PLN_03'], ['PLN_10', 'PLN_11'], ['PLN_06'], ['ALN_A', 'ALN_B'], ['PLN_09']];
+    // ── a line that runs north-south reads north first ──
+    //
+    // SYNTHETIC, the Hopkinsville weld cell's shape: five spots 1.5 m apart
+    // north to south whose x drifts out of order. Sorted by world X alone the
+    // row read ALN_03, ALN_05, ALN_01, ALN_04, ALN_02 — a north-south line
+    // scrambled by its drift. The module picture orders along the station's
+    // longer axis: north first on a north-south one, west first on an
+    // east-west one (every cell above). Both ways it is drawn as modules: a
+    // cell the gate leaves alone (no claim), and a changeover cell asked for
+    // by name, which is what its fallback draws when two spots stand on one
+    // point of the map.
+    {
+        const line = claimed => ({
+            geometry: true,
+            positions: [['ALN_01', 0.2, 6], ['ALN_02', 0.4, 4.5], ['ALN_03', 0, 3], ['ALN_04', 0.3, 1.5], ['ALN_05', 0.1, 0]]
+                .map(([n, x, y], i) => Object.assign({ core_node_name: n, sequence: i + 1, kind: 'front', x: x, y: y },
+                    claimed ? { claim: { swap_mode: 'two_robot', payload_code: 'P' + i, inbound_staging: 'SLN_0' + i,
+                        inbound_source: 'SMN_IN', outbound_destination: 'SMN_OUT' } } : {})),
+        });
+        for (const [label, claimed] of [['no claim', false], ['two-robot swaps', true]]) {
+            const got = modulesOf(m.renderFlowPicture({ cell: line(claimed), station: { name: 'SCREEN' } }, {}))
+                .map(md => md.lead).join(' ');
+            check('order: a north-south line reads north first (' + label + ')',
+                got === 'ALN_01 ALN_02 ALN_03 ALN_04 ALN_05', got);
+        }
+    }
     for (const [label, coords] of [['by world X', true], ['by sequence, back from the kind', false]]) {
         const c = cell(coords);
         check('order ' + label + ': the rows are the ones this pin means',
