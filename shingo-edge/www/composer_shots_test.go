@@ -9,13 +9,11 @@ import (
 	"html/template"
 	"math"
 	"net/http"
-	"net/http/httptest"
 	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
-	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -23,7 +21,6 @@ import (
 	"time"
 
 	"shingo/protocol"
-	"shingo/protocol/debuglog"
 	"shingo/shared/scenefixtures"
 	"shingoedge/config"
 	"shingoedge/domain"
@@ -142,127 +139,76 @@ func TestComposerShots(t *testing.T) {
 	eng.SetPayloadBinTypes(pbt)
 	points, edges := wireScene(fx)
 
-	dbg, err := debuglog.New(64, nil)
-	if err != nil {
-		t.Fatalf("debuglog: %v", err)
-	}
-	_, router, stop := NewRouter(eng, dbg, nil)
-	t.Cleanup(stop)
-	// /events answers 204 here: an EventSource that is left open is a pending
-	// network request, and headless Chrome's virtual-time budget waits on
-	// pending requests forever, so the screenshot never fires. A 204 closes
-	// the EventSource without a retry; the picture is drawn from the view
-	// fetch and never needed the stream.
-	mux := http.NewServeMux()
-	mux.HandleFunc("/events", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) })
-
-	// ── ONE REAL CLICK ──────────────────────────────────────────────────
-	//
-	// Everything else in this file renders. A screenshot never clicks, which
-	// is exactly how window.DesktopBodies could be undefined for a whole
-	// release — two classic scripts declaring one top-level name, the second
-	// dead before its last line — while every shot came out looking right and
-	// every write button on the page threw (2026-09-13).
-	//
-	// Chrome's --screenshot and --dump-dom cannot drive a mouse, and a
-	// ?click= door in the page would be a state only the harness can reach,
-	// which this file's own rule forbids. So the driver is a page of its own,
-	// served by the HARNESS and not by the product: it puts the real page in a
-	// same-origin iframe, sets a real control, dispatches a real click on the
-	// real button, and writes what happened into its own DOM for --dump-dom to
-	// read. The product is not touched and the button is the button.
-	mux.HandleFunc("/__shots/click-d5", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		_, _ = w.Write([]byte(clickD5Driver(r.URL.Query().Get("process"))))
+	srv := shotsServer(t, shotsRouter(t, eng), func(mux *http.ServeMux) {
+		// ── ONE REAL CLICK ──────────────────────────────────────────────────
+		//
+		// Everything else in this file renders. A screenshot never clicks, which
+		// is exactly how window.DesktopBodies could be undefined for a whole
+		// release — two classic scripts declaring one top-level name, the second
+		// dead before its last line — while every shot came out looking right and
+		// every write button on the page threw (2026-09-13).
+		//
+		// Chrome's --screenshot and --dump-dom cannot drive a mouse, and a
+		// ?click= door in the page would be a state only the harness can reach,
+		// which this file's own rule forbids. So the driver is a page of its own,
+		// served by the HARNESS and not by the product: it puts the real page in a
+		// same-origin iframe, sets a real control, dispatches a real click on the
+		// real button, and writes what happened into its own DOM for --dump-dom to
+		// read. The product is not touched and the button is the button.
+		mux.HandleFunc("/__shots/click-d5", func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			_, _ = w.Write([]byte(clickD5Driver(r.URL.Query().Get("process"))))
+		})
+		// The Add-process sheet, driven end to end. See clickAddProcessDriver.
+		mux.HandleFunc("/__shots/click-add", func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			_, _ = w.Write([]byte(clickAddProcessDriver(
+				r.URL.Query().Get("name"), r.URL.Query().Get("position"), r.URL.Query().Get("source"))))
+		})
+		// A CELL THE PLANT FIXTURE CANNOT PRODUCE. See syntheticCellDriver.
+		mux.HandleFunc("/__shots/synthetic-cell", func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			_, _ = w.Write([]byte(syntheticCellDriver()))
+		})
+		// D1's style row menu and its add-a-position chooser. See clickMenuDriver.
+		mux.HandleFunc("/__shots/menus", func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			_, _ = w.Write([]byte(clickMenuDriver(r.URL.Query().Get("process"), r.URL.Query().Get("style"))))
+		})
+		// P0's Edit-process sheet, saved with one field changed. See clickEditDriver.
+		mux.HandleFunc("/__shots/edit-process", func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			_, _ = w.Write([]byte(clickEditDriver(r.URL.Query().Get("process"), r.URL.Query().Get("name"))))
+		})
+		// D4's screen sheet, saved without touching the positions. See clickScreenDriver.
+		mux.HandleFunc("/__shots/screen-note", func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			_, _ = w.Write([]byte(clickScreenDriver(r.URL.Query().Get("process"), r.URL.Query().Get("station"))))
+		})
+		// The picture's re-fit on a style click, counted. See pulseDriver.
+		mux.HandleFunc("/__shots/pulse", func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			_, _ = w.Write([]byte(pulseDriver(r.URL.Query().Get("process"), r.URL.Query().Get("style"))))
+		})
+		// Settings' own scrolling, measured. See scrollDriver.
+		mux.HandleFunc("/__shots/scroll", func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			_, _ = w.Write([]byte(scrollDriver(r.URL.Query().Get("path"))))
+		})
+		// D1's staging picker, opened. See clickStagingDriver.
+		mux.HandleFunc("/__shots/open-staging", func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			_, _ = w.Write([]byte(clickStagingDriver(r.URL.Query().Get("process"),
+				r.URL.Query().Get("style"), r.URL.Query().Get("node"))))
+		})
+		// The apply modal's pickers, answered by clicking. See clickApplyDriver.
+		mux.HandleFunc("/__shots/click-apply", func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			preset, _ := strconv.ParseInt(r.URL.Query().Get("preset"), 10, 64)
+			style, _ := strconv.ParseInt(r.URL.Query().Get("style"), 10, 64)
+			_, _ = w.Write([]byte(clickApplyDriver(r.URL.Query().Get("process"), preset, style)))
+		})
 	})
-	// The Add-process sheet, driven end to end. See clickAddProcessDriver.
-	mux.HandleFunc("/__shots/click-add", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		_, _ = w.Write([]byte(clickAddProcessDriver(
-			r.URL.Query().Get("name"), r.URL.Query().Get("position"), r.URL.Query().Get("source"))))
-	})
-	// A CELL THE PLANT FIXTURE CANNOT PRODUCE. See syntheticCellDriver.
-	mux.HandleFunc("/__shots/synthetic-cell", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		_, _ = w.Write([]byte(syntheticCellDriver()))
-	})
-	// D1's style row menu and its add-a-position chooser. See clickMenuDriver.
-	mux.HandleFunc("/__shots/menus", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		_, _ = w.Write([]byte(clickMenuDriver(r.URL.Query().Get("process"), r.URL.Query().Get("style"))))
-	})
-	// P0's Edit-process sheet, saved with one field changed. See clickEditDriver.
-	mux.HandleFunc("/__shots/edit-process", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		_, _ = w.Write([]byte(clickEditDriver(r.URL.Query().Get("process"), r.URL.Query().Get("name"))))
-	})
-	// D4's screen sheet, saved without touching the positions. See clickScreenDriver.
-	mux.HandleFunc("/__shots/screen-note", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		_, _ = w.Write([]byte(clickScreenDriver(r.URL.Query().Get("process"), r.URL.Query().Get("station"))))
-	})
-	// The picture's re-fit on a style click, counted. See pulseDriver.
-	mux.HandleFunc("/__shots/pulse", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		_, _ = w.Write([]byte(pulseDriver(r.URL.Query().Get("process"), r.URL.Query().Get("style"))))
-	})
-	// Settings' own scrolling, measured. See scrollDriver.
-	mux.HandleFunc("/__shots/scroll", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		_, _ = w.Write([]byte(scrollDriver(r.URL.Query().Get("path"))))
-	})
-	// D1's staging picker, opened. See clickStagingDriver.
-	mux.HandleFunc("/__shots/open-staging", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		_, _ = w.Write([]byte(clickStagingDriver(r.URL.Query().Get("process"),
-			r.URL.Query().Get("style"), r.URL.Query().Get("node"))))
-	})
-	// The apply modal's pickers, answered by clicking. See clickApplyDriver.
-	mux.HandleFunc("/__shots/click-apply", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		preset, _ := strconv.ParseInt(r.URL.Query().Get("preset"), 10, 64)
-		style, _ := strconv.ParseInt(r.URL.Query().Get("style"), 10, 64)
-		_, _ = w.Write([]byte(clickApplyDriver(r.URL.Query().Get("process"), preset, style)))
-	})
-	mux.Handle("/", router)
-
-	// THE DESKTOP PAGE IS ADMIN-GATED, AND HEADLESS CHROME CANNOT LOG IN.
-	// There is no CLI flag for a cookie or a header, so the alternative to this
-	// shim is driving a login form with a screenshot tool that cannot drive
-	// anything. The shim carries the session cookie an admin would have, taken
-	// from a real /login round trip against this same router — so the page is
-	// rendered by the real handler behind the real middleware, and only the
-	// browser's inability to hold a cookie is worked around.
-	var adminCookie *http.Cookie
-	authed := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if adminCookie != nil && r.URL.Path != "/login" {
-			r.AddCookie(adminCookie)
-		}
-		mux.ServeHTTP(w, r)
-	})
-	srv := httptest.NewServer(authed)
-	t.Cleanup(srv.Close)
-
-	// First login creates the admin user (handlers_admin_pages.go handleLogin).
-	//
-	// A client that does NOT follow redirects: handleLogin answers 303 and sets
-	// the session on THAT response, and the default client follows the 303 to a
-	// page that (with no cookie yet) bounces back to /login — so resp.Cookies()
-	// reads the last hop and comes back empty.
-	noFollow := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error {
-		return http.ErrUseLastResponse
-	}}
-	if resp, err := noFollow.PostForm(srv.URL+"/login", url.Values{
-		"username": {"shots"}, "password": {"shots"},
-	}); err == nil {
-		for _, c := range resp.Cookies() {
-			adminCookie = c
-		}
-		resp.Body.Close()
-	}
-	if adminCookie == nil {
-		t.Fatal("no session cookie from /login — the desktop shots would photograph the login page")
-	}
 	shotAt := func(file, hash string) {
 		t.Helper()
 		target := filepath.Join(out, file)
@@ -332,6 +278,20 @@ func TestComposerShots(t *testing.T) {
 			t.Fatalf("set active style: %v", err)
 		}
 		shotAt(file, "#flow")
+		// THE OVERLAP CHECK on the board's picture (shotProbe, through the frame
+		// driver), written beside the PNG for the fixture shots' before/after
+		// (TestFixtureShots reads <file>.measure.json) and logged. A finding is a
+		// line, not a failure: the u4 shots photograph, they do not pin.
+		res := chromeRun{t: t, chrome: chrome, out: out}.measure(srv.URL+frame{
+			src: fmt.Sprintf("/operator/station/%d#flow", stationID), w: 1280, h: 800, svg: "#os-flow-svg"}.url(), 1280, 800)
+		raw, err := json.Marshal(res)
+		if err != nil {
+			t.Fatalf("%s: the measurement: %v", file, err)
+		}
+		if err := os.WriteFile(filepath.Join(out, file+".measure.json"), raw, 0o644); err != nil {
+			t.Fatalf("%s: write the measurement: %v", file, err)
+		}
+		t.Logf("%s overlap check: %s", file, res.line())
 	}
 	// THE TWO STYLES EVERY SHOT NAMES: the index pair and the two-robot swap.
 	const idx, swap = "PART SYN-A-S003", "PART SYN-A-S007"
@@ -516,7 +476,9 @@ func TestComposerShots(t *testing.T) {
 	modal("02-part-list.png", "#compose=part", "styles", "SHOT-PART-01", "data-act=\"part\"")
 	modal("03-count.png", "#compose=count;parts=SHOT-PART-01", "how does the press run it?")
 	modal("04-which-one.png", "#compose=which;parts="+newPair, "Which recipe?")
-	modal("05-positions.png", fmt.Sprintf("#compose=positions;parts=%s;recipe=%d", newPair, presetIDs[0]), "Spots · ")
+	// An ungrouped recipe keeps v0's hint (a grouped one takes the mock's words).
+	modal("05-positions.png", fmt.Sprintf("#compose=positions;parts=%s;recipe=%d", newPair, presetIDs[0]), "Spots · ",
+		"This is where the parts go. Tap one to change where it is")
 	// THE SPOTS STEP WITH A DECK SELECTED (spots v0). A second press-index
 	// recipe runs PLN_01 from PLN_03, so the two-off recipe's on-deck spot
 	// PLN_02 has one place an engineer set up for it: the shot is the deck card
@@ -1947,31 +1909,6 @@ func wireScene(fx scenefixtures.Plant) ([]protocol.ScenePointInfo, []protocol.Sc
 	return pts, eds
 }
 
-func chromeBinary() string {
-	if p := os.Getenv("COMPOSER_SHOTS_CHROME"); p != "" {
-		return p
-	}
-	candidates := []string{
-		`C:\Program Files\Google\Chrome\Application\chrome.exe`,
-		`C:\Program Files (x86)\Google\Chrome\Application\chrome.exe`,
-	}
-	if runtime.GOOS != "windows" {
-		candidates = []string{"google-chrome", "chromium", "chromium-browser"}
-	}
-	for _, c := range candidates {
-		if strings.Contains(c, string(os.PathSeparator)) {
-			if _, err := os.Stat(c); err == nil {
-				return c
-			}
-			continue
-		}
-		if p, err := exec.LookPath(c); err == nil {
-			return p
-		}
-	}
-	return ""
-}
-
 // clickD5Driver is the harness page for the one real click: D5's Settings save.
 //
 // IT TOGGLES THE GATE, which is the control whose save calls BOTH bodies in
@@ -2778,40 +2715,6 @@ const until = (step, fn, ms = 10000) => new Promise((resolve, reject) => {
   }
 })();
 </script>`
-}
-
-// rendererFailure says whether a line of --enable-logging=stderr means the
-// PAGE failed, as opposed to Chrome talking about itself.
-//
-// AN ALLOW-LIST, and it used to be "contains ERROR:". This scan reads the
-// BROWSER process's log — the comment where it is set up says so, and says
-// why: --headless=new does not put the renderer's console on stderr, so the
-// page's own errors are read out of the DOM instead (data-pd-error,
-// checkPanelFits). What lands here is Chrome's own infrastructure, and on
-// 2026-09-13 two different pieces of it turned the whole shots run red in a
-// row: GCM push registration failing with PHONE_REGISTRATION_ERROR because
-// the box could not reach Google (a VPN going up is enough), and the default
-// web-app installer failing to install chat.google.com. Both were reported as
-// "the page logged", against a screenshot of a press.
-//
-// Denying each one as it appeared would be a list that grows every time
-// Chrome adds a background feature. The thing this scan is actually for is a
-// renderer that died — a screenshot of a crashed tab is a PNG, and would pass
-// the size check — so it asks for that instead.
-func rendererFailure(line string) bool {
-	for _, fatal := range []string{
-		"Uncaught",                 // a page script threw during load
-		"Renderer process",         // "Renderer process crashed", "...not responding"
-		"renderer process crashed", //
-		"STATUS_ACCESS_VIOLATION",  // a renderer segfault on Windows
-		"Check failed:",            // a Blink CHECK, which takes the renderer with it
-		"Fatal error",
-	} {
-		if strings.Contains(line, fatal) {
-			return true
-		}
-	}
-	return false
 }
 
 // clickApplyDriver answers every picker the apply modal raises, by clicking.
