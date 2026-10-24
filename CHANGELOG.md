@@ -3,6 +3,30 @@
 One line per change. If a change needs a paragraph to explain, the paragraph
 belongs in the commit message or in `docs/` — this file is the index.
 
+## 2026-10-24 — Recipe groups, and the cell picture by relation
+
+Edge only; no migration. Not deployed; lands on `main` with 2026-10-22's spots v0.
+
+- An engineer sets a recipe's groups: Left Hand and Right Hand on a two-off
+- A group lists its spots and each spot's on-deck, third and lanes; a node serves one
+- The save refuses a group that disagrees with the recipe's cells, by name
+- A group carries its own Advanced, and the mint lays it on that part's spots
+- A grouped recipe's Spots step offers only its groups; no other recipe lends
+- An on-deck spot follows its spot where the old one is not allowed; the chip says so
+- Parts are placed after the spots move, so a part lands where it last ran
+- A changeover cell is drawn by relation: who stands beside whom, a card per spot
+- What is not in play fades; chevrons sit on the card that moves; L/R group tags
+- Lanes sit under the spots they serve; a cell off the map is shown in order, and says so
+- Loaders, unloaders and cells with no changeover keep today's picture
+- The HMI's Which recipe, Spots and Go and the desktop recipe draft draw it
+- The HMI asks for the Left Hand part, then the Right Hand part, on grouped recipes
+- The desktop recipe draft sets up groups and says what the floor can pick
+- The desktop's New style sheet gains the Spots step and sends the moves
+- The desktop's Out to picker offers the process's other stations' positions
+- Swap types are named in title case: 2‑Robot Index, 2‑Robot Swap, 1‑Robot Swap
+- Today's picture orders a north–south station north first
+- A dock note names a lane two cells share once
+
 ## 2026-10-22 — The floor picks only the pairings an engineer set up
 
 Edge only; no migration. Not deployed.
