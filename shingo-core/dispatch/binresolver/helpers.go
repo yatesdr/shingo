@@ -37,8 +37,12 @@ import (
 // additionally not 'staged', because a retrieve from a group must not take a bin
 // an operator is working at. Equivalent to the previous `!= available` for every
 // declared status.
+//
+// A carrier counted to nothing is no stock, as the stock fragment says
+// (helpers.BinCarriesSourceableStockSQL): this is that fragment's Go twin for a
+// group's slot children, which the lane mouth asks in SQL.
 func isBinAvailableForRetrieve(b *bins.Bin, payloadCode string, asker domain.DigAsker) bool {
-	if b.ClaimedBy != nil || b.Locked || !b.ManifestConfirmed {
+	if b.ClaimedBy != nil || b.Locked || !b.ManifestConfirmed || b.UOPRemaining <= 0 {
 		return false
 	}
 	if reservedByStranger(b, asker) {

@@ -21,13 +21,13 @@
   },
   {
     "fixture": "zero_uop_still_labelled",
-    "lane_buried": "",
-    "lane_buried_oldest": ""
+    "lane_buried": "rejected",
+    "lane_buried_oldest": "rejected"
   },
   {
     "fixture": "negative_uop_labelled",
-    "lane_buried": "",
-    "lane_buried_oldest": ""
+    "lane_buried": "rejected",
+    "lane_buried_oldest": "rejected"
   },
   {
     "fixture": "over_capacity",

@@ -601,7 +601,9 @@ func (f *Finder) Pick(need Need) Plan {
 	// matching full standing on that node or waits there. Three differences from
 	// the node-local arm, each because this is still the PLANT choosing:
 	//   - the carrier must HOLD the part — an empty standing there is not a full
-	//     of anything, and the a9a0eb78 empty exemption below is for moves;
+	//     of anything, nor is a carrier counted to nothing (the stock fragment's
+	//     rule, helpers.BinCarriesSourceableStockSQL), and the a9a0eb78 empty
+	//     exemption below is for moves;
 	//   - the drain-window filter applies in the loop, so a partial on the node
 	//     does not hide a full beside it;
 	//   - atNamedNode stays false, so the late seatbelt still judges it.
@@ -687,7 +689,7 @@ func (f *Finder) Pick(need Need) Plan {
 		var foreign *bins.Bin
 		for _, b := range candidates {
 			if namedFull {
-				if b.PayloadCode != payloadCode {
+				if b.PayloadCode != payloadCode || b.UOPRemaining <= 0 {
 					continue
 				}
 				if accept := acceptable(); accept != nil && !accept(b) {

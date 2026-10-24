@@ -13,15 +13,17 @@ import (
 // classifyEmptyGroup, and the timestamp comparisons read.
 
 // availBin returns a bin that passes isBinAvailableForRetrieve (status
-// "available", manifest confirmed, unclaimed). CreatedAt controls
-// FIFO/COST ordering; LoadedAt stays nil so the code paths that fall
-// back to CreatedAt are exercised.
+// "available", manifest confirmed, unclaimed, and counted above 0: a carrier
+// counted to nothing is no stock). CreatedAt controls FIFO/COST ordering;
+// LoadedAt stays nil so the code paths that fall back to CreatedAt are
+// exercised.
 func availBin(id int64, payloadCode string, createdAt time.Time) *bins.Bin {
 	return &bins.Bin{
 		ID:                id,
 		Status:            "available",
 		ManifestConfirmed: true,
 		PayloadCode:       payloadCode,
+		UOPRemaining:      10,
 		CreatedAt:         createdAt,
 	}
 }

@@ -72,7 +72,9 @@ var eligFixtures = []eligFixture{
 	{Name: "empty_carrier", Payload: "", UOP: 0, Cap: 0, Status: domain.BinStatusAvailable, NoLoadedA: true},
 	{Name: "wrong_part", Payload: "PART-B", UOP: 500, Cap: 1000, Status: domain.BinStatusAvailable, Confirmed: true},
 
-	// --- content: the quantity axis. FindSourceFIFO has no uop floor. ---
+	// --- content: the quantity axis. A carrier counted to nothing is no stock
+	// (helpers.BinCarriesSourceableStockSQL); concrete_node judges what stands
+	// where somebody named, and has no uop floor. ---
 	{Name: "zero_uop_still_labelled", Payload: wantPayload, UOP: 0, Cap: 1000, Status: domain.BinStatusAvailable, Confirmed: true},
 	{Name: "negative_uop_labelled", Payload: wantPayload, UOP: -32, Cap: 1000, Status: domain.BinStatusAvailable, Confirmed: true},
 	{Name: "over_capacity", Payload: wantPayload, UOP: 1200, Cap: 1000, Status: domain.BinStatusAvailable, Confirmed: true},

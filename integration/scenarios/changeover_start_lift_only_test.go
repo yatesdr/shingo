@@ -134,6 +134,13 @@ func (c *ksrCell) runningCell(label string) {
 // position in positions.
 func (c *ksrCell) runChangeover(label string, after int64, positions ...string) {
 	c.t.Helper()
+	c.runChangeoverTo(label, after, c.styleB, c.typeB, positions...)
+}
+
+// runChangeoverTo is runChangeover into the style to, whose carrier is bt: it
+// ends with the process on to and a bin of bt on each position in positions.
+func (c *ksrCell) runChangeoverTo(label string, after, to int64, bt *corebins.BinType, positions ...string) {
+	c.t.Helper()
 	disp := edgeengine.ReleaseDisposition{CalledBy: "ksr-operator"}
 	c.eventually(label+": the changeover's legs done and its gate open", func() bool {
 		c.fleetStep()
@@ -196,21 +203,22 @@ func (c *ksrCell) runChangeover(label string, after int64, positions ...string) 
 	}
 	proc, err := c.edge.DB.GetProcess(c.processID)
 	mustNil(c.t, err, "process")
-	if proc.ActiveStyleID == nil || *proc.ActiveStyleID != c.styleB {
-		c.t.Errorf("%s: the process is on style %v after CUTOVER, want B (%d)", label, proc.ActiveStyleID, c.styleB)
+	if proc.ActiveStyleID == nil || *proc.ActiveStyleID != to {
+		c.t.Errorf("%s: the process is on style %v after CUTOVER, want %d", label, proc.ActiveStyleID, to)
 	}
 	bins, err := c.core.eng.DB().ListBins()
 	mustNil(c.t, err, "bins")
-	onB := map[string]int{}
+	onTo := map[string]int{}
 	for _, b := range bins {
-		if b.BinTypeID == c.typeB.ID {
-			onB[c.nodeName(b.NodeID)]++
+		if b.BinTypeID == bt.ID {
+			onTo[c.nodeName(b.NodeID)]++
 		}
 	}
 	for _, pos := range positions {
-		if onB[pos] != 1 {
+		if onTo[pos] != 1 {
 			c.dump(label)
-			c.t.Errorf("%s: %d B bins on %s after CUTOVER, want 1 (B bins by node: %v)", label, onB[pos], pos, onB)
+			c.t.Errorf("%s: %d %s bins on %s after CUTOVER, want 1 (%s bins by node: %v)", label, onTo[pos], bt.Code,
+				pos, bt.Code, onTo)
 		}
 	}
 }

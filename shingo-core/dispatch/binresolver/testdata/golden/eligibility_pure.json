@@ -32,14 +32,14 @@
     "loader_drain": "uop\u003c=0",
     "loader_fill": "full-not-a-container",
     "concrete_node": "",
-    "ngrp_resolver": ""
+    "ngrp_resolver": "rejected"
   },
   {
     "fixture": "negative_uop_labelled",
     "loader_drain": "uop\u003c=0",
     "loader_fill": "full-not-a-container",
     "concrete_node": "",
-    "ngrp_resolver": ""
+    "ngrp_resolver": "rejected"
   },
   {
     "fixture": "over_capacity",

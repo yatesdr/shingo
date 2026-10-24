@@ -91,7 +91,18 @@ const BinNotReservedSQL = `NOT ` + reservations.BinSpokenForSQL
 // BinCarriesSourceableStockSQL — the carrier holds attested stock in a state
 // that may leave. 'staged' is excluded on top of the allow-list: a staged bin
 // is one an operator is working at.
-const BinCarriesSourceableStockSQL = `b.manifest_confirmed = true AND ` + SourceableStatusSQL + ` AND b.status <> 'staged'`
+//
+// A CARRIER COUNTED TO NOTHING HOLDS NO STOCK, whatever its part says. A line's
+// consume ticks draw a carrier to 0 and leave its part on it, and a changeover's
+// leg takes it off with no count (its release carries none), so it lands in a
+// market still marked. Without this arm every full reader took it as a full:
+// Edge 2's LINE-2 fetched one onto its line, and the release onto that position
+// was refused for good (DECISIONS S.12). The loader pool already refused it
+// (binsource's uop<=0) and the ruling already said it: a labelled carrier at 0
+// is nobody's stock and nobody's container. Every sourcing reader and the dig
+// readers compose this fragment, so they all ask it.
+const BinCarriesSourceableStockSQL = `b.manifest_confirmed = true AND b.uop_remaining > 0 AND ` +
+	SourceableStatusSQL + ` AND b.status <> 'staged'`
 
 // PayloadBinTypeRuleArm renders the payload_bin_types rule for the payload named
 // by payloadExpr — a placeholder ("$1") or a column ("b.payload_code") so a

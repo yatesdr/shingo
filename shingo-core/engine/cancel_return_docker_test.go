@@ -983,7 +983,10 @@ func TestReturnSources_LandWhereTheFinderLooks(t *testing.T) {
 			if dest == nil {
 				t.Fatalf("%s refused (%s) in a fixture with room", s.name, why)
 			}
-			_, err := db.DB.Exec(`UPDATE bins SET node_id=$1, status='available', manifest_confirmed=true WHERE id=$2`, dest.ID, b.ID)
+			// A carried full has units: counted to nothing it would be no stock
+			// (helpers.BinCarriesSourceableStockSQL), and no finder's.
+			_, err := db.DB.Exec(`UPDATE bins SET node_id=$1, status='available', manifest_confirmed=true,
+				uop_remaining = CASE WHEN payload_code <> '' THEN 10 ELSE 0 END WHERE id=$2`, dest.ID, b.ID)
 			testutil.MustNoErr(t, err, "stand the bin at "+dest.Name)
 			var found *bins.Bin
 			if payload != "" {
