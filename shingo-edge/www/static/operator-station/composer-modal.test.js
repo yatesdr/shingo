@@ -5,13 +5,17 @@
 // part asks how the press runs it only when the recipes offer more than one
 // way, parts that already run in a style ask Use or Set up new, setting
 // up always passes the spots screen, the second part's list leads with the
-// matching half — and the bodies Go previews, and what Go says.
+// matching half — and the bodies Go previews, and what Go says. On a recipe
+// with groups: what each recipe screen asks the picture to draw full, tag and
+// hold still, the on-deck spot following its spot, and the part list asking
+// by the groups' names.
 //
 // WHAT IS REAL: composer-render.js and composer-model.js. WHAT IS STUBBED: the
 // DOM (screens are asserted as the markup the module wrote), the picture
-// renderer, and fetch (the composer read answers from FLOW; a preview answers
-// PREVIEW when a test sets it and nothing otherwise, so Go stays on
-// "Checking…").
+// renderer (it records the options each picture was asked for, and reports
+// PICW as the picture's width when a test sets it), and fetch (the composer
+// read answers from FLOW; a preview answers PREVIEW when a test sets it and
+// nothing otherwise, so Go stays on "Checking…").
 //
 // Run by www/composer_modal_test.go.
 
@@ -80,10 +84,17 @@ const win = {
 let FLOW = {};
 let PREVIEW = null;
 let PIC = {};          // the options the last picture was drawn with
+const PICS = [];       // every picture's options, in order
+let PICW = 0;          // the width the stub reports, when set
 const CALLS = [];
 Object.assign(global, {
     window: win, document: doc, esc,
-    renderFlowPicture: (v, o) => { PIC = o || {}; return '<g class="picture"></g>'; },
+    renderFlowPicture: (v, o) => {
+        PIC = o || {};
+        PICS.push(PIC);
+        if (PICW) PIC.width = PICW;
+        return '<g class="picture"></g>';
+    },
     setTimeout: () => 0, clearTimeout: () => {}, requestAnimationFrame: fn => fn(),
     setInterval: () => 0, clearInterval: () => {},
     AbortController: class { constructor() { this.signal = {}; } abort() {} },
@@ -160,6 +171,7 @@ async function open(flow, setup) {
     UI.close();
     FLOW = flow;
     PREVIEW = null;
+    PICW = 0;
     UI.openPicker(viewWith(setup !== false));
     await settle(); await settle();
 }
@@ -418,6 +430,213 @@ spotsTest('a recipe naming a node the cell lost is shown with its sentence and n
     expectIn('stale shown', said);
     expectOut('stale offered', 'data-act="recipe" data-preset="' + card(flow, 'Two spot press index').id + '"');
     expectIn('the live one offered', 'data-act="recipe" data-preset="99"');
+});
+
+// What the recipe screens ask the picture for, read back from the stub: the
+// nodes drawn full (everything else fades), the L/R tags, and the deck
+// pairing the layout holds still while the operator moves things.
+function sorted(xs) { return JSON.stringify((xs || []).slice().sort()); }
+function tagsOf(o) {
+    const t = (o || PIC).tags || {};
+    return Object.keys(t).sort().map(n => n + ':' + t[n].letter + t[n].group).join(' ');
+}
+function pairsOf(o) {
+    const p = (o || PIC).pairs || {};
+    return Object.keys(p).sort().map(n => n + '<' + p[n].slice().sort().join(',')).join(' ');
+}
+spotsTest('an ungrouped recipe is drawn by relation, the recipe full and nothing tagged', async () => {
+    await twoOff(press6());
+    if (PIC.relation !== true) throw new Error('relation: ' + PIC.relation);
+    if (sorted(PIC.active) !== '["PLN_005","PLN_008","PLN_010","PLN_012"]') throw new Error('active: ' + sorted(PIC.active));
+    if (tagsOf()) throw new Error('tags on an ungrouped recipe: ' + tagsOf());
+    if (pairsOf() !== 'PLN_005<PLN_010 PLN_008<PLN_012') throw new Error('pairs: ' + pairsOf());
+    expectIn('hint', 'This is where the parts go. Tap one to change where it is · as it is? Next', hint());
+    tapPos('PLN_010');
+    if (sorted(PIC.active) !== '["PLN_005","PLN_006","PLN_008","PLN_009","PLN_010","PLN_012"]') {
+        throw new Error('active with PLN_010 selected: ' + sorted(PIC.active));
+    }
+    if (pairsOf() !== 'PLN_005<PLN_010 PLN_008<PLN_012') throw new Error('the pairing moved on a tap: ' + pairsOf());
+});
+
+// ── spots on recipe groups: the server's grouped card ────────────────────────
+//
+// The second read is the Go lane's grouped fixture (newPressGrouped): "Two
+// spot press index" re-saved with Left Hand on PLN_006 or PLN_010 (PLN_005 on
+// deck) or PLN_013 (PLN_014 on deck — synthetic, so the card has a carry) and
+// Right Hand on PLN_007 or PLN_012 (PLN_008 on deck); "One spot press index"
+// stays ungrouped on the same process. The card ships at and carry; the
+// screen looks them up.
+const GROUPED = process.argv[3] ? JSON.parse(fs.readFileSync(process.argv[3], 'utf8')) : null;
+function grouped(edit) {
+    const flow = JSON.parse(JSON.stringify(GROUPED));
+    if (edit) edit(flow);
+    return flow;
+}
+function groupedTest(name, fn) {
+    test(name, async () => {
+        if (!GROUPED) throw new Error('no grouped Press 6 read: run through www/composer_modal_test.go');
+        await fn();
+    });
+}
+const PREFILL_CHIPS = '["PLN_006 → PLN_010 ✕","PLN_007 → PLN_012 ✕"]';
+const CARRIED_CHIPS = '["PLN_006 → PLN_013 (on deck PLN_014) ✕","PLN_007 → PLN_012 ✕"]';
+groupedTest('grouped: nothing selected, the groups in play are full, each hand tagged, the pairing held', async () => {
+    await twoOff(grouped());
+    if (JSON.stringify(chips().sort()) !== PREFILL_CHIPS) throw new Error('pre-fill: ' + JSON.stringify(chips()));
+    if (PIC.relation !== true) throw new Error('relation: ' + PIC.relation);
+    if (sorted(PIC.active) !== '["PLN_005","PLN_008","PLN_010","PLN_012"]') throw new Error('active: ' + sorted(PIC.active));
+    if (tagsOf() !== 'PLN_010:L1 PLN_012:R2') throw new Error('tags: ' + tagsOf());
+    if (pairsOf() !== 'PLN_005<PLN_006,PLN_010,PLN_013 PLN_008<PLN_007,PLN_012') throw new Error('pairs: ' + pairsOf());
+    // THE MOCK'S WORDS, the two kinds of card a tap moves in bold.
+    expectIn('hint', 'Where this cell last ran the recipe. Tap a press spot or an on-deck spot to change it · as it is? Next', hint());
+    expectIn('hint, bold', 'Tap a <b>press spot</b> or an <b>on-deck spot</b>');
+});
+groupedTest('grouped: PLN_010 lights only Left Hand\'s other spots, tagged, and the hint names the group', async () => {
+    await twoOff(grouped());
+    tapPos('PLN_010');
+    if (PIC.selected !== 'PLN_010' || PIC.selectCard !== true) throw new Error('selection: ' + PIC.selected);
+    if (JSON.stringify(lit()) !== '["PLN_006","PLN_013"]') throw new Error('lit: ' + JSON.stringify(lit()));
+    if (sorted(PIC.active) !== '["PLN_005","PLN_006","PLN_008","PLN_010","PLN_012","PLN_013"]') {
+        throw new Error('active: ' + sorted(PIC.active));
+    }
+    if (tagsOf() !== 'PLN_006:L1 PLN_010:L1 PLN_012:R2 PLN_013:L1') throw new Error('tags: ' + tagsOf());
+    expectIn('hint', 'PLN_010 · Left Hand · where this part runs. Tap a spot marked move here', hint());
+    if (pairsOf() !== 'PLN_005<PLN_006,PLN_010,PLN_013 PLN_008<PLN_007,PLN_012') throw new Error('pairs: ' + pairsOf());
+});
+groupedTest('grouped: PLN_005 selects the deck and lights its list at PLN_010 less where it stands', async () => {
+    await twoOff(grouped());
+    tapPos('PLN_005');
+    if (PIC.selected !== 'PLN_005' || lit().length) throw new Error('deck: ' + PIC.selected + ' lit ' + JSON.stringify(lit()));
+    expectIn('hint', 'PLN_005 · Left Hand · on deck for PLN_010. Left Hand has nowhere else for it — ' +
+        'an engineer adds one on the desktop', hint());
+});
+groupedTest('grouped: a spot moved to PLN_013 carries its deck, and one chip says so', async () => {
+    await twoOff(grouped());
+    tapPos('PLN_010'); tapPos('PLN_013');
+    if (JSON.stringify(chips().sort()) !== CARRIED_CHIPS) throw new Error('carry: ' + JSON.stringify(chips()));
+    if (sorted(PIC.active) !== '["PLN_008","PLN_012","PLN_013","PLN_014"]') throw new Error('active: ' + sorted(PIC.active));
+    if (tagsOf() !== 'PLN_012:R2 PLN_013:L1') throw new Error('tags: ' + tagsOf());
+    if (pairsOf() !== 'PLN_005<PLN_006,PLN_010,PLN_013 PLN_008<PLN_007,PLN_012') throw new Error('the pairing moved: ' + pairsOf());
+    tapPos('PLN_014');
+    expectIn('the carried deck', 'PLN_014 · Left Hand · on deck for PLN_013', hint());
+    if (lit().length) throw new Error('the carried deck lit ' + JSON.stringify(lit()));
+});
+groupedTest('grouped: the carry chip\'s ✕ undoes the spot and its deck together', async () => {
+    await twoOff(grouped());
+    tapPos('PLN_010'); tapPos('PLN_013');
+    tap('unmove', { node: 'PLN_006' });
+    if (JSON.stringify(chips()) !== '["PLN_007 → PLN_012 ✕"]') throw new Error('undo: ' + JSON.stringify(chips()));
+    CALLS.length = 0;
+    tap('next');
+    if (JSON.stringify(lastPreview().overrides) !== '{"PLN_007":"PLN_012"}') throw new Error('body ' + JSON.stringify(lastPreview()));
+});
+groupedTest('grouped: back from PLN_013 to PLN_010 the deck goes home', async () => {
+    await twoOff(grouped());
+    tapPos('PLN_010'); tapPos('PLN_013');
+    tapPos('PLN_013'); tapPos('PLN_010');
+    if (JSON.stringify(chips().sort()) !== PREFILL_CHIPS) throw new Error('back: ' + JSON.stringify(chips()));
+});
+groupedTest('grouped: the deck lights the list of the stand its spot stands on now', async () => {
+    // As if Left Hand listed PLN_015 on deck for PLN_013 as well: the card's
+    // at is all the screen reads.
+    await twoOff(grouped(f => card(f, 'Two spot press index').spots.find(s => s.node === 'PLN_005').at.PLN_013.push('PLN_015')));
+    tapPos('PLN_010'); tapPos('PLN_013'); tapPos('PLN_014');
+    if (JSON.stringify(lit()) !== '["PLN_015"]') throw new Error('lit at PLN_013: ' + JSON.stringify(lit()));
+    tapPos('PLN_015');
+    if (JSON.stringify(chips().sort()) !== '["PLN_006 → PLN_013 (on deck PLN_015) ✕","PLN_007 → PLN_012 ✕"]') {
+        throw new Error('chips: ' + JSON.stringify(chips()));
+    }
+});
+groupedTest('grouped: Go previews the carried move with the spot\'s, and draws the flow by relation', async () => {
+    await twoOff(grouped());
+    tapPos('PLN_010'); tapPos('PLN_013');
+    CALLS.length = 0;
+    PREVIEW = { order_count: 0, actions: [], mint: { minted: true, style_name: 'SYN-P6-X + SYN-P6-Y', cells: [
+        { core_node_name: 'PLN_013', role: 'produce', swap_mode: 'two_robot_press_index', paired_core_node: 'PLN_014',
+            payload_code: 'SYN-P6-X' },
+        { core_node_name: 'PLN_012', role: 'produce', swap_mode: 'two_robot_press_index', paired_core_node: 'PLN_008',
+            payload_code: 'SYN-P6-Y' }] } };
+    tap('next');
+    const o = lastPreview().overrides || {};
+    if (JSON.stringify(Object.keys(o).sort().map(k => k + '→' + o[k])) !== '["PLN_005→PLN_014","PLN_006→PLN_013","PLN_007→PLN_012"]') {
+        throw new Error('body ' + JSON.stringify(lastPreview()));
+    }
+    await settle(); await settle();
+    expectIn('go', 'class="picture"');
+    if (PIC.relation !== true) throw new Error('Go relation: ' + PIC.relation);
+    if (sorted(PIC.active) !== '["PLN_008","PLN_012","PLN_013","PLN_014"]') throw new Error('Go active: ' + sorted(PIC.active));
+    if (tagsOf() !== 'PLN_012:R2 PLN_013:L1') throw new Error('Go tags: ' + tagsOf());
+    if (pairsOf() !== 'PLN_005<PLN_006,PLN_010,PLN_013 PLN_008<PLN_007,PLN_012') throw new Error('Go pairs: ' + pairsOf());
+});
+groupedTest('grouped: the part list asks for the Right Hand part, and the parts are named by hand', async () => {
+    await open(grouped());
+    tap('part', { part: 'SYN-P6-X' });
+    tap('two');
+    expectIn('second sheet', '<h2>The Right Hand part?</h2>');
+    tap('part', { part: 'SYN-P6-Y' });
+    expectIn('spots', '<span class="sub">SYN-P6-X (Left Hand) + SYN-P6-Y (Right Hand)</span>');
+    // A saved style places its parts by its own claims: the reuse screen
+    // names no hand, and Set up new does.
+    await open(grouped());
+    tap('part', { part: 'PART-A' });
+    tap('two');
+    tap('part', { part: 'PART-B' });
+    expectIn('reuse', '<h2>PART-A + PART-B</h2>');
+    tap('setupnew');
+    expectIn('set up new', '<span class="sub">PART-A (Left Hand) + PART-B (Right Hand)</span>');
+    await open(press6());
+    tap('part', { part: 'SYN-P6-X' });
+    tap('two');
+    expectIn('second sheet, no groups', '<h2>Second part</h2>');
+    tap('part', { part: 'SYN-P6-Y' });
+    expectIn('spots, no groups', '<span class="sub">SYN-P6-X + SYN-P6-Y</span>');
+});
+groupedTest('grouped: Which recipe draws each card by relation, its hands tagged, as wide as the picture', async () => {
+    const flow = grouped(f => f.presets.push(Object.assign({}, card(f, 'Two spot press index'), { id: '99', name: 'Two spot copy' })));
+    await open(flow);
+    PICW = 1500;
+    PICS.length = 0;
+    tap('part', { part: 'SYN-P6-X' });
+    tap('two');
+    tap('part', { part: 'SYN-P6-Y' });
+    expectIn('which', 'Which recipe? · SYN-P6-X (Left Hand) + SYN-P6-Y (Right Hand)');
+    if (PICS.length !== 2) throw new Error(PICS.length + ' pictures, want 2');
+    for (const o of PICS) {
+        if (o.relation !== true) throw new Error('Which relation: ' + o.relation);
+        if (sorted(o.active) !== '["PLN_005","PLN_006","PLN_007","PLN_008"]') throw new Error('Which active: ' + sorted(o.active));
+        if (tagsOf(o) !== 'PLN_006:L1 PLN_007:R2') throw new Error('Which tags: ' + tagsOf(o));
+        if (pairsOf(o) !== 'PLN_005<PLN_006,PLN_010,PLN_013 PLN_008<PLN_007,PLN_012') throw new Error('Which pairs: ' + pairsOf(o));
+    }
+    expectIn('which svg', '<svg class="os-flow-picture" viewBox="0 0 1500 ');
+});
+groupedTest('grouped: the Spots svg is the picture\'s own width, so a wider grid scrolls', async () => {
+    await open(grouped());
+    PICW = 1500;
+    tap('part', { part: 'SYN-P6-X' });
+    tap('two');
+    tap('part', { part: 'SYN-P6-Y' });
+    expectIn('spots svg', 'viewBox="0 0 1500 560" width="1500" height="560"');
+});
+groupedTest('grouped: the hash entry reaches PLN_010 selected', async () => {
+    const flow = grouped();
+    await open(flow);
+    win.location.hash = '#compose=positions;recipe=' + card(flow, 'Two spot press index').id +
+        ';parts=SYN-P6-X,SYN-P6-Y;moves=PLN_006:PLN_010,PLN_007:PLN_012;sel=PLN_006';
+    try {
+        if (!UI.openFromHash()) throw new Error('the hash opened nothing');
+    } finally {
+        win.location.hash = '';
+    }
+    if (JSON.stringify(lit()) !== '["PLN_006","PLN_013"]') throw new Error('lit: ' + JSON.stringify(lit()));
+    if (tagsOf() !== 'PLN_006:L1 PLN_010:L1 PLN_012:R2 PLN_013:L1') throw new Error('tags: ' + tagsOf());
+    expectIn('hint', 'PLN_010 · Left Hand · where this part runs', hint());
+});
+groupedTest('grouped process: the ungrouped One spot still lends and names no group', async () => {
+    await oneOff(grouped());
+    tapPos('PLN_009');
+    if (JSON.stringify(lit()) !== '["PLN_006"]') throw new Error('lit: ' + JSON.stringify(lit()));
+    expectIn('hint', 'PLN_009 · where this part runs', hint());
+    if (tagsOf()) throw new Error('tags: ' + tagsOf());
 });
 
 // ── Go says what happens and draws the press ─────────────────────────────────

@@ -1949,6 +1949,114 @@ test('a recipe applied with its pre-fill lands on the last-used spots, pairs and
     assert.strictEqual(M.presetMoved(MOVED_RECIPE, {}), MOVED_RECIPE, 'no moves: the recipe as stored');
 });
 
+// ── the Spots step on a grouped card: at and carry, looked up ────────────────
+// A card shaped like the server's (domain.RecipeSpots over groups; the Go pin
+// on the same shape is TestComposerCard_AGroupedCardOffersOnlyItsGroups):
+// Left Hand runs on PLN_006 or PLN_010 with PLN_005 or PLN_011 on deck, and on
+// PLN_013 with PLN_014 or PLN_015, so a move there carries the deck (carry);
+// Right Hand on PLN_007 or PLN_012 with PLN_008. The pre-fill stands on
+// PLN_010 and PLN_012.
+const GROUPED_CARD = {
+    id: '3', name: 'Two spot press index',
+    cells: {
+        PLN_006: { core_node_name: 'PLN_006', role: 'produce', swap_mode: 'two_robot_press_index', paired_core_node: 'PLN_005' },
+        PLN_007: { core_node_name: 'PLN_007', role: 'produce', swap_mode: 'two_robot_press_index', paired_core_node: 'PLN_008' },
+    },
+    groups: [
+        { of: 'PLN_006', name: 'Left Hand', spots: [
+            { core_node_name: 'PLN_006', paired_core_node: ['PLN_005', 'PLN_011'] },
+            { core_node_name: 'PLN_010', paired_core_node: ['PLN_005', 'PLN_011'] },
+            { core_node_name: 'PLN_013', paired_core_node: ['PLN_014', 'PLN_015'] }] },
+        { of: 'PLN_007', name: 'Right Hand', spots: [
+            { core_node_name: 'PLN_007', paired_core_node: ['PLN_008'] },
+            { core_node_name: 'PLN_012', paired_core_node: ['PLN_008'] }] },
+    ],
+    last_moves: { PLN_006: 'PLN_010', PLN_007: 'PLN_012' },
+    slots: [{ nodes: ['PLN_006'], role: 'produce' }, { nodes: ['PLN_007'], role: 'produce' }],
+    spots: [
+        { node: 'PLN_006', job: 'spot', group: 'Left Hand', targets: ['PLN_006', 'PLN_010', 'PLN_013'],
+            carry: { PLN_013: { PLN_005: 'PLN_014' } } },
+        { node: 'PLN_007', job: 'spot', group: 'Right Hand', targets: ['PLN_007', 'PLN_012'] },
+        { node: 'PLN_005', job: 'on_deck', of: 'PLN_006', group: 'Left Hand', targets: ['PLN_005', 'PLN_011'],
+            at: { PLN_006: ['PLN_005', 'PLN_011'], PLN_010: ['PLN_005', 'PLN_011'], PLN_013: ['PLN_014', 'PLN_015'] } },
+        { node: 'PLN_008', job: 'on_deck', of: 'PLN_007', group: 'Right Hand', targets: ['PLN_008'],
+            at: { PLN_007: ['PLN_008'], PLN_012: ['PLN_008'] } },
+    ],
+};
+const PREFILL = GROUPED_CARD.last_moves;
+const ON_013 = { PLN_006: 'PLN_013', PLN_005: 'PLN_014', PLN_007: 'PLN_012' };
+// keys sorted, so a pin reads the moves and not the order they were made in
+const byKey = m => JSON.stringify(Object.keys(m).sort().map(k => k + '→' + m[k]));
+
+test('a grouped deck lights its list at the stand its spot stands on now, less where it stands', () => {
+    assert.deepStrictEqual(M.spotsLit(GROUPED_CARD, PREFILL, 'PLN_005'), ['PLN_011'], 'Left Hand on PLN_010');
+    assert.deepStrictEqual(M.spotsLit(GROUPED_CARD, ON_013, 'PLN_005'), ['PLN_015'],
+        'Left Hand on PLN_013: its list there, not the recipe\'s own');
+    assert.deepStrictEqual(M.spotsLit(GROUPED_CARD, PREFILL, 'PLN_008'), [], 'Right Hand\'s only deck');
+    assert.deepStrictEqual(M.spotsLit(GROUPED_CARD, PREFILL, 'PLN_006'), ['PLN_006', 'PLN_013'],
+        'a spot\'s targets less where it stands, as v0');
+});
+
+test('a grouped spot moved to a target with a carry takes its deck along', () => {
+    const t = M.spotsTap(GROUPED_CARD, PREFILL, 'PLN_006', 'PLN_013');
+    assert.strictEqual(byKey(t.moves), byKey(ON_013));
+    assert.strictEqual(t.selected, '');
+});
+
+test('a deck already on the new stand\'s list stays; one carried earlier goes back', () => {
+    const on011 = { PLN_006: 'PLN_010', PLN_005: 'PLN_011', PLN_007: 'PLN_012' };
+    assert.strictEqual(byKey(M.spotsTap(GROUPED_CARD, on011, 'PLN_006', 'PLN_006').moves),
+        byKey({ PLN_005: 'PLN_011', PLN_007: 'PLN_012' }), 'PLN_011 is on PLN_006\'s list too: it stays');
+    assert.strictEqual(byKey(M.spotsTap(GROUPED_CARD, ON_013, 'PLN_006', 'PLN_010').moves), byKey(PREFILL),
+        'PLN_014 is not on PLN_010\'s list and PLN_005 is: it goes back');
+    assert.strictEqual(byKey(M.spotsTap(GROUPED_CARD, ON_013, 'PLN_005', 'PLN_015').moves),
+        byKey({ PLN_006: 'PLN_013', PLN_005: 'PLN_015', PLN_007: 'PLN_012' }), 'a deck moves alone');
+});
+
+test('a spot\'s chip carries the deck that followed it, and its ✕ undoes both', () => {
+    assert.deepStrictEqual(M.spotsChips(GROUPED_CARD, ON_013), [
+        { node: 'PLN_006', to: 'PLN_013', follow: ['PLN_005'] },
+        { node: 'PLN_007', to: 'PLN_012', follow: [] },
+    ]);
+    const on011 = { PLN_006: 'PLN_010', PLN_005: 'PLN_011', PLN_007: 'PLN_012' };
+    assert.deepStrictEqual(M.spotsChips(GROUPED_CARD, on011).map(c => c.node + ':' + c.follow.join(',')),
+        ['PLN_006:', 'PLN_005:', 'PLN_007:'], 'a deck the operator moved on its spot\'s own list is a chip of its own');
+    assert.strictEqual(byKey(M.spotsUnmove(GROUPED_CARD, ON_013, 'PLN_006')), byKey({ PLN_007: 'PLN_012' }));
+    assert.strictEqual(byKey(M.spotsUnmove(GROUPED_CARD, on011, 'PLN_005')), byKey(PREFILL), 'a deck\'s ✕ is its own');
+});
+
+test('spotsPicture: what is in play is full, the hands tagged on their spots, the pairing from the pre-fill', () => {
+    const sorted = xs => xs.slice().sort();
+    const p = M.spotsPicture(GROUPED_CARD, PREFILL, '');
+    assert.deepStrictEqual(sorted(p.active), ['PLN_005', 'PLN_008', 'PLN_010', 'PLN_012']);
+    assert.deepStrictEqual(p.targets, []);
+    assert.deepStrictEqual(p.tags, { PLN_010: { letter: 'L', group: 1 }, PLN_012: { letter: 'R', group: 2 } });
+    const pairs = q => Object.keys(q.pairs).sort().map(n => n + '<' + sorted(q.pairs[n]).join(','));
+    assert.deepStrictEqual(pairs(p), ['PLN_005<PLN_006,PLN_010,PLN_013', 'PLN_008<PLN_007,PLN_012']);
+    const s = M.spotsPicture(GROUPED_CARD, PREFILL, 'PLN_006');
+    assert.deepStrictEqual(s.targets, ['PLN_006', 'PLN_013']);
+    assert.deepStrictEqual(sorted(s.active), ['PLN_005', 'PLN_006', 'PLN_008', 'PLN_010', 'PLN_012', 'PLN_013']);
+    assert.deepStrictEqual(Object.keys(s.tags).sort(), ['PLN_006', 'PLN_010', 'PLN_012', 'PLN_013']);
+    const d = M.spotsPicture(GROUPED_CARD, PREFILL, 'PLN_005');
+    assert.deepStrictEqual(Object.keys(d.tags).sort(), ['PLN_010', 'PLN_012'], 'a deck and its list carry no tag');
+    assert.deepStrictEqual(pairs(M.spotsPicture(GROUPED_CARD, ON_013, 'PLN_006')), pairs(p),
+        'the pairing is the pre-fill\'s, whatever the moves');
+});
+
+test('spotsPicture on an ungrouped card: the recipe\'s own nodes after the moves, no tags', () => {
+    const card = Object.assign({}, MOVED_RECIPE, { spots: [
+        { node: 'PLN_01', job: 'spot', targets: ['PLN_01', 'PLN_03'] },
+        { node: 'PLN_04', job: 'spot', targets: ['PLN_04', 'PLN_06'] },
+        { node: 'PLN_02', job: 'on_deck', of: 'PLN_01', targets: ['PLN_02'] },
+        { node: 'PLN_05', job: 'on_deck', of: 'PLN_04', targets: ['PLN_05'] }] });
+    const p = M.spotsPicture(card, card.last_moves, '');
+    assert.deepStrictEqual(p.active.slice().sort(), ['PLN_02', 'PLN_03', 'PLN_05', 'PLN_06']);
+    assert.deepStrictEqual(p.tags, {});
+    assert.deepStrictEqual(p.pairs, { PLN_02: ['PLN_03'], PLN_05: ['PLN_06'] });
+    const t = M.spotsTap(card, card.last_moves, 'PLN_01', 'PLN_01');
+    assert.strictEqual(byKey(t.moves), byKey({ PLN_04: 'PLN_06' }), 'a spot moves alone, as v0');
+});
+
 // ── a position moves whole (W1) ──────────────────────────────────────────────
 // Springfield Press 6, 2026-10-21: the running style had to move from
 // PLN_006/007 to PLN_010/012 and the screens had no way to say it.

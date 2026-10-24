@@ -133,8 +133,12 @@
    stage. */
 .os-comp-scroll { flex: 1; min-height: 0; overflow: auto; }
 .os-comp-scroll > svg { display: block; }
+/* THE HINT KEEPS TWO LINES' ROOM, so the picture under it never moves between
+   taps: a tap's hint that wraps ("PLN_005 · Left Hand · on deck for PLN_010.
+   Left Hand has nowhere else for it …") pushed the whole grid 20 px down, and
+   back up on the next tap. */
 .os-comp-hint { flex: 0 0 auto; margin: 12px 20px 4px; color: var(--os-text-muted);
-    font-size: 14px; pointer-events: none; max-width: 760px; }
+    font-size: 14px; line-height: 20px; min-height: 40px; pointer-events: none; max-width: 760px; }
 .os-comp-hint b { color: var(--os-text); font-weight: 500; }
 
 /* ── bottom bar ────────────────────────────────────────────────────────── */

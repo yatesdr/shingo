@@ -389,8 +389,9 @@ function fakeElement() {
         !/(width|height):\s*100%/.test(ruleFor(opCss, '.os-flow-stage svg')), ruleFor(opCss, '.os-flow-stage svg'));
 
     // THE STATION'S POSITIONS SCREEN (pick-a-part U4) is the one picture the
-    // modal draws editable: its drawPositions, run as written against stubs,
-    // sizes the svg to the height the picture reports; its stylesheet scrolls it.
+    // modal draws editable: its drawPositions, run as written against stubs
+    // (with relationOpts and svgOpen, the helpers it draws through), sizes the
+    // svg to the size the picture reports; its stylesheet scrolls it.
     const src = fs.readFileSync(path.join(__dirname, 'composer-render.js'), 'utf8');
     const fn = name => {
         const at = src.indexOf('function ' + name + '(');
@@ -405,13 +406,16 @@ function fakeElement() {
     const shown = { innerHTML: '' };
     const cctx = {
         recipe: { name: 'Standard' }, picks: ['PART-A'], moves: {}, selected: '',
-        recipePicture() { return { svg: '', height: 1234 }; },
+        recipePicture() { return { svg: '', height: 1234, width: 1280 }; },
         picksLabel() { return 'PART-A'; },
-        M() { return { shortPart(p) { return p; } }; },
+        M() {
+            return { shortPart(p) { return p; }, spotsChips() { return []; },
+                spotsPicture() { return { targets: [], active: [], tags: {}, pairs: {} }; } };
+        },
         show() { return shown; }, esc(s) { return String(s); },
     };
     vm.createContext(cctx);
-    vm.runInContext(fn('drawPositions') + '\n__c = drawPositions;', cctx);
+    vm.runInContext(fn('relationOpts') + '\n' + fn('svgOpen') + '\n' + fn('drawPositions') + '\n__c = drawPositions;', cctx);
     cctx.__c();
     check('positions: the svg is drawn at the picture\'s own size',
         /<svg id="os-comp-svg"[^>]*viewBox="0 0 1280 1234" width="1280" height="1234"/.test(shown.innerHTML),
@@ -449,6 +453,10 @@ function fakeElement() {
         /display:\s*flex/.test(stageRule) && /flex-direction:\s*column/.test(stageRule), stageRule);
     check('composer css: the hint takes its own band (not laid over the picture)',
         !/position:\s*(absolute|fixed)/.test(hintRule) && /flex:\s*0 0 auto/.test(hintRule), hintRule);
+    // THE BAND IS TWO LINES HIGH WHATEVER THE HINT SAYS, so a tap whose hint
+    // wraps does not push the picture down (the shots measure the card's y).
+    const lh = /line-height:\s*(\d+)px/.exec(hintRule), mh = /min-height:\s*(\d+)px/.exec(hintRule);
+    check('composer css: the hint keeps two lines\' room', !!lh && !!mh && +mh[1] === 2 * +lh[1], hintRule);
     check('composer css: the scroll box is not laid over the stage',
         !/position:\s*(absolute|fixed)/.test(scrollRule) && !/inset:/.test(scrollRule), scrollRule);
     check('composer css: the scroll box takes the rest and clips what it scrolls',

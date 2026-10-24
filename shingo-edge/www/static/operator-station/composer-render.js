@@ -21,14 +21,23 @@
 //   part      setup on: the styles, then the part list
 //   count     One Part, One Spot / Two Parts, Two Spots / One Part, Two Spots —
 //             only the ones a recipe here can run, skipped when that is one
-//   second    the second part, the codes one character off the first leading
+//   second    the second part, the codes one character off the first leading;
+//             asked by the groups' name ("The Right Hand part?") when every
+//             recipe that runs two parts has groups
 //   reuse     the styles these parts already run in: use one, or set up
 //   which     the recipes that fit, by name, each with its picture
 //   positions the recipe's places on the cell picture; tap one, then a place
-//             marked "move here" — only where the engineer's recipes allow
+//             marked "move here" — only where the engineer's recipes allow,
+//             or, on a recipe with groups, its groups
 //   go        what the changeover does, the press it makes, the trips, Start
 //   none      no recipe here takes these parts — an engineer sets it up
 //   started   the tick, back to the board by itself
+//
+// THE RECIPE SCREENS DRAW THE CELL BY RELATION (recipe groups, 2026-10-24):
+// Which recipe, Spots and Go ask renderFlowPicture for the relation picture,
+// with what is in play full and the rest faded, a group's L/R tag on its
+// spots, and the deck pairing held still while the operator moves things —
+// all of it composer-model's spotsPicture, looked up on the card.
 //
 // NOTHING IS WRITTEN UNTIL START. Every screen before it is local state; Go's
 // words come from flow/preview's mint form (read-only), and Start is flow/mint
@@ -379,9 +388,43 @@ function drawReuse(matches) {
         '</div></div></div>';
 }
 
+// THE PARTS ARE ASKED BY HAND when the recipes have groups (SYNTH round 2 row
+// 11): the second part is "the Right Hand part", and Two Parts, Two Spots
+// names each pick by its slot's group — "SYN44 (Left Hand) + SYN45 (Right
+// Hand)". Words only: the first pick goes on the first slot, so tap order is
+// the hand, except where a part's own history puts it elsewhere (the server
+// places it, R-M; Go draws where it lands). A saved style places its parts by
+// its own claims, so the styles these parts already run in (reuse) and a
+// style tapped name no hand.
 function picksLabel() {
-    const parts = picks.map(p => M().shortPart(p)).join(' + ');
+    const hands = picks.length === 2 && !split && !chosen && screen !== 'reuse' ? handNames() : null;
+    const parts = picks.map((p, i) => M().shortPart(p) + (hands ? ' (' + hands[i] + ')' : '')).join(' + ');
     return split ? parts + ' · One Part, Two Spots' : parts;
+}
+
+// handNames is the group names the two parts are asked by, slot by slot: the
+// chosen recipe's, or, before one is chosen, those every recipe that runs two
+// parts agrees on. null when one has no groups or the names differ.
+function handNames() {
+    const cards = recipe ? [recipe] : presets().filter(p => (p.slots || []).length === 2 && produceSlots(p) === 2);
+    const names = cards.map(handsOf);
+    if (!names.length || names.some(n => !n || n.length !== 2)) return null;
+    return names.every(n => n.join('\x1f') === names[0].join('\x1f')) ? names[0] : null;
+}
+
+// handsOf is a card's group name for each slot (its group is the one `of` its
+// ★ head), or null when a slot has none.
+function handsOf(p) {
+    const out = (p.slots || []).map(sl => {
+        const g = (p.groups || []).find(x => (sl.nodes || []).indexOf(x.of) >= 0);
+        return g ? g.name : '';
+    });
+    return out.length && out.every(Boolean) ? out : null;
+}
+
+function secondTitle() {
+    const hands = handNames();
+    return hands ? 'The ' + hands[1] + ' part?' : 'Second part';
 }
 
 // ── which recipe ─────────────────────────────────────────────────────────────
@@ -428,7 +471,8 @@ function drawNone() {
 }
 
 // The recipe drawn on THIS cell's picture: the composer model fed the recipe's
-// cells and the picks on their slots, and the board's own renderer.
+// cells and the picks on their slots, and the board's own renderer, by
+// relation (relationOpts).
 function recipePicture(p, opts) {
     const s = pictureState(renamedCells(p, moves));
     // The picks on their slots, in slot order — what Go's placement will say
@@ -464,10 +508,34 @@ function pictureState(cells) {
     return M().reduce(model, { type: 'applyPreset', preset: { cells: cells } });
 }
 
+// drawPicture returns the picture's markup and the size it reports: the
+// relation picture is wider than the frame when its grid is, and the screen's
+// svg takes that width and scrolls rather than clip it.
 function drawPicture(s, opts) {
     const o = Object.assign({ selected: null, findings: {} }, opts || {});
     const svg = renderFlowPicture({ cell: M().pictureCells(s, cell()), station: view && view.station }, o);
-    return { svg: svg, height: o.height || 560 };
+    return { svg: svg, height: o.height || 560, width: o.width || 1280 };
+}
+
+// relationOpts is a recipe screen's ask of the picture (spotsPicture): drawn
+// by relation, the card's places full where they stand after the moves (and
+// the selection's targets on Spots), the rest faded, the groups' tags, and
+// the pairing the layout holds still. extra is the screen's own (Which and
+// Go keep usedOnly for the fallback, which draws today's module picture). No
+// recipe (a saved style on Go): relation and the claims' own pairing.
+function relationOpts(card, sel, extra) {
+    const o = Object.assign({ relation: true }, extra || {});
+    if (!card) return o;
+    const pv = M().spotsPicture(card, moves, sel || '');
+    return Object.assign(o, { active: pv.active, tags: pv.tags, pairs: pv.pairs },
+        sel ? { targets: pv.targets } : {});
+}
+
+// svgOpen is a screen's svg element for a drawn picture, at the picture's own
+// size, one user unit to one pixel.
+function svgOpen(pic, id) {
+    return '<svg' + (id ? ' id="' + id + '"' : '') + ' class="os-flow-picture" viewBox="0 0 ' + pic.width + ' ' + pic.height +
+        '" width="' + pic.width + '" height="' + pic.height + '">';
 }
 
 // renamedCells is the recipe's cells with the Positions screen's moves
@@ -493,11 +561,11 @@ function drawWhich(list) {
                 '<span class="where">' + esc(p.where || '') + '</span>' +
                 p.stale.map(t => '<span class="why">' + esc(t) + '</span>').join('') + '</div>';
         }
-        const pic = recipePicture(p, { usedOnly: true });
+        const pic = recipePicture(p, relationOpts(p, '', { usedOnly: true }));
         return '<button class="os-comp-recipe" data-act="recipe" data-preset="' + esc(p.id) + '">' +
             '<span class="nm">' + esc(p.name) + '</span>' +
             '<span class="where">' + esc(p.where || '') + '</span>' +
-            '<svg class="os-flow-picture" viewBox="0 0 1280 ' + pic.height + '" preserveAspectRatio="xMidYMin meet">' +
+            '<svg class="os-flow-picture" viewBox="0 0 ' + pic.width + ' ' + pic.height + '" preserveAspectRatio="xMidYMin meet">' +
             pic.svg + '</svg></button>';
     }).join('');
     show().innerHTML =
@@ -512,24 +580,37 @@ function drawWhich(list) {
 // The recipe's places on the cell picture: tap one, then a place marked "move
 // here". Same robot moves, different node — mode, pairing and role stay the
 // recipe's. Where each place may go is the card's (`spots`, domain.RecipeSpots,
-// from the engineer's recipes); the screen lights it and restates nothing, and
-// the server refuses anything else (engine.applyMoves). Nothing swaps.
+// from the engineer's recipes, or a grouped recipe's groups); the screen
+// lights it and restates nothing, and the server refuses anything else
+// (engine.applyMoves). Nothing swaps. On a grouped recipe a spot's on-deck
+// spot follows it where the card says (carry), and one chip says so —
+// "PLN_006 → PLN_013 (on deck PLN_014) ✕" — its ✕ putting both back.
 //
 // THE TAPPED CARD IS THE SELECTION, and only on this step: an on-deck card or a
 // lane is a place of its own here, so the picture outlines it alone rather than
 // its press's whole module (renderFlowPicture's selectCard).
 function drawPositions() {
-    const lit = selected ? M().spotsLit(recipe, moves, selected) : [];
-    const pic = recipePicture(recipe, { editable: true, selectCard: true, targets: lit,
+    const opts = relationOpts(recipe, selected, { editable: true, selectCard: true,
         selected: selected ? (moves[selected] || selected) : null });
-    const list = Object.keys(moves).map(n => {
-        const s = placeOf(n);
+    const lit = opts.targets || [];
+    const pic = recipePicture(recipe, opts);
+    const list = M().spotsChips(recipe, moves).map(c => {
+        const s = placeOf(c.node);
         const job = s && s.job !== 'spot' ? jobWords(s) + ': ' : '';
-        return '<button class="os-chip btn" data-act="unmove" data-node="' + esc(n) + '">' +
-            esc(job + n + ' → ' + moves[n]) + ' ✕</button>';
+        const follow = c.follow.map(n => followWord(placeOf(n)) + ' ' + moves[n]);
+        return '<button class="os-chip btn" data-act="unmove" data-node="' + esc(c.node) + '">' +
+            esc(job + c.node + ' → ' + c.to + (follow.length ? ' (' + follow.join(', ') + ')' : '')) + ' ✕</button>';
     }).join('');
     const sel = selected ? placeOf(selected) : null;
-    const here = sel ? esc(moves[sel.node] || sel.node) + ' · ' + esc(jobWords(sel)) + '. ' : '';
+    // THE HINT NAMES THE GROUP: "PLN_010 · Left Hand · where this part runs".
+    const here = sel ? esc(moves[sel.node] || sel.node) + ' · ' + (sel.group ? esc(sel.group) + ' · ' : '') +
+        esc(jobWords(sel)) + '. ' : '';
+    const nowhere = sel && sel.group ? esc(sel.group) + ' has nowhere else for it' : 'Your recipes set up nowhere else for it';
+    // Nothing selected, a grouped recipe opens where the cell last ran it and
+    // names the cards a tap moves; an ungrouped one keeps v0's words.
+    const opening = (recipe.groups || []).length
+        ? 'Where this cell last ran the recipe. Tap a <b>press spot</b> or an <b>on-deck spot</b> to change it · as it is? <b>Next</b>'
+        : 'This is where the parts go. Tap one to change where it is · as it is? <b>Next</b>';
     show().innerHTML =
         '<div class="os-comp-full">' +
         '<div class="os-comp-hdr"><h1>Spots · ' + esc(recipe.name) + '</h1>' +
@@ -539,12 +620,11 @@ function drawPositions() {
         '<div class="os-comp-hint">' + (sel
             ? here + (lit.length
                 ? 'Tap a spot marked <b>move here</b> to use it instead'
-                : 'Your recipes set up nowhere else for it — an engineer adds one on the desktop') +
+                : nowhere + ' — an engineer adds one on the desktop') +
                 ' · tap it again to leave it'
-            : 'This is where the parts go. Tap one to change where it is · as it is? <b>Next</b>') +
+            : opening) +
         '</div>' +
-        '<div class="os-comp-scroll"><svg id="os-comp-svg" class="os-flow-picture" viewBox="0 0 1280 ' + pic.height +
-        '" width="1280" height="' + pic.height + '">' + pic.svg + '</svg></div></div>' +
+        '<div class="os-comp-scroll">' + svgOpen(pic, 'os-comp-svg') + pic.svg + '</svg></div></div>' +
         '<div class="os-comp-bar"><div class="os-chips">' + list + '</div><span class="sp"></span>' +
         '<button class="os-btn os-btn-primary" data-act="next">Next</button></div></div>';
 }
@@ -569,6 +649,10 @@ function jobWords(s) {
             : '';
     return (field ? M().fieldLabel(st, field) : 'on deck') + ' for ' + at(s.of);
 }
+
+// followWord is an attached place's job without its spot — "on deck" — for
+// the chip of the spot it followed, which names the spot already.
+function followWord(s) { return s ? jobWords(s).replace(/ for \S+$/, '') : ''; }
 
 // A TAP ON THE SPOTS STEP is the model's to decide (composer-model spotsTap):
 // a place of the recipe selects that place; a place marked "move here" takes
@@ -704,13 +788,13 @@ function drawGo() {
     }
     // THE PRESS IT MAKES, ALWAYS DRAWN: the flow the changeover goes to, with
     // the parts on their spots, so the operator checks a picture rather than
-    // reading a list of node names.
+    // reading a list of node names — by relation, faded and tagged as the
+    // Spots step drew it, on the same held grid.
     let pic = '';
     const cells = pv && pv.mint && pv.mint.cells;
     if (cells && cells.length) {
-        const p = cellsPicture(cells, { usedOnly: true });
-        pic = '<div class="os-comp-scroll"><svg class="os-flow-picture" viewBox="0 0 1280 ' + p.height +
-            '" width="1280" height="' + p.height + '">' + p.svg + '</svg></div>';
+        const p = cellsPicture(cells, relationOpts(chosen ? null : recipe, '', { usedOnly: true }));
+        pic = '<div class="os-comp-scroll">' + svgOpen(p) + p.svg + '</svg></div>';
     }
     show().innerHTML =
         '<div class="os-comp-full os-comp-go">' +
@@ -814,7 +898,7 @@ function onClick(e) {
         case 'topart': openPicker(); break;
         case 'back': back(); break;
         case 'one': split = false; afterParts(); break;
-        case 'two': split = false; screen = 'second'; drawPartSheet('Second part'); break;
+        case 'two': split = false; screen = 'second'; drawPartSheet(secondTitle()); break;
         case 'split': split = true; afterParts(); break;
         case 'setupnew': fresh = true; toRecipe(); break;
         case 'recipe': {
@@ -822,7 +906,7 @@ function onClick(e) {
             if (r) chooseRecipe(r);
             break;
         }
-        case 'unmove': delete moves[btn.dataset.node]; drawPositions(); break;
+        case 'unmove': moves = M().spotsUnmove(recipe, moves, btn.dataset.node); drawPositions(); break;
         case 'next': go(); break;
         case 'start': start(); break;
         default: break;
@@ -852,7 +936,7 @@ export function openFromHash() {
     switch (m[1]) {
         case 'part': case 'saved': openPicker(); break;
         case 'count': screen = 'count'; drawCount(countOffers()); break;
-        case 'second': screen = 'second'; drawPartSheet('Second part'); break;
+        case 'second': screen = 'second'; drawPartSheet(secondTitle()); break;
         case 'reuse': screen = 'reuse'; drawReuse(savedMatches()); break;
         case 'which': screen = 'which'; drawWhich(fits()); break;
         case 'positions': if (recipe) { screen = 'positions'; drawPositions(); } break;

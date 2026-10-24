@@ -2179,6 +2179,14 @@ function presetCells(preset) {
 // The screen keeps its moves as recipe node → node, and its pre-fill is the
 // card's last_moves as shipped (already filtered by the same rule), on the
 // HMI and the desktop alike.
+//
+// A RECIPE WITH GROUPS ships two more lookups (recipe groups, 2026-10-24;
+// SYNTH round 2 row 8): an attached place — any place with `at`, whatever its
+// job (a sequential pair's B side keeps job "spot") — has at[stand], the
+// nodes it may stand on while its spot stands there; a spot has
+// carry[target], the attached moves its move to target brings, so an
+// on-deck spot follows its spot. A spot's targets stay fixed against the
+// recipe's layout; what an attached place may take moves with its spot.
 
 // spotAt is the recipe place standing at a node after the moves, or null.
 function spotAt(card, moves, node) {
@@ -2188,15 +2196,40 @@ function spotAt(card, moves, node) {
     return null;
 }
 
-// spotsLit is where the selected place (a recipe node) may move now: its
-// targets, less the node it stands on and any node another place stands on.
+// spotsLit is where the selected place (a recipe node) may move now, less
+// the node it stands on and any node another place stands on: a spot's
+// targets; an attached place's list at the stand its spot stands on now.
 function spotsLit(card, moves, selected) {
     const spots = (card && card.spots) || [];
     const s = spots.find(x => x.node === selected);
     if (!s) return [];
     const here = moves[s.node] || s.node;
     const taken = new Set(spots.filter(x => x.node !== s.node).map(x => moves[x.node] || x.node));
-    return (s.targets || []).filter(n => n !== here && !taken.has(n));
+    const offer = s.at ? s.at[moves[s.of] || s.of] : s.targets;
+    return (offer || []).filter(n => n !== here && !taken.has(n));
+}
+
+// spotsMove is the moves after one place goes to `to` (its own node puts it
+// back). A spot's attached places follow it to the new stand: one already on
+// that stand's list stays; one the card carries goes where carry[to] says;
+// one whose own node is on the list and that stands elsewhere goes back. An
+// attached place moves alone.
+function spotsMove(card, moves, node, to) {
+    const spots = (card && card.spots) || [];
+    const next = Object.assign({}, moves);
+    const put = (n, v) => { if (v === n) delete next[n]; else next[n] = v; };
+    put(node, to);
+    const s = spots.find(x => x.node === node);
+    if (!s || s.at) return next;
+    const carry = (s.carry || {})[to] || {};
+    for (const a of spots) {
+        if (!a.at || a.of !== node) continue;
+        const list = a.at[to] || [];
+        if (list.indexOf(next[a.node] || a.node) >= 0) continue;
+        if (carry[a.node]) put(a.node, carry[a.node]);
+        else if (list.indexOf(a.node) >= 0) delete next[a.node];
+    }
+    return next;
 }
 
 // spotsTap is one tap on the Spots step, returning the moves and the selection
@@ -2206,7 +2239,7 @@ function spotsLit(card, moves, selected) {
 //     job: the on-deck card selects the on-deck spot, never its press);
 //   - the selected place again clears the selection;
 //   - a lit node moves the selected place there, and its own node puts it
-//     back (no move);
+//     back (no move) — a spot taking its attached places along (spotsMove);
 //   - another place of the recipe selects that one instead — nothing swaps;
 //   - anything else moves nothing and keeps the selection, so the lit nodes
 //     stay lit.
@@ -2216,11 +2249,86 @@ function spotsTap(card, moves, selected, node) {
     if (!selected) return { moves: next, selected: at ? at.node : '' };
     if (at && at.node === selected) return { moves: next, selected: '' };
     if (spotsLit(card, moves, selected).indexOf(node) >= 0) {
-        if (node === selected) delete next[selected];
-        else next[selected] = node;
-        return { moves: next, selected: '' };
+        return { moves: spotsMove(card, moves, selected, node), selected: '' };
     }
     return { moves: next, selected: at ? at.node : selected };
+}
+
+// spotsChips is the Spots step's chips, one per move in the moves' order:
+// {node, to, follow}. An attached place whose own node is not on its spot's
+// list at the spot's new stand moved because its spot did, so it rides in
+// that spot's chip (`follow`) rather than having one of its own.
+function spotsChips(card, moves) {
+    const spots = (card && card.spots) || [];
+    const follows = {};
+    const folded = new Set();
+    for (const s of spots) {
+        const to = moves[s.node];
+        if (s.at || !to || to === s.node) continue;
+        follows[s.node] = spots.filter(a => a.at && a.of === s.node && moves[a.node] && moves[a.node] !== a.node &&
+            (a.at[to] || []).indexOf(a.node) < 0).map(a => a.node);
+        follows[s.node].forEach(n => folded.add(n));
+    }
+    return Object.keys(moves).filter(n => !folded.has(n))
+        .map(n => ({ node: n, to: moves[n], follow: follows[n] || [] }));
+}
+
+// spotsUnmove is a chip's ✕: the place back on its own node, a spot's
+// followers with it.
+function spotsUnmove(card, moves, node) { return spotsMove(card, moves, node, node); }
+
+// spotsPicture is what a recipe screen asks the cell picture for
+// (renderFlowPicture's targets, active, tags and pairs; SYNTH round 2 row 18):
+//
+//   - active: where every place of the card stands after the moves — the
+//     recipe's own five nodes, renamed — and what the selected place may take;
+//     the rest of the cell fades;
+//   - tags: a group's L/R letter on the cards its spots stand on, and on the
+//     spots the selected spot may take; an on-deck spot, a third or a lane
+//     carries none (the mock: its card already names its spot);
+//   - pairs: the deck rule's pairing from the state the step opens on — the
+//     recipe with the card's pre-fill — and, on a grouped card, every stand
+//     each on-deck or third place's at names, so the grid holds still while
+//     the operator moves things (the lead's D11).
+function spotsPicture(card, moves, selected) {
+    const spots = (card && card.spots) || [];
+    const at = n => moves[n] || n;
+    const targets = selected ? spotsLit(card, moves, selected) : [];
+    const active = [...new Set(spots.map(s => at(s.node)).concat(targets))];
+    const tags = {};
+    const groups = (card && card.groups) || [];
+    const tag = name => ({ letter: String(name).charAt(0), group: Math.max(1, groups.findIndex(g => g.name === name) + 1) });
+    for (const s of spots) if (s.group && s.job === 'spot') tags[at(s.node)] = tag(s.group);
+    const sel = spots.find(s => s.node === selected);
+    if (sel && sel.group && sel.job === 'spot') for (const n of targets) tags[n] = tag(sel.group);
+    return { targets: targets, active: active, tags: tags, pairs: spotsPairs(card) };
+}
+
+// spotsPairs is spotsPicture's pairing: {deck: [press, ...]}, read as the
+// layout's own claims-pairing reads a picture (a paired or second paired node
+// that is no row of its own), over the recipe with its pre-fill.
+function spotsPairs(card) {
+    const lm = (card && card.last_moves) || {};
+    const at = n => lm[n] || n;
+    const cells = (card && card.cells) || {};
+    const out = {};
+    const add = (deck, press) => {
+        if (!deck || !press || deck === press) return;
+        out[deck] = out[deck] || [];
+        if (out[deck].indexOf(press) < 0) out[deck].push(press);
+    };
+    for (const n of Object.keys(cells)) {
+        const c = cells[n];
+        const head = c.core_node_name || n;
+        for (const f of [c.paired_core_node, c.second_paired_core_node]) {
+            if (f && !cells[f]) add(at(f), at(head));
+        }
+    }
+    for (const s of (card && card.spots) || []) {
+        if (!s.at || (s.job !== 'on_deck' && s.job !== 'third')) continue;
+        for (const stand of Object.keys(s.at)) add(at(s.node), stand);
+    }
+    return out;
 }
 
 // presetMoved is the preset with its cells' nodes renamed by moves (recipe
@@ -2492,7 +2600,8 @@ function savedBody(styleId, stationId) {
         modeLabels, rowColumns, fieldRequired, fieldLabel, shortPart, robotWords,
         partOffers, styleFacts,
         routingNote, routingRoleOf, stagingFieldUsed,
-        presetCells, presetMoved, spotsLit, spotsTap, shapeDiff, orderSentences, orderTrip, viaWaypoints,
+        presetCells, presetMoved, spotsLit, spotsTap, spotsChips, spotsUnmove, spotsPicture,
+        shapeDiff, orderSentences, orderTrip, viaWaypoints,
         advancedFor, advancedShows, advancedSet, positionChoices,
         flowSaveBody, mintBody, savedBody,
     };
