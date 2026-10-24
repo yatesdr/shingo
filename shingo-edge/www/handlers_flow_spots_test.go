@@ -843,3 +843,81 @@ func TestComposerCard_AGroupedPrefillKeepsTheSlotsThatStand(t *testing.T) {
 		t.Errorf("the grouped pre-fill = %s, want Right Hand's alone", lm)
 	}
 }
+
+// ── the mint, grouped (SYNTH-round2 rows 4 and 24) ──────────────────────────
+
+// mintedClaims mints a body and returns the new style's claims by node.
+func (f press6) mintedClaims(t *testing.T, body map[string]any) map[string]processes.NodeClaim {
+	t.Helper()
+	resp := doRequest(t, f.router, "POST", "/api/processes/"+itoa(f.processID)+"/flow/mint", body, nil)
+	assertStatus(t, resp, http.StatusOK)
+	got := flowBody(t, resp)
+	if got["minted"] != true {
+		t.Fatalf("mint = %v, want a minted style", got)
+	}
+	claims, err := f.db.ListStyleNodeClaims(int64(got["style_id"].(float64)))
+	must(t, err, "claims")
+	out := map[string]processes.NodeClaim{}
+	for _, c := range claims {
+		out[c.CoreNodeName] = c
+	}
+	return out
+}
+
+// A group's Advanced is laid over the minted defaults on every cell of its
+// slot: Right Hand's reorder point (its source "manual": an engineer set it),
+// auto-reorder and curtain, kept through the mint's curtain stamp (D10, which
+// ORs the node's own curtain in). Left Hand says nothing and mints as today,
+// with the curtain its node already has.
+func TestFlowMint_AGroupsAdvancedIsLaidOnItsCells(t *testing.T) {
+	f := newPressGrouped(t)
+	_, err := f.db.Exec(`UPDATE style_node_claims SET curtain_required = 1 WHERE style_id = ? AND core_node_name = 'PLN_010'`, f.running)
+	must(t, err, "PLN_010's curtain")
+	bodies := mintBodies(t, f.station, map[string]mintArgs{"prefill": {f.grouped, press6Pair, press6Prefil}})
+	claims := f.mintedClaims(t, bodies["prefill"])
+	type policy struct {
+		Point   int
+		Source  string
+		Auto    bool
+		Curtain bool
+	}
+	got := map[string]policy{}
+	for n, c := range claims {
+		got[n] = policy{c.ReorderPoint, c.ReorderPointSource, c.AutoReorder, c.CurtainRequired}
+	}
+	want := map[string]policy{
+		"PLN_010": {0, "unset", false, true},
+		"PLN_012": {1, "manual", true, true},
+	}
+	if fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Errorf("minted policy = %v, want %v", got, want)
+	}
+}
+
+// A part goes where it last ran once the Spots step has moved the recipe
+// (round 1's F7: the parts were placed before the moves, on the recipe's own
+// nodes, so the history never matched a moved cell), and on a grouped recipe
+// onto any of its group's spots. Tapped second, SYN-P6-A still lands on the
+// slot of PLN_010, where the running style has it.
+func TestFlowMint_APartGoesWhereItLastRanAfterTheMoves(t *testing.T) {
+	f := newPressGrouped(t)
+	bodies := mintBodies(t, f.station, map[string]mintArgs{
+		// Two spot v1, ungrouped, moved onto the running style's spots.
+		"moved":   {f.twoSpot, []string{"SYN-P6-B", "SYN-P6-A"}, press6Prefil},
+		"grouped": {f.grouped, []string{"SYN-P6-C", "SYN-P6-A"}, nil},
+	})
+	parts := func(claims map[string]processes.NodeClaim) map[string]string {
+		out := map[string]string{}
+		for n, c := range claims {
+			out[n] = c.PayloadCode
+		}
+		return out
+	}
+	if got := parts(f.mintedClaims(t, bodies["moved"])); fmt.Sprint(got) != "map[PLN_010:SYN-P6-A PLN_012:SYN-P6-B]" {
+		t.Errorf("moved mint placed %v, want SYN-P6-A on PLN_010 where it last ran", got)
+	}
+	// Unmoved: Left Hand stands on PLN_006, and PLN_010 is one of its spots.
+	if got := parts(f.mintedClaims(t, bodies["grouped"])); fmt.Sprint(got) != "map[PLN_006:SYN-P6-A PLN_007:SYN-P6-C]" {
+		t.Errorf("grouped mint placed %v, want SYN-P6-A on Left Hand, which ran it on PLN_010", got)
+	}
+}

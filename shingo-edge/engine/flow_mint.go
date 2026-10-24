@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 
@@ -24,13 +25,19 @@ import (
 //     parts is the answer, and nothing is written (Minted=false). Parts first,
 //     provenance never: a plant style born before presets has none, and
 //     resolving by provenance would mint a duplicate of every one of them.
+//   - MOVE: the Spots step's moves rename the recipe's nodes, checked against
+//     the recipe's places (domain.RefuseSpotMoves). The slots keep the
+//     recipe's order with their nodes renamed (D9 of DECISIONS-recipe-groups),
+//     so the tap order and the minted name read as they did unmoved.
 //   - PLACE: each part goes to the node it last ran on here if that node is a
-//     slot of the recipe; the rest go to the free slots in picture order, in
-//     tap order (owner ruling R-M). The desktop may name a node per part.
+//     slot of the moved recipe, or on a grouped recipe one of a slot's group's
+//     spots; the rest go to the free slots in picture order, in tap order
+//     (owner ruling R-M). The desktop may name a node per part.
 //   - EXPAND: the recipe's cells with the parts on their slots, the recipe's
 //     role kept, and the minted policy: no auto-reorder, reorder point 0,
 //     source 'unset' (R-H / R-L) — the operator reorders by hand until an
-//     engineer sets it.
+//     engineer sets it — and over it, on a grouped recipe, each slot's group
+//     Advanced, which is the engineer setting it (SYNTH-round2 row 4).
 //   - CREATE: the style row and its claims in ONE transaction — SaveFlow's own
 //     body (saveFlowTx) — named per R-D, provenance stamped.
 //
@@ -113,10 +120,11 @@ type mintPlan struct {
 
 // MintedReorderSource is the reorder_point_source a minted style's claims
 // carry: no reorder point has been set, by anybody (R-L). The replenishment
-// page and the Advanced pill read it.
+// page and the Advanced pill read it. A group that sets a point mints it as
+// "manual" instead (domain.RecipeAdvanced.LayOver).
 const MintedReorderSource = "unset"
 
-// planMint resolves, places and expands. It writes nothing.
+// planMint resolves, moves, places and expands. It writes nothing.
 func (e *Engine) planMint(processID int64, req MintRequest) (*mintPlan, error) {
 	if req.StyleID != 0 {
 		return e.planSaved(processID, req.StyleID)
@@ -162,16 +170,20 @@ func (e *Engine) planMint(processID int64, req MintRequest) (*mintPlan, error) {
 	if req.Split && countRole(slots, protocol.ClaimRoleProduce) != 2 {
 		return nil, &MintRefusal{Reason: "recipe " + plan.preset.Name + " has no two spots the press makes parts into"}
 	}
-	slotOf, err := placeParts(req.Parts, codes, slots, live)
+	// Each slot's group, read off the recipe's own heads before the moves
+	// rename them.
+	groups := domain.SlotGroups(slots, plan.groups)
+	if plan.moved {
+		if cells, err = e.moveSpots(plan, cells, req.Overrides, live); err != nil {
+			return nil, err
+		}
+		slots = renameSlots(slots, req.Overrides)
+	}
+	slotOf, err := placeParts(req.Parts, codes, slots, groups, live)
 	if err != nil {
 		return nil, err
 	}
-	plan.cells, plan.placement = expandRecipe(cells, slots, codes, slotOf)
-	if plan.moved {
-		if err := e.moveSpots(plan, req.Overrides, live); err != nil {
-			return nil, err
-		}
-	}
+	plan.cells, plan.placement = expandRecipe(cells, slots, codes, slotOf, groups)
 	roles := make([]protocol.ClaimRole, len(codes))
 	ordered := make([]string, len(codes))
 	for i := range codes {
@@ -304,9 +316,12 @@ func (e *Engine) recipeSlots(processID, presetID int64, parts int, plan *mintPla
 }
 
 // expandRecipe puts each part on its slot's positions and gives every cell the
-// minted policy (R-H / R-L): no auto-reorder, reorder point 0, source 'unset'.
-// It returns the cells and the placement (each slot's first position → part).
-func expandRecipe(cells []domain.FlowCell, slots []domain.Slot, codes []string, slotOf []int) ([]domain.FlowCell, map[string]string) {
+// minted policy (R-H / R-L): no auto-reorder, reorder point 0, source 'unset';
+// then, on every cell of a slot whose group has an Advanced, that Advanced over
+// it. A group that says nothing mints as an ungrouped recipe does. It returns
+// the cells and the placement (each slot's first position → part).
+func expandRecipe(cells []domain.FlowCell, slots []domain.Slot, codes []string, slotOf []int,
+	groups []*domain.RecipeGroup) ([]domain.FlowCell, map[string]string) {
 	placement := map[string]string{}
 	partAt := map[string]string{}
 	for i, code := range codes {
@@ -315,10 +330,21 @@ func expandRecipe(cells []domain.FlowCell, slots []domain.Slot, codes []string, 
 		}
 		placement[slots[slotOf[i]].Nodes[0]] = code
 	}
+	policy := map[string]*domain.RecipeAdvanced{}
+	for i, s := range slots {
+		if i < len(groups) && groups[i] != nil && groups[i].Advanced != nil {
+			for _, n := range s.Nodes {
+				policy[n] = groups[i].Advanced
+			}
+		}
+	}
 	out := make([]domain.FlowCell, 0, len(cells))
 	for _, c := range cells {
 		c.PayloadCode = partAt[c.CoreNodeName]
 		c.Advanced = &domain.FlowAdvanced{ReorderPointSource: MintedReorderSource, CarryoverDisposition: domain.CarryoverReplace}
+		if g := policy[c.CoreNodeName]; g != nil {
+			g.LayOver(c.Advanced)
+		}
 		out = append(out, c)
 	}
 	return out, placement
@@ -389,14 +415,37 @@ func (e *Engine) resolveByParts(process *processes.Process, styles []processes.S
 
 // placeParts returns, per picked part (tap order), the index of the slot it
 // takes: the node the desktop named; else the node it last ran on here, if
-// that node is a free slot's; else the first free slot in picture order.
-func placeParts(picks []PartPick, codes []string, slots []domain.Slot, live []processes.NodeClaim) ([]int, error) {
+// that node is a free slot's or, on a grouped recipe, one of a free slot's
+// group's spots; else the first free slot in picture order. slots are the
+// moved recipe's, so a part that ran where the Spots step put its slot finds
+// it; groups is each slot's group (nil for none).
+//
+// A NAMED NODE IS A SLOT'S OWN, never a group's other spot: the desktop names
+// the node the part goes on, and on a spot the slot does not stand on it
+// would not go there.
+func placeParts(picks []PartPick, codes []string, slots []domain.Slot, groups []*domain.RecipeGroup,
+	live []processes.NodeClaim) ([]int, error) {
 	out := make([]int, len(codes))
 	taken := make([]bool, len(slots))
 	slotWith := func(node string) int {
 		for i, s := range slots {
-			for _, n := range s.Nodes {
-				if n == node {
+			if slices.Contains(s.Nodes, node) {
+				return i
+			}
+		}
+		return -1
+	}
+	ranOn := func(node string) int {
+		if i := slotWith(node); i >= 0 {
+			return i
+		}
+		for i, g := range groups {
+			if g == nil {
+				continue
+			}
+			for _, sp := range g.Spots {
+				// A pair's B side is its spot too: the part alternates on both.
+				if sp.CoreNodeName == node || (len(slots[i].Nodes) > 1 && slices.Contains(sp.PairedCoreNode, node)) {
 					return i
 				}
 			}
@@ -422,7 +471,7 @@ func placeParts(picks []PartPick, codes []string, slots []domain.Slot, live []pr
 			if c.PayloadCode != codes[i] {
 				continue
 			}
-			if s := slotWith(c.CoreNodeName); s >= 0 && !taken[s] {
+			if s := ranOn(c.CoreNodeName); s >= 0 && !taken[s] {
 				out[i], taken[s], placed = s, true, true
 				break
 			}
@@ -442,20 +491,21 @@ func placeParts(picks []PartPick, codes []string, slots []domain.Slot, live []pr
 	return out, nil
 }
 
-// moveSpots applies the Spots step's moves to the plan, after checking them
-// against the recipe's places. The rule reads the process's enabled recipes:
-// one statement, on a moved mint or preview only. The node list, the routing
-// rows and the claims are the plan's own.
+// moveSpots applies the Spots step's moves to the recipe's cells, after
+// checking them against the recipe's places, and returns the moved cells. The
+// rule reads the process's enabled recipes: one statement, on a moved mint or
+// preview only. The node list, the routing rows and the claims are the plan's
+// own.
 //
 // A GROUPED RECIPE READS NO OTHER RECIPE: its groups are the whole answer and
 // nothing is lent (SYNTH-round2 row 7), so its moved mint skips the list.
-func (e *Engine) moveSpots(plan *mintPlan, moves map[string]string, live []processes.NodeClaim) error {
+func (e *Engine) moveSpots(plan *mintPlan, cells []domain.FlowCell, moves map[string]string, live []processes.NodeClaim) ([]domain.FlowCell, error) {
 	rules := domain.SpotRules{Positions: plan.nodes, Lanes: domain.StagingLanes(plan.routing)}
 	var used []domain.NodeClaim
 	if len(plan.groups) == 0 {
 		rows, err := e.db.ListFlowPresets(plan.process.ID, false)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		enabled, versions := domain.EnabledRecipes(rows)
 		for _, p := range enabled {
@@ -471,9 +521,7 @@ func (e *Engine) moveSpots(plan *mintPlan, moves map[string]string, live []proce
 		}
 		used = domain.RecipeUsedClaims(versions[plan.preset.Name], byStyle)
 	}
-	var err error
-	plan.cells, plan.placement, err = applyMoves(plan.cells, plan.placement, plan.groups, moves, used, rules)
-	return err
+	return applyMoves(cells, plan.groups, moves, used, rules)
 }
 
 // applyMoves renames recipe nodes per the Spots step (R-K): every field of
@@ -483,17 +531,12 @@ func (e *Engine) moveSpots(plan *mintPlan, moves map[string]string, live []proce
 // no recipe set up; for a grouped recipe, the state the moves leave stands in
 // its groups. Whether the choreography still holds is the claim validator's
 // question, asked by the save.
-func applyMoves(cells []domain.FlowCell, placement map[string]string, groups []domain.RecipeGroup, moves map[string]string,
-	used []domain.NodeClaim, rules domain.SpotRules) ([]domain.FlowCell, map[string]string, error) {
+func applyMoves(cells []domain.FlowCell, groups []domain.RecipeGroup, moves map[string]string,
+	used []domain.NodeClaim, rules domain.SpotRules) ([]domain.FlowCell, error) {
 	if err := domain.RefuseSpotMoves(cells, groups, used, rules, moves); err != nil {
-		return nil, nil, &MintRefusal{Reason: err.Error()}
+		return nil, &MintRefusal{Reason: err.Error()}
 	}
-	rename := func(n string) string {
-		if to, ok := moves[n]; ok && to != "" {
-			return strings.TrimSpace(to)
-		}
-		return n
-	}
+	rename := renamer(moves)
 	out := make([]domain.FlowCell, 0, len(cells))
 	for _, c := range cells {
 		c.CoreNodeName = rename(c.CoreNodeName)
@@ -503,11 +546,32 @@ func applyMoves(cells []domain.FlowCell, placement map[string]string, groups []d
 		c.OutboundStaging = rename(c.OutboundStaging)
 		out = append(out, c)
 	}
-	moved := map[string]string{}
-	for n, code := range placement {
-		moved[rename(n)] = code
+	return out, nil
+}
+
+// renamer is the Spots step's moves as a rename: a moved node's new name, and
+// any other node as it is.
+func renamer(moves map[string]string) func(string) string {
+	return func(n string) string {
+		if to, ok := moves[n]; ok && to != "" {
+			return strings.TrimSpace(to)
+		}
+		return n
 	}
-	return out, moved, nil
+}
+
+// renameSlots is the recipe's slots, in the recipe's order, on the nodes the
+// moves put them on (D9 of DECISIONS-recipe-groups).
+func renameSlots(slots []domain.Slot, moves map[string]string) []domain.Slot {
+	rename := renamer(moves)
+	out := make([]domain.Slot, len(slots))
+	for i, s := range slots {
+		out[i] = domain.Slot{Role: s.Role, Nodes: make([]string, len(s.Nodes))}
+		for j, n := range s.Nodes {
+			out[i].Nodes[j] = rename(n)
+		}
+	}
+	return out
 }
 
 // uniqueStyleName is the R-D name, with ` · <recipe>` on a collision with a
@@ -616,6 +680,10 @@ func (e *Engine) MintStyle(processID int64, req MintRequest) (*MintResult, error
 // light-curtain requirement. Both are facts about the cell, not policy about a
 // part — see DECISIONS-builder-pick-a-part (containment default taken without
 // a ruling; curtain copied from the node).
+//
+// THE CURTAIN IS ORED IN, never written over (D10 of DECISIONS-recipe-groups):
+// a group's Advanced may require the curtain on a node no live claim does yet,
+// and the stamp runs after Expand has laid that on.
 func (e *Engine) mintStamp(processID int64) (func(*domain.NodeClaimInput), error) {
 	dests, err := e.db.ListProduceContainmentDestinations()
 	if err != nil {
@@ -636,7 +704,7 @@ func (e *Engine) mintStamp(processID int64) (func(*domain.NodeClaimInput), error
 		if in.Role == protocol.ClaimRoleProduce && dest != "" {
 			in.ContainmentDestination = dest
 		}
-		in.CurtainRequired = curtain[in.CoreNodeName]
+		in.CurtainRequired = in.CurtainRequired || curtain[in.CoreNodeName]
 	}, nil
 }
 
