@@ -81,6 +81,7 @@ const S = {
     add: null,           // the Add-process sheet's own non-text draft: {groupID}
     partPop: null,       // the open part popover: {node, q, note, catalogFailed}
     partSet: null,       // the STORED half of the open process's part set; null = not read
+    newStyle: null,      // the New style sheet's Spots step: {recipe, moves, sel} — see drawNewSpots
 };
 
 function root() { return $('pd-root'); }
@@ -116,6 +117,13 @@ function boot() {
     document.body.classList.add('pd-body');
 
     root().addEventListener('click', onClick);
+    // A RECIPE GROUP'S CARD IS HOVERED, NOT CLICKED, to see it on the picture
+    // (the mock's tab 1), and its name is typed. Both bubble to the root like
+    // the clicks do; neither redraws the tab, because a redraw under the
+    // pointer takes an open popover with it.
+    root().addEventListener('mouseover', e => onGroupHover(e, true));
+    root().addEventListener('mouseout', e => onGroupHover(e, false));
+    root().addEventListener('input', onGroupName);
     // The picture is drawn 1:1 into the column it has, so a resize is a
     // re-layout and not a re-scale. Only the picture is redrawn.
     window.addEventListener('resize', () => { if (S.model && S.tab === 'flows') drawPicture(); });
@@ -411,9 +419,35 @@ async function openProcess(id) {
         // ;import=<presetID> opens that recipe, laid onto this process, as a
         // draft (U7) — the popover's last step, reachable without a mouse.
         if (h.import) await importPreset(Number(h.import));
+        // ;recipe=<id> opens that recipe as a draft, the rail row's click;
+        // ;groups=1 then presses Set up groups, ;focus=<group> hovers a group,
+        // ;row=<node> clicks a spot's row and ;gadv=<group> opens its Advanced
+        // (recipe groups) — every state of the engineer's editor a shot of the
+        // mock's tab 1 has to reach.
+        if (h.recipe) openRecipeAt(h);
     }
     else if (h.tab === 'settings') { S.tab = 'settings'; S.settings = settingsDraft(); await openSettings(); }
+    // #newstyle=<recipe> opens + New style on that recipe, at its Spots step;
+    // ;sel=<node> selects a place there, as the station's #compose ;sel= does.
+    if (h.newstyle) openNewStyle(h.newstyle, h.sel);
     syncHash();
+}
+
+// openRecipeAt is the recipe draft's one-shots, in the order an engineer
+// clicks them. Local state only: nothing here writes.
+function openRecipeAt(h) {
+    openRecipe(h.recipe);
+    const d = S.shapeDraft;
+    if (!d) return;
+    if (h.groups && !d.groups) setUpGroups();
+    if (!d.groups) return;
+    const byName = name => d.groups.findIndex(g => g.name === name);
+    if (h.focus && byName(h.focus) >= 0) { d.focus = { g: byName(h.focus) }; drawFlows(); }
+    if (h.row) {
+        const g = d.groups.findIndex(x => x.spots.some(s => s.core_node_name === h.row));
+        if (g >= 0) { d.focus = { g: g, row: h.row }; drawFlows(); }
+    }
+    if (h.gadv && byName(h.gadv) >= 0) openGroupAdvanced(byName(h.gadv));
 }
 
 // The list's Settings link: open the process, then land on the tab the
@@ -445,7 +479,8 @@ function hashOpts() {
 // #tab=) — so a reload, a bookmark made after three clicks, or a link pasted
 // out of the address bar lands on the same state. replaceState mints no
 // history entries, so back and forward stay the browser's, not this page's.
-// The boot-only one-shots (;adv=, #part=, ;preset=, ;apply=, ;tick=, ;draft=) are
+// The boot-only one-shots (;adv=, #part=, ;preset=, ;apply=, ;tick=, ;draft=,
+// ;recipe= with ;groups= ;focus= ;row= ;gadv=, #newstyle= with ;sel=) are
 // consumed once and never re-minted: they exist so the shots harness can
 // reach a state without driving a mouse, and re-writing them would pin every
 // later click to a deep link nobody asked for.
@@ -578,6 +613,7 @@ function drawFlows() {
     root().innerHTML = appbar() + '<div class="pd-page">' + rail() + main() + '</div>';
     drawPicture();
     drawBar();
+    markRecipeState();
     scrollers.forEach(([sel, axis], i) => { const el = root().querySelector(sel); if (el) el[axis] = wasAt[i]; });
     bindRailSearch();
 }
@@ -731,10 +767,18 @@ function recipeRow(r) {
 // openRecipe puts a saved recipe in the positions table as a draft. Saving it
 // under the same name makes its next version; the styles minted from the old
 // one keep it as their provenance.
+//
+// A RECIPE THAT HAS GROUPS OPENS WITH ITS CARDS, as the desktop read carries
+// them — a group's Advanced included, so a re-save keeps it (SYNTH-round2 row
+// 4). One that has none opens without, and stays v0's until an engineer
+// presses Set up groups (row 5: never generated).
 function openRecipe(id) {
     const r = (S.composer.presets || []).find(x => String(x.id) === String(id));
     if (!r) return;
-    startShapeDraft(Object.values(r.cells || {}), { mode: r.mode, recipe: { id: r.id, name: r.name } });
+    startShapeDraft(Object.values(r.cells || {}), {
+        mode: r.mode, recipe: { id: r.id, name: r.name },
+        groups: (r.groups || []).length ? JSON.parse(JSON.stringify(r.groups)) : null,
+    });
 }
 
 // + New recipe: the shapes this cell could run (the generator's), or one
@@ -810,22 +854,40 @@ function cellFromModel() { return M().pictureCells(S.model, draftCell()); }
 // and staging slots a press shares) are the recipe's picture. A filter over
 // the read the page already holds: no request.
 function draftCell() {
+    if (!S.shapeDraft || !S.model) return S.composer.cell || { positions: [] };
+    return stationCellOf(M().toCells(S.model).map(c => c.core_node_name));
+}
+
+// stationCellOf is the process's cell cut to the stations of these heads, and
+// the stationless positions beside them: a recipe's own picture. The New
+// style and Use a recipe sheets draw a recipe's shape over the same cut.
+function stationCellOf(heads) {
     const base = S.composer.cell || { positions: [] };
-    if (!S.shapeDraft || !S.model) return base;
     const station = {};
     for (const p of (base.positions || [])) station[p.core_node_name] = p.station_id || 0;
-    const heads = new Set(M().toCells(S.model).map(c => station[c.core_node_name]).filter(Boolean));
-    if (!heads.size) return base;
+    const ids = new Set((heads || []).map(n => station[n]).filter(Boolean));
+    if (!ids.size) return base;
     return Object.assign({}, base, {
-        positions: (base.positions || []).filter(p => !p.station_id || heads.has(p.station_id)),
+        positions: (base.positions || []).filter(p => !p.station_id || ids.has(p.station_id)),
     });
 }
 
 // pictureOpts is how this page asks for the picture: by relation when the
 // process has a recipe — the floor sets this cell up, so the engineer sees the
-// picture the floor sees — and otherwise as the scope gate decides.
+// picture the floor sees — or the page is drawing one (a recipe is a
+// changeover's by definition), and otherwise as the scope gate decides.
+//
+// A DRAFT WITH GROUPS HOLDS ITS GRID BY THEIR PAIRS (the lead's D11): an
+// on-deck spot is laid out by every spot its groups let it feed, not by the
+// ★ cell alone, and the pairs come from the groups, never from the focus, so
+// hovering never re-flows the grid. At Press 6 PLN_005 feeds PLN_006 and
+// PLN_010, which stand in two rows, so it takes the middle one, as the mock
+// draws it. With no groups the picture's own claims decide, as before.
 function pictureOpts() {
-    return ((S.composer && S.composer.presets) || []).length ? { relation: true } : {};
+    const o = (((S.composer && S.composer.presets) || []).length || S.shapeDraft) ? { relation: true } : {};
+    const pairs = groupPairs();
+    if (pairs) o.pairs = pairs;
+    return o;
 }
 
 // PICTURE_H is the height of a frame the picture reported nothing for — an
@@ -854,11 +916,15 @@ function drawPicture(pass) {
     const byNode = {};
     for (const f of fs) if (f.node && !byNode[f.node]) byNode[f.node] = f.short;
     const p = process();
-    const cell = cellFromModel();
+    // A DRAFT WITH GROUPS DRAWS THE GROUPS (groupPicture): every spot they
+    // list as a card the floor could run, faded, tagged and given its
+    // chevrons by what the engineer is looking at.
+    const gp = groupPicture();
+    const cell = gp ? gp.cell : cellFromModel();
     const o = Object.assign({
         selected: S.selected, findings: byNode, editable: true, frame: { w: w },
-    }, pictureOpts());
-    o.sentences = sentencesFromModel(S.model, !!relationPlacement(cell, o));
+    }, pictureOpts(), gp ? gp.opts : {});
+    o.sentences = gp ? gp.sentences : sentencesFromModel(S.model, !!relationPlacement(cell, o));
     const markup = renderFlowPicture({ cell: cell, station: { name: p ? p.name : '' } }, o);
     const h = Math.round(o.height || PICTURE_H);
     // A RELATION GRID WIDER THAN THE COLUMN IS DRAWN WIDER, never shrunk: the
@@ -923,6 +989,7 @@ function drawPicture(pass) {
         });
     }
     reportDesktopFit();
+    markRecipeState();
 }
 
 // A PROCESS WITH NO PART IS THE STATE A CREATE LANDS IN, and until U10 there
@@ -1041,8 +1108,701 @@ function shapeDraftMain() {
         (lines.length ? '<div class="pd-notice">' + esc(lines.join(' · ')) + '</div>' : '') +
         (S.notice ? '<div class="pd-notice">' + esc(S.notice) + '</div>' : '') +
         '<div class="pd-pic"><svg id="pd-svg" class="os-flow-picture"></svg></div>' +
-        positionsTable() +
+        positionsTable() + groupsSection() +
         '<div class="pd-bar" id="pd-bar"></div><div class="pd-pop" id="pd-pop" hidden></div></div>';
+}
+
+// ── recipe groups: the engineer's editor (SYNTH-round2 rows 2-4, 9, 10, 18) ──
+//
+// AN ENGINEER SETS GROUPS ON A RECIPE: Left Hand and Right Hand on a two-off,
+// the press spots each part may run on, the on-deck spots allowed for each,
+// and Advanced per group; the floor's Spots step then offers exactly that and
+// nothing else (owner, 2026-10-22). The editor is this draft, not a screen of
+// its own: the positions table above stays the ★ cells' editor and the plain
+// path's (O-11), and the cards under it are the groups.
+//
+// TWO COPIES THE SAVE KEEPS ONE (row 2). A group is of its slot's ★ cell and
+// its first spot is that cell's head, with the cell's own attached nodes in
+// its lists; the server refuses every way the two could disagree, by name,
+// and this page shows the refusal as the server words it. syncGroups keeps
+// the cards on the cells as the table changes them, so most of those
+// refusals cannot be reached from here.
+//
+// A GROUP'S ROUTING IS ITS ★ CELL'S (row 3): the card's In from and Out to
+// are that cell's own pickers, so a card and its table row cannot disagree.
+//
+// NOTHING IS GENERATED (row 5): a recipe without groups has none until an
+// engineer presses Set up groups, and none are stored until Save recipe.
+
+// The four lists a group spot carries, by the claim's own field names (owner
+// ruling F3), each beside the ★ cell field it widens.
+const GROUP_FIELDS = ['paired_core_node', 'second_paired_core_node', 'inbound_staging', 'outbound_staging'];
+const DECK_FIELDS = ['paired_core_node', 'second_paired_core_node'];
+
+// What a group's Advanced may say: FlowAdvanced less the part fields, the press
+// hardware, the loader board's order and the reorder point's source (row 4,
+// domain.RecipeAdvanced), in that type's order.
+const GROUP_ADV_KEYS = ['reorder_point', 'auto_reorder', 'lineside_soft_threshold', 'auto_push',
+    'evacuate_on_changeover', 'changeover_carryover_disposition', 'keep_staged_node', 'auto_confirm',
+    'curtain_required', 'strict_pack'];
+
+// listWords is a list's column heading, its add chip and the noun "On the
+// floor" and the running-style line say it with, per mode.
+function listWords(field, mode) {
+    switch (field) {
+        case 'paired_core_node':
+            return mode === 'sequential'
+                ? { head: 'Pair (B side)', add: '+ B side', noun: 'with' }
+                : { head: 'On deck (can feed it)', add: '+ on deck', noun: 'on deck' };
+        case 'second_paired_core_node': return { head: 'Third', add: '+ third', noun: 'third' };
+        case 'inbound_staging': return { head: mode === 'two_robot' ? 'Staging lane (in)' : 'Lane in', add: '+ lane', noun: 'lane' };
+        default: return { head: 'Lane out', add: '+ lane', noun: 'lane out' };
+    }
+}
+
+// spotWords is the spot column's heading and its add button.
+function spotWords(mode) {
+    if (mode === 'two_robot_press_index') return { head: 'Press spot', add: '+ Add a press spot' };
+    if (mode === 'sequential') return { head: 'Pair (A side)', add: '+ Add a pair' };
+    return { head: 'Spot', add: '+ Add a spot' };
+}
+
+// starLists is the ★ cell's own attached places: one entry per list field
+// flowspec lets its mode and role have AND the cell fills — the model's own
+// rowColumns, so the fields a card offers are the ones the table draws. A
+// field the ★ cell leaves blank gets no column: the server refuses a list
+// there ("set one on PLN_006's row first"), and a control whose every value
+// is refused is not one to hand an engineer.
+function starLists(head) {
+    if (!S.model || !S.model.cells[head]) return [];
+    return M().rowColumns(S.model, head, 'partner').concat(M().rowColumns(S.model, head, 'staging'))
+        .filter(ch => ch.value);
+}
+
+// draftSlots is the draft's parts, in cell order: domain.PayloadSlots' rule
+// over the draft's own cells — a cell flowspec says takes a part is a slot,
+// and a mutual Sequential pair is one slot over both. The saved card ships the
+// same list as `slots`; this one follows the table as the engineer edits it.
+function draftSlots() {
+    const cells = M().toCells(S.model);
+    const by = {};
+    for (const c of cells) by[c.core_node_name] = c;
+    const taken = new Set();
+    const out = [];
+    for (const c of cells) {
+        const n = c.core_node_name;
+        if (taken.has(n) || !M().fieldRequired(S.model, n, 'payload_code')) continue;
+        const slot = { nodes: [n], role: c.role, mode: c.swap_mode };
+        taken.add(n);
+        const p = by[c.paired_core_node];
+        if (p && p.paired_core_node === n && !taken.has(p.core_node_name)) {
+            slot.nodes.push(p.core_node_name);
+            taken.add(p.core_node_name);
+        }
+        out.push(slot);
+    }
+    return out;
+}
+
+// newGroup is one slot's card as Set up groups lays it out: its ★ row and the
+// ★ cell's own attached places in its lists.
+function newGroup(head, name) {
+    const spot = { core_node_name: head };
+    for (const ch of starLists(head)) spot[ch.field] = [ch.value];
+    return { of: head, name: name, spots: [spot] };
+}
+
+// groupNames pre-fills the cards' names. TWO PRODUCE SLOTS ARE LEFT HAND AND
+// RIGHT HAND, the left the one the picture draws further west (by relation,
+// the floor's own left; slot order when the cell is off the map). Any other
+// slot is named by its swap type, numbered where two share one. Every name is
+// the engineer's to change: the floor asks for each part by it.
+function groupNames(slots) {
+    if (slots.length === 2 && slots.every(s => s.role === 'produce')) {
+        const lay = M().relationLayout(cellFromModel(), {});
+        const col = n => (lay.cells && lay.cells[n] ? lay.cells[n].c : null);
+        const a = col(slots[0].nodes[0]), b = col(slots[1].nodes[0]);
+        return a !== null && b !== null && b < a ? ['Right Hand', 'Left Hand'] : ['Left Hand', 'Right Hand'];
+    }
+    const word = s => M().modeLabels()[s.mode] || s.mode || 'Part';
+    return slots.map((s, i) => slots.filter(x => word(x) === word(s)).length > 1
+        ? word(s) + ' ' + (slots.slice(0, i + 1).filter(x => word(x) === word(s)).length) : word(s));
+}
+
+// setUpGroups is the button: one card per slot, pre-filled, nothing saved.
+// The cards stand in the picture's order, left first.
+function setUpGroups() {
+    const d = S.shapeDraft;
+    if (!d || d.groups || !S.model) return;
+    const slots = draftSlots();
+    const names = groupNames(slots);
+    const cards = slots.map((s, i) => newGroup(s.nodes[0], names[i]));
+    d.groups = names[0] === 'Right Hand' ? cards.reverse() : cards;
+    d.focus = null;
+    d.hover = null;
+    d.refusal = '';
+    drawFlows();
+}
+
+// syncGroups keeps the cards on the draft's cells as the positions table
+// changes them: each group stays of its slot's ★ head, and a group whose head
+// the table moved follows it to the head no group is of (the old head stays in
+// the group as one of its spots); its ★ row holds the cell's own attached
+// places at the front of its lists. A slot with no card gets one, pre-filled;
+// a card whose slot is gone goes with it — the server would refuse a group
+// count that is not the slot count.
+function syncGroups() {
+    const d = S.shapeDraft;
+    if (!d || !d.groups || !S.model) return;
+    const heads = draftSlots().map(s => s.nodes[0]);
+    const free = heads.filter(h => !d.groups.some(g => g.of === h));
+    const out = [];
+    for (const g of d.groups) {
+        if (heads.indexOf(g.of) < 0) {
+            if (!free.length) continue;
+            g.of = free.shift();
+        }
+        out.push(g);
+    }
+    for (const h of free) {
+        const taken = new Set(out.map(g => g.name));
+        const base = M().modeLabels()[(S.model.cells[h] || {}).mode] || 'Part';
+        let name = base;
+        for (let k = 2; taken.has(name); k++) name = base + ' ' + k;
+        out.push(newGroup(h, name));
+    }
+    for (const g of out) {
+        g.spots = g.spots || [];
+        if (!g.spots.length || g.spots[0].core_node_name !== g.of) {
+            const own = g.spots.find(s => s.core_node_name === g.of);
+            g.spots = [own || { core_node_name: g.of }].concat(g.spots.filter(s => s.core_node_name !== g.of));
+        }
+        const star = g.spots[0];
+        for (const ch of starLists(g.of)) {
+            const list = star[ch.field] || [];
+            if (list.indexOf(ch.value) < 0) star[ch.field] = [ch.value].concat(list);
+        }
+    }
+    d.groups = out;
+    if (d.focus && !out[d.focus.g]) d.focus = null;
+    if (d.hover !== null && d.hover !== undefined && !out[d.hover]) d.hover = null;
+}
+
+// groupsBody is the save's `groups`: the cards in the server's own shape —
+// of, name, spots with their non-empty lists in field order, and an Advanced
+// only when it says something (domain.RecipeAdvanced omits every field at its
+// zero). Read the same way off a saved card to tell whether the draft changed.
+function groupsBody(groups) {
+    return (groups || []).map(g => {
+        const out = { of: g.of, name: String(g.name || '').trim(), spots: (g.spots || []).map(s => {
+            const spot = { core_node_name: s.core_node_name };
+            for (const f of GROUP_FIELDS) if ((s[f] || []).length) spot[f] = s[f].slice();
+            return spot;
+        }) };
+        const a = recipeAdvanced(g.advanced || {}, g.of);
+        if (Object.keys(a).length) out.advanced = a;
+        return out;
+    });
+}
+
+// recipeAdvanced is a group's Advanced as a recipe may say it: GROUP_ADV_KEYS
+// that carry a value, by domain.ClaimHas's rule (the carry-over's blank or
+// replace is no opinion), and only those flowspec draws for the ★ cell's mode
+// and role — the server refuses the others (D26).
+function recipeAdvanced(a, head) {
+    const out = {};
+    for (const key of GROUP_ADV_KEYS) {
+        const v = a[key];
+        const set = key === 'changeover_carryover_disposition' ? !!v && v !== 'replace'
+            : Array.isArray(v) ? v.length > 0 : Boolean(v);
+        if (!set) continue;
+        if (head && S.model && S.model.cells[head] && !M().advancedShows(S.model, head, key)) continue;
+        out[key] = v;
+    }
+    return out;
+}
+
+// groupNodes is every node a group names: its spots and their lists.
+function groupNodes(g) {
+    const out = [];
+    for (const s of (g && g.spots) || []) {
+        out.push(s.core_node_name);
+        for (const f of GROUP_FIELDS) for (const v of s[f] || []) out.push(v);
+    }
+    return [...new Set(out)];
+}
+
+// groupFocus is what the engineer is looking at: a clicked row, else a group
+// pinned (its tag, or ;focus=), else the card under the pointer, else nothing.
+function groupFocus() {
+    const d = S.shapeDraft;
+    if (!d || !d.groups) return null;
+    if (d.focus && d.groups[d.focus.g]) return d.focus;
+    if (d.hover !== null && d.hover !== undefined && d.groups[d.hover]) return { g: d.hover };
+    return null;
+}
+
+// groupPairs is the picture's deck pairing for a draft with groups: every
+// press spot whose list holds a deck, and the ★ cell that names it — held
+// fixed by the groups, so a focus never re-flows the grid (see pictureOpts).
+// Only a press index's decks: a Sequential pair's B side is a spot of its own.
+function groupPairs() {
+    const d = S.shapeDraft;
+    if (!d || !d.groups || !S.model) return null;
+    const cells = M().toCells(S.model);
+    const heads = new Set(cells.map(c => c.core_node_name));
+    const out = {};
+    const add = (deck, spot) => {
+        if (!deck || heads.has(deck)) return;
+        out[deck] = out[deck] || [];
+        if (out[deck].indexOf(spot) < 0) out[deck].push(spot);
+    };
+    for (const c of cells) {
+        if (c.swap_mode === 'sequential') continue;
+        for (const f of DECK_FIELDS) add(c[f], c.core_node_name);
+    }
+    for (const g of d.groups) {
+        if ((S.model.cells[g.of] || {}).mode === 'sequential') continue;
+        for (const s of g.spots) for (const f of DECK_FIELDS) for (const v of s[f] || []) add(v, s.core_node_name);
+    }
+    return out;
+}
+
+// groupPicture is the draft's picture once it has groups (SYNTH row 18):
+//
+//   - every spot a group lists is drawn as the floor could run it: the ★
+//     cell's claim laid on it, with the first node of each of its lists;
+//   - no focus: every node any group names is full, tagged, and no chevron
+//     is drawn; a group hovered: its spots and lists, with their chevrons; a
+//     row clicked: that spot and its lists, with its chevrons;
+//   - the L/R tag is the group's first letter, on its spots' cards only (the
+//     mock's tab 1), and a card says whose it is: "Left Hand · ★ default" on
+//     the ★ spot, "feeds PLN_006 · PLN_010" on a deck, the recipe a spot no
+//     group holds runs in.
+//
+// The claims are the model's own (reduce over the draft), so the legs, the
+// robots and the dock read as the floor would see them; nothing here is saved.
+function groupPicture() {
+    const d = S.shapeDraft;
+    if (!d || !d.groups || !S.model) return null;
+    syncGroups();
+    let m = S.model;
+    for (const g of d.groups) {
+        const star = m.cells[g.of];
+        if (!star || !star.on || !star.mode) continue;
+        for (const s of g.spots.slice(1)) m = withGroupSpot(m, star, s);
+    }
+    const heads = (g, s) => {
+        const out = [s.core_node_name];
+        if ((S.model.cells[g.of] || {}).mode === 'sequential' && (s.paired_core_node || [])[0]) out.push(s.paired_core_node[0]);
+        return out;
+    };
+    const f = groupFocus();
+    let active, chevrons;
+    if (!f) {
+        active = [...new Set([].concat(...d.groups.map(groupNodes)))];
+        chevrons = [];
+    } else if (f.row) {
+        const g = d.groups[f.g];
+        const s = g.spots.find(x => x.core_node_name === f.row) || g.spots[0];
+        active = groupNodes({ spots: [s] });
+        chevrons = heads(g, s);
+    } else {
+        const g = d.groups[f.g];
+        active = groupNodes(g);
+        chevrons = [].concat(...g.spots.map(s => heads(g, s)));
+    }
+    const tags = {};
+    const lines = {};
+    const feeds = {};
+    d.groups.forEach((g, i) => {
+        const tag = { letter: (String(g.name || '').trim()[0] || '?').toUpperCase(), group: (i % 2) + 1 };
+        const seq = (S.model.cells[g.of] || {}).mode === 'sequential';
+        g.spots.forEach((s, k) => {
+            for (const n of heads(g, s)) {
+                tags[n] = tag;
+                lines[n] = [g.name + (k === 0 ? ' · ★ default' : '')];
+            }
+            if (seq) return;
+            for (const fd of DECK_FIELDS) for (const v of s[fd] || []) (feeds[v] = feeds[v] || []).push(s.core_node_name);
+        });
+    });
+    for (const v of Object.keys(feeds)) if (!lines[v]) lines[v] = ['feeds ' + feeds[v].join(' · ')];
+    const cell = M().pictureCells(m, draftCell());
+    const here = new Set((cell.positions || []).map(p => p.core_node_name));
+    for (const r of S.composer.presets || []) {
+        if (d.recipe && String(r.id) === String(d.recipe.id)) continue;
+        for (const n of Object.keys(r.cells || {})) if (here.has(n) && !lines[n]) lines[n] = ['in ' + r.name];
+    }
+    const sentences = sentencesFromModel(m, !!relationPlacement(cell, pictureOpts()));
+    if (sentences) sentences.cardLines = Object.assign({}, sentences.cardLines, lines);
+    return { model: m, cell: cell, sentences: sentences, opts: { active: active, tags: tags, chevrons: chevrons } };
+}
+
+// withGroupSpot lays a group's ★ claim on one of its other spots, in the
+// model, with the first node of each of the spot's lists.
+function withGroupSpot(m, star, s) {
+    const n = s.core_node_name;
+    if (!m.cells[n] || m.cells[n].on) return m;
+    const first = f => ((s[f] || [])[0]) || '';
+    const lay = (state, node, partner) => {
+        let x = M().reduce(state, { type: 'addPosition', node: node, mode: star.mode });
+        x = M().reduce(x, { type: 'setRole', node: node, role: star.role });
+        x = M().reduce(x, { type: 'setPartner', node: node, partner: partner });
+        x = M().reduce(x, { type: 'setSource', node: node, source: star.source });
+        return M().reduce(x, { type: 'setDest', node: node, dest: star.dest });
+    };
+    m = lay(m, n, first('paired_core_node'));
+    m = M().reduce(m, { type: 'setSecondPartner', node: n, partner: first('second_paired_core_node') });
+    m = M().reduce(m, { type: 'setStaging', node: n, staging: first('inbound_staging') });
+    m = M().reduce(m, { type: 'setParkOld', node: n, staging: first('outbound_staging') });
+    const b = first('paired_core_node');
+    if (star.mode === 'sequential' && b && m.cells[b] && !m.cells[b].on) m = lay(m, b, n);
+    return m;
+}
+
+// The group tag, as the picture draws it, beside a card's name.
+function groupTagHTML(g, i) {
+    return '<span class="pd-gtag g' + ((i % 2) + 1) + '">' + esc((String(g.name || '').trim()[0] || '?').toUpperCase()) + '</span>';
+}
+
+// groupsSection is the draft's groups: the Set up groups button, or a card per
+// slot and the "On the floor" block under them.
+function groupsSection() {
+    const d = S.shapeDraft;
+    if (!d) return '';
+    if (!d.groups) {
+        return '<div class="pd-groups" id="pd-groups"><div class="pd-grpbar">' +
+            '<button class="pd-btn" data-act="groups-setup">Set up groups</button>' +
+            '<span class="pd-dim">a card per part: the spots it may run on, what may serve each one, ' +
+            'and its own Advanced. Nothing is saved until Save recipe.</span></div></div>';
+    }
+    syncGroups();
+    return '<div class="pd-groups" id="pd-groups">' +
+        '<div class="pd-lbl">Groups<span class="hint">hover a group, or click a spot’s row, to see it on the picture</span></div>' +
+        (d.refusal ? '<div class="pd-refusal" id="pd-grefusal">' + esc(d.refusal) + '</div>' : '') +
+        '<div class="pd-grps">' + d.groups.map(groupCard).join('') + '</div>' + floorBlock() + '</div>';
+}
+
+function groupCard(g, i) {
+    const f = groupFocus();
+    const star = S.model.cells[g.of] || {};
+    const mode = star.mode;
+    const lists = starLists(g.of);
+    const words = lists.map(ch => listWords(ch.field, mode));
+    const sw = spotWords(mode);
+    const rows = g.spots.map((s, k) => {
+        const n = s.core_node_name;
+        const cells = lists.map((ch, j) => {
+            const list = s[ch.field] || [];
+            const chips = list.map(v => (k === 0 && v === ch.value)
+                // THE ★ CELL'S OWN PLACE IS READ-ONLY HERE: the server refuses
+                // a ★ row without it, and the table is where it changes.
+                ? '<span class="pd-chip set lock" title="' + esc(g.of + '’s own in the recipe — change it on its row in the table') + '">' +
+                    esc(v) + '</span>'
+                : '<button class="pd-chip set" data-act="glist-rm" data-g="' + i + '" data-node="' + esc(n) + '" data-field="' + ch.field +
+                    '" data-v="' + esc(v) + '" title="Take ' + esc(v) + ' out of this list">' + esc(v) + ' <i>&times;</i></button>').join('');
+            // A PAIR IS TWO: a Sequential spot takes one B side.
+            const full = mode === 'sequential' && ch.field === 'paired_core_node' && list.length > 0;
+            return '<td>' + chips + (full ? '' : '<button class="pd-chip add" data-act="glist-add" data-g="' + i +
+                '" data-node="' + esc(n) + '" data-field="' + ch.field + '">' + esc(words[j].add) + '</button>') + '</td>';
+        }).join('');
+        const rm = k === 0 ? '' : '<button class="pd-dimlink" data-act="gspot-rm" data-g="' + i + '" data-node="' + esc(n) +
+            '" title="Take ' + esc(n) + ' out of ' + esc(g.name) + '">&times;</button>';
+        return '<tr' + (f && f.row === n ? ' class="focus"' : '') + ' data-grow="' + esc(n) + '" data-g="' + i + '">' +
+            '<td><span class="pd-chip">' + esc(n) + (k === 0 ? ' <span class="pd-gstar">★</span>' : '') + '</span></td>' +
+            cells + '<td>' + rm + '</td></tr>';
+    }).join('');
+    const on = !!f && f.g === i && !f.row;
+    return '<div class="pd-grp' + (on ? ' focus' : '') + '" data-gcard="' + i + '">' +
+        '<div class="gh"><button class="pd-gfocus" data-act="gfocus" data-g="' + i + '" title="show ' + esc(g.name) +
+        ' on the picture">' + groupTagHTML(g, i) + '</button>' +
+        '<input class="pd-inp" type="text" data-gname="' + i + '" value="' + esc(g.name) + '" aria-label="this group’s name">' +
+        '<span class="pd-dim">the part on ' + esc(g.of) + '</span></div>' +
+        '<table class="pd-gtbl"><thead><tr><th>' + esc(sw.head) + '</th>' + words.map(w => '<th>' + esc(w.head) + '</th>').join('') +
+        '<th></th></tr></thead><tbody>' + rows + '</tbody></table>' +
+        '<button class="pd-chip add" data-act="gspot-add" data-g="' + i + '">' + esc(sw.add) + '</button>' +
+        '<div class="pd-lbl">Where bins come from and go</div><div class="pd-gkv">' +
+        '<span class="k">In from</span>' + picker(g.of, 'source', esc(star.source || '—'), star.source ? '' : 'bad',
+            W('inbound_source') + ' ' + (star.source || 'not set')) +
+        '<span class="k">Out to</span>' + picker(g.of, 'dest', esc(star.dest || '—'), star.dest ? '' : 'bad',
+            W('outbound_destination') + ' ' + (star.dest || 'not set')) + '</div>' +
+        '<div class="pd-lbl">Advanced</div><div class="pd-gadv"><span>' + esc(groupAdvSummary(g)) + '</span>' +
+        '<button class="pd-btn" data-act="gadv" data-g="' + i + '">Edit…</button></div></div>';
+}
+
+// groupAdvSummary is a card's Advanced line, in the sheet's own words.
+function groupAdvSummary(g) {
+    const a = recipeAdvanced(g.advanced || {}, g.of);
+    const out = Object.keys(a).map(key => {
+        const v = a[key];
+        if (key === 'changeover_carryover_disposition') return W(key) + ' ' + (CARRYOVER[v] || v);
+        if (typeof v === 'boolean') return W(key) + ' on';
+        return W(key) + ' ' + v;
+    });
+    return out.length ? out.join(' · ') : 'nothing set: a style made from it takes the minted defaults';
+}
+
+// ── the card's edits: every one a draft change, nothing written ──
+
+// groupChanged redraws after a card edit; the last refusal no longer says
+// anything about what is on screen.
+function groupChanged() {
+    if (S.shapeDraft) S.shapeDraft.refusal = '';
+    drawFlows();
+}
+
+// stationNames is the recipe's own station's positions, in sequence order:
+// what a card may add.
+function stationNames() {
+    return (draftCell().positions || []).slice().sort((a, b) => (a.sequence || 0) - (b.sequence || 0))
+        .map(p => p.core_node_name);
+}
+
+// openGroupPick lists `names` in the page's popover and runs `pick` on one.
+function openGroupPick(btn, title, names, empty, pick) {
+    const pop = $('pd-pop');
+    if (!pop) return;
+    pop.innerHTML = '<div class="pd-lbl">' + esc(title) + '</div>' + (names.length
+        ? names.map((n, i) => '<button data-opt="' + i + '">' + esc(n) + '</button>').join('')
+        : '<div class="none">' + esc(empty) + '</div>');
+    pop.hidden = false;
+    placePopover(pop, btn);
+    pop.querySelectorAll('[data-opt]').forEach(b => b.addEventListener('click', () => {
+        const n = names[Number(b.dataset.opt)];
+        closePop();
+        pick(n);
+    }));
+}
+
+// + Add a press spot: a picker over the station's positions no group holds
+// and no row of the recipe stands on. The new row's lists start as the ★
+// row's, so an on-deck spot that feeds the ★ spot is offered for it too —
+// PLN_010 arrives with PLN_005 (a Sequential pair's B side does not: it is
+// half of the new pair, and the engineer picks it).
+function addGroupSpot(btn, i) {
+    const d = S.shapeDraft;
+    const g = d && d.groups && d.groups[i];
+    if (!g) return;
+    const held = new Set([].concat(...d.groups.map(groupNodes), M().toCells(S.model).map(c => c.core_node_name)));
+    const names = stationNames().filter(n => !held.has(n));
+    const seq = (S.model.cells[g.of] || {}).mode === 'sequential';
+    openGroupPick(btn, spotWords((S.model.cells[g.of] || {}).mode).add.replace(/^\+ /, ''), names,
+        'Every position of this station is in a group or a row already.', n => {
+            const spot = { core_node_name: n };
+            if (!seq) for (const f of GROUP_FIELDS) if ((g.spots[0][f] || []).length) spot[f] = g.spots[0][f].slice();
+            g.spots.push(spot);
+            groupChanged();
+        });
+}
+
+// + on deck / + third / + lane: a deck or third is one of the station's
+// positions, a lane is a staging lane of the routing set or one of the press's
+// own back positions (the table's own staging list); never a node another
+// group holds, a spot of this one, or one the list has.
+function addGroupList(btn, i, node, field) {
+    const d = S.shapeDraft;
+    const g = d && d.groups && d.groups[i];
+    const s = g && g.spots.find(x => x.core_node_name === node);
+    if (!s) return;
+    const others = new Set([].concat(...d.groups.filter(x => x !== g).map(groupNodes)));
+    const spots = new Set(g.spots.map(x => x.core_node_name));
+    const have = new Set(s[field] || []);
+    const backs = S.model.positions.filter(p => p.kind === 'back').map(p => p.core_node_name);
+    const pool = DECK_FIELDS.indexOf(field) >= 0 ? stationNames()
+        : [...new Set((S.composer.routing || []).filter(r => r.role === 'staging').map(r => r.core_node_name).concat(backs))];
+    const heads = new Set(M().toCells(S.model).map(c => c.core_node_name));
+    const names = pool.filter(n => !others.has(n) && !spots.has(n) && !have.has(n) && !(heads.has(n) && !spots.has(n)));
+    const words = listWords(field, (S.model.cells[g.of] || {}).mode);
+    openGroupPick(btn, words.add.replace(/^\+ /, '') + ' for ' + node, names, 'Nothing left to offer here.', n => {
+        s[field] = (s[field] || []).concat([n]);
+        groupChanged();
+    });
+}
+
+function dropGroupList(i, node, field, v) {
+    const g = S.shapeDraft && S.shapeDraft.groups && S.shapeDraft.groups[i];
+    const s = g && g.spots.find(x => x.core_node_name === node);
+    if (!s) return;
+    s[field] = (s[field] || []).filter(x => x !== v);
+    groupChanged();
+}
+
+function dropGroupSpot(i, node) {
+    const d = S.shapeDraft;
+    const g = d && d.groups && d.groups[i];
+    if (!g || g.of === node) return;
+    g.spots = g.spots.filter(x => x.core_node_name !== node);
+    if (d.focus && d.focus.row === node) d.focus = null;
+    groupChanged();
+}
+
+// A click on a spot's row pins it on the picture, a second lets go; the
+// group's tag does the same for the group.
+function pinGroupRow(i, node) {
+    const d = S.shapeDraft;
+    if (!d || !d.groups) return;
+    d.focus = d.focus && d.focus.row === node ? null : { g: i, row: node };
+    drawFlows();
+}
+
+function pinGroup(i) {
+    const d = S.shapeDraft;
+    if (!d || !d.groups) return;
+    d.focus = d.focus && !d.focus.row && d.focus.g === i ? null : { g: i };
+    drawFlows();
+}
+
+// onGroupHover follows the pointer over the cards. It redraws the picture and
+// the cards' outline, nothing else; moving inside one card is one card.
+function onGroupHover(e, entering) {
+    const d = S.shapeDraft;
+    if (!d || !d.groups || S.tab !== 'flows') return;
+    const card = e.target && e.target.closest ? e.target.closest('[data-gcard]') : null;
+    if (!card) return;
+    if (entering) {
+        const g = Number(card.dataset.gcard);
+        if (g === d.hover) return;
+        d.hover = g;
+    } else {
+        const to = e.relatedTarget;
+        if (to && typeof card.contains === 'function' && card.contains(to)) return;
+        if (d.hover === null || d.hover === undefined) return;
+        d.hover = null;
+    }
+    const f = groupFocus();
+    const mark = (el, i) => (f && !f.row && f.g === i ? el.classList.add('focus') : el.classList.remove('focus'));
+    mark(card, Number(card.dataset.gcard));
+    for (const el of root().querySelectorAll('[data-gcard]')) mark(el, Number(el.dataset.gcard));
+    drawPicture();
+    markRecipeState();
+}
+
+// A card's name is typed in place: the tags follow it, the tab is not
+// redrawn under the cursor.
+function onGroupName(e) {
+    const el = e.target;
+    const d = S.shapeDraft;
+    if (!el || !el.dataset || el.dataset.gname === undefined || !d || !d.groups) return;
+    const g = d.groups[Number(el.dataset.gname)];
+    if (!g) return;
+    g.name = el.value;
+    d.refusal = '';
+    drawPicture();
+}
+
+// ── "On the floor" (SYNTH row 10) ──
+//
+// WHAT THE FLOOR CAN PICK, FROM THE SAVED CARD: the spots, at and carry Go
+// computed for the version the floor has, never the draft's own guess — the
+// HMI enforces that same object, so the block and the floor cannot disagree.
+// An edited draft says its changes wait for Save; a recipe with no saved
+// groups says the block appears once they are.
+
+function savedRecipeCard() {
+    const d = S.shapeDraft;
+    if (!d || !d.recipe) return null;
+    return (S.composer.presets || []).find(x => String(x.id) === String(d.recipe.id)) || null;
+}
+
+function orList(names) {
+    const n = (names || []).filter(Boolean);
+    if (n.length < 2) return n.join('');
+    return n.slice(0, -1).join(', ') + ' or ' + n[n.length - 1];
+}
+
+const FLOOR_NOUN = { on_deck: 'on deck', third: 'third', lane: 'lane', spot: 'with' };
+
+// floorSentence: "Left Hand runs on PLN_006 or PLN_010, on deck PLN_005 ·
+// Right Hand on PLN_007 or PLN_012, on deck PLN_008 · nothing else is
+// offered." A place whose list differs at one of its spot's stands says so at
+// that stand, and that it moves with its spot when the card carries it there.
+function floorSentence(card) {
+    const spots = card.spots || [];
+    const parts = (card.groups || []).map((g, i) => {
+        const own = spots.filter(s => s.group === g.name);
+        const head = own.find(s => s.node === g.of) || own.find(s => !s.at);
+        const stands = head ? head.targets || [head.node] : [g.of];
+        let s = g.name + (i === 0 ? ' runs on ' : ' on ') + orList(stands);
+        for (const p of own.filter(x => x !== head && x.at)) {
+            const base = (p.at[head ? head.node : stands[0]] || []);
+            s += ', ' + (FLOOR_NOUN[p.job] || p.job) + ' ' + orList(base);
+            for (const st of stands) {
+                const list = p.at[st] || [];
+                if (list.join() === base.join()) continue;
+                const carried = head && head.carry && head.carry[st] && head.carry[st][p.node];
+                s += ', or ' + orList(list) + ' at ' + st + (carried ? ' (it moves there with its spot)' : '');
+            }
+        }
+        return s;
+    });
+    return parts.join(' · ') + ' · nothing else is offered.';
+}
+
+// runningOutside names what the running style runs that these groups do not
+// hold, when that style is this recipe's shape (a claim per slot in the
+// recipe's modes): the floor cannot set it up again from this recipe.
+function runningOutside(card) {
+    const p = process();
+    const st = p && p.active_style_id ? composerStyle(p.active_style_id) : null;
+    const groups = card.groups || [];
+    if (!st || !groups.length) return '';
+    const modes = new Set(Object.values(card.cells || {}).map(c => c.swap_mode));
+    const rows = (st.claims || []).filter(c => modes.has(c.swap_mode) && c.payload_code);
+    if (rows.length !== (card.slots || []).length) return '';
+    const out = [];
+    for (const c of rows) {
+        const g = groups.find(x => (x.spots || []).some(s => s.core_node_name === c.core_node_name));
+        if (!g) {
+            if (!groups.some(x => groupNodes(x).indexOf(c.core_node_name) >= 0)) out.push(c.core_node_name + ' is in none of them');
+            continue;
+        }
+        const s = g.spots.find(x => x.core_node_name === c.core_node_name);
+        for (const f of GROUP_FIELDS) {
+            if (c[f] && (s[f] || []).indexOf(c[f]) < 0) {
+                out.push(c[f] + ' is not ' + listWords(f, c.swap_mode).noun + ' for ' + c.core_node_name + ' in ' + g.name);
+            }
+        }
+    }
+    return out.length ? 'The running style ' + st.name + ' stands outside these groups: ' + out.join('; ') + '.' : '';
+}
+
+function floorBlock() {
+    const card = savedRecipeCard();
+    let body;
+    if (card && (card.groups || []).length) {
+        body = esc(floorSentence(card));
+        const changed = JSON.stringify(groupsBody(S.shapeDraft.groups)) !== JSON.stringify(groupsBody(card.groups)) ||
+            M().shapeDiff(S.model, card).length > 0;
+        if (changed) body += ' <span class="pd-dim">Your changes reach the floor when you save.</span>';
+        const out = runningOutside(card);
+        if (out) body += '<br><span class="pd-warn">' + esc(out) + '</span>';
+    } else {
+        body = 'Not saved yet: what the floor can pick is said here once these groups are saved. ' +
+            'Until then the floor runs this recipe without groups.';
+    }
+    return '<div class="pd-floor" id="pd-floor"><div class="pd-lbl">On the floor</div><p>' + body + '</p></div>';
+}
+
+// markRecipeState publishes the draft's state for the shots harness, beside
+// the words it shows: body[data-pd-recipe] = "draft;groups=2;floor=saved;
+// row=PLN_010;gadv=Left Hand" (a group hovered or pinned is ";focus=<name>").
+function markRecipeState() {
+    const d = S.shapeDraft;
+    let m = '';
+    if (d && S.tab === 'flows') {
+        m = 'draft';
+        if (d.groups) {
+            m += ';groups=' + d.groups.length;
+            const card = savedRecipeCard();
+            if (card && (card.groups || []).length) m += ';floor=saved';
+            const f = groupFocus();
+            if (f && f.row) m += ';row=' + f.row;
+            else if (f) m += ';focus=' + d.groups[f.g].name;
+            if (S.adv && S.adv.group !== undefined && d.groups[S.adv.group]) m += ';gadv=' + d.groups[S.adv.group].name;
+        }
+    }
+    try { document.body.dataset.pdRecipe = m; } catch (_) { /* nothing to publish on */ }
 }
 
 // A position is USED when it has a row of its own, or when it is somebody
@@ -1131,14 +1891,14 @@ function positionsTable() {
             '<td>' + fieldCell(n, 'source', 'inbound_source', c.source, '—') + '</td>' +
             '<td>' + viaCell(n) + '</td>' +
             '<td>' + fieldCell(n, 'dest', 'outbound_destination', c.dest, '—') + '</td>' +
-            '<td><button class="pd-adv' + (advSet ? ' set' : '') + '" data-act="advanced" data-node="' + esc(n) + '">' +
-            gearSVG() + (advSet ? '<b>' + advSet + ' set</b>' : 'defaults') + '</button></td></tr>');
+            (S.shapeDraft ? '' : '<td><button class="pd-adv' + (advSet ? ' set' : '') + '" data-act="advanced" data-node="' + esc(n) + '">' +
+            gearSVG() + (advSet ? '<b>' + advSet + ' set</b>' : 'defaults') + '</button></td>') + '</tr>');
     }
     const rowless = rowlessRoles(used);
     const free = freePositions();
     let tail = '';
     if (rowless.length) {
-        tail += '<tr class="paired"><td colspan="' + (S.shapeDraft ? 9 : 10) + '">' + esc(rowless.join(' · ')) +
+        tail += '<tr class="paired"><td colspan="' + (S.shapeDraft ? 8 : 10) + '">' + esc(rowless.join(' · ')) +
             ' — no row of ' + (new Set(rowless.map(r => r.split(' ')[0])).size === 1 ? 'its' : 'their') +
             ' own</td></tr>';
     }
@@ -1169,10 +1929,16 @@ function positionsTable() {
         : '';
     // A SHAPE DRAFT HAS NO PART COLUMN (pick-a-part U2): a recipe never carries
     // one, so the column would be a control whose every value is refused.
+    // NOR AN ADVANCED ONE (recipe groups): a recipe's save strips every cell's
+    // Advanced (domain.StripFlowPayload), so the per-row gear opened a sheet
+    // whose every field was dropped without a word. A recipe's Advanced is
+    // its groups', on their cards.
     const partCol = S.shapeDraft ? '' : '<col class="c-part">';
     const partHead = S.shapeDraft ? '' : '<th>Part</th>';
+    const advCol = S.shapeDraft ? '' : '<col class="c-adv">';
+    const advHead = S.shapeDraft ? '' : '<th>Advanced</th>';
     const cols = '<colgroup><col class="c-pos"><col class="c-role"><col class="c-mode">' + partCol + '<col class="c-partner">' +
-        '<col class="c-staging"><col class="c-src"><col class="c-via"><col class="c-dst"><col class="c-adv"></colgroup>';
+        '<col class="c-staging"><col class="c-src"><col class="c-via"><col class="c-dst">' + advCol + '</colgroup>';
     // THE LABEL, THE HEADINGS AND THE FOOTER ARE OUTSIDE THE ROWS' BOX.
     // `#pd-postbl` scrolls the rows sideways and is still the box T1 measures
     // the table against — its clientWidth is what a column has to fit inside.
@@ -1205,7 +1971,7 @@ function positionsTable() {
         '<table>' + cols + '<thead><tr><th>Position</th><th>Role</th><th>' + esc(W('swap_mode')) + '</th>' + partHead +
         '<th>' + esc(W('paired_core_node')) + '</th><th>Staging</th>' +
         '<th>' + esc(W('inbound_source')) + '</th><th>' + esc(W('key_route')) + '</th>' +
-        '<th>' + esc(W('outbound_destination')) + '</th><th>Advanced</th></tr></thead></table></div>' +
+        '<th>' + esc(W('outbound_destination')) + '</th>' + advHead + '</tr></thead></table></div>' +
         '<div class="pd-postbl" id="pd-postbl">' +
         '<table>' + cols + '<tbody>' + rows.join('') + tail + '</tbody></table></div>' +
         footer + '</div>';
@@ -1648,11 +2414,32 @@ function optionsFor(node, kind) {
                 value: r.core_node_name, label: r.label || r.core_node_name, on: c.source === r.core_node_name,
                 action: { type: 'setSource', node: node, source: r.core_node_name },
             }));
-        case 'dest':
-            return routing.filter(r => r.role === 'destination').map(r => ({
+        // THE PROCESS'S OTHER STATIONS' POSITIONS ARE DESTINATIONS TOO. A press
+        // whose old bins go to an unloader on the same process names one of
+        // that unloader's windows — Press 6's ULN_002 and ULN_005 — and the
+        // server takes it (the routing set is the union of the positions and
+        // the routing rows, domain.RoutingSetNames). A position can never be
+        // a routing row as well (processes.ErrRoutingNodeIsPosition), so the
+        // rows alone left such a destination with no picker anywhere: the
+        // deploy note's "Out to ULN_005" had nothing to click. This
+        // station's own positions are not offered: a spot's old bin does not
+        // go to its neighbour.
+        case 'dest': {
+            const offered = routing.filter(r => r.role === 'destination').map(r => ({
                 value: r.core_node_name, label: r.label || r.core_node_name, on: c.dest === r.core_node_name,
                 action: { type: 'setDest', node: node, dest: r.core_node_name },
             }));
+            const all = S.composer.cell.positions || [];
+            const mine = (all.find(p => p.core_node_name === node) || {}).station_id || 0;
+            const named = new Set(offered.map(o => o.value));
+            const station = id => ((S.stations || []).find(s => s.id === id) || {}).name || 'another station';
+            return offered.concat(!mine ? [] : all.filter(p => p.station_id && p.station_id !== mine &&
+                !named.has(p.core_node_name)).map(p => ({
+                value: p.core_node_name, label: p.core_node_name, on: c.dest === p.core_node_name,
+                where: 'a position of ' + station(p.station_id),
+                action: { type: 'setDest', node: node, dest: p.core_node_name },
+            })));
+        }
         // via:<i> — the picker behind one point of the route. It replaces
         // that point, or removes it; "+ add" appends through via-add. The
         // whole list goes to setVia either way, because the order IS the
@@ -1800,11 +2587,13 @@ function openPicker(btn) {
     // why. The note is keyed on the options that carry a VALUE.
     const note = opts.some(o => o.value) ? '' : pickerEmptyWord(kind);
     // An option with a `note` is a line of text, not a choice; `use` marks a
-    // choice another position already takes, without disabling it.
+    // choice another position already takes, without disabling it, and
+    // `where` says where a choice that is not a routing row stands.
     pop.innerHTML =
         opts.map((o, i) => o.note ? '<div class="none">' + esc(o.note) + '</div>'
             : '<button data-opt="' + i + '" class="' + (o.on ? 'on' : '') + '">' + (o.icon || '') + esc(o.label) +
-            (o.use ? '<span class="use"> · used by ' + esc(o.use) + '</span>' : '') + '</button>').join('') +
+            (o.use ? '<span class="use"> · used by ' + esc(o.use) + '</span>' : '') +
+            (o.where ? '<span class="use"> · ' + esc(o.where) + '</span>' : '') + '</button>').join('') +
         (note ? '<div class="none">' + esc(note) + '</div>' : '');
     pop.hidden = false;
     placePopover(pop, btn);
@@ -3020,7 +3809,10 @@ const CARRYOVER = {
 
 function openAdvanced(node) {
     const c = S.model.cells[node];
-    if (!c) return;
+    // NOT IN A RECIPE DRAFT: a recipe's save drops every cell's Advanced, so
+    // the per-cell sheet there was work thrown away. A group's is the one a
+    // recipe keeps (openGroupAdvanced).
+    if (!c || S.shapeDraft) return;
     const a = M().advancedFor(S.model, node);
     S.adv = {
         node: node,
@@ -3035,7 +3827,29 @@ function openAdvanced(node) {
     drawAdvanced();
 }
 
+// openGroupAdvanced is the same sheet in GROUP SCOPE (SYNTH-round2 row 4): the
+// fields a recipe's group may say (GROUP_ADV_KEYS, domain.RecipeAdvanced),
+// drawn as flowspec draws them for the group's ★ cell — the server refuses a
+// field that cell's mode and role forbid (D26) — and Apply writes the group's
+// `advanced`, which the mint lays on every claim it makes from the group. The
+// part rows, the press hardware, the board order and the cell's own
+// evacuation and partial-home fields are not here: a recipe carries no part,
+// and the others are the cell's.
+function openGroupAdvanced(i) {
+    const g = S.shapeDraft && S.shapeDraft.groups && S.shapeDraft.groups[i];
+    if (!g || !S.model.cells[g.of]) return;
+    const a = M().advancedFor(S.model, g.of);
+    for (const key of GROUP_ADV_KEYS) {
+        if (g.advanced && g.advanced[key] !== undefined && g.advanced[key] !== null) a[key] = g.advanced[key];
+    }
+    // The mint stamps a group's reorder point as typed by an engineer.
+    if (a.reorder_point) a.reorder_point_source = 'manual';
+    S.adv = { node: g.of, group: i, a: a, was: Object.assign({}, a), evacNodes: [], evacDest: '', partialDest: '' };
+    drawAdvanced();
+}
+
 function advShows(key) {
+    if (S.adv.group !== undefined) return GROUP_ADV_KEYS.indexOf(key) >= 0 && M().advancedShows(S.model, S.adv.node, key);
     if (key === 'evac_nodes' || key === 'evac_dest') {
         return M().advancedShows(S.model, S.adv.node, 'evacuate_on_changeover');
     }
@@ -3169,10 +3983,15 @@ function drawAdvanced() {
             (n ? '<span class="cnt">' + n + ' set</span>' : '') + '</div>' +
             shown.map(advField).join('') + '</div>';
     }
-    scrim.innerHTML = '<div class="pd-modal" role="dialog" aria-modal="true" aria-label="' + esc(node) + ' Advanced">' +
-        '<div class="mh"><h2>' + esc(node) + ' · Advanced</h2><p>' + esc(S.model.styleName) +
-        ' · settings the flow doesn’t draw. They ride along with this position when the flow is ' +
-        'saved from either screen.</p></div>' +
+    const g = S.adv.group !== undefined && S.shapeDraft && S.shapeDraft.groups ? S.shapeDraft.groups[S.adv.group] : null;
+    const title = g ? g.name : node;
+    const sub = g
+        ? ((S.shapeDraft.recipe && S.shapeDraft.recipe.name) || 'This recipe') + ' · settings every style the floor makes ' +
+            'from it takes on ' + g.name + '’s spots. They are saved with the recipe.'
+        : S.model.styleName + ' · settings the flow doesn’t draw. They ride along with this position when the flow is ' +
+            'saved from either screen.';
+    scrim.innerHTML = '<div class="pd-modal" role="dialog" aria-modal="true" aria-label="' + esc(title) + ' Advanced">' +
+        '<div class="mh"><h2>' + esc(title) + ' · Advanced</h2><p>' + esc(sub) + '</p></div>' +
         '<div class="mb">' + body + '</div>' +
         '<div class="mf"><span class="st">Nothing here changes the flow or the picture.</span>' +
         '<button class="pd-btn" data-act="adv-cancel">Cancel</button>' +
@@ -3180,6 +3999,7 @@ function drawAdvanced() {
         '<div class="pd-pop" id="pd-advpop" hidden></div></div>';
     showSheet();
     bindAdvInputs();
+    markRecipeState();
 }
 
 // The number fields write through to S.adv as they are typed. Bound after
@@ -3198,12 +4018,25 @@ function bindAdvInputs() {
 function closeAdvanced() {
     hideSheet();
     S.adv = null;
+    markRecipeState();
 }
 
 // Apply: the thirteen through setAdvanced, the two evacuation fields through the
 // cell's own actions. Three reduces rather than one because they are three
-// different things the model already knows how to do.
+// different things the model already knows how to do. In group scope the
+// group's `advanced` takes what the sheet says, as the server stores it, and
+// no cell changes.
 function applyAdvanced() {
+    if (S.adv.group !== undefined) {
+        const g = S.shapeDraft && S.shapeDraft.groups && S.shapeDraft.groups[S.adv.group];
+        if (g) {
+            const a = recipeAdvanced(S.adv.a, g.of);
+            if (Object.keys(a).length) g.advanced = a; else delete g.advanced;
+        }
+        closeAdvanced();
+        groupChanged();
+        return;
+    }
     const node = S.adv.node;
     let m = M().reduce(S.model, { type: 'setAdvanced', node: node, advanced: S.adv.a });
     m = M().reduce(m, { type: 'setEvacNodes', node: node, nodes: S.adv.evacNodes });
@@ -3315,6 +4148,15 @@ function onAdvClick(e) {
         spop.innerHTML = '';
     }
     const act = e.target.closest && e.target.closest('[data-act]');
+    // NEW STYLE'S SPOTS STEP draws into this scrim: a card or band lane of its
+    // picture is a tap (a lane first — a used lane's slot carries the spot it
+    // serves as its data-pos), and a move's chip puts it back.
+    if (S.newStyle) {
+        const lane = e.target.closest && e.target.closest('#pd-nsvg [data-staging]');
+        const spot = !lane && e.target.closest && e.target.closest('#pd-nsvg [data-pos]');
+        if (lane || spot) { e.stopPropagation(); tapNewSpot(lane ? lane.dataset.staging : spot.dataset.pos); return; }
+        if (act && act.dataset.act === 'nmove-rm') { e.stopPropagation(); undoNewMove(act.dataset.node); return; }
+    }
     if (act && act.dataset.act === 'add-pickgroup') {
         e.stopPropagation();
         openGroupPicker(act, id => {
@@ -4438,6 +5280,8 @@ function closeSheet() {
     // from nothing ticked (explicit re-apply), not from what was ticked last
     // time and previewed against a flow that has since been saved.
     S.papply = null;
+    // So do New style's spots: the next sheet opens on the recipe's pre-fill.
+    if (S.newStyle) { S.newStyle = null; markNewStyle(); }
 }
 
 // ── one Escape rule, innermost first ─────────────────────────────────────────
@@ -4475,6 +5319,8 @@ function onEscape() {
     // The selection is the outermost thing Escape can let go of: only with no
     // popover and no sheet open does it clear the selected position.
     if (!layer) {
+        // So is a recipe group's row or tag pinned on the picture.
+        if (S.shapeDraft && S.shapeDraft.focus && S.tab === 'flows') { S.shapeDraft.focus = null; drawFlows(); return; }
         if (S.selected && S.tab === 'flows') clearSelected();
         return;
     }
@@ -4688,28 +5534,40 @@ async function refreshProcess() {
 // A TYPED NAME STAYS POSSIBLE for an engineer's one-off — "— none, I'll draw
 // it —" is the old sheet: a named style with no flow, drawn next on this
 // screen.
-function openNewStyle() {
+//
+// THE SPOTS STEP COMES AFTER THE PARTS (F6, SYNTH-round2 row 24): the same
+// relation picture and the same spotsTap / spotsLit the station's Spots step
+// runs, over the same card, opened where the cell last ran the recipe
+// (last_moves). The mint sends the moves as overrides — the station's own
+// mintBody bytes, with the node the desktop names for each part.
+function openNewStyle(recipeID, sel) {
     const presets = S.composer.presets || [];
     const palette = S.composer.palette || [];
     const recipeOpts = '<option value="">— none, I’ll name it and draw it —</option>' +
-        presets.map(p => '<option value="' + esc(p.id) + '">' + esc(p.name) +
-            (p.where ? ' · ' + esc(p.where) : '') + '</option>').join('');
+        presets.map(p => '<option value="' + esc(p.id) + '"' + (String(p.id) === String(recipeID || '') ? ' selected' : '') +
+            '>' + esc(p.name) + (p.where ? ' · ' + esc(p.where) : '') + '</option>').join('');
     const slotsHTML = id => {
         const p = presets.find(x => String(x.id) === String(id));
         if (!p) return '';
         const opts = '<option value="">pick a part</option>' +
             palette.map(c => '<option value="' + esc(c) + '">' + esc(c) + '</option>').join('');
+        // A GROUPED RECIPE ASKS FOR EACH PART BY ITS GROUP'S NAME, as the
+        // floor does (SYNTH row 11).
+        const group = s => (p.groups || []).find(g => g.of === s.nodes[0]);
         return (p.slots || []).map((s, i) =>
-            '<div class="pd-fld"><label>' + esc(s.nodes.join(' / ')) + '<small>' + esc(s.role) + '</small></label>' +
+            '<div class="pd-fld"><label>' + esc(group(s) ? group(s).name + ' part' : s.nodes.join(' / ')) +
+            '<small>' + esc(group(s) ? s.nodes.join(' / ') + ' · ' + s.role : s.role) + '</small></label>' +
             '<div class="v"><select class="pd-inp wide" data-f="slot' + i + '" data-node="' + esc(s.nodes[0]) + '">' +
             opts + '</select></div></div>').join('') +
             (palette.length ? '' : '<p class="pd-note">This process has no parts yet — add them in Settings › ' +
                 'Parts this process runs.</p>');
     };
-    openSheet('New style', 'a part this process runs: pick the recipe, and the part for each spot.',
+    S.newStyle = null;
+    openSheet('New style', 'a part this process runs: pick the recipe, the part for each spot, and where the spots go.',
         '<div class="pd-fld"><label>Recipe<small>the engineer-named shapes of this cell</small></label>' +
         '<div class="v"><select class="pd-inp wide" data-f="recipe" id="pd-newrecipe">' + recipeOpts + '</select></div></div>' +
         '<div id="pd-newslots"></div>' +
+        '<div id="pd-newspots"></div>' +
         '<div id="pd-newname">' + sheetField('Name', 'what this part is called here', 'name', '') + '</div>' +
         sheetField('Expected CATID', 'what the PLC calls it — blank means the CATIDs come from its parts in the catalog',
             'catid', '') +
@@ -4730,29 +5588,187 @@ function openNewStyle() {
             S.styleID = Number(made.body.id) || S.styleID;
             await refreshProcess();
         }, false);
-    const sel = $('pd-newrecipe');
-    if (sel) {
-        sel.addEventListener('change', () => {
-            $('pd-newslots').innerHTML = slotsHTML(sel.value);
-            // A recipe names the style (R-D); the name field is the one-off's.
-            $('pd-newname').hidden = !!sel.value;
-        });
+    const pick = id => {
+        const slots = $('pd-newslots');
+        if (slots) slots.innerHTML = slotsHTML(id);
+        // A recipe names the style (R-D); the name field is the one-off's.
+        const name = $('pd-newname');
+        if (name) name.hidden = !!id;
+        startNewSpots(id);
+    };
+    const chooser = $('pd-newrecipe');
+    if (chooser) chooser.addEventListener('change', () => pick(chooser.value));
+    if (recipeID) {
+        pick(String(recipeID));
+        if (sel && S.newStyle) {
+            const card = recipeCard(S.newStyle.recipe);
+            if ((card.spots || []).some(s => s.node === sel)) { S.newStyle.sel = sel; drawNewSpots(); } else tapNewSpot(sel);
+        }
     }
 }
 
+// The frame a sheet's picture is drawn into: the sheet's 732 less its body's
+// padding, its border and the scrollbar gutter (the sum
+// processes_desktop_sheet_width_test.go holds). A grid wider than that
+// scrolls sideways, as the relation picture does in every frame.
+const SHEET_PIC_W = 664;
+
+function recipeCard(id) {
+    return (S.composer.presets || []).find(x => String(x.id) === String(id)) || null;
+}
+
+// recipePicture draws a recipe's shape where the moves put it, on its own
+// station's cut of the cell, by relation (SYNTH row 18 for the HMI's Spots
+// step: every place's node full, and what the selection may move to; the
+// group's tag on its spots). Its grid is held by the card as it opened — the
+// recipe's cells moved by last_moves, widened by a grouped card's `at` at
+// every stand — so a tap never re-flows the cards under the pointer (D11).
+function recipePicture(card, moves, o) {
+    const shape = M().presetMoved(card, moves);
+    const model = M().reduce(initModel({ id: 0, name: card.name, claims: [], parts: [] }, { shape: true }),
+        { type: 'applyPreset', preset: shape });
+    const heads = M().toCells(model).map(c => c.core_node_name);
+    const at = s => moves[s.node] || s.node;
+    const placed = (card.spots || []).map(at);
+    const pairs = {};
+    const add = (deck, spot) => { (pairs[deck] = pairs[deck] || []).indexOf(spot) < 0 && pairs[deck].push(spot); };
+    const opened = M().presetMoved(card, card.last_moves || {});
+    for (const c of Object.values(opened.cells || {})) {
+        if (c.swap_mode === 'sequential') continue;
+        for (const f of DECK_FIELDS) if (c[f]) add(c[f], c.core_node_name);
+    }
+    for (const s of card.spots || []) {
+        if (!s.at || (s.job !== 'on_deck' && s.job !== 'third')) continue;
+        for (const stand of Object.keys(s.at)) for (const n of s.at[stand]) add(n, stand);
+    }
+    const tags = {};
+    (card.groups || []).forEach((g, i) => {
+        const tag = { letter: (String(g.name || '').trim()[0] || '?').toUpperCase(), group: (i % 2) + 1 };
+        for (const s of card.spots || []) if (s.group === g.name && s.job === 'spot') tags[at(s)] = tag;
+    });
+    const cell = M().pictureCells(model, stationCellOf(heads));
+    const opts = {
+        relation: true, frame: { w: o.w || SHEET_PIC_W }, editable: !!o.editable, pairs: pairs, tags: tags,
+        active: [...new Set(placed.concat(o.lit || []))],
+    };
+    opts.sentences = sentencesFromModel(model, !!relationPlacement(cell, opts));
+    if (o.selected) {
+        opts.selected = moves[o.selected] || o.selected;
+        opts.selectCard = true;
+        opts.targets = o.lit || [];
+    }
+    const p = process();
+    const markup = renderFlowPicture({ cell: cell, station: { name: p ? p.name : '' } }, opts);
+    const w = Math.round(opts.width || o.w || SHEET_PIC_W), h = Math.round(opts.height || PICTURE_H);
+    return '<div class="pd-pic pd-sheetpic"><svg id="' + o.id + '" class="os-flow-picture" viewBox="0 0 ' + w + ' ' + h +
+        '" width="' + w + '" height="' + h + '">' + markup + '</svg></div>';
+}
+
+// startNewSpots opens the Spots step for the recipe picked, on its pre-fill.
+function startNewSpots(id) {
+    const card = recipeCard(id);
+    S.newStyle = card ? { recipe: card.id, moves: Object.assign({}, card.last_moves || {}), sel: '' } : null;
+    drawNewSpots();
+}
+
+// drawNewSpots redraws the step alone, so the parts picked and the CATID
+// typed stay as they are.
+function drawNewSpots() {
+    const el = $('pd-newspots');
+    const ns = S.newStyle;
+    const card = ns && recipeCard(ns.recipe);
+    if (el && !card) el.innerHTML = '';
+    if (el && card) {
+        const lit = ns.sel ? M().spotsLit(card, ns.moves, ns.sel) : [];
+        const place = ns.sel ? (card.spots || []).find(s => s.node === ns.sel) : null;
+        const standing = place ? (ns.moves[place.node] || place.node) : '';
+        const hint = !place
+            ? (Object.keys(ns.moves).length ? 'Where this cell last ran the recipe.' : 'The recipe’s own spots.') +
+                ' Click a spot or an on-deck spot to move it.'
+            : standing + (place.group ? ' · ' + place.group : '') + ' · ' + (lit.length
+                ? 'click a spot marked “move here”, or ' + standing + ' again to leave it.'
+                : 'nowhere else is set up for it.');
+        el.innerHTML = '<div class="pd-fld"><label>Spots<small>where this style runs</small></label>' +
+            '<div class="v"><span class="pd-note">' + esc(hint) + '</span></div></div>' +
+            recipePicture(card, ns.moves, { id: 'pd-nsvg', editable: true, selected: ns.sel, lit: lit }) +
+            '<div class="pd-mvs">' + newMoveChips(card, ns.moves) + '</div>';
+    }
+    markNewStyle();
+}
+
+// newMoveChips is one chip per spot moved, its carried places in it, and one
+// per attached place moved on its own; a chip's ✕ puts it back — a spot with
+// what it carried.
+function newMoveChips(card, moves) {
+    const spots = card.spots || [];
+    const moved = n => moves[n] && moves[n] !== n;
+    const chip = (node, text) => '<button class="pd-chip set" data-act="nmove-rm" data-node="' + esc(node) + '">' +
+        esc(text) + ' <i>&times;</i></button>';
+    const out = [];
+    for (const s of spots) {
+        if (!moved(s.node)) continue;
+        const attached = !!s.at || s.job !== 'spot';
+        if (attached && s.of && moved(s.of)) continue;
+        if (attached) { out.push(chip(s.node, (FLOOR_NOUN[s.job] || s.job) + ' for ' + (moves[s.of] || s.of) + ': ' + s.node + ' → ' + moves[s.node])); continue; }
+        const carried = spots.filter(x => x.of === s.node && x !== s && moved(x.node))
+            .map(x => (FLOOR_NOUN[x.job] || x.job) + ' ' + moves[x.node]);
+        out.push(chip(s.node, s.node + ' → ' + moves[s.node] + (carried.length ? ' (' + carried.join(', ') + ')' : '')));
+    }
+    return out.length ? out.join('') : '<span class="pd-dim">the recipe’s own spots</span>';
+}
+
+function undoNewMove(node) {
+    const ns = S.newStyle;
+    const card = ns && recipeCard(ns.recipe);
+    if (!card) return;
+    delete ns.moves[node];
+    for (const s of card.spots || []) if (s.of === node) delete ns.moves[s.node];
+    ns.sel = '';
+    drawNewSpots();
+}
+
+// tapNewSpot is one click on the Spots step's picture: the station's own
+// spotsTap over the card, nothing restated here.
+function tapNewSpot(node) {
+    const ns = S.newStyle;
+    const card = ns && recipeCard(ns.recipe);
+    if (!card) return;
+    const r = M().spotsTap(card, ns.moves, ns.sel, node);
+    ns.moves = r.moves;
+    ns.sel = r.selected;
+    drawNewSpots();
+}
+
+// body[data-pd-new-style] = "spots;sel=PLN_010;moves=2", for the shots
+// harness: the step is up, what is selected (where it stands), how many moves.
+function markNewStyle() {
+    const ns = S.newStyle;
+    let m = '';
+    if (ns) {
+        const card = recipeCard(ns.recipe);
+        const place = ns.sel && card ? (card.spots || []).find(s => s.node === ns.sel) : null;
+        m = 'spots' + (place ? ';sel=' + (ns.moves[place.node] || place.node) : '') +
+            ';moves=' + Object.keys(ns.moves).filter(k => ns.moves[k] && ns.moves[k] !== k).length;
+    }
+    try { document.body.dataset.pdNewStyle = m; } catch (_) { /* nothing to publish on */ }
+}
+
 // mintNewStyle posts the sheet's recipe and parts to flow/mint, then the CATID
-// to the minted style if one was typed, and opens it.
+// to the minted style if one was typed, and opens it. Each part names its
+// slot's spot where the Spots step put it (a moved slot's node, D33), and the
+// moves ride as overrides.
 async function mintNewStyle(recipe) {
     const p = (S.composer.presets || []).find(x => String(x.id) === String(recipe));
+    const moves = (S.newStyle && String(S.newStyle.recipe) === String(recipe) && S.newStyle.moves) || {};
     const picks = [];
     for (let i = 0; i < ((p && p.slots) || []).length; i++) {
         const code = sheetValue('slot' + i);
         if (!code) { sheetStatus('Every slot needs a part.', true); return; }
-        const el = $('pd-scrim').querySelector('[data-f="slot' + i + '"]');
-        picks.push({ code: code, node: el ? el.dataset.node : '' });
+        const head = (p.slots[i].nodes || [])[0] || '';
+        picks.push({ code: code, node: moves[head] || head });
     }
     const made = await postJSON('POST', '/api/processes/' + S.processID + '/flow/mint',
-        B().flowMint(recipe, picks, stationIDForSave()));
+        B().flowMint(recipe, picks, stationIDForSave(), moves));
     if (!made.ok) { sheetStatus(made.error, true); return; }
     const catid = String(sheetValue('catid') || '').trim();
     if (catid) {
@@ -5609,16 +6625,19 @@ function openUsePreset(btn) {
 // HMI opens on. The recipe's own nodes otherwise. The positions table it lands
 // on is the pick step: every spot is a picker, and nothing is written until
 // Save flow.
+//
+// THE SHEET DRAWS THE SHAPE ON THE RELATION PICTURE (SYNTH-round2 row 17),
+// where the pre-fill puts it, before the lines that say what changes.
 function usePreset(id) {
     const card = (S.composer.presets || []).find(x => String(x.id) === String(id));
     if (!card || !S.model) return;
     const moves = card.last_moves || {};
     const p = M().presetMoved(card, moves);
     const diff = M().shapeDiff(S.model, p);
-    const lines = diff.length
+    const lines = recipePicture(card, moves, { id: 'pd-usvg' }) + (diff.length
         ? diff.map(d => '<div class="pd-diffrow"><b>' + esc(d.node) + '</b> · ' + esc(d.label) +
             (d.whole ? '' : ': ' + esc(d.from) + ' → ' + esc(d.to)) + '</div>').join('')
-        : '<p class="pd-note">This flow already has that shape — applying it changes nothing.</p>';
+        : '<p class="pd-note">This flow already has that shape — applying it changes nothing.</p>');
     openSheet('Use “' + p.name + '” on this style?',
         'the spots only — a recipe carries no parts, and the parts you have placed stay where they are.' +
             (Object.keys(moves).length ? ' Its spots are where this cell last ran it; change any in the table before you save.' : ''),
@@ -5655,7 +6674,11 @@ function startShapeDraft(shape, draft) {
     S.model = M().reduce(initModel({ id: 0, name: 'New shape', claims: [], parts: [] }, { shape: true }),
         { type: 'applyPreset', preset: { shape: shape } });
     S.baseline = '';
-    S.shapeDraft = Object.assign({ notes: [], unmapped: [] }, draft, { back: back, fromTab: from });
+    // groups is the draft's cards (null until Set up groups), focus the
+    // clicked row or pinned group, hover the card under the pointer, and
+    // refusal the server's last word on a save of them.
+    S.shapeDraft = Object.assign({ notes: [], unmapped: [], groups: null, focus: null, hover: null, refusal: '' },
+        draft, { back: back, fromTab: from });
     drawFlows();
 }
 
@@ -5779,6 +6802,7 @@ function openPresetNaming(title, prefill, from) {
         'Save recipe',
         () => {
             const name = sheetValue('name');
+            if (from && from.groups) return saveGroupedRecipe(name, from);
             return sheetSubmit('POST', '/api/processes/' + S.processID + '/presets',
                 B().flowPresetCreate(name, from), async () => {
                     // A NAMED DRAFT IS DONE: back to the list it now sits in.
@@ -5797,6 +6821,45 @@ function openPresetNaming(title, prefill, from) {
                 });
         },
         false);
+}
+
+// saveGroupedRecipe is the naming sheet's Save for a draft with groups: the
+// cells form of the create, with the groups beside the cells
+// (flowPresetCreate(name, {cells, groups}) — a style's or a found shape's form
+// carries none, and the server refuses groups on them).
+//
+// A REFUSAL IS THE SERVER'S SENTENCE, on the sheet and beside the cards: the
+// save checks the groups by name (domain.ValidateRecipeGroups) and its words
+// say which node and which group, which is what the engineer fixes on the
+// card under the sheet.
+//
+// A SAVED GROUPED RECIPE STAYS OPEN, at the version just saved, so its "On
+// the floor" block reads the server's card of it: what the floor can now pick
+// is the answer to the save. The way back is the draft's own Back.
+async function saveGroupedRecipe(name, from) {
+    const d = S.shapeDraft;
+    const out = await postJSON('POST', '/api/processes/' + S.processID + '/presets', B().flowPresetCreate(name, from));
+    if (!out.ok) {
+        sheetStatus(out.error, true);
+        if (d && S.shapeDraft === d) { d.refusal = out.error; drawFlows(); }
+        return;
+    }
+    closeSheet();
+    const keep = d ? { back: d.back, fromTab: d.fromTab } : null;
+    try {
+        const res = await fetch('/api/processes/' + S.processID + '/composer', { cache: 'no-store' });
+        if (res.ok) takeComposer(await res.json());
+    } catch (_) { /* the rail catches up on its next read */ }
+    const id = String((out.body && out.body.id) || '');
+    if (id && (S.composer.presets || []).some(p => String(p.id) === id)) {
+        openRecipe(id);
+        if (S.shapeDraft && keep) Object.assign(S.shapeDraft, keep);
+        S.notice = 'Saved recipe ' + name + '.';
+        drawFlows();
+        return;
+    }
+    S.notice = 'Saved recipe ' + name + '.';
+    await leaveShapeDraft();
 }
 
 async function refreshPresets() {
@@ -6240,7 +7303,7 @@ async function runPresetApply() {
 // click that does not stop propagating opens the list and hides it before
 // paint, which is the "clickable, nothing happens" report.
 const POPOVER_ACTS = { pick: 1, 'style-menu': 1, 'preset-menu': 1, 'add-position': 1, 'st-group': 1, 'st-holddest': 1, 'use-preset': 1,
-    'new-recipe': 1, 'import-from': 1 };
+    'new-recipe': 1, 'import-from': 1, 'gspot-add': 1, 'glist-add': 1 };
 
 function onClick(e) {
     const openRow = e.target.closest && e.target.closest('[data-open]');
@@ -6370,10 +7433,20 @@ function onClick(e) {
             // empty, never on the mode word — "Standard", "Tooling change".
             case 'shape-save': {
                 const r = S.shapeDraft && S.shapeDraft.recipe;
+                syncGroups();
+                const groups = S.shapeDraft && S.shapeDraft.groups ? groupsBody(S.shapeDraft.groups) : null;
                 openPresetNaming(r ? 'Save recipe ' + r.name : 'Name this recipe', r ? r.name : '',
-                    { cells: M().toCells(S.model) });
+                    groups ? { cells: M().toCells(S.model), groups: groups } : { cells: M().toCells(S.model) });
                 return;
             }
+            // The recipe groups' cards (see groupsSection).
+            case 'groups-setup': setUpGroups(); return;
+            case 'gspot-add': addGroupSpot(btn, Number(btn.dataset.g)); return;
+            case 'gspot-rm': dropGroupSpot(Number(btn.dataset.g), btn.dataset.node); return;
+            case 'glist-add': addGroupList(btn, Number(btn.dataset.g), btn.dataset.node, btn.dataset.field); return;
+            case 'glist-rm': dropGroupList(Number(btn.dataset.g), btn.dataset.node, btn.dataset.field, btn.dataset.v); return;
+            case 'gadv': openGroupAdvanced(Number(btn.dataset.g)); return;
+            case 'gfocus': pinGroup(Number(btn.dataset.g)); return;
             case 'recipe-open': openRecipe(btn.dataset.preset); return;
             case 'new-recipe': void openNewRecipe(btn); return;
             case 'preset-name-cand': {
@@ -6436,6 +7509,9 @@ function onClick(e) {
     }
     if (openRow) { openProcess(Number(openRow.dataset.open)); return; }
     if (styleRowEl && !btn) { selectStyle(Number(styleRowEl.dataset.style)); syncHash(); return; }
+    // A group's row pins that spot on the picture; a second click lets go.
+    const grow = e.target.closest && e.target.closest('[data-grow]');
+    if (grow) { pinGroupRow(Number(grow.dataset.g), grow.dataset.grow); return; }
     // A card and its row are one selection. The desktop picture never edits:
     // a card click finds the row (the bar's problem line's own path), and a
     // second click on the selected card or row lets go of it.

@@ -320,12 +320,21 @@ function flowPresetCreate(name, from) {
 // flow (pick-a-part U3). The desktop names a node per part; the station's
 // builder (composer-model.js mintBody) sends codes only. Never cells, never
 // an author: the handler decides both.
-function flowMint(presetID, picks, stationID) {
-    return {
+//
+// THE STATION'S BYTES, AND ONE FIELD MORE. overrides is the Spots step's moves
+// (recipe node → the node it should use instead), absent when there are
+// none, exactly as mintBody writes it: same keys, same order, so a pick with
+// no node and the same moves is mintBody's body byte for byte
+// (processes-desktop.popover-acts.test.js pins it). The node a part names is
+// its slot's spot where the moves put it.
+function flowMint(presetID, picks, stationID, overrides) {
+    const body = {
         preset_id: Number(presetID) || 0,
         parts: (picks || []).map(p => (p.node ? { code: String(p.code), node: String(p.node) } : { code: String(p.code) })),
         station_id: Number(stationID) || 0,
     };
+    if (overrides && Object.keys(overrides).length) body.overrides = Object.assign({}, overrides);
+    return body;
 }
 
 // flowPresetApplySave — POST /api/processes/{id}/flow/save, one row of the

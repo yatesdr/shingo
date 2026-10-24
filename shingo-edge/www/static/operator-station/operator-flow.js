@@ -1007,6 +1007,12 @@ function relSlot(x, y, name, caption, o) {
 // nothing. The direction is the grid's — target cell less source cell,
 // horizontal when its columns are at least its rows (a tie is horizontal) —
 // and the robot is legRobot's or dockRobot's, never a template's.
+//
+// A DECK MAY FEED MORE THAN ONE PRESS SPOT. A recipe group's on-deck spot
+// serves every spot of its group, and the desktop's draft draws the group
+// with a claim on each; a style can pair one deck twice too. The card's shape
+// is the first claim's (`feeder`), but every claim indexing from the deck
+// draws its own move, on its own card and on the deck's.
 function drawRelation(cell, sentences, lay, opts, width) {
     const positions = cell.positions || [];
     const byName = {};
@@ -1071,8 +1077,8 @@ function drawRelation(cell, sentences, lay, opts, width) {
         const inR = dockRobot(sentences, h, 'in');
         if (c.swap_mode === 'two_robot_press_index') {
             const idx = legRobot(sentences, h, 'index', dockRobot(sentences, h, 'out'));
-            const d = feeder[c.paired_core_node] === h ? c.paired_core_node : '';
-            const t = feeder[c.second_paired_core_node] === h ? c.second_paired_core_node : '';
+            const d = feeder[c.paired_core_node] ? c.paired_core_node : '';
+            const t = feeder[c.second_paired_core_node] ? c.second_paired_core_node : '';
             if (d) { add(d, inR, 'u', h); add(d, idx, dirOf(d, h), h); add(h, idx, dirOf(d, h), h); }
             if (t) { add(t, inR, 'u', h); if (d) add(t, idx, dirOf(t, d), h); }
         } else if (c.swap_mode === 'two_robot' || c.swap_mode === 'single_robot') {

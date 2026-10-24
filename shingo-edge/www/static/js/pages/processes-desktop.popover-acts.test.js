@@ -2444,12 +2444,583 @@ async function mainAsync() {
         if (/\.pd-pill/.test(css)) throw new Error('processes-desktop.css still styles .pd-pill');
     });
 
+    await recipeGroupPins({ pin, okJSON, click, wireSheet, wireOptions, chip, settle, liveInputs });
+
     if (failures > 0) {
         console.error('FAILED: ' + failures + ' of ' + (failures + checks));
         nodeProcess.exit(1);
     }
     console.log('OK: ' + checks + ' checks passed');
     nodeProcess.exit(0);
+}
+
+// ── recipe groups: the engineer's editor in the recipe draft ─────────────────
+//
+// SYNTH-round2 rows 9, 10, 18 and 24 (recipe groups, 2026-10-24). Under the
+// positions table, Set up groups lays out one card per part, pre-filled from
+// the cells; In from / Out to are the ★ cell's own fields; a group's Advanced
+// is the existing sheet in group scope and rides the save as
+// groups[i].advanced; the per-row gear is gone from a recipe draft, whose save
+// would drop it; the picture fades and tags by focus with its layout held by
+// the groups' pairs; "On the floor" is the SAVED card's; the New style sheet
+// has a Spots step whose mint carries the moves as the station's bytes.
+//
+// A SYNTHETIC PRESS-6 SHAPE: press spots in three columns (0.6, 0.95, 3.5) and
+// three rows (0, 0.4, 0.8 north), an on-deck spot at each end between the
+// middle and north rows, an unloader station far off. Node names only.
+//
+// THE DEPLOY NOTE RUNS ON THE SERVER'S OWN READS too:
+// processes_desktop_groups_test.go hands this script the Press 6 fixture's
+// desktop composer read (`--walk <read> <out>`), and the saved version's
+// (`--floor <read> <out>`), and posts what the page posted to the real router.
+const P6XY = {
+    PLN_005: [0, 0.55], PLN_006: [0.6, 0], PLN_007: [3.5, 0], PLN_008: [4.5, 0.6], PLN_009: [0.95, 0],
+    PLN_010: [0.6, 0.4], PLN_011: [0.95, 0.4], PLN_012: [3.5, 0.4], PLN_013: [0.6, 0.8], PLN_014: [0.95, 0.8],
+    PLN_015: [3.5, 0.8],
+};
+const p6cell = (head, deck, dest) => ({ core_node_name: head, role: 'produce', swap_mode: 'two_robot_press_index',
+    payload_code: '', paired_core_node: deck, inbound_source: 'SMN_BUF', outbound_destination: dest });
+const p6claim = (head, deck, part, dest) => Object.assign(p6cell(head, deck, dest), { payload_code: part });
+// SYNTH-round2 §2's groups, as the server stores and the desktop reads them.
+const P6_GROUPS = () => [
+    { of: 'PLN_006', name: 'Left Hand', spots: [
+        { core_node_name: 'PLN_006', paired_core_node: ['PLN_005'] },
+        { core_node_name: 'PLN_010', paired_core_node: ['PLN_005'] }] },
+    { of: 'PLN_007', name: 'Right Hand', spots: [
+        { core_node_name: 'PLN_007', paired_core_node: ['PLN_008'] },
+        { core_node_name: 'PLN_012', paired_core_node: ['PLN_008'] }],
+    advanced: { reorder_point: 1, auto_reorder: true } },
+];
+// The card's places for that recipe, in the shape domain.RecipeSpots ships.
+const P6_GROUPED_SPOTS = () => [
+    { node: 'PLN_006', job: 'spot', targets: ['PLN_006', 'PLN_010'], group: 'Left Hand' },
+    { node: 'PLN_005', job: 'on_deck', of: 'PLN_006', targets: ['PLN_005'], group: 'Left Hand',
+        at: { PLN_006: ['PLN_005'], PLN_010: ['PLN_005'] } },
+    { node: 'PLN_007', job: 'spot', targets: ['PLN_007', 'PLN_012'], group: 'Right Hand' },
+    { node: 'PLN_008', job: 'on_deck', of: 'PLN_007', targets: ['PLN_008'], group: 'Right Hand',
+        at: { PLN_007: ['PLN_008'], PLN_012: ['PLN_008'] } },
+];
+// v0's card for the ungrouped recipe: a spot moves to any free position the
+// recipes pair with its deck.
+const P6_PLAIN_SPOTS = () => [
+    { node: 'PLN_006', job: 'spot', targets: ['PLN_006', 'PLN_009', 'PLN_010'] },
+    { node: 'PLN_005', job: 'on_deck', of: 'PLN_006', targets: ['PLN_005'] },
+    { node: 'PLN_007', job: 'spot', targets: ['PLN_007', 'PLN_012'] },
+    { node: 'PLN_008', job: 'on_deck', of: 'PLN_007', targets: ['PLN_008'] },
+];
+function press6Composer(o) {
+    o = o || {};
+    const card = {
+        id: '7', name: 'Two spot press index', mode: 'two_robot_press_index', where: 'PLN_006 / PLN_007',
+        cells: { PLN_006: p6cell('PLN_006', 'PLN_005', 'ULN_002'), PLN_007: p6cell('PLN_007', 'PLN_008', o.dest7 || 'ULN_002') },
+        slots: [{ nodes: ['PLN_006'], role: 'produce' }, { nodes: ['PLN_007'], role: 'produce' }],
+        last_moves: { PLN_006: 'PLN_010', PLN_007: 'PLN_012' },
+        spots: o.grouped ? P6_GROUPED_SPOTS() : P6_PLAIN_SPOTS(),
+    };
+    if (o.grouped) card.groups = P6_GROUPS();
+    const one = {
+        id: '8', name: 'One spot press index', mode: 'two_robot_press_index', where: 'PLN_009',
+        cells: { PLN_009: p6cell('PLN_009', 'PLN_005', 'ULN_002') }, slots: [{ nodes: ['PLN_009'], role: 'produce' }],
+        spots: [{ node: 'PLN_009', job: 'spot', targets: ['PLN_009'] }, { node: 'PLN_005', job: 'on_deck', of: 'PLN_009', targets: ['PLN_005'] }],
+    };
+    const running = o.running || [p6claim('PLN_010', 'PLN_005', 'SYN-P6-A', 'ULN_002'), p6claim('PLN_012', 'PLN_008', 'SYN-P6-B', 'ULN_005')];
+    return {
+        styles: [{ id: 1, name: 'SYN-RUN', claims: running, parts: running.map(c => c.payload_code), advanced: {} }],
+        routing: [
+            { core_node_name: 'SMN_BUF', role: 'source', label: 'SMN_BUF', enabled: true, sequence: 1 },
+            { core_node_name: 'ULN_002', role: 'destination', label: 'ULN_002', enabled: true, sequence: 1 },
+            { core_node_name: 'ULN_005', role: 'destination', label: 'ULN_005', enabled: true, sequence: 2 },
+            { core_node_name: 'STG_1', role: 'staging', label: 'STG_1', enabled: true, sequence: 1 },
+        ],
+        presets: [card, one],
+        palette: ['SYN-P6-A', 'SYN-P6-B'],
+        cell: {
+            geometry: true,
+            positions: Object.keys(P6XY).sort().map((n, i) => ({
+                core_node_name: n, kind: n === 'PLN_005' || n === 'PLN_008' ? 'back' : 'front', sequence: i + 1,
+                x: P6XY[n][0], y: P6XY[n][1], station_id: 18,
+            })).concat([
+                { core_node_name: 'ULN_002', kind: 'front', sequence: 12, x: 100, y: 0, station_id: 25 },
+                { core_node_name: 'ULN_005', kind: 'front', sequence: 13, x: 101, y: 0, station_id: 25 },
+            ]),
+            groups: {},
+        },
+    };
+}
+
+// A card's own markup in the picture: from its data-pos to the next card's.
+function cardMarkup(svg, n) {
+    const i = svg.indexOf('data-pos="' + n + '"');
+    if (i < 0) return '';
+    const j = svg.indexOf('data-pos="', i + 10);
+    return svg.slice(i, j < 0 ? undefined : j);
+}
+const cvsIn = (svg, n) => (cardMarkup(svg, n).match(/data-robot="\d" data-dir="\w"/g) || [])
+    .map(s => s.replace(/data-robot="(\d)" data-dir="(\w)"/, '$1$2')).join(' ');
+const faintIn = (svg, n) => new RegExp('<g class="node[^"]*\\bfaint\\b[^"]*" data-pos="' + n + '"').test(svg);
+const tagIn = (svg, n) => {
+    const m = cardMarkup(svg, n).match(/<g class="gtag (g\d)">.*?<text[^>]*>([^<]*)<\/text>/);
+    return m ? m[2] + ' ' + m[1] : '';
+};
+const topIn = (svg, n) => {
+    const m = new RegExp('data-pos="' + n + '"[^>]*?transform="translate\\((-?[\\d.]+),(-?[\\d.]+)\\)"').exec(svg);
+    return m ? Number(m[2]) : NaN;
+};
+const plain = html => String(html).replace(/<\/?(div|p|br|tr|td|th|li|h\d)\b[^>]*>/g, ' ').replace(/<[^>]*>/g, '')
+    .replace(/&amp;/g, '&').replace(/\s+/g, ' ').trim();
+const between = (h, a, b) => { const i = h.indexOf(a); if (i < 0) return ''; const j = h.indexOf(b, i + a.length); return h.slice(i, j < 0 ? undefined : j); };
+
+async function recipeGroupPins(h) {
+    const { pin, okJSON, click, wireSheet, wireOptions, chip, settle, liveInputs } = h;
+    const PRESS6_PAGE = {
+        processes: [{ id: 1, name: 'Press 6', group_id: 0, active_style_id: 1, flow_composer_enabled: true }],
+        styles: [{ id: 1, process_id: 1, name: 'SYN-RUN' }],
+        stations: [{ id: 18, process_id: 1, name: 'Press 6 Operator Screen' }],
+    };
+    // One Press 6 page: the composer read, every POST recorded and answered
+    // by `answer` (200 by default), and the Recipes tab's read.
+    const p6Page = (composer, extra, answer) => {
+        const posts = [];
+        let live = null;
+        const ctx = loadPage(Object.assign({}, PRESS6_PAGE, {
+            flowspec: true, allowSheet: true, composer: composer,
+            onScrim: sc => { live = liveInputs(sc); },
+            fetch: (url, init) => {
+                if (/\/api\/processes\/\d+\/composer$/.test(url)) return okJSON(composer);
+                if (/\/presets$/.test(url) && !(init && init.method)) return okJSON({ presets: [], candidates: [] });
+                if (init && init.method === 'POST') {
+                    posts.push({ url: url, body: init.body });
+                    return answer ? answer(url, init) : okJSON({ id: 99, style_id: 5, style_name: 'SYN-P6-A/B', minted: true });
+                }
+                return null;
+            },
+        }, extra || {}));
+        return Object.assign(ctx, { posts: posts, live: () => live });
+    };
+    const openRecipe = async (ctx, id) => {
+        click(ctx.main, ctx.doc, { act: 'recipe-open', preset: id || '7' });
+        await settle();
+    };
+    // Picks the option labelled `label` off the popover a click opened.
+    const pickOption = (ctx, open, label) => {
+        const opts = wireOptions(ctx.pop);
+        open();
+        const re = new RegExp('data-opt="(\\d+)"[^>]*>(?:<[^>]*>)*' + label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '(?:<|$)');
+        const m = ctx.pop.innerHTML.match(re);
+        if (!m) throw new Error('setup: no option ' + label + ' in ' + ctx.pop.innerHTML);
+        bubble(opts.find(b => b.dataset.opt === m[1]), 'click', ctx.doc);
+    };
+    const addSpot = (ctx, g, node) => pickOption(ctx, () => click(ctx.main, ctx.doc, { act: 'gspot-add', g: String(g) }), node);
+    const setDest = (ctx, head, node) => pickOption(ctx, () => bubble(chip(ctx.main, head, 'dest'), 'click', ctx.doc), node);
+    const groupsHTML = root => between(root.innerHTML, '<div class="pd-groups"', '<div class="pd-bar"');
+
+    // The deploy note's clicks, on whatever composer read the page is given.
+    async function deployNote(ctx) {
+        await openRecipe(ctx, ((ctx.composer.presets || []).find(p => p.name === 'Two spot press index') || {}).id);
+        if (ctx.root.innerHTML.indexOf('Recipe · Two spot press index') < 0) throw new Error('the recipe draft did not open');
+        click(ctx.main, ctx.doc, { act: 'groups-setup' });
+        await settle();
+        addSpot(ctx, 0, 'PLN_010');
+        await settle();
+        addSpot(ctx, 1, 'PLN_012');
+        await settle();
+        setDest(ctx, 'PLN_007', 'ULN_005');
+        await settle();
+        click(ctx.main, ctx.doc, { act: 'shape-save' });
+        if (!ctx.scrim.classList.contains('active')) throw new Error('Save recipe… opened no naming sheet');
+        const named = /data-f="name" value="([^"]*)"/.exec(ctx.scrim.innerHTML);
+        if (!named || named[1] !== 'Two spot press index') throw new Error('the naming sheet opens on ' + (named && named[1]));
+        wireSheet(ctx.scrim, named[1]);
+        click(ctx.scrim, ctx.doc, { act: 'sheet-ok' });
+        await settle();
+        return ctx.posts.find(p => /\/presets$/.test(p.url));
+    }
+
+    const ARGV = nodeProcess.argv.slice(2);
+    if (ARGV[0] === '--walk' || ARGV[0] === '--floor') {
+        const composer = JSON.parse(fs.readFileSync(ARGV[1], 'utf8'));
+        const ctx = Object.assign(p6Page(composer), { composer: composer });
+        await settle();
+        const out = {};
+        if (ARGV[0] === '--walk') {
+            const posted = await deployNote(ctx);
+            out.body = posted ? JSON.parse(posted.body) : null;
+            out.groups = plain(groupsHTML(ctx.root));
+        } else {
+            await openRecipe(ctx, ((composer.presets || []).find(p => p.name === 'Two spot press index') || {}).id);
+            out.floor = plain(between(ctx.root.innerHTML, '<div class="pd-floor"', '</div></div>'));
+            out.cards = (ctx.root.innerHTML.match(/data-gcard="\d+"/g) || []).length;
+        }
+        fs.writeFileSync(ARGV[2], JSON.stringify(out));
+        return;
+    }
+
+    // THE PER-ROW GEAR IS GONE FROM A RECIPE DRAFT. A recipe's save strips
+    // every cell's Advanced (domain.StripFlowPayload), so the gear opened a
+    // sheet whose every field was dropped without a word. A group's
+    // Advanced is the one a recipe keeps.
+    await pin('a recipe draft draws no per-row Advanced gear', async () => {
+        const ctx = p6Page(press6Composer());
+        await settle();
+        if (ctx.root.innerHTML.indexOf('data-act="advanced"') < 0) throw new Error('setup: the style has no gear to lose');
+        await openRecipe(ctx);
+        const h = ctx.root.innerHTML;
+        if (h.indexOf('Recipe · Two spot press index') < 0) throw new Error('setup: the draft did not open');
+        if (h.indexOf('data-act="advanced"') >= 0 || h.indexOf('<th>Advanced</th>') >= 0) {
+            throw new Error('the recipe draft still draws the per-row gear: ' +
+                (h.match(/<button class="pd-adv[^>]*>/) || [''])[0]);
+        }
+    });
+
+    await pin('Set up groups lays out a card per part, pre-filled from the cells', async () => {
+        const ctx = p6Page(press6Composer());
+        await settle();
+        await openRecipe(ctx);
+        if (ctx.root.innerHTML.indexOf('data-act="groups-setup"') < 0) throw new Error('the draft has no Set up groups');
+        if (ctx.root.innerHTML.indexOf('data-gcard') >= 0) throw new Error('cards are drawn before Set up groups');
+        click(ctx.main, ctx.doc, { act: 'groups-setup' });
+        await settle();
+        const g = groupsHTML(ctx.root);
+        const cards = g.match(/data-gcard="\d+"/g) || [];
+        if (cards.length !== 2) throw new Error('want 2 cards, got ' + cards.length + ': ' + plain(g).slice(0, 300));
+        if (!/data-gname="0" value="Left Hand"/.test(g) || !/data-gname="1" value="Right Hand"/.test(g)) {
+            throw new Error('the two produce slots are not named Left Hand / Right Hand: ' + (g.match(/data-gname="\d" value="[^"]*"/g) || []).join(' '));
+        }
+        const left = between(g, 'data-gcard="0"', 'data-gcard="1"');
+        if (!/data-grow="PLN_006"/.test(left) || plain(left).indexOf('PLN_006 ★') < 0) throw new Error('Left Hand\'s ★ row is not PLN_006: ' + plain(left));
+        if (/data-act="glist-rm"[^>]*data-v="PLN_005"/.test(left)) throw new Error('the ★ cell\'s own on-deck spot can be taken out of its row');
+        if (plain(left).indexOf('PLN_005') < 0) throw new Error('PLN_005 is not on Left Hand\'s ★ row');
+        if (/data-act="gspot-rm"[^>]*data-node="PLN_006"/.test(left)) throw new Error('the ★ row can be removed');
+        if (!/data-act="glist-add"[^>]*>\+ on deck</.test(left)) throw new Error('no + on deck on the ★ row');
+        if (/>\+ third<|>\+ lane</.test(left)) throw new Error('a list the ★ cell leaves blank is offered: ' + plain(left));
+        if (!/data-act="gspot-add"[^>]*>\+ Add a press spot</.test(left)) throw new Error('no + Add a press spot');
+        if (!/data-act="gadv" data-g="0"[^>]*>Edit…</.test(left)) throw new Error('no Advanced · Edit… on Left Hand');
+    });
+
+    await pin('+ Add a press spot offers the positions no group holds, and pre-fills the ★ row\'s lists', async () => {
+        const ctx = p6Page(press6Composer());
+        await settle();
+        await openRecipe(ctx);
+        click(ctx.main, ctx.doc, { act: 'groups-setup' });
+        await settle();
+        wireOptions(ctx.pop);
+        click(ctx.main, ctx.doc, { act: 'gspot-add', g: '0' });
+        const offered = (ctx.pop.innerHTML.match(/data-opt="\d+"[^>]*>[^<]+/g) || []).map(s => s.replace(/.*>/, '')).join(' ');
+        if (offered !== 'PLN_009 PLN_010 PLN_011 PLN_012 PLN_013 PLN_014 PLN_015') {
+            throw new Error('Left Hand offers ' + JSON.stringify(offered) + ' — want this station\'s positions no group holds');
+        }
+        addSpot(ctx, 0, 'PLN_010');
+        await settle();
+        const left = between(groupsHTML(ctx.root), 'data-gcard="0"', 'data-gcard="1"');
+        const row = between(left, 'data-grow="PLN_010"', '</tr>');
+        if (!row) throw new Error('no PLN_010 row in Left Hand: ' + plain(left));
+        if (!/data-act="glist-rm"[^>]*data-v="PLN_005"/.test(row)) throw new Error('PLN_010\'s on-deck did not pre-fill PLN_005: ' + plain(row));
+        if (!/data-act="gspot-rm"[^>]*data-node="PLN_010"/.test(row)) throw new Error('the added row cannot be taken out');
+        wireOptions(ctx.pop);
+        click(ctx.main, ctx.doc, { act: 'gspot-add', g: '1' });
+        if (/>PLN_010</.test(ctx.pop.innerHTML) || />PLN_005</.test(ctx.pop.innerHTML)) {
+            throw new Error('Right Hand is offered a node Left Hand holds: ' + ctx.pop.innerHTML);
+        }
+    });
+
+    await pin('In from / Out to are the ★ cell\'s, read and written there', async () => {
+        const ctx = p6Page(press6Composer());
+        await settle();
+        await openRecipe(ctx);
+        click(ctx.main, ctx.doc, { act: 'groups-setup' });
+        await settle();
+        const right = () => between(groupsHTML(ctx.root), 'data-gcard="1"', '<div class="pd-floor"');
+        if (!/data-node="PLN_007" data-kind="dest"[^>]*><span class="t">ULN_002</.test(right())) {
+            throw new Error('Right Hand\'s Out to does not read PLN_007\'s destination: ' + plain(right()));
+        }
+        setDest(ctx, 'PLN_007', 'ULN_005');
+        await settle();
+        if (!/data-node="PLN_007" data-kind="dest"[^>]*><span class="t">ULN_005</.test(right())) throw new Error('Out to did not take ULN_005');
+        const table = between(ctx.root.innerHTML, 'id="pd-postbl"', 'class="pd-groups"');
+        if (!/data-row="PLN_007".*?data-kind="dest"[^>]*><span class="t">ULN_005</.test(table)) {
+            throw new Error('the positions table\'s PLN_007 row does not show the card\'s ULN_005');
+        }
+    });
+
+    await pin('Advanced · Edit… is the sheet in group scope, and Apply rides the save as groups[i].advanced', async () => {
+        const ctx = p6Page(press6Composer(), { extraIds: { 'pd-advpop': Object.assign(makeElement('pd-advpop'), { hidden: true }) } });
+        await settle();
+        await openRecipe(ctx);
+        click(ctx.main, ctx.doc, { act: 'groups-setup' });
+        await settle();
+        click(ctx.main, ctx.doc, { act: 'gadv', g: '1' });
+        const sheet = ctx.scrim.innerHTML;
+        if (sheet.indexOf('<h2>Right Hand · Advanced</h2>') < 0) throw new Error('the sheet is not Right Hand\'s: ' + plain(sheet).slice(0, 200));
+        for (const key of ['allowed_payload_codes', 'auto_request_payload', 'index_robot_supplies', 'sequence', 'evac_nodes', 'evac_dest', 'partial_dest']) {
+            if (sheet.indexOf('data-adv="' + key + '"') >= 0) throw new Error('group scope draws ' + key + ', which a recipe may not say');
+        }
+        for (const key of ['reorder_point', 'auto_reorder', 'keep_staged_node', 'strict_pack', 'curtain_required']) {
+            if (sheet.indexOf('data-adv="' + key + '"') < 0) throw new Error('group scope hides ' + key);
+        }
+        const live = ctx.live();
+        live.type(live.find('data-adv', 'reorder_point'), '1');
+        click(ctx.scrim, ctx.doc, { advkind: 'toggle', adv: 'auto_reorder' });
+        click(ctx.scrim, ctx.doc, { act: 'adv-apply' });
+        await settle();
+        const right = between(groupsHTML(ctx.root), 'data-gcard="1"', '<div class="pd-floor"');
+        if (plain(right).indexOf('Reorder point 1 · Auto reorder on') < 0) throw new Error('Right Hand\'s card says ' + plain(right));
+        if (/data-act="advanced"/.test(ctx.root.innerHTML)) throw new Error('setup: a per-row gear is back');
+        click(ctx.main, ctx.doc, { act: 'shape-save' });
+        wireSheet(ctx.scrim, 'Two spot press index');
+        click(ctx.scrim, ctx.doc, { act: 'sheet-ok' });
+        await settle();
+        const posted = ctx.posts.find(p => /\/presets$/.test(p.url));
+        if (!posted) throw new Error('the save posted nothing');
+        const body = JSON.parse(posted.body);
+        const adv = body.groups && body.groups[1] && body.groups[1].advanced;
+        if (JSON.stringify(adv) !== '{"reorder_point":1,"auto_reorder":true}') throw new Error('Right Hand\'s Advanced sent: ' + JSON.stringify(adv));
+        if (body.groups[0].advanced) throw new Error('Left Hand sent an Advanced nobody set: ' + JSON.stringify(body.groups[0].advanced));
+        if ((body.cells || []).some(c => c.advanced)) throw new Error('a cell carries an Advanced the save would drop');
+    });
+
+    // THE DEPLOY NOTE, CLICK BY CLICK: the body is SYNTH-round2 §2's recipe,
+    // through the cells form, and the page stays on the saved recipe.
+    await pin('the deploy note\'s clicks save SYNTH §2\'s recipe through the cells form', async () => {
+        const ctx = Object.assign(p6Page(press6Composer()), { composer: press6Composer() });
+        await settle();
+        const posted = await deployNote(ctx);
+        if (!posted) throw new Error('the save posted nothing');
+        const groups = P6_GROUPS();
+        delete groups[1].advanced;
+        const want = ctx.win.DesktopBodies.flowPresetCreate('Two spot press index', {
+            cells: [p6cell('PLN_006', 'PLN_005', 'ULN_002'), p6cell('PLN_007', 'PLN_008', 'ULN_005')], groups: groups,
+        });
+        if (posted.body !== JSON.stringify(want)) throw new Error('posted ' + posted.body + '\n      want   ' + JSON.stringify(want));
+        if (ctx.scrim.classList.contains('active')) throw new Error('the naming sheet is still open after the save');
+    });
+
+    await pin('a refused save says the server\'s words beside the cards', async () => {
+        const says = 'PLN_005 is in both Left Hand and Right Hand — a node serves one group only';
+        const ctx = Object.assign(p6Page(press6Composer(), null, () => Promise.resolve({
+            ok: false, status: 400, json: async () => ({ error: says }),
+        })), { composer: press6Composer() });
+        await settle();
+        await deployNote(ctx);
+        const g = groupsHTML(ctx.root);
+        if (g.indexOf('<div class="pd-refusal" id="pd-grefusal">' + says + '</div>') < 0) {
+            throw new Error('the cards do not carry the refusal: ' + plain(g).slice(0, 300));
+        }
+        if (!ctx.scrim.classList.contains('active')) throw new Error('the naming sheet closed over a refusal');
+    });
+
+    // THE PICTURE BY FOCUS (SYNTH row 18), its grid held by the groups' pairs
+    // (the lead's D11): PLN_005 feeds PLN_006 and PLN_010, which stand in two
+    // rows, so it takes the middle row in every state.
+    await pin('the draft picture fades, tags and draws chevrons by focus', async () => {
+        const { pic, svg } = pictureFrame(1084);
+        const ctx = p6Page(press6Composer(), { extraIds: { 'pd-svg': svg }, realPicture: true });
+        ctx.main.appendChild(pic);
+        await settle();
+        await openRecipe(ctx);
+        click(ctx.main, ctx.doc, { act: 'groups-setup' });
+        await settle();
+        addSpot(ctx, 0, 'PLN_010');
+        await settle();
+        addSpot(ctx, 1, 'PLN_012');
+        await settle();
+        const last = () => ctx.win.pictureCalls[ctx.win.pictureCalls.length - 1];
+        const pairs = '{"PLN_005":["PLN_006","PLN_010"],"PLN_008":["PLN_007","PLN_012"]}';
+        const state = (what, want) => {
+            const o = last(), s = svg.innerHTML;
+            if (o.relation !== true) throw new Error(what + ': not by relation');
+            if (JSON.stringify(o.pairs) !== pairs) throw new Error(what + ': pairs ' + JSON.stringify(o.pairs) + ', want ' + pairs);
+            if (topIn(s, 'PLN_005') - 18 !== topIn(s, 'PLN_010')) throw new Error(what + ': PLN_005 is not in PLN_010\'s row');
+            for (const n of Object.keys(P6XY)) {
+                const full = want.full.indexOf(n) >= 0;
+                if (faintIn(s, n) === full) throw new Error(what + ': ' + n + (full ? ' is faint' : ' is full'));
+            }
+            for (const n of Object.keys(want.cvs)) {
+                if (cvsIn(s, n) !== want.cvs[n]) throw new Error(what + ': ' + n + ' chevrons ' + JSON.stringify(cvsIn(s, n)) + ', want ' + JSON.stringify(want.cvs[n]));
+            }
+            for (const [n, t] of [['PLN_006', 'L g1'], ['PLN_010', 'L g1'], ['PLN_007', 'R g2'], ['PLN_012', 'R g2'], ['PLN_005', ''], ['PLN_009', '']]) {
+                if (tagIn(s, n) !== t) throw new Error(what + ': ' + n + ' tag ' + JSON.stringify(tagIn(s, n)) + ', want ' + JSON.stringify(t));
+            }
+        };
+        state('no focus', {
+            full: ['PLN_005', 'PLN_006', 'PLN_007', 'PLN_008', 'PLN_010', 'PLN_012'],
+            cvs: { PLN_005: '', PLN_006: '', PLN_010: '' },
+        });
+        if (cardMarkup(svg.innerHTML, 'PLN_006').indexOf('Left Hand · ★ default') < 0) throw new Error('PLN_006\'s card does not say it is Left Hand\'s ★ spot');
+        if (cardMarkup(svg.innerHTML, 'PLN_005').indexOf('feeds PLN_006 · PLN_010') < 0) throw new Error('PLN_005\'s card does not say what it feeds');
+        const card = makeElement('');
+        card.dataset.gcard = '0';
+        ctx.main.appendChild(card);
+        bubble(card, 'mouseover', ctx.doc);
+        state('Left Hand hovered', {
+            full: ['PLN_005', 'PLN_006', 'PLN_010'],
+            cvs: { PLN_005: '1u 2r', PLN_006: '2r', PLN_010: '2r', PLN_007: '', PLN_008: '' },
+        });
+        if (!/<div class="pd-grp focus" data-gcard="0"/.test(ctx.root.innerHTML) && !card.classList.contains('focus')) {
+            throw new Error('the hovered card is not marked');
+        }
+        bubble(card, 'mouseout', ctx.doc);
+        state('Left Hand left', { full: ['PLN_005', 'PLN_006', 'PLN_007', 'PLN_008', 'PLN_010', 'PLN_012'], cvs: { PLN_005: '' } });
+        click(ctx.main, ctx.doc, { grow: 'PLN_010', g: '0' });
+        await settle();
+        state('the PLN_010 row', { full: ['PLN_005', 'PLN_010'], cvs: { PLN_005: '1u 2r', PLN_010: '2r', PLN_006: '' } });
+        bubble(card, 'mouseover', ctx.doc);
+        state('a pinned row outlives a hover', { full: ['PLN_005', 'PLN_010'], cvs: { PLN_010: '2r' } });
+        click(ctx.main, ctx.doc, { grow: 'PLN_010', g: '0' });
+        await settle();
+        bubble(card, 'mouseout', ctx.doc);
+        state('the row let go', { full: ['PLN_005', 'PLN_006', 'PLN_007', 'PLN_008', 'PLN_010', 'PLN_012'], cvs: { PLN_010: '' } });
+    });
+
+    // "ON THE FLOOR" IS THE SAVED CARD'S (SYNTH row 10): generated from the
+    // spots, at and carry Go computed, never from the draft.
+    await pin('On the floor reads the saved card, and says when it is not saved yet', async () => {
+        const saved = p6Page(press6Composer({ grouped: true, dest7: 'ULN_005' }));
+        await settle();
+        await openRecipe(saved);
+        const g = groupsHTML(saved.root);
+        if ((g.match(/data-gcard="\d+"/g) || []).length !== 2) throw new Error('a grouped recipe does not open with its cards: ' + plain(g).slice(0, 200));
+        const floor = plain(between(saved.root.innerHTML, '<div class="pd-floor"', '</div></div>'));
+        const want = 'On the floor Left Hand runs on PLN_006 or PLN_010, on deck PLN_005 · Right Hand on PLN_007 or PLN_012, ' +
+            'on deck PLN_008 · nothing else is offered.';
+        if (floor !== want) throw new Error('the block reads ' + JSON.stringify(floor) + '\n      want ' + JSON.stringify(want));
+        addSpot(saved, 0, 'PLN_013');
+        await settle();
+        const dirty = plain(between(saved.root.innerHTML, '<div class="pd-floor"', '</div></div>'));
+        if (dirty.indexOf(want.slice('On the floor '.length)) < 0 || dirty.indexOf('Your changes reach the floor when you save.') < 0) {
+            throw new Error('an edited draft\'s block reads ' + JSON.stringify(dirty));
+        }
+        const fresh = p6Page(press6Composer());
+        await settle();
+        await openRecipe(fresh);
+        click(fresh.main, fresh.doc, { act: 'groups-setup' });
+        await settle();
+        const unsaved = plain(between(fresh.root.innerHTML, '<div class="pd-floor"', '</div></div>'));
+        const words = 'On the floor Not saved yet: what the floor can pick is said here once these groups are saved. ' +
+            'Until then the floor runs this recipe without groups.';
+        if (unsaved !== words) throw new Error('an unsaved block reads ' + JSON.stringify(unsaved));
+    });
+
+    await pin('On the floor says when the running style stands outside the groups', async () => {
+        const ctx = p6Page(press6Composer({ grouped: true, dest7: 'ULN_005',
+            running: [p6claim('PLN_013', 'PLN_005', 'SYN-P6-A', 'ULN_002'), p6claim('PLN_012', 'PLN_008', 'SYN-P6-B', 'ULN_005')] }));
+        await settle();
+        await openRecipe(ctx);
+        const floor = plain(between(ctx.root.innerHTML, '<div class="pd-floor"', '</div></div>'));
+        if (floor.indexOf('The running style SYN-RUN stands outside these groups: PLN_013 is in none of them.') < 0) {
+            throw new Error('the block reads ' + JSON.stringify(floor));
+        }
+        const inside = p6Page(press6Composer({ grouped: true, dest7: 'ULN_005' }));
+        await settle();
+        await openRecipe(inside);
+        if (/running style/.test(inside.root.innerHTML)) throw new Error('a running style inside its groups is reported');
+    });
+
+    // THE SHOTS HARNESS'S ONE-SHOTS: every state photographed is a URL.
+    await pin('#tab=presets;recipe= opens the draft, and ;groups= ;focus= ;row= ;gadv= reach each state', async () => {
+        const a = p6Page(press6Composer(), { hash: '#tab=presets;recipe=7;groups=1;focus=Right Hand' });
+        await settle();
+        if (a.root.innerHTML.indexOf('Recipe · Two spot press index') < 0) throw new Error(';recipe= opened no draft');
+        if (!/<div class="pd-grp focus" data-gcard="1"/.test(a.root.innerHTML)) throw new Error(';groups=1;focus=Right Hand did not focus Right Hand');
+        if (a.doc.body.dataset.pdRecipe !== 'draft;groups=2;focus=Right Hand') throw new Error('marker ' + JSON.stringify(a.doc.body.dataset.pdRecipe));
+        const b = p6Page(press6Composer({ grouped: true, dest7: 'ULN_005' }), {
+            hash: '#tab=presets;recipe=7;row=PLN_010;gadv=Left Hand',
+            extraIds: { 'pd-advpop': Object.assign(makeElement('pd-advpop'), { hidden: true }) },
+        });
+        await settle();
+        if (!/<tr class="focus" data-grow="PLN_010"/.test(b.root.innerHTML)) throw new Error(';row=PLN_010 did not click the row');
+        if (b.scrim.innerHTML.indexOf('<h2>Left Hand · Advanced</h2>') < 0) throw new Error(';gadv=Left Hand opened no sheet');
+        if (b.doc.body.dataset.pdRecipe !== 'draft;groups=2;floor=saved;row=PLN_010;gadv=Left Hand') {
+            throw new Error('marker ' + JSON.stringify(b.doc.body.dataset.pdRecipe));
+        }
+        if (b.win.replaceStates.some(u => /recipe=|groups=|focus=|row=|gadv=/.test(u))) {
+            throw new Error('a one-shot was minted back into the address: ' + b.win.replaceStates.join(' | '));
+        }
+    });
+
+    // ── New style's Spots step (F6) ──
+    //
+    // After a part per slot: the same relation picture and the same
+    // spotsTap / spotsLit the station runs, over the recipe's card, opened on
+    // its last_moves. The mint sends the moves as overrides, and its body is
+    // the station's mintBody bytes with the desktop's node per part.
+    await pin('flowMint is the station\'s mintBody bytes for the same picks and moves', async () => {
+        const B = require(path.join(__dirname, 'desktop-bodies.js'));
+        const modelSrc = fs.readFileSync(path.join(__dirname, '..', '..', 'operator-station', 'composer-model.js'), 'utf8');
+        const M = vm.runInThisContext('(function(module){' + modelSrc + '\nreturn module.exports;})', { filename: 'composer-model.js' })({ exports: {} });
+        const moves = { PLN_006: 'PLN_010', PLN_007: 'PLN_012' };
+        for (const mv of [moves, {}]) {
+            const a = JSON.stringify(B.flowMint(7, [{ code: 'SYN-P6-A' }, { code: 'SYN-P6-B' }], 18, mv));
+            const b = JSON.stringify(M.mintBody(7, ['SYN-P6-A', 'SYN-P6-B'], 18, mv));
+            if (a !== b) throw new Error('moves ' + JSON.stringify(mv) + ': flowMint ' + a + '\n      mintBody ' + b);
+        }
+    });
+
+    const newStylePage = (composer, hash) => {
+        const ids = {};
+        for (const id of ['pd-newrecipe', 'pd-newslots', 'pd-newname', 'pd-newspots']) ids[id] = makeElement(id);
+        const ctx = p6Page(composer, { hash: hash, realPicture: true, extraIds: ids });
+        const slot = (i, code) => Object.assign(makeElement(''), { value: code, type: 'select' });
+        const fields = { '[data-f="slot0"]': slot(0, 'SYN-P6-A'), '[data-f="slot1"]': slot(1, 'SYN-P6-B'),
+            '[data-f="recipe"]': Object.assign(makeElement(''), { value: '7' }), '[data-f="catid"]': Object.assign(makeElement(''), { value: '' }),
+            '.mf .st': makeElement('') };
+        ctx.scrim.querySelector = sel => fields[sel] || null;
+        const tap = node => {
+            const box = makeElement('pd-nsvg');
+            ctx.scrim.appendChild(box);
+            const c = makeElement('');
+            c.dataset.pos = node;
+            box.appendChild(c);
+            bubble(c, 'click', ctx.doc);
+        };
+        return Object.assign(ctx, { ids: ids, tap: tap, status: fields['.mf .st'] });
+    };
+    await pin('New style asks where the spots go, opened where the cell last ran the recipe', async () => {
+        const ctx = newStylePage(press6Composer(), '#newstyle=7');
+        await settle();
+        if (!ctx.scrim.classList.contains('active')) throw new Error(';newstyle=7 opened no sheet');
+        const spots = ctx.ids['pd-newspots'].innerHTML;
+        if (spots.indexOf('id="pd-nsvg"') < 0) throw new Error('the sheet draws no Spots picture: ' + plain(spots).slice(0, 200));
+        if (plain(spots).indexOf('PLN_006 → PLN_010') < 0 || plain(spots).indexOf('PLN_007 → PLN_012') < 0) {
+            throw new Error('the Spots step is not pre-filled from last_moves: ' + plain(spots));
+        }
+        const o = ctx.win.pictureCalls[ctx.win.pictureCalls.length - 1] || {};
+        if (o.relation !== true || o.editable !== true) throw new Error('the Spots picture is not the relation picture, tappable');
+        ctx.tap('PLN_010');
+        const lit = ctx.win.pictureCalls[ctx.win.pictureCalls.length - 1] || {};
+        if (JSON.stringify(lit.targets) !== '["PLN_006","PLN_009"]' || lit.selected !== 'PLN_010' || !lit.selectCard) {
+            throw new Error('a tap on PLN_010 lit ' + JSON.stringify(lit.targets) + ' selected ' + lit.selected);
+        }
+        ctx.tap('PLN_009');
+        if (plain(ctx.ids['pd-newspots'].innerHTML).indexOf('PLN_006 → PLN_009') < 0) throw new Error('the move did not land: ' + plain(ctx.ids['pd-newspots'].innerHTML));
+        if (ctx.doc.body.dataset.pdNewStyle !== 'spots;moves=2') throw new Error('marker ' + JSON.stringify(ctx.doc.body.dataset.pdNewStyle));
+    });
+
+    await pin('the New style mint sends the Spots step\'s moves as overrides, the station\'s bytes', async () => {
+        const ctx = newStylePage(press6Composer(), '#newstyle=7');
+        await settle();
+        click(ctx.scrim, ctx.doc, { act: 'sheet-ok' });
+        await settle();
+        const posted = ctx.posts.find(p => /\/flow\/mint$/.test(p.url));
+        if (!posted) throw new Error('Create minted nothing: ' + ctx.status.textContent);
+        const want = ctx.win.ComposerModel.mintBody(7, ['SYN-P6-A', 'SYN-P6-B'], 18, { PLN_006: 'PLN_010', PLN_007: 'PLN_012' });
+        want.parts[0].node = 'PLN_010';
+        want.parts[1].node = 'PLN_012';
+        if (posted.body !== JSON.stringify(want)) throw new Error('posted ' + posted.body + '\n      want   ' + JSON.stringify(want));
+    });
+
+    // USE A RECIPE draws the relation picture of what it would lay on.
+    await pin('Use a recipe shows the shape on the relation picture', async () => {
+        const ctx = p6Page(press6Composer(), { realPicture: true });
+        await settle();
+        click(ctx.main, ctx.doc, { act: 'use-preset-pick', preset: '7' });
+        if (!ctx.scrim.classList.contains('active')) throw new Error('Use a recipe opened no sheet');
+        if (ctx.scrim.innerHTML.indexOf('id="pd-usvg"') < 0) throw new Error('the Use sheet draws no picture');
+        const o = ctx.win.pictureCalls[ctx.win.pictureCalls.length - 1] || {};
+        if (o.relation !== true) throw new Error('the Use sheet\'s picture is not by relation');
+        if (JSON.stringify((o.active || []).slice().sort()) !== '["PLN_005","PLN_008","PLN_010","PLN_012"]') {
+            throw new Error('the Use sheet draws full ' + JSON.stringify(o.active));
+        }
+    });
 }
 
 mainAsync().catch(e => {

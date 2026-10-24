@@ -849,6 +849,20 @@ console.log('relation picture: chevrons on the card doing the action');
     const tie = parse(m.renderFlowPicture({ cell: press6({ PLN_09: index('PLN_06') }), station: { name: 'PIN' } }, {}));
     check('2-Robot Index: a deck a column over and a row down sends Robot 2 sideways', cvs(nodeCard(tie, 'PLN_06')) === '1u 2l' &&
         cvs(nodeCard(tie, 'PLN_09')) === '2l', cvs(nodeCard(tie, 'PLN_06')) + ' / ' + cvs(nodeCard(tie, 'PLN_09')));
+    // ONE DECK, TWO PRESS SPOTS: a recipe group's on-deck spot feeds each of
+    // its group's spots, and the desktop draws the group with a claim on
+    // every one of them. Each press card carries its own Robot 2; the deck's
+    // Robot 2 toward them is one pair while they stand on one side of it.
+    const shared = parse(m.renderFlowPicture({ cell: press6({ PLN_05: index('PLN_01'), PLN_09: index('PLN_01'),
+        PLN_07: index('PLN_08', 'SYN-P2') }), station: { name: 'PIN' } }, {}));
+    check('2-Robot Index: every press spot one deck feeds carries its Robot 2',
+        cvs(nodeCard(shared, 'PLN_05')) === '2r' && cvs(nodeCard(shared, 'PLN_09')) === '2r' && cvs(nodeCard(shared, 'PLN_01')) === '1u 2r',
+        [cvs(nodeCard(shared, 'PLN_05')), cvs(nodeCard(shared, 'PLN_09')), cvs(nodeCard(shared, 'PLN_01'))].join(' / '));
+    const one9 = parse(m.renderFlowPicture({ cell: press6({ PLN_05: index('PLN_01'), PLN_09: index('PLN_01') }),
+        station: { name: 'PIN' } }, { chevrons: ['PLN_09'] }));
+    check('2-Robot Index: the second spot a deck feeds draws alone, its deck\'s moves with it',
+        cvs(nodeCard(one9, 'PLN_09')) === '2r' && cvs(nodeCard(one9, 'PLN_01')) === '1u 2r' && cvs(nodeCard(one9, 'PLN_05')) === '',
+        [cvs(nodeCard(one9, 'PLN_09')), cvs(nodeCard(one9, 'PLN_01')), cvs(nodeCard(one9, 'PLN_05'))].join(' / '));
     // With a third: the third carries Robot 1 up and Robot 2 toward the deck,
     // and is drawn as a card of the deck's height in its own cell.
     const third = parse(m.renderFlowPicture({ cell: press6({ PLN_05: index('PLN_01', 'SYN-P1', 'PLN_09') }), station: { name: 'PIN' } }, {}));
