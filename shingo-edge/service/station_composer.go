@@ -626,8 +626,9 @@ func cellOrder(nodes []processes.Node) []string {
 // the return, so the query happens when there is a card to order.
 //
 // EACH CARD CARRIES ITS SPOTS (spots v0): where each of the recipe's places
-// may go, from the enabled recipes, the node list and the routing set this
-// read already holds, so the Spots step's rule costs the read no statement.
+// may go, from the enabled recipes (a grouped recipe's from its groups
+// alone), the node list and the routing set this read already holds, so the
+// Spots step's rule costs the read no statement.
 // The pre-fill goes through the same rule before it ships. And its STALE
 // sentences, from the same rows: the nodes it names that the process no
 // longer has, which the mint refuses.
@@ -694,8 +695,8 @@ func (s *StationService) composerPresets(processID int64, claims map[int64][]pro
 		// The Spots step's rule and its pre-fill, off the claims already
 		// read: no statement. The pre-fill keeps only what the rule allows.
 		used := domain.RecipeUsedClaims(versions[p.Name], claims)
-		card.Spots = domain.RecipeSpots(cells, used, rules)
-		card.LastMoves = domain.LegalSpotMoves(cells, used, rules,
+		card.Spots = domain.RecipeSpots(cells, groups, used, rules)
+		card.LastMoves = domain.LegalSpotMoves(cells, groups, used, rules,
 			domain.RecipeLastUsedMoves(cells, versions[p.Name], claims))
 		for _, st := range append(domain.StaleNodes(cells, live), domain.StaleGroupNodes(groups, live)...) {
 			card.Stale = append(card.Stale, domain.StaleSentence(p.Name, st))

@@ -646,3 +646,200 @@ func mustNode(t *testing.T, f press6, name string) *processes.Node {
 	must(t, err, name)
 	return n
 }
+
+// ── recipe groups (2026-10-24): the group is the whole answer ───────────────
+//
+// SYNTH-round2 rows 7 and 8: a grouped recipe's spot moves only to its group's
+// spots, an attached place only within the list its spot's stand has, and
+// nothing is lent from another recipe or style. An on-deck spot follows its
+// spot: the card says where (carry), and the Spots step's body carries the
+// deck's move with the spot's.
+
+// pressGrouped is press6 with "Two spot press index" re-saved by the engineer
+// with groups (v2): Left Hand on PLN_006 or PLN_010 fed by PLN_005, and on
+// PLN_013 fed only by PLN_014 — SYNTHETIC, Springfield has no such list; it is
+// here so a tied list exists, the shape an on-deck spot must follow its spot
+// through — and Right Hand on PLN_007 or PLN_012 fed by PLN_008, with its own
+// reorder point and curtain.
+type pressGrouped struct {
+	press6
+	grouped int64
+}
+
+func newPressGrouped(t *testing.T) pressGrouped {
+	t.Helper()
+	f := pressGrouped{press6: newPress6(t)}
+	groups := press6Groups()
+	groups[0]["spots"] = append(groups[0]["spots"].([]map[string]any),
+		map[string]any{"core_node_name": "PLN_013", "paired_core_node": []string{"PLN_014"}})
+	groups[1]["advanced"] = map[string]any{"reorder_point": 1, "auto_reorder": true, "curtain_required": true}
+	resp := f.saveRecipe(t, f.engineer(t), "Two spot press index", press6TwoSpotCells, groups)
+	assertStatus(t, resp, http.StatusOK)
+	f.grouped = int64(decodeBody(t, resp)["id"].(float64))
+	return f
+}
+
+// groupedSpot is a card place with the grouped fields.
+type groupedSpot struct {
+	Node    string                       `json:"node"`
+	Job     string                       `json:"job"`
+	Of      string                       `json:"of,omitempty"`
+	Targets []string                     `json:"targets"`
+	Group   string                       `json:"group,omitempty"`
+	At      map[string][]string          `json:"at,omitempty"`
+	Carry   map[string]map[string]string `json:"carry,omitempty"`
+}
+
+func groupedSpotsOf(t *testing.T, card map[string]any) map[string]groupedSpot {
+	t.Helper()
+	raw, err := json.Marshal(card["spots"])
+	must(t, err, "spots")
+	var list []groupedSpot
+	must(t, json.Unmarshal(raw, &list), "decode spots")
+	out := map[string]groupedSpot{}
+	for _, s := range list {
+		sort.Strings(s.Targets)
+		out[s.Node] = s
+	}
+	return out
+}
+
+// TestComposerCard_AGroupedCardOffersOnlyItsGroups is v0's card ⇔ server table
+// over the grouped recipe: the card's places are its groups' (no PLN_009, which
+// v0 lent from "One spot press index"), and for every place and every node the
+// card lights it exactly when the server takes the move — a spot's move with
+// the carry the card gives for it, as the Spots step sends it.
+func TestComposerCard_AGroupedCardOffersOnlyItsGroups(t *testing.T) {
+	f := newPressGrouped(t)
+	card := f.card(t, f.grouped)
+	got := groupedSpotsOf(t, card)
+	want := map[string]groupedSpot{
+		"PLN_006": {Node: "PLN_006", Job: "spot", Group: "Left Hand", Targets: []string{"PLN_006", "PLN_010", "PLN_013"},
+			Carry: map[string]map[string]string{"PLN_013": {"PLN_005": "PLN_014"}}},
+		"PLN_007": {Node: "PLN_007", Job: "spot", Group: "Right Hand", Targets: []string{"PLN_007", "PLN_012"}},
+		"PLN_005": {Node: "PLN_005", Job: "on_deck", Of: "PLN_006", Group: "Left Hand", Targets: []string{"PLN_005"},
+			At: map[string][]string{"PLN_006": {"PLN_005"}, "PLN_010": {"PLN_005"}, "PLN_013": {"PLN_014"}}},
+		"PLN_008": {Node: "PLN_008", Job: "on_deck", Of: "PLN_007", Group: "Right Hand", Targets: []string{"PLN_008"},
+			At: map[string][]string{"PLN_007": {"PLN_008"}, "PLN_012": {"PLN_008"}}},
+	}
+	if fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Errorf("the grouped card's places:\n got %+v\nwant %+v", got, want)
+	}
+	lm, err := json.Marshal(card["last_moves"])
+	must(t, err, "marshal the pre-fill")
+	if string(lm) != `{"PLN_006":"PLN_010","PLN_007":"PLN_012"}` {
+		t.Errorf("the grouped pre-fill = %s, want the running style's heads", lm)
+	}
+
+	every := []string{"STG_TOOL_1", "STG_TOOL_2", "ULN_002", "ULN_005", "SMN_BUF_100"}
+	for n := range f.nodes {
+		every = append(every, n)
+	}
+	sort.Strings(every)
+	cases := map[string]mintArgs{}
+	for node, s := range got {
+		for _, to := range every {
+			moves := map[string]string{node: to}
+			for from, carried := range s.Carry[to] {
+				moves[from] = carried
+			}
+			cases[node+"|"+to] = mintArgs{f.grouped, press6Pair, moves}
+		}
+	}
+	for key, body := range mintBodies(t, f.station, cases) {
+		node, to, _ := strings.Cut(key, "|")
+		lit := false
+		for _, n := range got[node].Targets {
+			lit = lit || n == to
+		}
+		status, out := f.preview(t, body)
+		if took := status != http.StatusUnprocessableEntity; took != lit {
+			t.Errorf("%s → %s: the card lights it %v, the server takes it %v (%d %v)", node, to, lit, took, status, out["error"])
+		}
+	}
+}
+
+// TestFlowMint_AGroupedRecipeMovesOnlyWithinItsGroups is the server's
+// final-state check, in the group's words: v0's lending took PLN_006 to
+// PLN_009 and the group refuses it; a spot moved to PLN_013 is refused
+// without its deck and taken with the carry; the decks never cross. "One spot
+// press index", still ungrouped on the same process, lends and moves as v0.
+func TestFlowMint_AGroupedRecipeMovesOnlyWithinItsGroups(t *testing.T) {
+	f := newPressGrouped(t)
+	refused := map[string]struct {
+		args mintArgs
+		says string
+	}{
+		"to the one-off's spot": {mintArgs{f.grouped, press6Pair, withPrefill(map[string]string{"PLN_006": "PLN_009"})},
+			"PLN_009 is not a press spot of Left Hand — an engineer adds it on the desktop"},
+		"the deck to an idle position": {mintArgs{f.grouped, press6Pair, withPrefill(map[string]string{"PLN_005": "PLN_011"})},
+			"PLN_011 is not an on-deck spot Left Hand has for PLN_010 — an engineer adds one on the desktop"},
+		"a spot moved without its deck": {mintArgs{f.grouped, press6Pair, withPrefill(map[string]string{"PLN_006": "PLN_013"})},
+			"PLN_005 is not an on-deck spot Left Hand has for PLN_013 — an engineer adds one on the desktop"},
+		"spots swap": {mintArgs{f.grouped, press6Pair, map[string]string{"PLN_006": "PLN_007", "PLN_007": "PLN_006"}},
+			"PLN_007 is not a press spot of Left Hand — an engineer adds it on the desktop"},
+		"decks cross": {mintArgs{f.grouped, press6Pair, map[string]string{"PLN_005": "PLN_008", "PLN_008": "PLN_005"}},
+			"PLN_008 is not an on-deck spot Left Hand has for PLN_006 — an engineer adds one on the desktop"},
+		"press to a lane": {mintArgs{f.grouped, press6Pair, withPrefill(map[string]string{"PLN_006": "STG_TOOL_2"})},
+			"STG_TOOL_2 is a staging lane; a press spot cannot move onto it"},
+		"press onto the other side's deck": {mintArgs{f.grouped, press6Pair, map[string]string{"PLN_006": "PLN_008"}},
+			"PLN_008 is an on-deck spot; a press spot cannot move onto it"},
+		"press to another station": {mintArgs{f.grouped, press6Pair, withPrefill(map[string]string{"PLN_006": "ULN_002"})},
+			"ULN_002 is another station's position"},
+	}
+	accepted := map[string]struct {
+		args  mintArgs
+		cells map[string]string
+	}{
+		"the pre-fill alone": {mintArgs{f.grouped, press6Pair, press6Prefil},
+			map[string]string{"PLN_010": "PLN_005", "PLN_012": "PLN_008"}},
+		"a tied list, the deck carried": {mintArgs{f.grouped, press6Pair, withPrefill(map[string]string{"PLN_006": "PLN_013", "PLN_005": "PLN_014"})},
+			map[string]string{"PLN_013": "PLN_014", "PLN_012": "PLN_008"}},
+		"press back to its own": {mintArgs{f.grouped, press6Pair, withPrefill(map[string]string{"PLN_006": ""})},
+			map[string]string{"PLN_006": "PLN_005", "PLN_012": "PLN_008"}},
+		"the ungrouped recipe still lends": {mintArgs{f.oneSpot, press6One, map[string]string{"PLN_009": "PLN_006"}},
+			map[string]string{"PLN_006": "PLN_005"}},
+	}
+	cases := map[string]mintArgs{}
+	for k, c := range refused {
+		cases[k] = c.args
+	}
+	for k, c := range accepted {
+		cases[k] = c.args
+	}
+	bodies := mintBodies(t, f.station, cases)
+	for name, c := range refused {
+		status, out := f.preview(t, bodies[name])
+		if msg, _ := out["error"].(string); status != http.StatusUnprocessableEntity || !strings.Contains(msg, c.says) {
+			t.Errorf("%s: %d %q, want 422 saying %q", name, status, msg, c.says)
+		}
+	}
+	for name, c := range accepted {
+		status, out := f.preview(t, bodies[name])
+		if status == http.StatusUnprocessableEntity {
+			t.Errorf("%s: refused: %v", name, out["error"])
+			continue
+		}
+		got := mintedCells(out)
+		for head, deck := range c.cells {
+			if got[head] != deck {
+				t.Errorf("%s: the flow has %s on deck for %s (%v), want %s", name, got[head], head, got, deck)
+			}
+		}
+	}
+}
+
+// A grouped recipe's pre-fill is kept slot by slot: the last style that used
+// it ran Left Hand on PLN_013 with PLN_005 on deck, which Left Hand does not
+// set up, and Right Hand on PLN_012, which it does. Right Hand's half ships;
+// v0 kept both, lent by that same style.
+func TestComposerCard_AGroupedPrefillKeepsTheSlotsThatStand(t *testing.T) {
+	f := newPressGrouped(t)
+	f.style(t, "SYN-ODD", f.grouped, "2026-10-23 09:00:00",
+		claim("PLN_013", "PLN_005", "SYN-P6-F", "ULN_002"), claim("PLN_012", "PLN_008", "SYN-P6-G", "ULN_005"))
+	lm, err := json.Marshal(f.card(t, f.grouped)["last_moves"])
+	must(t, err, "marshal the pre-fill")
+	if string(lm) != `{"PLN_007":"PLN_012"}` {
+		t.Errorf("the grouped pre-fill = %s, want Right Hand's alone", lm)
+	}
+}

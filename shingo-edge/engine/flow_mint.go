@@ -95,12 +95,15 @@ func (e *MintRefusal) Error() string { return e.Reason }
 var ErrMintRecipe = errors.New("no such recipe on this process")
 
 // mintPlan is a mint decided and not yet written. nodes and routing are the
-// process's node list and routing rows, as the recipe was read against them.
+// process's node list and routing rows, as the recipe was read against them;
+// groups is the recipe's groups (domain.ParseRecipe), nil for a recipe with
+// none.
 type mintPlan struct {
 	process   *processes.Process
 	preset    processes.FlowPreset
 	existing  *processes.Style
 	cells     []domain.FlowCell
+	groups    []domain.RecipeGroup
 	placement map[string]string
 	name      string
 	moved     bool
@@ -280,7 +283,7 @@ func (e *Engine) recipeSlots(processID, presetID int64, parts int, plan *mintPla
 	if err != nil {
 		return nil, nil, err
 	}
-	plan.nodes, plan.routing = nodes, routing
+	plan.nodes, plan.routing, plan.groups = nodes, routing, groups
 	live := domain.RoutingSetOf(nodes, routing)
 	if stale := append(domain.StaleNodes(cells, live), domain.StaleGroupNodes(groups, live)...); len(stale) > 0 {
 		return nil, nil, &MintRefusal{Reason: domain.StaleSentence(preset.Name, stale[0])}
@@ -443,26 +446,33 @@ func placeParts(picks []PartPick, codes []string, slots []domain.Slot, live []pr
 // against the recipe's places. The rule reads the process's enabled recipes:
 // one statement, on a moved mint or preview only. The node list, the routing
 // rows and the claims are the plan's own.
+//
+// A GROUPED RECIPE READS NO OTHER RECIPE: its groups are the whole answer and
+// nothing is lent (SYNTH-round2 row 7), so its moved mint skips the list.
 func (e *Engine) moveSpots(plan *mintPlan, moves map[string]string, live []processes.NodeClaim) error {
-	rows, err := e.db.ListFlowPresets(plan.process.ID, false)
-	if err != nil {
-		return err
-	}
-	enabled, versions := domain.EnabledRecipes(rows)
 	rules := domain.SpotRules{Positions: plan.nodes, Lanes: domain.StagingLanes(plan.routing)}
-	for _, p := range enabled {
-		// A recipe that does not parse grants nothing; the composer read
-		// logs it and offers no card for it.
-		if cells, err := domain.ParsePresetShape(p.FlowJSON); err == nil {
-			rules.Enabled = append(rules.Enabled, cells)
+	var used []domain.NodeClaim
+	if len(plan.groups) == 0 {
+		rows, err := e.db.ListFlowPresets(plan.process.ID, false)
+		if err != nil {
+			return err
 		}
+		enabled, versions := domain.EnabledRecipes(rows)
+		for _, p := range enabled {
+			// A recipe that does not parse grants nothing; the composer read
+			// logs it and offers no card for it.
+			if cells, err := domain.ParsePresetShape(p.FlowJSON); err == nil {
+				rules.Enabled = append(rules.Enabled, cells)
+			}
+		}
+		byStyle := map[int64][]processes.NodeClaim{}
+		for _, c := range live {
+			byStyle[c.StyleID] = append(byStyle[c.StyleID], c)
+		}
+		used = domain.RecipeUsedClaims(versions[plan.preset.Name], byStyle)
 	}
-	byStyle := map[int64][]processes.NodeClaim{}
-	for _, c := range live {
-		byStyle[c.StyleID] = append(byStyle[c.StyleID], c)
-	}
-	used := domain.RecipeUsedClaims(versions[plan.preset.Name], byStyle)
-	plan.cells, plan.placement, err = applyMoves(plan.cells, plan.placement, moves, used, rules)
+	var err error
+	plan.cells, plan.placement, err = applyMoves(plan.cells, plan.placement, plan.groups, moves, used, rules)
 	return err
 }
 
@@ -470,10 +480,12 @@ func (e *Engine) moveSpots(plan *mintPlan, moves map[string]string, live []proce
 // every cell that names the moved node names the new one instead. Every move
 // is checked first (domain.RefuseSpotMoves): to one of its place's targets,
 // no two places on one node, and no press and its attached place on a pairing
-// no recipe set up. Whether the choreography still holds is the claim
-// validator's question, asked by the save.
-func applyMoves(cells []domain.FlowCell, placement, moves map[string]string, used []domain.NodeClaim, rules domain.SpotRules) ([]domain.FlowCell, map[string]string, error) {
-	if err := domain.RefuseSpotMoves(cells, used, rules, moves); err != nil {
+// no recipe set up; for a grouped recipe, the state the moves leave stands in
+// its groups. Whether the choreography still holds is the claim validator's
+// question, asked by the save.
+func applyMoves(cells []domain.FlowCell, placement map[string]string, groups []domain.RecipeGroup, moves map[string]string,
+	used []domain.NodeClaim, rules domain.SpotRules) ([]domain.FlowCell, map[string]string, error) {
+	if err := domain.RefuseSpotMoves(cells, groups, used, rules, moves); err != nil {
 		return nil, nil, &MintRefusal{Reason: err.Error()}
 	}
 	rename := func(n string) string {

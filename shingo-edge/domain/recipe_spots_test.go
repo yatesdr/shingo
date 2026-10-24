@@ -31,7 +31,7 @@ func TestRecipeSpots_AThirdPositionKeepsItsPairingLikeTheDeck(t *testing.T) {
 		{thirdCell("P1", "D1", "T2")}, // P1 may take T2 as its third
 	}}
 	got := map[string]RecipeSpot{}
-	for _, s := range RecipeSpots(recipe, nil, rules) {
+	for _, s := range RecipeSpots(recipe, nil, nil, rules) {
 		got[s.Node] = s
 	}
 	want := map[string]RecipeSpot{
@@ -53,19 +53,19 @@ func TestRecipeSpots_AThirdPositionKeepsItsPairingLikeTheDeck(t *testing.T) {
 		// recipe does (D2 of DECISIONS-spots-v0).
 		{map[string]string{"P1": "P2", "T1": "T2"}, "P2 and T2 are not a pairing your recipes set up — an engineer adds one on the desktop"},
 	} {
-		err := RefuseSpotMoves(recipe, nil, rules, tc.moves)
+		err := RefuseSpotMoves(recipe, nil, nil, rules, tc.moves)
 		if err == nil || err.Error() != tc.says {
 			t.Errorf("%v: %v, want %q", tc.moves, err, tc.says)
 		}
 	}
 	for _, ok := range []map[string]string{{"P1": "P2"}, {"T1": "T2"}} {
-		if err := RefuseSpotMoves(recipe, nil, rules, ok); err != nil {
+		if err := RefuseSpotMoves(recipe, nil, nil, rules, ok); err != nil {
 			t.Errorf("%v refused: %v", ok, err)
 		}
 	}
 	// The pre-fill obeys the same rule: the pair the server would refuse is
 	// not suggested.
-	if got := LegalSpotMoves(recipe, nil, rules, map[string]string{"P1": "P2", "T1": "T2"}); got != nil {
+	if got := LegalSpotMoves(recipe, nil, nil, rules, map[string]string{"P1": "P2", "T1": "T2"}); got != nil {
 		t.Errorf("pre-fill = %v, want none", got)
 	}
 }

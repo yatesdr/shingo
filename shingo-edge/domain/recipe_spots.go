@@ -40,6 +40,11 @@ import (
 // (009,005) from "One spot press index", (010,005) and (012,008) from the
 // style running it. Never (009,008), (007,005), or anything with PLN_013:
 // the owner's same-side rule, with no side stored anywhere.
+//
+// A RECIPE WITH GROUPS IS NOT READ HERE (recipe groups, 2026-10-24): its
+// groups store the side, and they are the whole answer
+// (recipe_spots_grouped.go). Everything in this file is the ungrouped rule,
+// unchanged.
 
 // The jobs a place on the Spots step can have.
 const (
@@ -52,11 +57,22 @@ const (
 // RecipeSpot is one place of a recipe on the Spots step: its node, its job,
 // the spot it serves (blank for a spot), and every node it may move to, its
 // own included (putting it back is always allowed).
+//
+// A GROUPED RECIPE'S PLACE SAYS MORE, and an ungrouped one's is byte for byte
+// v0's (recipe_spots_grouped.go): Group is its group's name, on every place
+// of the group; At, on an attached place, is the nodes it may stand on for
+// each stand of its group (each of the group's spots), and its Targets are At
+// at its own spot's recipe node; Carry, on a spot, is the attached moves a
+// move to each target brings, recipe node → node, for the targets that need
+// one.
 type RecipeSpot struct {
-	Node    string   `json:"node"`
-	Job     string   `json:"job"`
-	Of      string   `json:"of,omitempty"`
-	Targets []string `json:"targets"`
+	Node    string                       `json:"node"`
+	Job     string                       `json:"job"`
+	Of      string                       `json:"of,omitempty"`
+	Targets []string                     `json:"targets"`
+	Group   string                       `json:"group,omitempty"`
+	At      map[string][]string          `json:"at,omitempty"`
+	Carry   map[string]map[string]string `json:"carry,omitempty"`
 }
 
 // SpotRules is the process's facts every recipe's spots are read against,
@@ -80,19 +96,60 @@ type pairing struct {
 // spotBook is RecipeSpots' working: the recipe's places and the process facts
 // a refusal has to explain itself from.
 type spotBook struct {
-	recipe    []FlowCell
-	spots     []RecipeSpot
-	at        map[string]int               // node → index into spots
-	modeOf    map[string]protocol.SwapMode // node → the mode of the row it serves
-	edges     []pairing                    // the recipe's own pairings
-	known     map[pairing]bool             // every pairing the recipes and the used claims name
-	rowNodes  map[string]bool              // nodes a recipe uses as a spot
-	attached  map[string]string            // nodes a recipe uses as an attached place → that job
-	named     map[string]bool              // the recipe's own five nodes (Collides' set)
-	station   map[string]int64             // live position → its station (0: none)
-	order     []string                     // live positions in press order
+	spotFacts
+	recipe   []FlowCell
+	spots    []RecipeSpot
+	at       map[string]int               // node → index into spots
+	modeOf   map[string]protocol.SwapMode // node → the mode of the row it serves
+	edges    []pairing                    // the recipe's own pairings
+	known    map[pairing]bool             // every pairing the recipes and the used claims name
+	rowNodes map[string]bool              // nodes a recipe uses as a spot
+	attached map[string]string            // nodes a recipe uses as an attached place → that job
+	named    map[string]bool              // the recipe's own five nodes (Collides' set)
+}
+
+// spotFacts is the process's positions and offered lanes as both books read
+// them, the ungrouped and the grouped.
+type spotFacts struct {
+	station   map[string]int64 // live position → its station (0: none)
+	order     []string         // live positions in press order
 	lanes     map[string]bool
 	laneOrder []string
+}
+
+func readSpotFacts(rules SpotRules) spotFacts {
+	f := spotFacts{station: map[string]int64{}, lanes: map[string]bool{}}
+	for _, p := range rules.Positions {
+		if _, dup := f.station[p.CoreNodeName]; dup {
+			continue
+		}
+		var st int64
+		if p.OperatorStationID != nil {
+			st = *p.OperatorStationID
+		}
+		f.station[p.CoreNodeName] = st
+		f.order = append(f.order, p.CoreNodeName)
+	}
+	for _, n := range rules.Lanes {
+		if !f.lanes[n] {
+			f.lanes[n] = true
+			f.laneOrder = append(f.laneOrder, n)
+		}
+	}
+	return f
+}
+
+// recipeNamed is the recipe's own nodes, Collides' set.
+func recipeNamed(recipe []FlowCell) map[string]bool {
+	out := map[string]bool{}
+	for _, c := range recipe {
+		for _, n := range cellNodes(c) {
+			if n != "" {
+				out[n] = true
+			}
+		}
+	}
+	return out
 }
 
 // RecipeSpots is each place of the recipe with its job and its targets (D1 of
@@ -113,31 +170,20 @@ type spotBook struct {
 //
 // Free is Collides' set: not one of the recipe's own five nodes. used is the
 // live claims of every style built from this recipe (RecipeUsedClaims).
-func RecipeSpots(recipe []FlowCell, used []NodeClaim, rules SpotRules) []RecipeSpot {
+//
+// A recipe with groups reads none of that: its groups are the whole answer
+// (readGroupSpots), and used and rules.Enabled lend it nothing.
+func RecipeSpots(recipe []FlowCell, groups []RecipeGroup, used []NodeClaim, rules SpotRules) []RecipeSpot {
+	if len(groups) > 0 {
+		return readGroupSpots(recipe, groups, rules).spots
+	}
 	return readSpots(recipe, used, rules).spots
 }
 
 func readSpots(recipe []FlowCell, used []NodeClaim, rules SpotRules) *spotBook {
-	b := &spotBook{recipe: recipe, at: map[string]int{}, modeOf: map[string]protocol.SwapMode{},
+	b := &spotBook{spotFacts: readSpotFacts(rules), recipe: recipe, at: map[string]int{},
 		known: map[pairing]bool{}, rowNodes: map[string]bool{}, attached: map[string]string{},
-		named: map[string]bool{}, station: map[string]int64{}, lanes: map[string]bool{}}
-	for _, p := range rules.Positions {
-		if _, dup := b.station[p.CoreNodeName]; dup {
-			continue
-		}
-		var st int64
-		if p.OperatorStationID != nil {
-			st = *p.OperatorStationID
-		}
-		b.station[p.CoreNodeName] = st
-		b.order = append(b.order, p.CoreNodeName)
-	}
-	for _, n := range rules.Lanes {
-		if !b.lanes[n] {
-			b.lanes[n] = true
-			b.laneOrder = append(b.laneOrder, n)
-		}
-	}
+		named: recipeNamed(recipe)}
 	b.edges = pairingsOf(recipe)
 	for _, cells := range append([][]FlowCell{recipe}, rules.Enabled...) {
 		for _, e := range pairingsOf(cells) {
@@ -148,13 +194,6 @@ func readSpots(recipe []FlowCell, used []NodeClaim, rules SpotRules) *spotBook {
 	for _, c := range used {
 		for _, e := range pairingsOf([]FlowCell{Collapse(c)}) {
 			b.known[e] = true
-		}
-	}
-	for _, c := range recipe {
-		for _, n := range cellNodes(c) {
-			if n != "" {
-				b.named[n] = true
-			}
 		}
 	}
 	b.places(recipe)
@@ -204,10 +243,21 @@ func (b *spotBook) noteJobs(cells []FlowCell) {
 	}
 }
 
-// places is the recipe's places in job order: the spots in cell order, then
-// the on-deck spots, the third positions and the lanes. A node with two jobs
-// keeps the first (D8): a move renames every field that names it.
+// places is the recipe's places (recipePlaces), indexed.
 func (b *spotBook) places(recipe []FlowCell) {
+	b.spots, b.modeOf = recipePlaces(recipe)
+	for i, s := range b.spots {
+		b.at[s.Node] = i
+	}
+}
+
+// recipePlaces is the recipe's places in job order: the spots in cell order,
+// then the on-deck spots, the third positions and the lanes, with the mode of
+// the row each serves. A node with two jobs keeps the first (D8): a move
+// renames every field that names it.
+func recipePlaces(recipe []FlowCell) ([]RecipeSpot, map[string]protocol.SwapMode) {
+	var spots []RecipeSpot
+	modeOf := map[string]protocol.SwapMode{}
 	rows := map[string]bool{}
 	for _, c := range recipe {
 		rows[c.CoreNodeName] = true
@@ -216,12 +266,11 @@ func (b *spotBook) places(recipe []FlowCell) {
 		if n == "" {
 			return
 		}
-		if _, dup := b.at[n]; dup {
+		if _, dup := modeOf[n]; dup {
 			return
 		}
-		b.at[n] = len(b.spots)
-		b.modeOf[n] = mode
-		b.spots = append(b.spots, RecipeSpot{Node: n, Job: job, Of: of})
+		modeOf[n] = mode
+		spots = append(spots, RecipeSpot{Node: n, Job: job, Of: of})
 	}
 	for _, c := range recipe {
 		add(c.CoreNodeName, SpotJobSpot, "", c.SwapMode)
@@ -240,17 +289,18 @@ func (b *spotBook) places(recipe []FlowCell) {
 		add(c.InboundStaging, SpotJobLane, c.CoreNodeName, c.SwapMode)
 		add(c.OutboundStaging, SpotJobLane, c.CoreNodeName, c.SwapMode)
 	}
+	return spots, modeOf
 }
 
 // attachedOnly reports whether the recipes use n as an attached place and
 // never as a spot.
 func (b *spotBook) attachedOnly(n string) bool { return b.attached[n] != "" && !b.rowNodes[n] }
 
-func (b *spotBook) isPosition(n string) bool { _, ok := b.station[n]; return ok }
+func (b spotFacts) isPosition(n string) bool { _, ok := b.station[n]; return ok }
 
 // sameStation is positionChoices' station rule: to is the moving node's own
 // station's, or no station's.
-func (b *spotBook) sameStation(node, to string) bool {
+func (b spotFacts) sameStation(node, to string) bool {
 	st := b.station[to]
 	return st == 0 || st == b.station[node]
 }
@@ -353,12 +403,16 @@ func (b *spotBook) laneField(s RecipeSpot) func(FlowCell) string {
 // its attached place both moved onto a pairing no recipe set up (D2). The
 // refusal is a sentence in the place's own words that names the next act;
 // nil when the moves stand.
-func RefuseSpotMoves(recipe []FlowCell, used []NodeClaim, rules SpotRules, moves map[string]string) error {
-	b := readSpots(recipe, used, rules)
+//
+// A grouped recipe's check is the state the moves leave (groupBook.refuse):
+// each spot on one of its group's spots, each attached place in its list at
+// that stand, nothing collided.
+func RefuseSpotMoves(recipe []FlowCell, groups []RecipeGroup, used []NodeClaim, rules SpotRules, moves map[string]string) error {
+	places, _ := recipePlaces(recipe)
 	clean := map[string]string{}
 	for _, from := range slices.Sorted(maps.Keys(moves)) {
 		to := strings.TrimSpace(moves[from])
-		if _, ok := b.at[from]; !ok {
+		if !slices.ContainsFunc(places, func(p RecipeSpot) bool { return p.Node == from }) {
 			return spotRefusal(from + " is not in this recipe")
 		}
 		if to == "" {
@@ -366,6 +420,13 @@ func RefuseSpotMoves(recipe []FlowCell, used []NodeClaim, rules SpotRules, moves
 		}
 		clean[from] = to
 	}
+	if len(groups) > 0 {
+		if why := readGroupSpots(recipe, groups, rules).refuse(clean); why != "" {
+			return spotRefusal(why)
+		}
+		return nil
+	}
+	b := readSpots(recipe, used, rules)
 	at := func(n string) string {
 		if to, ok := clean[n]; ok {
 			return to
@@ -392,9 +453,15 @@ func RefuseSpotMoves(recipe []FlowCell, used []NodeClaim, rules SpotRules, moves
 // targets allow them, and none at all when what is left would collide or pair
 // two places no recipe pairs. A suggestion the server would refuse is worse
 // than the recipe's own nodes.
-func LegalSpotMoves(recipe []FlowCell, used []NodeClaim, rules SpotRules, moves map[string]string) map[string]string {
+//
+// For a grouped recipe it is kept slot by slot (groupBook.legal): a slot's
+// pre-fill ships when the state it leaves stands, whatever the other slot's.
+func LegalSpotMoves(recipe []FlowCell, groups []RecipeGroup, used []NodeClaim, rules SpotRules, moves map[string]string) map[string]string {
 	if len(moves) == 0 {
 		return nil
+	}
+	if len(groups) > 0 {
+		return readGroupSpots(recipe, groups, rules).legal(moves)
 	}
 	b := readSpots(recipe, used, rules)
 	out := map[string]string{}

@@ -339,7 +339,9 @@ type ComposerPreset struct {
 	// step is always shown, and both surfaces read it as shipped.
 	LastMoves map[string]string `json:"last_moves,omitempty"`
 	// Spots is where each of the recipe's places may go on the Spots step
-	// (RecipeSpots): its node, its job, the spot it serves and its targets.
+	// (RecipeSpots): its node, its job, the spot it serves and its targets,
+	// and on a grouped recipe its group, where it may stand at each of its
+	// group's spots (at) and what a spot's move brings with it (carry).
 	// The HMI lights the targets and restates nothing; the mint refuses any
 	// other move (RefuseSpotMoves).
 	Spots []RecipeSpot `json:"spots,omitempty"`

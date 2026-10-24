@@ -321,7 +321,7 @@ func TestApplyMoves_ASwapIsRefused(t *testing.T) {
 		positions = append(positions, domain.Node{CoreNodeName: n, OperatorStationID: &station})
 	}
 	rules := domain.SpotRules{Enabled: [][]domain.FlowCell{cells}, Positions: positions}
-	_, _, err := applyMoves(cells, map[string]string{"PLN_06": "A", "PLN_07": "B"},
+	_, _, err := applyMoves(cells, map[string]string{"PLN_06": "A", "PLN_07": "B"}, nil,
 		map[string]string{"PLN_06": "PLN_07", "PLN_07": "PLN_06"}, nil, rules)
 	var refused *MintRefusal
 	want := "PLN_07 is not a press spot your recipes set up with PLN_05 on deck — an engineer adds one on the desktop"
