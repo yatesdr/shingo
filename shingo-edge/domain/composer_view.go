@@ -348,6 +348,12 @@ type ComposerPreset struct {
 	// by the first of them; the HMI draws its card with them and does not
 	// offer it, and the desktop's recipe row says the same words.
 	Stale []string `json:"stale,omitempty"`
+	// Groups is the recipe's groups as stored (RecipeGroup), absent on a
+	// recipe with none. The station's read carries them without Advanced:
+	// nothing on the station reads it, and the mint takes it from the stored
+	// recipe, never from a body. The desktop's carries it, so a group's
+	// Advanced round-trips through the draft.
+	Groups []RecipeGroup `json:"groups,omitempty"`
 }
 
 // ComposerScene is the travel graph, reduced to what a waypoint search needs.

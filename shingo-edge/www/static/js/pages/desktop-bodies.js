@@ -304,11 +304,15 @@ function processPayloads(codes) {
 // created_by is NOT here and never becomes a field: the session is the author,
 // the same rule the routing set's origin and the flow save's source are held
 // to. A page that named an author would be a page deciding authorship.
+//
+// A recipe draft's groups (Set up groups) ride with its cells, as drawn: the
+// server checks them by name and stores them beside the cells.
 function flowPresetCreate(name, from) {
     const body = { name: name || '' };
     if (from && from.styleID) body.from_style_id = Number(from.styleID);
     else if (from && from.shapeKey) body.from_candidate_shape = String(from.shapeKey);
     else if (from && Array.isArray(from.cells)) body.cells = from.cells.map(c => Object.assign({}, c, { payload_code: '' }));
+    if (body.cells && Array.isArray(from.groups) && from.groups.length) body.groups = from.groups;
     return body;
 }
 

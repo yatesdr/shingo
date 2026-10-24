@@ -28,6 +28,7 @@
 package service
 
 import (
+	"encoding/json"
 	"fmt"
 	"sort"
 
@@ -296,11 +297,15 @@ func (s *ProcessService) generatedShapes(processID int64, pressOrder []string, f
 // imported recipe after its review. Nothing is stamped: no style runs it yet.
 // The store validates the shape against the process's positions and routing
 // set (domain.ValidateFlowPreset), and the part is stripped here.
-func (s *ProcessService) CreateFromCells(processID int64, name, createdBy string, cells []domain.FlowCell) (int64, error) {
+//
+// groups is the recipe draft's Set up groups, written beside the cells as the
+// desktop sent it (domain.RecipeShapeJSON) and checked by the same store
+// validation (domain.ValidateRecipeGroups). Nil for a recipe with none.
+func (s *ProcessService) CreateFromCells(processID int64, name, createdBy string, cells []domain.FlowCell, groups json.RawMessage) (int64, error) {
 	if len(cells) == 0 {
 		return 0, fmt.Errorf("a shape needs at least one position")
 	}
-	return s.create(processID, name, createdBy, cells, nil)
+	return s.create(processID, name, createdBy, cells, groups, nil)
 }
 
 // ImportedShape is "Import from…": another cell's recipe laid onto this one,
@@ -376,7 +381,7 @@ func (s *ProcessService) CreateFromStyle(processID, styleID int64, name, created
 	for _, c := range claims {
 		cells = append(cells, domain.Collapse(c))
 	}
-	return s.create(processID, name, createdBy, cells, nil)
+	return s.create(processID, name, createdBy, cells, nil, nil)
 }
 
 // CreateFromCandidate names one of the migration offer's shapes, and stamps
@@ -401,7 +406,7 @@ func (s *ProcessService) CreateFromCandidate(processID int64, name, shapeKey, cr
 	if shape == nil {
 		return 0, fmt.Errorf("no style of process %d still has that shape — re-read the offer", processID)
 	}
-	return s.create(processID, name, createdBy, shape, members)
+	return s.create(processID, name, createdBy, shape, nil, members)
 }
 
 // create writes the preset and, when members are given, stamps them.
@@ -413,8 +418,9 @@ func (s *ProcessService) CreateFromCandidate(processID int64, name, shapeKey, cr
 // not rolled back: deleting a named shape because a bookkeeping column did not
 // write would lose the engineer's act, which is the only irreplaceable thing
 // in this transaction.
-func (s *ProcessService) create(processID int64, name, createdBy string, cells []domain.FlowCell, members []int64) (int64, error) {
-	flowJSON, err := domain.PresetShapeJSON(cells)
+func (s *ProcessService) create(processID int64, name, createdBy string, cells []domain.FlowCell,
+	groups json.RawMessage, members []int64) (int64, error) {
+	flowJSON, err := domain.RecipeShapeJSON(cells, groups)
 	if err != nil {
 		return 0, err
 	}

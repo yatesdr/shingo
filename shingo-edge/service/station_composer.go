@@ -383,7 +383,7 @@ func (s *StationService) buildComposerData(processID int64, styles []processes.S
 		})
 	}
 
-	out.Presets = s.composerPresets(processID, claims, nodes, routing)
+	out.Presets = s.composerPresets(processID, claims, nodes, routing, scope)
 	return out
 }
 
@@ -631,8 +631,12 @@ func cellOrder(nodes []processes.Node) []string {
 // The pre-fill goes through the same rule before it ships. And its STALE
 // sentences, from the same rows: the nodes it names that the process no
 // longer has, which the mint refuses.
+//
+// AND ITS GROUPS (recipe groups), parsed from the same flow_json by
+// domain.ParseRecipe. The cells still lend the pairings and draw the card; the
+// groups ride beside them, without Advanced on the station's scope.
 func (s *StationService) composerPresets(processID int64, claims map[int64][]processes.NodeClaim,
-	nodes func() []processes.Node, routing []domain.RoutingNode) []domain.ComposerPreset {
+	nodes func() []processes.Node, routing []domain.RoutingNode, scope composerScope) []domain.ComposerPreset {
 
 	rows, err := s.db.ListFlowPresets(processID, false)
 	if err != nil || len(rows) == 0 {
@@ -654,10 +658,11 @@ func (s *StationService) composerPresets(processID int64, claims map[int64][]pro
 	// once v2 is the card.
 	enabled, versions := domain.EnabledRecipes(rows)
 	parsed := make([][]domain.FlowCell, len(enabled))
+	grouped := make([][]domain.RecipeGroup, len(enabled))
 	rules := domain.SpotRules{Positions: positions, Lanes: domain.StagingLanes(routing)}
 	live := domain.RoutingSetOf(positions, routing)
 	for i, p := range enabled {
-		cells, err := domain.ParsePresetShape(p.FlowJSON)
+		cells, groups, err := domain.ParseRecipe(p.FlowJSON)
 		if err != nil {
 			// A preset that does not parse is not a card to offer. It also
 			// cannot have come from this edge's own writer, so it is worth a
@@ -665,12 +670,12 @@ func (s *StationService) composerPresets(processID int64, claims map[int64][]pro
 			log.Printf("composer: preset %d (%s v%d) does not parse, no card offered: %v", p.ID, p.Name, p.Version, err)
 			continue
 		}
-		parsed[i] = cells
+		parsed[i], grouped[i] = cells, groups
 		rules.Enabled = append(rules.Enabled, cells)
 	}
 	var out []domain.ComposerPreset
 	for i, p := range enabled {
-		cells := parsed[i]
+		cells, groups := parsed[i], grouped[i]
 		if cells == nil {
 			continue
 		}
@@ -678,7 +683,7 @@ func (s *StationService) composerPresets(processID int64, claims map[int64][]pro
 			// The ID is the preset's id, not its name: a tap has to resolve
 			// to one version, and two versions of a name share the name.
 			ID: strconv.FormatInt(p.ID, 10), Name: p.Name,
-			Cells: map[string]domain.FlowCell{},
+			Cells: map[string]domain.FlowCell{}, Groups: cardGroups(groups, scope),
 		}
 		for _, c := range cells {
 			card.Cells[c.CoreNodeName] = c
@@ -692,12 +697,28 @@ func (s *StationService) composerPresets(processID int64, claims map[int64][]pro
 		card.Spots = domain.RecipeSpots(cells, used, rules)
 		card.LastMoves = domain.LegalSpotMoves(cells, used, rules,
 			domain.RecipeLastUsedMoves(cells, versions[p.Name], claims))
-		for _, st := range domain.StaleNodes(cells, live) {
+		for _, st := range append(domain.StaleNodes(cells, live), domain.StaleGroupNodes(groups, live)...) {
 			card.Stale = append(card.Stale, domain.StaleSentence(p.Name, st))
 		}
 		card.Slots = domain.PayloadSlots(cells)
 		sort.SliceStable(card.Slots, func(i, j int) bool { return slotAt(at, card.Slots[i]) < slotAt(at, card.Slots[j]) })
 		out = append(out, card)
+	}
+	return out
+}
+
+// cardGroups is a recipe's groups as its card carries them: whole on the
+// desktop's scope, and on the station's without Advanced, which nothing there
+// reads. A copy either way; the parsed groups are the caller's.
+func cardGroups(groups []domain.RecipeGroup, scope composerScope) []domain.RecipeGroup {
+	if len(groups) == 0 {
+		return nil
+	}
+	out := append([]domain.RecipeGroup(nil), groups...)
+	if scope != composerDesktop {
+		for i := range out {
+			out[i].Advanced = nil
+		}
 	}
 	return out
 }

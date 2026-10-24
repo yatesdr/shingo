@@ -227,7 +227,7 @@ func TestComposerBlock_PresetMemberCountsShortCircuit(t *testing.T) {
 	// the one read that is genuinely needed: the preset list itself.
 	fx.counter.Reset()
 	withPresets := fx.svc.composerPresets(fx.processID, claims,
-		func() []processes.Node { return fx.svc.processNodes(fx.processID) }, nil)
+		func() []processes.Node { return fx.svc.processNodes(fx.processID) }, nil, composerStation)
 	if n := fx.counter.Count(); n > 1 {
 		t.Errorf("a process with no presets issues %d queries building its (empty) strip, want 1 — "+
 			"the list read itself and nothing else. A node list read for the card ORDER, on a "+

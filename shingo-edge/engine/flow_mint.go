@@ -258,16 +258,17 @@ func pickedCodes(picks []PartPick) ([]string, error) {
 // recipeSlots reads the recipe (onto plan.preset) and its slots in picture
 // order. It refuses a recipe naming a node the process no longer has, by name,
 // before anything is placed (owner, 2026-10-22: refuse and flag, never carry
-// the last style's node), and a recipe whose slot count is not the number of
-// parts. The node list and routing rows it reads go on the plan; the routing
-// read is the one statement the stale check costs a mint.
+// the last style's node), in a cell or in a group, and a recipe whose slot
+// count is not the number of parts. The node list and routing rows it reads go
+// on the plan; the routing read is the one statement the stale check costs a
+// mint.
 func (e *Engine) recipeSlots(processID, presetID int64, parts int, plan *mintPlan) ([]domain.FlowCell, []domain.Slot, error) {
 	preset, err := e.db.GetFlowPreset(presetID)
 	if err != nil || preset == nil || preset.ProcessID != processID || preset.ArchivedAt != nil {
 		return nil, nil, ErrMintRecipe
 	}
 	plan.preset = *preset
-	cells, err := domain.ParsePresetShape(preset.FlowJSON)
+	cells, groups, err := domain.ParseRecipe(preset.FlowJSON)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -280,7 +281,8 @@ func (e *Engine) recipeSlots(processID, presetID int64, parts int, plan *mintPla
 		return nil, nil, err
 	}
 	plan.nodes, plan.routing = nodes, routing
-	if stale := domain.StaleNodes(cells, domain.RoutingSetOf(nodes, routing)); len(stale) > 0 {
+	live := domain.RoutingSetOf(nodes, routing)
+	if stale := append(domain.StaleNodes(cells, live), domain.StaleGroupNodes(groups, live)...); len(stale) > 0 {
 		return nil, nil, &MintRefusal{Reason: domain.StaleSentence(preset.Name, stale[0])}
 	}
 	order := map[string]int{}

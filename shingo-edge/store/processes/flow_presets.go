@@ -103,8 +103,8 @@ func CreateFlowPreset(db *sql.DB, in FlowPresetInput) (int64, error) {
 // refuseNameOfAnotherShape is owner ruling F2 (2026-09-12): a repeated name is
 // a new VERSION of one recipe, never a second recipe under one name. What a
 // recipe is, for this, is its structure (domain.RecipeStructureKey, owner
-// 2026-10-22): a version may move its nodes and its routing, and keeps its
-// name; a different structure is refused.
+// 2026-10-22): a version may move its nodes, its routing and its groups, and
+// keeps its name; a different structure is refused.
 //
 // It compares against the name's NEWEST version. Every version this guard let
 // in shares the newest one's structure, so that is the lineage's structure;

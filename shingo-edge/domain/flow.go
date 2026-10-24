@@ -79,9 +79,10 @@ type FlowCell struct {
 	// definition not in it yet.
 	//
 	// Collapse deliberately does NOT fill it. A collapsed cell is the shape
-	// flow_presets validates, and a preset carries a flow, not a policy; the
-	// desktop reads what to show in the modal from ComposerStyle.Advanced,
-	// beside the cells rather than inside them.
+	// flow_presets validates, and a preset's cells carry a flow, not a policy
+	// (a recipe's one policy is its groups' Advanced, beside the cells:
+	// RecipeAdvanced); the desktop reads what to show in the modal from
+	// ComposerStyle.Advanced, beside the cells rather than inside them.
 	Advanced *FlowAdvanced `json:"advanced,omitempty"`
 }
 

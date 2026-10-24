@@ -103,9 +103,11 @@ var presetNodeFields = []struct {
 }
 
 // StaleNode is one node a recipe names that the process does not have: the
-// cell it is in (1-based, in the recipe's order), the field and the node.
+// cell it is in (1-based, in the recipe's order) or the group that names it
+// (StaleGroupNodes; Cell is then 0), the field and the node.
 type StaleNode struct {
 	Cell  int
+	Group string
 	Field string
 	Node  string
 }
@@ -134,8 +136,13 @@ func StaleNodes(cells []FlowCell, live map[string]bool) []StaleNode {
 // naming the next act: "Two spot press index sends cell 2 to ULN_003, which
 // is no longer a position here — an engineer re-saves the recipe on the
 // desktop". A source is a routing node, so its sentence says the routing set.
+// A group's node names the group where a cell's names the cell: "runs Left
+// Hand on PLN_013", "names PLN_014 in Left Hand".
 func StaleSentence(recipe string, s StaleNode) string {
 	cell := fmt.Sprintf("cell %d", s.Cell)
+	if s.Group != "" {
+		cell = s.Group
+	}
 	gone := "which is no longer a position here"
 	var says string
 	switch s.Field {
@@ -178,7 +185,8 @@ func RoutingSetOf(positions []Node, routing []RoutingNode) map[string]bool {
 // set, switched on or off): it must parse into at least one cell, no cell may
 // carry a payload, and every node named must be in allowed (StaleNodes). Pure
 // — the store resolves allowed and calls this. Every cell's payload is checked
-// before any cell's nodes.
+// before any cell's nodes, and the cells before the recipe's groups
+// (ValidateRecipeGroups, which a recipe with none passes).
 func ValidateFlowPreset(flowJSON string, allowed map[string]bool) error {
 	var flow struct {
 		Cells []map[string]json.RawMessage `json:"cells"`
@@ -211,7 +219,7 @@ func ValidateFlowPreset(flowJSON string, allowed map[string]bool) error {
 		s := stale[0]
 		return fmt.Errorf("%s: %s %q %w", label(s.Cell-1), s.Field, s.Node, ErrFlowPresetUnknownNode)
 	}
-	return nil
+	return ValidateRecipeGroups(flowJSON, allowed)
 }
 
 // rawString returns a JSON string value, or "" for absent / non-string.

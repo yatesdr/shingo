@@ -22,6 +22,7 @@ import (
 	"errors"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"shingoedge/domain"
 )
@@ -84,6 +85,11 @@ func (h *Handlers) apiCreateFlowPreset(w http.ResponseWriter, r *http.Request) {
 		// positions table (pick-a-part U2), or a reviewed import (U7). The
 		// third of the three, and like the others the part is stripped.
 		Cells []domain.FlowCell `json:"cells"`
+		// Groups is a recipe draft's Set up groups (recipe groups, D6 of
+		// DECISIONS-recipe-groups): a write field of the cells form only,
+		// kept raw so the store's check reads exactly what the desktop sent,
+		// a part in a group's Advanced included.
+		Groups json.RawMessage `json:"groups"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
@@ -104,6 +110,10 @@ func (h *Handlers) apiCreateFlowPreset(w http.ResponseWriter, r *http.Request) {
 			"name exactly one of from_style_id, from_candidate_shape or cells")
 		return
 	}
+	if g := strings.TrimSpace(string(req.Groups)); len(req.Cells) == 0 && g != "" && g != "null" {
+		writeError(w, http.StatusBadRequest, "groups are saved with a recipe's cells")
+		return
+	}
 	// THE SESSION IS THE AUTHOR. A body that named one would be a page
 	// deciding authorship, the same rule the routing origin and the flow
 	// save's source are held to.
@@ -112,7 +122,7 @@ func (h *Handlers) apiCreateFlowPreset(w http.ResponseWriter, r *http.Request) {
 	var newID int64
 	switch {
 	case len(req.Cells) > 0:
-		newID, err = h.engine.ProcessService().CreateFromCells(id, req.Name, createdBy, req.Cells)
+		newID, err = h.engine.ProcessService().CreateFromCells(id, req.Name, createdBy, req.Cells, req.Groups)
 	case req.FromStyleID != 0:
 		newID, err = h.engine.ProcessService().CreateFromStyle(id, req.FromStyleID, req.Name, createdBy)
 	default:

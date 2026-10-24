@@ -123,7 +123,7 @@ func seedMintCell(t *testing.T, cell mintCell) mintCellFixture {
 		if g.Mode != string(cell.mode) {
 			continue
 		}
-		id, err := svc.CreateFromCells(pid, "Standard", "test", g.Shape)
+		id, err := svc.CreateFromCells(pid, "Standard", "test", g.Shape, nil)
 		testutil.MustNoErr(t, err, "name the generated recipe")
 		eng := testEngine(t, db)
 		coreNeverAnswers(t, eng)

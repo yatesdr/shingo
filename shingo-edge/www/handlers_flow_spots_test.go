@@ -45,6 +45,7 @@ import (
 // PLN_009, and the deleted style whose PLN_009←PLN_008 the HMI once made.
 type press6 struct {
 	db        *store.DB
+	h         *Handlers
 	router    *chi.Mux
 	processID int64
 	station   int64
@@ -100,7 +101,7 @@ func newPress6(t *testing.T) press6 {
 	must(t, db.DeleteStyle(gone), "delete the HMI's cross-side style")
 	must(t, db.SetActiveStyle(pid, &f.running), "run it")
 	must(t, db.SetFlowComposerEnabled(pid, true), "HMI setup on")
-	_, f.router = realFlowRouter(t, db)
+	f.h, f.router = realFlowRouter(t, db)
 	return f
 }
 

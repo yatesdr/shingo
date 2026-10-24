@@ -44,7 +44,9 @@ import (
 //
 // payload_code is deliberately absent. So is Advanced: a reorder point is a
 // policy on a position, not a shape, and a preset that carried one would apply
-// a policy along with a shape without saying so.
+// a policy along with a shape without saying so. A recipe's groups may carry
+// one (RecipeAdvanced), on the group where the engineer set it and the mint
+// lays it on, never in a cell.
 var shapeFields = []struct {
 	field flowspec.Field
 	of    func(FlowCell) string
@@ -184,16 +186,8 @@ func CompareFlowShape(preset, got []FlowCell) (same bool, fields []string) {
 
 // PresetShapeJSON is a preset's flow_json: the shape, in the one envelope the
 // store validates (`{"cells":[…]}` — ValidateFlowPreset reads that object, and
-// a bare array is not it).
-func PresetShapeJSON(cells []FlowCell) (string, error) {
-	blob, err := json.Marshal(struct {
-		Cells []FlowCell `json:"cells"`
-	}{Cells: StripFlowPayload(cells)})
-	if err != nil {
-		return "", fmt.Errorf("marshal preset shape: %w", err)
-	}
-	return string(blob), nil
-}
+// a bare array is not it). RecipeShapeJSON with no groups.
+func PresetShapeJSON(cells []FlowCell) (string, error) { return RecipeShapeJSON(cells, nil) }
 
 // ParsePresetShape reads a preset's flow_json back into cells.
 //

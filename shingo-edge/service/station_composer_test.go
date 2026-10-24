@@ -345,7 +345,7 @@ func TestComposerPresets_OnlyTheLatestVersionOfANameIsACardAndItCarriesSlots(t *
 	if err != nil {
 		t.Fatalf("parse v1: %v", err)
 	}
-	second, err := presets.CreateFromCells(seeded.ProcessID, "Standard", "s.brown", cells)
+	second, err := presets.CreateFromCells(seeded.ProcessID, "Standard", "s.brown", cells, nil)
 	if err != nil {
 		t.Fatalf("v2: %v", err)
 	}
