@@ -269,8 +269,8 @@ func TestDrain_NeverFromAMaintainedGroup(t *testing.T) {
 // TestDrain_AFullAskFirstKeepsTheWindow: a full ask at the one window,
 // waiting for a full that has not been found, speaks for the window, and the
 // drain moves nothing: whichever asks first takes a free window, with no
-// preference read. (A drain first, and the full ask after it, is the engine's:
-// the drain's move is seen once it holds its claim.)
+// preference read. (A drain first, and the full ask after it:
+// TestDrain_ADrainFirstSendsAFullAskToAnotherWindow.)
 func TestDrain_AFullAskFirstKeepsTheWindow(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
@@ -291,6 +291,57 @@ func TestDrain_AFullAskFirstKeepsTheWindow(t *testing.T) {
 	testutil.MustNoErr(t, err, "drain")
 	if n != 0 || len(drainMoves(t, db)) != 0 {
 		t.Errorf("the drain made %d move(s) to a window a full is already asked for", n)
+	}
+}
+
+// TestDrain_ADrainFirstSendsAFullAskToAnotherWindow: a drain's move the fleet
+// cannot take yet (no scanner here, so it is born and stays pending, holding
+// its cart and no claim) and a full ask born after it, with two free windows:
+// the move took its window at birth, as a reservation on the window, so the
+// full is asked at the other window. The move's own end frees the window: once
+// it is cancelled, the next full ask may take that window. (DECISIONS D14.8,
+// U.3.)
+func TestDrain_ADrainFirstSendsAFullAskToAnotherWindow(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	f := newDrainFixture(t, db, "DRA", 2, 1, protocol.CarrierLeftover)
+	_, _, part := setupTestData(t, db)
+	testutil.MustNoErr(t, db.UpsertLoaderPayload(loaders.Payload{LoaderID: f.loader, PayloadCode: part.Code}), "the part it serves")
+	f.cart(t, f.slots[0].ID, f.tote, totes(13))
+	n, err := f.d.DrainLoader(f.loader)
+	testutil.MustNoErr(t, err, "drain")
+	moves := drainMoves(t, db)
+	if n != 1 || len(moves) != 1 || moves[0].DeliveryNode != f.windows[0].Name || moves[0].Status != StatusPending {
+		t.Fatalf("the drain made %d move(s) %v, want one pending move to %s", n, moves, f.windows[0].Name)
+	}
+	cfg, ok, err := f.d.LoadReplenishConfig(f.loader)
+	if err != nil || !ok {
+		t.Fatalf("config: ok=%v err=%v", ok, err)
+	}
+	res, err := sideCycleParts(f.d, ReplenishRequest{StationID: "edge.line1", LoaderID: f.loader}, cfg, part.Code)
+	testutil.MustNoErr(t, err, "the full ask")
+	if len(res.Created) != 1 || res.Created[0].DeliveryNode != f.windows[1].Name {
+		t.Fatalf("the full ask made %v (held %v), want one full to %s: %s is the drain's", res.Created, res.HeldBy,
+			f.windows[1].Name, f.windows[0].Name)
+	}
+	if len(res.Parts) != 1 || res.Parts[0].HeldBy[f.windows[0].Name] != "window-reserved" {
+		t.Errorf("the ask's parts %+v, want %s held by window-reserved", res.Parts, f.windows[0].Name)
+	}
+
+	// The move ends, and so does the full asked beside it, so the next ask has
+	// nothing outstanding and both windows to choose from.
+	f.d.Lifecycle().CancelOrder(moves[0], moves[0].StationID, "test: the drain's move ends", CancelCause{})
+	f.d.Lifecycle().CancelOrder(res.Created[0], res.Created[0].StationID, "test: the full ends", CancelCause{})
+	spoken, err := db.SlotSpokenForByStranger(f.windows[0].ID, 0)
+	testutil.MustNoErr(t, err, "read the window's reservations")
+	if spoken {
+		t.Fatalf("%s is still spoken for after the drain's move ended", f.windows[0].Name)
+	}
+	res, err = sideCycleParts(f.d, ReplenishRequest{StationID: "edge.line1", LoaderID: f.loader}, cfg, part.Code)
+	testutil.MustNoErr(t, err, "the next full ask")
+	if len(res.Created) != 1 || res.Created[0].DeliveryNode != f.windows[0].Name {
+		t.Errorf("the next full ask made %v (held %v), want one full to the freed %s", res.Created, res.HeldBy,
+			f.windows[0].Name)
 	}
 }
 
@@ -359,11 +410,12 @@ func TestDrain_StatementCount(t *testing.T) {
 	}
 	// Every window taken, 11: the row, the source, its level test, the homes
 	// and the member names, then per window its node, its bins and its
-	// orders. Two moves, 48: those, each free window's reservations, the cart
+	// orders. Two moves, 50: those, each free window's reservations, the cart
 	// list, the capabilities, the one cart type and each window's allowed
-	// types, then per move the cart's node, the window's station, and the bin
-	// move's plan and birth.
-	const wantTwo, wantTaken = 48, 11
+	// types, then per move the cart's node, the window's station, the bin
+	// move's plan and birth, and the window's reservation the move takes at
+	// birth (one INSERT).
+	const wantTwo, wantTaken = 50, 11
 	if two != wantTwo || taken != wantTaken {
 		t.Errorf("statements: two moves %d, every window taken %d; want %d and %d", two, taken, wantTwo, wantTaken)
 	}

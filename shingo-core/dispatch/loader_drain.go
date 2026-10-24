@@ -61,18 +61,19 @@ const drainActor = "drain"
 // since the save stops the pull: the save's own test, asked again
 // (store.DeclaresLevel).
 //
-// THE ACQUIRE RUNS UNDER THE LOCK, unlike ReplenishLoader's. A full ask's
-// window choice (plan.LoaderWindows) counts what the capacity gate counts —
-// a bin on the window, an order holding a claimed bin bound for it — and the
-// asks of its own intent; a drain's move is neither an empty nor a full ask, so
-// it is seen only once it holds its claim, which the acquire's dispatch takes.
-// Acquired before the lock goes, a move the fleet takes at once is in flight
-// before the next decision at the loader reads the windows. One the fleet
-// cannot take yet holds its cart and not the window: a full ask may then be
-// born for the same window, and the dispatch-time capacity gate, which every
-// move and ask meets before it is sent (fulfillment/scanner.go fulfill), lets
-// only one of them go there (named residual, W14). The scan lock ranks below
-// the loader's, so the order is the lock order's own.
+// THE MOVE TAKES ITS WINDOW AT BIRTH, as a slot reservation (drainMove). A full
+// ask's window choice (plan.LoaderWindows) counts what the capacity gate counts
+// (a bin on the window, an order holding a claimed bin bound for it), the asks
+// of its own intent, and another order's reservation on the window. A drain's
+// move is neither an empty nor a full ask, and holds no claim until the fleet
+// takes it, so the reservation is what a full ask sees: born after the move,
+// it is asked at another free window, even while the fleet cannot take the move
+// yet. The reservation is the move's own pending row, which its dispatch reuses
+// and its end releases (TerminalizeOrder's ReleaseByOrder).
+//
+// THE ACQUIRE RUNS UNDER THE LOCK, unlike ReplenishLoader's, so a move the
+// fleet takes at once is in flight before the next decision at the loader. The
+// scan lock ranks below the loader's, so the order is the lock order's own.
 func (d *Dispatcher) DrainLoader(loaderID int64) (int, error) {
 	l, err := d.db.GetLoader(loaderID)
 	if err != nil {
@@ -233,6 +234,14 @@ func (d *Dispatcher) drainMove(l *loaders.Loader, c *bins.Bin, w *nodes.Node) er
 	if err != nil {
 		log.Printf("dispatch: drain %s: birth of cart %s to %s: %v", l.Name, c.Label, w.Name, err)
 		return err
+	}
+	// The window, taken now, under the loader's lock: no decision at this
+	// loader reads the windows between the birth and this row. FreeWindows saw
+	// no other order's reservation on it; one born since, outside the loader's
+	// decisions, wins the window, and the move then meets the slot at its own
+	// dispatch as it did before it reserved anything.
+	if err := d.db.ReserveSlot(w.ID, order.ID); err != nil {
+		d.dbg("drain %s: move %d could not take %s at birth: %v", l.Name, order.ID, w.Name, err)
 	}
 	// The row is whole at its INSERT, as a Core ask's is, so it takes the same
 	// one acquire (acquireCoreAsk), under the loader's lock (DrainLoader).
