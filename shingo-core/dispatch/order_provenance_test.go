@@ -1,9 +1,17 @@
 package dispatch
 
 import (
+	"fmt"
+	"go/ast"
+	"go/parser"
+	"go/token"
+	"io/fs"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	"shingo/protocol"
+	"shingocore/internal/testdb"
 	"shingocore/store/orders"
 )
 
@@ -98,6 +106,51 @@ func TestPlainFamily_EveryTypeHasItsIntentAndItsPlanner(t *testing.T) {
 			t.Errorf("%s: planned %v, decided ahead %v; want both", typ, s.Handles(typ), s.decidesAhead(typ))
 		}
 	}
+}
+
+// TestRule4_NoOrderTypeOrIntentCarriesAHeight is ground rule 4's tombstone
+// (docs/ground-rules.md): a want is a Height on the demand, so no order type and
+// no sourcing intent names a height or a carrier state. Two identifiers do
+// today, the tops & bottoms pull's type and intent, and the plain family has a
+// fourth member for them. PREDICTED RED until the want is on the wire: then the
+// two identifiers are gone from every module, this becomes forbidigo's
+// tombstone on them (the bins\.Unclaim precedent in .golangci.yml), and the
+// family's three members an assertion.
+func TestRule4_NoOrderTypeOrIntentCarriesAHeight(t *testing.T) {
+	t.Parallel()
+	var found []string
+	root := repoRootFor(t)
+	for _, module := range []string{"protocol", "shared", "shingo-core", "shingo-edge", "integration"} {
+		err := filepath.WalkDir(filepath.Join(root, module), func(p string, d fs.DirEntry, err error) error {
+			if err != nil || d.IsDir() || !strings.HasSuffix(p, ".go") || strings.HasSuffix(p, "_test.go") {
+				return err
+			}
+			fset := token.NewFileSet()
+			f, perr := parser.ParseFile(fset, p, nil, 0)
+			if perr != nil {
+				return perr
+			}
+			rel, rerr := filepath.Rel(root, p)
+			if rerr != nil {
+				return rerr
+			}
+			ast.Inspect(f, func(n ast.Node) bool {
+				if id, ok := n.(*ast.Ident); ok &&
+					(id.Name == "OrderTypeRetrieveTopsAndBottoms" || id.Name == "SourceIntentTopsAndBottoms") {
+					found = append(found, fmt.Sprintf("%s:%d: %s", filepath.ToSlash(rel), fset.Position(id.Pos()).Line, id.Name))
+				}
+				return true
+			})
+			return nil
+		})
+		if err != nil {
+			t.Fatalf("walk %s: %v", module, err)
+		}
+	}
+	if len(plainFamily) != 3 {
+		found = append(found, fmt.Sprintf("the plain family has %d members, not 3", len(plainFamily)))
+	}
+	testdb.VerifyRed(t, "rule 4: a type or intent that carries a height", found)
 }
 
 // TestSourcesEmpty: the one test of an empty carrier's intent. Tops & bottoms
