@@ -42,6 +42,8 @@ func candFromBin(b *bins.Bin) binsource.Cand {
 		ManifestConfirmed: b.ManifestConfirmed,
 		Status:            b.Status,
 		State:             b.CarrierState(),
+		TotesOnCart:       b.TotesOnCart,
+		TotesPerLayer:     b.TotesPerLayer,
 	}
 }
 

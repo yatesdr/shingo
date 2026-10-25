@@ -7,9 +7,10 @@ import "shingo/protocol"
 //
 //   - none (the zero value): no height said — a keeper ask, a part that states
 //     no tote_layers. Any stack.
-//   - Layers(n): ranked by the ladder (bins preferredEmptyOrder): the exact
-//     height first, then the shortest taller, then the tallest shorter; at 0,
-//     tops & bottoms first, else the shortest stack.
+//   - Layers(n): ranked by the ladder (bins preferredEmptyOrder, and its Go
+//     twin for the loader pool, binsource rank): the exact height first, then
+//     the shortest taller, then the tallest shorter; at 0, tops & bottoms
+//     first, else the shortest stack.
 //   - TopsAndBottomsOnly: tops & bottoms and nothing else (SEND BACK's pull,
 //     and a maintained group's tops & bottoms row: its count and its cap).
 //

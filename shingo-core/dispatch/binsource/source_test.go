@@ -4,6 +4,7 @@ import (
 	"testing"
 	"time"
 
+	"shingo/protocol"
 	"shingocore/domain"
 )
 
@@ -15,7 +16,8 @@ const (
 
 // Part-X bins rank by FIFO (oldest COALESCE(loaded_at, created_at)); a partial
 // keeps its original loaded_at across a return, so it's just an aged bin of X.
-// Empties don't rank by age — they're fungible (grab any, stable by id).
+// Empties don't rank by age: with no height wanted they're fungible (grab any,
+// stable by id); with one they rank on its ladder (TestSourceFillRanksEmptiesByTheLadder).
 var (
 	tAncient = time.Date(2024, 1, 2, 0, 0, 0, 0, time.UTC)
 	tOld     = time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC)
@@ -199,4 +201,44 @@ func stocked(cands []Cand) []Cand {
 		out[i] = c
 	}
 	return out
+}
+
+// TestSourceFillRanksEmptiesByTheLadder: a Fill wanted at a height of n layers
+// takes the empties in the ladder's order (the SQL twin is bins'
+// preferredEmptyOrder; the agreement table over both is
+// TestHeightLadder_ThePoolAgreesWithTheFinders): a known count before an
+// unknown one, at least the want before fewer, nearest first, then by id. At 0
+// that is tops & bottoms first, then the shortest stack. A want that states no
+// layers ranks no height. Every pool below lands the carts in the reverse of
+// the ladder, so ranking by id alone takes the other one.
+func TestSourceFillRanksEmptiesByTheLadder(t *testing.T) {
+	n := func(v int) *int { return &v }
+	empty := func(id int64, totes, perLayer *int) Cand {
+		return Cand{BinID: id, Cap: cap10, CreatedAt: tOld, Status: domain.BinStatusAvailable,
+			TotesOnCart: totes, TotesPerLayer: perLayer, State: protocol.CarrierStateOf("", false, totes, perLayer)}
+	}
+	partial := Cand{BinID: 2, Payload: X, UOP: 5, Stocked: true, Cap: cap10, LoadedAt: at(tNew), CreatedAt: tNew,
+		Status: domain.BinStatusAvailable, State: protocol.CarrierLoaded}
+	for _, c := range []struct {
+		name   string
+		cands  []Cand
+		height domain.Height
+		want   int64
+	}{
+		{"at 0, tops & bottoms ahead of a two-high", []Cand{empty(1, n(16), n(8)), empty(2, n(0), n(8))}, domain.Layers(0), 2},
+		{"at 0, the shortest stack", []Cand{empty(1, n(16), n(8)), empty(2, n(8), n(8))}, domain.Layers(0), 2},
+		{"the exact height", []Cand{empty(1, n(8), n(8)), empty(2, n(16), n(8))}, domain.Layers(2), 2},
+		{"the shortest taller before the tallest shorter", []Cand{empty(1, n(8), n(8)), empty(2, n(24), n(8))}, domain.Layers(2), 2},
+		{"a shorter one before a count not known", []Cand{empty(1, nil, n(8)), empty(2, n(8), n(8))}, domain.Layers(2), 2},
+		{"a shorter one before a type with no totes per layer", []Cand{empty(1, n(3), nil), empty(2, n(8), n(8))}, domain.Layers(2), 2},
+		{"one rung: by id", []Cand{empty(1, n(16), n(8)), empty(2, n(16), n(8))}, domain.Layers(2), 1},
+		{"no height said: by id", []Cand{empty(1, n(8), n(8)), empty(2, n(16), n(8))}, domain.Height{}, 1},
+		{"tops & bottoms only: by id", []Cand{empty(1, n(0), n(8)), empty(2, n(0), n(8))}, domain.TopsAndBottomsOnly, 1},
+		{"a partial of the part before any empty", []Cand{empty(1, n(16), n(8)), partial}, domain.Layers(2), 2},
+	} {
+		got, ok := Source(c.cands, Want{Payload: X, Intent: Fill, Height: c.height})
+		if !ok || got.BinID != c.want {
+			t.Errorf("%s: took %d (found %v), want %d", c.name, got.BinID, ok, c.want)
+		}
+	}
 }

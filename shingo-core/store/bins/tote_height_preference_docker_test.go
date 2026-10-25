@@ -6,9 +6,11 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"slices"
 	"testing"
 
 	"shingo/protocol/testutil"
+	"shingocore/dispatch/binsource"
 	"shingocore/internal/testdb"
 	"shingocore/store"
 	"shingocore/store/bins"
@@ -211,4 +213,97 @@ func TestEmptyFinders_CountAndFindAgreeWithAWant(t *testing.T) {
 			}
 		}
 	}
+}
+
+// TestHeightLadder_ThePoolAgreesWithTheFinders is the ladder's agreement table,
+// the Go/SQL twin held equal: for each want, the order the empty finders take a
+// group's carts in (preferredEmptyOrder, after HeightArm) is the order a
+// dedicated loader's pool takes the same carts in (binsource.Source, whose
+// ranker composes the Go ladder, after Height.Admits). The carts are landed in
+// an order no rung follows, ties included. Every slot is a direct child of the
+// group, so the finders' accessibility terms tie and both sides fall to the bin
+// id: the pool ranks no accessibility (its members are a loader's positions),
+// and that is not a rung.
+func TestHeightLadder_ThePoolAgreesWithTheFinders(t *testing.T) {
+	t.Parallel()
+	db := testdb.Open(t)
+	tote := func(n *int) toteCart { return toteCart{code: "HL-TOTE", perLayer: 8, totes: n} }
+	labels := []string{"unknown", "no-totes-per-layer", "13", "48", "24", "16a", "8", "16b", "tb", "40"}
+	grpID, ids := toteGroup(t, db, "HL", []toteCart{tote(nil), {code: "HL-KD", totes: totes(3)},
+		tote(totes(13)), tote(totes(48)), tote(totes(24)), tote(totes(16)), tote(totes(8)), tote(totes(16)),
+		tote(totes(0)), tote(totes(40))})
+	label := map[int64]string{}
+	for i, id := range ids {
+		label[id] = labels[i]
+	}
+	known := []string{"unknown", "no-totes-per-layer"}
+	for _, c := range []struct {
+		name  string
+		want  bins.Height
+		order []string
+	}{
+		{"no height said", bins.Height{}, []string{"unknown", "no-totes-per-layer", "13", "48", "24", "16a", "8", "16b", "40"}},
+		{"tops & bottoms only", bins.TopsAndBottomsOnly, []string{"tb"}},
+		{"0: tops & bottoms, then the shortest", bins.Layers(0), append([]string{"tb", "8", "13", "16a", "16b", "24", "40", "48"}, known...)},
+		{"2 (16 totes): exact, taller nearest first, then shorter", bins.Layers(2), append([]string{"16a", "16b", "24", "40", "48", "13", "8"}, known...)},
+		{"5 (40 totes)", bins.Layers(5), append([]string{"40", "48", "24", "16a", "16b", "13", "8"}, known...)},
+		{"9 (72 totes): every cart shorter, the tallest first", bins.Layers(9), append([]string{"48", "40", "24", "16a", "16b", "13", "8"}, known...)},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			finders := ladderOrder(t, label, func() (*bins.Bin, error) {
+				return bins.FindEmptyCompatibleInGroup(db.DB, "", grpID, 0, reservations.Anyone, c.want)
+			}, func(id int64) {
+				_, err := db.Exec(`UPDATE bins SET locked = true WHERE id = $1`, id)
+				testutil.MustNoErr(t, err, "take the cart out")
+			})
+			_, err := db.Exec(`UPDATE bins SET locked = false WHERE id = ANY($1)`, ids)
+			testutil.MustNoErr(t, err, "put the carts back")
+
+			cands := make([]binsource.Cand, 0, len(ids))
+			for _, id := range ids {
+				b, err := db.GetBin(id)
+				testutil.MustNoErr(t, err, "read the cart")
+				cands = append(cands, binsource.Cand{BinID: b.ID, BinTypeID: b.BinTypeID, Payload: b.PayloadCode,
+					CreatedAt: b.CreatedAt, Status: b.Status, TotesOnCart: b.TotesOnCart,
+					TotesPerLayer: b.TotesPerLayer, State: b.CarrierState()})
+			}
+			pool := ladderOrder(t, label, func() (*bins.Bin, error) {
+				best, ok := binsource.Source(cands, binsource.Want{Intent: binsource.Fill, Height: c.want})
+				if !ok {
+					return nil, sql.ErrNoRows
+				}
+				return &bins.Bin{ID: best.BinID}, nil
+			}, func(id int64) {
+				for i := range cands {
+					if cands[i].BinID == id {
+						cands[i].Locked = true
+					}
+				}
+			})
+
+			if !slices.Equal(finders, c.order) {
+				t.Errorf("the finders took %v, want the ladder's %v", finders, c.order)
+			}
+			if !slices.Equal(pool, finders) {
+				t.Errorf("the pool took %v, the finders %v: the Go ladder and the SQL ladder disagree", pool, finders)
+			}
+		})
+	}
+}
+
+// ladderOrder takes carts one at a time with take, taking each out with out
+// before the next, and returns their labels in the order taken.
+func ladderOrder(t *testing.T, label map[int64]string, take func() (*bins.Bin, error), out func(int64)) []string {
+	t.Helper()
+	var order []string
+	for range label {
+		b, err := take()
+		id := foundID(t, b, err)
+		if id == 0 {
+			break
+		}
+		order = append(order, label[id])
+		out(id)
+	}
+	return order
 }

@@ -4,7 +4,7 @@
 // table-testable with plain values; the store-aware gather lives in the dispatch
 // package (loader_source.go).
 //
-// Four rules, nothing more:
+// Five rules, nothing more:
 //
 //   - Eligibility is payload-exact and intent-aware. A demand for part X is only
 //     ever satisfied by a bin of X — never a partial of another part Y. Drain
@@ -27,7 +27,13 @@
 //     loaded_at survives a return, so FIFO re-consumes a kept partial on its
 //     own). The only tier is in Fill: a partial of X is taken before a fresh
 //     empty (an empty is not part-X stock, so it is never age-ranked against a
-//     partial — empties are fungible, picked stably).
+//     partial).
+//
+//   - Empties are not aged either: a Fill ranks them on its want's height
+//     ladder (rank, the Go twin of the empty finders' SQL ladder, held equal
+//     by store/bins TestHeightLadder_ThePoolAgreesWithTheFinders), and those on
+//     one rung, or under a want that states no layers, are fungible, picked
+//     stably by id.
 package binsource
 
 import (
@@ -67,8 +73,9 @@ type Want struct {
 	// anybody else's is not (B1, Rule 4).
 	Asker int64
 	// Height is the height a Fill's carrier is wanted at: the zero value (no
-	// height said) and a stack never take tops & bottoms, TopsAndBottomsOnly
-	// takes tops & bottoms and nothing else.
+	// height said) and a stack never take tops & bottoms, Layers(0) takes any,
+	// TopsAndBottomsOnly takes tops & bottoms and nothing else; a Layers want
+	// also ranks the empties (rank).
 	Height domain.Height
 }
 
@@ -103,6 +110,10 @@ type Cand struct {
 	// against Want.Height on a Fill. "" in a test that does not set it reads
 	// as no state the height excludes.
 	State protocol.CarrierState
+	// TotesOnCart and TotesPerLayer are bins.totes_on_cart and its type's
+	// bin_types.totes_per_layer (nil: not known, and a type that states none),
+	// which place an empty on a Fill's height ladder (rank).
+	TotesOnCart, TotesPerLayer *int
 }
 
 func effectiveTime(c Cand) time.Time {
@@ -209,8 +220,8 @@ func binTypeReject(c Cand, w Want) string {
 }
 
 // less reports whether a ranks ahead of b. Part-X bins: FIFO, oldest first. Fill
-// puts a partial of X ahead of any empty; empties are fungible, picked stably by
-// BinID (not aged).
+// puts a partial of X ahead of any empty; empties are not aged: they rank on the
+// want's height ladder (rank), then stably by BinID.
 //
 // The intent asymmetry is DELIBERATE — do NOT "fix" it by adding a Drain tier (see
 // IMPLEMENTATION-PLAN §3.1). The partial-first tier is mandatory only on Fill, where
@@ -229,7 +240,10 @@ func less(a, b Cand, w Want) bool {
 			return be // a (partial of X) before b (empty)
 		}
 		if ae {
-			return a.BinID < b.BinID // empties: grab any, stable
+			if ra, rb := rank(w.Height, a.TotesOnCart, a.TotesPerLayer), rank(w.Height, b.TotesOnCart, b.TotesPerLayer); ra != rb {
+				return ra.before(rb)
+			}
+			return a.BinID < b.BinID // empties on one rung: grab any, stable
 		}
 	}
 	at, bt := effectiveTime(a), effectiveTime(b)
@@ -237,6 +251,50 @@ func less(a, b Cand, w Want) bool {
 		return at.Before(bt)
 	}
 	return a.BinID < b.BinID
+}
+
+// rung is an empty's place on a want's height ladder: the three terms the
+// finders' SQL ladder sorts by (store/bins preferredEmptyOrder), in its order,
+// false and nearer first in each. The SQL's later terms (a reachable slot, the
+// shallower depth) are not here: the pool's members are a loader's positions,
+// and the pool ranks no accessibility.
+type rung struct {
+	unknown bool // no count, or a type that states no totes per layer
+	short   bool // fewer totes than the want
+	off     int  // how far from the want, in totes
+}
+
+// rank is where an empty with totesOnCart on it, of a type of totesPerLayer to
+// a layer, stands on want's ladder: the Go twin of preferredEmptyOrder's ORDER
+// BY, comparing in totes against the empty's own type. A want that states no
+// layers (none, TopsAndBottomsOnly) puts every empty on one rung, as the SQL
+// appends no ladder for it. At Layers(0) no count is short, so tops & bottoms
+// is nearest, then the shortest stack. Held equal to the SQL by
+// store/bins TestHeightLadder_ThePoolAgreesWithTheFinders.
+func rank(want domain.Height, totesOnCart, totesPerLayer *int) rung {
+	layers, ok := want.Stated()
+	switch {
+	case !ok:
+		return rung{}
+	case totesOnCart == nil || !protocol.IsToteType(totesPerLayer):
+		return rung{unknown: true}
+	}
+	off := *totesOnCart - layers*(*totesPerLayer)
+	if off < 0 {
+		return rung{short: true, off: -off}
+	}
+	return rung{off: off}
+}
+
+// before reports whether r ranks ahead of o.
+func (r rung) before(o rung) bool {
+	switch {
+	case r.unknown != o.unknown:
+		return o.unknown
+	case r.short != o.short:
+		return o.short
+	}
+	return r.off < o.off
 }
 
 // Source returns the single best eligible candidate, or (zero, false) when none

@@ -859,6 +859,12 @@ var accessibleEmptyTerms = `(n.parent_id IS NULL OR n.depth IS NULL OR ` + helpe
 // height ranks; the passes are the finder's own and do not move. With no height
 // said (the zero Height) it is AccessibleEmptyOrder, byte for byte, and binds no
 // argument.
+//
+// THE LADDER HAS A GO TWIN, because SQL cannot compose a Go comparator: a
+// dedicated loader's pool ranks its empties in Go (dispatch/binsource rank,
+// the three terms above in this order), and the two are held equal by one
+// agreement table, TestHeightLadder_ThePoolAgreesWithTheFinders. A rung
+// changed here is changed there.
 // Pins: TestPreferredEmptyOrder_NoWantIsToday, TestEmptyFinders_HeightLadder,
 // TestEmptyFinders_OnlyShorterOrUnknownStillFound,
 // TestEmptyFinders_CountAndFindAgreeWithAWant.
