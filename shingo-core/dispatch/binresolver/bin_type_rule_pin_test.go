@@ -160,7 +160,7 @@ func TestGolden_BinTypeRule(t *testing.T) {
 	for _, c := range binTypeCases {
 		b := binTypeFixtureBin(c)
 
-		rule := domain.NewBinTypeRule(c.Allowed)
+		rule := domain.NewBinTypeRule(c.Allowed, nil)
 		cand := binsource.Cand{
 			BinID:             b.ID,
 			BinTypeID:         b.BinTypeID,
@@ -221,7 +221,7 @@ func TestGolden_BinTypeRule(t *testing.T) {
 func TestBinTypeRuleBindsBothPredicates(t *testing.T) {
 	t.Parallel()
 
-	rule := domain.NewBinTypeRule([]int64{binTypeFits})
+	rule := domain.NewBinTypeRule([]int64{binTypeFits}, nil)
 	excluded := binTypeFixtureBin(binTypeCase{BinTypeID: binTypeForeign, Shape: shapeFull})
 
 	if got := BinUnavailableReason(excluded, wantPayload, rule); got == "" {
@@ -278,10 +278,10 @@ func TestBinTypeRule_ZeroValueIsUnrestricted(t *testing.T) {
 // configuration gap as permission.
 func TestBinTypeRule_EmptyRuleRefusesEverything(t *testing.T) {
 	t.Parallel()
-	if !domain.NewBinTypeRule(nil).Permits(binTypeFits) {
+	if !domain.NewBinTypeRule(nil, nil).Permits(binTypeFits) {
 		t.Error("NewBinTypeRule(nil) must be unrestricted — no rows means no rule")
 	}
-	if domain.NewBinTypeRule([]int64{}).Permits(binTypeFits) {
+	if domain.NewBinTypeRule([]int64{}, nil).Permits(binTypeFits) {
 		t.Error("NewBinTypeRule([]) must refuse every type — a payload described " +
 			"as carryable by nothing must not read as a licence")
 	}

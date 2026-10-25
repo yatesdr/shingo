@@ -48,7 +48,8 @@ package dispatch
 // CauseNGRPAtLevel, CauseGroupHoldsEmptiesOnly, CauseFinderGroupFenced,
 // CauseFinderSourceMissing, CauseFleetRefusedCreate and
 // CauseFinderCarrierRefused. CauseVacateLifterGone carried a ninth until the
-// home clear's re-run became its releaser; eight again.
+// home clear's re-run became its releaser; eight again. CauseFinderNoToteCarrier
+// is the ninth (2026-10-25).
 // The paragraph above describes the first two it names; the rest say what they
 // are in their own rows.
 
@@ -1054,6 +1055,16 @@ var causeReleasers = []causeReleaser{
 			"one the part may not ride, so every finder passes it by and nothing arriving " +
 			"elsewhere ends the wait. It used to be filed as finder-node-empty, which reads " +
 			"as a shortage at a node holding the part (D33).",
+	},
+	{
+		cause:       CauseFinderNoToteCarrier,
+		populations: []WaitPopulation{PopAcquiring},
+		what: "NOTHING IN THE MATERIAL — the part's carrier rule names no tote carrier. Somebody " +
+			"adds a tote carrier to the part's carriers, or the pull is cancelled",
+		finding: "A CONFIGURATION WAIT, beside finder-source-missing. A tops & bottoms pull for a " +
+			"part on no tote carrier can never be served, and it used to be filed as the " +
+			"shortage it is not (finder-group-empty and its siblings): \"waiting for tops & " +
+			"bottoms\" at a source that may hold some.",
 	},
 	{
 		cause:       CauseFinderAccessibilityUnreadable,

@@ -45,13 +45,19 @@ type BinTypeRule struct {
 	// Unexported so the nil-vs-empty distinction cannot be flattened by a
 	// caller building the struct literally.
 	allowed map[int64]bool
+	// totes is how many of the allowed types are tote carriers (they state
+	// their totes per layer, protocol.IsToteType): 0 for the zero rule, which
+	// names no type and permits every one.
+	totes int
 }
 
 // NewBinTypeRule builds the rule for one payload from the bin-type ids
-// payload_bin_types names for it. A nil slice means the payload has no rows and
-// constrains nothing; a non-nil empty slice means it is described as carryable
-// by nothing and refuses every type.
-func NewBinTypeRule(binTypeIDs []int64) BinTypeRule {
+// payload_bin_types names for it, and those of them that are tote carriers
+// (toteIDs, nil for none; an id outside binTypeIDs is not one the rule names).
+// A nil binTypeIDs means the payload has no rows and constrains nothing; a
+// non-nil empty slice means it is described as carryable by nothing and
+// refuses every type.
+func NewBinTypeRule(binTypeIDs, toteIDs []int64) BinTypeRule {
 	if binTypeIDs == nil {
 		return BinTypeRule{}
 	}
@@ -59,8 +65,21 @@ func NewBinTypeRule(binTypeIDs []int64) BinTypeRule {
 	for _, id := range binTypeIDs {
 		allowed[id] = true
 	}
-	return BinTypeRule{allowed: allowed}
+	totes := 0
+	for _, id := range toteIDs {
+		if allowed[id] {
+			totes++
+		}
+	}
+	return BinTypeRule{allowed: allowed, totes: totes}
 }
+
+// PermitsATote reports whether a tote carrier may hold the payload: always for
+// the zero rule, and for a rule with rows only where it names one. A part on
+// no tote carrier can never be wanted at a height, tops & bottoms included, so
+// a wait for one is a configuration to fix, not a shortage
+// (plan.CauseFinderNoToteCarrier).
+func (r BinTypeRule) PermitsATote() bool { return r.allowed == nil || r.totes > 0 }
 
 // Permits reports whether a carrier of binTypeID may hold the payload this rule
 // was built for. Unrestricted (the zero value) permits everything.

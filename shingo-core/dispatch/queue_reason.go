@@ -24,7 +24,7 @@ import (
 //
 // Field use is per code:
 //   - QueueWaitingForMaterial: Payload + Kind + Partial + Group + Reserved +
-//     SourceMissing + CarrierRefused (+ Step)
+//     SourceMissing + CarrierRefused + NoToteCarrier (+ Step)
 //   - QueueWaitingForSlot:     Destination + BlockingBins/InboundOrders/EmptyOneOf +
 //     DestUnresolved (+ Step)
 //   - QueueStorageRearranging: Lane + Payload + DigOrderID + HolderOrderID + StoppedOrderID (+ Step)
@@ -162,6 +162,11 @@ type QueueParams struct {
 	// What ends the wait is a person moving or relabelling that carrier, so it
 	// is its own sentence (CauseFinderCarrierRefused).
 	CarrierRefused bool
+	// NoToteCarrier marks a wait for tops & bottoms whose part (Payload) has a
+	// carrier rule naming no tote carrier. "Waiting for tops & bottoms" is
+	// false here: none could serve it. What ends the wait is a person adding a
+	// tote carrier to the part's carriers (CauseFinderNoToteCarrier).
+	NoToteCarrier bool
 	// AtLevel marks a slot wait where the group is holding the number of empties
 	// it was configured to hold, rather than being physically out of space.
 	//
@@ -293,6 +298,15 @@ func materialSentence(p QueueParams) string {
 			part = p.Payload
 		}
 		s = fmt.Sprintf("%s holds %s only on a carrier type it may not ride — waiting for that carrier to be moved off or relabelled", where, part)
+	}
+	// NO TOTE CARRIER REPLACES IT TOO: no tops & bottoms is one the part may
+	// ride, so the sentence names the configuration, as SOURCE MISSING does.
+	if p.NoToteCarrier {
+		part := "the part"
+		if p.Payload != "" {
+			part = p.Payload
+		}
+		s = fmt.Sprintf("No tote carrier is configured for %s — waiting for its configuration to be fixed", part)
 	}
 	// TAKEN REPLACES IT TOO: the order is not short of anything, somebody moved
 	// the bin it had picked, and it is finding another.

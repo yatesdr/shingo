@@ -272,7 +272,7 @@ func (f *fakeFinderDB) LoadBinTypeRule(payloadCode string) (domain.BinTypeRule, 
 	if !ok {
 		return domain.BinTypeRule{}, nil
 	}
-	return domain.NewBinTypeRule(ids), nil
+	return domain.NewBinTypeRule(ids, nil), nil
 }
 
 func (f *fakeFinderDB) MaintainedGroupsSupporting(processNode string) ([]int64, error) {

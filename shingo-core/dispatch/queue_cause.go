@@ -674,6 +674,13 @@ const (
 	// material at a node that holds it (D33: a loader window holding its part on
 	// the wrong carrier, the move out waiting "for material" for good).
 	CauseFinderCarrierRefused QueueCause = "finder-carrier-refused"
+	// CauseFinderNoToteCarrier — tops & bottoms is wanted (SEND BACK's pull) for
+	// a part whose carrier rule (payload_bin_types) names no tote carrier, so no
+	// tops & bottoms is a carrier the part may ride. A CONFIGURATION WAIT:
+	// nothing arriving clears it; a person adds a tote carrier to the part's
+	// carriers, or the pull is cancelled. It was filed as the shortage it is
+	// not (finder-group-empty and its siblings), "waiting for tops & bottoms".
+	CauseFinderNoToteCarrier QueueCause = "finder-no-tote-carrier"
 
 	// ── Intake ────────────────────────────────────────────────────────────
 

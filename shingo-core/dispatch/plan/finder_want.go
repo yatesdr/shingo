@@ -235,6 +235,38 @@ func (f *Finder) derivedEmpty(need Need) (types []string, height domain.Height) 
 	return oneType(best), height
 }
 
+// NoToteCarrier names a shortage wait for tops & bottoms whose part's carrier
+// rule names no tote carrier (CauseFinderNoToteCarrier): no tops & bottoms is a
+// carrier that part may ride, so nothing arriving ends the wait, and "waiting
+// for tops & bottoms" would send a person looking for a cart that cannot serve
+// it. It stays a wait, as it has been since the intake refusal went; what it
+// says is the configuration to fix. Asked after Pick by dispatch's doors onto
+// the cascade. One read (the part's rule), only for a tops & bottoms need that
+// waits on a shortage; every other plan is returned as it came. A rule that
+// cannot be read leaves the shortage as it was.
+func (f *Finder) NoToteCarrier(need Need, p Plan) Plan {
+	if p.Outcome != OutcomeWait || parkKind(need) != KindTopsAndBottoms || need.PayloadCode == "" {
+		return p
+	}
+	switch p.Cause {
+	case CauseFinderGroupEmpty, CauseFinderPoolEmpty, CauseFinderNodeEmpty, CauseFinderPlantEmpty,
+		CauseFinderNoEmptyOfType:
+	default:
+		return p
+	}
+	rule, err := f.db.LoadBinTypeRule(need.PayloadCode)
+	if err != nil {
+		f.debug("finder: carrier rule for %q unreadable: %v", need.PayloadCode, err)
+		return p
+	}
+	if rule.PermitsATote() {
+		return p
+	}
+	p.Cause = CauseFinderNoToteCarrier
+	p.Params.NoToteCarrier = true
+	return p
+}
+
 // emptyFenceFor builds the maintained-group fence for one need.
 //
 // TWO INPUTS, TWO RULES. ProcessNode decides rule (i) — whether this asker is

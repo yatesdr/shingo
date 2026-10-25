@@ -7,6 +7,7 @@ package store
 import (
 	"fmt"
 
+	"shingo/protocol"
 	"shingocore/domain"
 	"shingocore/store/bins"
 	"shingocore/store/payloads"
@@ -80,32 +81,41 @@ func (db *DB) ListBinTypeCodesByPayload() (map[int64][]string, error) {
 // is also no rows: a code with no payload row has no bin-type rule to enforce,
 // and refusing every bin because a lookup missed would turn a naming slip into
 // a plant-wide stall.
+//
+// AND WHICH OF THEM ARE TOTE CARRIERS, in the same statement (a join on the
+// type's row), so the rule can say whether a tote carrier may hold the part
+// (BinTypeRule.PermitsATote) without a second read.
 func (db *DB) LoadBinTypeRule(payloadCode string) (domain.BinTypeRule, error) {
 	if payloadCode == "" {
 		return domain.BinTypeRule{}, nil
 	}
 	rows, err := db.DB.Query(`
-		SELECT pbt.bin_type_id
+		SELECT pbt.bin_type_id, bt.totes_per_layer
 		FROM payload_bin_types pbt
 		JOIN payloads p ON p.id = pbt.payload_id
+		JOIN bin_types bt ON bt.id = pbt.bin_type_id
 		WHERE p.code = $1`, payloadCode)
 	if err != nil {
 		return domain.BinTypeRule{}, fmt.Errorf("load bin-type rule for payload %q: %w", payloadCode, err)
 	}
 	defer rows.Close()
 
-	var ids []int64
+	var ids, totes []int64
 	for rows.Next() {
 		var id int64
-		if err := rows.Scan(&id); err != nil {
+		var perLayer *int
+		if err := rows.Scan(&id, &perLayer); err != nil {
 			return domain.BinTypeRule{}, fmt.Errorf("scan bin-type rule for payload %q: %w", payloadCode, err)
 		}
 		ids = append(ids, id)
+		if protocol.IsToteType(perLayer) {
+			totes = append(totes, id)
+		}
 	}
 	if err := rows.Err(); err != nil {
 		return domain.BinTypeRule{}, fmt.Errorf("load bin-type rule for payload %q: %w", payloadCode, err)
 	}
-	return domain.NewBinTypeRule(ids), nil
+	return domain.NewBinTypeRule(ids, totes), nil
 }
 
 // SetPayloadBinTypes replaces all bin type associations for a payload template.

@@ -378,3 +378,40 @@ func TestTopsAndBottomsPull_APartOnTwoToteCarriersTakesEither(t *testing.T) {
 			o.Status, o.QueueReason, o.Plan, tb)
 	}
 }
+
+// TestTopsAndBottomsPull_APartWithNoToteCarrierSaysSo: the part's carrier rule
+// names only a carrier that is no tote carrier, so no tops & bottoms is one the
+// part may ride, though tops & bottoms stands in the pull's source. The pull
+// waits, as it did once the intake refusal went, and its sentence names the
+// configuration to fix rather than a shortage; a rule that names the tote
+// carrier waits for tops & bottoms as before.
+func TestTopsAndBottomsPull_APartWithNoToteCarrierSaysSo(t *testing.T) {
+	t.Parallel()
+	db := testdb.Open(t)
+	c := newTBPCell(t, db, "TBN")
+	knock := &bins.BinType{Code: "TBN-KD"}
+	testutil.MustNoErr(t, db.CreateBinType(knock), "a knockdown")
+	pl, err := db.GetPayloadByCode(c.part)
+	testutil.MustNoErr(t, err, "part")
+	testutil.MustNoErr(t, db.SetPayloadBinTypes(pl.ID, []int64{knock.ID}), "the part rides the knockdown only")
+	c.cart(t, c.toteID, "TBN-TB", intPtr(0), "", nil)
+	d, _ := newTestDispatcher(t, db, testdb.NewTrackingBackend())
+	c.wirePull(t, d, "tbn-1")
+	if f := orderErrorFor(t, db, "tbn-1"); f != nil {
+		t.Fatalf("the pull was refused: %s %q; want it to wait", f.ErrorCode, f.Detail)
+	}
+	o := testdb.RequireOrder(t, db, "tbn-1")
+	want := "No tote carrier is configured for " + c.part + " — waiting for its configuration to be fixed"
+	if o.Status != protocol.StatusQueued || o.QueueReason != want || o.QueueCause != "finder-no-tote-carrier" {
+		t.Errorf("the pull is %s under %q (%s); want queued under %q (%s)",
+			o.Status, o.QueueReason, o.QueueCause, want, "finder-no-tote-carrier")
+	}
+
+	testutil.MustNoErr(t, db.SetPayloadBinTypes(pl.ID, []int64{knock.ID, c.toteID}), "the rule names the tote carrier")
+	c.exec(t, `DELETE FROM bins WHERE label = 'TBN-TB'`)
+	c.wirePull(t, d, "tbn-2")
+	o = testdb.RequireOrder(t, db, "tbn-2")
+	if o.QueueReason != "Waiting for tops & bottoms in "+c.src {
+		t.Errorf("with the tote carrier in the rule the pull waits under %q, want the shortage", o.QueueReason)
+	}
+}

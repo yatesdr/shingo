@@ -121,7 +121,7 @@ func NewSourceFinder(db FinderDB, resolver NodeResolver, dbg func(string, ...any
 // FindSourceForNeed runs the tier cascade for one NEED (plan.Finder.Pick) and
 // answers in dispatch's vocabulary.
 func (f *SourceFinder) FindSourceForNeed(need SourceNeed) SourceResult {
-	return sourceResultOf(f.picker.Pick(need))
+	return sourceResultOf(f.picker.NoToteCarrier(need, f.picker.Pick(need)))
 }
 
 // FindSource runs the tier cascade for one order and one intent and returns a
@@ -227,6 +227,7 @@ func queueParamsOf(p plan.Params) QueueParams {
 		Reserved:       p.Reserved,
 		SourceMissing:  p.SourceMissing,
 		CarrierRefused: p.CarrierRefused,
+		NoToteCarrier:  p.NoToteCarrier,
 		Destination:    p.Destination,
 		BlockingBins:   p.BlockingBins,
 		InboundOrders:  p.InboundOrders,

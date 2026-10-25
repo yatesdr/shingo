@@ -111,9 +111,9 @@ const materialWaitAge = 2 * time.Hour
 //     have no releaser that arrives on a truck, and the record names a resting
 //     claim-failed as the anomaly.
 //   - finder-group-fenced, finder-source-missing, ngrp-at-level,
-//     group-holds-empties-only, finder-carrier-refused: somebody configured
-//     this, or a carrier the part may not ride stands on the node; a person
-//     ends it, not a delivery.
+//     group-holds-empties-only, finder-carrier-refused, finder-no-tote-carrier:
+//     somebody configured this, or a carrier the part may not ride stands on
+//     the node; a person ends it, not a delivery.
 //     group-holds-empties-only says so in as many words — "a
 //     lead, not routine backpressure".
 //   - every lane and fleet cause: those are THROUGHPUT waits. A corridor that

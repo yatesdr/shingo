@@ -63,6 +63,14 @@ func TestFormatQueueSentence_Snapshot(t *testing.T) {
 			want:   "Waiting for tops & bottoms",
 		},
 		{
+			// A part on no tote carrier: no tops & bottoms could serve the pull,
+			// so the sentence names the configuration, not a shortage.
+			name:   "material tops & bottoms, the part on no tote carrier",
+			code:   protocol.QueueWaitingForMaterial,
+			params: QueueParams{Kind: "tops_bottoms", Payload: "SYN-PART02B.06", Group: "SUPER-A", NoToteCarrier: true},
+			want:   "No tote carrier is configured for SYN-PART02B.06 — waiting for its configuration to be fixed",
+		},
+		{
 			// (F7) Was "Waiting for an empty bin" — the old branch tested
 			// Payload == "" alongside the empty kind, so an unclassified FULL
 			// wait told the operator to go find an empty. It now claims nothing
