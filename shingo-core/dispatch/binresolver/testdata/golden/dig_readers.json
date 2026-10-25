@@ -101,7 +101,7 @@
   },
   {
     "fixture": "bin_type_rule_excludes",
-    "lane_buried": "",
-    "lane_buried_oldest": ""
+    "lane_buried": "rejected",
+    "lane_buried_oldest": "rejected"
   }
 ]

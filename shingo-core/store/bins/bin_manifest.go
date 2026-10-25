@@ -190,7 +190,10 @@ func GetManifest(db *sql.DB, binID int64) (*Manifest, error) {
 //
 // The whole eligibility question is bins.BinSourceableSQL; this reader adds
 // only FIFO order and the same-node exclusion. It has no private spelling of
-// status, holds, node liveness or the bin-type rule, and must not grow one.
+// status, holds, node liveness or the bin-type rule, and must not grow one. (It
+// spelled the quality hold by hand, which no other sourcing reader asked, until
+// the hold went into the stock half; TestSourcingReadersSpellNothingThemselves
+// now names the column.)
 //
 // ── THE OFF-SPEC STATUS WARNING NOW APPLIES PLANT-WIDE ────────────────────
 //
@@ -226,9 +229,6 @@ func FindSourceFIFO(db *sql.DB, payloadCode string, excludeNodeID int64) (*Bin, 
 		WHERE b.payload_code = $1
 		  AND %s
 		  AND ($2 = 0 OR b.node_id != $2)
-		  -- Quality hold (v100): a bin carrying the operator's hold marker waits
-		  -- for its containment move and is NOT sourceable back into the flow.
-		  AND NOT COALESCE(b.quality_hold, false)
 		-- b.id breaks a load-time tie: the seeder and a burst of arrivals stamp
 		-- loaded_at to the same instant, and LIMIT 1 over a tie was whatever the
 		-- plan returned (B1, TestB1_FIFOTieBreaksByID).

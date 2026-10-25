@@ -141,7 +141,10 @@ func LabelsByPayloadCode(db *sql.DB, code string, limit int) ([]string, int, err
 //
 // node_synthetic is the bin's node's is_synthetic, off the join already here: a
 // bin on a synthetic node (_TRANSIT, a robot's deck) is not AT any place, and
-// PickableAt refuses it as the SQL's BinAtLiveNodeSQL does (B1).
+// PickableAt refuses it as the SQL's BinAtLiveNodeSQL does (B1). node_disabled
+// is the same join's enabled, negated so a bin at no node reads as on none: the
+// dedicated loader's pool reads bins off several positions in one statement and
+// passes over one on a switched-off position (domain.Bin.AtDisabledNode).
 const BinJoinQuery = `SELECT b.id, b.bin_type_id, b.label, b.description, b.node_id, b.status, b.claimed_by, b.staged_at, b.staged_expires_at,
 	COALESCE(b.payload_code, ''), b.manifest, b.uop_remaining, b.delta_epoch, b.manifest_confirmed,
 	b.locked, b.locked_by, b.locked_at, b.last_counted_at, b.last_counted_by,
@@ -153,6 +156,7 @@ const BinJoinQuery = `SELECT b.id, b.bin_type_id, b.label, b.description, b.node
 	` + reservations.BinSpokenForByOrderSQL + ` AS pending_reserved_by,
 	COALESCE(b.quality_hold, false) AS quality_hold,
 	COALESCE(n.is_synthetic, false) AS node_synthetic,
+	NOT COALESCE(n.enabled, true) AS node_disabled,
 	b.totes_on_cart, bt.totes_per_layer, b.held_since
 	` + BinFromClause
 
@@ -599,7 +603,7 @@ func emptyCarrierWhere(destExpr, groupExpr string) string {
 	                            SELECT g.id FROM nodes g WHERE g.parent_id = ` + groupExpr + `))
 	                          AND NOT ` + helpers.LiveClearOnNodeSQL(`(SELECT cn.name FROM nodes cn WHERE cn.id = h.position_node_id)`) + `)
 	  AND NOT bt.bare
-	  AND NOT COALESCE(b.quality_hold, false)`
+	  AND ` + helpers.BinNotOnQualityHoldSQL
 }
 
 // OfTypeArm narrows to ONE carrier type, matched on CODE.
@@ -879,7 +883,7 @@ func ScanBin(row interface{ Scan(...any) error }) (*Bin, error) {
 		&b.LoadedAt, &b.AnomalyAt, &b.AnomalyNote, &b.CreatedAt, &b.UpdatedAt, &b.BinTypeCode, &b.NodeName, &b.UOPCapacity,
 		&b.CarrierRequiredRobotGroup, &b.BinTypeBare, &b.PayloadRobotGroup,
 		&b.PayloadNearEmptyEnabled, &b.PayloadNearEmptyGroup, &b.PayloadNearEmptyPct,
-		&reservedBy, &b.QualityHold, &b.AtSyntheticNode, &b.TotesOnCart, &b.TotesPerLayer, &b.HeldSince)
+		&reservedBy, &b.QualityHold, &b.AtSyntheticNode, &b.AtDisabledNode, &b.TotesOnCart, &b.TotesPerLayer, &b.HeldSince)
 	if err != nil {
 		return nil, err
 	}
@@ -2227,7 +2231,7 @@ func FindPartialToFinish(db *sql.DB, payloadCode string, places []string, exclud
 	  AND b.node_id IN (SELECT id FROM places)
 	  AND NOT `+linePositionSQL+`
 	  AND NOT bt.bare
-	  AND NOT COALESCE(b.quality_hold, false)
+	  AND `+helpers.BinNotOnQualityHoldSQL+`
 	  AND (n.parent_id IS NULL OR n.depth IS NULL OR `+helpers.ReachableSQL("n")+`)`, payloadP) +
 		ExcludeNodeArm(excludeP) +
 		NotForeignDugArm(a.add(string(reservations.ModeDig)), a.add(asker.OrderID), a.add(asker.LaneOwner)) + `

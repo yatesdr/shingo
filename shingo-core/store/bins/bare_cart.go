@@ -85,7 +85,7 @@ func ListBareInGroup(db *sql.DB, groupNodeID int64) ([]*Bin, error) {
 	  AND ` + helpers.BinUnheldSQL + `
 	  AND b.node_id IN (SELECT id FROM descendants)
 	  AND ` + BinAtLiveNodeSQL + `
-	  AND NOT COALESCE(b.quality_hold, false)
+	  AND ` + helpers.BinNotOnQualityHoldSQL + `
 	  AND (n.parent_id IS NULL OR n.depth IS NULL OR ` + helpers.ReachableSQL("n") + `)
 	ORDER BY b.updated_at, b.id`
 	rows, err := db.Query(q, groupNodeID)

@@ -39,11 +39,16 @@ import (
 // an operator is working at. Equivalent to the previous `!= available` for every
 // declared status.
 //
-// A carrier counted to nothing is no stock, as the stock fragment says
-// (helpers.BinCarriesSourceableStockSQL): this is that fragment's Go twin for a
-// group's slot children, which the lane mouth asks in SQL.
+// A carrier counted to nothing is no stock, and neither is one on quality hold,
+// as the stock fragment says (helpers.BinCarriesSourceableStockSQL): this is
+// that fragment's Go twin for a group's slot children, which the lane mouth
+// asks in SQL. THE CARRIER RULE IS NOT ASKED HERE, and the lane mouth asks it
+// (helpers.PayloadBinTypeRuleArm): the rule is the part's, read once per door
+// call, and this package's Store declares no read of it, so a slot child in a
+// carrier its part may not ride is taken. Rule 6's table names the gap
+// (TestRule6_OneAvailabilityTable, group_slot_child; a STOP of phase F).
 func isBinAvailableForRetrieve(b *bins.Bin, payloadCode string, asker domain.DigAsker) bool {
-	if b.ClaimedBy != nil || b.Locked || !b.ManifestConfirmed || b.UOPRemaining <= 0 {
+	if b.ClaimedBy != nil || b.Locked || !b.ManifestConfirmed || b.UOPRemaining <= 0 || b.QualityHold {
 		return false
 	}
 	if reservedByStranger(b, asker) {

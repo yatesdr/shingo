@@ -4,9 +4,9 @@ import "shingocore/store/reservations"
 
 // ── THE SOURCING PREDICATE, AND WHY THERE IS ONLY ONE OF IT ─────────────────
 //
-// "May this bin be sourced for this job?" — right part, attested, not held, at
-// a node automation is allowed to drive to, in a carrier the part is allowed to
-// travel in.
+// "May this bin be sourced for this job?" — right part, attested, holding stock,
+// not on quality hold, nobody else's, at a node automation is allowed to drive
+// to, in a carrier the part is allowed to travel in.
 //
 // It used to be answered by six hand-written WHERE clauses that did not agree.
 // A golden photograph of them (dispatch/binresolver) found four divergences,
@@ -23,9 +23,12 @@ import "shingocore/store/reservations"
 //     by-hand door — an engineer moving a bin deliberately — may touch a bin
 //     standing there.
 //   - THE DIG READERS ARE NOT SOURCING READERS. "Which buried bin do I dig" is
-//     a different question and keeps its own spelling; it is reservation-blind
-//     on purpose, because a reservation on a buried bin is the reason to dig
-//     it. They take the disabled-node rule and nothing else from here.
+//     a different question; it is reservation-blind on purpose, because a
+//     reservation on a buried bin is the reason to dig it. That ruling gave
+//     them the disabled-node rule alone. Since then they compose every other
+//     arm too (the stock half, U.1, and the carrier rule, phase F of the press
+//     tranche, 2026-10-25): a dig must not be spent exposing a carrier nobody
+//     can take. The reservation is the one arm they leave.
 //
 // IT LIVES HERE AND NOT IN store/bins BECAUSE TWO RULES INTERSECT. depguard's
 // store-sub-pkg-isolation stops store/sourceability importing store/bins, and
@@ -101,8 +104,19 @@ const BinNotReservedSQL = `NOT ` + reservations.BinSpokenForSQL
 // (binsource's uop<=0) and the ruling already said it: a labelled carrier at 0
 // is nobody's stock and nobody's container. Every sourcing reader and the dig
 // readers compose this fragment, so they all ask it.
+//
+// A CARRIER ON QUALITY HOLD IS NO STOCK EITHER: it waits for its containment
+// move and is not sourced back into the flow (BinNotOnQualityHoldSQL). The
+// FIFO finder spelled that arm by hand and the other sourcing readers did not
+// ask it; here every reader asks it, the digs included, and the Go twins ask
+// Bin.QualityHold (TestRule6_OneAvailabilityTable).
 const BinCarriesSourceableStockSQL = `b.manifest_confirmed = true AND b.uop_remaining > 0 AND ` +
-	SourceableStatusSQL + ` AND b.status <> 'staged'`
+	BinNotOnQualityHoldSQL + ` AND ` + SourceableStatusSQL + ` AND b.status <> 'staged'`
+
+// BinNotOnQualityHoldSQL — the bin carries no quality hold (bins.quality_hold,
+// v118: an operator's "Send to Quality Hold"). The stock half composes it, and
+// so do the readers of empties, partials and bare carts, which ask no stock.
+const BinNotOnQualityHoldSQL = `NOT COALESCE(b.quality_hold, false)`
 
 // PayloadBinTypeRuleArm renders the payload_bin_types rule for the payload named
 // by payloadExpr — a placeholder ("$1") or a column ("b.payload_code") so a

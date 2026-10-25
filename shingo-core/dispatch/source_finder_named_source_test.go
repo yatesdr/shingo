@@ -132,8 +132,8 @@ func TestNamedSource_ConcreteSourceTakesTheFullBesideAPartial(t *testing.T) {
 	t.Parallel()
 	db := namedSourceFixture()
 	dropNodeWith(db,
-		&bins.Bin{ID: 620, PayloadCode: "PART-A", UOPRemaining: 40, UOPCapacity: 100},
-		&bins.Bin{ID: 621, PayloadCode: "PART-A", UOPRemaining: 100, UOPCapacity: 100})
+		&bins.Bin{ID: 620, PayloadCode: "PART-A", UOPRemaining: 40, UOPCapacity: 100, ManifestConfirmed: true},
+		&bins.Bin{ID: 621, PayloadCode: "PART-A", UOPRemaining: 100, UOPCapacity: 100, ManifestConfirmed: true})
 	res := NewSourceFinder(db, nil, nil).FindSource(u1Order("FG-DROP-01"), IntentFull)
 	if res.Outcome != OutcomeFound || res.Bin == nil || res.Bin.ID != 621 || res.Node == nil || res.Node.Name != "FG-DROP-01" {
 		t.Fatalf("outcome=%v cause=%q bin=%v node=%v, want the full 621 on FG-DROP-01",
@@ -150,7 +150,7 @@ func TestNamedSource_ConcreteSourceTakesTheFullBesideAPartial(t *testing.T) {
 func TestNamedSource_ConcreteSourceOnlyAPartialWaitsForAFull(t *testing.T) {
 	t.Parallel()
 	db := namedSourceFixture()
-	dropNodeWith(db, &bins.Bin{ID: 620, PayloadCode: "PART-A", UOPRemaining: 40, UOPCapacity: 100})
+	dropNodeWith(db, &bins.Bin{ID: 620, PayloadCode: "PART-A", UOPRemaining: 40, UOPCapacity: 100, ManifestConfirmed: true})
 	res := NewSourceFinder(db, nil, nil).FindSource(u1Order("FG-DROP-01"), IntentFull)
 	if res.Outcome != OutcomeWait || res.QueueCause != CauseFinderNoFullCarrier {
 		t.Fatalf("outcome=%v cause=%q bin=%v, want Wait %q", res.Outcome, res.QueueCause, res.Bin, CauseFinderNoFullCarrier)
@@ -316,7 +316,7 @@ func TestFinderReads_NGRPDrainWindowAsksOnce(t *testing.T) {
 func TestFinderReads_ConcreteSourceUnchanged(t *testing.T) {
 	t.Parallel()
 	c := &countingFinderDB{fakeFinderDB: namedSourceFixture()}
-	dropNodeWith(c.fakeFinderDB, &bins.Bin{ID: 621, PayloadCode: "PART-A", UOPRemaining: 100, UOPCapacity: 100})
+	dropNodeWith(c.fakeFinderDB, &bins.Bin{ID: 621, PayloadCode: "PART-A", UOPRemaining: 100, UOPCapacity: 100, ManifestConfirmed: true})
 	res := NewSourceFinder(c, nil, nil).FindSource(u1Order("FG-DROP-01"), IntentFull)
 	t.Logf("concrete reads = %d (outcome %v bin %v)", c.reads, res.Outcome, res.Bin)
 	if res.Outcome != OutcomeFound || res.Bin == nil {
@@ -352,7 +352,7 @@ func TestNamedSourcePin_AFullOnACarrierItsPartMayNotRideNamesTheCarrier(t *testi
 	db := namedSourceFixture()
 	db.binTypeRule = map[string][]int64{"PART-A": {5}}
 	dropNodeWith(db, &bins.Bin{ID: 630, PayloadCode: "PART-A", BinTypeID: 7, BinTypeCode: "OTHER",
-		UOPRemaining: 100, UOPCapacity: 100})
+		UOPRemaining: 100, UOPCapacity: 100, ManifestConfirmed: true})
 	res := NewSourceFinder(db, nil, nil).FindSource(u1Order("FG-DROP-01"), IntentFull)
 	if res.Outcome != OutcomeWait || res.QueueCause != "finder-carrier-refused" || res.QueueParams.Group != "FG-DROP-01" {
 		t.Fatalf("outcome=%v cause=%q params=%+v bin=%v, want Wait %q on FG-DROP-01",

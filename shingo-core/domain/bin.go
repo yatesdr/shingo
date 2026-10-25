@@ -85,6 +85,12 @@ type Bin struct {
 	// bin on _TRANSIT or a robot's deck is not at any place anybody can pick it
 	// up from. Not on the wire.
 	AtSyntheticNode bool `json:"-"`
+	// AtDisabledNode is the bin's node switched off (NOT nodes.enabled), joined
+	// by BinJoinQuery: a disabled node is dead to automation, so a reader that
+	// judges bins read off several nodes (a dedicated loader's pool) passes over
+	// it there, as the SQL's NodeEnabledSQL does. False for a bin at no node.
+	// Not on the wire.
+	AtDisabledNode bool `json:"-"`
 	// QualityHold is the per-bin containment marker (v118): an operator's
 	// "Send to Quality Hold" set it, and the bin must not be SOURCED back into
 	// the ordinary flow while it waits for (or sits in) containment. The

@@ -137,49 +137,23 @@ var availOmits = map[string]map[string]string{
 }
 
 // availPredicted are today's disagreements with the rule, each with the phase of
-// the press-tranche-2 brief (rev 3) that closes it; "none" is a disagreement no
-// phase names. A cell here that has come to agree fails the test: delete it.
+// the press-tranche-2 brief (rev 3) that closes it, or the STOP that holds it.
+// A cell here that has come to agree fails the test: delete it.
+//
+// PHASE F closed its cells, and decided out loud the six that no phase named;
+// each was folded into the one rule, none named in availOmits:
+//   - both digs × the foreign and the bare carrier: the digs compose the
+//     carrier rule (PayloadBinTypeRuleArm). U.1's reason for giving them the
+//     stock half is this one too: a dig must not be spent exposing a carrier
+//     nobody can take, and the lane mouth refuses the dug carrier by that rule;
+//   - tier 4 × the unconfirmed full: namedFull asks the stock fragment's
+//     attestation (manifest_confirmed), as the group scan and tier 5 do;
+//   - tier 2 × the disabled loader position: the pool passes over a bin on a
+//     switched-off position (Bin.AtDisabledNode), as it passes over a held one.
 var availPredicted = map[string]map[string]string{
-	"lane_mouth": {
-		"held": "F — the quality hold is not in BinSourceableSQLFor (helpers/bin_sourceable.go)",
-	},
-	"dig_oldest_buried": {
-		"held":            "F — the hold, if it goes into the stock half the digs compose (BinCarriesSourceableStockSQL); else name it in availOmits",
-		"foreign_carrier": "none — the digs compose no carrier rule (2026-09-14: they take the disabled-node rule only), yet U.1's reason holds: a dig must not expose a carrier nobody can take",
-		"bare":            "none — the same carrier-rule gap as the foreign carrier",
-	},
-	"dig_shallowest_buried": {
-		"held":            "F — as dig_oldest_buried",
-		"foreign_carrier": "none — as dig_oldest_buried",
-		"bare":            "none — as dig_oldest_buried",
-	},
-	"sourceability_pool": {
-		"held": "F — the quality hold is not in BinSourceableSQL",
-	},
-	"pool_breakdown_free": {
-		"held": "F — the quality hold is not in the stock half or the holds half it composes",
-	},
-	"changeover_preflight": {
-		"held": "F — the quality hold is not in BinSourceableSQL",
-	},
 	"group_slot_child": {
-		"held":            "F — isBinAvailableForRetrieve asks no quality hold",
-		"foreign_carrier": "F — isBinAvailableForRetrieve composes no carrier rule",
-		"bare":            "F — the same carrier-rule gap",
-	},
-	"tier4_named_full": {
-		"unconfirmed":   "none — BinUnavailableReasonFor asks no manifest_confirmed, and namedFull adds none (finder.go namedFull loop)",
-		"disabled_node": "F — the concrete-node arm asks no Enabled",
-	},
-	"tier2_loader_pool": {
-		"disabled_node": "none — sourceFromDedicatedLoader reads the pool's bins with no Enabled on the positions",
-	},
-	"allocator_part_supply": {
-		"held":          "F — BinUnavailableReason asks no quality hold",
-		"disabled_node": "F — the concrete-node arm asks no Enabled",
-	},
-	"allocator_removal": {
-		"disabled_node": "F — the concrete-node arm asks no Enabled; a removal is automation, and a disabled node is dead to it (helpers.NodeEnabledSQL)",
+		"foreign_carrier": "STOP (F) — isBinAvailableForRetrieve composes no carrier rule: the rule is the part's, read once per door call (LoadBinTypeRule), and binresolver.Store declares no such read; declaring one is an interface method, which the brief's surface rule leaves to the lead",
+		"bare":            "STOP (F) — the same carrier-rule gap",
 	},
 }
 

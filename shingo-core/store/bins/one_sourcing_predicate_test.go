@@ -41,6 +41,7 @@ var handSpelled = []string{
 	"n.enabled",
 	"is_synthetic",
 	"status NOT IN",
+	"quality_hold", // the hold arm (BinNotOnQualityHoldSQL), in the stock half since phase F
 }
 
 func readBody(t *testing.T, file, fn string) string {

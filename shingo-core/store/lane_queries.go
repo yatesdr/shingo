@@ -582,7 +582,7 @@ func (db *DB) FindOldestBuriedBin(laneID int64, payloadCode string) (*bins.Bin, 
 		WHERE b.node_id IN (SELECT id FROM nodes WHERE parent_id = $1)
 		  AND `+bins.BinAtLiveNodeSQL+`
 		  AND `+bins.BinUnclaimedSQL+`
-		  AND `+bins.BinCarriesSourceableStockSQL+`
+		  AND `+bins.BinCarriesSourceableStockSQL+bins.PayloadBinTypeRuleArm("b.payload_code")+`
 		  AND ($2 = '' OR b.payload_code = $2)
 		  AND %s
 		ORDER BY COALESCE(b.loaded_at, b.created_at) ASC, b.id ASC -- b.id breaks a load-time tie (B1)
@@ -614,19 +614,25 @@ func (db *DB) FindOldestBuriedBin(laneID int64, payloadCode string) (*bins.Bin, 
 // written out longhand, a near-copy of the predicate differing in exactly one
 // arm. A near-copy is how the six spellings the 2026-09-14 collapse ended got
 // written in the first place, so the difference is now expressed by which
-// fragments it names: BinUnclaimedSQL and not BinNotReservedSQL. The one thing
-// it takes from the sourcing side unchanged is BinAtLiveNodeSQL, because a
-// disabled node is dead to automation and digs are automation.
+// fragments it names: BinUnclaimedSQL and not BinNotReservedSQL. Every other
+// arm of the sourcing side it takes unchanged: BinAtLiveNodeSQL, because a
+// disabled node is dead to automation and digs are automation; the stock half
+// (U.1, the quality hold in it since phase F); and the carrier rule
+// (PayloadBinTypeRuleArm on the bin's own part, phase F). A dig must not be
+// spent exposing a carrier nobody can take, and the lane mouth that takes the
+// dug carrier (FindSourceBinInLane) refuses one of a type its part may not
+// ride. Pinned by TestRule6_OneAvailabilityTable (dig_* rows).
 //
 // Its verdicts are photographed in
 // dispatch/binresolver/testdata/golden/dig_readers.json, and that file must not
-// move when the spelling does.
+// move when the spelling does; it moved when the carrier rule came in (the
+// bin_type_rule_excludes row).
 func (db *DB) FindBuriedBin(laneID int64, payloadCode string) (*bins.Bin, *nodes.Node, error) {
 	row := db.QueryRow(fmt.Sprintf(`%s
 		WHERE b.node_id IN (SELECT id FROM nodes WHERE parent_id = $1)
 		  AND `+bins.BinAtLiveNodeSQL+`
 		  AND `+bins.BinUnclaimedSQL+`
-		  AND `+bins.BinCarriesSourceableStockSQL+`
+		  AND `+bins.BinCarriesSourceableStockSQL+bins.PayloadBinTypeRuleArm("b.payload_code")+`
 		  AND ($2 = '' OR b.payload_code = $2)
 		  AND %s
 		ORDER BY COALESCE(n.depth, 0) ASC

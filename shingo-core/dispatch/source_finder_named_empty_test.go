@@ -106,3 +106,42 @@ func TestNamedEmpty_WhatTheNodeHolds(t *testing.T) {
 		})
 	}
 }
+
+// TestNamedSource_ADisabledSourceWaits: a switched-off node is dead to
+// automation (helpers.NodeEnabledSQL, the 2026-09-14 ruling), so a retrieve
+// naming one takes nothing standing there — a confirmed full or an empty — and
+// waits on the node, never widening plant-wide. Rule 6's table asks the full at
+// every reader (TestRule6_OneAvailabilityTable, tier4_named_full); this is the
+// empty beside it, which the table does not ask.
+func TestNamedSource_ADisabledSourceWaits(t *testing.T) {
+	t.Parallel()
+	for _, c := range []struct {
+		name     string
+		standing *bins.Bin
+		need     func(db *fakeFinderDB) SourceResult
+	}{
+		{"a full", &bins.Bin{ID: 640, PayloadCode: "PART-A", UOPRemaining: 100, UOPCapacity: 100, ManifestConfirmed: true},
+			func(db *fakeFinderDB) SourceResult {
+				return NewSourceFinder(db, nil, nil).FindSource(u1Order("FG-DROP-01"), IntentFull)
+			}},
+		{"an empty", plainEmpty(641), func(db *fakeFinderDB) SourceResult {
+			return NewSourceFinder(db, nil, nil).FindSourceForNeed(namedEmptyNeed("OUTSIDE"))
+		}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			db := namedEmptyFixture()
+			db.nodesByName["FG-DROP-01"].Enabled = false
+			dropNodeWith(db, c.standing)
+			res := c.need(db)
+			if res.Outcome != OutcomeWait || res.QueueCause != CauseFinderNodeEmpty || res.QueueParams.Group != "FG-DROP-01" {
+				t.Fatalf("outcome=%v cause=%q params=%+v bin=%v, want Wait %q on FG-DROP-01",
+					res.Outcome, res.QueueCause, res.QueueParams, res.Bin, CauseFinderNodeEmpty)
+			}
+			if db.fifoCalls != 0 || db.globalEmptyCalls != 0 || db.typedGlobalCalls != 0 {
+				t.Errorf("plant-wide scans = %d + %d + %d, want 0: a named source never widens",
+					db.fifoCalls, db.globalEmptyCalls, db.typedGlobalCalls)
+			}
+		})
+	}
+}

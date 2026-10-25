@@ -904,6 +904,14 @@ func (a *Allocator) findAvailableForNeed(pk pickupNeed, payloadCode string) (bin
 		return nil, false, fmt.Errorf("list bins at %s: %w", step.Node, err)
 	}
 	nodeHadBins = len(bins) > 0
+	// A SWITCHED-OFF NODE IS DEAD TO AUTOMATION (helpers.NodeEnabledSQL), and a
+	// complex order's pickup is automation whatever it lifts, a removal
+	// included: nothing there is bound, and the node reads as holding bins that
+	// are not available, so the reserve holds and retries (TestRule6_
+	// OneAvailabilityTable, allocator_*). The node row is the one read above.
+	if !node.Enabled {
+		return nil, nodeHadBins, nil
+	}
 	candidates := bins
 	claimPayload := payloadCode
 	switch {
@@ -972,6 +980,14 @@ func (a *Allocator) findAvailableForNeed(pk pickupNeed, payloadCode string) (bin
 		}
 	}
 	for _, b := range candidates {
+		// A PART SUPPLY TAKES STOCK OF ITS PART, and a carrier on quality hold is
+		// none: the sourcing rule's hold arm (helpers.BinNotOnQualityHoldSQL), as
+		// the group scan and tier 4 ask it. Not a removal (it clears the line
+		// whatever stands there) and not a pickup naming its bin (a person's pick,
+		// which the hold does not outrank, as a move's does not at tier 4).
+		if pk.kind == pickupPartSupply && step.BinID == 0 && b.QualityHold {
+			continue
+		}
 		if BinUnavailableReason(b, claimPayload, binTypes) == "" {
 			return b, nodeHadBins, nil
 		}

@@ -601,9 +601,14 @@ func (f *Finder) Pick(need Need) Plan {
 	// matching full standing on that node or waits there. Three differences from
 	// the node-local arm, each because this is still the PLANT choosing:
 	//   - the carrier must HOLD the part — an empty standing there is not a full
-	//     of anything, nor is a carrier counted to nothing (the stock fragment's
-	//     rule, helpers.BinCarriesSourceableStockSQL), and the a9a0eb78 empty
+	//     of anything, nor is a carrier counted to nothing or one whose manifest
+	//     was never confirmed (the stock fragment's rule,
+	//     helpers.BinCarriesSourceableStockSQL; the group scan and tier 5 ask
+	//     the same, TestRule6_OneAvailabilityTable), and the a9a0eb78 empty
 	//     exemption below is for moves;
+	//   - the node must be switched on: a disabled node is dead to automation
+	//     (helpers.NodeEnabledSQL), so a full or an empty there is not taken
+	//     and the need waits on the node (TestNamedSource_ADisabledSourceWaits);
 	//   - the drain-window filter applies in the loop, so a partial on the node
 	//     does not hide a full beside it;
 	//   - atNamedNode stays false, so the late seatbelt still judges it.
@@ -638,6 +643,12 @@ func (f *Finder) Pick(need Need) Plan {
 		if lberr != nil {
 			f.debug("finder: node-local candidates at %s unreadable: %v", need.SourceNode, lberr)
 			return unreadableSource(parkKind(need), payloadCode, need.SourceNode)
+		}
+		// THE PLANT CHOOSING (namedFull, namedEmpty) TAKES NOTHING FROM A
+		// SWITCHED-OFF NODE. A move keeps its reach: it names its carrier, and
+		// moving a bin off a dead node by hand is the ruling's one exception.
+		if !moveShaped && !srcNode.Enabled {
+			candidates = nil
 		}
 		claimPayload := payloadCode
 		if intent == IntentEmpty {
@@ -689,7 +700,7 @@ func (f *Finder) Pick(need Need) Plan {
 		var foreign *bins.Bin
 		for _, b := range candidates {
 			if namedFull {
-				if b.PayloadCode != payloadCode || b.UOPRemaining <= 0 {
+				if b.PayloadCode != payloadCode || b.UOPRemaining <= 0 || !b.ManifestConfirmed {
 					continue
 				}
 				if accept := acceptable(); accept != nil && !accept(b) {
@@ -1037,10 +1048,12 @@ func (f *Finder) sourceFromDedicatedLoader(srcNode *nodes.Node, payloadCode stri
 	}
 	// QUALITY HOLD (v100): a held bin waits for its containment move and is
 	// never a pool candidate — the hold marker keeps it out of the ordinary
-	// flow, and nothing about pool sourcing outranks that.
+	// flow, and nothing about pool sourcing outranks that. Nor is a bin on a
+	// switched-off position: a disabled node is dead to automation
+	// (helpers.NodeEnabledSQL; TestRule6_OneAvailabilityTable, tier2_loader_pool).
 	var readable []*bins.Bin
 	for _, b := range slotBins {
-		if b.QualityHold {
+		if b.QualityHold || b.AtDisabledNode {
 			continue
 		}
 		readable = append(readable, b)
