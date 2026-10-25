@@ -71,7 +71,7 @@ func TestChainReadiness_JudgesTheCarrierOnTheOnDeck(t *testing.T) {
 				}
 				return
 			}
-			if len(r.Clear) != 0 || len(r.Prime) != 0 || len(r.Vacant) != 0 {
+			if len(r.Clear) != 0 || len(r.Prime) != 0 {
 				t.Errorf("readiness %+v: want nothing, the index carries it", r)
 			}
 		})
@@ -88,11 +88,11 @@ func TestChainReadiness_VacantUnknownAndComing(t *testing.T) {
 	vacant := map[string]bool{"LINE": true, "B": false}
 	occupied := map[string]bool{"LINE": true, "B": true}
 
-	if r := ChainReadiness(claim, vacant, Deck{}); !slices.Equal(r.Prime, []string{"B"}) || !slices.Equal(r.Vacant, []string{"B"}) {
+	if r := ChainReadiness(claim, vacant, Deck{}); !slices.Equal(r.Prime, []string{"B"}) {
 		t.Errorf("vacant: %+v, want B primed", r)
 	}
-	if r := ChainReadiness(claim, vacant, Deck{Coming: map[string]bool{"B": true}}); len(r.Prime) != 0 || !slices.Equal(r.Vacant, []string{"B"}) {
-		t.Errorf("vacant with a carrier coming: %+v, want no prime, still vacant", r)
+	if r := ChainReadiness(claim, vacant, Deck{Coming: map[string]bool{"B": true}}); len(r.Prime) != 0 {
+		t.Errorf("vacant with a carrier coming: %+v, want no prime", r)
 	}
 	for name, deck := range map[string]Deck{
 		"no row":         {},
@@ -103,7 +103,7 @@ func TestChainReadiness_VacantUnknownAndComing(t *testing.T) {
 		if name == "missing from occupancy (reads occupied), row says empty" {
 			occ = map[string]bool{"LINE": true}
 		}
-		if r := ChainReadiness(claim, occ, deck); len(r.Clear)+len(r.Prime)+len(r.Vacant) != 0 {
+		if r := ChainReadiness(claim, occ, deck); len(r.Clear)+len(r.Prime) != 0 {
 			t.Errorf("%s: %+v, want nothing: unknown builds the swap", name, r)
 		}
 	}
@@ -120,7 +120,7 @@ func TestChainReadiness_OnlyAPressHasDependentPositions(t *testing.T) {
 	claim := readinessClaim(protocol.ClaimRoleConsume, "")
 	claim.SwapMode = protocol.SwapModeTwoRobot
 	r := ChainReadiness(claim, map[string]bool{"LINE": true, "B": false}, Deck{Rows: map[string]protocol.NodeBinsRow{"B": rowMarker}})
-	if len(r.Clear)+len(r.Prime)+len(r.Vacant) != 0 {
+	if len(r.Clear)+len(r.Prime) != 0 {
 		t.Errorf("two_robot with a stale paired node: %+v, want nothing", r)
 	}
 }

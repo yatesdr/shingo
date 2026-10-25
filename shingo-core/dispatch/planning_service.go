@@ -177,15 +177,15 @@ func newPlanningService(db *store.DB, resolver NodeResolver, finder *SourceFinde
 		waitChanged:    waitChanged,
 		handlers:       make(map[protocol.OrderType]PlanningHandler),
 	}
-	// One planTransport folds the plain family (PlainFamily). The handler map
+	// One planTransport folds the plain family (plainFamily). The handler map
 	// is type-keyed, but planTransport reads order.SourceIntent (the label→data
 	// field), so one handler serves every plain type, and each is decided ahead
 	// of its row.
 	s.ahead = map[protocol.OrderType]bool{}
-	for _, t := range PlainFamily {
+	for _, t := range plainFamily {
 		s.Register(t, s.planTransport)
 	}
-	for _, t := range PlainFamily {
+	for _, t := range plainFamily {
 		s.ahead[t] = true
 	}
 	return s
@@ -297,7 +297,7 @@ func (s *PlanningService) setQueueReason(order *orders.Order, code protocol.Queu
 	WriteQueueDetail(s.db, log.Printf, "dispatch", order, code, cause, params, s.waitChanged)
 }
 
-// planTransport is the single planner for the plain family (PlainFamily) —
+// planTransport is the single planner for the plain family (plainFamily) —
 // retrieve, retrieve_empty, retrieve_tops_bottoms and move — folded into one. It
 // parameterizes on order.SourceIntent (the label→data field stamped once at
 // intake by SourceIntentForType): an intent that SourcesEmpty sources an empty

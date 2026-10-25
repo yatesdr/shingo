@@ -53,7 +53,8 @@ type BinType struct {
 }
 
 // FloorSize is a carrier's floor, its width and length as entered, held in
-// order so that a 45 × 48 and a 48 × 45 are one size.
+// order so that a 45 × 48 and a 48 × 45 are one size: two floors are the same
+// exactly when they are ==.
 type FloorSize struct{ short, long float64 }
 
 // FloorSize is the type's floor size; false unless both its width and its
@@ -64,9 +65,6 @@ func (bt BinType) FloorSize() (FloorSize, bool) {
 	}
 	return FloorSize{min(bt.WidthIn, bt.LengthIn), max(bt.WidthIn, bt.LengthIn)}, true
 }
-
-// Same reports whether two floor sizes are one, whatever the orientation.
-func (f FloorSize) Same(o FloorSize) bool { return f == o }
 
 // BareStamp is what a CLEAR does to a cart's type in a two-stage unloader,
 // decided by the caller from where the cart stands and resolved by the store

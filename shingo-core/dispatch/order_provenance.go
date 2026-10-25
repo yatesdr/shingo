@@ -31,11 +31,11 @@ const (
 	SourceIntentOnDeck = "on_deck"
 )
 
-// PlainFamily is the plain order types: one transport each, planned by
+// plainFamily is the plain order types: one transport each, planned by
 // planTransport. The one list the planner registers (NewPlanningService), the
 // decide-ahead set is built from, and the coordinated tripwire checks
 // (AssertSimpleNotCoordinated); SourceIntentForType names an intent for each.
-var PlainFamily = []protocol.OrderType{
+var plainFamily = []protocol.OrderType{
 	OrderTypeRetrieve, OrderTypeRetrieveEmpty, OrderTypeRetrieveTopsAndBottoms, OrderTypeMove,
 }
 
@@ -44,7 +44,7 @@ var PlainFamily = []protocol.OrderType{
 // label→data conversion (Stage-5 forbidigo carve-out) — every downstream reader
 // keys on order.SourceIntent, never the type.
 //
-// One arm per plain type (PlainFamily, pinned), and no default: a type added to
+// One arm per plain type (plainFamily, pinned), and no default: a type added to
 // the family without an arm here is caught by the pin, not sent quietly to the
 // full finder. Every other type (complex, sourced per leg; an unknown one, which
 // intake refuses) is full, the direction that keeps the scanner's payload guard.
@@ -181,7 +181,7 @@ func IsCoordinated(order *orders.Order) bool {
 // Stage-5 forbidigo carve-out) — a plain-family label stamped coordinated is a
 // construction bug we want surfaced.
 func AssertSimpleNotCoordinated(order *orders.Order) {
-	if order.Coordinated && slices.Contains(PlainFamily, order.OrderType) {
+	if order.Coordinated && slices.Contains(plainFamily, order.OrderType) {
 		log.Printf("CONSTRUCTION BUG: plain-family order %d (%s) is stamped coordinated — "+
 			"the dispatch discriminator (IsCoordinated) will route it to the coordinated tail "+
 			"(role gate + complex reserve/confirm). Fix the intake stamp.", order.ID, order.OrderType)

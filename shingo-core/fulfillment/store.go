@@ -2,9 +2,9 @@ package fulfillment
 
 import (
 	"shingo/protocol"
+	"shingocore/dispatch/plan"
 	"shingocore/domain"
 	"shingocore/store"
-	"shingocore/store/bins"
 	"shingocore/store/nodes"
 	"shingocore/store/orders"
 	"shingocore/store/reservations"
@@ -20,17 +20,21 @@ import (
 //     exercise queue-to-dispatch behaviour without a database.
 //
 // The set below is exactly what the scanner needs — no more, no less: the
-// methods it calls directly on s.db, PLUS the CapacityDB set that
-// CheckDropoffCapacity(s.db, …) requires (GetNodeByDotName, CountBinsByNode,
-// CountInFlightOrdersByDeliveryNodeExcluding, ListChildNodes). After the
-// SourceFinder collapse the finder owns source lookup and returns the bin's node,
-// so the plant-wide finders and the node-by-id read left this interface.
+// methods it calls directly on s.db, and the capacity gate's read set, embedded
+// (plan.CapacityDB), because the scanner hands s.db whole to
+// dispatch.CheckDropoffCapacity. The gate's reads are declared once, there, with
+// the reason each is read; of them the scanner itself calls only
+// GetNodeByDotName. After the SourceFinder collapse the finder owns source
+// lookup and returns the bin's node, so the plant-wide finders and the
+// node-by-id read left this interface.
 //
 // This interface is wider than material or dispatch/binresolver
 // (fulfillment is orchestration, not pure compute) but the goal is
 // the same: make the DB dependency explicit and make the scanner
 // unit-testable in isolation.
 type Store interface {
+	plan.CapacityDB
+
 	// Order reads. ListAcquiringOrders is the scanner's scan set — top-level
 	// orders in {pending, queued} (the acquiring set).
 	ListAcquiringOrders() ([]*orders.Order, error)
@@ -45,28 +49,6 @@ type Store interface {
 	// permanently and correctly) from a defective single-bin order. Shadowed
 	// at dispatchHeldBin for one window before the spelling is cut over.
 	OrderOwnsNoCargo(orderID int64) (bool, error)
-	// CapacityDB: the capacity gate self-excludes the caller's own order.
-	CountInFlightOrdersByDeliveryNodeExcluding(deliveryNode string, excludeID int64) (int, error)
-
-	// Node reads (both are also part of the CapacityDB set).
-	GetNodeByDotName(name string) (*nodes.Node, error)
-	ListChildNodes(parentID int64) ([]*nodes.Node, error)
-	// The two maintained-group level reads. Here because the scanner hands this
-	// interface to dispatch.CheckDropoffCapacity, which consults the level so the
-	// gate and the resolver cannot disagree about whether a group can take a
-	// carrier (MG4-3). The scanner itself reads neither.
-	ListMaintainLevels(groupNodeID int64) ([]nodes.MaintainLevel, error)
-	CountEmptyBinsOfTypeInGroup(binTypeCode string, groupNodeID int64, h domain.Height) (int, error)
-	// The per-node Allowed Bin Types reads, here for the same reason and read by
-	// the scanner itself no more than the two above: the gate must not count a
-	// child free that the resolver will refuse for declaring another carrier type.
-	GetEffectiveBinTypes(nodeID int64) ([]*bins.BinType, error)
-	BinTypeForOrder(orderID int64) (*int64, protocol.CarrierState, error)
-	TopsAndBottomsWant(groupNodeID, binTypeID int64) (int, bool, error)
-	BinTypeBareOf(binTypeID int64) (*int64, error)
-
-	// Bin reads (CapacityDB).
-	CountBinsByNode(nodeID int64) (int, error)
 
 	// Mutations performed on the order during fulfillment.
 	//

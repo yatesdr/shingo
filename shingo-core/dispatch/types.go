@@ -10,7 +10,6 @@ const (
 	OrderTypeRetrieveEmpty          = protocol.OrderTypeRetrieveEmpty
 	OrderTypeRetrieveTopsAndBottoms = protocol.OrderTypeRetrieveTopsAndBottoms
 	OrderTypeMove                   = protocol.OrderTypeMove
-	OrderTypeStore                  = protocol.OrderTypeStore
 	OrderTypeComplex                = protocol.OrderTypeComplex
 	OrderTypeReshuffleRestore       = protocol.OrderTypeReshuffleRestore
 )

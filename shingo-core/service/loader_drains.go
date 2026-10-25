@@ -49,7 +49,9 @@ var ErrDrainTwoStage = errors.New("a two-stage unloader drains nothing: stage 2'
 // seen (named residual, W14).
 var ErrDrainIntoItsSource = errors.New("a drained cart's CLEAR would send it back to be drained")
 
-// ErrNotDrainable refuses a state no box drains (loaders.ErrNotDrainable).
+// ErrNotDrainable refuses a state no box drains. It is loaders.ErrNotDrainable
+// under the name www can reach: www may not import a store package
+// (www-no-direct-store), and its save maps this refusal to a 400.
 var ErrNotDrainable = loaders.ErrNotDrainable
 
 // checkDrains refuses l's drain boxes where they cannot hold, l being the row

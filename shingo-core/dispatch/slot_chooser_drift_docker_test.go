@@ -121,7 +121,7 @@ func setupDriftFixture(t *testing.T, db *store.DB, prefix string, ch driftChoose
 
 	fx.claimant = testdb.CreateOrder(t, db, func(o *orders.Order) {
 		o.EdgeUUID = prefix + "-CLAIMANT"
-		o.OrderType = OrderTypeStore
+		o.OrderType = protocol.OrderTypeStore
 		o.Status = protocol.StatusPending
 		o.PayloadCode = fx.bp.Code
 	})
@@ -163,7 +163,7 @@ var driftHolds = []driftHold{
 	}},
 	{name: "live-delivery-node", apply: func(t *testing.T, db *store.DB, fx *driftFixture) {
 		driftHolder(t, db, fx, func(o *orders.Order) {
-			o.OrderType = OrderTypeStore
+			o.OrderType = protocol.OrderTypeStore
 			o.Status = protocol.StatusQueued
 			o.DeliveryNode = fx.candidate.Name
 		})

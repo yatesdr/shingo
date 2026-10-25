@@ -221,7 +221,7 @@ func (w *windowWalk) fits(row protocol.NodeBinsRow) func(code string) bool {
 	}
 	return func(code string) bool {
 		fs, ok := w.sizes[code]
-		return ok && fs.Same(own)
+		return ok && fs == own
 	}
 }
 

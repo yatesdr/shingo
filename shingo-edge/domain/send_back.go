@@ -73,8 +73,6 @@ type SendBack struct {
 	CanCancel bool `json:"can_cancel"`
 	// QueueReason is the pull's own, Core's sentence; never composed here.
 	QueueReason string `json:"queue_reason"`
-	// Source is where the pull draws from, for the waiting line's words.
-	Source string `json:"source,omitempty"`
 }
 
 // SendBackLine decides the line. Precedence: waiting, then disabled, then
@@ -104,7 +102,7 @@ func SendBackLine(f SendBackFacts) SendBack {
 				line.CanCancel = true
 			}
 			if o.OrderType == protocol.OrderTypeRetrieveTopsAndBottoms {
-				line.QueueReason, line.Source = o.QueueReason, o.SourceNode
+				line.QueueReason = o.QueueReason
 			}
 		}
 		return line

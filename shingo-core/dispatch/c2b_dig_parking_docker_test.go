@@ -184,7 +184,7 @@ func TestC2bPin_AStoreNeverTakesADigsParking(t *testing.T) {
 	}
 
 	store := testdb.CreateOrder(t, db, func(o *orders.Order) {
-		o.OrderType, o.Status = OrderTypeStore, protocol.StatusQueued
+		o.OrderType, o.Status = protocol.OrderTypeStore, protocol.StatusQueued
 	})
 	if got, err := db.FindStoreSlotInLaneExcluding(f.ls.ID, store.ID); err == nil {
 		t.Fatalf("the store selector offered %s, a dig's pencilled parking", got.Name)
@@ -291,7 +291,7 @@ func TestC2bPin_TheJamOf959And963(t *testing.T) {
 	}
 
 	stranger := testdb.CreateOrder(t, db, func(o *orders.Order) {
-		o.OrderType, o.Status = OrderTypeStore, protocol.StatusQueued
+		o.OrderType, o.Status = protocol.OrderTypeStore, protocol.StatusQueued
 	})
 	for _, p := range f.parks {
 		if err := claimStoreSlot(db, stranger, p); err == nil {

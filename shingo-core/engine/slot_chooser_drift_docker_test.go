@@ -82,7 +82,7 @@ var engDriftHolds = []engDriftHold{
 	}},
 	{name: "live-delivery-node", apply: func(t *testing.T, db *store.DB, fx *engDriftFixture) {
 		engDriftHolder(t, db, fx, func(o *orders.Order) {
-			o.OrderType = dispatch.OrderTypeStore
+			o.OrderType = protocol.OrderTypeStore
 			o.Status = protocol.StatusQueued
 			o.DeliveryNode = fx.candidate.Name
 		})

@@ -70,7 +70,7 @@ func TestStage4_SourceIntentForType(t *testing.T) {
 // TestPlainFamily_EveryTypeHasItsIntentAndItsPlanner: the plain family is one
 // list, and each member has its own arm in SourceIntentForType (no default
 // sends a new member to the full finder), is planned by planTransport and is
-// decided ahead of its row. A type added to PlainFamily without an entry here
+// decided ahead of its row. A type added to plainFamily without an entry here
 // fails the count.
 func TestPlainFamily_EveryTypeHasItsIntentAndItsPlanner(t *testing.T) {
 	t.Parallel()
@@ -80,12 +80,12 @@ func TestPlainFamily_EveryTypeHasItsIntentAndItsPlanner(t *testing.T) {
 		OrderTypeRetrieveTopsAndBottoms: SourceIntentTopsAndBottoms,
 		OrderTypeMove:                   SourceIntentLocal,
 	}
-	if len(PlainFamily) != len(want) {
-		t.Fatalf("PlainFamily has %d types, this pin names %d: give the new type its intent here and in SourceIntentForType",
-			len(PlainFamily), len(want))
+	if len(plainFamily) != len(want) {
+		t.Fatalf("plainFamily has %d types, this pin names %d: give the new type its intent here and in SourceIntentForType",
+			len(plainFamily), len(want))
 	}
 	s := newPlanningService(nil, nil, nil, nil, nil, nil, nil)
-	for _, typ := range PlainFamily {
+	for _, typ := range plainFamily {
 		intent, ok := want[typ]
 		if !ok {
 			t.Errorf("%s is plain and this pin does not name its intent", typ)

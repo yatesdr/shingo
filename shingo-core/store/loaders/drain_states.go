@@ -56,16 +56,6 @@ func NewDrainStates(states []protocol.CarrierState) (DrainStates, error) {
 	return drainStatesOf(cols), nil
 }
 
-// Has reports whether the set drains s.
-func (d DrainStates) Has(s protocol.CarrierState) bool {
-	for _, x := range d {
-		if x == s {
-			return true
-		}
-	}
-	return false
-}
-
 // Ticked is the set as the text array the pull binds for
 // helpers.CarrierStateSQL = ANY($n).
 func (d DrainStates) Ticked() []string {

@@ -66,8 +66,6 @@ type Readiness struct {
 	// Prime is each position a carrier is to be brought to: a vacant one with
 	// nothing coming, and every position in Clear, whose carrier leaves first.
 	Prime []string
-	// Vacant is each position with nothing on it, a carrier coming or not.
-	Vacant []string
 }
 
 // Count is the orders the chain makes: one clear per wrong carrier, one prime
@@ -91,7 +89,6 @@ func ChainReadiness(claim *processes.NodeClaim, occupancy map[string]bool, deck 
 	var r Readiness
 	for _, pos := range claim.DependentPositions() {
 		if !isOccupied(occupancy, pos) {
-			r.Vacant = append(r.Vacant, pos)
 			if !deck.Coming[pos] {
 				r.Prime = append(r.Prime, pos)
 			}
