@@ -3,6 +3,7 @@ package dispatch
 import (
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -80,7 +81,7 @@ func TestNoLiteralQueueCauseConversions(t *testing.T) {
 				// cross-package `dispatch.QueueCause("…")`.
 				if strings.Contains(line, `QueueCause("`) {
 					offenders = append(offenders,
-						filepath.ToSlash(rel)+":"+itoa(i+1)+": "+strings.TrimSpace(line))
+						filepath.ToSlash(rel)+":"+strconv.Itoa(i+1)+": "+strings.TrimSpace(line))
 				}
 			}
 		}

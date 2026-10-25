@@ -14,7 +14,7 @@ import (
 )
 
 // TestCensus_AskKinds fences the kinds Core answers on the ask pair
-// (protocol/ask.go), the TestCensus_OrderCreationDoors precedent: the ask pair
+// (protocol/ask.go), the order census's precedent (TestCensus_Issuers): the ask pair
 // must not regrow a surface one undocumented kind at a time.
 //
 // The server is built as main builds it (buildAskServer, over

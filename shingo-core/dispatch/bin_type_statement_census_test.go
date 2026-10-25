@@ -26,7 +26,7 @@ import (
 // reasoning. Every site states its carrier in the call, this list names every
 // site, and a new one fails here until somebody adds it and says which it is.
 //
-// This is the same instrument as TestCensus_OrderCreationDoors, and for the same
+// This is the same instrument as the order census (TestCensus_Issuers), and for the same
 // reason: that list exists because somebody assumed CreateInboundOrder was "the
 // admission path" and the census disproved it. The doors census would not have
 // caught this one — a door is where an order is BORN, and these are where its

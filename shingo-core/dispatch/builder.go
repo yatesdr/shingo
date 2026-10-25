@@ -19,10 +19,11 @@ import (
 //
 // Build turns a door's need and the planner's plan into the order row, through
 // the single INSERT (orders.Create). It decides nothing: a plan whose verdict is
-// not satisfiable never reaches it. The bin move (B2) and the wire door (B3's
-// first) are on it; the others move to it one at a time in B3, and until then
-// they write through orders.Create as they did (TestCensus_OrderCreationDoors
-// names which is which).
+// not satisfiable never reaches it. Every door is on it but complex intake,
+// which writes through the store's CreateOrder, and the compound children (a
+// dig's legs, the home clear's moves), which the store's CreateCompoundChildrenTx
+// writes in the parent's transaction (TestCensus_Issuers names each caller of the
+// INSERT).
 
 // QueryRower is the write surface Build needs, satisfied by *sql.DB and *sql.Tx:
 // the two real call shapes are a door's own transaction and a compound parent's

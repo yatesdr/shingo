@@ -1,12 +1,18 @@
 package dispatch
 
 import (
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
+
+	"shingocore/internal/testdb"
 )
 
 // scanCoreSources returns every non-test .go file in shingo-core, as
@@ -93,7 +99,7 @@ func TestCensus_OrdersTableInsertStatements(t *testing.T) {
 				continue
 			}
 			if strings.Contains(line, "INSERT INTO orders ") {
-				sites = append(sites, p+":"+itoa(i+1))
+				sites = append(sites, p+":"+strconv.Itoa(i+1))
 			}
 		}
 	}
@@ -104,438 +110,329 @@ func TestCensus_OrdersTableInsertStatements(t *testing.T) {
 	}
 }
 
-// writerSymbols is every call that brings an order row into existence, in the
-// spelling a reader would grep for.
+// ── The census of issuers: who brings an order row into existence ─────────────
 //
-// ONE LIST, BOTH ARMS. The census asks two questions — "is this door still a
-// door" and "has a new door opened" — and they used to be asked with different
-// predicates: the existence arm checked all three writer symbols while the
-// completeness arm greped db.CreateOrder( alone. So the direction that exists to
-// catch a NEW way in was blind to a writer reaching the table through
-// orders.Create or CreateCompoundChildren, and the census reported a
-// completeness it had not checked.
+// THE UNIT IS A CALLER, found on go/ast, not a file or a grepped symbol. The
+// census this replaced listed doors by file and asked "does this file call a
+// writer symbol". It could not see a second caller of a door that already
+// existed, and two arrived that way: stage 2's pull reaches the person's bin
+// move (engine.CreateBinMove), and the cancel's return reaches the carried-bin
+// recovery (engine.orderCarriedBinDown). Both stood on no list. What this asks
+// instead is the call graph above the one INSERT: every function on the walk up
+// from orders.Create is named here, with its place on the walk, so a new caller
+// anywhere on it fails until somebody names it.
 //
-// AdmitCoreAsk belongs on this list even though it is not the store call. From a
-// caller's side it IS creation: it builds the order, admits it through the same
-// admission body the wire path uses, and hands back the created row. The two
-// Core timer doors reach the table only through it and carry no store symbol of
-// their own — which is exactly how both of them stood uncounted while both
-// census tests passed green.
-var writerSymbols = []string{
-	"db.CreateOrder(",
-	"orders.Create(",
-	"CreateCompoundChildren(",
-	"AdmitCoreAsk(",
-	// B2: the builder, and the one door that reaches it so far. From the door's
-	// side BirthMove IS creation (the row, the take and the hold, one
-	// transaction), as AdmitCoreAsk is for the timer doors.
-	"BirthMove(",
-	// B3: the builder called in a door's own transaction — the shape both
-	// BirthMove and admission's birth take. Spelled with its first argument so
-	// an unrelated Build (cms/wire) is not read as a writer.
-	"Build(tx, ",
-	// B3: the builder in a transaction of its own, which admission's birth and
-	// Dispatcher.Birth share.
-	"birthOwnTx(",
-	// And its face for a door outside dispatch (carried-bin recovery).
-	"dispatcher.Birth(",
+// Calls are matched by name and by how the receiver is spelt (callGraph), not
+// by type: the tree has more than one function called birth, admit or Build, and
+// the spelling is what tells them apart. A walk entry that names its callee's
+// spelling wrongly reports itself as unreached, never as silently passed.
+//
+// What each door's order HOLDS at its issue is the docker arm's question
+// (TestIssueCensus_AtCommit in this package and in engine), read from the one
+// table both arms share: testdb.IssueDoors.
+
+// issueRole is a function's place on the walk up from the INSERT.
+type issueRole int
+
+const (
+	// issueFace writes the row or is the issue's own face: the builder and the
+	// store's writers. The walk goes on from it.
+	issueFace issueRole = iota
+	// issueSite calls the issue: the census row (testdb.IssueDoors names the
+	// doors it serves). The walk goes on from it.
+	issueSite
+	// issueThrough is a door's body between its entry and the issue. The walk
+	// goes on from it.
+	issueThrough
+	// issueOpener is where a door is entered: a person's page, the wire, a
+	// timer, a trigger. The walk stops; who reaches an opener is the door's own
+	// business (TestCensus_PersonDoors names the pages).
+	issueOpener
+)
+
+// issueEntry is one function on the walk: its place, how a call to it is spelt
+// (the receiver's last name, "" for a bare call), and what it is.
+type issueEntry struct {
+	role  issueRole
+	spelt []string
+	what  string
 }
 
-// writesOrders reports whether a source file brings orders into existence.
-func writesOrders(src string) bool {
-	for _, sym := range writerSymbols {
-		if strings.Contains(src, sym) {
-			return true
+// insertCallers are the production functions calling orders.Create. The end
+// state of the one issue is one: the issue itself.
+var insertCallers = map[string]string{
+	"dispatch/builder.go:Build":                "the builder: a door's need and the planner's plan, as the row",
+	"store/orders.go:DB.CreateOrder":           "the store's own writer, in a transaction of its own: complex intake's",
+	"store/orders.go:CreateCompoundChildrenTx": "a compound parent's children, in the parent's transaction: the digs' and the home clear's",
+}
+
+// issueWalk is every function on the walk up from orders.Create.
+var issueWalk = map[string]issueEntry{
+	// The faces: the builder and the store's writers.
+	"dispatch/builder.go:Build":                 {issueFace, []string{"", "dispatch"}, "the builder over the one INSERT"},
+	"dispatch/builder.go:birthOwnTx":            {issueFace, []string{""}, "Build in a transaction of its own"},
+	"dispatch/builder.go:birthNamedMove":        {issueFace, []string{""}, "a move naming its bin: the at-source check, the hold marker, Build"},
+	"dispatch/builder.go:Dispatcher.BirthMove":  {issueFace, []string{"d", "dispatcher"}, "a person's move: Build, the take, the bin's hold"},
+	"dispatch/builder.go:Dispatcher.Birth":      {issueFace, []string{"dispatcher"}, "birthOwnTx's face outside dispatch"},
+	"store/orders.go:DB.CreateOrder":            {issueFace, []string{"db"}, "the store's writer in a transaction of its own"},
+	"store/orders.go:DB.CreateCompoundChildren": {issueFace, []string{"db"}, "a dig's children in a transaction of their own"},
+	"store/orders.go:CreateCompoundChildrenTx":  {issueFace, []string{"", "store"}, "a compound's children in the caller's transaction"},
+
+	// The sites: each calls the issue, and testdb.IssueDoors says what its
+	// doors' orders hold at commit.
+	"dispatch/lifecycle_service.go:LifecycleService.birth":            {issueSite, []string{"s", "lifecycle"}, "admission's birth: the wire's orders and the Core asks"},
+	"dispatch/complex_intake.go:Dispatcher.handleComplexOrderRequest": {issueSite, []string{"d"}, "complex intake"},
+	"dispatch/compound.go:Dispatcher.writeCompoundChildren":           {issueSite, []string{"d"}, "a dig's legs"},
+	"dispatch/loader_drain.go:Dispatcher.drainMove":                   {issueSite, []string{"d"}, "the loader drain's move"},
+	"engine/bin_move.go:Engine.CreateBinMove":                         {issueSite, []string{"e", "orchestration"}, "a bin move"},
+	"engine/carried_bin_recovery.go:Engine.birthAndDispatchRecovery":  {issueSite, []string{"e"}, "the carried-bin recovery's unit"},
+	"dispatch/clear_home.go:Dispatcher.BirthClearTx":                  {issueSite, []string{"dispatcher"}, "the home clear: its parent and the partial's move"},
+	"dispatch/clear_home.go:Dispatcher.birthClearSpot":                {issueSite, []string{"d"}, "the home clear: the empty's move to the open spot"},
+	"dispatch/clear_home.go:Dispatcher.birthClearTrade":               {issueSite, []string{"d"}, "the home clear: the trade's two moves"},
+
+	// A door's body on the way: the walk goes on through it.
+	"dispatch/loader_replenish.go:Dispatcher.AdmitCoreAsk":      {issueThrough, []string{"d", "dispatcher"}, "the Core ask through admission"},
+	"engine/carried_bin_recovery.go:Engine.orderCarriedBinDown": {issueThrough, []string{"e"}, "the recovery's door body, which two openers reach"},
+
+	// The openers: where a door is entered.
+	"dispatch/lifecycle_service.go:LifecycleService.CreateInboundOrder": {issueOpener, nil, "the wire intake (a plain order or a named move)"},
+	"dispatch/loader_replenish.go:Dispatcher.admitReplenishOrder":       {issueOpener, nil, "loader replenish: the loader's ask"},
+	"engine/maintainer.go:Maintainer.createAsks":                        {issueOpener, nil, "the maintained-group level keeper's ask"},
+	"dispatch/complex_intake.go:Dispatcher.HandleComplexOrderRequest":   {issueOpener, nil, "complex intake's door, under the scan lock"},
+	"dispatch/compound.go:Dispatcher.createCompoundOrder":               {issueOpener, nil, "a dig's compound, every dig planner's"},
+	"dispatch/loader_drain.go:Dispatcher.drainLocked":                   {issueOpener, nil, "the loader drain's pass, under the loader's lock"},
+	"www/handlers_orders.go:Handlers.fileBinMove":                       {issueOpener, nil, "a person's bin move: the Orders and Bins pages"},
+	"www/handlers_test_orders_direct.go:Handlers.apiDirectOrderSubmit":  {issueOpener, nil, "a person's bin move: the /test-orders direct form"},
+	"engine/stage2_pull.go:Engine.PullStage2": {issueOpener, nil, "STAGE 2'S PULL: a Core errand that reaches the person's bin move " +
+		"and inherits its take; its own row is the census's to give it (the window move)"},
+	"engine/carried_bin_recovery.go:Engine.RecoverCarriedBin": {issueOpener, nil, "the Recover button on an anomaly"},
+	"engine/cancel_return.go:Engine.tryReturnCarriedBin": {issueOpener, nil, "THE CANCEL'S RETURN: an order cancelled while its robot " +
+		"carries a bin opens the recovery's door with nobody pressing it"},
+	"engine/clear_home.go:Engine.birthClear":              {issueOpener, nil, "the home clear's door, in the station's transaction"},
+	"dispatch/clear_home.go:Dispatcher.ChooseClearLocked": {issueOpener, nil, "the home clear's choice at confirm: the spot arm"},
+	"dispatch/clear_home.go:Dispatcher.chooseClearTrade":  {issueOpener, nil, "the home clear's choice at confirm: the trade"},
+}
+
+// callee is one call in a function's body: the receiver's last name ("" for a
+// bare call) and the called name.
+type callee struct{ recv, name string }
+
+// callGraph is every declared function, "file:Recv.Func", and the calls in its
+// body, closures included.
+type callGraph map[string][]callee
+
+func newCallGraph(t *testing.T, sources map[string]string) callGraph {
+	t.Helper()
+	g := callGraph{}
+	fset := token.NewFileSet()
+	for path, src := range sources {
+		f, err := parser.ParseFile(fset, path, src, 0)
+		if err != nil {
+			t.Fatalf("parse %s: %v", path, err)
+		}
+		for _, d := range f.Decls {
+			fd, ok := d.(*ast.FuncDecl)
+			if !ok || fd.Body == nil {
+				continue
+			}
+			key := path + ":" + fd.Name.Name
+			if fd.Recv != nil && len(fd.Recv.List) > 0 {
+				rt := fd.Recv.List[0].Type
+				if st, ok := rt.(*ast.StarExpr); ok {
+					rt = st.X
+				}
+				if id, ok := rt.(*ast.Ident); ok {
+					key = path + ":" + id.Name + "." + fd.Name.Name
+				}
+			}
+			ast.Inspect(fd.Body, func(x ast.Node) bool {
+				call, ok := x.(*ast.CallExpr)
+				if !ok {
+					return true
+				}
+				switch fn := call.Fun.(type) {
+				case *ast.SelectorExpr:
+					g[key] = append(g[key], callee{lastName(fn.X), fn.Sel.Name})
+				case *ast.Ident:
+					g[key] = append(g[key], callee{"", fn.Name})
+				}
+				return true
+			})
 		}
 	}
-	return false
+	return g
 }
 
-// unnamedWriters is the completeness arm's whole judgement, lifted out so it can
-// be run against a synthetic tree as well as the real one. A census that can
-// only be exercised against the code it already describes cannot demonstrate
-// that it would catch anything.
-func unnamedWriters(sources map[string]string, named map[string]bool) []string {
-	var unnamed []string
-	for p, src := range sources {
-		if writesOrders(src) && !named[p] {
-			unnamed = append(unnamed, p)
+// callersOf is every function calling name spelt through one of recvs.
+func (g callGraph) callersOf(name string, recvs []string) []string {
+	var out []string
+	for k, calls := range g {
+		if slices.ContainsFunc(calls, func(c callee) bool { return c.name == name && slices.Contains(recvs, c.recv) }) {
+			out = append(out, k)
+		}
+	}
+	slices.Sort(out)
+	return out
+}
+
+// funcName is a walk key's bare function name: "Build" for "dispatch/builder.go:Build".
+func funcName(key string) string {
+	return key[strings.LastIndexAny(key, ":.")+1:]
+}
+
+// walkIssuers walks up from orders.Create and reports every function reached
+// that the walk does not name, and every named function the walk did not reach.
+func walkIssuers(g callGraph, walk map[string]issueEntry) (unnamed, unreached []string) {
+	reached := map[string]bool{}
+	queue := g.callersOf("Create", []string{"orders"})
+	for len(queue) > 0 {
+		k := queue[0]
+		queue = queue[1:]
+		if reached[k] {
+			continue
+		}
+		reached[k] = true
+		e, ok := walk[k]
+		if !ok {
+			unnamed = append(unnamed, k)
+			continue
+		}
+		if e.role != issueOpener {
+			queue = append(queue, g.callersOf(funcName(k), e.spelt)...)
+		}
+	}
+	for k := range walk {
+		if !reached[k] {
+			unreached = append(unreached, k)
 		}
 	}
 	slices.Sort(unnamed)
-	return unnamed
+	slices.Sort(unreached)
+	return unnamed, unreached
 }
 
-// door is one way an order can come to exist, described by what a person or a
-// system does rather than by where the code lives.
+// TestCensus_Issuers pins every way an order comes to exist, by its callers.
 //
-// The file list this replaced counted eight "doors" and was wrong in both
-// directions, because a file is not a door. service/order_service.go was
-// counted as a delegate three surfaces called; the census then found that no
-// surface called it at all, and the delegate was deleted rather than described
-// (see the note where its Create used to be). engine/orders.go is reached only
-// from the /test-orders page, so one file was a test harness rather than an
-// operator action. And the buried-reshuffle branch was counted as its own door
-// until it turned out to be building the same row complex intake builds — one
-// door that looked like two. Meanwhile the two Core timer doors, which no file
-// list ever named, were writing orders the whole time.
-//
-// Counting files answered "how many places call the writer". What anyone
-// actually needs to know is "how many ways can an order appear, and what does
-// each of them check" — because that is the question behind every gate
-// decision, every projection scope, and every blank origin_class.
-type door struct {
-	name string // what the door IS, in the words someone would use out loud
-	site string // where it starts, module-root-relative
-	who  string // who or what opens it
-}
-
-// TestCensus_OrderCreationDoors pins every way an order can come to exist.
-//
-// The Core-native loader design was written on the premise that
-// CreateInboundOrder is "the admission path", with a Core originator added
-// beside it as the second entry point. That premise does not survive a census:
-// most of the doors below never go near it. Extracting a shared admission body
-// is still right for the wire path and the new originator — but it is one door
-// among several, not THE one, and anything hung off admission covers only what
-// routes through it.
-//
-// The immediate consequence is the Edge order projection: orders from the other
-// doors do not pass through admission, so a projection emitted there will not
-// carry them and the Edge board stays blind to them, exactly as it is today.
-// That may be the right first scope. It has to be a decision rather than an
-// oversight, which is what this test exists to force.
-func TestCensus_OrderCreationDoors(t *testing.T) {
+// Three things are asserted: who calls the one INSERT (insertCallers; the end
+// state of the one issue is one caller, the issue); that every function on the
+// walk up from it is named, and every name is still on the walk (issueWalk);
+// and that the census table both arms read (testdb.IssueDoors) names the walk's
+// sites and nothing else.
+func TestCensus_Issuers(t *testing.T) {
 	t.Parallel()
-	doors := []door{
-		{"Edge wire intake", "dispatch/lifecycle_service.go", "an Edge station sends an order request"},
-		{"complex intake", "dispatch/complex_intake.go", "an Edge station sends a multi-leg order; the buried branch is this same door"},
-		{"compound children", "dispatch/compound.go", "a reshuffle plan, written as child rows in one transaction"},
-		// The "restore synthetic" door that stood here is gone: the restore-blockers
-		// subsystem that minted those parents is retired (no code creates them; the
-		// one-shot boot sweep only cancels leftovers). No order-creation site, no door.
-		// One door, two screens. It was two doors — the operator's orders page
-		// and the engineers' /test-orders page — which had drifted twelve ways
-		// between them, and each difference was a bug waiting its turn. They
-		// are one function now; the screens differ only in whether a person
-		// names the bin or names the node to take one off.
-		//
-		// The three questions this list exists to ask, answered:
-		//  1. Projects to the Edge? No. It writes the row itself rather than
-		//     routing through admission, so it is outside the projection scope
-		//     — the same answer both doors gave separately.
-		//  2. Needs the dropoff-capacity gate? Yes, and it consults it, before
-		//     the row and before any claim so a refusal leaves the bin alone.
-		//  3. What origin_class? no_demand, stamped at creation. Somebody
-		//     moving a bin from A to B is not a place asking for material, so
-		//     there is no episode; blank would land it in the bucket that means
-		//     "we lost a demand link".
-		{"bin move", "engine/bin_move.go", "a person moving one bin from where it is to somewhere else — the operator names the bin, the engineer names the node"},
-		// The one door that is about a ROBOT rather than about material. A bin
-		// riding a deck has nothing coming to fetch it — the order that was
-		// carrying it is terminal — so this asks that robot, and only that
-		// robot, to set the bin down somewhere.
-		//
-		// The three questions:
-		//  1. Projects to the Edge? No. It writes the row itself, like the bin-move
-		//     door beside it, so it is outside the projection scope. That is the
-		//     right answer here for a second reason as well: no Edge station asked
-		//     for this order and none of them owns the bin. It is Core reconciling
-		//     its own bookkeeping with the floor.
-		//  2. Needs the dropoff-capacity gate? Yes, and it takes the real slot
-		//     reservation: ReserveStorageDropoff before ConfirmForDispatch, which
-		//     also settles a group destination to a concrete child. Its own
-		//     three-tier destination search additionally refuses any node that is
-		//     occupied or claimed before it gets that far.
-		//  3. What origin_class? no_demand, by omission — and deliberately. No
-		//     place asked for material; a bin is in the wrong state and Core is
-		//     putting it right. An episode here would count a recovery as demand
-		//     and read every plant's demand history high by however many bins got
-		//     dropped that month.
-		{"carried-bin recovery", "engine/carried_bin_recovery.go", "an operator pressing Recover on the bins page — Core then asks the robot holding the stranded bin to put it down"},
-		// THE TWO CORE TIMER DOORS. Both mint retrieve_empty orders nobody on the
-		// Edge requested, both reach the orders table through AdmitCoreAsk and
-		// admission rather than writing a row, and both stood on no list at all
-		// until the completeness arm was widened to see them. The two doors that
-		// fire with nobody watching were the two nothing counted.
-		//
-		// They are TWO doors and not one, for the reason this list exists: a door
-		// is a way an order comes to exist, and a shared body is not that. Two
-		// different systems ask for two different reasons under two different
-		// bounds — the same distinction that made one delegate file three doors
-		// before the delegate turned out to be dead.
-		//
-		// The three questions, loader replenish:
-		//  1. Projects to the Edge? YES, and this is THE case the projection
-		//     exists for. It routes through admission, so it is inside the
-		//     scope; and no Edge station asked for the order, so without the
-		//     projection an operator watches a robot arrive at a window with
-		//     nothing on the board to say why.
-		//  2. Needs the dropoff-capacity gate? Yes, and it consults it per window
-		//     at decision time, with no order of its own to exclude. It then asks
-		//     a SECOND question the gate cannot answer — is a carrier already on
-		//     order for this window — because the gate does not count `queued`,
-		//     and that blindness is what let one dry loader stack 241 identical
-		//     asks at a single window, roughly one a minute.
-		//  3. What origin_class? Whatever the replenish request carries, and never
-		//     blank: AdmitCoreAsk stamps `attached` when an episode id is in hand
-		//     and `orphan` when neither is, rather than defaulting a
-		//     correctly-attributed order into the bucket that exists to find lost
-		//     attributions.
-		{"loader replenish", "dispatch/loader_replenish.go", "nobody — a loader's windows are below level and the replenishment loop asks for empty carriers"},
-		// The three questions, maintained-group level keeper:
-		//  1. Projects to the Edge? Yes, through the same body and for the same
-		//     reason — nobody on the Edge asked, so nobody there has a row.
-		//  2. Needs the dropoff-capacity gate? It does not consult it, and that is
-		//     a decision rather than an omission. The ask is bounded twice before
-		//     it is made: the keeper's own arithmetic subtracts what it already
-		//     asked for and what is already coming (want − resident − asked −
-		//     coming), and ResolveStore refuses a group already at its declared
-		//     level and hands back one concrete free slot. The destination is
-		//     pre-resolved for exactly this reason — one ask per free typed slot,
-		//     so there is no second ask to gate.
-		//  3. What origin_class? `attached`, stated at the call site rather than
-		//     defaulted. The keeper opened the episode itself and knows what it is.
-		{"maintained-group level keeper", "engine/maintainer.go", "nobody — a maintained group holds fewer empty carriers than its declared level and the maintainer's timer tops it up"},
-		// THE HOME CLEAR (dispatch/clear_home.go). A station clears a dedicated
-		// loader's home; Core authors the job: a compound parent (the clear's
-		// row, delivering to the home) and plain-move children — the partial's
-		// move at confirm, the empty's move on the spot arm or the trade —
-		// written through Build(tx, ...) and CreateCompoundChildrenTx in the
-		// door's transaction. On the trade the two moves are born
-		// sibling-linked (the partial's move re-planned in place,
-		// orders.BindTradeLegTx), each holding its drop after its lift on the
-		// other's.
-		//
-		// The three questions:
-		//  1. Projects to the Edge? YES, pushed by the door itself: the parent
-		//     and every child (projectClear), because none goes through
-		//     admission and the station asked for the job, so its board must
-		//     show the moves it caused. The projection census lists the door.
-		//  2. Needs the dropoff-capacity gate? Not at birth. On the demand and
-		//     spot arms the partial's move is held before dispatch on the
-		//     vacate fact (the home's carrier lifted off it), and the spot is
-		//     chosen free to the plain gate (ClearSpot); on the trade each drop
-		//     is held after its lift on the vacate fact of the bin standing
-		//     there, and appended only once that bin has left. From birth each
-		//     child's drop counts inbound to its node (the dig-leg arm), which
-		//     keeps other orders off them.
-		//  3. What origin_class? no_demand, stated at birth: the station asked
-		//     for housekeeping, and no place is asking for material.
-		{"home clear", "dispatch/clear_home.go", "an Edge station clearing a dedicated loader's home — Core declares the carrier empty and brings a buffer partial home"},
-		// THE LOADER DRAIN (dispatch/loader_drain.go, W14). An unloader with a
-		// drain box ticked: Core moves a part-less cart of that state from the
-		// unloader's inbound source into a free window, naming the cart, through
-		// the bin move's planner and builder (PlanMove, BirthMove).
-		//
-		// The three questions:
-		//  1. Projects to the Edge? Not its row: like the bin move it writes its
-		//     row outside admission, so no station has one. Its material notices
-		//     (order.delivered, bin_picked_up) go to the window's Edge
-		//     (Need.Projects), which binds the cart where it lands, as stage 2's
-		//     pull's do.
-		//  2. Needs the dropoff-capacity gate? Yes, through the bin move's plan
-		//     (plan.moveDestination), after the window was found free by the
-		//     predicate stage 2 shares (FreeWindows); and the scanner's re-run
-		//     before dispatch, as every move.
-		//  3. What origin_class? no_demand, stated at birth: no place asked for
-		//     material; the unloader clears a cart it was set up to clear.
-		{"loader drain", "dispatch/loader_drain.go", "nobody, or the crew's save that ticks a drain box — an unloader with a drain box ticked has a free window and a cart of that state in its inbound source"},
-		// THE LANE SELF-HEAL DOOR IS DELETED (§R.104), and it is not merely moved:
-		// nothing takes its place, because the order it used to create does not
-		// exist. Its entry read "nobody — the lane gate finds a robot dwelling
-		// behind a bin no one is coming for, and digs it out", and its comment
-		// explained that it "mints the parent that OWNS the excavation, because the
-		// dweller cannot: {staged → reshuffling} is not a legal transition and
-		// should not become one, so the demand keeps dwelling and something else
-		// does the digging."
-		//
-		// The dweller can. It owns its excavation without moving at all — no
-		// transition is needed because its resume is the splice-append, not the
-		// queue round-trip. So the excavation's children are written by the
-		// compound door like every other dig's, and this list is one door shorter
-		// rather than one door renamed. The three questions it answered are now
-		// the compound door's, unchanged.
-	}
+	g := newCallGraph(t, scanCoreSources(t))
 
-	// Each named door has to still be there. A door whose site stops writing
-	// orders has either moved or been merged, and either way this list is now
-	// describing a system that does not exist.
-	sources := scanCoreSources(t)
-	for _, d := range doors {
-		src, ok := sources[d.site]
-		if !ok {
-			t.Errorf("door %q names %s, which no longer exists", d.name, d.site)
-			continue
-		}
-		if !writesOrders(src) {
-			t.Errorf("door %q (%s) no longer creates orders. If it moved, say where; if it merged into another door, delete the entry and widen that one's description.",
-				d.name, d.site)
-		}
-	}
+	sameSites(t, "the callers of the one INSERT (orders.Create)",
+		g.callersOf("Create", []string{"orders"}), insertCallers,
+		"The issue is the one way a row is written. A new caller of orders.Create is a second issue: route it through the one there is.")
 
-	// THE DOORS ON THE BUILDER (B2, B3): each reaches the single INSERT through
-	// dispatch.Build, by the call named here, and the file that defines that
-	// call hands Build its own transaction. A door joins this list in the commit
-	// that moves it; the rest still write through orders.Create as they did.
-	// Each entry is the door's call, the file defining it, and what that file
-	// calls next on the way to Build.
-	onBuild := map[string]struct{ call, definedIn, next string }{
-		"bin move":                      {"BirthMove(", "dispatch/builder.go", "Build(tx, need, p)"},
-		"loader drain":                  {"BirthMove(", "dispatch/builder.go", "Build(tx, need, p)"},
-		"Edge wire intake":              {"s.birth(", "dispatch/lifecycle_service.go", "birthOwnTx("},
-		"loader replenish":              {"AdmitCoreAsk(", "dispatch/loader_replenish.go", "d.lifecycle.birth("},
-		"maintained-group level keeper": {"AdmitCoreAsk(", "dispatch/loader_replenish.go", "d.lifecycle.birth("},
-		"carried-bin recovery":          {"e.dispatcher.Birth(", "dispatch/builder.go", "birthOwnTx("},
-	}
-	for _, d := range doors {
-		b, ok := onBuild[d.name]
-		if !ok {
-			continue
-		}
-		if !strings.Contains(sources[d.site], b.call) {
-			t.Errorf("door %q (%s) no longer reaches the builder through %s", d.name, d.site, b.call)
-		}
-		if !strings.Contains(sources[b.definedIn], b.next) {
-			t.Errorf("door %q: %s defines %s but no longer calls %s on the way to Build", d.name, b.definedIn, b.call, b.next)
-		}
-	}
-	if !strings.Contains(sources["dispatch/builder.go"], "func birthOwnTx(") ||
-		strings.Count(sources["dispatch/builder.go"], "Build(tx, need, p)") < 2 {
-		t.Error("dispatch/builder.go: birthOwnTx and BirthMove no longer both call Build in their transaction")
-	}
-
-	// Plumbing a door reaches THROUGH, named so that "not a door" is a stated
-	// judgement rather than an omission. This is the distinction the old
-	// file-counting version could not make, and the reason it counted eight.
-	delegates := map[string]string{
-		"store/orders.go":     "the writer itself; every door reaches the orders table through this file, which is why there is one INSERT and not several",
-		"dispatch/builder.go": "the one builder (B2): Build over the single INSERT, and the transactions of BirthMove and of a move naming its bin (birthNamedMove); the bin move, the loader drain, the wire door and the two Core asks reach it now, and B3 moves the other doors to it",
-	}
-
-	// And no site may start writing orders without being named as a door. This
-	// is the direction that catches a new way in.
-	named := map[string]bool{}
-	for _, d := range doors {
-		named[d.site] = true
-	}
-	for site := range delegates {
-		named[site] = true
-	}
-	unnamed := unnamedWriters(sources, named)
+	unnamed, unreached := walkIssuers(g, issueWalk)
 	if len(unnamed) > 0 {
-		t.Errorf("these create orders and are not named as a door: %s\n"+
-			"Add one, in the words someone would use out loud, and answer three questions in the same commit:\n"+
+		t.Errorf("these reach the issue and are not named on the walk: %s\n"+
+			"Name each in issueWalk with its place (a site that issues, a door's body, or the opener where the door is entered).\n"+
+			"A new site is a census row: add it to testdb.IssueDoors with what its order holds at commit, and answer three questions in the same commit:\n"+
 			"  1. Does it project to the Edge? (only what routes through admission does)\n"+
 			"  2. Does it need the dropoff-capacity gate?\n"+
 			"  3. What origin_class do its rows carry? A blank is a row nothing can explain later.",
 			strings.Join(unnamed, ", "))
 	}
+	if len(unreached) > 0 {
+		t.Errorf("these are named on the walk and no longer reach the issue: %s\n"+
+			"If a door moved, name where; if it merged into another, delete the entry and widen that one.",
+			strings.Join(unreached, ", "))
+	}
+
+	sites := map[string]bool{}
+	for k, e := range issueWalk {
+		if e.role == issueSite {
+			sites[k] = true
+		}
+	}
+	served := map[string]bool{}
+	for _, d := range testdb.IssueDoors {
+		if !sites[d.Site] {
+			t.Errorf("census door %q names site %s, which the walk does not name as a site", d.Name, d.Site)
+		}
+		served[d.Site] = true
+	}
+	for s := range sites {
+		if !served[s] {
+			t.Errorf("site %s issues orders and no census door names it (testdb.IssueDoors)", s)
+		}
+	}
 }
 
-// itoa avoids pulling strconv in for one call.
-func itoa(n int) string {
-	if n == 0 {
-		return "0"
-	}
-	var b []byte
-	for n > 0 {
-		b = append([]byte{byte('0' + n%10)}, b...)
-		n /= 10
-	}
-	return string(b)
-}
-
-// TestCensus_CompletenessArmSeesEveryWriterSymbol is the census pointed at
-// itself: a new production file that creates orders must fail the census until
-// somebody names it as a door.
-//
-// It exists because the arm was silently half-blind. The existence arm checked
-// all the writer symbols; the completeness arm — the ONE direction that can
-// catch a way in nobody has thought of yet — greped db.CreateOrder( alone. A new
-// file reaching the table through orders.Create, CreateCompoundChildren or
-// AdmitCoreAsk passed straight through it, which is not a hypothetical: two Core
-// timer doors did exactly that, and both census tests stayed green while they
-// did. Against the real tree that blindness is invisible, because the tree's own
-// db.CreateOrder( sites all happen to be named. So the arm is run here against a
-// synthetic tree, one symbol at a time.
-func TestCensus_CompletenessArmSeesEveryWriterSymbol(t *testing.T) {
+// TestCensus_IssuersSeeANewCaller is the census pointed at itself: a function
+// that starts calling the issue, or a door's entry, must fail the walk until it
+// is named. Against the real tree that cannot be shown (every caller there is
+// named), so the walk runs here over a synthetic tree.
+func TestCensus_IssuersSeeANewCaller(t *testing.T) {
 	t.Parallel()
-	// The doors named at the time the new file appears. Deliberately not the
-	// real list: this test is about the ARM, not about today's census.
-	named := map[string]bool{"dispatch/existing_door.go": true}
-
-	for _, sym := range writerSymbols {
-		t.Run(sym, func(t *testing.T) {
-			const newDoor = "dispatch/brand_new_door.go"
-			sources := map[string]string{
-				"dispatch/existing_door.go": "package dispatch\n\nfunc old() { " + sym + "o) }\n",
-				newDoor:                     "package dispatch\n\nfunc brandNew() { " + sym + "o) }\n",
-			}
-			got := unnamedWriters(sources, named)
-			if len(got) != 1 || got[0] != newDoor {
-				t.Errorf("a new file calling %s was reported as %v, want [%s].\n"+
-					"The completeness arm has to check every symbol the existence arm checks, or a door can open through the ones it skips.",
-					sym, got, newDoor)
-			}
-		})
+	walk := map[string]issueEntry{
+		"dispatch/builder.go:Build":  {issueFace, []string{""}, "the builder"},
+		"dispatch/door.go:openIt":    {issueSite, []string{""}, "a site"},
+		"www/page.go:Handlers.press": {issueOpener, nil, "an opener"},
 	}
-}
-
-// TestCensus_CompletenessArmIgnoresNonWriters keeps the arm from crying wolf:
-// a file that does not create orders is not an unnamed door, and an arm that
-// flags everything gets whitelisted into uselessness.
-func TestCensus_CompletenessArmIgnoresNonWriters(t *testing.T) {
-	t.Parallel()
 	sources := map[string]string{
-		"dispatch/reader.go": "package dispatch\n\nfunc r() { db.GetOrder(1) }\n",
+		"dispatch/builder.go": "package dispatch\n\nfunc Build() { orders.Create(nil, nil) }\n",
+		"dispatch/door.go":    "package dispatch\n\nfunc openIt() { Build() }\n",
+		"www/page.go":         "package www\n\nfunc (h *Handlers) press() { openIt() }\n",
+		"dispatch/new.go":     "package dispatch\n\nfunc brandNew() { Build() }\n",
+		"engine/timer.go":     "package engine\n\nfunc tick() { openIt() }\n",
 	}
-	if got := unnamedWriters(sources, map[string]bool{}); len(got) != 0 {
-		t.Errorf("unnamedWriters flagged non-writers: %v", got)
+	unnamed, unreached := walkIssuers(newCallGraph(t, sources), walk)
+	want := []string{"dispatch/new.go:brandNew", "engine/timer.go:tick"}
+	if !slices.Equal(unnamed, want) || len(unreached) != 0 {
+		t.Errorf("unnamed = %v, unreached = %v; want unnamed %v and none unreached.\n"+
+			"A new caller of the issue, and a new caller of a site, must both be reported.", unnamed, unreached, want)
 	}
 }
 
-// TestCensus_OrderReceivedAtBirth asks every order-creation door one more
-// question: does the order report its receipt (EmitOrderReceived) when it is
-// born? Everything that hears an order arrive hangs off that event — the bins
-// feed's push of the node it delivers to (cmd/shingocore/bins_feed.go), the
-// audit row, Core's own pages — so a door that does not emit is seen by them at
-// dispatch, not at birth. The comment that said "a Core-originated order emits
-// its own event" was false for every Core door until AdmitCoreAsk emitted
+// TestCensus_OrderReceivedAtBirth asks every census door one more question:
+// does the order report its receipt (EmitOrderReceived) when it is issued?
+// Everything that hears an order arrive hangs off that event — the bins feed's
+// push of the node it delivers to (cmd/shingocore/bins_feed.go), the audit row,
+// Core's own pages — so a door that does not emit is seen by them at dispatch,
+// not at its issue. The comment that said "a Core-originated order emits its own
+// event" was false for every Core door until AdmitCoreAsk emitted
 // (TestPinCoreAsk_TheAskIsReceivedAtBirth). The answer per door is stated here;
 // a new door must give one.
 func TestCensus_OrderReceivedAtBirth(t *testing.T) {
 	t.Parallel()
-	// site -> the file whose source must (emitsIn != "") or must not (emitsIn
-	// == "") carry the emit, and why.
+	// door -> the file whose source must (emitsIn != "") or must not (emitsIn
+	// == "") carry the emit, and why. A door without an emit is asked of its
+	// site's file.
 	answers := map[string]struct{ emitsIn, why string }{
-		"dispatch/lifecycle_service.go":  {"dispatch/lifecycle_service.go", "the Edge wire intake: receipt of a request, with the sender's values"},
-		"dispatch/complex_intake.go":     {"dispatch/complex_intake.go", "a multi-leg Edge request: the same receipt"},
-		"dispatch/loader_replenish.go":   {"dispatch/loader_replenish.go", "AdmitCoreAsk, the loader replenishment's ask: Core's part and window"},
-		"engine/maintainer.go":           {"dispatch/loader_replenish.go", "the maintained-group keeper reaches the orders table through AdmitCoreAsk"},
-		"dispatch/compound.go":           {"", "a dig's children: internal moves under a parent already received; seen at dispatch"},
-		"engine/bin_move.go":             {"", "a person moving one bin from Core's pages; no Edge asked; seen at dispatch"},
-		"engine/carried_bin_recovery.go": {"", "Core putting a carried bin down; no Edge asked; seen at dispatch"},
-		"dispatch/clear_home.go":         {"", "the home clear: the door's own bin push (engine/clear_home.go notifyBinChanged) rebuilds the home's watchers at birth"},
-		"dispatch/loader_drain.go":       {"", "a drain's move: Core-born, no Edge asked, as the bin move is; seen at dispatch"},
+		"wire plain order":              {"dispatch/lifecycle_service.go", "the Edge wire intake: receipt of a request, with the sender's values"},
+		"wire named move":               {"dispatch/lifecycle_service.go", "the same receipt"},
+		"complex intake":                {"dispatch/complex_intake.go", "a multi-leg Edge request: the same receipt"},
+		"loader replenish":              {"dispatch/loader_replenish.go", "AdmitCoreAsk, the loader replenishment's ask: Core's part and window"},
+		"maintained-group level keeper": {"dispatch/loader_replenish.go", "the keeper reaches the orders table through AdmitCoreAsk"},
+		"dig legs":                      {"", "a dig's children: internal moves under a parent already received; seen at dispatch"},
+		"person's bin move":             {"", "a person moving one bin from Core's pages; no Edge asked; seen at dispatch"},
+		"stage 2's pull":                {"", "a pull Core makes; no Edge asked; seen at dispatch"},
+		"carried-bin recovery":          {"", "Core putting a carried bin down; no Edge asked; seen at dispatch"},
+		"the cancel's return":           {"", "the same, with nobody pressing anything"},
+		"home clear":                    {"", "the home clear: the door's own bin push (engine/clear_home.go notifyBinChanged) rebuilds the home's watchers at its issue"},
+		"home clear's child":            {"", "the same"},
+		"home clear's spot move":        {"", "the same"},
+		"home clear's trade":            {"", "the same"},
+		"loader drain":                  {"", "a drain's move: Core-born, no Edge asked, as the bin move is; seen at dispatch"},
 	}
 	sources := scanCoreSources(t)
-	named := map[string]bool{"store/orders.go": true, "dispatch/builder.go": true}
-	for site, a := range answers {
-		named[site] = true
-		if _, ok := sources[site]; !ok {
-			t.Errorf("%s no longer exists; say where its door went", site)
+	for _, d := range testdb.IssueDoors {
+		a, ok := answers[d.Name]
+		if !ok {
+			t.Errorf("census door %q does not say whether its order is received at its issue", d.Name)
 			continue
 		}
+		site := d.Site[:strings.Index(d.Site, ":")]
 		emits := strings.Contains(sources[a.emitsIn], "EmitOrderReceived(")
 		switch {
 		case a.emitsIn != "" && !emits:
-			t.Errorf("%s: %s no longer emits EmitOrderReceived (%s)", site, a.emitsIn, a.why)
+			t.Errorf("%s: %s no longer emits EmitOrderReceived (%s)", d.Name, a.emitsIn, a.why)
 		case a.emitsIn == "" && strings.Contains(sources[site], "EmitOrderReceived("):
-			t.Errorf("%s now emits EmitOrderReceived; move it to the emitting answers (was: %s)", site, a.why)
+			t.Errorf("%s: %s now emits EmitOrderReceived; move it to the emitting answers (was: %s)", d.Name, site, a.why)
 		}
-	}
-	if unnamed := unnamedWriters(sources, named); len(unnamed) > 0 {
-		t.Errorf("these create orders and do not say whether they are received at birth: %s", strings.Join(unnamed, ", "))
 	}
 }

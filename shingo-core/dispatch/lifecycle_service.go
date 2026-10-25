@@ -249,11 +249,12 @@ func (s *LifecycleService) projectOrder(order *orders.Order) {
 // Core-authored order has no sender), and the received event.
 //
 // This is NOT the only way an order comes into existence in Core — see
-// TestCensus_OrderCreationDoors for the whole list. Of the nine doors there,
-// THREE route through admission (the Edge wire intake above, and the two Core
-// timer doors by way of AdmitCoreAsk); the other six write their row another
-// way. So anything hung off admission covers three doors in nine, which is the
-// number to hold in mind before saying "every order gets this".
+// testdb.IssueDoors for the whole list (TestCensus_Issuers holds it to the
+// tree). Four of its doors route through admission (the wire's plain order and
+// named move above, and the two Core timer doors by way of AdmitCoreAsk); the
+// rest write their row another way. So anything hung off admission covers four
+// doors of the census, which is the number to hold in mind before saying "every
+// order gets this".
 func (s *LifecycleService) admit(order *orders.Order, birth func() error) *lifecycleError {
 	destNode, lerr := s.checkOrderRefs(order)
 	if lerr != nil {

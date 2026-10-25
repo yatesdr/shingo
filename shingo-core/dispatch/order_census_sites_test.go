@@ -213,8 +213,8 @@ func TestCensus_DropoffCapacityGateSites(t *testing.T) {
 // TestCensus_FleetTransportCreateIsNotADoor names every call to a fleet
 // backend's CreateOrder, and says why none of them is an order-creation door.
 //
-// The name collides with the order writer (db.CreateOrder), and writerSymbols
-// deliberately spells the store call with its receiver so the collision cannot
+// The name collides with the order writer (db.CreateOrder), and the issue census
+// (issueWalk) spells the store call with its receiver, so the collision cannot
 // count a vendor transport as an order row. This is the other half: the
 // transport calls are named, so "not a door" is a stated judgement.
 func TestCensus_FleetTransportCreateIsNotADoor(t *testing.T) {

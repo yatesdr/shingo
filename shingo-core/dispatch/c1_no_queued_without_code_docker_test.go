@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -85,7 +86,7 @@ func TestLadder_TheTransitionIsTheOnlyStatusWriter(t *testing.T) {
 				continue
 			}
 			if writer.MatchString(line) && !strings.HasSuffix(slash, "dispatch/lifecycle.go") {
-				callers = append(callers, slash+":"+itoa(i+1))
+				callers = append(callers, slash+":"+strconv.Itoa(i+1))
 			}
 		}
 		return nil
