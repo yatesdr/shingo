@@ -1801,8 +1801,7 @@ func TestFedShapeIsTheDependentPositions_ThroughTheSave(t *testing.T) {
 			t.Errorf("%s: the save stored %q/%q, the table's row is %q/%q", c.Name,
 				ask.PairedCoreNode, ask.SecondPairedCoreNode, row.Paired, row.SecondPaired)
 		}
-		_, claimed := byNode[ask.PairedCoreNode]
-		fed := domain.FedShape(ask.PairedCoreNode, ask.PairedCoreNode != "" && claimed)
+		fed := domain.FedShape(ask.PairedCoreNode, domain.PairedClaimed(&ask, byNode))
 		dependent := len(ask.DependentPositions()) > 0
 		if fed != c.WantFed || dependent != c.WantFed {
 			t.Errorf("%s (%s): FedShape = %v, DependentPositions = %v, want both %v\nwhy this case exists: %s",

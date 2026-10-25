@@ -57,19 +57,19 @@ func (e *Engine) sendBackCellOf(node *processes.Node, claim *processes.NodeClaim
 }
 
 // sendBackFacts reads the line's facts for a press, as the board reads them
-// from its own rows: the running style's claim on the paired position, the
-// press's and the outside's live orders and its runtime slots, the bins
-// copy's rows for the outside and the press, and whether a changeover is
-// armed on the process.
+// from its own rows: the claim's style's claims by core node (whether one
+// stands on the paired position, domain.PairedClaimed), the press's and the
+// outside's live orders and its runtime slots, the bins copy's rows for the
+// outside and the press, and whether a changeover is armed on the process.
 func (e *Engine) sendBackFacts(c sendBackCell, runtime *processes.RuntimeState) (domain.SendBackFacts, error) {
 	f := domain.SendBackFacts{Produce: c.claim.Role == protocol.ClaimRoleProduce, Paired: c.claim.PairedCoreNode,
 		Outbound: c.claim.OutboundDestination, OutsideNode: c.outside != nil}
 	if c.claim.PairedCoreNode != "" {
-		paired, err := e.db.GetStyleNodeClaimByNode(c.claim.StyleID, c.claim.PairedCoreNode)
-		if err != nil && !errors.Is(err, sql.ErrNoRows) {
-			return f, fmt.Errorf("claim on %s: %w", c.claim.PairedCoreNode, err)
+		byStyle, err := processes.ClaimsByNodeForStyles(e.db.DB, []int64{c.claim.StyleID})
+		if err != nil {
+			return f, fmt.Errorf("claims of %s's style: %w", c.node.Name, err)
 		}
-		f.PairedClaimed = err == nil && paired != nil
+		f.PairedClaimed = domain.PairedClaimed(c.claim, byStyle[c.claim.StyleID])
 	}
 	if !f.Produce || !domain.FedShape(f.Paired, f.PairedClaimed) || c.outside == nil {
 		return f, nil
@@ -179,7 +179,7 @@ func sendBackAtStart(plan *changeoverPlan, live []domain.Order) ([]int64, error)
 	for i := range plan.fromClaims {
 		c := &plan.fromClaims[i]
 		if !changing[c.CoreNodeName] || c.Role != protocol.ClaimRoleProduce ||
-			!domain.FedShape(c.PairedCoreNode, claimed[c.PairedCoreNode]) {
+			!domain.FedShape(c.PairedCoreNode, domain.PairedClaimed(c, claimed)) {
 			continue
 		}
 		id, ok := nodeOf[c.PairedCoreNode]

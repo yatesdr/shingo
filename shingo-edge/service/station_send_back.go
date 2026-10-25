@@ -24,7 +24,7 @@ func (s *StationService) sendBackOutsides(nodes []processes.Node, active map[str
 		if !ok || c.Role != protocol.ClaimRoleProduce {
 			continue
 		}
-		if _, claimed := active[c.PairedCoreNode]; !domain.FedShape(c.PairedCoreNode, claimed) {
+		if !domain.FedShape(c.PairedCoreNode, domain.PairedClaimed(&c, active)) {
 			continue
 		}
 		if !asked {
@@ -46,8 +46,7 @@ func sendBackFacts(node processes.Node, process *processes.Process, claim *proce
 	if claim == nil || claim.Role != protocol.ClaimRoleProduce {
 		return nil
 	}
-	_, claimed := b.activeClaims[claim.PairedCoreNode]
-	if !domain.FedShape(claim.PairedCoreNode, claimed) {
+	if !domain.FedShape(claim.PairedCoreNode, domain.PairedClaimed(claim, b.activeClaims)) {
 		return nil
 	}
 	f := &domain.SendBackFacts{Produce: true, Paired: claim.PairedCoreNode, Outbound: claim.OutboundDestination,

@@ -3,8 +3,8 @@
 // no core node of a claim of the same process and style, so the paired
 // position is the outside cart's and the press draws its totes from it. Core
 // asks it in SQL (store/bins FedClaimSQL); the Edge asks it in Go
-// (domain.FedShape, SEND BACK's line). Each side's test reads this table, so
-// the two cannot drift.
+// (domain.FedShape over domain.PairedClaimed, SEND BACK's line). Each side's
+// test reads this table, so the two cannot drift.
 //
 // The shape is role-blind: a consume press of the shape reads fed. The roles
 // SEND BACK serves are the line's own test (domain.SendBackLine), not this

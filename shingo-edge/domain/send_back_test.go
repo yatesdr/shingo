@@ -9,16 +9,17 @@ import (
 
 // TestFedShape_TheSharedShapeTable: the Edge's shape test answers every case
 // Core's FedClaimSQL answers (shared/fedshape): the paired position names no
-// claim of the case's claims.
+// claim of the case's claims, asked through PairedClaimed over those claims by
+// core node, as SEND BACK's gatherers ask it.
 func TestFedShape_TheSharedShapeTable(t *testing.T) {
 	t.Parallel()
 	for _, c := range fedshape.MustLoad() {
-		ask := c.AskClaim()
-		claimed := false
+		byNode := map[string]NodeClaim{}
 		for _, cl := range c.Claims {
-			claimed = claimed || (ask.Paired != "" && cl.Node == ask.Paired)
+			byNode[cl.Node] = NodeClaim{CoreNodeName: cl.Node, PairedCoreNode: cl.Paired, SecondPairedCoreNode: cl.SecondPaired}
 		}
-		if got := FedShape(ask.Paired, claimed); got != c.WantFed {
+		ask := byNode[c.Ask]
+		if got := FedShape(ask.PairedCoreNode, PairedClaimed(&ask, byNode)); got != c.WantFed {
 			t.Errorf("%s: FedShape = %v, want %v\nwhy this case exists: %s", c.Name, got, c.WantFed, c.Why)
 		}
 	}

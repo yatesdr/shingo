@@ -35,6 +35,20 @@ func FedShape(paired string, pairedClaimed bool) bool {
 	return paired != "" && !pairedClaimed
 }
 
+// PairedClaimed is FedShape's second fact, derived once: whether a claim of the
+// press's style stands on its paired position. styleClaims is that style's
+// claims keyed by core node, as each gatherer already holds them — the board's
+// running style (StationService), START's outgoing style, the route's read —
+// and only its keys are read. The shared table pins this with FedShape against
+// Core's FedClaimSQL (TestFedShape_TheSharedShapeTable).
+func PairedClaimed[V any](claim *NodeClaim, styleClaims map[string]V) bool {
+	if claim == nil || claim.PairedCoreNode == "" {
+		return false
+	}
+	_, ok := styleClaims[claim.PairedCoreNode]
+	return ok
+}
+
 // SendBackFacts is what the line is decided from. The caller reads them; the
 // decision reads nothing.
 type SendBackFacts struct {
