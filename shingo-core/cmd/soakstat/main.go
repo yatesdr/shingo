@@ -222,8 +222,9 @@ type pairStats struct {
 	histWedges    int
 	histOldestMin float64
 	// vacatedHolds is the press tranche's wedge: a pair leg parked
-	// reserve-holding while its line holds no bin, past vacatedHoldBound on
-	// the sim clock (vacatedLineHolds). Zero is the bar.
+	// reserve-holding while its fed press's dependent position holds no bin,
+	// past vacatedHoldBound on the sim clock (vacatedLineHolds). Zero is the
+	// bar.
 	vacatedHolds     int
 	vacatedOldestMin float64
 	ttdN             int
@@ -563,17 +564,26 @@ func historyWedges(db *store.DB) (int, float64, error) {
 	return n, oldest, nil
 }
 
-// vacatedHoldBound is how long a pair leg may hold its reserve with its line
-// empty before vacatedLineHolds counts it: a swap's own lift empties the line
-// for a few sim-seconds, and a carrier coming to it lands in a few sim-minutes.
+// vacatedHoldBound is how long a pair leg may hold its reserve with its
+// dependent position empty before vacatedLineHolds counts it: a swap's own
+// lift empties the position briefly, and a carrier coming to it lands in a few
+// sim-minutes.
 const vacatedHoldBound = "10 minutes"
 
 // vacatedLineHolds counts the pair legs (a sibling named) parked
-// reserve-holding while their process node (the line) holds no bin, whose last
-// history row is older than vacatedHoldBound against the newest history row
-// (the sim clock), and the oldest such age in sim-minutes. The press tranche's
-// sim reads zero here: a pair at a vacant line re-anchors or holds for a carrier
-// coming, it does not sit. -1 when the query fails.
+// reserve-holding at a press fed from behind while a dependent position of the
+// press holds no bin: the active claim at the leg's station and process node
+// is fed (bins.FedClaimSQL), and its paired or second paired position, the
+// positions Core's vacant fallback re-anchors (dispatch dependentSource), is
+// vacant. Counted when the leg's last history row is older than
+// vacatedHoldBound against the newest history row (the sim clock), with the
+// oldest such age in sim-minutes. The press's own line is not what is asked:
+// keyed on it, the count missed a pair at a held press with a vacant on-deck
+// and counted one at a vacant press with its on-deck held. The bar is zero: a
+// pair at a vacant dependent position re-anchors to its claim's inbound source
+// or holds for a carrier coming (holding-for-outside, not counted); one that
+// sits reserve-holding there is the wedge. -1 when the query fails.
+// Pin: TestVacatedLineHolds_APairAtAVacantDependentPosition.
 func vacatedLineHolds(db *store.DB) (int, float64, error) {
 	var n int
 	var oldest float64
@@ -582,10 +592,15 @@ func vacatedLineHolds(db *store.DB) (int, float64, error) {
 		     held AS (
 		       SELECT o.id, MAX(h.created_at) AS at
 		       FROM orders o JOIN order_history h ON h.order_id = o.id
-		       WHERE o.status = $1 AND o.queue_cause = $2
-		         AND o.sibling_order_uuid <> '' AND o.process_node <> ''
-		         AND NOT EXISTS (SELECT 1 FROM bins b JOIN nodes n ON n.id = b.node_id
-		                          WHERE n.name = o.process_node)
+		       WHERE o.status = $1 AND o.queue_cause = $2 AND o.sibling_order_uuid <> ''
+		         AND EXISTS (SELECT 1 FROM style_claims sc
+		                     JOIN process_styles ps ON ps.process_id = sc.process_id AND ps.style_id = sc.style_id
+		                     CROSS JOIN LATERAL (VALUES (sc.paired_core_node), (sc.second_paired_core_node)) d(pos)
+		                     WHERE ps.is_active AND ps.station_id = o.station_id AND sc.core_node_name = o.process_node
+		                       AND `+bins.FedClaimSQL("sc")+`
+		                       AND d.pos <> ''
+		                       AND NOT EXISTS (SELECT 1 FROM bins b JOIN nodes n ON n.id = b.node_id
+		                                        WHERE n.name = d.pos))
 		       GROUP BY o.id)
 		SELECT COUNT(*), COALESCE(MAX(EXTRACT(EPOCH FROM ((SELECT t FROM now_sim) - at)) / 60.0), 0)
 		FROM held WHERE at < (SELECT t FROM now_sim) - interval '`+vacatedHoldBound+`'`,

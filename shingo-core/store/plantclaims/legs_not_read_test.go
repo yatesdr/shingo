@@ -98,6 +98,7 @@ var sanctionedLegReaders = map[string]string{
 	"store/bins/fed_claim.go":          "the fed press's shape (FedClaimSQL) and where it draws from for a vacant pickup at its outside or second paired position (FedInboundSource)",
 	"store/bins/tote_lift.go":          "the lift's tote hook: is the node a fed cell's outside position (FedClaimSQL), and which press is its front",
 	"store/sourceability/read.go":      "the two-minute pass's claim load carries inbound_source for the forecaster (D2.1); the verdict does not read it",
+	"cmd/soakstat/main.go":             "the sim reader's vacated-line holds: a pair parked while its fed press's paired or second paired position holds no bin, the shape composed through FedClaimSQL; read-only instrumentation",
 }
 
 // TestLegColumnsHaveOnlySanctionedReaders walks shingo-core for any file that
