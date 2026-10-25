@@ -116,30 +116,33 @@ func TestLiveOrderPlacing_ReadsTheLiveRowsThroughTheLiveIndex(t *testing.T) {
 }
 
 // TestLiveOrderPlacing_Answers — what the statement answers, row by row, at
-// node A. A leg's places come from its persisted release facts; a plain order
-// (no steps) places at its delivery node; a leg with steps and no facts (a row
-// older than the column) reads as placing; a leg whose steps are none ("null"
-// or "[]", as legFacts reads them) places nowhere; a terminal row is not live;
-// and live facts that do not parse are unreadable, which outranks nothing
-// placing and is outranked by any row that is.
+// node A, keyed on the row's type. A leg's places come from its persisted
+// release facts; a plain order places at its delivery node, with or without a
+// plan; a leg with no facts (steps never stored, as a row Core projected down,
+// or a row older than the column) reads as placing; a leg whose steps are none
+// ("null" or "[]", as legFacts reads them) places nowhere; a terminal row is
+// not live; and live facts that do not parse are unreadable, which outranks
+// nothing placing and is outranked by any row that is.
 func TestLiveOrderPlacing_Answers(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
 		name string
-		rows []string // status | steps_json | release_facts ("NULL" for none) | delivery_node
+		rows []string // order_type | status | steps_json | release_facts ("NULL" for none) | delivery_node
 		want orders.Placing
 	}{
 		{"no orders", nil, orders.PlacingNone},
-		{"a leg placing at A", []string{`staged|[{}]|{"places":["A"]}|`}, orders.PlacingCarrier},
-		{"a leg placing elsewhere", []string{`staged|[{}]|{"places":["B"]}|A`}, orders.PlacingNone},
-		{"a leg placing nowhere", []string{`staged|[{}]|{"role":"departing"}|A`}, orders.PlacingNone},
-		{"a terminal leg placing at A", []string{`confirmed|[{}]|{"places":["A"]}|`}, orders.PlacingNone},
-		{"a plain order to A", []string{`in_transit|||A`}, orders.PlacingCarrier},
-		{"a plain order elsewhere", []string{`in_transit|||B`}, orders.PlacingNone},
-		{"a pre-facts leg", []string{`in_transit|[{}]|NULL|`}, orders.PlacingCarrier},
-		{"a leg with no steps", []string{`in_transit|null|NULL|A`, `in_transit|[]|NULL|A`}, orders.PlacingNone},
-		{"unreadable facts", []string{`staged|[{}]|{"places":|`}, orders.PlacingUnreadable},
-		{"unreadable facts beside a placing leg", []string{`staged|[{}]|{"places":|`, `staged|[{}]|{"places":["A"]}|`}, orders.PlacingCarrier},
+		{"a leg placing at A", []string{`complex|staged|[{}]|{"places":["A"]}|`}, orders.PlacingCarrier},
+		{"a leg placing elsewhere", []string{`complex|staged|[{}]|{"places":["B"]}|A`}, orders.PlacingNone},
+		{"a leg placing nowhere", []string{`complex|staged|[{}]|{"role":"departing"}|A`}, orders.PlacingNone},
+		{"a terminal leg placing at A", []string{`complex|confirmed|[{}]|{"places":["A"]}|`}, orders.PlacingNone},
+		{"a plain order to A", []string{`retrieve|in_transit||NULL|A`}, orders.PlacingCarrier},
+		{"a plain order elsewhere", []string{`retrieve|in_transit||NULL|B`}, orders.PlacingNone},
+		{"a plain order elsewhere, carrying a plan", []string{`move|in_transit|[{}]|NULL|B`}, orders.PlacingNone},
+		{"a leg whose steps were never stored, delivering elsewhere", []string{`complex|in_transit||NULL|B`}, orders.PlacingCarrier},
+		{"a pre-facts leg", []string{`complex|in_transit|[{}]|NULL|`}, orders.PlacingCarrier},
+		{"a leg with no steps", []string{`complex|in_transit|null|NULL|A`, `complex|in_transit|[]|NULL|A`}, orders.PlacingNone},
+		{"unreadable facts", []string{`complex|staged|[{}]|{"places":|`}, orders.PlacingUnreadable},
+		{"unreadable facts beside a placing leg", []string{`complex|staged|[{}]|{"places":|`, `complex|staged|[{}]|{"places":["A"]}|`}, orders.PlacingCarrier},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -150,12 +153,12 @@ func TestLiveOrderPlacing_Answers(t *testing.T) {
 			defer db.Close()
 			for i, r := range tc.rows {
 				f := strings.Split(r, "|")
-				var facts any = f[2]
-				if f[2] == "NULL" {
+				var facts any = f[3]
+				if f[3] == "NULL" {
 					facts = nil
 				}
 				if _, err := db.DB.Exec(`INSERT INTO orders (uuid, order_type, status, steps_json, release_facts, delivery_node)
-					VALUES (?, 'complex', ?, ?, ?, ?)`, fmt.Sprintf("u%d", i), f[0], f[1], facts, f[3]); err != nil {
+					VALUES (?, ?, ?, ?, ?, ?)`, fmt.Sprintf("u%d", i), f[0], f[1], f[2], facts, f[4]); err != nil {
 					t.Fatalf("insert %q: %v", r, err)
 				}
 			}
@@ -181,9 +184,9 @@ func TestLiveOrderPlacing_OneStatementAnswersEachNode(t *testing.T) {
 		t.Fatalf("open: %v", err)
 	}
 	defer db.Close()
-	for i, r := range [][3]string{{`[{}]`, `{"places":["B"]}`, ``}, {``, ``, `A`}} {
+	for i, r := range [][4]string{{`complex`, `[{}]`, `{"places":["B"]}`, ``}, {`retrieve`, ``, ``, `A`}} {
 		if _, err := db.DB.Exec(`INSERT INTO orders (uuid, order_type, status, steps_json, release_facts, delivery_node)
-			VALUES (?, 'complex', 'staged', ?, ?, ?)`, fmt.Sprintf("u%d", i), r[0], r[1], r[2]); err != nil {
+			VALUES (?, ?, 'staged', ?, ?, ?)`, fmt.Sprintf("u%d", i), r[0], r[1], r[2], r[3]); err != nil {
 			t.Fatalf("insert: %v", err)
 		}
 	}

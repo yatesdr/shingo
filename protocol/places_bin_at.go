@@ -71,9 +71,25 @@ func PlacesBinAt(steps []ComplexOrderStep, node string) bool {
 // which is authoritative for it. A complex order's delivery node is a display
 // value (Core stores its last dropoff), the wrong answer for a 3-position R2.
 //
-// The caller decodes the steps, and a caller that cannot read or decode a row
-// treats it as placing: the Edge's orderPlacesBinAtAny and placingAtSQL, and
-// Core's "coming" read.
+// The caller decodes the steps; given none, this answers placing nowhere. A
+// complex row whose steps a reader cannot establish is the reader's to judge,
+// and they differ:
+//
+//   - the Edge's orderPlacesBinAtAny reads a row it cannot read, steps never
+//     stored (a row Core projected down) and steps that do not decode as
+//     placing;
+//   - the Edge's placingAtSQL and the SEND BACK line's PlacesAt read a leg with
+//     no release facts (steps never stored, or older than the column) as
+//     placing at every node asked, and facts that do not parse as placing (the
+//     SQL ranks them unreadable, which its callers treat as placing); a leg
+//     created with no steps ("null" or "[]") places nowhere for the SQL and
+//     everywhere for PlacesAt, whose facts cannot tell it from the first;
+//   - Core's CarrierComingTo reads steps that do not decode as coming and a
+//     complex row with no steps as not coming, a row Core never holds (its
+//     intake refuses a complex order with none).
+//
+// shared/comingvectors pins the projected row as placing everywhere asked,
+// over the Edge's three readers.
 func OrderPlacesBinAt(orderType OrderType, steps []ComplexOrderStep, deliveryNode, node string) bool {
 	if orderType == OrderTypeComplex {
 		return PlacesBinAt(steps, node)

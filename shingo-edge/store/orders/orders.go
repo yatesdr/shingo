@@ -896,17 +896,19 @@ const (
 )
 
 // placingAtSQL answers PlacingAt in one statement over the live rows, for
-// every asked node at once (?1 is the asked nodes as a JSON array). Each live
-// row is read the way the release reads a leg (engine legFacts, release.Facts),
-// and is the SQL twin of protocol.OrderPlacesBinAt:
+// every asked node at once (?1 is the asked nodes as a JSON array). It is the
+// SQL twin of protocol.OrderPlacesBinAt, KEYED ON THE TYPE as that rule is,
+// never on whether steps are present. A complex leg is read the way the
+// release reads it (engine legFacts, release.Facts):
 //
-//   - steps_json empty: a plain order (retrieve, store, move, or a row Core
-//     projected down), which leaves its bin at delivery_node. Only those
-//     rows are read, by the join.
-//   - steps_json "null" or "[]": a leg with no steps, which leaves a bin
-//     nowhere (legFacts.none). Excluded by the join.
-//   - steps and no release_facts: a leg older than the column. Read as
-//     placing at every asked node: its facts are not stored, and the answer
+//   - any other type: a plain order (retrieve, store, move, ...), which leaves
+//     its bin at delivery_node whatever plan it carries. Only that node is
+//     read, by the join.
+//   - a complex leg whose steps_json is "null" or "[]": a leg with no steps,
+//     which leaves a bin nowhere (legFacts.none). Excluded by the join.
+//   - a complex leg with no release_facts: its steps were never stored (a row
+//     Core projected down) or it is older than the column. Read as placing at
+//     every asked node: its shape cannot be established here, and the answer
 //     must not drop a hold a carrier is coming for.
 //   - release_facts that are not JSON: unreadable (1). The CASE keeps
 //     json_each off them, which would fail the whole statement.
@@ -915,24 +917,26 @@ const (
 //     lifts from, and delivery_node on a complex leg is display only, so a leg
 //     whose delivery_node is blank is still found by its places.
 //
-// No part is read: a changeover's and a press-index leg carry the outgoing
-// part on the leg that places the incoming carrier. MAX ranks placing (2) over
-// unreadable (1) over none (0), per asked node. The status term is spelled as
-// TerminalStatusSQLList renders it, so the read walks the live rows through
-// the partial index idx_orders_live_process_node (pinned by
-// store TestLiveOrderPlacing_ReadsTheLiveRowsThroughTheLiveIndex), a few dozen
-// on a plant, not every order the Edge has held: one snapshot for the set,
-// never one statement per node.
+// Pinned against the rule by engine TestComingVectors_TheEdgesReadersAgree
+// (shared/comingvectors). No part is read: a changeover's and a press-index
+// leg carry the outgoing part on the leg that places the incoming carrier. MAX
+// ranks placing (2) over unreadable (1) over none (0), per asked node. The
+// status term is spelled as TerminalStatusSQLList renders it, so the read
+// walks the live rows through the partial index idx_orders_live_process_node
+// (pinned by store TestLiveOrderPlacing_ReadsTheLiveRowsThroughTheLiveIndex),
+// a few dozen on a plant, not every order the Edge has held: one snapshot for
+// the set, never one statement per node.
 var placingAtSQL = `SELECT a.value, COALESCE(MAX(CASE
 		WHEN o.id IS NULL THEN 0
-		WHEN o.steps_json = '' THEN 2
+		WHEN o.order_type <> '` + string(protocol.OrderTypeComplex) + `' THEN 2
 		WHEN COALESCE(o.release_facts, '') = '' THEN 2
 		WHEN NOT json_valid(o.release_facts) THEN 1
 		WHEN EXISTS (SELECT 1 FROM json_each(o.release_facts, '$.places') p WHERE p.value = a.value) THEN 2
 		ELSE 0 END), 0)
 	FROM json_each(?1) a
 	LEFT JOIN orders o ON o.status NOT IN (` + protocol.TerminalStatusSQLList() + `)
-	  AND ((o.steps_json = '' AND o.delivery_node = a.value) OR o.steps_json NOT IN ('', 'null', '[]'))
+	  AND CASE o.order_type WHEN '` + string(protocol.OrderTypeComplex) + `' THEN o.steps_json NOT IN ('null', '[]')
+	      ELSE o.delivery_node = a.value END
 	GROUP BY a.value`
 
 // PlacingAt reports, for each node, whether a live order is placing a carrier

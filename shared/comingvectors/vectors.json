@@ -1,5 +1,14 @@
 [
   {
+    "name": "complex/steps never stored (a row Core projected)",
+    "order_type": "complex",
+    "delivery_node": "LINE",
+    "places": {
+      "B": true,
+      "LINE": true
+    }
+  },
+  {
     "name": "plain/move off the on-deck to the outbound",
     "order_type": "move",
     "delivery_node": "OUT",
@@ -13,6 +22,25 @@
     "delivery_node": "B",
     "places": {
       "B": true
+    }
+  },
+  {
+    "name": "plain/retrieve to the on-deck, carrying Core's plan",
+    "order_type": "retrieve",
+    "steps": [
+      {
+        "action": "pickup",
+        "node": "IN"
+      },
+      {
+        "action": "dropoff",
+        "node": "B"
+      }
+    ],
+    "delivery_node": "B",
+    "places": {
+      "B": true,
+      "IN": false
     }
   },
   {

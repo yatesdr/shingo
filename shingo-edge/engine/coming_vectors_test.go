@@ -4,13 +4,19 @@ import (
 	"bytes"
 	"encoding/json"
 	"flag"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
 	"testing"
 
 	"shingo/protocol"
+	"shingo/protocol/testutil"
 	"shingo/shared/comingvectors"
+	"shingoedge/domain"
+	"shingoedge/release"
+	"shingoedge/store"
+	"shingoedge/store/orders"
 	"shingoedge/store/processes"
 )
 
@@ -23,7 +29,9 @@ var comingVectorsPath = filepath.Join("..", "..", "shared", "comingvectors", "ve
 // buildComingVectors is every leg shape the builders write, steady state and
 // changeover, for every swap mode, both roles, flipped and unflipped, two and
 // three positions where the mode has them, plus the plain orders; each with
-// protocol.OrderPlacesBinAt's answer at every node it names.
+// protocol.OrderPlacesBinAt's answer at every node it names. Then the two
+// stored shapes the type decides (a plain order carrying a plan, a complex row
+// with no steps stored).
 func buildComingVectors(t *testing.T) []comingvectors.Case {
 	t.Helper()
 	var out []comingvectors.Case
@@ -99,6 +107,17 @@ func buildComingVectors(t *testing.T) []comingvectors.Case {
 	add("plain/retrieve_empty to the on-deck", protocol.OrderTypeRetrieveEmpty, nil, "B")
 	add("plain/move off the on-deck to the outbound", protocol.OrderTypeMove, nil, "OUT")
 	add("plain/store to the outbound", protocol.OrderTypeStore, nil, "OUT")
+	// The type decides, not whether steps are present. A plain order carrying
+	// the transport plan Core persists at dispatch still places at its delivery
+	// node alone; and a complex row whose steps were never stored (Core's
+	// reconcile projects an order down without them) is a leg whose shape
+	// cannot be established, so it reads as placing at every node asked, its
+	// display delivery node and a node it never names alike (the caller's
+	// rule, protocol/places_bin_at.go), not as a plain order at its delivery.
+	add("plain/retrieve to the on-deck, carrying Core's plan", protocol.OrderTypeRetrieve,
+		[]protocol.ComplexOrderStep{{Action: protocol.ActionPickup, Node: "IN"}, {Action: protocol.ActionDropoff, Node: "B"}}, "B")
+	out = append(out, comingvectors.Case{Name: "complex/steps never stored (a row Core projected)",
+		OrderType: string(protocol.OrderTypeComplex), DeliveryNode: "LINE", Places: map[string]bool{"LINE": true, "B": true}})
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	return out
 }
@@ -124,4 +143,77 @@ func TestComingVectors_AreTheBuildersShapes(t *testing.T) {
 			"  cd shingo-edge && go test ./engine/ -run TestComingVectors_AreTheBuildersShapes -update-coming-vectors\n" +
 			"and run Core's TestComingVectors_CoreAgreesOverStoredRows (docker) on the new file.")
 	}
+}
+
+// TestComingVectors_TheEdgesReadersAgree is the Edge's readers over the shared
+// file: every case, stored as the Edge stores its row (storeComingVector), is
+// answered at every node it names as the case says, by each of the three reads
+// that ask "is a carrier coming to X" here: the live-placing SQL (store
+// PlacingAt: REQUEST's dependent positions, the produce hold), the SEND BACK
+// line's placing fact (domain, over rows in hand) and the changeover gates'
+// orderPlacesBinAtAny (over the stored steps).
+func TestComingVectors_TheEdgesReadersAgree(t *testing.T) {
+	t.Parallel()
+	db := testEngineDB(t)
+	e := &Engine{db: db}
+	cases, err := comingvectors.Cases()
+	testutil.MustNoErr(t, err, "the vectors")
+	for i, c := range cases {
+		row := storeComingVector(t, db, i, c)
+		for node, want := range c.Places {
+			placing, err := db.LiveOrderPlacing(node)
+			testutil.MustNoErr(t, err, c.Name+" at "+node)
+			wantPlacing := orders.PlacingNone
+			if want {
+				wantPlacing = orders.PlacingCarrier
+			}
+			if placing[node] != wantPlacing {
+				t.Errorf("%s: PlacingAt %s = %v, the vectors say placing %v", c.Name, node, placing[node], want)
+			}
+			line := domain.SendBackFacts{Paired: node}
+			line.OrderFacts([]orders.Order{*row}, nil)
+			if line.PlacingAtOutside != want {
+				t.Errorf("%s: SEND BACK's placing at %s = %v, the vectors say %v", c.Name, node, line.PlacingAtOutside, want)
+			}
+			if got := e.orderPlacesBinAtAny(row, []string{node}); got != want {
+				t.Errorf("%s: orderPlacesBinAtAny %s = %v, the vectors say %v", c.Name, node, got, want)
+			}
+		}
+		testutil.MustNoErr(t, db.UpdateOrderStatus(row.ID, string(protocol.StatusCancelled)), "retire "+c.Name)
+	}
+}
+
+// storeComingVector writes a case's row as the Edge writes one, live: a
+// complex leg as its create does (its steps and the release facts computed
+// from them, orders/manager_create.go); a complex row with no steps as Core's
+// projection lands it (UpsertProjection stores none); a plain order as its
+// create does, with the plan Core persists when the case carries one (no Edge
+// door writes a plain row's steps; the store's writer does).
+func storeComingVector(t *testing.T, db *store.DB, i int, c comingvectors.Case) *orders.Order {
+	t.Helper()
+	typ, uuid := protocol.OrderType(c.OrderType), fmt.Sprintf("cv-%d", i)
+	if typ == protocol.OrderTypeComplex && len(c.Steps) == 0 {
+		_, err := orders.UpsertProjection(db.DB, orders.ProjectionRow{UUID: uuid, OrderType: typ,
+			Status: string(protocol.StatusDispatched), DeliveryNode: c.DeliveryNode})
+		testutil.MustNoErr(t, err, c.Name)
+		row, err := db.GetOrderByUUID(uuid)
+		testutil.MustNoErr(t, err, c.Name)
+		return row
+	}
+	id, err := db.CreateOrder(uuid, typ, nil, typ == protocol.OrderTypeRetrieveEmpty, 1, c.DeliveryNode,
+		"", "", "", false, "", "", "")
+	testutil.MustNoErr(t, err, c.Name)
+	switch {
+	case typ == protocol.OrderTypeComplex:
+		var steps []protocol.ComplexOrderStep
+		testutil.MustNoErr(t, json.Unmarshal(c.Steps, &steps), c.Name)
+		facts, err := release.FactsFromSteps(steps, "LINE").Encode()
+		testutil.MustNoErr(t, err, c.Name)
+		testutil.MustNoErr(t, db.UpdateOrderStepsAndFacts(id, string(c.Steps), facts), c.Name)
+	case len(c.Steps) > 0:
+		testutil.MustNoErr(t, db.UpdateOrderStepsJSON(id, string(c.Steps)), c.Name)
+	}
+	row, err := db.GetOrder(id)
+	testutil.MustNoErr(t, err, c.Name)
+	return row
 }
