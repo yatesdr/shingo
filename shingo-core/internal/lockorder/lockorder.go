@@ -10,9 +10,8 @@
 //
 //	ConfigSave   the config page's save            www/router.go
 //	OnDeck       the on-deck carried-bin recovery  engine/engine.go
-//	Stage2Pair   one loader pair's stage-2 pull    engine/stage2_pull.go
 //	LoaderBudget one loader's count and insert      dispatch/loader_replenish.go
-//	             and its drain, acquires and all    dispatch/loader_drain.go
+//	             its window pulls, acquires and all dispatch/loader_window.go
 //	Scan         the scanner: passes, acquires, doors   fulfillment/scanner.go
 //	LaneGate     one node group's lane gate        dispatch/lane_gate_release.go
 //	Summon, GateFail, Futility   taken under a lane gate
@@ -31,7 +30,6 @@ package lockorder
 type (
 	ConfigSave   struct{}
 	OnDeck       struct{}
-	Stage2Pair   struct{}
 	LoaderBudget struct{}
 	Scan         struct{}
 	LaneGate     struct{}
@@ -95,7 +93,6 @@ type (
 
 func (ConfigSave) Rank() int   { return 5 }
 func (OnDeck) Rank() int       { return 10 }
-func (Stage2Pair) Rank() int   { return 11 }
 func (LoaderBudget) Rank() int { return 15 }
 func (Scan) Rank() int         { return 20 }
 func (LaneGate) Rank() int     { return 30 }
@@ -158,7 +155,6 @@ func (AfterQueue) Rank() int { return 190 }
 
 func (ConfigSave) Name() string   { return "www.configMu" }
 func (OnDeck) Name() string       { return "engine.onDeckMu" }
-func (Stage2Pair) Name() string   { return "engine.stage2 pair lock" }
 func (LoaderBudget) Name() string { return "dispatch.loaderLock(loader)" }
 func (Scan) Name() string         { return "fulfillment.scanMu" }
 func (LaneGate) Name() string     { return "dispatch.laneGates[group]" }

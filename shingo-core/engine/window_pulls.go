@@ -1,5 +1,9 @@
-// stage2_pull.go — Core moves the named bare cart from a two-stage unloader's
-// wait group into a free stage-2 window.
+// window_pulls.go — the triggers of Core's two window pulls, the goroutines
+// they run on, and the confirm of a landed pull's move. The pulls themselves
+// decide in dispatch (dispatch/loader_window.go): stage 2's (PullStage2: a bare
+// cart from a two-stage unloader's wait group into a free stage-2 window) and
+// the drain (DrainLoader: a part-less cart from an unloader's inbound source
+// into a free window).
 //
 // In pull mode stage 1's CLEAR stamps the cart bare and the Edge's empty-out
 // sends it into the wait group (stage 2's inbound source). From there Core does
@@ -8,46 +12,30 @@
 // dispatch and never reaches an empty finder — bins.EmptyCarrierWhere keeps
 // saying a bare cart is nobody's empty, absolutely.
 //
-// A wait group is an ordinary group: several pairs may name it, like any
-// supermarket feeding several loaders. A pull takes only carts the target
-// window admits (a marker fits where its carrier fits, bins.TypeAdmits), so two
-// pairs with different cart types share a group without taking each other's
-// carts, and two pairs with the same cart type share it first come first
-// served.
-//
 // Triggers, all existing events: a bin leaving a stage-2 window (the window
 // freed), an order completing into a wait group (a cart arrived), and a sweep at
-// startup. Each runs the pull on a goroutine, serialized per pair, so a burst of
-// triggers makes one move per free window.
+// startup. Each runs the pull on a goroutine; stage 2's loader lock serializes
+// the pulls, so a burst of triggers makes one move per free window.
 //
-// THE SAME TRIGGERS RUN THE DRAIN (W14, dispatch.DrainLoader): a bin leaving a
-// draining unloader's window, an order completing into its inbound source, and
-// the same startup sweep. Each event reads the loaders once (readWindowPulls)
-// and runs both pulls; the two subscriptions were widened, not copied, so
-// registration order is unchanged. One more runs it outside the events: the
-// loader save that leaves a box on (www apiUpdateLoader), which is the crew
-// ticking it.
+// THE SAME TRIGGERS RUN THE DRAIN (W14): a bin leaving a draining unloader's
+// window, an order completing into its inbound source, and the same startup
+// sweep. Each event reads the loaders once (readWindowPulls) and runs both
+// pulls; the two subscriptions were widened, not copied, so registration order
+// is unchanged. One more runs it outside the events: the loader save that
+// leaves a box on (www apiUpdateLoader), which is the crew ticking it.
 
 package engine
 
 import (
-	"fmt"
 	"strings"
 	"sync"
-
-	"github.com/google/uuid"
 
 	"shingo/protocol/lockcheck"
 	"shingocore/dispatch"
 	"shingocore/internal/lockorder"
 	"shingocore/store/loaders"
-	"shingocore/store/nodes"
 	"shingocore/store/orders"
 )
-
-// Stage2EdgeUUIDPrefix marks a stage-2 pull, beside core-l1- (the loader loop)
-// and core-mnt- (the level keeper).
-const Stage2EdgeUUIDPrefix = "core-s2-"
 
 // stage2Receipt and drainReceipt are the receipt types Core files when it
 // confirms its own landed pull: stage 2's, and the drain's
@@ -57,28 +45,13 @@ const (
 	drainReceipt  = "core_drain_landed"
 )
 
-// stage2Puller serializes stage 2's pulls per pair and tracks the trigger
-// goroutines of both window pulls (stage 2's and the drain's, which its own
-// loader lock serializes) so Stop can wait for them. The zero value is ready.
+// stage2Puller tracks the trigger goroutines of both window pulls (stage 2's
+// and the drain's, each decided under its loader's own lock in dispatch) so
+// Stop can wait for them. The zero value is ready.
 type stage2Puller struct {
 	mu      lockcheck.Mutex[lockorder.Stage2Pulls]
-	locks   map[int64]*lockcheck.Mutex[lockorder.Stage2Pair] // keyed by stage-1 loader id
 	stopped bool
 	wg      sync.WaitGroup
-}
-
-func (p *stage2Puller) pairLock(stage1ID int64) *lockcheck.Mutex[lockorder.Stage2Pair] {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	if p.locks == nil {
-		p.locks = map[int64]*lockcheck.Mutex[lockorder.Stage2Pair]{}
-	}
-	lk, ok := p.locks[stage1ID]
-	if !ok {
-		lk = &lockcheck.Mutex[lockorder.Stage2Pair]{}
-		p.locks[stage1ID] = lk
-	}
-	return lk
 }
 
 // spawn runs fn on a tracked goroutine, or not at all once stopped.
@@ -103,111 +76,12 @@ func (p *stage2Puller) stop() {
 	p.wg.Wait()
 }
 
-// PullStage2 moves bare carts from the pair's wait group into its free stage-2
-// windows, one move per free window, and returns how many it made. A pair in
-// direct mode (stage 2 has no inbound source) never pulls.
-//
-// Free window: dispatch.FreeWindows over stage 2's homes, the predicate the
-// drain shares. Candidates: bare carts in the wait group's subtree, unclaimed
-// and sourceable, oldest arrival first (bins.ListBareInGroup), each taken only
-// by a window that admits it (dispatch.WindowAdmits).
-func (e *Engine) PullStage2(stage1ID int64) (int, error) {
-	lk := e.stage2.pairLock(stage1ID)
-	lk.Lock()
-	defer lk.Unlock()
-
-	one, two, err := e.pullPair(stage1ID)
-	if err != nil || two == nil || two.InboundSource == "" {
-		return 0, err
-	}
-	group, err := e.db.GetNodeByDotName(two.InboundSource)
-	if err != nil {
-		return 0, fmt.Errorf("stage 2 of %s pulls from %q: %w", one.Name, two.InboundSource, err)
-	}
-	free, err := e.freeStage2Windows(two)
-	if err != nil || len(free) == 0 {
-		return 0, err
-	}
-	carts, err := e.db.ListBareCartsInGroup(group.ID)
-	if err != nil || len(carts) == 0 {
-		return 0, err
-	}
-	caps, err := e.db.ListLoaderHomeBinTypes(two.ID)
-	if err != nil {
-		return 0, err
-	}
-	reads := &dispatch.WindowReads{}
-	taken := map[int64]bool{}
-	moved := 0
-	for _, w := range free {
-		for _, c := range carts {
-			if taken[c.ID] {
-				continue
-			}
-			ok, err := e.dispatcher.WindowAdmits(w, caps[w.ID], c, reads)
-			if err != nil {
-				return moved, err
-			}
-			if !ok {
-				continue
-			}
-			taken[c.ID] = true
-			// The window's Edge binds the cart when it lands, so the move
-			// projects its delivery there.
-			station := e.dispatcher.WindowStation(w)
-			if _, err := e.CreateBinMove(BinMoveRequest{
-				Selection: BinSelectionByLabel, BinLabel: c.Label, DestNodeID: w.ID,
-				StationID: station, Projects: station, EdgeUUID: Stage2EdgeUUIDPrefix + uuid.New().String(),
-				Desc: "stage 2 pull for " + strings.TrimSuffix(one.Name, " · stage 1"),
-			}); err != nil {
-				// This cart could not go (lost to another mover, a lane that
-				// refused it); the next one may.
-				e.logFn("engine: stage-2 pull %s: cart %s to %s: %v", one.Name, c.Label, w.Name, err)
-				continue
-			}
-			moved++
-			break
-		}
-	}
-	return moved, nil
-}
-
-// pullPair returns a live pair by its stage-1 id, or nils.
-func (e *Engine) pullPair(stage1ID int64) (*loaders.Loader, *loaders.Loader, error) {
-	one, err := e.db.GetLoader(stage1ID)
-	if err != nil || one == nil || one.ArchivedAt != nil || one.SecondStageLoaderID == nil {
-		return nil, nil, err
-	}
-	two, err := e.db.GetLoader(*one.SecondStageLoaderID)
-	if err != nil || two == nil || two.ArchivedAt != nil {
-		return nil, nil, err
-	}
-	return one, two, nil
-}
-
-// freeStage2Windows returns stage 2's free windows (dispatch.FreeWindows).
-func (e *Engine) freeStage2Windows(two *loaders.Loader) ([]*nodes.Node, error) {
-	homes, err := e.db.ListLoaderHomes(two.ID)
-	if err != nil {
-		return nil, err
-	}
-	windows := make([]*nodes.Node, 0, len(homes))
-	for _, h := range homes {
-		w, err := e.db.GetNode(h.PositionNodeID)
-		if err != nil {
-			return nil, err
-		}
-		windows = append(windows, w)
-	}
-	return e.dispatcher.FreeWindows(windows)
-}
-
 // pullPairsAsync runs a pull for each stage-1 id on the tracked goroutine.
 func (e *Engine) pullPairsAsync(stage1IDs ...int64) {
 	for _, id := range stage1IDs {
 		id := id
 		e.stage2.spawn(func() {
-			if _, err := e.PullStage2(id); err != nil {
+			if _, err := e.dispatcher.PullStage2(id); err != nil {
 				e.logFn("engine: stage-2 pull for loader %d: %v", id, err)
 			}
 		})
@@ -338,7 +212,7 @@ func (e *Engine) onWindowLeft(fromNodeID int64) {
 // order.
 func landedReceipt(edgeUUID string) string {
 	switch {
-	case strings.HasPrefix(edgeUUID, Stage2EdgeUUIDPrefix):
+	case strings.HasPrefix(edgeUUID, dispatch.Stage2EdgeUUIDPrefix):
 		return stage2Receipt
 	case strings.HasPrefix(edgeUUID, dispatch.DrainEdgeUUIDPrefix):
 		return drainReceipt

@@ -484,7 +484,7 @@ func NotFencedArm() string {
 // the way from stage 1 to stage 2 (TestEmptyScan_NeverOffersABareCarrier). It
 // leaves the marker when stage 2's SEND ON stamps its carrier back. Every move
 // that carries a bare cart names it — the stage-1 U2, Core's core-s2- pull
-// (engine/stage2_pull.go), the stage-2 U2 — so none of them reads this
+// (dispatch.PullStage2), the stage-2 U2 — so none of them reads this
 // predicate.
 //
 // Two Go-side pickers never composed it and carry the rule themselves: the

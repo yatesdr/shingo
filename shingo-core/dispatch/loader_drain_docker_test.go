@@ -10,6 +10,7 @@ import (
 	"shingo/protocol"
 	"shingo/protocol/testutil"
 	"shingocore/internal/testdb"
+	"shingocore/service"
 	"shingocore/store"
 	"shingocore/store/bins"
 	"shingocore/store/loaders"
@@ -343,6 +344,87 @@ func TestDrain_ADrainFirstSendsAFullAskToAnotherWindow(t *testing.T) {
 		t.Errorf("the next full ask made %v (held %v), want one full to the freed %s", res.Created, res.HeldBy,
 			f.windows[0].Name)
 	}
+}
+
+// TestStage2_AMoveFirstSendsAFullAskToAnotherWindow is the drain's twin above
+// for stage 2's pull: a stage-2 move the fleet cannot take yet (no scanner, so
+// it is issued and stays pending, holding its cart and no claim) and a full ask
+// at stage 2 born after it, with two free windows. The move holds its window
+// from its issue (the window move), so the full is asked at the other one.
+func TestStage2_AMoveFirstSendsAFullAskToAnotherWindow(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	_, _, part := setupTestData(t, db)
+	d, _ := newTestDispatcher(t, db, nil)
+	ls := service.NewLoaderService(db, nil)
+	grp, err := db.CreateNodeGroup("S2F-WAIT")
+	testutil.MustNoErr(t, err, "the wait group")
+	testdb.MarkGroup(t, db, grp)
+	wait, err := db.GetNode(grp)
+	testutil.MustNoErr(t, err, "read the wait group")
+	slot := &nodes.Node{Name: "S2F-WAIT-1", Enabled: true, ParentID: &grp}
+	testutil.MustNoErr(t, db.CreateNode(slot), "slot")
+	carrier := &bins.BinType{Code: "S2F-CART"}
+	testutil.MustNoErr(t, db.CreateBinType(carrier), "cart type")
+	marker, err := db.EnsureBareMarker(carrier.ID)
+	testutil.MustNoErr(t, err, "marker")
+	cart := createTestBinAtNode(t, db, "", slot.ID, "S2F-BARE")
+	_, err = db.Exec(`UPDATE bins SET bin_type_id=$1 WHERE id=$2`, marker, cart.ID)
+	testutil.MustNoErr(t, err, "the cart is bare")
+
+	s1, s2, err := ls.CreateTwoStage(service.TwoStageCreate{Name: "S2F"})
+	testutil.MustNoErr(t, err, "the pair")
+	var windows []*nodes.Node
+	for i := 1; i <= 2; i++ {
+		w := &nodes.Node{Name: fmt.Sprintf("S2F-S2-W%d", i), Enabled: true}
+		testutil.MustNoErr(t, db.CreateNode(w), "window")
+		testutil.MustNoErr(t, ls.SetHome(s2, w.ID, "", "", 0), "stage-2 window")
+		windows = append(windows, w)
+	}
+	two, err := ls.Get(s2)
+	testutil.MustNoErr(t, err, "read stage 2")
+	testutil.MustNoErr(t, ls.Update(service.LoaderUpdate{ID: s2, Name: two.Name, InboundSource: wait.Name}),
+		"stage 2 pulls from the wait group")
+	testutil.MustNoErr(t, db.UpsertLoaderPayload(loaders.Payload{LoaderID: s2, PayloadCode: part.Code}),
+		"a part stage 2 serves")
+
+	n, err := d.PullStage2(s1)
+	testutil.MustNoErr(t, err, "the pull")
+	moves := stage2Moves(t, db)
+	if n != 1 || len(moves) != 1 || moves[0].DeliveryNode != windows[0].Name || moves[0].Status != StatusPending {
+		t.Fatalf("stage 2 made %d move(s) %v, want one pending move to %s", n, moves, windows[0].Name)
+	}
+	cfg, ok, err := d.LoadReplenishConfig(s2)
+	if err != nil || !ok {
+		t.Fatalf("stage 2's config: ok=%v err=%v", ok, err)
+	}
+	res, err := sideCycleParts(d, ReplenishRequest{StationID: "edge.line1", LoaderID: s2}, cfg, part.Code)
+	testutil.MustNoErr(t, err, "the full ask")
+	if len(res.Created) != 1 || res.Created[0].DeliveryNode != windows[1].Name {
+		t.Fatalf("the full ask made %v (held %v), want one full to %s: %s is the stage-2 move's", res.Created,
+			res.HeldBy, windows[1].Name, windows[0].Name)
+	}
+	if len(res.Parts) != 1 || res.Parts[0].HeldBy[windows[0].Name] != "window-reserved" {
+		t.Errorf("the ask's parts %+v, want %s held by window-reserved", res.Parts, windows[0].Name)
+	}
+}
+
+// stage2Moves returns the core-s2- orders, oldest first.
+func stage2Moves(t *testing.T, db *store.DB) []*orders.Order {
+	t.Helper()
+	rows, err := db.Query(`SELECT id FROM orders WHERE edge_uuid LIKE $1 ORDER BY id`, Stage2EdgeUUIDPrefix+"%")
+	testutil.MustNoErr(t, err, "list core-s2 orders")
+	defer rows.Close()
+	var out []*orders.Order
+	for rows.Next() {
+		var id int64
+		testutil.MustNoErr(t, rows.Scan(&id), "scan")
+		o, err := db.GetOrder(id)
+		testutil.MustNoErr(t, err, "order")
+		out = append(out, o)
+	}
+	testutil.MustNoErr(t, rows.Err(), "rows")
+	return out
 }
 
 // TestDrain_ConcurrentCallsMakeOneMovePerWindow: eight drains of one loader at

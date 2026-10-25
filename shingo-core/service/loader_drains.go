@@ -37,7 +37,7 @@ var ErrDrainProduce = errors.New("only an unloader drains carts from its inbound
 var ErrDrainNoSource = errors.New("an unloader drains the carts that land in its inbound source, and this one has none (it is fed directly, or no source is named): name an inbound source or untick the drain boxes")
 
 // ErrDrainTwoStage refuses a drain box on either half of a two-stage unloader:
-// stage 2's windows are its own pull's (engine PullStage2), and stage 1's CLEAR
+// stage 2's windows are its own pull's (dispatch PullStage2), and stage 1's CLEAR
 // stamps the cart bare, so neither has a window a drained cart could take.
 var ErrDrainTwoStage = errors.New("a two-stage unloader drains nothing: stage 2's windows are its own pull's, and stage 1's CLEAR stamps the cart bare")
 

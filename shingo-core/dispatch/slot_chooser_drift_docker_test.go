@@ -11,6 +11,7 @@ import (
 	"shingo/protocol/testutil"
 	"shingocore/dispatch/binresolver"
 	"shingocore/internal/testdb"
+	"shingocore/service"
 	"shingocore/store"
 	"shingocore/store/loaders"
 	"shingocore/store/nodes"
@@ -39,11 +40,11 @@ import (
 // it. The "free" row is the control: with nothing held, every chooser must
 // return the candidate, or the rest of its rows prove nothing.
 //
-// Choosers in the engine package (the carried-bin return's chooser and the
-// stage-2 pull's windows) cannot be called from here and carry the same table
-// in engine/slot_chooser_drift_docker_test.go. Loader placement (loader_place.go)
-// is here, as two rows: the home a leg is pointed at, and the buffer it falls
-// back to.
+// The chooser in the engine package (the carried-bin return's) cannot be
+// called from here and carries the same table in
+// engine/slot_chooser_drift_docker_test.go. Stage 2's windows are here as one
+// row, and loader placement (loader_place.go) as two: the home a leg is
+// pointed at, and the buffer it falls back to.
 
 type driftHold struct {
 	name string
@@ -62,6 +63,8 @@ type driftFixture struct {
 	// byRank is the shuffle walk's word that it offered the candidate as a
 	// stranger's promise the dig outranks (C2b A.3).
 	byRank bool
+	// stage2 is the pair's stage-2 loader, for the stage-2 window chooser.
+	stage2 int64
 }
 
 type driftChooser struct {
@@ -263,6 +266,10 @@ var driftChoosers = []driftChooser{
 	// (loader_place_picks_docker_test.go pins both).
 	{name: "loader-place-home", flat: true, setup: loaderDriftHome(false), choose: loaderDriftChoice},
 	{name: "loader-place-buffer", flat: true, setup: loaderDriftHome(true), choose: loaderDriftChoice},
+	// Stage 2's window list (stage2Windows, freeWindows), the drain's predicate
+	// too. A loader home may not sit in a node group, so the window is a
+	// STOR-typed node of its own: that is what gives it a claim door.
+	{name: "stage2-window", flat: true, setup: stage2DriftWindow, choose: stage2DriftChoice},
 }
 
 // loaderDriftHome makes the candidate a member of a dedicated loader: its home,
@@ -342,11 +349,40 @@ func dpth(t *testing.T, db *store.DB, fx *driftFixture) {
 	testutil.MustNoErr(t, db.SetNodeProperty(fx.grp.ID, binresolver.PropStoreAlgorithm, StoreDPTH), "set DPTH")
 }
 
+// stage2DriftWindow replaces the candidate with a STOR-typed window of a
+// two-stage pair's stage 2, and stage2DriftChoice asks stage 2's window list
+// for it.
+func stage2DriftWindow(t *testing.T, db *store.DB, fx *driftFixture) {
+	storType, err := db.GetNodeTypeByCode(protocol.NodeClassSTOR)
+	testutil.MustNoErr(t, err, "get STOR type")
+	fx.candidate = &nodes.Node{Name: fx.prefix + "-W", Enabled: true, NodeTypeID: &storType.ID}
+	testutil.MustNoErr(t, db.CreateNode(fx.candidate), "window")
+	ls := service.NewLoaderService(db, nil)
+	_, s2, err := ls.CreateTwoStage(service.TwoStageCreate{Name: fx.prefix})
+	testutil.MustNoErr(t, err, "create pair")
+	testutil.MustNoErr(t, ls.SetHome(s2, fx.candidate.ID, "", "", 0), "stage-2 window")
+	fx.stage2 = s2
+}
+
+func stage2DriftChoice(t *testing.T, db *store.DB, d *Dispatcher, fx *driftFixture) *nodes.Node {
+	two, err := db.GetLoader(fx.stage2)
+	testutil.MustNoErr(t, err, "read stage 2")
+	free, err := d.stage2Windows(two)
+	testutil.MustNoErr(t, err, "free stage-2 windows")
+	for _, w := range free {
+		if w.ID == fx.candidate.ID {
+			return w
+		}
+	}
+	return nil
+}
+
 // TestSlotChoosers_NeverOfferWhatTheClaimDoorRefuses is the drift guard.
 //
 // MUTATION: drop the reservation clause from any chooser (for the group
 // resolver's direct arms, the SlotSpokenForByStranger check; for the shuffle
-// walk, the takeable test). Its pending- and confirmed-reservation rows fail:
+// walk, the takeable test; for the stage-2 window, freeWindows' SlotSpokenForByStranger
+// check). Its pending- and confirmed-reservation rows fail:
 // the chooser returns the candidate and claimStoreSlot refuses it.
 func TestSlotChoosers_NeverOfferWhatTheClaimDoorRefuses(t *testing.T) {
 	t.Parallel()

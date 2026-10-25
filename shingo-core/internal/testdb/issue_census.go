@@ -22,11 +22,11 @@ import (
 // holds flips its row here, by prediction, before its source moves.
 //
 // AT COMMIT, NOT AFTER THE DOOR RETURNS. A door that writes a hold after its
-// transaction (the drain's window, the recovery's pin) and a scanner pass that
-// takes a hold after it are the two things the census must not mistake for the
-// issue's own, so the record is a deferred constraint trigger on orders
-// (InstallIssueCensus): it fires as the inserting transaction commits and reads
-// the row and its reservations as they stand then.
+// transaction (the recovery's pin) and a scanner pass that takes a hold after
+// it are the two things the census must not mistake for the issue's own, so
+// the record is a deferred constraint trigger on orders (InstallIssueCensus):
+// it fires as the inserting transaction commits and reads the row and its
+// reservations as they stand then.
 
 // IssueDoor is one way an order comes to exist.
 type IssueDoor struct {
@@ -80,18 +80,18 @@ var IssueDoors = []IssueDoor{
 	{Name: "dig legs", Site: "dispatch/compound.go:Dispatcher.writeCompoundChildren", Arm: "dispatch",
 		At: AtCommit{BinID: true, SlotRow: true}, Take: TakeTaken,
 		Why: "a reshuffle's children in their parent's transaction: the blocker stamped and held by the parent's lane (no bin row), a stranger's pending hold on it stolen by rank, the parking pencilled"},
-	{Name: "loader drain", Site: "dispatch/loader_drain.go:Dispatcher.drainMove", Arm: "dispatch",
-		At: AtCommit{BinID: true, NamedBin: true, BinRow: true}, Take: TakeRefused,
-		Why: "an unloader with a drain box ticked moves a cart of that state into a free window: the cart held from the issue, the window reserved after the commit; its read of carts passes over a held one (BinUnheldSQL), and its plan's take is refused for the race"},
+	{Name: "loader drain", Site: "dispatch/loader_window.go:Dispatcher.windowMove", Arm: "dispatch",
+		At: AtCommit{BinID: true, NamedBin: true, BinRow: true, SlotRow: true}, Take: TakeRefused,
+		Why: "an unloader with a drain box ticked moves a cart of that state into a free window (the window move): the cart and the window held from the issue; its read of carts passes over a held one (BinUnheldSQL), and Core's own errand takes nothing in the race after that read"},
 	{Name: "loader replenish", Site: "dispatch/lifecycle_service.go:LifecycleService.issue", Arm: "dispatch",
 		At: AtCommit{}, Take: TakeNoCart,
 		Why: "a loader's windows are below level: Core asks for an empty at the window it chose, and holds no window"},
 	{Name: "person's bin move", Site: "engine/bin_move.go:Engine.CreateBinMove", Arm: "engine",
 		At: AtCommit{BinID: true, NamedBin: true, BinRow: true}, Take: TakeTaken,
 		Why: "a person moves one bin from Core's pages: the cart held from the issue, a stranger's pending hold taken out loud"},
-	{Name: "stage 2's pull", Site: "engine/bin_move.go:Engine.CreateBinMove", Arm: "engine",
-		At: AtCommit{BinID: true, NamedBin: true, BinRow: true}, Take: TakeRefused,
-		Why: "a two-stage loader's stage 2 pulls a bare cart into a free window through the person's bin move, holding the cart and no window; its read of carts passes over a held one (BinUnheldSQL), and the person's take it reaches is its own only in the race after that read"},
+	{Name: "stage 2's pull", Site: "dispatch/loader_window.go:Dispatcher.windowMove", Arm: "engine",
+		At: AtCommit{BinID: true, NamedBin: true, BinRow: true, SlotRow: true}, Take: TakeRefused,
+		Why: "a two-stage loader's stage 2 pulls a bare cart into a free window (the window move): the cart and the window held from the issue; its read of carts passes over a held one (BinUnheldSQL), and Core's own errand takes nothing in the race after that read (TestStage2Pull_NeverTakesAStrangersHold)"},
 	{Name: "carried-bin recovery", Site: "engine/carried_bin_recovery.go:Engine.issueAndDispatchRecovery", Arm: "engine",
 		At: AtCommit{BinID: true, NamedBin: true, BinRow: true}, Take: TakeTaken,
 		Why: "an operator presses Recover: the cart held from the issue, the pin after it; a person pressed it, so a stranger's pending hold is taken out loud"},

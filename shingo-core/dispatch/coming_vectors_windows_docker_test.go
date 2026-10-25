@@ -23,7 +23,7 @@ import (
 // Core stores it (store TestComingVectors_CoreAgreesOverStoredRows: a complex
 // leg's steps and its last-acted node as delivery_node; a plain order's
 // delivery node and plan), holding its carrier as a dispatched order does,
-// against a window at every node the case names: FreeWindows and the window
+// against a window at every node the case names: freeWindows and the window
 // choice (LoaderWindows, an ask of each intent) each say whether a carrier is
 // coming there.
 //
@@ -32,7 +32,7 @@ import (
 // at a node it does not end at reads as not coming there: an evac that drops at
 // OUT and then refills the press position, a single-robot swap that places at
 // LINE and carries on. Every pair disagrees one way (the vectors say coming, all
-// three readers say free). Composing OrderPlacesBinAt into FreeWindows costs a
+// three readers say free). Composing OrderPlacesBinAt into freeWindows costs a
 // steps read per live row per window per pull, and into the choice's open-ask
 // arm would count an evac's arrival as an ask, the 2026-08-05 window deadlock.
 // Whether a plant aims such a leg at a loader window is the owner's to rule.
@@ -96,7 +96,7 @@ func TestComingVectors_TheWindowReadersAgree(t *testing.T) {
 		sort.Strings(names)
 		for _, n := range names {
 			want, w := c.Places[n], windows[n]
-			free, err := d.FreeWindows([]*nodes.Node{w})
+			free, err := d.freeWindows([]*nodes.Node{w})
 			testutil.MustNoErr(t, err, c.Name)
 			in := loaders.DeliveryTargetsInput{Layout: loaders.LayoutDedicatedPositions,
 				Homes: []loaders.Home{{PositionNodeID: w.ID}}, NodeNames: map[int64]string{w.ID: w.Name}}
@@ -104,7 +104,7 @@ func TestComingVectors_TheWindowReadersAgree(t *testing.T) {
 			byEmpty := d.pure.LoaderWindows(in, 1, SourceIntentEmpty).HeldBy[w.Name] != ""
 			byFull := d.pure.LoaderWindows(in, 1, SourceIntentFull).HeldBy[w.Name] != ""
 			if byFree != want || byEmpty != want || byFull != want {
-				disagree = append(disagree, fmt.Sprintf("%s | at %s: vectors %v, FreeWindows %v, LoaderWindows(empty) %v, LoaderWindows(full) %v | delivery_node %s | steps %s",
+				disagree = append(disagree, fmt.Sprintf("%s | at %s: vectors %v, freeWindows %v, LoaderWindows(empty) %v, LoaderWindows(full) %v | delivery_node %s | steps %s",
 					c.Name, n, want, byFree, byEmpty, byFull, coreDelivery, strings.ReplaceAll(string(c.Steps), "\n", "")))
 			}
 		}

@@ -4,13 +4,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"log"
 
-	"github.com/google/uuid"
-
-	"shingo/protocol"
-	"shingocore/dispatch/plan"
-	"shingocore/store/bins"
 	"shingocore/store/loaders"
 	"shingocore/store/nodes"
 )
@@ -40,11 +34,6 @@ import (
 // empty finder, and the empties-to-maintainer door (W9) never re-points it: it
 // lifts off no line position.
 
-// DrainEdgeUUIDPrefix marks a drain's move, beside core-l1- and core-u1- (the
-// loader loop's asks) and core-s2- (stage 2's pull). The engine confirms a
-// landed one as it confirms stage 2's: there is no receipt to wait for.
-const DrainEdgeUUIDPrefix = "core-dr-"
-
 // DrainLoader moves carts of the states an unloader ticked from its inbound
 // source into its free windows, one move per free window, and returns how many
 // it made. A loader that drains nothing reads its own row and stops.
@@ -52,21 +41,22 @@ const DrainEdgeUUIDPrefix = "core-dr-"
 // THE WINDOWS are the loader's delivery targets for a part-less carrier
 // (loaders.DeliveryTargets with no part: the shared windows in the plant's
 // order, a funnelling unloader's first window only; a dedicated position
-// never), each judged free by the predicate stage 2 shares (FreeWindows) and
-// taking only a cart it admits (WindowAdmits). THE CARTS are
+// never), each judged free by the predicate stage 2 shares (freeWindows) and
+// taking only a cart it admits (windowAdmits). THE CARTS are
 // bins.ListDrainableInGroup's, best first. A level declared on the source
 // since the save stops the pull: the save's own test, asked again
 // (store.DeclaresLevel).
 //
-// THE MOVE TAKES ITS WINDOW AT BIRTH, as a slot reservation (drainMove). A full
-// ask's window choice (plan.LoaderWindows) counts what the capacity gate counts
-// (a bin on the window, an order holding a claimed bin bound for it), the asks
-// of its own intent, and another order's reservation on the window. A drain's
-// move is neither an empty nor a full ask, and holds no claim until the fleet
-// takes it, so the reservation is what a full ask sees: born after the move,
-// it is asked at another free window, even while the fleet cannot take the move
-// yet. The reservation is the move's own pending row, which its dispatch reuses
-// and its end releases (TerminalizeOrder's ReleaseByOrder).
+// THE MOVE HOLDS ITS WINDOW FROM ITS ISSUE (windowMove, Need.Window): a slot
+// reservation taken in the issue's transaction. A full ask's window choice
+// (plan.LoaderWindows) counts what the capacity gate counts (a bin on the
+// window, an order holding a claimed bin bound for it), the asks of its own
+// intent, and another order's reservation on the window. A drain's move is
+// neither an empty nor a full ask, and holds no claim until the fleet takes it,
+// so the reservation is what a full ask sees: born after the move, it is asked
+// at another free window, even while the fleet cannot take the move yet. The
+// move's dispatch reuses the row and its end releases it (TerminalizeOrder's
+// ReleaseByOrder).
 //
 // THE ACQUIRE RUNS UNDER THE LOCK, unlike ReplenishLoader's, so a move the
 // fleet takes at once is in flight before the next decision at the loader. The
@@ -122,7 +112,7 @@ func (d *Dispatcher) drainLocked(l *loaders.Loader) (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	free, err := d.FreeWindows(windows)
+	free, err := d.freeWindows(windows)
 	if err != nil || len(free) == 0 {
 		return 0, err
 	}
@@ -134,33 +124,7 @@ func (d *Dispatcher) drainLocked(l *loaders.Loader) (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	reads := &WindowReads{}
-	taken := map[int64]bool{}
-	moved := 0
-	for _, w := range free {
-		for _, c := range carts {
-			if taken[c.ID] {
-				continue
-			}
-			ok, err := d.WindowAdmits(w, caps[w.ID], c, reads)
-			if err != nil {
-				return moved, err
-			}
-			if !ok {
-				continue
-			}
-			taken[c.ID] = true
-			if err := d.drainMove(l, c, w); err != nil {
-				// This cart could not go (lost to another mover, the planner
-				// refused it); the next one may.
-				d.dbg("drain loader=%d: cart %s to %s: %v", l.ID, c.Label, w.Name, err)
-				continue
-			}
-			moved++
-			break
-		}
-	}
-	return moved, nil
+	return d.pullInto(free, carts, caps, DrainEdgeUUIDPrefix, "drain for "+l.Name)
 }
 
 // drainWindows is the loader's delivery targets for a part-less carrier, as
@@ -190,55 +154,4 @@ func (d *Dispatcher) drainWindows(l *loaders.Loader) ([]*nodes.Node, error) {
 		windows = append(windows, w)
 	}
 	return windows, nil
-}
-
-// drainMove issues one move of cart c to window w, for the cart, and
-// acquires it once. The plan is the bin move's (PlanMove: the cart at its node,
-// the window's capacity and carrier rule). A drain is Core's own errand, never
-// a person's, so it takes no bin another order has promised itself: a
-// stranger's hold refuses its issue (the population already leaves such a bin
-// out, so only a race meets it). Station-unaware like every Core-born move; its
-// material notices project to the window's Edge (Need.Projects), which binds
-// the cart when it lands, as stage 2's do.
-func (d *Dispatcher) drainMove(l *loaders.Loader, c *bins.Bin, w *nodes.Node) error {
-	if c.NodeID == nil {
-		return errors.New("the cart is at no node")
-	}
-	at, err := d.db.GetNode(*c.NodeID)
-	if err != nil {
-		return err
-	}
-	p := d.PlanMove(plan.Given{Bin: c, Source: at, Dest: w})
-	if p.Refused != nil {
-		return fmt.Errorf("the move's plan refused it (rule %d): %v", p.Refused.Rule, p.Refused.Err)
-	}
-	station := d.WindowStation(w)
-	order, _, err := d.IssueOrder(Need{
-		Type:     OrderTypeMove,
-		Station:  station,
-		Ref:      DrainEdgeUUIDPrefix + uuid.New().String(),
-		Quantity: 1,
-		Desc:     "drain for " + l.Name,
-		// No place asked for material: the unloader is clearing a cart it was
-		// set up to clear, so there is no episode, and blank would read orphan.
-		OriginClass: protocol.OriginClassNoDemand,
-		Projects:    station,
-		Cart:        c.ID,
-	}, p)
-	if err != nil {
-		log.Printf("dispatch: drain %s: issue of cart %s to %s: %v", l.Name, c.Label, w.Name, err)
-		return err
-	}
-	// The window, taken now, under the loader's lock: no decision at this
-	// loader reads the windows between the issue and this row. FreeWindows saw
-	// no other order's reservation on it; one born since, outside the loader's
-	// decisions, wins the window, and the move then meets the slot at its own
-	// dispatch as it did before it reserved anything.
-	if err := d.db.ReserveSlot(w.ID, order.ID); err != nil {
-		d.dbg("drain %s: move %d could not take %s at its issue: %v", l.Name, order.ID, w.Name, err)
-	}
-	// The row is whole at its INSERT, as a Core ask's is, so it takes the same
-	// one acquire (acquireCoreAsk), under the loader's lock (DrainLoader).
-	d.acquireCoreAsk(order)
-	return nil
 }

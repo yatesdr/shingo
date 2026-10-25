@@ -21,7 +21,7 @@ import (
 )
 
 // loader_drain_docker_test.go — an unloader's drain on a running Core: the
-// triggers it shares with stage 2's pull (stage2_pull.go), a drain's move
+// triggers it shares with stage 2's pull (window_pulls.go), a drain's move
 // against a full ask at the same window, and the cart SEND BACK leaves in a
 // press's outbound group reaching a window. The decision itself is
 // dispatch's (dispatch/loader_drain_docker_test.go).
@@ -244,7 +244,7 @@ func TestDrain_SendBackLeftoverCartReachesAWindow(t *testing.T) {
 // is cleared off, the full ask takes the window. (The full ask first is
 // dispatch's TestDrain_AFullAskFirstKeepsTheWindow.)
 //
-// MUTATION: drop drainMove's acquire, and the full ask is born for the window
+// MUTATION: drop windowMove's acquire, and the full ask is born for the window
 // the drained cart is to go to. (Moving the acquire after the unlock is not
 // seen by a test that asks in sequence; it is the named residual's width.)
 func TestDrain_AndAFullAskNeverShareAWindow(t *testing.T) {

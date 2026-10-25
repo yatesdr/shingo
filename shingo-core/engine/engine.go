@@ -167,7 +167,7 @@ type Engine struct {
 	// (after.go). Built in New; its goroutine starts in Start.
 	after *afterQueue
 	// stage2 serializes the two-stage pull per pair and tracks its trigger
-	// goroutines (stage2_pull.go).
+	// goroutines (window_pulls.go).
 	stage2 stage2Puller
 	// carriersClear is true when the last carrier-node sweep left no
 	// `_ROBOT:` node at all, so the 2 s robot tick has nothing to retire or

@@ -98,7 +98,7 @@ var engineIssueDrivers = map[string]testdb.IssueDriver{
 			testdb.StrangerHolds(t, db, cart.ID)
 		}
 		eng := newTestEngine(t, db, simulator.New())
-		_, err := eng.PullStage2(p.stage1)
+		_, err := eng.dispatcher.PullStage2(p.stage1)
 		testutil.MustNoErr(t, err, "pull")
 		if moves := s2Moves(t, db); len(moves) == 1 {
 			return db, moves[0].ID

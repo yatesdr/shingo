@@ -22,10 +22,11 @@ import (
 )
 
 // stage2_pull_docker_test.go — Core moves the named bare cart from the wait
-// group into a free stage-2 window (engine/stage2_pull.go). The Edge does
-// nothing new: the move names its bin, so it goes straight to dispatch and
-// never reaches an empty finder, and it lands the way any Core-authored move
-// lands (TestStage2Pull_LandedMoveConfirmsAndFreesItsClaim).
+// group into a free stage-2 window (dispatch.PullStage2, triggered from
+// engine/window_pulls.go). The Edge does nothing new: the move names its bin,
+// so it goes straight to dispatch and never reaches an empty finder, and it
+// lands the way any Core-authored move lands
+// (TestStage2Pull_LandedMoveConfirmsAndFreesItsClaim).
 
 type s2Pair struct {
 	stage1, stage2 int64
@@ -108,7 +109,7 @@ func (f *s2Fixture) cart(t *testing.T, nodeID int64, bt *bins.BinType, age time.
 // s2Moves returns the core-s2- orders, oldest first.
 func s2Moves(t *testing.T, db *store.DB) []*orders.Order {
 	t.Helper()
-	rows, err := db.Query(`SELECT id FROM orders WHERE edge_uuid LIKE $1 ORDER BY id`, Stage2EdgeUUIDPrefix+"%")
+	rows, err := db.Query(`SELECT id FROM orders WHERE edge_uuid LIKE $1 ORDER BY id`, dispatch.Stage2EdgeUUIDPrefix+"%")
 	testutil.MustNoErr(t, err, "list core-s2 orders")
 	defer rows.Close()
 	var out []*orders.Order
@@ -156,7 +157,7 @@ func TestStage2Pull_MovesOldestOwnCartIntoFreeWindow(t *testing.T) {
 	t.Cleanup(eng.Stop)
 
 	awaitMoves(t, db, 1)
-	if n, err := eng.PullStage2(p.stage1); err != nil || n != 0 {
+	if n, err := eng.dispatcher.PullStage2(p.stage1); err != nil || n != 0 {
 		t.Errorf("second pull made %d moves (err %v), want none: the one window is spoken for", n, err)
 	}
 	moves := s2Moves(t, db)
@@ -188,7 +189,7 @@ func TestStage2Pull_IgnoresOtherGroups(t *testing.T) {
 	f.cart(t, loose.ID, f.marker, time.Hour)
 	eng := newTestEngine(t, db, simulator.New())
 
-	n, err := eng.PullStage2(p.stage1)
+	n, err := eng.dispatcher.PullStage2(p.stage1)
 	testutil.MustNoErr(t, err, "pull")
 	if n != 0 || len(s2Moves(t, db)) != 0 {
 		t.Errorf("pull made %d moves from carts outside the wait group, want none", n)
@@ -214,7 +215,7 @@ func TestStage2Pull_WindowWithInboundOrBinIsNotFree(t *testing.T) {
 	testutil.MustNoErr(t, db.CreateOrder(inbound), "inbound order to window 2")
 	eng := newTestEngine(t, db, simulator.New())
 
-	n, err := eng.PullStage2(p.stage1)
+	n, err := eng.dispatcher.PullStage2(p.stage1)
 	testutil.MustNoErr(t, err, "pull")
 	if got := s2Moves(t, db); n != 0 || len(got) != 0 {
 		t.Errorf("pull made %d moves (%d in all), want none: window 1 holds a bin and window 2 has an order on its way", n, len(got))
@@ -295,7 +296,7 @@ func TestStage2Pull_ConcurrentTriggersMakeOneMove(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			if _, err := eng.PullStage2(p.stage1); err != nil {
+			if _, err := eng.dispatcher.PullStage2(p.stage1); err != nil {
 				t.Errorf("pull: %v", err)
 			}
 		}()
@@ -323,9 +324,9 @@ func TestStage2Pull_SharedWaitGroupTakesOnlyCartsTheWindowAdmits(t *testing.T) {
 	eng := newTestEngine(t, db, simulator.New())
 
 	// Pair B first, so the older cart A is the one a type-blind pull would take.
-	_, err := eng.PullStage2(pb.stage1)
+	_, err := eng.dispatcher.PullStage2(pb.stage1)
 	testutil.MustNoErr(t, err, "pull B")
-	_, err = eng.PullStage2(pa.stage1)
+	_, err = eng.dispatcher.PullStage2(pa.stage1)
 	testutil.MustNoErr(t, err, "pull A")
 	moves := awaitMoves(t, db, 2)
 	got := map[string]int64{}
@@ -481,4 +482,47 @@ func TestStage2_PulledDirectlyDirectPairRefillsThroughStage1(t *testing.T) {
 		t.Errorf("stage 1's cart into %s resolves to %+v (err %v), want the emptied window %s",
 			grp.Name, got, err, windows[1].Name)
 	}
+}
+
+// TestStage2Pull_NeverTakesAStrangersHold: stage 2's pull is Core's own errand,
+// so a stranger's pending hold on the cart refuses its issue. Its read of carts
+// passes over a held cart, so the stranger is planted in the race after that
+// read: a trigger gives it the hold as the move's row is inserted, inside the
+// issue's transaction. Nothing is issued and the stranger keeps the cart.
+func TestStage2Pull_NeverTakesAStrangersHold(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	f := newS2Fixture(t, db, "S2T", 1)
+	p := f.pair(t, "S2T", 1)
+	cart := f.cart(t, f.slots[0].ID, f.marker, time.Hour)
+	stranger := &orders.Order{EdgeUUID: "s2t-stranger", StationID: "test", OrderType: "retrieve",
+		Status: "queued", Quantity: 1, BinID: &cart.ID}
+	testutil.MustNoErr(t, db.CreateOrder(stranger), "the stranger")
+	_, err := db.Exec(fmt.Sprintf(`
+		CREATE FUNCTION s2t_stranger_holds() RETURNS trigger AS $$
+		BEGIN
+			INSERT INTO reservations (order_id, resource_kind, bin_id, state, reserved_by, created_at)
+			VALUES (%d, 'bin', NEW.bin_id, 'pending', 'test', now());
+			RETURN NEW;
+		END $$ LANGUAGE plpgsql;
+		CREATE TRIGGER s2t_stranger_holds AFTER INSERT ON orders FOR EACH ROW
+			WHEN (NEW.edge_uuid LIKE 'core-s2-%%' AND NEW.bin_id IS NOT NULL)
+			EXECUTE FUNCTION s2t_stranger_holds();`, stranger.ID))
+	testutil.MustNoErr(t, err, "plant the stranger in the race")
+	eng := newTestEngine(t, db, simulator.New())
+
+	n, err := eng.dispatcher.PullStage2(p.stage1)
+	testutil.MustNoErr(t, err, "pull")
+	if moves := s2Moves(t, db); n != 0 || len(moves) != 0 {
+		t.Fatalf("stage 2 made %d move(s) %v over a stranger's pending hold, want none: its pull takes nothing", n, moves)
+	}
+	got, err := db.GetOrder(stranger.ID)
+	testutil.MustNoErr(t, err, "the stranger")
+	if got.BinID == nil || *got.BinID != cart.ID {
+		t.Errorf("the stranger points at %v, want still the cart %d", got.BinID, cart.ID)
+	}
+	// The stranger was planted for the race and ends with the test: its hold
+	// went with the refused issue, so its pointer alone would read as a wedge.
+	_, err = db.Exec(`UPDATE orders SET status = 'cancelled', bin_id = NULL WHERE id = $1`, stranger.ID)
+	testutil.MustNoErr(t, err, "end the stranger")
 }

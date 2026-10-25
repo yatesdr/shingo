@@ -796,7 +796,7 @@ func (e *Engine) wireEventHandlers() {
 	// After the completion handler above has applied the arrival, so a pull
 	// reads the cart where it landed. Both handlers only read and spawn; each
 	// event reads the loaders once and runs both pulls (readWindowPulls), and
-	// the pulls themselves run on stage2_pull.go's tracked goroutines.
+	// the pulls themselves run on window_pulls.go's tracked goroutines.
 	eventbus.SubscribeTyped(e.Events, func(evt eventbus.TypedEvent[EventType, BinEnteredTransitEvent]) {
 		e.onWindowLeft(evt.Payload.FromNodeID)
 	}, EventBinEnteredTransit)

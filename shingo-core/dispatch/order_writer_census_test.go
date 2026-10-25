@@ -181,7 +181,7 @@ var issueWalk = map[string]issueEntry{
 	"dispatch/lifecycle_service.go:LifecycleService.issue":            {issueSite, []string{"s", "lifecycle"}, "admission's issue: the wire's orders and the Core asks"},
 	"dispatch/complex_intake.go:Dispatcher.handleComplexOrderRequest": {issueSite, []string{"d"}, "complex intake"},
 	"dispatch/compound.go:Dispatcher.writeCompoundChildren":           {issueSite, []string{"d"}, "a dig's legs"},
-	"dispatch/loader_drain.go:Dispatcher.drainMove":                   {issueSite, []string{"d"}, "the loader drain's move"},
+	"dispatch/loader_window.go:Dispatcher.windowMove":                 {issueSite, []string{"d"}, "a window pull's move: the drain's and stage 2's"},
 	"engine/bin_move.go:Engine.CreateBinMove":                         {issueSite, []string{"e", "orchestration"}, "a bin move"},
 	"engine/carried_bin_recovery.go:Engine.issueAndDispatchRecovery":  {issueSite, []string{"e"}, "the carried-bin recovery's unit"},
 	"dispatch/clear_home.go:Dispatcher.BirthClearTx":                  {issueSite, []string{"dispatcher"}, "the home clear: its parent and the partial's move"},
@@ -191,6 +191,7 @@ var issueWalk = map[string]issueEntry{
 	// A door's body on the way: the walk goes on through it.
 	"dispatch/loader_replenish.go:Dispatcher.AdmitCoreAsk":      {issueThrough, []string{"d", "dispatcher"}, "the Core ask through admission"},
 	"engine/carried_bin_recovery.go:Engine.orderCarriedBinDown": {issueThrough, []string{"e"}, "the recovery's door body, which two openers reach"},
+	"dispatch/loader_window.go:Dispatcher.pullInto":             {issueThrough, []string{"d"}, "the window pulls' loop: a move per free window"},
 
 	// The openers: where a door is entered.
 	"dispatch/lifecycle_service.go:LifecycleService.CreateInboundOrder": {issueOpener, nil, "the wire intake (a plain order or a named move)"},
@@ -201,9 +202,8 @@ var issueWalk = map[string]issueEntry{
 	"dispatch/loader_drain.go:Dispatcher.drainLocked":                   {issueOpener, nil, "the loader drain's pass, under the loader's lock"},
 	"www/handlers_orders.go:Handlers.fileBinMove":                       {issueOpener, nil, "a person's bin move: the Orders and Bins pages"},
 	"www/handlers_test_orders_direct.go:Handlers.apiDirectOrderSubmit":  {issueOpener, nil, "a person's bin move: the /test-orders direct form"},
-	"engine/stage2_pull.go:Engine.PullStage2": {issueOpener, nil, "STAGE 2'S PULL: a Core errand that reaches the person's bin move " +
-		"and inherits its take; its own row is the census's to give it (the window move)"},
-	"engine/carried_bin_recovery.go:Engine.RecoverCarriedBin": {issueOpener, nil, "the Recover button on an anomaly"},
+	"dispatch/loader_window.go:Dispatcher.PullStage2":                   {issueOpener, nil, "stage 2's pull, under stage 2's loader lock"},
+	"engine/carried_bin_recovery.go:Engine.RecoverCarriedBin":           {issueOpener, nil, "the Recover button on an anomaly"},
 	"engine/cancel_return.go:Engine.tryReturnCarriedBin": {issueOpener, nil, "THE CANCEL'S RETURN: an order cancelled while its robot " +
 		"carries a bin opens the recovery's door with nobody pressing it"},
 	"engine/clear_home.go:Engine.birthClear":              {issueOpener, nil, "the home clear's door, in the station's transaction"},

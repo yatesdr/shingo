@@ -81,6 +81,13 @@ type Need struct {
 	// INSERT ("an order for one carrier"). 0: the acquire finds one, and the
 	// planner's pick rides the row as orders.plan.
 	Cart int64
+	// Window is the drop when it is one carrier's at a time (a loader window):
+	// it IS the order's delivery, so a need names it or Delivery, never both.
+	// It is held as a pending slot row taken in the issue's transaction, before
+	// the cart: a full ask born after it chooses another window
+	// (plan.LoaderWindows passes over a reserved one), and its dispatch reuses
+	// the row. A window another order holds refuses the issue (errWindowTaken).
+	Window *nodes.Node
 	// By is who asked: Person(name) for a person (a station or a page), the zero
 	// value for Core's own errand. It decides whether a stranger's soft hold on
 	// the cart is taken.
@@ -132,6 +139,9 @@ func row(need Need, p plan.Plan) *orders.Order {
 	if p.Dest != nil {
 		o.DeliveryNode = p.Dest.Name
 	}
+	if need.Window != nil {
+		o.DeliveryNode = need.Window.Name
+	}
 	switch {
 	case need.Cart != 0:
 		// The cart is the order's from its issue, so the node it stands on is
@@ -152,11 +162,11 @@ func row(need Need, p plan.Plan) *orders.Order {
 // issue writes the order a door's need and the planner's plan describe, on the
 // caller's transaction, holding what the need declares: the row (orders.Create,
 // with its creation history), the hold marker a station asked for
-// (QualityHoldBy), then the order's own soft hold on its cart
-// (reservations.Acquire). The take is who asked's: a person takes a stranger's
-// pending hold out loud, Core's own errand takes nothing, and nobody takes a
-// confirmed hold. A hold that cannot be taken refuses the issue: the error is
-// returned and the caller's transaction rolls back.
+// (QualityHoldBy), its window (Window), then the order's own soft hold on its
+// cart (reservations.Acquire). The take is who asked's: a person takes a
+// stranger's pending hold out loud, Core's own errand takes nothing, and nobody
+// takes a confirmed hold. A hold that cannot be taken refuses the issue: the
+// error is returned and the caller's transaction rolls back.
 //
 // The wire door brings a plan whose pick may have found nothing (the gate was
 // closed, or the pick waits, digs or fails): the row is issued either way, as it
@@ -171,17 +181,31 @@ func issue(tx *sql.Tx, need Need, p plan.Plan) (*orders.Order, Taken, error) {
 	if need.QualityHoldBy != "" && need.Cart == 0 {
 		return nil, Taken{}, errors.New("issue: a hold marker needs the cart it marks")
 	}
+	if need.Window != nil && need.Delivery != "" {
+		return nil, Taken{}, errors.New("issue: a declared window is the delivery; a need names one or the other")
+	}
 	o := row(need, p)
 	if err := orders.Create(tx, o); err != nil {
 		return nil, Taken{}, err
-	}
-	if need.Cart == 0 {
-		return o, Taken{}, nil
 	}
 	if need.QualityHoldBy != "" {
 		if err := store.HoldBinTx(tx, need.Cart, need.QualityHoldBy); err != nil {
 			return nil, Taken{}, fmt.Errorf("hold bin %d: %w", need.Cart, err)
 		}
+	}
+	// The window, before the cart: a window lost to another order since the
+	// door read it free is no issue, and the door asks at its next window.
+	if need.Window != nil {
+		err := reservations.AcquireSlot(tx, o.ID, need.Window.ID, "reserveSlot")
+		if errors.Is(err, reservations.ErrReservationConflict) {
+			return nil, Taken{}, errWindowTaken
+		}
+		if err != nil {
+			return nil, Taken{}, fmt.Errorf("hold window %s: %w", need.Window.Name, err)
+		}
+	}
+	if need.Cart == 0 {
+		return o, Taken{}, nil
 	}
 	// The cart's hold, asked first: an issue that meets no stranger reads
 	// nothing more. A root order owns its own lane rows.
@@ -237,6 +261,10 @@ func issueOwnTx(db *store.DB, need Need, p plan.Plan) (*orders.Order, Taken, err
 	}
 	return o, taken, nil
 }
+
+// errWindowTaken is an issue refused because the window its need declares
+// (Need.Window) is held by another order: nothing was written.
+var errWindowTaken = errors.New("the window is held by another order")
 
 // NotAtSourceError is a move refused at its issue because the bin it names is
 // not on its source. Error is the sentence the station shows.

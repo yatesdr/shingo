@@ -12,7 +12,6 @@ import (
 	"shingocore/fleet"
 	"shingocore/fleet/simulator"
 	"shingocore/internal/testdb"
-	"shingocore/service"
 	"shingocore/store"
 	"shingocore/store/nodes"
 	"shingocore/store/orders"
@@ -21,18 +20,16 @@ import (
 
 // slot_chooser_drift_docker_test.go — the engine's half of the drift guard in
 // dispatch/slot_chooser_drift_docker_test.go: no chooser offers a slot its own
-// claim door refuses. The two choosers here pick a destination before an order
-// exists and hand it to an order that claims through the dispatcher's
-// ReserveStorageDropoff (claimStoreSlot for a storage-classed node):
+// claim door refuses. The chooser here, chooseDeclared (the carried-bin
+// return's: the cancelled order's automatic return and the bins page's Return
+// button), picks a destination before an order exists, in a claim's source
+// group, stored into through storeInto, and hands it to an order that claims
+// through the dispatcher's ReserveStorageDropoff (claimStoreSlot for a
+// storage-classed node). Stage 2's window list is dispatch's now, and its row
+// is in dispatch's half.
 //
-//   - chooseDeclared, the carried-bin return's chooser (the cancelled order's
-//     automatic return and the bins page's Return button): a claim's source
-//     group, stored into through storeInto;
-//   - freeStage2Windows, the stage-2 pull's window list (dispatch.FreeWindows,
-//     the predicate the drain's windows meet too).
-//
-// Each candidate is storage-classed (a lane slot, or a STOR-typed window),
-// so the claim door is real. The "free" row is the control.
+// The candidate is a lane slot, so the claim door is real. The "free" row is
+// the control.
 
 type engDriftFixture struct {
 	prefix    string
@@ -124,43 +121,14 @@ var engDriftChoosers = []engDriftChooser{
 			}
 		},
 	},
-	{
-		name: "stage2-window",
-		build: func(t *testing.T, db *store.DB, eng *Engine, fx *engDriftFixture) func() *nodes.Node {
-			// A loader home may not sit in a node group, so the window is a
-			// STOR-typed node: that is what makes it a storage dropoff with a
-			// claim door (isStorageDropoff).
-			storType, err := db.GetNodeTypeByCode(protocol.NodeClassSTOR)
-			testutil.MustNoErr(t, err, "get STOR type")
-			fx.candidate = &nodes.Node{Name: fx.prefix + "-W", Enabled: true, NodeTypeID: &storType.ID}
-			testutil.MustNoErr(t, db.CreateNode(fx.candidate), "window")
-			ls := service.NewLoaderService(db, nil)
-			_, s2, err := ls.CreateTwoStage(service.TwoStageCreate{Name: fx.prefix})
-			testutil.MustNoErr(t, err, "create pair")
-			testutil.MustNoErr(t, ls.SetHome(s2, fx.candidate.ID, "", "", 0), "stage-2 window")
-			two, err := db.GetLoader(s2)
-			testutil.MustNoErr(t, err, "read stage 2")
-			return func() *nodes.Node {
-				free, err := eng.freeStage2Windows(two)
-				testutil.MustNoErr(t, err, "free stage-2 windows")
-				for _, w := range free {
-					if w.ID == fx.candidate.ID {
-						return w
-					}
-				}
-				return nil
-			}
-		},
-	},
 }
 
 // TestEngineSlotChoosers_NeverOfferWhatTheClaimDoorRefuses is the engine half
 // of the drift guard.
 //
-// MUTATION: drop the SlotSpokenForByStranger check from the stage-2 window, or
-// the reservation clause from nodes.SlotTakeableSQL, which the carried-bin
-// return reaches through the store selector. The chooser's pending- and
-// confirmed-reservation rows fail.
+// MUTATION: drop the reservation clause from nodes.SlotTakeableSQL, which the
+// carried-bin return reaches through the store selector. The chooser's
+// pending- and confirmed-reservation rows fail.
 func TestEngineSlotChoosers_NeverOfferWhatTheClaimDoorRefuses(t *testing.T) {
 	db := testDB(t)
 	_, _, p := setupTestData(t, db)

@@ -12,7 +12,7 @@
 //     cart types through one pair is the default and needs no configuration.
 //   - where stage 1 sends a cart is DERIVED, never typed. Pull mode: stage 2
 //     has an inbound source (the wait group), and stage 1 sends there;
-//     engine/stage2_pull.go moves each cart on into a free stage-2 window.
+//     dispatch.PullStage2 moves each cart on into a free stage-2 window.
 //     Direct mode: stage 2 has none, and stage 1 sends to stage 2's one window,
 //     or to a plain group Core makes for several and keeps in step.
 //   - stage 1's windows stand in a group Core makes too, so a press or cell
