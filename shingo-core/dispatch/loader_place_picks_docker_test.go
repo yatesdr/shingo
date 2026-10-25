@@ -506,12 +506,14 @@ func TestLoaderPlacement_NoClaimDoor_ReservedHomeIsNotTaken(t *testing.T) {
 // THE SPRINGFIELD 2026-08-05 SPECIMEN (SMN_030, 8h57m). An evac waited on its
 // partner naming the empty home as its delivery node and holding nothing, and
 // the refill counted it as an ask and was refused all shift. A loader still
-// counts a name as nothing, on both sides: the refill is created, and another
-// return placed while the evac waits still takes the home.
+// counts a name as nothing: the refill is created. The refill itself holds the
+// home from its issue (Need.Window, owner 2026-10-25: the asks hold their
+// window), so a return placed while the evac waits goes to the buffer, where it
+// took the home beside the refill before and two carriers were bound for it.
 func TestSpringfieldIncident_20260805_AWaitingReturnNamingTheHomeHoldsNothing(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	home, _, _, loaderID := springfieldLoaderFixture(t, db)
+	home, buffer, _, loaderID := springfieldLoaderFixture(t, db)
 	d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
 
 	testdb.CreateOrder(t, db, func(o *orders.Order) {
@@ -543,8 +545,8 @@ func TestSpringfieldIncident_20260805_AWaitingReturnNamingTheHomeHoldsNothing(t 
 
 	line := prNode(t, db, "SPR-0805-LINE2")
 	ret, steps := parkSwapPair(t, db, home.Name, line.Name, true)
-	if wait := d.placeForDedicatedLoader(ret, steps, nil); wait != "" || ret.DeliveryNode != home.Name {
-		t.Fatalf("a return placed while the evac and the refill name %s landed at %s (wait %q); "+
-			"for a loader the first to claim goes", home.Name, ret.DeliveryNode, wait)
+	if wait := d.placeForDedicatedLoader(ret, steps, nil); wait != "" || ret.DeliveryNode != buffer.Name {
+		t.Fatalf("a return placed while the refill holds %s landed at %s (wait %q), want the buffer %s: "+
+			"the refill holds the home from its issue", home.Name, ret.DeliveryNode, wait, buffer.Name)
 	}
 }

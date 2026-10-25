@@ -240,13 +240,16 @@ shape as a decision against it.
 1. The scanner finds a source bin (the shared `SourceFinder`). No status is
    written for this: acquiring is the act between `pending` and `dispatched`,
    not a stored status (C1).
-2. It resolves the destination node and soft-reserves the slot
-   (`ReserveStorageDropoff` — a no-op for a line/consume destination, which has
-   no slot to reserve).
-3. It soft-acquires the bin (`ReserveForDispatch`, a pending reservation) and
-   stamps the order's `BinID`.
-4. At dispatch, `ConfirmForDispatch` hard-claims the slot (if a storage
-   dropoff) and the bin, then `DispatchDirect` creates the fleet order.
+2. It resolves the destination node and holds it soft when it is one
+   carrier's at a time — a storage slot (`storageDropoffOf`) or a loader's
+   window (its home row) — through `ReserveStorageDropoff` (`holdPosition`).
+   A line or consume destination holds nothing. Owner-idempotent: a window the
+   order holds from its issue (`Need.Window`, below) passes straight through.
+3. It soft-acquires the bin (`ReserveForDispatchAndPoint`, a pending
+   reservation and the order's `BinID` in one statement).
+4. At dispatch, the hand (`DispatchHand`) hard-claims the slot (a storage
+   dropoff only: a window's row stays pending to the order's end) and the
+   bin, in one transaction, then the fleet order is created.
 
 If any step before confirm fails — the slot is contended, the bin loses a race,
 the destination can't be resolved — the order parks `pending → queued` under
@@ -297,9 +300,28 @@ stamped in the INSERT, and the claim follows at the hand, as for every order —
 no hard claim before the dispatch step on any path. Who asked decides a
 stranger's pending hold on the cart: a person's issue takes it out loud (the
 holder un-pointed and told; one that is an order for that cart ended by name),
-Core's own errand is refused by it, and nobody takes a confirmed hold. A window
-pull also holds its window from its issue (`Need.Window`, a pending slot row). A
-dig's leg is the one exception, below.
+Core's own errand is refused by it, and nobody takes a confirmed hold. A dig's
+leg is the one exception, below.
+
+**An order bound to a window holds it from its issue** (`Need.Window`, a
+pending slot row, taken in the issue's transaction before the cart): a window
+pull's move; a Core ask, the loader loop's at the window it chose and the
+level keeper's at the slot it pre-resolved (`AdmitCoreAsk`); and a station's
+move whose settled drop is one carrier's at a time (`CreateInboundOrder`, the
+acquire's own rule). A window another order holds refuses the issue with
+nothing written (`ErrWindowTaken`): the loader loop names the window
+`window-reserved` and asks at its next one, the keeper asks for its next slot,
+a station is told `claim_failed`. The row is a pending slot row like every
+other: a dig that outranks the holder takes it out loud (the holder told
+`slot-taken`), and one that does not, does not
+(`TestDig_TakesAnAsksWindowOnlyByRank`). An ask whose lane slot was taken is
+aimed back at its group by its next pass and chooses again; an ask whose window
+stands outside any lane is re-aimed by nothing and waits for its window. Not
+declared at the issue: a person's bin move's drop and the carried-bin recovery's
+(each held at its acquire or the recovery's own dispatch, by the acquire's rule)
+and every complex order's (the
+reserve pass holds storage dropoffs and declared-exclusive ones, never a loader
+window).
 
 ## The store API
 

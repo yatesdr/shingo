@@ -345,7 +345,7 @@ func (s *Scanner) fulfill(order *orders.Order, pick *dispatch.SourceResult) bool
 	// ── Dispatch discriminator (Stage 3) ──
 	// Dispatch no longer branches on OrderType; it keys on plan provenance.
 	// IsCoordinated == the order carries an Edge-authored coordinated plan
-	// (StepsJSON). Coordinated orders take the role gate (isConcreteStorageDropoff)
+	// (StepsJSON). Coordinated orders take the role gate (isStorageDropoff)
 	// + the unconditional line/process-node fast-path INSIDE DispatchPreparedComplex
 	// (reserveComplexDestination and its 2b05dce comment) — unchanged. Plain
 	// single-transport orders take the full occupancy gate + node-driven reserve
@@ -563,8 +563,9 @@ func (s *Scanner) fulfill(order *orders.Order, pick *dispatch.SourceResult) bool
 	// reuses — never re-finds — its own held bin).
 
 	// Resolve destination BEFORE the slot reserve so the reserve targets a real
-	// node. A storage dropoff reserves its slot soft (ReserveStorageDropoff); a line
-	// dest is a no-op. On conflict, park under waiting_for_slot — no
+	// node. A drop one carrier's at a time (a storage slot, a loader window) is held
+	// soft (ReserveStorageDropoff); a line dest is a no-op. On conflict, park
+	// under waiting_for_slot — no
 	// bin has been acquired yet, so there is nothing to release.
 	// The node value is deliberately discarded: ReserveStorageDropoff below SETTLES
 	// the destination (group resolve, dug-lane re-aim) and returns the authoritative

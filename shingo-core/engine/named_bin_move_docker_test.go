@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"fmt"
 	"reflect"
+	"strings"
 	"sync/atomic"
 	"testing"
 
@@ -15,7 +16,9 @@ import (
 	"shingocore/internal/testdb"
 	"shingocore/messaging"
 	"shingocore/service"
+	"shingocore/store"
 	"shingocore/store/nodes"
+	"shingocore/store/orders"
 )
 
 // A STATION'S MOVE FOR A BIN A ROBOT HOLDS IS REFUSED, NAMING THE HOLDER.
@@ -346,4 +349,90 @@ func TestNamedBinMove_ALockedBinIsRefused(t *testing.T) {
 	if o, err := db.GetOrderByUUID("nbl-return"); err == nil && o != nil {
 		t.Errorf("a move for a locked bin was issued: order %d (%s)", o.ID, o.Status)
 	}
+}
+
+// A STATION'S MOVE HOLDS ITS DROP FROM ITS ISSUE WHEN THE DROP IS ONE CARRIER'S AT
+// A TIME (Need.Window, since 2026-10-25): a pending slot row on a storage
+// drop at the commit that writes its row, and nothing on a plain node, which its
+// acquire holds no more than before. The drop is the one the decision settled
+// (plan.Plan.Dest), so the row is on the node the move goes to. An exclusive drop
+// another order holds refuses the move at its issue (rule 2): the station is
+// told claim_failed and nothing is written.
+func TestNamedBinMove_HoldsAnExclusiveDropFromItsIssue(t *testing.T) {
+	t.Parallel()
+	issue := func(t *testing.T, prefix string, storage bool, held bool) (*store.DB, *nodes.Node, []protocol.OrderError) {
+		t.Helper()
+		db := testdb.IssueCensusDB(t)
+		setupTestData(t, db)
+		stor, err := db.GetNodeTypeByCode("STOR")
+		testutil.MustNoErr(t, err, "the STOR type")
+		spot := &nodes.Node{Name: prefix + "-SPOT", Enabled: true}
+		drop := &nodes.Node{Name: prefix + "-DROP", Enabled: true}
+		if storage {
+			drop.NodeTypeID = &stor.ID
+		}
+		for _, n := range []*nodes.Node{spot, drop} {
+			testutil.MustNoErr(t, db.CreateNode(n), "node "+n.Name)
+		}
+		if held {
+			// A robot's move on its way to the drop holds it (a dispatched order:
+			// no scanner pass acts on it, so its row stands while the move is sent).
+			stranger := testdb.CreateOrder(t, db, func(o *orders.Order) {
+				o.OrderType, o.Status, o.DeliveryNode = protocol.OrderTypeMove, protocol.StatusDispatched, drop.Name
+			})
+			testutil.MustNoErr(t, db.ReserveSlot(drop.ID, stranger.ID), "a stranger holds the drop")
+		}
+		spare := createTestBinAtNode(t, db, "", spot.ID, prefix+"-SPARE")
+		d := newTestEngine(t, db, simulator.New()).Dispatcher()
+		env := testEnvelope()
+		env.ID = "env-" + strings.ToLower(prefix)
+		refused := d.RefusalsFor(env, func() {
+			d.HandleOrderRequest(env, &protocol.OrderRequest{
+				OrderUUID: strings.ToLower(prefix) + "-move", OrderType: protocol.OrderTypeMove, Quantity: 1,
+				SourceNode: spot.Name, DeliveryNode: drop.Name, BinID: spare.ID,
+			})
+		})
+		return db, drop, refused
+	}
+	atCommit := func(t *testing.T, db *store.DB, uuid string) testdb.AtCommit {
+		t.Helper()
+		o := testdb.RequireOrder(t, db, uuid)
+		at, _, ok := testdb.IssuedAtCommit(t, db, o.ID)
+		if !ok {
+			t.Fatalf("no at-commit record for %s", uuid)
+		}
+		return at
+	}
+
+	t.Run("a storage drop is held from the issue", func(t *testing.T) {
+		t.Parallel()
+		db, drop, refused := issue(t, "NBWS", true, false)
+		if len(refused) != 0 {
+			t.Fatalf("the move was refused: %+v", refused)
+		}
+		if at := atCommit(t, db, "nbws-move"); !at.SlotRow {
+			t.Errorf("the move held %s at its issue's commit, want %s's slot row", at, drop.Name)
+		}
+	})
+	t.Run("a plain drop is not", func(t *testing.T) {
+		t.Parallel()
+		db, drop, refused := issue(t, "NBWP", false, false)
+		if len(refused) != 0 {
+			t.Fatalf("the move was refused: %+v", refused)
+		}
+		if at := atCommit(t, db, "nbwp-move"); at.SlotRow {
+			t.Errorf("the move held %s at its issue's commit: %s is no one carrier's", at, drop.Name)
+		}
+	})
+	t.Run("a storage drop another order holds refuses the issue", func(t *testing.T) {
+		t.Parallel()
+		db, drop, refused := issue(t, "NBWH", true, true)
+		if len(refused) != 1 || refused[0].ErrorCode != string(protocol.TermClaimFailed) ||
+			!strings.Contains(refused[0].Detail, drop.Name) {
+			t.Fatalf("refusals = %+v, want one claim_failed naming %s", refused, drop.Name)
+		}
+		if o, err := db.GetOrderByUUID("nbwh-move"); err == nil && o != nil {
+			t.Errorf("a move into a held drop was issued: order %d (%s)", o.ID, o.Status)
+		}
+	})
 }

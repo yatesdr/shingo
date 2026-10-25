@@ -448,9 +448,9 @@ func (e *Engine) storeInto(src *nodes.Node, bin *bins.Bin) (*nodes.Node, string)
 // position: the loader's home for this payload when it is free and takes this
 // carrier, else the first free buffer of the same loader.
 //
-// A loader position reserves nothing (isStorageDropoff is false for it), so
-// "free" here is CheckDropoffCapacity's answer at this instant, which is the
-// same race placeForLoader lives with.
+// A loader position is held only from the return's acquire (holdPosition, after
+// this choice), so "free" here is CheckDropoffCapacity's answer at this
+// instant, the same race placeForLoader lives with.
 func (e *Engine) storeIntoLoader(home *loaders.Home, bin *bins.Bin) (*nodes.Node, string) {
 	l, err := e.db.GetLoader(home.LoaderID)
 	if err != nil || l == nil || l.ArchivedAt != nil {

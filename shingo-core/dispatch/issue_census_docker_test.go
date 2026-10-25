@@ -9,6 +9,7 @@ import (
 	"shingo/protocol/testutil"
 	"shingocore/internal/testdb"
 	"shingocore/store"
+	"shingocore/store/nodes"
 	"shingocore/store/orders"
 	"shingocore/store/reservations"
 )
@@ -40,7 +41,12 @@ var dispatchIssueDrivers = map[string]testdb.IssueDriver{
 	},
 	"wire named move": func(t *testing.T, stranger bool) (*store.DB, int64) {
 		db := testdb.IssueCensusDB(t)
-		storage, line, bp := setupTestData(t, db)
+		storage, _, bp := setupTestData(t, db)
+		// The drop is a storage node, one carrier's at a time, so the move
+		// holds it from its issue (a plain drop holds nothing:
+		// TestNamedBinMove_HoldsAnExclusiveDropFromItsIssue).
+		drop := &nodes.Node{Name: "IC-NAMED-DROP", Enabled: true, NodeTypeID: storage.NodeTypeID}
+		testutil.MustNoErr(t, db.CreateNode(drop), "the move's drop")
 		cart := testdb.CreateBinAtNode(t, db, bp.Code, storage.ID, "IC-NAMED")
 		if stranger {
 			testdb.StrangerHolds(t, db, cart.ID)
@@ -48,7 +54,7 @@ var dispatchIssueDrivers = map[string]testdb.IssueDriver{
 		d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
 		d.HandleOrderRequest(testEnvelope(), &protocol.OrderRequest{OrderUUID: "ic-named",
 			OrderType: OrderTypeMove, PayloadCode: bp.Code, Quantity: 1, BinID: cart.ID,
-			SourceNode: storage.Name, DeliveryNode: line.Name})
+			SourceNode: storage.Name, DeliveryNode: drop.Name})
 		return db, orderIDByUUID(t, db, "ic-named")
 	},
 	"complex intake": func(t *testing.T, _ bool) (*store.DB, int64) {

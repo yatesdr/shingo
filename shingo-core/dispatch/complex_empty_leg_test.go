@@ -65,6 +65,12 @@ func TestReserveConfirm_EmptyLegClaimsEmptyCarrier(t *testing.T) {
 		{Action: "dropoff", Node: lineNode.Name},
 	}
 	plan := BuildComplexPlan(steps)
+	// The store drop first, as DispatchPreparedComplex does (slots before bins):
+	// it is a standalone STOR node, a slot need since 2026-10-25 (slotNeeds asks
+	// the plain path's storage rule), so the confirm below claims its slot.
+	if out, err := d.allocator.reserveComplexSlots(order, steps); err != nil || out != reserveComplete {
+		t.Fatalf("reserveComplexSlots: %v (outcome %v), want the store drop %s reserved", err, out, storeNode.Name)
+	}
 	assigned, outcome, rerr := d.allocator.reserveComplexPlan(order, plan)
 	if rerr != nil {
 		t.Fatalf("reserveComplexPlan: %v", rerr)

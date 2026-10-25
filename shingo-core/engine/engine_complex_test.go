@@ -1243,7 +1243,12 @@ func TestComplexOrder_SingleRobotSwap(t *testing.T) {
 func TestComplexOrder_DoubleWait(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	storageNode, lineNode, bp := setupTestData(t, db)
+	_, lineNode, bp := setupTestData(t, db)
+	// A store holding two bins, so not a STOR slot: a STOR node is one
+	// carrier's at a time for a complex step as for a plain order (2026-10-25),
+	// and a drop there while the second bin still stands would wait.
+	storageNode := &nodes.Node{Name: "DW-STORE", Enabled: true}
+	testutil.MustNoErr(t, db.CreateNode(storageNode), "the store")
 
 	// Need bins at both nodes for ApplyComplexPlan:
 	//   - step 0: pickup(storage) → needs bin at storage

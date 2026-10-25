@@ -977,7 +977,8 @@ func (d *Dispatcher) DispatchDirect(order *orders.Order, sourceNode, destNode *n
 func (d *Dispatcher) DispatchHand(order *orders.Order, binID int64, sourceNode, destNode *nodes.Node) (string, error) {
 	hand := Hand{Bins: []HandBin{{BinID: binID, RemainingUOP: order.RemainingUOP}}}
 	// Only a concrete storage dropoff is hard-claimed; a line or consume point
-	// has no slot reservation to confirm. Same test the split confirm used.
+	// has no slot reservation to confirm, and a loader window's row stays pending
+	// to the order's end (holdPosition). Same test the split confirm used.
 	//
 	// A GROUP DROP IS NOT (RULINGS-C2c-run-through §3.2: a plain store into a
 	// group is a group drop): its slot stays paper and the release takes the

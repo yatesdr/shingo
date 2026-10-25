@@ -13,7 +13,7 @@ forbidigo-enforced seatbelts — is documented in [reservations.md](reservations
 
 | # | Mechanism | Catches | Anchor (symbol) |
 |---|-----------|---------|-----------------|
-| 1 | Advisory dropoff-capacity gate | a plain/complex order dispatching into a full concrete storage slot (child of a LANE/NGRP) or a saturated node group | `shingo-core/dispatch/capacity.go` — `CheckDropoffCapacity` (~:89) |
+| 1 | Advisory dropoff-capacity gate | a plain/complex order dispatching into a full concrete storage slot (a STOR node or a child of a LANE/NGRP) or a saturated node group | `shingo-core/dispatch/capacity.go` — `CheckDropoffCapacity` (~:89) |
 | 2 | Pair admission (a coordinated pair is one job) | the two legs of a pair committing separately — an EVAC sent to lift the line bin while its supply cannot come (strands the line, ALN_003), or one leg sent while its partner is refused. Every leg clears its acquisition phases in one pass and then every fleet create follows, or no leg is sent; an incomplete pair (partner not received yet, or digging its own bin out) parks holding nothing, and a partner Core refused at intake fails the leg that names it | `shingo-core/dispatch/complex_pair.go` — `dispatchPairInOnePass`; what counts as the pair is `coordinatedPairLegs`; the waits are `parkPair` / `parkPairAwaitingPartner`, the refusal `failForRefusedPartner` |
 | 3 | Slot reservation (reserve-only) | two stores resolving the same slot both dispatching into it (store-vs-store); the Dispatcher-surface entry also settles the destination (group→child, re-aim off a dug lane) and its return value is the only node a caller may use | `shingo-core/dispatch/store_slot.go` — `ReserveStorageDropoff` / `claimStoreSlot` (~:168) — a `resource_kind = 'slot'` reservation row, see [reservations.md](reservations.md) |
 | 4 | Atomic slot claim (reservation-guarded CAS) | a slot claim racing occupancy / another claimant | `shingo-core/store/nodes/nodes.go` — `ClaimSlotTx` (~:92); the sanctioned path is `db.ConfirmSlotClaim` (claim + reservation `pending→confirmed` in one tx), enforced by forbidigo — see [reservations.md](reservations.md) §The claim seatbelt |
@@ -65,7 +65,8 @@ runs `EvictStaleGhostBinsTx`.
 ## The deliberate LINE-drop exemption
 
 The tier-1/tier-3 dropoff gate is applied ONLY to concrete storage slots
-(children of a LANE or NGRP), **never to a LINE node and never to staging**.
+(a STOR node, or a child of a LANE or NGRP: `storageDropoffOf`, one rule for the plain
+and the complex families since 2026-10-25), **never to a LINE node and never to staging**.
 Gating the coordinated swap's LINE drop deadlocked a plant and was reverted in
 **`2b05dce`** — the exemption is load-bearing, not an oversight. A supply leg
 delivers to a line node a sibling evac clears; the fleet's shared-node
@@ -75,9 +76,9 @@ no parent and fails the gate's first test — so staging dropoffs are protected
 by **declaration** instead (`protocol.ComplexOrderStep.ExclusiveSlot`,
 enforced by the declared-exclusive dropoff loop in the complex gate).
 
-Anchor: `shingo-core/dispatch/complex_dispatch.go` — the `isConcreteStorageDropoff`
-gate (~:776) + the `2b05dce` regression comment (~:729) and the predicate's
-own "IT DOES NOT COVER STAGING" header (~:26).
+Anchor: `shingo-core/dispatch/complex_dispatch.go` — the storage-dropoff
+gate in `reserveComplexDestination` (`isStorageDropoff`) + its `2b05dce` regression comment, and the predicate's
+"IT DOES NOT COVER STAGING" note (`storageDropoffOf`, `dispatch/store_slot.go`).
 
 ## Two plant-verified vendor facts (2026-07-08)
 

@@ -131,7 +131,7 @@ func (d *Dispatcher) pullInto(free []*nodes.Node, carts []*bins.Bin, caps map[in
 				continue
 			}
 			err = d.windowMove(prefix, desc, c, w)
-			if errors.Is(err, errWindowTaken) {
+			if errors.Is(err, ErrWindowTaken) {
 				d.dbg("%s: %s was taken since it was read free", desc, w.Name)
 				break
 			}
@@ -153,7 +153,7 @@ func (d *Dispatcher) pullInto(free []*nodes.Node, carts []*bins.Bin, caps map[in
 // and carrier rule). A window pull is Core's own errand, never a person's, so
 // it takes no hold another order has: a stranger's hold on the cart refuses the
 // issue (the pulls' reads of carts pass over a held one, so only a race meets
-// it), and so does another order's on the window (errWindowTaken). It asks no
+// it), and so does another order's on the window (ErrWindowTaken). It asks no
 // dig verdict: both pulls read only reachable carts. Station-unaware like every
 // Core-born move; its material notices project to the window's Edge
 // (Need.Projects), which binds the cart when it lands.
@@ -204,9 +204,10 @@ func (d *Dispatcher) windowMove(prefix, desc string, c *bins.Bin, w *nodes.Node)
 // order yet, so it asks as the zero order and excludes nobody. Pinned by
 // TestComingVectors_TheWindowReadersAgree.
 //
-// ANOTHER ORDER'S SLOT RESERVATION: a pull's move holds its window from its
-// issue (windowMove), so a window one pull's move is on its way to is not
-// another's, nor a full ask's (plan.LoaderWindows reads the same row).
+// ANOTHER ORDER'S SLOT RESERVATION: a pull's move and a Core ask hold their
+// window from their issue (windowMove, AdmitCoreAsk), and a plain order bound
+// for it from its acquire (holdPosition), so a window one of them is on its way
+// to is not another's (plan.LoaderWindows reads the same row).
 //
 // Three reads per enabled window (its bins, the live rows naming it, its slot
 // reservations), none for a disabled one.

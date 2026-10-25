@@ -10,58 +10,10 @@ import (
 	"shingo/protocol"
 	"shingocore/dispatch/plan"
 	"shingocore/fleet"
-	"shingocore/store"
 	"shingocore/store/nodes"
 	"shingocore/store/orders"
 	"shingocore/store/reservations"
 )
-
-// isConcreteStorageDropoff reports whether a delivery node is a concrete
-// (non-synthetic) STORAGE slot — a direct child of a LANE or NGRP.
-// This is the role gate for the complex dropoff-capacity check (#1): such a
-// slot must queue-on-full, whereas a LINE/production dropoff must NOT be
-// gated (a two-robot supply leg delivers to a line a sibling evac clears, and
-// gating it deadlocks). Mirrors engine.isStorageSlot's parent-type rule minus
-// the synthetic-root cases — NGRP/LANE dropoffs are handled by step
-// re-resolution / ResolutionCapacity before this point.
-// (Free function — shared by the Dispatcher's dropoff-capacity gate and the
-// Allocator's slotNeeds; it needs only the store handle.)
-//
-// ── IT DOES NOT COVER STAGING, AND IT USED TO SAY IT DID ──────────────────
-//
-// This read "STORAGE/STAGING slot" and slotNeeds' docstring said "staging/relay
-// included". Neither was true. A staging node is a station with NO PARENT, so
-// the `ParentID == nil` guard below rejects it before the LANE/NGRP test is ever
-// reached — it was never a question of which parent type, it never got that far.
-//
-// The cost of the wrong sentence was that nobody re-read the code: the
-// predicate's NAME, this comment, and its other caller's comment all promised
-// staging coverage, so a reviewer checking "are staging dropoffs gated?" got
-// three confirmations and no gate. (An incident attribution stood here; §R.112
-// falsified it — see protocol.ComplexOrderStep.ExclusiveSlot. The three
-// confirmations and the missing gate are what this paragraph is about, and they
-// were real.)
-//
-// Staging is now covered by DECLARATION instead —
-// protocol.ComplexOrderStep.ExclusiveSlot, set by the author of the plan —
-// because Core cannot recognise a staging node at all: every station carries the
-// one STATION node type, the plantspec Kind is advisory and never persisted, and
-// the designation lives in the Edge cell config. This predicate keeps doing the
-// job it actually does, under a name that now matches it.
-func isConcreteStorageDropoff(db *store.DB, deliveryNode string) bool {
-	if deliveryNode == "" {
-		return false
-	}
-	node, err := db.GetNodeByDotName(deliveryNode)
-	if err != nil || node == nil || node.IsSynthetic || node.ParentID == nil {
-		return false
-	}
-	parent, err := db.GetNode(*node.ParentID)
-	if err != nil || parent == nil {
-		return false
-	}
-	return parent.NodeTypeCode == protocol.NodeClassLANE || parent.NodeTypeCode == protocol.NodeClassNGRP
-}
 
 // dispatchStep carries a phase helper's decision back to the DispatchPreparedComplex
 // orchestrator. done=true means the phase parked, failed, or skipped the order and
@@ -973,15 +925,16 @@ func (d *Dispatcher) reserveComplexDestination(order *orders.Order, resolvedStep
 	// gate for every complex order to unstick two-robot SUPPLY legs — which
 	// deliver to a LINE node a sibling EVAC clears — but that also let a
 	// changeover drop/evac to a FULL concrete storage slot dispatch into the
-	// occupied slot. Gate by node role (storage slot = child of LANE/NGRP), NOT
-	// by same-order pickup: gating the line case would re-create the deadlock
-	// 2b05dce fixed. NGRP dropoffs are already covered above by
+	// occupied slot. Gate by node role (a storage dropoff, storageDropoffOf: a
+	// STOR node or a child of a LANE or an NGRP, one rule with the plain path's
+	// since 2026-10-25), NOT by same-order pickup: gating the line case would
+	// re-create the deadlock 2b05dce fixed. NGRP dropoffs are already covered above by
 	// reResolveComplexStepsFor / ResolutionCapacity. Stay queued by returning an
 	// error — the scanner keeps the order queued and replays it on the next
 	// slot-vacancy tick (same contract as the claim_failed branch below).
 	//
 	// THIS USED TO SAY "STORAGE/STAGING", AND IT NEVER COVERED STAGING — see
-	// isConcreteStorageDropoff's own note. Staging is handled by the declared
+	// storageDropoffOf's own note. Staging is handled by the declared
 	// loop further down instead.
 	//
 	// THE PROHIBITION STANDS; ITS OLD REASON DOES NOT. The justification used to
@@ -1014,11 +967,11 @@ func (d *Dispatcher) reserveComplexDestination(order *orders.Order, resolvedStep
 	// IT IS NOT `s.Node == order.DeliveryNode`, and the difference is a hole. An
 	// order whose FINAL dropoff is itself a staging node — BuildStageSteps is
 	// exactly that shape, pickup source then dropoff staging, nothing after —
-	// fails isConcreteStorageDropoff, so this arm skips it; and a loop that then
+	// is no storage dropoff, so this arm skips it; and a loop that then
 	// skipped it again for equalling DeliveryNode would leave it checked by
 	// nobody. The two arms have to compose on what was ASKED, not on which node
 	// it was.
-	finalChecked := isConcreteStorageDropoff(d.db, order.DeliveryNode)
+	finalChecked := isStorageDropoff(d.db, order.DeliveryNode)
 	if finalChecked {
 		blocked, cap := CheckDropoffCapacity(d.db, order.DeliveryNode, order.ID)
 		// ── THE VACATED-SLOT RULE, IN TODAY'S WAIT BRANCH ONLY ────────────────

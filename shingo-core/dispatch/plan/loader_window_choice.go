@@ -40,10 +40,14 @@ type LoaderWindows struct {
 // writes nothing (the dispatcher births one order per chosen window).
 //
 // ANOTHER ORDER'S SLOT RESERVATION, which the capacity verdict does not read: a
-// pull's claim on a storage-classed window would be refused for as long as the
-// holder holds it. No pull exists yet, so nobody is exempt (owner 0). A name
-// that resolves to no node passes, the answer the capacity verdict gives it, so
-// the dispatch produces the real error. (main's loader pull window, rebase 4.)
+// window is one carrier's at a time, so a pull's issue into it would be refused
+// for as long as the holder holds it. The Core asks and the window pulls hold
+// their window from their issue (dispatch.Need.Window), and every plain order
+// holds its window at its acquire (dispatch's holdPosition), so a live ask of
+// either direction is named here first. No pull exists yet, so nobody is exempt
+// (owner 0). A name that resolves to no node passes, the answer the capacity
+// verdict gives it, so the dispatch produces the real error. (main's loader pull
+// window, rebase 4.)
 //
 // THE TARGET LIST IS THE BOUND. DeliveryTargets returns a budget equal to its
 // target count in every shape that exists — spread gives every window and the
@@ -59,8 +63,12 @@ type LoaderWindows struct {
 // but never asked for a carrier, and counting it deadlocked SMN_030 for 8h57m on
 // 2026-08-05. For a full the intent is shared with a complex order's parent, so
 // an evac bringing a full does count (see
-// orders.CountLiveCarrierRequestsByDeliveryNode). Arrivals are the capacity
-// verdict's in-flight arm. Unreadable fails closed, like every occupancy question.
+// orders.CountLiveCarrierRequestsByDeliveryNode). A live Core ask holds its
+// window's row from its issue, so the reservation arm above names it before this
+// count is asked; the count is for the orders that name the window and hold no
+// row on it yet: an Edge order before its acquire, a complex order's parent.
+// Arrivals are the capacity verdict's in-flight arm. Unreadable fails closed,
+// like every occupancy question.
 func (p *Planner) LoaderWindows(in loaders.DeliveryTargetsInput, want int, intent string) LoaderWindows {
 	defer observe(p.db, "loader-windows")()
 	targets, budget := loaders.DeliveryTargets(in)

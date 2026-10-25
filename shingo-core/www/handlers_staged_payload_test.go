@@ -91,7 +91,7 @@ func TestStagedOrder_TakesThePayloadFromTheBinNotTheOperator(t *testing.T) {
 // ── WHY IT WAS MISSED, RECORDED SO THE NEXT CENSUS IS DONE FIRST ──────────
 //
 // The defect is that Core cannot recognise a staging node — it is a station with
-// no parent, so isConcreteStorageDropoff rejects it and both destination gates
+// no parent, so the storage rule (storageDropoffOf) rejects it and both destination gates
 // stand down. The fix is for the author of the plan to declare it, and the fix
 // was written against the EDGE builders because that is where the investigation
 // had been reading.

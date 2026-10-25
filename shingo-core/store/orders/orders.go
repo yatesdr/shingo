@@ -2074,6 +2074,12 @@ func CountLiveByDeliveryNode(db *sql.DB, deliveryNode string) (int, error) {
 // its way speaks for the window whoever sent it. Whether an evac at an unloader
 // window can wait on that window's full-in, the way SMN_030's waited on its
 // empty, was not established; if one can, this count is where it would hold.
+//
+// WHAT IT IS FOR NOW THAT THE ASKS HOLD THEIR WINDOW (2026-10-25). A Core ask
+// holds its window's slot row from its issue, and the window choice asks the
+// row first (plan.LoaderWindows), so a live Core ask is named there. This count
+// stays for the orders that name a window and hold no row on it: an Edge order
+// before its acquire, and the complex family.
 func CountLiveCarrierRequestsByDeliveryNode(db *sql.DB, deliveryNode, intent string) (int, error) {
 	var count int
 	err := db.QueryRow(fmt.Sprintf(

@@ -722,7 +722,7 @@ func TestHandleOrderRelease_BinIDNilFallbackClearsManifest(t *testing.T) {
 //
 // NOT STAGING, though this comment said "storage/staging" for as long as the
 // gate existed. A staging node is a station with no parent and never passed
-// isConcreteStorageDropoff at all; it is covered by declaration instead
+// the storage rule (storageDropoffOf) at all; it is covered by declaration instead
 // (ExclusiveSlot), and TestDeclaredStagingOccupiedByABinQueues is its
 // counterpart to this test.
 func TestDispatchPreparedComplex_QueuesOnFullConcreteStorageDropoff(t *testing.T) {
@@ -778,16 +778,17 @@ func TestDispatchPreparedComplex_QueuesOnFullConcreteStorageDropoff(t *testing.T
 	}
 }
 
-// TestIsConcreteStorageDropoff_RoleGate pins the role classifier that scopes
+// TestStorageDropoff_RoleGate pins the role classifier that scopes
 // the #1 capacity gate. The two-robot guard is the line-node case: a LINE /
 // production dropoff must classify false so a supply leg is NOT capacity-
 // gated (a sibling evac clears the line; Core can't model that), which is the
 // deadlock 2b05dce removed. NGRP roots classify false too — they're handled
-// by step re-resolution before the gate.
-func TestIsConcreteStorageDropoff_RoleGate(t *testing.T) {
+// by step re-resolution before the gate. A standalone STOR node is storage
+// for the complex family as for the plain path (one rule since 2026-10-25).
+func TestStorageDropoff_RoleGate(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	_, lineNode, _ := setupTestData(t, db)
+	storage, lineNode, _ := setupTestData(t, db)
 	d, _ := newTestDispatcher(t, db, testdb.NewTrackingBackend())
 
 	grpType, err := db.GetNodeTypeByCode("NGRP")
@@ -805,14 +806,15 @@ func TestIsConcreteStorageDropoff_RoleGate(t *testing.T) {
 		want bool
 	}{
 		{"concrete storage slot (child of NGRP)", slot.Name, true},
+		{"standalone STOR node", storage.Name, true},
 		{"line/production node — two-robot guard", lineNode.Name, false},
 		{"synthetic NGRP root — handled by re-resolution", grp.Name, false},
 		{"empty", "", false},
 		{"missing node", "NO-SUCH-NODE", false},
 	}
 	for _, c := range cases {
-		if got := isConcreteStorageDropoff(d.db, c.node); got != c.want {
-			t.Errorf("%s: isConcreteStorageDropoff(%q) = %v, want %v", c.name, c.node, got, c.want)
+		if got := isStorageDropoff(d.db, c.node); got != c.want {
+			t.Errorf("%s: isStorageDropoff(%q) = %v, want %v", c.name, c.node, got, c.want)
 		}
 	}
 }

@@ -12,6 +12,7 @@ import (
 	"shingocore/dispatch"
 	"shingocore/fleet/simulator"
 	"shingocore/store"
+	"shingocore/store/nodes"
 )
 
 // release_layer_order112_docker_test.go — the order-112 class (SYNTH-round3 §2):
@@ -99,7 +100,12 @@ func TestReleaseLayer_Order112_EveryStationWaitStages(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			t.Parallel()
 			db := testDB(t)
-			storageNode, lineNode, bp := setupTestData(t, db)
+			_, lineNode, bp := setupTestData(t, db)
+			// A store holding two bins, so not a STOR slot: a STOR node is one
+			// carrier's at a time for a complex step as for a plain order
+			// (2026-10-25), and a drop there while the second bin stands would wait.
+			storageNode := &nodes.Node{Name: "O112-STORE", Enabled: true}
+			testutil.MustNoErr(t, db.CreateNode(storageNode), "the store")
 			createTestBinAtNode(t, db, bp.Code, storageNode.ID, "BIN-112-S1")
 			createTestBinAtNode(t, db, bp.Code, storageNode.ID, "BIN-112-S2")
 			createTestBinAtNode(t, db, bp.Code, lineNode.ID, "BIN-112-L1")

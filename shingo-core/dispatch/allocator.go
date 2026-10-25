@@ -117,7 +117,7 @@ type heldReservation struct {
 }
 
 // slotNeed is one dropoff step that needs a destination slot reservation: a
-// concrete storage slot, or a dropoff its author declared exclusive (a staging
+// storage dropoff, or a dropoff its author declared exclusive (a staging
 // node, which Core cannot recognise structurally — see slotNeeds). group is
 // the NGRP origin ("" for a fixed-concrete dropoff), used to revert-and-re-resolve
 // a fungible slot on conflict; a declared staging dropoff carries none, because
@@ -129,36 +129,44 @@ type slotNeed struct {
 	group     string
 }
 
-// slotNeeds returns the dropoff nodes an order must reserve: concrete storage
-// slots, plus any dropoff whose author DECLARED it exclusive. Ordering is step
-// order; the reconcile does not need the canonical node-ID sort the hard loop
-// used — the ABBA class dissolves at the soft-acquire layer, where a loser backs
-// off holding revocable reservations.
+// slotNeeds returns the dropoff nodes an order must reserve: storage dropoffs,
+// asked by the plain path's rule (isStorageDropoff, storageDropoffOf: a STOR
+// node or a child of a LANE or an NGRP), plus any dropoff whose author DECLARED
+// it exclusive. Ordering is step order; the reconcile does not need the
+// canonical node-ID sort the hard loop used — the ABBA class dissolves at the
+// soft-acquire layer, where a loser backs off holding revocable reservations.
+//
+// ONE RULE WITH THE PLAIN PATH (owner, 2026-10-25). This asked a narrower
+// predicate (a LANE or NGRP parent, no STOR arm), so a complex step dropping on
+// a standalone STOR node reserved nothing where a plain order's drop there
+// holds its slot (TestComplexDropOnAStandaloneStorNodeIsHeldAsAPlainDropThereIs).
+// The plain hold's other half, a loader's window (oneCarrierAt), is not asked
+// here: see oneCarrierAt for why.
 //
 // ── THIS COMMENT USED TO SAY "STAGING/RELAY INCLUDED". IT WAS NOT ─────────
 //
 // The claim was that this set is "exactly the set the retired ClaimSlot loop
-// iterated (isConcreteStorageDropoff dropoffs, staging/relay included)". The
-// first half was true and the parenthesis was false, which is the worst
-// available combination: the predicate's NAME and its DOCSTRING both promised
-// staging coverage, so nobody re-read the predicate.
+// iterated (concrete storage dropoffs, staging/relay included)". The first half
+// was true and the parenthesis was false, which is the worst available
+// combination: the predicate's NAME and its DOCSTRING both promised staging
+// coverage, so nobody re-read the predicate.
 //
-// isConcreteStorageDropoff bails at `node.ParentID == nil`, and staging nodes
-// are seeded parentless (cmd/seeddev/seed_core.go — stations pass nil where the
-// slot loop one block above passes its lane id). Staging never reached the
-// LANE/NGRP test at all. So a staging dropoff was reserved by nothing and
-// capacity-checked by nothing, so two orders can take one node and the second
-// robot arrives to find it full. (This named the Springfield 2026-08-12 hold as
-// the first anyone knew of it. §R.112's plant queries falsified that attribution
-// — see protocol.ComplexOrderStep.ExclusiveSlot for the one full record. The gap
-// is reachable on its own terms and the fix keeps its standing.)
+// The predicate bailed at `node.ParentID == nil`, and staging nodes are seeded
+// parentless (cmd/seeddev/seed_core.go — stations pass nil where the slot loop
+// one block above passes its lane id). Staging never reached the LANE/NGRP test
+// at all. So a staging dropoff was reserved by nothing and capacity-checked by
+// nothing, so two orders can take one node and the second robot arrives to find
+// it full. (This named the Springfield 2026-08-12 hold as the first anyone knew
+// of it. §R.112's plant queries falsified that attribution — see
+// protocol.ComplexOrderStep.ExclusiveSlot for the one full record. The gap is
+// reachable on its own terms and the fix keeps its standing.)
 //
 // ── WHY THE FIX IS A DECLARATION AND NOT A WIDER PREDICATE ────────────────
 //
 // Widening the role test to accept parentless stations would also readmit LINE
 // nodes, and gating those re-creates the deadlock 2b05dce fixed (see
-// isConcreteStorageDropoff's caller). Core cannot tell the two apart: every
-// station carries the one STATION node type, the plantspec Kind is advisory and
+// reserveComplexDestination). Core cannot tell the two apart: every station
+// carries the one STATION node type, the plantspec Kind is advisory and
 // unpersisted, and the staging designation lives in the Edge cell config. So the
 // author declares it — protocol.ComplexOrderStep.ExclusiveSlot — and Core stops
 // guessing at a fact it does not hold.
@@ -173,7 +181,7 @@ func (a *Allocator) slotNeeds(steps []resolvedStep) []slotNeed {
 		if s.Action != protocol.ActionDropoff || s.Node == "" {
 			continue
 		}
-		if !s.ExclusiveSlot && !isConcreteStorageDropoff(a.db, s.Node) {
+		if !s.ExclusiveSlot && !isStorageDropoff(a.db, s.Node) {
 			continue
 		}
 		out = append(out, slotNeed{stepIndex: i, nodeName: s.Node, group: s.Group})
@@ -646,12 +654,12 @@ func (a *Allocator) reanchorVacantPickup(order *orders.Order, plan *ComplexPlan,
 //
 // The paragraph above named "relay/staging" and had done since the split-brain
 // fix, but slotNeeds' predicate never returned a staging node — a station with
-// no parent fails isConcreteStorageDropoff at the nil guard. So the stable-relay
+// no parent is no storage dropoff (storageDropoffOf). So the stable-relay
 // argument held for STORAGE slots and quietly did not hold for staging relays,
 // which are precisely the ones a stage-and-accept plan depends on. It is true
 // now, for staging dropoffs the plan's author DECLARES exclusive; see slotNeeds.
 //
-// Per slot need — a concrete storage dropoff, or a declared-exclusive one — it
+// Per slot need — a storage dropoff, or a declared-exclusive one — it
 // keeps a held slot reservation (owner-aware,
 // matched by node) or acquires a fresh one. On conflict (another order holds it): a
 // FUNGIBLE NGRP dropoff reverts to its group so the next tick re-resolves to a free

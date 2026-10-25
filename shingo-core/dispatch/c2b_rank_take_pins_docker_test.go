@@ -11,6 +11,7 @@ import (
 	"shingo/protocol/testutil"
 	"shingocore/internal/testdb"
 	"shingocore/store"
+	"shingocore/store/nodes"
 	"shingocore/store/orders"
 )
 
@@ -129,4 +130,116 @@ func TestC2bPin_AYoungerDigNeverTakesAnOlderWaitersSlot(t *testing.T) {
 	if after.QueueCause != string(CauseNoShuffleSlot) {
 		t.Fatalf("the younger dig waits under %q, want %q", after.QueueCause, CauseNoShuffleSlot)
 	}
+}
+
+// askRankTake is c2bRankTake with the holder a Core ask (the level keeper's
+// shape) whose window is the group's only parking position, held from its
+// issue (AdmitCoreAsk): a sibling lane's slot, or a flat child of the group
+// (flat).
+func askRankTake(t *testing.T, prefix string, demandPriority int, flat bool) (*Dispatcher, *store.DB, *orders.Order, *orders.Order, *nodes.Node, func()) {
+	t.Helper()
+	db := testDB(t)
+	d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
+	sibDepth := 1
+	if flat {
+		sibDepth = 0
+	}
+	grp, dug, _, park, dugSlots, sibSlots, bp := setupDwellGroup(t, db, prefix, sibDepth, flat)
+	createTestBinAtNode(t, db, bp.Code, dugSlots[0].ID, prefix+"-BLK")
+	target := createTestBinAtNode(t, db, bp.Code, dugSlots[1].ID, prefix+"-TGT")
+	window := park
+	if !flat {
+		window = sibSlots[0]
+	}
+	ask, err := d.AdmitCoreAsk(CoreAskSpec{UUIDPrefix: "core-mnt-", OrderType: OrderTypeRetrieveEmpty,
+		StationID: "test-core", DeliveryNode: window.Name, PayloadDesc: "empty → " + grp.Name,
+		OriginClass: protocol.OriginClassOrphan})
+	testutil.MustNoErr(t, err, "the ask")
+
+	demand := mkQueuedComplexParent(t, db, strings.ToLower(prefix)+"-demand", bp.Code)
+	_, err = db.Exec(`UPDATE orders SET priority = $1 WHERE id = $2`, demandPriority, demand.ID)
+	testutil.MustNoErr(t, err, "rank the demand")
+	demand, err = db.GetOrder(demand.ID)
+	testutil.MustNoErr(t, err, "reload the demand")
+	dig := func() {
+		d.handleComplexBuriedOnReplay(demand, &BuriedError{Bin: target, Slot: dugSlots[1], LaneID: dug.ID})
+	}
+	return d, db, ask, demand, window, dig
+}
+
+// TestDig_TakesAnAsksWindowOnlyByRank is the asks' window check as the owner restated it
+// (2026-10-25, "rank is the rule"): an ask's held window is a pending slot row
+// like every other, so a dig that outranks the ask takes it out loud (the ask's
+// row deleted, the ask told slot-taken naming the dig, as every pending slot
+// row's holder is: store.takeSlotTx, nodes.TakeableSlotsInGroup), and a dig that
+// does not outrank it does not. Then the ask's next pass (its acquire's
+// destination step, ReserveStorageDropoff), what "the ask re-chooses at its next
+// pass" comes to in the tree: on a lane slot of a group it waits on the slot and
+// is aimed back at its group (plainGroupDrop's back-to-group), so the pass after
+// chooses again; on a flat child of a group nothing re-aims it, and it waits at
+// its window.
+//
+// At the base the ask held nothing, so its window was free to every dig, no
+// rank asked: the dig parked on it and the ask was never told.
+func TestDig_TakesAnAsksWindowOnlyByRank(t *testing.T) {
+	t.Parallel()
+	for _, c := range []struct {
+		name, prefix string
+		flat         bool
+	}{{"a lane slot", "AKRL", false}, {"a group's flat child", "AKRF", true}} {
+		t.Run("an outranking dig takes "+c.name+" out loud", func(t *testing.T) {
+			t.Parallel()
+			d, db, ask, demand, window, dig := askRankTake(t, c.prefix, 100, c.flat)
+			dig()
+			legs, err := db.ListChildOrders(demand.ID)
+			testutil.MustNoErr(t, err, "the dig's legs")
+			if len(legs) == 0 {
+				after, gErr := db.GetOrder(demand.ID)
+				testutil.MustNoErr(t, gErr, "reload the demand")
+				t.Fatalf("the outranking dig did not start: the demand is %s under %q", after.Status, after.QueueCause)
+			}
+			leg := releaseDwell(t, d, db, legs[0])
+			if leg.DeliveryNode != window.Name {
+				t.Fatalf("the leg parks at %q, want the ask's window %s (the group's only parking)", leg.DeliveryNode, window.Name)
+			}
+			if n := c2bSlotRows(t, db, ask.ID); n != 0 {
+				t.Errorf("the outranked ask still holds %d slot row(s)", n)
+			}
+			told, err := db.GetOrder(ask.ID)
+			testutil.MustNoErr(t, err, "reload the ask")
+			if told.QueueCause != "slot-taken" || !strings.Contains(told.QueueReason, fmt.Sprint(demand.ID)) {
+				t.Fatalf("the ask's wait is %q (%q), want slot-taken naming order %d", told.QueueCause, told.QueueReason, demand.ID)
+			}
+
+			// Its next pass.
+			dest := d.ReserveStorageDropoff(told)
+			if !dest.Refused() || dest.Cause != CauseStoreSlotContended {
+				t.Fatalf("the ask's next pass: refused=%v cause %q, want a wait on the slot the dig holds", dest.Refused(), dest.Cause)
+			}
+			after, err := db.GetOrder(ask.ID)
+			testutil.MustNoErr(t, err, "reload the ask")
+			if c.flat && after.DeliveryNode != window.Name {
+				t.Errorf("the ask on a flat window is aimed at %q, want still %s: nothing re-aims it", after.DeliveryNode, window.Name)
+			}
+			if !c.flat && after.DeliveryNode == window.Name {
+				t.Errorf("the ask on a lane slot is still aimed at %s, want it back at its group to choose again", window.Name)
+			}
+		})
+	}
+	t.Run("a dig that does not outrank the ask leaves its window", func(t *testing.T) {
+		t.Parallel()
+		_, db, ask, demand, window, dig := askRankTake(t, "AKRY", 0, false)
+		dig()
+		if legs, err := db.ListChildOrders(demand.ID); err != nil || len(legs) != 0 {
+			t.Fatalf("a younger dig started (%d leg(s), %v) on the ask's window %s, the group's only parking", len(legs), err, window.Name)
+		}
+		if n := c2bSlotRows(t, db, ask.ID); n != 1 {
+			t.Errorf("the ask holds %d slot row(s), want its window's 1", n)
+		}
+		after, err := db.GetOrder(demand.ID)
+		testutil.MustNoErr(t, err, "reload the demand")
+		if after.QueueCause != string(CauseNoShuffleSlot) {
+			t.Errorf("the younger dig waits under %q, want %q", after.QueueCause, CauseNoShuffleSlot)
+		}
+	})
 }

@@ -33,7 +33,7 @@ func dropoffStep(node string) protocol.ComplexOrderStep {
 
 // stagingDropoffStep is the declared staging dropoff — the one form Core
 // cannot recognise on its own. A staging node is a station with no parent,
-// so isConcreteStorageDropoff rejects it and both destination gates stand
+// so the storage rule (storageDropoffOf) rejects it and both destination gates stand
 // down: reserved by nothing, checked by nothing, free for a second order
 // to take while the first robot is on its way. Declaring it is not inference — the operator typed the
 // node into a field named staging, and the handler refuses the request

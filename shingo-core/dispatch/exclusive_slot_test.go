@@ -112,7 +112,7 @@ func TestExclusiveSlot_IsDropoffOnly(t *testing.T) {
 		{Action: protocol.ActionWait, Node: "STAGING", ExclusiveSlot: true},
 		{Action: protocol.ActionDropoff, Node: "", ExclusiveSlot: true}, // deferred destination
 	}
-	a := &Allocator{} // nil db is safe: no arm below reaches isConcreteStorageDropoff
+	a := &Allocator{} // nil db is safe: no arm below reaches isStorageDropoff
 	if needs := a.slotNeeds(steps); len(needs) != 0 {
 		t.Errorf("slotNeeds returned %+v for a set with no concrete dropoff — a declared PICKUP or "+
 			"WAIT must not reserve a node, and a blank dropoff has no node to reserve", needs)

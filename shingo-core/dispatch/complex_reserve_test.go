@@ -626,7 +626,7 @@ func TestComplexHoldingSlotsAsReservationsAcrossTicks(t *testing.T) {
 //
 // ── THE DEFECT ────────────────────────────────────────────────────────────
 //
-// slotNeeds gated on isConcreteStorageDropoff, which bails at `ParentID == nil`.
+// slotNeeds gated on a storage predicate that bails at `ParentID == nil`.
 // A staging node is seeded as a station with NO PARENT, so it never reached the
 // LANE/NGRP test and was reserved by nothing and capacity-checked by nothing.
 // slotNeeds' own docstring claimed "staging/relay included" — the predicate's
@@ -663,12 +663,12 @@ func TestDeclaredStagingDropoffIsReserved(t *testing.T) {
 		d, _ := newTestDispatcher(t, db, testdb.NewTrackingBackend())
 
 		// A STAGING node, built the way the seeder builds one: a station with NO
-		// PARENT. That nil parent is the whole defect — isConcreteStorageDropoff
+		// PARENT. That nil parent is the whole defect — the storage rule
 		// bails on it before it ever asks about LANE/NGRP.
 		staging := &nodes.Node{Name: tag + "-STAGING", Enabled: true}
 		testutil.MustNoErr(t, db.CreateNode(staging), "create staging node")
 		if staging.ParentID != nil {
-			t.Fatal("the staging fixture has a parent — then isConcreteStorageDropoff might cover " +
+			t.Fatal("the staging fixture has a parent — then the storage rule might cover " +
 				"it structurally and this test proves nothing about the declaration")
 		}
 		src := &nodes.Node{Name: tag + "-SRC", Enabled: true}
@@ -784,7 +784,7 @@ func TestDeclaredStagingSlotConflictHolds(t *testing.T) {
 // The staging node here IS order.DeliveryNode — the BuildStageSteps shape,
 // pickup source then dropoff staging with nothing after it. That combination
 // slips through both arms if they are composed carelessly: the DeliveryNode arm
-// skips it (a staging node fails isConcreteStorageDropoff), and a declared-loop
+// skips it (a staging node is no storage dropoff), and a declared-loop
 // that skipped nodes merely for EQUALLING DeliveryNode would skip it too. The
 // arms have to compose on what was ASKED, not on which node it was, which is why
 // the caller carries finalChecked rather than comparing names.
@@ -1133,5 +1133,68 @@ func TestReserveHonoursTheStepsOwnPayload(t *testing.T) {
 		t.Errorf("reserved bin %d, want %d (%s). Reserving %d would be the OUTGOING style — "+
 			"restocking a changed-over cell with the part it just stopped running.",
 			assigned[0].binID, inBin.ID, incoming.Code, outBin.ID)
+	}
+}
+
+// TestComplexDropOnAStandaloneStorNodeIsHeldAsAPlainDropThereIs is the owner's
+// decision of 2026-10-25: a complex step dropping on a standalone STOR
+// node (STOR-typed, no group parent) reserves its slot exactly as a plain
+// order's drop there does, one rule (storageDropoffOf). The plain half has held
+// since Stage 3; the complex half reserved nothing while slotNeeds asked the
+// narrower predicate (a LANE or NGRP parent). The complex fixture is
+// TestDeclaredStagingDropoffIsReserved's: a source bin already taken, so the
+// order holds acquiring and its slot reserve stays observable.
+func TestComplexDropOnAStandaloneStorNodeIsHeldAsAPlainDropThereIs(t *testing.T) {
+	t.Parallel()
+	db := testDBShared(t)
+	_, _, bp := setupTestData(t, db)
+	d, _ := newTestDispatcher(t, db, testdb.NewTrackingBackend())
+	stor, err := db.GetNodeTypeByCode("STOR")
+	testutil.MustNoErr(t, err, "the STOR type")
+	holds := func(orderID, nodeID int64) bool {
+		held, err := db.ListReservationsByOrder(orderID)
+		testutil.MustNoErr(t, err, "list reservations")
+		for _, r := range held {
+			if r.Kind == reservations.KindSlot && r.NodeID == nodeID {
+				return true
+			}
+		}
+		return false
+	}
+	newStor := func(name string) *nodes.Node {
+		n := &nodes.Node{Name: name, Enabled: true, NodeTypeID: &stor.ID}
+		testutil.MustNoErr(t, db.CreateNode(n), "create "+name)
+		if n.ParentID != nil {
+			t.Fatalf("%s has a parent: the decision is about a standalone STOR node", name)
+		}
+		return n
+	}
+
+	plainDrop := newStor("CSTOR-PLAIN-DROP")
+	plain := testdb.CreateOrder(t, db, func(o *orders.Order) {
+		o.EdgeUUID, o.OrderType, o.DeliveryNode, o.Status = "cstor-plain", OrderTypeMove, plainDrop.Name, StatusQueued
+	})
+	if dest := d.ReserveStorageDropoff(plain); dest.Refused() {
+		t.Fatalf("fixture: the plain drop on %s was refused: %v", plainDrop.Name, dest.Err)
+	}
+	if !holds(plain.ID, plainDrop.ID) {
+		t.Fatalf("fixture: a plain order's drop on the standalone STOR node %s holds nothing", plainDrop.Name)
+	}
+
+	cpxDrop := newStor("CSTOR-CPX-DROP")
+	src := &nodes.Node{Name: "CSTOR-SRC", Enabled: true}
+	testutil.MustNoErr(t, db.CreateNode(src), "create src")
+	takenBin := testdb.CreateBinAtNode(t, db, bp.Code, src.ID, "CSTOR-TAKEN")
+	other := testdb.CreateOrder(t, db)
+	testdb.ClaimBinForTest(t, db, takenBin.ID, other.ID)
+	steps := []resolvedStep{
+		{Action: protocol.ActionPickup, Node: src.Name},
+		{Action: protocol.ActionDropoff, Node: cpxDrop.Name},
+	}
+	order := mkComplexOrder(t, db, "cstor-complex", src.Name, src.Name, cpxDrop.Name, bp.Code, steps)
+	_ = d.DispatchPreparedComplex(order) // holds; the reserve is what we read
+	if !holds(order.ID, cpxDrop.ID) {
+		t.Fatalf("a complex step dropping on the standalone STOR node %s reserved nothing, where a plain "+
+			"order's drop on %s holds its slot: one rule, two answers", cpxDrop.Name, plainDrop.Name)
 	}
 }

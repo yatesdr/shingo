@@ -72,8 +72,8 @@ var IssueDoors = []IssueDoor{
 		At: AtCommit{}, Take: TakeNoCart,
 		Why: "an Edge station sends a retrieve: its row is not whole at its INSERT (the apply writes after it) and its pick rides as orders.plan, held after the gate and the slot by the acquire"},
 	{Name: "wire named move", Site: "dispatch/lifecycle_service.go:LifecycleService.issue", Arm: "dispatch",
-		At: AtCommit{BinID: true, NamedBin: true, BinRow: true}, Take: TakeTaken,
-		Why: "an Edge station's move naming its bin (SEND BACK, W6's clear, a spare's return, a containment move): issued for its cart and holding it from its issue, parked or not; a station's move is a person's act and takes a stranger's pending hold out loud"},
+		At: AtCommit{BinID: true, NamedBin: true, BinRow: true, SlotRow: true}, Take: TakeTaken,
+		Why: "an Edge station's move naming its bin (SEND BACK, W6's clear, a spare's return, a containment move): issued for its cart and holding it from its issue, parked or not, and holding its drop when the decision settled it on a position one carrier's at a time (the census drives a storage drop; a plain drop holds no slot); a station's move is a person's act and takes a stranger's pending hold out loud"},
 	{Name: "complex intake", Site: "dispatch/complex_intake.go:Dispatcher.handleComplexOrderRequest", Arm: "dispatch",
 		At: AtCommit{}, Take: TakeNoCart,
 		Why: "an Edge station sends a multi-leg order: issued through the one issue, the row only (its steps and its coordinated part); it knows neither its carts nor its slots at plan grain, so its holds are the reserve pass's, every pass: the family's declared shape"},
@@ -84,8 +84,8 @@ var IssueDoors = []IssueDoor{
 		At: AtCommit{BinID: true, NamedBin: true, BinRow: true, SlotRow: true}, Take: TakeRefused,
 		Why: "an unloader with a drain box ticked moves a cart of that state into a free window (the window move): the cart and the window held from the issue; its read of carts passes over a held one (BinUnheldSQL), and Core's own errand takes nothing in the race after that read"},
 	{Name: "loader replenish", Site: "dispatch/lifecycle_service.go:LifecycleService.issue", Arm: "dispatch",
-		At: AtCommit{}, Take: TakeNoCart,
-		Why: "a loader's windows are below level: Core asks for an empty at the window it chose, and holds no window"},
+		At: AtCommit{SlotRow: true}, Take: TakeNoCart,
+		Why: "a loader's windows are below level: Core asks for an empty or a full at the window it chose, holding the window from its issue (a window another order holds refuses the ask, and the loop asks at its next window)"},
 	{Name: "person's bin move", Site: "engine/bin_move.go:Engine.CreateBinMove", Arm: "engine",
 		At: AtCommit{BinID: true, NamedBin: true, BinRow: true}, Take: TakeTaken,
 		Why: "a person moves one bin from Core's pages: the cart held from the issue, a stranger's pending hold taken out loud"},
@@ -111,8 +111,8 @@ var IssueDoors = []IssueDoor{
 		At: AtCommit{BinID: true, NamedBin: true, BinRow: true}, Take: TakeTaken,
 		Why: "the clear's trade at confirm: the empty's move into the partial's place, sibling-linked to the partial's, holding its cart; the same take as the spot move"},
 	{Name: "maintained-group level keeper", Site: "dispatch/lifecycle_service.go:LifecycleService.issue", Arm: "engine",
-		At: AtCommit{}, Take: TakeNoCart,
-		Why: "a maintained group is below its level: Core asks for an empty at the slot it pre-resolved, and holds no slot"},
+		At: AtCommit{SlotRow: true}, Take: TakeNoCart,
+		Why: "a maintained group is below its level: Core asks for an empty at the slot it pre-resolved, holding the slot from its issue"},
 }
 
 // InstallIssueCensus installs the at-commit record in db: a table and a

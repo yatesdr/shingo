@@ -884,7 +884,7 @@ func (h *Handlers) submitSpotComplexOrder(w http.ResponseWriter,
 			{Action: "pickup", Node: sourceNode},
 			// DECLARED, because this form is the one place Core knows. The role
 			// test cannot recognise a staging node — it is a station with no
-			// parent, so isConcreteStorageDropoff rejects it and both destination
+			// parent and no STOR type, so the storage rule rejects it and both destination
 			// gates stand down, leaving the node reserved by nothing and checked
 			// by nothing — so a second order takes it while the first robot is on
 			// its way.

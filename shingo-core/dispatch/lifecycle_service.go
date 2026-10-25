@@ -216,6 +216,24 @@ func (s *LifecycleService) CreateInboundOrder(stationID string, p *protocol.Orde
 		}
 		if cart != nil {
 			need.Cart = cart.ID
+			// AND ITS DROP, when the decision settled it on a position one
+			// carrier's at a time (oneCarrierAt, the acquire's own rule): the drop
+			// is then the move's window, held from its issue (Need.Window), and
+			// another order holding it refuses the move with nothing written. The
+			// settled drop is the decision's when it moved it (pl.Dest), else the
+			// one the station named. A drop the gate held (no plan) or a line
+			// holds nothing here, and neither does a drop named in dot notation:
+			// the row stores it as named, which a window (stored by its own name)
+			// would change. The acquire holds what it settles.
+			drop := pl.Dest
+			if drop == nil && pl.Outcome == plan.OutcomeFound {
+				if n, err := s.db.GetNodeByDotName(order.DeliveryNode); err == nil && n != nil && n.Name == order.DeliveryNode {
+					drop = n
+				}
+			}
+			if held, _ := oneCarrierAt(s.db, drop); held {
+				need.Window, need.Delivery = drop, ""
+			}
 		}
 		var err error
 		taken, err = s.issue(order, need, pl)
@@ -310,6 +328,13 @@ func (s *LifecycleService) admit(order *orders.Order, write func() error) *lifec
 			lerr := lifecycleErr(string(protocol.TermClaimFailed), held.Error(), nil)
 			lerr.Touched = []string{order.SourceNode}
 			return lerr
+		}
+		// A window the issue would hold (Need.Window) that another order holds:
+		// nothing was written, and the refusal names the window. The error rides
+		// along, so a Core ask's caller can tell a lost window from a fault and go
+		// on to its next one.
+		if errors.Is(err, ErrWindowTaken) {
+			return lifecycleErr(string(protocol.TermClaimFailed), err.Error(), err)
 		}
 		return lifecycleErr("internal_error", err.Error(), err)
 	}

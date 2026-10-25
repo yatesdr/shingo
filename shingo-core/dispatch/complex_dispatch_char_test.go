@@ -305,7 +305,7 @@ func TestChar_DispatchPreparedComplex_ContendedConcreteSlot_QueuesWaitingForSlot
 	srcNode, _, bp := setupTestData(t, db)
 	d, _ := newTestDispatcher(t, db, testdb.NewTrackingBackend())
 
-	// A concrete storage slot: a direct child of an NGRP (isConcreteStorageDropoff
+	// A concrete storage slot: a direct child of an NGRP (the storageDropoffOf
 	// role gate). No bin sits on it and no order is inbound to it, so the capacity
 	// gate (614) passes and control reaches the slot RESERVE (637).
 	grpType, err := db.GetNodeTypeByCode("NGRP")

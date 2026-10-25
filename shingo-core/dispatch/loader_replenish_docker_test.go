@@ -953,3 +953,45 @@ func TestReplenishLoader_AnOperatorAsksForAsManyAsTheyNamed(t *testing.T) {
 		t.Errorf("the same ask with both windows taken: created %d held %v, want 0 and both windows named", len(again.Created), again.HeldBy)
 	}
 }
+
+// TestReplenishLoader_AWindowLostAtItsIssueIsNoOrderAndTheNextWindowAsks: an
+// ask holds its window from its issue, so a window another order takes between
+// the loop's choice and the ask's issue (here a test-only trigger plants a
+// stranger's slot row on the first window as its ask's row is inserted: the race
+// after the read) refuses that ask's issue. Rule 2: nothing is written for it,
+// the window is named as reserved, and the loop goes on to its next window.
+func TestReplenishLoader_AWindowLostAtItsIssueIsNoOrderAndTheNextWindowAsks(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	d, _ := newTestDispatcher(t, db, nil)
+	req, cfg, windows := replenishFixture(t, db, "RWL", 2)
+	lost, err := db.GetNodeByDotName(windows[0])
+	testutil.MustNoErr(t, err, "the first window")
+	stranger := testdb.CreateOrder(t, db)
+	_, err = db.Exec(fmt.Sprintf(`
+		CREATE FUNCTION rwl_stranger_holds() RETURNS trigger AS $$
+		BEGIN
+			INSERT INTO reservations (order_id, resource_kind, node_id, state, reserved_by, created_at)
+			VALUES (%d, 'slot', %d, 'pending', 'test', now());
+			RETURN NEW;
+		END $$ LANGUAGE plpgsql;
+		CREATE TRIGGER rwl_stranger_holds AFTER INSERT ON orders FOR EACH ROW
+			WHEN (NEW.edge_uuid LIKE 'core-l1-%%' AND NEW.delivery_node = '%s')
+			EXECUTE FUNCTION rwl_stranger_holds();`, stranger.ID, lost.ID, lost.Name))
+	testutil.MustNoErr(t, err, "plant the stranger in the race")
+
+	res, err := d.ReplenishLoader(req, cfg)
+	testutil.MustNoErr(t, err, "ReplenishLoader: a lost window is no error")
+	if len(res.Created) != 1 || res.Created[0].DeliveryNode != windows[1] {
+		t.Fatalf("the loop asked %v (held %v), want one ask at %s: %s was taken in the race and is no order",
+			res.Created, res.HeldBy, windows[1], windows[0])
+	}
+	if res.HeldBy[windows[0]] != "window-reserved" {
+		t.Errorf("HeldBy = %v, want %s held as window-reserved", res.HeldBy, windows[0])
+	}
+	var n int
+	testutil.MustNoErr(t, db.QueryRow(`SELECT count(*) FROM orders WHERE delivery_node = $1`, windows[0]).Scan(&n), "orders to the lost window")
+	if n != 0 {
+		t.Errorf("%d order(s) deliver to the lost window %s, want none: a refused issue writes nothing", n, windows[0])
+	}
+}

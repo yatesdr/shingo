@@ -50,7 +50,7 @@ import (
 // concrete storage slot under an NGRP with a bin standing on it, plus the line
 // bin its pickup step needs.
 //
-// Concrete-child-of-NGRP is deliberate: isConcreteStorageDropoff is a ROLE test,
+// Concrete-child-of-NGRP is deliberate: the storage rule (storageDropoffOf) is a ROLE test,
 // and a LINE dropoff must classify false or a two-robot supply leg gets held on
 // the node its own sibling evac is coming to clear — the 2b05dce deadlock. This
 // fixture is on the storage side of that line, which is the side that gates.

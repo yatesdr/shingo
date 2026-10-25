@@ -230,65 +230,101 @@ func orderHoldsSlotReservation(db *store.DB, orderID, nodeID int64) bool {
 	return false
 }
 
-// isStorageDropoff reports whether a delivery node is a concrete storage slot a
-// plain order exclusively occupies — the node fact that drives the
-// reservation. Broader than isConcreteStorageDropoff on purpose: a store's
-// destination is a standalone STOR-typed node (snt.code='STOR'), which is
-// frequently top-level (ParentID == nil) and so
-// isConcreteStorageDropoff-false — gating C2's reserve on the bare predicate
-// would stop reserving the store's own destination. This union covers the
-// standalone STOR node AND deep-lane / NGRP-child slots; it excludes lines and
-// consume points (no STOR type, no LANE/NGRP parent), which are never reserved.
+// isStorageDropoff is storageDropoffOf for a node named by its dot-name: a
+// storage slot a plain order exclusively occupies (a STOR node, or a child of a
+// LANE or an NGRP). A missing or unreadable node is not one.
 func isStorageDropoff(db *store.DB, deliveryNode string) bool {
 	if deliveryNode == "" {
 		return false
 	}
 	node, err := db.GetNodeByDotName(deliveryNode)
-	if err != nil || node == nil || node.IsSynthetic {
-		return false
-	}
-	if node.NodeTypeCode == protocol.NodeClassSTOR {
-		return true
-	}
-	return isConcreteStorageDropoff(db, deliveryNode)
+	storage, _ := storageDropoffOf(db, node)
+	return err == nil && storage
 }
 
-// reserveStorageDropoff is the node-driven Stage-3 generalization of C2's
-// per-store claim to EVERY plain family (store, move, retrieve, retrieve_empty):
-// after the plain-path full gate passes, if the dropoff is a concrete storage
-// slot (isStorageDropoff) it is reserved RESERVE-ONLY via claimStoreSlot, else
-// it is a no-op (lines/consume points reserve nothing). This closes the
-// move-to-storage race that previously had only a CheckDropoffCapacity read.
-// The gating is node-driven, NOT type-driven; the inner claimStoreSlot stays the
-// reserve-only exclusivity primitive (never a hard claim). No-op ⇒ nil.
+// holdPosition is the acquire's hold on a plain order's drop
+// (ReserveStorageDropoff), the node-driven Stage-3 generalization of C2's
+// per-store claim to every plain family: after the plain-path full gate passes,
+// a drop that is one carrier's at a time (oneCarrierAt: a storage slot or a
+// loader's window) is held RESERVE-ONLY via claimStoreSlotAs; a line or a
+// consume point holds nothing (no-op ⇒ nil). Node-driven, NOT type-driven, and
+// never a hard claim: the hand takes that (DispatchHand, storage slots only; a
+// window's row stays pending to the order's end).
+//
+// OWNER-IDEMPOTENT: a row the order already holds is kept as it is, so a
+// window held from the order's issue (Need.Window: a Core ask's, a window
+// pull's, a station's move's) passes straight through, as a slot an earlier
+// pass held does. The occupancy guard is asked first all the same: a carrier
+// standing on the drop refuses it as contended.
 //
 // A GROUP DROP'S ROW IS THE GROUP'S PAPER (plainGroupDrop): the slot stands in
 // a lane of a group and Core chose it, so the row is tagged GroupRoomTag, and
 // that tag is where the plain path keeps the group it chose from until its plan
 // is written. The node is read once and its parent once (storageDropoffOf),
-// where this read the node three times and the parent once.
-func reserveStorageDropoff(db *store.DB, order *orders.Order) error {
+// and the loader-home row once for a drop that is not storage.
+func holdPosition(db *store.DB, order *orders.Order) error {
 	if order.DeliveryNode == "" {
-		return nil // no dest — nothing to reserve
+		return nil // no dest — nothing to hold
 	}
 	node, err := db.GetNodeByDotName(order.DeliveryNode)
 	if err != nil || node == nil {
-		// Not readable is not a storage slot here, as isStorageDropoff answered
-		// it; the caller's settle-read reports it with the order's id.
+		// Not readable is not a position to hold here; the caller's
+		// settle-read reports it with the order's id.
 		return nil
 	}
-	storage, lane := storageDropoffOf(db, node)
-	if !storage {
-		return nil // line / consume point — nothing to reserve
+	held, lane := oneCarrierAt(db, node)
+	if !held {
+		return nil // line / consume point — nothing to hold
 	}
 	return claimStoreSlotAs(db, order, node, plainGroupDrop(order, lane))
 }
 
-// storageDropoffOf is isStorageDropoff for a node already in hand, and the lane
-// the node stands in (nil for a flat child or a top-level node): one read, the
-// parent's. A storage dropoff is a STOR node or a child of a LANE or an NGRP,
-// exactly isStorageDropoff's union; an unreadable parent answers as
-// isConcreteStorageDropoff did, not concrete.
+// oneCarrierAt is holdPosition's rule for a node in hand: a drop there is one
+// carrier's at a time when it is a storage dropoff (storageDropoffOf) or a
+// loader's window (its home row, GetLoaderHomeByPositionNode), and the lane it
+// stands in comes with it. The two reads that exist, composed: no class of its
+// own. The station's move asks it of its settled drop to declare its window at
+// its issue (CreateInboundOrder). The home is read only for a node that is not
+// storage, and an unreadable home row answers not a window, as an unreadable
+// parent answers not storage.
+//
+// THE COMPLEX FAMILY ASKS THE STORAGE HALF ONLY (slotNeeds, the final drop's
+// capacity gate). A swap's evac leg names a loader's home as its drop, and the
+// open-ask arm of the window choice stopped counting it for exactly that reason
+// (SMN_030, 2026-08-05: an evac and the ask for the carrier its supply needed
+// waited on each other). Whether a complex step's hold on a window would bring
+// that wait back was not established, so its slot reserve does not hold one.
+func oneCarrierAt(db *store.DB, node *nodes.Node) (bool, *nodes.Node) {
+	if storage, lane := storageDropoffOf(db, node); storage {
+		return true, lane
+	}
+	if node == nil || node.IsSynthetic {
+		return false, nil
+	}
+	home, err := db.GetLoaderHomeByPositionNode(node.ID)
+	return err == nil && home != nil, nil
+}
+
+// storageDropoffOf reports whether a node in hand is a storage dropoff, the one
+// rule every storage question asks (the plain hold, the hand, the complex
+// family's slot reserve and its final drop's capacity gate, the dug-lane
+// re-aim), and the lane the node stands in (nil for a flat child or a top-level
+// node): one read, the parent's. A storage dropoff is a STOR-typed node, which
+// is frequently top-level (a store's own destination), or a child of a LANE or
+// an NGRP; an unreadable parent answers by the type alone. A line or consume
+// point is neither, and is never reserved for it.
+//
+// IT DOES NOT COVER STAGING. A staging node is a station with no parent and the
+// one STATION node type, so it is never a storage dropoff, and Core cannot tell
+// one from a line (the plantspec Kind is advisory and never persisted; the
+// designation lives in the Edge cell config). A complex plan's author declares a
+// staging drop exclusive instead (protocol.ComplexOrderStep.ExclusiveSlot,
+// slotNeeds). Widening this rule to parentless stations would readmit LINE
+// nodes, and gating those re-creates the deadlock 2b05dce fixed
+// (reserveComplexDestination). The complex family asked a narrower predicate
+// (a LANE or NGRP parent, no STOR arm) until the owner's ruling of 2026-10-25: a complex
+// step dropping on a standalone STOR node now reserves its slot as a plain
+// order's drop there does (TestComplexDropOnAStandaloneStorNodeIsHeldAsAPlainDropThereIs).
 func storageDropoffOf(db *store.DB, node *nodes.Node) (storage bool, lane *nodes.Node) {
 	if node == nil || node.IsSynthetic {
 		return false, nil
@@ -311,12 +347,21 @@ func storageDropoffOf(db *store.DB, node *nodes.Node) (storage bool, lane *nodes
 }
 
 // ReserveStorageDropoff is the Dispatcher-surface (interface) entrypoint the
-// scanner uses to node-drive the plain-path destination reserve before a fleet
-// dispatch — the Stage-3 generalization of the former SecureStoreSlot (which
-// only served the store family). A non-nil error means the slot is not (yet)
-// ours — the caller requeues and waits, keeping its bin. Owner-idempotent, so a
-// store/move that already reserved its slot at intake passes straight through on
-// replay; a no-op for non-storage dropoffs.
+// scanner uses to node-drive the plain-path destination hold before a fleet
+// dispatch (holdPosition) — the Stage-3 generalization of the former
+// SecureStoreSlot (which only served the store family). A non-nil error means
+// the position is not (yet) ours — the caller requeues and waits, keeping its
+// bin. Owner-idempotent, so an order that holds its drop from its issue
+// (Need.Window) or from an earlier pass passes straight through; a no-op for a
+// line or consume point.
+//
+// A WINDOW HELD FROM THE ISSUE IS RE-AIMED ONLY WHERE ANY DROP WOULD BE. It is
+// a concrete node, so the group resolve never runs for it; the dug-lane redirect
+// and the back-to-group run only for a slot standing in a lane, and each lets go
+// of the order's row before it re-aims, so no row is left behind. That is how an
+// ask whose lane slot a dig took by rank chooses again at its next pass
+// (TestDig_TakesAnAsksWindowOnlyByRank). An ask on a window outside any lane is
+// never re-aimed: it waits for its window.
 //
 // IT RETURNS THE DESTINATION, and that is the fix. It also SETTLES that
 // destination — resolving a group to a child, re-aiming off a dug lane — and it
@@ -335,7 +380,7 @@ func (d *Dispatcher) ReserveStorageDropoff(order *orders.Order) StorageDropoff {
 	}
 	resolved := order.DeliveryNode != asked
 	d.redirectStoreOffDugLane(order)
-	if err := reserveStorageDropoff(d.db, order); err != nil {
+	if err := holdPosition(d.db, order); err != nil {
 		// A SLOT LOST TO A RACE GOES BACK TO ITS GROUP. The resolved slot was
 		// written onto the order before the claim, so an order that kept it would
 		// wait for that one slot: the winner's bin lands there, and a storage slot

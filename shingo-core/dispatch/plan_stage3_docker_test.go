@@ -26,7 +26,7 @@ func mkPlainOrder(t *testing.T, db interface {
 
 // TestStage3_IsStorageDropoff pins the corrected reserve predicate: it must be
 // TRUE for a standalone STOR node (the store's own destination, frequently
-// top-level and so isConcreteStorageDropoff-false — the bare predicate would have
+// top-level and so false to a LANE/NGRP-parent test — that bare predicate would have
 // regressed C2) AND for a deep-lane LANE-child slot, and FALSE for a line/consume
 // node.
 func TestStage3_IsStorageDropoff(t *testing.T) {
@@ -127,5 +127,41 @@ func TestStage3_MoveVsStore_ExactlyOneWins(t *testing.T) {
 	}
 	if wins != 1 {
 		t.Fatalf("exactly one of {move, store} must win the shared storage slot, got %d (move=%v store=%v)", wins, e1, e2)
+	}
+}
+
+// TestStage3_ALoaderWindowIsHeldAtAcquire: a loader's window is one carrier's at
+// a time, so a plain order delivering to it holds it at its acquire
+// (holdPosition: the storage question or the loader-home read), as a storage
+// slot is held: the first of two moves to the window holds its pending slot row
+// and the second waits on the slot. A line holds nothing, as before. The window
+// is a plain node (no STOR type, no group parent), so only its home row says it
+// is a window.
+func TestStage3_ALoaderWindowIsHeldAtAcquire(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	f := newDrainFixture(t, db, "S3LW", 1, 0)
+	w := f.windows[0]
+	_, line, bp := setupTestData(t, db)
+
+	m1 := mkPlainOrder(t, db, "s3lw-1", OrderTypeMove, bp.Code, w.Name)
+	m2 := mkPlainOrder(t, db, "s3lw-2", OrderTypeMove, bp.Code, w.Name)
+	if dest := f.d.ReserveStorageDropoff(m1); dest.Refused() {
+		t.Fatalf("the first move to window %s was refused: %v", w.Name, dest.Err)
+	}
+	if !holdsSlot(t, db, m1.ID, w.ID) {
+		t.Errorf("the first move to window %s holds no slot row on it: a window is one carrier's at a time", w.Name)
+	}
+	if dest := f.d.ReserveStorageDropoff(m2); !dest.Refused() || dest.Cause != CauseStoreSlotContended {
+		t.Errorf("the second move to window %s: refused=%v cause %q, want it to wait as store-slot-contended",
+			w.Name, dest.Refused(), dest.Cause)
+	}
+
+	toLine := mkPlainOrder(t, db, "s3lw-line", OrderTypeMove, bp.Code, line.Name)
+	if dest := f.d.ReserveStorageDropoff(toLine); dest.Refused() {
+		t.Fatalf("a move to the line was refused: %v", dest.Err)
+	}
+	if holdsSlot(t, db, toLine.ID, line.ID) {
+		t.Errorf("a move to the line %s holds a slot row on it: a line is no one carrier's", line.Name)
 	}
 }

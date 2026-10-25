@@ -103,12 +103,18 @@ type Need struct {
 	// INSERT ("an order for one carrier"). 0: the acquire finds one, and the
 	// planner's pick rides the row as orders.plan.
 	Cart int64
-	// Window is the drop when it is one carrier's at a time (a loader window):
-	// it IS the order's delivery, so a need names it or Delivery, never both.
-	// It is held as a pending slot row taken in the issue's transaction, before
-	// the cart: a full ask born after it chooses another window
-	// (plan.LoaderWindows passes over a reserved one), and its dispatch reuses
-	// the row. A window another order holds refuses the issue (errWindowTaken).
+	// Window is the drop when it is one carrier's at a time (a loader window, a
+	// storage slot): it IS the order's delivery, so a need names it or
+	// Delivery, never both. It is held as a pending slot row taken in the
+	// issue's transaction, before the cart: an ask born after it chooses
+	// another window (plan.LoaderWindows passes over a reserved one), and the
+	// acquire's hold reuses the row (holdPosition, owner-idempotent). The doors
+	// that declare one: the window pulls (windowMove), the Core asks
+	// (AdmitCoreAsk: the loader loop's window, the level keeper's pre-resolved
+	// slot), and a station's move whose settled drop is one carrier's at a time
+	// (CreateInboundOrder). A window another order holds refuses the issue
+	// (ErrWindowTaken). The row is a pending slot row like every other: a dig
+	// that outranks the order takes it out loud (store.TakeSlotByRank).
 	Window *nodes.Node
 	// By is who asked: Person(name) for a person (a station or a page), the zero
 	// value for Core's own errand. It decides whether a stranger's soft hold on
@@ -263,7 +269,7 @@ func issue(tx *sql.Tx, need Need, p plan.Plan) (*orders.Order, Taken, error) {
 	if need.Window != nil {
 		err := reservations.AcquireSlot(tx, o.ID, need.Window.ID, "reserveSlot")
 		if errors.Is(err, reservations.ErrReservationConflict) {
-			return nil, Taken{}, errWindowTaken
+			return nil, Taken{}, fmt.Errorf("%w: %s", ErrWindowTaken, need.Window.Name)
 		}
 		if err != nil {
 			return nil, Taken{}, fmt.Errorf("hold window %s: %w", need.Window.Name, err)
@@ -331,9 +337,11 @@ func issueOwnTx(db *store.DB, need Need, p plan.Plan) (*orders.Order, Taken, err
 	return o, taken, nil
 }
 
-// errWindowTaken is an issue refused because the window its need declares
-// (Need.Window) is held by another order: nothing was written.
-var errWindowTaken = errors.New("the window is held by another order")
+// ErrWindowTaken is an issue refused because the window its need declares
+// (Need.Window) is held by another order: nothing was written. The refusal
+// names the window. Its readers outside the package are the level keeper's
+// loop (engine Maintainer.createAsks), which goes on to its next slot.
+var ErrWindowTaken = errors.New("the window is held by another order")
 
 // NotAtSourceError is a move refused at its issue because the bin it names is
 // not on its source. Error is the sentence the station shows.

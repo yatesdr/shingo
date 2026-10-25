@@ -359,12 +359,25 @@ type transportDecision struct {
 }
 
 // Plan is the pick as the builder writes it (orders.plan): a bin when the
-// finder found one with the destination clear, else nothing.
+// finder found one with the destination clear, else nothing; and, when the
+// decision moved the drop (a cart's by-contents drop, a group's chosen child),
+// that drop as Dest, which the INSERT writes as the row's delivery. A drop the
+// decision kept is written as the station asked it (a dot-notation name is
+// stored as-is). A station's move holds its settled drop from its issue when it
+// is one carrier's at a time (CreateInboundOrder), so the drop it holds is the
+// one it goes to; applyTransport's write of the same node after is a no-op.
 func (d transportDecision) Plan() plan.Plan {
 	if d.refused != nil || d.blocked || !d.picked || d.pick.Outcome != OutcomeFound {
 		return plan.Plan{}
 	}
-	return plan.Plan{Outcome: plan.OutcomeFound, Bin: d.pick.Bin, Node: d.pick.Node}
+	p := plan.Plan{Outcome: plan.OutcomeFound, Bin: d.pick.Bin, Node: d.pick.Node}
+	switch {
+	case d.group != nil:
+		p.Dest = d.group
+	case d.byContents != nil:
+		p.Dest = d.byContents
+	}
+	return p
 }
 
 // decideTransport asks planTransport's questions and writes nothing, so a door
@@ -631,6 +644,16 @@ func (s *PlanningService) applyTransport(order *orders.Order, env *protocol.Enve
 				home = s.placeByContentsMove(order, d.pick)
 			}
 			if home != nil {
+				// RE-AIMED AFTER ITS ISSUE, by a count the move declares: a
+				// station's move that held its settled drop from its issue
+				// (Need.Window) lets go of that row first, so none is left on a
+				// drop it is not going to. Its acquire holds the new one
+				// (holdPosition). A move that held nothing deletes no row.
+				if destNode != nil && home.ID != destNode.ID {
+					if err := s.db.ReleaseSlotReservation(destNode.ID, order.ID); err != nil {
+						log.Printf("dispatch: move %d could not let go of %s: %v", order.ID, destNode.Name, err)
+					}
+				}
 				destNode = home
 				order.DeliveryNode = home.Name
 				if err := s.db.UpdateOrderDeliveryNode(order.ID, home.Name); err != nil {
@@ -660,7 +683,9 @@ func (s *PlanningService) applyTransport(order *orders.Order, env *protocol.Enve
 
 	// The claim-move to the scanner: the door's acquire claims (with the persisted
 	// RemainingUOP), reserves the dropoff, and dispatches — the single claim point.
-	// Intake reserves nothing; the scanner reserves for every plain family.
+	// Intake holds only what a station's move declares at its issue (its cart, and
+	// its settled drop when that is one carrier's at a time); the scanner's acquire
+	// holds the rest for every plain family.
 	return &PlanningResult{
 		SourceNode: sourceNode,
 		DestNode:   destNode,

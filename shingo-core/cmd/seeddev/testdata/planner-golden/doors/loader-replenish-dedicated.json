@@ -38,7 +38,8 @@
         "reservations": [
           "bin:confirmed:BIN-MT-01",
           "mouth:confirmed:Lane_11",
-          "occupancy:confirmed:Lane_11"
+          "occupancy:confirmed:Lane_11",
+          "slot:pending:PLK_H1"
         ],
         "to_fleet": true
       }

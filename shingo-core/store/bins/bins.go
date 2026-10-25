@@ -515,7 +515,7 @@ var EmptyCarrierWhere = emptyCarrierWhere("NULL", "NULL")
 // slot is one of its homes or buffers and it sources from AMR Supermarket.
 // (This used to say the group the slots "stand in", which reads as parentage.
 // It is not the same fact: whether a slot's IMMEDIATE parent is an NGRP or LANE
-// decides whether a drop there is a storage slot (isConcreteStorageDropoff),
+// decides whether a drop there is a storage slot (dispatch.storageDropoffOf),
 // and loader 7's are not — on 2026-09-28 a return dispatched onto SMN_023 while
 // a bin stood there, which the final-drop gate refuses for a storage slot.) The
 // refill is a retrieve_empty whose SOURCE is the group and whose DELIVERY is the

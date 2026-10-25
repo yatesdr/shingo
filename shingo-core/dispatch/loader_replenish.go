@@ -1,6 +1,7 @@
 package dispatch
 
 import (
+	"errors"
 	"fmt"
 	"maps"
 	"strings"
@@ -497,9 +498,12 @@ func (d *Dispatcher) replenishPartsLocked(req ReplenishRequest, cfg LoaderReplen
 		if err != nil {
 			return err
 		}
+		// A window a part's ask was issued at is held by that ask's row (it holds
+		// its window from its issue), so a later part's choice would name it
+		// reserved.
 		taken := maps.Clone(part.HeldBy)
 		for _, o := range part.Created {
-			taken[o.DeliveryNode] = "window-order-open"
+			taken[o.DeliveryNode] = "window-reserved"
 		}
 		free := false
 		for _, n := range names {
@@ -565,6 +569,14 @@ func (d *Dispatcher) replenishLocked(req ReplenishRequest, cfg LoaderReplenishCo
 	}
 	for _, t := range w.Chosen {
 		order, err := d.admitReplenishOrder(req, t, intent)
+		if errors.Is(err, ErrWindowTaken) {
+			// A WINDOW LOST SINCE THE CHOICE READ IT FREE is no order (the ask
+			// holds its window from its issue, and the issue was refused with
+			// nothing written): it is held as the choice would now hold it, and
+			// the loop asks at its next window.
+			res.HeldBy[t.NodeName] = "window-reserved"
+			continue
+		}
 		if err != nil {
 			// Stop rather than press on. A failure here is a write failure or a
 			// refused reference, and the windows after this one would fail the same
@@ -632,9 +644,14 @@ type CoreAskSpec struct {
 	// OrderType is the pull: OrderTypeRetrieveEmpty or OrderTypeRetrieve. The
 	// order's type, its sourcing intent, its received event and its projection
 	// derive from it. Stated: a spec without one is refused.
-	OrderType    protocol.OrderType
-	StationID    string
-	SourceNode   string
+	OrderType  protocol.OrderType
+	StationID  string
+	SourceNode string
+	// DeliveryNode is the window the ask chose: a loader's window (the loop's
+	// choice, plan.LoaderWindows) or the slot the keeper pre-resolved
+	// (plan.MaintainedSlot). The ask holds it from its issue (Need.Window); a
+	// window another order holds refuses the ask (ErrWindowTaken), and each
+	// caller goes on to its next window.
 	DeliveryNode string
 	// PayloadDesc is the human line on the Edge board card. The station's row
 	// for a Core empty is projected without a payload code (AdmitCoreAsk), which
@@ -662,7 +679,8 @@ type CoreAskSpec struct {
 // It goes through admission, the same body wire-originated orders go through,
 // and is issued through the one issue — so a Core-originated order gets the same
 // reference checks, the same synthetic-destination resolution, and the same
-// insert.
+// insert — holding its window from that issue (spec.DeliveryNode). A refused
+// issue is no order: the error wraps ErrWindowTaken and nothing was written.
 func (d *Dispatcher) AdmitCoreAsk(spec CoreAskSpec) (*orders.Order, error) {
 	intent, ok := carrierPullIntent(spec.OrderType)
 	if !ok {
@@ -703,11 +721,19 @@ func (d *Dispatcher) AdmitCoreAsk(spec CoreAskSpec) (*orders.Order, error) {
 			order.OriginClass = protocol.OriginClassOrphan
 		}
 	}
-	// Issued after admission's checks. No pick rides the
-	// row: the scanner picks the carrier, as it always has for a Core ask. The
-	// station is projected the order below, so it has a row for it.
+	// Issued after admission's checks, HOLDING ITS WINDOW (Need.Window): the
+	// window it chose is the ask's delivery, held as a pending slot row in the
+	// issue's own transaction, so a window another order holds refuses the ask
+	// with nothing written (ErrWindowTaken) and an ask born after it chooses
+	// another. No pick rides the row: the scanner picks the carrier, as it
+	// always has for a Core ask. The station is projected the order below, so
+	// it has a row for it.
 	if lerr := d.lifecycle.admit(order, func() error {
-		_, err := d.lifecycle.issue(order, Need{
+		window, err := d.db.GetNodeByDotName(order.DeliveryNode)
+		if err != nil {
+			return fmt.Errorf("read the ask's window %q: %w", order.DeliveryNode, err)
+		}
+		_, err = d.lifecycle.issue(order, Need{
 			Type:            spec.OrderType,
 			Station:         order.StationID,
 			Ref:             order.EdgeUUID,
@@ -719,7 +745,7 @@ func (d *Dispatcher) AdmitCoreAsk(spec CoreAskSpec) (*orders.Order, error) {
 			SkipAutoConfirm: spec.SkipAutoConfirm,
 			StationKnows:    true,
 			Source:          order.SourceNode,
-			Delivery:        order.DeliveryNode,
+			Window:          window,
 		}, plan.Plan{})
 		return err
 	}); lerr != nil {

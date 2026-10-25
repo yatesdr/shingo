@@ -2,6 +2,7 @@ package engine
 
 import (
 	"context"
+	"errors"
 	"sort"
 	_ "sync" // the plain lock inlines only where sync is imported (protocol/lockcheck)
 	"time"
@@ -407,6 +408,13 @@ func (m *Maintainer) createAsks(g *nodes.Node, lv store.MaintainLevel, station s
 			OriginID:    episode.OriginID,
 			OriginClass: protocol.OriginClassAttached,
 		})
+		if errors.Is(aerr, dispatch.ErrWindowTaken) {
+			// The ask holds its slot from its issue, so a slot another order
+			// took since the planner read it free is no ask (nothing was
+			// written): the loop asks the planner for its next slot.
+			m.eng.dbg("maintainer: %s/%s: %s was taken since it was chosen", g.Name, lv.BinTypeCode, res.Node.Name)
+			continue
+		}
 		if aerr != nil {
 			m.eng.logFn("maintainer: admit ask for %s/%s at %s: %v",
 				g.Name, lv.BinTypeCode, res.Node.Name, aerr)
