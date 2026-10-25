@@ -516,6 +516,10 @@ func (d *Dispatcher) takeOfferedPaper(order *orders.Order, choice plan.DropChoic
 // so a dig taking that lane is re-aimed like any other plan, and without this
 // the return would hold behind the dig with nothing else to release it.
 //
+// THE no_demand PROXY STAYS HERE ON PURPOSE (aPersonNamedTheDrop's reason): the
+// question is who named the DROP, not the cart, and named_bin_id says only the
+// second.
+//
 // Best-effort throughout: every doubt leaves the order exactly as it was, and the
 // worst case is the behaviour that existed before this function.
 func (d *Dispatcher) redirectStoreOffDugLane(order *orders.Order) {

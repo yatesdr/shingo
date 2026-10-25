@@ -699,7 +699,7 @@ func (d *Dispatcher) writeCompoundChildren(parentOrder *orders.Order, plan *Resh
 		}
 		return fmt.Errorf("create compound children: %w", err)
 	}
-	d.failDisplacedByHand(displaced)
+	d.failDisplacedForCart(displaced)
 	d.markLegsWaitingTheirTurn(parentOrder, plan)
 	return nil
 }
@@ -730,7 +730,7 @@ func (d *Dispatcher) markLegsWaitingTheirTurn(parent *orders.Order, plan *Reshuf
 	}
 }
 
-// failDisplacedByHand ends the hand-placed orders this dig took bins from.
+// failDisplacedForCart ends the orders for one cart whose cart this dig took.
 //
 // ── WHY THIS IS A FAILURE AND NOT A WAIT ─────────────────────────
 //
@@ -752,11 +752,11 @@ func (d *Dispatcher) markLegsWaitingTheirTurn(parent *orders.Order, plan *Reshuf
 // Best-effort per order: one that cannot be read or has already gone terminal is
 // logged and skipped, and the dig is never failed for it — the excavation is a
 // fact by the time this runs.
-func (d *Dispatcher) failDisplacedByHand(displaced []store.DisplacedByHand) {
+func (d *Dispatcher) failDisplacedForCart(displaced []store.DisplacedForCart) {
 	for _, v := range displaced {
 		ord, err := d.db.GetOrder(v.OrderID)
 		if err != nil || ord == nil {
-			log.Printf("dispatch: dig %d took bin %d from hand-placed order %d and that order "+
+			log.Printf("dispatch: dig %d took bin %d from order %d, an order for it, and that order "+
 				"could not be read back to end it (%v) — it is pointing at a bin it does not hold",
 				v.DigID, v.BinID, v.OrderID, err)
 			continue
@@ -769,11 +769,11 @@ func (d *Dispatcher) failDisplacedByHand(displaced []store.DisplacedByHand) {
 			where = "a shuffle slot in the same group"
 		}
 		detail := fmt.Sprintf("a dig (order %d) had to move bin %d out of its way and parked it at %s. "+
-			"This order was placed by hand and names that bin, so it is not re-aimed at a different "+
+			"This order is for that bin, so it is not re-aimed at a different "+
 			"one — re-issue it against the bin's new position", v.DigID, v.BinID, where)
 		if fErr := d.lifecycle.FailWithRef(ord, ord.StationID,
 			string(protocol.TermBinDugAway), detail, protocol.TermRef{Node: where}); fErr != nil {
-			log.Printf("dispatch: could not fail hand-placed order %d after dig %d took bin %d (%v)",
+			log.Printf("dispatch: could not fail order %d, an order for its bin, after dig %d took bin %d (%v)",
 				v.OrderID, v.DigID, v.BinID, fErr)
 		}
 	}

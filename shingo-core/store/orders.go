@@ -190,18 +190,19 @@ func (e *ParentGoneError) Error() string {
 
 func (e *ParentGoneError) Unwrap() error { return ErrParentGone }
 
-// DisplacedByHand names an order the steal took a bin from and DELIBERATELY did
-// not repair: one whose caller is a person at a Core door.
+// DisplacedForCart names an order the steal took a bin from and DELIBERATELY did
+// not repair: an order for that one cart (forThisCart: orders.named_bin_id),
+// a person's move or a station's among them.
 //
 // The ordinary victim is un-pointed and re-sources, which is a recalculation. A
-// hand-placed one cannot be treated that way — un-pointing it hands it back to
+// cart's own order cannot be treated that way — un-pointing it hands it back to
 // the finder, and for a node-local move that means Core silently substituting
-// whatever bin is standing at that node now for the one somebody named. So the
+// whatever bin is standing at that node now for the one it was for. So the
 // store leaves it pointed and REPORTS it, and the dispatch caller ends it out
 // loud once the steal has committed. Ending it here is not available: the
 // terminal chokepoint opens a transaction of its own.
-type DisplacedByHand struct {
-	OrderID  int64  // the hand-placed order that lost its bin
+type DisplacedForCart struct {
+	OrderID  int64  // the order for the cart that lost it
 	BinID    int64  // the bin the dig took
 	DigID    int64  // the compound whose dig took it
 	ParkedAt string // where that dig is putting the bin; "" if the leg named nowhere
@@ -222,9 +223,9 @@ type DisplacedByHand struct {
 // as they are (reservations.ErrReservationConflict when another holder owns the
 // lane).
 //
-// Returns the hand-placed orders whose bins it took — see DisplacedByHand. Empty
+// Returns the orders for a cart whose cart it took — see DisplacedForCart. Empty
 // on the ordinary path and on every error.
-func (db *DB) CreateCompoundChildren(children []CompoundChild, lanes *CompoundLanes) ([]DisplacedByHand, error) {
+func (db *DB) CreateCompoundChildren(children []CompoundChild, lanes *CompoundLanes) ([]DisplacedForCart, error) {
 	tx, err := db.Begin()
 	if err != nil {
 		return nil, fmt.Errorf("begin tx: %w", err)
@@ -259,7 +260,7 @@ func LogSteals(s Steals) { logSteals(s) }
 // clear commits its parent, the partial's soft hold and the empty's zero with
 // them. The caller commits, then reports displaced and calls LogSteals, the
 // order CreateCompoundChildren keeps.
-func CreateCompoundChildrenTx(tx *sql.Tx, children []CompoundChild, lanes *CompoundLanes) ([]DisplacedByHand, Steals, error) {
+func CreateCompoundChildrenTx(tx *sql.Tx, children []CompoundChild, lanes *CompoundLanes) ([]DisplacedForCart, Steals, error) {
 	// THE LANES' ADVISORY LOCKS COME FIRST, then the parent's row: the order every
 	// transaction that takes a lane and an order row keeps (the hand,
 	// HandOffLaneToPicker; reservations.OwnerLiveSQL's comment). The parent's
@@ -291,7 +292,7 @@ func CreateCompoundChildrenTx(tx *sql.Tx, children []CompoundChild, lanes *Compo
 			return nil, nil, err
 		}
 	}
-	var displaced []DisplacedByHand
+	var displaced []DisplacedForCart
 	var stolen Steals
 
 	for _, c := range children {
@@ -358,7 +359,7 @@ func compoundParentID(children []CompoundChild) int64 {
 // victim is one foreign soft holder of a dig's blocker.
 type victim struct {
 	orderID    int64
-	handPlaced bool
+	forCart    bool
 	pointsHere bool
 }
 
@@ -396,7 +397,7 @@ type victim struct {
 // for a demand Core sourced and the wrong one for a demand a person placed by
 // hand: a node-local move re-sourced from its own node takes whatever bin is
 // standing there now, so the instruction "move THAT bin" quietly becomes "move
-// some bin". Those keep their pointer and come back as DisplacedByHand for the
+// some bin". Those keep their pointer and come back as DisplacedForCart for the
 // caller to end out loud. It is the same rule redirectStoreOffDugLane already
 // keeps at the destination end — re-aiming a person's order is not a
 // recalculation, it is Core overruling somebody.
@@ -405,7 +406,7 @@ type victim struct {
 // survived unexamined for so long: the holder limped after its bin by id, it
 // usually worked, and nothing anywhere said a dig had taken somebody's bin. Now
 // it says so, by name, once per victim, at the moment it happens.
-func stealSoftHolds(tx *sql.Tx, binID, childID, parentID int64, parkedAt string) ([]DisplacedByHand, []stolenBin, error) {
+func stealSoftHolds(tx *sql.Tx, binID, childID, parentID int64, parkedAt string) ([]DisplacedForCart, []stolenBin, error) {
 	// ONE READ, THE BIN'S CLAIM AND ITS FOREIGN SOFT HOLDS. The bin row leads, so
 	// the claim is read even when nobody has a soft hold; a row per soft holder
 	// follows it (r.order_id NULL when there is none). The claim is the birth's
@@ -415,7 +416,7 @@ func stealSoftHolds(tx *sql.Tx, binID, childID, parentID int64, parkedAt string)
 	rows, err := tx.Query(`SELECT b.claimed_by,
 		       (b.claimed_by = $2 OR b.claimed_by = $3
 		        OR b.claimed_by IN (SELECT id FROM orders WHERE parent_order_id = $3)),
-		       r.order_id, COALESCE(o.origin_class,''), COALESCE(o.bin_id,0)
+		       r.order_id, COALESCE(o.named_bin_id,0), COALESCE(o.bin_id,0)
 		FROM bins b
 		LEFT JOIN reservations r ON r.bin_id = b.id AND r.resource_kind='bin'
 		  AND `+reservations.BlockingStateSQL("r.")+`
@@ -438,9 +439,9 @@ func stealSoftHolds(tx *sql.Tx, binID, childID, parentID int64, parkedAt string)
 	for rows.Next() {
 		found = true
 		var holder sql.NullInt64
-		var originClass string
+		var namedBin int64
 		var pointsAt int64
-		if err := rows.Scan(&claimedBy, &claimOurs, &holder, &originClass, &pointsAt); err != nil {
+		if err := rows.Scan(&claimedBy, &claimOurs, &holder, &namedBin, &pointsAt); err != nil {
 			rows.Close()
 			return nil, nil, fmt.Errorf("scan soft hold on bin %d: %w", binID, err)
 		}
@@ -449,7 +450,7 @@ func stealSoftHolds(tx *sql.Tx, binID, childID, parentID int64, parkedAt string)
 		}
 		victims = append(victims, victim{
 			orderID:    holder.Int64,
-			handPlaced: originClass == protocol.OriginClassNoDemand,
+			forCart:    forThisCart(namedBin, binID),
 			pointsHere: pointsAt == binID,
 		})
 	}
@@ -502,16 +503,16 @@ func stealSoftHolds(tx *sql.Tx, binID, childID, parentID int64, parkedAt string)
 			HolderID: claimedBy.Int64}
 	}
 
-	var displaced []DisplacedByHand
+	var displaced []DisplacedForCart
 	var stolen []stolenBin
 	for _, v := range victims {
-		if v.handPlaced && v.pointsHere {
+		if v.forCart && v.pointsHere {
 			// The person's order keeps its pointer and loses its row, as below,
 			// and only a pending row is taken.
 			res, err := tx.Exec(`DELETE FROM reservations WHERE bin_id=$1 AND order_id=$2 AND resource_kind='bin' AND state=$3`,
 				binID, v.orderID, string(reservations.StatePending))
 			if err != nil {
-				return nil, nil, fmt.Errorf("release bin %d from hand-placed holder %d: %w", binID, v.orderID, err)
+				return nil, nil, fmt.Errorf("release bin %d from holder %d, an order for it: %w", binID, v.orderID, err)
 			}
 			if n, _ := res.RowsAffected(); n == 0 {
 				if err := refuseIfConfirmed(tx, binID, childID, parentID, v.orderID); err != nil {
@@ -520,9 +521,9 @@ func stealSoftHolds(tx *sql.Tx, binID, childID, parentID int64, parkedAt string)
 				continue // the holder let go first: nothing of its was taken
 			}
 			stolen = append(stolen, stolenBin{
-				binID: binID, holderID: v.orderID, digID: parentID, handPlaced: true,
+				binID: binID, holderID: v.orderID, digID: parentID, forCart: true,
 			})
-			displaced = append(displaced, DisplacedByHand{
+			displaced = append(displaced, DisplacedForCart{
 				OrderID: v.orderID, BinID: binID, DigID: parentID, ParkedAt: parkedAt,
 			})
 			continue
@@ -657,47 +658,48 @@ type HolderNote struct {
 // it re-finds through the finder on the next pass instead of confirming a bin
 // that is leaving (the pointer wedge stealSoftHolds documents).
 //
-// A HOLDER THAT IS ITSELF A PERSON'S MOVE is not un-pointed: re-finding a move at
-// its node would carry whatever bin stands there now, not the one somebody
-// named. Its row is still deleted (the taker's own reservation needs the bin's
+// A HOLDER THAT IS ITSELF AN ORDER FOR THIS CART (forThisCart) is not un-pointed:
+// re-finding it at its node would carry whatever bin stands there now, not the
+// one it was for. Its row is still deleted (the taker's own reservation needs the bin's
 // one active row), and it is returned for the caller to end by name after the
-// commit, as the dig's steal does with DisplacedByHand.
-func TakeSoftHolds(tx *sql.Tx, binID, takerID int64, note HolderNote) (handPlaced []int64, err error) {
+// commit, as the dig's steal does with DisplacedForCart. unpointed counts the
+// holders un-pointed, which re-find on their next pass.
+func TakeSoftHolds(tx *sql.Tx, binID, takerID int64, note HolderNote) (named []int64, unpointed int, err error) {
 	type holder struct {
 		orderID    int64
 		status     string
-		handPlaced bool
+		forCart    bool
 		pointsHere bool
 	}
 	// The holders' order rows are locked here, before their promises are deleted
 	// below: a terminalize takes an order row, then its reservations, and a take
 	// that deleted the promise first and wrote the order after deadlocked with it
 	// (LOCKS.md §3). Ordered by id, so two takes lock holders in one order too.
-	rows, err := tx.Query(`SELECT r.order_id, o.status, COALESCE(o.origin_class,''), COALESCE(o.bin_id,0)
+	rows, err := tx.Query(`SELECT r.order_id, o.status, COALESCE(o.named_bin_id,0), COALESCE(o.bin_id,0)
 		FROM reservations r
 		JOIN orders o ON o.id = r.order_id
 		WHERE r.bin_id=$1 AND r.resource_kind='bin' AND r.state=$2 AND r.order_id <> $3
 		ORDER BY r.order_id
 		FOR UPDATE OF o`, binID, string(reservations.StatePending), takerID)
 	if err != nil {
-		return nil, fmt.Errorf("read soft holds on bin %d: %w", binID, err)
+		return nil, 0, fmt.Errorf("read soft holds on bin %d: %w", binID, err)
 	}
 	var holders []holder
 	for rows.Next() {
 		var h holder
-		var originClass string
+		var namedBin int64
 		var pointsAt int64
-		if err := rows.Scan(&h.orderID, &h.status, &originClass, &pointsAt); err != nil {
+		if err := rows.Scan(&h.orderID, &h.status, &namedBin, &pointsAt); err != nil {
 			rows.Close()
-			return nil, fmt.Errorf("scan soft hold on bin %d: %w", binID, err)
+			return nil, 0, fmt.Errorf("scan soft hold on bin %d: %w", binID, err)
 		}
-		h.handPlaced = originClass == protocol.OriginClassNoDemand
+		h.forCart = forThisCart(namedBin, binID)
 		h.pointsHere = pointsAt == binID
 		holders = append(holders, h)
 	}
 	if err := rows.Err(); err != nil {
 		rows.Close()
-		return nil, fmt.Errorf("read soft holds on bin %d: %w", binID, err)
+		return nil, 0, fmt.Errorf("read soft holds on bin %d: %w", binID, err)
 	}
 	rows.Close()
 
@@ -712,41 +714,50 @@ func TakeSoftHolds(tx *sql.Tx, binID, takerID int64, note HolderNote) (handPlace
 			WHERE order_id=$1 AND bin_id=$2 AND resource_kind='bin' AND state=$3`,
 			h.orderID, binID, string(reservations.StatePending))
 		if err != nil {
-			return nil, fmt.Errorf("release order %d's hold on bin %d: %w", h.orderID, binID, err)
+			return nil, 0, fmt.Errorf("release order %d's hold on bin %d: %w", h.orderID, binID, err)
 		}
 		if n, _ := res.RowsAffected(); n == 0 {
 			var confirmed bool
 			if err := tx.QueryRow(`SELECT EXISTS (SELECT 1 FROM reservations
 				WHERE order_id=$1 AND bin_id=$2 AND resource_kind='bin' AND state=$3)`,
 				h.orderID, binID, string(reservations.StateConfirmed)).Scan(&confirmed); err != nil {
-				return nil, fmt.Errorf("read order %d's row on bin %d: %w", h.orderID, binID, err)
+				return nil, 0, fmt.Errorf("read order %d's row on bin %d: %w", h.orderID, binID, err)
 			}
 			if confirmed {
-				return nil, fmt.Errorf("bin %d: order %d's claim was confirmed first: %w", binID, h.orderID, reservations.ErrReservationConflict)
+				return nil, 0, fmt.Errorf("bin %d: order %d's claim was confirmed first: %w", binID, h.orderID, reservations.ErrReservationConflict)
 			}
 			continue
 		}
 		if !h.pointsHere {
 			continue
 		}
-		if h.handPlaced {
-			handPlaced = append(handPlaced, h.orderID)
+		if h.forCart {
+			named = append(named, h.orderID)
 			continue
 		}
 		if _, err := tx.Exec(`UPDATE orders SET bin_id=NULL, queue_reason=$3, queue_code=$4, queue_cause=$5, updated_at=$6
 			WHERE id=$1 AND bin_id=$2`,
 			h.orderID, binID, note.Reason, string(note.Code), note.Cause, now); err != nil {
-			return nil, fmt.Errorf("un-point order %d from bin %d: %w", h.orderID, binID, err)
+			return nil, 0, fmt.Errorf("un-point order %d from bin %d: %w", h.orderID, binID, err)
 		}
 		if _, err := tx.Exec(
 			`INSERT INTO order_history (order_id, status, detail, code, actor, ref, created_at)
 			 VALUES ($1, $2, $3, 'bin-taken', NULLIF($4,''), $5, $6)`,
 			h.orderID, h.status, note.Reason, note.Actor, ref, now); err != nil {
-			return nil, fmt.Errorf("record the take on order %d: %w", h.orderID, err)
+			return nil, 0, fmt.Errorf("record the take on order %d: %w", h.orderID, err)
 		}
+		unpointed++
 	}
-	return handPlaced, nil
+	return named, unpointed, nil
 }
+
+// forThisCart is both takers' victim rule (TakeSoftHolds, the dig's
+// stealSoftHolds): a holder that is itself an order for the one cart taken
+// (orders.named_bin_id, stamped by every order issued for one carrier) keeps its
+// pointer and is handed back to be ended by name, never un-pointed, since
+// re-finding it at its node would carry whatever bin stands there now and not
+// the one it was for.
+func forThisCart(namedBinID, binID int64) bool { return namedBinID == binID }
 
 // ErrNoSlotTake is TakeSlotByRank declining: no stranger holds the slot by a
 // pending reservation, or the taker's demand does not outrank the holder's.
@@ -997,10 +1008,10 @@ func takeSlotTx(tx *sql.Tx, nodeID, takerID, named int64, note HolderNote, mode 
 // happened. soakstat counts one line per steal, so an over-count there is a
 // measurement of a shape the plant is not in.
 type stolenBin struct {
-	binID      int64
-	holderID   int64
-	digID      int64
-	handPlaced bool
+	binID    int64
+	holderID int64
+	digID    int64
+	forCart  bool
 }
 
 // logSteals emits the steal lines once the transaction they describe has
@@ -1008,9 +1019,9 @@ type stolenBin struct {
 // on a positional blocker" across both, one line per event.
 func logSteals(stolen []stolenBin) {
 	for _, s := range stolen {
-		if s.handPlaced {
-			log.Printf("dispatch: dig %d took bin %d from HAND-PLACED order %d — the dig outranked "+
-				"the holder on a positional blocker, but a person named this bin, so the order keeps its "+
+		if s.forCart {
+			log.Printf("dispatch: dig %d took bin %d from order %d, AN ORDER FOR THAT BIN — the dig outranked "+
+				"the holder on a positional blocker, but the order names this bin, so it keeps its "+
 				"pointer and is failed by name rather than re-aimed at whatever is standing there "+
 				"next", s.digID, s.binID, s.holderID)
 			continue

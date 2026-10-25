@@ -61,7 +61,7 @@ func TestClaimSweepPin_ATakeLeavesAHolderWhoseHandConfirmedFirst(t *testing.T) {
 	done := make(chan error, 1)
 	go func() {
 		done <- inTx(r.db, func(tx *sql.Tx) error {
-			_, err := store.TakeSoftHolds(tx, r.binID, taker.ID, takeNote)
+			_, _, err := store.TakeSoftHolds(tx, r.binID, taker.ID, takeNote)
 			return err
 		})
 	}()

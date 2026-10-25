@@ -117,7 +117,7 @@ func TestLockOrderPin_ASoftHoldTakeAndATerminalizeDoNotDeadlock(t *testing.T) {
 
 	takeErr, termErr := terminalizeAround(t, db, holder.ID, func() error {
 		return inTx(db, func(tx *sql.Tx) error {
-			_, err := store.TakeSoftHolds(tx, bin.ID, taker.ID, takeNote)
+			_, _, err := store.TakeSoftHolds(tx, bin.ID, taker.ID, takeNote)
 			return err
 		})
 	})

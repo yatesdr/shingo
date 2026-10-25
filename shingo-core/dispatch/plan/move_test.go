@@ -66,13 +66,13 @@ func TestValidateMove_RefusesARobotsBinNamingTheHolder(t *testing.T) {
 	}
 }
 
-func TestValidateMove_TakesAPendingReservation(t *testing.T) {
+func TestValidateMove_APendingReservationIsNoRefusal(t *testing.T) {
 	t.Parallel()
 	b := at(10, 1)
 	b.HasPendingReservation = true
 	p := movePlanner(&moveReader{}).ValidateMove(Given{Bin: b, Source: moveSource, Dest: moveDest})
-	if p.Refused != nil || !p.Take || p.Dest != moveDest || p.Bin != b || p.Node != moveSource {
-		t.Fatalf("plan = %+v, want the bin moved to DST with the soft hold taken (Q1)", p)
+	if p.Refused != nil || p.Dest != moveDest || p.Bin != b || p.Node != moveSource {
+		t.Fatalf("plan = %+v, want the bin moved to DST: a soft hold is the issue's to take, by who asked (Q1)", p)
 	}
 }
 
@@ -128,8 +128,8 @@ func TestChooseMove_PickableAtSkipsWhatAPersonCouldNotBeHandedBlind(t *testing.T
 		fence:  []*bins.BinType{{ID: 7, Code: "CART"}},
 	}
 	p := movePlanner(r).ChooseMove(moveSource, moveDest)
-	if p.Refused != nil || p.Bin != ok || p.Take {
-		t.Fatalf("plan = %+v (bin %+v), want bin 6 and no take", p, p.Bin)
+	if p.Refused != nil || p.Bin != ok {
+		t.Fatalf("plan = %+v (bin %+v), want bin 6", p, p.Bin)
 	}
 	r.atNode[1] = []*bins.Bin{claimed, reserved, locked, held, wrongType}
 	wantRefused(t, movePlanner(r).ChooseMove(moveSource, moveDest), RefusedNoFreeBin)

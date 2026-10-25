@@ -17,10 +17,10 @@ import (
 // take_soft_holds_docker_test.go — a person's move takes a promised bin (Q1).
 //
 // The person is authoritative over soft holds and never over a robot. The take
-// runs in the transaction that births the person's move, deletes the holder's
+// runs in the transaction that issues the person's order, deletes the holder's
 // promise, and leaves the holder un-pointed with the reason on its row and in
-// its history; a holder that is itself a person's move keeps its pointer and is
-// handed back to be ended by name.
+// its history; a holder that is itself an order for this cart (named_bin_id)
+// keeps its pointer and is handed back to be ended by name.
 
 var takeNote = store.HolderNote{
 	Reason: "Its bin was taken by order #0 (a person's move) — finding another",
@@ -30,18 +30,19 @@ var takeNote = store.HolderNote{
 }
 
 // take runs TakeSoftHolds and the taker's own reservation in one transaction,
-// as the bin-move door does.
-func take(t *testing.T, db *store.DB, binID, takerID int64) []int64 {
+// as a person's issue does, and returns what it handed back and how many it
+// un-pointed.
+func take(t *testing.T, db *store.DB, binID, takerID int64) ([]int64, int) {
 	t.Helper()
 	tx, err := db.Begin()
 	testutil.MustNoErr(t, err, "begin")
 	defer tx.Rollback()
-	handPlaced, err := store.TakeSoftHolds(tx, binID, takerID, takeNote)
+	named, unpointed, err := store.TakeSoftHolds(tx, binID, takerID, takeNote)
 	testutil.MustNoErr(t, err, "take")
 	testutil.MustNoErr(t, reservations.Acquire(tx, takerID, takerID, binID, "test-take"),
 		"the taker's own reservation must fit once the promise is taken")
 	testutil.MustNoErr(t, tx.Commit(), "commit")
-	return handPlaced
+	return named, unpointed
 }
 
 func TestTakeSoftHolds_UnpointsTheHolderAndLeavesTheTrail(t *testing.T) {
@@ -57,8 +58,8 @@ func TestTakeSoftHolds_UnpointsTheHolderAndLeavesTheTrail(t *testing.T) {
 		o.OriginClass = protocol.OriginClassNoDemand
 	})
 
-	if hp := take(t, db, bin.ID, taker.ID); len(hp) != 0 {
-		t.Fatalf("hand-placed = %v, want none: the holder is a Core-sourced order", hp)
+	if hp, n := take(t, db, bin.ID, taker.ID); len(hp) != 0 || n != 1 {
+		t.Fatalf("handed back %v, un-pointed %d; want none and 1: the holder is a Core-sourced order", hp, n)
 	}
 
 	after, err := db.GetOrder(holder.ID)
@@ -87,31 +88,59 @@ func TestTakeSoftHolds_UnpointsTheHolderAndLeavesTheTrail(t *testing.T) {
 	}
 }
 
-func TestTakeSoftHolds_APersonsMoveIsHandedBackNotReaimed(t *testing.T) {
+func TestTakeSoftHolds_AnOrderForTheCartIsHandedBackNotReaimed(t *testing.T) {
 	t.Parallel()
-	// The store reports the person's move and leaves it pointed; ending it by
-	// name is the bin-move door's, which is not in this test (the door's own
+	// The store reports the order for the cart and leaves it pointed; ending it by
+	// name is the issuing door's, which is not in this test (the door's own
 	// docker test ends it). So the row this test ends on is the wedge, on purpose.
-	testdb.DisableWedgeSweep(t, "the store hands the person's move back; the bin-move door ends it, and is not here")
+	testdb.DisableWedgeSweep(t, "the store hands the order for the cart back; the issuing door ends it, and is not here")
 	db := testdb.Open(t)
 	sd := testdb.SetupStandardData(t, db)
 	bin := testdb.CreateBinAtNode(t, db, "DEFAULT", sd.StorageNode.ID, "TAKE-HAND")
 	holder := testdb.CreateOrder(t, db, func(o *orders.Order) {
 		o.EdgeUUID = "take-hand-holder"
-		o.OriginClass = protocol.OriginClassNoDemand
+		o.NamedBinID, o.SourceNode = &bin.ID, sd.StorageNode.Name
 	})
 	testutil.MustNoErr(t, reservations.Acquire(db.DB, holder.ID, holder.ID, bin.ID, "test"), "holder's promise")
 	testutil.MustNoErr(t, db.UpdateOrderBinID(holder.ID, bin.ID), "holder points at the bin")
 	taker := testdb.CreateOrder(t, db, func(o *orders.Order) { o.EdgeUUID = "take-hand-taker" })
 
-	hp := take(t, db, bin.ID, taker.ID)
-	if len(hp) != 1 || hp[0] != holder.ID {
-		t.Fatalf("hand-placed = %v, want [%d]: a person's move is ended by name, not re-aimed", hp, holder.ID)
+	hp, n := take(t, db, bin.ID, taker.ID)
+	if len(hp) != 1 || hp[0] != holder.ID || n != 0 {
+		t.Fatalf("handed back %v, un-pointed %d; want [%d] and 0: an order for the cart is ended by name, not re-aimed", hp, n, holder.ID)
 	}
 	after, err := db.GetOrder(holder.ID)
 	testutil.MustNoErr(t, err, "reload holder")
 	if after.BinID == nil || *after.BinID != bin.ID {
-		t.Errorf("the hand-placed holder lost its pointer: re-finding a move re-aims it at another bin")
+		t.Errorf("the holder for the cart lost its pointer: re-finding it re-aims it at another bin")
+	}
+}
+
+// TestTakeSoftHolds_ANoDemandHolderForNoCartIsUnpointed: the victim rule is the
+// cart, not who asked. A no-demand order that names no cart (a person's spot
+// order, a redirect) holding the bin softly is un-pointed and re-finds like any
+// other; the proxy (origin_class no_demand) that used to hand it back would
+// have left it pointed at a bin that is leaving.
+func TestTakeSoftHolds_ANoDemandHolderForNoCartIsUnpointed(t *testing.T) {
+	t.Parallel()
+	db := testdb.Open(t)
+	sd := testdb.SetupStandardData(t, db)
+	bin := testdb.CreateBinAtNode(t, db, "DEFAULT", sd.StorageNode.ID, "TAKE-ND")
+	holder := testdb.CreateOrder(t, db, func(o *orders.Order) {
+		o.EdgeUUID = "take-nd-holder"
+		o.OriginClass = protocol.OriginClassNoDemand
+	})
+	testutil.MustNoErr(t, reservations.Acquire(db.DB, holder.ID, holder.ID, bin.ID, "test"), "holder's promise")
+	testutil.MustNoErr(t, db.UpdateOrderBinID(holder.ID, bin.ID), "holder points at the bin")
+	taker := testdb.CreateOrder(t, db, func(o *orders.Order) { o.EdgeUUID = "take-nd-taker" })
+
+	if hp, n := take(t, db, bin.ID, taker.ID); len(hp) != 0 || n != 1 {
+		t.Fatalf("handed back %v, un-pointed %d; want none and 1: it names no cart, so it re-finds", hp, n)
+	}
+	after, err := db.GetOrder(holder.ID)
+	testutil.MustNoErr(t, err, "reload holder")
+	if after.BinID != nil {
+		t.Errorf("holder still points at bin %d: it would confirm a bin that is leaving", *after.BinID)
 	}
 }
 
@@ -132,7 +161,7 @@ func TestTakeSoftHolds_NeverTakesARobotsBin(t *testing.T) {
 	tx, err := db.Begin()
 	testutil.MustNoErr(t, err, "begin")
 	defer tx.Rollback()
-	hp, err := store.TakeSoftHolds(tx, bin.ID, taker.ID, takeNote)
+	hp, _, err := store.TakeSoftHolds(tx, bin.ID, taker.ID, takeNote)
 	testutil.MustNoErr(t, err, "take")
 	testutil.MustNoErr(t, tx.Commit(), "commit")
 	if len(hp) != 0 {

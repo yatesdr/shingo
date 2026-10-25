@@ -101,11 +101,13 @@ type Actor struct{ person string }
 // Person is an order a person asked for: a station's or a page's actor.
 func Person(name string) Actor { return Actor{person: name} }
 
-// Taken is what an issue took from strangers: the person's moves whose soft
-// hold it took, which the caller ends by name once the issue has committed
-// (store.TakeSoftHolds).
+// Taken is what a person's issue took from strangers (store.TakeSoftHolds):
+// the orders for that one cart whose soft hold it took, which the caller ends
+// by name once the issue has committed, and how many other holders it
+// un-pointed, which re-find on their next pass.
 type Taken struct {
-	Named []int64
+	Named     []int64
+	Unpointed int
 }
 
 // row is the order a need and a plan describe, born `pending` (v4 §2.6). It
@@ -156,10 +158,11 @@ func row(need Need, p plan.Plan) *orders.Order {
 
 // issue writes the order a door's need and the planner's plan describe, on the
 // caller's transaction, holding what the need declares: the row (orders.Create,
-// with its creation history), then the cart, a stranger's pending hold on it
-// taken first when a person asked and the planner found one, then the order's
-// own soft hold (reservations.Acquire). A hold that cannot be taken refuses the
-// issue: the error is returned and the caller's transaction rolls back.
+// with its creation history), then the order's own soft hold on its cart
+// (reservations.Acquire). The take is who asked's: a person takes a stranger's
+// pending hold out loud, Core's own errand takes nothing, and nobody takes a
+// confirmed hold. A hold that cannot be taken refuses the issue: the error is
+// returned and the caller's transaction rolls back.
 //
 // The wire door brings a plan whose pick may have found nothing (the gate was
 // closed, or the pick waits, digs or fails): the row is issued either way, as it
@@ -178,20 +181,31 @@ func issue(tx *sql.Tx, need Need, p plan.Plan) (*orders.Order, Taken, error) {
 	if need.Cart == 0 {
 		return o, Taken{}, nil
 	}
-	var taken Taken
-	if p.Take && need.By.person != "" {
-		note := store.HolderNote{
-			Reason: FormatQueueSentence(protocol.QueueWaitingForMaterial, QueueParams{TakenByOrderID: o.ID}),
-			Code:   protocol.QueueWaitingForMaterial,
-			Cause:  string(CauseBinTaken),
-			Actor:  need.By.person,
-		}
-		var err error
-		if taken.Named, err = store.TakeSoftHolds(tx, need.Cart, o.ID, note); err != nil {
+	// The cart's hold, asked first: an issue that meets no stranger reads
+	// nothing more. A root order owns its own lane rows.
+	err := reservations.Acquire(tx, o.ID, o.ID, need.Cart, "reserveForDispatch")
+	if !errors.Is(err, reservations.ErrReservationConflict) || need.By.person == "" {
+		// Held, or refused: another order holds the cart and Core's own errand
+		// takes nothing.
+		if err != nil {
 			return nil, Taken{}, err
 		}
+		return o, Taken{}, nil
 	}
-	// A root order owns its own lane rows.
+	// A PERSON ASKED, so a stranger's pending hold is taken out loud: the
+	// holder is un-pointed and told, and one that is itself an order for this
+	// cart is handed back to be ended by name (store.TakeSoftHolds). A
+	// confirmed hold is a robot's and refuses the issue.
+	note := store.HolderNote{
+		Reason: FormatQueueSentence(protocol.QueueWaitingForMaterial, QueueParams{TakenByOrderID: o.ID}),
+		Code:   protocol.QueueWaitingForMaterial,
+		Cause:  string(CauseBinTaken),
+		Actor:  need.By.person,
+	}
+	var taken Taken
+	if taken.Named, taken.Unpointed, err = store.TakeSoftHolds(tx, need.Cart, o.ID, note); err != nil {
+		return nil, Taken{}, err
+	}
 	if err := reservations.Acquire(tx, o.ID, o.ID, need.Cart, "reserveForDispatch"); err != nil {
 		return nil, Taken{}, err
 	}

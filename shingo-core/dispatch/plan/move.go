@@ -59,10 +59,11 @@ type Refusal struct {
 // ValidateMove checks a person's fully specified move (Q1, owner 2026-09-26):
 // location, the carrier rule, the destination's capacity and the books. The
 // person is authoritative over soft holds and never over a robot, so a bin
-// another order has CLAIMED refuses (naming the holder), and one another order
-// has only pending-reserved is taken (Plan.Take). A held status (quality_hold and
-// the like) is not a refusal: a person moving a held bin, to quarantine say, is
-// the person deciding.
+// another order has CLAIMED refuses (naming the holder); one another order has
+// only pending-reserved is the issue's to take, decided by who asked
+// (dispatch.Need.By). A held status (quality_hold and the like) is not a
+// refusal: a person moving a held bin, to quarantine say, is the person
+// deciding.
 func (p *Planner) ValidateMove(g Given) Plan {
 	defer observe(p.db, "move")()
 	b := g.Bin
@@ -75,12 +76,7 @@ func (p *Planner) ValidateMove(g Given) Plan {
 	if b.Locked {
 		return refused(Refusal{Rule: RefusedLocked})
 	}
-	pl := p.moveDestination(b, g.Source, g.Dest, nil)
-	if pl.Refused != nil {
-		return pl
-	}
-	pl.Take = b.HasPendingReservation
-	return pl
+	return p.moveDestination(b, g.Source, g.Dest, nil)
 }
 
 // ChooseMove picks the bin an auto move takes off source: the first, in the

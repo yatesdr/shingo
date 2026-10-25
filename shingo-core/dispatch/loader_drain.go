@@ -194,12 +194,12 @@ func (d *Dispatcher) drainWindows(l *loaders.Loader) ([]*nodes.Node, error) {
 
 // drainMove issues one move of cart c to window w, for the cart, and
 // acquires it once. The plan is the bin move's (PlanMove: the cart at its node,
-// the window's capacity and carrier rule). A drain is a robot's errand, never
-// a person's, so it takes no bin another order has promised itself (Plan.Take
-// refuses here; the population already leaves such a bin out, so only a race
-// meets it). Station-unaware like every Core-born move; its material notices
-// project to the window's Edge (Need.Projects), which binds the cart when it
-// lands, as stage 2's do.
+// the window's capacity and carrier rule). A drain is Core's own errand, never
+// a person's, so it takes no bin another order has promised itself: a
+// stranger's hold refuses its issue (the population already leaves such a bin
+// out, so only a race meets it). Station-unaware like every Core-born move; its
+// material notices project to the window's Edge (Need.Projects), which binds
+// the cart when it lands, as stage 2's do.
 func (d *Dispatcher) drainMove(l *loaders.Loader, c *bins.Bin, w *nodes.Node) error {
 	if c.NodeID == nil {
 		return errors.New("the cart is at no node")
@@ -211,9 +211,6 @@ func (d *Dispatcher) drainMove(l *loaders.Loader, c *bins.Bin, w *nodes.Node) er
 	p := d.PlanMove(plan.Given{Bin: c, Source: at, Dest: w})
 	if p.Refused != nil {
 		return fmt.Errorf("the move's plan refused it (rule %d): %v", p.Refused.Rule, p.Refused.Err)
-	}
-	if p.Take {
-		return errors.New("another order has promised itself the cart")
 	}
 	station := d.WindowStation(w)
 	order, _, err := d.IssueOrder(Need{

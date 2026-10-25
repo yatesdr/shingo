@@ -150,6 +150,7 @@ func TestDigSteal_LeavesAHandPlacedOrderPointedAndReportsIt(t *testing.T) {
 		o.OrderType = protocol.OrderTypeMove
 		o.OriginClass = protocol.OriginClassNoDemand
 		o.SourceNode = sd.StorageNode.Name
+		o.NamedBinID = &bin.ID // a person's move is issued for its bin
 	})
 	testdb.ReserveBin(t, db, byHand.ID, bin.ID)
 	testutil.MustNoErr(t, db.UpdateOrderBinID(byHand.ID, bin.ID), "stamp bin_id")

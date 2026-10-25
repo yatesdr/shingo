@@ -73,6 +73,11 @@ func gatedGroupDrop(order *orders.Order, steps []resolvedStep, i int, slot *node
 // person named (no-demand / person-named)"): Core does not re-choose what
 // somebody chose. The one spelling of the exception, for the complex step's
 // group drop (gatedGroupDrop) and the plain one (plainGroupDrop).
+//
+// IT KEEPS THE no_demand PROXY ON PURPOSE. The takers ask "is this holder an
+// order for the cart" and read named_bin_id; this asks "did a door name the
+// drop", which no column records but the origin class a person's door stamps
+// (a Core errand for a cart names its cart, not its drop).
 func aPersonNamedTheDrop(order *orders.Order) bool {
 	return order != nil && order.OriginClass == protocol.OriginClassNoDemand
 }

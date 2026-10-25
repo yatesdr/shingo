@@ -198,18 +198,14 @@ type Plan struct {
 	TermCode string
 	Err      error
 
-	// THE GATHERED PLAN (B2). A move's plan (move.go) carries its destination
-	// and whether a stranger's soft hold stands on its bin, and the issue reads
-	// both (dispatch.issue writes Dest as the row's delivery node, and a
-	// person's issue takes the hold in its transaction). The picker leaves them
-	// zero.
+	// THE GATHERED PLAN (B2). A move's plan (move.go) carries its destination,
+	// which the issue writes as the row's delivery node (dispatch.issue). Who
+	// takes a stranger's soft hold on the bin is the issue's to decide, from who
+	// asked (dispatch.Need.By). The picker leaves it nil.
 	//
 	// Dest is the node the carrier is put down on: the named node, or the child
 	// the planner chose when the named node is a group.
 	Dest *nodes.Node
-	// Take is Q1's explicit take: the bin carries another order's PENDING
-	// reservation, and a person's move takes it (v4 §2.7, Rule 4).
-	Take bool
 	// Refused is the move's "not satisfiable": which rule said no, for a door
 	// with a person waiting. nil when the plan can be carried out.
 	Refused *Refusal

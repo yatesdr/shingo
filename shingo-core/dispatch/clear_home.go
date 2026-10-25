@@ -90,7 +90,7 @@ type ClearBirth struct {
 	Parent    *orders.Order
 	Partial   *orders.Order
 	after     func()
-	displaced []store.DisplacedByHand
+	displaced []store.DisplacedForCart
 	steals    store.Steals
 }
 
@@ -246,7 +246,7 @@ func (d *Dispatcher) clearChild(parent *orders.Order, seq int, bin *bins.Bin, fr
 func (d *Dispatcher) AfterClearBirth(b *ClearBirth, home string, emptyBin int64) {
 	b.after()
 	store.LogSteals(b.steals)
-	d.failDisplacedByHand(b.displaced)
+	d.failDisplacedForCart(b.displaced)
 	d.projectClear(b.Parent)
 	d.projectClear(b.Partial)
 	d.setQueueReason(b.Partial, protocol.QueueWaitingForSlot, CauseVacateWaitingLift,
@@ -434,7 +434,7 @@ func (d *Dispatcher) birthClearSpot(f ClearFacts, x *nodes.Node) error {
 		return err
 	}
 	store.LogSteals(steals)
-	d.failDisplacedByHand(displaced)
+	d.failDisplacedForCart(displaced)
 	d.projectClear(child)
 	return nil
 }
@@ -558,7 +558,7 @@ func (d *Dispatcher) birthClearTrade(f ClearFacts) error {
 	}
 	l1.StepsJSON, l1.SiblingOrderUUID = string(l1Steps), l2.EdgeUUID
 	store.LogSteals(steals)
-	d.failDisplacedByHand(displaced)
+	d.failDisplacedForCart(displaced)
 	d.projectClear(l2)
 	return nil
 }

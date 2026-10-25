@@ -30,7 +30,7 @@ import (
 
 // TestDigTakesAHandPlacedBin_FailsLoudlyWithItsOwnCode is the disposition.
 //
-// MUTATION (verified): drop the failDisplacedByHand call. The bin move sits
+// MUTATION (verified): drop the failDisplacedForCart call. The bin move sits
 // queued, pointing at a bin the dig owns and holding no reservation on it —
 // invisible, permanent, and exactly the shape contract-v2 clause (iii) detects.
 func TestDigTakesAHandPlacedBin_FailsLoudlyWithItsOwnCode(t *testing.T) {
@@ -48,6 +48,7 @@ func TestDigTakesAHandPlacedBin_FailsLoudlyWithItsOwnCode(t *testing.T) {
 		OrderType: OrderTypeMove, Status: StatusPending, Quantity: 1,
 		SourceNode:   slots[0].Name,
 		BinID:        &blocker.ID,
+		NamedBinID:   &blocker.ID,
 		OriginClass:  protocol.OriginClassNoDemand,
 		SourceIntent: SourceIntentForType(OrderTypeMove),
 	}
