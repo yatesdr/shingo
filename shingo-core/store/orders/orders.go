@@ -2321,23 +2321,3 @@ func LiveNamedMoveOff(db *sql.DB, node string, askerID int64) (bool, error) {
 	}
 	return lifting, nil
 }
-
-// LiveOrderNamingBin returns the live order, other than the asker, that names
-// bin as the one it is for (orders.named_bin_id, an order for that one carrier:
-// a station's move, a person's, or one of Core's errands), or nil. One
-// statement over the live rows: the status term serves idx_orders_status, and
-// named_bin_id carries no index of its own, so the read is asked only when a
-// supply pickup has found a bin.
-func LiveOrderNamingBin(db *sql.DB, binID, askerID int64) (*Order, error) {
-	row := db.QueryRow(fmt.Sprintf(`SELECT %s FROM orders
-		WHERE status IN (%s) AND named_bin_id = $1 AND id <> $2
-		ORDER BY id LIMIT 1`, SelectCols, protocol.NonTerminalStatusSQLList()), binID, askerID)
-	o, err := ScanOrder(row)
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, fmt.Errorf("live order naming bin %d: %w", binID, err)
-	}
-	return o, nil
-}

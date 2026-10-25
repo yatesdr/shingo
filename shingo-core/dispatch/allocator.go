@@ -425,45 +425,17 @@ func (a *Allocator) reserveComplexPlan(order *orders.Order, plan *ComplexPlan) (
 }
 
 // reservePickup reserves the bin findAvailableForNeed found for one pickup:
-// the named-bin test, the reservation, and the audits that say what was bound.
-// reserveComplete with the reservation; reserveHolding when another order
-// took the bin between the find and the acquire (the node had it, so the need
-// is sourceable: retry next tick) or names it; reserveHoldingForOutside when
-// the order naming it is a move taking it off a position the asking cell
-// depends on.
+// the reservation and the audits that say what was bound. reserveComplete with
+// the reservation; reserveHolding when another order took the bin between the
+// find and the acquire (the node had it, so the need is sourceable: retry next
+// tick).
 //
-// A SUPPLY PICKUP DOES NOT TAKE A BIN ANOTHER LIVE ORDER NAMES (orders
-// named_bin_id). A named move is for that one carrier: SEND BACK's move of the
-// outside cart, a wrong carrier's clear. An index leg reserving it first would
-// set on the press the very cart the move is taking away, and the move would
-// lift nothing. So the pair holds; the move lifts it; the position is vacant
-// and its prime is coming (missPickup's hold); the prime lands and the pair
-// takes it. Once the move is sent it claims its cart and the find stops
-// returning it, so from then missPickup holds the pair the same way. A removal is exempt: it clears whatever stands on its own line.
-// Asked only when such a pickup has found a bin (one statement).
+// A BIN ANOTHER ORDER IS FOR IS NEVER FOUND HERE: every order for one carrier
+// holds it softly from its issue (dispatch.Need.Cart), a station's move to take
+// the outside cart away among them, and the find passes over a held bin. The
+// pair whose index leg wanted that cart is held for outside material by
+// missPickup (LiveNamedMoveOff), from the move's issue to its lift.
 func (a *Allocator) reservePickup(order *orders.Order, pk pickupNeed, bin *binsstore.Bin) (*reservedPickup, reserveOutcome, error) {
-	removal := pk.kind == pickupRemoval
-	if !removal {
-		namer, err := a.db.LiveOrderNamingBin(bin.ID, order.ID)
-		if err != nil {
-			return nil, reserveHolding, err
-		}
-		if namer != nil {
-			a.dbg("reserve: order %d step %d at %s — bin %d is named by order %d, not taken",
-				order.ID, pk.stepIndex, pk.step.Node, bin.ID, namer.ID)
-			// A row naming a bin is an order for that one carrier
-			// (orders.named_bin_id). Every one but a station's move holds its
-			// cart from its issue, and the find that returned this bin passes
-			// over a held one, so the namer here is a station's move, which
-			// holds nothing until its acquire: off this pickup's node, a
-			// position the asking cell depends on, it is the outside's cart
-			// leaving.
-			if namer.SourceNode == pk.step.Node && a.dependentSource(order, pk.step) != "" {
-				return nil, reserveHoldingForOutside, nil
-			}
-			return nil, reserveHolding, nil
-		}
-	}
 	aerr := a.binManifest.ReserveForDispatch(bin.ID, order.ID)
 	if errors.Is(aerr, reservations.ErrReservationConflict) {
 		// The bin exists, another order holds it — retry next tick.
@@ -480,7 +452,7 @@ func (a *Allocator) reservePickup(order *orders.Order, pk pickupNeed, bin *binss
 	// anomaly worth an operator's eyes: a stale off-style leftover, or a
 	// mis-stamped bin (HK 2026-07-14). Proceed AND alert — never fail the order
 	// over it, and never rewrite the bin to match (account by its real payload).
-	if removal && bin.PayloadCode != "" && order.PayloadCode != "" && bin.PayloadCode != order.PayloadCode {
+	if pk.kind == pickupRemoval && bin.PayloadCode != "" && order.PayloadCode != "" && bin.PayloadCode != order.PayloadCode {
 		log.Printf("dispatch: order %d evac at %s binds off-payload bin %d (bin=%q order=%q) — proceeding, surfacing mismatch",
 			order.ID, pk.step.Node, bin.ID, bin.PayloadCode, order.PayloadCode)
 		a.db.AppendAudit("bin", bin.ID, "evac_payload_mismatch", "",
@@ -557,15 +529,14 @@ func (a *Allocator) missPickup(order *orders.Order, plan *ComplexPlan, pk pickup
 		}
 	}
 	// A CARRIER BEING TAKEN OFF A DEPENDENT POSITION IS WAITED FOR AS OUTSIDE
-	// MATERIAL. A wrong carrier's clear and SEND BACK's move name their cart and
-	// claim it when they are sent, so from then the find no longer returns it and
-	// reservePickup's named-bin arm never sees it; a carrier Core's filter
-	// refuses (another part, a marker) is never returned at all. The node still
-	// holds bins, the position is being cleared for the carrier that follows (the
-	// prime, SEND BACK's pull), and the pair holds on waiting_for_outside, as it
-	// does while the move is unclaimed. Asked only on a miss with bins by a
-	// pickup the vacant arm above would ask about: one statement, then
-	// dependentSource only when a named move lifts there.
+	// MATERIAL. A wrong carrier's clear and SEND BACK's move are issued for
+	// their cart and hold it from their issue, so the find never returns it; a
+	// carrier Core's filter refuses (another part, a marker) is never returned
+	// at all. The node still holds bins, the position is being cleared for the
+	// carrier that follows (the prime, SEND BACK's pull), and the pair holds on
+	// waiting_for_outside from the move's issue to its lift. Asked only on a
+	// miss with bins by a pickup the vacant arm above would ask about: one
+	// statement, then dependentSource only when a named move lifts there.
 	if nodeHadBins && pk.kind != pickupRemoval && !pk.potentialRelay && pk.step.BinID == 0 && pk.step.PayloadCode == "" {
 		lifting, err := a.db.LiveNamedMoveOff(pk.step.Node, order.ID)
 		if err != nil {

@@ -324,7 +324,11 @@ func (s *PlanningService) setQueueReason(order *orders.Order, code protocol.Queu
 // calls the two apart, deciding before its INSERT (B3); a caller holding a born
 // row calls this.
 func (s *PlanningService) planTransport(order *orders.Order, env *protocol.Envelope, payloadCode string) (*PlanningResult, *planningError) {
-	return s.applyTransport(order, env, s.decideTransport(order, payloadCode))
+	var cart *bins.Bin
+	if order.NamedBinID != nil {
+		cart, _ = s.db.GetBin(*order.NamedBinID)
+	}
+	return s.applyTransport(order, env, s.decideTransport(order, payloadCode, cart))
 }
 
 // transportDecision is what planTransport reads, taken in the order it asks and
@@ -365,10 +369,11 @@ func (d transportDecision) Plan() plan.Plan {
 // decideTransport asks planTransport's questions and writes nothing, so a door
 // can ask them before its row exists. An order with no id yet asks as nobody's
 // dig, which is what a fresh id is too: no dig names it.
-func (s *PlanningService) decideTransport(order *orders.Order, payloadCode string) transportDecision {
+func (s *PlanningService) decideTransport(order *orders.Order, payloadCode string, cart *bins.Bin) transportDecision {
 	var d transportDecision
 	isEmpty := SourcesEmpty(order.SourceIntent)
 	isMove := order.SourceIntent == SourceIntentLocal
+	var moveSrc *nodes.Node
 
 	// A TOPS & BOTTOMS PULL IS REFUSED AT INTAKE when it cannot resolve
 	// (toteCarrierFor: no fed press's outside carrying the part, no tote
@@ -401,7 +406,8 @@ func (s *PlanningService) decideTransport(order *orders.Order, payloadCode strin
 			d.refused = &planningError{Code: codeMissingSource, Detail: "move order requires source_node"}
 			return d
 		}
-		moveSrc, err := s.db.GetNodeByDotName(order.SourceNode)
+		var err error
+		moveSrc, err = s.db.GetNodeByDotName(order.SourceNode)
 		if err != nil {
 			d.refused = &planningError{Code: codeInvalidNode, Detail: fmt.Sprintf("source node %q not found", order.SourceNode), Err: err}
 			return d
@@ -431,7 +437,7 @@ func (s *PlanningService) decideTransport(order *orders.Order, payloadCode strin
 	// drop the carrier will take and not the one the station authored.
 	gateNode := order.DeliveryNode
 	if isMove {
-		if d.byContents, d.byContentsWhy = s.byContentsDrop(order); d.byContents != nil {
+		if d.byContents, d.byContentsWhy = s.byContentsDrop(order, cart); d.byContents != nil {
 			gateNode = d.byContents.Name
 		}
 	}
@@ -443,7 +449,17 @@ func (s *PlanningService) decideTransport(order *orders.Order, payloadCode strin
 	if isEmpty {
 		intent = IntentEmpty
 	}
-	d.picked, d.pick = true, s.finder.FindSource(order, intent)
+	// A MOVE FOR ONE CART HAS ITS CART (cart, read once by the door): the find
+	// scopes the source, not the bin, and with two bins on the source would
+	// return the other. The pick is the cart where the station read it; the
+	// issue holds it, and its statements check it still stands there
+	// (reservations.NamedBinSQL). A buried cart is the gate's to dig out at
+	// dispatch, as every held bin's is.
+	if cart != nil && isMove {
+		d.picked, d.pick = true, SourceResult{Outcome: OutcomeFound, Bin: cart, Node: moveSrc}
+	} else {
+		d.picked, d.pick = true, s.finder.FindSource(order, intent)
+	}
 	if d.pick.Outcome != OutcomeFound {
 		return d
 	}

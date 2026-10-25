@@ -297,29 +297,6 @@ func NamedBinSQL(orderParam, binParam int) string {
 		orderParam, binParam)
 }
 
-// NamedBinAtSourceTx is the named-bin test asked once more, at a move's birth:
-// whether bin binID stands on source, matched by name as NamedBinSQL matches
-// it, read under the bin's row lock so it cannot leave between this read and
-// the birth's commit. label is the bin's label; found is false when no bin has
-// the id. Pinned by engine.TestNamedBinMove_HoldOfABinNotAtTheSourceIsRefused.
-func NamedBinAtSourceTx(tx *sql.Tx, binID int64, source string) (label string, found, at bool, err error) {
-	var stands sql.NullBool
-	err = tx.QueryRow(`
-		SELECT b.label, nb_n.name = $2 OR nb_p.name || '.' || nb_n.name = $2
-		  FROM bins b
-		  LEFT JOIN nodes nb_n ON nb_n.id = b.node_id
-		  LEFT JOIN nodes nb_p ON nb_p.id = nb_n.parent_id
-		 WHERE b.id = $1
-		   FOR UPDATE OF b`, binID, source).Scan(&label, &stands)
-	if errors.Is(err, sql.ErrNoRows) {
-		return "", false, false, nil
-	}
-	if err != nil {
-		return "", false, false, fmt.Errorf("read where bin %d stands: %w", binID, err)
-	}
-	return label, true, stands.Valid && stands.Bool, nil
-}
-
 // Acquire inserts a bin reservation row for (orderID, binID) in state "pending".
 // reservedBy is the actor tag for forensics. (The former reason + expiresAt params
 // are gone in v44 — reason was always "", and expires_at is retired as a reaping

@@ -597,17 +597,13 @@ func (s *PlanningService) placeByContentsMove(order *orders.Order, pick SourceRe
 	return tn
 }
 
-// byContentsDrop is a move that names its bin, asked before the capacity gate
-// so the gate asks about the drop the carrier will take (decideTransport): the
-// named bin's by-contents drop, by the count declared on the move else the
-// bin's own, nil to keep the authored destination. It writes nothing; the
-// chosen node rides the decision to applyTransport.
-func (s *PlanningService) byContentsDrop(order *orders.Order) (*nodes.Node, string) {
-	if order.NamedBinID == nil || order.SourceNode == "" {
-		return nil, ""
-	}
-	b, err := s.db.GetBin(*order.NamedBinID)
-	if err != nil || b == nil {
+// byContentsDrop is a move for one cart (b, as the door read it), asked before
+// the capacity gate so the gate asks about the drop the carrier will take
+// (decideTransport): the cart's by-contents drop, by the count declared on the
+// move else the cart's own, nil to keep the authored destination. It writes
+// nothing; the chosen node rides the decision to applyTransport.
+func (s *PlanningService) byContentsDrop(order *orders.Order, b *bins.Bin) (*nodes.Node, string) {
+	if b == nil || order.SourceNode == "" {
 		return nil, ""
 	}
 	count := b.UOPRemaining

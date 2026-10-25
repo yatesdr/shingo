@@ -707,7 +707,7 @@ func (d *Dispatcher) AdmitCoreAsk(spec CoreAskSpec) (*orders.Order, error) {
 	// row: the scanner picks the carrier, as it always has for a Core ask. The
 	// station is projected the order below, so it has a row for it.
 	if lerr := d.lifecycle.admit(order, func() error {
-		return d.lifecycle.issue(order, Need{
+		_, err := d.lifecycle.issue(order, Need{
 			Type:            spec.OrderType,
 			Station:         order.StationID,
 			Ref:             order.EdgeUUID,
@@ -721,6 +721,7 @@ func (d *Dispatcher) AdmitCoreAsk(spec CoreAskSpec) (*orders.Order, error) {
 			Source:          order.SourceNode,
 			Delivery:        order.DeliveryNode,
 		}, plan.Plan{})
+		return err
 	}); lerr != nil {
 		if lerr.Err != nil {
 			return nil, lerr.Err

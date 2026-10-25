@@ -61,15 +61,9 @@ type Need struct {
 	Delivery string
 	// SkipAutoConfirm is carried verbatim, as the sender stated it.
 	SkipAutoConfirm bool
-	// NamedBin is the one bin a station's move is for, as the station read it on
-	// the source node (protocol.OrderRequest.BinID), on a move that does not yet
-	// hold it from its issue (birthNamedMove); nil for every other order. The
-	// hold and claim statements take that bin and no other
-	// (reservations.NamedBinSQL).
-	NamedBin *int64
-	// QualityHoldBy puts NamedBin on quality hold, attributed to this, in the
+	// QualityHoldBy puts Cart on quality hold, attributed to this, in the
 	// issue's transaction (protocol.OrderRequest.QualityHoldBy): a station's
-	// containment move. birthNamedMove writes it. "" for every other order.
+	// containment move. "" for every other order.
 	QualityHoldBy string
 	// SourceIntent is the sourcing intent when the type does not decide it: a
 	// carried-bin recovery's on_deck. Blank takes the type's (SourceIntentForType).
@@ -130,7 +124,6 @@ func row(need Need, p plan.Plan) *orders.Order {
 		SourceIntent:    need.SourceIntent,
 		StationUnaware:  !need.StationKnows,
 		ProjectsTo:      need.Projects,
-		NamedBinID:      need.NamedBin,
 		RecoversOrderID: need.Recovers,
 	}
 	if o.SourceIntent == "" {
@@ -158,7 +151,8 @@ func row(need Need, p plan.Plan) *orders.Order {
 
 // issue writes the order a door's need and the planner's plan describe, on the
 // caller's transaction, holding what the need declares: the row (orders.Create,
-// with its creation history), then the order's own soft hold on its cart
+// with its creation history), the hold marker a station asked for
+// (QualityHoldBy), then the order's own soft hold on its cart
 // (reservations.Acquire). The take is who asked's: a person takes a stranger's
 // pending hold out loud, Core's own errand takes nothing, and nobody takes a
 // confirmed hold. A hold that cannot be taken refuses the issue: the error is
@@ -171,8 +165,11 @@ func issue(tx *sql.Tx, need Need, p plan.Plan) (*orders.Order, Taken, error) {
 	if p.Refused != nil {
 		return nil, Taken{}, errors.New("issue: the plan is not satisfiable")
 	}
-	if need.Cart != 0 && (p.Node == nil || p.Dest == nil) {
-		return nil, Taken{}, errors.New("issue: an order for a cart needs a gathered plan")
+	if need.Cart != 0 && need.Source == "" && p.Node == nil {
+		return nil, Taken{}, errors.New("issue: an order for a cart names its source or the node the cart stands on")
+	}
+	if need.QualityHoldBy != "" && need.Cart == 0 {
+		return nil, Taken{}, errors.New("issue: a hold marker needs the cart it marks")
 	}
 	o := row(need, p)
 	if err := orders.Create(tx, o); err != nil {
@@ -180,6 +177,11 @@ func issue(tx *sql.Tx, need Need, p plan.Plan) (*orders.Order, Taken, error) {
 	}
 	if need.Cart == 0 {
 		return o, Taken{}, nil
+	}
+	if need.QualityHoldBy != "" {
+		if err := store.HoldBinTx(tx, need.Cart, need.QualityHoldBy); err != nil {
+			return nil, Taken{}, fmt.Errorf("hold bin %d: %w", need.Cart, err)
+		}
 	}
 	// The cart's hold, asked first: an issue that meets no stranger reads
 	// nothing more. A root order owns its own lane rows.
@@ -253,38 +255,24 @@ func (e *NotAtSourceError) Error() string {
 	return fmt.Sprintf("bin %s is not at that source (%s)", bin, e.Source)
 }
 
-// birthNamedMove is the issue of a station's move that names its bin, in one
-// transaction: the bin stands on the source (reservations.NamedBinAtSourceTx,
-// under its row lock), the hold marker when the station asked for one
-// (need.QualityHoldBy), and the row (issue). It holds nothing: the acquire
-// takes the bin. A bin not on the source is a *NotAtSourceError and nothing is
-// written.
-func birthNamedMove(db *store.DB, need Need, p plan.Plan) (*orders.Order, error) {
-	tx, err := db.Begin()
-	if err != nil {
-		return nil, err
+// CartHeldError is a person's order refused at its issue because a robot's
+// order holds the bin it is for: a confirmed hold, which nobody takes. Error is
+// the sentence the station shows. Holder is 0 when the holder was not read.
+type CartHeldError struct {
+	BinID  int64
+	Label  string
+	Holder int64
+}
+
+func (e *CartHeldError) Error() string {
+	bin := e.Label
+	if bin == "" {
+		bin = fmt.Sprintf("%d", e.BinID)
 	}
-	defer tx.Rollback() //nolint:errcheck // committed below; rollback is the error close
-	label, _, at, err := reservations.NamedBinAtSourceTx(tx, *need.NamedBin, need.Source)
-	if err != nil {
-		return nil, err
+	if e.Holder == 0 {
+		return fmt.Sprintf("bin %s is held by another order", bin)
 	}
-	if !at {
-		return nil, &NotAtSourceError{BinID: *need.NamedBin, Label: label, Source: need.Source}
-	}
-	if need.QualityHoldBy != "" {
-		if err := store.HoldBinTx(tx, *need.NamedBin, need.QualityHoldBy); err != nil {
-			return nil, fmt.Errorf("hold bin %d: %w", *need.NamedBin, err)
-		}
-	}
-	o, _, err := issue(tx, need, p)
-	if err != nil {
-		return nil, err
-	}
-	if err := tx.Commit(); err != nil {
-		return nil, err
-	}
-	return o, nil
+	return fmt.Sprintf("bin %s is held by order %d", bin, e.Holder)
 }
 
 // PlanMaintainedSlot asks the planner for the slot one keeper ask fills

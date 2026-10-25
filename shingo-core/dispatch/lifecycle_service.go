@@ -17,6 +17,7 @@ import (
 	"shingocore/store/bins"
 	"shingocore/store/nodes"
 	"shingocore/store/orders"
+	"shingocore/store/reservations"
 )
 
 type lifecycleError struct {
@@ -80,7 +81,7 @@ func (s *LifecycleService) dbg(format string, args ...any) {
 // CreateInboundOrder issues the order a station sent. decide is the planner's
 // question for this order, asked after the ref-checks and before the INSERT so
 // the pick rides the row (orders.plan; B3's first item); nil asks nothing.
-func (s *LifecycleService) CreateInboundOrder(stationID string, p *protocol.OrderRequest, decide func(order *orders.Order, payloadCode string) plan.Plan) (*orders.Order, string, *lifecycleError) {
+func (s *LifecycleService) CreateInboundOrder(stationID string, p *protocol.OrderRequest, decide func(order *orders.Order, payloadCode string, cart *bins.Bin) plan.Plan) (*orders.Order, string, *lifecycleError) {
 	payloadCode := p.PayloadCode
 	// Wire-protocol normalization: edge may send OrderTypeRetrieve + RetrieveEmpty=true.
 	// Promote that pair to the canonical OrderTypeRetrieveEmpty so downstream code
@@ -148,32 +149,51 @@ func (s *LifecycleService) CreateInboundOrder(stationID string, p *protocol.Orde
 		OriginID:     originID,
 		OriginClass:  originClass,
 	}
-	// A move may name the one bin it is for. Kept on the row and asked inside
-	// the statements that hold and claim a bin (reservations.NamedBinSQL), so
-	// the move lifts that bin or ends skipped; a bin not on the source at all is
-	// refused at its issue (birthNamedMove). Any other type naming a bin is
-	// not a shape a station sends; the field is ignored there.
+	// A MOVE MAY NAME THE ONE BIN IT IS FOR, and is then issued for it: the
+	// bin, read once here, is the cart the issue holds softly (Need.Cart), so a
+	// move parked by its gate or its slot holds its cart all the while, and the
+	// decision's pick is that cart, never another bin on the source. The issue's
+	// hold is the at-source check: its statement takes that bin only while it
+	// stands on the source (reservations.NamedBinSQL). A station's move is a
+	// person's act, so it takes a stranger's pending hold out loud. Any other
+	// type naming a bin is not a shape a station sends; the field is ignored
+	// there.
+	var cart *bins.Bin
 	if orderType == OrderTypeMove && p.BinID > 0 {
-		binID := p.BinID
-		order.NamedBinID = &binID
+		b, err := s.db.GetBin(p.BinID)
+		if err != nil {
+			return nil, "", lifecycleErr("internal_error", fmt.Sprintf("read bin %d: %v", p.BinID, err), err)
+		}
+		if b == nil {
+			lerr := lifecycleErr(string(protocol.TermNoSourceBin),
+				(&NotAtSourceError{BinID: p.BinID, Source: p.SourceNode}).Error(), nil)
+			lerr.Touched = []string{p.SourceNode}
+			return nil, "", lerr
+		}
+		if b.Locked {
+			// OWNER-WORDS
+			return nil, "", lifecycleErr(string(protocol.TermNoSourceBin), fmt.Sprintf("bin %s is locked", b.Label), nil)
+		}
+		cart = b
+		order.NamedBinID = &b.ID
 	}
 	// A station sending the bin to containment asks for its hold with the move
-	// (protocol.OrderRequest.QualityHoldBy): the marker is set in the issue's
-	// transaction, beside the check that the bin stands on the source
-	// (birthNamedMove). Without a named bin there is nothing to hold.
+	// (protocol.OrderRequest.QualityHoldBy): the issue sets the marker on the
+	// cart in its own transaction. Without a cart there is nothing to hold.
 	holdBy := ""
-	if order.NamedBinID != nil {
+	if cart != nil {
 		holdBy = p.QualityHoldBy
 	}
-	// Born through the builder. The need is what the station stated, with the
-	// delivery as admission resolved it; the plan is the pick, when the decision
-	// found one.
+	// Issued once admission has checked. The need is what the station stated,
+	// with the delivery as admission resolved it; the plan is the pick, when the
+	// decision found one.
+	var taken Taken
 	if lerr := s.admit(order, func() error {
 		var pl plan.Plan
 		if decide != nil {
-			pl = decide(order, payloadCode)
+			pl = decide(order, payloadCode, cart)
 		}
-		return s.issue(order, Need{
+		need := Need{
 			Type:            orderType,
 			Station:         order.StationID,
 			Ref:             order.EdgeUUID,
@@ -187,12 +207,19 @@ func (s *LifecycleService) CreateInboundOrder(stationID string, p *protocol.Orde
 			Source:          order.SourceNode,
 			Delivery:        order.DeliveryNode,
 			SkipAutoConfirm: order.SkipAutoConfirm,
-			NamedBin:        order.NamedBinID,
 			QualityHoldBy:   holdBy,
-		}, pl)
+			By:              Person(stationID),
+		}
+		if cart != nil {
+			need.Cart = cart.ID
+		}
+		var err error
+		taken, err = s.issue(order, need, pl)
+		return cartRefusal(err, cart, order.SourceNode)
 	}); lerr != nil {
 		return nil, "", lerr
 	}
+	s.failTakenForCart(taken, order, cart)
 	// Emitted by the CALLER, not by admit, and deliberately with the RAW
 	// wire values: p.OrderType rather than the promoted orderType, and
 	// p.DeliveryNode rather than the possibly-resolved order.DeliveryNode. Those
@@ -265,12 +292,19 @@ func (s *LifecycleService) admit(order *orders.Order, write func() error) *lifec
 		return lerr
 	}
 	if err := write(); err != nil {
-		// A move whose named bin is not on its source is refused here, before
-		// anything exists (birthNamedMove), with the sentence the station shows.
+		// A move for a cart that is not on its source, or that a robot's order
+		// holds, is refused here with nothing written (cartRefusal), with the
+		// sentence the station shows and the source's row beside it.
 		var away *NotAtSourceError
 		if errors.As(err, &away) {
 			lerr := lifecycleErr(string(protocol.TermNoSourceBin), away.Error(), nil)
 			lerr.Touched = []string{away.Source}
+			return lerr
+		}
+		var held *CartHeldError
+		if errors.As(err, &held) {
+			lerr := lifecycleErr(string(protocol.TermClaimFailed), held.Error(), nil)
+			lerr.Touched = []string{order.SourceNode}
 			return lerr
 		}
 		return lifecycleErr("internal_error", err.Error(), err)
@@ -298,22 +332,53 @@ func (s *LifecycleService) admit(order *orders.Order, write func() error) *lifec
 	return nil
 }
 
-// issue writes the order in its own transaction (issueOwnTx; birthNamedMove
-// for a station's move that names its bin)
-// and leaves order as written.
-func (s *LifecycleService) issue(order *orders.Order, need Need, p plan.Plan) error {
-	var built *orders.Order
-	var err error
-	if need.NamedBin != nil {
-		built, err = birthNamedMove(s.db, need, p)
-	} else {
-		built, _, err = issueOwnTx(s.db, need, p)
-	}
+// issue writes the order in its own transaction (issueOwnTx), leaves order as
+// written, and returns what a person's issue took from strangers.
+func (s *LifecycleService) issue(order *orders.Order, need Need, p plan.Plan) (Taken, error) {
+	built, taken, err := issueOwnTx(s.db, need, p)
 	if err != nil {
-		return err
+		return Taken{}, err
 	}
 	*order = *built
-	return nil
+	return taken, nil
+}
+
+// cartRefusal is the station's sentence for an issue its cart refused: the bin
+// has left the source the station read (reservations.ErrNotTheNamedBin, the
+// hold statement's at-source test), or a robot's order holds it (a confirmed
+// hold, reservations.ErrReservationConflict). Any other error, and an order
+// for no cart, passes through.
+func cartRefusal(err error, cart *bins.Bin, source string) error {
+	switch {
+	case cart == nil || err == nil:
+		return err
+	case errors.Is(err, reservations.ErrNotTheNamedBin):
+		return &NotAtSourceError{BinID: cart.ID, Label: cart.Label, Source: source}
+	case errors.Is(err, reservations.ErrReservationConflict):
+		held := &CartHeldError{BinID: cart.ID, Label: cart.Label}
+		if cart.ClaimedBy != nil {
+			held.Holder = *cart.ClaimedBy
+		}
+		return held
+	}
+	return err
+}
+
+// failTakenForCart ends, by name, the orders for one cart whose soft hold a
+// person's issue took (Taken.Named): re-finding them would carry whatever bin
+// stands at their node now, not the one they were for. The other holders were
+// un-pointed and re-find on their next pass.
+func (s *LifecycleService) failTakenForCart(taken Taken, by *orders.Order, cart *bins.Bin) {
+	for _, id := range taken.Named {
+		o, err := s.db.GetOrder(id)
+		if err != nil || o == nil || protocol.IsTerminal(o.Status) {
+			continue
+		}
+		detail := fmt.Sprintf("bin %s was taken by order #%d (a station's move)", cart.Label, by.ID)
+		if err := s.Fail(o, o.StationID, "bin_taken", detail); err != nil {
+			log.Printf("dispatch: order %d lost bin %s to order %d and could not be ended: %v", o.ID, cart.Label, by.ID, err)
+		}
+	}
 }
 
 // checkOrderRefs answers whether the things an order names actually exist.

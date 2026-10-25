@@ -4,6 +4,7 @@ package engine
 
 import (
 	"database/sql"
+	"fmt"
 	"reflect"
 	"sync/atomic"
 	"testing"
@@ -17,32 +18,31 @@ import (
 	"shingocore/store/nodes"
 )
 
-// A MOVE THAT NAMES ITS BIN LIFTS THAT BIN OR NOTHING.
+// A STATION'S MOVE FOR A BIN A ROBOT HOLDS IS REFUSED, NAMING THE HOLDER.
 //
 // The keep-staged sequence from the sequential sim: a station decides the
-// spare on its spot is wrong and sends it back by a move; the changeover's own
-// leg lifts that spare first; the refill lands on the spot; the move, still
-// waiting, must not carry the fresh refill away. It names the bin it was for,
-// and once that bin has left the spot it ends skipped.
-func TestNamedBinMove_LiftsNothingOnceItsBinHasLeft(t *testing.T) {
+// spare on its spot is wrong and sends it back by a move, while the
+// changeover's own leg has already claimed that spare and is on its way. The
+// move is issued for its cart and takes only a pending hold, never a robot's,
+// so it is refused at its issue with the holder named, and nothing is written.
+func TestNamedBinMove_ARobotsBinIsRefusedNamingTheHolder(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
 	_, lineNode, _ := setupTestData(t, db)
 	spot := &nodes.Node{Name: "NB-SPOT", Enabled: true}
 	back := &nodes.Node{Name: "NB-BACK", Enabled: true}
-	market := &nodes.Node{Name: "NB-MARKET", Enabled: true}
-	for _, n := range []*nodes.Node{spot, back, market} {
+	for _, n := range []*nodes.Node{spot, back} {
 		testutil.MustNoErr(t, db.CreateNode(n), "node "+n.Name)
 	}
 	spare := createTestBinAtNode(t, db, "", spot.ID, "NB-SPARE")
-	refill := createTestBinAtNode(t, db, "", market.ID, "NB-REFILL")
 
 	sim := simulator.New()
 	eng := newTestEngine(t, db, sim)
 	d := eng.Dispatcher()
 	env := testEnvelope()
+	env.ID = "env-nb"
 
-	// The changeover's leg lifts the spare off the spot.
+	// The changeover's leg claims the spare off the spot.
 	d.HandleComplexOrderRequest(env, &protocol.ComplexOrderRequest{
 		OrderUUID: "nb-leg", Quantity: 1,
 		Steps: []protocol.ComplexOrderStep{
@@ -56,40 +56,110 @@ func TestNamedBinMove_LiftsNothingOnceItsBinHasLeft(t *testing.T) {
 	}
 	sim.DriveState(leg.VendorOrderID, "RUNNING")
 
-	// The return for that spare arrives while the leg holds it.
-	d.HandleOrderRequest(env, &protocol.OrderRequest{
-		OrderUUID: "nb-return", OrderType: protocol.OrderTypeMove, Quantity: 1,
+	refused := d.RefusalsFor(env, func() {
+		d.HandleOrderRequest(env, &protocol.OrderRequest{
+			OrderUUID: "nb-return", OrderType: protocol.OrderTypeMove, Quantity: 1,
+			SourceNode: spot.Name, DeliveryNode: back.Name, BinID: spare.ID,
+		})
+	})
+	if len(refused) != 1 || refused[0].ErrorCode != string(protocol.TermClaimFailed) ||
+		refused[0].Detail != fmt.Sprintf("bin NB-SPARE is held by order %d", leg.ID) {
+		t.Fatalf("refusals = %+v, want one claim_failed naming order %d", refused, leg.ID)
+	}
+	if o, err := db.GetOrderByUUID("nb-return"); err == nil && o != nil {
+		t.Errorf("a move for a robot's bin was issued: order %d (%s)", o.ID, o.Status)
+	}
+}
+
+// A MOVE PARKED ON A FULL OUTBOUND HOLDS ITS CART, AND LIFTS NOTHING ONCE IT
+// HAS LEFT.
+//
+// The move's drop is occupied, so its gate parks it; it holds its cart all the
+// while (issued for it). The cart is then taken off the spot by hand, outside
+// any order, and a refill lands there. When the drop frees, the move must not
+// carry the refill away: its hand's claim takes the bin it is for only while it
+// stands on the source, so the move ends skipped.
+func TestNamedBinMove_LiftsNothingOnceItsBinHasLeft(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	setupTestData(t, db)
+	spot := &nodes.Node{Name: "NBP-SPOT", Enabled: true}
+	back := &nodes.Node{Name: "NBP-BACK", Enabled: true}
+	aside := &nodes.Node{Name: "NBP-ASIDE", Enabled: true}
+	market := &nodes.Node{Name: "NBP-MARKET", Enabled: true}
+	for _, n := range []*nodes.Node{spot, back, aside, market} {
+		testutil.MustNoErr(t, db.CreateNode(n), "node "+n.Name)
+	}
+	spare := createTestBinAtNode(t, db, "", spot.ID, "NBP-SPARE")
+	blocking := createTestBinAtNode(t, db, "", back.ID, "NBP-ON-BACK")
+	refill := createTestBinAtNode(t, db, "", market.ID, "NBP-REFILL")
+	eng := newTestEngine(t, db, simulator.New())
+
+	eng.Dispatcher().HandleOrderRequest(testEnvelope(), &protocol.OrderRequest{
+		OrderUUID: "nbp-return", OrderType: protocol.OrderTypeMove, Quantity: 1,
 		SourceNode: spot.Name, DeliveryNode: back.Name, BinID: spare.ID,
 	})
-	if o := testdb.RequireOrder(t, db, "nb-return"); o.BinID != nil {
-		t.Fatalf("fixture: the return holds bin %d while the leg carries the spare", *o.BinID)
+	ret := testdb.RequireOrder(t, db, "nbp-return")
+	if ret.Status != protocol.StatusQueued || ret.VendorOrderID != "" {
+		t.Fatalf("fixture: the return is %q (vendor %q), want parked on its full drop", ret.Status, ret.VendorOrderID)
+	}
+	var held int64
+	testutil.MustNoErr(t, db.QueryRow(`SELECT order_id FROM reservations WHERE bin_id=$1 AND state='pending'`,
+		spare.ID).Scan(&held), "the spare's hold")
+	if held != ret.ID {
+		t.Fatalf("the parked return holds nothing on its cart (holder %d): a move parked on its gate keeps its cart", held)
 	}
 
-	// The leg delivers the spare to the line, and the refill lands on the spot.
-	sim.DriveState(leg.VendorOrderID, "FINISHED")
-	d.HandleOrderReceipt(env, &protocol.OrderReceipt{OrderUUID: "nb-leg", ReceiptType: "confirmed", FinalCount: 1})
-	testdb.RequireBinAtNode(t, db, spare.ID, lineNode.ID)
-	_, err := db.Exec(`UPDATE bins SET node_id=$1 WHERE id=$2`, spot.ID, refill.ID)
-	testutil.MustNoErr(t, err, "the refill lands on the spot")
-
+	// By hand, outside any order: the spare goes aside, the refill lands on the
+	// spot, and the drop frees.
+	for _, mv := range []struct{ bin, node int64 }{{spare.ID, aside.ID}, {refill.ID, spot.ID}, {blocking.ID, market.ID}} {
+		_, err := db.Exec(`UPDATE bins SET node_id=$1 WHERE id=$2`, mv.node, mv.bin)
+		testutil.MustNoErr(t, err, "move a bin by hand")
+	}
 	eng.RunFulfillmentScan()
 
-	ret := testdb.RequireOrder(t, db, "nb-return")
+	ret = testdb.RequireOrder(t, db, "nbp-return")
 	if ret.Status != protocol.StatusSkipped {
 		t.Errorf("the return is %q, want skipped: the bin it was for has left the spot", ret.Status)
-	}
-	if ret.BinID != nil {
-		t.Errorf("the return holds bin %d, want none", *ret.BinID)
 	}
 	got, err := db.GetBin(refill.ID)
 	testutil.MustNoErr(t, err, "refill")
 	if got.ClaimedBy != nil || got.NodeID == nil || *got.NodeID != spot.ID {
 		t.Errorf("the refill is claimed by %v at node %v, want unclaimed on the spot", got.ClaimedBy, got.NodeID)
 	}
-	var held int
-	testutil.MustNoErr(t, db.QueryRow(`SELECT count(*) FROM reservations WHERE order_id=$1`, ret.ID).Scan(&held), "holds")
-	if held != 0 {
-		t.Errorf("the return holds %d reservation(s), want none", held)
+	var holds int
+	testutil.MustNoErr(t, db.QueryRow(`SELECT count(*) FROM reservations WHERE order_id=$1`, ret.ID).Scan(&holds), "holds")
+	if holds != 0 {
+		t.Errorf("the return holds %d reservation(s), want none", holds)
+	}
+}
+
+// TWO BINS ON THE SOURCE: THE MOVE LIFTS ITS OWN. The station names the older
+// bin on a spot holding two; the move is issued for that bin, never the other,
+// which a find of the spot returns (it ended skipped when the find chose).
+func TestNamedBinMove_TwoBinsOnTheSourceLiftsItsOwn(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	setupTestData(t, db)
+	spot := &nodes.Node{Name: "NB2B-SPOT", Enabled: true}
+	back := &nodes.Node{Name: "NB2B-BACK", Enabled: true}
+	for _, n := range []*nodes.Node{spot, back} {
+		testutil.MustNoErr(t, db.CreateNode(n), "node "+n.Name)
+	}
+	named := createTestBinAtNode(t, db, "", spot.ID, "NB2B-NAMED")
+	other := createTestBinAtNode(t, db, "", spot.ID, "NB2B-OTHER")
+	eng := newTestEngine(t, db, simulator.New())
+
+	eng.Dispatcher().HandleOrderRequest(testEnvelope(), &protocol.OrderRequest{
+		OrderUUID: "nb2b-return", OrderType: protocol.OrderTypeMove, Quantity: 1,
+		SourceNode: spot.Name, DeliveryNode: back.Name, BinID: named.ID,
+	})
+	ret := testdb.RequireOrder(t, db, "nb2b-return")
+	if ret.BinID == nil || *ret.BinID != named.ID || ret.VendorOrderID == "" || ret.Status == protocol.StatusSkipped {
+		t.Fatalf("the return = %q bin %v vendor %q, want dispatched with its named bin %d", ret.Status, ret.BinID, ret.VendorOrderID, named.ID)
+	}
+	if got, err := db.GetBin(other.ID); err != nil || got.ClaimedBy != nil {
+		t.Errorf("the other bin on the spot is claimed by %v (%v), want left alone", got.ClaimedBy, err)
 	}
 }
 
@@ -242,5 +312,38 @@ func TestNamedBinMove_ABinNotAtTheSourceIsRefusedAtBirth(t *testing.T) {
 	}
 	if o, err := db.GetOrderByUUID("nb3-return"); err == nil && o != nil {
 		t.Errorf("a move for a bin not on its source was born: order %d (%s)", o.ID, o.Status)
+	}
+}
+
+// A STATION'S MOVE FOR A LOCKED BIN IS REFUSED AT ITS ISSUE. The door's one
+// read of the bin says it is locked; nothing is written and the station is told
+// why.
+func TestNamedBinMove_ALockedBinIsRefused(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	setupTestData(t, db)
+	spot := &nodes.Node{Name: "NBL-SPOT", Enabled: true}
+	back := &nodes.Node{Name: "NBL-BACK", Enabled: true}
+	for _, n := range []*nodes.Node{spot, back} {
+		testutil.MustNoErr(t, db.CreateNode(n), "node "+n.Name)
+	}
+	bin := createTestBinAtNode(t, db, "", spot.ID, "NBL-BIN")
+	_, err := db.Exec(`UPDATE bins SET locked = true WHERE id = $1`, bin.ID)
+	testutil.MustNoErr(t, err, "lock the bin")
+	d := newTestEngine(t, db, simulator.New()).Dispatcher()
+	env := testEnvelope()
+	env.ID = "env-nbl"
+
+	refused := d.RefusalsFor(env, func() {
+		d.HandleOrderRequest(env, &protocol.OrderRequest{
+			OrderUUID: "nbl-return", OrderType: protocol.OrderTypeMove, Quantity: 1,
+			SourceNode: spot.Name, DeliveryNode: back.Name, BinID: bin.ID,
+		})
+	})
+	if len(refused) != 1 || refused[0].ErrorCode != string(protocol.TermNoSourceBin) || refused[0].Detail != "bin NBL-BIN is locked" {
+		t.Fatalf("refusals = %+v, want one no_source_bin \"bin NBL-BIN is locked\"", refused)
+	}
+	if o, err := db.GetOrderByUUID("nbl-return"); err == nil && o != nil {
+		t.Errorf("a move for a locked bin was issued: order %d (%s)", o.ID, o.Status)
 	}
 }

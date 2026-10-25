@@ -248,18 +248,22 @@ func TestVacantPickup_ALegThatOnlyLiftsThereIsNotComing(t *testing.T) {
 }
 
 // TestVacantPickup_ANamedMoveOffTheOutsideHoldsThePair is SEND BACK then
-// REQUEST SWAP: the cart on the on-deck is named by a live move taking it to
-// the outbound, so the index leg does not reserve it and the pair holds on
+// REQUEST SWAP: the cart on the on-deck is the cart of a station's move
+// taking it to the outbound, issued through the wire door, which holds it from
+// the issue, so the index leg's find passes over it and the pair holds on
 // waiting_for_outside. The move lifts and a carrier is coming: still
 // waiting_for_outside. It lands: the pair takes it.
 func TestVacantPickup_ANamedMoveOffTheOutsideHoldsThePair(t *testing.T) {
 	t.Parallel()
 	c := newVPCell(t, "VP4", protocol.ClaimRoleProduce)
 	outside := testdb.CreateBinAtNode(t, c.db, "", c.deck.ID, "VP4-OUTSIDE")
-	move := &orders.Order{EdgeUUID: "send-back-move", StationID: "line-1", OrderType: protocol.OrderTypeMove,
-		Status: protocol.StatusQueued, Quantity: 1, SourceNode: c.deck.Name, DeliveryNode: c.out.Name,
-		NamedBinID: &outside.ID}
-	testutil.MustNoErr(t, c.db.CreateOrder(move), "the named move")
+	c.d.HandleOrderRequest(testEnvelope(), &protocol.OrderRequest{OrderUUID: "send-back-move",
+		OrderType: protocol.OrderTypeMove, Quantity: 1, SourceNode: c.deck.Name, DeliveryNode: c.out.Name,
+		BinID: outside.ID})
+	move := prReloadUUID(t, c.db, "send-back-move")
+	if move.BinID == nil || *move.BinID != outside.ID {
+		t.Fatalf("fixture: SEND BACK's move holds %v, want its cart %d from its issue", move.BinID, outside.ID)
+	}
 
 	r1, r2 := c.submitPair("VP4", false, "VP4-r2", "VP4-r1")
 	c.scan(r1, r2)
@@ -295,6 +299,32 @@ func TestVacantPickup_ANamedMoveOffTheOutsideHoldsThePair(t *testing.T) {
 	if b := c.reread(landed); b.ClaimedBy == nil {
 		t.Error("the landed carrier is not the index leg's")
 	}
+}
+
+// TestVacantPickup_SendBackTakesThePairsHoldOutLoud: the pair's index leg has
+// promised itself the on-deck's cart (a pending hold, before its hand). SEND
+// BACK's move for that cart is a station's act, so a person's: its issue takes
+// the pair's hold and holds the cart itself, and the pair, finding the cart
+// held on its next pass, waits for outside material.
+func TestVacantPickup_SendBackTakesThePairsHoldOutLoud(t *testing.T) {
+	t.Parallel()
+	c := newVPCell(t, "VP9", protocol.ClaimRoleProduce)
+	cart := testdb.CreateBinAtNode(t, c.db, "", c.deck.ID, "VP9-ON-DECK")
+	r1, r2 := c.submitPair("VP9", false, "VP9-r2", "VP9-r1")
+	testdb.ReserveBin(t, c.db, prReloadUUID(t, c.db, r2).ID, cart.ID)
+
+	c.d.HandleOrderRequest(testEnvelope(), &protocol.OrderRequest{OrderUUID: "vp9-send-back",
+		OrderType: protocol.OrderTypeMove, Quantity: 1, SourceNode: c.deck.Name, DeliveryNode: c.out.Name,
+		BinID: cart.ID})
+	move := prReloadUUID(t, c.db, "vp9-send-back")
+	var holder int64
+	testutil.MustNoErr(t, c.db.QueryRow(`SELECT order_id FROM reservations WHERE bin_id = $1 AND state = 'pending'`,
+		cart.ID).Scan(&holder), "the cart's hold")
+	if holder != move.ID {
+		t.Fatalf("the cart is held by order %d, want SEND BACK's move %d: a station's move takes a pending hold", holder, move.ID)
+	}
+	c.scan(r1, r2)
+	c.requireHolds(protocol.QueueWaitingForOutside, r1, r2)
 }
 
 // TestVacantPickup_ACarrierBeingTakenOffHoldsForOutside: the carrier on the

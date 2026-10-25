@@ -171,7 +171,6 @@ var issueWalk = map[string]issueEntry{
 	// The faces: the builder and the store's writers.
 	"dispatch/builder.go:issue":                 {issueFace, []string{""}, "the issue over the one INSERT, on the caller's transaction"},
 	"dispatch/builder.go:issueOwnTx":            {issueFace, []string{""}, "the issue in a transaction of its own"},
-	"dispatch/builder.go:birthNamedMove":        {issueFace, []string{""}, "a station's move naming its bin: the at-source check, the hold marker, the issue"},
 	"dispatch/builder.go:Dispatcher.IssueOrder": {issueFace, []string{"d", "dispatcher"}, "the issue's face: issueOwnTx on the Dispatcher's database"},
 	"store/orders.go:DB.CreateOrder":            {issueFace, []string{"db"}, "the store's writer in a transaction of its own"},
 	"store/orders.go:DB.CreateCompoundChildren": {issueFace, []string{"db"}, "a dig's children in a transaction of their own"},

@@ -13,6 +13,7 @@ import (
 	"shingocore/internal/lockorder"
 	"shingocore/service"
 	"shingocore/store"
+	"shingocore/store/bins"
 	"shingocore/store/nodes"
 	"shingocore/store/orders"
 )
@@ -176,11 +177,11 @@ func (d *Dispatcher) handleOrderRequest(env *protocol.Envelope, p *protocol.Orde
 	// decision is applied to the born row below, as planTransport applied it.
 	var decided *transportDecision
 	order, payloadCode, lifecycleErr := d.lifecycle.CreateInboundOrder(stationID, p,
-		func(o *orders.Order, payloadCode string) plan.Plan {
+		func(o *orders.Order, payloadCode string, cart *bins.Bin) plan.Plan {
 			if !d.planner.decidesAhead(o.OrderType) {
 				return plan.Plan{}
 			}
-			dec := d.planner.decideTransport(o, payloadCode)
+			dec := d.planner.decideTransport(o, payloadCode, cart)
 			decided = &dec
 			return dec.Plan()
 		})

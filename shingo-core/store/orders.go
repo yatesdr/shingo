@@ -1301,13 +1301,7 @@ func (db *DB) UpdateOrderStepsJSON(id int64, stepsJSON string) error {
 func (db *DB) CompleteOrder(id int64) error             { return orders.Complete(db.DB, id) }
 func (db *DB) GetOrder(id int64) (*orders.Order, error) { return orders.Get(db.DB, id) }
 
-// LiveOrderNamingBin returns the live order, other than the asker, that names
-// the bin as the one it is for, or nil. See orders.LiveOrderNamingBin.
-func (db *DB) LiveOrderNamingBin(binID, askerID int64) (*orders.Order, error) {
-	return orders.LiveOrderNamingBin(db.DB, binID, askerID)
-}
-
-// LiveNamedMoveOff reports whether a live move naming its bin lifts it from
+// LiveNamedMoveOff reports whether a live station's move for one carrier lifts it from
 // node, the asker aside. See orders.LiveNamedMoveOff.
 func (db *DB) LiveNamedMoveOff(node string, askerID int64) (bool, error) {
 	return orders.LiveNamedMoveOff(db.DB, node, askerID)
