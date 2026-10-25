@@ -32,7 +32,7 @@ import (
 //     stands there.
 //   - Empty: an Empty-flagged pickup. A carrier with no part that is not the
 //     bare marker, which the height wanted where it is set down admits
-//     (plan.BindableEmpties). On a cell's own position tops & bottoms binds
+//     (binresolver.BindableEmpties). On a cell's own position tops & bottoms binds
 //     whatever that height (the house rule; the height's other arm is
 //     TestTopsAndBottoms_AConcreteSupplyNodeHoldingOnlyIt's).
 //   - Stock: a pickup naming the part. A carrier loaded with that part, its

@@ -616,7 +616,7 @@ func (f *Finder) Pick(need Need) Plan {
 	// the system working as intended, not a reason to fetch from anywhere in the
 	// plant (TestNamedEmpty_ConcreteSourceHoldingNothingWaits). It takes the
 	// empties standing on the node of the types the need wants (wantTypes),
-	// bound as the reserve binds them (BindableEmpties at the need's height:
+	// bound as the reserve binds them (binresolver.BindableEmpties at the need's height:
 	// tops & bottoms only where the node is a line position or the height
 	// admits it), or waits there; it never reaches tier 5. Not by setting
 	// NodeLocal: that arm takes quality-held carts and drops the late seatbelt,
@@ -641,13 +641,13 @@ func (f *Finder) Pick(need Need) Plan {
 		}
 		claimPayload := payloadCode
 		if intent == IntentEmpty {
-			candidates = EmptyBinsOnly(candidates)
+			candidates = binresolver.EmptyBinsOnly(candidates)
 			claimPayload = ""
 		}
 		if namedEmpty {
-			candidates = ofTypes(candidates, wantTypes)
-			at := BindAt{SetDown: height}
-			if AnyTopsAndBottoms(candidates) {
+			candidates = binresolver.OfTypes(candidates, wantTypes)
+			at := binresolver.BindAt{SetDown: height}
+			if binresolver.AnyTopsAndBottoms(candidates) {
 				line, lerr := f.db.IsLinePosition(srcNode.Name)
 				if lerr != nil {
 					f.debug("finder: is %s a line position: %v", need.SourceNode, lerr)
@@ -655,7 +655,7 @@ func (f *Finder) Pick(need Need) Plan {
 				}
 				at.LinePosition = line
 			}
-			candidates = BindableEmpties(candidates, at)
+			candidates = binresolver.BindableEmpties(candidates, at)
 		}
 		// The carrier rule for the part, read ONCE for this node's candidate
 		// list. An empty-intent fetch dropped its payload above and gets the

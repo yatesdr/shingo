@@ -14,7 +14,7 @@ import (
 )
 
 // tops_and_bottoms_bind_docker_test.go — where a complex pickup binds tops &
-// bottoms (plan.BindableEmpties): on a cell's own position whatever height the
+// bottoms (binresolver.BindableEmpties): on a cell's own position whatever height the
 // press asks for (the house rule: a carrier there belongs to that cell), and
 // elsewhere only where it is set down at a height that admits it. And where an
 // empty need naming a concrete source looks (tier 4's namedEmpty): there, and

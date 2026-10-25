@@ -12,7 +12,7 @@ import (
 // file). Before it, an empty need naming one physical, non-loader node passed
 // every scoped tier and took an empty from anywhere in the plant. It now takes
 // the empties standing on that node, bound as the reserve binds them
-// (plan.BindableEmpties), or waits there.
+// (binresolver.BindableEmpties), or waits there.
 
 // namedEmptyNeed is an empty need naming the concrete node FG-DROP-01 of the
 // named-source fixture, set down on setDown.

@@ -6,7 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
-	"shingocore/dispatch/plan"
+	"shingocore/dispatch/binresolver"
 	"shingocore/domain"
 	"slices"
 
@@ -913,14 +913,14 @@ func (a *Allocator) findAvailableForNeed(pk pickupNeed, payloadCode string) (bin
 		}
 		// Empty pickup leg (produce's "bring an empty to fill"): an empty carrier,
 		// dropping the payload context — same filter as the old claim path —
-		// and tops & bottoms only where it may be bound (plan.BindableEmpties).
-		candidates = plan.EmptyBinsOnly(bins)
-		if plan.AnyTopsAndBottoms(candidates) {
+		// and tops & bottoms only where it may be bound (binresolver.BindableEmpties).
+		candidates = binresolver.EmptyBinsOnly(bins)
+		if binresolver.AnyTopsAndBottoms(candidates) {
 			at, berr := a.bindAt(pk, payloadCode)
 			if berr != nil {
 				return nil, nodeHadBins, berr
 			}
-			candidates = plan.BindableEmpties(candidates, at)
+			candidates = binresolver.BindableEmpties(candidates, at)
 		}
 		claimPayload = ""
 	}
@@ -955,19 +955,19 @@ func (a *Allocator) findAvailableForNeed(pk pickupNeed, payloadCode string) (bin
 // and only when it is not, the height its carrier is wanted at where it is set
 // down (one statement, GetSetDownNode). At most two statements, and none on a
 // pickup with no tops & bottoms to judge.
-func (a *Allocator) bindAt(pk pickupNeed, payloadCode string) (plan.BindAt, error) {
+func (a *Allocator) bindAt(pk pickupNeed, payloadCode string) (binresolver.BindAt, error) {
 	line, err := a.db.IsLinePosition(pk.step.Node)
 	if err != nil {
-		return plan.BindAt{}, fmt.Errorf("is %s a line position: %w", pk.step.Node, err)
+		return binresolver.BindAt{}, fmt.Errorf("is %s a line position: %w", pk.step.Node, err)
 	}
 	if line || pk.setDown == "" {
-		return plan.BindAt{LinePosition: line}, nil
+		return binresolver.BindAt{LinePosition: line}, nil
 	}
 	_, h, err := a.db.GetSetDownNode(pk.setDown, payloadCode)
 	if err != nil {
-		return plan.BindAt{}, fmt.Errorf("the height wanted at %s: %w", pk.setDown, err)
+		return binresolver.BindAt{}, fmt.Errorf("the height wanted at %s: %w", pk.setDown, err)
 	}
-	return plan.BindAt{SetDown: h}, nil
+	return binresolver.BindAt{SetDown: h}, nil
 }
 
 // confirmComplexPlan commits a COMPLETE reserved assignment to hard claims — the

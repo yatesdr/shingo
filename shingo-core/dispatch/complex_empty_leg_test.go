@@ -21,7 +21,7 @@ import (
 // same source — the Hopkinsville bug where the press kept being handed full bins.
 //
 // Source node holds BOTH a full PART-A bin and an empty carrier. The empty-leg
-// filter lives in reserveComplexPlan.findAvailableForNeed (plan.EmptyBinsOnly), so the
+// filter lives in reserveComplexPlan.findAvailableForNeed (binresolver.EmptyBinsOnly), so the
 // reserve selects the empty and confirm claims exactly it.
 func TestReserveConfirm_EmptyLegClaimsEmptyCarrier(t *testing.T) {
 	t.Parallel()

@@ -488,7 +488,7 @@ func NotFencedArm() string {
 // predicate.
 //
 // Two Go-side pickers never composed it and carry the rule themselves: the
-// complex allocator's plan.EmptyBinsOnly (TestTier4_NeverOffersABareCart) and the
+// complex allocator's binresolver.EmptyBinsOnly (TestTier4_NeverOffersABareCart) and the
 // dedicated-loader pool's binsource.RejectReason
 // (TestDedicatedPool_NeverDrawsABareCart). Those three pins are the whole of
 // the claim; a new empty reader that neither composes this nor carries the rule
