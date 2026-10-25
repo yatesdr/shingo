@@ -106,7 +106,7 @@ the other half of why this document rotted.
 1. **The driver itself** — `dispatch/lifecycle.go`. `transition()` has to call the
    underlying store methods to do its job.
 2. **The INSERT** — `orders.Create` binds the struct's `Status` field directly,
-   and writes the birth `order_history` row in the same transaction
+   and writes the creation `order_history` row in the same transaction
    (`IssueOrder` opens one for an order issued alone; a dig's legs and the
    home clear's ride their compound's).
 

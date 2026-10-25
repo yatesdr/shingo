@@ -249,7 +249,7 @@ such index. Rows are reaped when their owning order is terminal or gone
 
 | Status | Description |
 |--------|-------------|
-| `pending` | Born; every order starts here and is asked for its whole hand (acquiring) |
+| `pending` | Issued; every order starts here and is asked for its whole hand (acquiring) |
 | `sourcing` | History only (C1): no order can be in it and no transition enters it; old `order_history` rows still say it. Migration v148 moved live rows to `queued` |
 | `queued` | Asked and could not have its whole hand; waits with its cause on the row (`queue_code`, `queue_reason` — never empty), holds its sources as soft **reservations**, and is asked again each scanner tick |
 | `dispatched` | Sent to fleet backend |

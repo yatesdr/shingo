@@ -20,11 +20,11 @@ import (
 // An order comes to exist one way: issued, through the single INSERT
 // (orders.Create), holding softly what its door already knows and will not
 // re-choose, in the issue's transaction or nothing. IssueOrder issues in a
-// transaction of its own; issue issues on the caller's (a compound parent and
-// its children). The issue decides nothing a plan decides: a plan whose verdict
-// is not satisfiable never reaches it. The compound children (a dig's legs, the
-// home clear's moves) still write through the store (TestCensus_Issuers names
-// every caller of the INSERT).
+// transaction of its own; issue issues on the caller's (a compound's legs, a
+// home clear's parent and its first leg). The issue decides nothing a plan
+// decides: a plan whose verdict is not satisfiable never reaches it.
+// TestCensus_Issuers names every caller of the INSERT, and testdb.IssueDoors
+// says what each door's order holds at its commit.
 
 // Need is what a door declares about the order it issues: the facts the row
 // records that no plan decides, and what the order holds from its issue. The

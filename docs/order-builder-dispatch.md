@@ -1,6 +1,6 @@
 # Order-Building & Source Dispatch
 
-**Source of truth:** `shingo-core/dispatch/source_finder.go`,
+**Source of truth:** `shingo-core/dispatch/builder.go`, `shingo-core/dispatch/source_finder.go`,
 `shingo-core/dispatch/allocator.go`, `protocol/status.go`. This document is the
 human-readable rendering; if the two diverge, the source wins.
 
@@ -79,7 +79,7 @@ simple↔complex unification a migration rather than a rewrite.
 
 ## The acquiring set — `{pending, queued}`
 
-Every order is born `pending`. **Acquiring** is the act between `pending` and
+Every order is issued `pending`. **Acquiring** is the act between `pending` and
 `dispatched` — asking for the order's whole hand and taking it in one
 transaction — never a stored status. An order whose hand is not whole parks in
 `queued` with its cause on the row. The fulfillment scanner asks orders whose
@@ -110,6 +110,31 @@ and it is dispatched the moment the missing source appears.
 
 `sourcing` was in this set before C1, as a stored status; it is history now
 (no edge enters it; see `[[order-lifecycle]]`).
+
+## The one issue
+
+An order comes to exist one way: **issued**, through `shingo-core/dispatch/builder.go`
+(`IssueOrder` in a transaction of its own; `issue` on the caller's, for a compound's
+legs). A door states a `Need` — the row's facts no plan decides, and what the order
+holds from its issue — and the planner's `plan.Plan` rides beside it; the issue writes
+the row through the single INSERT (`orders.Create`) and takes the holds in the same
+transaction, or nothing is written:
+
+| `Need` field | What the issue does with it |
+|--------------|-----------------------------|
+| `Cart` | the one carrier the order is for: a pending bin row, `bin_id` and `named_bin_id` stamped in the INSERT |
+| `Window` | a loader window that **is** the delivery: a pending slot row, before the cart; another order's refuses the issue |
+| `QualityHoldBy` | a station's containment move: the cart's hold marker |
+| `Robot` | a carried-bin recovery's pin, in the INSERT |
+| `Leg` | a compound's child: parent and turn; a dig leg's bin stamped and held by its parent's lane, with no bin row |
+| `Steps`, `Complex`, `Sibling` | a multi-leg order's resolved steps, its coordinated facts, its paired order |
+| `By` | who asked: `Person(name)` takes a stranger's pending hold on the cart out loud; the zero value (Core's own errand) is refused by it; nobody takes a confirmed hold |
+
+The census of doors is `shingo-core/internal/testdb/issue_census.go` (`IssueDoors`):
+what each door's order holds at the commit that issues it, held to the tree by
+`TestCensus_Issuers` (every caller of the INSERT, every site on the walk up from it)
+and to the database by each package's `TestIssueCensus_AtCommit`. A door that changes
+what it holds flips its row there first.
 
 ## Plan-shape intake
 

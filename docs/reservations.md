@@ -287,12 +287,19 @@ See `[[order-builder-dispatch]]` for the `AcquiringStatusSQLList = {pending,
 queued}` set — the orders the scanner may ask. (`MoveToSourcing` is deleted:
 `sourcing` left the ladder in C1.)
 
-**Synchronous manual orders** (`engine.CreateBinMove`, reached from the operator's
-manual-order screen via `www.submitSpotRetrieveSpecific` and from the
-`/test-orders` direct tab): a specific bin is named — by the operator, or by the
-door itself when it picks a free one — so these soft-acquire it and confirm at
-dispatch in the same call. The soft window is microscopic, but the discipline is
-uniform — no hard claim before the dispatch step on any path.
+**An order for one carrier holds it from its issue.** Every order is issued
+through dispatch's one issue (`IssueOrder`, or `issue` on the caller's
+transaction), and an order that is for one carrier declares it (`Need.Cart`): a
+person's bin move from Core's pages, a station's move naming its bin, a window
+pull (the drain's, stage 2's), a carried-bin recovery, a home clear's leg. Its
+pending row is taken in the issue's own transaction, `bin_id` and `named_bin_id`
+stamped in the INSERT, and the claim follows at the hand, as for every order —
+no hard claim before the dispatch step on any path. Who asked decides a
+stranger's pending hold on the cart: a person's issue takes it out loud (the
+holder un-pointed and told; one that is an order for that cart ended by name),
+Core's own errand is refused by it, and nobody takes a confirmed hold. A window
+pull also holds its window from its issue (`Need.Window`, a pending slot row). A
+dig's leg is the one exception, below.
 
 ## The store API
 

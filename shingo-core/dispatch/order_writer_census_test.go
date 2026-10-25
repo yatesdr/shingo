@@ -158,8 +158,9 @@ type issueEntry struct {
 	what  string
 }
 
-// insertCallers are the production functions calling orders.Create. The end
-// state of the one issue is one: the issue itself.
+// insertCallers are the production functions calling orders.Create, in the
+// end state of the one issue: the issue, and the store's own writer, which only
+// test fixtures call (TestCensus_Issuers holds it to no production caller).
 var insertCallers = map[string]string{
 	"dispatch/builder.go:issue":      "the issue: a door's need and the planner's plan, as the row and its holds",
 	"store/orders.go:DB.CreateOrder": "the store's own writer, in a transaction of its own: the tests' fixtures, no door's",

@@ -49,7 +49,7 @@ the truth of whichever machine owns the order at that moment.
 
 ## The ladder (C1)
 
-Every order is born `pending`. Its first hand takes it `pending → dispatched`
+Every order is issued `pending`. Its first hand takes it `pending → dispatched`
 in one transaction when the whole hand is had; otherwise it parks
 `pending → queued`, with the cause written on the row first. `queued` is the
 one place an order rests short of the fleet, and it always carries a cause
@@ -199,11 +199,13 @@ Notes on the Core machine:
   is refused and nothing is undone. A redirect writes no status:
   `HandleOrderRedirect` refuses anything not pre-dispatch.
 - **Doors.** Each door (`HandleOrderRequest`, complex intake, loader
-  replenishment, carried-bin recovery) holds the scanner's lock across its birth, its apply
+  replenishment) holds the scanner's lock across its issue, its apply
   and one acquire (`dispatch/door.go`), so a periodic pass never acquires a
-  half-applied row. A door whose decision is already a wait (dropoff gate,
-  finder wait, unresolved group) parks the order itself (`ParkAndTell`). The
-  station is not told `queued` for an order that never waited; a park sends one
+  half-applied row (a carried-bin recovery holds none: it is issued whole, its
+  robot pinned in the row, and dispatched in its own call). A door whose
+  decision is already a wait (dropoff gate, finder wait, unresolved group) parks
+  the order itself (`ParkAndTell`). The station is not told `queued` for an
+  order that never waited; a park sends one
   `order.update` `queued` with the reason, and a door never emits
   `EventOrderQueued`.
 

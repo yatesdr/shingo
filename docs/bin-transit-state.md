@@ -223,10 +223,10 @@ on saturation; queueing-on-saturation requires gating before resolution.
 
 ## Status-First Queueing
 
-Every order is born `pending` (complex orders included, since C1). The
+Every order is issued `pending` (complex orders included, since C1). The
 fulfillment scanner is the single sync point that runs the capacity gate and
 moves `pending`/`queued` → `dispatched`. Each door holds the scanner's lock
-(`scan-mu`) across its birth, its apply and one acquire (`dispatch/door.go`),
+(`scan-mu`) across its issue, its apply and one acquire (`dispatch/door.go`),
 so the door's own acquire and a periodic pass never run side by side.
 
 ```

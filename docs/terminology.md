@@ -67,7 +67,7 @@ A transport request to move a bin between nodes. Orders flow from Shingo Edge to
 | 6 River Systems | Task |
 | VDA 5050 | Order (same) |
 
-Order statuses: `pending`, `queued`, `dispatched`, `in_transit`, `delivered`, `confirmed`, `failed`, `cancelled` (plus `submitted`, `acknowledged`, `staged`, `faulted`, `reshuffling`, `skipped`; the full set is in [order-lifecycle.md](order-lifecycle.md)). (There is no `completed` status — terminal completion is `confirmed`.) Every order is born `pending`, goes to `dispatched` when its whole hand is had, or rests in `queued` with a cause until it is.
+Order statuses: `pending`, `queued`, `dispatched`, `in_transit`, `delivered`, `confirmed`, `failed`, `cancelled` (plus `submitted`, `acknowledged`, `staged`, `faulted`, `reshuffling`, `skipped`; the full set is in [order-lifecycle.md](order-lifecycle.md)). (There is no `completed` status — terminal completion is `confirmed`.) Every order is issued `pending`, goes to `dispatched` when its whole hand is had, or rests in `queued` with a cause until it is.
 
 ### Reservation
 

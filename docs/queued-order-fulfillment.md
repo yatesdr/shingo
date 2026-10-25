@@ -21,7 +21,7 @@ pending -> (acquiring) -> [whole hand] -> dispatched -> in_transit -> delivered 
 dispatched -> [fleet refused the create] -> QUEUED (fleet_unavailable) -> ...
 ```
 
-Every order is born `pending`. **Acquiring** is the act between `pending` and
+Every order is issued `pending`. **Acquiring** is the act between `pending` and
 `dispatched` — asking for the whole hand — never a stored status. When the hand
 is whole the order goes `pending → dispatched` in one transaction; otherwise it
 parks `pending → queued`, with its cause written on the row first. `queued` is
@@ -58,15 +58,16 @@ Does NOT apply to:
 - Node not found errors (bad delivery/source node -- config errors, should still fail)
 - Claim failures (race condition on bin claim)
 
-### 2. Doors -- Birth, Apply, One Acquire
+### 2. Doors -- Issue, Apply, One Acquire
 
 Files: `dispatch/door.go`, `fulfillment/scanner.go`
 
-Each door (`HandleOrderRequest`, complex intake, loader replenishment, carried-bin
-recovery) holds the scanner's lock across the order's birth, its apply and one
-acquire, so a periodic pass never acquires a half-applied row:
+Each door (`HandleOrderRequest`, complex intake, loader replenishment) holds the
+scanner's lock across the order's issue, its apply and one acquire, so a periodic
+pass never acquires a half-applied row (a carried-bin recovery holds none: it is
+issued whole, its robot pinned in the row, and dispatched in its own call):
 
-1. Birth: the INSERT writes `pending`.
+1. Issue: the INSERT writes `pending`.
 2. Apply: the door's own writes (remaining UOP, resolved destination).
 3. One acquire (`AcquireLocked`): the order is dispatched, or parked
    `pending → queued` under the cause its arm wrote, and its station is told
