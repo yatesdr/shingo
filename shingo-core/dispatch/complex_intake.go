@@ -116,7 +116,7 @@ func (d *Dispatcher) handleComplexOrderRequest(env *protocol.Envelope, p *protoc
 		return
 	}
 
-	order := row(complexNeed(stationID, p, resolvedSteps, string(stepsJSON)), plan.Plan{})
+	need := complexNeed(stationID, p, resolvedSteps, string(stepsJSON))
 
 	// Do the things this order names exist? The wire door has always asked; this
 	// one never did, so an order naming a payload Core does not have got a row,
@@ -127,20 +127,24 @@ func (d *Dispatcher) handleComplexOrderRequest(env *protocol.Envelope, p *protoc
 	// them at the other door: that rewrites where the order is going, and this
 	// order's steps have already chosen the concrete nodes its robot will visit.
 	//
-	// Before the insert, so a refusal leaves nothing behind, and well before the
+	// Before the issue, so a refusal leaves nothing behind, and well before the
 	// ack — the ack is the part that made this worse than a slow failure.
-	if _, lerr := d.lifecycle.checkOrderRefs(order); lerr != nil {
+	if _, lerr := d.lifecycle.checkOrderRefs(row(need, plan.Plan{})); lerr != nil {
 		d.refuseComplexIntake(env, p, lerr.Code, lerr.Detail)
 		return
 	}
 
-	if err := d.db.CreateOrder(order); err != nil {
-		log.Printf("dispatch: create complex order: %v", err)
+	// Issued holding nothing: a multi-leg order knows neither its carts nor its
+	// slots at plan grain, so its holds are the reserve pass's, every pass
+	// (Allocator.reserveComplexPlan), which is the family's declared shape.
+	order, _, err := d.IssueOrder(need, plan.Plan{})
+	if err != nil {
+		log.Printf("dispatch: issue complex order: %v", err)
 		d.refuseComplexIntake(env, p, "internal_error", err.Error())
 		return
 	}
 	if queueCode != "" {
-		// Queue detail is written after creation, never by it: CreateOrder does
+		// Queue detail is written after the issue, never by it: orders.Create does
 		// not persist the QueueReason/QueueCode/QueueCause fields, so assigning
 		// them above would look like it worked and do nothing. It goes through
 		// the one door rather than the bare store call so the struct carries the
@@ -152,8 +156,8 @@ func (d *Dispatcher) handleComplexOrderRequest(env *protocol.Envelope, p *protoc
 	}
 
 	// Two-robot swap pairing, back-link reconcile: the forward pointer
-	// (evac→supply) is already persisted atomically in CreateOrder above, so
-	// PAIR RECOGNITION no longer depends on this call succeeding — which matters
+	// (evac→supply) is already persisted atomically in the issue's INSERT above,
+	// so PAIR RECOGNITION no longer depends on this call succeeding — which matters
 	// more now than when it was written: the pointer used to arm a hold, and it
 	// now decides whether dispatch sees a pair at all (complex_pair.go). This call
 	// additionally records the supply's back-link (supply→evac) — bidirectional

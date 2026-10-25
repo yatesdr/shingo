@@ -162,7 +162,7 @@ type issueEntry struct {
 // state of the one issue is one: the issue itself.
 var insertCallers = map[string]string{
 	"dispatch/builder.go:issue":                "the issue: a door's need and the planner's plan, as the row and its holds",
-	"store/orders.go:DB.CreateOrder":           "the store's own writer, in a transaction of its own: complex intake's",
+	"store/orders.go:DB.CreateOrder":           "the store's own writer, in a transaction of its own: the tests' fixtures, no door's",
 	"store/orders.go:CreateCompoundChildrenTx": "a compound parent's children, in the parent's transaction: the digs' and the home clear's",
 }
 
@@ -323,6 +323,14 @@ func TestCensus_Issuers(t *testing.T) {
 	sameSites(t, "the callers of the one INSERT (orders.Create)",
 		g.callersOf("Create", []string{"orders"}), insertCallers,
 		"The issue is the one way a row is written. A new caller of orders.Create is a second issue: route it through the one there is.")
+
+	// THE STORE'S OWN WRITER HAS NO PRODUCTION CALLER: every door issues through
+	// the issue. Tests write their fixtures' rows with it (testdb.CreateOrder),
+	// and those are not doors.
+	if callers := g.callersOf("CreateOrder", []string{"db"}); len(callers) != 0 {
+		t.Errorf("store.DB.CreateOrder is called by %v: a door writing its row through the store, not the issue. "+
+			"Issue it (IssueOrder, or issue on the caller's transaction).", callers)
+	}
 
 	unnamed, unreached := walkIssuers(g, issueWalk)
 	if len(unnamed) > 0 {

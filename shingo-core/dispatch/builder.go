@@ -22,9 +22,9 @@ import (
 // re-choose, in the issue's transaction or nothing. IssueOrder issues in a
 // transaction of its own; issue issues on the caller's (a compound parent and
 // its children). The issue decides nothing a plan decides: a plan whose verdict
-// is not satisfiable never reaches it. Complex intake and the compound children
-// (a dig's legs, the home clear's moves) still write through the store
-// (TestCensus_Issuers names every caller of the INSERT).
+// is not satisfiable never reaches it. The compound children (a dig's legs, the
+// home clear's moves) still write through the store (TestCensus_Issuers names
+// every caller of the INSERT).
 
 // Need is what a door declares about the order it issues: the facts the row
 // records that no plan decides, and what the order holds from its issue. The

@@ -76,7 +76,7 @@ var IssueDoors = []IssueDoor{
 		Why: "an Edge station's move naming its bin (SEND BACK, W6's clear, a spare's return, a containment move): issued for its cart and holding it from its issue, parked or not; a station's move is a person's act and takes a stranger's pending hold out loud"},
 	{Name: "complex intake", Site: "dispatch/complex_intake.go:Dispatcher.handleComplexOrderRequest", Arm: "dispatch",
 		At: AtCommit{}, Take: TakeNoCart,
-		Why: "an Edge station sends a multi-leg order: the row only; its holds are the reserve pass's, every pass"},
+		Why: "an Edge station sends a multi-leg order: issued through the one issue, the row only (its steps and its coordinated part); it knows neither its carts nor its slots at plan grain, so its holds are the reserve pass's, every pass: the family's declared shape"},
 	{Name: "dig legs", Site: "dispatch/compound.go:Dispatcher.writeCompoundChildren", Arm: "dispatch",
 		At: AtCommit{BinID: true, SlotRow: true}, Take: TakeTaken,
 		Why: "a reshuffle's children in their parent's transaction: the blocker stamped and held by the parent's lane (no bin row), a stranger's pending hold on it stolen by rank, the parking pencilled"},
