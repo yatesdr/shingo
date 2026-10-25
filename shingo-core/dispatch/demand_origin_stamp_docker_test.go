@@ -41,9 +41,9 @@ func wantOrigin(t *testing.T, o *orders.Order, what, wantID, wantClass string) {
 }
 
 // TestOriginStamp_SurvivesTheRoundTrip is the floor everything else stands on:
-// the columns are in the INSERT column list AND in SelectCols. orders has TWO
-// independent INSERT statements (orders.Create and CreateCompoundChildren), so a
-// column named in one and not the other is silently dropped on exactly one path;
+// the columns are in the INSERT column list AND in SelectCols. orders had TWO
+// independent INSERT statements (orders.Create and the compound writer's), so a
+// column named in one and not the other was silently dropped on exactly one path;
 // both are exercised, here and in the compound test below.
 func TestOriginStamp_SurvivesTheRoundTrip(t *testing.T) {
 	t.Parallel()

@@ -22,8 +22,8 @@ type ReshuffleStep struct {
 	BinID    int64
 	FromNode *nodes.Node
 	ToNode   *nodes.Node
-	// Park is the parking slot an unbury step's leg pencils at the dig's birth
-	// (a pending slot reservation in the leg's name, store.CreateCompoundChildren):
+	// Park is the parking slot an unbury step's leg pencils at the dig's issue
+	// (a pending slot reservation in the leg's name, store.HoldLegTx):
 	// the walk's slot for this blocker. ToNode stays nil; the leg places into
 	// Park or a better free slot at release (dig_dwell.go). ParkByRank says the
 	// walk offered it by rank, from a stranger's promise the dig outranks (C2b

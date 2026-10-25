@@ -78,6 +78,14 @@ type Need struct {
 	// Complex is what a coordinated order states beyond the plain row; nil for
 	// every simple order, and its presence is what makes the row coordinated.
 	Complex *ComplexSpec
+	// Sibling is the order this one is paired with (orders.sibling_order_uuid),
+	// written with the row so the pointer can never be lost by a failed link
+	// step after it: a two-robot swap's evac naming its supply, a home clear's
+	// trade leg naming the partial's move. "" for every other order.
+	Sibling string
+	// Leg is a compound's child: its parent, its turn, and for a dig's leg the
+	// bin it moves. nil for every root order.
+	Leg *Leg
 
 	// WHAT THE ORDER HOLDS FROM ITS ISSUE, softly, in the issue's transaction,
 	// or the issue is refused.
@@ -100,15 +108,26 @@ type Need struct {
 	By Actor
 }
 
+// Leg is a compound's child as its issue writes it: its parent
+// (orders.parent_order_id), its turn among the parent's legs (sequence), and,
+// for a dig's leg, the bin it moves. A dig leg's bin is stamped as bin_id and
+// held by its parent's lane, with no bin row: one bin may be two legs' (an
+// unbury followed by a retrieve of the same bin) and the bin index admits one
+// active row. Its claim is its hand's. A leg that holds its bin by a row (the
+// home clear's) declares it as the need's Cart, and Bin is 0.
+type Leg struct {
+	Parent   int64
+	Sequence int
+	Bin      int64
+}
+
 // ComplexSpec is the part of a coordinated order's row only complex intake
-// states: the process it serves, its swap sibling (orders.sibling_order_uuid,
-// written with the row so a two-robot evac's pointer to its supply is never
-// lost), and the claim's SEER routing hints, kept because dispatch happens later
-// (domain.Order.KeyRoute). There is no coordinated flag: a need with a
-// ComplexSpec is coordinated.
+// states: the process it serves and the claim's SEER routing hints, kept
+// because dispatch happens later (domain.Order.KeyRoute). There is no
+// coordinated flag: a need with a ComplexSpec is coordinated. Its swap sibling
+// is the need's (Need.Sibling), as a home clear's trade leg's is.
 type ComplexSpec struct {
 	ProcessNode string
-	Sibling     string
 	KeyRoute    []string
 	KeyTask     string
 }
@@ -134,31 +153,40 @@ type Taken struct {
 // writes nothing.
 func row(need Need, p plan.Plan) *orders.Order {
 	o := &orders.Order{
-		EdgeUUID:        need.Ref,
-		StationID:       need.Station,
-		OrderType:       need.Type,
-		Status:          protocol.StatusPending,
-		Quantity:        need.Quantity,
-		SourceNode:      need.Source,
-		DeliveryNode:    need.Delivery,
-		Priority:        need.Priority,
-		PayloadDesc:     need.Desc,
-		PayloadCode:     need.PayloadCode,
-		SkipAutoConfirm: need.SkipAutoConfirm,
-		OriginID:        need.OriginID,
-		OriginClass:     need.OriginClass,
-		SourceIntent:    need.SourceIntent,
-		StationUnaware:  !need.StationKnows,
-		ProjectsTo:      need.Projects,
-		RecoversOrderID: need.Recovers,
-		StepsJSON:       need.Steps,
+		EdgeUUID:         need.Ref,
+		StationID:        need.Station,
+		OrderType:        need.Type,
+		Status:           protocol.StatusPending,
+		Quantity:         need.Quantity,
+		SourceNode:       need.Source,
+		DeliveryNode:     need.Delivery,
+		Priority:         need.Priority,
+		PayloadDesc:      need.Desc,
+		PayloadCode:      need.PayloadCode,
+		SkipAutoConfirm:  need.SkipAutoConfirm,
+		OriginID:         need.OriginID,
+		OriginClass:      need.OriginClass,
+		SourceIntent:     need.SourceIntent,
+		StationUnaware:   !need.StationKnows,
+		ProjectsTo:       need.Projects,
+		RecoversOrderID:  need.Recovers,
+		StepsJSON:        need.Steps,
+		SiblingOrderUUID: need.Sibling,
 	}
 	if o.SourceIntent == "" {
 		o.SourceIntent = SourceIntentForType(need.Type)
 	}
 	if c := need.Complex; c != nil {
 		o.Coordinated = true
-		o.ProcessNode, o.SiblingOrderUUID, o.KeyRoute, o.KeyTask = c.ProcessNode, c.Sibling, c.KeyRoute, c.KeyTask
+		o.ProcessNode, o.KeyRoute, o.KeyTask = c.ProcessNode, c.KeyRoute, c.KeyTask
+	}
+	if l := need.Leg; l != nil {
+		parent := l.Parent
+		o.ParentOrderID, o.Sequence = &parent, l.Sequence
+		if l.Bin != 0 {
+			bin := l.Bin
+			o.BinID = &bin
+		}
 	}
 	if p.Dest != nil {
 		o.DeliveryNode = p.Dest.Name
@@ -205,6 +233,9 @@ func issue(tx *sql.Tx, need Need, p plan.Plan) (*orders.Order, Taken, error) {
 	if need.QualityHoldBy != "" && need.Cart == 0 {
 		return nil, Taken{}, errors.New("issue: a hold marker needs the cart it marks")
 	}
+	if need.Leg != nil && need.Leg.Bin != 0 && need.Cart != 0 {
+		return nil, Taken{}, errors.New("issue: a leg holds its bin by its parent's lane or by its cart, never both")
+	}
 	if need.Window != nil && need.Delivery != "" {
 		return nil, Taken{}, errors.New("issue: a declared window is the delivery; a need names one or the other")
 	}
@@ -232,8 +263,12 @@ func issue(tx *sql.Tx, need Need, p plan.Plan) (*orders.Order, Taken, error) {
 		return o, Taken{}, nil
 	}
 	// The cart's hold, asked first: an issue that meets no stranger reads
-	// nothing more. A root order owns its own lane rows.
-	err := reservations.Acquire(tx, o.ID, o.ID, need.Cart, "reserveForDispatch")
+	// nothing more. A root order owns its own lane rows; a leg's are its parent's.
+	owner := o.ID
+	if need.Leg != nil {
+		owner = need.Leg.Parent
+	}
+	err := reservations.Acquire(tx, o.ID, owner, need.Cart, "reserveForDispatch")
 	if !errors.Is(err, reservations.ErrReservationConflict) || need.By.person == "" {
 		// Held, or refused: another order holds the cart and Core's own errand
 		// takes nothing.
@@ -256,7 +291,7 @@ func issue(tx *sql.Tx, need Need, p plan.Plan) (*orders.Order, Taken, error) {
 	if taken.Named, taken.Unpointed, err = store.TakeSoftHolds(tx, need.Cart, o.ID, note); err != nil {
 		return nil, Taken{}, err
 	}
-	if err := reservations.Acquire(tx, o.ID, o.ID, need.Cart, "reserveForDispatch"); err != nil {
+	if err := reservations.Acquire(tx, o.ID, owner, need.Cart, "reserveForDispatch"); err != nil {
 		return nil, Taken{}, err
 	}
 	return o, taken, nil

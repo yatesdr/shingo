@@ -4,9 +4,10 @@
 // and the order_bins junction out of the flat store/ package and into
 // this sub-package. The outer store/ keeps one-line delegate methods on
 // *store.DB; callers name orders.Order directly. Cross-aggregate methods
-// that mutate bins in the same transaction (CreateCompoundChildren,
-// FailOrderAtomic, ApplyMultiBinArrival) stay at the outer store/ level as
-// composition methods; the single-bin arrival is BinService.ApplyArrival.
+// that mutate bins in the same transaction (a dig leg's steal and pencil,
+// HoldLegTx; FailOrderAtomic; ApplyMultiBinArrival) stay at the outer store/
+// level as composition methods; the single-bin arrival is
+// BinService.ApplyArrival.
 package orders
 
 import (
@@ -163,7 +164,7 @@ func ScanOrders(rows *sql.Rows) ([]*Order, error) {
 // began, and its timeline started at whatever happened next. Two doors were in
 // that state: complex intake, which births at `queued` (dispatch/complex_intake.go
 // — every swap leg and every changeover leg), and compound children, which birth
-// at `pending` inside CreateCompoundChildren (every dig leg).
+// at `pending` on their compound's transaction (every dig leg).
 //
 // It is not cosmetic. SetQueueDetail stamps a wait's cause onto the history row
 // of the episode the order is RESTING IN; an order born into an episode with no
@@ -183,10 +184,11 @@ func ScanOrders(rows *sql.Rows) ([]*Order, error) {
 // description is payload_desc on the order row itself, and carried-bin recovery
 // writes its own audit row naming the action.
 //
-// THE CALLER SUPPLIES THE TRANSACTION, and both do: CreateCompoundChildren
-// passes its own (so a rolled-back compound takes its children's birth rows with
-// it), and db.CreateOrder opens one for every other door. Handed a bare *sql.DB
-// the two inserts are separate autocommits and the invariant is only a hope.
+// THE CALLER SUPPLIES THE TRANSACTION, and its one caller does (dispatch's issue):
+// a compound's legs ride their compound's (so a rolled-back compound takes its
+// legs' history rows with it), and IssueOrder opens one for every other order.
+// Handed a bare *sql.DB the two inserts are separate autocommits and the
+// invariant is only a hope.
 func Create(db helpers.QueryRower, o *Order) error {
 	now := clock.Now().UTC()
 	id, err := helpers.InsertID(db, `INSERT INTO orders (edge_uuid, station_id, order_type, status, quantity, source_node, delivery_node, process_node, priority, payload_desc, parent_order_id, sequence, steps_json, bin_id, payload_code, skip_auto_confirm, sibling_order_uuid, key_route, key_task, source_intent, coordinated, origin_id, origin_class, recovers_order_id, named_bin_id, station_unaware, projects_to, plan, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $27, $28, $29, $26, $26) RETURNING id`,
@@ -205,7 +207,7 @@ func Create(db helpers.QueryRower, o *Order) error {
 	}
 	o.ID = id
 	// InsertID rather than Exec: Create takes a QueryRower so it can run inside
-	// CreateCompoundChildren's transaction, and RETURNING id is how a QueryRower
+	// the issue's transaction, and RETURNING id is how a QueryRower
 	// executes an INSERT. The id is discarded.
 	if _, err := helpers.InsertID(db,
 		`INSERT INTO order_history (order_id, status, detail, created_at)
@@ -717,7 +719,7 @@ func LinkSiblingsByEdgeUUID(db *sql.DB, uuidA, uuidB string) (int64, error) {
 
 // BindTradeLegTx rewrites an unsent order's plan and names its sibling in one
 // statement: a home clear's partial move becoming one leg of the two-robot
-// trade (dispatch/clear_home.go, birthClearTrade). Guarded on no vendor order
+// trade (dispatch/clear_home.go, issueClearTrade). Guarded on no vendor order
 // and a live status, so a move the fleet already has is never re-planned.
 // Reports whether the row was written.
 func BindTradeLegTx(tx *sql.Tx, id int64, stepsJSON, siblingUUID string) (bool, error) {

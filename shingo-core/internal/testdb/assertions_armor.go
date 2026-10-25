@@ -56,7 +56,8 @@ const crashSliverAge = 5 * time.Minute
 // what this codebase already does on purpose and says so: "A multi-step
 // reshuffle plan INTENTIONALLY overlaps bin claims: a bin that appears in
 // several steps ... is claimed once per step, and the last step's write is the
-// one that stands" (store/orders.go CreateCompoundChildren), and
+// one that stands" (the compound writer, before C2b; today each leg claims in its
+// hand, store/orders.go ClaimCompoundLegBinTx, and the last to claim holds), and
 // engine/wiring_completion.go relies on it. So a dispatched leg whose bin is
 // held by its own parent or by a sibling IS armored: a robot is committed, the
 // bin is spoken for, and no demand outside the excavation can take it. Asking

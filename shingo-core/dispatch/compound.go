@@ -366,7 +366,7 @@ func chapterEndedInFailure(children []*orders.Order) bool {
 //
 // A PARENT THAT HAS ENDED GETS NO DIG. The caller planned from a row it read
 // earlier, and a cancel can land in between. The write reads the parent under a
-// row lock before anything else (store.CreateCompoundChildren), so it serialises
+// row lock before anything else (store.OpenCompoundTx), so it serialises
 // with the cancel's status write: a terminal parent gets nothing written and
 // store.ErrParentGone, and a cancel that comes after the commit finds the
 // children in its cascade. A parent that cannot begin reshuffling after the
@@ -551,140 +551,25 @@ func reshuffleBeginDetail(plan *ReshufflePlan) string {
 // place for the two halves to get out of order, which is exactly the ordering
 // this function's neighbour spends fifteen lines explaining.
 
-// writeCompoundChildren builds the compound's child orders from the plan and
-// writes them, with the dig's lane when lanes is set, in the store's single
-// transaction. The legs hold nothing (store.CreateCompoundChildren). It touches
-// the parent's STATUS not at all — that is the caller's (see CreateCompoundOrder).
+// writeCompoundChildren issues the compound's legs from the plan on one
+// transaction, with the dig's lane when lanes is set (store.OpenCompoundTx).
+// Each leg is issued holding no bin row, its bin held by the parent's lane, and
+// its ranked steal and parking pencil follow its row (store.HoldLegTx). It
+// touches the parent's STATUS not at all — that is the caller's (see
+// CreateCompoundOrder).
 func (d *Dispatcher) writeCompoundChildren(parentOrder *orders.Order, plan *ReshufflePlan, lanes *store.CompoundLanes) error {
-	var children []store.CompoundChild
-	for _, step := range plan.Steps {
-		// The payload the child is moving, read off the bin it names. The column
-		// was blank on every child ever written, which made "how much does
-		// payload X move in reshuffling" unanswerable from the orders table, and
-		// gave every reshuffle move the default load sequence — the dispatcher
-		// picks the robot's bin-task sequence from PayloadCode.
-		//
-		// A missing bin is not fatal here. The child still names the bin id and
-		// the claim below still runs; only the payload label is lost, and
-		// failing the whole compound over a label would trade a reporting gap
-		// for a stopped reshuffle.
-		var payloadCode string
-		if bin, err := d.db.GetBin(step.BinID); err != nil {
-			log.Printf("dispatch: compound child for bin %d: cannot read payload code: %v", step.BinID, err)
-		} else if bin != nil {
-			payloadCode = bin.PayloadCode
-		}
-
-		child := &orders.Order{
-			// A minted identity, like every other order. It used to be BUILT from
-			// the parent's — "<parent-uuid>-step-<sequence>" — which is a
-			// structural name, not an identity, and re-planning a parent's steps
-			// produced the same string again. That is a duplicate in the column
-			// migration v71 makes unique, and the two facts cannot both hold: a
-			// plant that has run reshuffling cannot apply the index, and a plant
-			// that applied it stops reshuffling at the next re-plan.
-			//
-			// Nothing is lost, because nothing read the name. Children are found
-			// by parent_order_id and ordered by sequence (ListChildOrders /
-			// GetNextChildOrder); both facts are columns on this struct, four
-			// lines down. The only Sscanf against an edge_uuid anywhere is the
-			// restore parent's, which is a different format and keeps its
-			// exemption. Verified by grep before this changed: one construction
-			// site (here) and zero readers.
-			//
-			// The fleet still gets it as ExternalID, where it is an opaque
-			// correlation token — a real UUID suits that better than a name that
-			// looks parseable.
-			EdgeUUID:      uuid.New().String(),
-			StationID:     parentOrder.StationID,
-			OrderType:     OrderTypeMove,
-			Status:        StatusPending,
-			ParentOrderID: &parentOrder.ID,
-			Sequence:      step.Sequence,
-			PayloadDesc:   fmt.Sprintf("reshuffle %s: bin %d", step.StepType, step.BinID),
-			PayloadCode:   payloadCode,
-			BinID:         &step.BinID,
-			// How this child sources its bin: locally, by name. Children were
-			// written with "", which is the DEFAULT-FULL value rather than an
-			// unset one — it reads as "find any full bin of this payload,
-			// plant-wide", the opposite of what a reshuffle child does. It names
-			// its exact bin four lines up; there is nothing to find.
-			//
-			// Harmless until now only because children never reach the finder:
-			// the scanner skips any order with a parent. That skip is intended
-			// behavior, and TestCompoundChild_StaysOutOfTheSourceFinder pins it,
-			// so a later change here cannot quietly route reshuffle work into
-			// plant-wide FIFO selection and hand it a different bin than the one
-			// it was planned to move.
-			SourceIntent: SourceIntentForType(OrderTypeMove),
-			// The derivative site — now the only one (the restore-blockers parent
-			// that was the second is retired by this merge). An order created in
-			// service of another order inherits its origin AND ITS CLASS: a dig
-			// move exists only because the parent needed a buried bin, so it is
-			// part of the cost of the parent's demand and belongs in that
-			// episode's count.
-			//
-			// STAMPED FORWARD, NOT WALKED. parent_order_id is set four lines up,
-			// which makes a read-time walk look available here, and it is still
-			// the wrong instrument: it is one level deep, so it cannot reach an
-			// episode from a grandchild, and it would re-derive at read time a
-			// value this order was handed at creation. Copying the class too is
-			// what stops a no_demand parent's digs arriving as fresh orphans.
-			//
-			// There WAS a second derivative site — the synthetic restore parent,
-			// which set no parent_order_id at all and so dead-ended the walk
-			// outright. It went with the reshuffle restore subsystem
-			// (cb74bfdc); the rule it motivated is unchanged, but the sharpest
-			// argument for it no longer has a live example. Do not weaken this
-			// to a walk on the grounds that the remaining sites all set a
-			// parent: one level is still not enough.
-			OriginID:    parentOrder.OriginID,
-			OriginClass: parentOrder.OriginClass,
-		}
-
-		if step.FromNode != nil {
-			child.SourceNode = step.FromNode.Name
-		}
-		if step.ToNode != nil {
-			child.DeliveryNode = step.ToNode.Name
-		}
-		// Simple-retrieve reshuffles emit a "retrieve" step with no
-		// ToNode and rely on this fallback to land the bin at the
-		// parent retrieve's lineside DeliveryNode.
-		//
-		// Complex-order reshuffles do NOT go through this branch:
-		// PlanReshuffleUnburyOnly emits no retrieve step at all — the
-		// complex parent resumes and runs its own pickup against the
-		// now-accessible original slot.
-		//
-		// Adding a "retrieve" step to PlanReshuffleUnburyOnly without
-		// a ToNode would silently inherit parentOrder.DeliveryNode,
-		// which for a complex parent is the *last* step's node
-		// (extractEndpoints in complex_steps.go) — wrong destination
-		// for the unbury step's deliverable. Don't.
-		if step.StepType == protocol.StepRetrieve && child.DeliveryNode == "" {
-			child.DeliveryNode = parentOrder.DeliveryNode
-		}
-
-		cc := store.CompoundChild{Order: child, BinID: step.BinID}
-		if step.Park != nil {
-			cc.Park, cc.ParkByRank, cc.ParkNamed = step.Park.ID, step.ParkByRank, parentOrder.ID
-			cc.ParkNote = store.HolderNote{
-				Reason: FormatQueueSentence(protocol.QueueWaitingForSlot, QueueParams{TakenByOrderID: parentOrder.ID}),
-				Code:   protocol.QueueWaitingForSlot,
-				Cause:  string(CauseSlotTaken),
-				Actor:  "dispatcher",
-			}
-		}
-		children = append(children, cc)
+	tx, err := d.db.Begin()
+	if err != nil {
+		return fmt.Errorf("begin the dig's issue: %w", err)
 	}
-
-	// %w, not %v: store.BlockerClaimedError has to survive this wrap for the
-	// planners to tell a congestion refusal from a fault.
-	displaced, err := d.db.CreateCompoundChildren(children, lanes)
+	defer tx.Rollback() //nolint:errcheck // committed below; rollback is the error close
+	displaced, stolen, err := d.issueLegsTx(tx, parentOrder, plan, lanes)
+	if err == nil {
+		err = tx.Commit()
+	}
 	if err != nil {
 		// A PENCIL REFUSED IS A SHORT WALK. The slot the walk found for a blocker
-		// was taken between the walk and the birth (a store, another dig), so the
+		// was taken between the walk and the issue (a store, another dig), so the
 		// dig does not start and nothing was written: the same no-shuffle-slot
 		// wait both doors already answer.
 		var taken *store.ParkingTakenError
@@ -697,11 +582,122 @@ func (d *Dispatcher) writeCompoundChildren(parentOrder *orders.Order, plan *Resh
 			}
 			return &dplan.DigShortError{Blockers: blockers, Walk: fmt.Errorf("%w: %v", ErrNoShuffleSlot, err)}
 		}
+		// %w, not %v: store.BlockerClaimedError has to survive this wrap for the
+		// planners to tell a congestion refusal from a fault.
 		return fmt.Errorf("create compound children: %w", err)
 	}
+	// AFTER THE COMMIT, and only after it: a displaced order is a consequence of
+	// a steal that happened, and the log of a steal that rolled back would count
+	// a theft that never was.
+	store.LogSteals(stolen)
 	d.failDisplacedForCart(displaced)
 	d.markLegsWaitingTheirTurn(parentOrder, plan)
 	return nil
+}
+
+// issueLegsTx is writeCompoundChildren's transaction: the compound opened, then
+// each leg issued and its own acts after its row.
+func (d *Dispatcher) issueLegsTx(tx *sql.Tx, parentOrder *orders.Order, plan *ReshufflePlan, lanes *store.CompoundLanes) ([]store.DisplacedForCart, store.Steals, error) {
+	if err := store.OpenCompoundTx(tx, parentOrder.ID, lanes); err != nil {
+		return nil, nil, err
+	}
+	var displaced []store.DisplacedForCart
+	var stolen store.Steals
+	for _, step := range plan.Steps {
+		leg, _, err := issue(tx, d.legNeed(parentOrder, step), dplan.Plan{})
+		if err != nil {
+			return nil, nil, fmt.Errorf("issue the leg at sequence %d: %w", step.Sequence, err)
+		}
+		cc := store.CompoundChild{Order: leg}
+		if step.Park != nil {
+			cc.Park, cc.ParkByRank, cc.ParkNamed = step.Park.ID, step.ParkByRank, parentOrder.ID
+			cc.ParkNote = store.HolderNote{
+				Reason: FormatQueueSentence(protocol.QueueWaitingForSlot, QueueParams{TakenByOrderID: parentOrder.ID}),
+				Code:   protocol.QueueWaitingForSlot,
+				Cause:  string(CauseSlotTaken),
+				Actor:  "dispatcher",
+			}
+		}
+		byHand, took, err := store.HoldLegTx(tx, cc)
+		if err != nil {
+			return nil, nil, err
+		}
+		displaced, stolen = append(displaced, byHand...), append(stolen, took...)
+	}
+	return displaced, stolen, nil
+}
+
+// legNeed is one dig leg as its issue writes it: a move of the step's bin, for
+// its parent, at its turn (Leg), holding no bin row.
+func (d *Dispatcher) legNeed(parentOrder *orders.Order, step ReshuffleStep) Need {
+	// The payload the leg is moving, read off the bin it names. The column was
+	// blank on every child ever written, which made "how much does payload X move
+	// in reshuffling" unanswerable from the orders table, and gave every
+	// reshuffle move the default load sequence — the dispatcher picks the
+	// robot's bin-task sequence from PayloadCode.
+	//
+	// A missing bin is not fatal here. The leg still names the bin id and the
+	// steal still runs; only the payload label is lost, and failing the whole
+	// compound over a label would trade a reporting gap for a stopped reshuffle.
+	var payloadCode string
+	if bin, err := d.db.GetBin(step.BinID); err != nil {
+		log.Printf("dispatch: compound child for bin %d: cannot read payload code: %v", step.BinID, err)
+	} else if bin != nil {
+		payloadCode = bin.PayloadCode
+	}
+	need := Need{
+		Type: OrderTypeMove,
+		// A minted identity, like every other order. It used to be BUILT from the
+		// parent's — "<parent-uuid>-step-<sequence>" — which is a structural name,
+		// not an identity, and re-planning a parent's steps produced the same
+		// string again: a duplicate in the column migration v71 makes unique.
+		// Nothing read the name: children are found by parent_order_id and
+		// ordered by sequence (ListChildOrders / GetNextChildOrder). The fleet
+		// still gets it as ExternalID, an opaque correlation token.
+		Ref:          uuid.New().String(),
+		Station:      parentOrder.StationID,
+		StationKnows: true,
+		Desc:         fmt.Sprintf("reshuffle %s: bin %d", step.StepType, step.BinID),
+		PayloadCode:  payloadCode,
+		// The source intent is the move's, local by name (SourceIntentForType):
+		// the leg names its exact bin and there is nothing to find. Children never
+		// reach the finder (the scanner skips any order with a parent;
+		// TestCompoundChild_StaysOutOfTheSourceFinder).
+		//
+		// The derivative site: an order created in service of another order
+		// inherits its origin AND ITS CLASS. A dig move exists only because the
+		// parent needed a buried bin, so it is part of the cost of the parent's
+		// demand and belongs in that episode's count. STAMPED FORWARD, NOT WALKED:
+		// a read-time walk up parent_order_id is one level deep, so it cannot
+		// reach an episode from a grandchild, and it would re-derive at read time
+		// a value this order was handed at its issue. Copying the class too is
+		// what stops a no_demand parent's digs arriving as fresh orphans.
+		OriginID:    parentOrder.OriginID,
+		OriginClass: parentOrder.OriginClass,
+		Leg:         &Leg{Parent: parentOrder.ID, Sequence: step.Sequence, Bin: step.BinID},
+	}
+	if step.FromNode != nil {
+		need.Source = step.FromNode.Name
+	}
+	if step.ToNode != nil {
+		need.Delivery = step.ToNode.Name
+	}
+	// Simple-retrieve reshuffles emit a "retrieve" step with no ToNode and rely
+	// on this fallback to land the bin at the parent retrieve's lineside
+	// DeliveryNode.
+	//
+	// Complex-order reshuffles do NOT go through this branch:
+	// PlanReshuffleUnburyOnly emits no retrieve step at all — the complex parent
+	// resumes and runs its own pickup against the now-accessible original slot.
+	//
+	// Adding a "retrieve" step to PlanReshuffleUnburyOnly without a ToNode would
+	// silently inherit parentOrder.DeliveryNode, which for a complex parent is
+	// the *last* step's node (extractEndpoints in complex_steps.go) — wrong
+	// destination for the unbury step's deliverable. Don't.
+	if step.StepType == protocol.StepRetrieve && need.Delivery == "" {
+		need.Delivery = parentOrder.DeliveryNode
+	}
+	return need
 }
 
 // markLegsWaitingTheirTurn writes the turn wait on every leg after the first:

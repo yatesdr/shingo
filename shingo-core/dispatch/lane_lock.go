@@ -82,7 +82,7 @@ const mirrorReservedBy = reservations.ByExcavation
 
 // digLaneTake is a dig's lane, taken IN THE PARENT'S HAND (v4 §2.6; SYNTH Fork
 // 1): the dig-mode mouth row is written in the transaction that writes the legs
-// (store.CreateCompoundChildren), after the parent's row is read under lock. A
+// (store.OpenCompoundTx), after the parent's row is read under lock. A
 // dig is started whole or not at all — there is no lane held by a dig whose legs
 // were refused, and no standalone lock transaction ahead of the legs.
 //

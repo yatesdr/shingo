@@ -52,7 +52,7 @@ func TestVacate_ALiftIsOneReadAndNoRowWhenNothingWaits(t *testing.T) {
 	child := &orders.Order{EdgeUUID: "vor-p", StationID: "edge.vor", OrderType: OrderTypeMove, Status: StatusPending,
 		Quantity: 1, ParentOrderID: &parent.ID, Sequence: 2, BinID: &p.ID, SourceNode: src.Name,
 		DeliveryNode: home.Name, StepsJSON: string(steps), SourceIntent: SourceIntentForType(OrderTypeMove)}
-	_, err = db.CreateCompoundChildren([]store.CompoundChild{{Order: child, BinID: p.ID}}, nil)
+	_, err = testdb.CreateCompoundChildren(t, db, []store.CompoundChild{{Order: child}}, nil)
 	testutil.MustNoErr(t, err, "the partial's move")
 
 	cdb, counter, err := store.OpenCounting(cfg)

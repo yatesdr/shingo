@@ -24,7 +24,7 @@ import (
 // both pass the gate before either claims. But intake still plans a BURIED
 // source itself: planTransport gates capacity (CheckDropoffCapacity), resolves
 // the source, and on OutcomeReshuffle calls planBuriedReshuffle → createCompound
-// → CreateCompoundChildren, which CLAIMS the retrieve child's bin in its own
+// → writeCompoundChildren, which issues the retrieve leg, its bin stamped, in its own
 // transaction, and that child takes the parent's delivery node. All of it on the
 // caller's goroutine, outside scanMu. Compound children are never re-gated on
 // capacity (AdvanceCompoundOrder), so the intake gate is the only one B meets.

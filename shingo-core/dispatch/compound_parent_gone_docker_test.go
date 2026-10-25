@@ -234,11 +234,11 @@ func TestCompoundDig_StoreRefusesALegUnderAnEndedParent(t *testing.T) {
 		ParentOrderID: &f.order.ID, Sequence: 1, BinID: &f.sc.Blockers[0].ID, SourceNode: f.sc.Slots[0].Name,
 	}
 
-	_, err := f.db.CreateCompoundChildren([]store.CompoundChild{{Order: leg, BinID: f.sc.Blockers[0].ID}}, nil)
+	_, err := testdb.CreateCompoundChildren(t, f.db, []store.CompoundChild{{Order: leg}}, nil)
 
 	var gone *store.ParentGoneError
 	if !errors.As(err, &gone) || gone.ParentID != f.order.ID {
-		t.Fatalf("CreateCompoundChildren = %v, want ParentGoneError for parent %d", err, f.order.ID)
+		t.Fatalf("the dig's issue = %v, want ParentGoneError for parent %d", err, f.order.ID)
 	}
 	f.nothingLeftBehind(t)
 	children, err := f.db.ListChildOrders(f.order.ID)

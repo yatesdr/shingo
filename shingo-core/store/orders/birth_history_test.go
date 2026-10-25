@@ -16,8 +16,8 @@ import (
 // birth row's invariant rests on.
 //
 // orders.Create writes TWO rows and takes a QueryRower, so whether they are
-// atomic is the caller's choice. CreateCompoundChildren passes its own tx; every
-// other door goes through db.CreateOrder, which was handing over a bare *sql.DB
+// atomic is the caller's choice. The issue passes its own tx (a dig's legs ride
+// their compound's); db.CreateOrder, the fixtures' door, was handing over a bare *sql.DB
 // — two separate autocommits. A failure between them left either an order with
 // no birth certificate (nowhere for SetQueueDetail to stamp a cause, which is
 // the whole reason the row exists) or a committed order the caller was told did
@@ -61,7 +61,7 @@ func TestCreateOrder_TheOrderAndItsBirthRowCommitTogether(t *testing.T) {
 // episode the order is resting in, and an order born into an episode that has no
 // row has nowhere for its cause to land. Complex intake births at `queued`
 // (dispatch/complex_intake.go) and compound children at `pending`
-// (store/orders.go CreateCompoundChildren) — between them, every swap leg and
+// (dispatch's issueLegsTx) — between them, every swap leg and
 // every dig leg in the plant.
 //
 // The row is written by orders.Create rather than by each door, because doors

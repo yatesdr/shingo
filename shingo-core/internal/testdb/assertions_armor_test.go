@@ -84,7 +84,7 @@ func TestArmorAssertion_CatchesAnUnarmoredDispatch(t *testing.T) {
 // half, and it is the one the clause was wrong about at first.
 //
 // A multi-step reshuffle deliberately overlaps bin claims — the same bin is
-// claimed once per step and the last write stands (CreateCompoundChildren says
+// claimed once per step and the last write stands (ClaimCompoundLegBinTx says
 // so, and wiring_completion.go relies on it). So a dispatched leg whose bin is
 // held by a sibling IS armored: a robot is committed and no demand outside the
 // excavation can take that bin. Written without this, the clause reported the

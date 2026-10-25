@@ -7,6 +7,7 @@ import (
 
 	"shingo/protocol/testutil"
 	"shingocore/dispatch/plan"
+	"shingocore/internal/testdb"
 	"shingocore/store"
 	"shingocore/store/nodes"
 	"shingocore/store/orders"
@@ -46,12 +47,12 @@ func TestClearFence_ChildDropCountsInboundFromBirth(t *testing.T) {
 		Status: StatusReshuffling, Quantity: 1, SourceNode: home.Name, DeliveryNode: home.Name}
 	testutil.MustNoErr(t, db.CreateOrder(parent), "parent")
 	child := func(uuid string, seq int, bin int64, from, to string) store.CompoundChild {
-		return store.CompoundChild{BinID: bin, Order: &orders.Order{EdgeUUID: uuid, StationID: "edge.cfp",
+		return store.CompoundChild{Order: &orders.Order{EdgeUUID: uuid, StationID: "edge.cfp",
 			OrderType: OrderTypeMove, Status: StatusPending, Quantity: 1, ParentOrderID: &parent.ID,
 			Sequence: seq, BinID: &bin, SourceNode: from, DeliveryNode: to,
 			SourceIntent: SourceIntentForType(OrderTypeMove)}}
 	}
-	_, err := db.CreateCompoundChildren([]store.CompoundChild{
+	_, err := testdb.CreateCompoundChildren(t, db, []store.CompoundChild{
 		child("cfp-e", 1, emptyOnHome.ID, home.Name, spot.Name),
 		child("cfp-p", 2, partial.ID, src.Name, home.Name),
 	}, nil)

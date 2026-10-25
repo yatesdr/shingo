@@ -720,7 +720,7 @@ func v47OrderRemainingUOP(tx *sql.Tx) error {
 // classifying live orders, so the column had to reproduce an existing answer.
 // There is no prior answer here - nothing has ever asked this question - and
 // the default is not merely the safe choice, it is the TRUE one: every compound
-// writes all of its children in a single transaction (CreateCompoundChildren)
+// writes all of its children in a single transaction (dispatch's issueLegsTx)
 // and never adds more, so every parent currently in `reshuffling` genuinely is
 // sealed. `DEFAULT false` states that fact about every existing row; a backfill
 // would state it twice.

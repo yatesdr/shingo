@@ -341,38 +341,45 @@ This is what the code comments call the **atomicity wedge** fix: the original
 statements, so a crash between them left the wedge. Reserve+confirm share one
 transaction; the CAS seatbelt never weakens.
 
-### The one recorded exception: compound reshuffle children
+### The one recorded exception: a dig's legs
 
-A compound reshuffle order is a parent that spawns child legs to dig a buried
-bin out of a lane. Those children are created and sequenced by the compound
-machinery in `CreateCompoundChildren` (`store/orders.go`), not by the scanner,
-and the bin each child moves is assigned by the reshuffle plan — not found. At
-creation each child takes a **direct bin claim** (an `UPDATE bins SET
-claimed_by` that bypasses `ClaimForDispatch`) so the sequenced legs don't race
-each other for the same bin — but the claim no longer stands alone. The same
-transaction writes a **confirmed reservation row** behind it
-(`supersedeBinLedger`: delete the bin's rows, insert
-`state='confirmed', reserved_by='compound-child'`), so a hard claim never
-exists without a ledger row, even here. That row is also the one exception to
-"Confirm runs at dispatch, never earlier".
+A compound reshuffle order is a parent that spawns legs to dig a buried bin out
+of a lane. Its legs are issued on one transaction (dispatch `issueLegsTx`:
+`store.OpenCompoundTx`, then each leg's row through the one issue, then
+`store.HoldLegTx`), not found by the scanner, and the bin each leg moves is
+assigned by the reshuffle plan. A leg is issued holding **no bin row**: it
+stamps the bin it moves (`bin_id`), and its parent's lane holds it — the dig's
+mouth row keeps every order outside the compound out of the lane
+(`reservations.DigExclusionSQL`). One bin may be two legs' (an unbury followed
+by a retrieve of the same bin) and the bin index admits one active row, which is
+why. That pointer with no pending row behind it is the exception to "an order
+for one carrier holds it by a pending row from its issue".
 
-Two arms surround the claim. The CAS is sibling-scoped — it refuses a bin held
-by an order outside this compound — and a foreign *pending* soft hold is
-stolen: `stealSoftHolds` ranks the two demands, releases the loser's row,
-clears its `bin_id` pointer so it re-finds, and reports the theft (a person's
-hand-placed order is displaced out loud, never quietly re-aimed). Any refusal
-rolls the whole compound back.
+At the leg's issue the dig settles the bin's foreign soft holds:
+`stealSoftHolds` ranks the two demands. An outranked *pending* promise is taken
+(the loser's row released and its `bin_id` cleared so it re-finds; an order for
+that one cart is displaced out loud, never quietly re-aimed); an outranking
+promise, or a hard claim outside the compound, refuses the dig. Any refusal rolls
+the whole compound back. The leg's parking is pencilled in the same transaction.
 
-This is still the one place a hard claim exists on an order that has not
-reached its own dispatch step. It is keyed on the data: a compound child is the
-only order that carries a `parent_order_id`.
+The leg's claim and ledger row are its hand's, at its dispatch
+(`ClaimCompoundLegBinTx`): a **direct bin claim** (an `UPDATE bins SET
+claimed_by` that bypasses `ClaimForDispatch`), sibling-scoped — it refuses a
+bin held by an order outside this compound — with a **confirmed reservation
+row** behind it in the same transaction (`supersedeBinLedger`: the bin's rows
+deleted, one inserted `state='confirmed', reserved_by='compound-child'`), so a
+hard claim never exists without a ledger row, even here. The last leg to claim
+the bin holds its one active row.
+
+A home clear's legs are not a dig: each holds its cart by a pending row from its
+issue, as every order for one carrier does, and is no part of this exception.
 
 ### The invariant, and the fence that enforces it
 
-**No non-compound order that is still acquiring (`pending` or `queued`) holds
-a hard bin or slot claim.** (The sweep also covers `sourcing`, which only an
-old history row can still say.) A compound child
-(`parent_order_id IS NOT NULL`) is the exempted case above.
+**No order that is still acquiring (`pending` or `queued`) holds a hard bin or
+slot claim.** (The sweep also covers `sourcing`, which only an old history row
+can still say.) A dig's legs are no exception: a leg waiting its turn holds
+nothing hard.
 
 The fence is a SQL sweep run as a docker integration test
 (`engine/rule1_invariant_docker_test.go`), **not** the linter. The `forbidigo` rule
@@ -381,8 +388,9 @@ above is useful but is *selector-match only*: it cannot see a bare
 new caller that bypasses the reserve/confirm pair. The invariant sweep can. It
 runs a real scanner pass that parks an order in `queued` holding its bin softly
 (its hand refused at the slot and rolled back), then asserts no acquiring order
-holds a hard claim; separately it pins that a compound child is born holding
-nothing (its claim is its hand's).
+holds a hard claim, with a dig's legs waiting their turn among them; separately
+it pins that a compound child is written holding nothing (its claim is its
+hand's).
 
 If you add a new path that writes `claimed_by`, the sweep is what will catch a
 rule violation. Run the docker tests.

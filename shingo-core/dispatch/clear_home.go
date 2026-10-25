@@ -50,7 +50,7 @@ import (
 //	trade   else two robots trade the bins: the empty's move E H→S and the
 //	        partial's move P S→H, sibling-linked, each plan
 //	        [pickup, wait(vacate), drop] with its drop stamped on the bin the
-//	        other lifts (birthClearTrade). Both are sent in one advance or
+//	        other lifts (issueClearTrade). Both are sent in one advance or
 //	        neither (tradePartnerReady); each robot lifts, stands under its bin,
 //	        and Core appends its drop once the other bin has left
 //	        (redriveVacateOrder). The swap's death rule binds them
@@ -85,18 +85,21 @@ type ClearJob struct {
 	PartialAt *nodes.Node
 }
 
-// ClearBirth is what BirthClearTx wrote, for AfterClearBirth once committed.
-type ClearBirth struct {
-	Parent    *orders.Order
-	Partial   *orders.Order
-	after     func()
-	displaced []store.DisplacedForCart
-	steals    store.Steals
+// ClearIssue is what IssueClearTx wrote, for AfterClearIssue once committed.
+type ClearIssue struct {
+	Parent  *orders.Order
+	Partial *orders.Order
+	after   func()
+	// taken is what the station's issue of the partial's move took from
+	// strangers, and partial the bin it took it on.
+	taken   Taken
+	partial *bins.Bin
 }
 
-// ErrClearPartialPromised is a birth refused because another order outranks
-// the clear for the partial (the steal's refusal).
-var ErrClearPartialPromised = errors.New("the partial is promised to another order")
+// ErrClearPartialPromised is a clear's issue refused because the partial is
+// not the station's to take: a robot's order holds it (a confirmed hold), or
+// it has left the spot the clear read it on.
+var ErrClearPartialPromised = errors.New("the partial is held by another order")
 
 // clearStamp is the vacate stamp on a clear child's drop: the bin that must
 // leave the node first. nil for a child that carries none (the empty's move).
@@ -114,7 +117,7 @@ func clearStamp(o *orders.Order) *plan.Vacate {
 }
 
 // heldTradePlan is a home clear's trade leg's stored plan: a compound child
-// whose plan carries a stored vacate wait (birthClearTrade writes it; no other
+// whose plan carries a stored vacate wait (issueClearTrade writes it; no other
 // writer does). ok=false for every other order, after a substring test that
 // decodes nothing, so the plain create seam pays no decode for it.
 func heldTradePlan(o *orders.Order) ([]resolvedStep, bool) {
@@ -173,14 +176,16 @@ func (d *Dispatcher) dispatchHeldTrade(order *orders.Order, steps []resolvedStep
 	return req.OrderID, nil
 }
 
-// BirthClearTx writes the clear's parent and the partial's move on the
+// IssueClearTx issues the clear's parent and the partial's move on the
 // caller's transaction (the door commits the empty's zero with them): the
-// parent born and moved to `reshuffling` (transitionTx — never in the
-// scanner's population, even across a crash), the child with its stamp, and
-// the child's soft hold on the partial (the Drain race). Statements: the
-// parent's INSERT and history, its status CAS, the child's INSERT and history,
-// the steal's victim read, the soft hold.
-func (d *Dispatcher) BirthClearTx(tx *sql.Tx, j ClearJob) (*ClearBirth, error) {
+// parent issued and moved to `reshuffling` (transitionTx — never in the
+// scanner's population, even across a crash), then the partial's move, a leg of
+// the parent at its turn, holding the partial from its issue (the Drain race).
+// The station asked for the clear, so its issue takes a stranger's pending hold
+// on the partial out loud (AfterClearIssue ends one that is an order for it);
+// a robot's hold refuses it. Statements: the parent's INSERT and history, its
+// status CAS, the leg's INSERT and history, the partial's hold.
+func (d *Dispatcher) IssueClearTx(tx *sql.Tx, j ClearJob) (*ClearIssue, error) {
 	now := clock.Now().UTC()
 	parent, _, err := issue(tx, Need{
 		Type: protocol.OrderTypeMove, Station: j.Station, Ref: orders.ClearUUIDPrefix + uuid.New().String(),
@@ -188,7 +193,7 @@ func (d *Dispatcher) BirthClearTx(tx *sql.Tx, j ClearJob) (*ClearBirth, error) {
 		Desc: fmt.Sprintf("clear %s: %s comes home from %s", j.Home.Name, j.Partial.Label, j.PartialAt.Name),
 		// Housekeeping the station asked for; no place is asking for material.
 		OriginClass: protocol.OriginClassNoDemand,
-		// The station asked for it and is sent its rows (AfterClearBirth).
+		// The station asked for it and is sent its rows (AfterClearIssue).
 		StationKnows: true,
 		Source:       j.Home.Name, Delivery: j.Home.Name,
 	}, plan.Plan{})
@@ -208,45 +213,38 @@ func (d *Dispatcher) BirthClearTx(tx *sql.Tx, j ClearJob) (*ClearBirth, error) {
 	if err != nil {
 		return nil, err
 	}
-	child := d.clearChild(parent, clearPartialSeq, j.Partial, j.PartialAt.Name, j.Home.Name,
+	need := clearLeg(parent, clearPartialSeq, j.Partial, j.PartialAt.Name, j.Home.Name,
 		fmt.Sprintf("clear %s: partial %s home from %s", j.Home.Name, j.Partial.Label, j.PartialAt.Name))
-	child.StepsJSON = string(steps)
-	displaced, steals, err := store.CreateCompoundChildrenTx(tx, []store.CompoundChild{{Order: child, BinID: j.Partial.ID}}, nil)
+	need.Steps = string(steps)
+	child, taken, err := issue(tx, need, plan.Plan{})
+	if errors.Is(err, reservations.ErrReservationConflict) || errors.Is(err, reservations.ErrNotTheNamedBin) {
+		return nil, ErrClearPartialPromised
+	}
 	if err != nil {
-		var claimed *store.BlockerClaimedError
-		if errors.As(err, &claimed) {
-			return nil, ErrClearPartialPromised
-		}
-		return nil, fmt.Errorf("birth the partial's move: %w", err)
+		return nil, fmt.Errorf("issue the partial's move: %w", err)
 	}
-	if err := reservations.Acquire(tx, child.ID, parent.ID, j.Partial.ID, "clear"); err != nil {
-		if errors.Is(err, reservations.ErrReservationConflict) {
-			return nil, ErrClearPartialPromised
-		}
-		return nil, fmt.Errorf("hold the partial: %w", err)
-	}
-	return &ClearBirth{Parent: parent, Partial: child, after: after, displaced: displaced, steals: steals}, nil
+	return &ClearIssue{Parent: parent, Partial: child, after: after, taken: taken, partial: j.Partial}, nil
 }
 
-// clearChild is one plain-move child of a clear.
-func (d *Dispatcher) clearChild(parent *orders.Order, seq int, bin *bins.Bin, from, to, desc string) *orders.Order {
-	return &orders.Order{
-		EdgeUUID: uuid.New().String(), StationID: parent.StationID, OrderType: OrderTypeMove,
-		Status: StatusPending, Quantity: 1, ParentOrderID: &parent.ID, Sequence: seq,
-		BinID: &bin.ID, PayloadCode: bin.PayloadCode, PayloadDesc: desc,
-		SourceNode: from, DeliveryNode: to, SourceIntent: SourceIntentForType(OrderTypeMove),
+// clearLeg is one plain-move leg of a clear, holding its bin from its issue as
+// the station's act (Person): the cart a move of its parent's, at its turn.
+func clearLeg(parent *orders.Order, seq int, bin *bins.Bin, from, to, desc string) Need {
+	return Need{
+		Type: OrderTypeMove, Station: parent.StationID, Ref: uuid.New().String(), Quantity: 1,
+		PayloadCode: bin.PayloadCode, Desc: desc, Source: from, Delivery: to, StationKnows: true,
 		OriginID: parent.OriginID, OriginClass: parent.OriginClass,
+		Leg:  &Leg{Parent: parent.ID, Sequence: seq},
+		Cart: bin.ID, By: Person(parent.StationID),
 	}
 }
 
-// AfterClearBirth is the committed birth's tail: the transition's actions,
-// the displaced and stolen holds, the rows pushed to the station (parent and
-// child — a child is not admitted, so nothing else would push it), and the
-// partial's hold on its row.
-func (d *Dispatcher) AfterClearBirth(b *ClearBirth, home string, emptyBin int64) {
+// AfterClearIssue is the committed issue's tail: the transition's actions, an
+// order for the partial whose hold the station's issue took ended by name, the
+// rows pushed to the station (parent and child — a child is not admitted, so
+// nothing else would push it), and the partial's hold on its row.
+func (d *Dispatcher) AfterClearIssue(b *ClearIssue, home string, emptyBin int64) {
 	b.after()
-	store.LogSteals(b.steals)
-	d.failDisplacedForCart(b.displaced)
+	d.lifecycle.failTakenForCart(b.taken, b.Partial, b.partial)
 	d.projectClear(b.Parent)
 	d.projectClear(b.Partial)
 	d.setQueueReason(b.Partial, protocol.QueueWaitingForSlot, CauseVacateWaitingLift,
@@ -405,36 +403,36 @@ func (d *Dispatcher) ChooseClearLocked(f ClearFacts) (string, error) {
 	if x == nil {
 		return d.chooseClearTrade(f)
 	}
-	if err := d.birthClearSpot(f, x); err != nil {
+	if err := d.issueClearSpot(f, x); err != nil {
 		return "", err
 	}
 	log.Printf("dispatch: clear %d: spot arm — the empty %s goes to %s", f.Parent.ID, f.EmptyBin.Label, x.Name)
 	return protocol.ClearArmSpot, nil
 }
 
-// birthClearSpot writes the empty's move E H→X, sequence 1, and its soft hold
-// on E, in one transaction: E is reserved at birth, so a tier-2 fill cannot
-// take it and skip the move.
-func (d *Dispatcher) birthClearSpot(f ClearFacts, x *nodes.Node) error {
+// issueClearSpot issues the empty's move E H→X, a leg of the clear at sequence
+// 1, holding E from its issue, in one transaction under the parent found live
+// (store.OpenCompoundTx): E is held at its issue, so a tier-2 fill cannot take
+// it and skip the move. The clear is the station's act, so a stranger's pending
+// hold on E is taken out loud.
+func (d *Dispatcher) issueClearSpot(f ClearFacts, x *nodes.Node) error {
 	tx, err := d.db.Begin()
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback() //nolint:errcheck // committed below; rollback is the error close
-	child := d.clearChild(f.Parent, 1, f.EmptyBin, f.Home.Name, x.Name,
-		fmt.Sprintf("clear %s: empty %s to %s", f.Home.Name, f.EmptyBin.Label, x.Name))
-	displaced, steals, err := store.CreateCompoundChildrenTx(tx, []store.CompoundChild{{Order: child, BinID: f.EmptyBin.ID}}, nil)
-	if err != nil {
-		return fmt.Errorf("birth the empty's move: %w", err)
+	if err := store.OpenCompoundTx(tx, f.Parent.ID, nil); err != nil {
+		return err
 	}
-	if err := reservations.Acquire(tx, child.ID, f.Parent.ID, f.EmptyBin.ID, "clear"); err != nil {
-		return fmt.Errorf("hold the empty: %w", err)
+	child, taken, err := issue(tx, clearLeg(f.Parent, 1, f.EmptyBin, f.Home.Name, x.Name,
+		fmt.Sprintf("clear %s: empty %s to %s", f.Home.Name, f.EmptyBin.Label, x.Name)), plan.Plan{})
+	if err != nil {
+		return fmt.Errorf("issue the empty's move: %w", err)
 	}
 	if err := tx.Commit(); err != nil {
 		return err
 	}
-	store.LogSteals(steals)
-	d.failDisplacedForCart(displaced)
+	d.lifecycle.failTakenForCart(taken, child, f.EmptyBin)
 	d.projectClear(child)
 	return nil
 }
@@ -463,7 +461,7 @@ func (d *Dispatcher) chooseClearTrade(f ClearFacts) (string, error) {
 			return "", nil
 		}
 	}
-	if err := d.birthClearTrade(f); err != nil {
+	if err := d.issueClearTrade(f); err != nil {
 		return "", err
 	}
 	log.Printf("dispatch: clear %d: trade arm — the empty %s goes to %s and the partial comes home to %s",
@@ -500,9 +498,10 @@ func (d *Dispatcher) ClearTradeRefusal(loaderID int64, home, spot *nodes.Node, e
 	return "", nil
 }
 
-// birthClearTrade writes the trade in one transaction: the empty's move
-// E H→S (sequence 1, plan [pickup H, wait(vacate), drop S] stamped on the
-// partial), E's soft hold, and the partial's move re-planned in place to
+// issueClearTrade issues the trade in one transaction under the parent found
+// live (store.OpenCompoundTx): the empty's move E H→S (a leg at sequence 1,
+// plan [pickup H, wait(vacate), drop S] stamped on the partial), holding E from
+// its issue as the station's act, and the partial's move re-planned in place to
 // [pickup S, wait(vacate), drop H] (its stamp on E kept, with the time it was
 // written at confirm), the two naming each other (sibling_order_uuid: the
 // pair, minted by Core, both uuids Core's). The swap's death rule reads that
@@ -513,22 +512,21 @@ func (d *Dispatcher) ClearTradeRefusal(loaderID int64, home, spot *nodes.Node, e
 // The partial's move is only re-planned while the fleet does not have it
 // (BindTradeLegTx's guard). Its row is not pushed again: the projection
 // carries neither its plan nor its sibling.
-func (d *Dispatcher) birthClearTrade(f ClearFacts) error {
+func (d *Dispatcher) issueClearTrade(f ClearFacts) error {
 	l1 := f.Partial
 	st := clearStamp(l1)
 	if st == nil {
 		return fmt.Errorf("clear %d: the partial's move %d carries no stamp", f.Parent.ID, l1.ID)
 	}
 	now := clock.Now().UTC()
-	l2 := d.clearChild(f.Parent, 1, f.EmptyBin, f.Home.Name, f.PartialAt,
-		fmt.Sprintf("clear %s: empty %s to %s, trading with the partial", f.Home.Name, f.EmptyBin.Label, f.PartialAt))
-	l2.SiblingOrderUUID = l1.EdgeUUID
 	l2Steps, err := json.Marshal(tradeSteps(f.Home.Name, f.PartialAt,
 		plan.Vacate{Node: f.PartialAt, Bin: *l1.BinID, StampedAt: &now}))
 	if err != nil {
 		return err
 	}
-	l2.StepsJSON = string(l2Steps)
+	need := clearLeg(f.Parent, 1, f.EmptyBin, f.Home.Name, f.PartialAt,
+		fmt.Sprintf("clear %s: empty %s to %s, trading with the partial", f.Home.Name, f.EmptyBin.Label, f.PartialAt))
+	need.Steps, need.Sibling = string(l2Steps), l1.EdgeUUID
 	l1Steps, err := json.Marshal(tradeSteps(f.PartialAt, f.Home.Name, *st))
 	if err != nil {
 		return err
@@ -539,12 +537,12 @@ func (d *Dispatcher) birthClearTrade(f ClearFacts) error {
 		return err
 	}
 	defer tx.Rollback() //nolint:errcheck // committed below; rollback is the error close
-	displaced, steals, err := store.CreateCompoundChildrenTx(tx, []store.CompoundChild{{Order: l2, BinID: f.EmptyBin.ID}}, nil)
-	if err != nil {
-		return fmt.Errorf("birth the empty's move: %w", err)
+	if err := store.OpenCompoundTx(tx, f.Parent.ID, nil); err != nil {
+		return err
 	}
-	if err := reservations.Acquire(tx, l2.ID, f.Parent.ID, f.EmptyBin.ID, "clear"); err != nil {
-		return fmt.Errorf("hold the empty: %w", err)
+	l2, taken, err := issue(tx, need, plan.Plan{})
+	if err != nil {
+		return fmt.Errorf("issue the empty's move: %w", err)
 	}
 	bound, err := orders.BindTradeLegTx(tx, l1.ID, string(l1Steps), l2.EdgeUUID)
 	if err != nil {
@@ -557,8 +555,7 @@ func (d *Dispatcher) birthClearTrade(f ClearFacts) error {
 		return err
 	}
 	l1.StepsJSON, l1.SiblingOrderUUID = string(l1Steps), l2.EdgeUUID
-	store.LogSteals(steals)
-	d.failDisplacedForCart(displaced)
+	d.lifecycle.failTakenForCart(taken, l2, f.EmptyBin)
 	d.projectClear(l2)
 	return nil
 }
@@ -742,7 +739,7 @@ func (d *Dispatcher) rerunClearLocked(partialID int64) bool {
 }
 
 // clearPartialSeq is the partial's move's sequence under its clear's parent
-// (BirthClearTx); the empty's move, on the spot arm or the trade, is 1.
+// (IssueClearTx); the empty's move, on the spot arm or the trade, is 1.
 const clearPartialSeq = 2
 
 // clearPartialOf returns the clear's partial move: the stamped child at the

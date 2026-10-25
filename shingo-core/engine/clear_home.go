@@ -31,7 +31,7 @@ import (
 //     can be born is asked too (dispatch.ClearTradeRefusal): a window that
 //     cannot take the other carrier is a 400, before anything is written;
 //  3. one transaction: the parent and the partial's move, the partial held,
-//     the carrier zeroed (dispatch.BirthClearTx, the bin manifest's clear);
+//     the carrier zeroed (dispatch.IssueClearTx, the bin manifest's clear);
 //  4. choose (dispatch.ChooseClearLocked): demand, then spot, then the trade;
 //     then the parent advanced, which sends the empty's move (both trade legs
 //     on the trade).
@@ -112,43 +112,43 @@ func (e *Engine) clearLoaderHomeLocked(station string, req protocol.ClearHomeReq
 		}
 	}
 
-	birth, epoch, err := e.birthClear(job)
+	issued, epoch, err := e.issueClear(job)
 	if errors.Is(err, dispatch.ErrClearPartialPromised) {
 		// resolveClearJob skipped every partial another order holds, under this
 		// same hold of the Door; nothing should have taken one since.
-		return clearRefused(http.StatusInternalServerError, "%s was promised to another order while the clear was being born", job.Partial.Label)
+		return clearRefused(http.StatusInternalServerError, "%s was taken by another order while the clear was being issued", job.Partial.Label)
 	}
 	if err != nil {
 		return clearRefused(http.StatusInternalServerError, "could not start the clear: %v", err)
 	}
-	d.AfterClearBirth(birth, home.Name, job.Empty.ID)
+	d.AfterClearIssue(issued, home.Name, job.Empty.ID)
 	e.notifyBinChanged(job.Empty.ID)
 
 	empty, err := e.db.GetBin(job.Empty.ID)
 	if err != nil || empty == nil {
 		empty = job.Empty
 	}
-	arm, err := d.ChooseClearLocked(dispatch.ClearFacts{Parent: birth.Parent, Home: home,
-		LoaderID: job.LoaderID, EmptyBin: empty, PartialAt: job.PartialAt.Name, Partial: birth.Partial,
+	arm, err := d.ChooseClearLocked(dispatch.ClearFacts{Parent: issued.Parent, Home: home,
+		LoaderID: job.LoaderID, EmptyBin: empty, PartialAt: job.PartialAt.Name, Partial: issued.Partial,
 		Prepared: true, Pulls: pulls, Spot: spot})
 	if err != nil || arm == "" {
-		// Choose could not write its arm (the trade was asked before the birth,
+		// Choose could not write its arm (the trade was asked before the issue,
 		// so "" is a fault here too). The job ends, nothing of it is left live,
 		// and the zero stands: the answer carries it for the station to record.
 		why := fmt.Sprintf("the clear could not choose where %s goes", job.Empty.Label)
 		if err != nil {
 			why = fmt.Sprintf("%s: %v", why, err)
 		}
-		d.EndClear(birth.Parent, why)
+		d.EndClear(issued.Parent, why)
 		ans := clearRefused(http.StatusInternalServerError, "%s; %s is recorded empty", why, job.Empty.Label)
 		ans.Body.BinID, ans.Body.DeltaEpoch = job.Empty.ID, epoch
 		return ans
 	}
-	if err := d.AdvanceCompoundOrder(birth.Parent.ID); err != nil {
-		log.Printf("engine: clear %d: advance: %v", birth.Parent.ID, err)
+	if err := d.AdvanceCompoundOrder(issued.Parent.ID); err != nil {
+		log.Printf("engine: clear %d: advance: %v", issued.Parent.ID, err)
 	}
 	return ClearHomeAnswer{Status: http.StatusOK, Body: protocol.ClearHomeResponse{
-		Status: "ok", Arm: arm, ParentUUID: birth.Parent.EdgeUUID, BinID: job.Empty.ID, DeltaEpoch: epoch}}
+		Status: "ok", Arm: arm, ParentUUID: issued.Parent.EdgeUUID, BinID: job.Empty.ID, DeltaEpoch: epoch}}
 }
 
 // resolveClearJob makes the checks the Edge used to make, against Core's own
@@ -248,10 +248,10 @@ func clearPartialOn(e *Engine, spot *nodes.Node, payload string) *bins.Bin {
 	return nil
 }
 
-// birthClear is step 3's one transaction: the CMS departure the zero owes
+// issueClear is step 3's one transaction: the CMS departure the zero owes
 // (if the home is a CMS boundary), the parent and the partial's move, and the
 // carrier's zero — all or nothing. Returns the carrier's new delta epoch.
-func (e *Engine) birthClear(job dispatch.ClearJob) (*dispatch.ClearBirth, int64, error) {
+func (e *Engine) issueClear(job dispatch.ClearJob) (*dispatch.ClearIssue, int64, error) {
 	txns := e.buildClearDeparture(job.Empty.ID, job.Home.ID)
 	tx, err := e.db.Begin()
 	if err != nil {
@@ -263,7 +263,7 @@ func (e *Engine) birthClear(job dispatch.ClearJob) (*dispatch.ClearBirth, int64,
 			return nil, 0, fmt.Errorf("book the cms departure of %s: %w", job.Empty.Label, err)
 		}
 	}
-	birth, err := e.dispatcher.BirthClearTx(tx, job)
+	issued, err := e.dispatcher.IssueClearTx(tx, job)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -278,5 +278,5 @@ func (e *Engine) birthClear(job dispatch.ClearJob) (*dispatch.ClearBirth, int64,
 	if len(txns) > 0 {
 		e.Events.Emit(Event{Type: EventCMSTransaction, Payload: CMSTransactionEvent{Transactions: txns}})
 	}
-	return birth, epoch, nil
+	return issued, epoch, nil
 }

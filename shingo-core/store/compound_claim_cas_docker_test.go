@@ -74,7 +74,6 @@ func childFor(parent *orders.Order, binID int64, seq int) store.CompoundChild {
 			Sequence:      seq,
 			BinID:         &binID,
 		},
-		BinID: binID,
 	}
 }
 
@@ -89,7 +88,7 @@ func handOver(t *testing.T, db *store.DB, parentID int64, kids ...store.Compound
 		if err != nil {
 			t.Fatalf("begin handover: %v", err)
 		}
-		if err := store.ClaimCompoundLegBinTx(tx, k.BinID, k.Order.ID, parentID); err != nil {
+		if err := store.ClaimCompoundLegBinTx(tx, *k.Order.BinID, k.Order.ID, parentID); err != nil {
 			_ = tx.Rollback()
 			return err
 		}
@@ -126,9 +125,9 @@ func TestCompoundClaim_RefusesABinHeldOutsideTheCompound(t *testing.T) {
 	claimFor(t, db, bin.ID, stranger.ID)
 
 	parent := compoundParent(t, db, "cas-parent")
-	_, err := db.CreateCompoundChildren([]store.CompoundChild{childFor(parent, bin.ID, 1)}, nil)
+	_, err := testdb.CreateCompoundChildren(t, db, []store.CompoundChild{childFor(parent, bin.ID, 1)}, nil)
 	if err == nil {
-		t.Fatal("CreateCompoundChildren succeeded against a bin held by an unrelated order — the " +
+		t.Fatal("the dig's issue succeeded against a bin held by an unrelated order — the " +
 			"reshuffle would drive to a bin another order is already carrying")
 	}
 
@@ -183,7 +182,7 @@ func TestCompoundClaim_AllowsTheOverlapsItsOwnPlanCreates(t *testing.T) {
 		bin := testdb.CreateBinAtNode(t, db, "DEFAULT", sd.StorageNode.ID, "CAS-FREE")
 		parent := compoundParent(t, db, "cas-free-parent")
 		kid := childFor(parent, bin.ID, 1)
-		if _, err := db.CreateCompoundChildren([]store.CompoundChild{kid}, nil); err != nil {
+		if _, err := testdb.CreateCompoundChildren(t, db, []store.CompoundChild{kid}, nil); err != nil {
 			t.Fatalf("birthing over an unclaimed bin must succeed: %v", err)
 		}
 		if err := handOver(t, db, parent.ID, kid); err != nil {
@@ -198,7 +197,7 @@ func TestCompoundClaim_AllowsTheOverlapsItsOwnPlanCreates(t *testing.T) {
 		claimFor(t, db, bin.ID, parent.ID)
 
 		kid := childFor(parent, bin.ID, 1)
-		if _, err := db.CreateCompoundChildren([]store.CompoundChild{kid}, nil); err != nil {
+		if _, err := testdb.CreateCompoundChildren(t, db, []store.CompoundChild{kid}, nil); err != nil {
 			t.Fatalf("a dig must be born over a bin its own PARENT holds: %v", err)
 		}
 		if err := handOver(t, db, parent.ID, kid); err != nil {
@@ -215,7 +214,7 @@ func TestCompoundClaim_AllowsTheOverlapsItsOwnPlanCreates(t *testing.T) {
 
 		// Two steps over ONE bin — the unbury-then-retrieve shape.
 		kids := []store.CompoundChild{childFor(parent, bin.ID, 1), childFor(parent, bin.ID, 2)}
-		if _, err := db.CreateCompoundChildren(kids, nil); err != nil {
+		if _, err := testdb.CreateCompoundChildren(t, db, kids, nil); err != nil {
 			t.Fatalf("a plan that touches one bin twice must be creatable: %v", err)
 		}
 		if err := handOver(t, db, parent.ID, kids...); err != nil {

@@ -68,10 +68,10 @@ type censusNode struct {
 var bumpPushCensus = map[string]censusNode{
 	// Clear for reuse.
 	"service:BinManifestService.ClearForReuseTx": {callers: []string{
-		"engine:Engine.ClearForReuseStampAndBookDeparture", "engine:Engine.birthClear",
+		"engine:Engine.ClearForReuseStampAndBookDeparture", "engine:Engine.issueClear",
 		"service:BinManifestService.ClearForReuseResolved", "uop:InventoryDeltaService.ApplyBinUOPDelta"}},
 	"engine:Engine.ClearForReuseStampAndBookDeparture": {push: pushBinsChanged},
-	"engine:Engine.birthClear":                         {callers: []string{"engine:Engine.clearLoaderHomeLocked"}},
+	"engine:Engine.issueClear":                         {callers: []string{"engine:Engine.clearLoaderHomeLocked"}},
 	"engine:Engine.clearLoaderHomeLocked":              {push: pushBinsChanged},
 	"service:BinManifestService.ClearForReuseResolved": {callers: []string{
 		"engine:Engine.ClearForReuseStampAndBookDeparture", "service:BinManifestService.ClearForReuse"}},

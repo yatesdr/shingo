@@ -168,7 +168,7 @@ func TestPin_DigBlind_ExcavationSelfHealsOnTheClaim(t *testing.T) {
 	}
 
 	// The excavation takes the lane AND claims its target, in that order,
-	// exactly as CreateCompoundChildren does inside its transaction.
+	// exactly as the dig's issue does inside its transaction (store.OpenCompoundTx).
 	digger := digHolder(t, db, "EXC-digger")
 	if !d.laneLock.TryLock(heldLane, digger.ID) {
 		t.Fatal("could not take the dig lock")

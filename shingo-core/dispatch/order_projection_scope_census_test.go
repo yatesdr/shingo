@@ -58,7 +58,7 @@ var projectionDoors = []projectionDoor{
 		site:         "dispatch/lifecycle_service.go",
 		name:         "the push — an order Core just admitted, projected to the station that owns it",
 		carriesChild: false,
-		whyThatAnswer: "its scope is admission, and CreateCompoundChildren does not route through admission; " +
+		whyThatAnswer: "its scope is admission, and a dig's issue (issueLegsTx) does not route through admission; " +
 			"see projectOrder's doc comment, which ties the scope to the function on purpose",
 	},
 	{

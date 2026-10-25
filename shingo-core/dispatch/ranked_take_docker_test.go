@@ -64,7 +64,7 @@ func holdsOf(t *testing.T, db *store.DB, orderID int64) holdShapeOf {
 // digAgainstBlocker builds the one shape every test below needs: a bin standing
 // in a lane, a compound parent whose dig must move it, and one child leg that
 // names it. Returns the parent and the children slice ready for
-// CreateCompoundChildren.
+// testdb.CreateCompoundChildren.
 func digAgainstBlocker(t *testing.T, db *store.DB, prefix string, parentPriority int, blocker *bins.Bin) (*orders.Order, []store.CompoundChild) {
 	t.Helper()
 	parent := testdb.CreateOrder(t, db, func(o *orders.Order) {
@@ -83,7 +83,7 @@ func digAgainstBlocker(t *testing.T, db *store.DB, prefix string, parentPriority
 		Sequence:      1,
 		BinID:         &blocker.ID,
 	}
-	return parent, []store.CompoundChild{{Order: leg, BinID: blocker.ID}}
+	return parent, []store.CompoundChild{{Order: leg}}
 }
 
 // blockerBin makes a bin at a fresh node for a dig to be blocked by.
@@ -110,7 +110,7 @@ func TestRankedTake_AnOutrankedDigBacksOutWhole(t *testing.T) {
 
 	before := holdsOf(t, db, holder.ID)
 
-	_, err := db.CreateCompoundChildren(children, nil)
+	_, err := testdb.CreateCompoundChildren(t, db, children, nil)
 	if err == nil {
 		t.Fatal("the dig's parent is outranked by the bin's holder; the steal must refuse")
 	}
@@ -170,7 +170,7 @@ func TestRankedTake_TheWinningPathIsUnchanged(t *testing.T) {
 	holder := promiseHolder(t, db, "rankwin-holder", 0, blocker.ID)
 	parent, children := digAgainstBlocker(t, db, "rankwin", 5, blocker)
 
-	_, err := db.CreateCompoundChildren(children, nil)
+	_, err := testdb.CreateCompoundChildren(t, db, children, nil)
 	testutil.MustNoErr(t, err, "the dig outranks the holder; the steal must proceed")
 
 	after := holdsOf(t, db, holder.ID)
@@ -211,7 +211,7 @@ func TestRankedTake_ALegRanksOnItsParent(t *testing.T) {
 	// created_at is later than the holder's. On its own row it loses both ways.
 	_, children := digAgainstBlocker(t, db, "rankleg", 5, blocker)
 
-	_, err := db.CreateCompoundChildren(children, nil)
+	_, err := testdb.CreateCompoundChildren(t, db, children, nil)
 	testutil.MustNoErr(t, err, "a leg of a priority-5 parent must beat a priority-3 promise-holder")
 
 	if after := holdsOf(t, db, holder.ID); after.binID != 0 {
@@ -235,7 +235,7 @@ func TestRankedTake_EqualRankGoesToTheOlder(t *testing.T) {
 	_, err := db.DB.Exec(`UPDATE orders SET created_at = NOW() - INTERVAL '2 hours' WHERE id=$1`, parent.ID)
 	testutil.MustNoErr(t, err, "age the dig's parent")
 
-	if _, err := db.CreateCompoundChildren(children, nil); err != nil {
+	if _, err := testdb.CreateCompoundChildren(t, db, children, nil); err != nil {
 		t.Fatalf("an older demand at equal priority must win the bin: %v", err)
 	}
 	if after := holdsOf(t, db, holder.ID); after.binID != 0 {
@@ -255,7 +255,7 @@ func TestRankedTake_AnEqualAndYoungerDigYields(t *testing.T) {
 	testutil.MustNoErr(t, err, "age the holder's demand")
 	_, children := digAgainstBlocker(t, db, "rankyoung", 0, blocker)
 
-	if _, err := db.CreateCompoundChildren(children, nil); err == nil {
+	if _, err := testdb.CreateCompoundChildren(t, db, children, nil); err == nil {
 		t.Fatal("a younger dig at equal priority must yield to the incumbent")
 	}
 	if after := holdsOf(t, db, holder.ID); after.binID != blocker.ID || after.res != 1 {
@@ -375,7 +375,7 @@ func TestRankedTake_ThePromisedCauseSurvivesTheWaitError(t *testing.T) {
 // open, whose blocker is promised to a demand that outranks it.
 //
 // The gate is in the one compound-creation door (CreateCompoundOrder →
-// writeCompoundChildren → CreateCompoundChildren), and a gate-staged dig goes
+// writeCompoundChildren → store.HoldLegTx), and a gate-staged dig goes
 // through it like every other, so §7 governs this shape too — the scope comment
 // that said otherwise was describing a second door that does not exist.
 //

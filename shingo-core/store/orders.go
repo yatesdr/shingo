@@ -1,9 +1,9 @@
 package store
 
 // Stage 2D delegate file: order CRUD and history live in store/orders/.
-// Cross-aggregate methods (CreateCompoundChildren, FailOrderAtomic,
-// CancelOrderAtomic) stay here because they mutate both the orders and
-// bins tables in a single transaction.
+// Cross-aggregate methods (a dig leg's steal and pencil, HoldLegTx;
+// FailOrderAtomic; CancelOrderAtomic) stay here because they mutate both the
+// orders and bins tables in a single transaction.
 
 import (
 	"database/sql"
@@ -19,8 +19,8 @@ import (
 	"shingocore/store/reservations"
 )
 
-// CreateOrder is the ordinary door onto orders.Create — every creator except the
-// compound one, which has a transaction of its own (CreateCompoundChildren).
+// CreateOrder is the store's own door onto orders.Create, in a transaction of
+// its own, for test fixtures: every order a door creates is issued (dispatch).
 //
 // IT OPENS A TRANSACTION BECAUSE Create WRITES TWO ROWS: the order and its birth
 // history row. Handed a *sql.DB those are separate autocommits, so a failure
@@ -39,13 +39,12 @@ func (db *DB) CreateOrder(o *orders.Order) error {
 	return tx.Commit()
 }
 
-// CompoundChild describes a child order to create in a compound order
-// transaction. Declared here (not in the orders sub-package) because
-// CreateCompoundChildren is cross-aggregate.
+// CompoundChild is a dig leg as its compound's transaction holds it (HoldLegTx):
+// the leg's issued row and its parking pencil. Declared here (not in the
+// orders sub-package) because the steal and the pencil are cross-aggregate.
 type CompoundChild struct {
-	Order *orders.Order
-	BinID int64 // bin to claim for this child
-	// Park is the parking slot this leg pencils at birth (a pending slot
+	Order *orders.Order // the leg, issued: its bin_id is the bin it moves
+	// Park is the parking slot this leg pencils at its issue (a pending slot
 	// reservation in its name), 0 for none. ParkByRank: the dig's walk offered
 	// it by rank, so a stranger's pending promise on it is taken
 	// (takeSlotByRankTx) under ParkNamed's demand, the holder told ParkNote.
@@ -55,11 +54,11 @@ type CompoundChild struct {
 	ParkNote   HolderNote
 }
 
-// ErrParkingTaken is a dig birth refused because the parking slot the walk found
-// for one of its blockers was taken between the walk and the birth: another
+// ErrParkingTaken is a dig's issue refused because the parking slot the walk found
+// for one of its blockers was taken between the walk and the issue: another
 // order's reservation is on it, and the dig cannot take it by rank. Nothing was
 // written. Dispatch reads it as a short walk (no-shuffle-slot).
-var ErrParkingTaken = errors.New("a dig's parking slot was taken before its birth")
+var ErrParkingTaken = errors.New("a dig's parking slot was taken before its issue")
 
 // ParkingTakenError names the slot. It unwraps to ErrParkingTaken.
 type ParkingTakenError struct {
@@ -85,10 +84,10 @@ func (db *DB) MarkCompoundLegsWaiting(parentID int64, first int, reason, code, c
 	return nil
 }
 
-// pencilParkingTx is a leg's parking pencil at its dig's birth: a pending slot
+// pencilParkingTx is a leg's parking pencil at its dig's issue: a pending slot
 // reservation in the leg's name on c.Park, taken from a stranger's pending
 // promise by rank when the walk offered it so. A slot already on someone's paper
-// that the dig cannot take refuses the birth (*ParkingTakenError).
+// that the dig cannot take refuses the issue (*ParkingTakenError).
 func pencilParkingTx(tx *sql.Tx, legID int64, c CompoundChild) error {
 	err := reservations.AcquireSlot(tx, legID, c.Park, reservations.ByDigParking)
 	if err == nil {
@@ -125,12 +124,13 @@ var ErrBlockerClaimed = errors.New("bin held by an order outside the compound")
 // BlockerClaimedError is the claim CAS refusing a leg because the bin it needs
 // is held by an order OUTSIDE this compound.
 //
-// It is typed because its disposition differs from every other error
-// CreateCompoundChildren can return. The others are faults — a failed write, a
-// broken row. This one is CONGESTION: the holder is an ordinary live order that
-// will finish and drop the claim, and the commonest holder by a wide margin is a
-// dispatched retrieve whose robot is at that moment driving the blocker out of
-// the lane. The blocker is in the process of ceasing to be a blocker.
+// It is typed because its disposition differs from every other error a dig's
+// issue can return (OpenCompoundTx, HoldLegTx). The others are faults — a
+// failed write, a broken row. This one is CONGESTION: the holder is an ordinary
+// live order that will finish and drop the claim, and the commonest holder by a
+// wide margin is a dispatched retrieve whose robot is at that moment driving
+// the blocker out of the lane. The blocker is in the process of ceasing to be a
+// blocker.
 //
 // Terminally failing the digger for it violates wait-not-fail on traffic as
 // ordinary as two demands on one lane minutes apart, so the dispatch callers map
@@ -170,12 +170,12 @@ func (e *BlockerClaimedError) Error() string {
 
 func (e *BlockerClaimedError) Unwrap() error { return ErrBlockerClaimed }
 
-// ErrParentGone is CreateCompoundChildren refusing a compound whose parent is
+// ErrParentGone is OpenCompoundTx refusing a compound whose parent is
 // already terminal.
 var ErrParentGone = errors.New("compound parent is terminal")
 
 // ParentGoneError is the typed form of ErrParentGone. Its disposition is unlike
-// every other error out of CreateCompoundChildren: nothing failed and nothing
+// every other error out of a compound's issue: nothing failed and nothing
 // waits. The order the dig was for has ended (a cancel landed between the
 // planner's read of it and this write), so the caller stops: it fails nothing,
 // parks nothing, and releases the lane it took in the parent's name.
@@ -208,66 +208,33 @@ type DisplacedForCart struct {
 	ParkedAt string // where that dig is putting the bin; "" if the leg named nowhere
 }
 
-// CreateCompoundChildren creates all child orders in a single transaction and
-// takes the foreign soft holds off their bins. Cross-aggregate (orders ↔ bins).
-//
-// A LEG IS BORN HOLDING NOTHING (v4 §2.6). It is `pending` until its turn, and a
-// wait keeps soft holds only, so the leg's bin claim and its ledger row are taken
-// at its handover, in its own hand (ClaimCompoundLegBinTx). What keeps the
-// blockers the dig's in between is the parent's dig hold on the lane: the finders
-// and the bin acquire ask the dig-exclusion question (reservations.DigExclusionSQL)
-// and keep everyone but the compound out of a lane a dig holds.
+// Steals is what an issue took from foreign soft holders, for LogSteals once
+// it has committed.
+type Steals []stolenBin
+
+// LogSteals logs a committed issue's steals, after the commit and only after
+// it: a steal reported from inside a transaction that then rolls back is a
+// theft a later leg's refusal un-did, and soakstat counts those lines.
+func LogSteals(s Steals) { logSteals(s) }
+
+// OpenCompoundTx opens the writing of a compound's children on the caller's
+// transaction: the lanes' locks, the parent's row read under lock and found
+// live, then the lanes' mouth rows. The children are issued after it on the
+// same transaction (dispatch's issue), and each dig leg's own acts follow its
+// row (HoldLegTx).
 //
 // lanes, when not nil, is the parent's lane step: the dig's mouth hold, taken in
 // this transaction so the dig is started whole or not at all. Its errors return
 // as they are (reservations.ErrReservationConflict when another holder owns the
 // lane).
-//
-// Returns the orders for a cart whose cart it took — see DisplacedForCart. Empty
-// on the ordinary path and on every error.
-func (db *DB) CreateCompoundChildren(children []CompoundChild, lanes *CompoundLanes) ([]DisplacedForCart, error) {
-	tx, err := db.Begin()
-	if err != nil {
-		return nil, fmt.Errorf("begin tx: %w", err)
-	}
-	defer tx.Rollback()
-	displaced, stolen, err := CreateCompoundChildrenTx(tx, children, lanes)
-	if err != nil {
-		return nil, err
-	}
-	if err := tx.Commit(); err != nil {
-		return nil, err
-	}
-	// AFTER THE COMMIT, and only after it. A displaced order is a consequence of
-	// a steal that HAPPENED; reporting one out of a transaction that then rolls
-	// back would have the caller terminate a person's order over a dig that
-	// never took anything. The LOG is the same fact and now keeps the same rule:
-	// a steal reported from inside the transaction is a theft that a later
-	// child's refusal can un-do, and soakstat counts those lines.
-	LogSteals(stolen)
-	return displaced, nil
-}
-
-// Steals is what a birth took from foreign soft holders, for LogSteals once
-// the birth has committed.
-type Steals []stolenBin
-
-// LogSteals logs a committed birth's steals (see CreateCompoundChildren).
-func LogSteals(s Steals) { logSteals(s) }
-
-// CreateCompoundChildrenTx is CreateCompoundChildren on the caller's
-// transaction, for a door that commits the children with other work — the home
-// clear commits its parent, the partial's soft hold and the empty's zero with
-// them. The caller commits, then reports displaced and calls LogSteals, the
-// order CreateCompoundChildren keeps.
-func CreateCompoundChildrenTx(tx *sql.Tx, children []CompoundChild, lanes *CompoundLanes) ([]DisplacedForCart, Steals, error) {
+func OpenCompoundTx(tx *sql.Tx, parentID int64, lanes *CompoundLanes) error {
 	// THE LANES' ADVISORY LOCKS COME FIRST, then the parent's row: the order every
 	// transaction that takes a lane and an order row keeps (the hand,
 	// HandOffLaneToPicker; reservations.OwnerLiveSQL's comment). The parent's
 	// FOR UPDATE below stays the first ROW lock.
 	if lanes != nil {
 		if err := reservations.LockLanesTx(tx, lanes.LaneIDs...); err != nil {
-			return nil, nil, err
+			return err
 		}
 	}
 	// THE PARENT IS READ UNDER LOCK, FIRST. A cancel's status write takes this
@@ -278,82 +245,66 @@ func CreateCompoundChildrenTx(tx *sql.Tx, children []CompoundChild, lanes *Compo
 	// them: legs dispatched, bins claimed and a delivery made for an order that
 	// had ended. "Live" is non-terminal, not "reshuffling": a gate-staged parent
 	// stays `staged` and takes its dig as it stands (dispatch CreateCompoundOrder).
-	if parentID := compoundParentID(children); parentID != 0 {
-		var status protocol.Status
-		if err := tx.QueryRow(`SELECT status FROM orders WHERE id=$1 FOR UPDATE`, parentID).Scan(&status); err != nil {
-			return nil, nil, fmt.Errorf("read compound parent %d: %w", parentID, err)
-		}
-		if protocol.IsTerminal(status) {
-			return nil, nil, &ParentGoneError{ParentID: parentID, Status: status}
-		}
+	var status protocol.Status
+	if err := tx.QueryRow(`SELECT status FROM orders WHERE id=$1 FOR UPDATE`, parentID).Scan(&status); err != nil {
+		return fmt.Errorf("read compound parent %d: %w", parentID, err)
+	}
+	if protocol.IsTerminal(status) {
+		return &ParentGoneError{ParentID: parentID, Status: status}
 	}
 	if lanes != nil {
-		if err := lanes.Admit(tx); err != nil {
+		return lanes.Admit(tx)
+	}
+	return nil
+}
+
+// HoldLegTx is a dig leg's own acts once its row is issued, on its compound's
+// transaction: the ranked steal of the foreign soft holds on the bin it moves,
+// and its parking pencil. A leg holds its bin by its parent's lane, with no bin
+// row of its own (v4 §2.6): its claim and ledger row are taken at its handover,
+// in its own hand (ClaimCompoundLegBinTx). What keeps the blockers the dig's in
+// between is the parent's dig hold on the lane: the finders and the bin
+// acquire ask the dig-exclusion question (reservations.DigExclusionSQL) and keep
+// everyone but the compound out of a lane a dig holds.
+//
+// Returns the orders for a cart whose cart it took (DisplacedForCart), and the
+// steals, for the caller to end and log once the transaction has committed.
+func HoldLegTx(tx *sql.Tx, c CompoundChild) ([]DisplacedForCart, Steals, error) {
+	o := c.Order
+	var displaced []DisplacedForCart
+	var stolen Steals
+	// THE STEAL HAPPENS AT THE ISSUE; THE CLAIM AT THE HANDOVER. A blocker is
+	// POSITIONAL — the dig has no choice about which bins are in its way — so the
+	// foreign soft holds on it are settled now, while the dig can still back out
+	// whole: stealSoftHolds ranks the two demands and REFUSES when the holder
+	// wins (§7), which aborts this transaction and leaves the lane free. A
+	// refusal at a later handover could not back out: the parent would hold the
+	// lane and the holder would be refused by it.
+	//
+	// The holder's row and its bin_id go together, in the steal, so it re-enters
+	// through the finder and re-resolves rather than confirming a bin that is
+	// leaving.
+	if o.BinID != nil {
+		parentID := int64(0)
+		if o.ParentOrderID != nil {
+			parentID = *o.ParentOrderID
+		}
+		byHand, took, err := stealSoftHolds(tx, *o.BinID, o.ID, parentID, o.DeliveryNode)
+		if err != nil {
+			return nil, nil, err
+		}
+		displaced, stolen = byHand, took
+	}
+	// THE LEG PENCILS ITS PARKING, in the dig's transaction (C2b dig-parking
+	// ruling): one pending slot reservation per blocker, so the dig's room is
+	// held from its issue. uq_reservations_slot_active is what keeps two digs
+	// from booking one slot; the loser's issue rolls back whole.
+	if c.Park != 0 {
+		if err := pencilParkingTx(tx, o.ID, c); err != nil {
 			return nil, nil, err
 		}
 	}
-	var displaced []DisplacedForCart
-	var stolen Steals
-
-	for _, c := range children {
-		o := c.Order
-		// One writer for the orders table. orders.Create runs inside this
-		// transaction because it takes a QueryRower rather than a *sql.DB, so
-		// children carry the same columns as every other order and cannot drift
-		// from them. It also owns the clock.Now() timestamps and the o.ID
-		// write-back that the code below depends on.
-		if err := orders.Create(tx, o); err != nil {
-			return nil, nil, fmt.Errorf("create child order (seq %d): %w", o.Sequence, err)
-		}
-
-		// THE STEAL HAPPENS AT BIRTH; THE CLAIM AT THE HANDOVER. A blocker is
-		// POSITIONAL — the dig has no choice about which bins are in its way — so
-		// the foreign soft holds on it are settled now, while the dig can still
-		// back out whole: stealSoftHolds ranks the two demands and REFUSES when
-		// the holder wins (§7), which aborts this transaction and leaves the lane
-		// free. A refusal at a later handover could not back out: the parent
-		// would hold the lane and the holder would be refused by it.
-		//
-		// The holder's row and its bin_id go together, in the steal, so it
-		// re-enters through the finder and re-resolves rather than confirming a
-		// bin that is leaving. The leg's own claim and ledger row are written at
-		// its handover (ClaimCompoundLegBinTx).
-		if o.BinID != nil {
-			parentID := int64(0)
-			if o.ParentOrderID != nil {
-				parentID = *o.ParentOrderID
-			}
-			byHand, took, err := stealSoftHolds(tx, *o.BinID, o.ID, parentID, o.DeliveryNode)
-			if err != nil {
-				return nil, nil, err
-			}
-			displaced = append(displaced, byHand...)
-			stolen = append(stolen, took...)
-		}
-
-		// THE LEG PENCILS ITS PARKING, in the dig's transaction (C2b dig-parking
-		// ruling): one pending slot reservation per blocker, so the dig's room is
-		// held from its birth. uq_reservations_slot_active is what keeps two digs
-		// from booking one slot; the loser's birth rolls back whole.
-		if c.Park != 0 {
-			if err := pencilParkingTx(tx, o.ID, c); err != nil {
-				return nil, nil, err
-			}
-		}
-	}
-
 	return displaced, stolen, nil
-}
-
-// compoundParentID is the parent the children are written under, 0 if none
-// names one.
-func compoundParentID(children []CompoundChild) int64 {
-	for _, c := range children {
-		if c.Order != nil && c.Order.ParentOrderID != nil {
-			return *c.Order.ParentOrderID
-		}
-	}
-	return 0
 }
 
 // victim is one foreign soft holder of a dig's blocker.
@@ -1046,7 +997,7 @@ func logSteals(stolen []stolenBin) {
 // which the parent itself may hold by the time a re-planned dig runs.
 //
 // A refusal is a *BlockerClaimedError naming the holder: the bin is held by an
-// order outside the compound. The birth already refused such a bin
+// order outside the compound. The leg's issue already refused such a bin
 // (stealSoftHolds reads the claim), and the parent's dig hold keeps the finders
 // and the bin acquire out of the lane after it, so this is the backstop, not the
 // rule.

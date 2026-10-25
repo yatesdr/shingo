@@ -36,7 +36,7 @@ func (r *clearRig) bornTrade(t *testing.T) (parent, l1, l2 *orders.Order) {
 	if refusal != nil {
 		t.Fatalf("resolve: %+v", refusal.Body)
 	}
-	birth, _, err := r.eng.birthClear(job)
+	birth, _, err := r.eng.issueClear(job)
 	testutil.MustNoErr(t, err, "birth")
 	e, err := r.db.GetBin(r.e.ID)
 	testutil.MustNoErr(t, err, "E after the zero")

@@ -161,9 +161,8 @@ type issueEntry struct {
 // insertCallers are the production functions calling orders.Create. The end
 // state of the one issue is one: the issue itself.
 var insertCallers = map[string]string{
-	"dispatch/builder.go:issue":                "the issue: a door's need and the planner's plan, as the row and its holds",
-	"store/orders.go:DB.CreateOrder":           "the store's own writer, in a transaction of its own: the tests' fixtures, no door's",
-	"store/orders.go:CreateCompoundChildrenTx": "a compound parent's children, in the parent's transaction: the digs' and the home clear's",
+	"dispatch/builder.go:issue":      "the issue: a door's need and the planner's plan, as the row and its holds",
+	"store/orders.go:DB.CreateOrder": "the store's own writer, in a transaction of its own: the tests' fixtures, no door's",
 }
 
 // issueWalk is every function on the walk up from orders.Create.
@@ -173,20 +172,19 @@ var issueWalk = map[string]issueEntry{
 	"dispatch/builder.go:issueOwnTx":            {issueFace, []string{""}, "the issue in a transaction of its own"},
 	"dispatch/builder.go:Dispatcher.IssueOrder": {issueFace, []string{"d", "dispatcher"}, "the issue's face: issueOwnTx on the Dispatcher's database"},
 	"store/orders.go:DB.CreateOrder":            {issueFace, []string{"db"}, "the store's writer in a transaction of its own"},
-	"store/orders.go:DB.CreateCompoundChildren": {issueFace, []string{"db"}, "a dig's children in a transaction of their own"},
-	"store/orders.go:CreateCompoundChildrenTx":  {issueFace, []string{"", "store"}, "a compound's children in the caller's transaction"},
 
 	// The sites: each calls the issue, and testdb.IssueDoors says what its
 	// doors' orders hold at commit.
 	"dispatch/lifecycle_service.go:LifecycleService.issue":            {issueSite, []string{"s", "lifecycle"}, "admission's issue: the wire's orders and the Core asks"},
 	"dispatch/complex_intake.go:Dispatcher.handleComplexOrderRequest": {issueSite, []string{"d"}, "complex intake"},
-	"dispatch/compound.go:Dispatcher.writeCompoundChildren":           {issueSite, []string{"d"}, "a dig's legs"},
+	"dispatch/compound.go:Dispatcher.issueLegsTx":                     {issueSite, []string{"d"}, "a dig's legs, on the compound's transaction"},
+	"dispatch/compound.go:Dispatcher.writeCompoundChildren":           {issueThrough, []string{"d"}, "the dig's issue: its transaction and its after-commit tail"},
 	"dispatch/loader_window.go:Dispatcher.windowMove":                 {issueSite, []string{"d"}, "a window pull's move: the drain's and stage 2's"},
 	"engine/bin_move.go:Engine.CreateBinMove":                         {issueSite, []string{"e", "orchestration"}, "a bin move"},
 	"engine/carried_bin_recovery.go:Engine.issueAndDispatchRecovery":  {issueSite, []string{"e"}, "the carried-bin recovery's unit"},
-	"dispatch/clear_home.go:Dispatcher.BirthClearTx":                  {issueSite, []string{"dispatcher"}, "the home clear: its parent and the partial's move"},
-	"dispatch/clear_home.go:Dispatcher.birthClearSpot":                {issueSite, []string{"d"}, "the home clear: the empty's move to the open spot"},
-	"dispatch/clear_home.go:Dispatcher.birthClearTrade":               {issueSite, []string{"d"}, "the home clear: the trade's two moves"},
+	"dispatch/clear_home.go:Dispatcher.IssueClearTx":                  {issueSite, []string{"dispatcher"}, "the home clear: its parent and the partial's move"},
+	"dispatch/clear_home.go:Dispatcher.issueClearSpot":                {issueSite, []string{"d"}, "the home clear: the empty's move to the open spot"},
+	"dispatch/clear_home.go:Dispatcher.issueClearTrade":               {issueSite, []string{"d"}, "the home clear: the trade's two moves"},
 
 	// A door's body on the way: the walk goes on through it.
 	"dispatch/loader_replenish.go:Dispatcher.AdmitCoreAsk":      {issueThrough, []string{"d", "dispatcher"}, "the Core ask through admission"},
@@ -206,7 +204,7 @@ var issueWalk = map[string]issueEntry{
 	"engine/carried_bin_recovery.go:Engine.RecoverCarriedBin":           {issueOpener, nil, "the Recover button on an anomaly"},
 	"engine/cancel_return.go:Engine.tryReturnCarriedBin": {issueOpener, nil, "THE CANCEL'S RETURN: an order cancelled while its robot " +
 		"carries a bin opens the recovery's door with nobody pressing it"},
-	"engine/clear_home.go:Engine.birthClear":              {issueOpener, nil, "the home clear's door, in the station's transaction"},
+	"engine/clear_home.go:Engine.issueClear":              {issueOpener, nil, "the home clear's door, in the station's transaction"},
 	"dispatch/clear_home.go:Dispatcher.ChooseClearLocked": {issueOpener, nil, "the home clear's choice at confirm: the spot arm"},
 	"dispatch/clear_home.go:Dispatcher.chooseClearTrade":  {issueOpener, nil, "the home clear's choice at confirm: the trade"},
 }

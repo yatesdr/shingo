@@ -99,9 +99,9 @@ type HandSlot struct {
 // HandBin is one soft-held bin to hard-claim. RemainingUOP is the operator's
 // release-correction count, as ConfirmClaim takes it (nil = a plain claim).
 //
-// DigLeg marks a dig leg's bin, which has no pending row behind it: a leg is born
+// DigLeg marks a dig leg's bin, which has no pending row behind it: a leg is issued
 // holding nothing and its blocker is the dig's because the parent holds the lane
-// (store.CreateCompoundChildren). It is claimed by store.ClaimCompoundLegBinTx,
+// (store.OpenCompoundTx). It is claimed by store.ClaimCompoundLegBinTx,
 // the compound's sibling-scoped claim, and its refusal is a blocker wait.
 type HandBin struct {
 	BinID        int64

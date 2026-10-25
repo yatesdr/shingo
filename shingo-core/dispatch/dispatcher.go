@@ -648,7 +648,7 @@ func (d *Dispatcher) dispatchToFleetCore(order *orders.Order, sourceNode, destNo
 	// A HOME CLEAR'S TRADE LEG SHIPS THE PLAN IT WAS BORN WITH, the dig dwell's
 	// sibling: [pickup, wait(vacate), drop], so the create is its lift alone,
 	// unsealed, and the robot stands under its lifted bin until Core appends the
-	// drop on its partner's lift (clear_home.go, birthClearTrade).
+	// drop on its partner's lift (clear_home.go, issueClearTrade).
 	if held, ok := heldTradePlan(order); ok {
 		return d.dispatchHeldTrade(order, held, sourceNode, payloadCode, hand)
 	}

@@ -650,8 +650,8 @@ func TestBurialShadow_CannotRefuseThePlacement(t *testing.T) {
 // digPlacement used to be resolved by asking OrderIsCompoundLeg about whatever
 // bins.claimed_by held when the arrival landed. For a dig leg that read is
 // unsound in both directions. Compound children deliberately overlap claims —
-// CreateCompoundChildren writes them for every step in one transaction and the
-// last step's UPDATE wins for a bin appearing in several — so a leg's placement
+// each leg claims its bin in its hand (ClaimCompoundLegBinTx) and the
+// last to claim holds a bin appearing in several steps — so a leg's placement
 // routinely reads a SIBLING's id, and once any claim ahead of it is cleared it
 // reads 0, which skipped the question entirely and defaulted to "not a dig".
 //

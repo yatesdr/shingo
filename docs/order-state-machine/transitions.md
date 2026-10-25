@@ -107,8 +107,8 @@ the other half of why this document rotted.
    underlying store methods to do its job.
 2. **The INSERT** — `orders.Create` binds the struct's `Status` field directly,
    and writes the birth `order_history` row in the same transaction
-   (`db.CreateOrder` opens one for every non-compound door;
-   `CreateCompoundChildren` passes its own).
+   (`IssueOrder` opens one for an order issued alone; a dig's legs and the
+   home clear's ride their compound's).
 
 **Number two is the one to know about.** Movement is governed; *entry* is not.
 There is no CHECK constraint on `orders.status` in either schema, `Scan`

@@ -531,7 +531,7 @@ func TestClearHome_TheExemptionClosesWhenTheJobEnds_WithNoWrite(t *testing.T) {
 	if refusal != nil {
 		t.Fatalf("resolve: %+v", refusal.Body)
 	}
-	birth, _, err := r.eng.birthClear(job)
+	birth, _, err := r.eng.issueClear(job)
 	testutil.MustNoErr(t, err, "birth")
 	found, err := r.db.FindEmptyCompatibleBin(r.part, "", 0, bins.EmptyFence{}, reservations.Anyone, bins.Height{})
 	if err != nil || found == nil || found.ID != r.e.ID {
@@ -801,7 +801,7 @@ func TestClearHome_CrashAfterTheBirth_TheFloorChooses(t *testing.T) {
 	if refusal != nil {
 		t.Fatalf("resolve: %+v", refusal.Body)
 	}
-	birth, epoch, err := r.eng.birthClear(job)
+	birth, epoch, err := r.eng.issueClear(job)
 	testutil.MustNoErr(t, err, "birth, then the crash")
 	if n := r.d.RerunClears(); n != 1 {
 		t.Fatalf("the floor re-ran %d, want 1", n)

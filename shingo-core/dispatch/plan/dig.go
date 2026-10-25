@@ -17,9 +17,9 @@ import (
 // already on paper.
 //
 // ROOM IS HELD, NOT COUNTED (C2b dig-parking ruling, 2026-10-09). The walk's
-// slots for the blockers are pencilled at the dig's birth, one pending slot
+// slots for the blockers are pencilled at the dig's issue, one pending slot
 // reservation per blocker's leg (dispatch planUnbury, store
-// CreateCompoundChildren). Running digs' parking is on paper, and the walk
+// HoldLegTx). Running digs' parking is on paper, and the walk
 // passes it by, so nothing is "owed" on top: the owed count this verdict carried
 // (C2a) counted legs without destinations and held nothing. Two digs 90 ms apart
 // counted the same free slots, a store took one, and each lifted leg needed a

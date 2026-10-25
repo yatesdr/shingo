@@ -100,7 +100,7 @@ func TestDigSteal_ReleasesTheHolderAndClearsItsPointer(t *testing.T) {
 
 	// The dig claims it as a blocker.
 	parent := compoundParent(t, db, "steal-parent")
-	if _, err := db.CreateCompoundChildren([]store.CompoundChild{childFor(parent, bin.ID, 1)}, nil); err != nil {
+	if _, err := testdb.CreateCompoundChildren(t, db, []store.CompoundChild{childFor(parent, bin.ID, 1)}, nil); err != nil {
 		t.Fatalf("the dig must win a soft-held blocker: %v", err)
 	}
 
@@ -142,7 +142,7 @@ func TestDigSteal_LedgerRowFollowsTheClaim(t *testing.T) {
 
 	parent := compoundParent(t, db, "ledger-parent")
 	child := childFor(parent, bin.ID, 1)
-	if _, err := db.CreateCompoundChildren([]store.CompoundChild{child}, nil); err != nil {
+	if _, err := testdb.CreateCompoundChildren(t, db, []store.CompoundChild{child}, nil); err != nil {
 		t.Fatalf("create compound: %v", err)
 	}
 	// BORN HOLDING NOTHING (C2b A.1): the row and the claim come with the leg's
@@ -194,7 +194,7 @@ func TestDigSteal_OneBinTwiceKeepsOneRow(t *testing.T) {
 
 	parent := compoundParent(t, db, "twice-parent")
 	kids := []store.CompoundChild{childFor(parent, bin.ID, 1), childFor(parent, bin.ID, 2)}
-	if _, err := db.CreateCompoundChildren(kids, nil); err != nil {
+	if _, err := testdb.CreateCompoundChildren(t, db, kids, nil); err != nil {
 		t.Fatalf("a plan that touches one bin twice must be creatable: %v", err)
 	}
 	if err := handOver(t, db, parent.ID, kids...); err != nil {
@@ -231,7 +231,7 @@ func TestDigSteal_TheCompoundsOwnRowIsSupersededNotStolen(t *testing.T) {
 	}
 
 	child := childFor(parent, bin.ID, 1)
-	if _, err := db.CreateCompoundChildren([]store.CompoundChild{child}, nil); err != nil {
+	if _, err := testdb.CreateCompoundChildren(t, db, []store.CompoundChild{child}, nil); err != nil {
 		t.Fatalf("a child must be born over a bin its own parent holds: %v", err)
 	}
 	if err := handOver(t, db, parent.ID, child); err != nil {

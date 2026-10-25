@@ -229,12 +229,14 @@ var ErrNotTheNamedBin = fmt.Errorf("reservations: the order names another bin, o
 //	ReplaceOrderBins           *DELETE order_bins (test in the same statement);
 //	                           INSERTs
 //	InsertOrderBin             *INSERT order_bins
-//	CreateCompoundChildren     a dig's lane advisory lock; *SELECT the parent FOR
+//	dispatch.issueLegsTx       a dig's lane advisory lock; *SELECT the parent FOR
 //	                           UPDATE; the dig's mouth write and, for a
 //	                           coordinated demand's own dig, its soft hold on
 //	                           the target bin (both tests read the row this
-//	                           transaction holds); child rows; the steal. A
-//	                           leg's claim and ledger row are its hand's.
+//	                           transaction holds) (store.OpenCompoundTx); then
+//	                           each leg's row (the issue) and its steal
+//	                           (store.HoldLegTx). A leg's claim and ledger row
+//	                           are its hand's.
 //	ClaimCompoundLegBinTx      inside the leg's hand, after its CAS: *UPDATE bins
 //	                           (claim); the ledger INSERT tests the leg's row.
 //	dispatch.acquireHand       advisory locks on all its lanes (sorted); then
@@ -251,8 +253,8 @@ var ErrNotTheNamedBin = fmt.Errorf("reservations: the order names another bin, o
 //	                           own row.
 //
 // No transaction holds an order row for update while taking this share lock on
-// a different, existing order's row: CreateCompoundChildren's second order is
-// its own new child, a pair's hand takes its second leg's row with that leg's own
+// a different, existing order's row: a dig's issue's second order is
+// its own new leg, a pair's hand takes its second leg's row with that leg's own
 // CAS before that leg's statements test it, and every other writer tests only the
 // order it writes for.
 //

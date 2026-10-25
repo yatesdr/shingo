@@ -569,7 +569,7 @@ func TestMultiBinSettle_CompoundChildScopesItsUnclaim(t *testing.T) {
 		t.Errorf("sibling-claimed bin is at %v, want destS (%d)", gotShared.NodeID, destS.ID)
 	}
 	if gotShared.ClaimedBy != nil {
-		t.Errorf("sibling-claimed bin still claimed by %d — CreateCompoundChildren writes claims for "+
+		t.Errorf("sibling-claimed bin still claimed by %d — each leg claims its bin at its hand, for "+
 			"every step in one transaction and the last write wins, so a leg routinely finds a "+
 			"SIBLING's id on the bin it is putting down. Same compound is the same owner: scoping "+
 			"strictly to the placer stalls re-reservation of bins the dig has finished with.",
