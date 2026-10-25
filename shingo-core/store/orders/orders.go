@@ -2278,6 +2278,11 @@ func VacateWaitCandidates(db *sql.DB, binID, orderID int64) ([]*Order, error) {
 // asker's sibling_order_uuid, and a row whose sibling_order_uuid is the asker's
 // edge_uuid. The supply → evac back-link is best-effort, so either side may be
 // the one carrying it, and a pair must never wait on its own refill.
+//
+// TWO READERS: the vacant pickup's wait for the carrier coming to its node
+// (dispatch's allocator, asking as its order), and the loader pulls' free
+// windows (dispatch.freeWindows), which ask as the zero order: a pull is no
+// order yet, so no row is excluded.
 func CarrierComingTo(db *sql.DB, node string, asker *Order) (bool, error) {
 	rows, err := db.Query(`SELECT order_type, steps_json, delivery_node FROM orders
 		WHERE status IN (`+protocol.NonTerminalStatusSQLList()+`)

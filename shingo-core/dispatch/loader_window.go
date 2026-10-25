@@ -13,6 +13,7 @@ import (
 	"shingocore/store/bins"
 	"shingocore/store/loaders"
 	"shingocore/store/nodes"
+	"shingocore/store/orders"
 )
 
 // loader_window.go — Core's two window pulls: a named cart into a loader
@@ -193,15 +194,22 @@ func (d *Dispatcher) windowMove(prefix, desc string, c *bins.Bin, w *nodes.Node)
 }
 
 // freeWindows returns, in the order given, the windows a pull may send a cart
-// to now: enabled, no bin on it, no non-terminal order delivering there, and
-// no other order's slot reservation. Core's own truth, no Edge heuristic.
+// to now: enabled, no bin on it, no carrier coming to it, and no other order's
+// slot reservation. Core's own truth, no Edge heuristic.
+//
+// NO CARRIER COMING is rule 8's one spelling (orders.CarrierComingTo:
+// protocol.OrderPlacesBinAt over the live rows whose delivery node or steps
+// name the window), so a leg that sets a carrier down at the window before its
+// last act holds it, and a leg that only lifts from it does not. A pull is no
+// order yet, so it asks as the zero order and excludes nobody. Pinned by
+// TestComingVectors_TheWindowReadersAgree.
 //
 // ANOTHER ORDER'S SLOT RESERVATION: a pull's move holds its window from its
 // issue (windowMove), so a window one pull's move is on its way to is not
 // another's, nor a full ask's (plan.LoaderWindows reads the same row).
 //
-// Three reads per enabled window (its bins, the orders delivering to it, its
-// slot reservations), none for a disabled one.
+// Three reads per enabled window (its bins, the live rows naming it, its slot
+// reservations), none for a disabled one.
 func (d *Dispatcher) freeWindows(windows []*nodes.Node) ([]*nodes.Node, error) {
 	var free []*nodes.Node
 	for _, w := range windows {
@@ -212,11 +220,11 @@ func (d *Dispatcher) freeWindows(windows []*nodes.Node) ([]*nodes.Node, error) {
 		if err != nil {
 			return nil, err
 		}
-		inbound, err := d.db.CountActiveOrdersByDeliveryNode(w.Name)
+		coming, err := d.db.CarrierComingTo(w.Name, &orders.Order{})
 		if err != nil {
 			return nil, err
 		}
-		if n != 0 || inbound != 0 {
+		if n != 0 || coming {
 			continue
 		}
 		spoken, err := d.db.SlotSpokenForByStranger(w.ID, 0)

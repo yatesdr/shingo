@@ -12,7 +12,6 @@ import (
 	"shingo/protocol"
 	"shingo/protocol/testutil"
 	"shingo/shared/comingvectors"
-	"shingocore/internal/testdb"
 	"shingocore/store/bins"
 	"shingocore/store/loaders"
 	"shingocore/store/nodes"
@@ -23,19 +22,20 @@ import (
 // Core stores it (store TestComingVectors_CoreAgreesOverStoredRows: a complex
 // leg's steps and its last-acted node as delivery_node; a plain order's
 // delivery node and plan), holding its carrier as a dispatched order does,
-// against a window at every node the case names: freeWindows and the window
-// choice (LoaderWindows, an ask of each intent) each say whether a carrier is
-// coming there.
+// against a window at every node the case names.
 //
-// THEY DO NOT, AND THIS IS A PREDICTED RED (rule 8, STOPS: "the window readers
-// and the coming rule"). Both read delivery_node, so a complex leg that places
-// at a node it does not end at reads as not coming there: an evac that drops at
-// OUT and then refills the press position, a single-robot swap that places at
-// LINE and carries on. Every pair disagrees one way (the vectors say coming, all
-// three readers say free). Composing OrderPlacesBinAt into freeWindows costs a
-// steps read per live row per window per pull, and into the choice's open-ask
-// arm would count an evac's arrival as an ask, the 2026-08-05 window deadlock.
-// Whether a plant aims such a leg at a loader window is the owner's to rule.
+// THE PULLS' WINDOWS ARE THE RULE'S: freeWindows (the drain's and stage 2's)
+// says a window is taken exactly where the vectors say a carrier is coming,
+// including a leg that sets its carrier down there before its last act (an
+// evac that drops at OUT and then refills the press position, a single-robot
+// swap that places at LINE and carries on).
+//
+// THE WINDOW CHOICE IS RUN, NOT HELD TO THE VECTORS (owner, 2026-10-25): an
+// ask asks where nothing of its own intent is asked (the evac's arrival read as
+// an ask deadlocked SMN_030 on 2026-08-05), and its arrivals are the dropoff
+// gate's in-flight arm, which every drop shares. Both read delivery_node, so
+// the choice (LoaderWindows, an ask of each intent) says taken exactly where
+// the row's delivery node is the window, and that is what is asserted of it.
 func TestComingVectors_TheWindowReadersAgree(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
@@ -103,9 +103,10 @@ func TestComingVectors_TheWindowReadersAgree(t *testing.T) {
 			byFree := len(free) == 0
 			byEmpty := d.pure.LoaderWindows(in, 1, SourceIntentEmpty).HeldBy[w.Name] != ""
 			byFull := d.pure.LoaderWindows(in, 1, SourceIntentFull).HeldBy[w.Name] != ""
-			if byFree != want || byEmpty != want || byFull != want {
-				disagree = append(disagree, fmt.Sprintf("%s | at %s: vectors %v, freeWindows %v, LoaderWindows(empty) %v, LoaderWindows(full) %v | delivery_node %s | steps %s",
-					c.Name, n, want, byFree, byEmpty, byFull, coreDelivery, strings.ReplaceAll(string(c.Steps), "\n", "")))
+			byDelivery := coreDelivery == n
+			if byFree != want || byEmpty != byDelivery || byFull != byDelivery {
+				disagree = append(disagree, fmt.Sprintf("%s | at %s: vectors %v, freeWindows %v; delivery_node %s, LoaderWindows(empty) %v, LoaderWindows(full) %v | steps %s",
+					c.Name, n, want, byFree, coreDelivery, byEmpty, byFull, strings.ReplaceAll(string(c.Steps), "\n", "")))
 			}
 		}
 		_, err = db.DB.Exec(`UPDATE bins SET claimed_by = NULL WHERE id = $1`, b.ID)
@@ -113,5 +114,7 @@ func TestComingVectors_TheWindowReadersAgree(t *testing.T) {
 		_, err = db.DB.Exec(`UPDATE orders SET status = 'cancelled' WHERE id = $1`, o.ID)
 		testutil.MustNoErr(t, err, "retire "+c.Name)
 	}
-	testdb.VerifyRed(t, "rule 8: the window readers against the coming vectors", disagree)
+	if len(disagree) > 0 {
+		t.Errorf("rule 8: %d (case, window) pairs disagree:\n%s", len(disagree), strings.Join(disagree, "\n"))
+	}
 }

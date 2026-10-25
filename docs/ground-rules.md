@@ -54,9 +54,10 @@ they are gone, so it is replaced by the plain assertion in the commit that fixes
 
 8. **"A carrier is coming to X" is `protocol.OrderPlacesBinAt` over live rows,** pinned by the shared vectors
    (`shared/comingvectors`); every reader composes it or is run over them.
+   The loader pulls' free windows compose it (`orders.CarrierComingTo`); the window choice is run over the vectors and
+   reads the delivery node, by ruling: an ask asks where nothing of its own intent is asked (2026-08-05).
    Tests: `TestComingVectors_CoreAgreesOverStoredRows` (Core), `TestComingVectors_TheEdgesReadersAgree` (the Edge's
-   three readers), `TestComingVectors_TheWindowReadersAgree` (the loader window readers; predicted red, an open
-   question for the owner).
+   three readers), `TestComingVectors_TheWindowReadersAgree` (the pulls' free windows and the window choice).
 
 9. **The census's unit is a caller.** Every function that reaches the issue is named, with what its door's order
    holds at commit. A comment that claims "every X" or "the one Y" names the test that proves it.
