@@ -172,25 +172,25 @@ func TestPulledDirectly_FindersHandTheCartOnlyToItsGroup(t *testing.T) {
 			NodeID: &f.stage2.ID, Status: domain.BinStatusAvailable}), "a finished cart on the window")
 		none := reservations.DigAsker{}
 
-		b, err := f.db.FindEmptyBinOfTypeInGroup(f.carrier.Code, g.ID, 0, none, bins.Height{})
+		b, err := f.db.FindEmptyBinOfTypeInGroup(f.carrier.Code, g.ID, 0, none, domain.Height{})
 		if err != nil || b == nil || b.Label != "TS-FINISHED-"+mode {
 			t.Errorf("%s mode: a line naming %s got %v (err %v), want the finished cart", mode, g.Name, b, err)
 		}
-		if b, err := f.db.FindEmptyCompatibleBinInGroup("", g.ID, 0, none, bins.Height{}); err != nil || b == nil {
+		if b, err := f.db.FindEmptyCompatibleBinInGroup("", g.ID, 0, none, domain.Height{}); err != nil || b == nil {
 			t.Errorf("%s mode: the compatible finder naming %s got %v (err %v), want the finished cart", mode, g.Name, b, err)
 		}
-		if n, err := f.db.CountEmptyBinsOfTypeInGroup(f.carrier.Code, g.ID, bins.Height{}); err != nil || n != 1 {
+		if n, err := f.db.CountEmptyBinsOfTypeInGroup(f.carrier.Code, g.ID, domain.Height{}); err != nil || n != 1 {
 			t.Errorf("%s mode: the keeper counts %d in %s (err %v), want 1: count and finder agree", mode, n, g.Name, err)
 		}
 
 		// Not naming the group: the plant-wide finder and another group get nothing.
-		if b, err := f.db.FindEmptyBinOfType(f.carrier.Code, "", 0, bins.EmptyFence{}, none, bins.Height{}); err == nil && b != nil {
+		if b, err := f.db.FindEmptyBinOfType(f.carrier.Code, "", 0, bins.EmptyFence{}, none, domain.Height{}); err == nil && b != nil {
 			t.Errorf("%s mode: a request naming no group took %s off a stage-2 window", mode, b.Label)
 		}
 		otherID, err := f.db.CreateNodeGroup("TS-ELSEWHERE-" + mode)
 		testutil.MustNoErr(t, err, "another group")
 		testdb.MarkGroup(t, f.db, otherID)
-		if b, err := f.db.FindEmptyBinOfTypeInGroup(f.carrier.Code, otherID, 0, none, bins.Height{}); err == nil && b != nil {
+		if b, err := f.db.FindEmptyBinOfTypeInGroup(f.carrier.Code, otherID, 0, none, domain.Height{}); err == nil && b != nil {
 			t.Errorf("%s mode: a request naming another group took %s", mode, b.Label)
 		}
 
@@ -202,11 +202,11 @@ func TestPulledDirectly_FindersHandTheCartOnlyToItsGroup(t *testing.T) {
 		testutil.MustNoErr(t, f.loader.SetHome(s2, second.ID, "", "", 0), "second window")
 		testutil.MustNoErr(t, f.db.CreateBin(&bins.Bin{Label: "TS-BARE-" + mode, BinTypeID: marker,
 			NodeID: &second.ID, Status: domain.BinStatusAvailable}), "a bare cart on the window")
-		if n, err := f.db.CountEmptyBinsOfTypeInGroup(f.carrier.Code, g.ID, bins.Height{}); err != nil || n != 1 {
+		if n, err := f.db.CountEmptyBinsOfTypeInGroup(f.carrier.Code, g.ID, domain.Height{}); err != nil || n != 1 {
 			t.Errorf("%s mode: with a bare cart beside it the keeper counts %d (err %v), want 1", mode, n, err)
 		}
 		for i := 0; i < 2; i++ {
-			b, err := f.db.FindEmptyCompatibleBinInGroup("", g.ID, 0, none, bins.Height{})
+			b, err := f.db.FindEmptyCompatibleBinInGroup("", g.ID, 0, none, domain.Height{})
 			if err == nil && b != nil && b.Label == "TS-BARE-"+mode {
 				t.Errorf("%s mode: the compatible finder handed out the bare cart", mode)
 			}

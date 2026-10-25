@@ -22,6 +22,7 @@ import (
 	"shingocore/store/reservations"
 
 	"shingo/protocol/eventbus"
+	"shingocore/domain"
 )
 
 // cancel_return_docker_test.go — the cancel-return policy end to end through the
@@ -992,7 +993,7 @@ func TestReturnSources_LandWhereTheFinderLooks(t *testing.T) {
 			if payload != "" {
 				found, err = db.FindSourceBinFIFO(payload, 0)
 			} else {
-				found, err = db.FindEmptyCompatibleBin("DG-Q", "", 0, bins.EmptyFence{}, reservations.Anyone, bins.Height{})
+				found, err = db.FindEmptyCompatibleBin("DG-Q", "", 0, bins.EmptyFence{}, reservations.Anyone, domain.Height{})
 			}
 			if err != nil || found == nil || found.ID != b.ID {
 				t.Errorf("%s: the bin set down at %s (declared via %s) is not what the finder finds (got %v, %v) — "+

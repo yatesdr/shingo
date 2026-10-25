@@ -1,6 +1,8 @@
 package bins
 
 import (
+	"shingo/protocol"
+	"shingocore/domain"
 	"strings"
 	"testing"
 )
@@ -12,7 +14,7 @@ func TestPreferredEmptyOrder_NoWantIsToday(t *testing.T) {
 	t.Parallel()
 	for range 2 {
 		a := &emptyQueryArgs{vals: []any{"T", int64(1)}}
-		if got := preferredEmptyOrder(a, Height{}); got != AccessibleEmptyOrder {
+		if got := preferredEmptyOrder(a, domain.Height{}); got != AccessibleEmptyOrder {
 			t.Errorf("no want: got\n%q\nwant today's\n%q", got, AccessibleEmptyOrder)
 		}
 		if len(a.vals) != 2 {
@@ -20,7 +22,7 @@ func TestPreferredEmptyOrder_NoWantIsToday(t *testing.T) {
 		}
 	}
 
-	five := Layers(5)
+	five := protocol.Layers(5)
 	a := &emptyQueryArgs{vals: []any{"T", int64(1)}}
 	got := preferredEmptyOrder(a, five)
 	again := preferredEmptyOrder(&emptyQueryArgs{vals: []any{"T", int64(1)}}, five)

@@ -1298,7 +1298,7 @@ func AtDeclaredLevel(levels []nodes.MaintainLevel, stated BinTypeStatement,
 				if !ok {
 					return true, nil
 				}
-				want, h = rowWant, domain.TopsAndBottomsOnly
+				want, h = rowWant, protocol.TopsAndBottomsOnly
 			}
 			held, cerr := count(l.BinTypeCode, h)
 			if cerr != nil {

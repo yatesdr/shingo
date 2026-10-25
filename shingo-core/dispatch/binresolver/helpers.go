@@ -229,7 +229,7 @@ func StockOnly(candidates []*bins.Bin, part string) []*bins.Bin {
 // height the carrier is wanted at where it is next set down.
 type BindAt struct {
 	LinePosition bool
-	SetDown      bins.Height
+	SetDown      domain.Height
 }
 
 // BindableEmpties keeps the empties a pickup standing at a node may bind, after

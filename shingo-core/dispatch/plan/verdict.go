@@ -6,7 +6,6 @@ import (
 
 	"shingo/protocol"
 	"shingocore/dispatch/binresolver"
-	"shingocore/domain"
 )
 
 // verdict.go — the words a plan's "missing X" is said in.
@@ -190,7 +189,7 @@ func parkKind(need Need) string {
 	switch {
 	case need.Intent != IntentEmpty:
 		return ""
-	case need.Want.Height == domain.TopsAndBottomsOnly:
+	case need.Want.Height == protocol.TopsAndBottomsOnly:
 		return KindTopsAndBottoms
 	}
 	return KindEmpty

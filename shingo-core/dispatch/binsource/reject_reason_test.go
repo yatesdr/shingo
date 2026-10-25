@@ -141,11 +141,11 @@ func TestRejectReasonFillHeight(t *testing.T) {
 		want   string
 	}{
 		{"tops & bottoms, no height said", topsAndBottoms, domain.Height{}, "height"},
-		{"tops & bottoms, a stack", topsAndBottoms, domain.Layers(3), "height"},
-		{"tops & bottoms, a want of 0", topsAndBottoms, domain.Layers(0), ""},
-		{"tops & bottoms, tops & bottoms only", topsAndBottoms, domain.TopsAndBottomsOnly, ""},
-		{"an empty, tops & bottoms only", empty, domain.TopsAndBottomsOnly, "height"},
-		{"a partial of the part, tops & bottoms only", partial, domain.TopsAndBottomsOnly, "height"},
+		{"tops & bottoms, a stack", topsAndBottoms, protocol.Layers(3), "height"},
+		{"tops & bottoms, a want of 0", topsAndBottoms, protocol.Layers(0), ""},
+		{"tops & bottoms, tops & bottoms only", topsAndBottoms, protocol.TopsAndBottomsOnly, ""},
+		{"an empty, tops & bottoms only", empty, protocol.TopsAndBottomsOnly, "height"},
+		{"a partial of the part, tops & bottoms only", partial, protocol.TopsAndBottomsOnly, "height"},
 		{"an empty, no height said", empty, domain.Height{}, ""},
 		{"a partial of the part, no height said", partial, domain.Height{}, ""},
 	} {
@@ -154,7 +154,7 @@ func TestRejectReasonFillHeight(t *testing.T) {
 		}
 	}
 	// Drain never takes a part-less carrier, whatever the height.
-	if got := RejectReason(topsAndBottoms, Want{Payload: X, Intent: Drain, Height: domain.TopsAndBottomsOnly}); got != "empty-bin" {
+	if got := RejectReason(topsAndBottoms, Want{Payload: X, Intent: Drain, Height: protocol.TopsAndBottomsOnly}); got != "empty-bin" {
 		t.Errorf("Drain over tops & bottoms = %q, want empty-bin", got)
 	}
 
@@ -163,7 +163,7 @@ func TestRejectReasonFillHeight(t *testing.T) {
 	if got, ok := Source(pool, Want{Payload: X, Intent: Fill}); !ok || got.BinID != 2 {
 		t.Errorf("an ordinary Fill drew %+v (%v), want the empty", got, ok)
 	}
-	if got, ok := Source(pool, Want{Payload: X, Intent: Fill, Height: domain.TopsAndBottomsOnly}); !ok || got.BinID != 1 {
+	if got, ok := Source(pool, Want{Payload: X, Intent: Fill, Height: protocol.TopsAndBottomsOnly}); !ok || got.BinID != 1 {
 		t.Errorf("tops & bottoms only drew %+v (%v), want tops & bottoms", got, ok)
 	}
 	if _, ok := Source(pool[:1], Want{Payload: X, Intent: Fill}); ok {

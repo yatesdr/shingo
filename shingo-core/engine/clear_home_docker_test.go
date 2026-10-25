@@ -15,6 +15,7 @@ import (
 	"shingo/protocol"
 	"shingo/protocol/testutil"
 	"shingocore/dispatch"
+	"shingocore/domain"
 	"shingocore/fleet"
 	"shingocore/fleet/simulator"
 	"shingocore/internal/testdb"
@@ -533,12 +534,12 @@ func TestClearHome_TheExemptionClosesWhenTheJobEnds_WithNoWrite(t *testing.T) {
 	}
 	birth, _, err := r.eng.issueClear(job)
 	testutil.MustNoErr(t, err, "birth")
-	found, err := r.db.FindEmptyCompatibleBin(r.part, "", 0, bins.EmptyFence{}, reservations.Anyone, bins.Height{})
+	found, err := r.db.FindEmptyCompatibleBin(r.part, "", 0, bins.EmptyFence{}, reservations.Anyone, domain.Height{})
 	if err != nil || found == nil || found.ID != r.e.ID {
 		t.Fatalf("with the job live and the carrier unheld, the find took %v (%v), want the home's carrier %d", found, err, r.e.ID)
 	}
 	r.d.EndClear(birth.Parent, "ended for the pin")
-	got, err := r.db.FindEmptyCompatibleBin(r.part, "", 0, bins.EmptyFence{}, reservations.Anyone, bins.Height{})
+	got, err := r.db.FindEmptyCompatibleBin(r.part, "", 0, bins.EmptyFence{}, reservations.Anyone, domain.Height{})
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		t.Fatalf("the find after the end: %v", err)
 	}

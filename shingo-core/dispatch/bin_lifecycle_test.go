@@ -9,6 +9,7 @@ import (
 
 	"shingo/protocol"
 	"shingo/protocol/testutil"
+	"shingocore/domain"
 	"shingocore/internal/testdb"
 	"shingocore/store"
 	"shingocore/store/bins"
@@ -264,7 +265,7 @@ func TestConcurrentRetrieveEmpty_BothClaimed_NoOverlap(t *testing.T) {
 			// condition terminates rather than spinning; with two bins and
 			// two goroutines each loses at most once before claiming the other.
 			for attempt := 0; attempt < 4; attempt++ {
-				found, err := db.FindEmptyCompatibleBin(bp.Code, "", 0, bins.EmptyFence{}, reservations.Anyone, bins.Height{})
+				found, err := db.FindEmptyCompatibleBin(bp.Code, "", 0, bins.EmptyFence{}, reservations.Anyone, domain.Height{})
 				if err != nil || found == nil {
 					if err != nil {
 						errors[idx] = err

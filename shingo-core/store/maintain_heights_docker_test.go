@@ -8,8 +8,8 @@ import (
 
 	"shingo/protocol"
 	"shingo/protocol/testutil"
+	"shingocore/domain"
 	"shingocore/internal/testdb"
-	"shingocore/store/bins"
 	"shingocore/store/orders"
 )
 
@@ -58,7 +58,7 @@ func TestCountsByTotes_AgreeWithTheKeepersCounts(t *testing.T) {
 	exec(`UPDATE bins SET payload_code = 'PART-A' WHERE id = $1`, loaded)
 	bin(otherID, "HGT-R6", slotID, 24)
 
-	resident, err := db.CountEmptyBinsOfTypeInGroup("HGT-TOTE", grpID, bins.Height{})
+	resident, err := db.CountEmptyBinsOfTypeInGroup("HGT-TOTE", grpID, domain.Height{})
 	testutil.MustNoErr(t, err, "keeper resident")
 	byTotes, err := db.CountEmptyBinsOfTypeInGroupByTotes("HGT-TOTE", grpID)
 	testutil.MustNoErr(t, err, "resident by totes")

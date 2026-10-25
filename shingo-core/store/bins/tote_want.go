@@ -13,7 +13,7 @@ import (
 //     tote numbers wants no height anywhere, so no finder's statement changes;
 //   - 0 at the core node of a fed press cell (FedClaimSQL) whose claim
 //     carries the payload: its totes come from the cart behind it, so tops &
-//     bottoms is wanted first, else the shortest stack (domain.Layers(0));
+//     bottoms is wanted first, else the shortest stack (protocol.Layers(0));
 //   - else the payload's tote_layers, a full stack.
 //
 // The CASE reads the claims only for a payload that states its layers. It is a

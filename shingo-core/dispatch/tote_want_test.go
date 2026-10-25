@@ -24,7 +24,7 @@ func wantText(h domain.Height) string {
 // (pinned to its episode's type) reads no destination and wants none.
 func TestToteWant_ReachesTheFinder(t *testing.T) {
 	t.Parallel()
-	five := domain.Layers(5)
+	five := protocol.Layers(5)
 	for _, tc := range []struct {
 		name string
 		need SourceNeed

@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"shingo/protocol/testutil"
+	"shingocore/domain"
 	"shingocore/internal/testdb"
 	"shingocore/store"
 	"shingocore/store/bins"
@@ -92,24 +93,24 @@ func TestPin_EveryEmptyFinderPrefersTheMouth(t *testing.T) {
 		find func() (*bins.Bin, error)
 	}{
 		{"typed, group-scoped", func() (*bins.Bin, error) {
-			return bins.FindEmptyOfTypeInGroup(db.DB, "ORD-45x58", grpID, 0, reservations.Anyone, bins.Height{})
+			return bins.FindEmptyOfTypeInGroup(db.DB, "ORD-45x58", grpID, 0, reservations.Anyone, domain.Height{})
 		}},
 		{"untyped, group-scoped", func() (*bins.Bin, error) {
-			return bins.FindEmptyCompatibleInGroup(db.DB, "", grpID, 0, reservations.Anyone, bins.Height{})
+			return bins.FindEmptyCompatibleInGroup(db.DB, "", grpID, 0, reservations.Anyone, domain.Height{})
 		}},
 		{"typed, plant-wide", func() (*bins.Bin, error) {
-			return bins.FindEmptyOfType(db.DB, "ORD-45x58", "", 0, bins.EmptyFence{}, reservations.Anyone, bins.Height{})
+			return bins.FindEmptyOfType(db.DB, "ORD-45x58", "", 0, bins.EmptyFence{}, reservations.Anyone, domain.Height{})
 		}},
 		{"untyped, plant-wide", func() (*bins.Bin, error) {
-			return bins.FindEmptyCompatible(db.DB, "", "", 0, bins.EmptyFence{}, reservations.Anyone, bins.Height{})
+			return bins.FindEmptyCompatible(db.DB, "", "", 0, bins.EmptyFence{}, reservations.Anyone, domain.Height{})
 		}},
 		// The set finders (a no-mix loader's) append the same ordering through
 		// their own statements.
 		{"type set, group-scoped", func() (*bins.Bin, error) {
-			return bins.FindEmptyOfTypesInGroup(db.DB, []string{"ORD-45x58"}, grpID, 0, reservations.Anyone, bins.Height{})
+			return bins.FindEmptyOfTypesInGroup(db.DB, []string{"ORD-45x58"}, grpID, 0, reservations.Anyone, domain.Height{})
 		}},
 		{"type set, plant-wide", func() (*bins.Bin, error) {
-			return bins.FindEmptyOfTypes(db.DB, []string{"ORD-45x58"}, "", 0, bins.EmptyFence{}, reservations.Anyone, bins.Height{})
+			return bins.FindEmptyOfTypes(db.DB, []string{"ORD-45x58"}, "", 0, bins.EmptyFence{}, reservations.Anyone, domain.Height{})
 		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -143,7 +144,7 @@ func TestPin_EquallyBuriedBreaksOnDepthThenID(t *testing.T) {
 	_, err := db.Exec(`UPDATE bins SET locked = true WHERE id = $1`, ids[0])
 	testutil.MustNoErr(t, err, "lock the mouth")
 
-	got, err := bins.FindEmptyOfTypeInGroup(db.DB, "TIE-45x58", grpID, 0, reservations.Anyone, bins.Height{})
+	got, err := bins.FindEmptyOfTypeInGroup(db.DB, "TIE-45x58", grpID, 0, reservations.Anyone, domain.Height{})
 	testutil.MustNoErr(t, err, "find")
 	if got == nil {
 		t.Fatal("found nothing behind a locked mouth")

@@ -194,7 +194,7 @@ func (f *fakeFinderDB) GetSetDownNode(name, _ string) (*nodes.Node, domain.Heigh
 		return nil, domain.Height{}, err
 	}
 	if layers, ok := f.wantAt[name]; ok {
-		return n, domain.Layers(layers), nil
+		return n, protocol.Layers(layers), nil
 	}
 	return n, domain.Height{}, nil
 }

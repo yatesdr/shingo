@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"shingo/protocol/testutil"
+	"shingocore/domain"
 	"shingocore/internal/testdb"
 	"shingocore/store"
 	"shingocore/store/bins"
@@ -110,7 +111,7 @@ func TestFence_SharingIsTheDefault(t *testing.T) {
 		{"an asker with a process, group NOT strict", bins.EmptyFence{ProcessNode: "SHARE-OUTSIDER"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			got, err := bins.FindEmptyOfType(db.DB, "SHARE-45x58", "", 0, tc.fence, reservations.Anyone, bins.Height{})
+			got, err := bins.FindEmptyOfType(db.DB, "SHARE-45x58", "", 0, tc.fence, reservations.Anyone, domain.Height{})
 			testutil.MustNoErr(t, err, "find")
 			if got == nil || got.ID != inside {
 				t.Errorf("got %v, want the group's carrier %d. Sharing is the plant default; "+
@@ -130,7 +131,7 @@ func TestFence_StrictGroupHidesFromOutsidersAndNotFromSupported(t *testing.T) {
 
 	t.Run("an outsider cannot see it", func(t *testing.T) {
 		got, err := bins.FindEmptyOfType(db.DB, "STRICT-45x58", "", 0,
-			bins.EmptyFence{ProcessNode: "STRICT-SOMEONE-ELSE"}, reservations.Anyone, bins.Height{})
+			bins.EmptyFence{ProcessNode: "STRICT-SOMEONE-ELSE"}, reservations.Anyone, domain.Height{})
 		testutil.MustNoErr(t, err, "find")
 		if got == nil || got.ID != outside {
 			t.Errorf("got %v, want the carrier OUTSIDE the fence (%d). A strict group's "+
@@ -141,7 +142,7 @@ func TestFence_StrictGroupHidesFromOutsidersAndNotFromSupported(t *testing.T) {
 
 	t.Run("a supported press can", func(t *testing.T) {
 		got, err := bins.FindEmptyOfType(db.DB, "STRICT-45x58", "", 0,
-			bins.EmptyFence{ProcessNode: "STRICT-PRESS-1"}, reservations.Anyone, bins.Height{})
+			bins.EmptyFence{ProcessNode: "STRICT-PRESS-1"}, reservations.Anyone, domain.Height{})
 		testutil.MustNoErr(t, err, "find")
 		if got == nil || got.ID != inside {
 			t.Errorf("got %v, want the group's own carrier %d. Dedication binds OUTSIDERS, "+
@@ -153,7 +154,7 @@ func TestFence_StrictGroupHidesFromOutsidersAndNotFromSupported(t *testing.T) {
 		// Blank ProcessNode means "supported nowhere", which is the safe reading
 		// of an ask that names no process.
 		got, err := bins.FindEmptyOfType(db.DB, "STRICT-45x58", "", 0,
-			bins.EmptyFence{OriginGroup: "STRICT-NOT-THIS-GROUP"}, reservations.Anyone, bins.Height{})
+			bins.EmptyFence{OriginGroup: "STRICT-NOT-THIS-GROUP"}, reservations.Anyone, domain.Height{})
 		testutil.MustNoErr(t, err, "find")
 		if got == nil || got.ID != outside {
 			t.Errorf("got %v, want %d — an ask naming no process cannot be supported "+
@@ -170,7 +171,7 @@ func TestFence_StrictWithNoSupportsFencesEveryone(t *testing.T) {
 	_, _, outside := fenceFixture(t, db, "NOSUP", "NOSUP-45x58", true)
 
 	got, err := bins.FindEmptyOfType(db.DB, "NOSUP-45x58", "", 0,
-		bins.EmptyFence{ProcessNode: "NOSUP-ANYONE"}, reservations.Anyone, bins.Height{})
+		bins.EmptyFence{ProcessNode: "NOSUP-ANYONE"}, reservations.Anyone, domain.Height{})
 	testutil.MustNoErr(t, err, "find")
 	if got == nil || got.ID != outside {
 		t.Errorf("got %v, want %d. 'I have not said who this is for' reads as 'not for "+
@@ -197,7 +198,7 @@ func TestFence_KeeperNeverSourcesFromTheGroupItIsFilling(t *testing.T) {
 	// whether or not anybody has fenced it, so rule (ii) does not consult
 	// strict_sourcing.
 	got, err := bins.FindEmptyOfType(db.DB, "SELF-45x58", "", 0,
-		bins.EmptyFence{OriginGroup: "SELF-GRP"}, reservations.Anyone, bins.Height{})
+		bins.EmptyFence{OriginGroup: "SELF-GRP"}, reservations.Anyone, domain.Height{})
 	testutil.MustNoErr(t, err, "find")
 	if got == nil || got.ID != outside {
 		t.Errorf("got %v, want the carrier outside the group (%d). Sourcing from the group "+
@@ -223,7 +224,7 @@ func TestFence_ExcludesTheGroupAndNothingElse(t *testing.T) {
 	testutil.MustNoErr(t, err, "remove the outside carrier")
 
 	got, ferr := bins.FindEmptyOfType(db.DB, "NARROW-45x58", "", 0,
-		bins.EmptyFence{ProcessNode: "NARROW-OUTSIDER"}, reservations.Anyone, bins.Height{})
+		bins.EmptyFence{ProcessNode: "NARROW-OUTSIDER"}, reservations.Anyone, domain.Height{})
 	if got != nil {
 		t.Fatalf("returned carrier %d from inside the fence (%d)", got.ID, inside)
 	}
@@ -256,7 +257,7 @@ func TestFence_ReciprocityFallsOutOfTheSameRule(t *testing.T) {
 	// A keeper filling A, looking for a carrier. B is strict and does not
 	// support it; A is its own group. Both are closed to it.
 	got, err := bins.FindEmptyOfType(db.DB, "RECIP-45x58", "", 0,
-		bins.EmptyFence{OriginGroup: "RECIP-A-GRP"}, reservations.Anyone, bins.Height{})
+		bins.EmptyFence{OriginGroup: "RECIP-A-GRP"}, reservations.Anyone, domain.Height{})
 	if got != nil {
 		t.Errorf("got carrier %d (A holds %d, B holds %d). A keeper must reach neither its "+
 			"own group nor another maintained one — the market and the cells are where it "+
@@ -299,7 +300,7 @@ func TestFence_ClosesNesting(t *testing.T) {
 	testutil.MustNoErr(t, err, "remove the direct carrier")
 
 	got, ferr := bins.FindEmptyOfType(sdb, "NEST-45x58", "", 0,
-		bins.EmptyFence{ProcessNode: "NEST-OUTSIDER"}, reservations.Anyone, bins.Height{})
+		bins.EmptyFence{ProcessNode: "NEST-OUTSIDER"}, reservations.Anyone, domain.Height{})
 	testutil.MustNoErr(t, ferr, "find")
 	if got == nil || got.ID != outside {
 		t.Errorf("got %v, want the carrier outside the fence (%d) — the nested carrier %d "+
@@ -324,7 +325,7 @@ func TestFence_CountIsUnfenced(t *testing.T) {
 	db := testdb.Open(t)
 	grpID, _, _ := fenceFixture(t, db, "PHYS", "PHYS-45x58", true)
 
-	n, err := bins.CountEmptyOfTypeInGroup(db.DB, "PHYS-45x58", grpID, bins.Height{})
+	n, err := bins.CountEmptyOfTypeInGroup(db.DB, "PHYS-45x58", grpID, domain.Height{})
 	testutil.MustNoErr(t, err, "count")
 	if n != 1 {
 		t.Errorf("count = %d, want 1. The level is PHYSICAL: how many carriers are standing "+

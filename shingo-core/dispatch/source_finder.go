@@ -6,7 +6,6 @@ import (
 
 	"shingo/protocol"
 	"shingocore/dispatch/plan"
-	"shingocore/domain"
 	"shingocore/store"
 	"shingocore/store/bins"
 	"shingocore/store/nodes"
@@ -189,7 +188,7 @@ func (f *SourceFinder) FindSource(order *orders.Order, intent Intent) SourceResu
 			return sourceResultOf(plan.Plan{Outcome: plan.OutcomeStructural, TermCode: codeStructural,
 				Err: errors.New(refusal)})
 		}
-		need.Want = plan.Want{Type: tc.Type, Height: domain.TopsAndBottomsOnly}
+		need.Want = plan.Want{Type: tc.Type, Height: protocol.TopsAndBottomsOnly}
 		need.ProcessNode = tc.Core
 	}
 	return f.FindSourceForNeed(need)

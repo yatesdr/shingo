@@ -324,7 +324,7 @@ func (f *fakeStore) CountEmptyBinsOfTypeInGroup(binTypeCode string, groupNodeID 
 	if f.emptyCountErr != nil {
 		return 0, f.emptyCountErr
 	}
-	if h == domain.TopsAndBottomsOnly {
+	if h == protocol.TopsAndBottomsOnly {
 		return f.tbCounts[groupKey{groupNodeID, binTypeCode}], nil
 	}
 	return f.emptyCounts[groupKey{groupNodeID, binTypeCode}], nil

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"testing"
 
+	"shingocore/domain"
 	"shingocore/internal/testdb"
 	"shingocore/store/bins"
 	"shingocore/store/nodes"
@@ -81,7 +82,7 @@ func TestEmptyScan_SkipsACellsOwnPosition(t *testing.T) {
 		// miss the parked one by luck of the ordering rather than by the rule.
 		// A drained pool answers with sql.ErrNoRows rather than a nil bin — see
 		// none_found_contract_test.go — so both shapes end the walk.
-		b, err := db.FindEmptyCompatibleBin("", "", 0, bins.EmptyFence{}, reservations.DigAsker{}, bins.Height{})
+		b, err := db.FindEmptyCompatibleBin("", "", 0, bins.EmptyFence{}, reservations.DigAsker{}, domain.Height{})
 		if errors.Is(err, sql.ErrNoRows) || b == nil {
 			break
 		}
@@ -151,7 +152,7 @@ func TestEmptyScan_SkipsAPressCellsPairedPositions(t *testing.T) {
 
 	found := map[int64]bool{}
 	for i := 0; i < 5; i++ {
-		b, err := db.FindEmptyCompatibleBin("", "", 0, bins.EmptyFence{}, reservations.DigAsker{}, bins.Height{})
+		b, err := db.FindEmptyCompatibleBin("", "", 0, bins.EmptyFence{}, reservations.DigAsker{}, domain.Height{})
 		if errors.Is(err, sql.ErrNoRows) || b == nil {
 			break
 		}

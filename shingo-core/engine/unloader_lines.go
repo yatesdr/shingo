@@ -250,7 +250,7 @@ func (w *windowWalk) anyShort(tl store.TypeLine) int {
 }
 
 func heightOf(tl store.TypeLine, h store.HeightLine) thing {
-	return thing{tl.Code, domain.Layers(h.Layers)}
+	return thing{tl.Code, protocol.Layers(h.Layers)}
 }
 
 // wanted is the type's wanted height at layers, if it has one.

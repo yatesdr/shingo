@@ -32,17 +32,6 @@ import (
 // codebase compile unchanged.
 type Bin = domain.Bin
 
-// Height is the height an empty is wanted at (domain.Height): every empty
-// finder takes one, the zero value wanting none.
-type Height = domain.Height
-
-// Layers is a want of n layers (domain.Layers).
-func Layers(n int) Height { return domain.Layers(n) }
-
-// TopsAndBottomsOnly is a want of tops & bottoms and nothing else
-// (domain.TopsAndBottomsOnly).
-var TopsAndBottomsOnly = domain.TopsAndBottomsOnly
-
 // HeightArm is the height a want admits, as a WHERE arm over the candidate b
 // and its type bt: domain.Height.Admits in SQL, through the carrier state's one
 // SQL spelling (helpers.CarrierStateSQL). None and a stack exclude tops & bottoms,
@@ -53,13 +42,13 @@ var TopsAndBottomsOnly = domain.TopsAndBottomsOnly
 // (CountEmptyBinsOfTypeInGroupByTotes) shares and whose 0 bucket is the
 // tops & bottoms row's resident. Binds no argument. Pinned against Admits by
 // TestHeightArm_AgreesWithAdmits.
-func HeightArm(h Height) string {
+func HeightArm(h domain.Height) string {
 	state := helpers.CarrierStateSQL("b", "bt")
 	switch {
-	case h == TopsAndBottomsOnly:
+	case h == protocol.TopsAndBottomsOnly:
 		return `
 	  AND ` + state + ` = '` + string(protocol.CarrierTopsAndBottoms) + `'`
-	case h == Layers(0):
+	case h == protocol.Layers(0):
 		return ""
 	}
 	return `
@@ -69,7 +58,7 @@ func HeightArm(h Height) string {
 // emptyTail is how every empty finder ends: the height its want admits
 // (HeightArm), then the ladder and today's order (preferredEmptyOrder). One
 // function so no finder takes the order without the arm.
-func emptyTail(a *emptyQueryArgs, want Height) string {
+func emptyTail(a *emptyQueryArgs, want domain.Height) string {
 	return HeightArm(want) + preferredEmptyOrder(a, want)
 }
 
@@ -868,7 +857,7 @@ var accessibleEmptyTerms = `(n.parent_id IS NULL OR n.depth IS NULL OR ` + helpe
 // Pins: TestPreferredEmptyOrder_NoWantIsToday, TestEmptyFinders_HeightLadder,
 // TestEmptyFinders_OnlyShorterOrUnknownStillFound,
 // TestEmptyFinders_CountAndFindAgreeWithAWant.
-func preferredEmptyOrder(a *emptyQueryArgs, want Height) string {
+func preferredEmptyOrder(a *emptyQueryArgs, want domain.Height) string {
 	layers, ok := want.Stated()
 	if !ok {
 		return AccessibleEmptyOrder
@@ -1513,7 +1502,7 @@ func claimBin(db binExecer, binID, orderID int64) error {
 // want is the height wanted (preferredEmptyOrder); the zero Height wants none. Every
 // empty finder below takes it the same way.
 func FindEmptyOfTypeInGroup(db *sql.DB, binTypeCode string, groupNodeID, excludeNodeID int64,
-	asker reservations.DigAsker, want Height) (*Bin, error) {
+	asker reservations.DigAsker, want domain.Height) (*Bin, error) {
 
 	if binTypeCode == "" {
 		return nil, sql.ErrNoRows
@@ -1537,7 +1526,7 @@ func FindEmptyOfTypeInGroup(db *sql.DB, binTypeCode string, groupNodeID, exclude
 // code does. Not counted by the level keeper, so it does not share
 // EmptyOfTypeInGroupWhere; it is that WHERE with OfTypesArm in OfTypeArm's place.
 func FindEmptyOfTypesInGroup(db *sql.DB, binTypeCodes []string, groupNodeID, excludeNodeID int64,
-	asker reservations.DigAsker, want Height) (*Bin, error) {
+	asker reservations.DigAsker, want domain.Height) (*Bin, error) {
 
 	if len(binTypeCodes) == 0 {
 		return nil, sql.ErrNoRows
@@ -1568,7 +1557,7 @@ func FindEmptyOfTypesInGroup(db *sql.DB, binTypeCodes []string, groupNodeID, exc
 // the keeper's resident, the stack cap and the capacity gate pass none (tops &
 // bottoms is no stock of a level), the tops & bottoms row's cap passes
 // TopsAndBottomsOnly.
-func CountEmptyOfTypeInGroup(db *sql.DB, binTypeCode string, groupNodeID int64, h Height) (int, error) {
+func CountEmptyOfTypeInGroup(db *sql.DB, binTypeCode string, groupNodeID int64, h domain.Height) (int, error) {
 	if binTypeCode == "" {
 		// The finder returns ErrNoRows for a blank code rather than matching
 		// everything; the count agrees by returning zero rather than the whole
@@ -1591,7 +1580,7 @@ func CountEmptyOfTypeInGroup(db *sql.DB, binTypeCode string, groupNodeID int64, 
 // binresolver.ResolveStoreVacated). EmptyOfTypeInGroupWhere itself (its
 // destination and exclude arm at 0, as the count passes them), one more
 // ExcludeNodeArm for the node, and the caller's height as the count appends it.
-func CountEmptyOfTypeInGroupExcludingNode(db *sql.DB, binTypeCode string, groupNodeID, excludeNodeID int64, h Height) (int, error) {
+func CountEmptyOfTypeInGroupExcludingNode(db *sql.DB, binTypeCode string, groupNodeID, excludeNodeID int64, h domain.Height) (int, error) {
 	if binTypeCode == "" {
 		return 0, nil
 	}
@@ -1636,7 +1625,7 @@ func CountEmptyOfTypeInGroupExcludingNode(db *sql.DB, binTypeCode string, groupN
 // so preferZone ranked its own carriers FIRST — which is now rule (ii)'s job to
 // prevent rather than a reason to distrust the preference.
 func FindEmptyOfType(db *sql.DB, binTypeCode, preferZone string, excludeNodeID int64,
-	fence EmptyFence, asker reservations.DigAsker, want Height) (*Bin, error) {
+	fence EmptyFence, asker reservations.DigAsker, want domain.Height) (*Bin, error) {
 
 	if binTypeCode == "" {
 		return nil, sql.ErrNoRows
@@ -1649,7 +1638,7 @@ func FindEmptyOfType(db *sql.DB, binTypeCode, preferZone string, excludeNodeID i
 // empty set finds nothing, as a blank code does. Its reader is a no-mix loader
 // whose payloads may ride several types (plan.Finder.wantedEmpty).
 func FindEmptyOfTypes(db *sql.DB, binTypeCodes []string, preferZone string, excludeNodeID int64,
-	fence EmptyFence, asker reservations.DigAsker, want Height) (*Bin, error) {
+	fence EmptyFence, asker reservations.DigAsker, want domain.Height) (*Bin, error) {
 
 	if len(binTypeCodes) == 0 {
 		return nil, sql.ErrNoRows
@@ -1660,7 +1649,7 @@ func FindEmptyOfTypes(db *sql.DB, binTypeCodes []string, preferZone string, excl
 // findEmptyTyped is the body FindEmptyOfType and FindEmptyOfTypes share: typeArm
 // renders the type narrowing against the parameter that carries typeVal.
 func findEmptyTyped(db *sql.DB, typeArm func(int) string, typeVal any, preferZone string, excludeNodeID int64,
-	fence EmptyFence, asker reservations.DigAsker, want Height) (*Bin, error) {
+	fence EmptyFence, asker reservations.DigAsker, want domain.Height) (*Bin, error) {
 
 	// TWO PARAMETERS, NOT ONE STRUCT. The fence is POLICY — config-born, changes
 	// at save time, keyed on supports and origin. The dig exclusion is PHYSICAL
@@ -1709,7 +1698,7 @@ func findEmptyTyped(db *sql.DB, typeArm func(int) string, typeVal any, preferZon
 }
 
 func FindEmptyCompatibleInGroup(db *sql.DB, payloadCode string, groupNodeID, excludeNodeID int64,
-	asker reservations.DigAsker, want Height) (*Bin, error) {
+	asker reservations.DigAsker, want domain.Height) (*Bin, error) {
 
 	a := &emptyQueryArgs{vals: []any{payloadCode, groupNodeID, excludeNodeID}}
 	q := nodetree.DescendantsOf(2) + BinJoinQuery +
@@ -1721,7 +1710,7 @@ func FindEmptyCompatibleInGroup(db *sql.DB, payloadCode string, groupNodeID, exc
 }
 
 func FindEmptyCompatible(db *sql.DB, payloadCode, preferZone string, excludeNodeID int64,
-	fence EmptyFence, asker reservations.DigAsker, want Height) (*Bin, error) {
+	fence EmptyFence, asker reservations.DigAsker, want domain.Height) (*Bin, error) {
 
 	build := func(withZone bool) (string, []any) {
 		a := &emptyQueryArgs{}

@@ -6,10 +6,11 @@ import (
 	"fmt"
 	"testing"
 
+	"shingo/protocol"
 	"shingo/protocol/testutil"
+	"shingocore/domain"
 	"shingocore/internal/testdb"
 	"shingocore/store"
-	"shingocore/store/bins"
 	"shingocore/store/nodes"
 )
 
@@ -30,7 +31,7 @@ func plainNode(t *testing.T, db *store.DB, name string, parent *int64) *nodes.No
 	return n
 }
 
-func layersText(h bins.Height) string {
+func layersText(h domain.Height) string {
 	if n, ok := h.Stated(); ok {
 		return fmt.Sprint(n)
 	}
@@ -68,18 +69,18 @@ func TestToteWant_TheShape(t *testing.T) {
 
 	for _, tc := range []struct {
 		name, node, payload string
-		want                bins.Height
+		want                domain.Height
 	}{
-		{"a fed press, its claim's part", "TW-PRESS", "TW-PART", bins.Layers(0)},
-		{"a fed press, a part its claim allows", "TW-PRESS", "TW-ALLOWED", bins.Layers(0)},
-		{"its outside position", "TW-OUT", "TW-PART", bins.Layers(5)},
-		{"a sequential pair's first press", "TW-SEQ-A", "TW-PART", bins.Layers(5)},
-		{"a sequential pair's second press", "TW-SEQ-B", "TW-PART", bins.Layers(5)},
-		{"an unclaimed node", "TW-FREE", "TW-PART", bins.Layers(5)},
-		{"a dotted name", "TW-AREA.TW-CHILD", "TW-PART", bins.Layers(5)},
-		{"a part with no layers at a fed press", "TW-PRESS", "TW-KD", bins.Height{}},
-		{"a part with no layers anywhere", "TW-FREE", "TW-KD", bins.Height{}},
-		{"no part", "TW-PRESS", "", bins.Height{}},
+		{"a fed press, its claim's part", "TW-PRESS", "TW-PART", protocol.Layers(0)},
+		{"a fed press, a part its claim allows", "TW-PRESS", "TW-ALLOWED", protocol.Layers(0)},
+		{"its outside position", "TW-OUT", "TW-PART", protocol.Layers(5)},
+		{"a sequential pair's first press", "TW-SEQ-A", "TW-PART", protocol.Layers(5)},
+		{"a sequential pair's second press", "TW-SEQ-B", "TW-PART", protocol.Layers(5)},
+		{"an unclaimed node", "TW-FREE", "TW-PART", protocol.Layers(5)},
+		{"a dotted name", "TW-AREA.TW-CHILD", "TW-PART", protocol.Layers(5)},
+		{"a part with no layers at a fed press", "TW-PRESS", "TW-KD", domain.Height{}},
+		{"a part with no layers anywhere", "TW-FREE", "TW-KD", domain.Height{}},
+		{"no part", "TW-PRESS", "", domain.Height{}},
 	} {
 		n, got, err := db.GetSetDownNode(tc.node, tc.payload)
 		testutil.MustNoErr(t, err, tc.name)

@@ -4,7 +4,7 @@ import (
 	"fmt"
 
 	"shingo/protocol"
-	"shingocore/store/bins"
+	"shingocore/domain"
 	"shingocore/store/nodes"
 	"shingocore/store/orders"
 )
@@ -57,7 +57,7 @@ func (c LevelState) Short() int {
 func (db *DB) CountLevel(g *nodes.Node, lv MaintainLevel, episode DemandOrigin) (LevelState, error) {
 	c := LevelState{Level: lv}
 	var err error
-	if c.Resident, err = db.CountEmptyBinsOfTypeInGroup(lv.BinTypeCode, g.ID, bins.Height{}); err != nil {
+	if c.Resident, err = db.CountEmptyBinsOfTypeInGroup(lv.BinTypeCode, g.ID, domain.Height{}); err != nil {
 		return c, fmt.Errorf("count residents %s/%s: %w", g.Name, lv.BinTypeCode, err)
 	}
 	if episode.OriginID != "" {

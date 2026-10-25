@@ -357,7 +357,7 @@ func (f *fakeCapacityDB) ListMaintainLevels(groupNodeID int64) ([]nodes.Maintain
 }
 
 func (f *fakeCapacityDB) CountEmptyBinsOfTypeInGroup(binTypeCode string, groupNodeID int64, h domain.Height) (int, error) {
-	if h == domain.TopsAndBottomsOnly {
+	if h == protocol.TopsAndBottomsOnly {
 		return f.tbInGroup[groupNodeID], nil
 	}
 	return f.emptyInGroup[groupNodeID], nil

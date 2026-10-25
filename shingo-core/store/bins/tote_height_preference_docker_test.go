@@ -9,8 +9,10 @@ import (
 	"slices"
 	"testing"
 
+	"shingo/protocol"
 	"shingo/protocol/testutil"
 	"shingocore/dispatch/binsource"
+	"shingocore/domain"
 	"shingocore/internal/testdb"
 	"shingocore/store"
 	"shingocore/store/bins"
@@ -73,29 +75,29 @@ func totes(n int) *int { return &n }
 // tote type (or any type) with the given want.
 func everyEmptyFinder(db *store.DB, code string, grpID int64) []struct {
 	name string
-	find func(want bins.Height) (*bins.Bin, error)
+	find func(want domain.Height) (*bins.Bin, error)
 } {
 	anyone := reservations.Anyone
 	return []struct {
 		name string
-		find func(want bins.Height) (*bins.Bin, error)
+		find func(want domain.Height) (*bins.Bin, error)
 	}{
-		{"typed, group-scoped", func(w bins.Height) (*bins.Bin, error) {
+		{"typed, group-scoped", func(w domain.Height) (*bins.Bin, error) {
 			return bins.FindEmptyOfTypeInGroup(db.DB, code, grpID, 0, anyone, w)
 		}},
-		{"type set, group-scoped", func(w bins.Height) (*bins.Bin, error) {
+		{"type set, group-scoped", func(w domain.Height) (*bins.Bin, error) {
 			return bins.FindEmptyOfTypesInGroup(db.DB, []string{code}, grpID, 0, anyone, w)
 		}},
-		{"untyped, group-scoped", func(w bins.Height) (*bins.Bin, error) {
+		{"untyped, group-scoped", func(w domain.Height) (*bins.Bin, error) {
 			return bins.FindEmptyCompatibleInGroup(db.DB, "", grpID, 0, anyone, w)
 		}},
-		{"typed, plant-wide", func(w bins.Height) (*bins.Bin, error) {
+		{"typed, plant-wide", func(w domain.Height) (*bins.Bin, error) {
 			return bins.FindEmptyOfType(db.DB, code, "", 0, bins.EmptyFence{}, anyone, w)
 		}},
-		{"type set, plant-wide", func(w bins.Height) (*bins.Bin, error) {
+		{"type set, plant-wide", func(w domain.Height) (*bins.Bin, error) {
 			return bins.FindEmptyOfTypes(db.DB, []string{code}, "", 0, bins.EmptyFence{}, anyone, w)
 		}},
-		{"untyped, plant-wide", func(w bins.Height) (*bins.Bin, error) {
+		{"untyped, plant-wide", func(w domain.Height) (*bins.Bin, error) {
 			return bins.FindEmptyCompatible(db.DB, "", "", 0, bins.EmptyFence{}, anyone, w)
 		}},
 	}
@@ -121,11 +123,11 @@ func TestEmptyFinders_HeightLadder(t *testing.T) {
 	tote := func(n *int) toteCart { return toteCart{code: "TH-TOTE", perLayer: 8, totes: n} }
 	grpID, ids := toteGroup(t, db, "TH", []toteCart{tote(nil), tote(totes(26)), tote(totes(48)), tote(totes(40))})
 	unknown, shorter, taller, exact := ids[0], ids[1], ids[2], ids[3]
-	five := bins.Layers(5)
+	five := protocol.Layers(5)
 
 	for _, f := range everyEmptyFinder(db, "TH-TOTE", grpID) {
 		t.Run(f.name, func(t *testing.T) {
-			b, err := f.find(bins.Height{})
+			b, err := f.find(domain.Height{})
 			if got := foundID(t, b, err); got != unknown {
 				t.Fatalf("no want took %d, want today's first by id (%d)", got, unknown)
 			}
@@ -159,7 +161,7 @@ func TestEmptyFinders_OnlyShorterOrUnknownStillFound(t *testing.T) {
 		{code: "TS-TOTE", perLayer: 8, totes: totes(26)},
 	})
 	unknown, shorter := ids[0], ids[1]
-	five := bins.Layers(5)
+	five := protocol.Layers(5)
 	for _, f := range everyEmptyFinder(db, "TS-TOTE", grpID) {
 		t.Run(f.name, func(t *testing.T) {
 			b, err := f.find(five)
@@ -198,7 +200,7 @@ func TestEmptyFinders_CountAndFindAgreeWithAWant(t *testing.T) {
 	empty, err := nodes.CreateGroup(db.DB, "TC-EMPTY-GRP")
 	testutil.MustNoErr(t, err, "empty group")
 	testdb.MarkGroup(t, db, empty)
-	for _, want := range []bins.Height{{}, bins.Layers(0), bins.Layers(5)} {
+	for _, want := range []domain.Height{{}, protocol.Layers(0), protocol.Layers(5)} {
 		for _, g := range []int64{stocked, empty} {
 			n, err := bins.CountEmptyOfTypeInGroup(db.DB, "TC-TOTE", g, want)
 			testutil.MustNoErr(t, err, "count")
@@ -239,15 +241,15 @@ func TestHeightLadder_ThePoolAgreesWithTheFinders(t *testing.T) {
 	known := []string{"unknown", "no-totes-per-layer"}
 	for _, c := range []struct {
 		name  string
-		want  bins.Height
+		want  domain.Height
 		order []string
 	}{
-		{"no height said", bins.Height{}, []string{"unknown", "no-totes-per-layer", "13", "48", "24", "16a", "8", "16b", "40"}},
-		{"tops & bottoms only", bins.TopsAndBottomsOnly, []string{"tb"}},
-		{"0: tops & bottoms, then the shortest", bins.Layers(0), append([]string{"tb", "8", "13", "16a", "16b", "24", "40", "48"}, known...)},
-		{"2 (16 totes): exact, taller nearest first, then shorter", bins.Layers(2), append([]string{"16a", "16b", "24", "40", "48", "13", "8"}, known...)},
-		{"5 (40 totes)", bins.Layers(5), append([]string{"40", "48", "24", "16a", "16b", "13", "8"}, known...)},
-		{"9 (72 totes): every cart shorter, the tallest first", bins.Layers(9), append([]string{"48", "40", "24", "16a", "16b", "13", "8"}, known...)},
+		{"no height said", domain.Height{}, []string{"unknown", "no-totes-per-layer", "13", "48", "24", "16a", "8", "16b", "40"}},
+		{"tops & bottoms only", protocol.TopsAndBottomsOnly, []string{"tb"}},
+		{"0: tops & bottoms, then the shortest", protocol.Layers(0), append([]string{"tb", "8", "13", "16a", "16b", "24", "40", "48"}, known...)},
+		{"2 (16 totes): exact, taller nearest first, then shorter", protocol.Layers(2), append([]string{"16a", "16b", "24", "40", "48", "13", "8"}, known...)},
+		{"5 (40 totes)", protocol.Layers(5), append([]string{"40", "48", "24", "16a", "16b", "13", "8"}, known...)},
+		{"9 (72 totes): every cart shorter, the tallest first", protocol.Layers(9), append([]string{"48", "40", "24", "16a", "16b", "13", "8"}, known...)},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			finders := ladderOrder(t, label, func() (*bins.Bin, error) {

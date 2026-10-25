@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"shingo/protocol/testutil"
+	"shingocore/domain"
 	"shingocore/internal/testdb"
 	"shingocore/store"
 	"shingocore/store/bins"
@@ -642,7 +643,7 @@ func TestFindEmptyCompatible_LaneUnawareStarvation(t *testing.T) {
 	testutil.MustNoErr(t, db.CreateBin(emptyL2), "create empty bin L2")
 
 	// GAP PROOF 1: FindEmptyCompatibleBin returns a buried empty (lane-unaware)
-	found, err := db.FindEmptyCompatibleBin(bp.Code, "", 0, bins.EmptyFence{}, reservations.Anyone, bins.Height{})
+	found, err := db.FindEmptyCompatibleBin(bp.Code, "", 0, bins.EmptyFence{}, reservations.Anyone, domain.Height{})
 	if err != nil {
 		t.Fatalf("FindEmptyCompatibleBin returned error: %v — if all empties are buried and the query filtered by accessibility, this would be the starvation scenario", err)
 	}

@@ -9,6 +9,7 @@ import (
 
 	"shingo/protocol"
 	"shingo/protocol/testutil"
+	"shingocore/domain"
 	"shingocore/internal/testdb"
 	"shingocore/store/bins"
 )
@@ -29,13 +30,13 @@ func TestEmptyFinders_TopsAndBottomsIsNobodysOrdinaryEmpty(t *testing.T) {
 	for _, f := range everyEmptyFinder(db, "TB-TOTE", grpID) {
 		for _, c := range []struct {
 			name string
-			want bins.Height
+			want domain.Height
 			got  int64
 		}{
-			{"no height said", bins.Height{}, 0},
-			{"a stack", bins.Layers(2), 0},
-			{"a want of 0", bins.Layers(0), tb},
-			{"tops & bottoms only", bins.TopsAndBottomsOnly, tb},
+			{"no height said", domain.Height{}, 0},
+			{"a stack", protocol.Layers(2), 0},
+			{"a want of 0", protocol.Layers(0), tb},
+			{"tops & bottoms only", protocol.TopsAndBottomsOnly, tb},
 		} {
 			b, err := f.find(c.want)
 			if got := foundID(t, b, err); got != c.got {
@@ -48,13 +49,13 @@ func TestEmptyFinders_TopsAndBottomsIsNobodysOrdinaryEmpty(t *testing.T) {
 	for _, f := range everyEmptyFinder(db, "TB-TOTE", grpID) {
 		for _, c := range []struct {
 			name string
-			want bins.Height
+			want domain.Height
 			got  int64
 		}{
-			{"no height said", bins.Height{}, stack},
-			{"a stack", bins.Layers(2), stack},
-			{"a want of 0: tops & bottoms first", bins.Layers(0), tb},
-			{"tops & bottoms only", bins.TopsAndBottomsOnly, tb},
+			{"no height said", domain.Height{}, stack},
+			{"a stack", protocol.Layers(2), stack},
+			{"a want of 0: tops & bottoms first", protocol.Layers(0), tb},
+			{"tops & bottoms only", protocol.TopsAndBottomsOnly, tb},
 		} {
 			b, err := f.find(c.want)
 			if got := foundID(t, b, err); got != c.got {
@@ -63,7 +64,7 @@ func TestEmptyFinders_TopsAndBottomsIsNobodysOrdinaryEmpty(t *testing.T) {
 		}
 		_, err := db.Exec(`UPDATE bins SET locked = true WHERE id = $1`, tb)
 		testutil.MustNoErr(t, err, "take tops & bottoms out")
-		if b, err := f.find(bins.TopsAndBottomsOnly); foundID(t, b, err) != 0 {
+		if b, err := f.find(protocol.TopsAndBottomsOnly); foundID(t, b, err) != 0 {
 			t.Errorf("%s: tops & bottoms only took the two-high once tops & bottoms was gone", f.name)
 		}
 		_, err = db.Exec(`UPDATE bins SET locked = false WHERE id = $1`, tb)
@@ -113,7 +114,7 @@ func TestHeightArm_AgreesWithAdmits(t *testing.T) {
 		got, err := db.GetBin(b.ID)
 		testutil.MustNoErr(t, err, "read back")
 		state := got.CarrierState()
-		for _, h := range []bins.Height{{}, bins.Layers(3), bins.Layers(0), bins.TopsAndBottomsOnly} {
+		for _, h := range []domain.Height{{}, protocol.Layers(3), protocol.Layers(0), protocol.TopsAndBottomsOnly} {
 			var inSQL bool
 			testutil.MustNoErr(t, db.QueryRow(`SELECT EXISTS (SELECT 1 FROM bins b JOIN bin_types bt ON bt.id = b.bin_type_id
 				WHERE b.id = $1`+bins.HeightArm(h)+`)`, b.ID).Scan(&inSQL), "the arm")
@@ -121,7 +122,7 @@ func TestHeightArm_AgreesWithAdmits(t *testing.T) {
 				t.Errorf("a %s cart, height %+v: the SQL arm says %v, Admits says %v", state, h, inSQL, h.Admits(state))
 			}
 		}
-		if state == protocol.CarrierTopsAndBottoms && (bins.Height{}).Admits(state) {
+		if state == protocol.CarrierTopsAndBottoms && (domain.Height{}).Admits(state) {
 			t.Error("no height said admits tops & bottoms")
 		}
 	}

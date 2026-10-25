@@ -225,16 +225,16 @@ func TestSourceFillRanksEmptiesByTheLadder(t *testing.T) {
 		height domain.Height
 		want   int64
 	}{
-		{"at 0, tops & bottoms ahead of a two-high", []Cand{empty(1, n(16), n(8)), empty(2, n(0), n(8))}, domain.Layers(0), 2},
-		{"at 0, the shortest stack", []Cand{empty(1, n(16), n(8)), empty(2, n(8), n(8))}, domain.Layers(0), 2},
-		{"the exact height", []Cand{empty(1, n(8), n(8)), empty(2, n(16), n(8))}, domain.Layers(2), 2},
-		{"the shortest taller before the tallest shorter", []Cand{empty(1, n(8), n(8)), empty(2, n(24), n(8))}, domain.Layers(2), 2},
-		{"a shorter one before a count not known", []Cand{empty(1, nil, n(8)), empty(2, n(8), n(8))}, domain.Layers(2), 2},
-		{"a shorter one before a type with no totes per layer", []Cand{empty(1, n(3), nil), empty(2, n(8), n(8))}, domain.Layers(2), 2},
-		{"one rung: by id", []Cand{empty(1, n(16), n(8)), empty(2, n(16), n(8))}, domain.Layers(2), 1},
+		{"at 0, tops & bottoms ahead of a two-high", []Cand{empty(1, n(16), n(8)), empty(2, n(0), n(8))}, protocol.Layers(0), 2},
+		{"at 0, the shortest stack", []Cand{empty(1, n(16), n(8)), empty(2, n(8), n(8))}, protocol.Layers(0), 2},
+		{"the exact height", []Cand{empty(1, n(8), n(8)), empty(2, n(16), n(8))}, protocol.Layers(2), 2},
+		{"the shortest taller before the tallest shorter", []Cand{empty(1, n(8), n(8)), empty(2, n(24), n(8))}, protocol.Layers(2), 2},
+		{"a shorter one before a count not known", []Cand{empty(1, nil, n(8)), empty(2, n(8), n(8))}, protocol.Layers(2), 2},
+		{"a shorter one before a type with no totes per layer", []Cand{empty(1, n(3), nil), empty(2, n(8), n(8))}, protocol.Layers(2), 2},
+		{"one rung: by id", []Cand{empty(1, n(16), n(8)), empty(2, n(16), n(8))}, protocol.Layers(2), 1},
 		{"no height said: by id", []Cand{empty(1, n(8), n(8)), empty(2, n(16), n(8))}, domain.Height{}, 1},
-		{"tops & bottoms only: by id", []Cand{empty(1, n(0), n(8)), empty(2, n(0), n(8))}, domain.TopsAndBottomsOnly, 1},
-		{"a partial of the part before any empty", []Cand{empty(1, n(16), n(8)), partial}, domain.Layers(2), 2},
+		{"tops & bottoms only: by id", []Cand{empty(1, n(0), n(8)), empty(2, n(0), n(8))}, protocol.TopsAndBottomsOnly, 1},
+		{"a partial of the part before any empty", []Cand{empty(1, n(16), n(8)), partial}, protocol.Layers(2), 2},
 	} {
 		got, ok := Source(c.cands, Want{Payload: X, Intent: Fill, Height: c.height})
 		if !ok || got.BinID != c.want {

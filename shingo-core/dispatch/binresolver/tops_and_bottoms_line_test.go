@@ -23,7 +23,7 @@ type lineCounts struct {
 }
 
 func (c *lineCounts) count(code string, h domain.Height) (int, error) {
-	if h == domain.TopsAndBottomsOnly {
+	if h == protocol.TopsAndBottomsOnly {
 		return c.topsAndBottoms[code], nil
 	}
 	return c.stacks[code], nil
