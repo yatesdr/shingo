@@ -421,6 +421,21 @@ func (f *Finder) Pick(need Need) Plan {
 		bin = result.Bin
 	}
 
+	// WHAT THE EMPTY SHOULD BE, resolved once, before any tier reads it: one
+	// want per need. The height it is wanted at where it is set down is asked of
+	// the loader pool (tier 2) and of both empty tiers, so a fed core's empty
+	// ranks tops & bottoms first from a loader's pool as from a group
+	// (TestTopsAndBottoms_TheFallbackFromADedicatedLoader). WHICH CARRIER TYPE,
+	// when the destination loader has declared a mix, is the empty tiers': a
+	// declared mix has to be searched FOR, since asking for any empty and
+	// rejecting the wrong type would let one wrong-typed carrier mask every
+	// right one behind it. A loader with no declared mix gets the carriers its
+	// payloads may ride (wantedEmpty), searched FOR in the same way and waiting
+	// under the same typed cause. nil is any carrier; several are searched as
+	// one set. The pool judges its carriers by the part's own rule instead.
+	// A full need derives nothing and reads nothing here.
+	wantTypes, height := f.wantedEmpty(need)
+
 	// ── Tier 2: dedicated-loader pool ─────────────────────────────────────
 	// Drain (full) / Fill (empty). A payload-less move (full intent, blank
 	// payload) skips the pool source — it is a direct relocation of the physical
@@ -432,7 +447,7 @@ func (f *Finder) Pick(need Need) Plan {
 		if intent == IntentEmpty {
 			loaderIntent = binsource.Fill
 		}
-		chosen, node, isLoaderPos, passed, lerr := f.sourceFromDedicatedLoader(srcNode, payloadCode, loaderIntent, need.Asker.OrderID, need.Want.Height, need.LiftFrom)
+		chosen, node, isLoaderPos, passed, lerr := f.sourceFromDedicatedLoader(srcNode, payloadCode, loaderIntent, need.Asker.OrderID, height, need.LiftFrom)
 		passedOver = passed
 		if lerr != nil {
 			// WAIT, NOT FAIL, and this arm is the callee's own stated disposition
@@ -474,15 +489,6 @@ func (f *Finder) Pick(need Need) Plan {
 			bin, binNode = chosen, node
 		}
 	}
-
-	// WHICH CARRIER TYPE, when the destination loader has declared a mix.
-	// Resolved once, used by both empty tiers, because a declared mix
-	// has to be searched FOR: asking for any empty and rejecting the wrong type
-	// would let one wrong-typed carrier mask every right one behind it.
-	// A loader with no declared mix gets the carriers its payloads may ride
-	// (wantedEmpty), searched FOR in the same way and waiting under the same
-	// typed cause. nil is any carrier; several are searched as one set.
-	wantTypes, height := f.wantedEmpty(need)
 
 	// ── Tier 2b: a partial to finish (empty intent naming a part) ─────────
 	// A carrier to fill can be one already part-filled with the same part:
@@ -1077,8 +1083,10 @@ func (f *Finder) sourceFromDedicatedLoader(srcNode *nodes.Node, payloadCode stri
 			return nil, nil, true, nil, fmt.Errorf("load bin-type rule for loader %d payload %q: %w", home.LoaderID, payloadCode, btErr)
 		}
 	}
-	// height is a stated want's (Need.Want; tops & bottoms rejects every other
-	// candidate), the zero value for every other need.
+	// height is the need's want (wantedEmpty: a stated want's, else the height
+	// derived where the carrier is set down), as every empty tier is asked: it
+	// admits (tops & bottoms only at 0 or for a want of it alone) and ranks the
+	// empties on its ladder.
 	want := binsource.Want{Payload: payloadCode, Intent: intent, BinTypes: binTypes, Asker: asker, Height: height}
 	best, ok := binsource.Source(cands, want)
 	if !ok {

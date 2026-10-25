@@ -9,7 +9,9 @@ import (
 	"shingo/protocol"
 	"shingo/protocol/testutil"
 	"shingocore/internal/testdb"
+	"shingocore/store"
 	"shingocore/store/bins"
+	"shingocore/store/loaders"
 	"shingocore/store/nodes"
 )
 
@@ -179,6 +181,79 @@ func TestTopsAndBottoms_ReanchorTakesItOnTheConcreteSourceOnly(t *testing.T) {
 			}
 		}
 		c.requireUnclaimed(elsewhere)
+	})
+}
+
+// dedicatedInboundSource makes the claim's inbound source the pinned home of a
+// dedicated loader with one buffer slot, and returns the buffer: the vacant
+// on-deck fetch then asks the loader's pool (tier 2), not the node.
+func (c vpCell) dedicatedInboundSource(prefix string) *nodes.Node {
+	c.t.Helper()
+	buffer := prNode(c.t, c.db, prefix+"-BUFFER")
+	loaderID, err := c.db.CreateLoader(store.Loader{Name: prefix + "-LOADER", Role: loaders.RoleProduce,
+		Layout: loaders.LayoutDedicatedPositions, Replenishment: "operator"})
+	testutil.MustNoErr(c.t, err, "the loader")
+	testutil.MustNoErr(c.t, c.db.UpsertLoaderHome(store.LoaderHome{LoaderID: loaderID, PositionNodeID: c.in.ID,
+		PayloadCode: c.part, Kind: loaders.HomeKindHome}), "the inbound source as its home")
+	testutil.MustNoErr(c.t, c.db.UpsertLoaderHome(store.LoaderHome{LoaderID: loaderID, PositionNodeID: buffer.ID,
+		Kind: loaders.HomeKindBuffer}), "its buffer")
+	return buffer
+}
+
+// TestTopsAndBottoms_TheFallbackFromADedicatedLoader: W5's vacant on-deck
+// fetch whose inbound source is a dedicated loader's position asks the loader's
+// pool with the height the carrier is wanted at where it is set down (the
+// press, a fed core: 0), as every other empty tier is asked. So the pool takes
+// tops & bottoms ahead of a two-high landed before it (the ladder: at 0, tops &
+// bottoms first), and takes it when it is all the pool holds. Set down on the
+// outside (wanted two high) the pool keeps tops & bottoms out and takes the
+// two-high ahead of a one-high landed first. The pool used to be asked with no
+// height, which keeps tops & bottoms out and ranks no stack, so the fallback
+// took the stack, or waited beside the tops & bottoms (D13.8).
+func TestTopsAndBottoms_TheFallbackFromADedicatedLoader(t *testing.T) {
+	t.Parallel()
+	t.Run("tops & bottoms beside a two-high", func(t *testing.T) {
+		t.Parallel()
+		c := tbCell(t, "TBL", true)
+		buffer := c.dedicatedInboundSource("TBL")
+		_, err := c.db.Exec(`UPDATE bins SET totes_on_cart = 16 WHERE id = $1`, c.inCarrier.ID)
+		testutil.MustNoErr(t, err, "a two-high on the home, landed first")
+		tb := c.totesOn(buffer, "TBL-AT-BUFFER", 0)
+		r1, r2 := c.submitPair("TBL", false, "TBL-r2", "TBL-r1")
+		c.scan(r1, r2)
+		c.requireTook(r1, r2, buffer)
+		c.requireClaimedBy(r2, tb)
+		c.requireUnclaimed(c.inCarrier)
+	})
+	t.Run("only tops & bottoms", func(t *testing.T) {
+		t.Parallel()
+		c := tbCell(t, "TBO", true)
+		c.dedicatedInboundSource("TBO")
+		_, err := c.db.Exec(`UPDATE bins SET totes_on_cart = 0 WHERE id = $1`, c.inCarrier.ID)
+		testutil.MustNoErr(t, err, "tops & bottoms on the home")
+		r1, r2 := c.submitPair("TBO", false, "TBO-r2", "TBO-r1")
+		c.scan(r1, r2)
+		c.requireTook(r1, r2, c.in)
+		c.requireClaimedBy(r2, c.inCarrier)
+	})
+	t.Run("set down on the outside: the two-high ahead of a one-high", func(t *testing.T) {
+		t.Parallel()
+		c := tbCell(t, "TBK", true)
+		buffer := c.dedicatedInboundSource("TBK")
+		_, err := c.db.Exec(`UPDATE bins SET totes_on_cart = 8 WHERE id = $1`, c.inCarrier.ID)
+		testutil.MustNoErr(t, err, "a one-high on the home, landed first")
+		c.totesOn(buffer, "TBK-TB", 0)
+		stack := c.totesOn(buffer, "TBK-STACK", 16)
+		res := NewSourceFinder(c.db, nil, nil).FindSourceForNeed(SourceNeed{SourceNode: c.in.Name, PayloadCode: c.part,
+			ProcessNode: c.press.Name, SetDownNode: c.deck.Name, Intent: IntentEmpty})
+		if res.Bin == nil || res.Bin.ID != stack.ID {
+			got := "nothing"
+			if res.Bin != nil {
+				got = res.Bin.Label
+			}
+			t.Errorf("wanted two high on the outside: took %s (%v, %s), want the two-high %s", got, res.Outcome,
+				res.QueueCause, stack.Label)
+		}
 	})
 }
 

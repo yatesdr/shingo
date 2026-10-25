@@ -11,6 +11,7 @@ import (
 	"shingocore/internal/testdb"
 	"shingocore/store"
 	"shingocore/store/bins"
+	"shingocore/store/loaders"
 	"shingocore/store/nodes"
 )
 
@@ -130,3 +131,70 @@ func TestToteWant_NoNumbersAddNoStatement(t *testing.T) {
 		}
 	}
 }
+
+// TestToteWant_ThePoolsStatements counts an empty fetched as the vacant on-deck
+// fallback asks for it (set down on the press, a fed core), from three
+// sources: a dedicated loader's home whose pool holds a cart, a node no loader
+// holds (tier 2 misses: the common case), and a loader home whose pool holds
+// nothing. The want is resolved before the pool is asked, and every other empty
+// tier already paid for it, so a pool that finds and a source the pool tier
+// misses cost what they cost before; a pool holding nothing pays the
+// derivation's reads ahead of its own, as a group holding nothing does.
+func TestToteWant_ThePoolsStatements(t *testing.T) {
+	t.Parallel()
+	db, cfg := testdb.OpenWithConfig(t)
+	newToteWantFixture(t, db)
+	cdb, counter, err := store.OpenCounting(cfg)
+	testutil.MustNoErr(t, err, "open counting db")
+	t.Cleanup(func() { cdb.Close() })
+	home := func(name string) *nodes.Node {
+		n := &nodes.Node{Name: name, Enabled: true}
+		testutil.MustNoErr(t, nodes.Create(db.DB, n), name)
+		id, err := db.CreateLoader(store.Loader{Name: name + "-LOADER", Role: loaders.RoleProduce,
+			Layout: loaders.LayoutDedicatedPositions, Replenishment: "operator"})
+		testutil.MustNoErr(t, err, "loader")
+		testutil.MustNoErr(t, db.UpsertLoaderHome(store.LoaderHome{LoaderID: id, PositionNodeID: n.ID,
+			PayloadCode: "TWD-PART", Kind: loaders.HomeKindHome}), "home")
+		return n
+	}
+	pool, dry := home("TWD-HOME"), home("TWD-DRY")
+	plain := &nodes.Node{Name: "TWD-PLAIN", Enabled: true}
+	testutil.MustNoErr(t, nodes.Create(db.DB, plain), "plain")
+	for _, at := range []*nodes.Node{pool, plain} {
+		_, err := db.Exec(`INSERT INTO bins (bin_type_id, label, node_id, status)
+			SELECT id, $1, $2, 'available' FROM bin_types WHERE code = 'TWD-TOTE'`, at.Name+"-CART", at.ID)
+		testutil.MustNoErr(t, err, "cart on "+at.Name)
+	}
+	for _, c := range []struct {
+		name  string
+		src   string
+		found bool
+		want  int
+	}{
+		{"a pool that finds", pool.Name, true, wantPoolFound},
+		{"a node no loader holds", plain.Name, true, wantPoolMissed},
+		{"a pool holding nothing", dry.Name, false, wantPoolDry},
+	} {
+		counter.Reset()
+		res := NewSourceFinder(cdb, nil, nil).FindSourceForNeed(SourceNeed{SourceNode: c.src, PayloadCode: "TWD-PART",
+			ProcessNode: "TWD-PRESS", SetDownNode: "TWD-PRESS", Intent: IntentEmpty})
+		stmts := counter.Statements()
+		if (res.Bin != nil) != c.found {
+			t.Errorf("%s: found %v (%v, %s), want found=%v", c.name, res.Bin, res.Outcome, res.QueueCause, c.found)
+		}
+		if len(stmts) != c.want {
+			t.Errorf("%s: %d statements, want %d\n%s", c.name, len(stmts), c.want, testutil.StatementBreakdown(stmts))
+		}
+	}
+}
+
+// Measured with the pool asked before the want was derived: found 11, missed 9,
+// a pool holding nothing 6. The derivation here is three reads (the set-down
+// node with its height, and the two of its effective bin types); a pool that
+// finds and a source the pool tier misses paid them after the pool, so they
+// are unchanged. A pool holding nothing never reached them and pays them now.
+const (
+	wantPoolFound  = 11
+	wantPoolMissed = 9
+	wantPoolDry    = 9
+)

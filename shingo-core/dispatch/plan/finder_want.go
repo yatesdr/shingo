@@ -60,12 +60,14 @@ func oneType(code string) []string {
 // height is the height, in layers of totes, the empty is wanted at where it is
 // set down (store.DB.GetSetDownNode): 0 at a fed press cell's core node, else the
 // payload's tote layers, none (the zero Height) when the payload states none or
-// nothing names where the carrier goes. The finders rank by it, and it decides
-// one thing they keep out: tops & bottoms answers Layers(0) only (bins.HeightArm). It rides the
-// destination read this function already made, so it costs no statement; a
-// keeper ask (the origin arm) reads no destination and wants no height.
+// nothing names where the carrier goes. The finders and the loader pool rank by
+// it (Pick resolves it before any tier reads it), and it decides one thing they
+// keep out: tops & bottoms answers Layers(0) only (bins.HeightArm,
+// Height.Admits). It rides the destination read this function already made, so
+// it costs no statement; a keeper ask (the origin arm) reads no destination and
+// wants no height.
 // Pins: TestToteWant_TheShape, TestToteWant_ReachesTheFinder,
-// TestToteWant_NoNumbersAddNoStatement.
+// TestToteWant_NoNumbersAddNoStatement, TestToteWant_ThePoolsStatements.
 //
 // A STATED WANT IS THE ANSWER (Need.Want), before any derivation: the caller
 // has already decided the type and the height. Everything else is derived
