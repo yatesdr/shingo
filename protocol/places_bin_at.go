@@ -78,12 +78,12 @@ func PlacesBinAt(steps []ComplexOrderStep, node string) bool {
 //   - the Edge's orderPlacesBinAtAny reads a row it cannot read, steps never
 //     stored (a row Core projected down) and steps that do not decode as
 //     placing;
-//   - the Edge's placingAtSQL and the SEND BACK line's PlacesAt read a leg with
+//   - the Edge's placingAtSQL and the SEND BACK line's placesAt read a leg with
 //     no release facts (steps never stored, or older than the column) as
 //     placing at every node asked, and facts that do not parse as placing (the
 //     SQL ranks them unreadable, which its callers treat as placing); a leg
 //     created with no steps ("null" or "[]") places nowhere for the SQL and
-//     everywhere for PlacesAt, whose facts cannot tell it from the first;
+//     everywhere for placesAt, whose facts cannot tell it from the first;
 //   - Core's CarrierComingTo reads steps that do not decode as coming and a
 //     complex row with no steps as not coming, a row Core never holds (its
 //     intake refuses a complex order with none).

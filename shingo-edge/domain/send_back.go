@@ -149,7 +149,7 @@ func SendBackOrders(rows []Order, outside string) []Order {
 // already holds: the press's live orders, the outside's (its own process
 // node's), and the press's runtime swap slots. Own is SendBackOrders over the
 // outside's rows; PlacingAtOutside is any other of either set placing a
-// carrier at the outside (PlacesAt); SwapLive is a slot's order among the
+// carrier at the outside (placesAt); SwapLive is a slot's order among the
 // press's rows that has not left the cell.
 func (f *SendBackFacts) OrderFacts(pressRows, outsideRows []Order, swapSlots ...*int64) {
 	f.Own = SendBackOrders(outsideRows, f.Paired)
@@ -166,7 +166,7 @@ func (f *SendBackFacts) OrderFacts(pressRows, outsideRows []Order, swapSlots ...
 			}
 		}
 	}
-	f.PlacingAtOutside = PlacesAt(others, f.Paired)
+	f.PlacingAtOutside = placesAt(others, f.Paired)
 	for _, slot := range swapSlots {
 		if slot == nil {
 			continue
@@ -179,12 +179,18 @@ func (f *SendBackFacts) OrderFacts(pressRows, outsideRows []Order, swapSlots ...
 	}
 }
 
-// PlacesAt reports whether a live order among rows leaves a carrier at node,
-// read as the release reads a leg (store PlacingAt, in Go over rows in hand): a
-// plain order at its delivery node, a leg at the nodes its release facts place
-// at, and a leg whose facts are missing or unreadable as placing (it must not
-// let a button act while a carrier may be coming).
-func PlacesAt(rows []Order, node string) bool {
+// placesAt reports whether a live order among rows leaves a carrier at node:
+// protocol.OrderPlacesBinAt over rows in hand, keyed on the type, with a
+// complex leg's steps answered by its stored facts (release.Facts.PlacesBinAt,
+// the steps' PlacesBinAt at its create). A plain order places at its delivery
+// node; a complex leg whose facts are missing (its steps never stored, a row
+// older than the column, or a leg created with no steps) or unreadable reads
+// as placing: it must not let a button act while a carrier may be coming.
+// store PlacingAt is this read in SQL but for the leg created with no steps,
+// which it sees by its steps ("null" or "[]") and reads as placing nowhere.
+// Both are pinned against the rule by engine
+// TestComingVectors_TheEdgesReadersAgree.
+func placesAt(rows []Order, node string) bool {
 	for _, o := range rows {
 		if protocol.IsTerminal(o.Status) || node == "" {
 			continue
