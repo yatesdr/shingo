@@ -77,11 +77,12 @@ func (d *Dispatcher) DrainLoader(loaderID int64) (int, error) {
 
 // drainsAt reports whether a loader's own row lets it drain, reading nothing:
 // a live unloader with a box ticked, an inbound source and shared windows, and
-// not stage 1 of a pair. The save refuses a box everywhere else
-// (service LoaderService.checkDrains); this keeps a row the save never wrote
-// from pulling.
-// (Stage 2 of a pair is known only by a read, and a pair is born whole with its
-// boxes off, so it is the save's alone.)
+// not stage 1 of a pair. The save refuses a box everywhere else, the layout
+// among them (service LoaderService.checkDrains, ErrDrainDedicatedLayout), and
+// the page draws the boxes where the save would keep them (DrainAllowed); this
+// keeps a row the save never wrote from pulling. (Stage 2 of a pair is known
+// only by a read, and a pair is born whole with its boxes off, so it is the
+// save's alone.)
 func drainsAt(l *loaders.Loader) bool {
 	return l != nil && l.ArchivedAt == nil && len(l.Drains) > 0 &&
 		l.Role == loaders.RoleConsume && l.InboundSource != "" &&

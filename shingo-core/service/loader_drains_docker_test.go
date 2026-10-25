@@ -190,3 +190,33 @@ func TestLoaderService_DrainsFromAMaintainedSourceIsTheOneRefusal(t *testing.T) 
 		t.Errorf("the refusal reads %q; it must say the boxes drain nothing from one (%q)", ErrFullsFromAnEmptiesBank, want)
 	}
 }
+
+// TestLoaderService_ADrainBoxNeedsSharedWindows: a drain moves carts into an
+// unloader's shared windows, so a box on an unloader with one spot per part is
+// refused, at create and at update, and a refused save lands nothing. The
+// drain reads the same rule off the row (dispatch.drainsAt), so a box stored
+// on a dedicated layout was kept and never pulled.
+func TestLoaderService_ADrainBoxNeedsSharedWindows(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	svc := NewLoaderService(db, nil)
+	src := drainGroup(t, db, "DRD-PRESS-OUT", 0)
+
+	if _, err := svc.CreateLoader(LoaderCreate{Name: "DRD-NEW", Role: loaders.RoleConsume,
+		Layout: loaders.LayoutDedicatedPositions, InboundSource: src.Name, Drains: leftovers}); !errors.Is(err, ErrDrainDedicatedLayout) {
+		t.Errorf("a dedicated unloader created with a box: err = %v, want ErrDrainDedicatedLayout", err)
+	}
+	id, err := svc.CreateLoader(LoaderCreate{Name: "DRD-UNL", Role: loaders.RoleConsume,
+		Layout: loaders.LayoutDedicatedPositions, InboundSource: src.Name})
+	testutil.MustNoErr(t, err, "a dedicated unloader with no box")
+	err = svc.Update(LoaderUpdate{ID: id, Name: "DRD-UNL", Layout: loaders.LayoutDedicatedPositions,
+		InboundSource: src.Name, Drains: leftovers})
+	if !errors.Is(err, ErrDrainDedicatedLayout) {
+		t.Errorf("a box ticked on a dedicated unloader: err = %v, want ErrDrainDedicatedLayout", err)
+	}
+	got, err := db.GetLoader(id)
+	testutil.MustNoErr(t, err, "re-read")
+	if len(got.Drains) != 0 {
+		t.Errorf("a refused save stored the boxes %v", got.Drains)
+	}
+}

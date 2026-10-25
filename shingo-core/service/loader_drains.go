@@ -36,6 +36,12 @@ var ErrDrainProduce = errors.New("only an unloader drains carts from its inbound
 // there is nothing for them to drain.
 var ErrDrainNoSource = errors.New("an unloader drains the carts that land in its inbound source, and this one has none (it is fed directly, or no source is named): name an inbound source or untick the drain boxes")
 
+// ErrDrainDedicatedLayout refuses a drain box on an unloader with one spot per
+// part: a drain moves carts into an unloader's shared windows, and the drain
+// reads the layout off the row (dispatch.drainsAt), so a box stored here would
+// be shown and pull nothing.
+var ErrDrainDedicatedLayout = errors.New("an unloader drains carts into its shared windows, and this one has one spot per part: drains need the shared-window layout")
+
 // ErrDrainTwoStage refuses a drain box on either half of a two-stage unloader:
 // stage 2's windows are its own pull's (dispatch PullStage2), and stage 1's CLEAR
 // stamps the cart bare, so neither has a window a drained cart could take.
@@ -67,6 +73,9 @@ func (s *LoaderService) checkDrains(l *loaders.Loader) error {
 	if l.InboundSource == "" {
 		return ErrDrainNoSource
 	}
+	if l.Layout != loaders.LayoutSharedWindow {
+		return ErrDrainDedicatedLayout
+	}
 	if l.SecondStageLoaderID != nil {
 		return ErrDrainTwoStage
 	}
@@ -80,6 +89,16 @@ func (s *LoaderService) checkDrains(l *loaders.Loader) error {
 		}
 	}
 	return s.checkDrainLoop(l.InboundSource, l.OutboundDest)
+}
+
+// DrainAllowed reports whether a drain box may be ticked on l as it is stored:
+// the save's own test (checkDrains) asked with one box on. The page draws the
+// boxes where this says yes, so the rule is spelled once, here. A loader, or an
+// unloader with no inbound source, reads nothing; any other unloader reads what
+// the save would.
+func (s *LoaderService) DrainAllowed(l loaders.Loader) bool {
+	l.Drains = loaders.DrainStates{loaders.Drainable[0]}
+	return s.checkDrains(&l) == nil
 }
 
 // checkDrainLoop refuses an outbound destination, or its overflow destination

@@ -731,15 +731,17 @@ await (async function settingsSaveThroughTheApi() {
     check('a rename carries board_hides_idle through, not flattened', off.board_hides_idle === true && off.board_shows_all_parts === false);
 })();
 
-// The four drain boxes (W14). Beside Accept partials on a single unloader that
-// has an inbound source, with the owner's labels and two help lines; each box
-// saves as ticked; the set round-trips, and saving any other setting sends it
-// back unchanged (the update is a full-row write, so a flattened set would
-// untick every box on the next rename).
+// The four drain boxes (W14). Beside Accept partials on a single unloader where
+// the list says a box holds (drain_allowed), with the owner's labels and two
+// help lines; each box saves as ticked; the set round-trips, and saving any
+// other setting sends it back unchanged (the update is a full-row write, so a
+// flattened set would untick every box on the next rename).
 (function drainBoxes() {
     const h = load({ auth: true });
     h.set("binTypeCatalog = []");
-    const item = function (l) { return { loader: l, homes: [], payloads: [], window_bin_types: {} }; };
+    const item = function (l, allowed) {
+        return { loader: l, homes: [], payloads: [], window_bin_types: {}, drain_allowed: allowed !== false };
+    };
     const html = h.ctx.settingsHtml(item(unloader({ inbound_source: 'PRESS-OUT' })), null);
     ['Drain empty bins', 'Drain tops &amp; bottoms', 'Drain leftover totes (not a whole layer)',
         'Drain tote bins with an unverified count',
@@ -756,14 +758,18 @@ await (async function settingsSaveThroughTheApi() {
     check('each box is a row that saves as ticked',
         (html.match(/data-action-change="saveStationSetting" data-loader-id="20" data-field="drain-/g) || []).length === 4);
 
-    const shape = function (l) { return h.ctx.formShape(h.ctx.formStateFromLoader(l)); };
-    check('no boxes on a loader, on a pair, or on an unloader with no source',
-        !shape(loader({ inbound_source: 'IN-G' })).drains &&
-        !shape(unloader({ inbound_source: 'IN-G', second_stage_loader_id: 8 })).drains && !shape(unloader()).drains);
-    check('no boxes on one spot per part (nothing drains there)',
-        !shape(unloader({ inbound_source: 'IN-G', layout: 'dedicated_positions' })).drains);
-    check('a ticked box stays drawn when its source is gone, so it can be unticked',
-        shape(unloader({ drain_states: ['leftover'] })).drains === true);
+    const shape = function (it) { return h.ctx.formShape(h.ctx.formStateFromItem(it)); };
+    check('no boxes on a loader, on a pair, or where the server says a box cannot hold',
+        !shape(item(loader({ inbound_source: 'IN-G' }), true)).drains &&
+        !shape(item(unloader({ inbound_source: 'IN-G', second_stage_loader_id: 8 }), true)).drains &&
+        !shape(item(unloader({ inbound_source: 'IN-G' }), false)).drains);
+    check('boxes where the server says a box holds (drain_allowed)',
+        shape(item(unloader({ inbound_source: 'IN-G' }), true)).drains === true);
+    check('the layout and the source are the server\'s question, not re-spelled here',
+        shape(item(unloader({ inbound_source: 'IN-G', layout: 'dedicated_positions' }), true)).drains === true &&
+        shape(item(unloader(), true)).drains === true);
+    check('a ticked box stays drawn where the server says no, so it can be unticked',
+        shape(item(unloader({ drain_states: ['leftover'] }), false)).drains === true);
 
     const stored = unloader({ inbound_source: 'PRESS-OUT', outbound_dest: 'EMPTIES', drain_states: ['unverified', 'empty'] });
     const on = h.ctx.settingsHtml(item(stored), null);

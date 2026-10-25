@@ -129,10 +129,11 @@ function formShape(state) {
     partials: saved && unloader,
     autoPush: saved && unloader,
     // The drain boxes drain what lands in an unloader's inbound source into
-    // its shared windows: asked of a single unloader with one (the service
-    // refuses a box on a loader, a pair, or with no source). A ticked box
-    // stays drawn whatever else changed, so it can always be unticked.
-    drains: saved && unloader && !pair && ((!dedicated && !!state.inbound) || (state.drains || []).length > 0),
+    // its shared windows: drawn where the server says a box would be kept
+    // (the list's drain_allowed, the save's own test), on a single unloader;
+    // the page does not spell the rule again. A ticked box stays drawn
+    // whatever else changed, so it can always be unticked.
+    drains: saved && unloader && !pair && (!!state.drainAllowed || (state.drains || []).length > 0),
     fedDirectly: saved,
     // An unloader drains when a window is cleared; only a loader has a supply
     // mode to choose, and only a loader has a changeover card to commandeer.
@@ -304,6 +305,15 @@ function formStateFromLoader(l) {
     inbound: l.inbound_source || '',
     outbound: l.outbound_dest || '',
   };
+}
+
+// formStateFromItem is a listed station's state: its row, and the server's
+// answer to whether a drain box would be kept on it (drain_allowed), which the
+// page asks rather than spells.
+function formStateFromItem(item) {
+  const state = formStateFromLoader(item.loader);
+  state.drainAllowed = !!item.drain_allowed;
+  return state;
 }
 
 // loaderPayload is the update body of a state. /api/loader/update is a
@@ -838,7 +848,7 @@ function supplyHtml(state) {
 }
 
 function settingsHtml(item, s2) {
-  const state = formStateFromLoader(item.loader);
+  const state = formStateFromItem(item);
   const shape = formShape(state);
   const lid = state.id;
   const pair = !!s2;

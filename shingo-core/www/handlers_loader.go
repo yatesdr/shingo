@@ -29,6 +29,7 @@ func loaderWriteStatus(err error) int {
 func drainRefusal(err error) bool {
 	return errors.Is(err, service.ErrDrainProduce) || errors.Is(err, service.ErrDrainNoSource) ||
 		errors.Is(err, service.ErrDrainTwoStage) || errors.Is(err, service.ErrDrainIntoItsSource) ||
+		errors.Is(err, service.ErrDrainDedicatedLayout) ||
 		errors.Is(err, service.ErrNotDrainable)
 }
 
@@ -423,6 +424,9 @@ func (h *Handlers) apiListLoaders(w http.ResponseWriter, _ *http.Request) {
 		out = append(out, map[string]any{
 			"loader": l, "payloads": payloads, "homes": homes,
 			"quota": quota, "window_bin_types": windowBinTypes,
+			// Whether a drain box may be ticked here, as the save would answer
+			// (LoaderService.DrainAllowed): the page draws the boxes from it.
+			"drain_allowed": svc.DrainAllowed(l),
 		})
 	}
 	h.jsonOK(w, map[string]any{"loaders": out})

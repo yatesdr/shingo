@@ -145,3 +145,45 @@ func TestLoaderUpdate_TickingABoxDrainsAtOnce(t *testing.T) {
 		t.Errorf("ticking the empty box made drain moves %v, want one to %s at once", got, window.Name)
 	}
 }
+
+// TestLoaderList_SaysWhereADrainBoxHolds: the list ships the save's own answer
+// to "may a drain box be ticked here" (drain_allowed), so the page draws the
+// boxes from it instead of re-spelling the rule: yes on a shared-window
+// unloader with an inbound source; no on one with one spot per part, on one
+// with no source, and on a loader.
+func TestLoaderList_SaysWhereADrainBoxHolds(t *testing.T) {
+	t.Parallel()
+	h, db := testHandlers(t)
+	src := &nodes.Node{Name: "DRL-PRESS-OUT", Enabled: true}
+	testutil.MustNoErr(t, db.CreateNode(src), "the inbound source")
+	mk := func(name, role, layout, source string) int64 {
+		t.Helper()
+		id, err := db.CreateLoader(loaders.Loader{Name: name, Role: role, Layout: layout,
+			Replenishment: loaders.ReplenishmentOperator, InboundSource: source})
+		testutil.MustNoErr(t, err, name)
+		return id
+	}
+	want := map[int64]bool{
+		mk("DRL-SHARED", loaders.RoleConsume, loaders.LayoutSharedWindow, src.Name):          true,
+		mk("DRL-DEDICATED", loaders.RoleConsume, loaders.LayoutDedicatedPositions, src.Name): false,
+		mk("DRL-NO-SOURCE", loaders.RoleConsume, loaders.LayoutSharedWindow, ""):             false,
+		mk("DRL-LOADER", loaders.RoleProduce, loaders.LayoutSharedWindow, src.Name):          false,
+	}
+	rec := httptest.NewRecorder()
+	h.apiListLoaders(rec, httptest.NewRequest(http.MethodGet, "/api/loader/list", nil))
+	var body struct {
+		Loaders []struct {
+			Loader struct {
+				ID   int64  `json:"id"`
+				Name string `json:"name"`
+			} `json:"loader"`
+			DrainAllowed bool `json:"drain_allowed"`
+		} `json:"loaders"`
+	}
+	testutil.MustNoErr(t, json.Unmarshal(rec.Body.Bytes(), &body), "decode the list")
+	for _, l := range body.Loaders {
+		if w, ok := want[l.Loader.ID]; ok && l.DrainAllowed != w {
+			t.Errorf("%s: drain_allowed = %v, want %v", l.Loader.Name, l.DrainAllowed, w)
+		}
+	}
+}
