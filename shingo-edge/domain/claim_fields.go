@@ -171,9 +171,11 @@ func ClaimInputHas(in NodeClaimInput, f flowspec.Field) bool {
 //
 // Not the others either: two_robot, two_robot_press_index and manual_swap
 // carry Forbidden entries that only the editor enforces today (D7, pinned in
-// TestFlowspecMatchesValidateNodeClaim), and widening this list is a behaviour
-// change with its own commit and its own plant query — a populated field the
-// store starts refusing is a claim that refuses to re-save.
+// TestFlowspecMatchesValidateNodeClaim; the two paired positions excepted,
+// which the store's save drops on a mode that names none rather than refusing,
+// NodeClaimInput.SavedPairs), and widening this list is a behaviour change
+// with its own commit and its own plant query — a populated field the store
+// starts refusing is a claim that refuses to re-save.
 func StrictSteadyModes() []protocol.SwapMode {
 	return []protocol.SwapMode{protocol.SwapModeSingleRobot}
 }

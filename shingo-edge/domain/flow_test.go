@@ -22,7 +22,7 @@ import (
 // and nothing in any column it does not — the shape an unlocked cell
 // round-trips through.
 func fullClaim(mode protocol.SwapMode, role protocol.ClaimRole) NodeClaim {
-	return NodeClaim{
+	c := NodeClaim{
 		ID: 41, StyleID: 7, CoreNodeName: "PLN_01", Role: role, SwapMode: mode,
 		PayloadCode: "SYN-A-P002", PairedCoreNode: "PLN_02", SecondPairedCoreNode: "PLN_03",
 		InboundSource: "Supermarket Empty Totes", InboundStaging: "PLN_02", OutboundStaging: "PLN_05",
@@ -31,6 +31,10 @@ func fullClaim(mode protocol.SwapMode, role protocol.ClaimRole) NodeClaim {
 		ReorderPointSource: "legacy", ChangeoverCarryoverDisposition: CarryoverReplace,
 		Sequence: 3, Source: ClaimSourceAdmin, CalledBy: "engineer",
 	}
+	// A mode that names no paired position stores none (SavedPairs), so the
+	// claim of that mode a save can hold carries none.
+	c.PairedCoreNode, c.SecondPairedCoreNode = InputFromClaim(c).SavedPairs()
+	return c
 }
 
 // claimColumnsEqual compares two claims on every column the INSERT writes —

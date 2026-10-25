@@ -674,6 +674,32 @@ func ValidateNodeClaim(in NodeClaimInput, nodeCtx ClaimNodeContext) []FieldError
 	return out
 }
 
+// SavedPairs is the claim's paired and second paired positions as the save
+// stores them: as sent on a mode whose flowspec row names the paired position
+// (two_robot_press_index, its index positions; sequential, its partner), and
+// blank on every other mode. The store's write (processes.UpsertClaim) and its
+// model (MaterializeClaim) both take them from here.
+//
+// WHY THE SAVE DROPS THEM RATHER THAN LEAVING THEM. The Edge's chain asks the
+// mode (NodeClaim.DependentPositions: a press-index claim's positions, none for
+// any other mode), while Core's FedClaimSQL, the SEND BACK line and every
+// mode-blind reader of the column (Positions, the cell picture, the bins watch
+// list, isInactivePairedNode) ask only whether a paired position is filled in.
+// A paired name left on a two_robot claim read as a press fed from behind at
+// Core and as nothing on the Edge's chain. Dropped here, the stored shape and
+// the mode agree by construction, so FedClaimSQL is DependentPositions
+// (store.TestFedShapeIsTheDependentPositions_ThroughTheSave). The editor already
+// cleared the two fields on a mode change (flowspec Forbidden); this is the
+// same answer for every other writer. A strict mode refuses the value before
+// this is asked (SteadyViolations), as D4 rules; rows stored before the rule
+// were cleared once by the Edge's upgrade (clear_paired_positions_a_mode_names_none).
+func (in NodeClaimInput) SavedPairs() (paired, second string) {
+	if flowspec.Steady(in.Role, in.SwapMode)[flowspec.PairedCoreNode] == flowspec.Forbidden {
+		return "", ""
+	}
+	return in.PairedCoreNode, in.SecondPairedCoreNode
+}
+
 // HasErrors reports whether any finding is a refusal rather than advice.
 func HasErrors(findings []FieldError) bool {
 	for _, f := range findings {

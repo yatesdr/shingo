@@ -1931,7 +1931,51 @@ func edgeMigrations() []migrate.Migration {
 				return err == nil && n == 1
 			},
 		},
+		{
+			// The claim save stores a paired and a second paired position only
+			// on a mode whose flowspec row names the paired position
+			// (domain.NodeClaimInput.SavedPairs). This is that rule applied once
+			// to the rows stored before it: on every other mode both are
+			// cleared, and each claim cleared is logged by its node. Core's
+			// FedClaimSQL read such a row as a press fed from behind while the
+			// Edge's chain (DependentPositions) found no dependent position.
+			//
+			// The two mode names are literals: a migration is a frozen copy of
+			// what it did on the day it ran. Data only; no Verify, as v13.
+			Version: 29,
+			Name:    "clear_paired_positions_a_mode_names_none",
+			Fn:      clearPairedPositionsAModeNamesNone,
+		},
 	}
+}
+
+// clearPairedPositionsAModeNamesNone is migration v29's body: every claim whose
+// mode is neither two_robot_press_index nor sequential and that holds a paired
+// or a second paired position is logged by node, then both are cleared.
+func clearPairedPositionsAModeNamesNone(tx *sql.Tx) error {
+	const stale = `swap_mode NOT IN ('two_robot_press_index', 'sequential')
+		AND (paired_core_node <> '' OR second_paired_core_node <> '')`
+	rows, err := tx.Query(`SELECT style_id, core_node_name, swap_mode, paired_core_node, second_paired_core_node
+		FROM style_node_claims WHERE ` + stale + ` ORDER BY id`)
+	if err != nil {
+		return err
+	}
+	for rows.Next() {
+		var styleID int64
+		var node, mode, paired, second string
+		if err := rows.Scan(&styleID, &node, &mode, &paired, &second); err != nil {
+			rows.Close()
+			return err
+		}
+		log.Printf("store: upgrade cleared the paired positions (%q, %q) of the %s claim on %s (style %d): its mode names none",
+			paired, second, mode, node, styleID)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	_, err = tx.Exec(`UPDATE style_node_claims SET paired_core_node = '', second_paired_core_node = '' WHERE ` + stale)
+	return err
 }
 
 // backfillRoutingSetsOnce is migration v25's body: for every live process

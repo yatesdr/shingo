@@ -386,7 +386,9 @@ type NodeClaim struct {
 	// Nothing in the name says which, so read the mode before reading the
 	// field. claim_validation.go refuses the one case that is wrong under both
 	// readings — a pair whose two positions are the same node — but every other
-	// site carries the overload silently. See docs/terminology.md.
+	// site carries the overload silently. See docs/terminology.md. On every
+	// other mode the save stores it, and SecondPairedCoreNode, blank
+	// (NodeClaimInput.SavedPairs).
 	PairedCoreNode string `json:"paired_core_node"`
 	// SecondPairedCoreNode is the optional third (back-most) position for
 	// two_robot_press_index. When set, the layout is C → B → A and R1's
@@ -684,11 +686,12 @@ func PositionClaimFromParent(parent *NodeClaim, coreNodeName string) *NodeClaim 
 // UNGATED BY SWAP MODE, deliberately. A claim occupies the nodes it names,
 // whatever mode it runs. A two_robot_press_index claim names its index
 // positions behind the front; a sequential claim names its partner in
-// PairedCoreNode too (claim_validation.go requires it), and a stale paired name
-// can survive on any mode, so this is not "the front node" for every other
-// mode. A caller that needs only the positions a swap works from asks
-// DependentPositions, which carries the mode gate; folding a gate in here would
-// make one function answer two questions.
+// PairedCoreNode too (claim_validation.go requires it), so this is not "the
+// front node" for every other mode. (No other mode's row is stored with a
+// paired name: the save drops it, NodeClaimInput.SavedPairs; a claim built in
+// memory can still carry one.) A caller that needs only the positions a swap
+// works from asks DependentPositions, which carries the mode gate; folding a
+// gate in here would make one function answer two questions.
 //
 // Nil-safe: a claim that does not exist occupies nothing, which removes a nil
 // check from every call site rather than moving it. Returns nil rather than an
@@ -732,7 +735,9 @@ func (c *NodeClaim) IsPressIndex() bool {
 // its own line: the extension positions of a press-index claim, which its
 // index leg lifts from and its refill sets down on, and none for every other
 // mode. A sequential claim's partner is its own claim's line, in no step this
-// claim's swap builds, and a paired name on any other mode is stale.
+// claim's swap builds, and on any other mode the save stores no paired name
+// (NodeClaimInput.SavedPairs), so over stored claims this is Core's FedClaimSQL
+// (store.TestFedShapeIsTheDependentPositions_ThroughTheSave).
 //
 // It is ExtensionPositions behind the mode gate, the pair nine sites wrote by
 // hand. The definition is pinned to the step builders, not called into them:

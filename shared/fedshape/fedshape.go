@@ -10,9 +10,16 @@
 // SEND BACK serves are the line's own test (domain.SendBackLine), not this
 // one's.
 //
+// The shape is mode-blind and the table carries no mode: the Edge's claim save
+// stores no paired position on a mode that names none, so a row of the table
+// is a claim as the save stores it, and the Edge's mode-gated definition
+// (NodeClaim.DependentPositions) answers every case the same
+// (store.TestFedShapeIsTheDependentPositions_ThroughTheSave, which names the
+// mode each case is saved under).
+//
 // It lives in shared/ for the reason loadervectors does: the one module both
-// shingo-core and shingo-edge import. ADDING A CASE: add it here and both
-// sides must satisfy it.
+// shingo-core and shingo-edge import. ADDING A CASE: add it here, name the
+// mode the Edge saves it under in that test, and both sides must satisfy it.
 package fedshape
 
 import (

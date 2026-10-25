@@ -462,14 +462,15 @@ func MaterializeClaim(in NodeClaimInput, prior *NodeClaim) NodeClaim {
 	c.AllowedPayloadCodes = cloneStrings(in.AllowedPayloadCodes)
 	c.AutoRequestPayload = in.AutoRequestPayload
 	c.EvacuateOnChangeover = in.EvacuateOnChangeover
-	c.PairedCoreNode = in.PairedCoreNode
+	// The two paired positions as the save stores them: none on a mode that
+	// names none.
+	c.PairedCoreNode, c.SecondPairedCoreNode = in.SavedPairs()
 	// A loader's deliveries auto-confirm whatever the claim says: a forklift
 	// window has nobody at a screen to confirm one. Asked BY NAME — this is a
 	// node-kind question, and the drift guard in protocol/ is right that a raw
 	// mode comparison here is a second derivation of it.
 	c.AutoConfirm = in.AutoConfirm || in.IsLoaderNode()
 	c.LinesideSoftThreshold = in.LinesideSoftThreshold
-	c.SecondPairedCoreNode = in.SecondPairedCoreNode
 	c.ReuseCompatibleBins, c.AutoPush, c.StrictPack = in.ReuseCompatibleBins, in.AutoPush, in.StrictPack
 	// The twelve pointer-gated columns: spoken or left alone.
 	if in.ReorderPointSource != nil {

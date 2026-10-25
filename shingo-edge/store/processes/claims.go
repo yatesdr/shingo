@@ -526,7 +526,8 @@ func IsPairedOnDeckNode(db *sql.DB, processID int64, coreNodeName string) (bool,
 
 // UpsertClaim inserts or updates a claim and returns the row id. Validates
 // role/swap_mode invariants (manual_swap claims must auto-confirm and
-// must declare an outbound destination).
+// must declare an outbound destination), and stores no paired position on a
+// mode that names none (domain.NodeClaimInput.SavedPairs).
 //
 // It does NOT run the dedicated-spot check: that is a property of the whole
 // table, so it runs once at the end of the caller's transaction
@@ -565,8 +566,7 @@ func upsertClaim(db DBTX, kinds domain.CoreNodeKinds, in NodeClaimInput) (int64,
 	// Trimmed here so no caller can bypass it.
 	// Internal write path; silent trim, no warning log.
 	in.CoreNodeName = strings.TrimSpace(in.CoreNodeName)
-	in.PairedCoreNode = strings.TrimSpace(in.PairedCoreNode)
-	in.SecondPairedCoreNode = strings.TrimSpace(in.SecondPairedCoreNode)
+	in.PairedCoreNode, in.SecondPairedCoreNode = strings.TrimSpace(in.PairedCoreNode), strings.TrimSpace(in.SecondPairedCoreNode)
 	in.ContainmentDestination = strings.TrimSpace(in.ContainmentDestination)
 	in.PartialDestination = strings.TrimSpace(in.PartialDestination)
 
@@ -640,6 +640,10 @@ func upsertClaim(db DBTX, kinds domain.CoreNodeKinds, in NodeClaimInput) (int64,
 	if err := modeArmViolation(in); err != nil {
 		return 0, nil, err
 	}
+	// A paired position on a mode that names none is not stored
+	// (domain.NodeClaimInput.SavedPairs). After the arms, so a strict mode's
+	// refusal of the field (D4) is still the answer a single_robot claim gets.
+	in.PairedCoreNode, in.SecondPairedCoreNode = in.SavedPairs()
 	// No leg names a lane. Asked of the input, before any statement: a claim
 	// that already names one is refused on its next write of any kind, until
 	// the leg is fixed.

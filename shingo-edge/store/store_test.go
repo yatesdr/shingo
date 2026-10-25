@@ -3,6 +3,7 @@ package store
 import (
 	"database/sql"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -12,6 +13,7 @@ import (
 
 	"shingo/protocol"
 	"shingo/protocol/testutil"
+	"shingo/shared/fedshape"
 	"shingoedge/domain"
 	"shingoedge/domain/flowspec"
 	"shingoedge/store/catalog"
@@ -1691,6 +1693,120 @@ func TestStoreStillAcceptsWhatFlowspecRefuses(t *testing.T) {
 	} {
 		if _, err := db.UpsertStyleNodeClaim(domain.CoreNodeKinds{}, in); err != nil {
 			t.Errorf("D4 (sequential) resolved at the store: %s refused (%v) — flip this case in the commit that did it", in.CoreNodeName, err)
+		}
+	}
+}
+
+// TestUpsertClaim_StoresNoPairOnAModeThatNamesNone: the save stores a claim's
+// paired and second paired positions only on a mode whose flowspec row names
+// the paired position (two_robot_press_index: its index positions; sequential:
+// its partner). A two_robot claim sent both stores neither, on its insert and
+// on the next save of a row stored before the rule; the model of the write
+// (domain.MaterializeClaim) says the same. The two modes that pair keep what
+// they were sent. A single_robot claim sent one is refused before the rule is
+// asked (D4, TestUpsertClaim_EnforcesFlowspec).
+func TestUpsertClaim_StoresNoPairOnAModeThatNamesNone(t *testing.T) {
+	t.Parallel()
+	db := coverageDB(t)
+	_, sid := seedProcessStyle(t, db, "PAIRS", "PAIRS")
+	for _, tc := range []struct {
+		in             processes.NodeClaimInput
+		paired, second string
+	}{
+		{processes.NodeClaimInput{StyleID: sid, CoreNodeName: "TR", SwapMode: protocol.SwapModeTwoRobot, PayloadCode: "PL",
+			InboundStaging: "IN", OutboundDestination: "OD", PairedCoreNode: "TR-B", SecondPairedCoreNode: "TR-C"}, "", ""},
+		{processes.NodeClaimInput{StyleID: sid, CoreNodeName: "PI", SwapMode: protocol.SwapModeTwoRobotPressIndex, PayloadCode: "PL",
+			OutboundDestination: "OD", PairedCoreNode: "PI-B", SecondPairedCoreNode: "PI-C"}, "PI-B", "PI-C"},
+		{processes.NodeClaimInput{StyleID: sid, CoreNodeName: "SQ", SwapMode: protocol.SwapModeSequential, PayloadCode: "PL",
+			OutboundDestination: "OD", InboundSource: "SRC", PairedCoreNode: "SQ-B"}, "SQ-B", ""},
+	} {
+		id, err := db.UpsertStyleNodeClaim(domain.CoreNodeKinds{}, tc.in)
+		testutil.MustNoErr(t, err, string(tc.in.SwapMode)+" save")
+		got, err := db.GetStyleNodeClaim(id)
+		testutil.MustNoErr(t, err, string(tc.in.SwapMode)+" read")
+		if got.PairedCoreNode != tc.paired || got.SecondPairedCoreNode != tc.second {
+			t.Errorf("%s sent %q/%q: stored %q/%q, want %q/%q", tc.in.SwapMode, tc.in.PairedCoreNode, tc.in.SecondPairedCoreNode,
+				got.PairedCoreNode, got.SecondPairedCoreNode, tc.paired, tc.second)
+		}
+		if m := domain.MaterializeClaim(tc.in, nil); m.PairedCoreNode != tc.paired || m.SecondPairedCoreNode != tc.second {
+			t.Errorf("%s: the model of the write (MaterializeClaim) holds %q/%q, want %q/%q", tc.in.SwapMode,
+				m.PairedCoreNode, m.SecondPairedCoreNode, tc.paired, tc.second)
+		}
+	}
+	// A row stored before the rule, re-saved as the replenishment page echoes it.
+	_, err := db.Exec(`UPDATE style_node_claims SET paired_core_node = 'TR-B', second_paired_core_node = 'TR-C'
+		WHERE style_id = ? AND core_node_name = 'TR'`, sid)
+	testutil.MustNoErr(t, err, "a stale row")
+	stale, err := db.GetStyleNodeClaimByNode(sid, "TR")
+	testutil.MustNoErr(t, err, "read the stale row")
+	_, err = db.UpsertStyleNodeClaim(domain.CoreNodeKinds{}, domain.InputFromClaimUngated(*stale))
+	testutil.MustNoErr(t, err, "re-save the stale row")
+	if again, err := db.GetStyleNodeClaimByNode(sid, "TR"); err != nil || again.PairedCoreNode != "" || again.SecondPairedCoreNode != "" {
+		t.Errorf("a stale two_robot row re-saved holds %+v (%v), want no paired position", again, err)
+	}
+}
+
+// TestFedShapeIsTheDependentPositions_ThroughTheSave: over the shared table
+// (shared/fedshape), each case's claims saved through the store under the mode
+// the Edge runs it in, the shape Core reads (domain.FedShape, the Go twin of
+// bins.FedClaimSQL, both pinned to the same table) and the Edge chain's
+// mode-gated positions (NodeClaim.DependentPositions) give the case's answer,
+// so FedClaimSQL and DependentPositions agree over every case. The table's
+// row is what the save stores: its stale case is a two_robot claim sent a
+// paired position, which the save drops (NodeClaimInput.SavedPairs).
+//
+// ADDING A CASE to the table: name the mode the Edge saves it under in
+// edgeMode; a case with none fails here.
+func TestFedShapeIsTheDependentPositions_ThroughTheSave(t *testing.T) {
+	t.Parallel()
+	db := coverageDB(t)
+	edgeMode := map[string]protocol.SwapMode{
+		"two-position":                        protocol.SwapModeTwoRobotPressIndex,
+		"three-position":                      protocol.SwapModeTwoRobotPressIndex,
+		"sequential":                          protocol.SwapModeSequential,
+		"consume":                             protocol.SwapModeTwoRobotPressIndex,
+		"blank paired":                        protocol.SwapModeTwoRobot,
+		"stale paired, as the save stores it": protocol.SwapModeTwoRobot,
+	}
+	// What the writer sent the stale case's claim, before the save.
+	sent := map[string]string{"stale paired, as the save stores it": "OUT"}
+	for i, c := range fedshape.MustLoad() {
+		mode, ok := edgeMode[c.Name]
+		if !ok {
+			t.Errorf("%s: no Edge mode for this case; name the mode it is saved under in edgeMode", c.Name)
+			continue
+		}
+		_, sid := seedProcessStyle(t, db, fmt.Sprintf("FSV-%d", i), fmt.Sprintf("FSV-%d", i))
+		for _, cl := range c.Claims {
+			in := processes.NodeClaimInput{StyleID: sid, CoreNodeName: cl.Node, Role: protocol.ClaimRole(cl.Role),
+				SwapMode: mode, PayloadCode: "FSV-PART", InboundSource: "FSV-SRC", OutboundDestination: "FSV-OD",
+				PairedCoreNode: cl.Paired, SecondPairedCoreNode: cl.SecondPaired}
+			if mode == protocol.SwapModeTwoRobot {
+				in.InboundStaging = "FSV-IN"
+			}
+			if p, ok := sent[c.Name]; ok && cl.Node == c.Ask {
+				in.PairedCoreNode = p
+			}
+			_, err := db.UpsertStyleNodeClaim(domain.CoreNodeKinds{}, in)
+			testutil.MustNoErr(t, err, c.Name+": save "+cl.Node)
+		}
+		stored, err := db.ListStyleNodeClaims(sid)
+		testutil.MustNoErr(t, err, c.Name+": read back")
+		byNode := map[string]processes.NodeClaim{}
+		for _, s := range stored {
+			byNode[s.CoreNodeName] = s
+		}
+		ask, row := byNode[c.Ask], c.AskClaim()
+		if ask.PairedCoreNode != row.Paired || ask.SecondPairedCoreNode != row.SecondPaired {
+			t.Errorf("%s: the save stored %q/%q, the table's row is %q/%q", c.Name,
+				ask.PairedCoreNode, ask.SecondPairedCoreNode, row.Paired, row.SecondPaired)
+		}
+		_, claimed := byNode[ask.PairedCoreNode]
+		fed := domain.FedShape(ask.PairedCoreNode, ask.PairedCoreNode != "" && claimed)
+		dependent := len(ask.DependentPositions()) > 0
+		if fed != c.WantFed || dependent != c.WantFed {
+			t.Errorf("%s (%s): FedShape = %v, DependentPositions = %v, want both %v\nwhy this case exists: %s",
+				c.Name, mode, fed, ask.DependentPositions(), c.WantFed, c.Why)
 		}
 	}
 }

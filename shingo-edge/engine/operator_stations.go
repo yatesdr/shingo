@@ -101,8 +101,8 @@ func (e *Engine) claimOccupancy(claim *processes.NodeClaim) cellRead {
 	// names asked about and isOccupied treats a missing key as occupied, so
 	// dropping a blank head here would change a suppressing answer into a
 	// permissive one. The extensions come from the claim's geometry, and only
-	// for a press — a stale PairedCoreNode on some other mode is not a position
-	// this cell occupies and must not be queried.
+	// for a press — a sequential partner is its own claim's line, not a
+	// position this cell's swap works, and must not be queried.
 	names := append([]string{claim.CoreNodeName}, claim.DependentPositions()...)
 	// A KEEP-STAGED CLAIM ASKS ABOUT ITS SPOT IN THE SAME READ: one more name.
 	// The spot's row is kept whole (whether a bin stands there and what it

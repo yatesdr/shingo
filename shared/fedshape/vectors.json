@@ -68,5 +68,17 @@
   ],
   "ask": "PRESS",
   "want_fed": false
+ },
+ {
+  "name": "stale paired, as the save stores it",
+  "why": "A claim on a mode that names no paired position (two_robot here) sent one anyway: the Edge claim save drops it (domain NodeClaimInput.SavedPairs), so the row Core mirrors carries none and has no outside, and the Edge chain finds no dependent position either. Before the save rule the row kept the name, Core read the claim as fed and the Edge chain did not.",
+  "claims": [
+   {
+    "node": "PRESS",
+    "role": "produce"
+   }
+  ],
+  "ask": "PRESS",
+  "want_fed": false
  }
 ]
