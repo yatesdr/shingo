@@ -80,7 +80,7 @@ type cellRead struct {
 	// line and its dependent positions.
 	occupancy map[string]bool
 	// deck is the row the table answered for each dependent position (what
-	// stands there, for ChainReadiness); a position it could not answer for
+	// stands there, for chainReadiness); a position it could not answer for
 	// has none.
 	deck map[string]protocol.NodeBinsRow
 	spot spotRead

@@ -267,7 +267,7 @@ func (a *Allocator) reserveComplexPlan(order *orders.Order, plan *ComplexPlan) (
 	for _, pk := range pickups {
 		// 1. Reuse a held bin that already satisfies this pickup (same node, same
 		//    empty-status). Owner-aware — does not go through BinUnavailableReason.
-		if hb := matchHeldToNeed(held, pk.step); hb != nil {
+		if hb := matchHeldToNeed(held, pk.step, pk.kind); hb != nil {
 			hb.used = true
 			assigned = append(assigned, reservedPickup{
 				stepIndex: pk.stepIndex, nodeName: pk.step.Node, binID: hb.binID, confirmed: hb.confirmed,
@@ -279,11 +279,11 @@ func (a *Allocator) reserveComplexPlan(order *orders.Order, plan *ComplexPlan) (
 		//    reserved bin (ours and others'), so we only ever Acquire an UNreserved
 		//    bin, which cannot self-conflict.
 		//
-		//    A removal/evac pickup (at the order's own line node) binds by NODE,
-		//    payload-agnostic: it clears whatever bin is resident, whose style may
-		//    legitimately differ from the node's active-style tag (a stale leftover
-		//    — SPR ALN_006, 2026-07). A supply fetch at any other node stays
-		//    payload-filtered.
+		//    It binds what the step names (rule 5): a removal/evac pickup (at the
+		//    order's own line node) by NODE, payload-agnostic — it clears whatever
+		//    bin is resident, whose style may legitimately differ from the node's
+		//    active-style tag (a stale leftover — SPR ALN_006, 2026-07); an empty
+		//    pickup an empty; a part supply stock of its part.
 		// THE STEP'S PAYLOAD WINS, and the two halves of this decision used to
 		// disagree. resolveStepNode already resolves WHICH NODE a leg goes to
 		// through plan.StepPayload (step's if set, else the order's); this passed the
@@ -501,15 +501,14 @@ func (a *Allocator) missPickup(order *orders.Order, plan *ComplexPlan, pk pickup
 	// naming a group, and this reserve held the partial set for good
 	// (carry-edge2's order 346). So a pickup that is all of: not a removal, not a
 	// relay target, at a node holding no bins, naming no bin (a named pickup
-	// holds for the bin it names), carrying no step payload (a spot pickup; a
-	// changeover's index leg, which names the part it lifts) asks where its
-	// claim draws from (dependentSource, which answers only at the outside
-	// or second paired position of a fed claim), and reanchorVacantPickup
-	// fetches from there. Either role: a produce on-deck asks for an empty, a
-	// consume one for a full of the part. Nothing is read on a pass with no
-	// such pickup.
-	if !nodeHadBins && pk.kind != pickupRemoval && !pk.potentialRelay && pk.step.BinID == 0 && pk.step.PayloadCode == "" {
-		if src := a.dependentSource(order, pk.step); src != "" {
+	// holds for the bin it names) asks where its claim draws from
+	// (dependentSource, which answers only at the outside or second paired
+	// position of a fed claim), and reanchorVacantPickup fetches from there
+	// for a steady leg (a changeover's leg waits: its episode's kind). Either
+	// role: a produce on-deck asks for an empty, a consume one for a full of
+	// the part. Nothing is read on a pass with no such pickup.
+	if !nodeHadBins && pk.kind != pickupRemoval && !pk.potentialRelay && pk.step.BinID == 0 {
+		if src, kind := a.dependentSource(order, pk.step); src != "" {
 			// A CARRIER COMING TO THE POSITION IS WAITED FOR, not fetched a
 			// second time: a prime, a SEND BACK pull, a previous pair's refill
 			// still travelling (store CarrierComingTo, the one statement; the
@@ -523,7 +522,7 @@ func (a *Allocator) missPickup(order *orders.Order, plan *ComplexPlan, pk pickup
 				a.dbg("reserve: order %d pickup at %s holds: a carrier is coming to it", order.ID, pk.step.Node)
 				return nil, reserveHoldingForOutside, nil
 			}
-			if got := a.reanchorVacantPickup(order, plan, pk.stepIndex, src); got != nil {
+			if got := a.reanchorVacantPickup(order, plan, pk.stepIndex, src, kind); got != nil {
 				return got, reserveComplete, nil
 			}
 		}
@@ -537,14 +536,16 @@ func (a *Allocator) missPickup(order *orders.Order, plan *ComplexPlan, pk pickup
 	// waiting_for_outside from the move's issue to its lift. Asked only on a
 	// miss with bins by a pickup the vacant arm above would ask about: one
 	// statement, then dependentSource only when a named move lifts there.
-	if nodeHadBins && pk.kind != pickupRemoval && !pk.potentialRelay && pk.step.BinID == 0 && pk.step.PayloadCode == "" {
+	if nodeHadBins && pk.kind != pickupRemoval && !pk.potentialRelay && pk.step.BinID == 0 {
 		lifting, err := a.db.LiveNamedMoveOff(pk.step.Node, order.ID)
 		if err != nil {
 			return nil, reserveHolding, err
 		}
-		if lifting && a.dependentSource(order, pk.step) != "" {
-			a.dbg("reserve: order %d pickup at %s holds: the carrier there is being taken away", order.ID, pk.step.Node)
-			return nil, reserveHoldingForOutside, nil
+		if lifting {
+			if src, _ := a.dependentSource(order, pk.step); src != "" {
+				a.dbg("reserve: order %d pickup at %s holds: the carrier there is being taken away", order.ID, pk.step.Node)
+				return nil, reserveHoldingForOutside, nil
+			}
 		}
 	}
 	a.logReserveMiss(order.ID, pk.stepIndex, pk.step.Node, nodeHadBins)
@@ -553,23 +554,25 @@ func (a *Allocator) missPickup(order *orders.Order, plan *ComplexPlan, pk pickup
 
 // dependentSource is where a pickup's claim draws from, when the pickup's node
 // is the outside or second paired position of a fed claim active
-// at the order's process node (store FedInboundSource: the shape and the
-// source in one statement, so a sequential partner never qualifies). Blank for
-// any other node, a claim that names no source, a pickup already at its source,
-// or a read that failed (logged; the next pass asks again).
-func (a *Allocator) dependentSource(order *orders.Order, step resolvedStep) string {
+// at the order's process node, and the kind of the order's episode (store
+// FedInboundSource: the shape, the source and the kind in one statement, so a
+// sequential partner never qualifies). Blank for any other node, a claim that
+// names no source, a pickup already at its source, or a read that failed
+// (logged; the next pass asks again). The kind is blank for an order with no
+// origin or one whose episode Core does not hold.
+func (a *Allocator) dependentSource(order *orders.Order, step resolvedStep) (src, kind string) {
 	if a.finder == nil || order.ProcessNode == "" {
-		return ""
+		return "", ""
 	}
-	src, err := a.db.FedInboundSource(order.StationID, order.ProcessNode, step.Node)
+	src, kind, err := a.db.FedInboundSource(order.StationID, order.ProcessNode, step.Node, order.OriginID)
 	if err != nil {
 		a.dbg("reserve: order %d vacant pickup at %s: read its claim's inbound source: %v", order.ID, step.Node, err)
-		return ""
+		return "", ""
 	}
 	if src == step.Node {
-		return ""
+		return "", ""
 	}
-	return src
+	return src, kind
 }
 
 // reanchorVacantPickup fetches the carrier a vacant dependent pickup names
@@ -583,8 +586,24 @@ func (a *Allocator) dependentSource(order *orders.Order, step resolvedStep) stri
 // already reserved and never found here. Nil when nothing is found or another
 // order took the carrier first: the need is then a miss as before, and the next
 // pass asks again.
-func (a *Allocator) reanchorVacantPickup(order *orders.Order, plan *ComplexPlan, stepIndex int, src string) *reservedPickup {
+//
+// A STEADY LEG'S ALONE, by its episode's kind (kind: demand_origins.kind, read
+// in dependentSource's statement). A changeover's index leg is never fetched
+// for: its changeover plans a vacant position's carrier itself, an Add from the
+// position's seat (the Edge's
+// TestChangeoverPress_AVacantOnDeckIsBroughtACarrierCoreSeesComing), so a fetch
+// here would race it for a second carrier. Nor is a leg whose kind Core cannot
+// say (no origin, or an episode Core does not hold): a changeover leg whose
+// episode read failed is born with no origin, so that is the unsure case. Not
+// by origin class: a steady REQUEST swap is attached too. Both still wait for a
+// carrier coming (TestVacantPickup_PickupsTheFallbackLeavesAlone,
+// TestVacantPickup_AChangeoversLegWaitsForACarrierComing).
+func (a *Allocator) reanchorVacantPickup(order *orders.Order, plan *ComplexPlan, stepIndex int, src, kind string) *reservedPickup {
 	step := plan.ResolvedSteps[stepIndex]
+	if kind == "" || kind == protocol.EpisodeKindChangeover {
+		a.dbg("reserve: order %d vacant pickup at %s: not fetched for a leg of episode kind %q", order.ID, step.Node, kind)
+		return nil
+	}
 	intent := IntentFull
 	if step.Empty {
 		intent = IntentEmpty
@@ -802,17 +821,18 @@ func (a *Allocator) resolveHeldReservations(rows []reservations.Reservation) []*
 // (the held bin is the order's own). Skips slot rows (the slot reconcile matches
 // those).
 //
-// Same empty-status first. Failing that, a step that is not an empty leg keeps
-// an EMPTY bin held at its node: the acquire rule takes one for it (an empty
-// bin carries no payload to mismatch, and a removal clears whatever is
-// resident), so a key that demanded equal empty-status read the order's own
-// hold as somebody else's, every pass. An empty leg never keeps a full bin;
-// the acquire rule never takes one for it. It does take a PARTIAL of the part
-// being made, to finish it (partialToFinishAt), so an empty leg keeps a held
-// bin that is not empty: that is the partial, and reading it as somebody
-// else's dropped the order's hold on it every pass and left the order pointing
-// at a bin it no longer held.
-func matchHeldToNeed(held []*heldReservation, step resolvedStep) *heldReservation {
+// Same empty-status first. Failing that, by what the pickup is (kind):
+//   - a removal keeps an EMPTY bin held at its node: it clears whatever is
+//     resident, so a key that demanded equal empty-status read the order's own
+//     hold as somebody else's, every pass;
+//   - an empty leg keeps a held bin that is not empty: the acquire rule takes
+//     a PARTIAL of the part being made, to finish it (partialToFinishAt), and
+//     reading it as somebody else's dropped the order's hold on it every pass
+//     and left the order pointing at a bin it no longer held;
+//   - a part supply keeps none: the acquire rule takes stock of its part and
+//     never an empty for it (rule 5), so an empty held at its node is a stray,
+//     released by the reconcile (TestReserveReconcile_AStockPickupKeepsNoHeldEmpty).
+func matchHeldToNeed(held []*heldReservation, step resolvedStep, kind pickupKind) *heldReservation {
 	var kept *heldReservation
 	for _, hb := range held {
 		if hb.used || hb.kind == reservations.KindSlot || hb.nodeName == "" || hb.nodeName != step.Node {
@@ -821,7 +841,7 @@ func matchHeldToNeed(held []*heldReservation, step resolvedStep) *heldReservatio
 		if hb.empty == step.Empty {
 			return hb
 		}
-		if kept == nil && hb.empty != step.Empty {
+		if kept == nil && kind != pickupPartSupply {
 			kept = hb
 		}
 	}
@@ -856,12 +876,14 @@ func isRemovalPickup(step resolvedStep, processNode string) bool {
 }
 
 // findAvailableForNeed returns the first UNRESERVED, claimable bin at the need's
-// node. Selection: a removal/evac pickup (at the order's line node) binds ANY
-// resident bin, payload-agnostic; an empty leg binds an empty carrier; otherwise a
-// payload match — the same per-step selection the old live claim path made, minus
-// the claim. Returns nil when the node has no available bin yet (the reconcile
-// counts it missing and retries).
-// nodeHadBins reports whether the node held ANY bins (before the empty/payload
+// node that answers what the step names (ground rule 5): a removal/evac pickup
+// (at the order's line node) binds ANY resident bin, payload-agnostic; an empty
+// leg binds an empty carrier, of a type the part its step names may ride when
+// it names one; a part supply binds stock of its part (binresolver.StockOnly:
+// loaded with it, confirmed, counted above 0). The same for produce and
+// consume: the kind is the step's, never the claim's role. Returns nil when the
+// node has no available bin yet (the reconcile counts it missing and retries).
+// nodeHadBins reports whether the node held ANY bins (before the empty or stock
 // filter) — the reconcile uses it to tell "genuinely empty node" (contributes to
 // a moot outcome) from "bins present but unavailable" (sourceable, hold + retry).
 //
@@ -911,9 +933,13 @@ func (a *Allocator) findAvailableForNeed(pk pickupNeed, payloadCode string) (bin
 		} else if pb != nil {
 			return pb, nodeHadBins, nil
 		}
-		// Empty pickup leg (produce's "bring an empty to fill"): an empty carrier,
-		// dropping the payload context — same filter as the old claim path —
-		// and tops & bottoms only where it may be bound (binresolver.BindableEmpties).
+		// Empty pickup leg (produce's "bring an empty to fill"): an empty
+		// carrier, and tops & bottoms only where it may be bound
+		// (binresolver.BindableEmpties). The order's part is no part of the
+		// question; the step's own is, when it names one, as the carrier its
+		// empty is for: a keep-staged produce spare, a changeover's refill that
+		// says which style its carrier is for (the carrier rule below, the one
+		// the group finders already ask of it). Naming none, any type.
 		candidates = binresolver.EmptyBinsOnly(bins)
 		if binresolver.AnyTopsAndBottoms(candidates) {
 			at, berr := a.bindAt(pk, payloadCode)
@@ -922,13 +948,17 @@ func (a *Allocator) findAvailableForNeed(pk pickupNeed, payloadCode string) (bin
 			}
 			candidates = binresolver.BindableEmpties(candidates, at)
 		}
-		claimPayload = ""
+		claimPayload = step.PayloadCode
+	case pk.kind == pickupPartSupply:
+		// A part supply: stock of its part, nothing else (rule 5). An unstamped
+		// empty is no stock, though it is no payload mismatch either.
+		candidates = binresolver.StockOnly(bins, payloadCode)
 	}
 	// The carrier rule for the part being fetched, read ONCE for this node's
 	// whole candidate list rather than per bin. claimPayload is "" on a removal
-	// or an empty leg — those fetch whatever is resident, name no part, and get
-	// the zero rule, which permits every type (LoadBinTypeRule short-circuits
-	// on the empty code and issues no query for it).
+	// and on an empty leg whose step names no part — those name no part and
+	// get the zero rule, which permits every type (LoadBinTypeRule
+	// short-circuits on the empty code and issues no query for it).
 	//
 	// Skipped entirely when there is nothing to judge. This runs per step per
 	// scanner tick and a node with no candidates is the ordinary case, so

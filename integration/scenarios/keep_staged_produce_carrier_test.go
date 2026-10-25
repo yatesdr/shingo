@@ -4,9 +4,8 @@
 // The spot holds an EMPTY of the carrier type the line is leaving: the
 // outgoing style's spare, which the changeover-start reconcile is sending back.
 // Until it goes, the incoming style's supply must not take it to the line.
-// Edge cannot tell carrier types apart — it holds no carrier rule — so the
-// supply's spot pickup names the incoming part and is never Empty, and Core
-// judges the bin against that part's carrier rule. This drives the Edge
+// The supply's spot pickup is Empty and names the incoming part, and Core takes
+// for it only an empty that part may ride (its carrier rule). This drives the Edge
 // builder's real step list through Core's complex intake and dispatch: the
 // supply holds while the old-type empty stands there, and takes the new-type
 // empty once one does.

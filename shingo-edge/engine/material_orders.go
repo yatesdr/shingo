@@ -281,18 +281,20 @@ func relayPickup(claim *processes.NodeClaim) protocol.ComplexOrderStep {
 
 // spotPickup lifts the spare standing on a keep-staged claim's spot. It is a
 // real source, not a relay, so it NAMES THE PART and Core judges the bin for
-// it: a full of another part holds the leg (the payload test in
-// binresolver.BinUnavailableReason), an empty of a carrier type the part may
-// not travel in holds it (the carrier rule, asked whenever a part is named),
-// and an unstamped empty of a permitted type is taken.
-//
-// NEVER Empty. Empty drops the part and the carrier rule with it, so it takes
-// an empty of any type; and it still refuses an empty stamped with a part,
-// because Core's empty filter keeps only a blank payload code. Both roles use
-// this one step (Core dispatch TestSpotPickup_HowTheStepFlagJudgesTheBin).
-// refillPickup is its only caller.
+// it as what the spare carries (carriesEmpty). On a consume line the spare is
+// a full, and Core takes stock of the part: a full of another part, one counted
+// to nothing and an empty hold the leg. On a produce line it is an empty, so
+// the pickup is Empty, and naming the part it asks for an empty the part may
+// ride (the carrier rule: an empty of another type holds the leg, which is how
+// a changeover's supply waits while the outgoing style's spare stands there),
+// or a partial of the part when the part has a partial home. Core binds what
+// the step says it lifts (ground rule 5), so a produce spot pickup naming the
+// part without Empty would take no empty at all. Both roles use this one step
+// (Core dispatch TestSpotPickup_HowTheStepFlagJudgesTheBin). refillPickup is
+// its only caller.
 func spotPickup(claim *processes.NodeClaim) protocol.ComplexOrderStep {
-	return protocol.ComplexOrderStep{Action: protocol.ActionPickup, Node: spotNode(claim), PayloadCode: claim.PayloadCode}
+	return protocol.ComplexOrderStep{Action: protocol.ActionPickup, Node: spotNode(claim), PayloadCode: claim.PayloadCode,
+		Empty: carriesEmpty(claim)}
 }
 
 // twoRobotSupplyTail carries the bin standing on inbound staging to the line:
@@ -498,10 +500,10 @@ func BuildTwoRobotPressIndexSwapSteps(claim *processes.NodeClaim) (orderR1, orde
 	// by the order's part. A CONSUME press-index would index
 	// FULL bins forward, so it must NOT be flagged (and doesn't occur in
 	// practice); scoping to produce also keeps the consume "full retrieve"
-	// invariant. The changeover R2 solves the same asymmetry via carriesFromPayload
-	// (§ buildPressIndexChangeoverSwap); steady-state has no from-style, so Empty
-	// is the mirror. Produce-scoped INSIDE the builder, mirroring BuildSingleSwapSteps
-	// / BuildSequentialBackfillSteps' own markInboundEmpty gate.
+	// invariant. The changeover R2 flags its on-deck pickups the same way
+	// (buildPressIndexChangeoverSwap). Produce-scoped INSIDE the builder,
+	// mirroring BuildSingleSwapSteps / BuildSequentialBackfillSteps' own
+	// markInboundEmpty gate.
 	if claim.Role == protocol.ClaimRoleProduce {
 		markPressIndexOnDeckEmpty(orderR2, claim)
 		// TWO FLAGGERS ON ONE LEG, and only under the flip.
@@ -912,32 +914,31 @@ func buildPressIndexChangeoverSwap(fromClaim, toClaim *processes.NodeClaim, tool
 		r1 = append(r1, refillPickup(fromClaim, toClaim))
 		r1 = append(r1, protocol.ComplexOrderStep{Action: "dropoff", Node: backPosition})
 	}
-	// R2's on-deck pickups name, as the step's payload, the part the leg
-	// already carries on the order (carriesFromPayload below): the outgoing
-	// style's carrier is what stands there. The answer Core's bind gives is the
-	// same (a step payload overrides the order's with the same value); what the
-	// step says is that this pickup names its part, so Core's vacant-pickup
-	// fallback never re-anchors a changeover's index leg to a carrier of the
-	// part from the inbound source (dispatch reanchorVacantPickup: a pickup
-	// carrying a step payload is excluded).
-	onDeck := func(node string) protocol.ComplexOrderStep {
-		return protocol.ComplexOrderStep{Action: "pickup", Node: node, PayloadCode: fromClaim.PayloadCode}
-	}
+	// R2's on-deck pickups are the steady-state R2's: Empty on a produce press,
+	// whose on-deck holds the empty the index carries to the press, and naming
+	// nothing on a consume one, whose index takes stock of the part the leg
+	// carries on the order, the outgoing style's (carriesFromPayload below).
+	// Core binds what the step says it lifts (ground rule 5), and it keeps a
+	// changeover's leg out of its vacant-pickup fetch by the leg's episode
+	// (dispatch reanchorVacantPickup), so the step says nothing else.
 	var r2 []protocol.ComplexOrderStep
 	if fromClaim.SecondPairedCoreNode != "" {
 		r2 = []protocol.ComplexOrderStep{
 			stationWait(fromClaim.PairedCoreNode, release.PurposeReady),
-			onDeck(fromClaim.PairedCoreNode),
+			{Action: "pickup", Node: fromClaim.PairedCoreNode},
 			{Action: "dropoff", Node: fromClaim.CoreNodeName},
-			onDeck(fromClaim.SecondPairedCoreNode),
+			{Action: "pickup", Node: fromClaim.SecondPairedCoreNode},
 			{Action: "dropoff", Node: fromClaim.PairedCoreNode},
 		}
 	} else {
 		r2 = []protocol.ComplexOrderStep{
 			stationWait(fromClaim.PairedCoreNode, release.PurposeReady),
-			onDeck(fromClaim.PairedCoreNode),
+			{Action: "pickup", Node: fromClaim.PairedCoreNode},
 			{Action: "dropoff", Node: fromClaim.CoreNodeName},
 		}
+	}
+	if fromClaim.Role == protocol.ClaimRoleProduce {
+		markPressIndexOnDeckEmpty(r2, fromClaim)
 	}
 	if fromClaim.IndexRobotSupplies {
 		// Flipped: R2 owns the supermarket trip, exactly as it does in steady
@@ -957,9 +958,11 @@ func buildPressIndexChangeoverSwap(fromClaim, toClaim *processes.NodeClaim, tool
 			evac: changeoverLeg{steps: r1, autoConfirm: true},
 			// R2 indexes the fresh tote onto the front — supply. It picks up an
 			// OLD (from-style) tote at the back position, so it carries the
-			// from-style payload; without it the removal filters for the new
-			// payload and finds no bin (ALN_001), the same defect the evac slot
-			// already guards on two_robot.
+			// from-style payload: a consume index takes stock of it there, and
+			// without it would ask for the new payload and find no bin
+			// (ALN_001), the same defect the evac slot already guards on
+			// two_robot. A produce index is Empty and takes the empty whatever
+			// part the order names.
 			//
 			// R2 drops on the press in both geometries, so confirmPolicy would
 			// want a receipt here. It auto-confirms for the reason given at the

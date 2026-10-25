@@ -34,7 +34,7 @@ type ConsumePlan struct {
 	DowngradedFromSwapMode   protocol.SwapMode // empty unless this is the case-2 downgrade
 
 	// Chain is what the dependent positions of a press need before its swap
-	// can index from them (ChainReadiness): the clears and the primes, created
+	// can index from them (chainReadiness): the clears and the primes, created
 	// ahead of the swap, or alongside the delivery to a vacant line
 	// (createClearsThenPrimes). Order tracking stays on the head node's
 	// runtime; the chain's orders are not sibling-linked.
@@ -94,7 +94,7 @@ func (p *ConsumePlan) OrderCount() int {
 // with gateLineRows. See the branch comment below.
 //
 // For a claim with dependent positions (a press), the planner asks
-// ChainReadiness of them and carries the chain (Chain: a clear per wrong
+// chainReadiness of them and carries the chain (Chain: a clear per wrong
 // carrier, a prime per position it primes) alongside the head's delivery when
 // the head is empty and ahead of the swap when it is not. Entries missing from
 // the map default to occupied=true (safe — no prime emitted); deck names what

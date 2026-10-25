@@ -13,7 +13,7 @@ import (
 
 // TestRequestNodeMaterial_AWrongCarrierIsClearedThenPrimedThenSwapped: a
 // consume press whose line holds a full of its part and whose on-deck holds a
-// carrier with no part (wrong for a consume index: ChainReadiness clears it).
+// carrier with no part (wrong for a consume index: chainReadiness clears it).
 // One REQUEST makes, on the press's process node and in this order: the clear,
 // a move of that carrier by name to the claim's outbound; the prime, a full of
 // the part to the on-deck; then the swap's two legs. The clear names its bin on

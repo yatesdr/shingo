@@ -38,11 +38,11 @@ func FedOutsideSQL(nodeExpr string) string {
 	return fedOutsideSQL(nodeExpr, "")
 }
 
-// FedOutsideCarryingSQL is FedOutsideSQL for a fed claim that carries the part
-// payloadExpr names (ClaimCarriesSQL): SEND BACK's pull lands tops & bottoms of
+// fedOutsideCarryingSQL is FedOutsideSQL for a fed claim that carries the part
+// payloadExpr names (claimCarriesSQL): SEND BACK's pull lands tops & bottoms of
 // the press's own part on its outside (ToteCarrierFor).
-func FedOutsideCarryingSQL(nodeExpr, payloadExpr string) string {
-	return fedOutsideSQL(nodeExpr, "\n\t\t   AND "+ClaimCarriesSQL("sc", payloadExpr))
+func fedOutsideCarryingSQL(nodeExpr, payloadExpr string) string {
+	return fedOutsideSQL(nodeExpr, "\n\t\t   AND "+claimCarriesSQL("sc", payloadExpr))
 }
 
 func fedOutsideSQL(nodeExpr, also string) string {
@@ -56,11 +56,11 @@ func fedOutsideSQL(nodeExpr, also string) string {
 		 LIMIT 1`
 }
 
-// ClaimCarriesSQL is whether a style_claims row (alias) carries the part
+// claimCarriesSQL is whether a style_claims row (alias) carries the part
 // payloadExpr names: its payload, or one of its allowed payloads. One spelling
 // for the height an empty is wanted at (ToteWantSQL) and the fed outside a
-// tops & bottoms pull lands on (FedOutsideCarryingSQL).
-func ClaimCarriesSQL(alias, payloadExpr string) string {
+// tops & bottoms pull lands on (fedOutsideCarryingSQL).
+func claimCarriesSQL(alias, payloadExpr string) string {
 	return `(` + alias + `.payload_code = ` + payloadExpr + `
 	                    OR (` + alias + `.allowed_payload_codes <> '[]' AND ` + alias + `.allowed_payload_codes::jsonb ? ` + payloadExpr + `))`
 }
@@ -78,22 +78,26 @@ func IsFedOutside(db *sql.DB, node string) (bool, error) {
 // claim whose outside position (paired_core_node) or second paired position is
 // position, and whose shape is a fed press (FedClaimSQL), so a sequential
 // partner never qualifies. Blank when no such claim is active at the node, or
-// it names no source. One statement: the shape and the source are one read.
+// it names no source. kind is the episode kind of originID, the asking order's
+// origin (demand_origins.kind: a steady swap's cell, a changeover's), blank
+// when the order has none or Core holds no such episode. One statement: the
+// shape, the source and the kind are one read.
 //
 // Its reader is Core's vacant-pickup fallback (dispatch reanchorVacantPickup):
-// a pickup at a vacant dependent position of a fed press is fetched from here.
-func FedInboundSource(db *sql.DB, stationID, coreNodeName, position string) (string, error) {
-	var src string
-	err := db.QueryRow(`SELECT sc.inbound_source
+// a pickup at a vacant dependent position of a fed press is fetched from here,
+// for a steady leg alone (the kind).
+func FedInboundSource(db *sql.DB, stationID, coreNodeName, position, originID string) (src, kind string, err error) {
+	err = db.QueryRow(`SELECT sc.inbound_source,
+		       COALESCE((SELECT d.kind FROM demand_origins d WHERE d.origin_id = NULLIF($4, '')::uuid), '')
 		FROM style_claims sc
 		JOIN process_styles ps ON ps.process_id = sc.process_id AND ps.style_id = sc.style_id
 		WHERE ps.is_active AND ps.station_id = $1 AND sc.core_node_name = $2 AND sc.inbound_source <> ''
 		  AND $3 <> '' AND $3 IN (sc.paired_core_node, sc.second_paired_core_node)
 		  AND `+FedClaimSQL("sc")+`
 		ORDER BY sc.process_id, sc.seq
-		LIMIT 1`, stationID, coreNodeName, position).Scan(&src)
+		LIMIT 1`, stationID, coreNodeName, position, originID).Scan(&src, &kind)
 	if errors.Is(err, sql.ErrNoRows) {
-		return "", nil
+		return "", "", nil
 	}
-	return src, err
+	return src, kind, err
 }

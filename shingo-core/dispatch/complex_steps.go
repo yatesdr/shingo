@@ -449,7 +449,7 @@ func (d *Dispatcher) widenSupplyPickups(order *orders.Order, steps []resolvedSte
 		if step.Action != protocol.ActionPickup || step.Empty || isRemovalPickup(step, order.ProcessNode) {
 			continue
 		}
-		if hb := matchHeldToNeed(held, step); hb != nil {
+		if hb := matchHeldToNeed(held, step, pickupPartSupply); hb != nil {
 			// The same match the reserve reconcile keeps by; consume the hold so a second identical need can't ride the same
 			// reservation past the finder.
 			hb.used = true

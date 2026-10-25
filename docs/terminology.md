@@ -226,7 +226,7 @@ A tote cart at a known 0 totes with no part on it: the cart's frame alone (`prot
 
 ### Vacant
 
-A position with nothing standing on it. A press's on-deck (its outside or second paired position) that is vacant when the pair reserves has its carrier fetched from the claim's inbound source, unless another live order is already bringing one there, when the pair waits ("Waiting for outside material"). Never "bare", which is the marker.
+A position with nothing standing on it. A press's on-deck (its outside or second paired position) that is vacant when a steady pair reserves has its carrier fetched from the claim's inbound source, unless another live order is already bringing one there, when the pair waits ("Waiting for outside material"). A changeover's legs are never fetched for (the changeover brings a vacant position its own carrier), nor is a leg whose demand episode Core cannot name; they wait. Never "bare", which is the marker.
 
 ### UOP per Tote
 

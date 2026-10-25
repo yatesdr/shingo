@@ -32,9 +32,12 @@ they are gone, so it is replaced by the plain assertion in the commit that fixes
    tombstone on the two deleted names, and the plain family's three members asserted).
 
 5. **A pickup takes a carrier that answers what its step names:** a lift, whatever stands at its node; an empty, a
-   part-less carrier the set-down height admits; stock of a part, a carrier loaded with it, confirmed and counted
-   above 0. The same rule for produce and consume.
-   Test: `TestRule5_EveryStepKindAgainstEveryCarrierState` (predicted red: the part-supply pickup's eight cells).
+   part-less carrier the set-down height admits (and, where the step names the part it is for, one that part may
+   ride); stock of a part, a carrier loaded with it, confirmed and counted above 0. The same rule for produce and
+   consume.
+   Tests: `TestRule5_EveryStepKindAgainstEveryCarrierState` (the bind, `binresolver.StockOnly` for stock);
+   the Edge's steps say what they lift: `TestPressIndexChangeoverR2_OnDeckPickupsSayWhatTheyLift`,
+   `TestKeepStagedSwap_LiftsTheSpareOnceAfterTheWait`.
 
 6. **Every availability reader composes the one fragment or its Go twin,** held by one agreement table over one
    fixture set; a reader that omits an arm names it in the table, with the reason.

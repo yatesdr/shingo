@@ -76,7 +76,7 @@ func ppCellOf(t *testing.T, o ksrOpts, class ppClass, finishLater bool) *ksrCell
 	if mode == protocol.SwapModeTwoRobotPressIndex {
 		// A produce press holds an empty on deck, not a full, and the Edge's
 		// table says so: the request judges the on-deck by the carrier it
-		// holds there (ChainReadiness), and a full of the part there is a
+		// holds there (chainReadiness), and a full of the part there is a
 		// wrong carrier on a produce press.
 		_, err = db.DB.Exec(`UPDATE bins SET payload_code='', manifest=NULL, uop_remaining=0,
 			manifest_confirmed=false WHERE label='KSR-A-DECK'`)

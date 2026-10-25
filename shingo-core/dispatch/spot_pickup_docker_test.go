@@ -16,17 +16,19 @@ import (
 // WHAT A COMPLEX PICKUP AT A CONCRETE NODE TAKES, BY HOW THE STEP IS FLAGGED.
 //
 // Keep-staged's swap starts with a pickup on the line's inbound staging node,
-// where a spare stands. That pickup names the part the line runs and is never
-// Empty. This table is the reason, measured at the allocator:
+// where a spare stands: a full of the part on a consume line, an empty its part
+// may ride on a produce line. This table is how the allocator judges the bin
+// (rule 5, the one bind rule):
 //
-//   - a pickup that NAMES THE PART judges the bin for it: an unstamped empty
-//     passes the payload test (helpers.go: an unstamped bin is not a mismatch)
-//     and then meets the carrier rule, so a permitted type is taken and any
-//     other type holds the leg; a bin stamped with another part holds it;
-//   - an Empty pickup drops the part (allocator.go: claimPayload = "") and with
-//     it the carrier rule, so it takes an empty of ANY type — and it still
-//     refuses a stamped empty, because binresolver.EmptyBinsOnly keeps only a blank
-//     payload code. Empty does not rescue a stamped carrier.
+//   - a pickup that NAMES THE PART and is not Empty takes stock of it: loaded
+//     with it, confirmed, counted above 0 (binresolver.StockOnly), of a carrier
+//     the part may ride. An unstamped empty is not stock of anything, so a
+//     consume spare is a full and nothing else; it used to pass (an unstamped
+//     bin is no payload mismatch) and a consume press ran on nothing;
+//   - an Empty pickup takes an unstamped empty and refuses a stamped one
+//     (binresolver.EmptyBinsOnly). Naming a part on the step, it takes an
+//     empty that part may ride (the produce spare, the changeover refill that
+//     says which style its carrier is for); naming none, an empty of any type.
 //
 // A payload that declares no carrier types states no bin-type intent, so every
 // type is right for it.
@@ -79,14 +81,17 @@ func TestSpotPickup_HowTheStepFlagJudgesTheBin(t *testing.T) {
 		order string // the order's payload; the step's wins when set
 		takes bool
 	}{
-		{"named: permitted-type unstamped empty", standing{newT, "", 0}, named(pNew.Code), pOld.Code, true},
+		{"named: permitted-type unstamped empty is no stock", standing{newT, "", 0}, named(pNew.Code), pOld.Code, false},
 		{"named: full of the payload", standing{newT, pNew.Code, 50}, named(pNew.Code), pOld.Code, true},
+		{"named: the payload's carrier counted out", standing{newT, pNew.Code, 0}, named(pNew.Code), pOld.Code, false},
 		{"named: non-permitted-type unstamped empty", standing{oldT, "", 0}, named(pNew.Code), pOld.Code, false},
 		{"named: empty stamped with another part", standing{newT, pOld.Code, 0}, named(pNew.Code), pOld.Code, false},
 		{"named: wrong-payload full", standing{newT, pOld.Code, 50}, named(pNew.Code), pNew.Code, false},
-		{"named: payload declares no types, any type", standing{oldT, "", 0}, named(pUndeclared.Code), pOld.Code, true},
+		{"named: payload declares no types, a full of any type", standing{oldT, pUndeclared.Code, 50}, named(pUndeclared.Code), pOld.Code, true},
 		{"Empty: any-type unstamped empty", standing{oldT, "", 0}, empty, pNew.Code, true},
-		{"Empty + payload: any-type unstamped empty", standing{oldT, "", 0}, emptyNamed(pNew.Code), pNew.Code, true},
+		{"Empty + payload: permitted-type unstamped empty", standing{newT, "", 0}, emptyNamed(pNew.Code), pOld.Code, true},
+		{"Empty + payload: non-permitted-type unstamped empty", standing{oldT, "", 0}, emptyNamed(pNew.Code), pNew.Code, false},
+		{"Empty + payload declaring no types: any-type unstamped empty", standing{oldT, "", 0}, emptyNamed(pUndeclared.Code), pNew.Code, true},
 		{"Empty: stamped empty refused", standing{newT, pOld.Code, 0}, empty, pNew.Code, false},
 		{"Empty + payload: stamped empty refused", standing{newT, pNew.Code, 0}, emptyNamed(pNew.Code), pNew.Code, false},
 	}

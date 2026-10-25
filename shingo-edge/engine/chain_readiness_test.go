@@ -64,7 +64,7 @@ func TestChainReadiness_JudgesTheCarrierOnTheOnDeck(t *testing.T) {
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			t.Parallel()
-			r := ChainReadiness(readinessClaim(c.role, c.partialDest), occupied, Deck{Rows: map[string]protocol.NodeBinsRow{"B": c.row}})
+			r := chainReadiness(readinessClaim(c.role, c.partialDest), occupied, Deck{Rows: map[string]protocol.NodeBinsRow{"B": c.row}})
 			if c.clear {
 				if len(r.Clear) != 1 || r.Clear[0].BinID != c.row.BinID || !slices.Equal(r.Prime, []string{"B"}) {
 					t.Errorf("readiness %+v: want the carrier cleared and B primed behind it", r)
@@ -88,10 +88,10 @@ func TestChainReadiness_VacantUnknownAndComing(t *testing.T) {
 	vacant := map[string]bool{"LINE": true, "B": false}
 	occupied := map[string]bool{"LINE": true, "B": true}
 
-	if r := ChainReadiness(claim, vacant, Deck{}); !slices.Equal(r.Prime, []string{"B"}) {
+	if r := chainReadiness(claim, vacant, Deck{}); !slices.Equal(r.Prime, []string{"B"}) {
 		t.Errorf("vacant: %+v, want B primed", r)
 	}
-	if r := ChainReadiness(claim, vacant, Deck{Coming: map[string]bool{"B": true}}); len(r.Prime) != 0 {
+	if r := chainReadiness(claim, vacant, Deck{Coming: map[string]bool{"B": true}}); len(r.Prime) != 0 {
 		t.Errorf("vacant with a carrier coming: %+v, want no prime", r)
 	}
 	for name, deck := range map[string]Deck{
@@ -103,12 +103,12 @@ func TestChainReadiness_VacantUnknownAndComing(t *testing.T) {
 		if name == "missing from occupancy (reads occupied), row says empty" {
 			occ = map[string]bool{"LINE": true}
 		}
-		if r := ChainReadiness(claim, occ, deck); len(r.Clear)+len(r.Prime) != 0 {
+		if r := chainReadiness(claim, occ, deck); len(r.Clear)+len(r.Prime) != 0 {
 			t.Errorf("%s: %+v, want nothing: unknown builds the swap", name, r)
 		}
 	}
 	coming := Deck{Rows: map[string]protocol.NodeBinsRow{"B": rowMarker}, Coming: map[string]bool{"B": true}}
-	if r := ChainReadiness(claim, occupied, coming); len(r.Clear) != 0 || len(r.Prime) != 0 {
+	if r := chainReadiness(claim, occupied, coming); len(r.Clear) != 0 || len(r.Prime) != 0 {
 		t.Errorf("a marker with a leg placing there: %+v, want no clear", r)
 	}
 }
@@ -119,7 +119,7 @@ func TestChainReadiness_OnlyAPressHasDependentPositions(t *testing.T) {
 	t.Parallel()
 	claim := readinessClaim(protocol.ClaimRoleConsume, "")
 	claim.SwapMode = protocol.SwapModeTwoRobot
-	r := ChainReadiness(claim, map[string]bool{"LINE": true, "B": false}, Deck{Rows: map[string]protocol.NodeBinsRow{"B": rowMarker}})
+	r := chainReadiness(claim, map[string]bool{"LINE": true, "B": false}, Deck{Rows: map[string]protocol.NodeBinsRow{"B": rowMarker}})
 	if len(r.Clear)+len(r.Prime) != 0 {
 		t.Errorf("two_robot with a stale paired node: %+v, want nothing", r)
 	}

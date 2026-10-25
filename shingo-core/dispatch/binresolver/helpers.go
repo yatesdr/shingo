@@ -148,11 +148,13 @@ func BinUnavailableReasonFor(b *bins.Bin, payloadCode string, binTypes domain.Bi
 		return fmt.Sprintf("payload %q does not match order payload %q", b.PayloadCode, payloadCode)
 	}
 	// THE CARRIER RULE, ASKED LAST and only when a part was named. A door
-	// fetching "whatever is resident" — a removal leg, an empty pickup that
-	// dropped its payload context — passes payloadCode "" and an unrestricted
-	// rule, and this is inert for it. Where a part IS named, the bin is being
-	// taken FOR that part, so it must be a carrier the part may travel in
-	// whether it already holds it or is an empty about to.
+	// fetching "whatever is resident" — a removal leg, an empty pickup whose
+	// step names no part — passes payloadCode "" and an unrestricted rule, and
+	// this is inert for it. Where a part IS named, the bin is being taken FOR
+	// that part, so it must be a carrier the part may travel in whether it
+	// already holds it (a part supply's stock) or is an empty about to (an
+	// empty pickup naming the part it is for: the produce spare, a changeover's
+	// refill).
 	//
 	// Asked after the payload match so the reason stays the useful one: a bin of
 	// the wrong part reports the mismatch, not its type.
@@ -182,6 +184,35 @@ func EmptyBinsOnly(candidates []*bins.Bin) []*bins.Bin {
 	out := make([]*bins.Bin, 0, len(candidates))
 	for _, b := range candidates {
 		if b.PayloadCode == "" && !b.BinTypeBare {
+			out = append(out, b)
+		}
+	}
+	return out
+}
+
+// StockOnly keeps the candidates that are stock of part: loaded with it, its
+// manifest confirmed, counted above 0 — the stock fragment's carrier half
+// (helpers.BinCarriesSourceableStockSQL), asked of what stands at the node a
+// pickup names, where BinUnavailableReasonFor then judges the rest (a hold,
+// the status, the carrier rule). It is the part-supply pickup's bind, ground
+// rule 5's "stock of a part": a carrier counted to nothing, one with no part,
+// tops & bottoms and the bare marker are no stock of it, on a produce press as
+// on a consume one (TestRule5_EveryStepKindAgainstEveryCarrierState). A
+// pickup that names no part, on the step or the order, keeps every candidate:
+// it lifts whatever stands there.
+//
+// BEFORE IT, the part-supply arm judged by BinUnavailableReasonFor alone,
+// which asks no count and refuses only ANOTHER part, so an unstamped empty
+// passed as a full: a consume press's on-deck set a part-less carrier on the
+// press, and a changeover's produce index leg lifted its empty by naming the
+// part. The Edge now says Empty for a pickup that lifts an empty.
+func StockOnly(candidates []*bins.Bin, part string) []*bins.Bin {
+	if part == "" {
+		return candidates
+	}
+	out := make([]*bins.Bin, 0, len(candidates))
+	for _, b := range candidates {
+		if b.PayloadCode == part && b.ManifestConfirmed && b.UOPRemaining > 0 {
 			out = append(out, b)
 		}
 	}

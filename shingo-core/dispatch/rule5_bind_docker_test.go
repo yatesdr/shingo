@@ -45,16 +45,14 @@ import (
 // names the outgoing part on both). Both roles are asked every kind, so a bind
 // keyed on the role (a consume-only refusal) leaves the produce rows red.
 //
-// PREDICTED RED: a Stock pickup binds a counted-out carrier, a carrier with no
-// part, tops & bottoms and the bare marker, because the part-supply arm judges
-// by BinUnavailableReasonFor, which asks no count and refuses only ANOTHER
-// part. That is a consume press's on-deck setting a part-less carrier on the
-// press while a produce pair holds. The part here states no carrier rule (the
-// zero rule permits every type), so the carrier-rule arm is out of play; a part
-// whose rule names its carriers refuses the marker by that arm today (a bare
-// type is never in a payload rule) and the other three stay red. A cell
-// marked red that answers as the rule says fails by name; when none is left,
-// drop the marks and the VerifyRed call.
+// A STOCK PICKUP BINDS STOCK OF ITS PART ALONE (binresolver.StockOnly): a
+// carrier counted out, one with no part, tops & bottoms and the bare marker
+// hold it, on either role's press. It bound all four while the part-supply arm
+// judged by BinUnavailableReasonFor, which asks no count and refuses only
+// ANOTHER part: a consume press's on-deck set a part-less carrier on the press
+// while a produce pair held. The part here states no carrier rule (the zero
+// rule permits every type), so the carrier-rule arm is out of play and the
+// marker is refused as no stock, not by its type.
 func TestRule5_EveryStepKindAgainstEveryCarrierState(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
@@ -75,35 +73,28 @@ func TestRule5_EveryStepKindAgainstEveryCarrierState(t *testing.T) {
 		{"bare (the marker type)", marker, "", 0, nil, protocol.CarrierBare},
 	}
 
-	const (
-		noCount = "BinUnavailableReasonFor, the part-supply arm's judge, asks no count"
-		noPart  = "BinUnavailableReasonFor's payload arm refuses only another part: a carrier with none passes"
-		noBare  = noPart + "; no arm refuses the marker, and the part states no carrier rule"
-	)
-	binds, holds := r5Cell{binds: true}, r5Cell{}
-	red := func(why string) r5Cell { return r5Cell{red: why} }
+	const binds, holds = true, false
 	kinds := []struct {
 		name  string
 		kind  pickupKind
 		steps func(p r5Position, out string) []protocol.ComplexOrderStep
-		cells [5]r5Cell // by state, in the order of states
+		cells [5]bool // whether it binds, by state, in the order of states
 	}{
 		{"Lift", pickupRemoval, func(p r5Position, out string) []protocol.ComplexOrderStep {
 			return []protocol.ComplexOrderStep{prWait(p.press.Name), prPick(p.press.Name), prDrop(out)}
-		}, [5]r5Cell{binds, binds, binds, binds, binds}},
+		}, [5]bool{binds, binds, binds, binds, binds}},
 		{"Empty", pickupEmptySupply, func(p r5Position, _ string) []protocol.ComplexOrderStep {
 			return []protocol.ComplexOrderStep{prWait(p.deck.Name),
 				{Action: protocol.ActionPickup, Node: p.deck.Name, Empty: true}, prDrop(p.press.Name)}
-		}, [5]r5Cell{holds, holds, binds, binds, holds}},
+		}, [5]bool{holds, holds, binds, binds, holds}},
 		{"Stock", pickupPartSupply, func(p r5Position, _ string) []protocol.ComplexOrderStep {
 			return []protocol.ComplexOrderStep{prWait(p.deck.Name),
 				{Action: protocol.ActionPickup, Node: p.deck.Name, PayloadCode: part}, prDrop(p.press.Name)}
-		}, [5]r5Cell{binds, red(noCount), red(noPart), red(noPart), red(noBare)}},
+		}, [5]bool{binds, holds, holds, holds, holds}},
 	}
 
 	out := prNode(t, db, "R5-OUT")
 	in := prNode(t, db, "R5-IN")
-	var violations []string
 	for _, role := range []protocol.ClaimRole{protocol.ClaimRoleProduce, protocol.ClaimRoleConsume} {
 		positions := r5Press(t, db, role, part, in.Name, out.Name, states)
 		for _, k := range kinds {
@@ -123,20 +114,12 @@ func TestRule5_EveryStepKindAgainstEveryCarrierState(t *testing.T) {
 				if !hadBins || (got != nil && got.ID != standing.ID) {
 					t.Fatalf("%s: the node does not hold its one carrier %s (fixture drift)", name, standing.Label)
 				}
-				took, cell := got != nil, k.cells[i]
-				switch {
-				case cell.red == "" && took != cell.binds:
-					t.Errorf("%s: binds=%v, rule 5 says binds=%v", name, took, cell.binds)
-				case cell.red != "" && !took:
-					t.Errorf("%s now answers as rule 5 says (it does not bind): its predicted red is gone. "+
-						"Drop the mark so the cell is a plain assertion", name)
-				case cell.red != "":
-					violations = append(violations, fmt.Sprintf("%s: binds, rule 5 says it does not (%s)", name, cell.red))
+				if took := got != nil; took != k.cells[i] {
+					t.Errorf("%s: binds=%v, rule 5 says binds=%v", name, took, k.cells[i])
 				}
 			}
 		}
 	}
-	testdb.VerifyRed(t, "rule 5: a pickup takes a carrier that answers what its step names", violations)
 }
 
 // r5State is one carrier state the table stands on a position: its type, its
@@ -149,14 +132,6 @@ type r5State struct {
 	uop     int
 	totes   *int
 	want    protocol.CarrierState
-}
-
-// r5Cell is what rule 5 says of one step kind against one carrier state, and,
-// when the tree answers otherwise today, why (red). A red cell is one rule 5
-// says does not bind.
-type r5Cell struct {
-	binds bool
-	red   string
 }
 
 // r5Position is one press of the table's: the press and its on-deck, each with

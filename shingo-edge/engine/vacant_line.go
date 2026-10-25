@@ -11,7 +11,7 @@ import (
 // instead of, its swap. Every swap opens by lifting the bin at the line, so a
 // line with no bin gets one plain order bringing a bin from the claim's inbound
 // source instead of a swap. A press's dependent positions get what
-// ChainReadiness says each needs (chain): a clear of a wrong carrier, then a
+// chainReadiness says each needs (chain): a clear of a wrong carrier, then a
 // prime; with the line holding a bin, those go AHEAD of the swap, which is
 // queued at Core behind them (W5: the pair waits for the carrier coming to its
 // on-deck, or fetches one to a vacant on-deck itself).
@@ -35,7 +35,7 @@ type vacantLine struct {
 // claim's positions hold no bin": the line's own, and its dependent positions.
 // A name missing from occupancy reads occupied. A changeover splits a press per
 // position on it (FanOutPressIndex, from the seats); REQUEST asks it for the
-// line alone and judges the dependent positions by ChainReadiness, which also
+// line alone and judges the dependent positions by chainReadiness, which also
 // knows what stands on them.
 func vacantPositions(claim *processes.NodeClaim, occupancy map[string]bool) (lineVacant bool, paired []string) {
 	lineVacant = !isOccupied(occupancy, claim.CoreNodeName)
@@ -58,7 +58,7 @@ type Deck struct {
 }
 
 // Readiness is what a claim's dependent positions need before its swap can
-// index from them (ChainReadiness).
+// index from them (chainReadiness).
 type Readiness struct {
 	// Clear is each wrong carrier to move off its position, as the bins table
 	// holds it, so the move can name the bin.
@@ -72,7 +72,7 @@ type Readiness struct {
 // per position. Both plans' OrderCount add it.
 func (r Readiness) Count() int { return len(r.Clear) + len(r.Prime) }
 
-// ChainReadiness reads a claim's dependent positions (DependentPositions) and
+// chainReadiness reads a claim's dependent positions (DependentPositions) and
 // says what each needs before the swap can index from it, for both roles:
 //
 //   - vacant: a carrier, unless one is already coming (deck.Coming);
@@ -85,7 +85,7 @@ func (r Readiness) Count() int { return len(r.Clear) + len(r.Prime) }
 // Pure. occupancy is the request's occupancy map (a name missing or not known
 // to Core reads occupied), so a position is vacant here exactly when it is
 // vacant to the line's half of the plan.
-func ChainReadiness(claim *processes.NodeClaim, occupancy map[string]bool, deck Deck) Readiness {
+func chainReadiness(claim *processes.NodeClaim, occupancy map[string]bool, deck Deck) Readiness {
 	var r Readiness
 	for _, pos := range claim.DependentPositions() {
 		if !isOccupied(occupancy, pos) {
@@ -105,25 +105,24 @@ func ChainReadiness(claim *processes.NodeClaim, occupancy map[string]bool, deck 
 }
 
 // wrongCarrier says the carrier standing on a dependent position is one the
-// swap must not set on the press. Its identity is the bins-feed row's; no bin
-// type is checked.
+// press's index pickup will not take, so the swap would hold for it: Core's
+// bind, read from the bins-feed row (dispatch findAvailableForNeed, ground rule
+// 5). The clear moves it off, and the prime brings the carrier that is right.
+// No bin type is checked.
 //
-//   - Any position: a bare marker (the row's Bare). Core's on-deck pickup drops
-//     a bare type (EmptyBinsOnly), so the pair would hold for good.
+//   - Any position: a bare marker (the row's Bare). It is no empty to fill
+//     (EmptyBinsOnly) and no stock of a part.
 //   - Produce: a carrier holding a part, except a partial of the claim's part
-//     when the claim names a partial destination. Core finishes a partial only
-//     where a partial home exists (dispatch/allocator.go, the Empty branch's
-//     partialToFinishAt), and its on-deck pickup takes no stamped carrier
-//     otherwise. An empty, and tops & bottoms (a tote cart at 0, no part), are
-//     what the index carries to the press: not wrong.
-//   - Consume: a carrier that does not hold the claim's part: an empty of any
+//     when the claim names a partial destination. The index is Empty, and Core
+//     finishes a partial only where a partial home exists (the Empty branch's
+//     partialToFinishAt); it takes no other stamped carrier. An empty, and tops
+//     & bottoms (a tote cart at 0, no part), are what the index carries to the
+//     press: not wrong.
+//   - Consume: a carrier that is not stock of the claim's part: an empty of any
 //     type, tops & bottoms, another part, or the part's carrier counted at
-//     nothing. Core's consume pickup DOES take a part-less carrier (its payload
-//     test passes a blank payload; dispatch
-//     TestSpotPickup_HowTheStepFlagJudgesTheBin), so the clear is what keeps it
-//     off the press. A partial of the part is kept: Core feeds consume partials
-//     and the press runs the next FIFO bin, half full or full (owner, round 4
-//     Q3).
+//     nothing. The index takes stock of the part alone (binresolver.StockOnly).
+//     A partial of the part is kept: Core feeds consume partials and the press
+//     runs the next FIFO bin, half full or full (owner, round 4 Q3).
 func wrongCarrier(claim *processes.NodeClaim, row protocol.NodeBinsRow) bool {
 	switch {
 	case row.Bare:
@@ -139,7 +138,7 @@ func wrongCarrier(claim *processes.NodeClaim, row protocol.NodeBinsRow) bool {
 }
 
 // planVacantLine answers "this line has a position that is not ready": nil
-// when Core reports a bin at the line and ChainReadiness finds nothing to clear
+// when Core reports a bin at the line and chainReadiness finds nothing to clear
 // or prime, else the line's delivery (when it is vacant) and the chain. occupancy
 // is the request's occupancy map (a missing entry reads occupied); deck is what
 // it read of the dependent positions. Pure.
@@ -166,7 +165,7 @@ func wrongCarrier(claim *processes.NodeClaim, row protocol.NodeBinsRow) bool {
 // Only the duplicate order is skipped; a second tap meets the swap in flight.
 func planVacantLine(node *processes.Node, claim *processes.NodeClaim, occupancy map[string]bool, deck Deck) (*vacantLine, error) {
 	lineVacant := !isOccupied(occupancy, claim.CoreNodeName)
-	ready := ChainReadiness(claim, occupancy, deck)
+	ready := chainReadiness(claim, occupancy, deck)
 	if !lineVacant && ready.Count() == 0 {
 		return nil, nil
 	}

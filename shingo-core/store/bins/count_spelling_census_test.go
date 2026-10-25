@@ -55,6 +55,7 @@ var countSpellings = map[string]string{
 	"shingo-core/cmd/soakstat/handoff.go:labelledAtZero":                                "`= 0` leaves a labelled overpack out of \"labelled at zero\"",
 	"shingo-core/cmd/soakstat/fixture_balance.go:fixtureBalance":                        "`COALESCE(…, 0) > 0` over a NOT NULL column",
 	"shingo-core/dispatch/binresolver/helpers.go:isBinAvailableForRetrieve":             "the stock fragment's Go twin for a group's slot children",
+	"shingo-core/dispatch/binresolver/helpers.go:StockOnly":                             "the part-supply bind's stock of its part (rule 5, phase E): the fragment's carrier half at a named node",
 	"shingo-core/dispatch/plan/finder.go:Finder.Pick":                                   "tier 4's named full",
 	"shingo-core/dispatch/binsource/source.go:RejectReason":                             "the loader pool's drain (Cand.UOP is uop_remaining)",
 	"shingo-core/dispatch/binsource/source.go:isPartialOf":                              "the loader pool's partial: holds stock, below capacity",

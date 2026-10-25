@@ -92,7 +92,7 @@ type pmCase struct {
 // structural ones are pinned by TestScenario_PressMatrix_TheCellsThatDoNotExist.
 const (
 	pmNoDependent = "a dependent position exists only on a press: NodeClaim.DependentPositions is nil " +
-		"off two_robot_press_index, so ChainReadiness reads nothing and no prime or clear is made"
+		"off two_robot_press_index, so chainReadiness reads nothing and no prime or clear is made"
 	pmNoOnDeckSeq = "sequential has no on-deck: its swap lifts only at the line (its partner is a line of " +
 		"its own claim, DependentPositions nil)"
 	pmNoOnDeck = "no on-deck off a press: the swap lifts only at the line (DependentPositions nil), so " +

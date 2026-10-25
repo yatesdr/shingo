@@ -50,9 +50,13 @@ func TestVacantPickupPin_AnOnDeckEmptyTakenWhileParkedIsFetchedFromTheInboundSou
 		}}, nil, 0)
 	testutil.MustNoErr(t, err, "the press's claim")
 
-	// The index leg, as the Edge builds it for a produce press-index claim.
+	// The index leg, as the Edge builds it for a produce press-index claim: a
+	// steady swap, attached to its cell's episode.
+	origin := testdb.OpenEpisode(t, db, protocol.EpisodeKindCell,
+		protocol.CellEpisodeKey(process, sd.Payload.Code, protocol.ClaimRoleProduce))
 	eng.Dispatcher().HandleComplexOrderRequest(testEnvelope(), &protocol.ComplexOrderRequest{
 		OrderUUID: "vacant-index-leg", PayloadCode: sd.Payload.Code, Quantity: 1, ProcessNode: press.Name,
+		OriginID: origin, OriginClass: protocol.OriginClassAttached,
 		Steps: []protocol.ComplexOrderStep{
 			{Action: protocol.ActionWait, Node: onDeck.Name},
 			{Action: protocol.ActionPickup, Node: onDeck.Name, Empty: true},

@@ -231,7 +231,7 @@ func (e *Engine) applyProduceEmptyLine(node *processes.Node, claim *processes.No
 	return &NodeOrderResult{Order: order, PrimeOrders: chain, ProcessNodeID: nodeID}, nil
 }
 
-// createClearsThenPrimes creates a press's chain (ChainReadiness), in this
+// createClearsThenPrimes creates a press's chain (chainReadiness), in this
 // order: a clear per wrong carrier on a dependent position, then a prime per
 // position, for both roles. Its caller creates the swap's legs after it.
 //
@@ -248,7 +248,7 @@ func (e *Engine) applyProduceEmptyLine(node *processes.Node, claim *processes.No
 //
 // A clear is a named-bin move of the carrier the bins table holds there to the
 // claim's outbound (CreateMoveOrderForBin: it lifts that bin or none, and never
-// while a leg places there, which ChainReadiness already left out). A prime
+// while a leg places there, which chainReadiness already left out). A prime
 // brings a carrier from the claim's inbound source: a full to a consume press,
 // an empty to a produce press. What the prime carries is its only role branch.
 // A produce prime is a retrieve of an empty, not a move: a move is a

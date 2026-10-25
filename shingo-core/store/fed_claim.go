@@ -28,7 +28,8 @@ func (db *DB) ToteCarrierFor(part, outside string) (bins.ToteCarrier, error) {
 }
 
 // FedInboundSource is where the active fed claim at a station's core node draws
-// from, asked about one of its positions. See bins.FedInboundSource.
-func (db *DB) FedInboundSource(stationID, coreNodeName, position string) (string, error) {
-	return bins.FedInboundSource(db.DB, stationID, coreNodeName, position)
+// from, asked about one of its positions, and the episode kind of the asking
+// order's origin. See bins.FedInboundSource.
+func (db *DB) FedInboundSource(stationID, coreNodeName, position, originID string) (src, kind string, err error) {
+	return bins.FedInboundSource(db.DB, stationID, coreNodeName, position, originID)
 }

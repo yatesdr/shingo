@@ -675,8 +675,7 @@
       },
       {
         "action": "pickup",
-        "node": "B",
-        "payload_code": "PART"
+        "node": "B"
       },
       {
         "action": "dropoff",
@@ -684,8 +683,7 @@
       },
       {
         "action": "pickup",
-        "node": "C",
-        "payload_code": "PART"
+        "node": "C"
       },
       {
         "action": "dropoff",
@@ -812,8 +810,7 @@
       },
       {
         "action": "pickup",
-        "node": "B",
-        "payload_code": "PART"
+        "node": "B"
       },
       {
         "action": "dropoff",
@@ -861,8 +858,7 @@
       },
       {
         "action": "pickup",
-        "node": "B",
-        "payload_code": "PART"
+        "node": "B"
       },
       {
         "action": "dropoff",
@@ -870,8 +866,7 @@
       },
       {
         "action": "pickup",
-        "node": "C",
-        "payload_code": "PART"
+        "node": "C"
       },
       {
         "action": "dropoff",
@@ -996,8 +991,7 @@
       },
       {
         "action": "pickup",
-        "node": "B",
-        "payload_code": "PART"
+        "node": "B"
       },
       {
         "action": "dropoff",
@@ -1183,7 +1177,7 @@
       {
         "action": "pickup",
         "node": "B",
-        "payload_code": "PART"
+        "empty": true
       },
       {
         "action": "dropoff",
@@ -1192,7 +1186,7 @@
       {
         "action": "pickup",
         "node": "C",
-        "payload_code": "PART"
+        "empty": true
       },
       {
         "action": "dropoff",
@@ -1324,7 +1318,7 @@
       {
         "action": "pickup",
         "node": "B",
-        "payload_code": "PART"
+        "empty": true
       },
       {
         "action": "dropoff",
@@ -1373,7 +1367,7 @@
       {
         "action": "pickup",
         "node": "B",
-        "payload_code": "PART"
+        "empty": true
       },
       {
         "action": "dropoff",
@@ -1382,7 +1376,7 @@
       {
         "action": "pickup",
         "node": "C",
-        "payload_code": "PART"
+        "empty": true
       },
       {
         "action": "dropoff",
@@ -1512,7 +1506,7 @@
       {
         "action": "pickup",
         "node": "B",
-        "payload_code": "PART"
+        "empty": true
       },
       {
         "action": "dropoff",

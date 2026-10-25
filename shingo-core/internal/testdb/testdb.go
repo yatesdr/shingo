@@ -48,6 +48,7 @@ import (
 	"time"
 
 	"github.com/docker/go-connections/nat"
+	"github.com/google/uuid"
 	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/modules/postgres"
@@ -1248,6 +1249,21 @@ func CreateBinAtNode(t *testing.T, db *store.DB, payloadCode string, nodeID int6
 		t.Fatalf("get bin %s after setup: %v", label, err)
 	}
 	return got
+}
+
+// OpenEpisode stands an open demand episode of kind on Core, keyed by key, as
+// the Edge's episode message leaves it (store.DB.UpsertDemandOrigin), and
+// returns its origin id. A leg attached to it is that episode's: a steady
+// swap's (protocol.EpisodeKindCell), a changeover's
+// (protocol.EpisodeKindChangeover).
+func OpenEpisode(t *testing.T, db *store.DB, kind, key string) string {
+	t.Helper()
+	id := uuid.NewString()
+	if err := db.UpsertDemandOrigin(store.DemandOrigin{OriginID: id, Revision: 1, EpisodeKey: key, Kind: kind,
+		StationID: "line-1", OpenedAt: time.Now().UTC()}); err != nil {
+		t.Fatalf("open a %s episode %s: %v", kind, key, err)
+	}
+	return id
 }
 
 // orderSeq keeps CreateOrder's EdgeUUIDs unique within a test process.

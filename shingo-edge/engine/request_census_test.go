@@ -132,7 +132,7 @@ func seedCensusPress(t *testing.T, role protocol.ClaimRole, mode protocol.SwapMo
 
 // censusCarrier is what a census line holds where occupied: on a press's
 // on-deck, the carrier its index carries for the role (a full of the part for
-// consume, an empty for produce; ChainReadiness judges any other carrier there
+// consume, an empty for produce; chainReadiness judges any other carrier there
 // wrong), and elsewhere a bin with no part.
 func censusCarrier(role protocol.ClaimRole, node string, occupied bool) protocol.NodeBinInfo {
 	b := protocol.NodeBinInfo{NodeName: node, Occupied: occupied}

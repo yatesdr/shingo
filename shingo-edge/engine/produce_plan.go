@@ -23,7 +23,7 @@ type ProducePlan struct {
 	Dispatch *SwapDispatch
 
 	// Chain is what the dependent positions of a press need before its swap can
-	// index from them (ChainReadiness): the clears and the primes, created ahead
+	// index from them (chainReadiness): the clears and the primes, created ahead
 	// of the swap, or alongside the empty to a vacant line
 	// (createClearsThenPrimes).
 	Chain Readiness
@@ -67,7 +67,7 @@ func (p *ProducePlan) OrderCount() int {
 // occupancy maps core node names to their telemetry-reported occupied state
 // (from engine.claimOccupancy, the bins table), same source and same
 // missing-entry-means-occupied reading as the consume side. deck is what the
-// request read of the dependent positions (ChainReadiness): what stands on
+// request read of the dependent positions (chainReadiness): what stands on
 // each and whether a carrier is already on its way, so a second request while
 // the first prime is still travelling adds nothing.
 //

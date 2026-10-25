@@ -15,9 +15,9 @@ import (
 // both roles, both modes that stage:
 //
 //   - there is no fetch: nothing picks up at the inbound source;
-//   - the spare is lifted once, by a pickup that names the claim's part and is
-//     never Empty (spotPickup; Core's TestSpotPickup_HowTheStepFlagJudgesTheBin
-//     says why);
+//   - the spare is lifted once, by a pickup that names the claim's part, and
+//     is Empty on a produce line, whose spare is an empty (spotPickup; Core's
+//     TestSpotPickup_HowTheStepFlagJudgesTheBin says why);
 //   - a station wait comes before that lift, and on the two-robot supply it
 //     stamps the spot itself, so a cancel while the robot waits leaves the
 //     spare where it stands;
@@ -47,8 +47,9 @@ func assertKeepStagedLeg(t *testing.T, what string, steps []protocol.ComplexOrde
 		case s.Action == protocol.ActionPickup && s.Node == claim.InboundStaging:
 			lifts++
 			waitedBefore = sawWait
-			if s.Empty || s.PayloadCode != claim.PayloadCode {
-				t.Errorf("%s lifts the spare with %+v, want a pickup naming %q and never Empty", what, s, claim.PayloadCode)
+			if s.Empty != carriesEmpty(claim) || s.PayloadCode != claim.PayloadCode {
+				t.Errorf("%s lifts the spare with %+v, want a pickup naming %q, Empty=%v", what, s, claim.PayloadCode,
+					carriesEmpty(claim))
 			}
 		}
 	}

@@ -16,8 +16,9 @@ import (
 // carrier from the market. With a keep-staged node named, they fetch it from
 // the spot instead, and that is the only step that changes: the same step
 // list, the inbound-source pickup replaced by the spot pickup (named for the
-// claim's part, never Empty), the press's index moves untouched. Steady state
-// and changeover, both roles, both flip states and both press geometries.
+// claim's part, Empty on a produce line), the press's index moves untouched.
+// Steady state and changeover, both roles, both flip states and both press
+// geometries.
 
 const everyModeSpot = "KS-SPOT"
 
@@ -44,7 +45,8 @@ func assertOnlyTheFetchMoved(t *testing.T, what string, plain, kept []protocol.C
 		if plain[i].Action != protocol.ActionPickup || plain[i].Node != claim.InboundSource {
 			t.Errorf("%s: step %d moved and it is not the fetch: %+v -> %+v", what, i, plain[i], kept[i])
 		}
-		want := protocol.ComplexOrderStep{Action: protocol.ActionPickup, Node: everyModeSpot, PayloadCode: claim.PayloadCode}
+		want := protocol.ComplexOrderStep{Action: protocol.ActionPickup, Node: everyModeSpot, PayloadCode: claim.PayloadCode,
+			Empty: carriesEmpty(claim)}
 		if kept[i] != want {
 			t.Errorf("%s: step %d = %+v, want the spot pickup %+v", what, i, kept[i], want)
 		}
@@ -294,7 +296,8 @@ func TestKeepStagedNode_TheChangeoverLegTakesTheSpareAsRequestDoes(t *testing.T)
 // "keep staged basically just makes robot swap modes start mid-order"). With a
 // right spare standing, the fresh carrier is already where the swap would have
 // staged it, so no leg sets a carrier down on the spot: there is one pickup
-// there, naming the part, and the next step sets that carrier on the line side.
+// there, naming the part (Empty on a produce line), and the next step sets that
+// carrier on the line side.
 // The single robot lifts the line's bin first — old out, then spot to line.
 // Steady swap and changeover, both roles, every press geometry; the spot is
 // the inbound staging in the two modes that stage, a node of its own in the
@@ -326,7 +329,7 @@ func TestKeepStagedNode_ARightSpareStartsMidOrder(t *testing.T) {
 				if mode == protocol.SwapModeSequential {
 					steady = append(steady, BuildSequentialBackfillSteps(run))
 				}
-				assertMidOrder(t, what+" steady", steady, run.PayloadCode, mode)
+				assertMidOrder(t, what+" steady", steady, run, mode)
 
 				from := goldenClaim(role, mode, "P-FROM", v.secondPaired, v.flip)
 				if noHop {
@@ -339,13 +342,13 @@ func TestKeepStagedNode_ARightSpareStartsMidOrder(t *testing.T) {
 				for _, a := range plan.Actions {
 					legs = append(legs, specSteps(a.SupplyOrder), specSteps(a.EvacOrder))
 				}
-				assertMidOrder(t, what+" changeover", legs, to.PayloadCode, mode)
+				assertMidOrder(t, what+" changeover", legs, to, mode)
 			}
 		}
 	}
 }
 
-func assertMidOrder(t *testing.T, what string, legs [][]protocol.ComplexOrderStep, part string, mode protocol.SwapMode) {
+func assertMidOrder(t *testing.T, what string, legs [][]protocol.ComplexOrderStep, claim *processes.NodeClaim, mode protocol.SwapMode) {
 	t.Helper()
 	pickups := 0
 	for _, steps := range legs {
@@ -362,8 +365,9 @@ func assertMidOrder(t *testing.T, what string, legs [][]protocol.ComplexOrderSte
 				t.Errorf("%s: a leg sets a carrier down on the spot (step %d): the spare is already there", what, i)
 			case protocol.ActionPickup:
 				pickups++
-				if s.PayloadCode != part || s.Empty {
-					t.Errorf("%s: the spot pickup is %+v, want it naming %s", what, s, part)
+				if s.PayloadCode != claim.PayloadCode || s.Empty != carriesEmpty(claim) {
+					t.Errorf("%s: the spot pickup is %+v, want it naming %s, Empty=%v", what, s, claim.PayloadCode,
+						carriesEmpty(claim))
 				}
 				if i+1 >= len(steps) || steps[i+1].Action != protocol.ActionDropoff ||
 					steps[i+1].Node == "STG-IN" || steps[i+1].Node == "STG-OUT" {

@@ -982,14 +982,17 @@ func TestRefillPickup_ConsumeChangeoverAsksForTheIncomingPayload(t *testing.T) {
 	}
 }
 
-// TestPressIndexChangeoverR2_OnDeckPickupsNameTheOutgoingPart: a changeover
-// R2's on-deck pickups carry, as the step's payload, the part the leg already
-// carries on the order, for both roles, flipped and unflipped, two and three
-// positions. The value is the order's, so Core's bind answers the pickup as it
-// did; the step naming it is what keeps Core's vacant-pickup fallback off a
-// changeover's index leg. The steady-state R2 is untouched: its produce on-deck
-// pickups are Empty-flagged and a consume one names nothing.
-func TestPressIndexChangeoverR2_OnDeckPickupsNameTheOutgoingPart(t *testing.T) {
+// TestPressIndexChangeoverR2_OnDeckPickupsSayWhatTheyLift: a changeover R2's
+// on-deck pickups are the steady-state R2's, for both roles, flipped and
+// unflipped, two and three positions: Empty and naming no part on a produce
+// press (it indexes an empty), naming no part and not Empty on a consume one
+// (it indexes a full of the part the order carries, the outgoing style's).
+// Core binds what a pickup's step says it lifts (rule 5: a pickup naming a
+// part takes stock of it), so the produce pickup that named the outgoing part
+// held for good under that rule; and Core leaves a changeover's leg out of its
+// vacant-pickup fetch by its episode's kind, so the step carries no label for
+// that.
+func TestPressIndexChangeoverR2_OnDeckPickupsSayWhatTheyLift(t *testing.T) {
 	t.Parallel()
 	for _, role := range []protocol.ClaimRole{protocol.ClaimRoleProduce, protocol.ClaimRoleConsume} {
 		for _, flipped := range []bool{false, true} {
@@ -1005,15 +1008,18 @@ func TestPressIndexChangeoverR2_OnDeckPickupsNameTheOutgoingPart(t *testing.T) {
 				}
 				var action changeover.NodeAction
 				assignDispatch(&action, "PLN_01", from.PayloadCode, d)
+				if got := action.SupplyOrder.Complex.PayloadCode; got != "OLD" {
+					t.Errorf("%s flipped=%v second=%q: the index leg carries %q, want the outgoing OLD", role, flipped, second, got)
+				}
 				onDeck := 0
 				for _, s := range d.Roles.supply.steps {
 					if s.Action != protocol.ActionPickup || (s.Node != "PLN_02" && s.Node != "PLN_03") {
 						continue
 					}
 					onDeck++
-					if s.PayloadCode != action.SupplyOrder.Complex.PayloadCode || s.PayloadCode != "OLD" {
-						t.Errorf("%s flipped=%v second=%q: pickup at %s names %q, order carries %q; want both OLD",
-							role, flipped, second, s.Node, s.PayloadCode, action.SupplyOrder.Complex.PayloadCode)
+					if want := role == protocol.ClaimRoleProduce; s.Empty != want || s.PayloadCode != "" {
+						t.Errorf("%s flipped=%v second=%q: pickup at %s is Empty=%v naming %q; want Empty=%v naming nothing",
+							role, flipped, second, s.Node, s.Empty, s.PayloadCode, want)
 					}
 				}
 				if want := map[string]int{"": 1, "PLN_03": 2}[second]; onDeck != want {

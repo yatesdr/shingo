@@ -176,9 +176,6 @@ var availPredicted = map[string]map[string]string{
 	},
 	"allocator_part_supply": {
 		"held":          "F — BinUnavailableReason asks no quality hold",
-		"counted_out":   "E — the part-supply arm judges Stock(p): count above 0",
-		"part_less":     "E — the part-supply arm judges Stock(p): loaded with p (an unstamped carrier passes the payload test today)",
-		"unconfirmed":   "E — the part-supply arm judges Stock(p): confirmed",
 		"disabled_node": "F — the concrete-node arm asks no Enabled",
 	},
 	"allocator_removal": {

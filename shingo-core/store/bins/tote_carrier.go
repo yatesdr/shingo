@@ -13,7 +13,7 @@ import (
 // to a node.
 //
 //   - Core is the fed press (FedClaimSQL) whose outside position the node is
-//     and whose claim carries the part (FedOutsideCarryingSQL); "" when the
+//     and whose claim carries the part (fedOutsideCarryingSQL); "" when the
 //     node is no such outside.
 //   - Types is how many tote carrier types (a type stating totes_per_layer) the
 //     part names: from its carrier rule when the rule has rows (a rule with rows
@@ -48,7 +48,7 @@ func ToteCarrierFor(db *sql.DB, part, outside string) (ToteCarrier, error) {
 	node := `(SELECT id FROM nodes WHERE name = $2)`
 	var tc ToteCarrier
 	err := db.QueryRow(nodetree.AncestorsOfExpr(node)+`,
-		cell AS (`+FedOutsideCarryingSQL("$2", "$1")+`),
+		cell AS (`+fedOutsideCarryingSQL("$2", "$1")+`),
 		ruled AS (SELECT bt.code, bt.totes_per_layer FROM payload_bin_types pbt
 		            JOIN payloads p ON p.id = pbt.payload_id
 		            JOIN bin_types bt ON bt.id = pbt.bin_type_id

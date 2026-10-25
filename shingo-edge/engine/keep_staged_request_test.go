@@ -158,7 +158,7 @@ func readSpotOrders(t *testing.T, db *store.DB, nodeID int64) spotOrders {
 }
 
 // onDeckCarrier is the carrier a press's index carries off its on-deck for the
-// role: a full of the part for consume, an empty for produce. ChainReadiness
+// role: a full of the part for consume, an empty for produce. chainReadiness
 // judges any other carrier there wrong.
 func onDeckCarrier(role protocol.ClaimRole) protocol.NodeBinInfo {
 	if role == protocol.ClaimRoleConsume {
