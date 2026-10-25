@@ -140,4 +140,4 @@ Two implementation details worth keeping, because both fail *silently*:
 Text-based matching (no `analyze-types: true`) is sufficient only because
 `*store.DB` is the sole definer of these methods in either module. It is blind to
 raw SQL and to any receiver not named `db` — see the invariant sweep in
-`dispatch/rule1_invariant_test.go`, which exists because of that blindness.
+`engine/rule1_invariant_docker_test.go`, which exists because of that blindness.

@@ -375,13 +375,14 @@ old history row can still say.) A compound child
 (`parent_order_id IS NOT NULL`) is the exempted case above.
 
 The fence is a SQL sweep run as a docker integration test
-(`dispatch/rule1_invariant_test.go`), **not** the linter. The `forbidigo` rule
+(`engine/rule1_invariant_docker_test.go`), **not** the linter. The `forbidigo` rule
 above is useful but is *selector-match only*: it cannot see a bare
 `UPDATE bins SET claimed_by` written inside a transaction, and it cannot see a
 new caller that bypasses the reserve/confirm pair. The invariant sweep can. It
-populates a real database with an order parked in `queued`, asserts the sweep
-finds zero hard claims on it, and separately asserts that a compound child's raw
-claim is correctly exempted.
+runs a real scanner pass that parks an order in `queued` holding its bin softly
+(its hand refused at the slot and rolled back), then asserts no acquiring order
+holds a hard claim; separately it pins that a compound child is born holding
+nothing (its claim is its hand's).
 
 If you add a new path that writes `claimed_by`, the sweep is what will catch a
 rule violation. Run the docker tests.
