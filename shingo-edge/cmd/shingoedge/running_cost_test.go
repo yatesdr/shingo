@@ -162,7 +162,7 @@ func runningOrder(t *testing.T, db *store.DB, station int64, coreNode string, i 
 		t.Fatalf("node %s on station %d: %v", coreNode, station, err)
 	}
 	uuid := fmt.Sprintf("running-%d", i)
-	id, err := db.CreateOrder(uuid, protocol.OrderTypeRetrieve, &node, false, 1, coreNode, "", "MARKET", "standard", false, "PART-01", "", "")
+	id, err := db.CreateOrder(uuid, protocol.OrderTypeRetrieve, &node, false, 1, coreNode, "", "MARKET", false, "PART-01", "", "")
 	if err != nil {
 		t.Fatalf("create order: %v", err)
 	}

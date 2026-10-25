@@ -15,7 +15,7 @@ func TestHandleOrderError_AppliesTheRowsBeforeTheOrder(t *testing.T) {
 	t.Parallel()
 	db := testHandlerDB(t)
 	h := NewEdgeHandler(orders.NewManager(db, noopEmitter{}, "edge"))
-	oid, err := db.CreateOrder("uuid-rows", protocol.OrderTypeMove, nil, false, 1, "HOLD-1", "", "SPOT-1", "", true, "", "", "")
+	oid, err := db.CreateOrder("uuid-rows", protocol.OrderTypeMove, nil, false, 1, "HOLD-1", "", "SPOT-1", true, "", "", "")
 	if err != nil {
 		t.Fatalf("create order: %v", err)
 	}

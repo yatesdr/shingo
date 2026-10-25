@@ -282,7 +282,7 @@ func loaderOrder(t *testing.T, db *store.DB, uuid string, typ protocol.OrderType
 	delivery, source, payload, status string) int64 {
 	t.Helper()
 	id, err := db.CreateOrder(uuid, typ, &nodeID, typ == protocol.OrderTypeRetrieve && payload == "",
-		1, delivery, "", source, "standard", false, payload, "", "")
+		1, delivery, "", source, false, payload, "", "")
 	if err != nil {
 		t.Fatalf("create order %s: %v", uuid, err)
 	}

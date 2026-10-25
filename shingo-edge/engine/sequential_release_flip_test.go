@@ -126,7 +126,7 @@ func seedSteadyStateSequentialPair(t *testing.T, db *store.DB) (eng *Engine, pro
 	// A staged order against the side the line pulls from: the finished bin
 	// the operator is about to release.
 	aOrder, err = db.CreateOrder("uuid-ss-release", orders.TypeComplex,
-		&aNodeID, false, 1, "SS-A", "", "", "", false, "PART-SS", "", "")
+		&aNodeID, false, 1, "SS-A", "", "", false, "PART-SS", "", "")
 	if err != nil {
 		t.Fatalf("create order: %v", err)
 	}

@@ -6,6 +6,7 @@ import (
 
 	"shingo/protocol"
 	"shingoedge/domain"
+	ordermgr "shingoedge/orders"
 	"shingoedge/release"
 	"shingoedge/store/orders"
 	"shingoedge/store/processes"
@@ -129,9 +130,10 @@ func (e *Engine) StageNodeChangeoverMaterial(processID, nodeID int64) (*orders.O
 	// Direct delivery if no staging configured. Source group: toClaim.InboundSource
 	// so the changeover retrieve honours the configured supermarket; empty
 	// preserves Core's global FIFO fallback for legacy claims.
-	retrieveEmpty := toClaim.Role == protocol.ClaimRoleProduce
-	order, err := e.orderMgr.CreateRetrieveOrder(&ctx.node.ID, retrieveEmpty, 1, toClaim.CoreNodeName, toClaim.InboundSource, "", "standard", toClaim.PayloadCode, e.cfg.AutoConfirm(), false,
-		e.changeoverOrigin(ctx.changeover.ID))
+	order, err := e.orderMgr.CreateRetrieveOrder(ordermgr.RetrieveSpec{Process: &ctx.node.ID,
+		Delivery: toClaim.CoreNodeName, Source: toClaim.InboundSource, Payload: toClaim.PayloadCode,
+		Quantity: 1, Empty: toClaim.Role == protocol.ClaimRoleProduce, AutoConfirm: e.cfg.AutoConfirm(),
+		Origin: e.changeoverOrigin(ctx.changeover.ID)})
 	if err != nil {
 		return nil, err
 	}

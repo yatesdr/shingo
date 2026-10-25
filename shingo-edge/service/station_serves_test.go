@@ -338,7 +338,7 @@ func TestServedRows_Waiting(t *testing.T) {
 	tiles := board([]domain.LoaderRole{domain.RoleProduce, domain.RoleConsume}, "PART-A", "PART-X", "PART-Y", "PART-M", "PART-Q")
 
 	queue := func(uuid string, node int64, part, reason string) {
-		id, err := db.CreateOrder(uuid, protocol.OrderTypeRetrieve, &node, false, 1, "X", "", "", "standard", false, part, "", "")
+		id, err := db.CreateOrder(uuid, protocol.OrderTypeRetrieve, &node, false, 1, "X", "", "", false, part, "", "")
 		if err != nil {
 			t.Fatalf("create order: %v", err)
 		}

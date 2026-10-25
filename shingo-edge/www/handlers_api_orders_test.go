@@ -135,7 +135,6 @@ func TestApiOrders_CreateRetrieveOrder_Success(t *testing.T) {
 		"payload_code":  "BIN-RET-1",
 		"quantity":      1,
 		"delivery_node": "LINE-A",
-		"load_type":     "standard",
 	}
 	resp := doRequest(t, router, "POST", "/api/orders/retrieve", body, nil)
 	assertStatus(t, resp, http.StatusOK)
@@ -175,7 +174,6 @@ func TestApiOrders_CreateRetrieveOrder_ResolvesDeliveryFromNode(t *testing.T) {
 		"process_node_id": nodeID,
 		"payload_code":    "BIN-RET-RES",
 		"quantity":        1,
-		"load_type":       "standard",
 		// delivery_node intentionally omitted — handler should derive it
 	}
 	resp := doRequest(t, router, "POST", "/api/orders/retrieve", body, nil)

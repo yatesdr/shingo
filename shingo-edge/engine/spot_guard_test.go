@@ -56,8 +56,10 @@ var cellShuttingRows = []cellRow{
 // retrieve attributed to the line, delivering to the line's inbound staging.
 func spotBoundRetrieve(t *testing.T, eng *Engine, nodeID int64, c *processes.NodeClaim) {
 	t.Helper()
-	_, err := eng.orderMgr.CreateRetrieveOrder(&nodeID, c.Role == protocol.ClaimRoleProduce, 1,
-		c.InboundStaging, c.InboundSource, "", "standard", c.PayloadCode, true, false, orders.Attached("spot-refill"))
+	_, err := eng.orderMgr.CreateRetrieveOrder(orders.RetrieveSpec{Process: &nodeID,
+		Empty: c.Role == protocol.ClaimRoleProduce, Quantity: 1, Delivery: c.InboundStaging,
+		Source: c.InboundSource, Payload: c.PayloadCode, AutoConfirm: true,
+		Origin: orders.Attached("spot-refill")})
 	testutil.MustNoErr(t, err, "create spot-bound retrieve")
 }
 

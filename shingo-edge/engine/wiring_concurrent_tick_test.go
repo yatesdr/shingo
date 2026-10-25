@@ -232,7 +232,7 @@ func TestRegression_TickDuringPartialBackPickupWindow(t *testing.T) {
 	const binID int64 = 11500
 	const orderUUID = "uuid-pb-pu"
 	orderID, err := db.CreateOrder(orderUUID, orders.TypeRetrieve,
-		&nodeID, false, 1, "PB-PICKUP-NODE", "", "", "", false, "PART-PB-PU", "", "")
+		&nodeID, false, 1, "PB-PICKUP-NODE", "", "", false, "PART-PB-PU", "", "")
 	if err != nil {
 		t.Fatalf("create order: %v", err)
 	}
@@ -298,7 +298,7 @@ func TestRegression_TickDuringChangeoverRunout(t *testing.T) {
 
 	const binID int64 = 4001
 	orderID, err := db.CreateOrder("uuid-runout", orders.TypeRetrieve,
-		&nodeID, false, 1, "RUNOUT-NODE", "", "", "", false, "PART-OLD", "", "")
+		&nodeID, false, 1, "RUNOUT-NODE", "", "", false, "PART-OLD", "", "")
 	if err != nil {
 		t.Fatalf("create order: %v", err)
 	}
@@ -536,7 +536,7 @@ func TestRegression_ChangeoverBackToStyle_ResetsToCapacityPostItem8(t *testing.T
 	// X bin returns. Order has bin_id set so binArrivingAt picks it up
 	// at completion and resolveReplenishUOP returns claim capacity.
 	orderID, err := db.CreateOrder("uuid-back-return", orders.TypeComplex,
-		&nodeID, false, 1, "BACK-NODE", "", "", "", false, "PART-X", "", "")
+		&nodeID, false, 1, "BACK-NODE", "", "", false, "PART-X", "", "")
 	if err != nil {
 		t.Fatalf("create order: %v", err)
 	}
@@ -571,7 +571,7 @@ func TestRegression_ChangeoverBackToStyle_ResetsToCapacityPostItem8(t *testing.T
 func stageABOrder(t *testing.T, db *store.DB, nodeID int64, uuid, payload string, binID int64) int64 {
 	t.Helper()
 	orderID, err := db.CreateOrder(uuid, orders.TypeRetrieve,
-		&nodeID, false, 1, "AB-NODE-X", "", "", "", false, payload, "", "")
+		&nodeID, false, 1, "AB-NODE-X", "", "", false, payload, "", "")
 	if err != nil {
 		t.Fatalf("create order %s: %v", uuid, err)
 	}

@@ -289,10 +289,10 @@ func (s *stubEngine) CreateRetrieveForAPI(req engine.APIRetrieveRequest) ([]*sto
 	}
 	made := make([]*storeorders.Order, 0, count)
 	for i := 0; i < count; i++ {
-		o, err := s.orderMgr.CreateRetrieveOrder(
-			req.ProcessNodeID, req.RetrieveEmpty, req.Quantity,
-			req.DeliveryNode, req.SourceNode, req.StagingNode, req.LoadType,
-			req.PayloadCode, req.AutoConfirm, false, orders.NoDemand())
+		o, err := s.orderMgr.CreateRetrieveOrder(orders.RetrieveSpec{Process: req.ProcessNodeID,
+			Empty: req.RetrieveEmpty, Quantity: req.Quantity, Delivery: req.DeliveryNode,
+			Source: req.SourceNode, Staging: req.StagingNode, Payload: req.PayloadCode,
+			AutoConfirm: req.AutoConfirm, Origin: orders.NoDemand()})
 		if err != nil {
 			return made, err
 		}
@@ -715,7 +715,7 @@ func seedOrder(t *testing.T, orderType protocol.OrderType, status protocol.Statu
 	t.Helper()
 	n := atomic.AddInt64(&orderUUIDCounter, 1)
 	uuid := fmt.Sprintf("test-uuid-%s-%d", string(orderType), n)
-	id, err := testDB.CreateOrder(uuid, orderType, nil, false, 10, "DELIVERY", "", "", "", false, "", "", "")
+	id, err := testDB.CreateOrder(uuid, orderType, nil, false, 10, "DELIVERY", "", "", false, "", "", "")
 	if err != nil {
 		t.Fatalf("seed order: %v", err)
 	}

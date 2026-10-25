@@ -217,7 +217,7 @@ func fullOrder() domain.Order {
 	s, n, at := "x", int64(1), time.Date(2026, 10, 17, 12, 0, 0, 0, time.UTC)
 	wait := 1
 	return domain.Order{ID: 1, UUID: "u-1", OrderType: "retrieve", Status: "in_transit", ProcessNodeID: &n,
-		RetrieveEmpty: true, Quantity: 1, DeliveryNode: "D", StagingNode: "S", SourceNode: "O", LoadType: "standard",
+		RetrieveEmpty: true, Quantity: 1, DeliveryNode: "D", StagingNode: "S", SourceNode: "O",
 		WaybillID: &s, ExternalRef: &s, FinalCount: &n, CountConfirmed: true, ETA: &s, AutoConfirm: true,
 		StagedExpireAt: &at, BinID: &n, PayloadCode: "PART-A", PayloadDesc: "d", SiblingOrderID: &n,
 		QueueReason: "r", QueueCode: "c", FaultSince: &at, FaultDeadline: &at, FaultNoticeAfterS: 1,

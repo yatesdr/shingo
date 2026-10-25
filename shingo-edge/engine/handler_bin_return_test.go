@@ -15,7 +15,7 @@ func TestHandleBinReturn_NoticeOnly(t *testing.T) {
 	eng := testEngine(t, db)
 
 	orderID, err := db.CreateOrder("uuid-br-1", orders.TypeRetrieve,
-		nil, false, 1, "ALN_001", "", "", "", false, "PART-A", "", "")
+		nil, false, 1, "ALN_001", "", "", false, "PART-A", "", "")
 	if err != nil {
 		t.Fatalf("create order: %v", err)
 	}

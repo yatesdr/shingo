@@ -21,8 +21,9 @@ func TestEcho_KeepsTheEdgesOwnProcessNode(t *testing.T) {
 	t.Parallel()
 	n := newEchoNodes(t, "EKP", protocol.ClaimRoleProduce, "BKP")
 
-	l1, err := n.eng.orderMgr.CreateRetrieveOrder(&n.aID, true, 1, n.bCore, "EMPTY-MKT", "",
-		"standard", "", false, true, orders.NoDemand())
+	l1, err := n.eng.orderMgr.CreateRetrieveOrder(orders.RetrieveSpec{Process: &n.aID, Empty: true,
+		Quantity: 1, Delivery: n.bCore, Source: "EMPTY-MKT", SkipAutoConfirm: true,
+		Origin: orders.NoDemand()})
 	testutil.MustNoErr(t, err, "CreateRetrieveOrder")
 	_, err = n.eng.ApplyOrderProjection(echoProjectionOf(l1))
 	testutil.MustNoErr(t, err, "apply echo")

@@ -68,7 +68,7 @@ func landBound(eng *Engine, node string, binID, epoch int64, count int) {
 // deliver emits order.delivered for bin at the node, carrying Core's count.
 func deliver(t *testing.T, eng *Engine, nodeID int64, uuid, node string, binID, epoch int64, count int) {
 	t.Helper()
-	orderID, err := eng.db.CreateOrder(uuid, orders.TypeRetrieve, &nodeID, false, 1, node, "", "", "", false, "", "", "")
+	orderID, err := eng.db.CreateOrder(uuid, orders.TypeRetrieve, &nodeID, false, 1, node, "", "", false, "", "", "")
 	testutil.MustNoErr(t, err, "create order")
 	bid := binID
 	testutil.MustNoErr(t, eng.db.UpdateOrderBinID(orderID, &bid), "order bin")
@@ -168,7 +168,7 @@ func releaseEmptyAt(t *testing.T, eng *Engine, nodeID, claimID int64, node strin
 	srv := mockBinUOPServer(t, map[int64]int{})
 	bridgeCore(t, eng, srv.URL)
 	orderID, err := eng.db.CreateOrder("uuid-rel-"+node, orders.TypeRetrieve,
-		&nodeID, false, 1, node, "", "", "", false, "", "", "")
+		&nodeID, false, 1, node, "", "", false, "", "", "")
 	testutil.MustNoErr(t, err, "create order")
 	testutil.MustNoErr(t, eng.db.UpdateProcessNodeRuntimeOrders(nodeID, &orderID, nil), "runtime order")
 	testutil.MustNoErr(t, eng.db.UpdateOrderStatus(orderID, "staged"), "stage the order")
@@ -420,7 +420,7 @@ func TestPinH_OrderBSimpleCompletionLeavesADifferentCarrier(t *testing.T) {
 	const departed, landed = int64(8501), int64(8502)
 	y := landed
 	testutil.MustNoErr(t, db.SetProcessNodeRuntimeWithBin(nodeID, &claimID, &y, 90), "Y on the seat")
-	orderID, err := db.CreateOrder("uuid-hob", orders.TypeMove, &nodeID, false, 1, "HOB-OUT", "", "", "", false, "", "", "")
+	orderID, err := db.CreateOrder("uuid-hob", orders.TypeMove, &nodeID, false, 1, "HOB-OUT", "", "", false, "", "", "")
 	testutil.MustNoErr(t, err, "create Order B")
 	x := departed
 	testutil.MustNoErr(t, db.UpdateOrderBinID(orderID, &x), "Order B carried X")
@@ -454,7 +454,7 @@ func TestPinH_PickupHandlerReadsItsOrderOnce(t *testing.T) {
 	_, nodeID, _, claimID := emptySeat(t, eng, "HPU", "PART-HPU", 100)
 	b := int64(8601)
 	testutil.MustNoErr(t, db.SetProcessNodeRuntimeWithBin(nodeID, &claimID, &b, 10), "bind")
-	_, err := db.CreateOrder("uuid-hpu", orders.TypeComplex, &nodeID, false, 1, "HPU-OUT", "", "", "", false, "", "", "")
+	_, err := db.CreateOrder("uuid-hpu", orders.TypeComplex, &nodeID, false, 1, "HPU-OUT", "", "", false, "", "", "")
 	testutil.MustNoErr(t, err, "create order")
 
 	counter.Reset()

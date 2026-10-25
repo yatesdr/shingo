@@ -37,11 +37,11 @@ func TestCancelLockPin_ACancelNeverConfirmsUnderItsCellLocks(t *testing.T) {
 
 	line := fx.nodeIDs["L1"]
 	live, err := fx.db.CreateOrder("pin-live-leg", protocol.OrderTypeRetrieve, &line, false, 1,
-		"L1", "", "SRC-NEW", "", false, "PART-NEW", "", "")
+		"L1", "", "SRC-NEW", false, "PART-NEW", "", "")
 	testutil.MustNoErr(t, err, "a live leg")
 	testutil.MustNoErr(t, fx.db.UpdateOrderStatus(live, string(protocol.StatusInTransit)), "flying")
 	landed, err := fx.db.CreateOrder("pin-landed-leg", protocol.OrderTypeRetrieve, &line, false, 1,
-		"SPOT", "", "SRC-OLD", "", false, "PART-OLD", "", "")
+		"SPOT", "", "SRC-OLD", false, "PART-OLD", "", "")
 	testutil.MustNoErr(t, err, "a landed leg")
 	testutil.MustNoErr(t, fx.db.UpdateOrderStatus(landed, string(protocol.StatusDelivered)), "delivered")
 	_, err = fx.db.DB.Exec(`UPDATE changeover_node_tasks SET next_material_order_id=?, old_material_release_order_id=? WHERE id=?`,

@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 	"sync/atomic"
@@ -104,6 +105,49 @@ func TestProduceEmptyLine_SingleRobotRequestDeliversAnEmpty(t *testing.T) {
 	}
 }
 
+// The empty a produce line's request brings names no load type, on the wire
+// or on its row: nothing on either module reads one, so its writers went and
+// the Edge's column is left dormant at its default.
+func TestProduceEmptyLine_TheRetrieveNamesNoLoadType(t *testing.T) {
+	t.Parallel()
+	eng, db, nodeID, claim := seedCell(t, protocol.ClaimRoleProduce, protocol.SwapModeSingleRobot, false,
+		map[string]protocol.NodeBinInfo{ksLine: {}, ksSpot: {}})
+	testutil.MustNoErr(t, db.SetProcessNodeRuntime(nodeID, &claim.ID, 30), "count")
+	_, err := eng.RequestProduceSwap(nodeID, 0)
+	testutil.MustNoErr(t, err, "request on an empty line")
+	_, plain := liveLineRows(t, eng, nodeID)
+	if len(plain) != 1 || plain[0].OrderType != orders.TypeRetrieve {
+		t.Fatalf("plain rows %+v, want the one retrieve", plain)
+	}
+	var loadType string
+	testutil.MustNoErr(t, db.QueryRow(`SELECT load_type FROM orders WHERE id = ?`, plain[0].ID).Scan(&loadType), "the row")
+	if loadType != "" {
+		t.Errorf("the row names load type %q, want none", loadType)
+	}
+	msgs, err := db.ListPendingOutbox(100)
+	testutil.MustNoErr(t, err, "outbox")
+	sent := 0
+	for _, m := range msgs {
+		if m.MsgType != protocol.TypeOrderRequest {
+			continue
+		}
+		var env protocol.Envelope
+		testutil.MustNoErr(t, json.Unmarshal(m.Payload, &env), "envelope")
+		var p map[string]any
+		testutil.MustNoErr(t, json.Unmarshal(env.Payload, &p), "order.request")
+		if p["order_uuid"] != plain[0].UUID {
+			continue
+		}
+		sent++
+		if lt, ok := p["load_type"]; ok {
+			t.Errorf("the order.request names load type %v, want the key absent", lt)
+		}
+	}
+	if sent != 1 {
+		t.Fatalf("%d order requests for the retrieve in the outbox, want 1", sent)
+	}
+}
+
 // A position still being worked reads empty mid-swap: the request is refused
 // and nothing is created, as on the consume side.
 func TestProduceEmptyLine_PositionStillWorkedRefuses(t *testing.T) {
@@ -112,8 +156,8 @@ func TestProduceEmptyLine_PositionStillWorkedRefuses(t *testing.T) {
 		map[string]protocol.NodeBinInfo{ksLine: {}})
 	// A live order of the line that sits in no runtime slot and ends away from
 	// it, as a single-robot swap leg does: only the line's own rows see it.
-	_, err := eng.orderMgr.CreateRetrieveOrder(&nodeID, true, 1, ksDest, ksMarket, "", "standard", ksPart, false, false,
-		orders.Attached("prior"))
+	_, err := eng.orderMgr.CreateRetrieveOrder(orders.RetrieveSpec{Process: &nodeID, Empty: true, Quantity: 1,
+		Delivery: ksDest, Source: ksMarket, Payload: ksPart, Origin: orders.Attached("prior")})
 	testutil.MustNoErr(t, err, "prior order")
 
 	_, err = eng.RequestProduceSwap(nodeID, 0)

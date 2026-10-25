@@ -204,7 +204,7 @@ func (w *buttonWorld) sibling() int64 {
 	_, err = db.UpsertStyleNodeClaim(domain.CoreNodeKinds{}, in)
 	testutil.MustNoErr(w.t, err, "sibling claim")
 	id, err := db.CreateOrder("uuid-sibling", orders.TypeRetrieve, &sib, w.role == protocol.ClaimRoleProduce, 1,
-		ksLine, "", ksMarket, "standard", false, ksPart, "", "")
+		ksLine, "", ksMarket, false, ksPart, "", "")
 	testutil.MustNoErr(w.t, err, "the sibling's bin")
 	w.setStatus(id, protocol.StatusInTransit)
 	return id

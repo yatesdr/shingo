@@ -38,7 +38,8 @@ func createDoors() []createDoor {
 			name: "retrieve",
 			create: func(t *testing.T, m *Manager, origin Origin) (int64, string) {
 				t.Helper()
-				o, err := m.CreateRetrieveOrder(nil, true, 1, "LINE-1", "EMPTY-MARKET", "", "", "PART-A", false, false, origin)
+				o, err := m.CreateRetrieveOrder(RetrieveSpec{Empty: true, Quantity: 1, Delivery: "LINE-1",
+					Source: "EMPTY-MARKET", Payload: "PART-A", Origin: origin})
 				if err != nil {
 					t.Fatalf("create retrieve order: %v", err)
 				}

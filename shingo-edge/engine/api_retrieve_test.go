@@ -105,7 +105,7 @@ func TestCreateRetrieveForAPI_AHeldWindowGetsCoresSentence(t *testing.T) {
 			if c.name == "resident" {
 				resident["HW-W1"] = "PART-H"
 			} else {
-				_, err := db.CreateOrder("hw-inbound", "retrieve", nil, false, 1, "HW-W1", "", "EMPTY-SUPER", "", false, "PART-H", "", "")
+				_, err := db.CreateOrder("hw-inbound", "retrieve", nil, false, 1, "HW-W1", "", "EMPTY-SUPER", false, "PART-H", "", "")
 				testutil.MustNoErr(t, err, "the full inbound")
 			}
 			holdSweep(t, eng, resident)
@@ -138,7 +138,7 @@ func TestCreateRetrieveForAPI_TheOverridesRideAsCoreReadsThem(t *testing.T) {
 
 	made, err := eng.CreateRetrieveForAPI(APIRetrieveRequest{
 		RetrieveEmpty: true, Quantity: 1, DeliveryNode: "OV-W1", PayloadCode: "PART-O",
-		SourceNode: "OTHER-MARKET", StagingNode: "OV-STAGE", LoadType: "standard", AutoConfirm: true,
+		SourceNode: "OTHER-MARKET", StagingNode: "OV-STAGE", AutoConfirm: true,
 	})
 	testutil.MustNoErr(t, err, "CreateRetrieveForAPI")
 	if ask := core.lastAsk(); ask.SourceNode != "OTHER-MARKET" || ask.AnySource {

@@ -745,7 +745,7 @@ func p2Order(t *testing.T, db *store.DB, status protocol.Status, deliveryNode st
 		typ = protocol.OrderTypeRetrieveEmpty
 	}
 	id, err := db.CreateOrder(fmt.Sprintf("p2-%s-%d-%d", status, len(steps), time.Now().UnixNano()), typ, nil, steps == nil, 1,
-		deliveryNode, "", "", "", false, "WIDGET-A", "", "")
+		deliveryNode, "", "", false, "WIDGET-A", "", "")
 	testutil.MustNoErr(t, err, "create order")
 	if steps != nil {
 		raw, err := json.Marshal(steps)

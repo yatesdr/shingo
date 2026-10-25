@@ -733,8 +733,8 @@ func TestReconciliationAnomalies_DetectsStuckAndDelivered(t *testing.T) {
 	db := coverageDB(t)
 
 	// Two orders — backdate updated_at to push past the thresholds.
-	stuckID, _ := db.CreateOrder("stuck", "retrieve", nil, false, 1, "", "", "", "", false, "CODE", "", "")
-	deliveredID, _ := db.CreateOrder("delivered", "retrieve", nil, false, 1, "", "", "", "", false, "CODE", "", "")
+	stuckID, _ := db.CreateOrder("stuck", "retrieve", nil, false, 1, "", "", "", false, "CODE", "", "")
+	deliveredID, _ := db.CreateOrder("delivered", "retrieve", nil, false, 1, "", "", "", false, "CODE", "", "")
 
 	db.UpdateOrderStatus(stuckID, "submitted")
 	db.UpdateOrderStatus(deliveredID, "delivered")
@@ -788,7 +788,7 @@ func TestOrders_CreateGetListByUUID(t *testing.T) {
 	db := coverageDB(t)
 
 	id, err := db.CreateOrder("uuid-1", "retrieve", nil, false, 5,
-		"DELIVERY", "STAGING", "SOURCE", "type_a", true, "PL-A", "", "")
+		"DELIVERY", "STAGING", "SOURCE", true, "PL-A", "", "")
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
@@ -798,7 +798,7 @@ func TestOrders_CreateGetListByUUID(t *testing.T) {
 		t.Fatalf("get: %v", err)
 	}
 	if got.UUID != "uuid-1" || got.DeliveryNode != "DELIVERY" || got.StagingNode != "STAGING" ||
-		got.SourceNode != "SOURCE" || got.LoadType != "type_a" || !got.AutoConfirm ||
+		got.SourceNode != "SOURCE" || !got.AutoConfirm ||
 		got.PayloadCode != "PL-A" || got.Quantity != 5 {
 		t.Errorf("got %+v", got)
 	}
@@ -818,9 +818,9 @@ func TestOrders_ActiveListFilters(t *testing.T) {
 	t.Parallel()
 	db := coverageDB(t)
 
-	_, _ = db.CreateOrder("a", "retrieve", nil, false, 1, "", "", "", "", false, "", "", "")
-	b, _ := db.CreateOrder("b", "retrieve", nil, false, 1, "", "", "", "", false, "", "", "")
-	c, _ := db.CreateOrder("c", "retrieve", nil, false, 1, "", "", "", "", false, "", "", "")
+	_, _ = db.CreateOrder("a", "retrieve", nil, false, 1, "", "", "", false, "", "", "")
+	b, _ := db.CreateOrder("b", "retrieve", nil, false, 1, "", "", "", false, "", "", "")
+	c, _ := db.CreateOrder("c", "retrieve", nil, false, 1, "", "", "", false, "", "", "")
 
 	// a stays pending, b confirmed, c cancelled.
 	db.UpdateOrderStatus(b, "confirmed")
@@ -859,8 +859,8 @@ func TestOrders_ByProcessAndNodeFilters(t *testing.T) {
 		t.Fatalf("create node: %v", err)
 	}
 
-	oid, _ := db.CreateOrder("u-r", "retrieve", &nid, false, 1, "", "", "", "", false, "", "", "")
-	oid2, _ := db.CreateOrder("u-m", "move", &nid, false, 1, "", "", "", "", false, "", "", "")
+	oid, _ := db.CreateOrder("u-r", "retrieve", &nid, false, 1, "", "", "", false, "", "", "")
+	oid2, _ := db.CreateOrder("u-m", "move", &nid, false, 1, "", "", "", false, "", "", "")
 
 	// By process
 	byProc, err := db.ListActiveOrdersByProcess(pid)
@@ -891,7 +891,7 @@ func TestOrders_ByProcessAndNodeFilters(t *testing.T) {
 func TestOrders_UpdateMutations(t *testing.T) {
 	t.Parallel()
 	db := coverageDB(t)
-	id, _ := db.CreateOrder("u", "retrieve", nil, false, 1, "", "", "", "", false, "", "", "")
+	id, _ := db.CreateOrder("u", "retrieve", nil, false, 1, "", "", "", false, "", "", "")
 
 	// ProcessNode assignment
 	pid, _ := db.CreateProcess("P", "", "", "", false)
@@ -953,7 +953,7 @@ func TestOrders_UpdateMutations(t *testing.T) {
 func TestOrders_HistoryInsertAndList(t *testing.T) {
 	t.Parallel()
 	db := coverageDB(t)
-	id, _ := db.CreateOrder("u", "retrieve", nil, false, 1, "", "", "", "", false, "", "", "")
+	id, _ := db.CreateOrder("u", "retrieve", nil, false, 1, "", "", "", false, "", "", "")
 
 	testutil.MustNoErr(t, db.InsertOrderHistory(id, "pending", "submitted", "auto-submit"), "insert history")
 	testutil.MustNoErr(t, db.InsertOrderHistory(id, "submitted", "acknowledged", "core ack"), "insert history 2")
@@ -1996,7 +1996,7 @@ func TestReconciliationAnomalies_MaterialWaitGetsTheLongerBound(t *testing.T) {
 	db := coverageDB(t)
 
 	mk := func(uuid, status, code string, age time.Duration) int64 {
-		id, err := db.CreateOrder(uuid, "retrieve", nil, false, 1, "", "", "", "", false, "CODE", "", "")
+		id, err := db.CreateOrder(uuid, "retrieve", nil, false, 1, "", "", "", false, "CODE", "", "")
 		if err != nil {
 			t.Fatalf("create %s: %v", uuid, err)
 		}
@@ -2064,9 +2064,9 @@ func TestOrders_LatestHistoryTimesForStatus(t *testing.T) {
 	t.Parallel()
 	db := coverageDB(t)
 
-	waiting, _ := db.CreateOrder("lh-waiting", "retrieve", nil, false, 1, "", "", "", "", false, "", "", "")
-	other, _ := db.CreateOrder("lh-other", "retrieve", nil, false, 1, "", "", "", "", false, "", "", "")
-	never, _ := db.CreateOrder("lh-never", "retrieve", nil, false, 1, "", "", "", "", false, "", "", "")
+	waiting, _ := db.CreateOrder("lh-waiting", "retrieve", nil, false, 1, "", "", "", false, "", "", "")
+	other, _ := db.CreateOrder("lh-other", "retrieve", nil, false, 1, "", "", "", false, "", "", "")
+	never, _ := db.CreateOrder("lh-never", "retrieve", nil, false, 1, "", "", "", false, "", "", "")
 
 	// Two waits on one order: the second is the one the clock is about.
 	testutil.MustNoErr(t, db.InsertOrderHistory(waiting, "pending", "queued", "first wait"), "hist 1")

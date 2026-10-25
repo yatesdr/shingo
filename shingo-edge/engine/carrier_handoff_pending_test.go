@@ -138,7 +138,7 @@ func TestH5_ADeliveredFromALandingCoreBindsNothing(t *testing.T) {
 	eng.wireEventHandlers()
 	_, nodeID, _, _ := emptySeat(t, eng, "HPL6", "PART-HPL6", 100)
 
-	orderID, err := eng.db.CreateOrder("uuid-hpl6", orders.TypeRetrieve, &nodeID, false, 1, "HPL6-NODE", "", "", "", false, "", "", "")
+	orderID, err := eng.db.CreateOrder("uuid-hpl6", orders.TypeRetrieve, &nodeID, false, 1, "HPL6-NODE", "", "", false, "", "", "")
 	testutil.MustNoErr(t, err, "create order")
 	bid, n := int64(9108), 80
 	testutil.MustNoErr(t, eng.db.UpdateOrderBinID(orderID, &bid), "order bin")

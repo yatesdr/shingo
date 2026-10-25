@@ -81,7 +81,7 @@ func TestDependentPositionSites_AnswerAsAtTheBase(t *testing.T) {
 		t.Parallel()
 		db := testEngineDB(t)
 		eng := testEngine(t, db)
-		id, err := db.CreateOrder("to-b", protocol.OrderTypeRetrieve, nil, true, 1, "B", "", "MARKET", "", false, "", "", "")
+		id, err := db.CreateOrder("to-b", protocol.OrderTypeRetrieve, nil, true, 1, "B", "", "MARKET", false, "", "", "")
 		testutil.MustNoErr(t, err, "create")
 		testutil.MustNoErr(t, db.UpdateOrderStatus(id, string(protocol.StatusDispatched)), "status")
 		node := &processes.Node{ID: 1, Name: "LINE", CoreNodeName: "LINE"}
@@ -208,7 +208,7 @@ func TestRequestProduceSwap_ALegWithNoDeliveryNodeIsSeenComing(t *testing.T) {
 		{Action: protocol.ActionPickup, Node: "MARKET-EMPTIES"},
 		{Action: protocol.ActionDropoff, Node: "INDEX-B"},
 	}
-	id, err := db.CreateOrder("blank-delivery-leg", protocol.OrderTypeComplex, nil, false, 1, "", "", "", "", false, "", "", "")
+	id, err := db.CreateOrder("blank-delivery-leg", protocol.OrderTypeComplex, nil, false, 1, "", "", "", false, "", "", "")
 	testutil.MustNoErr(t, err, "create leg")
 	facts, err := release.FactsFromSteps(steps, "PRESS").Encode()
 	testutil.MustNoErr(t, err, "facts")

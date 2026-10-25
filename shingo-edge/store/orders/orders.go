@@ -33,7 +33,7 @@ type (
 )
 
 const selectCols = `o.id, o.uuid, o.order_type, o.status, o.process_node_id, o.retrieve_empty, o.quantity,
-	o.delivery_node, o.staging_node, o.source_node, o.load_type,
+	o.delivery_node, o.staging_node, o.source_node,
 	o.waybill_id, o.external_ref, o.final_count,
 	o.count_confirmed, o.eta, o.auto_confirm, o.staged_expire_at, o.bin_id, o.payload_code, o.payload_desc, o.sibling_order_id, o.queue_reason, o.queue_code, o.authored_by, o.origin_id, o.origin_class,
 	o.fault_since, o.fault_deadline, o.fault_notice_after_s, o.fault_ref, o.departed_at, o.cell_left_at, o.station_wait, o.wait_kind, COALESCE(o.release_facts, ''), o.release_intent, o.release_held, o.created_at, o.updated_at,
@@ -214,7 +214,7 @@ func scanOrders(rows *sql.Rows) ([]Order, error) {
 		var createdAt, updatedAt string
 		var laneHeld int
 		if err := rows.Scan(&o.ID, &o.UUID, &o.OrderType, &o.Status, &o.ProcessNodeID, &o.RetrieveEmpty, &o.Quantity,
-			&o.DeliveryNode, &o.StagingNode, &o.SourceNode, &o.LoadType,
+			&o.DeliveryNode, &o.StagingNode, &o.SourceNode,
 			&o.WaybillID, &o.ExternalRef, &o.FinalCount,
 			&o.CountConfirmed, &o.ETA, &o.AutoConfirm, &stagedExpireAt, &binID, &o.PayloadCode, &o.PayloadDesc, &siblingID, &o.QueueReason, &o.QueueCode, &o.AuthoredBy, &o.OriginID, &o.OriginClass,
 			&faultSince, &faultDeadline, &o.FaultNoticeAfterS, &faultRef, &departedAt, &cellLeftAt, &stationWait, &o.WaitKind, &o.ReleaseFacts, &o.ReleaseIntent, &o.ReleaseHeld, &createdAt, &updatedAt,
@@ -252,7 +252,7 @@ func scanOrder(o *Order, scanner interface{ Scan(...any) error }) error {
 	var createdAt, updatedAt string
 	var laneHeld int
 	if err := scanner.Scan(&o.ID, &o.UUID, &o.OrderType, &o.Status, &o.ProcessNodeID, &o.RetrieveEmpty, &o.Quantity,
-		&o.DeliveryNode, &o.StagingNode, &o.SourceNode, &o.LoadType,
+		&o.DeliveryNode, &o.StagingNode, &o.SourceNode,
 		&o.WaybillID, &o.ExternalRef, &o.FinalCount,
 		&o.CountConfirmed, &o.ETA, &o.AutoConfirm, &stagedExpireAt, &binID, &o.PayloadCode, &o.PayloadDesc, &siblingID, &o.QueueReason, &o.QueueCode, &o.AuthoredBy, &o.OriginID, &o.OriginClass,
 		&faultSince, &faultDeadline, &o.FaultNoticeAfterS, &faultRef, &departedAt, &cellLeftAt, &stationWait, &o.WaitKind, &o.ReleaseFacts, &o.ReleaseIntent, &o.ReleaseHeld, &createdAt, &updatedAt,
@@ -332,11 +332,11 @@ func GetByUUID(db *sql.DB, uuid string) (*Order, error) {
 // shingoedge/orders. An order stamped no_demand carries a class and no id, and
 // that pair means "belongs to no demand episode by construction". A row with
 // both blank is a row written before this column list named them.
-func Create(db *sql.DB, uuid string, orderType protocol.OrderType, processNodeID *int64, retrieveEmpty bool, quantity int64, deliveryNode, stagingNode, sourceNode, loadType string, autoConfirm bool, payloadCode, originID, originClass string) (int64, error) {
+func Create(db *sql.DB, uuid string, orderType protocol.OrderType, processNodeID *int64, retrieveEmpty bool, quantity int64, deliveryNode, stagingNode, sourceNode string, autoConfirm bool, payloadCode, originID, originClass string) (int64, error) {
 	res, err := db.Exec(`
-		INSERT INTO orders (uuid, order_type, process_node_id, retrieve_empty, quantity, delivery_node, staging_node, source_node, load_type, auto_confirm, payload_code, origin_id, origin_class)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		uuid, orderType, processNodeID, retrieveEmpty, quantity, deliveryNode, stagingNode, sourceNode, loadType, autoConfirm, payloadCode, originID, originClass)
+		INSERT INTO orders (uuid, order_type, process_node_id, retrieve_empty, quantity, delivery_node, staging_node, source_node, auto_confirm, payload_code, origin_id, origin_class)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		uuid, orderType, processNodeID, retrieveEmpty, quantity, deliveryNode, stagingNode, sourceNode, autoConfirm, payloadCode, originID, originClass)
 	if err != nil {
 		return 0, err
 	}

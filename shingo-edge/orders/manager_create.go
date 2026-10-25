@@ -11,53 +11,75 @@ import (
 	"shingoedge/store/orders"
 )
 
-// CreateRetrieveOrder creates a new retrieve order and enqueues it to the outbox.
-// If payloadCode is empty and payloadID is set, it is derived from the payload.
-//
-// sourceNode names the supermarket node group (or specific node) that Core
-// should pull the bin from. Empty string falls back to Core's global FIFO
-// search (legacy behaviour). For bin_loader manual_swap claims this MUST be
-// claim.InboundSource — otherwise the planner happily pulls a payload-matching
-// empty/full bin from anywhere in the system, including the empty-tote return
-// area instead of the configured supermarket. See planTransport in
-// shingo-core/dispatch/planning_service.go, and its source finder, for the
-// resolver branch.
-// origin is REQUIRED. There is no unattributed twin of this any more — see the
-// Origin type, and see specimen (c) for what the twin cost.
-func (m *Manager) CreateRetrieveOrder(processNodeID *int64, retrieveEmpty bool, quantity int64, deliveryNode, sourceNode, stagingNode, loadType, payloadCode string, autoConfirm, skipAutoConfirm bool, origin Origin) (*orders.Order, error) {
+// RetrieveSpec is what a retrieve is created from: the order's facts, named,
+// in place of a row of positionals.
+type RetrieveSpec struct {
+	// Process is the Edge's process node the order is for (nil for none).
+	Process *int64
+	// Delivery is where the carrier goes.
+	Delivery string
+	// Source names the supermarket node group (or specific node) Core pulls
+	// the bin from. Empty falls back to Core's global FIFO search (legacy
+	// behaviour). For bin_loader manual_swap claims this MUST be
+	// claim.InboundSource — otherwise the planner happily pulls a
+	// payload-matching empty/full bin from anywhere in the system, including
+	// the empty-tote return area instead of the configured supermarket. See
+	// planTransport in shingo-core/dispatch/planning_service.go, and its
+	// source finder, for the resolver branch.
+	Source string
+	// Staging is written on this Edge's row alone, where the orders page shows
+	// it; Core reads none.
+	Staging string
+	// Payload is the part; empty derives it from the process node's claim
+	// (lookupPayloadMeta).
+	Payload string
+	// Quantity is carried verbatim: the manual order page's count, 1 for every
+	// other door.
+	Quantity int64
+	// Empty asks for an empty carrier rather than a full of the part.
+	Empty bool
+	// AutoConfirm confirms the delivery on this Edge (handleDelivered);
+	// SkipAutoConfirm asks Core's sweep not to (protocol.OrderRequest).
+	AutoConfirm, SkipAutoConfirm bool
+	// Origin is REQUIRED. There is no unattributed twin of this any more — see
+	// the Origin type, and see specimen (c) for what the twin cost.
+	Origin Origin
+}
+
+// CreateRetrieveOrder creates a new retrieve order and enqueues it to the
+// outbox.
+func (m *Manager) CreateRetrieveOrder(s RetrieveSpec) (*orders.Order, error) {
 	pull := PullFull
-	if retrieveEmpty {
+	if s.Empty {
 		pull = PullEmpty
 	}
-	return m.createRetrieveOrder(processNodeID, pull, quantity,
-		deliveryNode, sourceNode, stagingNode, loadType, payloadCode, autoConfirm, skipAutoConfirm, origin)
+	return m.createRetrieveOrder(s, pull)
 }
 
 // CreateTopsAndBottomsPull creates SEND BACK's pull: tops & bottoms of payload
 // (the running style's part) from source (the claim's inbound source) to
-// delivery (the press's outside position), quantity 1, no load type, on the
-// process node given (the outside's own: it never touches the press's runtime
-// slots). Auto-confirmed: the outside has no tile and no operator receives it.
-// Core plans it as an empty at exactly that height (retrieve_tops_bottoms).
+// delivery (the press's outside position), quantity 1, on the process node
+// given (the outside's own: it never touches the press's runtime slots).
+// Auto-confirmed: the outside has no tile and no operator receives it. Core
+// plans it as an empty at exactly that height (retrieve_tops_bottoms).
 func (m *Manager) CreateTopsAndBottomsPull(processNodeID *int64, delivery, source, payload string, origin Origin) (*orders.Order, error) {
-	return m.createRetrieveOrder(processNodeID, PullTopsAndBottoms, 1, delivery, source, "", "", payload, true, false, origin)
+	return m.createRetrieveOrder(RetrieveSpec{Process: processNodeID, Delivery: delivery, Source: source,
+		Payload: payload, Quantity: 1, AutoConfirm: true, Origin: origin}, PullTopsAndBottoms)
 }
 
 // createRetrieveOrder is the one body. pull is what it brings (Pull.wire): it
 // decides the row's type, the wire's type and flag, the log line and the
 // created event, so no caller and no line here names a type of its own.
-func (m *Manager) createRetrieveOrder(processNodeID *int64, pull Pull, quantity int64,
-	deliveryNode, sourceNode, stagingNode, loadType, payloadCode string,
-	autoConfirm, skipAutoConfirm bool, origin Origin) (*orders.Order, error) {
+func (m *Manager) createRetrieveOrder(s RetrieveSpec, pull Pull) (*orders.Order, error) {
 	orderUUID := uuid.New().String()
 	orderType, retrieveEmpty := pull.wire()
 
-	payloadDesc, payloadCode := m.lookupPayloadMeta(processNodeID, payloadCode)
+	payloadDesc, payloadCode := m.lookupPayloadMeta(s.Process, s.Payload)
 
 	orderID, err := m.db.CreateOrder(orderUUID, orderType,
-		processNodeID, retrieveEmpty,
-		quantity, deliveryNode, stagingNode, sourceNode, loadType, autoConfirm, payloadCode,
-		origin.ID, origin.Class)
+		s.Process, retrieveEmpty,
+		s.Quantity, s.Delivery, s.Staging, s.Source, s.AutoConfirm, payloadCode,
+		s.Origin.ID, s.Origin.Class)
 	if err != nil {
 		return nil, fmt.Errorf("create order: %w", err)
 	}
@@ -68,19 +90,18 @@ func (m *Manager) createRetrieveOrder(processNodeID *int64, pull Pull, quantity 
 		PayloadDesc:     payloadDesc,
 		PayloadCode:     payloadCode,
 		RetrieveEmpty:   retrieveEmpty,
-		Quantity:        quantity,
-		DeliveryNode:    deliveryNode,
-		SourceNode:      sourceNode,
-		StagingNode:     stagingNode,
-		LoadType:        loadType,
-		SkipAutoConfirm: skipAutoConfirm,
-		OriginID:        origin.ID,
-		OriginClass:     origin.Class,
+		Quantity:        s.Quantity,
+		DeliveryNode:    s.Delivery,
+		SourceNode:      s.Source,
+		StagingNode:     s.Staging,
+		SkipAutoConfirm: s.SkipAutoConfirm,
+		OriginID:        s.Origin.ID,
+		OriginClass:     s.Origin.Class,
 	})
 	m.enqueueAndAutoSubmit(orderID, orderUUID, env, envErr)
 
-	m.DebugLog.Log("create: type=%s id=%d uuid=%s delivery=%s", orderType, orderID, orderUUID, deliveryNode)
-	m.emitter.EmitOrderCreated(orderID, orderUUID, orderType, nil, processNodeID)
+	m.DebugLog.Log("create: type=%s id=%d uuid=%s delivery=%s", orderType, orderID, orderUUID, s.Delivery)
+	m.emitter.EmitOrderCreated(orderID, orderUUID, orderType, nil, s.Process)
 
 	return m.db.GetOrder(orderID)
 }
@@ -206,7 +227,7 @@ func (m *Manager) createMoveOrder(processNodeID *int64, quantity int64,
 
 	orderID, err := m.db.CreateOrder(orderUUID, TypeMove,
 		processNodeID, false,
-		quantity, deliveryNode, "", sourceNode, "", autoConfirm, payloadCode,
+		quantity, deliveryNode, "", sourceNode, autoConfirm, payloadCode,
 		origin.ID, origin.Class)
 	if err != nil {
 		return nil, fmt.Errorf("create move order: %w", err)
@@ -330,7 +351,7 @@ func (m *Manager) createComplexOrder(processNodeID *int64, quantity int64, deliv
 
 	orderID, err := m.db.CreateOrder(orderUUID, TypeComplex,
 		processNodeID, false,
-		quantity, deliveryNode, "", "", "", autoConfirm, payloadCode,
+		quantity, deliveryNode, "", "", autoConfirm, payloadCode,
 		origin.ID, origin.Class)
 	if err != nil {
 		return nil, fmt.Errorf("create complex order: %w", err)
@@ -466,9 +487,9 @@ func (m *Manager) QueueIngestManifest(payloadCode, binLabel string, binID, binEp
 
 // Origin attributes an order to the demand episode that asked for it.
 //
-// A VALUE, NOT TWO MORE POSITIONAL PARAMETERS. CreateRetrieveOrder already
-// takes ten, and the eleventh and twelfth would be two adjacent strings whose
-// order nothing but the compiler could check — and the compiler cannot tell
+// A VALUE, NOT TWO MORE POSITIONAL PARAMETERS. createMoveOrder already takes
+// nine, and the tenth and eleventh would be two adjacent strings whose order
+// nothing but the compiler could check — and the compiler cannot tell
 // origin_id from origin_class.
 //
 // ── THERE IS NO "NOT STATED" ANY MORE ─────────────────────────────────────

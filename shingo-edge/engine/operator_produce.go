@@ -212,8 +212,9 @@ func (e *Engine) applyProduceEmptyLine(node *processes.Node, claim *processes.No
 	if plan.FromSpot {
 		order, err = e.orderMgr.CreateMoveOrderCarryingTo(&nodeID, plan.SimpleSource, claim.CoreNodeName, "", autoConfirm, origin)
 	} else {
-		order, err = e.orderMgr.CreateRetrieveOrder(&nodeID, true, 1, claim.CoreNodeName, plan.SimpleSource, "",
-			"standard", claim.PayloadCode, autoConfirm, false, origin)
+		order, err = e.orderMgr.CreateRetrieveOrder(ordermgr.RetrieveSpec{Process: &nodeID, Delivery: claim.CoreNodeName,
+			Source: plan.SimpleSource, Payload: claim.PayloadCode, Quantity: 1, Empty: true,
+			AutoConfirm: autoConfirm, Origin: origin})
 	}
 	if err != nil {
 		return nil, err
@@ -276,9 +277,9 @@ func (e *Engine) createClearsThenPrimes(node *processes.Node, claim *processes.N
 		var po *orders.Order
 		var err error
 		if claim.Role == protocol.ClaimRoleProduce {
-			po, err = e.orderMgr.CreateRetrieveOrder(&nodeID, true, 1,
-				pos, claim.InboundSource, "", "standard", claim.PayloadCode,
-				autoConfirm, false, origin)
+			po, err = e.orderMgr.CreateRetrieveOrder(ordermgr.RetrieveSpec{Process: &nodeID, Delivery: pos,
+				Source: claim.InboundSource, Payload: claim.PayloadCode, Quantity: 1, Empty: true,
+				AutoConfirm: autoConfirm, Origin: origin})
 		} else {
 			po, err = e.orderMgr.CreateMoveOrder(&nodeID, quantity, claim.InboundSource, pos, autoConfirm, origin)
 		}

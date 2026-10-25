@@ -23,7 +23,6 @@ type Order struct {
 	DeliveryNode   string             `json:"delivery_node"`
 	StagingNode    string             `json:"staging_node"`
 	SourceNode     string             `json:"source_node"`
-	LoadType       string             `json:"load_type"`
 	WaybillID      *string            `json:"waybill_id"`
 	ExternalRef    *string            `json:"external_ref"`
 	FinalCount     *int64             `json:"final_count"`

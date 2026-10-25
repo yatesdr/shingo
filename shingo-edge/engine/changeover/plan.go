@@ -39,7 +39,6 @@ type RetrieveOrderSpec struct {
 	// the bin_loader retrieve plumbing in orders/manager.go.
 	SourceNode  string
 	StagingNode string
-	LoadType    string
 	PayloadCode string
 	AutoConfirm bool
 }

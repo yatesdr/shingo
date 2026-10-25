@@ -120,7 +120,7 @@ func TestScenario_H_R4_ALateLiftMovesTheTicksAfterTheLiftToTheNextBin(t *testing
 
 	// The pickup reaches the Edge late, carrying T and the new generation.
 	if _, err := w.edge.DB.CreateOrder(w.order.EdgeUUID, orders.TypeComplex, &w.nodeID, false, 1,
-		"OUT", "", "", "", false, "", "", ""); err != nil {
+		"OUT", "", "", false, "", "", ""); err != nil {
 		t.Fatalf("edge order: %v", err)
 	}
 	w.edge.Engine.HandleBinPickedUpMessage(protocol.BinPickedUp{

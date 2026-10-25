@@ -446,8 +446,9 @@ func (e *Engine) returnSpare(node *processes.Node, spot, source, carried string,
 func (e *Engine) refillSpot(node *processes.Node, c *processes.NodeClaim, n int, origin ordermgr.Origin) {
 	nodeID := node.ID
 	for i := 0; i < n; i++ {
-		if _, err := e.orderMgr.CreateRetrieveOrder(&nodeID, carriesEmpty(c), 1,
-			spotNode(c), c.InboundSource, "", "standard", c.PayloadCode, true, false, origin); err != nil {
+		if _, err := e.orderMgr.CreateRetrieveOrder(ordermgr.RetrieveSpec{Process: &nodeID, Delivery: spotNode(c),
+			Source: c.InboundSource, Payload: c.PayloadCode, Quantity: 1, Empty: carriesEmpty(c),
+			AutoConfirm: true, Origin: origin}); err != nil {
 			e.logFn("keep-staged: node %s: refill %d/%d for %s: %v", node.Name, i+1, n, spotNode(c), err)
 		}
 	}

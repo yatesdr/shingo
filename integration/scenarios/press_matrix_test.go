@@ -617,8 +617,8 @@ func pmComing(p *pmCell) {
 	var first *domain.Order
 	var err error
 	if p.role == protocol.ClaimRoleProduce {
-		first, err = p.edge.Engine.OrderManager().CreateRetrieveOrder(&nodeID, true, 1, ksrDeck, ksrMktA, "",
-			"standard", ksrPartA, false, false, edgeorders.Origin{})
+		first, err = p.edge.Engine.OrderManager().CreateRetrieveOrder(edgeorders.RetrieveSpec{Process: &nodeID,
+			Delivery: ksrDeck, Source: ksrMktA, Payload: ksrPartA, Quantity: 1, Empty: true, Origin: edgeorders.Origin{}})
 	} else {
 		first, err = p.edge.Engine.OrderManager().CreateMoveOrder(&nodeID, 1, ksrMktA, ksrDeck, false,
 			edgeorders.Origin{})

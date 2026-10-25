@@ -20,7 +20,6 @@ type APIRetrieveRequest struct {
 	DeliveryNode  string
 	SourceNode    string
 	StagingNode   string
-	LoadType      string
 	PayloadCode   string
 	AutoConfirm   bool
 	// Count > 1 asks for a batch of orders. At a loader window Core decides how
@@ -53,12 +52,10 @@ func (r *LoaderRetrieveRefused) Error() string { return r.Sentence }
 //
 // The request's overrides ride as Core reads them: the source it names, and
 // a source left blank has Core search the plant (AnySource), as an order
-// request naming none does. Core reads no staging node, load type or
-// auto-confirm on any order: the staging node and auto-confirm are written
-// on this Edge's rows for the orders Core made, where the orders page shows
-// the one and delivery acts on the other; load type is read by nobody and is
-// not kept. A loader window takes one carrier per order, so the quantity is
-// not carried.
+// request naming none does. Core reads no staging node or auto-confirm on
+// any order: both are written on this Edge's rows for the orders Core made,
+// where the orders page shows the one and delivery acts on the other. A
+// loader window takes one carrier per order, so the quantity is not carried.
 //
 // THE BATCH ARM IS CAPPED BY CORE. Asking for five empties at a loader window
 // with room for one makes one, and the answer says how many were made. A
@@ -149,14 +146,12 @@ func (e *Engine) loaderOwning(deliveryNode string) *domain.Loader {
 func (e *Engine) createRetrieveDirect(req APIRetrieveRequest, count int) ([]*orders.Order, error) {
 	made := make([]*orders.Order, 0, count)
 	for i := 0; i < count; i++ {
-		order, err := e.orderMgr.CreateRetrieveOrder(
-			req.ProcessNodeID, req.RetrieveEmpty, req.Quantity,
-			req.DeliveryNode, req.SourceNode, req.StagingNode, req.LoadType,
-			req.PayloadCode, req.AutoConfirm, false,
+		order, err := e.orderMgr.CreateRetrieveOrder(ordermgr.RetrieveSpec{Process: req.ProcessNodeID,
+			Delivery: req.DeliveryNode, Source: req.SourceNode, Staging: req.StagingNode, Payload: req.PayloadCode,
+			Quantity: req.Quantity, Empty: req.RetrieveEmpty, AutoConfirm: req.AutoConfirm,
 			// NoDemand: a direct API command belongs to no cell episode (see
 			// CreateRetrieveForAPI).
-			ordermgr.NoDemand(),
-		)
+			Origin: ordermgr.NoDemand()})
 		if err != nil {
 			// A partial batch is reported as what it is: the orders that exist
 			// are real and already enqueued, so swallowing them would lose work

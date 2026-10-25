@@ -92,7 +92,7 @@ func TestPinFold_ProduceRelease(t *testing.T) {
 		t.Parallel()
 		f := newCycleUnloader(t, "FRC")
 		n := f.n
-		id, err := f.db.CreateOrder("frc-u1", "retrieve", &n, false, 1, f.nCore, "", "FG-SUPER", "", false, "PART-AC", "", "")
+		id, err := f.db.CreateOrder("frc-u1", "retrieve", &n, false, 1, f.nCore, "", "FG-SUPER", false, "PART-AC", "", "")
 		testutil.MustNoErr(t, err, "in-flight U1")
 		testutil.MustNoErr(t, f.db.UpdateOrderStatus(id, string(protocol.StatusDispatched)), "dispatch")
 		f.core.set(f.nCore, false, "")

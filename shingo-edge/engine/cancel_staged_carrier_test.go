@@ -57,7 +57,7 @@ func TestWaitingAtStage(t *testing.T) {
 func seedSupplyStagedThenCancelled(t *testing.T, db *store.DB, nodeID int64, line, source, stage string) int64 {
 	t.Helper()
 	id, err := db.CreateOrder("uuid-supply-staged", orders.TypeComplex, &nodeID, false, 1,
-		line, "", source, "", false, "PART-NEW", "", "")
+		line, "", source, false, "PART-NEW", "", "")
 	testutil.MustNoErr(t, err, "create supply")
 	raw, err := json.Marshal(twoRobotSupplySteps(source, stage, line))
 	testutil.MustNoErr(t, err, "encode steps")

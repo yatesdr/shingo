@@ -531,7 +531,7 @@ func newWalk(t *testing.T) *walk {
 
 	// An order on the press station's first node.
 	w.orderUUID = "walk-order-1"
-	w.order, err = db.CreateOrder(w.orderUUID, protocol.OrderTypeRetrieve, &w.pressNode, false, 1, "PLN_01", "", "", "standard", false, "", "", "")
+	w.order, err = db.CreateOrder(w.orderUUID, protocol.OrderTypeRetrieve, &w.pressNode, false, 1, "PLN_01", "", "", false, "", "", "")
 	if err != nil {
 		t.Fatalf("create order: %v", err)
 	}

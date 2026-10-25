@@ -27,7 +27,6 @@ func (h *Handlers) apiCreateRetrieveOrder(w http.ResponseWriter, r *http.Request
 		DeliveryNode  string `json:"delivery_node"`
 		SourceNode    string `json:"source_node"` // optional supermarket group; "" = Core's global FIFO
 		StagingNode   string `json:"staging_node"`
-		LoadType      string `json:"load_type"`
 		Count         int    `json:"count"` // >1 creates a batch of empty bin orders
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -73,7 +72,6 @@ func (h *Handlers) apiCreateRetrieveOrder(w http.ResponseWriter, r *http.Request
 		DeliveryNode:  req.DeliveryNode,
 		SourceNode:    req.SourceNode,
 		StagingNode:   req.StagingNode,
-		LoadType:      req.LoadType,
 		PayloadCode:   req.PayloadCode,
 		AutoConfirm:   h.engine.AppConfig().AutoConfirm(),
 		Count:         count,

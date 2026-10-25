@@ -163,6 +163,8 @@ CREATE TABLE IF NOT EXISTS orders (
     delivery_node   TEXT NOT NULL DEFAULT '',
     staging_node    TEXT NOT NULL DEFAULT '',
     source_node     TEXT NOT NULL DEFAULT '',
+    -- load_type: dormant. Nothing on either module read it, and its writers went
+    -- (2026-10-25); kept at its default so a rolled-back Edge's INSERT runs.
     load_type       TEXT NOT NULL DEFAULT '',
     waybill_id      TEXT,
     external_ref    TEXT,

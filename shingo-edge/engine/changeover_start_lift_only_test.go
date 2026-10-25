@@ -36,7 +36,7 @@ import (
 func seedLiftOnlyAt(t *testing.T, db *store.DB, nodeID int64, coreNode, uuid string, status protocol.Status) int64 {
 	t.Helper()
 	id, err := db.CreateOrder(uuid, orders.TypeComplex, &nodeID, false, 1,
-		"DEST-OLD", "", coreNode, "", false, "PART-OLD", "", "")
+		"DEST-OLD", "", coreNode, false, "PART-OLD", "", "")
 	testutil.MustNoErr(t, err, "create lift-only order "+uuid)
 	steps := []protocol.ComplexOrderStep{
 		stationWait(coreNode, release.PurposeReady),

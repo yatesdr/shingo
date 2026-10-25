@@ -35,8 +35,9 @@ func keeperClaimByID(t *testing.T, db *store.DB, nodeID int64) *processes.NodeCl
 // a refill to the spot that has already ended with status.
 func endedRefill(t *testing.T, eng *Engine, db *store.DB, nodeID int64, status protocol.Status) {
 	t.Helper()
-	o, err := eng.orderMgr.CreateRetrieveOrder(&nodeID, false, 1, ksSpot, ksMarket, "", "standard", ksPart, true, false,
-		orders.Attached("floor-prior"))
+	o, err := eng.orderMgr.CreateRetrieveOrder(orders.RetrieveSpec{Process: &nodeID, Quantity: 1,
+		Delivery: ksSpot, Source: ksMarket, Payload: ksPart, AutoConfirm: true,
+		Origin: orders.Attached("floor-prior")})
 	testutil.MustNoErr(t, err, "prior refill")
 	testutil.MustNoErr(t, db.UpdateOrderStatus(o.ID, string(status)), "end the refill")
 }
@@ -102,8 +103,9 @@ func TestKeepStagedKeeper_ARefillOnItsWaySuppresses(t *testing.T) {
 	t.Parallel()
 	eng, db, nodeID := keeperCell(t)
 	holdingSwap(t, db, nodeID)
-	_, err := eng.orderMgr.CreateRetrieveOrder(&nodeID, false, 1, ksSpot, ksMarket, "", "standard", ksPart, true, false,
-		orders.Attached("floor-coming"))
+	_, err := eng.orderMgr.CreateRetrieveOrder(orders.RetrieveSpec{Process: &nodeID, Quantity: 1,
+		Delivery: ksSpot, Source: ksMarket, Payload: ksPart, AutoConfirm: true,
+		Origin: orders.Attached("floor-coming")})
 	testutil.MustNoErr(t, err, "refill on its way")
 	eng.sweepCellLevels()
 	if got := readSpotOrders(t, db, nodeID); got.refills != 1 {
@@ -168,8 +170,9 @@ func TestKeepStagedKeeper_StartAbortingTheCellDoesNotWaitOnItself(t *testing.T) 
 	nodeID := fx.nodeIDs["L1"]
 	// The refill is the older row, so the start aborts it first, while the swap
 	// still holds the line's slot and the keeper goes as far as the lock.
-	_, err := fx.eng.orderMgr.CreateRetrieveOrder(&nodeID, false, 1, "SPOT", "SRC-OLD", "", "standard", "PART-OLD",
-		true, false, orders.Attached("floor-start"))
+	_, err := fx.eng.orderMgr.CreateRetrieveOrder(orders.RetrieveSpec{Process: &nodeID, Quantity: 1,
+		Delivery: "SPOT", Source: "SRC-OLD", Payload: "PART-OLD", AutoConfirm: true,
+		Origin: orders.Attached("floor-start")})
 	testutil.MustNoErr(t, err, "refill coming")
 	holdingSwap(t, fx.db, nodeID)
 
@@ -227,8 +230,9 @@ func TestKeepStagedKeeper_DecidesFromTheTable(t *testing.T) {
 	t.Parallel()
 	landedRefill := func(t *testing.T, eng *Engine, db *store.DB, nodeID int64) string {
 		t.Helper()
-		o, err := eng.orderMgr.CreateRetrieveOrder(&nodeID, false, 1, ksSpot, ksMarket, "", "standard", ksPart, true, false,
-			orders.Attached("floor-landed"))
+		o, err := eng.orderMgr.CreateRetrieveOrder(orders.RetrieveSpec{Process: &nodeID, Quantity: 1,
+			Delivery: ksSpot, Source: ksMarket, Payload: ksPart, AutoConfirm: true,
+			Origin: orders.Attached("floor-landed")})
 		testutil.MustNoErr(t, err, "refill")
 		testutil.MustNoErr(t, db.UpdateOrderStatus(o.ID, string(protocol.StatusConfirmed)), "the refill landed")
 		return o.UUID

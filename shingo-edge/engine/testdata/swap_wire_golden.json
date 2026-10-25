@@ -15,7 +15,6 @@
               "DeliveryNode": "LINE",
               "SourceNode": "SRC",
               "StagingNode": "",
-              "LoadType": "standard",
               "PayloadCode": "P-TO",
               "AutoConfirm": false
             }
@@ -222,7 +221,6 @@
               "DeliveryNode": "LINE",
               "SourceNode": "SRC",
               "StagingNode": "",
-              "LoadType": "standard",
               "PayloadCode": "P-TO",
               "AutoConfirm": false
             }
@@ -673,7 +671,6 @@
               "DeliveryNode": "LINE",
               "SourceNode": "SRC",
               "StagingNode": "",
-              "LoadType": "standard",
               "PayloadCode": "P-TO",
               "AutoConfirm": false
             }
@@ -1171,7 +1168,6 @@
               "DeliveryNode": "LINE",
               "SourceNode": "SRC",
               "StagingNode": "",
-              "LoadType": "standard",
               "PayloadCode": "P-TO",
               "AutoConfirm": false
             }
@@ -1677,7 +1673,6 @@
               "DeliveryNode": "LINE",
               "SourceNode": "SRC",
               "StagingNode": "",
-              "LoadType": "standard",
               "PayloadCode": "P-TO",
               "AutoConfirm": false
             }
@@ -2183,7 +2178,6 @@
               "DeliveryNode": "LINE",
               "SourceNode": "SRC",
               "StagingNode": "",
-              "LoadType": "standard",
               "PayloadCode": "P-TO",
               "AutoConfirm": false
             }
@@ -2745,7 +2739,6 @@
               "DeliveryNode": "LINE",
               "SourceNode": "SRC",
               "StagingNode": "",
-              "LoadType": "standard",
               "PayloadCode": "P-TO",
               "AutoConfirm": false
             }
@@ -3307,7 +3300,6 @@
               "DeliveryNode": "LINE",
               "SourceNode": "SRC",
               "StagingNode": "",
-              "LoadType": "standard",
               "PayloadCode": "P-TO",
               "AutoConfirm": false
             }
@@ -3518,7 +3510,6 @@
               "DeliveryNode": "LINE",
               "SourceNode": "SRC",
               "StagingNode": "",
-              "LoadType": "standard",
               "PayloadCode": "P-TO",
               "AutoConfirm": false
             }
@@ -3976,7 +3967,6 @@
               "DeliveryNode": "LINE",
               "SourceNode": "SRC",
               "StagingNode": "",
-              "LoadType": "standard",
               "PayloadCode": "P-TO",
               "AutoConfirm": false
             }
@@ -4481,7 +4471,6 @@
               "DeliveryNode": "LINE",
               "SourceNode": "SRC",
               "StagingNode": "",
-              "LoadType": "standard",
               "PayloadCode": "P-TO",
               "AutoConfirm": false
             }
@@ -5001,7 +4990,6 @@
               "DeliveryNode": "LINE",
               "SourceNode": "SRC",
               "StagingNode": "",
-              "LoadType": "standard",
               "PayloadCode": "P-TO",
               "AutoConfirm": false
             }
@@ -5521,7 +5509,6 @@
               "DeliveryNode": "LINE",
               "SourceNode": "SRC",
               "StagingNode": "",
-              "LoadType": "standard",
               "PayloadCode": "P-TO",
               "AutoConfirm": false
             }
@@ -6104,7 +6091,6 @@
               "DeliveryNode": "LINE",
               "SourceNode": "SRC",
               "StagingNode": "",
-              "LoadType": "standard",
               "PayloadCode": "P-TO",
               "AutoConfirm": false
             }

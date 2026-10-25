@@ -28,7 +28,7 @@ func reconcileScheduledAt(t *testing.T, delivery, source string) bool {
 	})
 	testutil.MustNoErr(t, err, "create node")
 	id, err := db.CreateOrder("reconcile-leg", orders.TypeMove, &nodeID, false, 1,
-		delivery, "", source, "", true, "ASSY", "", "")
+		delivery, "", source, true, "ASSY", "", "")
 	testutil.MustNoErr(t, err, "create order")
 	testutil.MustNoErr(t, db.UpdateOrderStatus(id, string(protocol.StatusDelivered)), "mark delivered")
 

@@ -270,8 +270,9 @@ func TestKeepStagedRequest_ASpareOnItsWayIsWaitedFor(t *testing.T) {
 			t.Parallel()
 			eng, db, nodeID, _ := keepStagedCell(t, protocol.ClaimRoleConsume, c.mode,
 				map[string]protocol.NodeBinInfo{ksLine: {Occupied: true, PayloadCode: ksPart}, ksPair: onDeckCarrier(protocol.ClaimRoleConsume), ksSpot: {}})
-			_, err := eng.orderMgr.CreateRetrieveOrder(&nodeID, false, 1, ksSpot, ksMarket, "", "standard", ksPart, true, false,
-				orders.Attached("coming"))
+			_, err := eng.orderMgr.CreateRetrieveOrder(orders.RetrieveSpec{Process: &nodeID, Quantity: 1,
+				Delivery: ksSpot, Source: ksMarket, Payload: ksPart, AutoConfirm: true,
+				Origin: orders.Attached("coming")})
 			testutil.MustNoErr(t, err, "a refill on its way")
 			_, err = eng.RequestNodeMaterial(nodeID, 1)
 			testutil.MustNoErr(t, err, "request")

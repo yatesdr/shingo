@@ -460,7 +460,7 @@ func (w *walk) activeStyle() int64 {
 func (w *walk) freshOrder(status string) string {
 	w.t.Helper()
 	uuid := w.uniq("walk-order")
-	oid, err := w.db.CreateOrder(uuid, protocol.OrderTypeRetrieve, &w.pressNode, false, 1, "PLN_01", "", "SMN_01", "standard", false, "PART-W", "", "")
+	oid, err := w.db.CreateOrder(uuid, protocol.OrderTypeRetrieve, &w.pressNode, false, 1, "PLN_01", "", "SMN_01", false, "PART-W", "", "")
 	if err != nil {
 		w.t.Fatalf("create order: %v", err)
 	}

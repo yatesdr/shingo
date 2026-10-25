@@ -38,7 +38,7 @@ func TestRegression_RemovalOrderClearsBinPointer(t *testing.T) {
 	orderID, err := db.CreateOrder("uuid-reg11-removal", orders.TypeComplex,
 		&nodeID, false, 1,
 		"OUTBOUND-DEST",
-		"", "", "", false, "", "", "")
+		"", "", false, "", "", "")
 	if err != nil {
 		t.Fatalf("create order: %v", err)
 	}
@@ -83,7 +83,7 @@ func TestRegression_11_DeliveryOrderStillResetsLineUOP(t *testing.T) {
 	orderID, err := db.CreateOrder("uuid-reg11-delivery", orders.TypeComplex,
 		&nodeID, false, 1,
 		"REG11D-NODE", // DeliveryNode == process_node CoreNodeName
-		"", "", "", false, "", "", "")
+		"", "", false, "", "", "")
 	if err != nil {
 		t.Fatalf("create order: %v", err)
 	}
@@ -131,7 +131,7 @@ func TestRegression_DeliveryResetsToCapacityWithBin(t *testing.T) {
 
 	// Delivery order to the line with a bin attached.
 	orderID, err := db.CreateOrder("uuid-item8-delivery", orders.TypeComplex,
-		&nodeID, false, 1, "ITEM8-NODE", "", "", "", false, "", "", "")
+		&nodeID, false, 1, "ITEM8-NODE", "", "", false, "", "", "")
 	if err != nil {
 		t.Fatalf("create order: %v", err)
 	}
@@ -180,7 +180,7 @@ func TestRegression_BlindDeliverySeatsZeroNotCapacity(t *testing.T) {
 	testutil.MustNoErr(t, db.SetProcessNodeRuntime(nodeID, &claimID, 50), "seed runtime")
 
 	orderID, err := db.CreateOrder("uuid-blind-delivery", orders.TypeComplex,
-		&nodeID, false, 1, "BLIND-NODE", "", "", "", false, "", "", "")
+		&nodeID, false, 1, "BLIND-NODE", "", "", false, "", "", "")
 	if err != nil {
 		t.Fatalf("create order: %v", err)
 	}
