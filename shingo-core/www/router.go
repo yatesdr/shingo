@@ -26,17 +26,18 @@ import (
 // of different interface types so that compile-time enforcement
 // constrains where orchestration verbs can be reached:
 //
-//   - h.engine (ServiceAccess) — narrow surface, 50 methods. CRUD-only
+//   - h.engine (ServiceAccess) — narrow surface, 48 methods. CRUD-only
 //     handlers and read-only state queries use this. Calling
 //     orchestration verbs through h.engine fails to compile because
 //     those methods are not on ServiceAccess.
-//   - h.orchestration (EngineOrchestration) — wide surface adding 13
+//   - h.orchestration (EngineOrchestration) — wide surface adding 16
 //     verbs (direct orders, scene sync, cross-edge messaging, live
 //     reconfig, cms feed health). Embeds ServiceAccess so it can also
 //     reach service accessors and state queries.
 //
-// Both counts measured 2026-08-19; they read "~25" and "12" from the
-// 6.5 split onwards and were never re-measured. engine_iface_width_test.go
+// Both counts measured 2026-08-19 and again 2026-10-25, when SaveLoader
+// joined (they had drifted to 50 and 13 meanwhile); they read "~25" and "12"
+// from the 6.5 split onwards and were never re-measured. engine_iface_width_test.go
 // asserts them now — and it is the reason this prose is right: the 12
 // above was correct until CMSFeedHealth joined the wide surface, and the
 // test failed on the count while the sentence beside it went on saying

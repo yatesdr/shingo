@@ -23,7 +23,7 @@ import (
 // Phase 6.5 (2026-04-25) split this out of EngineAccess. The split
 // captures the architectural role distinction: most handlers do pure
 // CRUD through services and have no business reaching engine-level
-// orchestration. ServiceAccess gives those handlers a 50-method surface;
+// orchestration. ServiceAccess gives those handlers a 48-method surface;
 // orchestration handlers take EngineOrchestration explicitly via
 // h.orchestration.
 //
@@ -211,6 +211,14 @@ type EngineOrchestration interface {
 	// opt-out is a one-row write with no fleet call and is NodeService's.
 	CleanNow(vehicleID, actor string) error
 	SaveCleaningSetup(in engine.CleaningSetupInput, actor string) error
+
+	// ── Loaders ────────────────────────────────────────────────────
+	// SaveLoader is the loader update and its drain at the save: the service's
+	// save (LoaderService.Update), then, when a drain box is left on, the
+	// drain at once under the loader's lock (dispatch.DrainLoader). The create
+	// door does not use it: a new loader has no windows until its homes are
+	// added, so it saves through the service and drains nothing.
+	SaveLoader(u service.LoaderUpdate) error
 
 	// ── Live reconfiguration ───────────────────────────────────────
 	// The config page's save door applies the live config after the swap,

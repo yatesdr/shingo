@@ -54,7 +54,7 @@ func assertInterfaceWidth(t *testing.T, name string, rt reflect.Type, want []str
 	}
 }
 
-// TestServiceAccessWidth pins Core's narrow surface at 50 methods. The
+// TestServiceAccessWidth pins Core's narrow surface at 48 methods. The
 // interface's own doc comment states the same number; keep them together.
 func TestServiceAccessWidth(t *testing.T) {
 	t.Parallel()
@@ -112,8 +112,8 @@ func TestServiceAccessWidth(t *testing.T) {
 	assertInterfaceWidth(t, "ServiceAccess", reflect.TypeOf(&iface).Elem(), want)
 }
 
-// TestEngineOrchestrationWidth pins Core's wide surface at 66 methods —
-// ServiceAccess's 50 embedded, plus 16 orchestration verbs of its own.
+// TestEngineOrchestrationWidth pins Core's wide surface at 64 methods —
+// ServiceAccess's 48 embedded, plus 16 orchestration verbs of its own.
 // (CleanNow and SaveCleaningSetup joined at v158: one sends a pinned vendor
 // order, the other checks the cleaning points against the scene and the lanes
 // before saving. The cleaning opt-out did not: it is a one-row write and went
@@ -139,6 +139,14 @@ func TestServiceAccessWidth(t *testing.T) {
 // ClearLoaderHome is the home clear (engine/clear_home.go): it births the
 // clear's orders and zeroes the home's carrier in one transaction, under the
 // scanner's lock — no service owns all three.
+//
+// SaveLoader is the loader update and its drain at the save (owner,
+// 2026-10-25): a save that leaves a drain box on drains at once, and the drain
+// is the dispatcher's, under the loader's lock, so the update door used to
+// reach the dispatcher itself. Through the verb the loader doors reach it
+// nowhere (TestLoaderDoors_ReachNoDispatcher). The create door saves through
+// the service and drains nothing: a new loader has no windows until its homes
+// are added.
 func TestEngineOrchestrationWidth(t *testing.T) {
 	t.Parallel()
 	want := []string{
@@ -195,6 +203,7 @@ func TestEngineOrchestrationWidth(t *testing.T) {
 		"RequestEdgeReregister",
 		"RobotGroups",
 		"SaveCleaningSetup",
+		"SaveLoader",
 		"SceneSync",
 		"SendDataToEdge",
 		"SourceabilityEvents",

@@ -22,7 +22,7 @@
 // sweep. Each event reads the loaders once (readWindowPulls) and runs both
 // pulls; the two subscriptions were widened, not copied, so registration order
 // is unchanged. One more runs it outside the events: the loader save that
-// leaves a box on (www apiUpdateLoader), which is the crew ticking it.
+// leaves a box on (SaveLoader, below), which is the crew ticking it.
 
 package engine
 
@@ -33,6 +33,7 @@ import (
 	"shingo/protocol/lockcheck"
 	"shingocore/dispatch"
 	"shingocore/internal/lockorder"
+	"shingocore/service"
 	"shingocore/store/loaders"
 	"shingocore/store/orders"
 )
@@ -74,6 +75,28 @@ func (p *stage2Puller) stop() {
 	p.stopped = true
 	p.mu.Unlock()
 	p.wg.Wait()
+}
+
+// SaveLoader saves a loader's settings (service.LoaderService.Update) and, when
+// the save leaves a drain box on, drains at once: ticking a box is the crew
+// asking for exactly that, so it does not wait for a window to free, a cart to
+// arrive or a restart. The drain takes the loader's own lock
+// (dispatch.DrainLoader). A save with every box off drains nothing, and the
+// save is stored whatever the drain answers, so its error is logged.
+//
+// THE UPDATE DOOR ONLY. A new loader has no windows until its homes are
+// added, so the create door drains nothing at the save and saves through the
+// service; the drain then runs at the events above.
+func (e *Engine) SaveLoader(u service.LoaderUpdate) error {
+	if err := e.loaderService.Update(u); err != nil {
+		return err
+	}
+	if len(u.Drains) > 0 {
+		if _, err := e.dispatcher.DrainLoader(u.ID); err != nil {
+			e.logFn("engine: save loader %d: drain at the save: %v", u.ID, err)
+		}
+	}
+	return nil
 }
 
 // pullPairsAsync runs a pull for each stage-1 id on the tracked goroutine.

@@ -83,6 +83,11 @@ func (d *Dispatcher) DrainLoader(loaderID int64) (int, error) {
 // keeps a row the save never wrote from pulling. (Stage 2 of a pair is known
 // only by a read, and a pair is born whole with its boxes off, so it is the
 // save's alone.)
+//
+// THE UPDATE DRAINS AT THE SAVE, THE CREATE DOES NOT. A save that leaves a box
+// on drains at once (engine SaveLoader). A create with boxes on drains nothing
+// until the events: a new loader has no windows until its homes are added, so
+// there is nothing to drain into.
 func drainsAt(l *loaders.Loader) bool {
 	return l != nil && l.ArchivedAt == nil && len(l.Drains) > 0 &&
 		l.Role == loaders.RoleConsume && l.InboundSource != "" &&
