@@ -291,6 +291,13 @@ func stationReleased(steps []resolvedStep, waitIndex int) bool {
 // (SEND PARTIAL BACK). Must run before backend.ReleaseOrder so the fleet
 // doesn't proceed against an inconsistent manifest.
 //
+// THE COUNT IS THE LINE'S, about the cart standing on it: it is applied to
+// order.BinID only while that bin stands at the order's process node (its
+// source node when it names none, as recordClaimedBins reads it). An order's
+// bin is the one it claimed there, else its first pickup, so a leg that fetches
+// a full and lifts nothing at the line holds the incoming full: a count on its
+// release would empty a real full (TestHandleOrderRelease_ACountLandsOnlyOnTheCartAtTheLine).
+//
 // When order.BinID is nil (the complex claim missed), falls back to locating
 // the bin at order.ProcessNode/SourceNode — the ALN_002 incident path.
 func (d *Dispatcher) syncManifestForRelease(env *protocol.Envelope, order *orders.Order, p *protocol.OrderRelease) error {
@@ -327,7 +334,22 @@ func (d *Dispatcher) syncManifestForRelease(env *protocol.Envelope, order *order
 		fence = &service.ReleaseFence{Station: env.Src.Station, ReleaseFence: *p.AsOf}
 	}
 
+	line := order.ProcessNode
+	if line == "" {
+		line = order.SourceNode
+	}
 	if order.BinID != nil {
+		bin, err := d.db.GetBin(*order.BinID)
+		if err != nil {
+			log.Printf("dispatch: release for order %d: read its bin %d: %v", order.ID, *order.BinID, err)
+			d.sendError(env, p.OrderUUID, "manifest_sync_failed", err.Error())
+			return err
+		}
+		if at, lerr := d.db.GetNodeByDotName(line); lerr != nil || bin.NodeID == nil || *bin.NodeID != at.ID {
+			log.Printf("dispatch: release for order %d: bin %d stands at %q, not at %q, the line its count is about "+
+				"(%v) — the count is not applied", order.ID, bin.ID, bin.NodeName, line, lerr)
+			return nil
+		}
 		if err := d.binManifest.SyncOrClearForReleasedFenced(*order.BinID, order.ID, p.RemainingUOP, kind, p.CalledBy, fence); err != nil {
 			log.Printf("dispatch: manifest sync on release for order %d: %v", order.ID, err)
 			d.sendError(env, p.OrderUUID, "manifest_sync_failed", err.Error())
@@ -336,26 +358,21 @@ func (d *Dispatcher) syncManifestForRelease(env *protocol.Envelope, order *order
 		return nil
 	}
 
-	if order.ProcessNode == "" && order.SourceNode == "" {
+	if line == "" {
 		log.Printf("dispatch: release for order %d had nil BinID and no ProcessNode/SourceNode — manifest will not clear",
 			order.ID)
 		return nil
 	}
 
-	fallbackLookup := order.ProcessNode
-	if fallbackLookup == "" {
-		fallbackLookup = order.SourceNode
-	}
-
 	fallbackBin, ok := d.findFallbackBinAtSource(order)
 	if !ok {
 		log.Printf("dispatch: release for order %d had nil BinID and no fallback bin at %s — manifest will not clear",
-			order.ID, fallbackLookup)
+			order.ID, line)
 		return nil
 	}
 
 	log.Printf("dispatch: release for order %d had nil BinID; fallback located bin %d at %s",
-		order.ID, fallbackBin.ID, fallbackLookup)
+		order.ID, fallbackBin.ID, line)
 
 	if err := d.binManifest.SyncOrClearForReleasedNoOwnerFenced(fallbackBin.ID, order.ID, p.RemainingUOP, p.CalledBy, fence); err != nil {
 		log.Printf("dispatch: fallback manifest sync on release for order %d (bin %d): %v", order.ID, fallbackBin.ID, err)

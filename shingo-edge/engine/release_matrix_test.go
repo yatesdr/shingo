@@ -545,14 +545,17 @@ const charSPUnloaderNode = "SYN-UNL"
 // charSPArmUnloader configures a consume unloader serving fxPart with an AMR
 // inbound source, gives its window a process node on this Edge, and holds a
 // bins table that shows the window free, so a U1 that fires creates its order.
-func charSPArmUnloader(h *relHarness) {
+func charSPArmUnloader(h *relHarness) { charSPArmUnloaderFor(h, fxPart) }
+
+// charSPArmUnloaderFor is charSPArmUnloader for an unloader serving part.
+func charSPArmUnloaderFor(h *relHarness, part string) {
 	h.t.Helper()
 	h.loaderAsks = answerLoaderAsks(h.t, h.eng)
 	seedCoreLoader(h.t, h.eng, protocol.LoaderInfo{
 		Name: charSPUnloaderNode, LoaderKey: "loader:" + charSPUnloaderNode, Role: "consume", Layout: "shared_window",
 		Replenishment: "operator", InboundSource: "SYN-FG-SUPER", OutboundDest: "SYN-EMPTY-OUT",
 		Positions: []protocol.LoaderPosition{{CoreNodeName: charSPUnloaderNode}},
-		Payloads:  []protocol.LoaderPayloadInfo{{PayloadCode: fxPart}},
+		Payloads:  []protocol.LoaderPayloadInfo{{PayloadCode: part}},
 	})
 	pid, err := h.db.CreateProcess("SYN-UNL-PROC", "", "", "", false)
 	testutil.MustNoErr(h.t, err, "create unloader process")
@@ -590,6 +593,10 @@ func TestCharSP_U1FiresOnAProduceCaptureLinesideRelease(t *testing.T) {
 	armed := func(b func(h *relHarness)) func(h *relHarness) {
 		return func(h *relHarness) { b(h); charSPArmUnloader(h) }
 	}
+	// armedNext arms an unloader serving the INCOMING part.
+	armedNext := func(b func(h *relHarness)) func(h *relHarness) {
+		return func(h *relHarness) { b(h); charSPArmUnloaderFor(h, fxPartNext) }
+	}
 	atZero := func(b func(h *relHarness)) func(h *relHarness) {
 		return func(h *relHarness) {
 			b(h)
@@ -623,6 +630,21 @@ func TestCharSP_U1FiresOnAProduceCaptureLinesideRelease(t *testing.T) {
 		{"d5/co two_robot evac at 42, bare body",
 			armed(coAt(coTwoRobot, "evac", S, "supply", S)), sweepClick(dispNone),
 			"ok | evac=in_transit supply=in_transit | rel=evac,supply | ingest=1 capred=0 | sweep released=2 pending=0 deferred=0 flip=[] | u1=0[]"},
+		// A sequential press's one changeover order lifts the line's bin, but a
+		// produce release ships no count (the ingest is the bin's count), so the
+		// leg keeps what its supply pointer gives it: no disposition, no U1.
+		// Not the two-robot evac's U1 above (G applies the lift to the consume
+		// arm alone).
+		{"d6/co sequential lifter at 0, bare body",
+			armed(atZero(seqCO(protocol.ClaimRoleProduce))), nodeCOClick(dispNone),
+			"ok | supply=in_transit | rel=supply | ingest=0 capred=0 | node released=1 pending=0 deferred=0 flip=[] | u1=0[]"},
+		// The parked side of the same press holds an on-deck empty at 0, and its
+		// order's part is the INCOMING style's (left blank by its builder and
+		// backfilled from the to-claim): a U1 there would ask the incoming
+		// part's unloader for a full.
+		{"d6/co sequential parked side at 0, incoming part armed",
+			armedNext(seqParkedProduceCO), parkedCOClick(dispNone),
+			"ok | supply=submitted parked=in_transit | rel=parked | ingest=0 capred=0 | node released=1 pending=0 deferred=0 flip=[] | u1=0[]"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			t.Parallel()

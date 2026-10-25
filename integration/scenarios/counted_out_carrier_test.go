@@ -80,21 +80,26 @@ func (c *ksrCell) countOut(node string) *corebins.Bin {
 }
 
 // LINE-2 of the 2026-10-23 sim, end to end (DECISIONS S.12): a cart the line
-// counted down to 0 of its part, taken off by a changeover with no count,
-// is still marked with the part where it lands. The changeover back fetched it
-// as a full of the part, and the release onto that position was refused for
-// good: the position held no material to feed the line.
+// counted down to 0 of its part was taken off by a changeover whose release
+// carried no count, and stood in its market still marked with the part. The
+// changeover back fetched it as a full of the part, and the release onto that
+// position was refused for good: the position held no material to feed the
+// line.
 //
 // The cell is a sequential consume pair whose outbound is A's market. The
 // line's cart is counted out; the changeover to B takes it off and back into
-// the market with no count, as every changeover leg releases; the changeover
-// back to A fetches each position an A carrier from that market. A carrier
-// counted to nothing is no full of its part, so the fetch takes a counted one,
-// the release onto that position goes, and the cart at 0 stands where the
-// first changeover left it, taken by nothing. Before the fix the standby
-// position was brought the cart at 0, and the pulling side's release was
-// refused until the changeover timed out: "the line's parts would land on the
-// carrier still on KSR-LINE: KSR-LINE holds no material to feed the line".
+// the market. Sequential's one changeover order is the leg that lifts the
+// line's cart, so its release carries the count (G, whichever task pointer
+// the order is under): Core clears the cart at the line, and it arrives in the
+// market cleared. The changeover back to A fetches each position an A carrier
+// from that market; the cart at 0 is no full of the part either way (U.1's
+// finder rule), so the fetch takes a counted one, the release onto that
+// position goes, and the cleared cart stands where the first changeover left
+// it, taken by nothing. Before U.1 the standby position was brought the cart
+// at 0, and the pulling side's release was refused until the changeover timed
+// out: "the line's parts would land on the carrier still on KSR-LINE: KSR-LINE
+// holds no material to feed the line". Before G it arrived marked with its
+// part at 0.
 func TestScenario_ACarrierCountedToNothingIsNoFull(t *testing.T) {
 	c := newKsrCell(t, ksrOpts{role: protocol.ClaimRoleConsume, mode: protocol.SwapModeSequential, plain: true, pair: true})
 	// The Edge's inventory sink, as a plant runs it: a landing binds the seat
@@ -118,10 +123,10 @@ func TestScenario_ACarrierCountedToNothingIsNoFull(t *testing.T) {
 		mustNil(t, err, "the counted-out bin's node")
 		inA = slot.ParentID != nil && *slot.ParentID == c.mktA.ID
 	}
-	if !inA || gone.PayloadCode != ksrPartA || gone.UOPRemaining != 0 {
+	if !inA || gone.PayloadCode != "" || gone.UOPRemaining != 0 || gone.Manifest != nil {
 		c.dump("to B")
-		t.Fatalf("NOT REACHED: the counted-out cart is at %s with %q at %d, want back in %s still marked %s at 0",
-			c.nodeName(gone.NodeID), gone.PayloadCode, gone.UOPRemaining, ksrMktA, ksrPartA)
+		t.Fatalf("the counted-out cart is at %s with %q at %d, want back in %s cleared: the release of the leg "+
+			"that lifted it carries the line's count", c.nodeName(gone.NodeID), gone.PayloadCode, gone.UOPRemaining, ksrMktA)
 	}
 
 	before = c.lastID()

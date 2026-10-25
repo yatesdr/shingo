@@ -189,15 +189,18 @@ func (e *Engine) releaseChangeoverWaitScoped(processID, onlyNodeID int64, disp R
 	}
 	act := e.newAct(origin, onlyNodeID, disp.CalledBy)
 	act.Purpose = purpose
-	cl := e.loadChangeover(processID, onlyNodeID, disp)
+	cl := e.loadChangeover(act, processID, onlyNodeID, disp)
 	plan := release.PlanChangeover(cl.snap)
 	if plan.Refusal != nil {
 		return ReleaseChangeoverWaitResult{}, plan.Refusal
 	}
 	e.logFn("release_changeover_wait: process=%d changeover=%d tasks=%d scope=%s called_by=%q",
 		processID, cl.coID, len(cl.tasks), scope, disp.CalledBy)
-	// The supply leg rides through with no manifest action, whatever the
-	// operator chose: its bin is mid-transit carrying its real count.
+	// A leg that carries the line's count (release.PlanChangeover: on a release
+	// that ships a count, the leg that lifts the cart on the task's node,
+	// whichever pointer it is under) carries the task's disposition; every
+	// other leg rides through with no manifest action, whatever the operator
+	// chose: the carrier it brings carries its real count.
 	supplyDisp := ReleaseDisposition{CalledBy: disp.CalledBy}
 	var res ReleaseChangeoverWaitResult
 	var legs []actLeg
@@ -214,8 +217,8 @@ func (e *Engine) releaseChangeoverWaitScoped(processID, onlyNodeID int64, disp R
 		}
 		for _, s := range tp.Slots {
 			d := supplyDisp
-			if s.Kind == "evac" {
-				d = cl.evacDisp[tp.Task]
+			if s.Count {
+				d = cl.countDisp[tp.Task]
 			}
 			legs = append(legs, actLeg{orderID: s.Order, label: s.Kind, taskNode: task.NodeName,
 				press: fmt.Sprintf("task:%d", task.NodeID), disp: d})

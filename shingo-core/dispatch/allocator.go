@@ -331,7 +331,8 @@ func (a *Allocator) reserveComplexPlan(order *orders.Order, plan *ComplexPlan) (
 		}
 		tally(m.pk, m.nodeHadBins, got, out)
 	}
-	// Back in step order, as the confirm reads them (Order.BinID is the first).
+	// Back in step order, as the confirm reads them (Order.BinID is the one at
+	// the process node, else the first: recordClaimedBins).
 	slices.SortFunc(assigned, func(x, y reservedPickup) int { return cmp.Compare(x.stepIndex, y.stepIndex) })
 
 	// Release held bins not matched to any current need. Slot rows are reconciled

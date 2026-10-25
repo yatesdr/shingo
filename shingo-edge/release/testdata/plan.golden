@@ -126,16 +126,19 @@ consume pair
 ## PlanChangeover — doors 5 and 6
 changeover unreadable
   refuse: disk I/O error
-sweep: unchanged, out of scope, pulled, unreadable, paired, evacuate, lone supply
+sweep: unchanged, out of scope, pulled, unreadable, paired, evacuate, lone supply, a lifting supply, produce
   N-unchanged: in-scope=false needs-flip=false slots=[]
   N-other: in-scope=false needs-flip=false slots=[]
   N-pulled: in-scope=true needs-flip=true slots=[]
     log std: release changeover wait: node SYN-A skipped — the line is pulling from it, and a plant-wide sweep does not move the line on the operator's behalf
   N-unread: in-scope=true needs-flip=true slots=[]
     log std: release changeover wait node N-unread: disk I/O error — the sweep declines rather than releasing on an unread pull state
-  N-paired: in-scope=true needs-flip=false slots=[evac=4,supply=5]
+  N-paired: in-scope=true needs-flip=false slots=[evac=4+count,supply=5]
   N-tooling: in-scope=true needs-flip=false slots=[evac=6,supply=7]
   N-add: in-scope=true needs-flip=false slots=[supply=8]
+  N-sequential: in-scope=true needs-flip=false slots=[supply=11+count]
+  N-produce-sequential: in-scope=true needs-flip=false slots=[supply=12]
+  N-produce-paired: in-scope=true needs-flip=false slots=[evac=13+count,supply=14]
   N-paired-done: in-scope=true needs-flip=false slots=[evac=9,supply=10]
 node click on a pulled position: the trunk flips
   N-pulled: in-scope=true needs-flip=false slots=[evac=2]

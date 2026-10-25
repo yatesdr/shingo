@@ -2,6 +2,7 @@ package release
 
 import (
 	"fmt"
+	"slices"
 	"strconv"
 
 	"shingo/protocol"
@@ -374,7 +375,9 @@ func idStr(id *int64) string {
 // Slot is one leg of a changeover task the act covers.
 type Slot struct {
 	Order int64
-	Kind  string // "evac" | "supply"
+	Kind  string // "evac" | "supply": the task pointer it is under
+	// Count: the leg carries the line's count (PlanChangeover).
+	Count bool
 }
 
 // TaskPlan is the decision for one changeover task.
@@ -399,6 +402,15 @@ type ChangeoverPlan struct {
 // line. Each covered task's legs are then the act's (PlanAct): the evac goes
 // at the click, and the paired supply goes with it when they co-release or
 // holds until the evac's lift (G7), at the wait the act's purpose names.
+//
+// THE COUNT RIDES THE LEG THAT LIFTS THE LINE'S CART, where a release ships a
+// count (Slot.Count): a leg whose release lifts the cart on the task's node
+// (Task.Lifts), whichever pointer it is under, carries it; every other leg
+// carries none. A produce release ships no count (Task.Produce: the ingest is
+// the bin's count), so a produce task's legs keep what their pointer gives
+// them, the evac the count and the supply none: the count reaches nothing
+// there but U1, and a supply's U1 would ask for the order's part, which on a
+// sequential press's parked position is the incoming style's.
 func PlanChangeover(c Changeover) ChangeoverPlan {
 	if c.ReadErr != nil {
 		return ChangeoverPlan{Refusal: c.ReadErr}
@@ -423,10 +435,10 @@ func PlanChangeover(c Changeover) ChangeoverPlan {
 			continue
 		}
 		if t.Evac != nil {
-			tp.Slots = append(tp.Slots, Slot{Order: *t.Evac, Kind: "evac"})
+			tp.Slots = append(tp.Slots, Slot{Order: *t.Evac, Kind: "evac", Count: t.Produce || slices.Contains(t.Lifts, *t.Evac)})
 		}
 		if t.Supply != nil {
-			tp.Slots = append(tp.Slots, Slot{Order: *t.Supply, Kind: "supply"})
+			tp.Slots = append(tp.Slots, Slot{Order: *t.Supply, Kind: "supply", Count: !t.Produce && slices.Contains(t.Lifts, *t.Supply)})
 		}
 		out.Tasks = append(out.Tasks, tp)
 	}

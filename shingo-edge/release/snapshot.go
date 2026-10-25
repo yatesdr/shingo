@@ -179,6 +179,15 @@ type Task struct {
 	PullNode string
 	Evac     *int64
 	Supply   *int64
+	// Lifts names the task's legs whose release lifts the cart standing on its
+	// node (release.Facts.DepartsFrom), under whichever pointer the task
+	// records them (a sequential or per-position press's one order is its
+	// Supply).
+	Lifts []int64
+	// Produce: the task's releases go through the produce arm (the to-style's
+	// claim at the node is produce, the trunk's ArmProduce), which ships no
+	// count: a produce bin's count is its ingest.
+	Produce bool
 }
 
 // Material is what the loader has read for the Material page's release of a

@@ -454,5 +454,95 @@ func releasePinCells() []relCell {
 				deliverBack(h)
 			},
 			act: sweepClick(dispNone), probe: probes(pPull)},
+
+		// ── G: one release rule ───────────────────────────────────────────
+		// On a release that ships a count (the consume arm), a changeover leg
+		// whose release lifts the line's cart (it departs its process node)
+		// carries the count, evacDispositionForTask's from the seat, under
+		// whichever task pointer it was recorded; a leg that lifts nothing there
+		// carries none. Sequential's one order is recorded as the task's supply
+		// (TestChangeoverLift_EachModesLifterIsToldFromItsSteps): counted to 0,
+		// its release used to say nothing, and the cart reached its market still
+		// marked with its part (DECISIONS U.1, LINE-2). A produce release ships
+		// no count; its legs keep their pointer's (the d6 cells of
+		// TestCharSP_U1FiresOnAProduceCaptureLinesideRelease).
+		{name: "G/co sequential consume at 0: the lifting leg's release clears the cart",
+			want:  "ok | supply=in_transit | rel=supply | ingest=0 capred=0 | node released=1 pending=0 deferred=0 flip=[] | uop=0 | env:supply uop=0 kind=release_empty",
+			build: func(h *relHarness) { seqCO(protocol.ClaimRoleConsume)(h); countedOut(h) },
+			act:   nodeCOClick(dispNone), probe: probes(pUOP, pEnv)},
+		{name: "G/co sequential consume at its count: the lifting leg's release carries it",
+			want:  "ok | supply=in_transit | rel=supply | ingest=0 capred=0 | node released=1 pending=0 deferred=0 flip=[] | uop=42 | env:supply uop=42 kind=release_partial/42",
+			build: seqCO(protocol.ClaimRoleConsume),
+			act:   nodeCOClick(dispNone), probe: probes(pUOP, pEnv)},
+		{name: "G/co per-position consume at 0: the position's one leg clears the cart",
+			want: "ok | supply=in_transit | rel=supply | ingest=0 capred=0 | node released=1 pending=0 deferred=0 flip=[] | uop=0 | env:supply uop=0 kind=release_empty",
+			build: func(h *relHarness) {
+				coAt(coSpec{mode: protocol.SwapModeTwoRobotPressIndex, role: protocol.ClaimRoleConsume, perPosition: true}, "supply", S)(h)
+				countedOut(h)
+			},
+			act: nodeCOClick(dispNone), probe: probes(pUOP, pEnv)},
+		// Controls, the same before and after: the evac pointer's lifter carries
+		// the count, the supply that only places carries none.
+		{name: "G/co two_robot consume at 0: the evac clears the cart, the supply carries nothing",
+			want: "ok | evac=in_transit supply=in_transit | rel=evac,supply | ingest=0 capred=0 | sweep released=2 pending=0 deferred=0 flip=[] | uop=0 | env:evac uop=0 kind=release_empty | env:supply uop=nil kind=-",
+			build: func(h *relHarness) {
+				coAt(coSpec{mode: protocol.SwapModeTwoRobot, role: protocol.ClaimRoleConsume}, "evac", S, "supply", S)(h)
+				countedOut(h)
+			},
+			act: sweepClick(dispNone), probe: probes(pUOP, pEnv)},
+		{name: "G/co press-index consume at 0: R1 clears the cart, R2 carries nothing",
+			want: "ok | evac=in_transit supply=in_transit | rel=evac,supply | ingest=0 capred=0 | sweep released=2 pending=0 deferred=0 flip=[] | uop=0 | env:evac uop=0 kind=release_empty | env:supply uop=nil kind=-",
+			build: func(h *relHarness) {
+				coAt(coSpec{mode: protocol.SwapModeTwoRobotPressIndex, role: protocol.ClaimRoleConsume}, "evac", S, "supply", S)(h)
+				countedOut(h)
+			},
+			act: sweepClick(dispNone), probe: probes(pUOP, pEnv)},
+		{name: "G/co single_robot consume at 0: its one leg clears the cart",
+			want: "ok | evac=in_transit | rel=evac | ingest=0 capred=0 | node released=1 pending=0 deferred=0 flip=[] | uop=0 | env:evac uop=0 kind=release_empty",
+			build: func(h *relHarness) {
+				coAt(coSpec{mode: protocol.SwapModeSingleRobot, role: protocol.ClaimRoleConsume}, "evac", S)(h)
+				countedOut(h)
+			},
+			act: nodeCOClick(dispNone), probe: probes(pUOP, pEnv)},
 	}
+}
+
+// seqCO is a sequential press of the role changing over with the line on its
+// back position, the front position's leg staged at its wait: a click at the
+// front releases it without moving the line.
+func seqCO(role protocol.ClaimRole) func(h *relHarness) {
+	return func(h *relHarness) {
+		h.coID = h.changeover(coSpec{mode: protocol.SwapModeSequential, role: role})
+		testutil.MustNoErr(h.t, h.eng.writePullSide(h.partnerID, h.nodeID), "the line pulls from the back")
+		statuses(h, "supply", protocol.StatusStaged)
+	}
+}
+
+// seqParkedProduceCO is a sequential produce press changing over with the
+// line on its front: the back position, parked, holds an on-deck empty at 0,
+// and its leg (named "parked") is staged at its wait.
+func seqParkedProduceCO(h *relHarness) {
+	h.coID = h.changeover(coSpec{mode: protocol.SwapModeSequential})
+	task, err := h.db.GetChangeoverNodeTaskByNode(h.coID, h.partnerID)
+	testutil.MustNoErr(h.t, err, "the back position's task")
+	if task.NextMaterialOrderID == nil {
+		h.t.Fatal("fixture: the back position's changeover built no order")
+	}
+	h.addLeg("parked", *task.NextMaterialOrderID)
+	statuses(h, "parked", protocol.StatusStaged)
+	testutil.MustNoErr(h.t, h.db.UpdateProcessNodeUOP(h.partnerID, 0), "the on-deck empty at 0")
+}
+
+// parkedCOClick is the changeover's per-node click at the back position.
+func parkedCOClick(d ReleaseDisposition) func(h *relHarness) error {
+	return func(h *relHarness) error {
+		res, err := h.eng.ReleaseChangeoverWaitForNode(h.processID, h.partnerID, d)
+		h.extra = append(h.extra, fmt.Sprintf("node released=%d pending=%d deferred=%d flip=%v", res.Released, res.Pending, res.Deferred, res.NeedsFlip))
+		return err
+	}
+}
+
+// countedOut draws the front position's seat down to nothing.
+func countedOut(h *relHarness) {
+	testutil.MustNoErr(h.t, h.db.UpdateProcessNodeUOP(h.nodeID, 0), "the line's cart counted to 0")
 }

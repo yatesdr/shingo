@@ -564,6 +564,86 @@ func TestHandleOrderRelease_RemainingUOPNilLeavesManifestAlone(t *testing.T) {
 	}
 }
 
+// TestHandleOrderRelease_ACountLandsOnlyOnTheCartAtTheLine: a release's count
+// is the line's word about the cart standing at the order's process node, so
+// Core applies it to order.BinID only while that bin stands there. A leg that
+// fetches a full and sets it on the line lifts nothing there; its bin is the
+// incoming full (its first pickup), and a count on its release would empty a
+// real full. The leg that lifts the line's cart holds that cart as its bin
+// even when it fetches first (recordClaimedBins takes the bin claimed at the
+// process node over the first pickup): the single robot's changeover leg.
+func TestHandleOrderRelease_ACountLandsOnlyOnTheCartAtTheLine(t *testing.T) {
+	t.Parallel()
+	for _, c := range []struct {
+		name  string
+		steps func(line, in, stg, out string) []protocol.ComplexOrderStep
+		// lineAfter is the line's cart's count after the release (it stands at 9)
+		lineAfter int
+	}{
+		{name: "a supply's bin is the incoming full, away from the line: not counted",
+			steps: func(line, in, stg, out string) []protocol.ComplexOrderStep {
+				return []protocol.ComplexOrderStep{
+					{Action: protocol.ActionPickup, Node: in}, {Action: protocol.ActionDropoff, Node: stg},
+					{Action: protocol.ActionWait, Node: stg}, {Action: protocol.ActionPickup, Node: stg},
+					{Action: protocol.ActionDropoff, Node: line},
+				}
+			}, lineAfter: 9},
+		{name: "a single robot's leg fetches before it lifts: the line's cart is counted",
+			steps: func(line, in, stg, out string) []protocol.ComplexOrderStep {
+				return []protocol.ComplexOrderStep{
+					{Action: protocol.ActionPickup, Node: in}, {Action: protocol.ActionDropoff, Node: stg},
+					{Action: protocol.ActionWait, Node: line}, {Action: protocol.ActionPickup, Node: line},
+					{Action: protocol.ActionDropoff, Node: out}, {Action: protocol.ActionPickup, Node: stg},
+					{Action: protocol.ActionDropoff, Node: line},
+				}
+			}, lineAfter: 0},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			db := testDB(t)
+			_, lineNode, bp := setupTestData(t, db)
+			at := map[string]*nodes.Node{}
+			for _, n := range []string{"G-IN", "G-STG", "G-OUT"} {
+				at[n] = &nodes.Node{Name: n, Enabled: true}
+				testutil.MustNoErr(t, db.CreateNode(at[n]), "create "+n)
+			}
+			cart := func(label string, node *nodes.Node, count int) *bins.Bin {
+				b := &bins.Bin{BinTypeID: 1, Label: label, NodeID: &node.ID, Status: "available"}
+				testutil.MustNoErr(t, db.CreateBin(b), "create "+label)
+				testutil.MustNoErr(t, db.SetBinManifest(b.ID, `{"items":[]}`, bp.Code, count), "manifest "+label)
+				testutil.MustNoErr(t, db.ConfirmBinManifest(b.ID, ""), "confirm "+label)
+				return b
+			}
+			lineCart, full := cart("G-LINE-CART", lineNode, 9), cart("G-FULL", at["G-IN"], 40)
+			d, _ := newTestDispatcher(t, db, testdb.NewTrackingBackend())
+			o := submitComplexAndDispatch(t, d, db, testEnvelope(), &protocol.ComplexOrderRequest{
+				OrderUUID: "g-count", PayloadCode: bp.Code, Quantity: 1, ProcessNode: lineNode.Name,
+				Steps: c.steps(lineNode.Name, "G-IN", "G-STG", "G-OUT"),
+			})
+			if o.BinID == nil {
+				t.Fatalf("the order holds no bin after its dispatch (status %s)", o.Status)
+			}
+			// The fleet set the full down on staging before the wait.
+			testutil.MustNoErr(t, db.MoveBinClearingStaging(full.ID, at["G-STG"].ID, true), "the full to staging")
+			testutil.MustNoErr(t, db.UpdateOrderStatus(o.ID, string(StatusStaged), "test: at its wait"), "staged")
+			zero := 0
+			d.HandleOrderRelease(testEnvelope(), &protocol.OrderRelease{OrderUUID: "g-count", RemainingUOP: &zero})
+
+			gotFull, err := db.GetBin(full.ID)
+			testutil.MustNoErr(t, err, "the full")
+			if gotFull.PayloadCode != bp.Code || gotFull.UOPRemaining != 40 {
+				t.Errorf("the incoming full (the order's bin: %v) reads %q at %d after the release, want %q at 40: "+
+					"a count names the cart at the line", *o.BinID == full.ID, gotFull.PayloadCode, gotFull.UOPRemaining, bp.Code)
+			}
+			gotLine, err := db.GetBin(lineCart.ID)
+			testutil.MustNoErr(t, err, "the line's cart")
+			if gotLine.UOPRemaining != c.lineAfter {
+				t.Errorf("the line's cart reads %d after the release, want %d", gotLine.UOPRemaining, c.lineAfter)
+			}
+		})
+	}
+}
+
 // TestHandleOrderRelease_BinIDNilFallbackClearsManifest verifies the
 // source-node fallback path. Setup: an order with order.BinID=nil but a
 // bin sitting at order.SourceNode (the line). This is the production

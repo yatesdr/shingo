@@ -210,14 +210,17 @@ func TestPlanGolden(t *testing.T) {
 		c    Changeover
 	}{
 		{"changeover unreadable", Changeover{ReadErr: errRead}},
-		{"sweep: unchanged, out of scope, pulled, unreadable, paired, evacuate, lone supply", Changeover{Sweep: true, Tasks: []Task{
+		{"sweep: unchanged, out of scope, pulled, unreadable, paired, evacuate, lone supply, a lifting supply, produce", Changeover{Sweep: true, Tasks: []Task{
 			{NodeName: "N-unchanged", Situation: "unchanged"},
 			{NodeName: "N-other", Situation: "swap", Evac: ptr(1)},
 			{NodeName: "N-pulled", Situation: "swap", InScope: true, Pulling: true, PullNode: "SYN-A", Evac: ptr(2)},
 			{NodeName: "N-unread", Situation: "swap", InScope: true, PullErr: errRead, Evac: ptr(3)},
-			{NodeName: "N-paired", Situation: "swap", InScope: true, Evac: ptr(4), Supply: ptr(5)},
+			{NodeName: "N-paired", Situation: "swap", InScope: true, Evac: ptr(4), Supply: ptr(5), Lifts: []int64{4}},
 			{NodeName: "N-tooling", Situation: "evacuate", InScope: true, Evac: ptr(6), Supply: ptr(7)},
 			{NodeName: "N-add", Situation: "add", InScope: true, Supply: ptr(8)},
+			{NodeName: "N-sequential", Situation: "swap", InScope: true, Supply: ptr(11), Lifts: []int64{11}},
+			{NodeName: "N-produce-sequential", Situation: "swap", InScope: true, Produce: true, Supply: ptr(12), Lifts: []int64{12}},
+			{NodeName: "N-produce-paired", Situation: "swap", InScope: true, Produce: true, Evac: ptr(13), Supply: ptr(14), Lifts: []int64{13}},
 			{NodeName: "N-paired-done", Situation: "swap", InScope: true, Evac: ptr(9), Supply: ptr(10)},
 		}}},
 		{"node click on a pulled position: the trunk flips", Changeover{Tasks: []Task{
@@ -233,7 +236,11 @@ func TestPlanGolden(t *testing.T) {
 		for _, tp := range plan.Tasks {
 			var slots []string
 			for _, s := range tp.Slots {
-				slots = append(slots, fmt.Sprintf("%s=%d", s.Kind, s.Order))
+				count := ""
+				if s.Count {
+					count = "+count"
+				}
+				slots = append(slots, fmt.Sprintf("%s=%d%s", s.Kind, s.Order, count))
 			}
 			fmt.Fprintf(&b, "  %s: in-scope=%v needs-flip=%v slots=[%s]%s\n", c.c.Tasks[tp.Task].NodeName,
 				tp.InScope, tp.NeedsFlip, strings.Join(slots, ","), renderLog(tp.Logs))

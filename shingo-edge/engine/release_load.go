@@ -894,13 +894,14 @@ type changeoverLoad struct {
 	processID int64
 	coID      int64
 	tasks     []processes.NodeTask
-	evacDisp  []ReleaseDisposition // by task index
+	countDisp []ReleaseDisposition // the disposition a task's count-carrying legs carry, by task index
 }
 
 // loadChangeover reads the changeover, its tasks, and each in-scope task's
-// facts: the pull state (a sweep only), the evac's disposition from the line's
-// runtime cache, and the paired supply's state.
-func (e *Engine) loadChangeover(processID, onlyNodeID int64, disp ReleaseDisposition) *changeoverLoad {
+// facts: the pull state (a sweep only), and for a task the act may release,
+// what its count rule reads (changeoverCountFacts) and the count from the
+// line's runtime cache (evacDispositionForTask).
+func (e *Engine) loadChangeover(act *releaseAct, processID, onlyNodeID int64, disp ReleaseDisposition) *changeoverLoad {
 	cl := &changeoverLoad{processID: processID, snap: release.Changeover{Sweep: onlyNodeID == 0}}
 	changeover, err := e.db.GetActiveProcessChangeover(processID)
 	if err != nil {
@@ -914,7 +915,7 @@ func (e *Engine) loadChangeover(processID, onlyNodeID int64, disp ReleaseDisposi
 		return cl
 	}
 	cl.tasks = tasks
-	cl.evacDisp = make([]ReleaseDisposition, len(tasks))
+	cl.countDisp = make([]ReleaseDisposition, len(tasks))
 	for i, task := range tasks {
 		t := release.Task{
 			NodeID: task.ProcessNodeID, NodeName: task.NodeName, Situation: task.Situation,
@@ -929,7 +930,11 @@ func (e *Engine) loadChangeover(processID, onlyNodeID int64, disp ReleaseDisposi
 				}
 			}
 			if onlyNodeID != 0 || (t.PullErr == nil && !t.Pulling) {
-				if cl.evacDisp[i], err = evacDispositionForTask(e, task, disp); err != nil {
+				if cl.countDisp[i], err = evacDispositionForTask(e, task, disp); err != nil {
+					cl.snap.ReadErr = err
+					return cl
+				}
+				if t.Lifts, t.Produce, err = changeoverCountFacts(e, act, changeover.ToStyleID, task); err != nil {
 					cl.snap.ReadErr = err
 					return cl
 				}
@@ -949,10 +954,14 @@ func coreNameOf(e *Engine, task processes.NodeTask) string {
 	return task.NodeName
 }
 
-// evacDispositionForTask picks the evac leg's disposition. The operator's
-// override wins; otherwise the line's runtime cache decides: parts left →
-// send_partial_back with that count, drained → release_empty (the ALN_001 fix:
-// a bin can't land at its outbound destination tagged with a stale payload).
+// evacDispositionForTask picks the disposition of the legs that carry a task's
+// count (release.PlanChangeover, Slot.Count): on a release that ships a count,
+// the leg that lifts the node's cart (the evac, or a sequential or per-position
+// press's one order); on a produce release, the evac.
+// The operator's override wins; otherwise the line's runtime cache decides:
+// parts left → send_partial_back with that count, drained → release_empty (the
+// ALN_001 fix: a bin can't land at its outbound destination tagged with a
+// stale payload).
 //
 // A FAILED RUNTIME READ REFUSES THE RELEASE. The count is then unknown, and
 // release_empty would clear a carrier that may be full; the read error goes
@@ -970,6 +979,44 @@ func evacDispositionForTask(e *Engine, task processes.NodeTask, override Release
 		return ReleaseDisposition{Mode: DispositionSendPartialBack, PartialCount: &count, CalledBy: override.CalledBy}, nil
 	}
 	return ReleaseDisposition{Mode: DispositionCaptureLineside, CalledBy: override.CalledBy}, nil
+}
+
+// changeoverCountFacts reads what a changeover task's count rule decides from
+// (release.PlanChangeover). Its legs whose release lifts the cart standing on
+// its node: the segment after the leg's first station wait picks up there
+// (release.Facts.DepartsFrom, the question departingProduceLeg asks of a
+// produce bin, asked here of every role); steps decide it, never the pointer a
+// leg is under or the mode (TestChangeoverLift_EachModesLifterIsToldFromItsSteps).
+// And whether its releases go through the produce arm, which ships no count:
+// the to-style's claim at the node is produce, the claim resolveReleaseClaim
+// gives the trunk's arm, read as it reads it (none, or unreadable, is no
+// produce arm). A leg that cannot be read refuses the release: its count would
+// be shipped or skipped on a guess.
+func changeoverCountFacts(e *Engine, act *releaseAct, toStyle int64, task processes.NodeTask) ([]int64, bool, error) {
+	node, err := e.db.GetProcessNode(task.ProcessNodeID)
+	if err != nil || node == nil {
+		return nil, false, fmt.Errorf("node %s: read process node %d: %w", task.NodeName, task.ProcessNodeID, err)
+	}
+	to, cerr := e.db.GetStyleNodeClaimByNode(toStyle, node.CoreNodeName)
+	produce := cerr == nil && to != nil && to.Role == protocol.ClaimRoleProduce
+	var lifts []int64
+	for _, id := range []*int64{task.OldMaterialReleaseOrderID, task.NextMaterialOrderID} {
+		if id == nil {
+			continue
+		}
+		order, err := e.db.GetOrder(*id)
+		if err != nil {
+			return nil, false, fmt.Errorf("node %s: read order %d: %w", task.NodeName, *id, err)
+		}
+		lf := e.legFactsOf(act, order)
+		if err := errors.Join(lf.readErr, lf.undecodable); err != nil {
+			return nil, false, fmt.Errorf("node %s: order %d: read its steps: %w", task.NodeName, *id, err)
+		}
+		if lf.facts.DepartsFrom(node.CoreNodeName) {
+			lifts = append(lifts, *id)
+		}
+	}
+	return lifts, produce, nil
 }
 
 // ── Doors 3 and 4's loads ─────────────────────────────────────────────────
