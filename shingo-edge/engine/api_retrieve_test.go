@@ -105,7 +105,7 @@ func TestCreateRetrieveForAPI_AHeldWindowGetsCoresSentence(t *testing.T) {
 			if c.name == "resident" {
 				resident["HW-W1"] = "PART-H"
 			} else {
-				_, err := db.CreateOrder("hw-inbound", "retrieve", nil, false, 1, "HW-W1", "", "EMPTY-SUPER", false, "PART-H", "", "")
+				_, err := db.CreateOrder("hw-inbound", "retrieve", nil, false, 1, "HW-W1", "", "EMPTY-SUPER", protocol.Height{}, false, "PART-H", "", "")
 				testutil.MustNoErr(t, err, "the full inbound")
 			}
 			holdSweep(t, eng, resident)

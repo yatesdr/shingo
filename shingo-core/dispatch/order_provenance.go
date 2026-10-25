@@ -11,19 +11,16 @@ import (
 )
 
 // SourceIntent is the Stage-4 data home for the sourcing reads that used to
-// branch on OrderType — an empty carrier's intent (retrieve_empty's, and
-// tops & bottoms'), move's node-local sourcing, and the empty-payload guard's
-// exemptions. It is set ONCE at intake (the label→data carve-out, via
+// branch on OrderType — an empty carrier's intent (retrieve_empty's), move's
+// node-local sourcing, and the empty-payload guard's exemptions. A height the
+// empty is wanted at is no intent: it is the order's want (orders.want,
+// ground rule 4). It is set ONCE at intake (the label→data carve-out, via
 // SourceIntentForType) and read downstream as data by the source finder and the
 // scanner. Stored as a plain string column.
 const (
 	SourceIntentFull  = ""      // retrieve: a payload-matched FULL bin (the default)
 	SourceIntentEmpty = "empty" // retrieve_empty: an empty compatible carrier
 	SourceIntentLocal = "local" // move: the bin AT a concrete source node (node-local)
-	// SourceIntentTopsAndBottoms is retrieve_tops_bottoms': tops & bottoms of
-	// the fed press's tote carrier and nothing else (FindSource states the
-	// want). An empty carrier in every other respect (SourcesEmpty).
-	SourceIntentTopsAndBottoms = "tops_bottoms"
 	// SourceIntentOnDeck is the carried-bin recovery: the bin is already on the
 	// pinned robot's deck, so there is nothing to source and nothing to pick
 	// up. It is the one intent that changes the PLAN rather than the search —
@@ -36,7 +33,7 @@ const (
 // decide-ahead set is built from, and the coordinated tripwire checks
 // (AssertSimpleNotCoordinated); SourceIntentForType names an intent for each.
 var plainFamily = []protocol.OrderType{
-	OrderTypeRetrieve, OrderTypeRetrieveEmpty, OrderTypeRetrieveTopsAndBottoms, OrderTypeMove,
+	OrderTypeRetrieve, OrderTypeRetrieveEmpty, OrderTypeMove,
 }
 
 // SourceIntentForType maps an order's type to its sourcing intent. It is called
@@ -54,8 +51,6 @@ func SourceIntentForType(t protocol.OrderType) string {
 		return SourceIntentFull
 	case OrderTypeRetrieveEmpty:
 		return SourceIntentEmpty
-	case OrderTypeRetrieveTopsAndBottoms:
-		return SourceIntentTopsAndBottoms
 	case OrderTypeMove:
 		return SourceIntentLocal
 	}
@@ -63,13 +58,11 @@ func SourceIntentForType(t protocol.OrderType) string {
 }
 
 // SourcesEmpty is the one test of whether an intent sources an empty carrier:
-// retrieve_empty's and tops & bottoms'. Every sourcing reader that used to ask
-// for SourceIntentEmpty asks this, so the tops & bottoms pull plans, gates,
-// dispatches, picks its robot group and replays from the queue as the empty it
-// is. A Core ask's empty (loader_replenish) is not one of them: a loader asks
-// only for an empty or a full (carrierPullIntent).
+// retrieve_empty's, whatever height its want states. Every sourcing reader asks
+// this, so a pull of tops & bottoms plans, gates, dispatches, picks its robot
+// group and replays from the queue as the empty it is.
 func SourcesEmpty(intent string) bool {
-	return intent == SourceIntentEmpty || intent == SourceIntentTopsAndBottoms
+	return intent == SourceIntentEmpty
 }
 
 // carrierPullIntent is the sourcing intent of a Core-authored carrier pull

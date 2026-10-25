@@ -3,6 +3,7 @@ package service
 import (
 	"testing"
 
+	"shingo/protocol"
 	"shingo/protocol/testutil"
 	"shingoedge/domain"
 	"shingoedge/internal/testdb"
@@ -91,7 +92,7 @@ func TestStation_SetNodesDisablesRatherThanDeletesWhenOrdersActive(t *testing.T)
 		}
 	}
 	// Attach an active order to the node we're about to drop.
-	_, err := db.CreateOrder("keep-me", "retrieve", &nodeID, false, 1, "", "", "", false, "", "", "")
+	_, err := db.CreateOrder("keep-me", "retrieve", &nodeID, false, 1, "", "", "", protocol.Height{}, false, "", "", "")
 	if err != nil {
 		t.Fatalf("create order: %v", err)
 	}
@@ -128,7 +129,7 @@ func TestStation_SetNodesNamesThePositionsItCouldOnlyDisable(t *testing.T) {
 		byName[n.CoreNodeName] = n.ID
 	}
 	busyID := byName["N-BUSY"]
-	if _, err := db.CreateOrder("busy-order", "retrieve", &busyID, false, 1, "", "", "", false, "", "", ""); err != nil {
+	if _, err := db.CreateOrder("busy-order", "retrieve", &busyID, false, 1, "", "", "", protocol.Height{}, false, "", "", ""); err != nil {
 		t.Fatalf("create order: %v", err)
 	}
 
@@ -177,7 +178,7 @@ func TestStation_SetNodes_AdoptsOrphanInsteadOfDuplicating(t *testing.T) {
 
 	// Keep the node alive through the un-claim by giving it an active order, so it
 	// is disabled rather than deleted — the real-world orphan shape.
-	if _, err := db.CreateOrder("uuid-adopt", "complex", &origID, false, 1, "PLN_01", "", "", false, "", "", ""); err != nil {
+	if _, err := db.CreateOrder("uuid-adopt", "complex", &origID, false, 1, "PLN_01", "", "", protocol.Height{}, false, "", "", ""); err != nil {
 		t.Fatalf("seed active order: %v", err)
 	}
 	testutil.MustNoErr(t, setNodesErr(svc, stationA, []string{}), "un-claim PLN_01")

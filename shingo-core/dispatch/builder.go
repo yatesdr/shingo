@@ -90,6 +90,10 @@ type Need struct {
 	// Leg is a compound's child: its parent, its turn, and for a dig's leg the
 	// bin it moves. nil for every root order.
 	Leg *Leg
+	// Want is the height the empty is wanted at, as a station stated it on its
+	// request (protocol.OrderRequest.Want, orders.want): every find of the order
+	// reads it. None for every other order.
+	Want domain.Height
 
 	// WHAT THE ORDER HOLDS FROM ITS ISSUE, softly, in the issue's transaction,
 	// or the issue is refused.
@@ -177,6 +181,7 @@ func row(need Need, p plan.Plan) *orders.Order {
 		StepsJSON:        need.Steps,
 		SiblingOrderUUID: need.Sibling,
 		RobotID:          need.Robot,
+		Want:             need.Want,
 	}
 	if o.SourceIntent == "" {
 		o.SourceIntent = SourceIntentForType(need.Type)

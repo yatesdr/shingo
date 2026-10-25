@@ -744,9 +744,7 @@ func (d *Dispatcher) AdmitCoreAsk(spec CoreAskSpec) (*orders.Order, error) {
 	// carries its part, as the Edge's own full-in row always has: the carrier
 	// is the part.
 	projected := *order
-	// == and not SourcesEmpty: a Core ask is only an empty or a full
-	// (carrierPullIntent), never tops & bottoms, which only a station asks for.
-	if intent == SourceIntentEmpty {
+	if SourcesEmpty(intent) {
 		projected.PayloadCode = ""
 	}
 	d.lifecycle.projectOrder(&projected)

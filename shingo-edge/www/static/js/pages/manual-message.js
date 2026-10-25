@@ -23,8 +23,6 @@ var _fieldDefs = {
         { id: 'quantity', label: 'Quantity', type: 'number', value: '1' },
         { id: 'delivery_node', label: 'Delivery Node', type: 'nodeselect', value: '' },
         { id: 'source_node', label: 'Source Node', type: 'nodeselect', value: '' },
-        { id: 'staging_node', label: 'Staging Node', type: 'nodeselect', value: '' },
-        { id: 'load_type', label: 'Load Type', type: 'text', value: '' },
         { id: 'retrieve_empty', label: 'Retrieve Empty', type: 'checkbox', value: false }
     ],
     'order.cancel': [
@@ -99,8 +97,6 @@ function buildPayload() {
                 quantity: getFieldValue('quantity'),
                 delivery_node: getFieldValue('delivery_node'),
                 source_node: getFieldValue('source_node'),
-                staging_node: getFieldValue('staging_node'),
-                load_type: getFieldValue('load_type'),
                 retrieve_empty: getFieldValue('retrieve_empty')
             };
         case 'order.cancel':

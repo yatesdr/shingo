@@ -184,6 +184,13 @@ type Order struct {
 	// stands (SYNTH F4). nil when no bin was found at birth, and for a door that
 	// holds its bin from birth (BinID).
 	Plan *PlannedPick `json:"plan,omitempty"`
+
+	// Want is the height an empty is wanted at, as the station stated it on its
+	// request (protocol.OrderRequest.Want, v166): none for every order whose
+	// asker stated none, which is nearly all of them. A stated want is exact:
+	// the finder takes that height or waits (plan.Need.Exact). Written once, at
+	// its issue.
+	Want Height `json:"want,omitzero"`
 }
 
 // PlannedPick is a bin the planner chose and the bin row as it saw it. The row

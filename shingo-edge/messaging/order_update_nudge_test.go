@@ -50,7 +50,7 @@ func TestHandleOrderUpdate_AnnouncesTheOrderAfterItsLastWrite(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create node: %v", err)
 	}
-	oid, err := db.CreateOrder("uuid-nudge", protocol.OrderTypeRetrieve, &node, false, 1, "LINE-1", "", "", false, "", "", "")
+	oid, err := db.CreateOrder("uuid-nudge", protocol.OrderTypeRetrieve, &node, false, 1, "LINE-1", "", "", protocol.Height{}, false, "", "", "")
 	if err != nil {
 		t.Fatalf("create order: %v", err)
 	}

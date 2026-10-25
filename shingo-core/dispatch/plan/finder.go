@@ -257,8 +257,8 @@ func (f *Finder) Pick(need Need) Plan {
 	// exactly need.NodeLocal, and the tier-5 gate on !moveShaped is what makes
 	// plant-wide widening unreachable by type for node-local needs.
 	moveShaped := need.NodeLocal
-	// exact: the need states its empty (Need.Want). It skips a partial to
-	// finish and never widens plant-wide.
+	// exact: the need states the height its empty is wanted at (Need.Height).
+	// It skips a partial to finish and never widens plant-wide.
 	exact := need.Exact()
 
 	// Destination resolved once — excludeNodeID (prevent same-node retrieve) and
@@ -776,8 +776,8 @@ func (f *Finder) Pick(need Need) Plan {
 
 	// ── Tier 5: plant-wide fallback (retrieve-shaped only) ────────────────
 	// Move-shaped needs never reach here (tier 4 is terminal for a move), and
-	// neither does an exact one: tops & bottoms is pulled from the press's own
-	// inbound source or not at all.
+	// neither does an exact one: a stated height is taken from the need's own
+	// source or not at all (tops & bottoms from the press's inbound source).
 	if bin == nil && !moveShaped && !exact {
 		if intent == IntentFull {
 			b, err := f.db.FindSourceBinFIFO(payloadCode, excludeID)

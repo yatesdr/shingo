@@ -69,7 +69,7 @@ func newBinDoneWorld(t *testing.T, tracked int, produce bool) *binDoneWorld {
 		nodeID, delivery = f.produceID, "ALN_005"
 	}
 	id, err := f.db.CreateOrder("bin-done-swap", orders.TypeComplex, &nodeID, false, 1,
-		delivery, "", "SYN_MARKET", false, "", "", "")
+		delivery, "", "SYN_MARKET", protocol.Height{}, false, "", "", "")
 	testutil.MustNoErr(t, err, "create the swap leg")
 	_, err = f.db.Exec(`UPDATE orders SET steps_json = '[{"action":"wait"}]' WHERE id = ?`, id)
 	testutil.MustNoErr(t, err, "the leg's step plan (an Edge-authored leg is not lane-held)")

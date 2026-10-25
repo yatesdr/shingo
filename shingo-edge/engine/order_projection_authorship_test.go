@@ -33,7 +33,7 @@ import (
 // order has, not a simulation of one.
 func edgeAuthoredOrder(t *testing.T, eng *Engine, uuid, originID, originClass string) int64 {
 	t.Helper()
-	id, err := eng.db.CreateOrder(uuid, orders.TypeRetrieve, nil, true, 1, "W-A", "", "EMPTY-MARKET", false, "PART-A", originID, originClass)
+	id, err := eng.db.CreateOrder(uuid, orders.TypeRetrieve, nil, true, 1, "W-A", "", "EMPTY-MARKET", protocol.Height{}, false, "PART-A", originID, originClass)
 	if err != nil {
 		t.Fatalf("create edge-authored order: %v", err)
 	}

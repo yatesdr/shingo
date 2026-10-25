@@ -4505,7 +4505,26 @@ func migrationList() []migration {
 				}
 				return all
 			}},
+		{166, "orders.want - the height an empty is wanted at, as its asker stated it on the wire (protocol.OrderRequest.Want); blank states none",
+			v166OrderWant,
+			func(q schema.Querier) bool { return schema.ColumnExists(q, "orders", "want") }},
 	}
+}
+
+// v166OrderWant adds orders.want (protocol.Height's spelling: blank for none, a
+// decimal for Layers(n), 'tops_bottoms' for TopsAndBottomsOnly): the height an
+// empty is wanted at, as the station stated it on its request. Written once,
+// at intake, from the wire; every find of the order reads it (dispatch
+// FindSource), the scanner's replay included. A stated want is exact: that
+// height or wait. Every existing row is blank, which states none, what every
+// order before it had (a tops & bottoms pull of the retired type was never
+// sent by a plant). INERT TO AN OLDER BINARY, which never names the column.
+// ROLLBACK is the previous binary plus DROP COLUMN want.
+func v166OrderWant(tx *sql.Tx) error {
+	if _, err := tx.Exec(`ALTER TABLE orders ADD COLUMN IF NOT EXISTS want TEXT NOT NULL DEFAULT ''`); err != nil {
+		return fmt.Errorf("v166 orders.want: %w", err)
+	}
+	return nil
 }
 
 // v165DrainColumns are the four columns v165 adds, in the order the loader

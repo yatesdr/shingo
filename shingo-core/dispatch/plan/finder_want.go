@@ -69,14 +69,16 @@ func oneType(code string) []string {
 // Pins: TestToteWant_TheShape, TestToteWant_ReachesTheFinder,
 // TestToteWant_NoNumbersAddNoStatement, TestToteWant_ThePoolsStatements.
 //
-// A STATED WANT IS THE ANSWER (Need.Want), before any derivation: the caller
-// has already decided the type and the height. Everything else is derived
-// (derivedEmpty).
+// A STATED HEIGHT IS THE HEIGHT (Need.Height), over the derivation's: the asker
+// has decided it. The carrier type is derived as for any empty (derivedEmpty),
+// which chooses among the carriers the part may ride, so a part riding two tote
+// carriers takes tops & bottoms of either.
 func (f *Finder) wantedEmpty(need Need) (types []string, height domain.Height) {
+	types, height = f.derivedEmpty(need)
 	if need.Intent == IntentEmpty && need.Exact() {
-		return []string{need.Want.Type}, need.Want.Height
+		height = need.Height
 	}
-	return f.derivedEmpty(need)
+	return types, height
 }
 
 // derivedEmpty is wantedEmpty's answer for a need that states no want: the

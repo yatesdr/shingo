@@ -40,7 +40,7 @@ func TestV3PendingIntent_AgedThenSecondBoot(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
-	if _, err := db.CreateOrder("aged-uuid", protocol.OrderTypeMove, nil, false, 1, "D", "", "S", true, "P", "", ""); err != nil {
+	if _, err := db.CreateOrder("aged-uuid", protocol.OrderTypeMove, nil, false, 1, "D", "", "S", protocol.Height{}, true, "P", "", ""); err != nil {
 		t.Fatalf("seed order: %v", err)
 	}
 	if _, err := db.Exec(`ALTER TABLE orders DROP COLUMN pending_intent`); err != nil {
@@ -115,7 +115,7 @@ func TestPendingIntentTakeIsExactlyOnce(t *testing.T) {
 		t.Fatalf("open: %v", err)
 	}
 	defer db.Close()
-	id, err := db.CreateOrder("take-uuid", protocol.OrderTypeMove, nil, false, 1, "D", "", "S", true, "P", "", "")
+	id, err := db.CreateOrder("take-uuid", protocol.OrderTypeMove, nil, false, 1, "D", "", "S", protocol.Height{}, true, "P", "", "")
 	if err != nil {
 		t.Fatalf("create order: %v", err)
 	}

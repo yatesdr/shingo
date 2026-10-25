@@ -36,7 +36,7 @@ func c1Feed(t *testing.T, uuid string, at protocol.Status, msgs ...c1Msg) (statu
 	t.Helper()
 	db := testHandlerDB(t)
 	h := testHandler(t, db)
-	id, err := db.CreateOrder(uuid, protocol.OrderTypeRetrieve, nil, false, 1, "LINE-1", "", "", false, "PART", "", "")
+	id, err := db.CreateOrder(uuid, protocol.OrderTypeRetrieve, nil, false, 1, "LINE-1", "", "", protocol.Height{}, false, "PART", "", "")
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
@@ -95,7 +95,7 @@ func TestMixedVersion_NewEdgeOldCore_SourcingArrivesAsQueued(t *testing.T) {
 	t.Run("the boot snapshot", func(t *testing.T) {
 		db := testHandlerDB(t)
 		h := testHandler(t, db)
-		id, err := db.CreateOrder("nv-snap", protocol.OrderTypeRetrieve, nil, false, 1, "LINE-1", "", "", false, "PART", "", "")
+		id, err := db.CreateOrder("nv-snap", protocol.OrderTypeRetrieve, nil, false, 1, "LINE-1", "", "", protocol.Height{}, false, "PART", "", "")
 		if err != nil {
 			t.Fatalf("create: %v", err)
 		}

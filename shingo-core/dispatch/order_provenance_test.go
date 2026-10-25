@@ -11,7 +11,6 @@ import (
 	"testing"
 
 	"shingo/protocol"
-	"shingocore/internal/testdb"
 	"shingocore/store/orders"
 )
 
@@ -59,9 +58,8 @@ func TestStage4_SourceIntentForType(t *testing.T) {
 		want string
 	}{
 		{OrderTypeRetrieve, SourceIntentFull},       // full payload-matched bin
-		{OrderTypeRetrieveEmpty, SourceIntentEmpty}, // generic empty carrier
-		{OrderTypeRetrieveTopsAndBottoms, SourceIntentTopsAndBottoms},
-		{OrderTypeMove, SourceIntentLocal}, // bin AT a concrete node
+		{OrderTypeRetrieveEmpty, SourceIntentEmpty}, // generic empty carrier, at any stated height
+		{OrderTypeMove, SourceIntentLocal},          // bin AT a concrete node
 		// An unrecognised type must fall to full, NOT local: local exempts an
 		// order from the scanner's payload guard, so a stray mapping there is
 		// the expensive direction to be wrong in.
@@ -83,10 +81,9 @@ func TestStage4_SourceIntentForType(t *testing.T) {
 func TestPlainFamily_EveryTypeHasItsIntentAndItsPlanner(t *testing.T) {
 	t.Parallel()
 	want := map[protocol.OrderType]string{
-		OrderTypeRetrieve:               SourceIntentFull,
-		OrderTypeRetrieveEmpty:          SourceIntentEmpty,
-		OrderTypeRetrieveTopsAndBottoms: SourceIntentTopsAndBottoms,
-		OrderTypeMove:                   SourceIntentLocal,
+		OrderTypeRetrieve:      SourceIntentFull,
+		OrderTypeRetrieveEmpty: SourceIntentEmpty,
+		OrderTypeMove:          SourceIntentLocal,
 	}
 	if len(plainFamily) != len(want) {
 		t.Fatalf("plainFamily has %d types, this pin names %d: give the new type its intent here and in SourceIntentForType",
@@ -108,14 +105,12 @@ func TestPlainFamily_EveryTypeHasItsIntentAndItsPlanner(t *testing.T) {
 	}
 }
 
-// TestRule4_NoOrderTypeOrIntentCarriesAHeight is ground rule 4's tombstone
-// (docs/ground-rules.md): a want is a Height on the demand, so no order type and
-// no sourcing intent names a height or a carrier state. Two identifiers do
-// today, the tops & bottoms pull's type and intent, and the plain family has a
-// fourth member for them. PREDICTED RED until the want is on the wire: then the
-// two identifiers are gone from every module, this becomes forbidigo's
-// tombstone on them (the bins\.Unclaim precedent in .golangci.yml), and the
-// family's three members an assertion.
+// TestRule4_NoOrderTypeOrIntentCarriesAHeight is ground rule 4
+// (docs/ground-rules.md): a want is a Height on the demand, stated on the wire
+// (protocol.OrderRequest.Want) and stored on the order, so no order type and no
+// sourcing intent names a height or a carrier state. The tops & bottoms pull's
+// type and intent are gone from every module (forbidigo's tombstone in
+// .golangci.yml keeps them gone), and the plain family is three types.
 func TestRule4_NoOrderTypeOrIntentCarriesAHeight(t *testing.T) {
 	t.Parallel()
 	var found []string
@@ -150,15 +145,18 @@ func TestRule4_NoOrderTypeOrIntentCarriesAHeight(t *testing.T) {
 	if len(plainFamily) != 3 {
 		found = append(found, fmt.Sprintf("the plain family has %d members, not 3", len(plainFamily)))
 	}
-	testdb.VerifyRed(t, "rule 4: a type or intent that carries a height", found)
+	for _, f := range found {
+		t.Errorf("rule 4: a type or intent that carries a height: %s", f)
+	}
 }
 
-// TestSourcesEmpty: the one test of an empty carrier's intent. Tops & bottoms
-// is one; a full, a move and a carried bin are not.
+// TestSourcesEmpty: the one test of an empty carrier's intent, whatever height
+// its want states; a full, a move and a carried bin are not one, and neither is
+// the retired tops & bottoms intent's word.
 func TestSourcesEmpty(t *testing.T) {
 	t.Parallel()
 	for intent, want := range map[string]bool{
-		SourceIntentEmpty: true, SourceIntentTopsAndBottoms: true,
+		SourceIntentEmpty: true, "tops_bottoms": false,
 		SourceIntentFull: false, SourceIntentLocal: false, SourceIntentOnDeck: false,
 	} {
 		if got := SourcesEmpty(intent); got != want {
@@ -167,14 +165,14 @@ func TestSourcesEmpty(t *testing.T) {
 	}
 }
 
-// TestCarrierPullIntent_NoCoreAskIsTopsAndBottoms: a Core-authored carrier pull
-// is an empty or a full. Tops & bottoms is a station's pull (SEND BACK) and a
-// Core ask stating it is refused, so the loader's == SourceIntentEmpty tests
-// never meet it.
-func TestCarrierPullIntent_NoCoreAskIsTopsAndBottoms(t *testing.T) {
+// TestCarrierPullIntent_ACoreAskIsAnEmptyOrAFull: a Core-authored carrier pull
+// is an empty or a full; a move or a complex order is no Core ask's type.
+func TestCarrierPullIntent_ACoreAskIsAnEmptyOrAFull(t *testing.T) {
 	t.Parallel()
-	if _, ok := carrierPullIntent(OrderTypeRetrieveTopsAndBottoms); ok {
-		t.Error("carrierPullIntent accepted retrieve_tops_bottoms; a Core ask is only an empty or a full")
+	for _, typ := range []protocol.OrderType{OrderTypeMove, OrderTypeComplex} {
+		if _, ok := carrierPullIntent(typ); ok {
+			t.Errorf("carrierPullIntent accepted %s; a Core ask is only an empty or a full", typ)
+		}
 	}
 	for _, typ := range []protocol.OrderType{OrderTypeRetrieve, OrderTypeRetrieveEmpty} {
 		if _, ok := carrierPullIntent(typ); !ok {

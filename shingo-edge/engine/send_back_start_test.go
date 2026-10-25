@@ -31,7 +31,9 @@ func seedSendBackAtStart(t *testing.T, toPart string) (*coFixture, int64, int64)
 	testutil.MustNoErr(t, err, "the outside's process node")
 	move, err := fx.eng.orderMgr.CreateMoveOrderForBin(&outside, "KSCO-PAIR-L1", "KSCO-DEST", "", 77, ordermgr.NoDemand())
 	testutil.MustNoErr(t, err, "SEND BACK's move")
-	pull, err := fx.eng.orderMgr.CreateTopsAndBottomsPull(&outside, "KSCO-PAIR-L1", "SRC-OLD", "PART-OLD", ordermgr.NoDemand())
+	pull, err := fx.eng.orderMgr.CreateRetrieveOrder(ordermgr.RetrieveSpec{Process: &outside, Delivery: "KSCO-PAIR-L1",
+		Source: "SRC-OLD", Payload: "PART-OLD", Quantity: 1, Empty: true, Want: protocol.TopsAndBottomsOnly,
+		AutoConfirm: true, Origin: ordermgr.NoDemand()})
 	testutil.MustNoErr(t, err, "SEND BACK's pull")
 	return fx, move.ID, pull.ID
 }

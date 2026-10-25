@@ -169,7 +169,7 @@ func TestStrandedMonitor_StatementsPerPass(t *testing.T) {
 			f := seedWalkerProcess(t, db, "BUDGETP", specs)
 			for i := 0; i < tc.holding; i++ {
 				_, err := db.CreateOrder(fmt.Sprintf("budget-h%d", i), protocol.OrderTypeRetrieveEmpty, nil, true, 1,
-					f.Names[fmt.Sprintf("H%02d", i+1)], "", "", false, "SYN-PART-P", "", "")
+					f.Names[fmt.Sprintf("H%02d", i+1)], "", "", protocol.Height{}, false, "SYN-PART-P", "", "")
 				testutil.MustNoErr(t, err, "a carrier coming")
 			}
 			eng := testEngine(t, db)

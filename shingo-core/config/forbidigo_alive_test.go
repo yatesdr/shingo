@@ -39,16 +39,18 @@ import (
 // in a scratch edit — the tombstone-aware census fails naming it.
 
 // forbidigoTombstones are patterns that deliberately match nothing, each
-// with the reason. These are REINTRODUCTION guards: the function they name
-// was deleted, and the pattern exists to trip on its return. The rule's own
-// `msg` in .golangci.yml must say so too (tombstoneMsgMarker), so a developer
-// tripping it is told the function is gone rather than sent to use it.
+// with the reason. These are REINTRODUCTION guards: the function or name they
+// match was deleted, and the pattern exists to trip on its return. The rule's
+// own `msg` in .golangci.yml must say so too (tombstoneMsgMarker), so a
+// developer tripping it is told the name is gone rather than sent to use it.
 var forbidigoTombstones = map[string]string{
 	`bins\.Unclaim`: "forbids re-adding a deleted function: bins.Unclaim / bins.UnclaimByOrder (the bare claim clear that left the coupled reservation behind) were deleted 2026-09-26. If this test reports the pattern is live again, the function came back — move the row out of the tombstone list and clear its sanctioned callers.",
+	`(OrderTypeRetrieveTopsAndBottoms|SourceIntentTopsAndBottoms)`: "forbids re-adding a deleted name: the tops & bottoms pull's order type and sourcing intent were deleted 2026-10-25, when the want went on the wire as a protocol.Height (ground rule 4). If this test reports the pattern is live again, a height is being carried by a type or an intent — state it on the demand instead.",
 }
 
-// tombstoneMsgMarker is the phrase a tombstone rule's msg must carry.
-const tombstoneMsgMarker = "forbids re-adding a deleted function"
+// tombstoneMsgMarker is the phrase a tombstone rule's msg must carry: "a
+// deleted function", or "a deleted name" for a constant.
+const tombstoneMsgMarker = "forbids re-adding a deleted"
 
 // TestForbidigoPatternsAreAlive parses .golangci.yml's forbidigo.forbid
 // block and fails on any dead (matchless) pattern without a tombstone row.
@@ -95,8 +97,9 @@ func TestForbidigoTombstonesAreStillDead(t *testing.T) {
 
 // TestForbidigoTombstonesSayWhatTheyAre pins the tombstone contract both
 // ways: every tombstone row names a rule that exists in .golangci.yml, that
-// rule's msg says it forbids re-adding a deleted function, and its reason here
-// says the same; and no live (non-tombstone) rule claims to be a tombstone.
+// rule's msg says it forbids re-adding a deleted function or name, and its
+// reason here says the same; and no live (non-tombstone) rule claims to be a
+// tombstone.
 func TestForbidigoTombstonesSayWhatTheyAre(t *testing.T) {
 	msgs := map[string]string{}
 	for _, r := range parseForbidRules(t) {

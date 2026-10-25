@@ -19,8 +19,9 @@ import (
 	"shingocore/store/payloads"
 )
 
-// tops_and_bottoms_pull_docker_test.go — SEND BACK's pull at Core
-// (retrieve_tops_bottoms): what it takes, from where, and what intake refuses.
+// tops_and_bottoms_pull_docker_test.go — SEND BACK's pull at Core (an empty
+// retrieve stating tops & bottoms): what it takes, from where, and what intake
+// refuses.
 
 // tbpCell is a fed press (a produce tote press whose outside position is no
 // claim's core node) whose claim draws from a group, the part's tote carrier
@@ -94,8 +95,8 @@ func (c *tbpCell) cart(t *testing.T, typeID int64, label string, totes *int, pay
 }
 
 func (c *tbpCell) pull(uuid string) *orders.Order {
-	return &orders.Order{EdgeUUID: uuid, OrderType: OrderTypeRetrieveTopsAndBottoms, SourceIntent: SourceIntentTopsAndBottoms,
-		PayloadCode: c.part, SourceNode: c.src, DeliveryNode: c.outside, Quantity: 1}
+	return &orders.Order{EdgeUUID: uuid, OrderType: OrderTypeRetrieveEmpty, SourceIntent: SourceIntentEmpty,
+		Want: protocol.TopsAndBottomsOnly, PayloadCode: c.part, SourceNode: c.src, DeliveryNode: c.outside, Quantity: 1}
 }
 
 func (c *tbpCell) find(t *testing.T, o *orders.Order) SourceResult {
@@ -176,12 +177,12 @@ func TestTopsAndBottomsPull_AStrictGroupThatSupportsThePressServesIt(t *testing.
 	}
 }
 
-// TestToteCarrierFor_TheOutcomes: one statement answers the press and the tote
-// carrier. The part's carrier rule decides when it has rows, even against the
-// outside's types; only a part with no rule asks the outside's types; none or
-// more than one is refused, and so is a delivery that is no fed press's
-// outside carrying the part.
-func TestToteCarrierFor_TheOutcomes(t *testing.T) {
+// TestPressFor_TheOutcomes: one statement answers the press a pull of tops &
+// bottoms is for: the fed press whose outside the delivery is and whose claim
+// carries the part, whatever carriers the part rides (which of them the pull
+// brings is the finder's ordinary derivation). A part the press is not fed
+// with, or a delivery that is no fed press's outside, is refused.
+func TestPressFor_TheOutcomes(t *testing.T) {
 	t.Parallel()
 	db, cfg := testdb.OpenWithConfig(t)
 	c := newTBPCell(t, db, "TBC")
@@ -190,8 +191,6 @@ func TestToteCarrierFor_TheOutcomes(t *testing.T) {
 	c.exec(t, `UPDATE bin_types SET totes_per_layer = 6 WHERE id = $1`, other.ID)
 	knock := &bins.BinType{Code: "TBC-KD"}
 	testutil.MustNoErr(t, db.CreateBinType(knock), "a knockdown")
-	outside, err := db.GetNodeByDotName(c.outside)
-	testutil.MustNoErr(t, err, "outside")
 	pl, err := db.GetPayloadByCode(c.part)
 	testutil.MustNoErr(t, err, "part")
 	cdb, counter, err := store.OpenCounting(cfg)
@@ -201,46 +200,32 @@ func TestToteCarrierFor_TheOutcomes(t *testing.T) {
 	rule := func(ids ...int64) {
 		testutil.MustNoErr(t, db.SetPayloadBinTypes(pl.ID, ids), "the part's carrier rule")
 	}
-	allowed := func(mode string, ids ...int64) {
-		c.exec(t, `DELETE FROM node_bin_types WHERE node_id = $1`, outside.ID)
-		c.exec(t, `DELETE FROM node_properties WHERE node_id = $1 AND key = 'bin_type_mode'`, outside.ID)
-		if mode != "" {
-			c.exec(t, `INSERT INTO node_properties (node_id, key, value) VALUES ($1, 'bin_type_mode', $2)`, outside.ID, mode)
-		}
-		for _, id := range ids {
-			c.exec(t, `INSERT INTO node_bin_types (node_id, bin_type_id) VALUES ($1, $2)`, outside.ID, id)
-		}
-	}
 	for _, k := range []struct {
 		name    string
 		set     func()
 		part    string
 		at      string
-		want    string // the type, or "" for a refusal
-		refusal string
+		refusal string // "" for the press
 	}{
-		{"the rule names one tote carrier", func() { rule(c.toteID); allowed("") }, c.part, c.outside, c.tote, ""},
-		{"the rule wins over the outside's types", func() { rule(c.toteID); allowed("specific", other.ID) }, c.part, c.outside, c.tote, ""},
-		{"a rule with no tote carrier", func() { rule(knock.ID); allowed("specific", c.toteID) }, c.part, c.outside, "", "names no tote carrier"},
-		{"a rule with two", func() { rule(c.toteID, other.ID); allowed("") }, c.part, c.outside, "", "names more than one tote carrier"},
-		{"no rule: the outside's one tote type", func() { rule(); allowed("specific", other.ID, knock.ID) }, c.part, c.outside, other.Code, ""},
-		{"no rule, no types at the outside", func() { rule(); allowed("") }, c.part, c.outside, "", "names no tote carrier"},
-		{"no rule, every type allowed", func() { rule(); allowed("all") }, c.part, c.outside, "", "names more than one tote carrier"},
-		{"a part the press is not fed with", func() { rule(c.toteID); allowed("") }, "TBC-OTHER", c.outside, "", "is not the outside position of a press fed with"},
-		{"a node that is no outside", func() { rule(c.toteID); allowed("") }, c.part, c.press, "", "is not the outside position of a press fed with"},
+		{"the rule names one tote carrier", func() { rule(c.toteID) }, c.part, c.outside, ""},
+		{"the rule names two", func() { rule(c.toteID, other.ID) }, c.part, c.outside, ""},
+		{"a rule with no tote carrier", func() { rule(knock.ID) }, c.part, c.outside, ""},
+		{"no rule", func() { rule() }, c.part, c.outside, ""},
+		{"a part the press is not fed with", func() { rule(c.toteID) }, "TBC-OTHER", c.outside, "is not the outside position of a press fed with"},
+		{"a node that is no outside", func() { rule(c.toteID) }, c.part, c.press, "is not the outside position of a press fed with"},
 	} {
 		k.set()
 		counter.Reset()
-		tc, refusal, err := toteCarrierFor(cdb, k.part, k.at)
+		press, refusal, err := pressFor(cdb, k.part, k.at)
 		testutil.MustNoErr(t, err, k.name)
 		if n := len(counter.Statements()); n != 1 {
 			t.Errorf("%s: %d statements, want one", k.name, n)
 		}
-		if k.want != "" && (refusal != "" || tc.Type != k.want || tc.Core != c.press) {
-			t.Errorf("%s: %+v refused %q, want %s for %s", k.name, tc, refusal, k.want, c.press)
+		if k.refusal == "" && (refusal != "" || press != c.press) {
+			t.Errorf("%s: %q refused %q, want %s", k.name, press, refusal, c.press)
 		}
-		if k.want == "" && !strings.Contains(refusal, k.refusal) {
-			t.Errorf("%s: refused %q, want it to say %q", k.name, refusal, k.refusal)
+		if k.refusal != "" && (press != "" || !strings.Contains(refusal, k.refusal)) {
+			t.Errorf("%s: %q refused %q, want it to say %q", k.name, press, refusal, k.refusal)
 		}
 	}
 }
@@ -277,8 +262,8 @@ func TestTopsAndBottomsPull_IntakeRefuses(t *testing.T) {
 	d, _ := newTestDispatcher(t, db, testdb.NewTrackingBackend())
 	ask := func(uuid, part, src string) {
 		d.HandleOrderRequest(testEnvelope(), &protocol.OrderRequest{OrderUUID: uuid,
-			OrderType: OrderTypeRetrieveTopsAndBottoms, PayloadCode: part, SourceNode: src,
-			DeliveryNode: c.outside, Quantity: 1})
+			OrderType: OrderTypeRetrieve, RetrieveEmpty: true, Want: protocol.TopsAndBottomsOnly,
+			PayloadCode: part, SourceNode: src, DeliveryNode: c.outside, Quantity: 1})
 	}
 	for _, k := range []struct {
 		name, uuid, part, src string
@@ -308,28 +293,88 @@ func TestTopsAndBottomsPull_IntakeRefuses(t *testing.T) {
 		t.Fatalf("a pull that resolves was refused: %+v", f)
 	}
 	o := testdb.RequireOrder(t, db, "tbi-ok")
-	if o.Status != protocol.StatusQueued || o.SourceIntent != SourceIntentTopsAndBottoms || o.QueueReason != "Waiting for tops & bottoms in "+c.src {
-		t.Errorf("the pull is %s (%s) under %q, want queued as tops & bottoms, waiting for its cart", o.Status, o.SourceIntent, o.QueueReason)
+	if o.Status != protocol.StatusQueued || o.SourceIntent != SourceIntentEmpty || o.Want != protocol.TopsAndBottomsOnly ||
+		o.QueueReason != "Waiting for tops & bottoms in "+c.src {
+		t.Errorf("the pull is %s (%s, want %v) under %q, want queued as an empty wanting tops & bottoms, waiting for its cart",
+			o.Status, o.SourceIntent, o.Want, o.QueueReason)
 	}
 }
 
-// TestTopsAndBottomsPull_AnOlderCoreRefusesTheType: a Core with no planner for
-// retrieve_tops_bottoms refuses it at intake, before a row exists (the
-// mechanism behind the skew: an Edge ahead of its Core has its pull refused,
-// and the outside stands vacant until the next swap fetches for it).
-func TestTopsAndBottomsPull_AnOlderCoreRefusesTheType(t *testing.T) {
+// TestTopsAndBottomsPull_TheRetiredTypeIsUnknown: the pull's order type is
+// gone with no deprecation arm (it never reached a plant), so an Edge older
+// than its Core that still sends retrieve_tops_bottoms is refused at intake as
+// an unknown type, before a row exists, and the outside stands vacant until the
+// next swap fetches for it. That is the cost of Core first; Edge first would
+// pull a stack to the outside instead.
+func TestTopsAndBottomsPull_TheRetiredTypeIsUnknown(t *testing.T) {
 	t.Parallel()
 	db := testdb.Open(t)
 	c := newTBPCell(t, db, "TBO")
 	d, _ := newTestDispatcher(t, db, testdb.NewTrackingBackend())
-	delete(d.planner.handlers, OrderTypeRetrieveTopsAndBottoms)
 	d.HandleOrderRequest(testEnvelope(), &protocol.OrderRequest{OrderUUID: "tbo-1",
-		OrderType: OrderTypeRetrieveTopsAndBottoms, PayloadCode: c.part, SourceNode: c.src,
-		DeliveryNode: c.outside, Quantity: 1})
+		OrderType: protocol.OrderType("retrieve_tops_bottoms"), RetrieveEmpty: true, PayloadCode: c.part,
+		SourceNode: c.src, DeliveryNode: c.outside, Quantity: 1})
 	if f := orderErrorFor(t, db, "tbo-1"); f == nil || f.ErrorCode != string(protocol.TermUnknownType) {
 		t.Fatalf("intake answered %+v, want one unknown_type refusal", f)
 	}
 	if o, err := db.GetOrderByUUID("tbo-1"); err == nil && o != nil {
 		t.Errorf("an order row exists (%d, %s); the refusal leaves none", o.ID, o.Status)
+	}
+}
+
+// wirePull is SEND BACK's pull as the Edge puts it on the wire: a plain empty
+// retrieve stating its want, decoded the way intake decodes it.
+func (c *tbpCell) wirePull(t *testing.T, d *Dispatcher, uuid string) {
+	t.Helper()
+	raw := fmt.Sprintf(`{"order_uuid":%q,"order_type":"retrieve","retrieve_empty":true,"want":"tops_bottoms",
+		"payload_code":%q,"source_node":%q,"delivery_node":%q,"quantity":1}`, uuid, c.part, c.src, c.outside)
+	var req protocol.OrderRequest
+	testutil.MustNoErr(t, json.Unmarshal([]byte(raw), &req), "the wire request")
+	d.HandleOrderRequest(testEnvelope(), &req)
+}
+
+// TestTopsAndBottomsPull_TheWantOnTheWireIsWhatItWaitsFor: the pull is a plain
+// empty retrieve, and the want it states is what it takes. With only a stack
+// (3 high) in its source it waits for tops & bottoms there, as the type's pull
+// did; a Core that drops the want would take the stack.
+func TestTopsAndBottomsPull_TheWantOnTheWireIsWhatItWaitsFor(t *testing.T) {
+	t.Parallel()
+	db := testdb.Open(t)
+	c := newTBPCell(t, db, "TBW")
+	c.cart(t, c.toteID, "TBW-STACK", intPtr(24), "", nil)
+	d, _ := newTestDispatcher(t, db, testdb.NewTrackingBackend())
+	c.wirePull(t, d, "tbw-1")
+	o := testdb.RequireOrder(t, db, "tbw-1")
+	if o.OrderType != OrderTypeRetrieveEmpty || o.Status != protocol.StatusQueued ||
+		o.QueueReason != "Waiting for tops & bottoms in "+c.src {
+		t.Errorf("the pull is a %s, %s under %q; want a retrieve_empty queued waiting for tops & bottoms in %s",
+			o.OrderType, o.Status, o.QueueReason, c.src)
+	}
+}
+
+// TestTopsAndBottomsPull_APartOnTwoToteCarriersTakesEither: the part rides two
+// tote carriers, and the pull takes tops & bottoms of either: the ordinary
+// derivation chooses among the part's carriers (its rule), so the pull is no
+// longer refused for naming more than one.
+func TestTopsAndBottomsPull_APartOnTwoToteCarriersTakesEither(t *testing.T) {
+	t.Parallel()
+	db := testdb.Open(t)
+	c := newTBPCell(t, db, "TB2")
+	second := &bins.BinType{Code: "TB2-TOTE2"}
+	testutil.MustNoErr(t, db.CreateBinType(second), "a second tote carrier")
+	c.exec(t, `UPDATE bin_types SET totes_per_layer = 6 WHERE id = $1`, second.ID)
+	pl, err := db.GetPayloadByCode(c.part)
+	testutil.MustNoErr(t, err, "part")
+	testutil.MustNoErr(t, db.SetPayloadBinTypes(pl.ID, []int64{c.toteID, second.ID}), "the part rides both")
+	tb := c.cart(t, second.ID, "TB2-TB", intPtr(0), "", nil)
+	d, _ := newTestDispatcher(t, db, testdb.NewTrackingBackend())
+	c.wirePull(t, d, "tb2-1")
+	if f := orderErrorFor(t, db, "tb2-1"); f != nil {
+		t.Fatalf("the pull was refused: %s %q", f.ErrorCode, f.Detail)
+	}
+	o := testdb.RequireOrder(t, db, "tb2-1")
+	if o.Plan == nil || o.Plan.BinID != tb {
+		t.Errorf("the pull is %s under %q with plan %+v; want it to have picked the tops & bottoms %d",
+			o.Status, o.QueueReason, o.Plan, tb)
 	}
 }

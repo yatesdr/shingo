@@ -22,7 +22,7 @@ func stageOrderForConsumeNode(t *testing.T, db *store.DB, nodeID int64, uuid str
 		t.Fatalf("get process node %d: %v", nodeID, err)
 	}
 	orderID, err := db.CreateOrder(uuid, orders.TypeComplex,
-		&nodeID, false, 1, node.CoreNodeName, "", "", false, "", "", "")
+		&nodeID, false, 1, node.CoreNodeName, "", "", protocol.Height{}, false, "", "", "")
 	if err != nil {
 		t.Fatalf("create order: %v", err)
 	}
@@ -265,7 +265,7 @@ func TestHandleComplexOrderBCompletion_ResetsOnDelivery(t *testing.T) {
 	// delivery_node (createComplexOrder always persists them). BinID set so
 	// resolveReplenishUOP returns claim capacity.
 	orderID, err := db.CreateOrder("uuid-idemp", orders.TypeComplex,
-		&nodeID, false, 1, "LSD-IDEMP-NODE", "", "", false, "", "", "")
+		&nodeID, false, 1, "LSD-IDEMP-NODE", "", "", protocol.Height{}, false, "", "", "")
 	if err != nil {
 		t.Fatalf("create order: %v", err)
 	}
@@ -395,7 +395,7 @@ func TestHandleLoaderEmptyInCompletion_FilesNoL2(t *testing.T) {
 	loaderNodeID, _ := seedManualSwapClaim(t, db, "L2-FIRE", "produce", "PART-L2", "STORAGE-NODE")
 
 	orderID, err := db.CreateOrder("uuid-l1-fire", orders.TypeRetrieve,
-		&loaderNodeID, true, 1, "L2-FIRE-MSWAP-NODE", "", "", false, "", "", "")
+		&loaderNodeID, true, 1, "L2-FIRE-MSWAP-NODE", "", "", protocol.Height{}, false, "", "", "")
 	if err != nil {
 		t.Fatalf("create L1 order: %v", err)
 	}
@@ -449,7 +449,7 @@ func TestHandleNormalReplenishment_RetrieveStillResets(t *testing.T) {
 	// BinID must be set so binArrivingAt returns a non-nil pointer
 	// (otherwise resolveReplenishUOP correctly returns 0 — empty slot).
 	orderID, err := db.CreateOrder("uuid-retr", orders.TypeRetrieve,
-		&nodeID, false, 1, "LSD-RETR-NODE", "", "", false, "", "", "")
+		&nodeID, false, 1, "LSD-RETR-NODE", "", "", protocol.Height{}, false, "", "", "")
 	if err != nil {
 		t.Fatalf("create order: %v", err)
 	}

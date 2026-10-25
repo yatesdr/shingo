@@ -28,7 +28,7 @@ func TestStartChangeover_DiggingOrderIsCancelledHoweverTheEdgeLearnedOfIt(t *tes
 
 			uuid := "uuid-dig-" + path
 			orderID, err := db.CreateOrder(uuid, orders.TypeRetrieve,
-				&nodeID, false, 1, "CO-NODE", "", "", false, "PART-OLD", "", "")
+				&nodeID, false, 1, "CO-NODE", "", "", protocol.Height{}, false, "PART-OLD", "", "")
 			testutil.MustNoErr(t, err, "create order")
 			testutil.MustNoErr(t, db.UpdateOrderStatus(orderID, string(orders.StatusQueued)), "queue it")
 

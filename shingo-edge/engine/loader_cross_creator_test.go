@@ -84,7 +84,7 @@ func retrieveCreatorSites(t *testing.T) []string {
 	// Package dir is the test's CWD, so these are stable regardless of where
 	// `go test` was invoked from.
 	dirs := []string{".", "../www", "../orders"}
-	needles := []string{".CreateRetrieveOrder(", ".CreateTopsAndBottomsPull("}
+	needles := []string{".CreateRetrieveOrder("}
 	var sites []string
 	for _, d := range dirs {
 		entries, err := os.ReadDir(d)
@@ -150,9 +150,10 @@ func TestCensus_RetrieveOrderCreatorSites(t *testing.T) {
 	// applyProducePlan's own site when the empty to a bare press line came to
 	// carry primes too.
 	//
-	// 7 with CreateTopsAndBottomsPull, SEND BACK's pull (SendBack): the same
-	// body's door (Pull), counted with it, a retrieve that no loader asked for,
-	// on the outside's own process node.
+	// 7 with SEND BACK's pull (SendBack): a retrieve no loader asked for, on
+	// the outside's own process node. A plain CreateRetrieveOrder stating its
+	// want since the want went on the wire; it was CreateTopsAndBottomsPull,
+	// the same body's other door, counted with it.
 	//
 	// 11 since REQUEST EMPTY BIN refuses a mode outside the configurable set:
 	// requestEmptyAtLegacyLine, the retrieve it made for one, is gone. It was

@@ -30,6 +30,11 @@ type Order struct {
 	ETA            *string            `json:"eta"`
 	AutoConfirm    bool               `json:"auto_confirm"`
 	StagedExpireAt *time.Time         `json:"staged_expire_at,omitempty"`
+	// Want is the height the empty is wanted at, as this Edge stated it on the
+	// order's request (protocol.OrderRequest.Want, Edge v30): none for every
+	// order but SEND BACK's pull, which states tops & bottoms only and is known
+	// by it (SendBackOrders). A projection never writes it.
+	Want protocol.Height `json:"want,omitzero"`
 	// BinID is Core's ID for the bin associated with this order,
 	// snapshot from OrderDelivered. Nil for multi-bin orders; older Core
 	// builds leave it nil and Edge skips bin delta emission. PLC tick

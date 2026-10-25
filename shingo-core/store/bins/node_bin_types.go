@@ -39,19 +39,6 @@ func ListTypesForNode(db *sql.DB, nodeID int64) ([]*BinType, error) {
 	return ScanBinTypes(rows)
 }
 
-// inheritedTypeIDsSQL is the bin types assigned at the nearest node of the
-// ancestors CTE (nodetree.AncestorsOf) that has any: the "inherit" mode's
-// types. One spelling for ListEffectiveTypesInherited and the outside's types
-// a tops & bottoms pull may name (effectiveTypesSQL).
-const inheritedTypeIDsSQL = `
-			SELECT nbt.bin_type_id FROM node_bin_types nbt
-			WHERE nbt.node_id = (
-				SELECT a.id FROM ancestors a
-				WHERE EXISTS (SELECT 1 FROM node_bin_types nbt2 WHERE nbt2.node_id = a.id)
-				ORDER BY a.depth ASC
-				LIMIT 1
-			)`
-
 // ListEffectiveTypesInherited returns bin types from the nearest ancestor
 // node (inclusive of the node itself) that has any direct assignments.
 // Walks the parent chain via a recursive CTE. Returns an empty slice if no
@@ -63,7 +50,15 @@ const inheritedTypeIDsSQL = `
 func ListEffectiveTypesInherited(db *sql.DB, nodeID int64) ([]*BinType, error) {
 	rows, err := db.Query(fmt.Sprintf(nodetree.AncestorsOf(1)+`
 		SELECT %s FROM bin_types
-		WHERE id IN (`+inheritedTypeIDsSQL+`)
+		WHERE id IN (
+			SELECT nbt.bin_type_id FROM node_bin_types nbt
+			WHERE nbt.node_id = (
+				SELECT a.id FROM ancestors a
+				WHERE EXISTS (SELECT 1 FROM node_bin_types nbt2 WHERE nbt2.node_id = a.id)
+				ORDER BY a.depth ASC
+				LIMIT 1
+			)
+		)
 		ORDER BY code`, BinTypeSelectCols), nodeID)
 	if err != nil {
 		return nil, err

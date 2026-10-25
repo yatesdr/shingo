@@ -1,5 +1,10 @@
 package protocol
 
+import (
+	"fmt"
+	"strconv"
+)
+
 // height.go — the height an empty cart is wanted at: the value a demand states
 // and the rule that reads it against a cart's state (CarrierState).
 
@@ -51,4 +56,40 @@ func (h Height) Admits(s CarrierState) bool {
 		return true
 	}
 	return s != CarrierTopsAndBottoms
+}
+
+// String is the want in one word, its spelling on the wire (OrderRequest.Want)
+// and in both modules' order rows: "" for none, the decimal layers for
+// Layers(n), "tops_bottoms" (the cart state it admits alone) for
+// TopsAndBottomsOnly.
+func (h Height) String() string {
+	switch h.form {
+	case heightLayers:
+		return strconv.Itoa(h.layers)
+	case heightTopsAndBottomsOnly:
+		return string(CarrierTopsAndBottoms)
+	}
+	return ""
+}
+
+// MarshalText is String, so the want rides JSON as one string.
+func (h Height) MarshalText() ([]byte, error) { return []byte(h.String()), nil }
+
+// UnmarshalText reads String's spelling back: "" is none, "tops_bottoms" is
+// TopsAndBottomsOnly, a decimal is Layers(n). Anything else is refused rather
+// than read as none: a want a reader cannot spell is not "no want".
+func (h *Height) UnmarshalText(b []byte) error {
+	switch s := string(b); s {
+	case "":
+		*h = Height{}
+	case string(CarrierTopsAndBottoms):
+		*h = TopsAndBottomsOnly
+	default:
+		n, err := strconv.Atoi(s)
+		if err != nil {
+			return fmt.Errorf("a height is \"\", %q or a number of layers, not %q", CarrierTopsAndBottoms, s)
+		}
+		*h = Layers(n)
+	}
+	return nil
 }

@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	"shingo/protocol"
 	"shingo/protocol/testutil"
 	"shingoedge/orders"
 )
@@ -35,7 +36,7 @@ func TestBinPickedUp_ZeroesTheCountWithTheBin(t *testing.T) {
 
 	const orderUUID = "uuid-pick-zero"
 	orderID, err := db.CreateOrder(orderUUID, orders.TypeRetrieve,
-		&nodeID, false, 1, "PICK-ZERO-NODE", "", "", false, "PART-PZ", "", "")
+		&nodeID, false, 1, "PICK-ZERO-NODE", "", "", protocol.Height{}, false, "PART-PZ", "", "")
 	if err != nil {
 		t.Fatalf("create order: %v", err)
 	}

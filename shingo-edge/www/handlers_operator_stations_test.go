@@ -8,6 +8,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"shingo/protocol"
 	"shingo/protocol/testutil"
 	"shingoedge/engine"
 	"shingoedge/engine/changeover"
@@ -430,7 +431,7 @@ func TestOperatorStations_SetStationClaimedNodes_NamesPositionsKeptByAnActiveOrd
 	sid := seedOperatorStation(t, pid, "OS-KEPT-1", "KeptPositionsStation")
 	busyID := seedProcessNode(t, pid, sid, "kept-node-busy")
 	seedProcessNode(t, pid, sid, "kept-node-idle")
-	if _, err := testDB.CreateOrder("kept-node-busy-order", "retrieve", &busyID, false, 1, "", "", "", false, "", "", ""); err != nil {
+	if _, err := testDB.CreateOrder("kept-node-busy-order", "retrieve", &busyID, false, 1, "", "", "", protocol.Height{}, false, "", "", ""); err != nil {
 		t.Fatalf("create order: %v", err)
 	}
 

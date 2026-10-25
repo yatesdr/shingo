@@ -166,7 +166,7 @@ func TestSimChangeover_ARefusalIsReadAsAPersonReadsIt(t *testing.T) {
 			db := testEngineDB(t)
 			processID, nodeID, _, _, _, _ := seedChangeoverScenario(t, db)
 			eng := testEngine(t, db)
-			id, err := db.CreateOrder("co-blocker", "retrieve", &nodeID, false, 1, "CO-NODE", "", "SOURCE-OLD", false, "PART-OLD", "", "")
+			id, err := db.CreateOrder("co-blocker", "retrieve", &nodeID, false, 1, "CO-NODE", "", "SOURCE-OLD", protocol.Height{}, false, "PART-OLD", "", "")
 			testutil.MustNoErr(t, err, "the blocking order")
 			testutil.MustNoErr(t, db.UpdateOrderStatus(id, string(c.status)), "its status")
 			op, clk := coOperator(eng, "CO-PROC", "Style-TO", 0)

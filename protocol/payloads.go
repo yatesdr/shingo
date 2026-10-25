@@ -174,10 +174,17 @@ type OrderRequest struct {
 	Quantity      int64     `json:"quantity"`
 	DeliveryNode  string    `json:"delivery_node,omitempty"`
 	SourceNode    string    `json:"source_node,omitempty"`
-	StagingNode   string    `json:"staging_node,omitempty"`
-	LoadType      string    `json:"load_type,omitempty"`
 	Priority      int       `json:"priority,omitempty"`
 	RetrieveEmpty bool      `json:"retrieve_empty,omitempty"`
+	// Want is the height the empty is wanted at, stated by the asker: none
+	// (the zero value, omitted) lets Core derive it where the carrier is set
+	// down, as it always has; a stated one is taken exactly — that height or
+	// wait, never a partial to finish and never the plant-wide scan. SEND
+	// BACK's pull states TopsAndBottomsOnly. Sent on an empty retrieve alone.
+	// Additive: an older Core ignores it and takes any empty (a stack to an
+	// outside that wanted tops & bottoms), so Core goes first; an older Edge
+	// never sends it.
+	Want Height `json:"want,omitzero"`
 	// RemainingUOP: nil = no sync, 0 = clear manifest, >0 = partial consumption.
 	RemainingUOP *int `json:"remaining_uop,omitempty"`
 	// SkipAutoConfirm prevents Core's reconciliation sweep from auto-confirming
@@ -204,8 +211,10 @@ type OrderRequest struct {
 	// lands there next. 0 means no bin is
 	// named, and Core takes whatever stands on the source, as it always has.
 	//
-	// Sent only on a move. The Edge sends it on the return of a keep-staged
-	// spare, whose decision read the bin. Additive and omitempty both ways: an
+	// Sent only on a move whose decision read the bin: the return of a
+	// keep-staged spare, SEND BACK's move, the produce clear's, a loader's or
+	// an unloader's outbound and the containment moves (shingo-edge orders
+	// namedBin). Additive and omitempty both ways: an
 	// older Core ignores it and lifts whatever stands there, which is what it
 	// did before; an older Edge never sends it.
 	BinID int64 `json:"bin_id,omitempty"`

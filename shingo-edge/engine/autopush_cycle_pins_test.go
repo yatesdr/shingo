@@ -53,7 +53,7 @@ func newCycleUnloader(t *testing.T, prefix string) *ugFixture {
 // deliveredFullAt seeds the U1 that brought the full now standing on core.
 func (f *ugFixture) deliveredFullAt(t *testing.T, nodeID int64, core, payload string) int64 {
 	t.Helper()
-	id, err := f.db.CreateOrder("ac-u1-"+core, orders.TypeRetrieve, &nodeID, false, 1, core, "", "FG-SUPER", false, payload, "", "")
+	id, err := f.db.CreateOrder("ac-u1-"+core, orders.TypeRetrieve, &nodeID, false, 1, core, "", "FG-SUPER", protocol.Height{}, false, payload, "", "")
 	testutil.MustNoErr(t, err, "create U1")
 	testutil.MustNoErr(t, f.db.UpdateOrderStatus(id, string(protocol.StatusDelivered)), "deliver U1")
 	f.core.set(core, true, payload)
@@ -202,7 +202,7 @@ func TestPinAutoPushGate_PushEmptyFillsASiblingNothingElseTriggered(t *testing.T
 	t.Parallel()
 	f := newSynthUGFixture(t, "ACP", true)
 	n2 := f.n2
-	cancelled, err := f.db.CreateOrder("acp-u1-n2", orders.TypeRetrieve, &n2, false, 1, f.n2Core, "", "FG-SUPER", false, "PART-UG", "", "")
+	cancelled, err := f.db.CreateOrder("acp-u1-n2", orders.TypeRetrieve, &n2, false, 1, f.n2Core, "", "FG-SUPER", protocol.Height{}, false, "PART-UG", "", "")
 	testutil.MustNoErr(t, err, "create N2's U1")
 	testutil.MustNoErr(t, f.db.UpdateOrderStatus(cancelled, string(protocol.StatusCancelled)), "cancel it")
 	f.core.set(f.nCore, true, "")

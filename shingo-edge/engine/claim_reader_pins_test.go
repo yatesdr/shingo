@@ -65,7 +65,7 @@ func newCRFixture(t *testing.T, prefix string) *crFixture {
 // carrying 30.
 func (f *crFixture) deliverU1(t *testing.T, at int64, core string) {
 	t.Helper()
-	id, err := f.db.CreateOrder("cr-u1-"+core, orders.TypeRetrieve, &at, false, 1, core, "", "FG-SUPER", false, "PART-CR", "", "")
+	id, err := f.db.CreateOrder("cr-u1-"+core, orders.TypeRetrieve, &at, false, 1, core, "", "FG-SUPER", protocol.Height{}, false, "PART-CR", "", "")
 	testutil.MustNoErr(t, err, "create U1")
 	testutil.MustNoErr(t, f.db.UpdateOrderStatus(id, string(protocol.StatusDispatched)), "dispatch")
 	bin, uop := int64(991), 30

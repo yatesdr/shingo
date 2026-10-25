@@ -3,6 +3,7 @@ package engine
 import (
 	"testing"
 
+	"shingo/protocol"
 	"shingo/protocol/testutil"
 	"shingoedge/domain"
 	"shingoedge/orders"
@@ -140,7 +141,7 @@ func TestDelivered_RecordsWhatCoreSaysTheCarrierIs(t *testing.T) {
 	const uuid = "uuid-resid"
 	const binID int64 = 707
 	orderID, err := db.CreateOrder(uuid, orders.TypeRetrieve, &nodeID, false, 1,
-		node.CoreNodeName, "", "", false, "PART-REQUESTED", "", "")
+		node.CoreNodeName, "", "", protocol.Height{}, false, "PART-REQUESTED", "", "")
 	testutil.MustNoErr(t, err, "create order")
 	testutil.MustNoErr(t, db.UpdateOrderStatus(orderID, string(orders.StatusInTransit)), "set in_transit")
 
@@ -179,7 +180,7 @@ func TestDelivered_NoPayloadFromCoreLeavesNoStaleIdentity(t *testing.T) {
 
 	const uuid = "uuid-resid-old"
 	orderID, err := db.CreateOrder(uuid, orders.TypeRetrieve, &nodeID, false, 1,
-		node.CoreNodeName, "", "", false, "PART-REQ2", "", "")
+		node.CoreNodeName, "", "", protocol.Height{}, false, "PART-REQ2", "", "")
 	testutil.MustNoErr(t, err, "create order")
 	testutil.MustNoErr(t, db.UpdateOrderStatus(orderID, string(orders.StatusInTransit)), "set in_transit")
 

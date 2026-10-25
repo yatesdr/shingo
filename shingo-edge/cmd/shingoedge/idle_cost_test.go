@@ -222,7 +222,7 @@ func twentyTwoHomeBoard(t *testing.T, db *store.DB, eng *engine.Engine) int64 {
 		t.Fatalf("SetCoreLoaders: %v", err)
 	}
 	h03 := ids["SMN_H03"]
-	oid, err := db.CreateOrder("homes22-order-a", protocol.OrderTypeMove, &h03, false, 1, "SMN_F2", "", "SMN_H03", false, "", "", "")
+	oid, err := db.CreateOrder("homes22-order-a", protocol.OrderTypeMove, &h03, false, 1, "SMN_F2", "", "SMN_H03", protocol.Height{}, false, "", "", "")
 	if err != nil {
 		t.Fatalf("create order: %v", err)
 	}

@@ -102,7 +102,7 @@ func TestKeepStagedSpot_MovingABusySpotIsRefused(t *testing.T) {
 		t.Fatalf("keep-staged claim: %v", err)
 	}
 	orderID, err := db.CreateOrder("ks-refill", protocol.OrderTypeRetrieve, nil, false, 1,
-		"SPOT-OLD", "", "MARKET", true, "PART", "", "")
+		"SPOT-OLD", "", "MARKET", protocol.Height{}, true, "PART", "", "")
 	if err != nil {
 		t.Fatalf("refill order: %v", err)
 	}

@@ -33,7 +33,7 @@ type (
 )
 
 const selectCols = `o.id, o.uuid, o.order_type, o.status, o.process_node_id, o.retrieve_empty, o.quantity,
-	o.delivery_node, o.staging_node, o.source_node,
+	o.delivery_node, o.staging_node, o.source_node, o.want,
 	o.waybill_id, o.external_ref, o.final_count,
 	o.count_confirmed, o.eta, o.auto_confirm, o.staged_expire_at, o.bin_id, o.payload_code, o.payload_desc, o.sibling_order_id, o.queue_reason, o.queue_code, o.authored_by, o.origin_id, o.origin_class,
 	o.fault_since, o.fault_deadline, o.fault_notice_after_s, o.fault_ref, o.departed_at, o.cell_left_at, o.station_wait, o.wait_kind, COALESCE(o.release_facts, ''), o.release_intent, o.release_held, o.created_at, o.updated_at,
@@ -211,16 +211,17 @@ func scanOrders(rows *sql.Rows) ([]Order, error) {
 		var faultSince, faultDeadline, faultRef sql.NullString
 		var departedAt, cellLeftAt sql.NullString
 		var binID, siblingID, stationWait sql.NullInt64
-		var createdAt, updatedAt string
+		var createdAt, updatedAt, want string
 		var laneHeld int
 		if err := rows.Scan(&o.ID, &o.UUID, &o.OrderType, &o.Status, &o.ProcessNodeID, &o.RetrieveEmpty, &o.Quantity,
-			&o.DeliveryNode, &o.StagingNode, &o.SourceNode,
+			&o.DeliveryNode, &o.StagingNode, &o.SourceNode, &want,
 			&o.WaybillID, &o.ExternalRef, &o.FinalCount,
 			&o.CountConfirmed, &o.ETA, &o.AutoConfirm, &stagedExpireAt, &binID, &o.PayloadCode, &o.PayloadDesc, &siblingID, &o.QueueReason, &o.QueueCode, &o.AuthoredBy, &o.OriginID, &o.OriginClass,
 			&faultSince, &faultDeadline, &o.FaultNoticeAfterS, &faultRef, &departedAt, &cellLeftAt, &stationWait, &o.WaitKind, &o.ReleaseFacts, &o.ReleaseIntent, &o.ReleaseHeld, &createdAt, &updatedAt,
 			&o.ProcessName, &o.ProcessNodeName, &o.StationName, &laneHeld); err != nil {
 			return nil, err
 		}
+		readWant(&o, want)
 		o.LaneHeld = laneHeld == 1
 		o.StationWait = nullInt(stationWait)
 		applyFaultClock(&o, faultSince, faultDeadline, faultRef)
@@ -244,21 +245,31 @@ func scanOrders(rows *sql.Rows) ([]Order, error) {
 	return out, rows.Err()
 }
 
+// readWant reads the want column's one spelling (protocol.Height). Only this
+// Edge writes it, from a want it built, so an unreadable one is a hand edit:
+// it reads as none and is logged, rather than failing every list the row is in.
+func readWant(o *Order, text string) {
+	if err := o.Want.UnmarshalText([]byte(text)); err != nil {
+		log.Printf("orders: order %d has unreadable want %q: %v — read as none", o.ID, text, err)
+	}
+}
+
 func scanOrder(o *Order, scanner interface{ Scan(...any) error }) error {
 	var stagedExpireAt sql.NullString
 	var faultSince, faultDeadline, faultRef sql.NullString
 	var departedAt, cellLeftAt sql.NullString
 	var binID, siblingID, stationWait sql.NullInt64
-	var createdAt, updatedAt string
+	var createdAt, updatedAt, want string
 	var laneHeld int
 	if err := scanner.Scan(&o.ID, &o.UUID, &o.OrderType, &o.Status, &o.ProcessNodeID, &o.RetrieveEmpty, &o.Quantity,
-		&o.DeliveryNode, &o.StagingNode, &o.SourceNode,
+		&o.DeliveryNode, &o.StagingNode, &o.SourceNode, &want,
 		&o.WaybillID, &o.ExternalRef, &o.FinalCount,
 		&o.CountConfirmed, &o.ETA, &o.AutoConfirm, &stagedExpireAt, &binID, &o.PayloadCode, &o.PayloadDesc, &siblingID, &o.QueueReason, &o.QueueCode, &o.AuthoredBy, &o.OriginID, &o.OriginClass,
 		&faultSince, &faultDeadline, &o.FaultNoticeAfterS, &faultRef, &departedAt, &cellLeftAt, &stationWait, &o.WaitKind, &o.ReleaseFacts, &o.ReleaseIntent, &o.ReleaseHeld, &createdAt, &updatedAt,
 		&o.ProcessName, &o.ProcessNodeName, &o.StationName, &laneHeld); err != nil {
 		return err
 	}
+	readWant(o, want)
 	o.LaneHeld = laneHeld == 1
 	o.StationWait = nullInt(stationWait)
 	applyFaultClock(o, faultSince, faultDeadline, faultRef)
@@ -332,11 +343,11 @@ func GetByUUID(db *sql.DB, uuid string) (*Order, error) {
 // shingoedge/orders. An order stamped no_demand carries a class and no id, and
 // that pair means "belongs to no demand episode by construction". A row with
 // both blank is a row written before this column list named them.
-func Create(db *sql.DB, uuid string, orderType protocol.OrderType, processNodeID *int64, retrieveEmpty bool, quantity int64, deliveryNode, stagingNode, sourceNode string, autoConfirm bool, payloadCode, originID, originClass string) (int64, error) {
+func Create(db *sql.DB, uuid string, orderType protocol.OrderType, processNodeID *int64, retrieveEmpty bool, quantity int64, deliveryNode, stagingNode, sourceNode string, want protocol.Height, autoConfirm bool, payloadCode, originID, originClass string) (int64, error) {
 	res, err := db.Exec(`
-		INSERT INTO orders (uuid, order_type, process_node_id, retrieve_empty, quantity, delivery_node, staging_node, source_node, auto_confirm, payload_code, origin_id, origin_class)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		uuid, orderType, processNodeID, retrieveEmpty, quantity, deliveryNode, stagingNode, sourceNode, autoConfirm, payloadCode, originID, originClass)
+		INSERT INTO orders (uuid, order_type, process_node_id, retrieve_empty, quantity, delivery_node, staging_node, source_node, want, auto_confirm, payload_code, origin_id, origin_class)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		uuid, orderType, processNodeID, retrieveEmpty, quantity, deliveryNode, stagingNode, sourceNode, want.String(), autoConfirm, payloadCode, originID, originClass)
 	if err != nil {
 		return 0, err
 	}

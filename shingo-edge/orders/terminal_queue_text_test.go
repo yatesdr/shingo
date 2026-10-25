@@ -17,7 +17,7 @@ func TestCancelledRowDropsItsQueueText(t *testing.T) {
 	db := testManagerDB(t)
 	mgr := NewManager(db, testEmitter{}, "edge")
 
-	oid, err := db.CreateOrder("uuid-q-cancel", TypeRetrieve, nil, false, 1, "X", "", "", false, "", "", "")
+	oid, err := db.CreateOrder("uuid-q-cancel", TypeRetrieve, nil, false, 1, "X", "", "", protocol.Height{}, false, "", "", "")
 	testutil.MustNoErr(t, err, "create order")
 	testutil.MustNoErr(t, db.UpdateOrderStatus(oid, string(StatusQueued)), "queue it")
 	testutil.MustNoErr(t, db.SetOrderQueueReason("uuid-q-cancel", "Waiting for a slot at SYN-LANE-1", "waiting_for_slot"), "set reason")
@@ -40,7 +40,7 @@ func TestNonTerminalStatusKeepsQueueText(t *testing.T) {
 	t.Parallel()
 	db := testManagerDB(t)
 
-	oid, err := db.CreateOrder("uuid-q-keep", TypeRetrieve, nil, false, 1, "X", "", "", false, "", "", "")
+	oid, err := db.CreateOrder("uuid-q-keep", TypeRetrieve, nil, false, 1, "X", "", "", protocol.Height{}, false, "", "", "")
 	testutil.MustNoErr(t, err, "create order")
 	testutil.MustNoErr(t, db.UpdateOrderStatus(oid, string(StatusQueued)), "queue it")
 	testutil.MustNoErr(t, db.SetOrderQueueReason("uuid-q-keep", "Waiting for a slot at SYN-LANE-1", "waiting_for_slot"), "set reason")
@@ -60,7 +60,7 @@ func TestTerminalProjectionCarriesNoQueueText(t *testing.T) {
 	t.Parallel()
 	db := testManagerDB(t)
 
-	oid, err := db.CreateOrder("uuid-q-proj", TypeRetrieve, nil, false, 1, "X", "", "", false, "", "", "")
+	oid, err := db.CreateOrder("uuid-q-proj", TypeRetrieve, nil, false, 1, "X", "", "", protocol.Height{}, false, "", "", "")
 	testutil.MustNoErr(t, err, "create order")
 	testutil.MustNoErr(t, db.SetOrderQueueReason("uuid-q-proj", "Waiting for a slot at SYN-LANE-1", "waiting_for_slot"), "set reason")
 

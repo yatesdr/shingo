@@ -245,6 +245,10 @@ CREATE TABLE IF NOT EXISTS orders (
     -- hold or rejection sentence the board's chip shows.
     release_intent  TEXT NOT NULL DEFAULT '',
     release_held    TEXT NOT NULL DEFAULT '',
+    -- want (Edge v30): the height an empty is wanted at, as this Edge stated
+    -- it on the order's request (protocol.Height's spelling; '' is none).
+    -- SEND BACK knows its pull by it; a projection never writes it.
+    want            TEXT NOT NULL DEFAULT '',
     created_at      TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at      TEXT NOT NULL DEFAULT (datetime('now'))
 );

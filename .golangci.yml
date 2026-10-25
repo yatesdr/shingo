@@ -160,6 +160,16 @@ linters:
         # exclusions.rules).
         - pattern: 'bins\.Unclaim'
           msg: "TOMBSTONE: forbids re-adding a deleted function (bins.Unclaim / bins.UnclaimByOrder, deleted 2026-09-26). A bare bins.Unclaim(ByOrder) clears claimed_by WITHOUT releasing the coupled reservation, orphaning a confirmed reservation and bricking the bin (uq_reservations_bin_active). Use the coupled inverse db.ReleaseClaimForBin (store/orders.go); for the whole of an order's holds, db.TerminalizeOrder."
+        # Ground rule 4's tombstone (docs/ground-rules.md, 2026-10-25): a want is
+        # a protocol.Height stated on the demand (OrderRequest.Want, orders.want),
+        # never an order type or a sourcing intent. The tops & bottoms pull's
+        # type (retrieve_tops_bottoms) and intent (tops_bottoms) were deleted
+        # outright when the want went on the wire; the type never reached a
+        # plant. This forbids re-adding either name, in any module. Pin:
+        # dispatch TestRule4_NoOrderTypeOrIntentCarriesAHeight. Expires only
+        # with rule 4 itself.
+        - pattern: '(OrderTypeRetrieveTopsAndBottoms|SourceIntentTopsAndBottoms)'
+          msg: "TOMBSTONE: forbids re-adding a deleted name (the tops & bottoms pull's order type and intent, deleted 2026-10-25). A height an empty is wanted at is a protocol.Height stated on the demand: OrderRequest.Want on the wire, orders.want on Core, read into plan.Need.Height (ground rule 4)."
         # (The slot-claim patterns nodes.ClaimSlot / db.ClaimSlot went in the
         # 2026-09-26 dead-pattern sweep with the primitives they guarded.)
         # Order-builder Stage 5: OrderType is DATA, not a control-flow key.

@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	"shingo/protocol"
 	"shingo/protocol/testutil"
 	"shingoedge/orders"
 	"shingoedge/store/processes"
@@ -99,7 +100,7 @@ func TestF1b_MultiToteDelivered_Binds(t *testing.T) {
 	// supply bin. The DeliveryNode below is that lossy last-dropoff; BinDestNode
 	// overrides it with Core's per-bin resolution.
 	orderID, err := db.CreateOrder(uuid, orders.TypeComplex, &nodeID, false, 1,
-		"SUPERMARKET-OUT", "", "", false, "PART-MBB", "", "")
+		"SUPERMARKET-OUT", "", "", protocol.Height{}, false, "PART-MBB", "", "")
 	testutil.MustNoErr(t, err, "create order")
 	testutil.MustNoErr(t, db.UpdateOrderStatus(orderID, string(orders.StatusInTransit)), "set in_transit")
 
@@ -155,7 +156,7 @@ func TestDeliveredNotBound_NoActiveClaimRaisesAlarm(t *testing.T) {
 
 	const binID int64 = 4242
 	orderID, err := db.CreateOrder("uuid-noclaim", orders.TypeRetrieve, &nodeID, false, 1,
-		"NOCLAIM-NODE", "", "", false, "PART-NC", "", "")
+		"NOCLAIM-NODE", "", "", protocol.Height{}, false, "PART-NC", "", "")
 	testutil.MustNoErr(t, err, "create order")
 
 	eng := testEngine(t, db)
@@ -206,7 +207,7 @@ func TestDeliveredNotBound_ChangeoverAutoConfirmBindsNotSilent(t *testing.T) {
 	const binID int64 = 606
 	// autoConfirm=true → the changeover auto-confirm order.
 	orderID, err := db.CreateOrder(uuid, orders.TypeRetrieve, &nodeID, false, 1,
-		node.CoreNodeName, "", "", true, "PART-COAC", "", "")
+		node.CoreNodeName, "", "", protocol.Height{}, true, "PART-COAC", "", "")
 	testutil.MustNoErr(t, err, "create order")
 	testutil.MustNoErr(t, db.UpdateOrderStatus(orderID, string(orders.StatusInTransit)), "set in_transit")
 

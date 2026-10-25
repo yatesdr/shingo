@@ -264,7 +264,12 @@ CREATE TABLE IF NOT EXISTS orders (
     -- every other order. No foreign key: a bin row deleted under a waiting
     -- move must read as "the bin has left", not turn the move into one that
     -- names nothing. Added by migration 141.
-    named_bin_id BIGINT
+    named_bin_id BIGINT,
+    -- The height an empty is wanted at, as the station stated it on its
+    -- request (protocol.OrderRequest.Want): '' none, a decimal for that many
+    -- layers, 'tops_bottoms' for tops & bottoms only. Every find of the order
+    -- reads it. Added by migration 166.
+    want TEXT NOT NULL DEFAULT ''
 );
 -- UNIQUE, and partial. Two orders sharing an edge_uuid has no story: GetByUUID
 -- breaks the tie with ORDER BY id DESC, so a duplicate silently redirects every

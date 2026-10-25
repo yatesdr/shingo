@@ -396,7 +396,7 @@ func TestBinPickedUp_KanbanOrderIsSilent(t *testing.T) {
 	var logs []string
 	eng.logFn = func(format string, args ...any) { logs = append(logs, fmt.Sprintf(format, args...)) }
 
-	id, err := db.CreateOrder("uuid-kanban", "retrieve", nil, false, 1, "SOMEWHERE", "", "", false, "WIDGET-A", "", "")
+	id, err := db.CreateOrder("uuid-kanban", "retrieve", nil, false, 1, "SOMEWHERE", "", "", protocol.Height{}, false, "WIDGET-A", "", "")
 	testutil.MustNoErr(t, err, "create kanban order")
 	o, err := db.GetOrder(id)
 	testutil.MustNoErr(t, err, "get kanban order")

@@ -501,29 +501,27 @@ const (
 // here so both sides agree on the canonical values and so the JSON wire
 // shape (raw string) stays byte-identical to the prior untyped form.
 //
-// Core plans Retrieve, RetrieveEmpty, RetrieveTopsAndBottoms and Move (the plain
-// family) and Complex. The Edge mints RetrieveTopsAndBottoms for SEND BACK's
-// pull; nothing on Core mints it.
+// Core plans Retrieve, RetrieveEmpty and Move (the plain family) and Complex.
+// An empty wanted at a height is a RetrieveEmpty stating it
+// (OrderRequest.Want), never a type of its own.
 //
 // Two constants name values nothing mints any more and no code branches on:
 // "ingest", from when a produce ingest created an order rather than writing the
 // manifest directly; and "store", which was never a kind of order at all — it
 // was the argument the bin resolver takes to mean "I am putting a bin INTO this
 // group", and it now has its own type over in binresolver.ResolveMode. They are
-// kept so old rows read as a name; deleting them is a decision of its own.
+// kept unread: no production code in the five modules mints, renders or
+// branches on either (tests use "store" as a plain row's type); deleting them
+// is a decision of its own.
 type OrderType string
 
 const (
 	OrderTypeRetrieve      OrderType = "retrieve"       // pull a loaded bin matching a payload to a destination
 	OrderTypeRetrieveEmpty OrderType = "retrieve_empty" // pull an empty bin compatible with a payload to a destination
-	// OrderTypeRetrieveTopsAndBottoms pulls tops & bottoms (a tote cart at 0
-	// with no part) of a fed press's tote carrier to the press's outside
-	// position: SEND BACK's pull. Planned as an empty, at exactly that height.
-	OrderTypeRetrieveTopsAndBottoms OrderType = "retrieve_tops_bottoms"
-	OrderTypeStore                  OrderType = "store"   // push a payload from a node to storage
-	OrderTypeMove                   OrderType = "move"    // generic move; no manifest semantics
-	OrderTypeComplex                OrderType = "complex" // multi-step order composed of sub-steps
-	OrderTypeIngest                 OrderType = "ingest"  // edge-legacy: no longer minted (manifest-only ingest write); kept for historical order rows
+	OrderTypeStore         OrderType = "store"          // push a payload from a node to storage
+	OrderTypeMove          OrderType = "move"           // generic move; no manifest semantics
+	OrderTypeComplex       OrderType = "complex"        // multi-step order composed of sub-steps
+	OrderTypeIngest        OrderType = "ingest"         // edge-legacy: no longer minted (manifest-only ingest write); kept for historical order rows
 	// OrderTypeReshuffleRestore is the RETIRED restore-blockers housekeeping type.
 	// The subsystem that minted it is deleted (blockers lie now) and no order is
 	// ever created with it again — the constant is kept ONLY so historical rows

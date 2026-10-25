@@ -1946,6 +1946,33 @@ func edgeMigrations() []migrate.Migration {
 			Name:    "clear_paired_positions_a_mode_names_none",
 			Fn:      clearPairedPositionsAModeNamesNone,
 		},
+		{
+			// orders.want: the height an empty is wanted at, as this Edge
+			// stated it on the order's request (protocol.OrderRequest.Want, in
+			// protocol.Height's spelling; blank is none). SEND BACK knows its
+			// pull by it (domain.SendBackOrders); a projection never writes it.
+			// Every existing row is blank: a pull of the retired type stays
+			// unknown to SEND BACK, as it was never sent by a plant.
+			// Column-check guarded, like v7.
+			Version: 30,
+			Name:    "orders_want",
+			Fn: func(tx *sql.Tx) error {
+				var n int
+				if err := tx.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('orders') WHERE name = 'want'`).Scan(&n); err != nil {
+					return err
+				}
+				if n > 0 {
+					return nil
+				}
+				_, err := tx.Exec(`ALTER TABLE orders ADD COLUMN want TEXT NOT NULL DEFAULT ''`)
+				return err
+			},
+			Verify: func(q migrate.Querier) bool {
+				var n int
+				err := q.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('orders') WHERE name = 'want'`).Scan(&n)
+				return err == nil && n == 1
+			},
+		},
 	}
 }
 

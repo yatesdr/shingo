@@ -40,7 +40,8 @@ func FedOutsideSQL(nodeExpr string) string {
 
 // fedOutsideCarryingSQL is FedOutsideSQL for a fed claim that carries the part
 // payloadExpr names (claimCarriesSQL): SEND BACK's pull lands tops & bottoms of
-// the press's own part on its outside (ToteCarrierFor).
+// the press's own part on its outside, and that press is the pull's asker
+// (FedPressFor).
 func fedOutsideCarryingSQL(nodeExpr, payloadExpr string) string {
 	return fedOutsideSQL(nodeExpr, "\n\t\t   AND "+claimCarriesSQL("sc", payloadExpr))
 }
@@ -63,6 +64,18 @@ func fedOutsideSQL(nodeExpr, also string) string {
 func claimCarriesSQL(alias, payloadExpr string) string {
 	return `(` + alias + `.payload_code = ` + payloadExpr + `
 	                    OR (` + alias + `.allowed_payload_codes <> '[]' AND ` + alias + `.allowed_payload_codes::jsonb ? ` + payloadExpr + `))`
+}
+
+// FedPressFor reads, in one statement, the press of the fed cell
+// (fedOutsideCarryingSQL, composed from FedClaimSQL) whose outside position is
+// outside and whose claim carries part: the asker of a pull of tops & bottoms. ""
+// when outside is no such press's outside. Its readers are Core's intake guard
+// for the pull and every find of it, the scanner's replay included (dispatch
+// pressFor): the press rides no column.
+func FedPressFor(db *sql.DB, part, outside string) (string, error) {
+	var press string
+	err := db.QueryRow(`SELECT COALESCE((`+fedOutsideCarryingSQL("$2", "$1")+`), '')`, part, outside).Scan(&press)
+	return press, err
 }
 
 // IsFedOutside reports whether node is a fed press cell's outside position

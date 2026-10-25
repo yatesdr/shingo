@@ -143,12 +143,16 @@ func (f *SourceFinder) FindSourceForNeed(need SourceNeed) SourceResult {
 // none of these fall through to tier 5. Those "no fall-through" edges are the
 // bugs the collapse fixes; keep them exact.
 //
-// A TOPS & BOTTOMS PULL STATES ITS WANT (Need.Want): the part's tote carrier at
-// tops & bottoms only, for the fed press whose outside it lands on, which is
-// the need's ProcessNode (so a strict group that supports the press serves it).
-// Asked here on every find, the scanner's replay included, since no column
-// carries the type; a pull that no longer resolves fails with the sentence
-// intake would have refused it with (toteCarrierFor).
+// THE ORDER'S WANT IS THE NEED'S HEIGHT (orders.want, as its asker stated it):
+// a stated one is exact, its carrier type derived as any empty's. A pull of
+// tops & bottoms only lands on a fed press's outside, and its asker is that
+// press, which is the need's ProcessNode (so a strict group that supports the
+// press serves it): one read, on every find, the scanner's replay included.
+// The press is not written into the row's process_node, which is blank for a
+// plain order (the wire carries none) and which other readers key on: the
+// history row's reference, the futility key and the route's stops would all
+// start naming the press. A pull whose press no longer resolves fails with the
+// sentence intake would have refused it with (pressFor).
 func (f *SourceFinder) FindSource(order *orders.Order, intent Intent) SourceResult {
 	need := SourceNeed{
 		SourceNode:   order.SourceNode,
@@ -172,10 +176,11 @@ func (f *SourceFinder) FindSource(order *orders.Order, intent Intent) SourceResu
 		// cost nothing; MG3-1b makes all four read it, so an unfilled asker
 		// would mean a compound parent excluded from its OWN dig — unable to see
 		// the carrier that dig uncovered for it.
-		Asker: digAskerFor(order),
+		Asker:  digAskerFor(order),
+		Height: order.Want,
 	}
-	if order.SourceIntent == SourceIntentTopsAndBottoms {
-		tc, refusal, err := toteCarrierFor(f.db, order.PayloadCode, order.DeliveryNode)
+	if order.Want == protocol.TopsAndBottomsOnly {
+		press, refusal, err := pressFor(f.db, order.PayloadCode, order.DeliveryNode)
 		switch {
 		case err != nil:
 			return sourceResultOf(plan.Plan{
@@ -188,31 +193,23 @@ func (f *SourceFinder) FindSource(order *orders.Order, intent Intent) SourceResu
 			return sourceResultOf(plan.Plan{Outcome: plan.OutcomeStructural, TermCode: codeStructural,
 				Err: errors.New(refusal)})
 		}
-		need.Want = plan.Want{Type: tc.Type, Height: protocol.TopsAndBottomsOnly}
-		need.ProcessNode = tc.Core
+		need.ProcessNode = press
 	}
 	return f.FindSourceForNeed(need)
 }
 
-// toteCarrierFor answers a tops & bottoms pull of part to outside in one read
-// (store ToteCarrierFor): the fed press and the tote carrier, or the sentence
-// it is refused with when the delivery is no fed press's outside carrying the
-// part, or the part names no tote carrier, or more than one. err is a read
-// that did not answer, which is no refusal. Its askers: the intake guard
+// pressFor answers a pull of tops & bottoms of part to outside in one read
+// (store FedPressFor): the fed press whose outside it is and whose claim
+// carries the part, or the sentence it is refused with when there is none.
+// err is a read that did not answer, which is no refusal. Which carrier type
+// it brings is no question here: the ordinary derivation chooses among the
+// part's own (Finder.wantedEmpty). Its askers: the intake guard
 // (decideTransport) and every find (FindSource).
-func toteCarrierFor(db FinderDB, part, outside string) (tc bins.ToteCarrier, refusal string, err error) {
-	if tc, err = db.ToteCarrierFor(part, outside); err != nil {
-		return tc, "", err
+func pressFor(db FinderDB, part, outside string) (press, refusal string, err error) {
+	if press, err = db.FedPressFor(part, outside); err != nil || press != "" {
+		return press, "", err
 	}
-	switch {
-	case tc.Core == "":
-		return tc, fmt.Sprintf("%s is not the outside position of a press fed with %s", outside, part), nil
-	case tc.Types == 0:
-		return tc, fmt.Sprintf("%s names no tote carrier", part), nil
-	case tc.Types > 1:
-		return tc, fmt.Sprintf("%s names more than one tote carrier", part), nil
-	}
-	return tc, "", nil
+	return "", fmt.Sprintf("%s is not the outside position of a press fed with %s", outside, part), nil
 }
 
 // queueCauseOf names a planner cause in dispatch's queue vocabulary. The value is

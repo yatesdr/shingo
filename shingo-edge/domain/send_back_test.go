@@ -48,8 +48,8 @@ func TestSendBackLine_TheStates(t *testing.T) {
 	bare.Bare = true
 	unverified := toteCart("UNV", 0)
 	unverified.TotesOnCart = nil
-	pull := Order{OrderType: protocol.OrderTypeRetrieveTopsAndBottoms, Status: protocol.StatusQueued,
-		DeliveryNode: "OUT", SourceNode: "SUPER", QueueReason: "Waiting for tops & bottoms in SUPER"}
+	pull := Order{OrderType: protocol.OrderTypeRetrieve, RetrieveEmpty: true, Want: protocol.TopsAndBottomsOnly,
+		Status: protocol.StatusQueued, DeliveryNode: "OUT", SourceNode: "SUPER", QueueReason: "Waiting for tops & bottoms in SUPER"}
 	move := Order{OrderType: protocol.OrderTypeMove, Status: protocol.StatusInTransit, SourceNode: "OUT"}
 	for _, k := range []struct {
 		name      string
@@ -103,23 +103,30 @@ func TestSendBackLine_TheStates(t *testing.T) {
 	}
 }
 
-// TestSendBackOrders_TheMoveAndThePullOnly: a fanned-out changeover's legs on
-// the outside's process node (complex legs, a plain retrieve to the outside, a
-// changeover Add still queued there) are never SEND BACK's; a terminal one of
-// its own is not live.
+// TestSendBackOrders_TheMoveAndThePullOnly: SEND BACK's pull is the empty
+// retrieve to the outside wanting tops & bottoms only, as this Edge wrote it
+// and as Core's echo leaves it (retrieve_empty). A fanned-out changeover's legs
+// on the outside's process node (complex legs, a plain retrieve or an empty to
+// the outside stating no want, a changeover Add still queued there) are never
+// SEND BACK's, and neither is an empty to elsewhere stating the same want; a
+// terminal one of its own is not live.
 func TestSendBackOrders_TheMoveAndThePullOnly(t *testing.T) {
 	t.Parallel()
+	tb := protocol.TopsAndBottomsOnly
 	rows := []Order{
 		{ID: 1, OrderType: protocol.OrderTypeMove, Status: protocol.StatusQueued, SourceNode: "OUT", DeliveryNode: "UNLOADER"},
-		{ID: 2, OrderType: protocol.OrderTypeRetrieveTopsAndBottoms, Status: protocol.StatusQueued, DeliveryNode: "OUT"},
+		{ID: 2, OrderType: protocol.OrderTypeRetrieve, RetrieveEmpty: true, Want: tb, Status: protocol.StatusQueued, DeliveryNode: "OUT"},
 		{ID: 3, OrderType: protocol.OrderTypeComplex, Status: protocol.StatusQueued, DeliveryNode: "OUT"},
 		{ID: 4, OrderType: protocol.OrderTypeRetrieve, Status: protocol.StatusQueued, DeliveryNode: "OUT"},
 		{ID: 5, OrderType: protocol.OrderTypeComplex, Status: protocol.StatusInTransit, SourceNode: "OUT"},
-		{ID: 6, OrderType: protocol.OrderTypeRetrieveTopsAndBottoms, Status: protocol.StatusConfirmed, DeliveryNode: "OUT"},
+		{ID: 6, OrderType: protocol.OrderTypeRetrieve, RetrieveEmpty: true, Want: tb, Status: protocol.StatusConfirmed, DeliveryNode: "OUT"},
 		{ID: 7, OrderType: protocol.OrderTypeMove, Status: protocol.StatusQueued, SourceNode: "ELSEWHERE"},
+		{ID: 8, OrderType: protocol.OrderTypeRetrieve, RetrieveEmpty: true, Status: protocol.StatusQueued, DeliveryNode: "OUT"},
+		{ID: 9, OrderType: protocol.OrderTypeRetrieve, RetrieveEmpty: true, Want: tb, Status: protocol.StatusQueued, DeliveryNode: "ELSEWHERE"},
+		{ID: 10, OrderType: protocol.OrderTypeRetrieveEmpty, RetrieveEmpty: true, Want: tb, Status: protocol.StatusDispatched, DeliveryNode: "OUT"},
 	}
 	got := SendBackOrders(rows, "OUT")
-	if len(got) != 2 || got[0].ID != 1 || got[1].ID != 2 {
-		t.Errorf("SEND BACK's orders: %+v, want orders 1 and 2", got)
+	if len(got) != 3 || got[0].ID != 1 || got[1].ID != 2 || got[2].ID != 10 {
+		t.Errorf("SEND BACK's orders: %+v, want orders 1, 2 and 10", got)
 	}
 }

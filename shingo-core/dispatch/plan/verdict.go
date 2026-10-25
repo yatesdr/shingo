@@ -189,7 +189,7 @@ func parkKind(need Need) string {
 	switch {
 	case need.Intent != IntentEmpty:
 		return ""
-	case need.Want.Height == protocol.TopsAndBottomsOnly:
+	case need.Height == protocol.TopsAndBottomsOnly:
 		return KindTopsAndBottoms
 	}
 	return KindEmpty

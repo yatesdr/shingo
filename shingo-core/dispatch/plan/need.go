@@ -37,8 +37,9 @@ type Intent int
 const (
 	// IntentFull needs a bin holding the order's payload (retrieve, move).
 	IntentFull Intent = iota
-	// IntentEmpty needs an empty compatible carrier (retrieve_empty), or one at a
-	// stated want (Need.Want: retrieve_tops_bottoms).
+	// IntentEmpty needs an empty compatible carrier (retrieve_empty), at the
+	// height the need states (Need.Height) or the one derived where it is set
+	// down.
 	IntentEmpty
 )
 
@@ -135,22 +136,19 @@ type Need struct {
 	// waits, as before). nil for every need but the supply of a swap whose
 	// returning carrier has nowhere else to land (Dispatcher.returnLiftFrom).
 	LiftFrom []int64
-	// Want is an empty stated, not derived: its type and height. The zero
-	// value states nothing and the type and height derive as they always have
-	// (Finder.wantedEmpty). Stated, the need is EXACT: it takes that type at
-	// that height or waits, never a partial to finish (tier 2b) and never the
-	// plant-wide scan (tier 5). A tops & bottoms pull states one (FindSource).
-	Want Want
-}
-
-// Want is a stated empty: a carrier type and the height it is wanted at.
-type Want struct {
-	Type   string
+	// Height is the height the empty is wanted at, stated by its asker (the
+	// order's want, FindSource): the zero value states none, and the height
+	// derives where the carrier is set down, as it always has. Stated, the need
+	// is EXACT: it takes that height or waits, never a partial to finish (tier
+	// 2b) and never the plant-wide scan (tier 5). Its carrier type derives as
+	// any empty's does (Finder.wantedEmpty). A pull of tops & bottoms states
+	// TopsAndBottomsOnly.
 	Height domain.Height
 }
 
-// Exact reports whether the need states its empty (Need.Want).
-func (n Need) Exact() bool { return n.Want.Type != "" }
+// Exact reports whether the need states the height its empty is wanted at
+// (Need.Height).
+func (n Need) Exact() bool { return n.Height != (domain.Height{}) }
 
 // Outcome is the closed disposition set FindSource returns.
 type Outcome int
@@ -278,10 +276,10 @@ type FinderDB interface {
 	LoadBinTypeRule(payloadCode string) (domain.BinTypeRule, error)
 	MaintainedGroupsSupporting(processNode string) ([]int64, error)
 	NodeIsUnderAny(nodeID int64, roots []int64) (bool, error)
-	// ToteCarrierFor is a tops & bottoms pull's one read: the fed press whose
-	// outside the delivery is, and the part's tote carrier (dispatch
-	// toteCarrierFor).
-	ToteCarrierFor(part, outside string) (bins.ToteCarrier, error)
+	// FedPressFor is a tops & bottoms pull's one read: the fed press whose
+	// outside the delivery is and whose claim carries the part, "" for none
+	// (dispatch pressFor).
+	FedPressFor(part, outside string) (string, error)
 
 	IsSlotAccessible(slotNodeID int64) (bool, error)
 	GetLoaderHomeByPositionNode(positionNodeID int64) (*loaders.Home, error)

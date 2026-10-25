@@ -100,7 +100,8 @@ func TestSendBack_TheMoveAndThePullOnTheOutside(t *testing.T) {
 		m.ProcessNodeID == nil || *m.ProcessNodeID != c.outside || !m.AutoConfirm {
 		t.Errorf("the move: %+v", m)
 	}
-	if p.OrderType != protocol.OrderTypeRetrieveTopsAndBottoms || p.DeliveryNode != sbOut || p.SourceNode != sbSuper ||
+	if p.OrderType != protocol.OrderTypeRetrieve || !p.RetrieveEmpty || p.Want != protocol.TopsAndBottomsOnly ||
+		p.DeliveryNode != sbOut || p.SourceNode != sbSuper ||
 		p.PayloadCode != sbPart || p.ProcessNodeID == nil || *p.ProcessNodeID != c.outside || !p.AutoConfirm || p.Quantity != 1 {
 		t.Errorf("the pull: %+v", p)
 	}
@@ -133,6 +134,46 @@ func TestSendBack_TheMoveAndThePullOnTheOutside(t *testing.T) {
 	testutil.MustNoErr(t, err, "runtime")
 	if rt.ActiveOrderID != nil || rt.StagedOrderID != nil {
 		t.Errorf("the press's runtime slots were written: %+v", rt)
+	}
+}
+
+// TestSendBack_ThePullIsAPlainEmptyStatingItsWant: SEND BACK's pull goes on
+// the wire as a plain empty retrieve stating tops & bottoms, the owner's want
+// for the outside, and its row keeps the want: no order type of its own, no
+// staging node or load type on the wire.
+func TestSendBack_ThePullIsAPlainEmptyStatingItsWant(t *testing.T) {
+	t.Parallel()
+	c := seedSendBackPress(t, testEngineDB(t))
+	res, err := c.eng.SendBack(c.press)
+	testutil.MustNoErr(t, err, "SEND BACK")
+	msgs, err := c.db.ListPendingOutbox(100)
+	testutil.MustNoErr(t, err, "outbox")
+	var wire map[string]any
+	for _, msg := range msgs {
+		var env protocol.Envelope
+		testutil.MustNoErr(t, json.Unmarshal(msg.Payload, &env), "envelope")
+		var p map[string]any
+		if msg.MsgType == protocol.TypeOrderRequest && json.Unmarshal(env.Payload, &p) == nil &&
+			p["order_uuid"] == res.Pull.UUID {
+			wire = p
+		}
+	}
+	if wire == nil {
+		t.Fatal("the pull's order.request is not in the outbox")
+	}
+	if wire["order_type"] != "retrieve" || wire["retrieve_empty"] != true || wire["want"] != "tops_bottoms" {
+		t.Errorf("the pull on the wire: type %v, retrieve_empty %v, want %v; want a retrieve, true, tops_bottoms",
+			wire["order_type"], wire["retrieve_empty"], wire["want"])
+	}
+	for _, key := range []string{"staging_node", "load_type"} {
+		if _, ok := wire[key]; ok {
+			t.Errorf("the pull on the wire carries %s", key)
+		}
+	}
+	var want string
+	testutil.MustNoErr(t, c.db.QueryRow(`SELECT want FROM orders WHERE id = ?`, res.Pull.ID).Scan(&want), "the row's want")
+	if want != "tops_bottoms" {
+		t.Errorf("the pull's row wants %q, want tops_bottoms", want)
 	}
 }
 

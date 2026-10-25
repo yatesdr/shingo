@@ -42,7 +42,7 @@ func TestRegression_CaptureDeltaUsesActualBinPayload(t *testing.T) {
 	// row's payload_code captures the bin's true payload at create-time;
 	// the active claim has since rolled to PART-NEW.
 	orderID, err := db.CreateOrder("uuid-payload-drift", orders.TypeComplex,
-		&nodeID, false, 1, "REL-PAYLOAD-DRIFT-NODE", "", "", false,
+		&nodeID, false, 1, "REL-PAYLOAD-DRIFT-NODE", "", "", protocol.Height{}, false,
 		"PART-OLD", "", "")
 	if err != nil {
 		t.Fatalf("create order: %v", err)

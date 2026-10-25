@@ -201,7 +201,7 @@ func storeComingVector(t *testing.T, db *store.DB, i int, c comingvectors.Case) 
 		return row
 	}
 	id, err := db.CreateOrder(uuid, typ, nil, typ == protocol.OrderTypeRetrieveEmpty, 1, c.DeliveryNode,
-		"", "", false, "", "", "")
+		"", "", protocol.Height{}, false, "", "", "")
 	testutil.MustNoErr(t, err, c.Name)
 	switch {
 	case typ == protocol.OrderTypeComplex:

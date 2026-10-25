@@ -19,9 +19,9 @@ func seedSwapPairAt(t *testing.T, mode protocol.SwapMode, evacStatus, supplyStat
 	testutil.MustNoErr(t, err, "ensure runtime")
 	eng := testEngine(t, db)
 
-	evacID, err := db.CreateOrder("uuid-evac", orders.TypeComplex, &nodeID, false, 1, "", "", "", false, "WIDGET-A", "", "")
+	evacID, err := db.CreateOrder("uuid-evac", orders.TypeComplex, &nodeID, false, 1, "", "", "", protocol.Height{}, false, "WIDGET-A", "", "")
 	testutil.MustNoErr(t, err, "create evac")
-	supplyID, err := db.CreateOrder("uuid-supply", orders.TypeComplex, &nodeID, false, 1, "", "", "", false, "WIDGET-A", "", "")
+	supplyID, err := db.CreateOrder("uuid-supply", orders.TypeComplex, &nodeID, false, 1, "", "", "", protocol.Height{}, false, "WIDGET-A", "", "")
 	testutil.MustNoErr(t, err, "create supply")
 	// The evac's steps say what it is: it waits at the press, then lifts the
 	// press's bin — the leg a RELEASE finalizes the produce bin for.

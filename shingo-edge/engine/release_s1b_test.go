@@ -148,7 +148,7 @@ func TestReleaseS1bProduceSplit(t *testing.T) {
 			build: func(h *relHarness) {
 				h.sequentialPair(protocol.ClaimRoleProduce, false)
 				_, err := h.db.CreateOrder("s1b-b-carrier", protocol.OrderTypeRetrieveEmpty, &h.partnerID, true, 1,
-					fxPressB, "", "", false, fxPart, "", "")
+					fxPressB, "", "", protocol.Height{}, false, fxPart, "", "")
 				testutil.MustNoErr(h.t, err, "B's carrier coming")
 			},
 			act: seq(requestProduce("removal"), ticks(5), stages("removal"), orderClick("removal", dispEmpty),

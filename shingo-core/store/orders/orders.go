@@ -44,7 +44,7 @@ type History = domain.OrderHistory
 // SelectCols is exported so cross-aggregate readers at the outer store/
 // level (e.g. ListOrdersByBin, which joins orders from the bin side) can
 // reuse the column list.
-const SelectCols = `id, edge_uuid, station_id, order_type, status, quantity, source_node, delivery_node, process_node, vendor_order_id, vendor_state, robot_id, priority, payload_desc, error_detail, created_at, updated_at, completed_at, parent_order_id, sequence, steps_json, bin_id, payload_code, wait_index, queue_reason, queue_code, queue_cause, skip_auto_confirm, sibling_order_uuid, key_route, key_task, source_intent, coordinated, remaining_uop, origin_id, origin_class, open_for_children, recovers_order_id, named_bin_id, station_unaware, projects_to, plan`
+const SelectCols = `id, edge_uuid, station_id, order_type, status, quantity, source_node, delivery_node, process_node, vendor_order_id, vendor_state, robot_id, priority, payload_desc, error_detail, created_at, updated_at, completed_at, parent_order_id, sequence, steps_json, bin_id, payload_code, wait_index, queue_reason, queue_code, queue_cause, skip_auto_confirm, sibling_order_uuid, key_route, key_task, source_intent, coordinated, remaining_uop, origin_id, origin_class, open_for_children, recovers_order_id, named_bin_id, station_unaware, projects_to, plan, want`
 
 // Admin-facing list queries (List, ListFiltered, ListActive, ListActiveBoard,
 // CountActive) return EVERY order type. They used to exclude reshuffle_restore —
@@ -69,6 +69,8 @@ func ScanOrder(row interface{ Scan(...any) error }) (*Order, error) {
 	var keyRouteJSON string
 	// plan is the birth pick as JSON in one TEXT column (v147); '' is none.
 	var planJSON string
+	// want is the stated height in its one spelling (protocol.Height, v166).
+	var want string
 	err := row.Scan(&o.ID, &o.EdgeUUID, &o.StationID, &o.OrderType, &o.Status,
 		&o.Quantity,
 		&o.SourceNode, &o.DeliveryNode, &o.ProcessNode, &o.VendorOrderID, &o.VendorState, &o.RobotID,
@@ -76,9 +78,14 @@ func ScanOrder(row interface{ Scan(...any) error }) (*Order, error) {
 		&parentOrderID, &o.Sequence, &o.StepsJSON, &binID, &o.PayloadCode, &o.WaitIndex, &o.QueueReason, &queueCode, &queueCause,
 		&o.SkipAutoConfirm, &o.SiblingOrderUUID, &keyRouteJSON, &o.KeyTask,
 		&o.SourceIntent, &o.Coordinated, &remainingUOP,
-		&originID, &o.OriginClass, &o.OpenForChildren, &recoversOrderID, &namedBinID, &o.StationUnaware, &o.ProjectsTo, &planJSON)
+		&originID, &o.OriginClass, &o.OpenForChildren, &recoversOrderID, &namedBinID, &o.StationUnaware, &o.ProjectsTo, &planJSON, &want)
 	if err != nil {
 		return nil, err
+	}
+	if err := o.Want.UnmarshalText([]byte(want)); err != nil {
+		// Only Core writes the column, from a want the wire decoded, so this is
+		// a hand edit; it reads as none, as an unreadable plan does.
+		log.Printf("orders: order %d has unreadable want %q: %v — read as none", o.ID, want, err)
 	}
 	if planJSON != "" {
 		// Unreadable reads as no plan: acquiring then picks, as it did before v147.
@@ -191,7 +198,7 @@ func ScanOrders(rows *sql.Rows) ([]*Order, error) {
 // invariant is only a hope.
 func Create(db helpers.QueryRower, o *Order) error {
 	now := clock.Now().UTC()
-	id, err := helpers.InsertID(db, `INSERT INTO orders (edge_uuid, station_id, order_type, status, quantity, source_node, delivery_node, process_node, priority, payload_desc, parent_order_id, sequence, steps_json, bin_id, payload_code, skip_auto_confirm, sibling_order_uuid, key_route, key_task, source_intent, coordinated, origin_id, origin_class, recovers_order_id, named_bin_id, station_unaware, projects_to, plan, robot_id, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $27, $28, $29, $30, $26, $26) RETURNING id`,
+	id, err := helpers.InsertID(db, `INSERT INTO orders (edge_uuid, station_id, order_type, status, quantity, source_node, delivery_node, process_node, priority, payload_desc, parent_order_id, sequence, steps_json, bin_id, payload_code, skip_auto_confirm, sibling_order_uuid, key_route, key_task, source_intent, coordinated, origin_id, origin_class, recovers_order_id, named_bin_id, station_unaware, projects_to, plan, robot_id, want, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $27, $28, $29, $30, $31, $26, $26) RETURNING id`,
 		o.EdgeUUID, o.StationID, o.OrderType, o.Status,
 		o.Quantity,
 		o.SourceNode, o.DeliveryNode, o.ProcessNode, o.Priority, o.PayloadDesc,
@@ -201,7 +208,7 @@ func Create(db helpers.QueryRower, o *Order) error {
 		helpers.NullableText(o.OriginID), o.OriginClass,
 		helpers.NullableInt64(o.RecoversOrderID),
 		helpers.NullableInt64(o.NamedBinID),
-		now, o.StationUnaware, o.ProjectsTo, marshalPlan(o.Plan), o.RobotID)
+		now, o.StationUnaware, o.ProjectsTo, marshalPlan(o.Plan), o.RobotID, o.Want.String())
 	if err != nil {
 		return fmt.Errorf("create order: %w", err)
 	}

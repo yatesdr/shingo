@@ -94,7 +94,8 @@ type SendBack struct {
 // SendBackLine decides the line. Precedence: waiting, then disabled, then
 // enabled; absent when the press is not SEND BACK's.
 //
-//   - Absent: a claim that is not produce (THE ONE ROLE READ), not of the fed
+//   - Absent: a claim that is not produce (Produce; the gatherers also read
+//     the role to skip a claim before gathering), not of the fed
 //     shape, or whose outside has no process node row; then, unless waiting,
 //     an outside holding no cart, or a cart that is not a tote type, is bare,
 //     or is tops & bottoms already; a core cart standing that is not a tote
@@ -117,7 +118,7 @@ func SendBackLine(f SendBackFacts) SendBack {
 			if protocol.ChangeoverStartActionFor(o.Status) == protocol.ChangeoverStartCancel {
 				line.CanCancel = true
 			}
-			if o.OrderType == protocol.OrderTypeRetrieveTopsAndBottoms {
+			if o.Want == protocol.TopsAndBottomsOnly {
 				line.QueueReason = o.QueueReason
 			}
 		}
@@ -142,11 +143,13 @@ func SendBackLine(f SendBackFacts) SendBack {
 }
 
 // SendBackOrders is SEND BACK's live orders among rows, the orders of the
-// outside's own process node the caller read: the move whose source is the
-// outside (the cart sent back, by name) and the tops & bottoms pull whose
-// delivery is the outside, nothing else. A changeover's per-position legs
-// share that process node and are complex orders and plain retrieves, so
-// neither shape is one of them.
+// outside's own process node the caller read, each known by one shape: the
+// move whose source is the outside (the cart sent back, by name), and the
+// empty retrieve whose delivery is the outside and whose want is tops &
+// bottoms only (the pull), nothing else. A changeover's per-position legs
+// share that process node and are complex orders and plain retrieves stating
+// no want, so neither shape is one of them. The Edge row names no bin (D12.7),
+// so the want is what tells the pull.
 func SendBackOrders(rows []Order, outside string) []Order {
 	var out []Order
 	for _, o := range rows {
@@ -154,7 +157,7 @@ func SendBackOrders(rows []Order, outside string) []Order {
 			continue
 		}
 		if (o.OrderType == protocol.OrderTypeMove && o.SourceNode == outside) ||
-			(o.OrderType == protocol.OrderTypeRetrieveTopsAndBottoms && o.DeliveryNode == outside) {
+			(o.RetrieveEmpty && o.DeliveryNode == outside && o.Want == protocol.TopsAndBottomsOnly) {
 			out = append(out, o)
 		}
 	}

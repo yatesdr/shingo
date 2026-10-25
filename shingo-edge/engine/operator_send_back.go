@@ -144,7 +144,12 @@ func (e *Engine) SendBack(nodeID int64) (*SendBackResult, error) {
 	if err != nil {
 		return nil, fmt.Errorf("send back %s: %w", f.Paired, err)
 	}
-	pull, err := e.orderMgr.CreateTopsAndBottomsPull(&c.outside.ID, f.Paired, claim.InboundSource, claim.PayloadCode, origin)
+	// The pull: an empty of the press's part from its inbound source, wanted
+	// at exactly tops & bottoms (the owner's ruling, 2026-10-24), auto-confirmed
+	// (the outside has no tile and no operator receives it).
+	pull, err := e.orderMgr.CreateRetrieveOrder(ordermgr.RetrieveSpec{Process: &c.outside.ID, Delivery: f.Paired,
+		Source: claim.InboundSource, Payload: claim.PayloadCode, Quantity: 1, Empty: true,
+		Want: protocol.TopsAndBottomsOnly, AutoConfirm: true, Origin: origin})
 	if err != nil {
 		return &SendBackResult{Move: move}, fmt.Errorf("tops & bottoms to %s: %w", f.Paired, err)
 	}

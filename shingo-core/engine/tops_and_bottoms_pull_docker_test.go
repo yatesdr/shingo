@@ -17,9 +17,9 @@ import (
 )
 
 // tops_and_bottoms_pull_docker_test.go — SEND BACK at Core, end to end on the
-// engine: the pull (retrieve_tops_bottoms) admitted, parked and replayed by the
-// fulfillment scanner, and the count its move writes on the outside cart it
-// lifts.
+// engine: the pull (an empty retrieve stating tops & bottoms) admitted, parked
+// and replayed by the fulfillment scanner, and the count its move writes on the
+// outside cart it lifts.
 
 // tbpPlant is a fed tote press (TBP-PRESS, its outside TBP-OUT) drawing from a
 // group, the part's tote carrier (5 layers of 8, 8 parts a tote), and the
@@ -82,8 +82,8 @@ func (p *tbpPlant) cart(t *testing.T, label string, totes int, payload string, u
 // pull is SEND BACK's pull, as the Edge sends it.
 func (p *tbpPlant) pull(uuid string) {
 	p.eng.Dispatcher().HandleOrderRequest(testEnvelope(), &protocol.OrderRequest{OrderUUID: uuid,
-		OrderType: protocol.OrderTypeRetrieveTopsAndBottoms, PayloadCode: p.part, SourceNode: p.src,
-		DeliveryNode: p.outside, Quantity: 1})
+		OrderType: protocol.OrderTypeRetrieve, RetrieveEmpty: true, Want: protocol.TopsAndBottomsOnly,
+		PayloadCode: p.part, SourceNode: p.src, DeliveryNode: p.outside, Quantity: 1})
 }
 
 // TestTopsAndBottomsPull_ADryPullReplayedWaitsForTopsAndBottoms: the pull is
@@ -130,8 +130,8 @@ func TestTopsAndBottomsPull_ADryPullReplayedWaitsForTopsAndBottoms(t *testing.T)
 }
 
 // TestTopsAndBottomsPull_AReplayThatNoLongerResolvesFails: the press stops
-// carrying the part while its pull waits. The scanner's replay asks the tote
-// carrier again (no column carries it) and fails the order with the sentence
+// carrying the part while its pull waits. The scanner's replay asks for the
+// press again (no column carries it) and fails the order with the sentence
 // intake would have refused it with.
 func TestTopsAndBottomsPull_AReplayThatNoLongerResolvesFails(t *testing.T) {
 	t.Parallel()

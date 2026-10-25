@@ -3,8 +3,8 @@ package store
 import "shingocore/store/bins"
 
 // fed_claim.go — where a node stands in a claim's cell, on *store.DB: a line
-// position, a fed press's outside, the carrier its pull lands there, and where
-// its claim draws from. The statements are bins' (fed_claim.go, tote_carrier.go,
+// position, a fed press's outside, the press a pull to that outside is for,
+// and where its claim draws from. The statements are bins' (fed_claim.go,
 // bins.go's IsLinePosition); these are their store doors, in one file.
 
 // IsLinePosition reports whether a node is a claim's line position — its line,
@@ -21,10 +21,10 @@ func (db *DB) IsFedOutside(nodeName string) (bool, error) {
 	return bins.IsFedOutside(db.DB, nodeName)
 }
 
-// ToteCarrierFor is the press whose outside outside is and the tote carrier of
-// part, one read (bins.ToteCarrierFor): a tops & bottoms pull's.
-func (db *DB) ToteCarrierFor(part, outside string) (bins.ToteCarrier, error) {
-	return bins.ToteCarrierFor(db.DB, part, outside)
+// FedPressFor is the press whose outside outside is and whose claim carries
+// part, one read (bins.FedPressFor): a tops & bottoms pull's asker.
+func (db *DB) FedPressFor(part, outside string) (string, error) {
+	return bins.FedPressFor(db.DB, part, outside)
 }
 
 // FedInboundSource is where the active fed claim at a station's core node draws

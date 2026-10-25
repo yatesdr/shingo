@@ -62,8 +62,6 @@ func intakeEdgeU1(t *testing.T, uuid string, acceptPartials bool) (*orders.Order
 		Quantity:        1,
 		DeliveryNode:    window.Name,
 		SourceNode:      "", // blank inbound source: Core's plant-wide FIFO
-		StagingNode:     "",
-		LoadType:        "standard",
 		SkipAutoConfirm: true,
 		OriginID:        "",
 		OriginClass:     protocol.OriginClassNoDemand,

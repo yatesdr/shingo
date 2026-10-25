@@ -298,13 +298,14 @@ func (s *PlanningService) setQueueReason(order *orders.Order, code protocol.Queu
 }
 
 // planTransport is the single planner for the plain family (plainFamily) —
-// retrieve, retrieve_empty, retrieve_tops_bottoms and move — folded into one. It
-// parameterizes on order.SourceIntent (the label→data field stamped once at
-// intake by SourceIntentForType): an intent that SourcesEmpty sources an empty
-// carrier (IntentEmpty, Empty pickup step; tops & bottoms states its want in
-// FindSource); SourceIntentLocal is a node-local move (an explicit branch
-// carrying move's own source_node/same-node validations and synthetic-NGRP-dest
-// resolution); SourceIntentFull is a payload-matched retrieve.
+// retrieve, retrieve_empty and move — folded into one. It parameterizes on
+// order.SourceIntent (the label→data field stamped once at intake by
+// SourceIntentForType): an intent that SourcesEmpty sources an empty carrier
+// (IntentEmpty, Empty pickup step; a height its asker stated rides the order's
+// want into FindSource); SourceIntentLocal is a node-local move (an explicit
+// branch carrying move's own source_node/same-node validations and
+// synthetic-NGRP-dest resolution); SourceIntentFull is a payload-matched
+// retrieve.
 //
 // The claim-move to the scanner: intake does NOT claim the bin — the fulfillment
 // scanner is the SINGLE claim point. planTransport validates, resolves the
@@ -375,19 +376,17 @@ func (s *PlanningService) decideTransport(order *orders.Order, payloadCode strin
 	isMove := order.SourceIntent == SourceIntentLocal
 	var moveSrc *nodes.Node
 
-	// A TOPS & BOTTOMS PULL IS REFUSED AT INTAKE when it cannot resolve
-	// (toteCarrierFor: no fed press's outside carrying the part, no tote
-	// carrier, more than one) or names no inbound source: it would wait for
-	// ever, or widen. A read that did not answer is no refusal; the find asks
-	// again and waits.
-	if order.SourceIntent == SourceIntentTopsAndBottoms {
-		tc, refusal, err := toteCarrierFor(s.db, order.PayloadCode, order.DeliveryNode)
+	// A PULL OF TOPS & BOTTOMS ONLY IS REFUSED AT INTAKE when its delivery is
+	// no fed press's outside carrying the part (pressFor) or it names no
+	// inbound source: it would wait for ever, since a stated want never widens.
+	// A read that did not answer is no refusal; the find asks again and waits.
+	if order.Want == protocol.TopsAndBottomsOnly {
+		press, refusal, err := pressFor(s.db, order.PayloadCode, order.DeliveryNode)
 		switch {
 		case err == nil && refusal != "":
 			d.refused = &planningError{Code: codeStructural, Detail: refusal}
 			return d
 		case order.SourceNode == "":
-			press := tc.Core
 			if press == "" {
 				press = order.DeliveryNode
 			}

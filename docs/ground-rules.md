@@ -28,8 +28,10 @@ they are gone, so it is replaced by the plain assertion in the commit that fixes
 
 4. **A want is a `Height` value on the demand,** stated at intake and stored. No order type, intent or step flag
    carries a height or a carrier state. A step says what it lifts.
-   Test: `TestRule4_NoOrderTypeOrIntentCarriesAHeight` (predicted red until the want is on the wire; then a forbidigo
-   tombstone on the two deleted names, and the plain family's three members asserted).
+   The want rides the wire as `protocol.OrderRequest.Want` and Core's row as `orders.want`; a find reads it into
+   `plan.Need.Height`.
+   Test: `TestRule4_NoOrderTypeOrIntentCarriesAHeight` (the two deleted names absent from every module, the plain
+   family three types), and forbidigo's tombstone on the two names (`.golangci.yml`).
 
 5. **A pickup takes a carrier that answers what its step names:** a lift, whatever stands at its node; an empty, a
    part-less carrier the set-down height admits (and, where the step names the part it is for, one that part may

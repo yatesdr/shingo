@@ -120,7 +120,7 @@ func goldenScenario(t *testing.T) (db *store.DB, stationID int64) {
 	// to release_held, which the chip reads (release_render.go). The history
 	// rows stay, as a rollback writes them; the chip no longer reads them.
 	orderID, err := db.CreateOrder("gold-order-1", protocol.OrderTypeRetrieve, &pressNodeID,
-		false, 1, "PLN_G1", "", "SMN_01", false, "PAY-1", "", "")
+		false, 1, "PLN_G1", "", "SMN_01", protocol.Height{}, false, "PAY-1", "", "")
 	if err != nil {
 		t.Fatalf("create order: %v", err)
 	}

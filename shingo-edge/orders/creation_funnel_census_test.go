@@ -149,19 +149,20 @@ func TestCensus_EdgeWireShapes(t *testing.T) {
 		return ""
 	})
 	sitesEqual(t, "the Edge's wire shapes", got, map[string]string{
-		"orders/manager_create.go:createRetrieveOrder": "OrderRequest",
+		"orders/manager_create.go:CreateRetrieveOrder": "OrderRequest",
 		"orders/manager_create.go:createMoveOrder":     "OrderRequest",
 		"orders/manager_create.go:createComplexOrder":  "ComplexOrderRequest",
 	})
 }
 
-// constructors are the three Manager methods that build a wire shape. Every
-// exported Create*Order on Manager is a wrapper that ends in one of them.
-var constructors = []string{"createRetrieveOrder", "createMoveOrder", "createComplexOrder"}
+// constructors are the three Manager methods that build a wire shape: the
+// retrieve's one body (CreateRetrieveOrder, which takes a spec) and the move's
+// and the complex order's. Every other exported Create*Order on Manager is a
+// wrapper that ends in one of them.
+var constructors = []string{"CreateRetrieveOrder", "createMoveOrder", "createComplexOrder"}
 
 func isCreateOrderName(n string) bool {
-	return (strings.HasPrefix(n, "Create") || strings.HasPrefix(n, "create")) &&
-		(strings.Contains(n, "Order") || strings.HasSuffix(n, "Pull"))
+	return (strings.HasPrefix(n, "Create") || strings.HasPrefix(n, "create")) && strings.Contains(n, "Order")
 }
 
 // TestCensus_EdgeConstructorFunnel pins every Create*Order method on Manager
@@ -213,8 +214,7 @@ func TestCensus_EdgeConstructorFunnel(t *testing.T) {
 		got[c] = []string{c}
 	}
 	sitesEqual(t, "the Edge's constructor funnel", got, map[string]string{
-		"CreateRetrieveOrder":                  "createRetrieveOrder",
-		"CreateTopsAndBottomsPull":             "createRetrieveOrder",
+		"CreateRetrieveOrder":                  "CreateRetrieveOrder",
 		"CreateMoveOrder":                      "createMoveOrder",
 		"CreateMoveOrderWithPayloadCode":       "createMoveOrder",
 		"CreateMoveOrderWithUOP":               "createMoveOrder",
@@ -228,7 +228,6 @@ func TestCensus_EdgeConstructorFunnel(t *testing.T) {
 		"CreateComplexOrderWithPayload":        "createComplexOrder",
 		"CreateComplexOrderSibling":            "createComplexOrder",
 		"CreateComplexOrderPaired":             "createComplexOrder",
-		"createRetrieveOrder":                  "createRetrieveOrder",
 		"createMoveOrder":                      "createMoveOrder",
 		"createComplexOrder":                   "createComplexOrder",
 	})
@@ -300,7 +299,7 @@ var edgeCreationSites = map[string]string{
 	"engine/changeover_cancel_park.go:finishParkedTrips": "CreateMoveOrderCarrying",
 	// SEND BACK on a tote press (press tranche 2, W12): the cart by name to
 	// the outbound, and tops & bottoms in its place
-	"engine/operator_send_back.go:SendBack": "CreateMoveOrderForBin,CreateTopsAndBottomsPull",
+	"engine/operator_send_back.go:SendBack": "CreateMoveOrderForBin,CreateRetrieveOrder",
 	// quality containment (main, 2026-09-25)
 	"engine/operator_quality_hold.go:RecallContainedPayload": "CreateHoldMoveOrder",
 	"engine/operator_quality_hold.go:ReleaseFromContainment": "CreateMoveOrderWithPayloadCode",

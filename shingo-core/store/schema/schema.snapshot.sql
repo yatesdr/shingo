@@ -914,7 +914,8 @@ CREATE TABLE public.orders (
     orphan_aged_at timestamp with time zone,
     destination_resolved_at timestamp with time zone,
     recovers_order_id bigint,
-    named_bin_id bigint
+    named_bin_id bigint,
+    want text DEFAULT ''::text NOT NULL
 );
 
 CREATE SEQUENCE public.orders_id_seq

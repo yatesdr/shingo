@@ -148,6 +148,9 @@ func (s *LifecycleService) CreateInboundOrder(stationID string, p *protocol.Orde
 		SourceIntent: SourceIntentForType(orderType),
 		OriginID:     originID,
 		OriginClass:  originClass,
+		// The height the empty is wanted at, as the station stated it: read by
+		// the decision below and stored, so every find of the order reads it.
+		Want: p.Want,
 	}
 	// A MOVE MAY NAME THE ONE BIN IT IS FOR, and is then issued for it: the
 	// bin, read once here, is the cart the issue holds softly (Need.Cart), so a
@@ -209,6 +212,7 @@ func (s *LifecycleService) CreateInboundOrder(stationID string, p *protocol.Orde
 			SkipAutoConfirm: order.SkipAutoConfirm,
 			QualityHoldBy:   holdBy,
 			By:              Person(stationID),
+			Want:            order.Want,
 		}
 		if cart != nil {
 			need.Cart = cart.ID

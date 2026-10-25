@@ -566,7 +566,7 @@ func TestLanding_RePushesOnlyItsOwnLoader(t *testing.T) {
 // processNodeID, with the given stored type spelling.
 func scDeliveredRetrieve(t *testing.T, db *store.DB, uuid string, typ protocol.OrderType, processNodeID int64, retrieveEmpty bool, deliveryNode string) int64 {
 	t.Helper()
-	id, err := db.CreateOrder(uuid, typ, &processNodeID, retrieveEmpty, 1, deliveryNode, "", "", false, "", "", "")
+	id, err := db.CreateOrder(uuid, typ, &processNodeID, retrieveEmpty, 1, deliveryNode, "", "", protocol.Height{}, false, "", "", "")
 	testutil.MustNoErr(t, err, "create "+uuid)
 	testutil.MustNoErr(t, db.UpdateOrderStatus(id, string(orders.StatusDelivered)), "deliver "+uuid)
 	return id
@@ -665,7 +665,7 @@ func TestPinDoubleTapGuard_KeysOnAnyMoveAtTheProcessNode(t *testing.T) {
 	nodeID, _ := seedManualSwapClaim(t, db, "DT-ARR", "consume", "PART-DT", "EMPTY-TOTES")
 	const core = "DT-ARR-MSWAP-NODE"
 	// A move ARRIVING at this window, tracked here.
-	inbound, err := db.CreateOrder("dt-arriving", orders.TypeMove, &nodeID, false, 1, core, "", "ELSEWHERE", true, "", "", "")
+	inbound, err := db.CreateOrder("dt-arriving", orders.TypeMove, &nodeID, false, 1, core, "", "ELSEWHERE", protocol.Height{}, true, "", "", "")
 	testutil.MustNoErr(t, err, "create arriving move")
 
 	eng := testEngine(t, db)

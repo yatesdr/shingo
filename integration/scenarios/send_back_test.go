@@ -4,7 +4,7 @@
 // indexes them onto the press.
 //
 // The plain press cell (keep_staged_recovery_test.go's ksrCell), its claims
-// mirrored at Core (the pull's tote carrier and the fed shape are read there),
+// mirrored at Core (the pull's fed press and the fed shape are read there),
 // with tote numbers: the part's carts are 5 layers of 8 totes, the market's
 // empties full stacks, a cart 3 high on the outside and tops & bottoms in the
 // market. The outside position has a process node row on the Edge, where SEND

@@ -114,6 +114,9 @@ func TestWriter_RoundTripsEveryFieldItWrites(t *testing.T) {
 		// A birth fact on one door: a carried-bin recovery is pinned to the robot
 		// whose deck the bin rides, in the INSERT.
 		"RobotID": "roundtrip-robot",
+		// A birth fact: the height a station stated its empty is wanted at
+		// (v166), in the column's one spelling.
+		"Want": protocol.Layers(7),
 		// The birth pick the wire door writes and acquiring reads (v147).
 		"Plan": &domain.PlannedPick{BinID: 424242, Node: "ROUNDTRIP-PLAN-NODE", Payload: "RT-PAYLOAD",
 			Status: "available", Confirmed: true},

@@ -78,7 +78,7 @@ func TestCarrierLeft_EveryDoorClearsTheIdentity(t *testing.T) {
 		nodeID, _, core := seedCarrierAtSlot(t, db, "CL-PICK")
 		bid := carrierLeftBin
 		orderID, err := db.CreateOrder("uuid-cl-pick", orders.TypeRetrieve,
-			&nodeID, false, 1, core, "", "", false, "PART-CL", "", "")
+			&nodeID, false, 1, core, "", "", protocol.Height{}, false, "PART-CL", "", "")
 		testutil.MustNoErr(t, err, "create order")
 		testutil.MustNoErr(t, db.UpdateOrderBinID(orderID, &bid), "order bin")
 		eng := testEngine(t, db)
@@ -103,7 +103,7 @@ func TestCarrierLeft_EveryDoorClearsTheIdentity(t *testing.T) {
 		db := testEngineDB(t)
 		nodeID, _, core := seedCarrierAtSlot(t, db, "CL-PROD")
 		orderID, err := db.CreateOrder("uuid-cl-prod", orders.TypeComplex,
-			&nodeID, false, 1, core, "", "", false, "PART-CL", "", "")
+			&nodeID, false, 1, core, "", "", protocol.Height{}, false, "PART-CL", "", "")
 		testutil.MustNoErr(t, err, "create departing order")
 		departing, err := db.GetOrder(orderID)
 		testutil.MustNoErr(t, err, "read departing order")

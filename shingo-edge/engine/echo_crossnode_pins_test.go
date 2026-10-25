@@ -150,7 +150,7 @@ func newEchoNodes(t *testing.T, aPrefix string, aRole protocol.ClaimRole, bPrefi
 
 func withBOwnOrder(t *testing.T, n *echoNodes) *echoNodes {
 	t.Helper()
-	own, err := n.db.CreateOrder("echo-b-own-"+n.bCore, orders.TypeRetrieve, &n.bID, false, 1, n.bCore, "", "FG-MKT", false, "PART-EC", "", "")
+	own, err := n.db.CreateOrder("echo-b-own-"+n.bCore, orders.TypeRetrieve, &n.bID, false, 1, n.bCore, "", "FG-MKT", protocol.Height{}, false, "PART-EC", "", "")
 	testutil.MustNoErr(t, err, "B's own order")
 	testutil.MustNoErr(t, n.db.SetProcessNodeRuntimeActiveOrder(n.bID, &own), "point B at its own order")
 	n.bOwnOrder = own

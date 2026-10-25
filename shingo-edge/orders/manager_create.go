@@ -28,7 +28,7 @@ type RetrieveSpec struct {
 	// source finder, for the resolver branch.
 	Source string
 	// Staging is written on this Edge's row alone, where the orders page shows
-	// it; Core reads none.
+	// it; it is not on the wire, as Core reads none.
 	Staging string
 	// Payload is the part; empty derives it from the process node's claim
 	// (lookupPayloadMeta).
@@ -38,6 +38,11 @@ type RetrieveSpec struct {
 	Quantity int64
 	// Empty asks for an empty carrier rather than a full of the part.
 	Empty bool
+	// Want is the height the empty is wanted at, stated (protocol.Height): none
+	// lets Core derive it where the carrier is set down; a stated one is taken
+	// exactly or waited for. SEND BACK's pull states tops & bottoms only. Kept
+	// on this Edge's row, where SEND BACK knows its pull by it.
+	Want protocol.Height
 	// AutoConfirm confirms the delivery on this Edge (handleDelivered);
 	// SkipAutoConfirm asks Core's sweep not to (protocol.OrderRequest).
 	AutoConfirm, SkipAutoConfirm bool
@@ -47,38 +52,16 @@ type RetrieveSpec struct {
 }
 
 // CreateRetrieveOrder creates a new retrieve order and enqueues it to the
-// outbox.
+// outbox. A full and an empty are a retrieve with RetrieveEmpty off or on, on
+// the row and on the wire (Core promotes retrieve plus the flag to
+// retrieve_empty); the want rides both as stated.
 func (m *Manager) CreateRetrieveOrder(s RetrieveSpec) (*orders.Order, error) {
-	pull := PullFull
-	if s.Empty {
-		pull = PullEmpty
-	}
-	return m.createRetrieveOrder(s, pull)
-}
-
-// CreateTopsAndBottomsPull creates SEND BACK's pull: tops & bottoms of payload
-// (the running style's part) from source (the claim's inbound source) to
-// delivery (the press's outside position), quantity 1, on the process node
-// given (the outside's own: it never touches the press's runtime slots).
-// Auto-confirmed: the outside has no tile and no operator receives it. Core
-// plans it as an empty at exactly that height (retrieve_tops_bottoms).
-func (m *Manager) CreateTopsAndBottomsPull(processNodeID *int64, delivery, source, payload string, origin Origin) (*orders.Order, error) {
-	return m.createRetrieveOrder(RetrieveSpec{Process: processNodeID, Delivery: delivery, Source: source,
-		Payload: payload, Quantity: 1, AutoConfirm: true, Origin: origin}, PullTopsAndBottoms)
-}
-
-// createRetrieveOrder is the one body. pull is what it brings (Pull.wire): it
-// decides the row's type, the wire's type and flag, the log line and the
-// created event, so no caller and no line here names a type of its own.
-func (m *Manager) createRetrieveOrder(s RetrieveSpec, pull Pull) (*orders.Order, error) {
 	orderUUID := uuid.New().String()
-	orderType, retrieveEmpty := pull.wire()
-
 	payloadDesc, payloadCode := m.lookupPayloadMeta(s.Process, s.Payload)
 
-	orderID, err := m.db.CreateOrder(orderUUID, orderType,
-		s.Process, retrieveEmpty,
-		s.Quantity, s.Delivery, s.Staging, s.Source, s.AutoConfirm, payloadCode,
+	orderID, err := m.db.CreateOrder(orderUUID, TypeRetrieve,
+		s.Process, s.Empty,
+		s.Quantity, s.Delivery, s.Staging, s.Source, s.Want, s.AutoConfirm, payloadCode,
 		s.Origin.ID, s.Origin.Class)
 	if err != nil {
 		return nil, fmt.Errorf("create order: %w", err)
@@ -86,22 +69,22 @@ func (m *Manager) createRetrieveOrder(s RetrieveSpec, pull Pull) (*orders.Order,
 
 	env, envErr := m.sender.build(protocol.TypeOrderRequest, &protocol.OrderRequest{
 		OrderUUID:       orderUUID,
-		OrderType:       orderType,
+		OrderType:       TypeRetrieve,
 		PayloadDesc:     payloadDesc,
 		PayloadCode:     payloadCode,
-		RetrieveEmpty:   retrieveEmpty,
+		RetrieveEmpty:   s.Empty,
+		Want:            s.Want,
 		Quantity:        s.Quantity,
 		DeliveryNode:    s.Delivery,
 		SourceNode:      s.Source,
-		StagingNode:     s.Staging,
 		SkipAutoConfirm: s.SkipAutoConfirm,
 		OriginID:        s.Origin.ID,
 		OriginClass:     s.Origin.Class,
 	})
 	m.enqueueAndAutoSubmit(orderID, orderUUID, env, envErr)
 
-	m.DebugLog.Log("create: type=%s id=%d uuid=%s delivery=%s", orderType, orderID, orderUUID, s.Delivery)
-	m.emitter.EmitOrderCreated(orderID, orderUUID, orderType, nil, s.Process)
+	m.DebugLog.Log("create: type=%s id=%d uuid=%s delivery=%s want=%q", TypeRetrieve, orderID, orderUUID, s.Delivery, s.Want)
+	m.emitter.EmitOrderCreated(orderID, orderUUID, TypeRetrieve, nil, s.Process)
 
 	return m.db.GetOrder(orderID)
 }
@@ -227,7 +210,7 @@ func (m *Manager) createMoveOrder(processNodeID *int64, quantity int64,
 
 	orderID, err := m.db.CreateOrder(orderUUID, TypeMove,
 		processNodeID, false,
-		quantity, deliveryNode, "", sourceNode, autoConfirm, payloadCode,
+		quantity, deliveryNode, "", sourceNode, protocol.Height{}, autoConfirm, payloadCode,
 		origin.ID, origin.Class)
 	if err != nil {
 		return nil, fmt.Errorf("create move order: %w", err)
@@ -351,7 +334,7 @@ func (m *Manager) createComplexOrder(processNodeID *int64, quantity int64, deliv
 
 	orderID, err := m.db.CreateOrder(orderUUID, TypeComplex,
 		processNodeID, false,
-		quantity, deliveryNode, "", "", autoConfirm, payloadCode,
+		quantity, deliveryNode, "", "", protocol.Height{}, autoConfirm, payloadCode,
 		origin.ID, origin.Class)
 	if err != nil {
 		return nil, fmt.Errorf("create complex order: %w", err)
