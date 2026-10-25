@@ -147,3 +147,25 @@ func TestCountQueueCodes_CountsAPendingLeg(t *testing.T) {
 			"causeless pending row is not a wait). Full counts: %v", counts["waiting_for_slot"], counts)
 	}
 }
+
+// EVERY CODE HAS ITS CHIP. The template renders a code through queueCodeLabels
+// and falls back to the bare code, so a code missing from the map shows an
+// operator "waiting_for_outside: 2". The map is walked against
+// protocol.AllQueueCodes both ways: every code has a label, and no label is for
+// a code that is not one.
+func TestQueueCodeLabels_EveryQueueCodeHasAChip(t *testing.T) {
+	t.Parallel()
+	labels := queueCodeLabels()
+	codes := map[string]bool{}
+	for _, c := range protocol.AllQueueCodes() {
+		codes[string(c)] = true
+		if labels[string(c)] == "" {
+			t.Errorf("queue code %q has no chip label: the orders board shows the bare code", c)
+		}
+	}
+	for code := range labels {
+		if !codes[code] {
+			t.Errorf("a chip label for %q, which is not a queue code (protocol.AllQueueCodes)", code)
+		}
+	}
+}

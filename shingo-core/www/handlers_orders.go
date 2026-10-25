@@ -480,8 +480,9 @@ func countQueueCodes(orders []*domain.Order) map[string]int {
 }
 
 // queueCodeLabels maps each queue code to a short display label for the orders
-// page summary. Single source for the operator-facing wording so a new code is
-// added in both the formatter and here together.
+// page summary. Single source for the operator-facing wording; every code in
+// protocol.AllQueueCodes has one (TestQueueCodeLabels_EveryQueueCodeHasAChip),
+// so a new code is added in the formatter and here together.
 func queueCodeLabels() map[string]string {
 	return map[string]string{
 		string(protocol.QueueWaitingForMaterial): "Waiting for material",
@@ -489,6 +490,7 @@ func queueCodeLabels() map[string]string {
 		string(protocol.QueueStorageRearranging): "Rearranging storage",
 		string(protocol.QueueWaitingForPartner):  "Waiting for partner or release",
 		string(protocol.QueueFleetUnavailable):   "Robot system not responding",
+		string(protocol.QueueWaitingForOutside):  "Waiting for outside material",
 	}
 }
 
