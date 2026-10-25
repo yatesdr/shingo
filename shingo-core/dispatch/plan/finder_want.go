@@ -66,14 +66,23 @@ func oneType(code string) []string {
 // keeper ask (the origin arm) reads no destination and wants no height.
 // Pins: TestToteWant_TheShape, TestToteWant_ReachesTheFinder,
 // TestToteWant_NoNumbersAddNoStatement.
+//
+// A STATED WANT IS THE ANSWER (Need.Want), before any derivation: the caller
+// has already decided the type and the height. Everything else is derived
+// (derivedEmpty).
 func (f *Finder) wantedEmpty(need Need) (types []string, height domain.Height) {
+	if need.Intent == IntentEmpty && need.Exact() {
+		return []string{need.Want.Type}, need.Want.Height
+	}
+	return f.derivedEmpty(need)
+}
+
+// derivedEmpty is wantedEmpty's answer for a need that states no want: the
+// maintained-group episode's type, else the loader window's derivation, else
+// what fits where the carrier is set down, and the height wanted there.
+func (f *Finder) derivedEmpty(need Need) (types []string, height domain.Height) {
 	if need.Intent != IntentEmpty {
 		return nil, domain.Height{}
-	}
-	// A STATED WANT IS THE ANSWER (Need.Want), before any derivation: the
-	// caller has already decided the type and the height.
-	if need.Exact() {
-		return []string{need.Want.Type}, need.Want.Height
 	}
 
 	// ── FIRST ARM: THE TYPE IS PINNED, NOT DERIVED ──────────────────────────
