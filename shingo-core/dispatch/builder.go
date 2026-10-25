@@ -15,27 +15,21 @@ import (
 	"shingocore/store/reservations"
 )
 
-// builder.go — the one builder (v4 §2.5; B2).
+// builder.go — the one issue (v4 §2.5; B2, and the round-2 unification's K).
 //
-// Build turns a door's need and the planner's plan into the order row, through
-// the single INSERT (orders.Create). It decides nothing: a plan whose verdict is
-// not satisfiable never reaches it. Every door is on it but complex intake,
-// which writes through the store's CreateOrder, and the compound children (a
-// dig's legs, the home clear's moves), which the store's CreateCompoundChildrenTx
-// writes in the parent's transaction (TestCensus_Issuers names each caller of the
-// INSERT).
+// An order comes to exist one way: issued, through the single INSERT
+// (orders.Create), holding softly what its door already knows and will not
+// re-choose, in the issue's transaction or nothing. IssueOrder issues in a
+// transaction of its own; issue issues on the caller's (a compound parent and
+// its children). The issue decides nothing a plan decides: a plan whose verdict
+// is not satisfiable never reaches it. Complex intake and the compound children
+// (a dig's legs, the home clear's moves) still write through the store
+// (TestCensus_Issuers names every caller of the INSERT).
 
-// QueryRower is the write surface Build needs, satisfied by *sql.DB and *sql.Tx:
-// the two real call shapes are a door's own transaction and a compound parent's
-// (the B2 design note §2). It is store/internal/helpers.QueryRower's shape, which
-// orders.Create takes.
-type QueryRower interface {
-	QueryRow(query string, args ...any) *sql.Row
-}
-
-// Need is what a door asks the builder to write about who asked: the facts the
-// row records that no plan decides. The door fills it; Build writes it verbatim.
-// A door difference lives here, never as a parameter on Build (v4 §2.5).
+// Need is what a door declares about the order it issues: the facts the row
+// records that no plan decides, and what the order holds from its issue. The
+// door fills it; the issue writes it verbatim. A door difference lives here,
+// never as a parameter on the issue (v4 §2.5).
 type Need struct {
 	Type        protocol.OrderType
 	Station     string
@@ -60,52 +54,63 @@ type Need struct {
 	// no ack, no waybill, no bookkeeping notice (v145; the orc's Stop 1 and 2
 	// rulings).
 	StationKnows bool
-	// HoldsBin: the door takes the plan's bin in the birth's transaction (the
-	// bin move), so the row is born holding it (bin_id). A door that does not
-	// hold the bin at birth gets the pick as a plan instead (orders.plan), which
-	// acquiring reads and may find stale (SYNTH F4).
-	HoldsBin bool
 	// Source and Delivery are the nodes as asked. The row's delivery is the
 	// plan's Dest when the planner chose one, else what was asked; its source is
-	// what was asked, or the held bin's node when nothing was.
+	// what was asked, or the cart's node when nothing was.
 	Source   string
 	Delivery string
 	// SkipAutoConfirm is carried verbatim, as the sender stated it.
 	SkipAutoConfirm bool
-	// NamedBin is the one bin a move is for, as the station read it on the
-	// source node (protocol.OrderRequest.BinID); nil for every other order.
-	// Written once, at birth (orders.named_bin_id); the hold and claim
-	// statements take that bin and no other (reservations.NamedBinSQL).
+	// NamedBin is the one bin a station's move is for, as the station read it on
+	// the source node (protocol.OrderRequest.BinID), on a move that does not yet
+	// hold it from its issue (birthNamedMove); nil for every other order. The
+	// hold and claim statements take that bin and no other
+	// (reservations.NamedBinSQL).
 	NamedBin *int64
 	// QualityHoldBy puts NamedBin on quality hold, attributed to this, in the
-	// birth's transaction (protocol.OrderRequest.QualityHoldBy): a station's
-	// containment move. Build does not write it; birthNamedMove does. "" for
-	// every other order.
+	// issue's transaction (protocol.OrderRequest.QualityHoldBy): a station's
+	// containment move. birthNamedMove writes it. "" for every other order.
 	QualityHoldBy string
 	// SourceIntent is the sourcing intent when the type does not decide it: a
 	// carried-bin recovery's on_deck. Blank takes the type's (SourceIntentForType).
 	SourceIntent string
 	// Recovers is the cancelled order whose carried bin a Core-minted return
 	// puts down (orders.recovers_order_id); nil for every other order. Written
-	// once, at birth.
+	// once, at its issue.
 	Recovers *int64
+
+	// WHAT THE ORDER HOLDS FROM ITS ISSUE, softly, in the issue's transaction,
+	// or the issue is refused.
+	//
+	// Cart is the one carrier the order is for: its pending bin row is taken in
+	// the issue's transaction, and bin_id and named_bin_id are stamped in the
+	// INSERT ("an order for one carrier"). 0: the acquire finds one, and the
+	// planner's pick rides the row as orders.plan.
+	Cart int64
+	// By is who asked: Person(name) for a person (a station or a page), the zero
+	// value for Core's own errand. It decides whether a stranger's soft hold on
+	// the cart is taken.
+	By Actor
 }
 
-// Build writes the order a plan describes, born `pending` (v4 §2.6), and returns
-// it with its id. It decides nothing: a plan the planner refused never reaches
-// it (Refused), and a door that holds its bin at birth must bring a gathered
-// plan (the bin, the node it stands on, the node it goes to).
-//
-// The wire door brings a plan whose pick may have found nothing (the gate was
-// closed, or the pick waits, digs or fails): the row is born either way, as it
-// always was, and the order's disposition is the door's business after birth.
-func Build(ex QueryRower, need Need, p plan.Plan) (*orders.Order, error) {
-	if p.Refused != nil {
-		return nil, errors.New("build: the plan is not satisfiable")
-	}
-	if need.HoldsBin && (p.Bin == nil || p.Node == nil || p.Dest == nil) {
-		return nil, errors.New("build: a door holding its bin needs a gathered plan")
-	}
+// Actor is who asked for an order. A person is authoritative over another
+// order's soft hold, never over a robot (v4 §2.7 Rule 4); Core's own errand
+// takes nothing. The zero value is Core's errand.
+type Actor struct{ person string }
+
+// Person is an order a person asked for: a station's or a page's actor.
+func Person(name string) Actor { return Actor{person: name} }
+
+// Taken is what an issue took from strangers: the person's moves whose soft
+// hold it took, which the caller ends by name once the issue has committed
+// (store.TakeSoftHolds).
+type Taken struct {
+	Named []int64
+}
+
+// row is the order a need and a plan describe, born `pending` (v4 §2.6). It
+// writes nothing.
+func row(need Need, p plan.Plan) *orders.Order {
 	o := &orders.Order{
 		EdgeUUID:        need.Ref,
 		StationID:       need.Station,
@@ -133,11 +138,12 @@ func Build(ex QueryRower, need Need, p plan.Plan) (*orders.Order, error) {
 		o.DeliveryNode = p.Dest.Name
 	}
 	switch {
-	case need.HoldsBin:
-		// The bin is the order's from birth, so the node it stands on is the
-		// order's source. A pick that is not held never names the source: the
-		// asked source (blank, a node or a group) scopes any re-pick.
-		o.BinID = &p.Bin.ID
+	case need.Cart != 0:
+		// The cart is the order's from its issue, so the node it stands on is
+		// the order's source. A pick that is not held never names the source:
+		// the asked source (blank, a node or a group) scopes any re-pick.
+		cart := need.Cart
+		o.BinID, o.NamedBinID = &cart, &cart
 		if o.SourceNode == "" {
 			o.SourceNode = p.Node.Name
 		}
@@ -145,38 +151,78 @@ func Build(ex QueryRower, need Need, p plan.Plan) (*orders.Order, error) {
 		o.Plan = &domain.PlannedPick{BinID: p.Bin.ID, Node: p.Node.Name, Payload: p.Bin.PayloadCode,
 			Status: string(p.Bin.Status), Confirmed: p.Bin.ManifestConfirmed}
 	}
-	if err := orders.Create(ex, o); err != nil {
-		return nil, err
+	return o
+}
+
+// issue writes the order a door's need and the planner's plan describe, on the
+// caller's transaction, holding what the need declares: the row (orders.Create,
+// with its creation history), then the cart, a stranger's pending hold on it
+// taken first when a person asked and the planner found one, then the order's
+// own soft hold (reservations.Acquire). A hold that cannot be taken refuses the
+// issue: the error is returned and the caller's transaction rolls back.
+//
+// The wire door brings a plan whose pick may have found nothing (the gate was
+// closed, or the pick waits, digs or fails): the row is issued either way, as it
+// always was, and the order's disposition is the door's business after.
+func issue(tx *sql.Tx, need Need, p plan.Plan) (*orders.Order, Taken, error) {
+	if p.Refused != nil {
+		return nil, Taken{}, errors.New("issue: the plan is not satisfiable")
 	}
-	return o, nil
+	if need.Cart != 0 && (p.Node == nil || p.Dest == nil) {
+		return nil, Taken{}, errors.New("issue: an order for a cart needs a gathered plan")
+	}
+	o := row(need, p)
+	if err := orders.Create(tx, o); err != nil {
+		return nil, Taken{}, err
+	}
+	if need.Cart == 0 {
+		return o, Taken{}, nil
+	}
+	var taken Taken
+	if p.Take && need.By.person != "" {
+		note := store.HolderNote{
+			Reason: FormatQueueSentence(protocol.QueueWaitingForMaterial, QueueParams{TakenByOrderID: o.ID}),
+			Code:   protocol.QueueWaitingForMaterial,
+			Cause:  string(CauseBinTaken),
+			Actor:  need.By.person,
+		}
+		var err error
+		if taken.Named, err = store.TakeSoftHolds(tx, need.Cart, o.ID, note); err != nil {
+			return nil, Taken{}, err
+		}
+	}
+	// A root order owns its own lane rows.
+	if err := reservations.Acquire(tx, o.ID, o.ID, need.Cart, "reserveForDispatch"); err != nil {
+		return nil, Taken{}, err
+	}
+	return o, taken, nil
 }
 
-// Birth writes an order through Build in its own transaction (birthOwnTx), for
-// a door that holds nothing else in the birth's transaction (carried-bin
-// recovery).
-func (d *Dispatcher) Birth(need Need, p plan.Plan) (*orders.Order, error) {
-	return birthOwnTx(d.db, need, p)
+// IssueOrder issues an order in a transaction of its own: the row, its history
+// and its holds, or none of them (issue).
+func (d *Dispatcher) IssueOrder(need Need, p plan.Plan) (*orders.Order, Taken, error) {
+	return issueOwnTx(d.db, need, p)
 }
 
-// birthOwnTx is Build in a transaction of its own: the row and its birth
-// history, or neither (db.CreateOrder's shape).
-func birthOwnTx(db *store.DB, need Need, p plan.Plan) (*orders.Order, error) {
+// issueOwnTx is IssueOrder's body, for admission, which issues without the
+// Dispatcher (LifecycleService.issue).
+func issueOwnTx(db *store.DB, need Need, p plan.Plan) (*orders.Order, Taken, error) {
 	tx, err := db.Begin()
 	if err != nil {
-		return nil, err
+		return nil, Taken{}, err
 	}
 	defer tx.Rollback() //nolint:errcheck // committed below; rollback is the error close
-	o, err := Build(tx, need, p)
+	o, taken, err := issue(tx, need, p)
 	if err != nil {
-		return nil, err
+		return nil, Taken{}, err
 	}
 	if err := tx.Commit(); err != nil {
-		return nil, err
+		return nil, Taken{}, err
 	}
-	return o, nil
+	return o, taken, nil
 }
 
-// NotAtSourceError is a move refused at its birth because the bin it names is
+// NotAtSourceError is a move refused at its issue because the bin it names is
 // not on its source. Error is the sentence the station shows.
 type NotAtSourceError struct {
 	BinID  int64
@@ -193,11 +239,12 @@ func (e *NotAtSourceError) Error() string {
 	return fmt.Sprintf("bin %s is not at that source (%s)", bin, e.Source)
 }
 
-// birthNamedMove is the birth of a move that names its bin, in one
+// birthNamedMove is the issue of a station's move that names its bin, in one
 // transaction: the bin stands on the source (reservations.NamedBinAtSourceTx,
 // under its row lock), the hold marker when the station asked for one
-// (need.QualityHoldBy), and the row (Build). A bin not on the source is a *NotAtSourceError and nothing
-// is written.
+// (need.QualityHoldBy), and the row (issue). It holds nothing: the acquire
+// takes the bin. A bin not on the source is a *NotAtSourceError and nothing is
+// written.
 func birthNamedMove(db *store.DB, need Need, p plan.Plan) (*orders.Order, error) {
 	tx, err := db.Begin()
 	if err != nil {
@@ -216,7 +263,7 @@ func birthNamedMove(db *store.DB, need Need, p plan.Plan) (*orders.Order, error)
 			return nil, fmt.Errorf("hold bin %d: %w", *need.NamedBin, err)
 		}
 	}
-	o, err := Build(tx, need, p)
+	o, _, err := issue(tx, need, p)
 	if err != nil {
 		return nil, err
 	}
@@ -245,45 +292,6 @@ func (d *Dispatcher) PlanMove(g plan.Given) plan.Plan {
 		return d.pure.ValidateMove(g)
 	}
 	return d.pure.ChooseMove(g.Source, g.Dest)
-}
-
-// BirthMove writes a person's bin move in one transaction: the row (Build),
-// Q1's take when the plan says so, and the move's own soft hold on its bin. The
-// take and the hold land together or not at all, so no instant exists in which
-// the bin is promised to nobody or to two orders.
-//
-// It returns the person's moves the take handed back (store.TakeSoftHolds):
-// the caller ends each by name once this has committed.
-func (d *Dispatcher) BirthMove(need Need, p plan.Plan, actor string) (*orders.Order, []int64, error) {
-	tx, err := d.db.Begin()
-	if err != nil {
-		return nil, nil, fmt.Errorf("begin bin move: %w", err)
-	}
-	defer tx.Rollback()
-	o, err := Build(tx, need, p)
-	if err != nil {
-		return nil, nil, err
-	}
-	var handedBack []int64
-	if p.Take {
-		note := store.HolderNote{
-			Reason: FormatQueueSentence(protocol.QueueWaitingForMaterial, QueueParams{TakenByOrderID: o.ID}),
-			Code:   protocol.QueueWaitingForMaterial,
-			Cause:  string(CauseBinTaken),
-			Actor:  actor,
-		}
-		if handedBack, err = store.TakeSoftHolds(tx, p.Bin.ID, o.ID, note); err != nil {
-			return nil, nil, err
-		}
-	}
-	// A move has no compound parent, so it owns its own lane rows.
-	if err := reservations.Acquire(tx, o.ID, o.ID, p.Bin.ID, "reserveForDispatch"); err != nil {
-		return nil, nil, err
-	}
-	if err := tx.Commit(); err != nil {
-		return nil, nil, fmt.Errorf("commit bin move: %w", err)
-	}
-	return o, handedBack, nil
 }
 
 // CapacitySentence is the operator sentence for a blocked capacity verdict, as

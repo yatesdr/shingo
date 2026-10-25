@@ -451,9 +451,13 @@ func (a *Allocator) reservePickup(order *orders.Order, pk pickupNeed, bin *binss
 		if namer != nil {
 			a.dbg("reserve: order %d step %d at %s — bin %d is named by order %d, not taken",
 				order.ID, pk.stepIndex, pk.step.Node, bin.ID, namer.ID)
-			// A row naming a bin is a move (orders.named_bin_id is written for
-			// a move alone): off this pickup's node, a position the asking
-			// cell depends on, it is the outside's cart leaving.
+			// A row naming a bin is an order for that one carrier
+			// (orders.named_bin_id). Every one but a station's move holds its
+			// cart from its issue, and the find that returned this bin passes
+			// over a held one, so the namer here is a station's move, which
+			// holds nothing until its acquire: off this pickup's node, a
+			// position the asking cell depends on, it is the outside's cart
+			// leaving.
 			if namer.SourceNode == pk.step.Node && a.dependentSource(order, pk.step) != "" {
 				return nil, reserveHoldingForOutside, nil
 			}

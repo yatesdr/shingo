@@ -199,9 +199,10 @@ type Plan struct {
 	Err      error
 
 	// THE GATHERED PLAN (B2). A move's plan (move.go) carries its destination
-	// and whether it takes a soft hold, and the builder reads both (dispatch.Build
-	// writes Dest as the row's delivery node; the bin-move door takes the hold in
-	// the birth's transaction). The picker leaves them zero.
+	// and whether a stranger's soft hold stands on its bin, and the issue reads
+	// both (dispatch.issue writes Dest as the row's delivery node, and a
+	// person's issue takes the hold in its transaction). The picker leaves them
+	// zero.
 	//
 	// Dest is the node the carrier is put down on: the named node, or the child
 	// the planner chose when the named node is a group.

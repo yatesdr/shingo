@@ -105,7 +105,7 @@ func TestWriter_RoundTripsEveryFieldItWrites(t *testing.T) {
 		"RecoversOrderID": &recovered.ID,
 		// A birth fact: a move names the bin it is for when it is created.
 		"NamedBinID": &namedBin,
-		// true is the non-default: every door but dispatch.Build leaves it false
+		// true is the non-default: only a Core-born issue (dispatch.issue) writes it
 		// (v145).
 		"StationUnaware": true,
 		// Blank is the default and projects to nobody; a named station is what

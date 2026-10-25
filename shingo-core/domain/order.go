@@ -148,11 +148,13 @@ type Order struct {
 	// which this order carries back. nil on every other order. Written once at
 	// creation; the reverse lookup is store.GetOrderRecovering.
 	RecoversOrderID *int64 `json:"recovers_order_id,omitempty"`
-	// NamedBinID is the one bin a move is for, as the station that sent it
-	// read it on the source node (protocol.OrderRequest.BinID). The bin hold
-	// and claim statements take that bin and no other, and only while it
-	// stands on the source node (reservations.NamedBinSQL); once it has left,
-	// the move is skipped. nil on every other order. Written once at creation.
+	// NamedBinID is the one bin the order is for: a station's move names it as
+	// the station read it on the source node (protocol.OrderRequest.BinID), and
+	// every order issued for one carrier (dispatch.Need.Cart) stamps it at its
+	// issue. The bin hold and claim statements take that bin and no other, and
+	// only while it stands on the source node (reservations.NamedBinSQL); once
+	// it has left, the order is skipped. nil on every other order. Written once,
+	// at its issue.
 	NamedBinID *int64 `json:"named_bin_id,omitempty"`
 
 	// StationUnaware is true when the station named on the order has no row for
@@ -163,8 +165,8 @@ type Order struct {
 	//
 	// NAMED FOR THE EXCEPTION, like OpenForChildren: the zero value and the
 	// column's default are false, which is every order before B2 and every door
-	// that does not write it. dispatch.Build writes it true: every door on it
-	// is Core-born.
+	// that does not write it. The issue (dispatch.issue) writes it from its need:
+	// true for a Core-born order whose station has no row for it.
 	StationUnaware bool `json:"station_unaware,omitempty"`
 
 	// ProjectsTo is the station a station-unaware order projects to, and what it
@@ -173,7 +175,7 @@ type Order struct {
 	// Edge models (a stage-2 pull's window). Blank projects to nobody, and such
 	// an order sends no station anything (the orc's ruling on Stop 1, v4 §2.5).
 	// Unread for a station-known order, which sends to StationID as it always
-	// did. Written by dispatch.Build from its need's Projects.
+	// did. Written by the issue (dispatch.issue) from its need's Projects.
 	ProjectsTo string `json:"projects_to,omitempty"`
 
 	// Plan is the planner's pick, written at birth by a door that picks before

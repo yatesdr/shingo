@@ -20,6 +20,7 @@
 package engine
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 
@@ -30,6 +31,7 @@ import (
 	"shingocore/store/bins"
 	"shingocore/store/nodes"
 	"shingocore/store/orders"
+	"shingocore/store/reservations"
 )
 
 // CarriedBinNotRecoverable explains why no recovery order was created. It is
@@ -87,6 +89,7 @@ func (e *Engine) RecoverCarriedBin(binID int64, actor string) (*orders.Order, st
 	}
 	return e.orderCarriedBinDown(binID, "", onDeckRequest{
 		actor:                   actor,
+		by:                      dispatch.Person(actor),
 		action:                  "carried_bin_recovery_ordered",
 		choose:                  e.chooseDeclared,
 		recoversTerminalCarrier: true,
@@ -101,6 +104,8 @@ func (e *Engine) RecoverCarriedBin(binID int64, actor string) (*orders.Order, st
 //
 //	actor     who the audit row names: the operator, for the button;
 //	          system:cancel-return for the cancel-return policy.
+//	by        who asked (dispatch.Need.By): a person, for the button; Core's own
+//	          errand (the zero value) for the cancel-return policy.
 //	action    the recovery_actions verb, which says WHICH policy chose the
 //	          destination.
 //	recovers  the cancelled order this one returns the bin of
@@ -113,6 +118,7 @@ func (e *Engine) RecoverCarriedBin(binID int64, actor string) (*orders.Order, st
 //	          it and none can mistake a dead recovery order for the bin's job.
 type onDeckRequest struct {
 	actor, action           string
+	by                      dispatch.Actor
 	recovers                *int64
 	recoversTerminalCarrier bool
 	choose                  func(bin *bins.Bin, robot fleet.RobotStatus, carrier *orders.Order) (*nodes.Node, string, error)
@@ -250,12 +256,13 @@ func (e *Engine) orderCarriedBinDown(binID int64, robotID string, req onDeckRequ
 	need := dispatch.Need{
 		Type:     dispatch.OrderTypeMove,
 		Quantity: 1,
-		// The bin is the order's from birth: the need holds it, and the row's
+		// The order is for the bin: its issue holds it softly, and the row's
 		// source is the carrier node the bin sits on. That node is recorded
 		// because it is true and because the lane and slot machinery below take a
 		// source node, NOT because a robot goes there: the on-deck plan has no
 		// pickup step at all (plan.UnloadOnlyLegs).
-		HoldsBin:    true,
+		Cart:        bin.ID,
+		By:          req.by,
 		PayloadCode: bin.PayloadCode,
 		// The pin. See dispatch.pinnedVehicleFor for why the intent and not
 		// robot_id alone is what makes this a pin.
@@ -305,14 +312,14 @@ func (e *Engine) orderCarriedBinDown(binID int64, robotID string, req onDeckRequ
 			"so this attempt can be created; the earlier attempt(s) failed and their rows are kept",
 			binID, freed, need.Ref)
 	}
-	// THE BIRTH, THE PIN AND THE DISPATCH ARE ONE UNIT UNDER THE SCAN LOCK
-	// (dispatch/door.go; RULINGS-C1-P0 F1). The order is born `pending` with its
-	// bin named and no hold yet, and `pending` is in the scanner's population: a
-	// pass in between would take an unpinned order with no reservation into the
+	// THE ISSUE, THE PIN AND THE DISPATCH ARE ONE UNIT UNDER THE SCAN LOCK
+	// (dispatch/door.go; RULINGS-C1-P0 F1). The order is issued `pending` holding
+	// its bin softly and not yet pinned, and `pending` is in the scanner's population: a
+	// pass in between would take an unpinned order into the
 	// held-bin arm.
 	var order *orders.Order
 	var unitErr error
-	e.door(func() { order, unitErr = e.birthAndDispatchRecovery(need, bin, carrierNode, dest, robotID) })
+	e.door(func() { order, unitErr = e.issueAndDispatchRecovery(need, bin, carrierNode, dest, robotID) })
 	if unitErr != nil {
 		return nil, "", unitErr
 	}
@@ -349,11 +356,15 @@ func (e *Engine) orderCarriedBinDown(binID int64, robotID string, req onDeckRequ
 	return order, detail, nil
 }
 
-// birthAndDispatchRecovery is the recovery door's unit under the scan lock: the
-// birth, the robot pin, and the dispatch or the park.
-func (e *Engine) birthAndDispatchRecovery(need dispatch.Need, bin *bins.Bin, carrierNode, dest *nodes.Node, robotID string) (*orders.Order, error) {
+// issueAndDispatchRecovery is the recovery door's unit under the scan lock: the
+// issue (the cart held softly), the robot pin, and the dispatch or the park.
+func (e *Engine) issueAndDispatchRecovery(need dispatch.Need, bin *bins.Bin, carrierNode, dest *nodes.Node, robotID string) (*orders.Order, error) {
 	binID := bin.ID
-	order, err := e.dispatcher.Birth(need, plan.Plan{Outcome: plan.OutcomeFound, Bin: bin, Node: carrierNode, Dest: dest})
+	order, _, err := e.dispatcher.IssueOrder(need, plan.Plan{Outcome: plan.OutcomeFound, Bin: bin, Node: carrierNode, Dest: dest})
+	if errors.Is(err, reservations.ErrReservationConflict) {
+		// Another order holds the bin: nothing was written.
+		return nil, &CarriedBinNotRecoverable{BinID: binID, Reason: fmt.Sprintf("bin %d was taken by another order", binID)}
+	}
 	if err != nil {
 		return nil, fmt.Errorf("create recovery order for bin %d: %w", binID, err)
 	}
@@ -441,14 +452,10 @@ func (e *Engine) dispatchRecoveryOrder(order *orders.Order, binID int64, sourceN
 		}
 		return &CarriedBinNotRecoverable{BinID: binID, Reason: detail}
 	}
-	// The creation entry this used to stamp by hand is written by orders.Create,
-	// in the INSERT's own transaction — see the note there. What named this door
-	// on the timeline was never that row's detail anyway: it is the audit row at
-	// the tail of the caller, whose action name says a robot was ASKED to set the
-	// bin down rather than that Core worked out where it probably is.
-	if err := e.binManifest.ReserveForDispatch(binID, order.ID); err != nil {
-		return fail("bin_taken", fmt.Sprintf("bin %d was taken by another order: %v", binID, err), err)
-	}
+	// The bin is held from the order's issue (dispatch.Need.Cart), in the
+	// INSERT's own transaction, so a bin another order holds refused the issue
+	// before anything was written.
+	//
 	// RESERVE THE SLOT BEFORE CONFIRMING IT. ConfirmForDispatch hard-claims a
 	// storage dropoff through the reservation-guarded CAS, which requires a
 	// PENDING reservation to exist — the scanner's plain path gets one from
@@ -537,7 +544,7 @@ func (e *Engine) dispatchRecoveryOrder(order *orders.Order, binID int64, sourceN
 //     on success calls the same DispatchDirect this door would have called. The
 //     plan the scanner sends is the plan this door would have sent.
 //
-// The bin is SOFT (a pending reservation from ReserveForDispatch) and the
+// The bin is SOFT (a pending reservation taken at its issue) and the
 // destination reservation is owner-idempotent, which is what that arm expects.
 func (e *Engine) queueRecoveryForUnreadableLane(order *orders.Order, destNode *nodes.Node, aerr error) error {
 	code := protocol.QueueStorageRearranging

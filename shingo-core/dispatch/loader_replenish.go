@@ -642,7 +642,7 @@ type CoreAskSpec struct {
 	// ("empty 45x58x32").
 	PayloadDesc string
 	// PayloadCode is the part a loader's ask is for, written on Core's row in
-	// the birth's INSERT. For a full it is the part the finder looks for. The
+	// the issue's INSERT. For a full it is the part the finder looks for. The
 	// empty carrier is generic, but the order is the loader's demand for this
 	// part: the lead-time readers (AvgL1QueueSeconds)
 	// select on it, and the finder takes the carrier types the part may ride
@@ -660,7 +660,7 @@ type CoreAskSpec struct {
 // AdmitCoreAsk builds and admits one Core-authored carrier pull.
 //
 // It goes through admission, the same body wire-originated orders go through,
-// and births through the one builder — so a Core-originated order gets the same
+// and is issued through the one issue — so a Core-originated order gets the same
 // reference checks, the same synthetic-destination resolution, and the same
 // insert.
 func (d *Dispatcher) AdmitCoreAsk(spec CoreAskSpec) (*orders.Order, error) {
@@ -678,7 +678,7 @@ func (d *Dispatcher) AdmitCoreAsk(spec CoreAskSpec) (*orders.Order, error) {
 		DeliveryNode: spec.DeliveryNode,
 		// No payload code on the admitted struct: admission would read the
 		// payload catalog for it (checkOrderRefs), and the part is Core's own
-		// configuration, not a sender's claim to check. It goes in the birth's
+		// configuration, not a sender's claim to check. It goes in the issue's
 		// Need below, so the INSERT writes it.
 		PayloadCode:  "",
 		PayloadDesc:  spec.PayloadDesc,
@@ -703,11 +703,11 @@ func (d *Dispatcher) AdmitCoreAsk(spec CoreAskSpec) (*orders.Order, error) {
 			order.OriginClass = protocol.OriginClassOrphan
 		}
 	}
-	// Born through the builder, after admission's checks. No pick rides the
-	// birth: the scanner picks the carrier, as it always has for a Core ask. The
+	// Issued after admission's checks. No pick rides the
+	// row: the scanner picks the carrier, as it always has for a Core ask. The
 	// station is projected the order below, so it has a row for it.
 	if lerr := d.lifecycle.admit(order, func() error {
-		return d.lifecycle.birth(order, Need{
+		return d.lifecycle.issue(order, Need{
 			Type:            spec.OrderType,
 			Station:         order.StationID,
 			Ref:             order.EdgeUUID,
@@ -727,7 +727,7 @@ func (d *Dispatcher) AdmitCoreAsk(spec CoreAskSpec) (*orders.Order, error) {
 		}
 		return nil, fmt.Errorf("%s: %s", lerr.Code, lerr.Detail)
 	}
-	// Received at birth, as an Edge request is (CreateInboundOrder), with Core's
+	// Received at its issue, as an Edge request is (CreateInboundOrder), with Core's
 	// own values: the part and the window. Without it a Core ask reached the
 	// bins feed only at dispatch, so a watched window showed nothing inbound
 	// while its ask queued. Pinned by TestPinCoreAsk_TheAskIsReceivedAtBirth.
@@ -759,7 +759,7 @@ func (d *Dispatcher) AcquireCoreAsk(order *orders.Order) {
 	d.acquireCoreAsk(order)
 }
 
-// acquireCoreAsk is AcquireCoreAsk. The ask's row is whole at its birth (no apply
+// acquireCoreAsk is AcquireCoreAsk. The ask's row is whole at its issue (no apply
 // follows the INSERT), so it needs no door: the acquire takes the scan lock
 // itself (door.go). A dispatcher with no scanner leaves the ask pending.
 func (d *Dispatcher) acquireCoreAsk(order *orders.Order) {

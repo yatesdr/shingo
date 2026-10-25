@@ -192,7 +192,7 @@ func (e *Engine) CreateBinMove(req BinMoveRequest) (*BinMoveResult, error) {
 	// A BURIED BIN WHOSE GROUP HAS NOWHERE TO PARK ITS BLOCKERS IS REFUSED NOW
 	// (owner, 2026-09-26): a person is waiting at this door. Born, the move would
 	// be sent to the lane's mark and wait there under no-shuffle-slot while the
-	// person is told "queued". The dig's own verdict, asked before the birth.
+	// person is told "queued". The dig's own verdict, asked before the issue.
 	var short *plan.DigShortError
 	if err := e.dispatcher.MoveDigFits(p.Bin, p.Node, p.Dest); errors.As(err, &short) {
 		return nil, refuse(BinMoveConflict, err,
@@ -220,22 +220,23 @@ func (e *Engine) CreateBinMove(req BinMoveRequest) (*BinMoveResult, error) {
 		// B is not a place asking for material, so there is no episode and its
 		// absence is not a finding. Left blank it would land orphan and put a
 		// deliberate human action in the one bucket that is supposed to mean
-		// "we lost a demand link". Build stamps SourceIntent LOCAL from the type,
+		// "we lost a demand link". The issue stamps SourceIntent LOCAL from the type,
 		// through the same map as every other door.
 		OriginClass: protocol.OriginClassNoDemand,
 		// A bin move is Core-born, so its station has no row for it and is sent
 		// no ack, waybill or status (v4 §2.5). It projects its delivery to the
 		// Edge the door names, or to nobody.
 		Projects: req.Projects,
-		// The birth takes the bin (BirthMove's soft hold), so the row is born
-		// holding it.
-		HoldsBin: true,
+		// The move is for the bin: its issue holds it softly and stamps it on the
+		// row. A person asked, so a stranger's soft hold on it is taken out loud.
+		Cart: p.Bin.ID,
+		By:   dispatch.Person(moveActor(req)),
 	}
 
-	// THE BIRTH: the row, the take and the move's own soft hold, in one
+	// THE ISSUE: the row, the take and the move's own soft hold, in one
 	// transaction. orders.Create writes the creation history row inside it, so
 	// every move's timeline begins, including the ones that go on to wait.
-	order, handedBack, err := e.dispatcher.BirthMove(need, p, moveActor(req))
+	order, taken, err := e.dispatcher.IssueOrder(need, p)
 	if err != nil {
 		// Another order reserved the bin between the plan and the transaction: a
 		// race with a person, not a fault. Nothing was written.
@@ -247,7 +248,7 @@ func (e *Engine) CreateBinMove(req BinMoveRequest) (*BinMoveResult, error) {
 	}
 	// A person's move that had promised itself this bin is ended by name, never
 	// re-aimed at whatever else stands at its node (store.TakeSoftHolds).
-	for _, id := range handedBack {
+	for _, id := range taken.Named {
 		e.failOrderAndEmit(id, "bin_taken", fmt.Sprintf(
 			"bin %s was taken by order #%d (a person's move)", p.Bin.Label, order.ID))
 	}

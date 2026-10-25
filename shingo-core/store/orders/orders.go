@@ -2302,14 +2302,19 @@ func CarrierComingTo(db *sql.DB, node string, asker *Order) (bool, error) {
 	return false, rows.Err()
 }
 
-// LiveNamedMoveOff reports whether a live order other than the asker is a move
-// naming its bin (named_bin_id is written for a move alone) that lifts it from
-// node: a wrong carrier's clear or SEND BACK's move, taking the cart away
-// whether or not it has claimed it yet. One statement.
+// LiveNamedMoveOff reports whether a live order other than the asker is a
+// station's move for one carrier that lifts it from node: a wrong carrier's
+// clear or SEND BACK's move, taking the cart away whether or not it has claimed
+// it yet. named_bin_id is written for every order issued for one carrier (a
+// person's bin move, a drain's, stage 2's, a recovery's), so the station's is
+// the one its station knows (station_unaware false): Core's own errands off a
+// position hold no pair there (TestIssueCensus_ADrainMoveOffAnOnDeckDoesNotHoldThePair).
+// One statement.
 func LiveNamedMoveOff(db *sql.DB, node string, askerID int64) (bool, error) {
 	var lifting bool
 	err := db.QueryRow(fmt.Sprintf(`SELECT EXISTS (SELECT 1 FROM orders
-		WHERE status IN (%s) AND named_bin_id IS NOT NULL AND source_node = $1 AND id <> $2)`,
+		WHERE status IN (%s) AND named_bin_id IS NOT NULL AND NOT station_unaware
+		  AND source_node = $1 AND id <> $2)`,
 		protocol.NonTerminalStatusSQLList()), node, askerID).Scan(&lifting)
 	if err != nil {
 		return false, fmt.Errorf("live named move off %s: %w", node, err)
@@ -2318,10 +2323,11 @@ func LiveNamedMoveOff(db *sql.DB, node string, askerID int64) (bool, error) {
 }
 
 // LiveOrderNamingBin returns the live order, other than the asker, that names
-// bin as the one it is for (orders.named_bin_id: a move that names its carrier,
-// an operator's or a station's), or nil. One statement over the live rows: the
-// status term serves idx_orders_status, and named_bin_id carries no index of
-// its own, so the read is asked only when a supply pickup has found a bin.
+// bin as the one it is for (orders.named_bin_id, an order for that one carrier:
+// a station's move, a person's, or one of Core's errands), or nil. One
+// statement over the live rows: the status term serves idx_orders_status, and
+// named_bin_id carries no index of its own, so the read is asked only when a
+// supply pickup has found a bin.
 func LiveOrderNamingBin(db *sql.DB, binID, askerID int64) (*Order, error) {
 	row := db.QueryRow(fmt.Sprintf(`SELECT %s FROM orders
 		WHERE status IN (%s) AND named_bin_id = $1 AND id <> $2

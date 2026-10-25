@@ -30,9 +30,9 @@ import "shingo/protocol"
 //  1. orders.bin_id — the bin type is chosen and recorded. Every simple move and
 //     retrieve that has reached dispatch is here. This is the physical thing the
 //     robot is holding, so it outranks anything inferred.
-//  2. orders.named_bin_id — the station named the carrier when it asked (an
-//     unloader's empty-out names the cart at its window), so the type is known
-//     before dispatch claims it. Pin:
+//  2. orders.named_bin_id — the order is for that carrier (a station named it,
+//     as an unloader's empty-out names the cart at its window, or Core issued
+//     the order for it), so the type is known before dispatch claims it. Pin:
 //     TestUnloaderEmptyOut_NamedBinIsNotParkedByAnotherTypeOverLevel.
 //  3. the order's BIN reservations — a complex order's legs hold their carriers
 //     before bin_id means anything, so a dropoff step resolving into a group

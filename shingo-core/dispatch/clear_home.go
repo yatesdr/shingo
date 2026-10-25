@@ -182,7 +182,7 @@ func (d *Dispatcher) dispatchHeldTrade(order *orders.Order, steps []resolvedStep
 // the steal's victim read, the soft hold.
 func (d *Dispatcher) BirthClearTx(tx *sql.Tx, j ClearJob) (*ClearBirth, error) {
 	now := clock.Now().UTC()
-	parent, err := Build(tx, Need{
+	parent, _, err := issue(tx, Need{
 		Type: protocol.OrderTypeMove, Station: j.Station, Ref: orders.ClearUUIDPrefix + uuid.New().String(),
 		Quantity: 1, PayloadCode: j.Payload,
 		Desc: fmt.Sprintf("clear %s: %s comes home from %s", j.Home.Name, j.Partial.Label, j.PartialAt.Name),
@@ -193,7 +193,7 @@ func (d *Dispatcher) BirthClearTx(tx *sql.Tx, j ClearJob) (*ClearBirth, error) {
 		Source:       j.Home.Name, Delivery: j.Home.Name,
 	}, plan.Plan{})
 	if err != nil {
-		return nil, fmt.Errorf("birth the clear's parent: %w", err)
+		return nil, fmt.Errorf("issue the clear's parent: %w", err)
 	}
 	after, err := d.lifecycle.transitionTx(tx, parent, StatusReshuffling, Event{
 		Actor: "system", Reason: fmt.Sprintf("clearing %s: the partial %s comes home", j.Home.Name, j.Partial.Label)})

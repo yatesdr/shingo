@@ -161,7 +161,7 @@ type issueEntry struct {
 // insertCallers are the production functions calling orders.Create. The end
 // state of the one issue is one: the issue itself.
 var insertCallers = map[string]string{
-	"dispatch/builder.go:Build":                "the builder: a door's need and the planner's plan, as the row",
+	"dispatch/builder.go:issue":                "the issue: a door's need and the planner's plan, as the row and its holds",
 	"store/orders.go:DB.CreateOrder":           "the store's own writer, in a transaction of its own: complex intake's",
 	"store/orders.go:CreateCompoundChildrenTx": "a compound parent's children, in the parent's transaction: the digs' and the home clear's",
 }
@@ -169,23 +169,22 @@ var insertCallers = map[string]string{
 // issueWalk is every function on the walk up from orders.Create.
 var issueWalk = map[string]issueEntry{
 	// The faces: the builder and the store's writers.
-	"dispatch/builder.go:Build":                 {issueFace, []string{"", "dispatch"}, "the builder over the one INSERT"},
-	"dispatch/builder.go:birthOwnTx":            {issueFace, []string{""}, "Build in a transaction of its own"},
-	"dispatch/builder.go:birthNamedMove":        {issueFace, []string{""}, "a move naming its bin: the at-source check, the hold marker, Build"},
-	"dispatch/builder.go:Dispatcher.BirthMove":  {issueFace, []string{"d", "dispatcher"}, "a person's move: Build, the take, the bin's hold"},
-	"dispatch/builder.go:Dispatcher.Birth":      {issueFace, []string{"dispatcher"}, "birthOwnTx's face outside dispatch"},
+	"dispatch/builder.go:issue":                 {issueFace, []string{""}, "the issue over the one INSERT, on the caller's transaction"},
+	"dispatch/builder.go:issueOwnTx":            {issueFace, []string{""}, "the issue in a transaction of its own"},
+	"dispatch/builder.go:birthNamedMove":        {issueFace, []string{""}, "a station's move naming its bin: the at-source check, the hold marker, the issue"},
+	"dispatch/builder.go:Dispatcher.IssueOrder": {issueFace, []string{"d", "dispatcher"}, "the issue's face: issueOwnTx on the Dispatcher's database"},
 	"store/orders.go:DB.CreateOrder":            {issueFace, []string{"db"}, "the store's writer in a transaction of its own"},
 	"store/orders.go:DB.CreateCompoundChildren": {issueFace, []string{"db"}, "a dig's children in a transaction of their own"},
 	"store/orders.go:CreateCompoundChildrenTx":  {issueFace, []string{"", "store"}, "a compound's children in the caller's transaction"},
 
 	// The sites: each calls the issue, and testdb.IssueDoors says what its
 	// doors' orders hold at commit.
-	"dispatch/lifecycle_service.go:LifecycleService.birth":            {issueSite, []string{"s", "lifecycle"}, "admission's birth: the wire's orders and the Core asks"},
+	"dispatch/lifecycle_service.go:LifecycleService.issue":            {issueSite, []string{"s", "lifecycle"}, "admission's issue: the wire's orders and the Core asks"},
 	"dispatch/complex_intake.go:Dispatcher.handleComplexOrderRequest": {issueSite, []string{"d"}, "complex intake"},
 	"dispatch/compound.go:Dispatcher.writeCompoundChildren":           {issueSite, []string{"d"}, "a dig's legs"},
 	"dispatch/loader_drain.go:Dispatcher.drainMove":                   {issueSite, []string{"d"}, "the loader drain's move"},
 	"engine/bin_move.go:Engine.CreateBinMove":                         {issueSite, []string{"e", "orchestration"}, "a bin move"},
-	"engine/carried_bin_recovery.go:Engine.birthAndDispatchRecovery":  {issueSite, []string{"e"}, "the carried-bin recovery's unit"},
+	"engine/carried_bin_recovery.go:Engine.issueAndDispatchRecovery":  {issueSite, []string{"e"}, "the carried-bin recovery's unit"},
 	"dispatch/clear_home.go:Dispatcher.BirthClearTx":                  {issueSite, []string{"dispatcher"}, "the home clear: its parent and the partial's move"},
 	"dispatch/clear_home.go:Dispatcher.birthClearSpot":                {issueSite, []string{"d"}, "the home clear: the empty's move to the open spot"},
 	"dispatch/clear_home.go:Dispatcher.birthClearTrade":               {issueSite, []string{"d"}, "the home clear: the trade's two moves"},
@@ -275,7 +274,7 @@ func (g callGraph) callersOf(name string, recvs []string) []string {
 	return out
 }
 
-// funcName is a walk key's bare function name: "Build" for "dispatch/builder.go:Build".
+// funcName is a walk key's bare function name: "issue" for "dispatch/builder.go:issue".
 func funcName(key string) string {
 	return key[strings.LastIndexAny(key, ":.")+1:]
 }

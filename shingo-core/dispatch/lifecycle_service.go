@@ -77,9 +77,9 @@ func (s *LifecycleService) dbg(format string, args ...any) {
 	}
 }
 
-// CreateInboundOrder births the order a station sent. decide is the planner's
+// CreateInboundOrder issues the order a station sent. decide is the planner's
 // question for this order, asked after the ref-checks and before the INSERT so
-// the pick rides the birth (orders.plan; B3's first item); nil asks nothing.
+// the pick rides the row (orders.plan; B3's first item); nil asks nothing.
 func (s *LifecycleService) CreateInboundOrder(stationID string, p *protocol.OrderRequest, decide func(order *orders.Order, payloadCode string) plan.Plan) (*orders.Order, string, *lifecycleError) {
 	payloadCode := p.PayloadCode
 	// Wire-protocol normalization: edge may send OrderTypeRetrieve + RetrieveEmpty=true.
@@ -151,14 +151,14 @@ func (s *LifecycleService) CreateInboundOrder(stationID string, p *protocol.Orde
 	// A move may name the one bin it is for. Kept on the row and asked inside
 	// the statements that hold and claim a bin (reservations.NamedBinSQL), so
 	// the move lifts that bin or ends skipped; a bin not on the source at all is
-	// refused at birth (birthNamedMove). Any other type naming a bin is
+	// refused at its issue (birthNamedMove). Any other type naming a bin is
 	// not a shape a station sends; the field is ignored there.
 	if orderType == OrderTypeMove && p.BinID > 0 {
 		binID := p.BinID
 		order.NamedBinID = &binID
 	}
 	// A station sending the bin to containment asks for its hold with the move
-	// (protocol.OrderRequest.QualityHoldBy): the marker is set in the birth's
+	// (protocol.OrderRequest.QualityHoldBy): the marker is set in the issue's
 	// transaction, beside the check that the bin stands on the source
 	// (birthNamedMove). Without a named bin there is nothing to hold.
 	holdBy := ""
@@ -173,7 +173,7 @@ func (s *LifecycleService) CreateInboundOrder(stationID string, p *protocol.Orde
 		if decide != nil {
 			pl = decide(order, payloadCode)
 		}
-		return s.birth(order, Need{
+		return s.issue(order, Need{
 			Type:            orderType,
 			Station:         order.StationID,
 			Ref:             order.EdgeUUID,
@@ -201,7 +201,7 @@ func (s *LifecycleService) CreateInboundOrder(stationID string, p *protocol.Orde
 	// inside the shared body: AdmitCoreAsk emits its own with Core's values, and
 	// TestCensus_OrderReceivedAtBirth says, door by door, which others do.
 	s.emitter.EmitOrderReceived(order.ID, order.EdgeUUID, stationID, p.OrderType, payloadCode, p.DeliveryNode)
-	// The hold the birth set pushes the containment snapshot, as the hold door's
+	// The hold the issue set pushes the containment snapshot, as the hold door's
 	// write does (PayloadService.SetBinHold).
 	if holdBy != "" {
 		s.emitter.EmitBinHeld(*order.NamedBinID)
@@ -237,9 +237,9 @@ func (s *LifecycleService) projectOrder(order *orders.Order) {
 }
 
 // admit is the wire-free middle of order intake: validate the payload, resolve a
-// synthetic delivery node, birth the row, and stamp the destination's
-// resolution. The birth is the door's own (every door on admission births
-// through Build, by LifecycleService.birth); admit runs it between the checks
+// synthetic delivery node, issue the row, and stamp the destination's
+// resolution. The issue is the door's own (every door on admission issues
+// through LifecycleService.issue); admit runs it (write) between the checks
 // and the stamp.
 //
 // It is extracted so a Core-originated order can be admitted through exactly the
@@ -255,7 +255,7 @@ func (s *LifecycleService) projectOrder(order *orders.Order) {
 // rest write their row another way. So anything hung off admission covers four
 // doors of the census, which is the number to hold in mind before saying "every
 // order gets this".
-func (s *LifecycleService) admit(order *orders.Order, birth func() error) *lifecycleError {
+func (s *LifecycleService) admit(order *orders.Order, write func() error) *lifecycleError {
 	destNode, lerr := s.checkOrderRefs(order)
 	if lerr != nil {
 		return lerr
@@ -264,7 +264,7 @@ func (s *LifecycleService) admit(order *orders.Order, birth func() error) *lifec
 	if lerr != nil {
 		return lerr
 	}
-	if err := birth(); err != nil {
+	if err := write(); err != nil {
 		// A move whose named bin is not on its source is refused here, before
 		// anything exists (birthNamedMove), with the sentence the station shows.
 		var away *NotAtSourceError
@@ -298,16 +298,16 @@ func (s *LifecycleService) admit(order *orders.Order, birth func() error) *lifec
 	return nil
 }
 
-// birth writes the order through the builder in its own transaction
-// (birthOwnTx; birthNamedMove for a move that names its bin)
+// issue writes the order in its own transaction (issueOwnTx; birthNamedMove
+// for a station's move that names its bin)
 // and leaves order as written.
-func (s *LifecycleService) birth(order *orders.Order, need Need, p plan.Plan) error {
+func (s *LifecycleService) issue(order *orders.Order, need Need, p plan.Plan) error {
 	var built *orders.Order
 	var err error
 	if need.NamedBin != nil {
 		built, err = birthNamedMove(s.db, need, p)
 	} else {
-		built, err = birthOwnTx(s.db, need, p)
+		built, _, err = issueOwnTx(s.db, need, p)
 	}
 	if err != nil {
 		return err

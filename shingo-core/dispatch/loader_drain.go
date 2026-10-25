@@ -45,9 +45,6 @@ import (
 // landed one as it confirms stage 2's: there is no receipt to wait for.
 const DrainEdgeUUIDPrefix = "core-dr-"
 
-// drainActor is who a drain's move's birth is recorded as taking a bin for.
-const drainActor = "drain"
-
 // DrainLoader moves carts of the states an unloader ticked from its inbound
 // source into its free windows, one move per free window, and returns how many
 // it made. A loader that drains nothing reads its own row and stops.
@@ -195,7 +192,7 @@ func (d *Dispatcher) drainWindows(l *loaders.Loader) ([]*nodes.Node, error) {
 	return windows, nil
 }
 
-// drainMove births one move of cart c to window w, naming the cart, and
+// drainMove issues one move of cart c to window w, for the cart, and
 // acquires it once. The plan is the bin move's (PlanMove: the cart at its node,
 // the window's capacity and carrier rule). A drain is a robot's errand, never
 // a person's, so it takes no bin another order has promised itself (Plan.Take
@@ -219,7 +216,7 @@ func (d *Dispatcher) drainMove(l *loaders.Loader, c *bins.Bin, w *nodes.Node) er
 		return errors.New("another order has promised itself the cart")
 	}
 	station := d.WindowStation(w)
-	order, _, err := d.BirthMove(Need{
+	order, _, err := d.IssueOrder(Need{
 		Type:     OrderTypeMove,
 		Station:  station,
 		Ref:      DrainEdgeUUIDPrefix + uuid.New().String(),
@@ -229,19 +226,19 @@ func (d *Dispatcher) drainMove(l *loaders.Loader, c *bins.Bin, w *nodes.Node) er
 		// set up to clear, so there is no episode, and blank would read orphan.
 		OriginClass: protocol.OriginClassNoDemand,
 		Projects:    station,
-		HoldsBin:    true,
-	}, p, drainActor)
+		Cart:        c.ID,
+	}, p)
 	if err != nil {
-		log.Printf("dispatch: drain %s: birth of cart %s to %s: %v", l.Name, c.Label, w.Name, err)
+		log.Printf("dispatch: drain %s: issue of cart %s to %s: %v", l.Name, c.Label, w.Name, err)
 		return err
 	}
 	// The window, taken now, under the loader's lock: no decision at this
-	// loader reads the windows between the birth and this row. FreeWindows saw
+	// loader reads the windows between the issue and this row. FreeWindows saw
 	// no other order's reservation on it; one born since, outside the loader's
 	// decisions, wins the window, and the move then meets the slot at its own
 	// dispatch as it did before it reserved anything.
 	if err := d.db.ReserveSlot(w.ID, order.ID); err != nil {
-		d.dbg("drain %s: move %d could not take %s at birth: %v", l.Name, order.ID, w.Name, err)
+		d.dbg("drain %s: move %d could not take %s at its issue: %v", l.Name, order.ID, w.Name, err)
 	}
 	// The row is whole at its INSERT, as a Core ask's is, so it takes the same
 	// one acquire (acquireCoreAsk), under the loader's lock (DrainLoader).

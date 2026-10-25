@@ -276,8 +276,9 @@ func OwnerLiveSQL(param int) string {
 // statement that writes it, the way OwnerLiveSQL is: true unless the order
 // (bind parameter orderParam) names one bin and the bin being taken (binParam)
 // is not that bin, or that bin no longer stands on the order's source node.
-// An order that names no bin passes, which is every order but a station's
-// return of a keep-staged spare (protocol.OrderRequest.BinID).
+// An order that names no bin passes: one whose acquire finds its carrier.
+// Every order issued for one carrier names it (orders.named_bin_id), a
+// station's move among them (protocol.OrderRequest.BinID).
 //
 // The source node is matched by name, as the dispatcher resolves it: a plain
 // name, or PARENT.CHILD (nodes.GetByDotName). Plain reads with no lock: the
