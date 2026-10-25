@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"shingo/protocol"
-	"shingocore/store/bins"
 	"shingocore/store/internal/helpers"
 )
 
@@ -225,24 +224,4 @@ func (db *DB) ListHeldPartials(payloadCode string) ([]protocol.HeldPartial, erro
 // caller's transaction (helpers.StampHeldSinceDeclaredTx), for service/.
 func StampHeldSinceDeclaredTx(tx *sql.Tx, binID int64) error {
 	return helpers.StampHeldSinceDeclaredTx(tx, binID)
-}
-
-// IsLinePosition reports whether a node is a claim's line position — its line,
-// paired or second paired node: the predicate the empty search excludes a
-// carrier by. A carrier standing there is that position's own, never a fetch
-// to send elsewhere.
-func (db *DB) IsLinePosition(nodeName string) (bool, error) {
-	return bins.IsLinePosition(db.DB, nodeName)
-}
-
-// IsFedOutside reports whether a node is a fed press cell's outside position
-// (bins.FedOutsideSQL): where a tote cart's count is exact only at its lift.
-func (db *DB) IsFedOutside(nodeName string) (bool, error) {
-	return bins.IsFedOutside(db.DB, nodeName)
-}
-
-// ToteCarrierFor is the press whose outside outside is and the tote carrier of
-// part, one read (bins.ToteCarrierFor): a tops & bottoms pull's.
-func (db *DB) ToteCarrierFor(part, outside string) (bins.ToteCarrier, error) {
-	return bins.ToteCarrierFor(db.DB, part, outside)
 }
