@@ -282,3 +282,59 @@ func TestStationView_SendBackLine(t *testing.T) {
 		t.Errorf("the steady view issues %d statements with SEND BACK's line, %d without: want the same", fed, n)
 	}
 }
+
+// TestSendBack_TheLineAndTheRouteReadOneChangeover: the board's line and the
+// route ask "a changeover is armed" of the same fact, the process's active
+// changeover row, so a line drawn enabled is one the route acts on. The two
+// states the process row and the changeover row disagree in: the cutover
+// clears the target style before it writes the changeover completed, and the
+// cancel writes it cancelled before it clears the target style; a failure
+// between the two writes leaves the state standing.
+//
+// NOT PARALLEL, for TestStationView_SendBackLine's reason.
+func TestSendBack_TheLineAndTheRouteReadOneChangeover(t *testing.T) {
+	line := func(t *testing.T, c sbCell) *domain.SendBack {
+		t.Helper()
+		var tile *domain.StationNodeView
+		for range 2 { // the first poll after process_nodes moves draws no line
+			view, err := c.eng.stationService.BuildView(context.Background(), c.stationID)
+			testutil.MustNoErr(t, err, "BuildView")
+			c.eng.stationService.StampBins(view, service.BoardBinsFromCopy(c.eng.LocalNodeBins().Rows), true, nil)
+			for i := range view.Nodes {
+				if view.Nodes[i].Node.ID == c.press {
+					tile = &view.Nodes[i]
+				}
+			}
+			c.hold(t, sbCart(sbOut, "SB-CART", 77, 24), sbCart(sbPress, "SB-FRONT", 76, 0))
+		}
+		if tile == nil {
+			t.Fatal("no press tile")
+		}
+		return tile.SendBack
+	}
+	for _, k := range []struct {
+		name  string
+		state func(t *testing.T, c sbCell)
+		armed bool
+	}{
+		{"a changeover row active, the target style cleared", func(t *testing.T, c sbCell) {
+			_, err := c.db.Exec(`INSERT INTO process_changeovers (process_id, to_style_id, state, called_by)
+				VALUES (?, ?, 'active', 'test')`, c.processID, c.styleID)
+			testutil.MustNoErr(t, err, "an active changeover")
+		}, true},
+		{"the target style set, no changeover row", func(t *testing.T, c sbCell) {
+			testutil.MustNoErr(t, c.db.SetTargetStyle(c.processID, &c.styleID), "a target style")
+		}, false},
+	} {
+		t.Run(k.name, func(t *testing.T) {
+			c := seedSendBackPress(t, testEngineDB(t))
+			k.state(t, c)
+			l := line(t, c)
+			enabled := l != nil && l.State == domain.SendBackEnabled
+			_, err := c.eng.SendBack(c.press)
+			if enabled == k.armed || (err == nil) != enabled {
+				t.Errorf("line %+v, route %v: want the line enabled %v and the route acting with it", l, err, !k.armed)
+			}
+		})
+	}
+}

@@ -711,7 +711,7 @@ func (s *StationService) BuildView(ctx context.Context, stationID int64) (*store
 	if err != nil {
 		return nil, err
 	}
-	b := s.prefetchBoardData(process, nodes, nodeTaskMap)
+	b := s.prefetchBoardData(process, nodes, nodeTaskMap, view.ActiveChangeover)
 	// The board's own node rows, for the curtain points: a paired position
 	// that is also on this board is read from here rather than from the
 	// plant-wide set.
@@ -1113,13 +1113,19 @@ type boardData struct {
 	// position's process node (SEND BACK's orders are created there). The
 	// board-wide order read covers them.
 	outsides map[int64]processes.Node
+	// changeover is the process's active changeover, the view's own
+	// (newStationView's read), nil when none: SEND BACK's "a changeover is
+	// armed", as its route asks it.
+	changeover *processes.Changeover
 }
 
 // prefetchBoardData performs every board-wide read the tile loop depends on.
 // Each is fail-open on its own terms: a failed enrichment renders a board
-// missing that detail, never no board.
+// missing that detail, never no board. changeover is the view's active
+// changeover, already read, carried for the tiles.
 func (s *StationService) prefetchBoardData(
 	process *processes.Process, nodes []processes.Node, nodeTaskMap map[int64]processes.NodeTask,
+	changeover *processes.Changeover,
 ) *boardData {
 	// Per-tile lookups hoisted to one query each for the whole board: every
 	// read serialises on one connection, so a query inside the tile loop is a
@@ -1225,6 +1231,7 @@ func (s *StationService) prefetchBoardData(
 		activeBuckets:       activeBuckets,
 		strandedBuckets:     strandedBuckets,
 		outsides:            outsides,
+		changeover:          changeover,
 	}
 }
 
@@ -1470,7 +1477,7 @@ func (s *StationService) buildNodeTile(
 		}
 	}
 	applyLoaderRefusals(&nodeView, node, b)
-	nodeView.SendBackFacts = sendBackFacts(node, process, nodeView.ActiveClaim, runtime, b)
+	nodeView.SendBackFacts = sendBackFacts(node, nodeView.ActiveClaim, runtime, b)
 	return nodeView
 }
 

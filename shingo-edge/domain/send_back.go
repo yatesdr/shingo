@@ -66,7 +66,9 @@ type SendBackFacts struct {
 	Outside *protocol.NodeBinsRow
 	Core    *protocol.NodeBinsRow
 	// Outbound is the claim's outbound destination, where the cart goes.
-	Outbound        string
+	Outbound string
+	// ChangeoverArmed: the process has an active changeover row, read by
+	// both gatherers from that row (never the process's target style).
 	ChangeoverArmed bool
 	// Own is SEND BACK's live orders (SendBackOrders).
 	Own []Order

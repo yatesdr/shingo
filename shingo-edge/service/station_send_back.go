@@ -40,8 +40,13 @@ func (s *StationService) sendBackOutsides(nodes []processes.Node, active map[str
 
 // sendBackFacts is a tile's line facts from the board's rows: nil on a tile
 // that is no fed produce press (its line is absent, and SendBackLine would say
-// so). The bins rows come in StampBins (stampSendBack).
-func sendBackFacts(node processes.Node, process *processes.Process, claim *processes.NodeClaim,
+// so). The bins rows come in StampBins (stampSendBack). A changeover is armed
+// when the process has an active changeover row (b.changeover), the fact the
+// route refuses on (Engine.sendBackFacts), so a line drawn enabled is one the
+// route acts on. The process's target style is not that fact: the cutover
+// clears it before it writes the changeover completed, and the cancel after it
+// writes it cancelled.
+func sendBackFacts(node processes.Node, claim *processes.NodeClaim,
 	runtime *processes.RuntimeState, b *boardData) *domain.SendBackFacts {
 	if claim == nil || claim.Role != protocol.ClaimRoleProduce {
 		return nil
@@ -50,7 +55,7 @@ func sendBackFacts(node processes.Node, process *processes.Process, claim *proce
 		return nil
 	}
 	f := &domain.SendBackFacts{Produce: true, Paired: claim.PairedCoreNode, Outbound: claim.OutboundDestination,
-		ChangeoverArmed: process.TargetStyleID != nil}
+		ChangeoverArmed: b.changeover != nil}
 	on, ok := b.outsides[node.ID]
 	f.OutsideNode = ok
 	var outsideRows []domain.Order
