@@ -191,7 +191,7 @@ func ScanOrders(rows *sql.Rows) ([]*Order, error) {
 // invariant is only a hope.
 func Create(db helpers.QueryRower, o *Order) error {
 	now := clock.Now().UTC()
-	id, err := helpers.InsertID(db, `INSERT INTO orders (edge_uuid, station_id, order_type, status, quantity, source_node, delivery_node, process_node, priority, payload_desc, parent_order_id, sequence, steps_json, bin_id, payload_code, skip_auto_confirm, sibling_order_uuid, key_route, key_task, source_intent, coordinated, origin_id, origin_class, recovers_order_id, named_bin_id, station_unaware, projects_to, plan, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $27, $28, $29, $26, $26) RETURNING id`,
+	id, err := helpers.InsertID(db, `INSERT INTO orders (edge_uuid, station_id, order_type, status, quantity, source_node, delivery_node, process_node, priority, payload_desc, parent_order_id, sequence, steps_json, bin_id, payload_code, skip_auto_confirm, sibling_order_uuid, key_route, key_task, source_intent, coordinated, origin_id, origin_class, recovers_order_id, named_bin_id, station_unaware, projects_to, plan, robot_id, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $27, $28, $29, $30, $26, $26) RETURNING id`,
 		o.EdgeUUID, o.StationID, o.OrderType, o.Status,
 		o.Quantity,
 		o.SourceNode, o.DeliveryNode, o.ProcessNode, o.Priority, o.PayloadDesc,
@@ -201,7 +201,7 @@ func Create(db helpers.QueryRower, o *Order) error {
 		helpers.NullableText(o.OriginID), o.OriginClass,
 		helpers.NullableInt64(o.RecoversOrderID),
 		helpers.NullableInt64(o.NamedBinID),
-		now, o.StationUnaware, o.ProjectsTo, marshalPlan(o.Plan))
+		now, o.StationUnaware, o.ProjectsTo, marshalPlan(o.Plan), o.RobotID)
 	if err != nil {
 		return fmt.Errorf("create order: %w", err)
 	}

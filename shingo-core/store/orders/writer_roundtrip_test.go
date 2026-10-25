@@ -111,6 +111,9 @@ func TestWriter_RoundTripsEveryFieldItWrites(t *testing.T) {
 		// Blank is the default and projects to nobody; a named station is what
 		// a stage-2 pull writes (v146).
 		"ProjectsTo": "roundtrip-projected-station",
+		// A birth fact on one door: a carried-bin recovery is pinned to the robot
+		// whose deck the bin rides, in the INSERT.
+		"RobotID": "roundtrip-robot",
 		// The birth pick the wire door writes and acquiring reads (v147).
 		"Plan": &domain.PlannedPick{BinID: 424242, Node: "ROUNDTRIP-PLAN-NODE", Payload: "RT-PAYLOAD",
 			Status: "available", Confirmed: true},
@@ -128,7 +131,6 @@ func TestWriter_RoundTripsEveryFieldItWrites(t *testing.T) {
 		"UpdatedAt":     "updated_at",
 		"VendorOrderID": "vendor_order_id",
 		"VendorState":   "vendor_state",
-		"RobotID":       "robot_id",
 		"ErrorDetail":   "error_detail",
 		"CompletedAt":   "completed_at",
 		"WaitIndex":     "wait_index",

@@ -10,7 +10,7 @@ import (
 //
 // ── WHY ───────────────────────────────────────────────────────────────────
 //
-// Every order is born `pending` (v4 §2.6), and `pending` is in the scanner's
+// Every order is issued `pending` (v4 §2.6), and `pending` is in the scanner's
 // population. A wire order's row exists before its door has finished with it:
 // the door writes remaining_uop and the resolved destination after the INSERT,
 // and a buried source's dig is planned from the pick the door made before it.
@@ -19,17 +19,18 @@ import (
 // the dig. So the door holds the scanner's lock across all of it (RULINGS-C1-P0
 // F1). Zero statements; only the lock's scope moved.
 //
-// The lock goes when a born row is a whole row. C2b moved the dig's pivot into
-// the hand; the plan facts did not move into the birth's transaction. The wire
+// The lock goes when an issued row is a whole row. C2b moved the dig's pivot into
+// the hand; the plan facts did not move into the issue's transaction. The wire
 // door still writes remaining_uop, a group's resolved child, the payload code
 // and the park's cause after its INSERT; complex intake its sibling back-link
-// and park; the carried-bin recovery its pin. A door whose row IS whole at its
-// INSERT holds no lock: the bin move (engine.CreateBinMove) and the Core ask
-// (AcquireCoreAsk) ask for their one acquire through AcquireOne.
+// and park. A door whose row IS whole at its INSERT holds no lock: the bin move
+// (engine.CreateBinMove) and the Core ask (AcquireCoreAsk) ask for their one
+// acquire through AcquireOne, and the carried-bin recovery, its robot pinned in
+// the row, dispatches in its own call (HandHeld).
 //
 // ── WHAT A DOOR DOES INSIDE IT ────────────────────────────────────────────
 //
-// Birth, apply, then one acquire (acquireBorn). An order the acquire dispatches
+// Issue, apply, then one acquire (acquireBorn). An order the acquire dispatches
 // is told by the dispatch's own messages; one it parks is `queued` with its
 // cause on the row, and its station is told once, with that cause, by the
 // scanner's park. A door that parks by itself, because its decision was already

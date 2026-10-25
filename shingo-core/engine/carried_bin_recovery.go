@@ -264,8 +264,11 @@ func (e *Engine) orderCarriedBinDown(binID int64, robotID string, req onDeckRequ
 		Cart:        bin.ID,
 		By:          req.by,
 		PayloadCode: bin.PayloadCode,
-		// The pin. See dispatch.pinnedVehicleFor for why the intent and not
-		// robot_id alone is what makes this a pin.
+		// The pin: this robot and no other, in the INSERT (for every other order
+		// the column records the robot the fleet assigned). See
+		// dispatch.pinnedVehicleFor for why the intent and not robot_id alone is
+		// what makes this a pin.
+		Robot:        robotID,
 		SourceIntent: dispatch.SourceIntentOnDeck,
 		// NO_DEMAND, stamped at the literal like its siblings at the other
 		// caller-less doors. A recovery is Core reconciling its own books with
@@ -312,14 +315,10 @@ func (e *Engine) orderCarriedBinDown(binID int64, robotID string, req onDeckRequ
 			"so this attempt can be created; the earlier attempt(s) failed and their rows are kept",
 			binID, freed, need.Ref)
 	}
-	// THE ISSUE, THE PIN AND THE DISPATCH ARE ONE UNIT UNDER THE SCAN LOCK
-	// (dispatch/door.go; RULINGS-C1-P0 F1). The order is issued `pending` holding
-	// its bin softly and not yet pinned, and `pending` is in the scanner's population: a
-	// pass in between would take an unpinned order into the
-	// held-bin arm.
-	var order *orders.Order
-	var unitErr error
-	e.door(func() { order, unitErr = e.issueAndDispatchRecovery(need, bin, carrierNode, dest, robotID) })
+	// THE ISSUE IS WHOLE AT ITS INSERT, the pin in the row (need.Robot), so it
+	// needs no scan lock around it: a pass that reaches the `pending` order
+	// before its dispatch takes it to the robot it names.
+	order, unitErr := e.issueAndDispatchRecovery(need, bin, carrierNode, dest)
 	if unitErr != nil {
 		return nil, "", unitErr
 	}
@@ -356,9 +355,10 @@ func (e *Engine) orderCarriedBinDown(binID int64, robotID string, req onDeckRequ
 	return order, detail, nil
 }
 
-// issueAndDispatchRecovery is the recovery door's unit under the scan lock: the
-// issue (the cart held softly), the robot pin, and the dispatch or the park.
-func (e *Engine) issueAndDispatchRecovery(need dispatch.Need, bin *bins.Bin, carrierNode, dest *nodes.Node, robotID string) (*orders.Order, error) {
+// issueAndDispatchRecovery is the recovery door's unit: the issue, whole at its
+// INSERT (the cart held softly, the robot pinned in the row: need.Robot), then
+// the dispatch in its own call.
+func (e *Engine) issueAndDispatchRecovery(need dispatch.Need, bin *bins.Bin, carrierNode, dest *nodes.Node) (*orders.Order, error) {
 	binID := bin.ID
 	order, _, err := e.dispatcher.IssueOrder(need, plan.Plan{Outcome: plan.OutcomeFound, Bin: bin, Node: carrierNode, Dest: dest})
 	if errors.Is(err, reservations.ErrReservationConflict) {
@@ -368,46 +368,16 @@ func (e *Engine) issueAndDispatchRecovery(need dispatch.Need, bin *bins.Bin, car
 	if err != nil {
 		return nil, fmt.Errorf("create recovery order for bin %d: %w", binID, err)
 	}
-	order.RobotID = robotID
-	// ── PERSIST THE PIN, BECAUSE THE INSERT DOES NOT ──────────────────────
-	//
-	// orders.Create's column list has no robot_id (store/orders/orders.go): the
-	// column is written by the vendor-dispatch update, where it records the robot
-	// the FLEET assigned. On this door RobotID means the opposite thing — this
-	// robot and no other, set by the creator — and it was being carried only on
-	// the in-memory struct.
-	//
-	// That was invisible while every path dispatched inside this call:
-	// pinnedVehicleFor read the struct in hand and the pin worked. It stops being
-	// invisible the moment the order can PARK, because whatever re-drives it reads
-	// the order back from the database — and an unpinned unload-only plan tells
-	// some other robot to put down a bin it is not carrying. Measured: the parked
-	// order came back from the scanner with robot_id="".
-	//
-	// Through the existing narrow writer rather than by widening the shared INSERT,
-	// which is a different question and not this door's to answer.
-	//
-	// A FAILED PIN FAILS THE ROW. Returning with the row still pending left an
-	// order holding this pair's one uuid that no scanner pass selects and whose
-	// every re-read would come back unpinned.
-	if err := e.db.UpdateOrderRobotID(order.ID, robotID); err != nil {
-		e.failOrderAndEmit(order.ID, "pin_failed", fmt.Sprintf("could not pin the order to %s: %v", robotID, err))
-		return nil, fmt.Errorf("pin recovery order %d to robot %s: %w", order.ID, robotID, err)
-	}
 
-	// ── DISPATCHED HERE, NOT LEFT FOR THE SCANNER ───────────────────────
+	// ── DISPATCHED HERE, WITH ITS OWN DISPOSITION ───────────────────────
 	//
-	// The scanner would never pick this up: it sources a move order by FINDING
-	// a bin at the source node, and every finder excludes synthetic nodes —
-	// which is the property that makes a carrier node safe in the first place
-	// (a bin riding a deck must not be sourceable). An order that waits for a
-	// find that cannot happen is an order that sits in sourcing forever,
-	// holding the bin.
-	//
-	// So this door dispatches, in the same shape as the bin-move door: reserve,
-	// ask the lanes, confirm, hand over — with the same rollback on refusal,
-	// because there is a person waiting on the answer either way.
-	if derr := e.dispatchRecoveryOrder(order, bin.ID, carrierNode, dest); derr != nil {
+	// The order is issued `pending` with its bin stamped and its robot pinned,
+	// so a scanner pass that reaches it first takes it into the held-bin arm,
+	// which dispatches it to that robot (and then this call yields). This door
+	// dispatches it at once all the same, because a person is waiting on the
+	// answer, and the refusals are the door's to dispose of: a fleet refusal of
+	// a recovery stays terminal, where the scanner's arm parks.
+	if derr := e.dispatchRecoveryOrder(order, bin.ID, carrierNode); derr != nil {
 		return nil, derr
 	}
 	return order, nil
@@ -434,14 +404,14 @@ func (e *Engine) cancelParkedOnDeckOrder(o *orders.Order, actor string) error {
 	return nil
 }
 
-// dispatchRecoveryOrder hands one recovery order to the fleet, and cleans up
-// after itself if the fleet will not take it.
-//
-// The sequence mirrors the bin-move door (bin_move.go) because it is the same
-// situation: a named bin, no finder involved, and a caller who needs the answer
-// now. Deviating would mean a second, less-tested spelling of soft-reserve →
-// admit → hard-claim → dispatch.
-func (e *Engine) dispatchRecoveryOrder(order *orders.Order, binID int64, sourceNode, destNode *nodes.Node) error {
+// dispatchRecoveryOrder hands one recovery order to the fleet through the
+// held-bin body the scanner's arm uses (dispatch.HandHeld: the destination
+// secured and settled, the lanes asked, then the hand and the fleet), and
+// disposes of each refusal the door's own way, cleaning up after itself: a
+// person is waiting on the answer. The bin is held from the order's issue
+// (dispatch.Need.Cart), in the INSERT's own transaction, so a bin another order
+// holds refused the issue before anything was written.
+func (e *Engine) dispatchRecoveryOrder(order *orders.Order, binID int64, sourceNode *nodes.Node) error {
 	fail := func(code, detail string, err error) error {
 		e.failOrderAndEmit(order.ID, code, detail)
 		if rerr := e.db.ReleaseReservation(order.ID, binID); rerr != nil {
@@ -452,54 +422,34 @@ func (e *Engine) dispatchRecoveryOrder(order *orders.Order, binID int64, sourceN
 		}
 		return &CarriedBinNotRecoverable{BinID: binID, Reason: detail}
 	}
-	// The bin is held from the order's issue (dispatch.Need.Cart), in the
-	// INSERT's own transaction, so a bin another order holds refused the issue
-	// before anything was written.
-	//
-	// RESERVE THE SLOT BEFORE CONFIRMING IT. ConfirmForDispatch hard-claims a
-	// storage dropoff through the reservation-guarded CAS, which requires a
-	// PENDING reservation to exist — the scanner's plain path gets one from
-	// ReserveStorageDropoff on the way in, and a door that dispatches directly
-	// has to make the same call or the claim is refused for having no
-	// reservation rather than for the slot being taken.
-	//
-	// It also SETTLES the destination (group → child, off a dug lane), so the
-	// node it returns is the one to dispatch against and the earlier read is
-	// stale from here on.
-	// THE THIRD CALLER OF THIS DOOR, AND IT HAD THE SAME SIN AS THE OTHER TWO —
-	// one door over and OPERATOR-FACING. Every refusal collapsed into
+	h, err := dispatch.HandHeld(e.dispatcher, order, binID, sourceNode)
+	// THE DESTINATION, OPERATOR-FACING. Every refusal used to collapse into
 	// "slot_unavailable / no slot at X right now", so a failed database read told
 	// the person holding the tablet to go and look at a slot that was probably
 	// empty, and an unresolved GROUP told them to look at one slot out of a set.
 	// The verdict names the cause; this maps it to the code and the sentence the
 	// operator sees.
-	dest := e.dispatcher.ReserveStorageDropoff(order)
-	if dest.Refused() {
+	if dest := h.Dropoff; dest.Refused() {
 		code, sentence := recoveryDropoffRefusal(dest.Cause, order.DeliveryNode)
 		return fail(code, fmt.Sprintf("%s: %v", sentence, dest.Err), dest.Err)
 	}
-	if dest.Node != nil {
-		destNode = dest.Node
-	}
-	// The lane question, asked for the same reason the bin-move door asks it: a
-	// robot driving to the destination is a robot in a lane. The SOURCE is
-	// synthetic and has no lane, and the destination's lane is marked (every lane
-	// is), so the robot stops at the mark and the gate decides its entry: no lane
-	// refuses this order here, and this door no longer has a lane-park arm. What
-	// is left is a lane that could not be READ, which parks rather than kills.
-	if _, _, _, aerr := e.dispatcher.AdmitLanesForOrder(
-		order, sourceNode, destNode, dispatch.EntryHeldBin); aerr != nil {
-		return e.queueRecoveryForUnreadableLane(order, destNode, aerr)
+	// The lane question: a robot driving to the destination is a robot in a
+	// lane. The SOURCE is synthetic and has no lane, and the destination's lane
+	// is marked (every lane is), so the robot stops at the mark and the gate
+	// decides its entry: no lane refuses this order here. What is left is a lane
+	// that could not be READ, which parks rather than kills.
+	if h.Lanes != nil {
+		return e.queueRecoveryForUnreadableLane(order, h.Dropoff.Node, h.Lanes)
 	}
 	// THE HAND: slot, bin, occupancy and status in one transaction, then the
 	// fleet. It takes no lane hold for this order (the source has no lane), so a
 	// refusal is a slot or bin refusal, an ended order or a gone named bin: the
-	// claim failure the old confirm returned. Either way the hand held nothing.
-	_, err := e.dispatcher.DispatchHand(order, binID, sourceNode, destNode)
+	// claim failure. Either way the hand held nothing.
 	if dispatch.IsConcurrentTransition(err) {
-		// Another dispatcher took the order first and holds it; the hand held
-		// nothing, so there is nothing to fail or undo (SYNTH §2.4: the loser
-		// yields). The order is returned as it now stands.
+		// Another dispatcher took the order first and holds it (a scanner pass,
+		// with the pin in the row); the hand held nothing, so there is nothing to
+		// fail or undo (SYNTH §2.4: the loser yields). The order is returned as
+		// it now stands.
 		e.logFn("engine: recovery order %d was dispatched by another caller first — yielding", order.ID)
 		if fresh, rerr := e.db.GetOrder(order.ID); rerr == nil {
 			*order = *fresh
@@ -507,16 +457,17 @@ func (e *Engine) dispatchRecoveryOrder(order *orders.Order, binID int64, sourceN
 		return nil
 	}
 	if _, refused := dispatch.AsHandRefusal(err); refused || dispatch.NotAWait(err) {
-		return fail("claim_failed", fmt.Sprintf("could not claim bin %d and slot %s: %v", binID, destNode.Name, err), err)
+		return fail("claim_failed", fmt.Sprintf("could not claim bin %d and slot %s: %v", binID, h.Dropoff.Node.Name, err), err)
 	}
 	if err != nil {
-		// THIS ARM STAYS TERMINAL, and it is not the lane arm's twin. A fleet
-		// refusal is the sanctioned demand-by-hand exception: the person who
-		// pressed Recover is standing at the door awaiting the answer, and the
-		// robot system saying no is an answer. The lane arm above parks because a
-		// corridor clears on its own and something re-drives the order when it
-		// does; nothing re-drives a plant whose fleet is down, so a row left live
-		// here would be an orphan on the board wearing a cause with no releaser.
+		// A FLEET REFUSAL STAYS TERMINAL (owner, 2026-10-24: "we want engineers to
+		// handle it; it's usually for a good reason"), and it is not the lane
+		// arm's twin. The person who pressed Recover is standing at the door
+		// awaiting the answer, and the robot system saying no is an answer. The
+		// lane arm above parks because a corridor clears on its own and something
+		// re-drives the order when it does; nothing re-drives a plant whose fleet
+		// is down, so a row left live here would be an orphan on the board wearing
+		// a cause with no releaser.
 		return fail("fleet_failed", fmt.Sprintf("the fleet did not accept the order: %v", err), err)
 	}
 	return nil

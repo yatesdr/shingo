@@ -72,6 +72,10 @@ type Need struct {
 	// puts down (orders.recovers_order_id); nil for every other order. Written
 	// once, at its issue.
 	Recovers *int64
+	// Robot is the one robot the order is for, in the INSERT (orders.robot_id):
+	// a carried-bin recovery's pin, the robot whose deck the bin rides. "" for
+	// every other order, whose robot the fleet assigns at dispatch.
+	Robot string
 	// Steps is a multi-leg order's steps as resolved at its intake
 	// (orders.steps_json); "" for every other order.
 	Steps string
@@ -172,6 +176,7 @@ func row(need Need, p plan.Plan) *orders.Order {
 		RecoversOrderID:  need.Recovers,
 		StepsJSON:        need.Steps,
 		SiblingOrderUUID: need.Sibling,
+		RobotID:          need.Robot,
 	}
 	if o.SourceIntent == "" {
 		o.SourceIntent = SourceIntentForType(need.Type)

@@ -25,7 +25,6 @@ var deliberatelyNotWritten = map[string]string{
 	"id":              "serial primary key, assigned by RETURNING id",
 	"vendor_order_id": "fleet identifier, minted at dispatch (dispatcher.go)",
 	"vendor_state":    "vendor lifecycle mirror, written on vendor callbacks",
-	"robot_id":        "assigned when the fleet picks a robot",
 	"error_detail":    "written on failure transitions",
 	"completed_at":    "written at the terminal transition",
 	"wait_index":      "queue-position bookkeeping, maintained after create",
