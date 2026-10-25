@@ -9,6 +9,7 @@ import (
 
 	"shingo/protocol"
 	"shingocore/store/audit"
+	"shingocore/store/bins"
 )
 
 // [S.4] HANDOFF: the carrier-handoff work's before-numbers, per Edge where the
@@ -36,8 +37,9 @@ import (
 //	c. releases whose after_uop differs from before_uop, per op.
 //	d. epoch refreshes per target node, and how many named _TRANSIT (a carrier
 //	   riding a robot, where no station models it).
-//	e. labelled carriers at 0 at rest: a payload code and no parts, at a node
-//	   other than _TRANSIT, at the collect.
+//	e. labelled carriers at 0 (or below) at rest: a payload code and no stock
+//	   (a count of 0, or an overpack below it), at a node other than _TRANSIT,
+//	   at the collect.
 //	f. consume ticks Core applied to a carrier after its release and before
 //	   its next generation (the next EpochBumpOps or manifest_confirmed row on
 //	   the bin): a seat still counting into a carrier it has let go.
@@ -255,14 +257,15 @@ func releasesChanged(db *sql.DB) ([]releaseOp, error) {
 	return out, rows.Err()
 }
 
-// labelledAtZero is the carriers holding a label and no parts at a node other
-// than _TRANSIT, per node.
+// labelledAtZero is the carriers holding a label and no stock (bins.StockSQL:
+// counted to 0, or overpacked below it) at a node other than _TRANSIT, per
+// node.
 func labelledAtZero(db *sql.DB) ([]nodeCount, error) {
 	rows, err := db.Query(`
 		SELECT n.name, COALESCE(MAX(nt.code), ''), COUNT(*)
 		FROM bins b JOIN nodes n ON n.id = b.node_id
 		LEFT JOIN node_types nt ON nt.id = n.node_type_id
-		WHERE b.payload_code <> '' AND b.uop_remaining = 0 AND b.status <> 'retired'
+		WHERE b.payload_code <> '' AND NOT ` + bins.StockSQL("b") + ` AND b.status <> 'retired'
 		  AND n.name <> '_TRANSIT'
 		GROUP BY n.name ORDER BY 3 DESC, 1`)
 	if err != nil {
@@ -477,7 +480,7 @@ func printHandoff(h *handoffCore, edges []*edgeReading, logs *logStats, unrun bo
 		}
 	}
 	fmt.Printf("        d. epoch refreshes: %d, to _TRANSIT %d  (%s)\n", sumCounts(h.refreshes), transit, nodeText(h.refreshes, 8))
-	fmt.Printf("        e. labelled carriers at 0 at rest: %d  (%s)\n", sumCounts(h.zeroAtRest), nodeText(h.zeroAtRest, 8))
+	fmt.Printf("        e. labelled carriers at 0 (or below) at rest: %d  (%s)\n", sumCounts(h.zeroAtRest), nodeText(h.zeroAtRest, 8))
 	a := h.after
 	fmt.Printf("        f. consume ticks after a release: %d of %d releases followed, %d bin(s), %d ticks (%d units), max %d per release\n",
 		a.followed, a.releases, a.bins, a.ticks, a.units, a.maxPer)

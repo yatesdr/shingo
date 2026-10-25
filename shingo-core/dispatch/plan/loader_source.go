@@ -32,6 +32,7 @@ func candFromBin(b *bins.Bin) binsource.Cand {
 		Payload:           b.PayloadCode,
 		UOP:               b.UOPRemaining,
 		Cap:               b.UOPCapacity,
+		Stocked:           b.Stocked(),
 		LoadedAt:          b.LoadedAt,
 		CreatedAt:         b.CreatedAt,
 		Claimed:           b.ClaimedBy != nil,

@@ -32,7 +32,7 @@ func TestRejectReasonCannotDriftFromEligible(t *testing.T) {
 						for _, locked := range bools {
 							for _, confirmed := range bools {
 								c := Cand{
-									BinID: 1, Payload: p, UOP: u, Cap: cap10,
+									BinID: 1, Payload: p, UOP: u, Cap: cap10, Stocked: u > 0,
 									CreatedAt: tOld, Claimed: claimed, Locked: locked,
 									ManifestConfirmed: confirmed, Status: st,
 								}
@@ -58,7 +58,7 @@ func TestRejectReasonCannotDriftFromEligible(t *testing.T) {
 // surface except this one.
 func TestRejectReasonNamesTheFirstFailure(t *testing.T) {
 	full := func(mut func(*Cand)) Cand {
-		c := Cand{BinID: 7, Payload: X, UOP: cap10, Cap: cap10, CreatedAt: tOld,
+		c := Cand{BinID: 7, Payload: X, UOP: cap10, Cap: cap10, Stocked: true, CreatedAt: tOld,
 			ManifestConfirmed: true, Status: domain.BinStatusAvailable}
 		if mut != nil {
 			mut(&c)
@@ -75,9 +75,9 @@ func TestRejectReasonNamesTheFirstFailure(t *testing.T) {
 		{"claimed beats everything", full(func(c *Cand) { c.Claimed = true; c.Payload = Y }), "claimed"},
 		{"locked", full(func(c *Cand) { c.Locked = true }), "locked"},
 		{"blocking status", full(func(c *Cand) { c.Status = domain.BinStatusMaintenance }), "status:maintenance"},
-		{"empty bin cannot be drained", full(func(c *Cand) { c.Payload = ""; c.UOP = 0 }), "empty-bin"},
+		{"empty bin cannot be drained", full(func(c *Cand) { c.Payload = ""; c.UOP, c.Stocked = 0, false }), "empty-bin"},
 		{"near-miss payload is named", full(func(c *Cand) { c.Payload = Y }), "payload:" + Y},
-		{"drained to zero", full(func(c *Cand) { c.UOP = 0 }), "uop<=0"},
+		{"drained to zero", full(func(c *Cand) { c.UOP, c.Stocked = 0, false }), "uop<=0"},
 		{"full but unconfirmed", full(func(c *Cand) { c.ManifestConfirmed = false }), "unconfirmed-full"},
 		{"partial need not be confirmed", full(func(c *Cand) { c.UOP = cap10 - 1; c.ManifestConfirmed = false }), ""},
 		{"over-capacity counts as full", full(func(c *Cand) { c.UOP = cap10 + 1; c.ManifestConfirmed = false }), "unconfirmed-full"},
@@ -105,19 +105,19 @@ func TestRejectReasonFillTags(t *testing.T) {
 	}
 
 	partial := base
-	partial.Payload, partial.UOP = X, cap10-1
+	partial.Payload, partial.UOP, partial.Stocked = X, cap10-1, true
 	if got := RejectReason(partial, want); got != "" {
 		t.Errorf("partial of X should be eligible for Fill, got %q", got)
 	}
 
 	fullOfX := base
-	fullOfX.Payload, fullOfX.UOP, fullOfX.ManifestConfirmed = X, cap10, true
+	fullOfX.Payload, fullOfX.UOP, fullOfX.Stocked, fullOfX.ManifestConfirmed = X, cap10, true, true
 	if got := RejectReason(fullOfX, want); got != "full-not-a-container" {
 		t.Errorf("full of X for Fill = %q, want full-not-a-container", got)
 	}
 
 	otherPart := base
-	otherPart.Payload, otherPart.UOP = Y, 1
+	otherPart.Payload, otherPart.UOP, otherPart.Stocked = Y, 1, true
 	if got := RejectReason(otherPart, want); got != "payload:"+Y {
 		t.Errorf("partial of Y for Fill = %q, want payload:%s", got, Y)
 	}
@@ -133,7 +133,7 @@ func TestRejectReasonFillHeight(t *testing.T) {
 	empty := base
 	empty.State = protocol.CarrierEmpty
 	partial := base
-	partial.Payload, partial.UOP, partial.State = X, cap10-1, protocol.CarrierLoaded
+	partial.Payload, partial.UOP, partial.Stocked, partial.State = X, cap10-1, true, protocol.CarrierLoaded
 	for _, c := range []struct {
 		name   string
 		cand   Cand

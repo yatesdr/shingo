@@ -762,15 +762,21 @@ var EmptyOfTypeInGroupWhere = EmptyCarrierWhereInGroup(3, 2) +
 // exactly one place. See helpers/bin_sourceable.go for the rule and the
 // 2026-09-14 rulings behind it.
 const (
-	SourceableStatusSQL          = helpers.SourceableStatusSQL
-	NodeEnabledSQL               = helpers.NodeEnabledSQL
-	BinPresentSQL                = helpers.BinPresentSQL
-	BinAtLiveNodeSQL             = helpers.BinAtLiveNodeSQL
-	BinUnheldSQL                 = helpers.BinUnheldSQL
-	BinUnclaimedSQL              = helpers.BinUnclaimedSQL
-	BinCarriesSourceableStockSQL = helpers.BinCarriesSourceableStockSQL
-	BinInUndeclaredCarrierSQL    = helpers.BinInUndeclaredCarrierSQL
+	SourceableStatusSQL       = helpers.SourceableStatusSQL
+	NodeEnabledSQL            = helpers.NodeEnabledSQL
+	BinPresentSQL             = helpers.BinPresentSQL
+	BinAtLiveNodeSQL          = helpers.BinAtLiveNodeSQL
+	BinUnheldSQL              = helpers.BinUnheldSQL
+	BinUnclaimedSQL           = helpers.BinUnclaimedSQL
+	BinInUndeclaredCarrierSQL = helpers.BinInUndeclaredCarrierSQL
 )
+
+// BinCarriesSourceableStockSQL — see helpers.BinCarriesSourceableStockSQL (a
+// var: it composes StockSQL).
+var BinCarriesSourceableStockSQL = helpers.BinCarriesSourceableStockSQL
+
+// StockSQL — see helpers.StockSQL; for soakstat, which is outside store/.
+func StockSQL(alias string) string { return helpers.StockSQL(alias) }
 
 // PayloadBinTypeRuleArm — see helpers.PayloadBinTypeRuleArm.
 func PayloadBinTypeRuleArm(payloadExpr string) string {
@@ -2226,7 +2232,7 @@ func FindPartialToFinish(db *sql.DB, payloadCode string, places []string, exclud
 	  AND b.node_id IS NOT NULL
 	  AND ` + BinAtLiveNodeSQL + fmt.Sprintf(`
 	  AND b.payload_code = $%d
-	  AND b.uop_remaining > 0
+	  AND `+helpers.StockSQL("b")+`
 	  AND b.uop_remaining < COALESCE((SELECT p.uop_capacity FROM payloads p WHERE p.code = b.payload_code), 0)
 	  AND b.node_id IN (SELECT id FROM places)
 	  AND NOT `+linePositionSQL+`

@@ -43,6 +43,11 @@ func TestHandoff_ReadsEachNumberOffTheRealSchema(t *testing.T) {
 	bin := testdb.CreateBinAtNode(t, db, sd.Payload.Code, sd.LineNode.ID, "HO-1")
 	_, err = db.Exec(`UPDATE bins SET uop_remaining = 0 WHERE id = $1`, bin.ID)
 	testutil.MustNoErr(t, err, "the carrier is labelled and empty")
+	// A labelled overpack holds no stock either (bins.StockSQL): it is labelled at
+	// zero as the carrier at 0 is.
+	over := testdb.CreateBinAtNode(t, db, sd.Payload.Code, sd.LineNode.ID, "HO-2")
+	_, err = db.Exec(`UPDATE bins SET uop_remaining = -3 WHERE id = $1`, over.ID)
+	testutil.MustNoErr(t, err, "the second carrier is labelled and overpacked")
 	_, err = db.Exec(`INSERT INTO bin_uop_exception (kind, bin_id, actor, occurred_at, op, detail)
 		VALUES ($1, $2, 'line-1', NOW(), $3, '{"delta": -3}')`, audit.ExcStaleEpoch, bin.ID, audit.OpStaleEpochDropped)
 	testutil.MustNoErr(t, err, "seed a stale drop")
@@ -80,8 +85,8 @@ func TestHandoff_ReadsEachNumberOffTheRealSchema(t *testing.T) {
 	if sumCounts(h.refreshes) != 2 || h.refreshes[0].n != 1 {
 		t.Errorf("refreshes = %+v, want two, one per node", h.refreshes)
 	}
-	if len(h.zeroAtRest) != 1 || h.zeroAtRest[0].node != line {
-		t.Errorf("labelled at 0 = %+v, want the one carrier at %s", h.zeroAtRest, line)
+	if len(h.zeroAtRest) != 1 || h.zeroAtRest[0].node != line || h.zeroAtRest[0].n != 2 {
+		t.Errorf("labelled at 0 = %+v, want the two carriers at %s, the one at 0 and the overpack", h.zeroAtRest, line)
 	}
 	a := h.after
 	if a.releases != 2 || a.followed != 1 || a.ticks != 2 || a.units != 3 || a.maxPer != 2 || a.byStation["line-1"] != 2 {

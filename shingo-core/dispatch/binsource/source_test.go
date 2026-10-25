@@ -179,7 +179,7 @@ func TestSource(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got, found := Source(tc.cands, tc.want)
+			got, found := Source(stocked(tc.cands), tc.want)
 			if found != tc.wantFound {
 				t.Fatalf("found = %v, want %v (got bin %d)", found, tc.wantFound, got.BinID)
 			}
@@ -188,4 +188,15 @@ func TestSource(t *testing.T) {
 			}
 		})
 	}
+}
+
+// stocked is what the caller reads off each row before the selector sees it
+// (candFromBin: domain.Bin.Stocked): the table states its candidates' counts.
+func stocked(cands []Cand) []Cand {
+	out := make([]Cand, len(cands))
+	for i, c := range cands {
+		c.Stocked = c.UOP > 0
+		out[i] = c
+	}
+	return out
 }

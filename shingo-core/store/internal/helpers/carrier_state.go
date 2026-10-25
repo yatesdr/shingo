@@ -14,7 +14,7 @@ func CarrierStateSQL(b, bt string) string {
 	return `(CASE
 		WHEN ` + bt + `.bare THEN '` + string(protocol.CarrierBare) + `'
 		WHEN COALESCE(` + b + `.payload_code, '') <> '' THEN '` + string(protocol.CarrierLoaded) + `'
-		WHEN ` + bt + `.totes_per_layer IS NULL OR ` + bt + `.totes_per_layer <= 0 THEN '` + string(protocol.CarrierEmpty) + `'
+		WHEN ` + bt + `.totes_per_layer IS NULL THEN '` + string(protocol.CarrierEmpty) + `'
 		WHEN ` + b + `.totes_on_cart IS NULL THEN '` + string(protocol.CarrierUnverified) + `'
 		WHEN ` + b + `.totes_on_cart = 0 THEN '` + string(protocol.CarrierTopsAndBottoms) + `'
 		WHEN ` + b + `.totes_on_cart % ` + bt + `.totes_per_layer <> 0 THEN '` + string(protocol.CarrierLeftover) + `'

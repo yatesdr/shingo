@@ -147,6 +147,7 @@ func (f eligFixture) cand(b *bins.Bin) binsource.Cand {
 		BinID:             b.ID,
 		Payload:           b.PayloadCode,
 		UOP:               b.UOPRemaining,
+		Stocked:           b.Stocked(),
 		Cap:               b.UOPCapacity,
 		LoadedAt:          b.LoadedAt,
 		CreatedAt:         b.CreatedAt,

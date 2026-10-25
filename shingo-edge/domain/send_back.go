@@ -124,11 +124,11 @@ func SendBackLine(f SendBackFacts) SendBack {
 		return line
 	}
 	cart := f.Outside
-	if cart == nil || !cart.Occupied || cart.TotesPerLayer == nil || cart.Bare ||
+	if cart == nil || !cart.Occupied || !protocol.IsToteType(cart.TotesPerLayer) || cart.Bare ||
 		cart.CarrierState() == protocol.CarrierTopsAndBottoms {
 		return SendBack{}
 	}
-	if f.Core != nil && f.Core.Occupied && f.Core.TotesPerLayer == nil {
+	if f.Core != nil && f.Core.Occupied && !protocol.IsToteType(f.Core.TotesPerLayer) {
 		return SendBack{}
 	}
 	if f.ChangeoverArmed {

@@ -11,6 +11,8 @@ import (
 	"log"
 	"strings"
 	"time"
+
+	"shingocore/store/internal/helpers"
 )
 
 // Footprint is the plant-footprint summary. Counts are plant-wide totals;
@@ -71,8 +73,8 @@ func Get(db *sql.DB, loc *time.Location, loadedOp string, unloadedOps []string) 
 	// Distinct producing processes across lines — best-effort (cell_part_events
 	// may be empty/absent). Physical cells aren't distinguishable yet (Q-034).
 	_ = db.QueryRow(`SELECT COUNT(DISTINCT (cell_id, process_id)) FROM cell_part_events`).Scan(&fp.ProcessesManaged)
-	// Full = a bin currently holding parts (uop_remaining > 0); empty = the rest.
-	if err := db.QueryRow(`SELECT COUNT(*), COUNT(*) FILTER (WHERE uop_remaining > 0) FROM bins`).
+	// Full = a bin currently holding stock (helpers.StockSQL); empty = the rest.
+	if err := db.QueryRow(`SELECT COUNT(*), COUNT(*) FILTER (WHERE `+helpers.StockSQL("b")+`) FROM bins b`).
 		Scan(&fp.BinsManaged, &fp.BinsFull); err != nil {
 		return nil, err
 	}

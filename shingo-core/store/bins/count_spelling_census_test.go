@@ -10,8 +10,6 @@ import (
 	"strconv"
 	"strings"
 	"testing"
-
-	"shingocore/internal/testdb"
 )
 
 // count_spelling_census_test.go — ground rule 7, "a count is a claim; counted to
@@ -20,10 +18,11 @@ import (
 // A carrier's count (bins.uop_remaining, the bin row's UOPRemaining) compared
 // with 0 says "this carrier holds stock" or "it holds none". The stock fragment
 // and the bins feed's Stocked say it as `> 0`; other sites say `<= 0`, `= 0`,
-// `<> 0` or `COALESCE(…, 0) > 0`, and the last three disagree with the first
-// about a negative count, an overpack. Phase F of the press-tranche-2 brief
-// makes it one function each side, a domain.Bin method and
-// helpers.StockSQL(alias); until then every site is a spelling.
+// `<> 0` or `COALESCE(…, 0) > 0`, and the last three disagreed with the first
+// about a negative count, an overpack. Since phase F of the press-tranche-2
+// brief it is one function each side: domain.Bin.Stocked in Go and
+// helpers.StockSQL(alias) in SQL (bins.StockSQL outside store/); the Edge reads
+// the bins feed's Stocked, which binRow derives from Stocked.
 //
 // THE UNIT IS A SITE: a file and the declaration holding the comparison (Func,
 // Recv.Method, or a const, var or type by its name), found on go/ast over every
@@ -32,42 +31,17 @@ import (
 // as `x`), so a fragment split around an alias is read whole. A comment naming
 // a comparison is no site, and no line number is in the key.
 //
-// Each fact has three lists, all exact. Its spellings are today's sites and go
-// to testdb.VerifyRed: green while they stand, red when the last is folded,
-// which is when the call goes. Its other questions compare the same column with
-// 0 to ask something else, each with its reason. A site on neither list fails as
-// a new spelling, and a listed site the tree no longer has fails as stale.
+// Each fact has two lists, both exact, and no third: the one function is the
+// fact's only spelling. Its other questions compare the same column with 0 to
+// ask something else, each with its reason. A site on neither list fails as a
+// new spelling, and a listed site the tree no longer has fails as stale. (Until
+// phase F the spellings were a third list, committed red in testdb.VerifyRed's
+// form; F folded them.)
 //
 // The second fact is "is this a tote type" (finch-4300 A7): totes per layer
-// stated. Phase F folds it into protocol.IsToteType beside ToteLayers, and in
-// SQL into the null test, `totes_per_layer IS [NOT] NULL`, which is therefore
-// no spelling. Every `<= 0` and `> 0` arm is dead under CHECK
-// (totes_per_layer > 0).
-
-// countSpellings are today's sites of "holds stock / counted to nothing".
-var countSpellings = map[string]string{
-	"shingo-core/store/internal/helpers/bin_sourceable.go:BinCarriesSourceableStockSQL": "the stock fragment: every sourcing reader and the digs compose it",
-	"shingo-core/store/internal/helpers/held_partial.go:HeldPartialSQL":                 "an unfinished carrier: holds stock, below capacity",
-	"shingo-core/store/bins/bins.go:FindPartialToFinish":                                "the partial to finish: holds stock, below capacity",
-	"shingo-core/store/sourceability/read.go:lineUOPByNode":                             "a line's stock sums the carriers holding stock",
-	"shingo-core/store/footprint/footprint.go:Get":                                      "the dashboard's full count: a bin holding parts (its own comment); not in phase F's list",
-	"shingo-core/store/lineside_divergence.go:DB.LinesideCoreSide":                      "`<> 0` counts an overpack as stock where the fragment counts it as nothing (F: judged and named)",
-	"shingo-core/cmd/soakstat/handoff.go:labelledAtZero":                                "`= 0` leaves a labelled overpack out of \"labelled at zero\"",
-	"shingo-core/cmd/soakstat/fixture_balance.go:fixtureBalance":                        "`COALESCE(…, 0) > 0` over a NOT NULL column",
-	"shingo-core/dispatch/binresolver/helpers.go:isBinAvailableForRetrieve":             "the stock fragment's Go twin for a group's slot children",
-	"shingo-core/dispatch/binresolver/helpers.go:StockOnly":                             "the part-supply bind's stock of its part (rule 5, phase E): the fragment's carrier half at a named node",
-	"shingo-core/dispatch/plan/finder.go:Finder.Pick":                                   "tier 4's named full",
-	"shingo-core/dispatch/binsource/source.go:RejectReason":                             "the loader pool's drain (Cand.UOP is uop_remaining)",
-	"shingo-core/dispatch/binsource/source.go:isPartialOf":                              "the loader pool's partial: holds stock, below capacity",
-	"shingo-core/engine/clear_home.go:Engine.resolveClearJob":                           "a home with parts to clear",
-	"shingo-core/engine/clear_home.go:clearPartialOn":                                   "a partial standing at the clear's spot",
-	"shingo-core/material/material.go:readBinContents":                                  "a carrier holding parts has counts to read",
-	"shingo-core/messaging/bins_feed.go:binRow":                                         "the wire's Stocked, the Edge's only spelling",
-	"shingo-core/www/handlers_dashboards.go:Handlers.transitRows":                       "a partial in transit: holds stock, below capacity",
-	"shingo-core/www/handlers_telemetry.go:loadAssertionRefusal":                        "an asserted partial: holds stock, below capacity",
-	"shingo-edge/domain/station_view.go:StationNodeView.MarshalJSON":                    "the Edge recomputes Stocked; F reads the feed's",
-	"shingo-edge/engine/sim_operator.go:simOperator.consumeDisposition":                 "the sim floor's underpack: counted to nothing",
-}
+// stated. It is protocol.IsToteType beside ToteLayers, and in SQL the null
+// test, `totes_per_layer IS [NOT] NULL`, which is therefore no spelling. The
+// `<= 0` and `> 0` arms it folded were dead under CHECK (totes_per_layer > 0).
 
 // countOtherQuestions compare the count with 0 to ask something else.
 var countOtherQuestions = map[string]string{
@@ -75,22 +49,11 @@ var countOtherQuestions = map[string]string{
 	"shingo-core/store/bins/ledger_integrity.go:OpenNegativeBins":      "the overpack finding: a count below 0 is the finding, not the stock question",
 	"shingo-core/www/material_flags_view.go:ClassifyLedger":            "the ledger's reading (settled, or binloads below 0): the overpack question",
 	"shingo-edge/engine/sim_operator.go:simOperator.clearNegativeBins": "the sim sweeps overpacked market bins: the overpack question",
-}
-
-// toteSpellings are today's sites of "is this a tote type" that are neither
-// protocol.IsToteType nor the SQL null test.
-var toteSpellings = map[string]string{
-	"protocol/carrier.go:ToteLayers":                                            "`== nil || <= 0`; ToteLayers composes IsToteType after F",
-	"protocol/carrier.go:CarrierStateOf":                                        "`== nil || <= 0`",
-	"shingo-core/store/internal/helpers/carrier_state.go:CarrierStateSQL":       "`IS NULL OR <= 0`: the dead arm",
-	"shingo-core/dispatch/place_by_contents.go:maintainerSlot":                  "`!= nil && > 0`",
-	"shingo-core/dispatch/place_by_contents.go:carrierGap":                      "`== nil || <= 0`",
-	"shingo-core/engine/unloader_lines.go:windowWalk.own":                       "`!= nil && > 0`",
-	"shingo-core/store/maintain_line.go:DB.TypeLineOf":                          "`== nil || <= 0`",
-	"shingo-core/service/node_service_maintain.go:NodeService.setMaintainLevel": "`== nil`",
-	"shingo-core/www/handlers_payloads.go:fullCartTotes":                        "`!= nil`",
-	"shingo-edge/domain/send_back.go:SendBackLine":                              "`== nil`, twice",
-	"shingo-edge/service/station_bins.go:StationService.StampBins":              "`!= nil`, beside the count's own",
+	// Judged and named in phase F (the brief's "judged and named").
+	"shingo-core/store/lineside_divergence.go:DB.LinesideCoreSide": "`<> 0`: the reconciliation asks whether Core holds a count at a seat that the Edge's " +
+		"report must answer for, an overpack included — a count to compare, not stock",
+	"shingo-edge/engine/sim_operator.go:simOperator.consumeDisposition": "the sim build's floor bands the oracle's count (underpack at or below 0, the lineside " +
+		"pull, a partial back): test tooling reading Core's bin JSON over HTTP, where the Edge's one reader of stock is the feed's Stocked",
 }
 
 // toteOtherQuestions compare totes per layer with 0 or nil to ask something else.
@@ -101,52 +64,40 @@ var toteOtherQuestions = map[string]string{
 // TestRule7_CountedToNothingHasOneSpelling is ground rule 7's census.
 func TestRule7_CountedToNothingHasOneSpelling(t *testing.T) {
 	t.Parallel()
-	got := siteCensus(t, countGoSite, countSQL, isTheOneCount)
-	testdb.VerifyRed(t, "rule 7: counted to nothing has one spelling",
-		judgeCensus(t, "count", got, countSpellings, countOtherQuestions))
+	judgeCensus(t, "count", siteCensus(t, countGoSite, countSQL, isTheOneCount), countOtherQuestions)
 }
 
 // TestRule7_ToteTypeHasOneSpelling is the census's second list (A7).
 func TestRule7_ToteTypeHasOneSpelling(t *testing.T) {
 	t.Parallel()
-	got := siteCensus(t, toteGoSite, toteSQL, isTheOneToteType)
-	testdb.VerifyRed(t, "rule 7: is-a-tote-type has one spelling",
-		judgeCensus(t, "tote type", got, toteSpellings, toteOtherQuestions))
+	judgeCensus(t, "tote type", siteCensus(t, toteGoSite, toteSQL, isTheOneToteType), toteOtherQuestions)
 }
 
-// judgeCensus fails on a site on neither list and on a listed site the tree no
-// longer has, and returns the spelling sites, each with its forms and lines.
-func judgeCensus(t *testing.T, what string, got map[string][]string, spellings, other map[string]string) []string {
+// judgeCensus fails on a site that is not on the other-questions list, and on a
+// listed site the tree no longer has.
+func judgeCensus(t *testing.T, what string, got map[string][]string, other map[string]string) {
 	t.Helper()
-	var violations []string
 	keys := make([]string, 0, len(got))
 	for k := range got {
 		keys = append(keys, k)
 	}
 	slices.Sort(keys)
 	for _, k := range keys {
-		forms := strings.Join(got[k], "; ")
-		if why, ok := spellings[k]; ok {
-			violations = append(violations, k+" ["+forms+"]: "+why)
-			continue
-		}
 		if _, ok := other[k]; ok {
 			continue
 		}
-		t.Errorf("rule 7: %s [%s] is a new spelling of the %s fact and is on no list.\n\n"+
-			"Compose the one function (a domain.Bin method and helpers.StockSQL for the count, "+
+		t.Errorf("rule 7: %s [%s] is a second spelling of the %s fact.\n\n"+
+			"Compose the one function (domain.Bin.Stocked and helpers.StockSQL for the count, "+
 			"protocol.IsToteType and the null test for the tote type), or, if the site asks a "+
-			"different question, name it in the other-questions list with the reason.", k, forms, what)
+			"different question, name it in the other-questions list with the reason.",
+			k, strings.Join(got[k], "; "), what)
 	}
-	for _, list := range []map[string]string{spellings, other} {
-		for k, why := range list {
-			if _, ok := got[k]; !ok {
-				t.Errorf("rule 7: %s (%s) is listed, but the tree no longer compares the %s there: "+
-					"delete its line, or repoint it if the site moved", k, why, what)
-			}
+	for k, why := range other {
+		if _, ok := got[k]; !ok {
+			t.Errorf("rule 7: %s (%s) is listed, but the tree no longer compares the %s there: "+
+				"delete its line, or repoint it if the site moved", k, why, what)
 		}
 	}
-	return violations
 }
 
 // countRE is the count compared with 0 in SQL: the column, or the column under
@@ -194,15 +145,14 @@ func toteGoSite(e *ast.BinaryExpr) bool {
 	return isComparison(e.Op) && (tote(e.X) && other(e.Y) || tote(e.Y) && other(e.X))
 }
 
-// isTheOneCount exempts the one function each side, which phase F creates: a
-// method on Core's domain.Bin, and helpers.StockSQL.
+// isTheOneCount exempts the one function each side: domain.Bin.Stocked, and
+// helpers.StockSQL.
 func isTheOneCount(rel, decl string) bool {
-	return strings.HasPrefix(rel, "shingo-core/domain/") && strings.HasPrefix(decl, "Bin.") ||
-		strings.HasPrefix(rel, "shingo-core/store/internal/helpers/") && decl == "StockSQL"
+	return rel == "shingo-core/domain/bin.go" && decl == "Bin.Stocked" ||
+		rel == "shingo-core/store/internal/helpers/bin_sourceable.go" && decl == "StockSQL"
 }
 
-// isTheOneToteType exempts protocol.IsToteType, which phase F creates beside
-// ToteLayers.
+// isTheOneToteType exempts protocol.IsToteType, beside ToteLayers.
 func isTheOneToteType(rel, decl string) bool {
 	return rel == "protocol/carrier.go" && decl == "IsToteType"
 }

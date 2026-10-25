@@ -204,6 +204,13 @@ func (b *Bin) ParseManifest() (*Manifest, error) {
 // cart as a whole number of its type's totes per layer.
 func (b *Bin) Layers() (int, bool) { return protocol.ToteLayers(b.TotesOnCart, b.TotesPerLayer) }
 
+// Stocked is whether the carrier holds stock: its count above 0. A carrier
+// counted to nothing holds none whatever its part says, and neither does an
+// overpack (a count below 0). The one Go spelling of the fact
+// (TestRule7_CountedToNothingHasOneSpelling): helpers.StockSQL is its SQL
+// twin, and the bins feed's Stocked, the Edge's one reading of it, is this.
+func (b *Bin) Stocked() bool { return b.UOPRemaining > 0 }
+
 // CarrierState is what stands on the cart (protocol.CarrierStateOf): loaded,
 // bare, tops & bottoms, leftover, unverified or empty.
 func (b *Bin) CarrierState() protocol.CarrierState {

@@ -279,7 +279,7 @@ func (w *windowWalk) own(row protocol.NodeBinsRow) (thing, bool) {
 	if !ok {
 		return thing{}, false
 	}
-	tote := row.TotesPerLayer != nil && *row.TotesPerLayer > 0
+	tote := protocol.IsToteType(row.TotesPerLayer)
 	switch row.CarrierState() {
 	case protocol.CarrierTopsAndBottoms:
 		// The row while the group is short of it; never its type at any height.

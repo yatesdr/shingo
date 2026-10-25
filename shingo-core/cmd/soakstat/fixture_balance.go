@@ -4,6 +4,8 @@ import (
 	"database/sql"
 	"fmt"
 	"strings"
+
+	"shingocore/store/bins"
 )
 
 // [S.2] FIXTURE BALANCE: is each payload made as fast as it is drawn?
@@ -98,7 +100,7 @@ func fixtureBalance(db *sql.DB) ([]payloadBalance, error) {
 		SELECT f.p, COALESCE(bt.code, '?'), f.made, f.drawn, COALESCE(pl.uop_capacity, 0),
 		       (SELECT COUNT(*) FROM bins b WHERE b.bin_type_id = c.t AND b.status <> 'retired'),
 		       (SELECT COUNT(*) FROM bins b WHERE b.bin_type_id = c.t AND b.payload_code = f.p
-		          AND COALESCE(b.uop_remaining, 0) > 0)
+		          AND ` + bins.StockSQL("b") + `)
 		FROM flow f
 		LEFT JOIN carrier c ON c.p = f.p
 		LEFT JOIN bin_types bt ON bt.id = c.t

@@ -700,7 +700,7 @@ func (f *Finder) Pick(need Need) Plan {
 		var foreign *bins.Bin
 		for _, b := range candidates {
 			if namedFull {
-				if b.PayloadCode != payloadCode || b.UOPRemaining <= 0 || !b.ManifestConfirmed {
+				if b.PayloadCode != payloadCode || !b.Stocked() || !b.ManifestConfirmed {
 					continue
 				}
 				if accept := acceptable(); accept != nil && !accept(b) {

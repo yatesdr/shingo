@@ -8,7 +8,7 @@ import "database/sql"
 // group, or the group above its lane. One spelling, read by the arrival stamp
 // and the clear's refusal, so the two cannot disagree about what is held.
 func HeldPartialSQL(a string) string {
-	return `(` + a + `.payload_code <> '' AND ` + a + `.uop_remaining > 0
+	return `(` + a + `.payload_code <> '' AND ` + StockSQL(a) + `
 	  AND ` + a + `.uop_remaining < COALESCE((SELECT p.uop_capacity FROM payloads p WHERE p.code = ` + a + `.payload_code), 0)
 	  AND ` + InPartialHomeSQL(a+".node_id", a+".payload_code") + `)`
 }

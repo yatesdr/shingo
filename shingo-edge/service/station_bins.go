@@ -267,7 +267,7 @@ func (s *StationService) StampBins(view *domain.OperatorStationView, rows map[st
 			tile.BinState = nodeBinState(row)
 			stocked := row.Stocked
 			tile.BinStocked = &stocked
-			if row.TotesOnCart != nil || row.TotesPerLayer != nil {
+			if row.TotesOnCart != nil || protocol.IsToteType(row.TotesPerLayer) {
 				tile.BinTotes = &domain.BinTotes{TotesOnCart: row.TotesOnCart, TotesPerLayer: row.TotesPerLayer}
 			}
 		}

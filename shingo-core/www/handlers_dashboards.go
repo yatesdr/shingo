@@ -436,7 +436,7 @@ func (h *Handlers) transitRows(allBins []*domain.Bin, payloadSet map[string]bool
 			source = orderSource[*b.ClaimedBy]
 			robot = orderRobot[*b.ClaimedBy]
 		}
-		if !isEmpty && b.UOPRemaining > 0 && b.UOPCapacity > 0 && b.UOPRemaining < b.UOPCapacity {
+		if !isEmpty && b.Stocked() && b.UOPCapacity > 0 && b.UOPRemaining < b.UOPCapacity {
 			isPartial = true
 		}
 		outbound := !isEmpty && !isPartial && payloadSet[b.PayloadCode]

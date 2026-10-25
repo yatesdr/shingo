@@ -141,7 +141,7 @@ func loadAssertionRefusal(req protocol.BinLoadRequest, b *domain.Bin) (int, stri
 	case protocol.LoadExpectBare:
 		changed = changed || b.PayloadCode != ""
 	case protocol.LoadExpectPartial:
-		changed = changed || b.PayloadCode != req.PayloadCode || b.UOPRemaining <= 0 || b.UOPRemaining >= b.UOPCapacity
+		changed = changed || b.PayloadCode != req.PayloadCode || !b.Stocked() || b.UOPRemaining >= b.UOPCapacity
 	default:
 		// OWNER-WORDS
 		return http.StatusBadRequest, fmt.Sprintf("expect %q is not a carrier the door knows: say %s or %s",

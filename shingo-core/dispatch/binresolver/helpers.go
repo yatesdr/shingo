@@ -48,7 +48,7 @@ import (
 // carrier its part may not ride is taken. Rule 6's table names the gap
 // (TestRule6_OneAvailabilityTable, group_slot_child; a STOP of phase F).
 func isBinAvailableForRetrieve(b *bins.Bin, payloadCode string, asker domain.DigAsker) bool {
-	if b.ClaimedBy != nil || b.Locked || !b.ManifestConfirmed || b.UOPRemaining <= 0 || b.QualityHold {
+	if b.ClaimedBy != nil || b.Locked || !b.ManifestConfirmed || !b.Stocked() || b.QualityHold {
 		return false
 	}
 	if reservedByStranger(b, asker) {
@@ -217,7 +217,7 @@ func StockOnly(candidates []*bins.Bin, part string) []*bins.Bin {
 	}
 	out := make([]*bins.Bin, 0, len(candidates))
 	for _, b := range candidates {
-		if b.PayloadCode == part && b.ManifestConfirmed && b.UOPRemaining > 0 {
+		if b.PayloadCode == part && b.ManifestConfirmed && b.Stocked() {
 			out = append(out, b)
 		}
 	}

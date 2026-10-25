@@ -3,6 +3,7 @@ package service
 import (
 	"fmt"
 
+	"shingo/protocol"
 	"shingocore/store"
 	"shingocore/store/nodes"
 	"shingocore/store/plantclaims"
@@ -189,7 +190,7 @@ func (s *NodeService) setMaintainLevel(groupNodeID, binTypeID int64, want int, l
 	}
 	// A HEIGHT IS COUNTED IN TOTES, so a type that states none cannot be wanted
 	// at one: no cart of it could ever be counted standing there.
-	if len(layerWants) > 0 && bt.TotesPerLayer == nil {
+	if len(layerWants) > 0 && !protocol.IsToteType(bt.TotesPerLayer) {
 		return MaintainedGroupCheck{
 			Refusals: []string{fmt.Sprintf("%s states no totes per layer: a height, tops & bottoms included, is counted in its totes, so it cannot be wanted at one", bt.Code)},
 		}, nil

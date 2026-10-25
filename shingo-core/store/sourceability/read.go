@@ -259,7 +259,7 @@ func lineUOPByNode(db *sql.DB) (map[string]int, error) {
 		SELECT n.name, COALESCE(SUM(b.uop_remaining), 0)
 		FROM bins b
 		JOIN nodes n ON n.id = b.node_id
-		WHERE b.uop_remaining > 0
+		WHERE ` + helpers.StockSQL("b") + `
 		  AND ` + helpers.NodeEnabledSQL + `
 		GROUP BY n.name`)
 	if err != nil {

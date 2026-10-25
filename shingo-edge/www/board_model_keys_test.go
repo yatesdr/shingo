@@ -69,6 +69,7 @@ func readJS(t *testing.T, name string) string {
 // loader tile set: a consume loader tile with a bin, a served row.
 func boardFixture() domain.OperatorStationView {
 	have := 7
+	stocked := true // the feed's Stocked, as StationService.StampBins sets it
 	manifest := "{}"
 	return domain.OperatorStationView{
 		Nodes: []domain.StationNodeView{{
@@ -89,6 +90,7 @@ func boardFixture() domain.OperatorStationView {
 				PayloadCode: "PART-A", UOPRemaining: 7, Manifest: &manifest, ManifestConfirmed: true, Occupied: true,
 				// A held partial: its line, its arrival and its count (held_uop).
 				UOPCapacity: 10, HeldSince: "2026-10-18T10:00:00Z", HeldFor: "PRESS-1"},
+			BinStocked:     &stocked,
 			BinTotes:       &domain.BinTotes{TotesOnCart: &have, TotesPerLayer: &have},
 			Assignment:     &domain.TileAssignment{BinType: "TOTE-1", Layers: &have},
 			BufferPartial:  &domain.BufferPartial{Node: "SMN_F1"},
@@ -150,7 +152,7 @@ func TestStationView_ModelReadsAreWireKeys(t *testing.T) {
 		t.Error("the station's bin_state carries uop_remaining; it carries stocked")
 	}
 	if string(keys["bin"]["stocked"]) != "true" {
-		t.Errorf("bin_state.stocked = %s, want true for a count above 0", keys["bin"]["stocked"])
+		t.Errorf("bin_state.stocked = %s, want true: the feed's Stocked", keys["bin"]["stocked"])
 	}
 
 	reads := readsIn(readJS(t, "operator-board-model.js"), map[string]string{

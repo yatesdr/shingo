@@ -178,7 +178,7 @@ func (e *Engine) resolveClearJob(home *nodes.Node, station string, req protocol.
 	if err != nil {
 		return refuse(http.StatusInternalServerError, "could not read %s: %v", home.Name, err)
 	}
-	if len(onHome) != 1 || onHome[0].UOPRemaining <= 0 || onHome[0].PayloadCode == "" {
+	if len(onHome) != 1 || !onHome[0].Stocked() || onHome[0].PayloadCode == "" {
 		return refuse(http.StatusBadRequest, "%s has no bin with parts to clear", home.Name)
 	}
 	empty := onHome[0]
@@ -227,18 +227,19 @@ func (e *Engine) resolveClearJob(home *nodes.Node, station string, req protocol.
 	return refuse(http.StatusBadRequest, "no buffer spot holds a partial of %s", h.PayloadCode)
 }
 
-// clearPartialOn is the bin of the payload with parts left on spot that no
-// order holds: no claim, and no soft hold either (bins.StandsUnheld). A
+// clearPartialOn is the bin of the payload with stock left on spot (Stocked)
+// that no order holds: no claim, and no soft hold either (bins.StandsUnheld). A
 // partial another order has been promised is not the clear's to bring home;
 // skipping it here makes that case the pick's own 400 before anything is
-// written, instead of a birth the steal would refuse after the zero.
+// written, where the partial's leg, issued as the station's act, would take
+// that promise out loud after the zero.
 func clearPartialOn(e *Engine, spot *nodes.Node, payload string) *bins.Bin {
 	on, err := e.db.ListBinsByNode(spot.ID)
 	if err != nil {
 		return nil
 	}
 	for _, b := range on {
-		if b.PayloadCode != payload || b.UOPRemaining <= 0 || b.ClaimedBy != nil {
+		if b.PayloadCode != payload || !b.Stocked() || b.ClaimedBy != nil {
 			continue
 		}
 		if free, err := e.db.BinStandsUnheld(b.ID, spot.Name); err == nil && free {

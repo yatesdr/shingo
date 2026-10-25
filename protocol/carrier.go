@@ -13,18 +13,27 @@ package protocol
 // card's height (NodeBinsRow.Layers), Core's unloader walk and the keeper's
 // heights (domain.Bin.Layers). Pinned by TestToteLayers.
 func ToteLayers(totesOnCart, totesPerLayer *int) (int, bool) {
-	if totesOnCart == nil || totesPerLayer == nil || *totesPerLayer <= 0 || *totesOnCart%*totesPerLayer != 0 {
+	if totesOnCart == nil || !IsToteType(totesPerLayer) || *totesOnCart%*totesPerLayer != 0 {
 		return 0, false
 	}
 	return *totesOnCart / *totesPerLayer, true
 }
+
+// IsToteType reports whether a carrier type is a tote type: it states its
+// totes per layer (bin_types.totes_per_layer). The one spelling of the fact on
+// both modules; in SQL it is the null test, `totes_per_layer IS NOT NULL`
+// (TestRule7_ToteTypeHasOneSpelling). A stated value is never 0 or below: the
+// column's CHECK (totes_per_layer > 0) refuses it, and the Edge reads the value
+// from Core's feed, so the arithmetic here and in CarrierStateOf divides by it.
+func IsToteType(totesPerLayer *int) bool { return totesPerLayer != nil }
 
 // Layers is the row's cart height (ToteLayers).
 func (r NodeBinsRow) Layers() (int, bool) { return ToteLayers(r.TotesOnCart, r.TotesPerLayer) }
 
 // CarrierState is what stands on a cart, one value: Core's finders, counts,
 // pool, bind, unloader walk, drop choice and drain read it, and so do the
-// Edge's chain readiness, card and SEND BACK line. The values are the strings
+// Edge's board empties line and SEND BACK line (its chain readiness asks the
+// row's part and Stocked instead, wrongCarrier). The values are the strings
 // Core's SQL twin (store/internal/helpers CarrierStateSQL) renders, pinned equal by its
 // agreement table.
 type CarrierState string
@@ -58,7 +67,7 @@ func CarrierStateOf(part string, bare bool, totesOnCart, totesPerLayer *int) Car
 		return CarrierBare
 	case part != "":
 		return CarrierLoaded
-	case totesPerLayer == nil || *totesPerLayer <= 0:
+	case !IsToteType(totesPerLayer):
 		return CarrierEmpty
 	case totesOnCart == nil:
 		return CarrierUnverified

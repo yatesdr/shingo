@@ -166,6 +166,7 @@ func TestGolden_BinTypeRule(t *testing.T) {
 			BinTypeID:         b.BinTypeID,
 			Payload:           b.PayloadCode,
 			UOP:               b.UOPRemaining,
+			Stocked:           b.Stocked(),
 			Cap:               b.UOPCapacity,
 			LoadedAt:          b.LoadedAt,
 			CreatedAt:         b.CreatedAt,
@@ -229,7 +230,7 @@ func TestBinTypeRuleBindsBothPredicates(t *testing.T) {
 	}
 
 	cand := binsource.Cand{
-		BinID: 1, BinTypeID: binTypeForeign, Payload: wantPayload, UOP: 1000, Cap: 1000,
+		BinID: 1, BinTypeID: binTypeForeign, Payload: wantPayload, UOP: 1000, Cap: 1000, Stocked: true,
 		ManifestConfirmed: true, Status: domain.BinStatusAvailable,
 		CreatedAt: time.Unix(1_700_000_000, 0).UTC(),
 	}

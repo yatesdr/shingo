@@ -348,7 +348,7 @@ func readBinContents(s Store, binID int64) (*binContents, error) {
 	// reason the template answered perfectly well, so it yields no rows and no
 	// finding. Only a MISSING RATIO means the question went unanswered.
 	var uncounted []string
-	if bin.UOPRemaining > 0 {
+	if bin.Stocked() {
 		for _, m := range parsed.Items {
 			if perCycle[m.PartNumber] <= 0 {
 				uncounted = append(uncounted, m.PartNumber)

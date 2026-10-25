@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"strings"
 
+	"shingo/protocol"
 	"shingocore/domain"
 )
 
@@ -86,7 +87,7 @@ func (h *Handlers) handlePayloadsPage(w http.ResponseWriter, r *http.Request) {
 func fullCartTotes(payloads []*domain.Payload, binTypes []*domain.BinType, codesByPayload map[int64][]string) map[int64][]string {
 	perLayer := make(map[string]int, len(binTypes))
 	for _, bt := range binTypes {
-		if bt.TotesPerLayer != nil {
+		if protocol.IsToteType(bt.TotesPerLayer) {
 			perLayer[bt.Code] = *bt.TotesPerLayer
 		}
 	}

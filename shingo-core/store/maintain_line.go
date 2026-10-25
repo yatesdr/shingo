@@ -3,6 +3,7 @@ package store
 import (
 	"fmt"
 
+	"shingo/protocol"
 	"shingocore/store/bins"
 	"shingocore/store/nodes"
 	"shingocore/store/orders"
@@ -129,7 +130,7 @@ func (db *DB) TypeLineOf(g *nodes.Node, lv MaintainLevel, episode DemandOrigin,
 	}
 	tl := TypeLine{Code: lv.BinTypeCode, Want: lv.Want, Have: lv.Want - c.Short()}
 	for _, w := range layerWants {
-		if w.BinTypeID != lv.BinTypeID || w.TotesPerLayer == nil || *w.TotesPerLayer <= 0 {
+		if w.BinTypeID != lv.BinTypeID || !protocol.IsToteType(w.TotesPerLayer) {
 			continue
 		}
 		tl.TotesPerLayer = *w.TotesPerLayer

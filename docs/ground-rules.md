@@ -41,12 +41,14 @@ they are gone, so it is replaced by the plain assertion in the commit that fixes
 
 6. **Every availability reader composes the one fragment or its Go twin,** held by one agreement table over one
    fixture set; a reader that omits an arm names it in the table, with the reason.
-   Test: `TestRule6_OneAvailabilityTable` (predicted red per reader and arm).
+   Test: `TestRule6_OneAvailabilityTable` (predicted red: the part-supply arm's three cells, phase E; a group's slot
+   children and the carrier rule, two cells phase F stopped on).
 
-7. **A count is a claim.** "Counted to nothing" has one spelling each side; "empty" is written only by a person's
-   act or by the release of the leg that lifted the line's cart.
-   Tests: `TestRule7_CountedToNothingHasOneSpelling`, `TestRule7_ToteTypeHasOneSpelling` (predicted red: every
-   spelling but the one function).
+7. **A count is a claim.** "Counted to nothing" has one spelling each side (`domain.Bin.Stocked`,
+   `helpers.StockSQL`; the Edge reads the bins feed's `Stocked`), and so has "a tote type"
+   (`protocol.IsToteType`, SQL `IS NOT NULL`); "empty" is written only by a person's act or by the release of the
+   leg that lifted the line's cart.
+   Tests: `TestRule7_CountedToNothingHasOneSpelling`, `TestRule7_ToteTypeHasOneSpelling`.
 
 8. **"A carrier is coming to X" is `protocol.OrderPlacesBinAt` over live rows,** pinned by the shared vectors
    (`shared/comingvectors`); every reader composes it or is run over them.

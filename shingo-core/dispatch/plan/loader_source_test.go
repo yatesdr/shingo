@@ -25,7 +25,7 @@ func TestCandFromBin(t *testing.T) {
 			ManifestConfirmed: true, Status: "staged",
 		}
 		got := candFromBin(b)
-		if got.BinID != 1 || got.Payload != "PART-X" || got.UOP != 5 || got.Cap != 10 {
+		if got.BinID != 1 || got.Payload != "PART-X" || got.UOP != 5 || got.Cap != 10 || !got.Stocked {
 			t.Fatalf("identity/fill fields wrong: %+v", got)
 		}
 		if got.LoadedAt == nil || !got.LoadedAt.Equal(loaded) {
@@ -48,7 +48,7 @@ func TestCandFromBin(t *testing.T) {
 			LoadedAt: nil, CreatedAt: created, Status: "available",
 		}
 		got := candFromBin(b)
-		if got.Payload != "" {
+		if got.Payload != "" || got.Stocked {
 			t.Fatalf("empty payload not mapped: %q", got.Payload)
 		}
 		if got.LoadedAt != nil {

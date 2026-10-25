@@ -569,7 +569,7 @@ func binRow(name string, b *bins.Bin) protocol.NodeBinsRow {
 	row.Manifest = b.Manifest
 	row.ManifestConfirmed = b.ManifestConfirmed
 	row.Epoch = b.DeltaEpoch
-	row.Stocked = b.UOPRemaining > 0
+	row.Stocked = b.Stocked()
 	row.TotesOnCart = b.TotesOnCart
 	row.TotesPerLayer = b.TotesPerLayer
 	if b.PayloadCode != "" {

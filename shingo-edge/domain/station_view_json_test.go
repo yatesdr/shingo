@@ -50,8 +50,20 @@ func TestStationNodeView_JSONShape(t *testing.T) {
 	if _, ok := cell["loader"]; ok {
 		t.Error("a cell's tile carries a loader")
 	}
-	if string(keys(cell["bin_state"])["stocked"]) != "true" {
-		t.Error("a bin counting 3 is not stocked")
+	// STOCKED IS THE FEED'S WORD (protocol.NodeBinsRow.Stocked, Core's
+	// domain.Bin.Stocked), never the tile's count: the board's count is 0 but
+	// for a held partial's, so a count says nothing here.
+	if string(keys(cell["bin_state"])["stocked"]) != "false" {
+		t.Error("a bin the feed said nothing of reads as stocked off its count")
+	}
+	yes, no := true, false
+	fed := keys(StationNodeView{BinState: &NodeBinState{Occupied: true}, BinStocked: &yes})
+	if string(keys(fed["bin_state"])["stocked"]) != "true" {
+		t.Error("a bin the feed calls stocked reads as not stocked at a count of 0")
+	}
+	counted := keys(StationNodeView{BinState: &NodeBinState{UOPRemaining: 3, Occupied: true}, BinStocked: &no})
+	if string(keys(counted["bin_state"])["stocked"]) != "false" {
+		t.Error("a bin the feed calls not stocked reads as stocked off its count")
 	}
 
 	// The Production page's {{json .BinState}}: the count, as it always was.

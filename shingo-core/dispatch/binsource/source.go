@@ -42,7 +42,7 @@ import (
 type Intent int
 
 const (
-	// Drain (consume): the cell needs PARTS — a full or partial of X (uop > 0).
+	// Drain (consume): the cell needs PARTS — a full or partial of X that holds stock (Cand.Stocked).
 	Drain Intent = iota
 	// Fill (produce): the cell needs a CONTAINER for X — a partial of X to top
 	// up, else a fungible empty.
@@ -80,6 +80,10 @@ type Cand struct {
 	Payload   string // "" marks an empty bin
 	UOP       int    // uop_remaining
 	Cap       int    // uop_capacity
+	// Stocked is whether the carrier holds stock (domain.Bin.Stocked, the one
+	// spelling of "counted to nothing"): read off the row by the caller as
+	// State is, so this package compares UOP only with the capacity.
+	Stocked bool
 
 	LoadedAt  *time.Time // nil for an empty; FIFO key is COALESCE(LoadedAt, CreatedAt)
 	CreatedAt time.Time
@@ -112,7 +116,7 @@ func isEmpty(c Cand) bool { return c.Payload == "" }
 
 func isFullOf(c Cand, x string) bool { return c.Payload == x && c.UOP >= c.Cap }
 
-func isPartialOf(c Cand, x string) bool { return c.Payload == x && c.UOP > 0 && c.UOP < c.Cap }
+func isPartialOf(c Cand, x string) bool { return c.Payload == x && c.Stocked && c.UOP < c.Cap }
 
 // eligible reports whether c can satisfy want: a bin of part X only (Payload == X
 // excludes empties and other parts up front), filtered by intent, in a carrier X
@@ -161,7 +165,7 @@ func RejectReason(c Cand, w Want) string {
 			return "empty-bin"
 		case c.Payload != w.Payload:
 			return "payload:" + c.Payload
-		case c.UOP <= 0:
+		case !c.Stocked:
 			return "uop<=0"
 		case isFullOf(c, w.Payload) && !c.ManifestConfirmed:
 			return "unconfirmed-full"

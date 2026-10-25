@@ -236,7 +236,7 @@ func maintainerSlot(db *store.DB, pure *plan.Planner, order *orders.Order, b *bi
 		return ""
 	}
 	state := b.CarrierState()
-	tote := b.TotesPerLayer != nil && *b.TotesPerLayer > 0
+	tote := protocol.IsToteType(b.TotesPerLayer)
 	switch {
 	case state == protocol.CarrierLoaded, state == protocol.CarrierBare:
 		return ""
@@ -346,7 +346,7 @@ func groupsWanting(db *store.DB, b *bins.Bin, liftNode string) ([]wantingGroup, 
 // 0, its wanted height for a cart at whole layers, or the type's Short where
 // the group wants no stack heights of the type.
 func carrierGap(db *store.DB, g *nodes.Node, lv store.MaintainLevel, episode store.DemandOrigin, b *bins.Bin) (int, error) {
-	if b.TotesPerLayer == nil || *b.TotesPerLayer <= 0 {
+	if !protocol.IsToteType(b.TotesPerLayer) {
 		c, err := db.CountLevel(g, lv, episode)
 		return c.Short(), err
 	}

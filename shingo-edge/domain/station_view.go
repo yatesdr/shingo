@@ -76,14 +76,16 @@ type StationNodeView struct {
 	// whole and shows whether it holds parts (Stocked, Partial); the station's
 	// JSON carries its own shape (stationBinState: stocked in place of the count).
 	BinState *NodeBinState `json:"bin_state,omitempty"`
-	// BinStocked is whether the bin holds parts, set when BinState was read
-	// from the Edge's copy of Core's node-bins feed, which carries that and no
-	// count (BinState.UOPRemaining is then 0 and means nothing). Nil when the
-	// bin was read over HTTP and stocked is its count above zero. Not
+	// BinStocked is whether the bin holds stock: the node-bins row's Stocked
+	// (Core's domain.Bin.Stocked, the one spelling of "counted to nothing"),
+	// set with BinState by StationService.StampBins from the Edge's copy of the
+	// feed, which carries that and no count (BinState.UOPRemaining is 0 but for
+	// a held partial's; the HTTP read that also served one is gone). Nil reads
+	// as not stocked: the Edge never recomputes the fact from a count. Not
 	// serialised: the station's JSON carries it as bin_state.stocked.
 	BinStocked *bool `json:"-"`
-	// BinTotes are the cart's tote numbers from its node-bins row (the copy or
-	// the HTTP answer): nil when the row carried neither. Not serialised: the
+	// BinTotes are the cart's tote numbers from its node-bins row (the Edge's
+	// copy of the feed): nil when the row carried neither. Not serialised: the
 	// station's JSON carries them on bin_state, and NodeBinState, which the
 	// Production page marshals whole, carries none.
 	BinTotes *BinTotes `json:"-"`
@@ -583,12 +585,11 @@ func stationOrders(orders []Order) []stationOrder {
 }
 
 // MarshalJSON is the station's JSON for a tile: a loader tile carries no
-// active_claim (the board reads Loader), the bin carries Stocked rather than
-// its count (stationBinState; BinStocked when the bin came from the Edge's
-// copy of the feed, which has no count), and an order carries the keys the
-// glass reads (stationOrder). The Go tile keeps all three whole for the engine
-// and the Production page's template, which reads them through Go fields and
-// marshals only the bin, as a NodeBinState. Pinned by
+// active_claim (the board reads Loader), the bin carries the feed's Stocked
+// rather than its count (stationBinState, from BinStocked), and an order
+// carries the keys the glass reads (stationOrder). The Go tile keeps all three
+// whole for the engine and the Production page's template, which reads them
+// through Go fields and marshals only the bin, as a NodeBinState. Pinned by
 // TestStationNodeView_JSONShape.
 func (v StationNodeView) MarshalJSON() ([]byte, error) {
 	type plain StationNodeView
@@ -598,10 +599,7 @@ func (v StationNodeView) MarshalJSON() ([]byte, error) {
 	}
 	var bin *stationBinState
 	if b := p.BinState; b != nil {
-		stocked := b.UOPRemaining > 0
-		if p.BinStocked != nil {
-			stocked = *p.BinStocked
-		}
+		stocked := p.BinStocked != nil && *p.BinStocked
 		bin = &stationBinState{
 			BinID: b.BinID, BinLabel: b.BinLabel, BinTypeCode: b.BinTypeCode, Bare: b.Bare,
 			PayloadCode: b.PayloadCode, Stocked: stocked, Manifest: b.Manifest,

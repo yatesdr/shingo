@@ -110,8 +110,14 @@ const BinNotReservedSQL = `NOT ` + reservations.BinSpokenForSQL
 // FIFO finder spelled that arm by hand and the other sourcing readers did not
 // ask it; here every reader asks it, the digs included, and the Go twins ask
 // Bin.QualityHold (TestRule6_OneAvailabilityTable).
-const BinCarriesSourceableStockSQL = `b.manifest_confirmed = true AND b.uop_remaining > 0 AND ` +
+var BinCarriesSourceableStockSQL = `b.manifest_confirmed = true AND ` + StockSQL("b") + ` AND ` +
 	BinNotOnQualityHoldSQL + ` AND ` + SourceableStatusSQL + ` AND b.status <> 'staged'`
+
+// StockSQL is domain.Bin.Stocked for the bins row aliased alias: the carrier
+// holds stock, its count above 0. The one SQL spelling of "counted to
+// nothing" (TestRule7_CountedToNothingHasOneSpelling): `NOT StockSQL(b)` is a
+// carrier at 0 or overpacked below it, which holds no stock either.
+func StockSQL(alias string) string { return alias + `.uop_remaining > 0` }
 
 // BinNotOnQualityHoldSQL — the bin carries no quality hold (bins.quality_hold,
 // v118: an operator's "Send to Quality Hold"). The stock half composes it, and
