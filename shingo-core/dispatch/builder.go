@@ -72,6 +72,12 @@ type Need struct {
 	// puts down (orders.recovers_order_id); nil for every other order. Written
 	// once, at its issue.
 	Recovers *int64
+	// Steps is a multi-leg order's steps as resolved at its intake
+	// (orders.steps_json); "" for every other order.
+	Steps string
+	// Complex is what a coordinated order states beyond the plain row; nil for
+	// every simple order, and its presence is what makes the row coordinated.
+	Complex *ComplexSpec
 
 	// WHAT THE ORDER HOLDS FROM ITS ISSUE, softly, in the issue's transaction,
 	// or the issue is refused.
@@ -92,6 +98,19 @@ type Need struct {
 	// value for Core's own errand. It decides whether a stranger's soft hold on
 	// the cart is taken.
 	By Actor
+}
+
+// ComplexSpec is the part of a coordinated order's row only complex intake
+// states: the process it serves, its swap sibling (orders.sibling_order_uuid,
+// written with the row so a two-robot evac's pointer to its supply is never
+// lost), and the claim's SEER routing hints, kept because dispatch happens later
+// (domain.Order.KeyRoute). There is no coordinated flag: a need with a
+// ComplexSpec is coordinated.
+type ComplexSpec struct {
+	ProcessNode string
+	Sibling     string
+	KeyRoute    []string
+	KeyTask     string
 }
 
 // Actor is who asked for an order. A person is authoritative over another
@@ -132,9 +151,14 @@ func row(need Need, p plan.Plan) *orders.Order {
 		StationUnaware:  !need.StationKnows,
 		ProjectsTo:      need.Projects,
 		RecoversOrderID: need.Recovers,
+		StepsJSON:       need.Steps,
 	}
 	if o.SourceIntent == "" {
 		o.SourceIntent = SourceIntentForType(need.Type)
+	}
+	if c := need.Complex; c != nil {
+		o.Coordinated = true
+		o.ProcessNode, o.SiblingOrderUUID, o.KeyRoute, o.KeyTask = c.ProcessNode, c.Sibling, c.KeyRoute, c.KeyTask
 	}
 	if p.Dest != nil {
 		o.DeliveryNode = p.Dest.Name

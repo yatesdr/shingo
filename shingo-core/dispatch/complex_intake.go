@@ -5,6 +5,7 @@ import (
 	"log"
 
 	"shingo/protocol"
+	"shingocore/dispatch/plan"
 	"shingocore/store/orders"
 	"shingocore/store/reservations"
 )
@@ -115,54 +116,7 @@ func (d *Dispatcher) handleComplexOrderRequest(env *protocol.Envelope, p *protoc
 		return
 	}
 
-	sourceNode, deliveryNode := extractEndpoints(resolvedSteps)
-
-	// Intake site 2 of 3 for the demand grain. BOTH LEGS OF A SWAP CARRY THE
-	// SAME ORIGIN — one fire of applyConsumePlan is one demand served by two
-	// order rows, so Edge sends the pair with one id and Core stores it twice.
-	// Counting the legs as two demands would read every swap-mode episode 2x
-	// high, which is the ratio the whole surface is built to read.
-	originID, originClass := classifyInboundOrigin(p.OriginID, p.OriginClass, stationID, p.OrderUUID)
-
-	order := &orders.Order{
-		EdgeUUID:  p.OrderUUID,
-		StationID: stationID,
-		OrderType: OrderTypeComplex,
-		// BORN PENDING, like every order (v4 §2.6; C1.1.1). A complex order's hand
-		// is not whole at birth — resolved steps and no bins — and its one acquire
-		// (the door's, below) is what goes looking. It rests in `queued` with its
-		// cause when the hand cannot be had, the same rung every order rests in.
-		//
-		// The dropoff-capacity gate counts HOLDERS, not statuses
-		// (orders.InFlightForDropoffSQL): an order is in flight to a node when it
-		// holds a claimed bin bound there, whatever its rung.
-		Status:       StatusPending,
-		Quantity:     p.Quantity,
-		Priority:     p.Priority,
-		PayloadCode:  payloadCode,
-		PayloadDesc:  p.PayloadDesc,
-		SourceNode:   sourceNode,
-		DeliveryNode: deliveryNode,
-		ProcessNode:  p.ProcessNode,
-		StepsJSON:    string(stepsJSON),
-		// Provenance stamp: complex intake is coordinated. The dispatch
-		// discriminator (IsCoordinated) reads this column, not StepsJSON.
-		Coordinated: true,
-		// Durable two-robot swap linkage: persist the supply sibling's UUID
-		// in the CreateOrder INSERT itself, so a two-robot evac's pointer to
-		// its supply is written atomically with the order and can never be
-		// lost by a failed post-create link step (the old ALN_003 fail-open).
-		// "" for non-swap orders. The bidirectional back-link (supply→evac) is
-		// still reconciled below / on-read.
-		SiblingOrderUUID: p.SiblingOrderUUID,
-		// The claim's SEER routing hints, persisted with the order because
-		// dispatch happens later — see domain.Order.KeyRoute. Empty on every
-		// order until an Edge claim configures one.
-		KeyRoute:    p.KeyRoute,
-		KeyTask:     p.KeyTask,
-		OriginID:    originID,
-		OriginClass: originClass,
-	}
+	order := row(complexNeed(stationID, p, resolvedSteps, string(stepsJSON)), plan.Plan{})
 
 	// Do the things this order names exist? The wire door has always asked; this
 	// one never did, so an order naming a payload Core does not have got a row,
@@ -221,12 +175,12 @@ func (d *Dispatcher) handleComplexOrderRequest(env *protocol.Envelope, p *protoc
 			log.Printf("dispatch: link complex order %d sibling %s: %v", order.ID, p.SiblingOrderUUID, err)
 		}
 	}
-	d.emitter.EmitOrderReceived(order.ID, order.EdgeUUID, stationID, OrderTypeComplex, payloadCode, deliveryNode)
+	d.emitter.EmitOrderReceived(order.ID, order.EdgeUUID, stationID, OrderTypeComplex, payloadCode, order.DeliveryNode)
 
 	// Ack to edge before the acquire so the edge's order-table row exists when
 	// the dispatched-event fires (the acquire dispatches synchronously, and the
 	// edge needs to have already recorded the order ID).
-	d.sendAck(env, order.EdgeUUID, order.ID, sourceNode)
+	d.sendAck(env, order.EdgeUUID, order.ID, order.SourceNode)
 
 	// A buried parent does not go to the scanner: it has nothing the scanner
 	// could act on until the blocking bin has been moved. The reshuffle tail
@@ -247,6 +201,41 @@ func (d *Dispatcher) handleComplexOrderRequest(env *protocol.Envelope, p *protoc
 		return
 	}
 	d.acquireBorn(order, nil)
+}
+
+// complexNeed is the row complex intake writes, stated as a need: the facts
+// the request carries, its endpoints and steps as resolved at intake, and its
+// coordinated part (ComplexSpec). It is issued pending like every order (v4
+// §2.6; C1.1.1): its hand is not whole at its issue — resolved steps and no
+// bins — and its one acquire is what goes looking, resting in `queued` with its
+// cause when the hand cannot be had. The dropoff-capacity gate counts HOLDERS,
+// not statuses (orders.InFlightForDropoffSQL).
+//
+// BOTH LEGS OF A SWAP CARRY THE SAME ORIGIN (intake site 2 of 3 for the demand
+// grain): one fire of applyConsumePlan is one demand served by two order rows,
+// so the Edge sends the pair with one id and Core stores it twice. Counting the
+// legs as two demands would read every swap-mode episode 2x high, which is the
+// ratio the whole surface is built to read.
+func complexNeed(stationID string, p *protocol.ComplexOrderRequest, steps []resolvedStep, stepsJSON string) Need {
+	source, delivery := extractEndpoints(steps)
+	originID, originClass := classifyInboundOrigin(p.OriginID, p.OriginClass, stationID, p.OrderUUID)
+	return Need{
+		Type:         OrderTypeComplex,
+		Station:      stationID,
+		Ref:          p.OrderUUID,
+		Quantity:     p.Quantity,
+		Priority:     p.Priority,
+		Desc:         p.PayloadDesc,
+		PayloadCode:  p.PayloadCode,
+		OriginID:     originID,
+		OriginClass:  originClass,
+		StationKnows: true,
+		Source:       source,
+		Delivery:     delivery,
+		Steps:        stepsJSON,
+		Complex: &ComplexSpec{ProcessNode: p.ProcessNode, Sibling: p.SiblingOrderUUID,
+			KeyRoute: p.KeyRoute, KeyTask: p.KeyTask},
+	}
 }
 
 // refuseComplexIntake answers a complex request Core will not ingest.
