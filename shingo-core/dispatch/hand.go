@@ -156,6 +156,52 @@ func (r *HandRefusal) ParkParams(order *orders.Order) QueueParams {
 	return QueueParams{Payload: order.PayloadCode}
 }
 
+// heldHand is the three Dispatcher verbs HandHeld takes in sequence. The scanner
+// passes its narrow Dispatcher, the carried-bin recovery the Dispatcher itself.
+type heldHand interface {
+	ReserveStorageDropoff(order *orders.Order) StorageDropoff
+	AdmitLanesForOrder(order *orders.Order, sourceNode, destNode *nodes.Node, kind EntryKind) (bool, QueueCause, string, error)
+	DispatchHand(order *orders.Order, binID int64, sourceNode, destNode *nodes.Node) (string, error)
+}
+
+// HeldHand is how far HandHeld got, leg by leg. Each caller disposes of it its
+// own way: fulfillment's dispatchHeldBin parks, the carried-bin recovery ends
+// its order with the engineer's sentence.
+type HeldHand struct {
+	// Dropoff is the destination as ReserveStorageDropoff secured and settled
+	// it. When it is Refused, nothing after it ran.
+	Dropoff StorageDropoff
+	// Lanes is the lane admission's error: the lanes could not be read, and the
+	// hand was not asked.
+	Lanes error
+	// Vendor is the fleet's id for the order, once the hand is taken and the
+	// fleet has accepted it.
+	Vendor string
+}
+
+// HandHeld hands a plain order that already holds its bin (orders.bin_id), in
+// the one sequence both such doors use: secure and settle the destination slot
+// (ReserveStorageDropoff, owner-idempotent: a slot the order reserved earlier
+// passes through, a lost or filled one refuses and the order keeps its bin);
+// ask the lanes (AdmitLanesForOrder, EntryHeldBin: no finder ran, so there is
+// no reachability answer to skip on; a lane buried after the hold was taken is
+// the gate's to serve at the mark); then the hand: slot, bin, lane mouths,
+// occupancy and status in one transaction, and the fleet (DispatchHand). It
+// stops at the first leg that refuses; the error is DispatchHand's.
+func HandHeld(d heldHand, order *orders.Order, binID int64, sourceNode *nodes.Node) (HeldHand, error) {
+	h := HeldHand{Dropoff: d.ReserveStorageDropoff(order)}
+	if h.Dropoff.Refused() {
+		return h, nil
+	}
+	if _, _, _, err := d.AdmitLanesForOrder(order, sourceNode, h.Dropoff.Node, EntryHeldBin); err != nil {
+		h.Lanes = err
+		return h, nil
+	}
+	var err error
+	h.Vendor, err = d.DispatchHand(order, binID, sourceNode, h.Dropoff.Node)
+	return h, err
+}
+
 // acquireHand takes the hand, the occupancy of every lane `entering` lies in,
 // and the `dispatched` status, in one transaction.
 //

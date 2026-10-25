@@ -806,12 +806,15 @@ func (s *Scanner) dispatchHeldBin(order *orders.Order) bool {
 			dispatch.QueueParams{Destination: order.DeliveryNode, DestUnresolved: true})
 		return false
 	}
-	// (Re)secure the destination slot reserve-only before dispatch (node-driven;
-	// a no-op for non-storage dests). Owner-idempotent, so a store that reserved at
-	// intake passes through; a loser (or a slot that filled) requeues holding its
-	// bin, never dropping into an occupied slot (#115/#117, generalized).
-	dest := s.dispatcher.ReserveStorageDropoff(order)
-	if dest.Refused() {
+	// The destination, the lanes and the hand (dispatch.HandHeld), PENDING →
+	// DISPATCHED for every order (SYNTH F8, C1.1.2): it goes from its birth to the
+	// hand, so its history never says it waited when it did not. The held bin is
+	// still SOFT (a pending reservation from a prior tick) until the hand takes
+	// it. What follows is this caller's disposition of each refusal.
+	h, err := dispatch.HandHeld(s.dispatcher, order, *order.BinID, sourceNode)
+	if dest := h.Dropoff; dest.Refused() {
+		// A loser, or a slot that filled, requeues holding its bin and never
+		// drops into an occupied slot (#115/#117, generalized).
 		s.setQueueReason(order, protocol.QueueWaitingForSlot, dest.Cause,
 			dispatch.QueueParams{Destination: order.DeliveryNode})
 		if s.debugLog != nil {
@@ -820,21 +823,11 @@ func (s *Scanner) dispatchHeldBin(order *orders.Order) bool {
 		}
 		return false
 	}
-	destNode := dest.Node
-	// PENDING → DISPATCHED for every order (SYNTH F8, C1.1.2): it goes from its
-	// birth to the hand, so its history never says it waited when it did not.
-	// Lane admission (P4): same as the fresh path — the physical question with no
-	// row written; the mouth rows are taken in the hand. EntryHeldBin: this caller
-	// skips nothing, because it never called the finder and so has no answer to
-	// the reachability question. A held bin buried after its hold was taken is
-	// the gate's to serve: its acceptance arm digs it out at the mark.
-	if !s.admitLanes(order, sourceNode, destNode, dispatch.EntryHeldBin) {
+	if h.Lanes != nil {
+		s.parkUnreadLanes(order, h.Lanes)
 		return false
 	}
-	// THE HAND, as on the fresh path: the held bin is still SOFT (pending
-	// reservation from the prior tick); the slot, the bin, the lane mouths, the
-	// occupancy and the status are taken in one transaction, or none of them is.
-	vendorOrderID, err := s.dispatcher.DispatchHand(order, *order.BinID, sourceNode, destNode)
+	destNode, vendorOrderID := h.Dropoff.Node, h.Vendor
 	if dispatch.IsConcurrentTransition(err) {
 		s.yieldLostHand(order, err)
 		return false
@@ -976,12 +969,18 @@ func (s *Scanner) parkRefusedHand(order *orders.Order, r *dispatch.HandRefusal) 
 // the held-bin dig it fed (digForBuriedHeldBin), are gone with the unmarked lane.
 func (s *Scanner) admitLanes(order *orders.Order, sourceNode, destNode *nodes.Node, kind dispatch.EntryKind) bool {
 	if _, _, _, err := s.dispatcher.AdmitLanesForOrder(order, sourceNode, destNode, kind); err != nil {
-		s.logFn("fulfillment: lane acquire for order %d errored: %v (retrying)", order.ID, err)
-		s.setQueueReason(order, protocol.QueueWaitingForMaterial, dispatch.CauseLaneAcquireError,
-			dispatch.QueueParams{Payload: order.PayloadCode})
+		s.parkUnreadLanes(order, err)
 		return false
 	}
 	return true
+}
+
+// parkUnreadLanes parks an order whose lanes could not be read: a wait, and the
+// next pass asks again.
+func (s *Scanner) parkUnreadLanes(order *orders.Order, err error) {
+	s.logFn("fulfillment: lane acquire for order %d errored: %v (retrying)", order.ID, err)
+	s.setQueueReason(order, protocol.QueueWaitingForMaterial, dispatch.CauseLaneAcquireError,
+		dispatch.QueueParams{Payload: order.PayloadCode})
 }
 
 // logTransition reports a failed lifecycle transition from the scanner.

@@ -159,9 +159,15 @@ func TestBinMoveDoor_AsksAdmission(t *testing.T) {
 	if !strings.Contains(door, "acquireOne(") || strings.Contains(door, "DispatchHand(") {
 		t.Fatal("CreateBinMove must hand the move to acquiring (acquireOne) and must not dispatch it itself")
 	}
-	fn := funcBody(t, readRepoFile(t, filepath.Join("shingo-core", "fulfillment", "scanner.go")),
+	// The held-bin arm hands through dispatch.HandHeld, whose sequence is the
+	// ask and then the hand.
+	arm := funcBody(t, readRepoFile(t, filepath.Join("shingo-core", "fulfillment", "scanner.go")),
 		"func (s *Scanner) dispatchHeldBin(")
-	askAt := strings.Index(fn, "admitLanes(")
+	if !strings.Contains(arm, "dispatch.HandHeld(") {
+		t.Fatal("the held-bin arm no longer hands through dispatch.HandHeld; re-derive where it asks admission")
+	}
+	fn := funcBody(t, readRepoFile(t, filepath.Join("shingo-core", "dispatch", "hand.go")), "func HandHeld(")
+	askAt := strings.Index(fn, "AdmitLanesForOrder(")
 	if askAt < 0 {
 		t.Fatal("the held-bin arm does not ask admission. A core operator's bin move is a robot in a lane " +
 			"exactly as much as a compound leg is")
