@@ -123,7 +123,9 @@ func (s *StationService) ComposerForProcess(processID int64) (*domain.ComposerDa
 	// THE ROUTING SET THE BLOCK JUST BUILT, not a second read of it: the
 	// picture's staging offers are the enabled staging rows, which is the same
 	// list out.Routing carries.
-	out.Cell = s.processCellPicture(process, claims, nodes, routingFromBlock(out))
+	routing := routingFromBlock(out)
+	out.Cell = s.processCellPicture(process, claims, nodes, routing)
+	out.RoutingGaps = domain.RoutingGaps(process.Name, routing)
 	out.Map = s.composerMap()
 	return out, nil
 }

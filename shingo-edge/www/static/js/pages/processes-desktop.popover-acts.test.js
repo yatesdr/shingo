@@ -1551,6 +1551,121 @@ async function mainAsync() {
         console.log('ok: a recipe draft emptied by its rows\' × offers the modes again');
     }
 
+    // ── + New recipe: an empty draft at once, the mode picked at its first row ─
+    //
+    // Owner, 2026-10-26: start with a fresh recipe and let them build from
+    // there. No popover and no generated shapes — an empty draft, on a press
+    // whose routing set has no source and no destination. The mode is picked
+    // where an empty style picks it, at the first "+ Add a position"; after
+    // that the draft's rows have one mode and the button offers only it. The
+    // row takes the routing set's defaults as any added row does, and where
+    // the set has none the server's sentence (the composer's routing_gaps)
+    // stands beside the row's empty destination.
+    const gapWhy = "Press 1's routing set names no outbound destination — add one under Routing set";
+    const recipeComposer = () => {
+        const c = firstRowComposer();
+        c.cell.positions.push({ core_node_name: 'PLN_03', kind: 'front', sequence: 3 });
+        c.routing_gaps = { outbound_destination: gapWhy };
+        return c;
+    };
+    function newRecipeRig(server) {
+        const ctx = loadPage({
+            flowspec: true,
+            composer: recipeComposer(),
+            fetch: url => (/\/api\/processes\/1\/composer$/.test(url)
+                ? Promise.resolve({ ok: true, json: async () => JSON.parse(JSON.stringify(server())) })
+                : null),
+        });
+        ctx.made = wireButtons(ctx.pop);
+        ctx.act = (name, data) => {
+            const b = makeElement('');
+            if (name === 'add-position' || name === 'new-recipe') b.classList.add('pd-btn');
+            b.dataset.act = name;
+            Object.assign(b.dataset, data || {});
+            ctx.main.appendChild(b);
+            bubble(b, 'click', ctx.doc);
+        };
+        return ctx;
+    }
+
+    {
+        const ctx = newRecipeRig(recipeComposer);
+        const { root, pop, made, act } = ctx;
+        await drain();
+        await drain();
+        act('new-recipe');
+        for (let i = 0; i < 4; i++) await drain();
+        if (pop.hidden === false) {
+            throw new Error('+ New recipe opened a popover: ' + JSON.stringify(pop.innerHTML.slice(0, 200)));
+        }
+        if (root.innerHTML.indexOf('<h1>New recipe</h1>') < 0 || root.innerHTML.indexOf('data-row=') >= 0) {
+            throw new Error('+ New recipe did not open an empty draft titled "New recipe"');
+        }
+        act('add-position');
+        if (pop.hidden !== false || !made['freemode=two_robot']) {
+            throw new Error('the empty draft\'s first "+ Add a position" did not offer the modes: ' + pop.innerHTML.slice(0, 200));
+        }
+        bubble(made['freemode=two_robot'], 'click', ctx.doc);
+        bubble(made['freepos=PLN_01'], 'click', ctx.doc);
+        await drain();
+        if (root.innerHTML.indexOf('data-row="PLN_01"') < 0 ||
+            root.innerHTML.indexOf('<h1>New recipe · 2‑Robot Swap</h1>') < 0) {
+            throw new Error('the first row did not land in 2-Robot Swap');
+        }
+        for (const k of Object.keys(made)) delete made[k];
+        act('add-position');
+        if (pop.hidden !== false || Object.keys(made).some(k => k.indexOf('freemode=') === 0) ||
+            !Object.keys(made).some(k => k.indexOf('freepos=') === 0)) {
+            throw new Error('the next "+ Add a position" did not go straight to the positions: ' + pop.innerHTML.slice(0, 200));
+        }
+        checks++;
+        console.log('ok: + New recipe opens an empty draft; its first row picks the mode, the next takes it');
+
+        const row = root.innerHTML.slice(root.innerHTML.indexOf('data-row="PLN_01"'));
+        const tr = row.slice(0, row.indexOf('</tr>'));
+        const at = tr.indexOf('data-kind="dest"');
+        const dest = at < 0 ? '' : tr.slice(at, tr.indexOf('</td>', at));
+        if (dest.indexOf('<small class="pd-gap">' + gapWhy + '</small>') < 0) {
+            throw new Error('the row\'s empty destination does not carry the routing set\'s sentence: ' + tr.slice(0, 1600));
+        }
+        if (tr.split('pd-gap').length !== 2) {
+            throw new Error('the sentence is drawn on a field other than the destination');
+        }
+        // The save of this row is the server's to refuse
+        // (TestPresets_ARecipeRowItsModeCannotRunIsRefusedAtSave): a draft is
+        // never previewed, so the bar raises no finding on it.
+        checks++;
+        console.log('ok: the draft\'s empty destination carries the routing set\'s sentence');
+    }
+
+    // No reload: a destination added to the routing set after the page loaded
+    // reaches the next draft's first row, and the sentence is gone. The page
+    // holds the composer it opened with; the server's now has DN_001.
+    {
+        let server = recipeComposer();
+        const ctx = newRecipeRig(() => server);
+        const { root, made, act } = ctx;
+        await drain();
+        await drain();
+        server = recipeComposer();
+        delete server.routing_gaps;
+        server.routing = [{ core_node_name: 'DN_001', role: 'destination', label: 'DN_001', enabled: true, sequence: 1 }];
+        act('new-recipe');
+        for (let i = 0; i < 4; i++) await drain();
+        act('add-position');
+        if (!made['freemode=two_robot']) throw new Error('setup: the empty draft offered no modes');
+        bubble(made['freemode=two_robot'], 'click', ctx.doc);
+        bubble(made['freepos=PLN_01'], 'click', ctx.doc);
+        await drain();
+        const row = root.innerHTML.slice(root.innerHTML.indexOf('data-row="PLN_01"'));
+        const tr = row.slice(0, row.indexOf('</tr>'));
+        if (tr.indexOf('<span class="t">DN_001</span>') < 0 || tr.indexOf('pd-gap') >= 0) {
+            throw new Error('a destination added without a reload did not reach the new row: ' + tr.slice(0, 1600));
+        }
+        checks++;
+        console.log('ok: a destination added without a reload reaches the next draft\'s row, and the sentence is gone');
+    }
+
 
     // ── the positions table: role is a column, a value reads first, staging
     //    says what it needs and who else is parked there ─────────────────────

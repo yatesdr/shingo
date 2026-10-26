@@ -776,24 +776,27 @@ function openRecipe(id) {
     const r = (S.composer.presets || []).find(x => String(x.id) === String(id));
     if (!r) return;
     startShapeDraft(Object.values(r.cells || {}), {
-        mode: r.mode, recipe: { id: r.id, name: r.name },
+        recipe: { id: r.id, name: r.name },
         groups: (r.groups || []).length ? JSON.parse(JSON.stringify(r.groups)) : null,
     });
 }
 
-// + New recipe: the shapes this cell could run (the generator's), or one
-// copied from another cell. Each opens as a draft; nothing is stored until it
-// is named.
-async function openNewRecipe(btn) {
-    const pop = $('pd-pop');
-    if (!pop) return;
-    if (!presetsView()) await loadPresets();
-    const gen = (presetsView() && presetsView().generated) || [];
-    pop.innerHTML = gen.map(g => '<button data-act="shape-draft" data-mode="' + esc(g.mode) + '">' +
-        esc(M().modeLabels()[g.mode] || g.mode) + '<small>' + esc(g.where || '') + '</small></button>').join('') +
-        '<button data-act="import-from">From another cell…<small>copy its recipe onto these spots</small></button>';
-    pop.hidden = false;
-    placePopover(pop, btn);
+// + New recipe opens an empty recipe draft at once (owner, 2026-10-26: start
+// with a fresh recipe and let them build from there). Its mode is picked at
+// its first row, by the chooser an empty style uses (addFreePosition); each
+// row takes what any added row takes, the routing set's defaults included.
+// Nothing is stored until it is named.
+//
+// THE COMPOSER IS READ AGAIN FIRST. A row's defaults, and the sentence beside
+// a field the routing set cannot fill (routing_gaps), come from it, and the
+// page holds the one it opened with: a destination added in Settings since
+// would not reach the row. One composer read per click.
+async function openNewRecipe() {
+    try {
+        const res = await fetch('/api/processes/' + S.processID + '/composer', { cache: 'no-store' });
+        if (res.ok) takeComposer(await res.json());
+    } catch (_) { /* the draft opens on the routing set the page holds */ }
+    startShapeDraft([], {});
 }
 
 // THE RAIL FOLLOWS THE FLOOR. A style a station builds on its HMI lands in
@@ -1080,7 +1083,8 @@ function main() {
 // which positions make parts (the generator's note); the Role chip on each row
 // is the answer.
 function shapeDraftMain() {
-    const label = M().modeLabels()[S.shapeDraft.mode] || S.shapeDraft.mode;
+    // The mode its rows have: none until the first row picks one.
+    const label = M().modeLabels()[defaultModeFor()] || '';
     const notes = S.shapeDraft.notes || [];
     const ask = notes.some(n => n.indexOf('which positions make parts') >= 0);
     const lines = notes.filter(n => n.indexOf('which positions make parts') < 0);
@@ -1094,7 +1098,8 @@ function shapeDraftMain() {
     if (check.length) lines.push('Check ' + check.join(', ') + ' — what the other cell named there has no match here, so it is blank');
     if (dropped.length) lines.push('Not placed: ' + dropped.join(', ') + ' — this cell has fewer positions');
     const r = S.shapeDraft.recipe;
-    const title = r ? 'Recipe · ' + r.name : S.shapeDraft.from ? 'Import · ' + S.shapeDraft.from : 'New recipe · ' + label;
+    const title = r ? 'Recipe · ' + r.name : S.shapeDraft.from ? 'Import · ' + S.shapeDraft.from :
+        label ? 'New recipe · ' + label : 'New recipe';
     const sub = r ? 'spots, how they swap, where bins come from and go; no part. Saved under the same ' +
         'name it becomes the next version' :
         'a recipe — spots, how they swap, where bins come from and go; no part, and nothing is saved until you name it';
@@ -1893,9 +1898,9 @@ function positionsTable() {
             (S.shapeDraft ? '' : '<td>' + picker(n, 'part', esc(M().shortPart(c.part) || 'pick one'), c.part ? 'part' : 'bad', c.part || '') + '</td>') +
             '<td>' + columnCell(n, 'partner') + '</td>' +
             '<td>' + columnCell(n, 'staging') + '</td>' +
-            '<td>' + fieldCell(n, 'source', 'inbound_source', c.source, '—') + '</td>' +
+            '<td>' + fieldCell(n, 'source', 'inbound_source', c.source, '—') + routingGap(n, 'inbound_source', c.source) + '</td>' +
             '<td>' + viaCell(n) + '</td>' +
-            '<td>' + fieldCell(n, 'dest', 'outbound_destination', c.dest, '—') + '</td>' +
+            '<td>' + fieldCell(n, 'dest', 'outbound_destination', c.dest, '—') + routingGap(n, 'outbound_destination', c.dest) + '</td>' +
             (S.shapeDraft ? '' : '<td><button class="pd-adv' + (advSet ? ' set' : '') + '" data-act="advanced" data-node="' + esc(n) + '">' +
             gearSVG() + (advSet ? '<b>' + advSet + ' set</b>' : 'defaults') + '</button></td>') + '</tr>');
     }
@@ -2038,6 +2043,15 @@ function blank(node, kind, text, title) {
 }
 
 // fieldCell is one single-field column: source, destination.
+// routingGap is the server's sentence (the composer's routing_gaps) beside a
+// recipe draft row's empty field that the row's mode requires and the
+// routing set has no row to fill: which field, and where to add one. The
+// server says it; the page only draws it.
+function routingGap(node, field, value) {
+    const why = !value && S.shapeDraft && (S.composer.routing_gaps || {})[field];
+    return why && M().fieldRequired(S.model, node, field) ? '<small class="pd-gap">' + esc(why) + '</small>' : '';
+}
+
 function fieldCell(node, kind, field, value, empty) {
     if (value || M().fieldRequired(S.model, node, field) || isOpen(node, kind)) {
         return picker(node, kind, esc(value || '—'), '', value);
@@ -6712,12 +6726,12 @@ function usePreset(id) {
 function openShapeDraft(mode) {
     const g = ((presetsView() && presetsView().generated) || []).find(x => x.mode === mode);
     if (!g) return;
-    startShapeDraft(g.shape, { mode: mode, notes: g.notes || [] });
+    startShapeDraft(g.shape, { notes: g.notes || [] });
 }
 
-// startShapeDraft puts a shape in the positions table as a draft. draft is
-// S.shapeDraft less `back`: {mode, notes} for a New shape row, plus
-// {from, unmapped} for an import.
+// startShapeDraft puts a shape in the positions table as a draft — an empty
+// one for + New recipe. draft is S.shapeDraft less `back`: {notes} for a
+// Suggested row, {from, unmapped} for an import.
 function startShapeDraft(shape, draft) {
     const back = S.styleID;
     const from = S.tab;
@@ -7357,7 +7371,7 @@ async function runPresetApply() {
 // click that does not stop propagating opens the list and hides it before
 // paint, which is the "clickable, nothing happens" report.
 const POPOVER_ACTS = { pick: 1, 'style-menu': 1, 'preset-menu': 1, 'add-position': 1, 'st-group': 1, 'st-holddest': 1, 'use-preset': 1,
-    'new-recipe': 1, 'import-from': 1, 'gspot-add': 1, 'glist-add': 1 };
+    'import-from': 1, 'gspot-add': 1, 'glist-add': 1 };
 
 function onClick(e) {
     const openRow = e.target.closest && e.target.closest('[data-open]');
@@ -7502,7 +7516,7 @@ function onClick(e) {
             case 'gadv': openGroupAdvanced(Number(btn.dataset.g)); return;
             case 'gfocus': pinGroup(Number(btn.dataset.g)); return;
             case 'recipe-open': openRecipe(btn.dataset.preset); return;
-            case 'new-recipe': void openNewRecipe(btn); return;
+            case 'new-recipe': void openNewRecipe(); return;
             case 'preset-name-cand': {
                 const c = candidateByKey(btn.dataset.cand);
                 if (c) openPresetNaming('Name this shape', c.suggested_name, { shapeKey: c.shape_key });

@@ -3,6 +3,8 @@ package domain
 import (
 	"strings"
 	"time"
+
+	"shingoedge/domain/flowspec"
 )
 
 // ── THE ROUTING SET ──────────────────────────────────────────────────────────
@@ -149,4 +151,31 @@ type RoutingNodeInput struct {
 	Enabled      bool   `json:"enabled"`
 	Origin       string `json:"-"`
 	CalledBy     string `json:"-"`
+}
+
+// RoutingGaps is the desktop's word for the fields a new row takes from the
+// routing set — its inbound source and outbound destination, the lowest
+// enabled row of each role (composer-model's defaultRouting, the same rule as
+// lowestOfRole) — when the set has no such row, keyed by the field's wire
+// name. A recipe draft draws the sentence beside the row's empty field, so the
+// engineer reads where to fill it from. Nil when the set has both.
+func RoutingGaps(processName string, routing []RoutingNode) map[string]string {
+	var out map[string]string
+	for _, g := range []struct {
+		field flowspec.Field
+		role  string
+	}{
+		{flowspec.InboundSource, RoutingRoleSource},
+		{flowspec.OutboundDestination, RoutingRoleDestination},
+	} {
+		if lowestOfRole(routing, g.role) != "" {
+			continue
+		}
+		if out == nil {
+			out = map[string]string{}
+		}
+		out[string(g.field)] = processName + "'s routing set names no " +
+			strings.ToLower(flowspec.Label(g.field)) + " — add one under Routing set"
+	}
+	return out
 }

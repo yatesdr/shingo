@@ -61,6 +61,11 @@ type ComposerData struct {
 	// not made, and the screens say which names are waiting and where to go
 	// and make it — they do not let it be made from here.
 	RoutingOff map[string][]string `json:"routing_off,omitempty"`
+	// RoutingGaps is, keyed by field, the sentence for a field a new row takes
+	// from the routing set that the set cannot fill (RoutingGaps). The
+	// desktop's alone — a recipe draft draws it beside the row's empty field;
+	// absent when the set has a source and a destination.
+	RoutingGaps map[string]string `json:"routing_gaps,omitempty"`
 	// Presets are this process's flow presets, newest version of each name.
 	// The S4 strip renders a card per preset; empty means the strip carries
 	// FLOW · Start blank · PARTS and nothing more.
