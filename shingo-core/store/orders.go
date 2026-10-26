@@ -1228,6 +1228,12 @@ func (db *DB) UpdateOrderStatusFromWithReasonTx(tx *sql.Tx, id int64, from, to, 
 	return orders.UpdateStatusFromWithReasonTx(tx, id, from, to, detail, reason.Code, reason.Actor, reason.refJSON())
 }
 
+// AdvanceOrderStepsDone raises the order's steps_done to n — see
+// orders.AdvanceStepsDone.
+func (db *DB) AdvanceOrderStepsDone(id int64, n int) error {
+	return orders.AdvanceStepsDone(db.DB, id, n)
+}
+
 // UpdateOrderWaitIndex increments the wait_index for a complex order after
 // releasing one wait segment.
 func (db *DB) UpdateOrderWaitIndex(id int64, waitIndex int) error {

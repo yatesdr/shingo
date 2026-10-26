@@ -915,7 +915,8 @@ CREATE TABLE public.orders (
     destination_resolved_at timestamp with time zone,
     recovers_order_id bigint,
     named_bin_id bigint,
-    want text DEFAULT ''::text NOT NULL
+    want text DEFAULT ''::text NOT NULL,
+    steps_done integer DEFAULT 0 NOT NULL
 );
 
 CREATE SEQUENCE public.orders_id_seq

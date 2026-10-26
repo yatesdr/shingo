@@ -269,7 +269,12 @@ CREATE TABLE IF NOT EXISTS orders (
     -- request (protocol.OrderRequest.Want): '' none, a decimal for that many
     -- layers, 'tops_bottoms' for tops & bottoms only. Every find of the order
     -- reads it. Added by migration 166.
-    want TEXT NOT NULL DEFAULT ''
+    want TEXT NOT NULL DEFAULT '',
+    -- How many steps of the order's plan the fleet has finished, by position:
+    -- the block subscriber advances it as each block finishes the plan's next
+    -- open step (an order with no stored plan counts its two implied steps).
+    -- The route strip reads where the robot is from it. Added by migration 167.
+    steps_done INTEGER NOT NULL DEFAULT 0
 );
 -- UNIQUE, and partial. Two orders sharing an edge_uuid has no story: GetByUUID
 -- breaks the tie with ORDER BY id DESC, so a duplicate silently redirects every

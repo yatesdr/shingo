@@ -42,7 +42,13 @@ type Order struct {
 	BinID         *int64             `json:"bin_id,omitempty"`
 	PayloadCode   string             `json:"payload_code"`
 	WaitIndex     int                `json:"wait_index"`
-	QueueReason   string             `json:"queue_reason,omitempty"`
+	// StepsDone is how many steps of the plan the fleet has finished, by
+	// position: the block subscriber advances it as each block finishes the
+	// plan's next open step (StepsDoneAfter), and the route strip reads where
+	// the robot is from it (RouteStops). An order with no stored plan counts
+	// its two implied steps, the lift and the drop.
+	StepsDone   int    `json:"steps_done"`
+	QueueReason string `json:"queue_reason,omitempty"`
 	// QueueCode is the structured category behind QueueReason — one of the
 	// protocol.QueueCode values (waiting_for_material, waiting_for_slot, …).
 	// The sentence is generated FROM this code by the dispatch formatter, so the

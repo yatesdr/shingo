@@ -16,6 +16,7 @@ package telemetry
 
 import (
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"log"
 	"strings"
@@ -37,6 +38,40 @@ type (
 	Stats   = domain.TelemetryStats
 	StatsV2 = domain.TelemetryStatsV2
 )
+
+// InsertBlockLeg writes a block's BLOCK_FINISHED row (legState) unless the
+// order already has one for blockID, and reports whether it wrote. The check is
+// the INSERT's own WHERE, so a block costs the one statement it always did.
+//
+// A restarted poller reports every block its vendor already finished as newly
+// FINISHED; the row the block got the first time is how the subscriber tells
+// that replay from a block it has not seen. A blockID of "" (a vendor that
+// names none) is never a replay.
+func InsertBlockLeg(db *sql.DB, e *Event, legState, blockID string) (bool, error) {
+	key := ""
+	if blockID != "" {
+		k, err := json.Marshal([]map[string]string{{"blockId": blockID}})
+		if err != nil {
+			return false, fmt.Errorf("insert block leg: key: %w", err)
+		}
+		key = string(k)
+	}
+	res, err := db.Exec(`INSERT INTO mission_events
+		(order_id, vendor_order_id, old_state, new_state, robot_id, blocks_json, errors_json, detail, created_at)
+		SELECT $1::bigint, $2::text, $3::text, $4::text, $5::text, $6::jsonb, $7::jsonb, $8::text, $9::timestamptz
+		WHERE $10::text = '' OR NOT EXISTS (SELECT 1 FROM mission_events
+			WHERE order_id = $1::bigint AND new_state = $4::text AND blocks_json @> $10::jsonb)`,
+		e.OrderID, e.VendorOrderID, e.OldState, legState, e.RobotID, e.BlocksJSON, e.ErrorsJSON, e.Detail,
+		clock.Now().UTC(), key)
+	if err != nil {
+		return false, fmt.Errorf("insert block leg: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("insert block leg: rows: %w", err)
+	}
+	return n == 1, nil
+}
 
 // InsertEvent writes a mission-event row.
 func InsertEvent(db *sql.DB, e *Event) error {

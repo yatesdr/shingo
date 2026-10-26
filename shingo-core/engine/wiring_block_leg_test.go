@@ -35,6 +35,14 @@ func seedLegOrder(t *testing.T, db *store.DB, uuid string) int64 {
 	return ord.ID
 }
 
+// legOrder is the order as handleBlockCompleted reads it for the leg.
+func legOrder(t *testing.T, db *store.DB, id int64) *orders.Order {
+	t.Helper()
+	o, err := db.GetOrder(id)
+	testutil.MustNoErr(t, err, "read order")
+	return o
+}
+
 func TestRecordBlockLeg_WritesTimingToMissionEvents(t *testing.T) {
 	t.Parallel()
 
@@ -53,7 +61,7 @@ func TestRecordBlockLeg_WritesTimingToMissionEvents(t *testing.T) {
 		BinTask:       "Load",
 		StartTime:     1784956669,
 		TerminateTime: 1784956774,
-	})
+	}, legOrder(t, db, orderID))
 
 	events, err := db.ListMissionEvents(orderID)
 	testutil.MustNoErr(t, err, "list mission events")
@@ -122,7 +130,7 @@ func TestRecordBlockLeg_MissingTimesLeaveDurationZero(t *testing.T) {
 		OrderID: orderID, VendorOrderID: "sg-leg-2",
 		BlockID: "b1", Location: "L", BinTask: "Load",
 		// no StartTime / TerminateTime
-	})
+	}, legOrder(t, db, orderID))
 
 	events, err := db.ListMissionEvents(orderID)
 	testutil.MustNoErr(t, err, "list mission events")
@@ -157,7 +165,7 @@ func TestRecordBlockLeg_InvertedTimesDoNotProduceNegativeDuration(t *testing.T) 
 		OrderID: orderID, VendorOrderID: "sg-leg-3",
 		BlockID: "b1", Location: "L", BinTask: "Unload",
 		StartTime: 1784956774, TerminateTime: 1784956669,
-	})
+	}, legOrder(t, db, orderID))
 
 	events, err := db.ListMissionEvents(orderID)
 	testutil.MustNoErr(t, err, "list mission events")

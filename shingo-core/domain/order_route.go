@@ -2,6 +2,7 @@ package domain
 
 import (
 	"encoding/json"
+	"strings"
 
 	"shingo/protocol"
 )
@@ -164,4 +165,43 @@ func endpointStops(o *Order) []RouteStop {
 		stops = append(stops, RouteStop{Node: o.ProcessNode})
 	}
 	return append(stops, end(o.DeliveryNode))
+}
+
+// StepsDoneAfter is what steps_done becomes when a block finishes at location
+// doing action (a plan action; "" for a block of no step's kind, such as the
+// turns of an advanced load sequence): the plan's next open step is done when
+// it is that action at that node, or that action at a node not resolved yet.
+// A bare wait sends no block, so the next open step is the first after
+// steps_done that is not one. ok=false: the block finished no step, and
+// steps_done stands — a turn, a repeat, a block out of its place.
+func StepsDoneAfter(o *Order, location, action string) (int, bool) {
+	if o == nil || action == "" {
+		return 0, false
+	}
+	steps := progressSteps(o)
+	i := max(o.StepsDone, 0)
+	for i < len(steps) && steps[i].Action == protocol.ActionWait && steps[i].Node == "" {
+		i++
+	}
+	if i >= len(steps) {
+		return o.StepsDone, false
+	}
+	s := steps[i]
+	if s.Action != action || (s.Node != "" && strings.TrimSpace(s.Node) != strings.TrimSpace(location)) {
+		return o.StepsDone, false
+	}
+	return i + 1, true
+}
+
+// progressSteps is the plan steps_done counts: the stored steps when they name
+// a stop to read, else the two an order with no steps implies, the lift at
+// source_node and the drop at delivery_node.
+func progressSteps(o *Order) []routeStep {
+	if len(stepStops(o.StepsJSON)) > 0 {
+		var steps []routeStep
+		if json.Unmarshal([]byte(o.StepsJSON), &steps) == nil {
+			return steps
+		}
+	}
+	return []routeStep{{Action: protocol.ActionPickup, Node: o.SourceNode}, {Action: protocol.ActionDropoff, Node: o.DeliveryNode}}
 }

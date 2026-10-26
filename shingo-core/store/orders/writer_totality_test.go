@@ -28,6 +28,7 @@ var deliberatelyNotWritten = map[string]string{
 	"error_detail":    "written on failure transitions",
 	"completed_at":    "written at the terminal transition",
 	"wait_index":      "queue-position bookkeeping, maintained after create",
+	"steps_done":      "born 0 by DEFAULT; only the block subscriber advances it (AdvanceStepsDone)",
 	"queue_reason":    "owned by the transition that queues, via SetOrderQueueDetail",
 	"queue_code":      "same; read back at lifecycle.go:291 to build the history reason",
 	"queue_cause":     "same",

@@ -115,3 +115,59 @@ func TestRouteStops(t *testing.T) {
 		}
 	}
 }
+
+// A plan with a bare wait between a drop and a lift somewhere else.
+const routeBareAwaySteps = `[{"action":"pickup","node":"SMN_01"},{"action":"dropoff","node":"IN_STG"},{"action":"wait"},` +
+	`{"action":"pickup","node":"ALN_001"},{"action":"dropoff","node":"ULN_001"}]`
+
+// TestStepsDoneAfter: a finished block completes the plan's next open step when
+// it is that step's action at that step's node, and nothing else. Each sequence
+// is the vendor's blocks in the order it finishes them.
+func TestStepsDoneAfter(t *testing.T) {
+	t.Parallel()
+	type block struct{ at, action string }
+	cases := []struct {
+		name   string
+		order  Order
+		blocks []block
+		want   []int // steps_done after each block
+	}{
+		{"single_robot: every block its step, each repeated node by its place",
+			Order{StepsJSON: routeSingleSteps},
+			[]block{{"SMN_01", "pickup"}, {"IN_STG", "dropoff"}, {"ALN_001", "wait"}, {"ALN_001", "pickup"},
+				{"OUT_STG", "dropoff"}, {"IN_STG", "pickup"}, {"ALN_001", "dropoff"}, {"OUT_STG", "pickup"}, {"ULN_001", "dropoff"}},
+			[]int{1, 2, 3, 4, 5, 6, 7, 8, 9}},
+		{"an advanced load sequence: once, on the block that lifts; the turns and the approach count nothing",
+			Order{SourceNode: "SMN_01", DeliveryNode: "ALN_001"},
+			[]block{{"SMN_01", ""}, {"SMN_01", ""}, {"SMN_01", "pickup"}, {"SMN_01", ""}, {"ALN_001", "dropoff"}},
+			[]int{0, 0, 1, 1, 2}},
+		{"a bare wait sends no block: the lift after it counts past it",
+			Order{StepsJSON: routeBareAwaySteps},
+			[]block{{"SMN_01", "pickup"}, {"IN_STG", "dropoff"}, {"ALN_001", "pickup"}, {"ULN_001", "dropoff"}},
+			[]int{1, 2, 4, 5}},
+		{"a block repeated, or out of its place, counts nothing",
+			Order{StepsJSON: routeSingleSteps},
+			[]block{{"SMN_01", "pickup"}, {"SMN_01", "pickup"}, {"OUT_STG", "dropoff"}, {"IN_STG", "dropoff"}},
+			[]int{1, 1, 1, 2}},
+		{"a step not resolved yet takes its action wherever the fleet did it",
+			Order{StepsJSON: `[{"action":"pickup","group":"SMN"},{"action":"dropoff","node":"ALN_002"}]`},
+			[]block{{"SMN_013", "pickup"}, {"ALN_002", "dropoff"}},
+			[]int{1, 2}},
+		{"a block past the last step counts nothing",
+			Order{SourceNode: "SMN_01", DeliveryNode: "ALN_001", StepsDone: 2},
+			[]block{{"ALN_001", "dropoff"}},
+			[]int{2}},
+	}
+	for _, c := range cases {
+		o := c.order
+		for i, b := range c.blocks {
+			if n, ok := StepsDoneAfter(&o, b.at, b.action); ok {
+				o.StepsDone = n
+			}
+			if o.StepsDone != c.want[i] {
+				t.Errorf("%s: after block %d (%s at %s) steps_done is %d, want %d", c.name, i+1, b.action, b.at, o.StepsDone, c.want[i])
+				break
+			}
+		}
+	}
+}

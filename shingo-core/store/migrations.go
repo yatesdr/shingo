@@ -4508,7 +4508,27 @@ func migrationList() []migration {
 		{166, "orders.want - the height an empty is wanted at, as its asker stated it on the wire (protocol.OrderRequest.Want); blank states none",
 			v166OrderWant,
 			func(q schema.Querier) bool { return schema.ColumnExists(q, "orders", "want") }},
+		{167, "orders.steps_done - how many steps of the order's plan the fleet has finished, by position; the route strip reads where the robot is from it",
+			v167OrderStepsDone,
+			func(q schema.Querier) bool { return schema.ColumnExists(q, "orders", "steps_done") }},
 	}
+}
+
+// v167OrderStepsDone adds orders.steps_done, the count of the plan's steps the
+// fleet has finished: the route strip reads where the robot is from it. The
+// block subscriber advances it, one GREATEST update per block that finishes the
+// plan's next open step (domain.StepsDoneAfter); nothing else writes it. 0 on
+// every existing row, which draws an order in flight as not started until its
+// next block. INERT TO AN OLDER BINARY, which never names the column. ROLLBACK
+// is the previous binary plus DROP COLUMN steps_done.
+//
+// Renumbered 164 -> 167: v164 through v166 landed on main while this was on its
+// branch.
+func v167OrderStepsDone(tx *sql.Tx) error {
+	if _, err := tx.Exec(`ALTER TABLE orders ADD COLUMN IF NOT EXISTS steps_done INTEGER NOT NULL DEFAULT 0`); err != nil {
+		return fmt.Errorf("v167 orders.steps_done: %w", err)
+	}
+	return nil
 }
 
 // v166OrderWant adds orders.want (protocol.Height's spelling: blank for none, a

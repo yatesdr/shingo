@@ -12,6 +12,12 @@ import (
 
 func (db *DB) InsertMissionEvent(e *telemetry.Event) error { return telemetry.InsertEvent(db.DB, e) }
 
+// InsertBlockLeg writes a block's leg row unless the order has one for the
+// block, and reports whether it wrote — see telemetry.InsertBlockLeg.
+func (db *DB) InsertBlockLeg(e *telemetry.Event, legState, blockID string) (bool, error) {
+	return telemetry.InsertBlockLeg(db.DB, e, legState, blockID)
+}
+
 func (db *DB) ListMissionEvents(orderID int64) ([]*telemetry.Event, error) {
 	return telemetry.ListEvents(db.DB, orderID)
 }

@@ -42,6 +42,7 @@ import (
 
 	"shingo/protocol"
 	"shingocore/domain"
+	"shingocore/fleet/seerrds"
 	"shingocore/service"
 	"shingocore/store/bins"
 	"shingocore/store/orders"
@@ -53,11 +54,24 @@ import (
 // bin lifecycle transition: pickups free the source slot (→ _TRANSIT),
 // intermediate storage dropoffs record the bin at its slot immediately.
 func (e *Engine) handleBlockCompleted(ev BlockCompletedEvent) {
+	// The order, read once for the leg and the count below. nil when it cannot
+	// be read: the leg is still recorded, without its robot.
+	order, err := e.db.GetOrder(ev.OrderID)
+	if err != nil {
+		order = nil
+	}
 	// Record the observation before routing it. This handler was the sole
 	// subscriber and it threw the block away after moving the bin, so every
 	// leg the fleet reported — travel-to-source, load, travel-to-dest, unload —
 	// existed for the duration of one function call and was never written down.
-	e.recordBlockLeg(ev)
+	//
+	// A block already recorded is a replay (a restarted poller reports every
+	// finished block again): it is counted once, the first time. The bin
+	// handlers below see it again, as they always did; they are idempotent on
+	// the bin's own state.
+	if e.recordBlockLeg(ev, order) {
+		e.countStepDone(ev, order)
+	}
 
 	switch {
 	case IsPickupBlock(ev.BinTask):
@@ -98,6 +112,42 @@ type blockLeg struct {
 	DurationSeconds int64  `json:"durationSeconds"`
 }
 
+// countStepDone advances the order's steps_done when the block finished the
+// plan's next open step (domain.StepsDoneAfter): one write for such a block,
+// none for any other. The route strip reads where the robot is from it, and
+// TestBlockFinished_EveryBlockSentReachesTheSubscriber is why it can: every
+// block the dispatcher sends reaches this handler as FINISHED. Best-effort,
+// like the leg: a lost count draws the robot a stop behind until its next
+// block, and must never stop a bin from moving.
+func (e *Engine) countStepDone(ev BlockCompletedEvent, order *orders.Order) {
+	if order == nil {
+		return
+	}
+	n, ok := domain.StepsDoneAfter(order, ev.Location, blockAction(ev.BinTask))
+	if !ok || n <= order.StepsDone {
+		return
+	}
+	if err := e.db.AdvanceOrderStepsDone(order.ID, n); err != nil {
+		e.logFn("route: count %d steps done for order %d: %v", n, order.ID, err)
+	}
+}
+
+// blockAction is the plan action a block of binTask does, as this handler
+// reads the vendor's vocabulary: IsPickupBlock, IsDropoffBlock, and the Wait
+// binTask a wait at a node is sent as. "" for a block of no step's kind, such
+// as the turns of an advanced load sequence around its one load.
+func blockAction(binTask string) string {
+	switch {
+	case IsPickupBlock(binTask):
+		return protocol.ActionPickup
+	case IsDropoffBlock(binTask):
+		return protocol.ActionDropoff
+	case strings.EqualFold(binTask, seerrds.BinTaskForAction(protocol.ActionWait)):
+		return protocol.ActionWait
+	}
+	return ""
+}
+
 // recordBlockLeg writes one mission_events row per completed block — roughly
 // two rows per order, into a JSONB column that already exists, so no schema
 // change and no new table.
@@ -107,9 +157,13 @@ type blockLeg struct {
 // were on the wire the whole time and rds.BlockDetail simply had no fields to
 // hold them.
 //
+// It reports whether the block is new: false only when the order already has
+// the block's row, the replay of a block counted before. A row that cannot be
+// written is new, so a lost telemetry row never stops a step from counting.
+//
 // Best-effort: a failure here logs and returns. Losing a telemetry row must
 // never stop the bin from moving.
-func (e *Engine) recordBlockLeg(ev BlockCompletedEvent) {
+func (e *Engine) recordBlockLeg(ev BlockCompletedEvent, order *orders.Order) bool {
 	leg := blockLeg{
 		BlockID:       ev.BlockID,
 		Location:      ev.Location,
@@ -126,7 +180,7 @@ func (e *Engine) recordBlockLeg(ev BlockCompletedEvent) {
 	blocks, err := json.Marshal([]blockLeg{leg})
 	if err != nil {
 		e.logFn("telemetry: marshal block leg for order %d: %v", ev.OrderID, err)
-		return
+		return true
 	}
 
 	// The robot comes from the ORDER. Block events carry no vehicle at all —
@@ -135,7 +189,7 @@ func (e *Engine) recordBlockLeg(ev BlockCompletedEvent) {
 	// per-robot leg breakdown would be empty for the same reason the mission
 	// summaries were.
 	robotID := ""
-	if order, oerr := e.db.GetOrder(ev.OrderID); oerr == nil && order != nil {
+	if order != nil {
 		robotID = order.RobotID
 	}
 
@@ -144,18 +198,19 @@ func (e *Engine) recordBlockLeg(ev BlockCompletedEvent) {
 		detail += fmt.Sprintf(" took %ds", leg.DurationSeconds)
 	}
 
-	if err := e.db.InsertMissionEvent(&telemetry.Event{
+	fresh, err := e.db.InsertBlockLeg(&telemetry.Event{
 		OrderID:       ev.OrderID,
 		VendorOrderID: ev.VendorOrderID,
-		OldState:      "",
-		NewState:      BlockLegState,
 		RobotID:       robotID,
 		BlocksJSON:    string(blocks),
 		ErrorsJSON:    "[]",
 		Detail:        detail,
-	}); err != nil {
+	}, BlockLegState, ev.BlockID)
+	if err != nil {
 		e.logFn("telemetry: record block leg for order %d: %v", ev.OrderID, err)
+		return true
 	}
+	return fresh
 }
 
 // handlePickupBlockCompleted drives the bin claimed at a pickup block onto
