@@ -211,3 +211,36 @@ func TestArmorAssertion_ASoftHoldIsFine(t *testing.T) {
 		t.Errorf("a waiting order holding only its soft reservation was reported: %v", s.errs)
 	}
 }
+
+// TestArmorAssertion_CatchesAWindowLeftOnAnOldDrop is clause 4's proof: a re-aim
+// that moved an order's delivery and kept its row on the drop it left. An order
+// holding the row on its drop, named by a dot name's last element, is fine.
+func TestArmorAssertion_CatchesAWindowLeftOnAnOldDrop(t *testing.T) {
+	t.Parallel()
+	// BEFORE Open, as above.
+	testdb.DisableWedgeSweep(t, "this test MANUFACTURES the violating states so the assertions have something to catch")
+	db := testdb.Open(t)
+
+	old := &nodes.Node{Name: "ARMOR-OLD-DROP", Enabled: true}
+	slot := &nodes.Node{Name: "ARMOR-SLOT", Enabled: true}
+	for _, n := range []*nodes.Node{old, slot} {
+		testutil.MustNoErr(t, db.CreateNode(n), "create "+n.Name)
+	}
+	reaimed := testdb.CreateOrder(t, db, func(o *orders.Order) {
+		o.EdgeUUID, o.Status, o.DeliveryNode = "armor-reaimed", protocol.StatusQueued, "ARMOR-NEW-DROP"
+	})
+	testutil.MustNoErr(t, db.ReserveSlot(old.ID, reaimed.ID), "the row the re-aim kept")
+	dotted := testdb.CreateOrder(t, db, func(o *orders.Order) {
+		o.EdgeUUID, o.Status, o.DeliveryNode = "armor-dotted", protocol.StatusQueued, "ARMOR-LANE.ARMOR-SLOT"
+	})
+	testutil.MustNoErr(t, db.ReserveSlot(slot.ID, dotted.ID), "a row on its dot-named drop")
+
+	s := &spy{TB: t}
+	testdb.AssertArmorMatchesStatus(s, db)
+	if !s.caught(fmt.Sprintf("WINDOW OFF ITS DROP: order %d", reaimed.ID)) {
+		t.Errorf("a slot row left on the drop a re-aim moved off was not reported; the assertion said %v", s.errs)
+	}
+	if s.caught(fmt.Sprintf("WINDOW OFF ITS DROP: order %d", dotted.ID)) {
+		t.Errorf("a row on the order's dot-named drop was reported: %v", s.errs)
+	}
+}

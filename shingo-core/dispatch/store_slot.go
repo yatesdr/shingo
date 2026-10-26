@@ -365,7 +365,8 @@ func storageDropoffOf(db *store.DB, node *nodes.Node) (storage bool, lane *nodes
 // of the order's row before it re-aims, so no row is left behind. That is how an
 // ask whose lane slot a dig took by rank chooses again at its next pass
 // (TestDig_TakesAnAsksWindowOnlyByRank). An ask on a window outside any lane is
-// never re-aimed: it waits for its window.
+// never re-aimed: it waits for its window. Every docker test's end-of-test sweep
+// holds it (testdb's clause 4: a live order's own slot row is on its drop).
 //
 // IT RETURNS THE DESTINATION, and that is the fix. It also SETTLES that
 // destination — resolving a group to a child, re-aiming off a dug lane — and it

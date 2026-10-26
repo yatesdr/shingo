@@ -8,6 +8,7 @@ import (
 	"shingo/protocol/clock"
 	"shingocore/store"
 	"shingocore/store/orders"
+	"shingocore/store/reservations"
 )
 
 // crashSliverAge is how old a `dispatched` order with no vendor order id has to
@@ -28,7 +29,9 @@ import (
 const crashSliverAge = 5 * time.Minute
 
 // AssertArmorMatchesStatus is the two-clause dispatched assertion and its
-// converse: does what an order HOLDS agree with what its status CLAIMS?
+// converse: does what an order HOLDS agree with what its status CLAIMS? Clause 4
+// asks the same of a window: does the slot row an order holds stand where it
+// delivers (assertWindowRowIsItsDrop)?
 //
 // AssertNoPointerWedge asks the same question from the acquiring side and asks
 // it about the POINTER. This asks it about the ARMOR, across the seam a fleet
@@ -97,6 +100,7 @@ func AssertArmorMatchesStatus(t testing.TB, db *store.DB) {
 	assertDispatchedIsArmored(t, db)
 	assertNoOldCrashSliver(t, db)
 	assertNothingHeldAtRest(t, db)
+	assertWindowRowIsItsDrop(t, db)
 }
 
 // assertDispatchedIsArmored is clause 1.
@@ -192,5 +196,43 @@ func assertNothingHeldAtRest(t testing.TB, db *store.DB) {
 			"    A hard hold is taken for the fleet call; an order that has not reached "+
 			"`dispatched` has none, so what it holds is withheld from every other order while it "+
 			"waits. A fixture whose point is a hard hold builds its order at `dispatched`.", h.Line())
+	}
+}
+
+// assertWindowRowIsItsDrop is clause 4: AN ORDER'S WINDOW ROW STANDS WHERE IT
+// DELIVERS. A plain order holds its drop as a slot row, from its issue
+// (Need.Window) or its acquire (holdPosition), and every re-aim lets go of that
+// row before it moves the delivery (the count-driven re-aim in applyTransport,
+// the dug-lane redirect, the back-to-group arm). So a held window's order is
+// never re-aimed while it holds: a live root order's own slot row is on the node
+// it delivers to, by name or as a dot name's last element. Not asked of a
+// group drop's paper (GroupRoomTag, a unit of the group's room on a slot the
+// release chooses again), a dig's parking (a leg's), or a complex order, which
+// holds its steps' drops.
+func assertWindowRowIsItsDrop(t testing.TB, db *store.DB) {
+	t.Helper()
+	rows, err := db.DB.Query(`
+		SELECT o.id, o.delivery_node, n.name
+		  FROM reservations r JOIN orders o ON o.id = r.order_id JOIN nodes n ON n.id = r.node_id
+		 WHERE r.resource_kind = 'slot' AND `+reservations.ActiveStateSQL("r.")+`
+		   AND COALESCE(r.reserved_by, '') NOT IN ($1, $2)
+		   AND o.parent_order_id IS NULL AND o.order_type <> $3
+		   AND o.status NOT IN (`+protocol.TerminalStatusSQLList()+`)
+		   AND COALESCE(o.delivery_node, '') <> ''
+		   AND o.delivery_node <> n.name AND right(o.delivery_node, length(n.name) + 1) <> '.' || n.name
+		 ORDER BY o.id`, reservations.GroupRoomTag, reservations.ByDigParking, string(protocol.OrderTypeComplex))
+	if err != nil {
+		t.Fatalf("AssertArmorMatchesStatus: scan slot rows off their drop: %v", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id int64
+		var delivery, node string
+		if err := rows.Scan(&id, &delivery, &node); err != nil {
+			t.Fatalf("AssertArmorMatchesStatus: scan a slot row off its drop: %v", err)
+		}
+		t.Errorf("WINDOW OFF ITS DROP: order %d holds a slot row on %s and delivers to %s.\n"+
+			"    A re-aim lets go of the order's row before it moves the delivery; a row left on the "+
+			"old drop holds a window nothing is coming to.", id, node, delivery)
 	}
 }
