@@ -864,13 +864,19 @@ func (s *BinManifestService) confirmTx(tx *sql.Tx, binID int64, producedAt strin
 	if err != nil {
 		return err
 	}
+	// A correction keeps the carrier's place in line (fifo_date.go).
+	kept, why := keptLoadedAt(tx, binID, producedAt)
+	if kept != nil {
+		producedAt = kept.UTC().Format(time.RFC3339Nano)
+	}
 	loadedAt, uop, payloadCode, err := bins.ConfirmManifestTx(tx, binID, producedAt)
 	if err != nil {
 		return err
 	}
 	detail, _ := json.Marshal(struct {
 		LoadedAt time.Time `json:"loaded_at"`
-	}{loadedAt})
+		Kept     string    `json:"kept,omitempty"`
+	}{loadedAt, why})
 	uopCtx, err := resolveBinUOPContext(tx, binID, detail)
 	if err != nil {
 		return err
