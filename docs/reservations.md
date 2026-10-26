@@ -308,10 +308,13 @@ pending slot row, taken in the issue's transaction before the cart): a window
 pull's move; a Core ask, the loader loop's at the window it chose and the
 level keeper's at the slot it pre-resolved (`AdmitCoreAsk`); and a station's
 move whose settled drop is one carrier's at a time (`CreateInboundOrder`, the
-acquire's own rule). A window another order holds refuses the issue with
-nothing written (`ErrWindowTaken`): the loader loop names the window
-`window-reserved` and asks at its next one, the keeper asks for its next slot,
-a station is told `claim_failed`. The row is a pending slot row like every
+acquire's own rule). A window another order holds refuses Core's own errand
+with nothing written (`ErrWindowTaken`): the loader loop names the window
+`window-reserved` and asks at its next one, the keeper asks for its next slot.
+Who asked decides, as for the cart: a station's move takes another order's
+pending hold on its window out loud (the holder's row deleted and the holder
+told `slot-taken`, naming the move), and a confirmed hold, a robot's, refuses it
+`claim_failed` naming the holder. The row is a pending slot row like every
 other: a dig that outranks the holder takes it out loud (the holder told
 `slot-taken`), and one that does not, does not
 (`TestDig_TakesAnAsksWindowOnlyByRank`). An ask whose lane slot was taken is

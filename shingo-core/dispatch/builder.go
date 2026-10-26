@@ -113,8 +113,10 @@ type Need struct {
 	// (AdmitCoreAsk: the loader loop's window, the level keeper's pre-resolved
 	// slot), and a station's move whose settled drop is one carrier's at a time
 	// (CreateInboundOrder). A window another order holds refuses the issue
-	// (ErrWindowTaken). The row is a pending slot row like every other: a dig
-	// that outranks the order takes it out loud (store.TakeSlotByRank).
+	// (ErrWindowTaken), unless a person asked and the holder's row is pending: it
+	// is then taken out loud, as the cart's is (holdWindow). The row is a pending
+	// slot row like every other: a dig that outranks the order takes it out loud
+	// (store.TakeSlotByRank).
 	Window *nodes.Node
 	// By is who asked: Person(name) for a person (a station or a page), the zero
 	// value for Core's own errand. It decides whether a stranger's soft hold on
@@ -157,10 +159,13 @@ func Person(name string) Actor { return Actor{person: name} }
 // Taken is what a person's issue took from strangers (store.TakeSoftHolds):
 // the orders for that one cart whose soft hold it took, which the caller ends
 // by name once the issue has committed, and how many other holders it
-// un-pointed, which re-find on their next pass.
+// un-pointed, which re-find on their next pass; and the order whose pending
+// hold on the declared window it took (holdWindow), 0 for none, which is told
+// slot-taken.
 type Taken struct {
 	Named     []int64
 	Unpointed int
+	Window    int64
 }
 
 // row is the order a need and a plan describe, born `pending` (v4 §2.6). It
@@ -266,17 +271,15 @@ func issue(tx *sql.Tx, need Need, p plan.Plan) (*orders.Order, Taken, error) {
 	}
 	// The window, before the cart: a window lost to another order since the
 	// door read it free is no issue, and the door asks at its next window.
+	var taken Taken
 	if need.Window != nil {
-		err := reservations.AcquireSlot(tx, o.ID, need.Window.ID, "reserveSlot")
-		if errors.Is(err, reservations.ErrReservationConflict) {
-			return nil, Taken{}, fmt.Errorf("%w: %s", ErrWindowTaken, need.Window.Name)
-		}
-		if err != nil {
-			return nil, Taken{}, fmt.Errorf("hold window %s: %w", need.Window.Name, err)
+		var err error
+		if taken.Window, err = holdWindow(tx, o.ID, need.Window, need.By); err != nil {
+			return nil, Taken{}, err
 		}
 	}
 	if need.Cart == 0 {
-		return o, Taken{}, nil
+		return o, taken, nil
 	}
 	// The cart's hold, asked first: an issue that meets no stranger reads
 	// nothing more. A root order owns its own lane rows; a leg's are its parent's.
@@ -291,7 +294,7 @@ func issue(tx *sql.Tx, need Need, p plan.Plan) (*orders.Order, Taken, error) {
 		if err != nil {
 			return nil, Taken{}, err
 		}
-		return o, Taken{}, nil
+		return o, taken, nil
 	}
 	// A PERSON ASKED, so a stranger's pending hold is taken out loud: the
 	// holder is un-pointed and told, and one that is itself an order for this
@@ -303,7 +306,6 @@ func issue(tx *sql.Tx, need Need, p plan.Plan) (*orders.Order, Taken, error) {
 		Cause:  string(CauseBinTaken),
 		Actor:  need.By.person,
 	}
-	var taken Taken
 	if taken.Named, taken.Unpointed, err = store.TakeSoftHolds(tx, need.Cart, o.ID, note); err != nil {
 		return nil, Taken{}, err
 	}
@@ -311,6 +313,43 @@ func issue(tx *sql.Tx, need Need, p plan.Plan) (*orders.Order, Taken, error) {
 		return nil, Taken{}, err
 	}
 	return o, taken, nil
+}
+
+// holdWindow takes the issuing order's pending slot row on its declared window,
+// in the issue's transaction, and returns the order it took the window from (0
+// for none). A window another order holds refuses Core's own errand
+// (ErrWindowTaken). A PERSON ASKED, so a stranger's pending hold on the window
+// is taken out loud, one rule for the cart and the position (ground rule 3):
+// the holder's row is deleted and it is told slot-taken, naming the taker, as a
+// dig's ranked take tells it (store.TakeSlotForPersonTx). A robot's hold (a
+// confirmed row, or a holder already handed to the fleet) refuses a person too,
+// naming its holder.
+func holdWindow(tx *sql.Tx, orderID int64, window *nodes.Node, by Actor) (int64, error) {
+	err := reservations.AcquireSlot(tx, orderID, window.ID, "reserveSlot")
+	if !errors.Is(err, reservations.ErrReservationConflict) {
+		if err != nil {
+			return 0, fmt.Errorf("hold window %s: %w", window.Name, err)
+		}
+		return 0, nil
+	}
+	if by.person == "" {
+		return 0, fmt.Errorf("%w: %s", ErrWindowTaken, window.Name)
+	}
+	note := store.HolderNote{
+		Reason: FormatQueueSentence(protocol.QueueWaitingForSlot, QueueParams{TakenByOrderID: orderID}),
+		Code:   protocol.QueueWaitingForSlot,
+		Cause:  string(CauseSlotTaken),
+		Actor:  by.person,
+	}
+	holder, err := store.TakeSlotForPersonTx(tx, window.ID, orderID, note)
+	if !errors.Is(err, store.ErrNoSlotTake) {
+		return holder, err
+	}
+	robot, err := store.SlotHolderTx(tx, window.ID, orderID)
+	if err != nil {
+		return 0, err
+	}
+	return 0, fmt.Errorf("%w: %s (order %d's robot holds it)", ErrWindowTaken, window.Name, robot)
 }
 
 // IssueOrder issues an order in a transaction of its own: the row, its history
@@ -339,7 +378,8 @@ func issueOwnTx(db *store.DB, need Need, p plan.Plan) (*orders.Order, Taken, err
 
 // ErrWindowTaken is an issue refused because the window its need declares
 // (Need.Window) is held by another order: nothing was written. The refusal
-// names the window. Its readers outside the package are the level keeper's
+// names the window, and for a person's order the robot's order that holds it
+// (holdWindow). Its readers outside the package are the level keeper's
 // loop (engine Maintainer.createAsks), which goes on to its next slot.
 var ErrWindowTaken = errors.New("the window is held by another order")
 

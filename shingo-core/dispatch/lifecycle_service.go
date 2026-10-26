@@ -218,8 +218,9 @@ func (s *LifecycleService) CreateInboundOrder(stationID string, p *protocol.Orde
 			need.Cart = cart.ID
 			// AND ITS DROP, when the decision settled it on a position one
 			// carrier's at a time (oneCarrierAt, the acquire's own rule): the drop
-			// is then the move's window, held from its issue (Need.Window), and
-			// another order holding it refuses the move with nothing written. The
+			// is then the move's window, held from its issue (Need.Window): another
+			// order's pending hold on it is the station's to take out loud, and a
+			// robot's refuses the move with nothing written (holdWindow). The
 			// settled drop is the decision's when it moved it (pl.Dest), else the
 			// one the station named. A drop the gate held (no plan) or a line
 			// holds nothing here, and neither does a drop named in dot notation:
@@ -242,6 +243,7 @@ func (s *LifecycleService) CreateInboundOrder(stationID string, p *protocol.Orde
 		return nil, "", lerr
 	}
 	s.failTakenForCart(taken, order, cart)
+	s.tellWindowTaken(taken, order)
 	// Emitted by the CALLER, not by admit, and deliberately with the RAW
 	// wire values: p.OrderType rather than the promoted orderType, and
 	// p.DeliveryNode rather than the possibly-resolved order.DeliveryNode. Those
@@ -407,6 +409,21 @@ func (s *LifecycleService) failTakenForCart(taken Taken, by *orders.Order, cart 
 		if err := s.Fail(o, o.StationID, "bin_taken", detail); err != nil {
 			log.Printf("dispatch: order %d lost bin %s to order %d and could not be ended: %v", o.ID, cart.Label, by.ID, err)
 		}
+	}
+}
+
+// tellWindowTaken pushes the new wait of the order whose pending hold on the
+// move's drop the station's move took at its issue (Taken.Window), as a dig's
+// take pushes its holder's (takeSlotByRank): the holder was told slot-taken in
+// the issue's transaction.
+func (s *LifecycleService) tellWindowTaken(taken Taken, by *orders.Order) {
+	if taken.Window == 0 {
+		return
+	}
+	log.Printf("dispatch: order %d (a station's move) took %s from order %d's pending hold — "+
+		"order %d is told slot-taken", by.ID, by.DeliveryNode, taken.Window, taken.Window)
+	if h, err := s.db.GetOrder(taken.Window); err == nil && h != nil {
+		notifyWaitChanged(s.emitter, h)
 	}
 }
 

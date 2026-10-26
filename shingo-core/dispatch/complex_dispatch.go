@@ -1167,11 +1167,15 @@ func (d *Dispatcher) setQueueReason(order *orders.Order, code protocol.QueueCode
 // NotifyWaitChanged tells the order's station that the reason it is waiting
 // changed (WriteQueueDetail decides when). A Core-internal order no station
 // placed has nobody to tell.
-func (d *Dispatcher) NotifyWaitChanged(order *orders.Order) {
+func (d *Dispatcher) NotifyWaitChanged(order *orders.Order) { notifyWaitChanged(d.emitter, order) }
+
+// notifyWaitChanged is NotifyWaitChanged on an emitter in hand: the dispatcher's,
+// or admission's after a station's move took a window (tellWindowTaken).
+func notifyWaitChanged(emitter Emitter, order *orders.Order) {
 	if order.EdgeUUID == "" || order.StationID == "" || order.ParentOrderID != nil {
 		return
 	}
-	d.emitter.EmitOrderWaitChanged(order.ID, order.EdgeUUID, order.StationID)
+	emitter.EmitOrderWaitChanged(order.ID, order.EdgeUUID, order.StationID)
 }
 
 // SetQueueReason is the exported form, for a door OUTSIDE this package that

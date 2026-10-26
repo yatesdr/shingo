@@ -769,7 +769,38 @@ const (
 	// "a plan never blocks a committed robot" (HANDOFF §5). The caller vouches for
 	// the commitment; the holder's unsent state is re-read under the lock.
 	SlotTakeByCommitment
+	// SlotTakeByPerson: a person's order takes a position another order has only
+	// promised itself, as it takes such a cart (TakeSoftHolds; ground rule 3). No
+	// rank is asked: the person is authoritative over soft holds. A holder sent
+	// to the fleet is a robot coming, and is not taken.
+	SlotTakeByPerson
 )
+
+// TakeSlotForPersonTx is a person's take of the slot nodeID at the issue of
+// their order takerID, on the issue's transaction (SlotTakeByPerson): the
+// pending holder's row deleted, its wait set to the note and a history row
+// written (code slot-taken, naming the taker), the slot reserved for the taker.
+// Returns the holder; ErrNoSlotTake when no order holds the slot by a pending row
+// it has not yet handed to the fleet (a robot's hold, which nobody takes).
+func TakeSlotForPersonTx(tx *sql.Tx, nodeID, takerID int64, note HolderNote) (int64, error) {
+	return takeSlotTx(tx, nodeID, takerID, takerID, note, SlotTakeByPerson, "", "reserveSlot")
+}
+
+// SlotHolderTx is the order other than except holding an active slot row on
+// nodeID (0 for none): the holder a refused take names.
+func SlotHolderTx(tx *sql.Tx, nodeID, except int64) (int64, error) {
+	var holder int64
+	err := tx.QueryRow(`SELECT order_id FROM reservations
+		WHERE node_id = $1 AND resource_kind = 'slot' AND `+reservations.ActiveStateSQL("")+` AND order_id <> $2
+		ORDER BY order_id LIMIT 1`, nodeID, except).Scan(&holder)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, fmt.Errorf("read the holder of slot %d: %w", nodeID, err)
+	}
+	return holder, nil
+}
 
 // TakeGroupRoomByRank is TakeSlotByRank for a planned group drop's paper at
 // acquiring (C2c ruling 2): the same door, the slot reserved for the taker as

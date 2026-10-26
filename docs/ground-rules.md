@@ -22,9 +22,11 @@ they are gone, so it is replaced by the plain assertion in the commit that fixes
    Test: the census's take column (`TestIssueCensus_AtCommit`, a stranger's pending hold on each door's cart).
 
 3. **A take is a person's act, decided by who asked** (`dispatch.Need.By`). A person takes a stranger's pending hold
-   out loud (the holder un-pointed and told; one that is itself an order for the cart ended by name); Core's own
-   errand takes nothing; nobody takes a confirmed hold.
-   Tests: the census's take column; `TestTakeSoftHolds_*`.
+   out loud, on the cart or on the position the order declares: the holder un-pointed and told (a cart's holder that
+   is itself an order for the cart ended by name; a position's holder told `slot-taken`, as a dig's ranked take tells
+   it). Core's own errand takes nothing; nobody takes a confirmed hold, and a person refused by one is told whose it is.
+   Tests: the census's take column; `TestTakeSoftHolds_*`; `TestNamedMove_TakesAPendingHoldOnItsDropOutLoud`,
+   `TestNamedMove_IsRefusedByAConfirmedHoldOnItsDropNamingItsHolder`.
 
 4. **A want is a `Height` value on the demand,** stated at intake and stored. No order type, intent or step flag
    carries a height or a carrier state. A step says what it lifts.
