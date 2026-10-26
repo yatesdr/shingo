@@ -207,6 +207,12 @@ func (db *DB) ListActiveOrdersByProcessNodeAndType(processNodeID int64, orderTyp
 	return orders.ListActiveByProcessNodeAndType(db.DB, processNodeID, orderType)
 }
 
+// ListActiveOrdersByBinAndType returns non-terminal orders of one type that
+// carry the bin, wherever they are tracked; see orders.ListActiveByBinAndType.
+func (db *DB) ListActiveOrdersByBinAndType(binID int64, orderType protocol.OrderType) ([]orders.Order, error) {
+	return orders.ListActiveByBinAndType(db.DB, binID, orderType)
+}
+
 // ListActiveOrdersByProcessNode returns non-terminal orders for a
 // process node.
 func (db *DB) ListActiveOrdersByProcessNode(processNodeID int64) ([]orders.Order, error) {

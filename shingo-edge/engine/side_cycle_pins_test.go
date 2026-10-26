@@ -5,9 +5,11 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 
 	"shingo/protocol"
@@ -652,34 +654,86 @@ func TestPinConfirmU1_RecordsAZeroFinalCount(t *testing.T) {
 
 // ── A3.3: the double-tap guard ───────────────────────────────────────────
 
-// TestPinDoubleTapGuard_KeysOnAnyMoveAtTheProcessNode pins what the guard in
-// ClearBin and PushEmptyOut actually checks: any non-terminal MOVE tracked at
-// this process_node — including one ARRIVING here. That is the opposite
-// direction from outboundMoveInFlight (core node, departures only), which is why
-// the two must not be merged. PUSH EMPTY refuses; CLEAR skips the U2 without
-// failing the clear.
-func TestPinDoubleTapGuard_KeysOnAnyMoveAtTheProcessNode(t *testing.T) {
+// TestPinDoubleTapGuard_KeysOnTheCart pins what the guard in ClearBin and
+// PushEmptyOut checks: a non-terminal MOVE carrying this cart (orders.bin_id,
+// which a move naming its bin records from its birth), wherever it is tracked.
+// A live move at the window carrying another cart does not refuse PUSH EMPTY;
+// one carrying this cart does, and nothing is created.
+func TestPinDoubleTapGuard_KeysOnTheCart(t *testing.T) {
 	t.Parallel()
 	srv := fakeCoreBinServer(t, true, "")
 	db := testEngineDB(t)
-	nodeID, _ := seedManualSwapClaim(t, db, "DT-ARR", "consume", "PART-DT", "EMPTY-TOTES")
-	const core = "DT-ARR-MSWAP-NODE"
-	// A move ARRIVING at this window, tracked here.
-	inbound, err := db.CreateOrder("dt-arriving", orders.TypeMove, &nodeID, false, 1, core, "", "ELSEWHERE", protocol.Height{}, true, "", "", "")
-	testutil.MustNoErr(t, err, "create arriving move")
-
+	nodeID, _ := seedManualSwapClaim(t, db, "DT-CART", "consume", "PART-DT", "EMPTY-TOTES")
+	const core = "DT-CART-MSWAP-NODE"
 	eng := testEngine(t, db)
 	bridgeCore(t, eng, srv.URL)
-	holdProcessNodes(t, eng, true, "")
+	holdProcessNodes(t, eng, true, "") // bin 77 on the window
+
+	// The previous cart's empty-out, still live (waiting at a lane gate).
+	other, err := eng.orderMgr.CreateMoveOrderForBin(&nodeID, core, "EMPTY-TOTES", "", 76, orders.NoDemand())
+	testutil.MustNoErr(t, err, "create the previous cart's empty-out")
+	testutil.MustNoErr(t, eng.PushEmptyOut(nodeID), "PushEmptyOut with another cart's move live at the window")
+	if n, _ := countMovesTo(t, db, nodeID, "EMPTY-TOTES"); n != 2 {
+		t.Fatalf("empty-outs = %d, want 2: order %d carries bin 76, not this window's 77", n, other.ID)
+	}
+
 	err = eng.PushEmptyOut(nodeID)
 	if err == nil || !strings.Contains(err.Error(), "already has an empty-out in flight") {
-		t.Errorf("PushEmptyOut with an arriving move tracked here = %v, want the in-flight refusal", err)
+		t.Errorf("PushEmptyOut with a live move carrying this cart = %v, want the in-flight refusal", err)
 	}
-	if eng.outboundMoveInFlight(nodeID, core) {
-		t.Errorf("outboundMoveInFlight saw the arriving move %d — it counts departures only", inbound)
+	if n, _ := countMovesTo(t, db, nodeID, "EMPTY-TOTES"); n != 2 {
+		t.Errorf("empty-outs after the second tap = %d, want 2 (one per cart)", n)
 	}
-	if n, _ := countMovesTo(t, db, nodeID, "EMPTY-TOTES"); n != 0 {
-		t.Errorf("empty-outs created = %d, want 0", n)
+}
+
+// TestPinDoubleTapGuard_ASecondFullClearedWhileTheLastEmptyOutWaitsGetsItsOwn is
+// round 3's sim (FGN_001): the crew cleared the next full while the previous
+// cart's empty-out was still live, waiting at its lane's gate, and the guard,
+// keyed on the window, skipped the second empty-out, so the cart stayed and the
+// unloader pulled no more. Each cleared cart gets its own; a second CLEAR tap on
+// the same cart still skips.
+func TestPinDoubleTapGuard_ASecondFullClearedWhileTheLastEmptyOutWaitsGetsItsOwn(t *testing.T) {
+	t.Parallel()
+	var cleared atomic.Int64
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/telemetry/node-bins":
+			var rows []map[string]any
+			for _, node := range strings.Split(r.URL.Query().Get("nodes"), ",") {
+				rows = append(rows, map[string]any{"node_name": node, "occupied": true,
+					"payload_code": "PART-DT", "bin_id": cleared.Load()})
+			}
+			_ = json.NewEncoder(w).Encode(rows)
+		case "/api/telemetry/bin-clear":
+			_ = json.NewEncoder(w).Encode(map[string]any{"status": "ok", "bin_id": cleared.Load(),
+				"cleared_payload_code": "PART-DT"})
+		default:
+			_ = json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+		}
+	}))
+	t.Cleanup(srv.Close)
+	db := testEngineDB(t)
+	nodeID, _ := seedManualSwapClaim(t, db, "DT-NEXT", "consume", "PART-DT", "EMPTY-TOTES")
+	eng := testEngine(t, db)
+	bridgeCore(t, eng, srv.URL)
+	holdProcessNodes(t, eng, true, "PART-DT")
+
+	cleared.Store(101)
+	testutil.MustNoErr(t, eng.ClearBin(nodeID, "", false, nil), "CLEAR the first full")
+	cleared.Store(102) // the first empty-out is still live; the next full lands
+	testutil.MustNoErr(t, eng.ClearBin(nodeID, "", false, nil), "CLEAR the second full")
+	testutil.MustNoErr(t, eng.ClearBin(nodeID, "", false, nil), "a second CLEAR tap on the second full")
+
+	moves, err := db.ListActiveOrdersByProcessNode(nodeID)
+	testutil.MustNoErr(t, err, "list the window's moves")
+	var bins []int64
+	for _, m := range moves {
+		if m.OrderType == orders.TypeMove && m.DeliveryNode == "EMPTY-TOTES" && m.BinID != nil {
+			bins = append(bins, *m.BinID)
+		}
+	}
+	if !slices.Equal(bins, []int64{101, 102}) {
+		t.Errorf("empty-outs carry bins %v, want [101 102]: one per cleared cart, none for the double tap", bins)
 	}
 }
 

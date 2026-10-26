@@ -573,10 +573,12 @@ func (e *Engine) afterClear(nodeID int64, node *processes.Node, claim *processes
 	var notSent error
 	if claim.Role == protocol.ClaimRoleConsume {
 		// Double-tap guard, the same one PushEmptyOut carries: the order layer has
-		// no dedup for move orders, so a second CLEAR tap on the same window would
-		// mint a second U2 for one physical carrier. Moving the create after the
-		// clear widened the window for that, because the clear is a round trip to
-		// Core.
+		// no dedup for move orders, so a second CLEAR tap on the same carrier would
+		// mint a second U2 for it. Moving the create after the clear widened the
+		// window for that, because the clear is a round trip to Core. It asks for
+		// a live move carrying the cart the clear cleared, not for any move at the
+		// window: the previous cart's empty-out may still be live (waiting at a
+		// lane gate) when the next full lands and is cleared.
 		//
 		// It SKIPS the U2 rather than failing, which is where it differs from
 		// PushEmptyOut. There the empty-out IS the operation, so refusing it is the
@@ -584,17 +586,16 @@ func (e *Engine) afterClear(nodeID int64, node *processes.Node, claim *processes
 		// would tell the operator their CLEAR failed when it did not, and a retry
 		// would then find no bin and create nothing at all.
 		//
-		// A read error skips the U2 too, matching PushEmptyOut's direction. A
-		// missed empty-out strands one carrier at a window the operator can still
-		// tap PUSH EMPTY on; a duplicate sends two robots for one bin, and the
-		// second finds nothing there.
+		// A read error skips the U2 too, matching PushEmptyOut's direction: a
+		// duplicate sends two robots for one bin, and the second finds nothing
+		// there.
 		if claim.PulledDirectly {
 			// A stage 2 pulled directly by the process: the finished cart
 			// stays on the window for the line to take, so there is no
 			// empty-out and nothing to tell the operator.
 			log.Printf("bin_ops: %s is pulled directly by the process — the cart waits on the window for the line",
 				node.Name)
-		} else if existingID, inFlight, lerr := e.emptyOutInFlight(nodeID); lerr != nil {
+		} else if existingID, inFlight, lerr := e.emptyOutInFlight(cleared.BinID); lerr != nil {
 			log.Printf("bin_ops: check in-flight move for node %s: %v", node.Name, lerr)
 		} else if inFlight {
 			log.Printf("bin_ops: skipping empty-out at node %s — order %d is already moving this carrier out",
@@ -696,9 +697,10 @@ func (e *Engine) PushEmptyOut(nodeID int64) error {
 	// Double-tap guard: the order layer has no dedup for move orders, so two
 	// rapid taps would each call createUnloaderEmptyOut and create two U2
 	// orders for the same physical bin. Here the empty-out IS the operation, so
-	// an active move — or a read that could not say — refuses it; ClearBin runs
-	// the same check and skips instead. See emptyOutInFlight for what it keys on.
-	if _, inFlight, err := e.emptyOutInFlight(nodeID); err != nil {
+	// a live move carrying this cart — or a read that could not say — refuses
+	// it; ClearBin runs the same check and skips instead. See emptyOutInFlight
+	// for what it keys on.
+	if _, inFlight, err := e.emptyOutInFlight(row.BinID); err != nil {
 		return fmt.Errorf("check in-flight move for node %s: %w", node.Name, err)
 	} else if inFlight {
 		return fmt.Errorf("node %s already has an empty-out in flight", node.Name)
@@ -719,18 +721,22 @@ func (e *Engine) PushEmptyOut(nodeID int64) error {
 }
 
 // emptyOutInFlight is the double-tap check shared by ClearBin and PushEmptyOut:
-// is any non-terminal MOVE tracked at this process_node? It returns the oldest
-// one's ID for the log line. The CALLERS decide what a hit means — PushEmptyOut
-// refuses, ClearBin skips its U2 (its clear has already committed) — and both
-// treat a read error as "do not create".
+// is a non-terminal MOVE carrying this cart live? binID is Core's id for the
+// carrier (the one the clear cleared, or the one PUSH EMPTY read on the window),
+// and a move naming its bin records it from its birth (createMoveOrder). It
+// returns the oldest one's ID for the log line. The CALLERS decide what a hit
+// means — PushEmptyOut refuses, ClearBin skips its U2 (its clear has already
+// committed) — and both treat a read error as "do not create".
 //
-// KEYED ON THE PROCESS NODE AND THE ORDER TYPE, and it counts a move ARRIVING
-// here as readily as one leaving. That is the opposite shape from
-// outboundMoveInFlight (core node, departures only, loader side), which is why
-// the two are not one function: merged, one of them would change which taps it
-// refuses. Pinned by TestPinDoubleTapGuard_KeysOnAnyMoveAtTheProcessNode.
-func (e *Engine) emptyOutInFlight(nodeID int64) (existingID int64, inFlight bool, err error) {
-	existing, err := e.db.ListActiveOrdersByProcessNodeAndType(nodeID, protocol.OrderTypeMove)
+// KEYED ON THE CART, not the window. It was keyed on any move at the process
+// node, so a CLEAR skipped its empty-out while the previous cart's was still
+// live, waiting at a lane gate after its lift, and the cleared cart stayed on
+// the window with no move owed: the unloader pulled no more, and the plant ran
+// out of empties (press-tranche2 round 3's sim, on main since 2026-09-22). A
+// bin id of 0 (a Core that names none) keys no row, and the move it makes names
+// no bin either. Pinned by TestPinDoubleTapGuard_KeysOnTheCart.
+func (e *Engine) emptyOutInFlight(binID int64) (existingID int64, inFlight bool, err error) {
+	existing, err := e.db.ListActiveOrdersByBinAndType(binID, protocol.OrderTypeMove)
 	if err != nil {
 		return 0, false, err
 	}

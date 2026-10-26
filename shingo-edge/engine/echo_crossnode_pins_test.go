@@ -317,13 +317,16 @@ func TestPinEcho_SharedWindowL1ToASiblingWindow(t *testing.T) {
 // the U2; after the echo a second CLEAR at stage 1 still sees it and skips, and
 // stage 2's PUSH EMPTY is not blocked by a U2 that is not its own. Before the fix
 // the echo re-credited the U2 to stage 2: the second CLEAR filed a second U2 for
-// the same carrier and stage 2 refused PUSH EMPTY — the B5 wedge.
+// the same carrier and stage 2 refused PUSH EMPTY — the B5 wedge. The guard
+// keys on the cart now (TestPinDoubleTapGuard_KeysOnTheCart), so each window
+// holds its own here.
 func TestPinEcho_Stage1DoubleTapSeesItsOwnU2AfterTheEcho(t *testing.T) {
 	t.Parallel()
 	n := newEchoNodes(t, "EDT1", protocol.ClaimRoleConsume, "BDT2")
 	srv := fakeCoreBinServer(t, true, "")
 	bridgeCore(t, n.eng, srv.URL)
-	holdProcessNodes(t, n.eng, true, "")
+	holdActableBins(t, n.eng, protocol.NodeBinsRow{Node: n.aCore, Occupied: true, BinID: 77},
+		protocol.NodeBinsRow{Node: n.bCore, Occupied: true, BinID: 78})
 
 	testutil.MustNoErr(t, n.eng.ClearBin(n.aID, "", false, nil), "first CLEAR")
 	u2 := echoOnlyMoveFrom(t, n)

@@ -845,6 +845,20 @@ func ListStagedByProcessNode(db *sql.DB, processNodeID int64) ([]Order, error) {
 	return scanOrders(rows)
 }
 
+// ListActiveByBinAndType returns non-terminal orders of one type that carry the
+// bin (bin_id: Core's id, which a move naming its bin records at its birth and
+// every order learns at delivery), oldest first, wherever they are tracked.
+func ListActiveByBinAndType(db *sql.DB, binID int64, orderType protocol.OrderType) ([]Order, error) {
+	rows, err := db.Query(fmt.Sprintf(`SELECT `+selectCols+` `+joinClause+`
+		WHERE o.bin_id = ? AND o.order_type = ? AND o.status NOT IN (%s)
+		ORDER BY o.created_at`, protocol.TerminalStatusSQLList()), binID, orderType)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanOrders(rows)
+}
+
 // ListActiveByProcessNodeAndType returns non-terminal orders for a
 // process node filtered by order type.
 func ListActiveByProcessNodeAndType(db *sql.DB, processNodeID int64, orderType protocol.OrderType) ([]Order, error) {

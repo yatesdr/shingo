@@ -134,7 +134,7 @@ func fakeCoreBinServer(t *testing.T, occupied bool, payload string) *httptest.Se
 			return
 		}
 		if r.URL.Path == "/api/telemetry/bin-clear" {
-			json.NewEncoder(w).Encode(map[string]any{"status": "ok", "cleared_payload_code": payload})
+			json.NewEncoder(w).Encode(map[string]any{"status": "ok", "bin_id": 77, "cleared_payload_code": payload})
 			return
 		}
 		json.NewEncoder(w).Encode(map[string]string{"status": "ok"})

@@ -3,6 +3,7 @@ package orders
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 
 	"github.com/google/uuid"
 
@@ -214,6 +215,15 @@ func (m *Manager) createMoveOrder(processNodeID *int64, quantity int64,
 		origin.ID, origin.Class)
 	if err != nil {
 		return nil, fmt.Errorf("create move order: %w", err)
+	}
+	// A move that names its bin carries it from its birth, not from its delivery
+	// (HandleDelivered): the unloader's double-tap guard asks for a live move
+	// carrying the cart (emptyOutInFlight), and an empty-out is live long before
+	// it is delivered.
+	if bin.id != 0 {
+		if err := m.db.UpdateOrderBinID(orderID, &bin.id); err != nil {
+			log.Printf("create move order %d: record bin %d: %v", orderID, bin.id, err)
+		}
 	}
 
 	env, envErr := m.sender.build(protocol.TypeOrderRequest, &protocol.OrderRequest{
