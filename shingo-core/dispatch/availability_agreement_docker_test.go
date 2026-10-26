@@ -33,12 +33,13 @@ import (
 // records what each predicate answers and asserts nothing. This asserts: the
 // expected answer of every cell is the one rule — a carrier is sourceable as
 // stock of its part only when it is the plain good full — and a cell that
-// disagrees is either PREDICTED (availPredicted, with the phase that closes it)
-// or a failure. A predicted cell that has come to agree fails too, so the
-// prediction list is the exact list of today's disagreements, never a ceiling.
-// The predicted cells go to testdb.VerifyRed: green while they stand, red the
-// moment the last is gone, which is when the VerifyRed call goes and the table
-// is all assertions.
+// disagrees is a failure. The table is all assertions: phase F closed its
+// predicted cells and decided out loud the six no phase named (both digs × the
+// foreign and the bare carrier compose the carrier rule, PayloadBinTypeRuleArm,
+// so a dig is not spent exposing a carrier nobody can take; tier 4's named full
+// asks the stock fragment's attestation; tier 2's pool passes over a bin on a
+// switched-off position), and the group scan's slot child × the foreign and the
+// bare carrier went green when it read the part's rule (Store.LoadBinTypeRule).
 //
 // EVERY READER IS ASKED THROUGH ITS PRODUCTION DOOR. The SQL readers are called
 // as they are; the Go twins are reached through the caller that runs them
@@ -136,27 +137,6 @@ var availOmits = map[string]map[string]string{
 	},
 }
 
-// availPredicted are today's disagreements with the rule, each with the phase of
-// the press-tranche-2 brief (rev 3) that closes it, or the STOP that holds it.
-// A cell here that has come to agree fails the test: delete it.
-//
-// PHASE F closed its cells, and decided out loud the six that no phase named;
-// each was folded into the one rule, none named in availOmits:
-//   - both digs × the foreign and the bare carrier: the digs compose the
-//     carrier rule (PayloadBinTypeRuleArm). U.1's reason for giving them the
-//     stock half is this one too: a dig must not be spent exposing a carrier
-//     nobody can take, and the lane mouth refuses the dug carrier by that rule;
-//   - tier 4 × the unconfirmed full: namedFull asks the stock fragment's
-//     attestation (manifest_confirmed), as the group scan and tier 5 do;
-//   - tier 2 × the disabled loader position: the pool passes over a bin on a
-//     switched-off position (Bin.AtDisabledNode), as it passes over a held one.
-var availPredicted = map[string]map[string]string{
-	"group_slot_child": {
-		"foreign_carrier": "STOP (F) — isBinAvailableForRetrieve composes no carrier rule: the rule is the part's, read once per door call (LoadBinTypeRule), and binresolver.Store declares no such read; declaring one is an interface method, which the brief's surface rule leaves to the lead",
-		"bare":            "STOP (F) — the same carrier-rule gap",
-	},
-}
-
 // TestRule6_OneAvailabilityTable is ground rule 6: one fixture set through every
 // reader that answers "may this carrier be sourced as stock of its part".
 func TestRule6_OneAvailabilityTable(t *testing.T) {
@@ -171,7 +151,6 @@ func TestRule6_OneAvailabilityTable(t *testing.T) {
 	readers := availReaders(t, db, copies)
 	checkAvailTableNames(t, readers)
 
-	var violations []string
 	for _, r := range readers {
 		for _, c := range copies {
 			took := r.took(c)
@@ -179,16 +158,7 @@ func TestRule6_OneAvailabilityTable(t *testing.T) {
 			if _, omitted := availOmits[r.name][c.fx.name]; omitted {
 				want = true
 			}
-			why, predicted := availPredicted[r.name][c.fx.name]
-			switch {
-			case took == want && predicted:
-				t.Errorf("rule 6: %s (%s) now %s the %s carrier, as the rule says. The prediction "+
-					"%q is stale: delete it from availPredicted so the cell is an assertion.",
-					r.name, r.where, takesWord(took), c.fx.name, why)
-			case took != want && predicted:
-				violations = append(violations, fmt.Sprintf("%s (%s) %s the %s carrier: %s",
-					r.name, r.where, takesWord(took), c.fx.name, why))
-			case took != want:
+			if took != want {
 				t.Errorf("rule 6: %s (%s) %s the %s carrier; the one rule says it %s.\n\n"+
 					"Every availability reader composes the one fragment (helpers.BinSourceableSQL) or "+
 					"its Go twin. A reader that omits an arm by design names it in availOmits with the "+
@@ -197,7 +167,6 @@ func TestRule6_OneAvailabilityTable(t *testing.T) {
 			}
 		}
 	}
-	testdb.VerifyRed(t, "rule 6: every availability reader composes the one fragment or its Go twin", violations)
 }
 
 func takesWord(took bool) string {
@@ -207,9 +176,8 @@ func takesWord(took bool) string {
 	return "refuses"
 }
 
-// checkAvailTableNames fails on a name in availOmits or availPredicted that is
-// no reader or no fixture, and on a cell in both: a stale name reads as
-// coverage, and a cell cannot be both by design and a drift.
+// checkAvailTableNames fails on a name in availOmits that is no reader or no
+// fixture: a stale name reads as coverage.
 func checkAvailTableNames(t *testing.T, readers []availReader) {
 	t.Helper()
 	known := map[string]bool{}
@@ -220,22 +188,13 @@ func checkAvailTableNames(t *testing.T, readers []availReader) {
 	for _, fx := range availFixtures {
 		fixture[fx.name] = true
 	}
-	for label, table := range map[string]map[string]map[string]string{"availOmits": availOmits, "availPredicted": availPredicted} {
-		for reader, cells := range table {
-			if !known[reader] {
-				t.Errorf("%s names reader %q, which the table does not run", label, reader)
-			}
-			for fx := range cells {
-				if !fixture[fx] || fx == availGood {
-					t.Errorf("%s names %s × %q, which is no fixture the rule refuses", label, reader, fx)
-				}
-			}
-		}
-	}
 	for reader, cells := range availOmits {
+		if !known[reader] {
+			t.Errorf("availOmits names reader %q, which the table does not run", reader)
+		}
 		for fx := range cells {
-			if _, both := availPredicted[reader][fx]; both {
-				t.Errorf("%s × %s is in availOmits and availPredicted: it is one or the other", reader, fx)
+			if !fixture[fx] || fx == availGood {
+				t.Errorf("availOmits names %s × %q, which is no fixture the rule refuses", reader, fx)
 			}
 		}
 	}

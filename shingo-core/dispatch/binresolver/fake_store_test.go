@@ -62,6 +62,11 @@ type fakeStore struct {
 	tbCounts map[groupKey]int
 	// bareOf maps a bare marker to its carrier; absent = a real type.
 	bareOf map[int64]int64
+	// rules answers LoadBinTypeRule per part; absent = no rows, the zero rule.
+	// ruleErr is an injected read failure; ruleReads counts the reads.
+	rules     map[string]domain.BinTypeRule
+	ruleErr   error
+	ruleReads int
 
 	// Lane query fixtures.
 	//
@@ -282,6 +287,14 @@ func (f *fakeStore) BinTypeBareOf(binTypeID int64) (*int64, error) {
 		return &id, nil
 	}
 	return nil, nil
+}
+
+func (f *fakeStore) LoadBinTypeRule(payloadCode string) (domain.BinTypeRule, error) {
+	f.ruleReads++
+	if f.ruleErr != nil {
+		return domain.BinTypeRule{}, f.ruleErr
+	}
+	return f.rules[payloadCode], nil
 }
 
 // BinTypeForOrder defaults to "could not tell", which is what an order with

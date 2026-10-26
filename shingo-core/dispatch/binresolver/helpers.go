@@ -42,12 +42,13 @@ import (
 // A carrier counted to nothing is no stock, and neither is one on quality hold,
 // as the stock fragment says (helpers.BinCarriesSourceableStockSQL): this is
 // that fragment's Go twin for a group's slot children, which the lane mouth
-// asks in SQL. THE CARRIER RULE IS NOT ASKED HERE, and the lane mouth asks it
-// (helpers.PayloadBinTypeRuleArm): the rule is the part's, read once per door
-// call, and this package's Store declares no read of it, so a slot child in a
-// carrier its part may not ride is taken. Rule 6's table names the gap
-// (TestRule6_OneAvailabilityTable, group_slot_child; a STOP of phase F).
-func isBinAvailableForRetrieve(b *bins.Bin, payloadCode string, asker domain.DigAsker) bool {
+// asks in SQL. AND THE CARRIER RULE, as the lane mouth asks it
+// (helpers.PayloadBinTypeRuleArm): rule is the part's (domain.BinTypeRule),
+// read once per scan by the caller (Store.LoadBinTypeRule), so a slot child in
+// a carrier its part may not ride, a bare marker among them, is not taken. A
+// part-less ask names no rule. Rule 6's table holds it
+// (TestRule6_OneAvailabilityTable, group_slot_child).
+func isBinAvailableForRetrieve(b *bins.Bin, payloadCode string, rule domain.BinTypeRule, asker domain.DigAsker) bool {
 	if b.ClaimedBy != nil || b.Locked || !b.ManifestConfirmed || !b.Stocked() || b.QualityHold {
 		return false
 	}
@@ -57,7 +58,7 @@ func isBinAvailableForRetrieve(b *bins.Bin, payloadCode string, asker domain.Dig
 	if !b.Status.Sourceable() || b.Status == domain.BinStatusStaged {
 		return false
 	}
-	if payloadCode != "" && b.PayloadCode != payloadCode {
+	if payloadCode != "" && (b.PayloadCode != payloadCode || !rule.Permits(b.BinTypeID)) {
 		return false
 	}
 	return true

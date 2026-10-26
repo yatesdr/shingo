@@ -210,6 +210,10 @@ func (r *DefaultResolver) Resolve(syntheticNode *nodes.Node, mode ResolveMode, p
 // FIFO defect. The one caller generalised past the NGRP gate so far (a LANE
 // source) answered the ranking question by taking the group scan's.
 func (r *DefaultResolver) resolveRetrieve(children []*nodes.Node, payloadCode string, asker domain.DigAsker) (*nodes.Node, error) {
+	rule, err := r.DB.LoadBinTypeRule(payloadCode)
+	if err != nil {
+		return nil, err
+	}
 	for _, child := range children {
 		if !child.Enabled {
 			continue
@@ -220,7 +224,7 @@ func (r *DefaultResolver) resolveRetrieve(children []*nodes.Node, payloadCode st
 			continue
 		}
 		for _, b := range bins {
-			if !isBinAvailableForRetrieve(b, payloadCode, asker) {
+			if !isBinAvailableForRetrieve(b, payloadCode, rule, asker) {
 				continue
 			}
 			return child, nil

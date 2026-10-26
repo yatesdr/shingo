@@ -261,11 +261,19 @@ func (r *GroupResolver) scanForBestBin(group *nodes.Node, payloadCode string, s 
 // scanChildren is scanForBestBin's body over a child list the CALLER chose:
 // the group's dig-filtered children, or a single lane (ResolveRetrieveInLane).
 // It returns (nil, nil) when nothing is found, and the caller says why.
+//
+// THE PART'S CARRIER RULE IS READ AT THE FIRST FLAT CHILD HOLDING BINS, once
+// per scan: a lane's mouth asks it in SQL, and a lane-only group reads nothing
+// more. A failed read skips the flat children, as a failed ListBinsByNode skips
+// its child: a slot child is never judged without the rule.
 func (r *GroupResolver) scanChildren(children []*nodes.Node, payloadCode string, s retrieveStrategy,
 	asker domain.DigAsker, accept BinFilter) (*ResolveResult, error) {
 	var bestBin *bins.Bin
 	var bestNode *nodes.Node
 	var bestTime time.Time
+	var rule domain.BinTypeRule
+	var ruleErr error
+	ruleRead := false
 
 	for _, child := range children {
 		if !child.Enabled {
@@ -309,8 +317,16 @@ func (r *GroupResolver) scanChildren(children []*nodes.Node, payloadCode string,
 				r.dbg("%s: ListBinsByNode node=%s: %v", s.label, child.Name, err)
 				continue
 			}
+			if len(nodeBins) > 0 && !ruleRead {
+				rule, ruleErr = r.DB.LoadBinTypeRule(payloadCode)
+				ruleRead = true
+			}
+			if ruleErr != nil {
+				r.dbg("%s: LoadBinTypeRule payload=%s: %v — skipping node=%s", s.label, payloadCode, ruleErr, child.Name)
+				continue
+			}
 			for _, b := range nodeBins {
-				if !isBinAvailableForRetrieve(b, payloadCode, asker) || !accept.accepts(b) {
+				if !isBinAvailableForRetrieve(b, payloadCode, rule, asker) || !accept.accepts(b) {
 					continue
 				}
 				if s.firstMatch {

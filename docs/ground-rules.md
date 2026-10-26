@@ -43,8 +43,8 @@ they are gone, so it is replaced by the plain assertion in the commit that fixes
 
 6. **Every availability reader composes the one fragment or its Go twin,** held by one agreement table over one
    fixture set; a reader that omits an arm names it in the table, with the reason.
-   Test: `TestRule6_OneAvailabilityTable` (predicted red: the part-supply arm's three cells, phase E; a group's slot
-   children and the carrier rule, two cells phase F stopped on).
+   Test: `TestRule6_OneAvailabilityTable`, all assertions (a group's slot children ask the part's carrier rule,
+   `binresolver.Store.LoadBinTypeRule`, read at the scan's first flat child holding bins).
 
 7. **A count is a claim.** "Counted to nothing" has one spelling each side (`domain.Bin.Stocked`,
    `helpers.StockSQL`; the Edge reads the bins feed's `Stocked`), and so has "a tote type"

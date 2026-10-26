@@ -185,7 +185,7 @@ func TestGolden_Eligibility(t *testing.T) {
 		c := f.cand(b)
 
 		ngrp := ""
-		if !isBinAvailableForRetrieve(b, wantPayload, reservations.Anyone) {
+		if !isBinAvailableForRetrieve(b, wantPayload, domain.BinTypeRule{}, reservations.Anyone) {
 			ngrp = "rejected"
 		}
 

@@ -111,6 +111,13 @@ type Store interface {
 	// BinTypeBareOf names the carrier a bare marker stands for: a marker is
 	// admitted wherever its carrier is (bins.TypeAdmits). nil for a real type.
 	BinTypeBareOf(binTypeID int64) (*int64, error)
+
+	// LoadBinTypeRule is the part's carrier rule (payload_bin_types), the one
+	// statement store.DB.LoadBinTypeRule reads, and none for a part-less ask.
+	// The group scan reads it once, lazily, at its first flat child holding
+	// bins, so a group's slot children ask the rule the lane mouth asks in SQL
+	// (ground rule 6): a lane-only group reads nothing more.
+	LoadBinTypeRule(payloadCode string) (domain.BinTypeRule, error)
 }
 
 // The compile-time check that *store.DB satisfies Store lives in dispatch
