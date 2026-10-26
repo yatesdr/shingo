@@ -3,6 +3,18 @@
 One line per change. If a change needs a paragraph to explain, the paragraph
 belongs in the commit message or in `docs/` — this file is the index.
 
+## 2026-10-26 — Changeovers at two-buffer cells, and FIFO kept honest
+
+Core, Edge and protocol; no migration. Not deployed. UOPAdjustment gains two optional fields.
+
+- A changeover release offers no PULL PARTS; the cart goes back with its count
+- The release refuses a pull on a changeover cart at every door (gate G9)
+- The sim operator no longer pulls parts at a changeover
+- A swap's supply lifts where its return can land, through a buffer if it must
+- A return with nowhere to land says which spots to empty
+- A person's restamp in Core tells the station what the carrier now holds
+- A correction keeps a carrier's place in FIFO: same part, within 20 minutes
+
 ## 2026-10-24 — Recipe groups, and the cell picture by relation
 
 Edge only; no migration. Not deployed; lands on `main` with 2026-10-22's spots v0.
