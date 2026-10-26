@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"shingoedge/domain/flowspec"
 )
 
 // ── FLOW PRESETS ─────────────────────────────────────────────────────────────
@@ -72,6 +74,11 @@ var ErrFlowPresetNameIsAnotherShape = errors.New("is already a different shape �
 // ErrFlowPresetMalformed refuses a flow_json that does not parse into at least
 // one cell.
 var ErrFlowPresetMalformed = errors.New("flow_json must be an object with a non-empty cells array")
+
+// ErrFlowPresetIncomplete refuses a recipe row its mode cannot run: a field
+// the mode requires is empty. The wording ahead of it is the style save's
+// for the same claim (validateSwapModeRouting).
+var ErrFlowPresetIncomplete = errors.New("fill it on the row before saving")
 
 // flowPresetPayloadKeys are the cell keys a part could arrive under.
 //
@@ -219,7 +226,30 @@ func ValidateFlowPreset(flowJSON string, allowed map[string]bool) error {
 		s := stale[0]
 		return fmt.Errorf("%s: %s %q %w", label(s.Cell-1), s.Field, s.Node, ErrFlowPresetUnknownNode)
 	}
+	for i, c := range cells {
+		if msg := missingRouting(c); msg != "" {
+			return fmt.Errorf("%s: %s — %w", label(i), msg, ErrFlowPresetIncomplete)
+		}
+	}
 	return ValidateRecipeGroups(flowJSON, allowed)
+}
+
+// missingRouting is the style save's per-mode routing rule on one recipe row
+// (validateSwapModeRouting over flowspec.Steady): the first field the row's
+// mode requires that it leaves empty, worded as a style's save words it, or
+// "" when the row is complete. A recipe row is a claim with no part, and the
+// part is the one Required field it never carries — this rule does not read
+// it. Without it a draft with no destination saved as a recipe no style could
+// run: the bar raises no such finding on a draft, which is never previewed.
+func missingRouting(c FlowCell) string {
+	in := Expand(c, nil, "", "")
+	first := ""
+	validateSwapModeRouting(in, flowspec.Steady(in.Role, in.SwapMode), func(_, msg string) {
+		if first == "" {
+			first = msg
+		}
+	})
+	return first
 }
 
 // rawString returns a JSON string value, or "" for absent / non-string.

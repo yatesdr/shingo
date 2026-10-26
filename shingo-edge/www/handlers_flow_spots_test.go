@@ -551,8 +551,19 @@ func TestComposerCard_ASequentialPairIsTwoSpotsWhateverTheirKind(t *testing.T) {
 			CoreNodeName: n, Name: n, Sequence: i + 1, Enabled: true})
 		must(t, err, "position "+n)
 	}
+	// A sequential row needs a source and a destination to be saved as a
+	// recipe, so the line has a routing set with one of each.
+	for _, r := range []struct{ name, role string }{
+		{"SMN_SEQ_IN", domain.RoutingRoleSource}, {"SMN_SEQ_OUT", domain.RoutingRoleDestination},
+	} {
+		id, err := db.UpsertRoutingNode(domain.CoreNodeKinds{}, domain.RoutingNodeInput{ProcessID: pid,
+			CoreNodeName: r.name, Role: r.role, Sequence: 1, Enabled: true, Origin: domain.RoutingOriginEngineer, CalledBy: "test"})
+		must(t, err, "routing "+r.name)
+		must(t, db.SetRoutingNodeEnabled(domain.CoreNodeKinds{}, pid, id, true, "test"), "enable "+r.name)
+	}
 	seq := func(a, b string) domain.FlowCell {
-		return domain.FlowCell{CoreNodeName: a, Role: "consume", SwapMode: "sequential", PairedCoreNode: b}
+		return domain.FlowCell{CoreNodeName: a, Role: "consume", SwapMode: "sequential", PairedCoreNode: b,
+			InboundSource: "SMN_SEQ_IN", OutboundDestination: "SMN_SEQ_OUT"}
 	}
 	f := press6{db: db, processID: pid, station: sid}
 	ab := f.recipe(t, "A/B", seq("SEQ_A", "SEQ_B"), seq("SEQ_B", "SEQ_A"))

@@ -249,9 +249,13 @@ func buildBudgetTemplate(t *testing.T, fx scenefixtures.Plant) {
 
 	// Three presets.
 	for i := 0; i < budgetPresets; i++ {
+		// Complete rows, as a recipe saves only rows its mode can run: a back
+		// position each and the set's destination (SMN_12, the third row).
 		cells := []domain.FlowCell{
-			{CoreNodeName: positions[0], Role: tmpl.Role, SwapMode: tmpl.SwapMode},
-			{CoreNodeName: positions[1], Role: tmpl.Role, SwapMode: tmpl.SwapMode},
+			{CoreNodeName: positions[0], Role: tmpl.Role, SwapMode: tmpl.SwapMode,
+				PairedCoreNode: positions[2], OutboundDestination: "SMN_12"},
+			{CoreNodeName: positions[1], Role: tmpl.Role, SwapMode: tmpl.SwapMode,
+				PairedCoreNode: positions[3], OutboundDestination: "SMN_12"},
 		}
 		shape, err := json.Marshal(map[string]any{"cells": cells})
 		if err != nil {

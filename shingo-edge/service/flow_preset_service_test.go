@@ -389,3 +389,19 @@ func containsID(ids []int64, id int64) bool {
 	}
 	return false
 }
+
+// TestPresets_ARecipeRowItsModeCannotRunIsRefusedAtSave: the row a new
+// draft's first "+ Add a position" makes on a routing set with no source and
+// no destination — a 2-Robot Swap with no staging and no destination — is
+// refused at save, in the words a style's save uses for the same claim.
+func TestPresets_ARecipeRowItsModeCannotRunIsRefusedAtSave(t *testing.T) {
+	t.Parallel()
+	svc, seeded, _ := presetFixture(t)
+	_, err := svc.CreateFromCells(seeded.ProcessID, "Fresh", "test", []domain.FlowCell{
+		{CoreNodeName: "PLN_01", Role: "consume", SwapMode: "two_robot"},
+	}, nil)
+	want := "cell 1 (PLN_01): 2‑Robot Swap requires inbound staging — fill it on the row before saving"
+	if err == nil || err.Error() != want {
+		t.Fatalf("a recipe row with no staging and no destination: err %v, want %q", err, want)
+	}
+}
