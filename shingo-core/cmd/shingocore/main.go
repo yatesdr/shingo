@@ -62,6 +62,7 @@ type coreFlags struct {
 	configPath string
 	resetDB    bool
 	fileFilter []string // nil = no file; empty = all subsystems; populated = specific
+	pprofPort  int      // 0 = profiler off (pprof.go)
 }
 
 // parseFlags handles the custom --log-debug stripping and standard flag parsing.
@@ -74,6 +75,7 @@ func parseFlags() coreFlags {
 	configPath := flag.String("config", "shingocore.yaml", "path to config file")
 	resetDB := flag.Bool("reset-db", false, "wipe database before starting (requires confirmation)")
 	showHelp := flag.Bool("help", false, "show help")
+	pprofPort := flag.Int("pprof-port", 0, "serve net/http/pprof on 127.0.0.1 at this port (0 = off)")
 	flag.Parse()
 
 	if *showHelp {
@@ -85,7 +87,7 @@ func parseFlags() coreFlags {
 		os.Exit(0)
 	}
 
-	return coreFlags{configPath: *configPath, resetDB: *resetDB, fileFilter: fileFilter}
+	return coreFlags{configPath: *configPath, resetDB: *resetDB, fileFilter: fileFilter, pprofPort: *pprofPort}
 }
 
 func printUsage() {
@@ -97,6 +99,7 @@ func printUsage() {
 	fmt.Println("  --version             show version")
 	fmt.Println("  --log-debug[=FILTER]  enable debug log to shingo-debug.log")
 	fmt.Println("                        FILTER: comma-separated subsystems (default: all)")
+	fmt.Println("  --pprof-port PORT     serve net/http/pprof on 127.0.0.1:PORT (default 0: off)")
 	fmt.Println("  --help                show this help")
 	fmt.Println()
 	fmt.Println("Debug subsystems:")
@@ -307,6 +310,8 @@ func main() {
 	// never reaches ready, and those are exactly the boots worth attributing
 	// to a commit (five restarts in fifteen minutes, 2026-07-24).
 	log.Printf("shingocore: starting version=%s commit=%s config=%s", Version, Commit, flags.configPath)
+	// Before config and DB open, so a boot that hangs can be profiled too.
+	startPprof(pprofAddr(flags.pprofPort))
 	// Hand the stamp to the web layer so the Core Health strip can show it
 	// beside uptime — "0d 00h 14m" next to a red verdict reads as "it broke
 	// right after a restart" with no correlation work.

@@ -68,6 +68,7 @@ type edgeFlags struct {
 	restoreMode bool
 	debugFlag   bool
 	fileFilter  []string // nil = no file; empty = all subsystems; populated = specific
+	pprofPort   int      // 0 = profiler off (pprof.go)
 }
 
 // parseFlags handles the custom --log-debug stripping and standard flag parsing.
@@ -79,6 +80,7 @@ func parseFlags() edgeFlags {
 	configPath := flag.String("config", "shingoedge.yaml", "path to config file")
 	port := flag.Int("port", 0, "HTTP port (overrides config)")
 	restoreMode := flag.Bool("restore", false, "interactive restore from backup storage before starting")
+	pprofPort := flag.Int("pprof-port", 0, "serve net/http/pprof on 127.0.0.1 at this port (0 = off)")
 	flag.Usage = func() {
 		fmt.Fprintf(flag.CommandLine.Output(), "Usage: shingoedge [flags]\n\nFlags:\n")
 		flag.PrintDefaults()
@@ -95,6 +97,7 @@ func parseFlags() edgeFlags {
 		restoreMode: *restoreMode,
 		debugFlag:   debugFlag,
 		fileFilter:  fileFilter,
+		pprofPort:   *pprofPort,
 	}
 }
 
@@ -452,6 +455,8 @@ func main() {
 	// shingo-core: a boot that dies during config or DB open is exactly the
 	// boot worth attributing to a commit.
 	log.Printf("shingoedge: starting version=%s commit=%s config=%s", Version, Commit, flags.configPath)
+	// Before config and DB open, so a boot that hangs can be profiled too.
+	startPprof(pprofAddr(flags.pprofPort))
 
 	if flags.debugFlag {
 		log.SetFlags(log.LstdFlags | log.Lshortfile)
