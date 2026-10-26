@@ -888,6 +888,17 @@ func (d *Dispatcher) spotsThatTake(ret *orders.Order, retSteps []resolvedStep) (
 	return spots, carrier, true
 }
 
+// parkNoSlotParams is the wait a return parks under when its loader has no spot
+// for it: the home it waits at, and the spots any one of which, emptied, lets it
+// go (spotsThatTake).
+func (d *Dispatcher) parkNoSlotParams(ret *orders.Order, retSteps []resolvedStep, waitHome string) QueueParams {
+	params := QueueParams{Destination: waitHome}
+	if spots, _, ok := d.spotsThatTake(ret, retSteps); ok {
+		params.EmptyOneOf = spotNames(spots)
+	}
+	return params
+}
+
 // spotNames lists the spots' node names for an operator sentence or a record.
 func spotNames(spots []store.LoaderPlacementMember) string {
 	names := make([]string, 0, len(spots))

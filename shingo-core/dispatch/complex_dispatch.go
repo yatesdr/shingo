@@ -566,11 +566,8 @@ func (d *Dispatcher) prepareComplexSteps(order *orders.Order, pc *pairPass, rema
 	// Only a leg whose drop is a loader home can reach that answer, so a supply leg
 	// bound for the line is never held by it.
 	if waitHome := d.placeForDedicatedLoader(order, resolvedSteps, pc); waitHome != "" {
-		params := QueueParams{Destination: waitHome}
-		if spots, _, ok := d.spotsThatTake(order, resolvedSteps); ok {
-			params.EmptyOneOf = spotNames(spots)
-		}
-		if d.setQueueReason(order, protocol.QueueWaitingForSlot, CauseLoaderParkNoSlot, params) {
+		if d.setQueueReason(order, protocol.QueueWaitingForSlot, CauseLoaderParkNoSlot,
+			d.parkNoSlotParams(order, resolvedSteps, waitHome)) {
 			log.Printf("dispatch: complex order %d waits — loader home %s cannot take its bin and no buffer is free",
 				order.ID, waitHome)
 		}
