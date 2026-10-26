@@ -61,6 +61,34 @@ func TestRouteStops(t *testing.T) {
 		{"single_robot: nine steps, the wait dropped, every visit kept",
 			Order{StepsJSON: routeSingleSteps, Status: protocol.StatusStaged, WaitIndex: 0},
 			"", "SMN_01 → IN_STG → [ALN_001] → OUT_STG → IN_STG → ALN_001 → OUT_STG → ULN_001"},
+		{"single_robot dispatched, robot at the source",
+			Order{StepsJSON: routeSingleSteps, Status: protocol.StatusDispatched, WaitIndex: 0},
+			"SMN_01", "[SMN_01] → IN_STG → ALN_001 → OUT_STG → IN_STG → ALN_001 → OUT_STG → ULN_001"},
+		{"single_robot dispatched, robot at inbound staging: the wait_index picks the first visit",
+			Order{StepsJSON: routeSingleSteps, Status: protocol.StatusDispatched, WaitIndex: 0},
+			"IN_STG", "SMN_01 → [IN_STG] → ALN_001 → OUT_STG → IN_STG → ALN_001 → OUT_STG → ULN_001"},
+		{"single_robot released, robot at inbound staging: the wait_index picks the second visit",
+			Order{StepsJSON: routeSingleSteps, Status: protocol.StatusInTransit, WaitIndex: 1},
+			"IN_STG", "SMN_01 → IN_STG → ALN_001 → OUT_STG → [IN_STG] → ALN_001 → OUT_STG → ULN_001"},
+		// After the release the last six stops are one segment, and the row
+		// says no more than that. The line and outbound staging are each
+		// visited twice in it: the robot lifting the old bin off the line
+		// (stop 3) and setting the new one down (stop 6) is the same input,
+		// status in_transit, wait_index 1, station ALN_001, and reads stop 3;
+		// at outbound staging, dropping the old bin (stop 4) and lifting it
+		// again (stop 7) both read stop 4.
+		{"single_robot released, robot at the line: the first visit, whichever it is on",
+			Order{StepsJSON: routeSingleSteps, Status: protocol.StatusInTransit, WaitIndex: 1},
+			"ALN_001", "SMN_01 → IN_STG → [ALN_001] → OUT_STG → IN_STG → ALN_001 → OUT_STG → ULN_001"},
+		{"single_robot released, robot at outbound staging: the first visit, whichever it is on",
+			Order{StepsJSON: routeSingleSteps, Status: protocol.StatusInTransit, WaitIndex: 1},
+			"OUT_STG", "SMN_01 → IN_STG → ALN_001 → [OUT_STG] → IN_STG → ALN_001 → OUT_STG → ULN_001"},
+		{"single_robot released, robot between stops: none of the six marked",
+			Order{StepsJSON: routeSingleSteps, Status: protocol.StatusInTransit, WaitIndex: 1},
+			"LM7", "SMN_01 → IN_STG → ALN_001 → OUT_STG → IN_STG → ALN_001 → OUT_STG → ULN_001"},
+		{"no steps, moving: no stop marked, wherever the robot is",
+			Order{SourceNode: "UTN_014", DeliveryNode: "UTN_013", Status: protocol.StatusInTransit},
+			"UTN_014", "UTN_014 → UTN_013"},
 		{"a step not resolved yet names its group",
 			Order{StepsJSON: `[{"action":"pickup","group":"SMN"},{"action":"dropoff","node":"ALN_002"}]`, Status: protocol.StatusQueued},
 			"", "SMN → ALN_002"},

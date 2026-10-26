@@ -38,7 +38,7 @@ func TestOrderRouteRuleMatchesThePopup(t *testing.T) {
 		`{"action":"wait","node":"ALN_001"},{"action":"pickup","node":"ALN_001"},{"action":"dropoff","node":"OUT_STG"},` +
 		`{"action":"pickup","node":"IN_STG"},{"action":"dropoff","node":"ALN_001"},{"action":"pickup","node":"OUT_STG"},` +
 		`{"action":"dropoff","node":"ULN_001"}]`
-	robots := stubRobotStations{"AMR-01": "PLN_012", "AMR-02": "ULN_002"}
+	robots := stubRobotStations{"AMR-01": "PLN_012", "AMR-02": "ULN_002", "AMR-03": "OUT_STG"}
 	cases := []struct {
 		name  string
 		order orders.Order
@@ -50,6 +50,10 @@ func TestOrderRouteRuleMatchesThePopup(t *testing.T) {
 			"PLN_012 > [ULN_002] > SMN_BUF_100 > PLN_008"},
 		{"single_robot, queued", orders.Order{StepsJSON: single, Status: protocol.StatusQueued},
 			"SMN_01 > IN_STG > ALN_001 > OUT_STG > IN_STG > ALN_001 > OUT_STG > ULN_001"},
+		{"single_robot parked at the line", orders.Order{StepsJSON: single, Status: protocol.StatusStaged, RobotID: "AMR-03"},
+			"SMN_01 > IN_STG > [ALN_001] > OUT_STG > IN_STG > ALN_001 > OUT_STG > ULN_001"},
+		{"single_robot released, at outbound staging", orders.Order{StepsJSON: single, Status: protocol.StatusInTransit, WaitIndex: 1, RobotID: "AMR-03"},
+			"SMN_01 > IN_STG > ALN_001 > [OUT_STG] > IN_STG > ALN_001 > OUT_STG > ULN_001"},
 		{"unreadable steps", orders.Order{StepsJSON: `[{"action":`, SourceNode: "UTN_014", DeliveryNode: "UTN_013"}, "UTN_014 > UTN_013"},
 		{"all three", orders.Order{SourceNode: "UTN_014", ProcessNode: "ALN_003", DeliveryNode: "UTN_013"}, "UTN_014 > ALN_003 > UTN_013"},
 		{"line repeats From", orders.Order{SourceNode: "UTN_014", ProcessNode: "UTN_014", DeliveryNode: "UTN_013"}, "UTN_014 > UTN_013"},
