@@ -23,7 +23,7 @@ import (
 func renderOrdersPage(t *testing.T, h *Handlers, query string) string {
 	t.Helper()
 	if len(h.tmpls) == 0 {
-		base := template.New("").Funcs(templateFuncs(h.engine.NodeService(), h.engine))
+		base := template.New("").Funcs(templateFuncs(h.engine.NodeService()))
 		base = template.Must(base.ParseFS(templateFS, "templates/layout.html", "templates/partials/*.html"))
 		pages, err := fs.Glob(templateFS, "templates/*.html")
 		testutil.MustNoErr(t, err, "glob templates")

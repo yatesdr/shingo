@@ -12,7 +12,7 @@ import (
 
 func confidenceFuncs(t *testing.T) (f2 func(float64) string, band func(float64) string) {
 	t.Helper()
-	fm := templateFuncs(nil, nil)
+	fm := templateFuncs(nil)
 	f2, ok := fm["f2"].(func(float64) string)
 	if !ok {
 		t.Fatal("f2 missing from the template FuncMap")
@@ -91,7 +91,7 @@ func TestConfidenceBand_MatchesVendorThresholds(t *testing.T) {
 // missing FuncMap entry is a template parse error at render time, which is a
 // blank robots page rather than a build failure.
 func TestConfidenceHelpersAreRegistered(t *testing.T) {
-	tmpl := template.New("t").Funcs(templateFuncs(nil, nil))
+	tmpl := template.New("t").Funcs(templateFuncs(nil))
 	if _, err := tmpl.Parse(`{{f2 .C}}{{confidenceBand .C}}`); err != nil {
 		t.Fatalf("robots.html's helpers do not parse: %v", err)
 	}

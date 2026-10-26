@@ -18,14 +18,14 @@ import (
 // TestRouteSurfaces_Statements counts what the three route surfaces read: the
 // task board's feed (/api/board/orders), the orders board's rows (/orders/rows)
 // and the order pop-up (/api/orders/enriched). The route is drawn from the
-// order row and the fleet's robot cache (domain.RouteStops reads nothing), so
+// order row alone (domain.RouteStops reads nothing), so
 // the boards read as many statements for three rows as for one, and the pop-up
 // as many for an eight-stop order as for a two-stop one. The counts are logged:
 // they are the base a change to how the route is drawn is measured against.
 func TestRouteSurfaces_Statements(t *testing.T) {
 	t.Parallel()
 	h, db, counter := countingHandlers(t)
-	page := template.Must(template.New("").Funcs(templateFuncs(h.engine.NodeService(), h.engine)).
+	page := template.Must(template.New("").Funcs(templateFuncs(h.engine.NodeService())).
 		ParseFS(templateFS, "templates/layout.html", "templates/partials/*.html"))
 	h.tmpls["orders.html"] = template.Must(page.ParseFS(templateFS, "templates/orders.html"))
 

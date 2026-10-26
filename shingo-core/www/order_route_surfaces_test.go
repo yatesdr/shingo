@@ -7,26 +7,26 @@ import (
 	"io/fs"
 	"os/exec"
 	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 
 	"shingo/protocol"
 	"shingo/protocol/testutil"
 	"shingocore/domain"
-	"shingocore/fleet"
 	"shingocore/store/orders"
 )
 
 // TestOrderRouteRuleMatchesThePopup: the route is drawn on three surfaces —
-// the board's order-route partial (templates/partials/orders-rows.html, also
-// the Dashboard card), the order pop-up's routeHTML (static/pages/orders.js)
-// and the task board's rowHTML (static/pages/dashboard.js). They differ on
-// purpose in dress (the pop-up links each node and says "not assigned yet";
-// the boards print a dash), and must not differ in which stops appear or
-// which is marked current. The rule is domain.RouteStops, server side; the two
-// scripts draw what the server sends them and have no rule of their own. This
-// feeds all three the same orders and compares their stop sequences with the
-// rule's.
+// the boards' order-route partial (templates/partials/orders-rows.html, also
+// the Dashboard's Active Orders card), the task board's rowHTML
+// (static/pages/dashboard.js) and the order pop-up (static/pages/orders.js),
+// whose hero draws the same strip and whose timeline lists every stop. The two
+// scripts draw through static/components/route-strip.js. The rule is
+// domain.RouteStops and domain.RouteViewOf, server side: the scripts and the
+// partial lay out what they are sent and derive nothing. This feeds all of them
+// the same orders and compares the strip's cells, the strip's title and the
+// timeline's stops with the rule's.
 func TestOrderRouteRuleMatchesThePopup(t *testing.T) {
 	nodePath, err := exec.LookPath("node")
 	if err != nil {
@@ -38,44 +38,60 @@ func TestOrderRouteRuleMatchesThePopup(t *testing.T) {
 		`{"action":"wait","node":"ALN_001"},{"action":"pickup","node":"ALN_001"},{"action":"dropoff","node":"OUT_STG"},` +
 		`{"action":"pickup","node":"IN_STG"},{"action":"dropoff","node":"ALN_001"},{"action":"pickup","node":"OUT_STG"},` +
 		`{"action":"dropoff","node":"ULN_001"}]`
-	robots := stubRobotStations{"AMR-01": "PLN_012", "AMR-02": "ULN_002", "AMR-03": "OUT_STG"}
 	cases := []struct {
 		name  string
 		order orders.Order
-		want  string
+		strip string
 	}{
-		{"press-index R1 parked for RELEASE", orders.Order{StepsJSON: r1, Status: protocol.StatusStaged, RobotID: "AMR-01",
-			SourceNode: "PLN_012", ProcessNode: "PLN_012", DeliveryNode: "PLN_008"}, "[PLN_012] > ULN_002 > SMN_BUF_100 > PLN_008"},
-		{"press-index R1 released, at the outbound", orders.Order{StepsJSON: r1, Status: protocol.StatusInTransit, WaitIndex: 1, RobotID: "AMR-02"},
-			"PLN_012 > [ULN_002] > SMN_BUF_100 > PLN_008"},
+		{"press-index R1 parked for RELEASE", orders.Order{StepsJSON: r1, Status: protocol.StatusStaged, StepsDone: 1,
+			SourceNode: "PLN_012", ProcessNode: "PLN_012", DeliveryNode: "PLN_008"},
+			"here:PLN_012 next:ULN_002 remaining:+1 final:PLN_008"},
+		{"press-index R1 released, at the outbound", orders.Order{StepsJSON: r1, Status: protocol.StatusInTransit, WaitIndex: 1, StepsDone: 3},
+			"passed:PLN_012 ➜ next:SMN_BUF_100 final:PLN_008"},
 		{"single_robot, queued", orders.Order{StepsJSON: single, Status: protocol.StatusQueued},
-			"SMN_01 > IN_STG > ALN_001 > OUT_STG > IN_STG > ALN_001 > OUT_STG > ULN_001"},
-		{"single_robot parked at the line", orders.Order{StepsJSON: single, Status: protocol.StatusStaged, RobotID: "AMR-03"},
-			"SMN_01 > IN_STG > [ALN_001] > OUT_STG > IN_STG > ALN_001 > OUT_STG > ULN_001"},
-		{"single_robot released, at outbound staging", orders.Order{StepsJSON: single, Status: protocol.StatusInTransit, WaitIndex: 1, RobotID: "AMR-03"},
-			"SMN_01 > IN_STG > ALN_001 > [OUT_STG] > IN_STG > ALN_001 > OUT_STG > ULN_001"},
-		{"unreadable steps", orders.Order{StepsJSON: `[{"action":`, SourceNode: "UTN_014", DeliveryNode: "UTN_013"}, "UTN_014 > UTN_013"},
-		{"all three", orders.Order{SourceNode: "UTN_014", ProcessNode: "ALN_003", DeliveryNode: "UTN_013"}, "UTN_014 > ALN_003 > UTN_013"},
-		{"line repeats From", orders.Order{SourceNode: "UTN_014", ProcessNode: "UTN_014", DeliveryNode: "UTN_013"}, "UTN_014 > UTN_013"},
-		{"line repeats To", orders.Order{SourceNode: "UTN_014", ProcessNode: "UTN_013", DeliveryNode: "UTN_013"}, "UTN_014 > UTN_013"},
-		{"no line", orders.Order{SourceNode: "UTN_014", DeliveryNode: "UTN_013"}, "UTN_014 > UTN_013"},
-		{"From not chosen", orders.Order{ProcessNode: "ALN_003", DeliveryNode: "UTN_013"}, "? > ALN_003 > UTN_013"},
-		{"To not chosen", orders.Order{SourceNode: "UTN_014", ProcessNode: "ALN_003"}, "UTN_014 > ALN_003 > ?"},
-		{"nothing chosen", orders.Order{}, "? > ?"},
-		{"round trip", orders.Order{SourceNode: "UTN_014", ProcessNode: "ALN_003", DeliveryNode: "UTN_014"}, "UTN_014 > ALN_003 > UTN_014"},
+			"next:SMN_01 remaining:+6 final:ULN_001"},
+		{"single_robot parked at the line", orders.Order{StepsJSON: single, Status: protocol.StatusStaged, StepsDone: 3},
+			"passed:SMN_01 here:ALN_001 next:OUT_STG remaining:+3 final:ULN_001"},
+		{"single_robot released, the old bin lifted again at outbound staging",
+			orders.Order{StepsJSON: single, Status: protocol.StatusInTransit, WaitIndex: 1, StepsDone: 8},
+			"passed:SMN_01 ➜ next:ULN_001"},
+		{"single_robot delivered", orders.Order{StepsJSON: single, Status: protocol.StatusDelivered},
+			"passed:SMN_01 here:ULN_001"},
+		{"plain, lifted", orders.Order{SourceNode: "UTN_014", DeliveryNode: "UTN_013", Status: protocol.StatusInTransit, StepsDone: 1},
+			"left:UTN_014 ➜ next:UTN_013"},
+		{"unreadable steps", orders.Order{StepsJSON: `[{"action":`, SourceNode: "UTN_014", DeliveryNode: "UTN_013"},
+			"next:UTN_014 final:UTN_013"},
+		{"all three", orders.Order{SourceNode: "UTN_014", ProcessNode: "ALN_003", DeliveryNode: "UTN_013"},
+			"next:UTN_014 remaining:+1 final:UTN_013"},
+		{"line repeats From", orders.Order{SourceNode: "UTN_014", ProcessNode: "UTN_014", DeliveryNode: "UTN_013"},
+			"next:UTN_014 final:UTN_013"},
+		{"From not chosen", orders.Order{ProcessNode: "ALN_003", DeliveryNode: "UTN_013"},
+			"next:— remaining:+1 final:UTN_013"},
+		{"To not chosen", orders.Order{SourceNode: "UTN_014", ProcessNode: "ALN_003"},
+			"next:UTN_014 remaining:+1 final:—"},
+		{"nothing chosen", orders.Order{}, "next:— final:—"},
+		{"round trip", orders.Order{SourceNode: "UTN_014", ProcessNode: "ALN_003", DeliveryNode: "UTN_014"},
+			"next:UTN_014 remaining:+1 final:UTN_014"},
 	}
 
-	// The rule, as the server sends it to the two scripts.
-	stops := make([][]domain.RouteStop, len(cases))
+	// The rule, as the server sends it to the scripts: the stops and the view.
+	type sent struct {
+		Route     []domain.RouteStop `json:"route"`
+		RouteView domain.RouteView   `json:"route_view"`
+	}
+	rule := make([]sent, len(cases))
 	for i := range cases {
-		stops[i] = domain.RouteStops(&cases[i].order, robotStationOf(robots, &cases[i].order))
-		if got := stopSequence(stops[i]); got != cases[i].want {
-			t.Errorf("%s: the rule reads %s, want %s", cases[i].name, got, cases[i].want)
+		stops := domain.RouteStops(&cases[i].order)
+		rule[i] = sent{stops, domain.RouteViewOf(stops, cases[i].order.Status)}
+		if got := viewSequence(rule[i].RouteView); got != cases[i].strip {
+			t.Errorf("%s: the rule's strip reads %s, want %s", cases[i].name, got, cases[i].strip)
 		}
 	}
+	sentJSON, err := json.Marshal(rule)
+	testutil.MustNoErr(t, err, "marshal the rule")
 
-	// The board's partial.
-	base := template.Must(template.New("").Funcs(templateFuncs(nil, robots)).
+	// The boards' partial.
+	base := template.Must(template.New("").Funcs(templateFuncs(nil)).
 		ParseFS(templateFS, "templates/layout.html", "templates/partials/*.html"))
 	board := make([]string, len(cases))
 	for i := range cases {
@@ -83,31 +99,45 @@ func TestOrderRouteRuleMatchesThePopup(t *testing.T) {
 		if err := base.ExecuteTemplate(&buf, "order-route", &cases[i].order); err != nil {
 			t.Fatalf("execute order-route: %v", err)
 		}
-		board[i] = routeSequence(buf.String(), "→", "—")
+		board[i] = buf.String()
 	}
 
-	stopsJSON, err := json.Marshal(stops)
-	testutil.MustNoErr(t, err, "marshal stops")
-
-	// The pop-up's hero.
-	popupHTML := runRouteJS(t, nodePath, "var nodeLink = function (n) { return '<a>' + n + '</a>'; };\n"+
-		"var NOT_ASSIGNED = '<span>not assigned yet</span>';\n"+
-		staticJSFunction(t, "static/pages/orders.js", "routeHTML")+"\n"+
-		"console.log(JSON.stringify("+string(stopsJSON)+".map(function (s) { return routeHTML(s); })));")
+	component := staticJSFunction(t, "static/components/route-strip.js", "routeStateLabel") + "\n" +
+		staticJSFunction(t, "static/components/route-strip.js", "routeStripHTML") + "\n" +
+		staticJSFunction(t, "static/components/route-strip.js", "routeTimelineHTML") + "\n" +
+		"var escapeHtml = function (s) { return String(s); };\n"
 
 	// The task board's row: its route cell.
-	taskHTML := runRouteJS(t, nodePath, "var escapeHtml = function (s) { return String(s); };\n"+
+	task := runRouteJS(t, nodePath, component+
 		"var statusClass = function () { return ''; }, statusLabel = function (s) { return s; }, formatETA = function () { return ''; };\n"+
-		staticJSFunction(t, "static/pages/dashboard.js", "routeCell")+"\n"+
 		staticJSFunction(t, "static/pages/dashboard.js", "rowHTML")+"\n"+
-		"console.log(JSON.stringify("+string(stopsJSON)+".map(function (s) {"+
-		" var m = rowHTML({ route: s }).match(/<td class=\"r-route\">(.*?)<\\/td>/); return m ? m[1] : ''; })));")
+		"console.log(JSON.stringify("+string(sentJSON)+".map(function (o) {"+
+		" var m = rowHTML(o).match(/<td class=\"r-route\">(.*?)<\\/td>/); return m ? m[1] : ''; })));")
+
+	// The pop-up: its hero's strip and its timeline.
+	hero := runRouteJS(t, nodePath, component+
+		staticJSFunction(t, "static/pages/orders.js", "routeHeroHTML")+"\n"+
+		"console.log(JSON.stringify("+string(sentJSON)+".map(function (o) { return routeHeroHTML(o); })));")
+	timeline := runRouteJS(t, nodePath, component+
+		"var nodeLink = function (n) { return '<a>' + n + '</a>'; };\n"+
+		"var NOT_ASSIGNED = '<span>not assigned yet</span>';\n"+
+		"console.log(JSON.stringify("+string(sentJSON)+".map(function (o) { return routeTimelineHTML(o.route, nodeLink, NOT_ASSIGNED); })));")
 
 	for i, c := range cases {
-		popup := routeSequence(popupHTML[i], "&rarr;", "not assigned yet")
-		task := routeSequence(taskHTML[i], "&rarr;", "-")
-		if board[i] != c.want || popup != c.want || task != c.want {
-			t.Errorf("%s: rule %s; board %s, pop-up %s, task board %s", c.name, c.want, board[i], popup, task)
+		wantTitle := titleOf(rule[i].Route)
+		for _, s := range []struct{ where, html string }{{"board", board[i]}, {"task board", task[i]}, {"pop-up hero", hero[i]}} {
+			if got := stripCells(s.html); got != c.strip {
+				t.Errorf("%s: the %s strip reads %s, the rule %s", c.name, s.where, got, c.strip)
+			}
+			if got := stripTitle(t, s.html); got != wantTitle {
+				t.Errorf("%s: the %s strip's title reads %q, want %q", c.name, s.where, got, wantTitle)
+			}
+		}
+		if got, want := timelineCells(timeline[i]), stopsSequence(rule[i].Route); got != want {
+			t.Errorf("%s: the pop-up timeline reads %s, the rule %s", c.name, got, want)
+		}
+		if strings.Contains(stopsSequence(rule[i].Route), "left:") && !strings.Contains(strings.Join(labelsOf(timeline[i]), ","), "left") {
+			t.Errorf("%s: the pop-up timeline does not say which stop the robot left: %s", c.name, timeline[i])
 		}
 	}
 }
@@ -143,50 +173,119 @@ func staticJSFunction(t *testing.T, file, name string) string {
 	return fn
 }
 
-// stubRobotStations is the fleet cache as the route reads it.
-type stubRobotStations map[string]string
-
-func (s stubRobotStations) GetCachedRobotStatus(id string) (fleet.RobotStatus, bool) {
-	st, ok := s[id]
-	return fleet.RobotStatus{VehicleID: id, CurrentStation: st}, ok
+// viewSequence is the rule's strip: its beats left to right, a stop as
+// state:node (an unchosen end as —), the stops between the next and the final
+// as remaining:+n, and the robot's arrow as ➜ before the stop it heads to.
+func viewSequence(v domain.RouteView) string {
+	var parts []string
+	beat := func(b domain.RouteBeat, s string) {
+		if v.Heading == b {
+			parts = append(parts, "➜")
+		}
+		parts = append(parts, s)
+	}
+	beat(domain.BeatOrigin, cellText(v.Origin))
+	if v.Here != nil {
+		parts = append(parts, cellText(*v.Here))
+	}
+	if v.Next != nil {
+		beat(domain.BeatNext, cellText(*v.Next))
+	}
+	if v.Remaining > 0 {
+		parts = append(parts, "remaining:+"+strconv.Itoa(v.Remaining))
+	}
+	if v.Final != nil {
+		beat(domain.BeatFinal, cellText(*v.Final))
+	}
+	return strings.Join(parts, " ")
 }
 
-// stopSequence is the rule's answer in routeSequence's terms.
-func stopSequence(stops []domain.RouteStop) string {
+func cellText(s domain.RouteStop) string {
+	if s.Unassigned {
+		return string(s.State) + ":—"
+	}
+	return string(s.State) + ":" + s.Node
+}
+
+// stopsSequence is every stop of the rule's route as state:node.
+func stopsSequence(stops []domain.RouteStop) string {
 	parts := make([]string, len(stops))
 	for i, s := range stops {
-		switch {
-		case s.Unassigned:
-			parts[i] = "?"
-		case s.Current:
-			parts[i] = "[" + s.Node + "]"
-		default:
-			parts[i] = s.Node
-		}
+		parts[i] = cellText(s)
 	}
-	return strings.Join(parts, " > ")
+	return strings.Join(parts, " ")
 }
 
-var routeTitleAttr = regexp.MustCompile(` title="[^"]*"`)
-
-// routeSequence reduces a drawn route to "A > [B] > C": an unchosen end as
-// "?", the stop drawn in <strong> (the current one) in brackets. Titles are
-// dropped first: the partial's carries the whole route, arrows and all.
-func routeSequence(html, arrow, none string) string {
-	html = routeTitleAttr.ReplaceAllString(html, "")
-	var parts []string
-	for _, p := range strings.Split(html, arrow) {
-		current := strings.Contains(p, "<strong")
-		p = visibleRouteText(p)
-		if p == none {
-			p = "?"
+// titleOf is the strip's title as every surface must write it: each stop by
+// name ("not assigned yet" for an end not chosen), its state in words after
+// it unless it is still to come, "→" between.
+func titleOf(stops []domain.RouteStop) string {
+	words := map[domain.RouteState]string{domain.RoutePassed: "passed", domain.RouteLeft: "left",
+		domain.RouteHere: "robot here", domain.RouteNext: "next", domain.RouteFinal: "final"}
+	parts := make([]string, len(stops))
+	for i, s := range stops {
+		parts[i] = s.Node
+		if s.Unassigned {
+			parts[i] = "not assigned yet"
 		}
-		if current {
-			p = "[" + p + "]"
+		if w := words[s.State]; w != "" {
+			parts[i] += " (" + w + ")"
 		}
-		parts = append(parts, p)
 	}
-	return strings.Join(parts, " > ")
+	return strings.Join(parts, " → ")
+}
+
+var (
+	stripCellRe    = regexp.MustCompile(`<span class="route-(?:cell (?:route-chip )?route-([a-z]+)[^"]*|sep (route-heading))"[^>]*>([^<]*)</span>`)
+	stripTitleRe   = regexp.MustCompile(`<span class="route-strip" title="([^"]*)"`)
+	timelineCellRe = regexp.MustCompile(`(?s)<li class="route-cell route-([a-z]+)[^"]*"[^>]*>(.*?)</li>`)
+	timelineNodeRe = regexp.MustCompile(`(?s)<span class="route-node">(.*?)</span>`)
+	timelineLabel  = regexp.MustCompile(`<span class="route-label">([^<]*)</span>`)
+	entityText     = strings.NewReplacer("&#43;", "+", "&mdash;", "—", "&rarr;", "→", "&#8594;", "→",
+		"&#39;", "'", "&#34;", `"`, "&amp;", "&")
+)
+
+// stripCells reduces a drawn strip to its cells and its arrow as viewSequence
+// spells them.
+func stripCells(html string) string {
+	var parts []string
+	for _, m := range stripCellRe.FindAllStringSubmatch(html, -1) {
+		if m[2] != "" {
+			parts = append(parts, "➜")
+			continue
+		}
+		parts = append(parts, m[1]+":"+strings.TrimSpace(entityText.Replace(m[3])))
+	}
+	return strings.Join(parts, " ")
+}
+
+// stripTitle is the strip's title, the whole route, unescaped.
+func stripTitle(t *testing.T, html string) string {
+	t.Helper()
+	m := stripTitleRe.FindStringSubmatch(html)
+	if m == nil {
+		t.Errorf("no route-strip title in %q", html)
+		return ""
+	}
+	return entityText.Replace(m[1])
+}
+
+// timelineCells reduces the pop-up's timeline to its stops as stopsSequence
+// spells them.
+func timelineCells(html string) string {
+	var parts []string
+	for _, m := range timelineCellRe.FindAllStringSubmatch(html, -1) {
+		node := m[2]
+		if n := timelineNodeRe.FindStringSubmatch(m[2]); n != nil {
+			node = n[1]
+		}
+		node = visibleRouteText(node)
+		if node == "not assigned yet" {
+			node = "—"
+		}
+		parts = append(parts, m[1]+":"+node)
+	}
+	return strings.Join(parts, " ")
 }
 
 func visibleRouteText(html string) string {
@@ -203,4 +302,30 @@ func visibleRouteText(html string) string {
 		}
 	}
 	return strings.TrimSpace(b.String())
+}
+
+func labelsOf(html string) []string {
+	var out []string
+	for _, m := range timelineLabel.FindAllStringSubmatch(html, -1) {
+		out = append(out, m[1])
+	}
+	return out
+}
+
+// TestDashboardActiveOrders_DrawsTheBoardsCompactTable: the Dashboard's Active
+// Orders card draws the orders board's rows (the same order-route partial and
+// columns), so it draws them at the board's density. At the default table
+// density its route strip and timestamps, each kept to one line, ran past the
+// card at 1440 px; table-compact is the board's own answer to the same
+// columns. The robot id is one token there as on the board.
+func TestDashboardActiveOrders_DrawsTheBoardsCompactTable(t *testing.T) {
+	src, err := fs.ReadFile(templateFS, "templates/partials/dashboard-active-orders.html")
+	testutil.MustNoErr(t, err, "read the Active Orders partial")
+	part := string(src)
+	if !strings.Contains(part, `<table class="table-compact">`) {
+		t.Error("the Active Orders table is not drawn table-compact, the density the orders board draws the same columns at")
+	}
+	if !strings.Contains(part, `<td class="orders-robot">{{.RobotID}}</td>`) {
+		t.Error("the Active Orders robot cell is not orders-robot: the id wraps mid-token as the board's does not")
+	}
 }

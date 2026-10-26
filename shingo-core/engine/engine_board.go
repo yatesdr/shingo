@@ -25,10 +25,13 @@ type BoardOrder struct {
 	// The map uses it as the authoritative fetch-vs-carry signal instead of inferring
 	// the leg from robot↔source geometry — which broke on multi-leg / complex orders.
 	Carrying bool `json:"carrying"`
-	// Route is the order's route, domain.RouteStops with the robot's station: the
-	// one rule the orders board and the pop-up draw too, so the task board shows
-	// every stop of a complex leg, not its first and last alone.
+	// Route is the order's route, domain.RouteStops: every stop with where it
+	// stands in the robot's progress, the one rule the orders board and the
+	// pop-up draw too. The strip's title lists it.
 	Route []domain.RouteStop `json:"route"`
+	// RouteView is Route laid out as the strip the task board draws
+	// (domain.RouteViewOf). Off the order row; no read of its own.
+	RouteView domain.RouteView `json:"route_view"`
 }
 
 // liftLoadedThreshold is the lift/jack height (metres) above which a robot counts as
@@ -71,8 +74,9 @@ func (e *Engine) GetActiveOrdersWithRobotLocationFiltered(stations []string) ([]
 			CreatedAt:      o.CreatedAt.Format(time.RFC3339),
 			CurrentStation: rob.CurrentStation,
 			Carrying:       rob.LiftHeight > liftLoadedThreshold,
-			Route:          domain.RouteStops(o, rob.CurrentStation),
 		}
+		bo.Route = domain.RouteStops(o)
+		bo.RouteView = domain.RouteViewOf(bo.Route, o.Status)
 		if string(o.Status) == "in_transit" {
 			bo.ETA = eta.Stamp(e.etaCache, o.SourceNode, o.DeliveryNode)
 		}
@@ -104,7 +108,8 @@ func (e *Engine) GetActiveOrderWithRobotLocation(orderID int64) (*BoardOrder, er
 		bo.CurrentStation = rs.CurrentStation
 		bo.Carrying = rs.LiftHeight > liftLoadedThreshold
 	}
-	bo.Route = domain.RouteStops(o, bo.CurrentStation)
+	bo.Route = domain.RouteStops(o)
+	bo.RouteView = domain.RouteViewOf(bo.Route, o.Status)
 	if string(o.Status) == "in_transit" {
 		bo.ETA = eta.Stamp(e.etaCache, o.SourceNode, o.DeliveryNode)
 	}

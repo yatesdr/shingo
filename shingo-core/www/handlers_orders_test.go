@@ -471,11 +471,12 @@ func visibleText(html string) string {
 	return strings.Join(strings.Fields(b.String()), " ")
 }
 
-// routeText is the visible text of a row's route cell.
+// routeText is the visible text of a row's route cell: the strip, its stops
+// between "›" separators.
 func routeText(row string) string {
 	// The tag's opening only: the span carries a title (the whole route, for
 	// hover), so the exact tag would not match.
-	i := strings.Index(row, `<span class="order-route"`)
+	i := strings.Index(row, `<span class="route-strip"`)
 	if i < 0 {
 		return ""
 	}
@@ -483,8 +484,10 @@ func routeText(row string) string {
 	return visibleText(rest[:strings.Index(rest, "</td>")])
 }
 
-// U4: From → Line → To in place of the UUID column, the payload printed once,
-// and Created with seconds (rows share a minute).
+// U4: the route strip in place of the UUID column, the payload printed once,
+// and Created with seconds (rows share a minute). An order in transit that has
+// finished no block is on its way to its origin: the arrow before it, the line
+// the +1 between the origin (next) and the final.
 func TestOrdersBoard_RowColumns(t *testing.T) {
 	t.Parallel()
 	h, db := testHandlersForRendering(t)
@@ -507,7 +510,7 @@ func TestOrdersBoard_RowColumns(t *testing.T) {
 	if strings.Contains(row, "pin-uuid-7f3a") {
 		t.Error("the row still prints the edge UUID")
 	}
-	if got, want := routeText(row), "UTN_014 → ALN_003 → UTN_013"; got != want {
+	if got, want := routeText(row), "› UTN_014 › +1 › UTN_013"; got != want {
 		t.Errorf("route = %q, want %q", got, want)
 	}
 	if strings.Count(visibleText(row), "SHIM") != 1 {
@@ -538,11 +541,11 @@ func TestOrdersBoard_RouteOmitsARepeatedNode(t *testing.T) {
 	}, "")
 
 	body := renderOrdersPage(t, h, "")
-	if got, want := routeText(boardRow(body, o.ID)), "SYN_MARKET_01 → ALN_008"; got != want {
+	if got, want := routeText(boardRow(body, o.ID)), "› SYN_MARKET_01 › ALN_008"; got != want {
 		t.Errorf("route = %q, want %q", got, want)
 	}
 	openRow := boardRow(body, open.ID)
-	if got, want := routeText(openRow), "UTN_013 → —"; got != want {
+	if got, want := routeText(openRow), "UTN_013 › —"; got != want {
 		t.Errorf("route = %q, want %q", got, want)
 	}
 	if !strings.Contains(openRow, `title="not assigned yet"`) {

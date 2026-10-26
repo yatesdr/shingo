@@ -1,0 +1,65 @@
+/* The route strip, and the order pop-up's timeline.
+ *
+ * partials/orders-rows.html (order-route) draws the strip on the orders board
+ * and the Dashboard's Active Orders card; static/components/route-strip.js
+ * draws it on the task board and in the order pop-up's hero, and the timeline
+ * under that hero. Loaded by layout.html and dashboard-display.html.
+ *
+ * FOUR BEATS AT MOST (domain.RouteView): the origin, the stop the robot is at,
+ * the next, the final, and one +n chip for the stops between the next and the
+ * final. Passed stops are not drawn; the origin stands for them.
+ *
+ * ONE THING IS COLOURED: where the robot is, in the accent (--route-here), as a
+ * fill carrying its own ink so it reads on any row behind it. At a stop it is
+ * the stop's pill; on its way it is the arrow before the stop it heads to.
+ * Every other stop is the text ramp, told apart by its marker:
+ *   passed, left  a small filled dot, dimmed
+ *   here          the accent pill around a disc
+ *   next          a hollow outline around a ring, in the row's text colour
+ *   remaining     a hollow dot
+ *   final         a small filled square
+ * The stops between the next and the final are one "+n" chip. */
+
+.route-strip { display: inline-flex; align-items: center; white-space: nowrap; vertical-align: middle; font-weight: var(--fw-normal); letter-spacing: normal; }
+.route-sep { color: var(--route-passed); padding: 0 0.15em; }
+.route-cell { display: inline-flex; align-items: center; gap: 0.25em; line-height: 1.35; border: 1.5px solid transparent; border-radius: 999px; padding: 0 0.1em; color: var(--route-remaining); }
+.route-cell::before { content: ""; flex: none; box-sizing: border-box; width: 0.5em; height: 0.5em; border-radius: 50%; }
+
+.route-passed, .route-left { color: var(--route-passed); }
+.route-passed::before, .route-left::before { background: var(--route-passed); width: 0.4em; height: 0.4em; }
+
+/* On its way: the arrow before the stop the robot heads to is the robot. */
+.route-sep.route-heading { color: var(--route-on-here); background: var(--route-here); border-radius: 999px; padding: 0 0.45em; margin: 0 0.15em; font-weight: var(--fw-bold); }
+
+.route-here { color: var(--route-on-here); background: var(--route-here); border-color: var(--route-here); font-weight: var(--fw-bold); padding: 0 0.4em 0 0.3em; }
+.route-here::before { background: var(--route-on-here); width: 0.6em; height: 0.6em; }
+
+.route-next { border-color: currentColor; font-weight: var(--fw-bold); padding: 0 0.4em 0 0.3em; }
+.route-next::before { border: 2px solid currentColor; width: 0.6em; height: 0.6em; }
+
+.route-remaining::before { border: 1.5px solid var(--route-passed); }
+
+.route-final::before { background: currentColor; border-radius: 1px; width: 0.5em; height: 0.5em; }
+
+/* An end not chosen yet: the guide's no-data dash, no marker. */
+.route-cell.route-none::before { display: none; }
+
+.route-cell.route-chip { color: var(--route-chip-ink); background: var(--route-chip); border-color: var(--route-chip); font-weight: var(--fw-normal); font-size: 0.85em; font-variant-numeric: tabular-nums; padding: 0 0.45em; }
+.route-cell.route-chip::before { display: none; }
+
+/* THE TIMELINE: every stop top to bottom, its marker on a rail, its state in
+ * words beside it. The pills fall away and the shapes stay; the robot is the
+ * accent on its stop's marker, or on the rail below the stop it left. */
+.route-timeline { list-style: none; margin: 0.5rem 0 0.25rem; padding: 0; font-size: var(--font-sm); }
+.route-timeline .route-cell { display: flex; position: relative; gap: 0.55em; border: 0; border-radius: 0; background: none; padding: 0.15rem 0; font-weight: var(--fw-normal); }
+.route-timeline .route-cell::before { width: 0.75em; height: 0.75em; }
+.route-timeline .route-passed::before, .route-timeline .route-left::before { transform: scale(0.6); }
+.route-timeline .route-remaining::before { transform: scale(0.8); }
+.route-timeline .route-final::before { transform: scale(0.75); border-radius: 1px; }
+.route-timeline .route-here { color: var(--route-here); font-weight: var(--fw-bold); }
+.route-timeline .route-here::before { background: var(--route-here); }
+.route-timeline .route-cell:not(:last-child)::after { content: ""; position: absolute; left: calc(0.375em - 1px); top: calc(0.15rem + 1.1em); bottom: calc(-0.15rem - 0.2em); width: 2px; background: var(--route-chip); }
+.route-timeline .route-left:not(:last-child)::after { background: var(--route-here); width: 4px; left: calc(0.375em - 2px); }
+/* A node's link takes its stop's colour: the timeline's names say the state too. */
+.route-timeline .route-node a { color: inherit; }
+.route-label { color: var(--text-muted); font-size: var(--font-xs); font-weight: var(--fw-normal); }

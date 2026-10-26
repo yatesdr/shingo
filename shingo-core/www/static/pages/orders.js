@@ -2,6 +2,7 @@ import { apiGet, apiPost, debounce, delegateActions, escapeHtml, h, hideModal, o
 import { formatDuration, formatTime } from '/static/shared/utils.js';
 import { formatClockSeconds, plantDate } from '/static/components/plantclock.js';
 import { relevantNotices } from '/static/pages/fleet-notices.js';
+import { routeStripHTML, routeTimelineHTML } from '/static/components/route-strip.js';
 import { installLiveDurations, onSSE, reconcileList, serverNow } from '/static/shared/utils.js';
 
 // Controls live inside the manifest, which can be on screen twice at once
@@ -262,17 +263,13 @@ function binRef(bin) {
 // header used to read "UTN_013 → —" under a line saying where it was waiting.
 var NOT_ASSIGNED = '<span class="order-route-none">not assigned yet</span>';
 
-// routeHTML draws the route the server computed (data.route,
-// domain.RouteStops), the stop the robot is at in bold. It has no rule of its
-// own: which nodes appear is the board's order-route partial's answer too,
-// held together by TestOrderRouteRuleMatchesThePopup.
-function routeHTML(stops) {
-  if (!stops || !stops.length) return NOT_ASSIGNED;
-  return stops.map(function (s) {
-    if (s.unassigned) return NOT_ASSIGNED;
-    var n = nodeLink(s.node);
-    return s.current ? '<strong class="order-route-current" title="the robot is here">' + n + '</strong>' : n;
-  }).join(' <span class="manifest-arrow">&rarr;</span> ');
+// routeHeroHTML is the pop-up's headline: the route as the boards draw it,
+// from what the server computed (data.route_view, data.route). The timeline
+// under it lists every stop. Neither has a rule of its own: both are the
+// order-route partial's answer too, held together by
+// TestOrderRouteRuleMatchesThePopup.
+function routeHeroHTML(data) {
+  return '<span class="manifest-route">' + routeStripHTML(data.route_view, data.route) + '</span>';
 }
 
 // planHTML is the order's full chain as Core holds it, every step with its
@@ -360,18 +357,20 @@ function buildManifest(data, opts) {
   var out = '<div class="manifest">';
 
   // ── HERO ──
-  // The route is what an order IS, so it leads — one readable line of its
-  // stops rather than labelled cells in a grid, with the status and the
-  // elapsed time beside it, and under it the full chain with its waits.
-  // Everything else is a footnote to that. An end not chosen yet reads "not
-  // assigned yet", never a bare dash.
+  // The route is what an order IS, so it leads — the strip the boards draw,
+  // with the status and the elapsed time beside it; under it every stop as a
+  // timeline, then the full chain with its waits. Everything else is a
+  // footnote to that. An end not chosen yet reads "not assigned yet" in the
+  // timeline, never a bare dash.
   out += '<div class="manifest-head">';
   out += '<div class="manifest-hero">';
-  out += '<span class="manifest-route">' + routeHTML(data.route) + '</span>';
+  out += routeHeroHTML(data);
   out += '<span class="badge badge-' + o.status + '">' + escapeHtml(o.status) + '</span>';
   var elapsed = elapsedLabel(o);
   if (elapsed) out += '<span class="manifest-elapsed tnum">' + elapsed + '</span>';
   out += '</div>';
+  var timeline = routeTimelineHTML(data.route, nodeLink, NOT_ASSIGNED);
+  if (timeline) out += '<div class="manifest-timeline">' + timeline + '</div>';
   var plan = planHTML(o);
   if (plan) out += '<div class="manifest-plan">' + plan + '</div>';
 

@@ -451,6 +451,18 @@
   --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.1);
   --shadow-md: 0 4px 6px rgba(0, 0, 0, 0.1);
   --shadow-lg: 0 4px 6px rgba(0, 0, 0, 0.1);
+
+  /* The route strip (Core's boards and order pop-up, route-strip.css). One
+   * thing on it is coloured, where the robot is, and in the accent; every
+   * other stop is the text ramp, told apart by its marker's shape. The accent
+   * is drawn as a fill carrying --route-on-here, which clears 4.5:1 on it, so
+   * it reads on any row behind it (route_strip_contrast_test.go). */
+  --route-here: var(--accent);
+  --route-on-here: #ffffff;
+  --route-passed: var(--text-muted);
+  --route-remaining: var(--text);
+  --route-chip: var(--bg-dark);
+  --route-chip-ink: var(--text);
 }
 
 [data-theme="dark"] {
@@ -564,6 +576,15 @@
   --status-failed-bg:       #450a0a;
   --status-failed-ink:      #f87171;
   --status-failed-border:   #5c1515;
+
+  /* The route strip, dark: the dark accent takes a near-black ink (white on
+   * it is 3.5:1). */
+  --route-here: var(--accent);
+  --route-on-here: #0d1117;
+  --route-passed: var(--text-muted);
+  --route-remaining: var(--text);
+  --route-chip: #21262d;
+  --route-chip-ink: var(--text);
 }
 
 /* Reduced-motion, by law ("motion means motion"). Zeroing the motion

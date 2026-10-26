@@ -16,6 +16,7 @@
 // #dash-main; register the kind's renderer template in handlers_dashboards.go.
 
 import { escapeHtml, formatClock, formatDuration, onSSE, serverNow, setSSEReloadOnBuild } from '/static/shared/utils.js';
+import { routeStripHTML } from '/static/components/route-strip.js';
 
 (function () {
   var body = document.body;
@@ -58,21 +59,13 @@ import { escapeHtml, formatClock, formatDuration, onSSE, serverNow, setSSEReload
   // ── task-board renderer ────────────────────────────────────────────
   var seen = {}; // order_id -> true, to flash only genuinely new rows
 
-  // routeCell draws the route the server computed (o.route,
-  // domain.RouteStops), the stop the robot is at in bold. It has no rule of
-  // its own: the orders board and the pop-up draw the same stops
+  // The route cell is the strip the server laid out (o.route_view,
+  // domain.RouteViewOf) with every stop in its title (o.route). It has no rule
+  // of its own: the orders board and the pop-up draw the same strip
   // (TestOrderRouteRuleMatchesThePopup).
-  function routeCell(stops) {
-    if (!stops || !stops.length) return '-';
-    return stops.map(function (s) {
-      if (s.unassigned) return '-';
-      return s.current ? '<strong class="r-route-current">' + escapeHtml(s.node) + '</strong>' : escapeHtml(s.node);
-    }).join(' <span class="r-route-arrow">&rarr;</span> ');
-  }
-
   function rowHTML(o) {
     return '<td class="r-robot">' + escapeHtml(o.robot_id || '-') + '</td>' +
-      '<td class="r-route">' + routeCell(o.route) + '</td>' +
+      '<td class="r-route">' + routeStripHTML(o.route_view, o.route) + '</td>' +
       '<td class="r-payload">' + escapeHtml(o.payload_code || '-') + '</td>' +
       '<td class="r-status ' + statusClass(o.status) + '">' + escapeHtml(statusLabel(o.status)) + '</td>' +
       '<td class="r-eta">' + escapeHtml(formatETA(o.eta)) + '</td>';

@@ -6,7 +6,11 @@
   {{if .ActiveOrders}}
   <div class="card" id="dash-active-orders">
     <h3>Active Orders</h3>
-    <table>
+    {{/* table-compact: the orders board's density for the orders board's
+         columns. At the default density the route strip and the timestamps,
+         each one line, ran past the card at 1440 px
+         (TestDashboardActiveOrders_DrawsTheBoardsCompactTable). */}}
+    <table class="table-compact">
       <thead>
         <tr>
           <th>ID</th>
@@ -39,7 +43,7 @@
             <span class="badge badge-{{.Status}}">{{.Status}}</span>
             {{if .QueueReason}}<div class="orders-subtext orders-reason">{{.QueueReason}}{{with index $.WaitSince .ID}} · <span class="tnum orders-wait-since" data-since="{{.}}"></span>{{end}}</div>{{end}}
           </td>
-          <td>{{.RobotID}}</td>
+          <td class="orders-robot">{{.RobotID}}</td>
           {{/* Seconds, as on the orders board: rows can share a minute. */}}
           <td class="orders-time">{{formatTimeSeconds .CreatedAt}}</td>
         </tr>

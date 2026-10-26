@@ -1,6 +1,7 @@
 package domain
 
 import (
+	"strconv"
 	"strings"
 	"testing"
 
@@ -8,7 +9,8 @@ import (
 )
 
 // routeText draws stops the way a person reads them: "→" between stops, an
-// unassigned end as "—", the current stop in brackets.
+// unassigned end as "—", and each stop's state after a colon, a remaining stop
+// bare.
 func routeText(stops []RouteStop) string {
 	parts := make([]string, len(stops))
 	for i, s := range stops {
@@ -16,8 +18,8 @@ func routeText(stops []RouteStop) string {
 		if s.Unassigned {
 			p = "—"
 		}
-		if s.Current {
-			p = "[" + p + "]"
+		if s.State != RouteRemaining {
+			p += ":" + string(s.State)
 		}
 		parts[i] = p
 	}
@@ -35,90 +37,134 @@ const routeSingleSteps = `[{"action":"pickup","node":"SMN_01"},{"action":"dropof
 	`{"action":"pickup","node":"IN_STG"},{"action":"dropoff","node":"ALN_001"},{"action":"pickup","node":"OUT_STG"},` +
 	`{"action":"dropoff","node":"ULN_001"}]`
 
+// A plan with a bare wait between a drop and a lift at the same node, and one
+// whose next lift after the bare wait is somewhere else.
+const (
+	routeBareSameSteps = `[{"action":"pickup","node":"SMN_01"},{"action":"dropoff","node":"ALN_001"},{"action":"wait"},` +
+		`{"action":"pickup","node":"ALN_001"},{"action":"dropoff","node":"ULN_001"}]`
+	routeBareAwaySteps = `[{"action":"pickup","node":"SMN_01"},{"action":"dropoff","node":"IN_STG"},{"action":"wait"},` +
+		`{"action":"pickup","node":"ALN_001"},{"action":"dropoff","node":"ULN_001"}]`
+	// A lane wait parks the robot at a map point, which is no stop.
+	routeLaneWaitSteps = `[{"action":"pickup","node":"SMN_01"},{"action":"wait","node":"AP7","wait_kind":"lane"},` +
+		`{"action":"dropoff","node":"SLN_005"}]`
+)
+
 func TestRouteStops(t *testing.T) {
 	t.Parallel()
+	single := func(status protocol.Status, waitIndex, done int) Order {
+		return Order{StepsJSON: routeSingleSteps, Status: status, WaitIndex: waitIndex, StepsDone: done}
+	}
 	cases := []struct {
-		name    string
-		order   Order
-		station string
-		want    string
+		name  string
+		order Order
+		want  string
 	}{
-		{"press-index R1 queued: the whole route, nothing marked",
+		{"press-index R1 queued: the whole route, the press next",
 			Order{StepsJSON: routeR1Steps, Status: protocol.StatusQueued, SourceNode: "PLN_012", DeliveryNode: "PLN_008", ProcessNode: "PLN_012"},
-			"", "PLN_012 → ULN_002 → SMN_BUF_100 → PLN_008"},
-		{"press-index R1 parked for RELEASE: the press is the current stop",
+			"PLN_012:next → ULN_002 → SMN_BUF_100 → PLN_008:final"},
+		{"press-index R1 parked for RELEASE: the robot is at the press",
+			Order{StepsJSON: routeR1Steps, Status: protocol.StatusStaged, WaitIndex: 0, StepsDone: 1},
+			"PLN_012:here → ULN_002:next → SMN_BUF_100 → PLN_008:final"},
+		{"press-index R1 staged before its wait block is counted: the wait_index puts it at the press",
 			Order{StepsJSON: routeR1Steps, Status: protocol.StatusStaged, WaitIndex: 0},
-			"PLN_012", "[PLN_012] → ULN_002 → SMN_BUF_100 → PLN_008"},
-		{"press-index R1 released, robot at the outbound",
-			Order{StepsJSON: routeR1Steps, Status: protocol.StatusInTransit, WaitIndex: 1},
-			"ULN_002", "PLN_012 → [ULN_002] → SMN_BUF_100 → PLN_008"},
-		{"press-index R1 released, robot between stops",
-			Order{StepsJSON: routeR1Steps, Status: protocol.StatusInTransit, WaitIndex: 1},
-			"LM12", "PLN_012 → ULN_002 → SMN_BUF_100 → PLN_008"},
-		{"press-index R1 delivered: nothing marked",
+			"PLN_012:here → ULN_002:next → SMN_BUF_100 → PLN_008:final"},
+		{"press-index R1 released, the press lifted: it has left the press for the outbound",
+			Order{StepsJSON: routeR1Steps, Status: protocol.StatusInTransit, WaitIndex: 1, StepsDone: 2},
+			"PLN_012:left → ULN_002:next → SMN_BUF_100 → PLN_008:final"},
+		{"press-index R1 released, dropped at the outbound and on its way",
+			Order{StepsJSON: routeR1Steps, Status: protocol.StatusInTransit, WaitIndex: 1, StepsDone: 3},
+			"PLN_012:passed → ULN_002:left → SMN_BUF_100:next → PLN_008:final"},
+		{"press-index R1 delivered: every stop behind it, the last one where it is",
 			Order{StepsJSON: routeR1Steps, Status: protocol.StatusDelivered, WaitIndex: 1},
-			"PLN_008", "PLN_012 → ULN_002 → SMN_BUF_100 → PLN_008"},
+			"PLN_012:passed → ULN_002:passed → SMN_BUF_100:passed → PLN_008:here"},
 		{"single_robot: nine steps, the wait dropped, every visit kept",
-			Order{StepsJSON: routeSingleSteps, Status: protocol.StatusStaged, WaitIndex: 0},
-			"", "SMN_01 → IN_STG → [ALN_001] → OUT_STG → IN_STG → ALN_001 → OUT_STG → ULN_001"},
-		{"single_robot dispatched, robot at the source",
-			Order{StepsJSON: routeSingleSteps, Status: protocol.StatusDispatched, WaitIndex: 0},
-			"SMN_01", "[SMN_01] → IN_STG → ALN_001 → OUT_STG → IN_STG → ALN_001 → OUT_STG → ULN_001"},
-		{"single_robot dispatched, robot at inbound staging: the wait_index picks the first visit",
-			Order{StepsJSON: routeSingleSteps, Status: protocol.StatusDispatched, WaitIndex: 0},
-			"IN_STG", "SMN_01 → [IN_STG] → ALN_001 → OUT_STG → IN_STG → ALN_001 → OUT_STG → ULN_001"},
-		{"single_robot released, robot at inbound staging: the wait_index picks the second visit",
-			Order{StepsJSON: routeSingleSteps, Status: protocol.StatusInTransit, WaitIndex: 1},
-			"IN_STG", "SMN_01 → IN_STG → ALN_001 → OUT_STG → [IN_STG] → ALN_001 → OUT_STG → ULN_001"},
-		// After the release the last six stops are one segment, and the row
-		// says no more than that. The line and outbound staging are each
-		// visited twice in it: the robot lifting the old bin off the line
-		// (stop 3) and setting the new one down (stop 6) is the same input,
-		// status in_transit, wait_index 1, station ALN_001, and reads stop 3;
-		// at outbound staging, dropping the old bin (stop 4) and lifting it
-		// again (stop 7) both read stop 4.
-		{"single_robot released, robot at the line: the first visit, whichever it is on",
-			Order{StepsJSON: routeSingleSteps, Status: protocol.StatusInTransit, WaitIndex: 1},
-			"ALN_001", "SMN_01 → IN_STG → [ALN_001] → OUT_STG → IN_STG → ALN_001 → OUT_STG → ULN_001"},
-		{"single_robot released, robot at outbound staging: the first visit, whichever it is on",
-			Order{StepsJSON: routeSingleSteps, Status: protocol.StatusInTransit, WaitIndex: 1},
-			"OUT_STG", "SMN_01 → IN_STG → ALN_001 → [OUT_STG] → IN_STG → ALN_001 → OUT_STG → ULN_001"},
-		{"single_robot released, robot between stops: none of the six marked",
-			Order{StepsJSON: routeSingleSteps, Status: protocol.StatusInTransit, WaitIndex: 1},
-			"LM7", "SMN_01 → IN_STG → ALN_001 → OUT_STG → IN_STG → ALN_001 → OUT_STG → ULN_001"},
-		{"no steps, moving: no stop marked, wherever the robot is",
-			Order{SourceNode: "UTN_014", DeliveryNode: "UTN_013", Status: protocol.StatusInTransit},
-			"UTN_014", "UTN_014 → UTN_013"},
+			single(protocol.StatusStaged, 0, 3),
+			"SMN_01:passed → IN_STG:passed → ALN_001:here → OUT_STG:next → IN_STG → ALN_001 → OUT_STG → ULN_001:final"},
+		{"single_robot dispatched, nothing finished yet: no stop here or left, the source next",
+			single(protocol.StatusDispatched, 0, 0),
+			"SMN_01:next → IN_STG → ALN_001 → OUT_STG → IN_STG → ALN_001 → OUT_STG → ULN_001:final"},
+		{"single_robot dispatched, the source lifted: it has left the source",
+			single(protocol.StatusDispatched, 0, 1),
+			"SMN_01:left → IN_STG:next → ALN_001 → OUT_STG → IN_STG → ALN_001 → OUT_STG → ULN_001:final"},
+		{"single_robot dispatched, dropped at inbound staging, the line next",
+			single(protocol.StatusInTransit, 0, 2),
+			"SMN_01:passed → IN_STG:left → ALN_001:next → OUT_STG → IN_STG → ALN_001 → OUT_STG → ULN_001:final"},
+		{"single_robot released, nothing of the tail done: standing at the line, its next work there",
+			single(protocol.StatusInTransit, 1, 3),
+			"SMN_01:passed → IN_STG:passed → ALN_001:here → OUT_STG:next → IN_STG → ALN_001 → OUT_STG → ULN_001:final"},
+		// The line and outbound staging are each visited twice after the
+		// release; steps_done tells the visits apart.
+		{"single_robot released, the old bin lifted off the line: the first visit",
+			single(protocol.StatusInTransit, 1, 4),
+			"SMN_01:passed → IN_STG:passed → ALN_001:left → OUT_STG:next → IN_STG → ALN_001 → OUT_STG → ULN_001:final"},
+		{"single_robot released, the old bin parked at outbound staging: the first visit",
+			single(protocol.StatusInTransit, 1, 5),
+			"SMN_01:passed → IN_STG:passed → ALN_001:passed → OUT_STG:left → IN_STG:next → ALN_001 → OUT_STG → ULN_001:final"},
+		{"single_robot released, the new bin collected at inbound staging: the second visit",
+			single(protocol.StatusInTransit, 1, 6),
+			"SMN_01:passed → IN_STG:passed → ALN_001:passed → OUT_STG:passed → IN_STG:left → ALN_001:next → OUT_STG → ULN_001:final"},
+		{"single_robot released, the new bin set down on the line: the second visit",
+			single(protocol.StatusInTransit, 1, 7),
+			"SMN_01:passed → IN_STG:passed → ALN_001:passed → OUT_STG:passed → IN_STG:passed → ALN_001:left → OUT_STG:next → ULN_001:final"},
+		{"single_robot released, the old bin lifted again at outbound staging: the market next",
+			single(protocol.StatusInTransit, 1, 8),
+			"SMN_01:passed → IN_STG:passed → ALN_001:passed → OUT_STG:passed → IN_STG:passed → ALN_001:passed → OUT_STG:left → ULN_001:next"},
+		{"single_robot in transit with every step done, not yet delivered: here at the market",
+			single(protocol.StatusInTransit, 1, 9),
+			"SMN_01:passed → IN_STG:passed → ALN_001:passed → OUT_STG:passed → IN_STG:passed → ALN_001:passed → OUT_STG:passed → ULN_001:here"},
+		{"single_robot cancelled after the old bin left the line: no robot here or next",
+			single(protocol.StatusCancelled, 1, 4),
+			"SMN_01:passed → IN_STG:passed → ALN_001:passed → OUT_STG → IN_STG → ALN_001 → OUT_STG → ULN_001:final"},
+		{"a bare wait, parked: the robot is where it last dropped",
+			Order{StepsJSON: routeBareSameSteps, Status: protocol.StatusStaged, StepsDone: 2},
+			"SMN_01:passed → ALN_001:here → ULN_001:next"},
+		{"a bare wait, released to lift where it stands: still here",
+			Order{StepsJSON: routeBareSameSteps, Status: protocol.StatusInTransit, WaitIndex: 1, StepsDone: 2},
+			"SMN_01:passed → ALN_001:here → ULN_001:next"},
+		{"a bare wait, parked away from its next lift",
+			Order{StepsJSON: routeBareAwaySteps, Status: protocol.StatusStaged, StepsDone: 2},
+			"SMN_01:passed → IN_STG:here → ALN_001:next → ULN_001:final"},
+		{"a bare wait, released away from its next lift: the wait_index sends it on, it has left",
+			Order{StepsJSON: routeBareAwaySteps, Status: protocol.StatusInTransit, WaitIndex: 1, StepsDone: 2},
+			"SMN_01:passed → IN_STG:left → ALN_001:next → ULN_001:final"},
+		{"a bare wait crossed and the next lift done",
+			Order{StepsJSON: routeBareAwaySteps, Status: protocol.StatusInTransit, WaitIndex: 1, StepsDone: 4},
+			"SMN_01:passed → IN_STG:passed → ALN_001:left → ULN_001:next"},
+		{"a lane wait at a map point: lifted and parked short of the lane, between its stops",
+			Order{StepsJSON: routeLaneWaitSteps, Status: protocol.StatusStaged, StepsDone: 2},
+			"SMN_01:left → SLN_005:next"},
 		{"a step not resolved yet names its group",
 			Order{StepsJSON: `[{"action":"pickup","group":"SMN"},{"action":"dropoff","node":"ALN_002"}]`, Status: protocol.StatusQueued},
-			"", "SMN → ALN_002"},
+			"SMN:next → ALN_002:final"},
+		{"no steps, moving with the bin lifted: its two implied steps",
+			Order{SourceNode: "UTN_014", DeliveryNode: "UTN_013", Status: protocol.StatusInTransit, StepsDone: 1},
+			"UTN_014:left → UTN_013:next"},
 		{"no steps: From → Line → To",
 			Order{SourceNode: "UTN_014", ProcessNode: "ALN_003", DeliveryNode: "UTN_013"},
-			"", "UTN_014 → ALN_003 → UTN_013"},
+			"UTN_014:next → ALN_003 → UTN_013:final"},
+		{"no steps, the line between the lift and the drop it does not visit",
+			Order{SourceNode: "UTN_014", ProcessNode: "ALN_003", DeliveryNode: "UTN_013", Status: protocol.StatusInTransit, StepsDone: 1},
+			"UTN_014:left → ALN_003 → UTN_013:next"},
 		{"no steps, line repeats an end",
 			Order{SourceNode: "UTN_014", ProcessNode: "UTN_013", DeliveryNode: "UTN_013"},
-			"", "UTN_014 → UTN_013"},
+			"UTN_014:next → UTN_013:final"},
 		{"no steps, ends not chosen",
 			Order{ProcessNode: "ALN_003"},
-			"", "— → ALN_003 → —"},
+			"—:next → ALN_003 → —:final"},
 		{"unreadable steps read as no steps",
 			Order{StepsJSON: `[{"action":`, SourceNode: "UTN_014", DeliveryNode: "UTN_013"},
-			"", "UTN_014 → UTN_013"},
+			"UTN_014:next → UTN_013:final"},
 		{"steps that name no node read as no steps",
 			Order{StepsJSON: `[{"action":"wait"}]`, SourceNode: "UTN_014", DeliveryNode: "UTN_013"},
-			"", "UTN_014 → UTN_013"},
+			"UTN_014:next → UTN_013:final"},
 	}
 	for _, c := range cases {
 		o := c.order
-		if got := routeText(RouteStops(&o, c.station)); got != c.want {
+		if got := routeText(RouteStops(&o)); got != c.want {
 			t.Errorf("%s:\n got %s\nwant %s", c.name, got, c.want)
 		}
 	}
 }
-
-// A plan with a bare wait between a drop and a lift somewhere else.
-const routeBareAwaySteps = `[{"action":"pickup","node":"SMN_01"},{"action":"dropoff","node":"IN_STG"},{"action":"wait"},` +
-	`{"action":"pickup","node":"ALN_001"},{"action":"dropoff","node":"ULN_001"}]`
 
 // TestStepsDoneAfter: a finished block completes the plan's next open step when
 // it is that step's action at that step's node, and nothing else. Each sequence
@@ -168,6 +214,91 @@ func TestStepsDoneAfter(t *testing.T) {
 				t.Errorf("%s: after block %d (%s at %s) steps_done is %d, want %d", c.name, i+1, b.action, b.at, o.StepsDone, c.want[i])
 				break
 			}
+		}
+	}
+}
+
+// stripText is the strip as the boards draw it: its beats left to right, a
+// stop as state:node, the stops between the next and the final as
+// remaining:+n, and the robot's arrow as ➜ before the stop it heads to.
+func stripText(v RouteView) string {
+	cell := func(s RouteStop) string {
+		n := s.Node
+		if s.Unassigned {
+			n = "—"
+		}
+		return string(s.State) + ":" + n
+	}
+	var parts []string
+	beat := func(b RouteBeat, s string) {
+		if v.Heading == b {
+			parts = append(parts, "➜")
+		}
+		parts = append(parts, s)
+	}
+	beat(BeatOrigin, cell(v.Origin))
+	if v.Here != nil {
+		parts = append(parts, cell(*v.Here))
+	}
+	if v.Next != nil {
+		beat(BeatNext, cell(*v.Next))
+	}
+	if v.Remaining > 0 {
+		parts = append(parts, "remaining:+"+strconv.Itoa(v.Remaining))
+	}
+	if v.Final != nil {
+		beat(BeatFinal, cell(*v.Final))
+	}
+	return strings.Join(parts, " ")
+}
+
+// TestRouteViewOf is the strip's four beats (owner, 2026-10-26): the origin,
+// the stop the robot is at, the next, the final, and one +n for the stops
+// between the next and the final. Passed stops are never drawn, the origin
+// stands for them; in transit the stop just left is not drawn either, and the
+// arrow before the stop the robot heads to says it is between.
+func TestRouteViewOf(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name  string
+		order Order
+		want  string
+	}{
+		{"two stops, queued: the origin next, no robot on its way",
+			Order{SourceNode: "UTN_014", DeliveryNode: "UTN_013", Status: protocol.StatusQueued},
+			"next:UTN_014 final:UTN_013"},
+		{"two stops, dispatched before the first block: the arrow before the origin",
+			Order{SourceNode: "UTN_014", DeliveryNode: "UTN_013", Status: protocol.StatusDispatched},
+			"➜ next:UTN_014 final:UTN_013"},
+		{"two stops, lifted and between: the arrow before the final, which is next",
+			Order{SourceNode: "UTN_014", DeliveryNode: "UTN_013", Status: protocol.StatusInTransit, StepsDone: 1},
+			"left:UTN_014 ➜ next:UTN_013"},
+		{"four stops, in transit at a stop, the origin: here is the origin",
+			Order{StepsJSON: routeR1Steps, Status: protocol.StatusInTransit, WaitIndex: 1},
+			"here:PLN_012 next:ULN_002 remaining:+1 final:PLN_008"},
+		{"eight stops, acknowledged before the first block",
+			Order{StepsJSON: routeSingleSteps, Status: protocol.StatusAcknowledged},
+			"➜ next:SMN_01 remaining:+6 final:ULN_001"},
+		{"eight stops, in transit between: the stop left is not drawn",
+			Order{StepsJSON: routeSingleSteps, Status: protocol.StatusInTransit, StepsDone: 2},
+			"passed:SMN_01 ➜ next:ALN_001 remaining:+4 final:ULN_001"},
+		{"eight stops, staged at the line",
+			Order{StepsJSON: routeSingleSteps, Status: protocol.StatusStaged, StepsDone: 3},
+			"passed:SMN_01 here:ALN_001 next:OUT_STG remaining:+3 final:ULN_001"},
+		{"eight stops, delivered: here is the final",
+			Order{StepsJSON: routeSingleSteps, Status: protocol.StatusDelivered},
+			"passed:SMN_01 here:ULN_001"},
+		{"eight stops cancelled midway: the stops to come, nothing here or next",
+			Order{StepsJSON: routeSingleSteps, Status: protocol.StatusCancelled, WaitIndex: 1, StepsDone: 5},
+			"passed:SMN_01 remaining:+3 final:ULN_001"},
+		{"one stop: the origin alone",
+			Order{StepsJSON: `[{"action":"pickup","node":"SLN_005"},{"action":"wait","node":"AP7"}]`, Status: protocol.StatusQueued},
+			"next:SLN_005"},
+	}
+	for _, c := range cases {
+		o := c.order
+		if got := stripText(RouteViewOf(RouteStops(&o), o.Status)); got != c.want {
+			t.Errorf("%s:\n got %s\nwant %s", c.name, got, c.want)
 		}
 	}
 }

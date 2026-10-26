@@ -627,10 +627,12 @@ func (h *Handlers) apiGetOrderEnriched(w http.ResponseWriter, r *http.Request) {
 		// computed here: the threshold is Core's, and the modal must say what
 		// the board says. Every value inside is escaped by FaultLine.HTML.
 		FaultLine string `json:"fault_line,omitempty"`
-		// Route is the hero's route, domain.RouteStops: computed here, as the
-		// board's partial computes it, so the pop-up draws the one rule and has
-		// none of its own (TestOrderRouteRuleMatchesThePopup).
-		Route []domain.RouteStop `json:"route"`
+		// Route is the order's route, domain.RouteStops, and RouteView its
+		// strip: computed here, as the board's partial computes them, so the
+		// pop-up's hero and timeline draw the one rule and have none of their
+		// own (TestOrderRouteRuleMatchesThePopup).
+		Route     []domain.RouteStop `json:"route"`
+		RouteView domain.RouteView   `json:"route_view"`
 	}
 
 	// A WAIT THAT ENDED IS NOT SHOWN AS ONE. queue_reason was not cleared when a
@@ -693,11 +695,8 @@ func (h *Handlers) apiGetOrderEnriched(w http.ResponseWriter, r *http.Request) {
 			result.Robot = &rs
 		}
 	}
-	station := ""
-	if result.Robot != nil {
-		station = result.Robot.CurrentStation
-	}
-	result.Route = domain.RouteStops(order, station)
+	result.Route = domain.RouteStops(order)
+	result.RouteView = domain.RouteViewOf(result.Route, order.Status)
 
 	h.jsonOK(w, result)
 }

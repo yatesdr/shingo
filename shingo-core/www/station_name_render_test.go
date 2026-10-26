@@ -62,7 +62,7 @@ func renderPageWithNamer(t *testing.T, page string, namer stationNamer, data map
 		t.Fatalf("%s is not discovered by router.go's glob, so it is not routable", page)
 	}
 
-	base := template.New("").Funcs(templateFuncs(namer, nil))
+	base := template.New("").Funcs(templateFuncs(namer))
 	base = template.Must(base.ParseFS(templateFS,
 		"templates/layout.html", "templates/partials/*.html"))
 	clone := template.Must(base.Clone())
@@ -158,13 +158,13 @@ func TestStationName_FallsBackToTheRawIdentity(t *testing.T) {
 
 // TestStationNameFunc_NilNamerRendersRawIdentity pins the no-resolver case.
 //
-// templateFuncs(nil, nil) is what the parse-only tests use, and it must produce the
+// templateFuncs(nil) is what the parse-only tests use, and it must produce the
 // same output as an unknown station rather than a blank cell — one fallback
 // path, not two.
 func TestStationNameFunc_NilNamerRendersRawIdentity(t *testing.T) {
 	t.Parallel()
 
-	fn, ok := templateFuncs(nil, nil)["stationName"].(func(string) string)
+	fn, ok := templateFuncs(nil)["stationName"].(func(string) string)
 	if !ok {
 		t.Fatalf("stationName is not a func(string) string")
 	}

@@ -21,7 +21,7 @@ import (
 // the shared "layout" are executed by phase6_pages_render_test.go's renderPage,
 // which is the closer mirror of what router.go does.
 func TestTemplatesParse(t *testing.T) {
-	base := template.Must(template.New("").Funcs(templateFuncs(nil, nil)).
+	base := template.Must(template.New("").Funcs(templateFuncs(nil)).
 		ParseFS(templateFS, "templates/layout.html", "templates/partials/*.html"))
 
 	pages, err := fs.Glob(templateFS, "templates/*.html")

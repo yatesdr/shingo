@@ -309,8 +309,6 @@ textarea { resize: vertical; min-height: 60px; }
 /* Identity strip — everything that is context rather than headline. */
 .manifest-ident { margin-top: 0.3rem; color: var(--text-muted); font-size: var(--font-xs); }
 .manifest-plan { margin-top: 0.2rem; color: var(--text-muted); font-size: var(--font-xs); }
-/* The hero route is bold already: its current stop is underlined instead. */
-.manifest-route .order-route-current { text-decoration: underline; text-underline-offset: 0.2em; }
 .manifest-dot { margin: 0 0.45rem; color: var(--text-muted); }
 .manifest-head .manifest-uuid {
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
@@ -983,11 +981,9 @@ th.sort-desc::after { content: ' \2193'; color: var(--primary); }
 .orders-card { padding:0.75rem; }
 /* Rows open the detail modal. */
 .orders-table tbody tr { cursor:pointer; }
-/* The route (partials/orders-rows.html order-route), on the board and
- * the Dashboard. Node names are single tokens; the arrows recede. An end not
- * assigned yet is the guide's no-data dash. */
+/* The route strip (partials/orders-rows.html order-route) is route-strip.css's;
+ * the cell only keeps it on one line. The pop-up's "not assigned yet" recedes. */
 .orders-route { white-space:nowrap; }
-.order-route-arrow { color:var(--text-muted); }
 .order-route-none { color:var(--text-muted); }
 .orders-scope { margin-bottom:var(--sp-2); }
 /* The pager row sits under the rows, not among them. */

@@ -1,11 +1,22 @@
-{{define "order-route"}}{{/* The order's route: domain.RouteStops, the one rule
-     every route surface draws (the orders board and the Dashboard here, the
-     order pop-up's routeHTML and the task board's rowHTML from the route the
-     server sends them), held together by TestOrderRouteRuleMatchesThePopup.
-     A complex leg reads every stop of its steps; an order with no steps reads
-     From → Line → To. An end not chosen yet is no data, not an empty string: a
-     muted dash whose title says so. The stop the robot is at is marked. One
-     line: the cell does not wrap, and its title carries the whole route. */}}<span class="order-route" title="{{range $i, $s := routeStops .}}{{if $i}} → {{end}}{{if $s.Unassigned}}not assigned yet{{else}}{{$s.Node}}{{end}}{{end}}">{{range $i, $s := routeStops .}}{{if $i}} <span class="order-route-arrow">→</span> {{end}}{{if $s.Unassigned}}<span class="order-route-none" title="not assigned yet">—</span>{{else if $s.Current}}<strong class="order-route-current" title="the robot is here">{{$s.Node}}</strong>{{else}}{{$s.Node}}{{end}}{{end}}</span>{{end}}
+{{define "order-route"}}{{/* The order's route as a strip: domain.RouteStops
+     and domain.RouteViewOf, the one rule every route surface draws (the orders
+     board and the Dashboard card here, the task board and the order pop-up from
+     what the server sends them, through static/components/route-strip.js), held
+     together by TestOrderRouteRuleMatchesThePopup. Four beats at most: the
+     origin, the stop the robot is at, the next, the final, and one +n for the
+     stops between the next and the final; the accent arrow goes before the
+     stop the robot heads to. A state is a colour and a shape (route-strip.css),
+     so it reads without colour. The title names every stop with its state in
+     words; the pop-up's timeline is the one place each stop is drawn. One line:
+     the cell does not wrap. */}}{{with orderRoute .}}{{$h := .View.Heading}}<span class="route-strip" title="{{range $i, $s := .Stops}}{{if $i}} → {{end}}{{if $s.Unassigned}}not assigned yet{{else}}{{$s.Node}}{{end}}{{with routeStateWords $s.State}} ({{.}}){{end}}{{end}}">{{if eq $h "origin"}}{{template "route-heading"}}{{end}}{{template "route-cell" .View.Origin}}{{with .View.Here}}{{template "route-sep"}}{{template "route-cell" .}}{{end}}{{with .View.Next}}{{if eq $h "next"}}{{template "route-heading"}}{{else}}{{template "route-sep"}}{{end}}{{template "route-cell" .}}{{end}}{{with .View.Remaining}}{{template "route-sep"}}<span class="route-cell route-chip route-remaining" title="{{.}} more">+{{.}}</span>{{end}}{{with .View.Final}}{{if eq $h "final"}}{{template "route-heading"}}{{else}}{{template "route-sep"}}{{end}}{{template "route-cell" .}}{{end}}</span>{{end}}{{end}}
+
+{{define "route-cell"}}{{/* One stop of the strip; an end not chosen yet is the
+     guide's no-data dash. */}}{{if .Unassigned}}<span class="route-cell route-{{.State}} route-none" title="not assigned yet">—</span>{{else}}<span class="route-cell route-{{.State}}">{{.Node}}</span>{{end}}{{end}}
+
+{{define "route-sep"}}<span class="route-sep" aria-hidden="true">›</span>{{end}}
+
+{{define "route-heading"}}{{/* The robot on its way: the separator before the
+     stop it heads to, drawn in the accent. */}}<span class="route-sep route-heading" aria-hidden="true">›</span>{{end}}
 
 {{define "order-payload"}}{{/* The payload, printed once. payload_desc is almost
      always the payload's own catalog description ("SHIM" / "SHIM (dev)"), so
