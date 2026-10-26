@@ -217,7 +217,7 @@ func (s *LifecycleService) CreateInboundOrder(stationID string, p *protocol.Orde
 		if cart != nil {
 			need.Cart = cart.ID
 			// AND ITS DROP, when the decision settled it on a position one
-			// carrier's at a time (oneCarrierAt, the acquire's own rule): the drop
+			// carrier's at a time (OneCarrierAt, the acquire's own rule): the drop
 			// is then the move's window, held from its issue (Need.Window): another
 			// order's pending hold on it is the station's to take out loud, and a
 			// robot's refuses the move with nothing written (holdWindow). The
@@ -232,7 +232,7 @@ func (s *LifecycleService) CreateInboundOrder(stationID string, p *protocol.Orde
 					drop = n
 				}
 			}
-			if held, _ := oneCarrierAt(s.db, drop); held {
+			if held, _ := OneCarrierAt(s.db, drop); held {
 				need.Window, need.Delivery = drop, ""
 			}
 		}

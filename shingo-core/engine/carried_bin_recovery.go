@@ -133,9 +133,10 @@ type onDeckRequest struct {
 // deck the bin has left.
 //
 // ONE CALL AT A TIME, ACROSS EVERY CALLER. The policy chooses a concrete slot
-// before the order exists, and the slot is only reserved further down, in
-// dispatchRecoveryOrder; between the two, the slot is free to anyone else who
-// asks. The callers are the button and both hosts of the watch (the robot poll
+// before the order exists, and the slot is only reserved further down, at the
+// issue (Need.Window) when it is one carrier's at a time and in
+// dispatchRecoveryOrder otherwise; between the two, the slot is free to anyone
+// else who asks. The callers are the button and both hosts of the watch (the robot poll
 // and the reconciliation sweep), each on its own goroutine, and the per-bin
 // attempt record serializes nothing across two bins. On the sim rig a swap
 // cancelled with both decks loaded put the two hosts on the two bins in the
@@ -289,6 +290,15 @@ func (e *Engine) orderCarriedBinDown(binID int64, robotID string, req onDeckRequ
 		carrier != nil && protocol.IsTerminal(carrier.Status) {
 		need.Recovers = &carrier.ID
 	}
+	// AND ITS DROP, when the policy chose a position one carrier's at a time
+	// (dispatch.OneCarrierAt, the acquire's own rule): the drop is then the
+	// recovery's window, held from its issue (Need.Window), as a station's move
+	// holds its own. Another order holding it refuses the recovery with nothing
+	// written (CarriedBinNotRecoverable); a person's press takes a pending hold
+	// on it out loud, as it takes one on the bin.
+	if held, _ := dispatch.OneCarrierAt(e.db, dest); held {
+		need.Window = dest
+	}
 	// FREE THE UUID A DEAD ATTEMPT IS HOLDING.
 	//
 	// recoveryEdgeUUID is deterministic per (bin, robot), which is what makes a
@@ -364,6 +374,10 @@ func (e *Engine) issueAndDispatchRecovery(need dispatch.Need, bin *bins.Bin, car
 	if errors.Is(err, reservations.ErrReservationConflict) {
 		// Another order holds the bin: nothing was written.
 		return nil, &CarriedBinNotRecoverable{BinID: binID, Reason: fmt.Sprintf("bin %d was taken by another order", binID)}
+	}
+	if errors.Is(err, dispatch.ErrWindowTaken) {
+		// Another order holds the drop the policy chose: nothing was written.
+		return nil, &CarriedBinNotRecoverable{BinID: binID, Reason: err.Error()}
 	}
 	if err != nil {
 		return nil, fmt.Errorf("create recovery order for bin %d: %w", binID, err)

@@ -3,6 +3,8 @@
 package engine
 
 import (
+	"errors"
+	"strings"
 	"testing"
 
 	"shingo/protocol"
@@ -22,6 +24,36 @@ import (
 //
 // Each pin says what it expects to change, if anything, and why. A pin that a
 // later commit edits is a pin that commit owes an explanation for.
+
+// TestRecovery_ADropAnotherOrderHoldsRefusesItAtItsIssue: the recovery declares
+// the drop its policy chose when it is one carrier's at a time (Need.Window,
+// dispatch.OneCarrierAt), so another order holding it refuses the return at its
+// issue with nothing written, and the window's refusal is the recovery's own
+// (CarriedBinNotRecoverable), naming the drop. Core's own errand takes nothing.
+func TestRecovery_ADropAnotherOrderHoldsRefusesItAtItsIssue(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	eng := newTestEngine(t, db, testdb.NewTrackingBackend())
+	_, slot := storeGroupWithSlot(t, db, "RWT")
+	bin, _ := seedCancelledCarry(t, db, "AMR-RWT", "RWT-P", "LINE-RWT")
+	cacheRobot(eng, loadedDispatchable("AMR-RWT"))
+	holder := testdb.CreateOrder(t, db, func(o *orders.Order) {
+		o.OrderType, o.Status, o.DeliveryNode = protocol.OrderTypeMove, protocol.StatusDispatched, slot.Name
+	})
+	testutil.MustNoErr(t, db.ReserveSlot(slot.ID, holder.ID), "another order holds the slot")
+
+	_, _, err := eng.orderCarriedBinDown(bin.ID, "", onDeckRequest{actor: "system:test", action: "carried_bin_returned",
+		choose: func(*bins.Bin, fleet.RobotStatus, *orders.Order) (*nodes.Node, string, error) {
+			return slot, "the test's choice", nil
+		}})
+	var refused *CarriedBinNotRecoverable
+	if !errors.As(err, &refused) || !strings.Contains(refused.Reason, slot.Name) {
+		t.Fatalf("the return onto a held slot = %v, want CarriedBinNotRecoverable naming %s", err, slot.Name)
+	}
+	if o, gErr := db.GetOrderByUUID(recoveryEdgeUUID(bin.ID, "AMR-RWT")); gErr == nil && o != nil {
+		t.Errorf("a return onto a held slot was issued: order %d (%s)", o.ID, o.Status)
+	}
+}
 
 // ── fixtures, shared with cancel_return_docker_test.go ───────────────────────
 

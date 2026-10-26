@@ -245,7 +245,7 @@ func isStorageDropoff(db *store.DB, deliveryNode string) bool {
 // holdPosition is the acquire's hold on a plain order's drop
 // (ReserveStorageDropoff), the node-driven Stage-3 generalization of C2's
 // per-store claim to every plain family: after the plain-path full gate passes,
-// a drop that is one carrier's at a time (oneCarrierAt: a storage slot or a
+// a drop that is one carrier's at a time (OneCarrierAt: a storage slot or a
 // loader's window) is held RESERVE-ONLY via claimStoreSlotAs; a line or a
 // consume point holds nothing (no-op ⇒ nil). Node-driven, NOT type-driven, and
 // never a hard claim: the hand takes that (DispatchHand, storage slots only; a
@@ -272,21 +272,25 @@ func holdPosition(db *store.DB, order *orders.Order) error {
 		// settle-read reports it with the order's id.
 		return nil
 	}
-	held, lane := oneCarrierAt(db, node)
+	held, lane := OneCarrierAt(db, node)
 	if !held {
 		return nil // line / consume point — nothing to hold
 	}
 	return claimStoreSlotAs(db, order, node, plainGroupDrop(order, lane))
 }
 
-// oneCarrierAt is holdPosition's rule for a node in hand: a drop there is one
+// OneCarrierAt is holdPosition's rule for a node in hand: a drop there is one
 // carrier's at a time when it is a storage dropoff (storageDropoffOf) or a
 // loader's window (its home row, GetLoaderHomeByPositionNode), and the lane it
 // stands in comes with it. The two reads that exist, composed: no class of its
-// own. The station's move asks it of its settled drop to declare its window at
-// its issue (CreateInboundOrder). The home is read only for a node that is not
-// storage, and an unreadable home row answers not a window, as an unreadable
-// parent answers not storage.
+// own. The doors that know their drop ask it to declare their window at the
+// issue (Need.Window): the station's move of its settled drop
+// (CreateInboundOrder), and the carried-bin recovery of the drop its policy
+// chose (engine), which is why it is exported. The issue does not ask it of
+// every row's drop: a door that declares none would then hold one (a home
+// clear's parent, delivering to the home). The home is read only for a node
+// that is not storage, and an unreadable home row answers not a window, as an
+// unreadable parent answers not storage.
 //
 // THE COMPLEX FAMILY ASKS THE STORAGE HALF ONLY (slotNeeds, the final drop's
 // capacity gate). A swap's evac leg names a loader's home as its drop, and the
@@ -294,7 +298,7 @@ func holdPosition(db *store.DB, order *orders.Order) error {
 // (SMN_030, 2026-08-05: an evac and the ask for the carrier its supply needed
 // waited on each other). Whether a complex step's hold on a window would bring
 // that wait back was not established, so its slot reserve does not hold one.
-func oneCarrierAt(db *store.DB, node *nodes.Node) (bool, *nodes.Node) {
+func OneCarrierAt(db *store.DB, node *nodes.Node) (bool, *nodes.Node) {
 	if storage, lane := storageDropoffOf(db, node); storage {
 		return true, lane
 	}

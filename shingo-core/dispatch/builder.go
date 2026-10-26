@@ -111,12 +111,13 @@ type Need struct {
 	// acquire's hold reuses the row (holdPosition, owner-idempotent). The doors
 	// that declare one: the window pulls (windowMove), the Core asks
 	// (AdmitCoreAsk: the loader loop's window, the level keeper's pre-resolved
-	// slot), and a station's move whose settled drop is one carrier's at a time
-	// (CreateInboundOrder). A window another order holds refuses the issue
-	// (ErrWindowTaken), unless a person asked and the holder's row is pending: it
-	// is then taken out loud, as the cart's is (holdWindow). The row is a pending
-	// slot row like every other: a dig that outranks the order takes it out loud
-	// (store.TakeSlotByRank).
+	// slot), a station's move whose settled drop is one carrier's at a time
+	// (CreateInboundOrder), and the carried-bin recovery's drop when it is
+	// (engine; both ask OneCarrierAt). A window another order holds refuses
+	// the issue (ErrWindowTaken), unless a person asked and the holder's row is
+	// pending: it is then taken out loud, as the cart's is (holdWindow). The row
+	// is a pending slot row like every other: a dig that outranks the order
+	// takes it out loud (store.TakeSlotByRank).
 	Window *nodes.Node
 	// By is who asked: Person(name) for a person (a station or a page), the zero
 	// value for Core's own errand. It decides whether a stranger's soft hold on
@@ -380,7 +381,8 @@ func issueOwnTx(db *store.DB, need Need, p plan.Plan) (*orders.Order, Taken, err
 // (Need.Window) is held by another order: nothing was written. The refusal
 // names the window, and for a person's order the robot's order that holds it
 // (holdWindow). Its readers outside the package are the level keeper's
-// loop (engine Maintainer.createAsks), which goes on to its next slot.
+// loop (engine Maintainer.createAsks), which goes on to its next slot, and the
+// carried-bin recovery, which refuses (CarriedBinNotRecoverable).
 var ErrWindowTaken = errors.New("the window is held by another order")
 
 // NotAtSourceError is a move refused at its issue because the bin it names is

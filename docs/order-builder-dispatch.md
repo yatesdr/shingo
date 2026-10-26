@@ -123,7 +123,7 @@ transaction, or nothing is written:
 | `Need` field | What the issue does with it |
 |--------------|-----------------------------|
 | `Cart` | the one carrier the order is for: a pending bin row, `bin_id` and `named_bin_id` stamped in the INSERT |
-| `Window` | the drop when it is one carrier's at a time, which **is** the delivery: a pending slot row, before the cart; another order's refuses Core's errand (`ErrWindowTaken`), and a person's issue takes a pending one out loud (the holder told `slot-taken`) and is refused, naming the holder, only by a confirmed one. Declared by the window pulls, the Core asks (the loader loop's window, the level keeper's pre-resolved slot) and a station's move whose settled drop is a storage slot or a loader window; the acquire's hold (`holdPosition`) is owner-idempotent on it |
+| `Window` | the drop when it is one carrier's at a time, which **is** the delivery: a pending slot row, before the cart; another order's refuses Core's errand (`ErrWindowTaken`), and a person's issue takes a pending one out loud (the holder told `slot-taken`) and is refused, naming the holder, only by a confirmed one. Declared by the window pulls, the Core asks (the loader loop's window, the level keeper's pre-resolved slot), a station's move whose settled drop is a storage slot or a loader window, and the carried-bin recovery's drop when it is one (`OneCarrierAt`); the acquire's hold (`holdPosition`) is owner-idempotent on it |
 | `QualityHoldBy` | a station's containment move: the cart's hold marker |
 | `Robot` | a carried-bin recovery's pin, in the INSERT |
 | `Leg` | a compound's child: parent and turn; a dig leg's bin stamped and held by its parent's lane, with no bin row |

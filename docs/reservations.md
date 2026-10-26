@@ -319,10 +319,13 @@ other: a dig that outranks the holder takes it out loud (the holder told
 `slot-taken`), and one that does not, does not
 (`TestDig_TakesAnAsksWindowOnlyByRank`). An ask whose lane slot was taken is
 aimed back at its group by its next pass and chooses again; an ask whose window
-stands outside any lane is re-aimed by nothing and waits for its window. Not
-declared at the issue: a person's bin move's drop and the carried-bin recovery's
-(each held at its acquire or the recovery's own dispatch, by the acquire's rule)
-and every complex order's (the
+stands outside any lane is re-aimed by nothing and waits for its window. The
+carried-bin recovery declares the drop its policy chose the same way when it is
+one carrier's at a time (`dispatch.OneCarrierAt`), and a window another order
+holds refuses it (`CarriedBinNotRecoverable`). Not declared at the issue: a
+person's bin move's drop (held at its acquire, by the acquire's rule), a home
+clear's (its parent delivers to the home and holds nothing there) and every
+complex order's (the
 reserve pass holds storage dropoffs and declared-exclusive ones, never a loader
 window).
 

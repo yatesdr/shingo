@@ -140,8 +140,8 @@ type slotNeed struct {
 // predicate (a LANE or NGRP parent, no STOR arm), so a complex step dropping on
 // a standalone STOR node reserved nothing where a plain order's drop there
 // holds its slot (TestComplexDropOnAStandaloneStorNodeIsHeldAsAPlainDropThereIs).
-// The plain hold's other half, a loader's window (oneCarrierAt), is not asked
-// here: see oneCarrierAt for why.
+// The plain hold's other half, a loader's window (OneCarrierAt), is not asked
+// here: see OneCarrierAt for why.
 //
 // ── THIS COMMENT USED TO SAY "STAGING/RELAY INCLUDED". IT WAS NOT ─────────
 //
