@@ -515,16 +515,7 @@ func (s *StationService) SetNodes(stationID int64, nodeNames []string) (kept []s
 		byCoreName[n.CoreNodeName] = n
 	}
 
-	// Normalize input: trim, expand groups, and deduplicate, preserving order.
-	clean := make([]string, 0, len(nodeNames))
-	desired := map[string]bool{}
-	for _, name := range s.expandGroups(nodeNames) {
-		name = strings.TrimSpace(name)
-		if name != "" && !desired[name] {
-			desired[name] = true
-			clean = append(clean, name)
-		}
-	}
+	clean, desired := s.wantedNames(nodeNames)
 
 	// REFUSE THE WHOLE SAVE, rather than dropping the bad names and writing the
 	// rest. This endpoint is a wholesale REPLACE of the station's node list, so a
@@ -637,6 +628,22 @@ func (s *StationService) SetNodes(stationID int64, nodeNames []string) (kept []s
 	}
 
 	return s.releaseRemovedPositions(stationNodes, desired)
+}
+
+// wantedNames is how SetNodes reads a list: groups expanded, names trimmed,
+// blanks and repeats dropped, order kept. RemovalImpact reads it the same way,
+// so the warning is about the save the same list makes.
+func (s *StationService) wantedNames(nodeNames []string) ([]string, map[string]bool) {
+	clean := make([]string, 0, len(nodeNames))
+	desired := map[string]bool{}
+	for _, name := range s.expandGroups(nodeNames) {
+		name = strings.TrimSpace(name)
+		if name != "" && !desired[name] {
+			desired[name] = true
+			clean = append(clean, name)
+		}
+	}
+	return clean, desired
 }
 
 // releaseRemovedPositions is SetNodes' removal pass: every position this

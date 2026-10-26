@@ -6155,6 +6155,13 @@ function stationBody(st, editing, change) {
 // So the sheet asks the server what this screen claims, and opens on the
 // answer. The write is also skipped when the engineer did not touch the list —
 // a note edit has no business calling a set-to endpoint at all.
+//
+// A LIST THAT TAKES A POSITION OFF IS ASKED ABOUT FIRST. Retiring a position
+// leaves every recipe and style that names it pointing at nothing, so before
+// anything is written the sheet asks the server what still names the ones
+// going (POST …/claimed-nodes/impact) and shows the answer. It is a warning,
+// not a refusal: a second Save of the same list goes through. A list that
+// removes nothing, or removes only what nothing names, saves on the first.
 // The screen sheet's line for positions a save could not take off the screen
 // because each still has an active order.
 function keptPositionsSentence(names) {
@@ -6171,6 +6178,8 @@ async function openScreenSheet(stationID) {
         positionsOfOtherProcesses(),
     ]);
     const baseline = editing ? (S.stationNodes[String(st.id)] || []).slice() : [];
+    // The list a removal warning was last shown for; Save on it again confirms.
+    let warnedFor = null;
     const claimedElsewhere = {};
     for (const other of stationsOf(S.processID)) {
         if (other.id === st.id) continue;
@@ -6198,11 +6207,6 @@ async function openScreenSheet(stationID) {
             'the positions this screen claims — a flow can only use a position its screen owns'),
         editing ? 'Save' : 'Add',
         async () => {
-            const wrote = await postJSON(editing ? 'PUT' : 'POST',
-                editing ? '/api/operator-stations/' + st.id : '/api/operator-stations',
-                stationBody(st, editing, { name: sheetValue('name'), note: sheetValue('note') }));
-            if (!wrote.ok) { sheetStatus(wrote.error, true); return; }
-            const id = editing ? st.id : Number(wrote.body.id);
             // UNTOUCHED MEANS UNWRITTEN. claimed-nodes is a set-to, so sending
             // the list again when nobody changed it is a delete-and-recreate of
             // every position — and sending it when the baseline failed to load
@@ -6211,6 +6215,22 @@ async function openScreenSheet(stationID) {
             const want = B().stationNodes(sheetValue('positions')).nodes;
             const same = want.length === baseline.length &&
                 want.every((n, i) => n === baseline[i]);
+            const key = JSON.stringify(want);
+            if (!same && baseline.some(n => want.indexOf(n) < 0) && warnedFor !== key) {
+                const impact = await postJSON('POST', '/api/operator-stations/' + st.id + '/claimed-nodes/impact',
+                    { nodes: want });
+                if (!impact.ok) { sheetStatus(impact.error, true); return; }
+                if (impact.body.warning) {
+                    warnedFor = key;
+                    sheetStatus(impact.body.warning, false);
+                    return;
+                }
+            }
+            const wrote = await postJSON(editing ? 'PUT' : 'POST',
+                editing ? '/api/operator-stations/' + st.id : '/api/operator-stations',
+                stationBody(st, editing, { name: sheetValue('name'), note: sheetValue('note') }));
+            if (!wrote.ok) { sheetStatus(wrote.error, true); return; }
+            const id = editing ? st.id : Number(wrote.body.id);
             if (!same) {
                 const nodes = await postJSON('PUT', '/api/operator-stations/' + id + '/claimed-nodes',
                     { nodes: want });

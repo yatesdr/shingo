@@ -274,6 +274,11 @@ func routeFixtures() map[string]routeFixture {
 		"PUT /api/operator-stations/{id}/claimed-nodes": {want: 200, moves: true, req: on(func(w *walk) (string, any) {
 			return sp(w) + "/claimed-nodes", map[string]any{"nodes": []string{"PLN_01", "PLN_04", "PLN_06"}}
 		})},
+		// The removal warning is a read: it names what claims a position the
+		// list drops, and writes nothing, so nothing is announced.
+		"POST /api/operator-stations/{id}/claimed-nodes/impact": {want: 200, req: on(func(w *walk) (string, any) {
+			return sp(w) + "/claimed-nodes/impact", map[string]any{"nodes": []string{"PLN_01"}}
+		})},
 		"POST /api/loader-boards": {want: 200, moves: true, req: on(func(w *walk) (string, any) {
 			return "/api/loader-boards", map[string]any{"loader_key": "loader:walk-2", "process_id": w.loaderProc}
 		})},

@@ -75,6 +75,7 @@ func newOperatorStationsRouter(t *testing.T) (*Handlers, *chi.Mux) {
 			r.Delete("/operator-stations/{id}", h.apiDeleteOperatorStation)
 			r.Get("/operator-stations/{id}/claimed-nodes", h.apiGetStationClaimedNodes)
 			r.Put("/operator-stations/{id}/claimed-nodes", h.apiSetStationClaimedNodes)
+			r.Post("/operator-stations/{id}/claimed-nodes/impact", h.apiStationRemovalImpact)
 
 			r.Get("/process-nodes", h.apiListConfiguredProcessNodes)
 			r.Get("/process-nodes/station/{stationID}", h.apiListConfiguredProcessNodesByStation)
@@ -418,6 +419,32 @@ func TestOperatorStations_SetStationClaimedNodes_Success(t *testing.T) {
 	}
 	if len(names) != 3 {
 		t.Errorf("expected 3 nodes after set, got %d (%v)", len(names), names)
+	}
+}
+
+// The impact read writes nothing and answers in one field: a list that takes
+// off a position nothing names gets an empty warning, and the position stays
+// until the save itself.
+func TestOperatorStations_StationRemovalImpact_WritesNothing(t *testing.T) {
+	h, router := newOperatorStationsRouter(t)
+	cookie := authCookie(t, h)
+
+	pid := seedProcess(t, "RemovalImpactLine")
+	sid := seedOperatorStation(t, pid, "OS-RI-1", "RemovalImpactStation")
+	set := map[string]any{"nodes": []string{"impact-node-a", "impact-node-b"}}
+	assertStatus(t, doRequest(t, router, "PUT", "/api/operator-stations/"+itoa(sid)+"/claimed-nodes", set, cookie), http.StatusOK)
+
+	body := map[string]any{"nodes": []string{"impact-node-a"}}
+	resp := doRequest(t, router, "POST", "/api/operator-stations/"+itoa(sid)+"/claimed-nodes/impact", body, cookie)
+	assertStatus(t, resp, http.StatusOK)
+	assertJSONPath(t, resp, "warning", "")
+
+	names, err := testDB.GetStationNodeNames(sid)
+	if err != nil {
+		t.Fatalf("GetStationNodeNames: %v", err)
+	}
+	if len(names) != 2 {
+		t.Errorf("the impact read changed the station's positions: %v", names)
 	}
 }
 
@@ -1007,6 +1034,7 @@ func TestOperatorStations_AdminAuth_RequiresLogin(t *testing.T) {
 		{"POST", "/api/operator-stations/1/move"},
 		{"GET", "/api/operator-stations/1/claimed-nodes"},
 		{"PUT", "/api/operator-stations/1/claimed-nodes"},
+		{"POST", "/api/operator-stations/1/claimed-nodes/impact"},
 		{"GET", "/api/process-nodes"},
 		{"GET", "/api/process-nodes/station/1"},
 		{"POST", "/api/process-nodes"},

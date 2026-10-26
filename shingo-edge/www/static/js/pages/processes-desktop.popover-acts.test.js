@@ -894,6 +894,8 @@ async function mainAsync() {
             docQSA: sel => (sel === '.pd-npk' && sheetOpen ? [box] : []),
             fetch: (url, init) => {
                 const method = (init && init.method) || 'GET';
+                // Nothing names PLN_02, so the removal goes through on the first Save.
+                if (url === '/api/operator-stations/10/claimed-nodes/impact') return ok({ warning: '' });
                 if (url === '/api/operator-stations/10/claimed-nodes') {
                     if (method === 'PUT') {
                         puts.push(JSON.parse(init.body));
@@ -978,6 +980,116 @@ async function mainAsync() {
         if (open) throw new Error('the sheet stayed open on a reply without kept');
         checks++;
         console.log('ok: a reply without kept closes the screen sheet as before');
+    }
+
+    // ── taking a position off a screen names what it orphans first ──────────
+    //
+    // Before anything is written, a save that takes positions off the screen
+    // asks the server what still names them (POST …/claimed-nodes/impact). A
+    // warning is shown and the save waits for a second Save; it is a warning,
+    // not a refusal. Nothing to warn about and the save goes straight through.
+    async function removeFromScreen(preview, saves) {
+        const opts = makeElement('');
+        const input = makeElement('');
+        const box = makeElement('npk-positions');
+        box.dataset.npkbox = 'positions';
+        box.querySelector = sel => (sel === '[data-npkq]' ? input
+            : sel === '[data-npkpart="opts"]' ? opts : null);
+        const status = makeElement('');
+        let sheetOpen = false;
+        const puts = [];
+        let rowPuts = 0;
+        const previews = [];
+        const ok = body => Promise.resolve({ ok: true, json: async () => body });
+        const { main, doc, scrim } = loadPage({
+            allowSheet: true,
+            stations: [{ id: 10, process_id: 1, name: 'Screen A', enabled: true }],
+            stationNodes: { '10': ['PLN_01', 'PLN_02'] },
+            extraIds: { 'npk-positions': box },
+            docQSA: sel => (sel === '.pd-npk' && sheetOpen ? [box] : []),
+            fetch: (url, init) => {
+                const method = (init && init.method) || 'GET';
+                if (url === '/api/operator-stations/10/claimed-nodes/impact' && method === 'POST') {
+                    previews.push(JSON.parse(init.body));
+                    return ok(preview);
+                }
+                if (url === '/api/operator-stations/10/claimed-nodes') {
+                    if (method === 'PUT') {
+                        puts.push(JSON.parse(init.body));
+                        return ok({ status: 'ok', kept: [] });
+                    }
+                    return ok(['PLN_01', 'PLN_02']);
+                }
+                if (url === '/api/operator-stations/10' && method === 'PUT') {
+                    rowPuts++;
+                    return ok({ status: 'ok' });
+                }
+                if (url === '/api/operator-stations') {
+                    return ok([{ id: 10, process_id: 1, name: 'Screen A', enabled: true }]);
+                }
+                if (url === '/api/core-nodes') {
+                    return ok(['PLN_01', 'PLN_02'].map(name => ({ name, node_type: 'PLN' })));
+                }
+                if (url === '/api/process-nodes') return ok([]);
+                return null;
+            },
+        });
+        scrim.querySelector = sel => (sel === '.mf .st' ? status : null);
+        await drain();
+        await drain();
+        sheetOpen = true;
+        const edit = makeElement('');
+        edit.dataset.act = 'screen-edit';
+        edit.dataset.station = '10';
+        main.appendChild(edit);
+        bubble(edit, 'click', doc);
+        for (let i = 0; i < 6; i++) await drain();
+        const drop = makeElement('');
+        drop.dataset.npk = 'drop';
+        drop.dataset.npkkey = 'positions';
+        drop.dataset.npkname = 'PLN_02';
+        scrim.appendChild(drop);
+        bubble(drop, 'click', doc);
+        const after = [];
+        for (let s = 0; s < saves; s++) {
+            const save = makeElement('');
+            save.dataset.act = 'sheet-ok';
+            scrim.appendChild(save);
+            bubble(save, 'click', doc);
+            for (let i = 0; i < 10; i++) await drain();
+            after.push({ puts: puts.length, rowPuts, status: status.textContent, cls: status.className });
+        }
+        return { after, previews, open: scrim.classList.contains('active') };
+    }
+
+    {
+        const warning = 'Removing PLN_02 leaves recipe "Two up" and style "Style A" (the active style) naming ' +
+            'a position this process no longer has. Save again to remove it anyway.';
+        const { after, previews } = await removeFromScreen({ warning }, 2);
+        if (previews.length < 1 || JSON.stringify(previews[0]) !== JSON.stringify({ nodes: ['PLN_01'] })) {
+            throw new Error('a save taking PLN_02 off the screen did not ask what names it first: ' + JSON.stringify(previews));
+        }
+        if (after[0].puts !== 0 || after[0].rowPuts !== 0 || after[0].status !== warning) {
+            throw new Error('the first Save wrote before warning, or did not show the warning: ' + JSON.stringify(after[0]));
+        }
+        if (after[0].cls !== 'st') {
+            throw new Error('the warning is not a refusal; status class was ' + JSON.stringify(after[0].cls));
+        }
+        if (after[1].puts !== 1 || after[1].rowPuts !== 1) {
+            throw new Error('a second Save after the warning did not take the position off: ' + JSON.stringify(after[1]));
+        }
+        checks++;
+        console.log('ok: taking off a position a recipe names shows the recipe by name, and a second Save confirms it');
+    }
+
+    {
+        const { after, open } = await removeFromScreen({ warning: '' }, 1);
+        if (after[0].puts !== 1 || after[0].status || open) {
+            throw new Error('a position nothing names was not taken off on the first Save, or warned: ' +
+                JSON.stringify(after[0]) + ' open=' + open);
+        }
+        checks++;
+        console.log('ok: taking off a position nothing names goes through without a warning');
     }
 
     // ── selection: a card finds its row, a second click or Escape lets go ───

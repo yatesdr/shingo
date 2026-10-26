@@ -504,6 +504,7 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger, backupSvc *backup.Servi
 				r.Delete("/operator-stations/{id}", h.apiDeleteOperatorStation)
 				r.Get("/operator-stations/{id}/claimed-nodes", h.apiGetStationClaimedNodes)
 				r.Put("/operator-stations/{id}/claimed-nodes", h.apiSetStationClaimedNodes)
+				r.Post("/operator-stations/{id}/claimed-nodes/impact", h.apiStationRemovalImpact)
 				// A Core loader with no operator screen anywhere on this edge.
 				r.Post("/loader-boards", h.apiCreateLoaderBoard)
 

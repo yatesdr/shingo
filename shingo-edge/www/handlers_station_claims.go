@@ -90,3 +90,28 @@ func (h *Handlers) apiSetStationClaimedNodes(w http.ResponseWriter, r *http.Requ
 	}
 	writeJSON(w, map[string]any{"status": "ok", "kept": kept})
 }
+
+// apiStationRemovalImpact answers the screen sheet before it saves a list
+// that takes positions off the station: the recipes and styles that still
+// name them (StationService.RemovalImpact). It writes nothing; the body is the
+// claimed-nodes PUT's own, and an empty warning means go ahead.
+func (h *Handlers) apiStationRemovalImpact(w http.ResponseWriter, r *http.Request) {
+	id, err := parseID(r, "id")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid station id")
+		return
+	}
+	var req struct {
+		Nodes []string `json:"nodes"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	warning, err := h.engine.StationService().RemovalImpact(id, req.Nodes)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, map[string]string{"warning": warning})
+}
