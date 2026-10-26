@@ -75,6 +75,10 @@ type SourceResult struct {
 	// ForeignCarrier is plan.Plan's: a full taken into storage on a carrier its
 	// part may not ride. The door stores it held (holdFullOnForeignCarrier).
 	ForeignCarrier bool
+
+	// PassedOver is plan.Plan's: FIFO's bin, when Need.LiftFrom took another so
+	// a swap's returning carrier can land (noteSwapThroughBuffer).
+	PassedOver *bins.Bin
 }
 
 // sourceResultOf translates a plan into dispatch's vocabulary. The cause is the
@@ -94,6 +98,7 @@ func sourceResultOf(p plan.Plan) SourceResult {
 		Err:         p.Err,
 
 		ForeignCarrier: p.ForeignCarrier,
+		PassedOver:     p.PassedOver,
 	}
 }
 

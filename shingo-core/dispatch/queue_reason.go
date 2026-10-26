@@ -24,7 +24,7 @@ import (
 // Field use is per code:
 //   - QueueWaitingForMaterial: Payload + Kind + Partial + Group + Reserved +
 //     SourceMissing + CarrierRefused (+ Step)
-//   - QueueWaitingForSlot:     Destination + BlockingBins/InboundOrders +
+//   - QueueWaitingForSlot:     Destination + BlockingBins/InboundOrders/EmptyOneOf +
 //     DestUnresolved (+ Step)
 //   - QueueStorageRearranging: Lane + Payload + DigOrderID + HolderOrderID + StoppedOrderID (+ Step)
 //   - QueueWaitingForPartner:  Sibling (+ SiblingStatus), or Destination for a
@@ -112,6 +112,10 @@ type QueueParams struct {
 	// lineside delivery node. Naming the delivery node here is the F1 defect:
 	// it sent operators to the wrong place.
 	Group string
+	// EmptyOneOf names the spots, comma-separated, that would take a return's
+	// carrier at a dedicated loader whose home and buffers are full: emptying any
+	// one of them lets the return go (spotsThatTake). Set only for that wait.
+	EmptyOneOf string
 	// BlockingBins is how many bins physically occupy the destination. Set only
 	// when that is what blocks the dropoff.
 	BlockingBins int
@@ -321,6 +325,11 @@ func slotSentence(p QueueParams) string {
 	s := "Waiting for a slot"
 	if p.Destination != "" {
 		s += fmt.Sprintf(" at %s", p.Destination)
+	}
+	// A RETURN TO A DEDICATED LOADER says which spots would take its carrier:
+	// emptying any one of them lets it go (spotsThatTake).
+	if p.EmptyOneOf != "" {
+		return s + fmt.Sprintf(" — empty one of %s and it goes", p.EmptyOneOf)
 	}
 	switch {
 	case p.BlockingBins > 0:

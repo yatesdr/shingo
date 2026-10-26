@@ -126,6 +126,14 @@ type Need struct {
 	// the pass forms the pair and never read back (vacated.go). nil for a solo
 	// order, the first leg, and every need that is not a pair's.
 	Pair *PairLeg
+
+	// LiftFrom narrows a dedicated-loader pick to bins standing on these
+	// position nodes: the spots a swap's returning carrier can land on once
+	// this leg lifts from one of them. FIFO ranks what is left, and when no
+	// eligible bin stands on them the pick is FIFO's own (the return then
+	// waits, as before). nil for every need but the supply of a swap whose
+	// returning carrier has nowhere else to land (Dispatcher.returnLiftFrom).
+	LiftFrom []int64
 }
 
 // Outcome is the closed disposition set FindSource returns.
@@ -152,6 +160,9 @@ type Plan struct {
 	// OutcomeFound.
 	Bin  *bins.Bin
 	Node *nodes.Node
+	// PassedOver is the bin FIFO would have taken, when Need.LiftFrom took
+	// another; nil otherwise.
+	PassedOver *bins.Bin
 
 	// OutcomeWait: the structured category the need waits under, and the params
 	// the operator sentence is generated from. Cause is the engineer-only scope

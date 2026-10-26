@@ -336,6 +336,9 @@ func (f *Finder) Pick(need Need) Plan {
 		// foreignCarrier: tier 4 took a full on a carrier its part may not ride
 		// into storage (see the node-local arm). Carried on the found plan.
 		foreignCarrier bool
+		// passedOver: tier 2 took another bin than FIFO's for Need.LiftFrom.
+		// Carried on the found plan.
+		passedOver *bins.Bin
 	)
 
 	// The drain-window question, asked AT MOST ONCE per need. It costs three
@@ -437,7 +440,8 @@ func (f *Finder) Pick(need Need) Plan {
 		if intent == IntentEmpty {
 			loaderIntent = binsource.Fill
 		}
-		chosen, node, isLoaderPos, lerr := f.sourceFromDedicatedLoader(srcNode, payloadCode, loaderIntent, need.Asker.OrderID)
+		chosen, node, isLoaderPos, passed, lerr := f.sourceFromDedicatedLoader(srcNode, payloadCode, loaderIntent, need.Asker.OrderID, need.LiftFrom)
+		passedOver = passed
 		if lerr != nil {
 			// WAIT, NOT FAIL, and this arm is the callee's own stated disposition
 			// finally being honoured. Every error sourceFromDedicatedLoader returns
@@ -943,7 +947,7 @@ func (f *Finder) Pick(need Need) Plan {
 	}
 
 	f.auditSourcedOutsideItsGroup(need, binNode)
-	return Plan{Outcome: OutcomeFound, Bin: bin, Node: binNode, ForeignCarrier: foreignCarrier}
+	return Plan{Outcome: OutcomeFound, Bin: bin, Node: binNode, ForeignCarrier: foreignCarrier, PassedOver: passedOver}
 }
 
 // sourceFromDedicatedLoader is the dedicated-home-loader source path, moved onto
@@ -962,7 +966,7 @@ func (f *Finder) Pick(need Need) Plan {
 //   - isLoaderPos=true, bin=nil → a loader position but no eligible bin of X in
 //     the pool; the caller QUEUES (must not fall through to the global scan).
 //   - isLoaderPos=true, bin!=nil → the chosen bin and the node it is parked at.
-func (f *Finder) sourceFromDedicatedLoader(srcNode *nodes.Node, payloadCode string, intent binsource.Intent, asker int64) (bin *bins.Bin, binNode *nodes.Node, isLoaderPos bool, err error) {
+func (f *Finder) sourceFromDedicatedLoader(srcNode *nodes.Node, payloadCode string, intent binsource.Intent, asker int64, liftFrom []int64) (bin *bins.Bin, binNode *nodes.Node, isLoaderPos bool, passedOver *bins.Bin, err error) {
 	// The source node is the one FindSourceForNeed already resolved. This used
 	// to look the name up a second time, and filed a name matching no node as a
 	// read failure (TestMissingSourcePin_*); both answers are now given once, at
@@ -977,13 +981,13 @@ func (f *Finder) sourceFromDedicatedLoader(srcNode *nodes.Node, payloadCode stri
 	// used to pay a second read here only to learn it falls through.
 	home, layout, err := f.db.GetLoaderHomeAndLayout(srcNode.ID)
 	if err != nil {
-		return nil, nil, false, fmt.Errorf("resolve loader for node %s: %w", sourceNodeName, err)
+		return nil, nil, false, nil, fmt.Errorf("resolve loader for node %s: %w", sourceNodeName, err)
 	}
 	if home == nil {
-		return nil, nil, false, nil // not a loader position at all
+		return nil, nil, false, nil, nil // not a loader position at all
 	}
 	if layout != loaders.LayoutDedicatedPositions {
-		return nil, nil, false, nil
+		return nil, nil, false, nil, nil
 	}
 
 	// Pool = the loader's sourceable members: pinned home positions + buffer
@@ -992,7 +996,7 @@ func (f *Finder) sourceFromDedicatedLoader(srcNode *nodes.Node, payloadCode stri
 	// position is never sourced — the D4 buffer/unpinned-home disambiguation.
 	members, err := f.db.ListLoaderHomes(home.LoaderID)
 	if err != nil {
-		return nil, nil, true, fmt.Errorf("list loader %d members: %w", home.LoaderID, err)
+		return nil, nil, true, nil, fmt.Errorf("list loader %d members: %w", home.LoaderID, err)
 	}
 	// Collect the sourceable members' node ids, then read every bin across them
 	// in ONE query (ListBinsByNodes) rather than N per-member reads on the hot
@@ -1008,7 +1012,7 @@ func (f *Finder) sourceFromDedicatedLoader(srcNode *nodes.Node, payloadCode stri
 	}
 	slotBins, err := f.db.ListBinsByNodes(poolNodes)
 	if err != nil {
-		return nil, nil, true, fmt.Errorf("list bins for loader %d pool: %w", home.LoaderID, err)
+		return nil, nil, true, nil, fmt.Errorf("list bins for loader %d pool: %w", home.LoaderID, err)
 	}
 	// QUALITY HOLD (v100): a held bin waits for its containment move and is
 	// never a pool candidate — the hold marker keeps it out of the ordinary
@@ -1036,10 +1040,11 @@ func (f *Finder) sourceFromDedicatedLoader(srcNode *nodes.Node, payloadCode stri
 	if len(cands) > 0 {
 		var btErr error
 		if binTypes, btErr = f.db.LoadBinTypeRule(payloadCode); btErr != nil {
-			return nil, nil, true, fmt.Errorf("load bin-type rule for loader %d payload %q: %w", home.LoaderID, payloadCode, btErr)
+			return nil, nil, true, nil, fmt.Errorf("load bin-type rule for loader %d payload %q: %w", home.LoaderID, payloadCode, btErr)
 		}
 	}
-	best, ok := binsource.Source(cands, binsource.Want{Payload: payloadCode, Intent: intent, BinTypes: binTypes, Asker: asker})
+	want := binsource.Want{Payload: payloadCode, Intent: intent, BinTypes: binTypes, Asker: asker}
+	best, ok := binsource.Source(cands, want)
 	if !ok {
 		// The pool came up empty. Say WHY, in two halves, because "no eligible
 		// bin" has two different shapes and the bare message cannot tell them
@@ -1052,19 +1057,25 @@ func (f *Finder) sourceFromDedicatedLoader(srcNode *nodes.Node, payloadCode stri
 		// it. A candidate-only log would show zero rows for that case and teach
 		// nobody anything.
 		f.explainEmptyPool(home.LoaderID, sourceNodeName, payloadCode, intent, asker, members, slotBins, cands)
-		return nil, nil, true, nil // loader position, no eligible bin of X → caller queues
+		return nil, nil, true, nil, nil // loader position, no eligible bin of X → caller queues
+	}
+	if len(liftFrom) > 0 {
+		if pick := liftWhereTheReturnLands(cands, byID, liftFrom, want, best); pick.BinID != best.BinID {
+			passedOver = byID[best.BinID]
+			best = pick
+		}
 	}
 	chosen := byID[best.BinID]
 	if chosen == nil || chosen.NodeID == nil {
 		// Defensive: Source only returns a BinID it was handed, and a pool bin
 		// always carries the node it was read at — but never deref a nil node id.
-		return nil, nil, true, fmt.Errorf("loader %d chose bin %d with no resolvable node", home.LoaderID, best.BinID)
+		return nil, nil, true, nil, fmt.Errorf("loader %d chose bin %d with no resolvable node", home.LoaderID, best.BinID)
 	}
 	node, err := f.db.GetNode(*chosen.NodeID)
 	if err != nil {
-		return nil, nil, true, fmt.Errorf("resolve node for bin %d: %w", chosen.ID, err)
+		return nil, nil, true, nil, fmt.Errorf("resolve node for bin %d: %w", chosen.ID, err)
 	}
-	return chosen, node, true, nil
+	return chosen, node, true, passedOver, nil
 }
 
 // auditSourcedOutsideItsGroup logs when a press the level keeper serves takes

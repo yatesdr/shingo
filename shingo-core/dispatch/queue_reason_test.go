@@ -113,6 +113,14 @@ func TestFormatQueueSentence_Snapshot(t *testing.T) {
 			want:   "Waiting for a slot at ASRS_01",
 		},
 		{
+			// A return to a dedicated loader whose home and buffers are full:
+			// the spots that would take its carrier, any one of which frees it.
+			name:   "loader return names the spots that would take it",
+			code:   protocol.QueueWaitingForSlot,
+			params: QueueParams{Destination: "SYN-HOME-OUT", EmptyOneOf: "SYN-HOME-OUT, SYN-BUF-1, SYN-BUF-2"},
+			want:   "Waiting for a slot at SYN-HOME-OUT — empty one of SYN-HOME-OUT, SYN-BUF-1, SYN-BUF-2 and it goes",
+		},
+		{
 			// (F2) "a bin is sitting there" — go clear it.
 			name:   "slot blocked by bins present",
 			code:   protocol.QueueWaitingForSlot,

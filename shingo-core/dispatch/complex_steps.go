@@ -407,6 +407,11 @@ func (d *Dispatcher) widenSupplyPickups(order *orders.Order, steps []resolvedSte
 	out := make([]resolvedStep, len(steps))
 	copy(out, steps)
 	changed := false
+	var (
+		liftFrom []int64
+		liftWhy  string
+		liftRead bool
+	)
 	for i := range out {
 		step := out[i]
 		if widenStopsAt(step) {
@@ -486,6 +491,12 @@ func (d *Dispatcher) widenSupplyPickups(order *orders.Order, steps []resolvedSte
 		if n, err := d.db.GetNodeByDotName(anchor); err != nil || n == nil || n.IsSynthetic {
 			continue // unknown or synthetic anchor — not this seam's job
 		}
+		// A swap's return is asked first where it can land, once per call and
+		// only for a leg with a sibling (returnLiftFrom).
+		if !liftRead && order.SiblingOrderUUID != "" {
+			liftFrom, liftWhy = d.returnLiftFrom(order)
+			liftRead = true
+		}
 		// The STEP's part when it names one: a changeover supply carries the
 		// outgoing part on the order and names the incoming one on its fetch.
 		res := d.finder.FindSourceForNeed(SourceNeed{
@@ -495,9 +506,13 @@ func (d *Dispatcher) widenSupplyPickups(order *orders.Order, steps []resolvedSte
 			Intent:       IntentFull,
 			NodeLocal:    true,
 			Asker:        digAskerFor(order),
+			LiftFrom:     liftFrom,
 		})
 		switch MapFinderOutcome(res) {
 		case OutcomeFound:
+			if res.PassedOver != nil {
+				d.noteSwapThroughBuffer(order, res.Node.Name, res.PassedOver, liftWhy)
+			}
 			if res.Node.Name != step.Node {
 				d.dbg("widen: order %d supply pickup %s → %s (pool hit, anchor %s)",
 					order.ID, step.Node, res.Node.Name, anchor)

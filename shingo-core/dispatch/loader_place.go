@@ -4,9 +4,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"strings"
 
 	"shingo/protocol"
 	"shingocore/store"
+	"shingocore/store/bins"
 	"shingocore/store/loaders"
 	"shingocore/store/orders"
 )
@@ -809,6 +811,113 @@ func (d *Dispatcher) homeClearForReturn(order *orders.Order, homeName string, pc
 		}
 	}
 	return false
+}
+
+// returnLiftFrom is asked for a swap's SUPPLY leg before its bin is chosen: the
+// position nodes it may lift from so its sibling's returning carrier has
+// somewhere to land, or nil for no restriction (plan.Need.LiftFrom).
+//
+// THE TWO DECISIONS ARE ONE. The supply's bin was chosen first, FIFO over the
+// loader's homes and buffers, and the return was placed after it: its home, a
+// free buffer, then the spot the supply just emptied when that spot takes the
+// carrier (placeVacated). The first could leave the second nowhere, because a
+// pinned home the supply empties does not take another part's carrier. So the
+// return is asked first.
+//
+// nil, and the pick is plain FIFO, when this leg has no sibling returning to a
+// dedicated-loader home (or it cannot be read), when spotsThatTake has nothing
+// to say, or when one of those spots stands free: the return has room without
+// the supply's help. Otherwise the spots themselves; why names them, for the
+// record a changed pick writes.
+func (d *Dispatcher) returnLiftFrom(supply *orders.Order) (liftFrom []int64, why string) {
+	ret, retSteps, ok := d.swapSiblingPlan(supply, nil)
+	if !ok || protocol.IsTerminal(ret.Status) || !d.legReturnsToHome(ret, retSteps) {
+		return nil, ""
+	}
+	spots, carrier, ok := d.spotsThatTake(ret, retSteps)
+	if !ok {
+		return nil, ""
+	}
+	for _, m := range spots {
+		if !m.HeldByStranger {
+			if blocked, _ := CheckDropoffCapacity(d.db, m.NodeName, ret.ID); !blocked {
+				return nil, ""
+			}
+		}
+		liftFrom = append(liftFrom, m.PositionNodeID)
+	}
+	return liftFrom, fmt.Sprintf("order %d's returning %s has no free spot (%s)", ret.ID, carrier, spotNames(spots))
+}
+
+// spotsThatTake is the members of the dedicated loader a return leg parks at
+// that take its carrier: every buffer, and any home the carrier belongs on
+// (homeAcceptsCarrier). The placement chain lands the carrier on one of them or
+// waits for one (placeForLoader), so these are also the spots whose emptying
+// lets a waiting return go. ok is false, with nothing to say, when the leg does
+// not park at a dedicated loader, or its carrier's part cannot be read or it
+// carries none (every member takes it then).
+func (d *Dispatcher) spotsThatTake(ret *orders.Order, retSteps []resolvedStep) (spots []store.LoaderPlacementMember, carrier string, ok bool) {
+	target := ret.DeliveryNode
+	if f := lastDropIndex(retSteps); f >= 0 && retSteps[f].Anchor != "" {
+		target = retSteps[f].Anchor
+	}
+	if target == "" {
+		return nil, "", false
+	}
+	dest, err := d.db.GetNodeByDotName(target)
+	if err != nil || dest == nil {
+		return nil, "", false
+	}
+	members, err := d.db.LoaderMembersForPlacement(dest.ID, ret.ID)
+	home := memberAt(members, dest.ID)
+	if err != nil || home == nil {
+		return nil, "", false
+	}
+	if loader, lerr := d.db.GetLoader(home.LoaderID); lerr != nil || loader == nil || loader.Layout != loaders.LayoutDedicatedPositions {
+		return nil, "", false
+	}
+	carrier, known := d.carrierPayloadFor(ret, retSteps)
+	if !known || carrier == "" {
+		return nil, "", false
+	}
+	for _, m := range members {
+		if m.Kind == loaders.HomeKindBuffer || homeAcceptsCarrier(m.PayloadCode, carrier, known) {
+			spots = append(spots, m)
+		}
+	}
+	return spots, carrier, true
+}
+
+// spotNames lists the spots' node names for an operator sentence or a record.
+func spotNames(spots []store.LoaderPlacementMember) string {
+	names := make([]string, 0, len(spots))
+	for _, m := range spots {
+		names = append(names, m.NodeName)
+	}
+	return strings.Join(names, ", ")
+}
+
+// noteSwapThroughBuffer records that a supply took another bin than FIFO's so
+// its sibling's returning carrier can land (returnLiftFrom). A queued order makes
+// its choices again every pass (asIntentKeeping), so it is written once: only
+// while the stored plan does not already lift from the chosen spot.
+func (d *Dispatcher) noteSwapThroughBuffer(order *orders.Order, picked string, passed *bins.Bin, why string) {
+	if stored, ok := decodeSteps(order.StepsJSON); ok {
+		for _, s := range stored {
+			if s.Action == protocol.ActionPickup && s.Node == picked {
+				return
+			}
+		}
+	}
+	from := "another spot"
+	if passed.NodeName != "" {
+		from = passed.NodeName
+	}
+	detail := fmt.Sprintf("supply lifts from %s rather than FIFO's bin %d on %s: %s", picked, passed.ID, from, why)
+	log.Printf("dispatch: swap through a buffer: order %d %s", order.ID, detail)
+	if err := d.db.RecordRecoveryAction("swap_through_buffer", "order", order.ID, detail, "system"); err != nil {
+		log.Printf("dispatch: record swap_through_buffer for order %d: %v", order.ID, err)
+	}
 }
 
 // swapSiblingPlan returns this leg's swap sibling and the sibling's plan.
