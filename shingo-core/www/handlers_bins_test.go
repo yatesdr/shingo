@@ -430,6 +430,11 @@ func TestExecuteBinAction_LoadPayload_AnnouncesOnceAsAPerson(t *testing.T) {
 	if adj.Released {
 		t.Error("Released = true, want false — the bin did not leave the node")
 	}
+	if !adj.PayloadKnown || adj.PayloadCode != sd.Payload.Code {
+		t.Errorf("PayloadCode/PayloadKnown = %q/%v, want %q/true — a person's load names the part, or "+
+			"the station keeps counting the carrier as the part it last knew and Core refuses every count",
+			adj.PayloadCode, adj.PayloadKnown, sd.Payload.Code)
+	}
 }
 
 // The mirror on the opposite edge of the lifecycle. Clear had the same two
@@ -473,6 +478,10 @@ func TestExecuteBinAction_Clear_AnnouncesOnceAsAPerson(t *testing.T) {
 	}
 	if adj.Released {
 		t.Error("Released = true, want false — a clear moves nothing; the carrier is still on the node")
+	}
+	if !adj.PayloadKnown || adj.PayloadCode != "" {
+		t.Errorf("PayloadCode/PayloadKnown = %q/%v, want \"\"/true — a person's clear names the carrier empty",
+			adj.PayloadCode, adj.PayloadKnown)
 	}
 }
 

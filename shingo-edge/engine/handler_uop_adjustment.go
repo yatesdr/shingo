@@ -169,10 +169,15 @@ func (e *Engine) HandleUOPAdjustment(adj protocol.UOPAdjustment) {
 		}
 		log.Printf("uop_adjustment: bound staged bin %d to node %s via count correction (remaining=%d epoch=%d)",
 			adj.BinID, adj.CoreNodeName, adj.NewRemaining, adj.Epoch)
-		// Same identity hand-off as the Bound arm: the correction binds a
-		// carrier whose payload the envelope does not carry, so UNKNOWN clears
-		// whatever the slot said before — through the doorway.
-		e.recordLinesideCarrier(node.ID, node.CoreNodeName, domain.UnknownCarrier(), domain.CarrierFromDelivery)
+		// Same identity hand-off as the Bound arm: a count binds a carrier whose
+		// payload its envelope does not carry, so UNKNOWN clears whatever the
+		// slot said before — through the doorway. A person's load or clear
+		// names it (UOPAdjustment.PayloadKnown).
+		carrier, src := domain.UnknownCarrier(), domain.CarrierFromDelivery
+		if adj.PayloadKnown {
+			carrier, src = domain.KnownCarrier(domain.LinesidePayloadCode(adj.PayloadCode)), domain.CarrierFromOperator
+		}
+		e.recordLinesideCarrier(node.ID, node.CoreNodeName, carrier, src)
 		e.Events.Emit(Event{Type: EventUOPAdjusted, Payload: UOPAdjustedEvent{
 			ProcessNodeID: node.ID,
 			CoreNodeName:  adj.CoreNodeName,
@@ -297,6 +302,15 @@ func (e *Engine) HandleUOPAdjustment(adj protocol.UOPAdjustment) {
 	if err := e.inventoryDelta.BindFromCore(node.ID, rt.ActiveClaimID, rt.ActiveBinID, adj.Epoch, adj.NewRemaining); err != nil {
 		log.Printf("uop_adjustment: write remaining_uop=%d epoch=%d for node %s: %v", adj.NewRemaining, adj.Epoch, adj.CoreNodeName, err)
 		return
+	}
+	// A PERSON'S LOAD OR CLEAR NAMES WHAT THIS CARRIER NOW HOLDS
+	// (UOPAdjustment.PayloadKnown), and the line's counts carry that part from
+	// here. Without it a carrier restamped in Core kept its old part at the
+	// station, and Core refused every count as a payload mismatch for the rest
+	// of its stay (Hopkinsville 4x2, 2026-10-26). A count names nothing.
+	if adj.PayloadKnown {
+		e.recordLinesideCarrier(node.ID, node.CoreNodeName,
+			domain.KnownCarrier(domain.LinesidePayloadCode(adj.PayloadCode)), domain.CarrierFromOperator)
 	}
 
 	e.Events.Emit(Event{Type: EventUOPAdjusted, Payload: UOPAdjustedEvent{

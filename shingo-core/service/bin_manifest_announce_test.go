@@ -225,4 +225,8 @@ func TestLoadAtLine_AnnouncesAsLifecycle(t *testing.T) {
 	if !protocol.IsLifecycleActor(msgs[0].Actor) {
 		t.Errorf("the LOAD announced as %q, want a lifecycle actor: the Edge applied the LOAD from its reply", msgs[0].Actor)
 	}
+	if msgs[0].PayloadKnown || msgs[0].PayloadCode != "" {
+		t.Errorf("the LOAD's lifecycle announcement names %q (known=%v), want nothing: only a person's reset names "+
+			"the carrier, and the Edge seats this one from the call's reply", msgs[0].PayloadCode, msgs[0].PayloadKnown)
+	}
 }

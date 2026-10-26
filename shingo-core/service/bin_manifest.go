@@ -87,17 +87,17 @@ func binTypeCodeInTx(tx *sql.Tx, id int64) string {
 // costs no statement. Every reset path writes an absolute uop_remaining in the
 // UPDATE immediately before this one, inside the same transaction, so the
 // value read here is the one that reset just wrote.
-func bumpEpochRaw(tx *sql.Tx, binID int64) (epoch int64, remaining int, nodeName string, addr bins.LifecycleAddress, err error) {
+func bumpEpochRaw(tx *sql.Tx, binID int64) (epoch int64, remaining int, payload, nodeName string, addr bins.LifecycleAddress, err error) {
 	addrDest, address := bins.ScanLifecycleAddress()
 	if err := tx.QueryRow(
 		`UPDATE bins SET delta_epoch=delta_epoch+1 WHERE id=$1
-		 RETURNING delta_epoch, uop_remaining,
+		 RETURNING delta_epoch, uop_remaining, COALESCE(payload_code, ''),
 		           COALESCE((SELECT n.name FROM nodes n WHERE n.id = bins.node_id), ''),
 		           `+bins.LifecycleAddressSQL,
-		binID).Scan(append([]any{&epoch, &remaining, &nodeName}, addrDest...)...); err != nil {
-		return 0, 0, "", bins.LifecycleAddress{}, fmt.Errorf("bump delta_epoch bin %d: %w", binID, err)
+		binID).Scan(append([]any{&epoch, &remaining, &payload, &nodeName}, addrDest...)...); err != nil {
+		return 0, 0, "", "", bins.LifecycleAddress{}, fmt.Errorf("bump delta_epoch bin %d: %w", binID, err)
 	}
-	return epoch, remaining, nodeName, address(), nil
+	return epoch, remaining, payload, nodeName, address(), nil
 }
 
 // bumpEpoch ends a bin's current life, starts the next one, and tells the
@@ -144,7 +144,7 @@ func bumpEpochRaw(tx *sql.Tx, binID int64) (epoch int64, remaining int, nodeName
 // Edge, and an Edge that does not model the node parsed it and logged "process
 // node not found".
 func (s *BinManifestService) bumpEpoch(tx *sql.Tx, binID int64, by protocol.Declarer) (int64, error) {
-	epoch, remaining, nodeName, addr, err := bumpEpochRaw(tx, binID)
+	epoch, remaining, payload, nodeName, addr, err := bumpEpochRaw(tx, binID)
 	if err != nil {
 		return 0, err
 	}
@@ -161,14 +161,25 @@ func (s *BinManifestService) bumpEpoch(tx *sql.Tx, binID int64, by protocol.Decl
 			binID, epoch, nodeName)
 		return epoch, nil
 	}
-	if err := announceLifecycle(s.announce, tx, addr, "epoch", &protocol.UOPAdjustment{
+	adj := &protocol.UOPAdjustment{
 		BinID:        binID,
 		CoreNodeName: nodeName,
 		NewRemaining: remaining,
 		Epoch:        epoch,
 		Actor:        by.Actor(),
 		AdjustedAt:   time.Now().UTC(),
-	}); err != nil {
+	}
+	// A PERSON'S RESET SAYS WHAT THE CARRIER NOW HOLDS. Somebody at an admin
+	// door set a part on this carrier, or cleared it, and the station counting
+	// it would otherwise keep tagging its counts with the part it last knew,
+	// which Core refuses as a payload mismatch for the rest of the carrier's
+	// stay (Hopkinsville 4x2, 2026-10-26: a line cart restamped from one part to
+	// another). A lifecycle reset names nothing: its carrier is named by its own
+	// landing or departure.
+	if by == protocol.DeclaredByPerson {
+		adj.PayloadCode, adj.PayloadKnown = payload, true
+	}
+	if err := announceLifecycle(s.announce, tx, addr, "epoch", adj); err != nil {
 		return 0, fmt.Errorf("announce epoch %d for bin %d: %w", epoch, binID, err)
 	}
 	return epoch, nil

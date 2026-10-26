@@ -1715,6 +1715,15 @@ type UOPAdjustment struct {
 	// AsOfStation is the station whose stream AsOfNet measures. Any other
 	// station modelling the node takes NewRemaining as is.
 	AsOfStation string `json:"as_of_station,omitempty"`
+	// PayloadCode and PayloadKnown name what the carrier holds after a reset a
+	// person declared (an admin Load Payload or Clear, a non-lifecycle Actor):
+	// the part, or a known-empty carrier for a clear. The station records it as
+	// the carrier standing at the node, so the counts it sends carry the part
+	// the carrier now holds. PayloadKnown is false on every other adjustment: a
+	// count does not assert identity, and a lifecycle reset's carrier is named
+	// by its own landing or departure. Older Edges ignore the fields.
+	PayloadCode  string `json:"payload_code,omitempty"`
+	PayloadKnown bool   `json:"payload_known,omitempty"`
 }
 
 // BinEpochRefresh is the body of a SubjectBinEpochRefresh message: the
