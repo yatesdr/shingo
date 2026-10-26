@@ -22,12 +22,14 @@ type captureEmitter struct {
 	blocks   []capturedBlock
 	status   []string // "vendorOrderID:newState", in emit order
 	assigned []string // "vendorOrderID:robotID", only for non-empty robot IDs
+	events   []string // "block:blockID" and "status:vendorOrderID:newState", in emit order
 }
 
 func (c *captureEmitter) EmitOrderStatusChanged(_ int64, vendorOrderID, _, newStatus, robotID, _ string, _ *fleet.OrderSnapshot) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.status = append(c.status, vendorOrderID+":"+newStatus)
+	c.events = append(c.events, "status:"+vendorOrderID+":"+newStatus)
 	if robotID != "" {
 		c.assigned = append(c.assigned, vendorOrderID+":"+robotID)
 	}
@@ -37,6 +39,7 @@ func (c *captureEmitter) EmitBlockCompleted(orderID int64, vendorOrderID, blockI
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.blocks = append(c.blocks, capturedBlock{orderID, vendorOrderID, blockID, location, binTask})
+	c.events = append(c.events, "block:"+blockID)
 }
 
 type fixedResolver struct{ id int64 }

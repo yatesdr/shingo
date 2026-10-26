@@ -45,9 +45,9 @@ func newTestDriver(t *testing.T, cfg config.SimConfig, seed int64) (*Driver, *Si
 	return d, s, m, em
 }
 
-// T2.3 / Gate 2: an order advances CREATED → RUNNING → (block) → FINISHED, and
-// the intermediate pickup block fires EmitBlockCompleted while the final
-// delivery is represented by FINISHED (no block-completed for it).
+// T2.3 / Gate 2: an order advances CREATED → RUNNING → (blocks) → FINISHED,
+// and each block fires EmitBlockCompleted, the final delivery's just ahead of
+// FINISHED (TestDriverReportsTheLastBlockBeforeTheOrderFinishes).
 func TestDriverAdvancesToFinished(t *testing.T) {
 	cfg := config.SimConfig{TransitTime: 5 * time.Second, JitterPct: 0, FailRate: 0}
 	d, s, m, em := newTestDriver(t, cfg, 1)
@@ -58,11 +58,14 @@ func TestDriverAdvancesToFinished(t *testing.T) {
 	if got := s.GetOrder(vid).State; got != "FINISHED" {
 		t.Fatalf("want FINISHED, got %s", got)
 	}
-	if len(em.blocks) != 1 {
-		t.Fatalf("want 1 block-completed (the intermediate pickup), got %d: %+v", len(em.blocks), em.blocks)
+	if len(em.blocks) != 2 {
+		t.Fatalf("want 2 block-completed (the pickup, then the delivery), got %d: %+v", len(em.blocks), em.blocks)
 	}
 	if em.blocks[0].binTask != "JackLoad" || em.blocks[0].location != "A" {
-		t.Fatalf("intermediate block wrong: %+v", em.blocks[0])
+		t.Fatalf("pickup block wrong: %+v", em.blocks[0])
+	}
+	if em.blocks[1].binTask != "JackUnload" || em.blocks[1].location != "B" {
+		t.Fatalf("delivery block wrong: %+v", em.blocks[1])
 	}
 	// Status sequence should reach RUNNING then FINISHED.
 	if !contains(em.status, vid+":RUNNING") || !contains(em.status, vid+":FINISHED") {

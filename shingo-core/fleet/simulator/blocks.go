@@ -9,10 +9,10 @@ package simulator
 // classifier (engine/wiring_block_completed.go) routes correctly.
 //
 // The driver (T2.3) calls this for each block whose simulated transit has
-// elapsed. The FINAL delivery is represented by the order reaching FINISHED —
-// the engine records it via handleOrderDelivered, and handleStoreBlockCompleted
-// independently skips any dropoff whose location is the order's delivery node,
-// so emitting the last block here would be a harmless no-op either way.
+// elapsed, the last block of a complete order too, just ahead of the order's
+// FINISHED, as a plant's fleet reports it. The delivery itself is recorded
+// from that FINISHED via handleOrderDelivered; handleStoreBlockCompleted moves
+// no bin for a dropoff at the order's delivery node.
 //
 // startTime/terminateTime are epoch SECONDS on the sim clock, matching what
 // SEER puts on a FINISHED block (rds.BlockDetail). The driver passes the real

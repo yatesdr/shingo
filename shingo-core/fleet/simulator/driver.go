@@ -50,6 +50,7 @@ type orderProgress struct {
 	heldAt      string    // non-empty while stalled at an occupied position (log-once)
 	heldSince   time.Time // when the current hold began — bounds an unresolvable hold
 	heldWarned  bool      // the unresolvable-hold diagnostic is printed once per hold
+	lastSent    bool      // a complete order's last block was reported FINISHED (once, ahead of the order)
 	// pendingFault: the fault die said FAILED and the report deferred (Fix
 	// A) — the retry re-reports exactly that FAILED, roll-free. A retry is
 	// not a re-decision, and not re-rolling also keeps a deferral free of
@@ -425,12 +426,22 @@ func (d *Driver) advance(now time.Time, vid string, ov *OrderView, p *orderProgr
 			return
 		}
 
-		// The final block of a complete order is represented by FINISHED, whose
-		// delivery the engine records via handleOrderDelivered (T2.2 rationale).
-		// It is still a physical placement, so it takes the same occupancy hold.
+		// The final block of a complete order is reported FINISHED, then the
+		// order, as a plant's fleet reports them in one poll
+		// (rds.Poller.diffBlockStates): the block subscriber counts the plan's
+		// last step, and the engine records the delivery from the order's
+		// FINISHED via handleOrderDelivered (handleStoreBlockCompleted moves no
+		// bin for a drop at the delivery node). The block is reported once;
+		// a deferred FINISHED retries the order alone. It is still a physical
+		// placement, so it takes the same occupancy hold.
 		if ov.Complete && p.blockIndex == len(blocks)-1 {
-			if d.holdForPosition(now, vid, blocks[p.blockIndex].Location, blocks[p.blockIndex].BinTask, p) {
+			b := blocks[p.blockIndex]
+			if d.holdForPosition(now, vid, b.Location, b.BinTask, p) {
 				return
+			}
+			if !p.lastSent {
+				d.sim.CompleteBlock(vid, b.BlockID, b.Location, b.BinTask, p.blockStart.Unix(), now.Unix())
+				p.lastSent = true
 			}
 			if _, _, dfr := d.sim.DriveState(vid, "FINISHED"); dfr {
 				// HOLD THE TRANSITION (Fix A): the position hold was released
@@ -442,11 +453,9 @@ func (d *Driver) advance(now time.Time, vid string, ov *OrderView, p *orderProgr
 				d.holdDeferred(p, now)
 				return
 			}
-			// The final block is still a block the robot physically ran, even
-			// though it is reported as FINISHED rather than CompleteBlock: its
-			// unload empties the deck. Applied before markDone, which forgets
-			// which robot ran it.
-			d.robots.blockCompleted(p.robotID, blocks[p.blockIndex].Location, blocks[p.blockIndex].BinTask)
+			// The deck follows the final block too: its unload empties it.
+			// Applied before markDone, which forgets which robot ran it.
+			d.robots.blockCompleted(p.robotID, b.Location, b.BinTask)
 			d.markDone(p)
 			return
 		}
