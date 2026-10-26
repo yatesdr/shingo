@@ -55,6 +55,9 @@ type Leg struct {
 	Label    string
 	TaskNode string
 	Mode     string // the disposition's mode
+	// Pulled is the parts the disposition books to the bench: the sum of a
+	// capture-lineside's quantities, 0 for every other mode.
+	Pulled int
 
 	// NeedOrder
 	Intent      *Intent // the leg's release intent, if any
@@ -90,6 +93,10 @@ type Leg struct {
 	Drop          bool // the evac of a changeover drop
 	ClaimResolved bool
 	Produce       bool
+	// ChangeoverEvac: the leg is a changeover task's evac, in any situation
+	// (GetChangeoverNodeTaskByEvacOrderID): the cart leaving a node whose
+	// style is changing.
+	ChangeoverEvac bool
 
 	// NeedSupply
 	SupplyErr error

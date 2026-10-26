@@ -196,6 +196,19 @@ func (op *simOperator) leave(r *changeoverRun, why string) {
 	op.e.logFn("[sim] operator leaves the changeover of %s to %s: %s", r.cfg.Process, r.cfg.ToStyle, why)
 }
 
+// changingOver reports whether the node has a task in its process's active
+// changeover that changes it (any situation but "unchanged"). The cart such a
+// release lifts goes back with its parts: release gate G9 refuses a pull to
+// the bench there, so the operator's floor pull does not apply.
+func (op *simOperator) changingOver(node *processes.Node) bool {
+	co, err := op.e.db.GetActiveProcessChangeover(node.ProcessID)
+	if err != nil || co == nil {
+		return false
+	}
+	task, err := op.e.db.GetChangeoverNodeTaskByNode(co.ID, node.ID)
+	return err == nil && task != nil && task.Situation != "unchanged"
+}
+
 // changeoverReleasePurpose is the changeover decision the node's tile RELEASE
 // makes, as the station screen decides it (operator-modal.js
 // changeoverReleasePurpose): with a changeover task at the node that is not

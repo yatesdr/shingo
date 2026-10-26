@@ -53,6 +53,17 @@ door2/departing check unreadable
     log release: order=11 node=Press 1 — refusing release: departing-bin check: node Press 1: read claim 7: disk I/O error
 door2/lineside evac
   go lineside flip=false finalize=false suppress=false u1=false
+door2/lineside evac, parts pulled to the bench (steady state)
+  go lineside flip=false finalize=false suppress=false u1=false
+door2/changeover evac, parts pulled to the bench
+  refuse G9: a changeover cart goes back with its parts: use RELEASE PARTIAL, or BIN EMPTY if it is empty (5 parts were to be pulled to the bench)
+sweep/changeover evac, parts pulled to the bench
+  refuse G9: node SYN-PRESS (evac): a changeover cart goes back with its parts: use RELEASE PARTIAL, or BIN EMPTY if it is empty (5 parts were to be pulled to the bench)
+    log std: release changeover wait node SYN-PRESS (evac): a changeover cart goes back with its parts: use RELEASE PARTIAL, or BIN EMPTY if it is empty (5 parts were to be pulled to the bench)
+door2/changeover drop, parts pulled to the bench
+  refuse G9: a changeover cart goes back with its parts: use RELEASE PARTIAL, or BIN EMPTY if it is empty (5 parts were to be pulled to the bench)
+door2/changeover evac, nothing pulled (the drained default)
+  go lineside flip=false finalize=false suppress=false u1=false
 pair/lineside supply
   go lineside flip=false finalize=false suppress=true u1=false
 door2/produce evac, bin full

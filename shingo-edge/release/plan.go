@@ -71,7 +71,8 @@ type LegPlan struct {
 //	G4 the order reads               G1 Core will release it
 //	(no process node: a plain release)
 //	G4 the node reads                G5 the pull state reads
-//	G4 the runtime reads             (the arm: drop, no claim, produce, lineside)
+//	G4 the runtime reads             G9 a changeover cart pulls nothing
+//	(the arm: drop, no claim, produce, lineside)
 //	G4 the supply classification     G4 the departing-bin check
 //	G5 the flip
 func PlanLeg(a Act, l Leg) LegPlan {
@@ -110,6 +111,15 @@ func PlanLeg(a Act, l Leg) LegPlan {
 	}
 	if !l.Loaded.Has(NeedKind) {
 		return LegPlan{Need: NeedKind}
+	}
+	if l.ChangeoverEvac && l.Pulled > 0 {
+		// The cutover freezes every bench pile (lineside_strand.go), so parts
+		// booked to the bench here are never counted again, while the cart
+		// they came off is booked empty and wiped. Asked before the arms, so a
+		// drop's evac is refused as well.
+		return legRefusal(a, l, G9, fmt.Errorf(
+			"a changeover cart goes back with its parts: use RELEASE PARTIAL, or BIN EMPTY if it is empty "+
+				"(%d parts were to be pulled to the bench)", l.Pulled))
 	}
 	switch {
 	case l.Drop:

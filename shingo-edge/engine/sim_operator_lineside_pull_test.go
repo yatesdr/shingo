@@ -76,6 +76,29 @@ func TestSimOperator_NoPullWhenTheKnobIsZero(t *testing.T) {
 	}
 }
 
+// At a node whose part is changing, the cart goes back with its count: the
+// release refuses a pull there (gate G9), and a sim that pulled would be
+// refused on every pass.
+func TestSimOperator_AChangeoverCartGoesBackWithItsParts(t *testing.T) {
+	t.Parallel()
+	op, f := pullFixture(t, 2, 5)
+	if disp, _ := op.consumeDisposition(f.consumeID); disp.Mode != DispositionCaptureLineside {
+		t.Fatalf("control: tracked 2 of 30 at 5%% with no changeover: mode %q, want %q", disp.Mode, DispositionCaptureLineside)
+	}
+	res, err := f.db.DB.Exec(`INSERT INTO process_changeovers (process_id, from_style_id, to_style_id) VALUES (?, ?, ?)`,
+		f.processID, f.styleID, f.styleID)
+	testutil.MustNoErr(t, err, "insert changeover")
+	coID, err := res.LastInsertId()
+	testutil.MustNoErr(t, err, "changeover id")
+	_, err = f.db.DB.Exec(`INSERT INTO changeover_node_tasks (process_changeover_id, process_node_id, situation) VALUES (?, ?, 'swap')`,
+		coID, f.consumeID)
+	testutil.MustNoErr(t, err, "insert node task")
+	if disp, _ := op.consumeDisposition(f.consumeID); disp.Mode != DispositionSendPartialBack {
+		t.Errorf("tracked 2 at a node changing over: mode %q, want %q (the cart goes back with its parts)",
+			disp.Mode, DispositionSendPartialBack)
+	}
+}
+
 func TestSimOperator_AnEmptyCarrierIsStillReleasedUnderpack(t *testing.T) {
 	t.Parallel()
 	op, f := pullFixture(t, 0, 5)

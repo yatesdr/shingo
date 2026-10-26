@@ -112,6 +112,13 @@ func legCases() []struct {
 			l.DepartErr = errors.New("departing-bin check: node Press 1: read claim 7: disk I/O error")
 		})},
 		{"door2/lineside evac", station, with(func(l *Leg) {})},
+		{"door2/lineside evac, parts pulled to the bench (steady state)", station, with(func(l *Leg) { l.Pulled = 5 })},
+		{"door2/changeover evac, parts pulled to the bench", station, with(func(l *Leg) { l.ChangeoverEvac, l.Pulled = true, 5 })},
+		{"sweep/changeover evac, parts pulled to the bench", sweep, with(func(l *Leg) { l.ChangeoverEvac, l.Pulled = true, 5 })},
+		{"door2/changeover drop, parts pulled to the bench", station, with(func(l *Leg) {
+			l.ChangeoverEvac, l.Drop, l.Pulled = true, true, 5
+		})},
+		{"door2/changeover evac, nothing pulled (the drained default)", station, with(func(l *Leg) { l.ChangeoverEvac = true })},
 		{"pair/lineside supply", pair, with(func(l *Leg) { l.IsSupply, l.Label, l.Mode = true, "supply", "" })},
 		{"door2/produce evac, bin full", station, with(func(l *Leg) { l.Produce, l.Departs = true, true })},
 		{"door2/produce supply", station, with(func(l *Leg) { l.Produce, l.IsSupply = true, true })},

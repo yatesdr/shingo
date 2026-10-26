@@ -992,7 +992,9 @@ func (op *simOperator) release(orderID int64, whenDone bool) {
 //	0 < tracked <= the pull (LinesidePullPercent of the pack, rounded up)
 //	              -> CAPTURE LINESIDE. The operator pulls the last parts into the
 //	                 lineside bucket and releases the bin empty; the weld runs on
-//	                 the bucket through the exchange (SimMachineReady).
+//	                 the bucket through the exchange (SimMachineReady). Not on a
+//	                 node that is changing over: that cart goes back with its
+//	                 parts (release gate G9), so it takes the next arm.
 //	tracked >  the pull -> SEND PARTIAL BACK. Stock is left; the bin returns to the pool
 //	                 with its count and manifest intact, which is what makes it
 //	                 re-sourceable oldest-first.
@@ -1015,7 +1017,7 @@ func (op *simOperator) consumeDisposition(nodeID int64) (ReleaseDisposition, boo
 	switch {
 	case ferr == nil && b.Occupied && b.UOPRemaining <= 0:
 		disp.Mode = DispositionReleaseUnderpack
-	case ferr == nil && b.Occupied && b.PayloadCode != "" &&
+	case ferr == nil && b.Occupied && b.PayloadCode != "" && !op.changingOver(node) &&
 		b.UOPRemaining <= op.linesidePullAt(b.PayloadCode, claim.UOPCapacity):
 		// THE FLOOR'S PULL (owner, 2026-10-10): the last few parts go into the
 		// lineside bucket and the bin is released empty, so the weld runs on the

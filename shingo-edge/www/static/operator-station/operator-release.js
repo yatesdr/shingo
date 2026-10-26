@@ -203,10 +203,20 @@ export async function openReleasePrompt(url, entry) {
         url, entry, payloads, selected, suggested,
         partialCount: partialCountSuggested,
         partialCountSuggested,
+        changeover: isChangeoverRelease(url),
         screen: renderReleasePromptStep1,
         posting: false,
     };
     renderReleasePromptStep1();
+}
+
+// isChangeoverRelease reports whether the prompt answers a changeover's
+// release (the tile's RELEASE: READY / TOOLING DONE, changeoverReleaseAction in
+// operator-modal.js). Its cart is leaving a node whose style is changing, so
+// nothing is pulled to the bench: the cutover freezes every bench pile, and the
+// server refuses the pull (release gate G9).
+function isChangeoverRelease(url) {
+    return /\/changeover\/release(\?|$)/.test(String(url || ''));
 }
 
 // isProduceRelease reports whether the release is happening on a produce
@@ -232,15 +242,30 @@ function renderReleasePromptStep1() {
         return;
     }
 
+    nodeModalContent.innerHTML = releasePromptStep1HTML(state);
+    nodeModalContent.querySelectorAll('[data-action]').forEach(function(btn) {
+        btn.addEventListener('click', handleReleasePromptAction);
+    });
+    nodeModal.classList.add('active');
+}
+
+// releasePromptStep1HTML is the consume release's first screen. A changeover
+// release shows no PULL PARTS: the cart goes back with its count (RELEASE
+// PARTIAL) or is declared empty (BIN EMPTY / RELEASE EMPTY).
+function releasePromptStep1HTML(state) {
     let html = '';
     html += '<div class="modal-header">';
     html += '<div class="modal-node-name">Release</div>';
-    html += '<div class="modal-payload">Anything pulled to lineside during the swap?</div>';
+    html += state.changeover
+        ? '<div class="modal-payload">Changeover: the bin goes back to the supermarket with its parts.</div>'
+        : '<div class="modal-payload">Anything pulled to lineside during the swap?</div>';
     html += '</div>';
 
-    if (state.payloads.length === 0) {
+    // A changeover release has no primary pull group: the partial count and
+    // the buttons below say what the cart goes back with.
+    if (!state.changeover && state.payloads.length === 0) {
         html += '<div class="os-release-prompt"><div style="color:#999;padding:12px 0;font-size:14px">No allowed payloads on this node.</div></div>';
-    } else {
+    } else if (!state.changeover) {
         // Primary group: the chip grid and the PULL PARTS button visually
         // belong together — the chips show what's about to be captured and
         // the button submits it. Highlighted so the operator's eye lands
@@ -301,12 +326,7 @@ function renderReleasePromptStep1() {
     }
     html += '<button type="button" class="os-action-btn close" data-action="release-cancel">CANCEL</button>';
     html += '</div>';
-
-    nodeModalContent.innerHTML = html;
-    nodeModalContent.querySelectorAll('[data-action]').forEach(function(btn) {
-        btn.addEventListener('click', handleReleasePromptAction);
-    });
-    nodeModal.classList.add('active');
+    return html;
 }
 
 // renderReleasePromptProduce is the produce-node release: a single confirm to

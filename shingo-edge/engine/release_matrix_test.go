@@ -319,6 +319,8 @@ func releaseMatrixCells() []relCell {
 	pi3 := pairSpec{mode: protocol.SwapModeTwoRobotPressIndex, threePos: true}
 	pi2f := pairSpec{mode: protocol.SwapModeTwoRobotPressIndex, flipped: true}
 	pi3f := pairSpec{mode: protocol.SwapModeTwoRobotPressIndex, threePos: true, flipped: true}
+	coConsume := coSpec{mode: protocol.SwapModeTwoRobot, role: protocol.ClaimRoleConsume}
+	coConsumeDrop := coSpec{mode: protocol.SwapModeTwoRobot, role: protocol.ClaimRoleConsume, drop: true}
 	S, Q, D, T := protocol.StatusStaged, protocol.StatusQueued, protocol.StatusDispatched, protocol.StatusInTransit
 
 	return []relCell{
@@ -496,6 +498,27 @@ func releaseMatrixCells() []relCell {
 		{name: "d6/co pi marked/single leg, curtain live",
 			want: "hold:curtain | supply=staged | rel=- | ingest=0 capred=0 | uop=42", build: withCurtain(curtainLive, coAt(coSpec{mode: protocol.SwapModeTwoRobotPressIndex, marked: true}, "supply", S)),
 			act: pairClick(dispNone), probe: probes(pUOP)},
+
+		// ── G9: a changeover cart goes back with its parts, at every door ──
+		{name: "g9/d1 co two_robot pair, PULL PARTS",
+			want: "refuse:changeover-pull | evac=staged supply=staged | rel=- | ingest=0 capred=0 | uop=42", build: coAt(coConsume, "evac", S, "supply", S),
+			act: pairClick(dispPull(5)), probe: probes(pUOP)},
+		{name: "g9/d2 co two_robot evac, PULL PARTS",
+			want: "refuse:changeover-pull | evac=staged supply=dispatched | rel=- | ingest=0 capred=0 | uop=42", build: coAt(coConsume, "evac", S, "supply", D),
+			act: orderClick("evac", dispPull(5)), probe: probes(pUOP)},
+		{name: "g9/d2 co drop evac, PULL PARTS",
+			want: "refuse:changeover-pull | evac=staged | rel=- | ingest=0 capred=0 | uop=42", build: coAt(coConsumeDrop, "evac", S),
+			act: orderClick("evac", dispPull(5)), probe: probes(pUOP)},
+		{name: "g9/d5 co two_robot node click, PULL PARTS",
+			want: "refuse:changeover-pull | evac=staged supply=staged | rel=- | ingest=0 capred=0 | node released=0 pending=0 deferred=0 flip=[] | uop=42", build: coAt(coConsume, "evac", S, "supply", S),
+			act: nodeCOClick(dispPull(5)), probe: probes(pUOP)},
+		{name: "g9/d5 co two_robot node click, RELEASE PARTIAL",
+			want: "ok | evac=in_transit supply=in_transit | rel=evac,supply | ingest=0 capred=0 | node released=2 pending=0 deferred=0 flip=[] | uop=30", build: coAt(coConsume, "evac", S, "supply", S),
+			act: nodeCOClick(dispPartial(30)), probe: probes(pUOP)},
+		// The steady state is unchanged: a pull on an ordinary swap goes.
+		{name: "g9/d2 two_robot evac, PULL PARTS (steady state)",
+			want: "ok | evac=in_transit supply=dispatched | rel=evac | ingest=0 capred=0 | uop=0", build: pairAt(twoRobotConsume, "evac", S, "supply", D),
+			act: orderClick("evac", dispPull(5)), probe: probes(pUOP)},
 	}
 }
 

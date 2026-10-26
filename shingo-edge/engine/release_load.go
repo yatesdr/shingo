@@ -207,9 +207,24 @@ func (ll *legLoad) echo() *int {
 
 func newLegLoad(orderID int64, label, taskNode string, disp ReleaseDisposition) *legLoad {
 	return &legLoad{
-		snap: release.Leg{OrderID: orderID, Label: label, TaskNode: taskNode, Mode: string(disp.Mode)},
+		snap: release.Leg{OrderID: orderID, Label: label, TaskNode: taskNode, Mode: string(disp.Mode), Pulled: pulledToBench(disp)},
 		disp: disp,
 	}
+}
+
+// pulledToBench is the parts a disposition books to the bench: a capture-
+// lineside's quantities, summed. Every other mode pulls nothing.
+func pulledToBench(disp ReleaseDisposition) int {
+	if disp.Mode != DispositionCaptureLineside {
+		return 0
+	}
+	n := 0
+	for _, q := range disp.LinesideCapture {
+		if q > 0 {
+			n += q
+		}
+	}
+	return n
 }
 
 // loadLeg reads one group of a leg's facts.
@@ -270,9 +285,12 @@ func (e *Engine) loadLeg(act *releaseAct, ll *legLoad, need release.Need) {
 			s.ActiveClaim = fmt.Sprintf("%d", *runtime.ActiveClaimID)
 		}
 	case release.NeedKind:
-		if dropTask, _ := e.db.GetChangeoverNodeTaskByEvacOrderID(s.OrderID); dropTask != nil && dropTask.Situation == "drop" {
-			s.Drop = true
-			break
+		if task, _ := e.db.GetChangeoverNodeTaskByEvacOrderID(s.OrderID); task != nil {
+			s.ChangeoverEvac = true
+			if task.Situation == "drop" {
+				s.Drop = true
+				break
+			}
 		}
 		ll.toClaim, ll.nodeTask = e.resolveReleaseClaim(ll.node, ll.runtime)
 		s.ClaimResolved = ll.toClaim != nil

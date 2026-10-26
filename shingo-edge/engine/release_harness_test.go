@@ -486,6 +486,8 @@ func errClass(err error) string {
 		return "refuse:in-flight"
 	case strings.Contains(msg, "not a coordinated pair"), strings.Contains(msg, "no tracked orders"):
 		return "refuse:no-pair"
+	case strings.Contains(msg, "goes back with its parts"):
+		return "refuse:changeover-pull"
 	}
 	if len(msg) > 48 {
 		msg = msg[:48]

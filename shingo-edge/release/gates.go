@@ -20,6 +20,7 @@ const (
 	G6 = "G6" // the light curtain
 	G7 = "G7" // the lift dependency
 	G8 = "G8" // one robot per bin
+	G9 = "G9" // a changeover cart goes back with its parts
 )
 
 // Gate is one row of the table.
@@ -69,4 +70,8 @@ var Gates = []Gate{
 		"the Material page's release (a creation)",
 		"refuses while the move an earlier tap created for the bin is still live",
 		[]string{"refuse:in-flight"}},
+	{G9, "a changeover cart goes back with its parts",
+		"a changeover task's evac, at every door",
+		"a disposition that books parts to the bench refuses: the cutover freezes every bench pile, so parts pulled off a changeover cart are never counted again while the cart is wiped as empty; RELEASE PARTIAL sends them back with the cart",
+		[]string{"refuse:changeover-pull"}},
 }
