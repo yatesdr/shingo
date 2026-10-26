@@ -413,12 +413,6 @@ async function openProcess(id) {
             openPresetApply(Number(h.apply));
             if (h.tick) await tickApplyRow(Number(h.tick));
         }
-        // ;draft=<mode> opens that New shape row as a draft (pick-a-part U2),
-        // for the shots harness — the same one-shot convention as ;apply=.
-        if (h.draft) openShapeDraft(h.draft);
-        // ;import=<presetID> opens that recipe, laid onto this process, as a
-        // draft (U7) — the popover's last step, reachable without a mouse.
-        if (h.import) await importPreset(Number(h.import));
         // ;recipe=<id> opens that recipe as a draft, the rail row's click;
         // ;groups=1 then presses Set up groups, ;focus=<group> hovers a group,
         // ;row=<node> clicks a spot's row and ;gadv=<group> opens its Advanced
@@ -479,7 +473,7 @@ function hashOpts() {
 // #tab=) — so a reload, a bookmark made after three clicks, or a link pasted
 // out of the address bar lands on the same state. replaceState mints no
 // history entries, so back and forward stay the browser's, not this page's.
-// The boot-only one-shots (;adv=, #part=, ;preset=, ;apply=, ;tick=, ;draft=,
+// The boot-only one-shots (;adv=, #part=, ;preset=, ;apply=, ;tick=,
 // ;recipe= with ;groups= ;focus= ;row= ;gadv=, #newstyle= with ;sel=) are
 // consumed once and never re-minted: they exist so the shots harness can
 // reach a state without driving a mouse, and re-writing them would pin every
@@ -1085,21 +1079,8 @@ function main() {
 function shapeDraftMain() {
     // The mode its rows have: none until the first row picks one.
     const label = M().modeLabels()[defaultModeFor()] || '';
-    const notes = S.shapeDraft.notes || [];
-    const ask = notes.some(n => n.indexOf('which positions make parts') >= 0);
-    const lines = notes.filter(n => n.indexOf('which positions make parts') < 0);
-    // AN IMPORT NAMES WHAT IT COULD NOT SETTLE (U7): the positions whose cell
-    // lost a field — a partner past this cell's last position, a route drawn
-    // for the other cell's aisles — and the other cell's positions that have
-    // no counterpart here. The rows carry the same word.
-    const unmapped = S.shapeDraft.unmapped || [];
-    const check = unmapped.filter(n => S.model.cells[n]);
-    const dropped = unmapped.filter(n => !S.model.cells[n]);
-    if (check.length) lines.push('Check ' + check.join(', ') + ' — what the other cell named there has no match here, so it is blank');
-    if (dropped.length) lines.push('Not placed: ' + dropped.join(', ') + ' — this cell has fewer positions');
     const r = S.shapeDraft.recipe;
-    const title = r ? 'Recipe · ' + r.name : S.shapeDraft.from ? 'Import · ' + S.shapeDraft.from :
-        label ? 'New recipe · ' + label : 'New recipe';
+    const title = r ? 'Recipe · ' + r.name : label ? 'New recipe · ' + label : 'New recipe';
     const sub = r ? 'spots, how they swap, where bins come from and go; no part. Saved under the same ' +
         'name it becomes the next version' :
         'a recipe — spots, how they swap, where bins come from and go; no part, and nothing is saved until you name it';
@@ -1108,9 +1089,6 @@ function shapeDraftMain() {
         '<div class="sub">' + esc(sub) + '</div></div>' +
         '<div class="act"><button class="pd-btn quiet" data-act="shape-cancel">Back</button>' +
         '<button class="pd-btn primary" data-act="shape-save">Save recipe…</button></div></div>' +
-        (ask ? '<div class="pd-notice">Which positions make parts here? No flow on this process says — ' +
-            'set Role on each row before naming it.</div>' : '') +
-        (lines.length ? '<div class="pd-notice">' + esc(lines.join(' · ')) + '</div>' : '') +
         (S.notice ? '<div class="pd-notice">' + esc(S.notice) + '</div>' : '') +
         '<div class="pd-pic"><svg id="pd-svg" class="os-flow-picture"></svg></div>' +
         positionsTable() + groupsSection() +
@@ -1891,8 +1869,7 @@ function positionsTable() {
             // to move the bin in Core first.
             '<td class="pos">' + picker(n, 'position', esc(n), 'pd-posname', n) +
                 '<button class="pd-rmpos" data-act="rmpos" data-node="' + esc(n) + '" title="Take ' + esc(n) +
-                ' off this flow">×</button><small>' + esc(rowWord(n)) +
-                (S.shapeDraft && (S.shapeDraft.unmapped || []).includes(n) ? ' · check' : '') + '</small></td>' +
+                ' off this flow">×</button><small>' + esc(rowWord(n)) + '</small></td>' +
             '<td>' + roleCell(n, c.role) + '</td>' +
             '<td>' + picker(n, 'mode', gl(c.mode, 22, {}) + esc(M().modeLabels()[c.mode] || '')) + '</td>' +
             (S.shapeDraft ? '' : '<td>' + picker(n, 'part', esc(M().shortPart(c.part) || 'pick one'), c.part ? 'part' : 'bad', c.part || '') + '</td>') +
@@ -6587,8 +6564,7 @@ function drawPresets() {
     let h = (S.notice ? '<div class="pd-notice">' + esc(S.notice) + '</div>' : '') +
         '<div class="pd-sect"><h2>Recipes</h2><span class="pd-lbl"><span class="cnt">' +
         presets.length + '</span></span>' +
-        '<span class="pd-dim">spots and robot moves with no part — a style is one of these with its parts on</span>' +
-        '<button class="pd-dimlink" data-act="import-from">Import from…</button></div>';
+        '<span class="pd-dim">spots and robot moves with no part — a style is one of these with its parts on</span></div>';
     // THE COLUMNS ARE SIZED, the way D1's positions table is, and for the same
     // reason: left to itself the browser gave Name a third of what its content
     // needs and Shape less than its position list, so the one thing an
@@ -6605,7 +6581,7 @@ function drawPresets() {
         '<thead><tr><th>Name</th><th>Shape</th><th>Applied to</th>' +
         '<th>Drift</th><th>Saved</th><th></th></tr></thead><tbody>' +
         presets.map(presetRow).join('') + '</tbody></table>'
-        : '<p class="pd-dim">No recipes yet — + New recipe in the Styles tab’s rail, or start from a suggestion below.</p>';
+        : '<p class="pd-dim">No recipes yet — + New recipe in the Styles tab’s rail.</p>';
 
     // THE OFFER, while there is one. Once every shape the press runs has a
     // name this section is not empty, it is finished — and a heading over
@@ -6625,25 +6601,6 @@ function drawPresets() {
             '<col style="width:10%"><col style="width:37%"></colgroup>' +
             '<thead><tr><th>Shape</th><th>Run by</th><th></th></tr></thead><tbody>' +
             cands.map(candidateRow).join('') + '</tbody></table>';
-    }
-    // NEW SHAPE (pick-a-part U2): what this cell COULD run, one recipe per
-    // mode its positions and routing set satisfy. Opening one puts it in the
-    // positions table as a draft with no style and no part; the table's own
-    // pickers are the override, and nothing is stored until it is named.
-    const gen = v.generated || [];
-    if (gen.length) {
-        h += '<div class="pd-sect"><h2>Suggested</h2><span class="pd-lbl"><span class="cnt">' +
-            gen.length + '</span></span>' +
-            '<span class="pd-dim">recipes this cell could run, from its positions and routing set — ' +
-            'open one to check it, then name it</span></div>' +
-            '<table class="pd-tbl pd-candtbl"><colgroup><col style="width:63%">' +
-            '<col style="width:37%"></colgroup>' +
-            '<thead><tr><th>Shape</th><th></th></tr></thead><tbody>' +
-            gen.map(g => '<tr data-gen="' + esc(g.mode) + '"><td class="pn">' + shapeCell(g.mode, g.where) +
-                ((g.notes || []).length ? '<small>' + esc(g.notes.join(' · ')) + '</small>' : '') + '</td>' +
-                '<td class="pd-acts"><button class="pd-dimlink" data-act="shape-draft" data-mode="' +
-                esc(g.mode) + '">Open as a draft…</button></td></tr>').join('') +
-            '</tbody></table>';
     }
     // THE ROW MENU NEEDS A POPOVER TO OPEN INTO. #pd-pop is rendered by main(),
     // which is the FLOWS tab — so on Presets openPresetMenu found nothing and
@@ -6715,23 +6672,17 @@ function usePreset(id) {
         });
 }
 
-// ── New shape: a recipe drafted in the positions table (pick-a-part U2) ──────
+// ── the recipe draft, in the positions table (pick-a-part U2) ───────────────
 //
 // A MODE OF D1, NOT A NEW EDITOR. The draft is a model with no style and no
-// part (init's `shape`), the generated cells applied to it, and the positions
-// table drawn over it with the Part column hidden. Paired, Staging, source,
-// destination and Role are the table's own pickers — the generator proposed,
-// the engineer confirms. Save is the naming modal and the shape lands as a
-// preset; the name is the engineer's, never the mode word.
-function openShapeDraft(mode) {
-    const g = ((presetsView() && presetsView().generated) || []).find(x => x.mode === mode);
-    if (!g) return;
-    startShapeDraft(g.shape, { notes: g.notes || [] });
-}
+// part (init's `shape`), a recipe's cells applied to it or none, and the
+// positions table drawn over it with the Part column hidden. Paired, Staging,
+// source, destination and Role are the table's own pickers. Save is the naming
+// modal and the shape lands as a recipe; the name is the engineer's.
 
 // startShapeDraft puts a shape in the positions table as a draft — an empty
-// one for + New recipe. draft is S.shapeDraft less `back`: {notes} for a
-// Suggested row, {from, unmapped} for an import.
+// one for + New recipe, a recipe's own to change it. draft is S.shapeDraft less
+// `back`: {recipe, groups} for a recipe.
 function startShapeDraft(shape, draft) {
     const back = S.styleID;
     const from = S.tab;
@@ -6745,56 +6696,9 @@ function startShapeDraft(shape, draft) {
     // groups is the draft's cards (null until Set up groups), focus the
     // clicked row or pinned group, hover the card under the pointer, and
     // refusal the server's last word on a save of them.
-    S.shapeDraft = Object.assign({ notes: [], unmapped: [], groups: null, focus: null, hover: null, refusal: '' },
+    S.shapeDraft = Object.assign({ groups: null, focus: null, hover: null, refusal: '' },
         draft, { back: back, fromTab: from });
     drawFlows();
-}
-
-// ── Import from… another cell's recipe (pick-a-part U7, R-J) ────────────────
-//
-// TWO PICKS, BOTH OFF READS THAT ALREADY EXIST: the process list the page
-// holds, then that process's own Presets read. The last step is this
-// process's Presets read with ?import=, which lays the recipe onto these
-// positions and routing set server-side (domain.RemapShape) and stores
-// nothing. The draft it opens is a New shape draft, saved through the same
-// create path; the positions the remap could not settle are flagged.
-function openImportFrom(btn) {
-    const pop = $('pd-pop');
-    if (!pop) return;
-    const others = S.processes.filter(p => p.id !== S.processID);
-    pop.innerHTML = others.length
-        ? others.map(p => '<button data-act="import-process" data-pid="' + esc(p.id) + '">' +
-            esc(p.name) + '</button>').join('')
-        : '<div class="none">There is no other process to import from.</div>';
-    pop.hidden = false;
-    placePopover(pop, btn);
-}
-
-async function openImportProcess(pid) {
-    const pop = $('pd-pop');
-    if (!pop) return;
-    const res = await fetch('/api/processes/' + pid + '/presets');
-    const v = res.ok ? await res.json().catch(() => null) : null;
-    const presets = (v && v.presets) || [];
-    pop.innerHTML = presets.length
-        ? presets.map(p => '<button data-act="import-pick" data-preset="' + esc(p.id) + '">' +
-            esc(p.name) + (p.where ? '<small>' + esc(p.where) + '</small>' : '') + '</button>').join('')
-        : '<div class="none">That process has no named recipes.</div>';
-}
-
-async function importPreset(presetID) {
-    const pop = $('pd-pop');
-    if (pop) pop.hidden = true;
-    const res = await fetch('/api/processes/' + S.processID + '/presets?import=' + presetID);
-    const got = await res.json().catch(() => ({}));
-    if (!res.ok) {
-        S.notice = got.error || 'That recipe could not be read.';
-        drawPresets();
-        return;
-    }
-    startShapeDraft(got.shape || [], {
-        mode: got.mode || '', from: got.from_name || '', unmapped: got.unmapped || [],
-    });
 }
 
 // leaveShapeDraft goes back to the Presets tab, with the style that was open
@@ -7371,7 +7275,7 @@ async function runPresetApply() {
 // click that does not stop propagating opens the list and hides it before
 // paint, which is the "clickable, nothing happens" report.
 const POPOVER_ACTS = { pick: 1, 'style-menu': 1, 'preset-menu': 1, 'add-position': 1, 'st-group': 1, 'st-holddest': 1, 'use-preset': 1,
-    'import-from': 1, 'gspot-add': 1, 'glist-add': 1 };
+    'gspot-add': 1, 'glist-add': 1 };
 
 function onClick(e) {
     const openRow = e.target.closest && e.target.closest('[data-open]');
@@ -7492,10 +7396,6 @@ function onClick(e) {
                     false);
                 return;
             }
-            case 'shape-draft': openShapeDraft(btn.dataset.mode); return;
-            case 'import-from': openImportFrom(btn); return;
-            case 'import-process': void openImportProcess(btn.dataset.pid); return;
-            case 'import-pick': void importPreset(Number(btn.dataset.preset)); return;
             case 'shape-cancel': void leaveShapeDraft(); return;
             // THE NAME IS THE ENGINEER'S (pick-a-part U2): the field opens
             // empty, never on the mode word — "Standard", "Tooling change".

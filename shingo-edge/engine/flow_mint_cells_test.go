@@ -13,11 +13,9 @@ import (
 
 // flow_mint_cells_test.go — the mint beyond the press index: the demo plant's
 // WELD-2 (single_robot, three slots), PRESS-2 (sequential, one slot of two
-// nodes) and WELD-1 (two_robot, consume + produce). Each cell is the
-// generator test's own table (domain/flow_preset_generate_test.go
-// TestGenerateShapes_SixCells), seeded with a running style, and its recipe is
-// the shape the generator offers for it, named the way the Presets tab names
-// one.
+// nodes) and WELD-1 (two_robot, consume + produce). Each cell is seeded with a
+// running style, and its recipe is the shape that style runs, named through
+// the create path a hand-built draft takes.
 
 type mintCellClaim struct {
 	node, part, paired, inStg, outStg string
@@ -84,8 +82,8 @@ type mintCellFixture struct {
 	preset  int64
 }
 
-// seedMintCell builds the cell, its running style, and names the generated
-// recipe for its mode "Standard".
+// seedMintCell builds the cell, its running style, and names the shape that
+// style runs "Standard": the Presets read's candidate for it, saved as cells.
 func seedMintCell(t *testing.T, cell mintCell) mintCellFixture {
 	t.Helper()
 	db := testEngineDB(t)
@@ -119,18 +117,18 @@ func seedMintCell(t *testing.T, cell mintCell) mintCellFixture {
 	svc := service.NewProcessService(db)
 	view, err := svc.PresetsFor(pid)
 	testutil.MustNoErr(t, err, "PresetsFor")
-	for _, g := range view.Generated {
-		if g.Mode != string(cell.mode) {
+	for _, c := range view.Candidates {
+		if c.Mode != string(cell.mode) {
 			continue
 		}
-		id, err := svc.CreateFromCells(pid, "Standard", "test", g.Shape, nil)
-		testutil.MustNoErr(t, err, "name the generated recipe")
+		id, err := svc.CreateFromCells(pid, "Standard", "test", c.Shape, nil)
+		testutil.MustNoErr(t, err, "name the running style's shape")
 		eng := testEngine(t, db)
 		coreNeverAnswers(t, eng)
 		enableComposer(t, db, pid)
 		return mintCellFixture{db: db, eng: eng, process: pid, running: run, preset: id}
 	}
-	t.Fatalf("%s: the generator offers no %s recipe (got %d)", cell.name, cell.mode, len(view.Generated))
+	t.Fatalf("%s: the Presets read offers no %s shape (got %d)", cell.name, cell.mode, len(view.Candidates))
 	return mintCellFixture{}
 }
 

@@ -1759,27 +1759,6 @@ func TestComposerShots(t *testing.T) {
 	// lowercase here it was a third spelling of it.
 	desktopDOM("D6 named field", d6open, flowspec.Label(flowspec.OutboundDestination))
 
-	// U2 · NEW SHAPE (pick-a-part brief): the generated recipes are a section
-	// of the same tab, and opening one puts it in D1's positions table as a
-	// draft with no style and no Part column. `;draft=` opens it, like ;apply=.
-	// The routing rows D5 switched off are put back first: a generator with no
-	// destination to name offers nothing, which is right and not the shot.
-	testdb.SeedRoutingSet(t, db, seeded.ProcessID, "shots")
-	desktopDOM("D7 new shape section", d6, `data-act="shape-draft"`)
-	d7 := fmt.Sprintf("/processes?process=%d#tab=presets;draft=%s", seeded.ProcessID, protocol.SwapModeTwoRobotPressIndex)
-	desktopShot("D7-new-shape-draft.png", d7)
-	desktopDOM("D7 shape draft header", d7, `New recipe · `)
-	desktopDOM("D7 shape draft save", d7, `data-act="shape-save"`)
-
-	// U7 · IMPORT FROM… (pick-a-part brief): a recipe laid onto this process
-	// opens as the same draft, titled for where it came from. `;import=` is the
-	// popover's last step; the fixture's own preset stands in for another
-	// cell's, which remaps position for position.
-	desktopDOM("D8 import button", d6, `data-act="import-from"`)
-	d8 := fmt.Sprintf("/processes?process=%d#tab=presets;import=%d", seeded.ProcessID, presetID)
-	desktopShot("D8-import-draft.png", d8)
-	desktopDOM("D8 import draft header", d8, `Import · `)
-
 	// THE APPLY MODAL, with one part ticked and its previewed diff on screen.
 	// `;tick=` previews that row, which is the whole rule this modal exists to
 	// enforce: never a save without its preview drawn.

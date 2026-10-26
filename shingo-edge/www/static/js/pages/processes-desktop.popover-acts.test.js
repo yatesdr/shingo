@@ -1510,47 +1510,6 @@ async function mainAsync() {
         console.log('ok: a style with no rows gains its first row from "+ Add a position": a choreography, then a position');
     }
 
-    // A flow whose rows were all taken off is empty again, and is asked again:
-    // a recipe draft whose only row went is not bound to the mode it had. The
-    // draft here is a Suggested one, opened in single_robot from the Recipes
-    // tab; its row's × empties it.
-    {
-        const shape = [{ core_node_name: 'PLN_01', role: 'consume', swap_mode: 'single_robot' }];
-        const { pop, main, doc } = loadPage({
-            composer: firstRowComposer(),
-            fetch: url => (/\/api\/processes\/1\/presets$/.test(url)
-                ? Promise.resolve({ ok: true, json: async () => ({ presets: [], candidates: [], styles_with_flow: 0,
-                    generated: [{ mode: 'single_robot', shape, where: 'PLN_01' }] }) })
-                : null),
-        });
-        await drain();
-        await drain();
-        const made = wireButtons(pop);
-        const tab = makeElement('');
-        tab.dataset.tab = 'presets';
-        main.appendChild(tab);
-        bubble(tab, 'click', doc);
-        for (let i = 0; i < 4; i++) await drain();
-        const act = (name, data) => {
-            const b = makeElement('');
-            b.dataset.act = name;
-            Object.assign(b.dataset, data || {});
-            main.appendChild(b);
-            bubble(b, 'click', doc);
-        };
-        act('shape-draft', { mode: 'single_robot' });
-        await drain();
-        act('rmpos', { node: 'PLN_01' });
-        await drain();
-        act('add-position');
-        if (pop.hidden !== false || !Object.keys(made).some(k => k.indexOf('freemode=') === 0)) {
-            throw new Error('a draft emptied by its rows\' × did not offer the modes again: ' +
-                JSON.stringify(pop.innerHTML.slice(0, 200)));
-        }
-        checks++;
-        console.log('ok: a recipe draft emptied by its rows\' × offers the modes again');
-    }
-
     // ── + New recipe: an empty draft at once, the mode picked at its first row ─
     //
     // Owner, 2026-10-26: start with a fresh recipe and let them build from
@@ -1569,13 +1528,18 @@ async function mainAsync() {
         return c;
     };
     function newRecipeRig(server) {
+        const urls = [];
         const ctx = loadPage({
             flowspec: true,
             composer: recipeComposer(),
-            fetch: url => (/\/api\/processes\/1\/composer$/.test(url)
-                ? Promise.resolve({ ok: true, json: async () => JSON.parse(JSON.stringify(server())) })
-                : null),
+            fetch: url => {
+                urls.push(url);
+                return /\/api\/processes\/1\/composer$/.test(url)
+                    ? Promise.resolve({ ok: true, json: async () => JSON.parse(JSON.stringify(server())) })
+                    : null;
+            },
         });
+        ctx.urls = urls;
         ctx.made = wireButtons(ctx.pop);
         ctx.act = (name, data) => {
             const b = makeElement('');
@@ -1593,13 +1557,20 @@ async function mainAsync() {
         const { root, pop, made, act } = ctx;
         await drain();
         await drain();
+        ctx.urls.length = 0;
         act('new-recipe');
         for (let i = 0; i < 4; i++) await drain();
         if (pop.hidden === false) {
             throw new Error('+ New recipe opened a popover: ' + JSON.stringify(pop.innerHTML.slice(0, 200)));
         }
-        if (root.innerHTML.indexOf('<h1>New recipe</h1>') < 0 || root.innerHTML.indexOf('data-row=') >= 0) {
+        // NOTHING PREFILLS: no rows, no mode, no notes, and no read of anything
+        // that could propose one — the composer alone, for the routing set.
+        if (root.innerHTML.indexOf('<h1>New recipe</h1>') < 0 || root.innerHTML.indexOf('data-row=') >= 0 ||
+            root.innerHTML.indexOf('class="pd-notice"') >= 0) {
             throw new Error('+ New recipe did not open an empty draft titled "New recipe"');
+        }
+        if (ctx.urls.some(u => !/\/api\/processes\/1\/composer$/.test(u))) {
+            throw new Error('+ New recipe read more than the composer: ' + JSON.stringify(ctx.urls));
         }
         act('add-position');
         if (pop.hidden !== false || !made['freemode=two_robot']) {
@@ -1609,8 +1580,9 @@ async function mainAsync() {
         bubble(made['freepos=PLN_01'], 'click', ctx.doc);
         await drain();
         if (root.innerHTML.indexOf('data-row="PLN_01"') < 0 ||
-            root.innerHTML.indexOf('<h1>New recipe · 2‑Robot Swap</h1>') < 0) {
-            throw new Error('the first row did not land in 2-Robot Swap');
+            root.innerHTML.indexOf('<h1>New recipe · 2‑Robot Swap</h1>') < 0 ||
+            root.innerHTML.split('data-row=').length !== 2) {
+            throw new Error('the first row did not land, alone, in 2-Robot Swap');
         }
         for (const k of Object.keys(made)) delete made[k];
         act('add-position');
@@ -1664,6 +1636,66 @@ async function mainAsync() {
         }
         checks++;
         console.log('ok: a destination added without a reload reaches the next draft\'s row, and the sentence is gone');
+    }
+
+    // A flow whose rows were all taken off is empty again, and is asked again:
+    // a recipe draft whose only row went is not bound to the mode it had.
+    {
+        const ctx = newRecipeRig(recipeComposer);
+        const { pop, made, act } = ctx;
+        await drain();
+        await drain();
+        act('new-recipe');
+        for (let i = 0; i < 4; i++) await drain();
+        act('add-position');
+        bubble(made['freemode=single_robot'], 'click', ctx.doc);
+        bubble(made['freepos=PLN_01'], 'click', ctx.doc);
+        await drain();
+        act('rmpos', { node: 'PLN_01' });
+        await drain();
+        for (const k of Object.keys(made)) delete made[k];
+        act('add-position');
+        if (pop.hidden !== false || !made['freemode=two_robot']) {
+            throw new Error('a draft emptied by its rows\' × did not offer the modes again: ' +
+                JSON.stringify(pop.innerHTML.slice(0, 200)));
+        }
+        checks++;
+        console.log('ok: a recipe draft emptied by its rows\' × offers the modes again');
+    }
+
+    // The copy path and the generator are gone (owner, 2026-10-26): a recipe
+    // starts empty here and is built by hand, so the Recipes tab neither copies
+    // one from another cell nor suggests one — not even from a read that still
+    // carried generated shapes — and the page names neither path.
+    {
+        const shape = [{ core_node_name: 'PLN_01', role: 'consume', swap_mode: 'single_robot' }];
+        const { root, pop, main, doc } = loadPage({
+            composer: firstRowComposer(),
+            fetch: url => (/\/api\/processes\/1\/presets$/.test(url)
+                ? Promise.resolve({ ok: true, json: async () => ({ presets: [], candidates: [], styles_with_flow: 0,
+                    generated: [{ mode: 'single_robot', shape, where: 'PLN_01' }] }) })
+                : null),
+        });
+        await drain();
+        await drain();
+        const tab = makeElement('');
+        tab.dataset.tab = 'presets';
+        main.appendChild(tab);
+        bubble(tab, 'click', doc);
+        for (let i = 0; i < 4; i++) await drain();
+        const page = root.innerHTML + pop.innerHTML;
+        if (!/<h2>Recipes<\/h2>/.test(page)) throw new Error('setup: the Recipes tab did not draw');
+        for (const gone of ['import-from', 'Import from', 'From another cell', 'Suggested', 'shape-draft',
+            'start from a suggestion']) {
+            if (page.indexOf(gone) >= 0) throw new Error('the Recipes tab still offers a recipe it did not build: ' + gone);
+        }
+        const src = fs.readFileSync(path.join(__dirname, 'processes-desktop.js'), 'utf8');
+        for (const id of ['openImportFrom', 'openImportProcess', 'importPreset', 'openShapeDraft', "'shape-draft'",
+            'h.import', 'h.draft', '.generated']) {
+            if (src.indexOf(id) >= 0) throw new Error('the page still names a retired path: ' + id);
+        }
+        checks++;
+        console.log('ok: no door copies or suggests a recipe, and the page names neither path');
     }
 
 

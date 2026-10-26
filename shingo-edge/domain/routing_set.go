@@ -179,3 +179,23 @@ func RoutingGaps(processName string, routing []RoutingNode) map[string]string {
 	}
 	return out
 }
+
+// lowestOfRole is the default source or destination: the enabled row of that
+// role with the lowest sequence, ties by name — the row composer-model's
+// defaultRouting gives a new row.
+func lowestOfRole(routing []RoutingNode, role string) string {
+	best := -1
+	for i, r := range routing {
+		if r.Role != role || !r.Enabled {
+			continue
+		}
+		if best < 0 || r.Sequence < routing[best].Sequence ||
+			(r.Sequence == routing[best].Sequence && r.CoreNodeName < routing[best].CoreNodeName) {
+			best = i
+		}
+	}
+	if best < 0 {
+		return ""
+	}
+	return routing[best].CoreNodeName
+}

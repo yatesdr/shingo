@@ -1,6 +1,4 @@
-// handlers_flow_presets.go — the desktop Presets tab's four endpoints. The
-// list also answers ?import= (pick-a-part U7): another cell's recipe, laid onto
-// this one and not stored.
+// handlers_flow_presets.go — the desktop Presets tab's four endpoints.
 //
 // FOUR, AND APPLY IS NOT ONE OF THEM. A preset is applied to one style at a
 // time through the doors that already exist — `flow/preview` with the preset's
@@ -17,11 +15,8 @@
 package www
 
 import (
-	"database/sql"
 	"encoding/json"
-	"errors"
 	"net/http"
-	"strconv"
 	"strings"
 
 	"shingoedge/domain"
@@ -31,26 +26,6 @@ func (h *Handlers) apiListFlowPresets(w http.ResponseWriter, r *http.Request) {
 	id, err := parseID(r, "id")
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid process id")
-		return
-	}
-	// ?import=<presetID> is "Import from…": that recipe laid onto this
-	// process, unsaved (service.ImportCandidate).
-	if raw := r.URL.Query().Get("import"); raw != "" {
-		presetID, err := strconv.ParseInt(raw, 10, 64)
-		if err != nil || presetID <= 0 {
-			writeError(w, http.StatusBadRequest, "invalid import preset id")
-			return
-		}
-		shape, err := h.engine.ProcessService().ImportCandidate(id, presetID)
-		if errors.Is(err, sql.ErrNoRows) {
-			writeError(w, http.StatusNotFound, "no such preset")
-			return
-		}
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, err.Error())
-			return
-		}
-		writeJSON(w, shape)
 		return
 	}
 	view, err := h.engine.ProcessService().PresetsFor(id)
@@ -81,9 +56,9 @@ func (h *Handlers) apiCreateFlowPreset(w http.ResponseWriter, r *http.Request) {
 		// offered shapes and stamps the styles that run it.
 		FromStyleID        int64  `json:"from_style_id"`
 		FromCandidateShape string `json:"from_candidate_shape"`
-		// Cells is a shape the engineer drew: a "New shape" draft from the
-		// positions table (pick-a-part U2), or a reviewed import (U7). The
-		// third of the three, and like the others the part is stripped.
+		// Cells is a shape the engineer drew: a recipe draft from the
+		// positions table (pick-a-part U2). The third of the three, and like
+		// the others the part is stripped.
 		Cells []domain.FlowCell `json:"cells"`
 		// Groups is a recipe draft's Set up groups (recipe groups, D6 of
 		// DECISIONS-recipe-groups): a write field of the cells form only,

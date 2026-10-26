@@ -333,11 +333,11 @@ func desktopBuilder(t *testing.T, expr string, fixture map[string]any) map[strin
 	return out
 }
 
-// TestFlowPresets_NewShapeIsOfferedAndNamedFromTheDraft (pick-a-part U2): the
-// Presets read offers a generated recipe for a mode the cell can satisfy, and
-// the desktop's create body for that recipe's cells — built by the page's own
-// builder — names a preset whose shape is the recipe, authored by the session.
-func TestFlowPresets_NewShapeIsOfferedAndNamedFromTheDraft(t *testing.T) {
+// TestFlowPresets_AHandBuiltDraftIsNamedFromThePage (pick-a-part U2): a
+// recipe built by hand in the positions table is named through the desktop's
+// own create body — built by the page's builder — and stored as drawn,
+// authored by the session.
+func TestFlowPresets_AHandBuiltDraftIsNamedFromThePage(t *testing.T) {
 	h, router := newAdminRouter(t)
 	cookie := authCookie(t, h)
 	pid, _ := presetProcess(t, "PRESET-NEW")
@@ -346,33 +346,18 @@ func TestFlowPresets_NewShapeIsOfferedAndNamedFromTheDraft(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("routing staging: %v", err)
 	}
-
-	resp := doRequest(t, router, "GET", "/api/processes/"+itoa(pid)+"/presets", nil, cookie)
-	assertStatus(t, resp, http.StatusOK)
+	shape := []domain.FlowCell{{CoreNodeName: "PP_01", Role: "consume", SwapMode: "two_robot",
+		InboundStaging: "PP-STG", OutboundDestination: "PP-DST"}}
 	var view struct {
-		Generated []struct {
-			Mode  string            `json:"mode"`
-			Shape []domain.FlowCell `json:"shape"`
-		} `json:"generated"`
 		Presets []struct {
 			Name      string            `json:"name"`
 			CreatedBy string            `json:"created_by"`
 			Shape     []domain.FlowCell `json:"shape"`
 		} `json:"presets"`
 	}
-	decodeJSON(t, resp, &view)
-	var shape []domain.FlowCell
-	for _, g := range view.Generated {
-		if g.Mode == "two_robot" {
-			shape = g.Shape
-		}
-	}
-	if len(shape) != 1 || shape[0].InboundStaging != "PP-STG" || shape[0].OutboundDestination != "PP-DST" {
-		t.Fatalf("generated two_robot shape = %+v, want PP_01 staged at PP-STG to PP-DST", shape)
-	}
 
 	body := desktopBuilder(t, "B.flowPresetCreate('Standard', { cells: f.cells })", map[string]any{"cells": shape})
-	resp = doRequest(t, router, "POST", "/api/processes/"+itoa(pid)+"/presets", body, cookie)
+	resp := doRequest(t, router, "POST", "/api/processes/"+itoa(pid)+"/presets", body, cookie)
 	assertStatus(t, resp, http.StatusOK)
 
 	resp = doRequest(t, router, "GET", "/api/processes/"+itoa(pid)+"/presets", nil, cookie)
@@ -383,59 +368,4 @@ func TestFlowPresets_NewShapeIsOfferedAndNamedFromTheDraft(t *testing.T) {
 	if domain.FlowShapeKey(view.Presets[0].Shape) != domain.FlowShapeKey(shape) {
 		t.Errorf("stored shape %+v, want the drawn one %+v", view.Presets[0].Shape, shape)
 	}
-}
-
-// IMPORT FROM ANOTHER CELL (pick-a-part U7): GET presets?import= lays the
-// other process's recipe onto this one's positions and routing set, stores
-// nothing, and the reviewed shape is named through the same create path a
-// drawn shape takes.
-func TestFlowPresets_ImportLaysAnotherCellsRecipeOntoThisOne(t *testing.T) {
-	h, router := newAdminRouter(t)
-	cookie := authCookie(t, h)
-	from, _ := presetProcess(t, "PRESET-IMPORT-FROM")
-	resp := doRequest(t, router, "POST", "/api/processes/"+itoa(from)+"/presets",
-		map[string]any{"name": "Theirs", "cells": []domain.FlowCell{{
-			CoreNodeName: "PP_01", Role: "consume", SwapMode: "two_robot", InboundStaging: "PP_01",
-			InboundSource: "PP-SRC", OutboundDestination: "PP-DST", KeyRoute: []string{"LM1"},
-		}}}, cookie)
-	assertStatus(t, resp, http.StatusOK)
-	presetID := int64(decodeBody(t, resp)["id"].(float64))
-
-	to := seedProcess(t, "PRESET-IMPORT-TO")
-	if _, err := testDB.CreateProcessNode(processes.NodeInput{
-		ProcessID: to, CoreNodeName: "IM_01", Name: "IM_01", Enabled: true,
-	}); err != nil {
-		t.Fatalf("create position: %v", err)
-	}
-	for name, role := range map[string]string{"IM-SRC": domain.RoutingRoleSource, "IM-DST": domain.RoutingRoleDestination} {
-		if _, err := testDB.UpsertRoutingNode(domain.CoreNodeKinds{}, domain.RoutingNodeInput{
-			ProcessID: to, CoreNodeName: name, Role: role, Enabled: true,
-		}); err != nil {
-			t.Fatalf("routing %s: %v", name, err)
-		}
-	}
-
-	resp = doRequest(t, router, "GET", "/api/processes/"+itoa(to)+"/presets?import="+itoa(presetID), nil, cookie)
-	assertStatus(t, resp, http.StatusOK)
-	var got struct {
-		FromName string            `json:"from_name"`
-		Shape    []domain.FlowCell `json:"shape"`
-		Unmapped []string          `json:"unmapped"`
-	}
-	decodeJSON(t, resp, &got)
-	want := domain.FlowCell{CoreNodeName: "IM_01", Role: "consume", SwapMode: "two_robot", InboundStaging: "IM_01",
-		InboundSource: "IM-SRC", OutboundDestination: "IM-DST"}
-	if got.FromName != "Theirs" || len(got.Shape) != 1 || domain.FlowShapeKey(got.Shape) != domain.FlowShapeKey([]domain.FlowCell{want}) {
-		t.Fatalf("import = %+v, want Theirs laid onto IM_01 with this cell's routing", got)
-	}
-	if len(got.Unmapped) != 1 || got.Unmapped[0] != "IM_01" {
-		t.Errorf("unmapped = %v, want IM_01 flagged (its route was drawn for the other cell)", got.Unmapped)
-	}
-
-	body := desktopBuilder(t, "B.flowPresetCreate('Ours', { cells: f.cells })", map[string]any{"cells": got.Shape})
-	resp = doRequest(t, router, "POST", "/api/processes/"+itoa(to)+"/presets", body, cookie)
-	assertStatus(t, resp, http.StatusOK)
-
-	resp = doRequest(t, router, "GET", "/api/processes/"+itoa(to)+"/presets?import=999999", nil, cookie)
-	assertStatus(t, resp, http.StatusNotFound)
 }

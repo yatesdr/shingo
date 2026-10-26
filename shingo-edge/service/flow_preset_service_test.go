@@ -405,3 +405,22 @@ func TestPresets_ARecipeRowItsModeCannotRunIsRefusedAtSave(t *testing.T) {
 		t.Fatalf("a recipe row with no staging and no destination: err %v, want %q", err, want)
 	}
 }
+
+// TestPresets_TheReadOffersNoGeneratedShapes: a recipe is built by hand from
+// an empty draft (owner, 2026-10-26), so the Recipes tab's read proposes none
+// — no Suggested section to fill. The shapes the press already runs, the
+// candidates, are not proposals and stay.
+func TestPresets_TheReadOffersNoGeneratedShapes(t *testing.T) {
+	t.Parallel()
+	svc, seeded, _ := presetFixture(t)
+	view, err := svc.PresetsFor(seeded.ProcessID)
+	testutil.MustNoErr(t, err, "svc.PresetsFor")
+	raw, err := json.Marshal(view)
+	testutil.MustNoErr(t, err, "marshal the read")
+	if strings.Contains(string(raw), `"generated"`) {
+		t.Errorf("the presets read still carries generated shapes: %.200s", raw)
+	}
+	if len(view.Candidates) == 0 {
+		t.Error("the presets read lost its candidates, the shapes the press already runs")
+	}
+}

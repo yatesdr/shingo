@@ -49,11 +49,6 @@ import (
 type PresetsView struct {
 	Presets    []PresetRow       `json:"presets"`
 	Candidates []PresetCandidate `json:"candidates"`
-	// Generated is "New shape": one proposed recipe per mode the cell can
-	// satisfy, from its positions and routing set (domain.GenerateShapes).
-	// The desktop opens one as a shape draft in the positions table; nothing
-	// is stored until the engineer names it.
-	Generated []GeneratedShape `json:"generated"`
 	// StylesWithFlow is how many of the process's live styles have any claim
 	// at all — the denominator for "N shapes over M flows", and the number
 	// that makes the grouping visible.
@@ -102,15 +97,6 @@ type PresetCandidate struct {
 	Where       string   `json:"where"`
 	Members     []int64  `json:"members"`
 	MemberNames []string `json:"member_names"`
-}
-
-// GeneratedShape is one "New shape" row: a generated recipe, its positions in
-// press order, and the notes to read before naming it.
-type GeneratedShape struct {
-	Mode  string            `json:"mode"`
-	Shape []domain.FlowCell `json:"shape"`
-	Where string            `json:"where"`
-	Notes []string          `json:"notes,omitempty"`
 }
 
 // styleFlow is one style's collapsed flow, read once and reused by all three
@@ -253,48 +239,11 @@ func (s *ProcessService) PresetsFor(processID int64) (*PresetsView, error) {
 		}
 		return out.Candidates[a].SuggestedName < out.Candidates[b].SuggestedName
 	})
-
-	generated, err := s.generatedShapes(processID, pressOrder, flows)
-	if err != nil {
-		return nil, err
-	}
-	out.Generated = generated
 	return out, nil
 }
 
-// generatedShapes is "New shape": what this cell COULD run.
-//
-// ONE MORE READ, the routing set. The positions are pressOrder (already read,
-// in picture order) and the role and back-position evidence is the claims
-// styleFlows already collapsed — role, position and the spots a claim uses as
-// a partner or staging place are all the generator takes from them.
-func (s *ProcessService) generatedShapes(processID int64, pressOrder []string, flows []styleFlow) ([]GeneratedShape, error) {
-	routing, err := s.db.ListRoutingNodes(processID)
-	if err != nil {
-		return nil, err
-	}
-	var prior, shapes []domain.NodeClaim
-	for _, f := range flows {
-		for _, c := range f.cells {
-			prior = append(prior, domain.NodeClaim{CoreNodeName: c.CoreNodeName, Role: c.Role})
-			shapes = append(shapes, domain.NodeClaim{CoreNodeName: c.CoreNodeName, SwapMode: c.SwapMode,
-				PairedCoreNode: c.PairedCoreNode, SecondPairedCoreNode: c.SecondPairedCoreNode,
-				InboundStaging: c.InboundStaging, OutboundStaging: c.OutboundStaging})
-		}
-	}
-	out := []GeneratedShape{}
-	picks := domain.ShapePicks{Back: domain.BackPositionNames(shapes)}
-	for _, g := range domain.GenerateShapes(pressOrder, routing, prior, picks) {
-		out = append(out, GeneratedShape{
-			Mode: string(g.Mode), Shape: g.Cells, Notes: g.Notes,
-			Where: domain.PresetShapeNodeWord(g.Cells, pressOrder),
-		})
-	}
-	return out, nil
-}
-
-// CreateFromCells names a shape the engineer drew — a "New shape" draft, or an
-// imported recipe after its review. Nothing is stamped: no style runs it yet.
+// CreateFromCells names a shape the engineer drew — a recipe draft built in the
+// positions table. Nothing is stamped: no style runs it yet.
 // The store validates the shape against the process's positions and routing
 // set (domain.ValidateFlowPreset), and the part is stripped here.
 //
@@ -306,64 +255,6 @@ func (s *ProcessService) CreateFromCells(processID int64, name, createdBy string
 		return 0, fmt.Errorf("a shape needs at least one position")
 	}
 	return s.create(processID, name, createdBy, cells, groups, nil)
-}
-
-// ImportedShape is "Import from…": another cell's recipe laid onto this one,
-// with the positions to check before it is named (domain.RemapShape). It is
-// not stored; naming it goes through CreateFromCells like a drawn shape.
-type ImportedShape struct {
-	FromPresetID int64             `json:"from_preset_id"`
-	FromName     string            `json:"from_name"`
-	Mode         string            `json:"mode"`
-	Shape        []domain.FlowCell `json:"shape"`
-	Where        string            `json:"where"`
-	Unmapped     []string          `json:"unmapped"`
-}
-
-// ImportCandidate remaps preset presetID — usually another process's — onto
-// processID. Four reads: the preset, then each cell's positions and routing
-// set.
-func (s *ProcessService) ImportCandidate(processID, presetID int64) (*ImportedShape, error) {
-	p, err := s.db.GetFlowPreset(presetID)
-	if err != nil {
-		return nil, err
-	}
-	src, err := domain.ParsePresetShape(p.FlowJSON)
-	if err != nil {
-		return nil, err
-	}
-	from, err := s.shapeFrame(p.ProcessID)
-	if err != nil {
-		return nil, err
-	}
-	to, err := s.shapeFrame(processID)
-	if err != nil {
-		return nil, err
-	}
-	cells, unmapped := domain.RemapShape(src, from, to)
-	if cells == nil {
-		cells = []domain.FlowCell{}
-	}
-	if unmapped == nil {
-		unmapped = []string{}
-	}
-	return &ImportedShape{
-		FromPresetID: p.ID, FromName: p.Name, Mode: oneMode(cells), Shape: cells,
-		Where: domain.PresetShapeNodeWord(cells, to.Positions), Unmapped: unmapped,
-	}, nil
-}
-
-// shapeFrame is one process's positions in picture order and its routing set.
-func (s *ProcessService) shapeFrame(processID int64) (domain.ShapeFrame, error) {
-	positions, err := s.pressOrder(processID)
-	if err != nil {
-		return domain.ShapeFrame{}, err
-	}
-	routing, err := s.db.ListRoutingNodes(processID)
-	if err != nil {
-		return domain.ShapeFrame{}, err
-	}
-	return domain.ShapeFrame{Positions: positions, Routing: routing}, nil
 }
 
 // CreateFromStyle names the shape of one style's flow. The part is stripped
