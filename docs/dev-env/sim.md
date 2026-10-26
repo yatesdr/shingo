@@ -163,7 +163,7 @@ comment in `sim_operator.go` says the same thing.
 
 Pacing knobs live in the dev configs — `sim.transit_time` (core),
 `sim.processes[].tick_interval` + `sim.operators.*` (edge). `sim.speed` scales
-every sim duration (transit, ticks, operator / downtime / changeover delays) for
+every sim duration (transit, ticks, operator / changeover delays) for
 fast-forward dev loops. An optional **finite-fleet** model (`sim.fleet_size`,
 plus `sim.transit_min`/`sim.transit_max` for realistic minutes-long crossings)
 lets the sim answer "how many robots does this plant need?" — orders queue for a
@@ -250,9 +250,11 @@ realistic, sustained, metric-rich plant.
 **`sim.speed` is live**, not pending — `SimConfig.Speed` at
 `shingo-core/config/config.go:262`, set to `5.0` in both dev configs
 (`shingocore.dev.yaml:166`, `shingoedge.dev.yaml:73`), with the 10× ceiling
-described under *The speed ceiling* above. **Downtime is live too** —
-`SimDowntimeConfig` at `shingo-edge/config/config.go:271`, configured at
-`shingoedge.dev.yaml:202`.
+described under *The speed ceiling* above. **There is no downtime model**: the
+clustered random outages it gave the presses and welds were removed on 2026-10-26,
+because a single-feed weld turned every press outage into a long wait that read as
+a defect in every sim report. A machine stops in the sim only when it is starved,
+off shift, or stopped by a case.
 
 Still pending, and documented in [`plant-model.md`](plant-model.md) as it lands:
 the remaining data features (quality, customer-demand) and the sub-line →

@@ -54,6 +54,36 @@ re-cut (+2) hold 265 uop, 4.4 sim-h, about 53 wall-minutes, with carrier pools a
 dig headroom still passing. More stock moves the clock; it does not remove the
 deficit. A longer run needs the rate fixed, not more bins.
 
+### The two-Edge pair's balance (2026-10-26)
+
+The certification pair runs `demo-sim.yaml` on Edge 1 and `edge2.yaml` on Edge 2.
+Two of its long waits were the plant's, in every run and on `main`'s baseline too,
+so every report read them as defects or passed them over as working. Both are
+rebalanced, so a long wait in the pair reads as a defect until shown otherwise:
+
+- **PART-X asks as PART-W does** (`edge2.yaml`). L2-B claims PART-X at three
+  cells, and three carriers all stood at them, so the first drained cell's swap
+  waited 52-74 sim-min until the B -> A changeover cancelled it. A fourth carrier
+  (lane `L2_Lane_X4`, `L2-BX-04`) served the first swap only: the PART-X loader
+  was asked once, at a total of 19, because Core's kanban total counts the
+  carriers at the cells as stock, 60 against a threshold of 20. PART-X's threshold
+  is now 80, above its cells as PART-W's is, and
+  `TestEdge2Fixture_ThresholdCoversSeatStock` counts a part's seats under every
+  style its line can change over to (it counted the seed's style alone, so PART-X
+  had none). A loader holds its part's total at the threshold even while its style
+  is idle, so the pool gained four empties (`L2_Lane_MT4`, `L2_Lane_MT5`): 18
+  carriers, the arithmetic at the top of `edge2.yaml`.
+- **No downtime model** (removed from the Edge sim, its config and Core's
+  projection of its events). It gave PRESS-1, PRESS-2 and WELD-1..4 85% availability
+  in clustered 5-30 min outages, and PRESS-1 is WELD-1's only feed with no PANEL-A
+  full spare in the market, so every press outage became a 15-30 sim-min wait of
+  WELD-1's swap pair, about every two sim-hours. Slowing WELD-1 (14s) was tried
+  first and did not change it: a weld that waits for its feed draws what the feed
+  makes, whatever its tick.
+
+The baseline for the pair is one run with no rig cases at the tip, read before the
+pair (soakstat's FIXTURE BALANCE and every wait over 10 sim-min by order id).
+
 ### The census will tell you
 
 A spec is checked at seed time (`shingo-core/plantspec/census.go`) for two

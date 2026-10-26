@@ -131,7 +131,8 @@ defer this and put it in a repo doc."
 - Schema should accommodate a future operator HMI form emitting the same event
   (don't build the HMI now — just don't paint the schema into a sim-only corner).
 - OEE: `quality = good_parts / total_parts`. Feeds the OEE product alongside
-  availability (G9 downtime events) and performance (cycle time vs target).
+  availability (the heartbeat's stop detection; the sim's G9 downtime events were
+  removed 2026-10-26) and performance (cycle time vs target).
 
 **When to pick up:** When the team wants OEE quality factor on dashboards or
 when a plant operator asks for a scrap-recording workflow.

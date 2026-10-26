@@ -63,7 +63,24 @@
 #     in flight           1-2 legs at a time on this small a market      = 2
 #     spare               the one that absorbs a carrier somewhere odd   = 1
 #     total needed                                                      = 7
-#     seeded              2 PART-W + 3 PART-X + 1 PART-Y + 3 empty       = 9
+#     seeded              2 PART-W + 4 PART-X + 1 PART-Y + 7 empty       = 14
+#                         (+ the 4 at the cells: 18 carriers in all)
+#
+#   THAT COUNT IS THE FLOOR, NOT THE POOL, BECAUSE A LOADER HOLDS ITS PART'S
+#   TOTAL AT THE THRESHOLD WHETHER OR NOT ITS STYLE RUNS. PART-W and PART-X
+#   each ask at 80 (the demands block), so each keeps four carriers' worth in
+#   the loop even while idle, and more while the part-drained carriers a
+#   changeover sent back sit in the market (they count at what they hold):
+#
+#     the running part    3 at its cells + up to 4 full in the market    = 7
+#     the idle part       80 in fulls and part-drained carriers          = 4-7
+#     PART-Y              one filling at WLD_010 + one for the drain     = 2
+#     empties             the one WLD_010 waits on + one at a loader     = 2
+#     total               typical 7 + 5 + 2 + 2, worst 7 + 7 + 2 + 2      = 16-18
+#
+#   The plant held 14 while PART-X asked at 20 and so never held its total;
+#   asking at 80 adds the idle part's hoard, so four empties were added
+#   (2026-10-26).
 #
 #   THE A/B PAIR IS TWO SEATS, NOT ONE, and this count said three because it
 #   read the pair as its cell. Both halves hold a carrier at once — that is what
@@ -76,6 +93,17 @@
 #   them — and an empty in the market is not one of them until a loader has
 #   filled it. Seeded with two, the third cell waited in awaiting_material for
 #   as long as the plant ran, and the changeover could never complete.
+#
+#   AND ONE MORE THAN THE CELLS, so the three-cell style can SWAP (2026-10-26).
+#   With three PART-X carriers all three stood at the cells under L2-B, and the
+#   first cell to drain asked for a fourth that only SMN_L2_02 could fill. The
+#   loader was asked once, too late: Core's kanban total counts the carriers at
+#   the cells as stocked (the inclusion policy of 2026-05-11), 60 against a
+#   threshold of 20, so it fired only at a total of 19 with the cells nearly
+#   dry. So the swaps (supply and evac) waited 52-74 sim-min, every run of the
+#   plant main's included, until the B -> A changeover cancelled them. The fourth
+#   carrier serves the first swap; PART-X's threshold at 80, above its cells as
+#   PART-W's is, keeps the loader filling for the rest (the demands block).
 #
 #   Produce side mirrors it: evac lead time (~R) < fill time C*t = 20 * 30 s = 10 min.
 #
@@ -108,7 +136,7 @@ zones:
   # in front is not in anybody's way. The validator refuses it, correctly.
   #
   # AND THE GROUP KEEPS ROOM TO DIG. Free slots are not the number that matters —
-  # REACHABLE free slots are, and a slot behind a bin is not room. Seven mouths sit
+  # REACHABLE free slots are, and a slot behind a bin is not room. Ten mouths sit
   # empty here plus a dedicated buffer position, well over the two-slot minimum, so
   # an excavation always has somewhere to stand its blockers.
   - name: SMN_L2
@@ -124,6 +152,9 @@ zones:
       # block: two X carriers cannot cover a three-cell changeover, and the cell
       # left out waits in awaiting_material forever.
       - {name: L2_Lane_X3, slots: [{name: SMN_L2_016, depth: 1}, {name: SMN_L2_017, depth: 2}]}
+      # A FOURTH X LANE, for the fourth PART-X carrier: one more than L2-B's three
+      # cells, so a drained cell's swap has a full to fetch (the arithmetic above).
+      - {name: L2_Lane_X4, slots: [{name: SMN_L2_020, depth: 1}, {name: SMN_L2_021, depth: 2}]}
       - {name: L2_Lane_Y1, slots: [{name: SMN_L2_009, depth: 1}, {name: SMN_L2_010, depth: 2}]}
       - {name: L2_Lane_MT1, slots: [{name: SMN_L2_011, depth: 1}, {name: SMN_L2_012, depth: 2}]}
       - {name: L2_Lane_MT2, slots: [{name: SMN_L2_013, depth: 1}, {name: SMN_L2_014, depth: 2}]}
@@ -132,6 +163,10 @@ zones:
       # three produce stations against two seeded empties. The third plant-wide
       # empty sits at WLD_010, which is a cell, not this market.
       - {name: L2_Lane_MT3, slots: [{name: SMN_L2_018, depth: 1}, {name: SMN_L2_019, depth: 2}]}
+      # Two more empty lanes, packed: the pool the thresholds hold (the
+      # arithmetic at the top). Full lanes, so the free slots stay as they were.
+      - {name: L2_Lane_MT4, slots: [{name: SMN_L2_022, depth: 1}, {name: SMN_L2_023, depth: 2}]}
+      - {name: L2_Lane_MT5, slots: [{name: SMN_L2_024, depth: 1}, {name: SMN_L2_025, depth: 2}]}
       # The buffer position: in-flight slack, and a guaranteed place to park a dig.
       - {name: L2_Lane_BUF, slots: [{name: SMN_L2_015, depth: 1}]}
 
@@ -363,12 +398,18 @@ bins:
   - {name: L2-BX-01, slot: SMN_L2_006, payload: PART-X, uop: 20}
   - {name: L2-BX-02, slot: SMN_L2_008, payload: PART-X, uop: 20}
   - {name: L2-BX-03, slot: SMN_L2_017, payload: PART-X, uop: 20}
+  # AND ONE MORE, so the three-cell style can swap (see the arithmetic at the top).
+  - {name: L2-BX-04, slot: SMN_L2_021, payload: PART-X, uop: 20}
   # Somewhere for finished PART-Y to go.
   - {name: L2-BY-01, slot: SMN_L2_010, payload: PART-Y, uop: 20}
   # Empty carriers — the spares the arithmetic above insists on.
   - {name: L2-MT-01, slot: SMN_L2_012, payload: "", uop: 0}
   - {name: L2-MT-02, slot: SMN_L2_014, payload: "", uop: 0}
   - {name: L2-MT-03, slot: SMN_L2_019, payload: "", uop: 0}
+  - {name: L2-MT-04, slot: SMN_L2_022, payload: "", uop: 0}
+  - {name: L2-MT-05, slot: SMN_L2_023, payload: "", uop: 0}
+  - {name: L2-MT-06, slot: SMN_L2_024, payload: "", uop: 0}
+  - {name: L2-MT-07, slot: SMN_L2_025, payload: "", uop: 0}
 
   # ── CARRIERS AT THE CELLS. Without one, seeddev binds no runtime state for the
   # node (it needs a bin AT the claim's node), the PLC tick has nothing to
@@ -387,8 +428,11 @@ demands:
   # hold up to 60 between them: at 20 the cells alone met it, the total froze at
   # 34 once PRS_011 drained, and the loader never refired (a stranded swap).
   # TestEdge2Fixture_ThresholdCoversSeatStock keeps every threshold above it.
+  # PART-X's likewise, for the same three cells under L2-B: at 20 its loader was
+  # asked once, at a total of 19, with the cells nearly dry, and the swaps it
+  # should have fed waited for material until the changeover back cancelled them.
   - {payload: PART-W, node: SMN_L2_01, replenish_uop_threshold: 80}
-  - {payload: PART-X, node: SMN_L2_02, replenish_uop_threshold: 20}
+  - {payload: PART-X, node: SMN_L2_02, replenish_uop_threshold: 80}
   - {payload: PART-Y, node: FGN_L2_01, replenish_uop_threshold: 0}
 
 # ONE PLC COUNTER PER PROCESS, NOT PER CELL. A tick reaches cells through its

@@ -61,11 +61,9 @@ type (
 	SSEHub          struct{}
 	QueryCount      struct{}
 
-	SimOperator     struct{}
-	SimStatements   struct{}
-	SimDowntime     struct{}
-	MachineDowntime struct{}
-	SimPLC          struct{}
+	SimOperator   struct{}
+	SimStatements struct{}
+	SimPLC        struct{}
 )
 
 func (ConfigSave) Rank() int      { return 5 }
@@ -100,11 +98,9 @@ func (StationView) Rank() int     { return 133 }
 func (SSEHub) Rank() int          { return 140 }
 func (QueryCount) Rank() int      { return 990 }
 
-func (SimOperator) Rank() int     { return 180 }
-func (SimStatements) Rank() int   { return 991 }
-func (SimDowntime) Rank() int     { return 182 }
-func (MachineDowntime) Rank() int { return 183 }
-func (SimPLC) Rank() int          { return 184 }
+func (SimOperator) Rank() int   { return 180 }
+func (SimStatements) Rank() int { return 991 }
+func (SimPLC) Rank() int        { return 184 }
 
 func (Node) Nests() bool  { return true }
 func (Prime) Nests() bool { return true }
@@ -141,8 +137,6 @@ func (StationView) Name() string     { return "www.stationViewGroup.mu" }
 func (SSEHub) Name() string          { return "www.EventHub.mu" }
 func (QueryCount) Name() string      { return "store.queryCount.mu" }
 
-func (SimOperator) Name() string     { return "engine.simOperator.mu" }
-func (SimStatements) Name() string   { return "main.stmtObserver.mu" }
-func (SimDowntime) Name() string     { return "simwarlink.DowntimeModel.mu" }
-func (MachineDowntime) Name() string { return "simwarlink.MachineDowntime.mu" }
-func (SimPLC) Name() string          { return "simwarlink.FakeClient.mu" }
+func (SimOperator) Name() string   { return "engine.simOperator.mu" }
+func (SimStatements) Name() string { return "main.stmtObserver.mu" }
+func (SimPLC) Name() string        { return "simwarlink.FakeClient.mu" }

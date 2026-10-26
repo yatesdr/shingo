@@ -55,7 +55,7 @@ import (
 )
 
 // edgeSim is the minimal slice of shingoedge.dev.yaml the rate math needs: the
-// per-process tick cadence and the operator/downtime knobs. Parsed directly (not
+// per-process tick cadence and the operator knobs. Parsed directly (not
 // via the edge config package) so this core-module dev tool needs no cross-module
 // import.
 type edgeSim struct {
@@ -71,13 +71,6 @@ type edgeSim struct {
 			LoaderAutoLoad    string `yaml:"loader_auto_load"`
 			UnloaderAutoClear string `yaml:"unloader_auto_clear"`
 		} `yaml:"operators"`
-		Downtime struct {
-			Enabled  bool `yaml:"enabled"`
-			Machines []struct {
-				PLCName      string  `yaml:"plc_name"`
-				Availability float64 `yaml:"availability"`
-			} `yaml:"machines"`
-		} `yaml:"downtime"`
 	} `yaml:"sim"`
 }
 
@@ -92,7 +85,6 @@ type flow struct {
 	loaders   []string // manual_swap produce claims (C-push supply)
 	unloaders []string // manual_swap consume claims (end-gate drain)
 	bufferUOP int64    // seeded inventory of this payload at t0
-	minAvail  float64  // lowest availability across its machines (1.0 = none)
 }
 
 // procClass records, per process, what kind of node it is — the basis for the
@@ -128,22 +120,21 @@ func main() {
 	if err != nil {
 		fail("load edge config: %v", err)
 	}
-	rate, avail := edgeRates(edge)
+	rate := edgeRates(edge)
 
 	if *fleet {
 		runFleet(plant, rate, *transit, *util, *plantPath)
 		return
 	}
 	if *carriers {
-		runCarriers(plant, rate, avail, *transit, *plantPath,
+		runCarriers(plant, rate, *transit, *plantPath,
 			capacityPerMin(edge.Sim.Operators.LoaderAutoLoad),
 			capacityPerMin(edge.Sim.Operators.UnloaderAutoClear))
 		return
 	}
-	flows := walkClaims(plant, rate, avail)
+	flows := walkClaims(plant, rate)
 	report(flows, capacityPerMin(edge.Sim.Operators.LoaderAutoLoad),
-		capacityPerMin(edge.Sim.Operators.UnloaderAutoClear),
-		edge.Sim.Downtime.Enabled, *plantPath, *edgePath)
+		capacityPerMin(edge.Sim.Operators.UnloaderAutoClear), *plantPath, *edgePath)
 }
 
 // ───────────────────────── rate model (shared by both modes) ─────────────────
@@ -179,7 +170,7 @@ func activeClaims(plant *plantspec.Plant) []struct {
 }
 
 // walkClaims accumulates per-payload flows given a process→rate (parts/min) map.
-func walkClaims(plant *plantspec.Plant, rate, avail map[string]float64) map[string]*flow {
+func walkClaims(plant *plantspec.Plant, rate map[string]float64) map[string]*flow {
 	uopCap := map[string]int64{}
 	for _, p := range plant.Payloads {
 		uopCap[p.Code] = p.UOPCapacity
@@ -188,7 +179,7 @@ func walkClaims(plant *plantspec.Plant, rate, avail map[string]float64) map[stri
 	get := func(payload string) *flow {
 		f := flows[payload]
 		if f == nil {
-			f = &flow{payload: payload, uopCap: uopCap[payload], minAvail: 1.0}
+			f = &flow{payload: payload, uopCap: uopCap[payload]}
 			flows[payload] = f
 		}
 		return f
@@ -210,9 +201,6 @@ func walkClaims(plant *plantspec.Plant, rate, avail map[string]float64) map[stri
 			continue
 		}
 		r := rate[proc]
-		if a, ok := avail[proc]; ok && a < f.minAvail {
-			f.minAvail = a
-		}
 		switch c.Role {
 		case "produce":
 			f.produce += r
@@ -232,10 +220,10 @@ func walkClaims(plant *plantspec.Plant, rate, avail map[string]float64) map[stri
 	return flows
 }
 
-// edgeRates builds the process→rate and process→availability maps from the edge
-// sim config (CHECK mode reads the configured ticks).
-func edgeRates(edge *edgeSim) (rate, avail map[string]float64) {
-	rate, avail = map[string]float64{}, map[string]float64{}
+// edgeRates builds the process→rate map from the edge sim config (CHECK mode
+// reads the configured ticks).
+func edgeRates(edge *edgeSim) map[string]float64 {
+	rate := map[string]float64{}
 	for _, p := range edge.Sim.Processes {
 		d, err := time.ParseDuration(p.TickInterval)
 		if err != nil || d <= 0 {
@@ -246,14 +234,8 @@ func edgeRates(edge *edgeSim) (rate, avail map[string]float64) {
 			per = 1
 		}
 		rate[p.PLCName] = 60.0 / d.Seconds() * float64(per)
-		avail[p.PLCName] = 1.0
 	}
-	if edge.Sim.Downtime.Enabled {
-		for _, m := range edge.Sim.Downtime.Machines {
-			avail[m.PLCName] = m.Availability
-		}
-	}
-	return rate, avail
+	return rate
 }
 
 // classify partitions processes into produce-only (presses, derived by the solver)
@@ -298,7 +280,7 @@ func solveRates(plant *plantspec.Plant, lineRate float64) map[string]float64 {
 			rate[proc] = lineRate
 		}
 	}
-	demand := walkClaims(plant, rate, nil) // what the anchored lines consume
+	demand := walkClaims(plant, rate) // what the anchored lines consume
 	pureOf := pureProducerCount(cls)
 	for proc, pc := range cls {
 		if pc.hasProduce && !pc.hasConsume {
@@ -341,7 +323,7 @@ func runSolve(plant *plantspec.Plant, lineRate float64, transit, plantPath strin
 			anchor[proc] = lineRate
 		}
 	}
-	demand := walkClaims(plant, anchor, nil)
+	demand := walkClaims(plant, anchor)
 	pureOf := pureProducerCount(cls)
 
 	type derivation struct {
@@ -381,7 +363,7 @@ func runSolve(plant *plantspec.Plant, lineRate float64, transit, plantPath strin
 
 	// Confirm the derived rates actually balance (run the check on them).
 	fmt.Println()
-	flows := walkClaims(plant, rate, nil)
+	flows := walkClaims(plant, rate)
 	allOK := true
 	for _, n := range sortedKeys(flows) {
 		if _, ok, _ := flows[n].verdict(math.Inf(1), math.Inf(1)); !ok {
@@ -419,7 +401,7 @@ func sizeFromTransit(plant *plantspec.Plant, rate map[string]float64, transit st
 		fail("bad -transit %q", transit)
 	}
 	mins := d.Minutes()
-	flows := walkClaims(plant, rate, nil)
+	flows := walkClaims(plant, rate)
 
 	fmt.Printf("\nSizing for %s worst-case transit (per consumed payload):\n", transit)
 	fmt.Printf("%-10s %-10s %-14s %-12s %s\n", "PAYLOAD", "PULL/min", "REORDER≥", "BIN CAP≥", "WHY")
@@ -488,7 +470,7 @@ func runFleet(plant *plantspec.Plant, rate map[string]float64, transit string, u
 		fail("bad -util %.2f (want 0..1)", util)
 	}
 	tmin := d.Minutes()
-	flows := walkClaims(plant, rate, nil) // for manual_swap throughput (loader/unloader)
+	flows := walkClaims(plant, rate) // for manual_swap throughput (loader/unloader)
 
 	type frow struct {
 		proc, role, payload, mode string
@@ -636,7 +618,7 @@ func (f *flow) verdict(loaderClearsPerMin, unloaderClearsPerMin float64) (string
 	return "NO-SOURCE", false, "consumed but nothing produces it"
 }
 
-func report(flows map[string]*flow, loaderCap, unloaderCap float64, downtime bool, plantPath, edgePath string) {
+func report(flows map[string]*flow, loaderCap, unloaderCap float64, plantPath, edgePath string) {
 	fmt.Printf("Fill/starve — plant %s, rates %s\n\n", plantPath, edgePath)
 	fmt.Printf("%-10s %-22s %-22s %-8s %-12s %s\n",
 		"PAYLOAD", "PRODUCE/min", "CONSUME/min", "BUFFER", "VERDICT", "DETAIL")
@@ -663,9 +645,6 @@ func report(flows map[string]*flow, loaderCap, unloaderCap float64, downtime boo
 
 	fmt.Println(strings.Repeat("─", 110))
 	fmt.Printf("%d balanced, %d problem(s).  →  %s\n", balanced, problems, headline(allHealthy))
-	if downtime {
-		fmt.Println("note: downtime is ON — nominal parity holds in expectation, but buffers must cover the 85%-uptime variance.")
-	}
 	if !allHealthy {
 		os.Exit(1)
 	}

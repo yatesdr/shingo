@@ -119,7 +119,7 @@ func TestDriverStagedOrderWaitsForRelease(t *testing.T) {
 
 // A release for an order that already reached a terminal state is idempotent —
 // ReleaseOrder returns nil, not a hard error. This stops a late/duplicate release
-// (e.g. Core's complex auto-release racing a downtime FAILED) from cascading a
+// (e.g. Core's complex auto-release racing a fault's FAILED) from cascading a
 // spurious fleet_failed that fails the order twice on the Edge — the
 // "simulator: order ... not found for release" noise.
 //

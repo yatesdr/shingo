@@ -113,8 +113,8 @@ sim:
   # fulls captured all 18 STANDARD-SM carriers (every press-empty order then waited,
   # 05800934 and 8a2b01e4) and filled SYN_MARKET with PANEL-A (41/45, the second
   # jam's layer 2). 27s was 2.22/min nameplate, 1.89/min at the 85% availability
-  # below; 24s is 2.5/min nameplate, 2.13/min at 85%. soakstat's
-  # [S.2] FIXTURE BALANCE flags any payload made faster than it is drawn by more
+  # the downtime model then gave; 24s is 2.5/min nameplate, 2.13/min at 85%.
+  # soakstat's [S.2] FIXTURE BALANCE flags any payload made faster than it is drawn by more
   # than 10%, so a fixture imbalance never again reads as a Core jam.
   #
   # The 10s / 12s settings and their notes below are the history of this setting:
@@ -225,33 +225,8 @@ sim:
     # pack or less left, the operator pulls it into the lineside bucket and
     # releases the bin empty; the weld runs on the bucket through the exchange.
     lineside_pull_percent: 5
-  # Downtime model v1 (G9, §3.1): clustered random outages.
-  # Per-machine 85% availability via exponential TBF + bounded MTTR.
-  # Produces realistic clustering (good weeks / bad weeks) for OEE.
-  downtime:
-    enabled: true                     # ON for long-run/OEE realism (85% avail, clustered outages)
-    machines:
-      - plc_name: PRESS-1
-        availability: 0.85
-        min_mttr: 5m
-        max_mttr: 30m
-      - plc_name: PRESS-2
-        availability: 0.85
-        min_mttr: 5m
-        max_mttr: 30m
-      - plc_name: WELD-1
-        availability: 0.85
-        min_mttr: 5m
-        max_mttr: 30m
-      - plc_name: WELD-2
-        availability: 0.85
-        min_mttr: 5m
-        max_mttr: 30m
-      - plc_name: WELD-3
-        availability: 0.85
-        min_mttr: 5m
-        max_mttr: 30m
-      - plc_name: WELD-4
-        availability: 0.85
-        min_mttr: 5m
-        max_mttr: 30m
+  # NO DOWNTIME MODEL (removed 2026-10-26, owner). It gave PRESS-1, PRESS-2 and
+  # WELD-1..4 85% availability in clustered 5-30 min outages; PRESS-1 is WELD-1's
+  # only feed with no PANEL-A full spare in the market, so every press outage read
+  # as a 15-30 sim-min weld wait in every sim report. The rates above were measured
+  # with it on.

@@ -1593,26 +1593,6 @@ type ProductionTicks struct {
 	Ticks []ProductionTickEvent `json:"ticks"`
 }
 
-// DowntimeEvent carries a persisted downtime start or end event (G9).
-// Emitted by the sim's downtime model on readiness-gate transitions and
-// projected into core's downtime_events table for OEE availability.
-// Two events per outage: one "down" (started) and one "up" (ended).
-// The end event carries duration_ms for convenience; the start event
-// sets duration_ms = 0 and ended_at to the zero value.
-// Core deduplicates on (station, edge_event_id), taking the station from the
-// envelope: the one the transport carried, not a copy the sender asserted in
-// its own body, which could disagree with it once each Edge has its own
-// identity.
-type DowntimeEvent struct {
-	PLCName     string    `json:"plc_name"`      // the machine that went down
-	Reason      string    `json:"reason"`        // "breakdown" (sim); extensible for real plant
-	IsDown      bool      `json:"is_down"`       // true = machine went down, false = machine came back up
-	StartedAt   time.Time `json:"started_at"`    // when the downtime began
-	EndedAt     time.Time `json:"ended_at"`      // when it ended (zero for start events)
-	DurationMS  int64     `json:"duration_ms"`   // 0 for start events; repair duration for end events
-	EdgeEventID int64     `json:"edge_event_id"` // monotonic counter for dedup (Edge-local)
-}
-
 // LinesideBucketState is a lineside pile's state, on the Edge and in Core's
 // mirror alike.
 type LinesideBucketState string

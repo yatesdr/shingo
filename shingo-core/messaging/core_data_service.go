@@ -14,7 +14,6 @@ import (
 	"shingocore/service"
 	"shingocore/store"
 	"shingocore/store/demands"
-	"shingocore/store/downtime"
 	"shingocore/store/heartbeat"
 	"shingocore/store/plantclaims"
 	"shingocore/store/registry"
@@ -22,10 +21,6 @@ import (
 
 // heartbeatRetentionDays is the cell_part_events retention window (plan §12).
 const heartbeatRetentionDays = 90
-
-// downtimeRetentionDays matches heartbeatRetentionDays. Same event-log shape,
-// same 90-day window; no reason for the two to differ.
-const downtimeRetentionDays = 90
 
 // binUOPDeltaRetentionDays is the raw bin_uop_delta retention window (D6).
 // Same house number as the other two; the permanent records that outlive it
@@ -66,9 +61,6 @@ type CoreDataService struct {
 	// sourcingReport builds one station's sourcing snapshot for the heartbeat
 	// compare (FeedSourcing); ok false before the monitor's first pass.
 	sourcingReport func(station string) (protocol.SourcingStateReport, bool)
-	// downtimeCh buffers downtime event projections for the async worker
-	// started by StartDowntimeProjection (G9).
-	downtimeCh chan downtime.DowntimeEvent
 	// plantTimezone is the EXPLICITLY configured plant zone, echoed to every
 	// edge on its heartbeat ack so a site is configured in one place instead of
 	// once per box. Deliberately NOT Core's resolved zone: see
@@ -151,7 +143,6 @@ func NewCoreDataService(db *store.DB, resp coreDataResponder, announce service.E
 		inventoryDelta:     service.NewInventoryDeltaService(db, service.NewBinManifestService(db, announce), announce),
 		linesideDivergence: service.NewLinesideDivergenceService(db),
 		resp:               resp,
-		downtimeCh:         make(chan downtime.DowntimeEvent, 1024),
 		feeds:              newFeedState(),
 		bins:               newBinsFeed(),
 	}
@@ -813,82 +804,5 @@ func (s *CoreDataService) rederiveLoaderOwners() {
 		if err == nil && len(changes) > 0 && s.thresholdMonitor != nil {
 			s.thresholdMonitor.Resync(st)
 		}
-	}
-}
-
-// StartDowntimeProjection launches the async downtime_events projection worker
-// and partition manager (G9). Call once at the composition root after subject
-// registration. HandleDowntimeEvent enqueues, this worker does the INSERT.
-// (The production-tick projection that this used to mirror is synchronous
-// now; see HandleProductionTicks.)
-//
-// downtime_events is scaffolding for the sim's downtime model — deliberate,
-// and not currently fed by any plant (0 rows at Springfield; the only producer
-// is behind //go:build sim). It is kept and maintained, not deleted, because
-// the sim work that consumes it is planned. What it must NOT do meanwhile is
-// accumulate one empty partition a month forever, which is what happened while
-// this loop was missing.
-func (s *CoreDataService) StartDowntimeProjection() {
-	if err := s.db.EnsureDowntimePartitions(clock.Now().UTC()); err != nil {
-		log.Printf("core_handler: ensure downtime partitions at boot: %v", err)
-	}
-	go func() {
-		for e := range s.downtimeCh {
-			if err := s.db.InsertDowntimeEvent(e); err != nil {
-				log.Printf("core_handler: project downtime_event station=%s plc=%s edge_id=%d: %v", e.Station, e.PLCName, e.EdgeEventID, err)
-			}
-		}
-	}()
-	// Daily maintenance, mirroring StartHeartbeatMaintenance. Two things were
-	// missing here, not one: EnsurePartitions only creates the current and next
-	// month, so with no daily tick a Core up longer than two months runs out of
-	// partitions; and the copy that became store/downtime dropped
-	// DropOldPartitions entirely, so nothing ever pruned.
-	go func() {
-		t := time.NewTicker(24 * time.Hour)
-		defer t.Stop()
-		for range t.C {
-			now := clock.Now().UTC()
-			if err := s.db.EnsureDowntimePartitions(now); err != nil {
-				log.Printf("core_handler: ensure downtime partitions: %v", err)
-			}
-			if dropped, err := s.db.DropOldDowntimePartitions(downtimeRetentionDays, now); err != nil {
-				log.Printf("core_handler: drop old downtime partitions: %v", err)
-			} else if dropped > 0 {
-				log.Printf("core_handler: dropped %d expired downtime partition(s)", dropped)
-			}
-		}
-	}()
-}
-
-// HandleDowntimeEvent projects an Edge downtime event into downtime_events
-// for OEE availability dashboards (G9). Dedup on (station, edge_event_id)
-// is synchronous and runs first; the projection is enqueued non-blocking so
-// it can never back-pressure the Kafka consumer. Best-effort: a dropped
-// projection is logged, not retried.
-func (s *CoreDataService) HandleDowntimeEvent(env *protocol.Envelope, d *protocol.DowntimeEvent) {
-	station := env.Src.Station
-	isNew, err := s.db.TryDowntimeEventDedup(station, d.EdgeEventID)
-	if err != nil {
-		log.Printf("core_handler: downtime event dedup station=%s edge_id=%d: %v", station, d.EdgeEventID, err)
-		return
-	}
-	if !isNew {
-		s.resp.dbg("downtime event replay station=%s edge_id=%d — already projected", station, d.EdgeEventID)
-		return
-	}
-	ev := downtime.DowntimeEvent{
-		Station:     station,
-		PLCName:     d.PLCName,
-		Reason:      d.Reason,
-		StartedAt:   d.StartedAt,
-		EndedAt:     d.EndedAt,
-		DurationMS:  d.DurationMS,
-		EdgeEventID: d.EdgeEventID,
-	}
-	select {
-	case s.downtimeCh <- ev:
-	default:
-		log.Printf("core_handler: downtime event projection queue full, dropped station=%s plc=%s edge_id=%d", station, d.PLCName, d.EdgeEventID)
 	}
 }

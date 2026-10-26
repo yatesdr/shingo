@@ -516,7 +516,6 @@ func main() {
 	// passes (plan §12). The tick handlers project synchronously and need this
 	// month's partition before the first message.
 	coreDataService.StartHeartbeatMaintenance()
-	coreDataService.StartDowntimeProjection()
 
 	ingestor := protocol.NewIngestor(func(_ *protocol.RawHeader) bool { return true })
 	ingestor.DebugLog = dbg.Func("protocol")

@@ -296,7 +296,6 @@ type SimConfig struct {
 	Epoch      time.Time          `yaml:"epoch"`       // sim clock start (fast-forward origin). Zero = wall-now
 	AnchorWall time.Time          `yaml:"anchor_wall"` // SHARED wall anchor for fast-forward sync: sim-now = epoch + speed×(wallNow−anchor). Set IDENTICALLY in core+edge to the run-start wall time so the two clocks stay in lockstep (no cross-process drift). Zero = per-process boot anchor (drifts).
 	Calendar   SimCalendarConfig  `yaml:"calendar"`
-	Downtime   SimDowntimeConfig  `yaml:"downtime"`
 	Processes  []SimProcessConfig `yaml:"processes"`
 	Operators  SimOperatorsConfig `yaml:"operators"`
 }
@@ -321,24 +320,6 @@ type SimShiftConfig struct {
 type SimBreakConfig struct {
 	Start string `yaml:"start"` // "HH:MM" 24h
 	End   string `yaml:"end"`   // "HH:MM" 24h
-}
-
-// SimDowntimeConfig configures the clustered-random downtime model (G9, §3.1).
-// Per-machine 85% uptime via exponential TBF + bounded-random MTTR draws.
-// Disabled by default (backward-compatible).
-type SimDowntimeConfig struct {
-	Enabled  bool                       `yaml:"enabled"`  // default false
-	Machines []SimDowntimeMachineConfig `yaml:"machines"` // per-machine knobs; empty = disabled
-}
-
-// SimDowntimeMachineConfig defines downtime parameters for one machine (PLC).
-// Availability = MTBF / (MTBF + MTTR). With MTTR = random[min, max], the
-// TBF is derived to hit the target availability.
-type SimDowntimeMachineConfig struct {
-	PLCName      string  `yaml:"plc_name"`
-	Availability float64 `yaml:"availability"` // target availability (0-1), default 0.85
-	MinMTTR      string  `yaml:"min_mttr"`     // minimum repair time, e.g. "5m"
-	MaxMTTR      string  `yaml:"max_mttr"`     // maximum repair time, e.g. "30m"
 }
 
 // Scaled divides a duration by the speed multiplier. Zero or negative speed is
@@ -709,7 +690,6 @@ func (c *Config) Clone() *Config {
 			out.Sim.Calendar.Shifts[i] = s
 		}
 	}
-	out.Sim.Downtime.Machines = cloneSlice(c.Sim.Downtime.Machines)
 	out.Sim.Processes = cloneSlice(c.Sim.Processes)
 	out.Sim.Operators.Changeovers = cloneSlice(c.Sim.Operators.Changeovers)
 	out.Logging.StderrSubsystems = cloneSlice(c.Logging.StderrSubsystems)

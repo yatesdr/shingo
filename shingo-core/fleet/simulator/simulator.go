@@ -226,7 +226,7 @@ func (s *SimulatorBackend) ReleaseOrder(vendorOrderID string, blocks []fleet.Ord
 		if _, wasSettled := s.settled[vendorOrderID]; wasSettled {
 			// Idempotent: the order already settled (FINISHED/STOPPED/FAILED) and was reaped
 			// by the eviction sweep before this release arrived — typically a complex order
-			// the downtime model FAILED mid-flight while Core's auto-release was in flight for
+			// the fault model (fail_rate) FAILED mid-flight while Core's auto-release was in flight for
 			// it. Its terminal status already reached Core (DriveState fired before eviction),
 			// so the release is moot. No-op instead of erroring: a hard error cascades a
 			// spurious fleet_failed that fails the order a SECOND time on the Edge — the source

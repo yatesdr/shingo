@@ -155,8 +155,3 @@ sim:
       - {process: LINE-2, to_style: L2-B, at: 40m}
       - {process: LINE-2, to_style: L2-A, at: 120m}
 
-  # Downtime OFF, deliberately. EDGE 1 runs it for OEE realism; here a random
-  # outage inside the observation window would be indistinguishable from the
-  # defect under test, and a scenario that cannot tell those apart proves nothing.
-  downtime:
-    enabled: false

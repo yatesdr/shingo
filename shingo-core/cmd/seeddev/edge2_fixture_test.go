@@ -20,9 +20,13 @@ import (
 // It reads plants/edge2.yaml itself, not a fixture copy, for the reason
 // seed_demo_mg2_test.go gives: the shipped file is the thing under test.
 //
-// The seats counted are every consume claim of each process's ACTIVE style, both
-// halves of an A/B pair included (both hold a carrier at once). A threshold of 0
-// is informational (no loader push) and is skipped.
+// The seats counted are every consume claim of each style a process can change
+// over to, the most any one of its styles holds of the payload, both halves of an
+// A/B pair included (both hold a carrier at once). The seed's active style alone
+// is not enough: PART-X is claimed only by L2-B, so it counted no seats and its
+// threshold of 20 passed while L2-B's three cells held 60, and its loader was
+// asked only once the cells were nearly dry. A threshold of 0 is informational
+// (no loader push) and is skipped.
 func TestEdge2Fixture_ThresholdCoversSeatStock(t *testing.T) {
 	t.Parallel()
 
@@ -34,15 +38,26 @@ func TestEdge2Fixture_ThresholdCoversSeatStock(t *testing.T) {
 		t.Fatalf("validate plants/edge2.yaml: %v", err)
 	}
 
-	active := map[string]bool{}
-	for _, proc := range p.Processes {
-		active[proc.ActiveStyle] = true
+	processOf := map[string]string{}
+	for _, s := range p.Styles {
+		processOf[s.Name] = s.Process
+	}
+	type styleSeat struct{ style, payload string }
+	byStyle := map[styleSeat]int64{}
+	for _, c := range p.Claims {
+		if c.Role == "consume" {
+			byStyle[styleSeat{c.Style, c.Payload}] += c.UOPCapacity
+		}
+	}
+	type processSeat struct{ process, payload string }
+	most := map[processSeat]int64{}
+	for k, n := range byStyle {
+		ps := processSeat{processOf[k.style], k.payload}
+		most[ps] = max(most[ps], n)
 	}
 	seatStock := map[string]int64{}
-	for _, c := range p.Claims {
-		if active[c.Style] && c.Role == "consume" {
-			seatStock[c.Payload] += c.UOPCapacity
-		}
+	for k, n := range most {
+		seatStock[k.payload] += n
 	}
 
 	for _, d := range p.Demands {
@@ -51,7 +66,7 @@ func TestEdge2Fixture_ThresholdCoversSeatStock(t *testing.T) {
 		}
 		th := int64(*d.ReplenishUOPThreshold)
 		if th <= seatStock[d.Payload] {
-			t.Errorf("demand %s at %s: threshold %d is not above the %d its active cells hold; "+
+			t.Errorf("demand %s at %s: threshold %d is not above the %d its cells hold under the style claiming most of it; "+
 				"the cells alone meet it and the loader never refires",
 				d.Payload, d.Node, th, seatStock[d.Payload])
 		}

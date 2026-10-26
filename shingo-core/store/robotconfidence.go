@@ -11,7 +11,7 @@ import (
 )
 
 // Delegates to the robotconfidence sub-package, matching the shape of
-// store/heartbeat.go and store/downtime.go so callers see one *store.DB API.
+// store/heartbeat.go so callers see one *store.DB API.
 
 func (db *DB) EnsureRobotConfidencePartitions(ref time.Time) error {
 	return robotconfidence.EnsurePartitions(db.DB, ref)

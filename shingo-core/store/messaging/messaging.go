@@ -198,7 +198,7 @@ func RecordInboundMessage(db *sql.DB, msgID, msgType, stationID string) (bool, e
 
 // InboxRetentionPeriod is how long processed inbound message IDs are kept.
 //
-// Ninety days, matching the heartbeat/downtime windows, and generous by
+// Ninety days, matching the heartbeat window, and generous by
 // orders of magnitude: the record only has to outlive the redelivery it
 // guards against, which the outbox bounds at 24 hours.
 const InboxRetentionPeriod = 90 * 24 * time.Hour

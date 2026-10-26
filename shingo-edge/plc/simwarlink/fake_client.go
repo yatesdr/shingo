@@ -47,7 +47,7 @@ const OverrunTag = "SimOverrun"
 // ReadinessFunc reports whether the fake PLC should emit a tick for the given
 // plcName. When nil or returns true, the tick proceeds. When it returns false,
 // the tick is suppressed (the machine is not ready — starved input, no output
-// bin, or downtime). Set by the edge composition root to inspect runtime states.
+// bin, or off shift). Set by the edge composition root to inspect runtime states.
 type ReadinessFunc func(plcName string) bool
 
 // FakeClient serves a fixed set of PLCs (one per distinct plc_name in the sim
@@ -124,7 +124,7 @@ func (f *FakeClient) tick(ctx context.Context, p config.SimProcessConfig, t cloc
 			return
 		case <-t.C():
 			// Readiness gate (G3): a real PLC stops counting when the machine
-			// isn't ready (starved input, no output bin, downtime). The fake
+			// isn't ready (starved input, no output bin, off shift). The fake
 			// checks the injected ReadinessFunc and suppresses the tick when
 			// the machine should idle.
 			f.mu.RLock()

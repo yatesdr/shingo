@@ -174,7 +174,7 @@ type zoneHeadroom struct {
 	deepestLane string
 }
 
-func runCarriers(plant *plantspec.Plant, rate, avail map[string]float64, transit, plantPath string, loaderCap, unloaderCap float64) {
+func runCarriers(plant *plantspec.Plant, rate map[string]float64, transit, plantPath string, loaderCap, unloaderCap float64) {
 	d := 10 * time.Minute
 	if transit != "" {
 		parsed, err := time.ParseDuration(transit)
@@ -204,7 +204,7 @@ func runCarriers(plant *plantspec.Plant, rate, avail map[string]float64, transit
 	floorOK := reportStockFloor(plan, mins)
 	headroomOK := reportHeadroom(zones)
 	// Informational only, and it returns nothing to AND in: see inputCoupling.
-	reportCoupling(computeCoupling(plant, rate, avail))
+	reportCoupling(computeCoupling(plant, rate))
 	ok := balanceOK && floorOK && headroomOK
 
 	fmt.Printf("\n%s\n", headline(ok))
@@ -396,7 +396,7 @@ func computeCarriers(plant *plantspec.Plant, rate map[string]float64, loaderCap,
 	// pull, and an unloader-drained payload as fast as its producers make. So the
 	// tick rate is the answer on both sides, and the cadences are used only to
 	// flag a manual point that genuinely cannot keep up.
-	flows := walkClaims(plant, rate, nil)
+	flows := walkClaims(plant, rate)
 	for _, name := range sortedKeys(flows) {
 		f := flows[name]
 		cap := float64(f.uopCap)
@@ -801,7 +801,7 @@ func reportHeadroom(zones []zoneHeadroom) bool {
 
 // computeCoupling finds every payload whose consumer waits on more inputs than
 // its producer does, and sizes the empty pool that absorbs the difference.
-func computeCoupling(plant *plantspec.Plant, rate, avail map[string]float64) []inputCoupling {
+func computeCoupling(plant *plantspec.Plant, rate map[string]float64) []inputCoupling {
 	binTypeOf := map[string]string{}
 	capOf := map[string]int64{}
 	for _, pl := range plant.Payloads {
@@ -871,25 +871,12 @@ func computeCoupling(plant *plantspec.Plant, rate, avail map[string]float64) []i
 		}
 		sort.Strings(siblings)
 
-		// THE PRODUCER'S OWN DOWNTIME COUNTS, and the edge config declares it.
-		//
-		// Using the configured tick rate overstates the drain by the producer's
-		// unavailability — 18% at demo.yaml's 0.85 — because a press that is down
-		// is not filling carriers either. The columns below are the CONSUMER's
-		// realized fraction ON TOP of this, which is what makes the two comparable:
-		// both sides start from what their machines actually do.
-		//
-		// AND NOTE WHAT THE CONFIG ALREADY SAYS. demo.yaml's downtime block gives
-		// PRESS-2 and WELD-2 the SAME 0.85. Symmetric machine availability reads
-		// as balance and is not: WELD-2 has a way to stop that PRESS-2 does not,
-		// so equal downtime still leaves the press ahead.
+		// The columns below are the CONSUMER's realized fraction on top of the
+		// producer's configured tick rate: the sim has no machine downtime, so a
+		// press fills carriers at its rate whenever it has an empty.
 		fill := 0.0
 		if c := capOf[payload]; c > 0 {
-			a := 1.0
-			if v, ok := avail[producer]; ok && v > 0 {
-				a = v
-			}
-			fill = rate[producer] * a / float64(c)
+			fill = rate[producer] / float64(c)
 		}
 		bt := binTypeOf[payload]
 		if bt == "" {

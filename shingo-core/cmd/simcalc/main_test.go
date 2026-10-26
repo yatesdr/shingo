@@ -42,7 +42,7 @@ func fixturePlant() *plantspec.Plant {
 
 func TestWalkClaims_RatesAndABCountedOnce(t *testing.T) {
 	rate := map[string]float64{"PRESS-1": 12, "WELD-1": 6, "WELD-3": 6}
-	flows := walkClaims(fixturePlant(), rate, nil)
+	flows := walkClaims(fixturePlant(), rate)
 
 	// PANEL-LH: 1 press @12 vs 2 welds @6 each = balanced.
 	if got := flows["PANEL-LH"].produce; got != 12 {

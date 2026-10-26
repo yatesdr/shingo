@@ -168,14 +168,6 @@ const (
 	// them from clobbering each other without a revision counter.
 	SubjectSupplyRefusal = "supply.refusal"
 
-	// SubjectDowntimeEvent — Edge → Core persisted downtime event (G9).
-	// Carries DowntimeEvent. Emitted by the sim's downtime model on
-	// readiness-gate state transitions (running→down and down→running).
-	// Core projects into downtime_events for OEE availability dashboards.
-	// Replaces the old derived-only approach (gaps in cell_part_events
-	// computed at query time) with explicit persisted start/end pairs.
-	SubjectDowntimeEvent = "production.downtime"
-
 	// SubjectPlantClaims — Edge → Core: the plant-spec claim set the
 	// sourceability computation reads (a new SUBJECT on the existing
 	// shingo.orders topic, NOT a new topic — follows the production ticks
@@ -370,7 +362,6 @@ func CoreInboundSubjects() []string {
 		SubjectBinUOPDelta,
 		SubjectLinesideBucketLevel,
 		SubjectProductionTicks,
-		SubjectDowntimeEvent,
 		SubjectPlantClaims,
 		SubjectLinesideLevelReport,
 		SubjectDemandOrigin,

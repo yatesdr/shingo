@@ -274,9 +274,8 @@ Data messages use the envelope's existing `cor` (correlation ID) field for reque
 | `production.ticks` | Edge -> Core | `ProductionTicks` | Batched per-station tick feed from the counter_snapshots shipper (it replaced the per-tick `production.tick`, removed 2026-10-20) |
 | `inventory.lineside_level_report` | Edge -> Core | `LinesideLevelReport` | The Edge's own view of its lineside levels, for Core's divergence comparison |
 | `inventory.hold_dropped` | Edge -> Core | `HoldDropped` | A produce seat's hold was dropped without replaying onto a bin; Core writes one `hold_dropped` row (no bin) and lists it on /inventory |
-| `production.downtime` | Edge -> Core | `DowntimeEvent` | A persisted downtime start or end |
 
-The twelve rows with linked schemas carry full field tables below. The twenty
+The twelve rows with linked schemas carry full field tables below. The nineteen
 added after them do not — the Go structs in `protocol/payloads.go`,
 `protocol/lineside_level_report.go` and `protocol/hold_dropped.go` are the reference
 for their fields. The table's membership is pinned against
@@ -291,10 +290,9 @@ with no row. `supply.refusal` / `supply.refusal_state` are the
 supply-refusal channel that shipped 2026-07-30; `supply.refusal_snapshot`
 joined them with the feed digests, so a lost refusal message heals.
 
-**Note the name.** The downtime subject is `production.downtime`. An earlier
-version of this document called it `downtime.event` in prose, which matches no
-constant in `protocol/types.go` — the Go identifier is `SubjectDowntimeEvent`,
-and only the identifier resembles the old text.
+**`production.downtime` is removed** (2026-10-26), with the sim's downtime model,
+its only sender, and Core's projection of it into `downtime_events`. The table and
+its dedup table stay in the schema, empty and unwritten.
 
 New subjects can be added by defining a constant and a data schema -- no protocol interface changes required.
 
@@ -435,8 +433,8 @@ override, so it was always `["line-1"]`, and its only consumer composed
 `station + "." + line` into a dashboard scope no order row could match. The
 column is dropped from `edge_registry` too.
 
-**Payload copies of the station are gone** from `production.downtime` (`DowntimeEvent`),
-the retired `lineside_bucket_delta` (which carried it twice in one
+**Payload copies of the station are gone** from the since-removed
+`production.downtime` (`DowntimeEvent`), the retired `lineside_bucket_delta` (which carried it twice in one
 envelope) and `bin_uop_delta` (`BinUOPDelta`). Every handler now reads
 `Envelope.Src.Station`. The old `if station == "" { station = env.Src.Station }`
 reconciliation was a rule with two possible answers that only ever produced one

@@ -101,8 +101,8 @@ func pgBumpOpsArraySQL() string {
 //
 // DELETE, not partitions: the volume (~7,000 rows/day) doesn't justify
 // partitioning, and the hottest index is per-bin, which would go
-// cross-partition. 90 days matches heartbeatRetentionDays /
-// downtimeRetentionDays (the house number); the deepest code consumer of this
+// cross-partition. 90 days matches heartbeatRetentionDays (the house number);
+// the deepest code consumer of this
 // stream is 30 days (binsOccupancyDaily), so the window is 3× the deepest
 // read.
 //

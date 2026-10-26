@@ -17,8 +17,8 @@ import (
 )
 
 // simClock holds the clock constructed for sim mode, shared between
-// simWarlinkClient and startSimSubsystems so the downtime model gets the
-// same SimClock for scaled After() calls.
+// simWarlinkClient and startSimSubsystems so the sim operator gets the same
+// SimClock for scaled After() calls.
 var simClock clock.Clock
 
 // simGuard enforces the SHINGO_ALLOW_SIM env gate and prints the loud
@@ -46,7 +46,7 @@ func simWarlinkClient(cfg *config.Config) plc.WarlinkClient {
 	// IDENTICALLY — divergence in epoch/anchor/cap is silent clock drift across the
 	// Kafka seam (clock.BuildSimClock owns the logic + the 15× cap that MUST match
 	// core). SetDefault wires clock.Now() to sim time; simClock is shared with the
-	// downtime model + operator.
+	// operator.
 	// The anchor belongs to the RUN, not to the config file — a hardcoded
 	// epoch drifts (speed-1)x further from wall time every day it sits in the
 	// tree. clock.ResolveAnchor prefers the run's shared env anchor and is the
@@ -119,7 +119,7 @@ func startSimSubsystems(eng *engine.Engine, cfg *config.Config, wlClient plc.War
 	eng.PLCManager().StartWarLinkPoller()
 
 	// Wire the readiness gate (G3) into the fake PLC client.
-	// Compose: calendar gate AND machine-readiness gate AND downtime gate.
+	// Compose: calendar gate AND machine-readiness gate.
 	if fake, ok := wlClient.(*simwarlink.FakeClient); ok && eng.DB() != nil {
 		machineGate := makeReadinessGate(eng.DB().DB, fake.Overrun)
 		cal := simwarlink.NewProductionCalendar(simwarlink.CalendarConfig{
@@ -128,41 +128,7 @@ func startSimSubsystems(eng *engine.Engine, cfg *config.Config, wlClient plc.War
 			Shifts:  convertShifts(cfg.Sim.Calendar.Shifts),
 		})
 
-		// Downtime model (G9): per-machine clustered random outages.
-		// The model forces the readiness gate off during downtime and
-		// emits start/end events to Core via the outbox.
-		var downtimeModel *simwarlink.DowntimeModel
-		station := cfg.StationID()
-		outboxDB := eng.DB() // store.DB with EnqueueOutbox
-
-		downEmitEvent := func(envData []byte, subject string) {
-			if _, err := outboxDB.EnqueueOutbox(envData, subject); err != nil {
-				log.Printf("downtime: enqueue outbox: %v", err)
-			}
-		}
-		// setDown callback: no-op placeholder, the downtime check is
-		// integrated into the readiness gate below.
-		setDown := func(plcName string, down bool) {
-			// The readiness gate reads IsDown() directly.
-		}
-
-		// Reuse the clock built in simWarlinkClient (saved to the package var)
-		// so the downtime model's scaled After() waits run on the SAME timeline
-		// as the global clock.Now() — not a second SimClock anchored at a
-		// different wall instant (which, under a 100–300× fast-forward, drifts
-		// minutes of sim-time apart). simWarlinkClient runs first — it builds the
-		// injected WarLink client at engine.New — so simClock is populated here.
-		clk := simClock
-		if clk == nil {
-			clk = clock.Real()
-		}
-		downtimeModel = simwarlink.NewDowntimeModel(cfg.Sim, clk, station, setDown, downEmitEvent)
-
 		gate := func(plcName string) bool {
-			// Downtime gate: if the machine is in a downtime outage, suppress.
-			if downtimeModel != nil && downtimeModel.IsDown(plcName) {
-				return false
-			}
 			// Calendar gate: off-shift = no tick.
 			if cal != nil && !cal.IsOnShift(clock.Now()) {
 				return false
@@ -171,18 +137,12 @@ func startSimSubsystems(eng *engine.Engine, cfg *config.Config, wlClient plc.War
 		}
 
 		if cal != nil {
-			log.Printf("[sim] readiness gate wired (G3 + calendar + downtime: %d shifts, weekends=%v)",
+			log.Printf("[sim] readiness gate wired (G3 + calendar: %d shifts, weekends=%v)",
 				len(cfg.Sim.Calendar.Shifts), cfg.Sim.Calendar.Weekend)
 		} else {
-			log.Printf("[sim] readiness gate wired (G3 + downtime, no calendar)")
+			log.Printf("[sim] readiness gate wired (G3, no calendar)")
 		}
-		log.Printf("[sim] %s", simwarlink.FormatDowntimeParams(cfg.Sim))
 		fake.SetReadinessFunc(gate)
-
-		// Start the downtime model after the gate is wired.
-		if downtimeModel != nil {
-			downtimeModel.Start(context.Background())
-		}
 	}
 
 	if cfg.Sim.Operators.Enabled {
