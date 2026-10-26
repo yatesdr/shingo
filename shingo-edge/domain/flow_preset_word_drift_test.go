@@ -41,6 +41,21 @@ func TestSwapModeWordsMatchTheModel(t *testing.T) {
 	if seen != 4 {
 		t.Errorf("the model declares %d modes; SwapModeWord was written against 4", seen)
 	}
+	// MODES IS THE CHOOSER'S LIST: "+ Add a position" on a flow with no rows
+	// offers exactly these, so they are the modes a recipe can take — the
+	// configurable set, the loader's manual swap not among them.
+	declared := map[string]bool{}
+	for _, p := range pairs {
+		declared[p[1]] = true
+	}
+	for _, m := range protocol.ConfigurableSwapModes() {
+		if !declared[string(m)] {
+			t.Errorf("the model's MODES has no %q; the chooser would not offer a mode a recipe can take", m)
+		}
+	}
+	if len(declared) != len(protocol.ConfigurableSwapModes()) {
+		t.Errorf("the model's MODES has %d modes, the configurable set %d", len(declared), len(protocol.ConfigurableSwapModes()))
+	}
 	// A mode nothing names gets no word, so a suggested name says the
 	// positions alone rather than inventing a label.
 	if w := SwapModeWord(protocol.SwapModeManualSwap); w != "" {

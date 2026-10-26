@@ -1419,6 +1419,139 @@ async function mainAsync() {
         console.log('ok: the desktop\'s empty bar names its own way to add a position');
     }
 
+    // ── the editor's dead ends: a first row, a recipe menu with no shapes ───
+    //
+    // wireButtons stubs the pop's querySelectorAll for any [data-x] list the
+    // page binds, handing back one element per data-x="v" the page wrote, so a
+    // click on one is a real click on what the page drew.
+    function wireButtons(pop) {
+        const made = {};
+        pop.querySelectorAll = sel => {
+            const m = /^\[data-([a-z-]+)\]$/.exec(sel);
+            if (!m) return [];
+            const re = new RegExp('data-' + m[1] + '="([^"]*)"', 'g');
+            const out = [];
+            let x;
+            while ((x = re.exec(pop.innerHTML))) {
+                const b = makeElement('');
+                b.dataset[attrName('data-' + m[1])] = x[1];
+                pop.appendChild(b);
+                out.push(b);
+                made[m[1] + '=' + x[1]] = b;
+            }
+            return out;
+        };
+        return made;
+    }
+    // The owner's press on 2026-10-26: no recipes, a style with no flow, and a
+    // routing set with no source and no destination, so the generator offers
+    // nothing either.
+    const firstRowComposer = () => ({
+        styles: [{ id: 1, name: 'Style A', claims: [], parts: [], advanced: {} }],
+        routing: [],
+        presets: [],
+        palette: [],
+        cell: {
+            positions: [
+                { core_node_name: 'PLN_01', kind: 'front', sequence: 1 },
+                { core_node_name: 'PLN_02', kind: 'front', sequence: 2 },
+            ],
+            groups: {},
+        },
+    });
+
+    // A style with no rows has no choreography to borrow, so "+ Add a
+    // position" asks for one, then for the position: the first row comes from
+    // the desktop, not from a notice sending the engineer elsewhere. Nothing
+    // here reads the routing set or the generator; the missing source and
+    // destination are the row's to fill.
+    {
+        const { root, pop, main, doc } = loadPage({ composer: firstRowComposer() });
+        await drain();
+        await drain();
+        if (root.innerHTML.indexOf('<button class="pd-btn" data-act="add-position">+ Add a position</button>') < 0) {
+            throw new Error('setup: a style with no rows does not draw "+ Add a position"');
+        }
+        const made = wireButtons(pop);
+        const add = makeElement('');
+        add.classList.add('pd-btn');
+        add.dataset.act = 'add-position';
+        main.appendChild(add);
+        bubble(add, 'click', doc);
+        if (pop.hidden !== false || pop.innerHTML.indexOf('data-freemode="single_robot"') < 0) {
+            throw new Error('a style with no rows: "+ Add a position" offered no choreography to start from; pop ' +
+                JSON.stringify(pop.innerHTML.slice(0, 160)));
+        }
+        bubble(made['freemode=single_robot'], 'click', doc);
+        if (pop.hidden !== false || !made['freepos=PLN_02']) {
+            throw new Error('after the choreography, the free positions were not offered: ' + pop.innerHTML.slice(0, 200));
+        }
+        bubble(made['freepos=PLN_02'], 'click', doc);
+        await drain();
+        if (root.innerHTML.indexOf('data-row="PLN_02"') < 0) {
+            throw new Error('a style with no rows did not gain PLN_02 as its first row');
+        }
+        if (root.innerHTML.indexOf('This style has no spots yet') >= 0) {
+            throw new Error('the dead-end notice is still drawn');
+        }
+        // The source and destination the routing set could not fill are the
+        // row's own pickers, and the bar flags the row: work to finish, not a
+        // dead end.
+        for (const kind of ['source', 'dest']) {
+            if (root.innerHTML.indexOf('data-node="PLN_02" data-kind="' + kind + '"') < 0) {
+                throw new Error('the first row has no ' + kind + ' picker to fill');
+            }
+        }
+        const bar = doc.getElementById('pd-bar').innerHTML;
+        if (bar.indexOf('data-node="PLN_02"') < 0 || bar.indexOf('class="h bad"') < 0) {
+            throw new Error('the bar does not flag the new row as work to finish: ' + bar.slice(0, 200));
+        }
+        checks++;
+        console.log('ok: a style with no rows gains its first row from "+ Add a position": a choreography, then a position');
+    }
+
+    // A flow whose rows were all taken off is empty again, and is asked again:
+    // a recipe draft whose only row went is not bound to the mode it had. The
+    // draft here is a Suggested one, opened in single_robot from the Recipes
+    // tab; its row's × empties it.
+    {
+        const shape = [{ core_node_name: 'PLN_01', role: 'consume', swap_mode: 'single_robot' }];
+        const { pop, main, doc } = loadPage({
+            composer: firstRowComposer(),
+            fetch: url => (/\/api\/processes\/1\/presets$/.test(url)
+                ? Promise.resolve({ ok: true, json: async () => ({ presets: [], candidates: [], styles_with_flow: 0,
+                    generated: [{ mode: 'single_robot', shape, where: 'PLN_01' }] }) })
+                : null),
+        });
+        await drain();
+        await drain();
+        const made = wireButtons(pop);
+        const tab = makeElement('');
+        tab.dataset.tab = 'presets';
+        main.appendChild(tab);
+        bubble(tab, 'click', doc);
+        for (let i = 0; i < 4; i++) await drain();
+        const act = (name, data) => {
+            const b = makeElement('');
+            b.dataset.act = name;
+            Object.assign(b.dataset, data || {});
+            main.appendChild(b);
+            bubble(b, 'click', doc);
+        };
+        act('shape-draft', { mode: 'single_robot' });
+        await drain();
+        act('rmpos', { node: 'PLN_01' });
+        await drain();
+        act('add-position');
+        if (pop.hidden !== false || !Object.keys(made).some(k => k.indexOf('freemode=') === 0)) {
+            throw new Error('a draft emptied by its rows\' × did not offer the modes again: ' +
+                JSON.stringify(pop.innerHTML.slice(0, 200)));
+        }
+        checks++;
+        console.log('ok: a recipe draft emptied by its rows\' × offers the modes again');
+    }
+
+
     // ── the positions table: role is a column, a value reads first, staging
     //    says what it needs and who else is parked there ─────────────────────
     //

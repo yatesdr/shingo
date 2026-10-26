@@ -1855,6 +1855,11 @@ function rowlessRoles(used) {
     return out;
 }
 
+// THE FREE LIST IS THE PROCESS'S, every station's positions in it: the
+// desktop's cell is the whole process (processCellPicture, station 0), so a
+// position another station of this process owns is offered here too. That is
+// right and stays (owner, 2026-10-26): a press's outbound is the unloader's
+// position, which the unloader's own station owns.
 function freePositions() {
     if (!S.model) return [];
     const used = usedPositions();
@@ -5821,10 +5826,15 @@ function openNewGroup() {
 //
 // WHICH MODE: the one this flow already uses. A press runs one choreography
 // on almost every position, so the common case is right and the odd one out is
-// one click. A flow with no cells yet has NO default (pick-a-part U2): the
-// fallback was the first key of the mode table, `two_robot_press_index`, which
-// put a press-index row on a weld cell. A recipe decides the mode — Use a
-// preset, or Presets › New shape.
+// one click. Inside a recipe draft that is the recipe's own mode, since its
+// rows have one; a draft whose rows were all taken off is not bound to it.
+//
+// A FLOW WITH NO ROWS HAS NONE TO BORROW, and there is no default (pick-a-part
+// U2): the fallback was the first key of the mode table,
+// `two_robot_press_index`, which put a press-index row on a weld cell. So the
+// engineer is asked — the row picker's own list of choreographies, then the
+// position. It used to answer with a notice sending them to a recipe instead,
+// which left a style with no rows no way to gain its first from this screen.
 function defaultModeFor() {
     const seen = {};
     for (const n of Object.keys(S.model.cells)) {
@@ -5837,12 +5847,36 @@ function defaultModeFor() {
 function addFreePosition(btn) {
     const free = freePositions();
     if (!free.length) return;
-    if (!defaultModeFor()) {
-        S.notice = 'This style has no spots yet. Start it from a recipe — Use a recipe ▾, or + New recipe in the rail.';
-        drawFlows();
-        return;
-    }
-    if (free.length === 1) { apply({ type: 'addPosition', node: free[0], mode: defaultModeFor() }); return; }
+    const mode = defaultModeFor();
+    if (mode) addFreeAs(btn, free, mode);
+    else openFreeModes(btn, free);
+}
+
+// openFreeModes asks for the first row's choreography, then its position.
+function openFreeModes(btn, free) {
+    const pop = $('pd-pop');
+    if (!pop) return;
+    const labels = M().modeLabels();
+    pop.innerHTML = '<div class="pd-lbl">Choreography for the first position</div>' +
+        Object.keys(labels).map(m => '<button data-freemode="' + esc(m) + '">' + gl(m, 22, {}) +
+            esc(labels[m]) + '</button>').join('');
+    pop.hidden = false;
+    placePopover(pop, btn);
+    // The click is stopped here: the position menu replaces this one, so the
+    // button is gone from #pd-pop by the time the document's outside-click
+    // closer sees it, and it would close the menu it just opened.
+    pop.querySelectorAll('[data-freemode]').forEach(b => b.addEventListener('click', e => {
+        e.stopPropagation();
+        const mode = b.dataset.freemode;
+        closePop();
+        addFreeAs(btn, free, mode);
+    }));
+}
+
+// addFreeAs adds a free position as mode: the one free position at once, or
+// the position the engineer picks from the free ones.
+function addFreeAs(btn, free, mode) {
+    if (free.length === 1) { apply({ type: 'addPosition', node: free[0], mode: mode }); return; }
     const pop = $('pd-pop');
     if (!pop) return;
     pop.innerHTML = '<div class="pd-lbl">Add a position</div>' +
@@ -5856,7 +5890,7 @@ function addFreePosition(btn) {
     pop.querySelectorAll('[data-freepos]').forEach(b => b.addEventListener('click', () => {
         const node = b.dataset.freepos;
         closePop();
-        apply({ type: 'addPosition', node: node, mode: defaultModeFor() });
+        apply({ type: 'addPosition', node: node, mode: mode });
     }));
 }
 
