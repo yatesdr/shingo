@@ -165,7 +165,7 @@ func boardServes(tiles []store.StationNodeView) (map[string]bool, map[protocol.C
 // is not a cell it serves. Pinned by TestServedRows_LoaderClaimsAreNotRows,
 // which seeds a non-loader claim beside a loader one.
 func (s *StationService) isLoaderClaim(c processes.NodeClaim) bool {
-	return c.IsLoaderNode() || s.loaderHolds(c.CoreNodeName)
+	return c.IsLoaderNode() || s.LoaderHolds(c.CoreNodeName)
 }
 
 // servedHave is a row's count of its part: the node's bin when the bin holds

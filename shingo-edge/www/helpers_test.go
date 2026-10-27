@@ -87,7 +87,8 @@ type stubEngine struct {
 	cfg           *config.Config
 	cfgPath       string
 	core          map[string]protocol.NodeInfo
-	groups        map[string][]string // group membership the stub's StationService is wired with
+	groups        map[string][]string    // group membership the stub's StationService is wired with
+	loaders       service.LoaderResolver // nil: unwired, so no node is a shared loader window
 	orderMgr      *orders.Manager
 	// plcMgr is what PLCManager returns: nil unless a test puts a manager
 	// (with a seeded tag cache) here.
@@ -384,6 +385,9 @@ func (s *stubEngine) StationService() *service.StationService {
 	if s.groups != nil {
 		groups := s.groups
 		svc.SetCoreNodeGroupResolver(func() map[string][]string { return groups })
+	}
+	if s.loaders != nil {
+		svc.SetLoaderResolver(s.loaders)
 	}
 	return svc
 }

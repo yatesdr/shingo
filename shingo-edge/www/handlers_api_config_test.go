@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"shingo/protocol"
+	"shingoedge/domain"
 	"shingoedge/store/catalog"
 	"shingoedge/store/processes"
 )
@@ -463,6 +464,52 @@ func TestApiConfig_GetCoreNodes_GroupCarriesMembers(t *testing.T) {
 	}
 	if m, ok := got["FGN_001"]; !ok || len(m) != 0 {
 		t.Errorf("plain node: present %v members %v, want present with none", ok, m)
+	}
+}
+
+// oneLoader answers LoaderForNode from one loader, everything else a clean miss.
+type oneLoader struct{ l *domain.Loader }
+
+func (o oneLoader) LoaderForNode(n domain.NodeID) (*domain.Loader, error) {
+	if o.l.Contains(n) {
+		return o.l, nil
+	}
+	return nil, nil
+}
+
+// A window of a Core-owned loader says so, because the positions checklist
+// offers it even when another process holds it (SetNodes accepts a loader's
+// node on several processes) and greys out every other held node.
+func TestApiConfig_GetCoreNodes_LoaderWindowIsShared(t *testing.T) {
+	h, router := newAdminRouter(t)
+	cookie := authCookie(t, h)
+
+	loader, err := domain.NewSharedWindowLoader(domain.LoaderID("LD-SHARED"), domain.RoleConsume,
+		domain.ReplenishmentOperator, []domain.Window{{Node: "SMN_001"}}, nil)
+	if err != nil {
+		t.Fatalf("NewSharedWindowLoader: %v", err)
+	}
+	stub := h.engine.(*stubEngine)
+	stub.core = map[string]protocol.NodeInfo{
+		"SMN_001": {Name: "SMN_001", NodeType: "storage"},
+		"PLN_005": {Name: "PLN_005", NodeType: "storage"},
+	}
+	stub.loaders = oneLoader{l: loader}
+
+	resp := doRequest(t, router, "GET", "/api/core-nodes", nil, cookie)
+	assertStatus(t, resp, http.StatusOK)
+
+	var rows []struct {
+		Name         string `json:"name"`
+		SharedLoader bool   `json:"shared_loader"`
+	}
+	decodeJSON(t, resp, &rows)
+	got := map[string]bool{}
+	for _, r := range rows {
+		got[r.Name] = r.SharedLoader
+	}
+	if !got["SMN_001"] || got["PLN_005"] {
+		t.Errorf("shared_loader = %v, want SMN_001 true and PLN_005 false", got)
 	}
 }
 

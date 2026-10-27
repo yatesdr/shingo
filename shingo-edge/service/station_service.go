@@ -418,10 +418,12 @@ func (s *StationService) livePositionsOfOtherProcesses(excludeProcessID int64) (
 	return held, nil
 }
 
-// loaderHolds reports whether a Core-owned loader's window/position set names
+// LoaderHolds reports whether a Core-owned loader's window/position set names
 // coreNodeName — the shared-window exception to the one-process-per-slot rule.
 // An unwired resolver or a clean miss is false: no loader, no exception.
-func (s *StationService) loaderHolds(coreNodeName string) bool {
+// Exported for the node list the positions checklist reads, so the page greys
+// out exactly the names SetNodes would refuse and no others.
+func (s *StationService) LoaderHolds(coreNodeName string) bool {
 	if s.loaders == nil || coreNodeName == "" {
 		return false
 	}
@@ -563,7 +565,7 @@ func (s *StationService) SetNodes(stationID int64, nodeNames []string) (kept []s
 		if !held {
 			continue
 		}
-		if s.loaderHolds(name) {
+		if s.LoaderHolds(name) {
 			continue
 		}
 		return nil, &otherProcessPositionError{name: name, process: other}
