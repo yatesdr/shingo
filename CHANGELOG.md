@@ -3,6 +3,37 @@
 One line per change. If a change needs a paragraph to explain, the paragraph
 belongs in the commit message or in `docs/` — this file is the index.
 
+## 2026-10-27 — Press tranche 2, the route strip, and positions from Settings
+
+Core then Edge in one window; Core 164–167, Edge v29–v30. SPR runs c350a1ba; the Settings positions work is not deployed.
+
+- REQUEST judges a press's on-deck by the carrier standing on it
+- A changeover plans and lifts each press position by what stands on it
+- A vacant on-deck is fetched from its claim's source, or waits for one coming
+- A press's chain goes ahead of its swap, never instead of it
+- A pair held for its on-deck reads WAITING FOR OUTSIDE MATERIAL
+- START cancels a changing press's queued clear and prime, and a moving SEND BACK
+- Tops & bottoms is a carrier state of its own, never an ordinary empty (164)
+- retrieve_tops_bottoms pulls exactly that, from its source
+- An unloader's drain boxes pull ticked part-less carts into free windows (165)
+- An empty off a line goes to the maintained group short of it
+- SEND BACK on a tote press: the line, the route and CANCEL
+- An empty's wanted height rides the order as `want` (166)
+- Every order is issued holding the cart, bin or window its door declares
+- A pickup binds what its step lifts; availability asks the quality hold too
+- The loader pool ranks empties on the finders' height ladder
+- A swap is not downgraded onto a carrier the Edge has just seen land
+- Core's boards draw an order's route as a strip, from `orders.steps_done` (167)
+- Edge v29 clears stale paired positions on modes that use none; v30 adds `want`
+- The recipe generator and "Import from…" retire; a recipe is built by hand
+- "+ New recipe" opens an empty draft; a recipe saves only rows its mode can run
+- Taking a position off a screen names the recipes and styles still claiming it
+- Settings lists a process's positions and adds them from a checklist
+- Core's node list marks the nodes a loader shares
+- `--pprof-port` serves net/http/pprof on loopback; off by default
+- The Bins page lays a type's dimensions out W, L, H
+- Tests: the press scenario matrix, the order census, bind and availability tables
+
 ## 2026-10-26 — Changeovers at two-buffer cells, and FIFO kept honest
 
 Core, Edge and protocol; no migration. Not deployed. UOPAdjustment gains two optional fields.
