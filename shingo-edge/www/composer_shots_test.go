@@ -1235,6 +1235,11 @@ func TestComposerShots(t *testing.T) {
 	desktopShot("D4-operator-screens.png", d4)
 	desktopShot("D5-settings.png", d5)
 	desktopDOM("D4 operator screens", d4, `data-act="screen-add"`)
+	// Settings' Add positions checklist, whole and filtered to one family.
+	d5add := d5 + ";addpos="
+	desktopShot("D5-add-positions.png", d5add)
+	desktopShot("D5-add-positions-filtered.png", d5add+"PLN_")
+	desktopDOM("D5 add positions", d5add, `class="pd-npk check"`)
 
 	// ── EDITING A SCREEN'S NOTE DOES NOT DELETE ITS POSITIONS ───────────
 	//

@@ -2626,8 +2626,11 @@ async function mainAsync() {
         const h = await addProcessSheet(null);
         const parts = h.split('placeholder="find a part by name"').length - 1;
         const nodes = h.split('placeholder="find a node by name"').length - 1;
-        if (parts !== 1 || nodes !== 4) {
-            throw new Error('want 1 part placeholder and 4 node placeholders, got ' + parts + ' and ' + nodes);
+        // The positions field is the checklist, whose field filters a list
+        // that is already open rather than finding into a closed one.
+        const check = h.split('placeholder="filter by name, or pick a prefix below"').length - 1;
+        if (parts !== 1 || nodes !== 3 || check !== 1) {
+            throw new Error('want 1 part, 3 node and 1 checklist placeholder, got ' + parts + ', ' + nodes + ' and ' + check);
         }
     });
 
@@ -2837,6 +2840,7 @@ async function mainAsync() {
     });
 
     await recipeGroupPins({ pin, okJSON, click, wireSheet, wireOptions, chip, settle, liveInputs });
+    if (!nodeProcess.argv[2]) await settingsPositionsPins({ pin, okJSON, click, wireSheet, settle });
 
     if (failures > 0) {
         console.error('FAILED: ' + failures + ' of ' + (failures + checks));
@@ -3411,6 +3415,191 @@ async function recipeGroupPins(h) {
         if (o.relation !== true) throw new Error('the Use sheet\'s picture is not by relation');
         if (JSON.stringify((o.active || []).slice().sort()) !== '["PLN_005","PLN_008","PLN_010","PLN_012"]') {
             throw new Error('the Use sheet draws full ' + JSON.stringify(o.active));
+        }
+    });
+}
+
+// ── Settings · Positions and the Add positions checklist ─────────────────────
+//
+// Press 6 with its two screens: the press's own (18) and the Unloader (25).
+// Press 4 holds PLN_001; the Bin Loader holds SMN_001, a Core loader's window.
+// The screen's list the SERVER answers carries PLN_009BCD, which the page was
+// not loaded with: an add that sent the page's own list would drop it.
+async function settingsPositionsPins(h) {
+    const { pin, okJSON, click, wireSheet, settle } = h;
+    const live = () => [
+        { id: 87, process_id: 1, process_name: 'Press 6', operator_station_id: 18, station_name: 'Press 6 Operator Screen',
+            core_node_name: 'PLN_005', name: 'PLN_005', sequence: 1, enabled: true },
+        { id: 127, process_id: 1, process_name: 'Press 6', operator_station_id: 18, station_name: 'Press 6 Operator Screen',
+            core_node_name: 'PLN_006BCD', name: 'PLN_006BCD', sequence: 2, enabled: true },
+        { id: 144, process_id: 1, process_name: 'Press 6', operator_station_id: 25, station_name: 'Unloader',
+            core_node_name: 'ULN_002', name: 'ULN_002', sequence: 1, enabled: true },
+        { id: 89, process_id: 1, process_name: 'Press 6', operator_station_id: null, station_name: '',
+            core_node_name: 'PLN_009', name: 'PLN_009', sequence: 3, enabled: true },
+        { id: 50, process_id: 2, process_name: 'Press 4', operator_station_id: 30, station_name: 'P400',
+            core_node_name: 'PLN_001', name: 'PLN_001', sequence: 1, enabled: true },
+        { id: 60, process_id: 3, process_name: 'Bin Loader', operator_station_id: 8, station_name: 'Bin Loader',
+            core_node_name: 'SMN_001', name: 'SMN_001', sequence: 1, enabled: true },
+    ];
+    const coreNodes = [
+        { name: 'PLN_001', node_type: 'storage' }, { name: 'PLN_005', node_type: 'storage' },
+        { name: 'PLN_005PAL', node_type: 'storage' }, { name: 'PLN_006BCD', node_type: 'storage' },
+        { name: 'PLN_006PAL', node_type: 'storage' }, { name: 'PLN_009', node_type: 'storage' },
+        { name: 'SMN_001', node_type: 'storage', shared_loader: true },
+        { name: 'SMN_002', node_type: 'storage' }, { name: 'ULN_002', node_type: 'storage' },
+        { name: 'Press Unloader', node_type: 'NGRP', members: ['ULN_002', 'ULN_005'] },
+    ];
+    const claimed = { 18: ['PLN_005', 'PLN_006BCD', 'PLN_009BCD'], 25: ['ULN_002'] };
+    // One Press 6 page on Settings: every write recorded, the claimed-nodes
+    // read answered from `claimed` unless `readFails`, the impact from `warning`.
+    const page = (hash, o) => {
+        o = o || {};
+        const writes = [];
+        const ctx = loadPage({
+            allowSheet: true, hash: hash,
+            processes: [{ id: 1, name: 'Press 6', group_id: 0, active_style_id: 1, flow_composer_enabled: true }],
+            stations: [{ id: 18, process_id: 1, name: 'Press 6 Operator Screen' }, { id: 25, process_id: 1, name: 'Unloader' }],
+            stationNodes: { 18: ['PLN_005', 'PLN_006BCD'], 25: ['ULN_002'] },
+            fetch: (url, init) => {
+                const method = (init && init.method) || 'GET';
+                if (url === '/api/process-nodes') return okJSON(live());
+                if (url === '/api/core-nodes') return okJSON(coreNodes);
+                const m = /^\/api\/operator-stations\/(\d+)\/claimed-nodes(\/impact)?$/.exec(url);
+                if (!m) return null;
+                if (method === 'GET') {
+                    return o.readFails ? Promise.resolve({ ok: false, status: 500, json: async () => ({}) })
+                        : okJSON(claimed[m[1]] || []);
+                }
+                writes.push({ method: method, url: url, body: JSON.parse(init.body) });
+                if (m[2]) return okJSON({ warning: o.warning || '' });
+                return okJSON({ status: 'ok', kept: [] });
+            },
+        });
+        return Object.assign(ctx, { writes: writes });
+    };
+    const rowOf = (html, name) => (html.match(new RegExp('<button[^>]*>(?:<i class="box"></i>)?' + name + '(?:<small>[^<]*</small>)?</button>')) || [''])[0];
+
+    await pin('Settings lists each position under its screen, with its curtain switch and a Remove', async () => {
+        const ctx = page('#tab=settings');
+        await settle();
+        const html = ctx.root.innerHTML;
+        if (html.indexOf('<h2>Positions</h2>') < 0 || html.indexOf('data-act="pos-add"') < 0) {
+            throw new Error('Settings draws no Positions section with Add positions');
+        }
+        if (html.indexOf('<h2>Light curtain interlock</h2>') >= 0) throw new Error('the curtain section is still its own heading');
+        const press = html.indexOf('<div class="pd-lbl pd-posscreen">Press 6 Operator Screen</div>');
+        const unloader = html.indexOf('<div class="pd-lbl pd-posscreen">Unloader</div>');
+        if (press < 0 || unloader < 0) throw new Error('the rows are not grouped under their two screens');
+        const at = n => html.indexOf('data-act="pos-remove" data-node="' + n + '"');
+        if (!(press < at('PLN_005') && at('PLN_005') < unloader && unloader < at('ULN_002'))) {
+            throw new Error('PLN_005 is not under the press\'s screen, or ULN_002 not under the Unloader');
+        }
+        if (html.indexOf('data-act="pos-remove" data-node="PLN_005" data-station="18"') < 0) throw new Error('PLN_005\'s Remove does not name screen 18');
+        if (html.indexOf('data-act="cu-toggle" data-node="87"') < 0) throw new Error('PLN_005 has no curtain switch');
+        const loose = html.indexOf('<div class="pd-lbl pd-posscreen">On no screen</div>');
+        if (loose < unloader || html.indexOf('data-act="cu-toggle" data-node="89"') < loose) throw new Error('PLN_009 is not under On no screen');
+        if (html.indexOf('data-act="pos-remove" data-node="PLN_009"') >= 0) throw new Error('a position on no screen offers a Remove it cannot do');
+    });
+
+    await pin('Add positions greys what is a position already, names whose, and offers a loader window', async () => {
+        const ctx = page('#tab=settings;addpos=');
+        await settle();
+        const s = ctx.scrim.innerHTML;
+        if (!ctx.scrim.classList.contains('active') || s.indexOf('<h2>Add positions</h2>') < 0) throw new Error(';addpos= opened no sheet');
+        const want = {
+            PLN_001: '<button class="off" disabled><i class="box"></i>PLN_001<small>on Press 4</small></button>',
+            PLN_005: '<button class="off" disabled><i class="box"></i>PLN_005<small>already on Press 6 Operator Screen</small></button>',
+            ULN_002: '<button class="off" disabled><i class="box"></i>ULN_002<small>already on Unloader</small></button>',
+        };
+        for (const n of Object.keys(want)) {
+            if (rowOf(s, n) !== want[n]) throw new Error(n + ' draws ' + JSON.stringify(rowOf(s, n)) + '\n      want ' + want[n]);
+        }
+        if (!/data-npkname="SMN_001"><i class="box"><\/i>SMN_001<small>loader window · also on Bin Loader<\/small>/.test(s)) {
+            throw new Error('the loader window is not offered with its note: ' + JSON.stringify(rowOf(s, 'SMN_001')));
+        }
+        if (!/data-npk="add"[^>]*data-npkname="PLN_005PAL"/.test(s)) throw new Error('PLN_005PAL is not tickable');
+        if (!/data-npkname="PLN_009"><i class="box"><\/i>PLN_009<small>on no screen yet<\/small>/.test(s)) {
+            throw new Error('a position on no screen is not offered to put on one: ' + JSON.stringify(rowOf(s, 'PLN_009')));
+        }
+        if (s.indexOf('Press Unloader') >= 0) throw new Error('a group is offered as a box');
+        const pres = (s.match(/data-npk="prefix" data-npkkey="addpos" data-npkname="(\w+)"/g) || []).map(x => x.replace(/.*"(\w+)"$/, '$1'));
+        if (pres.join(' ') !== 'PLN SMN ULN') throw new Error('prefixes ' + JSON.stringify(pres));
+        if (/data-npk="(all|none)"/.test(s)) throw new Error('the checklist offers a tick-all');
+        if (s.indexOf('data-act="pos-screen" data-station="25"') < 0) throw new Error('two screens, and no chooser');
+    });
+
+    await pin('a prefix filters the checklist to its family and only filters', async () => {
+        const ctx = page('#tab=settings;addpos=PLN_');
+        await settle();
+        const s = ctx.scrim.innerHTML;
+        if (s.indexOf('PLN_005PAL') < 0 || s.indexOf('>SMN_002<') >= 0) throw new Error('PLN_ did not filter to PLN: ' + s.length);
+        if (!/<button class="on" data-npk="prefix" data-npkkey="addpos" data-npkname="PLN">/.test(s)) throw new Error('PLN is not marked as the filter');
+        click(ctx.scrim, ctx.doc, { npk: 'prefix', npkkey: 'addpos', npkname: 'PLN' });
+        click(ctx.scrim, ctx.doc, { npk: 'prefix', npkkey: 'addpos', npkname: 'SMN' });
+        wireSheet(ctx.scrim, '');
+        click(ctx.scrim, ctx.doc, { act: 'sheet-ok' });
+        await settle();
+        if (ctx.writes.length) throw new Error('pressing prefixes ticked something: ' + JSON.stringify(ctx.writes));
+    });
+
+    await pin('Add sends the screen\'s list as the server answers it, plus the ticked nodes', async () => {
+        const ctx = page('#tab=settings;addpos=');
+        await settle();
+        click(ctx.scrim, ctx.doc, { npk: 'add', npkkey: 'addpos', npkname: 'PLN_005PAL' });
+        click(ctx.scrim, ctx.doc, { npk: 'add', npkkey: 'addpos', npkname: 'PLN_006PAL' });
+        click(ctx.scrim, ctx.doc, { act: 'sheet-ok' });
+        await settle();
+        const put = ctx.writes.find(w => w.method === 'PUT');
+        if (!put || put.url !== '/api/operator-stations/18/claimed-nodes') throw new Error('Add wrote ' + JSON.stringify(ctx.writes));
+        const want = '["PLN_005","PLN_006BCD","PLN_009BCD","PLN_005PAL","PLN_006PAL"]';
+        if (JSON.stringify(put.body.nodes) !== want) throw new Error('Add sent ' + JSON.stringify(put.body.nodes) + '\n      want ' + want);
+        if (ctx.scrim.classList.contains('active')) throw new Error('the sheet is still open');
+        const says = '<div class="pd-notice">Added PLN_005PAL, PLN_006PAL to Press 6 Operator Screen.</div>';
+        if (ctx.root.innerHTML.indexOf(says) < 0) throw new Error('Settings does not say ' + says);
+    });
+
+    await pin('the screen chooser sends the ticks to the screen picked', async () => {
+        const ctx = page('#tab=settings;addpos=');
+        await settle();
+        click(ctx.scrim, ctx.doc, { act: 'pos-screen', station: '25' });
+        click(ctx.scrim, ctx.doc, { npk: 'add', npkkey: 'addpos', npkname: 'SMN_002' });
+        click(ctx.scrim, ctx.doc, { act: 'sheet-ok' });
+        await settle();
+        const put = ctx.writes.find(w => w.method === 'PUT');
+        if (!put || put.url !== '/api/operator-stations/25/claimed-nodes' || JSON.stringify(put.body.nodes) !== '["ULN_002","SMN_002"]') {
+            throw new Error('the Unloader add wrote ' + JSON.stringify(ctx.writes));
+        }
+    });
+
+    await pin('a screen list that cannot be read adds nothing', async () => {
+        const ctx = page('#tab=settings;addpos=', { readFails: true });
+        await settle();
+        const status = wireSheet(ctx.scrim, '');
+        click(ctx.scrim, ctx.doc, { npk: 'add', npkkey: 'addpos', npkname: 'PLN_005PAL' });
+        click(ctx.scrim, ctx.doc, { act: 'sheet-ok' });
+        await settle();
+        if (ctx.writes.length) throw new Error('an add over an unread list was sent: ' + JSON.stringify(ctx.writes));
+        if (status.textContent.indexOf('could not be read, so nothing was added') < 0) throw new Error('the sheet says ' + JSON.stringify(status.textContent));
+    });
+
+    await pin('Remove asks with what still names the position, then sends the list without it', async () => {
+        const says = 'PLN_005 is named by recipe Two up.';
+        const ctx = page('#tab=settings', { warning: says });
+        await settle();
+        click(ctx.root, ctx.doc, { act: 'pos-remove', node: 'PLN_005', station: '18' });
+        await settle();
+        const ask = ctx.writes.find(w => /\/impact$/.test(w.url));
+        if (!ask || JSON.stringify(ask.body.nodes) !== '["PLN_006BCD","PLN_009BCD"]') throw new Error('the impact ask was ' + JSON.stringify(ask));
+        if (ctx.scrim.innerHTML.indexOf('<h2>Remove PLN_005</h2>') < 0 || ctx.scrim.innerHTML.indexOf(says) < 0) {
+            throw new Error('the question does not carry the warning: ' + ctx.scrim.innerHTML.slice(0, 300));
+        }
+        if (ctx.writes.some(w => w.method === 'PUT')) throw new Error('Remove wrote before it was confirmed');
+        click(ctx.scrim, ctx.doc, { act: 'sheet-ok' });
+        await settle();
+        const put = ctx.writes.find(w => w.method === 'PUT');
+        if (!put || JSON.stringify(put.body.nodes) !== '["PLN_006BCD","PLN_009BCD"]') throw new Error('Remove sent ' + JSON.stringify(put));
+        if (ctx.root.innerHTML.indexOf('<div class="pd-notice">Removed PLN_005 from Press 6 Operator Screen.</div>') < 0) {
+            throw new Error('Settings does not say what was removed');
         }
     });
 }

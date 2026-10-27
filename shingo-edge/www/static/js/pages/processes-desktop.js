@@ -78,6 +78,8 @@ const S = {
     coreNodes: null,     // Core's node list, [{name, node_type}] — the node picker's source
     coreNodesReq: null,  // the in-flight read of it, so four pickers share one request
     pickers: {},         // every open node picker, by key — see pickerInit
+    livePositions: null, // every live position on this Edge, every process's — see loadLivePositions
+    addPos: null,        // the Add positions sheet's screen: {station}
     add: null,           // the Add-process sheet's own non-text draft: {groupID}
     partPop: null,       // the open part popover: {node, q, note, catalogFailed}
     partSet: null,       // the STORED half of the open process's part set; null = not read
@@ -420,7 +422,13 @@ async function openProcess(id) {
         // mock's tab 1 has to reach.
         if (h.recipe) openRecipeAt(h);
     }
-    else if (h.tab === 'settings') { S.tab = 'settings'; S.settings = settingsDraft(); await openSettings(); }
+    else if (h.tab === 'settings') {
+        S.tab = 'settings';
+        S.settings = settingsDraft();
+        await openSettings();
+        // ;addpos=<filter> opens Add positions with the filter typed.
+        if ('addpos' in h) await openAddPositions(h.addpos);
+    }
     // #newstyle=<recipe> opens + New style on that recipe, at its Spots step;
     // ;sel=<node> selects a place there, as the station's #compose ;sel= does.
     if (h.newstyle) openNewStyle(h.newstyle, h.sel);
@@ -474,7 +482,8 @@ function hashOpts() {
 // out of the address bar lands on the same state. replaceState mints no
 // history entries, so back and forward stay the browser's, not this page's.
 // The boot-only one-shots (;adv=, #part=, ;preset=, ;apply=, ;tick=,
-// ;recipe= with ;groups= ;focus= ;row= ;gadv=, #newstyle= with ;sel=) are
+// ;recipe= with ;groups= ;focus= ;row= ;gadv=, #newstyle= with ;sel=,
+// ;addpos=) are
 // consumed once and never re-minted: they exist so the shots harness can
 // reach a state without driving a mouse, and re-writing them would pin every
 // later click to a deep link nobody asked for.
@@ -4153,6 +4162,14 @@ function onAdvClick(e) {
         if (lane || spot) { e.stopPropagation(); tapNewSpot(lane ? lane.dataset.staging : spot.dataset.pos); return; }
         if (act && act.dataset.act === 'nmove-rm') { e.stopPropagation(); undoNewMove(act.dataset.node); return; }
     }
+    // Add positions' screen chooser: which screen the ticked nodes go on.
+    if (act && act.dataset.act === 'pos-screen' && S.addPos) {
+        e.stopPropagation();
+        S.addPos.station = Number(act.dataset.station);
+        const seg = $('pd-posscreen');
+        if (seg) seg.innerHTML = addPositionsScreens();
+        return;
+    }
     if (act && act.dataset.act === 'add-pickgroup') {
         e.stopPropagation();
         openGroupPicker(act, id => {
@@ -4414,19 +4431,57 @@ function curtainDraft() {
     return out;
 }
 
-// The open process's live nodes, for the curtain section. Every node, not
-// only produce ones: the screen stands where the bin is picked up, and the
-// engineer who wired it knows which spot that is.
+// The open process's live nodes, for the Positions section and the curtain
+// switch on each. Every node, not only produce ones: the screen stands where
+// the bin is picked up, and the engineer who wired it knows which spot that is.
 async function loadCurtainNodes() {
-    S.curtainNodes = [];
+    S.curtainNodes = (await loadLivePositions())
+        .filter(n => n.process_id === S.processID)
+        .sort((a, b) => (a.sequence - b.sequence) || String(a.name).localeCompare(String(b.name)));
+    S.curtain = curtainDraft();
+}
+
+// loadLivePositions reads every live position on this Edge, every process's,
+// into S.livePositions and returns it. A failed read is [] here and marks
+// nothing: SetNodes still refuses what it must, it just cannot be warned of.
+async function loadLivePositions() {
     try {
         const res = await fetch('/api/process-nodes');
         const rows = res.ok ? await res.json() : [];
-        S.curtainNodes = (Array.isArray(rows) ? rows : [])
-            .filter(n => n.process_id === S.processID)
-            .sort((a, b) => (a.sequence - b.sequence) || String(a.name).localeCompare(String(b.name)));
-    } catch (_) { S.curtainNodes = []; }
-    S.curtain = curtainDraft();
+        S.livePositions = Array.isArray(rows) ? rows : [];
+    } catch (_) { S.livePositions = []; }
+    return S.livePositions;
+}
+
+// positionBlock is why `name` cannot become a position of processID, or ''.
+// It is SetNodes' own refusal, said before the save instead of after it: one
+// Core node is one position of one process, unless a Core loader holds it
+// (shared_loader on Core's node list). A node already on one of this process's
+// screens is greyed too; ticking it would MOVE it there, which is the screen
+// sheet's job, not an add's. One of this process's positions on NO screen is
+// not: the save adopts it onto the screen picked, which is what it lacks.
+// processID 0 is a process not yet made.
+function positionBlock(name, processID) {
+    const rows = (S.livePositions || []).filter(n => n.core_node_name === name);
+    const own = rows.find(n => n.process_id === processID);
+    if (own) return own.operator_station_id ? 'already on ' + (own.station_name || 'a screen of this process') : '';
+    const other = rows[0];
+    if (other && !sharedLoaderNode(name)) return 'on ' + other.process_name;
+    return '';
+}
+
+// positionNote is what a tickable node carries: a position of this process on
+// no screen, or a loader window another process holds.
+function positionNote(name, processID) {
+    const rows = (S.livePositions || []).filter(n => n.core_node_name === name);
+    if (rows.some(n => n.process_id === processID)) return 'on no screen yet';
+    const other = rows.find(n => n.process_id !== processID);
+    return other && sharedLoaderNode(name) ? 'loader window · also on ' + other.process_name : '';
+}
+
+function sharedLoaderNode(name) {
+    const n = (S.coreNodes || []).find(c => c.name === name);
+    return !!(n && n.shared_loader);
 }
 
 function curtainDirty() {
@@ -4476,6 +4531,191 @@ function stToggle(key) {
         '" role="switch" aria-checked="' + (S.settings[key] ? 'true' : 'false') + '"></button>';
 }
 
+// ── Settings · Positions ─────────────────────────────────────────────────────
+//
+// Every position of the process, under the screen it is on, each with its
+// light-curtain switch and a Remove. Add positions opens the checklist.
+//
+// A POSITION BELONGS TO A SCREEN, not to the process alone (process_nodes
+// carries operator_station_id, and claimed-nodes is per screen), so the rows
+// are grouped by screen and the add asks which one when there is more than
+// one. The Operator screens tab still edits the same list; both write through
+// PUT …/claimed-nodes, and this section never sends a list it did not just read.
+function positionsSection() {
+    const screens = stationsOf(S.processID);
+    const head = '<div class="pd-sect"><h2>Positions</h2>' +
+        '<span class="pd-dim">the spots this process works, by the screen each is on</span>' +
+        '<span class="pd-spacer"></span>' +
+        (screens.length ? '<button class="pd-btn" data-act="pos-add">Add positions</button>' : '') + '</div>';
+    if (!screens.length) {
+        return head + '<p class="pd-note">A position belongs to an operator screen, and this process has ' +
+            'none yet. Add one on the Operator screens tab, then add its positions here.</p>';
+    }
+    const nodes = S.curtainNodes || [];
+    if (!nodes.length) return head + '<p class="pd-note">This process has no positions yet.</p>';
+    const onScreen = id => nodes.filter(n => n.operator_station_id === id);
+    const loose = nodes.filter(n => !screens.some(st => st.id === n.operator_station_id));
+    return head + screens.filter(st => onScreen(st.id).length).map(st =>
+        '<div class="pd-lbl pd-posscreen">' + esc(st.name) + '</div>' + onScreen(st.id).map(positionRow).join('')).join('') +
+        (loose.length ? '<div class="pd-lbl pd-posscreen">On no screen</div>' + loose.map(positionRow).join('') : '');
+}
+
+// positionRow is one position: its name, its curtain switch and Remove, and the
+// curtain's three fields under it while the switch is on.
+//
+// FG LIGHT-CURTAIN INTERLOCK - a per-node opt-in. Off (the default) means
+// releases at the node go as always. On, a produce release there waits for the
+// node's curtain tag to read its release value, checked by a direct WarLink
+// read at the click (fail-closed on any read trouble); the operator station's
+// RELEASE button greys when the cached value disagrees. The release value
+// starts unchosen and must be picked before the node can be saved switched on
+// - the server refuses the same. The switch is a draft, saved by Save settings;
+// Add and Remove write at once, like the routing set below.
+function positionRow(n) {
+    const d = S.curtain[n.id];
+    if (!d) return '';
+    const on = !!d.enabled;
+    const seg = [[true, 'TRUE'], [false, 'FALSE']].map(v =>
+        '<button class="' + (d.safe === v[0] ? 'on' : '') + '" data-act="cu-val" data-node="' + n.id +
+        '" data-val="' + v[0] + '">' + esc(v[1]) + '</button>').join('');
+    const sub = (n.enabled === false ? 'off until its active order finishes · ' : '') +
+        (on ? 'light curtain on: releases here wait for its tag' : 'light curtain off: releases here go as always');
+    const remove = n.operator_station_id
+        ? '<button class="pd-dimlink" data-act="pos-remove" data-node="' + esc(n.core_node_name) +
+            '" data-station="' + n.operator_station_id + '">Remove</button>'
+        : '';
+    return stField(n.name + (n.core_node_name && n.core_node_name !== n.name ? ' (' + n.core_node_name + ')' : ''), sub,
+        '<span class="pd-poscu"><span class="pd-dim">Light curtain</span>' +
+        '<button class="pd-chk' + (on ? ' on' : '') + '" data-act="cu-toggle" data-node="' + n.id +
+        '" role="switch" aria-checked="' + (on ? 'true' : 'false') + '"></button></span>' + remove) +
+        (on
+            ? stField('PLC', 'the WarLink PLC the curtain button writes - type to filter the live list', cuCombo(n.id, 'plc', 'plc')) +
+              stField('Tag', 'the BOOL tag the button flips - type to filter; published tags are readable, unpublished ones are not', cuCombo(n.id, 'tag', 'tag')) +
+              stField('Release value', 'which reading allows the release - a site fact; choose it from the test, there is no default',
+                  '<div class="pd-seg">' + seg + '</div>')
+            : '');
+}
+
+// The positions one screen holds, read fresh, or null when the read failed.
+//
+// THE ADD AND THE REMOVE SEND WHAT THIS RETURNS, never S.stationNodes.
+// claimed-nodes is a set-to: a name left out of the list is a position taken
+// off the screen. refreshStationNodes keeps the old list when its read fails,
+// and an add sent over a stale list would remove whatever the page had not
+// seen yet — so a failed read stops the write instead.
+async function readStationNodes(stationID) {
+    try {
+        const res = await fetch('/api/operator-stations/' + stationID + '/claimed-nodes');
+        if (!res.ok) return null;
+        const names = await res.json();
+        return Array.isArray(names) ? names : [];
+    } catch (_) { return null; }
+}
+
+const ADD_POSITIONS_PICKER = 'addpos';
+
+// openAddPositions is the checklist sheet. `filter` pre-types the field (the
+// shots harness's ;addpos=<filter>).
+async function openAddPositions(filter) {
+    const screens = stationsOf(S.processID);
+    if (!screens.length) return;
+    await Promise.all([loadCoreNodes(), loadLivePositions()]);
+    const pid = S.processID;
+    S.addPos = { station: screens[0].id };
+    pickerInit(ADD_POSITIONS_PICKER, {
+        checklist: true,
+        exclude: n => positionBlock(n, pid),
+        annotate: n => positionNote(n, pid),
+        onChange: markAddPositions,
+    });
+    S.pickers[ADD_POSITIONS_PICKER].q = filter || '';
+    const which = screens.length > 1
+        ? '<div class="pd-fld"><label>Screen<small>the one the new positions go on</small></label>' +
+            '<div class="v"><div class="pd-seg" id="pd-posscreen">' + addPositionsScreens() + '</div></div></div>'
+        : '';
+    openSheet('Add positions', 'tick each node to add' + (screens.length === 1 ? ' to ' + screens[0].name : ''),
+        which + pickerField(ADD_POSITIONS_PICKER, 'Nodes', 'a greyed node is a position already, here or on another process'),
+        'Add', submitAddPositions, false);
+}
+
+function addPositionsScreens() {
+    return stationsOf(S.processID).map(st => '<button class="' + (S.addPos && st.id === S.addPos.station ? 'on' : '') +
+        '" data-act="pos-screen" data-station="' + st.id + '">' + esc(st.name) + '</button>').join('');
+}
+
+// The confirm button counts what it will add.
+function markAddPositions() {
+    const ok = $('pd-scrim').querySelector('[data-act="sheet-ok"]');
+    const n = pickerValue(ADD_POSITIONS_PICKER).length;
+    if (ok) ok.textContent = n ? 'Add ' + n : 'Add';
+}
+
+async function submitAddPositions() {
+    const picked = pickerValue(ADD_POSITIONS_PICKER);
+    if (!picked.length) { sheetStatus('Tick a node to add.', true); return; }
+    const stationID = S.addPos.station;
+    const current = await readStationNodes(stationID);
+    if (!current) { sheetStatus('This screen’s positions could not be read, so nothing was added.', true); return; }
+    const out = await postJSON('PUT', '/api/operator-stations/' + stationID + '/claimed-nodes',
+        B().stationNodes(current.concat(picked)));
+    if (!out.ok) { sheetStatus(out.error, true); return; }
+    const st = stationsOf(S.processID).find(s => s.id === stationID);
+    closeSheet();
+    await afterPositionsChanged(stationID);
+    S.settingsNotice = 'Added ' + picked.join(', ') + ' to ' + (st ? st.name : 'the screen') + '.';
+    drawSettings();
+}
+
+// openRemovePosition asks first, with what still names the position
+// (POST …/claimed-nodes/impact) in the question.
+async function openRemovePosition(name, stationID) {
+    const st = stationsOf(S.processID).find(s => s.id === stationID) || { name: 'its screen' };
+    const current = await readStationNodes(stationID);
+    if (!current) {
+        S.settingsError = st.name + '’s positions could not be read, so ' + name + ' was not removed.';
+        drawSettings();
+        return;
+    }
+    const impact = await postJSON('POST', '/api/operator-stations/' + stationID + '/claimed-nodes/impact',
+        B().stationNodes(current.filter(n => n !== name)));
+    const says = !impact.ok ? 'What still names it could not be read (' + impact.error + ').'
+        : impact.body.warning || 'No recipe or style of this process names it.';
+    openSheet('Remove ' + name, 'from ' + st.name,
+        '<p class="pd-note">' + esc(says) + ' Removing it takes its tile off the screen.</p>',
+        'Remove', () => submitRemovePosition(name, stationID, st.name), true);
+}
+
+async function submitRemovePosition(name, stationID, screenName) {
+    const current = await readStationNodes(stationID);
+    if (!current) { sheetStatus('This screen’s positions could not be read, so nothing was removed.', true); return; }
+    const out = await postJSON('PUT', '/api/operator-stations/' + stationID + '/claimed-nodes',
+        B().stationNodes(current.filter(n => n !== name)));
+    if (!out.ok) { sheetStatus(out.error, true); return; }
+    const kept = Array.isArray(out.body.kept) ? out.body.kept : [];
+    closeSheet();
+    await afterPositionsChanged(stationID);
+    S.settingsNotice = kept.length ? keptPositionsSentence(kept) : 'Removed ' + name + ' from ' + screenName + '.';
+    drawSettings();
+}
+
+// afterPositionsChanged re-reads what an add or a remove moved — the screen's
+// list, the process's positions and the composer the Styles tab draws — and
+// KEEPS the Settings drafts. refreshProcess would reset them, and a curtain or
+// a name typed but not yet saved is not the add's to throw away.
+async function afterPositionsChanged(stationID) {
+    const settings = S.settings, curtain = S.curtain;
+    S.settingsError = '';
+    await refreshStationNodes(stationID);
+    const res = await fetch('/api/processes/' + S.processID + '/composer', { cache: 'no-store' });
+    if (res.ok) {
+        takeComposer(await res.json());
+        S.graph = null;
+    }
+    await loadCurtainNodes();
+    S.settings = settings;
+    for (const id of Object.keys(curtain || {})) if (S.curtain[id]) S.curtain[id] = curtain[id];
+}
+
 function drawSettings() {
     if (!S.settings) S.settings = settingsDraft();
     const p = process() || {};
@@ -4498,34 +4738,8 @@ function drawSettings() {
             'a process that counts can skip a same-part swap at changeover; an unwired one never does',
             stToggle('counter_enabled'));
 
-    // FG LIGHT-CURTAIN INTERLOCK - a per-node opt-in. Off (the default)
-    // means releases at the node go as always. On, a produce release there
-    // waits for the node's curtain tag to read its release value, checked by
-    // a direct WarLink read at the click (fail-closed on any read trouble);
-    // the operator station's RELEASE button greys when the cached value
-    // disagrees. The release value starts unchosen and must be picked before
-    // the node can be saved switched on - the server refuses the same.
     if (!S.curtain) S.curtain = curtainDraft();
-    const curtainRows = (S.curtainNodes || []).map(n => {
-        const d = S.curtain[n.id];
-        if (!d) return '';
-        const on = !!d.enabled;
-        const seg = [[true, 'TRUE'], [false, 'FALSE']].map(v =>
-            '<button class="' + (d.safe === v[0] ? 'on' : '') + '" data-act="cu-val" data-node="' + n.id +
-            '" data-val="' + v[0] + '">' + esc(v[1]) + '</button>').join('');
-        return stField(n.name + (n.core_node_name && n.core_node_name !== n.name ? ' (' + n.core_node_name + ')' : ''),
-            on ? 'releases here wait for the curtain tag' : 'off: releases here go as always',
-            '<button class="pd-chk' + (on ? ' on' : '') + '" data-act="cu-toggle" data-node="' + n.id +
-            '" role="switch" aria-checked="' + (on ? 'true' : 'false') + '"></button>') +
-            (on
-                ? stField('PLC', 'the WarLink PLC the curtain button writes - type to filter the live list', cuCombo(n.id, 'plc', 'plc')) +
-                  stField('Tag', 'the BOOL tag the button flips - type to filter; published tags are readable, unpublished ones are not', cuCombo(n.id, 'tag', 'tag')) +
-                  stField('Release value', 'which reading allows the release - a site fact; choose it from the test, there is no default',
-                      '<div class="pd-seg">' + seg + '</div>')
-                : '');
-    }).join('');
-    const curtain = '<div class="pd-sect"><h2>Light curtain interlock</h2><span class="pd-dim">per position</span></div>' +
-        (curtainRows || '<p class="pd-note">This process has no positions yet.</p>');
+    const positions = positionsSection();
 
     const seg = AUTO_ARM.map(m => '<button class="' + (S.settings.changeover_auto_arm === m[0] ? 'on' : '') +
         '" data-act="st-arm" data-arm="' + m[0] + '">' + esc(m[1]) + '</button>').join('');
@@ -4596,7 +4810,7 @@ function drawSettings() {
     // sheet twice the viewport — back off the top of the screen.
     const wasAt = (() => { const b = root().querySelector('.pd-sheet'); return b ? b.scrollTop : 0; })();
     root().innerHTML = appbar() + '<div class="pd-sheet pd-settings">' +
-        general + counter + curtain + changeover + hmi + partsSect + hold + routingSection() + stylesSect + danger +
+        general + counter + positions + changeover + hmi + partsSect + hold + routingSection() + stylesSect + danger +
         '<div class="pd-savebar"><span class="prov' + (settingsDirty() ? ' dirty' : '') + '">' +
         (settingsDirty() ? 'Unsaved changes' : 'No unsaved changes') + '</span>' +
         '<button class="pd-btn" data-act="st-discard">Discard</button>' +
@@ -4812,13 +5026,9 @@ async function reloadStations() {
 // marks nothing: the save still refuses, it just cannot be warned of here.
 async function positionsOfOtherProcesses() {
     const out = {};
-    try {
-        const res = await fetch('/api/process-nodes');
-        const rows = res.ok ? await res.json() : [];
-        for (const n of Array.isArray(rows) ? rows : []) {
-            if (n.process_id !== S.processID && n.core_node_name) out[n.core_node_name] = n.process_name;
-        }
-    } catch (_) { /* nothing extra to mark */ }
+    for (const n of await loadLivePositions()) {
+        if (n.process_id !== S.processID && n.core_node_name) out[n.core_node_name] = n.process_name;
+    }
     return out;
 }
 
@@ -4954,12 +5164,14 @@ function coreNodeList() {
 //             pickers only: a group has no slot, so as a position it renders
 //             nothing, while in a routing list a group is a real source or
 //             destination and must stay itself
+//   checklist the list is always open, one box per node, with the name
+//             prefixes (PLN, SMN…) as filters over it — see checklistOptions
 function pickerInit(key, opts) {
     const o = opts || {};
     S.pickers[key] = {
         sel: (o.selected || []).slice(),
         q: '',
-        open: false,
+        open: !!o.checklist,
         source: o.source || 'core',
         exclude: o.exclude || (() => ''),
         annotate: o.annotate || (() => ''),
@@ -4967,6 +5179,7 @@ function pickerInit(key, opts) {
         onDrop: o.onDrop || null,
         onChange: o.onChange || null,
         expandGroups: !!o.expandGroups,
+        checklist: !!o.checklist,
     };
 }
 
@@ -4989,11 +5202,14 @@ function pickerValue(key) {
 // the field under the caret nor the caret in it. Same reason markSettingsBar
 // exists.
 function pickerBox(key) {
-    return '<div class="pd-npk" data-npkbox="' + key + '" id="npk-' + key + '">' +
+    const p = S.pickers[key];
+    const check = !!(p && p.checklist);
+    return '<div class="pd-npk' + (check ? ' check' : '') + '" data-npkbox="' + key + '" id="npk-' + key + '">' +
         '<div class="chips" data-npkpart="chips">' + pickerChips(key) + '</div>' +
         '<input class="pd-npkq" type="text" autocomplete="off" data-npkq="' + key +
-        '" placeholder="' + (S.pickers[key] && S.pickers[key].source === 'payloads'
-            ? 'find a part by name' : 'find a node by name') + '">' +
+        '" placeholder="' + (p && p.source === 'payloads' ? 'find a part by name'
+            : check ? 'filter by name, or pick a prefix below' : 'find a node by name') + '">' +
+        (check ? '<div class="pre" data-npkpart="pre">' + checklistPrefixes(key) + '</div>' : '') +
         '<div class="opts" data-npkpart="opts">' + pickerOptions(key) + '</div></div>';
 }
 
@@ -5037,6 +5253,7 @@ function pickerOptions(key) {
     // list rather than looking at it — which is how the shots driver knows to
     // wait rather than to report the fixture missing a name it does have.
     if (!S.coreNodes) return '<div class="none loading">Reading Core’s node list…</div>';
+    if (p.checklist) return checklistOptions(key, p);
     const needle = p.q.trim().toLowerCase();
     const hits = coreNodeList().filter(n => !needle || String(n.name).toLowerCase().indexOf(needle) >= 0);
     if (!hits.length) {
@@ -5061,6 +5278,68 @@ function pickerOptions(key) {
             : p.annotate(n.name);
         out += '<button class="' + (on ? 'on' : '') + '" data-npk="add" data-npkkey="' + key +
             '" data-npkname="' + esc(n.name) + '">' + esc(n.name) +
+            (note ? '<small>' + esc(note) + '</small>' : '') + '</button>';
+    }
+    return out;
+}
+
+// ── the checklist: the same picker, one box per node ─────────────────────────
+//
+// For positions, which an engineer adds a handful at a time from one family
+// of names (PLN_006BCD…NOP). The list stays open, the prefixes Core's names
+// carry are filters over it, and every node is its own box.
+//
+// ONE BOX, ONE NODE. A group is not drawn here: as a position it is its
+// members, and a box that ticks a dozen nodes at once is not one the engineer
+// looked at. Nor is there a tick-all: each position added is one chosen.
+
+// checklistNodes is the checklist's universe: Core's plain nodes, no groups.
+function checklistNodes() {
+    return coreNodeList().filter(n => !(Array.isArray(n.members) && n.members.length));
+}
+
+// nodePrefix is the family a node's name opens with — PLN of PLN_006BCD — or
+// '' for a name with none.
+function nodePrefix(name) {
+    const m = /^([A-Za-z]+)_/.exec(String(name || ''));
+    return m ? m[1].toUpperCase() : '';
+}
+
+// checklistPrefixes draws one filter per family in the universe. A prefix
+// only FILTERS: it types `PLN_` into the field, and a second press clears it.
+function checklistPrefixes(key) {
+    const p = S.pickers[key];
+    if (!p || !S.coreNodes) return '';
+    const seen = [];
+    for (const n of checklistNodes()) {
+        const pre = nodePrefix(n.name);
+        if (pre && seen.indexOf(pre) < 0) seen.push(pre);
+    }
+    const q = p.q.trim().toUpperCase();
+    return seen.sort().map(pre => '<button class="' + (q === pre + '_' ? 'on' : '') + '" data-npk="prefix" ' +
+        'data-npkkey="' + key + '" data-npkname="' + esc(pre) + '">' + esc(pre) + '</button>').join('');
+}
+
+// checklistOptions is the rows: a box, the name, and the reason a greyed one
+// cannot be ticked or the note a tickable one carries.
+function checklistOptions(key, p) {
+    const needle = p.q.trim().toLowerCase();
+    const hits = checklistNodes().filter(n => !needle || String(n.name).toLowerCase().indexOf(needle) >= 0);
+    if (!hits.length) {
+        return '<div class="none">No node Core knows about is called that. The list is the ' +
+            'fleet’s — shingo mirrors it and cannot add to it.</div>';
+    }
+    let out = '';
+    for (const n of hits) {
+        const why = p.exclude(n.name);
+        if (why) {
+            out += '<button class="off" disabled><i class="box"></i>' + esc(n.name) +
+                '<small>' + esc(why) + '</small></button>';
+            continue;
+        }
+        const note = p.annotate(n.name);
+        out += '<button class="' + (p.sel.indexOf(n.name) >= 0 ? 'on' : '') + '" data-npk="add" data-npkkey="' + key +
+            '" data-npkname="' + esc(n.name) + '"><i class="box"></i>' + esc(n.name) +
             (note ? '<small>' + esc(note) + '</small>' : '') + '</button>';
     }
     return out;
@@ -5115,8 +5394,10 @@ function redrawPicker(key) {
     if (!box) return;
     const chips = box.querySelector('[data-npkpart="chips"]');
     const opts = box.querySelector('[data-npkpart="opts"]');
+    const pre = box.querySelector('[data-npkpart="pre"]');
     if (chips) chips.innerHTML = pickerChips(key);
     if (opts) opts.innerHTML = pickerOptions(key);
+    if (pre) pre.innerHTML = checklistPrefixes(key);
 }
 
 // Every picker now in the document, bound and filled. The node list is read
@@ -5152,7 +5433,8 @@ function bindPickers() {
 // while the engineer is typing into one of them.
 function openOnlyPicker(key) {
     for (const k of Object.keys(S.pickers)) {
-        if (k === key || !S.pickers[k].open) continue;
+        // A checklist is not a dropdown: it stays open beside the one typed in.
+        if (k === key || !S.pickers[k].open || S.pickers[k].checklist) continue;
         S.pickers[k].open = false;
         redrawPicker(k);
     }
@@ -5166,6 +5448,16 @@ function onPickerClick(el) {
     const key = el.dataset.npkkey, name = el.dataset.npkname;
     const p = S.pickers[key];
     if (!p) return;
+    if (el.dataset.npk === 'prefix') {
+        // A filter, never a selection: the family typed into the field, or
+        // cleared by a second press. The field is not redrawn (pickerBox), so
+        // its value is set here to say what the list is filtered by.
+        p.q = p.q.trim().toUpperCase() === name + '_' ? '' : name + '_';
+        const input = $('npk-' + key) && $('npk-' + key).querySelector('[data-npkq]');
+        if (input) input.value = p.q;
+        redrawPicker(key);
+        return;
+    }
     if (el.dataset.npk === 'drop') {
         // A write-through picker's × writes through as well. Splicing the
         // local list instead would take the chip off the screen and leave the
@@ -5272,6 +5564,7 @@ function closeSheet() {
     // the engineer when this sheet is opened again. Settings' own pickers are
     // in #pd-root and stay.
     for (const k of Object.keys(S.pickers)) if (!$('npk-' + k)) delete S.pickers[k];
+    S.addPos = null;
     // The apply modal's ticks and previews go with it: reopening it must start
     // from nothing ticked (explicit re-apply), not from what was ticked last
     // time and previewed against a flow that has since been saved.
@@ -5989,8 +6282,14 @@ function partSetField() {
 function openAddProcess() {
     S.add = { groupID: 0 };
     const positions = () => pickerValue('positions');
+    // THE SAME CHECKLIST AS SETTINGS' ADD POSITIONS: one box per node, and a
+    // node another process holds is greyed with its name (process 0 is this
+    // one, not yet made). The holders are read after the sheet opens, and the
+    // list redraws when they land.
     pickerInit('positions', {
-        expandGroups: true,
+        checklist: true,
+        exclude: n => positionBlock(n, 0),
+        annotate: n => positionNote(n, 0),
         onChange: () => {
             // A name that has just become a position cannot also be a routing
             // row: process_routing_nodes refuses one (ErrRoutingNodeIsPosition)
@@ -6048,6 +6347,7 @@ function openAddProcess() {
 
     openSheet('Add process', 'a process, the screen that works it, and where its bins come from and go.',
         body, 'Create', submitAddProcess, false);
+    loadLivePositions().then(() => redrawPicker('positions'));
     // A REFUSED FIELD STOPS BEING REPORTED ONCE IT IS TYPED IN. Only the two
     // up-front checks clear this way: a refusal from the write chain is the
     // record of what was already made, and typing must not erase it.
@@ -7355,6 +7655,8 @@ function onClick(e) {
             case 'st-save': saveSettings(); return;
             case 'st-sync': syncCatalog(); return;
             case 'st-delete': openDeleteProcess(); return;
+            case 'pos-add': void openAddPositions(''); return;
+            case 'pos-remove': void openRemovePosition(btn.dataset.node, Number(btn.dataset.station)); return;
             case 'bind-loader': bindLoaderBoard(btn.dataset.loader); return;
             case 'screen-add': void openScreenSheet(0); return;
             case 'screen-edit': void openScreenSheet(btn.dataset.station); return;

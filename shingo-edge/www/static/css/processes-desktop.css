@@ -860,6 +860,39 @@ body.pd-body .pd-sheet { flex: 1 1 auto; min-height: 0; overflow: auto; }
 .pd-npk .opts button small { color: var(--text-muted); font-size: 11.5px; margin-left: 10px; }
 .pd-npk .opts .none { color: var(--text-muted); padding: 8px; font-size: 12.5px; line-height: 1.4; }
 
+/* THE CHECKLIST (positions): the same list, always open and taller, a box at
+   the head of each row, the reason or note pushed to the right edge. A ticked
+   row keeps the text colour — the box says it is ticked — and a greyed row's
+   box is dimmed with its name. The prefixes are the chip shape at the chip
+   size: filters, so they read like the selection's own chips. */
+.pd-npk.check .opts { max-height: 300px; }
+.pd-npk.check .opts button { display: flex; align-items: center; gap: 9px; }
+.pd-npk.check .opts button.on { color: var(--text); }
+.pd-npk.check .opts button small { margin-left: auto; padding-left: 12px; }
+.pd-npk.check .opts .box {
+    flex: none; width: 14px; height: 14px; box-sizing: border-box;
+    border: 1.5px solid var(--sub-3); border-radius: 4px;
+}
+.pd-npk.check .opts button.on .box {
+    border-color: var(--accent-solid); background: var(--accent-solid);
+    box-shadow: inset 0 0 0 2px var(--bg);
+}
+.pd-npk.check .opts button.off { opacity: 0.55; }
+.pd-npk.check .opts button.off .box { border-color: var(--sub-2); }
+.pd-npk .pre { display: flex; flex-wrap: wrap; gap: 4px; }
+.pd-npk .pre:empty { display: none; }
+.pd-npk .pre button {
+    border: 1px solid var(--sub-2); border-radius: 999px; background: none; cursor: pointer;
+    color: var(--text-muted); font: inherit; font-size: 12px; padding: 2px 10px;
+}
+.pd-npk .pre button:hover { color: var(--text); }
+.pd-npk .pre button.on { color: var(--accent); border-color: var(--accent); }
+
+/* Settings · Positions: the screen's name over its rows, and the curtain's
+   label beside its switch so the switch says what it is. */
+.pd-settings .pd-posscreen { display: block; margin: 14px 0 2px; }
+.pd-poscu { display: inline-flex; align-items: center; gap: 8px; }
+
 /* A process with no part yet — the state an Add process lands in. Prose at the
    note's colour and the field grid's measure; it is a sentence, not a panel. */
 .pd-empty { padding: 28px 4px; max-width: 64ch; }

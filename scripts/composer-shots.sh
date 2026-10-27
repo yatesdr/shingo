@@ -27,7 +27,8 @@
 #
 #   P0-processes.png   D1-flows-selected.png   D1-flows-selected-light.png
 #   D1-flows-running.png   D2-advanced.png   D3-routing-set.png
-#   D4-operator-screens.png   D5-settings.png   D6-presets.png
+#   D4-operator-screens.png   D5-settings.png   D5-add-positions.png
+#   D5-add-positions-filtered.png   D6-presets.png
 #   D6-presets-member-expanded.png   D6-apply-modal.png
 #   D6-apply-modal-answered.png   D7-new-shape-draft.png   D8-import-draft.png
 #
