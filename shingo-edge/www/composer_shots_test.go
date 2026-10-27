@@ -618,9 +618,12 @@ func TestComposerShots(t *testing.T) {
 		target := filepath.Join(out, file)
 		_ = os.Remove(target)
 		profile := t.TempDir()
+		// REDUCED MOTION, because a shot is a still: a sheet opened after its
+		// own reads (Add positions) lands late in the virtual-time budget,
+		// and its 160 ms fade-in was photographed half-way.
 		cmd := exec.Command(chrome,
 			"--headless=new", "--disable-gpu", "--hide-scrollbars", "--no-first-run",
-			"--no-default-browser-check", "--user-data-dir="+profile,
+			"--no-default-browser-check", "--user-data-dir="+profile, "--force-prefers-reduced-motion",
 			"--blink-settings=preferredColorScheme="+strconv.Itoa(scheme),
 			"--window-size="+size, "--virtual-time-budget=15000",
 			"--screenshot="+target, srv.URL+path)
