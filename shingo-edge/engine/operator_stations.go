@@ -3,6 +3,7 @@ package engine
 import (
 	"fmt"
 	"log"
+	"time"
 
 	"shingo/protocol"
 	"shingoedge/domain"
@@ -227,7 +228,10 @@ func (e *Engine) requestNodeFromClaim(node *processes.Node, runtime *processes.R
 	// answers a node it does not have as present and empty, and a head or paired
 	// position named wrong would read vacant on every request.
 	cell := e.claimOccupancy(claim)
-	occupancy := e.occupancyKnownNodesOnly(cell.occupancy, node.Name)
+	// The wall clock, not clock.Now: the landing's lineside_at is SQLite's
+	// datetime('now'), and the sim clock runs ahead of it.
+	occupancy, heldByLanding := heldByItsOwnLanding(node, runtime, claim,
+		e.occupancyKnownNodesOnly(cell.occupancy, node.Name), time.Now())
 	deck := Deck{Rows: cell.deck, Coming: coming}
 
 	// The evac leg lifts whatever is ON the cell, which is not always the style
@@ -260,7 +264,7 @@ func (e *Engine) requestNodeFromClaim(node *processes.Node, runtime *processes.R
 	if takeSpare && plan.SimpleMove && downgraded {
 		plan.SimpleSource = spotNode(claim)
 	}
-	if err := e.gateLineRows(node, claim, downgraded); err != nil {
+	if err := e.gateLineRows(node, claim, downgraded || heldByLanding); err != nil {
 		return nil, err
 	}
 	if downgraded {

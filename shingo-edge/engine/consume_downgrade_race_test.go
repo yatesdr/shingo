@@ -449,3 +449,115 @@ func TestConsumeDowngrade_MintsOncePlacementIsRecorded(t *testing.T) {
 		t.Errorf("order count %d → %d: nothing was minted for a cell below its reorder point", before, got)
 	}
 }
+
+// ── W1'S LEFTOVER: A CART LANDED IN THE SAME SECOND AS THE RE-REQUEST ─────
+//
+// The sim's WELD-1 (round 4, Core order 271): a swap's supply landed a part-full
+// carrier at the cell, the sweep asked in the same second, and Core's occupancy,
+// a moment behind the landing this Edge had already bound, read the cell empty:
+// the swap was downgraded to a plain move onto the carrier, which never moved
+// again. The Edge's own record of the landing now holds the cell occupied for
+// landingSettle (heldByItsOwnLanding).
+
+// newOrdersSince is the type and delivery of each order created after the first n.
+func newOrdersSince(t *testing.T, db *store.DB, n int) []string {
+	t.Helper()
+	rows, err := db.DB.Query(`SELECT order_type, COALESCE(delivery_node, '') FROM orders ORDER BY id`)
+	testutil.MustNoErr(t, err, "list orders")
+	defer rows.Close()
+	var out []string
+	for i := 0; rows.Next(); i++ {
+		var typ, dest string
+		testutil.MustNoErr(t, rows.Scan(&typ, &dest), "scan order")
+		if i >= n {
+			out = append(out, typ+" "+dest)
+		}
+	}
+	return out
+}
+
+// TestConsumeDowngrade_ACartLandedThisSecondKeepsTheSwap: Core reads the cell
+// empty, this Edge recorded a landing there this second: the request keeps the
+// swap and mints no plain move onto the cell.
+//
+// RED at edb48c1e: the request mints a move SYN_MARKET → ALN_004.
+func TestConsumeDowngrade_ACartLandedThisSecondKeepsTheSwap(t *testing.T) {
+	t.Parallel()
+	eng, db, nodeID := spokenForFixture(t, false)
+	testutil.MustNoErr(t, db.SetProcessNodeRuntimeLinesidePayload(nodeID, "BRKT", true, string(domain.CarrierFromLanding)),
+		"the landing this Edge recorded")
+
+	before := countOrders(t, db)
+	if _, err := eng.requestNodeMaterialFor(nodeID, 1, protocol.EpisodeTriggerAutoreorder); err != nil {
+		t.Fatalf("request refused: %v", err)
+	}
+	minted := newOrdersSince(t, db, before)
+	swap := false
+	for _, o := range minted {
+		if o == string(orders.TypeMove)+" ALN_004" {
+			t.Errorf("minted a plain move onto the cell a carrier landed on this second (%v): the downgrade on Core's occupancy alone", minted)
+		}
+		if strings.HasPrefix(o, string(orders.TypeComplex)+" ") {
+			swap = true
+		}
+	}
+	if !swap {
+		t.Errorf("minted %v, want the swap", minted)
+	}
+}
+
+// TestConsumeDowngrade_AnEmptyCellStillDowngrades: Core reads the cell empty and
+// this Edge's last record there is a departure: the plain delivery, as before.
+func TestConsumeDowngrade_AnEmptyCellStillDowngrades(t *testing.T) {
+	t.Parallel()
+	eng, db, nodeID := spokenForFixture(t, false)
+	testutil.MustNoErr(t, db.SetProcessNodeRuntimeLinesidePayload(nodeID, "", false, string(domain.CarrierDeparted)),
+		"the carrier left")
+
+	before := countOrders(t, db)
+	if _, err := eng.requestNodeMaterialFor(nodeID, 1, protocol.EpisodeTriggerAutoreorder); err != nil {
+		t.Fatalf("request refused: %v", err)
+	}
+	if minted := newOrdersSince(t, db, before); len(minted) != 1 || minted[0] != string(orders.TypeMove)+" ALN_004" {
+		t.Errorf("minted %v, want one plain move onto the empty cell", minted)
+	}
+}
+
+// TestConsumeDowngrade_ALandingPastItsSettleDoesNotOutrankCore: a landing this
+// Edge recorded longer ago than landingSettle no longer holds the cell against
+// Core (a carrier moved off by hand in Core shows the Edge no departure).
+func TestConsumeDowngrade_ALandingPastItsSettleDoesNotOutrankCore(t *testing.T) {
+	t.Parallel()
+	eng, db, nodeID := spokenForFixture(t, false)
+	testutil.MustNoErr(t, db.SetProcessNodeRuntimeLinesidePayload(nodeID, "BRKT", true, string(domain.CarrierFromLanding)),
+		"the landing")
+	_, err := db.DB.Exec(`UPDATE process_node_runtime_states SET lineside_at = datetime('now', '-120 seconds') WHERE process_node_id = ?`, nodeID)
+	testutil.MustNoErr(t, err, "two minutes ago")
+
+	before := countOrders(t, db)
+	if _, err := eng.requestNodeMaterialFor(nodeID, 1, protocol.EpisodeTriggerAutoreorder); err != nil {
+		t.Fatalf("request refused: %v", err)
+	}
+	if minted := newOrdersSince(t, db, before); len(minted) != 1 || minted[0] != string(orders.TypeMove)+" ALN_004" {
+		t.Errorf("minted %v, want the plain move: a landing two minutes old does not outrank Core", minted)
+	}
+}
+
+// TestConsumeDowngrade_ALandingDoesNotLetASecondSwapPastTheInFlightOne: W1's own
+// state with a fresh landing record (Core's re-arm of a swap's intermediate drop
+// lands too): the request kept from its downgrade still asks what is on its way,
+// and is refused while the swap is in flight.
+func TestConsumeDowngrade_ALandingDoesNotLetASecondSwapPastTheInFlightOne(t *testing.T) {
+	t.Parallel()
+	eng, db, nodeID := spokenForFixture(t, false)
+	seedInFlightSwap(t, db, nodeID)
+	testutil.MustNoErr(t, db.SetProcessNodeRuntimeLinesidePayload(nodeID, "BRKT", true, string(domain.CarrierFromLanding)),
+		"Core's re-arm, recorded as a landing")
+
+	before := countOrders(t, db)
+	if _, err := eng.requestNodeMaterialFor(nodeID, 1, protocol.EpisodeTriggerAutoreorder); err == nil {
+		t.Fatalf("request accepted while the swap is in flight; minted %v", newOrdersSince(t, db, before))
+	} else if !strings.Contains(err.Error(), "already on its way") {
+		t.Errorf("refusal = %q, want the sentence that says a bin is already coming", err)
+	}
+}

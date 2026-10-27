@@ -2,10 +2,47 @@ package engine
 
 import (
 	"fmt"
+	"log"
+	"maps"
+	"time"
 
 	"shingo/protocol"
+	"shingoedge/domain"
 	"shingoedge/store/processes"
 )
+
+// landingSettle is how long this Edge's own record of a landing at a cell
+// outranks Core's occupancy reading the cell empty: long enough for Core's bins
+// feed to catch up with the landing it announced, short enough that a carrier
+// moved off by hand in Core (which records no lift at the node it leaves, so the
+// Edge sees no departure) stops holding the cell occupied soon after.
+const landingSettle = 30 * time.Second
+
+// heldByItsOwnLanding is W1's leftover (the double-supply race, round 4's §4):
+// the head reads occupied when this Edge recorded a landing there within
+// landingSettle and Core's occupancy reads it empty. The landing binds the
+// runtime (handler_bin_landed.go, landCarrier) before Core's feed row for the
+// cell moves, and a request in that second read the cell "empty (no bin)" and
+// downgraded the swap to a plain delivery onto the carrier that had just landed:
+// a move that can never drop, with no evac leg, that every later ask reads as
+// already pointing there (the sim's WELD-1, Core order 271). The record is the
+// runtime the caller already read: no statement. Reports whether it held the
+// head, so the caller still asks what is on its way (gateLineRows): Core's
+// re-arm of a swap's intermediate drop lands too (handler_uop_adjustment.go), and
+// W1's own state must still be refused while its swap is in flight.
+func heldByItsOwnLanding(node *processes.Node, runtime *processes.RuntimeState, claim *processes.NodeClaim,
+	occupancy map[string]bool, now time.Time) (map[string]bool, bool) {
+	if runtime == nil || runtime.ActiveBinID == nil || runtime.LinesideSource != string(domain.CarrierFromLanding) ||
+		now.Sub(runtime.LinesideAt) > landingSettle || isOccupied(occupancy, claim.CoreNodeName) {
+		return occupancy, false
+	}
+	held := make(map[string]bool, len(occupancy)+1)
+	maps.Copy(held, occupancy)
+	held[claim.CoreNodeName] = true
+	log.Printf("[request-material] node %s: Core reads it empty, but bin %d landed here %s ago by this Edge's record — not downgrading",
+		node.Name, *runtime.ActiveBinID, now.Sub(runtime.LinesideAt).Round(time.Second))
+	return held, true
+}
 
 // vacantLine is what a line with a position that is not ready gets beside, or
 // instead of, its swap. Every swap opens by lifting the bin at the line, so a
