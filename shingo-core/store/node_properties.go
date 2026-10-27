@@ -25,6 +25,12 @@ func (db *DB) GetNodeProperty(nodeID int64, key string) string {
 	return nodes.GetProperty(db.DB, nodeID, key)
 }
 
+// GetNodePropertyByName returns a node's property by the node's name, or ""
+// (nodes.GetPropertyByNodeName).
+func (db *DB) GetNodePropertyByName(name, key string) string {
+	return nodes.GetPropertyByNodeName(db.DB, name, key)
+}
+
 // GetNodePropertyOrError returns a node property, distinguishing UNSET
 // ("", nil) from UNREADABLE ("", err).
 func (db *DB) GetNodePropertyOrError(nodeID int64, key string) (string, error) {

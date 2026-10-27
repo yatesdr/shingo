@@ -840,8 +840,9 @@ var causeReleasers = []causeReleaser{
 	{
 		cause:       CauseNGRPAtLevel,
 		populations: []WaitPopulation{PopAcquiring, PopCompoundLeg},
-		what: "a carrier LEAVES the group — or somebody raises the level. Two releasers, " +
-			"and the second is the one an operator can act on",
+		what: "a carrier LEAVES the group — or somebody raises the level — or, with an overflow " +
+			"named, a slot frees there and the next pass sends the order to it (MG6-1, admission " +
+			"or parked). The second is the one an operator can act on",
 		finding: "IT CLEARS ON TWO DIFFERENT THINGS, which is why it is not CauseNGRPFull. " +
 			"A physically full group clears when a carrier leaves and on nothing else. This " +
 			"group has EMPTY POSITIONS — they are spoken for by a number somebody " +
@@ -1086,7 +1087,7 @@ var causeReleasers = []causeReleaser{
 	{
 		cause:       CauseNGRPFull,
 		populations: []WaitPopulation{PopAcquiring},
-		what:        "a child of the destination group frees",
+		what:        "a child of the destination group frees, or a slot frees in the overflow it names",
 	},
 	{
 		cause:       CauseCapacityCheckFailed,

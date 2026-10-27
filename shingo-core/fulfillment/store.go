@@ -49,6 +49,11 @@ type Store interface {
 	// permanently and correctly) from a defective single-bin order. Shadowed
 	// at dispatchHeldBin for one window before the spelling is cut over.
 	OrderOwnsNoCargo(orderID int64) (bool, error)
+	// GetNodePropertyByName is how the capacity gate's park asks whether the
+	// group it parked an order on names an overflow destination
+	// (nodes.PropOverflowDestination), one read before any resolve
+	// (overflowsWhileParked).
+	GetNodePropertyByName(name, key string) string
 
 	// Mutations performed on the order during fulfillment.
 	//

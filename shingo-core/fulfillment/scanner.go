@@ -51,6 +51,11 @@ type Scanner struct {
 	// askedThisPass is the orders this RunOnce has asked and not dispatched,
 	// guarded by scanMu; nil outside a RunOnce (AcquireOne asks once anyway).
 	askedThisPass map[int64]bool
+	// overflowRefusedThisPass is the groups whose overflow this RunOnce has asked
+	// for an order parked on their room and been refused, or that name none
+	// (overflowsWhileParked), guarded by scanMu; nil outside a RunOnce. Every
+	// other order parked on the same group shares the answer.
+	overflowRefusedThisPass map[string]bool
 
 	triggerMu lockcheck.Mutex[lockorder.ScanTrigger]
 	pending   bool // coalesce triggers during a scan
@@ -112,7 +117,8 @@ func (s *Scanner) RunOnce() int {
 	// cause. Every trigger also starts a fresh pass of its own
 	// (engine.triggerFulfillment), so nothing waits on this rerun to see it.
 	s.askedThisPass = map[int64]bool{}
-	defer func() { s.askedThisPass = nil }()
+	s.overflowRefusedThisPass = map[string]bool{}
+	defer func() { s.askedThisPass, s.overflowRefusedThisPass = nil, nil }()
 
 	fulfilled := s.scan()
 
@@ -273,6 +279,44 @@ func (s *Scanner) tryFulfill(order *orders.Order) bool {
 	return false
 }
 
+// overflowsWhileParked is MG6-1 for an order the capacity gate parks on its
+// group's room (at its level, or full), and reports whether the order now holds
+// a drop in the group's overflow, so the acquire goes on to it. Every order here
+// is one no robot has (the acquiring set), and no other order pays for the ask.
+//
+// WHAT A GROUP'S PARKED ORDERS PAY PER PASS. One read, the group's overflow
+// name; a group that names none (or names itself) stops there. With one named,
+// the overflow's own capacity gate (the same predicate the resolver keeps to),
+// and only on a pass it has room the reserve, whose resolve takes the overflow
+// as intake does and is the one re-aim. A refusal anywhere leaves the order
+// aimed at its group, to park under the gate's cause.
+//
+// ONCE PER GROUP PER PASS, NOT PER ORDER. A refusal is the pass's answer for
+// every order parked on the group (overflowRefusedThisPass): the gate admits a
+// lane group's free positions where the resolve needs an admissible lane slot,
+// so on SYN_MARKET the refusal is the reserve's, and N parked orders paid it N
+// times. A take is not shared: the next order asks again, as the overflow may
+// have room for it too.
+func (s *Scanner) overflowsWhileParked(order *orders.Order, cause dispatch.QueueCause) bool {
+	if cause != dispatch.CauseNGRPAtLevel && cause != dispatch.CauseNGRPFull {
+		return false
+	}
+	group := order.DeliveryNode
+	if s.overflowRefusedThisPass[group] {
+		return false
+	}
+	overflow := s.db.GetNodePropertyByName(group, nodes.PropOverflowDestination)
+	took := overflow != "" && overflow != group
+	if took {
+		blocked, _ := dispatch.CheckDropoffCapacity(s.db, overflow, order.ID)
+		took = !blocked && !s.dispatcher.ReserveStorageDropoff(order).Refused()
+	}
+	if !took && s.overflowRefusedThisPass != nil {
+		s.overflowRefusedThisPass[group] = true
+	}
+	return took
+}
+
 // park is the tail of an acquire that did not dispatch: a `pending` order whose
 // arm wrote its cause moves to `queued`, and its station is told once, with
 // that cause (dispatch.ParkAndTell's rule; the station hears a later change of
@@ -388,8 +432,10 @@ func (s *Scanner) fulfill(order *orders.Order, pick *dispatch.SourceResult) bool
 	// claimed bin bound here (orders.InFlightForDropoffSQL), so an order retrying
 	// after it has claimed must not count its own row.
 	if blocked, cap := dispatch.CheckDropoffCapacity(s.db, order.DeliveryNode, order.ID); blocked {
-		s.setQueueReason(order, protocol.QueueWaitingForSlot, cap.Cause, cap.Params)
-		return false
+		if !s.overflowsWhileParked(order, cap.Cause) {
+			s.setQueueReason(order, protocol.QueueWaitingForSlot, cap.Cause, cap.Params)
+			return false
+		}
 	}
 
 	// Source: an order already holding its bin — a store (claimed at intake) or a

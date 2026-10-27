@@ -491,6 +491,15 @@ func IsSyntheticUnresolved(err error) bool {
 // and LANE is seeded synthetic too, so the narrow one would be born carrying the
 // divergence this removes. Resolve handles both — NGRP via GroupResolver, LANE
 // via resolveStore over its concrete children.
+//
+// AND THE OVERFLOW, AS INTAKE TRIES IT (MG6-1, admission or parked). A group
+// that refuses for room (at its level, or full) hands the order to the child its
+// overflow destination would take, when that has room: the same one hop intake
+// makes, asked again on every pass the order waits, so a push that parked while
+// the overflow was full goes there once a slot frees. It is this resolve's one
+// write; an overflow slot then lost at the hold goes back to the order's own
+// group through the back-to-group arm (ReserveStorageDropoff), and the next pass
+// asks again. Only an order no robot has comes here.
 func (d *Dispatcher) resolveSyntheticDropoff(order *orders.Order) error {
 	if d.resolver == nil || order == nil || order.DeliveryNode == "" {
 		return nil
@@ -501,23 +510,30 @@ func (d *Dispatcher) resolveSyntheticDropoff(order *orders.Order) error {
 		// the order id attached rather than swallowing it here.
 		return nil
 	}
-	choice, rErr := d.pure.StoreDrop(node, order.PayloadCode,
-		binresolver.UnknownBinType("scanner deferral keeper: order holds no bin and no hold"), digAskerFor(order))
+	stated := binresolver.UnknownBinType("scanner deferral keeper: order holds no bin and no hold")
+	choice, rErr := d.pure.StoreDrop(node, order.PayloadCode, stated, digAskerFor(order))
 	if rErr == nil && choice.Slot == nil {
 		rErr = fmt.Errorf("resolver returned no node")
 	}
 	if rErr == nil && !d.takeOfferedPaper(order, choice) {
 		rErr = fmt.Errorf("no available slot in node group %s", node.Name)
 	}
-	if rErr != nil {
+	slot := ""
+	if rErr == nil {
+		slot = choice.Slot.Name
+	} else if class, _ := classifyResolutionError(rErr); class == ResolutionCapacity {
+		slot, _ = d.pure.OverflowDestination(node, order.PayloadCode,
+			func() binresolver.BinTypeStatement { return stated }, digAskerFor(order))
+	}
+	if slot == "" {
 		return SyntheticUnresolved{OrderID: order.ID, Group: order.DeliveryNode, Err: rErr}
 	}
-	if uErr := d.db.UpdateOrderDeliveryNode(order.ID, choice.Slot.Name); uErr != nil {
+	if uErr := d.db.UpdateOrderDeliveryNode(order.ID, slot); uErr != nil {
 		return fmt.Errorf("order %d resolved %s to %s but delivery_node could not be written: %w",
-			order.ID, order.DeliveryNode, choice.Slot.Name, uErr)
+			order.ID, order.DeliveryNode, slot, uErr)
 	}
-	d.dbg("store: order %d resolved group %s -> %s at dispatch", order.ID, order.DeliveryNode, choice.Slot.Name)
-	order.DeliveryNode = choice.Slot.Name
+	d.dbg("store: order %d resolved group %s -> %s at dispatch", order.ID, order.DeliveryNode, slot)
+	order.DeliveryNode = slot
 	return nil
 }
 

@@ -202,6 +202,7 @@ func TestCensus_DropoffCapacityGateSites(t *testing.T) {
 		"engine/cancel_return.go:storeIntoLoader":                     "cancel-return: whether a loader home has room for the carried bin's type",
 		"dispatch/clear_home.go:ClearSpot":                            "home clear: whether a buffer spot is open for the home's carrier (the spot arm)",
 		"fulfillment/scanner.go:fulfill":                              "the scanner's re-run before every dispatch (a pass's order, or AcquireOne's)",
+		"fulfillment/scanner.go:overflowsWhileParked":                 "a parked push's group's overflow: whether it has room before the reserve is asked (R.39); its answer moves as the gate's does",
 		"store/orders.go:CountInFlightOrdersByDeliveryNodeExcluding":  "the store wrapper",
 		"store/orders/orders.go:CountInFlightByDeliveryNode":          "the count",
 		"store/orders/orders.go:CountInFlightByDeliveryNodeExcluding": "the count, excluding the asker",

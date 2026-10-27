@@ -87,6 +87,19 @@ func GetPropertyOrError(db *sql.DB, nodeID int64, key string) (string, error) {
 	return value, nil
 }
 
+// GetPropertyByNodeName is GetProperty for a caller holding the node's name and
+// not its id: one statement, the property joined to its node by name. Unset and
+// a missing node both answer "", and a read failure is logged and answers "" too.
+func GetPropertyByNodeName(db *sql.DB, name, key string) string {
+	var value string
+	err := db.QueryRow(`SELECT p.value FROM node_properties p JOIN nodes n ON n.id = p.node_id
+		WHERE n.name = $1 AND p.key = $2`, name, key).Scan(&value)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		log.Printf("nodes: get property %q for node %q: %v", key, name, err)
+	}
+	return value
+}
+
 // GetProperty returns a single property value for a node, or empty string if
 // not set.
 //

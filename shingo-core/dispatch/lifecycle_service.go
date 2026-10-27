@@ -584,10 +584,12 @@ func (s *LifecycleService) resolveSyntheticDestination(order *orders.Order, dest
 		// time two groups name each other, and "the carrier went three groups away
 		// from where anybody expected" is worse than a park an operator can see.
 		//
-		// NO MID-ROUTE RE-AIM, EVER. This runs at ADMISSION, before a robot has
-		// been told anything. A push already in flight that arrives at a
-		// just-topped group parks at its dropoff with a named cause — it does not
-		// get redirected underneath the robot carrying it.
+		// ADMISSION OR PARKED, NEVER MID-ROUTE. This runs at admission, and the
+		// scanner's resolve asks the same one hop again on every pass a parked push
+		// waits (resolveSyntheticDropoff, behind the capacity gate's park): both
+		// before a robot has been told anything. A push a robot has — one in flight
+		// that arrives at a just-topped group — parks at its dropoff with a named
+		// cause; it is never redirected underneath the robot carrying it.
 		if node, stamp, ok := s.tryOverflow(order, destNode); ok {
 			s.dbg("intake: %s at level — overflowing to %s", requested, node)
 			order.DeliveryNode = node
