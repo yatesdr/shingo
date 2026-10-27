@@ -489,8 +489,20 @@ func TestComposerShots(t *testing.T) {
 		if pressIndexID == 0 {
 			t.Fatal("plant A named no press-index recipe; the deck shot has no deck")
 		}
+		// A press-index cell is refused without an outbound destination, so
+		// the deck recipe borrows the named recipe's in and out: the shot is
+		// about where PLN_02 may go, not where the bins do.
+		named, err := db.GetFlowPreset(pressIndexID)
+		if err != nil {
+			t.Fatalf("read the press-index recipe: %v", err)
+		}
+		namedCells, _, err := domain.ParseRecipe(named.FlowJSON)
+		if err != nil || len(namedCells) == 0 {
+			t.Fatalf("the press-index recipe has no cell to borrow from: %v", err)
+		}
 		shape, err := domain.PresetShapeJSON([]domain.FlowCell{{CoreNodeName: "PLN_01", Role: protocol.ClaimRoleProduce,
-			SwapMode: protocol.SwapModeTwoRobotPressIndex, PairedCoreNode: "PLN_03"}})
+			SwapMode: protocol.SwapModeTwoRobotPressIndex, PairedCoreNode: "PLN_03",
+			InboundSource: namedCells[0].InboundSource, OutboundDestination: namedCells[0].OutboundDestination}})
 		if err != nil {
 			t.Fatalf("deck recipe shape: %v", err)
 		}
