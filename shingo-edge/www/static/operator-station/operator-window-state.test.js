@@ -292,6 +292,24 @@ function homeEntry(role, coreNode, orders) {
     eq(card(e, 'ASSY').statusText, 'NO DEMAND', 'blank move arriving at a consume node: NO DEMAND');
 })();
 
+// 28. A home's empty is held by its clear's rows (a blank move off it, the parent
+//     home to home) but not by the line's demand riding on it: a queued move
+//     that names its part and goes to the line holds nothing until Core issues
+//     it, so the empty loads (SPR 2026-10-28: such a move hid the LOAD and the
+//     line waited on a load nobody was shown).
+(function () {
+    const held = orders => { const e = homeEntry('produce', 'SMN_H1', orders); e.bin_state = { occupied: true, payload_code: '' }; return e; };
+    const demand = { status: 'queued', order_type: 'move', payload_code: 'BRKT', source_node: 'SMN_H1', delivery_node: 'LINE-1' };
+    const blank = { status: 'queued', order_type: 'move', payload_code: '', source_node: 'SMN_H1', delivery_node: 'SMN_B1' };
+    const parent = { status: 'reshuffling', order_type: 'move', payload_code: 'BRKT', source_node: 'SMN_H1', delivery_node: 'SMN_H1' };
+    eq(ctx.emptyCarrierHeld(held([demand])), false, 'held: the line\'s demand on the home does not hold its empty');
+    eq(ctx.emptyCarrierHeld(held([blank])), true, 'held: the clear\'s blank move off the home holds its empty');
+    eq(ctx.emptyCarrierHeld(held([parent])), true, 'held: the clear\'s parent, home to home, holds its empty');
+    eq(ctx.leavesAsDemand(held([]), demand), true, 'a part-naming move from the home to the line leaves as demand');
+    const c = card(held([demand]), 'BRKT');
+    eq(c.statusText + ' ' + c.action, 'LOAD load', 'an empty under a queued move to the line: LOAD');
+})();
+
 // ── result ──
 if (failed > 0) { console.error('\n' + failed + ' failure(s), ' + passed + ' passed'); process.exit(1); }
 console.log('operator-window-state: ' + passed + ' assertions passed');

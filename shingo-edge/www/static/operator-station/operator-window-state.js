@@ -109,8 +109,22 @@ export function emptyCarrierHeld(entry) {
     if (!bs.occupied || bs.payload_code || coreNode === '') return false;
     const short = function (n) { return String(n || '').replace(/^.*\./, ''); };
     return (entry.orders || []).some(function (o) {
-        return isActiveStatus(o.status) && o.status !== 'delivered' && short(o.source_node) === short(coreNode);
+        return isActiveStatus(o.status) && o.status !== 'delivered' && short(o.source_node) === short(coreNode) &&
+            !leavesAsDemand(entry, o);
     });
+}
+
+// leavesAsDemand reports whether a row leaving a home is the line's demand
+// riding on it, not the home's clear: a move that names its part and delivers
+// to another node. The clear's rows name no part (the emptied carrier's move)
+// or come back to the home (its parent). Demand holds no carrier until Core
+// issues it holding the loaded one, so it neither holds the empty nor reads as
+// a clear in flight (SPR 2026-10-28: a queued move to the line hid the LOAD of
+// the empty its home stood with, and the line waited on a load nobody was shown).
+export function leavesAsDemand(entry, o) {
+    const coreNode = (entry.node && entry.node.core_node_name) || '';
+    const short = function (n) { return String(n || '').replace(/^.*\./, ''); };
+    return !!o.payload_code && short(o.source_node) === short(coreNode) && short(o.delivery_node) !== short(coreNode);
 }
 
 // CLEAR_RUNNING is a loader home's words while its clear runs and the emptied

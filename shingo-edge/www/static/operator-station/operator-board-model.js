@@ -18,7 +18,7 @@
 
 'use strict';
 
-import { cardModel, emptyCarrierHeld, clearRunning, CLEAR_RUNNING, isActiveStatus } from './operator-window-state.js';
+import { cardModel, emptyCarrierHeld, clearRunning, CLEAR_RUNNING, isActiveStatus, leavesAsDemand } from './operator-window-state.js';
 
 // loaderOf is a tile's loader, or null on every tile that is not a Core
 // loader's window or position.
@@ -446,12 +446,13 @@ function liveOrders(tile) {
 // emptied carrier off the home (Core's clear, on its spot arm, to an open
 // buffer spot; pushed to the station as a plain row), live on the home's
 // orders. The home draws no Load card until it ends, and the spot it goes to
-// is drawn as coming.
+// is drawn as coming. A move naming its part bound for the line is the line's
+// demand on the home (leavesAsDemand), not its clear.
 function clearMoves(tile) {
     const home = (tile.node && tile.node.core_node_name) || '';
     if (!home || tileRole(tile) !== 'produce') return [];
     return liveOrders(tile).filter(function (o) {
-        return o.order_type === 'move' && shortNode(o.source_node) === shortNode(home);
+        return o.order_type === 'move' && shortNode(o.source_node) === shortNode(home) && !leavesAsDemand(tile, o);
     });
 }
 

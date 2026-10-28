@@ -283,6 +283,15 @@ eq([NOBIN, FULLBIN('PART-A'), EMPTYBIN('KD-1'), EMPTYBIN(''), { occupied: true, 
     eq(zone(b, 'load').cards, [], 'clear in flight: the home draws no Load card (changed: it drew LOAD)');
     eq(M.bufferOf(homes).map(s => s.state), ['partial', 'coming', 'open'], 'clear in flight: its spot is drawn as coming');
     eq(zone(b, 'partials').tone, 'plain', 'clear in flight: the coming spot counts as an empty, so no amber');
+    // The line's demand riding on the home is not its clear: a queued move
+    // naming its part bound for the line leaves the empty loadable and draws
+    // the Load card (changed: it hid it, SPR 2026-10-28).
+    const demand = ord(303, 'queued', { order_type: 'move', source_node: 'SMN_H1', delivery_node: 'ALN_L1', payload_code: 'PART-A' });
+    const asked = [Object.assign({}, homes[0], { orders: [demand] })];
+    const d = B({ station: {}, nodes: asked, serves: [row('PART-A', -40, { waiting: true })] });
+    eq(zone(d, 'load').cards.map(cardSay), [['SMN_H1', 'PART-A', 'amber', 'SOON', 'CELL waiting']],
+        'demand on the home: the Load card, amber while its cell waits');
+    eq(M.bufferOf(asked).map(s => s.state), ['partial', 'partial', 'open'], 'demand on the home: no buffer spot drawn as coming');
 }
 
 // ── a home whose empty an unfinished order holds offers no LOAD ──
