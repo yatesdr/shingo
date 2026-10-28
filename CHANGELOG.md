@@ -22,6 +22,9 @@ Edge-only; no migrations. Core then Edge at SPR to keep both on one commit.
 - A queued move from a home to its line no longer hides the home's LOAD
 - Core's loader threshold leaves the Edge: no copy, no wire field (Edge v31)
 - A cell episode's level is its reorder point, not Core's threshold (Edge v32)
+- The dev sim seeds demo-sim.yaml by default, with Core stopped across the seed
+- demo-sim.yaml gets demo.yaml's PANEL-D; edge2's drain gets Core auto_push
+- The dev configs and plant notes say what the code does today; jitter_pct goes
 
 ## 2026-10-27 — Press tranche 2, the route strip, and positions from Settings
 
