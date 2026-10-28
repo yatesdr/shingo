@@ -3,6 +3,14 @@
 One line per change. If a change needs a paragraph to explain, the paragraph
 belongs in the commit message or in `docs/` — this file is the index.
 
+## 2026-10-28 — The loader board lights a waiting cell it cannot count
+
+Edge-only; no migrations. Core then Edge at SPR to keep both on one commit.
+
+- A cell that has asked lights its Load card amber even at a count below 0
+- The cells row says "count unknown" for any uncounted row, never "null left"
+- A refusal on a waiting, uncounted cell says "waiting", not "has none left"
+
 ## 2026-10-27 — Press tranche 2, the route strip, and positions from Settings
 
 Core then Edge in one window; Core 164–167, Edge v29–v30. SPR runs c350a1ba; the Settings positions work is not deployed.
