@@ -1204,6 +1204,31 @@ const loadBody = { payload_code: 'PART-A', uop_count: 24,
     eq(zoneEl('No parts available').className, 'os-pc-zone os-pc-zone--red', 'No parts available: the section is red');
 }
 
+// ── 16. The presses line, and a cart cleared and on its way ────────────────
+{
+    // An unloader's status row folds to one line like a loader's cells: the
+    // same line, one state (SPR 2026-10-28: the FG unloader's presses row stayed
+    // open after the cells folded). A cart emptied at a window whose move off it
+    // is live says it is leaving, not nothing.
+    const leaving = order(9010, 'in_transit', { order_type: 'move', source_node: 'ULN_P2', delivery_node: 'ULN_S2' });
+    const windows = [
+        loaderTile(1, 'ULN_P1', { role: 'consume', parts: ['PART-A'], bin: FULL('PART-A'), uop: 12, operator: true }),
+        loaderTile(2, 'ULN_P2', { role: 'consume', parts: ['PART-A'], bin: EMPTY, operator: true, orders: [leaving] }),
+    ];
+    setView(windows, { serves: [row('PRESS-1', 'PART-A', 120, { role: 'produce', carrier: 'TOTE-1', node: 'PLN_1', capacity_uop: 400 })] });
+    render();
+    const bar = () => grid.descendants().find(n => n.classList.contains('os-pc-cellbar'));
+    const presses = () => grid.descendants().filter(n => n.classList.contains('os-pc-press'));
+    const label = () => part(bar(), 'os-pc-cellbar-label');
+    eq([label(), presses().length], ['Presses', 0], 'presses: one folded line, no press tile drawn');
+    await tap(bar());
+    eq([presses().length, grid.classList.contains('os-pc-cellsopen')], [1, true], 'presses: a tap opens the tiles, and the board may scroll');
+    await tap(bar());
+    eq(presses().length, 0, 'presses: a second tap folds them');
+    eq(cardText(pcCard('TOTE-1', 'ULN_P2')).slice(-1), ['Cleared · robot on its way'],
+        'a cart cleared and on its way out says so');
+}
+
 if (failed) { console.error(passed + ' passed, ' + failed + ' FAILED'); process.exit(1); }
 console.log('operator loader station: ' + passed + ' passed');
 process.exit(0);

@@ -904,11 +904,20 @@ function windowCards(consumers, ctx) {
         const at = heightOf(bin);
         const atLayers = at && at.extra === 0 ? at.layers : null;
         const changes = !!back && !!own && (back !== own || (typeof lit.layers === 'number' && lit.layers !== atLayers));
+        // A cart cleared and on its way out: its move off this window is live
+        // (the stage-1 cart to stage 2, an emptied cart's U2). It stands here
+        // until a robot lifts it, and says so rather than nothing (SPR
+        // 2026-10-28: a cleared cart read as if nobody had dealt with it).
+        const home = (t.node && t.node.core_node_name) || '';
+        const leaving = !full && liveOrders(t).some(function (o) {
+            return o.order_type === 'move' && shortNode(o.source_node) === shortNode(home);
+        });
         let note = '';
         if (full && bin.held_since) {
             const since = ctx.when(bin.held_since);
             note = 'Partial · held for ' + (bin.held_for || 'its line') + (since ? ' · since ' + since : '');
-        } else if (loader.pulled_directly && !full) note = 'The cart waits here for the line';
+        } else if (leaving) note = 'Cleared · robot on its way';
+        else if (loader.pulled_directly && !full) note = 'The cart waits here for the line';
         else if (changes) note = 'Change to ' + choiceLabel(lit);
         else if (back && multi) note = full ? 'Send back ' + choiceLabel(lit) : 'Send it';
         // A full at the window has arrived, ready to unload: green, ARRIVED and

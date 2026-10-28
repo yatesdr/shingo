@@ -13,6 +13,8 @@ Edge-only; no migrations. Core then Edge at SPR to keep both on one commit.
 - The cells row folds to one line; a tap opens the tiles and the board scrolls
 - Card columns: three from 1000 px, four from 1360, five from 1800
 - A full arrived at an unloader window is green, pulses and says where
+- An unloader's presses row folds like the cells: one shared status line
+- A cart cleared at a window says "Cleared · robot on its way"
 - A compact fourth card size comes before any card goes behind "+N more"
 - A code the compact size cannot hold takes a column back rather than clip
 - A refused part a cell runs is red again, under "No parts available"

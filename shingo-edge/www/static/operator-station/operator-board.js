@@ -17,7 +17,9 @@ import { boardModel, fitBoard, statusRowLayout, GEOM } from './operator-board-mo
 // What the person at the screen chose; this screen only, nothing is stored.
 let showAll = false;
 let partialsOpen = false;
-let cellsOpen = false;
+// statusOpen: the board's status row (a loader's cells, an unloader's presses)
+// opened from its folded line.
+let statusOpen = false;
 
 // drawn is the board on the glass: one {key, sig, el} a band, in order. sig is
 // the band's inputs as JSON; a band whose sig is unchanged is kept.
@@ -145,37 +147,61 @@ function bar(fraction, tick, cls) {
     return track;
 }
 
-// buildCellBar is the cells row folded to one line: each cell, closest to
-// running out first, with its most urgent row's words ("waiting" for a cell
-// that has asked), red where a red card fixes it, and Show / Hide. The whole
-// line is the tap.
-function buildCellBar(cells, open, acts) {
-    const red = cells.tiles.some(function (t) { return t.red; });
+// buildStatusBar is a board's status row folded to one line, the one shape
+// both rows fold to (a loader's cells, an unloader's presses): a label, each
+// item with its words, red where red, and Show / Hide. The whole line is the
+// tap, and opening it draws the row's tiles under it.
+function buildStatusBar(label, items, open, acts) {
+    const red = items.some(function (it) { return it.red; });
     const btn = el('button', { type: 'button', className: 'os-pc-cellbar' + (red ? ' os-pc-cellbar--red' : '') });
-    btn.appendChild(el('span', { className: 'os-pc-cellbar-label', textContent: 'Cells' }));
+    btn.appendChild(el('span', { className: 'os-pc-cellbar-label', textContent: label }));
     const list = el('span', { className: 'os-pc-cellbar-list' });
-    if (cells.failed) list.appendChild(el('span', { className: 'os-pc-cellbar-cell os-pc-cellbar-cell--quiet', textContent: 'could not look' }));
-    cells.tiles.forEach(function (t) {
-        const first = t.rows[0];
-        const cell = el('span', { className: 'os-pc-cellbar-cell' + (t.red ? ' os-pc-cellbar-cell--red' : '') +
-            (t.covered ? ' os-pc-cellbar-cell--quiet' : '') });
-        cell.appendChild(el('span', { className: 'os-pc-cellbar-name', textContent: t.cell }));
-        const words = first ? (first.state === 'waiting' ? 'waiting' : first.words) : '';
-        if (words) cell.appendChild(el('span', { className: 'os-pc-cellbar-words', textContent: words }));
+    items.forEach(function (it) {
+        const cell = el('span', { className: 'os-pc-cellbar-cell' + (it.red ? ' os-pc-cellbar-cell--red' : '') +
+            (it.quiet ? ' os-pc-cellbar-cell--quiet' : '') });
+        cell.appendChild(el('span', { className: 'os-pc-cellbar-name', textContent: it.name }));
+        if (it.words) cell.appendChild(el('span', { className: 'os-pc-cellbar-words', textContent: it.words }));
         list.appendChild(cell);
     });
-    if (cells.more > 0) {
-        list.appendChild(el('span', { className: 'os-pc-cellbar-cell os-pc-cellbar-cell--quiet', textContent: '+' + cells.more + ' more' }));
-    }
     btn.appendChild(list);
     btn.appendChild(el('span', { className: 'os-pc-cellbar-toggle', textContent: open ? 'Hide' : 'Show' }));
-    btn.addEventListener('click', function () { cellsOpen = !cellsOpen; acts.rerender(); });
+    btn.addEventListener('click', function () { statusOpen = !statusOpen; acts.rerender(); });
     return btn;
+}
+
+// cellItems are the cells row's folded items: each cell, closest to running
+// out first, with its most urgent row's words ("waiting" for a cell that has
+// asked), red where a red card fixes it.
+function cellItems(cells) {
+    const items = [];
+    if (cells.failed) items.push({ name: 'could not look', quiet: true });
+    cells.tiles.forEach(function (t) {
+        const first = t.rows[0];
+        items.push({ name: t.cell, words: first ? (first.state === 'waiting' ? 'waiting' : first.words) : '',
+            red: t.red, quiet: t.covered });
+    });
+    if (cells.more > 0) items.push({ name: '+' + cells.more + ' more', quiet: true });
+    return items;
+}
+
+// pressItems are the presses row's folded items: each press, closest to full
+// first, with its count ("24 of 132", "full"), red where a red cart fixes it;
+// then the empties ready, by bin.
+function pressItems(p) {
+    const items = p.tiles.map(function (t) {
+        return { name: t.cell + ' · ' + t.node, words: t.words, red: t.red };
+    });
+    if (p.more > 0) items.push({ name: '+' + p.more + ' more', quiet: true });
+    if (p.empties) {
+        items.push({ name: 'Empties', words: p.empties.lines.filter(function (l) { return !l.small; })
+            .map(function (l) { return l.bin + ' ' + l.words; }).join(', ') });
+    }
+    return items;
 }
 
 function buildCells(cells, layout, rowsPerTile, open, acts) {
     const wrap = el('div', { className: 'os-pc-status' });
-    wrap.appendChild(buildCellBar(cells, open, acts));
+    wrap.appendChild(buildStatusBar('Cells', cellItems(cells), open, acts));
     if (!open) return wrap;
     const row = el('div', { className: 'os-pc-tiles' + (layout.countUnder ? ' os-pc-tiles--under' : '') });
     row.style.setProperty('--os-pc-tile-cols', String(layout.columns || 1));
@@ -207,9 +233,10 @@ function buildCells(cells, layout, rowsPerTile, open, acts) {
     return wrap;
 }
 
-function buildPresses(p, layout) {
+function buildPresses(p, layout, open, acts) {
     const wrap = el('div', { className: 'os-pc-status' });
-    wrap.appendChild(el('div', { className: 'os-pc-status-label', textContent: 'Bins filling at the presses, closest to full first' }));
+    wrap.appendChild(buildStatusBar('Presses', pressItems(p), open, acts));
+    if (!open) return wrap;
     const row = el('div', { className: 'os-pc-tiles' });
     row.style.setProperty('--os-pc-tile-cols', String(layout.columns || 1));
     p.tiles.forEach(function (t) {
@@ -299,15 +326,12 @@ function buildZone(z, shown, cols, acts) {
 export function renderBoard(grid, view, viewport, acts, when, sign) {
     const m = boardModel(view, { partialsOpen: partialsOpen, when: when, sign: sign });
     const status = m.cells || m.presses;
-    // A loader's cells row is one folded line (GEOM.statusFold) to the fit: the
-    // board is the work. Opened, its tiles draw under the line and the board
-    // scrolls to the work below them, laid out as it was (SPR 2026-10-28: on a
-    // 10-inch tablet the tiles took a third of the screen and pushed the cards
-    // behind "+N more").
-    const statusAt = function (rows) {
-        if (m.cells) return GEOM.statusFold;
-        return statusRowLayout(status, viewport.width, rows).height;
-    };
+    // The status row (a loader's cells, an unloader's presses) is one folded
+    // line (GEOM.statusFold) to the fit: the board is the work. Opened, its
+    // tiles draw under the line and the board scrolls to the work below them,
+    // laid out as it was (SPR 2026-10-28: on a 10-inch tablet the cells took a
+    // third of the screen; the presses row stayed open until it was folded too).
+    const statusAt = function () { return status ? GEOM.statusFold : 0; };
     let zones = m.zones;
     let fit;
     if (showAll) {
@@ -320,7 +344,7 @@ export function renderBoard(grid, view, viewport, acts, when, sign) {
     grid.classList.remove('os-pc-step-0', 'os-pc-step-1', 'os-pc-step-2', 'os-pc-step-3');
     grid.classList.add('os-pc-step-' + fit.step);
     if (showAll) grid.classList.add('os-pc-showall'); else grid.classList.remove('os-pc-showall');
-    if (m.cells && cellsOpen) grid.classList.add('os-pc-cellsopen'); else grid.classList.remove('os-pc-cellsopen');
+    if (status && statusOpen) grid.classList.add('os-pc-cellsopen'); else grid.classList.remove('os-pc-cellsopen');
 
     const bands = [{ key: 'top', inputs: [m.title, m.words, m.tileCount, showAll, m.sign], build: function () { return buildTop(m, acts); } }];
     if (m.bar) {
@@ -328,10 +352,13 @@ export function renderBoard(grid, view, viewport, acts, when, sign) {
             build: function () { return buildBar(m.bar, acts); } });
     }
     if (m.cells) {
-        bands.push({ key: 'cells', inputs: [m.cells, layout, fit.rowsPerTile, cellsOpen],
-            build: function () { return buildCells(m.cells, layout, fit.rowsPerTile, cellsOpen, acts); } });
+        bands.push({ key: 'cells', inputs: [m.cells, layout, fit.rowsPerTile, statusOpen],
+            build: function () { return buildCells(m.cells, layout, fit.rowsPerTile, statusOpen, acts); } });
     }
-    if (m.presses) bands.push({ key: 'presses', inputs: [m.presses, layout], build: function () { return buildPresses(m.presses, layout); } });
+    if (m.presses) {
+        bands.push({ key: 'presses', inputs: [m.presses, layout, statusOpen],
+            build: function () { return buildPresses(m.presses, layout, statusOpen, acts); } });
+    }
     zones.forEach(function (z, i) {
         bands.push({ key: 'zone:' + z.key, inputs: [z, fit.shown[i], fit.columns],
             build: function () { return buildZone(z, fit.shown[i], fit.columns, acts); } });

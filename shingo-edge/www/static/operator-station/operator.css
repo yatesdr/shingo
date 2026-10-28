@@ -1217,8 +1217,8 @@ body.os-pc-active #os-footer { display: none; }
     --os-pc-card: 64px; --os-pc-headline: 18px; --os-pc-title: 16px; --os-pc-header: 26px; --os-pc-spot: 12px;
     --os-pc-note: 12px;
 }
-/* Show all scrolls, and so does the board with its cells opened: the tiles sit
-   above the work, which keeps the layout the fit gave it. */
+/* Show all scrolls, and so does the board with its status row opened: the
+   tiles sit above the work, which keeps the layout the fit gave it. */
 #os-grid.os-pc-board.os-pc-showall,
 #os-grid.os-pc-board.os-pc-cellsopen { overflow-y: auto; }
 
@@ -1266,9 +1266,10 @@ body.os-pc-active #os-footer { display: none; }
 
 /* The status row */
 .os-pc-status { flex: none; display: flex; flex-direction: column; gap: 8px; }
-/* The cells line: the loader's status row folded to one tappable line, so the
-   board is the work. Its height is GEOM.statusFold, all the fit counts of
-   the row (operator-board.js renderBoard). */
+/* The status line: a board's status row (a loader's cells, an unloader's
+   presses) folded to one tappable line, so the board is the work. Its height is
+   GEOM.statusFold, all the fit counts of the row (operator-board.js
+   buildStatusBar, renderBoard). */
 .os-pc-cellbar {
     display: flex;
     align-items: center;
