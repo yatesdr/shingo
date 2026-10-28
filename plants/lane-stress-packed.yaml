@@ -635,11 +635,11 @@ claims:
     outbound_destination: SYN_COMP
     auto_push: true
 
-# Core's loader switches (plantspec LoaderSettings). A claim's `auto_push` seeds only
-# the Edge's stored claim; the unloader's re-pull when its window frees reads Core's
-# bin_loaders.auto_push, which only this section sets. Without it FGN_001 re-pulled only on
-# a weld's capture release, and sat idle with its window free (Stage A soak, 2026-09-26:
-# 22 pulls in 90 minutes, gaps up to 9.5 wall-minutes, 23 full ASSY waiting).
+# Core's loader switches (plantspec LoaderSettings). A loader claim seeds no Edge claim row,
+# so its own `auto_push` reaches nothing; the unloader's re-pull when its window frees reads
+# Core's bin_loaders.auto_push, which only this section sets. Without it FGN_001 re-pulled
+# only on a weld's capture release, and sat idle with its window free (Stage A soak,
+# 2026-09-26: 22 pulls in 90 minutes, gaps up to 9.5 wall-minutes, 23 full ASSY waiting).
 loader_settings:
   FGN_001: {auto_push: true}
 

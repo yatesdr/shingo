@@ -234,8 +234,9 @@ type LoaderSettings struct {
 	// partly drained carrier.
 	AcceptPartials bool `yaml:"accept_partials,omitempty"`
 	// AutoPush → bin_loaders.auto_push: the unloader re-pulls its next full
-	// when a window frees. Distinct from a claim's auto_push, which seeds only
-	// the Edge's stored claim and never reaches the Core loader.
+	// when a window frees. This is the only way a spec sets it: a loader claim
+	// gets no Edge claim row (seed_edge), so a claim's own auto_push seeds
+	// nothing for a loader.
 	AutoPush bool `yaml:"auto_push,omitempty"`
 }
 

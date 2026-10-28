@@ -72,91 +72,33 @@ staging:
 sim:
   enabled: true
   seed: 1                           # fixed for reproducible dev runs (0 = derive+log)
-  # SLOWED FROM 10x TO 2x (owner's call, 2026-09-05). At 10x the loop could not
-  # hold steady state and the reason is a units mismatch, not a tuning miss: the
-  # delivery pipeline runs on WALL time (Kafka hop, DB writes, the outbox drain,
-  # and every periodic loop still on a raw time.Ticker), so a ~30-60 s real round
-  # trip lands as 300-600 SIM
-  # seconds. Consumption is quoted in sim time — 20 parts x 30 s = 600 s of cover —
-  # so the round trip ate the entire depletion budget and cells drained past zero
-  # while their replenishment was still in flight. At 2x the same real round trip
-  # costs 60-120 sim seconds against the same 600, which is the margin the
-  # arithmetic assumed all along.
+  # ── 10x, MEASURED AS A PAIR (2026-09-26) ─────────────────────────────────
   #
-  # CORRECTION (2026-09-06): this list used to name "simulated robot travel" as a
-  # wall-time leg. It is not one, and never was. NewDriver scales transit by speed
-  # ONLY when it is handed a non-SimClock (driver.go:141); sim startup always
-  # builds a *SimClock, so transit keeps its base value and is spent through the
-  # clock's own After — which divides by the multiplier. Robot travel is already
-  # sim-scaled and does not compress the budget at any speed.
+  # Three runs on lane-stress-packed over the same ~99 sim-minutes, 5x twice and
+  # 10x once, read through the demand pairing: 10x sat inside the 5x-vs-5x spread,
+  # so the dev stack runs at 10x and clock.DefaultSimMaxSpeed (also 10) holds the
+  # numbers. The rig scripts run 20x by rewriting the speed line below in their
+  # own clone and adding max_speed (rig/run-pt2*.sh match `  speed: 10.0` exactly,
+  # in this file and both edge configs; keep it byte-identical). The earlier 2x
+  # and 5x settings and their outbox-drain measurements are in git history; the
+  # drainer has rung on every enqueue since 2e4b416f, so it is not the binding leg.
   #
-  # Measured on the rig at 2x: transit_min/max is 15-20 s against a 109 sim-second
-  # mean order life, so travel is ~18% of an order and the other 82% is the
-  # pipeline. Naming travel as the cost pointed tuning at the one leg that was
-  # already correct. The real wall-bound remainder is the pipeline cadence above,
-  # and the sim-vs-wall rule for it is in docs/dev-env/sim.md.
+  # Robot travel is already sim-scaled: sim startup builds a *SimClock and the
+  # driver spends transit through its After (fleet/simulator NewDriver), so no
+  # speed compresses it.
   #
-  # MUST MATCH shingocore.dev.yaml AND every edge, and must be changed HERE rather
-  # than through POST /api/sim/speed: a live SetSpeed re-anchors per process and
-  # breaks the core-edge sync this epoch/anchor pair exists to hold.  #
+  # MUST MATCH every edge, and is changed HERE, never through POST /api/sim/speed:
+  # a live SetSpeed re-anchors per process and breaks the core-edge sync that the
+  # shared anchor (SHINGO_SIM_ANCHOR, scripts/sim-anchor.sh) holds.
+  #
   # ── CHANGING THIS NUMBER IS A `down -v`, NOT A RESTART ──────────────────────
   #
-  # sim-now is epoch + speed*(wallNow-anchor), so changing speed RETIMES THE WHOLE
-  # WORLD while the rows already in the database keep the stamps they were written
-  # with. Going 10x -> 2x divides elapsed sim time by five: sim-now jumped BACKWARDS
-  # about fifteen sim-months, and every order already in flight was left carrying a
-  # created_at in the future. Anything reasoning about age, deadlines or "older
-  # than" treats those rows as not yet due, forever — they never move again and
-  # they look exactly like a wedge.
-  #
-  # Measured 2026-09-05: 413 orders confirmed cleanly on the new clock while six
-  # pre-change survivors sat frozen, and the survivors were read as evidence that
-  # the rig was broken. It was not.
-  #
-  # Reset the data when you change this. The note above about matching core and
-  # every edge still applies and is not the same warning.
-  # ── 5x, AND IT IS MEASURED (2026-09-06) ───────────────────────────────────
-  #
-  # It was 10x, then 2x by owner's call after the 10x loop could not hold steady
-  # state. Neither number had been measured. All three were, on this rig, in
-  # 6-minute windows at steady state, in orders finished per WALL minute -- the
-  # only rate that says whether the box is keeping up:
-  #
-  #     2x    9.83/wall-min   backlog +0   11 open   104 sim-s mean order life
-  #     5x   21.50/wall-min   backlog +2    9 open   102 sim-s   <- shipped
-  #    10x    4.65/wall-min   backlog +6   33 open    (survivors only)
-  #
-  # 10x is not merely no better, it is HALF the throughput of 2x while the box
-  # sits at 0.44 load -- so the limit was never CPU. 5x is the fastest speed that
-  # holds the 2x SHAPE: same order lifetime, same queue depth, backlog flat, and
-  # 2.2x the work per real minute. clock.DefaultSimMaxSpeed refuses more.
-  #
-  # THE BINDING LEG IS THE EDGE OUTBOX DRAIN, and that was measured too: it is 5s
-  # of WALL backstop (protocol/outbox/drainer.go:170), so at Nx it is 5N SIMULATED
-  # seconds per hop. Dropping it to 500ms took 10x from 4.65 to 34.50/wall-min in a
-  # controlled re-run -- the same speed, one value changed. It is NOT lowered here,
-  # because that same interval is also the dead-letter budget (MaxRetries x
-  # interval) and shortening it divides a real broker's recovery window by the
-  # same factor. Splitting the two is the change that raises the ceiling.
-  #
-  # ── 10x, MEASURED AS A PAIR (2026-09-26), AND THE PARAGRAPH ABOVE IS STALE ──
-  #
-  # Three runs on lane-stress-packed over the same ~99 sim-minutes: 5x twice and
-  # 10x once, read through the demand pairing. 10x sits inside the 5x-vs-5x
-  # spread (see clock.DefaultSimMaxSpeed for the numbers), so the rig runs at 10x
-  # and a run's wall minutes halve for the same sim span.
-  #
-  # The outbox is not the binding leg today: the drainer has rung on every
-  # enqueue since 2e4b416f (2026-08-21), and on the rig a message leaves in about
-  # 60-70 ms on both sides (Core p95 under 0.13 s). What 09-06 measured with a
-  # 500 ms interval is not reproduced by the tree as it stands.
-  #
-  # SEPARATELY, AND IT LIMITS EVERY SPEED: a staged bin with no reservation wedges
-  # a robot permanently through the position gate, and the count only ratchets up.
-  # It is a single_robot swap self-deadlocking against the sim's position gate,
-  # it costs two robots in the first three minutes of every run, and it is
-  # sim-only. Write-up: ISSUE-sim-position-hold-deadlock-2026-09-06.md at the
-  # GitHub root. A long run degrades for that reason, not this one.
+  # sim-now is epoch + speed*(wallNow-anchor), so a new speed retimes the whole
+  # world while the rows already in the database keep the stamps they were written
+  # with. Going down in speed leaves in-flight orders created in the future: never
+  # due, they never move again and look exactly like a wedge (2026-09-05: six such
+  # survivors were read as a broken rig while 413 orders confirmed around them).
+  # Reset the data when you change this.
   speed: 10.0
   # SYNCED RUNNING (zero core↔edge drift, and the multiplier is real). In
   # running-clock mode (no epoch) each binary stamps its own boot-now as the clock
@@ -211,7 +153,8 @@ sim:
   # the demo's rate balance above needs 20 to keep the supply cycle inside the
   # drain window.
   fleet_size: 20
-  jitter_pct: 0.2
+  # No jitter_pct: transit_min < transit_max is a uniform draw and the driver
+  # reads jitter only when they are equal (driver.go nextDeadline).
   fail_rate: 0.0
 
 # ── CMS inventory-ledger integration ──────────────────────────────────────

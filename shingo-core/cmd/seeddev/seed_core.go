@@ -386,12 +386,14 @@ func boolProp(b bool) string {
 
 // seedBinLoaders derives the Core-owned bin_loaders aggregate from the plant's
 // manual_swap claims — the dev-sim equivalent of the production migration, and
-// what makes the Core-owned loader read path exercisable in the sim. Grouped by
-// (core_node, role); the plantspec has no
-// home-location concept, so loaders are shared_window and their allowed payloads
-// become bin_loader_payloads (min_stock = reorder_point, uop_threshold from the
-// demand spec). Replenishment: consume → auto when auto_push else operator;
-// produce → auto. Idempotent — skips a (core_node, role) that already exists.
+// what makes the Core-owned loader read path exercisable in the sim. A claim is
+// its own shared_window loader, a window_of claim a window of one, and home_of
+// claims the positions of a dedicated_positions loader; allowed payloads become
+// bin_loader_payloads with uop_threshold from the demand spec. Replenishment:
+// produce → threshold, consume → operator. A consume loader's auto_push and
+// accept_partials come from the spec's loader_settings only; a loader claim's
+// auto_push, auto_reorder and reorder_point are not read. Idempotent — skips a
+// (core_node, role) that already exists.
 func seedBinLoaders(db *store.DB, p *plantspec.Plant) error {
 	// The station's own setting, by node name: whether a changeover commandeers
 	// its card. It lives on the station because it describes the station.

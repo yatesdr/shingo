@@ -17,11 +17,16 @@ func TestDevYAMLParses(t *testing.T) {
 	if !cfg.Sim.Enabled {
 		t.Error("sim.enabled should be true in dev config")
 	}
-	if cfg.Sim.TransitTime != 5*time.Second {
-		t.Errorf("sim.transit_time = %v, want 5s", cfg.Sim.TransitTime)
+	// The keys the file sets, not defaults: transit_time and jitter_pct are
+	// unset there (a uniform transit_min..transit_max draw never reads them).
+	if cfg.Sim.Speed != 10 {
+		t.Errorf("sim.speed = %v, want 10", cfg.Sim.Speed)
 	}
-	if cfg.Sim.JitterPct != 0.2 {
-		t.Errorf("sim.jitter_pct = %v, want 0.2", cfg.Sim.JitterPct)
+	if cfg.Sim.TransitMin != 15*time.Second || cfg.Sim.TransitMax != 20*time.Second {
+		t.Errorf("sim.transit_min/max = %v/%v, want 15s/20s", cfg.Sim.TransitMin, cfg.Sim.TransitMax)
+	}
+	if cfg.Sim.FleetSize != 20 {
+		t.Errorf("sim.fleet_size = %d, want 20", cfg.Sim.FleetSize)
 	}
 	if cfg.Web.Port != 8083 {
 		t.Errorf("web.port = %d, want 8083", cfg.Web.Port)

@@ -1127,11 +1127,12 @@ claims:
   # PANEL-A and PANEL-B are work-in-progress that a cell consumes; an unloader on
   # either competes with the line for its own feedstock. UNLOADER-A/FGN_001 is now
   # the only unloader here, and that is the whole intended population.
-# demo-sim: Core's loader switches (plantspec LoaderSettings). A claim's `auto_push` seeds only
-# the Edge's stored claim; the unloader's re-pull when its window frees reads Core's
-# bin_loaders.auto_push, which only this section sets. Without it FGN_001 re-pulled only on
-# a weld's capture release, and sat idle with its window free (Stage A soak, 2026-09-26:
-# 22 pulls in 90 minutes, gaps up to 9.5 wall-minutes, 23 full ASSY waiting).
+# demo-sim: Core's loader switches (plantspec LoaderSettings). A loader claim seeds no Edge
+# claim row, so its own `auto_push` reaches nothing; the unloader's re-pull when its window
+# frees reads Core's bin_loaders.auto_push, which only this section sets. Without it FGN_001
+# re-pulled only on a weld's capture release, and sat idle with its window free (Stage A
+# soak, 2026-09-26: 22 pulls in 90 minutes, gaps up to 9.5 wall-minutes, 23 full ASSY
+# waiting).
 loader_settings:
   FGN_001: {auto_push: true}
 

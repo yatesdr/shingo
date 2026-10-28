@@ -15,6 +15,10 @@ and Hopkinsville are configured through the Nodes page, not from a spec file.
 | `demo-sim.yaml` | The sim rig's demo: `demo.yaml` plus five PANEL-B bins (so a 40-minute run stays healthy) and `loader_settings` giving the unloader Core's `auto_push`. Keep it in step with `demo.yaml`; it differs only by the lines marked `demo-sim`. |
 | `lane-stress.yaml` | A rig aimed at one seam: single-file lanes, the mouth gate, digs, and contention for a corridor. **Frozen baseline, retired from certification** — see below. |
 | `lane-stress-packed.yaml` | The corrected re-cut of the above. **New baselines are cut here.** Carries two extra PANEL-B bins (2026-09-26) so a 40-minute run stays healthy. |
+| `edge2.yaml` | EDGE 2's line (station `edge2.line1`): the observable-window changeover plant, seeded by the `seed-edge2` service onto the same Core as `demo-sim.yaml`. |
+
+`docker-compose.dev.yml`'s `seed` reads `SHINGO_PLANT`, default `/plants/demo-sim.yaml`
+(it was `demo.yaml` until 2026-10-28; a sim seeded from that wedges, see below).
 
 The lane-stress rigs are not models of a plant. Cell fidelity is borrowed
 wholesale from `demo.yaml` — same presses, welds, loaders, unloader, swap modes
@@ -110,11 +114,13 @@ are comparing against an older figure, check when it was taken.
 
 ## The unloader's `auto_push` lives in `loader_settings`
 
-A claim's `auto_push` seeds only the Edge's stored claim. The unloader's re-pull when
-its window frees reads Core's `bin_loaders.auto_push`, which only a spec's
-`loader_settings` section sets. A spec that declares `auto_push` on the claim alone
+A loader claim seeds no Edge claim row, so a claim's `auto_push` seeds nothing (nor do its
+`auto_reorder`, `reorder_point` or `auto_confirm`). The unloader's re-pull when its window
+frees reads Core's `bin_loaders.auto_push`, which only a spec's `loader_settings` section sets. A spec that declares `auto_push` on the claim alone
 gets an unloader that re-pulls only on a producer's capture release. The Stage A
 soak (2026-09-26) ran that way: 22 pulls in 90 minutes, with its one window free for
-up to 9.5 wall-minutes at a time. `demo-sim.yaml` and `lane-stress-packed.yaml` set it;
-`demo.yaml` (the golden's plant) and the frozen `lane-stress.yaml` do not.
+up to 9.5 wall-minutes at a time. `demo-sim.yaml`, `lane-stress-packed.yaml` and
+`edge2.yaml` set it; `demo.yaml` (the golden's plant) and the frozen `lane-stress.yaml` do
+not. On 2026-10-28 a laptop sim seeded from `demo.yaml` wedged about three sim-hours in:
+22 pulls against 46 ASSY releases, 24 full ASSY in the market and no empty left.
 
