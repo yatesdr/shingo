@@ -1,6 +1,9 @@
 # Local dev environment — SIMULATION ONLY, not for production.
 # Quickstart: make dev && make dev-seed   (see README.dev.md, added in T5.3)
 COMPOSE := docker compose -f docker-compose.dev.yml
+# The plant the simcalc targets read: the rig's, as the seed's default is. Override
+# with PLANT=plants/demo.yaml for the planner golden's plant.
+PLANT ?= plants/demo-sim.yaml
 
 .PHONY: dev-build dev dev-down dev-reset dev-seed dev-logs dev-rates dev-carriers dev-rates-solve
 
@@ -32,27 +35,29 @@ dev-reset: ## Stop and delete volumes (fresh DBs + a fresh sim anchor on next up
 	# without landing before data that already exists.
 	bash scripts/sim-anchor.sh mint
 
-dev-seed: ## Seed the demo plant then restart core+edge to pick up the seeded registry + runtime states
-	# --build so an edited seeddev / demo.yaml is always picked up (the seed
-	# image is separate from core/edge and easy to leave stale otherwise).
-	# Restart BOTH services: the seed writes behind the running engines. Edge
-	# caches runtime states at startup and the seed writes them into SQLite
-	# behind it; Core's threshold monitor does a one-shot startup sweep ~3s after
-	# boot, and the seed writes demand_registry (the C-push threshold bindings)
-	# behind it — so a registry seeded after that sweep stays UNMONITORED until
-	# Core restarts (the loop never gets a loop-below-threshold signal). The
-	# compose deps force core to start before the seed (edge depends on core,
-	# seed depends on edge), so the sweep always predates the seed. Restarting
-	# core re-runs the sweep against the populated registry. Mirrors production,
-	# where a deploy restarts Core after an out-of-band registry write
-	# (seeddev). See threshold_monitor.go startupSweep / Resync.
-	$(COMPOSE) run --build --rm seed
-	$(COMPOSE) restart core edge
+dev-seed: ## Seed the plant (SHINGO_PLANT, default plants/demo-sim.yaml) with Core stopped, then start it
+	# --build so an edited seeddev / plant is always picked up (the seed image is
+	# separate from core/edge and easy to leave stale otherwise).
+	#
+	# CORE IS STOPPED ACROSS THE SEED (docs/dev-env/sim.md, "Seed with Core
+	# STOPPED"). A running Core's startup reconciliation, threshold monitor and
+	# station service act on a half-seeded topology and record adoptions, orphans
+	# and anomalies the plant never produced. --no-deps keeps compose from starting
+	# it again for the seed (seed depends on edge, edge on core). Starting Core
+	# afterwards runs the threshold monitor's one-shot startup sweep against the
+	# seeded demand_registry: a registry written behind that sweep stays
+	# UNMONITORED until Core restarts (threshold_monitor.go startupSweep / Resync).
+	# Edge stays up (the seed writes its SQLite through the shared volume) and is
+	# restarted because it caches runtime states at startup.
+	$(COMPOSE) stop core
+	$(COMPOSE) run --build --rm --no-deps seed
+	$(COMPOSE) start core
+	$(COMPOSE) restart edge
 
 dev-logs: ## Tail core + edge logs
 	$(COMPOSE) logs -f core edge
 
-dev-rates: ## Fill/starve AND carrier-deadlock check on the demo plant (no Docker needed)
+dev-rates: ## Fill/starve AND carrier-deadlock check on $(PLANT) (no Docker needed)
 	# BOTH CHECKS, AND THE SECOND ONE IS THE ONE THAT BITES. simcalc answers two
 	# different questions and only the first ran here:
 	#
@@ -69,25 +74,27 @@ dev-rates: ## Fill/starve AND carrier-deadlock check on the demo plant (no Docke
 	# rig jam was real anyway — the pool DID run dry — and the corrected
 	# checker still names the mechanism that dries it: input coupling, where a
 	# consumer with a second part waits, its producer keeps filling, and that
-	# bin type's empties go to zero. demo.yaml reads SUSTAINS on both halves
-	# today; that is the floor this target defends, not a law of the plant.
+	# bin type's empties go to zero. demo-sim.yaml's carrier check reads SUSTAINS
+	# (2026-10-28); that is the floor this target defends, not a law of the plant.
+	# Its rate check reads STARVE on PANEL-A/B and exits non-zero, on demo.yaml
+	# too: it costs WELD-1/2 at their 6/min nameplate, while the presses tick at
+	# the welds' measured swap-cadence draw (23 s / 22 s, set 2026-10-09; the
+	# PRESS-1 block of shingoedge.dev.yaml says why). Re-measure before retuning.
 	#
 	# The carrier check EXITS NON-ZERO on a pool that cannot circulate, so this
 	# target fails on a plant that will deadlock. That is the point — a verdict
 	# nobody runs is a verdict nobody has.
-	cd shingo-core && go run ./cmd/simcalc -plant ../plants/demo.yaml -edge ../shingo-edge/shingoedge.dev.yaml
-	cd shingo-core && go run ./cmd/simcalc -carriers -plant ../plants/demo.yaml -edge ../shingo-edge/shingoedge.dev.yaml
+	cd shingo-core && go run ./cmd/simcalc -plant ../$(PLANT) -edge ../shingo-edge/shingoedge.dev.yaml
+	cd shingo-core && go run ./cmd/simcalc -carriers -plant ../$(PLANT) -edge ../shingo-edge/shingoedge.dev.yaml
 
 dev-carriers: ## Carrier/empty-pool deadlock check alone (the half that exits non-zero)
-	cd shingo-core && go run ./cmd/simcalc -carriers -plant ../plants/demo.yaml -edge ../shingo-edge/shingoedge.dev.yaml
+	cd shingo-core && go run ./cmd/simcalc -carriers -plant ../$(PLANT) -edge ../shingo-edge/shingoedge.dev.yaml
 
 dev-rates-solve: ## Derive balanced tick rates. Override: make dev-rates-solve ARGS="-line-rate 8 -transit 15m"
-	cd shingo-core && go run ./cmd/simcalc -solve -plant ../plants/demo.yaml $(ARGS)
+	cd shingo-core && go run ./cmd/simcalc -solve -plant ../$(PLANT) $(ARGS)
 
 dev-fleet: ## Estimate the AMR fleet the plant needs. Override: make dev-fleet ARGS="-transit 15m -util 0.7"
-	cd shingo-core && go run ./cmd/simcalc -fleet -plant ../plants/demo.yaml -edge ../shingo-edge/shingoedge.dev.yaml $(ARGS)
-
-# dev-wipe target added in Phase 4 (T4.5).
+	cd shingo-core && go run ./cmd/simcalc -fleet -plant ../$(PLANT) -edge ../shingo-edge/shingoedge.dev.yaml $(ARGS)
 
 # ── The pre-push gate ────────────────────────────────────────────────
 #
