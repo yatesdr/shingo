@@ -1179,7 +1179,10 @@ body {
    now) is --status-failed-*, amber (act soon) --status-faulted-*, everything
    else the neutral surface. No card is filled: red and amber are a card's
    outline (red 3 px, amber 2 px, plain 1 px), its mark and its reason line.
-   Nothing animates. The fit's numbers (operator-board-model.js STEPS, GEOM)
+   Green (--success) is a full at an unloader window ready to unload, and it is
+   the one thing that animates: it pulses until it is unloaded
+   (.os-pc-card--flash), because shipping could not see a bin arrive
+   (SPR 2026-10-28). The fit's numbers (operator-board-model.js STEPS, GEOM)
    are the sizes here: change one, change both. */
 
 body.os-pc-active { grid-template-rows: 1fr; background: var(--elev-base); }
@@ -1450,6 +1453,17 @@ body.os-pc-active #os-footer { display: none; }
     cursor: pointer;
 }
 .os-pc-card--amber { border: 2px solid var(--status-faulted-ink); }
+/* A full ready to unload: green, its outline and a glow pulsing in its own
+   tone (a stopped press's red takes it over); the card's text never fades.
+   Still under reduced motion: the green says it. */
+.os-pc-card--green { border: 2px solid var(--success); }
+.os-pc-card--flash { --os-pc-flash: var(--success); animation: os-pc-arrived 1.4s ease-in-out infinite; }
+.os-pc-card--flash.os-pc-card--red { --os-pc-flash: var(--status-failed-ink); }
+@keyframes os-pc-arrived {
+    0%, 100% { box-shadow: 0 0 0 0 transparent; }
+    50% { box-shadow: 0 0 0 4px var(--os-pc-flash), 0 0 20px 6px var(--os-pc-flash); }
+}
+@media (prefers-reduced-motion: reduce) { .os-pc-card--flash { animation: none; } }
 .os-pc-card--red { border: 3px solid var(--status-failed-ink); }
 .os-pc-card:active { background: var(--elev-raised); }
 .os-pc-card-body {
@@ -1487,6 +1501,8 @@ body.os-pc-active #os-footer { display: none; }
 .os-pc-card--red .os-pc-chevron { color: var(--status-failed-ink); }
 .os-pc-card--amber .os-pc-reason,
 .os-pc-card--amber .os-pc-chevron { color: var(--status-faulted-ink); }
+.os-pc-card--green .os-pc-reason,
+.os-pc-card--green .os-pc-chevron { color: var(--success); }
 /* An alarm note is an instruction: it wraps and is never cut. */
 .os-pc-note { font-size: var(--os-pc-note); line-height: 1.2; color: var(--text-muted); white-space: normal; overflow-wrap: anywhere; }
 .os-pc-chevron { flex: none; display: inline-flex; color: var(--text-muted); }

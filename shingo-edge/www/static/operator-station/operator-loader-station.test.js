@@ -736,9 +736,12 @@ const loadBody = { payload_code: 'PART-A', uop_count: 24,
     eq(headerButtons(), [], 'a shared unloader: no CHANGEOVER (changed: the header kept it)');
     eq(zoneTitles(), ['At the windows'], 'a shared unloader: one list');
     eq(pcCards().map(c => cardText(c)), [
-        ['ULN_A1', ' · holds a full bin', ' · PART-A', ' · 7', 'TOTE-1', 'Send back TOTE-1'],
+        ['ULN_A1', ' · holds a full bin', ' · PART-A', ' · 7', 'TOTE-1', 'ARRIVED', '· at ULN_A1 · Send back TOTE-1'],
         ['ULN_A2', ' · holds an empty bin', 'TOTE-1', 'Send it'],
-    ], 'At the windows: one card a cart, the bin the headline; a station of two bin types says what to send back');
+    ], 'At the windows: one card a cart, the bin the headline; a station of two bin types says what to send back; ' +
+        'a full has ARRIVED and says where');
+    eq(pcCard('TOTE-1', 'ULN_A1').className, 'os-pc-card os-pc-card--green os-pc-card--flash', 'an arrived full: green, pulsing');
+    eq(pcCard('TOTE-1', 'ULN_A1').descendants().some(n => n.classList.contains('os-pc-mark')), true, 'an arrived full carries its mark');
 
     // A full: the CLEAR panel. Two types for the window's parts: a picker.
     await tap(pcCard('TOTE-1', 'ULN_A1'));

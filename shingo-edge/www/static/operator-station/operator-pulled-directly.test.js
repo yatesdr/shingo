@@ -43,8 +43,8 @@ eq(note({ loader: { pulled_directly: false }, bin_state: cart }), '',
     'the option off: no sentence, the window sends its cart on as today');
 eq(note({ loader: { pulled_directly: true }, bin_state: { occupied: false } }), '',
     'an empty window says nothing');
-eq(note({ loader: { pulled_directly: true }, bin_state: { occupied: true, payload_code: 'PART-X' } }), '',
-    'a cart still carrying parts is not finished');
+eq(note({ loader: { pulled_directly: true }, bin_state: { occupied: true, payload_code: 'PART-X' } }), 'at ST2_A1',
+    'a cart still carrying parts is not finished: no line sentence, it has arrived to be unloaded and says where');
 eq(note({ loader: { pulled_directly: true } }), '', 'no bin state: nothing to say');
 
 console.log('operator pulled directly: ' + passed + ' passed, ' + failed + ' failed');

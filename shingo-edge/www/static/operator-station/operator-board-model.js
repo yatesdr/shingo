@@ -389,7 +389,8 @@ export function staleSign(view, link, clock) {
 //
 // What the board draws, decided here and drawn by operator-board.js. Colour is
 // an instruction on one ladder: 'red' (act now, the word NOW), 'amber' (act
-// soon, SOON) and 'plain' (no word). The reason beside a word is three words
+// soon, SOON) and 'plain' (no word); beside it 'green', a full at an unloader
+// window ready to unload (ARRIVED). The reason beside a word is three words
 // or fewer.
 //
 // The card is the button, and it opens what that tile's primary act opened on
@@ -910,12 +911,20 @@ function windowCards(consumers, ctx) {
         } else if (loader.pulled_directly && !full) note = 'The cart waits here for the line';
         else if (changes) note = 'Change to ' + choiceLabel(lit);
         else if (back && multi) note = full ? 'Send back ' + choiceLabel(lit) : 'Send it';
-        ctx.windows.push(ctx.card(t, 'cart', [1], {
+        // A full at the window has arrived, ready to unload: green, ARRIVED and
+        // where, pulsing until it is (flash; SPR 2026-10-28, shipping could not
+        // see a bin arrive or at which spot, and the owner asked for green). A
+        // held partial waits for its line, not for the person here, and stays
+        // plain.
+        const arrived = full && !bin.held_since;
+        ctx.windows.push(ctx.card(t, 'cart', [arrived ? 1 : 2], {
             spotWords: full ? 'holds a full bin' : (bin.bare ? 'no bin' : 'holds an empty bin'),
             spotPart: full ? bin.payload_code : '',
             spotCount: full ? fmtCount((t.runtime && t.runtime.remaining_uop_cached) || 0) : '',
             spotHeight: bin.bare ? '' : heightLabel(bin),
-            headline: own || bin.bin_label || 'Unknown bin', reason: note,
+            headline: own || bin.bin_label || 'Unknown bin',
+            tone: arrived ? 'green' : 'plain', word: arrived ? 'ARRIVED' : '', flash: arrived,
+            reason: arrived ? 'at ' + spotOf(t) + (note ? ' · ' + note : '') : note,
             back: back, own: own, full: full,
             act: windowAct(t, ctx.kind, lit),
         }));
@@ -926,7 +935,8 @@ function windowCards(consumers, ctx) {
 // empty of its bin ready lights the first cart, carts holding an empty first
 // and then fulls, each in the plant's order, whose send-back bin is the one
 // it needs ("NOW · Change to <bin>" or "NOW · Send back <bin>"). The press's
-// tile is red with it; every other cart stays plain.
+// tile is red with it; every other cart keeps its own colour (an arrived full
+// stays green, a red one keeps pulsing).
 function lightStoppedPresses(presses, windows) {
     const walk = windows.slice().sort(function (a, b) {
         if (a.full !== b.full) return a.full ? 1 : -1;
@@ -934,7 +944,7 @@ function lightStoppedPresses(presses, windows) {
     });
     presses.forEach(function (p) {
         if (!p.full || p.ready || !p.bin) return;
-        const cart = walk.find(function (c) { return c.tone === 'plain' && c.back === p.bin; });
+        const cart = walk.find(function (c) { return c.tone !== 'red' && c.back === p.bin; });
         if (!cart) return;
         cart.tone = 'red';
         cart.word = 'NOW';
@@ -1091,7 +1101,11 @@ export function boardModel(view, ui) {
         if (ctx.known) counts.push(toLoad + ' to load');
         if (ctx.refused.length > 0) counts.push(ctx.refused.length + ' no parts');
     }
-    if (consumers.length > 0 && ctx.known) counts.push(ctx.windows.length > 0 ? ctx.windows.length + ' at the windows' : 'nothing at the windows');
+    if (consumers.length > 0 && ctx.known) {
+        const arrived = ctx.windows.filter(function (c) { return c.flash; }).length;
+        if (arrived > 0) counts.push(arrived + ' arrived');
+        counts.push(ctx.windows.length > 0 ? ctx.windows.length + ' at the windows' : 'nothing at the windows');
+    }
     otherOrder.forEach(function (l) { counts.push(otherCards[l].length + ' ' + l.toLowerCase()); });
     if (spots) {
         const p = spots.filter(function (s) { return s.state === 'partial'; }).length;

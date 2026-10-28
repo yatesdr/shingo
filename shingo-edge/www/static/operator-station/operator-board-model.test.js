@@ -464,10 +464,12 @@ eq([NOBIN, FULLBIN('PART-A'), EMPTYBIN('KD-1'), EMPTYBIN(''), { occupied: true, 
     const w = zone(b, 'windows');
     eq(w.cards.map(c => [c.spot, c.spotWords, c.spotPart, c.spotCount, c.headline, c.tone, c.word, c.reason]), [
         ['SMN_B3', 'holds an empty bin', '', '', 'KD-1', 'red', 'NOW', 'Change to TOTE-2'],
-        ['SMN_B2', 'holds a full bin', 'PART-K', '180', 'TOTE-2', 'plain', '', 'Send back TOTE-2'],
-        ['SMN_B4', 'holds a full bin', 'PART-L', '1,250', 'KD-1', 'plain', '', 'Change to TOTE-2'],
+        ['SMN_B2', 'holds a full bin', 'PART-K', '180', 'TOTE-2', 'green', 'ARRIVED', 'at SMN_B2 · Send back TOTE-2'],
+        ['SMN_B4', 'holds a full bin', 'PART-L', '1,250', 'KD-1', 'green', 'ARRIVED', 'at SMN_B4 · Change to TOTE-2'],
     ], 'unloader: one card per cart, the bin the headline; "Change to" on a cart whose send-back type is not its own; ' +
-        'one red per stopped press, the first cart in the walk (an empty first) whose send-back bin it needs; red first');
+        'one red per stopped press, the first cart in the walk (an empty first) whose send-back bin it needs; red first; ' +
+        'a full at a window has ARRIVED, green (ready to unload), and says where (changed: plain, SPR 2026-10-28)');
+    eq(w.cards.map(c => !!c.flash), [false, true, true], 'an arrived full pulses (flash); an empty cart does not');
     eq(b.presses.tiles.map(p => [p.cell, p.node, p.words, p.bin, p.part, p.ready, p.red]), [
         ['PRESS-1', 'PLN_A1', 'full', 'TOTE-2', 'PART-K', false, true],
         ['PRESS-2', 'PLN_A9', '85 of 300', 'KD-1', 'PART-L', true, false],
@@ -475,14 +477,14 @@ eq([NOBIN, FULLBIN('PART-A'), EMPTYBIN('KD-1'), EMPTYBIN(''), { occupied: true, 
     ], 'presses: closest to full first; red only when full and a red cart fixes it');
     eq(b.presses.empties, { group: 'EMPTY-SUPER', open: 1, lines: [{ bin: 'TOTE-2', words: 'none' }, { bin: 'KD-1', words: '2 ready' }] },
         'Empties: a line per bin type in words ("none" for a type the group holds none of), the open spots once');
-    eq(b.words, ['3 at the windows', 'PRESS-1 full'], 'top line: the carts, and the press that is full');
+    eq(b.words, ['2 arrived', '3 at the windows', 'PRESS-1 full'], 'top line: the fulls arrived, the carts, and the press that is full');
     eq(w.cards.map(c => c.act.kind), ['push-empty', 'unload', 'unload'],
         'unloader windows (the old slot grid): an empty opens the empty-cart panel, a full the CLEAR');
     eq(w.cards[1].act, { kind: 'unload', node: 1, carriers: ['TOTE-2', 'KD-1'], discarding: 180, leavesBare: false, lit: { bin_type: 'TOTE-2' } },
         'a full\'s CLEAR: its carriers and its count, the waiting press\'s bin lit');
     // One bin type at the station: no "Send back" / "Send it".
     const one = B({ station: {}, nodes: [windows[1], windows[2]], serves: [serves[2]], empties: empties });
-    eq(zone(one, 'windows').cards.map(c => c.reason), ['', ''], 'one bin type at the station: no send-back note');
+    eq(zone(one, 'windows').cards.map(c => c.reason), ['at SMN_B4', ''], 'one bin type at the station: no send-back note (an arrived full says where)');
     // The Empties lines are the served presses' bin types: a type the group
     // holds that no served press uses gets no line.
     const extra = { group: 'EMPTY-SUPER', rows: empties.rows.concat([{ bin_type: 'TOTE-9', have: 6, spots: 1 }]) };
@@ -490,8 +492,8 @@ eq([NOBIN, FULLBIN('PART-A'), EMPTYBIN('KD-1'), EMPTYBIN(''), { occupied: true, 
         'Empties: no line for a type no served press uses');
     // A stage-1 unloader: no Empties tile, no note.
     const st1 = B({ station: {}, nodes: [bt(1, 'ST1', { role: 'consume', bin: FULLBIN('PART-A'), leavesBare: true })], serves: [], empties: empties });
-    eq([st1.presses.empties, zone(st1, 'windows').cards[0].reason, zone(st1, 'windows').cards[0].act.leavesBare], [null, '', true],
-        'stage 1: no Empties tile (its group is stage 2\'s windows), no note, Full off');
+    eq([st1.presses.empties, zone(st1, 'windows').cards[0].reason, zone(st1, 'windows').cards[0].act.leavesBare], [null, 'at ST1', true],
+        'stage 1: no Empties tile (its group is stage 2\'s windows), no note but where it arrived, Full off');
     // A held partial (main's partial home): its note says whose and since when,
     // and its tap is UNLOAD and COUNT, not the CLEAR.
     const heldBin = Object.assign({}, FULLBIN('PART-K', 'TOTE-2'), { held_since: '2026-10-18T10:00:00Z', held_for: 'P400', held_uop: 120 });
@@ -500,6 +502,7 @@ eq([NOBIN, FULLBIN('PART-A'), EMPTYBIN('KD-1'), EMPTYBIN(''), { occupied: true, 
     const hc = zone(held, 'windows').cards[0];
     eq([hc.reason, hc.act.kind, hc.act.heldFor, hc.act.count], ['Partial · held for P400 · since 10:00', 'unload-held', 'P400', 120],
         'a held partial at a window: held for its line since its arrival; the tap is UNLOAD and COUNT with the count Core holds');
+    eq([hc.tone, !!hc.flash], ['plain', false], 'a held partial waits for its line, not for the person here: plain, no pulse');
     const none = B({ station: {}, nodes: [windows[3]], serves: [] });
     eq([zone(none, 'windows').count, zone(none, 'windows').empty, none.words], [0, 'No cart at any window.', ['nothing at the windows']],
         'no cart at any window: one quiet line');
@@ -557,14 +560,14 @@ eq([NOBIN, FULLBIN('PART-A'), EMPTYBIN('KD-1'), EMPTYBIN(''), { occupied: true, 
     const w = zone(b, 'windows');
     const byspot = {};
     w.cards.forEach(c => { byspot[c.spot] = [c.spotHeight, c.reason, c.act.lit]; });
-    eq(byspot.SMN_C1, ['', 'Change to TOTE-1 · 3 high', { bin_type: 'TOTE-1', layers: 3 }],
+    eq(byspot.SMN_C1, ['', 'at SMN_C1 · Change to TOTE-1 · 3 high', { bin_type: 'TOTE-1', layers: 3 }],
         'a KD cart assigned TOTE-1 at 3 high: the note says so and its CLEAR lights it');
     eq(byspot.SMN_C2, ['3 high + 2', 'Send it', { bin_type: 'TOTE-1' }],
         'an empty tote cart over a layer: its height on the spot line; like for like names no height');
     const tall = Object.assign(bt(3, 'SMN_C3', { role: 'consume', parts: ['PART-K'], bin: Object.assign(T(16, 8),
         { payload_code: 'PART-K', stocked: true }), uop: 30, carriers: ['TOTE-1', 'KD-1'] }), { assignment: { bin_type: 'TOTE-1', layers: 5 } });
     const c3 = zone(B({ station: {}, nodes: [tall], serves: serves, empties: view.empties }), 'windows').cards[0];
-    eq([c3.spotHeight, c3.reason], ['2 high', 'Change to TOTE-1 · 5 high'],
+    eq([c3.spotHeight, c3.reason], ['2 high', 'at SMN_C3 · Change to TOTE-1 · 5 high'],
         'a tote cart at 2 high assigned 5 high: a change, said with its height');
     eq(b.presses.empties.lines.map(l => [l.bin, l.words, !!l.small]),
         [['TOTE-1', '1 ready', false], ['TOTE-1 · 3 high', '1 of 2', true], ['TOTE-1 · 5 high', '0 of 1', true]],

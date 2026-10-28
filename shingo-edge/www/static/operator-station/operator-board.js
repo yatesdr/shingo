@@ -28,9 +28,16 @@ let drawn = [];
 export function resetBoard() { drawn = []; }
 
 // mark is the shape that goes with a colour: red a solid disc, amber an open
-// triangle, so the two read apart without the hue. currentColor draws it.
+// triangle, green a ringed check, so they read apart without the hue.
+// currentColor draws it.
 function mark(tone) {
     const span = el('span', { className: 'os-pc-mark' });
+    if (tone === 'green') {
+        span.innerHTML = '<svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true"><circle cx="9" cy="9" r="7.6" fill="none" ' +
+            'stroke="currentColor" stroke-width="1.8"/><path d="M5.4 9.3L7.9 11.7L12.6 6.6" fill="none" stroke="currentColor" ' +
+            'stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+        return span;
+    }
     span.innerHTML = tone === 'red'
         ? '<svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true"><circle cx="9" cy="9" r="8" fill="currentColor"/>' +
           '<path class="os-pc-mark-ink" d="M9 4.6V10" stroke-width="2.2" stroke-linecap="round"/>' +
@@ -53,7 +60,7 @@ function chevron() {
 // not (a refused part's red card has none: its section says No parts).
 function wordLine(cls, tone, word, reason) {
     const line = el('span', { className: cls });
-    if (word || tone === 'red' || tone === 'amber') line.appendChild(mark(tone));
+    if (word || tone === 'red' || tone === 'amber' || tone === 'green') line.appendChild(mark(tone));
     if (word) line.appendChild(el('span', { className: 'os-pc-word', textContent: word }));
     if (reason) line.appendChild(el('span', { className: 'os-pc-why', textContent: (word ? '· ' : '') + reason }));
     return line;
@@ -62,7 +69,7 @@ function wordLine(cls, tone, word, reason) {
 // buildCard draws one card. The spot's name and any code on the spot line
 // never shrink; the words between them do.
 function buildCard(card, acts) {
-    const btn = el('button', { type: 'button', className: 'os-pc-card os-pc-card--' + card.tone });
+    const btn = el('button', { type: 'button', className: 'os-pc-card os-pc-card--' + card.tone + (card.flash ? ' os-pc-card--flash' : '') });
     if (card.number) {
         btn.classList.add('os-pc-card--numbered');
         btn.appendChild(el('span', { className: 'os-pc-num', textContent: String(card.number) }));
