@@ -3,13 +3,18 @@
 One line per change. If a change needs a paragraph to explain, the paragraph
 belongs in the commit message or in `docs/` — this file is the index.
 
-## 2026-10-28 — The loader board lights a waiting cell it cannot count
+## 2026-10-28 — The loader board, fitted to a 10-inch tablet
 
 Edge-only; no migrations. Core then Edge at SPR to keep both on one commit.
 
 - A cell that has asked lights its Load card amber even at a count below 0
 - The cells row says "count unknown" for any uncounted row, never "null left"
 - A refusal on a waiting, uncounted cell says "waiting", not "has none left"
+- The cells row folds to one line; a tap opens the tiles and the board scrolls
+- Card columns: three from 1000 px, four from 1360, five from 1800
+- A compact fourth card size comes before any card goes behind "+N more"
+- A code the compact size cannot hold takes a column back rather than clip
+- A refused part a cell runs is red again, under "No parts available"
 
 ## 2026-10-27 — Press tranche 2, the route strip, and positions from Settings
 
