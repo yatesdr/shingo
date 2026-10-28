@@ -160,7 +160,7 @@ function buildCells(cells, layout, rowsPerTile) {
             }
             const cap = r.capacity > 0 ? r.capacity : 0;
             line.appendChild(bar(cap && r.left != null ? r.left / cap : 0, cap ? r.tick / cap : 0,
-                r.state === 'unknown' ? 'os-pc-track--unknown' : ''));
+                r.left == null ? 'os-pc-track--unknown' : ''));
             tile.appendChild(line);
         });
         if (hidden > 0) tile.appendChild(el('div', { className: 'os-pc-tile-more', textContent: '+' + hidden }));

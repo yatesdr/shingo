@@ -165,13 +165,15 @@ function emptyReady(view, binType) {
 
 // coverage grades each served row, most urgent first:
 //
-//   a running row: left = have_uop; below 0 (overpack, the cell still runs) or
-//   null (a cell the Edge cannot see) is 'unknown', never out; else ready
-//   (covered) when a tile of this board holds a stocked bin of the part, or for
-//   a produce row on an unloader board when the empties hold one of its bin
-//   type; not ready, 'out' with none left, else 'waiting' while the cell has
-//   asked for it (row.waiting: an order queued with Core's reason) and
-//   'exposed' when it has not;
+//   a running row: left = have_uop; ready (covered) when a tile of this board
+//   holds a stocked bin of the part, or for a produce row on an unloader board
+//   when the empties hold one of its bin type. A count below 0 (overpack, the
+//   cell still runs) or null (a cell the Edge cannot see) is never out: it is
+//   'waiting' while the cell has asked for it and nothing here is ready (a
+//   queued order is not hidden by a count the Edge cannot read), else
+//   'unknown'. A count of 0 or more, not ready: 'out' with none left, else
+//   'waiting' while the cell has asked for it (row.waiting: an order queued
+//   with Core's reason) and 'exposed' when it has not;
 //   an incoming row: drawn only while waiting, 'out' with none left, else
 //   'waiting'; never exposed.
 //
@@ -187,11 +189,10 @@ export function coverage(view) {
         if (row.incoming) {
             if (!row.waiting) return;
             state = known && left === 0 ? 'out' : 'waiting';
-        } else if (!known) {
-            state = 'unknown';
         } else {
             const ready = row.role === 'produce' ? emptyReady(view, row.carrier) : readyAt(view, row.part);
-            if (ready) state = 'covered';
+            if (!known) state = row.waiting && !ready ? 'waiting' : 'unknown';
+            else if (ready) state = 'covered';
             else if (left === 0) state = 'out';
             else state = row.waiting ? 'waiting' : 'exposed';
         }
@@ -493,7 +494,7 @@ function loadReason(view, cov, part) {
     if (!c) return { tone: 'plain', reason: 'No cell runs this part', rank: [5, 0] };
     const cell = c.row.cell;
     if (c.state === 'out') return { tone: 'red', word: 'NOW', reason: cell + ' out', rank: [0, 0], fixes: cell + '|' + part };
-    if (c.state === 'waiting') return { tone: 'amber', word: 'SOON', reason: cell + ' waiting', rank: [1, c.left] };
+    if (c.state === 'waiting') return { tone: 'amber', word: 'SOON', reason: cell + ' waiting', rank: [1, c.left === null ? Infinity : c.left] };
     if (c.state === 'unknown') return { tone: 'plain', reason: cell + ' count unknown', rank: [3, 0] };
     return { tone: 'plain', reason: cell + ' has ' + fmtCount(c.left) + ' left', rank: [2, c.left] };
 }
@@ -514,7 +515,8 @@ export const MAX_TILE_ROWS = 4;
 // cellsRow is the loader's status row: one tile per served cell, a row per
 // drawn consume row (coverage: an incoming row only while it waits). A covered
 // row is a bar with no words; exposed and waiting say "N left", out "none
-// left", unknown "count unknown". A tile is red only when a red card on this
+// left", any row whose count is not known "count unknown" (a waiting row too).
+// A tile is red only when a red card on this
 // board fixes it (fixes holds "cell|part"). Rows: out and exposed first, at
 // most four, then "+N". Cells: by the worst drawn row's count, covered rows
 // left out, unknown last; past six, the covered cells fold into "+N more
@@ -533,9 +535,8 @@ export function cellsRow(view, fixes) {
             cells.push(cell);
         }
         cell.first = Math.min(cell.first, c.i);
-        let words = fmtCount(c.left) + ' left';
+        let words = c.left === null ? 'count unknown' : fmtCount(c.left) + ' left';
         if (c.state === 'out') words = 'none left';
-        else if (c.state === 'unknown') words = 'count unknown';
         else if (c.state === 'covered') words = '';
         cell.rows.push({
             part: c.row.part, state: c.state, words: words,
@@ -548,7 +549,7 @@ export function cellsRow(view, fixes) {
         let worst = Infinity;
         let unknown = false;
         cell.rows.forEach(function (r) {
-            if (r.state === 'unknown') unknown = true;
+            if (r.left === null) unknown = true;
             else if (r.state !== 'covered') worst = Math.min(worst, r.left);
         });
         cell.group = worst !== Infinity ? 0 : (unknown ? 2 : 1);
@@ -798,7 +799,8 @@ function loaderCards(t, ctx) {
             const exposes = !!c && (c.state === 'out' || c.state === 'waiting' || c.state === 'exposed');
             const when = ctx.when(refusals[code].refused_at);
             let reason = 'Said no parts' + (when ? ' · ' + when : '');
-            if (exposes) reason += ' · ' + c.row.cell + ' has ' + (c.left > 0 ? fmtCount(c.left) : 'none') + ' left';
+            if (exposes) reason += ' · ' + c.row.cell + (c.left === null ? ' waiting'
+                : ' has ' + (c.left > 0 ? fmtCount(c.left) : 'none') + ' left');
             ctx.refused.push(ctx.card(t, 'refused:' + code, [exposes ? 0 : 1], {
                 spotWords: spot.words, spotCode: spot.code, headline: code, reason: reason,
                 act: held ? { kind: 'modal', node: t.node.id } : { kind: 'load', node: t.node.id, codes: [code] },

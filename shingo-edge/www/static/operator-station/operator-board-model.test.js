@@ -110,15 +110,20 @@ eq(states(view), ['OUT-1:out', 'OUT-2:out', 'INC-OUT:out', 'INC-WAIT:waiting', '
 'coverage: out (in the plant\'s order), waiting, exposed (fewest left first), unknown (below 0 or null, never out), covered; an incoming row not waiting draws nothing');
 // A running row whose cell has asked (waiting): some left reads waiting, never
 // exposed; none left reads out; a stocked bin on the board still covers it;
-// an unknown count stays unknown.
+// an unknown count (null or below 0) reads waiting, after the counted ones,
+// unless a stocked bin covers it (changed: an unknown count stayed unknown,
+// so a cell with an order queued for an empty home drew plain).
 eq(states({ nodes: [held], serves: [
     row('PART-B', 4, { cell: 'ASKED-4', waiting: true }),
     row('PART-B', 0, { cell: 'ASKED-0', waiting: true }),
     row('PART-A', 2, { cell: 'ASKED-COVERED', waiting: true }),
     row('PART-B', null, { cell: 'ASKED-UNSEEN', waiting: true }),
+    row('PART-B', -199, { cell: 'ASKED-OVERPACK', waiting: true }),
+    row('PART-A', -5, { cell: 'ASKED-OVERPACK-COVERED', waiting: true }),
     row('PART-B', 3, { cell: 'NOT-ASKED' }),
-] }), ['ASKED-0:out', 'ASKED-4:waiting', 'NOT-ASKED:exposed', 'ASKED-UNSEEN:unknown', 'ASKED-COVERED:covered'],
-'coverage: a running row that has asked reads waiting with some left, out with none');
+] }), ['ASKED-0:out', 'ASKED-4:waiting', 'ASKED-UNSEEN:waiting', 'ASKED-OVERPACK:waiting', 'NOT-ASKED:exposed',
+    'ASKED-OVERPACK-COVERED:unknown', 'ASKED-COVERED:covered'],
+'coverage: a running row that has asked reads waiting with some left or an unknown count, out with none');
 eq(M.coverage({ nodes: [], serves: [row('PART-P', 3, { role: 'produce', carrier: 'TOTE-1' })] }).map(c => c.state), ['exposed'],
     'a produce row on an unloader: ready from the empties, absent here');
 eq(M.coverage({ nodes: [], serves: [row('PART-P', 3, { role: 'produce', carrier: 'TOTE-1' })],
@@ -226,6 +231,7 @@ eq([NOBIN, FULLBIN('PART-A'), EMPTYBIN('KD-1'), EMPTYBIN(''), { occupied: true, 
         bt(6, 'SMN_6', { dedicated: true, parts: ['PART-N'], bin: EMPTYBIN('KD-1') }),
         bt(7, 'SMN_7', { dedicated: true, parts: ['PART-Y'], bin: EMPTYBIN('KD-1') }),
         bt(8, 'SMN_8', { dedicated: true, parts: ['PART-C'], bin: EMPTYBIN('KD-1') }),
+        bt(9, 'SMN_9', { dedicated: true, parts: ['PART-V'], bin: EMPTYBIN('KD-1') }),
     ];
     const v = { station: { name: 'Bin Loader' }, nodes: homes, serves: [
         row('PART-T', 451, { cell: 'C1' }),
@@ -235,23 +241,26 @@ eq([NOBIN, FULLBIN('PART-A'), EMPTYBIN('KD-1'), EMPTYBIN(''), { occupied: true, 
         row('PART-U', -5, { cell: 'C5' }),
         row('PART-C', 0, { cell: 'C6', incoming: true, waiting: true }),
         row('PART-Y', 2000, { cell: 'C7' }),
+        row('PART-V', -199, { cell: 'C8', waiting: true }),
     ] };
     const b = B(v);
     eq(zone(b, 'load').cards.map(cardSay), [
         ['SMN_4', 'PART-O', 'red', 'NOW', 'C4 out'],
         ['SMN_8', 'PART-C', 'red', 'NOW', 'C6 out'],
         ['SMN_2', 'PART-W', 'amber', 'SOON', 'C2 waiting'],
+        ['SMN_9', 'PART-V', 'amber', 'SOON', 'C8 waiting'],
         ['SMN_3', 'PART-X', 'plain', '', 'C3 has 67 left'],
         ['SMN_1', 'PART-T', 'plain', '', 'C1 has 451 left'],
         ['SMN_7', 'PART-Y', 'plain', '', 'C7 has 2,000 left'],
         ['SMN_5', 'PART-U', 'plain', '', 'C5 count unknown'],
         ['SMN_6', 'PART-N', 'plain', '', 'No cell runs this part'],
     ], 'Load: out (red, ties in the plant\'s order), a cell changing over to a part it has none of (the same red), ' +
-        'waiting (amber), then the printed count fewest first, unknown, a part no cell runs; no card says changeover');
+        'waiting (amber; an order queued at a count the Edge cannot read is waiting too, after the counted ones), ' +
+        'then the printed count fewest first, unknown, a part no cell runs; no card says changeover');
     eq(zone(b, 'load').cards[0].spotWords + ' ' + zone(b, 'load').cards[0].spotCode, 'holds an empty KD-1',
         'Load: the spot line says what the home holds');
     eq(zone(b, 'load').cards[0].act, { kind: 'load', node: 4, codes: ['PART-O'] }, 'Load: the card opens the load modal for its part');
-    eq(b.words.slice(0, 3), ['8 to load', 'C4 out', 'C6 out'], 'top line: the count to load, then each cell out');
+    eq(b.words.slice(0, 3), ['9 to load', 'C4 out', 'C6 out'], 'top line: the count to load, then each cell out');
     // The failed served read: every Load card plain, the cells row says so.
     const failed = B({ station: {}, nodes: homes.slice(0, 1) });
     eq([cardSay(zone(failed, 'load').cards[0]), failed.cells.failed, failed.words],
@@ -332,6 +341,12 @@ eq([NOBIN, FULLBIN('PART-A'), EMPTYBIN('KD-1'), EMPTYBIN(''), { occupied: true, 
         'Waiting on the plant: the tap opens the load modal (Undo and LOAD are there)');
     eq(zone(b, 'load').cards, [], 'a refused part has no Load card');
     eq(b.words.slice(0, 2), ['0 to load', '2 waiting on the plant'], 'top line counts the refusals');
+    // A refusal on a part its cell has asked for at a count the Edge cannot
+    // read (changed: it said "has none left").
+    const unseen = B({ station: {}, nodes: [nodes[0]], serves: [row('PART-A', -199, { cell: 'CELL-4', waiting: true })] },
+        { when: iso => ({ T1: '06:15' })[iso] });
+    eq(zone(unseen, 'refused').cards.map(cardSay), [['SMN_A34', 'PART-A', 'plain', '', 'Said no parts · 06:15 · CELL-4 waiting']],
+        'Waiting on the plant: a cell waiting at an unknown count says waiting, never "none left"');
 }
 
 // ── Clear partials: folded, opened, amber, red, unknown, none can come home ──
@@ -391,6 +406,7 @@ eq([NOBIN, FULLBIN('PART-A'), EMPTYBIN('KD-1'), EMPTYBIN(''), { occupied: true, 
         row('PART-Q', 0, { cell: 'C2', capacity_uop: 400 }),
         row('PART-R', 30, { cell: 'C3', capacity_uop: 400, reorder_uop: 50 }),
         row('PART-S', null, { cell: 'C4', capacity_uop: 400 }),
+        row('PART-Z', -40, { cell: 'C5', capacity_uop: 400, waiting: true }),
     ] };
     const b = B(v);
     eq(b.cells.tiles.map(t => [t.cell, t.red, t.rows.map(r => [r.part, r.words, r.red, r.tick])]), [
@@ -398,7 +414,9 @@ eq([NOBIN, FULLBIN('PART-A'), EMPTYBIN('KD-1'), EMPTYBIN(''), { occupied: true, 
         ['C2', false, [['PART-Q', 'none left', false, 0]]],
         ['C3', false, [['PART-R', '30 left', false, 50]]],
         ['C4', false, [['PART-S', 'count unknown', false, 0]]],
-    ], 'cells: red only where a red card fixes it; an out row with no card says "none left" plainly; the tick only above 0; unknown last');
+        ['C5', false, [['PART-Z', 'count unknown', false, 0]]],
+    ], 'cells: red only where a red card fixes it; an out row with no card says "none left" plainly; the tick only above 0; ' +
+        'unknown last, a waiting row at an unknown count with them (changed: it read "null left")');
     eq(b.words.slice(0, 3), ['1 to load', 'C1 out', 'C2 out'], 'top line: every cell out, card or none');
     // One cell with five rows.
     const hop = M.cellsRow({ nodes: [], serves: [1, 2, 3, 4, 5].map(i => row('PART-' + i, i * 10, { cell: 'CELL-H' })) });
