@@ -146,7 +146,7 @@ export function clearRunning(entry) {
 }
 
 // cardModel computes the rendered state of one (window × payload) card: the status
-// tag, its CSS class, the detail line, the click action, and the load-now flag.
+// tag, the detail line, the click action, and the load-now flag.
 // Replaces cardState + the per-card derivation in buildLoaderCard. The precedence is
 // preserved exactly (it encodes the incident cases above); only the role-specific
 // words are now sourced from ROLE_WORDS rather than inline ternaries.
@@ -178,24 +178,24 @@ export function cardModel(entry, code) {
     // waitingOnRobot marks the one card state that is a DOWNTIME signal rather than
     // an operator cue: a call is queued for this payload and nothing is coming for
     // it — nothing delivered, nothing in transit, the fleet has not even acknowledged
-    // it, and there is no empty parked to load. LOAD and ACKNOWLEDGED share the queued
-    // COLOUR but neither is downtime (one is actionable right now, the other has the
-    // fleet on it), so the render layer needs this flag to escalate only the real one.
+    // it, and there is no empty parked to load. LOAD and ACKNOWLEDGED are queued
+    // states too but neither is downtime (one is actionable right now, the other has
+    // the fleet on it), so the render layer needs this flag to escalate only the real one.
     // Set in the QUEUED branch below and nowhere else.
     let waitingOnRobot = false;
 
     // Status tag (precedence-ordered; the order encodes the incident fixes — a consume
     // empty must be caught as SWAP before the produce LOAD fallback, plant 2026-06-02).
-    let cls, statusText, statusClass;
-    if (payloadDelivered) { cls = 'os-board-delivered'; statusText = 'DELIVERED'; statusClass = 'os-board-tag-delivered'; }
-    else if (canClearThisPayload) { cls = 'os-board-delivered'; statusText = 'SWAP'; statusClass = 'os-board-tag-delivered'; }
-    else if (f.canSwapEmpty) { cls = 'os-board-delivered'; statusText = 'SWAP'; statusClass = 'os-board-tag-delivered'; }
-    else if (payloadInTransit) { cls = 'os-board-transit'; statusText = 'IN TRANSIT'; statusClass = 'os-board-tag-transit'; }
-    else if (payloadAcknowledged) { cls = 'os-board-queued'; statusText = 'ACKNOWLEDGED'; statusClass = 'os-board-tag-queued'; }
-    else if (loadNow) { cls = 'os-board-queued'; statusText = 'LOAD'; statusClass = 'os-board-tag-queued'; }
-    else if (hasPayloadDemand) { cls = 'os-board-queued'; statusText = 'QUEUED'; statusClass = 'os-board-tag-queued'; waitingOnRobot = true; }
-    else if (f.canLoadEmpty) { cls = 'os-board-queued'; statusText = 'LOAD'; statusClass = 'os-board-tag-queued'; }
-    else { cls = 'os-board-nodemand'; statusText = 'NO DEMAND'; statusClass = 'os-board-tag-nodemand'; }
+    let statusText;
+    if (payloadDelivered) statusText = 'DELIVERED';
+    else if (canClearThisPayload) statusText = 'SWAP';
+    else if (f.canSwapEmpty) statusText = 'SWAP';
+    else if (payloadInTransit) statusText = 'IN TRANSIT';
+    else if (payloadAcknowledged) statusText = 'ACKNOWLEDGED';
+    else if (loadNow) statusText = 'LOAD';
+    else if (hasPayloadDemand) { statusText = 'QUEUED'; waitingOnRobot = true; }
+    else if (f.canLoadEmpty) statusText = 'LOAD';
+    else statusText = 'NO DEMAND';
 
     // Detail line. The role-specific verbs come from ROLE_WORDS, not inline ternaries.
     let detail;
@@ -219,7 +219,6 @@ export function cardModel(entry, code) {
     const held = role === 'produce' && emptyCarrierHeld(entry);
     if (held) {
         const running = clearRunning(entry);
-        cls = 'os-board-transit'; statusClass = 'os-board-tag-transit';
         statusText = running ? 'CLEARING' : 'HELD';
         detail = running ? CLEAR_RUNNING : 'Held for an order — load after it leaves';
         waitingOnRobot = false;
@@ -254,7 +253,7 @@ export function cardModel(entry, code) {
     }
 
     return {
-        cls: cls, statusText: statusText, statusClass: statusClass, detail: detail, action: action, loadNow: loadNow && !held,
+        statusText: statusText, detail: detail, action: action, loadNow: loadNow && !held,
         // Queue-position badge facts (rendered by operator-render): only REAL per-payload
         // orders count — the agnostic blank-payload empty must not stamp a number on every card.
         queueCount: payloadOrders.length, delivered: payloadDelivered, inTransit: payloadInTransit,
