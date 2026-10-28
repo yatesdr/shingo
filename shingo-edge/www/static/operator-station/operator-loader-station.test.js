@@ -1073,8 +1073,8 @@ const loadBody = { payload_code: 'PART-A', uop_count: 24,
 
 // ── 11. A board that overflows the screen ─────────────────────────────────
 {
-    // 40 homes to load, four refusals (two rows), at 1280 x 768: the zones give
-    // way from the last. A cut zone draws the cards that fit and a "+N more"
+    // 40 homes to load, four refusals of parts no cell runs (plain, so they may
+    // be cut), at 1280 x 768: the zones give way from the last. A cut zone draws the cards that fit and a "+N more"
     // for exactly the rest (a bug fixed: a zone cut to no card drew its title
     // and nothing to tap), and "+N more" opens Show all.
     const homes = [], serves = [];
@@ -1087,16 +1087,15 @@ const loadBody = { payload_code: 'PART-A', uop_count: 24,
         const p = 'PART-R' + i;
         homes.push(loaderTile(20 + i, 'SMN_R' + i, { parts: [p], bin: NONE, dedicated: true,
             supply_refusals: { [p]: { refused_at: new Date().toISOString() } } }));
-        serves.push(row('CELL-R', p, 500));
     }
     setView(homes, { serves: serves });
     render();
     const more = z => zoneEl(z).descendants().filter(n => n.classList.contains('os-pc-more')).map(n => n.textContent);
-    const drawn = zoneEl('Waiting on the plant').descendants().filter(n => n.classList.contains('os-pc-card')
+    const drawn = zoneEl('No parts available').descendants().filter(n => n.classList.contains('os-pc-card')
         && !n.classList.contains('os-pc-more')).length;
-    eq([drawn < 4, more('Waiting on the plant')], [true, ['+' + (4 - drawn) + ' more']],
+    eq([drawn < 4, more('No parts available')], [true, ['+' + (4 - drawn) + ' more']],
         'overflow: a cut zone draws what fits and "+N more" for the rest');
-    await tap(zoneEl('Waiting on the plant').descendants().find(n => n.classList.contains('os-pc-more')));
+    await tap(zoneEl('No parts available').descendants().find(n => n.classList.contains('os-pc-more')));
     eq(topLine()[2], 'Show work', '"+N more" opens Show all');
     await tap(showAllButton());
 }
@@ -1168,6 +1167,38 @@ const loadBody = { payload_code: 'PART-A', uop_count: 24,
     eq(rowsText(), 'Failed to load manifest — tap the payload again to retry',
         'load modal: a failed read says so, with the retry, not "no template"');
     manifestBroken.delete('PART-A');
+}
+
+// ── 15. The cells line, and a refused part a cell runs ─────────────────────
+{
+    // The cells row is one line by default, each cell with its most urgent
+    // row's words; a tap opens the tiles under it and a second folds them (SPR
+    // 2026-10-28: on a 10-inch tablet the tiles took a third of the screen). A
+    // refused part a cell runs is a red card with its mark, in a red "No parts
+    // available" section, as the old boards drew it.
+    const homes = [
+        loaderTile(1, 'SMN_L1', { parts: ['PART-A'], bin: EMPTY, dedicated: true }),
+        loaderTile(2, 'SMN_L2', { parts: ['PART-B'], bin: EMPTY, dedicated: true,
+            supply_refusals: { 'PART-B': { refused_at: new Date().toISOString() } } }),
+    ];
+    setView(homes, { serves: [row('CELL-L', 'PART-A', 40, { waiting: true }), row('CELL-M', 'PART-B', 300)] });
+    render();
+    const cellbar = () => grid.descendants().find(n => n.classList.contains('os-pc-cellbar'));
+    const tiles = () => grid.descendants().filter(n => n.classList.contains('os-pc-tile'));
+    const barText = () => cellbar().descendants().filter(n => n.classList.contains('os-pc-cellbar-name')
+        || n.classList.contains('os-pc-cellbar-words') || n.classList.contains('os-pc-cellbar-toggle')).map(n => n.textContent);
+    eq([barText(), tiles().length], [['CELL-L', 'waiting', 'CELL-M', '300 left', 'Show'], 0],
+        'cells: one line, folded, each cell with its words; no tile drawn');
+    await tap(cellbar());
+    eq([barText().slice(-1), tiles().length, grid.classList.contains('os-pc-cellsopen')], [['Hide'], 2, true],
+        'cells: a tap opens the tiles under the line, and the board may scroll');
+    await tap(cellbar());
+    eq([tiles().length, grid.classList.contains('os-pc-cellsopen')], [0, false], 'cells: a second tap folds them');
+    const c = pcCard('PART-B');
+    eq([c.className, cardText(c).slice(-1), c.descendants().some(n => n.classList.contains('os-pc-mark'))],
+        ['os-pc-card os-pc-card--red', [part(c, 'os-pc-why')], true], 'a refused part a cell runs: a red card with its mark');
+    eq(part(c, 'os-pc-why').indexOf('CELL-M 300 left') === 0, true, 'a refused part a cell runs: the cell and its count');
+    eq(zoneEl('No parts available').className, 'os-pc-zone os-pc-zone--red', 'No parts available: the section is red');
 }
 
 if (failed) { console.error(passed + ' passed, ' + failed + ' FAILED'); process.exit(1); }

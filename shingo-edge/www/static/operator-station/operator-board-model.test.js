@@ -325,7 +325,7 @@ eq([NOBIN, FULLBIN('PART-A'), EMPTYBIN('KD-1'), EMPTYBIN(''), { occupied: true, 
     eq(zone(out, 'load').cards, [], 'a loaded carrier leaving: no card, as before');
 }
 
-// ── Waiting on the plant ──
+// ── No parts available ──
 {
     const nodes = [
         bt(1, 'SMN_A34', { dedicated: true, parts: ['PART-A'], bin: EMPTYBIN(''), refusals: { 'PART-A': { refused_at: 'T1' } } }),
@@ -334,19 +334,28 @@ eq([NOBIN, FULLBIN('PART-A'), EMPTYBIN('KD-1'), EMPTYBIN(''), { occupied: true, 
     const b = B({ station: {}, nodes: nodes.slice().reverse(), serves: [row('PART-A', 212, { cell: 'CELL-4' })] },
         { when: iso => ({ T1: '06:15', T2: 'Monday' })[iso] });
     eq(zone(b, 'refused').cards.map(cardSay), [
-        ['SMN_A34', 'PART-A', 'plain', '', 'Said no parts · 06:15 · CELL-4 has 212 left'],
-        ['SMN_A28', 'PART-B', 'plain', '', 'Said no parts · Monday'],
-    ], 'Waiting on the plant: plain, no word; when it was said, and the cell it exposes; an exposing refusal first');
+        ['SMN_A34', 'PART-A', 'red', '', 'CELL-4 212 left · 06:15'],
+        ['SMN_A28', 'PART-B', 'plain', '', 'No cell runs it · Monday'],
+    ], 'No parts available: red where a cell runs the part, plain where none does; the cell, then when it was said; red first ' +
+        '(changed: "Waiting on the plant", every card plain; the floor asked for the red the old boards drew, SPR 2026-10-28)');
+    eq([zone(b, 'refused').title, zone(b, 'refused').tone], ['No parts available', 'red'], 'No parts available: the section is red with a red card');
     eq(zone(b, 'refused').cards[0].act, { kind: 'load', node: 1, codes: ['PART-A'] },
-        'Waiting on the plant: the tap opens the load modal (Undo and LOAD are there)');
+        'No parts available: the tap opens the load modal (Undo and LOAD are there)');
     eq(zone(b, 'load').cards, [], 'a refused part has no Load card');
-    eq(b.words.slice(0, 2), ['0 to load', '2 waiting on the plant'], 'top line counts the refusals');
-    // A refusal on a part its cell has asked for at a count the Edge cannot
-    // read (changed: it said "has none left").
-    const unseen = B({ station: {}, nodes: [nodes[0]], serves: [row('PART-A', -199, { cell: 'CELL-4', waiting: true })] },
-        { when: iso => ({ T1: '06:15' })[iso] });
-    eq(zone(unseen, 'refused').cards.map(cardSay), [['SMN_A34', 'PART-A', 'plain', '', 'Said no parts · 06:15 · CELL-4 waiting']],
-        'Waiting on the plant: a cell waiting at an unknown count says waiting, never "none left"');
+    eq(b.words.slice(0, 2), ['0 to load', '2 no parts'], 'top line counts the refusals');
+    // The cell's state, short enough for a 1024 px card: out, waiting (a count
+    // the Edge cannot read too), running (a count it cannot read, not asked),
+    // and plain where a stocked bin on the board covers it.
+    const say = (serves, extra) => zone(B({ station: {}, nodes: [nodes[0]].concat(extra || []), serves: serves },
+        { when: iso => ({ T1: '06:15' })[iso] }), 'refused').cards.map(cardSay)[0].slice(2);
+    eq([say([row('PART-A', 0, { cell: 'CELL-4' })]), say([row('PART-A', -199, { cell: 'CELL-4', waiting: true })]),
+        say([row('PART-A', -199, { cell: 'CELL-4' })]),
+        say([row('PART-A', 40, { cell: 'CELL-4' })], [bt(3, 'SMN_A35', { dedicated: true, parts: ['PART-A'], bin: FULLBIN('PART-A') })])],
+    [['red', '', 'CELL-4 out · 06:15'], ['red', '', 'CELL-4 waiting · 06:15'], ['red', '', 'CELL-4 running · 06:15'],
+        ['plain', '', 'CELL-4 bin ready · 06:15']],
+    'No parts available: out, waiting, running at a count the Edge cannot read; plain with a bin ready on the board');
+    const plain = B({ station: {}, nodes: [nodes[1]], serves: [] });
+    eq([zone(plain, 'refused').tone, zone(plain, 'refused').cards[0].tone], ['plain', 'plain'], 'No parts available: plain where no cell runs a refused part');
 }
 
 // ── Clear partials: folded, opened, amber, red, unknown, none can come home ──
@@ -566,7 +575,7 @@ eq([NOBIN, FULLBIN('PART-A'), EMPTYBIN('KD-1'), EMPTYBIN(''), { occupied: true, 
     const b = B({ station: { name: 'L' }, nodes: homes, serves: serves, bins: { known: false } }, { partialsOpen: true });
     eq([zone(b, 'load').cards.length, zone(b, 'load').count, zone(b, 'load').empty], [0, '', 'Could not look'],
         'bins not known: no Load card (a delivered order would offer one today), and "Could not look", not "Nothing to load"');
-    eq(zone(b, 'refused').cards.length, 1, 'bins not known: Waiting on the plant stays (a refusal reads no bin)');
+    eq(zone(b, 'refused').cards.length, 1, 'bins not known: No parts available stays (a refusal reads no bin)');
     eq([zone(b, 'partials').cards.length, zone(b, 'partials').empty], [0, 'Could not look'],
         'bins not known: an opened Clear partials says "Could not look"');
     eq(b.words.some(w => / to load$/.test(w)), false, 'bins not known: the top line counts no Load cards');
@@ -635,7 +644,8 @@ eq([NOBIN, FULLBIN('PART-A'), EMPTYBIN('KD-1'), EMPTYBIN(''), { occupied: true, 
 // Fit
 // ═════════════════════════════════════════════════════════════════════════════
 
-eq([1024, 1099, 1100, 1699, 1700, 1920].map(M.columnsFor), [2, 2, 3, 3, 4, 4], 'columns: 2 under 1100, 3 from 1100, 4 from 1700');
+eq([999, 1000, 1024, 1359, 1360, 1799, 1800, 1920].map(M.columnsFor), [2, 3, 3, 3, 4, 4, 5, 5],
+    'columns: 2 under 1000, 3 from 1000 (a 10-inch tablet at 1024), 4 from 1360, 5 from 1800 (changed: 2 under 1100, 3, 4 from 1700)');
 
 // The proofs' strings: as dense as a real part or bin code gets (capitals and
 // digits, no spaces to spare), synthetic.
@@ -645,8 +655,8 @@ eq([PART18.length, BIN19.length], [18, 19], 'the proofs\' strings are 18 and 19 
 const card = (o) => Object.assign({ spot: 'SMN_A13', spotWords: 'holds an empty', spotCode: 'KD-1', headline: PART18, tone: 'plain' }, o || {});
 const zoneOf = (cards, o) => Object.assign({ cards: cards }, o || {});
 const nCards = (n, o) => Array.from({ length: n }, () => card(o));
-const WIDTHS = [1024, 1099, 1100, 1280, 1699, 1700, 1920];
-const HEIGHTS = { 1024: 768, 1099: 768, 1100: 800, 1280: 800, 1699: 900, 1700: 1000, 1920: 1080 };
+const WIDTHS = [1000, 1024, 1280, 1359, 1360, 1799, 1800, 1920];
+const HEIGHTS = { 1000: 540, 1024: 540, 1280: 800, 1359: 800, 1360: 800, 1799: 1000, 1800: 1000, 1920: 1080 };
 
 // The clip proofs: wherever fitBoard lands, an 18-character part on a card
 // (numbered or not), a 19-character bin code on an unloader's headline and its
@@ -660,14 +670,23 @@ WIDTHS.forEach(function (w) {
         });
 });
 // At every step a board can be asked for and every column count, a card that
-// does not fit steps the board down; the smallest step always fits.
-[2, 3, 4].forEach(function (cols) {
-    const w = { 2: 1024, 3: 1100, 4: 1700 }[cols];
-    eq(M.cardFits(card({ number: 1 }), 2, M.cardInnerWidth(w, cols, true)), true,
+// does not fit steps the board down; the smallest step always fits the
+// numbered part at the narrowest width of each column count.
+const SMALLEST = M.STEPS.length - 1;
+[2, 3, 4, 5].forEach(function (cols) {
+    const w = { 2: 800, 3: 1000, 4: 1360, 5: 1800 }[cols];
+    eq(M.cardFits(card({ number: 1 }), SMALLEST, M.cardInnerWidth(w, cols, true)), true,
         'clip proof: the smallest step fits the numbered 18-character part at the narrowest ' + cols + '-column width');
-    eq(M.cardFits(card({ headline: BIN19, spotCode: '', spotPart: PART18, spotCount: '1,027' }), 2, M.cardInnerWidth(w, cols, false)), true,
-        'clip proof: the smallest step fits the 19-character bin code and the spot line\'s part at ' + cols + ' columns');
 });
+// The bin code with its part on the spot line does not fit three columns at
+// 1000 px: the fit takes a column back rather than clip it.
+{
+    const unloader = card({ headline: BIN19, spotCode: '', spotPart: PART18, spotCount: '1,027' });
+    const f = M.fitBoard({ width: 1000, height: 540 }, 0, [zoneOf([unloader])], false);
+    eq([M.cardFits(unloader, SMALLEST, M.cardInnerWidth(1000, 3, false)), f.columns, M.cardFits(unloader, f.step, M.cardInnerWidth(1000, f.columns, false))],
+        [false, 2, true], 'clip proof: a code the smallest step cannot hold at three columns takes a column back');
+    eq(M.fitBoard({ width: 1000, height: 540 }, 0, [zoneOf([card()])], false).columns, 3, 'the 18-character part keeps three columns at 1000 px');
+}
 // The cell tile: the longest part with "1,027 left" side by side, or the count
 // under the bar, never clipped, at every width.
 WIDTHS.forEach(function (w) {
@@ -697,8 +716,8 @@ WIDTHS.forEach(function (w) {
     eq(M.fitBoard({ width: 1280, height: 800 }, status.height, zones, false), { step: 0, columns: 3, shown: [0, 2, 0], rowsPerTile: 4 },
         'fit: the large day at 1280 x 800, the largest step');
     eq(M.fitBoard({ width: 1024, height: 768 }, M.statusRowLayout({ tiles: [1, 2, 3, 4, 5].map(i => ({ cell: 'CELL-' + i,
-        rows: [{ part: DAY14, words: '212 left' }], hidden: 0 })), more: 0 }, 1024).height, zones, false).columns, 2,
-    'fit: the large day at 1024 x 768, two columns');
+        rows: [{ part: DAY14, words: '212 left' }], hidden: 0 })), more: 0 }, 1024).height, zones, false).columns, 3,
+    'fit: the large day at 1024 x 768, three columns (changed: two)');
     // The buffer full of partials, red, nine cards.
     const red = [zoneOf([]), zoneOf([dayCard(), dayCard()]), zoneOf(Array.from({ length: 9 }, (x, i) => dayCard({ number: i + 1 })), { openedByBoard: true })];
     const f = M.fitBoard({ width: 1280, height: 800 }, status.height, red, false);
@@ -721,7 +740,7 @@ WIDTHS.forEach(function (w) {
     const refused = zoneOf(nCards(6));
     const folded = zoneOf([], { folded: true });
     const f = M.fitBoard({ width: 1024, height: 768 }, 150, [load, refused, folded], true);
-    eq([f.step, f.shown[2]], [2, 0], 'overflow: the smallest step; the folded partials stay one row');
+    eq([f.step, f.shown[2]], [SMALLEST, 0], 'overflow: the smallest step; the folded partials stay one row');
     eq(f.shown[1] < 6 && f.shown[0] === 12 || f.shown[0] >= 2, true, 'overflow: the last zone gives way before the one above it');
     const all = M.fitBoard({ width: 1024, height: 400 }, 150, [zoneOf(nCards(4, { tone: 'red' }).concat(nCards(8))), zoneOf(nCards(8))], false);
     eq([all.shown[0] >= 4, all.shown[1]], [true, 0], 'overflow: a red card is never cut, even where the board cannot hold it');
@@ -736,9 +755,11 @@ WIDTHS.forEach(function (w) {
         rows: [1, 2, 3, 4].map(() => ({ part: 'PART-A', words: '212 left' })), hidden: 2 })), more: 0 };
     const statusAt = rows => M.statusRowLayout(cells, 1024, rows).height;
     eq(statusAt(4) > statusAt(2), true, 'status row: fewer rows a tile, a shorter row');
-    const zones = [zoneOf([card({ tone: 'red' }), card({ tone: 'amber' })].concat(nCards(12))), zoneOf(nCards(2)), zoneOf([], { folded: true })];
+    // Nine red and amber cards (three rows at 1024 px) the fit may not cut.
+    const lit = nCards(6, { tone: 'red' }).concat(nCards(3, { tone: 'amber' }));
+    const zones = [zoneOf(lit.concat(nCards(12))), zoneOf(nCards(2)), zoneOf([], { folded: true })];
     const f = M.fitBoard({ width: 1024, height: 768 }, statusAt, zones, false);
-    eq([f.step, f.shown[0] >= 2], [2, true], 'overflow: Load keeps its red and amber; what fewer rows a tile free is drawn again');
+    eq([f.step, f.shown[0] >= 9], [SMALLEST, true], 'overflow: Load keeps its red and amber; what fewer rows a tile free is drawn again');
     eq(f.rowsPerTile < M.MAX_TILE_ROWS, true, 'overflow: rows per tile give way when the zones cannot');
     eq(M.fitBoard({ width: 1024, height: 768 }, statusAt, [zoneOf(nCards(2))], false).rowsPerTile, M.MAX_TILE_ROWS,
         'rows per tile stay at four where the board fits');
@@ -752,7 +773,7 @@ WIDTHS.forEach(function (w) {
     const zones = [zoneOf([], { tone: 'plain' }), zoneOf(nCards(2), { tone: 'plain' }),
         zoneOf(nCards(6, { number: 1 }), { tone: 'amber', openedByBoard: true, strip: strip })];
     const f = M.fitBoard({ width: 1024, height: 768 }, 140, zones, false);
-    eq([f.step, f.shown], [2, [0, 2, 6]], 'the amber buffer at 1024 x 768: every card drawn, nothing cut while it fits');
+    eq([f.step, f.shown], [SMALLEST, [0, 2, 6]], 'the amber buffer at 1024 x 768: every card drawn, nothing cut while it fits');
     const g = M.fitBoard({ width: 1024, height: 700 }, 140, zones, false);
     eq(g.shown[1] === 0 || g.shown[1] === 2, true, 'a zone of one row is cut whole or not at all');
     eq(g.shown[2] >= 1 && g.shown[1] === 2, true, 'two refusals in one row are not cut for nothing: the opened partials give way');
@@ -769,7 +790,7 @@ WIDTHS.forEach(function (w) {
     const noted = card({ note: NOTE });
     const narrow = M.cardInnerWidth(1024, 2, false);
     const lines = step => Math.ceil(M.textWidth(NOTE, M.STEPS[step].note) / narrow);
-    eq([0, 1, 2].map(st => M.cardFits(noted, st, narrow)), [0, 1, 2].map(st => lines(st) <= 2),
+    eq(M.STEPS.map((x, st) => M.cardFits(noted, st, narrow)), M.STEPS.map((x, st) => lines(st) <= 2),
         'a card fits a step only where its note takes two lines or fewer');
     const f = M.fitBoard({ width: 1024, height: 768 }, 0, [zoneOf([noted])], false);
     eq(lines(f.step) <= 2, true, 'the fit picks a step where the note takes two lines or fewer');

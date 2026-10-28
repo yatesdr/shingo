@@ -779,11 +779,30 @@ function headlineOf(tile) {
 
 // ── the loader's cards ───────────────────────────────────────────────────────
 
+// refusalReason is a standing refusal's colour and reason. Red while a cell
+// runs the part and no stocked bin of it is on the board: the line will not
+// get it, and the floor asked to see that in red (as the old boards drew a
+// refused call). Plain when no cell runs it or a stocked bin covers it. The
+// reason is the cell and when it was said, short enough for a 1024 px card:
+// "CELL out", "CELL waiting", "CELL 212 left", "CELL running" (a count the
+// Edge cannot read); plain "CELL bin ready" (covered) or "No cell runs it".
+function refusalReason(c, when) {
+    const at = when ? ' · ' + when : '';
+    if (!c || c.state === 'covered') return { tone: 'plain', reason: (c ? c.row.cell + ' bin ready' : 'No cell runs it') + at };
+    const cell = c.row.cell;
+    let words = cell + ' running';
+    if (c.state === 'out') words = cell + ' out';
+    else if (c.state === 'waiting') words = cell + ' waiting';
+    else if (c.left !== null) words = cell + ' ' + fmtCount(c.left) + ' left';
+    return { tone: 'red', reason: words + at };
+}
+
 // loaderCards sorts a loader tile's work into its zones: Load (one card per
 // home and part, or per shared window listing the parts called for, the first
-// by coverage lit), Waiting on the plant (a standing refusal; its tap opens the
-// load modal, where Undo and LOAD are), Clear partials (tile.buffer_partial)
-// and Check bin (a bin with a part and a count of 0 or below).
+// by coverage lit), No parts available (a standing refusal, red while a cell
+// runs the part; its tap opens the load modal, where Undo and LOAD are), Clear
+// partials (tile.buffer_partial) and Check bin (a bin with a part and a count
+// of 0 or below).
 function loaderCards(t, ctx) {
     const view = ctx.view;
     const spot = spotWords(t);
@@ -795,14 +814,9 @@ function loaderCards(t, ctx) {
     const loadable = [];
     cardParts(t, view.serves).forEach(function (code) {
         if (refusals[code]) {
-            const c = worstRow(ctx.cov, code, 'consume');
-            const exposes = !!c && (c.state === 'out' || c.state === 'waiting' || c.state === 'exposed');
-            const when = ctx.when(refusals[code].refused_at);
-            let reason = 'Said no parts' + (when ? ' · ' + when : '');
-            if (exposes) reason += ' · ' + c.row.cell + (c.left === null ? ' waiting'
-                : ' has ' + (c.left > 0 ? fmtCount(c.left) : 'none') + ' left');
-            ctx.refused.push(ctx.card(t, 'refused:' + code, [exposes ? 0 : 1], {
-                spotWords: spot.words, spotCode: spot.code, headline: code, reason: reason,
+            const r = refusalReason(worstRow(ctx.cov, code, 'consume'), ctx.when(refusals[code].refused_at));
+            ctx.refused.push(ctx.card(t, 'refused:' + code, [r.tone === 'red' ? 0 : 1], {
+                tone: r.tone, spotWords: spot.words, spotCode: spot.code, headline: code, reason: r.reason,
                 act: held ? { kind: 'modal', node: t.node.id } : { kind: 'load', node: t.node.id, codes: [code] },
             }));
             return;
@@ -943,7 +957,7 @@ function lightStoppedPresses(presses, windows) {
 //   presses        the unloader's status row and its Empties tile, or null
 //   zones          [{key, title, count, tone, word, reason, cards, empty,
 //                  folded, openedByBoard, strip, stripWords}] in order: Load,
-//                  Waiting on the plant, At the windows, the catch-all zones
+//                  No parts available, At the windows, the catch-all zones
 //                  (each titled by its act), Clear partials
 //   all            every tile's cards in the plant's order (Show all); a tile
 //                  with no card gets a plain one opening the node modal
@@ -955,7 +969,7 @@ function lightStoppedPresses(presses, windows) {
 // stands at a spot: no Load card, no cart at a window, no partial or Check bin
 // card (each card and its act read bin_state); Load, At the windows and an
 // opened Clear partials say "Could not look" in place of their empty
-// sentence, and neither their titles nor the top line give a count. Waiting on the plant, the
+// sentence, and neither their titles nor the top line give a count. No parts available, the
 // cells row and the strip ("?") stay. Pinned by operator-board-model.test.js.
 export function boardModel(view, ui) {
     ui = ui || {};
@@ -1043,7 +1057,8 @@ export function boardModel(view, ui) {
         zones.push({ key: 'load', title: 'Load', count: ctx.known ? toLoad : '', tone: 'plain', cards: ctx.load,
             empty: ctx.load.length === 0 ? (ctx.known ? 'Nothing to load right now.' : 'Could not look') : '' });
         if (ctx.refused.length > 0) {
-            zones.push({ key: 'refused', title: 'Waiting on the plant', count: ctx.refused.length, tone: 'plain', cards: ctx.refused });
+            const red = ctx.refused.some(function (c) { return c.tone === 'red'; });
+            zones.push({ key: 'refused', title: 'No parts available', count: ctx.refused.length, tone: red ? 'red' : 'plain', cards: ctx.refused });
         }
     }
     if (consumers.length > 0) {
@@ -1073,7 +1088,7 @@ export function boardModel(view, ui) {
     const counts = [];
     if (producers.length > 0) {
         if (ctx.known) counts.push(toLoad + ' to load');
-        if (ctx.refused.length > 0) counts.push(ctx.refused.length + ' waiting on the plant');
+        if (ctx.refused.length > 0) counts.push(ctx.refused.length + ' no parts');
     }
     if (consumers.length > 0 && ctx.known) counts.push(ctx.windows.length > 0 ? ctx.windows.length + ' at the windows' : 'nothing at the windows');
     otherOrder.forEach(function (l) { counts.push(otherCards[l].length + ' ' + l.toLowerCase()); });
@@ -1150,15 +1165,18 @@ function boardBar(tiles, kind, view) {
 // gives way first to a "+N more" card, then the one before it. Pinned, with
 // the clip proofs, by operator-board-model.test.js ("fit").
 
-// STEPS are the board's three sizes: a card's height (its least: a card with
+// STEPS are the board's four sizes: a card's height (its least: a card with
 // more lines than that holds grows, cardHeight) and headline, a section title
-// and its header row, the spot line, the note, and the gap between a card's
-// lines. On a card the word (NOW, SOON) is 20 px and its reason 17 px at every
-// step; the reason's line is 24 px and the "Also" line 17 px.
+// and its header row, the spot line, the note, the gap between a card's lines
+// and the reason's line. On a card the word (NOW, SOON) is 20 px and its reason
+// 17 px, on a 24 px line, at every step but the compact one (16 px and 15 px on
+// 20 px); the "Also" line is 17 px. The compact step is what a 10-inch tablet
+// falls to before any card goes behind "+N more" (SPR 2026-10-28).
 export const STEPS = [
-    { card: 120, headline: 32, title: 24, header: 34, spot: 15, note: 15, lineGap: 5 },
-    { card: 98, headline: 26, title: 20, header: 30, spot: 14, note: 14, lineGap: 5 },
-    { card: 74, headline: 20, title: 18, header: 28, spot: 13, note: 13, lineGap: 1 },
+    { card: 120, headline: 32, title: 24, header: 34, spot: 15, note: 15, lineGap: 5, reason: 24 },
+    { card: 98, headline: 26, title: 20, header: 30, spot: 14, note: 14, lineGap: 5, reason: 24 },
+    { card: 74, headline: 20, title: 18, header: 28, spot: 13, note: 13, lineGap: 1, reason: 24 },
+    { card: 64, headline: 18, title: 16, header: 26, spot: 12, note: 12, lineGap: 0, reason: 20 },
 ];
 
 // GEOM is the board's fixed geometry in px, shared with operator.css's
@@ -1173,19 +1191,23 @@ export const STEPS = [
 // the bar or under it, a covered row's bare bar, the "+N"), the press tile and
 // an Empties line. Measured on the glass in headless Chrome at each step.
 export const GEOM = {
-    padX: 20, padTop: 14, padBottom: 16, topLine: 40, gap: 12, bar: 56,
+    padX: 20, padTop: 14, padBottom: 16, topLine: 40, gap: 10, bar: 56,
     sectionPadX: 12, sectionPadY: 22, sectionBorder: 3, headerGap: 10, cardGap: 10,
-    cardPadX: 14, cardPadY: 2, cardBorder: 3, chevron: 26, badge: 48, folded: 72, stripBox: 36, toggle: 48, zoneLine: 21,
-    reasonLine: 24, alsoLine: 17,
+    cardPadX: 14, cardPadY: 2, cardBorder: 3, chevron: 26, badge: 48, folded: 58, stripBox: 36, toggle: 48, zoneLine: 21,
+    alsoLine: 17,
     statusLabel: 27, tilePad: 27, tileGap: 10, tileHead: 43, rowLine: 37, rowUnder: 56, rowBar: 14, rowMore: 23,
-    pressTile: 132, emptiesLine: 25, emptiesFoot: 46,
+    pressTile: 132, emptiesLine: 25, emptiesFoot: 46, statusFold: 48,
 };
 
-// columnsFor is the card columns at a width: 2 under 1100 px, 3 from 1100, 4
-// from 1700.
+// columnsFor is the card columns at a width: 2 under 1000 px, 3 from 1000, 4
+// from 1360, 5 from 1800 (each the narrowest at which the compact step holds a
+// numbered 18-character part). A 10-inch tablet lays the station out at 1024
+// px (operator-display.html's viewport); two columns there drew each card as a
+// half-screen strip and cut the rest behind "+N more" (SPR, 2026-10-28).
 export function columnsFor(width) {
-    if (width >= 1700) return 4;
-    if (width >= 1100) return 3;
+    if (width >= 1800) return 5;
+    if (width >= 1360) return 4;
+    if (width >= 1000) return 3;
     return 2;
 }
 
@@ -1248,7 +1270,7 @@ export function cardHeight(card, step, inner) {
     const g = GEOM;
     const s = STEPS[step];
     let h = Math.ceil(s.spot * 1.2) + s.lineGap + Math.ceil(s.headline * 1.05);
-    if (card.word || card.reason) h += s.lineGap + g.reasonLine;
+    if (card.word || card.reason) h += s.lineGap + s.reason;
     if (card.also && card.also.length) h += s.lineGap + g.alsoLine;
     if (card.note) h += s.lineGap + noteLines(card, step, inner) * Math.ceil(s.note * 1.2);
     return Math.max(s.card, h + 2 * (g.cardPadY + g.cardBorder));
@@ -1286,10 +1308,10 @@ function zoneHeight(z, shown, step, cols, width) {
     if (z.folded) return g.folded;
     let header = s.header;
     if (z.strip) header = Math.max(header, z.openedByBoard ? g.stripBox : g.toggle);
-    // The outline by tone: red 3 px, amber 2, plain 1 (operator.css); a zone
-    // that names no tone is counted at the widest.
-    const border = { plain: 1, amber: 2, red: 3 }[z.tone] || g.sectionBorder;
-    const base = 2 * border + g.sectionPadY + header;
+    // The outline by tone is red 3 px, amber 2, plain 1, and operator.css
+    // takes the difference out of the padding, so every zone's outline and
+    // padding come to the plain one's (a red zone was counted 4 px tall).
+    const base = 2 + g.sectionPadY + header;
     const cut = z.cards.length - shown;
     if (shown === 0 && cut === 0) return base + (z.strip && z.empty ? g.headerGap + g.zoneLine : 0);
     return base + g.headerGap + cardRowsHeight(z.cards, shown, cut, step, cols, width);
@@ -1307,6 +1329,7 @@ function boardHeight(zones, shown, step, cols, fixedTop, width) {
 // rowsPerTile}. statusHeight is a number, or a function of the rows a cell
 // tile shows (statusRowLayout's height at that count) where those may give way.
 //
+//   - the width's columns, fewer where the smallest step would clip a code;
 //   - the largest step at which every card's codes fit unclipped (cardFits) and
 //     every zone fits the height;
 //   - where no step fits the height, the smallest step whose codes fit, and the
@@ -1320,7 +1343,6 @@ function boardHeight(zones, shown, step, cols, fixedTop, width) {
 //     behind its "+N"), down to one.
 export function fitBoard(viewport, statusHeight, zones, hasBar) {
     const g = GEOM;
-    const cols = columnsFor(viewport.width);
     const statusAt = typeof statusHeight === 'function' ? statusHeight : function () { return statusHeight; };
     const topAt = function (rows) {
         const h = statusAt(rows);
@@ -1328,11 +1350,17 @@ export function fitBoard(viewport, statusHeight, zones, hasBar) {
     };
     let fixedTop = topAt(MAX_TILE_ROWS);
     const full = zones.map(function (z) { return z.folded ? 0 : z.cards.length; });
-    const fits = function (step) {
+    const fitsAt = function (step, n) {
         return zones.every(function (z) {
-            return z.cards.every(function (c) { return cardFits(c, step, cardInnerWidth(viewport.width, cols, !!c.number)); });
+            return z.cards.every(function (c) { return cardFits(c, step, cardInnerWidth(viewport.width, n, !!c.number)); });
         });
     };
+    // The width's columns (columnsFor), one fewer while the smallest step
+    // cannot hold every card's codes at that many: a long bin code with its
+    // part on the spot line takes a column back rather than clip.
+    let cols = columnsFor(viewport.width);
+    while (cols > 2 && !fitsAt(STEPS.length - 1, cols)) cols--;
+    const fits = function (step) { return fitsAt(step, cols); };
     for (let step = 0; step < STEPS.length; step++) {
         if (!fits(step)) continue;
         if (boardHeight(zones, full, step, cols, fixedTop, viewport.width) <= viewport.height) {

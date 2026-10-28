@@ -1190,7 +1190,7 @@ body.os-pc-active #os-footer { display: none; }
 #os-grid.os-pc-board {
     display: flex;
     flex-direction: column;
-    gap: 12px;
+    gap: 10px;
     padding: 14px 20px 16px;
     overflow: hidden;
     background: var(--elev-base);
@@ -1210,8 +1210,14 @@ body.os-pc-active #os-footer { display: none; }
     --os-pc-card: 74px; --os-pc-headline: 20px; --os-pc-title: 18px; --os-pc-header: 28px; --os-pc-spot: 13px;
     --os-pc-note: 13px;
 }
-/* Show all is the one view that may scroll. */
-#os-grid.os-pc-board.os-pc-showall { overflow-y: auto; }
+#os-grid.os-pc-board.os-pc-step-3 {
+    --os-pc-card: 64px; --os-pc-headline: 18px; --os-pc-title: 16px; --os-pc-header: 26px; --os-pc-spot: 12px;
+    --os-pc-note: 12px;
+}
+/* Show all scrolls, and so does the board with its cells opened: the tiles sit
+   above the work, which keeps the layout the fit gave it. */
+#os-grid.os-pc-board.os-pc-showall,
+#os-grid.os-pc-board.os-pc-cellsopen { overflow-y: auto; }
 
 .os-pc-board button { font-family: inherit; color: inherit; touch-action: manipulation; }
 
@@ -1257,6 +1263,35 @@ body.os-pc-active #os-footer { display: none; }
 
 /* The status row */
 .os-pc-status { flex: none; display: flex; flex-direction: column; gap: 8px; }
+/* The cells line: the loader's status row folded to one tappable line, so the
+   board is the work. Its height is GEOM.statusFold, all the fit counts of
+   the row (operator-board.js renderBoard). */
+.os-pc-cellbar {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    width: 100%;
+    height: 48px;
+    padding: 0 14px;
+    background: var(--elev-surface);
+    border: 1px solid var(--sub-2);
+    border-radius: 12px;
+    font-size: 15px;
+    font-weight: 600;
+    text-align: left;
+    white-space: nowrap;
+    cursor: pointer;
+}
+.os-pc-cellbar--red { border: 3px solid var(--status-failed-ink); padding: 0 12px; }
+.os-pc-cellbar:active { background: var(--elev-raised); }
+.os-pc-cellbar-label { flex: none; color: var(--text-muted); }
+.os-pc-cellbar-list { flex: 1; min-width: 0; display: flex; gap: 20px; overflow: hidden; }
+.os-pc-cellbar-cell { flex: none; display: inline-flex; gap: 6px; }
+.os-pc-cellbar-words { font-weight: 500; color: var(--text-muted); }
+.os-pc-cellbar-cell--red,
+.os-pc-cellbar-cell--red .os-pc-cellbar-words { color: var(--status-failed-ink); }
+.os-pc-cellbar-cell--quiet { color: var(--text-muted); }
+.os-pc-cellbar-toggle { flex: none; color: var(--text-muted); }
 .os-pc-status-label { font-size: 14px; font-weight: 600; color: var(--text-muted); }
 .os-pc-tiles {
     display: grid;
@@ -1348,7 +1383,9 @@ body.os-pc-active #os-footer { display: none; }
 }
 .os-pc-zone--amber { border: 2px solid var(--status-faulted-ink); padding: 9px 11px 11px; }
 .os-pc-zone--red { border: 3px solid var(--status-failed-ink); padding: 8px 10px 10px; }
-.os-pc-zone--folded { min-height: 64px; justify-content: center; }
+/* A folded zone is one line: its Show button (48 px) and 4 px above and
+   below it (GEOM.folded 58). */
+.os-pc-zone--folded { min-height: 58px; padding-top: 4px; padding-bottom: 4px; justify-content: center; }
 .os-pc-zone-head {
     display: flex;
     align-items: center;
@@ -1424,6 +1461,11 @@ body.os-pc-active #os-footer { display: none; }
     overflow: hidden;
 }
 .os-pc-step-2 .os-pc-card-body { gap: 1px; }
+.os-pc-step-3 .os-pc-card-body { gap: 0; }
+/* The compact step's reason: 16 px word, 15 px words, on a 20 px line (STEPS). */
+.os-pc-step-3 .os-pc-reason .os-pc-word { font-size: 16px; }
+.os-pc-step-3 .os-pc-reason .os-pc-why { font-size: 15px; }
+.os-pc-step-3 .os-pc-reason .os-pc-mark svg { width: 16px; height: 16px; }
 .os-pc-spot { display: flex; min-width: 0; font-size: var(--os-pc-spot); white-space: nowrap; line-height: 1.2; }
 .os-pc-spot-name,
 .os-pc-spot-code { flex: none; font-weight: 600; white-space: pre; }
