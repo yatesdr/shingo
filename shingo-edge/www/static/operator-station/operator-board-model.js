@@ -1194,13 +1194,17 @@ function boardBar(tiles, kind, view) {
 // and its header row, the spot line, the note, the gap between a card's lines
 // and the reason's line. On a card the word (NOW, SOON) is 20 px and its reason
 // 17 px, on a 24 px line, at every step but the compact one (16 px and 15 px on
-// 20 px); the "Also" line is 17 px. The compact step is what a 10-inch tablet
-// falls to before any card goes behind "+N more" (SPR 2026-10-28).
+// 18 px); the "Also" line is 17 px. The compact step is what a 10-inch tablet
+// falls to before any card goes behind "+N more" (SPR 2026-10-28). spotName is
+// the spot's own name on that line, larger than the words beside it: where the
+// card is matters most to the person walking to it (shipping, SPR 2026-10-28).
+// The two small steps take its room from their line gap and the compact reason
+// line, so a card is no taller than it was and no card more goes behind "+N".
 export const STEPS = [
-    { card: 120, headline: 32, title: 24, header: 34, spot: 15, note: 15, lineGap: 5, reason: 24 },
-    { card: 98, headline: 26, title: 20, header: 30, spot: 14, note: 14, lineGap: 5, reason: 24 },
-    { card: 74, headline: 20, title: 18, header: 28, spot: 13, note: 13, lineGap: 1, reason: 24 },
-    { card: 64, headline: 18, title: 16, header: 26, spot: 12, note: 12, lineGap: 0, reason: 20 },
+    { card: 120, headline: 32, title: 24, header: 34, spot: 15, spotName: 19, note: 15, lineGap: 5, reason: 24 },
+    { card: 98, headline: 26, title: 20, header: 30, spot: 14, spotName: 18, note: 14, lineGap: 5, reason: 24 },
+    { card: 74, headline: 20, title: 18, header: 28, spot: 13, spotName: 15, note: 13, lineGap: 0, reason: 24 },
+    { card: 64, headline: 18, title: 16, header: 26, spot: 12, spotName: 14, note: 12, lineGap: 0, reason: 18 },
 ];
 
 // GEOM is the board's fixed geometry in px, shared with operator.css's
@@ -1274,8 +1278,8 @@ export function cardFits(card, step, inner) {
     const s = STEPS[step];
     if (textWidth(card.headline, s.headline) > inner) return false;
     if (noteLines(card, step, inner) > 2) return false;
-    const fixed = [card.spot, card.spotCode, card.spotPart, card.spotCount, card.spotHeight].filter(Boolean).join(' · ');
-    return textWidth(fixed + ' · ', s.spot) <= inner;
+    const rest = [card.spotCode, card.spotPart, card.spotCount, card.spotHeight].filter(Boolean).join(' · ');
+    return textWidth(card.spot, s.spotName) + textWidth(' · ' + rest + (rest ? ' · ' : ''), s.spot) <= inner;
 }
 
 // noteLines is the lines a card's note wraps to at a step, measured high (a
@@ -1293,7 +1297,7 @@ export function noteLines(card, step, inner) {
 export function cardHeight(card, step, inner) {
     const g = GEOM;
     const s = STEPS[step];
-    let h = Math.ceil(s.spot * 1.2) + s.lineGap + Math.ceil(s.headline * 1.05);
+    let h = Math.ceil(Math.max(s.spot, s.spotName) * 1.2) + s.lineGap + Math.ceil(s.headline * 1.05);
     if (card.word || card.reason) h += s.lineGap + s.reason;
     if (card.also && card.also.length) h += s.lineGap + g.alsoLine;
     if (card.note) h += s.lineGap + noteLines(card, step, inner) * Math.ceil(s.note * 1.2);

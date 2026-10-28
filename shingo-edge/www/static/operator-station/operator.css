@@ -1203,19 +1203,20 @@ body.os-pc-active #os-footer { display: none; }
     --os-pc-title: 24px;
     --os-pc-header: 34px;
     --os-pc-spot: 15px;
+    --os-pc-spot-name: 19px;
     --os-pc-note: 15px;
 }
 #os-grid.os-pc-board.os-pc-step-1 {
     --os-pc-card: 98px; --os-pc-headline: 26px; --os-pc-title: 20px; --os-pc-header: 30px; --os-pc-spot: 14px;
-    --os-pc-note: 14px;
+    --os-pc-spot-name: 18px; --os-pc-note: 14px;
 }
 #os-grid.os-pc-board.os-pc-step-2 {
     --os-pc-card: 74px; --os-pc-headline: 20px; --os-pc-title: 18px; --os-pc-header: 28px; --os-pc-spot: 13px;
-    --os-pc-note: 13px;
+    --os-pc-spot-name: 15px; --os-pc-note: 13px;
 }
 #os-grid.os-pc-board.os-pc-step-3 {
     --os-pc-card: 64px; --os-pc-headline: 18px; --os-pc-title: 16px; --os-pc-header: 26px; --os-pc-spot: 12px;
-    --os-pc-note: 12px;
+    --os-pc-spot-name: 14px; --os-pc-note: 12px;
 }
 /* Show all scrolls, and so does the board with its status row opened: the
    tiles sit above the work, which keeps the layout the fit gave it. */
@@ -1475,15 +1476,19 @@ body.os-pc-active #os-footer { display: none; }
     min-width: 0;
     overflow: hidden;
 }
-.os-pc-step-2 .os-pc-card-body { gap: 1px; }
+.os-pc-step-2 .os-pc-card-body { gap: 0; }
 .os-pc-step-3 .os-pc-card-body { gap: 0; }
-/* The compact step's reason: 16 px word, 15 px words, on a 20 px line (STEPS). */
+/* The compact step's reason: 16 px word, 15 px words, on an 18 px line (STEPS). */
+.os-pc-step-3 .os-pc-reason { line-height: 18px; }
 .os-pc-step-3 .os-pc-reason .os-pc-word { font-size: 16px; }
 .os-pc-step-3 .os-pc-reason .os-pc-why { font-size: 15px; }
 .os-pc-step-3 .os-pc-reason .os-pc-mark svg { width: 16px; height: 16px; }
-.os-pc-spot { display: flex; min-width: 0; font-size: var(--os-pc-spot); white-space: nowrap; line-height: 1.2; }
+.os-pc-spot { display: flex; align-items: baseline; min-width: 0; font-size: var(--os-pc-spot); white-space: nowrap; line-height: 1.2; }
 .os-pc-spot-name,
 .os-pc-spot-code { flex: none; font-weight: 600; white-space: pre; }
+/* The spot's name is where the card is: larger and in full strength
+   (STEPS spotName), the words and codes beside it stay the line's size. */
+.os-pc-spot-name { font-size: var(--os-pc-spot-name); font-weight: 700; color: var(--text-strong); }
 .os-pc-spot-words { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: pre; color: var(--text-muted); }
 .os-pc-spot-code { color: var(--text-muted); }
 .os-pc-headline {
