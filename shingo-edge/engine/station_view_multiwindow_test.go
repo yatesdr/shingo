@@ -76,7 +76,7 @@ func TestBuildView_SharedWindow_CarriesTheLoader(t *testing.T) {
 			{CoreNodeName: "MW-W2"},
 			{CoreNodeName: "MW-W3"},
 		},
-		Payloads: []protocol.LoaderPayloadInfo{{PayloadCode: "PART-A", UOPThreshold: 100}},
+		Payloads: []protocol.LoaderPayloadInfo{{PayloadCode: "PART-A"}},
 	}})
 
 	view, err := eng.stationService.BuildView(context.Background(), sid)

@@ -16,6 +16,8 @@ Edge-only; no migrations. Core then Edge at SPR to keep both on one commit.
 - A code the compact size cannot hold takes a column back rather than clip
 - A refused part a cell runs is red again, under "No parts available"
 - A queued move from a home to its line no longer hides the home's LOAD
+- Core's loader threshold leaves the Edge: no copy, no wire field (Edge v31)
+- A cell episode's level is its reorder point, not Core's threshold (Edge v32)
 
 ## 2026-10-27 — Press tranche 2, the route strip, and positions from Settings
 

@@ -53,11 +53,11 @@ func TestTier1_BUG1_OperatorAndDemandShareLoaderKey(t *testing.T) {
 // handle_loop_below_threshold_test.go; the operator-staging fallback by
 // maybe_push_loader_test.go.
 
-// Gate 3 (prerequisite A landed): the per-payload UOP threshold and the operator-driven
-// flag must reach the *domain.Loader snapshot through projectCoreLoader and survive a
-// SetCoreLoaders refresh. Without the uopThreshold projection the threshold silently
-// reads 0 (and a threshold loader would fall back to operator staging).
-func TestTier1_SnapshotCarriesThresholdAndTransitional(t *testing.T) {
+// Gate 3: the replenishment mode (threshold or operator) must reach the
+// *domain.Loader snapshot through projectCoreLoader and survive a SetCoreLoaders
+// refresh. The UOP threshold itself is not carried: it is Core's alone and left
+// the wire 2026-10-28.
+func TestTier1_SnapshotCarriesReplenishmentMode(t *testing.T) {
 	t.Parallel()
 	db := testEngineDB(t)
 	eng := testEngine(t, db)
@@ -71,9 +71,6 @@ func TestTier1_SnapshotCarriesThresholdAndTransitional(t *testing.T) {
 	if err != nil || a == nil {
 		t.Fatalf("resolve AUTO-LDR: %v", err)
 	}
-	if got := a.UOPThresholdFor("PART-A"); got != 150 {
-		t.Errorf("UOPThresholdFor(PART-A) = %d, want 150 (threaded off the cache)", got)
-	}
 	if a.UsesOperatorStaging() {
 		t.Error("replenishment=auto loader must not be operator-driven")
 	}
@@ -85,18 +82,15 @@ func TestTier1_SnapshotCarriesThresholdAndTransitional(t *testing.T) {
 	if !op.UsesOperatorStaging() {
 		t.Error("replenishment=operator loader must be operator-driven")
 	}
-	if got := op.UOPThresholdFor("PART-B"); got != 0 {
-		t.Errorf("UOPThresholdFor(PART-B) = %d, want 0 (none seeded)", got)
-	}
 
-	// Survives a refresh: the field is re-threaded, not stale.
-	seedCoreLoader(t, eng, sharedLoaderInfo("AUTO-LDR", "produce", "threshold", "PART-A", 2, 222))
+	// Survives a refresh: the mode is re-threaded, not stale.
+	seedCoreLoader(t, eng, sharedLoaderInfo("AUTO-LDR", "produce", "operator", "PART-A", 2, 222))
 	a2, err := eng.loaders().LoaderForPayload("PART-A", domain.RoleProduce)
 	if err != nil {
 		t.Fatalf("LoaderForPayload(PART-A) after refresh: %v", err)
 	}
-	if a2 == nil || a2.UOPThresholdFor("PART-A") != 222 {
-		t.Errorf("after refresh UOPThresholdFor(PART-A) = %v, want 222", a2)
+	if a2 == nil || !a2.UsesOperatorStaging() {
+		t.Errorf("after refresh to operator: UsesOperatorStaging = false (%v), want true", a2)
 	}
 }
 

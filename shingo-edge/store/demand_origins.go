@@ -56,7 +56,9 @@ type OpenOrigin struct {
 	PayloadCode  string
 
 	OpenedTotal int
-	Threshold   int
+	// ReorderPoint is the claim's reorder level the decision was made at
+	// (NodeClaim.DemandLevel): the Edge's auto-reorder, never Core's threshold.
+	ReorderPoint int
 	// ExpectedOrders is nil when the denominator is UNKNOWABLE — a different
 	// state from 1, and one the surface renders as "—" rather than as a ratio
 	// somebody would draw a conclusion from.
@@ -71,7 +73,7 @@ type OpenOrigin struct {
 var ErrOriginNotOpen = errors.New("no open demand origin for that episode key")
 
 const openOriginCols = `episode_key, origin_id, revision, kind, direction, trigger_kind,
-	trigger_ref, process_id, core_node_name, payload_code, opened_total, threshold,
+	trigger_ref, process_id, core_node_name, payload_code, opened_total, reorder_point,
 	expected_orders, expected_unknown_reason, rerequest_count, discretionary, opened_at`
 
 func scanOpenOrigin(sc interface{ Scan(...any) error }) (*OpenOrigin, error) {
@@ -83,7 +85,7 @@ func scanOpenOrigin(sc interface{ Scan(...any) error }) (*OpenOrigin, error) {
 	)
 	if err := sc.Scan(&o.EpisodeKey, &o.OriginID, &o.Revision, &o.Kind, &o.Direction,
 		&o.TriggerKind, &o.TriggerRef, &o.ProcessID, &o.CoreNodeName, &o.PayloadCode,
-		&o.OpenedTotal, &o.Threshold, &expected, &o.ExpectedUnknownReason,
+		&o.OpenedTotal, &o.ReorderPoint, &expected, &o.ExpectedUnknownReason,
 		&o.RerequestCount, &disc, &opened); err != nil {
 		return nil, err
 	}
@@ -119,7 +121,7 @@ func (db *DB) OpenDemandOrigin(o *OpenOrigin) error {
 		 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		o.EpisodeKey, o.OriginID, 1, o.Kind, o.Direction, o.TriggerKind,
 		o.TriggerRef, o.ProcessID, o.CoreNodeName, o.PayloadCode,
-		o.OpenedTotal, o.Threshold, expected, o.ExpectedUnknownReason,
+		o.OpenedTotal, o.ReorderPoint, expected, o.ExpectedUnknownReason,
 		o.RerequestCount, disc, o.OpenedAt.UTC().Format(time.RFC3339Nano))
 	if err != nil {
 		return fmt.Errorf("open demand origin %q: %w", o.EpisodeKey, err)

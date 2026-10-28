@@ -115,9 +115,10 @@ func seedCoreLoader(t *testing.T, eng *Engine, infos ...protocol.LoaderInfo) {
 }
 
 // sharedLoaderInfo builds a single-payload shared_window LoaderInfo — the common
-// test loader shape. repl is "auto" (automatic replenishment) or "operator"
-// (transitional / operator-driven). For a consume unloader pass role "consume".
-func sharedLoaderInfo(coreNode, role, repl, payload string, _ int, uopThreshold int) protocol.LoaderInfo {
+// test loader shape. repl is "threshold" or "operator". For a consume unloader
+// pass role "consume". Both trailing ints are vestigial: the bin-count min_stock
+// is retired, and the UOP threshold left the wire (it is Core's alone).
+func sharedLoaderInfo(coreNode, role, repl, payload string, _, _ int) protocol.LoaderInfo {
 	return protocol.LoaderInfo{
 		Name:          coreNode,
 		LoaderKey:     "loader:" + coreNode,
@@ -127,7 +128,7 @@ func sharedLoaderInfo(coreNode, role, repl, payload string, _ int, uopThreshold 
 		InboundSource: "EMPTY-SUPER",
 		OutboundDest:  "FG-MARKET",
 		Positions:     []protocol.LoaderPosition{{CoreNodeName: coreNode}},
-		Payloads:      []protocol.LoaderPayloadInfo{{PayloadCode: payload, UOPThreshold: uopThreshold}},
+		Payloads:      []protocol.LoaderPayloadInfo{{PayloadCode: payload}},
 	}
 }
 

@@ -607,9 +607,10 @@ slice, consumed by the Edge cache (`core_loaders`) — the loader resolvers' rea
 |---|---|---|---|
 | Core Node Name | `core_node_name` | string | The position/window node NAME (Edge's key space). |
 | Payload Code | `payload_code` | string | The bound payload (dedicated); empty for a window or an unassigned position. |
-| UOP Threshold | `uop_threshold` | int | Per-position UOP-threshold replenishment trigger (0 = off). |
 
-**LoaderPayloadInfo:** `payload_code` (string), `uop_threshold` (int) — one entry per payload in a shared_window loader's allowed set.
+**LoaderPayloadInfo:** `payload_code` (string) — one entry per payload in a shared_window loader's allowed set.
+
+The loader's UOP threshold is not on this wire (dropped 2026-10-28): it is Core's alone, and an older Core still sending `uop_threshold` is ignored on decode.
 
 #### CatalogPayloadsRequest
 
@@ -720,7 +721,7 @@ older Core ignores unknown fields, and an older Core that has not registered the
 | Payload Code | `payload_code` | string | No | The binding payload for the claim. |
 | Allowed Payload Codes | `allowed_payload_codes` | string[] | No | The effective payload set this claim accepts. Usually just `[payload_code]`. |
 | UOP Capacity | `uop_capacity` | integer | No | Bin capacity (UOP) for the claim's payload — time-to-empty context. |
-| Reorder Point | `reorder_point` | integer | No | Role-dependent replenishment trigger (consume: UOP threshold; produce: bin-count floor). |
+| Reorder Point | `reorder_point` | integer | No | The Edge's auto-reorder point (consume: fire at or below it; produce: ask for the empty at it, else at capacity). Not Core's loader threshold. |
 
 #### SourcingStateReport
 

@@ -197,7 +197,7 @@ func seedOpenEpisode(t *testing.T, db *DB, processName, payload string, role pro
 		EpisodeKey: key, OriginID: "origin-" + key, Kind: protocol.EpisodeKindCell,
 		Direction: role, TriggerKind: protocol.EpisodeTriggerAutoreorder,
 		TriggerRef: "claim:1", ProcessID: processName, CoreNodeName: "SYN_NODE01",
-		PayloadCode: payload, Threshold: 50, ExpectedOrders: &expected,
+		PayloadCode: payload, ReorderPoint: 50, ExpectedOrders: &expected,
 		OpenedAt: time.Now().UTC(),
 	}); err != nil {
 		t.Fatalf("open demand origin %s: %v", key, err)

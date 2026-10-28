@@ -121,7 +121,7 @@ func TestProduceEarlyAsk_EpisodeRecordsCapacityWhenThereIsNoReorderPoint(t *test
 	); err != nil {
 		t.Fatalf("open the produce cell's episode: %v", err)
 	}
-	if got := episodeThreshold(t, db, "RECCAP-PROC", "RECCAP-PART", protocol.ClaimRoleProduce); got != 6 {
+	if got := episodeReorderPoint(t, db, "RECCAP-PROC", "RECCAP-PART", protocol.ClaimRoleProduce); got != 6 {
 		t.Errorf("episode threshold = %d, want 6 — this cell was judged full at 6 and the record "+
 			"must name that number. A stored 0 reads as a threshold of zero, which is a statement "+
 			"about the level that nobody made", got)
@@ -144,7 +144,7 @@ func TestProduceEarlyAsk_EpisodeRecordsCapacityWhenTheReorderPointIsUnreachable(
 	); err != nil {
 		t.Fatalf("open the produce cell's episode: %v", err)
 	}
-	if got := episodeThreshold(t, db, "RECOVER-PROC", "RECOVER-PART", protocol.ClaimRoleProduce); got != 100 {
+	if got := episodeReorderPoint(t, db, "RECOVER-PROC", "RECOVER-PART", protocol.ClaimRoleProduce); got != 100 {
 		t.Errorf("episode threshold = %d, want 100 — a reorder point of 120 on a bin that holds "+
 			"100 is not the level anything was judged against", got)
 	}
@@ -173,7 +173,7 @@ func TestProduceEarlyAsk_ConsumeIsUnmoved(t *testing.T) {
 	); err != nil {
 		t.Fatalf("open the consume cell's episode: %v", err)
 	}
-	if got := episodeThreshold(t, db, "UNMOVED-PROC", "UNMOVED-PART", protocol.ClaimRoleConsume); got != 80 {
+	if got := episodeReorderPoint(t, db, "UNMOVED-PROC", "UNMOVED-PART", protocol.ClaimRoleConsume); got != 80 {
 		t.Errorf("consume episode threshold = %d, want 80", got)
 	}
 }

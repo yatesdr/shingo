@@ -51,8 +51,8 @@ func TestProjectCoreLoader_BranchesOnLayout(t *testing.T) {
 		l, err := projectCoreLoader(store.CoreLoader{
 			LoaderKey: "loader:SLN-2", Role: "produce", Layout: "dedicated_positions",
 			Positions: []store.CoreLoaderPosition{
-				{PositionNode: "HOME-1", PayloadCode: "PART-A", UOPThreshold: 80},
-				{PositionNode: "HOME-2", PayloadCode: "PART-B", UOPThreshold: 90},
+				{PositionNode: "HOME-1", PayloadCode: "PART-A"},
+				{PositionNode: "HOME-2", PayloadCode: "PART-B"},
 			},
 		})
 		if err != nil {
@@ -65,8 +65,8 @@ func TestProjectCoreLoader_BranchesOnLayout(t *testing.T) {
 		if len(pos) != 2 {
 			t.Fatalf("positions = %d, want 2", len(pos))
 		}
-		if pos[0].Node != "HOME-1" || pos[0].Payload != "PART-A" || pos[0].UOPThreshold != 80 {
-			t.Errorf("position 0 = %+v, want HOME-1/PART-A/thr80", pos[0])
+		if pos[0].Node != "HOME-1" || pos[0].Payload != "PART-A" {
+			t.Errorf("position 0 = %+v, want HOME-1/PART-A", pos[0])
 		}
 		if pos[1].Node != "HOME-2" || pos[1].Payload != "PART-B" {
 			t.Errorf("position 1 = %+v, want HOME-2/PART-B", pos[1])

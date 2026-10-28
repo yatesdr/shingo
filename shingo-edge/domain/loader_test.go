@@ -124,40 +124,23 @@ func TestNewDedicatedPositionsLoader_Valid(t *testing.T) {
 // which is what the old behaviour was: every screen said "threshold" while the
 // carriers came from the operator push.
 //
-// MisconfiguredThreshold now carries the whole weight of surfacing that state,
-// because nothing feeds such a loader at all.
+// Whether its thresholds are set is Core's to say (its loader and inventory
+// pages: "no threshold set"); the Edge holds no copy of the threshold.
 func TestUsesOperatorStaging_TheSwitchMeansWhatItSays(t *testing.T) {
 	t.Parallel()
 	windows := []Window{{Node: "W1"}}
 	payloads := []PayloadCode{"P1"}
 
-	configured, err := NewSharedWindowLoader("CFG", RoleProduce, ReplenishmentThreshold,
-		windows, payloads, WithUOPThreshold(map[PayloadCode]int{"P1": 100}))
+	// Threshold switched ON: Core's threshold path owns it, whatever Core has
+	// configured. It does NOT become an operator-staged loader behind the
+	// operator's back.
+	threshold, err := NewSharedWindowLoader("THR", RoleProduce, ReplenishmentThreshold, windows, payloads)
 	if err != nil {
-		t.Fatalf("build configured: %v", err)
+		t.Fatalf("build threshold: %v", err)
 	}
-	if configured.UsesOperatorStaging() {
-		t.Error("threshold loader WITH a threshold: UsesOperatorStaging = true, want false — the automatic path owns it")
-	}
-	if configured.MisconfiguredThreshold() {
-		t.Error("threshold loader WITH a threshold: MisconfiguredThreshold = true, want false")
-	}
-
-	// Threshold switched ON with nothing configured: the threshold path still
-	// owns it and simply has nothing to fire on. It does NOT become an
-	// operator-staged loader behind the operator's back.
-	bare, err := NewSharedWindowLoader("BARE", RoleProduce, ReplenishmentThreshold, windows, payloads)
-	if err != nil {
-		t.Fatalf("build bare: %v", err)
-	}
-	if bare.UsesOperatorStaging() {
-		t.Error("threshold loader with NO threshold: UsesOperatorStaging = true, want false — " +
+	if threshold.UsesOperatorStaging() {
+		t.Error("threshold loader: UsesOperatorStaging = true, want false — " +
 			"switching threshold on must not silently put the loader in the other mode")
-	}
-	if !bare.MisconfiguredThreshold() {
-		t.Error("threshold loader with NO threshold: MisconfiguredThreshold = false, want true — " +
-			"with no fallback left, this flag is the only thing between that configuration " +
-			"and a loader nobody feeds")
 	}
 
 	operator, err := NewSharedWindowLoader("OPS", RoleProduce, ReplenishmentOperator, windows, payloads)
@@ -166,9 +149,6 @@ func TestUsesOperatorStaging_TheSwitchMeansWhatItSays(t *testing.T) {
 	}
 	if !operator.UsesOperatorStaging() {
 		t.Error("operator loader: UsesOperatorStaging = false, want true")
-	}
-	if operator.MisconfiguredThreshold() {
-		t.Error("operator loader: MisconfiguredThreshold = true, want false — operator mode is a choice, not a misconfiguration")
 	}
 }
 
@@ -241,57 +221,5 @@ func TestLoader_AccessorsReturnCopies(t *testing.T) {
 	ps[0] = "TAMPERED"
 	if l.PayloadSet()[0] != "P1" {
 		t.Errorf("PayloadSet() leaked internal state: %v", l.PayloadSet())
-	}
-}
-
-// TestPayloadsMissingThreshold_PartialCoverageIsTheOneThatHides.
-//
-// A loader with a threshold on SOME of its payloads passes every check that
-// asks "is a threshold configured" — one is — while the rest are ordered by
-// nobody. Nothing fires for them and nothing says so. It is the same silence as
-// the mode fallback that used to sit above it, one level down: not a loader in
-// the wrong mode, but parts inside a right one that no path covers.
-//
-// Owner's ask, 2026-08-02: say how many, and point at where to fix it.
-func TestPayloadsMissingThreshold_PartialCoverageIsTheOneThatHides(t *testing.T) {
-	t.Parallel()
-	windows := []Window{{Node: "W1"}}
-	set := []PayloadCode{"P1", "P2", "P3", "P4", "P5"}
-
-	partial, err := NewSharedWindowLoader("PART", RoleProduce, ReplenishmentThreshold,
-		windows, set, WithUOPThreshold(map[PayloadCode]int{"P1": 100, "P3": 50, "P5": 25}))
-	if err != nil {
-		t.Fatalf("build: %v", err)
-	}
-
-	missing := partial.PayloadsMissingThreshold()
-	if len(missing) != 2 || missing[0] != "P2" || missing[1] != "P4" {
-		t.Errorf("missing = %v, want [P2 P4] — three of five are set, so this loader looks "+
-			"configured to every check that only asks whether A threshold exists", missing)
-	}
-	// And it is NOT the severe case: something does fire here.
-	if partial.MisconfiguredThreshold() {
-		t.Error("MisconfiguredThreshold = true — that flag means NOTHING fires; " +
-			"conflating it with partial coverage loses the difference between " +
-			"a loader nobody feeds and two parts nobody orders")
-	}
-
-	full, err := NewSharedWindowLoader("FULL", RoleProduce, ReplenishmentThreshold,
-		windows, []PayloadCode{"P1"}, WithUOPThreshold(map[PayloadCode]int{"P1": 100}))
-	if err != nil {
-		t.Fatalf("build: %v", err)
-	}
-	if got := full.PayloadsMissingThreshold(); len(got) != 0 {
-		t.Errorf("fully configured loader reports %v missing, want none", got)
-	}
-
-	// An OPERATOR loader has no thresholds by design — reporting them missing
-	// would put a permanent complaint on every correctly-configured loader.
-	ops, err := NewSharedWindowLoader("OPS", RoleProduce, ReplenishmentOperator, windows, set)
-	if err != nil {
-		t.Fatalf("build: %v", err)
-	}
-	if got := ops.PayloadsMissingThreshold(); len(got) != 0 {
-		t.Errorf("operator loader reports %v missing, want none — a threshold is meaningless there", got)
 	}
 }

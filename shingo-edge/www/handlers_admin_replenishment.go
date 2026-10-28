@@ -1,4 +1,5 @@
-// handlers_admin_replenishment.go — UOP-threshold replenishment page.
+// handlers_admin_replenishment.go — the cell auto-reorder page: each claim's
+// reorder point. Not Core's threshold (a loader's), which the Edge does not hold.
 //
 // Phase 1 ships a minimal page with three sections (per v5 brief):
 //

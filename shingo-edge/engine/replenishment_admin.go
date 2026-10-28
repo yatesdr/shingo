@@ -17,7 +17,8 @@
 //
 // What remains is genuinely Edge-owned: reorder_point / reorder_point_source /
 // auto_reorder on style_node_claims, which handleConsumeTick reads on every PLC
-// tick to fire auto-reorder. That is the cell-side threshold and it is live.
+// tick to fire auto-reorder. That is the cell-side reorder point, a different
+// thing from Core's threshold, and it is live.
 package engine
 
 import (

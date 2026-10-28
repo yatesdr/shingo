@@ -81,8 +81,9 @@ func demandLevelFixture(
 	return eng, db, procID, claim
 }
 
-// episodeThreshold returns the threshold stamped on this cell's open episode.
-func episodeThreshold(
+// episodeReorderPoint returns the reorder level stamped on this cell's open
+// episode (the Edge's auto-reorder level; not Core's threshold).
+func episodeReorderPoint(
 	t *testing.T, db *store.DB, procName, payload string, role protocol.ClaimRole,
 ) int {
 	t.Helper()
@@ -91,7 +92,7 @@ func episodeThreshold(
 	if open == nil {
 		t.Fatalf("no open episode at %s|%s|%s", procName, payload, role)
 	}
-	return open.Threshold
+	return open.ReorderPoint
 }
 
 // A CONSUME CLAIM IS JUDGED AT ITS REORDER POINT, and the episode records the
@@ -118,7 +119,7 @@ func TestDemandLevel_ConsumeIsJudgedAtItsReorderPoint(t *testing.T) {
 	); err != nil {
 		t.Fatalf("open the consume cell's episode: %v", err)
 	}
-	if got := episodeThreshold(t, db, "CONSRP-PROC", "CONSRP-PART", protocol.ClaimRoleConsume); got != 80 {
+	if got := episodeReorderPoint(t, db, "CONSRP-PROC", "CONSRP-PART", protocol.ClaimRoleConsume); got != 80 {
 		t.Errorf("episode threshold = %d, want 80 — the record must name the number the decision "+
 			"was made against, or the episode surface cannot be read back against the config", got)
 	}
@@ -150,7 +151,7 @@ func TestDemandLevel_ConsumeWithNoReorderPointStillOptsOut(t *testing.T) {
 	); err != nil {
 		t.Fatalf("open the consume cell's episode: %v", err)
 	}
-	if got := episodeThreshold(t, db, "CONSOPT-PROC", "CONSOPT-PART", protocol.ClaimRoleConsume); got != 0 {
+	if got := episodeReorderPoint(t, db, "CONSOPT-PROC", "CONSOPT-PART", protocol.ClaimRoleConsume); got != 0 {
 		t.Errorf("episode threshold = %d, want 0 — an opted-out consume claim was judged against "+
 			"no level at all, and the record says so", got)
 	}

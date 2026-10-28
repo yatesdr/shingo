@@ -75,14 +75,11 @@ func projectCoreLoader(l store.CoreLoader) (*domain.Loader, error) {
 			windows = append(windows, domain.Window{Node: domain.NodeID(p.PositionNode)})
 		}
 		payloadSet := make([]domain.PayloadCode, 0, len(l.Payloads))
-		uopThreshold := make(map[domain.PayloadCode]int, len(l.Payloads))
 		for _, p := range l.Payloads {
 			payloadSet = append(payloadSet, domain.PayloadCode(p.PayloadCode))
-			uopThreshold[domain.PayloadCode(p.PayloadCode)] = p.UOPThreshold
 		}
 		return domain.NewSharedWindowLoader(id, role, repl, windows, payloadSet,
 			domain.WithInboundSource(l.InboundSource),
-			domain.WithUOPThreshold(uopThreshold),
 			domain.WithFunnelWindows(l.FunnelWindows),
 			domain.WithChangeoverLoadDirective(l.ChangeoverLoadDirective),
 			domain.WithLeavesBare(l.LeavesBare),
@@ -95,10 +92,9 @@ func projectCoreLoader(l store.CoreLoader) (*domain.Loader, error) {
 		positions := make([]domain.Position, 0, len(l.Positions))
 		for _, p := range l.Positions {
 			positions = append(positions, domain.Position{
-				Node:         domain.NodeID(p.PositionNode),
-				Payload:      domain.PayloadCode(p.PayloadCode),
-				HomeKind:     p.HomeKind,
-				UOPThreshold: p.UOPThreshold,
+				Node:     domain.NodeID(p.PositionNode),
+				Payload:  domain.PayloadCode(p.PayloadCode),
+				HomeKind: p.HomeKind,
 			})
 		}
 		// FunnelWindows is not passed: positions never share a budget, so it is

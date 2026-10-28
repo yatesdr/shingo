@@ -1973,6 +1973,61 @@ func edgeMigrations() []migrate.Migration {
 				return err == nil && n == 1
 			},
 		},
+		{
+			// core_loader_positions.uop_threshold and core_loader_payloads
+			// .uop_threshold: the Edge's copy of Core's loader threshold. The
+			// threshold is Core's alone (its monitor orders from it, its pages
+			// report a missing one); the copy fed one startup warning and left
+			// the wire in the same change. Column-check guarded per table, and
+			// no Verify, like v3: a re-added column stays visible.
+			Version: 31,
+			Name:    "drop_core_loader_uop_threshold",
+			Fn: func(tx *sql.Tx) error {
+				for _, table := range []string{"core_loader_positions", "core_loader_payloads"} {
+					var n int
+					if err := tx.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('` + table + `')
+						WHERE name = 'uop_threshold'`).Scan(&n); err != nil {
+						return err
+					}
+					if n == 0 {
+						continue
+					}
+					if _, err := tx.Exec(`ALTER TABLE ` + table + ` DROP COLUMN uop_threshold`); err != nil {
+						return err
+					}
+				}
+				return nil
+			},
+		},
+		{
+			// demand_origins_open.threshold -> reorder_point: the level a cell
+			// episode was decided at is the claim's reorder point, the Edge's
+			// auto-reorder, and was named for Core's threshold and sent in its
+			// field. Guarded: renames only where threshold is present and
+			// reorder_point is not (a fresh DB has reorder_point from the DDL).
+			Version: 32,
+			Name:    "demand_origins_open_reorder_point",
+			Fn: func(tx *sql.Tx) error {
+				var old, renamed int
+				if err := tx.QueryRow(`SELECT
+					COUNT(CASE WHEN name = 'threshold' THEN 1 END),
+					COUNT(CASE WHEN name = 'reorder_point' THEN 1 END)
+					FROM pragma_table_info('demand_origins_open')`).Scan(&old, &renamed); err != nil {
+					return err
+				}
+				if old == 0 || renamed > 0 {
+					return nil
+				}
+				_, err := tx.Exec(`ALTER TABLE demand_origins_open RENAME COLUMN threshold TO reorder_point`)
+				return err
+			},
+			Verify: func(q migrate.Querier) bool {
+				var n int
+				err := q.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('demand_origins_open')
+					WHERE name = 'reorder_point'`).Scan(&n)
+				return err == nil && n == 1
+			},
+		},
 	}
 }
 

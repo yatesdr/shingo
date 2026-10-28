@@ -19,7 +19,7 @@ func TestCoreLoaderCache_ReplaceAndRead(t *testing.T) {
 		{
 			Name: "L", LoaderKey: "loader:LOADER-X", Role: "produce",
 			Layout: "dedicated_positions", Replenishment: "threshold", OutboundDest: "FG-MARKET",
-			Positions: []protocol.LoaderPosition{{CoreNodeName: "POS-1", PayloadCode: "PART-A", UOPThreshold: 100}},
+			Positions: []protocol.LoaderPosition{{CoreNodeName: "POS-1", PayloadCode: "PART-A"}},
 		},
 		{
 			Name: "U", LoaderKey: "loader:UNLOADER-Y", Role: "consume",
@@ -43,7 +43,7 @@ func TestCoreLoaderCache_ReplaceAndRead(t *testing.T) {
 	if l.Layout != "dedicated_positions" {
 		t.Errorf("loader = %+v, want dedicated_positions", l)
 	}
-	if len(l.Positions) != 1 || l.Positions[0].PositionNode != "POS-1" || l.Positions[0].PayloadCode != "PART-A" || l.Positions[0].UOPThreshold != 100 {
+	if len(l.Positions) != 1 || l.Positions[0].PositionNode != "POS-1" || l.Positions[0].PayloadCode != "PART-A" {
 		t.Errorf("positions = %+v, want POS-1/PART-A/100", l.Positions)
 	}
 

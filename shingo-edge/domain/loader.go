@@ -2,9 +2,7 @@ package domain
 
 import (
 	"fmt"
-	"maps"
 	"slices"
-	"sort"
 
 	"shingo/protocol"
 )
@@ -112,8 +110,7 @@ type Position struct {
 	// not yet assigned. Core keeps them apart (bin_loader_homes.home_kind, read
 	// by InSourcePool to leave an unassigned home out of the source pool); the
 	// Edge could not, and classified an unpinned home as a buffer.
-	HomeKind     string
-	UOPThreshold int
+	HomeKind string
 }
 
 // Position home kinds, mirroring Core's bin_loader_homes.home_kind.
@@ -160,16 +157,15 @@ type Loader struct {
 
 	// Optional runtime config carried so the empty-in / completion paths need
 	// neither the legacy claim nor a second lookup. Set via LoaderOption.
-	inboundSource           string              // the empty market L1s source from
-	outboundDest            string              // the market filled (L2) / emptied (U2) bins go to on completion
-	uopThreshold            map[PayloadCode]int // shared_window per-payload UOP-threshold (C-push opt-in, display-read only on Edge); dedicated carries it on Position
-	funnelWindows           bool                // shared_window only: take one window at a time instead of spreading (see FunnelWindows)
-	changeoverLoadDirective bool                // a changeover commandeers this station's card (see ChangeoverLoadDirective)
-	leavesBare              bool                // stage 1 of a two-stage unloader: its CLEAR leaves the cart bare (see LeavesBare)
-	autoPush                bool                // a freed window re-pulls this unloader's next full (see WithAutoPush)
-	pulledDirectly          bool                // stage 2 whose finished carts the process pulls off its windows (see PulledDirectly)
-	boardHidesIdle          bool                // the board leaves off spots with nothing to do (see BoardHidesIdle)
-	boardShowsAllParts      bool                // the board lists every part, not only the running style's (see BoardShowsAllParts)
+	inboundSource           string // the empty market L1s source from
+	outboundDest            string // the market filled (L2) / emptied (U2) bins go to on completion
+	funnelWindows           bool   // shared_window only: take one window at a time instead of spreading (see FunnelWindows)
+	changeoverLoadDirective bool   // a changeover commandeers this station's card (see ChangeoverLoadDirective)
+	leavesBare              bool   // stage 1 of a two-stage unloader: its CLEAR leaves the cart bare (see LeavesBare)
+	autoPush                bool   // a freed window re-pulls this unloader's next full (see WithAutoPush)
+	pulledDirectly          bool   // stage 2 whose finished carts the process pulls off its windows (see PulledDirectly)
+	boardHidesIdle          bool   // the board leaves off spots with nothing to do (see BoardHidesIdle)
+	boardShowsAllParts      bool   // the board lists every part, not only the running style's (see BoardShowsAllParts)
 }
 
 // LoaderOption sets optional runtime config on a constructed Loader. Variadic, so
@@ -187,17 +183,6 @@ func WithInboundSource(src string) LoaderOption {
 // CoreLoader.OutboundDest). The completion handlers read it off the aggregate.
 func WithOutboundDest(dst string) LoaderOption {
 	return func(l *Loader) { l.outboundDest = dst }
-}
-
-// WithUOPThreshold sets the shared_window per-payload UOP threshold — carried
-// down from the Core aggregate for display/config parity. Nothing on the Edge
-// acts on it any more (the threshold receiver it fed is deleted; Core orders
-// directly). Dedicated loaders carry the threshold on each Position.
-func WithUOPThreshold(m map[PayloadCode]int) LoaderOption {
-	return func(l *Loader) {
-		l.uopThreshold = make(map[PayloadCode]int, len(m))
-		maps.Copy(l.uopThreshold, m)
-	}
 }
 
 // WithFunnelWindows restricts a shared_window loader to ONE window at a time:
@@ -310,72 +295,6 @@ func (l *Loader) InboundSource() string { return l.inboundSource }
 // then logs and skips rather than firing a malformed move.
 func (l *Loader) OutboundDest() string { return l.outboundDest }
 
-// UOPThresholdFor returns the per-payload UOP threshold (the C-push opt-in): the
-// shared per-payload value for shared_window, or the matching position's
-// UOPThreshold for dedicated. Zero means "no UOP-threshold policy" (not opted into
-// C-push). Only display reads this on the Edge (station board starvation tint);
-// ordering is Core's.
-func (l *Loader) UOPThresholdFor(p PayloadCode) int {
-	if v, ok := l.uopThreshold[p]; ok {
-		return v
-	}
-	for _, pos := range l.positions {
-		if pos.Payload == p {
-			return pos.UOPThreshold
-		}
-	}
-	return 0
-}
-
-// hasConfiguredThreshold reports whether any payload/position carries a UOP
-// threshold > 0 — i.e. the loader is actually set up for threshold (C-push)
-// replenishment. A threshold-mode loader with none configured is misconfigured.
-func (l *Loader) hasConfiguredThreshold() bool {
-	for _, v := range l.uopThreshold {
-		if v > 0 {
-			return true
-		}
-	}
-	for _, pos := range l.positions {
-		if pos.UOPThreshold > 0 {
-			return true
-		}
-	}
-	return false
-}
-
-// PayloadsMissingThreshold lists the payloads this loader serves that carry NO
-// UOP threshold, when the loader is switched to threshold replenishment. Empty
-// for an operator loader (a threshold is meaningless there) and empty when every
-// payload has one.
-//
-// PARTIAL COVERAGE IS THE COMMON CASE AND IT LOOKS FINE. A loader serving five
-// parts with thresholds on three of them passes every check that asks "is a
-// threshold configured" — one is — while the other two are ordered by nobody.
-// Nothing fires for them and nothing says so. That is the same silence as the
-// mode fallback this replaced, one level down: not a loader in the wrong mode,
-// but two parts inside a right one that no path covers.
-//
-// Sorted so the answer is stable for a screen and for a log line.
-func (l *Loader) PayloadsMissingThreshold() []PayloadCode {
-	if l.replenishment != ReplenishmentThreshold {
-		return nil
-	}
-	var out []PayloadCode
-	for _, p := range l.payloadSet {
-		if l.uopThreshold[p] <= 0 {
-			out = append(out, p)
-		}
-	}
-	for _, pos := range l.positions {
-		if pos.Payload != "" && pos.UOPThreshold <= 0 {
-			out = append(out, pos.Payload)
-		}
-	}
-	sort.Slice(out, func(i, j int) bool { return out[i] < out[j] })
-	return out
-}
-
 // UsesOperatorStaging reports whether this loader is supplied by operator-driven
 // opportunistic staging — the window-free push — rather than by the automatic
 // threshold path. A consume loader is always operator, so this is true for it.
@@ -388,26 +307,13 @@ func (l *Loader) PayloadsMissingThreshold() []PayloadCode {
 // at it came from the operator push, and the only trace was one warning line at
 // startup.
 //
-// So: threshold on means the threshold path runs, for whatever thresholds are
-// configured. Configure none and nothing fires — which is a plainly visible
-// "you have not set this up yet", not a different mode wearing this one's name.
-// Threshold off means the push. Two modes, each doing what it is called.
+// So: threshold on means Core's threshold path runs, for whatever thresholds
+// Core has configured. Configure none and nothing fires, which Core's loader and
+// inventory pages say ("no threshold set"); the threshold is Core's, and the
+// Edge holds no copy of it. Threshold off means the push. Two modes, each doing
+// what it is called.
 func (l *Loader) UsesOperatorStaging() bool {
 	return l.replenishment == ReplenishmentOperator
-}
-
-// MisconfiguredThreshold reports a loader switched to threshold replenishment
-// with no threshold configured — so the threshold path has nothing to fire on
-// and the loader is fed by nothing at all.
-//
-// This used to describe a fallback ("it is falling back to operator staging").
-// There is no fallback now, which makes this warning the ONLY thing standing
-// between that configuration and a loader nobody feeds. It must stay loud and
-// it must be reachable — see SweepPushLoaders, where it is deliberately checked
-// outside the operator-staging gate, because a misconfigured loader is skipped
-// by that gate and would otherwise be warned about by nobody.
-func (l *Loader) MisconfiguredThreshold() bool {
-	return l.replenishment == ReplenishmentThreshold && !l.hasConfiguredThreshold()
 }
 
 func (l *Loader) IsShared() bool    { return l.layout == LayoutSharedWindow }

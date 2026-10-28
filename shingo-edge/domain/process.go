@@ -293,8 +293,9 @@ type NodeClaim struct {
 	// the one place that resolves them. Read that method, not this field,
 	// for any "what level does this claim act on" question.
 	//
-	// Consume-role claim: the UOP threshold for auto-reorder, "fire at or
-	// below" (≤). The level is evaluated by the sweep in
+	// Consume-role claim: the reorder point for the Edge's auto-reorder,
+	// "fire at or below" (≤). Not Core's threshold, which is a loader's and
+	// which the Edge does not hold. The level is evaluated by the sweep in
 	// engine/demand_reconciler.go — NOT by the counter tick. The tick's
 	// level blocks were removed when the sweep took the decision over, so
 	// a cell that stops consuming still has its level re-evaluated.
@@ -304,13 +305,12 @@ type NodeClaim struct {
 	// is the level otherwise. See DemandLevel for each case.
 	//
 	// manual_swap claim of either role (bin loader/unloader): NOT READ.
-	// Loader replenishment is Core-owned — operator push or UOP threshold
-	// — and no bin-count floor survives. The level sweep skips a loader
+	// Loader replenishment is Core-owned — operator push or Core's UOP
+	// threshold — and no bin-count floor survives. The level sweep skips a loader
 	// node before it reads any level, so setting this on a loader claim
 	// does nothing.
 	ReorderPoint int `json:"reorder_point"`
-	// ReorderPointSource (UOP-threshold replenishment) records how
-	// ReorderPoint was set. 'legacy' = default, never edited (the
+	// ReorderPointSource records how ReorderPoint was set. 'legacy' = default, never edited (the
 	// silent-inert default); 'manual' = engineer typed a value;
 	// 'calculated' = applied from the unified calculator. Surfaced in
 	// the replenishment UI as a small badge per row.
@@ -320,7 +320,7 @@ type NodeClaim struct {
 	// remaining UOP first went at-or-below ReorderPoint. Nil means not below.
 	//
 	// It is what turns a LEVEL into an EDGE. Without it the predicate can only
-	// answer "is it below right now", which cannot tell one below-threshold
+	// answer "is it below right now", which cannot tell one below-reorder-point
 	// episode from the next — so an origin minted from it would be a fresh
 	// "demand" per tick, i.e. an id per ORDER, which is the paperwork-counting
 	// failure the demand grain exists to avoid.
@@ -829,10 +829,10 @@ func (c *NodeClaim) IsLoaderNode() bool {
 // every site that needed the level picked one by hand. evaluateCellLevel read
 // reorder_point, evaluateProduceLevel read UOPCapacity and never looked at
 // reorder_point at all, and openCellEpisode stamped reorder_point onto the
-// episode for BOTH roles. So a produce cell's episode reported a threshold that
+// episode for BOTH roles. So a produce cell's episode reported a level that
 // nothing had compared anything to, and on a produce claim with no reorder
 // point — which is every produce claim deployed at either plant — that
-// threshold was recorded as zero. With one derivation the record cannot name a
+// level was recorded as zero. With one derivation the record cannot name a
 // number the decision did not use.
 //
 // ── CONSUME: THE REORDER POINT, INCLUDING ITS ZERO ──────────────────────────
@@ -856,7 +856,7 @@ func (c *NodeClaim) IsLoaderNode() bool {
 //
 //   - 0 is the opt-out spelling, and a produce cell cannot opt out of noticing
 //     that its bin is full — the bin stops accepting parts whether or not
-//     anybody armed a threshold. So it falls back to capacity, which is what
+//     anybody set a reorder point. So it falls back to capacity, which is what
 //     the produce evaluator has always done, and no deployed claim moves.
 //   - at or above capacity is unreachable: a bin cannot hold more than it
 //     holds, so honouring it literally would mean a cell that never asks at

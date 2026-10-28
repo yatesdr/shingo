@@ -12,7 +12,8 @@ import (
 // TestLoadersFromCore_SharedWindow pins the single read-model for a shared_window
 // produce loader: it resolves from the synced cache through the *domain.Loader
 // aggregate snapshot, identity is the loader_key token, and the config
-// (inbound/outbound/min_stock/uop_threshold/payload set) is projected off the cache.
+// (inbound/outbound/payload set) is projected off the cache. The UOP threshold is
+// not: it is Core's alone and is not on the wire.
 // (Migrated from the deleted manualSwapNode shim + cache-direct helpers onto the
 // snapshot accessors — Tier 1.)
 func TestLoadersFromCore_SharedWindow(t *testing.T) {
@@ -25,7 +26,7 @@ func TestLoadersFromCore_SharedWindow(t *testing.T) {
 		Name: "L", LoaderKey: "loader:AGG-LOADER", Role: "produce", Layout: "shared_window", Replenishment: "threshold",
 		OutboundDest: "FG-MARKET", InboundSource: "EMPTY-SUPER",
 		Positions: []protocol.LoaderPosition{{CoreNodeName: "AGG-LOADER"}},
-		Payloads:  []protocol.LoaderPayloadInfo{{PayloadCode: "PART-A", UOPThreshold: 100}},
+		Payloads:  []protocol.LoaderPayloadInfo{{PayloadCode: "PART-A"}},
 	})
 
 	l, err := eng.loaders().LoaderForPayload("PART-A", domain.RoleProduce)
@@ -47,9 +48,6 @@ func TestLoadersFromCore_SharedWindow(t *testing.T) {
 	if !l.ServesPayload("PART-A") {
 		t.Error("loader should serve PART-A")
 	}
-	if got := l.UOPThresholdFor("PART-A"); got != 100 {
-		t.Errorf("UOPThresholdFor(PART-A) = %d, want 100 (cache threshold)", got)
-	}
 	if _, err := eng.loaders().LoaderForPayload("NOPE", domain.RoleProduce); !errors.Is(err, ErrLoaderNotFound) {
 		t.Errorf("LoaderForPayload(NOPE) err = %v, want ErrLoaderNotFound", err)
 	}
@@ -66,14 +64,14 @@ func TestLoadersFromCore_DedicatedAndUnloader(t *testing.T) {
 
 	seedCoreLoader(t, eng,
 		protocol.LoaderInfo{Name: "HL", LoaderKey: "loader:HL-LOADER", Role: "produce", Layout: "dedicated_positions", Replenishment: "operator",
-			Positions: []protocol.LoaderPosition{{CoreNodeName: "POS-1", PayloadCode: "PART-H", UOPThreshold: 80}}},
+			Positions: []protocol.LoaderPosition{{CoreNodeName: "POS-1", PayloadCode: "PART-H"}}},
 		protocol.LoaderInfo{Name: "U", LoaderKey: "loader:UNL-1", Role: "consume", Layout: "shared_window", Replenishment: "operator",
 			Positions: []protocol.LoaderPosition{{CoreNodeName: "UNL-1"}},
 			Payloads:  []protocol.LoaderPayloadInfo{{PayloadCode: "PART-U"}}},
 	)
 
-	// dedicated_positions: resolves by payload to its position, carries the per-position
-	// threshold + the dedicated layout, and replenishment=operator → operator-driven.
+	// dedicated_positions: resolves by payload to its position, carries the dedicated
+	// layout, and replenishment=operator → operator-driven.
 	l, err := eng.loaders().LoaderForPayload("PART-H", domain.RoleProduce)
 	if err != nil || l == nil {
 		t.Fatalf("LoaderForPayload(PART-H) = %v, %v; want the dedicated loader", l, err)
@@ -83,9 +81,6 @@ func TestLoadersFromCore_DedicatedAndUnloader(t *testing.T) {
 	}
 	if got := l.Positions(); len(got) != 1 || got[0].Node != "POS-1" {
 		t.Errorf("positions = %+v, want one at POS-1", got)
-	}
-	if got := l.UOPThresholdFor("PART-H"); got != 80 {
-		t.Errorf("UOPThresholdFor(PART-H) = %d, want 80 (position threshold)", got)
 	}
 	if !l.UsesOperatorStaging() {
 		t.Error("replenishment=operator loader should be operator-driven")
@@ -132,7 +127,7 @@ func TestLoaderIdentity_IsTheLoaderKey(t *testing.T) {
 	if err := db.ReplaceCoreLoaders([]protocol.LoaderInfo{{
 		Name: "Syn", LoaderKey: "loader:77", Role: "produce",
 		Layout: "shared_window", Replenishment: "threshold",
-		Payloads: []protocol.LoaderPayloadInfo{{PayloadCode: "PART-A", UOPThreshold: 100}},
+		Payloads: []protocol.LoaderPayloadInfo{{PayloadCode: "PART-A"}},
 		Positions: []protocol.LoaderPosition{
 			{CoreNodeName: "CUT-W1"},
 			{CoreNodeName: "CUT-W2"},

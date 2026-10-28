@@ -65,8 +65,7 @@ type CoreLoaderPosition struct {
 	PositionNode string
 	PayloadCode  string
 	// HomeKind is 'home' | 'buffer', synced from Core (domain.Position.IsBuffer).
-	HomeKind     string
-	UOPThreshold int
+	HomeKind string
 	// Ordinal is where the operator dragged this window, synced from Core.
 	// Zero on every row means nothing was arranged (or the Core that sent it
 	// predates the field), which falls through to a number-aware name sort.
@@ -75,8 +74,7 @@ type CoreLoaderPosition struct {
 
 // CoreLoaderPayload is one entry in a shared_window allowed set.
 type CoreLoaderPayload struct {
-	PayloadCode  string
-	UOPThreshold int
+	PayloadCode string
 }
 
 // ReplaceCoreLoaders fully replaces the cached Core loader config (full-state
@@ -113,16 +111,16 @@ func (db *DB) ReplaceCoreLoaders(loaders []protocol.LoaderInfo) error {
 		for _, p := range l.Positions {
 			// min_stock column left dormant (bin-count floor retired) — defaults to 0.
 			if _, err := tx.Exec(
-				`INSERT INTO core_loader_positions (loader_key, position_node, payload_code, home_kind, uop_threshold, ordinal) VALUES (?,?,?,?,?,?)`,
-				l.LoaderKey, p.CoreNodeName, p.PayloadCode, p.HomeKind, p.UOPThreshold, p.Ordinal,
+				`INSERT INTO core_loader_positions (loader_key, position_node, payload_code, home_kind, ordinal) VALUES (?,?,?,?,?)`,
+				l.LoaderKey, p.CoreNodeName, p.PayloadCode, p.HomeKind, p.Ordinal,
 			); err != nil {
 				return fmt.Errorf("insert position %s: %w", p.CoreNodeName, err)
 			}
 		}
 		for _, p := range l.Payloads {
 			if _, err := tx.Exec(
-				`INSERT INTO core_loader_payloads (loader_key, payload_code, uop_threshold) VALUES (?,?,?)`,
-				l.LoaderKey, p.PayloadCode, p.UOPThreshold,
+				`INSERT INTO core_loader_payloads (loader_key, payload_code) VALUES (?,?)`,
+				l.LoaderKey, p.PayloadCode,
 			); err != nil {
 				return fmt.Errorf("insert payload %s: %w", p.PayloadCode, err)
 			}
@@ -201,13 +199,13 @@ func scanCoreLoaders(rows *sql.Rows) ([]CoreLoader, error) {
 // This read used to be `ORDER BY position_node` — plain name order, with the
 // operator's arrangement discarded because there was no column to put it in.
 func (db *DB) attachCoreLoaderChildren(l *CoreLoader) error {
-	prows, err := db.Query(`SELECT position_node, payload_code, home_kind, uop_threshold, ordinal FROM core_loader_positions WHERE loader_key=?`, l.LoaderKey)
+	prows, err := db.Query(`SELECT position_node, payload_code, home_kind, ordinal FROM core_loader_positions WHERE loader_key=?`, l.LoaderKey)
 	if err != nil {
 		return fmt.Errorf("list positions %s: %w", l.LoaderKey, err)
 	}
 	for prows.Next() {
 		var p CoreLoaderPosition
-		if err := prows.Scan(&p.PositionNode, &p.PayloadCode, &p.HomeKind, &p.UOPThreshold, &p.Ordinal); err != nil {
+		if err := prows.Scan(&p.PositionNode, &p.PayloadCode, &p.HomeKind, &p.Ordinal); err != nil {
 			prows.Close()
 			return err
 		}
@@ -224,14 +222,14 @@ func (db *DB) attachCoreLoaderChildren(l *CoreLoader) error {
 		)
 	})
 
-	yrows, err := db.Query(`SELECT payload_code, uop_threshold FROM core_loader_payloads WHERE loader_key=? ORDER BY payload_code`, l.LoaderKey)
+	yrows, err := db.Query(`SELECT payload_code FROM core_loader_payloads WHERE loader_key=? ORDER BY payload_code`, l.LoaderKey)
 	if err != nil {
 		return fmt.Errorf("list payloads %s: %w", l.LoaderKey, err)
 	}
 	defer yrows.Close()
 	for yrows.Next() {
 		var p CoreLoaderPayload
-		if err := yrows.Scan(&p.PayloadCode, &p.UOPThreshold); err != nil {
+		if err := yrows.Scan(&p.PayloadCode); err != nil {
 			return err
 		}
 		l.Payloads = append(l.Payloads, p)

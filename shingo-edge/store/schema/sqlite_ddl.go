@@ -762,7 +762,7 @@ CREATE TABLE IF NOT EXISTS style_node_claims (
     key_route               TEXT NOT NULL DEFAULT '',
     key_task                TEXT NOT NULL DEFAULT '',
     auto_push               INTEGER NOT NULL DEFAULT 0,
-    -- UOP-threshold replenishment: tracks how reorder_point was set.
+    -- How reorder_point was set (the Edge's auto-reorder, not Core's threshold).
     -- 'legacy' = default, never edited (silent-inert when 0).
     -- 'manual' = engineer typed a value.
     -- 'calculated' = applied from the unified calculator.
@@ -900,7 +900,6 @@ CREATE TABLE IF NOT EXISTS core_loader_positions (
     payload_code   TEXT    NOT NULL,
     home_kind      TEXT    NOT NULL DEFAULT '',  -- 'home' | 'buffer' (synced from Core); '' = pre-field Core, fall back to classifying by empty payload
     min_stock      INTEGER NOT NULL DEFAULT 0,
-    uop_threshold  INTEGER NOT NULL DEFAULT 0,
     ordinal        INTEGER NOT NULL DEFAULT 0,   -- where the operator dragged this window; 0 everywhere = nothing arranged, fall back to a number-aware name sort
     PRIMARY KEY (loader_key, position_node)
 );
@@ -908,7 +907,6 @@ CREATE TABLE IF NOT EXISTS core_loader_payloads (
     loader_key     TEXT    NOT NULL,   -- the owning loader's identity token
     payload_code   TEXT    NOT NULL,
     min_stock      INTEGER NOT NULL DEFAULT 0,
-    uop_threshold  INTEGER NOT NULL DEFAULT 0,
     PRIMARY KEY (loader_key, payload_code)
 );
 
@@ -1062,7 +1060,10 @@ CREATE TABLE IF NOT EXISTS demand_origins_open (
     payload_code    TEXT NOT NULL DEFAULT '',
     -- Stamped once at the falling edge and never recomputed.
     opened_total    INTEGER NOT NULL DEFAULT 0,
-    threshold       INTEGER NOT NULL DEFAULT 0,
+    -- The claim's reorder level the decision was made at (NodeClaim.DemandLevel):
+    -- the Edge's auto-reorder, never Core's threshold. It was named threshold
+    -- and sent in Core's threshold field until Edge v32.
+    reorder_point   INTEGER NOT NULL DEFAULT 0,
     -- NULLABLE: a denominator that is UNKNOWABLE is a different state from one
     -- that is 1, and both 0 and 1 render as a real ratio somebody would draw a
     -- conclusion from. expected_unknown_reason says why, because a NULL with no

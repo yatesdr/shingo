@@ -182,8 +182,8 @@ func TestBuildLoaderInfos(t *testing.T) {
 	if p.CoreNodeName != "HOME-POS-1" {
 		t.Errorf("position carries %q, want the node NAME HOME-POS-1 (id→name bridge)", p.CoreNodeName)
 	}
-	if p.PayloadCode != "PART-A" || p.UOPThreshold != 100 {
-		t.Errorf("position = %+v, want PART-A/thr100", p)
+	if p.PayloadCode != "PART-A" {
+		t.Errorf("position = %+v, want PART-A", p)
 	}
 }
 
@@ -342,8 +342,8 @@ func TestBuildLoaderInfos_SkipsAHomeWhoseNodeIsGone(t *testing.T) {
 		t.Fatalf("positions = %d, want 1 — the orphaned home must be skipped, the live one kept", len(li.Positions))
 	}
 	p := li.Positions[0]
-	if p.CoreNodeName != "GONE-LIVE" || p.PayloadCode != "PART-LIVE" || p.UOPThreshold != 7 {
-		t.Errorf("surviving position = %+v, want GONE-LIVE/PART-LIVE/thr7 projected in full", p)
+	if p.CoreNodeName != "GONE-LIVE" || p.PayloadCode != "PART-LIVE" {
+		t.Errorf("surviving position = %+v, want GONE-LIVE/PART-LIVE projected in full", p)
 	}
 }
 

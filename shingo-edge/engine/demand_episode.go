@@ -241,11 +241,11 @@ func (e *Engine) openCellEpisode(
 		OpenedTotal:  openedTotal,
 		// THE SAME DERIVATION THE DECISION USED. This stamped
 		// claim.ReorderPoint for both roles while the produce evaluator judged
-		// against capacity, so a produce episode recorded a threshold nothing
-		// had compared anything to — and on a produce claim with no reorder
-		// point, which is every deployed one, it recorded zero. DemandLevel is
-		// the only derivation now, so the row cannot disagree with the call.
-		Threshold:      claim.DemandLevel(),
+		// against capacity, so a produce episode recorded a level nothing had
+		// compared anything to — and on a produce claim with no reorder point,
+		// which is every deployed one, it recorded zero. DemandLevel is the only
+		// derivation now, so the row cannot disagree with the call.
+		ReorderPoint:   claim.DemandLevel(),
 		ExpectedOrders: &expected,
 		Discretionary:  discretionary,
 		OpenedAt:       time.Now().UTC(),
@@ -577,7 +577,11 @@ func (e *Engine) emitOriginState(o *store.OpenOrigin, closedAt *time.Time, close
 		Kind: o.Kind, Direction: o.Direction, Trigger: o.TriggerKind,
 		TriggerRef: o.TriggerRef, ProcessID: o.ProcessID,
 		CoreNodeName: o.CoreNodeName, PayloadCode: o.PayloadCode,
-		OpenedAt: o.OpenedAt, OpenedTotal: o.OpenedTotal, Threshold: o.Threshold,
+		// Threshold is not set: it is Core's (a threshold or maintain
+		// episode's level), and this is a cell episode, whose level is the
+		// Edge's reorder point and stays on the Edge (Core shows a cell
+		// episode's threshold as not applicable).
+		OpenedAt: o.OpenedAt, OpenedTotal: o.OpenedTotal,
 		ExpectedOrders: o.ExpectedOrders, ExpectedUnknownReason: o.ExpectedUnknownReason,
 		RerequestCount: o.RerequestCount, Discretionary: o.Discretionary,
 		ClosedAt: closedAt, CloseReason: closeReason, ClosedBy: closedBy,

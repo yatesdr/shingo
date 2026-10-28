@@ -1231,8 +1231,11 @@ type LoaderPosition struct {
 	// sends nothing, every position decodes "", and the reader falls back to
 	// the empty-payload inference — exactly what it did before. See
 	// LoaderHomeKind* below.
-	HomeKind     string `json:"home_kind,omitempty"`
-	UOPThreshold int    `json:"uop_threshold"`
+	HomeKind string `json:"home_kind,omitempty"`
+	// The loader's UOP threshold is not on this wire: it is Core's alone (the
+	// threshold monitor orders from it, Core's pages report a missing one) and
+	// the Edge's copy fed nothing but a startup warning. Dropped 2026-10-28; an
+	// older Core still sending uop_threshold is ignored on decode.
 	// Ordinal is where the operator put this window. An admin screen lets them
 	// drag a loader's windows into the order they want filled; Core persists
 	// that and this is how it reaches the plant.
@@ -1291,8 +1294,7 @@ const (
 
 // LoaderPayloadInfo is one entry in a shared_window loader's allowed payload set.
 type LoaderPayloadInfo struct {
-	PayloadCode  string `json:"payload_code"`
-	UOPThreshold int    `json:"uop_threshold"`
+	PayloadCode string `json:"payload_code"`
 }
 
 // --- Production data schemas ---

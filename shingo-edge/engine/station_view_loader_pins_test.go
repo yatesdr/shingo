@@ -202,8 +202,8 @@ func TestLoaderLineside_CreditsByPayload(t *testing.T) {
 		Replenishment: "threshold", OutboundDest: "FG-MARKET", InboundSource: "EMPTY-SUPER",
 		Positions: windows("SMN_L1"),
 		Payloads: []protocol.LoaderPayloadInfo{
-			{PayloadCode: "PART-A", UOPThreshold: 50}, {PayloadCode: "PART-B", UOPThreshold: 10},
-			{PayloadCode: "PART-C", UOPThreshold: 16}, {PayloadCode: "PART-D", UOPThreshold: 99},
+			{PayloadCode: "PART-A"}, {PayloadCode: "PART-B"},
+			{PayloadCode: "PART-C"}, {PayloadCode: "PART-D"},
 		},
 	})
 
@@ -277,7 +277,7 @@ func TestLoaderTile_NoPartRunningIsAnEmptyList(t *testing.T) {
 		Name: "Idle", LoaderKey: "loader:24", Role: "produce", Layout: "shared_window",
 		Replenishment: "threshold", OutboundDest: "FG-MARKET", InboundSource: "EMPTY-SUPER",
 		Positions: windows("SMN_N1"),
-		Payloads:  []protocol.LoaderPayloadInfo{{PayloadCode: "PART-A", UOPThreshold: 50}},
+		Payloads:  []protocol.LoaderPayloadInfo{{PayloadCode: "PART-A"}},
 	})
 	loaderOrder(t, db, "idle-l1", protocol.OrderTypeRetrieve, ids["SMN_N1"], "SMN_N1", "", "PART-A", "queued")
 

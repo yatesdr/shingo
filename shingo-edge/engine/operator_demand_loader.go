@@ -128,24 +128,9 @@ func (e *Engine) SweepPushLoaders() {
 	}
 	swept := 0
 	for _, l := range loaders {
-		// CHECKED BEFORE THE GATE, NOT INSIDE IT. A threshold loader with no
-		// threshold is not operator-staged any more, so it is skipped below — and
-		// if this warning sat after the skip, the one configuration that feeds a
-		// loader from nothing would be the one nothing reports.
-		// Two severities, and the second is the one that hides. NO threshold at
-		// all means nothing feeds the loader — loud. SOME payloads without one
-		// means the loader works and those parts are ordered by nobody, which
-		// passes every check that only asks whether a threshold exists.
-		if missing := l.PayloadsMissingThreshold(); len(missing) > 0 {
-			if l.MisconfiguredThreshold() {
-				log.Printf("WARN loader-push: loader=%s is switched to threshold replenishment but has NO threshold configured — "+
-					"nothing will order carriers for it. Either set a UOP threshold, or switch it to operator so the window-free push feeds it.", l.ID())
-			} else {
-				log.Printf("WARN loader-push: loader=%s is on threshold replenishment and %d of its payloads have no threshold (%v) — "+
-					"those parts are ordered by nobody. Set a UOP threshold for each on the inventory page.",
-					l.ID(), len(missing), missing)
-			}
-		}
+		// A threshold loader is Core's to feed. Whether its thresholds are set
+		// is Core's to say too (its loader and inventory pages: "no threshold
+		// set"); the Edge holds no copy of the threshold and warns about none.
 		if !l.UsesOperatorStaging() {
 			continue
 		}

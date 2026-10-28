@@ -323,8 +323,8 @@ func buildPayloadOneWindowBoard(t *testing.T, db *store.DB, eng *Engine) int64 {
 		Replenishment: "threshold", OutboundDest: "FG-MARKET", InboundSource: "EMPTY-SUPER",
 		Positions: windows("SMN_A1"),
 		Payloads: []protocol.LoaderPayloadInfo{
-			{PayloadCode: "PART-A", UOPThreshold: 50},
-			{PayloadCode: "PART-B", UOPThreshold: 0},
+			{PayloadCode: "PART-A"},
+			{PayloadCode: "PART-B"},
 		},
 	})
 	loaderOrder(t, db, "one-l1", protocol.OrderTypeRetrieve, ids["SMN_A1"], "SMN_A1", "", "PART-A", "queued")
@@ -343,7 +343,7 @@ func buildPayloadTwoWindowBoard(t *testing.T, db *store.DB, eng *Engine) int64 {
 		Name: "Loader two", LoaderKey: "loader:12", Role: "produce", Layout: "shared_window",
 		Replenishment: "operator", OutboundDest: "FG-MARKET", InboundSource: "EMPTY-SUPER",
 		Positions: windows("SMN_B1", "SMN_B2"),
-		Payloads:  []protocol.LoaderPayloadInfo{{PayloadCode: "PART-A", UOPThreshold: 20}},
+		Payloads:  []protocol.LoaderPayloadInfo{{PayloadCode: "PART-A"}},
 	})
 	loaderOrder(t, db, "two-l1", protocol.OrderTypeRetrieve, ids["SMN_B2"], "SMN_B2", "", "", "delivered")
 	return sid
@@ -360,7 +360,7 @@ func buildDedicatedHomesBoard(t *testing.T, db *store.DB, eng *Engine) int64 {
 		Name: "Homes", LoaderKey: "loader:13", Role: "produce", Layout: "dedicated_positions",
 		Replenishment: "operator", OutboundDest: "FG-MARKET", InboundSource: "EMPTY-SUPER",
 		Positions: []protocol.LoaderPosition{
-			{CoreNodeName: "SMN_H1", PayloadCode: "PART-A", HomeKind: protocol.LoaderHomeKindHome, UOPThreshold: 20, Ordinal: 1},
+			{CoreNodeName: "SMN_H1", PayloadCode: "PART-A", HomeKind: protocol.LoaderHomeKindHome, Ordinal: 1},
 			{CoreNodeName: "SMN_H2", PayloadCode: "PART-B", HomeKind: protocol.LoaderHomeKindHome, Ordinal: 2},
 			{CoreNodeName: "SMN_F1", HomeKind: protocol.LoaderHomeKindBuffer, Ordinal: 3},
 			{CoreNodeName: "SMN_F2", HomeKind: protocol.LoaderHomeKindBuffer, Ordinal: 4},

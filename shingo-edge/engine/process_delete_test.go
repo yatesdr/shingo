@@ -31,7 +31,7 @@ func openEpisodesFor(t *testing.T, db *store.DB, processName string, n int) map[
 			EpisodeKey: key, OriginID: "origin-" + key, Kind: protocol.EpisodeKindCell,
 			Direction: protocol.ClaimRoleConsume, TriggerKind: protocol.EpisodeTriggerAutoreorder,
 			TriggerRef: "claim:1", ProcessID: processName, CoreNodeName: "SYN_NODE01",
-			PayloadCode: payload, Threshold: 50, ExpectedOrders: &expected,
+			PayloadCode: payload, ReorderPoint: 50, ExpectedOrders: &expected,
 			OpenedAt: time.Now().UTC(),
 		}
 		if err := db.OpenDemandOrigin(row); err != nil {
