@@ -382,6 +382,15 @@ claims:
     outbound_destination: SMN_L2
     operator_station: DRAIN-10-OPS
 
+# Core's loader switches (plantspec LoaderSettings). The drain's re-pull when its
+# window frees reads Core's bin_loaders.auto_push, and only this section sets it: a
+# loader claim gets no Edge claim row, so the claim's own auto_push and
+# auto_reorder above seed nothing. Without it FGN_L2_01 pulled a full only when
+# WLD_010's sim release asked for one (releaseAsPair's capture_lineside, a body no
+# station sends), the shape that wedged demo.yaml's FGN_001 on 2026-10-28.
+loader_settings:
+  FGN_L2_01: {auto_push: true}
+
 bins:
   # PACKED FROM THE BACK — each seeded carrier sits at its lane's DEEPEST slot and
   # the mouth stays open. See the zone comment for why the other way round is
