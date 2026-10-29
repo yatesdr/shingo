@@ -28,9 +28,10 @@ type InventoryQueryStore interface {
 	// where the Edge's lineside report and Core's replica still disagree.
 	ListOpenReportDivergences() ([]store.OpenReportDivergence, error)
 
-	// ListHoldDrops and ListDeclaredFullStamps are the strict-pack lists: the
-	// Edge's dropped produce holds and the stamps of a station's declared FULL.
-	ListHoldDrops(since time.Time, limit int) ([]audit.HoldDrop, error)
+	// ListHoldDropRuns and ListDeclaredFullStamps are the strict-pack lists: the
+	// Edge's dropped produce holds, as runs, and the stamps of a station's
+	// release declared full.
+	ListHoldDropRuns(since time.Time, gap time.Duration, limit int) ([]audit.HoldDropRun, error)
 	ListDeclaredFullStamps(since time.Time, limit int) ([]audit.DeclaredFullStamp, error)
 
 	// Raw SQL pass-through for the preflight / system-uop

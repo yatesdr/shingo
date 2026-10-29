@@ -681,24 +681,60 @@ const HOLD_DROP_REASON = {
   no_bin: 'made with no bin to count into',
 };
 
+// HOLD_DROP_RUNS_SHOWN is how many of a line's runs are spelled out; the rest
+// are summed into "and N earlier".
+const HOLD_DROP_RUNS_SHOWN = 6;
+
+// renderHoldDrops draws the hold drops as Core groups them: runs, each a seat,
+// part, reason and station with its drops a stroke or so apart (a line at its
+// pack with a pack held drops a part a stroke until a bin comes). One line per
+// seat, part and reason, with its total, then its runs, latest first. The
+// totals count every drop in the window; Core's limit bounds the runs only.
 function renderHoldDrops() {
   const host = document.getElementById('rh-hold-drops');
   if (!host) return;
-  const rows = (ledgerExceptions && ledgerExceptions.hold_drops) || [];
+  const runs = (ledgerExceptions && ledgerExceptions.hold_drop_runs) || [];
   const since = ledgerExceptions && ledgerExceptions.since;
   const span = since ? ' since ' + escapeHtml(formatTime(since)) : '';
-  if (!rows.length) {
+  if (!runs.length) {
     host.innerHTML = '<div class="ledger-routine text-muted-sm">No hold drops' + (span || ' in the window') + '.</div>';
     return;
   }
-  const items = rows.map((d) => '<li>'
-    + escapeHtml(d.node || '(no node)') + ' · ' + escapeHtml(formatTime(d.occurred_at))
-    + ' — <b>' + num(d.qty) + '</b> of <span class="text-muted-xs">' + escapeHtml(d.payload_code || '(no part)') + '</span>'
-    + ' dropped: ' + escapeHtml(HOLD_DROP_REASON[d.reason] || d.reason || '')
-    + (d.station ? ' <span class="text-muted-xs">' + escapeHtml(d.station) + '</span>' : '')
-    + '</li>').join('');
+  const lines = [];
+  const byKey = {};
+  runs.forEach((r) => {
+    const key = [r.node, r.payload_code, r.reason, r.station].join('\u0000');
+    if (!byKey[key]) {
+      byKey[key] = { node: r.node, part: r.payload_code, reason: r.reason, station: r.station, qty: 0, runs: [] };
+      lines.push(byKey[key]);
+    }
+    byKey[key].qty += r.qty || 0;
+    byKey[key].runs.push(r);
+  });
+  const runText = (r) => {
+    const mins = Math.round((new Date(r.last) - new Date(r.first)) / 60000);
+    return escapeHtml(formatTime(r.first)) + (mins >= 1 ? ' for ' + mins + ' min' : '') + ' — <b>' + num(r.qty) + '</b>';
+  };
+  const items = lines.map((l) => {
+    const shown = l.runs.slice(0, HOLD_DROP_RUNS_SHOWN).map(runText);
+    const rest = l.runs.slice(HOLD_DROP_RUNS_SHOWN);
+    if (rest.length) {
+      const restQty = rest.reduce((n, r) => n + (r.qty || 0), 0);
+      shown.push('and ' + rest.length + ' earlier — <b>' + num(restQty) + '</b>');
+    }
+    return '<li>'
+      + escapeHtml(l.node || '(no node)')
+      + ' — <b>' + num(l.qty) + '</b> of <span class="text-muted-xs">' + escapeHtml(l.part || '(no part)') + '</span>'
+      + ' dropped: ' + escapeHtml(HOLD_DROP_REASON[l.reason] || l.reason || '')
+      + (l.station ? ' <span class="text-muted-xs">' + escapeHtml(l.station) + '</span>' : '')
+      + '<div class="text-muted-xs">' + l.runs.length + ' run' + (l.runs.length === 1 ? '' : 's') + ': '
+      + shown.join(' · ') + '</div>'
+      + '</li>';
+  }).join('');
+  const total = lines.reduce((n, l) => n + l.qty, 0);
   host.innerHTML = '<div class="ledger-routine">'
-    + '<div class="ledger-routine__head">' + rows.length + ' hold drop' + (rows.length === 1 ? '' : 's') + span + '</div>'
+    + '<div class="ledger-routine__head">' + num(total) + ' dropped in ' + runs.length + ' run' + (runs.length === 1 ? '' : 's')
+    + span + '</div>'
     + '<ul class="ledger-routine__list">' + items + '</ul></div>';
 }
 

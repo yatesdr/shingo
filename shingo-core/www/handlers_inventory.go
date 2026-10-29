@@ -110,10 +110,11 @@ func (h *Handlers) apiInventoryMonitorTotals(w http.ResponseWriter, r *http.Requ
 //
 // ?since=<RFC3339> and ?limit= control the excursion history (default 7 days,
 // 200 rows). Excursions are the forensics; the two lists above are the
-// actionable part. The same window and limit bound hold_drops and
+// actionable part. The same window and limit bound hold_drop_runs and
 // declared_full_stamps, the strict-pack lists: routine records rather than
 // faults, so the page shows them as lists with a count, and a quiet line when
-// the window holds none.
+// the window holds none. hold_drop_runs counts every drop in the window; the
+// limit bounds the runs, never the count.
 func (h *Handlers) apiInventoryLedgerExceptions(w http.ResponseWriter, r *http.Request) {
 	openBins, err := h.engine.OpenNegativeBins()
 	if err != nil {
@@ -186,7 +187,7 @@ func (h *Handlers) apiInventoryLedgerExceptions(w http.ResponseWriter, r *http.R
 	// Read together: a dropped hold makes the next bin short and that bin is
 	// then stamped, so both rows can describe the same parts, which is why
 	// every row carries its node and time. Routine lists, not alarms.
-	holdDrops, err := h.engine.InventoryService().HoldDrops(since, limit)
+	holdDropRuns, err := h.engine.InventoryService().HoldDropRuns(since, limit)
 	if err != nil {
 		h.jsonError(w, "hold drops: "+err.Error(), http.StatusInternalServerError)
 		return
@@ -218,7 +219,7 @@ func (h *Handlers) apiInventoryLedgerExceptions(w http.ResponseWriter, r *http.R
 		"delta_daily":          deltaDaily,
 		"delta_daily_since":    dailySince,
 		"report_divergences":   divergences,
-		"hold_drops":           holdDrops,
+		"hold_drop_runs":       holdDropRuns,
 		"declared_full_stamps": stamps,
 	})
 }

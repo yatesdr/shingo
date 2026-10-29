@@ -401,22 +401,32 @@ func TestApiInventoryLedgerExceptions_HoldDropsAtALineRunningFull(t *testing.T) 
 	}
 	var body struct {
 		HoldDrops []map[string]any `json:"hold_drops"`
+		Runs      []struct {
+			Node   string `json:"node"`
+			Reason string `json:"reason"`
+			Drops  int64  `json:"drops"`
+			Qty    int64  `json:"qty"`
+		} `json:"hold_drop_runs"`
 	}
 	testutil.MustNoErr(t, json.NewDecoder(bytes.NewReader(rec.Body.Bytes())).Decode(&body), "decode")
 	seen := fmt.Sprintf("rows=%d", len(body.HoldDrops))
-	// Today: one row per drop, newest first, cut at the limit: the page's head
-	// reads "200 hold drops" for 250, and 200 identical lines.
+	for _, r := range body.Runs {
+		seen += fmt.Sprintf(" run=%s/%s:%d/%d", r.Node, r.Reason, r.Drops, r.Qty)
+	}
+	// It was one row per drop, newest first, cut at the limit: the page's head
+	// read "200 hold drops" for 250, and 200 identical lines. Now two runs,
+	// latest first, every drop counted.
 	today := "rows=200"
-	after := today
+	after := "rows=0 run=ALN_011/hold_cap:70/70 run=ALN_011/hold_cap:180/180"
 	t.Logf("PIN inventory/hold-drops %s", seen)
 	if seen != after {
 		t.Errorf("hold drops at a line running full: got %s, want %s (today %s)", seen, after, today)
 	}
 }
 
-// strict-pack lists the ledger fetch carries (lane P0): hold_drops, the
-// hold_dropped exceptions in the window with their seat, part, quantity,
-// reason and time; and declared_full_stamps, the release_declared_full ledger
+// strict-pack lists the ledger fetch carries (lane P0): hold_drop_runs, the
+// hold_dropped exceptions in the window as runs with their seat, part, reason,
+// station, count and span; and declared_full_stamps, the release_declared_full ledger
 // rows in the window with their seat, bin, counted and declared counts, who
 // declared it and when. A row older than the window is not listed. Verify-red
 // at the base: the response has neither key.
@@ -443,28 +453,28 @@ func TestApiInventoryLedgerExceptions_ListsHoldDropsAndStamps(t *testing.T) {
 		t.Fatalf("status: got %d, want 200; body=%s", rec.Code, rec.Body.String())
 	}
 	var body struct {
-		HoldDrops []map[string]any `json:"hold_drops"`
-		Stamps    []map[string]any `json:"declared_full_stamps"`
+		Runs   []map[string]any `json:"hold_drop_runs"`
+		Stamps []map[string]any `json:"declared_full_stamps"`
 	}
 	testutil.MustNoErr(t, json.NewDecoder(bytes.NewReader(rec.Body.Bytes())).Decode(&body), "decode")
-	for _, key := range []string{`"hold_drops"`, `"declared_full_stamps"`} {
+	for _, key := range []string{`"hold_drop_runs"`, `"declared_full_stamps"`} {
 		if !strings.Contains(rec.Body.String(), key) {
 			t.Fatalf("no %s in the ledger-exceptions response: %s", key, rec.Body.String())
 		}
 	}
-	if len(body.HoldDrops) != 1 {
-		t.Fatalf("%d hold drops listed, want 1 (the one in the window): %+v", len(body.HoldDrops), body.HoldDrops)
+	if len(body.Runs) != 1 {
+		t.Fatalf("%d hold drop runs listed, want 1 (the one drop in the window): %+v", len(body.Runs), body.Runs)
 	}
 	for key, want := range map[string]any{
-		"node": "ALN_011", "payload_code": sd.Payload.Code, "qty": float64(24), "reason": "sweep",
-		"station": "stn-page", "actor": "edge:sweep",
+		"node": "ALN_011", "payload_code": sd.Payload.Code, "drops": float64(1), "qty": float64(24), "reason": "sweep",
+		"station": "stn-page",
 	} {
-		if body.HoldDrops[0][key] != want {
-			t.Errorf("hold drop %s = %v, want %v", key, body.HoldDrops[0][key], want)
+		if body.Runs[0][key] != want {
+			t.Errorf("hold drop run %s = %v, want %v", key, body.Runs[0][key], want)
 		}
 	}
-	if body.HoldDrops[0]["occurred_at"] == nil || body.HoldDrops[0]["occurred_at"] == "" {
-		t.Error("hold drop occurred_at is missing")
+	if body.Runs[0]["first"] == nil || body.Runs[0]["first"] != body.Runs[0]["last"] {
+		t.Errorf("a one-drop run spans one moment: first %v last %v", body.Runs[0]["first"], body.Runs[0]["last"])
 	}
 	if len(body.Stamps) != 1 {
 		t.Fatalf("%d stamps listed, want 1 (the one in the window): %+v", len(body.Stamps), body.Stamps)

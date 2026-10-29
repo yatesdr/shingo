@@ -54,11 +54,17 @@ func (s *InventoryService) OpenReportDivergences() ([]store.OpenReportDivergence
 	return out, err
 }
 
-// HoldDrops lists the produce holds the Edges dropped since a time, newest
-// first: each a hold_dropped row with its seat, part, quantity and reason.
-// Read by the /inventory ledger panels. Never nil on success.
-func (s *InventoryService) HoldDrops(since time.Time, limit int) ([]audit.HoldDrop, error) {
-	return s.db.ListHoldDrops(since, limit)
+// HoldDropRunGap is the quiet that ends a run of hold drops: a line running
+// full drops a part a stroke, strokes come under a minute apart, and a gap
+// longer than this is the line stopped or a bin come and gone.
+const HoldDropRunGap = 15 * time.Minute
+
+// HoldDropRuns lists the produce holds the Edges dropped since a time as runs
+// (audit.HoldDropRun), latest first: each a seat, part, reason and station
+// with its drops, parts and span. Read by the /inventory ledger panels. Never
+// nil on success.
+func (s *InventoryService) HoldDropRuns(since time.Time, limit int) ([]audit.HoldDropRun, error) {
+	return s.db.ListHoldDropRuns(since, HoldDropRunGap, limit)
 }
 
 // DeclaredFullStamps lists the bins a station declared full below their

@@ -63,17 +63,20 @@ const (
 	ExcHoldDropped = "hold_dropped"
 )
 
-// HoldDrop is one hold_dropped row as the /inventory list reads it.
-type HoldDrop struct {
-	ID          int64     `json:"id"`
+// HoldDropRun is what /inventory lists of the hold_dropped rows: a run of them
+// at one seat, of one part, for one reason, at one station, none more than the
+// run gap after the one before. A line at its pack with a pack held drops a
+// part a stroke (hold_cap) until a bin comes, so a run is one line with its
+// total, never a line per stroke. Drops is the rows, Qty the parts.
+type HoldDropRun struct {
 	Node        string    `json:"node"`
 	PayloadCode string    `json:"payload_code"`
-	Qty         int64     `json:"qty"`
 	Reason      string    `json:"reason"`
 	Station     string    `json:"station"`
-	Actor       string    `json:"actor"`
-	OrderID     string    `json:"order_id,omitempty"`
-	OccurredAt  time.Time `json:"occurred_at"`
+	Drops       int64     `json:"drops"`
+	Qty         int64     `json:"qty"`
+	First       time.Time `json:"first"`
+	Last        time.Time `json:"last"`
 }
 
 // holdDropDetail is the detail JSON of a hold_dropped row. MsgID is the
@@ -120,34 +123,45 @@ func AppendHoldDropped(execer BinUOPExecer, msgID, station, node, payloadCode st
 	return n == 1, nil
 }
 
-// ListHoldDrops returns the hold_dropped rows that occurred at or after since,
-// newest first, at most limit. One statement on idx_bin_uop_exception_open.
-func ListHoldDrops(db *sql.DB, since time.Time, limit int) ([]HoldDrop, error) {
+// ListHoldDropRuns returns the hold_dropped rows that occurred at or after
+// since as runs (HoldDropRun): a row more than gap after the last of its seat,
+// part, reason and station starts a new run. Latest run first, at most limit
+// runs; every row in the window is counted, whatever the limit. The reason is
+// the row's op (AppendHoldDropped writes it there). One statement on
+// idx_bin_uop_exception_open.
+func ListHoldDropRuns(db *sql.DB, since time.Time, gap time.Duration, limit int) ([]HoldDropRun, error) {
 	if limit <= 0 || limit > 500 {
 		limit = 200
 	}
-	rows, err := db.Query(`SELECT id, payload_code, actor, occurred_at, COALESCE(detail, '{}'::jsonb)
-		FROM bin_uop_exception
-		WHERE kind = $1 AND recovered_at IS NULL AND occurred_at >= $2
-		ORDER BY occurred_at DESC, id DESC
-		LIMIT $3`, ExcHoldDropped, since.UTC(), limit)
+	rows, err := db.Query(`WITH d AS (
+			SELECT occurred_at, payload_code, COALESCE(op, '') AS reason,
+			       COALESCE(detail->>'node', '') AS node, COALESCE(detail->>'station', '') AS station,
+			       COALESCE((detail->>'qty')::bigint, 0) AS qty
+			  FROM bin_uop_exception
+			 WHERE kind = $1 AND recovered_at IS NULL AND occurred_at >= $2),
+		s AS (
+			SELECT *, CASE WHEN occurred_at - lag(occurred_at) OVER w <= make_interval(secs => $3)
+			               THEN 0 ELSE 1 END AS starts
+			  FROM d WINDOW w AS (PARTITION BY node, payload_code, reason, station ORDER BY occurred_at)),
+		r AS (
+			SELECT *, sum(starts) OVER (PARTITION BY node, payload_code, reason, station ORDER BY occurred_at) AS run
+			  FROM s)
+		SELECT node, payload_code, reason, station, count(*), sum(qty), min(occurred_at), max(occurred_at)
+		  FROM r
+		 GROUP BY node, payload_code, reason, station, run
+		 ORDER BY max(occurred_at) DESC, node, payload_code
+		 LIMIT $4`, ExcHoldDropped, since.UTC(), gap.Seconds(), limit)
 	if err != nil {
-		return nil, fmt.Errorf("list hold drops: %w", err)
+		return nil, fmt.Errorf("list hold drop runs: %w", err)
 	}
 	defer rows.Close()
-	out := []HoldDrop{}
+	out := []HoldDropRun{}
 	for rows.Next() {
-		var d HoldDrop
-		var raw []byte
-		if err := rows.Scan(&d.ID, &d.PayloadCode, &d.Actor, &d.OccurredAt, &raw); err != nil {
-			return nil, fmt.Errorf("list hold drops: scan: %w", err)
+		var r HoldDropRun
+		if err := rows.Scan(&r.Node, &r.PayloadCode, &r.Reason, &r.Station, &r.Drops, &r.Qty, &r.First, &r.Last); err != nil {
+			return nil, fmt.Errorf("list hold drop runs: scan: %w", err)
 		}
-		var det holdDropDetail
-		if err := json.Unmarshal(raw, &det); err != nil {
-			return nil, fmt.Errorf("list hold drops: detail of %d: %w", d.ID, err)
-		}
-		d.Node, d.Qty, d.Reason, d.Station, d.OrderID = det.Node, det.Qty, det.Reason, det.Station, det.OrderID
-		out = append(out, d)
+		out = append(out, r)
 	}
 	return out, rows.Err()
 }

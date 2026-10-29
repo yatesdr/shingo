@@ -45,9 +45,10 @@ func (db *DB) RecordHoldDropped(msgID, station, node, payloadCode string, qty in
 	return audit.AppendHoldDropped(db.DB, msgID, station, node, payloadCode, qty, reason, actor, orderID, occurredAt)
 }
 
-// ListHoldDrops lists the hold_dropped exceptions since a time, newest first.
-func (db *DB) ListHoldDrops(since time.Time, limit int) ([]audit.HoldDrop, error) {
-	return audit.ListHoldDrops(db.DB, since, limit)
+// ListHoldDropRuns lists the hold_dropped exceptions since a time as runs
+// (audit.HoldDropRun), latest first.
+func (db *DB) ListHoldDropRuns(since time.Time, gap time.Duration, limit int) ([]audit.HoldDropRun, error) {
+	return audit.ListHoldDropRuns(db.DB, since, gap, limit)
 }
 
 // ListDeclaredFullStamps lists the release_declared_full ledger rows since a
