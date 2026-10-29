@@ -1198,11 +1198,12 @@ type LoaderInfo struct {
 	// it. False — also what a Core predating this field sends — is what every
 	// Core-owned unloader does today.
 	AutoPush bool `json:"auto_push,omitempty"`
-	// PulledDirectly marks a two-stage unloader's stage 2 whose finished carts
-	// the process pulls straight off its windows: the Edge's CLEAR there sends
-	// the cart nowhere, quietly, and the board says it waits for the line.
-	// False, also what a Core predating this field sends, is today's: the
-	// empty-out to OutboundDest.
+	// PulledDirectly marks a loader whose finished carriers the process pulls
+	// straight off its windows (a two-stage unloader's stage 2, or any loader
+	// but a stage 1): the Edge's CLEAR there sends the carrier nowhere,
+	// quietly, and the board says it waits for the line. False, also what a
+	// Core predating this field sends, is today's: the empty-out to
+	// OutboundDest.
 	PulledDirectly bool `json:"pulled_directly,omitempty"`
 	// BoardHidesIdle: the station's board leaves off cards and homes with
 	// nothing to do (an operator-ordered station still shows an empty spot).

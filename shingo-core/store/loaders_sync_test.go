@@ -555,13 +555,14 @@ func TestPinBuildLoaderInfos_AZeroPayloadUnloader(t *testing.T) {
 
 // TestBuildLoaderInfos_StageOneLeavesBare: a stage 1 — the loader naming a
 // second stage — tells the Edge its CLEAR leaves the cart bare; the stage 2 it
-// names does not. No marker code travels: Core derives each cart's marker at
-// the CLEAR.
+// names takes the bare carts (TakesBare), which is how the Edge tells a
+// stage 2, produce since v168, from a loader. No marker code travels: Core
+// derives each cart's marker at the CLEAR.
 func TestBuildLoaderInfos_StageOneLeavesBare(t *testing.T) {
 	t.Parallel()
 	db := testdb.Open(t)
 	two, err := db.CreateLoader(loaders.Loader{
-		Name: "HL-S2", Role: loaders.RoleConsume,
+		Name: "HL-S2", Role: loaders.RoleProduce,
 		Layout: loaders.LayoutSharedWindow, Replenishment: loaders.ReplenishmentOperator,
 	})
 	if err != nil {
@@ -575,11 +576,12 @@ func TestBuildLoaderInfos_StageOneLeavesBare(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateLoader stage 1: %v", err)
 	}
-	if !findLoaderInfo(t, db, one).LeavesBare {
-		t.Error("stage 1 LeavesBare = false, want true")
+	s1, s2 := findLoaderInfo(t, db, one), findLoaderInfo(t, db, two)
+	if !s1.LeavesBare || s1.TakesBare {
+		t.Errorf("stage 1 LeavesBare %v TakesBare %v, want true, false", s1.LeavesBare, s1.TakesBare)
 	}
-	if findLoaderInfo(t, db, two).LeavesBare {
-		t.Error("stage 2 LeavesBare = true, want false")
+	if s2.LeavesBare || !s2.TakesBare {
+		t.Errorf("stage 2 LeavesBare %v TakesBare %v, want false, true", s2.LeavesBare, s2.TakesBare)
 	}
 }
 

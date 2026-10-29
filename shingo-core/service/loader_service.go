@@ -165,9 +165,9 @@ type LoaderCreate struct {
 	// FedDirectly: fed straight from a process, not from an inbound source.
 	// When set, InboundSource is stored blank whatever was sent.
 	FedDirectly bool
-	// PulledDirectly: a stage 2's finished carts are pulled straight off its
-	// windows by the process. Refused here: only a pair's stage 2 takes it,
-	// and a pair is made by CreateTwoStage and set on the box afterwards.
+	// PulledDirectly: the carriers this loader finishes are pulled straight off
+	// its windows by the process. When set, OutboundDest is stored blank
+	// whatever was sent.
 	PulledDirectly bool
 	// Drains: the part-less carrier states an unloader drains from its inbound
 	// source beside its fulls (loaders.DrainStates), refused where a box cannot
@@ -200,10 +200,6 @@ func (s *LoaderService) CreateLoader(in LoaderCreate) (int64, error) {
 	}
 	if in.AutoPush && in.Role != loaders.RoleConsume {
 		return 0, ErrAutoPushProduce
-	}
-	// A loader is created alone; a pair's stage 2 is made by CreateTwoStage.
-	if in.PulledDirectly {
-		return 0, ErrPulledDirectlyStage2Only
 	}
 	inbound := in.InboundSource
 	if in.FedDirectly {
@@ -282,9 +278,10 @@ type LoaderUpdate struct {
 	// FedDirectly: fed straight from a process. When set, InboundSource is
 	// stored blank whatever was sent.
 	FedDirectly bool
-	// PulledDirectly: a stage 2's finished carts are pulled straight off its
-	// windows by the process. When set, OutboundDest is stored blank whatever
-	// was sent. A pair's stage 2 only.
+	// PulledDirectly: the carriers this loader finishes are pulled straight off
+	// its windows by the process. When set, OutboundDest is stored blank
+	// whatever was sent. Any loader but a pair's stage 1
+	// (ErrPulledDirectlyStageOne).
 	PulledDirectly bool
 	// BoardHidesIdle: the Edge board leaves off cards and homes with nothing
 	// to do. Display only; any station.
@@ -356,14 +353,8 @@ func (s *LoaderService) Update(in LoaderUpdate) error {
 	}
 	cur.InboundSource = inboundSource
 	cur.FedDirectly = in.FedDirectly
-	if in.PulledDirectly {
-		one, err := s.firstStageOf(id)
-		if err != nil {
-			return err
-		}
-		if one == nil {
-			return ErrPulledDirectlyStage2Only
-		}
+	if in.PulledDirectly && cur.SecondStageLoaderID != nil {
+		return ErrPulledDirectlyStageOne
 	}
 	cur.PulledDirectly = in.PulledDirectly
 	cur.FunnelWindows = funnelWindows

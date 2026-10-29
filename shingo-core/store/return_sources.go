@@ -12,7 +12,11 @@
 
 package store
 
-import "fmt"
+import (
+	"fmt"
+
+	"shingocore/store/loaders"
+)
 
 // ReturnSourcesForPayload names the nodes the plant will source a FULL bin of
 // payload from the next time a line asks for it, best first.
@@ -83,7 +87,8 @@ func (db *DB) ReturnSourcesForPayload(payload string, ownNodes []string) ([]stri
 //	               this line's spent carrier (the swap plan's drop).
 //	produce claim  inbound_source — where the press draws its empties from.
 //	consume loader outbound_dest — where an unloader sends the carriers it has
-//	               drained.
+//	               drained; a two-stage unloader's stage 2 (produce) too, the
+//	               carts it puts an empty on (loaders.ActsAsUnloaderSQL).
 //	produce loader inbound_source — where a loader's empties come from.
 //
 // NOT the maintained groups supporting a process, and not any bank's overflow:
@@ -99,6 +104,7 @@ func (db *DB) EmptiesPlacesForBinType(binTypeID int64, ownNodes []string) ([]str
 	if ownNodes == nil {
 		ownNodes = []string{}
 	}
+	unloader := loaders.ActsAsUnloaderSQL("l")
 	admits := func(payloadExpr string) string {
 		return `(` + payloadExpr + ` = ''
 		     OR EXISTS (SELECT 1 FROM payload_bin_types pbt JOIN payloads p ON p.id = pbt.payload_id
@@ -118,11 +124,11 @@ func (db *DB) EmptiesPlacesForBinType(binTypeID int64, ownNodes []string) ([]str
 			     OR (sc.role = 'produce' AND sc.inbound_source <> ''))
 			   AND `+admits("sc.payload_code")+`
 			UNION ALL
-			SELECT CASE WHEN l.role = 'consume' THEN l.outbound_dest ELSE l.inbound_source END, false, false
+			SELECT CASE WHEN `+unloader+` THEN l.outbound_dest ELSE l.inbound_source END, false, false
 			  FROM bin_loaders l
 			 WHERE l.archived_at IS NULL
-			   AND ((l.role = 'consume' AND l.outbound_dest <> '')
-			     OR (l.role = 'produce' AND l.inbound_source <> ''))
+			   AND ((`+unloader+` AND l.outbound_dest <> '')
+			     OR (NOT `+unloader+` AND l.inbound_source <> ''))
 			   AND EXISTS (SELECT 1 FROM (
 			         SELECT p.payload_code AS pc FROM bin_loader_payloads p WHERE p.loader_id = l.id
 			         UNION SELECT h.payload_code FROM bin_loader_homes h WHERE h.loader_id = l.id

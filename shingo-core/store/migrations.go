@@ -4511,7 +4511,33 @@ func migrationList() []migration {
 		{167, "orders.steps_done - how many steps of the order's plan the fleet has finished, by position; the route strip reads where the robot is from it",
 			v167OrderStepsDone,
 			func(q schema.Querier) bool { return schema.ColumnExists(q, "orders", "steps_done") }},
+		{168, "a two-stage unloader's stage 2 is produce - stage 1 takes a bin off, stage 2 puts one on",
+			v168StageTwoProduces,
+			func(q schema.Querier) bool {
+				var left bool
+				err := q.QueryRow(`SELECT EXISTS (SELECT 1 FROM bin_loaders WHERE role <> 'produce'
+					AND id IN (SELECT second_stage_loader_id FROM bin_loaders WHERE second_stage_loader_id IS NOT NULL))`).Scan(&left)
+				return err == nil && !left
+			}},
 	}
+}
+
+// v168StageTwoProduces makes every loader some stage 1 names as its second
+// stage a produce loader: a pair is stage 1 taking a bin off and stage 2
+// putting one on, whichever side it serves. Accept partials and auto push go
+// off with it: both are an unloader's, refused on a produce loader at the
+// door, and neither did anything on a stage 2. The Edge reads the stage from
+// LoaderInfo.TakesBare, not from the role, so its windows still act as an
+// unloader's. AN EDGE PREDATING TakesBare reads a produce loader with no parts
+// as malformed and drops it: deploy the Edge with this Core. ROLLBACK is the
+// previous binary plus the same UPDATE back to consume.
+func v168StageTwoProduces(tx *sql.Tx) error {
+	if _, err := tx.Exec(`UPDATE bin_loaders SET role = 'produce', accept_partials = false, auto_push = false
+		WHERE role <> 'produce'
+		  AND id IN (SELECT second_stage_loader_id FROM bin_loaders WHERE second_stage_loader_id IS NOT NULL)`); err != nil {
+		return fmt.Errorf("v168 stage 2 is produce: %w", err)
+	}
+	return nil
 }
 
 // v167OrderStepsDone adds orders.steps_done, the count of the plan's steps the

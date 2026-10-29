@@ -11,6 +11,7 @@ import (
 	"shingo/protocol/testutil"
 	"shingocore/domain"
 	"shingocore/store/bins"
+	"shingocore/store/loaders"
 	"shingocore/store/nodes"
 	"shingocore/store/reservations"
 )
@@ -110,7 +111,10 @@ func TestPulledDirectly_RefusesAWindowInAnotherGroup(t *testing.T) {
 	}
 }
 
-func TestPulledDirectly_IsStage2Only(t *testing.T) {
+// TestPulledDirectly_AnyLoaderButAStageOne: the option is the loader's, not
+// the pair's. A lone unloader and a lone loader take it, their outbound stored
+// blank; a stage 1 is refused, since its carts go on to stage 2.
+func TestPulledDirectly_AnyLoaderButAStageOne(t *testing.T) {
 	t.Parallel()
 	f := newTwoStageFixture(t)
 	s1, _ := f.create(t, "TS-PD-S1")
@@ -118,11 +122,18 @@ func TestPulledDirectly_IsStage2Only(t *testing.T) {
 	testutil.MustNoErr(t, err, "read stage 1")
 	err = f.loader.Update(LoaderUpdate{ID: s1, Name: one.Name, AcceptPartials: one.AcceptPartials,
 		AutoPush: one.AutoPush, PulledDirectly: true})
-	if !errors.Is(err, ErrPulledDirectlyStage2Only) {
-		t.Errorf("stage 1 pulled directly: err = %v, want ErrPulledDirectlyStage2Only", err)
+	if !errors.Is(err, ErrPulledDirectlyStageOne) {
+		t.Errorf("stage 1 pulled directly: err = %v, want ErrPulledDirectlyStageOne", err)
 	}
-	if _, err := f.loader.CreateLoader(LoaderCreate{Name: "TS-PD-LONE", Role: "consume", PulledDirectly: true}); !errors.Is(err, ErrPulledDirectlyStage2Only) {
-		t.Errorf("a lone unloader pulled directly: err = %v, want ErrPulledDirectlyStage2Only", err)
+	for _, role := range []string{loaders.RoleConsume, loaders.RoleProduce} {
+		id, err := f.loader.CreateLoader(LoaderCreate{Name: "TS-PD-LONE-" + role, Role: role,
+			OutboundDest: "", PulledDirectly: true})
+		testutil.MustNoErr(t, err, "a lone "+role+" loader pulled directly")
+		l, err := f.db.GetLoader(id)
+		testutil.MustNoErr(t, err, "read it")
+		if !l.PulledDirectly || l.OutboundDest != "" {
+			t.Errorf("lone %s loader: pulled %v outbound %q, want true and blank", role, l.PulledDirectly, l.OutboundDest)
+		}
 	}
 }
 

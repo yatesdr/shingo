@@ -235,9 +235,17 @@ func (s *NodeService) outboundWithoutOverflow(cfg MaintainedGroupConfig, groupNa
 	if err != nil {
 		return "", fmt.Errorf("read loaders sending to %s: %w", groupName, err)
 	}
+	// A two-stage unloader's stage 2 is produce and sends its carts out as
+	// empties all the same (loaders.ActsAsUnloaderSQL), so it counts.
+	secondStage := map[int64]bool{}
+	for _, l := range all {
+		if l.SecondStageLoaderID != nil {
+			secondStage[*l.SecondStageLoaderID] = true
+		}
+	}
 	var feeding []string
 	for _, l := range all {
-		if l.Role == loaders.RoleConsume && l.OutboundDest == groupName {
+		if (l.Role == loaders.RoleConsume || secondStage[l.ID]) && l.OutboundDest == groupName {
 			feeding = append(feeding, l.Name)
 		}
 	}

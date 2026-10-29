@@ -657,16 +657,18 @@ await (async function settingsSaveThroughTheApi() {
 })();
 
 (function pulledDirectly() {
-    // "Pulled directly by the process": stage 2's outbound mirror of "fed
-    // directly". The row is on a pair's settings, saves stage 2, and the box's
-    // stage-2 outbound slot then says so instead of asking for a place.
+    // "Pulled directly by the process": the outbound mirror of "fed directly",
+    // on any station but a pair's stage 1. On a pair the row saves stage 2, and
+    // the box's stage-2 outbound slot then says so instead of asking for a
+    // place; a single station's row saves itself.
     const h = load({ auth: true });
     const [one, two] = pair();
     const html = h.ctx.settingsHtml(one, two);
     check('a pair offers "Pulled directly by the process", on stage 2',
         html.indexOf('Pulled directly by the process') >= 0 && html.indexOf('loader-set-8-pulledDirectly') >= 0);
-    check('a single station does not', h.ctx.settingsHtml({ loader: unloader(), homes: [], payloads: [] }, null)
-        .indexOf('Pulled directly by the process') < 0);
+    const single = h.ctx.settingsHtml({ loader: unloader(), homes: [], payloads: [] }, null);
+    check('a single station offers it too, on itself',
+        single.indexOf('Pulled directly by the process') >= 0 && single.indexOf('loader-set-20-pulledDirectly') >= 0);
     const b = h.ctx.settingUpdate(unloader({ id: 8, outbound_dest: 'EMPTIES' }), 'pulledDirectly', true);
     check('ticking it sends pulled_directly:true and a blank outbound', b.pulled_directly === true && b.outbound_dest === '');
     const named = h.ctx.placeUpdate(unloader({ id: 8, pulled_directly: true }), 'outbound', 'EMPTIES');
@@ -694,7 +696,7 @@ await (async function settingsSaveThroughTheApi() {
         html.indexOf('Order empties') < 0 && html.indexOf('During a changeover') < 0);
     check('settings: gone — "Leaves carriers bare as", the layout dropdown',
         html.indexOf('Leaves carriers bare as') < 0 && html.indexOf('Multi window') < 0 && html.indexOf('Single window') < 0);
-    check('settings: every row saves as ticked', (html.match(/data-action-change="saveStationSetting"/g) || []).length === 6);
+    check('settings: every row saves as ticked', (html.match(/data-action-change="saveStationSetting"/g) || []).length === 7);
     check('settings: the window-type picker never offers a bare type',
         html.indexOf('>CART<') >= 0 && html.indexOf('CART-BARE') < 0);
     check('binTypeOptions(set, false) leaves bare out', h.ctx.binTypeOptions([], false).indexOf('CART-BARE') < 0);

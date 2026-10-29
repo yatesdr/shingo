@@ -1,9 +1,13 @@
 // loader_two_stage.go — a two-stage unloader set up as ONE unloader.
 //
-// Stage 1 pulls the full bin off and leaves the cart bare; stage 2 sets a new
-// empty bin on it and sends it out. Underneath they are two consume loaders, and
-// they stay two: each runs its own windows on the Edge exactly as the half-loader
-// shipped. What this file adds is the setup and the plumbing between them:
+// Stage 1 pulls the full bin off and leaves the cart bare; stage 2 sets a bin
+// back on it (an empty, or a partial with its count) and sends it out, or keeps
+// it on its window for the line when it is pulled directly. Underneath they are
+// two loaders, and they stay two: stage 1 consume (it takes a bin off), stage 2
+// produce (it puts one on). Each runs its own windows on the Edge; the Edge
+// tells stage 2 by LoaderInfo.TakesBare, not by its role, and draws its windows
+// as an unloader's. What this file adds is the setup and the plumbing between
+// them:
 //
 //   - the link: stage 1's second_stage_loader_id, so the page shows one box.
 //   - bare is a property of the cart type (bin_types.bare_of), not of the
@@ -45,10 +49,11 @@ const BareMarkerSuffix = bins.BareMarkerSuffix
 // taking it would silently pull it out of the group it is in.
 var ErrWindowInAnotherGroup = errors.New("this node is already in another group: take it out of that group first")
 
-// ErrPulledDirectlyStage2Only refuses "pulled directly by the process" on
-// anything but a two-stage unloader's stage 2: it is about the carts stage 2
-// finishes, and only stage 2 finishes carts.
-var ErrPulledDirectlyStage2Only = errors.New("pulled directly by the process is a two-stage unloader's stage 2 setting")
+// ErrPulledDirectlyStageOne refuses "pulled directly by the process" on a
+// two-stage unloader's stage 1: its carts go on to stage 2, a destination Core
+// derives (syncPair), and no process pulls a bare cart. Any other loader takes
+// it: the carriers it finishes stay on its windows for the process to pull.
+var ErrPulledDirectlyStageOne = errors.New("a two-stage unloader's stage 1 sends its carts on to stage 2: pulled directly is stage 2's setting")
 
 // ErrQuotaBare refuses a bare marker in a loader's carrier mix: the mix says
 // which empties to fetch, and no finder hands out a bare cart.
@@ -83,7 +88,7 @@ func (s *LoaderService) CreateTwoStage(in TwoStageCreate) (stage1, stage2 int64,
 		return 0, 0, ErrDrainTwoStage
 	}
 	stage2, err = s.db.CreateLoader(loaders.Loader{
-		Name: in.Name + stage2Suffix, Role: loaders.RoleConsume, Layout: loaders.LayoutSharedWindow,
+		Name: in.Name + stage2Suffix, Role: loaders.RoleProduce, Layout: loaders.LayoutSharedWindow,
 		Replenishment: loaders.ReplenishmentOperator, BoardShowsAllParts: true,
 	})
 	if err != nil {

@@ -48,6 +48,14 @@ func (db *DB) BuildLoaderInfos() ([]protocol.LoaderInfo, error) {
 		return nil, err
 	}
 	out := make([]protocol.LoaderInfo, 0, len(ls))
+	// A stage 2 is the loader a stage 1 names; the list read above holds every
+	// stage 1, so this costs no statement.
+	secondStage := map[int64]bool{}
+	for _, l := range ls {
+		if l.SecondStageLoaderID != nil {
+			secondStage[*l.SecondStageLoaderID] = true
+		}
+	}
 	for _, l := range ls {
 		info := protocol.LoaderInfo{
 			Name:          l.Name,
@@ -64,7 +72,11 @@ func (db *DB) BuildLoaderInfos() ([]protocol.LoaderInfo, error) {
 			// leaves the cart bare, and Core derives the marker from the cart's
 			// own type, so the Edge needs the fact and never the code.
 			LeavesBare: l.SecondStageLoaderID != nil,
-			AutoPush:   l.AutoPush,
+			// Its mirror: stage 2 takes the bare carts and puts a bin back on.
+			// The Edge draws its windows as an unloader's from this, whatever
+			// the role says.
+			TakesBare: secondStage[l.ID],
+			AutoPush:  l.AutoPush,
 			// Stage 2's finished carts stay on its windows for the process.
 			PulledDirectly: l.PulledDirectly,
 			// How the station's board draws; display only.
@@ -437,7 +449,8 @@ func (db *DB) keepOwnedEntries(stationID string, entries []demands.RegistryEntry
 	return kept, nil
 }
 
-// ConsumeWindow is one window of a consume loader, with the loader's outbound
+// ConsumeWindow is one window of a loader that acts as an unloader (a consume
+// loader, or a two-stage unloader's stage 2), with the loader's outbound
 // group: the group's node id (0 when no node carries its name) and whether the
 // group declares any level.
 type ConsumeWindow struct {
@@ -448,8 +461,9 @@ type ConsumeWindow struct {
 	NodeName   string
 }
 
-// ConsumeWindowsAt returns every window of the active consume loaders that
-// have a window at any of nodeIDs, by group, then loader, then the plant's
+// ConsumeWindowsAt returns every window of the active loaders acting as an
+// unloader (loaders.ActsAsUnloaderSQL) that have a window at any of nodeIDs,
+// by group, then loader, then the plant's
 // window order (bin_loader_homes.sort_order): the groups whose fill a station
 // watching those windows is shown, and every cart the group's walk reads. One
 // statement; none for no ids. A loader whose carts the process pulls straight
@@ -459,10 +473,9 @@ func (db *DB) ConsumeWindowsAt(nodeIDs []int64) ([]ConsumeWindow, error) {
 		return nil, nil
 	}
 	placeholders := make([]string, len(nodeIDs))
-	args := make([]any, 0, len(nodeIDs)+1)
-	args = append(args, loaders.RoleConsume)
+	args := make([]any, 0, len(nodeIDs))
 	for i, id := range nodeIDs {
-		placeholders[i] = fmt.Sprintf("$%d", i+2)
+		placeholders[i] = fmt.Sprintf("$%d", i+1)
 		args = append(args, id)
 	}
 	rows, err := db.DB.Query(`SELECT l.outbound_dest, COALESCE(g.id, 0),
@@ -472,7 +485,7 @@ func (db *DB) ConsumeWindowsAt(nodeIDs []int64) ([]ConsumeWindow, error) {
 		JOIN bin_loader_homes h ON h.loader_id = l.id
 		JOIN nodes n ON n.id = h.position_node_id
 		LEFT JOIN nodes g ON g.name = l.outbound_dest
-		WHERE l.archived_at IS NULL AND l.role = $1 AND l.outbound_dest <> ''
+		WHERE l.archived_at IS NULL AND `+loaders.ActsAsUnloaderSQL("l")+` AND l.outbound_dest <> ''
 		  AND l.id IN (SELECT loader_id FROM bin_loader_homes WHERE position_node_id IN (`+
 		strings.Join(placeholders, ",")+`))
 		ORDER BY l.outbound_dest, l.id, h.sort_order, h.position_node_id`, args...)

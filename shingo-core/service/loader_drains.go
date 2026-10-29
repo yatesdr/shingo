@@ -67,15 +67,8 @@ func (s *LoaderService) checkDrains(l *loaders.Loader) error {
 	if len(l.Drains) == 0 {
 		return nil
 	}
-	if l.Role != loaders.RoleConsume {
-		return ErrDrainProduce
-	}
-	if l.InboundSource == "" {
-		return ErrDrainNoSource
-	}
-	if l.Layout != loaders.LayoutSharedWindow {
-		return ErrDrainDedicatedLayout
-	}
+	// A pair's halves first: stage 2 is produce (v168), and "a loader is fed
+	// empties" would be the wrong reason for it.
 	if l.SecondStageLoaderID != nil {
 		return ErrDrainTwoStage
 	}
@@ -87,6 +80,15 @@ func (s *LoaderService) checkDrains(l *loaders.Loader) error {
 		if one != nil {
 			return ErrDrainTwoStage
 		}
+	}
+	if l.Role != loaders.RoleConsume {
+		return ErrDrainProduce
+	}
+	if l.InboundSource == "" {
+		return ErrDrainNoSource
+	}
+	if l.Layout != loaders.LayoutSharedWindow {
+		return ErrDrainDedicatedLayout
 	}
 	return s.checkDrainLoop(l.InboundSource, l.OutboundDest)
 }

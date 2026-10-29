@@ -130,12 +130,13 @@ type Loader struct {
 	// as inbound_source = '', so no loader's pulling changed.
 	FedDirectly bool `json:"fed_directly"`
 
-	// PulledDirectly is FedDirectly's outbound mirror, on a two-stage
-	// unloader's stage 2: the process pulls its finished carts straight off its
-	// windows, so they are not sent anywhere. When it is set OutboundDest is
-	// stored blank, Core makes stage 2's windows a group a line can name as
-	// its source, and the empty finders hand that group's finished carts to a
-	// request naming it. FALSE for every loader until a plant turns it on.
+	// PulledDirectly is FedDirectly's outbound mirror, on any loader but a
+	// two-stage unloader's stage 1: the process pulls the carriers it finishes
+	// straight off its windows, so they are not sent anywhere, and OutboundDest
+	// is stored blank. On a pair's stage 2 Core also makes the windows a group
+	// a line can name as its source, and the empty finders hand that group's
+	// finished carts to a request naming it; any other loader's windows are
+	// named as they stand. FALSE for every loader until a plant turns it on.
 	PulledDirectly bool `json:"pulled_directly"`
 
 	// BoardHidesIdle: the station's Edge board leaves off a card or home
@@ -165,6 +166,21 @@ type Loader struct {
 	// own loader; the Edge learns only that a stage 1 leaves its carts bare
 	// (LoaderInfo.LeavesBare), and Core's CLEAR stamps each cart's own marker.
 	SecondStageLoaderID *int64 `json:"second_stage_loader_id"`
+}
+
+// TakesBareSQL is "some live stage 1 names this loader as its second stage"
+// over the bin_loaders row aliased alias: LoaderInfo.TakesBare's fact, in SQL.
+func TakesBareSQL(alias string) string {
+	return `EXISTS (SELECT 1 FROM bin_loaders s1 WHERE s1.second_stage_loader_id = ` + alias +
+		`.id AND s1.archived_at IS NULL)`
+}
+
+// ActsAsUnloaderSQL is "this loader's windows act as an unloader's" over the
+// bin_loaders row aliased alias: a consume loader, or a two-stage unloader's
+// stage 2, which is produce (v168) and still sends the carts it finishes to its
+// outbound destination as empties. The Edge's twin is Loader.ActsAsUnloader.
+func ActsAsUnloaderSQL(alias string) string {
+	return `(` + alias + `.role = '` + RoleConsume + `' OR ` + TakesBareSQL(alias) + `)`
 }
 
 // Home is one dedicated position: exactly one payload. The global

@@ -65,8 +65,9 @@ func TestCreateTwoStage_LinksStagesWithNoPlacement(t *testing.T) {
 	}
 	two, err := f.db.GetLoader(s2)
 	testutil.MustNoErr(t, err, "read stage 2")
-	if two.Role != loaders.RoleConsume || two.SecondStageLoaderID != nil || two.OutboundDest != "" || two.InboundSource != "" {
-		t.Errorf("stage 2 = %+v, want a plain unloader with nothing placed", two)
+	// Stage 1 takes a bin off (consume); stage 2 puts one on (produce).
+	if two.Role != loaders.RoleProduce || two.SecondStageLoaderID != nil || two.OutboundDest != "" || two.InboundSource != "" {
+		t.Errorf("stage 2 = %+v, want a produce loader with nothing placed", two)
 	}
 	if _, _, err := f.loader.CreateTwoStage(TwoStageCreate{}); err == nil {
 		t.Error("a pair with no name was created")

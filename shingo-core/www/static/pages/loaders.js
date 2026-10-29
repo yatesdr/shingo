@@ -103,7 +103,8 @@ function readForm() {
 // normalizeForm folds in the choices that IMPLY another value, so the screen
 // and what gets saved cannot disagree:
 //   - FED DIRECTLY means there is no source, so the source is cleared, not
-//     merely hidden; PULLED DIRECTLY is its outbound mirror on a stage 2.
+//     merely hidden; PULLED DIRECTLY is its outbound mirror, on any station
+//     but a pair's stage 1.
 //   - Two stations is an unloader's answer; a loader clears nothing.
 function normalizeForm(state) {
   if (state.fedDirectly) state.inbound = '';
@@ -466,8 +467,12 @@ function stationSlots(item, s2) {
     // stay on its own spots, so a blank "Fulls go to" is a running station, not
     // a missing place.
     const staysOnSpots = !unloader && !shared;
-    const outbound = placeSlot(item, 'outbound', unloader ? 'Empties go to' : 'Fulls go to', l.outbound_dest, !staysOnSpots);
-    outbound.stays = staysOnSpots && !l.outbound_dest;
+    // Pulled directly: the process takes what this station finishes off its
+    // windows, so the slot says that instead of asking for a place.
+    const pulled = !!l.pulled_directly;
+    const outbound = placeSlot(item, 'outbound', unloader ? 'Empties go to' : 'Fulls go to', l.outbound_dest, !staysOnSpots && !pulled);
+    outbound.stays = staysOnSpots && !pulled && !l.outbound_dest;
+    outbound.pulled = pulled && !l.outbound_dest;
     const slots = [windowsSlot(item), inbound, outbound];
     if (shared) slots.push(partsSlot(item, unloader ? 'Parts it drains' : 'Parts it fills'));
     return [{ stage: 0, item: item, slots: slots }];
@@ -859,8 +864,10 @@ function settingsHtml(item, s2) {
   if (shape.drains) first += drainChecksHtml(lid, state.drains);
   if (shape.autoPush) first += settingCheck(lid, 'autoPush', state.autoPush, 'Pull the next full automatically when a window frees');
   if (shape.fedDirectly) first += settingCheck(lid, 'fedDirectly', state.fedDirectly, 'Fed directly by the process');
-  // Stage 2's outbound mirror. Its own row because it saves stage 2.
+  // The outbound mirror. On a pair it is stage 2's, its own row because it
+  // saves stage 2; a stage 1 always sends its carts on to stage 2.
   if (pair) first += settingCheck(Number(s2.loader.id), 'pulledDirectly', !!s2.loader.pulled_directly, 'Pulled directly by the process');
+  else first += settingCheck(lid, 'pulledDirectly', !!state.pulledDirectly, 'Pulled directly by the process');
   if (shape.changeover) first += settingCheck(lid, 'changeoverLoadDirective', state.changeoverLoadDirective, 'During a changeover, tell this station which carrier to load');
   // "Cart" is the operator's word for a two-stage unloader's carrier (style
   // guide glossary); every other station says carrier.
