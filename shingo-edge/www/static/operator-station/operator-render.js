@@ -3,7 +3,7 @@ import { formatClock } from '/static/shared/utils.js';
 import { getView, claimedNodes, isReplenishing, getLink } from './operator-state.js';
 import { isActive } from './order-status.js';
 import { ROLE_WORDS, clearRunning, CLEAR_RUNNING } from './operator-window-state.js';
-import { loaderOf, tileRole, takesBare, partialParts, carriersOf, isDedicated, isUnloaderWindow, boardLayout, isBoard, staleSign } from './operator-board-model.js';
+import { loaderOf, tileRole, takesBare, stageTwoOn, carriersOf, isDedicated, isUnloaderWindow, boardLayout, isBoard, staleSign } from './operator-board-model.js';
 import { clearChoices, choiceLabel, heightWords, isLit, clearHighlight } from './operator-board-model.js';
 import { windowWords } from './operator-board-model.js';
 import { renderBoard, resetBoard } from './operator-board.js';
@@ -245,7 +245,7 @@ const boardActs = {
         case 'load': openLoadBinRef(a.node, a.codes, 0); break;
         case 'unload': confirmUnloadSwap(a.node, a.carriers, a.discarding, a.leavesBare, a.lit); break;
         case 'unload-held': confirmUnloadHeld(a.node, a.heldFor, a.count, a.stageTwo); break;
-        case 'push-empty': confirmPushEmpty(a.node, a.carriers, a.bare, a.lit, a.partials); break;
+        case 'push-empty': confirmPushEmpty(a.node, a.carriers, a.bare, a.lit, a.stageTwo); break;
         case 'clear-home': confirmClearLoaderHome(a.node, a.home, a.spot); break;
         case 'modal': openModalRef(a.node); break;
         case 'request-empty': postFromBar(a, '/api/process-nodes/' + a.node + '/request-empty', {}); break;
@@ -410,7 +410,7 @@ function confirmUnloadHeld(nodeID, line, count, stageTwo) {
 //
 // leavesBare is the tile's loader.leaves_bare: true only at a window of the
 // stage-1 half of a two-stage unloader. There the cart goes on to stage 2 with
-// no bin on it, so there is nothing to pick — the CLEAR is one tap, Full off,
+// no bin on it, so there is nothing to pick — the CLEAR is one tap, BIN OFF,
 // and posts a blank code; Core stamps the cart from its own type. The panel
 // names no type: the marker Core stamps is bookkeeping, never an operator's word.
 //
@@ -500,39 +500,43 @@ function clearBody(choice) {
 // on · 3 high", "Send on · tops & bottoms"), each posting the CLEAR with its
 // layers and still no type, so no type is named on the panel.
 //
-// extra, when given, is one more act after them, {label, act}: a stage 2's
-// PARTIAL ON (confirmEmptyOrPartialOn), which closes the panel and runs act.
-function oneTapPanel(nodeID, title, subtitles, label, after, heights, lit, extra) {
+// extras, when given, are more acts after them, each {label, act}: a stage 2's
+// FULL ON and PARTIAL ON (confirmStageTwoOn); each closes the panel and runs act.
+function oneTapPanel(nodeID, title, subtitles, label, after, heights, lit, extras) {
     const overlay = el('div', { className: 'os-co-picker-overlay' });
     const panel = el('div', { className: 'os-co-picker os-co-picker--one-tap' });
     panel.appendChild(el('div', { className: 'os-co-picker-title', textContent: title }));
     subtitles.forEach(function(s) { panel.appendChild(s); });
-    const many = heights && heights.length > 0;
-    const plainLit = many && !!lit && typeof lit.layers !== 'number';
-    const go = el('button', { className: 'os-co-picker-btn' + (plainLit ? ' os-co-picker-btn--lit' : ''), textContent: label });
-    go.addEventListener('click', function() {
-        overlay.remove();
-        postAction('/api/process-nodes/' + nodeID + '/clear-bin', undefined, loadViewRef);
-    });
-    panel.appendChild(go);
-    (heights || []).forEach(function(choice) {
-        const btn = el('button', { className: 'os-co-picker-btn' + (isLit(choice, lit) ? ' os-co-picker-btn--lit' : ''),
-            textContent: label + ' · ' + heightWords(choice.layers) });
-        btn.addEventListener('click', function() {
+    // label '' is a panel with no CLEAR of its own: only the extras (a consume
+    // side's stage 2, where nothing goes on as an empty).
+    if (label) {
+        const many = heights && heights.length > 0;
+        const plainLit = many && !!lit && typeof lit.layers !== 'number';
+        const go = el('button', { className: 'os-co-picker-btn' + (plainLit ? ' os-co-picker-btn--lit' : ''), textContent: label });
+        go.addEventListener('click', function() {
             overlay.remove();
-            postAction('/api/process-nodes/' + nodeID + '/clear-bin', { layers: choice.layers }, loadViewRef);
+            postAction('/api/process-nodes/' + nodeID + '/clear-bin', undefined, loadViewRef);
         });
-        panel.appendChild(btn);
-    });
-    if (extra) {
+        panel.appendChild(go);
+        (heights || []).forEach(function(choice) {
+            const btn = el('button', { className: 'os-co-picker-btn' + (isLit(choice, lit) ? ' os-co-picker-btn--lit' : ''),
+                textContent: label + ' · ' + heightWords(choice.layers) });
+            btn.addEventListener('click', function() {
+                overlay.remove();
+                postAction('/api/process-nodes/' + nodeID + '/clear-bin', { layers: choice.layers }, loadViewRef);
+            });
+            panel.appendChild(btn);
+        });
+    }
+    (extras || []).forEach(function(extra) {
         const more = el('button', { className: 'os-co-picker-btn', textContent: extra.label });
         more.addEventListener('click', function() {
             overlay.remove();
             extra.act();
         });
         panel.appendChild(more);
-    }
-    panel.appendChild(el('div', { className: 'os-co-picker-subtitle', textContent: after }));
+    });
+    if (after) panel.appendChild(el('div', { className: 'os-co-picker-subtitle', textContent: after }));
     const cancel = el('button', { className: 'os-co-picker-btn cancel', textContent: 'CANCEL' });
     cancel.addEventListener('click', () => overlay.remove());
     panel.appendChild(cancel);
@@ -541,17 +545,18 @@ function oneTapPanel(nodeID, title, subtitles, label, after, heights, lit, extra
     showOverlay(overlay);
 }
 
-// confirmFullOff is stage 1 of a two-stage unloader: the full comes off the
-// cart and the cart goes on to stage 2 bare. The discard count is still stated.
-// It leaves the cart bare, so it offers no height and posts no layers.
+// confirmFullOff is stage 1 of a two-stage unloader: whatever came back from
+// the line comes off the cart (a full from a produce line; an empty or a
+// partial from a consume line) and the cart goes on to stage 2 bare. BIN OFF
+// on either side; the CLEAR books the count. The discard count is still
+// stated. It leaves the cart bare, so it offers no height and posts no layers.
 function confirmFullOff(nodeID, discarding) {
     const subs = [];
     if (discarding > 0) {
         subs.push(el('div', { className: 'os-co-picker-subtitle os-co-picker-warn',
             textContent: 'This slot still counts ' + discarding + '. Confirming writes it to zero.' }));
     }
-    oneTapPanel(nodeID, 'Full bin on the cart', subs, 'Full off',
-        'The cart goes on to Stage 2. The next full is on its way.');
+    oneTapPanel(nodeID, 'Bin on the cart', subs, 'BIN OFF', 'The cart goes on to Stage 2.');
 }
 
 // confirmSendOn is stage 2 with a bare cart in the window (bin_state.bare):
@@ -575,20 +580,24 @@ function sendOnHeights(carriers) {
     return heights;
 }
 
-// confirmEmptyOrPartialOn is a bare cart at a stage-2 window (takesBare): one
-// panel, two choices. EMPTY ON is the Send on above (clear-bin with a blank
-// code: Core re-types the cart, count 0), with its heights. PARTIAL ON is the
-// LOAD door (openLoadBin): a part from parts, the lines that take their
-// empties from this stage 2 (tile.loader.partial_parts), and a count the
-// person types, which must be above 0; Core un-bares the cart first. Where no
-// line sources from here there is no PARTIAL ON.
-function confirmEmptyOrPartialOn(nodeID, carriers, lit, parts) {
-    const partial = parts.length > 0
-        ? { label: 'PARTIAL ON', act: function () { openLoadBinRef(nodeID, parts, 0, { typedCount: true }); } }
-        : null;
-    oneTapPanel(nodeID, 'Cart, no bin',
-        [el('div', { className: 'os-co-picker-subtitle', textContent: 'Put an empty on, or a partial — type the count.' })],
-        'EMPTY ON', 'No type to pick — it\'s the cart it came in as.', sendOnHeights(carriers), lit, partial);
+// confirmStageTwoOn is a bare cart at a stage-2 window (takesBare): one panel,
+// what goes on it as stageTwoOn decided (on). EMPTY ON is the Send on above
+// (clear-bin with a blank code: Core re-types the cart, count 0), with its
+// heights; a consume side has none. FULL ON is the LOAD door (openLoadBin) with
+// the consume lines' parts, the count defaulting to the pack. PARTIAL ON is the
+// LOAD door with every part the lines take and a count the person types, which
+// must be above 0. Core un-bares the cart first on either LOAD.
+function confirmStageTwoOn(nodeID, carriers, lit, on) {
+    const extras = [];
+    if (on.full.length > 0) {
+        extras.push({ label: 'FULL ON', act: function () { openLoadBinRef(nodeID, on.full, 0); } });
+    }
+    if (on.partial.length > 0) {
+        extras.push({ label: 'PARTIAL ON', act: function () { openLoadBinRef(nodeID, on.partial, 0, { typedCount: true }); } });
+    }
+    oneTapPanel(nodeID, 'Cart, no bin', [el('div', { className: 'os-co-picker-subtitle', textContent: on.copy })],
+        on.empty ? 'EMPTY ON' : '', on.empty ? 'No type to pick — it\'s the cart it came in as.' : '',
+        on.empty ? sendOnHeights(carriers) : [], lit, extras);
 }
 
 // confirmPushEmpty shows a confirmation panel for an empty carrier sitting in an
@@ -597,12 +606,12 @@ function confirmEmptyOrPartialOn(nodeID, carriers, lit, parts) {
 //
 // bare is the carrier's bin_state.bare: a stage-2 cart with no bin on it gets
 // the one-tap Send on panel instead (confirmSendOn), or, at a takes_bare
-// window, EMPTY ON or PARTIAL ON (confirmEmptyOrPartialOn; partials is then the
-// parts PARTIAL ON offers, null anywhere else). lit is the choice the board's
-// card says to send it back as: its PUSH AS is lit.
-function confirmPushEmpty(nodeID, carriers, bare, lit, partials) {
+// window, what goes on it (confirmStageTwoOn; stageTwo is then the card
+// stageTwoOn decided, null anywhere else). lit is the choice the board's card
+// says to send it back as: its PUSH AS is lit.
+function confirmPushEmpty(nodeID, carriers, bare, lit, stageTwo) {
     if (bare) {
-        if (partials) confirmEmptyOrPartialOn(nodeID, carriers, lit, partials);
+        if (stageTwo) confirmStageTwoOn(nodeID, carriers, lit, stageTwo);
         else confirmSendOn(nodeID, carriers, lit);
         return;
     }
@@ -1080,7 +1089,7 @@ function createNodeButton(entry) {
             if (fullPresent) confirmUnloadSwap(entry.node.id, carriersOf(entry),
                 entry.runtime && entry.runtime.remaining_uop_cached, !!loader.leaves_bare, lit);
             else if (emptyPresent) confirmPushEmpty(entry.node.id, carriersOf(entry), !!bs.bare, lit,
-                bs.bare && takesBare(entry) ? partialParts(entry) : null);
+                bs.bare && takesBare(entry) ? stageTwoOn(entry) : null);
         });
     } else {
         btn.addEventListener('click', () => openModalRef(entry.node.id));

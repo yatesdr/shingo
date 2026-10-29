@@ -80,7 +80,8 @@ func boardFixture() domain.OperatorStationView {
 			Loader: &domain.TileLoader{
 				Role: "consume", Layout: "shared_window", Replenishment: "operator", OutboundDest: "EMPTY-SUPER",
 				Parts: []domain.TileLoaderPart{{Code: "PART-A"}}, Carriers: []string{"TOTE-1"},
-				LeavesBare: true, TakesBare: true, PartialParts: []string{"PART-A"}, PulledDirectly: true,
+				LeavesBare: true, TakesBare: true, StageTwoSide: "consume", PartialParts: []string{"PART-A"},
+				FullParts: []string{"PART-A"}, PulledDirectly: true,
 				Buffer: []domain.BufferSpot{{Node: "SMN_F1", State: domain.SpotPartial}},
 			},
 			// An order with every field set: the station's JSON carries the keys the

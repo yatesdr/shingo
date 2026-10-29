@@ -229,12 +229,12 @@ func TestLoader_AccessorsReturnCopies(t *testing.T) {
 	}
 }
 
-// TestPartialParts_TheLinesThatSourceFromStageTwo: what PARTIAL ON offers at a
-// stage 2 is the parts of the produce claims whose inbound source is one of
-// its windows or a group holding one, in the claims' order, each once. A
-// consume claim, a loader claim and a line sourcing elsewhere add nothing, and
-// a loader that takes no bare carts offers nothing.
-func TestPartialParts_TheLinesThatSourceFromStageTwo(t *testing.T) {
+// TestStageTwoParts_TheLinesThatSourceFromStageTwo: what a stage 2 puts on is
+// for the lines whose inbound source is one of its windows or a group holding
+// one, produce (an empty) or consume (a full), in the claims' order, each part
+// and role once. A loader claim and a line sourcing elsewhere add nothing, and
+// a loader that takes no bare carts offers nothing. The side follows the roles.
+func TestStageTwoParts_TheLinesThatSourceFromStageTwo(t *testing.T) {
 	t.Parallel()
 	windows := []Window{{Node: "S2-W1"}, {Node: "S2-W2"}}
 	s2, err := NewSharedWindowLoader("loader:S2", RoleProduce, ReplenishmentOperator, windows, nil, WithTakesBare(true))
@@ -252,14 +252,36 @@ func TestPartialParts_TheLinesThatSourceFromStageTwo(t *testing.T) {
 		line(protocol.ClaimRoleConsume, protocol.SwapModeSequential, "S2G", "PART-4"),
 		line(protocol.ClaimRoleProduce, protocol.SwapModeManualSwap, "S2G", "PART-5"),
 	}
-	if got := s2.PartialParts(claims, groups); !slices.Equal(got, []string{"PART-1", "PART-2"}) {
-		t.Errorf("PartialParts = %v, want [PART-1 PART-2]", got)
+	parts := s2.StageTwoParts(claims, groups)
+	want := []StageTwoPart{{"PART-1", protocol.ClaimRoleProduce}, {"PART-2", protocol.ClaimRoleProduce},
+		{"PART-4", protocol.ClaimRoleConsume}}
+	if !slices.Equal(parts, want) {
+		t.Errorf("StageTwoParts = %v, want %v", parts, want)
+	}
+	if got := StageTwoPartCodes(parts, ""); !slices.Equal(got, []string{"PART-1", "PART-2", "PART-4"}) {
+		t.Errorf("every part (PARTIAL ON, the LOAD gate) = %v, want [PART-1 PART-2 PART-4]", got)
+	}
+	if got := StageTwoPartCodes(parts, protocol.ClaimRoleConsume); !slices.Equal(got, []string{"PART-4"}) {
+		t.Errorf("the consume parts (FULL ON) = %v, want [PART-4]", got)
+	}
+	for _, c := range []struct {
+		parts []StageTwoPart
+		side  string
+	}{
+		{parts, StageTwoSideMixed},
+		{parts[:2], StageTwoSideProduce},
+		{parts[2:], StageTwoSideConsume},
+		{nil, ""},
+	} {
+		if got := StageTwoSide(c.parts); got != c.side {
+			t.Errorf("StageTwoSide(%v) = %q, want %q", c.parts, got, c.side)
+		}
 	}
 	plain, err := NewSharedWindowLoader("loader:U", RoleConsume, ReplenishmentOperator, windows, nil)
 	if err != nil {
 		t.Fatalf("build unloader: %v", err)
 	}
-	if got := plain.PartialParts(claims, groups); got != nil {
-		t.Errorf("PartialParts at a loader that takes no bare carts = %v, want nil", got)
+	if got := plain.StageTwoParts(claims, groups); got != nil {
+		t.Errorf("StageTwoParts at a loader that takes no bare carts = %v, want nil", got)
 	}
 }

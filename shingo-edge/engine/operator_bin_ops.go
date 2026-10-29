@@ -141,10 +141,10 @@ func (e *Engine) requestEmptyOrigin(node *processes.Node, claim *processes.NodeC
 // bin_loader_homes is UNIQUE on position_node_id, so a node belongs to exactly
 // one loader whatever its role.
 //
-// AT A STAGE-2 WINDOW (TakesBare) the set adds what PARTIAL ON offers there
-// (Loader.PartialParts): the parts of the lines that take their empties from
-// this stage 2, which its own payload set (SPR's is empty) does not list. That
-// costs one statement, the live claims, at a stage-2 window only; no Core read.
+// AT A STAGE-2 WINDOW (TakesBare) the set adds every part the lines that source
+// from this stage 2 take (Loader.StageTwoParts): what PARTIAL ON and FULL ON
+// put on, which its own payload set (SPR's is empty) does not list. That costs
+// one statement, the live claims, at a stage-2 window only; no Core read.
 // Pinned by TestStageTwo_PartialOnLoadsAPartTheLinesSourceFromHere.
 func (e *Engine) loadablePayloads(node *processes.Node, claim *processes.NodeClaim) []string {
 	if l, err := e.loaders().LoaderForNode(domain.NodeID(node.CoreNodeName)); err == nil && l != nil {
@@ -152,7 +152,7 @@ func (e *Engine) loadablePayloads(node *processes.Node, claim *processes.NodeCla
 		// not the loader's other positions' parts; a shared window loads the whole set.
 		codes := l.LoadablePayloadCodesAt(domain.NodeID(node.CoreNodeName))
 		if l.TakesBare() {
-			for _, p := range e.stageTwoPartialParts(l) {
+			for _, p := range domain.StageTwoPartCodes(e.stageTwoParts(l), "") {
 				if !slices.Contains(codes, p) {
 					codes = append(codes, p)
 				}
@@ -165,10 +165,10 @@ func (e *Engine) loadablePayloads(node *processes.Node, claim *processes.NodeCla
 	return claim.AllowedPayloads()
 }
 
-// stageTwoPartialParts is Loader.PartialParts from this Edge's live claims and
-// the node list's group membership: one statement, nil on a read error (the
-// LOAD then refuses the part, rather than load what it could not check).
-func (e *Engine) stageTwoPartialParts(l *domain.Loader) []string {
+// stageTwoParts is Loader.StageTwoParts from this Edge's live claims and the
+// node list's group membership: one statement, nil on a read error (the LOAD
+// then refuses the part, rather than load what it could not check).
+func (e *Engine) stageTwoParts(l *domain.Loader) []domain.StageTwoPart {
 	served, err := processes.ListServedClaims(e.db.DB)
 	if err != nil {
 		log.Printf("bin_ops: read the live claims for %s's partials: %v", l.ID(), err)
@@ -178,7 +178,7 @@ func (e *Engine) stageTwoPartialParts(l *domain.Loader) []string {
 	for i := range served {
 		claims[i] = served[i].Claim
 	}
-	return l.PartialParts(claims, e.CoreNodeGroups())
+	return l.StageTwoParts(claims, e.CoreNodeGroups())
 }
 
 // LoadBin marks a bin at a manual_swap node as loaded with the given manifest.

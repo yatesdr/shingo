@@ -129,17 +129,17 @@ function noTypeOnPanel(p, label) {
     });
 }
 p = open(function () { ctx.confirmUnloadSwap(15, ['TOTE-S', 'TOTE-L'], 0, true); });
-eq(p.texts[0], 'Full bin on the cart', 'stage 1: title');
-eq(p.buttons, ['Full off', 'CANCEL'], 'stage 1: one button, no picker');
-eq(p.texts.indexOf('The cart goes on to Stage 2. The next full is on its way.') >= 0, true,
+eq(p.texts[0], 'Bin on the cart', 'stage 1: title, either side');
+eq(p.buttons, ['BIN OFF', 'CANCEL'], 'stage 1: one button, no picker');
+eq(p.texts.indexOf('The cart goes on to Stage 2.') >= 0, true,
     'stage 1: says where the cart goes');
 noTypeOnPanel(p, 'stage 1');
-eq(p.click('Full off'), [{ url: '/api/process-nodes/15/clear-bin', body: undefined }],
+eq(p.click('BIN OFF'), [{ url: '/api/process-nodes/15/clear-bin', body: undefined }],
     'stage 1: blank code (no body) — Core stamps the cart');
 p = open(function () { ctx.confirmUnloadSwap(16, ['RACK-C'], 5, true); });
-eq(p.buttons, ['Full off', 'CANCEL'], 'stage 1: a single-type node does not auto-fill its type either');
+eq(p.buttons, ['BIN OFF', 'CANCEL'], 'stage 1: a single-type node does not auto-fill its type either');
 noTypeOnPanel(p, 'stage 1 single-type');
-eq(p.click('Full off'), [{ url: '/api/process-nodes/16/clear-bin', body: undefined }],
+eq(p.click('BIN OFF'), [{ url: '/api/process-nodes/16/clear-bin', body: undefined }],
     'stage 1: still a blank code');
 eq(p.texts.indexOf('This slot still counts 5. Confirming writes it to zero.') >= 0, true,
     'stage 1: the discard count is still stated');
@@ -209,8 +209,8 @@ p = open(function () { ctx.confirmUnloadSwap(32, ['TOTE-S'], 0, false, null); })
 eq(p.buttons, ['TOTE-S', 'TOTE-S · 3 high', 'CANCEL'], 'heights: one type\'s heights replace CONFIRM SWAP');
 // Stage 1 leaves the cart bare: no heights, no layers.
 p = open(function () { ctx.confirmUnloadSwap(33, ['TOTE-S'], 0, true, null); });
-eq(p.buttons, ['Full off', 'CANCEL'], 'heights: stage 1 offers no height');
-eq(p.click('Full off'), [{ url: '/api/process-nodes/33/clear-bin', body: undefined }], 'heights: Full off posts no layers');
+eq(p.buttons, ['BIN OFF', 'CANCEL'], 'heights: stage 1 offers no height');
+eq(p.click('BIN OFF'), [{ url: '/api/process-nodes/33/clear-bin', body: undefined }], 'heights: BIN OFF posts no layers');
 // The empty-cart panel: PUSH EMPTY unchanged, PUSH AS by height.
 p = open(function () { ctx.confirmPushEmpty(34, ['TOTE-S', 'RACK-C'], false, { bin_type: 'TOTE-S', layers: 3 }); });
 eq(p.buttons, ['PUSH EMPTY', 'PUSH AS TOTE-S', 'PUSH AS TOTE-S · 3 high', 'PUSH AS RACK-C', 'CANCEL'],

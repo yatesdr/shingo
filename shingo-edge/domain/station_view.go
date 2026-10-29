@@ -472,12 +472,16 @@ type TileLoader struct {
 	// TakesBare): the board draws it as an unloader's window whatever Role
 	// says, and offers nothing that asks a carrier into it.
 	TakesBare bool `json:"takes_bare"`
-	// PartialParts is what a stage-2 window's PARTIAL ON offers
-	// (Loader.PartialParts): the parts of the lines that take their empties
-	// from this stage 2. Stamped by the served pass (StationService.servedRows)
-	// from the claims it reads; absent on any other tile, and when no line
-	// sources from here.
+	// The stage-2 bare cart's card, from Loader.StageTwoParts: the lines that
+	// source from this stage 2. StageTwoSide says which they are (produce,
+	// consume, mixed) and so which of EMPTY ON and FULL ON the card offers;
+	// PartialParts is every part they take (PARTIAL ON), FullParts the consume
+	// lines' (FULL ON, the count defaulting to the pack). Stamped by the served
+	// pass (StationService.servedRows) from the claims it reads; absent on any
+	// other tile, and when no line sources from here.
+	StageTwoSide string   `json:"stage_two_side,omitempty"`
 	PartialParts []string `json:"partial_parts,omitempty"`
+	FullParts    []string `json:"full_parts,omitempty"`
 	// PulledDirectly marks a stage-2 window whose finished carts the process
 	// pulls straight off it.
 	PulledDirectly bool `json:"pulled_directly"`

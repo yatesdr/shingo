@@ -333,6 +333,11 @@ func TestStageTwoPin_G14G15G16_TheBoard(t *testing.T) {
 		if tile.Loader != nil && strings.Join(tile.Loader.PartialParts, ",") != s2Part {
 			t.Errorf("%s's partial parts = %v, want [%s]", tile.Node.CoreNodeName, tile.Loader.PartialParts, s2Part)
 		}
+		// The lines here make the part: a produce side, so no FULL ON.
+		if tile.Loader != nil && (tile.Loader.StageTwoSide != domain.StageTwoSideProduce || len(tile.Loader.FullParts) != 0) {
+			t.Errorf("%s's side %q full parts %v, want produce and none", tile.Node.CoreNodeName,
+				tile.Loader.StageTwoSide, tile.Loader.FullParts)
+		}
 	}
 	list := strings.Join(r.eng.stationService.BinNodes(r.sid), ",")
 	if !strings.Contains(list, "S2-OUT-M1") || !strings.Contains(list, "S2-OUT-M2") {

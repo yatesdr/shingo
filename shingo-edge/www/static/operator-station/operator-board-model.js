@@ -44,12 +44,23 @@ export function takesBare(tile) {
     return !!loader && !!loader.takes_bare;
 }
 
-// partialParts is what a stage-2 window's PARTIAL ON offers
-// (tile.loader.partial_parts): the parts of the lines that take their empties
-// from this stage 2, from the server's served pass. Empty when none does.
-export function partialParts(tile) {
-    const loader = loaderOf(tile);
-    return (loader && loader.partial_parts) || [];
+// stageTwoOn is a stage-2 bare cart's card, the one place its words are
+// decided: what goes on the cart, from the side the lines that source from
+// this stage 2 are on (tile.loader.stage_two_side, the server's served pass).
+// A produce line takes an empty (EMPTY ON), a consume line a full (FULL ON, the
+// count defaulting to the pack); a partial goes on for either (PARTIAL ON, the
+// count typed). With no line sourcing from here, EMPTY ON alone.
+export function stageTwoOn(tile) {
+    const loader = loaderOf(tile) || {};
+    const side = loader.stage_two_side || '';
+    const partial = loader.partial_parts || [];
+    const full = side === 'consume' || side === 'mixed' ? (loader.full_parts || []) : [];
+    const empty = side !== 'consume';
+    let copy = 'Put an empty on.';
+    if (side === 'consume') copy = 'Put a full on — count defaults to the pack. Or a partial — type the count.';
+    else if (side === 'mixed') copy = 'Put an empty or a full on — a full\'s count defaults to the pack. Or a partial — type the count.';
+    else if (partial.length) copy = 'Put an empty on, or a partial — type the count.';
+    return { side: side, empty: empty, full: full, partial: partial, copy: copy };
 }
 
 // partCodes is the parts a loader tile can load, in the loader's order.
@@ -418,7 +429,7 @@ export function staleSign(view, link, clock) {
 // (operator-loader-station.test.js pins every post).
 //
 //   load              the load modal for the parts (openLoadBin)
-//   unload            the CLEAR panel (confirmUnloadSwap; Full off at stage 1)
+//   unload            the CLEAR panel (confirmUnloadSwap; BIN OFF at stage 1)
 //   unload-held       a held partial's panel (confirmUnloadHeld; PARTIAL OFF ·
 //                     EMPTY ON at a stage 2)
 //   push-empty        the empty-cart panel (confirmPushEmpty; Send on when bare,
@@ -770,10 +781,10 @@ function windowAct(tile, kind, lit) {
     const bin = tile.bin_state || {};
     if (kind === 'grid') {
         if (bin.payload_code) return unloadAct(tile, lit);
-        // A bare cart at a stage-2 window (takesBare) carries what PARTIAL ON
-        // offers beside EMPTY ON (partials); anywhere else partials is null.
+        // A bare cart at a stage-2 window (takesBare) carries its card
+        // (stageTwo, stageTwoOn); anywhere else stageTwo is null.
         return { kind: 'push-empty', node: tile.node.id, carriers: carriersOf(tile), bare: !!bin.bare, lit: lit,
-            partials: bin.bare && takesBare(tile) ? partialParts(tile) : null };
+            stageTwo: bin.bare && takesBare(tile) ? stageTwoOn(tile) : null };
     }
     const codes = bin.payload_code ? [bin.payload_code] : partCodes(tile);
     if (codes.some(function (c) { return partAct(tile, c) === 'unload'; })) return unloadAct(tile, lit);

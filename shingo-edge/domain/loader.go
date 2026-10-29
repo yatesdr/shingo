@@ -478,18 +478,34 @@ func (l *Loader) LoadablePayloadCodesAt(coreNode NodeID) []string {
 	return l.loadablePayloadCodes()
 }
 
-// PartialParts is what a person may put on a bare cart as a partial at a
-// window of this stage 2 (PARTIAL ON): the parts of the produce claims given
-// (the Edge's live claims) whose inbound source names one of this loader's
-// windows, or a group holding one — the lines that take their empties from
-// here. groups is Core's group membership as the node list carried it (group
-// name to member names). In the claims' order, each part once; nil at a loader
-// that does not take bare carts. A loader claim is no line and is skipped.
+// StageTwoPart is a part a line takes from a stage 2, and that line's role. A
+// pair serves either side the same way: stage 1 takes off what comes back from
+// the line, stage 2 puts on what the line needs, an empty for a produce line
+// (Role produce) and a full for a consume line (Role consume).
+type StageTwoPart struct {
+	Part string
+	Role protocol.ClaimRole
+}
+
+// Stage 2's sides (StageTwoSide): which of EMPTY ON and FULL ON its bare-cart
+// card offers beside PARTIAL ON.
+const (
+	StageTwoSideProduce = "produce"
+	StageTwoSideConsume = "consume"
+	StageTwoSideMixed   = "mixed"
+)
+
+// StageTwoParts is what the lines take from this stage 2: the parts of the
+// claims given (the Edge's live claims), produce or consume, whose inbound
+// source names one of this loader's windows, or a group holding one. groups is
+// Core's group membership as the node list carried it (group name to member
+// names). In the claims' order, each part and role once; nil at a loader that
+// does not take bare carts. A loader claim is no line and is skipped.
 //
 // No wire field and no Core read: both callers hold the claims and the groups
 // already (the station view's served pass, and the LOAD's gate). Pinned by
-// TestPartialParts_TheLinesThatSourceFromStageTwo.
-func (l *Loader) PartialParts(claims []NodeClaim, groups map[string][]string) []string {
+// TestStageTwoParts_TheLinesThatSourceFromStageTwo.
+func (l *Loader) StageTwoParts(claims []NodeClaim, groups map[string][]string) []StageTwoPart {
 	if !l.takesBare {
 		return nil
 	}
@@ -505,18 +521,57 @@ func (l *Loader) PartialParts(claims []NodeClaim, groups map[string][]string) []
 			}
 		}
 	}
-	var out []string
-	seen := map[string]bool{}
+	var out []StageTwoPart
+	seen := map[StageTwoPart]bool{}
 	for i := range claims {
 		c := &claims[i]
-		if c.Role != protocol.ClaimRoleProduce || c.IsLoaderNode() || !places[strings.TrimSpace(c.InboundSource)] {
+		if c.IsLoaderNode() || !places[strings.TrimSpace(c.InboundSource)] {
 			continue
 		}
+		role := protocol.ClaimRoleConsume
+		if c.Role == protocol.ClaimRoleProduce {
+			role = protocol.ClaimRoleProduce
+		}
 		for _, p := range c.AllowedPayloads() {
-			if p != "" && !seen[p] {
-				seen[p] = true
-				out = append(out, p)
+			if sp := (StageTwoPart{Part: p, Role: role}); p != "" && !seen[sp] {
+				seen[sp] = true
+				out = append(out, sp)
 			}
+		}
+	}
+	return out
+}
+
+// StageTwoSide is which lines a stage 2 serves, from its StageTwoParts: all
+// produce, all consume, mixed, or "" when no line sources from it.
+func StageTwoSide(parts []StageTwoPart) string {
+	var produce, consume bool
+	for _, p := range parts {
+		if p.Role == protocol.ClaimRoleProduce {
+			produce = true
+		} else {
+			consume = true
+		}
+	}
+	switch {
+	case produce && consume:
+		return StageTwoSideMixed
+	case consume:
+		return StageTwoSideConsume
+	case produce:
+		return StageTwoSideProduce
+	}
+	return ""
+}
+
+// StageTwoPartCodes is the parts of parts, each once, in order; of only role
+// when role is set. All of them are what PARTIAL ON offers and the LOAD's gate
+// accepts at a stage 2; the consume ones are what FULL ON offers.
+func StageTwoPartCodes(parts []StageTwoPart, role protocol.ClaimRole) []string {
+	var out []string
+	for _, p := range parts {
+		if (role == "" || p.Role == role) && !slices.Contains(out, p.Part) {
+			out = append(out, p.Part)
 		}
 	}
 	return out

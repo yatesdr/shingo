@@ -31,7 +31,7 @@ import (
 // asked). While a served cell has an incoming style, one more: Core's sourcing
 // verdicts. Pinned by TestServedRows_StatementBudget.
 //
-// A stage-2 tile's PARTIAL ON parts (stampPartialParts) come from the same
+// A stage-2 tile's bare-cart card (stampStageTwoCard) comes from the same
 // claims read: no statement more, and no read of Core.
 func (s *StationService) servedRows(tiles []store.StationNodeView) []domain.ServedRow {
 	parts, roles := boardServes(tiles)
@@ -44,7 +44,7 @@ func (s *StationService) servedRows(tiles []store.StationNodeView) []domain.Serv
 		return nil
 	}
 	claims = slices.DeleteFunc(claims, func(c processes.ServedClaim) bool { return s.isLoaderClaim(c.Claim) })
-	s.stampPartialParts(tiles, claims)
+	s.stampStageTwoCard(tiles, claims)
 	if len(claims) == 0 {
 		return []domain.ServedRow{}
 	}
@@ -69,15 +69,16 @@ func (s *StationService) servedRows(tiles []store.StationNodeView) []domain.Serv
 	return rows
 }
 
-// stampPartialParts sets each stage-2 tile's PartialParts (Loader.PartialParts):
-// the parts of the live produce claims whose inbound source is one of the
-// loader's windows or a group holding one, from the served pass's claims and
-// the node list's group membership (GroupMembers, read once, and only on a
-// board with a stage-2 tile), once per loader. Nothing on any other tile.
-func (s *StationService) stampPartialParts(tiles []store.StationNodeView, served []processes.ServedClaim) {
+// stampStageTwoCard sets each stage-2 tile's bare-cart card (StageTwoSide,
+// PartialParts, FullParts, from Loader.StageTwoParts): the live claims whose
+// inbound source is one of the loader's windows or a group holding one, from
+// the served pass's claims and the node list's group membership (GroupMembers,
+// read once, and only on a board with a stage-2 tile), once per loader.
+// Nothing on any other tile.
+func (s *StationService) stampStageTwoCard(tiles []store.StationNodeView, served []processes.ServedClaim) {
 	var groups map[string][]string
 	var claims []processes.NodeClaim
-	byLoader := map[domain.LoaderID][]string{}
+	byLoader := map[domain.LoaderID][]domain.StageTwoPart{}
 	for i := range tiles {
 		t := &tiles[i]
 		if t.Loader == nil || !t.Loader.TakesBare || s.loaders == nil {
@@ -96,10 +97,12 @@ func (s *StationService) stampPartialParts(tiles []store.StationNodeView, served
 					claims[j] = served[j].Claim
 				}
 			}
-			parts = l.PartialParts(claims, groups)
+			parts = l.StageTwoParts(claims, groups)
 			byLoader[l.ID()] = parts
 		}
-		t.Loader.PartialParts = parts
+		t.Loader.StageTwoSide = domain.StageTwoSide(parts)
+		t.Loader.PartialParts = domain.StageTwoPartCodes(parts, "")
+		t.Loader.FullParts = domain.StageTwoPartCodes(parts, protocol.ClaimRoleConsume)
 	}
 }
 

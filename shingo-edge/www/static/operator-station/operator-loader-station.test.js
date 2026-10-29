@@ -819,9 +819,9 @@ const loadBody = { payload_code: 'PART-A', uop_count: 24,
     eq(part(pcCard('TOTE-1', 'ST2_A2'), 'os-pc-why'), 'The cart waits here for the line',
         'stage 2 pulled directly: the empty cart waits for the line');
     await tap(pcCard('TOTE-1', 'ST1_A1'));
-    eq(overlayButtons(), ['Full off', 'CANCEL'], 'stage 1 full: one tap, Full off');
-    await tapOverlay('Full off');
-    eq(posts(), [{ method: 'POST', url: '/api/process-nodes/1/clear-bin', body: {} }], 'Full off posts clear-bin with no type');
+    eq(overlayButtons(), ['BIN OFF', 'CANCEL'], 'stage 1 full: one tap, BIN OFF');
+    await tapOverlay('BIN OFF');
+    eq(posts(), [{ method: 'POST', url: '/api/process-nodes/1/clear-bin', body: {} }], 'BIN OFF posts clear-bin with no type');
     render();
     await tap(pcCards().find(c => cardText(c)[0] === 'ST2_A1'));
     eq(overlayButtons(), ['Send on', 'CANCEL'], 'stage 2 bare cart: one tap, Send on');
@@ -1252,6 +1252,10 @@ const loadBody = { payload_code: 'PART-A', uop_count: 24,
         t.loader.takes_bare = true;
         t.loader.carriers = carriersFor(t.loader.parts.map(p => p.code));
         if (o && o.partial_parts) t.loader.partial_parts = o.partial_parts;
+        if (o && o.full_parts) t.loader.full_parts = o.full_parts;
+        // The server's side for the lines that source from here (produce
+        // lines when only partial_parts is given, as SPR's pair).
+        if (o && (o.stage_two_side || o.partial_parts)) t.loader.stage_two_side = o.stage_two_side || 'produce';
         return t;
     };
     const BARE = { occupied: true, payload_code: '', stocked: false, bare: true, bin_label: 'CART-1', bin_type_code: 'TOTE-1' };
@@ -1304,6 +1308,33 @@ const loadBody = { payload_code: 'PART-A', uop_count: 24,
     render();
     await tap(pcCards().find(c => cardText(c)[0] === 'ST2_B1'));
     eq(overlayButtons(), ['EMPTY ON', 'CANCEL'], 'stage 2, a bare cart, no line sources from here: EMPTY ON alone');
+
+    // A consume side (owner 2026-10-29): the lines that source from here take
+    // fulls, so what goes on a bare cart is a full (FULL ON, the LOAD door with
+    // the count at the pack) or a partial; never an empty.
+    const consumeSide = stageTwoTile(2, 'ST2_B1', { pulled_directly: true, bin: BARE, stage_two_side: 'consume',
+        partial_parts: ['PART-K'], full_parts: ['PART-K'] });
+    setView([stage1, consumeSide, held]);
+    render();
+    await tap(pcCards().find(c => cardText(c)[0] === 'ST2_B1'));
+    eq([overlayTexts().slice(0, 2), overlayButtons()],
+        [['Cart, no bin', 'Put a full on — count defaults to the pack. Or a partial — type the count.'],
+            ['FULL ON', 'PARTIAL ON', 'CANCEL']],
+        'stage 2 on a consume side, a bare cart: FULL ON or PARTIAL ON, no EMPTY ON');
+    loadOpens = [];
+    await tapOverlay('FULL ON');
+    eq(loadOpens, [{ node: 2, codes: ['PART-K'], cap: 0 }], 'FULL ON opens the load modal for the cells\' parts');
+    await confirmLoad();
+    eq(posts(), [{ method: 'POST', url: '/api/process-nodes/2/load-bin', body: { payload_code: 'PART-K', uop_count: 132,
+        manifest: [{ part_number: 'PN-K1', quantity: 132, description: 'right' }] } }],
+    'FULL ON posts load-bin at the pack, nothing typed');
+
+    // Both sides source from here: EMPTY ON, FULL ON and PARTIAL ON.
+    setView([stage1, stageTwoTile(2, 'ST2_B1', { pulled_directly: true, bin: BARE, stage_two_side: 'mixed',
+        partial_parts: ['PART-K', 'PART-A'], full_parts: ['PART-A'] }), held]);
+    render();
+    await tap(pcCards().find(c => cardText(c)[0] === 'ST2_B1'));
+    eq(overlayButtons(), ['EMPTY ON', 'FULL ON', 'PARTIAL ON', 'CANCEL'], 'stage 2 serving both sides: all three');
     setView([stage1, bare, held]);
 
     render();

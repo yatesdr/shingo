@@ -12,6 +12,7 @@ import (
 	"shingo/protocol/clock"
 	"shingo/protocol/lockcheck"
 	"shingoedge/config"
+	"shingoedge/domain"
 	"shingoedge/internal/lockorder"
 	"shingoedge/release"
 	storeorders "shingoedge/store/orders"
@@ -1150,6 +1151,10 @@ func (op *simOperator) classifyFromClaim(nodeID int64) (time.Duration, string, f
 		return 0, "", nil, false
 	}
 	switch {
+	case claim.TakesBare && op.fullOnPart(node.CoreNodeName) != "": // a consume side's stage 2: a bare cart → FULL ON
+		c := *claim
+		c.PayloadCode = op.fullOnPart(node.CoreNodeName)
+		return op.unloaderDelay(), "full on", func() error { return op.loadBin(nodeID, &c) }, true
 	case claim.ActsAsUnloader(): // unloader: full bin arrived → CLEAR it; at a stage 2 a bare cart → Send on
 		return op.unloaderDelay(), "clear", func() error { return op.e.ClearBin(nodeID, "", false, nil) }, true
 	case claim.Role == protocol.ClaimRoleProduce: // loader: empty bin arrived → LOAD it
@@ -1157,6 +1162,22 @@ func (op *simOperator) classifyFromClaim(nodeID int64) (time.Duration, string, f
 		return op.loaderDelay(), "load", func() error { return op.loadBin(nodeID, c) }, true
 	}
 	return 0, "", nil, false
+}
+
+// fullOnPart is the part a consume side's stage 2 puts on a bare cart (FULL
+// ON): the first consume part of the lines that source from it
+// (Loader.StageTwoParts). "" at any other window, and at a stage 2 serving a
+// produce line or both, where a bare cart gets the empty (Send on).
+func (op *simOperator) fullOnPart(coreNode string) string {
+	l, err := op.e.loaders().LoaderForNode(domain.NodeID(coreNode))
+	if err != nil || l == nil || !l.TakesBare() {
+		return ""
+	}
+	parts := op.e.stageTwoParts(l)
+	if domain.StageTwoSide(parts) != domain.StageTwoSideConsume {
+		return ""
+	}
+	return domain.StageTwoPartCodes(parts, protocol.ClaimRoleConsume)[0]
 }
 
 // loadBin synthesizes a single-item manifest from the claim's payload + capacity
