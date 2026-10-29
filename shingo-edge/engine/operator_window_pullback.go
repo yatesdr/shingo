@@ -34,7 +34,8 @@ type MarketBinInfo struct {
 }
 
 // FetchMarketBins returns the bins currently sitting in the outbound
-// supermarket for the given produce loader node. Used by the HMI picker to
+// supermarket for the given produce loader node (never a stage 2, TakesBare:
+// nothing is pulled into one). Used by the HMI picker to
 // let the operator choose which bin to pull back.
 //
 // Steps:
@@ -53,6 +54,9 @@ func (e *Engine) FetchMarketBins(nodeID int64) ([]MarketBinInfo, error) {
 	}
 	if claim.Role != protocol.ClaimRoleProduce {
 		return nil, fmt.Errorf("node %s is not a produce node", node.Name)
+	}
+	if claim.TakesBare {
+		return nil, errStageTwoAsksNothing(node.Name)
 	}
 	if claim.OutboundDestination == "" {
 		return nil, fmt.Errorf("node %s has no outbound_destination configured", node.Name)
@@ -88,7 +92,8 @@ func (e *Engine) FetchMarketBins(nodeID int64) ([]MarketBinInfo, error) {
 
 // PullFromMarket creates a single move order to pull a bin from a market slot
 // back to the loader window. The source must be a direct child of the loader's
-// outbound_destination and must hold a bin.
+// outbound_destination and must hold a bin. A stage-2 window (TakesBare) is
+// refused.
 func (e *Engine) PullFromMarket(nodeID int64, sourceCoreName string) error {
 	node, _, claim, err := e.loadActiveNode(nodeID)
 	if err != nil {
@@ -99,6 +104,9 @@ func (e *Engine) PullFromMarket(nodeID int64, sourceCoreName string) error {
 	}
 	if claim.Role != protocol.ClaimRoleProduce {
 		return fmt.Errorf("node %s is not a produce node", node.Name)
+	}
+	if claim.TakesBare {
+		return errStageTwoAsksNothing(node.Name)
 	}
 	if claim.OutboundDestination == "" {
 		return fmt.Errorf("node %s has no outbound_destination configured", node.Name)

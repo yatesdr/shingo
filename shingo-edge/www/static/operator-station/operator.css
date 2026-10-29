@@ -269,6 +269,9 @@ body {
    (ui-style-guide, Buttons > Touch sizing) by scope, not a parallel button
    class. Scoped to these panels only; the older pickers are not in this change. */
 .os-co-picker--one-tap .os-co-picker-btn { min-height: var(--os-touch-min, 56px); }
+/* A secondary act beside the one a panel is for (COUNT beside a stage 2's
+   PARTIAL OFF · EMPTY ON): still at the touch floor, quieter than the primary. */
+.os-co-picker-btn.os-co-picker-btn--secondary { background: #3a3f4e; color: #fff; font-size: 14px; font-weight: 600; }
 
 /* An annotation line under a button's label (the supply refusal's payload
    note): smaller and slightly translucent, so it reads as a note rather than

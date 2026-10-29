@@ -14,7 +14,7 @@ import { openKeypad } from './operator-keypad.js';
 import { openReleasePrompt, closeReleasePrompt } from './operator-release.js';
 import { isActive, isPreDispatch } from './order-status.js';
 import { emptyCarrierHeld, isOwnEmptyOut } from './operator-window-state.js';
-import { loaderOf, partCodes, carriersOf, binsKnown, clearHighlight } from './operator-board-model.js';
+import { loaderOf, tileRole, takesBare, partCodes, carriersOf, binsKnown, clearHighlight } from './operator-board-model.js';
 import { confirmUnloadSwap } from './operator-render.js';
 
 const nodeModal = document.getElementById('node-modal');
@@ -158,7 +158,7 @@ export function renderModal(entry) {
         const binState = entry.bin_state;
         const binLabel = binState && binState.bin_label ? binState.bin_label : 'No bin';
         const binPayload = binState && binState.payload_code ? binState.payload_code : '';
-        const roleLabel = loader.role === 'produce' ? 'Loader' : 'Unloader';
+        const roleLabel = tileRole(entry) === 'produce' ? 'Loader' : 'Unloader';
         html += '<div class="modal-payload">' + roleLabel + ' - Bin: ' + esc(binLabel) + (binPayload ? ' (' + esc(binPayload) + ')' : '') + '</div>';
         html += '<div class="modal-fill-row">';
         html += '<div class="modal-fill-text" style="font-size:18px;font-weight:600">' + (remaining > 0 ? 'LOADED (' + remaining + ' UoP)' : 'EMPTY') + '</div>';
@@ -336,7 +336,7 @@ export function renderModal(entry) {
             //
             // Not while an unfinished order holds that empty (a home's clear):
             // Core would refuse the LOAD (emptyCarrierHeld).
-            const parkedEmptyAtLoader = loader.role === 'produce' &&
+            const parkedEmptyAtLoader = tileRole(entry) === 'produce' &&
                 hasBin && binState && !binState.payload_code && !emptyCarrierHeld(entry);
 
             // Symmetric unloader case: full bin parked at unloader, U1 was
@@ -345,18 +345,18 @@ export function renderModal(entry) {
             // downstream — but the matching payload card should signal "this
             // is here, ready" instead of leaving the operator to think the
             // demand is unmet.
-            const parkedFullPayload = (loader.role === 'consume' && hasBin && binState && binState.payload_code)
+            const parkedFullPayload = (tileRole(entry) === 'consume' && hasBin && binState && binState.payload_code)
                 ? binState.payload_code : null;
 
             html += '<div class="os-demand-queue">';
             html += '<div style="font-size:13px;color:#999;margin-bottom:8px;text-transform:uppercase;letter-spacing:1px">';
-            html += loader.role === 'produce' ? 'Load Queue' : 'Unload Queue';
+            html += tileRole(entry) === 'produce' ? 'Load Queue' : 'Unload Queue';
             html += '</div>';
 
             if (delivered) {
                 html += '<div style="background:#1a3a1a;border:1px solid #2a5a2a;border-radius:6px;padding:10px;margin-bottom:10px;display:flex;align-items:center;gap:8px">';
                 html += '<span style="font-size:14px;font-weight:700;color:#6f6">[READY]</span>';
-                html += '<span style="color:#6f6;font-weight:600">Bin delivered - ready for ' + (loader.role === 'produce' ? 'loading' : 'unloading') + '</span>';
+                html += '<span style="color:#6f6;font-weight:600">Bin delivered - ready for ' + (tileRole(entry) === 'produce' ? 'loading' : 'unloading') + '</span>';
                 html += '</div>';
             } else if (inTransit) {
                 html += '<div style="background:#2a2a1a;border:1px solid #5a5a2a;border-radius:6px;padding:10px;margin-bottom:10px;display:flex;align-items:center;gap:8px">';
@@ -457,12 +457,15 @@ export function renderModal(entry) {
                 var idleNoDemand = !hasBin && !payloadOrders.length && !hasDemand;
                 // NOT WHILE THE BINS ARE NOT KNOWN: "no bin" is then nobody's
                 // finding, and a request would be made for a window that may
-                // hold one (a bug fixed; operator-refresh.test.js).
-                var canRequest = idleNoDemand && binsKnown(getView());
+                // hold one (a bug fixed; operator-refresh.test.js). NOR AT A
+                // STAGE 2 (takesBare): stage 1 brings its carts, and nothing is
+                // asked into it (a bug fixed: one listing a part offered TAP TO
+                // REQUEST FULL; operator-loader-station.test.js section 17).
+                var canRequest = idleNoDemand && binsKnown(getView()) && !takesBare(entry);
                 var clickable = !!payloadDelivered || parkedEmptyAtLoader || canRequest;
                 var requestUrl = '';
                 if (canRequest) {
-                    requestUrl = loader.role === 'produce'
+                    requestUrl = tileRole(entry) === 'produce'
                         ? '/api/process-nodes/' + entry.node.id + '/request-empty|' + code
                         : '/api/process-nodes/' + entry.node.id + '/request-full|' + code;
                 }
@@ -525,7 +528,7 @@ export function renderModal(entry) {
                 } else if (isActive) {
                     html += 'active demand';
                 } else if (canRequest) {
-                    html += loader.role === 'produce' ? 'TAP TO REQUEST EMPTY' : 'TAP TO REQUEST FULL';
+                    html += tileRole(entry) === 'produce' ? 'TAP TO REQUEST EMPTY' : 'TAP TO REQUEST FULL';
                 } else {
                     html += 'no demand';
                 }
@@ -559,7 +562,7 @@ export function renderModal(entry) {
             // clear-bin with no type, around the panel); a loader's posts as it
             // always did.
             if (loaderOffersClear(binState, remaining)) {
-                html += loader.role === 'consume'
+                html += tileRole(entry) === 'consume'
                     ? actionBtn('CLEAR BIN', 'empty-tools', true, 'unload-panel:' + entry.node.id)
                     : actionBtn('CLEAR BIN', 'empty-tools', true,
                         '/api/process-nodes/' + entry.node.id + '/clear-bin');

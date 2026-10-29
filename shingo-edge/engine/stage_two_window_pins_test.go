@@ -220,29 +220,32 @@ func TestStageTwoPin_G3_PushEmpty(t *testing.T) {
 	}
 }
 
-// G4 and its inverse: what a request at a stage-2 window asks Core for. An
-// empty: nothing, refused. A full of a part stage 2 lists (pull mode): one ask,
-// and Core's order into the window.
+// G4 and its inverse: a request at a stage-2 window asks Core for nothing,
+// an empty or a full of a part stage 2 lists (pull mode).
+//
+// CHANGED (a flat bug): the full used to be asked. A consume stage 2 listing
+// a part ordered a full into a window stage 1 feeds; at 5b983220 this pinned
+// one ask and Core's order. Refused now, by the produce role and, for a stage
+// 2 still sent as consume, by TakesBare.
 func TestStageTwoPin_G4_RequestsAtAStageTwoWindow(t *testing.T) {
 	t.Parallel()
-	r := newStageTwoRig(t, stageTwoMode('c'))
+	pair := stageTwoMode('c')
+	r := newStageTwoRig(t, pair)
 	before := r.asks.asks.Load()
 	if _, err := r.eng.RequestEmptyBin(r.nodes[s2W1], ""); err == nil {
 		t.Error("RequestEmptyBin at a stage-2 window succeeded; want it refused")
 	}
+	if o, err := r.eng.RequestFullBin(r.nodes[s2W1], s2Part); err == nil {
+		t.Errorf("RequestFullBin at a stage-2 window = %+v; want it refused", o)
+	}
+	stillConsume := pair.Stage2()
+	stillConsume.Role = string(protocol.ClaimRoleConsume)
+	r.eng.SetCoreLoaders([]protocol.LoaderInfo{stillConsume, pair.Stage1()})
+	if o, err := r.eng.RequestFullBin(r.nodes[s2W1], s2Part); err == nil || !strings.Contains(err.Error(), "stage 2") {
+		t.Errorf("RequestFullBin at a consume stage 2 = %+v, %v; want the stage-2 refusal", o, err)
+	}
 	if n := r.asks.asks.Load() - before; n != 0 {
-		t.Errorf("asks on REQUEST EMPTY = %d, want 0", n)
-	}
-
-	o, err := r.eng.RequestFullBin(r.nodes[s2W1], s2Part)
-	if err != nil || o == nil {
-		t.Fatalf("RequestFullBin at a stage-2 window = %v, %v; want today's order", o, err)
-	}
-	if n := r.asks.asks.Load() - before; n != 1 {
-		t.Errorf("asks on REQUEST FULL = %d, want 1", n)
-	}
-	if ask := r.asks.lastAsk(); ask.Direction != protocol.LoaderRetrieveFull || ask.LoaderKey != stageTwoMode('c').Stage2Key() {
-		t.Errorf("the ask = %+v, want a full at stage 2", ask)
+		t.Errorf("asks on the requests = %d (last %+v), want 0", n, r.asks.lastAsk())
 	}
 }
 
@@ -293,14 +296,18 @@ func TestStageTwoPin_G8_TheLandingAsksNoEmpty(t *testing.T) {
 	}
 }
 
-// G12: with both halves serving a part, the unloader found for it.
+// G12: with both halves serving a part, the unloader found for it is stage 1.
+//
+// CHANGED (better): it was stage 2, which sorts first and shadowed stage 1 for
+// a release's full-in (pinned so at 5b983220). A produce stage 2 is not a
+// consume loader, and the full-in paths stay on role consume.
 func TestStageTwoPin_G12_TheUnloaderForAPart(t *testing.T) {
 	t.Parallel()
 	pair := stageTwoMode('c')
 	r := newStageTwoRig(t, pair)
 	l, err := r.eng.loaders().LoaderForPayload(s2Part, domain.RoleConsume)
-	if err != nil || l == nil || string(l.ID()) != pair.Stage2Key() {
-		t.Errorf("LoaderForPayload(%s, consume) = %v (err %v), want stage 2 %s", s2Part, l, err, pair.Stage2Key())
+	if err != nil || l == nil || string(l.ID()) != pair.Stage1Key() {
+		t.Errorf("LoaderForPayload(%s, consume) = %v (err %v), want stage 1 %s", s2Part, l, err, pair.Stage1Key())
 	}
 }
 
@@ -320,6 +327,11 @@ func TestStageTwoPin_G14G15G16_TheBoard(t *testing.T) {
 		}
 		if tile.Loader == nil || strings.Join(tile.Loader.Carriers, ",") != "TOTE-1,TOTE-2" {
 			t.Errorf("G14: %s's loader = %+v, want carriers TOTE-1,TOTE-2", tile.Node.CoreNodeName, tile.Loader)
+		}
+		// PARTIAL ON's parts: the cell making the part takes its empties from
+		// the pair group, so its part is offered (ruling 4, 2026-10-29).
+		if tile.Loader != nil && strings.Join(tile.Loader.PartialParts, ",") != s2Part {
+			t.Errorf("%s's partial parts = %v, want [%s]", tile.Node.CoreNodeName, tile.Loader.PartialParts, s2Part)
 		}
 	}
 	list := strings.Join(r.eng.stationService.BinNodes(r.sid), ",")
@@ -356,5 +368,45 @@ func TestStageTwoPin_TheLoadPostsThePartAndTheCount(t *testing.T) {
 	defer core.mu.Unlock()
 	if len(core.loads) != 1 || core.loads[0].PayloadCode != "PART-SC" || core.loads[0].UOPCount == nil || *core.loads[0].UOPCount != 37 {
 		t.Errorf("bin-load requests = %+v, want one of PART-SC at 37", core.loads)
+	}
+}
+
+// TestStageTwo_PartialOnLoadsAPartTheLinesSourceFromHere is ruling 4's PARTIAL ON
+// (2026-10-29): a LOAD on a bare cart at a stage-2 window takes a part a line
+// sources from the pair group, which the stage's own payload set (none) does
+// not list, and posts the typed count. A part no line sources from here is
+// refused. The cart's send-out is the CLEAR's: none where the stage is pulled
+// directly, else one move off the window to its outbound, naming no part and
+// the cart Core loaded.
+func TestStageTwo_PartialOnLoadsAPartTheLinesSourceFromHere(t *testing.T) {
+	t.Parallel()
+	typed := int64(37)
+	manifest := []protocol.IngestManifestItem{{PartNumber: "PN-K", Quantity: 37}}
+
+	a := newStageTwoRig(t, stageTwoMode('a'))
+	a.cells(t, s2Part, s2Group)
+	a.core.set(s2W1, true, "")
+	if err := a.eng.LoadBin(a.nodes[s2W1], "PART-Z", &typed, manifest); err == nil {
+		t.Error("PARTIAL ON of a part no line sources from here succeeded; want it refused")
+	}
+	testutil.MustNoErr(t, a.eng.LoadBin(a.nodes[s2W1], s2Part, &typed, manifest), "PARTIAL ON pulled directly")
+	a.core.mu.Lock()
+	loads := append([]BinLoadRequest(nil), a.core.loads...)
+	a.core.mu.Unlock()
+	if len(loads) != 1 || loads[0].PayloadCode != s2Part || loads[0].UOPCount == nil || *loads[0].UOPCount != 37 {
+		t.Errorf("bin-load requests = %+v, want one of %s at 37", loads, s2Part)
+	}
+	if moves := scMovesFrom(t, a.db, s2W1); len(moves) != 0 {
+		t.Errorf("moves off a pulled-directly window after PARTIAL ON = %+v, want none", moves)
+	}
+
+	b := newStageTwoRig(t, stageTwoMode('b'))
+	b.cells(t, s2Part, s2W2)
+	b.core.set(s2W1, true, "")
+	testutil.MustNoErr(t, b.eng.LoadBin(b.nodes[s2W1], s2Part, &typed, manifest), "PARTIAL ON direct")
+	moves := scMovesFrom(t, b.db, s2W1)
+	if len(moves) != 1 || moves[0].DeliveryNode != s2Out || moves[0].PayloadCode != "" ||
+		moves[0].BinID == nil || *moves[0].BinID != 77 {
+		t.Errorf("moves off a direct window after PARTIAL ON = %+v, want one to %s naming bin 77 and no part", moves, s2Out)
 	}
 }

@@ -49,7 +49,9 @@ import (
 // destination and the other's to the new one.
 //
 // A consume window reaching LoadBin (the modal's delivered-card tap) misses the
-// produce lookup and keeps the claim's outbound.
+// produce lookup and keeps the claim's outbound; so does a stage-2 window (a
+// produce loader, TakesBare) reaching the U2's consume lookup, and its claim's
+// outbound is SynthClaim's copy of the same loader's.
 //
 // ok is false for a blank outbound (nowhere to send it) and for one equal to the
 // node itself (a same-node move), each logged in the sentence that site has

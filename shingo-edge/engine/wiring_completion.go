@@ -581,8 +581,9 @@ func applyManualSwap(e *Engine, ctx *orderCompletionCtx) bool {
 	// NODE BELONGS TO, and only that one. The walk over every operator-staged
 	// produce loader this replaced read Core once per loader, and one loader's
 	// landing frees only its own window, so it was that many GETs for one fact.
-	// Threshold loaders are Core's to feed and are skipped. Every loader's own
-	// landing re-pushes it — TestLanding_RePushesOnlyItsOwnLoader.
+	// Threshold loaders are Core's to feed and are skipped, and so is a stage 2.
+	// Every other loader's own landing re-pushes it —
+	// TestLanding_RePushesOnlyItsOwnLoader.
 	if claim.Role == protocol.ClaimRoleProduce {
 		e.rePushOwnLoader(ctx.node)
 	}
@@ -591,16 +592,18 @@ func applyManualSwap(e *Engine, ctx *orderCompletionCtx) bool {
 
 // rePushOwnLoader stages one empty at the operator-staged produce loader that
 // owns node, through maybeStageLoaderEmpty: one loader retrieve ask, which Core
-// counts and places. A node that belongs to no loader, or to a threshold one, stages
+// counts and places. A node that belongs to no loader, to a threshold one, or to a
+// stage 2 (TakesBare: stage 1 or Core's stage-2 pull brings its carts) stages
 // nothing. It is the produce CLEAR's push and the L2-landed push; the startup
-// sweep is SweepPushLoaders. Pinned by TestProduceClear_RePushesOnlyItsOwnLoader
-// and TestLanding_RePushesOnlyItsOwnLoader.
+// sweep is SweepPushLoaders. Pinned by TestProduceClear_RePushesOnlyItsOwnLoader,
+// TestLanding_RePushesOnlyItsOwnLoader and the stage-2 pins
+// (TestStageTwoPin_G2Prime_..., _G7_..., _G8_...).
 func (e *Engine) rePushOwnLoader(node *processes.Node) {
 	l, err := e.loaders().LoaderForNode(domain.NodeID(node.CoreNodeName))
 	if err != nil || l == nil {
 		return
 	}
-	if l.Role() != domain.RoleProduce || !l.UsesOperatorStaging() {
+	if l.Role() != domain.RoleProduce || !l.UsesOperatorStaging() || l.TakesBare() {
 		return
 	}
 	e.maybeStageLoaderEmpty(l)

@@ -67,6 +67,7 @@
           }
         ],
         "leaves_bare": false,
+        "takes_bare": false,
         "pulled_directly": false,
         "board_shows_all_parts": false
       },
@@ -131,6 +132,7 @@
           }
         ],
         "leaves_bare": false,
+        "takes_bare": false,
         "pulled_directly": false,
         "board_shows_all_parts": false
       },
@@ -179,6 +181,7 @@
           }
         ],
         "leaves_bare": false,
+        "takes_bare": false,
         "pulled_directly": false,
         "board_shows_all_parts": false
       },

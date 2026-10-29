@@ -64,6 +64,7 @@
           }
         ],
         "leaves_bare": true,
+        "takes_bare": false,
         "pulled_directly": false,
         "board_shows_all_parts": false
       },
@@ -109,6 +110,7 @@
           }
         ],
         "leaves_bare": true,
+        "takes_bare": false,
         "pulled_directly": false,
         "board_shows_all_parts": false
       },
@@ -144,7 +146,7 @@
         "updated_at": "<ts>"
       },
       "loader": {
-        "role": "consume",
+        "role": "produce",
         "layout": "shared_window",
         "replenishment": "operator",
         "outbound_dest": "EMPTY-SUPER",
@@ -154,6 +156,7 @@
           }
         ],
         "leaves_bare": false,
+        "takes_bare": true,
         "pulled_directly": true,
         "board_shows_all_parts": false
       },

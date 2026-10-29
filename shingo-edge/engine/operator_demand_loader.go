@@ -111,8 +111,9 @@ func (e *Engine) maybeStageLoaderEmpty(loader *domain.Loader) {
 	}
 }
 
-// SweepPushLoaders walks every active operator-driven produce manual_swap loader
-// and stages an empty if its window is free. Intended for Edge startup (after
+// SweepPushLoaders walks every active operator-driven produce manual_swap loader,
+// a stage 2 excepted (TakesBare: stage 1 brings its carts), and stages an
+// empty if its window is free. Intended for Edge startup (after
 // registration ack, mirroring SweepPushUnloaders): catches loaders that were
 // empty when Edge went down so the operator returns to a staged empty rather
 // than an empty window.
@@ -131,7 +132,7 @@ func (e *Engine) SweepPushLoaders() {
 		// A threshold loader is Core's to feed. Whether its thresholds are set
 		// is Core's to say too (its loader and inventory pages: "no threshold
 		// set"); the Edge holds no copy of the threshold and warns about none.
-		if !l.UsesOperatorStaging() {
+		if !l.UsesOperatorStaging() || l.TakesBare() {
 			continue
 		}
 		e.maybeStageLoaderEmpty(l)

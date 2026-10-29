@@ -39,10 +39,12 @@ func (p StageTwoPair) Infos() []protocol.LoaderInfo {
 	return []protocol.LoaderInfo{p.Stage2(), p.Stage1()}
 }
 
-// Stage2 is the stage-2 loader: consume, as Core makes every stage 2 today.
+// Stage2 is the stage-2 loader as Core makes it since 2026-10-29: produce,
+// and TakesBare. Until then it was consume with no TakesBare; the pins that
+// build from here ran green on that shape before the Edge keyed on TakesBare.
 func (p StageTwoPair) Stage2() protocol.LoaderInfo {
 	info := protocol.LoaderInfo{
-		Name: p.Group, LoaderKey: p.Stage2Key(), Role: string(protocol.ClaimRoleConsume),
+		Name: p.Group, LoaderKey: p.Stage2Key(), Role: string(protocol.ClaimRoleProduce), TakesBare: true,
 		Layout: protocol.LoaderLayoutSharedWindow, Replenishment: protocol.LoaderReplenishmentOperator,
 		InboundSource: p.Inbound, OutboundDest: p.Outbound, PulledDirectly: p.PulledDirectly,
 	}

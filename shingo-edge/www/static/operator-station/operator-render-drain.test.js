@@ -34,6 +34,9 @@ const ctx = vm.createContext({
     document: { getElementById: () => null },        // module-level os-grid/etc. lookups
     isActive: function (s) { return s !== 'completed' && s !== 'cancelled' && s !== 'failed'; },
 });
+// The model reads a window's role through the window model (windowRole).
+vm.runInContext(fs.readFileSync(path.join(__dirname, 'operator-window-state.js'), 'utf8')
+    .replace(/^export\s+/gm, ''), ctx);
 vm.runInContext(model, ctx);
 vm.runInContext(src + '\nthis.unloaderWindowColour = unloaderWindowColour;', ctx);
 const isUnloaderWindow = ctx.isUnloaderWindow, colour = ctx.unloaderWindowColour;

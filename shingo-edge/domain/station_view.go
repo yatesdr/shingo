@@ -320,7 +320,7 @@ type OperatorStationView struct {
 	// from it: its cells row, which parts run, and a Load card's colour and
 	// reason (operator-board-model.js coverage). Built by StationService.servedRows.
 	Serves []ServedRow `json:"serves,omitzero"`
-	// Empties is what the outbound group of the board's consume loader holds:
+	// Empties is what the outbound group of the board's unloader holds:
 	// per bin type, the empties standing in it, and the group's open spots.
 	// Absent on a board with no such loader, for a stage-1 unloader (its group
 	// is stage 2's windows, not an empties source), and when the bins could
@@ -412,7 +412,8 @@ type BufferSpot struct {
 	State string `json:"state"`
 }
 
-// Empties is a consume loader's outbound group as the board reads it.
+// Empties is an unloader's (consume, or a stage 2) outbound group as the
+// board reads it.
 type Empties struct {
 	// Group is the outbound group's name.
 	Group string       `json:"group"`
@@ -454,11 +455,22 @@ type TileLoader struct {
 	// window, the position's own part at a dedicated home, none at a buffer.
 	Parts []TileLoaderPart `json:"parts"`
 	// Carriers are the bin types an unloader's CLEAR panels offer for this
-	// node's parts, from Core's payload-to-bin-type catalog. Consume role only.
+	// node's parts, from Core's payload-to-bin-type catalog. An unloader's
+	// window only: consume, or a stage 2 (TakesBare) whatever its role.
 	Carriers []string `json:"carriers,omitempty"`
 	// LeavesBare marks a stage-1 window of a two-stage unloader: its CLEAR is
 	// one tap, "Full off", with no type.
 	LeavesBare bool `json:"leaves_bare"`
+	// TakesBare marks a stage-2 window of a two-stage unloader (its loader's
+	// TakesBare): the board draws it as an unloader's window whatever Role
+	// says, and offers nothing that asks a carrier into it.
+	TakesBare bool `json:"takes_bare"`
+	// PartialParts is what a stage-2 window's PARTIAL ON offers
+	// (Loader.PartialParts): the parts of the lines that take their empties
+	// from this stage 2. Stamped by the served pass (StationService.servedRows)
+	// from the claims it reads; absent on any other tile, and when no line
+	// sources from here.
+	PartialParts []string `json:"partial_parts,omitempty"`
 	// PulledDirectly marks a stage-2 window whose finished carts the process
 	// pulls straight off it.
 	PulledDirectly bool `json:"pulled_directly"`
@@ -474,6 +486,12 @@ type TileLoader struct {
 	// absent on every other tile and on a loader with no buffer spot. Stamped
 	// by StationService.StampBins (stripTile).
 	Buffer []BufferSpot `json:"buffer,omitempty"`
+}
+
+// ActsAsUnloader is Loader.ActsAsUnloader read off the tile: role consume, or
+// a stage-2 window whatever its role. Nil-safe: no loader is no unloader.
+func (t *TileLoader) ActsAsUnloader() bool {
+	return t != nil && ActsAsUnloader(LoaderRole(t.Role), t.TakesBare)
 }
 
 // TileLoaderPart is one part a loader tile can load.

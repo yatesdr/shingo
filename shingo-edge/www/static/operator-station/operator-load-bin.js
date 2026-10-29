@@ -12,13 +12,17 @@ let loadViewRef = null;
 
 export function setLoadView(fn) { loadViewRef = fn; }
 
-export function openLoadBin(nodeID, allowedCodes, defaultCapacity) {
+// opts.typedCount: the count starts at 0, not the part's capacity, so the
+// person must type it (a stage 2's PARTIAL ON: a partial is less than a pack,
+// and CONFIRM LOAD refuses 0).
+export function openLoadBin(nodeID, allowedCodes, defaultCapacity, opts) {
     loadBinState = {
         nodeID: nodeID,
         payloadCode: '',
         uopCount: 0,
         manifest: [],
         submitting: false,
+        typedCount: !!(opts && opts.typedCount),
     };
     const payloadEl = document.getElementById('load-bin-payload');
     payloadEl.innerHTML = '';
@@ -99,7 +103,7 @@ async function selectLoadPayload(code) {
             return;
         }
         const items = data.items || [];
-        loadBinState.uopCount = data.uop_capacity || 0;
+        loadBinState.uopCount = loadBinState.typedCount ? 0 : (data.uop_capacity || 0);
         // Capture the canonical manifest from the payload template — operators
         // shouldn't be redefining it on the fly. They see the line items so
         // they can verify the bin matches the template, but the ratios are

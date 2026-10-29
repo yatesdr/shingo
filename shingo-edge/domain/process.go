@@ -523,8 +523,13 @@ type NodeClaim struct {
 	// PulledDirectly is set by Loader.SynthClaim at a window of a two-stage
 	// unloader's stage 2 whose finished carts the process pulls straight off
 	// it: the CLEAR there sends the cart nowhere. Never stored on a claim.
-	PulledDirectly bool      `json:"-"`
-	CreatedAt      time.Time `json:"created_at"`
+	PulledDirectly bool `json:"-"`
+	// TakesBare is set by Loader.SynthClaim at a window of a two-stage
+	// unloader's stage 2 (Loader.TakesBare): the window acts as an unloader's
+	// whatever the role (ActsAsUnloader), and nothing is asked into it. Never
+	// stored on a claim.
+	TakesBare bool      `json:"-"`
+	CreatedAt time.Time `json:"created_at"`
 
 	// ── ATTRIBUTION ────────────────────────────────────────────────────
 	// Who wrote this row and from where. The flow composer makes the claim
@@ -818,6 +823,13 @@ func (c *NodeClaim) AllowedPayloads() []string {
 // nil check from every call site rather than moving it.
 func (c *NodeClaim) IsLoaderNode() bool {
 	return c != nil && c.SwapMode == protocol.SwapModeManualSwap
+}
+
+// ActsAsUnloader is Loader.ActsAsUnloader read off a loader window's claim:
+// role consume, or a stage-2 window (TakesBare) whatever its role. Nil-safe:
+// no claim is no unloader.
+func (c *NodeClaim) ActsAsUnloader() bool {
+	return c != nil && ActsAsUnloader(LoaderRole(c.Role), c.TakesBare)
 }
 
 // DemandLevel is the UOP count this claim is judged against — the ONE

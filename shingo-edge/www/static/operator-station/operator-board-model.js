@@ -5,7 +5,9 @@
 // its fit (fitBoard).
 //
 // Every read of a loader tile is here, off tile.loader and view.serves, the
-// keys BuildView ships for the board (domain.TileLoader, domain.ServedRow);
+// keys BuildView ships for the board (domain.TileLoader, domain.ServedRow),
+// but a window's role, which tileRole reads through windowRole
+// (operator-window-state.js, the bottom of the board's imports);
 // operator-render.js, operator-modal.js and operator-window-state.js draw from
 // what these return. The Go test TestStationView_ModelReadsAreWireKeys
 // (shingo-edge/www/board_model_keys_test.go) reads the `tile.`, `loader.`,
@@ -18,7 +20,7 @@
 
 'use strict';
 
-import { cardModel, emptyCarrierHeld, clearRunning, CLEAR_RUNNING, isActiveStatus, leavesAsDemand } from './operator-window-state.js';
+import { cardModel, emptyCarrierHeld, clearRunning, CLEAR_RUNNING, isActiveStatus, leavesAsDemand, windowRole } from './operator-window-state.js';
 
 // loaderOf is a tile's loader, or null on every tile that is not a Core
 // loader's window or position.
@@ -26,10 +28,28 @@ export function loaderOf(tile) {
     return (tile && tile.loader) || null;
 }
 
-// tileRole is a loader tile's role, produce (a loader) or consume (an unloader).
+// tileRole is a loader tile's role as its window is worked, produce (a loader)
+// or consume (an unloader): consume at a stage-2 window whatever Core's role
+// (windowRole, operator-window-state.js). Every role read on the board goes
+// through it.
 export function tileRole(tile) {
+    return windowRole(tile);
+}
+
+// takesBare: a window of a two-stage unloader's stage 2 (Core's takes_bare).
+// It draws as an unloader's window (tileRole), and nothing on the glass asks a
+// carrier into it: stage 1 or Core's stage-2 pull brings every cart.
+export function takesBare(tile) {
     const loader = loaderOf(tile);
-    return loader ? loader.role : undefined;
+    return !!loader && !!loader.takes_bare;
+}
+
+// partialParts is what a stage-2 window's PARTIAL ON offers
+// (tile.loader.partial_parts): the parts of the lines that take their empties
+// from this stage 2, from the server's served pass. Empty when none does.
+export function partialParts(tile) {
+    const loader = loaderOf(tile);
+    return (loader && loader.partial_parts) || [];
 }
 
 // partCodes is the parts a loader tile can load, in the loader's order.
@@ -68,11 +88,10 @@ export function isDedicated(tile) {
     return !!loader && loader.layout === 'dedicated_positions';
 }
 
-// isUnloaderWindow: a window of a shared unloader (a tap on a full is the
-// CLEAR panel, on an empty the empty-cart panel).
+// isUnloaderWindow: a window of a shared unloader, a stage 2's among them (a
+// tap on a full is the CLEAR panel, on an empty the empty-cart panel).
 export function isUnloaderWindow(tile) {
-    const loader = loaderOf(tile);
-    return !!loader && loader.role === 'consume' && !isDedicated(tile);
+    return tileRole(tile) === 'consume' && !isDedicated(tile);
 }
 
 // ── the layout ───────────────────────────────────────────────────────────────
@@ -400,7 +419,10 @@ export function staleSign(view, link, clock) {
 //
 //   load              the load modal for the parts (openLoadBin)
 //   unload            the CLEAR panel (confirmUnloadSwap; Full off at stage 1)
-//   push-empty        the empty-cart panel (confirmPushEmpty; Send on when bare)
+//   unload-held       a held partial's panel (confirmUnloadHeld; PARTIAL OFF ·
+//                     EMPTY ON at a stage 2)
+//   push-empty        the empty-cart panel (confirmPushEmpty; Send on when bare,
+//                     EMPTY ON or PARTIAL ON when bare at a stage 2)
 //   clear-home        the home's clear (confirmClearLoaderHome)
 //   modal             the node modal
 //   request-empty, request-full, pull-from-market    the board bar's three
@@ -723,12 +745,15 @@ function partAct(tile, code) {
 
 function unloadAct(tile, lit) {
     const bin = tile.bin_state || {};
-    // A HELD partial, waiting in its partial home for its line, is not cleared
-    // on one tap: the count is what makes it worth calling back. Its tap is
-    // UNLOAD and COUNT (operator-render.js confirmUnloadHeld), with Core's count
-    // of it (bin.held_uop, which does not tick while it waits).
+    // A HELD partial in its partial home is not cleared on the plain CLEAR: the
+    // count is what makes it worth finishing. Its tap (operator-render.js
+    // confirmUnloadHeld) is, at a stage-2 window (stageTwo, takesBare), one
+    // button, PARTIAL OFF · EMPTY ON, with COUNT small beside it; at any other
+    // unloader window UNLOAD and COUNT. Both post the clear with unload, Core's
+    // count of it riding along (bin.held_uop, which does not tick while held).
     if (bin.held_since) {
-        return { kind: 'unload-held', node: tile.node.id, heldFor: bin.held_for || '', count: bin.held_uop || 0 };
+        return { kind: 'unload-held', node: tile.node.id, heldFor: bin.held_for || '', count: bin.held_uop || 0,
+            stageTwo: takesBare(tile) };
     }
     return {
         kind: 'unload', node: tile.node.id, carriers: carriersOf(tile),
@@ -745,7 +770,10 @@ function windowAct(tile, kind, lit) {
     const bin = tile.bin_state || {};
     if (kind === 'grid') {
         if (bin.payload_code) return unloadAct(tile, lit);
-        return { kind: 'push-empty', node: tile.node.id, carriers: carriersOf(tile), bare: !!bin.bare, lit: lit };
+        // A bare cart at a stage-2 window (takesBare) carries what PARTIAL ON
+        // offers beside EMPTY ON (partials); anywhere else partials is null.
+        return { kind: 'push-empty', node: tile.node.id, carriers: carriersOf(tile), bare: !!bin.bare, lit: lit,
+            partials: bin.bare && takesBare(tile) ? partialParts(tile) : null };
     }
     const codes = bin.payload_code ? [bin.payload_code] : partCodes(tile);
     if (codes.some(function (c) { return partAct(tile, c) === 'unload'; })) return unloadAct(tile, lit);
@@ -917,14 +945,18 @@ function windowCards(consumers, ctx) {
             const since = ctx.when(bin.held_since);
             note = 'Partial · held for ' + (bin.held_for || 'its line') + (since ? ' · since ' + since : '');
         } else if (leaving) note = 'Cleared · robot on its way';
-        else if (loader.pulled_directly && !full) note = 'The cart waits here for the line';
+        // A bare cart is not finished, so it does not wait for the line (a bug
+        // fixed: it said so); at a stage-2 window its tap says what to put on
+        // (EMPTY ON or PARTIAL ON) and the card names nothing to send back.
+        else if (loader.pulled_directly && !full && !bin.bare) note = 'The cart waits here for the line';
+        else if (bin.bare && takesBare(t)) note = '';
         else if (changes) note = 'Change to ' + choiceLabel(lit);
         else if (back && multi) note = full ? 'Send back ' + choiceLabel(lit) : 'Send it';
         // A full at the window has arrived, ready to unload: green, ARRIVED and
         // where, pulsing until it is (flash; SPR 2026-10-28, shipping could not
         // see a bin arrive or at which spot, and the owner asked for green). A
-        // held partial waits for its line, not for the person here, and stays
-        // plain.
+        // held partial is no full to unload and stays plain: its card's act is
+        // the held panel (unloadAct).
         const arrived = full && !bin.held_since;
         ctx.windows.push(ctx.card(t, 'cart', [arrived ? 1 : 2], {
             spotWords: full ? 'holds a full bin' : (bin.bare ? 'no bin' : 'holds an empty bin'),
@@ -1154,10 +1186,13 @@ export function boardModel(view, ui) {
 // free one); PULL FROM MARKET on a loader with an outbound destination. The
 // same doors and guards as that board, in sentence case. While the bins are not
 // known its request is not offered ("could not look"): whether a window holds a
-// bin is what it asks (a bug fixed: an unread window offered the request).
+// bin is what it asks (a bug fixed: an unread window offered the request). No
+// bar for a stage-2 window first (takesBare): nothing is asked into one (a bug
+// fixed: one listing a part offered Request full).
 function boardBar(tiles, kind, view) {
     if (kind !== 'payload') return null;
     const entry = tiles[0];
+    if (takesBare(entry)) return null;
     const role = tileRole(entry);
     const isProduce = role === 'produce';
     const windows = tiles.filter(function (t) { return tileRole(t) === role; });

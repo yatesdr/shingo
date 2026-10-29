@@ -14,9 +14,10 @@ import (
 // ServesPayload, and the board lists LoadablePayloadCodesAt.
 
 // TestSharedWindowZeroPayloads_ByRole: the constructor's answer for each role.
-// A loader stages empties for a payload, so produce still needs one. An
-// unloader may declare none (the stage-2 window of a two-stage unloader), and
-// then serves no payload at all — not even the blank one.
+// A loader stages empties for a payload, so a plain produce loader still needs
+// one. One that acts as an unloader may declare none — a consume loader, or
+// the stage 2 of a two-stage unloader (TakesBare), produce since 2026-10-29 —
+// and then serves no payload at all, not even the blank one.
 func TestSharedWindowZeroPayloads_ByRole(t *testing.T) {
 	t.Parallel()
 	windows := []Window{{Node: "UNL-W1"}}
@@ -26,6 +27,16 @@ func TestSharedWindowZeroPayloads_ByRole(t *testing.T) {
 		t.Errorf("produce shared_window with zero payloads built %+v; want the constructor to refuse it", l)
 	} else if !strings.Contains(err.Error(), "shared_window needs at least one payload") {
 		t.Errorf("produce zero-payload error = %q, want the at-least-one-payload refusal", err)
+	}
+
+	// A stage 2 (TakesBare) is a produce loader with no payloads at SPR, and
+	// acts as an unloader: built.
+	s2, err := NewSharedWindowLoader("loader:ZP-stage2", RoleProduce, ReplenishmentOperator, windows, nil, WithTakesBare(true))
+	if err != nil {
+		t.Fatalf("produce stage 2 (takes bare) with zero payloads: %v; want it built", err)
+	}
+	if !s2.ActsAsUnloader() || s2.ServesPayload("") {
+		t.Errorf("stage 2: ActsAsUnloader = %v, ServesPayload(\"\") = %v; want true, false", s2.ActsAsUnloader(), s2.ServesPayload(""))
 	}
 
 	u, err := NewSharedWindowLoader("loader:ZP-consume", RoleConsume, ReplenishmentOperator, windows, nil)

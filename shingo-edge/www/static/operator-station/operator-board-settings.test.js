@@ -23,8 +23,11 @@ function eq(got, want, label) {
 }
 
 const ctx = vm.createContext({});
-vm.runInContext(fs.readFileSync(path.join(__dirname, 'operator-board-model.js'), 'utf8')
-    .replace(/^import[^\n]*\n/gm, '').replace(/^export\s+/gm, ''), ctx);
+// The model reads a window's role through the window model (windowRole).
+['operator-window-state.js', 'operator-board-model.js'].forEach(function (f) {
+    vm.runInContext(fs.readFileSync(path.join(__dirname, f), 'utf8')
+        .replace(/^import[^\n]*\n/gm, '').replace(/^export\s+/gm, ''), ctx);
+});
 const cardParts = ctx.cardParts;
 
 function tile(o) {

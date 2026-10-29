@@ -3,6 +3,7 @@ package domain
 import (
 	"fmt"
 	"slices"
+	"strings"
 
 	"shingo/protocol"
 )
@@ -135,10 +136,10 @@ func (p Position) IsBuffer() bool {
 //   - a shared layout with per-position payloads is unrepresentable — the
 //     shared constructor takes a payload SET, not positions, so the type
 //     signature alone forbids it (stronger than a runtime check);
-//   - zero windows / zero positions, zero payloads on a PRODUCE shared loader,
-//     empty node ids, and empty payloads in the shared set are rejected by the
-//     constructors (a consume shared loader may declare zero payloads — see
-//     NewSharedWindowLoader);
+//   - zero windows / zero positions, zero payloads on a shared loader that
+//     does not act as an unloader, empty node ids, and empty payloads in the
+//     shared set are rejected by the constructors (a consume or stage-2 shared
+//     loader may declare zero payloads — see NewSharedWindowLoader);
 //   - the slot count is DERIVED, never passed, so a slot count below the member count
 //     cannot be expressed.
 //
@@ -162,6 +163,7 @@ type Loader struct {
 	funnelWindows           bool   // shared_window only: take one window at a time instead of spreading (see FunnelWindows)
 	changeoverLoadDirective bool   // a changeover commandeers this station's card (see ChangeoverLoadDirective)
 	leavesBare              bool   // stage 1 of a two-stage unloader: its CLEAR leaves the cart bare (see LeavesBare)
+	takesBare               bool   // stage 2 of a two-stage unloader: its windows take stage 1's bare carts (see TakesBare)
 	autoPush                bool   // a freed window re-pulls this unloader's next full (see WithAutoPush)
 	pulledDirectly          bool   // stage 2 whose finished carts the process pulls off its windows (see PulledDirectly)
 	boardHidesIdle          bool   // the board leaves off spots with nothing to do (see BoardHidesIdle)
@@ -212,15 +214,6 @@ func NewSharedWindowLoader(id LoaderID, role LoaderRole, repl LoaderReplenishmen
 	if len(windows) == 0 {
 		return nil, fmt.Errorf("loader %s: shared_window needs at least one window", id)
 	}
-	// A loader stages empties FOR a payload, so it needs at least one. An
-	// unloader may declare none: the stage-2 window of a two-stage unloader is
-	// fed directly by stage 1 and offered no fulls. With no payloads,
-	// ServesPayload is false for every code (no LoaderForPayload match, no U1)
-	// and the unloader sweep offers nothing and reads nothing
-	// (TestSharedWindowZeroPayloads_ByRole, TestUnloaderSweep_ZeroPayloadSharedWindow_ZeroReads).
-	if len(payloadSet) == 0 && role != RoleConsume {
-		return nil, fmt.Errorf("loader %s: shared_window needs at least one payload", id)
-	}
 	for i, w := range windows {
 		if w.Node == "" {
 			return nil, fmt.Errorf("loader %s: window %d has empty node", id, i)
@@ -242,6 +235,17 @@ func NewSharedWindowLoader(id LoaderID, role LoaderRole, repl LoaderReplenishmen
 	}
 	for _, o := range opts {
 		o(l)
+	}
+	// A loader stages empties FOR a payload, so it needs at least one. A loader
+	// that acts as an unloader may declare none: the stage-2 window of a
+	// two-stage unloader (TakesBare, a produce loader since 2026-10-29) is fed
+	// directly by stage 1 and offered no fulls, and a consume one may be too.
+	// With no payloads, ServesPayload is false for every code (no
+	// LoaderForPayload match, no U1) and the unloader sweep offers nothing and
+	// reads nothing (TestSharedWindowZeroPayloads_ByRole,
+	// TestUnloaderSweep_ZeroPayloadSharedWindow_ZeroReads).
+	if len(l.payloadSet) == 0 && !l.ActsAsUnloader() {
+		return nil, fmt.Errorf("loader %s: shared_window needs at least one payload", id)
 	}
 	return l, nil
 }
@@ -354,6 +358,34 @@ func WithLeavesBare(on bool) LoaderOption {
 // stage 1. The board reads it to show the one-tap "Full off" panel.
 func (l *Loader) LeavesBare() bool { return l.leavesBare }
 
+// WithTakesBare marks this loader as the stage-2 half of a two-stage unloader
+// (CoreLoader.TakesBare; Core owns it — the loader some stage 1 names as its
+// second stage). Not passing the option is any other loader.
+func WithTakesBare(on bool) LoaderOption {
+	return func(l *Loader) { l.takesBare = on }
+}
+
+// TakesBare reports whether this loader's windows take the bare carts stage 1
+// leaves (LeavesBare's mirror): a person there puts a bin back on the cart.
+// Stage 2 is a produce loader (Core, 2026-10-29); it acts as an unloader all
+// the same (ActsAsUnloader), and nothing asks a carrier into its windows:
+// stage 1 or Core's stage-2 pull brings every cart.
+func (l *Loader) TakesBare() bool { return l.takesBare }
+
+// ActsAsUnloader reports whether this loader's windows are worked as an
+// unloader's: role consume, or a stage 2 (TakesBare) whatever its role. The
+// board's cards, the CLEAR's send-out and PUSH EMPTY key on it; the paths
+// that bring a full in stay on role consume, and the paths that ask an empty
+// in refuse a stage 2.
+func (l *Loader) ActsAsUnloader() bool { return ActsAsUnloader(l.role, l.takesBare) }
+
+// ActsAsUnloader is the one rule behind Loader.ActsAsUnloader,
+// NodeClaim.ActsAsUnloader and TileLoader.ActsAsUnloader: an unloader, or a
+// stage 2 whatever its role.
+func ActsAsUnloader(role LoaderRole, takesBare bool) bool {
+	return role == RoleConsume || takesBare
+}
+
 // WithAutoPush sets whether a CLEAR, a PUSH EMPTY or this unloader's own
 // empty-out landing re-pulls its next full (CoreLoader.AutoPush, owned by
 // Core's bin_loaders.auto_push). Not passing it leaves false, which is what
@@ -446,6 +478,50 @@ func (l *Loader) LoadablePayloadCodesAt(coreNode NodeID) []string {
 	return l.loadablePayloadCodes()
 }
 
+// PartialParts is what a person may put on a bare cart as a partial at a
+// window of this stage 2 (PARTIAL ON): the parts of the produce claims given
+// (the Edge's live claims) whose inbound source names one of this loader's
+// windows, or a group holding one — the lines that take their empties from
+// here. groups is Core's group membership as the node list carried it (group
+// name to member names). In the claims' order, each part once; nil at a loader
+// that does not take bare carts. A loader claim is no line and is skipped.
+//
+// No wire field and no Core read: both callers hold the claims and the groups
+// already (the station view's served pass, and the LOAD's gate). Pinned by
+// TestPartialParts_TheLinesThatSourceFromStageTwo.
+func (l *Loader) PartialParts(claims []NodeClaim, groups map[string][]string) []string {
+	if !l.takesBare {
+		return nil
+	}
+	places := map[string]bool{}
+	for _, n := range l.DeliveryNodes() {
+		places[string(n)] = true
+	}
+	for g, members := range groups {
+		for _, m := range members {
+			if places[m] {
+				places[g] = true
+				break
+			}
+		}
+	}
+	var out []string
+	seen := map[string]bool{}
+	for i := range claims {
+		c := &claims[i]
+		if c.Role != protocol.ClaimRoleProduce || c.IsLoaderNode() || !places[strings.TrimSpace(c.InboundSource)] {
+			continue
+		}
+		for _, p := range c.AllowedPayloads() {
+			if p != "" && !seen[p] {
+				seen[p] = true
+				out = append(out, p)
+			}
+		}
+	}
+	return out
+}
+
 // SynthClaim builds an in-memory, NON-PERSISTED manual_swap NodeClaim that
 // represents this loader at coreNode. It is the Core-owned-loader path's stand-in
 // for a per-style style_node_claim: a node that is a window/position of a Core
@@ -484,6 +560,7 @@ func (l *Loader) SynthClaim(coreNode NodeID) *NodeClaim {
 		AutoConfirm:         true, // mandatory for bin_loader claims (auto-confirm delivery)
 		AutoPush:            l.autoPush,
 		PulledDirectly:      l.pulledDirectly,
+		TakesBare:           l.takesBare,
 	}
 }
 

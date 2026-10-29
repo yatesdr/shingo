@@ -1,6 +1,11 @@
 package domain
 
-import "testing"
+import (
+	"slices"
+	"testing"
+
+	"shingo/protocol"
+)
 
 // TestNewLoader_RejectsInvalidStates is the constructor gate. It pins that the
 // two constructors reject every representable invalid state, so an invalid
@@ -221,5 +226,40 @@ func TestLoader_AccessorsReturnCopies(t *testing.T) {
 	ps[0] = "TAMPERED"
 	if l.PayloadSet()[0] != "P1" {
 		t.Errorf("PayloadSet() leaked internal state: %v", l.PayloadSet())
+	}
+}
+
+// TestPartialParts_TheLinesThatSourceFromStageTwo: what PARTIAL ON offers at a
+// stage 2 is the parts of the produce claims whose inbound source is one of
+// its windows or a group holding one, in the claims' order, each once. A
+// consume claim, a loader claim and a line sourcing elsewhere add nothing, and
+// a loader that takes no bare carts offers nothing.
+func TestPartialParts_TheLinesThatSourceFromStageTwo(t *testing.T) {
+	t.Parallel()
+	windows := []Window{{Node: "S2-W1"}, {Node: "S2-W2"}}
+	s2, err := NewSharedWindowLoader("loader:S2", RoleProduce, ReplenishmentOperator, windows, nil, WithTakesBare(true))
+	if err != nil {
+		t.Fatalf("build stage 2: %v", err)
+	}
+	groups := map[string][]string{"S2G": {"S2-W1", "S2-W2"}, "OTHER": {"X1"}}
+	line := func(role protocol.ClaimRole, mode protocol.SwapMode, in string, parts ...string) NodeClaim {
+		return NodeClaim{Role: role, SwapMode: mode, InboundSource: in, PayloadCode: parts[0], AllowedPayloadCodes: parts}
+	}
+	claims := []NodeClaim{
+		line(protocol.ClaimRoleProduce, protocol.SwapModeSequential, "S2G", "PART-1"),
+		line(protocol.ClaimRoleProduce, protocol.SwapModeSequential, "S2-W2", "PART-2", "PART-1"),
+		line(protocol.ClaimRoleProduce, protocol.SwapModeSequential, "OTHER", "PART-3"),
+		line(protocol.ClaimRoleConsume, protocol.SwapModeSequential, "S2G", "PART-4"),
+		line(protocol.ClaimRoleProduce, protocol.SwapModeManualSwap, "S2G", "PART-5"),
+	}
+	if got := s2.PartialParts(claims, groups); !slices.Equal(got, []string{"PART-1", "PART-2"}) {
+		t.Errorf("PartialParts = %v, want [PART-1 PART-2]", got)
+	}
+	plain, err := NewSharedWindowLoader("loader:U", RoleConsume, ReplenishmentOperator, windows, nil)
+	if err != nil {
+		t.Fatalf("build unloader: %v", err)
+	}
+	if got := plain.PartialParts(claims, groups); got != nil {
+		t.Errorf("PartialParts at a loader that takes no bare carts = %v, want nil", got)
 	}
 }

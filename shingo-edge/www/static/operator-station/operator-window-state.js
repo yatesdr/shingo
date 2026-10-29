@@ -53,19 +53,32 @@ export const ROLE_WORDS = {
 
 function words(role) { return ROLE_WORDS[role] || ROLE_WORDS.produce; }
 
+// windowRole is the role a loader window is worked in, the one read of it on
+// the glass: 'consume' at a window of a two-stage unloader's stage 2
+// (tile.loader.takes_bare; a produce loader since 2026-10-29, worked as an
+// unloader all the same), else the loader's role; undefined on a tile with no
+// loader. It lives here, at the bottom of the board's imports, so this file
+// stays import-free: operator-board-model.js's tileRole and the modal read it
+// through tileRole, this file directly.
+export function windowRole(entry) {
+    const loader = (entry && entry.loader) || null;
+    if (!loader) return undefined;
+    return loader.takes_bare ? 'consume' : loader.role;
+}
+
 // nodeFacts derives the role-neutral node-level facts from one station node view
 // (a loader tile). The per-card model and the header both build on these, so
 // they can never disagree about what's physically at the window. The role is the
-// loader's (tile.loader): a loader tile carries no claim.
+// window's (windowRole, from tile.loader): a loader tile carries no claim.
 export function nodeFacts(entry) {
-    const loader = entry.loader || {};
+    const role = windowRole(entry);
     const bs = entry.bin_state || {};
     const activeOrders = (entry.orders || []).filter(function (o) { return isActiveStatus(o.status); });
     const binPresent = !!bs.occupied;
     const binEmpty = binPresent && !bs.payload_code;
     const binLoaded = binPresent && !!bs.payload_code;
     return {
-        role: loader.role,
+        role: role,
         binPresent: binPresent,
         binEmpty: binEmpty,
         binLoaded: binLoaded,
@@ -73,8 +86,8 @@ export function nodeFacts(entry) {
         activeOrders: activeOrders,
         hasDemand: activeOrders.length > 0,
         // consume-role swap affordances (a loaded full to pull / an empty to return)
-        canClearLoaded: loader.role === 'consume' && binLoaded,
-        canSwapEmpty: loader.role === 'consume' && binEmpty,
+        canClearLoaded: role === 'consume' && binLoaded,
+        canSwapEmpty: role === 'consume' && binEmpty,
         // produce: an empty bin parked with no order yet is still loadable
         canLoadEmpty: binEmpty && activeOrders.length === 0,
     };
@@ -88,9 +101,8 @@ export function nodeFacts(entry) {
 // blank move arriving from another node is not this node's carrier leaving, so
 // neither counts (operator-window-state.test.js cases 24–27).
 export function isOwnEmptyOut(entry, o) {
-    const loader = entry.loader || {};
     const coreNode = (entry.node && entry.node.core_node_name) || '';
-    return loader.role === 'consume' && coreNode !== '' &&
+    return windowRole(entry) === 'consume' && coreNode !== '' &&
         o.order_type === 'move' && o.source_node === coreNode;
 }
 

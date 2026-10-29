@@ -140,15 +140,45 @@ func (e *Engine) requestEmptyOrigin(node *processes.Node, claim *processes.NodeC
 // a live loader becomes invisible. LoaderForNode cannot be ambiguous —
 // bin_loader_homes is UNIQUE on position_node_id, so a node belongs to exactly
 // one loader whatever its role.
+//
+// AT A STAGE-2 WINDOW (TakesBare) the set adds what PARTIAL ON offers there
+// (Loader.PartialParts): the parts of the lines that take their empties from
+// this stage 2, which its own payload set (SPR's is empty) does not list. That
+// costs one statement, the live claims, at a stage-2 window only; no Core read.
+// Pinned by TestStageTwo_PartialOnLoadsAPartTheLinesSourceFromHere.
 func (e *Engine) loadablePayloads(node *processes.Node, claim *processes.NodeClaim) []string {
 	if l, err := e.loaders().LoaderForNode(domain.NodeID(node.CoreNodeName)); err == nil && l != nil {
 		// Scoped to THIS node: a dedicated home loads only its own pinned payload,
 		// not the loader's other positions' parts; a shared window loads the whole set.
-		if codes := l.LoadablePayloadCodesAt(domain.NodeID(node.CoreNodeName)); len(codes) > 0 {
+		codes := l.LoadablePayloadCodesAt(domain.NodeID(node.CoreNodeName))
+		if l.TakesBare() {
+			for _, p := range e.stageTwoPartialParts(l) {
+				if !slices.Contains(codes, p) {
+					codes = append(codes, p)
+				}
+			}
+		}
+		if len(codes) > 0 {
 			return codes
 		}
 	}
 	return claim.AllowedPayloads()
+}
+
+// stageTwoPartialParts is Loader.PartialParts from this Edge's live claims and
+// the node list's group membership: one statement, nil on a read error (the
+// LOAD then refuses the part, rather than load what it could not check).
+func (e *Engine) stageTwoPartialParts(l *domain.Loader) []string {
+	served, err := processes.ListServedClaims(e.db.DB)
+	if err != nil {
+		log.Printf("bin_ops: read the live claims for %s's partials: %v", l.ID(), err)
+		return nil
+	}
+	claims := make([]processes.NodeClaim, len(served))
+	for i := range served {
+		claims[i] = served[i].Claim
+	}
+	return l.PartialParts(claims, e.CoreNodeGroups())
 }
 
 // LoadBin marks a bin at a manual_swap node as loaded with the given manifest.
@@ -285,7 +315,8 @@ func (e *Engine) LoadBin(nodeID int64, payloadCode string, uopCount *int64, mani
 }
 
 // afterLoad is a LOAD's follow-up once Core has loaded the carrier: the
-// carrier's identity, the L1's confirm and the L2, the seat bound to Core's
+// carrier's identity, the L1's confirm and the move out (the L2; at a stage 2
+// the CLEAR's send-out, loadedSendOut), the seat bound to Core's
 // count and stamp, the refusal it ends. Run when the answer comes, whether
 // inside the tap's wait or after it.
 func (e *Engine) afterLoad(nodeID int64, node *processes.Node, claim *processes.NodeClaim, payloadCode string, loadResp *BinLoadResponse) {
@@ -296,13 +327,15 @@ func (e *Engine) afterLoad(nodeID int64, node *processes.Node, claim *processes.
 	// seating anything else puts the Edge and the ledger into disagreement
 	// about a carrier both of them can see.
 	seatedUOP := int64(loadResp.UOPRemaining)
+	// The carrier Core loaded, which a stage 2's send-out names (loadedSendOut).
+	cart := loadResp.BinID
 
 	// The operator's tap on LOAD is the explicit confirmation that the L1
 	// retrieve_empty arrived and has been filled. Confirming the L1 here
 	// transitions it delivered → confirmed and sends a delivery receipt to Core.
 	// An L1 Core already confirmed (its auto-confirm sweep, for a Core-born
 	// empty) is not found here and takes the branch below; either way the L2 is
-	// filed by this LOAD, after the confirm (fileLoadedOutbound).
+	// filed by this LOAD, after the confirm (loadedSendOut).
 	//
 	// The operator is the instrument for what the window now holds: the same
 	// write the branch below makes through seatManuallyLoadedBin. Pinned by
@@ -312,9 +345,10 @@ func (e *Engine) afterLoad(nodeID int64, node *processes.Node, claim *processes.
 	if l1ID, l1Confirmed := e.confirmDeliveredAt(node.CoreNodeName, true, seatedUOP); l1Confirmed {
 		log.Printf("bin_ops: confirmed L1 order %d on operator load at node %d", l1ID, nodeID)
 		// The L1's completion left the runtime pointer to this LOAD
-		// (applyLoaderEmptyIn): onto the L2, or off the confirmed L1 when no
-		// L2 is filed (no outbound, or one already owed).
-		if !e.fileLoadedOutbound(node, claim, payloadCode, 0) {
+		// (applyLoaderEmptyIn): onto the L2 (at a stage 2, the CLEAR's send-out;
+		// loadedSendOut), or off the confirmed L1 when none is filed (no
+		// outbound, pulled directly, or one already owed).
+		if !e.loadedSendOut(node, claim, payloadCode, 0, cart) {
 			if err := e.db.ClearProcessNodeRuntimeOrderRefs(l1ID); err != nil {
 				log.Printf("bin_ops: clear runtime pointers to L1 %d: %v", l1ID, err)
 			}
@@ -347,10 +381,10 @@ func (e *Engine) afterLoad(nodeID int64, node *processes.Node, claim *processes.
 
 	// No delivered L1 here: the operator loaded a bin placed at the loader by
 	// hand, or Core already confirmed the empty that brought it (its auto-confirm
-	// sweep, for a Core-born L1). Seat the bin and file the L2 so it still goes
-	// to outbound. active_bin_id comes from Core's LoadBin response — that's the
-	// authoritative pointer to the bin physically at this slot, regardless
-	// of whether any order was tracking it.
+	// sweep, for a Core-born L1). Seat the bin and file the L2 (loadedSendOut)
+	// so it still goes to outbound. active_bin_id comes from Core's LoadBin
+	// response — that's the authoritative pointer to the bin physically at this
+	// slot, regardless of whether any order was tracking it.
 	claimIDPtr := persistedClaimID(claim)
 	var activeBinID *int64
 	var deltaEpoch int64
@@ -360,7 +394,7 @@ func (e *Engine) afterLoad(nodeID int64, node *processes.Node, claim *processes.
 		deltaEpoch = loadResp.DeltaEpoch
 	}
 	e.seatManuallyLoadedBin(node, claimIDPtr, activeBinID, deltaEpoch, int(seatedUOP), payloadCode)
-	e.fileLoadedOutbound(node, claim, payloadCode, 0)
+	e.loadedSendOut(node, claim, payloadCode, 0, cart)
 
 	e.clearRefusalOnLoad(node.CoreNodeName, payloadCode)
 }
@@ -522,10 +556,12 @@ func (e *Engine) ClearBin(nodeID int64, binTypeCode string, unload bool, layers 
 	if err := requireLoaderClaim(node, claim); err != nil {
 		return err
 	}
-	if claim.Role == protocol.ClaimRoleConsume {
+	if claim.ActsAsUnloader() {
 		// Confirm any AMR-fed inbound (U1) — the operator's CLEAR tap IS the receipt
 		// ack. A press/forklift-fed drain has no U1; the helper returns ok=false and
 		// we proceed to the empty-out regardless (it no longer depends on a U1).
+		// A stage-2 window (TakesBare, a produce loader) is worked as an unloader's
+		// and confirms the same way (TestStageTwoPin_G2_...).
 		if u1ID, ok := e.confirmDeliveredAt(node.CoreNodeName, false, 0); ok {
 			log.Printf("bin_ops: confirmed U1 order %d on operator clear at node %s", u1ID, node.CoreNodeName)
 		}
@@ -566,43 +602,14 @@ func (e *Engine) afterClear(nodeID int64, node *processes.Node, claim *processes
 	// from a Core that predates the field.
 	clearedPayload := cleared.ClearedPayloadCode
 	// Empty-out (U2): send the now-empty bin to the unloader's outbound (empty
-	// totes). Fired off the CLEAR — so it runs for every consume drain, not just
-	// ones an AMR fed — but only after the clear has COMMITTED on Core, so the
+	// totes). Fired off the CLEAR — so it runs for every window worked as an
+	// unloader's (a consume drain, or a stage 2 whatever its role), not just ones
+	// an AMR fed — but only after the clear has COMMITTED on Core, so the
 	// carrier the U2 names is empty on Core's side too and not merely about to be.
 	// The clear succeeding is what says a carrier was there (see the doc above).
 	var notSent error
-	if claim.Role == protocol.ClaimRoleConsume {
-		// Double-tap guard, the same one PushEmptyOut carries: the order layer has
-		// no dedup for move orders, so a second CLEAR tap on the same carrier would
-		// mint a second U2 for it. Moving the create after the clear widened the
-		// window for that, because the clear is a round trip to Core. It asks for
-		// a live move carrying the cart the clear cleared, not for any move at the
-		// window: the previous cart's empty-out may still be live (waiting at a
-		// lane gate) when the next full lands and is cleared.
-		//
-		// It SKIPS the U2 rather than failing, which is where it differs from
-		// PushEmptyOut. There the empty-out IS the operation, so refusing it is the
-		// honest answer. Here the clear has already committed; returning an error
-		// would tell the operator their CLEAR failed when it did not, and a retry
-		// would then find no bin and create nothing at all.
-		//
-		// A read error skips the U2 too, matching PushEmptyOut's direction: a
-		// duplicate sends two robots for one bin, and the second finds nothing
-		// there.
-		if claim.PulledDirectly {
-			// A stage 2 pulled directly by the process: the finished cart
-			// stays on the window for the line to take, so there is no
-			// empty-out and nothing to tell the operator.
-			log.Printf("bin_ops: %s is pulled directly by the process — the cart waits on the window for the line",
-				node.Name)
-		} else if existingID, inFlight, lerr := e.emptyOutInFlight(cleared.BinID); lerr != nil {
-			log.Printf("bin_ops: check in-flight move for node %s: %v", node.Name, lerr)
-		} else if inFlight {
-			log.Printf("bin_ops: skipping empty-out at node %s — order %d is already moving this carrier out",
-				node.Name, existingID)
-		} else if nerr := e.createUnloaderEmptyOut(node, claim, cleared.BinID); nerr != nil {
-			notSent = nerr
-		}
+	if claim.ActsAsUnloader() {
+		_, notSent = e.sendCartOut(node, claim, cleared.BinID)
 	}
 	claimIDPtr := persistedClaimID(claim)
 	if e.inventoryDelta != nil {
@@ -645,9 +652,10 @@ func (e *Engine) afterClear(nodeID int64, node *processes.Node, claim *processes
 	}
 	// Push-driven loader (operator-staged): the operator cleared the window, so
 	// stage the next empty at the loader this window belongs to — only that one,
-	// and only if it is operator-staged (rePushOwnLoader). The walk over every
-	// operator-staged loader this replaced read Core once per loader and could
-	// stage an empty at a loader whose window this tap did not free.
+	// and only if it is operator-staged and not a stage 2 (rePushOwnLoader). The
+	// walk over every operator-staged loader this replaced read Core once per
+	// loader and could stage an empty at a loader whose window this tap did not
+	// free.
 	if claim.Role == protocol.ClaimRoleProduce {
 		e.rePushOwnLoader(node)
 	}
@@ -655,6 +663,69 @@ func (e *Engine) afterClear(nodeID int64, node *processes.Node, claim *processes
 		return fmt.Errorf("bin cleared, but %w", notSent)
 	}
 	return nil
+}
+
+// sendCartOut is the CLEAR's send-out at a window worked as an unloader's: the
+// U2 of the carrier binID off the window (createUnloaderEmptyOut), or nothing
+// at a stage 2 pulled directly by the process. A stage 2's LOAD (PARTIAL ON)
+// sends its cart out by the same rule (loadedSendOut). filed reports whether
+// a move was made; notSent is the operator's "nowhere to send it".
+//
+// Double-tap guard, the same one PushEmptyOut carries: the order layer has no
+// dedup for move orders, so a second CLEAR tap on the same carrier would mint a
+// second U2 for it. Moving the create after the clear widened the window for
+// that, because the clear is a round trip to Core. It asks for a live move
+// carrying the cart the clear cleared, not for any move at the window: the
+// previous cart's empty-out may still be live (waiting at a lane gate) when the
+// next full lands and is cleared.
+//
+// It SKIPS the U2 rather than failing, which is where it differs from
+// PushEmptyOut. There the empty-out IS the operation, so refusing it is the
+// honest answer. Here the clear has already committed; returning an error
+// would tell the operator their CLEAR failed when it did not, and a retry
+// would then find no bin and create nothing at all.
+//
+// A read error skips the U2 too, matching PushEmptyOut's direction: a
+// duplicate sends two robots for one bin, and the second finds nothing there.
+func (e *Engine) sendCartOut(node *processes.Node, claim *processes.NodeClaim, binID int64) (filed bool, notSent error) {
+	if claim.PulledDirectly {
+		// A stage 2 pulled directly by the process: the finished cart stays on
+		// the window for the line to take, so there is no empty-out and nothing
+		// to tell the operator.
+		log.Printf("bin_ops: %s is pulled directly by the process — the cart waits on the window for the line",
+			node.Name)
+		return false, nil
+	}
+	existingID, inFlight, lerr := e.emptyOutInFlight(binID)
+	switch {
+	case lerr != nil:
+		log.Printf("bin_ops: check in-flight move for node %s: %v", node.Name, lerr)
+		return false, nil
+	case inFlight:
+		log.Printf("bin_ops: skipping empty-out at node %s — order %d is already moving this carrier out",
+			node.Name, existingID)
+		return false, nil
+	}
+	return e.createUnloaderEmptyOut(node, claim, binID)
+}
+
+// loadedSendOut is the move a LOAD owes the carrier it loaded, and reports
+// whether it filed one. At a loader's window it is the L2
+// (fileLoadedOutbound), naming l2Bin (0 after a LOAD Core answered, as
+// before). At a stage-2 window (TakesBare: the LOAD is PARTIAL ON) the cart
+// leaves by the CLEAR's rule instead (sendCartOut, naming cart, Core's id for
+// it): nothing where the stage is pulled directly, the line takes it off the
+// window; else the move off the window to stage 2's outbound, naming no part.
+// Pinned by TestStageTwo_PartialOnLoadsAPartTheLinesSourceFromHere.
+func (e *Engine) loadedSendOut(node *processes.Node, claim *processes.NodeClaim, payloadCode string, l2Bin, cart int64) bool {
+	if !claim.TakesBare {
+		return e.fileLoadedOutbound(node, claim, payloadCode, l2Bin)
+	}
+	filed, notSent := e.sendCartOut(node, claim, cart)
+	if notSent != nil {
+		log.Printf("bin_ops: LOAD at %s: %v", node.Name, notSent)
+	}
+	return filed
 }
 
 // PushEmptyOut sends the empty bin currently sitting in a drain window outbound
@@ -669,11 +740,12 @@ func (e *Engine) PushEmptyOut(nodeID int64) error {
 	if err != nil {
 		return err
 	}
-	// Mirror ClearBin: PushEmptyOut is for manual_swap consume windows only.
+	// Mirror ClearBin: PushEmptyOut is for loader windows worked as an
+	// unloader's only (a consume window, or a stage 2 whatever its role).
 	if err := requireLoaderClaim(node, claim); err != nil {
 		return err
 	}
-	if claim.Role != protocol.ClaimRoleConsume {
+	if !claim.ActsAsUnloader() {
 		return fmt.Errorf("node %s is not a consume node", node.Name)
 	}
 	// FAILS CLOSED — no bin means refuse, never "push anyway". The window is
@@ -709,7 +781,7 @@ func (e *Engine) PushEmptyOut(nodeID int64) error {
 	// removal of whatever carrier stands on the window, never a fetch for a part.
 	// See createUnloaderEmptyOut. Nowhere to send it is a refusal here: the
 	// push is the whole operation and nothing has been committed.
-	if err := e.createUnloaderEmptyOut(node, claim, row.BinID); err != nil {
+	if _, err := e.createUnloaderEmptyOut(node, claim, row.BinID); err != nil {
 		return err
 	}
 	// Ask for the next pull — mirrors ClearBin's gate at its tail, with the
@@ -720,8 +792,9 @@ func (e *Engine) PushEmptyOut(nodeID int64) error {
 	return nil
 }
 
-// emptyOutInFlight is the double-tap check shared by ClearBin and PushEmptyOut:
-// is a non-terminal MOVE carrying this cart live? binID is Core's id for the
+// emptyOutInFlight is the double-tap check shared by ClearBin (sendCartOut, and
+// so a stage 2's LOAD) and PushEmptyOut: is a non-terminal MOVE carrying this
+// cart live? binID is Core's id for the
 // carrier (the one the clear cleared, or the one PUSH EMPTY read on the window),
 // and a move naming its bin records it from its birth (createMoveOrder). It
 // returns the oldest one's ID for the log line. The CALLERS decide what a hit
@@ -751,7 +824,9 @@ func (e *Engine) emptyOutInFlight(binID int64) (existingID int64, inFlight bool,
 // totes). Called from ClearBin once the operator confirms a processed bin, so it fires
 // for an AMR-fed unloader AND a press/forklift-fed drain — the latter has no inbound
 // U1, so the old order-completion trigger (handleUnloaderFullInCompletion, now removed)
-// never fired for it.
+// never fired for it. A stage 2's PARTIAL ON (a LOAD at a TakesBare window not
+// pulled directly) sends its cart out the same way (sendCartOut), so that move
+// carries a partial and still names no part.
 //
 // Outbound resolves from the loader AGGREGATE (consume role), falling back to the
 // claim — the same severing-the-legacy-claim source the old handler used. U2
@@ -797,10 +872,12 @@ func (e *Engine) emptyOutInFlight(binID int64) (existingID int64, inFlight bool,
 // ClearBin (which has already cleared, and says so) and PushEmptyOut (where the
 // move is the whole operation, so it is a refusal). A failure to CREATE the move
 // is still only logged.
-func (e *Engine) createUnloaderEmptyOut(node *processes.Node, claim *processes.NodeClaim, binID int64) error {
+//
+// The bool reports whether the move was made (sendCartOut's filed).
+func (e *Engine) createUnloaderEmptyOut(node *processes.Node, claim *processes.NodeClaim, binID int64) (bool, error) {
 	outbound, ok := e.outboundFor(node, claim, domain.RoleConsume)
 	if !ok {
-		return fmt.Errorf("%s has nowhere to send the empty carrier: it stays in the window until it is moved by hand", node.Name)
+		return false, fmt.Errorf("%s has nowhere to send the empty carrier: it stays in the window until it is moved by hand", node.Name)
 	}
 	nodeID := node.ID
 	// NoDemand: the side-cycle's empty-out is the system's own consequence of a
@@ -809,7 +886,7 @@ func (e *Engine) createUnloaderEmptyOut(node *processes.Node, claim *processes.N
 		ordermgr.NoDemand())
 	if err != nil {
 		e.logFn("side-cycle: create U2 (empty-out) for unloader %s: %v", node.Name, err)
-		return nil
+		return false, nil
 	}
 	log.Printf("side-cycle: U2 (empty-out) order %d for unloader %s → %s (names no part)", order.ID, node.Name, outbound)
 	// Point the runtime active order at U2 so the unloader UI shows the empty-out next.
@@ -817,7 +894,7 @@ func (e *Engine) createUnloaderEmptyOut(node *processes.Node, claim *processes.N
 	if err := e.db.SetProcessNodeRuntimeActiveOrder(node.ID, &order.ID); err != nil {
 		log.Printf("side-cycle: update runtime orders for unloader %d: %v", node.ID, err)
 	}
-	return nil
+	return true, nil
 }
 
 // RequestEmptyBin delivers an empty bin to a produce node. At a loader window
@@ -825,7 +902,8 @@ func (e *Engine) createUnloaderEmptyOut(node *processes.Node, claim *processes.N
 // (single_robot, two_robot, two_robot_press_index, sequential) plan and apply
 // exactly what the produce request would, without its guards about the parts,
 // so the robot choreography and the checks on the line are the produce
-// request's. Any other mode is refused. Returns the primary order (the plain empty, the first swap leg, or
+// request's. Any other mode is refused, and so is a stage-2 window (TakesBare,
+// a produce loader): nothing is asked into it. Returns the primary order (the plain empty, the first swap leg, or
 // the first prime); a second leg is tracked on the runtime row.
 func (e *Engine) RequestEmptyBin(nodeID int64, payloadCode string) (*orders.Order, error) {
 	node, runtime, claim, err := e.loadActiveNode(nodeID)
@@ -837,6 +915,9 @@ func (e *Engine) RequestEmptyBin(nodeID int64, payloadCode string) (*orders.Orde
 	}
 	if claim.Role != protocol.ClaimRoleProduce {
 		return nil, fmt.Errorf("node %s: only produce nodes request empty bins", node.Name)
+	}
+	if claim.TakesBare {
+		return nil, errStageTwoAsksNothing(node.Name)
 	}
 	// A SWAP-MODE LINE ASKS WHAT THE PRODUCE REQUEST ASKS, and nothing more: the
 	// same guards on the line (guardLineRequest, under the cell's lock), the
@@ -942,7 +1023,7 @@ func (e *Engine) requestEmptyAtManualSwapLoader(
 }
 
 // RequestFullBin asks Core for a full bin of the given payload at a
-// manual_swap consume node. Core queues the order if no full bins of that
+// manual_swap consume node, never a stage 2's. Core queues the order if no full bins of that
 // payload are available. It is the loader retrieve ask, as the unloader's
 // automatic U1 is, so both are counted by the one decision on Core.
 func (e *Engine) RequestFullBin(nodeID int64, payloadCode string) (*orders.Order, error) {
@@ -955,6 +1036,12 @@ func (e *Engine) RequestFullBin(nodeID int64, payloadCode string) (*orders.Order
 	}
 	if claim.Role != protocol.ClaimRoleConsume {
 		return nil, fmt.Errorf("node %s: only consume nodes request full bins", node.Name)
+	}
+	// A stage 2 is refused whatever its role: a consume one listing a part
+	// used to ask Core for a full into a window stage 1 feeds
+	// (TestStageTwoPin_G4_RequestsAtAStageTwoWindow).
+	if claim.TakesBare {
+		return nil, errStageTwoAsksNothing(node.Name)
 	}
 	if ok, reason := e.CanAcceptOrders(nodeID); !ok {
 		return nil, fmt.Errorf("node %s unavailable: %s", node.Name, reason)
@@ -1014,6 +1101,14 @@ func (e *Engine) RequestFullBin(nodeID int64, payloadCode string) (*orders.Order
 	return e.trackAskedOrder(nodeID, node, res.Created[0], false), nil
 }
 
+// errStageTwoAsksNothing is the refusal of every door that would ask a carrier
+// into a window of a two-stage unloader's stage 2 (TakesBare): REQUEST EMPTY,
+// REQUEST FULL and PULL FROM MARKET. Stage 1, or Core's stage-2 pull, brings
+// every cart there.
+func errStageTwoAsksNothing(node string) error {
+	return fmt.Errorf("node %s is a stage 2: its carts come from stage 1, so nothing is asked into it", node)
+}
+
 // stationTakesLoadDirective asks the Core-owned loader a node belongs to whether
 // a changeover commandeers its card. A clean miss is false.
 func (e *Engine) stationTakesLoadDirective(coreNodeName string) bool {
@@ -1043,10 +1138,12 @@ func (e *Engine) loadOntoLabelledCarrier(node *processes.Node, claim *processes.
 	// here, and a refusal naming "wait for outbound move" waits for a move
 	// nothing will file (Lane 0 calibration run, PLK_X2). A carrier of a part
 	// this loader loads, with units, at a window that owes no outbound, is that
-	// carrier: file its outbound now. fileLoadedOutbound owns the owed-move
-	// guard, so a window whose outbound is already filed still refuses.
+	// carrier: file its outbound now (loadedSendOut). fileLoadedOutbound owns
+	// the owed-move guard, and at a stage 2 sendCartOut's guard on the cart
+	// does, so a window whose outbound is already filed still refuses; a stage
+	// 2 pulled directly files none and refuses too.
 	if slices.Contains(e.loadablePayloads(node, claim), b.PayloadCode) &&
-		e.fileLoadedOutbound(node, claim, b.PayloadCode, b.BinID) {
+		e.loadedSendOut(node, claim, b.PayloadCode, b.BinID, b.BinID) {
 		log.Printf("bin_ops: LOAD at %s found %s already loaded with no outbound owed (a lost reply); outbound filed",
 			node.Name, b.PayloadCode)
 		return nil

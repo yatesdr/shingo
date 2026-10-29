@@ -253,12 +253,25 @@ p = open(function () { ctx.confirmUnloadSwap(36, ['TOTE-S'], 0, false, { bin_typ
 eq(p.buttons, ['CONFIRM SWAP', 'CANCEL'], 'no heights wanted: today\'s CONFIRM SWAP');
 view = null;
 // ── confirmUnloadHeld: a held partial at an unloader window ──
+//
+// Changed (ruling of 2026-10-29): it said "It waits here until the line calls
+// it back to be finished." It says what to do, and at a stage 2 it is one
+// button named for both motions.
 {
     const p = open(function () { ctx.confirmUnloadHeld(41, 'P400', 113); });
     eq(p.buttons, ['COUNT', 'UNLOAD', 'CANCEL'], 'a held partial: COUNT, UNLOAD, CANCEL');
-    eq(p.texts.slice(0, 2), ['Partial, held for P400', 'It waits here until the line calls it back to be finished.'],
-        'a held partial: whose, and that it waits for its line');
+    eq(p.texts.slice(0, 2), ['Partial, held for P400', 'Take the partial bin off, then UNLOAD. COUNT if it is full.'],
+        'a held partial: whose, and what to do');
     eq(p.click('UNLOAD'), [{ url: '/api/process-nodes/41/clear-bin', body: { unload: true } }], 'UNLOAD posts the clear with unload');
+}
+{
+    const p = open(function () { ctx.confirmUnloadHeld(41, 'P400', 113, true); });
+    eq(p.buttons, ['PARTIAL OFF · EMPTY ON', 'COUNT', 'CANCEL'], 'a held partial at a stage 2: one primary, COUNT, CANCEL');
+    eq(p.texts.slice(0, 2), ['Partial, held for P400', 'Pull the partial bin off and set an empty on, then tap.'],
+        'a held partial at a stage 2: whose, and both motions');
+    eq(p.click('PARTIAL OFF · EMPTY ON'), [{ url: '/api/process-nodes/41/clear-bin', body: { unload: true } }],
+        'PARTIAL OFF · EMPTY ON posts the clear with unload');
+    eq(p.texts.some(function (t) { return /calls it back/.test(t); }), false, 'nothing says the line calls it back');
 }
 
 if (failed) { console.error(passed + ' passed, ' + failed + ' FAILED'); process.exit(1); }

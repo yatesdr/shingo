@@ -15,11 +15,12 @@ import (
 //
 // ONE LIST PER STATION, BUILT WHEN THE PLANT CHANGES, NEVER PER BUILD. A board
 // reads the bins at its tiles' nodes, at its dedicated loaders' buffer spots
-// (the buffer strip and a home's CLEAR BIN) and at its consume loaders'
-// outbound-group members (the empties). The names come from process_nodes, the
-// loaders Core sent and the group membership the node list carried, so the
-// list is held and rebuilt only when one of the three has moved: one statement
-// on the first build after a change, none on the next. The station view reads
+// (the buffer strip and a home's CLEAR BIN) and at its unloaders' (consume,
+// or a stage 2) outbound-group members (the empties). The names come from
+// process_nodes, the loaders Core sent and the group membership the node list
+// carried, so the list is held and rebuilt only when one of the three has
+// moved: one statement on the first build after a change, none on the next.
+// The station view reads
 // every name's row from the Edge's copy of the bins feed (www
 // stampStationBins), with no call to Core, pinned by
 // TestStationView_NoCoreReadPerBuild (www).
@@ -32,7 +33,7 @@ type binNodes struct {
 	byStation map[int64][]string
 	// all is every station's list together, sorted, each name once.
 	all []string
-	// outbound is the members of each listed consume loader's outbound group,
+	// outbound is the members of each listed unloader's outbound group,
 	// by group name, in the group's order.
 	outbound map[string][]string
 	// nodes is every process node by (process, core node), from the same
@@ -62,9 +63,9 @@ func (s *StationService) binNodesKeyNow() binNodesKey {
 
 // BinNodes is the Core node names a station's board reads bins at: its tiles'
 // nodes (and the stationless positions of its processes a changeover adopts
-// onto it), its dedicated loaders' buffer spots and its consume loaders'
-// outbound-group members. Sorted, each once; nil when the station has none or
-// the list could not be read.
+// onto it), its dedicated loaders' buffer spots and its unloaders' (consume,
+// or a stage 2) outbound-group members. Sorted, each once; nil when the
+// station has none or the list could not be read.
 func (s *StationService) BinNodes(stationID int64) []string {
 	return s.heldBinNodes().byStation[stationID]
 }
@@ -186,9 +187,10 @@ func (s *StationService) buildBinNodes(rows []processes.Node) binNodes {
 }
 
 // loaderBinNodes is the names a loader tile at coreNode adds to its board's
-// list: a dedicated loader's buffer spots; a consume loader's outbound-group
-// members, recorded in outbound. A stage-1 unloader adds none: its group is
-// stage 2's windows, which no board reads as empties.
+// list: a dedicated loader's buffer spots; an unloader's (consume, or a stage
+// 2 whatever its role) outbound-group members, recorded in outbound. A
+// stage-1 unloader adds none: its group is stage 2's windows, which no board
+// reads as empties.
 func (s *StationService) loaderBinNodes(coreNode string, groups, outbound map[string][]string) []string {
 	if s.loaders == nil {
 		return nil
@@ -205,7 +207,7 @@ func (s *StationService) loaderBinNodes(coreNode string, groups, outbound map[st
 			}
 		}
 	}
-	if l.Role() == domain.RoleConsume && !l.LeavesBare() {
+	if l.ActsAsUnloader() && !l.LeavesBare() {
 		if members := groups[l.OutboundDest()]; len(members) > 0 {
 			outbound[l.OutboundDest()] = members
 			names = append(names, members...)
@@ -247,7 +249,7 @@ func BoardBinsFromCopy(rows map[string]protocol.NodeBinsRow) map[string]BoardBin
 //     that is a tile of this board (stripTile);
 //   - on a home holding a stocked bin of its part, the spot whose partial its
 //     clear would bring home (buffer_partial);
-//   - the board's empties, from its consume loader's outbound group;
+//   - the board's empties, from its unloader's outbound group;
 //   - each cart's tote numbers, from its row;
 //   - from the group lines of the Edge's copy (groups; nil from
 //     a Core that sends none): each window's assignment, and the empties'
@@ -438,10 +440,10 @@ func bufferPartialFor(l *domain.Loader, node string, rows map[string]BoardBin) *
 	return nil
 }
 
-// boardEmpties is the empties of the board's first consume loader (in tile
-// order) whose outbound group the list holds: per bin type a served press
-// fills or one standing empty in the group, how many empties of it stand
-// there; and the group's open spots. Nil when the board has no such loader.
+// boardEmpties is the empties of the board's first unloader (consume, or a
+// stage 2; in tile order) whose outbound group the list holds: per bin type a
+// served press fills or one standing empty in the group, how many empties of
+// it stand there; and the group's open spots. Nil when the board has no such loader.
 // An empty is an occupied bin with no part that is not stocked; a bare cart is
 // not one.
 //
@@ -456,7 +458,7 @@ func (s *StationService) boardEmpties(view *domain.OperatorStationView, outbound
 	rows map[string]BoardBin, groups []protocol.NodeBinsGroup) *domain.Empties {
 	group := ""
 	for _, tile := range view.Nodes {
-		if tile.Loader == nil || tile.Loader.Role != string(domain.RoleConsume) || tile.Loader.LeavesBare {
+		if !tile.Loader.ActsAsUnloader() || tile.Loader.LeavesBare {
 			continue
 		}
 		if _, ok := outbound[tile.Loader.OutboundDest]; ok {

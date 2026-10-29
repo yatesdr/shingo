@@ -1523,10 +1523,11 @@ func (s *StationService) tileLoader(l *domain.Loader, coreNode string) *domain.T
 		OutboundDest:       l.OutboundDest(),
 		Parts:              parts,
 		LeavesBare:         l.LeavesBare(),
+		TakesBare:          l.TakesBare(),
 		PulledDirectly:     l.PulledDirectly(),
 		BoardShowsAllParts: l.BoardShowsAllParts(),
 	}
-	if l.Role() == domain.RoleConsume && s.carrierCatalog != nil {
+	if l.ActsAsUnloader() && s.carrierCatalog != nil {
 		tl.Carriers = carriersFor(s.carrierCatalog(), codes)
 	}
 	return tl

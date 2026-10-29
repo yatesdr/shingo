@@ -387,7 +387,9 @@ func buildSlotGridBoard(t *testing.T, db *store.DB, eng *Engine) int64 {
 }
 
 // A two-stage unloader on one station: stage 1's two windows leave the cart
-// bare, stage 2's window is pulled directly by the line.
+// bare, stage 2's window is pulled directly by the line. Stage 2 is produce and
+// takes bare, as Core sends it since 2026-10-29: its tile is the unloader's it
+// was while consume, with role produce and takes_bare.
 func buildTwoStageBoard(t *testing.T, db *store.DB, eng *Engine) int64 {
 	sid, _ := loaderStation(t, db, "UNL-TWO-STAGE", "ST1_A1", "ST1_A2", "ST2_A1")
 	setCoreLoaders(t, eng,
@@ -399,7 +401,7 @@ func buildTwoStageBoard(t *testing.T, db *store.DB, eng *Engine) int64 {
 			Payloads:   []protocol.LoaderPayloadInfo{{PayloadCode: "PART-A"}},
 		},
 		protocol.LoaderInfo{
-			Name: "Stage 2", LoaderKey: "loader:16", Role: "consume", Layout: "shared_window",
+			Name: "Stage 2", LoaderKey: "loader:16", Role: "produce", TakesBare: true, Layout: "shared_window",
 			Replenishment: "operator", OutboundDest: "EMPTY-SUPER", InboundSource: "ST1-GROUP",
 			PulledDirectly: true,
 			Positions:      windows("ST2_A1"),

@@ -634,11 +634,13 @@ func (op *simOperator) sweepManualSwapNodes() {
 		if claim.PairedCoreNode != "" && runtime != nil && !runtime.ActivePull {
 			continue
 		}
-		switch claim.Role {
-		case protocol.ClaimRoleProduce:
-			byName[n.CoreNodeName] = target{id: n.ID, wantsEmpty: true}
-		case protocol.ClaimRoleConsume:
+		// A stage-2 window (TakesBare, a produce loader) is worked as an
+		// unloader's: it wants a stocked cart, never an empty one.
+		switch {
+		case claim.ActsAsUnloader():
 			byName[n.CoreNodeName] = target{id: n.ID, wantsEmpty: false}
+		case claim.Role == protocol.ClaimRoleProduce:
+			byName[n.CoreNodeName] = target{id: n.ID, wantsEmpty: true}
 		default:
 			continue
 		}
@@ -1147,12 +1149,12 @@ func (op *simOperator) classifyFromClaim(nodeID int64) (time.Duration, string, f
 		op.e.debugFn("[sim] operator: skip inactive A/B side %s", node.CoreNodeName)
 		return 0, "", nil, false
 	}
-	switch claim.Role {
-	case protocol.ClaimRoleProduce: // loader: empty bin arrived → LOAD it
+	switch {
+	case claim.ActsAsUnloader(): // unloader: full bin arrived → CLEAR it; at a stage 2 a bare cart → Send on
+		return op.unloaderDelay(), "clear", func() error { return op.e.ClearBin(nodeID, "", false, nil) }, true
+	case claim.Role == protocol.ClaimRoleProduce: // loader: empty bin arrived → LOAD it
 		c := claim
 		return op.loaderDelay(), "load", func() error { return op.loadBin(nodeID, c) }, true
-	case protocol.ClaimRoleConsume: // unloader: full bin arrived → CLEAR it
-		return op.unloaderDelay(), "clear", func() error { return op.e.ClearBin(nodeID, "", false, nil) }, true
 	}
 	return 0, "", nil, false
 }

@@ -168,6 +168,7 @@ let requests = [];
 const marketBins = [{ node_name: 'MARKET-GROUP.SMN_M1', payload_code: 'PART-A', stocked: true, partial: true, uop_capacity: 48 }];
 const manifests = {
     'PART-A': { uop_capacity: 24, items: [{ part_number: 'PN-A1', parts_per_cycle: 2, description: 'left' }] },
+    'PART-K': { uop_capacity: 132, items: [{ part_number: 'PN-K1', parts_per_cycle: 1, description: 'right' }] },
 };
 // A payload here gets a 500 from the Edge's manifest read (its catalog copy
 // could not be read).
@@ -448,7 +449,12 @@ let loadOpens = [];
 const realOpenLoadBin = ctx.openLoadBin;
 function spyLoadBin() {
     loadOpens = [];
-    const spy = function (nodeID, codes, cap) { loadOpens.push({ node: nodeID, codes: codes, cap: cap }); return realOpenLoadBin(nodeID, codes, cap); };
+    const spy = function (nodeID, codes, cap, opts) {
+        const rec = { node: nodeID, codes: codes, cap: cap };
+        if (opts) rec.opts = opts;
+        loadOpens.push(rec);
+        return realOpenLoadBin(nodeID, codes, cap, opts);
+    };
     // The board reaches it through setRenderRefs, the node modal through its
     // import (a global here).
     ctx.openLoadBin = spy;
@@ -1235,15 +1241,24 @@ const loadBody = { payload_code: 'PART-A', uop_count: 24,
 // stage-2 window here comes from stageTwoTile, so the role these run under is
 // set in one place.
 {
-    // stageTwoTile is a stage-2 window as BuildView ships it: consume, no
-    // parts unless given (SPR's has none), operator-replenished.
-    const stageTwoTile = (id, core, o) => loaderTile(id, core, Object.assign({ role: 'consume', parts: [], operator: true,
-        outbound: o && o.pulled_directly ? '' : 'S2-OUT' }, o));
+    // stageTwoTile is a stage-2 window as BuildView ships it since 2026-10-29:
+    // produce and takes_bare, no parts unless given (SPR's has none),
+    // operator-replenished, the CLEAR panels' carriers on it (the server gives
+    // them to any window worked as an unloader's). Until then it was consume
+    // with no takes_bare, and this section ran green on that shape first.
+    const stageTwoTile = (id, core, o) => {
+        const t = loaderTile(id, core, Object.assign({ role: 'produce', parts: [], operator: true,
+            outbound: o && o.pulled_directly ? '' : 'S2-OUT' }, o));
+        t.loader.takes_bare = true;
+        t.loader.carriers = carriersFor(t.loader.parts.map(p => p.code));
+        if (o && o.partial_parts) t.loader.partial_parts = o.partial_parts;
+        return t;
+    };
     const BARE = { occupied: true, payload_code: '', stocked: false, bare: true, bin_label: 'CART-1', bin_type_code: 'TOTE-1' };
     const HELD = { occupied: true, payload_code: 'PART-K', stocked: true, bin_label: 'CART-2', bin_type_code: 'TOTE-1',
         held_since: '2026-10-29T10:00:00Z', held_for: 'P400', held_uop: 113, uop_capacity: 132 };
     const stage1 = loaderTile(1, 'ST1_B1', { role: 'consume', parts: ['PART-K'], bin: NONE, leaves_bare: true, operator: true });
-    const bare = stageTwoTile(2, 'ST2_B1', { pulled_directly: true, bin: BARE });
+    const bare = stageTwoTile(2, 'ST2_B1', { pulled_directly: true, bin: BARE, partial_parts: ['PART-K'] });
     const held = stageTwoTile(3, 'ST2_B2', { pulled_directly: true, bin: HELD });
 
     // J1, J2: the pair's station is a board of carts, no bar.
@@ -1251,33 +1266,65 @@ const loadBody = { payload_code: 'PART-A', uop_count: 24,
     render();
     eq([slotTiles().length, zoneTitles(), barButtons().length, headerButtons()], [0, ['At the windows'], 0, []],
         'stage 2: a board of carts, one list, no bar, no header buttons');
+    // Changed: the bare cart's card said "The cart waits here for the line"
+    // (5b983220), which a bare cart does not (a bug fixed); its tap was Send on,
+    // and is EMPTY ON or PARTIAL ON (ruling 2026-10-29).
     const bareCard = pcCards().find(c => cardText(c)[0] === 'ST2_B1');
-    eq(cardText(bareCard), ['ST2_B1', ' · no bin', 'TOTE-1', 'The cart waits here for the line'],
-        'stage 2, a bare cart: no bin, its type, and (today) that it waits for the line');
+    eq(cardText(bareCard), ['ST2_B1', ' · no bin', 'TOTE-1'], 'stage 2, a bare cart: no bin, its type, no note');
     await tap(bareCard);
-    eq([overlayTexts()[0], overlayButtons()], ['Cart, no bin', ['Send on', 'CANCEL']], 'stage 2, a bare cart: Send on');
-    await tapOverlay('Send on');
-    eq(posts(), [{ method: 'POST', url: '/api/process-nodes/2/clear-bin', body: {} }], 'Send on posts clear-bin, no type');
+    eq([overlayTexts().slice(0, 2), overlayButtons()],
+        [['Cart, no bin', 'Put an empty on, or a partial — type the count.'], ['EMPTY ON', 'PARTIAL ON', 'CANCEL']],
+        'stage 2, a bare cart: EMPTY ON or PARTIAL ON');
+    await tapOverlay('EMPTY ON');
+    eq(posts(), [{ method: 'POST', url: '/api/process-nodes/2/clear-bin', body: {} }], 'EMPTY ON posts clear-bin, no type (Send on)');
+
+    // PARTIAL ON: the LOAD door with the parts the lines source from here and
+    // a count the person types; 0 (nothing typed) posts nothing.
+    render();
+    loadOpens = [];
+    await tap(pcCards().find(c => cardText(c)[0] === 'ST2_B1'));
+    await tapOverlay('PARTIAL ON');
+    eq(loadOpens, [{ node: 2, codes: ['PART-K'], cap: 0, opts: { typedCount: true } }],
+        'PARTIAL ON opens the load modal for the lines\' parts, the count to be typed');
+    await confirmLoad();
+    eq(posts(), [], 'PARTIAL ON with no count typed posts nothing');
+    let keypad = null;
+    const realKeypad = ctx.openKeypad;
+    ctx.openKeypad = function (_node, _value, opts) { keypad = opts; };
+    await document.getElementById('os-load-uop-display').click();
+    await keypad.onOk(0, 37);
+    ctx.openKeypad = realKeypad;
+    await confirmLoad();
+    eq(posts(), [{ method: 'POST', url: '/api/process-nodes/2/load-bin', body: { payload_code: 'PART-K', uop_count: 37,
+        manifest: [{ part_number: 'PN-K1', quantity: 37, description: 'right' }] } }],
+    'PARTIAL ON posts load-bin with the part and the typed count');
+
+    // No line sources from here: EMPTY ON alone.
+    setView([stage1, stageTwoTile(2, 'ST2_B1', { pulled_directly: true, bin: BARE }), held]);
+    render();
+    await tap(pcCards().find(c => cardText(c)[0] === 'ST2_B1'));
+    eq(overlayButtons(), ['EMPTY ON', 'CANCEL'], 'stage 2, a bare cart, no line sources from here: EMPTY ON alone');
+    setView([stage1, bare, held]);
 
     render();
     const heldCard = pcCards().find(c => cardText(c)[0] === 'ST2_B2');
     eq(cardText(heldCard).slice(-1)[0].indexOf('Partial · held for P400 · since ') === 0, true,
         'stage 2, a held partial: held for its line, since its arrival');
     await tap(heldCard);
-    eq(overlayButtons(), ['COUNT', 'UNLOAD', 'CANCEL'], 'stage 2, a held partial: COUNT, UNLOAD, CANCEL');
-    await tapOverlay('UNLOAD');
+    // Changed (ruling 2026-10-29): COUNT, UNLOAD, CANCEL became one primary,
+    // PARTIAL OFF · EMPTY ON, the same post, with COUNT small beside it.
+    eq(overlayButtons(), ['PARTIAL OFF · EMPTY ON', 'COUNT', 'CANCEL'], 'stage 2, a held partial: PARTIAL OFF · EMPTY ON, COUNT, CANCEL');
+    await tapOverlay('PARTIAL OFF · EMPTY ON');
     eq(posts(), [{ method: 'POST', url: '/api/process-nodes/3/clear-bin', body: { unload: true } }],
-        'stage 2, a held partial: UNLOAD posts clear-bin with unload');
+        'stage 2, a held partial: PARTIAL OFF · EMPTY ON posts clear-bin with unload');
 
-    // J3: a stage 2 that lists a part, first on a board beside a loader: the
-    // bar asks for a full into it (today).
+    // J3: a stage 2 that lists a part, first on a board beside a loader: no
+    // bar. Fixed: it offered Request full, a full asked into a window stage 1
+    // feeds (pinned so on the consume stage 2, 5b983220).
     setView([stageTwoTile(2, 'ST2_C1', { parts: ['PART-K'], bin: NONE }),
         loaderTile(5, 'SMN_C5', { parts: ['PART-K'], bin: NONE, operator: true })]);
     render();
-    eq(barButtons().map(b => b.textContent), ['Request full'], 'stage 2 first on a payload board: the bar asks for a full (today)');
-    await tap(barButtons()[0]);
-    eq(posts(), [{ method: 'POST', url: '/api/process-nodes/2/request-full', body: { payload_code: 'PART-K' } }],
-        'stage 2 first on a payload board: Request full posts request-full (today)');
+    eq(barButtons().map(b => b.textContent), [], 'stage 2 first on a payload board, fixed: no bar asks for a full');
 
     // J5: the window's card model reads an unloader's.
     const dressed = stageTwoTile(2, 'ST2_D1', { parts: ['PART-K'], bin: EMPTY });
@@ -1297,7 +1344,7 @@ const loadBody = { payload_code: 'PART-A', uop_count: 24,
     resetDOM();
     ctx.openModal(2);
     eq(modalActions().map(a => a.dataset.action).filter(a => a.indexOf('request') >= 0),
-        ['/api/process-nodes/2/request-full|PART-K'], 'stage 2 modal, idle with a part: a request for a full (today)');
+        [], 'stage 2 modal, idle with a part, fixed: no request (it offered TAP TO REQUEST FULL)');
 
     // J1, J7: stage 2 beside a press is the node grid; its slot is an
     // unloader window.
@@ -1314,10 +1361,10 @@ const loadBody = { payload_code: 'PART-A', uop_count: 24,
     eq([slotTile('ST2_B1').className, words('ST2_B3'), words('ST2_B4')], ['os-node-btn os-drain-idle', ['NO BIN'], ['AWAITING FULL']],
         'stage 2 beside a press: an unloader slot, its words');
     await tap(slotTile('ST2_B2'));
-    eq(overlayButtons(), ['COUNT', 'UNLOAD', 'CANCEL'], 'stage 2 slot, a held partial: COUNT, UNLOAD, CANCEL');
+    eq(overlayButtons(), ['PARTIAL OFF · EMPTY ON', 'COUNT', 'CANCEL'], 'stage 2 slot, a held partial: PARTIAL OFF · EMPTY ON (changed)');
     render();
     await tap(slotTile('ST2_B1'));
-    eq(overlayButtons(), ['Send on', 'CANCEL'], 'stage 2 slot, a bare cart: Send on');
+    eq(overlayButtons(), ['EMPTY ON', 'PARTIAL ON', 'CANCEL'], 'stage 2 slot, a bare cart: EMPTY ON or PARTIAL ON (changed: Send on)');
 }
 
 // ── 18. The LOAD's count is the one typed ───────────────────────────────────

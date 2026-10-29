@@ -1183,6 +1183,15 @@ type LoaderInfo struct {
 	// bookkeeping and never reaches an operator. False — also what a Core
 	// predating this field sends — is an ordinary unloader.
 	LeavesBare bool `json:"leaves_bare,omitempty"`
+	// TakesBare marks the stage-2 half of a two-stage unloader, LeavesBare's
+	// mirror: its windows take the bare carts stage 1 leaves, and a person
+	// there puts a bin back on. The Edge draws its windows as an unloader's
+	// (the cart cards, the held partial's card, the CLEAR) whatever its role,
+	// and never asks for anything into them: stage 1 or Core's stage-2 pull
+	// brings every cart. Core sets it for any loader some stage 1 names as its
+	// second stage. False, also what a Core predating this field sends, is any
+	// other loader.
+	TakesBare bool `json:"takes_bare,omitempty"`
 	// AutoPush re-pulls this unloader's next full when a CLEAR, a PUSH EMPTY or
 	// its own empty-out landing frees a window. It lives on the loader because
 	// the stored claim that used to carry it is retired and SynthClaim never set

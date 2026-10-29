@@ -129,6 +129,10 @@ CREATE TABLE core_loaders (
     -- 1 = the stage-1 half of a two-stage unloader: its CLEAR leaves the cart
     -- bare and Core stamps the cart's own marker. Core owns it.
     leaves_bare INTEGER NOT NULL DEFAULT 0,
+    -- 1 = the stage-2 half of a two-stage unloader, whatever its role: the
+    -- board draws its windows as an unloader's and nothing asks a carrier
+    -- into them (Edge v33). Core owns it.
+    takes_bare INTEGER NOT NULL DEFAULT 0,
     -- 1 = a CLEAR, a PUSH EMPTY or this unloader's own empty-out landing
     -- re-pulls its next full. Core owns it (bin_loaders.auto_push).
     auto_push INTEGER NOT NULL DEFAULT 0,
