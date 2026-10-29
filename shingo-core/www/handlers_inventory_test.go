@@ -5,6 +5,7 @@ package www
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -373,6 +374,46 @@ func TestApiInventoryLedgerExceptions_ListsOpenReportDivergences(t *testing.T) {
 // --- apiInventoryLedgerExceptions: hold drops and declared-full stamps ------
 
 // TestApiInventoryLedgerExceptions_ListsHoldDropsAndStamps pins the two
+// TestApiInventoryLedgerExceptions_HoldDropsAtALineRunningFull: a strict line
+// at its pack with a full pack held drops a part a stroke (hold_cap) until a
+// bin comes. Seeded as SPR's ALN_011 had it on 2026-10-29: two runs, 180 and
+// 70 drops a minute apart, the runs an hour apart, all in the window.
+func TestApiInventoryLedgerExceptions_HoldDropsAtALineRunningFull(t *testing.T) {
+	t.Parallel()
+	h, db := testHandlers(t)
+	sd := testdb.SetupStandardData(t, db)
+	seed := func(n int, startMinutesAgo int) {
+		for i := 0; i < n; i++ {
+			_, err := db.Exec(`INSERT INTO bin_uop_exception (kind, bin_id, payload_code, actor, occurred_at, op, detail)
+				VALUES ('hold_dropped', NULL, $1, 'edge:tick', now() - make_interval(mins => $2), 'hold_cap',
+				        jsonb_build_object('node', 'ALN_011', 'qty', 1, 'reason', 'hold_cap', 'station', 'stn-page',
+				                           'msg_id', 'm' || $2::text))`,
+				sd.Payload.Code, startMinutesAgo-i)
+			testutil.MustNoErr(t, err, "seed hold drop")
+		}
+	}
+	seed(180, 400) // 400..221 minutes ago
+	seed(70, 150)  // 150..81 minutes ago
+
+	rec := getPlain(t, h.apiInventoryLedgerExceptions, "/api/inventory/ledger-exceptions")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status: got %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	var body struct {
+		HoldDrops []map[string]any `json:"hold_drops"`
+	}
+	testutil.MustNoErr(t, json.NewDecoder(bytes.NewReader(rec.Body.Bytes())).Decode(&body), "decode")
+	seen := fmt.Sprintf("rows=%d", len(body.HoldDrops))
+	// Today: one row per drop, newest first, cut at the limit: the page's head
+	// reads "200 hold drops" for 250, and 200 identical lines.
+	today := "rows=200"
+	after := today
+	t.Logf("PIN inventory/hold-drops %s", seen)
+	if seen != after {
+		t.Errorf("hold drops at a line running full: got %s, want %s (today %s)", seen, after, today)
+	}
+}
+
 // strict-pack lists the ledger fetch carries (lane P0): hold_drops, the
 // hold_dropped exceptions in the window with their seat, part, quantity,
 // reason and time; and declared_full_stamps, the release_declared_full ledger
