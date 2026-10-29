@@ -256,6 +256,60 @@ func TestProducePartialsPin_PartialOnAtStageTwoIsFetchedFirst(t *testing.T) {
 	}
 }
 
+// TestProducePartialsPin_FullOnAtStageTwoIsFetchedByTheCell: a pair serving a
+// consume cell. A person puts a full on a bare cart at a stage-2 window through
+// the LOAD door at the pack; the cell, which sources its fulls from stage 2's
+// group, takes that cart on its next REQUEST.
+func TestProducePartialsPin_FullOnAtStageTwoIsFetchedByTheCell(t *testing.T) {
+	t.Parallel()
+	sim := simulator.New()
+	h, db := testHandlersWithSim(t, sim)
+	sd := testdb.SetupStandardData(t, db)
+	s1, _, _, w2 := twoStagePair(t, h, db, "PPF", []string{"PPF-S1-W1"}, []string{"PPF-S2-W1", "PPF-S2-W2"})
+	one, err := db.GetLoader(s1)
+	testutil.MustNoErr(t, err, "stage 1")
+	group := one.OutboundDest
+	testutil.MustNoErr(t, db.CreatePayload(&payloads.Payload{Code: "PPF-X", UOPCapacity: 40}), "the part")
+	testutil.MustNoErr(t, db.ReplacePlantClaims("PPF-PROC",
+		[]plantclaims.StyleRow{{ProcessID: "PPF-PROC", StyleID: "PPF-STY", ConfigGen: 1, IsActive: true}},
+		[]plantclaims.ClaimRow{{ProcessID: "PPF-PROC", StyleID: "PPF-STY", CoreNodeName: sd.LineNode.Name,
+			Role: protocol.ClaimRoleConsume, SwapMode: protocol.SwapModeTwoRobot, PayloadCode: "PPF-X",
+			InboundSource: group, OutboundDestination: one.Name}}, 0), "the cell takes its fulls from stage 2")
+	cart := mintBinType(t, db, "PPF-CART")
+	bare := cartOfType(t, db, "", w2[0].ID, "PPF-BARE", mintMarker(t, db, cart))
+
+	load := postJSON(t, h.apiBinLoad, "/api/telemetry/bin-load", map[string]any{
+		"node_name": w2[0].Name, "payload_code": "PPF-X", "uop_count": 40,
+		"manifest": []map[string]any{{"part_number": "P1"}}})
+	got, err := db.GetBin(bare.ID)
+	testutil.MustNoErr(t, err, "reload")
+
+	d := h.engine.Dispatcher()
+	d.HandleOrderRequest(testdb.Envelope(), &protocol.OrderRequest{
+		OrderUUID: "ppf-feed", OrderType: dispatch.OrderTypeRetrieve, PayloadCode: "PPF-X",
+		DeliveryNode: sd.LineNode.Name, SourceNode: group, Quantity: 1,
+	})
+	eng, ok := h.engine.(*engine.Engine)
+	if !ok {
+		t.Fatal("precondition: the handlers' engine is not *engine.Engine")
+	}
+	eng.RunFulfillmentScan()
+	o, err := db.GetOrderByUUID("ppf-feed")
+	testutil.MustNoErr(t, err, "the feed")
+	fetched := "waits"
+	if o.BinID != nil && *o.BinID == bare.ID {
+		fetched = "the full"
+	}
+	seen := fmt.Sprintf("load=%d type=%s part=%s uop=%d feed=%s",
+		load.Code, got.BinTypeCode, got.PayloadCode, got.UOPRemaining, fetched)
+	today := `load=200 type=PPF-CART part=PPF-X uop=40 feed=the full`
+	after := today
+	t.Logf("PIN load/full-on-at-stage-2 %s", seen)
+	if seen != after {
+		t.Errorf("FULL ON at a stage-2 window: got %s, want %s (today %s)", seen, after, today)
+	}
+}
+
 // TestProducePartialsPin_LoadAtAHomeNeedsACount: a LOAD at a window inside a
 // partial home of its part must say how many it holds (today the standard pack
 // was assumed, and a real partial read as full); with the count it loads, and
