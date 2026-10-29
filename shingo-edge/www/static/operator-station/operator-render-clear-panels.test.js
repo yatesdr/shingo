@@ -57,7 +57,7 @@ const ctx = vm.createContext({
 // (operator-board-model.js clearChoices, isLit): pure, so it runs as it ships.
 vm.runInContext(fs.readFileSync(path.join(__dirname, 'operator-board-model.js'), 'utf8')
     .replace(/^import\s[^;]*;/gm, '').replace(/^export\s+/gm, ''), ctx);
-vm.runInContext(src + '\nthis.confirmUnloadSwap = confirmUnloadSwap; this.confirmPushEmpty = confirmPushEmpty;', ctx);
+vm.runInContext(src + '\nthis.confirmUnloadSwap = confirmUnloadSwap; this.confirmPushEmpty = confirmPushEmpty; this.confirmUnloadHeld = confirmUnloadHeld;', ctx);
 
 function walk(n, out) {
     out.push(n);
@@ -252,5 +252,14 @@ view = { empties: { group: 'G', rows: [{ bin_type: 'TOTE-S', have: 0, spots: 1 }
 p = open(function () { ctx.confirmUnloadSwap(36, ['TOTE-S'], 0, false, { bin_type: 'TOTE-S' }); });
 eq(p.buttons, ['CONFIRM SWAP', 'CANCEL'], 'no heights wanted: today\'s CONFIRM SWAP');
 view = null;
+// ── confirmUnloadHeld: a held partial at an unloader window ──
+{
+    const p = open(function () { ctx.confirmUnloadHeld(41, 'P400', 113); });
+    eq(p.buttons, ['COUNT', 'UNLOAD', 'CANCEL'], 'a held partial: COUNT, UNLOAD, CANCEL');
+    eq(p.texts.slice(0, 2), ['Partial, held for P400', 'It waits here until the line calls it back to be finished.'],
+        'a held partial: whose, and that it waits for its line');
+    eq(p.click('UNLOAD'), [{ url: '/api/process-nodes/41/clear-bin', body: { unload: true } }], 'UNLOAD posts the clear with unload');
+}
+
 if (failed) { console.error(passed + ' passed, ' + failed + ' FAILED'); process.exit(1); }
 console.log('operator-render clear panels: ' + passed + ' passed');

@@ -3138,6 +3138,28 @@ async function recipeGroupPins(h) {
         }
     });
 
+    // A PRODUCE POSITION'S FINISHED-GOODS ROWS: where the sheet draws strict
+    // pack and the partial home, before and after strict pack is switched on,
+    // and what the partial home's help says. Pinned before the tolerance
+    // exists: two sections, Unfinished carriers and Counting.
+    await pin('a produce position\'s sheet draws its finished-goods rows', async () => {
+        const ctx = p6Page(press6Composer(), { extraIds: { 'pd-advpop': Object.assign(makeElement('pd-advpop'), { hidden: true }) } });
+        await settle();
+        click(ctx.main, ctx.doc, { act: 'advanced', node: 'PLN_010' });
+        const fg = () => ctx.scrim.innerHTML.split('<div class="pd-sec">').slice(1).map(sec => {
+            const title = (sec.match(/<div class="pd-lbl">([^<]*)/) || [])[1];
+            const keys = [...new Set((sec.match(/data-adv="[^"]*"/g) || []).map(s => s.slice(10, -1)))];
+            return title + ': ' + keys.join(',');
+        }).filter(s => /strict_pack|pack_tolerance_pct|partial_dest/.test(s)).join(' | ');
+        if (ctx.scrim.innerHTML.indexOf('<h2>PLN_010 · Advanced</h2>') < 0) throw new Error('setup: the sheet is not PLN_010\'s');
+        const off = 'Unfinished carriers: partial_dest | Counting: strict_pack';
+        if (fg() !== off) throw new Error('strict pack off: ' + fg() + '\n      want ' + off);
+        const help = plain(ctx.scrim.innerHTML.split('<div class="pd-fld">').find(f => f.indexOf('data-adv="partial_dest"') >= 0) || '');
+        if (help.indexOf('waits to be called back and finished') < 0) throw new Error('the partial home says ' + help);
+        click(ctx.scrim, ctx.doc, { advkind: 'toggle', adv: 'strict_pack' });
+        if (fg() !== off) throw new Error('strict pack on: ' + fg() + '\n      want ' + off);
+    });
+
     await pin('Advanced · Edit… is the sheet in group scope, and Apply rides the save as groups[i].advanced', async () => {
         const ctx = p6Page(press6Composer(), { extraIds: { 'pd-advpop': Object.assign(makeElement('pd-advpop'), { hidden: true }) } });
         await settle();

@@ -208,6 +208,52 @@ func TestPlaceForContainment_FlagOff_NoDivert(t *testing.T) {
 	}
 }
 
+// TestPartialHome_GroupHomeTakesAFreeWindowOrKeepsTheDrop: a group home (a
+// synthetic group of two windows, the shape Core makes for a two-stage pair's
+// stage 2) gives an unfinished carrier a free window; with both taken the
+// carrier keeps its authored drop. A single-node home is named as it is, with
+// no room check.
+func TestPartialHome_GroupHomeTakesAFreeWindowOrKeepsTheDrop(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	setupTestData(t, db)
+	d, _ := newTestDispatcherWithResolver(t, db)
+	testutil.MustNoErr(t, db.CreatePayload(&payloads.Payload{Code: "PART-PH", UOPCapacity: 10}), "create the part")
+	fgn := &nodes.Node{Name: "FGN-PH", Enabled: true}
+	testutil.MustNoErr(t, db.CreateNode(fgn), "create the FG drop")
+	ngrp, err := db.GetNodeTypeByCode("NGRP")
+	testutil.MustNoErr(t, err, "NGRP type")
+	grp := &nodes.Node{Name: "PH-PAIR", IsSynthetic: true, NodeTypeID: &ngrp.ID, Enabled: true}
+	testutil.MustNoErr(t, db.CreateNode(grp), "create the group home")
+	var windows []*nodes.Node
+	for _, n := range []string{"PH-W1", "PH-W2"} {
+		w := &nodes.Node{Name: n, ParentID: &grp.ID, Enabled: true}
+		testutil.MustNoErr(t, db.CreateNode(w), "create "+n)
+		windows = append(windows, w)
+	}
+	_, err = db.DB.Exec(`INSERT INTO style_claims (process_id, style_id, core_node_name, role, swap_mode, payload_code,
+		outbound_destination, partial_destination)
+		VALUES ('P-PH', 'S-PH', 'PROD-PH', 'produce', 'auto', 'PART-PH', 'FGN-PH', 'PH-PAIR')`)
+	testutil.MustNoErr(t, err, "a claim keeps its partials in the group")
+
+	b := makeLoaderBin(t, db, "PART-PH", fgn.ID, "ph-partial", 4, time.Now().UTC())
+	o := containmentOrder(t, db, "ph-partial-1", fgn.Name, "PROD-PH", &b.ID)
+	got := partialHome(db, d.pure, o, b, 4, "PROD-PH", fgn.Name, binresolver.NoBinType)
+	if got != windows[0].Name && got != windows[1].Name {
+		t.Errorf("group home with free windows: the partial goes to %q, want a window of %s", got, grp.Name)
+	}
+	makeLoaderBin(t, db, "PART-PH", windows[0].ID, "ph-taken-1", 10, time.Now().UTC())
+	makeLoaderBin(t, db, "PART-PH", windows[1].ID, "ph-taken-2", 10, time.Now().UTC())
+	if got := partialHome(db, d.pure, o, b, 4, "PROD-PH", fgn.Name, binresolver.NoBinType); got != "" {
+		t.Errorf("group home full: the partial goes to %q, want its authored drop kept", got)
+	}
+	_, err = db.DB.Exec(`UPDATE style_claims SET partial_destination = 'PH-W1' WHERE core_node_name = 'PROD-PH'`)
+	testutil.MustNoErr(t, err, "name one window as the home")
+	if got := partialHome(db, d.pure, o, b, 4, "PROD-PH", fgn.Name, binresolver.NoBinType); got != windows[0].Name {
+		t.Errorf("single-node home holding a cart: the partial goes to %q, want %s (no room check)", got, windows[0].Name)
+	}
+}
+
 // TestPartialHome_ContainmentGoesFirst: an unfinished carrier of a contained
 // part keeps containment's drop, though its line's claim names a partial
 // home; the home takes it once containment is lifted.

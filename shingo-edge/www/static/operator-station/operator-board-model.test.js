@@ -503,7 +503,14 @@ eq([NOBIN, FULLBIN('PART-A'), EMPTYBIN('KD-1'), EMPTYBIN(''), { occupied: true, 
     eq([hc.reason, hc.act.kind, hc.act.heldFor, hc.act.count], ['Partial · held for P400 · since 10:00', 'unload-held', 'P400', 120],
         'a held partial at a window: held for its line since its arrival; the tap is UNLOAD and COUNT with the count Core holds');
     eq([hc.tone, !!hc.flash], ['plain', false], 'a held partial waits for its line, not for the person here: plain, no pulse');
-    const none = B({ station: {}, nodes: [windows[3]], serves: [] });
+    // The same partial on a pulled-directly stage-2 window (SPR's pair): the
+    // held card, not the dressing act.
+    const held2 = B({ station: {}, nodes: [bt(10, 'ULN_09', { role: 'consume', parts: ['PART-K'], bin: heldBin, carriers: ['TOTE-2'], pulledDirectly: true })], serves: [] },
+        { when: () => '10:00' });
+    const hc2 = zone(held2, 'windows').cards[0];
+    eq([hc2.reason, hc2.act.kind, hc2.act.heldFor, hc2.act.count, hc2.tone], ['Partial · held for P400 · since 10:00', 'unload-held', 'P400', 120, 'plain'],
+        'a held partial on a stage-2 window: the held card, as at any unloader window');
+    const none =B({ station: {}, nodes: [windows[3]], serves: [] });
     eq([zone(none, 'windows').count, zone(none, 'windows').empty, none.words], [0, 'No cart at any window.', ['nothing at the windows']],
         'no cart at any window: one quiet line');
 }

@@ -218,3 +218,39 @@ func TestSimOperator_ReconcileDrivesEveryScheduler(t *testing.T) {
 		}
 	}
 }
+
+// TestStageTwoPin_G17_TheSimClearsAtStageTwo is the role census's G17
+// (stage_two_window_pins_test.go has the rest): at a stage-2 window the sim's
+// auto-operator CLEARs, and its sweep acts on a stocked cart there, never on a
+// bare one.
+func TestStageTwoPin_G17_TheSimClearsAtStageTwo(t *testing.T) {
+	r := newStageTwoRig(t, stageTwoMode('a'))
+	op := newTestSimOperator(clock.NewManual(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)))
+	op.e = r.eng
+	if _, label, _, ok := op.classifyFromClaim(r.nodes[s2W1]); !ok || label != "clear" {
+		t.Errorf("classifyFromClaim at a stage-2 window = (%q, %v), want a clear", label, ok)
+	}
+
+	r.core.set(s2W1, true, "")              // a bare cart
+	r.core.setCount(s2W2, true, s2Part, 40) // a stocked one
+	seen := make(chan int64, 4)
+	op.classify = func(id int64) (time.Duration, string, func() error, bool) {
+		seen <- id
+		return 0, "", nil, false
+	}
+	op.sweepManualSwapNodes()
+	var got []int64
+	for deadline := time.After(300 * time.Millisecond); ; {
+		select {
+		case id := <-seen:
+			got = append(got, id)
+			continue
+		case <-deadline:
+		}
+		break
+	}
+	if len(got) != 1 || got[0] != r.nodes[s2W2] {
+		t.Errorf("the sweep scheduled nodes %v, want only %s (%d): the stocked cart, not the bare one",
+			got, s2W2, r.nodes[s2W2])
+	}
+}

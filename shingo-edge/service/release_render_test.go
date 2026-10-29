@@ -1,15 +1,108 @@
 package service
 
 import (
+	"context"
+	"encoding/json"
 	"reflect"
 	"testing"
 
 	"shingo/protocol"
 	"shingoedge/domain"
+	"shingoedge/internal/testdb"
 	"shingoedge/store/orders"
+	"shingoedge/store/processes"
+	"shingoedge/store/stations"
 )
 
 func iptr(v int) *int { return &v }
+
+// shortTile builds one station with one produce tile, its active style's claim
+// strict or not, the part's catalog pack 132 and the seat counted at count,
+// and returns the tile as the station's JSON carries it.
+func shortTile(t *testing.T, strict bool, count int) map[string]any {
+	t.Helper()
+	db := testdb.Open(t)
+	processID, err := db.CreateProcess("SYN-FG-PROC", "", "", "", false)
+	if err != nil {
+		t.Fatalf("process: %v", err)
+	}
+	stationID, err := db.CreateOperatorStation(stations.Input{ProcessID: processID, Code: "SYN-FG-ST", Name: "FG", Sequence: 1, Enabled: true})
+	if err != nil {
+		t.Fatalf("station: %v", err)
+	}
+	nodeID, err := db.CreateProcessNode(processes.NodeInput{ProcessID: processID, OperatorStationID: &stationID,
+		CoreNodeName: "SYN-FG-1", Code: "FG1", Name: "FG 1", Sequence: 1, Enabled: true})
+	if err != nil {
+		t.Fatalf("node: %v", err)
+	}
+	styleID, err := db.CreateStyle("SYN-STYLE", "", processID)
+	if err != nil {
+		t.Fatalf("style: %v", err)
+	}
+	if err := db.SetActiveStyle(processID, &styleID); err != nil {
+		t.Fatalf("active style: %v", err)
+	}
+	if _, err := db.Exec(`INSERT INTO payload_catalog (id, name, code, uop_capacity) VALUES (1, 'SYN-PART-132', 'SYN-PART-132', 132)`); err != nil {
+		t.Fatalf("catalog: %v", err)
+	}
+	if _, err := db.UpsertStyleNodeClaim(domain.CoreNodeKinds{}, processes.NodeClaimInput{
+		StyleID: styleID, CoreNodeName: "SYN-FG-1", Role: protocol.ClaimRoleProduce, SwapMode: protocol.SwapModeTwoRobot,
+		PayloadCode: "SYN-PART-132", InboundStaging: "SYN-STG", InboundSource: "SYN-SRC", OutboundDestination: "SYN-DOCK",
+		StrictPack: strict,
+	}); err != nil {
+		t.Fatalf("claim: %v", err)
+	}
+	if _, err := db.EnsureProcessNodeRuntime(nodeID); err != nil {
+		t.Fatalf("runtime: %v", err)
+	}
+	if err := db.UpdateProcessNodeUOP(nodeID, count); err != nil {
+		t.Fatalf("count: %v", err)
+	}
+	view, err := NewStationService(db).BuildView(context.Background(), stationID)
+	if err != nil {
+		t.Fatalf("BuildView: %v", err)
+	}
+	for i := range view.Nodes {
+		if view.Nodes[i].Node.ID != nodeID {
+			continue
+		}
+		raw, err := json.Marshal(view.Nodes[i])
+		if err != nil {
+			t.Fatalf("marshal tile: %v", err)
+		}
+		out := map[string]any{}
+		if err := json.Unmarshal(raw, &out); err != nil {
+			t.Fatalf("read tile: %v", err)
+		}
+		return out
+	}
+	t.Fatal("the tile is missing from its station")
+	return nil
+}
+
+// TestBuildView_ReleaseShort pins what a produce tile tells the board about a
+// short release: the RELEASE button's label reads the tile, and the stamp at
+// the release reads the claim. Pinned before the tolerance exists: no tile
+// says anything about a short release, whatever its claim and count.
+func TestBuildView_ReleaseShort(t *testing.T) {
+	t.Parallel()
+	for _, c := range []struct {
+		name   string
+		strict bool
+		count  int
+	}{
+		{"strict, 113 of 132", true, 113},
+		{"strict, 128 of 132", true, 128},
+		{"strict, at the pack", true, 132},
+		{"strict, empty", true, 0},
+		{"not strict, 113 of 132", false, 113},
+	} {
+		tile := shortTile(t, c.strict, c.count)
+		if v, ok := tile["release_short"]; ok {
+			t.Errorf("%s: the tile carries release_short = %v; nothing decides it yet", c.name, v)
+		}
+	}
+}
 
 // The board's buttons come from the rows the view holds (SHAPE 3.8). Each case
 // is a node's live legs; the want is what the tile renders.

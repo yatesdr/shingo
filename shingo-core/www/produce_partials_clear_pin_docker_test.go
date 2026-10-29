@@ -11,6 +11,9 @@ import (
 
 	"shingo/protocol"
 	"shingo/protocol/testutil"
+	"shingocore/dispatch"
+	"shingocore/engine"
+	"shingocore/fleet/simulator"
 	"shingocore/internal/testdb"
 	"shingocore/store"
 	"shingocore/store/audit"
@@ -148,6 +151,107 @@ func TestProducePartialsPin_ClearRefusesAHeldPartial(t *testing.T) {
 	testutil.MustNoErr(t, err, "reload")
 	if got.UOPRemaining != 0 || got.PayloadCode != "" {
 		t.Errorf("after UNLOAD the bin holds %d of %q, want cleared", got.UOPRemaining, got.PayloadCode)
+	}
+}
+
+// TestProducePartialsPin_StageTwoUnloadLeavesADressedEmpty: a partial whose
+// home is a two-stage unloader's stage 2 stands held on a window. One tap is
+// refused; UNLOAD books its count and leaves the cart as stage 2's own Send on
+// leaves one, its carrier type with nothing in it, which the line may fetch.
+func TestProducePartialsPin_StageTwoUnloadLeavesADressedEmpty(t *testing.T) {
+	t.Parallel()
+	h, db := testHandlers(t)
+	testdb.SetupStandardData(t, db)
+	_, _, _, w2 := twoStagePair(t, h, db, "PPS2", []string{"PPS2-S1-W1"}, []string{"PPS2-S2-W1"})
+	ppHome(t, db, w2[0], "PPS2-X")
+	cart := mintBinType(t, db, "PPS2-CART")
+	b := cartOfType(t, db, "PPS2-X", w2[0].ID, "PPS2-PARTIAL", cart)
+	testutil.MustNoErr(t, db.SetBinManifest(b.ID, `{"items":[]}`, "PPS2-X", 7), "a partial on the window")
+	_, err := db.DB.Exec(`UPDATE bins SET held_since = now() WHERE id=$1`, b.ID)
+	testutil.MustNoErr(t, err, "held since it landed")
+
+	tap := postJSON(t, h.apiBinClear, "/api/telemetry/bin-clear", map[string]any{"node_name": w2[0].Name})
+	unload := postJSON(t, h.apiBinClear, "/api/telemetry/bin-clear", map[string]any{"node_name": w2[0].Name, "unload": true})
+	got, err := db.GetBin(b.ID)
+	testutil.MustNoErr(t, err, "reload")
+	rows, err := audit.ListBinUOPByBin(db.DB, b.ID, 10, 0)
+	testutil.MustNoErr(t, err, "ledger")
+	op := "-"
+	if len(rows) > 0 {
+		op = fmt.Sprintf("%s %d->%d", rows[0].Op, derefInt(rows[0].BeforeUOP), rows[0].AfterUOP)
+	}
+	held := "set"
+	if got.HeldSince == nil {
+		held = "null"
+	}
+	seen := fmt.Sprintf("tap=%d unload=%d type=%s part=%q uop=%d ledger=%s held=%s",
+		tap.Code, unload.Code, got.BinTypeCode, got.PayloadCode, got.UOPRemaining, op, held)
+	// No stage-2 stamp: the cart keeps its carrier type (StampNone). Today the
+	// emptied cart keeps held_since, so the board keeps drawing the held card.
+	today := `tap=409 unload=200 type=PPS2-CART part="" uop=0 ledger=clear_for_reuse 7->0 held=set`
+	after := today
+	t.Logf("PIN clear/stage-2-unload %s", seen)
+	if seen != after {
+		t.Errorf("UNLOAD at a stage-2 window: got %s, want %s (today %s)", seen, after, today)
+	}
+}
+
+// TestProducePartialsPin_PartialOnAtStageTwoIsFetchedFirst: a person puts a
+// partial on a bare cart at a stage-2 window through the LOAD door, with its
+// count. The cart takes its carrier type back and holds the part; the line,
+// which sources its empties from stage 2's group and keeps its partials there,
+// fetches that partial before the dressed empty beside it.
+func TestProducePartialsPin_PartialOnAtStageTwoIsFetchedFirst(t *testing.T) {
+	t.Parallel()
+	sim := simulator.New()
+	h, db := testHandlersWithSim(t, sim)
+	sd := testdb.SetupStandardData(t, db)
+	s1, _, _, w2 := twoStagePair(t, h, db, "PPO", []string{"PPO-S1-W1"}, []string{"PPO-S2-W1", "PPO-S2-W2"})
+	one, err := db.GetLoader(s1)
+	testutil.MustNoErr(t, err, "stage 1")
+	group := one.OutboundDest // the group Core made for stage 2's two windows
+	testutil.MustNoErr(t, db.CreatePayload(&payloads.Payload{Code: "PPO-X", UOPCapacity: 132}), "the part")
+	testutil.MustNoErr(t, db.ReplacePlantClaims("PPO-PROC",
+		[]plantclaims.StyleRow{{ProcessID: "PPO-PROC", StyleID: "PPO-STY", ConfigGen: 1, IsActive: true}},
+		[]plantclaims.ClaimRow{{ProcessID: "PPO-PROC", StyleID: "PPO-STY", CoreNodeName: sd.LineNode.Name,
+			Role: protocol.ClaimRoleProduce, SwapMode: protocol.SwapModeTwoRobot, PayloadCode: "PPO-X",
+			InboundSource: group, PartialDestination: group}}, 0), "the line sources from stage 2 and keeps its partials there")
+	cart := mintBinType(t, db, "PPO-CART")
+	bare := cartOfType(t, db, "", w2[0].ID, "PPO-BARE", mintMarker(t, db, cart))
+	dressed := cartOfType(t, db, "", w2[1].ID, "PPO-EMPTY", cart)
+
+	load := postJSON(t, h.apiBinLoad, "/api/telemetry/bin-load", map[string]any{
+		"node_name": w2[0].Name, "payload_code": "PPO-X", "uop_count": 40,
+		"manifest": []map[string]any{{"part_number": "P1"}}})
+	got, err := db.GetBin(bare.ID)
+	testutil.MustNoErr(t, err, "reload")
+
+	d := h.engine.Dispatcher()
+	d.HandleOrderRequest(testdb.Envelope(), &protocol.OrderRequest{
+		OrderUUID: "ppo-refill", OrderType: dispatch.OrderTypeRetrieveEmpty, PayloadCode: "PPO-X",
+		DeliveryNode: sd.LineNode.Name, SourceNode: group, Quantity: 1,
+	})
+	eng, ok := h.engine.(*engine.Engine)
+	if !ok {
+		t.Fatal("precondition: the handlers' engine is not *engine.Engine")
+	}
+	eng.RunFulfillmentScan()
+	o, err := db.GetOrderByUUID("ppo-refill")
+	testutil.MustNoErr(t, err, "the refill")
+	fetched := "waits"
+	switch {
+	case o.BinID != nil && *o.BinID == bare.ID:
+		fetched = "partial"
+	case o.BinID != nil && *o.BinID == dressed.ID:
+		fetched = "empty"
+	}
+	seen := fmt.Sprintf("load=%d type=%s part=%s uop=%d refill=%s",
+		load.Code, got.BinTypeCode, got.PayloadCode, got.UOPRemaining, fetched)
+	today := `load=200 type=PPO-CART part=PPO-X uop=40 refill=partial`
+	after := today
+	t.Logf("PIN load/partial-on-at-stage-2 %s", seen)
+	if seen != after {
+		t.Errorf("PARTIAL ON at a stage-2 window: got %s, want %s (today %s)", seen, after, today)
 	}
 }
 

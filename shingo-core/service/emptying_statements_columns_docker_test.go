@@ -72,7 +72,8 @@ func loadedBinOffDefaults(t *testing.T, db *store.DB, nodeID int64, label string
 		undeclared_carrier_at='2020-01-02T00:00:00Z', last_counted_at='2020-01-03T00:00:00Z',
 		last_counted_by='counter', anomaly_at='2020-01-04T00:00:00Z', anomaly_note='note',
 		staged_at='2020-01-05T00:00:00Z', staged_expires_at='2020-01-06T00:00:00Z',
-		lifted_at='2020-01-07T00:00:00Z', updated_at='2020-01-08T00:00:00Z', totes_on_cart=3
+		lifted_at='2020-01-07T00:00:00Z', updated_at='2020-01-08T00:00:00Z', totes_on_cart=3,
+		held_since='2020-01-09T00:00:00Z'
 		WHERE id=$1`, bin.ID)
 	testutil.MustNoErr(t, err, "move the bin's columns off their defaults")
 	return bin

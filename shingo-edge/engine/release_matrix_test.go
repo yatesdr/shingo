@@ -762,6 +762,9 @@ func TestStrictPack_TheStampIsAStationsAlone(t *testing.T) {
 			want:  "ok | swap=in_transit | rel=swap | ingest=1 capred=0 | stamp:q=42 declared=100 by=operator order=swap",
 			build: strict(func(h *relHarness) { h.singleRobot(protocol.ClaimRoleProduce); statuses(h, "swap", S) }),
 			act:   orderClick("swap", dispNone), probe: pStamp},
+		{name: "d1/two_robot pair, one short of the pack",
+			want:  "ok | evac=in_transit supply=in_transit | rel=evac,supply | ingest=1 capred=0 | stamp:q=99 declared=100 by=operator order=evac",
+			build: atCount(99, strict(pairAt(twoRobot, "evac", S, "supply", S))), act: pairClick(dispNone), probe: pStamp},
 
 		// ── Station doors, not a short strict bin: the count alone ──────────
 		{name: "d1/two_robot pair, count above the pack ships unclamped",
