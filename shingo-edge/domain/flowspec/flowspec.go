@@ -131,8 +131,10 @@ const (
 	// in the browser and nowhere else.
 	ReorderPointSource Field = "reorder_point_source"
 	// PartialDestination is where a produce claim's carrier goes when it leaves
-	// the line unfinished, to wait and be called back (a node or a group).
-	// Blank = where a full goes. Offered on produce claims only.
+	// the line unfinished: a node group holds it to be finished later, an
+	// unloader unloads it there. Blank = where a full goes, at its real count.
+	// Offered on produce claims only. Worded "Partials go to", the row's name
+	// in the Advanced sheet's Finished goods section.
 	PartialDestination Field = "partial_destination"
 	// CurtainRequired is the light-curtain style tie: this part's full-bin
 	// releases at the node wait for the node's curtain tag. A FlowAdvanced
@@ -140,12 +142,18 @@ const (
 	CurtainRequired Field = "curtain_required"
 	// StrictPack caps a produce claim's bound bin at its pack: ticks past the
 	// pack are held on the seat for the next bin of the part instead of
-	// counted onto this one (engine strictPackApplies). Offered on produce
+	// counted onto this one (NodeClaim.StrictPackApplies). Offered on produce
 	// claims; Forbidden on consume claims, which draw a bin down and have no
 	// pack to stop at, and on loader cards, whose counts are a person's. Not
 	// to be confused with StrictSteadyModes (domain/claim_fields.go), which
 	// says how fully a mode's row is enforced at save.
 	StrictPack Field = "strict_pack"
+	// PackTolerancePct is a strict claim's miscount tolerance, a percent of
+	// the pack: a station's RELEASE of a bin within it of the pack declares the
+	// bin full (domain.NodeClaim.DeclaresFullAt). Used and Forbidden exactly
+	// where StrictPack is; it has no reader with strict pack off, and the save
+	// does not refuse one there.
+	PackTolerancePct Field = "pack_tolerance_pct"
 
 	// SwapMode and Role are NOT columns the per-mode matrices consult — they
 	// are the two discriminants the matrices are keyed BY, so they are not in
@@ -188,9 +196,10 @@ var fieldLabels = map[Field]string{
 	KeyRoute:                       "Key route",
 	KeyTask:                        "Key task",
 	ReorderPointSource:             "Reorder point source",
-	PartialDestination:             "Partial destination",
+	PartialDestination:             "Partials go to",
 	CurtainRequired:                "Curtain required",
 	StrictPack:                     "Strict pack",
+	PackTolerancePct:               "Pack tolerance %",
 	SwapMode:                       "Swap mode",
 	Role:                           "Role",
 }
@@ -205,7 +214,7 @@ var fieldOrder = []Field{
 	ChangeoverEvacNodes, ChangeoverEvacDestination, ChangeoverCarryoverDisposition,
 	ReuseCompatibleBins, IndexRobotSupplies, AutoConfirm, AutoRequestPayload, AutoPush,
 	KeyRoute, KeyTask, ReorderPointSource, PartialDestination, CurtainRequired,
-	StrictPack,
+	StrictPack, PackTolerancePct,
 }
 
 // Fields returns every field, in canonical order. A fresh slice each call.
@@ -424,7 +433,7 @@ func steadyRows() map[protocol.SwapMode]map[Field]Need {
 	ms[AutoPush] = Used // consume only; produce is overridden in Steady
 	// A loader card's count is a person's (the PLC tick skips manual_swap
 	// claims), so there is no tick for a pack to stop.
-	ms[StrictPack] = Forbidden
+	ms[StrictPack], ms[PackTolerancePct] = Forbidden, Forbidden
 	for _, f := range []Field{
 		ReorderPoint, AutoReorder, LinesideSoftThreshold,
 		InboundStaging, OutboundStaging, InboundSource,
@@ -500,7 +509,7 @@ func Steady(role protocol.ClaimRole, mode protocol.SwapMode) map[Field]Need {
 		out[PartialDestination] = Unused
 		// A consume tick draws its bin down: there is no pack for it to stop
 		// at, so the cap is a produce setting.
-		out[StrictPack] = Forbidden
+		out[StrictPack], out[PackTolerancePct] = Forbidden, Forbidden
 	}
 	return out
 }

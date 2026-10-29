@@ -1223,11 +1223,11 @@ func TestSaveFlow_R3_RefusalOrder(t *testing.T) {
 }
 
 // TestSaveFlow_StrictPackSurvivesASave: a produce claim with the pack cap on
-// keeps it through both saves the composer makes. A save that never opened the
-// Advanced sheet carries it from the prior (Expand); a save whose sheet was
-// opened and applied sends it in the advanced block (FlowAdvanced, built on the
-// desktop from composer-model.js ADVANCED_DEFAULTS), and a block that did not
-// name it would write it off.
+// and a tolerance keeps both through both saves the composer makes. A save
+// that never opened the Advanced sheet carries them from the prior (Expand); a
+// save whose sheet was opened and applied sends them in the advanced block
+// (FlowAdvanced, built on the desktop from composer-model.js
+// ADVANCED_DEFAULTS), and a block that did not name them would write them off.
 func TestSaveFlow_StrictPackSurvivesASave(t *testing.T) {
 	t.Parallel()
 	db := testEngineDB(t)
@@ -1238,7 +1238,7 @@ func TestSaveFlow_StrictPackSurvivesASave(t *testing.T) {
 	same, err := db.GetStyleNodeClaimByNode(toStyleID, "FLOW-SAME")
 	testutil.MustNoErr(t, err, "get FLOW-SAME")
 	in := domain.InputFromClaim(*same)
-	in.Role, in.StrictPack = protocol.ClaimRoleProduce, true
+	in.Role, in.StrictPack, in.PackTolerancePct = protocol.ClaimRoleProduce, true, 10
 	_, err = db.UpsertStyleNodeClaim(domain.CoreNodeKinds{}, in)
 	testutil.MustNoErr(t, err, "turn the cap on at FLOW-SAME")
 
@@ -1265,8 +1265,8 @@ func TestSaveFlow_StrictPackSurvivesASave(t *testing.T) {
 		testutil.MustNoErr(t, err, tc.name+": save")
 		got, err := db.GetStyleNodeClaimByNode(toStyleID, "FLOW-SAME")
 		testutil.MustNoErr(t, err, "get FLOW-SAME after")
-		if !got.StrictPack {
-			t.Errorf("%s: strict_pack is off after the save; a save must not write the cap off", tc.name)
+		if !got.StrictPack || got.PackTolerancePct != 10 {
+			t.Errorf("%s: strict_pack %v, tolerance %d after the save; a save must not write the cap or its tolerance off", tc.name, got.StrictPack, got.PackTolerancePct)
 		}
 	}
 }

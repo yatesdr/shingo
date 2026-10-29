@@ -63,8 +63,8 @@ function calledByFromView() {
 
 // capture_lineside with nothing pulled — the body a consume release at zero
 // with no payload chips posts: the disposition names what was pulled to
-// lineside, and the answer is "nothing". A produce release posts
-// releasedFullBody instead.
+// lineside, and the answer is "nothing". A produce release posts releaseBody
+// instead.
 function releasedNothingBody(calledBy) {
     return {
         disposition: 'capture_lineside',
@@ -75,9 +75,15 @@ function releasedNothingBody(calledBy) {
 }
 
 // A PRODUCE RELEASE SAYS NOTHING ABOUT LINESIDE, because the question does not
-// apply: the bin is going OUT full, not coming back drawn-down. So this body
+// apply: the bin is going OUT, not coming back drawn-down. So this body
 // carries no disposition at all, which Core reads as "no manifest action" and
 // leaves the carrier's contents alone.
+//
+// IT DECLARES NOTHING EITHER. Whether the bin is booked full is the engine's,
+// at the finalize (declaredFull, from the claim's pack tolerance), and the
+// tile's RELEASE / RELEASE SHORT reads the same helper. It was named
+// releasedFullBody, and a FULL name on a body that says nothing is the shape of
+// the incident below.
 //
 // It used to post releasedNothingBody — capture_lineside with an empty
 // qty_by_part — which ComputeReleaseRemainingUOP turns into &0, i.e. "the bin
@@ -86,7 +92,7 @@ function releasedNothingBody(calledBy) {
 // discarded the disposition; releaseOrderDropFastPath skips that branch, so at
 // a changeover the meaningless payload became the instruction. Hopkinsville:
 // 46 wipes, 140,762 parts, 2026-07-16 to 09-08.
-function releasedFullBody(calledBy) {
+function releaseBody(calledBy) {
     return { called_by: calledBy };
 }
 
@@ -99,10 +105,11 @@ function releasedFullBody(calledBy) {
 //
 //   produce role           the engine discards the disposition entirely for
 //                          produce (release_commit.go, the produce arm), so
-//                          RELEASE posts releasedFullBody and the prompt never
+//                          RELEASE posts releaseBody and the prompt never
 //                          opens; its consume framing — "anything pulled to
 //                          lineside?", "bin returning to supermarket" — is
-//                          backwards for a node pushing a full bin OUT.
+//                          backwards for a node pushing a bin OUT. This is the
+//                          only produce path: no produce screen exists.
 //   consume, no payloads,  no chip grid to pick from, and the PARTIAL and
 //   remaining_uop == 0     UNDER COUNT arms are both remaining_uop > 0 only,
 //                          leaving RELEASE EMPTY + CANCEL.
@@ -120,7 +127,7 @@ function releasedFullBody(calledBy) {
 function singleOutcomeReleaseBody(entry, payloads) {
     const claim = entry && entry.active_claim;
     if (!claim) return null;
-    if (claim.role === 'produce') return releasedFullBody(calledByFromView());
+    if (claim.role === 'produce') return releaseBody(calledByFromView());
     if (payloads.length > 0) return null;
     // STRICTER THAN THE RENDERER, DELIBERATELY. renderReleasePromptStep1 reads
     // a missing remaining_uop_cached as 0 because it is only choosing a label
@@ -219,28 +226,16 @@ function isChangeoverRelease(url) {
     return /\/changeover\/release(\?|$)/.test(String(url || ''));
 }
 
-// isProduceRelease reports whether the release is happening on a produce
-// (loader / press) node. The entire lineside-disposition prompt is consume
-// framing — "anything pulled to lineside?", RELEASE PARTIAL / RELEASE EMPTY,
-// "bin returning to supermarket". A produce node is pushing a FULL bin OUT, so
-// that wording is backwards and the questions are meaningless: the engine
-// short-circuits produce role to a plain release (release_commit.go, the produce arm),
-// discarding the disposition entirely. Render a simple "release the full bin"
-// confirm instead.
-function isProduceRelease(state) {
-    const claim = state && state.entry && state.entry.active_claim;
-    return !!(claim && claim.role === 'produce');
-}
-
+// renderReleasePromptStep1 draws the consume release's first screen. The
+// prompt is consume framing throughout — "anything pulled to lineside?",
+// RELEASE PARTIAL / RELEASE EMPTY, "bin returning to supermarket" — and a
+// produce release never reaches it: singleOutcomeReleaseBody posts releaseBody
+// for every produce claim before the prompt opens. The produce screen this
+// once branched to (RELEASE FULL) was reachable from nowhere and is gone.
 function renderReleasePromptStep1() {
     const state = releasePromptState;
     if (!state) return;
     state.screen = renderReleasePromptStep1;
-
-    if (isProduceRelease(state)) {
-        renderReleasePromptProduce();
-        return;
-    }
 
     nodeModalContent.innerHTML = releasePromptStep1HTML(state);
     nodeModalContent.querySelectorAll('[data-action]').forEach(function(btn) {
@@ -327,38 +322,6 @@ function releasePromptStep1HTML(state) {
     html += '<button type="button" class="os-action-btn close" data-action="release-cancel">CANCEL</button>';
     html += '</div>';
     return html;
-}
-
-// renderReleasePromptProduce is the produce-node release: a single confirm to
-// push the finished FULL bin out. No lineside chips, no partial/empty/underpack
-// (all consume-only). release-submit carries a capture_lineside disposition with
-// nothing pulled — the engine ignores the disposition for produce role but uses
-// capture_lineside as the trigger to fire the downstream unloader's full-in
-// side-cycle (release_commit.go, the produce arm's U1), which the old send_partial_back path
-// (chosen whenever remaining_uop>0) silently suppressed.
-function renderReleasePromptProduce() {
-    let html = '';
-    html += '<div class="modal-header">';
-    html += '<div class="modal-node-name">Release</div>';
-    html += '<div class="modal-payload">Send the full bin out?</div>';
-    html += '</div>';
-
-    html += '<div class="os-release-prompt">';
-    html += '<div class="os-release-primary-label" style="padding:12px 0">';
-    html += 'The finished bin is released to its outbound destination and the next empty is brought in.';
-    html += '</div>';
-    html += '</div>';
-
-    html += '<div class="modal-actions">';
-    html += '<button type="button" class="os-action-btn request" data-action="release-submit-produce">RELEASE FULL</button>';
-    html += '<button type="button" class="os-action-btn close" data-action="release-cancel">CANCEL</button>';
-    html += '</div>';
-
-    nodeModalContent.innerHTML = html;
-    nodeModalContent.querySelectorAll('[data-action]').forEach(function(btn) {
-        btn.addEventListener('click', handleReleasePromptAction);
-    });
-    nodeModal.classList.add('active');
 }
 
 // renderReleasePromptUnderpackConfirm shows the destructive-action
@@ -524,19 +487,8 @@ async function handleReleasePromptAction(evt) {
     //                              shape as RELEASE EMPTY (manifest clear);
     //                              distinct audit op so forensics can trend
     //                              missing-inventory patterns separately.
-    // Produce release: confirm-only. capture_lineside with no buckets — engine
-    // discards the disposition for produce role but uses capture_lineside to
-    // fire the downstream unloader full-in side-cycle.
-    if (action === 'release-submit-produce') {
-        // Same body singleOutcomeReleaseBody posts when it skips this modal —
-        // one builder, so the two paths cannot drift apart. Still reachable:
-        // a produce entry whose active_claim has not loaded yet renders the
-        // prompt, and this submits it.
-        const body = releasedFullBody(calledByFromView());
-        await submitRelease(state, state.url, body);
-        return;
-    }
-
+    // A produce release has no arm here: it never opens the prompt
+    // (singleOutcomeReleaseBody posts releaseBody first).
     if (action === 'release-submit' || action === 'release-submit-parts' || action === 'release-submit-underpack') {
         const url = state.url;
         const calledBy = calledByFromView();

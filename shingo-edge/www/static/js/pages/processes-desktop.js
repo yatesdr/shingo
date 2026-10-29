@@ -1136,7 +1136,7 @@ const DECK_FIELDS = ['paired_core_node', 'second_paired_core_node'];
 // domain.RecipeAdvanced), in that type's order.
 const GROUP_ADV_KEYS = ['reorder_point', 'auto_reorder', 'lineside_soft_threshold', 'auto_push',
     'evacuate_on_changeover', 'changeover_carryover_disposition', 'keep_staged_node', 'auto_confirm',
-    'curtain_required', 'strict_pack'];
+    'curtain_required', 'strict_pack', 'pack_tolerance_pct'];
 
 // listWords is a list's column heading, its add chip and the noun "On the
 // floor" and the running-style line say it with, per mode.
@@ -2155,7 +2155,7 @@ function syncPosHead(e) {
 // The row's `N set` badge. The model counts it, by domain.ClaimHas's rule, so
 // the badge and the server agree on what "set" means; the two evacuation
 // fields and the partial home are the cell's own and are counted here beside
-// them because the modal draws all fifteen in one sheet.
+// them because the modal draws all eighteen in one sheet.
 function advancedCount(node) {
     const c = S.model.cells[node];
     let n = M().advancedSet(S.model, node).length;
@@ -3729,8 +3729,8 @@ async function setPartSetMember(code, on) {
 
 // ── D2 · Advanced (SPEC §2 D2) ───────────────────────────────────────────────
 //
-// The modal is the ONLY place these columns appear (ruling R2). Fourteen of the
-// seventeen fields are the model's advanced block; the other three — evacuation
+// The modal is the ONLY place these columns appear (ruling R2). Fifteen of the
+// eighteen fields are the model's advanced block; the other three — evacuation
 // positions, evacuation destination and the partial home — are on the cell, a
 // routing fact the flow carries like the destination beside it. Apply dispatches both and marks the flow dirty;
 // nothing is written until Save flow.
@@ -3745,16 +3745,18 @@ const ADV_SECTIONS = [
     ['Part identity', ['allowed_payload_codes']],
     ['Replenishment', ['reorder_point', 'auto_reorder', 'lineside_soft_threshold', 'auto_request_payload', 'auto_push', 'keep_staged_node']],
     ['Changeover specials', ['evacuate_on_changeover', 'evac_nodes', 'evac_dest', 'changeover_carryover_disposition']],
-    // A carrier that leaves this position before it is full: where it waits to
-    // be called back and finished. Offered on a produce position only.
-    ['Unfinished carriers', ['partial_dest']],
+    // FINISHED GOODS: what a produce position's bin is counted to and where it
+    // goes when it leaves short, in the order an engineer decides them — the
+    // pack cap, the miscount tolerance (drawn only while the cap is on: it has
+    // no reader without it, advShows), then where partials go. One section,
+    // where 'Unfinished carriers' and 'Counting' were two (partials-stage2,
+    // 2026-10-29). Offered on a produce position only (flowspec).
+    ['Finished goods', ['strict_pack', 'pack_tolerance_pct', 'partial_dest']],
     ['Press hardware', ['index_robot_supplies']],
     // THE LIGHT CURTAIN'S STYLE TIE (pick-a-part U5). It had copy and a control
     // and no section, so nothing drew it: the claim had readers
     // (engine/release_load.go) and no UI writer.
     ['Light curtain', ['curtain_required']],
-    // The pack cap: a produce position's bin is counted only up to its pack.
-    ['Counting', ['strict_pack']],
     ['Station policy', ['auto_confirm']],
     // BOARD is one field, and it earns a section rather than a corner of
     // another: the loader board's draw order is not replenishment, not a
@@ -3763,7 +3765,7 @@ const ADV_SECTIONS = [
     ['Board', ['sequence']],
 ];
 
-// ADV_COPY — the sheet's seventeen rows: which CLAIM FIELD each one edits, and
+// ADV_COPY — the sheet's eighteen rows: which CLAIM FIELD each one edits, and
 // the one-line help under it.
 //
 // THE HELP IS THIS PAGE'S; THE NAME IS NOT. This used to carry both, so it was
@@ -3787,13 +3789,17 @@ const ADV_COPY = {
     evacuate_on_changeover: ['evacuate_on_changeover', 'clear this position before the new style'],
     evac_nodes: ['changeover_evac_nodes', 'tooling change — which positions get cleared'],
     evac_dest: ['changeover_evac_destination', ''],
-    partial_dest: ['partial_destination', 'where a bin that leaves this position unfinished waits to be called back and finished; blank sends it where full bins go'],
+    // What each kind of home does, because the picker cannot say it: the
+    // routing row is a name. An unloader home unloads the bin; it does not
+    // hold it for the line.
+    partial_dest: ['partial_destination', 'where a bin released short goes: blank sends it where full bins go, at its real count; a node group holds it there to be finished later; the unloader unloads it there'],
     changeover_carryover_disposition: ['changeover_carryover_disposition', 'what happens to a part-full bin'],
     index_robot_supplies: ['index_robot_supplies', 'the same for every part on this press'],
     auto_confirm: ['auto_confirm', 'the plant setting applies unless set here'],
     sequence: ['sequence', 'where this position sits on the loader board'],
     curtain_required: ['curtain_required', 'this part\'s full-bin releases wait for the node\'s light curtain - the bin leaving decides, so a part whose exit must not stop the conveyor leaves this off'],
     strict_pack: ['strict_pack', 'count the bin at this position only up to its pack; parts made past it are held for the next bin of the part'],
+    pack_tolerance_pct: ['pack_tolerance_pct', 'a bin released within this percent of its pack (up to 20) is booked full; further short, or with this blank, it ships its real count and the button reads RELEASE SHORT'],
 };
 
 // The reorder point's source stamps that are worth a pill: the word drawn and
@@ -3854,6 +3860,10 @@ function openGroupAdvanced(i) {
 }
 
 function advShows(key) {
+    // The tolerance is read only through strict pack, so it is drawn only
+    // while the sheet has strict pack on, in either scope. A stored value
+    // stays when the cap is switched off; nothing reads it then.
+    if (key === 'pack_tolerance_pct' && !S.adv.a.strict_pack) return false;
     if (S.adv.group !== undefined) return GROUP_ADV_KEYS.indexOf(key) >= 0 && M().advancedShows(S.model, S.adv.node, key);
     if (key === 'evac_nodes' || key === 'evac_dest') {
         return M().advancedShows(S.model, S.adv.node, 'evacuate_on_changeover');
@@ -3923,7 +3933,7 @@ function advField(key) {
                 ? '<span class="pd-src" title="' + esc(src[1]) + '">' + esc(src[0]) + '</span>' : '');
             break;
         }
-        case 'lineside_soft_threshold': case 'sequence': control = advNumber(key); break;
+        case 'lineside_soft_threshold': case 'sequence': case 'pack_tolerance_pct': control = advNumber(key); break;
         case 'curtain_required': control = advToggle(key); break;
         case 'auto_request_payload': {
             const v = S.adv.a.auto_request_payload;
@@ -4026,11 +4036,11 @@ function closeAdvanced() {
     markRecipeState();
 }
 
-// Apply: the thirteen through setAdvanced, the two evacuation fields through the
-// cell's own actions. Three reduces rather than one because they are three
-// different things the model already knows how to do. In group scope the
-// group's `advanced` takes what the sheet says, as the server stores it, and
-// no cell changes.
+// Apply: the advanced block through setAdvanced, the two evacuation fields and
+// the partial home through the cell's own actions. Several reduces rather than
+// one because they are different things the model already knows how to do. In
+// group scope the group's `advanced` takes what the sheet says, as the server
+// stores it, and no cell changes.
 function applyAdvanced() {
     if (S.adv.group !== undefined) {
         const g = S.shapeDraft && S.shapeDraft.groups && S.shapeDraft.groups[S.adv.group];

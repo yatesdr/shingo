@@ -1126,8 +1126,8 @@ test('a strict claim\'s finished-goods fields through opening the sheet and an A
     // tolerance in the Advanced block, partial_destination on the cell. The
     // sheet opens on ADVANCED_DEFAULTS merged key by key, so a key the
     // defaults do not name is dropped on open and an Apply sends the block
-    // without it. Pinned before the tolerance exists: the defaults do not
-    // name it, so it is dropped.
+    // without it. Pinned before the tolerance existed, when it was dropped;
+    // ADVANCED_DEFAULTS names it now, so all three survive.
     const f = FIXTURES.styles['7'];
     const advanced = Object.assign({}, f.advanced);
     advanced.PLN_01 = Object.assign({}, advanced.PLN_01, { strict_pack: true, pack_tolerance_pct: 5 });
@@ -1140,11 +1140,11 @@ test('a strict claim\'s finished-goods fields through opening the sheet and an A
     });
     const adv = M.advancedFor(s, 'PLN_01');
     assert.strictEqual(adv.strict_pack, true, 'the sheet opened with strict pack off');
-    assert.strictEqual(adv.pack_tolerance_pct, undefined, 'the sheet opened with a tolerance');
+    assert.strictEqual(adv.pack_tolerance_pct, 5, 'the sheet opened with the tolerance dropped');
     const after = M.reduce(s, { type: 'setAdvanced', node: 'PLN_01', advanced: adv });
     const one = M.toCells(after).find(c => c.core_node_name === 'PLN_01');
     assert.strictEqual(one.advanced.strict_pack, true, 'the Apply sent strict pack off');
-    assert.strictEqual(one.advanced.pack_tolerance_pct, undefined, 'the Apply sent a tolerance');
+    assert.strictEqual(one.advanced.pack_tolerance_pct, 5, 'the Apply sent the tolerance off');
     assert.strictEqual(one.partial_destination, 'SYN-PARTIALS', 'the Apply lost the partial home');
 });
 

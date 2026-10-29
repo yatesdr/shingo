@@ -106,6 +106,13 @@ type StationNodeView struct {
 	// reads a property the server declares instead of a mode name: sequential
 	// and single_robot link their legs too, and release them one at a time.
 	ReleasesAsPair bool `json:"releases_as_pair"`
+	// ReleaseShort is true when a station's RELEASE of this node's bin, at the
+	// seat's count now, would ship it short: its claim is strict, the bin is
+	// short of its pack, and outside the claim's pack tolerance
+	// (NodeClaim.ReleaseShort, the helper the release's declaration reads).
+	// The produce RELEASE button reads RELEASE SHORT then, so the operator can
+	// wait for the pack. Omitted when false, which is every other tile.
+	ReleaseShort bool `json:"release_short,omitempty"`
 	// ReleasePurposes are the decisions this node owes, one per purpose a live
 	// leg stands at or heads to: the board renders one RELEASE per
 	// purpose, enabled when Ready (a leg parked at a station wait of it).

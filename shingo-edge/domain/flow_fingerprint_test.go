@@ -1,6 +1,7 @@
 package domain
 
 import (
+	"reflect"
 	"regexp"
 	"testing"
 	"time"
@@ -195,6 +196,17 @@ func TestFlowFingerprint_ExcludesTheRoutingSet(t *testing.T) {
 			t.Error("key_task is fingerprinted; its one runtime forward was removed, so editing it " +
 				"invalidates every open preview for a column that drives nothing")
 		}
+		if col == "pack_tolerance_pct" {
+			t.Error("pack_tolerance_pct is fingerprinted; it changes what a release books, not a plan, " +
+				"so setting it would invalidate every open preview")
+		}
+	}
+	// And the hash does not move when it does.
+	c := NodeClaim{ID: 1, CoreNodeName: "PLN_01", Role: protocol.ClaimRoleProduce, StrictPack: true}
+	before := fingerprintClaims([]NodeClaim{c})
+	c.PackTolerancePct = 10
+	if after := fingerprintClaims([]NodeClaim{c}); !reflect.DeepEqual(before, after) {
+		t.Error("a claim's fingerprint row moved with its pack tolerance")
 	}
 }
 

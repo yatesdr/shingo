@@ -103,6 +103,7 @@ var unspokenColumns = []struct {
 	{"reuse_compatible_bins", func(c processes.NodeClaim) any { return c.ReuseCompatibleBins }},
 	{"auto_push", func(c processes.NodeClaim) any { return c.AutoPush }},
 	{"strict_pack", func(c processes.NodeClaim) any { return c.StrictPack }},
+	{"pack_tolerance_pct", func(c processes.NodeClaim) any { return c.PackTolerancePct }},
 	{"index_robot_supplies", func(c processes.NodeClaim) any { return c.IndexRobotSupplies }},
 	{"key_task", func(c processes.NodeClaim) any { return c.KeyTask }},
 	{"changeover_carryover_disposition", func(c processes.NodeClaim) any { return c.ChangeoverCarryoverDisposition }},

@@ -53,6 +53,8 @@ func TestValidateFlowPreset_AGroupedRecipeIsCheckedByName(t *testing.T) {
 		"Press 6 as the engineer saves it": twoSpotWith(leftHand, rightHand),
 		"no groups at all":                 "{" + twoSpotCells + "}",
 		"an empty groups list":             twoSpotWith(),
+		"a strict group with a tolerance": twoSpotWith(leftHand,
+			strings.Replace(rightHand, `"reorder_point":1`, `"strict_pack":true,"pack_tolerance_pct":10`, 1)),
 		// A tied list: PLN_013 is fed only by PLN_014, and nothing else is.
 		"a spot with a deck of its own": twoSpotWith(`{"of":"PLN_006","name":"Left Hand","spots":[
 			{"core_node_name":"PLN_006","paired_core_node":["PLN_005"]},
@@ -118,6 +120,9 @@ func TestValidateFlowPreset_AGroupedRecipeIsCheckedByName(t *testing.T) {
 		// refuses what the mode forbids), so the save says so first.
 		"an Advanced field the mode does not use": {flow: twoSpotWith(leftHand, strings.Replace(rightHand, `"reorder_point":1`, `"auto_push":true`, 1)),
 			says: "Right Hand's Advanced sets auto push, which a 2‑Robot Index produce spot does not use — clear it"},
+		// The same reason: the claim validator would refuse every minted claim.
+		"a pack tolerance out of range": {flow: twoSpotWith(leftHand, strings.Replace(rightHand, `"reorder_point":1`, `"strict_pack":true,"pack_tolerance_pct":25`, 1)),
+			says: "Right Hand's Advanced: Pack tolerance is a percent of the pack from 0 to 20; 25 is out of range"},
 		"a spot the process does not have": {flow: twoSpotWith(`{"of":"PLN_006","name":"Left Hand","spots":[
 			{"core_node_name":"PLN_006","paired_core_node":["PLN_005"]},
 			{"core_node_name":"PLN_099","paired_core_node":["PLN_005"]}]}`, rightHand),

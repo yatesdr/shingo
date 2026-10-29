@@ -223,6 +223,11 @@ const ADVANCED_DEFAULTS = {
     // false = the count is uncapped. Without this key advancedFor drops a
     // stored true and an Apply writes the cap off.
     strict_pack: false,
+    // A strict position's miscount tolerance, a percent of the pack: a
+    // RELEASE this close to the pack books the bin full. Default 0 = no
+    // tolerance, the real count ships. Without this key advancedFor drops a
+    // stored percentage and an Apply writes it off, the strict_pack hazard.
+    pack_tolerance_pct: 0,
     // The loader board's draw order. Zero is "the store's order", not
     // position zero — Expand speaks the column only when this block exists at
     // all, so a save that never opened the sheet leaves it alone.

@@ -57,7 +57,7 @@ const ctx = vm.createContext({ console: console, getView: () => ({ station: { na
 vm.runInContext(
     extractFn(src, 'calledByFromView') + '\n' +
     extractFn(src, 'releasedNothingBody') + '\n' +
-    extractFn(src, 'releasedFullBody') + '\n' +
+    extractFn(src, 'releaseBody') + '\n' +
     extractFn(src, 'singleOutcomeReleaseBody') + '\n' +
     'this.singleOutcomeReleaseBody = singleOutcomeReleaseBody;\n' +
     'this.calledByFromView = calledByFromView;', ctx);
@@ -73,7 +73,7 @@ truthy(p, 'produce release skips the modal even with payloads configured');
 // A PRODUCE RELEASE CARRIES NO DISPOSITION, and this assertion used to say the
 // opposite. capture_lineside with an empty qty_by_part is the RELEASE EMPTY
 // wire shape: ComputeReleaseRemainingUOP turns it into &0 and Core clears the
-// carrier. The button says RELEASE FULL. That contradiction was inert only
+// carrier. The button said RELEASE FULL. That contradiction was inert only
 // while the engine's produce-role branch discarded the disposition, and
 // releaseOrderDropFastPath skips that branch — so at a changeover it became the
 // instruction that emptied a full bin. Hopkinsville: 46 wipes, 140,762 parts,

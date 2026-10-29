@@ -67,10 +67,15 @@ func TestReleaseMatrixSim(t *testing.T) {
 			build: atCount(100, strictPackAt(100, true, pairAt(pairSpec{mode: protocol.SwapModeTwoRobot}, "evac", S, "supply", S))),
 			act:   simPress("evac"), probe: pStamp},
 		// Its door (the pair door with capture_lineside, a station's) declares a
-		// short strict bin full when it is pressed on one.
-		{name: "d11/the auto-operator's pair door on a short strict bin",
-			want:  "ok | evac=in_transit supply=in_transit | rel=evac,supply | ingest=1 capred=0 | stamp:q=42 declared=100 by=sim-operator order=evac",
-			build: strictPackAt(100, true, pairAt(pairSpec{mode: protocol.SwapModeTwoRobot}, "evac", S, "supply", S)),
+		// short strict bin full when it is pressed on one within the claim's
+		// tolerance (95 of 100 at 5%), and ships the count further short.
+		{name: "d11/the auto-operator's pair door on a strict bin within its tolerance",
+			want:  "ok | evac=in_transit supply=in_transit | rel=evac,supply | ingest=1 capred=0 | stamp:q=95 declared=100 by=sim-operator order=evac",
+			build: withTolerance(5, atCount(95, strictPackAt(100, true, pairAt(pairSpec{mode: protocol.SwapModeTwoRobot}, "evac", S, "supply", S)))),
+			act:   simPairDoor("evac"), probe: pStamp},
+		{name: "d11/the auto-operator's pair door on a strict bin short of its tolerance",
+			want:  "ok | evac=in_transit supply=in_transit | rel=evac,supply | ingest=1 capred=0 | stamp:q=42",
+			build: withTolerance(5, strictPackAt(100, true, pairAt(pairSpec{mode: protocol.SwapModeTwoRobot}, "evac", S, "supply", S))),
 			act:   simPairDoor("evac"), probe: pStamp},
 		// The 2026-08-28 incident's shape: the sim pressed RELEASE on the side
 		// the line was pulling from. fact-owners Lane G flips onto a ready

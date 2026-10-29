@@ -25,6 +25,9 @@ func ClaimHas(c *NodeClaim, f flowspec.Field) bool {
 	if c == nil {
 		return false
 	}
+	if has, ok := strictPackHas(f, c.StrictPack, c.PackTolerancePct); ok {
+		return has
+	}
 	switch f {
 	case flowspec.InboundStaging:
 		return c.InboundStaging != ""
@@ -56,8 +59,6 @@ func ClaimHas(c *NodeClaim, f flowspec.Field) bool {
 		return c.KeepStagedNode != ""
 	case flowspec.CurtainRequired:
 		return c.CurtainRequired
-	case flowspec.StrictPack:
-		return c.StrictPack
 	case flowspec.EvacuateOnChangeover:
 		return c.EvacuateOnChangeover
 	case flowspec.ChangeoverEvacNodes:
@@ -89,6 +90,9 @@ func ClaimHas(c *NodeClaim, f flowspec.Field) bool {
 // ClaimInputHas is ClaimHas for the write shape. The pointer-typed fields
 // follow their contract: nil is "no opinion", which is not a value.
 func ClaimInputHas(in NodeClaimInput, f flowspec.Field) bool {
+	if has, ok := strictPackHas(f, in.StrictPack, in.PackTolerancePct); ok {
+		return has
+	}
 	switch f {
 	case flowspec.InboundStaging:
 		return in.InboundStaging != ""
@@ -120,8 +124,6 @@ func ClaimInputHas(in NodeClaimInput, f flowspec.Field) bool {
 		return OptValue(in.KeepStagedNode) != ""
 	case flowspec.CurtainRequired:
 		return in.CurtainRequired
-	case flowspec.StrictPack:
-		return in.StrictPack
 	case flowspec.EvacuateOnChangeover:
 		return in.EvacuateOnChangeover
 	case flowspec.ChangeoverEvacNodes:
@@ -149,6 +151,21 @@ func ClaimInputHas(in NodeClaimInput, f flowspec.Field) bool {
 		return OptValue(in.KeyTask) != ""
 	}
 	return false
+}
+
+// strictPackHas is ClaimHas and ClaimInputHas for strict pack and its
+// tolerance, which read alike off a claim and its write shape (a true flag, a
+// non-zero percent): ok is false for every other field. One reader for the
+// pair, ahead of each switch, which also keeps both switches inside the
+// funlen ceiling.
+func strictPackHas(f flowspec.Field, strict bool, pct int) (has, ok bool) {
+	switch f {
+	case flowspec.StrictPack:
+		return strict, true
+	case flowspec.PackTolerancePct:
+		return pct != 0, true
+	}
+	return false, false
 }
 
 // StrictSteadyModes are the modes whose Steady row is enforced IN FULL at

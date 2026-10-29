@@ -17,9 +17,10 @@ import (
 func iptr(v int) *int { return &v }
 
 // shortTile builds one station with one produce tile, its active style's claim
-// strict or not, the part's catalog pack 132 and the seat counted at count,
-// and returns the tile as the station's JSON carries it.
-func shortTile(t *testing.T, strict bool, count int) map[string]any {
+// strict or not with a pack tolerance of pct, the part's catalog pack 132 and
+// the seat counted at count, and returns the tile as the station's JSON
+// carries it.
+func shortTile(t *testing.T, strict bool, pct, count int) map[string]any {
 	t.Helper()
 	db := testdb.Open(t)
 	processID, err := db.CreateProcess("SYN-FG-PROC", "", "", "", false)
@@ -48,7 +49,7 @@ func shortTile(t *testing.T, strict bool, count int) map[string]any {
 	if _, err := db.UpsertStyleNodeClaim(domain.CoreNodeKinds{}, processes.NodeClaimInput{
 		StyleID: styleID, CoreNodeName: "SYN-FG-1", Role: protocol.ClaimRoleProduce, SwapMode: protocol.SwapModeTwoRobot,
 		PayloadCode: "SYN-PART-132", InboundStaging: "SYN-STG", InboundSource: "SYN-SRC", OutboundDestination: "SYN-DOCK",
-		StrictPack: strict,
+		StrictPack: strict, PackTolerancePct: pct,
 	}); err != nil {
 		t.Fatalf("claim: %v", err)
 	}
@@ -82,24 +83,39 @@ func shortTile(t *testing.T, strict bool, count int) map[string]any {
 
 // TestBuildView_ReleaseShort pins what a produce tile tells the board about a
 // short release: the RELEASE button's label reads the tile, and the stamp at
-// the release reads the claim. Pinned before the tolerance exists: no tile
-// says anything about a short release, whatever its claim and count.
+// the release reads the claim, through the one helper
+// (NodeClaim.ReleaseShort). Pinned before the tolerance existed, when no tile
+// said anything; now a strict tile short of its pack and outside its
+// tolerance carries release_short, and every other tile carries nothing.
 func TestBuildView_ReleaseShort(t *testing.T) {
 	t.Parallel()
 	for _, c := range []struct {
 		name   string
 		strict bool
+		pct    int
 		count  int
+		want   any
 	}{
-		{"strict, 113 of 132", true, 113},
-		{"strict, 128 of 132", true, 128},
-		{"strict, at the pack", true, 132},
-		{"strict, empty", true, 0},
-		{"not strict, 113 of 132", false, 113},
+		{"strict, no tolerance, 113 of 132", true, 0, 113, true},
+		{"strict, 5% (T 6), 113 of 132", true, 5, 113, true},
+		{"strict, 5% (T 6), 128 of 132", true, 5, 128, nil},
+		{"strict, no tolerance, 128 of 132", true, 0, 128, true},
+		{"strict, at the pack", true, 5, 132, nil},
+		{"strict, empty", true, 5, 0, nil},
+		{"not strict, 113 of 132", false, 5, 113, nil},
 	} {
-		tile := shortTile(t, c.strict, c.count)
-		if v, ok := tile["release_short"]; ok {
-			t.Errorf("%s: the tile carries release_short = %v; nothing decides it yet", c.name, v)
+		tile := shortTile(t, c.strict, c.pct, c.count)
+		if got := tile["release_short"]; got != c.want {
+			t.Errorf("%s: release_short = %v, want %v", c.name, got, c.want)
+		}
+		// The claim rides the tile: its tolerance costs bytes only when set.
+		claim, _ := tile["active_claim"].(map[string]any)
+		got, has := claim["pack_tolerance_pct"]
+		if c.pct == 0 && has {
+			t.Errorf("%s: active_claim carries pack_tolerance_pct = %v with none set", c.name, got)
+		}
+		if c.pct != 0 && got != float64(c.pct) {
+			t.Errorf("%s: active_claim pack_tolerance_pct = %v, want %d", c.name, got, c.pct)
 		}
 	}
 }

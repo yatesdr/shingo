@@ -3138,26 +3138,60 @@ async function recipeGroupPins(h) {
         }
     });
 
-    // A PRODUCE POSITION'S FINISHED-GOODS ROWS: where the sheet draws strict
-    // pack and the partial home, before and after strict pack is switched on,
-    // and what the partial home's help says. Pinned before the tolerance
-    // exists: two sections, Unfinished carriers and Counting.
+    // A PRODUCE POSITION'S FINISHED-GOODS ROWS: one section, in the order an
+    // engineer decides them — strict pack, its tolerance (drawn only while
+    // strict pack is on), where partials go — and the partial home's help says
+    // what each kind of home does. In group scope the same section, less the
+    // cell's partial home, and the tolerance rides the recipe's save. Pinned
+    // before the tolerance existed, when the sheet drew the partial home under
+    // Unfinished carriers and strict pack under Counting.
     await pin('a produce position\'s sheet draws its finished-goods rows', async () => {
-        const ctx = p6Page(press6Composer(), { extraIds: { 'pd-advpop': Object.assign(makeElement('pd-advpop'), { hidden: true }) } });
-        await settle();
-        click(ctx.main, ctx.doc, { act: 'advanced', node: 'PLN_010' });
-        const fg = () => ctx.scrim.innerHTML.split('<div class="pd-sec">').slice(1).map(sec => {
+        const fgOf = scrim => scrim.innerHTML.split('<div class="pd-sec">').slice(1).map(sec => {
             const title = (sec.match(/<div class="pd-lbl">([^<]*)/) || [])[1];
             const keys = [...new Set((sec.match(/data-adv="[^"]*"/g) || []).map(s => s.slice(10, -1)))];
             return title + ': ' + keys.join(',');
         }).filter(s => /strict_pack|pack_tolerance_pct|partial_dest/.test(s)).join(' | ');
+        const extra = () => ({ extraIds: { 'pd-advpop': Object.assign(makeElement('pd-advpop'), { hidden: true }) } });
+        const ctx = p6Page(press6Composer(), extra());
+        await settle();
+        click(ctx.main, ctx.doc, { act: 'advanced', node: 'PLN_010' });
+        const fg = () => fgOf(ctx.scrim);
         if (ctx.scrim.innerHTML.indexOf('<h2>PLN_010 · Advanced</h2>') < 0) throw new Error('setup: the sheet is not PLN_010\'s');
-        const off = 'Unfinished carriers: partial_dest | Counting: strict_pack';
+        const off = 'Finished goods: strict_pack,partial_dest';
         if (fg() !== off) throw new Error('strict pack off: ' + fg() + '\n      want ' + off);
-        const help = plain(ctx.scrim.innerHTML.split('<div class="pd-fld">').find(f => f.indexOf('data-adv="partial_dest"') >= 0) || '');
-        if (help.indexOf('waits to be called back and finished') < 0) throw new Error('the partial home says ' + help);
+        const home = plain(ctx.scrim.innerHTML.split('<div class="pd-fld">').find(f => f.indexOf('data-adv="partial_dest"') >= 0) || '');
+        if (home.indexOf('Partials go to') !== 0) throw new Error('the partial home is not named Partials go to: ' + home);
+        for (const says of ['where full bins go, at its real count', 'a node group holds it there to be finished later', 'the unloader unloads it there']) {
+            if (home.indexOf(says) < 0) throw new Error('the partial home\'s help does not say "' + says + '": ' + home);
+        }
+        if (/called back/.test(home)) throw new Error('the partial home still says a bin waits to be called back: ' + home);
         click(ctx.scrim, ctx.doc, { advkind: 'toggle', adv: 'strict_pack' });
-        if (fg() !== off) throw new Error('strict pack on: ' + fg() + '\n      want ' + off);
+        const on = 'Finished goods: strict_pack,pack_tolerance_pct,partial_dest';
+        if (fg() !== on) throw new Error('strict pack on: ' + fg() + '\n      want ' + on);
+
+        // Group scope: Right Hand's Advanced, strict pack on, a tolerance typed.
+        const g = p6Page(press6Composer(), extra());
+        await settle();
+        await openRecipe(g);
+        click(g.main, g.doc, { act: 'groups-setup' });
+        await settle();
+        click(g.main, g.doc, { act: 'gadv', g: '1' });
+        if (fgOf(g.scrim) !== 'Finished goods: strict_pack') throw new Error('group scope, strict pack off: ' + fgOf(g.scrim));
+        click(g.scrim, g.doc, { advkind: 'toggle', adv: 'strict_pack' });
+        if (fgOf(g.scrim) !== 'Finished goods: strict_pack,pack_tolerance_pct') throw new Error('group scope, strict pack on: ' + fgOf(g.scrim));
+        const live = g.live();
+        live.type(live.find('data-adv', 'pack_tolerance_pct'), '5');
+        click(g.scrim, g.doc, { act: 'adv-apply' });
+        await settle();
+        click(g.main, g.doc, { act: 'shape-save' });
+        wireSheet(g.scrim, 'Two spot press index');
+        click(g.scrim, g.doc, { act: 'sheet-ok' });
+        await settle();
+        const posted = g.posts.find(p => /\/presets$/.test(p.url));
+        if (!posted) throw new Error('the save posted nothing');
+        const adv = JSON.parse(posted.body).groups[1].advanced;
+        const want = '{"strict_pack":true,"pack_tolerance_pct":5}';
+        if (JSON.stringify(adv) !== want) throw new Error('Right Hand\'s Advanced sent ' + JSON.stringify(adv) + '\n      want ' + want);
     });
 
     await pin('Advanced · Edit… is the sheet in group scope, and Apply rides the save as groups[i].advanced', async () => {

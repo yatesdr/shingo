@@ -812,6 +812,11 @@ CREATE TABLE style_node_claims (
     -- are held on the seat for the next bin of the part. 0 = uncapped, today's
     -- count.
     strict_pack             INTEGER NOT NULL DEFAULT 0,
+    -- pack_tolerance_pct (v34): a strict claim's miscount tolerance, a percent
+    -- of the pack (0-20). A station's RELEASE of a bin within it of the pack
+    -- declares the bin full; further short ships the real count. 0 = no
+    -- tolerance: the real count always ships.
+    pack_tolerance_pct      INTEGER NOT NULL DEFAULT 0,
     allowed_payload_codes   TEXT NOT NULL DEFAULT '',
     auto_request_payload    TEXT NOT NULL DEFAULT '',
     -- The keep-staged node: one more node this line's full or empty comes
@@ -937,6 +942,7 @@ CREATE TABLE style_node_claims_quarantine(
   partial_destination TEXT,
   curtain_required INT,
   strict_pack INT,
+  pack_tolerance_pct INT,
   allowed_payload_codes TEXT,
   auto_request_payload TEXT,
   keep_staged_node TEXT,

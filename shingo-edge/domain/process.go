@@ -1,6 +1,7 @@
 package domain
 
 import (
+	"fmt"
 	"slices"
 	"time"
 
@@ -340,10 +341,12 @@ type NodeClaim struct {
 	// configures it and never enforces it.
 	ContainmentDestination string `json:"containment_destination"`
 	// PartialDestination is where this claim's carrier goes when it leaves the
-	// line unfinished — its part set, its count above 0 and below capacity —
-	// to wait there and be called back to finish (a node or a group). Blank =
-	// it goes where a full goes. Core judges "unfinished" from its own count at
-	// the lift and chooses the drop; the Edge configures it and never enforces it.
+	// line unfinished — its part set, its count above 0 and below capacity: a
+	// node group holds it there to be finished later, an unloader unloads it
+	// there. Blank = it goes where a full goes, at its real count. Core judges
+	// "unfinished" from its own count at the lift (a strict bin declared full
+	// within PackTolerancePct is not) and chooses the drop; the Edge configures
+	// it and never enforces it.
 	PartialDestination string `json:"partial_destination"`
 	// CurtainRequired is the light-curtain interlock's style tie: whether THIS
 	// style's full-bin releases at THIS node wait for the node's curtain tag.
@@ -359,10 +362,22 @@ type NodeClaim struct {
 	// catalog-resolved): a tick charges the bin only up to the pack and holds
 	// the rest on the seat for the next bin of the part, and a count already
 	// at or above the pack is never written down. The PLC tick reads it from
-	// the claim it matched (engine strictPackApplies). Off by default, which is
-	// today's uncapped count. A produce setting: flowspec forbids it on consume
-	// claims and loader cards. Unrelated to StrictSteadyModes.
-	StrictPack          bool     `json:"strict_pack"`
+	// the claim it matched (NodeClaim.StrictPackApplies). Off by default, which
+	// is today's uncapped count. A produce setting: flowspec forbids it on
+	// consume claims and loader cards. Unrelated to StrictSteadyModes.
+	StrictPack bool `json:"strict_pack"`
+	// PackTolerancePct is the plant's miscount tolerance on a strict claim, a
+	// percent of the pack (0 to MaxPackTolerancePct): a station's RELEASE of a
+	// bin counted within PackTolerance of its pack declares it full at the
+	// pack (DeclaresFullAt), and one further short ships its real count and
+	// reads RELEASE SHORT on the tile (ReleaseShort). 0 is no tolerance: the
+	// real count always ships. Read only where StrictPackApplies; with strict
+	// pack off it has no reader. Edge-only: no Core column, no wire field. NOT
+	// in the flow fingerprint: it changes what a release books, not a tick or
+	// a plan (store/processes fingerprintExclusions). omitempty: the claim
+	// rides every tile of the station's poll (active_claim, target_claim), and
+	// a claim with no tolerance, every claim today, spends no bytes on it.
+	PackTolerancePct    int      `json:"pack_tolerance_pct,omitempty"`
 	AllowedPayloadCodes []string `json:"allowed_payload_codes"`
 	AutoRequestPayload  string   `json:"auto_request_payload"`
 	// KeepStagedNode is the claim's keep-staged node (the spot): one more node
@@ -890,6 +905,95 @@ func (c *NodeClaim) DemandLevel() int {
 	return protocol.ClaimDemandLevel(c.Role, c.ReorderPoint, c.UOPCapacity)
 }
 
+// ── STRICT PACK: THE CAP, THE TOLERANCE, THE RELEASE ────────────────────────
+//
+// One decider for a strict claim's numbers. The PLC tick's cap
+// (engine strictPackFor), the RELEASE's declaration
+// (engine declaredFull) and the tile's label (StationNodeView.ReleaseShort)
+// all read these, so the tile cannot say RELEASE where the release ships
+// short, nor RELEASE SHORT where it declares full.
+
+// MaxPackTolerancePct is the largest miscount tolerance a claim may carry, a
+// percent of the pack. The plant asked for 5 to 10; the cap stops a typo from
+// booking half-empty bins full (SYNTH-round1 D3).
+const MaxPackTolerancePct = 20
+
+// PackToleranceRefusal is the save's sentence for a pack tolerance outside 0
+// to MaxPackTolerancePct, or "" when it is in range. One sentence for both
+// doors that take one: a claim's save (ValidateNodeClaim) and a recipe
+// group's Advanced (ValidateRecipeGroups), which the mint lays on every claim.
+func PackToleranceRefusal(pct int) string {
+	if pct >= 0 && pct <= MaxPackTolerancePct {
+		return ""
+	}
+	return fmt.Sprintf("Pack tolerance is a percent of the pack from 0 to %d; %d is out of range", MaxPackTolerancePct, pct)
+}
+
+// StrictPackApplies is the gate for the strict arm: the claim carries
+// strict_pack, is a produce claim, and has a pack (UOPCapacity, resolved from
+// the catalog on every read; the claim's uop_capacity column is dead and a
+// produce bin's resident payload is "" for the whole fill, so neither is
+// read). The seat's active_claim_id is not read: it is NULL on a seat never
+// through a changeover, a Clear or a Record Count, which would leave the arm
+// off at exactly the seats it is for. A bin still bound under an outgoing claim
+// after a cutover is the case the pointer could tell apart; the tick matches
+// the active style's claim and the cutover clears the departing part's hold,
+// so that bin is capped at the incoming pack only for the ticks that land on
+// it before it leaves. The mode is not read: the cap is per seat. A strict
+// claim with no pack is logged where the claim is read
+// (store/processes logStrictPackWithoutPack), so the arm is never off in
+// silence. Nil-safe: no claim, no cap.
+func (c *NodeClaim) StrictPackApplies() bool {
+	return c != nil && c.StrictPack && c.Role == protocol.ClaimRoleProduce && c.UOPCapacity > 0
+}
+
+// CappedPack is the pack the strict arm caps the seat's bound bin at, or 0
+// when StrictPackApplies says it does not apply.
+func (c *NodeClaim) CappedPack() int {
+	if !c.StrictPackApplies() {
+		return 0
+	}
+	return c.UOPCapacity
+}
+
+// PackTolerance is the claim's miscount tolerance in parts:
+// max(1, floor(pack × pct / 100)), or 0 with no percentage or no strict pack.
+// Floor, so it never forgives more than the percent typed; at least one, so a
+// percentage on a small pack never silently means none (5% of 10 is 1). 132 at
+// 5% is 6, at 10% is 13. The save refuses a percent past MaxPackTolerancePct
+// (ValidateNodeClaim).
+func (c *NodeClaim) PackTolerance() int {
+	pack := c.CappedPack()
+	if pack == 0 || c.PackTolerancePct <= 0 {
+		return 0
+	}
+	return max(1, pack*c.PackTolerancePct/100)
+}
+
+// DeclaresFullAt is the pack a station's RELEASE of a bin counted at n
+// declares the bin full at, or 0 for none (the counted number ships alone): a
+// strict claim, a bin short of its pack (0 < n < pack), a tolerance, and the
+// shortfall within it (pack − n ≤ PackTolerance). A count at or above the pack
+// is never declared; it ships as counted. Which doors may declare (a station's
+// RELEASE, never a changeover's evac) is the engine's (declaredFull).
+func (c *NodeClaim) DeclaresFullAt(n int) int {
+	pack, tol := c.CappedPack(), c.PackTolerance()
+	if pack == 0 || tol == 0 || n <= 0 || n >= pack || pack-n > tol {
+		return 0
+	}
+	return pack
+}
+
+// ReleaseShort says a station's RELEASE of a bin counted at n ships short: a
+// strict claim, a bin short of its pack (0 < n < pack), and no declaration
+// (DeclaresFullAt is 0) — the bin leaves at its real count and Core judges it
+// unfinished. The tile's button reads RELEASE SHORT then, so the operator can
+// wait for the pack.
+func (c *NodeClaim) ReleaseShort(n int) bool {
+	pack := c.CappedPack()
+	return pack > 0 && n > 0 && n < pack && c.DeclaresFullAt(n) == 0
+}
+
 // Ptr returns a pointer to v. It exists for the absent-means-untouched fields
 // on NodeClaimInput below, which cannot be written as &true / &1 inline.
 func Ptr[T any](v T) *T { return &v }
@@ -1190,7 +1294,8 @@ type NodeClaimInput struct {
 	// value type (the editor always renders the control), blank = inert.
 	ContainmentDestination string `json:"containment_destination"`
 	// PartialDestination mirrors NodeClaim's field: where an unfinished carrier
-	// of this claim goes to wait. Blank = where a full goes.
+	// of this claim goes (a node group holds it, an unloader unloads it). Blank
+	// = where a full goes.
 	PartialDestination string `json:"partial_destination"`
 	// CurtainRequired is the input side of the light-curtain style tie
 	// (NodeClaim's field carries the rule): whether this style's full-bin
@@ -1199,7 +1304,12 @@ type NodeClaimInput struct {
 	// StrictPack mirrors NodeClaim's field: the bound bin is charged only up
 	// to its pack. An unconditional column, carried from the prior claim by
 	// Expand and echoed by InputFromClaim like AutoPush.
-	StrictPack           bool     `json:"strict_pack"`
+	StrictPack bool `json:"strict_pack"`
+	// PackTolerancePct mirrors NodeClaim's field: a strict claim's miscount
+	// tolerance, a percent of the pack. Unconditional, carried and echoed as
+	// StrictPack is; ValidateNodeClaim refuses one outside 0 to
+	// MaxPackTolerancePct.
+	PackTolerancePct     int      `json:"pack_tolerance_pct"`
 	AllowedPayloadCodes  []string `json:"allowed_payload_codes"`
 	AutoRequestPayload   string   `json:"auto_request_payload"`
 	EvacuateOnChangeover bool     `json:"evacuate_on_changeover"`

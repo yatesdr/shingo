@@ -43,7 +43,7 @@ func advancedPrior() NodeClaim {
 	c.KeepStagedNode = "SPOT-1"
 	c.IndexRobotSupplies = true
 	c.AutoConfirm = true
-	c.StrictPack = true
+	c.StrictPack, c.PackTolerancePct = true, 5
 	return c
 }
 
@@ -78,7 +78,7 @@ func TestFlowAdvanced_UntouchedIsExpandUnchanged(t *testing.T) {
 		row.ReorderPoint != 60 || row.ReorderPointSource != "manual" || !row.AutoReorder ||
 		row.LinesideSoftThreshold != 7 || row.AutoRequestPayload != "SYN-A-P002" || !row.AutoPush ||
 		!row.EvacuateOnChangeover || row.ChangeoverCarryoverDisposition != CarryoverKeepLineside ||
-		row.KeepStagedNode != "SPOT-1" || !row.IndexRobotSupplies || !row.AutoConfirm || !row.StrictPack {
+		row.KeepStagedNode != "SPOT-1" || !row.IndexRobotSupplies || !row.AutoConfirm || !row.StrictPack || row.PackTolerancePct != 5 {
 		t.Errorf("a column the modal owns was flattened by a save that never opened it: %+v", row)
 	}
 }

@@ -86,20 +86,20 @@ type FlowCell struct {
 	Advanced *FlowAdvanced `json:"advanced,omitempty"`
 }
 
-// FlowAdvanced is the thirteen columns of a claim that the flow does not draw
+// FlowAdvanced is the sixteen columns of a claim that the flow does not draw
 // (spec §2 D2, ruling R2: this is the ONLY place they appear).
 //
-// The grouping is the modal's six sections, in order: part identity,
-// replenishment, changeover specials, press hardware, station policy, board.
-// Two of D2's fields are not here — evacuation positions and evacuation
-// destination are on the cell already, because the picture draws them.
+// The modal draws them under its sections (processes-desktop.js
+// ADV_SECTIONS). Three of its rows are not here — evacuation positions,
+// evacuation destination and the partial home are on the cell already, a
+// routing fact the flow carries.
 //
 // Every field is a plain value, and all of them are written together: the
 // modal shows what the row holds and Apply hands the whole section back, so
 // there is no per-field "untouched" to model inside it. Untouched is the
 // pointer on FlowCell.
-// A ZERO IS THE DEFAULT, AND IS NOT SENT. Ten of these fields carry omitempty
-// and three deliberately do not.
+// A ZERO IS THE DEFAULT, AND IS NOT SENT. Thirteen of these fields carry
+// omitempty and three deliberately do not.
 //
 // The desktop read carries an Advanced block per position per style — 240 of
 // them on the S0 fixture — and every one spelled out all fourteen fields even
@@ -163,6 +163,10 @@ type FlowAdvanced struct {
 	// StrictPack caps the position's bound bin at its pack (NodeClaim.StrictPack).
 	// A produce setting; flowspec forbids it on consume claims and loader cards.
 	StrictPack bool `json:"strict_pack,omitempty"`
+	// PackTolerancePct is the strict claim's miscount tolerance, a percent of
+	// the pack (NodeClaim.PackTolerancePct). Forbidden where StrictPack is; the
+	// sheet draws it only while strict pack is on.
+	PackTolerancePct int `json:"pack_tolerance_pct,omitempty"`
 }
 
 // AdvancedOf is the claim's advanced columns as the modal shows them. Nil in,
@@ -189,6 +193,7 @@ func AdvancedOf(c *NodeClaim) *FlowAdvanced {
 		Sequence:              c.Sequence,
 		CurtainRequired:       c.CurtainRequired,
 		StrictPack:            c.StrictPack,
+		PackTolerancePct:      c.PackTolerancePct,
 	}
 	return a
 }
@@ -296,18 +301,19 @@ func Expand(cell FlowCell, prior *NodeClaim, source, calledBy string) NodeClaimI
 		// (SetContainment's route) and switched off a node's curtain tie.
 		in.ContainmentDestination = prior.ContainmentDestination
 		in.CurtainRequired = prior.CurtainRequired
-		// The pack cap is the same kind of column: no FlowCell field names it,
-		// so a save that never opened the modal keeps it from the prior.
-		in.StrictPack = prior.StrictPack
+		// The pack cap and its tolerance are the same kind of column: no
+		// FlowCell field names them, so a save that never opened the modal
+		// keeps them from the prior.
+		in.StrictPack, in.PackTolerancePct = prior.StrictPack, prior.PackTolerancePct
 	}
 	// The Advanced modal, LAST, so an engineer's opinion beats both the
 	// carry-through above and the degenerate-list guess inside it. Nil is the
 	// standing case and leaves everything above exactly as it was — which is
 	// the whole reason the field is a pointer.
 	//
-	// Six of the thirteen are pointer-gated columns Expand otherwise leaves
+	// Six of the sixteen are pointer-gated columns Expand otherwise leaves
 	// nil; speaking them is what makes an update touch them at all. The other
-	// seven are unconditional columns that were being copied from the prior a
+	// ten are unconditional columns that were being copied from the prior a
 	// moment ago and are now the modal's.
 	if a := cell.Advanced; a != nil {
 		in.AllowedPayloadCodes = cloneStrings(a.AllowedPayloadCodes)
@@ -324,7 +330,7 @@ func Expand(cell FlowCell, prior *NodeClaim, source, calledBy string) NodeClaimI
 		in.ChangeoverCarryoverDisposition = Ptr(a.CarryoverDisposition)
 		in.Sequence = Ptr(a.Sequence)
 		in.CurtainRequired = a.CurtainRequired
-		in.StrictPack = a.StrictPack
+		in.StrictPack, in.PackTolerancePct = a.StrictPack, a.PackTolerancePct
 	}
 	return in
 }
@@ -357,6 +363,7 @@ func InputFromClaim(c NodeClaim) NodeClaimInput {
 		// editor-less-column disease, one line of prevention).
 		CurtainRequired:                c.CurtainRequired,
 		StrictPack:                     c.StrictPack,
+		PackTolerancePct:               c.PackTolerancePct,
 		AllowedPayloadCodes:            cloneStrings(c.AllowedPayloadCodes),
 		AutoRequestPayload:             c.AutoRequestPayload,
 		EvacuateOnChangeover:           c.EvacuateOnChangeover,
@@ -472,6 +479,7 @@ func MaterializeClaim(in NodeClaimInput, prior *NodeClaim) NodeClaim {
 	c.AutoConfirm = in.AutoConfirm || in.IsLoaderNode()
 	c.LinesideSoftThreshold = in.LinesideSoftThreshold
 	c.ReuseCompatibleBins, c.AutoPush, c.StrictPack = in.ReuseCompatibleBins, in.AutoPush, in.StrictPack
+	c.PackTolerancePct = in.PackTolerancePct
 	// The twelve pointer-gated columns: spoken or left alone.
 	if in.ReorderPointSource != nil {
 		c.ReorderPointSource = *in.ReorderPointSource

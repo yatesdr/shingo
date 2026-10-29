@@ -110,9 +110,9 @@ func TestFlowspecRoleMovesOnlyTheNamedEntries(t *testing.T) {
 		}
 		// manual_swap hides the lineside threshold for BOTH roles (the loader
 		// board owns the numbers), so its one role-dependent entry is auto-push.
-		// Every other mode offers a produce claim its partial route and the
-		// pack cap, and forbids the cap on a consume claim.
-		want := []flowspec.Field{flowspec.LinesideSoftThreshold, flowspec.PartialDestination, flowspec.StrictPack}
+		// Every other mode offers a produce claim its partial route, the
+		// pack cap and its tolerance, and forbids both on a consume claim.
+		want := []flowspec.Field{flowspec.LinesideSoftThreshold, flowspec.PartialDestination, flowspec.StrictPack, flowspec.PackTolerancePct}
 		if mode == protocol.SwapModeManualSwap {
 			want = []flowspec.Field{flowspec.AutoPush}
 		}
@@ -146,6 +146,11 @@ func TestStrictPack_ForbiddenOnConsumeAndLoaderClaimsOnly(t *testing.T) {
 			}
 			if got := flowspec.Steady(role, mode)[flowspec.StrictPack]; got != want {
 				t.Errorf("%s %s: strict_pack is %v, want %v", role, mode, got, want)
+			}
+			// The tolerance is read only through the cap, so it is offered and
+			// forbidden exactly where the cap is.
+			if got := flowspec.Steady(role, mode)[flowspec.PackTolerancePct]; got != want {
+				t.Errorf("%s %s: pack_tolerance_pct is %v, want %v (strict_pack's)", role, mode, got, want)
 			}
 		}
 	}

@@ -274,7 +274,7 @@ func RestoreStyle(db *sql.DB, id int64) error {
 // A clone that copied it would copy a number nothing reads.
 const cloneClaimColumns = `core_node_name, role, swap_mode, payload_code,
 	reorder_point, reorder_point_source, auto_reorder, inbound_staging, outbound_staging,
-	inbound_source, outbound_destination, containment_destination, partial_destination, curtain_required, strict_pack, allowed_payload_codes, auto_request_payload,
+	inbound_source, outbound_destination, containment_destination, partial_destination, curtain_required, strict_pack, pack_tolerance_pct, allowed_payload_codes, auto_request_payload,
 	keep_staged_node, evacuate_on_changeover, paired_core_node, auto_confirm, sequence,
 	lineside_soft_threshold, second_paired_core_node, reuse_compatible_bins, auto_push,
 	changeover_evac_nodes, changeover_evac_destination,

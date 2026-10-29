@@ -81,6 +81,7 @@ type RecipeAdvanced struct {
 	AutoConfirm           bool                 `json:"auto_confirm,omitempty"`
 	CurtainRequired       bool                 `json:"curtain_required,omitempty"`
 	StrictPack            bool                 `json:"strict_pack,omitempty"`
+	PackTolerancePct      int                  `json:"pack_tolerance_pct,omitempty"`
 }
 
 // recipePartKeys are the Advanced keys that would put a part on a recipe.
@@ -210,6 +211,7 @@ func (g RecipeAdvanced) LayOver(a *FlowAdvanced) {
 	a.LinesideSoftThreshold, a.AutoPush = g.LinesideSoftThreshold, g.AutoPush
 	a.EvacuateOnChangeover, a.KeepStagedNode = g.EvacuateOnChangeover, g.KeepStagedNode
 	a.AutoConfirm, a.CurtainRequired, a.StrictPack = g.AutoConfirm, g.CurtainRequired, g.StrictPack
+	a.PackTolerancePct = g.PackTolerancePct
 	if g.CarryoverDisposition != "" {
 		a.CarryoverDisposition = g.CarryoverDisposition
 	}
@@ -446,13 +448,16 @@ var advancedFields = []struct {
 	{flowspec.AutoConfirm, func(a RecipeAdvanced) bool { return a.AutoConfirm }},
 	{flowspec.CurtainRequired, func(a RecipeAdvanced) bool { return a.CurtainRequired }},
 	{flowspec.StrictPack, func(a RecipeAdvanced) bool { return a.StrictPack }},
+	{flowspec.PackTolerancePct, func(a RecipeAdvanced) bool { return a.PackTolerancePct != 0 }},
 }
 
 // advancedTheModeTakes refuses a group's Advanced setting a field its ★ cell's
 // mode and role forbid (flowspec.Steady): the mint lays the group's Advanced on
 // every claim it makes, and the claim validator would then refuse every style
 // made from the recipe — a save that cannot be used, found at the floor's Go
-// instead of at the desktop's Save (D26 of DECISIONS-recipe-groups).
+// instead of at the desktop's Save (D26 of DECISIONS-recipe-groups). A pack
+// tolerance out of range is refused here for the same reason
+// (PackToleranceRefusal, the claim validator's own sentence).
 func (c *groupCheck) advancedTheModeTakes() error {
 	for _, g := range c.groups {
 		if g.Advanced == nil {
@@ -465,6 +470,9 @@ func (c *groupCheck) advancedTheModeTakes() error {
 				return refusef("%s's Advanced sets %s, which a %s %s spot does not use — clear it",
 					g.Name, strings.ToLower(flowspec.Label(f.field)), SwapModeWord(star.SwapMode), star.Role)
 			}
+		}
+		if msg := PackToleranceRefusal(g.Advanced.PackTolerancePct); msg != "" {
+			return refusef("%s's Advanced: %s", g.Name, msg)
 		}
 	}
 	return nil

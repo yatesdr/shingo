@@ -1436,6 +1436,11 @@ func (s *StationService) buildNodeTile(
 	nodeView.CanSkip = canSkipChangeoverStep(nodeView.ChangeoverTask, nodeView.Orders)
 	nodeView.SwapReady = store.ComputeSwapReady(s.db, nodeView.ActiveClaim, runtime, nodeView.ChangeoverTask)
 	nodeView.ReleasesAsPair = store.ReleasesAsPair(nodeView.ActiveClaim)
+	// The RELEASE button's word: the claim the tile already holds against the
+	// seat's count, no read of its own.
+	if runtime != nil {
+		nodeView.ReleaseShort = nodeView.ActiveClaim.ReleaseShort(runtime.RemainingUOPCached)
+	}
 	// Lineside piles power the active-bar and count-anomaly chip UI on
 	// the operator station modal. Best-effort — absence of buckets
 	// just means the node has nothing pulled to lineside yet.

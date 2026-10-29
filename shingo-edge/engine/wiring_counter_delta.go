@@ -70,7 +70,7 @@ func (e *Engine) counterDeltaRows(processID int64, nodes []processes.Node) (*pro
 
 // handleCounterDelta processes a production counter tick: a consume node's
 // bound bin is drawn down, a produce node's is filled (up to its pack when the
-// claim's strict_pack applies; strictPackApplies), and with nothing chargeable
+// claim's strict_pack applies; NodeClaim.StrictPackApplies), and with nothing chargeable
 // the tick is held on the seat for the next bin of its part.
 //
 // This walk validates the tick, resolves each node's claim against the tick's
@@ -332,7 +332,7 @@ func (a tickAttribution) skipReport() string {
 // ticks and at boot, except a hold between bins, and ends an episode whose
 // seat has since bound.
 //
-// ── A STRICT PRODUCE SEAT STOPS AT THE PACK (strictPackApplies) ──────────
+// ── A STRICT PRODUCE SEAT STOPS AT THE PACK (NodeClaim.StrictPackApplies) ─
 //
 // When the tick's claim carries strict_pack (parts.pack > 0), a bound bin
 // takes only what fits under the pack and the rest stays in the hold for the
@@ -551,7 +551,7 @@ func (e *Engine) handleConsumeTick(node *processes.Node, runtime *processes.Runt
 // check. Asking for the next bin is the demand reconciler's sweep, not this
 // function's. A press does not stop at the pack: it keeps making parts until
 // someone swaps the bin, and those ticks arrive here. Without strict_pack they
-// count on past the pack; with it (strictPackApplies) the bin stops at the pack
+// count on past the pack; with it (NodeClaim.StrictPackApplies) the bin stops at the pack
 // and the rest is held for the next bin of the part.
 //
 // Emits BinUOPDelta(produce_tick) for what the bin was charged: the tick plus
@@ -613,30 +613,12 @@ func producedPayload(claim *processes.NodeClaim) string {
 
 // ── Strict pack ──────────────────────────────────────────────────────────
 
-// strictPackApplies is the gate for the strict arm: the tick's matched claim
-// carries strict_pack, is a produce claim, and has a pack (UOPCapacity,
-// resolved from the catalog on every read; the claim's uop_capacity column is
-// dead and a produce bin's resident payload is "" for the whole fill, so
-// neither is read). The seat's active_claim_id is not read: it is NULL on a
-// seat never through a changeover, a Clear or a Record Count, which would
-// leave the arm off at exactly the seats it is for. A bin still bound under an
-// outgoing claim after a cutover is the case the pointer could tell apart; the
-// tick matches the active style's claim and the cutover clears the departing
-// part's hold, so that bin is capped at the incoming pack only for the ticks
-// that land on it before it leaves. The mode is not read: the cap is per seat.
-// A strict claim with no pack is logged where the claim is read
-// (processes.logStrictPackWithoutPack), so the arm is never off in silence.
-func strictPackApplies(claim *processes.NodeClaim) bool {
-	return claim != nil && claim.StrictPack && claim.Role == protocol.ClaimRoleProduce && claim.UOPCapacity > 0
-}
-
 // strictPackFor is the pack the strict arm caps the seat's bound bin at, or 0
-// when strictPackApplies says it does not apply.
+// when the arm does not apply. The gate is the claim's own
+// (domain.NodeClaim.StrictPackApplies, through CappedPack): the one predicate
+// the release's declaration and the tile's label read too.
 func strictPackFor(claim *processes.NodeClaim) int {
-	if !strictPackApplies(claim) {
-		return 0
-	}
-	return claim.UOPCapacity
+	return claim.CappedPack()
 }
 
 // holdDropByTick is the actor a tick-time hold_dropped row names.

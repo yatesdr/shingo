@@ -785,6 +785,12 @@ function cellCardAction(entry, claim, remaining) {
     // promising what the gate will allow. curtain_ok is absent when the
     // node is not gated - the button behaves exactly as before.
     const curtainHeld = entry.curtain_ok === false;
+    // A produce RELEASE that will ship the bin short reads RELEASE SHORT: the
+    // server's release_short, from the one helper the release's declaration
+    // reads (NodeClaim.ReleaseShort), so the word and what Core books cannot
+    // disagree. One tap either way; the operator may wait for the pack. The
+    // changeover arms below keep their own words: a changeover never declares.
+    const releaseWord = entry.release_short ? 'RELEASE SHORT' : 'RELEASE';
     // A changeover tile's RELEASE names the decision it makes (SHAPE 3.8):
     // the purpose of the station wait a leg is parked at, from the server's
     // release_purposes. It posts that purpose, so a "ready" press can never
@@ -806,7 +812,7 @@ function cellCardAction(entry, claim, remaining) {
             return { label: 'RELEASE (CURTAIN)', cls: 'close', enabled: false, action: '',
                 title: 'The FG light curtain is not in its release state - the interlock blocks this release until it is.' };
         }
-        return { label: 'RELEASE', cls: 'request', enabled: true,
+        return { label: releaseWord, cls: 'request', enabled: true,
             action: 'release-prompt:/api/process-nodes/' + entry.node.id + '/release-staged' };
     }
     if (entry.releases_as_pair && swapPair(active).length >= 2) {
@@ -853,7 +859,7 @@ function cellCardAction(entry, claim, remaining) {
             return { label: 'RELEASE (CURTAIN)', cls: 'close', enabled: false, action: '',
                 title: 'The FG light curtain is not in its release state - the interlock blocks this release until it is.' };
         }
-        return { label: 'RELEASE', cls: 'request', enabled: true,
+        return { label: releaseWord, cls: 'request', enabled: true,
             action: 'release-prompt:/api/orders/' + staged.id + '/release' };
     }
     if (delivered) {

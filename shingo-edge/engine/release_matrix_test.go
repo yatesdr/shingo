@@ -663,11 +663,23 @@ func TestCharSP_U1FiresOnAProduceCaptureLinesideRelease(t *testing.T) {
 // ── Strict pack (P3): the stamp is a station's alone ─────────────────────
 //
 // A station's RELEASE (doors 1 and 2: the pair click, the per-order click, the
-// sim's auto-operator) of a strict bin counted below its pack ships the count
-// with the pack declared beside it; Core stamps it. Every other door, every
-// changeover's evac (whatever door it goes through), a count at or above the
-// pack, and a claim without strict_pack ship the count alone. The finalize
-// never clamps. stamp: renders each ingest since the mark.
+// sim's auto-operator) of a strict bin counted short of its pack, within the
+// claim's pack tolerance of it, ships the count with the pack declared beside
+// it; Core stamps it. A bin further short, a claim with no tolerance (0, the
+// default), every other door, every changeover's evac (whatever door it goes
+// through), a count at or above the pack, and a claim without strict_pack ship
+// the count alone. The finalize never clamps. stamp: renders each ingest since
+// the mark.
+
+// withTolerance sets pack_tolerance_pct on every live claim at the front node,
+// after the fixture is built.
+func withTolerance(pct int, b func(h *relHarness)) func(h *relHarness) {
+	return func(h *relHarness) {
+		b(h)
+		_, err := h.db.DB.Exec(`UPDATE style_node_claims SET pack_tolerance_pct = ? WHERE core_node_name = ? AND retired_at IS NULL`, pct, fxPress)
+		testutil.MustNoErr(h.t, err, "pack_tolerance_pct")
+	}
+}
 
 // strictPackAt gives the node's parts a catalog pack (the claim's pack is
 // catalog-resolved) and, when on, sets strict_pack on every live claim at the
@@ -747,80 +759,134 @@ func TestStrictPack_TheStampIsAStationsAlone(t *testing.T) {
 	co := coSpec{mode: protocol.SwapModeTwoRobot}
 	drop := coSpec{mode: protocol.SwapModeTwoRobot, drop: true}
 	strict := func(b func(h *relHarness)) func(h *relHarness) { return strictPackAt(100, true, b) }
+	// within is a strict bin short of its pack and inside the claim's
+	// tolerance: 95 of 100 at 5% (T 5), the count a station's RELEASE
+	// declares full.
+	within := func(b func(h *relHarness)) func(h *relHarness) { return withTolerance(5, atCount(95, strict(b))) }
+	// at is a strict two-robot pair of the given pack, counted at n, its
+	// claim's tolerance pct.
+	at := func(pack, pct, n int) func(h *relHarness) {
+		return withTolerance(pct, atCount(n, strictPackAt(pack, true, pairAt(twoRobot, "evac", S, "supply", S))))
+	}
 	runRelCells(t, []relCell{
-		// ── Station doors, a short strict bin: stamped ──────────────────────
+		// ── Station doors, a strict bin within its tolerance: stamped ───────
 		{name: "d1/two_robot pair, bare body (the HMI)",
-			want:  "ok | evac=in_transit supply=in_transit | rel=evac,supply | ingest=1 capred=0 | stamp:q=42 declared=100 by=operator order=evac",
-			build: strict(pairAt(twoRobot, "evac", S, "supply", S)), act: pairClick(dispNone), probe: pStamp},
+			want:  "ok | evac=in_transit supply=in_transit | rel=evac,supply | ingest=1 capred=0 | stamp:q=95 declared=100 by=operator order=evac",
+			build: within(pairAt(twoRobot, "evac", S, "supply", S)), act: pairClick(dispNone), probe: pStamp},
 		{name: "d1/two_robot pair, curtain live: the press declares while the legs hold",
-			want:  "hold:curtain | evac=staged supply=staged | rel=- | ingest=1 capred=0 | stamp:q=42 declared=100 by=operator order=evac",
-			build: strict(withCurtain(curtainLive, pairAt(twoRobot, "evac", S, "supply", S))), act: pairClick(dispNone), probe: pStamp},
+			want:  "hold:curtain | evac=staged supply=staged | rel=- | ingest=1 capred=0 | stamp:q=95 declared=100 by=operator order=evac",
+			build: within(withCurtain(curtainLive, pairAt(twoRobot, "evac", S, "supply", S))), act: pairClick(dispNone), probe: pStamp},
 		{name: "d2/two_robot evac, capture_lineside",
-			want:  "ok | evac=in_transit supply=dispatched | rel=evac | ingest=1 capred=0 | stamp:q=42 declared=100 by=operator order=evac",
-			build: strict(pairAt(twoRobot, "evac", S, "supply", D)), act: orderClick("evac", dispEmpty), probe: pStamp},
+			want:  "ok | evac=in_transit supply=dispatched | rel=evac | ingest=1 capred=0 | stamp:q=95 declared=100 by=operator order=evac",
+			build: within(pairAt(twoRobot, "evac", S, "supply", D)), act: orderClick("evac", dispEmpty), probe: pStamp},
 		{name: "d2/single_robot swap, bare body",
-			want:  "ok | swap=in_transit | rel=swap | ingest=1 capred=0 | stamp:q=42 declared=100 by=operator order=swap",
-			build: strict(func(h *relHarness) { h.singleRobot(protocol.ClaimRoleProduce); statuses(h, "swap", S) }),
+			want:  "ok | swap=in_transit | rel=swap | ingest=1 capred=0 | stamp:q=95 declared=100 by=operator order=swap",
+			build: within(func(h *relHarness) { h.singleRobot(protocol.ClaimRoleProduce); statuses(h, "swap", S) }),
 			act:   orderClick("swap", dispNone), probe: pStamp},
-		{name: "d1/two_robot pair, one short of the pack",
-			want:  "ok | evac=in_transit supply=in_transit | rel=evac,supply | ingest=1 capred=0 | stamp:q=99 declared=100 by=operator order=evac",
-			build: atCount(99, strict(pairAt(twoRobot, "evac", S, "supply", S))), act: pairClick(dispNone), probe: pStamp},
+
+		// ── The tolerance: T = max(1, floor(pack × pct / 100)) ─────────────
+		// 0 (the default) is no tolerance: the real count ships, one short or
+		// fifty-eight.
+		{name: "d1/pct 0: 42 of 100 ships its count",
+			want:  "ok | evac=in_transit supply=in_transit | rel=evac,supply | ingest=1 capred=0 | stamp:q=42",
+			build: at(100, 0, 42), act: pairClick(dispNone), probe: pStamp},
+		{name: "d1/pct 0: 99 of 100 ships its count",
+			want:  "ok | evac=in_transit supply=in_transit | rel=evac,supply | ingest=1 capred=0 | stamp:q=99",
+			build: at(100, 0, 99), act: pairClick(dispNone), probe: pStamp},
+		{name: "d1/pct 5 (T 5): 94 of 100 ships its count",
+			want:  "ok | evac=in_transit supply=in_transit | rel=evac,supply | ingest=1 capred=0 | stamp:q=94",
+			build: at(100, 5, 94), act: pairClick(dispNone), probe: pStamp},
+		{name: "d1/pct 10 (T 10): 90 of 100 declared",
+			want:  "ok | evac=in_transit supply=in_transit | rel=evac,supply | ingest=1 capred=0 | stamp:q=90 declared=100 by=operator order=evac",
+			build: at(100, 10, 90), act: pairClick(dispNone), probe: pStamp},
+		{name: "d1/pct 10 (T 10): 89 of 100 ships its count",
+			want:  "ok | evac=in_transit supply=in_transit | rel=evac,supply | ingest=1 capred=0 | stamp:q=89",
+			build: at(100, 10, 89), act: pairClick(dispNone), probe: pStamp},
+		// A small pack: 5% of 10 floors to 0, and the tolerance is at least one.
+		{name: "d1/pack 10 at pct 5 (T 1): 9 declared",
+			want:  "ok | evac=in_transit supply=in_transit | rel=evac,supply | ingest=1 capred=0 | stamp:q=9 declared=10 by=operator order=evac",
+			build: at(10, 5, 9), act: pairClick(dispNone), probe: pStamp},
+		{name: "d1/pack 10 at pct 5 (T 1): 8 ships its count",
+			want:  "ok | evac=in_transit supply=in_transit | rel=evac,supply | ingest=1 capred=0 | stamp:q=8",
+			build: at(10, 5, 8), act: pairClick(dispNone), probe: pStamp},
+		// The plant's three releases of the 132-pack part (T 6 at 5%, 13 at 10%).
+		{name: "d1/pack 132 at pct 5: 37 ships its count",
+			want:  "ok | evac=in_transit supply=in_transit | rel=evac,supply | ingest=1 capred=0 | stamp:q=37",
+			build: at(132, 5, 37), act: pairClick(dispNone), probe: pStamp},
+		{name: "d1/pack 132 at pct 10: 37 ships its count",
+			want:  "ok | evac=in_transit supply=in_transit | rel=evac,supply | ingest=1 capred=0 | stamp:q=37",
+			build: at(132, 10, 37), act: pairClick(dispNone), probe: pStamp},
+		{name: "d1/pack 132 at pct 5: 113 ships its count",
+			want:  "ok | evac=in_transit supply=in_transit | rel=evac,supply | ingest=1 capred=0 | stamp:q=113",
+			build: at(132, 5, 113), act: pairClick(dispNone), probe: pStamp},
+		{name: "d1/pack 132 at pct 10: 113 ships its count",
+			want:  "ok | evac=in_transit supply=in_transit | rel=evac,supply | ingest=1 capred=0 | stamp:q=113",
+			build: at(132, 10, 113), act: pairClick(dispNone), probe: pStamp},
+		{name: "d1/pack 132 at pct 5: 124 ships its count",
+			want:  "ok | evac=in_transit supply=in_transit | rel=evac,supply | ingest=1 capred=0 | stamp:q=124",
+			build: at(132, 5, 124), act: pairClick(dispNone), probe: pStamp},
+		{name: "d1/pack 132 at pct 10: 124 declared",
+			want:  "ok | evac=in_transit supply=in_transit | rel=evac,supply | ingest=1 capred=0 | stamp:q=124 declared=132 by=operator order=evac",
+			build: at(132, 10, 124), act: pairClick(dispNone), probe: pStamp},
 
 		// ── Station doors, not a short strict bin: the count alone ──────────
 		{name: "d1/two_robot pair, count above the pack ships unclamped",
 			want:  "ok | evac=in_transit supply=in_transit | rel=evac,supply | ingest=1 capred=0 | stamp:q=130",
-			build: atCount(130, strict(pairAt(twoRobot, "evac", S, "supply", S))), act: pairClick(dispNone), probe: pStamp},
+			build: at(100, 10, 130), act: pairClick(dispNone), probe: pStamp},
 		{name: "d1/two_robot pair, count at the pack",
 			want:  "ok | evac=in_transit supply=in_transit | rel=evac,supply | ingest=1 capred=0 | stamp:q=100",
-			build: atCount(100, strict(pairAt(twoRobot, "evac", S, "supply", S))), act: pairClick(dispNone), probe: pStamp},
+			build: at(100, 10, 100), act: pairClick(dispNone), probe: pStamp},
+		// A tolerance on a claim without strict pack has no reader.
 		{name: "d1/two_robot pair, claim not strict",
-			want:  "ok | evac=in_transit supply=in_transit | rel=evac,supply | ingest=1 capred=0 | stamp:q=42",
-			build: strictPackAt(100, false, pairAt(twoRobot, "evac", S, "supply", S)), act: pairClick(dispNone), probe: pStamp},
+			want:  "ok | evac=in_transit supply=in_transit | rel=evac,supply | ingest=1 capred=0 | stamp:q=95",
+			build: withTolerance(5, atCount(95, strictPackAt(100, false, pairAt(twoRobot, "evac", S, "supply", S)))),
+			act:   pairClick(dispNone), probe: pStamp},
 		{name: "d1/two_robot pair, empty strict bin ships nothing",
 			want:  "ok | evac=in_transit supply=in_transit | rel=evac,supply | ingest=0 capred=0 | stamp:none",
-			build: atCount(0, strict(pairAt(twoRobot, "evac", S, "supply", S))), act: pairClick(dispNone), probe: pStamp},
+			build: at(100, 10, 0), act: pairClick(dispNone), probe: pStamp},
 		// The seat names its strict claim, but a tick now matches another
 		// style's claim (the active style moved and the seat's pointer did
 		// not). The cap is the tick's claim's, whatever the seat names, so the
 		// bin is declared at that claim's pack.
 		{name: "d2/two_robot evac, the tick's claim is not the seat's: the tick's claim declares",
-			want:  "ok | evac=in_transit supply=dispatched | rel=evac | ingest=1 capred=0 | stamp:q=42 declared=100 by=operator order=evac",
-			build: strict(tickClaimMoved), act: orderClick("evac", dispEmpty), probe: pStamp},
+			want:  "ok | evac=in_transit supply=dispatched | rel=evac | ingest=1 capred=0 | stamp:q=95 declared=100 by=operator order=evac",
+			build: within(tickClaimMoved), act: orderClick("evac", dispEmpty), probe: pStamp},
 		// The same, with the seat's own claim not strict: the per-order door
 		// still reads the tick's claim, which is.
 		{name: "d2/two_robot evac, the seat's claim is not strict and the tick's is",
-			want: "ok | evac=in_transit supply=dispatched | rel=evac | ingest=1 capred=0 | stamp:q=42 declared=100 by=operator order=evac",
+			want: "ok | evac=in_transit supply=dispatched | rel=evac | ingest=1 capred=0 | stamp:q=95 declared=100 by=operator order=evac",
 			build: func(h *relHarness) {
-				strict(tickClaimMoved)(h)
+				within(tickClaimMoved)(h)
 				_, err := h.db.DB.Exec(`UPDATE style_node_claims SET strict_pack=0 WHERE id=
 					(SELECT active_claim_id FROM process_node_runtime_states WHERE process_node_id=?)`, h.nodeID)
 				testutil.MustNoErr(h.t, err, "the seat's claim not strict")
 			},
 			act: orderClick("evac", dispEmpty), probe: pStamp},
 
-		// ── A changeover's evac, at any door: the real count ────────────────
+		// ── A changeover's evac, at any door: the real count, within the
+		// tolerance or not ───────────────────────────────────────────────────
 		{name: "d1/co two_robot pair (door 1 on a changeover task)",
-			want:  "ok | evac=in_transit supply=in_transit | rel=evac,supply | ingest=1 capred=0 | stamp:q=42",
-			build: strict(coAt(co, "evac", S, "supply", S)), act: pairClick(dispNone), probe: pStamp},
+			want:  "ok | evac=in_transit supply=in_transit | rel=evac,supply | ingest=1 capred=0 | stamp:q=95",
+			build: within(coAt(co, "evac", S, "supply", S)), act: pairClick(dispNone), probe: pStamp},
 		{name: "d2/co two_robot evac",
-			want:  "ok | evac=in_transit supply=dispatched | rel=evac | ingest=1 capred=0 | stamp:q=42",
-			build: strict(coAt(co, "evac", S, "supply", D)), act: orderClick("evac", dispEmpty), probe: pStamp},
+			want:  "ok | evac=in_transit supply=dispatched | rel=evac | ingest=1 capred=0 | stamp:q=95",
+			build: within(coAt(co, "evac", S, "supply", D)), act: orderClick("evac", dispEmpty), probe: pStamp},
 		{name: "d2/co drop evac (door 7's arm)",
-			want:  "ok | evac=in_transit | rel=evac | ingest=1 capred=0 | stamp:q=42",
-			build: strict(coAt(drop, "evac", S)), act: orderClick("evac", dispNone), probe: pStamp},
+			want:  "ok | evac=in_transit | rel=evac | ingest=1 capred=0 | stamp:q=95",
+			build: within(coAt(drop, "evac", S)), act: orderClick("evac", dispNone), probe: pStamp},
 		{name: "d5/co two_robot sweep",
-			want:  "ok | evac=in_transit supply=in_transit | rel=evac,supply | ingest=1 capred=0 | sweep released=2 pending=0 deferred=0 flip=[] | stamp:q=42",
-			build: strict(coAt(co, "evac", S, "supply", S)), act: sweepClick(dispNone), probe: pStamp},
+			want:  "ok | evac=in_transit supply=in_transit | rel=evac,supply | ingest=1 capred=0 | sweep released=2 pending=0 deferred=0 flip=[] | stamp:q=95",
+			build: within(coAt(co, "evac", S, "supply", S)), act: sweepClick(dispNone), probe: pStamp},
 		{name: "d6/co drop at the station button (to door 5, the drop arm)",
-			want:  "ok | evac=in_transit | rel=evac | ingest=1 capred=0 | stamp:q=42",
-			build: strict(coAt(drop, "evac", S)), act: pairClick(dispNone), probe: pStamp},
+			want:  "ok | evac=in_transit | rel=evac | ingest=1 capred=0 | stamp:q=95",
+			build: within(coAt(drop, "evac", S)), act: pairClick(dispNone), probe: pStamp},
 
 		// ── Doors 3 and 4 never finalize ────────────────────────────────────
-		{name: "d3/material release of a short strict bin",
+		{name: "d3/material release of a strict bin within its tolerance",
 			want:  "ok |  | rel=- | ingest=0 capred=0 | stamp:none",
-			build: strict(func(h *relHarness) { h.seedNode(twoRobot) }), act: materialTap(0), probe: pStamp},
-		{name: "d4/position evac of a short strict bin",
+			build: within(func(h *relHarness) { h.seedNode(twoRobot) }), act: materialTap(0), probe: pStamp},
+		{name: "d4/position evac of a strict bin within its tolerance",
 			want:  "ok |  | rel=- | ingest=0 capred=0 | stamp:none",
-			build: strict(func(h *relHarness) { h.seedNode(twoRobot) }), act: positionEvac, probe: pStamp},
+			build: within(func(h *relHarness) { h.seedNode(twoRobot) }), act: positionEvac, probe: pStamp},
 	})
 }

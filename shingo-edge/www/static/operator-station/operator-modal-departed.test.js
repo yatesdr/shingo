@@ -103,7 +103,7 @@ function card(orders, opts) {
     opts = opts || {};
     return cellCardAction(
         { node: NODE, orders, swap_ready: !!opts.swapReady, releases_as_pair: !!opts.releasesAsPair,
-            bin_state: opts.binState },
+            bin_state: opts.binState, release_short: opts.releaseShort },
         opts.claim || PRODUCE,
         opts.remaining != null ? opts.remaining : 40);
 }
@@ -262,6 +262,22 @@ const stagedLeg = { id: 301, status: 'staged', lane_held: false, departed: false
 btn = card([departedR1, stagedLeg]);
 eq(btn.label, 'RELEASE', 'a station-releasable staged leg still offers RELEASE');
 eq(btn.action, 'release-prompt:/api/orders/301/release', 'and it targets that leg');
+
+// RELEASE SHORT: the server says this release ships the bin short (a strict
+// claim, outside its pack tolerance; NodeClaim.ReleaseShort). The word changes
+// at both produce arms and nothing else does: same tap, same action.
+btn = card([departedR1, deliveredR2], { swapReady: true, releaseShort: true });
+eq(btn.label, 'RELEASE SHORT', 'swap_ready on a short release reads RELEASE SHORT');
+eq(btn.action, 'release-prompt:/api/process-nodes/42/release-staged', 'and it is the same pair release');
+btn = card([departedR1, stagedLeg], { releaseShort: true });
+eq(btn.label, 'RELEASE SHORT', 'a staged leg on a short release reads RELEASE SHORT');
+eq(btn.action, 'release-prompt:/api/orders/301/release', 'and it is the same leg release');
+btn = card([departedR1, stagedLeg], { releaseShort: false });
+eq(btn.label, 'RELEASE', 'within the tolerance, or not strict, it reads RELEASE');
+// A changeover tile keeps its decision's word: a changeover never declares.
+btn = cellCardAction({ node: NODE, orders: [stagedLeg], release_short: true,
+    changeover_task: { situation: 'swap' }, release_purposes: [{ purpose: 'ready', ready: true }] }, PRODUCE, 40);
+eq(btn.label, 'RELEASE: READY', 'a changeover tile reads its decision, not RELEASE SHORT');
 
 // A DEPARTED staged leg offers nothing — it is not the station's to release.
 // (Not a shape that occurs today; the pin is that the filter is applied before

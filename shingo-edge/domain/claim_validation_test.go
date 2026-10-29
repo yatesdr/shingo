@@ -662,3 +662,77 @@ func TestValidateNodeClaim_StrictModesRefuseFieldsTheyDoNotUse(t *testing.T) {
 		t.Errorf("two_robot is not strict yet; outbound staging refused: %+v", got)
 	}
 }
+
+// TestStrictPack_TheToleranceDecidesTheDeclaration pins the one helper the
+// RELEASE's declaration (engine declaredFull) and the tile's label
+// (StationNodeView.ReleaseShort) read: T = max(1, floor(pack × pct / 100)); a
+// strict bin short of its pack within T declares the pack, further short
+// ships its count and reads short, and 0 is no tolerance at all.
+func TestStrictPack_TheToleranceDecidesTheDeclaration(t *testing.T) {
+	t.Parallel()
+	strict := func(pack, pct int) *NodeClaim {
+		return &NodeClaim{Role: protocol.ClaimRoleProduce, StrictPack: true, UOPCapacity: pack, PackTolerancePct: pct}
+	}
+	for _, c := range []struct {
+		name     string
+		claim    *NodeClaim
+		n        int
+		tol      int
+		declared int
+		short    bool
+	}{
+		{"pct 0: 42 of 100 ships short", strict(100, 0), 42, 0, 0, true},
+		{"pct 0: 99 of 100 ships short", strict(100, 0), 99, 0, 0, true},
+		{"pct 5 (T 5): 95 of 100 declared", strict(100, 5), 95, 5, 100, false},
+		{"pct 5 (T 5): 94 of 100 short", strict(100, 5), 94, 5, 0, true},
+		{"pct 10 (T 10): 90 of 100 declared", strict(100, 10), 90, 10, 100, false},
+		{"pct 10 (T 10): 89 of 100 short", strict(100, 10), 89, 10, 0, true},
+		{"pack 10 at pct 5 (T 1): 9 declared", strict(10, 5), 9, 1, 10, false},
+		{"pack 10 at pct 5 (T 1): 8 short", strict(10, 5), 8, 1, 0, true},
+		{"pack 132 at pct 5 (T 6): 37 short", strict(132, 5), 37, 6, 0, true},
+		{"pack 132 at pct 10 (T 13): 37 short", strict(132, 10), 37, 13, 0, true},
+		{"pack 132 at pct 5: 113 short", strict(132, 5), 113, 6, 0, true},
+		{"pack 132 at pct 10: 113 short", strict(132, 10), 113, 13, 0, true},
+		{"pack 132 at pct 5: 124 short", strict(132, 5), 124, 6, 0, true},
+		{"pack 132 at pct 10: 124 declared", strict(132, 10), 124, 13, 132, false},
+		{"at the pack: neither", strict(132, 10), 132, 13, 0, false},
+		{"above the pack: neither", strict(132, 10), 140, 13, 0, false},
+		{"empty: neither", strict(132, 10), 0, 13, 0, false},
+		{"strict pack off: no reader", &NodeClaim{Role: protocol.ClaimRoleProduce, UOPCapacity: 132, PackTolerancePct: 10}, 124, 0, 0, false},
+		{"consume: no reader", &NodeClaim{Role: protocol.ClaimRoleConsume, StrictPack: true, UOPCapacity: 132, PackTolerancePct: 10}, 124, 0, 0, false},
+		{"no pack in the catalog: no reader", strict(0, 10), 124, 0, 0, false},
+		{"no claim", nil, 124, 0, 0, false},
+	} {
+		if got := c.claim.PackTolerance(); got != c.tol {
+			t.Errorf("%s: PackTolerance = %d, want %d", c.name, got, c.tol)
+		}
+		if got := c.claim.DeclaresFullAt(c.n); got != c.declared {
+			t.Errorf("%s: DeclaresFullAt(%d) = %d, want %d", c.name, c.n, got, c.declared)
+		}
+		if got := c.claim.ReleaseShort(c.n); got != c.short {
+			t.Errorf("%s: ReleaseShort(%d) = %v, want %v", c.name, c.n, got, c.short)
+		}
+	}
+}
+
+// TestValidateNodeClaim_PackToleranceIsZeroToTwenty: the save refuses a
+// tolerance outside 0 to MaxPackTolerancePct by name, and does not refuse one
+// on a claim with strict pack off (it has no reader there).
+func TestValidateNodeClaim_PackToleranceIsZeroToTwenty(t *testing.T) {
+	t.Parallel()
+	for _, c := range []struct {
+		pct     int
+		strict  bool
+		refused bool
+	}{
+		{0, true, false}, {5, true, false}, {20, true, false},
+		{21, true, true}, {-1, true, true}, {100, true, true},
+		{10, false, false}, {21, false, true},
+	} {
+		in := validClaim()
+		in.StrictPack, in.PackTolerancePct = c.strict, c.pct
+		if got := hasField(ValidateNodeClaim(in, ClaimNodeContext{}), "pack_tolerance_pct"); got != c.refused {
+			t.Errorf("pct %d (strict %v): refused = %v, want %v", c.pct, c.strict, got, c.refused)
+		}
+	}
+}

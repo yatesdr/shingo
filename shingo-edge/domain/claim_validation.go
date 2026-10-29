@@ -512,6 +512,12 @@ func ValidateNodeClaim(in NodeClaimInput, nodeCtx ClaimNodeContext) []FieldError
 	if in.Sequence != nil && *in.Sequence < 0 {
 		add("sequence", "Board order cannot be negative")
 	}
+	// The pack tolerance is a percent of the pack, 0 to MaxPackTolerancePct.
+	// Refused past it rather than clamped: a typo would book half-empty bins
+	// full. Not refused with strict pack off, where nothing reads it.
+	if msg := PackToleranceRefusal(in.PackTolerancePct); msg != "" {
+		add(string(flowspec.PackTolerancePct), msg)
+	}
 
 	// THE PER-MODE HALF READS ONE TABLE. Which fields this claim's mode
 	// requires and which it must not carry is flowspec.Steady's answer, shared

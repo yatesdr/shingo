@@ -439,8 +439,9 @@ func (e *Engine) logCapture(orderID int64, requested, applied ReleaseDisposition
 //  2. queue the ingest: the Edge's count, the bin and its epoch, and the
 //     departing ORDER's payload (for a changeover evac, the outgoing style's).
 //     No manifest lines: Core resolves the payload's template. A station's
-//     RELEASE of a strict bin counted below its pack also declares the pack
-//     (declaredFull), which Core stamps; the count itself is never clamped;
+//     RELEASE of a strict bin counted within its claim's pack tolerance short
+//     of the pack also declares the pack (declaredFull), which Core stamps;
+//     the count itself is never clamped;
 //  3. clear the slot (carrierLeft), so later ticks hold and replay onto the
 //     next bin.
 //
@@ -547,11 +548,14 @@ func byLeg(act *releaseAct, ll *legLoad) finalizeBy {
 // declaredFull is the pack a release declares the departing bin full at, or
 // 0 for none (the count ships alone). It declares only for a station's RELEASE
 // (doors 1 and 2, the sim's auto-operator among them) that is not a
-// changeover's evac, of a bin counted below the pack of a claim the strict arm
-// applies to. The claim and the test are the cap's own: the node's claim as a
-// tick resolves it, its strictPackFor against the seat's count as the finalize
-// read it, so a bin is declared full exactly when a tick landing now would be capped at
-// that pack. A count at or above the pack is not declared: it ships as counted.
+// changeover's evac, and then exactly when the claim says so
+// (domain.NodeClaim.DeclaresFullAt): a claim the strict arm applies to, a bin
+// counted short of its pack, and the shortfall within the claim's pack
+// tolerance. The claim is the cap's own: the node's claim as a tick resolves
+// it, against the seat's count as the finalize read it. A count at or above
+// the pack, a claim with no tolerance (pack_tolerance_pct 0), and a bin further
+// short than the tolerance are not declared: they ship as counted, and the
+// tile read RELEASE SHORT for the last two (the same claim's ReleaseShort).
 func (e *Engine) declaredFull(node *processes.Node, rt *processes.RuntimeState, by finalizeBy) int {
 	if (by.origin != release.OriginStationPair && by.origin != release.OriginStationOrder) || by.changeover {
 		return 0
@@ -563,10 +567,7 @@ func (e *Engine) declaredFull(node *processes.Node, rt *processes.RuntimeState, 
 		// claim whatever the seat names, so that is the one read.
 		claim = requestedClaimAtNode(e.db, node)
 	}
-	if pack := strictPackFor(claim); pack > rt.RemainingUOPCached {
-		return pack
-	}
-	return 0
+	return claim.DeclaresFullAt(rt.RemainingUOPCached)
 }
 
 // runtimeRemaining is a nil-safe read for log lines.

@@ -44,6 +44,11 @@ import (
 // key_task is not in it either: the branch removed its one runtime forward,
 // so editing a column that drives nothing was invalidating every open
 // preview.
+//
+// Nor is pack_tolerance_pct (2026-10-29): it changes what a station's RELEASE
+// books (whether a short bin is declared full), not a tick, a leg or anything
+// a plan does, so a save that set it leaves every open preview's plan as it
+// was.
 
 // FlowFingerprintColumns is the claim column list the fingerprint serialises,
 // in order. It must equal cloneClaimColumns plus id, and a test in

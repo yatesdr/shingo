@@ -36,8 +36,12 @@ var cloneOnlyExclusions = map[string]string{}
 //	          hashed, editing it invalidated every open preview on the press.
 //	          The column stays (and a clone still carries it) because the data
 //	          is still there and Core's mirror still has the field.
+//	pack_tolerance_pct  changes what a station's RELEASE books (whether a
+//	          short strict bin is declared full), not a tick or a plan. A clone
+//	          carries it: it is the claim's setting.
 var fingerprintExclusions = map[string]string{
-	"key_task": "no runtime reader on this tree; hashing it invalidated previews for a column that drives nothing",
+	"key_task":           "no runtime reader on this tree; hashing it invalidated previews for a column that drives nothing",
+	"pack_tolerance_pct": "changes a release's booking, not a tick or a plan; hashing it would invalidate previews for a booking setting",
 }
 
 // TestFlowFingerprintColumnsAreCloneClaimColumnsPlusID holds the two lists

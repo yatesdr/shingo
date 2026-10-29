@@ -1811,7 +1811,7 @@ func edgeMigrations() []migrate.Migration {
 		{
 			// style_node_claims.strict_pack: a produce claim's bound bin is
 			// charged only up to its pack, the rest held for the next bin of
-			// the part (engine strictPackApplies). DEFAULT 0 is today's
+			// the part (NodeClaim.StrictPackApplies). DEFAULT 0 is today's
 			// uncapped count on every existing claim. The baseline CREATE
 			// carries it for a fresh install; guarded, and the claim
 			// quarantine's mirror gets its column in the same step, as v24.
@@ -2050,6 +2050,53 @@ func edgeMigrations() []migrate.Migration {
 			Verify: func(q migrate.Querier) bool {
 				var n int
 				err := q.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('core_loaders') WHERE name = 'takes_bare'`).Scan(&n)
+				return err == nil && n == 1
+			},
+		},
+		{
+			// style_node_claims.pack_tolerance_pct: a strict claim's miscount
+			// tolerance, a percent of the pack. A station's RELEASE of a bin
+			// within it of the pack declares the bin full; further short ships
+			// its real count (NodeClaim.DeclaresFullAt). DEFAULT 0 is no
+			// tolerance on every existing claim: from this step on a strict
+			// claim declares nothing until the plant types a percentage. The
+			// baseline CREATE carries it for a fresh install; guarded, and the
+			// claim quarantine's mirror gets its column in the same step, as
+			// v26.
+			Version: 34,
+			Name:    "style_node_claims_pack_tolerance_pct",
+			Fn: func(tx *sql.Tx) error {
+				var n int
+				if err := tx.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('style_node_claims')
+					WHERE name = 'pack_tolerance_pct'`).Scan(&n); err != nil {
+					return err
+				}
+				if n == 0 {
+					if _, err := tx.Exec(`ALTER TABLE style_node_claims ADD COLUMN pack_tolerance_pct INTEGER NOT NULL DEFAULT 0`); err != nil {
+						return err
+					}
+				}
+				var q, qn int
+				if err := tx.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = '` + ClaimQuarantineTable + `'`).Scan(&q); err != nil {
+					return err
+				}
+				if q == 0 {
+					return nil
+				}
+				if err := tx.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('` + ClaimQuarantineTable + `')
+					WHERE name = 'pack_tolerance_pct'`).Scan(&qn); err != nil {
+					return err
+				}
+				if qn > 0 {
+					return nil
+				}
+				_, err := tx.Exec(`ALTER TABLE ` + ClaimQuarantineTable + ` ADD COLUMN pack_tolerance_pct INT`)
+				return err
+			},
+			Verify: func(q migrate.Querier) bool {
+				var n int
+				err := q.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('style_node_claims')
+					WHERE name = 'pack_tolerance_pct'`).Scan(&n)
 				return err == nil && n == 1
 			},
 		},

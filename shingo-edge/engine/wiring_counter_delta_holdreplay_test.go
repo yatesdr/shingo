@@ -307,7 +307,7 @@ func TestCharSP_FirstBoundTickReplaysTheWholeHold(t *testing.T) {
 // ── Strict pack: the bound bin is charged only up to its pack ──
 //
 // The pack is the tick's matched claim's UOPCapacity (catalog-resolved on every
-// read), the gate is strictPackApplies, and the split is splitStrict. Unless a
+// read), the gate is NodeClaim.StrictPackApplies, and the split is splitStrict. Unless a
 // pin says otherwise the pack is 132, the seat names the claim (the gate does
 // not read active_claim_id), and the claim's part is WIDGET-A.
 

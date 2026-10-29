@@ -44,6 +44,8 @@ func populateClaimField(c *NodeClaim, f flowspec.Field) {
 		c.CurtainRequired = true
 	case flowspec.StrictPack:
 		c.StrictPack = true
+	case flowspec.PackTolerancePct:
+		c.PackTolerancePct = 5
 	case flowspec.EvacuateOnChangeover:
 		c.EvacuateOnChangeover = true
 	case flowspec.ChangeoverEvacNodes:
@@ -109,6 +111,8 @@ func populateClaimInputField(in *NodeClaimInput, f flowspec.Field) {
 		in.CurtainRequired = true
 	case flowspec.StrictPack:
 		in.StrictPack = true
+	case flowspec.PackTolerancePct:
+		in.PackTolerancePct = 5
 	case flowspec.EvacuateOnChangeover:
 		in.EvacuateOnChangeover = true
 	case flowspec.ChangeoverEvacNodes:

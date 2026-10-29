@@ -42,6 +42,7 @@ func claimEditorBody(c *processes.NodeClaim) processes.NodeClaimInput {
 		ReuseCompatibleBins:   c.ReuseCompatibleBins,
 		AutoPush:              c.AutoPush,
 		StrictPack:            c.StrictPack,
+		PackTolerancePct:      c.PackTolerancePct,
 		PairedCoreNode:        c.PairedCoreNode,
 		SecondPairedCoreNode:  c.SecondPairedCoreNode,
 		AutoConfirm:           c.AutoConfirm,
@@ -94,6 +95,7 @@ func TestUpsertStyleNodeClaim_EditorSaveIsANoOp(t *testing.T) {
 		ReuseCompatibleBins:   true,
 		AutoPush:              true,
 		StrictPack:            true,
+		PackTolerancePct:      7,
 		PairedCoreNode:        "RT-NODE-B",
 		SecondPairedCoreNode:  "RT-NODE-C",
 		AutoConfirm:           true,
@@ -159,6 +161,7 @@ func TestUpsertStyleNodeClaim_EditorSaveIsANoOp(t *testing.T) {
 		{"reuse_compatible_bins", before.ReuseCompatibleBins, after.ReuseCompatibleBins},
 		{"auto_push", before.AutoPush, after.AutoPush},
 		{"strict_pack", before.StrictPack, after.StrictPack},
+		{"pack_tolerance_pct", before.PackTolerancePct, after.PackTolerancePct},
 		{"changeover_evac_destination", before.ChangeoverEvacDestination, after.ChangeoverEvacDestination},
 		{"index_robot_supplies", before.IndexRobotSupplies, after.IndexRobotSupplies},
 	} {
