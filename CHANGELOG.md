@@ -21,6 +21,9 @@ percentage.
 - One Finished goods section: strict pack, its tolerance, where partials go
 - Pulled directly is a setting of any loader but a stage 1
 - /inventory says "no pack" from the stamp's reason, not from its numbers
+- /inventory lists hold drops as runs with their totals, not a line per stroke cut at 200
+- A consume side's stage 2 puts a full on (FULL ON, count at the pack) or a partial; both sides offer all three
+- Stage 1's button reads BIN OFF on either side
 
 ## 2026-10-28 — The loader board, fitted to a 10-inch tablet
 
