@@ -3,6 +3,25 @@
 One line per change. If a change needs a paragraph to explain, the paragraph
 belongs in the commit message or in `docs/` — this file is the index.
 
+## 2026-10-29 — Partials to stage 2, the miscount tolerance, stage 2 is produce
+
+Core first, then the Edge at once: Core 168 makes stage 2 produce, and an Edge before v33 drops a produce stage 2
+with no parts. Edge v33–v34. The day the Edge lands, a strict claim declares nothing until the plant types a
+percentage.
+
+- A two-stage unloader's stage 2 is produce; the wire says so with takes_bare (Core 168)
+- A stage-2 window acts as an unloader's whatever its role, and nothing asks a carrier into it
+- REQUEST FULL is no longer offered at a stage 2
+- A held partial at stage 2 has one button: PARTIAL OFF · EMPTY ON, COUNT small beside it
+- A bare cart at stage 2 offers EMPTY ON or PARTIAL ON, with a typed count
+- An emptied carrier is no longer held, so its card goes with the partial
+- A strict claim's pack tolerance (0–20 %) decides the full stamp; outside it the count ships (Edge v34)
+- The produce tile reads RELEASE SHORT when the count is outside the tolerance
+- The unreachable produce release screen is gone
+- One Finished goods section: strict pack, its tolerance, where partials go
+- Pulled directly is a setting of any loader but a stage 1
+- /inventory says "no pack" from the stamp's reason, not from its numbers
+
 ## 2026-10-28 — The loader board, fitted to a 10-inch tablet
 
 Edge-only; no migrations. Core then Edge at SPR to keep both on one commit.
