@@ -716,7 +716,7 @@ function renderDeclaredStamps() {
     + escapeHtml(st.node || '(no node)') + ' · ' + escapeHtml(formatTime(st.applied_at))
     + ' — <code>' + escapeHtml(st.bin_label || ('bin ' + st.bin_id)) + '</code>'
     + ' <span class="text-muted-xs">' + escapeHtml(st.payload_code || '') + '</span>'
-    + (st.declared === st.counted
+    + (st.reason === 'no_pack'
       ? ' counted <b>' + num(st.counted) + '</b>, kept: no pack for this part'
       : ' counted <b>' + num(st.counted) + '</b> → its pack <b>' + num(st.declared) + '</b>')
     + (st.actor ? ' by ' + escapeHtml(st.actor) : '')

@@ -102,8 +102,13 @@ console.log('inventory: the two lists render their rows');
             && s.includes('T(2026-10-20T08:20:00Z)'), s);
         const kept = load({ since: '2026-10-13T08:00:00Z', hold_drops: [], declared_full_stamps: [
             { id: 2, bin_id: 9, bin_label: 'SHG:0900', node: 'ALN_011', payload_code: 'SYN44-PARTA.06',
-              counted: 97, declared: 97, actor: 'operator-7', applied_at: '2026-10-20T08:30:00Z' }] }).stamps;
+              counted: 97, declared: 97, reason: 'no_pack', actor: 'operator-7', applied_at: '2026-10-20T08:30:00Z' }] }).stamps;
         check('stamps: a no_pack row says the count was kept', kept.includes('kept: no pack for this part') && !kept.includes('→'), kept);
+        // The reason decides, not the numbers: a row with no reason is a stamp.
+        const stamped = load({ since: '2026-10-13T08:00:00Z', hold_drops: [], declared_full_stamps: [
+            { id: 3, bin_id: 10, bin_label: 'SHG:0901', node: 'ALN_011', payload_code: 'SYN44-PARTA.06',
+              counted: 97, declared: 97, actor: 'operator-7', applied_at: '2026-10-20T08:40:00Z' }] }).stamps;
+        check('stamps: a row without no_pack is not read as no pack', !stamped.includes('no pack'), stamped);
         check('stamps: no red chip', !s.includes('chip-err') && !s.includes('ledger-exceptions"'), s);
     }
 }

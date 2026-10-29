@@ -157,8 +157,9 @@ const (
 	// station behind.
 	OpAfterLift = "after_lift"
 
-	// OpReleaseDeclaredFull tags a station's RELEASE FULL on a produce bin
-	// counted below its pack (strict pack): Core books the counted number
+	// OpReleaseDeclaredFull tags a station's RELEASE of a strict produce bin
+	// counted short of its pack within the claim's miscount tolerance (the
+	// Edge's declaredFull): Core books the counted number
 	// (OpSetForProduction) and then this row, before_uop the counted number
 	// and after_uop the pack of the part Core books the bin under, from its
 	// catalog, in the same transaction

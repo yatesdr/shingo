@@ -231,8 +231,13 @@ func resolveBinUOPContext(tx *sql.Tx, binID int64, detail json.RawMessage) (audi
 // again once emptied. A person declares the number with the CLEAR
 // (DeclareTotesTx), after this statement. Pin:
 // TestEmptyingStatements_AFullBuiltOnTopsAndBottomsReadsUnknownOnceEmptied.
+//
+// held_since GOES WITH THE COUNT: it says an unfinished carrier is held in a
+// partial home, and an emptied carrier is not one. Left set, the board kept
+// drawing the held partial's card on a cart already unloaded at stage 2.
 const emptiedCarrierSET = `payload_code='', manifest=NULL, uop_remaining=0,
-	manifest_confirmed=false, loaded_at=NULL, undeclared_carrier_at=NULL, totes_on_cart=NULL`
+	manifest_confirmed=false, loaded_at=NULL, undeclared_carrier_at=NULL, totes_on_cart=NULL,
+	held_since=NULL`
 
 // ClearForReuse empties a bin's manifest. Owns its transaction. The bin
 // becomes an empty to the empty finders — except on a live loader's
@@ -918,8 +923,10 @@ func (s *BinManifestService) RecordProducedBin(binID int64, manifestJSON, payloa
 	return nil
 }
 
-// DeclaredFull is a station's RELEASE FULL on a produce bin it counted below
-// its pack, as the ingest carries it (protocol.OrderIngestRequest.DeclaredQty,
+// DeclaredFull is a station's RELEASE of a strict produce bin it counted short
+// of its pack by no more than the claim's miscount tolerance (the Edge decides
+// that; outside it nothing is declared and the count ships alone), as the
+// ingest carries it (protocol.OrderIngestRequest.DeclaredQty,
 // CalledBy, OrderID), with the pack the caller resolved for the part the bin
 // is booked under. The count is booked as counted and stamped up to Pack with
 // a row; nothing is stamped when Pack does not exceed the count, so a count is

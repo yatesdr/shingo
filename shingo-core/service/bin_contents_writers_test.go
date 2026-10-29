@@ -72,7 +72,7 @@ var binContentsWriters = map[string]writerEntry{
 	"service/bin_manifest.go:syncOrClearForReleased": {notALoad,
 		"a release's declared count (or its zero) and the payload's part list; payload unchanged"},
 	"service/bin_manifest.go:stampDeclaredFullTx": {notALoad,
-		"a station's RELEASE FULL raising the count just booked to the pack, inside the produce " +
+		"a station's RELEASE within its miscount tolerance raising the count just booked to the pack, inside the produce " +
 			"writer's transaction; the payload is the one the produce write set"},
 }
 

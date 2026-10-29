@@ -80,7 +80,7 @@ func loadedBinOffDefaults(t *testing.T, db *store.DB, nodeID int64, label string
 }
 
 var emptiedColumns = []string{
-	"delta_epoch", "loaded_at", "manifest", "manifest_confirmed", "payload_code",
+	"delta_epoch", "held_since", "loaded_at", "manifest", "manifest_confirmed", "payload_code",
 	"totes_on_cart", "undeclared_carrier_at", "uop_remaining", "updated_at",
 }
 

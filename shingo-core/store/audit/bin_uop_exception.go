@@ -155,16 +155,20 @@ func ListHoldDrops(db *sql.DB, since time.Time, limit int) ([]HoldDrop, error) {
 // DeclaredFullStamp is one release_declared_full ledger row as the /inventory
 // list reads it.
 type DeclaredFullStamp struct {
-	ID          int64     `json:"id"`
-	BinID       int64     `json:"bin_id"`
-	BinLabel    string    `json:"bin_label"`
-	Node        string    `json:"node"`
-	PayloadCode string    `json:"payload_code"`
-	Counted     int       `json:"counted"`
-	Declared    int       `json:"declared"`
-	Actor       string    `json:"actor"`
-	OrderID     *int64    `json:"order_id,omitempty"`
-	AppliedAt   time.Time `json:"applied_at"`
+	ID          int64  `json:"id"`
+	BinID       int64  `json:"bin_id"`
+	BinLabel    string `json:"bin_label"`
+	Node        string `json:"node"`
+	PayloadCode string `json:"payload_code"`
+	Counted     int    `json:"counted"`
+	Declared    int    `json:"declared"`
+	Actor       string `json:"actor"`
+	// Reason is the stamp's detail.reason: blank for a stamp to the pack,
+	// no_pack (service.DeclaredFullNoPack) when the part had none and the
+	// count was kept.
+	Reason    string    `json:"reason,omitempty"`
+	OrderID   *int64    `json:"order_id,omitempty"`
+	AppliedAt time.Time `json:"applied_at"`
 }
 
 // ListDeclaredFullStamps returns the release_declared_full rows applied at or
@@ -177,7 +181,7 @@ func ListDeclaredFullStamps(db *sql.DB, since time.Time, limit int) ([]DeclaredF
 	}
 	rows, err := db.Query(`SELECT l.id, l.bin_id, COALESCE(b.label, ''),
 		       COALESCE(NULLIF(l.detail->>'node', ''), n.name, ''), l.payload_code,
-		       COALESCE(l.before_uop, 0), l.after_uop, l.actor, l.order_id, l.applied_at
+		       COALESCE(l.before_uop, 0), l.after_uop, l.actor, COALESCE(l.detail->>'reason', ''), l.order_id, l.applied_at
 		FROM bin_uop_ledger l
 		LEFT JOIN bins b ON b.id = l.bin_id
 		LEFT JOIN nodes n ON n.id = l.node_id
@@ -193,7 +197,7 @@ func ListDeclaredFullStamps(db *sql.DB, since time.Time, limit int) ([]DeclaredF
 		var st DeclaredFullStamp
 		var order sql.NullInt64
 		if err := rows.Scan(&st.ID, &st.BinID, &st.BinLabel, &st.Node, &st.PayloadCode,
-			&st.Counted, &st.Declared, &st.Actor, &order, &st.AppliedAt); err != nil {
+			&st.Counted, &st.Declared, &st.Actor, &st.Reason, &order, &st.AppliedAt); err != nil {
 			return nil, fmt.Errorf("list declared-full stamps: scan: %w", err)
 		}
 		if order.Valid {

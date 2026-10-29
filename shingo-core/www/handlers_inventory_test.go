@@ -392,7 +392,7 @@ func TestApiInventoryLedgerExceptions_ListsHoldDropsAndStamps(t *testing.T) {
 		testutil.MustNoErr(t, err, "seed hold drop")
 		_, err = db.Exec(`INSERT INTO bin_uop_ledger (bin_id, before_uop, after_uop, op, source, payload_code, actor, applied_at, detail)
 			VALUES ($1, 131, 132, 'release_declared_full', 'test', $2, 'operator-7', now() - $3::interval,
-			        jsonb_build_object('node', 'ALN_011', 'counted', 131, 'declared', 132))`,
+			        jsonb_build_object('node', 'ALN_011', 'counted', 131, 'declared', 132, 'reason', 'no_pack'))`,
 			bin.ID, sd.Payload.Code, age)
 		testutil.MustNoErr(t, err, "seed stamp")
 	}
@@ -430,7 +430,7 @@ func TestApiInventoryLedgerExceptions_ListsHoldDropsAndStamps(t *testing.T) {
 	}
 	for key, want := range map[string]any{
 		"node": "ALN_011", "bin_id": float64(bin.ID), "bin_label": "BIN-STAMPED", "payload_code": sd.Payload.Code,
-		"counted": float64(131), "declared": float64(132), "actor": "operator-7",
+		"counted": float64(131), "declared": float64(132), "actor": "operator-7", "reason": "no_pack",
 	} {
 		if body.Stamps[0][key] != want {
 			t.Errorf("stamp %s = %v, want %v", key, body.Stamps[0][key], want)

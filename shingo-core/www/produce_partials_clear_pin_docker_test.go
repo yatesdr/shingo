@@ -186,10 +186,11 @@ func TestProducePartialsPin_StageTwoUnloadLeavesADressedEmpty(t *testing.T) {
 	}
 	seen := fmt.Sprintf("tap=%d unload=%d type=%s part=%q uop=%d ledger=%s held=%s",
 		tap.Code, unload.Code, got.BinTypeCode, got.PayloadCode, got.UOPRemaining, op, held)
-	// No stage-2 stamp: the cart keeps its carrier type (StampNone). Today the
-	// emptied cart keeps held_since, so the board keeps drawing the held card.
+	// No stage-2 stamp: the cart keeps its carrier type (StampNone). It used
+	// to keep held_since, so the board kept drawing the held card; the clear
+	// now drops it with the count (emptiedCarrierSET).
 	today := `tap=409 unload=200 type=PPS2-CART part="" uop=0 ledger=clear_for_reuse 7->0 held=set`
-	after := today
+	after := `tap=409 unload=200 type=PPS2-CART part="" uop=0 ledger=clear_for_reuse 7->0 held=null`
 	t.Logf("PIN clear/stage-2-unload %s", seen)
 	if seen != after {
 		t.Errorf("UNLOAD at a stage-2 window: got %s, want %s (today %s)", seen, after, today)
