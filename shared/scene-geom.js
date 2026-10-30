@@ -68,6 +68,28 @@ export function rotate90For(minX, maxX, minY, maxY) {
     return (maxY - minY) > (maxX - minX);
 }
 
+// turnedProjector is makeProjector for a chosen quarter turn clockwise of the
+// (x, −y) base image: 0, 90, 180 or 270. Every turn is a rotation and none a
+// mirror, so a map turned on a wall still reads as the floor it shows.
+export function turnedProjector(deg) {
+    if (deg === 180) return function (x, y) { return [-x, y]; };
+    if (deg === 270) return function (x, y) { return [-y, -x]; };
+    return makeProjector(deg === 90);
+}
+
+// mapTurn is the wall map's orientation: the quarter turn the display was set to,
+// or with none set, the same decision rotate90For makes. The bounds are the full
+// plant's, for the reason rotate90For gives.
+export function mapTurn(chosen, minX, maxX, minY, maxY) {
+    if (chosen === 0 || chosen === 90 || chosen === 180 || chosen === 270) return chosen;
+    return rotate90For(minX, maxX, minY, maxY) ? 90 : 0;
+}
+
+// headingDeg is a world heading (radians) as an SVG rotate on a turned map.
+export function headingDeg(angle, turn) {
+    return -(angle * 180 / Math.PI) + turn;
+}
+
 // Squared distance — squared because every caller either compares it against
 // another distance or against a squared threshold, and the square root is the
 // expensive half.

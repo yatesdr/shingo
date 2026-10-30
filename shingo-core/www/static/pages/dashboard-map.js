@@ -51,7 +51,7 @@ import { escapeHtml, formatClock, onSSE, serverNow, setSSEReloadOnBuild } from '
 // viewport, comets and SSE wiring. Promoted from components/ when the Edge's
 // station cell picture became its second consumer (docs/shared-layer-promotion.md).
 import {
-  makeProjector, rotate90For, dist2, isCoord, cubicLength, cubicPathD, laneKey
+  makeProjector, turnedProjector, mapTurn, headingDeg, dist2, isCoord, cubicLength, cubicPathD, laneKey
 } from '/static/shared/scene-geom.js';
 
 (function () {
@@ -140,7 +140,7 @@ import {
   var orderByRobot = {};    // robot_id -> order
   var hotNodes = {};        // lowercased node name -> status (highlight)
   var view = null;          // {minX, minY, w, h} screen-space bounding box
-  var rotate90 = false;     // orient the plant's long axis along screen X
+  var turnDeg = 0;          // the map's quarter turn clockwise (computeView)
   var focusRobot = null;    // click-to-focus: id of the robot whose route is lit
   var mapKeyOpen = false;   // node-type symbol key collapsed by default (reference info)
   var cometLayer = null;    // persistent SVG overlay holding the route comets
@@ -198,6 +198,16 @@ import {
   // after computeView. The `false` here is the same starting orientation the
   // old module-state flag had, so the first frame is unchanged.
   var proj = makeProjector(false);
+
+  // The quarter turn this screen was set to with the map's Rotate button. It is
+  // the screen's own, kept in its browser, because a wall monitor has no login to
+  // save anything with. None saved, the plant's shape decides (mapTurn).
+  var turnKey = '';
+  var chosenTurn;
+  try {
+    turnKey = 'shingo.map-turn.' + document.body.dataset.dashboardId;
+    chosenTurn = parseInt(localStorage.getItem(turnKey), 10);
+  } catch (_) { /* no storage: this screen just doesn't remember */ }
 
   // ── header chrome ──────────────────────────────────────────────────
   function tickClock() {
@@ -497,6 +507,21 @@ import {
     computeView(); // recomputes ROI + adoptViewTarget (forceReframe eases to it)
   }
 
+  // Rotate: a quarter turn clockwise, remembered on this screen. Everything drawn
+  // is re-projected, so the frame snaps to the turned plant rather than easing from
+  // a view of the old one.
+  function rotateMap() {
+    chosenTurn = (turnDeg + 90) % 360;
+    try { localStorage.setItem(turnKey, String(chosenTurn)); } catch (_) { /* this visit only */ }
+    if (viewEaseRAF) { cancelAnimationFrame(viewEaseRAF); viewEaseRAF = 0; }
+    userView = false;
+    viewTarget = null;
+    var btn = document.getElementById('map-recenter');
+    if (btn) btn.classList.remove('is-active');
+    clearCometLayer();
+    render();
+  }
+
   // Minimap click-to-jump: center the current view on the clicked world point
   // (stays in manual mode — it's navigation, not a follow-restore; recenter is
   // the follow-restore).
@@ -557,6 +582,8 @@ import {
 
     var recenter = document.getElementById('map-recenter');
     if (recenter) recenter.addEventListener('click', function () { recenterView(); });
+    var rotate = document.getElementById('map-rotate');
+    if (rotate) rotate.addEventListener('click', rotateMap);
   }
 
   // Hysteresis: only adopt a new target if the shift is meaningful.
@@ -611,10 +638,10 @@ import {
     var minWy = Math.min.apply(null, wy), maxWy = Math.max.apply(null, wy);
     // Orientation is based on the FULL plant so a zoomed-in ROI never flips.
     // This is the ONLY place orientation is decided, so it is the only place
-    // the projector is rebuilt — the flag itself is still read directly by the
-    // robot chevron, which counter-rotates against it.
-    rotate90 = rotate90For(minWx, maxWx, minWy, maxWy);
-    proj = makeProjector(rotate90);
+    // the projector is rebuilt — the turn itself is still read directly by the
+    // robot chevron, which rotates with it.
+    turnDeg = mapTurn(chosenTurn, minWx, maxWx, minWy, maxWy);
+    proj = turnedProjector(turnDeg);
 
     // Full-plant screen-space bbox (stable reference for clamping + minimap viewBox)
     var fsx = [], fsy = [];
@@ -1498,7 +1525,7 @@ import {
         // robot→delivery, i.e. backwards on the pickup leg — now fixed via
         // orderLeg. This chevron convention is the second candidate only if
         // reversed CHEVRONS, not streaks, are ever seen again.)
-        var rot = -(r.angle * 180 / Math.PI) + (rotate90 ? 90 : 0);
+        var rot = headingDeg(r.angle, turnDeg);
         var g = svgEl('g', { transform: 'translate(' + s[0] + ',' + s[1] + ') rotate(' + rot + ')' });
         g.appendChild(svgEl('polygon', { points: chevronPoints(robotR), class: 'map-robot', fill: color, 'stroke-width': robotR * 0.16 }));
         rg.appendChild(g);

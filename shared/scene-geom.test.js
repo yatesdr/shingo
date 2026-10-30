@@ -124,5 +124,28 @@ check('a landscape plant does not', g.rotate90For(0, 100, 0, 60) === false);
 check('a square plant does not (strictly taller only)', g.rotate90For(0, 50, 0, 50) === false);
 check('one press alone would NOT decide it (a subgraph is the wrong input)', g.rotate90For(-21.945, -15.157, 59.542, 60.697) === false);
 
+// The wall map's chosen quarter turn. A turn is a rotation, never a mirror, and
+// the chevron has to point where the projected heading points on every one.
+console.log('quarter turns');
+const closeTo = (a, b) => Math.abs(a - b) < 1e-9;
+for (const turn of [0, 90, 180, 270]) {
+    const proj = g.turnedProjector(turn);
+    const [ax, ay] = proj(1, 0), [bx, by] = proj(0, 1);
+    check(turn + ': keeps lengths', closeTo(Math.hypot(ax, ay), 1) && closeTo(Math.hypot(bx, by), 1));
+    check(turn + ': is no mirror', closeTo(ax * by - ay * bx, -1), String(ax * by - ay * bx));
+    for (const angle of [0, 0.7, 2.5, -1.2]) {
+        const [hx, hy] = proj(Math.cos(angle), Math.sin(angle));
+        const rad = g.headingDeg(angle, turn) * Math.PI / 180;
+        check(turn + ': chevron follows heading ' + angle, closeTo(Math.cos(rad), hx) && closeTo(Math.sin(rad), hy));
+    }
+}
+check('0 and 90 are the projections the plants already draw',
+    JSON.stringify(g.turnedProjector(0)(3, 4)) === JSON.stringify(g.makeProjector(false)(3, 4)) &&
+    JSON.stringify(g.turnedProjector(90)(3, 4)) === JSON.stringify(g.makeProjector(true)(3, 4)));
+check('a chosen turn beats the plant\'s shape', g.mapTurn(270, 0, 50, 0, 100) === 270 && g.mapTurn(0, 0, 50, 0, 100) === 0);
+check('no choice leaves a portrait plant at 90', g.mapTurn(undefined, 0, 50, 0, 100) === 90);
+check('no choice leaves a landscape plant at 0', g.mapTurn(undefined, 0, 100, 0, 50) === 0);
+check('a turn that is not a quarter is no choice', g.mapTurn(45, 0, 50, 0, 100) === 90);
+
 if (failures) { console.log(failures + ' FAILED'); process.exit(1); }
 console.log('scene-geom agreement: all vectors match');
