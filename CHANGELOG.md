@@ -3,6 +3,26 @@
 One line per change. If a change needs a paragraph to explain, the paragraph
 belongs in the commit message or in `docs/` — this file is the index.
 
+## 2026-10-30 — Inventory: positions and lines, opening on what needs a look
+
+No migration. The Edge carries only CSS (the unused tab and meter rules leave).
+
+- /inventory and Count history are two tabs of one page
+- Supermarket positions: part, spot, in loop with its threshold line, time to empty, UoP threshold, on the way
+- Lines lists every claim of a running style, consume and produce: in bin, time left, reorder point, on the way
+- Each table opens on the rows that need a look, least time left first; the rest fold behind "Show N more"
+- A one-bin home at a threshold of a pack or more needs a look when it is empty, not at its threshold
+- With nothing to look at, a table reads "All N positions healthy", never an empty body
+- The UoP threshold is set in its row on Enter; every change writes one audit_log row, shown on hover
+- ABOVE HOME CAPACITY is the one badge
+- The calculator opens only from the UoP threshold ⓘ, uncalibrated, and saves only on Confirm
+- The calculator offers nothing before a home's first L1 cycle; its cycle is the part's median measured rate
+- A bin below zero or not confirmed is named above the tables, linked to its recount
+- Count history holds the count ledger lists, the tick feed and the flagged carriers; the daily drop chart went
+- The keeper's levels moved to the Nodes page's group; the lineside buckets to the Bins page
+- The local gate's race step runs the docker tests, as CI's docker-race shards do
+- Every tab bar in Core and the Edge is the one shared pattern at one size; Bins, Orders, Diagnostics and Test orders moved to it
+
 ## 2026-10-29 — Partials to stage 2, the miscount tolerance, stage 2 is produce
 
 Core first, then the Edge at once: Core 168 makes stage 2 produce, and an Edge before v33 drops a produce stage 2
