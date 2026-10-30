@@ -632,8 +632,9 @@ func cellOrder(nodes []processes.Node) []string {
 // alone), the node list and the routing set this read already holds, so the
 // Spots step's rule costs the read no statement.
 // The pre-fill goes through the same rule before it ships. And its STALE
-// sentences, from the same rows: the nodes it names that the process no
-// longer has, which the mint refuses.
+// sentences, from the same rows (domain.ReadRecipe): a routing role the process
+// has no node for, and the nodes it names that the process no longer has, which
+// the mint refuses.
 //
 // AND ITS GROUPS (recipe groups), parsed from the same flow_json by
 // domain.ParseRecipe. The cells still lend the pairings and draw the card; the
@@ -662,8 +663,8 @@ func (s *StationService) composerPresets(processID int64, claims map[int64][]pro
 	enabled, versions := domain.EnabledRecipes(rows)
 	parsed := make([][]domain.FlowCell, len(enabled))
 	grouped := make([][]domain.RecipeGroup, len(enabled))
+	findings := make([][]string, len(enabled))
 	rules := domain.SpotRules{Positions: positions, Lanes: domain.StagingLanes(routing)}
-	live := domain.RoutingSetOf(positions, routing)
 	for i, p := range enabled {
 		cells, groups, err := domain.ParseRecipe(p.FlowJSON)
 		if err != nil {
@@ -673,8 +674,11 @@ func (s *StationService) composerPresets(processID int64, claims map[int64][]pro
 			log.Printf("composer: preset %d (%s v%d) does not parse, no card offered: %v", p.ID, p.Name, p.Version, err)
 			continue
 		}
-		parsed[i], grouped[i] = cells, groups
-		rules.Enabled = append(rules.Enabled, cells)
+		// As the process's Settings have it now, from the rows above: resolving
+		// costs this read no statement.
+		read := domain.ReadRecipe(p.Name, cells, groups, positions, routing)
+		parsed[i], grouped[i], findings[i] = read.Cells, read.Groups, read.Findings
+		rules.Enabled = append(rules.Enabled, read.Cells)
 	}
 	var out []domain.ComposerPreset
 	for i, p := range enabled {
@@ -700,9 +704,7 @@ func (s *StationService) composerPresets(processID int64, claims map[int64][]pro
 		card.Spots = domain.RecipeSpots(cells, groups, used, rules)
 		card.LastMoves = domain.LegalSpotMoves(cells, groups, used, rules,
 			domain.RecipeLastUsedMoves(cells, versions[p.Name], claims))
-		for _, st := range append(domain.StaleNodes(cells, live), domain.StaleGroupNodes(groups, live)...) {
-			card.Stale = append(card.Stale, domain.StaleSentence(p.Name, st))
-		}
+		card.Stale = findings[i]
 		card.Slots = domain.PayloadSlots(cells)
 		sort.SliceStable(card.Slots, func(i, j int) bool { return slotAt(at, card.Slots[i]) < slotAt(at, card.Slots[j]) })
 		out = append(out, card)

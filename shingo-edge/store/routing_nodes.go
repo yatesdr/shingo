@@ -33,8 +33,9 @@ func (db *DB) SetRoutingNodeEnabled(kinds domain.CoreNodeKinds, processID, id in
 	return processes.SetRoutingNodeEnabled(db.DB, kinds, processID, id, enabled, calledBy)
 }
 
-// DeleteRoutingNode removes one row, refusing while a live claim names it.
-func (db *DB) DeleteRoutingNode(processID, id int64) error {
+// DeleteRoutingNode removes one row and says what it was and which live styles
+// still name it.
+func (db *DB) DeleteRoutingNode(processID, id int64) (name, role string, styles []string, err error) {
 	return processes.DeleteRoutingNode(db.DB, processID, id)
 }
 
@@ -50,12 +51,10 @@ func (db *DB) RoutingSet(processID int64) ([]processes.RoutingNode, error) {
 // PutRoutingNodes writes a whole list of (name, role) rows in the order given,
 // adopting rows that already exist and NEVER deleting one the list omits.
 //
-// ADD-AND-ADOPT, NOT A SET-TO, and the reason is the delete guard. Taking a
-// routing name out is refused while a live claim still routes through it
-// (ErrRoutingNodeInUse) — a refusal an engineer is meant to see, by name, so
-// they can move the flow first. A set-to could only either fail the whole
-// write for a row nobody touched or drop a row a flow depends on. Add Process
-// only ever adds; the Edit sheet keeps its diff, where a removal is a DELETE.
+// ADD-AND-ADOPT, NOT A SET-TO, because a removal warns what it orphans, by name.
+// A set-to would drop a row nobody touched and warn about a name the engineer
+// never asked to take out. Add Process only ever adds; the Edit sheet keeps its
+// diff, where a removal is a DELETE.
 //
 // THE INDEX IS THE SEQUENCE. composer-model's defaultRouting opens a new
 // position on the LOWEST sequence of each role, so the order the engineer

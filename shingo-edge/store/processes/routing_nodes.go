@@ -33,11 +33,6 @@ var ErrInvalidRoutingRole = errors.New("routing role must be source, staging or 
 // offered twice.
 var ErrRoutingNodeIsPosition = errors.New("is a position of this process; positions stay in process_nodes")
 
-// ErrRoutingNodeInUse refuses a delete while a live style's claim still names
-// the node in the matching field. The error names the style so the engineer
-// knows which claim to look at.
-var ErrRoutingNodeInUse = errors.New("a live claim still routes through this node")
-
 // ErrRoutingNodeNotFound: no such row in this process.
 var ErrRoutingNodeNotFound = errors.New("routing node not found in this process")
 
@@ -91,7 +86,7 @@ func ListRoutingNodes(db DBTX, processID int64) ([]RoutingNode, error) {
 //
 // THE COUNT IS COMPUTED IN GO, from the claims this reads once, because the
 // SQL form of it is unindexable. domain.CountRoutingStyles holds the matching
-// rule so the count and the delete guard cannot answer differently.
+// rule so the count and the removal warning cannot answer differently.
 //
 // PER ROLE, not per name: a node that is a live source may be nobody's
 // destination, and one count over every field would put "on 10 styles" beside
@@ -253,8 +248,8 @@ func SetRoutingNodeEnabled(db *sql.DB, kinds domain.CoreNodeKinds, processID, id
 }
 
 // routingFieldMatch is the claim-side predicate for one role: which claim
-// fields name a node in that role. The delete guard matches the FIELD, not the
-// name — a node that is a live source may still be deleted as a destination.
+// fields name a node in that role. The removal's warning matches the FIELD, not
+// the name — a node that is a live source is nobody's destination.
 func routingFieldMatch(role string) string {
 	switch role {
 	case domain.RoutingRoleSource:
@@ -266,42 +261,40 @@ func routingFieldMatch(role string) string {
 	}
 }
 
-// DeleteRoutingNode removes one row — unless a live style's claim in the
-// process still names the node in the matching field, in which case it
-// refuses with the style's name.
-func DeleteRoutingNode(db *sql.DB, processID, id int64) error {
-	var name, role string
+// DeleteRoutingNode removes one row and returns its node and role with the live
+// styles whose claims still name it in the matching field. It never refuses over
+// them (owner ruling, 2026-10-30: a removal warns what it orphans): a claim is
+// the style's own and goes on routing through the node.
+func DeleteRoutingNode(db *sql.DB, processID, id int64) (name, role string, styles []string, err error) {
 	switch err := db.QueryRow(`SELECT core_node_name, role FROM process_routing_nodes
 		WHERE id = ? AND process_id = ?`, id, processID).Scan(&name, &role); {
 	case errors.Is(err, sql.ErrNoRows):
-		return ErrRoutingNodeNotFound
+		return "", "", nil, ErrRoutingNodeNotFound
 	case err != nil:
-		return err
+		return "", "", nil, err
 	}
 	rows, err := db.Query(`SELECT DISTINCT s.name FROM style_node_claims c
 		JOIN styles s ON s.id = c.style_id
 		WHERE s.process_id = ?2 AND s.deleted_at IS NULL AND c.retired_at IS NULL AND `+routingFieldMatch(role)+`
 		ORDER BY s.name`, name, processID)
 	if err != nil {
-		return err
+		return "", "", nil, err
 	}
 	defer rows.Close()
-	var styles []string
 	for rows.Next() {
 		var s string
 		if err := rows.Scan(&s); err != nil {
-			return err
+			return "", "", nil, err
 		}
 		styles = append(styles, s)
 	}
 	if err := rows.Err(); err != nil {
-		return err
+		return "", "", nil, err
 	}
-	if len(styles) > 0 {
-		return fmt.Errorf("%w: %s is the %s of style %s", ErrRoutingNodeInUse, name, role, strings.Join(styles, ", "))
+	if _, err := db.Exec(`DELETE FROM process_routing_nodes WHERE id = ? AND process_id = ?`, id, processID); err != nil {
+		return "", "", nil, err
 	}
-	_, err = db.Exec(`DELETE FROM process_routing_nodes WHERE id = ? AND process_id = ?`, id, processID)
-	return err
+	return name, role, styles, nil
 }
 
 // RoutingSet is the Routing tab's answer in one pass: the rows, each with the
@@ -309,7 +302,7 @@ func DeleteRoutingNode(db *sql.DB, processID, id int64) error {
 //
 // TWO READS. The rows, and the process's live claims for the per-row counts —
 // the rule for which claim field names a row lives in domain, so the count and
-// the delete guard cannot answer differently. (It also returned a report of
+// the removal warning cannot answer differently. (It also returned a report of
 // the boot-time backfill — counts, a summary line, the gate — which went with
 // the backfill; the desktop read only the rows.)
 func RoutingSet(db *sql.DB, processID int64) ([]RoutingNode, error) {

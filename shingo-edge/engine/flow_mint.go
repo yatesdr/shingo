@@ -270,12 +270,13 @@ func pickedCodes(picks []PartPick) ([]string, error) {
 	return codes, nil
 }
 
-// recipeSlots reads the recipe (onto plan.preset) and its slots in picture
-// order. It refuses a recipe naming a node the process no longer has, by name,
-// before anything is placed (owner, 2026-10-22: refuse and flag, never carry
-// the last style's node), in a cell or in a group, and a recipe whose slot
-// count is not the number of parts. The node list and routing rows it reads go
-// on the plan; the routing read is the one statement the stale check costs a
+// recipeSlots reads the recipe (onto plan.preset) against the process's Settings
+// (domain.ReadRecipe), and its slots in picture order. It refuses a recipe with a
+// routing role the process has no node for or naming a node the process no longer
+// has, by name, before anything is placed (owner, 2026-10-22: refuse and flag,
+// never carry the last style's node), in a cell or in a group, and a recipe whose
+// slot count is not the number of parts. The node list and routing rows it reads
+// go on the plan; the routing read is the one statement the resolution costs a
 // mint.
 func (e *Engine) recipeSlots(processID, presetID int64, parts int, plan *mintPlan) ([]domain.FlowCell, []domain.Slot, error) {
 	preset, err := e.db.GetFlowPreset(presetID)
@@ -283,7 +284,7 @@ func (e *Engine) recipeSlots(processID, presetID int64, parts int, plan *mintPla
 		return nil, nil, ErrMintRecipe
 	}
 	plan.preset = *preset
-	cells, groups, err := domain.ParseRecipe(preset.FlowJSON)
+	stored, groups, err := domain.ParseRecipe(preset.FlowJSON)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -295,11 +296,12 @@ func (e *Engine) recipeSlots(processID, presetID int64, parts int, plan *mintPla
 	if err != nil {
 		return nil, nil, err
 	}
-	plan.nodes, plan.routing, plan.groups = nodes, routing, groups
-	live := domain.RoutingSetOf(nodes, routing)
-	if stale := append(domain.StaleNodes(cells, live), domain.StaleGroupNodes(groups, live)...); len(stale) > 0 {
-		return nil, nil, &MintRefusal{Reason: domain.StaleSentence(preset.Name, stale[0])}
+	read := domain.ReadRecipe(preset.Name, stored, groups, nodes, routing)
+	if len(read.Findings) > 0 {
+		return nil, nil, &MintRefusal{Reason: read.Findings[0]}
 	}
+	cells := read.Cells
+	plan.nodes, plan.routing, plan.groups = nodes, routing, read.Groups
 	order := map[string]int{}
 	for i, n := range nodes {
 		order[n.CoreNodeName] = i
@@ -512,7 +514,7 @@ func (e *Engine) moveSpots(plan *mintPlan, cells []domain.FlowCell, moves map[st
 			// A recipe that does not parse grants nothing; the composer read
 			// logs it and offers no card for it.
 			if cells, err := domain.ParsePresetShape(p.FlowJSON); err == nil {
-				rules.Enabled = append(rules.Enabled, cells)
+				rules.Enabled = append(rules.Enabled, domain.ReadRecipe(p.Name, cells, nil, plan.nodes, plan.routing).Cells)
 			}
 		}
 		byStyle := map[int64][]processes.NodeClaim{}

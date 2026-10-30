@@ -350,9 +350,10 @@ type ComposerPreset struct {
 	// The HMI lights the targets and restates nothing; the mint refuses any
 	// other move (RefuseSpotMoves).
 	Spots []RecipeSpot `json:"spots,omitempty"`
-	// Stale is a sentence for each node the recipe names that the process no
-	// longer has (StaleNodes, StaleSentence). The mint refuses such a recipe
-	// by the first of them; the HMI draws its card with them and does not
+	// Stale is a sentence for each thing that stops this recipe running on this
+	// process now (ReadRecipe's findings): a routing role with no node, and each
+	// node it names that the process no longer has. The mint refuses such a
+	// recipe by the first of them; the HMI draws its card with them and does not
 	// offer it, and the desktop's recipe row says the same words.
 	Stale []string `json:"stale,omitempty"`
 	// Groups is the recipe's groups as stored (RecipeGroup), absent on a

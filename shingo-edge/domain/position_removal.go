@@ -1,6 +1,7 @@
 package domain
 
 import (
+	"fmt"
 	"sort"
 	"strings"
 )
@@ -48,24 +49,25 @@ func PositionRemovalWarning(claims []PositionClaims) string {
 		strings.Join(lines, " ") + " Save again to remove them anyway."
 }
 
-// claimantPhrases is `recipe "A"` or `recipes "A" and "B"`, then the same
+// claimantPhrases is `recipe "A"` or `2 recipes "A" and "B"`, then the same
 // for styles, the active style marked.
 func claimantPhrases(c PositionClaims) []string {
 	var out []string
 	if len(c.Recipes) > 0 {
-		out = append(out, kindWord("recipe", len(c.Recipes))+" "+andList(quotedNames(c.Recipes, "")))
+		out = append(out, countedKind("recipe", len(c.Recipes))+" "+andList(quotedNames(c.Recipes, "")))
 	}
 	if len(c.Styles) > 0 {
-		out = append(out, kindWord("style", len(c.Styles))+" "+andList(quotedNames(c.Styles, c.Active)))
+		out = append(out, countedKind("style", len(c.Styles))+" "+andList(quotedNames(c.Styles, c.Active)))
 	}
 	return out
 }
 
-func kindWord(word string, n int) string {
+// countedKind is `recipe` for one and `2 recipes` for more.
+func countedKind(word string, n int) string {
 	if n == 1 {
 		return word
 	}
-	return word + "s"
+	return fmt.Sprintf("%d %ss", n, word)
 }
 
 // quotedNames sorts the names and quotes each, marking the active style.

@@ -2,6 +2,7 @@ package store
 
 import (
 	"errors"
+	"slices"
 	"strings"
 	"testing"
 
@@ -297,7 +298,7 @@ func TestRoutingNodes_EnablingABackfillIsTheApproval(t *testing.T) {
 // evidence the panel shows — how many of the process's live styles name this
 // node in THIS role.
 //
-// It is the same predicate the delete guard matches on (routingFieldMatch), for
+// It is the same predicate the removal warning matches on (routingFieldMatch), for
 // the reason the guard uses it: a node that is a live source may be nobody's
 // destination, and one count over all fields would put "on 10 styles" beside a
 // destination row that no style sends anything to. The derive already reads
@@ -377,12 +378,11 @@ func TestRoutingNodes_UpsertRefusals(t *testing.T) {
 	}
 }
 
-// TestRoutingNodes_DeleteRefusesWhileALiveClaimReferencesTheName is the
-// delete guard. A routing row cannot go while a live style's claim still names
-// it in the matching field — the composer would then be offering a set the
-// plant's own configuration contradicts — and the refusal names the style so
-// the engineer knows where to look. Retire the style and the delete proceeds.
-func TestRoutingNodes_DeleteRefusesWhileALiveClaimReferencesTheName(t *testing.T) {
+// TestRoutingNodes_DeleteNamesTheStylesStillRoutingThroughIt: a routing row goes
+// whatever names it (owner ruling, 2026-10-30: a removal warns, never refuses),
+// and the answer names the live styles whose claims still name it in the
+// matching field, so the engineer knows where to look.
+func TestRoutingNodes_DeleteNamesTheStylesStillRoutingThroughIt(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
 	pid, sid := seedRoutingProcess(t, db, "P400")
@@ -408,31 +408,32 @@ func TestRoutingNodes_DeleteRefusesWhileALiveClaimReferencesTheName(t *testing.T
 	}
 
 	for _, key := range []string{"SMN_BUF_100:source", "STG_01:staging", "Supermarket Area:destination"} {
-		err := db.DeleteRoutingNode(pid, ids[key])
-		if !errors.Is(err, processes.ErrRoutingNodeInUse) {
-			t.Fatalf("delete %s while a live claim names it: err = %v, want ErrRoutingNodeInUse", key, err)
-		}
-		if !strings.Contains(err.Error(), "S-P400") {
-			t.Errorf("delete %s: refusal does not name the style: %v", key, err)
+		_, _, styles, err := db.DeleteRoutingNode(pid, ids[key])
+		testutil.MustNoErr(t, err, "delete "+key)
+		if !slices.Contains(styles, "S-P400") {
+			t.Errorf("delete %s names styles %v, want S-P400", key, styles)
 		}
 	}
 	// The same name in a role no claim uses it for is free to go: the guard
 	// matches the FIELD, not the name.
-	if err := db.DeleteRoutingNode(pid, ids["SMN_BUF_100:destination"]); err != nil {
-		t.Fatalf("delete SMN_BUF_100:destination (no claim uses it as a destination): %v", err)
+	if _, _, styles, err := db.DeleteRoutingNode(pid, ids["SMN_BUF_100:destination"]); err != nil || len(styles) != 0 {
+		t.Fatalf("delete SMN_BUF_100:destination (no claim uses it as a destination): styles %v, %v", styles, err)
 	}
 
-	// Retired style ⇒ its claims no longer hold the row.
+	// Retired style ⇒ its claims are no longer named.
 	if err := db.DeleteStyle(sid); err != nil {
 		t.Fatalf("DeleteStyle: %v", err)
 	}
-	if err := db.DeleteRoutingNode(pid, ids["SMN_BUF_100:source"]); err != nil {
-		t.Fatalf("delete after the style retired: %v", err)
+	again, err := db.UpsertRoutingNode(domain.CoreNodeKinds{}, domain.RoutingNodeInput{
+		ProcessID: pid, CoreNodeName: "SMN_BUF_100", Role: domain.RoutingRoleSource, Enabled: true})
+	testutil.MustNoErr(t, err, "put the source back")
+	if _, _, styles, err := db.DeleteRoutingNode(pid, again); err != nil || len(styles) != 0 {
+		t.Fatalf("delete after the style retired: styles %v, %v", styles, err)
 	}
 	rows, err := db.ListRoutingNodes(pid)
 	testutil.MustNoErr(t, err, "db.ListRoutingNodes")
-	if len(rows) != 2 {
-		t.Fatalf("after deletes: %v, want STG_01:staging and Supermarket Area:destination", routingKeys(rows))
+	if len(rows) != 0 {
+		t.Fatalf("after deletes: %v, want none", routingKeys(rows))
 	}
 }
 

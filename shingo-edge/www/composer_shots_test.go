@@ -1353,7 +1353,7 @@ func TestComposerShots(t *testing.T) {
 		desktopDOM("D3 plain routing node", d5, `class="mp-rt`)
 		desktopDOM("D3 names it", d5, ">"+plain+"<")
 		desktopDOM("D3 says which role", d5, ">stage<")
-		if err := db.DeleteRoutingNode(seeded.ProcessID, rowID); err != nil {
+		if _, _, _, err := db.DeleteRoutingNode(seeded.ProcessID, rowID); err != nil {
 			t.Fatalf("remove the plain routing node: %v", err)
 		}
 	}

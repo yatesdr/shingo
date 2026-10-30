@@ -74,7 +74,7 @@ type RoutingNode struct {
 	// ("inbound source on 10 styles"). It is a read-side count and no column,
 	// taken from the live claims the routing read already holds.
 	//
-	// PER ROLE, not per name, and by the same predicate the delete guard
+	// PER ROLE, not per name, and by the same predicate the removal warning
 	// matches on: a node that is a live source may be nobody's destination,
 	// and one count over every field would put "on 10 styles" beside a
 	// destination row nothing sends to.
@@ -84,9 +84,9 @@ type RoutingNode struct {
 // RoutingFieldsFor is the claim-side rule for one role: which of a claim's
 // fields name a node in that role.
 //
-// ONE STATEMENT OF THE RULE, read by the count and by the delete guard. They
-// must agree — "10 styles route through this" and "you may not delete it,
-// these styles route through it" are the same question asked twice — and
+// ONE STATEMENT OF THE RULE, read by the count and by the removal warning. They
+// must agree — "10 styles route through this" and "these styles still route
+// through it" are the same question asked twice — and
 // before this they were two hand-written predicates, one in SQL and one in a
 // correlated subquery, that had already drifted on whether to TRIM the
 // routing row's own name.

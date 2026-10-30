@@ -73,8 +73,15 @@ func TestFlowPreset_CreateListGetArchive(t *testing.T) {
 	if p1.Version != 1 || p2.Version != 2 || p1.Name != p2.Name || p2.CreatedBy != "bob" {
 		t.Fatalf("versions = %+v / %+v, want v1 then v2 of the same name", p1, p2)
 	}
-	if p1.FlowJSON != pressIndexFlow || p1.ProcessID != pid || p1.CreatedAt.IsZero() || p1.ArchivedAt != nil {
+	if p1.ProcessID != pid || p1.CreatedAt.IsZero() || p1.ArchivedAt != nil {
 		t.Fatalf("v1 did not round-trip: %+v", p1)
+	}
+	// Each role here has one node, so the stored form names the role and reads
+	// back as the node saved.
+	stored, err := domain.ParsePresetShape(p1.FlowJSON)
+	testutil.MustNoErr(t, err, "parse v1")
+	if stored[0].InboundSource != domain.RecipeFollowsSource || stored[0].OutboundDestination != domain.RecipeFollowsDestination {
+		t.Fatalf("v1 stored %+v, want the roles", stored[0])
 	}
 
 	list, err := db.ListFlowPresets(pid, false)

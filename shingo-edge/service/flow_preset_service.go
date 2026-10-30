@@ -115,11 +115,11 @@ type styleFlow struct {
 
 // PresetsFor is the Presets tab's read.
 //
-// COST: FOUR QUERIES, AND FLAT IN THE STYLE COUNT. styleFlows below reads the
+// COST: FIVE QUERIES, AND FLAT IN THE STYLE COUNT. styleFlows below reads the
 // styles once and ListLiveClaimsByProcess once, then buckets the claims by
-// style in memory; this adds the presets list and the position order. Four at
-// 40 styles, four at 400. TestPresetsFor_QueryCount is the pin and prints the
-// number on every run.
+// style in memory; this adds the presets list, the positions and the routing
+// set the shapes resolve against. Five at 40 styles, five at 400.
+// TestPresetsFor_QueryCount is the pin and prints the number on every run.
 //
 // This said "one claims query per style … ~92 indexed queries" and named a
 // measurement in a report to back it. It was never true of this function —
@@ -141,7 +141,17 @@ func (s *ProcessService) PresetsFor(processID int64) (*PresetsView, error) {
 	}
 	// The order every shape's positions are printed in. One read, handed to
 	// each row: see domain.PresetShapeNodes.
-	pressOrder, err := s.pressOrder(processID)
+	nodes, err := s.db.ListProcessNodesByProcess(processID)
+	if err != nil {
+		return nil, err
+	}
+	pressOrder := make([]string, 0, len(nodes))
+	for _, n := range nodes {
+		pressOrder = append(pressOrder, n.CoreNodeName)
+	}
+	// What a shape's routing fields resolve against: drift is the claim against
+	// the recipe as the process's Settings have it now (domain.ReadRecipe).
+	routing, err := s.db.ListRoutingNodes(processID)
 	if err != nil {
 		return nil, err
 	}
@@ -160,12 +170,13 @@ func (s *ProcessService) PresetsFor(processID int64) (*PresetsView, error) {
 		byID[p.ID] = p
 	}
 	for _, p := range presets {
-		cells, err := domain.ParsePresetShape(p.FlowJSON)
+		stored, err := domain.ParsePresetShape(p.FlowJSON)
 		if err != nil {
 			// A stored preset that does not parse is a row to report, not a
 			// row to crash on. It cannot have come from this service.
 			continue
 		}
+		cells := domain.ReadRecipe(p.Name, stored, nil, nodes, routing).Cells
 		row := PresetRow{
 			ID: p.ID, Name: p.Name, Version: p.Version, CreatedBy: p.CreatedBy,
 			CreatedAt: p.CreatedAt.Format("01-02"),
@@ -346,19 +357,6 @@ func (s *ProcessService) Archive(id int64) error { return s.db.ArchiveFlowPreset
 
 // Get resolves one preset, archived or not, for the apply flow.
 func (s *ProcessService) Get(id int64) (*processes.FlowPreset, error) { return s.db.GetFlowPreset(id) }
-
-// pressOrder is the process's position names in the order the press has them.
-func (s *ProcessService) pressOrder(processID int64) ([]string, error) {
-	nodes, err := s.db.ListProcessNodesByProcess(processID)
-	if err != nil {
-		return nil, err
-	}
-	out := make([]string, 0, len(nodes))
-	for _, n := range nodes {
-		out = append(out, n.CoreNodeName)
-	}
-	return out, nil
-}
 
 // styleFlows collapses every live style of the process once.
 //

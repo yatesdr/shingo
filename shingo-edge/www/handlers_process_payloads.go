@@ -84,8 +84,7 @@ func (h *Handlers) apiSetProcessPayloads(w http.ResponseWriter, r *http.Request)
 // caller never asked for, and nothing says which half landed.
 //
 // IT ADDS AND ADOPTS AND NEVER DELETES. See service.PutRoutingNodes for why a
-// set-to is the wrong shape for a table whose delete is refused while a live
-// claim routes through the name.
+// set-to is the wrong shape for a table whose removal warns what it orphans.
 func (h *Handlers) apiPutRoutingNodes(w http.ResponseWriter, r *http.Request) {
 	id, err := parseID(r, "id")
 	if err != nil {

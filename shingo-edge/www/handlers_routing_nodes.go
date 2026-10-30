@@ -152,21 +152,22 @@ func (h *Handlers) apiDeleteRoutingNode(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusBadRequest, "invalid routing node id")
 		return
 	}
-	if err := h.engine.ProcessService().DeleteRoutingNode(id, rowID); err != nil {
-		switch {
-		case errors.Is(err, service.ErrRoutingNodeInUse):
-			// A precondition the engineer can clear, not a fault: the message
-			// names the style whose claim still routes through the node.
-			writeError(w, http.StatusConflict, err.Error())
-		case errors.Is(err, service.ErrRoutingNodeNotFound):
+	removal, err := h.engine.ProcessService().DeleteRoutingNode(id, rowID)
+	if err != nil {
+		if errors.Is(err, service.ErrRoutingNodeNotFound) {
 			writeError(w, http.StatusNotFound, err.Error())
-		default:
-			writeError(w, http.StatusInternalServerError, err.Error())
+			return
 		}
+		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	h.requestBackup("routing-node-deleted")
-	writeJSON(w, map[string]string{"status": "ok"})
+	// The row is gone. What it orphans comes back beside the status, and the
+	// desktop shows the warning: a removal warns, never refuses.
+	writeJSON(w, struct {
+		Status string `json:"status"`
+		domain.RoutingRemoval
+	}{"ok", removal})
 }
 
 // apiPatchProcess is the flow-composer gate. PATCH rather than a field on the

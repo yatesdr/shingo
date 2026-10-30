@@ -3,6 +3,17 @@
 One line per change. If a change needs a paragraph to explain, the paragraph
 belongs in the commit message or in `docs/` — this file is the index.
 
+## 2026-10-30 — A recipe follows the process's Settings
+
+One Edge migration, no recipe takes a new version. Deploy the Edge alone.
+
+- A recipe's source, destination, staging and evac destination resolve by role from the routing set when it is read
+- A role with one node stores the role only and follows Settings; with several, the recipe keeps the node it chose
+- A role with no node is a finding on the card, and the mint refuses by it
+- The card, the preview, the mint, the Spots step and the drift compare read through one resolver
+- Removing a routing node no longer refuses: it goes, and warns the recipes it orphans and the styles still on it
+- Removing a position warns only about the recipes whose current version names it, with a count
+
 ## 2026-10-30 — Inventory: positions and lines, opening on what needs a look
 
 No migration. The Edge carries only CSS (the unused tab and meter rules leave).

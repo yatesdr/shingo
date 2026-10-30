@@ -47,8 +47,8 @@ func ListProcessPayloads(db DBTX, processID int64) ([]string, error) {
 // caller (store.DB.ReplaceProcessPayloads) passes the bare handle, so a write
 // that fails part way leaves the set partly written. The table has
 // no dependants — nothing references a process_payloads row, which is the
-// difference between this and the routing set, whose delete is refused while a
-// live claim routes through the name. A part taken out of the set stops being
+// difference between this and the routing set, whose removal warns what it
+// orphans. A part taken out of the set stops being
 // OFFERED; the claims that already run it are untouched and keep it in the
 // palette (ProcessPalette).
 func ReplaceProcessPayloads(db DBTX, processID int64, codes []string) error {

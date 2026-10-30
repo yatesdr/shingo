@@ -144,7 +144,7 @@ func TestRoutingNodes_AdoptAndDelete(t *testing.T) {
 	h, router := newAdminRouter(t)
 	cookie := authCookie(t, h)
 	pid := seedProcess(t, "RT-Adopt")
-	sid := seedRoutingClaim(t, pid, "RT-Adopt-Style")
+	seedRoutingClaim(t, pid, "RT-Adopt-Style")
 	seedBackfilledRows(t, pid)
 	rows, err := testDB.ListRoutingNodes(pid)
 	testutil.MustNoErr(t, err, "testDB.ListRoutingNodes")
@@ -186,18 +186,16 @@ func TestRoutingNodes_AdoptAndDelete(t *testing.T) {
 	resp = doRequest(t, router, "PATCH", "/api/processes/"+itoa(pid)+"/routing-nodes/"+itoa(source.ID), map[string]any{}, cookie)
 	assertStatus(t, resp, http.StatusBadRequest)
 
-	resp = doRequest(t, router, "DELETE", "/api/processes/"+itoa(pid)+"/routing-nodes/"+itoa(staging.ID), nil, cookie)
-	assertStatus(t, resp, http.StatusConflict)
-	body := decodeBody(t, resp)
-	if msg, _ := body["error"].(string); !strings.Contains(msg, "RT-Adopt-Style") {
-		t.Errorf("refusal does not name the style: %v", body)
-	}
-
-	if err := testDB.DeleteStyle(sid); err != nil {
-		t.Fatalf("retire style: %v", err)
-	}
+	// A removal warns what it leaves and goes (owner ruling, 2026-10-30).
 	resp = doRequest(t, router, "DELETE", "/api/processes/"+itoa(pid)+"/routing-nodes/"+itoa(staging.ID), nil, cookie)
 	assertStatus(t, resp, http.StatusOK)
+	body := decodeBody(t, resp)
+	if msg, _ := body["warning"].(string); !strings.Contains(msg, "RT-Adopt-Style") {
+		t.Errorf("the warning does not name the style: %v", body)
+	}
+	if body["status"] != "ok" {
+		t.Errorf("status = %v, want ok", body["status"])
+	}
 	// And a row of another process is not reachable through this one.
 	other := seedProcess(t, "RT-Adopt-Other")
 	resp = doRequest(t, router, "DELETE", "/api/processes/"+itoa(other)+"/routing-nodes/"+itoa(source.ID), nil, cookie)

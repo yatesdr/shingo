@@ -23,7 +23,8 @@ import (
 // records (source_preset_id, source_preset_version) as provenance, and that
 // reference has to keep meaning what it meant. Drift is computed from the
 // claim rows themselves, never from the stored version — the preset is not
-// a drift oracle.
+// a drift oracle. The routing fields are the process's, and resolve when the
+// recipe is read (recipe_routing.go).
 
 // FlowPreset is one row of flow_presets.
 type FlowPreset struct {
@@ -130,7 +131,7 @@ func StaleNodes(cells []FlowCell, live map[string]bool) []StaleNode {
 	for i, c := range cells {
 		for _, f := range presetNodeFields {
 			for _, n := range f.nodes(c) {
-				if name := strings.TrimSpace(n); name != "" && !live[name] {
+				if name := strings.TrimSpace(n); name != "" && !isRecipeMarker(name) && !live[name] {
 					out = append(out, StaleNode{Cell: i + 1, Field: f.key, Node: name})
 				}
 			}
@@ -144,7 +145,8 @@ func StaleNodes(cells []FlowCell, live map[string]bool) []StaleNode {
 // is no longer a position here — an engineer re-saves the recipe on the
 // desktop". A source is a routing node, so its sentence says the routing set.
 // A group's node names the group where a cell's names the cell: "runs Left
-// Hand on PLN_013", "names PLN_014 in Left Hand".
+// Hand on PLN_013", "names PLN_014 in Left Hand". A routing field reaches this
+// only from a stored name, so never from a one-node role (ReadRecipe).
 func StaleSentence(recipe string, s StaleNode) string {
 	cell := fmt.Sprintf("cell %d", s.Cell)
 	if s.Group != "" {

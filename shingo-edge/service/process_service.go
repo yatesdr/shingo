@@ -178,7 +178,6 @@ func (s *ProcessService) SetFlowComposerEnabled(processID int64, enabled bool) e
 // the store package.
 
 var (
-	ErrRoutingNodeInUse      = processes.ErrRoutingNodeInUse
 	ErrRoutingNodeIsPosition = processes.ErrRoutingNodeIsPosition
 	ErrInvalidRoutingRole    = processes.ErrInvalidRoutingRole
 	ErrRoutingNodeNotFound   = processes.ErrRoutingNodeNotFound
@@ -207,10 +206,42 @@ func (s *ProcessService) SetRoutingNodeEnabled(kinds domain.CoreNodeKinds, proce
 	return s.db.SetRoutingNodeEnabled(kinds, processID, id, enabled, calledBy)
 }
 
-// DeleteRoutingNode removes one row, refusing with ErrRoutingNodeInUse while
-// a live claim still routes through the node.
-func (s *ProcessService) DeleteRoutingNode(processID, id int64) error {
-	return s.db.DeleteRoutingNode(processID, id)
+// DeleteRoutingNode removes one row and returns what that orphans: the recipes
+// it leaves with a finding, the live styles still routing through the node, and
+// the sentence the desktop shows. A warning, never a refusal (owner ruling,
+// 2026-10-30). Four reads and the delete, on an engineer's one write.
+func (s *ProcessService) DeleteRoutingNode(processID, id int64) (domain.RoutingRemoval, error) {
+	presets, err := s.db.ListFlowPresets(processID, false)
+	if err != nil {
+		return domain.RoutingRemoval{}, err
+	}
+	positions, err := s.db.ListProcessNodesByProcess(processID)
+	if err != nil {
+		return domain.RoutingRemoval{}, err
+	}
+	before, err := s.db.ListRoutingNodes(processID)
+	if err != nil {
+		return domain.RoutingRemoval{}, err
+	}
+	name, role, styles, err := s.db.DeleteRoutingNode(processID, id)
+	if err != nil {
+		return domain.RoutingRemoval{}, err
+	}
+	after := make([]domain.RoutingNode, 0, len(before))
+	for _, r := range before {
+		if r.ID != id {
+			after = append(after, r)
+		}
+	}
+	recipes := domain.RecipeOrphans(presets, positions, positions, before, after)
+	if recipes == nil {
+		recipes = []string{}
+	}
+	if styles == nil {
+		styles = []string{}
+	}
+	return domain.RoutingRemoval{Recipes: recipes, Styles: styles,
+		Warning: domain.RoutingRemovalWarning(name, role, recipes, styles)}, nil
 }
 
 // RoutingSet is the Routing tab's rows, each with its live-style count.

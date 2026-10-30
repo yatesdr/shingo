@@ -91,6 +91,19 @@ func CreateFlowPreset(db *sql.DB, in FlowPresetInput) (int64, error) {
 	if err := refuseNameOfAnotherShape(db, in); err != nil {
 		return 0, err
 	}
+	// Validated as drawn, stored as the rule says: a one-node role by the role
+	// alone, so the recipe follows Settings (domain.CollapseRecipeRouting).
+	positions, err := ListNodesByProcess(db, in.ProcessID)
+	if err != nil {
+		return 0, err
+	}
+	routing, err := ListRoutingNodes(db, in.ProcessID)
+	if err != nil {
+		return 0, err
+	}
+	if in.FlowJSON, err = domain.CollapseRecipeRouting(in.FlowJSON, positions, routing); err != nil {
+		return 0, err
+	}
 	res, err := db.Exec(`INSERT INTO flow_presets (process_id, name, version, flow_json, created_by)
 		SELECT ?1, ?2, COALESCE(MAX(version), 0) + 1, ?3, ?4 FROM flow_presets WHERE process_id = ?1 AND name = ?2`,
 		in.ProcessID, in.Name, in.FlowJSON, in.CreatedBy)

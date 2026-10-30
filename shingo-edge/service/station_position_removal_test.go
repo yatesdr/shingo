@@ -6,6 +6,7 @@ import (
 
 	"shingo/protocol/testutil"
 	"shingo/shared/scenefixtures"
+	"shingoedge/domain"
 	"shingoedge/internal/testdb"
 )
 
@@ -67,7 +68,7 @@ func TestRemovalImpact_ARecipeThatClaimsThePositionIsNamed(t *testing.T) {
 	svc, station := removalFixture(t)
 	got, err := svc.RemovalImpact(station, without(t, svc, station, "PLN_03"))
 	testutil.MustNoErr(t, err, "RemovalImpact")
-	want := `Removing PLN_03 leaves recipe "Swap pair" and styles "PART SYN-A-S002", "PART SYN-A-S007" and ` +
+	want := `Removing PLN_03 leaves recipe "Swap pair" and 3 styles "PART SYN-A-S002", "PART SYN-A-S007" and ` +
 		`"PART SYN-A-S008" naming a position this process no longer has. Save again to remove it anyway.`
 	if got != want {
 		t.Errorf("removing PLN_03:\n got %q\nwant %q", got, want)
@@ -81,7 +82,7 @@ func TestRemovalImpact_TheActiveStyleIsCalledOut(t *testing.T) {
 	svc, station := removalFixture(t)
 	got, err := svc.RemovalImpact(station, without(t, svc, station, "PLN_01"))
 	testutil.MustNoErr(t, err, "RemovalImpact")
-	want := `Removing PLN_01 leaves styles "PART SYN-A-S001", "PART SYN-A-S003", "PART SYN-A-S004", ` +
+	want := `Removing PLN_01 leaves 7 styles "PART SYN-A-S001", "PART SYN-A-S003", "PART SYN-A-S004", ` +
 		`"PART SYN-A-S005", "PART SYN-A-S006" (the active style), "PART SYN-A-S009" and "PART SYN-A-S010" ` +
 		`naming a position this process no longer has. Save again to remove it anyway.`
 	if got != want {
@@ -97,11 +98,46 @@ func TestRemovalImpact_SeveralPositionsAreEachNamed(t *testing.T) {
 	got, err := svc.RemovalImpact(station, without(t, svc, station, "PLN_03", "PLN_06"))
 	testutil.MustNoErr(t, err, "RemovalImpact")
 	want := `Removing PLN_03 and PLN_06 leaves these naming positions this process no longer has — ` +
-		`PLN_03: recipe "Swap pair"; styles "PART SYN-A-S002", "PART SYN-A-S007" and "PART SYN-A-S008". ` +
-		`PLN_06: recipe "Swap pair"; styles "PART SYN-A-S002", "PART SYN-A-S007" and "PART SYN-A-S008". ` +
+		`PLN_03: recipe "Swap pair"; 3 styles "PART SYN-A-S002", "PART SYN-A-S007" and "PART SYN-A-S008". ` +
+		`PLN_06: recipe "Swap pair"; 3 styles "PART SYN-A-S002", "PART SYN-A-S007" and "PART SYN-A-S008". ` +
 		`Save again to remove them anyway.`
 	if got != want {
 		t.Errorf("removing PLN_03 and PLN_06:\n got %q\nwant %q", got, want)
+	}
+}
+
+// TestRemovalImpact_ARecipesOlderVersionIsNotNamed: a recipe's enabled version is
+// the one on the card, so a position only an older version stands on orphans
+// nothing, and the warning names the recipe only while the card would break.
+func TestRemovalImpact_ARecipesOlderVersionIsNotNamed(t *testing.T) {
+	t.Parallel()
+	svc, station := removalFixture(t)
+	st, err := svc.db.GetOperatorStation(station)
+	testutil.MustNoErr(t, err, "station")
+	rows, err := svc.db.ListFlowPresets(st.ProcessID, false)
+	testutil.MustNoErr(t, err, "recipes")
+	cells, err := domain.ParsePresetShape(rows[0].FlowJSON)
+	testutil.MustNoErr(t, err, "parse")
+	for i := range cells {
+		if cells[i].CoreNodeName == "PLN_03" {
+			cells[i].CoreNodeName = "PLN_01"
+		}
+		if cells[i].PairedCoreNode == "PLN_03" {
+			cells[i].PairedCoreNode = "PLN_01"
+		}
+	}
+	_, err = NewProcessService(svc.db).CreateFromCells(st.ProcessID, "Swap pair", "test", cells, nil)
+	testutil.MustNoErr(t, err, "version 2, off PLN_03")
+
+	got, err := svc.RemovalImpact(station, without(t, svc, station, "PLN_03"))
+	testutil.MustNoErr(t, err, "RemovalImpact")
+	if strings.Contains(got, "Swap pair") {
+		t.Errorf("removing PLN_03 names the recipe whose current version left it: %q", got)
+	}
+	got, err = svc.RemovalImpact(station, without(t, svc, station, "PLN_01"))
+	testutil.MustNoErr(t, err, "RemovalImpact")
+	if !strings.Contains(got, `recipe "Swap pair"`) {
+		t.Errorf("removing PLN_01 does not name the recipe now standing on it: %q", got)
 	}
 }
 

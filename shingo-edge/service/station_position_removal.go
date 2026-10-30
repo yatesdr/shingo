@@ -63,7 +63,10 @@ func (s *StationService) positionClaims(processID int64, removed []string) ([]do
 		return nil, err
 	}
 	recipes := map[string]map[string]bool{}
-	for _, p := range presets {
+	// The enabled recipe of each name: an older version is on no card, so it
+	// is orphaned by nothing.
+	latest, _ := domain.EnabledRecipes(presets)
+	for _, p := range latest {
 		cells, err := domain.ParsePresetShape(p.FlowJSON)
 		if err != nil {
 			continue // a recipe that does not parse names nothing the floor can run

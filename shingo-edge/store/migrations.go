@@ -21,6 +21,7 @@ package store
 
 import (
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"log"
 	"strings"
@@ -2100,7 +2101,161 @@ func edgeMigrations() []migrate.Migration {
 				return err == nil && n == 1
 			},
 		},
+		{
+			// A recipe's routing fields are the process's now: a one-node role
+			// is stored as the role only. No recipe takes a new version, since
+			// nothing about the recipe an engineer saved has changed. The rest
+			// keep their names, and a name the process no longer has is logged
+			// here and flagged on its card (domain.ReadRecipe).
+			Version: 35,
+			Name:    "recipes_store_one_node_roles_by_role",
+			Fn:      collapseRecipeRoutingOnce,
+		},
 	}
+}
+
+// collapseRecipeRoutingOnce is the recipe migration's body: every row of
+// flow_presets, archived versions included, because a member's provenance still
+// reads them. A field naming a live position stays, an empty one stays, and a
+// field of a role with exactly one enabled routing row becomes that role's
+// marker. Idempotent: a marker is left alone and an unchanged row is not written.
+// The field, role and marker words are literals, not the domain constants: a
+// migration is a frozen copy of what it did on the day it ran.
+func collapseRecipeRoutingOnce(tx *sql.Tx) error {
+	rows, err := tx.Query(`SELECT id, process_id, name, flow_json, archived_at IS NOT NULL FROM flow_presets ORDER BY id`)
+	if err != nil {
+		return err
+	}
+	var recipes []recipeRoutingRow
+	for rows.Next() {
+		var r recipeRoutingRow
+		if err := rows.Scan(&r.id, &r.process, &r.name, &r.flow, &r.archived); err != nil {
+			rows.Close()
+			return err
+		}
+		recipes = append(recipes, r)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	facts := map[int64]*recipeRoutingFacts{}
+	for _, r := range recipes {
+		if facts[r.process] == nil {
+			if facts[r.process], err = readRecipeRoutingFacts(tx, r.process); err != nil {
+				return err
+			}
+		}
+		out, changed := collapseRecipeRow(r, facts[r.process])
+		if !changed {
+			continue
+		}
+		if _, err := tx.Exec(`UPDATE flow_presets SET flow_json = ? WHERE id = ?`, out, r.id); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// recipeRoutingRow is one flow_presets row as the recipe migration reads it.
+type recipeRoutingRow struct {
+	id, process int64
+	name, flow  string
+	archived    bool
+}
+
+// recipeRoutingFacts is one process as the recipe migration reads it: its live
+// positions, how many enabled routing rows each role has, and every row listed.
+type recipeRoutingFacts struct {
+	positions map[string]bool
+	enabled   map[string]int
+	listed    map[string]bool
+}
+
+func readRecipeRoutingFacts(tx *sql.Tx, process int64) (*recipeRoutingFacts, error) {
+	f := &recipeRoutingFacts{positions: map[string]bool{}, enabled: map[string]int{}, listed: map[string]bool{}}
+	pos, err := tx.Query(`SELECT TRIM(core_node_name) FROM process_nodes WHERE process_id = ? AND deleted_at IS NULL`, process)
+	if err != nil {
+		return nil, err
+	}
+	for pos.Next() {
+		var n string
+		if err := pos.Scan(&n); err != nil {
+			pos.Close()
+			return nil, err
+		}
+		f.positions[n] = true
+	}
+	pos.Close()
+	if err := pos.Err(); err != nil {
+		return nil, err
+	}
+	set, err := tx.Query(`SELECT role, TRIM(core_node_name), enabled FROM process_routing_nodes WHERE process_id = ?`, process)
+	if err != nil {
+		return nil, err
+	}
+	defer set.Close()
+	for set.Next() {
+		var role, n string
+		var on bool
+		if err := set.Scan(&role, &n, &on); err != nil {
+			return nil, err
+		}
+		f.listed[role+"\x00"+n] = true
+		if on {
+			f.enabled[role]++
+		}
+	}
+	return f, set.Err()
+}
+
+// collapseRecipeRow is one row's new flow_json and whether it changed. A row that
+// does not parse is logged and left; a name the process no longer has is logged
+// and flagged on its card.
+func collapseRecipeRow(r recipeRoutingRow, f *recipeRoutingFacts) (string, bool) {
+	var env map[string]json.RawMessage
+	var cells []map[string]json.RawMessage
+	if json.Unmarshal([]byte(r.flow), &env) != nil || json.Unmarshal(env["cells"], &cells) != nil || len(cells) == 0 {
+		log.Printf("store: recipe %q (id %d) does not parse, left as it is", r.name, r.id)
+		return "", false
+	}
+	legs := []struct{ field, role, marker string }{
+		{"inbound_source", "source", "@source"},
+		{"inbound_staging", "staging", "@staging"},
+		{"outbound_staging", "staging", "@staging"},
+		{"outbound_destination", "destination", "@destination"},
+		{"changeover_evac_destination", "destination", "@destination"},
+	}
+	changed := false
+	for i, cell := range cells {
+		for _, l := range legs {
+			var v string
+			if raw, ok := cell[l.field]; !ok || json.Unmarshal(raw, &v) != nil {
+				continue
+			}
+			v = strings.TrimSpace(v)
+			switch {
+			case v == "" || v == l.marker || f.positions[v]:
+			case f.enabled[l.role] == 1:
+				cell[l.field], changed = json.RawMessage(`"`+l.marker+`"`), true
+			case !f.listed[l.role+"\x00"+v] && !r.archived:
+				log.Printf("store: recipe %q names %s as cell %d's %s, which this process no longer has; flagged on its card", r.name, v, i+1, l.field)
+			}
+		}
+	}
+	if !changed {
+		return "", false
+	}
+	blob, err := json.Marshal(cells)
+	if err != nil {
+		return "", false
+	}
+	env["cells"] = blob
+	out, err := json.Marshal(env)
+	if err != nil {
+		return "", false
+	}
+	return string(out), true
 }
 
 // clearPairedPositionsAModeNamesNone is migration v29's body: every claim whose

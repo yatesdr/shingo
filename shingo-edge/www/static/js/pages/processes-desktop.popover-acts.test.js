@@ -2533,6 +2533,25 @@ async function mainAsync() {
         }
     });
 
+    await pin('taking a routing name out goes through and shows what it orphans', async () => {
+        const warning = 'Removed DN_001. Recipes left without their destination (2): "A" and "B".';
+        const sent = [];
+        const { root, doc } = loadPage({
+            allowSheet: true, composer: mapComposer(null), hash: '#tab=settings',
+            fetch: (url, init) => {
+                if (init && init.method === 'DELETE') { sent.push(url); return okJSON({ status: 'ok', warning }); }
+                return url === '/api/processes/1/routing-nodes' ? okJSON(routingView) : null;
+            },
+        });
+        await settle();
+        click(root, doc, { npk: 'drop', npkkey: 'rs_destination', npkname: 'DN_001' });
+        await settle();
+        if (sent[0] !== '/api/processes/1/routing-nodes/2') throw new Error('the removal sent ' + JSON.stringify(sent));
+        if (root.innerHTML.indexOf('<div class="pd-warn">' + warning.replace(/"/g, '&quot;')) < 0) {
+            throw new Error('the warning is not on the panel');
+        }
+    });
+
     await pin('the routing panel with a plant map draws the map and its caption', async () => {
         const { root } = settingsPage(plantMap());
         realGeometry();

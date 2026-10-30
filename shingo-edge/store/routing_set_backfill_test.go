@@ -3,7 +3,7 @@ package store
 import (
 	"bytes"
 	"encoding/json"
-	"errors"
+	"slices"
 	"sort"
 	"strings"
 	"testing"
@@ -12,7 +12,6 @@ import (
 	"shingo/shared/scenefixtures"
 
 	"shingoedge/domain"
-	"shingoedge/store/processes"
 )
 
 // routing_set_backfill_test.go — the routing-set backfill against a whole
@@ -396,16 +395,17 @@ func TestRoutingBackfill_PlantB(t *testing.T) {
 		}
 	}
 
-	// Delete refusal names the style, on real rows: SMN_BUF_100 is Press 4's
+	// The removal names the style, on real rows: SMN_BUF_100 is Press 4's
 	// source on style "testpayload".
 	p4 := byName["Press 4"]
 	rows, err := db.ListRoutingNodes(p4)
 	testutil.MustNoErr(t, err, "db.ListRoutingNodes")
 	for _, r := range rows {
 		if r.CoreNodeName == "SMN_BUF_100" && r.Role == domain.RoutingRoleSource {
-			err := db.DeleteRoutingNode(p4, r.ID)
-			if !errors.Is(err, processes.ErrRoutingNodeInUse) || !strings.Contains(err.Error(), "testpayload") {
-				t.Errorf("deleting Press 4's live source: err = %v, want ErrRoutingNodeInUse naming style testpayload", err)
+			_, _, styles, err := db.DeleteRoutingNode(p4, r.ID)
+			testutil.MustNoErr(t, err, "delete Press 4's live source")
+			if !slices.Contains(styles, "testpayload") {
+				t.Errorf("deleting Press 4's live source names styles %v, want testpayload", styles)
 			}
 		}
 	}

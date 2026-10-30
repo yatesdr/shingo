@@ -64,6 +64,7 @@ const S = {
     adv: null,           // the Advanced sheet's own draft: {node, a, evacNodes, evacDest}
     routing: null,       // D3's rows — every one, the disabled backfills included
     routingError: '',    // the server's refusal, by name
+    routingWarning: '',  // what the last removal orphans, by name
     graph: null,         // the travel graph, built once per map
     settings: null,      // D5's draft; nothing is written until Save settings
     settingsError: '',
@@ -355,6 +356,7 @@ async function openProcess(id) {
     S.graph = null;
     S.routing = null;
     S.routingError = '';
+    S.routingWarning = '';
     S.mapZoom = 1;
     // The routing pickers go with the routing set: they are write-through onto
     // THIS process's rows, and one left behind would post another press's name
@@ -3382,12 +3384,8 @@ function mapSubject() {
 // So each role is ONE picker box. The chips are the set. Picking a name puts
 // it in the role; the chip's × takes it out.
 //
-// OUT MEANS SWITCHED OFF, NOT DELETED. `enabled` is the column that already
-// carries this and the store refuses a DELETE while a live claim still routes
-// through the name (ErrRoutingNodeInUse) — so a chip's × would be a control
-// that sometimes fails. Disabling always works and keeps the row's provenance
-// and author. The row is still there to be picked again, and the picker says
-// so.
+// OUT MEANS DELETED, and it always works: what the removal orphans comes back
+// as a warning (setRoutingNode).
 //
 // THE EVIDENCE MOVED INTO THE PICKER rather than being deleted. Q5's sub-line
 // — where a name came from and how many styles use it — is what an engineer
@@ -3543,11 +3541,12 @@ function routingSection() {
         (way.length ? stBlock('Waypoints', 'from the map, on the shortest supply path — not editable',
             '<span class="pd-dim">' + esc(way.join(' · ')) + '</span>') : '') +
         (S.routingError ? '<div class="pd-refusal">' + esc(S.routingError) + '</div>' : '') +
+        (S.routingWarning ? '<div class="pd-warn">' + esc(S.routingWarning) + '</div>' : '') +
         '<p class="pd-note">A name in one of these lists is a place this process may route material ' +
         'through, and operators are offered these and never the plant. There is nothing to switch ' +
-        'on: a name in the list is set up. Taking one out is refused while a live flow still routes ' +
-        'through it, and the refusal says which part. Whether operators may change flows at all is ' +
-        'the HMI switch above.</p>' +
+        'on: a name in the list is set up. A recipe follows the one name in a role; with several, it ' +
+        'keeps the one it was saved with. Taking one out warns what it leaves behind. Whether ' +
+        'operators may change flows at all is the HMI switch above.</p>' +
         // THE MAP IS THE READ-BACK. It draws what the set says, fitted to this
         // press, and a click on a name flashes that name's chip. It is not an
         // input: a click on a dot could only guess at the role, and the three
@@ -3576,12 +3575,9 @@ function routingMap(m) {
 // of stupid he has to switch it on, that's for the HMI". So a name is in the
 // set or it is not, and every row this screen writes is on.
 //
-// TAKING ONE OUT DELETES IT, which it did not before. Disabling was chosen
-// because DELETE is refused while a live claim still routes through the name —
-// but that refusal is the RIGHT answer, not an obstacle: you cannot take away
-// a place your running flows are sending material to, and the server says
-// which style. Disabling instead left a row the desktop no longer showed and
-// the HMI no longer offered, invisible to both and undoable from neither.
+// TAKING ONE OUT DELETES IT, and the answer says what that orphans: the recipes
+// left without the node and the live styles still routing through it, by name,
+// as a warning (owner ruling, 2026-10-30). The row is gone either way.
 async function setRoutingNode(role, name, on) {
     const have = (S.routing || []).find(r => r.core_node_name === name && r.role === role);
     let out;
@@ -3603,6 +3599,7 @@ async function setRoutingNode(role, name, on) {
             B().routingAdd(name, role, routingRowsFor(role).length));
     }
     S.routingError = out.ok ? '' : out.error;
+    S.routingWarning = out.ok && out.body ? (out.body.warning || '') : '';
     await loadRouting();
     drawSettings();
     // Back into the field the name was typed into: the engineer adding one

@@ -76,12 +76,9 @@ func TestProcessPayloads_PutIsASetToInOneTrip(t *testing.T) {
 
 // THE ROUTING ARRAY ADDS AND ADOPTS; IT NEVER DELETES.
 //
-// A set-to here would be a delete path, and a routing delete is refused while a
-// live claim routes through the name (ErrRoutingNodeInUse) — so a set-to would
-// either refuse the whole write for a name the engineer never touched, or
-// silently drop a row a flow depends on. Add Process only ever adds, and the
-// Edit sheet keeps its diff, where a removal is a DELETE the engineer sees
-// refused by name.
+// A set-to here would be a delete path, dropping a row the engineer never
+// touched and warning about it. Add Process only ever adds, and the Edit sheet
+// keeps its diff, where a removal is a DELETE the engineer sees the warning of.
 func TestProcessRoutingNodes_PutAddsAndAdoptsAndNeverDeletes(t *testing.T) {
 	h, router := newAdminRouter(t)
 	cookie := authCookie(t, h)
