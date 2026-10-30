@@ -26,8 +26,10 @@
 #
 # So `race` runs the detector over ./engine/... and ./www/... — the two packages
 # where a concurrent caller arrives WITHOUT anyone writing a goroutine (the
-# reconnect path, and one goroutine per HTTP request). Scoped to two packages it
-# is about a minute; module-wide it is half an hour. See step_race.
+# reconnect path, and one goroutine per HTTP request) — with their docker tests,
+# as CI's docker-race shards run them, against a throwaway Postgres of its own.
+# Scoped to two packages it is minutes; module-wide it is half an hour. See
+# step_race.
 #
 # It is in `full`, not in `all`. The bare gate stays the fast one.
 #
@@ -38,8 +40,9 @@
 #                                         carries vet), script guards, unit tests
 #   bash scripts/gate.sh scope [BASE]     say whether the docker suites are needed
 #                                         (exit 0 = needed, 1 = not needed)
-#   bash scripts/gate.sh race             -race over ./engine/... and ./www/...
-#                                         (borrows WSL's cgo on Windows)
+#   bash scripts/gate.sh race             -race -tags docker over ./engine/... and
+#                                         ./www/... (borrows WSL's cgo on Windows;
+#                                         needs docker for its Postgres)
 #   bash scripts/gate.sh docker           run the docker suites (no -race)
 #   bash scripts/gate.sh sim              -tags sim tests (edge sim operator, core
 #                                         fleet simulator, simwarlink), with -race
@@ -781,32 +784,40 @@ step_scope() {
 # lands on this one server now.
 sharedPG=""
 
-start_shared_pg() {
-  local id port deadline
-  id="$(docker run -d \
+# pg_up starts one such server as container $1 and prints its address once it
+# answers. NAMED, so gate_on_exit can take it down by name: the race step's
+# server is started inside `full`'s side job, a subshell whose variables the
+# parent never sees, and $$ is the gate's pid in both.
+pg_up() {
+  local name=$1 port deadline
+  docker run -d --name "$name" \
       -e POSTGRES_USER=test -e POSTGRES_PASSWORD=test -e POSTGRES_DB=postgres \
       -e PGDATA=/var/lib/postgresql/data/pgdata \
       --tmpfs /var/lib/postgresql/data:rw,size=4g \
       -p 127.0.0.1::5432 \
       postgres:16-alpine \
       -c fsync=off -c synchronous_commit=off -c full_page_writes=off \
-      -c max_connections=500 -c shared_buffers=256MB 2>&1)" || return 1
-  case "$id" in *[!0-9a-f]*|"") return 1 ;; esac
-  sharedPG="$id"
-  # Torn down on an interrupted run by gate_on_exit (the script's one EXIT
-  # trap, which also releases the gate lock — a second `trap ... EXIT` here
-  # would replace that one and leave the lock behind).
+      -c max_connections=500 -c shared_buffers=256MB >/dev/null 2>&1 || return 1
 
   deadline=$(( $(date +%s) + 60 ))
-  until docker exec "$id" pg_isready -U test -q 2>/dev/null; do
+  until docker exec "$name" pg_isready -U test -q 2>/dev/null; do
     [ "$(date +%s)" -gt "$deadline" ] && return 1
     sleep 0.5
   done
 
-  port="$(docker port "$id" 5432/tcp 2>/dev/null | head -1 | sed 's/.*://')"
+  port="$(docker port "$name" 5432/tcp 2>/dev/null | head -1 | sed 's/.*://')"
   [ -z "$port" ] && return 1
+  echo "127.0.0.1:$port"
+}
 
-  export SHINGO_TEST_PG="127.0.0.1:$port"
+start_shared_pg() {
+  local addr
+  # Set before the start, so an interrupted run's gate_on_exit (the script's
+  # one EXIT trap, which also releases the gate lock — a second `trap ... EXIT`
+  # here would replace that one and leave the lock behind) removes it.
+  sharedPG="shingo-gate-docker-$$"
+  addr="$(pg_up "$sharedPG")" || return 1
+  export SHINGO_TEST_PG="$addr"
   export SHINGO_TEST_PG_TEMPLATE="template_gate_$$"
   return 0
 }
@@ -815,6 +826,19 @@ stop_shared_pg() {
   [ -z "$sharedPG" ] && return 0
   docker rm -f "$sharedPG" >/dev/null 2>&1
   sharedPG=""
+}
+
+# The race step's own server (step_race): not the docker step's, because the
+# two run side by side in `full` and the docker step stops its server when it
+# is done.
+RACE_PG="shingo-gate-race-$$"
+# The marker file says the server may exist: the exit trap asks docker only
+# when a race step started one, not on every run.
+RACE_PG_MARK="$ROOT/.gate/race-pg.$$"
+stop_race_pg() {
+  [ -e "$RACE_PG_MARK" ] || return 0
+  docker rm -f "$RACE_PG" >/dev/null 2>&1
+  rm -f "$RACE_PG_MARK"
 }
 
 # docker_p answers how many test binaries to run at once.
@@ -998,13 +1022,32 @@ step_docker() {
 # CGO IS REQUIRED AND WINDOWS DOES NOT HAVE IT. `go test -race` needs a C
 # toolchain; the dev host has none, so this step re-enters through WSL and pays
 # the 9p bridge crossing the header measures at 10-20x. That is affordable
-# because the scope is two packages — measured at roughly a minute — and
-# unaffordable module-wide, which is the same trade the header already makes.
+# because the scope is two packages and unaffordable module-wide, which is the
+# same trade the header already makes.
+#
+# WITH THE DOCKER TESTS, BECAUSE CI RUNS THEM SO. This step used to be untagged
+# and the docker step runs without -race, so the combination CI's docker-race
+# shards run existed nowhere here. A docker test that read its own handler's
+# second write before it landed (TestStepsDone_TheSubscriberCountsThePlanSteps-
+# TheFleetFinished, main 9c86018f, 2026-10-30) passed every local gate and
+# failed CI's. So the step runs -tags docker,lockcheck against its own
+# throwaway Postgres (RACE_PG), and a run whose tests skipped for want of
+# docker is a failure, as in step_docker.
 RACE_PKGS="./engine/... ./www/..."
 
 step_race() {
-  local rcmd rrc
-  rcmd="cd \"$ROOT/shingo-core\" && CGO_ENABLED=1 go test -race -tags lockcheck -count=1 -timeout=15m $RACE_PKGS"
+  local rrc addr pgenv="" inner
+  touch "$RACE_PG_MARK" 2>/dev/null
+  if addr="$(pg_up "$RACE_PG")"; then
+    pgenv="SHINGO_TEST_PG=$addr SHINGO_TEST_PG_TEMPLATE=template_gate_race_$$"
+  else
+    # As in step_docker: a speedup, not a gate. testdb starts a container per
+    # package instead, and the sentinel check below still refuses a skip.
+    stop_race_pg
+    echo "  race: WARNING — could not start its postgres; each docker package starts its own" >&2
+  fi
+  inner="$pgenv SHINGO_TEST_REQUIRE_DOCKER=1 CGO_ENABLED=1 go test -race -tags docker,lockcheck -count=1 -timeout=20m $RACE_PKGS"
+  local rcmd="cd \"$ROOT/shingo-core\" && $inner"
 
   if [ -n "${WSL_DISTRO_NAME:-}" ]; then
     # Already inside WSL — run directly.
@@ -1022,16 +1065,22 @@ step_race() {
       echo "FAIL race — could not translate $ROOT into a WSL path"
       return 1
     fi
-    ( wsl.exe -d Ubuntu -- bash -lc "cd '$wslroot/shingo-core' && CGO_ENABLED=1 go test -race -tags lockcheck -count=1 -timeout=15m $RACE_PKGS" \
+    ( wsl.exe -d Ubuntu -- bash -lc "cd '$wslroot/shingo-core' && $inner" \
         >"$ROOT/.gate/race.log" 2>&1 ); rrc=$?
   else
+    stop_race_pg
     echo "FAIL race — no cgo toolchain and no WSL to borrow one from"
-    echo "  install WSL, or run on a host with gcc: go test -race $RACE_PKGS"
+    echo "  install WSL, or run on a host with gcc: go test -race -tags docker $RACE_PKGS"
     return 1
   fi
+  stop_race_pg
 
+  if grep -q '^SHINGO-DOCKER-DOWN' "$ROOT/.gate/race.log"; then
+    echo "FAIL race — the run reported docker down: the docker tests skipped. Not a green gate." >&2
+    return 1
+  fi
   if [ "$rrc" -eq 0 ]; then
-    echo "ok   race ($RACE_PKGS)"
+    echo "ok   race (-tags docker, $RACE_PKGS)"
     return 0
   fi
   echo "FAIL race"
@@ -1046,8 +1095,9 @@ mkdir -p "$ROOT/.gate" 2>/dev/null || true
 
 # ── The machine gate lock ─────────────────────────────────────────────────
 # One trap for everything the script must undo on the way out, however it
-# leaves: the shared Postgres (step_docker) and the gate lock. INT and TERM
-# exit explicitly so the EXIT trap runs for them too.
+# leaves: the two throwaway Postgres servers (step_docker's, step_race's) and
+# the gate lock. INT and TERM exit explicitly so the EXIT trap runs for them
+# too.
 . "$ROOT/scripts/gate-lock.sh"
 # side_pid is the race-and-sim job `full` runs beside the docker step: an
 # interrupted gate takes it down too, rather than leaving it running against
@@ -1055,7 +1105,7 @@ mkdir -p "$ROOT/.gate" 2>/dev/null || true
 side_pid=""
 gate_on_exit() {
   [ -n "$side_pid" ] && kill "$side_pid" 2>/dev/null
-  stop_shared_pg; gate_lock_release
+  stop_shared_pg; stop_race_pg; gate_lock_release
 }
 trap gate_on_exit EXIT
 trap 'exit 130' INT
@@ -1155,10 +1205,11 @@ case "${1:-all}" in
     # step, so skipping it is how the hole reopens.
     if timed step_scope "${2:-}"; then
       if timed step_test "$(untagged_only_modules)"; then note_step unit; else rc=1; fi
-      # RACE AND SIM RUN BESIDE THE DOCKER STEP, NOT AFTER IT. Neither touches
-      # Postgres (race is untagged, sim is -tags sim, the edge is SQLite), and
-      # the docker step's longest stretch is integration/scenarios, one package
-      # that spends most of its time waiting on the bus rather than computing.
+      # RACE AND SIM RUN BESIDE THE DOCKER STEP, NOT AFTER IT. Neither uses the
+      # docker step's Postgres (race starts its own, sim is -tags sim, the edge
+      # is SQLite), and the docker step's longest stretch is
+      # integration/scenarios, one package that spends most of its time waiting
+      # on the bus rather than computing.
       # In series the two added ~3.5 min to every full gate on the 4-core box.
       # Their output is held in files and printed after the docker step's, in
       # the order it always had, so the log reads the same as a serial run.
