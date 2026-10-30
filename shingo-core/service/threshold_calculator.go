@@ -25,6 +25,8 @@ import (
 	"math"
 	"time"
 
+	"shingo/protocol/clock"
+
 	"shingocore/store"
 	"shingocore/store/orders"
 )
@@ -69,8 +71,9 @@ func CalculateThresholds(in ThresholdCalculatorInputs) ThresholdCalculatorOutput
 }
 
 // ThresholdCalculatorService wraps the pure formula with a date-range-driven
-// input fetch from Core's order_history. Used by a (future) Core replenishment
-// endpoint; the engineer-triggered Calculate that today lives on the Edge.
+// input fetch from Core's order_history, for POST /api/loader/calculate (the
+// /inventory modal's Recalculate). The table's own suggestions come from
+// orders.LeadTimesByPayload and CalculateThresholds (inventory_loop.go).
 type ThresholdCalculatorService struct {
 	db *store.DB
 }
@@ -160,9 +163,12 @@ func (s *ThresholdCalculatorService) Calculate(req CalculateRequest) (CalculateR
 // primitives instead of importing the store's range type.
 func (s *ThresholdCalculatorService) CalculateDays(coreNode, payloadCode string, days int, safetyFactor, cycleSeconds float64, binCapacityUOP int) (CalculateResult, error) {
 	if days <= 0 {
-		days = 14
+		days = LoopLeadDays
 	}
-	end := time.Now()
+	// Core's clock, the one order_history is stamped with: wall time at a
+	// plant, sim time on the dev stack (where time.Now() put every row of the
+	// window in the future and every input read 0).
+	end := clock.Now()
 	return s.Calculate(CalculateRequest{
 		CoreNodeName:   coreNode,
 		PayloadCode:    payloadCode,

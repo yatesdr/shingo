@@ -186,7 +186,18 @@ func transitionCTE(fromStates []string, fromEarliest bool, toState, payloadCode,
 
 // transitionCTEScoped is transitionCTE over the orders in scope.
 func transitionCTEScoped(fromStates []string, fromEarliest bool, toState string, scope OrderScope, r LeadTimeRange) (string, []any) {
-	args := []any{toState}
+	body, args := transitionsSQL("transitions", fromStates, fromEarliest, toState, scope, r, false, nil)
+	return "WITH " + body, args
+}
+
+// transitionsSQL is one named transitions CTE (`name AS (...)`), its
+// placeholders numbered after args, which it returns extended. byPayload
+// carries each order's payload_code beside its span, so one statement can
+// aggregate every payload (LeadTimesByPayload) under the same pairing rules
+// the per-payload helpers use.
+func transitionsSQL(name string, fromStates []string, fromEarliest bool, toState string, scope OrderScope, r LeadTimeRange, byPayload bool, args []any) (string, []any) {
+	args = append(args, toState)
+	toArg := len(args)
 	// The from-set, one placeholder each. Rendered rather than passed as an
 	// array so this stays driver-agnostic — the package builds every other IN
 	// list the same way.
@@ -201,21 +212,24 @@ func transitionCTEScoped(fromStates []string, fromEarliest bool, toState string,
 	}
 	args = append(args, r.Start.UTC(), r.End.UTC())
 	startArg, endArg := len(args)-1, len(args)
-	cte := fmt.Sprintf(`WITH transitions AS (
-		SELECT h_from.order_id,
+	payloadCol, payloadGroup := "", ""
+	if byPayload {
+		payloadCol, payloadGroup = "o.payload_code, ", ", o.payload_code"
+	}
+	cte := fmt.Sprintf(`%s AS (
+		SELECT h_from.order_id, %s
 		       %s(h_from.created_at) AS from_ts,
 		       MAX(h_to.created_at)   AS to_ts
 		FROM order_history h_from
 		JOIN order_history h_to
 		  ON h_to.order_id = h_from.order_id
-		 AND h_to.status = $1
+		 AND h_to.status = $%d
 		 AND h_to.created_at >= h_from.created_at
 		JOIN orders o ON o.id = h_from.order_id
 		WHERE h_from.status IN (%s)
 		  AND h_from.created_at >= $%d
 		  AND h_from.created_at <= $%d`,
-		fromAgg, strings.Join(placeholders, ", "), startArg, endArg)
-	n := len(args)
+		name, payloadCol, fromAgg, toArg, strings.Join(placeholders, ", "), startArg, endArg)
 	for _, c := range []struct{ col, val string }{
 		{"payload_code", scope.PayloadCode},
 		{"order_type", scope.OrderType},
@@ -223,13 +237,123 @@ func transitionCTEScoped(fromStates []string, fromEarliest bool, toState string,
 		{"robot_id", scope.RobotID},
 	} {
 		if c.val != "" {
-			n++
-			cte += fmt.Sprintf(" AND o.%s = $%d", c.col, n)
 			args = append(args, c.val)
+			cte += fmt.Sprintf(" AND o.%s = $%d", c.col, len(args))
 		}
 	}
-	cte += " GROUP BY h_from.order_id)"
+	cte += " GROUP BY h_from.order_id" + payloadGroup + ")"
 	return cte, args
+}
+
+// LeadTimeInputs are the calculator's observed inputs for one payload over a
+// window, as the four helpers above and CountCompletedOrdersInWindow compute
+// them one payload at a time, plus the median measured consumption rate.
+type LeadTimeInputs struct {
+	L1QueueSeconds      float64
+	L1TransitSeconds    float64
+	L2LoadSeconds       float64
+	MarketToCellSeconds float64
+	SamplesL1           int
+	SamplesRetrieve     int
+	// RatePerSec is the median of the payload's positive plant-wide
+	// consumption rates (UoP per second) in the window, from the threshold
+	// monitor's own tte_samples (kind threshold); 0 when none was measured.
+	// Not the latest: a sample's rate is a sliding window's count, so after a
+	// stop it decays to one unit per window before it reads 0, and the latest
+	// positive sample of an idle part is that tail, not the line's rate.
+	RatePerSec float64
+}
+
+// LeadTimesByPayload is the calculator's input read for every payload at once:
+// one statement, one window, the same transition pairs, central tendencies and
+// "0 = no signal" contract as AvgL1QueueSeconds, AvgL1TransitSeconds,
+// MedianL2LoadSeconds, P95MarketToCellSeconds and the two
+// CountCompletedOrdersInWindow coverage counts, grouped by payload instead of
+// filtered to one (pinned against them). It also returns each payload's median
+// positive rate from tte_samples, reached per monitored binding through
+// idx_tte_samples_place_time, so the /inventory page can turn the rate into a
+// cycle without a statement per row. A payload absent from the map had no
+// signal in the window.
+func LeadTimesByPayload(db *sql.DB, r LeadTimeRange) (map[string]LeadTimeInputs, error) {
+	var args []any
+	var ctes []string
+	for _, t := range []struct {
+		name         string
+		from         []string
+		fromEarliest bool
+		to           string
+		orderType    string
+	}{
+		{"l1q", domain.AcquiringEntryStatuses(), true, "dispatched", "retrieve_empty"},
+		{"l1t", []string{"in_transit"}, false, "delivered", "retrieve_empty"},
+		{"l2l", []string{"delivered"}, false, "confirmed", "retrieve_empty"},
+		{"m2c", []string{"in_transit"}, false, "delivered", "retrieve"},
+	} {
+		var cte string
+		cte, args = transitionsSQL(t.name, t.from, t.fromEarliest, t.to, OrderScope{OrderType: t.orderType}, r, true, args)
+		ctes = append(ctes, cte)
+	}
+	args = append(args, r.Start.UTC(), r.End.UTC())
+	start, end := len(args)-1, len(args)
+	span := `EXTRACT(EPOCH FROM (to_ts - from_ts))`
+	count := func(status, orderType string) string {
+		return fmt.Sprintf(`SELECT o.payload_code, COUNT(DISTINCT o.id)::float8
+			FROM orders o JOIN order_history h ON h.order_id = o.id
+			WHERE h.status = '%s' AND h.created_at >= $%d AND h.created_at <= $%d AND o.order_type = '%s'
+			GROUP BY o.payload_code`, status, start, end, orderType)
+	}
+	q := `WITH ` + strings.Join(ctes, ",\n") + `
+		SELECT k, payload_code, v FROM (
+			SELECT 'l1q' AS k, payload_code, AVG(` + span + `) AS v FROM l1q WHERE to_ts > from_ts GROUP BY payload_code
+			UNION ALL
+			SELECT 'l1t', payload_code, AVG(` + span + `) FROM l1t WHERE to_ts > from_ts GROUP BY payload_code
+			UNION ALL
+			SELECT 'l2l', payload_code, PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY ` + span + `) FROM l2l WHERE to_ts > from_ts GROUP BY payload_code
+			UNION ALL
+			SELECT 'm2c', payload_code, PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY ` + span + `) FROM m2c WHERE to_ts > from_ts GROUP BY payload_code
+			UNION ALL
+			SELECT 'n_l1', * FROM (` + count("confirmed", "retrieve_empty") + `) c1
+			UNION ALL
+			SELECT 'n_ret', * FROM (` + count("delivered", "retrieve") + `) c2
+			UNION ALL
+			SELECT 'rate', b.payload_code, PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY s.rate_per_sec)
+			FROM (SELECT DISTINCT core_node_name, payload_code FROM demand_registry WHERE replenish_uop_threshold > 0) b
+			JOIN tte_samples s ON s.core_node_name = b.core_node_name AND s.payload_code = b.payload_code
+			 AND s.kind = 'threshold' AND s.rate_per_sec > 0 AND s.computed_at >= $` + fmt.Sprint(start) + `
+			GROUP BY b.payload_code
+		) u`
+	rows, err := db.Query(q, args...)
+	if err != nil {
+		return nil, fmt.Errorf("lead times by payload: %w", err)
+	}
+	defer rows.Close()
+	out := map[string]LeadTimeInputs{}
+	for rows.Next() {
+		var k, payload string
+		var v sql.NullFloat64
+		if err := rows.Scan(&k, &payload, &v); err != nil {
+			return nil, fmt.Errorf("lead times by payload: scan: %w", err)
+		}
+		in := out[payload]
+		switch k {
+		case "l1q":
+			in.L1QueueSeconds = v.Float64
+		case "l1t":
+			in.L1TransitSeconds = v.Float64
+		case "l2l":
+			in.L2LoadSeconds = v.Float64
+		case "m2c":
+			in.MarketToCellSeconds = v.Float64
+		case "n_l1":
+			in.SamplesL1 = int(v.Float64)
+		case "n_ret":
+			in.SamplesRetrieve = int(v.Float64)
+		case "rate":
+			in.RatePerSec = v.Float64
+		}
+		out[payload] = in
+	}
+	return out, rows.Err()
 }
 
 // avgTransition returns the mean transition duration in seconds, 0 when the

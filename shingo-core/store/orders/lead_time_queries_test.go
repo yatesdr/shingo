@@ -97,3 +97,45 @@ func TestLeadTimeHelpers_Fidelity(t *testing.T) {
 		t.Errorf("AvgL1QueueSeconds(empty window) = %v,%v, want 0", v, err)
 	}
 }
+
+// TestLeadTimesByPayload_RateIsTheRunningRate pins the rate /inventory turns
+// into a cycle. A tte_samples rate is a sliding window's count, so after a stop
+// it decays to one unit per window before it reads 0. The latest positive
+// sample of an idle part is that tail; the rate is the median of the window's
+// positive samples, the line's running rate. A sample before the window does
+// not count.
+func TestLeadTimesByPayload_RateIsTheRunningRate(t *testing.T) {
+	t.Parallel()
+	d := testdb.Open(t)
+	db := d.DB
+	_, err := db.Exec(`INSERT INTO demand_registry (station_id, core_node_name, role, payload_code, replenish_uop_threshold)
+		VALUES ('line-1', 'SMN_R1', 'consume', 'PART-R', 100)`)
+	testutil.MustNoErr(t, err, "seed registry")
+	sample := func(ago time.Duration, rate float64) {
+		_, err := db.Exec(`INSERT INTO tte_samples (computed_at, process_id, style_id, core_node_name, payload_code,
+			uop_remaining, rate_per_sec, style_status, kind) VALUES ($1, 'LINE-R', 'S1', 'SMN_R1', 'PART-R', 500, $2, '', 'threshold')`,
+			time.Now().Add(-ago), rate)
+		testutil.MustNoErr(t, err, "seed sample")
+	}
+	// Twenty samples two minutes apart, running at 70 s a unit, then the stop's
+	// tail (900 s, 1800 s), then the line idle at 0.
+	for i := range 20 {
+		sample(time.Duration(120-2*i)*time.Minute, 1.0/70)
+	}
+	sample(78*time.Minute, 1.0/900)
+	sample(76*time.Minute, 1.0/1800)
+	for i := range 10 {
+		sample(time.Duration(74-2*i)*time.Minute, 0)
+	}
+	// Before the window: a different rate, more samples than the window has.
+	for i := range 40 {
+		sample(20*24*time.Hour+time.Duration(i)*time.Minute, 1.0/5)
+	}
+
+	got, err := orders.LeadTimesByPayload(db, orders.LeadTimeRange{Start: time.Now().AddDate(0, 0, -14), End: time.Now()})
+	testutil.MustNoErr(t, err, "lead times by payload")
+	if rate := got["PART-R"].RatePerSec; math.Abs(rate-1.0/70) > 1e-9 {
+		t.Errorf("rate = %v (a %.0f s cycle), want the running 1/70 (70 s): the stop's tail or the old samples leaked in",
+			rate, 1/rate)
+	}
+}

@@ -12,18 +12,6 @@ import (
 	"shingocore/domain"
 )
 
-// deltaDailyDays is how far back the daily drop trend reaches.
-//
-// Wider than the per-payload panel's 7 days on purpose. The drops are
-// episodic: Springfield's 30 days to 2026-07-29 had drops on nine of them and
-// one day carrying 76% of the net. At 7 days that spike has nothing to be a
-// spike ABOVE, and a reader cannot tell an incident from the new normal —
-// which is the exact judgement this trend exists to support.
-//
-// Not a sim-derived constant: it is a window, not a threshold. Nothing is
-// classified by it and no verdict turns on it.
-const deltaDailyDays = 30
-
 // InventoryInvariant is the Item 13 plant-wide running totals shape.
 // BinSum is signed because the SME lock allows bins to go negative
 // (overpack/underpack); over time the signed sum drifts in either
@@ -57,64 +45,62 @@ func (h *Handlers) apiInventoryInvariant(w http.ResponseWriter, r *http.Request)
 	})
 }
 
+// handleInventory renders /inventory: two tables (supermarket positions and
+// lines), filled by apiInventoryLoop.
 func (h *Handlers) handleInventory(w http.ResponseWriter, r *http.Request) {
-	data := map[string]any{
-		"Page": "inventory",
-	}
-	// The production tick feed panel (partials/tick-feed-panel.html). A failed
-	// read renders the panel's empty state rather than failing the page.
+	h.render(w, r, "inventory.html", map[string]any{"Page": "inventory"})
+}
+
+// handleInventoryCountHistory renders /inventory/count-history: the count
+// ledger lists that left /inventory (2026-10-29), moved as they were, with the
+// production tick feed panel (partials/tick-feed-panel.html). A failed feed
+// read renders the panel's empty state rather than failing the page.
+func (h *Handlers) handleInventoryCountHistory(w http.ResponseWriter, r *http.Request) {
+	data := map[string]any{"Page": "inventory"}
 	if feed, err := h.engine.HeartbeatService().TickFeedStatus(clock.Now().UTC()); err != nil {
-		log.Printf("inventory: tick feed status: %v", err)
+		log.Printf("count history: tick feed status: %v", err)
 	} else {
 		data["TickFeed"] = feed
 	}
-	h.render(w, r, "inventory.html", data)
+	h.render(w, r, "count-history.html", data)
 }
 
-func (h *Handlers) apiInventory(w http.ResponseWriter, r *http.Request) {
-	rows, err := h.engine.InventoryService().List()
+// apiInventoryLoop is /inventory's one read (service.InventoryService.Loop):
+// every (loader position, part) the threshold monitor watches with its in-loop
+// UoP, threshold, provenance, cover, the calculator's inputs and coming; every
+// claim of a running style at a line, consume and produce, with its bin, time
+// left and coming; whether each row needs a look; and the bins that make a sum
+// doubtful.
+func (h *Handlers) apiInventoryLoop(w http.ResponseWriter, r *http.Request) {
+	view, err := h.engine.InventoryService().Loop(r.Context(), clock.Now(), h.engine.AppConfig().Sourceability.RateWindow)
 	if err != nil {
-		h.jsonError(w, "Failed to load inventory: "+err.Error(), http.StatusInternalServerError)
+		h.jsonError(w, "inventory: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
-	h.jsonOK(w, rows)
+	h.jsonOK(w, view)
 }
 
-// apiInventoryMonitorTotals returns the per-payload Replenishment Health rollup:
-// DB on-hand (bins + lineside split), which payloads are monitored, and their
-// configured thresholds. Powers the inventory page's Replenishment Health
-// meters. (The monitor holds no private tally anymore, so there is no
-// cache-vs-DB drift to surface — that chip was deleted with the tally.)
-func (h *Handlers) apiInventoryMonitorTotals(w http.ResponseWriter, r *http.Request) {
-	rows, err := h.engine.ReplenishmentHealth(r.Context())
-	if err != nil {
-		h.jsonError(w, "replenishment health: "+err.Error(), http.StatusInternalServerError)
-		return
-	}
-	h.jsonOK(w, rows)
-}
-
-// apiInventoryLedgerExceptions returns the ledger-integrity exception list:
-// bins whose UOP is negative right now, and the payloads whose plant-wide
-// total is negative — the ones the threshold monitor is signalling
-// replenishment for from a count it cannot trust. (It still signals; the
-// refusal was removed.)
+// apiInventoryLedgerExceptions is /inventory/count-history's count ledger:
+// bins whose UOP is negative right now, the payloads whose plant-wide total is
+// negative, the dropped deltas per payload beside each payload's ledger total,
+// the open report divergences, and the strict-pack lists (hold drop runs,
+// declared-full stamps). The zero-crossing excursions ride along as API
+// forensics; no page draws them.
 //
-// BLANK ON A GOOD DAY. That is the design: a page of charts computed from a
-// handful of points is worse than nothing, and a list that is empty until
-// something is wrong is the right instrument.
+// BLANK ON A GOOD DAY, the exception lists. That is the design: a page of
+// charts computed from a handful of points is worse than nothing, and a list
+// that is empty until something is wrong is the right instrument.
 //
 // Read-side only — every value comes from bins, bin_uop_ledger and
 // bin_uop_exception (the open report_divergence episodes the lineside report's
 // comparison records), which are already on disk. No new table.
 //
-// ?since=<RFC3339> and ?limit= control the excursion history (default 7 days,
-// 200 rows). Excursions are the forensics; the two lists above are the
-// actionable part. The same window and limit bound hold_drop_runs and
-// declared_full_stamps, the strict-pack lists: routine records rather than
-// faults, so the page shows them as lists with a count, and a quiet line when
-// the window holds none. hold_drop_runs counts every drop in the window; the
-// limit bounds the runs, never the count.
+// ?since=<RFC3339> and ?limit= bound the excursions, the dropped deltas and the
+// strict-pack lists (default 7 days, 200 rows): the lists are routine records
+// rather than faults, so the
+// page shows them as lists with a count, and a quiet line when the window
+// holds none. hold_drop_runs counts every drop in the window; the limit bounds
+// the runs, never the count.
 func (h *Handlers) apiInventoryLedgerExceptions(w http.ResponseWriter, r *http.Request) {
 	openBins, err := h.engine.OpenNegativeBins()
 	if err != nil {
@@ -139,6 +125,7 @@ func (h *Handlers) apiInventoryLedgerExceptions(w http.ResponseWriter, r *http.R
 			limit = n
 		}
 	}
+
 	// A release and the delta it races are seconds apart, so the window only
 	// needs to be wide enough to survive queue latency.
 	excursions, err := h.engine.NegativeLedgerExcursions(since, 5*time.Minute, limit)
@@ -149,25 +136,12 @@ func (h *Handlers) apiInventoryLedgerExceptions(w http.ResponseWriter, r *http.R
 
 	// Delta integrity rides the same request and the same window. It belongs
 	// beside the exception list, not on its own endpoint: the exception list
-	// says "this payload is negative" and this says "and here is the mechanism
+	// says "this bin is negative" and this says "and here is the mechanism
 	// that probably did it", and the two are only worth anything read
 	// together. One fetch means they cannot drift apart in the UI either.
 	deltaIntegrity, err := h.engine.DeltaIntegrityByPayload(since)
 	if err != nil {
 		h.jsonError(w, "delta integrity: "+err.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	// The time axis for the same drops. Deliberately a WIDER window than the
-	// panel above: a trend needs enough days to have a shape, and 7 of them at
-	// Springfield showed one spike and nothing to compare it against.
-	dailySince := clock.Now().UTC().AddDate(0, 0, -deltaDailyDays)
-	if dailySince.After(since) {
-		dailySince = since
-	}
-	deltaDaily, err := h.engine.DeltaIntegrityDaily(dailySince, plantLocation.String())
-	if err != nil {
-		h.jsonError(w, "delta integrity daily: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 
@@ -182,11 +156,11 @@ func (h *Handlers) apiInventoryLedgerExceptions(w http.ResponseWriter, r *http.R
 		return
 	}
 
-	// The strict-pack lists, in the excursions' window: the produce holds the
-	// Edges dropped, and the bins a station declared full above their count.
-	// Read together: a dropped hold makes the next bin short and that bin is
-	// then stamped, so both rows can describe the same parts, which is why
-	// every row carries its node and time. Routine lists, not alarms.
+	// The strict-pack lists, in the same window: the produce holds the Edges
+	// dropped, and the bins a station declared full above their count. Read
+	// together: a dropped hold makes the next bin short and that bin is then
+	// stamped, so both rows can describe the same parts, which is why every
+	// row carries its node and time. Routine lists, not alarms.
 	holdDropRuns, err := h.engine.InventoryService().HoldDropRuns(since, limit)
 	if err != nil {
 		h.jsonError(w, "hold drops: "+err.Error(), http.StatusInternalServerError)
@@ -207,17 +181,12 @@ func (h *Handlers) apiInventoryLedgerExceptions(w http.ResponseWriter, r *http.R
 	if deltaIntegrity == nil {
 		deltaIntegrity = []domain.DeltaIntegrity{}
 	}
-	if deltaDaily == nil {
-		deltaDaily = []domain.DeltaDay{}
-	}
 	h.jsonOK(w, map[string]any{
 		"since":                since,
 		"open_bins":            openBins,
 		"negative_payloads":    payloads,
 		"excursions":           excursions,
 		"delta_integrity":      deltaIntegrity,
-		"delta_daily":          deltaDaily,
-		"delta_daily_since":    dailySince,
 		"report_divergences":   divergences,
 		"hold_drop_runs":       holdDropRuns,
 		"declared_full_stamps": stamps,
@@ -260,7 +229,7 @@ func (h *Handlers) apiSourceabilityEvents(w http.ResponseWriter, r *http.Request
 }
 
 // apiInventoryAnomalySummary returns the read-only rejected-delta + stale-staged
-// rollup behind the inventory page's alerts banner (P2-C6): reason-split drop
+// rollup behind count history's alerts banner (P2-C6): reason-split drop
 // counters, the count of anomaly-flagged bins whose deltas are being refused, and
 // the count of bins parked staged past their own TTL. Pure observability — no
 // behavior change, safe to poll.
@@ -273,8 +242,8 @@ func (h *Handlers) apiInventoryAnomalySummary(w http.ResponseWriter, r *http.Req
 	h.jsonOK(w, sum)
 }
 
-// apiInventoryRejectedDeltas is the drill-down behind the inventory page's
-// "N rejected deltas" banner: the list of carriers whose deltas are being
+// apiInventoryRejectedDeltas is the drill-down behind count history's
+// "N carriers flagged for a recount" banner: the list of carriers whose deltas are being
 // refused, each with its node, payload/part, when it was flagged, the latest
 // drop reason + time, and the drop count — so the operator can see WHICH carrier
 // to cycle-count instead of just a number. Pure read; safe to poll.
@@ -289,7 +258,7 @@ func (h *Handlers) apiInventoryRejectedDeltas(w http.ResponseWriter, r *http.Req
 
 // apiBuckets returns every lineside_buckets row as JSON: Core's mirror of the
 // Edge's piles, active and stranded. Powers the "Lineside Buckets" section on
-// the operator-facing inventory page. Read-only; Core never writes a pile.
+// the Bins page (bins-lineside.js). Read-only; Core never writes a pile.
 func (h *Handlers) apiBuckets(w http.ResponseWriter, r *http.Request) {
 	rows, err := h.engine.InventoryService().ListLinesideBuckets()
 	if err != nil {
@@ -431,6 +400,9 @@ func cell(col string, row int) string {
 
 // apiInventoryMaintainedGroups returns the keeper's last tick, one row per
 // (group, bin type): the declared level and the three populations it subtracted.
+// Read by the Nodes page's group modal (nodes-maintain.js renderKeeperLevels),
+// beside the level it keeps; the path keeps its /inventory prefix from when
+// the inventory page drew it.
 //
 // THE SUBTRACTION IS THE PAYLOAD, not a status word. An operator looking at a
 // group that is short and quiet needs to see WHICH term closed the gap — asks

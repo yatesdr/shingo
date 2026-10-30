@@ -6,7 +6,7 @@ import (
 	"shingo/protocol"
 )
 
-// TickFeedStation is one station's row in the Inventory page's production
+// TickFeedStation is one station's row in count history's production
 // tick feed panel: the lag its edge last reported on a heartbeat, and the two
 // flags Core derives from it.
 type TickFeedStation struct {

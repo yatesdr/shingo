@@ -2115,7 +2115,7 @@ func RecoverToNode(db *sql.DB, binID, toNodeID int64, onPlaced helpers.OnPlaced)
 // flagged forever: at Hopkinsville on 2026-08-02, all ten bins carried it, seven
 // of them counted AFTER being flagged and still flagged, the oldest since May.
 // A signal that is set on everything and never cleared says nothing, so the
-// "which carrier do I go count" answer the inventory page exists to give had
+// "which carrier do I go count" answer the count history page exists to give had
 // quietly become "all of them".
 //
 // Cleared HERE, in the same statement as the count, rather than in the service

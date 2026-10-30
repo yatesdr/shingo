@@ -34,8 +34,8 @@ func (s *InventoryService) List() ([]inventory.Row, error) {
 }
 
 // ListLinesideBuckets returns every lineside_buckets row joined to
-// node hierarchy so the operator-facing inventory page renders
-// bucket parts alongside the bins table. Read-only: the rows are a
+// node hierarchy so the Bins page renders the lineside piles
+// alongside its bins table. Read-only: the rows are a
 // mirror of the Edge's piles, and Core never writes a pile.
 func (s *InventoryService) ListLinesideBuckets() ([]inventory.BucketRow, error) {
 	return s.db.ListLinesideBuckets()

@@ -193,6 +193,25 @@
     <p class="text-muted">No bins registered.{{if .Authenticated}} Use "+ Bin" to create bins.{{end}}</p>
   </div>
   {{end}}
+
+  <!-- Lineside Buckets (moved from /inventory, 2026-10-29): Core's mirror of
+       the Edge's piles. Active piles count toward a part's in-loop UoP; a
+       stranded row is a count anomaly left at a cutover and never counts.
+       bins-lineside.js. -->
+  <section class="card mb-2 mt-2" id="buckets">
+    <div class="section-head">
+      <h2>Lineside Buckets</h2>
+      <span class="text-muted-sm"><span id="buckets-stale"></span> Active piles count toward in-loop UoP; a stranded row never counts</span>
+    </div>
+    <div class="table-scroll-y">
+      <table class="rh-table">
+        <thead>
+          <tr><th>Node</th><th>Payload</th><th>State</th><th class="rh-num">Qty</th><th>Updated</th></tr>
+        </thead>
+        <tbody id="buckets-body"><tr><td colspan="5" class="dash-empty">Loading…</td></tr></tbody>
+      </table>
+    </div>
+  </section>
 </div>
 
 {{if .Authenticated}}
@@ -422,4 +441,5 @@
   var PAGE_AUTH = {{.Authenticated}};
 </script>
 <script type="module" src="/static/pages/bins.js"></script>
+<script type="module" src="/static/pages/bins-lineside.js"></script>
 {{end}}

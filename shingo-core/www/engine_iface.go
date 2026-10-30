@@ -1,7 +1,6 @@
 package www
 
 import (
-	"context"
 	"time"
 
 	"shingo/protocol"
@@ -23,7 +22,7 @@ import (
 // Phase 6.5 (2026-04-25) split this out of EngineAccess. The split
 // captures the architectural role distinction: most handlers do pure
 // CRUD through services and have no business reaching engine-level
-// orchestration. ServiceAccess gives those handlers a 48-method surface;
+// orchestration. ServiceAccess gives those handlers a 46-method surface;
 // orchestration handlers take EngineOrchestration explicitly via
 // h.orchestration.
 //
@@ -99,11 +98,6 @@ type ServiceAccess interface {
 	// gated per-(process, style) verdicts plus claim/pool drill-in context and
 	// the replenishment queue. A pure read of the monitor snapshot.
 	SourceabilityPage() (engine.SourceabilityPageView, error)
-	// ReplenishmentHealth is the per-payload inventory rollup behind the
-	// inventory page: DB on-hand (bins + lineside split), the threshold monitor's
-	// cached total (for drift detection), and configured thresholds. A pure read
-	// of the monitor snapshot + inventory.
-	ReplenishmentHealth(ctx context.Context) ([]engine.PayloadHealth, error)
 	// MaintainedGroupStates is the keeper's last tick, one line per (group, bin
 	// type): the declared level and the three populations it subtracted to reach
 	// its gap.
@@ -127,9 +121,6 @@ type ServiceAccess interface {
 	// list: how much count was dropped per payload, against that payload's
 	// current ledger total. Also read-side only.
 	DeltaIntegrityByPayload(since time.Time) ([]domain.DeltaIntegrity, error)
-	// DeltaIntegrityDaily is the same population on the time axis, bucketed by
-	// plant-local day. Rides the same request as the panel above.
-	DeltaIntegrityDaily(since time.Time, tz string) ([]domain.DeltaDay, error)
 	// CarrierBindings is 5.11's ledger half: every carrier, the payload ShinGo
 	// believes it holds, and when that belief last started. Unfiltered — the
 	// candidate rule is a pure function in this package.

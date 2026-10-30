@@ -33,8 +33,8 @@ import (
 //   - single_payload: the monitor's hot-path shape — one payload per call,
 //     which is what OnBinUOPDelta / OnBucketApplied now issue per delta. THIS
 //     is the number the gate is read against.
-//   - all_payloads: the ReplenishmentHealth page shape — every payload in one
-//     call — for reference.
+//   - all_payloads: a whole-plant shape — every payload in one call, as the
+//     /inventory table's read takes its monitored parts — for reference.
 func BenchmarkSystemUOPForPayload(b *testing.B) {
 	db := testdb.Open(b)
 	svc := NewInventoryService(db)

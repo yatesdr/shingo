@@ -411,6 +411,30 @@ type ledgerRates struct {
 	consumeByNode, produceByNode map[nodePayload]float64
 }
 
+// NodeRates is consumptionRates' node grain, for a reader that wants a line's
+// own rate and nothing plant-wide: the /inventory Lines table's time left. The
+// same one statement, so the page and the sourcing verdict cannot read two
+// different rates for one line.
+type NodeRates struct{ r ledgerRates }
+
+// ReadNodeRates scans the rates over window (consumptionRates).
+func ReadNodeRates(db *sql.DB, window time.Duration) (NodeRates, error) {
+	r, err := consumptionRates(db, window)
+	return NodeRates{r: r}, err
+}
+
+// Consume is the node's consumption rate for the payload, UoP per second; 0
+// when it drew none in the window.
+func (n NodeRates) Consume(node, payload string) float64 {
+	return n.r.consumeByNode[nodePayload{Node: node, Payload: payload}]
+}
+
+// Produce is the node's production rate for the payload, UoP per second; 0
+// when it made none in the window.
+func (n NodeRates) Produce(node, payload string) float64 {
+	return n.r.produceByNode[nodePayload{Node: node, Payload: payload}]
+}
+
 // ActiveStyles returns the style each process is currently running, keyed by
 // process ID, from the plant-claims mirror. A process with no active style is
 // absent from the map — Core must not guess at one.

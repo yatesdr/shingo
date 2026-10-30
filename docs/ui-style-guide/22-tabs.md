@@ -29,7 +29,7 @@ JS handler is shared. No more `.tab-bar` / `.diag-tabs` / `.spot-tabs` /
 `shared/components.css`, and no page sets a tab's size.
 
 A tab that changes page rather than panel is a link, `<a class="tab" href="...">`, with the current one
-`aria-current="page"`.
+`aria-current="page"` (`/inventory` and its Count history).
 
 ### Tabs are not CTAs
 

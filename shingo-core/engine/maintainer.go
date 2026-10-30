@@ -101,7 +101,7 @@ type MaintainerGroupState struct {
 	OldestAskCause string `json:"oldest_ask_cause,omitempty"`
 	// OldestAskReason is that ask's queue_reason: the operator sentence the
 	// dispatcher wrote from its queue code (FormatQueueSentence). The cause is
-	// the engineer's tag; this is what the Inventory page prints.
+	// the engineer's tag; this is what the Nodes page's keeper's levels print.
 	OldestAskReason string `json:"oldest_ask_reason,omitempty"`
 	// OldestAskAge is rendered on the one duration ladder (protocol.FormatDuration),
 	// not Go's "11m3s".

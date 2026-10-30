@@ -137,9 +137,23 @@ duplicate orders while it stood.
 
 The calculator lives on Core (`shingo-core/service/threshold_calculator.go`,
 lead-time helpers in `shingo-core/store/orders/lead_time_queries.go`),
-exposed at `POST /api/loader/calculate` and driven from the inventory page:
-enter a cycle time, run the calculation, read the suggested UoP threshold and
-confidence in the popover, then set the value on the loader config. The Edge
+exposed at `POST /api/loader/calculate`. It is **uncalibrated**: on `/inventory`
+it is reached only from the UoP threshold column's ⓘ ("calculator
+(uncalibrated)"), and no row shows its number. It opens on the position with the
+shortest margin, with a picker for the others. Its suggestion is computed for
+every position from one read (`LeadTimesByPayload`: the same four inputs and two
+coverage counts, grouped by payload, pinned against the per-payload helpers)
+and `CalculateThresholds`, with the cycle taken from the 14-day median running
+rate (the median of the payload's positive `tte_samples` rates, kind
+threshold). There is no suggestion until the position has a completed L1 cycle
+in the window — a threshold `retrieve_empty` delivered to the position (any
+window of a shared loader) and confirmed — counted per position in the bindings
+read; a lead time from an order that never completed is not a lead time. **A
+suggestion is never one click into the live threshold**: it is prefilled in the
+calculator, the cycle and safety factor open to change and the calculation re-run
+through the endpoint, and one Confirm saves it (source `calculated`, or `manual`
+if the value was typed over). The window ends at Core's clock
+(`clock.Now()`), the one `order_history` is stamped with. The Edge
 replenishment page retains only the cell-autoreorder half; its loader
 section, calculator modal, Apply/Override/Recalculate-all controls and the
 `threshold_calculated` / `overridden_inputs` / `threshold_confidence` columns
@@ -148,10 +162,10 @@ were deleted 2026-07-21 — the Edge write path terminated in a no-op stub.
 Two input differences from earlier revisions of this page: L1 queue measures
 `queued → dispatched` (Core never writes `acknowledged`, so the old pair was
 structurally zero), and the L2 store-transit input is no longer auto-fetched
-(no store orders exist) — it is an operator-editable modal input defaulting
-to 0. Because L2 coverage is always zero, `scoreConfidence` can never return
-HIGH or MEDIUM; every suggestion currently reports LOW, and there is no Apply
-button to gate.
+(no store orders exist) — it is 0 (the `/inventory` modal shows it as 0; the
+endpoint takes no L2 transit). Because L2 coverage is always zero,
+`scoreConfidence` can never return HIGH or MEDIUM; every suggestion currently
+reports LOW.
 
 Engineer-triggered. There is no nightly batch recompute — engineers see the calculation context every time they apply a value, and threshold thrash from auto-apply is impossible.
 
@@ -186,15 +200,15 @@ The historical Edge modal this section used to document, for reference:
 
 Every input is editable. Engineer edits flow through to the live-recomputed threshold + cell reorder shown below (the formula is mirrored in JS — no server round-trip per keystroke). Inputs the engineer changed away from the observed value are tracked on the threshold row in the `overridden_inputs` column and surface on the main table as `Overrides: <human-readable list>` under the source badge.
 
-*(The rest of this subsection describes the deleted Edge modal. Kept for provenance — the Core popover reuses the same input set minus the changes noted above.)*
+*(The rest of this subsection describes the deleted Edge modal. Kept for provenance — the Core modal on `/inventory` reuses the same input set minus the changes noted above.)*
 
 ### Inputs
 
-All lead-time inputs are derived from `order_history` state transitions on Core via `shingo-core/store/orders/lead_time_queries.go`. Cycle time is engineer-supplied for now (automatic peak-cycle derivation from `hourly_counts` is a later round).
+All lead-time inputs are derived from `order_history` state transitions on Core via `shingo-core/store/orders/lead_time_queries.go`. Cycle time is supplied with the request; the `/inventory` page supplies 1 / the median of the payload's positive plant-wide consumption rates (`tte_samples.rate_per_sec`, kind threshold, in the window; not the latest: a sample's rate is a sliding window's count, and after a stop it decays to one unit per window before it reads 0), and its modal lets the engineer type another (automatic peak-cycle derivation from `hourly_counts` is a later round).
 
 | Input | Source | Helper |
 |---|---|---|
-| `cycle_seconds` | Engineer entry | — |
+| `cycle_seconds` | The request: on `/inventory`, 1 / the median measured rate; editable in its modal | `LeadTimesByPayload` (`RatePerSec`) |
 | `l1_queue_seconds` | `queued → dispatched` mean (Core never writes `acknowledged`, so the old `queued → acknowledged` pair was structurally zero) | `AvgL1QueueSeconds` |
 | `l1_transit_seconds` | `in_transit → delivered` mean (`retrieve_empty`) | `AvgL1TransitSeconds` |
 | `l2_load_seconds` | `delivered → confirmed` **median** (`retrieve_empty`) | `MedianL2LoadSeconds` |
@@ -226,15 +240,15 @@ A coverage score over the data the calculator was able to observe in the date ra
 | `MEDIUM` | window ≥ 7 days AND ≥ 10 of each |
 | `LOW` | anything below MEDIUM |
 
-`LOW` confidence is the only label reachable today (L2 coverage is always zero — see above), so as a practical matter **every suggestion reports LOW**. The engineer can still Override and type a value; on Core the provenance is the loader config's audit trail. The HIGH/MEDIUM thresholds are conservative for the initial Springfield roll-out and will be re-tuned post-calibration.
+`LOW` confidence is the only label reachable today (L2 coverage is always zero — see above), so as a practical matter **every suggestion reports LOW**. The engineer can still type a value; on Core the provenance is the uop_threshold audit_log row (see What gets persisted). The HIGH/MEDIUM thresholds are conservative for the initial Springfield roll-out and will be re-tuned post-calibration.
 
 ### What gets persisted
 
-The calculation itself is not persisted — the engineer reads the suggested value from the popover and sets the threshold on the loader config (`bin_loader_homes.uop_threshold` via the loader service), which is where the value lives and where its `updated` provenance is visible. The Edge-side persistence columns this section used to document (`threshold_calculated`, `threshold_calculated_at`, `threshold_confidence`, `overridden_inputs` on a threshold row) were deleted 2026-07-21 along with the Edge loader-threshold UI; none of them exist on Core.
+The calculation itself is not persisted — the engineer applies the suggestion (or types a value) in the `/inventory` row, which sets the threshold on the loader config (`bin_loader_homes.uop_threshold` or `bin_loader_payloads.uop_threshold` via the loader service's set-home / set-payload doors), which is where the value lives. Every change of the value writes one `audit_log` row (entity `loader_home` by position node, or `loader_payload` by loader; action `uop_threshold`; values `<payload> <old>` → `<payload> <new> <manual|calculated>`; the actor), whichever page made it. The threshold's hover on `/inventory` says who changed it, when and from what, with the threshold as time at the 14-day median running rate; a value set before any row existed says so. The Edge-side persistence columns this section used to document (`threshold_calculated`, `threshold_calculated_at`, `threshold_confidence`, `overridden_inputs` on a threshold row) were deleted 2026-07-21 along with the Edge loader-threshold UI; none of them exist on Core.
 
 ### Recalculate all
 
-The bulk **Recalculate all** control was part of the deleted Edge modal; there is no equivalent on Core today. Each calculation is run per (loader, payload) from the inventory page popover.
+The bulk **Recalculate all** control was part of the deleted Edge modal; there is no equivalent on Core today. The `/inventory` calculator opens from the UoP threshold column's ⓘ on one position at a time (a picker moves it), and its suggestion is applied per (loader position, payload), only on Confirm.
 
 ---
 
@@ -327,12 +341,35 @@ The Edge is a pile's only writer, so Core's `lineside_buckets` is a mirror fed b
   `ReplenishLoader` (every loader's carriers, both directions, under the
   per-loader `loaderLock`) and its window choice, `plan.LoaderWindows`.
 - `service/threshold_calculator.go` + `store/orders/lead_time_queries.go` —
-  the calculator and its Postgres lead-time helpers.
+  the calculator and its Postgres lead-time helpers (`LeadTimesByPayload`: all
+  payloads in one read, for `/inventory`).
+- `service/inventory_loop.go` + `store/inventory/loop.go` — the `/inventory`
+  read. Supermarket positions: monitored bindings, in-loop UoP, time to empty
+  (cover, while a running line uses the part), the threshold with its
+  provenance, and On the way (orders to the position queued or in transit, not
+  yet delivered). A one-bin home at a threshold of a pack or more refills when
+  it empties and is not read as below, silently; ABOVE HOME CAPACITY (a
+  threshold over a multi-bin home's windows × pack) is the one badge. Lines
+  (an Edge process each): every claim of a running style, consume and produce
+  — in bin / pack, time left (until empty, or until full) at the node's rate
+  from sourceability's node rates, the cell reorder point (set on the named
+  station's Edge) and On the way (live orders that set a bin down at the node,
+  `protocol.OrderPlacesBinAt`). Each table opens on the rows that need a look,
+  least time left first: a position at or under its UoP threshold (a one-bin
+  home at a threshold of a pack or more: when that home is empty), above home
+  capacity, with its part's count in doubt or a bin on the way; a line past
+  its threshold (consume at or under its reorder point; produce at or over
+  `protocol.ClaimDemandLevel`, or over its pack), with its bin in doubt or a
+  bin on the way. The rest fold behind "Show N more"; when none qualifies the
+  table reads "All N … healthy". The doubt line names every counted bin below
+  zero or whose contents nobody confirmed ("not confirmed"), except the bin
+  filling at a produce seat: its count climbs from the Edge's ticks and is
+  confirmed at release.
 - `service/inventory_system_count.go` — `SystemUOPForPayload`.
 - `store/demands/` — `demand_registry` CRUD including `replenish_uop_threshold`.
 - `store/loaders/` + `service/loader_service.go` — `bin_loader_homes.uop_threshold`
   (where the threshold actually lives) and the `rederive()` registry sync.
-- `www/handlers_loader.go` — `POST /api/loader/calculate` (the calculator endpoint).
+- `www/handlers_loader.go` — `POST /api/loader/calculate` (the calculator endpoint), and the set-home / set-payload doors the `/inventory` row saves through (`source` names a `calculated` save).
 
 ### Protocol
 
@@ -354,4 +391,4 @@ Tracked separately; not part of the v6 work:
 - **R3 iterate-all-claims** — Springfield is Case A (loader claim lists all payloads).
 - **Queued-retrieve safety net at Edge** — redundant with C-push.
 - **Diagnostics UI live stream** — structured logs are emitted; UI rendering deferred to Phase 1.5.
-- **Automatic peak-cycle derivation from `hourly_counts`** — engineer-supplied cycle time for now.
+- **Automatic peak-cycle derivation from `hourly_counts`** — the cycle is the median measured rate's, or typed, for now.

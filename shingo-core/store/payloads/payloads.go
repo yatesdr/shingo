@@ -105,26 +105,6 @@ func PayloadCATIDs(db *sql.DB) (map[int64]string, error) {
 	return out, rows.Err()
 }
 
-// DescriptionsByCode returns a payload_code → description map for every payload
-// template. Used by the inventory Replenishment Health rollup to show a catalog
-// description beside each payload code.
-func DescriptionsByCode(db *sql.DB) (map[string]string, error) {
-	rows, err := db.Query(`SELECT code, COALESCE(description, '') FROM payloads`)
-	if err != nil {
-		return nil, fmt.Errorf("payload descriptions: %w", err)
-	}
-	defer rows.Close()
-	out := make(map[string]string)
-	for rows.Next() {
-		var code, desc string
-		if err := rows.Scan(&code, &desc); err != nil {
-			return nil, fmt.Errorf("scan payload description: %w", err)
-		}
-		out[code] = desc
-	}
-	return out, rows.Err()
-}
-
 // Create inserts a new payload template and sets p.ID on success.
 func Create(db *sql.DB, p *Payload) error {
 	return createRow(db, p)

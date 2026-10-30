@@ -41,7 +41,7 @@
 // what threshold, comes from demand_registry on every evaluation; whether a
 // place already has an open demand, and which one, comes from demand_origins
 // on every evaluation. Memory holds only what this process is doing: debounce
-// and warm-up timers, log throttles, the contradiction chip's stamp. See the
+// and warm-up timers, log throttles (the contradiction log's included). See the
 // ThresholdMonitor struct for the history of the copies it used to hold.
 //
 // There is no longer a second path to dedup against. The legacy bin-count
@@ -106,11 +106,11 @@ const warmUpFloor = 2
 // binding is enough to keep the condition visible without becoming the noise.
 const negativeLogWindow = 60 * time.Second
 
-// swapContradictionWindow is how long a manual-swap-vs-ledger contradiction
-// (P2-C9) stays surfaced as a Replenishment Health chip, and the throttle
-// window for its log line. A human requesting a swap for a payload the ledger
-// reads as fully stocked is a standing condition worth showing for a while, not
-// a per-request event.
+// swapContradictionWindow is the throttle window for the manual-swap-vs-ledger
+// contradiction's log line (P2-C9). A human requesting a swap for a payload the
+// ledger reads as fully stocked is a standing condition, not a per-request
+// event. (It was also how long a Replenishment Health chip showed it; that page
+// and its chip went on 2026-10-29, and the log is what remains.)
 const swapContradictionWindow = 15 * time.Minute
 
 // thresholdEntry is one monitored place — (core_node_name, payload) — with its
@@ -178,7 +178,7 @@ type ThresholdMonitor struct {
 	duplicateLogged map[string]time.Time
 	// swapContradiction is the last time a manual-swap request arrived for a
 	// payload the ledger read as fully stocked (P2-C9). Keyed by payload_code;
-	// drives the Replenishment Health contradiction chip and throttles the log.
+	// throttles the contradiction log.
 	swapContradiction map[string]time.Time
 
 	// now supplies every timestamp this monitor measures an interval against.
@@ -223,84 +223,6 @@ func (m *ThresholdMonitor) nowFn() time.Time {
 		return m.now()
 	}
 	return clock.Now()
-}
-
-// MonitorBinding is one monitored (station, node, payload) threshold binding,
-// exported for the Snapshot read model behind the inventory Replenishment
-// Health page.
-type MonitorBinding struct {
-	StationID    string `json:"station_id"`
-	CoreNodeName string `json:"core_node_name"`
-	Threshold    int    `json:"threshold"`
-	LoaderID     int64  `json:"loader_id,omitempty"`
-}
-
-// MonitorSnapshotEntry is the set of threshold bindings watching one payload —
-// which loaders monitor it, at what threshold. It carries no UOP total: the
-// monitor holds no cached belief, so the caller reads DB truth
-// (SystemUOPForPayload) directly for the on-hand number.
-type MonitorSnapshotEntry struct {
-	PayloadCode string           `json:"payload_code"`
-	Bindings    []MonitorBinding `json:"bindings"`
-	// SwapContradiction is true when a manual-swap request arrived for this
-	// payload within swapContradictionWindow while the ledger read it as fully
-	// stocked (P2-C9). Surfaced as a Replenishment Health chip.
-	SwapContradiction bool `json:"swap_contradiction"`
-}
-
-// Snapshot returns which payloads are monitored and the binding set watching
-// each — the read model behind the inventory Replenishment Health page. It
-// reports only the monitored set and thresholds; the caller reads DB on-hand
-// itself.
-//
-// THE BINDINGS ARE READ, NOT REMEMBERED: one ListDemandThresholds per call.
-// This page is what an engineer opens to ask "is this loader monitored, at
-// what threshold?", and while it rendered a copy, the answer during the
-// 2026-08-19 burst would have been the copy's. It shows every registry row,
-// duplicates included, because the page is where a duplicate should be seen.
-// The contradiction chip is the one thing here no table holds.
-//
-// A read error is returned, not rendered as "nothing is monitored".
-func (m *ThresholdMonitor) Snapshot() ([]MonitorSnapshotEntry, error) {
-	if m.eng == nil || m.eng.db == nil {
-		return nil, nil
-	}
-	entries, err := m.eng.db.ListDemandThresholds()
-	if err != nil {
-		return nil, err
-	}
-	byPayload := map[string][]MonitorBinding{}
-	var order []string
-	for _, e := range entries {
-		if e.ReplenishUOPThreshold <= 0 {
-			continue
-		}
-		if _, seen := byPayload[e.PayloadCode]; !seen {
-			order = append(order, e.PayloadCode)
-		}
-		byPayload[e.PayloadCode] = append(byPayload[e.PayloadCode], MonitorBinding{
-			StationID:    e.StationID,
-			CoreNodeName: e.CoreNodeName,
-			Threshold:    e.ReplenishUOPThreshold,
-			LoaderID:     e.LoaderID,
-		})
-	}
-	now := m.nowFn()
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	out := make([]MonitorSnapshotEntry, 0, len(order))
-	for _, payload := range order {
-		contradiction := false
-		if last, ok := m.swapContradiction[payload]; ok && now.Sub(last) < swapContradictionWindow {
-			contradiction = true
-		}
-		out = append(out, MonitorSnapshotEntry{
-			PayloadCode:       payload,
-			Bindings:          byPayload[payload],
-			SwapContradiction: contradiction,
-		})
-	}
-	return out, nil
 }
 
 // placeKey is the grain of everything the monitor keys: the episode key,
@@ -594,14 +516,13 @@ func (m *ThresholdMonitor) handleBinUpdated(ev BinUpdatedEvent) {
 // yet a human at the line is requesting a swap, that is a contradiction — the
 // SNF3 CARRIER-0024 shape, where Core held a 150-UOP phantom on-hand while the
 // operator's tile read 46 and the line starved. It logs a
-// manual_request_vs_ledger warning, raises a Replenishment Health chip, and
-// immediately re-evaluates the payload.
+// manual_request_vs_ledger warning and immediately re-evaluates the payload.
 //
 // With the private tally gone, "re-evaluate" is simply "re-read" — the only
 // mode there is now. It creates NO orders: the re-read fires the normal
 // (debounced) signal only if the ledger is genuinely below threshold, which is
 // the non-contradiction case; when it reads stocked, nothing fires. The
-// contradiction log/chip is throttled to once per swapContradictionWindow per
+// contradiction log is throttled to once per swapContradictionWindow per
 // payload, so a burst of complex orders can't spam it.
 func (m *ThresholdMonitor) NoteSwapRequestContradiction(payloadCode string) {
 	if payloadCode == "" || m.eng == nil || m.eng.db == nil {
@@ -621,7 +542,7 @@ func (m *ThresholdMonitor) NoteSwapRequestContradiction(payloadCode string) {
 	}
 	// THE CONTRADICTION IS ABOUT THE LEDGER: a human is asking for material the
 	// ledger says is there. The ledger is also the total every fire decision
-	// reads, so the chip and the recheck below judge the same number.
+	// reads, so the log and the recheck below judge the same number.
 	maxThreshold := 0
 	for _, b := range bindings {
 		if b.threshold > maxThreshold {
@@ -641,7 +562,7 @@ func (m *ThresholdMonitor) NoteSwapRequestContradiction(payloadCode string) {
 // recordSwapContradiction stamps a swap-vs-ledger contradiction for the payload
 // if the last one is outside the window, returning whether it was newly
 // recorded (i.e. should be logged now). Fixed-window throttle: the log fires
-// once per window and the chip reads the stamp for the rest of it.
+// once per window.
 func (m *ThresholdMonitor) recordSwapContradiction(payloadCode string) bool {
 	now := m.nowFn()
 	m.mu.Lock()
@@ -692,7 +613,7 @@ func (m *ThresholdMonitor) decide(bindings []thresholdEntry, total int, reason s
 	// arming onto a dry source.
 	//
 	// So: fall through and evaluate normally. The count still gets flagged for
-	// a human — loudly here, and as an exception row on the inventory page —
+	// a human — loudly here, and as a row on /inventory's doubt line —
 	// but the line keeps getting material while they sort it out. Over-ordering
 	// is recoverable. Starving a line because a count was wrong is not.
 	if total < 0 {

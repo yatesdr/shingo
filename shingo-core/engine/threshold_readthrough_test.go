@@ -710,36 +710,6 @@ func TestReadThrough_StatementsPerEvaluation(t *testing.T) {
 	}
 }
 
-// THE PAGE READS THE REGISTRY. Snapshot is what Replenishment Health renders
-// for "is this loader monitored, at what threshold?", so it shows every row the
-// registry holds — a duplicate station included — stops showing a binding the
-// moment its row is gone, and reports a failed read as a failure rather than
-// as "nothing is monitored".
-func TestReadThrough_SnapshotReadsTheRegistry(t *testing.T) {
-	t.Parallel()
-	r := newRTRig(t, "PANEL-RT-SNAP", 500)
-	insertRegistryRow(t, r, "PLANT.RT-STALE", rtThreshold)
-
-	snap, err := r.m.Snapshot()
-	testutil.MustNoErr(t, err, "snapshot")
-	if len(snap) != 1 || len(snap[0].Bindings) != 2 {
-		t.Fatalf("snapshot = %+v, want the payload with both registry rows", snap)
-	}
-
-	_, err = r.eng.db.Exec(`DELETE FROM demand_registry WHERE payload_code = $1`, r.b.payloadCode)
-	testutil.MustNoErr(t, err, "delete registry rows")
-	snap, err = r.m.Snapshot()
-	testutil.MustNoErr(t, err, "snapshot")
-	if len(snap) != 0 {
-		t.Errorf("snapshot still shows %+v after the rows went — the page would say a loader is monitored that is not", snap)
-	}
-
-	hideDemandRegistry(t, r.eng.db)
-	if _, err := r.m.Snapshot(); err == nil {
-		t.Error("a failed registry read returned no error — the page would render it as nothing monitored")
-	}
-}
-
 // A NEGATIVE TOTAL'S LOG LINE IS THROTTLED; ITS ORDERING IS NOT. Four deltas
 // sixteen seconds apart — each past the debounce window, all inside the
 // negative-log window — fire four times and log once.

@@ -153,7 +153,7 @@ func List(db *sql.DB) ([]Row, error) {
 }
 
 // BucketRow is the denormalized lineside_buckets listing row used by
-// the Core inventory page. Mirrors the field naming on Row so the JS
+// the Core Bins page's lineside section. Mirrors the field naming on Row so the JS
 // renderer can reuse the existing cell/lane/node columns alongside
 // the bucket-specific fields (Station, PayloadCode, State, Qty).
 //
@@ -175,7 +175,7 @@ type BucketRow struct {
 	Qty         int    `json:"qty"`
 	State       string `json:"state"`
 	// UpdatedAt is the last time this row's level changed. Surfaced so the
-	// inventory page can colour stale active rows (amber >7d, coral >30d).
+	// Bins page can colour stale active rows (amber >7d, coral >30d).
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
@@ -212,8 +212,8 @@ ORDER BY group_name, b.station, COALESCE(n.depth, 0), node_name, b.payload_code,
 `
 
 // ListLinesideBuckets returns every lineside_buckets row joined to the
-// node hierarchy so the Core inventory page can render them alongside
-// the existing bins table. Rows are ordered by cell → station → node
+// node hierarchy so the Core Bins page can render them alongside
+// its bins table. Rows are ordered by cell → station → node
 // → part → state for stable on-screen grouping. Empty table returns nil.
 func ListLinesideBuckets(db *sql.DB) ([]BucketRow, error) {
 	rows, err := db.Query(linesideBucketsSQL)
@@ -233,36 +233,6 @@ func ListLinesideBuckets(db *sql.DB) ([]BucketRow, error) {
 			return nil, fmt.Errorf("scan lineside_buckets row: %w", err)
 		}
 		out = append(out, r)
-	}
-	return out, rows.Err()
-}
-
-// DistinctStockedPayloads returns every payload_code with current stock — a
-// non-empty payload on at least one bin (any lifecycle) or one active lineside
-// pile. A stranded pile is a count anomaly, not stock.
-// Used to build the Replenishment Health rollup so payloads that are stocked but
-// have no threshold configured still appear (as "no threshold set") next to the
-// monitored ones.
-func DistinctStockedPayloads(db *sql.DB) ([]string, error) {
-	const q = `
-SELECT payload_code FROM (
-    SELECT DISTINCT payload_code FROM bins WHERE COALESCE(payload_code, '') <> ''
-    UNION
-    SELECT DISTINCT payload_code FROM lineside_buckets WHERE state = 'active'
-) s
-ORDER BY payload_code`
-	rows, err := db.Query(q)
-	if err != nil {
-		return nil, fmt.Errorf("distinct stocked payloads: %w", err)
-	}
-	defer rows.Close()
-	var out []string
-	for rows.Next() {
-		var p string
-		if err := rows.Scan(&p); err != nil {
-			return nil, fmt.Errorf("scan stocked payload: %w", err)
-		}
-		out = append(out, p)
 	}
 	return out, rows.Err()
 }

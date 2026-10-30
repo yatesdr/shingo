@@ -29,8 +29,9 @@ type Footprint struct {
 	ProcessesManaged int64 `json:"processes_managed"`
 	BinsManaged      int64 `json:"bins_managed"` // total — the headline
 	// Full vs empty split (Q-032): full = uop_remaining > 0; empty = the rest.
-	// BinsFull + BinsEmpty == BinsManaged. The Inventory page owns the richer
-	// three-way lifecycle split (stocked / in-production-empty / idle).
+	// BinsFull + BinsEmpty == BinsManaged. (The Inventory page's three-way
+	// lifecycle split, stocked / in-production-empty / idle, went with its KPI
+	// tiles on 2026-10-29.)
 	BinsFull   int64   `json:"bins_full"`
 	BinsEmpty  int64   `json:"bins_empty"`
 	CellsSpark []int64 `json:"cells_spark"` // cumulative-by-day, last 30 pts

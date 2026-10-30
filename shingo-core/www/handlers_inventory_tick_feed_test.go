@@ -8,8 +8,9 @@ import (
 	"testing"
 )
 
-// TestHandleInventory_TickFeedPanel: the Inventory page carries one row per
-// station for the production tick feed, flagging a station whose Edge reports
+// TestHandleInventory_TickFeedPanel: the count history page (the tick feed
+// moved there from /inventory, 2026-10-29) carries one row per station for the
+// production tick feed, flagging a station whose Edge reports
 // an unsent tick older than the lag threshold and one that has never reported
 // the lag (an Edge from before the shipper).
 func TestHandleInventory_TickFeedPanel(t *testing.T) {
@@ -29,13 +30,13 @@ func TestHandleInventory_TickFeedPanel(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	rec := getPlain(t, h.handleInventory, "/inventory")
+	rec := getPlain(t, h.handleInventoryCountHistory, "/inventory/count-history")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status %d: %s", rec.Code, rec.Body.String())
 	}
 	body := rec.Body.String()
 	if !strings.Contains(body, `id="tick-feed"`) {
-		t.Fatalf("no tick-feed panel on /inventory")
+		t.Fatalf("no tick-feed panel on /inventory/count-history")
 	}
 	i := strings.Index(body, `id="tick-feed"`)
 	panel := body[i:]

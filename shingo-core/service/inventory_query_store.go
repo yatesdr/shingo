@@ -8,6 +8,8 @@ import (
 	"shingocore/store"
 	"shingocore/store/audit"
 	"shingocore/store/inventory"
+	"shingocore/store/orders"
+	"shingocore/store/sourceability"
 )
 
 // InventoryQueryStore is the narrow DB surface InventoryService depends on.
@@ -33,6 +35,17 @@ type InventoryQueryStore interface {
 	// release declared full.
 	ListHoldDropRuns(since time.Time, gap time.Duration, limit int) ([]audit.HoldDropRun, error)
 	ListDeclaredFullStamps(since time.Time, limit int) ([]audit.DeclaredFullStamp, error)
+
+	// The /inventory page's reads (inventory_loop.go): the monitored
+	// bindings, the bins in the loop, the running claims, the lines' node
+	// rates, the live orders not yet delivered, and the calculator's inputs
+	// for every part at once.
+	LoopBindings(start, end time.Time) ([]inventory.Binding, error)
+	LoopBins(outOfLoop string) ([]inventory.LoopBin, error)
+	LoopClaims() ([]inventory.LoopClaim, error)
+	LoopNodeRates(rateWindow time.Duration) (sourceability.NodeRates, error)
+	LoopLiveOrders() ([]inventory.LiveOrder, error)
+	LeadTimesByPayload(r orders.LeadTimeRange) (map[string]orders.LeadTimeInputs, error)
 
 	// Raw SQL pass-through for the preflight / system-uop
 	// queries. Each one builds its own IN (...) placeholder list at

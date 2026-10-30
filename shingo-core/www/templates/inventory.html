@@ -1,14 +1,23 @@
 {{define "content"}}
+<!-- Inventory: the supermarket positions the threshold monitor watches (and
+     setting their UoP threshold), and the lines (the Edge's processes), every
+     claim of a running style, consume and produce. Each table opens on the rows
+     that need a look. Filled by /api/inventory/loop (inventory.js); the count
+     ledger is the Count history tab, /inventory/count-history. -->
 <div class="inv-page" data-authenticated="{{if .Authenticated}}true{{else}}false{{end}}">
 
-  <!-- Sticky search + controls bar. Search filters every section below. -->
-  <div class="inv-bar ops-filter-bar">
-    <h1 class="inv-title">Inventory</h1>
+  <!-- The two inventory pages are tabs of one, the shared .tabs as links: the
+       active tab is the title. A div, not a nav: shared/components.css styles
+       every nav as the app header. -->
+  <div class="tabs" role="navigation" aria-label="Inventory pages">
+    <a class="tab active" href="/inventory" aria-current="page">Inventory</a>
+    <a class="tab" href="/inventory/count-history">Count history</a>
+  </div>
+
+  <div class="inv-bar">
     <input type="text" id="inv-search" class="form-input inv-search"
-           placeholder="Search part, bin, node…  ( / to focus )"
-           data-action-input="onSearch" data-action-keydown="onSearchKey">
-    <select id="inv-zone" class="form-input" data-action-change="onFilter"><option value="">All zones</option></select>
-    <select id="inv-group" class="form-input" data-action-change="onFilter"><option value="">All groups</option></select>
+           placeholder="Search part or node…  ( / to focus )" aria-label="Search part or node"
+           data-action-input="onSearch">
     <button type="button" class="btn btn-sm" data-action="refresh" title="Refresh now">
       <svg class="icon icon-16" aria-hidden="true"><use href="#icon-refresh"></use></svg>
     </button>
@@ -21,134 +30,42 @@
     {{end}}
   </div>
 
-  <!-- Conditional alerts banner — only rendered when something needs eyes. -->
-  <div id="inv-alerts"></div>
+  <!-- The doubt line: bins whose count makes a sum untrustworthy. Rendered
+       only when there is one; absent otherwise, never "0 problems". -->
+  <div id="loop-doubt"></div>
 
-  <!-- KPI strip (5 tiles) — filled by JS. -->
-  <div class="grid-kpi" id="inv-kpi"></div>
-
-  <!-- Replenishment Health — one row per payload, worst first. -->
-  <section class="card mb-2" id="rh">
-    <div class="section-head">
-      <h2>Replenishment Health</h2>
-      <span class="text-muted-sm">On-hand = bins + lineside (what the threshold monitor sums) · click a row to tune thresholds</span>
-    </div>
-    <!-- The ledger panels sit SIDE BY SIDE, not stacked, because they are
-         read together: the left names a broken count ("this payload is
-         negative"), the right names the mechanism ("and here is the count that
-         never landed"). Stacked, the comparison cost a scroll.
-
-         Both are BLANK ON A GOOD DAY — the JS emits nothing when there is
-         nothing to say. .ledger-row hides an empty child and lets the survivor
-         take the full width, so one panel alone does not render in a half-width
-         column with dead space beside it. -->
-    <div class="ledger-row">
-      <!-- Fed by /api/inventory/ledger-exceptions. -->
-      <div id="rh-ledger-exceptions"></div>
-      <!-- Read-side only — every drop is already an observation row in
-           bin_uop_ledger with the dropped quantity in its metadata. -->
-      <div id="rh-delta-integrity"></div>
-      <!-- Open report_divergence episodes: where the Edge's lineside report and
-           Core's count still disagree, by carrier. Same fetch as the two above. -->
-      <div id="rh-report-divergence"></div>
-      <!-- Strict pack, routine records rather than faults: the produce holds
-           the Edges dropped, and the bins a station declared full above their
-           count. Never blank: an empty window renders one quiet line. -->
-      <div id="rh-hold-drops"></div>
-      <div id="rh-declared-stamps"></div>
-    </div>
-    <div class="table-scroll-y">
-      <table class="rh-table">
-        <thead>
-          <tr>
-            <th style="width:1rem"></th>
-            <th>Payload</th>
-            <th>Part number</th>
-            <th style="min-width:200px">On-hand vs threshold</th>
-            <th class="rh-num">On-hand</th>
-            <th class="rh-num">Threshold</th>
-            <th class="rh-num">Headroom</th>
-            <th>Status</th>
-          </tr>
-        </thead>
-        <tbody id="rh-body"><tr><td colspan="8" class="dash-empty">Loading…</td></tr></tbody>
+  <section class="card mb-2 loop-section" id="positions">
+    <div class="loop-scroll">
+      <table class="loop-table">
+        <caption class="loop-caption">Supermarket positions</caption>
+        <thead id="pos-head"></thead>
+        <tbody id="pos-body"><tr><td colspan="6" class="dash-empty">Loading…</td></tr></tbody>
       </table>
     </div>
   </section>
 
-  <!-- Maintained Groups — the empty-carrier levels Core holds, and the
-       arithmetic behind each one.
-
-       THE WHOLE ROW IS THE SUBTRACTION. want − resident − asked − coming = gap
-       is printed term by term rather than collapsed into a status, because a
-       group that is short and quiet has two opposite explanations — asks
-       already out, or carriers already coming — and a single pill hides which.
-
-       HIDDEN ENTIRELY WHEN THERE IS NOTHING TO SAY. No maintained group, or no
-       tick yet, and the section does not render. A card reading "0 groups" is a
-       card that gets scrolled past forever. -->
-  <section class="card mb-2 is-hidden" id="mg">
-    <div class="section-head">
-      <h2>Maintained Groups</h2>
-      <span class="text-muted-sm">Empty carriers Core keeps standing by · level &minus; here &minus; asked &minus; coming = short</span>
-    </div>
-    <div class="table-scroll-y">
-      <table class="rh-table">
-        <thead>
-          <tr>
-            <th>Group</th>
-            <th>Carrier type</th>
-            <th class="rh-num">Level</th>
-            <th class="rh-num">Here</th>
-            <th class="rh-num">Asked</th>
-            <th class="rh-num">Coming</th>
-            <th class="rh-num">Short</th>
-            <th>Waiting on</th>
-          </tr>
-        </thead>
-        <tbody id="mg-body"></tbody>
+  <section class="card mb-2 loop-section" id="lines" hidden>
+    <div class="loop-scroll">
+      <table class="loop-table">
+        <caption class="loop-caption">Lines</caption>
+        <thead id="line-head"></thead>
+        <tbody id="line-body"></tbody>
       </table>
     </div>
   </section>
 
-  <!-- Lineside Buckets — Core's mirror of the Edge's piles; the monitor sums the active ones. -->
-  <section class="card mb-2" id="buckets">
-    <div class="section-head">
-      <h2>Lineside Buckets</h2>
-      <span class="text-muted-sm">Active piles count toward on-hand; a stranded row is a count anomaly left at a cutover and never counts</span>
-    </div>
-    <div class="table-scroll-y">
-      <table class="rh-table">
-        <thead>
-          <tr>
-            <th>Station</th><th>Node</th><th>Payload</th><th>State</th>
-            <th class="rh-num">Qty</th><th>Updated</th>
-          </tr>
-        </thead>
-        <tbody id="buckets-body"><tr><td colspan="6" class="dash-empty">Loading…</td></tr></tbody>
-      </table>
-    </div>
-  </section>
-
-  {{template "tick-feed-panel" .TickFeed}}
-
-  <p class="text-muted-sm">
-    Bin-level detail lives on the <a href="/bins">Bins page</a>.
-  </p>
 </div>
 
-<!-- Flagged-carriers drill (the banner's "carriers flagged for a recount").
-     There is no per-payload consumption drill: the one that sat here matched a
-     part number against a payload code, which almost never agree, so it read
-     "n/a" for every payload. -->
-<div class="modal-overlay drill-modal" id="inv-drill" data-backdrop-close>
-  <div class="modal">
+<!-- The threshold calculator's inputs for one row: what the page's suggestion
+     was computed from, with the cycle and the safety factor open to change and
+     the calculator re-run on Core (POST /api/loader/calculate). -->
+<div class="modal-overlay" id="loop-calc" data-backdrop-close>
+  <div class="modal loop-calc-modal">
     <div class="modal-header">
-      <h2 id="drill-title">Carriers flagged for a recount</h2>
-      <button class="modal-close" data-action="close-modal" aria-label="Close"><svg class="icon icon-20" aria-hidden="true"><use href="#icon-close"></use></svg></button>
+      <h2 id="loop-calc-title">Threshold calculator</h2>
+      <button class="modal-close" data-action="closeCalc" aria-label="Close"><svg class="icon icon-20" aria-hidden="true"><use href="#icon-close"></use></svg></button>
     </div>
-    <div id="drill-detail"></div>
-    <div class="drill-narrative" id="drill-narrative"></div>
+    <div id="loop-calc-body"></div>
   </div>
 </div>
 

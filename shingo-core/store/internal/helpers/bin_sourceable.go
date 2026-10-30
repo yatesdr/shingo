@@ -194,7 +194,7 @@ func UndeclaredCarrierRuleSQL(payloadExpr, binTypeExpr string) string {
 }
 
 // BinInUndeclaredCarrierSQL reads the STAMP, not the rule. Every surface that
-// counts or lists findings composes this one fragment, so the inventory page's
+// counts or lists findings composes this one fragment, so count history's
 // count, the /material-flags list and the sourcing reason cannot disagree about
 // how many there are.
 //

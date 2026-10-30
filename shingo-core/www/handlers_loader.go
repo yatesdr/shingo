@@ -183,6 +183,10 @@ func (h *Handlers) apiSetLoaderPayload(w http.ResponseWriter, r *http.Request) {
 		LoaderID     int64  `json:"loader_id"`
 		PayloadCode  string `json:"payload_code"`
 		UOPThreshold int    `json:"uop_threshold"`
+		// Source is how the threshold was reached, for its audit row:
+		// "calculated" when the /inventory page applied the calculator's
+		// suggestion as it stood; anything else records "manual".
+		Source string `json:"source"`
 	}
 	if !h.parseJSON(w, r, &req) {
 		return
@@ -191,7 +195,8 @@ func (h *Handlers) apiSetLoaderPayload(w http.ResponseWriter, r *http.Request) {
 		h.jsonError(w, "loader_id and payload_code are required", http.StatusBadRequest)
 		return
 	}
-	if err := h.engine.LoaderService().SetPayload(req.LoaderID, req.PayloadCode, req.UOPThreshold); err != nil {
+	by := service.ThresholdBy{Actor: h.getUsername(r), Source: req.Source}
+	if err := h.engine.LoaderService().SetPayload(req.LoaderID, req.PayloadCode, req.UOPThreshold, by); err != nil {
 		h.jsonError(w, "set payload: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -288,6 +293,7 @@ func (h *Handlers) apiSetLoaderHome(w http.ResponseWriter, r *http.Request) {
 		PayloadCode    string `json:"payload_code"`
 		HomeKind       string `json:"home_kind"` // "" / home / buffer (zone the tile dropped into)
 		UOPThreshold   int    `json:"uop_threshold"`
+		Source         string `json:"source"` // as on apiSetLoaderPayload
 	}
 	if !h.parseJSON(w, r, &req) {
 		return
@@ -299,7 +305,8 @@ func (h *Handlers) apiSetLoaderHome(w http.ResponseWriter, r *http.Request) {
 		h.jsonError(w, "loader_id and position_node_id are required", http.StatusBadRequest)
 		return
 	}
-	if err := h.engine.LoaderService().SetHome(req.LoaderID, req.PositionNodeID, req.PayloadCode, req.HomeKind, req.UOPThreshold); err != nil {
+	by := service.ThresholdBy{Actor: h.getUsername(r), Source: req.Source}
+	if err := h.engine.LoaderService().SetHome(req.LoaderID, req.PositionNodeID, req.PayloadCode, req.HomeKind, req.UOPThreshold, by); err != nil {
 		h.jsonError(w, "set home: "+err.Error(), loaderWriteStatus(err))
 		return
 	}
@@ -422,8 +429,8 @@ func (h *Handlers) apiListLoaders(w http.ResponseWriter, _ *http.Request) {
 }
 
 // apiCalculateThreshold runs the ported lead-time calculator over a lookback
-// window and returns suggested thresholds + a confidence score, for the loader
-// panel's Calculate button.
+// window and returns suggested thresholds + a confidence score, for the
+// /inventory row's calculator modal (Recalculate, with a typed cycle).
 func (h *Handlers) apiCalculateThreshold(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		CoreNodeName   string  `json:"core_node_name"`

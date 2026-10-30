@@ -210,12 +210,13 @@ func TestThresholdMonitor_ReadsAuthoritativeSum_FiresWhenDBBelow(t *testing.T) {
 	}
 }
 
-// TestThresholdMonitor_SwapContradiction_ChipsWhenStocked pins P2-C9: a manual
-// swap request for a payload whose ledger reads fully stocked (>= its max
-// binding threshold) raises the Replenishment Health contradiction chip and
-// creates NO signal — the SNF3 phantom-on-hand shape where the operator swaps
-// while Core believes stocked.
-func TestThresholdMonitor_SwapContradiction_ChipsWhenStocked(t *testing.T) {
+// TestThresholdMonitor_SwapContradiction_RecordedWhenStocked pins P2-C9: a
+// manual swap request for a payload whose ledger reads fully stocked (>= its
+// max binding threshold) records the contradiction (the stamp that throttles
+// its manual_request_vs_ledger log) and creates NO signal — the SNF3
+// phantom-on-hand shape where the operator swaps while Core believes stocked.
+// (It also raised a Replenishment Health chip until that page went, 2026-10-29.)
+func TestThresholdMonitor_SwapContradiction_RecordedWhenStocked(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
 	eng := newTestEngine(t, db, simulator.New())
@@ -247,19 +248,12 @@ func TestThresholdMonitor_SwapContradiction_ChipsWhenStocked(t *testing.T) {
 	m.NoteSwapRequestContradiction(payload)
 	time.Sleep(200 * time.Millisecond)
 
-	// Chip raised for this payload.
-	chip := false
-	snap, err := m.Snapshot()
-	if err != nil {
-		t.Fatalf("snapshot: %v", err)
-	}
-	for _, s := range snap {
-		if s.PayloadCode == payload && s.SwapContradiction {
-			chip = true
-		}
-	}
-	if !chip {
-		t.Error("expected P2-C9 SwapContradiction chip for a swap requested against a stocked ledger")
+	// The contradiction is recorded for this payload.
+	m.mu.Lock()
+	_, recorded := m.swapContradiction[payload]
+	m.mu.Unlock()
+	if !recorded {
+		t.Error("expected the P2-C9 contradiction recorded for a swap requested against a stocked ledger")
 	}
 
 	// And NO order was created — the re-read reads stocked.
@@ -268,11 +262,12 @@ func TestThresholdMonitor_SwapContradiction_ChipsWhenStocked(t *testing.T) {
 	}
 }
 
-// TestThresholdMonitor_SwapContradiction_NoChipWhenBelow pins the other half:
-// a swap request for a genuinely below-threshold payload is the operator being
-// right, not a contradiction — no chip is raised. (A normal below-threshold
-// signal may fire; that is the expected path and is covered elsewhere.)
-func TestThresholdMonitor_SwapContradiction_NoChipWhenBelow(t *testing.T) {
+// TestThresholdMonitor_SwapContradiction_NotRecordedWhenBelow pins the other
+// half: a swap request for a genuinely below-threshold payload is the operator
+// being right, not a contradiction — nothing is recorded. (A normal
+// below-threshold signal may fire; that is the expected path and is covered
+// elsewhere.)
+func TestThresholdMonitor_SwapContradiction_NotRecordedWhenBelow(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
 	eng := newTestEngine(t, db, simulator.New())
@@ -301,14 +296,11 @@ func TestThresholdMonitor_SwapContradiction_NoChipWhenBelow(t *testing.T) {
 	m.NoteSwapRequestContradiction(payload)
 	time.Sleep(200 * time.Millisecond)
 
-	snap, err := m.Snapshot()
-	if err != nil {
-		t.Fatalf("snapshot: %v", err)
-	}
-	for _, s := range snap {
-		if s.PayloadCode == payload && s.SwapContradiction {
-			t.Error("raised a contradiction chip for a genuinely below-threshold payload; the operator is right, not contradicted")
-		}
+	m.mu.Lock()
+	_, recorded := m.swapContradiction[payload]
+	m.mu.Unlock()
+	if recorded {
+		t.Error("recorded a contradiction for a genuinely below-threshold payload; the operator is right, not contradicted")
 	}
 }
 

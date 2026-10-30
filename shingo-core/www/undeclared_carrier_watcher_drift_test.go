@@ -7,8 +7,9 @@ import (
 	"testing"
 )
 
-// undeclared_carrier_watcher_drift_test.go — the inventory page's half of the
-// carrier-rule watcher, held as source text.
+// undeclared_carrier_watcher_drift_test.go — the count history page's half of
+// the carrier-rule watcher, held as source text. (It was /inventory's until
+// 2026-10-29, when the counts moved to /inventory/count-history.)
 //
 // ── WHY THIS IS A TEST AT ALL ───────────────────────────────────────────────
 //
@@ -16,7 +17,7 @@ import (
 // carrier its payload does not declare LANDS now, counts as stock on every
 // inventory surface, and is refused by every sourcing reader — so the only
 // thing between "that bin can never be fetched" and nobody knowing is the count
-// on this page and the list on /material-flags. Law 8: a flag nobody sees is
+// on that page and the list on /material-flags. Law 8: a flag nobody sees is
 // error 5, and the refusal it replaced was at least loud.
 //
 // The failure mode that would silently disable it is a JSON key: the Go field
@@ -35,20 +36,20 @@ func TestInventoryPageReadsTheUndeclaredCarrierCount(t *testing.T) {
 	goSrc := mustReadRepoFile(t, filepath.FromSlash("../uop/applier.go"))
 	if !strings.Contains(goSrc, `json:"`+key+`"`) {
 		t.Fatalf("uop.AnomalyDeltaSummary no longer publishes %q.\n"+
-			"If the field was renamed, rename it in inventory.js in the same commit; "+
-			"if it was deleted, the inventory page has lost its only count of carriers "+
+			"If the field was renamed, rename it in count-history.js in the same commit; "+
+			"if it was deleted, the count history page has lost its only count of carriers "+
 			"nothing will ever fetch.", key)
 	}
 
-	js := mustReadRepoFile(t, filepath.FromSlash("static/pages/inventory.js"))
+	js := mustReadRepoFile(t, filepath.FromSlash("static/pages/count-history.js"))
 	if !strings.Contains(js, "anomalySummary."+key) {
-		t.Errorf("inventory.js does not read anomalySummary.%s.\n"+
+		t.Errorf("count-history.js does not read anomalySummary.%s.\n"+
 			"An undefined property renders as zero findings, which is the reassuring "+
 			"reading and the wrong one — the produce door lands these bins rather than "+
 			"refusing them, so this count is what replaced the refusal.", key)
 	}
 	if !strings.Contains(js, "/material-flags") {
-		t.Error("the count on /inventory does not link to /material-flags. A bare " +
+		t.Error("the count on /inventory/count-history does not link to /material-flags. A bare " +
 			"number names no carrier and no fix; the list is on the other page.")
 	}
 }

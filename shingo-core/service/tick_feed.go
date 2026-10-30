@@ -24,7 +24,7 @@ const TickFeedLagThreshold = 5 * time.Minute
 // heartbeat's own 90 s TTL gives one late one, plus two more.
 const TickFeedReportStaleAfter = 3 * time.Minute
 
-// ClassifyTickFeed derives the Inventory page's tick-feed rows from the
+// ClassifyTickFeed derives count history's tick-feed rows from the
 // registry, as of now. Pure.
 func ClassifyTickFeed(edges []domain.RegistryEdge, now time.Time) []domain.TickFeedStation {
 	out := make([]domain.TickFeedStation, 0, len(edges))
@@ -45,7 +45,7 @@ func ClassifyTickFeed(edges []domain.RegistryEdge, now time.Time) []domain.TickF
 	return out
 }
 
-// TickFeedStatus is the Inventory page's production tick feed panel: one row
+// TickFeedStatus is count history's production tick feed panel: one row
 // per registered station. One registry read.
 func (s *HeartbeatService) TickFeedStatus(now time.Time) ([]domain.TickFeedStation, error) {
 	edges, err := s.db.ListEdges()

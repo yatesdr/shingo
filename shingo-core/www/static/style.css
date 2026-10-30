@@ -1876,81 +1876,112 @@ body[data-dashboard-kind="node-report"] #dash-main {
   color: var(--text-muted);
 }
 
-/* ═══ Inventory page (v2) ══════════════════════════════════════════════════
- * Exception-first inventory: sticky search bar, alerts banner, KPI strip, a
- * Replenishment Health table (on-hand vs threshold per payload, worst first),
- * and lineside buckets with staleness colouring. The bins table moved to /bins.
- * Shared pieces (.thr-meter, .chip-*, .kpi-*, .alerts-banner, .ops-filter-bar)
- * live in components.css; page-specific layout lives here. */
+/* ═══ Inventory page ════════════════════════════════════════════════════════
+ * /inventory is two tables, supermarket positions and lines (.loop-*): values
+ * in cells, the meaning in the header and its ⓘ. /inventory/count-history
+ * carries the count ledger lists (.ledger-*, .di-*, .rh-table, below). Tokens
+ * only; rules from the substrate ramp, indigo as chrome, status in .badge-* and
+ * the red of a row past its threshold. */
 
-/* Sticky search + controls bar. ONE ROW: .form-input is width:100%, which put
-   the search and both selects on full-width rows of their own and pinned
-   ~215 px over the page. The sections it scrolls to keep their heading clear
-   of it. */
-.inv-bar { display: flex; align-items: center; gap: 0.6rem; flex-wrap: wrap; padding: 0.7rem 0; border-bottom: 1px solid var(--border); }
-.inv-bar .inv-title { font-size: var(--font-xl); margin: 0 auto 0 0; font-weight: var(--fw-bold); }
+/* The search + controls bar, under the page's tabs (the shared .tabs, whose
+   rule separates the header) and right-aligned. ONE ROW: .form-input is
+   width:100%, which put the search on a full-width row of its own. */
+.inv-bar { display: flex; align-items: center; justify-content: flex-end; gap: var(--sp-2); flex-wrap: wrap; margin-bottom: var(--sp-3); }
 .inv-bar .form-input { width: auto; }
 .inv-bar .inv-search { flex: 0 1 240px; min-width: 160px; }
 .inv-page > section { scroll-margin-top: 4.5rem; }
 .inv-live-stamp { font-size: var(--font-xs); color: var(--text-muted); font-variant-numeric: tabular-nums; }
 
-/* KPI bin-lifecycle stacked bar. */
-.lifebar { display: flex; height: 0.9rem; border-radius: 3px; overflow: hidden; margin-top: 0.55rem; gap: 2px; }
-.lifebar span { height: 100%; }
-.lifebar .seg-stocked { background: var(--viz-green); }
-.lifebar .seg-prodempty { background: var(--viz-amber); }
-.lifebar .seg-idle { background: color-mix(in srgb, var(--text-muted) 45%, transparent); }
-.lifekey { display: flex; gap: 0.9rem; font-size: var(--font-xs); color: var(--text-muted); margin-top: 0.3rem; flex-wrap: wrap; }
-.lifekey i { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 0.3rem; }
-.lifekey .k-stocked { background: var(--viz-green); }
-.lifekey .k-prodempty { background: var(--viz-amber); }
-.lifekey .k-idle { background: color-mix(in srgb, var(--text-muted) 45%, transparent); }
+/* The doubt line: one line above the tables, only when a count is in doubt. */
+.loop-doubt { margin: 0 0 var(--sp-3); font-size: var(--font-sm); line-height: 1.8; }
 
-/* Replenishment Health table. */
+/* The tables. Headers on the type scale, two weights; one value per cell,
+   every numeric column right-aligned and tabular. */
+.loop-scroll { overflow-x: auto; }
+.loop-table { width: 100%; border-collapse: collapse; font-size: var(--font-sm); }
+.loop-caption { caption-side: top; text-align: left; font-size: var(--font-sm); font-weight: var(--fw-bold); color: var(--text); padding: 0 var(--sp-3) var(--sp-2); }
+.loop-table th { font-size: var(--font-xs); font-weight: var(--fw-bold); color: var(--text-muted); text-align: left; padding: var(--sp-2) var(--sp-3); border-bottom: 1px solid var(--sub-3); vertical-align: bottom; white-space: nowrap; }
+.loop-table td { padding: var(--sp-2) var(--sp-3); border-bottom: 1px solid var(--sub-1); vertical-align: middle; white-space: nowrap; }
+.loop-table .loop-r { text-align: right; }
+.loop-table .tnum { font-variant-numeric: tabular-nums; }
+/* A row past its threshold, or a count below zero. */
+.loop-short { color: var(--viz-coral); font-weight: var(--fw-bold); }
+/* The threshold line in the In loop cell: the in-loop fill over a track and an
+   amber tick at the UoP threshold, ringed in the surface colour so it reads over
+   any fill. Coral past the threshold, amber near it, green clear of it; hatched
+   when the sum is below zero. */
+.loop-inloop { display: inline-flex; align-items: center; gap: var(--sp-2); }
+/* The number in a fixed box, so every row's bar starts at the same place
+   whatever the number's width (room for "12,345"). */
+.loop-inloop__n { display: inline-block; min-width: 6ch; text-align: right; }
+.thr-meter { position: relative; display: inline-block; width: 7.5rem; height: 0.7rem; background: var(--sub-2); border-radius: 3px; }
+.thr-meter__fill { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 3px; background: var(--viz-green); }
+.thr-meter--near .thr-meter__fill { background: var(--viz-amber); }
+.thr-meter--below .thr-meter__fill { background: var(--viz-coral); }
+.thr-meter__tick { position: absolute; top: -3px; bottom: -3px; width: 2px; margin-left: -1px; background: var(--viz-amber); border-radius: 1px; box-shadow: 0 0 0 1px var(--surface); }
+.thr-meter--err { background: repeating-linear-gradient(45deg,
+  color-mix(in srgb, var(--viz-coral) 30%, transparent), color-mix(in srgb, var(--viz-coral) 30%, transparent) 4px,
+  transparent 4px, transparent 8px); }
+/* A line's role: a plain word, not a badge (badges are status). */
+.loop-table .loop-role { font-size: var(--font-xs); color: var(--text-muted); }
+/* A value with more on hover (the bins away from the spot). */
+.loop-tip { text-decoration: underline dotted var(--sub-4); text-underline-offset: 3px; cursor: help; }
+.loop-sub { font-size: var(--font-xs); color: var(--text-muted); font-weight: var(--fw-normal); }
+.loop-help { cursor: help; color: var(--text-muted); font-weight: var(--fw-normal); }
+.loop-fold td { padding-top: var(--sp-3); }
+/* The search term, marked where it matches. */
+.inv-hit { background: color-mix(in srgb, var(--viz-amber) 35%, transparent); border-radius: 2px; }
+
+/* The UoP threshold cell: the input, and ABOVE HOME CAPACITY when it applies. */
+.loop-thr { display: flex; align-items: center; justify-content: flex-end; gap: var(--sp-2); }
+.loop-table .loop-thr-input { width: 6rem; margin: 0; padding: var(--sp-1) var(--sp-2); text-align: right; font-size: var(--font-sm); border: 1px solid var(--sub-3); border-radius: var(--radius); background: var(--surface); color: var(--text); }
+.loop-table .loop-thr-input:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+.loop-row--dirty .loop-thr-input { border-color: var(--accent); }
+.loop-chip { font-size: var(--font-xs); }
+/* The UoP threshold column's ⓘ opens on click: its one line and the link to
+   the uncalibrated calculator. */
+.loop-thr-h { position: relative; }
+.loop-help-btn { background: none; border: 0; padding: 0; font: inherit; }
+.loop-pop { position: absolute; right: 0; top: 100%; z-index: var(--z-dropdown); width: 18rem; margin-top: var(--sp-1); padding: var(--sp-2) var(--sp-3); background: var(--surface); color: var(--text); border: 1px solid var(--sub-3); border-radius: var(--radius); box-shadow: var(--shadow-md); font-size: var(--font-sm); font-weight: var(--fw-normal); text-transform: none; letter-spacing: normal; text-align: left; white-space: normal; }
+.loop-calc-pick { display: flex; align-items: center; gap: var(--sp-2); margin-bottom: var(--sp-2); font-size: var(--font-sm); }
+.loop-link { background: none; border: 0; padding: 0; font: inherit; color: var(--accent); text-decoration: underline; cursor: pointer; }
+
+/* A saved row flashes once. --dur-fast is zeroed under reduced motion. */
+.loop-flash > td { animation: loop-flash var(--dur-fast) var(--ease); }
+@keyframes loop-flash { from { background: color-mix(in srgb, var(--accent) 18%, transparent); } to { background: transparent; } }
+
+/* The calculator's inputs (#loop-calc). */
+.loop-calc-modal { max-width: 460px; }
+.loop-calc-table { width: 100%; border-collapse: collapse; font-size: var(--font-sm); margin-bottom: var(--sp-2); }
+.loop-calc-table th { text-align: left; font-weight: var(--fw-normal); color: var(--text-muted); padding: var(--sp-1) 0; }
+.loop-calc-table td { padding: var(--sp-1) 0; }
+.loop-calc-table input, .loop-calc-out input { width: 6rem; margin: 0; text-align: right; }
+.loop-calc-out { margin: var(--sp-3) 0; font-size: var(--font-sm); }
+.loop-calc-actions { display: flex; justify-content: flex-end; }
+
+@media (max-width: 640px) {
+  .loop-table th, .loop-table td { padding: var(--sp-2); }
+}
+}
+
+/* Count history and the pages that took its sections: the tables (the tick feed
+   on count history, Maintained Groups on the Nodes page, Lineside Buckets on the
+   Bins page) and the flagged-carrier link in count history's banner. */
 .rh-table { width: 100%; border-collapse: collapse; font-size: var(--font-sm); }
 .rh-table th { font-weight: 600; color: var(--text-muted); font-size: var(--font-xs); text-transform: uppercase; letter-spacing: 0.05em; text-align: left; padding: 0.45rem 0.6rem; border-bottom: 1px solid var(--border); }
 .rh-table td { padding: 0.5rem 0.6rem; border-bottom: 1px solid var(--border); vertical-align: middle; }
-.rh-row { cursor: pointer; }
-.rh-row:hover { background: var(--elev-raised); }
 .rh-num { text-align: right; font-variant-numeric: tabular-nums; }
 /* The only coloured number on a Maintained Groups row. A covered level is not
    a green tick, it is nothing happening — so only the short case is marked. */
 .mg-short { color: var(--warning); font-weight: 600; }
-.rh-neg { color: var(--viz-coral); }
-.rh-split { font-size: var(--font-xs); color: var(--text-muted); }
 .chev { display: inline-block; transition: transform var(--dur-fast, 0.15s) var(--ease, ease); color: var(--text-muted); }
-.rh-row.open .chev { transform: rotate(90deg); }
-
-/* Expanded editor row. */
-.rh-editor > td { background: var(--elev-raised); padding: 0.9rem 1rem; }
-.thr-edit-table { width: 100%; border-collapse: collapse; font-size: var(--font-sm); }
-.thr-edit-table th { font-size: var(--font-xs); text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-muted); text-align: left; padding: 0.3rem 0.5rem; border-bottom: 1px solid var(--border); }
-.thr-edit-table td { padding: 0.4rem 0.5rem; vertical-align: middle; }
-.thr-edit-table input[type="number"] { width: 90px; text-align: right; }
-.row-dirty { outline: 1px solid var(--viz-amber); outline-offset: -1px; border-radius: 4px; }
-.dirty-dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--viz-amber); margin-right: 0.35rem; vertical-align: middle; }
-.kind-pill { font-size: var(--font-xs); text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-muted); border: 1px solid var(--border); border-radius: 999px; padding: 0.05rem 0.45rem; }
-.calc-pop { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow-sm); padding: 0.8rem 1rem; margin-top: 0.6rem; max-width: 520px; }
-.calc-pop b { font-variant-numeric: tabular-nums; }
-.conf-high { color: var(--viz-green); }
-.conf-low { color: var(--viz-amber); }
-
-/* Holding-bins mini list inside the expanded row. */
-.holding-title { font-size: var(--font-xs); text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-muted); margin: 0.8rem 0 0.3rem; }
-.holding-table { width: 100%; border-collapse: collapse; font-size: var(--font-sm); }
-.holding-table th { font-size: var(--font-xs); color: var(--text-muted); text-transform: uppercase; text-align: left; padding: 0.25rem 0.5rem; border-bottom: 1px solid var(--border); }
-.holding-table td { padding: 0.3rem 0.5rem; border-bottom: 1px solid var(--border); }
+.alerts-banner .link-btn { background: none; border: 0; padding: 0; font: inherit; color: inherit; text-decoration: underline; cursor: pointer; }
 
 /* Lineside bucket staleness. */
 .stale-7 { color: var(--viz-amber); }
 .stale-30 { color: var(--viz-coral); font-weight: 600; }
 tr.row-stale > td { background: color-mix(in srgb, var(--viz-coral) 7%, transparent); }
 
-/* Global-search match highlight. */
-.inv-hit { background: color-mix(in srgb, var(--viz-amber) 35%, transparent); border-radius: 2px; }
-
-/* Consumption drill chart. */
-.drill-chart { height: 320px; }
 .drill-narrative { margin-top: 0.75rem; color: var(--text-muted); font-size: var(--font-sm); }
 
 /* ── Core Health strip (dashboard) ─────────────────────────────────────────
@@ -2076,8 +2107,8 @@ tr.row-stale > td { background: color-mix(in srgb, var(--viz-coral) 7%, transpar
    "structure recedes, state glows" overrides it: a desaturated state colour
    placed in structure is exactly what the principle forbids. It was also
    incoherent here, because the fill retints to --warning/--danger while the
-   track stayed indigo. Every other meter in the app (.thr-meter,
-   .bar-row__track, .util-bar, .progress-bar-container) was already neutral;
+   track stayed indigo. Every other meter in the app (.bar-row__track,
+   .util-bar, .progress-bar-container) was already neutral;
    this one was the outlier. */
 .cs-meter {
   position: relative; height: 6px; border-radius: 3px; overflow: hidden;
@@ -2146,7 +2177,7 @@ a.cs-fig { color: inherit; text-decoration: none; }
 .dwell-thin .dwell-val { opacity: 0.65; }
 .dwell-thin .dwell-count { color: var(--warning); }
 
-/* ── Ledger exceptions (inventory) ─────────────────────────────────────────
+/* ── Ledger exceptions (count history) ─────────────────────────────────────────
    Rendered only when the list is non-empty — the JS emits nothing otherwise.
    An exception list that always shows something is not an exception list. */
 .ledger-exceptions {
@@ -2164,7 +2195,7 @@ a.cs-fig { color: inherit; text-decoration: none; }
 }
 .ledger-exceptions__list b { color: var(--danger); }
 
-/* ── Delta integrity (inventory) ───────────────────────────────────────────
+/* ── Delta integrity (count history) ───────────────────────────────────────────
    Sits directly under the ledger exceptions and is read WITH it. Deliberately
    the quieter of the two: this panel names a MECHANISM, its neighbour names a
    broken count. Amber, not red — nothing here is itself a fault. Blank on a
@@ -2178,14 +2209,6 @@ a.cs-fig { color: inherit; text-decoration: none; }
 }
 .delta-integrity__head { font-size: 0.85rem; margin-bottom: 0.35rem; }
 
-/* One line, not two paragraphs. It is the arrow LEGEND first — the glyphs in
-   the rows are unreadable without it — and carries the single claim a reader
-   must not get wrong (▲ beside a negative ledger is two problems, not one).
-   The full explanation is on the ⓘ. */
-.delta-integrity__legend {
-  font-size: 0.75rem; color: var(--text-muted); margin-bottom: 0.4rem;
-}
-.delta-integrity__legend b { color: var(--viz-amber); font-weight: 600; }
 .di-info {
   cursor: help; opacity: 0.7; margin-left: 0.2rem;
   border-bottom: 1px dotted currentColor;
@@ -2217,10 +2240,9 @@ a.cs-fig { color: inherit; text-decoration: none; }
 .di-row--head .di-uop, .di-row--head .di-drops, .di-row--head .di-flags {
   color: var(--text-muted); font-weight: inherit; cursor: default;
 }
-/* Direction rides the figure as a glyph. Colour is a REINFORCEMENT, never the
-   only carrier — the arrow itself distinguishes the two readings for anyone
-   who cannot separate the hues. */
-.di-dir { font-size: 0.7em; opacity: 0.85; }
+/* Direction rides the figure as a word (high / low). Colour is a
+   REINFORCEMENT, never the only carrier. */
+.di-dir { font-size: 0.85em; opacity: 0.85; }
 .di-dir--below { color: var(--danger); }
 .di-drops { text-align: right; color: var(--text-muted); }
 .di-flags { display: flex; gap: 0.3rem; align-items: baseline; justify-content: flex-end; }
@@ -2245,7 +2267,7 @@ a.cs-fig { color: inherit; text-decoration: none; }
    would double it against the flex gap. */
 .ledger-row .ledger-exceptions, .ledger-row .delta-integrity { margin-bottom: 0; }
 
-/* ── Strict-pack lists (inventory): dropped holds, declared-full stamps ────
+/* ── Strict-pack lists (count history): dropped holds, declared-full stamps ────
  * Routine records, not faults: a plain border, no chip, and a quiet line
  * rather than nothing when the window is empty. Node and time lead each row
  * because a dropped hold and the stamp of the next bin describe the same
@@ -2261,37 +2283,6 @@ a.cs-fig { color: inherit; text-decoration: none; }
   font-size: 0.8rem; color: var(--text-muted);
   font-variant-numeric: tabular-nums;
 }
-
-/* ── Daily drop trend ──────────────────────────────────────────────────────
- * One bar per plant-local day WITH DROPS. Days with none are absent from the
- * data and absent here: a zero-height bar would assert a measured quiet day
- * where the plant was simply down, which is rule 4 of the number doctrine
- * (no data must not render as zero) at the one spot on this panel it bites.
- *
- * The bar is a magnitude and the tooltip carries the signed number, the row
- * count and the cause split — colour distinguishes the two DIRECTIONS but is
- * never the only carrier of the reading. Heights scale to the window's peak,
- * because the finding this exists to show is that one day can carry most of a
- * month, and a fixed scale hides exactly that. */
-.delta-daily { margin: 0.5rem 0 0.6rem; }
-.delta-daily__head {
-  display: flex; align-items: baseline; gap: 0.4rem;
-  font-size: 0.78rem; margin-bottom: 0.25rem;
-}
-.dd-net { color: var(--viz-amber); font-variant-numeric: tabular-nums; font-weight: 600; }
-.delta-daily__chart {
-  display: flex; align-items: flex-end; gap: 2px;
-  height: 34px;
-}
-.dd-bar {
-  flex: 1 1 0; min-width: 3px; border-radius: 1px 1px 0 0;
-  background: var(--viz-amber);
-}
-/* Above reality (consumption never landed) is the common Springfield shape;
-   below reality (credit never landed) is the one that can explain a negative
-   ledger. Two findings, two marks — see the panel's __why copy. */
-.dd-bar--above { background: var(--viz-amber); }
-.dd-bar--below { background: var(--danger); }
 
 /* ── Demand episodes (Phase 6: 5.1, 5.4, 5.5, 5.6, 5.14) ──────────────────
  *

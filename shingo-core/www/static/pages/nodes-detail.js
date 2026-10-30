@@ -1,5 +1,5 @@
 import { api, apiGet, apiPost, delegateActions, el, escapeHtml, openFromQuery, toast, uiConfirm } from '/static/app.js';
-import { confirmAllowedBinsNarrowing, renderMaintainSection, saveMaintainedGroup } from '/static/pages/nodes-maintain.js';
+import { confirmAllowedBinsNarrowing, renderKeeperLevels, renderMaintainSection, saveMaintainedGroup } from '/static/pages/nodes-maintain.js';
 
 // Node detail modal: form fields, chip pickers (bin types & stations),
 // inventory list with editable manifest, occupancy comparison modal.
@@ -77,6 +77,9 @@ export function openNodeModal(el, opts) {
   // for an operator who can edit: the section lives in the auth-only half of
   // the modal and has no read-only twin.
   renderMaintainSection(isAuth && isGroupType, d.id);
+  // The keeper's last tick for a maintained group, for every viewer: inside
+  // the maintained section with a session, in the read-only half without.
+  renderKeeperLevels(isGroupType ? d.name : '');
 
   if (isAuth) {
     var assocSection = document.getElementById('nf-assoc-section');

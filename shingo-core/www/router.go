@@ -26,7 +26,7 @@ import (
 // of different interface types so that compile-time enforcement
 // constrains where orchestration verbs can be reached:
 //
-//   - h.engine (ServiceAccess) — narrow surface, 48 methods. CRUD-only
+//   - h.engine (ServiceAccess) — narrow surface, 46 methods. CRUD-only
 //     handlers and read-only state queries use this. Calling
 //     orchestration verbs through h.engine fails to compile because
 //     those methods are not on ServiceAccess.
@@ -183,6 +183,8 @@ func NewRouter(eng *engine.Engine, doors *Doors, dbg *debuglog.Logger) (http.Han
 		r.Get("/orders/detail", h.handleOrderDetail)
 		r.Get("/robots", h.handleRobots)
 		r.Get("/inventory", h.handleInventory)
+		// The count ledger lists that left /inventory, as they were (2026-10-29).
+		r.Get("/inventory/count-history", h.handleInventoryCountHistory)
 		// The demand GRAIN. There used to be a /demand quota page beside it
 		// under a near-identical name; it went with its table at v106.
 		r.Get("/demand-episodes", h.handleDemandEpisodes)
@@ -386,8 +388,7 @@ func NewRouter(eng *engine.Engine, doors *Doors, dbg *debuglog.Logger) (http.Han
 			r.Get("/telemetry/e-maint/download", h.apiEMaintRobotTelemetryDownload)
 
 			// Inventory & diagnostics
-			r.Get("/inventory", h.apiInventory)
-			r.Get("/inventory/monitor-totals", h.apiInventoryMonitorTotals)
+			r.Get("/inventory/loop", h.apiInventoryLoop)
 			r.Get("/inventory/anomaly-summary", h.apiInventoryAnomalySummary)
 			r.Get("/inventory/ledger-exceptions", h.apiInventoryLedgerExceptions)
 			r.Get("/inventory/maintained-groups", h.apiInventoryMaintainedGroups)

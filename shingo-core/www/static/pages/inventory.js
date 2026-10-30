@@ -1,151 +1,172 @@
-// Inventory v2 — exception-first. Leads with what needs attention: a
-// Replenishment Health table (on-hand vs threshold per payload, worst first),
-// a KPI strip, a conditional alerts banner, and lineside buckets with staleness
-// colouring. Bin-level detail lives on /bins now. Data sources:
-//   /api/inventory/monitor-totals — per-payload on-hand (bins+lineside split),
-//     which payloads are monitored, and their thresholds.
-//   /api/loader/list — editable per-loader threshold config (Save + Calc).
-//   /api/inventory — bin rows, for the payload's holding bins + bin lifecycle.
-//   /api/buckets — lineside buckets, now carrying updated_at for staleness.
-//   /api/nodes — node id -> name, for home-loader node labels.
+// Inventory: two tables from one read (/api/inventory/loop, service
+// InventoryService.Loop). Supermarket positions: a row per (loader position,
+// part) the threshold monitor watches. Lines: a row per claim of a running
+// style at a line (an Edge process), consume and produce. Each table opens on
+// the rows that need a look (the row's look, decided on Core), worst first, the
+// healthy rest folded behind one control at its foot. Cells hold values; each
+// column's meaning is in its header and its ⓘ. The count ledger is on
+// /inventory/count-history.
+//
+// The UoP threshold is edited in the row and saved on Enter through the loader
+// config's own doors (set-home / set-payload), which re-derive demand and
+// write the one audit row the hover reads. The threshold calculator is
+// uncalibrated: it is reached only from the UoP threshold column's ⓘ, and a
+// value it suggests saves only on Confirm there.
 
-import {
-  apiGet, apiPost, escapeHtml, delegateActions, toast, uiConfirm, timeAgo, timeAgoHTML, debounce,
-} from '/static/app.js';
-import { formatClock, formatDuration, formatTime, onSSE, serverNow } from '/static/shared/utils.js';
+import { apiGet, apiPost, escapeHtml, delegateActions, toast, debounce } from '/static/app.js';
+import { formatClock, formatTime, onSSE, serverNow } from '/static/shared/utils.js';
 import { createLiveSchedule } from '/static/pages/live-schedule.js';
 
 // ── state ──────────────────────────────────────────────────────────────
-let health = [];        // /api/inventory/monitor-totals rows
-let healthLoadError = null; // why the last monitor-totals read failed, else null
-let ledgerExceptions = {}; // /api/inventory/ledger-exceptions
-let maintained = [];    // /api/inventory/maintained-groups — the keeper's last tick
-let anomalySummary = {}; // /api/inventory/anomaly-summary (rejected/stale counts)
-let loaders = [];       // /api/loader/list loaders (editable config)
-let bins = [];          // /api/inventory rows
-let buckets = [];       // /api/buckets rows (with updated_at)
-let nodesById = {};     // node id -> name
-let binsByPayload = {}; // payload_code -> [bin rows]
-let onHandSeries = [];  // small rolling on-hand samples for the KPI sparkline
-
+let view = null;          // the last /api/inventory/loop answer
+let loadError = null;     // why the last read failed, else null
 let searchTerm = '';
-let zoneFilter = '';
-let groupFilter = '';
-let expanded = null;    // payload_code of the currently-open RH row
+let flashKey = '';        // the row saved last, flashed once on the next render
+let pendingRender = false; // a read landed while a row was being edited
+let thrPopOpen = false;   // the UoP threshold column's ⓘ is open
+const authenticated = (document.querySelector('.inv-page') || { dataset: {} }).dataset.authenticated === 'true';
 
-const STALE_WARN_MS = 7 * 24 * 3600 * 1000;
-const STALE_BAD_MS = 30 * 24 * 3600 * 1000;
+// The fold, per table: open shows the healthy rows too. Remembered for the
+// tab's session only. try/catch because sessionStorage throws outright in
+// some privacy modes, and a remembered fold must never stop the page loading.
+const open = { positions: readOpen('positions'), lines: readOpen('lines') };
+function readOpen(table) {
+  try { return sessionStorage.getItem('inventory:open:' + table) === '1'; } catch (e) { return false; }
+}
+
+// Column help: one line per column, on its ⓘ — never in a cell.
+const HELP = {
+  inloop: 'Every counted unit of the part in the loop: its bins wherever they stand, plus active lineside piles. The bar is that against the UoP threshold, the tick: red past it, amber near it, green clear. Hover a value for bins away from this spot.',
+  empty: 'In loop at the line\'s 14-day median running rate. Red at or under the UoP threshold (a one-bin home at a pack or more: when it is empty); — when no running line uses the part, ? when it has no measured rate.',
+  threshold: 'Core orders a refill when In loop drops below this; 0 = not monitored. Enter saves, Esc undoes. Hover a value for who set it.',
+  ontheway: 'Bins in transit or queued to this spot.',
+  inbin: 'Parts in the bin at the line / its pack.',
+  left: 'Consume: until the bin at the line is empty. Produce: until it is full. At the line\'s rate over the last 30 minutes; ? when it has not run. Red past the cell reorder point.',
+  rp: 'The cell calls its swap at this count: consume at or under it, produce at or over it (0 = when full). Set on the station\'s Edge.',
+  lineway: 'Bins on their way to the line: fulls to a consume spot, empties to a produce spot.',
+};
 
 // ── data loading ─────────────────────────────────────────────────────────
-let lastLoadAt = 0; // Date.now() of the last loadAll start (the 20 s fallback reads it)
-
-// The loader list and the node names are read only by an open row's editor
-// (loaderRowsFor), so they are fetched only while a row is open (LC11).
-function loadEditorData() {
-  return Promise.all([
-    apiGet('/api/loader/list').catch(() => ({ loaders: [] })),
-    apiGet('/api/nodes').catch(() => ({})),
-  ]).then(([ld, nd]) => {
-    loaders = (ld && ld.loaders) || [];
-    const nodes = (nd && (nd.nodes || nd.data || nd)) || [];
-    nodesById = {};
-    (Array.isArray(nodes) ? nodes : []).forEach((n) => {
-      const id = n.id != null ? n.id : n.ID;
-      if (id != null) nodesById[id] = n.name != null ? n.name : n.Name;
-    });
-  });
-}
+let lastLoadAt = 0;
 
 async function loadAll(quiet) {
-  healthLoadError = null;
   lastLoadAt = Date.now();
   try {
-    const [h, inv, bk, an, lx, mg] = await Promise.all([
-      apiGet('/api/inventory/monitor-totals').catch((e) => { healthLoadError = e; return null; }),
-      apiGet('/api/inventory').catch(() => []),
-      apiGet('/api/buckets').catch(() => []),
-      apiGet('/api/inventory/anomaly-summary').catch(() => ({})),
-      apiGet('/api/inventory/ledger-exceptions').catch(() => ({})),
-      apiGet('/api/inventory/maintained-groups').catch(() => []),
-      expanded !== null ? loadEditorData() : null,
-    ]);
-    ledgerExceptions = lx && typeof lx === 'object' ? lx : {};
-    maintained = Array.isArray(mg) ? mg : [];
-    // A failed read keeps the last rows; with none, renderHealth says it failed.
-    if (h !== null) health = Array.isArray(h) ? h : [];
-    anomalySummary = an && typeof an === 'object' ? an : {};
-    bins = Array.isArray(inv) ? inv : (inv && inv.rows) || [];
-    buckets = Array.isArray(bk) ? bk : (bk && bk.rows) || [];
-    indexBins();
-    sampleOnHand();
-    renderAll();
+    view = await apiGet('/api/inventory/loop');
+    loadError = null;
   } catch (e) {
+    loadError = e;
     if (!quiet) toast('Failed to load inventory: ' + (e.message || e), 'error', { sticky: true });
-    const body = document.getElementById('rh-body');
-    if (body && !health.length) {
-      body.innerHTML = '<tr><td colspan="8" class="dash-empty">Could not load — '
-        + escapeHtml(String(e.message || e))
-        + ' <button class="btn btn-sm" data-action="refresh">Retry</button></td></tr>';
-    }
   }
+  if (editing()) { pendingRender = true; return; }
+  renderAll();
 }
 
-function indexBins() {
-  binsByPayload = {};
-  bins.forEach((b) => {
-    const pc = b.payload_code || '';
-    if (!pc) return;
-    (binsByPayload[pc] = binsByPayload[pc] || []).push(b);
+// editing is true while a threshold box holds a value not yet saved: a live
+// read must not wipe what someone is typing.
+function editing() {
+  return Array.from(document.querySelectorAll('.loop-thr-input'))
+    .some((el) => el.value !== el.dataset.orig);
+}
+
+// ── pure helpers (lifted by inventory.loop.test.js) ──────────────────────
+
+function num(n) { return (n == null || isNaN(n)) ? '—' : Number(n).toLocaleString(); }
+
+// dur is a duration as the floor reads it: "47 min", or "2.3 h" from 90
+// minutes up; "—" when there is none.
+function dur(seconds) {
+  if (seconds == null || isNaN(seconds)) return '—';
+  const m = seconds / 60;
+  if (m >= 90) return (Math.round(m / 6) / 10).toLocaleString() + ' h';
+  return Math.round(m).toLocaleString() + ' min';
+}
+
+// timeToEmpty is a position's cover while a running line uses the part; null
+// when none does.
+function timeToEmpty(r) {
+  return r.group ? r.cover_seconds : null;
+}
+
+// timeLeft is what a row is sorted by: a position's time to empty, a line's
+// time until its bin is empty or full; null when unknown.
+function timeLeft(r) {
+  return r.kind === 'line' ? r.cover_seconds : timeToEmpty(r);
+}
+
+// worstFirst sorts the least time left first and the unknown last; ties by
+// line, part, spot.
+function worstFirst(a, b) {
+  const ta = timeLeft(a), tb = timeLeft(b);
+  return (ta == null ? Infinity : ta) - (tb == null ? Infinity : tb)
+    || String(a.group || '').localeCompare(String(b.group || ''))
+    || String(a.payload_code).localeCompare(String(b.payload_code)) || String(a.node).localeCompare(String(b.node));
+}
+
+// foldedBodyHtml is a table's body: the rows that need a look (r.look, Core's
+// rule), worst first, then one row-width control for the healthy rest, "Show N
+// more". Open, every row shows and the control folds them again. When nothing
+// needs a look the body is one line, "All N <noun> healthy", with "Show all
+// N": the only place Show all appears, and never an empty body. A search shows
+// every match, unfolded.
+function foldedBodyHtml(rows, table, cols, nouns, rowHtml) {
+  const sorted = rows.slice().sort(worstFirst);
+  const all = open[table] || !!searchTerm;
+  const look = sorted.filter((r) => r.look);
+  const shown = all ? sorted : look;
+  const ctl = (label) => '<button type="button" class="btn btn-sm" data-action="toggleFold" data-table="' + table + '">'
+    + label + '</button>';
+  const foot = (html) => '<tr class="loop-fold"><td colspan="' + cols + '">' + html + '</td></tr>';
+  if (!shown.length) {
+    const n = sorted.length;
+    return foot((n === 1 ? '1 ' + nouns[0] : 'All ' + n + ' ' + nouns[1]) + ' healthy ' + ctl('Show all ' + n));
+  }
+  let html = shown.map(rowHtml).join('');
+  if (searchTerm) return html;
+  if (shown.length < sorted.length) html += foot(ctl('Show ' + (sorted.length - shown.length) + ' more'));
+  else if (open[table] && look.length < sorted.length) html += foot(ctl('Show fewer'));
+  return html;
+}
+
+// offHomeTitle names the part's bins standing away from the position, for the
+// In loop hover.
+function offHomeTitle(list) {
+  if (!list || !list.length) return '';
+  return list.map((o) => o.bins + (o.bins === 1 ? ' bin' : ' bins') + (o.node ? ' at ' + o.node : ' on a robot')).join('\n');
+}
+
+// thrTitle is the threshold's hover: who changed the value, when and from
+// what, and the threshold as time at the 14-day median running rate.
+function thrTitle(r) {
+  const parts = [];
+  const p = r.provenance;
+  if (p) {
+    parts.push(p.source + ' ' + num(p.value) + (p.old != null ? ' (was ' + num(p.old) + ')' : '')
+      + (p.by ? ' by ' + p.by : '') + ' on ' + formatTime(p.at) + (p.current ? '' : '; the value has changed since'));
+  } else {
+    parts.push('set before changes were recorded');
+  }
+  if (r.cycle_seconds != null) parts.push('≈ ' + dur(r.threshold * r.cycle_seconds) + ' at the 14-day median running rate');
+  return parts.join('\n');
+}
+
+// doubtHtml is the line above the tables: each bin whose count makes its
+// part's sum untrustworthy, linking to its recount door. '' when there are none.
+function doubtHtml(doubt) {
+  if (!doubt || !doubt.length) return '';
+  const items = doubt.map((d) => {
+    const what = d.reason === 'below_zero' ? 'reads ' + num(d.uop) : 'not confirmed';
+    return '<a href="/bins?open=' + encodeURIComponent(d.bin_id) + '">' + escapeHtml(d.label || ('bin ' + d.bin_id))
+      + (d.node ? ' at ' + escapeHtml(d.node) : '') + '</a> ' + escapeHtml(what);
   });
+  return '<div class="loop-doubt" role="note">'
+    + '<span class="badge badge-warn">' + doubt.length + ' doubtful</span> '
+    + items.join(' · ') + '</div>';
 }
 
-function sampleOnHand() {
-  let total = 0;
-  health.forEach((r) => { if (r.monitored) total += r.on_hand; });
-  onHandSeries.push(total);
-  if (onHandSeries.length > 40) onHandSeries.shift();
-}
-
-// ── health classification ──────────────────────────────────────────────
-// Worst -> best: ledger error, below, near, ok, unset. "Near" is within 20% of
-// the threshold; a negative in-loop total is a broken ledger (can't be trusted).
-function healthState(r) {
-  if (r.on_hand < 0) return 'err';
-  if (!r.monitored || !(r.threshold > 0)) return 'unset';
-  if (r.on_hand < r.threshold) return 'below';
-  if (r.on_hand < r.threshold * 1.2) return 'near';
-  return 'ok';
-}
-const STATE_RANK = { err: 0, below: 1, near: 2, ok: 3, unset: 4 };
-
-// ── search + filter helpers ───────────────────────────────────────────────
-function zonesForPayload(pc) {
-  const set = {};
-  (binsByPayload[pc] || []).forEach((b) => { if (b.zone) set[b.zone] = 1; });
-  return set;
-}
-function groupsForPayload(pc) {
-  const set = {};
-  (binsByPayload[pc] || []).forEach((b) => { if (b.group_name) set[b.group_name] = 1; });
-  return set;
-}
-function matchesSearch(r) {
-  if (!searchTerm) return true;
-  const t = searchTerm.toLowerCase();
-  if ((r.payload_code || '').toLowerCase().includes(t)) return true;
-  if ((r.description || '').toLowerCase().includes(t)) return true;
-  return (binsByPayload[r.payload_code] || []).some((b) =>
-    (b.node_name || '').toLowerCase().includes(t) || (b.bin_label || '').toLowerCase().includes(t));
-}
-function passesFilters(r) {
-  if (!matchesSearch(r)) return false;
-  if (zoneFilter && !zonesForPayload(r.payload_code)[zoneFilter]) return false;
-  if (groupFilter && !groupsForPayload(r.payload_code)[groupFilter]) return false;
-  return true;
-}
-// Wrap the current search term in a highlight mark, escaping each piece. The
-// match runs on the RAW text: run on the escaped string, a search for "amp" or
-// "quot" put the mark inside an entity and broke it.
+// hl wraps the current search term in a highlight mark, escaping each piece.
+// The match runs on the RAW text: run on the escaped string, a search for
+// "amp" or "quot" put the mark inside an entity and broke it.
 function hl(text) {
   const raw = text == null ? '' : String(text);
   if (!searchTerm) return escapeHtml(raw);
@@ -155,985 +176,341 @@ function hl(text) {
     .join('');
 }
 
+function help(key) {
+  return ' <span class="loop-help" tabindex="0" title="' + escapeHtml(HELP[key]) + '">ⓘ</span>';
+}
+
+// ── supermarket positions ─────────────────────────────────────────────────
+
+function posHeadHtml() {
+  return '<tr>'
+    + '<th>Part</th>'
+    + '<th>Spot</th>'
+    + '<th class="loop-r">In loop (UoP)' + help('inloop') + '</th>'
+    + '<th class="loop-r">Time to empty' + help('empty') + '</th>'
+    + '<th class="loop-r loop-thr-h">' + thrHeadHtml() + '</th>'
+    + '<th class="loop-r">On the way' + help('ontheway') + '</th>'
+    + '</tr>';
+}
+
+// thrHeadHtml is the UoP threshold header. Its ⓘ opens on click: the column's
+// one line and the only way to the calculator, labelled uncalibrated.
+function thrHeadHtml() {
+  return 'UoP threshold <button type="button" class="loop-help loop-help-btn" data-action="toggleThrPop" aria-expanded="'
+    + thrPopOpen + '" title="' + escapeHtml(HELP.threshold) + '">ⓘ</button>'
+    + '<div class="loop-pop" id="thr-pop"' + (thrPopOpen ? '' : ' hidden') + '>' + escapeHtml(HELP.threshold)
+    + ' <button type="button" class="loop-link" data-action="openCalcPicker">calculator (uncalibrated)</button></div>';
+}
+
+// thresholdCell is the input (a plain number when logged out), value only,
+// with the one chip a threshold can carry: over what a multi-bin home holds.
+function thresholdCell(r) {
+  const key = escapeHtml(r.key);
+  const title = thrTitle(r);
+  const chip = r.state === 'above_home_capacity' ? '<span class="badge badge-warn loop-chip">ABOVE HOME CAPACITY</span> ' : '';
+  const value = authenticated
+    ? '<input type="number" min="0" step="1" class="loop-thr-input tnum" value="' + r.threshold + '" data-orig="'
+      + r.threshold + '" data-key="' + key + '" title="' + escapeHtml(title) + '" aria-label="UoP threshold for '
+      + escapeHtml(r.payload_code) + ' at ' + escapeHtml(r.node) + '" data-action-keydown="thrKey" data-action-input="thrInput">'
+    : '<span class="tnum" title="' + escapeHtml(title) + '">' + num(r.threshold) + '</span>';
+  return '<div class="loop-thr">' + chip + value + '</div>';
+}
+
+// meterHtml is the threshold line beside In loop: the in-loop fill against an
+// amber tick at the UoP threshold, on a scale of 1.6 thresholds (or a tenth
+// past the sum when that is longer). The fill is coral when the row is past its
+// threshold (Core's beyond), amber within a fifth above the threshold, green
+// clear of it; hatched when the sum is below zero and cannot be read.
+function meterHtml(r) {
+  if (r.in_loop == null) return '';
+  if (r.in_loop < 0) return '<span class="thr-meter thr-meter--err" aria-hidden="true"></span>';
+  const thr = r.threshold || 0;
+  const scale = Math.max(thr * 1.6, r.in_loop * 1.1, 1);
+  const fill = Math.min(100, (r.in_loop / scale) * 100);
+  const st = r.beyond ? ' thr-meter--below' : r.in_loop < thr * 1.2 ? ' thr-meter--near' : '';
+  let html = '<span class="thr-meter' + st + '" aria-hidden="true"><span class="thr-meter__fill" style="width:'
+    + fill.toFixed(1) + '%"></span>';
+  if (thr > 0) html += '<span class="thr-meter__tick" style="left:' + Math.min(100, (thr / scale) * 100).toFixed(1) + '%"></span>';
+  return html + '</span>';
+}
+
+// coming is an On the way cell: the count, a dash when none.
+function coming(n) {
+  return n > 0 ? num(n) : '—';
+}
+
+function posRowHtml(r) {
+  const tte = timeToEmpty(r);
+  const off = offHomeTitle(r.off_home);
+  const cls = 'loop-row' + (r.key === flashKey ? ' loop-flash' : '');
+  return '<tr class="' + cls + '" data-key="' + escapeHtml(r.key) + '">'
+    + '<td><code>' + hl(r.payload_code) + '</code></td>'
+    + '<td>' + hl(r.node) + '</td>'
+    + '<td class="loop-r tnum' + (r.in_loop < 0 ? ' loop-short' : '') + '"><span class="loop-inloop">' + meterHtml(r)
+      + '<span class="loop-inloop__n">'
+      + (off ? '<span class="loop-tip" title="' + escapeHtml(off) + '">' + num(r.in_loop) + '</span>' : num(r.in_loop))
+      + '</span></span></td>'
+    + '<td class="loop-r tnum' + (r.beyond && tte != null ? ' loop-short' : '') + '">'
+      + (!r.group ? '—' : tte == null ? '?' : dur(tte)) + '</td>'
+    + '<td class="loop-r">' + thresholdCell(r) + '</td>'
+    + '<td class="loop-r tnum">' + coming(r.coming) + '</td>'
+    + '</tr>';
+}
+
+// posBodyHtml is the positions table body in its default view (foldedBodyHtml).
+function posBodyHtml(rows) {
+  if (!rows.length) return '<tr><td colspan="6" class="dash-empty">' + (searchTerm ? 'No position matches.' : 'No part is monitored.') + '</td></tr>';
+  return foldedBodyHtml(rows, 'positions', 6, ['position', 'positions'], posRowHtml);
+}
+
+// ── lines ────────────────────────────────────────────────────────────────
+
+function lineHeadHtml() {
+  return '<tr>'
+    + '<th>Line</th>'
+    + '<th>Part</th>'
+    + '<th>Role</th>'
+    + '<th class="loop-r">In bin / pack' + help('inbin') + '</th>'
+    + '<th class="loop-r">Time left' + help('left') + '</th>'
+    + '<th class="loop-r">Cell reorder point' + help('rp') + '</th>'
+    + '<th class="loop-r">On the way' + help('lineway') + '</th>'
+    + '</tr>';
+}
+
+// lineRowHtml is one claim at a line. A line with two spots for one part names
+// the spot beside the line, so its rows are told apart.
+function lineRowHtml(r, twoSpots) {
+  const inBin = r.in_bin == null || !r.pack ? '—' : num(r.in_bin) + ' / ' + num(r.pack);
+  const left = r.cover_seconds != null ? dur(r.cover_seconds) : r.in_bin == null ? '—' : '?';
+  const where = (r.station ? r.station + '\'s' : 'its') + ' Edge';
+  return '<tr class="loop-row" data-key="' + escapeHtml(r.key) + '">'
+    + '<td>' + hl(r.group || r.node) + (twoSpots ? ' <span class="text-muted">' + hl(r.node) + '</span>' : '') + '</td>'
+    + '<td><code>' + hl(r.payload_code) + '</code></td>'
+    + '<td class="loop-role">' + escapeHtml(r.role) + '</td>'
+    + '<td class="loop-r tnum"' + (r.in_bin == null ? ' title="no bin at the line"' : '') + '>' + inBin + '</td>'
+    + '<td class="loop-r tnum' + (r.beyond && r.cover_seconds != null ? ' loop-short' : '') + '">' + left + '</td>'
+    + '<td class="loop-r tnum" title="' + escapeHtml('Set on ' + where) + '">' + num(r.reorder_point) + '</td>'
+    + '<td class="loop-r tnum">' + coming(r.coming) + '</td>'
+    + '</tr>';
+}
+
+// lineBodyHtml is the lines table body in its default view (foldedBodyHtml).
+function lineBodyHtml(rows) {
+  const spots = {};
+  const at = (r) => r.group + '|' + r.payload_code + '|' + r.role;
+  rows.forEach((r) => { spots[at(r)] = (spots[at(r)] || 0) + 1; });
+  return foldedBodyHtml(rows, 'lines', 7, ['line', 'lines'], (r) => lineRowHtml(r, spots[at(r)] > 1));
+}
+
+function matches(r) {
+  if (!searchTerm) return true;
+  const t = searchTerm.toLowerCase();
+  return [r.payload_code, r.description, r.node, r.group]
+    .some((v) => String(v || '').toLowerCase().includes(t));
+}
+
 // ── rendering ─────────────────────────────────────────────────────────────
 function renderAll() {
-  populateFilters();
-  renderKpis();
-  renderAlerts();
-  renderLedgerExceptions();
-  renderDeltaIntegrity();
-  renderReportDivergence();
-  renderHoldDrops();
-  renderDeclaredStamps();
-  renderHealth();
-  renderMaintained();
-  renderBuckets();
-  const asof = document.getElementById('inv-asof');
-  if (asof) asof.textContent = 'as of ' + formatClock(serverNow());
-}
-
-function populateFilters() {
-  const zones = {}, groups = {};
-  bins.forEach((b) => { if (b.zone) zones[b.zone] = 1; if (b.group_name) groups[b.group_name] = 1; });
-  buckets.forEach((b) => { if (b.zone) zones[b.zone] = 1; if (b.group_name) groups[b.group_name] = 1; });
-  fillSelect('inv-zone', Object.keys(zones).sort(), zoneFilter, 'All zones');
-  fillSelect('inv-group', Object.keys(groups).sort(), groupFilter, 'All groups');
-}
-function fillSelect(id, values, current, allLabel) {
-  const sel = document.getElementById(id);
-  if (!sel || sel.dataset.filled === values.join('|')) return;
-  sel.dataset.filled = values.join('|');
-  sel.innerHTML = '<option value="">' + allLabel + '</option>'
-    + values.map((v) => '<option value="' + escapeHtml(v) + '"' + (v === current ? ' selected' : '') + '>' + escapeHtml(v) + '</option>').join('');
-}
-
-function sparklineSvg(series) {
-  if (series.length < 2) return '';
-  const max = Math.max.apply(null, series), min = Math.min.apply(null, series);
-  const span = max - min || 1;
-  const pts = series.map((v, i) => {
-    const x = (i / (series.length - 1)) * 120;
-    const y = 18 - ((v - min) / span) * 16 - 1;
-    return x.toFixed(1) + ',' + y.toFixed(1);
-  }).join(' ');
-  return '<svg viewBox="0 0 120 20" preserveAspectRatio="none" width="100%" height="18">'
-    + '<polyline fill="none" stroke="var(--viz-teal)" stroke-width="1.6" points="' + pts + '"/></svg>';
-}
-
-function renderKpis() {
-  const el = document.getElementById('inv-kpi');
-  if (!el) return;
-  let binU = 0, lineU = 0, monitored = 0, belowN = 0;
-  health.forEach((r) => {
-    if (r.monitored) { binU += r.bin_uop; lineU += r.bucket_uop; monitored++; }
-    const st = healthState(r);
-    if (st === 'below' || st === 'err') belowN++;
-  });
-  const onHand = binU + lineU;
-  // Bin lifecycle: stocked (loaded), in-production-empty (claimed but drained), idle.
-  let stocked = 0, prodEmpty = 0, idle = 0;
-  bins.forEach((b) => {
-    if (b.payload_code && b.confirmed && b.uop_remaining > 0) stocked++;
-    else if (b.payload_code) prodEmpty++;
-    else idle++;
-  });
-  const binTot = stocked + prodEmpty + idle || 1;
-  let staleBk = 0;
-  buckets.forEach((b) => { if (bucketAgeMs(b) > STALE_BAD_MS) staleBk++; });
-
-  el.innerHTML = [
-    tile('On-hand (monitored)', num(onHand), 'UoP · bins ' + num(binU) + ' + lineside ' + num(lineU),
-      '', sparklineSvg(onHandSeries)),
-    tile('Below threshold', String(belowN), 'of ' + monitored + ' monitored payloads',
-      belowN ? 'kpi-tile--bad kpi-tile--clickable' : 'kpi-tile--clickable', '', 'scrollTo:rh'),
-    lifecycleTile(stocked, prodEmpty, idle, binTot),
-    tile('Stale buckets', String(staleBk), 'active piles untouched &gt; 30 d',
-      (staleBk ? 'kpi-tile--warn ' : '') + 'kpi-tile--clickable', '', 'scrollTo:buckets'),
-  ].join('');
-}
-function tile(label, value, sub, cls, spark, action) {
-  const act = action ? ' data-action="' + action + '"' : '';
-  return '<div class="card kpi-tile ' + (cls || '') + '"' + act + '>'
-    + '<div class="kpi-label">' + label + '</div>'
-    + '<div class="kpi-value">' + value + '</div>'
-    + '<div class="kpi-sub">' + sub + '</div>'
-    + (spark ? '<div class="kpi-spark">' + spark + '</div>' : '')
-    + '</div>';
-}
-function lifecycleTile(stocked, prodEmpty, idle, tot) {
-  const w = (n) => ((n / tot) * 100).toFixed(1) + '%';
-  return '<div class="card kpi-tile">'
-    + '<div class="kpi-label">Bin lifecycle</div>'
-    + '<div class="kpi-value">' + (stocked + prodEmpty + idle) + '</div>'
-    + '<div class="kpi-sub">bins tracked</div>'
-    + '<div class="lifebar"><span class="seg-stocked" style="width:' + w(stocked) + '"></span>'
-    + '<span class="seg-prodempty" style="width:' + w(prodEmpty) + '"></span>'
-    + '<span class="seg-idle" style="width:' + w(idle) + '"></span></div>'
-    + '<div class="lifekey"><span><i class="k-stocked"></i>' + stocked + ' stocked</span>'
-    + '<span><i class="k-prodempty"></i>' + prodEmpty + ' in-prod empty</span>'
-    + '<span><i class="k-idle"></i>' + idle + ' idle</span></div>'
-    + '</div>';
-}
-
-function renderAlerts() {
-  const el = document.getElementById('inv-alerts');
-  if (!el) return;
-  let below = 0, err = 0, stale = 0;
-  health.forEach((r) => {
-    const st = healthState(r);
-    if (st === 'below') below++;
-    if (st === 'err') err++;
-  });
-  buckets.forEach((b) => { if (bucketAgeMs(b) > STALE_BAD_MS) stale++; });
-  // Carriers flagged anomaly_at (a refused delta — payload mismatch or stale
-  // epoch — or a rebind that left mixed contents) and bins parked staged past
-  // their own TTL — the SNF3 stranding signals.
-  //
-  // CARRIERS, NOT DELTAS. This figure is a live count of flagged bins with no
-  // window; it used to read "N rejected deltas" beside the panel's "M deltas
-  // dropped", and the two never agreed because they are different populations
-  // (pinned by TestInventory_RejectedAndDroppedCountDifferentPopulations). The
-  // dropped-delta count is shown once, in the panel, with its window.
-  const rejected = anomalySummary.rejected_delta_bins || 0;
-  const staleStaged = anomalySummary.stale_staged_bins || 0;
-  // Carriers holding a payload their bin type is not declared to carry. These
-  // COUNT as stock above and no sourcing reader will ever fetch them, so the
-  // on-hand figure on this very page is money the plant cannot spend. The
-  // produce door records these rather than refusing them — by the time a cell
-  // reports a finalize the parts are already in the carrier — which is exactly
-  // why the count has to be here: an unwatched finding is worse than the
-  // refusal it replaced. /material-flags lists which carriers.
-  const undeclared = anomalySummary.undeclared_carrier_bins || 0;
-  const parts = [];
-  if (below) parts.push('<b>' + below + '</b> payload' + (below > 1 ? 's' : '') + ' below threshold');
-  if (err) parts.push('<b>' + err + '</b> ledger error' + (err > 1 ? 's' : ''));
-  // The flagged-carrier count is its own click target — it opens the drill
-  // listing WHICH carriers are flagged (part, node, reason), not just a scroll.
-  if (rejected) parts.push('<span data-action="showRejectedDeltas" style="text-decoration:underline;cursor:pointer"><b>' + rejected + '</b> carrier' + (rejected > 1 ? 's' : '') + ' flagged for a recount</span>');
-  if (staleStaged) parts.push('<b>' + staleStaged + '</b> stale staged bin' + (staleStaged > 1 ? 's' : ''));
-  // A LINK, NOT A SCROLL TARGET: the carriers are listed on another page, and
-  // the fix (move the parts, or declare the bin type on the payload) is not
-  // something this page can do.
-  // data-action="stopPropagation" so the banner's own scrollTo handler does not
-  // also fire under the link — the built-in verb stops the bubble without
-  // preventDefault, so the navigation still happens.
-  if (undeclared) parts.push('<a href="/material-flags" data-action="stopPropagation"><b>'
-    + undeclared + '</b> bin' + (undeclared > 1 ? 's' : '') + ' in undeclared carriers</a>');
-  if (stale) parts.push('<b>' + stale + '</b> stale bucket' + (stale > 1 ? 's' : ''));
-  if (!parts.length) { el.innerHTML = ''; return; }
-  el.innerHTML = '<div class="alerts-banner" data-action="scrollTo:' + (err || below ? 'rh' : 'buckets') + '">'
-    + '<svg class="icon icon-16" aria-hidden="true"><use href="#icon-alert-triangle"></use></svg>'
-    + '<span>' + parts.join(' · ') + ' — click to review</span></div>';
-}
-
-function renderHealth() {
-  const body = document.getElementById('rh-body');
-  if (!body) return;
-  const rows = health.filter(passesFilters).slice();
-  rows.sort((a, b) => {
-    const ra = STATE_RANK[healthState(a)], rb = STATE_RANK[healthState(b)];
-    if (ra !== rb) return ra - rb;
-    return headroom(a) - headroom(b); // within a band, least headroom first
-  });
-  if (!health.length && healthLoadError) {
-    body.innerHTML = '<tr><td colspan="8" class="dash-empty">Could not load payloads — '
-      + escapeHtml(String(healthLoadError.message || healthLoadError))
+  pendingRender = false;
+  const posBody = document.getElementById('pos-body');
+  const lineBody = document.getElementById('line-body');
+  const lines = document.getElementById('lines');
+  const doubt = document.getElementById('loop-doubt');
+  if (!posBody) return;
+  if (!view) {
+    posBody.innerHTML = '<tr><td colspan="6" class="dash-empty">Could not load — '
+      + escapeHtml(String(loadError ? (loadError.message || loadError) : 'no answer'))
       + ' <button class="btn btn-sm" data-action="refresh">Retry</button></td></tr>';
     return;
   }
-  if (!rows.length) {
-    body.innerHTML = '<tr><td colspan="8" class="dash-empty">'
-      + (health.length ? 'No payloads match the filter.' : 'No monitored or stocked payloads.') + '</td></tr>';
-    return;
-  }
-  body.innerHTML = rows.map(rhRowHtml).join('');
-}
-// Maintained Groups — the keeper's last tick, printed term by term.
-//
-// THE SECTION HIDES ITSELF when there is nothing to say: no maintained group,
-// or Core has not ticked yet. Both are the ordinary state on most plants, and a
-// permanent card reading "0 groups" is a card that gets scrolled past forever.
-//
-// "WAITING ON" PRINTS THE ASK'S OWN QUEUE SENTENCE — the words the dispatcher
-// wrote for an operator (FormatQueueSentence, from the order's queue code) — and
-// keeps the engineer's queue cause in the title. No label map here: the
-// cause vocabulary is thirty-odd values in dispatch/queue_cause.go and a second
-// copy would drift the first time one is added. An ask with no sentence prints
-// its cause as itself (guide rule 4 rider: an unrecognised value is not an
-// absent one).
-function renderMaintained() {
-  const sec = document.getElementById('mg');
-  const body = document.getElementById('mg-body');
-  if (!sec || !body) return;
-  if (!maintained.length) { sec.classList.add('is-hidden'); body.innerHTML = ''; return; }
-  sec.classList.remove('is-hidden');
-
-  // Shortest-covered first: a group actually short is what the operator came
-  // for, and a row whose gap is <= 0 is the keeper working.
-  const rows = maintained.slice().sort((a, b) => (b.gap || 0) - (a.gap || 0)
-    || String(a.group_node).localeCompare(String(b.group_node))
-    || String(a.bin_type_code).localeCompare(String(b.bin_type_code)));
-
-  body.innerHTML = rows.map((r) => {
-    const gap = r.gap || 0;
-    // Short is the only coloured number on the row. A gap of 0 or less is not
-    // "good" needing a green tick, it is nothing happening.
-    const gapCell = gap > 0
-      ? '<td class="rh-num mg-short" title="Core is short ' + gap
-        + ' and has asks out or is placing them">' + gap + '</td>'
-      : '<td class="rh-num text-muted" title="the level is covered">0</td>';
-    const waiting = r.oldest_ask_cause
-      ? '<span class="tnum" title="the longest-waiting ask against this level has been parked '
-        + escapeHtml(r.oldest_ask_age || '') + ' (' + escapeHtml(r.oldest_ask_cause) + ')">'
-        + escapeHtml(r.oldest_ask_reason || r.oldest_ask_cause)
-        + ' &middot; ' + escapeHtml(r.oldest_ask_age || '') + '</span>'
-      : '<span class="text-muted" title="nothing parked — every ask this level made is moving">&mdash;</span>';
-    return '<tr>'
-      + '<td>' + escapeHtml(r.group_node || '') + '</td>'
-      + '<td>' + escapeHtml(r.bin_type_code || '') + '</td>'
-      + '<td class="rh-num">' + (r.want || 0) + '</td>'
-      + '<td class="rh-num">' + (r.resident || 0) + '</td>'
-      + '<td class="rh-num">' + (r.asked || 0) + '</td>'
-      + '<td class="rh-num">' + (r.coming || 0) + '</td>'
-      + gapCell
-      + '<td>' + waiting + '</td>'
-      + '</tr>';
-  }).join('');
+  const rows = (view.rows || []).filter(matches);
+  document.getElementById('pos-head').innerHTML = posHeadHtml();
+  posBody.innerHTML = posBodyHtml(rows.filter((r) => r.kind !== 'line'));
+  const lineRows = rows.filter((r) => r.kind === 'line');
+  if (lines) lines.hidden = !lineRows.length;
+  document.getElementById('line-head').innerHTML = lineHeadHtml();
+  if (lineBody) lineBody.innerHTML = lineBodyHtml(lineRows);
+  if (doubt) doubt.innerHTML = doubtHtml(view.doubt);
+  const asof = document.getElementById('inv-asof');
+  if (asof) asof.textContent = 'as of ' + formatClock(serverNow());
+  flashKey = '';
 }
 
-function headroom(r) { return r.on_hand - (r.threshold || 0); }
+function rowByKey(key) { return ((view && view.rows) || []).find((r) => r.key === key); }
 
-function meterHtml(r) {
-  const st = healthState(r);
-  if (st === 'err') {
-    return '<div class="thr-meter thr-meter--err" title="In-loop total is negative — reconcile the bins ledger before trusting the threshold"></div>';
-  }
-  const scale = Math.max((r.threshold || 0) * 1.6, r.on_hand * 1.1, 1);
-  const fill = Math.max(0, Math.min(100, (r.on_hand / scale) * 100));
-  const cls = st === 'below' ? ' thr-meter--below' : st === 'near' ? ' thr-meter--near' : st === 'unset' ? ' thr-meter--unset' : '';
-  let html = '<div class="thr-meter' + cls + '"><div class="thr-meter__fill" style="width:' + fill.toFixed(1) + '%"></div>';
-  if (r.threshold > 0) {
-    const tick = Math.max(0, Math.min(100, (r.threshold / scale) * 100));
-    html += '<div class="thr-meter__tick" style="left:' + tick.toFixed(1) + '%"></div>';
-  }
-  return html + '</div>';
-}
-// ── ledger exceptions ─────────────────────────────────────────────────────
-//
-// Bins whose UoP ledger is negative RIGHT NOW. Blank on a good day, and that
-// is the whole design — a list that stays empty until something is wrong is a
-// better instrument than a panel that always shows something.
-//
-// This is upstream of the failure class the rest of the branch chases. A
-// negative in-loop total means material moved off the books, so every number
-// derived from it is computed from a reading nobody can trust: the total the
-// threshold monitor decides on, and the gap the Edge sizes an order from.
-//
-// It does NOT stop replenishment. That behaviour existed and was removed —
-// material having gone missing is exactly when the loop still needs
-// restocking, and refusing to order let the payload genuinely run dry and a
-// changeover arm on a dry source. What a broken count loses is the right to
-// SIZE the order: the Edge clamps the gap at 0 rather than reading -443 as
-// demand for 26 bins. Springfield's negative appeared on no surface at all,
-// which is why nobody could act on it.
-//
-// Deliberately NOT clamped anywhere: negative is loudly wrong, and a clamp
-// would make it silently wrong.
-function renderLedgerExceptions() {
-  const host = document.getElementById('rh-ledger-exceptions');
-  if (!host) return;
-  const openBins = (ledgerExceptions && ledgerExceptions.open_bins) || [];
-  if (!openBins.length) { host.innerHTML = ''; return; }
-
-  const rows = openBins.map((b) => {
-    const since = b.negative_since
-      ? ' since ' + formatTime(b.negative_since)
-      // The crossing predates the audit trail — say so rather than implying it
-      // just happened.
-      : ' (start unknown)';
-    const where = b.node_name ? ' at ' + escapeHtml(b.node_name) : '';
-    return '<li><code>' + escapeHtml(b.label || ('bin ' + b.bin_id)) + '</code>'
-      + (b.payload_code ? ' <span class="text-muted-xs">' + escapeHtml(b.payload_code) + '</span>' : '')
-      + where + ' counts <b>' + b.uop_remaining + '</b>' + escapeHtml(since) + '</li>';
-  }).join('');
-
-  // Short. An earlier version explained overpacks and fork trucks in a
-  // paragraph — that belongs in this comment, not on the page. It also
-  // overstated: it claimed replenishment was suppressed, which was true of one
-  // part rather than all three, and is no longer true of any.
-  host.innerHTML = '<div class="ledger-exceptions">'
-    + '<div class="ledger-exceptions__head">'
-    + '<span class="chip chip-err">Count below zero</span> '
-    + openBins.length + ' bin' + (openBins.length === 1 ? '' : 's')
-    + ' reporting a negative count'
-    + '</div>'
-    + '<div class="ledger-exceptions__why">Ordering is unaffected. Recount to correct.</div>'
-    + '<ul class="ledger-exceptions__list">' + rows + '</ul></div>';
-}
-
-// ── delta integrity ───────────────────────────────────────────────────────
-//
-// The mechanism panel. Its neighbour above says "this payload is negative";
-// this says "and here is what happened to the counts". Read-side only: every
-// dropped delta is already an observation row in bin_uop_audit (before == after,
-// because the count did not move) with the dropped quantity in its metadata.
-//
-// TWO FIGURES, AND THEY MUST NOT BE MIXED.
-//
-//   UoP lost      — stale_epoch_dropped + payload_mismatch_dropped ONLY, less
-//                    uop_recovered: mismatch-refused units the running net
-//                    landed with the bin's next accepted count.
-//   Mixed contents — payload_rebound_with_inventory, as a COUNT with no UoP
-//                    total. A rebind is not a drop: the applier rebinds the
-//                    payload and APPLIES the delta, so the tote's unit total
-//                    stays correct and the bin is flagged for a cycle count of
-//                    what is physically in it. Summing it into UoP lost
-//                    inflates the figure and corrupts the one comparison this
-//                    panel exists to make.
-//
-// "UoP lost" is a NET, signed toward the ledger: dropped credits minus dropped
-// consumes, so a positive number means the count reads BELOW reality by that
-// much — directly comparable to the negative total printed beside it. If a
-// payload reads -443 and shows +443 lost, the answer is on the screen.
-function renderDeltaIntegrity() {
-  const host = document.getElementById('rh-delta-integrity');
-  if (!host) return;
-  const rows = (ledgerExceptions && ledgerExceptions.delta_integrity) || [];
-  // A payload with nothing dropped and nothing rebound is not worth a row.
-  const shown = rows.filter((r) => r.drop_rows > 0 || r.mixed_contents > 0);
-  if (!shown.length) { host.innerHTML = ''; return; }
-
-  // Worst first: the biggest ledger effect, then the biggest count of drops.
-  shown.sort((a, b) => Math.abs(b.uop_lost) - Math.abs(a.uop_lost) || b.drop_rows - a.drop_rows);
-
-  // ONE ROW IS FOUR ALIGNED CELLS, NOT A SENTENCE.
-  //
-  // This used to render each payload as a line of prose — "2199 UoP of count
-  // never landed — reads above reality (2171 dropped deltas: 2170 stale epoch,
-  // 1 payload mismatch)" — repeated seventeen times. Every row restated the
-  // same two clauses around two numbers, so the numbers, which are the only
-  // thing that varies, were the hardest part to find and could not be compared
-  // down the column because nothing lined up.
-  //
-  // The prose moves to the tooltip, where the detail is still one hover away
-  // for the row you care about, and the grid carries what you scan: which
-  // part, how much, how many drops, and whether its ledger is negative too.
-  // Direction moves onto an arrow beside the figure, legended once in the head
-  // rather than spelled out per row.
-  const items = shown.map((r) => {
-    // Signed toward the ledger: >= 0 reads BELOW reality (credit never
-    // landed), < 0 reads ABOVE (consumption never landed). Only `below` can
-    // explain a negative ledger printed beside it — see the head note.
-    const below = r.uop_lost >= 0;
-    const arrow = below ? '▼' : '▲';
-    const causes = [];
-    if (r.stale_epoch_rows) causes.push(r.stale_epoch_rows + ' stale epoch');
-    if (r.payload_mismatch_rows) causes.push(r.payload_mismatch_rows + ' payload mismatch');
-
-    let uopCell = '';
-    let dropCell = '';
-    if (r.drop_rows > 0) {
-      const tip = 'Reads ' + num(Math.abs(r.uop_lost)) + ' UoP '
-        + (below ? 'BELOW' : 'ABOVE') + ' reality. '
-        + 'Dropped credits ' + num(r.credits_dropped)
-        + ', dropped consumes ' + num(r.consumes_dropped)
-        + ', across ' + r.bins + ' bin' + (r.bins === 1 ? '' : 's') + '.'
-        + (r.uop_recovered ? ' Recovered ' + num(Math.abs(r.uop_recovered))
-          + ' refused UoP that landed with a later count, already taken off the figure.' : '')
-        + (causes.length ? ' Cause: ' + causes.join(', ') + '.' : '');
-      uopCell = '<span class="di-uop" title="' + escapeHtml(tip) + '">'
-        + num(Math.abs(r.uop_lost))
-        + ' <span class="di-dir' + (below ? ' di-dir--below' : '') + '">' + arrow + '</span></span>';
-      dropCell = '<span class="di-drops">' + num(r.drop_rows) + '</span>';
-    }
-
-    // Flags column. Both entries live here so the numeric columns stay pure
-    // numbers and keep aligning.
-    let flags = '';
-    // The comparison. Printing the ledger total beside the drop total is the
-    // whole design: the two numbers matching IS the finding.
-    if (r.ledger_total < 0) {
-      flags += '<span class="di-ledger" title="This payload\'s ledger total is negative.">'
-        + num(r.ledger_total) + '</span>';
-    }
-    if (r.mixed_contents > 0) {
-      // Deliberately no UoP figure here. Nothing was lost — the delta was
-      // applied — so a number would read as a loss and would be added to the
-      // one above by anyone skimming.
-      const tip = 'A bin\'s payload was rebound while it still held units under the old label. '
-        + 'Counting CONTINUED and the unit total is correct; the bin needs a cycle count of what '
-        + 'is physically in it. This is NOT lost count and has no UoP figure.';
-      flags += '<span class="chip chip-warn" title="' + escapeHtml(tip) + '">'
-        + r.mixed_contents + ' mixed</span>';
-    }
-
-    return '<div class="di-row">'
-      + '<code class="di-pay">' + escapeHtml(r.payload_code) + '</code>'
-      + uopCell + dropCell
-      + '<span class="di-flags">' + flags + '</span>'
-      + '</div>';
-  }).join('');
-
-  // A COUNT IS EXACT OF A STATED WINDOW (guide, "The numbers themselves"): the
-  // rows are drops since ledgerExceptions.since, so the head says since when.
-  const totalDrops = shown.reduce((n, r) => n + r.drop_rows, 0);
-  const since = ledgerExceptions && ledgerExceptions.since;
-  host.innerHTML = '<div class="delta-integrity">'
-    + '<div class="delta-integrity__head">'
-    + '<span class="chip chip-warn">Counts not landing</span> '
-    + totalDrops + ' delta' + (totalDrops === 1 ? '' : 's')
-    + ' dropped across ' + shown.length + ' payload' + (shown.length === 1 ? '' : 's')
-    + (since ? ' since ' + escapeHtml(formatTime(since)) : '')
-    + '</div>'
-    // THE LEGEND CARRIES WHAT THE PROSE USED TO, AND IT IS NOT OPTIONAL.
-    //
-    // Two paragraphs used to sit here. They are gone from the page because they
-    // were re-read on every visit to learn nothing new — but the CLAIM they
-    // guard against is still live, so it moves to the ⓘ rather than being
-    // deleted:
-    //
-    //   Dropped consumes leave the count reading HIGH; only dropped credits
-    //   leave it reading LOW. Springfield has 12,514 dropped consumes and has
-    //   never recorded a single dropped credit, so every row here reads ABOVE
-    //   while the ledgers beside them read negative — OPPOSITE directions. An
-    //   earlier version invited closing one finding with the other's evidence.
-    //
-    // What stays visible is the arrow legend, because the arrows are unreadable
-    // without it, and the one sentence a reader must not miss: ▲ and a negative
-    // ledger are two problems, not one.
-    + '<div class="delta-integrity__legend">'
-    + '<b>▲</b> reads high · <b class="di-dir--below">▼</b> reads low — only <b>▼</b> explains a negative ledger'
-    + ' <span class="di-info" title="'
-    + escapeHtml('Direction is the reading. ABOVE (▲) means consumption never landed, so the count is too high. '
-      + 'BELOW (▼) means credit never landed. Only BELOW can explain a negative ledger printed beside it — a payload '
-      + 'that reads above while its ledger reads negative has two separate problems, not one.\n\n'
-      + 'A large negative is an INDICATOR, NOT A DIAGNOSIS: it says ShinGo has been out of the loop on that part. '
-      + 'Manual moves, robots down and sourcing gaps all read the same from here. It points at a cycle count, not at a cause.')
-    + '">ⓘ</span></div>'
-    + renderDeltaDaily()
-    + '<div class="di-rows">'
-    + '<div class="di-row di-row--head">'
-    + '<span>Part</span><span class="di-uop">UoP</span>'
-    + '<span class="di-drops">Drops</span><span class="di-flags">Ledger</span>'
-    + '</div>'
-    + items + '</div></div>';
-}
-
-// ── report divergence ─────────────────────────────────────────────────────
-//
-// The lineside report is a checksum: each minute the Edge says which carrier
-// it has bound at each consume seat and what it counts, and Core compares that
-// against its own count. A disagreement is an episode, open until a later
-// report agrees. Replenishment is decided off Core's count either way, so a
-// row here is a count to go and check, not an order that did or did not go.
-// Blank on a good day. Values are as first seen when the episode opened.
-const DIVERGENCE_CLASS = {
-  count: 'count differs',
-  epoch: 'Edge counting an old load',
-  not_at_seat: 'Edge carrier not here in Core',
-  unbound_carrier: 'Core carrier not bound at the Edge',
-  empty_seat: 'Core carrier where the Edge has nothing',
-  bucket: 'lineside bucket differs',
-};
-
-// openFor is how long an episode has been open. opened_at is a SERVER stamp, so
-// it is differenced against serverNow(), never the browser's Date.now(); the
-// duration is the shared ladder's.
-function openFor(iso) {
-  return formatDuration(serverNow() - new Date(iso).getTime());
-}
-
-function renderReportDivergence() {
-  const host = document.getElementById('rh-report-divergence');
-  if (!host) return;
-  const rows = (ledgerExceptions && ledgerExceptions.report_divergences) || [];
-  if (!rows.length) { host.innerHTML = ''; return; }
-
-  const items = rows.map((d) => {
-    const bin = d.bin_id ? (d.bin_label || ('bin ' + d.bin_id)) : 'bucket';
-    const epoch = d.edge_epoch !== null && d.edge_epoch !== undefined
-      && d.core_epoch !== null && d.core_epoch !== undefined && d.edge_epoch !== d.core_epoch
-      ? ' · epoch Edge ' + d.edge_epoch + ' / Core ' + d.core_epoch
-      : (d.core_epoch !== null && d.core_epoch !== undefined ? ' · epoch ' + d.core_epoch : '');
-    return '<li><code>' + escapeHtml(bin) + '</code>'
-      + ' <span class="text-muted-xs">' + escapeHtml(d.payload_code || '') + '</span>'
-      + (d.node ? ' at ' + escapeHtml(d.node) : '')
-      + ' — ' + escapeHtml(DIVERGENCE_CLASS[d.class] || d.class)
-      + ': Edge <b>' + num(d.edge_count) + '</b>, Core <b>' + num(d.core_count) + '</b>'
-      + escapeHtml(epoch)
-      + ' <span class="text-muted-xs">' + escapeHtml(d.station || '') + ', open ' + escapeHtml(openFor(d.opened_at))
-    + ' (since ' + escapeHtml(formatTime(d.opened_at)) + ')</span>'
-      + '</li>';
-  }).join('');
-
-  host.innerHTML = '<div class="ledger-exceptions">'
-    + '<div class="ledger-exceptions__head">'
-    + '<span class="chip chip-warn">Inventory count anomalies</span> '
-    + rows.length + ' open'
-    + '</div>'
-    + '<div class="ledger-exceptions__why">Ordering reads the Core count. Recount the carrier to correct.</div>'
-    + '<ul class="ledger-exceptions__list">' + items + '</ul></div>';
-}
-
-// ── strict pack: dropped holds and declared-full stamps ───────────────────
-//
-// Two routine lists, read together. A produce seat whose bin is at its pack
-// holds the strokes past it and replays them onto the next bin; a hold that
-// cannot be replayed is dropped, and the Edge says so (hold_dropped). A station
-// that releases a bin FULL below its pack ships the count and the declaration,
-// and Core stamps the bin up to its part's pack (release_declared_full); a part
-// with no pack keeps its count, and the row says so. A dropped hold
-// makes the next bin short and that bin is then stamped, so the two rows can
-// describe the same parts: every row shows its node and its time together.
-//
-// NOT ALARMS. Both happen on a normal shift, so neither carries a red chip and
-// neither is blank on a good day: an empty window reads as one quiet line, so
-// "nothing happened" is visible as an answer rather than as a missing panel.
-// Both lists cover the same window as the excursions (ledgerExceptions.since).
-const HOLD_DROP_REASON = {
-  no_carrier: 'no carrier coming',
-  sweep: 'no carrier coming (sweep)',
-  backstop: 'over a pack at replay',
-  hold_cap: 'over a pack while the bin was full',
-  cutover: 'cleared at changeover',
-  foreign_hold: 'another part beside the bin',
-  flip_carry_overflow: 'did not fit the partner bin',
-  no_bin: 'made with no bin to count into',
-};
-
-// HOLD_DROP_RUNS_SHOWN is how many of a line's runs are spelled out; the rest
-// are summed into "and N earlier".
-const HOLD_DROP_RUNS_SHOWN = 6;
-
-// renderHoldDrops draws the hold drops as Core groups them: runs, each a seat,
-// part, reason and station with its drops a stroke or so apart (a line at its
-// pack with a pack held drops a part a stroke until a bin comes). One line per
-// seat, part and reason, with its total, then its runs, latest first. The
-// totals count every drop in the window; Core's limit bounds the runs only.
-function renderHoldDrops() {
-  const host = document.getElementById('rh-hold-drops');
-  if (!host) return;
-  const runs = (ledgerExceptions && ledgerExceptions.hold_drop_runs) || [];
-  const since = ledgerExceptions && ledgerExceptions.since;
-  const span = since ? ' since ' + escapeHtml(formatTime(since)) : '';
-  if (!runs.length) {
-    host.innerHTML = '<div class="ledger-routine text-muted-sm">No hold drops' + (span || ' in the window') + '.</div>';
-    return;
-  }
-  const lines = [];
-  const byKey = {};
-  runs.forEach((r) => {
-    const key = [r.node, r.payload_code, r.reason, r.station].join('\u0000');
-    if (!byKey[key]) {
-      byKey[key] = { node: r.node, part: r.payload_code, reason: r.reason, station: r.station, qty: 0, runs: [] };
-      lines.push(byKey[key]);
-    }
-    byKey[key].qty += r.qty || 0;
-    byKey[key].runs.push(r);
-  });
-  const runText = (r) => {
-    const mins = Math.round((new Date(r.last) - new Date(r.first)) / 60000);
-    return escapeHtml(formatTime(r.first)) + (mins >= 1 ? ' for ' + mins + ' min' : '') + ' — <b>' + num(r.qty) + '</b>';
-  };
-  const items = lines.map((l) => {
-    const shown = l.runs.slice(0, HOLD_DROP_RUNS_SHOWN).map(runText);
-    const rest = l.runs.slice(HOLD_DROP_RUNS_SHOWN);
-    if (rest.length) {
-      const restQty = rest.reduce((n, r) => n + (r.qty || 0), 0);
-      shown.push('and ' + rest.length + ' earlier — <b>' + num(restQty) + '</b>');
-    }
-    return '<li>'
-      + escapeHtml(l.node || '(no node)')
-      + ' — <b>' + num(l.qty) + '</b> of <span class="text-muted-xs">' + escapeHtml(l.part || '(no part)') + '</span>'
-      + ' dropped: ' + escapeHtml(HOLD_DROP_REASON[l.reason] || l.reason || '')
-      + (l.station ? ' <span class="text-muted-xs">' + escapeHtml(l.station) + '</span>' : '')
-      + '<div class="text-muted-xs">' + l.runs.length + ' run' + (l.runs.length === 1 ? '' : 's') + ': '
-      + shown.join(' · ') + '</div>'
-      + '</li>';
-  }).join('');
-  const total = lines.reduce((n, l) => n + l.qty, 0);
-  host.innerHTML = '<div class="ledger-routine">'
-    + '<div class="ledger-routine__head">' + num(total) + ' dropped in ' + runs.length + ' run' + (runs.length === 1 ? '' : 's')
-    + span + '</div>'
-    + '<ul class="ledger-routine__list">' + items + '</ul></div>';
-}
-
-function renderDeclaredStamps() {
-  const host = document.getElementById('rh-declared-stamps');
-  if (!host) return;
-  const rows = (ledgerExceptions && ledgerExceptions.declared_full_stamps) || [];
-  const since = ledgerExceptions && ledgerExceptions.since;
-  const span = since ? ' since ' + escapeHtml(formatTime(since)) : '';
-  if (!rows.length) {
-    host.innerHTML = '<div class="ledger-routine text-muted-sm">No bins declared full' + (span || ' in the window') + '.</div>';
-    return;
-  }
-  const items = rows.map((st) => '<li>'
-    + escapeHtml(st.node || '(no node)') + ' · ' + escapeHtml(formatTime(st.applied_at))
-    + ' — <code>' + escapeHtml(st.bin_label || ('bin ' + st.bin_id)) + '</code>'
-    + ' <span class="text-muted-xs">' + escapeHtml(st.payload_code || '') + '</span>'
-    + (st.reason === 'no_pack'
-      ? ' counted <b>' + num(st.counted) + '</b>, kept: no pack for this part'
-      : ' counted <b>' + num(st.counted) + '</b> → its pack <b>' + num(st.declared) + '</b>')
-    + (st.actor ? ' by ' + escapeHtml(st.actor) : '')
-    + '</li>').join('');
-  host.innerHTML = '<div class="ledger-routine">'
-    + '<div class="ledger-routine__head">' + rows.length + ' bin' + (rows.length === 1 ? '' : 's')
-    + ' declared full' + span + '</div>'
-    + '<ul class="ledger-routine__list">' + items + '</ul></div>';
-}
-
-// renderDeltaDaily draws the drop trend as one bar per plant-local day.
-//
-// A DAILY SERIES, NOT A WINDOW TOTAL, because the population is episodic and a
-// total cannot say so. Bars are scaled against the largest ABSOLUTE net in the
-// window, so a single incident day does not flatten every ordinary day to
-// nothing while still being visibly the outlier.
-//
-// Gaps are left as gaps. Days with no drops are not in the data and are not
-// drawn as zero-height bars: at Springfield those days are weekends and the
-// plant being down, and a zero bar would assert a measured quiet day where
-// there was no production at all. Absence is not zero — the number doctrine's
-// rule 4, at the one place on this panel it can bite.
-function renderDeltaDaily() {
-  const days = (ledgerExceptions && ledgerExceptions.delta_daily) || [];
-  if (!days.length) return '';
-
-  const peak = days.reduce((m, d) => Math.max(m, Math.abs(d.net_delta)), 0);
-  if (!peak) return '';
-
-  const bars = days.map((d) => {
-    const pct = Math.max(2, Math.round((Math.abs(d.net_delta) / peak) * 100));
-    // Sign drives the class, not the magnitude: the two directions are
-    // different findings and must not share a colour.
-    const dir = d.net_delta < 0 ? 'dd-bar--above' : 'dd-bar--below';
-    const causes = [];
-    if (d.stale_epoch_rows) causes.push(d.stale_epoch_rows + ' stale epoch');
-    if (d.payload_mismatch_rows) causes.push(d.payload_mismatch_rows + ' payload mismatch');
-    const tip = d.day.slice(0, 10) + ': net ' + d.net_delta + ' UoP across '
-      + d.drop_rows + ' dropped delta' + (d.drop_rows === 1 ? '' : 's')
-      + (causes.length ? ' (' + causes.join(', ') + ')' : '')
-      + ' · ' + d.payloads + ' payload' + (d.payloads === 1 ? '' : 's')
-      + ', ' + d.bins + ' bin' + (d.bins === 1 ? '' : 's');
-    return '<span class="dd-bar ' + dir + '" style="height:' + pct + '%" '
-      + 'title="' + escapeHtml(tip) + '"></span>';
-  }).join('');
-
-  const net = days.reduce((n, d) => n + d.net_delta, 0);
-  const first = days[0].day.slice(0, 10);
-  const last = days[days.length - 1].day.slice(0, 10);
-  return '<div class="delta-daily">'
-    + '<div class="delta-daily__head">'
-    + '<span class="cs-lbl">Daily net</span> '
-    + '<span class="dd-net">' + net + ' UoP</span> '
-    + '<span class="text-muted-xs">' + days.length + ' day'
-    + (days.length === 1 ? '' : 's') + ' with drops · ' + first + ' → ' + last + '</span>'
-    + '</div>'
-    + '<div class="delta-daily__chart">' + bars + '</div></div>';
-}
-
-function chipsHtml(r) {
-  const st = healthState(r);
-  let chips = '';
-  if (st === 'err') {
-    // on_hand < 0. Ordering CONTINUES on this reading — a wrong count must not
-    // starve a line — but the number is not real and needs a recount.
-    const tip = 'On-hand is ' + r.on_hand + '. Ordering is unaffected; recount to correct.';
-    chips += '<span class="chip chip-err" title="' + escapeHtml(tip) + '">Count below zero</span>';
-  }
-  else if (st === 'below') chips += '<span class="chip chip-below">Below — order due</span>';
-  else if (st === 'near') chips += '<span class="chip chip-near">Near threshold</span>';
-  else if (st === 'ok') chips += '<span class="chip chip-ok">OK</span>';
-  else chips += '<span class="chip chip-muted">No threshold set</span>';
-  if (r.ledger_negative && st !== 'err') {
-    // on_hand (bins + lineside) can read healthy while the BINS side alone is
-    // negative — bucket stock masking a broken bin ledger. The existing
-    // on_hand < 0 test cannot see that, so it gets its own chip.
-    const tip = 'Bins for this payload sum to ' + r.ledger_total + ', but lineside stock is '
-      + 'masking it in the on-hand total. The bin ledger is still wrong — check this '
-      + 'payload in the ledger exceptions above.';
-    chips += ' <span class="chip chip-warn" title="' + escapeHtml(tip) + '">Bin ledger negative</span>';
-  }
-  if (r.swap_contradiction) {
-    // P2-C9: an operator requested a manual swap for this payload while the
-    // ledger reads it as fully stocked — the SNF3 phantom-on-hand shape. The
-    // line may be starving behind a stale staged bin; check this payload's bins.
-    const tip = 'A manual swap was requested for this payload while on-hand ('
-      + r.on_hand + ') reads at or above threshold. The line may be starving '
-      + 'behind a phantom on-hand — check this payload\'s bins for a stale staged bin.';
-    chips += ' <span class="chip chip-warn" title="' + escapeHtml(tip) + '">Swap requested vs stocked ledger</span>';
-  }
-  return chips;
-}
-function rhRowHtml(r) {
-  const hr = headroom(r);
-  const open = expanded === r.payload_code;
-  const nameCell = '<code>' + hl(r.payload_code) + '</code>'
-    + (r.description ? ' <span class="text-muted-xs">' + hl(r.description) + '</span>' : '');
-  let out = '<tr class="rh-row' + (open ? ' open' : '') + '" data-action="toggleRow:' + escapeHtml(r.payload_code) + '">'
-    + '<td><span class="chev"><svg class="icon" aria-hidden="true"><use href="#icon-chevron-right"></use></svg></span></td>'
-    + '<td>' + nameCell + '</td>'
-    + '<td><code>' + hl(partNumberFor(r.payload_code)) + '</code></td>'
-    + '<td>' + meterHtml(r) + '</td>'
-    + '<td class="rh-num">' + (r.on_hand < 0 ? '<span class="rh-neg">' + num(r.on_hand) + '</span>' : num(r.on_hand))
-    + '<div class="rh-split">bins ' + num(r.bin_uop) + ' + line ' + num(r.bucket_uop) + '</div></td>'
-    + '<td class="rh-num">' + (r.threshold > 0 ? num(r.threshold) : '<span class="text-muted">—</span>') + '</td>'
-    + '<td class="rh-num' + (hr < 0 ? ' rh-neg' : '') + '">' + (r.threshold > 0 ? (hr >= 0 ? '+' : '') + num(hr) : '—') + '</td>'
-    + '<td>' + chipsHtml(r) + '</td>'
-    + '</tr>';
-  if (open) out += editorRowHtml(r);
-  return out;
-}
-function partNumberFor(pc) {
-  const b = (binsByPayload[pc] || []).find((x) => x.part_number);
-  return b ? b.part_number : '';
-}
-
-// Expanded editor: per-loader threshold rows (explicit Save/Discard + Calc) plus
-// the payload's holding bins.
-function editorRowHtml(r) {
-  const cfg = loaderRowsFor(r.payload_code);
-  let editor = '<div class="text-muted-sm mb-2">Thresholds for <code>' + escapeHtml(r.payload_code)
-    + '</code> — per Core-owned loader. Saving re-derives demand and pushes to the edge on the next sync.</div>';
-  if (!cfg.length) {
-    editor += '<div class="text-muted-sm">No Core-owned loader carries this payload. Add it on the '
-      + '<a href="/nodes">Nodes page</a> to set a threshold.</div>';
-  } else {
-    editor += '<table class="thr-edit-table"><thead><tr><th></th><th>Loader</th><th>Node</th><th>Kind</th>'
-      + '<th>Cycle (s)</th><th></th><th>UoP threshold</th><th></th></tr></thead><tbody>'
-      + cfg.map(thrRowHtml).join('') + '</tbody></table>';
-  }
-  editor += holdingBinsHtml(r.payload_code);
-  return '<tr class="rh-editor"><td colspan="8">' + editor + '</td></tr>';
-}
-function loaderRowsFor(pc) {
-  const rows = [];
-  loaders.forEach((item) => {
-    const l = item.loader;
-    (item.payloads || []).forEach((p) => {
-      if (p.payload_code === pc) rows.push({ l, node: l.core_node_name, kind: 'payload', thr: p.uop_threshold || 0 });
-    });
-    (item.homes || []).forEach((hm) => {
-      if (hm.payload_code === pc) {
-        rows.push({ l, node: nodesById[hm.position_node_id] || ('node#' + hm.position_node_id), kind: 'home', thr: hm.uop_threshold || 0, positionNodeId: hm.position_node_id });
-      }
-    });
-  });
-  return rows;
-}
-function thrRowHtml(c) {
-  const key = c.l.id + '|' + c.kind + '|' + c.node;
-  const data = 'data-lid="' + c.l.id + '" data-kind="' + c.kind + '" data-node="' + escapeHtml(c.node) + '"'
-    + ' data-pnid="' + (c.positionNodeId || '') + '" data-anchor="' + escapeHtml(c.l.core_node_name || '') + '"';
-  return '<tr data-thr-key="' + escapeHtml(key) + '">'
-    + '<td><span class="dirty-dot" style="visibility:hidden"></span></td>'
-    + '<td>' + escapeHtml(c.l.name || '') + '</td>'
-    + '<td><code>' + escapeHtml(c.node) + '</code></td>'
-    + '<td><span class="kind-pill">' + c.kind + '</span></td>'
-    + '<td><input type="number" class="form-input thr-cycle" placeholder="cycle" ' + data + ' style="width:70px"></td>'
-    + '<td><button class="btn btn-sm" data-action="calcThr" ' + data + '>Calc</button></td>'
-    + '<td><input type="number" class="form-input thr-value" value="' + c.thr + '" data-orig="' + c.thr + '" ' + data
-    + ' data-action-input="onThrInput"></td>'
-    + '<td class="nowrap"><button class="btn btn-sm btn-primary thr-save" data-action="saveThr" ' + data + ' style="visibility:hidden">Save</button> '
-    + '<button class="btn btn-sm thr-discard" data-action="discardThr" style="visibility:hidden">Discard</button></td>'
-    + '</tr>';
-}
-function holdingBinsHtml(pc) {
-  const list = binsByPayload[pc] || [];
-  if (!list.length) return '<div class="holding-title">Holding bins</div><div class="text-muted-sm">None on hand.</div>';
-  const rows = list.map((b) =>
-    '<tr><td><a href="/bins">' + escapeHtml(b.bin_label || '') + '</a></td>'
-    + '<td><code>' + escapeHtml(b.node_name || '') + '</code></td>'
-    + '<td>' + escapeHtml(b.zone || '') + '</td>'
-    + '<td class="rh-num">' + num(b.uop_remaining) + '</td>'
-    + '<td><span class="badge badge-' + escapeHtml(b.status || '') + '">' + escapeHtml(b.status || '') + '</span>'
-    + (b.in_transit ? ' <span class="chip chip-near">in transit</span>' : '') + '</td></tr>').join('');
-  return '<div class="holding-title">Holding bins (' + list.length + ')</div>'
-    + '<table class="holding-table"><thead><tr><th>Bin</th><th>Node</th><th>Zone</th><th class="rh-num">UoP</th><th>Status</th></tr></thead>'
-    + '<tbody>' + rows + '</tbody></table>';
-}
-
-function bucketAgeMs(b) {
-  if (b.state === 'stranded') return 0;
-  const t = b.updated_at ? new Date(b.updated_at).getTime() : NaN;
-  return isFinite(t) ? (serverNow() - t) : 0;
-}
-function renderBuckets() {
-  const body = document.getElementById('buckets-body');
-  if (!body) return;
-  const rows = buckets.filter((b) => {
-    if (zoneFilter && b.zone !== zoneFilter) return false;
-    if (groupFilter && b.group_name !== groupFilter) return false;
-    if (!searchTerm) return true;
-    const t = searchTerm.toLowerCase();
-    return (b.payload_code || '').toLowerCase().includes(t)
-      || (b.node_name || '').toLowerCase().includes(t);
-  });
-  if (!rows.length) {
-    body.innerHTML = '<tr><td colspan="6" class="dash-empty">'
-      + (buckets.length ? 'No buckets match the filter.' : 'No lineside buckets.') + '</td></tr>';
-    return;
-  }
-  body.innerHTML = rows.map((b) => {
-    const stranded = b.state === 'stranded';
-    const age = bucketAgeMs(b);
-    const stale = age > STALE_BAD_MS;
-    const ageCls = stale ? 'stale-30' : age > STALE_WARN_MS ? 'stale-7' : '';
-    const ageText = b.updated_at ? timeAgo(b.updated_at) : '—';
-    // A stranded row is a count anomaly recorded at the node's cutover: it never
-    // counts and never changes again, so its age is not a ghost risk.
-    const stateCell = stranded
-      ? '<span class="badge badge-flagged" title="What was left of the pile when the style changed. Not counted.">count anomaly at cutover</span>'
-      : '<span class="badge badge-available">active</span>';
-    return '<tr' + (stale ? ' class="row-stale"' : '') + '>'
-      + '<td>' + hl(b.station || '') + '</td>'
-      + '<td><code>' + hl(b.node_name || '') + '</code></td>'
-      + '<td><code>' + hl(b.payload_code || '') + '</code></td>'
-      + '<td>' + stateCell + '</td>'
-      + '<td class="rh-num">' + num(b.qty) + '</td>'
-      + '<td class="' + ageCls + '"' + (b.updated_at ? ' title="' + escapeHtml(formatTime(b.updated_at)) + '"' : '')
-      + '>' + escapeHtml(ageText) + (stale ? ' · <b>stale</b>' : '') + '</td>'
-      + '</tr>';
-  }).join('');
-}
-
-// ── formatting ─────────────────────────────────────────────────────────────
-function num(n) { return (n == null || isNaN(n)) ? '—' : Number(n).toLocaleString(); }
-
-// ── interactions ───────────────────────────────────────────────────────────
-const onSearch = debounce((el) => { searchTerm = (el.value || '').trim(); renderHealth(); renderBuckets(); }, 150);
-function onSearchKey() { /* the document-level '/' shortcut handles focus */ }
-function onFilter() {
-  zoneFilter = (document.getElementById('inv-zone') || {}).value || '';
-  groupFilter = (document.getElementById('inv-group') || {}).value || '';
-  renderHealth();
-  renderBuckets();
-}
-function refresh() { loadAll(); }
-function scrollTo(id) {
-  const el = document.getElementById(id);
-  if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
-}
-function exportInventory() { window.location = '/api/inventory/export'; }
-
-async function toggleRow(pc) {
-  expanded = expanded === pc ? null : pc;
-  // Opening a row reads its editor's data first: the page no longer carries
-  // the loader list and node names while no row is open (LC11).
-  if (expanded !== null) await loadEditorData();
-  renderHealth();
-}
-
-// Threshold editing: explicit save. Typing marks the row dirty (shows Save /
-// Discard); nothing persists until Save.
-function onThrInput(el) { setRowDirty(el.closest('tr'), true); }
-function setRowDirty(tr, dirty) {
-  if (!tr) return;
-  const dot = tr.querySelector('.dirty-dot');
-  const save = tr.querySelector('.thr-save');
-  const disc = tr.querySelector('.thr-discard');
-  tr.classList.toggle('row-dirty', dirty);
-  if (dot) dot.style.visibility = dirty ? 'visible' : 'hidden';
-  if (save) save.style.visibility = dirty ? 'visible' : 'hidden';
-  if (disc) disc.style.visibility = dirty ? 'visible' : 'hidden';
-}
-async function saveThr(el) {
+// ── threshold edit ───────────────────────────────────────────────────────
+function thrInput(el) {
   const tr = el.closest('tr');
-  const thr = Number(tr.querySelector('.thr-value').value) || 0;
-  const d = el.dataset;
+  if (tr) tr.classList.toggle('loop-row--dirty', el.value !== el.dataset.orig);
+}
+
+function thrKey(el, ev) {
+  const e = ev || window.event;
+  if (!e) return;
+  if (e.key === 'Enter') {
+    e.preventDefault();
+    saveThreshold(el.dataset.key, el.value, 'manual');
+  } else if (e.key === 'Escape') {
+    el.value = el.dataset.orig;
+    thrInput(el);
+    el.blur();
+  }
+}
+
+// saveThreshold writes one row's UoP threshold through the loader config's
+// door for its layout: a dedicated home by its position, a shared window
+// loader by its part. source is "manual" from the row, and from the calculator
+// "calculated" when its suggestion was confirmed as it stood.
+async function saveThreshold(key, value, source) {
+  const r = rowByKey(key);
+  if (!r || r.kind !== 'loader') return;
+  const thr = Number(value);
+  if (!Number.isInteger(thr) || thr < 0) { toast('A UoP threshold is a whole number, 0 or more', 'warning'); return; }
   try {
-    if (d.kind === 'home') {
-      await apiPost('/api/loader/set-home', { loader_id: Number(d.lid), position_node_id: Number(d.pnid), payload_code: expanded, uop_threshold: thr });
+    if (r.layout === 'dedicated_positions') {
+      await apiPost('/api/loader/set-home', { loader_id: r.loader_id, position_node_id: r.position_node_id,
+        payload_code: r.payload_code, uop_threshold: thr, source });
     } else {
-      await apiPost('/api/loader/set-payload', { loader_id: Number(d.lid), payload_code: expanded, uop_threshold: thr });
+      await apiPost('/api/loader/set-payload', { loader_id: r.loader_id, payload_code: r.payload_code,
+        uop_threshold: thr, source });
     }
-    toast('Threshold saved — demand re-derived, edge push on next sync', 'success');
+    flashKey = key;
+    document.querySelectorAll('.loop-thr-input[data-key="' + CSS.escape(key) + '"]').forEach((el) => { el.dataset.orig = String(thr); el.value = String(thr); });
     await loadAll(true);
   } catch (e) {
     toast('Save failed: ' + (e.message || e), 'error', { sticky: true });
   }
 }
-function discardThr(el) {
-  const tr = el.closest('tr');
-  const input = tr.querySelector('.thr-value');
-  input.value = input.dataset.orig;
-  setRowDirty(tr, false);
-  closeCalcPop(tr);
+
+// toggleThrPop opens or closes the UoP threshold column's ⓘ.
+function toggleThrPop() {
+  thrPopOpen = !thrPopOpen;
+  const pop = document.getElementById('thr-pop');
+  if (pop) pop.hidden = !thrPopOpen;
 }
 
-// Calc: suggest a threshold from observed lead times; the operator applies it
-// (which just fills the field + marks dirty), then Saves deliberately.
-async function calcThr(el) {
-  const tr = el.closest('tr');
-  const cyc = Number(tr.querySelector('.thr-cycle').value);
-  if (!cyc || cyc <= 0) { toast('Enter cycle seconds first (the box left of Calc)', 'warning'); return; }
+// calcRows are the positions the calculator can work on, least time left first.
+function calcRows() {
+  return ((view && view.rows) || []).filter((r) => r.kind === 'loader' && r.inputs).sort(worstFirst);
+}
+
+// openCalcPicker opens the calculator on the worst position; its picker
+// moves it to another. A value it suggests saves only on Confirm (the near
+// miss of 2026-10-29: a stop's tail made suggestions of 1, one click from the
+// live threshold).
+function openCalcPicker() {
+  const rows = calcRows();
+  if (!rows.length) { toast('No position has measured refill times yet', 'info'); return; }
+  openCalc(rows[0].key);
+}
+
+function pickCalcRow(el) { openCalc(el.value); }
+
+// ── the calculator's inputs ──────────────────────────────────────────────
+let calcKey = '';
+let calcSuggested = null; // the value the modal's calculator last suggested
+
+function secs(v) { return v == null ? '—' : num(Math.round(v)) + ' s'; }
+
+// openCalc opens the calculator's inputs for a row, the suggestion filled in
+// and, with a session, one Confirm to save it.
+function openCalc(key) {
+  const r = rowByKey(key);
+  if (!r || !r.inputs) return;
+  calcKey = key;
+  calcSuggested = r.suggested;
+  const i = r.inputs;
+  const title = document.getElementById('loop-calc-title');
+  if (title) title.textContent = 'Calculator (uncalibrated)';
+  const pick = '<label class="loop-calc-pick">Position <select id="calc-row" data-action-input="pickCalcRow">'
+    + calcRows().map((o) => '<option value="' + escapeHtml(o.key) + '"' + (o.key === key ? ' selected' : '') + '>'
+      + escapeHtml(o.payload_code + ' at ' + o.node) + '</option>').join('') + '</select></label>';
+  const days = (view && view.lead_days) || 14;
+  const cyc = r.cycle_seconds != null ? (Math.round(r.cycle_seconds * 10) / 10) : '';
+  const field = (label, val) => '<tr><th>' + escapeHtml(label) + '</th><td class="loop-r tnum">' + val + '</td></tr>';
+  const body = document.getElementById('loop-calc-body');
+  body.innerHTML = pick + '<table class="loop-calc-table"><tbody>'
+    + '<tr><th>Cycle (s)</th><td class="loop-r"><input type="number" min="0" step="0.1" id="calc-cycle" class="tnum" value="' + cyc + '"></td></tr>'
+    + field('L1 queue', secs(i.l1_queue_seconds))
+    + field('L1 transit', secs(i.l1_transit_seconds))
+    + field('L2 load (median)', secs(i.l2_load_seconds))
+    + field('L2 transit', secs(0))
+    + field('Market → cell (p95)', secs(i.market_to_cell_seconds))
+    + '<tr><th>Safety factor</th><td class="loop-r"><input type="number" min="0" step="0.1" id="calc-safety" class="tnum" value="' + ((view && view.safety) || 1.5) + '"></td></tr>'
+    + field('Completed L1 cycles, this position', num(r.completed_l1))
+    + field('Completed L1 cycles, the part', num(i.samples_l1))
+    + field('Completed retrieves', num(i.samples_retrieve))
+    + '</tbody></table>'
+    + '<div class="loop-sub">Observed over ' + days + ' days. The cycle is the 14-day median running rate\'s. '
+    + 'L2 transit is 0: no store orders exist.</div>'
+    + '<div id="calc-out" class="loop-calc-out">' + (r.suggested == null
+      ? 'No suggestion: no completed refill at this position in ' + days + ' days.'
+      : calcOutHtml(r.suggested, r.confidence)) + '</div>'
+    + (authenticated ? '<div class="loop-calc-actions">'
+      + '<button type="button" class="btn btn-sm" data-action="runCalc">Recalculate</button> '
+      + '<button type="button" class="btn btn-sm btn-primary" data-action="confirmCalc">Confirm</button></div>' : '');
+  document.getElementById('loop-calc').classList.add('active');
+}
+
+// calcOutHtml is the modal's suggestion: the value to save (an input with a
+// session, prefilled) and the confidence.
+function calcOutHtml(value, confidence) {
+  if (value == null) return '';
+  const v = authenticated
+    ? '<input type="number" min="0" step="1" id="calc-value" class="tnum" value="' + value + '" aria-label="UoP threshold to save">'
+    : '<b class="tnum">' + num(value) + '</b>';
+  return 'Suggested UoP threshold ' + v + ' · confidence ' + escapeHtml(confidence || '');
+}
+
+async function runCalc() {
+  const r = rowByKey(calcKey);
+  if (!r) return;
+  const cycle = Number((document.getElementById('calc-cycle') || {}).value);
+  if (!(cycle > 0)) { toast('Enter the cycle in seconds', 'warning'); return; }
+  const out = document.getElementById('calc-out');
   try {
-    const d = await apiPost('/api/loader/calculate', { core_node_name: el.dataset.anchor, payload_code: expanded, cycle_seconds: cyc, days: 14 });
-    if (d && d.error) { toast(d.error, 'error'); return; }
-    const l1 = (d && d.outputs && d.outputs.L1Threshold) || 0;
-    showCalcPop(tr, l1, d ? d.confidence : '');
+    const d = await apiPost('/api/loader/calculate', {
+      core_node_name: r.node, payload_code: r.payload_code, cycle_seconds: cycle, days: (view && view.lead_days) || 14,
+      safety_factor: Number((document.getElementById('calc-safety') || {}).value) || 0,
+    });
+    const l1 = d && d.outputs ? d.outputs.L1Threshold : null;
+    calcSuggested = l1;
+    if (out) out.innerHTML = calcOutHtml(l1, d && d.confidence);
   } catch (e) {
-    toast('Calc failed: ' + (e.message || e), 'error');
+    toast('Calculate failed: ' + (e.message || e), 'error');
   }
 }
-function showCalcPop(tr, value, confidence) {
-  closeCalcPop(tr);
-  const conf = String(confidence || '').toLowerCase();
-  const pop = document.createElement('div');
-  pop.className = 'calc-pop';
-  pop.innerHTML = 'Suggested UoP threshold: <b>' + value + '</b> &nbsp;·&nbsp; confidence '
-    + '<b class="' + (conf === 'high' ? 'conf-high' : 'conf-low') + '">' + escapeHtml(confidence || 'n/a') + '</b>'
-    + '<div class="text-muted-sm mt-2">From the observed lead times over 14 days. Nothing is saved until you Apply, then Save.</div>'
-    + '<button class="btn btn-sm btn-primary mt-2" data-action="applyCalc:' + value + '">Apply ' + value + '</button> '
-    + '<button class="btn btn-sm mt-2" data-action="dismissCalc">Dismiss</button>';
-  tr.querySelector('.thr-value').closest('td').appendChild(pop);
-}
-function closeCalcPop(scope) {
-  (scope || document).querySelectorAll('.calc-pop').forEach((p) => p.remove());
-}
-function applyCalc(value, el) {
-  const tr = el.closest('tr');
-  tr.querySelector('.thr-value').value = value;
-  setRowDirty(tr, true);
-  closeCalcPop(tr);
-}
-function dismissCalc(el) { closeCalcPop(el.closest('tr')); }
 
-function closeDrill() { document.getElementById('inv-drill').classList.remove('active'); }
-
-// ── flagged-carrier drill ──────────────────────────────────────────────────
-// The banner's flagged-carrier count was a dead scroll — it never told the
-// operator WHICH carrier was flagged. This lists them: carrier, part, node, why
-// (stale epoch / payload mismatch), how many drops, and when — so they know
-// exactly what to cycle-count. Reuses the #inv-drill modal shell.
-function reasonLabel(op) {
-  if (op === 'stale_epoch_dropped') return 'Stale epoch — bin was rebound; deltas from the old count are dropped';
-  if (op === 'payload_mismatch_dropped') return 'Payload mismatch — the delta’s part differs from the bin’s';
-  return 'Flagged (no recent drop logged)';
-}
-async function showRejectedDeltas() {
-  const modal = document.getElementById('inv-drill');
-  const detail = document.getElementById('drill-detail');
-  const title = document.getElementById('drill-title');
-  const narr = document.getElementById('drill-narrative');
-  if (!modal || !detail) return;
-  if (title) title.textContent = 'Carriers flagged for a recount';
-  if (narr) narr.innerHTML = 'These carriers have live counter deltas the system is dropping, so their on-hand '
-    + 'can drift from what is physically in the bin. Cycle-count the carrier at its node to clear the flag and realign the count.';
-  detail.innerHTML = '<div class="dash-empty">Loading…</div>';
-  modal.classList.add('active');
-  let rows;
-  try {
-    rows = await apiGet('/api/inventory/rejected-deltas');
-  } catch (e) {
-    detail.innerHTML = '<div class="dash-empty">Failed to load: ' + escapeHtml(e.message || String(e)) + '</div>';
-    return;
-  }
-  if (!rows || !rows.length) {
-    detail.innerHTML = '<div class="dash-empty">No carriers are currently flagged.</div>';
-    return;
-  }
-  detail.innerHTML = '<div class="table-scroll-y"><table class="rh-table"><thead><tr>'
-    + '<th>Carrier</th><th>Part</th><th>Node</th><th>Reason</th><th>Drops</th><th>Flagged</th><th>Last reject</th>'
-    + '</tr></thead><tbody>'
-    + rows.map((b) =>
-      '<tr><td>' + escapeHtml(b.bin_label || ('#' + b.bin_id)) + '</td>'
-      + '<td>' + escapeHtml(b.payload_code || '—') + '</td>'
-      + '<td>' + escapeHtml(b.node_name || '—') + '</td>'
-      + '<td>' + escapeHtml(reasonLabel(b.reason)) + '</td>'
-      + '<td>' + (b.drop_count || 0) + '</td>'
-      + '<td class="nowrap">' + timeAgoHTML(b.anomaly_at) + '</td>'
-      + '<td class="nowrap">' + (b.last_reject_at ? timeAgoHTML(b.last_reject_at) : '—') + '</td></tr>').join('')
-    + '</tbody></table></div>';
+// confirmCalc saves the modal's value: "calculated" when it is the
+// calculator's suggestion as it stood, "manual" when it was typed over.
+function confirmCalc() {
+  const el = document.getElementById('calc-value');
+  if (!el) return;
+  const value = Number(el.value);
+  closeCalc();
+  saveThreshold(calcKey, value, value === calcSuggested ? 'calculated' : 'manual');
 }
 
-// ── init + live updates ────────────────────────────────────────────────────
+function closeCalc() { const m = document.getElementById('loop-calc'); if (m) m.classList.remove('active'); }
+
+// ── interactions ───────────────────────────────────────────────────────────
+const onSearch = debounce((el) => { searchTerm = (el.value || '').trim(); renderAll(); }, 150);
+function refresh() { loadAll(); }
+// toggleFold opens or folds one table (the control's data-table) and
+// remembers it for the session.
+function toggleFold(el) {
+  const table = el && el.dataset ? el.dataset.table : '';
+  if (!(table in open)) return;
+  open[table] = !open[table];
+  try { sessionStorage.setItem('inventory:open:' + table, open[table] ? '1' : '0'); } catch (e) { /* not remembered: the fold still works */ }
+  renderAll();
+}
+function exportInventory() { window.location = '/api/inventory/export'; }
+
 delegateActions(document.body, {
-  onSearch, onSearchKey, onFilter, refresh, exportInventory, scrollTo,
-  toggleRow, onThrInput, saveThr, discardThr, calcThr, applyCalc, dismissCalc,
-  showRejectedDeltas,
-  'close-modal': closeDrill,
-}, { events: ['click', 'change', 'input', 'keydown'] });
+  onSearch, refresh, toggleFold, exportInventory, thrKey, thrInput, toggleThrPop, openCalcPicker, pickCalcRow,
+  runCalc, confirmCalc, closeCalc,
+}, { events: ['click', 'input', 'keydown'] });
 
 // '/' focuses the search box from anywhere (unless already typing in a field).
 document.addEventListener('keydown', (e) => {
@@ -1142,22 +519,23 @@ document.addEventListener('keydown', (e) => {
     const s = document.getElementById('inv-search');
     if (s) s.focus();
   } else if (e.key === 'Escape') {
-    closeDrill();
+    closeCalc();
+    if (thrPopOpen) toggleThrPop();
   }
 });
+// A read that landed mid-edit renders once the box is left.
+document.addEventListener('focusout', () => { setTimeout(() => { if (pendingRender && !editing()) renderAll(); }, 0); });
 
-// Live: refresh on order events; a light interval as a fallback so the
-// "as of" stamp stays honest even without live traffic. LC11: a burst of
-// order events is one reload after it settles; a hidden tab reloads nothing
-// and catches up once when shown; the fallback skips a turn when a reload ran
-// within its interval (the answer would be the same rows).
-const FALLBACK_MS = 20000;
+// Live: order events re-read the loop, a burst being one read after it
+// settles; a hidden tab reads nothing and catches up once when shown; a
+// minute's interval keeps the stamp honest without traffic. The read carries
+// the calculator's 14-day aggregate, so it is paced by events and the minute,
+// not polled harder.
+const FALLBACK_MS = 60000;
 const live = document.getElementById('inv-live');
 function markLive() { if (live) { live.textContent = 'live'; live.classList.add('is-live'); } }
-const reload = createLiveSchedule(() => loadAll(true), { debounceMs: 1500 });
+const reload = createLiveSchedule(() => loadAll(true), { debounceMs: 5000, maxWaitMs: 30000 });
 onSSE('order-update', () => { markLive(); reload.kick(); });
-// The first connect is the page's own open, which loadAll() below already
-// reads; a later one is a reconnect and reloads.
 let connectedOnce = false;
 onSSE('connected', () => {
   markLive();

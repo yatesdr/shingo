@@ -1,0 +1,60 @@
+{{define "content"}}
+<div class="inv-page">
+
+  <div class="tabs" role="navigation" aria-label="Inventory pages">
+    <a class="tab" href="/inventory">Inventory</a>
+    <a class="tab active" href="/inventory/count-history" aria-current="page">Count history</a>
+  </div>
+
+  <div class="inv-bar">
+    <button type="button" class="btn btn-sm" data-action="refresh" title="Refresh now">
+      <svg class="icon icon-16" aria-hidden="true"><use href="#icon-refresh"></use></svg>
+    </button>
+    <span class="live-pill" id="ch-live" title="Live updates">idle</span>
+    <span class="inv-live-stamp" id="ch-asof"></span>
+  </div>
+
+  <!-- Carriers flagged for a recount, stale staged bins, undeclared carriers.
+       Only rendered when one of them is non-zero. -->
+  <div id="ch-alerts"></div>
+
+  <!-- The count ledger lists (moved from /inventory, 2026-10-29), all fed by
+       /api/inventory/ledger-exceptions. The panels sit SIDE BY SIDE, not
+       stacked, because they are read together: the first names a broken count
+       ("this bin is negative"), the next names the mechanism ("and here is the
+       count that never landed"). The exception lists are BLANK ON A GOOD DAY —
+       the JS emits nothing when there is nothing to say, and .ledger-row hides
+       an empty child so the survivor takes the full width. The strict-pack
+       lists are routine records and never blank: an empty window renders one
+       quiet line. -->
+  <section class="card mb-2" id="ledger">
+    <div class="section-head">
+      <h2>Count ledger</h2>
+      <span class="text-muted-sm">Bins below zero, counts not landing, report divergences, dropped holds, bins declared full</span>
+    </div>
+    <div class="ledger-row">
+      <div id="rh-ledger-exceptions"></div>
+      <div id="rh-delta-integrity"></div>
+      <div id="rh-report-divergence"></div>
+      <div id="rh-hold-drops"></div>
+      <div id="rh-declared-stamps"></div>
+    </div>
+  </section>
+
+  {{template "tick-feed-panel" .TickFeed}}
+</div>
+
+<!-- Flagged-carriers drill (the "carriers flagged for a recount" count). -->
+<div class="modal-overlay drill-modal" id="inv-drill" data-backdrop-close>
+  <div class="modal">
+    <div class="modal-header">
+      <h2 id="drill-title">Carriers flagged for a recount</h2>
+      <button class="modal-close" data-action="close-modal" aria-label="Close"><svg class="icon icon-20" aria-hidden="true"><use href="#icon-close"></use></svg></button>
+    </div>
+    <div id="drill-detail"></div>
+    <div class="drill-narrative" id="drill-narrative"></div>
+  </div>
+</div>
+
+<script type="module" src="/static/pages/count-history.js"></script>
+{{end}}

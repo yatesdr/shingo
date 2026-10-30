@@ -20,7 +20,7 @@ import (
 
 // Characterization tests for handlers_inventory.go —
 //   - handleInventory: renders /inventory (HTML)
-//   - apiInventory: GET /api/inventory returns []InventoryRow
+//   - handleInventoryCountHistory: renders /inventory/count-history (HTML)
 //   - apiInventoryExport: GET /api/inventory/export streams an XLSX workbook
 
 // --- handleInventory --------------------------------------------------------
@@ -45,48 +45,6 @@ func TestHandleInventory_RendersHTML(t *testing.T) {
 	}
 	if !strings.Contains(body, "Inventory") {
 		t.Errorf("expected 'Inventory' heading in body, not found; len=%d", len(body))
-	}
-}
-
-// --- apiInventory -----------------------------------------------------------
-
-// TestApiInventory_EmptyDB pins the empty-DB response: 200 + a JSON array
-// (possibly empty) decode.
-func TestApiInventory_EmptyDB(t *testing.T) {
-	t.Parallel()
-	h, _ := testHandlers(t)
-
-	rec := getPlain(t, h.apiInventory, "/api/inventory")
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status: got %d, want 200; body=%s", rec.Code, rec.Body.String())
-	}
-	var rows []map[string]any
-	testutil.MustNoErr(t, json.NewDecoder(rec.Body).Decode(&rows), "decode")
-}
-
-// TestApiInventory_WithSeededBin pins the happy path: a bin at a storage
-// node shows up as an InventoryRow with the bin label.
-func TestApiInventory_WithSeededBin(t *testing.T) {
-	t.Parallel()
-	h, db := testHandlers(t)
-	sd := testdb.SetupStandardData(t, db)
-	bin := testdb.CreateBinAtNode(t, db, sd.Payload.Code, sd.StorageNode.ID, "BIN-INV-1")
-
-	rec := getPlain(t, h.apiInventory, "/api/inventory")
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status: got %d, want 200; body=%s", rec.Code, rec.Body.String())
-	}
-	var rows []map[string]any
-	testutil.MustNoErr(t, json.NewDecoder(rec.Body).Decode(&rows), "decode")
-	found := false
-	for _, r := range rows {
-		if label, _ := r["bin_label"].(string); label == bin.Label {
-			found = true
-			break
-		}
-	}
-	if !found {
-		t.Errorf("expected inventory row for bin %q, got %+v", bin.Label, rows)
 	}
 }
 
@@ -492,31 +450,62 @@ func TestApiInventoryLedgerExceptions_ListsHoldDropsAndStamps(t *testing.T) {
 	}
 }
 
-// TestHandleInventory_PageShape pins the server-rendered parts of the page this
-// unit changes: the lineside buckets header and the drill modal shell.
+// TestHandleInventory_PageShape pins the server-rendered parts of the two
+// pages, which are two tabs of one (owner, 2026-10-30): Inventory and Count
+// history, the active tab marked. /inventory is two tables (supermarket
+// positions, lines) with the doubt line above them, and none of what left it,
+// the Bins link included; /inventory/count-history carries the count ledger
+// row and the flagged-carriers modal shell.
 func TestHandleInventory_PageShape(t *testing.T) {
 	t.Parallel()
 	h, _ := testHandlersForPages(t)
 	rec := httptest.NewRecorder()
 	h.handleInventory(rec, httptest.NewRequest(http.MethodGet, "/inventory", nil))
 	body := rec.Body.String()
-
-	// Were all present. The Cell column was a dash on every row (a lineside
-	// node has no group parent); the consumption drill read "n/a" for every
-	// payload (it matched a part number against a payload code).
+	for _, want := range []string{`id="loop-doubt"`, `id="pos-body"`, `id="line-body"`, `id="loop-calc"`,
+		`<a class="tab active" href="/inventory" aria-current="page">Inventory</a>`,
+		`<a class="tab" href="/inventory/count-history">Count history</a>`} {
+		if !strings.Contains(body, want) {
+			t.Errorf("/inventory has no %s", want)
+		}
+	}
+	// Gone from /inventory on 2026-10-29: the KPI strip, the ledger panels,
+	// the keeper's levels, the piles, the tick feed — and earlier the Cell
+	// column and the consumption drill.
 	for _, gone := range []string{
-		"<th>Cell</th>",
-		`data-action="drillRange:14"`,
-		"Consumption &amp; cover",
-		"per-payload trend drill",
+		`id="inv-kpi"`, `class="ledger-row"`, `id="mg"`, "Lineside Buckets", `id="tick-feed"`,
+		"<th>Cell</th>", `data-action="drillRange:14"`, "Consumption &amp; cover",
+		"In-loop UoP against the UoP threshold", `id="loop-body"`, `href="/bins"`, `class="inv-title"`, "tab-btn",
 	} {
 		if strings.Contains(body, gone) {
 			t.Errorf("%q is still on the inventory page", gone)
 		}
 	}
-	// The modal shell stays: the flagged-carriers list opens in it.
+
+	rec = httptest.NewRecorder()
+	h.handleInventoryCountHistory(rec, httptest.NewRequest(http.MethodGet, "/inventory/count-history", nil))
+	body = rec.Body.String()
+	if !strings.Contains(body, `<a class="tab" href="/inventory">Inventory</a>`) ||
+		!strings.Contains(body, `<a class="tab active" href="/inventory/count-history" aria-current="page">Count history</a>`) {
+		t.Error("count history does not carry the two tabs, Count history active")
+	}
+	if !strings.Contains(body, `class="ledger-row"`) || !strings.Contains(body, `id="rh-hold-drops"`) {
+		t.Error("the count ledger row is not on /inventory/count-history")
+	}
 	if !strings.Contains(body, `id="inv-drill"`) || !strings.Contains(body, "Carriers flagged for a recount") {
-		t.Error("the flagged-carriers modal shell is gone")
+		t.Error("the flagged-carriers modal shell is not on /inventory/count-history")
+	}
+	// Moved off count history (owner, 2026-10-29): the keeper's levels to the
+	// Nodes page's maintained group, the lineside piles to the Bins page.
+	for _, gone := range []string{`id="mg"`, "Maintained Groups", "Lineside Buckets", "/api/buckets", "maintained-groups"} {
+		if strings.Contains(body, gone) {
+			t.Errorf("%q is still on /inventory/count-history", gone)
+		}
+	}
+	rec = httptest.NewRecorder()
+	h.handleNodes(rec, httptest.NewRequest(http.MethodGet, "/nodes", nil))
+	if !strings.Contains(rec.Body.String(), `id="keeper-levels"`) {
+		t.Error("the keeper's levels block is not on the Nodes page")
 	}
 }
 

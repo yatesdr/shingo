@@ -235,7 +235,7 @@ func (s *CoreDataService) StartHeartbeatMaintenance() {
 // because the Edge has already moved past it: one tick with a bad clock must
 // not take the good ones with it. Each row still refused is logged with its
 // station, edge_snapshot_id and recorded_at, and counted on the station's
-// edge_registry.tick_rejected, which the Inventory page shows.
+// edge_registry.tick_rejected, which count history's tick feed panel shows.
 //
 // THE STATION COMES FROM THE ENVELOPE, FULL STOP. It used to come from the
 // payload with the envelope as a fallback, which is a rule with two possible

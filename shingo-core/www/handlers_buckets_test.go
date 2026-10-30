@@ -16,8 +16,8 @@ import (
 // Issue 2 (lineside-buckets-investigation-2026-05-18.md): Core's
 // lineside_buckets table is populated end-to-end by the existing
 // Edge's pile levels, but no operator-facing UI surfaced it.
-// These tests pin the read-only listing endpoint that the inventory
-// page now consumes alongside the existing bins table.
+// These tests pin the read-only listing endpoint that the Bins page's
+// lineside section (bins-lineside.js) consumes.
 
 // TestApiBuckets_EmptyDB pins the empty-DB response: 200 + a JSON
 // array decode (possibly empty).
@@ -110,20 +110,25 @@ func TestApiBuckets_OrderedByCellStationNode(t *testing.T) {
 	}
 }
 
-// TestHandleInventory_ListsBucketsSection pins the page-render path: the
-// inventory.html template includes a "Lineside Buckets" section that
-// the operator-facing page renders alongside the bins table.
-func TestHandleInventory_ListsBucketsSection(t *testing.T) {
+// TestHandleBins_ListsBucketsSection pins the page-render path: the Bins page
+// carries the "Lineside Buckets" section, the bin-level detail beside the bins
+// (owner, 2026-10-29; it sat on /inventory/count-history before), and count
+// history no longer does.
+func TestHandleBins_ListsBucketsSection(t *testing.T) {
 	t.Parallel()
 	h, _ := testHandlersForPages(t)
 
-	rec := getPlain(t, h.handleInventory, "/inventory")
+	rec := getPlain(t, h.handleBins, "/bins")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status: got %d, want 200; body=%s", rec.Code, rec.Body.String())
 	}
 	body := rec.Body.String()
-	if !strings.Contains(body, "Lineside Buckets") {
-		t.Errorf("expected 'Lineside Buckets' section in /inventory page, not found; body len=%d", len(body))
+	if !strings.Contains(body, "Lineside Buckets") || !strings.Contains(body, "/static/pages/bins-lineside.js") {
+		t.Errorf("expected the 'Lineside Buckets' section and its script on /bins, not found; body len=%d", len(body))
+	}
+	rec = getPlain(t, h.handleInventoryCountHistory, "/inventory/count-history")
+	if strings.Contains(rec.Body.String(), "Lineside Buckets") {
+		t.Error("count history still carries the lineside buckets")
 	}
 }
 

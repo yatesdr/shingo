@@ -266,6 +266,20 @@
           cart back as; they do not change how many Core keeps.</div>
       </div>
 
+      <!-- The keeper's last tick for this group (moved from /inventory,
+           2026-10-29): level − here − asked − coming = short, term by term.
+           Hidden until the group has a tick. nodes-maintain.js
+           renderKeeperLevels. -->
+      <div id="keeper-levels" class="form-group hide">
+        <label>The keeper's last tick</label>
+        <div class="table-scroll-y">
+          <table class="rh-table">
+            <thead><tr><th>Carrier type</th><th class="rh-num">Level</th><th class="rh-num">Here</th><th class="rh-num">Asked</th><th class="rh-num">Coming</th><th class="rh-num">Short</th><th>Waiting on</th></tr></thead>
+            <tbody id="keeper-levels-body"></tbody>
+          </table>
+        </div>
+        <div class="form-hint">Empty carriers Core keeps standing by: level &minus; here &minus; asked &minus; coming = short.</div>
+      </div>
       <div class="form-group">
         <label>Processes this group serves</label>
         <div id="nf-maintain-supports"></div>
@@ -317,6 +331,20 @@
         <strong>Enabled:</strong> <span id="ro-enabled"></span>
       </div>
     </div>
+      <!-- The keeper's last tick for this group (moved from /inventory,
+           2026-10-29): level − here − asked − coming = short, term by term.
+           Hidden until the group has a tick. nodes-maintain.js
+           renderKeeperLevels. -->
+    <div id="keeper-levels" class="form-group hide mb-2">
+        <label>The keeper's last tick</label>
+        <div class="table-scroll-y">
+          <table class="rh-table">
+            <thead><tr><th>Carrier type</th><th class="rh-num">Level</th><th class="rh-num">Here</th><th class="rh-num">Asked</th><th class="rh-num">Coming</th><th class="rh-num">Short</th><th>Waiting on</th></tr></thead>
+            <tbody id="keeper-levels-body"></tbody>
+          </table>
+        </div>
+        <div class="form-hint">Empty carriers Core keeps standing by: level &minus; here &minus; asked &minus; coming = short.</div>
+      </div>
     <!-- Occupant section (read-only) -->
     <div id="modal-inventory" class="hide mb-2">
       <div class="flex flex-between mb-1">

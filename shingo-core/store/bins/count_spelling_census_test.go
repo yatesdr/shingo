@@ -54,6 +54,9 @@ var countOtherQuestions = map[string]string{
 		"report must answer for, an overpack included — a count to compare, not stock",
 	"shingo-edge/engine/sim_operator.go:simOperator.consumeDisposition": "the sim build's floor bands the oracle's count (underpack at or below 0, the lineside " +
 		"pull, a partial back): test tooling reading Core's bin JSON over HTTP, where the Edge's one reader of stock is the feed's Stocked",
+	// /inventory (2026-10-29).
+	"shingo-core/service/inventory_loop.go:indexLoop": "the doubt line: a counted bin below 0 makes its part's in-loop sum untrustworthy — " +
+		"the overpack question, asked of the bins the sum counts",
 }
 
 // toteOtherQuestions compare totes per layer with 0 or nil to ask something else.

@@ -589,3 +589,66 @@ delegateActions(document.body, {
   setMaintainWant,
   toggleMaintainSupport
 }, { events: ['click', 'change'] });
+
+// ── The keeper's levels (moved from /inventory, owner 2026-10-29) ──────────
+//
+// The keeper's last tick for one maintained group, one row per carrier type,
+// beside the level it keeps: level − here − asked − coming = short, printed
+// term by term rather than collapsed into a status, because a group that is
+// short and quiet has two opposite explanations — asks already out, or carriers
+// already coming — and a single pill hides which.
+//
+// HIDDEN when there is nothing to say: no tick for this group yet, or it is
+// not maintained. Read for a viewer with no session too: the gate removes a
+// button, not a screen.
+//
+// "WAITING ON" PRINTS THE ASK'S OWN QUEUE SENTENCE (the dispatcher's words for
+// an operator) and keeps the engineer's queue cause in the title. No label map:
+// an ask with no sentence prints its cause as itself.
+var _keeperFor = '';
+
+export function renderKeeperLevels(groupName) {
+  var box = document.getElementById('keeper-levels');
+  var body = document.getElementById('keeper-levels-body');
+  if (!box || !body) return;
+  box.classList.add('hide');
+  body.innerHTML = '';
+  _keeperFor = groupName || '';
+  if (!groupName) return;
+  apiGet('/api/inventory/maintained-groups').then(function (all) {
+    if (_keeperFor !== groupName) return; // the modal moved on
+    var rows = (Array.isArray(all) ? all : []).filter(function (r) { return r.group_node === groupName; });
+    if (!rows.length) return;
+    rows.sort(function (a, b) {
+      return (b.gap || 0) - (a.gap || 0) || String(a.bin_type_code).localeCompare(String(b.bin_type_code));
+    });
+    body.innerHTML = rows.map(keeperRowHtml).join('');
+    box.classList.remove('hide');
+  }).catch(function (err) {
+    // A failed read leaves the block hidden: the level editor above still works.
+    console.warn('keeper levels', err);
+  });
+}
+
+export function keeperRowHtml(r) {
+  var gap = r.gap || 0;
+  // Short is the only coloured number on the row. A gap of 0 or less is not
+  // "good" needing a green tick, it is nothing happening.
+  var gapCell = gap > 0
+    ? '<td class="rh-num mg-short" title="Core is short ' + gap + ' and has asks out or is placing them">' + gap + '</td>'
+    : '<td class="rh-num text-muted" title="the level is covered">0</td>';
+  var waiting = r.oldest_ask_cause
+    ? '<span class="tnum" title="the longest-waiting ask against this level has been parked '
+      + escapeHtml(r.oldest_ask_age || '') + ' (' + escapeHtml(r.oldest_ask_cause) + ')">'
+      + escapeHtml(r.oldest_ask_reason || r.oldest_ask_cause) + ' &middot; ' + escapeHtml(r.oldest_ask_age || '') + '</span>'
+    : '<span class="text-muted" title="nothing parked — every ask this level made is moving">&mdash;</span>';
+  return '<tr>'
+    + '<td>' + escapeHtml(r.bin_type_code || '') + '</td>'
+    + '<td class="rh-num">' + (r.want || 0) + '</td>'
+    + '<td class="rh-num">' + (r.resident || 0) + '</td>'
+    + '<td class="rh-num">' + (r.asked || 0) + '</td>'
+    + '<td class="rh-num">' + (r.coming || 0) + '</td>'
+    + gapCell
+    + '<td>' + waiting + '</td>'
+    + '</tr>';
+}

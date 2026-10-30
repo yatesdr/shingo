@@ -15,6 +15,7 @@ import (
 
 	"shingocore/store"
 	"shingocore/store/demands"
+	"shingocore/store/inventory"
 	"shingocore/store/loaders"
 )
 
@@ -429,15 +430,68 @@ func (s *LoaderService) Delete(id int64) error {
 
 // SetPayload assigns (or updates) a shared_window payload binding + threshold.
 // (The bin-count floor / min_stock is retired — replenishment is operator or
-// UOP-threshold, never bin-count.)
-func (s *LoaderService) SetPayload(loaderID int64, payloadCode string, uopThreshold int) error {
+// UOP-threshold, never bin-count.) by says who set the threshold and how, for
+// its audit row (recordThreshold); omitted, it is a manual change by "system".
+func (s *LoaderService) SetPayload(loaderID int64, payloadCode string, uopThreshold int, by ...ThresholdBy) error {
+	prior, err := s.db.ListLoaderPayloads(loaderID)
+	if err != nil {
+		return err
+	}
+	old := 0
+	for _, p := range prior {
+		if p.PayloadCode == payloadCode {
+			old = p.UOPThreshold
+		}
+	}
 	if err := s.db.UpsertLoaderPayload(loaders.Payload{
 		LoaderID: loaderID, PayloadCode: payloadCode, UOPThreshold: uopThreshold,
 	}); err != nil {
 		return err
 	}
+	s.recordThreshold(inventory.ThresholdAuditPayload, loaderID, payloadCode, old, uopThreshold, by)
 	s.rederive()
 	return nil
+}
+
+// ThresholdBy says who set a UoP threshold and how: Source is
+// ThresholdManual (typed) or ThresholdCalculated (the calculator's suggestion,
+// applied as it stood).
+type ThresholdBy struct {
+	Actor  string
+	Source string
+}
+
+// The two threshold sources an audit row records.
+const (
+	ThresholdManual     = "manual"
+	ThresholdCalculated = "calculated"
+)
+
+// recordThreshold writes the one audit_log row a UoP threshold change leaves:
+// entity loader_home (by position node) or loader_payload (by loader), action
+// uop_threshold, values ThresholdAuditValues. Nothing is written when the
+// value did not move. The /inventory page's provenance reads the latest one
+// (inventory.LoopBindings). A failed write is logged, not returned: the
+// threshold is saved and in force, and refusing the save over its history
+// would leave the plant on the old value.
+func (s *LoaderService) recordThreshold(entity string, entityID int64, payloadCode string, old, new int, by []ThresholdBy) {
+	if old == new || payloadCode == "" {
+		return
+	}
+	b := ThresholdBy{}
+	if len(by) > 0 {
+		b = by[0]
+	}
+	if b.Source != ThresholdCalculated {
+		b.Source = ThresholdManual
+	}
+	if b.Actor == "" {
+		b.Actor = "system"
+	}
+	ov, nv := ThresholdAuditValues(payloadCode, old, new, b.Source)
+	if err := s.db.AppendAudit(entity, entityID, inventory.ThresholdAuditAction, ov, nv, b.Actor); err != nil {
+		log.Printf("loader_service: threshold audit %s %d %s: %v", entity, entityID, payloadCode, err)
+	}
 }
 
 // SetQuota declares how many carriers of one bin type a loader wants on hand.
@@ -492,8 +546,8 @@ func (s *LoaderService) SetWindowBinTypes(loaderID, positionNodeID int64, binTyp
 // position is appended at the end of the loader's order; re-setting an existing
 // one preserves its place (the store ignores sort_order on conflict). payloadCode
 // may be empty — the grid-drag drops a node first, then the operator assigns its
-// payload via the inline picker.
-func (s *LoaderService) SetHome(loaderID, positionNodeID int64, payloadCode, homeKind string, uopThreshold int) error {
+// payload via the inline picker. by is as on SetPayload.
+func (s *LoaderService) SetHome(loaderID, positionNodeID int64, payloadCode, homeKind string, uopThreshold int, by ...ThresholdBy) error {
 	// homeKind is the home/buffer discriminator; "" normalises to home in the store.
 	// A BUFFER slot pins no payload (it holds whatever partial parks there), so a
 	// payload sent alongside a buffer kind is dropped rather than trusted.
@@ -533,6 +587,13 @@ func (s *LoaderService) SetHome(loaderID, positionNodeID int64, payloadCode, hom
 	if err := s.syncPairOf(loaderID); err != nil {
 		return fmt.Errorf("two-stage window %s: %w", node.Name, err)
 	}
+	old := 0
+	for _, h := range existing {
+		if h.PositionNodeID == positionNodeID && h.PayloadCode == payloadCode {
+			old = h.UOPThreshold
+		}
+	}
+	s.recordThreshold(inventory.ThresholdAuditHome, positionNodeID, payloadCode, old, uopThreshold, by)
 	s.rederive()
 	return nil
 }

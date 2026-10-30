@@ -6,8 +6,11 @@ package store
 
 import (
 	"fmt"
+	"time"
 
 	"shingocore/store/inventory"
+	"shingocore/store/orders"
+	"shingocore/store/sourceability"
 )
 
 func (db *DB) ListInventory() ([]inventory.Row, error) {
@@ -16,16 +19,9 @@ func (db *DB) ListInventory() ([]inventory.Row, error) {
 
 // ListLinesideBuckets returns every authoritative lineside_buckets row
 // joined to the node hierarchy. Surfaces the bucket data the
-// /api/buckets endpoint and Core inventory page render against.
+// /api/buckets endpoint and the Core Bins page render against.
 func (db *DB) ListLinesideBuckets() ([]inventory.BucketRow, error) {
 	return inventory.ListLinesideBuckets(db.DB)
-}
-
-// DistinctStockedPayloads returns every payload_code with current stock on a
-// bin or an active lineside pile. Feeds the Replenishment Health rollup so stocked but
-// unmonitored payloads still appear.
-func (db *DB) DistinctStockedPayloads() ([]string, error) {
-	return inventory.DistinctStockedPayloads(db.DB)
 }
 
 // SumBinUOP returns the signed total of bins.uop_remaining across all
@@ -51,4 +47,37 @@ func (db *DB) SumLinesideBuckets() (int64, error) {
 		return 0, fmt.Errorf("sum lineside_buckets.qty: %w", err)
 	}
 	return sum, nil
+}
+
+// LoopBindings, LoopBins, LoopClaims, LoopLiveOrders and LoopNodeRates are the
+// /inventory page's reads (see store/inventory/loop.go).
+func (db *DB) LoopBindings(start, end time.Time) ([]inventory.Binding, error) {
+	return inventory.LoopBindings(db.DB, start, end)
+}
+
+// LoopBins lists the bins in the loop; outOfLoop is the in-loop sum's own predicate.
+func (db *DB) LoopBins(outOfLoop string) ([]inventory.LoopBin, error) {
+	return inventory.LoopBins(db.DB, outOfLoop)
+}
+
+// LoopClaims lists the running styles' claims.
+func (db *DB) LoopClaims() ([]inventory.LoopClaim, error) {
+	return inventory.LoopClaims(db.DB)
+}
+
+// LoopNodeRates reads sourceability's node rates over rateWindow, for the
+// Lines table's time left.
+func (db *DB) LoopNodeRates(rateWindow time.Duration) (sourceability.NodeRates, error) {
+	return sourceability.ReadNodeRates(db.DB, rateWindow)
+}
+
+// LoopLiveOrders lists the live orders not yet delivered, for the Lines
+// table's On the way.
+func (db *DB) LoopLiveOrders() ([]inventory.LiveOrder, error) {
+	return inventory.LoopLiveOrders(db.DB)
+}
+
+// LeadTimesByPayload is the calculator's input read for every payload at once.
+func (db *DB) LeadTimesByPayload(r orders.LeadTimeRange) (map[string]orders.LeadTimeInputs, error) {
+	return orders.LeadTimesByPayload(db.DB, r)
 }

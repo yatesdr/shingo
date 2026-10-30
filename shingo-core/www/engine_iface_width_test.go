@@ -54,7 +54,7 @@ func assertInterfaceWidth(t *testing.T, name string, rt reflect.Type, want []str
 	}
 }
 
-// TestServiceAccessWidth pins Core's narrow surface at 48 methods. The
+// TestServiceAccessWidth pins Core's narrow surface at 46 methods. The
 // interface's own doc comment states the same number; keep them together.
 func TestServiceAccessWidth(t *testing.T) {
 	t.Parallel()
@@ -70,7 +70,6 @@ func TestServiceAccessWidth(t *testing.T) {
 		"ConfigPath",
 		"DashboardService",
 		"DeltaIntegrityByPayload",
-		"DeltaIntegrityDaily",
 		"DemandEpisodeService",
 		"Dispatcher",
 		"EdgeFeedFlags",
@@ -99,7 +98,6 @@ func TestServiceAccessWidth(t *testing.T) {
 		"PayloadService",
 		"Reconciliation",
 		"Recovery",
-		"ReplenishmentHealth",
 		"RequestEdgeReregister",
 		"RobotGroups",
 		"SourceabilityEvents",
@@ -112,13 +110,16 @@ func TestServiceAccessWidth(t *testing.T) {
 	assertInterfaceWidth(t, "ServiceAccess", reflect.TypeOf(&iface).Elem(), want)
 }
 
-// TestEngineOrchestrationWidth pins Core's wide surface at 64 methods —
-// ServiceAccess's 48 embedded, plus 16 orchestration verbs of its own.
+// TestEngineOrchestrationWidth pins Core's wide surface at 62 methods —
+// ServiceAccess's 46 embedded, plus 16 orchestration verbs of its own.
 // (CleanNow and SaveCleaningSetup joined at v158: one sends a pinned vendor
 // order, the other checks the cleaning points against the scene and the lanes
 // before saving. The cleaning opt-out did not: it is a one-row write and went
 // on NodeService, so ServiceAccess stayed at 50. ClearLoaderHome joined with
 // the loader home's clear as a parent order.)
+// (ReplenishmentHealth and DeltaIntegrityDaily left both on 2026-10-29: the
+// /inventory page that read them became one table on InventoryService.Loop,
+// and the daily drop chart went with it.)
 // (PrepareDatabase left it in R27: Core's database settings apply after a
 // restart, so the save door only pings the draft, through HealthService.)
 //
@@ -166,7 +167,6 @@ func TestEngineOrchestrationWidth(t *testing.T) {
 		"CreateBinMove",
 		"DashboardService",
 		"DeltaIntegrityByPayload",
-		"DeltaIntegrityDaily",
 		"DemandEpisodeService",
 		"Dispatcher",
 		"EdgeFeedFlags",
@@ -199,7 +199,6 @@ func TestEngineOrchestrationWidth(t *testing.T) {
 		"ReconfigureMessaging",
 		"ReconfigureNotifications",
 		"Recovery",
-		"ReplenishmentHealth",
 		"RequestEdgeReregister",
 		"RobotGroups",
 		"SaveCleaningSetup",
