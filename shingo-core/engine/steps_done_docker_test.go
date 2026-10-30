@@ -4,10 +4,12 @@ package engine
 
 import (
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"shingo/protocol"
+	"shingo/protocol/eventbus"
 	"shingo/protocol/testutil"
 	"shingocore/dispatch"
 	"shingocore/fleet/seerrds"
@@ -26,21 +28,55 @@ func stepsDoneOf(t *testing.T, db *store.DB, orderID int64) int {
 	return n
 }
 
-// untilSeen waits for the subscriber to have recorded n blocks of the order.
-func untilSeen(t *testing.T, db *store.DB, orderID int64, n int) {
+// blocksHandled counts the distinct blocks of each order the engine's block
+// subscriber has FINISHED handling, so a test reads steps_done only once the
+// block's count is written.
+//
+// THE LEG ROW IS NOT THAT POINT. handleBlockCompleted writes the block's
+// mission_events row (recordBlockLeg) and then, in a separate statement,
+// steps_done (countStepDone); a read between the two found steps_done one
+// block behind. This file used to wait for the leg row, and on CI's slower
+// runner the read landed in that gap (2026-10-30, main 9c86018f: "after 3 of
+// the load sequence's blocks steps_done is 0, want 1").
+//
+// WHY A SUBSCRIBER: eventbus.Emit calls subscribers synchronously, in the
+// order they subscribed, on the poller's goroutine, and the engine subscribes
+// handleBlockCompleted in wireEventHandlers, inside Start. One subscribed
+// after Start sees a block only after handleBlockCompleted has returned for
+// it, both writes done. Distinct block ids, because a replayed block is
+// emitted again.
+type blocksHandled struct {
+	mu   sync.Mutex
+	seen map[int64]map[string]bool
+}
+
+func watchBlocksHandled(eng *Engine) *blocksHandled {
+	h := &blocksHandled{seen: map[int64]map[string]bool{}}
+	eventbus.SubscribeTyped(eng.Events, func(evt eventbus.TypedEvent[EventType, BlockCompletedEvent]) {
+		h.mu.Lock()
+		defer h.mu.Unlock()
+		if h.seen[evt.Payload.OrderID] == nil {
+			h.seen[evt.Payload.OrderID] = map[string]bool{}
+		}
+		h.seen[evt.Payload.OrderID][evt.Payload.BlockID] = true
+	}, EventBlockCompleted)
+	return h
+}
+
+// until waits for n blocks of the order to have been handled.
+func (h *blocksHandled) until(t *testing.T, orderID int64, n int) {
 	t.Helper()
 	deadline := time.Now().Add(10 * time.Second)
 	for time.Now().Before(deadline) {
-		seen := 0
-		for _, c := range subscriberSaw(t, db, orderID) {
-			seen += c
-		}
+		h.mu.Lock()
+		seen := len(h.seen[orderID])
+		h.mu.Unlock()
 		if seen >= n {
 			return
 		}
-		time.Sleep(20 * time.Millisecond)
+		time.Sleep(5 * time.Millisecond)
 	}
-	t.Fatalf("the subscriber never recorded %d blocks of order %d", n, orderID)
+	t.Fatalf("the block subscriber never finished %d blocks of order %d", n, orderID)
 }
 
 // TestStepsDone_TheSubscriberCountsThePlanStepsTheFleetFinished drives the
@@ -58,6 +94,7 @@ func TestStepsDone_TheSubscriberCountsThePlanStepsTheFleetFinished(t *testing.T)
 		mustExec(t, db, `UPDATE payloads SET advanced_load_sequence = 'Child cart interlock' WHERE code = $1`, bp.Code)
 		vendor, url := newStubVendor(t)
 		eng := newTestEngine(t, db, seerrds.New(seerrds.Config{BaseURL: url, Timeout: 2 * time.Second, PollInterval: 10 * time.Millisecond}))
+		handled := watchBlocksHandled(eng)
 
 		eng.Dispatcher().HandleOrderRequest(testEnvelope(), &protocol.OrderRequest{
 			OrderUUID: "done-seq", OrderType: dispatch.OrderTypeRetrieve, PayloadCode: bp.Code,
@@ -70,7 +107,7 @@ func TestStepsDone_TheSubscriberCountsThePlanStepsTheFleetFinished(t *testing.T)
 		// Go_AP1, Spin_90, load, Spin_inverse_90 at the source, then the drop.
 		for _, step := range []struct{ finished, want int }{{2, 0}, {3, 1}, {4, 1}} {
 			vendor.drive(order.VendorOrderID, rds.StateRunning, step.finished)
-			untilSeen(t, db, order.ID, step.finished)
+			handled.until(t, order.ID, step.finished)
 			if got := stepsDoneOf(t, db, order.ID); got != step.want {
 				t.Fatalf("after %d of the load sequence's blocks steps_done is %d, want %d", step.finished, got, step.want)
 			}
@@ -100,6 +137,7 @@ func TestStepsDone_TheSubscriberCountsThePlanStepsTheFleetFinished(t *testing.T)
 			createTestBinAtNode(t, db, bp.Code, storageNode.ID, "BIN-DONE-WAIT-"+string(rune('A'+i)))
 			vendor, url := newStubVendor(t)
 			eng := newTestEngine(t, db, seerrds.New(seerrds.Config{BaseURL: url, Timeout: 2 * time.Second, PollInterval: 10 * time.Millisecond}))
+			handled := watchBlocksHandled(eng)
 			d := eng.Dispatcher()
 			env := testEnvelope()
 			uuid := "done-wait-" + string(rune('a'+i))
@@ -125,7 +163,7 @@ func TestStepsDone_TheSubscriberCountsThePlanStepsTheFleetFinished(t *testing.T)
 
 			d.HandleOrderRelease(env, &protocol.OrderRelease{OrderUUID: uuid})
 			vendor.drive(order.VendorOrderID, rds.StateRunning, sent+1)
-			untilSeen(t, db, order.ID, sent+1)
+			handled.until(t, order.ID, sent+1)
 			if got := stepsDoneOf(t, db, order.ID); got != c.lifted {
 				t.Fatalf("released and lifted at the line, steps_done is %d, want %d", got, c.lifted)
 			}
