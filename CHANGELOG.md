@@ -3,6 +3,13 @@
 One line per change. If a change needs a paragraph to explain, the paragraph
 belongs in the commit message or in `docs/` — this file is the index.
 
+## 2026-10-30 — The wall map can be turned
+
+No migration. Core only.
+
+- The Robot Map has a Rotate button: each tap turns the map 90 degrees, and that screen remembers it
+- Until a screen is rotated, the map orients itself as it does today
+
 ## 2026-10-30 — A recipe follows the process's Settings
 
 One Edge migration, no recipe takes a new version. Deploy the Edge alone.

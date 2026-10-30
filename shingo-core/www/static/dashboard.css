@@ -398,7 +398,7 @@ tr.row-new { animation: row-flash 1.4s ease-out; }
 
 /* Recenter control — restores auto-follow. Hidden until the user takes
  * manual control (wheel-zoom / drag-pan add .is-active). */
-.map-recenter {
+.map-recenter, .map-rotate {
   position: absolute;
   left: 0.75rem;
   bottom: 0.75rem;
@@ -415,7 +415,9 @@ tr.row-new { animation: row-flash 1.4s ease-out; }
   cursor: pointer;
 }
 .map-recenter.is-active { display: inline-flex; }
-.map-recenter:hover { background: var(--elev-raised, #1f2733); }
+.map-recenter:hover, .map-rotate:hover { background: var(--elev-raised, #1f2733); }
+/* Always there, and beside Recenter and the Map key rather than over them. */
+.map-rotate { display: inline-flex; left: 8rem; }
 /* Grab cursor while drag-panning. */
 .map-svg-wrap.map-dragging { cursor: grabbing; }
 
