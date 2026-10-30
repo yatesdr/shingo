@@ -343,11 +343,11 @@
       </div>
       <button class="modal-close" data-action="closeBinDetail">&times;</button>
     </div>
-    <div class="tab-bar">
-      <button class="tab-btn active" data-action="switchTab:overview">Overview</button>
-      <button class="tab-btn" data-action="switchTab:contents">Contents</button>
-      <button class="tab-btn" data-action="switchTab:actions">Actions</button>
-      <button class="tab-btn" data-action="switchTab:journal">Journal</button>
+    <div class="tabs" role="tablist">
+      <button type="button" class="tab active" data-action="switchTab:overview">Overview</button>
+      <button type="button" class="tab" data-action="switchTab:contents">Contents</button>
+      <button type="button" class="tab" data-action="switchTab:actions">Actions</button>
+      <button type="button" class="tab" data-action="switchTab:journal">Journal</button>
     </div>
     <div id="bd-overview" class="tab-panel active"></div>
     <div id="bd-contents" class="tab-panel"></div>

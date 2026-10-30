@@ -5,7 +5,7 @@ import { onSSE } from '/static/shared/utils.js';
 var authenticated = document.getElementById('page-data').dataset.authenticated === 'true';
 
 function switchTab(name) {
-  document.querySelectorAll('.to-tab').forEach(function(t) { t.classList.remove('active'); });
+  document.querySelectorAll('.tabs .tab').forEach(function(t) { t.classList.remove('active'); });
   document.querySelectorAll('.to-tab-content').forEach(function(c) { c.classList.remove('active'); });
   document.getElementById('tab-' + name).classList.add('active');
   event.target.classList.add('active');

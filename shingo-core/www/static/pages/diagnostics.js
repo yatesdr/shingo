@@ -13,13 +13,13 @@ import { onSSE } from '/static/shared/utils.js';
     document.getElementById('tab-recovery').style.display = tab === 'recovery' ? 'block' : 'none';
     var tabFire = document.getElementById('tab-fire');
     if (tabFire) tabFire.style.display = tab === 'fire' ? 'block' : 'none';
-    var tabs = document.querySelectorAll('.diag-tab');
+    var tabs = document.querySelectorAll('.tabs .tab');
     tabs.forEach(function(t) { t.classList.remove('active'); });
     if (tab === 'debug') tabs[0].classList.add('active');
     else if (tab === 'cms') tabs[1].classList.add('active');
     else if (tab === 'recon') tabs[2].classList.add('active');
     else if (tab === 'recovery') tabs[3].classList.add('active');
-    var fireTab = document.querySelector('.diag-tab[data-tab="fire"]');
+    var fireTab = document.querySelector('.tabs .tab[data-tab="fire"]');
     if (fireTab) {
       if (tab === 'fire') fireTab.classList.add('active');
       else fireTab.classList.remove('active');

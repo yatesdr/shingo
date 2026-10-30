@@ -25,7 +25,11 @@ Markup:
 ```
 
 JS handler is shared. No more `.tab-bar` / `.diag-tabs` / `.spot-tabs` /
-`.to-tabs` / `.process-tab`.
+`.to-tabs` / `.process-tab`: every tab bar in Core and the Edge is `.tabs` / `.tab`, defined once in
+`shared/components.css`, and no page sets a tab's size.
+
+A tab that changes page rather than panel is a link, `<a class="tab" href="...">`, with the current one
+`aria-current="page"`.
 
 ### Tabs are not CTAs
 

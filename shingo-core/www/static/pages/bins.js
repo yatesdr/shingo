@@ -164,7 +164,7 @@ function binDetailOpen() {
 }
 
 function openTab() {
-  var btn = document.querySelector('#bin-detail-modal .tab-btn.active');
+  var btn = document.querySelector('#bin-detail-modal .tab.active');
   var m = btn && /^switchTab:(\w+)$/.exec(btn.getAttribute('data-action') || '');
   return m ? m[1] : 'overview';
 }
@@ -302,7 +302,7 @@ function switchTab(name) {
   var tabs = ['overview', 'contents', 'actions', 'journal'];
   tabs.forEach(function(t) {
     var panel = document.getElementById('bd-' + t);
-    var btn = document.querySelector('.tab-btn[data-action="switchTab:' + t + '"]');
+    var btn = document.querySelector('#bin-detail-modal .tab[data-action="switchTab:' + t + '"]');
     // A .tab-panel shows only with .active (shared/components.css, §22).
     if (panel) panel.classList.toggle('active', t === name);
     if (btn) btn.classList.toggle('active', t === name);

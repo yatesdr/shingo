@@ -1256,18 +1256,20 @@ nav {
     .set-ui .set-inp.wide { min-width: 0; width: 100%; }
 }
 
-/* TABS (style guide §22) — the first implementation of the one tab pattern.
+/* TABS (style guide §22) — the one tab pattern, for both apps, at one size.
  * A row of .tab buttons in a .tabs bar switches .tab-panel siblings by
  * data-tab, through the shared switchTab handler in utils.js. A panel shows
  * only with .active, so a page that used bare .tab-panel with .hide (Core's
- * bin detail) was moved to .active in the same change. The older .tab-bar,
- * .diag-tab and .to-tab families are not migrated here. */
+ * bin detail) was moved to .active in the same change. A tab that changes
+ * page is a link, <a class="tab">, so it never takes a link's underline. The
+ * older .tab-bar, .diag-tab and .to-tab families are gone: every tab bar in
+ * Core and the Edge is this one. No page sets a tab's size. */
 .tabs { display: flex; gap: 0.25rem; border-bottom: 1px solid var(--border); margin-bottom: 1rem; }
 .tab {
     padding: 0.5rem 1rem; cursor: pointer; border: none; background: none;
     color: var(--text-muted); font: inherit; border-bottom: 2px solid transparent; margin-bottom: -1px;
 }
-.tab:hover { color: var(--text); }
+.tab:hover { color: var(--text); text-decoration: none; }
 .tab.active { color: var(--primary); border-bottom-color: var(--primary); }
 .tab-panel { display: none; }
 .tab-panel.active { display: block; }

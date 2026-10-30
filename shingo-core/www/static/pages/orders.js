@@ -769,7 +769,7 @@ function closeManualOrderModal() {
 
 function switchManualOrderTab(name, btn) {
   _moActiveTab = name;
-  document.querySelectorAll('#manual-order-modal .tab-btn').forEach(function(t) { t.classList.remove('active'); });
+  document.querySelectorAll('#manual-order-modal .tab').forEach(function(t) { t.classList.remove('active'); });
   document.querySelectorAll('.manual-order-tab-content').forEach(function(c) { c.classList.remove('active'); });
   document.getElementById('manual-order-tab-' + name).classList.add('active');
   btn.classList.add('active');

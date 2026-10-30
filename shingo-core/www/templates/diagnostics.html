@@ -1,11 +1,11 @@
 {{define "content"}}
-<div class="diag-tabs">
-  <button class="diag-tab active" data-action="switchDiagTab:debug">Debug Log</button>
-  <button class="diag-tab" data-action="switchDiagTab:cms">CMS Transactions</button>
-  <button class="diag-tab" data-action="switchDiagTab:recon">Reconciliation</button>
-  <button class="diag-tab" data-action="switchDiagTab:recovery">Recovery</button>
+<div class="tabs" role="tablist">
+  <button type="button" class="tab active" data-action="switchDiagTab:debug">Debug Log</button>
+  <button type="button" class="tab" data-action="switchDiagTab:cms">CMS Transactions</button>
+  <button type="button" class="tab" data-action="switchDiagTab:recon">Reconciliation</button>
+  <button type="button" class="tab" data-action="switchDiagTab:recovery">Recovery</button>
   {{if .FireAlarmEnabled}}
-  <button class="diag-tab" data-tab="fire" data-action="switchDiagTab:fire">Fire Alarm</button>
+  <button type="button" class="tab" data-tab="fire" data-action="switchDiagTab:fire">Fire Alarm</button>
   {{end}}
 </div>
 

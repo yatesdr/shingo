@@ -810,13 +810,6 @@ textarea { resize: vertical; min-height: 60px; }
 /* Quality hold badge */
 .badge-quality_hold { background:#f8d7da; color:#842029; }
 
-/* Tab bar */
-.tab-bar { display:flex; border-bottom:2px solid var(--border); margin-bottom:1rem; }
-.tab-btn { padding:0.5rem 1rem; background:none; border:none; border-bottom:2px solid transparent;
-           margin-bottom:-2px; cursor:pointer; font-size:0.85rem; font-weight:600; color:var(--text-muted); }
-.tab-btn:hover { color:var(--text); }
-.tab-btn.active { color:var(--primary); border-bottom-color:var(--primary); }
-
 /* Detail modal field grid */
 .bd-fields { display:grid; grid-template-columns:1fr 1fr; gap:0.5rem 1rem; font-size:0.85rem; margin-bottom:1rem; }
 .bd-field label { font-size:0.72rem; text-transform:uppercase; letter-spacing:0.04em; color:var(--text-muted); margin-bottom:0; display:block; }
@@ -916,21 +909,14 @@ th.sort-asc::after { content: ' \2191'; color: var(--primary); }
 th.sort-desc::after { content: ' \2193'; color: var(--primary); }
 
 /* --- Diagnostics page --- */
-.diag-tabs { display:flex; gap:0; margin-bottom:1rem; border-bottom:2px solid var(--border); }
-.diag-tab { padding:0.5rem 1.2rem; cursor:pointer; border:none; background:none; font-size:0.95rem;
-  border-bottom:2px solid transparent; margin-bottom:-2px; color:var(--text-muted); }
-.diag-tab.active { color:var(--text); border-bottom-color:var(--primary); font-weight:600; }
-.diag-tab:hover { color:var(--text); }
 .cms-pos { background:rgba(34,197,94,0.08); }
 .cms-neg { background:rgba(239,68,68,0.08); }
 .cms-qty-pos { color:#16a34a; font-weight:600; }
 .cms-qty-neg { color:#dc2626; font-weight:600; }
 
 /* --- Orders page --- */
-/* The manual-order modal's tabs used to be a parallel .manual-order-tab
- * taxonomy hardcoding #7c3aed. They now reuse the .tab-bar / .tab-btn
- * pattern (which tracks --primary), per the style guide's one-tabs rule;
- * only the panel show/hide rule stays page-local. */
+/* The manual-order modal's tabs are the shared .tabs / .tab (style guide
+ * §22, one tab pattern); only the panel show/hide rule stays page-local. */
 .manual-order-tab-content { display:none; }
 .manual-order-tab-content.active { display:block; }
 
@@ -1026,14 +1012,6 @@ th.sort-desc::after { content: ' \2193'; color: var(--primary); }
 .order-mission-link { font-size:.85em; margin-left:.5rem; }
 
 /* --- Test Orders page --- */
-.to-tabs { display:flex; gap:0; border-bottom:2px solid var(--border); margin-bottom:1.5rem; }
-.to-tab {
-  background:none; border:none; padding:.6rem 1.2rem; cursor:pointer;
-  font-size:.95rem; color:var(--text-muted); border-bottom:2px solid transparent;
-  margin-bottom:-2px; font-weight:500;
-}
-.to-tab:hover { color:var(--text); }
-.to-tab.active { color:#7c3aed; border-bottom-color:#7c3aed; }
 .to-tab-content { display:none; }
 .to-tab-content.active { display:block; }
 .to-form-card {

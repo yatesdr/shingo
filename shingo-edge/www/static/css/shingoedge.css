@@ -103,26 +103,6 @@ main.container {
     font-weight: 600;
 }
 
-/* === Tab bar (mirrors Core's .tab-bar / .tab-btn) === */
-.tab-bar {
-    display: flex;
-    border-bottom: 2px solid var(--border);
-    margin-bottom: 1rem;
-}
-.tab-btn {
-    padding: 0.5rem 1rem;
-    background: none;
-    border: none;
-    border-bottom: 2px solid transparent;
-    margin-bottom: -2px;
-    cursor: pointer;
-    font-size: 0.85rem;
-    font-weight: 600;
-    color: var(--text-muted);
-    transition: color 0.15s, border-color 0.15s;
-}
-.tab-btn:hover { color: var(--text); }
-.tab-btn.active { color: var(--primary); border-bottom-color: var(--primary); }
 
 /* === Tables === */
 .table {

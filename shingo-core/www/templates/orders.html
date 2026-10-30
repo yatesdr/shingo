@@ -92,10 +92,10 @@
       <button class="modal-close" data-action="closeManualOrderModal" aria-label="Close"><svg class="icon icon-20" aria-hidden="true"><use href="#icon-close"></use></svg></button>
     </div>
     <div class="p-2">
-      <div class="tab-bar">
-        <button class="tab-btn active" data-action="switchManualOrderTab:transport">Transport</button>
-        <button class="tab-btn" data-action="switchManualOrderTab:staged">Staged</button>
-        <button class="tab-btn" data-action="switchManualOrderTab:move_robot">Move Robot</button>
+      <div class="tabs" role="tablist">
+        <button type="button" class="tab active" data-action="switchManualOrderTab:transport">Transport</button>
+        <button type="button" class="tab" data-action="switchManualOrderTab:staged">Staged</button>
+        <button type="button" class="tab" data-action="switchManualOrderTab:move_robot">Move Robot</button>
       </div>
 
       <!-- Tab 1: Transport -->
