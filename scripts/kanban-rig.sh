@@ -427,7 +427,7 @@ run_R3() {
   # A cart in flight counts in no group, so the count is waited for, not sampled once.
   wait_for 60 "the family stands in K, $Z45 and $SPARE" '[ "$(family_loop)" -ge 16 ]' \
     || say "the family's count stayed at $(family_loop)"
-  check "$Z45 holds its level" "$(family_in "$Z45")" 6
+  check "$Z45 holds its level, less a cart the weld borrowed" "$([ "$(family_in "$Z45")" -ge 5 ] && echo yes || echo no)" yes
   check "K, $Z45 and $SPARE hold the family, less the weld's one" \
     "$([ "$(family_loop)" -ge 16 ] && echo yes || echo no)" yes
   check "K's card says why its surplus stays" "$(card_said "$K" "" '"surplus_cause"')" yes
@@ -516,11 +516,22 @@ run_R5() {
   # Z45 stay whole, the next cart goes to K's overflow, and the card says no group is short.
   wait_for 120 "K has a free child" '[ -n "$(free_child "$K")" ]' || die "K has no free child"
   move_bin KB-SM-S1 "$(free_child "$K")" || fail "could not hand K a cart from SM"
-  wait_for 240 "the next cart went to $SPARE" '[ "$(empties "$SPARE" "$SMALL")" -ge 1 ]' \
-    || fail "no cart reached $SPARE, K's overflow"
+  # The card stands only while the cart is on its window, so the board is read every
+  # second here; the 30 s samples can fall either side of it.
+  local unload_id="" id saw=no reached=no
+  for id in $(seq 1 12); do
+    case "$(curl -s -m 10 "$EDGE/api/operator-stations/$id/view")" in
+      *"\"code\":\"$UNLOAD_OPS\""*) unload_id="$id"; break ;;
+    esac
+  done
+  for _ in $(seq 1 240); do
+    case "$(curl -s -m 5 "$EDGE/api/operator-stations/$unload_id/view")" in *"$LIT_NONE_SHORT"*) saw=yes ;; esac
+    if [ "$(empties "$SPARE" "$SMALL")" -ge 1 ]; then reached=yes; break; fi
+    sleep 1
+  done
+  check "the next cart went to $SPARE, K's overflow" "$reached" yes
   never_to_sm
-  check "the card says no group is short" \
-    "$(grep -c "$LIT_NONE_SHORT" "$OUT/lit.jsonl" | awk '{ print ($1 > 0) ? "yes" : "no" }')" yes
+  check "the card says no group is short" "$saw" yes
 }
 
 z45_short() { [ "$(empties "$Z45" "$SMALL")" -lt 2 ]; }

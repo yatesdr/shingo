@@ -303,6 +303,11 @@ type ProcessNodeOption struct {
 // bargain every resolved-at-save reference in this system makes, and the answer
 // is the editor showing what is stored, not a re-resolve nobody asked for.
 //
+// A claim's paired and second paired positions are its positions too: the lift
+// divert keys on the node a cart was lifted from, so a supports set saved without
+// them would not serve the carts lifted there. Pin:
+// TestListProcessNodeOptions_APairedPositionIsAPosition.
+//
 // A process whose claims name nodes Core has never heard of contributes an entry
 // with fewer nodes than it has claims; a process with no resolvable node at all
 // is omitted, because an option that can select nothing is not an option.
@@ -310,7 +315,8 @@ func ListProcessNodeOptions(db *sql.DB) ([]ProcessNodeOption, error) {
 	rows, err := db.Query(`
 		SELECT DISTINCT sc.process_id, n.id, n.name
 		FROM style_claims sc
-		JOIN nodes n ON n.name = sc.core_node_name
+		CROSS JOIN LATERAL (VALUES (sc.core_node_name), (sc.paired_core_node), (sc.second_paired_core_node)) AS p(name)
+		JOIN nodes n ON n.name = p.name
 		ORDER BY sc.process_id, n.name`)
 	if err != nil {
 		return nil, fmt.Errorf("plantclaims process node options: query: %w", err)

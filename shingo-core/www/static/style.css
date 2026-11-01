@@ -374,6 +374,8 @@ textarea { resize: vertical; min-height: 60px; }
  * column and wrapping its field strip for no reason. */
 .modal-wide { max-width: 900px; padding: 1.25rem 1.5rem; }
 .modal-wide .modal-header { margin-bottom: 0.375rem; }
+/* The kanban's table: the short and what holds it stay in view with no scrolling. */
+#node-modal .modal:has(#keeper-levels:not(.hide)) { max-width: 900px; }
 .modal-header {
   margin-bottom: 1rem;
 }
