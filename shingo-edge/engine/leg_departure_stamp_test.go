@@ -386,26 +386,26 @@ func TestBinPickedUp_UnprovableShapeSaysSo(t *testing.T) {
 	}
 }
 
-// TestBinPickedUp_KanbanOrderIsSilent pins the common case. An order with no
+// TestBinPickedUp_NoProcessNodeOrderIsSilent pins the common case. An order with no
 // process node has no cell to leave; the stamp must be a no-op AND say
-// nothing, or every kanban pickup in the plant writes a log line.
-func TestBinPickedUp_KanbanOrderIsSilent(t *testing.T) {
+// nothing, or every threshold-replenishment pickup in the plant writes a log line.
+func TestBinPickedUp_NoProcessNodeOrderIsSilent(t *testing.T) {
 	t.Parallel()
 	db := testEngineDB(t)
 	eng := testEngine(t, db)
 	var logs []string
 	eng.logFn = func(format string, args ...any) { logs = append(logs, fmt.Sprintf(format, args...)) }
 
-	id, err := db.CreateOrder("uuid-kanban", "retrieve", nil, false, 1, "SOMEWHERE", "", "", protocol.Height{}, false, "WIDGET-A", "", "")
-	testutil.MustNoErr(t, err, "create kanban order")
+	id, err := db.CreateOrder("uuid-threshold", "retrieve", nil, false, 1, "SOMEWHERE", "", "", protocol.Height{}, false, "WIDGET-A", "", "")
+	testutil.MustNoErr(t, err, "create threshold order")
 	o, err := db.GetOrder(id)
-	testutil.MustNoErr(t, err, "get kanban order")
+	testutil.MustNoErr(t, err, "get threshold order")
 
 	eng.HandleBinPickedUp(o.UUID, 0, "MARKET-EMPTIES")
 
 	for _, l := range logs {
 		if strings.Contains(l, "departure") || strings.Contains(l, "DEPARTED") {
-			t.Errorf("a kanban order produced a departure log line: %q", l)
+			t.Errorf("a threshold order produced a departure log line: %q", l)
 		}
 	}
 }

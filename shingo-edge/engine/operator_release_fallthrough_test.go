@@ -72,7 +72,7 @@ func findLogLine(logs []string, needles ...string) string {
 }
 
 // TestReleaseOrderWithLineside_NoProcessNode_LogsSkip verifies that an
-// order without a process node — the pure-kanban / generic-move case —
+// order without a process node — the threshold-replenishment / generic-move case —
 // emits a "no_process_node" breadcrumb when its disposition is dropped.
 //
 // Pre-cleanup this branch returned silently, leaving a future investigator
@@ -85,7 +85,7 @@ func TestReleaseOrderWithLineside_NoProcessNode_LogsSkip(t *testing.T) {
 	eng := testEngine(t, db)
 	getLogs := captureReleaseLogs(t, eng)
 
-	// Create a kanban-style order with no process node attached.
+	// Create a threshold-style order with no process node attached.
 	orderID, err := db.CreateOrder("uuid-no-pn", orders.TypeRetrieve,
 		nil /* processNodeID */, false, 1, "GENERIC-NODE", "", "", protocol.Height{}, false, "", "", "")
 	if err != nil {

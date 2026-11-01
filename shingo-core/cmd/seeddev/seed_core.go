@@ -485,7 +485,7 @@ func seedBinLoaders(db *store.DB, p *plantspec.Plant) error {
 			continue
 		}
 		c := first[k]
-		// Role-aware: produce → threshold (UOP kanban); consume → operator (drain).
+		// Role-aware: produce → threshold (UOP threshold replenishment); consume → operator (drain).
 		repl := "threshold"
 		if k.role == "consume" {
 			repl = "operator"

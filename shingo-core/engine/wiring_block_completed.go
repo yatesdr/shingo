@@ -527,7 +527,7 @@ func (e *Engine) handleStoreBlockCompleted(ev BlockCompletedEvent) {
 
 	staged := e.resolveNodeStaging(destNode)
 	// The bin physically leaves _TRANSIT — a real, addressable node — so the
-	// event says so. This used to emit FromNodeID 0 to keep kanban's
+	// event says so. This used to emit FromNodeID 0 to keep threshold replenishment's
 	// produce-on-storage-exit check from firing, but that subscriber was
 	// deleted in 2026-08: the zero silenced nobody while making "arrives from
 	// _TRANSIT" indistinguishable from "emitter did not know". Verified at

@@ -1,9 +1,9 @@
-// System-wide in-loop totals for kanban demand math.
+// System-wide in-loop totals for threshold-replenishment math.
 //
 // This is intentionally separate from PreflightAvailability (which has
 // "available for sourcing right now" semantics and excludes staged,
 // flagged, maintenance, retired bins as well as bins at
-// non-storage nodes). The kanban demand math has a different question:
+// non-storage nodes). The threshold-replenishment math has a different question:
 // "how many bins of this payload are physically in the loop right now,
 // regardless of whether they're parked at storage, en route, or staged
 // at a consumer line?"

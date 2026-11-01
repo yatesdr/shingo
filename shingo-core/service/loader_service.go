@@ -39,7 +39,7 @@ type ThresholdNotifier interface {
 // threshold VALUE, and this loader has values.
 //
 // Refusing it at the door keeps a setting off the page that nothing reads. A
-// consume threshold mode may exist one day (the drain is a kanban problem
+// consume threshold mode may exist one day (the drain is a replenishment problem
 // too), and when it does, this error is what a reader will grep to find every
 // place that has to change.
 var ErrConsumeThreshold = errors.New("an unloader cannot be threshold-driven: consume loaders drain, and nothing acts on a consume threshold")
@@ -183,7 +183,7 @@ func (s *LoaderService) CreateLoader(in LoaderCreate) (int64, error) {
 		layout = loaders.LayoutSharedWindow
 	}
 	if replenishment == "" {
-		// Role-aware default: a produce loader is threshold-driven (UOP kanban
+		// Role-aware default: a produce loader is threshold-driven (UOP threshold replenishment
 		// autoreorder); a consume loader (unloader) is always operator (the
 		// window-queue drain — no consume threshold mode today).
 		if in.Role == loaders.RoleConsume {
@@ -694,7 +694,7 @@ var ErrSourceIsALane = errors.New(protocol.MsgLaneIsNotASource)
 // empties bank: the store resolver refuses a carrier holding a part there, so
 // fulls could be pulled from it but never put back into it. And an unloader
 // never drains one (owner, 2026-10-22: "unloader should not drain the source
-// levels or kanban maintainer"), so the sentence says so too: this is the one
+// levels or threshold keeper"), so the sentence says so too: this is the one
 // refusal, whatever the drain boxes say, and no second one is spelled for them.
 // The Edge's claim save says the shared stem (protocol.MsgFullsFromAnEmptiesBank)
 // alone, because an Edge claim has no drain boxes.

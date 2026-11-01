@@ -392,9 +392,9 @@ func (e *Engine) wireEventHandlers() {
 		// the node is the delivery node and books at whole-order FINISHED.
 		//
 		// WHY THE FIX LIVES AT THE SUBSCRIBER. An earlier version of this
-		// comment justified it with four named readers (kanban, replenishment,
+		// comment justified it with four named readers (the threshold demand path, replenishment,
 		// sourceability, the lane gate) that a real FromNodeID would change —
-		// but kanban's demand path was already deleted (2026-08), replenishment
+		// but the threshold demand path was already deleted (2026-08), replenishment
 		// and sourceability read PayloadCode only and cannot observe the field,
 		// and the lane gate's own header says a duplicate evaluation is
 		// harmless. The population was never checked, and the count was wrong

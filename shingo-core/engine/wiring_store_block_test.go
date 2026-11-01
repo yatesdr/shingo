@@ -462,7 +462,7 @@ func TestResolvePickupBin_ASingleCartLiftsThroughItsRow(t *testing.T) {
 // TestHandleStoreBlockCompleted_IntermediateDropoffCarriesRealFromNode pins
 // the From side of the intermediate-dropoff BinUpdatedEvent.
 //
-// This emitter used to send FromNodeID 0 deliberately, to keep "kanban's
+// This emitter used to send FromNodeID 0 deliberately, to keep "threshold replenishment's
 // produce-on-storage-exit check" from firing — a subscriber that was deleted
 // in 2026-08, so the zero silenced nobody. Worse, 0 is not a real node id: a
 // reader cannot tell "arrives from _TRANSIT" from "emitter did not know", and

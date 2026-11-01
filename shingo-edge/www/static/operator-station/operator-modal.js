@@ -446,7 +446,7 @@ export function renderModal(entry) {
                 // Long term, loader demand should flow in automatically
                 // (auto_push drains unloaders; upstream consume-side
                 // reorder feeds loaders), so the operator never has
-                // to manually request a bin from this screen. (The kanban
+                // to manually request a bin from this screen. (The threshold
                 // / lineside demand-signal route this list used to name was
                 // deleted 2026-08; auto_request_payload is persisted but has
                 // no trigger reader.) Once that's

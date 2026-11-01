@@ -129,7 +129,7 @@ accordingly. `go tool cover -html=cover.out` for the per-line view.)
 | Edge log: no `plc connected` lines | The fake WarLink poller didn't start — check `sim.enabled: true` and that the edge log shows "starting WarLink poller explicitly". |
 | `make dev-seed` fails with "plantspec invalid" | The plant spec has a dangling reference / missing staging — the error lists every problem; fix `plants/demo.yaml`. |
 | `make dev-seed` fails opening the edge SQLite | The edge container must be up + migrated first (run `make dev` before `make dev-seed`). |
-| Kanban never fires a demand | Storage isn't under a LANE/NGRP parent — the seed builds this; if you hand-edit nodes, keep the zone → lane → slot hierarchy. |
+| Threshold replenishment never fires a demand | Storage isn't under a LANE/NGRP parent — the seed builds this; if you hand-edit nodes, keep the zone → lane → slot hierarchy. |
 | Counters never climb | Reporting-point `plc_name`/`tag_name` must exactly match `shingoedge.dev.yaml`'s `sim.processes`; the seed keeps them aligned. |
 
 ## Internals

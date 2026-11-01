@@ -152,7 +152,7 @@ func (p *Plant) Validate() error {
 		addNode(st.Name, "station")
 	}
 	if laneCount == 0 || slotCount == 0 {
-		add("storage hierarchy missing: need at least one zone → lane → slot (kanban only sees nodes under a LANE/NGRP parent)")
+		add("storage hierarchy missing: need at least one zone → lane → slot (threshold replenishment only sees nodes under a LANE/NGRP parent)")
 	}
 	ref := func(name string) bool { _, ok := nodes[name]; return ok }
 	maintained := make(map[string]bool, len(p.MaintainedGroups))

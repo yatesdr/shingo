@@ -3435,7 +3435,7 @@ func migrationList() []migration {
 		// v40: rename the replenishment enum value auto→threshold (role-aware) + swap the
 		// CHECK. Once the legacy bin-count floor is retired, "auto" only ever meant
 		// threshold-driven, so the model is operator|threshold. Conversion is role-aware:
-		// a produce auto loader is threshold (UOP kanban autoreorder); a consume auto loader
+		// a produce auto loader is threshold (UOP threshold replenishment); a consume auto loader
 		// (the AutoPush drain) becomes operator — consume's single mode is the window-queue
 		// drain, there is no consume threshold mode. min_stock columns are left dormant.
 		{40, "loader replenishment auto→threshold (role-aware) + CHECK (operator,threshold)",

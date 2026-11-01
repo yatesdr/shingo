@@ -120,7 +120,7 @@ pages, each with its own route (`shingo-edge/www/router.go`):
 | Operator stations | `/operator-stations` |
 | Core node list | `/core-nodes` |
 | Replenishment | `/replenishment` |
-| Kanbans | `/kanbans` |
+| Orders | `/orders` |
 | App config, including **Backups** | `/config` |
 
 What each covers:

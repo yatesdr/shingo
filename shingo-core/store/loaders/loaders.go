@@ -31,7 +31,7 @@ func Key(id int64) string { return "loader:" + strconv.FormatInt(id, 10) }
 
 // Enum values: layout = shared_window | dedicated_positions; role = produce |
 // consume; replenishment = operator | threshold. A produce loader is operator
-// (operator stages/clears at the board) or threshold (UOP kanban autoreorder).
+// (operator stages/clears at the board) or threshold (UOP threshold replenishment).
 // A consume loader (unloader) is always operator — the window-queue drain.
 // "auto" was renamed to "threshold" (v40 migration) once the legacy bin-count
 // floor was retired, so "auto" no longer conflates threshold with bin-count.

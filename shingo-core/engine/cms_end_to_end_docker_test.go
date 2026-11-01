@@ -434,7 +434,7 @@ func TestCMSEndToEnd_UntaggedBoundariesPostNothing(t *testing.T) {
 // that silenced the ledger for a whole order.
 //
 // Historically an intermediate dropoff emitted FromNodeID 0 (the bin arrives
-// from _TRANSIT, not a real slot — a zero once kept the deleted kanban path
+// from _TRANSIT, not a real slot — a zero once kept the deleted threshold demand path
 // quiet). The CMS subscription required BOTH ends to be non-zero, so it
 // dropped the event entirely: material physically landed in a tagged
 // storeroom and CMS was told nothing until the whole order finished, which at

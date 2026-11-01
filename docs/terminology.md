@@ -135,7 +135,7 @@ An end-item type that a process produces. Stored in the database as `job_styles`
 
 ### Bin Loader / Unloader
 
-A staging point where an operator manually fills empty bins (a **loader**, role `produce`) or empties full bins (an **unloader**, role `consume`) to feed/drain the kanban loop. Core owns the loader aggregate (`bin_loaders`); the Edge runtime consumes it as a first-class `domain.Loader`. A loader has one of two **layouts**:
+A staging point where an operator manually fills empty bins (a **loader**, role `produce`) or empties full bins (an **unloader**, role `consume`) to feed/drain the material loop. Core owns the loader aggregate (`bin_loaders`); the Edge runtime consumes it as a first-class `domain.Loader`. A loader has one of two **layouts**:
 
 | Term | Meaning |
 |---|---|

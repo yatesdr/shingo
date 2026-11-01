@@ -57,7 +57,7 @@ type unloaderAskKey struct {
 // synthesises as capture_lineside (it then asks for a full of the evac order's
 // part, the outgoing one), the sim's auto-operator (releaseAsPair), and any API
 // client that posts capture_lineside on a produce node. The consume
-// DemandSignal caller is gone (2026-08) with the kanban demand-signal route;
+// DemandSignal caller is gone (2026-08) with the threshold demand-signal route;
 // fulls landing at FG storage no longer auto-trigger a U1.
 //
 // LOCAL FIRST. The released payload is usually already covered — in an auto_push

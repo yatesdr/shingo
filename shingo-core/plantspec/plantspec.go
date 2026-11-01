@@ -3,7 +3,7 @@
 // edge (SQLite) databases (brief T4.1, decision D2).
 //
 // The spec mirrors the seed inventory: a storage hierarchy (NGRP zones → LANE
-// lanes → depth-ordered slots — load-bearing, kanban only sees nodes under that
+// lanes → depth-ordered slots — load-bearing, threshold replenishment only sees nodes under that
 // hierarchy), non-storage stations (line/press/weld/loader/unloader/staging),
 // payloads + bin types, initial bin placement, the edge process/style/claim
 // topology, demand registry, reporting points and cell configs. Validate() rejects the mistakes that silently break the demo
@@ -149,7 +149,7 @@ type Payload struct {
 }
 
 // Zone is an NGRP storage zone. RetrieveAlgorithm (e.g. FIFO) and
-// StoreAlgorithm (DPTH/LKND) control kanban lane selection.
+// StoreAlgorithm (DPTH/LKND) control threshold-replenishment lane selection.
 //
 // A zone holds LANES (the deep-storage shape: aisles of depth-ordered slots), or
 // POSITIONS (the flat shape: slots hanging directly off the group), or both. The

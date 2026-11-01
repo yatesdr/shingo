@@ -12,11 +12,9 @@ import (
 	"shingocore/store/nodes"
 )
 
-// wiring_staging_kanban_test.go — isStorageSlot coverage.
+// wiring_storage_slot_test.go — isStorageSlot coverage.
 //
-// Formerly wiring_kanban_test.go; the kanban demand-signal tests
-// (handleKanbanDemand / sendDemandSignals) were deleted with the signal
-// path itself — see the 2026-08 removal. What remains is the predicate
+// The threshold demand-signal tests were deleted with the signal path itself — see the 2026-08 removal. What remains is the predicate
 // those tests happened to sit beside: isStorageSlot, now living in
 // wiring_staging.go and load-bearing for arrival staging.
 

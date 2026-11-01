@@ -332,7 +332,7 @@ func seedManualSwapClaim(t *testing.T, db *store.DB, prefix string, role protoco
 // TestReleaseOrderWithLineside_ConsumeReleaseDoesNotFireL1 pins the
 // post-AMR-trial architecture: the consume-side release path no longer
 // creates an L1 retrieve_empty at the loader. L1 is owned by Core's
-// wiring_kanban DemandSignal pipeline (Core observes the bin movement
+// threshold DemandSignal pipeline (Core observes the bin movement
 // at storage, emits to Edge, Edge fires L1 with current supply count).
 //
 // Both DispositionCaptureLineside and DispositionSendPartialBack are

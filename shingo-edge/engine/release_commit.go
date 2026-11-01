@@ -85,7 +85,7 @@ func (e *Engine) commitLeg(act *releaseAct, p release.LegPlan, ll *legLoad) (rel
 func (e *Engine) applyLeg(act *releaseAct, p release.LegPlan, ll *legLoad) error {
 	order, disp := ll.order, ll.disp
 	if p.Arm == release.ArmPlain {
-		// Orders without a process node (pure kanban, generic moves) skip the
+		// Orders without a process node (threshold replenishment, generic moves) skip the
 		// lineside path: Core gets nil remaining_uop and leaves the bin alone.
 		// Intentional, and logged so a "the prompt didn't fire" investigation
 		// has something to grep for.

@@ -1,4 +1,4 @@
-// Package orders holds E-Kanban order persistence for shingo-edge.
+// Package orders holds threshold-replenishment and process order persistence for shingo-edge.
 //
 // Phase 5b of the architecture plan moved the orders + order_history
 // CRUD out of the flat store/ package and into this sub-package. The

@@ -15,12 +15,12 @@ A bin_loader claim has a **mode** field: `loader` (default) or `unloader`. Each 
 
 Single role (`bin_loader`) with mode avoids duplicating role checks. Mode flips `retrieveEmpty` and determines HMI layout.
 
-### Kanban-Driven Demand
+### Threshold-Driven Demand
 
 There is no manual configuration of target levels or fixed ratios. Downstream consumption drives upstream replenishment:
 
-- **Loader signal:** A weld cell empties a bin (consumes last part, bin returns to storage empty). The empty bin returning IS the kanban card. This triggers a loader order for that payload.
-- **Unloader signal:** A weld cell produces a full FG bin and it goes to storage. The full bin arriving IS the kanban card. This triggers an unloader order.
+- **Loader signal:** A weld cell empties a bin (consumes last part, bin returns to storage empty). The empty bin returning IS the signal. This triggers a loader order for that payload.
+- **Unloader signal:** A weld cell produces a full FG bin and it goes to storage. The full bin arriving IS the signal. This triggers an unloader order.
 
 If weld cells burn through Part ABC fast, more empties return, more loader orders get created. If Part DEF slows down, fewer empties, fewer orders. Self-balancing.
 
@@ -86,7 +86,7 @@ The full list of allowed payloads comes from the claim's `allowed_payload_codes`
 
 ---
 
-## Kanban Demand Wiring (Core-Side)
+## Threshold Demand Wiring (Core-Side)
 
 The bin-count `DemandSignal` route this section used to describe is gone (2026-08; see
 Event Flow below). What remains Core-side is the demand registry and the threshold
@@ -109,7 +109,7 @@ demand_registry
 ### Event Flow
 
 **The bin-count DemandSignal route was removed entirely (2026-08).** Core no longer
-emits `demand.signal` and no handler exists on Edge. The removal closed the kanban-eval
+emits `demand.signal` and no handler exists on Edge. The removal closed the threshold-replenishment evaluation
 TODO with plant evidence: the produce leg emitted ~14 signals/day at Core, 100%
 discarded on arrival by design; the consume leg had zero `demand_registry` rows at
 either plant. Nothing downstream of either emission ever ran.
@@ -252,7 +252,7 @@ that conflated the two subjects, and the handler was unreachable the whole time.
 ### DemandSignal — REMOVED
 
 The `demand.signal` subject, its payload struct, and both halves of its handling
-were deleted in 2026-08 (Core's `sendDemandSignals`/`handleKanbanDemand`, Edge's
+were deleted in 2026-08 (Core's signal sender and handler, Edge's
 handler registration). There is no wire message and no code path; see Event Flow
 above for what replaced each side.
 
@@ -278,7 +278,7 @@ ClaimSync / `style_node_claims.mode` / edge-checkbox authoring path is gone.
 | `service/loader_service.go` | Loader CRUD service (Create/Update/Delete/SetHome/SetPayload). `rederive` rebuilds `demand_registry` from the aggregate for the union of registry stations + registered edges and nudges the threshold monitor. |
 | `store/loaders_sync.go` | `BuildLoaderInfos` (loader config for the node-list sync), `BuildDemandRegistryFromAggregate`, `DemandRegistryStations`. |
 | `store/demand_registry.go`, `store/demands/demands.go` | `demand_registry` table + `SyncDemandRegistry`: deletes the station's rows and re-inserts the derivation in one transaction; the change list is a diff of threshold values against the prior rows, not an upsert. The loader writers go through `store.DeriveDemandRegistry` → `demands.SyncDerivedRegistry`, which refuses an empty derivation that skipped an unresolvable input while the station holds rows, and logs one `demand registry derive:` line per station. |
-| `engine/wiring_staging.go` | `isStorageSlot` (parent LANE/NGRP + loader-home check) — moved here from wiring_kanban.go when the kanban demand-signal path was deleted; `resolveNodeStaging` (arrival staging). (`handleKanbanDemand`/`sendDemandSignals` deleted — see DemandSignal REMOVED above.) |
+| `engine/wiring_staging.go` | `isStorageSlot` (parent LANE/NGRP + loader-home check) — moved here when the threshold demand-signal path was deleted; `resolveNodeStaging` (arrival staging). (The signal sender and handler were deleted — see DemandSignal REMOVED above.) |
 | `messaging/core_data_service.go` | Node-list response carries `Loaders` (`BuildLoaderInfos`); **seeds `demand_registry` from the aggregate on edge (re)connect**, then `thresholdMonitor.Resync`. (`HandleClaimSync` deleted.) |
 | `store/migrations.go` | `bin_loaders` aggregate schema (v34–v40); `UNIQUE` on `orders.edge_uuid`. |
 | `www/handlers_loader.go`, `www/static/pages/loaders.js` | Core loader admin UI (create, layout, windows/positions, payload checklist + batch save, replenishment). |
@@ -345,7 +345,7 @@ When the operator loads DEF into the bin at SMN_001, the system sets the manifes
 
 A loader whose replenishment is **operator-paced** rather than UOP-threshold-paced:
 the operator decides what to stage from a preload board instead of the system
-auto-firing on a kanban threshold. Originally a bridge for loaders whose payloads
+auto-firing on a replenishment threshold. Originally a bridge for loaders whose payloads
 don't all have supermarket slots yet (the manual tugger isn't fully eliminated).
 Design rationale in `transitional-bin-loader-plan-v2.md` at the GitHub root; this is
 the as-built summary. ("Transitional" was renamed "operator-driven"; the per-bin-count

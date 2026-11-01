@@ -272,7 +272,7 @@ func (e *Engine) applyBinArrivalForOrder(order *orders.Order) *ArrivalRefusal {
 // that had gone unaudited the same way.
 //
 // The action is "evicted", not "moved": a reader can then tell a displacement
-// from a delivery. (An older comment added that kanban keyed on "moved" — that
+// from a delivery. (An older comment added that threshold replenishment keyed on "moved" — that
 // demand path was deleted in 2026-08; the distinction survives on its own
 // merits, and "moved" would also book CMS transfer rows for a displacement.)
 func (e *Engine) noteEvictedGhosts(evicted []int64, what string, byBinID int64, atNode string) {

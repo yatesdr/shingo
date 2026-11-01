@@ -296,11 +296,11 @@ func TestWiring_MoveCompletion_ManualSwap(t *testing.T) {
 	// Cache binding no longer asserted at confirm under the new contract.
 	// After the side-cycle refactor (commit 4f9212b + tryAutoRequest
 	// removal), applyManualSwap clears ActiveOrderID without
-	// queueing a follow-up kanban request. New empties are driven by
+	// queueing a follow-up threshold request. New empties are driven by
 	// line REQUESTs through the loader replenishment path, not by
 	// completion-time auto-requests at the loader.
 	if runtime.ActiveOrderID != nil {
-		t.Errorf("ActiveOrderID = %d after manual_swap move completion; expected nil (no more kanban auto-request)", *runtime.ActiveOrderID)
+		t.Errorf("ActiveOrderID = %d after manual_swap move completion; expected nil (no more threshold auto-request)", *runtime.ActiveOrderID)
 	}
 }
 

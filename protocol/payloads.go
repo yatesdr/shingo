@@ -1298,7 +1298,7 @@ const (
 const (
 	// LoaderReplenishmentOperator: the operator stages and clears at the board.
 	LoaderReplenishmentOperator = "operator"
-	// LoaderReplenishmentThreshold: UOP kanban autoreorder. Renamed from "auto"
+	// LoaderReplenishmentThreshold: UOP threshold replenishment. Renamed from "auto"
 	// in the v40 migration, once the legacy bin-count floor was retired.
 	LoaderReplenishmentThreshold = "threshold"
 )

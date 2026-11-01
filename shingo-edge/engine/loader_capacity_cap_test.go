@@ -13,7 +13,7 @@ import (
 // PR-0 capacity-cap regression suite — the SLN_002 incident class.
 //
 // The incident: a home-location loader configured as ONE core node carrying
-// ~20 payloads. A single kanban demand signal swept every payload at minStock=2
+// ~20 payloads. A single threshold demand signal swept every payload at minStock=2
 // → ~40 retrieve_empty orders aimed at a one-bin window, all parked
 // "destination occupied" and cancelled. The fix was two-fold: (1) a per-node
 // capacity cap bounds total in-flight carriers at a core node to its physical

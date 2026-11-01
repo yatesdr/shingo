@@ -513,7 +513,7 @@ func TestBinManifestService_Confirm(t *testing.T) {
 // TestBinManifestService_RecordProducedBin_AtomicCountAndConfirm pins the
 // manifest atomicity fix: RecordProducedBin sets the manifest AND confirms it in
 // one transaction, so a produce finalize never leaves a counted-but-unconfirmed
-// bin (invisible to kanban — manifest_confirmed gates drain/retrieve sources).
+// bin (invisible to threshold replenishment — manifest_confirmed gates drain/retrieve sources).
 // The count, the
 // confirm, and both audit rows land together.
 func TestBinManifestService_RecordProducedBin_AtomicCountAndConfirm(t *testing.T) {

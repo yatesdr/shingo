@@ -628,7 +628,7 @@ func (db *DB) migrate() error {
 	// whenever the unloader window is free and a full bin of an allowed
 	// payload exists in claim.InboundSource — no external trigger
 	// required. Default false preserves the event-driven model. (The
-	// kanban demand signal this comment used to contrast against was
+	// threshold demand signal this comment used to contrast against was
 	// deleted 2026-08.) The gates that read it call rePushOwnUnloader
 	// (engine/wiring_completion.go); MaybePushUnloader, named here before,
 	// was removed when they stopped walking every unloader.

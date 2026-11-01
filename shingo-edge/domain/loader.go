@@ -78,7 +78,7 @@ const (
 func (r LoaderRole) valid() bool { return r == RoleProduce || r == RoleConsume }
 
 // LoaderReplenishment is operator (the operator stages/clears at the board) or
-// threshold (UOP kanban autoreorder — Core's threshold monitor fires the empties).
+// threshold (UOP threshold replenishment — Core's threshold monitor fires the empties).
 // A consume loader (unloader) is always operator: its single mode is the
 // window-queue drain. Mirrors the Core aggregate's loaders.Replenishment* constants.
 type LoaderReplenishment string

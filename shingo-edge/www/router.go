@@ -222,23 +222,6 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger, backupSvc *backup.Servi
 			http.Redirect(w, req, target, http.StatusMovedPermanently)
 		})
 		r.Get("/orders", h.handleOrders)
-		// Permanent redirect for any operator bookmark from the
-		// /kanbans era. The URL was renamed to /orders to match
-		// Core's terminology and the user-facing nav label.
-		r.Get("/kanbans", func(w http.ResponseWriter, req *http.Request) {
-			target := "/orders"
-			if q := req.URL.RawQuery; q != "" {
-				target += "?" + q
-			}
-			http.Redirect(w, req, target, http.StatusMovedPermanently)
-		})
-		r.Get("/kanbans/partial", func(w http.ResponseWriter, req *http.Request) {
-			target := "/orders/partial"
-			if q := req.URL.RawQuery; q != "" {
-				target += "?" + q
-			}
-			http.Redirect(w, req, target, http.StatusMovedPermanently)
-		})
 		r.Get("/production", h.handleProduction)
 		r.Get("/changeover", h.handleChangeover)
 		r.Get("/changeover/partial", h.handleChangeoverPartial)

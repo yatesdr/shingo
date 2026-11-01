@@ -217,7 +217,7 @@ func (h *CoreHandler) staleEdgeLoop() {
 // This pass used to also empty the station's demand_registry, on the reasoning
 // that demand signals should stop being routed to a dead station. That
 // reasoning was true when it was written and stopped being true on 2026-08-19,
-// when the kanban demand-signal path it protected was deleted: the produce leg
+// when the threshold demand-signal path it protected was deleted: the produce leg
 // was 100% discarded on arrival and the consume leg had no rows at either
 // plant, so nothing has read the registry to route anything since.
 //

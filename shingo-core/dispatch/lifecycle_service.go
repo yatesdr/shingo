@@ -754,7 +754,7 @@ func (s *LifecycleService) ApplyIngestManifest(p *protocol.OrderIngestRequest) *
 	// Set the manifest AND confirm it in ONE transaction: a confirm failure must
 	// not leave a counted-but-unconfirmed bin. manifest_confirmed is a hard gate
 	// for a full bin to be a drain/retrieve source, so a stranded unconfirmed bin
-	// is invisible to kanban. The epoch bump's return value is discarded because
+	// is invisible to threshold replenishment. The epoch bump's return value is discarded because
 	// this Core-internal path has no Edge response to thread it through — but the
 	// bump announces itself, so the station is told either way. This used to say
 	// the Edge relearned "on its next periodic bin-state refresh"; there was no

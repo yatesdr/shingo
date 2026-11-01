@@ -1509,7 +1509,7 @@ func claimBin(db binExecer, binID, orderID int64) error {
 // preferring preferZone. excludeNodeID > 0 omits bins parked at that node —
 // pass the order's destination node so the caller never receives a same-node
 // bin (would produce a fleet order with src == dst, which the fleet cancels
-// and the kanban demand re-fires, producing an order spam loop). Pass 0 to
+// and the threshold demand re-fires, producing an order spam loop). Pass 0 to
 // disable exclusion. See SHINGO_TODO.md "Same-node retrieve" entry.
 //
 // Empty-bin definition (post-2026-04-27 fix): COALESCE(payload_code, ”) = ”.

@@ -32,7 +32,7 @@ import (
 // and ran the manifest write and the confirm as two transactions with the
 // confirm's failure logged and swallowed — a set-but-unconfirmed bin reported
 // "ok". The confirm is the gate that makes a full bin a drain source, so that
-// was a bin the Edge thought it had loaded and kanban could never see.
+// was a bin the Edge thought it had loaded and threshold replenishment could never see.
 
 func TestApiBinLoad_AmbiguousMultipleBins_Returns409(t *testing.T) {
 	t.Parallel()

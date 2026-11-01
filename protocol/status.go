@@ -679,11 +679,11 @@ func IsStuckSweepCandidate(s Status) bool {
 func (s Status) IsStuckSweepCandidate() bool { return IsStuckSweepCandidate(s) }
 
 // (IsOperatorVisible was deleted 2026-09-26: zero production callers. It
-// claimed to drive "edge ListActive, kanban demand pages, manual-message
+// claimed to drive "edge ListActive, threshold demand pages, manual-message
 // picker", but every one of those surfaces hand-spells its own visibility
 // window — Edge ListActive pins its 7-day faulted/confirmed window at
 // shingo-edge/store/orders/orders.go:77 (list_active_window_test.go), and no
-// kanban or manual-message code referenced this predicate either. The JS twin
+// threshold-replenishment or manual-message code referenced this predicate either. The JS twin
 // OPERATOR_VISIBLE_STATUSES in order-status.js had no importers and went with
 // it. Intent, should a surface ever want one shared answer: non-terminal
 // statuses plus failed, minus confirmed/cancelled/skipped.)

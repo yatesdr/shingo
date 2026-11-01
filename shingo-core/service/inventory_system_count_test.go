@@ -12,7 +12,7 @@ import (
 )
 
 // TestSystemUOPForPayload_ExcludesOutOfLoop: flagged, maintenance and retired
-// bins are out of the kanban loop and their parts must not count toward the
+// bins are out of the replenishment loop and their parts must not count toward the
 // in-loop total (outOfLoopFilterSQL). Each status verified on its own.
 func TestSystemUOPForPayload_ExcludesOutOfLoop(t *testing.T) {
 	t.Parallel()

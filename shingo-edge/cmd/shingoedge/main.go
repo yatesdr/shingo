@@ -388,7 +388,7 @@ func setupKafkaSubscribers(eng *engine.Engine, msgClient *messaging.Client, cfg 
 	// one. The window where somebody reads this line is the Edge-first half of a
 	// deploy, diagnosing a loader that is not being fed — and the answer they need
 	// is "look at Core", which the line this replaced actively argued against.
-	log.Printf("kanban: threshold replenishment is Core-owned — this Edge consumes no below-threshold signal and originates no loader empties from one (operator push and changeover paths unaffected; the kanban demand-signal route is gone entirely — an unloader U1 comes from its own auto_push gates, the startup sweep, and a produce release posting capture_lineside)")
+	log.Printf("threshold replenishment is Core-owned — this Edge consumes no below-threshold signal and originates no loader empties from one (operator push and changeover paths unaffected; the threshold demand-signal route is gone entirely — an unloader U1 comes from its own auto_push gates, the startup sweep, and a produce release posting capture_lineside)")
 
 	if err := eng.StartupReconcile(); err != nil {
 		log.Printf("initial startup reconcile: %v", err)

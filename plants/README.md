@@ -71,7 +71,7 @@ rebalanced, so a long wait in the pair reads as a defect until shown otherwise:
   cells, and three carriers all stood at them, so the first drained cell's swap
   waited 52-74 sim-min until the B -> A changeover cancelled it. A fourth carrier
   (lane `L2_Lane_X4`, `L2-BX-04`) served the first swap only: the PART-X loader
-  was asked once, at a total of 19, because Core's kanban total counts the
+  was asked once, at a total of 19, because Core's in-loop total counts the
   carriers at the cells as stock, 60 against a threshold of 20. PART-X's threshold
   is now 80, above its cells as PART-W's is, and
   `TestEdge2Fixture_ThresholdCoversSeatStock` counts a part's seats under every

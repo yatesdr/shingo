@@ -62,7 +62,7 @@ const (
 	// There is no replenishment subject on the wire: the earlier design
 	// (SubjectLoopBelowThreshold, Core→Edge, Edge sizing the ask) was
 	// deleted 2026-08-02 after a Springfield over-order showed the two
-	// halves counted different things. The kanban bin-count DemandSignal
+	// halves counted different things. The threshold bin-count DemandSignal
 	// route followed (2026-08). Edge's only replenishment writers are the
 	// operator request, the operator push, and the unloader auto-push.
 

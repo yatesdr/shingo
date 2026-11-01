@@ -219,7 +219,7 @@ export function cardModel(entry, code) {
     else if (payloadAcknowledged) detail = 'Order accepted — awaiting dispatch';
     else if (hasPayloadDemand) detail = 'Waiting for robot';
     else if (f.canLoadEmpty) detail = 'Empty bin parked — tap to load';
-    else detail = 'No kanban signal';
+    else detail = 'No threshold signal';
 
     // Action (what the tap does), role-gated. A LOADER acts on a delivered empty
     // directly — the tap IS the receipt confirmation — so it must not also require

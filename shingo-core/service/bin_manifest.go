@@ -900,7 +900,7 @@ func (s *BinManifestService) confirmTx(tx *sql.Tx, binID int64, producedAt strin
 //
 // The ingest apply path uses this so a confirm failure can no longer leave a
 // counted-but-unconfirmed bin — a stranded state, since manifest_confirmed is a
-// hard gate for a full bin to be a drain/retrieve source (kanban never sees an
+// hard gate for a full bin to be a drain/retrieve source (threshold replenishment never sees an
 // unconfirmed bin).
 //
 // A CARRIER THE PAYLOAD DOES NOT DECLARE LANDS HERE AND IS FLAGGED, never
@@ -1100,7 +1100,7 @@ var ErrCountRequired = errors.New("a load here must say how many it holds")
 // The hold check, the set and the confirm commit together (recordProduced).
 // The set and the confirm were two transactions with the confirm's failure
 // logged and dropped, which left a set-but-unconfirmed bin — invisible to
-// kanban — reported to the Edge as ok. Returns the new epoch and the count
+// threshold replenishment — reported to the Edge as ok. Returns the new epoch and the count
 // written.
 func (s *BinManifestService) LoadAtLine(binID int64, manifestJSON, payloadCode string, declared *int64) (int64, int, error) {
 	p, err := s.db.GetPayloadByCode(payloadCode)

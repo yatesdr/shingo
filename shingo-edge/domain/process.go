@@ -529,7 +529,7 @@ type NodeClaim struct {
 	// changeover evac at count 0, the sim's auto-operator, or an API client.
 	// With AutoPush off, the unloader pulls only on those and on an operator's
 	// full request. A fork-truck-fed unloader names no inbound source, and
-	// offerUnloaderFulls asks nothing for it whatever this says. The kanban demand
+	// offerUnloaderFulls asks nothing for it whatever this says. The threshold demand
 	// signal was deleted 2026-08.
 	//
 	// For a Core-owned loader window it comes from the loader

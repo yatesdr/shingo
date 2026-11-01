@@ -18,7 +18,7 @@ The system manages two separate threshold knobs, in series along the supply path
 
 When **total in-loop UOP for a payload** drops below this value, Core creates an L1 retrieve_empty order (directly — no wire signal; Edge only executes).
 
-- *In-loop UOP* = `SUM(bin.uop_remaining)` + `SUM(bucket.qty)` for that payload, across every bin in the kanban lifecycle (`available`, `staged`, in-transit) and every **active** lineside pile of that payload. Excludes `flagged`, `maintenance`, `retired` bins. A pile is active from the pull until its process's next cutover (every active-style flip: the changeover cutover and the admin style flip); at the cutover every pile at the process's nodes becomes **stranded**, a count-anomaly record that never drains, never counts on either side and never revives when the style comes back. Stranded is a state on the row, set by the Edge, not a claims lookup at Core (the 2026-07-23 claims-derived rule is gone). Operators run out what they pull, so a leftover at cutover is most likely the size of a declaration error, not parts on the bench.
+- *In-loop UOP* = `SUM(bin.uop_remaining)` + `SUM(bucket.qty)` for that payload, across every bin in the replenishment loop (`available`, `staged`, in-transit) and every **active** lineside pile of that payload. Excludes `flagged`, `maintenance`, `retired` bins. A pile is active from the pull until its process's next cutover (every active-style flip: the changeover cutover and the admin style flip); at the cutover every pile at the process's nodes becomes **stranded**, a count-anomaly record that never drains, never counts on either side and never revives when the style comes back. Stranded is a state on the row, set by the Edge, not a claims lookup at Core (the 2026-07-23 claims-derived rule is gone). Operators run out what they pull, so a leftover at cutover is most likely the size of a declaration error, not parts on the bench.
 - *Lives at*: Core-owned loader config — `bin_loader_homes.uop_threshold` per (loader position, payload), derived into `demand_registry.replenish_uop_threshold` by `BuildDemandRegistryFromAggregate` and re-derived on every loader config edit (`service/loader_service.go` `rederive()`). The Edge `loader_payload_thresholds` table was dropped 2026-07-21; the Edge page's loader-threshold section was deleted with it.
 - *Owned by*: Core. The loader aggregate (`bin_loaders` and its payload rows) is the source of truth, and `demand_registry.replenish_uop_threshold` is derived from it. Edge receives loader configuration on the node-list sync, not by pushing it up.
 - *Default*: `0` — Core doesn't monitor this loader/payload pair. What feeds it then depends on the loader's replenishment mode: an operator-driven loader is stocked by the window-free push (`rePushOwnLoader` / `SweepPushLoaders`); a threshold-mode loader with threshold 0 is fed by NOTHING, and the startup push logs a warning saying exactly that.
@@ -383,10 +383,10 @@ Tracked separately; not part of the v6 work:
 
 - **Statistical formulas** (mixed variability, z-scores) — Phase 3.
 - **EPEI / Run Frequency** for shared cells — Phase 3.
-- **Signal kanban** — Phase 3.
+- **Signal replenishment** — Phase 3.
 - **Capacity feasibility check** with OEE — Phase 3.
 - **Poisson formula** for low-volume styles — Phase 3.
-- **FG-out kanban** — Phase 3.
+- **FG-out replenishment** — Phase 3.
 - **U1/U2 unloader-side** thresholds — Springfield doesn't run unloaders; defer.
 - **R3 iterate-all-claims** — Springfield is Case A (loader claim lists all payloads).
 - **Queued-retrieve safety net at Edge** — redundant with C-push.

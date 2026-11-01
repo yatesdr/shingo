@@ -1452,7 +1452,7 @@ func (s *StationService) buildNodeTile(
 	// operator's REQUEST creates orders tracked at the line node. But
 	// the loader operator still needs to see "demand for my bin" so
 	// they keep it loaded. Plant test 2026-04-27: line-initiated swap
-	// orders went silent on the loader UI after the kanban-spam guard
+	// orders went silent on the loader UI after the threshold-spam guard
 	// stopped firing process-node-tracked orders here.
 	nodeView.Orders = b.boardOrders[node.ID]
 	nodeView.CanSkip = canSkipChangeoverStep(nodeView.ChangeoverTask, nodeView.Orders)

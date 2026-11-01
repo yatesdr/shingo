@@ -565,7 +565,7 @@ func applyManualSwap(e *Engine, ctx *orderCompletionCtx) bool {
 	}
 	// tryAutoRequest call removed in side-cycle refactor (commit 4f9212b
 	// + this one). Loader empties are now driven by line REQUESTs through
-	// the loader replenishment path, not by post-completion kanban auto-requests.
+	// the loader replenishment path, not by post-completion threshold auto-requests.
 	//
 	// Push-driven unloader: the U2 just landed. The re-pull normally already
 	// happened at its PICKUP (rePullOnEmptyOutPickup), when Core freed the window;
@@ -745,7 +745,7 @@ func (e *Engine) handleNormalReplenishment(ctx *orderCompletionCtx) {
 			log.Printf("update runtime orders for node %d: %v", ctx.node.ID, err)
 		}
 		// Pre-side-cycle, this called e.tryAutoRequest to re-evaluate
-		// kanban demand and queue a new empty-in. Removed: the
+		// threshold demand and queue a new empty-in. Removed: the
 		// side-cycle drives empty-in creation from line REQUESTs via
 		// the loader replenishment path, not from completion-time sweeps.
 	}

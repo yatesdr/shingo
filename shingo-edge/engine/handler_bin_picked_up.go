@@ -115,7 +115,7 @@ func (e *Engine) HandleBinPickedUpMessage(bp protocol.BinPickedUp) {
 	// noise to mask.
 	//
 	// Failure modes treated as "couldn't verify, do nothing":
-	//   - order.ProcessNodeID == nil  — kanban-only orders. F' Phase 2
+	//   - order.ProcessNodeID == nil  — threshold-replenishment orders. F' Phase 2
 	//     doesn't apply (no process node = no changeover task) and the
 	//     downstream flush+clear shouldn't fire either. Fall through
 	//     the gate by skipping the whole side-effecting block.
@@ -130,7 +130,7 @@ func (e *Engine) HandleBinPickedUpMessage(bp protocol.BinPickedUp) {
 	// flush + clear become silent dead code. Do not weaken or remove
 	// this without replacing the proof end-to-end on the wire path.
 	if order.ProcessNodeID == nil {
-		// Kanban-only order — no slot to verify, nothing to flush /
+		// A threshold-replenishment order — no slot to verify, nothing to flush /
 		// clear via this handler. Logging would be noise.
 		return
 	}

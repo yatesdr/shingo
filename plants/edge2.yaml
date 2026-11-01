@@ -97,7 +97,7 @@
 #   AND ONE MORE THAN THE CELLS, so the three-cell style can SWAP (2026-10-26).
 #   With three PART-X carriers all three stood at the cells under L2-B, and the
 #   first cell to drain asked for a fourth that only SMN_L2_02 could fill. The
-#   loader was asked once, too late: Core's kanban total counts the carriers at
+#   loader was asked once, too late: Core's in-loop total counts the carriers at
 #   the cells as stocked (the inclusion policy of 2026-05-11), 60 against a
 #   threshold of 20, so it fired only at a total of 19 with the cells nearly
 #   dry. So the swaps (supply and evac) waited 52-74 sim-min, every run of the
