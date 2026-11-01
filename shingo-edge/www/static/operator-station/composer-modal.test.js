@@ -83,6 +83,8 @@ const win = {
 
 let FLOW = {};
 let PREVIEW = null;
+let MINT = null;       // flow/mint's answer, when a test sets it
+let START = null;      // changeover/start's answer, when a test sets it
 let PIC = {};          // the options the last picture was drawn with
 const PICS = [];       // every picture's options, in order
 let PICW = 0;          // the width the stub reports, when set
@@ -103,6 +105,12 @@ Object.assign(global, {
         if (String(url).indexOf('/composer') >= 0) return Promise.resolve({ ok: true, status: 200, json: async () => FLOW });
         if (PREVIEW && String(url).indexOf('/flow/preview') >= 0) {
             return Promise.resolve({ ok: true, status: 200, json: async () => PREVIEW });
+        }
+        if (MINT && String(url).indexOf('/flow/mint') >= 0) {
+            return Promise.resolve({ ok: true, status: 200, json: async () => MINT });
+        }
+        if (START && String(url).indexOf('/changeover/start') >= 0) {
+            return Promise.resolve({ ok: START.ok !== false, status: START.status || 200, json: async () => START.body || {} });
         }
         return new Promise(() => {});
     },
@@ -167,13 +175,26 @@ function expectOut(what, needle, where) {
     const h = where === undefined ? html() : where;
     if (h.indexOf(needle) >= 0) throw new Error(what + ': shows "' + needle + '"\n      ' + h.slice(0, 500));
 }
-async function open(flow, setup) {
+async function open(flow, setup, view) {
     UI.close();
     FLOW = flow;
     PREVIEW = null;
+    MINT = null;
+    START = null;
     PICW = 0;
-    UI.openPicker(viewWith(setup !== false));
+    UI.openPicker(view || viewWith(setup !== false));
     await settle(); await settle();
+}
+// urls is every request since the last CALLS reset, by path and query.
+function urls() { return CALLS.map(c => c.url); }
+function bodyOf(part) {
+    const c = CALLS.filter(x => x.url.indexOf(part) >= 0).pop();
+    return c ? JSON.stringify(c.body) : '';
+}
+// typeQ types into the picker's search box.
+function typeQ(text) {
+    els['os-comp-q'].value = text;
+    els['os-comp-q'].handlers.input();
 }
 function lastPreview() {
     const pv = CALLS.filter(c => c.url.indexOf('/flow/preview') >= 0).pop();
@@ -197,6 +218,116 @@ test('setup off: a style tapped previews that style, nothing minted', async () =
     tap('saved', { style: '2' });
     expectIn('saved go', 'Checking what this changeover does');
     if (JSON.stringify(lastPreview()) !== '{"style_id":2,"station_id":5}') throw new Error('body ' + JSON.stringify(lastPreview()));
+});
+
+// ── CHANGEOVER to Start, a style tapped, by the switch ──────────────────────
+// Every request the station sends from the CHANGEOVER tap to a started
+// changeover, and every screen between, for a style tapped under Styles.
+const B_PREVIEW = {
+    order_count: 2,
+    actions: [
+        { core_node_name: 'PLN_06', evac_order: { from: 'PLN_06', to: 'ULN_002' } },
+        { core_node_name: 'PLN_09', supply_order: { from: 'SMN_BUF_100', to: 'PLN_09', payload_code: 'PART-B' } },
+    ],
+    mint: { style_id: 2, style_name: 'B-RUN', cells: [{ core_node_name: 'PLN_09', role: 'produce',
+        swap_mode: 'two_robot_press_index', payload_code: 'PART-B' }] },
+};
+async function styleToStart(setup) {
+    UI.close();
+    CALLS.length = 0;
+    FLOW = { part_rows: ROWS, presets: [ONE] };
+    PREVIEW = B_PREVIEW;
+    MINT = { style_id: 2, style_name: 'B-RUN', fingerprint: 'fp-2' };
+    START = { body: { id: 9 } };
+    UI.openPicker(viewWith(setup));
+    await settle(); await settle();
+    const opened = urls();
+    tap('saved', { style: '2' });
+    await settle(); await settle();
+    const card = html();
+    const tapped = urls().slice(opened.length);
+    tap('start');
+    await settle(); await settle(); await settle();
+    return { opened: opened, card: card, tapped: tapped, started: urls().slice(opened.length + tapped.length), after: html() };
+}
+test('setup on: a style tapped is the card, then mint and start on its fingerprint', async () => {
+    const r = await styleToStart(true);
+    if (r.opened.join() !== '/api/operator-stations/5/composer') throw new Error('on open: ' + r.opened.join());
+    if (r.tapped.join() !== '/api/processes/1/flow/preview?preflight=1') throw new Error('on the tap: ' + r.tapped.join());
+    for (const want of ['Change over to B-RUN?', 'Takes the bins off PLN_06 to ULN_002.', 'class="picture"',
+        'os-comp-trips', 'data-act="back"', 'Start changeover']) {
+        expectIn('the card', want, r.card);
+    }
+    if (r.started.join() !== '/api/processes/1/flow/mint,/api/processes/1/changeover/start') {
+        throw new Error('on Start: ' + r.started.join());
+    }
+    if (bodyOf('/flow/mint') !== '{"style_id":2,"station_id":5}') throw new Error('mint ' + bodyOf('/flow/mint'));
+    if (bodyOf('/changeover/start') !== '{"to_style_id":2,"called_by":"Screen 5","flow_fingerprint":"fp-2"}') {
+        throw new Error('start ' + bodyOf('/changeover/start'));
+    }
+    expectIn('started', 'Changeover started', r.after);
+});
+test('setup off: a style tapped, the station sends the same as setup on', async () => {
+    const r = await styleToStart(false);
+    if (r.opened.join() !== '/api/operator-stations/5/composer') throw new Error('on open: ' + r.opened.join());
+    if (r.tapped.join() !== '/api/processes/1/flow/preview?preflight=1') throw new Error('on the tap: ' + r.tapped.join());
+    for (const want of ['Change over to B-RUN?', 'class="picture"', 'os-comp-trips', 'Start changeover']) {
+        expectIn('the card', want, r.card);
+    }
+    if (r.started.join() !== '/api/processes/1/flow/mint,/api/processes/1/changeover/start') {
+        throw new Error('on Start: ' + r.started.join());
+    }
+    if (bodyOf('/changeover/start') !== '{"to_style_id":2,"called_by":"Screen 5","flow_fingerprint":"fp-2"}') {
+        throw new Error('start ' + bodyOf('/changeover/start'));
+    }
+    expectIn('started', 'Changeover started', r.after);
+});
+test('setup off: the running style tapped says so and offers no Start', async () => {
+    await open({ part_rows: ROWS, presets: [ONE] }, false);
+    PREVIEW = { running: true, mint: { style_id: 1, style_name: 'A-RUN', running: true } };
+    tap('saved', { style: '1' });
+    await settle(); await settle();
+    expectIn('running', 'A-RUN is already running — there is nothing to change over.');
+    expectOut('running', 'data-act="start"');
+});
+test('setup off: a refused start says why where Start was', async () => {
+    await open({ part_rows: ROWS, presets: [ONE] }, false);
+    PREVIEW = B_PREVIEW;
+    MINT = { style_id: 2, style_name: 'B-RUN', fingerprint: 'fp-2' };
+    START = { ok: false, status: 400, body: { error: 'PLN_09 has an order in flight' } };
+    const say = { textContent: '', className: '' };
+    tap('saved', { style: '2' });
+    await settle(); await settle();
+    root().querySelector = sel => (sel === '.os-comp-say' ? { querySelector: () => say, appendChild() {} } : null);
+    tap('start');
+    await settle(); await settle(); await settle();
+    root().querySelector = () => null;
+    if (say.textContent !== 'PLN_09 has an order in flight') throw new Error('refusal: "' + say.textContent + '"');
+});
+test('setup off has no Set up a part; setup on has it', async () => {
+    await open({ part_rows: ROWS, presets: [ONE] }, false);
+    expectOut('setup off', 'Set up a part', box());
+    expectOut('setup off', 'data-act="part"', box());
+    await open({ part_rows: ROWS, presets: [ONE] }, true);
+    expectIn('setup on', 'Set up a part', box());
+});
+test('the search box: its words, the CATID shown on a row, and a search by CATID', async () => {
+    const v = viewWith(true);
+    v.composer.styles[1].catid = 'CAT-B';
+    await open({ part_rows: ROWS, presets: [ONE, TWO] }, true, v);
+    expectIn('picker', 'placeholder="scan or type a part, a name or a CATID"');
+    expectIn('a part row', 'CATID CAT-A', box());
+    expectIn('a style row', 'CATID CAT-B', box());
+    typeQ('cat-a');
+    expectIn('search by CATID', 'data-part="PART-A"', box());
+    expectOut('search by CATID', 'data-part="PART-C"', box());
+    typeQ('cat-b');
+    expectIn('a style by CATID', 'data-style="2"', box());
+    typeQ('');
+    tap('part', { part: 'PART-C' });
+    tap('two');
+    expectIn('second part', 'placeholder="scan or type a part, a name or a CATID"');
+    expectIn('second part', 'CATID CAT-A', box());
 });
 
 // ── HMI setup on ─────────────────────────────────────────────────────────────
