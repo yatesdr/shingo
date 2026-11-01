@@ -730,8 +730,9 @@ delegateActions(document.body, {
 //
 // "WAITING ON" PRINTS THE ASK'S OWN QUEUE SENTENCE (the dispatcher's words for
 // an operator) and keeps the engineer's queue cause in the title, then why nothing
-// more was asked (held_by), beside the gap it explains. No label map: an ask with no
-// sentence prints its cause as itself.
+// more was asked (held_by), beside the gap it explains, then why a cart above its want
+// is waiting (surplus_cause). No label map: an ask with no sentence prints its cause as
+// itself.
 var _keeperFor = '';
 
 export function renderKeeperLevels(groupName) {
@@ -773,9 +774,10 @@ export function keeperRowHtml(r) {
       + escapeHtml(r.oldest_ask_reason || r.oldest_ask_cause) + ' &middot; ' + escapeHtml(r.oldest_ask_age || '') + '</span>'
     : '';
   var held = r.held_by ? '<span>' + escapeHtml(r.held_by) + '</span>' : '';
-  var waiting = parked || held
-    ? parked + (parked && held ? '<br>' : '') + held
-    : '<span class="text-muted" title="nothing parked — every ask this level made is moving">&mdash;</span>';
+  var surplus = r.surplus_cause ? '<span>' + escapeHtml(r.surplus_cause) + '</span>' : '';
+  var says = [parked, held, surplus].filter(Boolean).join('<br>');
+  var waiting = says
+    || '<span class="text-muted" title="nothing parked — every ask this level made is moving">&mdash;</span>';
   var driving = (r.running_processes || []).length
     ? escapeHtml(r.running_processes.join(', '))
     : '<span class="text-muted">&mdash;</span>';

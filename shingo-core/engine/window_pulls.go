@@ -44,6 +44,9 @@ import (
 const (
 	stage2Receipt = "core_s2_landed"
 	drainReceipt  = "core_drain_landed"
+	// surplusReceipt is the surplus arm's (engine/kanban_surplus.go), a window or a
+	// source's slot alike.
+	surplusReceipt = "core_surplus_landed"
 )
 
 // stage2Puller tracks the trigger goroutines of both window pulls (stage 2's
@@ -231,20 +234,22 @@ func (e *Engine) onWindowLeft(fromNodeID int64) {
 }
 
 // landedReceipt is the receipt type Core files when it confirms a landed move
-// of one of its own window pulls, by the move's prefix, or "" for any other
-// order.
+// of one of its own window pulls or of the surplus arm, by the move's prefix, or
+// "" for any other order.
 func landedReceipt(edgeUUID string) string {
 	switch {
 	case strings.HasPrefix(edgeUUID, dispatch.Stage2EdgeUUIDPrefix):
 		return stage2Receipt
 	case strings.HasPrefix(edgeUUID, dispatch.DrainEdgeUUIDPrefix):
 		return drainReceipt
+	case strings.HasPrefix(edgeUUID, dispatch.SurplusEdgeUUIDPrefix):
+		return surplusReceipt
 	}
 	return ""
 }
 
 // onWindowPullOrderCompleted handles both halves of the completion event for
-// the window pulls. A core-s2- or core-dr- move that is DELIVERED is confirmed
+// the window pulls. A core-s2-, core-dr- or core-sp- move that is DELIVERED is confirmed
 // here: the robot set the cart down on an empty window and there is no human
 // receipt to wait for — the reason the Edge's own U2/L2 moves are created
 // autoConfirm — while a delivered order stays non-terminal and keeps its bin's

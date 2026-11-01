@@ -3,6 +3,7 @@ package engine
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sort"
 	_ "sync" // the plain lock inlines only where sync is imported (protocol/lockcheck)
 	"time"
@@ -123,6 +124,10 @@ type MaintainerGroupState struct {
 	// OldestAskAge is rendered on the one duration ladder (protocol.FormatDuration),
 	// not Go's "11m3s".
 	OldestAskAge string `json:"oldest_ask_age,omitempty"`
+	// SurplusCause is why a cart of this type stands above its want while the kanban
+	// is short and has no child free (engine/kanban_surplus.go). A surplus has no ask, so
+	// it has no oldest ask to name.
+	SurplusCause string `json:"surplus_cause,omitempty"`
 }
 
 // Maintainer holds every kanban's effective want.
@@ -188,9 +193,9 @@ func (m *Maintainer) Ticks() int {
 // the open episodes with their asks, the comings, the residents. The order is the
 // safe one: a cart landing mid-read counts in two terms and asks one less until the
 // next tick, and is never in none, which would ask for a cart already there. A
-// short kanban adds one forecast, an asking kanban one read of its slot state, its
-// properties and its children's types, and an ask what its birth costs. Pin:
-// TestKanbanCost_KeeperTick.
+// short kanban adds one read of its unloaders' windows and one forecast, an asking
+// kanban one read of its slot state, its properties and its children's types, and an
+// ask what its birth costs. Pin: TestKanbanCost_KeeperTick.
 func (m *Maintainer) Tick() {
 	if m.eng == nil || m.eng.db == nil {
 		return
@@ -226,13 +231,17 @@ func (m *Maintainer) Tick() {
 	// open and absent from it is config-withdrawn — see closeWithdrawn.
 	configuredKeys := map[string]bool{}
 	asked := false
+	byKanban := make(map[int64][]store.KanbanPictureRow)
+	for _, r := range picture {
+		byKanban[r.KanbanNodeID] = append(byKanban[r.KanbanNodeID], r)
+	}
 
 	for from := 0; from < len(picture); {
 		to := from
 		for to < len(picture) && picture[to].KanbanNodeID == picture[from].KanbanNodeID {
 			to++
 		}
-		got, created := m.tickKanban(picture[from:to], openByKey, counts, configuredKeys)
+		got, created := m.tickKanban(picture[from:to], byKanban, openByKey, counts, configuredKeys)
 		states = append(states, got...)
 		asked = asked || created
 		from = to
@@ -265,8 +274,8 @@ func (m *Maintainer) Tick() {
 // asks would be invisible on every Edge board (the phantom-order family): the save
 // refuses that, a migrated row can hold it, and it is skipped out loud. Pins:
 // TestKanban_ANoSupportsKanbanRunsNoKeeper, TestMaintainer_RefusesAGroupWithNoStation.
-func (m *Maintainer) tickKanban(rows []store.KanbanPictureRow, openByKey map[string]store.KeeperEpisode,
-	counts *store.KanbanCounts, configured map[string]bool) ([]MaintainerGroupState, bool) {
+func (m *Maintainer) tickKanban(rows []store.KanbanPictureRow, picture map[int64][]store.KanbanPictureRow,
+	openByKey map[string]store.KeeperEpisode, counts *store.KanbanCounts, configured map[string]bool) ([]MaintainerGroupState, bool) {
 
 	k := rows[0]
 	if !k.Live {
@@ -313,16 +322,31 @@ func (m *Maintainer) tickKanban(rows []store.KanbanPictureRow, openByKey map[str
 	}
 
 	var ask *kanbanAsks
+	var windows []store.KanbanWindow
 	if len(short) > 0 {
+		var err error
+		if windows, err = m.eng.db.ListKanbanWindows(k.KanbanNodeID); err != nil {
+			// Asking on a count that was not made could fill one gap twice. Nothing is
+			// asked or moved, and the next tick reads again.
+			m.eng.logFn("maintainer: %s: read its windows: %v", k.KanbanName, err)
+		}
+		lit := surplusAtWindows(rows, lines, windows)
+		var need []string
+		for i := range lines {
+			lines[i].atWindows = lit[rows[i].BinTypeCode]
+			if err == nil && lines[i].count.Short()-lines[i].atWindows >= 1 {
+				need = append(need, rows[i].BinTypeCode)
+			}
+		}
 		ask = &kanbanAsks{
-			group:      &nodes.Node{ID: k.KanbanNodeID, Name: k.KanbanName, IsSynthetic: true, Enabled: true},
-			station:    k.StationID,
-			hasSources: len(k.Sources) > 0,
-			sourceable: m.forecast(k, short),
-			reads:      m.eng.db.KanbanAskReads(k.KanbanNodeID, levels, residents),
+			group:         &nodes.Node{ID: k.KanbanNodeID, Name: k.KanbanName, IsSynthetic: true, Enabled: true},
+			station:       k.StationID,
+			hasSources:    len(k.Sources) > 0,
+			sourceable:    m.forecast(k, need),
+			reads:         m.eng.db.KanbanAskReads(k.KanbanNodeID, levels, residents),
+			windowsUnread: err != nil,
 		}
 	}
-	states := make([]MaintainerGroupState, len(lines))
 	created := false
 	for i := range lines {
 		l := &lines[i]
@@ -330,14 +354,26 @@ func (m *Maintainer) tickKanban(rows []store.KanbanPictureRow, openByKey map[str
 			m.tickLine(l, ask)
 		}
 		parked(&l.state, l.episode, m.now())
-		st := l.state
+		created = created || l.state.Created > 0
+	}
+	if ask != nil && !ask.windowsUnread {
+		for code, cause := range m.surplusArm(k, rows, lines, ask, windows, picture, counts) {
+			for i := range lines {
+				if lines[i].state.BinTypeCode == code {
+					lines[i].state.SurplusCause = cause
+				}
+			}
+		}
+	}
+	states := make([]MaintainerGroupState, len(lines))
+	for i := range lines {
+		st := lines[i].state
 		states[i] = st
-		created = created || st.Created > 0
 		// ONE LINE PER TICK PER GROUP, ALWAYS — the full chain, not "would create N".
 		// A reader has to see WHY the number came out as it did, and every term is a
 		// separate question with a separate way of being wrong.
-		m.eng.dbg("maintainer: group=%s type=%s want=%d resident=%d asked=%d coming=%d gap=%d created=%d held_by=%s",
-			st.GroupNode, st.BinTypeCode, st.Want, st.Resident, st.Asked, st.Coming, st.Gap, st.Created, st.HeldBy)
+		m.eng.dbg("maintainer: group=%s type=%s want=%d resident=%d asked=%d coming=%d at_windows=%d gap=%d created=%d held_by=%s surplus=%s",
+			st.GroupNode, st.BinTypeCode, st.Want, st.Resident, st.Asked, st.Coming, lines[i].atWindows, st.Gap, st.Created, st.HeldBy, st.SurplusCause)
 	}
 	return states, created
 }
@@ -348,6 +384,9 @@ type keeperLine struct {
 	episode store.KeeperEpisode
 	count   store.LevelState
 	state   MaintainerGroupState
+	// atWindows is the arm's carts the walk has lit as this type, read only on a short
+	// kanban. The keeper asks for the gap less these (surplusAtWindows).
+	atWindows int
 }
 
 // kanbanAsks is what a short kanban's asks share in one tick.
@@ -357,6 +396,9 @@ type kanbanAsks struct {
 	hasSources bool
 	sourceable map[string]bool
 	reads      *store.KanbanAskReads
+	// windowsUnread says the read of the unloaders' windows failed, so the tick neither
+	// asks nor moves.
+	windowsUnread bool
 }
 
 // forecast asks, before any ask is minted, the question each ask would put to the
@@ -418,10 +460,20 @@ func (m *Maintainer) tickLine(l *keeperLine, ask *kanbanAsks) {
 		// needs, for carriers that do not exist. The episode stays open (the group
 		// is short, and says so) and HeldBy says why nothing was asked. Pin:
 		// TestMaintainer_MintsNoAskForATypeNothingOutsideCanSource.
-		if !ask.sourceable[lv.BinTypeCode] {
+		//
+		// WHAT THE ARM HAS AT THE WINDOWS IS NOT ASKED FOR AGAIN: the walk has lit those
+		// carts as this type, so they fill this gap. Pin:
+		// TestKanbanSurplus_TheAsksAreNetted.
+		gap := c.Short() - l.atWindows
+		switch {
+		case ask.windowsUnread:
+			st.HeldBy = "the unloader's windows could not be read"
+		case gap <= 0:
+			st.HeldBy = fmt.Sprintf("%d at the unloader's windows coming back as %s", l.atWindows, lv.BinTypeCode)
+		case !ask.sourceable[lv.BinTypeCode]:
 			st.HeldBy = nothingToSource(lv.BinTypeCode, ask.hasSources)
-		} else {
-			st.Created, st.HeldBy = m.createAsks(ask, lv, l.episode.OriginID, c.Short())
+		default:
+			st.Created, st.HeldBy = m.createAsks(ask, lv, l.episode.OriginID, gap)
 		}
 
 	case c.Resident >= lv.Want && c.Asked == 0:

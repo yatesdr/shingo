@@ -14,25 +14,27 @@ import (
 
 // kanban_pins_test.go — characterization pins with no database.
 
-// TestKanbanPin_LandedReceiptConfirmsTwoPrefixesOnly: Core confirms a landed move
-// of its own two window pulls, by prefix, and no other order it asked for: every
-// other ask waits for its receipt or the auto-confirm sweep.
-func TestKanbanPin_LandedReceiptConfirmsTwoPrefixesOnly(t *testing.T) {
+// TestKanbanPin_LandedReceiptConfirmsThreePrefixesOnly: Core confirms a landed move
+// of its own two window pulls and of the surplus arm, by prefix, and no other order it
+// asked for: every other ask waits for its receipt or the auto-confirm sweep.
+func TestKanbanPin_LandedReceiptConfirmsThreePrefixesOnly(t *testing.T) {
 	t.Parallel()
 	for uuid, want := range map[string]string{
-		dispatch.Stage2EdgeUUIDPrefix + "1": stage2Receipt,
-		dispatch.DrainEdgeUUIDPrefix + "1":  drainReceipt,
-		"core-mnt-1":                        "",
-		"core-l1-1":                         "",
-		"edge-order-1":                      "",
-		"":                                  "",
+		dispatch.Stage2EdgeUUIDPrefix + "1":  stage2Receipt,
+		dispatch.DrainEdgeUUIDPrefix + "1":   drainReceipt,
+		dispatch.SurplusEdgeUUIDPrefix + "1": surplusReceipt,
+		"core-mnt-1":                         "",
+		"core-l1-1":                          "",
+		"edge-order-1":                       "",
+		"":                                   "",
 	} {
 		if got := landedReceipt(uuid); got != want {
 			t.Errorf("landedReceipt(%q) = %q, want %q", uuid, got, want)
 		}
 	}
-	if dispatch.Stage2EdgeUUIDPrefix != "core-s2-" || dispatch.DrainEdgeUUIDPrefix != "core-dr-" {
-		t.Errorf("prefixes %q and %q, want core-s2- and core-dr-", dispatch.Stage2EdgeUUIDPrefix, dispatch.DrainEdgeUUIDPrefix)
+	if dispatch.Stage2EdgeUUIDPrefix != "core-s2-" || dispatch.DrainEdgeUUIDPrefix != "core-dr-" || dispatch.SurplusEdgeUUIDPrefix != "core-sp-" {
+		t.Errorf("prefixes %q, %q and %q, want core-s2-, core-dr- and core-sp-",
+			dispatch.Stage2EdgeUUIDPrefix, dispatch.DrainEdgeUUIDPrefix, dispatch.SurplusEdgeUUIDPrefix)
 	}
 }
 

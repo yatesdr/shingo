@@ -12,6 +12,7 @@
 //	OnDeck       the on-deck carried-bin recovery  engine/engine.go
 //	LoaderBudget one loader's count and insert      dispatch/loader_replenish.go
 //	             its window pulls, acquires and all dispatch/loader_window.go
+//	             the keeper's surplus arm, likewise   dispatch/kanban_surplus.go
 //	Scan         the scanner: passes, acquires, doors   fulfillment/scanner.go
 //	LaneGate     one node group's lane gate        dispatch/lane_gate_release.go
 //	Summon, GateFail, Futility   taken under a lane gate

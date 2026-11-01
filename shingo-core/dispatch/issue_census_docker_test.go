@@ -9,6 +9,7 @@ import (
 	"shingo/protocol/testutil"
 	"shingocore/internal/testdb"
 	"shingocore/store"
+	"shingocore/store/bins"
 	"shingocore/store/nodes"
 	"shingocore/store/orders"
 	"shingocore/store/reservations"
@@ -110,6 +111,24 @@ var dispatchIssueDrivers = map[string]testdb.IssueDriver{
 			return db, moves[0].ID
 		}
 		return db, 0
+	},
+	"the surplus arm": func(t *testing.T, stranger bool) (*store.DB, int64) {
+		db := testdb.IssueCensusDB(t)
+		f := newDrainFixture(t, db, "ICS", 2, 1)
+		cart := f.cart(t, f.slots[0].ID, f.plain, nil)
+		if stranger {
+			testdb.StrangerHolds(t, db, cart.ID)
+		}
+		read, err := db.GetBin(cart.ID)
+		testutil.MustNoErr(t, err, "the cart")
+		moved, _, err := f.d.SurplusToWindows(f.loader, f.windows, []*bins.Bin{read}, "census")
+		testutil.MustNoErr(t, err, "the arm")
+		if len(moved) != 1 {
+			return db, 0
+		}
+		var id int64
+		testutil.MustNoErr(t, db.QueryRow(`SELECT id FROM orders WHERE edge_uuid LIKE $1`, SurplusEdgeUUIDPrefix+"%").Scan(&id), "the move")
+		return db, id
 	},
 	"loader replenish": func(t *testing.T, _ bool) (*store.DB, int64) {
 		db := testdb.IssueCensusDB(t)

@@ -28,9 +28,9 @@ import (
 // landed move (engine/window_pulls.go).
 
 // Stage2EdgeUUIDPrefix marks stage 2's pull and DrainEdgeUUIDPrefix the
-// drain's, beside core-l1- and core-u1- (the loader loop's asks) and core-mnt-
-// (the level keeper). The engine confirms a landed one of either: there is no
-// receipt to wait for.
+// drain's, beside core-l1- and core-u1- (the loader loop's asks), core-mnt-
+// (the level keeper) and core-sp- (its surplus arm). The engine confirms a landed
+// one of these two and of the arm's: there is no receipt to wait for.
 const (
 	Stage2EdgeUUIDPrefix = "core-s2-"
 	DrainEdgeUUIDPrefix  = "core-dr-"
@@ -130,7 +130,8 @@ func (d *Dispatcher) pullInto(free []*nodes.Node, carts []*bins.Bin, caps map[in
 			if !ok {
 				continue
 			}
-			err = d.windowMove(prefix, desc, c, w)
+			station := d.windowStation(w)
+			err = d.windowMove(prefix, desc, c, w, station, station)
 			if errors.Is(err, ErrWindowTaken) {
 				d.dbg("%s: %s was taken since it was read free", desc, w.Name)
 				break
@@ -160,7 +161,11 @@ func (d *Dispatcher) pullInto(free []*nodes.Node, carts []*bins.Bin, caps map[in
 //
 // The row is whole at its INSERT, as a Core ask's is, so it takes the same one
 // acquire (acquireCoreAsk), under the loader's lock its pull holds.
-func (d *Dispatcher) windowMove(prefix, desc string, c *bins.Bin, w *nodes.Node) error {
+//
+// station and projects are the row's station and who hears of the cart, for a window
+// both its own (windowStation). The surplus arm sends a cart to a source's slot the same
+// way, a slot no Edge models (SurplusToSlot).
+func (d *Dispatcher) windowMove(prefix, desc string, c *bins.Bin, w *nodes.Node, station, projects string) error {
 	if c.NodeID == nil {
 		return errors.New("the cart is at no node")
 	}
@@ -172,17 +177,16 @@ func (d *Dispatcher) windowMove(prefix, desc string, c *bins.Bin, w *nodes.Node)
 	if p.Refused != nil {
 		return fmt.Errorf("the move's plan refused it (rule %d): %v", p.Refused.Rule, p.Refused.Err)
 	}
-	station := d.windowStation(w)
 	order, _, err := d.IssueOrder(Need{
 		Type:     OrderTypeMove,
 		Station:  station,
 		Ref:      prefix + uuid.New().String(),
 		Quantity: 1,
 		Desc:     desc,
-		// No place asked for material: the loader is clearing a cart it was set
-		// up to clear, so there is no episode, and blank would read orphan.
+		// No place asked for material: Core is clearing a cart it was set up to
+		// clear, so there is no episode, and blank would read orphan.
 		OriginClass: protocol.OriginClassNoDemand,
-		Projects:    station,
+		Projects:    projects,
 		Cart:        c.ID,
 		Window:      w,
 	}, p)

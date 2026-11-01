@@ -180,7 +180,7 @@ var issueWalk = map[string]issueEntry{
 	"dispatch/complex_intake.go:Dispatcher.handleComplexOrderRequest": {issueSite, []string{"d"}, "complex intake"},
 	"dispatch/compound.go:Dispatcher.issueLegsTx":                     {issueSite, []string{"d"}, "a dig's legs, on the compound's transaction"},
 	"dispatch/compound.go:Dispatcher.writeCompoundChildren":           {issueThrough, []string{"d"}, "the dig's issue: its transaction and its after-commit tail"},
-	"dispatch/loader_window.go:Dispatcher.windowMove":                 {issueSite, []string{"d"}, "a window pull's move: the drain's and stage 2's"},
+	"dispatch/loader_window.go:Dispatcher.windowMove":                 {issueSite, []string{"d"}, "a window pull's move: the drain's, stage 2's and the surplus arm's"},
 	"engine/bin_move.go:Engine.CreateBinMove":                         {issueSite, []string{"e", "orchestration"}, "a bin move"},
 	"engine/carried_bin_recovery.go:Engine.issueAndDispatchRecovery":  {issueSite, []string{"e"}, "the carried-bin recovery's unit"},
 	"dispatch/clear_home.go:Dispatcher.IssueClearTx":                  {issueSite, []string{"dispatcher"}, "the home clear: its parent and the partial's move"},
@@ -202,6 +202,8 @@ var issueWalk = map[string]issueEntry{
 	"www/handlers_orders.go:Handlers.fileBinMove":                       {issueOpener, nil, "a person's bin move: the Orders and Bins pages"},
 	"www/handlers_test_orders_direct.go:Handlers.apiDirectOrderSubmit":  {issueOpener, nil, "a person's bin move: the /test-orders direct form"},
 	"dispatch/loader_window.go:Dispatcher.PullStage2":                   {issueOpener, nil, "stage 2's pull, under stage 2's loader lock"},
+	"dispatch/kanban_surplus.go:Dispatcher.SurplusToWindows":            {issueOpener, nil, "the keeper's surplus arm to a window, under the loader's lock"},
+	"dispatch/kanban_surplus.go:Dispatcher.SurplusToSlot":               {issueOpener, nil, "the keeper's surplus arm to a source's slot"},
 	"engine/carried_bin_recovery.go:Engine.RecoverCarriedBin":           {issueOpener, nil, "the Recover button on an anomaly"},
 	"engine/cancel_return.go:Engine.tryReturnCarriedBin": {issueOpener, nil, "THE CANCEL'S RETURN: an order cancelled while its robot " +
 		"carries a bin opens the recovery's door with nobody pressing it"},
@@ -423,6 +425,7 @@ func TestCensus_OrderReceivedAtBirth(t *testing.T) {
 		"home clear's spot move":        {"", "the same"},
 		"home clear's trade":            {"", "the same"},
 		"loader drain":                  {"", "a drain's move: Core-born, no Edge asked, as the bin move is; seen at dispatch"},
+		"the surplus arm":               {"", "the keeper moving its own resident: Core-born, no Edge asked; seen at dispatch"},
 	}
 	sources := scanCoreSources(t)
 	for _, d := range testdb.IssueDoors {

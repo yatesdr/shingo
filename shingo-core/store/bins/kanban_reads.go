@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"shingocore/domain"
+	"shingocore/store/internal/nodetree"
 	"shingocore/store/reservations"
 )
 
@@ -160,4 +161,28 @@ type childScan struct {
 
 func (c childScan) Scan(dest ...any) error {
 	return c.rows.Scan(append([]any{c.child}, dest...)...)
+}
+
+// ListKanbanSurplus is the population the surplus arm moves from: the empties of the
+// named types standing in a kanban that its count calls residents, oldest arrival
+// first.
+//
+// THE COUNT'S OWN WHERE, SO THE ARM CANNOT MOVE WHAT THE KEEPER DOES NOT COUNT:
+// emptyCarrierWhere refuses a claimed, locked, reserved, staged, loaded, bare or
+// quality-held cart, and a cart on a disabled node. HeightArm's no-height-said arm
+// leaves tops & bottoms out, which is no stock of a level. A cart that met any of them
+// is not read, so no plan is made for it: there is no refusal to handle. Pin:
+// TestKanbanSurplus_NeverMovesWhatTheCountRefuses.
+func ListKanbanSurplus(db *sql.DB, kanbanID int64, codes []string) ([]*Bin, error) {
+	if len(codes) == 0 {
+		return nil, nil
+	}
+	rows, err := db.Query(nodetree.DescendantsOf(1)+" "+BinJoinQuery+emptyCarrierWhere("NULL", "$1")+`
+		  AND b.node_id IN (SELECT id FROM descendants)`+OfTypesArm(2)+HeightArm(domain.Height{})+`
+		ORDER BY b.updated_at, b.id`, kanbanID, codes)
+	if err != nil {
+		return nil, fmt.Errorf("list kanban surplus %d: %w", kanbanID, err)
+	}
+	defer rows.Close()
+	return scanBins(rows)
 }

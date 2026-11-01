@@ -148,43 +148,6 @@ func TestKanbanPin_ALevelZeroRowRefusesEveryStore(t *testing.T) {
 	}
 }
 
-// TestKanbanPin_NothingMovesAResidentOutOfAGroup: carts above their level stay
-// across ticks with no order written for them, and that holds when they are the
-// reason another declared type has no position to land on.
-func TestKanbanPin_NothingMovesAResidentOutOfAGroup(t *testing.T) {
-	t.Parallel()
-	db := testdb.Open(t)
-	eng := newTestEngine(t, db, simulator.New())
-	// Two positions, both held by the surplus of OVER; SHORT is short with no
-	// position free, and an empty of it stands outside for the keeper to find.
-	grpID, types := campaignGroup(t, db, "KPS", 2, map[string]int{"KPS-OVER": 1, "KPS-SHORT": 1})
-	kids, err := db.ListChildNodes(grpID)
-	testutil.MustNoErr(t, err, "positions")
-	over1 := landAt(t, db, types["KPS-OVER"], kids[0].ID, "KPS-OVER-1")
-	over2 := landAt(t, db, types["KPS-OVER"], kids[1].ID, "KPS-OVER-2")
-	mntOutsideEmpty(t, db, types["KPS-SHORT"], "KPS-OUT")
-
-	m := eng.Maintainer()
-	for i := 0; i < 3; i++ {
-		m.Tick()
-	}
-	st := mntState(t, m, "KPS", "KPS-OVER")
-	if st.Resident != 2 || st.Gap != -1 || st.Created != 0 || st.OriginID != "" {
-		t.Errorf("the type above its level: %+v, want 2 resident, gap -1, nothing asked or open", st)
-	}
-	short := mntState(t, m, "KPS", "KPS-SHORT")
-	if short.Gap != 1 || short.Created != 0 || short.HeldBy == "" {
-		t.Errorf("the type with no position: %+v, want gap 1, nothing asked, a reason held", short)
-	}
-	var n int
-	testutil.MustNoErr(t, db.QueryRow(`SELECT count(*) FROM orders`).Scan(&n), "orders")
-	if n != 0 {
-		t.Errorf("%d orders written; nothing moves a resident, and nothing can land", n)
-	}
-	testdb.RequireBinAtNode(t, db, over1, kids[0].ID)
-	testdb.RequireBinAtNode(t, db, over2, kids[1].ID)
-}
-
 // TestKanbanPin_TheKeepersAskIsBornWithNoSource: the keeper's order names no
 // source at its birth (the concrete slot it fills is its delivery), the scanner
 // writes the node the chosen bin stands on at acquire, the slot and never its

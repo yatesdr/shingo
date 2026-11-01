@@ -34,10 +34,21 @@ const (
 	// the picture, the open episodes with their asks, the comings, the residents.
 	keeperTickSteady = 4
 	// keeperTickBurstToFirstAsk is a tick with one type short by 4, up to the first
-	// ask's transaction: the steady four, the forecast, the episode's open, the
-	// group's properties, slot state and children's types, and the two node reads of
-	// the ask's admission. Each ask after it chooses its slot with no statement.
-	keeperTickBurstToFirstAsk = 11
+	// ask's transaction: the steady four, the read of the unloaders' windows, the
+	// forecast, the episode's open, the group's properties, slot state and children's
+	// types, and the two node reads of the ask's admission. Each ask after it chooses
+	// its slot with no statement.
+	keeperTickBurstToFirstAsk = 12
+	// surplusArmNoWindow is a tick the surplus arm's precondition holds on with one
+	// window open: the steady four, the windows, the forecast, the episode's open, the
+	// slot state, the properties and types the choice reads. The windows' read says one
+	// is open, so nothing more.
+	surplusArmNoWindow = 10
+	// surplusArmToFirstMove is the same tick with two windows open, up to the move's
+	// transaction: that, the surplus list, freeWindows' three reads a window, the
+	// loader's capability list, the window's Allowed Bin Types and the cart's type row,
+	// and the move's plan.
+	surplusArmToFirstMove = 28
 	// snapshotBuild is one bins feed build for the Edge watching the windows: the
 	// read snapshot (5: BEGIN, the names, the orders inbound, the bins, COMMIT), the
 	// picture of its groups, then UnloaderGroupLines (open episodes, types in play,
@@ -303,6 +314,49 @@ func TestKanbanCost_KeeperTick(t *testing.T) {
 		if n != 1 {
 			t.Errorf("the group's %s read %d times over four asks, want once", what, n)
 		}
+	}
+}
+
+// TestKanbanCost_SurplusArm: what a tick costs with the arm's precondition true. K's 8
+// positions all held, 5 of them big above its want, totes short by 1 and sourceable.
+func TestKanbanCost_SurplusArm(t *testing.T) {
+	t.Parallel()
+	r := newKanbanCostRig(t, 2, 2, 2)
+	kids, err := r.db.ListChildNodes(r.k.ID)
+	testutil.MustNoErr(t, err, "positions")
+	for i, c := range kids[3:] {
+		landAt(t, r.db, r.big, c.ID, fmt.Sprintf("KC-OVER-%d", i))
+	}
+	testutil.MustNoErr(t, r.db.SetMaintainLevel(store.MaintainLevel{GroupNodeID: r.k.ID, BinTypeID: r.totes, Want: 2}), "totes short")
+	m := r.eng.Maintainer()
+
+	// One window open (W4): the read says so, and the arm reads nothing to learn it.
+	r.counter.Reset()
+	m.Tick()
+	stmts := r.counter.Statements()
+	t.Logf("STATEMENTS: surplus arm, one window open: %d\n%s", len(stmts), testutil.StatementBreakdown(stmts))
+	if st := mntState(t, m, "KC-K", "KC-BIG"); !strings.Contains(st.SurplusCause, "last one free") {
+		t.Fatalf("fixture drift: %+v", st)
+	}
+	if len(stmts) != surplusArmNoWindow {
+		t.Errorf("the arm with one window open = %d statements, want %d", len(stmts), surplusArmNoWindow)
+	}
+
+	// Two open: one move.
+	_, err = r.db.Exec(`DELETE FROM bins WHERE label = 'KC-W3-EMPTY'`)
+	testutil.MustNoErr(t, err, "free a window")
+	r.counter.Reset()
+	m.Tick()
+	stmts = r.counter.Statements()
+	n := firstBegin(stmts)
+	t.Logf("STATEMENTS: surplus arm, two open: %d, the first %d to the move's birth\n%s", len(stmts), n, testutil.StatementBreakdown(stmts))
+	var moves int
+	testutil.MustNoErr(t, r.db.QueryRow(`SELECT COUNT(*) FROM orders WHERE edge_uuid LIKE 'core-sp-%'`).Scan(&moves), "moves")
+	if moves != 1 {
+		t.Fatalf("fixture drift: %d moves, want 1", moves)
+	}
+	if n != surplusArmToFirstMove {
+		t.Errorf("the arm to the move's birth = %d statements, want %d", n, surplusArmToFirstMove)
 	}
 }
 

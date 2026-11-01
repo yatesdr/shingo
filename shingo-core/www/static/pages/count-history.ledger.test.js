@@ -233,6 +233,10 @@ console.log('the sections count history gave away render where they went (owner,
         const both = vm.runInContext('keeperRowHtml(' + JSON.stringify({ bin_type_code: 'SMALL', want: 5, gap: 2, held_by: 'no free slot',
             oldest_ask_cause: 'c', oldest_ask_reason: 'Waiting for an empty', oldest_ask_age: '12m' }) + ')', kctx);
         check('keeper: a parked ask and a held reason both show', both.includes('Waiting for an empty') && both.includes('no free slot'), both);
+        const above = vm.runInContext('keeperRowHtml(' + JSON.stringify({ bin_type_code: 'SMALL', want: 1, resident: 3, gap: -2, running_processes: ['PRESS-6'],
+            held_by: 'no free slot', surplus_cause: 'above its want, and no source of K has room for it' }) + ')', kctx);
+        check('keeper: why a surplus waits stands beside why nothing was asked', above.includes('no free slot<')
+            && above.includes('no source of K has room for it') && !above.includes('&mdash;'), above);
         const note = liftFrom('nodes-maintain.js', 'export function', 'keeperNoteHtml');
         if (!note) {
             check('nodes-maintain.js defines keeperNoteHtml', false);

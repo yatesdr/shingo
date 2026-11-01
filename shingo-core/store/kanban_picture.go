@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	"shingo/protocol"
+	"shingocore/domain"
 	"shingocore/kanban"
 	"shingocore/store/internal/helpers"
 )
@@ -32,6 +33,9 @@ type KanbanPictureRow struct {
 	Supports []KanbanRef
 	// Sources are the groups its keeper may pull from, in rank order.
 	Sources []KanbanRef
+	// Floor is the type's floor size, Sized false with none entered.
+	Floor domain.FloorSize
+	Sized bool
 	// OverflowNodeID and OverflowNode are where this type overflows:
 	// COALESCE(level, kanban). LevelOverflowNodeID is the level row's own, nil
 	// when the type takes the kanban's default.
@@ -214,7 +218,8 @@ SELECT g.id, g.name, l.bin_type_id, bt.code, l.want, k.running_cover, COALESCE(r
        COALESCE(sl.slots, 0), COALESCE(su.refs, '[]'), COALESCE(so.refs, '[]'),
        COALESCE(l.overflow_node_id, k.overflow_node_id), COALESCE(ov.name, ''), l.overflow_node_id,
        COALESCE(tb.want, 0), COALESCE(k.station_id, ''), k.strict, g.enabled AND g.is_synthetic,
-       COALESCE(r.processes, '[]'), COALESCE(nt.processes, '[]'), COALESCE(fa.processes, '[]')
+       COALESCE(r.processes, '[]'), COALESCE(nt.processes, '[]'), COALESCE(fa.processes, '[]'),
+       COALESCE(bt.width_in, 0), COALESCE(bt.length_in, 0)
   FROM scope
   JOIN kanbans k ON k.node_id = scope.node_id
   JOIN nodes g ON g.id = k.node_id
@@ -284,13 +289,16 @@ func scanKanbanPicture(rows *sql.Rows, err error) ([]KanbanPictureRow, error) {
 		var (
 			r                                         KanbanPictureRow
 			supports, sources, running, nothing, fell []byte
+			width, length                             float64
 		)
 		if err := rows.Scan(&r.KanbanNodeID, &r.KanbanName, &r.BinTypeID, &r.BinTypeCode,
 			&r.Base, &r.Cover, &r.Running, &r.Slots, &supports, &sources,
 			&r.OverflowNodeID, &r.OverflowNode, &r.LevelOverflowNodeID,
-			&r.TopsAndBottomsWant, &r.StationID, &r.Strict, &r.Live, &running, &nothing, &fell); err != nil {
+			&r.TopsAndBottomsWant, &r.StationID, &r.Strict, &r.Live, &running, &nothing, &fell,
+			&width, &length); err != nil {
 			return nil, fmt.Errorf("kanban picture: scan: %w", err)
 		}
+		r.Floor, r.Sized = domain.BinType{WidthIn: width, LengthIn: length}.FloorSize()
 		for _, f := range []struct {
 			raw []byte
 			to  any
