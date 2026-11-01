@@ -404,18 +404,22 @@ function fakeElement() {
         throw new Error('no ' + name + ' in composer-render.js');
     };
     const shown = { innerHTML: '' };
+    // No box to measure here, so fitSpots leaves the svg at the picture's own
+    // size (the markup this pin reads) and scrollOfSpots has nothing to keep.
     const cctx = {
-        recipe: { name: 'Standard' }, picks: ['PART-A'], moves: {}, opened: {}, selected: '',
+        recipe: { name: 'Standard' }, picks: ['PART-A'], moves: {}, opened: {}, selected: '', MIN_FIT: 0.5,
         recipePicture() { return { svg: '', height: 1234, width: 1280 }; },
         picksLabel() { return 'PART-A'; },
         M() {
             return { shortPart(p) { return p; }, spotsChips() { return []; }, spotsInert() { return []; },
                 spotsPicture() { return { targets: [], active: [], tags: {}, pairs: {} }; } };
         },
-        show() { return shown; }, esc(s) { return String(s); },
+        show() { return shown; }, root() { return { querySelector() { return null; } }; }, $() { return null; },
+        esc(s) { return String(s); },
     };
     vm.createContext(cctx);
-    vm.runInContext(fn('relationOpts') + '\n' + fn('svgOpen') + '\n' + fn('drawPositions') + '\n__c = drawPositions;', cctx);
+    vm.runInContext(fn('relationOpts') + '\n' + fn('svgOpen') + '\n' + fn('scrollOfSpots') + '\n' + fn('fitSpots') + '\n' +
+        fn('drawPositions') + '\n__c = drawPositions;', cctx);
     cctx.__c();
     check('positions: the svg is drawn at the picture\'s own size',
         /<svg id="os-comp-svg"[^>]*viewBox="0 0 1280 1234" width="1280" height="1234"/.test(shown.innerHTML),

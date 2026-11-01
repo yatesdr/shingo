@@ -639,6 +639,7 @@ function drawWhich(list) {
 // lane is a place of its own here, so the picture outlines it alone rather than
 // its press's whole module (renderFlowPicture's selectCard).
 function drawPositions() {
+    const keep = scrollOfSpots();
     const opts = relationOpts(recipe, selected, { editable: true, selectCard: true,
         selected: selected ? (moves[selected] || selected) : null });
     const inert = M().spotsInert(recipe, moves);
@@ -681,6 +682,33 @@ function drawPositions() {
         '<div class="os-comp-scroll">' + svgOpen(pic, 'os-comp-svg') + pic.svg + '</svg></div></div>' +
         '<div class="os-comp-bar"><div class="os-chips">' + list + '</div><span class="sp"></span>' +
         '<button class="os-btn os-btn-primary" data-act="next">Next</button></div></div>';
+    fitSpots(pic, keep);
+}
+
+// THE PICTURE FITS THE SCREEN. fitSpots scales the Spots svg to its box, both
+// ways, so every spot is on screen without a scroll: never up (a scale of 1 at
+// most) and never below MIN_FIT, where a 114 px card would be smaller than the
+// 56 px a finger needs (--os-touch-min). Only past that floor does the picture
+// scroll, and then a redraw (every tap is one) puts the scroll back where it
+// was: keep is the old box's scroll, read before the redraw replaced it.
+const MIN_FIT = 0.5;
+function fitSpots(pic, keep) {
+    const r = root();
+    const box = r.querySelector ? r.querySelector('.os-comp-scroll') : null;
+    const svg = $('os-comp-svg');
+    if (!box || !svg || !box.clientWidth || !box.clientHeight) return;
+    const k = Math.max(MIN_FIT, Math.min(1, box.clientWidth / pic.width, box.clientHeight / pic.height));
+    svg.setAttribute('width', String(Math.round(pic.width * k)));
+    svg.setAttribute('height', String(Math.round(pic.height * k)));
+    if (keep) { box.scrollLeft = keep.left; box.scrollTop = keep.top; }
+}
+
+// scrollOfSpots is the Spots picture's scroll before a redraw, or null when
+// the Spots picture is not on screen.
+function scrollOfSpots() {
+    const svg = $('os-comp-svg');
+    const box = svg && svg.parentNode;
+    return box ? { left: box.scrollLeft || 0, top: box.scrollTop || 0 } : null;
 }
 
 // placeOf is the card's place for a recipe node, or null.
@@ -1039,6 +1067,10 @@ document.addEventListener('keydown', e => {
     if (e.key !== 'Escape') return;
     onEscape();
 });
+
+// A screen that changes size (a kiosk rotated, a window resized) fits the
+// Spots picture again.
+window.addEventListener('resize', () => { if (screen === 'positions' && recipe) drawPositions(); });
 
 window.ComposerUI = { openPicker, close, setView, openFromHash, onEscape };
 

@@ -139,6 +139,8 @@
    stage. */
 .os-comp-scroll { flex: 1; min-height: 0; overflow: auto; }
 .os-comp-scroll > svg { display: block; }
+/* The Spots picture, fitted to its box (fitSpots), sits in the middle of it. */
+#os-comp-svg { margin: 0 auto; }
 /* THE HINT KEEPS TWO LINES' ROOM, so the picture under it never moves between
    taps: a tap's hint that wraps ("PLN_005 · Left Hand · on deck for PLN_010.
    Left Hand has nowhere else for it …") pushed the whole grid 20 px down, and

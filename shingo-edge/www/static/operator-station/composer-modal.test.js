@@ -773,13 +773,61 @@ groupedTest('grouped: Which recipe draws each card by relation, its hands tagged
     }
     expectIn('which svg', '<svg class="os-flow-picture" viewBox="0 0 1500 ');
 });
-groupedTest('grouped: the Spots svg is the picture\'s own width, so a wider grid scrolls', async () => {
+groupedTest('grouped: the Spots svg is drawn at the picture\'s own size, then fitted to its box', async () => {
     await open(grouped());
     PICW = 1500;
     tap('part', { part: 'SYN-P6-X' });
     tap('two');
     tap('part', { part: 'SYN-P6-Y' });
     expectIn('spots svg', 'viewBox="0 0 1500 560" width="1500" height="560"');
+});
+
+// A box the stub can measure: a fresh one each time the screen is redrawn, as
+// a browser's would be, and the Spots svg in it.
+function measuredBox(w, h) {
+    const boxes = [];
+    const svg = { attrs: {}, setAttribute(k, v) { this.attrs[k] = v; } };
+    root().querySelector = sel => {
+        if (sel !== '.os-comp-scroll') return null;
+        const last = boxes[boxes.length - 1];
+        if (last && last.html === root().innerHTML) return last;
+        boxes.push({ html: root().innerHTML, clientWidth: w, clientHeight: h, scrollLeft: 0, scrollTop: 0 });
+        return boxes[boxes.length - 1];
+    };
+    Object.defineProperty(svg, 'parentNode', { get: () => root().querySelector('.os-comp-scroll') });
+    els['os-comp-svg'] = svg;
+    return { svg: svg, box: () => root().querySelector('.os-comp-scroll'),
+        done() { delete els['os-comp-svg']; root().querySelector = () => null; } };
+}
+groupedTest('grouped: the Spots picture fits its box both ways, never scaled up', async () => {
+    await open(grouped());
+    tap('part', { part: 'SYN-P6-X' });
+    tap('two');
+    PICW = 1698;
+    const m = measuredBox(1280, 596);
+    try {
+        tap('part', { part: 'SYN-P6-Y' });
+        // 1698 x 560: the width binds, 1280 / 1698.
+        if (m.svg.attrs.width !== '1280' || m.svg.attrs.height !== '422') throw new Error('fit: ' + JSON.stringify(m.svg.attrs));
+        PICW = 900;
+        tapPos('PLN_010');
+        if (m.svg.attrs.width !== '900' || m.svg.attrs.height !== '560') throw new Error('scaled up: ' + JSON.stringify(m.svg.attrs));
+    } finally { m.done(); PICW = 0; }
+});
+groupedTest('grouped: past the touch floor the picture scrolls, and a tap keeps the scroll', async () => {
+    await open(grouped());
+    tap('part', { part: 'SYN-P6-X' });
+    tap('two');
+    PICW = 4000;
+    const m = measuredBox(1280, 596);
+    try {
+        tap('part', { part: 'SYN-P6-Y' });
+        if (m.svg.attrs.width !== '2000') throw new Error('the floor is a half: ' + JSON.stringify(m.svg.attrs));
+        m.box().scrollLeft = 640; m.box().scrollTop = 0;
+        tapPos('PLN_010');
+        const after = m.box();
+        if (after.scrollLeft !== 640) throw new Error('the scroll jumped: ' + after.scrollLeft);
+    } finally { m.done(); PICW = 0; }
 });
 // ── the Spots step as the floor drives it: requests, a part moved twice ─────
 groupedTest('grouped: the Spots taps send nothing; Next is the one request', async () => {
