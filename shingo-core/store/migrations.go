@@ -4082,9 +4082,10 @@ func migrationList() []migration {
 			}},
 		{98, "bin_loaders.changeover_load_directive — whose card a changeover commandeers",
 			v98LoaderChangeoverLoadDirective,
-			func(q schema.Querier) bool {
-				return schema.ColumnExists(q, "bin_loaders", "changeover_load_directive")
-			}},
+			// Trusts the version row: v170 drops this column, and a verify that
+			// still asked for it would fail on every boot after v170 and re-run
+			// this body, which re-adds it.
+			func(schema.Querier) bool { return true }},
 		{99, "rename payload_manifest.quantity to parts_per_cycle — the value is already the ratio",
 			v99PayloadManifestPartsPerCycle,
 			func(q schema.Querier) bool {
@@ -4536,6 +4537,11 @@ func migrationList() []migration {
 		{169, "kanbans - one row per kanban with its settings as columns; levels, supports and layer wants hang off it; sources; the parent and property-key indexes",
 			v169Kanbans,
 			v169Done},
+		{170, "drop bin_loaders.changeover_load_directive - no card ever read it, its one reader was an attribution choice on the Edge",
+			v170DropChangeoverLoadDirective,
+			func(q schema.Querier) bool {
+				return schema.ColumnAbsent(q, "bin_loaders", "changeover_load_directive")
+			}},
 		{173, "order_bins: an order's carts, one row per lift (pick_step, drop_step), for every order that carries a cart, kept after it ends; the census lists what the walk cannot place",
 			v173OrderCarts,
 			func(q schema.Querier) bool {
@@ -4548,6 +4554,20 @@ func migrationList() []migration {
 					schema.ColumnAbsent(q, "order_bins", "node_name") && schema.ColumnAbsent(q, "order_bins", "action")
 			}},
 	}
+}
+
+// v170DropChangeoverLoadDirective drops a setting that did not do what it said.
+// The page offered "tell this station which carrier to load"; no view, no JSON
+// and no script rendered it. Its one reader chose which demand episode an opted-in
+// loader's empty request joined, and that request now joins the cell's episode.
+// The value is lost, and nothing else read it. ROLLBACK is the previous binary:
+// its v98 self-heal re-adds the column at FALSE, so every loader comes back opted
+// out. Rolled forward again, this step's own verify drops it.
+func v170DropChangeoverLoadDirective(tx *sql.Tx) error {
+	if _, err := tx.Exec(`ALTER TABLE bin_loaders DROP COLUMN IF EXISTS changeover_load_directive`); err != nil {
+		return fmt.Errorf("v170 drop bin_loaders.changeover_load_directive: %w", err)
+	}
+	return nil
 }
 
 // v168StageTwoProduces makes every loader some stage 1 names as its second

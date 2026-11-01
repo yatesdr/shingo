@@ -392,9 +392,9 @@ stations:
   - {name: FGN_001, kind: unloader}  # drains ASSY finished goods
   # THERE IS NO FGN_002. It drained PANEL-A purely so the U1 side-cycle trigger had
   # an unloader to resolve — a test scaffold that moved real material: 16 PANEL-A
-  # carriers against WELD-1's 4 over 81 sim-minutes. Its changeover_load_directive
-  # went with it. To exercise that trigger again, give a press a payload that
-  # genuinely ships and put the unloader on THAT; see node_claims for why.
+  # carriers against WELD-1's 4 over 81 sim-minutes. To exercise that trigger again,
+  # give a press a payload that genuinely ships and put the unloader on THAT; see
+  # node_claims for why.
   # THERE IS NO FGN_003, AND THE SM FAMINE IT WAS ADDED FOR HAD A DIFFERENT CAUSE.
   #
   # The note here read: "A carrier's label is cleared on capture-reduction, on a
@@ -1142,11 +1142,9 @@ cell_configs:
   # A STATION DECLARED IN operator_stations MUST ALSO BE BOUND HERE. seed_edge
   # creates operator_stations from cell_configs, so a name listed above with no
   # binding in this block leaves its process node's operator_station_id NULL and
-  # the station simply does not exist. That bit UNLOADER-B: it carried the plant's
-  # only changeover_load_directive, the LOAD directive card had nowhere to render,
-  # and the surface shipped unobservable (N3, sim 2026-08-24). UNLOADER-B is gone
-  # now and no plant here declares a load directive, but the binding rule is the
-  # part worth keeping.
+  # the station simply does not exist. That bit UNLOADER-B: nothing bound to it
+  # rendered and no run noticed (N3, sim 2026-08-24). UNLOADER-B is gone now, but
+  # the binding rule is the part worth keeping.
   #
   # Loaders have no single cell station — their windows are per-node operator stations
   # (PLK_W1/2-OPS, PLK_X1-OPS, PLK_X2-OPS), declared via operator_station above.

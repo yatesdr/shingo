@@ -235,12 +235,6 @@ type Station struct {
 	Name string `yaml:"name"`
 	Kind string `yaml:"kind"` // line_in|line_out|press|weld|loader|unloader|staging|dest
 	Zone string `yaml:"zone,omitempty"`
-	// ChangeoverLoadDirective commandeers this station's card during a
-	// changeover: rather than offering every payload it serves, the card names
-	// the carrier the incoming style needs. loader/unloader only — it is a
-	// property of the station, which is why it sits here and not on each
-	// style's claim.
-	ChangeoverLoadDirective bool `yaml:"changeover_load_directive,omitempty"`
 }
 
 // LoaderSettings is one loader's entry in Plant.LoaderSettings. Both switches

@@ -390,9 +390,6 @@ func (db *DB) migrate() error {
 	// column existed reads as today's behaviour. Repopulated full-state on the
 	// next node-list sync regardless.
 	db.Exec("ALTER TABLE core_loaders ADD COLUMN funnel_windows INTEGER NOT NULL DEFAULT 0")
-	// Core owns it (bin_loaders); this is the mirror. Default 0 = the ordinary
-	// board, which is what every station does until one is opted in.
-	db.Exec("ALTER TABLE core_loaders ADD COLUMN changeover_load_directive INTEGER NOT NULL DEFAULT 0")
 	// Whether this unloader is the stage-1 half of a two-stage unloader
 	// (LoaderInfo.LeavesBare): its CLEAR leaves the cart bare and Core stamps
 	// the cart's own marker. It replaces bare_bin_type_code, the one marker
@@ -2110,6 +2107,34 @@ func edgeMigrations() []migrate.Migration {
 			Version: 35,
 			Name:    "recipes_store_one_node_roles_by_role",
 			Fn:      collapseRecipeRoutingOnce,
+		},
+		{
+			// core_loaders.changeover_load_directive leaves the cache schema with
+			// Core's v170. core_loaders is a cache rewritten on every node-list
+			// sync, so nothing is lost. The frozen-chain step that re-added the
+			// column on every boot was removed in the same change.
+			//
+			// A rolled-back Edge's boot re-adds the column (its frozen chain
+			// still has the step), so its loader statements run; rolled forward
+			// again, this version is already applied and does not run twice, so
+			// the column stays, unread at its default.
+			//
+			// Guarded, and NO Verify, as v27: a re-added column stays visible to
+			// the double-boot schema proof instead of being quietly re-dropped.
+			Version: 36,
+			Name:    "drop_core_loaders_changeover_load_directive",
+			Fn: func(tx *sql.Tx) error {
+				var n int
+				if err := tx.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('core_loaders')
+					WHERE name = 'changeover_load_directive'`).Scan(&n); err != nil {
+					return err
+				}
+				if n == 0 {
+					return nil
+				}
+				_, err := tx.Exec(`ALTER TABLE core_loaders DROP COLUMN changeover_load_directive`)
+				return err
+			},
 		},
 	}
 }

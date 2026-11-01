@@ -14,6 +14,12 @@ No migration. Edge only.
 - A Spots chip appears only once a part moves, and its ✕ undoes the move
 - A tap on the search box raises the touch keyboard
 - An on-deck spot with nowhere to go can't be tapped
+## 2026-11-01 — The changeover load directive is gone
+
+Core v170, Edge v36, either order: a missing wire field reads as off.
+
+- The "tell this station which carrier to load" checkbox is gone; no card ever showed it
+- An opted-in loader's empty request is attributed to the cell episode, not the changeover
 
 ## 2026-10-30 — The wall map can be turned
 

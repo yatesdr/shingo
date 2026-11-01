@@ -28,7 +28,7 @@ func projectedByKey(t *testing.T, eng *Engine, key string, role domain.LoaderRol
 }
 
 // TestProjectCoreLoader_OptionsByBranch: the shared_window branch carries
-// inbound, outbound, funnel_windows, changeover_load_directive, leaves_bare,
+// inbound, outbound, funnel_windows, leaves_bare,
 // takes_bare, auto_push and the two board settings; the dedicated_positions branch
 // carries all of those except funnel_windows.
 func TestProjectCoreLoader_OptionsByBranch(t *testing.T) {
@@ -39,7 +39,7 @@ func TestProjectCoreLoader_OptionsByBranch(t *testing.T) {
 			Name: "OPT-SW", LoaderKey: "loader:OPT-SW", Role: "consume", Layout: "shared_window",
 			Replenishment: protocol.LoaderReplenishmentOperator,
 			InboundSource: "FG-SUPER", OutboundDest: "EMPTY-TOTES",
-			FunnelWindows: true, ChangeoverLoadDirective: true, LeavesBare: true, TakesBare: true, AutoPush: true,
+			FunnelWindows: true, LeavesBare: true, TakesBare: true, AutoPush: true,
 			BoardHidesIdle: true, BoardShowsAllParts: true,
 			Positions: []protocol.LoaderPosition{{CoreNodeName: "OPT-SW-W1"}},
 			Payloads:  []protocol.LoaderPayloadInfo{{PayloadCode: "PART-A"}},
@@ -48,7 +48,7 @@ func TestProjectCoreLoader_OptionsByBranch(t *testing.T) {
 			Name: "OPT-DP", LoaderKey: "loader:OPT-DP", Role: "consume", Layout: "dedicated_positions",
 			Replenishment: protocol.LoaderReplenishmentOperator,
 			InboundSource: "FG-SUPER", OutboundDest: "EMPTY-TOTES",
-			FunnelWindows: true, ChangeoverLoadDirective: true, LeavesBare: true, TakesBare: true, AutoPush: true,
+			FunnelWindows: true, LeavesBare: true, TakesBare: true, AutoPush: true,
 			BoardHidesIdle: true, BoardShowsAllParts: true,
 			Positions: []protocol.LoaderPosition{{CoreNodeName: "OPT-DP-P1", PayloadCode: "PART-A"}},
 		},
@@ -58,8 +58,8 @@ func TestProjectCoreLoader_OptionsByBranch(t *testing.T) {
 	if sw.InboundSource() != "FG-SUPER" || sw.OutboundDest() != "EMPTY-TOTES" {
 		t.Errorf("shared inbound/outbound = %q/%q, want FG-SUPER/EMPTY-TOTES", sw.InboundSource(), sw.OutboundDest())
 	}
-	if !sw.FunnelWindows() || !sw.ChangeoverLoadDirective() {
-		t.Errorf("shared funnel/directive = %v/%v, want true/true", sw.FunnelWindows(), sw.ChangeoverLoadDirective())
+	if !sw.FunnelWindows() {
+		t.Error("shared funnel = false, want true")
 	}
 	if !sw.LeavesBare() {
 		t.Error("shared LeavesBare = false, want true")
@@ -91,12 +91,9 @@ func TestProjectCoreLoader_OptionsByBranch(t *testing.T) {
 		t.Errorf("dedicated board hides/all = %v/%v, want true/true", dp.BoardHidesIdle(), dp.BoardShowsAllParts())
 	}
 	// Not passed by the dedicated branch: funnel_windows is meaningless there
-	// (positions never share a budget). The directive used to be dropped too.
+	// (positions never share a budget).
 	if dp.FunnelWindows() {
 		t.Error("dedicated funnel = true, want false (the branch does not pass it)")
-	}
-	if !dp.ChangeoverLoadDirective() {
-		t.Error("dedicated directive = false, want true")
 	}
 }
 

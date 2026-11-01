@@ -158,16 +158,15 @@ type Loader struct {
 
 	// Optional runtime config carried so the empty-in / completion paths need
 	// neither the legacy claim nor a second lookup. Set via LoaderOption.
-	inboundSource           string // the empty market L1s source from
-	outboundDest            string // the market filled (L2) / emptied (U2) bins go to on completion
-	funnelWindows           bool   // shared_window only: take one window at a time instead of spreading (see FunnelWindows)
-	changeoverLoadDirective bool   // a changeover commandeers this station's card (see ChangeoverLoadDirective)
-	leavesBare              bool   // stage 1 of a two-stage unloader: its CLEAR leaves the cart bare (see LeavesBare)
-	takesBare               bool   // stage 2 of a two-stage unloader: its windows take stage 1's bare carts (see TakesBare)
-	autoPush                bool   // a freed window re-pulls this unloader's next full (see WithAutoPush)
-	pulledDirectly          bool   // stage 2 whose finished carts the process pulls off its windows (see PulledDirectly)
-	boardHidesIdle          bool   // the board leaves off spots with nothing to do (see BoardHidesIdle)
-	boardShowsAllParts      bool   // the board lists every part, not only the running style's (see BoardShowsAllParts)
+	inboundSource      string // the empty market L1s source from
+	outboundDest       string // the market filled (L2) / emptied (U2) bins go to on completion
+	funnelWindows      bool   // shared_window only: take one window at a time instead of spreading (see FunnelWindows)
+	leavesBare         bool   // stage 1 of a two-stage unloader: its CLEAR leaves the cart bare (see LeavesBare)
+	takesBare          bool   // stage 2 of a two-stage unloader: its windows take stage 1's bare carts (see TakesBare)
+	autoPush           bool   // a freed window re-pulls this unloader's next full (see WithAutoPush)
+	pulledDirectly     bool   // stage 2 whose finished carts the process pulls off its windows (see PulledDirectly)
+	boardHidesIdle     bool   // the board leaves off spots with nothing to do (see BoardHidesIdle)
+	boardShowsAllParts bool   // the board lists every part, not only the running style's (see BoardShowsAllParts)
 }
 
 // LoaderOption sets optional runtime config on a constructed Loader. Variadic, so
@@ -329,20 +328,6 @@ func (l *Loader) IsDedicated() bool { return l.layout == LayoutDedicatedPosition
 // restriction. Meaningless for a dedicated loader, whose positions never shared
 // a budget.
 func (l *Loader) FunnelWindows() bool { return l.funnelWindows }
-
-// WithChangeoverLoadDirective opts this station into having its card
-// commandeered during a changeover.
-func WithChangeoverLoadDirective(on bool) LoaderOption {
-	return func(l *Loader) { l.changeoverLoadDirective = on }
-}
-
-// ChangeoverLoadDirective reports whether a changeover replaces this station's
-// board with an instruction naming the carrier the incoming style needs.
-//
-// Core owns the setting — it is a fact about the station and how it is run, so
-// it lives beside the rest of the station's setup in bin_loaders rather than on
-// each style's claim, where it used to be duplicated per style.
-func (l *Loader) ChangeoverLoadDirective() bool { return l.changeoverLoadDirective }
 
 // WithLeavesBare marks this unloader as the stage-1 half of a two-stage
 // unloader (CoreLoader.LeavesBare; Core owns it — a loader with a second

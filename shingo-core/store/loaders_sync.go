@@ -66,8 +66,6 @@ func (db *DB) BuildLoaderInfos() ([]protocol.LoaderInfo, error) {
 			OutboundDest:  l.OutboundDest,
 			InboundSource: l.InboundSource,
 			FunnelWindows: l.FunnelWindows,
-
-			ChangeoverLoadDirective: l.ChangeoverLoadDirective,
 			// A stage 1 is the loader that names a second stage. Its CLEAR
 			// leaves the cart bare, and Core derives the marker from the cart's
 			// own type, so the Edge needs the fact and never the code.

@@ -153,16 +153,15 @@ func (s *LoaderService) Create(name, role, layout, replenishment, outboundDest, 
 // with, so the form asks each question once, at create, instead of creating
 // the loader and then editing it to reach the rest.
 type LoaderCreate struct {
-	Name                    string
-	Role                    string
-	Layout                  string
-	Replenishment           string
-	OutboundDest            string
-	InboundSource           string
-	FunnelWindows           bool
-	ChangeoverLoadDirective bool
-	AcceptPartials          bool
-	AutoPush                bool
+	Name           string
+	Role           string
+	Layout         string
+	Replenishment  string
+	OutboundDest   string
+	InboundSource  string
+	FunnelWindows  bool
+	AcceptPartials bool
+	AutoPush       bool
 	// FedDirectly: fed straight from a process, not from an inbound source.
 	// When set, InboundSource is stored blank whatever was sent.
 	FedDirectly bool
@@ -221,8 +220,7 @@ func (s *LoaderService) CreateLoader(in LoaderCreate) (int64, error) {
 		Name: in.Name, Role: in.Role, Layout: layout,
 		Replenishment: replenishment, OutboundDest: in.OutboundDest,
 		InboundSource: inbound, FunnelWindows: in.FunnelWindows,
-		ChangeoverLoadDirective: in.ChangeoverLoadDirective,
-		AcceptPartials:          in.AcceptPartials, AutoPush: in.AutoPush, FedDirectly: in.FedDirectly,
+		AcceptPartials: in.AcceptPartials, AutoPush: in.AutoPush, FedDirectly: in.FedDirectly,
 		PulledDirectly: in.PulledDirectly,
 		BoardHidesIdle: hidesIdle, BoardShowsAllParts: showsAll,
 		Drains: drains,
@@ -262,16 +260,15 @@ func boardDefaults(replenishment string) (hidesIdle, showsAllParts bool) {
 // because the list had reached two trailing booleans, where a call site says
 // `..., true, false)` and only the signature knows which is which.
 type LoaderUpdate struct {
-	ID                      int64
-	Name                    string
-	Layout                  string
-	Replenishment           string
-	OutboundDest            string
-	InboundSource           string
-	FunnelWindows           bool
-	ChangeoverLoadDirective bool
+	ID            int64
+	Name          string
+	Layout        string
+	Replenishment string
+	OutboundDest  string
+	InboundSource string
+	FunnelWindows bool
 	// AcceptPartials: an unloader may be fed partly drained carriers. Consume
-	// only; set on a saved loader, like ChangeoverLoadDirective.
+	// only; set on a saved loader.
 	AcceptPartials bool
 	// AutoPush: an unloader re-pulls its next full when a window frees. Consume
 	// only; set on a saved loader, like AcceptPartials.
@@ -359,7 +356,6 @@ func (s *LoaderService) Update(in LoaderUpdate) error {
 	}
 	cur.PulledDirectly = in.PulledDirectly
 	cur.FunnelWindows = funnelWindows
-	cur.ChangeoverLoadDirective = in.ChangeoverLoadDirective
 	if err := s.checkAcceptPartials(cur, in.AcceptPartials); err != nil {
 		return err
 	}

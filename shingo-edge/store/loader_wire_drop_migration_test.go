@@ -82,21 +82,23 @@ func TestV27_AgedDatabaseDropsThemAndTheNextBootLeavesThemDropped(t *testing.T) 
 // TestV27_ThePreviousBuildsLoaderStatementsStillRun: the three statements of
 // the previous build's loader sync and loader reads that name
 // core_loaders.config_gen (store/core_loaders.go at cbb37955) run against the
-// migrated schema, so a rolled-back Edge still starts with its loaders.
+// migrated schema, so a rolled-back Edge still starts with its loaders. They are
+// quoted without changeover_load_directive, which Edge v36 drops: the rolled-back
+// build's own frozen chain adds that column back before it reads.
 func TestV27_ThePreviousBuildsLoaderStatementsStillRun(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	if _, err := db.Exec(`INSERT INTO core_loaders (loader_key, role, name, layout, replenishment, outbound_dest, inbound_source, config_gen, funnel_windows, changeover_load_directive, leaves_bare, auto_push, pulled_directly, synced_at)
-			 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,datetime('now'))`,
-		"loader:7", "produce", "L7", "shared_window", "operator", "FG", "SM", 3, false, false, false, false, false); err != nil {
+	if _, err := db.Exec(`INSERT INTO core_loaders (loader_key, role, name, layout, replenishment, outbound_dest, inbound_source, config_gen, funnel_windows, leaves_bare, auto_push, pulled_directly, synced_at)
+			 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,datetime('now'))`,
+		"loader:7", "produce", "L7", "shared_window", "operator", "FG", "SM", 3, false, false, false, false); err != nil {
 		t.Fatalf("the previous build's loader insert: %v", err)
 	}
 	for _, q := range []struct {
 		sql  string
 		args []any
 	}{
-		{`SELECT loader_key, role, name, layout, replenishment, outbound_dest, inbound_source, config_gen, funnel_windows, changeover_load_directive, leaves_bare, auto_push, pulled_directly FROM core_loaders ORDER BY loader_key`, nil},
-		{`SELECT loader_key, role, name, layout, replenishment, outbound_dest, inbound_source, config_gen, funnel_windows, changeover_load_directive, leaves_bare, auto_push, pulled_directly FROM core_loaders WHERE loader_key=?`, []any{"loader:7"}},
+		{`SELECT loader_key, role, name, layout, replenishment, outbound_dest, inbound_source, config_gen, funnel_windows, leaves_bare, auto_push, pulled_directly FROM core_loaders ORDER BY loader_key`, nil},
+		{`SELECT loader_key, role, name, layout, replenishment, outbound_dest, inbound_source, config_gen, funnel_windows, leaves_bare, auto_push, pulled_directly FROM core_loaders WHERE loader_key=?`, []any{"loader:7"}},
 	} {
 		rows, err := db.Query(q.sql, q.args...)
 		if err != nil {

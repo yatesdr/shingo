@@ -19,7 +19,7 @@ func TestCoreLoadersCache_OptionsSurviveReopen(t *testing.T) {
 	testutil.MustNoErr(t, err, "open")
 	testutil.MustNoErr(t, db.ReplaceCoreLoaders([]protocol.LoaderInfo{{
 		LoaderKey: "loader:OPT", Role: "consume", Name: "OPT", Layout: "shared_window",
-		Replenishment: "operator", FunnelWindows: true, ChangeoverLoadDirective: true,
+		Replenishment: "operator", FunnelWindows: true,
 		LeavesBare: true, AutoPush: true,
 		Positions: []protocol.LoaderPosition{{CoreNodeName: "OPT-W1"}},
 		Payloads:  []protocol.LoaderPayloadInfo{{PayloadCode: "PART-A"}},
@@ -33,8 +33,8 @@ func TestCoreLoadersCache_OptionsSurviveReopen(t *testing.T) {
 	if err != nil || l == nil {
 		t.Fatalf("read the cache: loader=%v err=%v", l, err)
 	}
-	if !l.FunnelWindows || !l.ChangeoverLoadDirective {
-		t.Errorf("after re-open funnel/directive = %v/%v, want true/true", l.FunnelWindows, l.ChangeoverLoadDirective)
+	if !l.FunnelWindows {
+		t.Error("after re-open funnel = false, want true")
 	}
 	if !l.LeavesBare {
 		t.Error("after re-open leaves_bare = false, want true")

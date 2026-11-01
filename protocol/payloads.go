@@ -1177,12 +1177,6 @@ type LoaderInfo struct {
 	// what a Core predating this field sends — means "spread", the behaviour every
 	// loader has today. Ignored for dedicated_positions loaders.
 	FunnelWindows bool `json:"funnel_windows,omitempty"`
-	// ChangeoverLoadDirective commandeers this loader's card during a
-	// changeover: instead of offering every payload it serves, the card names
-	// the carrier the incoming style needs. Stated as the opt-in so the zero
-	// value — which is also what a Core predating this field sends — means the
-	// ordinary board, which is what every loader does today.
-	ChangeoverLoadDirective bool `json:"changeover_load_directive,omitempty"`
 	// LeavesBare marks the stage-1 half of a two-stage unloader: its CLEAR
 	// leaves the cart with no bin on it, and Core stamps the cart's own bare
 	// marker, derived from the cart's type. The Edge posts a blank code there

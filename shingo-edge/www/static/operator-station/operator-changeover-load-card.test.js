@@ -55,7 +55,7 @@ function tile(id, name, part) {
     return {
         node: { id: id, name: name, core_node_name: name }, orders: [],
         loader: { role: 'produce', layout: 'dedicated_positions', replenishment: 'threshold', outbound_dest: '',
-            parts: [{ code: part }], directive: false, leaves_bare: false, pulled_directly: false },
+            parts: [{ code: part }], leaves_bare: false, pulled_directly: false },
         bin_state: { occupied: true, payload_code: '', stocked: false, bin_type_code: 'TOTE-L' },
     };
 }

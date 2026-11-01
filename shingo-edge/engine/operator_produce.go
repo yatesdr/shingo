@@ -194,7 +194,7 @@ func (e *Engine) produceRequest(node *processes.Node, runtime *processes.Runtime
 	if ask.finalizes {
 		origin = e.openEpisodeForProduce(node, runtime, claim, plan, ask.trigger)
 	} else {
-		origin = e.requestEmptyOrigin(node, claim, runtime.RemainingUOPCached, plan.OrderCount())
+		origin = e.operatorRequestOrigin(node, claim, runtime.RemainingUOPCached, plan.OrderCount())
 	}
 
 	return e.applyProducePlan(node, runtime, claim, plan, origin)

@@ -587,7 +587,7 @@ func TestBuildLoaderInfos_StageOneLeavesBare(t *testing.T) {
 
 // TestPinLoaderInfo_WireKeys pins the JSON key set Core sends for an unloader
 // with every optional field at its zero value and no members: every omitempty
-// field (the flow endpoints, funnel_windows, changeover_load_directive,
+// field (the flow endpoints, funnel_windows,
 // leaves_bare, auto_push, pulled_directly, positions, payloads) is absent, so a
 // Core that adds one ships the same bytes for every loader that does not set it.
 func TestPinLoaderInfo_WireKeys(t *testing.T) {

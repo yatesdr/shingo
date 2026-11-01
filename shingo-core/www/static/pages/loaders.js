@@ -137,9 +137,8 @@ function formShape(state) {
     drains: saved && unloader && !pair && (!!state.drainAllowed || (state.drains || []).length > 0),
     fedDirectly: saved,
     // An unloader drains when a window is cleared; only a loader has a supply
-    // mode to choose, and only a loader has a changeover card to commandeer.
+    // mode to choose.
     supply: saved && !unloader,
-    changeover: saved && !unloader,
     // A pair is two shared-window unloaders; there is no layout to pick.
     dedicated: saved && !pair,
     // Filling one window at a time is a budget shared across windows, so it
@@ -293,7 +292,6 @@ function formStateFromLoader(l) {
     stage2ID: Number(l.second_stage_loader_id || 0),
     dedicated: l.layout === 'dedicated_positions',
     funnel: !!l.funnel_windows,
-    changeoverLoadDirective: !!l.changeover_load_directive,
     acceptPartials: !!l.accept_partials,
     autoPush: !!l.auto_push,
     // The drain boxes as the set the server keeps (drain_states), one value.
@@ -328,7 +326,6 @@ function loaderPayload(state) {
     layout: state.dedicated ? 'dedicated_positions' : 'shared_window',
     replenishment: state.replenishment,
     funnel_windows: !!state.funnel,
-    changeover_load_directive: !!state.changeoverLoadDirective,
     // Unloaders only; the server refuses true on a loader.
     accept_partials: unloader && !!state.acceptPartials,
     auto_push: unloader && !!state.autoPush,
@@ -868,7 +865,6 @@ function settingsHtml(item, s2) {
   // saves stage 2; a stage 1 always sends its carts on to stage 2.
   if (pair) first += settingCheck(Number(s2.loader.id), 'pulledDirectly', !!s2.loader.pulled_directly, 'Pulled directly by the process');
   else first += settingCheck(lid, 'pulledDirectly', !!state.pulledDirectly, 'Pulled directly by the process');
-  if (shape.changeover) first += settingCheck(lid, 'changeoverLoadDirective', state.changeoverLoadDirective, 'During a changeover, tell this station which carrier to load');
   // "Cart" is the operator's word for a two-stage unloader's carrier (style
   // guide glossary); every other station says carrier.
   const noun = pair ? 'cart' : 'carrier';

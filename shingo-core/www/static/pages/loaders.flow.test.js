@@ -219,7 +219,7 @@ console.log('create card — three questions and nothing else');
     check('stages: never asked of a loader', shape(card({ role: 'produce' })).stages === false);
     const s = shape(card({ role: 'consume' }));
     check('card: no Settings row appears on the create card',
-        ['partials', 'autoPush', 'fedDirectly', 'supply', 'changeover', 'dedicated', 'funnel', 'mix', 'windows', 'remove']
+        ['partials', 'autoPush', 'fedDirectly', 'supply', 'dedicated', 'funnel', 'mix', 'windows', 'remove']
             .every(function (k) { return s[k] === false; }));
     check('a loader is never two stations, whatever was picked first',
         h.ctx.normalizeForm(card({ role: 'produce', stages: 'two' })).stages === '');
@@ -589,9 +589,9 @@ console.log('settings — one link, saves as ticked, nothing else moves');
     const shape = function (l) { return h.ctx.formShape(h.ctx.formStateFromLoader(l)); };
     const u = shape(unloader());
     check('unloader: partials, auto pull, fed directly', u.partials && u.autoPush && u.fedDirectly);
-    check('unloader: no supply question and no changeover directive', !u.supply && !u.changeover);
+    check('unloader: no supply question', !u.supply);
     const l = shape(loader());
-    check('loader: supply and changeover directive; no unloader switches', l.supply && l.changeover && !l.partials && !l.autoPush);
+    check('loader: supply; no unloader switches', l.supply && !l.partials && !l.autoPush);
     check('fill one window at a time: offered to a shared-window station',
         shape(unloader()).funnel === true && shape(loader()).funnel === true);
     check('fill one window at a time: NOT offered where every spot is its own',
@@ -604,7 +604,7 @@ console.log('settings — one link, saves as ticked, nothing else moves');
 (function settingsRoundTrip() {
     const h = load();
     const stored = unloader({ funnel_windows: true, inbound_source: 'IN-G', outbound_dest: 'OUT-G',
-        changeover_load_directive: false, replenishment: 'operator', name: 'PAIR-A · stage 1', second_stage_loader_id: 8 });
+        replenishment: 'operator', name: 'PAIR-A · stage 1', second_stage_loader_id: 8 });
     const b = h.ctx.settingUpdate(stored, 'acceptPartials', true);
     check('funnel_windows round-trips unchanged when its row is not touched (true)', b.funnel_windows === true);
     check('funnel_windows round-trips unchanged when its row is not touched (false)',
@@ -692,8 +692,8 @@ await (async function settingsSaveThroughTheApi() {
         'Fed directly by the process', 'One spot per part (each window takes one part only)', 'Fill one window at a time',
         'Keep on hand', 'Delete station', 'Changes save as you tick them.',
     ].forEach(function (w) { check('settings words: "' + w + '"', html.indexOf(w) >= 0); });
-    check('settings, unloader: no supply dropdown, no changeover directive',
-        html.indexOf('Order empties') < 0 && html.indexOf('During a changeover') < 0);
+    check('settings, unloader: no supply dropdown',
+        html.indexOf('Order empties') < 0);
     check('settings: gone — "Leaves carriers bare as", the layout dropdown',
         html.indexOf('Leaves carriers bare as') < 0 && html.indexOf('Multi window') < 0 && html.indexOf('Single window') < 0);
     check('settings: every row saves as ticked', (html.match(/data-action-change="saveStationSetting"/g) || []).length === 7);
@@ -702,8 +702,8 @@ await (async function settingsSaveThroughTheApi() {
     check('binTypeOptions(set, false) leaves bare out', h.ctx.binTypeOptions([], false).indexOf('CART-BARE') < 0);
     const d = h.ctx.settingsHtml({ loader: loader({ layout: 'dedicated_positions' }), homes: [], payloads: [] }, null);
     check('settings, one spot per part: no "Fill one window at a time"', d.indexOf('Fill one window at a time') < 0);
-    check('settings, loader: supply and the changeover directive',
-        d.indexOf('Order empties') >= 0 && d.indexOf('During a changeover, tell this station which carrier to load') >= 0);
+    check('settings, loader: supply; the changeover checkbox is gone',
+        d.indexOf('Order empties') >= 0 && d.indexOf('During a changeover') < 0);
     const p = pair();
     const ph = h.ctx.settingsHtml(p[0], p[1]);
     check('settings, pair: stage 1 rows; no layout row; windows of both stages',

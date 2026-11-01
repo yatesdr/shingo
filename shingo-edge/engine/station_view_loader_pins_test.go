@@ -303,10 +303,9 @@ func TestLoaderTile_NoPartRunningIsAnEmptyList(t *testing.T) {
 //     board's role, marked incoming, counted by the same pass;
 //   - one rule for every served cell, the station's own process included;
 //   - an incoming row waits while Core lists its part missing (consume rows)
-//     or the cell has it queued with Core's reason; the loader's directive
-//     setting gates nothing here.
+//     or the cell has it queued with Core's reason.
 //
-// Before (the directive): it read the station's own process only, and its
+// Before: it read the station's own process only, and its
 // incoming PRODUCE claims whatever the board's role, and named every incoming
 // part whether or not anything was short. A loader acts only when a served cell
 // is short of what it makes, and a loader makes what its cells consume.
@@ -389,9 +388,8 @@ func TestServedRows_IncomingRowsAndWaiting(t *testing.T) {
 			setCoreLoaders(t, eng, protocol.LoaderInfo{
 				Name: "CO", LoaderKey: "loader:25", Role: tc.role, Layout: "shared_window",
 				Replenishment: "operator", OutboundDest: "FG-MARKET", InboundSource: "EMPTY-SUPER",
-				ChangeoverLoadDirective: true,
-				Positions:               windows("SMN_C1"),
-				Payloads:                []protocol.LoaderPayloadInfo{{PayloadCode: "PART-A"}, {PayloadCode: "PART-B"}},
+				Positions: windows("SMN_C1"),
+				Payloads:  []protocol.LoaderPayloadInfo{{PayloadCode: "PART-A"}, {PayloadCode: "PART-B"}},
 			})
 
 			view := buildLoaderView(t, eng, sid)

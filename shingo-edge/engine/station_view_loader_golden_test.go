@@ -127,7 +127,7 @@ func TestBuildView_LoaderGolden(t *testing.T) {
 
 // wiredLoaderEngine is testEngine with the view wired as engine.New wires it:
 // the aggregate loader store, the station view resolving through it, and a
-// payload-to-bin-type catalog for the changeover directive.
+// payload-to-bin-type catalog for the incoming rows.
 func wiredLoaderEngine(t *testing.T, db *store.DB) *Engine {
 	t.Helper()
 	eng := testEngine(t, db)

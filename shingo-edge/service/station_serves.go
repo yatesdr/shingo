@@ -14,8 +14,8 @@ import (
 
 // servedRows is the board's served pass: what the board's loaders serve, one
 // row per served cell's claim and part. It replaces the per-tile lineside
-// fields (the parts a running style uses, their lineside, the changeover
-// directive); the board derives those from the rows (operator-board-model.js).
+// fields (the parts a running style uses, their lineside); the board derives those
+// from the rows (operator-board-model.js).
 //
 // Run only when the board has a loader tile, and nil (absent on the wire) when
 // it has none or a read fails: a board that could not look must not read as a

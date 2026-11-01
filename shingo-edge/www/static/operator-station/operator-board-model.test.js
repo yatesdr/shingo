@@ -42,7 +42,7 @@ function tile(role, o) {
             role: role, layout: o.dedicated ? 'dedicated_positions' : 'shared_window',
             replenishment: o.operator ? 'operator' : 'threshold', outbound_dest: '',
             parts: (o.parts || ['PART-A']).map(c => ({ code: c })),
-            directive: !!o.directive, leaves_bare: false, pulled_directly: false,
+            leaves_bare: false, pulled_directly: false,
             board_shows_all_parts: !!o.allParts,
         },
         orders: [],
@@ -181,7 +181,7 @@ function bt(id, name, o) {
             replenishment: o.operator ? 'operator' : 'threshold',
             outbound_dest: o.outbound === undefined ? '' : o.outbound,
             parts: (o.parts || ['PART-A']).map(c => ({ code: c })),
-            directive: false, leaves_bare: !!o.leavesBare, pulled_directly: !!o.pulledDirectly,
+            leaves_bare: !!o.leavesBare, pulled_directly: !!o.pulledDirectly,
             // The setting as Core's v157 backfilled it.
             board_shows_all_parts: !!o.operator,
         },

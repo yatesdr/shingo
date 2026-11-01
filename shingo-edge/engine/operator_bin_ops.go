@@ -76,50 +76,6 @@ func (e *Engine) operatorRequestOrigin(node *processes.Node, claim *processes.No
 	return ordermgr.Attached(originID)
 }
 
-// changeoverLoadOrigin returns the active changeover's episode when THIS load
-// is one the changeover asked for, and a zero Origin otherwise.
-//
-// Gated on the STATION's directive setting, not merely on a changeover
-// existing. A station that was never opted in serves its ordinary steady-state
-// demand right through a changeover — attributing those to the changeover would
-// inflate its ratio with bins it did not cause, which is the mirror of the
-// under-count this exists to fix.
-//
-// The setting is Core's (bin_loaders), read through the same loader resolver the
-// card uses, so the two cannot disagree about whether this station is opted in.
-func (e *Engine) changeoverLoadOrigin(node *processes.Node, claim *processes.NodeClaim) ordermgr.Origin {
-	if claim == nil || !e.stationTakesLoadDirective(node.CoreNodeName) {
-		return ordermgr.Origin{}
-	}
-	co, err := e.db.GetActiveProcessChangeover(node.ProcessID)
-	if err != nil || co == nil {
-		return ordermgr.Origin{}
-	}
-	return e.changeoverOrigin(co.ID)
-}
-
-// requestEmptyOrigin answers who asked for this empty.
-//
-// The operator asking for an empty IS the demand, so the cell episode opens (or
-// is joined) before anything is created and the order can name what caused it.
-//
-// UNLESS A CHANGEOVER ASKED. A load the operator makes off the changeover
-// directive is that changeover's demand, not this cell's steady-state pull:
-// attributed to the cell it reads in demand-origin reporting as an orphan
-// replenishment nobody can tie to the changeover it served, and the
-// changeover's own ratio under-counts by exactly the bins it caused.
-//
-// One function rather than two calls and an if at the call site, because
-// RequestEmptyBin is at its statement budget: main extracted it down to the
-// limit and retired its funlen exclusion in the same commit that this addition
-// met at the merge. The two lookups were always one question.
-func (e *Engine) requestEmptyOrigin(node *processes.Node, claim *processes.NodeClaim, cachedUOP, expected int) ordermgr.Origin {
-	if o := e.changeoverLoadOrigin(node, claim); o.ID != "" {
-		return o
-	}
-	return e.operatorRequestOrigin(node, claim, cachedUOP, expected)
-}
-
 // loadablePayloads returns the payload codes an operator may load or request at
 // this manual_swap loader node: the Core loader's set at the node, else the
 // claim's own list. Resolved from the loader store — the SAME resolver the
@@ -963,7 +919,9 @@ func (e *Engine) RequestEmptyBin(nodeID int64, payloadCode string) (*orders.Orde
 		if payloadCode != "" && !slices.Contains(e.loadablePayloads(node, claim), payloadCode) {
 			return nil, fmt.Errorf("payload %q not in allowed list for node %s", payloadCode, node.Name)
 		}
-		reqOrigin := e.requestEmptyOrigin(node, claim, runtime.RemainingUOPCached, 1)
+		// The operator asking for an empty IS the demand, so the cell episode opens
+		// (or is joined) before anything is created and the order can name its cause.
+		reqOrigin := e.operatorRequestOrigin(node, claim, runtime.RemainingUOPCached, 1)
 		return e.requestEmptyAtManualSwapLoader(nodeID, node, claim, payloadCode, reqOrigin)
 	}
 	// A mode outside the configurable set: the retired "simple", or blank. No
@@ -1107,19 +1065,6 @@ func (e *Engine) RequestFullBin(nodeID int64, payloadCode string) (*orders.Order
 // every cart there.
 func errStageTwoAsksNothing(node string) error {
 	return fmt.Errorf("node %s is a stage 2: its carts come from stage 1, so nothing is asked into it", node)
-}
-
-// stationTakesLoadDirective asks the Core-owned loader a node belongs to whether
-// a changeover commandeers its card. A clean miss is false.
-func (e *Engine) stationTakesLoadDirective(coreNodeName string) bool {
-	if coreNodeName == "" {
-		return false
-	}
-	l, err := e.loaders().LoaderForNode(domain.NodeID(coreNodeName))
-	if err != nil || l == nil {
-		return false
-	}
-	return l.ChangeoverLoadDirective()
 }
 
 // loadOntoLabelledCarrier answers a LOAD at a window whose carrier already

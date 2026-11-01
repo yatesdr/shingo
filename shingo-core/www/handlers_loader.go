@@ -56,9 +56,8 @@ func (h *Handlers) apiCreateLoader(w http.ResponseWriter, r *http.Request) {
 		FunnelWindows bool `json:"funnel_windows"`
 		// The settings the edit form has always had, asked at create too, so a
 		// loader is set up in one pass. Absent reads as false, as on update.
-		ChangeoverLoadDirective bool `json:"changeover_load_directive"`
-		AcceptPartials          bool `json:"accept_partials"`
-		AutoPush                bool `json:"auto_push"`
+		AcceptPartials bool `json:"accept_partials"`
+		AutoPush       bool `json:"auto_push"`
 		// FedDirectly: fed straight from a process; the inbound source is
 		// stored blank. Absent reads as false.
 		FedDirectly bool `json:"fed_directly"`
@@ -79,8 +78,7 @@ func (h *Handlers) apiCreateLoader(w http.ResponseWriter, r *http.Request) {
 	id, err := h.engine.LoaderService().CreateLoader(service.LoaderCreate{
 		Name: req.Name, Role: req.Role, Layout: req.Layout, Replenishment: req.Replenishment,
 		OutboundDest: req.OutboundDest, InboundSource: req.InboundSource, FunnelWindows: req.FunnelWindows,
-		ChangeoverLoadDirective: req.ChangeoverLoadDirective,
-		AcceptPartials:          req.AcceptPartials, AutoPush: req.AutoPush, FedDirectly: req.FedDirectly, PulledDirectly: req.PulledDirectly,
+		AcceptPartials: req.AcceptPartials, AutoPush: req.AutoPush, FedDirectly: req.FedDirectly, PulledDirectly: req.PulledDirectly,
 		Drains: req.DrainStates,
 	})
 	if err != nil {
@@ -131,10 +129,6 @@ func (h *Handlers) apiUpdateLoader(w http.ResponseWriter, r *http.Request) {
 		OutboundDest  string `json:"outbound_dest"`
 		InboundSource string `json:"inbound_source"`
 		FunnelWindows bool   `json:"funnel_windows"`
-		// ChangeoverLoadDirective: commandeer this loader's card during a
-		// changeover. Set up where the loader is set up, rather than on each
-		// style's claim.
-		ChangeoverLoadDirective bool `json:"changeover_load_directive"`
 		// AcceptPartials: an unloader may be fed partly drained carriers.
 		// Absent reads as false, which keeps the full-carrier rule.
 		AcceptPartials bool `json:"accept_partials"`
@@ -166,7 +160,7 @@ func (h *Handlers) apiUpdateLoader(w http.ResponseWriter, r *http.Request) {
 	if err := h.orchestration.SaveLoader(service.LoaderUpdate{
 		ID: req.ID, Name: req.Name, Layout: req.Layout, Replenishment: req.Replenishment,
 		OutboundDest: req.OutboundDest, InboundSource: req.InboundSource,
-		FunnelWindows: req.FunnelWindows, ChangeoverLoadDirective: req.ChangeoverLoadDirective,
+		FunnelWindows:  req.FunnelWindows,
 		AcceptPartials: req.AcceptPartials, AutoPush: req.AutoPush, FedDirectly: req.FedDirectly, PulledDirectly: req.PulledDirectly,
 		BoardHidesIdle: req.BoardHidesIdle, BoardShowsAllParts: req.BoardShowsAllParts,
 		Drains: req.DrainStates,

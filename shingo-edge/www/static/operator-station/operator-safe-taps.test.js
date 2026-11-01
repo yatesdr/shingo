@@ -304,7 +304,7 @@ function loaderTile(id, core, o) {
         node: { id: id, process_id: 1, core_node_name: core, name: core },
         runtime: { remaining_uop_cached: o.uop || 0 },
         loader: { role: role, layout: 'shared_window', replenishment: 'operator', outbound_dest: '',
-            parts: (o.parts || ['PART-A']).map(c => ({ code: c })), directive: false, leaves_bare: false, pulled_directly: false },
+            parts: (o.parts || ['PART-A']).map(c => ({ code: c })), leaves_bare: false, pulled_directly: false },
         orders: o.orders || [], swap_ready: false, releases_as_pair: false,
     };
     if (role === 'consume') t.loader.carriers = ['TOTE-1', 'TOTE-2'];

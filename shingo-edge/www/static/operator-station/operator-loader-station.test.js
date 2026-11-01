@@ -289,7 +289,7 @@ function carriersFor(parts) {
 // the board reads it (tile.loader) and no claim. Options: role, parts, operator
 // (Core's replenishment `operator`), all_parts (the board setting, defaulted
 // from operator as Core's backfill set it), dedicated
-// (dedicated_positions), outbound, directive, leaves_bare, pulled_directly, bin,
+// (dedicated_positions), outbound, leaves_bare, pulled_directly, bin,
 // uop, orders, buffer_partial, supply_refusals and buffer (tile.loader.buffer,
 // which rides on a loader's first home only).
 function loaderTile(id, core, o) {
@@ -304,7 +304,7 @@ function loaderTile(id, core, o) {
             replenishment: o.operator ? 'operator' : 'threshold',
             outbound_dest: o.outbound === undefined ? 'FG-MARKET' : o.outbound,
             parts: parts.map(c => ({ code: c })),
-            directive: !!o.directive, leaves_bare: !!o.leaves_bare, pulled_directly: !!o.pulled_directly,
+            leaves_bare: !!o.leaves_bare, pulled_directly: !!o.pulled_directly,
             // The setting as Core's v157 backfilled it: an operator station
             // lists every part.
             board_shows_all_parts: o.all_parts === undefined ? !!o.operator : !!o.all_parts,
@@ -1065,15 +1065,14 @@ const loadBody = { payload_code: 'PART-A', uop_count: 24,
 
 // ── 10. The changeover banner is gone ──────────────────────────────────────
 {
-    // Changed: the directive setting gated the banner, which the board retires; a
-    // cell changing over to a part it has none of is a red card where a tile
+    // The board has no changeover banner: a cell changing over to a part it has
+    // none of is a red card where a tile
     // can fill it, and the top line names the cell either way.
     const waiting = { serves: [row('CELL-C', 'PART-A', 0, { incoming: true, waiting: true, carrier: 'TOTE-1', node: 'WLN_C1' })] };
-    setView([loaderTile(1, 'SMN_C1', { parts: ['PART-A', 'PART-B'], bin: NONE, directive: true })], waiting);
+    setView([loaderTile(1, 'SMN_C1', { parts: ['PART-A', 'PART-B'], bin: NONE })], waiting);
     render();
-    eq(grid.descendants().some(n => n.classList.contains('os-changeover-load-directive')), false, 'no banner on the board');
     eq(topLine()[1], '0 to load · CELL-C out', 'the cell changing over with none of the part is named in the top line');
-    setView([loaderTile(1, 'SMN_C1', { parts: ['PART-A', 'PART-B'], bin: EMPTY, directive: true })], waiting);
+    setView([loaderTile(1, 'SMN_C1', { parts: ['PART-A', 'PART-B'], bin: EMPTY })], waiting);
     render();
     const c = pcCard('PART-A');
     eq([c.className, cardText(c).slice(-2)], ['os-pc-card os-pc-card--red', ['NOW', '· CELL-C out']],

@@ -81,7 +81,6 @@ func projectCoreLoader(l store.CoreLoader) (*domain.Loader, error) {
 		return domain.NewSharedWindowLoader(id, role, repl, windows, payloadSet,
 			domain.WithInboundSource(l.InboundSource),
 			domain.WithFunnelWindows(l.FunnelWindows),
-			domain.WithChangeoverLoadDirective(l.ChangeoverLoadDirective),
 			domain.WithLeavesBare(l.LeavesBare),
 			domain.WithTakesBare(l.TakesBare),
 			domain.WithAutoPush(l.AutoPush),
@@ -99,11 +98,9 @@ func projectCoreLoader(l store.CoreLoader) (*domain.Loader, error) {
 			})
 		}
 		// FunnelWindows is not passed: positions never share a budget, so it is
-		// meaningless here. ChangeoverLoadDirective is: a home-location station
-		// can be opted in like any other (TestChangeoverLoadOrigin_DedicatedLoader).
+		// meaningless here.
 		return domain.NewDedicatedPositionsLoader(id, role, repl, positions,
 			domain.WithInboundSource(l.InboundSource),
-			domain.WithChangeoverLoadDirective(l.ChangeoverLoadDirective),
 			domain.WithLeavesBare(l.LeavesBare),
 			domain.WithTakesBare(l.TakesBare),
 			domain.WithAutoPush(l.AutoPush),

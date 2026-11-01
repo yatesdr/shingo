@@ -13,34 +13,30 @@ import (
 )
 
 // ---------------------------------------------------------------------------
-// A press-index position adopted onto a board beside a loader that carries the
-// changeover load directive. The setting no longer rides the station's JSON (no
-// glass reader); the engine reads it from the loader (stationTakesLoadDirective).
-// What is pinned here is that the position is no loader tile.
+// A press-index position adopted onto a board beside a loader. What is pinned here
+// is that the position is no loader tile.
 // ---------------------------------------------------------------------------
 
-// loadDirectiveScenario builds a station with a produce LOADER carrying the
-// directive flag, plus a press-index press whose extension position is adopted onto
+// positionBesideLoaderScenario builds a station with a produce LOADER, plus a
+// press-index press whose extension position is adopted onto
 // the board through its owning task — the shape that renders a claimless position.
-// directiveLoaders answers which Core loader a node is, with the station's
-// directive setting on it. Only LDR_1 is a loader here.
-type directiveLoaders struct{ on bool }
+// oneLoader answers which Core loader a node is. Only LDR_1 is a loader here.
+type oneLoader struct{}
 
-func (d directiveLoaders) LoaderForNode(n domain.NodeID) (*domain.Loader, error) {
+func (oneLoader) LoaderForNode(n domain.NodeID) (*domain.Loader, error) {
 	if n != "LDR_1" {
 		return nil, nil
 	}
 	return domain.NewSharedWindowLoader("loader:1", domain.RoleProduce,
 		domain.ReplenishmentOperator,
-		[]domain.Window{{Node: "LDR_1"}}, []domain.PayloadCode{"PART-OLD", "PART-NEW"},
-		domain.WithChangeoverLoadDirective(d.on))
+		[]domain.Window{{Node: "LDR_1"}}, []domain.PayloadCode{"PART-OLD", "PART-NEW"})
 }
 
-func loadDirectiveScenario(t *testing.T, loaderFlag bool) (*store.DB, int64) {
+func positionBesideLoaderScenario(t *testing.T) (*store.DB, int64) {
 	t.Helper()
 	db := testdb.Open(t)
 
-	processID, err := db.CreateProcess("LD-PROC", "load directive", "", "", false)
+	processID, err := db.CreateProcess("LD-PROC", "position beside a loader", "", "", false)
 	mustNoErr(t, err, "create process")
 	stationID, err := db.CreateOperatorStation(stations.Input{
 		ProcessID: processID, Code: "LD-ST", Name: "LD Station", Sequence: 1, Enabled: true,
@@ -69,8 +65,7 @@ func loadDirectiveScenario(t *testing.T, loaderFlag bool) (*store.DB, int64) {
 	mustNoErr(t, err, "create to style")
 	mustNoErr(t, db.SetActiveStyle(processID, &fromStyleID), "set active style")
 
-	// The loader: produce role, carrying the directive flag, is Core's
-	// (directiveLoaders): its window's claim is the one SynthClaim builds, a
+	// The loader: produce role, is Core's (oneLoader): its window's claim is the one SynthClaim builds, a
 	// shared loader that can carry both styles' payloads.
 
 	// The press-index parent. Its position inherits the
@@ -86,8 +81,7 @@ func loadDirectiveScenario(t *testing.T, loaderFlag bool) (*store.DB, int64) {
 	})
 	mustNoErr(t, err, "upsert press claim")
 
-	// The incoming style wants a different payload at the press — that is what
-	// the loader is being told to go and fetch carriers for.
+	// The incoming style wants a different payload at the press.
 	_, err = db.UpsertStyleNodeClaim(domain.CoreNodeKinds{}, processes.NodeClaimInput{
 		StyleID: toStyleID, CoreNodeName: "PLN_1", Role: protocol.ClaimRoleProduce,
 		SwapMode: protocol.SwapModeTwoRobotPressIndex, PairedCoreNode: "PLN_2",
@@ -97,7 +91,7 @@ func loadDirectiveScenario(t *testing.T, loaderFlag bool) (*store.DB, int64) {
 	mustNoErr(t, err, "upsert to claim")
 
 	res, err := db.Exec(`INSERT INTO process_changeovers (process_id, from_style_id, to_style_id, state, called_by)
-		VALUES (?, ?, ?, 'active', 'load-directive-test')`, processID, fromStyleID, toStyleID)
+		VALUES (?, ?, ?, 'active', 'position-beside-loader-test')`, processID, fromStyleID, toStyleID)
 	mustNoErr(t, err, "insert changeover")
 	changeoverID, _ := res.LastInsertId()
 
@@ -160,14 +154,14 @@ func tileFor(t *testing.T, view *store.OperatorStationView, coreNodeName string)
 	return nil
 }
 
-// TestBuildView_BackPositionRendersNoDirective: SynthesizePositionClaim is a
+// TestBuildView_APressPositionIsNoLoaderTile: SynthesizePositionClaim is a
 // whole-struct copy of the parent, so a position inherits the press claim. A
 // press position is no loader's, so its tile carries no loader facts.
-func TestBuildView_BackPositionRendersNoDirective(t *testing.T) {
+func TestBuildView_APressPositionIsNoLoaderTile(t *testing.T) {
 	t.Parallel()
-	db, stationID := loadDirectiveScenario(t, true)
+	db, stationID := positionBesideLoaderScenario(t)
 	svc := NewStationService(db)
-	svc.SetLoaderResolver(directiveLoaders{on: true})
+	svc.SetLoaderResolver(oneLoader{})
 
 	view, err := svc.BuildView(context.Background(), stationID)
 	mustNoErr(t, err, "BuildView")

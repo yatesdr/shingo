@@ -499,10 +499,8 @@ func (p *Plant) Validate() error {
 	// pin their own window. A name that appears in `operator_stations` and in
 	// neither of those is declared and never created: the node that would render
 	// on it keeps operator_station_id NULL and every surface bound to that
-	// station is unreachable, silently. UNLOADER-B-OPS was in exactly that state
-	// while FGN_002 carried the plant's only changeover_load_directive, so the
-	// LOAD directive card could not be rendered at all and the feature shipped
-	// unobserved (N3, sim 2026-08-24).
+	// station is unreachable, silently. UNLOADER-B-OPS was in exactly that state,
+	// so nothing bound to it rendered and no run noticed (N3, sim 2026-08-24).
 	for _, s := range p.OperatorStations {
 		if !builtStations[s] {
 			add("operator station %q is declared but nothing builds it — add a cell_config for "+

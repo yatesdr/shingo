@@ -46,7 +46,9 @@ import (
 //     so the body count is unchanged. Third use: 2026-10-14, the ALTER adding
 //     core_loader_positions.kind and the CREATE TABLEs of
 //     core_loader_window_bin_types and core_loader_quotas, removed with Edge
-//     v27 (wantTotal 163 -> 160).
+//     v27 (wantTotal 163 -> 160). Fourth use: 2026-11-01, the ALTER adding
+//     core_loaders.changeover_load_directive, removed with Edge v36
+//     (wantTotal 160 -> 159).
 //   - A DATA step that rewrites live rows on every boot is removed, with a pin
 //     of the behaviour it broke. No versioned migration can retire it: the
 //     chain runs before the versioned runner on every start, so the step
@@ -81,7 +83,7 @@ func TestFrozenChainIsPinned(t *testing.T) {
 		t.Fatalf("no migrate() FuncDecl found in migrations.go")
 	}
 
-	const wantTotal = 160 // statements in migrate(): frozen chain + the runVersioned tail
+	const wantTotal = 159 // statements in migrate(): frozen chain + the runVersioned tail
 	if got := len(mig.Body.List); got != wantTotal {
 		t.Errorf("migrate() has %d statements, want %d — the frozen chain's shape changed. "+
 			"New schema changes go in edgeMigrations(), not here; frozen steps are never edited. "+

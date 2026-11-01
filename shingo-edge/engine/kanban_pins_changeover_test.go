@@ -239,9 +239,8 @@ func TestKanbanPin_CancelLeavesAnotherFlowsOrderLive(t *testing.T) {
 
 // TestKanbanPin_CancelLeavesAnUnlinkedOrderOfTheEpisodeLive: carrying the
 // changeover's origin does not make an order the cancel's. An order attributed to
-// the episode and linked to no task (a directive loader's REQUEST EMPTY at
-// changeoverLoadOrigin, a keeper refill at liftingOrigin outside the spots) stays
-// live with its origin.
+// the episode and linked to no task (a keeper refill at liftingOrigin outside the
+// spots) stays live with its origin.
 func TestKanbanPin_CancelLeavesAnUnlinkedOrderOfTheEpisodeLive(t *testing.T) {
 	t.Parallel()
 	p := seedKPPress(t)

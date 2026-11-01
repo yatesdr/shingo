@@ -880,9 +880,6 @@ CREATE TABLE IF NOT EXISTS core_loaders (
     inbound_source TEXT    NOT NULL DEFAULT '',
     config_gen     INTEGER NOT NULL DEFAULT 0,  -- unread, left at 0: a rolled-back build's loader statements name it (Edge v27)
     funnel_windows INTEGER NOT NULL DEFAULT 0,  -- 1 = one window at a time; 0 = spread across windows (the default everywhere)
-    -- 1 = a changeover commandeers this station's card and names the carrier the
-    -- incoming style needs. Core owns it (bin_loaders); this is the mirror.
-    changeover_load_directive INTEGER NOT NULL DEFAULT 0,
     -- 1 = the stage-1 half of a two-stage unloader: its CLEAR leaves the cart
     -- bare and Core stamps the cart's own marker. Core owns it.
     leaves_bare INTEGER NOT NULL DEFAULT 0,
