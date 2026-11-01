@@ -357,33 +357,150 @@ func TestKanbanPin_StartWhoseApplyFailsLeavesTheEpisodeOpen(t *testing.T) {
 	}
 }
 
-// TestKanbanPin_ALegTheApplyFailedToLinkOutlivesTheCancel: two-robot. The supply
-// is created, the evac cannot be, and the node's apply returns before it links
-// anything: the task names neither leg, so the cancel cannot find the supply. It
-// stays live. This is the one changeover-created order the cancel leaves.
-func TestKanbanPin_ALegTheApplyFailedToLinkOutlivesTheCancel(t *testing.T) {
+// TestKanbanPin_ALegCreatedBeforeTheApplyFailedDiesWithTheCancel: the two modes
+// whose action creates two legs. The supply is created, the evac cannot be; the
+// node's task is in error and names the supply, so the cancel's abort reaches it.
+func TestKanbanPin_ALegCreatedBeforeTheApplyFailedDiesWithTheCancel(t *testing.T) {
 	t.Parallel()
-	db := testEngineDB(t)
-	processID, _, _, toStyleID := seedPhase3SwapScenarioMode(t, db, protocol.SwapModeTwoRobot)
-	eng := testEngine(t, db)
-	eng.wireEventHandlers()
-	// The evac is the leg that lifts the old part.
-	kpFailInserts(t, db, "orders", "NEW.payload_code = 'PART-OLD'")
-	co, err := eng.StartProcessChangeover(processID, toStyleID, "test", "kanban pin")
-	testutil.MustNoErr(t, err, "start")
-	if legs := kpLegs(t, db, co.ID); len(legs) != 0 {
-		t.Fatalf("task-linked legs = %v, want none: the apply returned before linking", legs)
+	for _, tc := range []struct {
+		name string
+		seed func(t *testing.T) (db *store.DB, eng *Engine, processID, toStyle int64)
+	}{
+		{"two robot", func(t *testing.T) (*store.DB, *Engine, int64, int64) {
+			db := testEngineDB(t)
+			processID, _, _, toStyle := seedPhase3SwapScenarioMode(t, db, protocol.SwapModeTwoRobot)
+			eng := testEngine(t, db)
+			eng.wireEventHandlers()
+			return db, eng, processID, toStyle
+		}},
+		{"press index, one bin type", func(t *testing.T) (*store.DB, *Engine, int64, int64) {
+			p := seedKPPress(t)
+			kpOneBinType(p)
+			return p.db, p.eng, p.processID, p.toStyle
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			db, eng, processID, toStyle := tc.seed(t)
+			// The evac is the second leg the action creates.
+			kpFailInserts(t, db, "orders", "(SELECT COUNT(*) FROM orders) > 0")
+			co, err := eng.StartProcessChangeover(processID, toStyle, "test", "kanban pin")
+			testutil.MustNoErr(t, err, "start")
+			live, err := db.ListActiveOrders()
+			testutil.MustNoErr(t, err, "live")
+			if len(live) != 1 {
+				t.Fatalf("live orders = %+v, want the supply alone", live)
+			}
+			supply := live[0].ID
+			tasks, err := db.ListChangeoverNodeTasks(co.ID)
+			testutil.MustNoErr(t, err, "tasks")
+			var linked bool
+			for _, task := range tasks {
+				if task.NextMaterialOrderID != nil && *task.NextMaterialOrderID == supply {
+					linked = task.State == domain.NodeTaskError && task.OldMaterialReleaseOrderID == nil
+				}
+			}
+			if !linked {
+				t.Fatalf("tasks = %+v, want one in error naming the supply %d and no evac", tasks, supply)
+			}
+			testutil.MustNoErr(t, eng.CancelProcessChangeover(processID), "cancel")
+			if got := reloadStatus(t, db, supply); got != orders.StatusCancelled {
+				t.Errorf("the supply = %s after cancel, want cancelled", got)
+			}
+		})
 	}
-	live, err := db.ListActiveOrders()
-	testutil.MustNoErr(t, err, "live")
-	if len(live) != 1 || live[0].PayloadCode != "PART-NEW" {
-		t.Fatalf("live orders = %+v, want the supply alone", live)
+}
+
+// kpOneBinType gives both styles of a kpPress one bin type, so the start makes the
+// pair's one two-leg action rather than fanning out per position.
+func kpOneBinType(p *kpPress) {
+	p.eng.SetPayloadBinTypes([]protocol.PayloadBinTypeInfo{
+		{PayloadCode: "KP-OLD", BinTypeCode: "KP-TYPE-A"},
+		{PayloadCode: "KP-NEW", BinTypeCode: "KP-TYPE-A"},
+	})
+}
+
+// TestKanbanPin_CancelReachesEveryLegOfEverySwapMode: DECISIONS D2's claim, per
+// shape. Whatever a START creates in each swap mode, no leg of it is live after
+// the cancel. The keep-staged spot's own return is abortSpotOrdersNotFlown's and
+// is pinned at TestKeepStagedChangeover_CancelCountsAReturnAlreadyFlying.
+func TestKanbanPin_CancelReachesEveryLegOfEverySwapMode(t *testing.T) {
+	t.Parallel()
+	seeded := func(mode protocol.SwapMode) func(t *testing.T) (*store.DB, *Engine, int64, int64) {
+		return func(t *testing.T) (*store.DB, *Engine, int64, int64) {
+			db := testEngineDB(t)
+			processID, _, _, toStyle := seedPhase3SwapScenarioMode(t, db, mode)
+			eng := testEngine(t, db)
+			eng.wireEventHandlers()
+			return db, eng, processID, toStyle
+		}
 	}
-	supply := live[0].ID
-	testutil.MustNoErr(t, eng.CancelProcessChangeover(processID), "cancel")
-	got, err := db.GetOrder(supply)
-	testutil.MustNoErr(t, err, "reload")
-	if orders.IsTerminal(got.Status) {
-		t.Errorf("the unlinked supply = %s after cancel, want it live", got.Status)
+	for _, tc := range []struct {
+		name string
+		legs int
+		seed func(t *testing.T) (*store.DB, *Engine, int64, int64)
+	}{
+		{"single robot", 1, seeded(protocol.SwapModeSimple)},
+		{"two robot", 2, seeded(protocol.SwapModeTwoRobot)},
+		{"press index, one bin type", 2, func(t *testing.T) (*store.DB, *Engine, int64, int64) {
+			p := seedKPPress(t)
+			kpOneBinType(p)
+			return p.db, p.eng, p.processID, p.toStyle
+		}},
+		{"press index, per position", 2, func(t *testing.T) (*store.DB, *Engine, int64, int64) {
+			p := seedKPPress(t)
+			return p.db, p.eng, p.processID, p.toStyle
+		}},
+		{"tooling positions", 2, func(t *testing.T) (*store.DB, *Engine, int64, int64) {
+			db := testEngineDB(t)
+			processID, _, toStyle := seedMarkedPressScenario(t, db)
+			eng := testEngine(t, db)
+			eng.wireEventHandlers()
+			coreNeverAnswers(t, eng)
+			return db, eng, processID, toStyle
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			db, eng, processID, toStyle := tc.seed(t)
+			co, err := eng.StartProcessChangeover(processID, toStyle, "test", "kanban pin")
+			testutil.MustNoErr(t, err, "start")
+			var ids []int64
+			for _, legs := range kpLegs(t, db, co.ID) {
+				ids = append(ids, legs...)
+			}
+			live, err := db.ListActiveOrders()
+			testutil.MustNoErr(t, err, "live")
+			if len(ids) != tc.legs || len(live) != tc.legs {
+				t.Fatalf("task-linked legs = %v, live orders = %d, want %d of each: a live order the task does not name is out of the cancel's reach", ids, len(live), tc.legs)
+			}
+			testutil.MustNoErr(t, eng.CancelProcessChangeover(processID), "cancel")
+			live, err = db.ListActiveOrders()
+			testutil.MustNoErr(t, err, "live after")
+			for _, o := range live {
+				t.Errorf("order %d (%s, %s) live after cancel", o.ID, o.OrderType, o.Status)
+			}
+		})
+	}
+	// Sequential: the fixture starts it, and the start holds the pulling side's
+	// leg until its partner's delivers (createHeldLeg creates it here).
+	for _, evacuate := range []bool{false, true} {
+		t.Run(fmt.Sprintf("sequential evacuate=%v", evacuate), func(t *testing.T) {
+			t.Parallel()
+			db := testEngineDB(t)
+			eng, processID, _, _, co := seedSequentialScenario(t, db, evacuate)
+			legs := kpLegs(t, db, co.ID)
+			live, err := db.ListActiveOrders()
+			testutil.MustNoErr(t, err, "live")
+			if len(legs) != 2 || len(live) != 2 {
+				t.Fatalf("task-linked legs = %v, live orders = %d, want one per position", legs, len(live))
+			}
+			testutil.MustNoErr(t, eng.CancelProcessChangeover(processID), "cancel")
+			live, err = db.ListActiveOrders()
+			testutil.MustNoErr(t, err, "live after")
+			for _, o := range live {
+				t.Errorf("order %d (%s, %s) live after cancel", o.ID, o.OrderType, o.Status)
+			}
+		})
 	}
 }

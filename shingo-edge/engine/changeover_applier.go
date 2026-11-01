@@ -135,6 +135,15 @@ func (e *Engine) applyNodeAction(nodeTask *processes.NodeTask, action changeover
 		if err != nil {
 			log.Printf("changeover: auto-create orders for %s (%s): create evac order: %v — operator must handle manually",
 				action.NodeName, action.Situation, err)
+			// The supply already exists, and the task is the only thing that names
+			// a leg to the cancel (taskLeftOnStaging). Linked, a cancel aborts it
+			// and a second REQUEST sees it (ensureNodeTaskCanRequestOrder). Pin:
+			// TestKanbanPin_ALegCreatedBeforeTheApplyFailedDiesWithTheCancel.
+			if supplyID != nil {
+				if err := e.db.LinkChangeoverNodeOrders(nodeTask.ID, supplyID, nil); err != nil {
+					log.Printf("changeover: link supply order for node task %d: %v", nodeTask.ID, err)
+				}
+			}
 			if err := e.db.UpdateChangeoverNodeTaskState(nodeTask.ID, domain.NodeTaskError); err != nil {
 				log.Printf("changeover: update node task %d state to error: %v", nodeTask.ID, err)
 			}
