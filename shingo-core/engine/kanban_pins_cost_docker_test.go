@@ -228,17 +228,6 @@ func (r *kanbanCostRig) inGroup(t *testing.T, name string, g *nodes.Node) bool {
 	return n != nil && n.ParentID != nil && *n.ParentID == g.ID
 }
 
-// firstBegin is the index of the first transaction's BEGIN in stmts, len(stmts)
-// with none.
-func firstBegin(stmts []string) int {
-	for i, s := range stmts {
-		if strings.HasPrefix(strings.ToLower(strings.TrimSpace(s)), "begin") {
-			return i
-		}
-	}
-	return len(stmts)
-}
-
 // reAim is the index of the statement that re-aims an order's delivery_node,
 // len(stmts) with none.
 func reAim(stmts []string) int {
@@ -297,8 +286,8 @@ func TestKanbanCost_KeeperTick(t *testing.T) {
 	}
 	stmts := r.counter.Statements()
 	t.Logf("STATEMENTS: keeper tick, one type short by 4: %d, the first %d to the first ask's birth\n%s",
-		got, firstBegin(stmts), testutil.StatementBreakdown(stmts))
-	if n := firstBegin(stmts); n != keeperTickBurstToFirstAsk {
+		got, testutil.FirstBegin(stmts), testutil.StatementBreakdown(stmts))
+	if n := testutil.FirstBegin(stmts); n != keeperTickBurstToFirstAsk {
 		t.Errorf("the burst to the first ask = %d statements, want %d", n, keeperTickBurstToFirstAsk)
 	}
 	for what, one := range map[string]string{"slot state": "group-slot-state", "children's types": "up(child, id, parent_id, depth)",
@@ -346,7 +335,7 @@ func TestKanbanCost_SurplusArm(t *testing.T) {
 	r.counter.Reset()
 	m.Tick()
 	stmts = r.counter.Statements()
-	n := firstBegin(stmts)
+	n := testutil.FirstBegin(stmts)
 	t.Logf("STATEMENTS: surplus arm, two open: %d, the first %d to the move's birth\n%s", len(stmts), n, testutil.StatementBreakdown(stmts))
 	var moves int
 	testutil.MustNoErr(t, r.db.QueryRow(`SELECT COUNT(*) FROM orders WHERE edge_uuid LIKE 'core-sp-%'`).Scan(&moves), "moves")
@@ -394,7 +383,7 @@ func kanbanCostSnapshot(t *testing.T, r *kanbanCostRig, wantBuild, wantBytes int
 	svc.HandleBinWatch(&protocol.Envelope{Src: protocol.Address{Role: protocol.RoleEdge, Station: "kc-edge"}},
 		&protocol.BinWatchList{Digest: digest, Nodes: names})
 	stmts := r.counter.Statements()
-	from := firstBegin(stmts)
+	from := testutil.FirstBegin(stmts)
 	to := len(stmts)
 	for i := from; i < len(stmts); i++ {
 		if strings.Contains(strings.ToLower(stmts[i]), "into outbox") {
@@ -443,7 +432,7 @@ func TestKanbanCost_NoWindowDoor(t *testing.T) {
 		t.Fatalf("fixture drift: the move went to %s, want K's overflow", o.DeliveryNode)
 	}
 	stmts := r.counter.Statements()
-	door := stmts[:firstBegin(stmts)]
+	door := stmts[:testutil.FirstBegin(stmts)]
 	t.Logf("STATEMENTS: the door %d\n%s", len(door), testutil.StatementBreakdown(door))
 	if len(door) != intakeDoorNoWindow {
 		t.Errorf("no-window door = %d statements, want %d", len(door), intakeDoorNoWindow)
@@ -497,7 +486,7 @@ func TestKanbanCost_IntakeDoor(t *testing.T) {
 				t.Fatalf("fixture drift: the push went to %s, want a position of %s", o.DeliveryNode, r.z45.Name)
 			}
 			stmts := r.counter.Statements()
-			door := stmts[:firstBegin(stmts)]
+			door := stmts[:testutil.FirstBegin(stmts)]
 			t.Logf("STATEMENTS: %s: the door %d (with the birth %d)\n%s", tc.name, len(door), len(stmts),
 				testutil.StatementBreakdown(door))
 			if len(door) != tc.want {

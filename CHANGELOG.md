@@ -14,6 +14,27 @@ No migration. Edge only.
 - A Spots chip appears only once a part moves, and its ✕ undoes the move
 - A tap on the search box raises the touch keyboard
 - An on-deck spot with nowhere to go can't be tapped
+## 2026-11-01 — Kanban: a group holds a level, follows the job, and repays what it borrows
+
+Core v169 (run `store.KanbanMigrationCensusSQL` first), Edge one literal. Ship Core and Edge together.
+
+- A group with a level is a kanban: `kanbans`, `kanban_levels`, `kanban_supports`, `kanban_layer_levels`, `kanban_sources`
+- `maintain_enabled` is gone; station, strict and overflow leave properties for columns; plain groups keep their overflow property
+- Want = level + running cover x processes running the type, following a changeover's target from START
+- The keeper's tick is 4 statements, any plant size; the bins build 10; a window push's door 8; the parked arm 8
+- Sources: an ordered list a kanban's keeper pulls from; empty means plant-wide; never another lineside kanban
+- A kanban with no supports runs no keeper: it counts, shows its shortfall, and is refilled by unloaders
+- One chooser at all four doors: the kanban if short, then its first source short of the cart, then overflow, then park named
+- The unloader's card lights the source's type and names it, or says "No group is short of this cart"
+- A surplus cart moves to the unloader's window to re-type, or to a source with room; never the last free window
+- Overflow is per type with a default; saves warn on what a source cannot repay, and no longer refuse levels over positions
+- A cancel also cancels a supply whose evac could not be created
+- A changeover's episode names its target's first produce part and node, and a failed open reaches Core once the outbox clears
+- CLEAR and PUSH AS offer only the cart's floor size, plus the lit choice; `NodeListResponse.floor` is per type
+- Known, not built: wrong-type carts standing on positions after a cancel; the next START's lift takes them
+- `plants/kanban-press.yaml` is a permanent certification rig; R1 and R5's loop run in the docker shards, R1-R6 on the stack before a merge
+- A plant file's change now runs the tests that seed it, in CI and in `gate.sh scope`
+
 ## 2026-11-01 — A kanban is called a kanban
 
 Core v171, Edge no migration. Ship Core and Edge together: until both are up, a claim save naming a kanban as its inbound source is not refused on the Edge.

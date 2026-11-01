@@ -383,7 +383,8 @@ func reportKanbans(plant *plantspec.Plant, plan carrierPlan, rate map[string]flo
 		for _, r := range rows {
 			var says []string
 			if r.toSpare > 0 {
-				says = append(says, fmt.Sprintf("%d carts past the levels land in %s", r.toSpare, strings.Join(r.spareZone, ",")))
+				says = append(says, fmt.Sprintf("%d carts past the levels, settled: in %s once the kanban's surplus can leave; "+
+					"until a source is short it keeps that surplus", r.toSpare, strings.Join(r.spareZone, ",")))
 			}
 			if r.excess > 0 {
 				says = append(says, fmt.Sprintf("%d carts with nowhere to land: they park on the windows", r.excess))

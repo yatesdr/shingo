@@ -7,6 +7,17 @@ import (
 	"strings"
 )
 
+// FirstBegin is the index of the first transaction's BEGIN in stmts, len(stmts)
+// with none: where a door's reads end and what it writes starts.
+func FirstBegin(stmts []string) int {
+	for i, s := range stmts {
+		if strings.HasPrefix(strings.ToLower(strings.TrimSpace(s)), "begin") {
+			return i
+		}
+	}
+	return len(stmts)
+}
+
 // StatementBreakdown summarises what a counted path sent to its database: the
 // total, then each statement kind (SELECT, INSERT, UPDATE, DELETE, BEGIN,
 // COMMIT, ...) with its count, then each (kind, table) pair. It reads the SQL a

@@ -14,6 +14,8 @@ on:
       # templates load its stylesheets. Without it here, a change that
       # breaks Core's build lands with Core CI never running.
       - "shared/**"
+      # The planner golden and the Kanban rig's loop test seed these files.
+      - "plants/**"
       - ".github/workflows/core.yml"
       # The shared workflow and actions these jobs call. Without them a
       # change to sharded-suite.yml or shared-postgres — the code that
@@ -26,6 +28,7 @@ on:
       - "shingo-core/**"
       - "protocol/**"
       - "shared/**"
+      - "plants/**"
       - ".github/workflows/core.yml"
       # The shared workflow and actions these jobs call. Without them a
       # change to sharded-suite.yml or shared-postgres — the code that

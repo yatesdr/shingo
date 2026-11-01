@@ -123,6 +123,16 @@ card() {
     | sed -n "s/.*\"$3\":\([0-9-]*\).*/\1/p" | head -1
 }
 
+# card_said <group> <type or ""> <pattern>: yes or no, whether any sampled card of that
+# line carried the pattern. A count, not grep -q: under pipefail an early-exiting grep -q
+# kills the writer upstream with SIGPIPE, and the pipeline answers no to a match.
+card_said() {
+  local n
+  n="$(tr '{' '\n' <"$OUT/kanban-cards.jsonl" | grep "\"$CARD_GROUP\":\"$1\"" | grep "\"$CARD_TYPE\":\"$2" \
+       | grep -c "$3" || true)"
+  [ "${n:-0}" -gt 0 ] && echo yes || echo no
+}
+
 # wait_for <wall seconds> <description> <shell test>: polls every 2 s; false on timeout.
 wait_for() {
   local budget=$1 what=$2 deadline=$(( $(date +%s) + $1 ))
@@ -214,7 +224,12 @@ cancel_changeover() {
   say "CANCEL: $code $(cut -c1-200 "$OUT/.last")"
   http_ok "$code"
 }
-gate_open() { curl -s -m 10 "$EDGE/api/processes/$PROCESS_ID/changeover/gate-status" | grep -q '"can_complete":true'; }
+gate_open() {
+  case "$(curl -s -m 10 "$EDGE/api/processes/$PROCESS_ID/changeover/gate-status")" in
+    *'"can_complete":true'*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
 
 # cutover <wall budget>: CUTOVER once the changeover's own gate allows it.
 cutover() {
@@ -245,6 +260,21 @@ move_bin() {
   http_ok "$code"
 }
 
+# stand_on_window <label>: a person standing a cart on a free window of the press's
+# unloader. free_child reads the windows free and a cart can land on one before the move
+# reaches Core, which answers 400 "already has 1 bin(s)". So it tries again on whichever
+# window is free next, and is a failure only after 120 s of that.
+stand_on_window() {
+  local window deadline=$(( $(date +%s) + 120 ))
+  while [ "$(date +%s)" -lt "$deadline" ]; do
+    window="$(free_child "$UNLOAD_GROUP")"
+    if [ -n "$window" ] && move_bin "$1" "$window"; then return 0; fi
+    sleep 3
+  done
+  say "no window of $UNLOAD_GROUP took $1 in 120 s"
+  return 1
+}
+
 # ── THE SAMPLERS AND THE COLLECTION ─────────────────────────────────────────────────────
 sample_loop() {
   local unload_id="" id
@@ -267,15 +297,21 @@ sample_loop() {
   done
 }
 
-# orders over 10 sim-min: minutes on the orders' own clock, the newest stamp as now.
+# orders over 10 sim-min: minutes on the orders' own clock, the newest stamp as now. A
+# cancelled order has no completed_at, so a terminal order ends at its last update; only a
+# live one ages to the end of the run.
 long_orders() {
-  sql "WITH clock AS (SELECT max(updated_at) AS now FROM orders)
-       SELECT o.id, COALESCE(NULLIF(o.payload_code,''),'-'), o.status,
-              COALESCE(NULLIF(o.queue_cause,''), NULLIF(o.error_detail,''), '-'),
-              o.source_node || ' -> ' || o.delivery_node,
-              round((EXTRACT(EPOCH FROM (COALESCE(o.completed_at, clock.now) - o.created_at)) / 60)::numeric, 1) AS minutes
-         FROM orders o, clock
-        WHERE COALESCE(o.completed_at, clock.now) - o.created_at > interval '10 minutes'
+  sql "WITH clock AS (SELECT max(updated_at) AS now FROM orders),
+            aged AS (SELECT o.*, COALESCE(o.completed_at,
+                       CASE WHEN o.status IN ('confirmed','failed','cancelled','skipped')
+                            THEN o.updated_at ELSE clock.now END) AS ended
+                       FROM orders o, clock)
+       SELECT id, COALESCE(NULLIF(payload_code,''),'-'), status,
+              COALESCE(NULLIF(queue_cause,''), NULLIF(error_detail,''), '-'),
+              source_node || ' -> ' || delivery_node,
+              round((EXTRACT(EPOCH FROM (ended - created_at)) / 60)::numeric, 1) AS minutes
+         FROM aged
+        WHERE ended - created_at > interval '10 minutes'
         ORDER BY minutes DESC" >"$OUT/long-orders.tsv"
 }
 
@@ -313,9 +349,13 @@ collect() {
 # orders_count <where>: orders matching a condition, since the run began.
 orders_count() { sql "SELECT count(*) FROM orders WHERE $1"; }
 
-# in_group <group>: the SQL list of a group's own name and its children's.
+# in_group <group>: the SQL list of a group's own name, its children's and, for a group of
+# lanes, its lanes' slots: SM's orders deliver two levels down.
 in_group() {
-  echo "(SELECT '$1' UNION SELECT n.name FROM nodes n JOIN nodes g ON g.id = n.parent_id WHERE g.name = '$1')"
+  echo "(SELECT '$1'
+         UNION SELECT n.name FROM nodes n JOIN nodes g ON g.id = n.parent_id WHERE g.name = '$1'
+         UNION SELECT n.name FROM nodes n JOIN nodes l ON l.id = n.parent_id
+                                          JOIN nodes g ON g.id = l.parent_id WHERE g.name = '$1')"
 }
 
 never_to_sm() { check_zero "no order delivered to $SM" "$(orders_count "delivery_node IN $(in_group "$SM")")"; }
@@ -333,9 +373,19 @@ run_R1() {
   check "K2 wants small 2" "$(card "$K2" "$SMALL" want)" 2
   check_zero "unloader carts lit anything but small" "$(lit_other_than "$SMALL")"
   # A kanban with no supports says "no keeper" for as long as it is short; only the two
-  # lineside kanbans can be held.
-  check_zero "lineside cards with a holder" \
-    "$(tr '{' '\n' <"$OUT/kanban-cards.jsonl" | grep -E "\"$CARD_GROUP\":\"($K|$K2)\"" | grep -c '"held_by"' || true)"
+  # lineside kanbans can be held. A refill's two carts stand on K's slots until they are
+  # lifted, so a line can read held for one tick: held across two samples is the defect.
+  # The one-tick ones are counted in held-one-tick.txt.
+  tr '{' '\n' <"$OUT/kanban-cards.jsonl" | grep -E "\"$CARD_GROUP\":\"($K|$K2)\"" | grep '"held_by"' \
+    >"$OUT/held-one-tick.txt" || true
+  check_zero "lineside lines held across two samples" "$(awk -v a="\"$CARD_GROUP\":\"$K\"" -v b="\"$CARD_GROUP\":\"$K2\"" '
+    { n = split($0, card, "{"); delete now
+      for (i = 1; i <= n; i++)
+        if ((index(card[i], a) || index(card[i], b)) && index(card[i], "\"held_by\"")) {
+          key = substr(card[i], 1, index(card[i], "\"want\"")); now[key] = 1; if (key in was) bad++
+        }
+      delete was; for (key in now) was[key] = 1 }
+    END { print bad + 0 }' "$OUT/kanban-cards.jsonl")"
   check_zero "pushes parked at a level" "$(orders_count "queue_cause ILIKE '%level%'")"
   check_zero "orders live and queued on a kanban at the end" \
     "$(orders_count "status IN ('queued','sourcing') AND delivery_node IN $(in_group "$K")")"
@@ -352,7 +402,12 @@ run_R2() {
   cutover 600 || { fail "the changeover did not reach its cutover"; return; }
   pass "cut over to totes"
   sim_min 10
-  check "K holds its totes want" "$(empties "$K" "$TOTES")" 5
+  # A refill's carts leave K between two ticks, so the want is waited for, not sampled once.
+  if wait_for 60 "K holds its totes want" '[ "$(empties "$K" "$TOTES")" = 5 ]'; then
+    pass "K holds its totes want"
+  else
+    fail "K never held its totes want"
+  fi
   never_to_sm
 }
 
@@ -367,20 +422,26 @@ run_R3() {
               AND o.source_node NOT IN $(in_group "$Z32") AND o.source_node NOT IN $(in_group "$UNLOAD_GROUP")")"
   # 45x48 off the process goes to K, then Z45 if short, then the spare zone. Surplus residents
   # of K move only to a source with a level and room or to a window (the arm never goes to a
-  # plain group), so with Z45 whole K keeps them and says why: all 17 carts accounted for.
+  # plain group), so with Z45 whole K keeps them and says why. The weld shares Z45 and can
+  # hold one of the 17 at its own unloader, so 16 or 17 stand here; fewer is a cart lost.
+  # A cart in flight counts in no group, so the count is waited for, not sampled once.
+  wait_for 60 "the family stands in K, $Z45 and $SPARE" '[ "$(family_loop)" -ge 16 ]' \
+    || say "the family's count stayed at $(family_loop)"
   check "$Z45 holds its level" "$(family_in "$Z45")" 6
-  check "K, $Z45 and $SPARE hold the family" "$(( $(family_in "$K") + $(family_in "$Z45") + $(family_in "$SPARE") ))" 17
-  check "K's card says why its surplus stays" \
-    "$(tr '{' '\n' <"$OUT/kanban-cards.jsonl" | grep "\"$CARD_GROUP\":\"$K\"" | grep -q '"surplus_cause"' && echo yes || echo no)" yes
+  check "K, $Z45 and $SPARE hold the family, less the weld's one" \
+    "$([ "$(family_loop)" -ge 16 ] && echo yes || echo no)" yes
+  check "K's card says why its surplus stays" "$(card_said "$K" "" '"surplus_cause"')" yes
   # Cover over the pool, not a defect: 8 wanted from 6 carts, 4 of them on the positions.
   check "K wants 32x30 4" "$(card "$K" "$C32" want)" 4
-  check "K's card says what holds the other 2" \
-    "$(tr '{' '\n' <"$OUT/kanban-cards.jsonl" | grep "\"$CARD_GROUP\":\"$K\"" | grep "\"$CARD_TYPE\":\"$C32\"" \
-       | grep -q '"held_by"' && echo yes || echo no)" yes
+  check "K's card says what holds the other 2" "$(card_said "$K" "$C32" '"held_by"')" yes
   changeover_to "$STYLE_TOTES" || return
   # The arm fires only while K is full and short; the last cart can stay if K fills first.
   check_zero "32x30 back: at most one stays in K" "$(( $(empties "$K" "$C32") > 1 ))"
-  check "the totes came back: K holds its want" "$(empties "$K" "$TOTES")" 5
+  if wait_for 60 "the totes came back: K holds its want" '[ "$(empties "$K" "$TOTES")" = 5 ]'; then
+    pass "the totes came back: K holds its want"
+  else
+    fail "the totes never came back to K's want"
+  fi
   never_to_sm
 }
 
@@ -389,6 +450,14 @@ family_in() {
   sql "SELECT count(*) FROM bins b JOIN nodes n ON n.id = b.node_id JOIN nodes g ON g.id = n.parent_id
        JOIN bin_types t ON t.id = b.bin_type_id
        WHERE g.name = '$1' AND t.code IN ('$SMALL','$BIG','$TOTES') AND b.payload_code = ''"
+}
+
+# family_loop: the same, across the three groups that hold the press's loop while it runs
+# off the family. One statement, so a failed read is an unequal count and not a bad sum.
+family_loop() {
+  sql "SELECT count(*) FROM bins b JOIN nodes n ON n.id = b.node_id JOIN nodes g ON g.id = n.parent_id
+       JOIN bin_types t ON t.id = b.bin_type_id
+       WHERE g.name IN ('$K','$Z45','$SPARE') AND t.code IN ('$SMALL','$BIG','$TOTES') AND b.payload_code = ''"
 }
 
 run_R4() {
@@ -420,25 +489,26 @@ run_R5() {
   sim_min 10
   # K borrows from Z45: its cart leaves by hand, its keeper fetches from Z45, and the same
   # cart then reaches a window as the next small off the process would.
-  local cart spot window
+  local cart spot
   cart="$(oldest_empty "$K" "$SMALL")"; spot="$(free_child_lane)"
   [ -n "$cart" ] && [ -n "$spot" ] || die "no small in K or no room in $SM"
   move_bin "$cart" "$spot" || fail "could not take a cart out of K"
   wait_for 120 "K borrowed: Z45 short a small" z45_short || fail "K did not borrow from Z45"
-  window="$(free_child "$UNLOAD_GROUP")"
-  [ -n "$window" ] || die "no free window"
-  move_bin "$cart" "$window" || fail "could not stand the cart on a window"
+  stand_on_window "$cart" || fail "could not stand the cart on a window"
   wait_for 180 "the cart repaid Z45" z45_whole || fail "Z45 was not repaid"
   never_to_sm
 
-  # K2 borrows from Z45; K's next cart repays it.
-  cart="$(oldest_empty "$K2" "$SMALL")"; spot="$(free_child_lane)"
-  [ -n "$cart" ] && [ -n "$spot" ] || die "no small in K2 or no room in $SM"
-  move_bin "$cart" "$spot" || fail "could not take a cart out of K2"
+  # K2 borrows from Z45; K's next cart repays it. A robot can claim the cart between the
+  # read and the move, so the hand move asks again until a cart is taken.
+  local taken=""
+  for _ in $(seq 1 30); do
+    cart="$(oldest_empty "$K2" "$SMALL")"; spot="$(free_child_lane)"
+    if [ -n "$cart" ] && [ -n "$spot" ] && move_bin "$cart" "$spot"; then taken=1; break; fi
+    sleep 2
+  done
+  [ -n "$taken" ] || die "could not take a cart out of K2"
   wait_for 120 "K2 borrowed: Z45 short a small" z45_short || fail "K2 did not borrow from Z45"
-  window="$(free_child "$UNLOAD_GROUP")"
-  [ -n "$window" ] || die "no free window"
-  move_bin "$cart" "$window" || fail "could not stand the cart on a press window"
+  stand_on_window "$cart" || fail "could not stand the cart on a press window"
   wait_for 180 "K's cart repaid Z45 for K2" z45_whole || fail "Z45 was not repaid across kanbans"
   never_to_sm
 
@@ -477,12 +547,21 @@ run_R6() {
   check "K holds spares" "$([ "$(empties "$K" "$SMALL")" -ge 1 ] && echo yes || echo no)" yes
   check_zero "K2's keeper took from K" \
     "$(orders_count "id > $mark AND delivery_node IN $(in_group "$K2") AND source_node IN $(in_group "$K")")"
-  check "K2 is short with its ask visible" \
-    "$(grep -c '"oldest_ask_cause":"[^"]' "$OUT/kanban-cards.jsonl" | awk '{ print ($1 > 0) ? "yes" : "no" }')" yes
   sim_min 10
   check_zero "K2's keeper took from K, after settle" \
     "$(orders_count "id > $mark AND delivery_node IN $(in_group "$K2") AND source_node IN $(in_group "$K")")"
+  # Nothing can source it, so the keeper rightly asks nothing and K2's card says what holds
+  # it. Read after the settle: the samples come every 30 s and the check before it is at 12.
+  check "K2's card says no empty at any source" "$(card_said "$K2" "$SMALL" '"held_by":"no empty')" yes
   never_to_sm
+  # The run starved the weld by hand, so its orders wait on carts nothing can bring. Hand
+  # the carts back to Z45: K2's keeper fetches them and every order waiting on K2 moves.
+  for cart in KB-Z45-S1 KB-Z45-S2; do
+    move_bin "$cart" "$(free_child "$Z45")" || fail "could not hand $cart back to $Z45"
+  done
+  wait_for 180 "the weld's waiting orders moved" \
+    '[ "$(orders_count "status = '"'"'queued'"'"' AND source_node IN $(in_group "$K2")")" = 0 ]' \
+    || fail "the weld's orders stayed queued after the carts came back"
 }
 
 # free_child_lane: a mouth in SM, where a cart taken out of the loop stands.

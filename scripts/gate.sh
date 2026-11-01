@@ -681,6 +681,10 @@ step_scope() {
       */templates/*.html) reaching="$reaching$f"$'\n' ; continue ;;
     esac
     case "$f" in
+      # The planner golden and the Kanban rig's loop test seed these files.
+      plants/*.yaml) reaching="$reaching$f"$'\n' ; continue ;;
+    esac
+    case "$f" in
       *_test.go)
         # A _test.go file is compiled ONLY into its own package's test
         # binary -- it is not part of any importable surface -- so it can

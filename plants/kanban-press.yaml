@@ -6,7 +6,8 @@
 # (station edge1.line1) alone: SHINGO_PLANT=/plants/kanban-press.yaml, no edge2.
 # The runs, what each catches and how to drive them: docs/fleet-simulator/kanban.md and
 # scripts/kanban-rig.sh. Pinned by plantspec TestKanbanPressPlant_* and cmd/seeddev
-# TestKanbanPressFixture_* / TestSeedKanbanPress_*.
+# TestKanbanPressFixture_* / TestSeedKanbanPress_*. Its loop runs in the docker shards:
+# cmd/seeddev TestKanbanRig_*.
 #
 # ── THE LOOP. Produce and consume are one circular problem ─────────────────────────────
 #
@@ -81,6 +82,12 @@
 # then ZONE-45 if short, then the spare, never to KP-SM. They come back when ZONE-45 has
 # none, because the spare is K's last source. The save's "repaid only as T's overflow"
 # names it: R17a, on the rig.
+#
+# Eight in the spare is the settled picture, once K's surplus has somewhere to go. A
+# resident moves only to a window or to a group with a level for its type and room, so
+# with ZONE-45 whole K keeps its 4 surplus 45x48 and says why (surplus_cause), and only the
+# positions' 4 carts reach the spare: 7 in K, 6 in ZONE-45, 4 in the spare. K's 32x30 then
+# fills through its one free child and the positions fill one at a time. Nothing wedges.
 #
 # 32x30 UNDER KP-32 STAYS 2 SHORT, AND THAT IS NOT A DEFECT. K's 4 of cover + 4 positions
 # want 8 from 6 carts: cover over the pool. It shows on the card as "cannot be covered",
