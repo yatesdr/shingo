@@ -51,9 +51,8 @@ import (
 //
 // ── LIVE-CAPABLE, GATED ONLY BY CONFIG ─────────────────────────────────────
 //
-// There is no shadow flag. A group is maintained when its own maintain_enabled
-// property says so, which no production group has set until an owner sets it.
-// The per-tick subtraction line is the floor diagnostic, not a mode.
+// There is no shadow flag and no on/off: a group with levels and a station has a
+// keeper. The per-tick subtraction line is the floor diagnostic, not a mode.
 //
 // ── THE KNOWN EXPOSURE: A WIPED CORE, FOR AT MOST ONE HEARTBEAT ────────────
 //
@@ -77,8 +76,8 @@ import (
 // log volume.
 const maintainerTickInterval = 30 * time.Second
 
-// MaintainerGroupState is one (group, type) line of Snapshot() — what the
-// replenishment-health page renders.
+// MaintainerGroupState is one (group, type) line of Snapshot() — what the keeper's
+// last tick on the Nodes page renders (nodes-maintain.js renderKeeperLevels).
 //
 // PARKED-NESS IS DERIVED, NEVER STORED. It is read from the live asks' queue
 // causes at render time. A stored status is the uopCache lesson: a rollup drifts
@@ -190,6 +189,16 @@ func (m *Maintainer) Tick() {
 		openByKey[o.EpisodeKey] = o
 	}
 
+	kanbans, err := m.eng.db.ListKanbans()
+	if err != nil {
+		m.eng.logFn("maintainer: list kanbans: %v", err)
+		return
+	}
+	kanbanOf := make(map[int64]store.Kanban, len(kanbans))
+	for _, k := range kanbans {
+		kanbanOf[k.NodeID] = k
+	}
+
 	var states []MaintainerGroupState
 	// configuredKeys is every episode key the CONFIG still calls for. Anything
 	// open and absent from it is config-withdrawn — see closeWithdrawn.
@@ -199,17 +208,21 @@ func (m *Maintainer) Tick() {
 		if !g.IsSynthetic || !g.Enabled {
 			continue
 		}
-		if m.eng.db.GetNodeProperty(g.ID, nodes.PropMaintainEnabled) != "on" {
+		k, isKanban := kanbanOf[g.ID]
+		if !isKanban {
 			continue
 		}
-		station := m.eng.db.GetNodeProperty(g.ID, nodes.PropMaintenanceStation)
+		station := k.StationID
 		if station == "" {
-			// Config save refuses this (MG1-4), so reaching it means the property
-			// was written by another path. Refuse to run rather than mint an order
-			// projectOrder would silently drop — an order invisible on every Edge
-			// board is the phantom-order family.
-			m.eng.logFn("maintainer: group %s is maintained with no maintenance_station — skipped; "+
-				"its asks would be invisible on every Edge board", g.Name)
+			// A kanban with no supports needs no station, and runs no keeper without
+			// one. One WITH supports: the save refuses it, and a migrated row can
+			// hold it. Refuse to run rather than mint an order projectOrder would
+			// silently drop — an order invisible on every Edge board is the
+			// phantom-order family. Pin: TestMaintainer_RefusesAGroupWithNoStation.
+			if k.HasSupports {
+				m.eng.logFn("maintainer: kanban %s has supports and no station — skipped; "+
+					"its asks would be invisible on every Edge board", g.Name)
+			}
 			continue
 		}
 		levels, lerr := m.eng.db.ListMaintainLevels(g.ID)
@@ -444,7 +457,7 @@ func (m *Maintainer) closeEpisode(episode store.DemandOrigin, reason, group, bin
 }
 
 // closeWithdrawn closes every open maintain episode the CONFIG no longer calls
-// for — a level line deleted, or a group disabled.
+// for — a level line deleted, or a kanban's station cleared.
 //
 // THE PRECONDITION IS THE CONFIG, NOT THE LEVEL, the same distinction
 // reconcileThresholdBindings draws. The settle edge already owns the level close

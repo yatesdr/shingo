@@ -3998,8 +3998,8 @@ func migrationList() []migration {
 		{90, "maintained-group config: levels + supports tables, bin_types.length_in, modal mtimes",
 			v90MaintainedGroups,
 			func(q schema.Querier) bool {
-				return schema.TableExists(q, "node_maintain_levels") &&
-					schema.TableExists(q, "node_maintain_supports") &&
+				return (kanbanSetsRenamed(q) || (schema.TableExists(q, "node_maintain_levels") &&
+					schema.TableExists(q, "node_maintain_supports"))) &&
 					schema.ColumnExists(q, "bin_types", "length_in") &&
 					schema.ColumnExists(q, "node_properties", "updated_at") &&
 					schema.ColumnExists(q, "node_bin_types", "created_at")
@@ -4495,7 +4495,7 @@ func migrationList() []migration {
 					schema.ColumnExists(q, "payloads", "uop_per_tote") &&
 					schema.ColumnExists(q, "bin_types", "totes_per_layer") &&
 					schema.ColumnExists(q, "bins", "totes_on_cart") &&
-					schema.TableExists(q, "node_maintain_layer_levels")
+					(kanbanSetsRenamed(q) || schema.TableExists(q, "node_maintain_layer_levels"))
 			}},
 		{162, "bins.last_lift_at — when a robot last lifted the bin, every lift, never cleared: the vacate fact's floor",
 			v162BinLastLiftAt,
@@ -4506,8 +4506,9 @@ func migrationList() []migration {
 		{164, "node_maintain_layer_levels.layers may be 0 — a maintained group's tops & bottoms row, a cap of its own",
 			v164TopsAndBottomsRow,
 			func(q schema.Querier) bool {
-				return schema.CheckConstraintAllows(q, "node_maintain_layer_levels",
-					"node_maintain_layer_levels_layers_check", ">= 0")
+				return schema.CheckConstraintAllows(q, "kanban_layer_levels", "kanban_layer_levels_layers_check", ">= 0") ||
+					schema.CheckConstraintAllows(q, "node_maintain_layer_levels",
+						"node_maintain_layer_levels_layers_check", ">= 0")
 			}},
 		{165, "bin_loaders.drains_empty, drains_tops_bottoms, drains_leftover, drains_unverified - the part-less carts an unloader pulls from its inbound source beside its fulls, one box per carrier state; all off",
 			v165LoaderDrainStates,
@@ -4532,7 +4533,9 @@ func migrationList() []migration {
 					AND id IN (SELECT second_stage_loader_id FROM bin_loaders WHERE second_stage_loader_id IS NOT NULL))`).Scan(&left)
 				return err == nil && !left
 			}},
-		// v169-v172 are the kanban stream's (branch kanban), landing after this.
+		{169, "kanbans - one row per kanban with its settings as columns; levels, supports and layer wants hang off it; sources; the parent and property-key indexes",
+			v169Kanbans,
+			v169Done},
 		{173, "order_bins: an order's carts, one row per lift (pick_step, drop_step), for every order that carries a cart, kept after it ends; the census lists what the walk cannot place",
 			v173OrderCarts,
 			func(q schema.Querier) bool {
@@ -4635,8 +4638,8 @@ func v165LoaderDrainStates(tx *sql.Tx) error {
 // the unloader, and the card asks the crew for it.
 func v164TopsAndBottomsRow(tx *sql.Tx) error {
 	for _, s := range []string{
-		`ALTER TABLE node_maintain_layer_levels DROP CONSTRAINT IF EXISTS node_maintain_layer_levels_layers_check`,
-		`ALTER TABLE node_maintain_layer_levels ADD CONSTRAINT node_maintain_layer_levels_layers_check CHECK (layers >= 0)`,
+		`ALTER TABLE IF EXISTS node_maintain_layer_levels DROP CONSTRAINT IF EXISTS node_maintain_layer_levels_layers_check`,
+		`ALTER TABLE IF EXISTS node_maintain_layer_levels ADD CONSTRAINT node_maintain_layer_levels_layers_check CHECK (layers >= 0)`,
 	} {
 		if _, err := tx.Exec(s); err != nil {
 			return fmt.Errorf("v164 tops & bottoms row: %w", err)
@@ -8218,9 +8221,8 @@ func v92DropProductionLog(tx *sql.Tx) error {
 //
 // The two set tables mirror node_bin_types: composite PK, node FKs, no surrogate
 // id. The scalars that go with them (maintain_enabled, strict_sourcing,
-// maintenance_station, overflow_destination) are node_properties rows and need
-// no schema — which is most of why they are properties, since that write path
-// is audited old→new unconditionally and a new table's would not be.
+// maintenance_station, overflow_destination) were node_properties rows here; v169
+// moved them into kanbans.
 //
 // length_in is the third dimension the schema never had: bin_types carries
 // width_in and height_in, so a code like "45x58x32" holds its own length in the

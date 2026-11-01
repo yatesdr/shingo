@@ -237,20 +237,32 @@ func TestSeedCore_DemoPlant(t *testing.T) {
 			pos.ParentID, mgZone.ID)
 	}
 
-	// The four scalars, written through the same property path the settings modal
-	// uses so a seeded group and a hand-configured one are the same rows.
-	for _, want := range []struct{ key, value string }{
-		{"maintain_enabled", "on"},
-		{"strict_sourcing", "on"},
-		{"maintenance_station", "edge1.line1"},
-		{"overflow_destination", "SYN_SM_Stamp"},
-		// Explicit, never inherited: an ancestor's allowed-bins list must not
-		// silently govern a group that has just been told to hold two types.
-		{"bin_type_mode", "all"},
-	} {
-		if got := db.GetNodeProperty(mgZone.ID, want.key); got != want.value {
-			t.Errorf("SYN_PRESS_EMPTIES %s = %q, want %q", want.key, got, want.value)
-		}
+	// The row, written through the same save the settings modal uses so a seeded
+	// group and a hand-configured one are the same rows.
+	k, err := db.GetKanban(mgZone.ID)
+	if err != nil || k == nil {
+		t.Fatalf("SYN_PRESS_EMPTIES has no kanbans row: %v", err)
+	}
+	if !k.Strict || k.StationID != "edge1.line1" || k.OverflowNode != "SYN_SM_Stamp" {
+		t.Errorf("SYN_PRESS_EMPTIES kanban = %+v, want strict, station edge1.line1, overflow SYN_SM_Stamp", k)
+	}
+	if k.RunningCover != 3 {
+		t.Errorf("SYN_PRESS_EMPTIES running cover = %d, want 3", k.RunningCover)
+	}
+	sources, err := db.ListKanbanSources(mgZone.ID)
+	if err != nil {
+		t.Fatalf("ListKanbanSources: %v", err)
+	}
+	if len(sources) != 1 || sources[0].SourceNodeName != "SYN_SM_Stamp" || sources[0].Rank != 1 {
+		t.Errorf("SYN_PRESS_EMPTIES sources = %+v, want SYN_SM_Stamp at rank 1", sources)
+	}
+	if got := db.GetNodeProperty(mgZone.ID, "overflow_destination"); got != "" {
+		t.Errorf("SYN_PRESS_EMPTIES overflow_destination property = %q; a kanban holds its overflow on its row", got)
+	}
+	// Explicit, never inherited: an ancestor's allowed-bins list must not silently
+	// govern a group that has just been told to hold two types.
+	if got := db.GetNodeProperty(mgZone.ID, "bin_type_mode"); got != "all" {
+		t.Errorf("SYN_PRESS_EMPTIES bin_type_mode = %q, want all", got)
 	}
 
 	levels, err := db.ListMaintainLevels(mgZone.ID)

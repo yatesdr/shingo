@@ -329,7 +329,7 @@ func TestCancelReturn_AnEmptyGoesWhereClaimsDeclareEmptiesGo(t *testing.T) {
 		testutil.MustNoErr(t, db.CreateNode(other), "create the other press")
 		strict, _ := storeGroupWithSlot(t, db, "CRE4-STRICT")
 		testutil.MustNoErr(t, db.SetMaintainSupports(strict.ID, []int64{other.ID}), "supports another press only")
-		testutil.MustNoErr(t, db.SetNodeProperty(strict.ID, nodes.PropStrictSourcing, "on"), "strict")
+		testdb.KanbanStrict(t, db, strict.ID, true)
 		seedRoleClaim(t, db, "PROC-CRE4", press.Name, protocol.ClaimRoleProduce, "CRE4-P", strict.Name, "")
 		empty, _ := seedCancelledCarry(t, db, "AMR-CRE4", "", press.Name)
 		cacheRobot(eng, loadedDispatchable("AMR-CRE4"))
@@ -876,7 +876,7 @@ func emptiesBank(t *testing.T, db *store.DB, prefix string, binTypeID int64, pre
 		"a level of one")
 	seedRoleClaim(t, db, "PROC-"+prefix, press.Name, protocol.ClaimRoleProduce, prefix+"-PART", bank.Name, "")
 	if overflow != "" {
-		testutil.MustNoErr(t, db.SetNodeProperty(bank.ID, nodes.PropOverflowDestination, overflow), "name the overflow")
+		testdb.KanbanOverflow(t, db, bank.ID, overflow)
 	}
 	return bank
 }

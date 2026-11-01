@@ -166,12 +166,12 @@ func TestTopsAndBottomsPull_AStrictGroupThatSupportsThePressServesIt(t *testing.
 	db := testdb.Open(t)
 	c := newTBPCell(t, db, "TBS")
 	tb := c.cart(t, c.toteID, "TBS-TB", intPtr(0), "", nil)
-	c.exec(t, `INSERT INTO node_properties (node_id, key, value) VALUES ($1, $2, 'on')`, c.srcID, nodes.PropStrictSourcing)
+	testdb.KanbanStrict(t, db, c.srcID, true)
 
 	if res := c.find(t, c.pull("tbs-1")); res.Outcome != OutcomeWait || res.QueueCause != queueCauseOf(plan.CauseFinderGroupFenced) {
 		t.Fatalf("a strict group that does not support the press: %v under %q, want fenced", res.Outcome, res.QueueCause)
 	}
-	c.exec(t, `INSERT INTO node_maintain_supports (group_node_id, process_node_id) VALUES ($1, $2)`, c.srcID, c.pressID)
+	c.exec(t, `INSERT INTO kanban_supports (kanban_node_id, process_node_id) VALUES ($1, $2)`, c.srcID, c.pressID)
 	if res := c.find(t, c.pull("tbs-1")); res.Outcome != OutcomeFound || res.Bin == nil || res.Bin.ID != tb {
 		t.Fatalf("a strict group that supports the press: %v under %q, want bin %d", res.Outcome, res.QueueCause, tb)
 	}

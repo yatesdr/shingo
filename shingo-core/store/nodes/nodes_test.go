@@ -762,16 +762,16 @@ func TestNodeProperties_UpsertMovesUpdatedAt(t *testing.T) {
 	readTimes := func() (created, updated time.Time) {
 		t.Helper()
 		testutil.MustNoErr(t, sdb.QueryRow(
-			`SELECT created_at, updated_at FROM node_properties WHERE node_id=$1 AND key='maintain_enabled'`,
+			`SELECT created_at, updated_at FROM node_properties WHERE node_id=$1 AND key='resolve_around'`,
 			n.ID).Scan(&created, &updated), "read property timestamps")
 		return
 	}
 
-	testutil.MustNoErr(t, nodes.SetProperty(sdb, n.ID, "maintain_enabled", "off"), "SetProperty insert")
+	testutil.MustNoErr(t, nodes.SetProperty(sdb, n.ID, "resolve_around", "off"), "SetProperty insert")
 	created1, updated1 := readTimes()
 
 	// A CHANGED value moves updated_at and leaves created_at where it was.
-	testutil.MustNoErr(t, nodes.SetProperty(sdb, n.ID, "maintain_enabled", "on"), "SetProperty change")
+	testutil.MustNoErr(t, nodes.SetProperty(sdb, n.ID, "resolve_around", "on"), "SetProperty change")
 	created2, updated2 := readTimes()
 	if !created2.Equal(created1) {
 		t.Errorf("created_at moved on upsert: %v → %v", created1, created2)
@@ -781,7 +781,7 @@ func TestNodeProperties_UpsertMovesUpdatedAt(t *testing.T) {
 	}
 
 	// An UNCHANGED value moves it too — a save is a save.
-	testutil.MustNoErr(t, nodes.SetProperty(sdb, n.ID, "maintain_enabled", "on"), "SetProperty same value")
+	testutil.MustNoErr(t, nodes.SetProperty(sdb, n.ID, "resolve_around", "on"), "SetProperty same value")
 	_, updated3 := readTimes()
 	if !updated3.After(updated2) {
 		t.Errorf("updated_at did not move on a re-save of the same value: %v → %v", updated2, updated3)

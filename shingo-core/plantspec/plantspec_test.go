@@ -190,6 +190,17 @@ func TestValidate_MaintainedGroupPasses(t *testing.T) {
 	}
 }
 
+// A kanban with no supports declares what it holds and is refilled by others, so
+// it needs no station; sources, cover and per-type overflow are all spec fields.
+func TestValidate_AKanbanWithNoSupportsNeedsNoStation(t *testing.T) {
+	p := maintainedPlant()
+	p.MaintainedGroups[0].Station = ""
+	p.MaintainedGroups[0].Supports = nil
+	if err := p.Validate(); err != nil {
+		t.Fatalf("a kanban with no supports and no station should pass, got: %v", err)
+	}
+}
+
 func TestValidate_MaintainedGroupRefusals(t *testing.T) {
 	cases := []struct {
 		name   string
@@ -206,7 +217,13 @@ func TestValidate_MaintainedGroupRefusals(t *testing.T) {
 		}, "a maintained group is flat"},
 		{"no positions", func(p *Plant) { p.Zones[1].Positions = nil }, "no positions to hold a level"},
 		// projectOrder no-ops on a blank StationID.
-		{"no station", func(p *Plant) { p.MaintainedGroups[0].Station = "" }, "show on no board"},
+		{"supports and no station", func(p *Plant) { p.MaintainedGroups[0].Station = "" }, "show on no board"},
+		{"negative cover", func(p *Plant) { p.MaintainedGroups[0].RunningCover = -1 }, "cannot be negative"},
+		{"a source that is itself", func(p *Plant) { p.MaintainedGroups[0].Sources = []string{"PRESS-EMPTIES"} }, "itself as a source"},
+		{"a source that is no zone", func(p *Plant) { p.MaintainedGroups[0].Sources = []string{"NOPE"} }, "not a declared zone"},
+		{"a source twice", func(p *Plant) { p.MaintainedGroups[0].Sources = []string{"SYN_MARKET", "SYN_MARKET"} }, "twice"},
+		{"a level overflow that is no zone", func(p *Plant) { p.MaintainedGroups[0].Levels[0].Overflow = "NOPE" }, "not a declared zone"},
+		{"a level overflow that is itself", func(p *Plant) { p.MaintainedGroups[0].Levels[0].Overflow = "PRESS-EMPTIES" }, "overflows to itself"},
 		{"no levels", func(p *Plant) { p.MaintainedGroups[0].Levels = nil }, "declares no levels"},
 		{"unknown bin type", func(p *Plant) { p.MaintainedGroups[0].Levels[0].BinType = "BOGUS" }, "unknown bin_type"},
 		{"duplicate bin type", func(p *Plant) { p.MaintainedGroups[0].Levels[1].BinType = "STANDARD" }, "twice"},

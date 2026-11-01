@@ -305,7 +305,7 @@ func (s *Scanner) overflowsWhileParked(order *orders.Order, cause dispatch.Queue
 	if s.overflowRefusedThisPass[group] {
 		return false
 	}
-	overflow := s.db.GetNodePropertyByName(group, nodes.PropOverflowDestination)
+	overflow := s.db.OverflowNameOf(group)
 	took := overflow != "" && overflow != group
 	if took {
 		blocked, _ := dispatch.CheckDropoffCapacity(s.db, overflow, order.ID)

@@ -561,12 +561,10 @@ func (h *Handlers) apiNodeDisplayNameSet(w http.ResponseWriter, r *http.Request)
 // setNodePropertyAudited writes one node property and leaves the old→new trail
 // behind it.
 //
-// EXTRACTED SO THERE IS ONE OF IT. The maintained-group settings endpoint writes
-// four properties in one save, and the alternative — a second place that calls
-// SetNodeProperty and remembers to append an audit row — is how the trail
-// acquires a hole nobody notices until they go looking for a change that was
-// never recorded. Anything that writes a node property from the UI goes through
-// here.
+// EXTRACTED SO THERE IS ONE OF IT. A second place that calls SetNodeProperty and
+// remembers to append an audit row is how the trail acquires a hole nobody notices
+// until they go looking for a change that was never recorded. Anything that writes
+// a node property from the UI goes through here.
 //
 // AUDITED, and this is where the waiting point earns it. Node properties are
 // configuration — lane_gate_point decides whether a lane stages robots at all —

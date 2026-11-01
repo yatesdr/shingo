@@ -47,7 +47,7 @@ func TestMaintainedGroupLevel_LayerWants(t *testing.T) {
 	grpID, err := db.CreateNodeGroup("GRP-MGLW")
 	testutil.MustNoErr(t, err, "create group")
 	testdb.MarkGroup(t, db, grpID)
-	for i := 1; i <= 6; i++ {
+	for i := 1; i <= 8; i++ {
 		testutil.MustNoErr(t, db.CreateNode(&nodes.Node{
 			Name: fmt.Sprintf("GRP-MGLW-P%d", i), ParentID: &grpID, Enabled: true,
 		}), "create position")

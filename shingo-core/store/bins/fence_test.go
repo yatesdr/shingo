@@ -72,7 +72,7 @@ func fenceFixture(t *testing.T, db *store.DB, prefix, code string, strict bool) 
 		btID, prefix+"-OUTSIDE", far.ID).Scan(&outside), "outside carrier")
 
 	if strict {
-		testutil.MustNoErr(t, db.SetNodeProperty(grpID, nodes.PropStrictSourcing, "on"), "strict on")
+		testdb.KanbanStrict(t, db, grpID, true)
 	}
 	// The inside carrier has the LOWER id, so an unfenced search prefers it and
 	// every assertion below discriminates.
@@ -96,7 +96,7 @@ func supportProcess(t *testing.T, db *store.DB, grpID int64, name string) {
 //
 // This is the ruling that governs everything else: plant-wide sharing stays the
 // default everywhere, and the only fenced zones are maintained groups with
-// strict_sourcing on. Derek added the sharing deliberately, to keep lines
+// strict on. Derek added the sharing deliberately, to keep lines
 // running rather than run pure-strict, and phase 3 does not take it away.
 func TestFence_SharingIsTheDefault(t *testing.T) {
 	t.Parallel()
@@ -196,7 +196,7 @@ func TestFence_KeeperNeverSourcesFromTheGroupItIsFilling(t *testing.T) {
 
 	// NOT STRICT, deliberately. Filling a group from itself is a null trip
 	// whether or not anybody has fenced it, so rule (ii) does not consult
-	// strict_sourcing.
+	// strict.
 	got, err := bins.FindEmptyOfType(db.DB, "SELF-45x58", "", 0,
 		bins.EmptyFence{OriginGroup: "SELF-GRP"}, reservations.Anyone, domain.Height{})
 	testutil.MustNoErr(t, err, "find")

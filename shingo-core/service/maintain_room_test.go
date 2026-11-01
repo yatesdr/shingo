@@ -14,7 +14,7 @@ import (
 // how many of the carts are tops & bottoms.
 func TestRoomRefusals_TheRowCountsBesideTheLevel(t *testing.T) {
 	t.Parallel()
-	cfg := MaintainedGroupConfig{Enabled: true,
+	cfg := MaintainedGroupConfig{
 		Levels: []store.MaintainLevel{{BinTypeID: 7, Want: 3}},
 		LayerWants: []store.MaintainLayerWant{
 			{BinTypeID: 7, Layers: 0, Want: 2},

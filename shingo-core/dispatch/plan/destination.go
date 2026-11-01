@@ -98,30 +98,43 @@ func (p *Planner) OverflowDestination(group *nodes.Node, payloadCode string, sta
 	return result.Node.Name, true
 }
 
-// OverflowReader is what OverflowGroupOf reads: the group's property and the
-// node it names.
+// OverflowReader is what OverflowGroupOf reads: where the group's overflow points
+// and the node there.
 type OverflowReader interface {
-	GetNodeProperty(nodeID int64, key string) string
+	OverflowTargetOf(groupNodeID int64) (nodes.OverflowTarget, error)
+	GetNode(id int64) (*nodes.Node, error)
 	GetNodeByDotName(name string) (*nodes.Node, error)
 }
 
-// OverflowGroupOf is a maintained group's configured overflow destination: the
-// node it names, or nil. With nil, why is "" when none is configured (a real
-// answer, not a missing one) and a sentence when one is configured and
-// unusable.
+// OverflowGroupOf is a group's configured overflow destination: the node it
+// names, or nil. With nil, why is "" when none is configured (a real answer, not
+// a missing one) and a sentence when one is configured and unusable.
 //
-// THE LOOKUP HALF OF OverflowDestination, and the only copy. The cancel-return
-// policy (engine/cancel_return.go) follows the
-// same overflow for a bin it is returning to a group at its level, and two
-// lookups would be two answers the first time either grows a rule.
+// A kanban's overflow is the node on its row. A plain group's is the name in its
+// overflow_destination property, which is why this can still fail to resolve
+// (nodes.OverflowTargetOf; the pin of the plain arm is
+// TestOverflow_APlainGroupKeepsItsProperty).
+//
+// THE LOOKUP HALF OF OverflowDestination. The cancel-return policy
+// (engine/cancel_return.go) follows the same overflow for a bin it is returning
+// to a group at its level, and two lookups would be two answers the first time
+// either grows a rule.
 func OverflowGroupOf(db OverflowReader, group *nodes.Node) (*nodes.Node, string) {
-	overflow := db.GetNodeProperty(group.ID, nodes.PropOverflowDestination)
-	if overflow == "" {
+	target, err := db.OverflowTargetOf(group.ID)
+	if err != nil {
+		return nil, fmt.Sprintf("overflow of %s could not be read (%v)", group.Name, err)
+	}
+	var dest *nodes.Node
+	switch {
+	case target.NodeID != 0:
+		dest, err = db.GetNode(target.NodeID)
+	case target.Name != "":
+		dest, err = db.GetNodeByDotName(target.Name)
+	default:
 		return nil, ""
 	}
-	dest, err := db.GetNodeByDotName(overflow)
 	if err != nil || dest == nil {
-		return nil, fmt.Sprintf("overflow %q of %s does not resolve (%v)", overflow, group.Name, err)
+		return nil, fmt.Sprintf("overflow %q of %s does not resolve (%v)", target.Name, group.Name, err)
 	}
 	if dest.ID == group.ID {
 		// A group naming itself is the one-hop rule's degenerate case, and it is

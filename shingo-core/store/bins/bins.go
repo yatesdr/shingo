@@ -252,7 +252,7 @@ func (a *emptyQueryArgs) add(v any) int {
 //
 // SHARING IS THE PLANT DEFAULT. Derek's plant-wide empty sharing stays exactly
 // as it is for everyone; the ONLY fenced zones are maintained groups with
-// strict_sourcing on. A blank EmptyFence fences nothing, which is what every
+// kanbans.strict on. A blank EmptyFence fences nothing, which is what every
 // caller that has no order in hand keeps getting.
 type EmptyFence struct {
 	// ProcessNode is the asker's process node NAME — the identity the supports
@@ -284,16 +284,16 @@ func (f EmptyFence) Args() []any { return []any{f.ProcessNode, f.OriginGroup} }
 // point of the feature: nothing may steal from the press empty zones, and
 // everyone else keeps sharing.
 //
-// Supported-ness is read from node_maintain_supports by process node NAME,
+// Supported-ness is read from kanban_supports by process node NAME,
 // which is what the ask carries. A group that supports nobody fences everybody,
 // and that is right rather than a degenerate case — it is a group in the middle
 // of being configured, and the safe reading of "I have not said who this is
 // for" is "not for you".
 //
-// RECIPROCITY FALLS OUT, unasked for: a keeper topping up group A is not in
-// group B's supports list either, so it is an outsider at B by the same rule
-// that makes a press an outsider at A. Two maintained groups cannot drain each
-// other, and nothing had to be written to arrange it.
+// A KEEPER IS AN OUTSIDER TOO: its ask names no process, so a keeper topping up
+// group A cannot see strict group B's empties by the same rule that makes a press
+// an outsider at A. This holds only where B is strict; a group that is not strict
+// fences nobody, keeper included.
 //
 // ── RULE (ii): NOT FROM THE GROUP YOU ARE FILLING ───────────────────────────
 //
@@ -305,9 +305,8 @@ func (f EmptyFence) Args() []any { return []any{f.ProcessNode, f.OriginGroup} }
 // matters: the fence asks "are you an outsider here?" — a keeper is not, at its
 // own group — while this asks "are you filling this group?". The keeper is
 // exempt from rule (i) at its own group and caught by rule (ii) there anyway.
-// Net effect: the keeper sources from the market and the cells, never from any
-// maintained group, and a supported press reaches its own group through the
-// supports list.
+// Net effect: the keeper sources from anywhere but its own group and the strict
+// ones, and a supported press reaches its own group through the supports list.
 //
 // The measured consequence of not having rule (ii): a six-position group
 // standing at 2 of a level of 4 dispatched both its top-off asks against its
@@ -315,7 +314,7 @@ func (f EmptyFence) Args() []any { return []any{f.ProcessNode, f.OriginGroup} }
 // claims then dropped `resident`, which re-opened the gap, which asked again —
 // the group shuffled itself and never reached its level.
 //
-// APPLIED WITHOUT REGARD TO strict_sourcing, unlike rule (i). Filling a group
+// APPLIED WITHOUT REGARD TO strict, unlike rule (i). Filling a group
 // from itself is a null trip whether or not anybody has fenced it.
 //
 // ── WHY A NODE SET AND NOT A PER-ROW TEST ───────────────────────────────────
@@ -331,12 +330,12 @@ func (f EmptyFence) Args() []any { return []any{f.ProcessNode, f.OriginGroup} }
 // carry EmptyFence.Args().
 func FencedNodesCTE(processParam, originParam int) string {
 	return fmt.Sprintf(`WITH RECURSIVE fenced_roots(id) AS (
-		SELECT np.node_id FROM node_properties np
-		 WHERE np.key = 'strict_sourcing' AND np.value = 'on'
+		SELECT k.node_id FROM kanbans k
+		 WHERE k.strict
 		   AND NOT EXISTS (
-			 SELECT 1 FROM node_maintain_supports s
+			 SELECT 1 FROM kanban_supports s
 			 JOIN nodes pn ON pn.id = s.process_node_id
-			 WHERE s.group_node_id = np.node_id AND pn.name = $%d
+			 WHERE s.kanban_node_id = k.node_id AND pn.name = $%d
 		   )
 		UNION
 		SELECT g.id FROM nodes g WHERE $%d <> '' AND g.name = $%d
@@ -1613,7 +1612,7 @@ func CountEmptyOfTypeInGroupExcludingNode(db *sql.DB, binTypeCode string, groupN
 // sharing rather than fencing. That ordering is the whole semantic.
 //
 // AND IT IS WHY THE FENCE HAD TO BE ADDITIVE. Phase 3 does not narrow this arm;
-// it adds one exception to it — maintained groups with strict_sourcing on —
+// it adds one exception to it — kanbans with strict on —
 // and everything else keeps sharing exactly as before. A blank EmptyFence
 // renders neither the CTE nor the arm, so an unfenced plant runs Derek's query
 // unchanged, byte for byte.

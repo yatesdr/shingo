@@ -67,25 +67,42 @@ func mgWarnedAbout(chk MaintainedGroupCheck, substr string) bool {
 // projectOrder no-ops on a blank StationID, so a top-up order minted without a
 // station would run on the floor and appear on no board anywhere. Refused rather
 // than warned because nothing downstream can detect it afterwards.
-func TestMaintainedGroup_RefusesEnabledWithoutStation(t *testing.T) {
+func TestMaintainedGroup_RefusesSupportsWithoutStation(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
 	svc := NewNodeService(db)
 
-	grpID, _ := mgGroup(t, db, "GRP-NO-STATION", 2)
+	grpID, kids := mgGroup(t, db, "GRP-NO-STATION", 2)
+	bt := mgBinType(t, db, "NO-STATION-TOTE")
 
-	chk, err := svc.CheckMaintainedGroupSettings(grpID, MaintainedGroupSettings{MaintainEnabled: true})
-	testutil.MustNoErr(t, err, "CheckMaintainedGroupSettings enabled")
+	// No supports: a kanban that declares what it holds needs no station.
+	chk, err := svc.SetMaintainLevel(grpID, bt, 1)
+	testutil.MustNoErr(t, err, "level with no supports")
+	if chk.Err() != nil {
+		t.Fatalf("a kanban with no supports and no station was refused: %v", chk.Refusals)
+	}
+
+	chk, err = svc.SetMaintainSupports(grpID, []int64{kids[0].ID})
+	testutil.MustNoErr(t, err, "supports")
 	if !mgRefusedBy(chk, "station") {
 		t.Fatalf("refusals = %v, want one about the missing station", chk.Refusals)
 	}
+	if got, _ := svc.ListMaintainSupports(grpID); len(got) != 0 {
+		t.Errorf("the refused supports were written: %+v", got)
+	}
 
-	// Not maintained: the station is nobody's business, and a group being
-	// configured must be able to sit in that state.
-	chk, err = svc.CheckMaintainedGroupSettings(grpID, MaintainedGroupSettings{MaintainEnabled: false})
-	testutil.MustNoErr(t, err, "CheckMaintainedGroupSettings disabled")
+	testdb.KanbanStation(t, db, grpID, "EDGE-1")
+	chk, err = svc.SetMaintainSupports(grpID, []int64{kids[0].ID})
+	testutil.MustNoErr(t, err, "supports with a station")
 	if chk.Err() != nil {
-		t.Fatalf("a disabled group with no station was refused: %v", chk.Refusals)
+		t.Fatalf("supports with a station were refused: %v", chk.Refusals)
+	}
+
+	// Clearing the station under them is the same state, refused the same way.
+	chk, err = svc.CheckMaintainedGroupSettings(grpID, MaintainedGroupSettings{})
+	testutil.MustNoErr(t, err, "CheckMaintainedGroupSettings")
+	if !mgRefusedBy(chk, "station") {
+		t.Fatalf("refusals = %v, want one about the missing station", chk.Refusals)
 	}
 }
 
@@ -102,7 +119,7 @@ func TestMaintainedGroup_RefusesNonFlatGroup(t *testing.T) {
 	testutil.MustNoErr(t, err, "AddLane")
 
 	chk, err := svc.CheckMaintainedGroupSettings(grpID, MaintainedGroupSettings{
-		MaintainEnabled: true, MaintenanceStation: "EDGE-1",
+		MaintenanceStation: "EDGE-1",
 	})
 	testutil.MustNoErr(t, err, "CheckMaintainedGroupSettings")
 	if !mgRefusedBy(chk, "GRP-DEEP-LANE-1") {
@@ -231,8 +248,7 @@ func TestMaintainedGroup_WarnsWhenLevelFillsEveryPosition(t *testing.T) {
 	grpID, _ := mgGroup(t, db, "GRP-FULL", 2)
 	bt := mgBinType(t, db, "FULL-TOTE")
 
-	testutil.MustNoErr(t, db.SetNodeProperty(grpID, nodes.PropMaintainEnabled, "on"), "enable")
-	testutil.MustNoErr(t, db.SetNodeProperty(grpID, nodes.PropMaintenanceStation, "EDGE-1"), "station")
+	testdb.KanbanStation(t, db, grpID, "EDGE-1")
 
 	chk, err := svc.SetMaintainLevel(grpID, bt, 2)
 	testutil.MustNoErr(t, err, "SetMaintainLevel")
@@ -261,6 +277,7 @@ func TestMaintainedGroup_WarnsOnUntypedSupportedPosition(t *testing.T) {
 	grpID, _ := mgGroup(t, db, "GRP-SUP", 4)
 	press := &nodes.Node{Name: "PRESS-UNTYPED", Enabled: true}
 	testutil.MustNoErr(t, db.CreateNode(press), "create press")
+	testdb.KanbanStation(t, db, grpID, "EDGE-1")
 
 	chk, err := svc.SetMaintainSupports(grpID, []int64{press.ID})
 	testutil.MustNoErr(t, err, "SetMaintainSupports")
@@ -291,10 +308,10 @@ func mgPutBin(t *testing.T, db *store.DB, label string, binTypeID, nodeID int64)
 	}), "CreateBin "+label)
 }
 
-// Turning maintenance off on a group that still holds carriers leaves them
-// belonging to nothing. Refused, naming them — and force is the operator saying
+// Reserving a group that still holds carriers hides them from every process not
+// on the list. Refused, naming them — and force is the operator saying
 // they already know.
-func TestMaintainedGroupGuard_DisableWithResidents(t *testing.T) {
+func TestMaintainedGroupGuard_ReserveWithResidents(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
 	svc := NewNodeService(db)
@@ -303,10 +320,8 @@ func TestMaintainedGroupGuard_DisableWithResidents(t *testing.T) {
 	bt := mgBinType(t, db, "HOLD-TOTE")
 	mgPutBin(t, db, "BIN-HELD-1", bt, kids[0].ID)
 
-	testutil.MustNoErr(t, db.SetNodeProperty(grpID, nodes.PropMaintainEnabled, "on"), "enable")
-
 	g, err := svc.CheckMaintainedGroupSettingsChange(grpID,
-		MaintainedGroupSettings{MaintainEnabled: false}, false)
+		MaintainedGroupSettings{StrictSourcing: true}, false)
 	testutil.MustNoErr(t, err, "CheckMaintainedGroupSettingsChange")
 	if !strings.Contains(g.Blocked, "BIN-HELD-1") {
 		t.Fatalf("blocked = %q, want it to name the carrier standing there", g.Blocked)
@@ -315,7 +330,7 @@ func TestMaintainedGroupGuard_DisableWithResidents(t *testing.T) {
 	// force is the whole point of the guard being a refusal rather than a
 	// prohibition.
 	g, err = svc.CheckMaintainedGroupSettingsChange(grpID,
-		MaintainedGroupSettings{MaintainEnabled: false}, true)
+		MaintainedGroupSettings{StrictSourcing: true}, true)
 	testutil.MustNoErr(t, err, "CheckMaintainedGroupSettingsChange forced")
 	if g.Blocked != "" {
 		t.Errorf("forced change still blocked: %q", g.Blocked)
@@ -333,11 +348,10 @@ func TestMaintainedGroupGuard_NoTransitionAsksNothing(t *testing.T) {
 	bt := mgBinType(t, db, "STEADY-TOTE")
 	mgPutBin(t, db, "BIN-STEADY-1", bt, kids[0].ID)
 
-	testutil.MustNoErr(t, db.SetNodeProperty(grpID, nodes.PropMaintainEnabled, "on"), "enable")
-	testutil.MustNoErr(t, db.SetNodeProperty(grpID, nodes.PropStrictSourcing, "on"), "reserve")
+	testdb.KanbanStrict(t, db, grpID, true)
 
 	g, err := svc.CheckMaintainedGroupSettingsChange(grpID, MaintainedGroupSettings{
-		MaintainEnabled: true, StrictSourcing: true, MaintenanceStation: "EDGE-2",
+		StrictSourcing: true, MaintenanceStation: "EDGE-2",
 	}, false)
 	testutil.MustNoErr(t, err, "CheckMaintainedGroupSettingsChange")
 	if g.Blocked != "" {

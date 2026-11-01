@@ -75,7 +75,7 @@ func newParkedPush(t *testing.T, db *store.DB, pfx string, withOverflow bool) pa
 	_, spillPos := group(fx.overflow, 1)
 	fx.blocker = carrier(pfx+"-BLOCK", spillPos[0])
 	if withOverflow {
-		testutil.MustNoErr(t, db.SetNodeProperty(grpID, nodes.PropOverflowDestination, fx.overflow), "overflow")
+		testdb.KanbanOverflow(t, db, grpID, fx.overflow)
 	}
 	fx.away = plain(pfx + "-AWAY")
 	src := pfx + "-SRC"
@@ -160,7 +160,7 @@ func TestOverflow_APushParkedAtAFullGroupTakesItsOverflowToo(t *testing.T) {
 	testdb.SetupStandardData(t, db)
 	eng := newTestEngine(t, db, testdb.NewTrackingBackend())
 	fx := newParkedPush(t, db, "OVP5", true)
-	_, err := db.Exec(`DELETE FROM node_maintain_levels WHERE group_node_id = (SELECT id FROM nodes WHERE name = $1)`, fx.group)
+	_, err := db.Exec(`DELETE FROM kanban_levels WHERE kanban_node_id = (SELECT id FROM nodes WHERE name = $1)`, fx.group)
 	testutil.MustNoErr(t, err, "no level")
 	_, err = db.Exec(`INSERT INTO bins (bin_type_id, label, node_id, status)
 		SELECT bin_type_id, 'OVP5-RES2', (SELECT id FROM nodes WHERE name = $1), 'available' FROM bins WHERE id = $2`,
@@ -387,7 +387,7 @@ func laneOverflow(t *testing.T, db *store.DB, pfx string, fx parkedPush) string 
 	binAt(t, db, slots[0][0], "")
 	g, err := db.GetNodeByDotName(fx.group)
 	testutil.MustNoErr(t, err, "the parked group")
-	testutil.MustNoErr(t, db.SetNodeProperty(g.ID, nodes.PropOverflowDestination, grp.Name), "the lane overflow")
+	testdb.KanbanOverflow(t, db, g.ID, grp.Name)
 	return grp.Name
 }
 

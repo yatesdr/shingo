@@ -225,6 +225,35 @@ console.log('the sections count history gave away render where they went (owner,
         const covered = vm.runInContext('keeperRowHtml(' + JSON.stringify({ bin_type_code: 'STANDARD', want: 4, resident: 4, gap: 0 }) + ')', kctx);
         check('keeper: a covered level is a quiet 0 and a dash', !covered.includes('mg-short') && covered.includes('&mdash;'), covered);
     }
+    // The kanban's Sources list on the same module: ordered, one group at a time.
+    const srcRows = liftFrom('nodes-maintain.js', 'function', 'sourceRowsHtml');
+    const moveIn = liftFrom('nodes-maintain.js', 'function', 'moveInList');
+    if (!srcRows || !moveIn) {
+        check('nodes-maintain.js defines sourceRowsHtml and moveInList', false);
+    } else {
+        const sctx = { escapeHtml: esc };
+        vm.createContext(sctx);
+        vm.runInContext(srcRows + '\n' + moveIn, sctx);
+        const list = [{ id: 1, name: 'Z45' }, { id: 2, name: 'Z32' }];
+        const groups = list.concat([{ id: 3, name: 'SM' }]);
+        const html = vm.runInContext('sourceRowsHtml(' + JSON.stringify(list) + ',' + JSON.stringify(groups) + ')', sctx);
+        check('sources: in order, numbered from 1', html.indexOf('1.') < html.indexOf('Z45') && html.indexOf('Z45') < html.indexOf('2.')
+            && html.indexOf('2.') < html.indexOf('Z32'), html);
+        check('sources: the first has no up, the last has no down', /data-index="0" data-delta="-1" disabled/.test(html)
+            && /data-index="1" data-delta="1" disabled/.test(html) && !/data-index="0" data-delta="1" disabled/.test(html), html);
+        check('sources: the add row offers only what is not listed', html.includes('<option value="3">SM</option>')
+            && !html.includes('<option value="1">'), html);
+        check('sources: one group at a time, nothing selects several', !/multiple|select.?all/i.test(html), html);
+        const empty = vm.runInContext('sourceRowsHtml([],' + JSON.stringify(groups) + ')', sctx);
+        check('sources: none says the keeper searches the plant', empty.includes('searches the plant'), empty);
+        const moved = (from, delta) => JSON.stringify(vm.runInContext(
+            'moveInList(' + JSON.stringify(list) + ',' + from + ',' + delta + ').map(function (s) { return s.name; })', sctx));
+        check('sources: down moves it later', moved(0, 1) === '["Z32","Z45"]', moved(0, 1));
+        check('sources: up past the top stays', moved(0, -1) === '["Z45","Z32"]', moved(0, -1));
+        check('sources: down past the bottom stays', moved(1, 1) === '["Z45","Z32"]', moved(1, 1));
+    }
+    const moduleSrc = fs.readFileSync(path.join(__dirname, 'nodes-maintain.js'), 'utf8');
+    check('modal: the enabled toggle is gone', !moduleSrc.includes('maintain_enabled') && !moduleSrc.includes('nf-maintain-enabled'));
     // The lineside piles, on the Bins page.
     const rows = liftFrom('bins-lineside.js', 'function', 'bucketRowsHtml');
     const age = liftFrom('bins-lineside.js', 'function', 'bucketAgeMs');

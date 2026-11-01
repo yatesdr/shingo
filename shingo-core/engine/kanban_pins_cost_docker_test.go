@@ -30,11 +30,10 @@ import (
 // asserted exactly so a read added or removed is a decision. The comment on each
 // names the settled target; the lane that lands the target changes the const.
 const (
-	// todayKeeperTickFixed + S is one steady tick, nothing short: the node list,
-	// the open episodes, one maintain_enabled read per enabled synthetic node (S),
-	// and per kept group (K, K2) its station, its levels and two counts per level.
-	// Settled: 4 whatever S is.
-	todayKeeperTickFixed = 16
+	// todayKeeperTickFixed is one steady tick, nothing short, whatever the plant's
+	// synthetic node count: the node list, the open episodes, the kanbans, and per
+	// kept kanban (K, K2) its levels and two counts per level. Settled: 4.
+	todayKeeperTickFixed = 15
 	// todaySnapshotBuild is one bins feed build for the Edge watching the
 	// windows: the read snapshot (5), K's levels, then UnloaderGroupLines (open
 	// episodes, types in play, two counts per level). Settled: about 9.
@@ -122,8 +121,7 @@ func newKanbanCostRig(t *testing.T, z45Small, z45Big, z45Totes int) *kanbanCostR
 		return at
 	}
 	keeper := func(g *nodes.Node, supports ...string) {
-		testutil.MustNoErr(t, db.SetNodeProperty(g.ID, nodes.PropMaintainEnabled, "on"), "enable")
-		testutil.MustNoErr(t, db.SetNodeProperty(g.ID, nodes.PropMaintenanceStation, "kc-edge"), "station")
+		testdb.KanbanStation(t, db, g.ID, "kc-edge")
 		var ids []int64
 		for _, name := range supports {
 			n := &nodes.Node{Name: name, Enabled: true}
@@ -149,7 +147,7 @@ func newKanbanCostRig(t *testing.T, z45Small, z45Big, z45Totes int) *kanbanCostR
 	level(r.k2, r.small, 1)
 	stand(r.small, kids[:1], "KC-K2-S")
 
-	// Z45 and Z32 declare levels and run no keeper: the flag is K's and K2's.
+	// Z45 and Z32 declare levels and name no station, so they run no keeper.
 	r.z45, kids = kanbanCostFlat(t, db, "KC-Z45", 8)
 	level(r.z45, r.small, 2)
 	level(r.z45, r.big, 2)
@@ -157,14 +155,14 @@ func newKanbanCostRig(t *testing.T, z45Small, z45Big, z45Totes int) *kanbanCostR
 	stand(r.small, kids[:z45Small], "KC-Z45-S")
 	stand(r.big, kids[z45Small:z45Small+z45Big], "KC-Z45-B")
 	stand(r.totes, kids[z45Small+z45Big:z45Small+z45Big+z45Totes], "KC-Z45-T")
-	testutil.MustNoErr(t, db.SetNodeProperty(r.k.ID, nodes.PropOverflowDestination, r.z45.Name), "overflow")
+	testdb.KanbanOverflow(t, db, r.k.ID, r.z45.Name)
 
 	r.z32, kids = kanbanCostFlat(t, db, "KC-Z32", 8)
 	level(r.z32, r.t32, 6)
 	stand(r.t32, kids[:6], "KC-Z32")
 
-	// Plain markets: lanes, no level, each lane one more synthetic node for the
-	// tick's per-node read.
+	// Plain markets: lanes, no level, each lane one more synthetic node, which the
+	// tick no longer pays for.
 	for _, m := range []string{"KC-SM", "KC-M2", "KC-M3"} {
 		_, _, slots := laneGroup(t, db, m, 6, 3)
 		if m == "KC-SM" {
@@ -198,14 +196,6 @@ func newKanbanCostRig(t *testing.T, z45Small, z45Big, z45Totes int) *kanbanCostR
 	return r
 }
 
-// syntheticCount is S: the enabled synthetic nodes the tick asks one question of.
-func (r *kanbanCostRig) syntheticCount(t *testing.T) int64 {
-	t.Helper()
-	var s int64
-	testutil.MustNoErr(t, r.db.QueryRow(`SELECT count(*) FROM nodes WHERE is_synthetic AND enabled`).Scan(&s), "S")
-	return s
-}
-
 // inGroup reports whether a node name is a position of group g.
 func (r *kanbanCostRig) inGroup(t *testing.T, name string, g *nodes.Node) bool {
 	t.Helper()
@@ -236,20 +226,18 @@ func reAim(stmts []string) int {
 	return len(stmts)
 }
 
-// TestKanbanCost_KeeperTick: one steady tick. Asserted with Z45 and Z32 running
-// no keeper; logged with them flagged on as well, the reading the round-4 census
-// assumed for "≈22+S".
+// TestKanbanCost_KeeperTick: one steady tick. Asserted with Z45 and Z32 running no
+// keeper (no station); logged with a station on them as well, the reading the
+// round-4 census assumed for "≈22+S".
 func TestKanbanCost_KeeperTick(t *testing.T) {
 	t.Parallel()
 	r := newKanbanCostRig(t, 2, 2, 2)
-	s := r.syntheticCount(t)
 	m := r.eng.Maintainer()
 
 	r.counter.Reset()
 	m.Tick()
 	n := r.counter.Count()
-	t.Logf("STATEMENTS: keeper tick, steady, S=%d: %d (fixed %d + S)\n%s", s, n, n-s,
-		testutil.StatementBreakdown(r.counter.Statements()))
+	t.Logf("STATEMENTS: keeper tick, steady: %d\n%s", n, testutil.StatementBreakdown(r.counter.Statements()))
 	for _, st := range m.Snapshot() {
 		if st.Gap > 0 || st.Created != 0 || st.OriginID != "" {
 			t.Fatalf("fixture drift: the tick is not steady: %+v", st)
@@ -258,17 +246,16 @@ func TestKanbanCost_KeeperTick(t *testing.T) {
 	if len(m.Snapshot()) != 5 {
 		t.Fatalf("fixture drift: %d lines kept, want K's 4 and K2's 1: %+v", len(m.Snapshot()), m.Snapshot())
 	}
-	if n != todayKeeperTickFixed+s {
-		t.Errorf("keeper tick = %d statements, want %d + S (%d)", n, todayKeeperTickFixed, s)
+	if n != todayKeeperTickFixed {
+		t.Errorf("keeper tick = %d statements, want %d", n, todayKeeperTickFixed)
 	}
 
 	for _, g := range []*nodes.Node{r.z45, r.z32} {
-		testutil.MustNoErr(t, r.db.SetNodeProperty(g.ID, nodes.PropMaintainEnabled, "on"), "enable")
-		testutil.MustNoErr(t, r.db.SetNodeProperty(g.ID, nodes.PropMaintenanceStation, "kc-edge"), "station")
+		testdb.KanbanStation(t, r.db, g.ID, "kc-edge")
 	}
 	r.counter.Reset()
 	m.Tick()
-	t.Logf("STATEMENTS: the same tick with Z45 and Z32 flagged on: %d (fixed %d + S)", r.counter.Count(), r.counter.Count()-s)
+	t.Logf("STATEMENTS: the same tick with a station on Z45 and Z32: %d", r.counter.Count())
 }
 
 // TestKanbanCost_SnapshotBuild: one bins feed build for the Edge watching the
@@ -364,7 +351,7 @@ func TestKanbanCost_ScannerParkedPass(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			r := newKanbanCostRig(t, tc.small, tc.big, tc.totes)
-			testutil.MustNoErr(t, r.db.SetNodeProperty(r.k.ID, nodes.PropOverflowDestination, ""), "no overflow yet")
+			testdb.KanbanOverflow(t, r.db, r.k.ID, "")
 			push := testdb.CreateOrder(t, r.db, func(o *orders.Order) {
 				o.EdgeUUID = "kc-parked"
 				o.StationID = "kc-edge"
@@ -382,7 +369,7 @@ func TestKanbanCost_ScannerParkedPass(t *testing.T) {
 				t.Fatalf("fixture drift: the push is %s (%s), want parked at K's level", parked.Status, parked.QueueCause)
 			}
 
-			testutil.MustNoErr(t, r.db.SetNodeProperty(r.k.ID, nodes.PropOverflowDestination, r.z45.Name), "overflow")
+			testdb.KanbanOverflow(t, r.db, r.k.ID, r.z45.Name)
 			r.counter.Reset()
 			r.eng.fulfillment.RunOnce()
 			stmts := r.counter.Statements()

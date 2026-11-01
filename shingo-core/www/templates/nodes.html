@@ -216,7 +216,7 @@
         </div>
       </div>
       </div>
-      <!-- Shown when the group is maintained. The algorithms are NOT hidden in
+      <!-- Shown when the group declares a level. The algorithms are NOT hidden in
            that case, deliberately: they still decide everything about loaded
            carriers here. Saying which half they stop deciding is information; a
            control that vanishes is a question. -->
@@ -225,45 +225,57 @@
       </div>
     </div>
 
-    <!-- Maintained group (NGRP only) -------------------------------------
-         The level Core holds here in EMPTY carriers. Not a "buffer": a loader
-         window with home_kind=buffer is a different, existing thing. -->
+    <!-- Kanban (NGRP only) -------------------------------------------------
+         The level Core holds here in EMPTY carriers. A group with a level is a
+         kanban. Not a "buffer": a loader window with home_kind=buffer is a
+         different, existing thing. -->
     <div id="nf-maintain" class="hide mb-2">
-      <label class="text-sm" style="display:block;margin-bottom:6px;font-weight:600">Maintained group</label>
+      <label class="text-sm" style="display:block;margin-bottom:6px;font-weight:600">Kanban</label>
       <div class="text-muted" style="font-size:0.75rem;margin-bottom:10px">
-        Core can hold a set number of empty carriers here, so the equipment this group
-        serves never has to wait for one.
+        Declare a level and Core keeps that many empty carriers here, so the equipment this group
+        supports never has to wait for one.
       </div>
 
-      <label class="text-sm" style="display:flex;align-items:center;gap:8px;margin-bottom:8px;cursor:pointer">
-        <input type="checkbox" id="nf-maintain-enabled" data-action-change="onMaintainToggle">
-        Keep this group stocked
-      </label>
       <label class="text-sm" style="display:flex;align-items:center;gap:8px;margin-bottom:10px;cursor:pointer">
         <input type="checkbox" id="nf-maintain-strict">
-        Only the processes listed below may take empties from here
+        Strict: only the processes under Supports may take empties from here
       </label>
 
       <div class="grid grid-2 text-sm">
         <div class="form-group">
           <label for="nf-maintain-station">Board these orders show on</label>
           <select id="nf-maintain-station"></select>
-          <div class="form-hint">Without one, the top-up orders show on no board at all.</div>
+          <div class="form-hint">Needed with Supports: without one, the top-up orders show on no board
+            at all, so Core does not place them.</div>
         </div>
         <div class="form-group">
-          <label for="nf-maintain-overflow">When this group has its level, send extras to</label>
+          <label for="nf-maintain-overflow">Overflow</label>
           <select id="nf-maintain-overflow"></select>
-          <div class="form-hint">Optional. Without one, a carrier that turns up anyway waits where it
-            is, still loaded.</div>
+          <div class="form-hint">Where extras go when this group has its level. Optional. Without one,
+            a carrier that turns up anyway waits where it is, still loaded.</div>
         </div>
       </div>
 
       <div class="form-group">
-        <label>Maintained level</label>
+        <label>Level</label>
         <div id="nf-maintain-levels"></div>
         <div class="form-hint">How many of each carrier type to keep here. Zero means none of that
-          type, on purpose. Under a type, the heights wanted here tell the unloader what to send a
-          cart back as; they do not change how many Core keeps.</div>
+          type, on purpose. A type's Overflow goes ahead of the group's. Under a type,
+          the heights wanted here tell the unloader what to send a cart back as; they do not change
+          how many Core keeps.</div>
+      </div>
+
+      <div class="form-group text-sm">
+        <label for="nf-maintain-cover">Running cover</label>
+        <input type="number" id="nf-maintain-cover" class="form-input loader-mix-want" min="0" value="0">
+        <div class="form-hint">Extra of a type to keep per process under Supports running that type.</div>
+      </div>
+
+      <div class="form-group">
+        <label>Sources</label>
+        <div id="nf-maintain-sources"></div>
+        <div class="form-hint">Groups the keeper may pull from, first to last. With none, it searches
+          the plant.</div>
       </div>
 
       <!-- The keeper's last tick for this group (moved from /inventory,
@@ -281,7 +293,7 @@
         <div class="form-hint">Empty carriers Core keeps standing by: level &minus; here &minus; asked &minus; coming = short.</div>
       </div>
       <div class="form-group">
-        <label>Processes this group serves</label>
+        <label>Supports</label>
         <div id="nf-maintain-supports"></div>
         <div class="form-hint">Pick the processes that pull empties from here. Their positions are
           what gets saved.</div>

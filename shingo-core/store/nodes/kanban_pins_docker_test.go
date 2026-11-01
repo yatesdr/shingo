@@ -20,7 +20,7 @@ func TestKanbanPin_AStrictGroupFencesABlankProcess(t *testing.T) {
 	strict, err := nodes.CreateGroup(db.DB, "KPF-STRICT")
 	testutil.MustNoErr(t, err, "strict group")
 	testdb.MarkGroup(t, db, strict)
-	testutil.MustNoErr(t, db.SetNodeProperty(strict, nodes.PropStrictSourcing, "on"), "strict on")
+	testdb.KanbanStrict(t, db, strict, true)
 	open, err := nodes.CreateGroup(db.DB, "KPF-OPEN")
 	testutil.MustNoErr(t, err, "open group")
 	testdb.MarkGroup(t, db, open)

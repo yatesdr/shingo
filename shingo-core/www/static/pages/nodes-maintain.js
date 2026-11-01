@@ -1,11 +1,11 @@
 import { apiGet, apiPost, delegateActions, escapeHtml, toast, uiConfirm } from '/static/app.js';
 
-// Maintained-group section of the node group settings modal.
+// Kanban section of the node group settings modal.
 //
-// A maintained group is a node group whose EMPTY-CARRIER level Core holds: so
-// many unclaimed carriers of each declared type, at all times, near the
-// equipment that consumes them. This module owns the section's whole lifecycle —
-// load, render, stage, save.
+// A kanban is a node group whose EMPTY-CARRIER level Core holds: so many
+// unclaimed carriers of each declared type, near the equipment that consumes
+// them. A group with a level is one; there is no switch. This module owns the
+// section's whole lifecycle — load, render, stage, save.
 //
 // NOT "buffer" in any string a person reads. A loader window can have
 // home_kind=buffer, which is a different thing with opposite behaviour, and one
@@ -30,13 +30,16 @@ var _mg = null;
 function blank(nodeID) {
   return {
     nodeID: nodeID,
-    // levels: [{bin_type_id, bin_type_code, want, layer_wants: [{layers, want}]}]
-    // as edited. layer_wants are the level's wanted heights, told to the
-    // unloader; the one at 0 layers is the type's tops & bottoms row, a cap of
-    // its own beside the level (a tote type only).
+    // levels: [{bin_type_id, bin_type_code, want, overflow_node_id,
+    // layer_wants: [{layers, want}]}] as edited. overflow_node_id is the type's own
+    // overflow, 0 for the group's. layer_wants are the level's wanted heights, told
+    // to the unloader; the one at 0 layers is the type's tops & bottoms row, a cap
+    // of its own beside the level (a tote type only).
     levels: [],
     // savedLevels: what the server had, for the remove-diff on save.
     savedLevels: [],
+    // sources: [{id, name}], the groups the keeper may pull from, first to last.
+    sources: [],
     // processes: [{process_id, nodes:[{id,name}]}] — the picker's contents.
     processes: [],
     // selected: Set of process_id.
@@ -85,12 +88,16 @@ export function renderMaintainSection(isGroupType, nodeID) {
     _mg.levels = (cfg.levels || []).map(function (l) {
       return {
         bin_type_id: Number(l.bin_type_id), bin_type_code: l.bin_type_code, want: Number(l.want),
+        overflow_node_id: Number(l.overflow_node_id || 0), overflow_node: l.overflow_node || '',
         layer_wants: (cfg.layer_wants || []).filter(function (w) {
           return Number(w.bin_type_id) === Number(l.bin_type_id);
         }).map(function (w) { return { layers: Number(w.layers), want: Number(w.want) }; })
       };
     });
-    _mg.savedLevels = _mg.levels.map(function (l) { return { bin_type_id: l.bin_type_id, want: l.want }; });
+    _mg.savedLevels = _mg.levels.map(savedLevel);
+    _mg.sources = (cfg.sources || []).map(function (s) {
+      return { id: Number(s.source_node_id), name: s.source_node_name };
+    });
     _mg.processes = opts;
 
     var storedNodes = new Set((cfg.supports || []).map(function (s) { return Number(s.process_node_id); }));
@@ -107,13 +114,13 @@ export function renderMaintainSection(isGroupType, nodeID) {
     });
     _mg.orphans = Array.from(storedNodes).filter(function (id) { return !claimed.has(id); });
 
-    document.getElementById('nf-maintain-enabled').checked = !!cfg.maintain_enabled;
     document.getElementById('nf-maintain-strict').checked = !!cfg.strict_sourcing;
+    document.getElementById('nf-maintain-cover').value = String(Number(cfg.running_cover || 0));
     fillStations(cfg.maintenance_station || '');
     fillOverflow(cfg.overflow_destination || '');
     renderLevels();
+    renderSources();
     renderSupports();
-    setAlgoNote(!!cfg.maintain_enabled);
   }).catch(function (err) {
     console.error('renderMaintainSection', err);
     // Loud, and the section stays hidden. A section rendered from a failed fetch
@@ -121,22 +128,40 @@ export function renderMaintainSection(isGroupType, nodeID) {
     // configuration change.
     box.classList.add('hide');
     _mg = null;
-    toast('Could not load the maintained-group settings for this group.', 'error');
+    toast('Could not load the kanban settings for this group.', 'error');
   });
 }
 
+// savedLevel is what a save diffs a level line against.
+function savedLevel(l) {
+  return { bin_type_id: l.bin_type_id, want: l.want, overflow_node_id: l.overflow_node_id };
+}
+
 // setAlgoNote annotates the ASRS/algorithm controls instead of hiding them. They
-// still decide everything about LOADED carriers here; what a maintained level
-// takes over is the empty pull. Saying which half stopped applying is
-// information — a control that vanished would just be a question.
+// still decide everything about LOADED carriers here; what a level takes over is
+// the empty pull. Saying which half stopped applying is information — a control
+// that vanished would just be a question.
 function setAlgoNote(on) {
   var note = document.getElementById('nf-maintain-algo-note');
   if (note) note.classList.toggle('hide', !on);
 }
 
-export function onMaintainToggle() {
-  var box = document.getElementById('nf-maintain-enabled');
-  setAlgoNote(!!(box && box.checked));
+// otherGroups is the node groups on the page, this one left out, off the tiles:
+// [{id, name}], sorted by name. NGRP is the only group code: Core's v6 migration
+// renamed the legacy SMKT / SUP codes to it.
+function otherGroups() {
+  var seen = {};
+  var out = [];
+  document.querySelectorAll('.node-tile').forEach(function (t) {
+    if (t.dataset.typeCode !== 'NGRP') return;
+    var name = t.dataset.name;
+    if (!name || seen[name]) return;
+    if (_mg && String(t.dataset.id) === String(_mg.nodeID)) return; // never itself
+    seen[name] = true;
+    out.push({ id: Number(t.dataset.id), name: name });
+  });
+  out.sort(function (a, b) { return a.name.localeCompare(b.name); });
+  return out;
 }
 
 function fillStations(current) {
@@ -162,17 +187,10 @@ function fillOverflow(current) {
   var sel = document.getElementById('nf-maintain-overflow');
   if (!sel) return;
   var html = '<option value="">— none —</option>';
-  // Groups come off the tiles already on the page. NGRP is the only group
-  // code: Core's v6 migration renamed the legacy SMKT / SUP codes to it.
   var seen = {};
-  document.querySelectorAll('.node-tile').forEach(function (t) {
-    var code = t.dataset.typeCode;
-    if (code !== 'NGRP') return;
-    var name = t.dataset.name;
-    if (!name || seen[name]) return;
-    if (_mg && String(t.dataset.id) === String(_mg.nodeID)) return; // never itself
-    seen[name] = true;
-    html += '<option value="' + escapeHtml(name) + '">' + escapeHtml(name) + '</option>';
+  otherGroups().forEach(function (g) {
+    seen[g.name] = true;
+    html += '<option value="' + escapeHtml(g.name) + '">' + escapeHtml(g.name) + '</option>';
   });
   sel.innerHTML = html;
   if (current && !seen[current]) {
@@ -182,14 +200,34 @@ function fillOverflow(current) {
   sel.value = current;
 }
 
+// levelOverflowSelect is one level's own overflow: the group's by default, or a
+// group of its own. A chosen group that is not on this page still shows, so the
+// next Save does not clear it.
+function levelOverflowSelect(l) {
+  var groups = otherGroups();
+  var html = '<option value="0">Overflow: the group\'s</option>';
+  var found = false;
+  groups.forEach(function (g) {
+    if (g.id === l.overflow_node_id) found = true;
+    html += '<option value="' + g.id + '"' + (g.id === l.overflow_node_id ? ' selected' : '') + '>Overflow: '
+      + escapeHtml(g.name) + '</option>';
+  });
+  if (l.overflow_node_id && !found) {
+    html += '<option value="' + l.overflow_node_id + '" selected>Overflow: '
+      + escapeHtml(l.overflow_node || String(l.overflow_node_id)) + ' (not on this page)</option>';
+  }
+  return '<select class="form-input" aria-label="Overflow for ' + escapeHtml(l.bin_type_code) + '"'
+    + ' data-action-change="setMaintainLevelOverflow" data-bin-type-id="' + l.bin_type_id + '">' + html + '</select>';
+}
+
 // renderLevels draws the declared level, one row per carrier type with its
 // wanted heights under it, plus the add row. Same controls and the same vocabulary as the loaders page's carrier mix —
-// but this section is a "maintained level", and the two are not the same
-// promise: a mix is a preference bounded by the loader's windows, a level is the
-// number Core holds.
+// but the two are not the same promise: a mix is a preference bounded by the
+// loader's windows, a level is the number Core holds.
 function renderLevels() {
   var host = document.getElementById('nf-maintain-levels');
   if (!host || !_mg) return;
+  setAlgoNote(_mg.levels.length > 0);
   var declared = {};
   _mg.levels.forEach(function (l) { declared[l.bin_type_id] = true; });
 
@@ -199,6 +237,7 @@ function renderLevels() {
       + '<input type="number" class="form-input loader-mix-want" min="0" value="' + Number(l.want) + '"'
       + ' aria-label="How many ' + escapeHtml(l.bin_type_code) + ' to keep on hand"'
       + ' data-action-change="setMaintainWant" data-bin-type-id="' + l.bin_type_id + '">'
+      + levelOverflowSelect(l)
       + '<button type="button" class="btn btn-sm" title="Remove"'
       + ' data-action="removeMaintainLevel" data-bin-type-id="' + l.bin_type_id + '">&times;</button>'
       + '</div>'
@@ -328,7 +367,7 @@ export function addMaintainLevel() {
   var n = Number(want && want.value);
   if (!(n >= 0)) n = 0;
   var t = _allBinTypes.find(function (x) { return Number(x.id) === id; });
-  _mg.levels.push({ bin_type_id: id, bin_type_code: (t && (t.code || t.label)) || String(id), want: n, layer_wants: [] });
+  _mg.levels.push({ bin_type_id: id, bin_type_code: (t && (t.code || t.label)) || String(id), want: n, overflow_node_id: 0, layer_wants: [] });
   _mg.levels.sort(function (a, b) { return a.bin_type_code.localeCompare(b.bin_type_code); });
   renderLevels();
 }
@@ -349,6 +388,81 @@ export function removeMaintainLevel(el) {
   var id = Number(el.getAttribute('data-bin-type-id'));
   _mg.levels = _mg.levels.filter(function (l) { return l.bin_type_id !== id; });
   renderLevels();
+}
+
+export function setMaintainLevelOverflow(el) {
+  var l = levelByID(Number(el.getAttribute('data-bin-type-id')));
+  if (l) l.overflow_node_id = Number(el.value) || 0;
+}
+
+// moveInList returns list with the entry at index i moved by delta, a copy; the
+// same list when that would leave the ends. The sources' up and down buttons.
+function moveInList(list, i, delta) {
+  var to = i + delta;
+  if (i < 0 || i >= list.length || to < 0 || to >= list.length) return list;
+  var out = list.slice();
+  var moved = out.splice(i, 1)[0];
+  out.splice(to, 0, moved);
+  return out;
+}
+
+// sourceRowsHtml draws the sources in order, each with its own up, down and
+// remove, and the add row: one group picked and added at a time, the groups
+// already listed left out. Nothing here selects more than one.
+function sourceRowsHtml(sources, groups) {
+  var rows = sources.map(function (s, i) {
+    return '<div class="loader-mix-line">'
+      + '<span class="text-sm tnum">' + (i + 1) + '.</span>'
+      + '<span class="loader-chip">' + escapeHtml(s.name) + '</span>'
+      + '<button type="button" class="btn btn-sm" title="Earlier" data-action="moveMaintainSource" data-index="' + i + '" data-delta="-1"'
+      + (i === 0 ? ' disabled' : '') + '>&uarr;</button>'
+      + '<button type="button" class="btn btn-sm" title="Later" data-action="moveMaintainSource" data-index="' + i + '" data-delta="1"'
+      + (i === sources.length - 1 ? ' disabled' : '') + '>&darr;</button>'
+      + '<button type="button" class="btn btn-sm" title="Remove" data-action="removeMaintainSource" data-index="' + i + '">&times;</button>'
+      + '</div>';
+  }).join('');
+  var listed = {};
+  sources.forEach(function (s) { listed[s.id] = true; });
+  var rest = groups.filter(function (g) { return !listed[g.id]; });
+  var add = '';
+  if (rest.length) {
+    add = '<div class="loader-mix-add">'
+      + '<select id="nf-maintain-add-source" class="form-input" aria-label="Source group">'
+      + rest.map(function (g) { return '<option value="' + g.id + '">' + escapeHtml(g.name) + '</option>'; }).join('')
+      + '</select>'
+      + '<button type="button" class="btn btn-sm" data-action="addMaintainSource">Add</button>'
+      + '</div>';
+  }
+  return (rows || '<div class="text-muted" style="font-size:0.75rem">No sources: the keeper searches the plant.</div>') + add;
+}
+
+function renderSources() {
+  var host = document.getElementById('nf-maintain-sources');
+  if (!host || !_mg) return;
+  host.innerHTML = sourceRowsHtml(_mg.sources, otherGroups());
+}
+
+export function addMaintainSource() {
+  if (!_mg) return;
+  var sel = document.getElementById('nf-maintain-add-source');
+  var id = Number(sel && sel.value);
+  if (!id) return;
+  var g = otherGroups().find(function (x) { return x.id === id; });
+  if (g) _mg.sources.push(g);
+  renderSources();
+}
+
+export function removeMaintainSource(el) {
+  if (!_mg) return;
+  var i = Number(el.getAttribute('data-index'));
+  _mg.sources = _mg.sources.filter(function (_, at) { return at !== i; });
+  renderSources();
+}
+
+export function moveMaintainSource(el) {
+  if (!_mg) return;
+  _mg.sources = moveInList(_mg.sources, Number(el.getAttribute('data-index')), Number(el.getAttribute('data-delta')));
+  renderSources();
 }
 
 // renderSupports lists PROCESSES, with the positions each one resolves to shown
@@ -485,20 +599,21 @@ export async function confirmAllowedBinsNarrowing(nodeID, binTypeIDs, form) {
 // saveMaintainedGroup flushes the section. Called from the modal's Save, before
 // the form posts.
 //
-// Scalars first, then the level, then the supports — and the order matters once
-// the save-time rules land: a refusal names the setting it refused, and an
-// operator reading "this group is already a loader's staging group" wants it
-// against the switch they just flipped, not against a level row they did not
-// touch.
+// Settings first, then the level, then the supports and sources — a refusal names
+// the setting it refused, and an operator reading "this group is already a
+// loader's staging group" wants it against the switch they just flipped, not
+// against a level row they did not touch. The station comes ahead of the supports
+// because the supports need it.
 export async function saveMaintainedGroup() {
   var box = document.getElementById('nf-maintain');
   if (!box || box.classList.contains('hide') || !_mg) return;
 
   var nodeID = _mg.nodeID;
-  var enabled = document.getElementById('nf-maintain-enabled').checked;
   var strict = document.getElementById('nf-maintain-strict').checked;
   var station = document.getElementById('nf-maintain-station').value;
   var overflow = document.getElementById('nf-maintain-overflow').value;
+  var cover = Number(document.getElementById('nf-maintain-cover').value);
+  if (!(cover >= 0) || Math.floor(cover) !== cover) cover = 0;
 
   // Warnings collect across the whole flush and are shown once. Four toasts for
   // one Save is four things to dismiss and one thing to read.
@@ -515,15 +630,15 @@ export async function saveMaintainedGroup() {
   try {
     collect(await postConfirmable('/api/nodes/maintained-group/settings', {
       group_node_id: nodeID,
-      maintain_enabled: enabled,
       strict_sourcing: strict,
       maintenance_station: station,
       overflow_destination: overflow
     }));
+    collect(await apiPost('/api/nodes/maintained-group/cover', { group_node_id: nodeID, running_cover: cover }));
 
     // Removals come off the DIFF against what the server had. Deleting every row
     // and re-adding would be simpler and would also, for a moment, leave a
-    // maintained group with no declared level at all.
+    // kanban with no declared level at all.
     var still = {};
     _mg.levels.forEach(function (l) { still[l.bin_type_id] = true; });
     for (var i = 0; i < _mg.savedLevels.length; i++) {
@@ -542,6 +657,12 @@ export async function saveMaintainedGroup() {
         group_node_id: nodeID, bin_type_id: l.bin_type_id, want: l.want,
         layer_wants: l.layer_wants.map(function (w) { return { layers: w.layers, want: w.want }; })
       }));
+      var had = _mg.savedLevels.find(function (s) { return s.bin_type_id === l.bin_type_id; });
+      if (l.overflow_node_id !== (had ? had.overflow_node_id : 0)) {
+        collect(await apiPost('/api/nodes/maintained-group/level/overflow', {
+          group_node_id: nodeID, bin_type_id: l.bin_type_id, overflow_node_id: l.overflow_node_id
+        }));
+      }
     }
 
     var nodeIDs = _mg.orphans.slice();
@@ -553,10 +674,12 @@ export async function saveMaintainedGroup() {
     });
     collect(await postConfirmable('/api/nodes/maintained-group/supports',
       { group_node_id: nodeID, process_node_ids: nodeIDs }));
+    collect(await apiPost('/api/nodes/maintained-group/sources',
+      { group_node_id: nodeID, source_node_ids: _mg.sources.map(function (s) { return s.id; }) }));
 
     // The staged state now matches the server, so a second Save without
     // reopening does not re-issue removals for rows already gone.
-    _mg.savedLevels = _mg.levels.map(function (x) { return { bin_type_id: x.bin_type_id, want: x.want }; });
+    _mg.savedLevels = _mg.levels.map(savedLevel);
 
     // Deduplicated: the same warning comes back from every endpoint that
     // re-validated the whole configuration, which is all of them.
@@ -581,10 +704,13 @@ export async function saveMaintainedGroup() {
 delegateActions(document.body, {
   addMaintainLayerWant,
   addMaintainLevel,
-  onMaintainToggle,
+  addMaintainSource,
+  moveMaintainSource,
   removeMaintainLayerWant,
   removeMaintainLevel,
+  removeMaintainSource,
   setMaintainLayerWant,
+  setMaintainLevelOverflow,
   setMaintainTopsAndBottoms,
   setMaintainWant,
   toggleMaintainSupport

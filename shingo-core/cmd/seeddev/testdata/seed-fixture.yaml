@@ -802,14 +802,16 @@ cell_configs:
   - {process: UNLOADER-C, station: UNLOADER-C-OPS}
   - {process: UNLOADER-D, station: UNLOADER-D-OPS}
 
-# The maintained-group config shape seeddev must write: four node properties and
-# two node-keyed tables, with supports resolved from process names to the core
+# The kanban config shape seeddev must write: a kanbans row and its node-keyed
+# tables, with supports resolved from process names to the core
 # nodes those processes' claims name.
 maintained_groups:
   - group: SYN_PRESS_EMPTIES
     station: edge1.line1
     strict: true
     overflow: SYN_SM_Stamp
+    running_cover: 3
+    sources: [SYN_SM_Stamp]
     levels:
       - {bin_type: STANDARD, want: 2}
       - {bin_type: STANDARD-SM, want: 1}

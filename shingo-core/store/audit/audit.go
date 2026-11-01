@@ -20,7 +20,7 @@ import (
 type Entry = domain.AuditEntry
 
 // Append writes an audit-log row.
-func Append(db *sql.DB, entityType string, entityID int64, action, oldValue, newValue, actor string) error {
+func Append(db BinUOPExecer, entityType string, entityID int64, action, oldValue, newValue, actor string) error {
 	_, err := db.Exec(`INSERT INTO audit_log (entity_type, entity_id, action, old_value, new_value, actor) VALUES ($1, $2, $3, $4, $5, $6)`,
 		entityType, entityID, action, oldValue, newValue, actor)
 	return err

@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strconv"
 
+	"shingo/protocol"
 	"shingocore/service"
 )
 
@@ -20,28 +21,31 @@ import (
 // bottoms row, a cap of its own that the store caps judge a cart at 0 against.
 // Nothing sources on any of them.
 //
-// FOUR WRITE ENDPOINTS, ONE PER THING AN OPERATOR EDITS, rather than one
-// save-everything call. The section has independent halves — the four scalars,
-// one level line, the whole level set, the supported processes — and a single
-// endpoint that took all of them would have to decide what an omitted field
-// means. Omitted-means-clear silently deletes a level when the form fails to
-// populate; omitted-means-keep makes clearing impossible. Per-thing endpoints
+// ONE WRITE ENDPOINT PER THING AN OPERATOR EDITS, rather than one save-everything
+// call. The section has independent halves — the settings, the running cover, one
+// level line, one level's overflow, the supported processes, the sources — and a
+// single endpoint that took all of them would have to decide what an omitted
+// field means. Omitted-means-clear silently deletes a level when the form fails
+// to populate; omitted-means-keep makes clearing impossible. Per-thing endpoints
 // have no such question to answer.
 //
-// The scalars go through setNodePropertyAudited, the same call
-// /api/nodes/properties/set makes, so they arrive with the identical old→new
-// audit row. That is the whole reason they are properties rather than columns on
-// a table of their own.
+// Each carries its partial to NodeService.SaveKanban, the one write, with the
+// session's user as the actor of the audit rows it appends.
 
-// maintainedGroupSettings is the four scalars, as one save.
-//
-// They travel together because they are one control cluster on one screen and an
-// operator flipping "maintain this group" while naming its station is making ONE
-// decision. Each is still written through the property path individually, so the
-// audit trail reads as four keys changing, which is what happened.
+// kanbanActor names the audit rows of this request: the session's user, or the
+// generic UI actor when there is none.
+func (h *Handlers) kanbanActor(r *http.Request) string {
+	if u := h.getUsername(r); u != "" {
+		return u
+	}
+	return protocol.AuditActorUI
+}
+
+// maintainedGroupSettings is the settings cluster, as one save: they are one
+// group of controls on one screen. The audit trail reads one row per setting that
+// changed.
 type maintainedGroupSettings struct {
 	GroupNodeID         int64  `json:"group_node_id"`
-	MaintainEnabled     bool   `json:"maintain_enabled"`
 	StrictSourcing      bool   `json:"strict_sourcing"`
 	MaintenanceStation  string `json:"maintenance_station"`
 	OverflowDestination string `json:"overflow_destination"`
@@ -113,7 +117,8 @@ func (h *Handlers) apiMaintainedGroupCheckTypes(w http.ResponseWriter, r *http.R
 	h.jsonOK(w, map[string]any{"blocked": g.Blocked})
 }
 
-// apiMaintainedGroupSettingsSet writes the four scalars.
+// apiMaintainedGroupSettingsSet writes the settings: strict, station and the
+// default overflow.
 //
 // POST /api/nodes/maintained-group/settings
 func (h *Handlers) apiMaintainedGroupSettingsSet(w http.ResponseWriter, r *http.Request) {
@@ -126,15 +131,11 @@ func (h *Handlers) apiMaintainedGroupSettingsSet(w http.ResponseWriter, r *http.
 		return
 	}
 	set := service.MaintainedGroupSettings{
-		MaintainEnabled:     req.MaintainEnabled,
 		StrictSourcing:      req.StrictSourcing,
 		MaintenanceStation:  req.MaintenanceStation,
 		OverflowDestination: req.OverflowDestination,
 	}
-	// RULES FIRST, WRITE SECOND — and nothing at all is written when they
-	// refuse. Four properties written one at a time have no transaction around
-	// them, so a refusal discovered halfway would leave a group configured half
-	// the way the operator asked and half the way it was.
+	// The rules first, so a refusal is named ahead of the question the guard asks.
 	chk, err := h.engine.NodeService().CheckMaintainedGroupSettings(req.GroupNodeID, set)
 	if err != nil {
 		h.jsonError(w, err.Error(), http.StatusInternalServerError)
@@ -143,9 +144,9 @@ func (h *Handlers) apiMaintainedGroupSettingsSet(w http.ResponseWriter, r *http.
 	if !h.maintainedGroupRefused(w, chk) {
 		return
 	}
-	// The floor guard, second: turning maintenance off or the reserve on changes
-	// what the carriers standing in the group MEAN, and force is the operator
-	// saying they already know.
+	// The floor guard, second: turning the reserve on changes what the carriers
+	// standing in the group MEAN, and force is the operator saying they already
+	// know.
 	g, err := h.engine.NodeService().CheckMaintainedGroupSettingsChange(req.GroupNodeID, set, req.Force)
 	if err != nil {
 		h.jsonError(w, err.Error(), http.StatusInternalServerError)
@@ -154,16 +155,96 @@ func (h *Handlers) apiMaintainedGroupSettingsSet(w http.ResponseWriter, r *http.
 	if !h.maintainedGroupHeld(w, g) {
 		return
 	}
-	// The service names the keys and the on/off spelling; this loop does the
-	// writing, because the audit row can only be appended where the actor is
-	// known. Four rows, one per key, which is what happened.
-	for _, wr := range service.MaintainedGroupPropertyWrites(set) {
-		if err := h.setNodePropertyAudited(req.GroupNodeID, wr.Key, wr.Value); err != nil {
-			h.jsonError(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
+	chk, err = h.engine.NodeService().SaveKanban(service.KanbanSave{
+		GroupNodeID: req.GroupNodeID,
+		Actor:       h.kanbanActor(r),
+		Strict:      &req.StrictSourcing,
+		Station:     &req.MaintenanceStation,
+		Overflow:    &req.OverflowDestination,
+	})
+	if err != nil {
+		h.jsonError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if !h.maintainedGroupRefused(w, chk) {
+		return
 	}
 	h.maintainedGroupOK(w, chk, g)
+}
+
+// apiMaintainedGroupCoverSet sets the running cover: the extra the kanban wants
+// of a type per supported process running it.
+//
+// POST /api/nodes/maintained-group/cover
+func (h *Handlers) apiMaintainedGroupCoverSet(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		GroupNodeID  int64 `json:"group_node_id"`
+		RunningCover int   `json:"running_cover"`
+	}
+	if !h.parseJSON(w, r, &req) {
+		return
+	}
+	if req.GroupNodeID == 0 {
+		h.jsonError(w, "group_node_id is required", http.StatusBadRequest)
+		return
+	}
+	h.saveKanbanAnswer(w, service.KanbanSave{GroupNodeID: req.GroupNodeID, Actor: h.kanbanActor(r), Cover: &req.RunningCover})
+}
+
+// apiMaintainedGroupSourcesSet replaces the sources: the groups the keeper may
+// pull from, the list order being the rank.
+//
+// POST /api/nodes/maintained-group/sources
+func (h *Handlers) apiMaintainedGroupSourcesSet(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		GroupNodeID   int64   `json:"group_node_id"`
+		SourceNodeIDs []int64 `json:"source_node_ids"`
+	}
+	if !h.parseJSON(w, r, &req) {
+		return
+	}
+	if req.GroupNodeID == 0 {
+		h.jsonError(w, "group_node_id is required", http.StatusBadRequest)
+		return
+	}
+	if req.SourceNodeIDs == nil {
+		req.SourceNodeIDs = []int64{}
+	}
+	h.saveKanbanAnswer(w, service.KanbanSave{GroupNodeID: req.GroupNodeID, Actor: h.kanbanActor(r), Sources: &req.SourceNodeIDs})
+}
+
+// apiMaintainedGroupLevelOverflowSet sets one level's own overflow; 0 clears it,
+// and the type takes the kanban's default.
+//
+// POST /api/nodes/maintained-group/level/overflow
+func (h *Handlers) apiMaintainedGroupLevelOverflowSet(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		GroupNodeID    int64 `json:"group_node_id"`
+		BinTypeID      int64 `json:"bin_type_id"`
+		OverflowNodeID int64 `json:"overflow_node_id"`
+	}
+	if !h.parseJSON(w, r, &req) {
+		return
+	}
+	if req.GroupNodeID == 0 || req.BinTypeID == 0 {
+		h.jsonError(w, "group_node_id and bin_type_id are required", http.StatusBadRequest)
+		return
+	}
+	h.saveKanbanAnswer(w, service.KanbanSave{GroupNodeID: req.GroupNodeID, Actor: h.kanbanActor(r),
+		Levels: []service.KanbanLevelSave{{BinTypeID: req.BinTypeID, Overflow: &req.OverflowNodeID}}})
+}
+
+// saveKanbanAnswer runs a save with no floor guard and answers it.
+func (h *Handlers) saveKanbanAnswer(w http.ResponseWriter, save service.KanbanSave) {
+	chk, err := h.engine.NodeService().SaveKanban(save)
+	if err != nil {
+		h.jsonError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if !h.maintainedGroupRefused(w, chk) {
+		return
+	}
+	h.maintainedGroupOK(w, chk, service.MaintainedGroupGuard{})
 }
 
 // maintainLayerWant is one wanted height on a level's save: how many carts of
@@ -200,28 +281,19 @@ func (h *Handlers) apiMaintainedGroupLevelSet(w http.ResponseWriter, r *http.Req
 	// is NOT the same as removing the line, so it is not rejected. Negative is
 	// refused by the table's CHECK and, ahead of it, by the service — which
 	// gives the operator a sentence instead of a constraint-violation string.
-	var chk service.MaintainedGroupCheck
-	var err error
-	if req.LayerWants == nil {
-		chk, err = h.engine.NodeService().SetMaintainLevel(req.GroupNodeID, req.BinTypeID, req.Want)
-	} else {
+	line := service.KanbanLevelSave{BinTypeID: req.BinTypeID, Want: &req.Want}
+	if req.LayerWants != nil {
 		wants, werr := layerWantRows(*req.LayerWants)
 		if werr != nil {
 			h.jsonError(w, werr.Error(), http.StatusBadRequest)
 			return
 		}
-		chk, err = h.engine.NodeService().SetMaintainLevelAndLayerWants(req.GroupNodeID, req.BinTypeID, req.Want, wants)
-	}
-	if err != nil {
-		h.jsonError(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	if !h.maintainedGroupRefused(w, chk) {
-		return
+		line.LayerWants = &wants
 	}
 	// No floor guard on a level line: declaring or undeclaring a carrier type
 	// changes what Core HOLDS, not what a resident is allowed to be.
-	h.maintainedGroupOK(w, chk, service.MaintainedGroupGuard{})
+	h.saveKanbanAnswer(w, service.KanbanSave{GroupNodeID: req.GroupNodeID, Actor: h.kanbanActor(r),
+		Levels: []service.KanbanLevelSave{line}})
 }
 
 // layerWantRows reads a level save's wanted heights: each 0 layers (the tops &
@@ -264,17 +336,10 @@ func (h *Handlers) apiMaintainedGroupLevelRemove(w http.ResponseWriter, r *http.
 		h.jsonError(w, "group_node_id and bin_type_id are required", http.StatusBadRequest)
 		return
 	}
-	chk, err := h.engine.NodeService().RemoveMaintainLevel(req.GroupNodeID, req.BinTypeID)
-	if err != nil {
-		h.jsonError(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	if !h.maintainedGroupRefused(w, chk) {
-		return
-	}
 	// No floor guard on a level line: declaring or undeclaring a carrier type
 	// changes what Core HOLDS, not what a resident is allowed to be.
-	h.maintainedGroupOK(w, chk, service.MaintainedGroupGuard{})
+	h.saveKanbanAnswer(w, service.KanbanSave{GroupNodeID: req.GroupNodeID, Actor: h.kanbanActor(r),
+		RemoveLevels: []int64{req.BinTypeID}})
 }
 
 // apiMaintainedGroupSupportsSet replaces the set of process nodes a group serves.
@@ -311,7 +376,12 @@ func (h *Handlers) apiMaintainedGroupSupportsSet(w http.ResponseWriter, r *http.
 	}
 	// An empty set is a legitimate save: it is what "this group serves nobody
 	// yet" looks like, and refusing it would leave no way to undo a mistake.
-	chk, err := h.engine.NodeService().SetMaintainSupports(req.GroupNodeID, req.ProcessNodeIDs)
+	supports := req.ProcessNodeIDs
+	if supports == nil {
+		supports = []int64{}
+	}
+	chk, err := h.engine.NodeService().SaveKanban(service.KanbanSave{GroupNodeID: req.GroupNodeID, Actor: h.kanbanActor(r),
+		Supports: &supports})
 	if err != nil {
 		h.jsonError(w, err.Error(), http.StatusInternalServerError)
 		return

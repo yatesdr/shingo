@@ -591,16 +591,36 @@ func (p *Plant) Validate() error {
 				add("maintained_group %q has no positions to hold a level in", mg.Group)
 			}
 		}
-		// projectOrder no-ops on a blank StationID.
-		if strings.TrimSpace(mg.Station) == "" {
+		// projectOrder no-ops on a blank StationID. A kanban with no supports
+		// declares what it holds and needs none.
+		if len(mg.Supports) > 0 && strings.TrimSpace(mg.Station) == "" {
 			add("maintained_group %q has no station; its top-up orders would show on no board", mg.Group)
 		}
-		if mg.Overflow != "" {
-			if mg.Overflow == mg.Group {
-				add("maintained_group %q overflows to itself", mg.Group)
-			} else if kind, ok := nodes[mg.Overflow]; !ok || kind != "zone" {
-				add("maintained_group %q overflows to %q, which is not a declared zone", mg.Group, mg.Overflow)
+		if mg.RunningCover < 0 {
+			add("maintained_group %q has running_cover %d; it cannot be negative", mg.Group, mg.RunningCover)
+		}
+		checkOverflow := func(overflow string) {
+			if overflow == "" {
+				return
 			}
+			if overflow == mg.Group {
+				add("maintained_group %q overflows to itself", mg.Group)
+			} else if kind, ok := nodes[overflow]; !ok || kind != "zone" {
+				add("maintained_group %q overflows to %q, which is not a declared zone", mg.Group, overflow)
+			}
+		}
+		checkOverflow(mg.Overflow)
+		seenSource := map[string]bool{}
+		for _, src := range mg.Sources {
+			if src == mg.Group {
+				add("maintained_group %q names itself as a source", mg.Group)
+			} else if kind, ok := nodes[src]; !ok || kind != "zone" {
+				add("maintained_group %q sources from %q, which is not a declared zone", mg.Group, src)
+			}
+			if seenSource[src] {
+				add("maintained_group %q lists source %q twice", mg.Group, src)
+			}
+			seenSource[src] = true
 		}
 		if len(mg.Levels) == 0 {
 			add("maintained_group %q declares no levels", mg.Group)
@@ -615,6 +635,7 @@ func (p *Plant) Validate() error {
 				add("maintained_group %q declares bin_type %q twice", mg.Group, l.BinType)
 			}
 			seenType[l.BinType] = true
+			checkOverflow(l.Overflow)
 			if l.Want < 0 {
 				add("maintained_group %q wants %d of %q; a level cannot be negative", mg.Group, l.Want, l.BinType)
 			}

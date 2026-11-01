@@ -10,8 +10,8 @@ import "shingocore/dispatch/binresolver"
 // It is the union of the parts' own read surfaces, each declared where it is
 // used: the picker's (FinderDB), the group resolver's (binresolver.Store), the
 // capacity gate's (CapacityDB), the loader window choice's (LoaderWindowsDB),
-// the slot book's (SlotBookDB), the dig verdict's (DigDB) and the group drop
-// chooser's (ChooseDropDB).
+// the slot book's (SlotBookDB), the dig verdict's (DigDB), the group drop
+// chooser's (ChooseDropDB) and the overflow's (OverflowReader).
 type Reader interface {
 	FinderDB
 	binresolver.Store
@@ -20,4 +20,5 @@ type Reader interface {
 	SlotBookDB
 	DigDB
 	ChooseDropDB
+	OverflowReader
 }

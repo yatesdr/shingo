@@ -570,6 +570,51 @@ CREATE TABLE public.inventory_delta_dedup (
     applied_window_end timestamp with time zone
 );
 
+CREATE TABLE public.kanban_layer_levels (
+    kanban_node_id bigint NOT NULL,
+    bin_type_id bigint NOT NULL,
+    layers integer NOT NULL,
+    want integer NOT NULL,
+    CONSTRAINT kanban_layer_levels_layers_check CHECK ((layers >= 0)),
+    CONSTRAINT kanban_layer_levels_want_check CHECK ((want >= 0))
+);
+
+CREATE TABLE public.kanban_levels (
+    kanban_node_id bigint NOT NULL,
+    bin_type_id bigint NOT NULL,
+    want integer NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    overflow_node_id bigint,
+    CONSTRAINT kanban_levels_want_check CHECK ((want >= 0))
+);
+
+CREATE TABLE public.kanban_sources (
+    kanban_node_id bigint NOT NULL,
+    rank integer NOT NULL,
+    source_node_id bigint NOT NULL,
+    CONSTRAINT kanban_sources_check CHECK ((source_node_id <> kanban_node_id)),
+    CONSTRAINT kanban_sources_rank_check CHECK ((rank >= 1))
+);
+
+CREATE TABLE public.kanban_supports (
+    kanban_node_id bigint NOT NULL,
+    process_node_id bigint NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+CREATE TABLE public.kanbans (
+    node_id bigint NOT NULL,
+    station_id text,
+    strict boolean DEFAULT false NOT NULL,
+    running_cover integer DEFAULT 0 NOT NULL,
+    overflow_node_id bigint,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT kanbans_check CHECK ((overflow_node_id <> node_id)),
+    CONSTRAINT kanbans_running_cover_check CHECK ((running_cover >= 0))
+);
+
 CREATE TABLE public.lane_confidence_daily (
     day date NOT NULL,
     area_name text NOT NULL,
@@ -722,30 +767,6 @@ ALTER SEQUENCE public.mission_telemetry_id_seq OWNED BY public.mission_telemetry
 CREATE TABLE public.node_bin_types (
     node_id bigint NOT NULL,
     bin_type_id bigint NOT NULL,
-    created_at timestamp with time zone DEFAULT now() NOT NULL
-);
-
-CREATE TABLE public.node_maintain_layer_levels (
-    group_node_id bigint NOT NULL,
-    bin_type_id bigint NOT NULL,
-    layers integer NOT NULL,
-    want integer NOT NULL,
-    CONSTRAINT node_maintain_layer_levels_layers_check CHECK ((layers >= 0)),
-    CONSTRAINT node_maintain_layer_levels_want_check CHECK ((want >= 0))
-);
-
-CREATE TABLE public.node_maintain_levels (
-    group_node_id bigint NOT NULL,
-    bin_type_id bigint NOT NULL,
-    want integer NOT NULL,
-    created_at timestamp with time zone DEFAULT now() NOT NULL,
-    updated_at timestamp with time zone DEFAULT now() NOT NULL,
-    CONSTRAINT node_maintain_levels_want_check CHECK ((want >= 0))
-);
-
-CREATE TABLE public.node_maintain_supports (
-    group_node_id bigint NOT NULL,
-    process_node_id bigint NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL
 );
 
@@ -1699,6 +1720,24 @@ ALTER TABLE ONLY public.inbox
 ALTER TABLE ONLY public.inventory_delta_dedup
     ADD CONSTRAINT inventory_delta_dedup_pkey PRIMARY KEY (station, scope_kind, scope_key, epoch);
 
+ALTER TABLE ONLY public.kanban_layer_levels
+    ADD CONSTRAINT kanban_layer_levels_pkey PRIMARY KEY (kanban_node_id, bin_type_id, layers);
+
+ALTER TABLE ONLY public.kanban_levels
+    ADD CONSTRAINT kanban_levels_pkey PRIMARY KEY (kanban_node_id, bin_type_id);
+
+ALTER TABLE ONLY public.kanban_sources
+    ADD CONSTRAINT kanban_sources_kanban_node_id_source_node_id_key UNIQUE (kanban_node_id, source_node_id);
+
+ALTER TABLE ONLY public.kanban_sources
+    ADD CONSTRAINT kanban_sources_pkey PRIMARY KEY (kanban_node_id, rank);
+
+ALTER TABLE ONLY public.kanban_supports
+    ADD CONSTRAINT kanban_supports_pkey PRIMARY KEY (kanban_node_id, process_node_id);
+
+ALTER TABLE ONLY public.kanbans
+    ADD CONSTRAINT kanbans_pkey PRIMARY KEY (node_id);
+
 ALTER TABLE ONLY public.lane_confidence_daily
     ADD CONSTRAINT lane_confidence_daily_pkey PRIMARY KEY (day, area_name, lane, version_id);
 
@@ -1728,15 +1767,6 @@ ALTER TABLE ONLY public.mission_telemetry
 
 ALTER TABLE ONLY public.node_bin_types
     ADD CONSTRAINT node_bin_types_pkey PRIMARY KEY (node_id, bin_type_id);
-
-ALTER TABLE ONLY public.node_maintain_layer_levels
-    ADD CONSTRAINT node_maintain_layer_levels_pkey PRIMARY KEY (group_node_id, bin_type_id, layers);
-
-ALTER TABLE ONLY public.node_maintain_levels
-    ADD CONSTRAINT node_maintain_levels_pkey PRIMARY KEY (group_node_id, bin_type_id);
-
-ALTER TABLE ONLY public.node_maintain_supports
-    ADD CONSTRAINT node_maintain_supports_pkey PRIMARY KEY (group_node_id, process_node_id);
 
 ALTER TABLE ONLY public.node_payloads
     ADD CONSTRAINT node_payloads_pkey PRIMARY KEY (node_id, payload_id);
@@ -1955,9 +1985,13 @@ CREATE INDEX idx_mission_telemetry_robot ON public.mission_telemetry USING btree
 
 CREATE INDEX idx_mission_telemetry_station ON public.mission_telemetry USING btree (station_id);
 
+CREATE INDEX idx_node_properties_key ON public.node_properties USING btree (key);
+
 CREATE INDEX idx_node_stations_station ON public.node_stations USING btree (station_id);
 
 CREATE INDEX idx_nodes_claimed_by ON public.nodes USING btree (claimed_by) WHERE (claimed_by IS NOT NULL);
+
+CREATE INDEX idx_nodes_parent ON public.nodes USING btree (parent_id);
 
 CREATE INDEX idx_order_bins_order ON public.order_bins USING btree (order_id);
 
@@ -2101,6 +2135,39 @@ ALTER TABLE ONLY public.cms_transactions
 ALTER TABLE ONLY public.cms_transactions
     ADD CONSTRAINT cms_transactions_order_id_fkey FOREIGN KEY (order_id) REFERENCES public.orders(id);
 
+ALTER TABLE ONLY public.kanban_layer_levels
+    ADD CONSTRAINT kanban_layer_levels_bin_type_id_fkey FOREIGN KEY (bin_type_id) REFERENCES public.bin_types(id) ON DELETE CASCADE;
+
+ALTER TABLE ONLY public.kanban_layer_levels
+    ADD CONSTRAINT kanban_layer_levels_kanban_node_id_fkey FOREIGN KEY (kanban_node_id) REFERENCES public.kanbans(node_id) ON DELETE CASCADE;
+
+ALTER TABLE ONLY public.kanban_levels
+    ADD CONSTRAINT kanban_levels_bin_type_id_fkey FOREIGN KEY (bin_type_id) REFERENCES public.bin_types(id) ON DELETE CASCADE;
+
+ALTER TABLE ONLY public.kanban_levels
+    ADD CONSTRAINT kanban_levels_kanban_node_id_fkey FOREIGN KEY (kanban_node_id) REFERENCES public.kanbans(node_id) ON DELETE CASCADE;
+
+ALTER TABLE ONLY public.kanban_levels
+    ADD CONSTRAINT kanban_levels_overflow_node_id_fkey FOREIGN KEY (overflow_node_id) REFERENCES public.nodes(id) ON DELETE SET NULL;
+
+ALTER TABLE ONLY public.kanban_sources
+    ADD CONSTRAINT kanban_sources_kanban_node_id_fkey FOREIGN KEY (kanban_node_id) REFERENCES public.kanbans(node_id) ON DELETE CASCADE;
+
+ALTER TABLE ONLY public.kanban_sources
+    ADD CONSTRAINT kanban_sources_source_node_id_fkey FOREIGN KEY (source_node_id) REFERENCES public.nodes(id) ON DELETE CASCADE;
+
+ALTER TABLE ONLY public.kanban_supports
+    ADD CONSTRAINT kanban_supports_kanban_node_id_fkey FOREIGN KEY (kanban_node_id) REFERENCES public.kanbans(node_id) ON DELETE CASCADE;
+
+ALTER TABLE ONLY public.kanban_supports
+    ADD CONSTRAINT kanban_supports_process_node_id_fkey FOREIGN KEY (process_node_id) REFERENCES public.nodes(id) ON DELETE CASCADE;
+
+ALTER TABLE ONLY public.kanbans
+    ADD CONSTRAINT kanbans_node_id_fkey FOREIGN KEY (node_id) REFERENCES public.nodes(id) ON DELETE CASCADE;
+
+ALTER TABLE ONLY public.kanbans
+    ADD CONSTRAINT kanbans_overflow_node_id_fkey FOREIGN KEY (overflow_node_id) REFERENCES public.nodes(id) ON DELETE SET NULL;
+
 ALTER TABLE ONLY public.lane_confidence_daily
     ADD CONSTRAINT lane_confidence_daily_version_id_fkey FOREIGN KEY (version_id) REFERENCES public.scene_lane_versions(id);
 
@@ -2112,24 +2179,6 @@ ALTER TABLE ONLY public.node_bin_types
 
 ALTER TABLE ONLY public.node_bin_types
     ADD CONSTRAINT node_bin_types_node_id_fkey FOREIGN KEY (node_id) REFERENCES public.nodes(id) ON DELETE CASCADE;
-
-ALTER TABLE ONLY public.node_maintain_layer_levels
-    ADD CONSTRAINT node_maintain_layer_levels_bin_type_id_fkey FOREIGN KEY (bin_type_id) REFERENCES public.bin_types(id) ON DELETE CASCADE;
-
-ALTER TABLE ONLY public.node_maintain_layer_levels
-    ADD CONSTRAINT node_maintain_layer_levels_group_node_id_fkey FOREIGN KEY (group_node_id) REFERENCES public.nodes(id) ON DELETE CASCADE;
-
-ALTER TABLE ONLY public.node_maintain_levels
-    ADD CONSTRAINT node_maintain_levels_bin_type_id_fkey FOREIGN KEY (bin_type_id) REFERENCES public.bin_types(id) ON DELETE CASCADE;
-
-ALTER TABLE ONLY public.node_maintain_levels
-    ADD CONSTRAINT node_maintain_levels_group_node_id_fkey FOREIGN KEY (group_node_id) REFERENCES public.nodes(id) ON DELETE CASCADE;
-
-ALTER TABLE ONLY public.node_maintain_supports
-    ADD CONSTRAINT node_maintain_supports_group_node_id_fkey FOREIGN KEY (group_node_id) REFERENCES public.nodes(id) ON DELETE CASCADE;
-
-ALTER TABLE ONLY public.node_maintain_supports
-    ADD CONSTRAINT node_maintain_supports_process_node_id_fkey FOREIGN KEY (process_node_id) REFERENCES public.nodes(id) ON DELETE CASCADE;
 
 ALTER TABLE ONLY public.node_payloads
     ADD CONSTRAINT node_payloads_node_id_fkey FOREIGN KEY (node_id) REFERENCES public.nodes(id) ON DELETE CASCADE;

@@ -479,7 +479,7 @@ func (db *DB) ConsumeWindowsAt(nodeIDs []int64) ([]ConsumeWindow, error) {
 		args = append(args, id)
 	}
 	rows, err := db.DB.Query(`SELECT l.outbound_dest, COALESCE(g.id, 0),
-			COALESCE(EXISTS (SELECT 1 FROM node_maintain_levels m WHERE m.group_node_id = g.id), false),
+			COALESCE(EXISTS (SELECT 1 FROM kanban_levels m WHERE m.kanban_node_id = g.id), false),
 			h.position_node_id, n.name
 		FROM bin_loaders l
 		JOIN bin_loader_homes h ON h.loader_id = l.id

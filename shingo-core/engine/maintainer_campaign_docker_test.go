@@ -54,8 +54,7 @@ func campaignGroup(t *testing.T, db *store.DB, group string, slots int, levels m
 		n := &nodes.Node{Name: fmt.Sprintf("%s-P%02d", group, i+1), Enabled: true, ParentID: &grpID}
 		testutil.MustNoErr(t, db.CreateNode(n), "create position")
 	}
-	testutil.MustNoErr(t, db.SetNodeProperty(grpID, nodes.PropMaintainEnabled, "on"), "enable")
-	testutil.MustNoErr(t, db.SetNodeProperty(grpID, nodes.PropMaintenanceStation, "test-core"), "station")
+	testdb.KanbanStation(t, db, grpID, "test-core")
 
 	ids := map[string]int64{}
 	for code, want := range levels {

@@ -9,7 +9,7 @@ package helpers
 // nodes.ListMaintainLevels' own, so none of them can disagree with the level
 // list about a row. Binds nothing.
 func DeclaresLevelSQL(groupExpr string) string {
-	return `EXISTS (SELECT 1 FROM node_maintain_levels ml
+	return `EXISTS (SELECT 1 FROM kanban_levels ml
 		JOIN bin_types mlt ON mlt.id = ml.bin_type_id
-		WHERE ml.group_node_id = ` + groupExpr + `)`
+		WHERE ml.kanban_node_id = ` + groupExpr + `)`
 }

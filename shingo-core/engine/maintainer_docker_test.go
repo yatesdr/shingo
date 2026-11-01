@@ -36,8 +36,7 @@ func mntFixture(t *testing.T, db *store.DB, group string, slots int, typeCode st
 	testutil.MustNoErr(t, db.QueryRow(
 		`INSERT INTO bin_types (code) VALUES ($1) RETURNING id`, typeCode).Scan(&btID), "bin type")
 
-	testutil.MustNoErr(t, db.SetNodeProperty(grpID, nodes.PropMaintainEnabled, "on"), "enable")
-	testutil.MustNoErr(t, db.SetNodeProperty(grpID, nodes.PropMaintenanceStation, "test-core"), "station")
+	testdb.KanbanStation(t, db, grpID, "test-core")
 	testutil.MustNoErr(t, db.SetMaintainLevel(store.MaintainLevel{
 		GroupNodeID: grpID, BinTypeID: btID, Want: want,
 	}), "declare level")
@@ -207,16 +206,16 @@ func TestMaintainer_ConfigWithdrawnClosesAsRemoved(t *testing.T) {
 	}
 }
 
-// A group with no maintenance_station is SKIPPED, not run. projectOrder no-ops
-// on a blank StationID, so its asks would run on the floor and appear on no
-// board anywhere — the phantom-order family.
+// A kanban with no station is SKIPPED, not run. projectOrder no-ops on a blank
+// StationID, so its asks would run on the floor and appear on no board anywhere —
+// the phantom-order family.
 func TestMaintainer_RefusesAGroupWithNoStation(t *testing.T) {
 	t.Parallel()
 	db := testdb.Open(t)
 	eng := newTestEngine(t, db, simulator.New())
 	grpID, _ := mntFixture(t, db, "MNT-NOSTATION", 2, "MNT-NS", 1)
-	// Written directly, bypassing the save-time rules that refuse it.
-	testutil.MustNoErr(t, db.SetNodeProperty(grpID, nodes.PropMaintenanceStation, ""), "blank the station")
+	// Written directly, bypassing the save-time rule that refuses it with supports.
+	testdb.KanbanStation(t, db, grpID, "")
 
 	m := eng.Maintainer()
 	m.Tick()
@@ -233,14 +232,19 @@ func TestMaintainer_RefusesAGroupWithNoStation(t *testing.T) {
 	}
 }
 
-// A group whose maintain_enabled is off is not the keeper's business at all.
-// This is the whole live-capability gate: no shadow flag, just config.
+// A group that declares no level is not the keeper's business at all, whatever
+// its row says. This is the whole live-capability gate: no flag, just config.
 func TestMaintainer_IgnoresUnmaintainedGroups(t *testing.T) {
 	t.Parallel()
 	db := testdb.Open(t)
 	eng := newTestEngine(t, db, simulator.New())
-	grpID, _ := mntFixture(t, db, "MNT-OFF", 2, "MNT-OFF-T", 2)
-	testutil.MustNoErr(t, db.SetNodeProperty(grpID, nodes.PropMaintainEnabled, "off"), "disable")
+	plain, err := nodes.CreateGroup(db.DB, "MNT-PLAIN")
+	testutil.MustNoErr(t, err, "plain group")
+	testdb.MarkGroup(t, db, plain)
+	noLevel, err := nodes.CreateGroup(db.DB, "MNT-ROW-NO-LEVEL")
+	testutil.MustNoErr(t, err, "group with a row and no level")
+	testdb.MarkGroup(t, db, noLevel)
+	testdb.KanbanStation(t, db, noLevel, "test-core")
 
 	m := eng.Maintainer()
 	m.Tick()

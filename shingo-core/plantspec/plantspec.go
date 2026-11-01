@@ -265,17 +265,23 @@ type Bin struct {
 type MaintainedGroup struct {
 	// Group names the zone. It must be a declared zone with positions and no lanes.
 	Group string `yaml:"group"`
-	// Station is the Edge station the top-up orders are projected to. REQUIRED,
-	// and required here for the same reason the UI refuses a blank one:
-	// projectOrder no-ops on a blank StationID, so a seeded group without one
-	// would produce orders that run on the floor and show on no board. A seed
-	// that can only be discovered wrong at runtime is the kind this spec exists
-	// to refuse.
-	Station string `yaml:"station"`
+	// Station is the Edge station the top-up orders are projected to. Required
+	// with supports, for the same reason the UI refuses a blank one: projectOrder
+	// no-ops on a blank StationID, so a keeper's order without one would run on
+	// the floor and show on no board. Blank on a kanban with no supports, which
+	// declares what it holds and runs no keeper.
+	Station string `yaml:"station,omitempty"`
 	// Strict reserves the group's empties for the supported processes.
 	Strict bool `yaml:"strict,omitempty"`
-	// Overflow names a second zone to try when this one is at level. Optional;
-	// blank means an arriving carrier waits instead.
+	// RunningCover is the extra the kanban wants of a type per supported process
+	// running that type. Zero means the levels alone.
+	RunningCover int `yaml:"running_cover,omitempty"`
+	// Sources names, in order, the zones the kanban's keeper may pull from. Empty
+	// means the plant-wide search.
+	Sources []string `yaml:"sources,omitempty"`
+	// Overflow names a second zone to try when this one is at level, for every
+	// type without its own. Optional; blank means an arriving carrier waits
+	// instead.
 	Overflow string `yaml:"overflow,omitempty"`
 	// Levels is how many empty carriers of each type to hold.
 	Levels []MaintainLevel `yaml:"levels"`
@@ -291,9 +297,12 @@ type MaintainedGroup struct {
 // Want may be zero, which declares the type and asks for none of it — a
 // different statement from leaving the line out, and the distinction the store
 // preserves.
+//
+// Overflow names this type's own overflow zone, ahead of the group's.
 type MaintainLevel struct {
-	BinType string `yaml:"bin_type"`
-	Want    int    `yaml:"want"`
+	BinType  string `yaml:"bin_type"`
+	Want     int    `yaml:"want"`
+	Overflow string `yaml:"overflow,omitempty"`
 }
 
 // Process is an edge process (one independently-counting cell or line). Each

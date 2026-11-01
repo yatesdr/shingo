@@ -427,7 +427,7 @@ func (e *Engine) storeInto(src *nodes.Node, bin *bins.Bin) (*nodes.Node, string)
 	// its overflow.
 	//
 	// THE HOP FOLLOWS A DECLARATION BY THE BANK, NOT BY A CONSUMER. No retrieve
-	// tier reads overflow_destination, so a bin that took the hop is found by
+	// tier reads the overflow, so a bin that took the hop is found by
 	// blank-source needs (the keeper's top-ups, the plant-wide tier) only.
 	// Empties-only in practice: a payload is refused by an empties bank before
 	// its level is asked.

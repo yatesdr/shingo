@@ -177,7 +177,7 @@ func TestBuildNodeBins_NoLevelsNoGroupNoStatement(t *testing.T) {
 
 	// Its levels removed, the group is read once more, found empty, and not
 	// read again.
-	_, err = f.db.DB.Exec(`DELETE FROM node_maintain_levels WHERE group_node_id = $1`, f.group.ID)
+	_, err = f.db.DB.Exec(`DELETE FROM kanban_levels WHERE kanban_node_id = $1`, f.group.ID)
 	testutil.MustNoErr(t, err, "remove level")
 	for i, want := range []int64{6, 5} {
 		f.counter.Reset()

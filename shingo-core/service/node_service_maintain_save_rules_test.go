@@ -6,15 +6,15 @@ import (
 	"testing"
 
 	"shingo/protocol/testutil"
+	"shingocore/internal/testdb"
 	"shingocore/store/loaders"
-	"shingocore/store/nodes"
 )
 
 // node_service_maintain_save_rules_test.go — what the Nodes page's maintained
 // group save says about two configurations that cannot work: levels past the
 // enabled positions of a maintained group, and levels on a live unloader's
 // outbound with no overflow destination. Both are refused; their neighbours
-// (maintenance off; an overflow set) save as before.
+// (an overflow set) save as before.
 //
 // Each case saves a level through SetMaintainLevel (the level door of
 // www/handlers_maintained_groups.go) and records whether it saved, what it
@@ -56,8 +56,7 @@ func TestMaintainedGroupSave_LevelsAndTheUnloaderOutbound(t *testing.T) {
 	db := testDB(t)
 	svc := NewNodeService(db)
 	on := func(grpID int64) {
-		testutil.MustNoErr(t, db.SetNodeProperty(grpID, nodes.PropMaintainEnabled, "on"), "enable")
-		testutil.MustNoErr(t, db.SetNodeProperty(grpID, nodes.PropMaintenanceStation, "EDGE-1"), "station")
+		testdb.KanbanStation(t, db, grpID, "EDGE-1")
 	}
 
 	t.Run("levels summing past the enabled positions of a maintained group", func(t *testing.T) {
@@ -67,15 +66,6 @@ func TestMaintainedGroupSave_LevelsAndTheUnloaderOutbound(t *testing.T) {
 		if got.saved || !mgRefusedBy(MaintainedGroupCheck{Refusals: got.refused}, "SR-PAST declares 3 carriers across 2") {
 			t.Errorf("3 wanted across 2 positions: saved=%v refused=%v warnings=%v; want refused, "+
 				"naming the group and both numbers", got.saved, got.refused, got.warnings)
-		}
-	})
-
-	t.Run("levels summing past the positions of a group not maintained", func(t *testing.T) {
-		grpID, _ := mgGroup(t, db, "SR-OFF", 2)
-		got := mgSaveLevel(t, svc, grpID, mgBinType(t, db, "SR-OFF-TOTE"), 3)
-		if !got.saved || len(got.refused) != 0 || len(got.warnings) != 0 {
-			t.Errorf("3 wanted across 2 positions, maintenance off: saved=%v refused=%v warnings=%v; "+
-				"want saved with nothing said", got.saved, got.refused, got.warnings)
 		}
 	})
 
@@ -93,7 +83,7 @@ func TestMaintainedGroupSave_LevelsAndTheUnloaderOutbound(t *testing.T) {
 		grpID, _ := mgGroup(t, db, "SR-OVF", 3)
 		mgGroup(t, db, "SR-OVF-SPILL", 1)
 		mgUnloaderSendingTo(t, svc, "SR-OVF-UNL", "SR-OVF")
-		testutil.MustNoErr(t, db.SetNodeProperty(grpID, nodes.PropOverflowDestination, "SR-OVF-SPILL"), "overflow")
+		testdb.KanbanOverflow(t, db, grpID, "SR-OVF-SPILL")
 		got := mgSaveLevel(t, svc, grpID, mgBinType(t, db, "SR-OVF-TOTE"), 1)
 		if !got.saved || len(got.refused) != 0 || len(got.warnings) != 0 {
 			t.Errorf("a level on SR-OVF-UNL's outbound, overflow set: saved=%v refused=%v warnings=%v; "+

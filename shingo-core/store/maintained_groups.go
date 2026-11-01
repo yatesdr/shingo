@@ -4,7 +4,11 @@ package store
 // Same shape as node_properties.go — the aggregate owns the queries, the outer
 // store/ level owns the *DB method set the service layer calls.
 
-import "shingocore/store/nodes"
+import (
+	"log"
+
+	"shingocore/store/nodes"
+)
 
 // MaintainLevel and MaintainSupport are re-exported so callers outside the store
 // do not have to import the nodes aggregate for the row types alone.
@@ -13,24 +17,60 @@ type (
 	MaintainLayerWant = nodes.MaintainLayerWant
 	MaintainSupport   = nodes.MaintainSupport
 	TypeInPlay        = nodes.TypeInPlay
+	Kanban            = nodes.Kanban
+	KanbanSource      = nodes.KanbanSource
+	OverflowTarget    = nodes.OverflowTarget
 )
 
-// SetMaintainLevel declares how many empty carriers of one type a maintained
-// group holds.
+// SetMaintainLevel seeds one level with no audit: a fixture's write. Production
+// saves go through SaveKanban.
 func (db *DB) SetMaintainLevel(l MaintainLevel) error {
 	return nodes.SetMaintainLevel(db.DB, l)
 }
 
-// SetMaintainLevelAndLayerWants declares a level and replaces its type's layer
-// wants, in one transaction.
+// SetMaintainLevelAndLayerWants seeds a level and its type's layer wants with no
+// audit: a fixture's write. Production saves go through SaveKanban.
 func (db *DB) SetMaintainLevelAndLayerWants(l MaintainLevel, wants []MaintainLayerWant) error {
 	return nodes.SetMaintainLevelAndLayerWants(db.DB, l, wants)
 }
 
-// RemoveMaintainLevel stops declaring a carrier type for a group, and removes
-// its layer wants with it.
+// RemoveMaintainLevel removes a seeded level with no audit: a fixture's write.
+// Production saves go through SaveKanban.
 func (db *DB) RemoveMaintainLevel(groupNodeID, binTypeID int64) error {
 	return nodes.RemoveMaintainLevel(db.DB, groupNodeID, binTypeID)
+}
+
+// GetKanban reads one kanbans row, nil when the group has none.
+func (db *DB) GetKanban(nodeID int64) (*Kanban, error) {
+	return nodes.GetKanban(db.DB, nodeID)
+}
+
+// ListKanbans reads every kanbans row in one statement.
+func (db *DB) ListKanbans() ([]Kanban, error) {
+	return nodes.ListKanbans(db.DB)
+}
+
+// ListKanbanSources returns a kanban's sources in rank order, names joined on.
+func (db *DB) ListKanbanSources(kanbanNodeID int64) ([]KanbanSource, error) {
+	return nodes.ListKanbanSources(db.DB, kanbanNodeID)
+}
+
+// OverflowTargetOf reads a group's overflow: a kanban's row, or a plain group's
+// property. One statement.
+func (db *DB) OverflowTargetOf(groupNodeID int64) (OverflowTarget, error) {
+	return nodes.OverflowTargetOf(db.DB, groupNodeID)
+}
+
+// OverflowNameOf is the name of a group's overflow, by the group's name; blank
+// for none, and for a read that failed, which leaves the push parked until the
+// next pass asks again. One statement.
+func (db *DB) OverflowNameOf(groupName string) string {
+	t, err := nodes.OverflowTargetByName(db.DB, groupName)
+	if err != nil {
+		log.Printf("store: %v", err)
+		return ""
+	}
+	return t.Name
 }
 
 // ListMaintainLayerWants returns a group's layer wants, codes and each type's
@@ -68,7 +108,8 @@ func (db *DB) MaintainedGroupIDs() (map[int64]bool, error) {
 	return nodes.MaintainedGroupIDs(db.DB)
 }
 
-// SetMaintainSupports replaces the set of process nodes a group serves.
+// SetMaintainSupports seeds the set of process nodes a group serves with no
+// audit: a fixture's write. Production saves go through SaveKanban.
 func (db *DB) SetMaintainSupports(groupNodeID int64, processNodeIDs []int64) error {
 	return nodes.SetMaintainSupports(db.DB, groupNodeID, processNodeIDs)
 }

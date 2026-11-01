@@ -1162,8 +1162,8 @@ func TestPlannerGolden_Doors(t *testing.T) {
 			need: map[string]any{"door": "level keeper", "group": "SYN_PRESS_EMPTIES",
 				"setup": "BIN-PEB-01..03 moved out to PLN_005, PLN_006 and SLN_010, so STANDARD is 1 of 4 wanted"},
 			run: func(g *goldenPlant) {
-				if v := g.db.GetNodeProperty(g.node("SYN_PRESS_EMPTIES").ID, nodes.PropMaintainEnabled); v != "on" {
-					g.t.Fatalf("fixture: the demo seeds SYN_PRESS_EMPTIES with maintain_enabled=%q, want on", v)
+				if k, err := g.db.GetKanban(g.node("SYN_PRESS_EMPTIES").ID); err != nil || k == nil || k.StationID == "" {
+					g.t.Fatalf("fixture: the demo seeds SYN_PRESS_EMPTIES as a kanban with a station; got %+v (%v)", k, err)
 				}
 				for _, m := range [][2]string{{"BIN-PEB-01", "PLN_005"}, {"BIN-PEB-02", "PLN_006"}, {"BIN-PEB-03", "SLN_010"}} {
 					g.exec(`UPDATE bins SET node_id = (SELECT id FROM nodes WHERE name = $2) WHERE label = $1`, m[0], m[1])

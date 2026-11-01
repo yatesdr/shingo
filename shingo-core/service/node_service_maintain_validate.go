@@ -88,14 +88,20 @@ func (s *NodeService) ValidateMaintainedGroup(cfg MaintainedGroupConfig) (Mainta
 			groupName, strings.Join(nested, ", "), plural(len(nested), "is", "are"))
 	}
 
-	// ── A station, or the orders run unseen ──────────────────────────────────
+	// ── Supports need a station, or the orders run unseen ────────────────────
 	// projectOrder no-ops on a blank StationID, so a top-up order minted without
 	// one would run on the floor and appear on no board anywhere. That is the
 	// phantom-order family, and it is worth a refusal rather than a warning
-	// because nothing downstream can detect it afterwards.
-	if cfg.Enabled && strings.TrimSpace(cfg.MaintenanceStation) == "" {
+	// because nothing downstream can detect it afterwards. A kanban with no
+	// supports declares what it holds and is refilled by others, and needs none.
+	if len(cfg.Supports) > 0 && strings.TrimSpace(cfg.MaintenanceStation) == "" {
 		refuse("%s has no station for its top-up orders — without one they would run on the floor and show on no board",
 			groupName)
+	}
+
+	// ── Sources ──────────────────────────────────────────────────────────────
+	if msg := s.sourceWarnings(cfg, groupName, refuse); msg != nil {
+		chk.Warnings = append(chk.Warnings, msg...)
 	}
 
 	// ── Level rows ───────────────────────────────────────────────────────────
@@ -181,12 +187,11 @@ func (s *NodeService) ValidateMaintainedGroup(cfg MaintainedGroupConfig) (Mainta
 // roomRefusals is the group's room against what its levels declare: more than
 // it can hold, or no room for a return.
 //
-// Past the enabled positions is a REFUSAL: a maintained group cannot stand
-// more carriers than it has positions, so its level could never be met and the
-// keeper would stay short of it for good. Exactly at them is a WARNING: the
-// level can be held, but it leaves the unloader nowhere to put the next carrier
-// it drains, and the group can gain positions or re-enable children.
-// Maintenance off asks neither: nothing keeps the level. Pin:
+// Past the enabled positions is a REFUSAL: a kanban cannot stand more carriers
+// than it has positions, so its level could never be met and the keeper would
+// stay short of it for good. Exactly at them is a WARNING: the level can be held,
+// but it leaves the unloader nowhere to put the next carrier it drains, and the
+// group can gain positions or re-enable children. Pin:
 // TestMaintainedGroupSave_LevelsAndTheUnloaderOutbound.
 //
 // The levels and the tops & bottoms rows (layer wants at 0) are counted
@@ -209,21 +214,49 @@ func roomRefusals(cfg MaintainedGroupConfig, groupName string, enabledChildren i
 		carriers = fmt.Sprintf("%d carriers (%d of them tops & bottoms)", total, topsAndBottoms)
 	}
 	switch {
-	case cfg.Enabled && total > enabledChildren:
+	case total > enabledChildren:
 		refusals = append(refusals, fmt.Sprintf("%s declares %s across %d enabled position%s — more than it can hold, so its level could never be met",
 			groupName, carriers, enabledChildren, plural(enabledChildren, "", "s")))
-	case cfg.Enabled && enabledChildren > 0 && total == enabledChildren:
+	case enabledChildren > 0 && total == enabledChildren:
 		warnings = append(warnings, fmt.Sprintf("%s declares %s across %d position%s — nothing is left free for a carrier coming back in",
 			groupName, carriers, enabledChildren, plural(enabledChildren, "", "s")))
 	}
 	return refusals, warnings
 }
 
+// sourceWarnings judges a kanban's sources: a source is not the kanban and is
+// listed once (refuse), and a lineside kanban's keeper never takes from another
+// kanban that has supports of its own, which is said here and never refused.
+func (s *NodeService) sourceWarnings(cfg MaintainedGroupConfig, groupName string, refuse func(string, ...any)) []string {
+	var warnings []string
+	seen := make(map[int64]bool, len(cfg.Sources))
+	for _, src := range cfg.Sources {
+		if src.SourceNodeID == cfg.GroupNodeID {
+			refuse("%s cannot source from itself", groupName)
+			continue
+		}
+		if seen[src.SourceNodeID] {
+			refuse("%s is listed twice in the sources of %s", src.SourceNodeName, groupName)
+			continue
+		}
+		seen[src.SourceNodeID] = true
+		if len(cfg.Supports) == 0 {
+			continue
+		}
+		k, err := s.db.GetKanban(src.SourceNodeID)
+		if err == nil && k != nil && k.HasSupports {
+			warnings = append(warnings, fmt.Sprintf("%s has supports of its own, so the keeper of %s never takes from it",
+				src.SourceNodeName, groupName))
+		}
+	}
+	return warnings
+}
+
 // outboundWithoutOverflow is the refusal for levels on a live unloader's
 // outbound with no overflow destination, or blank.
 //
-// A declared level is a cap whether or not maintenance is on (the store
-// resolver refuses a push past it). A live unloader that sends its empties to
+// A declared level is a cap (the store resolver refuses a push past it). A live
+// unloader that sends its empties to
 // the group has its empty-out parked once the group is at level, and the cart
 // stays on its window, unless an overflow destination takes the push. Pin:
 // TestMaintainedGroupSave_LevelsAndTheUnloaderOutbound.

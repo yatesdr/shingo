@@ -92,6 +92,11 @@ func TestGetByDotNames_AgreesWithGetByDotName(t *testing.T) {
 		if (one == nil) == inBatch || (one != nil && !reflect.DeepEqual(one, got)) {
 			t.Errorf("%q: GetByDotName = %+v, GetByDotNames = %+v (present %v)", c.name, one, got, inBatch)
 		}
+		id, ok, err := nodes.ResolveDotNameID(sdb, c.name)
+		testutil.MustNoErr(t, err, "ResolveDotNameID")
+		if ok != (one != nil) || (one != nil && id != one.ID) {
+			t.Errorf("%q: GetByDotName = %+v, ResolveDotNameID = %d, %v", c.name, one, id, ok)
+		}
 		switch {
 		case c.want == nil && one != nil:
 			t.Errorf("%q resolved to node %d %q, want unknown", c.name, one.ID, one.Name)

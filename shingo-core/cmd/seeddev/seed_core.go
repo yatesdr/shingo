@@ -286,13 +286,11 @@ func seedCore(db *store.DB, p *plantspec.Plant, binIDByNode map[string]int64) er
 	return nil
 }
 
-// seedMaintainedGroups writes the config a maintained group is: four node
-// properties and two node-keyed tables.
+// seedMaintainedGroups writes the config a kanban is, through store.SaveKanban.
 //
-// THE SAME TWO HOMES THE UI WRITES, not a seed-only shortcut. The scalars go
-// through SetNodeProperty and the sets through the maintain tables, so a seeded
-// group and a hand-configured one are the same rows — which is the only thing
-// that makes the sim's staged shape evidence about the real one.
+// THE SAME WRITE THE UI MAKES, not a seed-only shortcut, so a seeded kanban and a
+// hand-configured one are the same rows — which is the only thing that makes the
+// sim's staged shape evidence about the real one.
 //
 // bin_type_mode is written explicitly, for the reason the save-time rules write
 // it: inherit-by-default would let an ancestor's allowed-bins list silently
@@ -337,29 +335,47 @@ func seedMaintainedGroups(db *store.DB, p *plantspec.Plant, nodeIDs map[string]i
 		if !ok {
 			return fmt.Errorf("maintained group %q: zone not found among seeded nodes", mg.Group)
 		}
-		props := []struct{ key, value string }{
-			{nodes.PropMaintainEnabled, "on"},
-			{nodes.PropStrictSourcing, boolProp(mg.Strict)},
-			{nodes.PropMaintenanceStation, mg.Station},
-			{nodes.PropOverflowDestination, mg.Overflow},
-			{nodes.PropBinTypeMode, nodes.BinTypeModeAll},
+		if err := db.SetNodeProperty(groupID, nodes.PropBinTypeMode, nodes.BinTypeModeAll); err != nil {
+			return fmt.Errorf("maintained group %q property %s: %w", mg.Group, nodes.PropBinTypeMode, err)
 		}
-		for _, pr := range props {
-			if err := db.SetNodeProperty(groupID, pr.key, pr.value); err != nil {
-				return fmt.Errorf("maintained group %q property %s: %w", mg.Group, pr.key, err)
+		// zoneID is a named zone's node; a blank name is 0, which clears.
+		zoneID := func(name string) (int64, error) {
+			if name == "" {
+				return 0, nil
 			}
+			id, ok := nodeIDs[name]
+			if !ok {
+				return 0, fmt.Errorf("maintained group %q: zone %q not found among seeded nodes", mg.Group, name)
+			}
+			return id, nil
 		}
+		overflow, err := zoneID(mg.Overflow)
+		if err != nil {
+			return err
+		}
+		change := store.KanbanChange{NodeID: groupID, EnsureRow: true, Station: &mg.Station, Strict: &mg.Strict,
+			Cover: &mg.RunningCover, Overflow: &overflow}
 		for _, l := range mg.Levels {
 			btID, ok := binTypeIDs[l.BinType]
 			if !ok {
 				return fmt.Errorf("maintained group %q: bin type %q not seeded", mg.Group, l.BinType)
 			}
-			if err := db.SetMaintainLevel(store.MaintainLevel{
-				GroupNodeID: groupID, BinTypeID: btID, Want: l.Want,
-			}); err != nil {
-				return fmt.Errorf("maintained group %q level %s: %w", mg.Group, l.BinType, err)
+			levelOverflow, err := zoneID(l.Overflow)
+			if err != nil {
+				return err
 			}
+			want := l.Want
+			change.Levels = append(change.Levels, store.KanbanLevelChange{BinTypeID: btID, Want: &want, Overflow: &levelOverflow})
 		}
+		sources := make([]int64, 0, len(mg.Sources))
+		for _, name := range mg.Sources {
+			id, err := zoneID(name)
+			if err != nil {
+				return err
+			}
+			sources = append(sources, id)
+		}
+		change.Sources = &sources
 		var supportIDs []int64
 		for _, proc := range mg.Supports {
 			for _, nodeName := range processNodes[proc] {
@@ -370,18 +386,12 @@ func seedMaintainedGroups(db *store.DB, p *plantspec.Plant, nodeIDs map[string]i
 				supportIDs = append(supportIDs, id)
 			}
 		}
-		if err := db.SetMaintainSupports(groupID, supportIDs); err != nil {
-			return fmt.Errorf("maintained group %q supports: %w", mg.Group, err)
+		change.Supports = &supportIDs
+		if err := db.SaveKanban(change, "seeddev"); err != nil {
+			return fmt.Errorf("maintained group %q: %w", mg.Group, err)
 		}
 	}
 	return nil
-}
-
-func boolProp(b bool) string {
-	if b {
-		return "on"
-	}
-	return "off"
 }
 
 // seedBinLoaders derives the Core-owned bin_loaders aggregate from the plant's

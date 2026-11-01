@@ -9,11 +9,9 @@ import (
 
 // The holds-bins guard.
 //
-// Four edits to a maintained group change what its residents MEAN, and all four
-// are safe on an empty group and questionable on a full one:
+// Three edits to a kanban change what its residents MEAN, and all three are safe
+// on an empty group and questionable on a full one:
 //
-//	disable          the level stops being held; the carriers standing there
-//	                 become nobody's
 //	reserve (strict) the carriers standing there stop being visible to every
 //	                 process that is not on the list — including ones already
 //	                 looking for them
@@ -82,20 +80,18 @@ func binLabels(bs []*bins.Bin) []string {
 	return out
 }
 
-// CheckMaintainedGroupSettingsChange runs the guard for the two settings
-// transitions — turning maintenance off, and turning the reserve on.
+// CheckMaintainedGroupSettingsChange runs the guard for the settings transition
+// that changes what residents mean: turning the reserve on.
 //
-// It compares against what is stored, so a save that leaves both switches where
-// they were asks nothing: only the EDGE trips the guard.
+// It compares against what is stored, so a save that leaves the switch where it
+// was asks nothing: only the EDGE trips the guard.
 func (s *NodeService) CheckMaintainedGroupSettingsChange(groupNodeID int64, set MaintainedGroupSettings, force bool) (MaintainedGroupGuard, error) {
 	var g MaintainedGroupGuard
 	before, err := s.GetMaintainedGroup(groupNodeID)
 	if err != nil {
 		return g, err
 	}
-	turningOff := before.Enabled && !set.MaintainEnabled
-	turningStrictOn := !before.StrictSourcing && set.StrictSourcing
-	if !turningOff && !turningStrictOn {
+	if before.StrictSourcing || !set.StrictSourcing {
 		return g, nil
 	}
 
@@ -103,13 +99,11 @@ func (s *NodeService) CheckMaintainedGroupSettingsChange(groupNodeID int64, set 
 	// check passes: it is the one thing here that is about orders rather than
 	// carriers, and an operator reserving a group wants to know who is already
 	// on their way to it regardless of what is standing there.
-	if turningStrictOn {
-		drain, err := s.checkStrictDrain(groupNodeID)
-		if err != nil {
-			return g, err
-		}
-		g.Drain = drain
+	drain, err := s.checkStrictDrain(groupNodeID)
+	if err != nil {
+		return g, err
 	}
+	g.Drain = drain
 	if force {
 		return g, nil
 	}
@@ -125,14 +119,8 @@ func (s *NodeService) CheckMaintainedGroupSettingsChange(groupNodeID int64, set 
 	if err != nil {
 		return g, err
 	}
-	switch {
-	case turningOff:
-		g.Blocked = fmt.Sprintf("%s still holds %s — turning maintenance off leaves %s belonging to nothing",
-			group.Name, strings.Join(binLabels(held), ", "), plural(len(held), "it", "them"))
-	default:
-		g.Blocked = fmt.Sprintf("%s still holds %s — reserving the group hides %s from every process not on the list",
-			group.Name, strings.Join(binLabels(held), ", "), plural(len(held), "it", "them"))
-	}
+	g.Blocked = fmt.Sprintf("%s still holds %s — reserving the group hides %s from every process not on the list",
+		group.Name, strings.Join(binLabels(held), ", "), plural(len(held), "it", "them"))
 	return g, nil
 }
 
