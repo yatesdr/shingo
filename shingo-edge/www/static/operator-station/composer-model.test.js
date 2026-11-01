@@ -2042,14 +2042,44 @@ test('a deck already on the new stand\'s list stays; one carried earlier goes ba
 
 test('a spot\'s chip carries the deck that followed it, and its ✕ undoes both', () => {
     assert.deepStrictEqual(M.spotsChips(GROUPED_CARD, ON_013), [
-        { node: 'PLN_006', to: 'PLN_013', follow: ['PLN_005'] },
-        { node: 'PLN_007', to: 'PLN_012', follow: [] },
+        { node: 'PLN_006', from: 'PLN_006', to: 'PLN_013', follow: ['PLN_005'] },
+        { node: 'PLN_007', from: 'PLN_007', to: 'PLN_012', follow: [] },
     ]);
     const on011 = { PLN_006: 'PLN_010', PLN_005: 'PLN_011', PLN_007: 'PLN_012' };
     assert.deepStrictEqual(M.spotsChips(GROUPED_CARD, on011).map(c => c.node + ':' + c.follow.join(',')),
         ['PLN_006:', 'PLN_005:', 'PLN_007:'], 'a deck the operator moved on its spot\'s own list is a chip of its own');
     assert.strictEqual(byKey(M.spotsUnmove(GROUPED_CARD, ON_013, 'PLN_006')), byKey({ PLN_007: 'PLN_012' }));
     assert.strictEqual(byKey(M.spotsUnmove(GROUPED_CARD, on011, 'PLN_005')), byKey(PREFILL), 'a deck\'s ✕ is its own');
+});
+
+test('against where the step opened: no chip until a part moves, a chip reads from → to, and ✕ is the undo', () => {
+    assert.deepStrictEqual(M.spotsChips(GROUPED_CARD, PREFILL, PREFILL), [], 'the pre-fill is not a move');
+    assert.deepStrictEqual(M.spotsChips(GROUPED_CARD, ON_013, PREFILL), [
+        { node: 'PLN_006', from: 'PLN_010', to: 'PLN_013', follow: ['PLN_005'] },
+    ], 'one move, from where the part stood');
+    assert.strictEqual(byKey(M.spotsUnmove(GROUPED_CARD, ON_013, 'PLN_006', PREFILL)), byKey(PREFILL),
+        'its ✕ puts the spot and the deck that rode along back where they opened');
+    const home = { PLN_007: 'PLN_012' };
+    assert.deepStrictEqual(M.spotsChips(GROUPED_CARD, home, PREFILL),
+        [{ node: 'PLN_006', from: 'PLN_010', to: 'PLN_006', follow: [] }], 'to the recipe\'s own spot is a move too');
+    assert.strictEqual(byKey(M.spotsUnmove(GROUPED_CARD, home, 'PLN_006', PREFILL)), byKey(PREFILL));
+    // A stand another place has taken since stays taken: the ✕ moves nothing.
+    const card = JSON.parse(JSON.stringify(GROUPED_CARD));
+    card.spots.find(s => s.node === 'PLN_007').targets.push('PLN_010');
+    const taken = { PLN_006: 'PLN_013', PLN_005: 'PLN_014', PLN_007: 'PLN_010' };
+    assert.strictEqual(byKey(M.spotsUnmove(card, taken, 'PLN_006', PREFILL)), byKey(taken));
+});
+
+test('an on-deck spot with nowhere to go is inert: a tap does not select it; one with somewhere to go is a place', () => {
+    assert.deepStrictEqual(M.spotsInert(GROUPED_CARD, PREFILL), ['PLN_008'], 'PLN_005 may go to PLN_011; PLN_008 nowhere');
+    assert.deepStrictEqual(M.spotsInert(GROUPED_CARD, ON_013), ['PLN_008'], 'at PLN_013 PLN_005 may go to PLN_015');
+    const inert = M.spotsInert(GROUPED_CARD, PREFILL);
+    assert.strictEqual(M.spotsTap(GROUPED_CARD, PREFILL, '', 'PLN_008', inert).selected, '', 'the inert deck');
+    assert.strictEqual(M.spotsTap(GROUPED_CARD, PREFILL, '', 'PLN_005', inert).selected, 'PLN_005', 'the deck that can move');
+    assert.strictEqual(M.spotsTap(GROUPED_CARD, PREFILL, 'PLN_007', 'PLN_008', inert).selected, 'PLN_007',
+        'a tap on the inert deck keeps the selection');
+    assert.strictEqual(M.spotsTap(GROUPED_CARD, PREFILL, '', 'PLN_008').selected, 'PLN_008',
+        'with no skip (the desktop) the deck is selected as before');
 });
 
 test('spotsPicture: what is in play is full, the hands tagged on their spots, the pairing from the pre-fill', () => {

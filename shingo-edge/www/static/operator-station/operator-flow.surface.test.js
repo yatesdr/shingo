@@ -405,11 +405,11 @@ function fakeElement() {
     };
     const shown = { innerHTML: '' };
     const cctx = {
-        recipe: { name: 'Standard' }, picks: ['PART-A'], moves: {}, selected: '',
+        recipe: { name: 'Standard' }, picks: ['PART-A'], moves: {}, opened: {}, selected: '',
         recipePicture() { return { svg: '', height: 1234, width: 1280 }; },
         picksLabel() { return 'PART-A'; },
         M() {
-            return { shortPart(p) { return p; }, spotsChips() { return []; },
+            return { shortPart(p) { return p; }, spotsChips() { return []; }, spotsInert() { return []; },
                 spotsPicture() { return { targets: [], active: [], tags: {}, pairs: {} }; } };
         },
         show() { return shown; }, esc(s) { return String(s); },

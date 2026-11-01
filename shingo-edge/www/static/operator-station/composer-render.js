@@ -71,6 +71,7 @@ let fresh = false;      // Set up new: do not reuse a style these parts run in
 let chosen = 0;         // the style tapped, by style id, or 0
 let recipe = null;      // the recipe (preset card) the parts mint from, or null
 let moves = {};         // the Spots step's moves: recipe node → node
+let opened = {};        // the moves the Spots step opened on (the pre-fill): a chip is a change from these
 let selected = '';      // the recipe place the Spots step is moving (its recipe node)
 let preview = null;     // the last mint preview's answer
 let previewStatus = 0;
@@ -176,7 +177,7 @@ function root() {
 
 function reset() {
     picks = []; split = false; fresh = false; chosen = 0;
-    recipe = null; moves = {}; selected = ''; preview = null;
+    recipe = null; moves = {}; opened = {}; selected = ''; preview = null;
 }
 
 export function close() {
@@ -493,6 +494,7 @@ function toPositions() { screen = 'positions'; selected = ''; drawPositions(); }
 function chooseRecipe(r) {
     recipe = r;
     moves = Object.assign({}, r.last_moves || {});
+    opened = Object.assign({}, moves);
     toPositions();
 }
 
@@ -622,7 +624,15 @@ function drawWhich(list) {
 // lights it and restates nothing, and the server refuses anything else
 // (engine.applyMoves). Nothing swaps. On a grouped recipe a spot's on-deck
 // spot follows it where the card says (carry), and one chip says so —
-// "PLN_006 → PLN_013 (on deck PLN_014) ✕" — its ✕ putting both back.
+// "PLN_010 → PLN_013 (on deck PLN_014) ✕" — its ✕ putting both back.
+//
+// A CHIP IS A MOVE THE OPERATOR MADE (spotsChips against `opened`, the
+// pre-fill the step opened on): none until a part moves, it reads from where
+// the part was to where it is, and its ✕ is the undo (spotsUnmove).
+//
+// AN ON-DECK SPOT WITH NOWHERE TO GO IS LEFT ALONE (spotsInert): not drawn
+// full, not selected by a tap, not named in the hint. Where one can move, it
+// is a place like any other.
 //
 // THE TAPPED CARD IS THE SELECTION, and only on this step: an on-deck card or a
 // lane is a place of its own here, so the picture outlines it alone rather than
@@ -630,15 +640,19 @@ function drawWhich(list) {
 function drawPositions() {
     const opts = relationOpts(recipe, selected, { editable: true, selectCard: true,
         selected: selected ? (moves[selected] || selected) : null });
+    const inert = M().spotsInert(recipe, moves);
+    const inertAt = inert.map(n => moves[n] || n);
+    if (opts.active) opts.active = opts.active.filter(n => inertAt.indexOf(n) < 0);
     const lit = opts.targets || [];
     const pic = recipePicture(recipe, opts);
-    const list = M().spotsChips(recipe, moves).map(c => {
+    const list = M().spotsChips(recipe, moves, opened).map(c => {
         const s = placeOf(c.node);
         const job = s && s.job !== 'spot' ? jobWords(s) + ': ' : '';
-        const follow = c.follow.map(n => followWord(placeOf(n)) + ' ' + moves[n]);
+        const follow = c.follow.map(n => followWord(placeOf(n)) + ' ' + (moves[n] || n));
         return '<button class="os-chip btn" data-act="unmove" data-node="' + esc(c.node) + '">' +
-            esc(job + c.node + ' → ' + c.to + (follow.length ? ' (' + follow.join(', ') + ')' : '')) + ' ✕</button>';
+            esc(job + c.from + ' → ' + c.to + (follow.length ? ' (' + follow.join(', ') + ')' : '')) + ' ✕</button>';
     }).join('');
+    const decks = ((recipe && recipe.spots) || []).some(s => s.job === 'on_deck' && inert.indexOf(s.node) < 0);
     const sel = selected ? placeOf(selected) : null;
     // THE HINT NAMES THE GROUP: "PLN_010 · Left Hand · where this part runs".
     const here = sel ? esc(moves[sel.node] || sel.node) + ' · ' + (sel.group ? esc(sel.group) + ' · ' : '') +
@@ -647,7 +661,8 @@ function drawPositions() {
     // Nothing selected, a grouped recipe opens where the cell last ran it and
     // names the cards a tap moves; an ungrouped one keeps v0's words.
     const opening = (recipe.groups || []).length
-        ? 'Where this cell last ran the recipe. Tap a <b>press spot</b> or an <b>on-deck spot</b> to change it · as it is? <b>Next</b>'
+        ? 'Where this cell last ran the recipe. Tap a <b>press spot</b>' + (decks ? ' or an <b>on-deck spot</b>' : '') +
+            ' to change it · as it is? <b>Next</b>'
         : 'This is where the parts go. Tap one to change where it is · as it is? <b>Next</b>';
     show().innerHTML =
         '<div class="os-comp-full">' +
@@ -698,7 +713,7 @@ function followWord(s) { return s ? jobWords(s).replace(/ for \S+$/, '') : ''; }
 // one instead, and nothing swaps; anything else moves nothing.
 function onPositionsTap(node) {
     if (!node) return;
-    const t = M().spotsTap(recipe, moves, selected, node);
+    const t = M().spotsTap(recipe, moves, selected, node, M().spotsInert(recipe, moves));
     moves = t.moves;
     selected = t.selected;
     drawPositions();
@@ -944,7 +959,7 @@ function onClick(e) {
             if (r) chooseRecipe(r);
             break;
         }
-        case 'unmove': moves = M().spotsUnmove(recipe, moves, btn.dataset.node); drawPositions(); break;
+        case 'unmove': moves = M().spotsUnmove(recipe, moves, btn.dataset.node, opened); drawPositions(); break;
         case 'next': go(); break;
         case 'start': if (screen === 'confirm') startSaved(); else start(); break;
         default: break;
@@ -963,6 +978,7 @@ export function openFromHash() {
     chosen = Number(opt('style')) || 0;
     recipe = presets().find(p => String(p.id) === opt('recipe')) || null;
     moves = {};
+    opened = Object.assign({}, (recipe && recipe.last_moves) || {});
     for (const pair of (opt('moves') ? opt('moves').split(',') : [])) {
         const [from, to] = pair.split(':');
         if (from && to) moves[from] = to;

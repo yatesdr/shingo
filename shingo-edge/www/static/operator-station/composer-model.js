@@ -2248,9 +2248,14 @@ function spotsMove(card, moves, node, to) {
 //   - another place of the recipe selects that one instead — nothing swaps;
 //   - anything else moves nothing and keeps the selection, so the lit nodes
 //     stay lit.
-function spotsTap(card, moves, selected, node) {
+//
+// `skip` is the places a tap passes over (the station passes spotsInert:
+// an on-deck spot with nowhere to go selects nothing there). The desktop
+// passes none.
+function spotsTap(card, moves, selected, node, skip) {
     const next = Object.assign({}, moves);
-    const at = spotAt(card, moves, node);
+    let at = spotAt(card, moves, node);
+    if (at && (skip || []).indexOf(at.node) >= 0) at = null;
     if (!selected) return { moves: next, selected: at ? at.node : '' };
     if (at && at.node === selected) return { moves: next, selected: '' };
     if (spotsLit(card, moves, selected).indexOf(node) >= 0) {
@@ -2259,28 +2264,59 @@ function spotsTap(card, moves, selected, node) {
     return { moves: next, selected: at ? at.node : selected };
 }
 
-// spotsChips is the Spots step's chips, one per move in the moves' order:
-// {node, to, follow}. An attached place whose own node is not on its spot's
-// list at the spot's new stand moved because its spot did, so it rides in
-// that spot's chip (`follow`) rather than having one of its own.
-function spotsChips(card, moves) {
+// spotsChips is the Spots step's chips: one per place that stands somewhere
+// other than where it stood when the step opened, {node, from, to, follow}.
+// `opened` is the moves the step opened on (the card's pre-fill); absent, the
+// recipe's own nodes. So nothing moved is no chip, and a chip reads from where
+// the part was to where it is. An attached place that had to leave because its
+// spot did (where it opened is not on its spot's list at the spot's new stand)
+// rides in that spot's chip (`follow`) rather than having one of its own.
+function spotsChips(card, moves, opened) {
+    const base = opened || {};
     const spots = (card && card.spots) || [];
+    const now = n => moves[n] || n;
+    const was = n => base[n] || n;
+    const moved = n => now(n) !== was(n);
     const follows = {};
     const folded = new Set();
     for (const s of spots) {
-        const to = moves[s.node];
-        if (s.at || !to || to === s.node) continue;
-        follows[s.node] = spots.filter(a => a.at && a.of === s.node && moves[a.node] && moves[a.node] !== a.node &&
-            (a.at[to] || []).indexOf(a.node) < 0).map(a => a.node);
+        if (s.at || !moved(s.node)) continue;
+        follows[s.node] = spots.filter(a => a.at && a.of === s.node && moved(a.node) &&
+            (a.at[now(s.node)] || []).indexOf(was(a.node)) < 0).map(a => a.node);
         follows[s.node].forEach(n => folded.add(n));
     }
-    return Object.keys(moves).filter(n => !folded.has(n))
-        .map(n => ({ node: n, to: moves[n], follow: follows[n] || [] }));
+    return [...new Set(Object.keys(moves).concat(Object.keys(base)))].filter(n => moved(n) && !folded.has(n))
+        .map(n => ({ node: n, from: was(n), to: now(n), follow: follows[n] || [] }));
 }
 
-// spotsUnmove is a chip's ✕: the place back on its own node, a spot's
-// followers with it.
-function spotsUnmove(card, moves, node) { return spotsMove(card, moves, node, node); }
+// spotsUnmove is a chip's ✕, an undo: the place back where it stood when the
+// step opened, with the places that rode in its chip, and the chip gone. If
+// another place has taken that stand since, the ✕ moves nothing.
+function spotsUnmove(card, moves, node, opened) {
+    const base = opened || {};
+    const chip = spotsChips(card, moves, base).find(c => c.node === node);
+    const next = Object.assign({}, moves);
+    if (!chip) return next;
+    const back = [node].concat(chip.follow);
+    const taken = new Set(((card && card.spots) || []).filter(s => back.indexOf(s.node) < 0)
+        .map(s => moves[s.node] || s.node));
+    if (back.some(n => taken.has(base[n] || n))) return next;
+    for (const n of back) {
+        if (base[n] && base[n] !== n) next[n] = base[n];
+        else delete next[n];
+    }
+    return next;
+}
+
+// spotsInert is the on-deck spots the Spots step leaves alone: an on-deck
+// place with nowhere to go from the stand its spot stands on now (spotsLit is
+// empty). On the station's Spots step a tap does not select one (spotsTap's
+// skip) and the screen does not draw it full. Where an on-deck spot can move,
+// it is a place like any other.
+function spotsInert(card, moves) {
+    return ((card && card.spots) || []).filter(s => s.job === 'on_deck' && !spotsLit(card, moves, s.node).length)
+        .map(s => s.node);
+}
 
 // spotsPicture is what a recipe screen asks the cell picture for
 // (renderFlowPicture's targets, active, tags and pairs; SYNTH round 2 row 18):
@@ -2605,7 +2641,7 @@ function savedBody(styleId, stationId) {
         modeLabels, rowColumns, fieldRequired, fieldLabel, shortPart, robotWords,
         partOffers, styleFacts,
         routingNote, routingRoleOf, stagingFieldUsed,
-        presetCells, presetMoved, spotsLit, spotsTap, spotsChips, spotsUnmove, spotsPicture,
+        presetCells, presetMoved, spotsLit, spotsTap, spotsChips, spotsUnmove, spotsInert, spotsPicture,
         shapeDiff, orderSentences, orderTrip, viaWaypoints,
         advancedFor, advancedShows, advancedSet, positionChoices,
         flowSaveBody, mintBody, savedBody,

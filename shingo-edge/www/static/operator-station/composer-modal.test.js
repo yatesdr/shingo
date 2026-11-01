@@ -187,6 +187,8 @@ async function open(flow, setup, view) {
 }
 // urls is every request since the last CALLS reset, by path and query.
 function urls() { return CALLS.map(c => c.url); }
+// sortedKeys is a map as JSON with its keys in order: a body's map, read for what it says.
+function sortedKeys(o) { return JSON.stringify(Object.keys(o || {}).sort().reduce((m, k) => { m[k] = o[k]; return m; }, {})); }
 function bodyOf(part) {
     const c = CALLS.filter(x => x.url.indexOf(part) >= 0).pop();
     return c ? JSON.stringify(c.body) : '';
@@ -503,10 +505,13 @@ function spotsTest(name, fn) {
         await fn();
     });
 }
-spotsTest('spots open where the cell last ran the recipe, as the server shipped it', async () => {
+spotsTest('spots open where the cell last ran the recipe, as the server shipped it, and no chip until a part moves', async () => {
     await twoOff(press6());
-    if (JSON.stringify(chips().sort()) !== '["PLN_006 → PLN_010 ✕","PLN_007 → PLN_012 ✕"]') {
-        throw new Error('pre-fill: ' + JSON.stringify(chips()));
+    if (chips().length) throw new Error('chips before a move: ' + JSON.stringify(chips()));
+    CALLS.length = 0;
+    tap('next');
+    if (JSON.stringify(lastPreview().overrides) !== '{"PLN_006":"PLN_010","PLN_007":"PLN_012"}') {
+        throw new Error('pre-fill: ' + JSON.stringify(lastPreview()));
     }
 });
 spotsTest('a press spot lights only the spots its recipes pair with its deck, and outlines itself', async () => {
@@ -516,41 +521,42 @@ spotsTest('a press spot lights only the spots its recipes pair with its deck, an
     if (JSON.stringify(lit()) !== '["PLN_006","PLN_009"]') throw new Error('lit: ' + JSON.stringify(lit()));
     expectIn('hint', 'PLN_010 · where this part runs', hint());
 });
-spotsTest('the on-deck card selects its own job, and PLN_013 moves nothing', async () => {
+spotsTest('an on-deck card with nowhere to go selects nothing, and PLN_013 moves nothing', async () => {
     await twoOff(press6());
     tapPos('PLN_005');
-    expectIn('hint', 'PLN_005 · on deck for PLN_010', hint());
-    if (PIC.selected !== 'PLN_005' || lit().length) throw new Error('deck: ' + JSON.stringify(PIC));
+    expectIn('hint', 'This is where the parts go', hint());
+    if (PIC.selected || lit().length) throw new Error('deck: ' + JSON.stringify(PIC));
     tapPos('PLN_013');
-    if (chips().length !== 2 || chips().some(c => c.indexOf('PLN_013') >= 0)) throw new Error('moved: ' + JSON.stringify(chips()));
-    if (PIC.selected !== 'PLN_005') throw new Error('the selection went: ' + PIC.selected);
+    if (chips().length || PIC.selected) throw new Error('moved: ' + JSON.stringify(chips()) + ' ' + PIC.selected);
 });
-spotsTest('a press then its own deck re-selects the deck; nothing swaps', async () => {
+spotsTest('a press then its own deck keeps the press; nothing swaps', async () => {
     await twoOff(press6());
     tapPos('PLN_010');
     tapPos('PLN_005');
-    if (PIC.selected !== 'PLN_005' || chips().length !== 2) throw new Error('swapped: ' + JSON.stringify(chips()));
+    if (PIC.selected !== 'PLN_010' || chips().length) throw new Error('swapped: ' + PIC.selected + ' ' + JSON.stringify(chips()));
 });
 spotsTest('a spot then another spot re-selects it; the decks never cross (was: a swap)', async () => {
     await twoOff(press6());
     tapPos('PLN_010');
     tapPos('PLN_012');
     if (PIC.selected !== 'PLN_012') throw new Error('selected ' + PIC.selected);
-    if (JSON.stringify(chips().sort()) !== '["PLN_006 → PLN_010 ✕","PLN_007 → PLN_012 ✕"]') {
-        throw new Error('swapped: ' + JSON.stringify(chips()));
-    }
+    if (chips().length) throw new Error('swapped: ' + JSON.stringify(chips()));
 });
-spotsTest('a press spot moves to a lit spot and back, and Go sends what the chips say', async () => {
+spotsTest('a press spot moves to a lit spot and back, its ✕ is the undo, and Go sends what the screen shows', async () => {
     await twoOff(press6());
     tapPos('PLN_010'); tapPos('PLN_009');
-    if (JSON.stringify(chips().sort()) !== '["PLN_006 → PLN_009 ✕","PLN_007 → PLN_012 ✕"]') {
-        throw new Error('move: ' + JSON.stringify(chips()));
-    }
-    tapPos('PLN_009'); tapPos('PLN_006');
-    if (JSON.stringify(chips()) !== '["PLN_007 → PLN_012 ✕"]') throw new Error('put back: ' + JSON.stringify(chips()));
+    if (JSON.stringify(chips()) !== '["PLN_010 → PLN_009 ✕"]') throw new Error('move: ' + JSON.stringify(chips()));
+    tapPos('PLN_009'); tapPos('PLN_010');
+    if (chips().length) throw new Error('moved back: ' + JSON.stringify(chips()));
+    tapPos('PLN_010'); tapPos('PLN_006');
+    if (JSON.stringify(chips()) !== '["PLN_010 → PLN_006 ✕"]') throw new Error('to the recipe spot: ' + JSON.stringify(chips()));
+    tap('unmove', { node: 'PLN_006' });
+    if (chips().length) throw new Error('undo: ' + JSON.stringify(chips()));
     CALLS.length = 0;
     tap('next');
-    if (JSON.stringify(lastPreview().overrides) !== '{"PLN_007":"PLN_012"}') throw new Error('body ' + JSON.stringify(lastPreview()));
+    if (sortedKeys(lastPreview().overrides) !== '{"PLN_006":"PLN_010","PLN_007":"PLN_012"}') {
+        throw new Error('body ' + JSON.stringify(lastPreview()));
+    }
 });
 spotsTest('a lane moves only to a lane, and its chip names its job', async () => {
     await oneOff(press6());
@@ -601,15 +607,15 @@ function pairsOf(o) {
     const p = (o || PIC).pairs || {};
     return Object.keys(p).sort().map(n => n + '<' + p[n].slice().sort().join(',')).join(' ');
 }
-spotsTest('an ungrouped recipe is drawn by relation, the recipe full and nothing tagged', async () => {
+spotsTest('an ungrouped recipe is drawn by relation, the recipe full but a deck with nowhere to go, nothing tagged', async () => {
     await twoOff(press6());
     if (PIC.relation !== true) throw new Error('relation: ' + PIC.relation);
-    if (sorted(PIC.active) !== '["PLN_005","PLN_008","PLN_010","PLN_012"]') throw new Error('active: ' + sorted(PIC.active));
+    if (sorted(PIC.active) !== '["PLN_010","PLN_012"]') throw new Error('active: ' + sorted(PIC.active));
     if (tagsOf()) throw new Error('tags on an ungrouped recipe: ' + tagsOf());
     if (pairsOf() !== 'PLN_005<PLN_010 PLN_008<PLN_012') throw new Error('pairs: ' + pairsOf());
     expectIn('hint', 'This is where the parts go. Tap one to change where it is · as it is? Next', hint());
     tapPos('PLN_010');
-    if (sorted(PIC.active) !== '["PLN_005","PLN_006","PLN_008","PLN_009","PLN_010","PLN_012"]') {
+    if (sorted(PIC.active) !== '["PLN_006","PLN_009","PLN_010","PLN_012"]') {
         throw new Error('active with PLN_010 selected: ' + sorted(PIC.active));
     }
     if (pairsOf() !== 'PLN_005<PLN_010 PLN_008<PLN_012') throw new Error('the pairing moved on a tap: ' + pairsOf());
@@ -635,63 +641,62 @@ function groupedTest(name, fn) {
         await fn();
     });
 }
-const PREFILL_CHIPS = '["PLN_006 → PLN_010 ✕","PLN_007 → PLN_012 ✕"]';
-const CARRIED_CHIPS = '["PLN_006 → PLN_013 (on deck PLN_014) ✕","PLN_007 → PLN_012 ✕"]';
-groupedTest('grouped: nothing selected, the groups in play are full, each hand tagged, the pairing held', async () => {
+const CARRIED_CHIPS = '["PLN_010 → PLN_013 (on deck PLN_014) ✕"]';
+groupedTest('grouped: nothing selected, the press spots in play are full, each hand tagged, the pairing held', async () => {
     await twoOff(grouped());
-    if (JSON.stringify(chips().sort()) !== PREFILL_CHIPS) throw new Error('pre-fill: ' + JSON.stringify(chips()));
+    if (chips().length) throw new Error('chips before a move: ' + JSON.stringify(chips()));
     if (PIC.relation !== true) throw new Error('relation: ' + PIC.relation);
-    if (sorted(PIC.active) !== '["PLN_005","PLN_008","PLN_010","PLN_012"]') throw new Error('active: ' + sorted(PIC.active));
+    if (sorted(PIC.active) !== '["PLN_010","PLN_012"]') throw new Error('active: ' + sorted(PIC.active));
     if (tagsOf() !== 'PLN_010:L1 PLN_012:R2') throw new Error('tags: ' + tagsOf());
     if (pairsOf() !== 'PLN_005<PLN_006,PLN_010,PLN_013 PLN_008<PLN_007,PLN_012') throw new Error('pairs: ' + pairsOf());
-    // THE MOCK'S WORDS, the two kinds of card a tap moves in bold.
-    expectIn('hint', 'Where this cell last ran the recipe. Tap a press spot or an on-deck spot to change it · as it is? Next', hint());
-    expectIn('hint, bold', 'Tap a <b>press spot</b> or an <b>on-deck spot</b>');
+    // No on-deck spot here can move, so the hint names the press spots only.
+    expectIn('hint', 'Where this cell last ran the recipe. Tap a press spot to change it · as it is? Next', hint());
+    expectIn('hint, bold', 'Tap a <b>press spot</b> to change it');
 });
 groupedTest('grouped: PLN_010 lights only Left Hand\'s other spots, tagged, and the hint names the group', async () => {
     await twoOff(grouped());
     tapPos('PLN_010');
     if (PIC.selected !== 'PLN_010' || PIC.selectCard !== true) throw new Error('selection: ' + PIC.selected);
     if (JSON.stringify(lit()) !== '["PLN_006","PLN_013"]') throw new Error('lit: ' + JSON.stringify(lit()));
-    if (sorted(PIC.active) !== '["PLN_005","PLN_006","PLN_008","PLN_010","PLN_012","PLN_013"]') {
+    if (sorted(PIC.active) !== '["PLN_006","PLN_010","PLN_012","PLN_013"]') {
         throw new Error('active: ' + sorted(PIC.active));
     }
     if (tagsOf() !== 'PLN_006:L1 PLN_010:L1 PLN_012:R2 PLN_013:L1') throw new Error('tags: ' + tagsOf());
     expectIn('hint', 'PLN_010 · Left Hand · where this part runs. Tap a spot marked move here', hint());
     if (pairsOf() !== 'PLN_005<PLN_006,PLN_010,PLN_013 PLN_008<PLN_007,PLN_012') throw new Error('pairs: ' + pairsOf());
 });
-groupedTest('grouped: PLN_005 selects the deck and lights its list at PLN_010 less where it stands', async () => {
+groupedTest('grouped: PLN_005, with nowhere to go at PLN_010, is not selected', async () => {
     await twoOff(grouped());
     tapPos('PLN_005');
-    if (PIC.selected !== 'PLN_005' || lit().length) throw new Error('deck: ' + PIC.selected + ' lit ' + JSON.stringify(lit()));
-    expectIn('hint', 'PLN_005 · Left Hand · on deck for PLN_010. Left Hand has nowhere else for it — ' +
-        'an engineer adds one on the desktop', hint());
+    if (PIC.selected || lit().length) throw new Error('deck: ' + PIC.selected + ' lit ' + JSON.stringify(lit()));
+    expectIn('hint', 'Where this cell last ran the recipe. Tap a press spot to change it', hint());
 });
 groupedTest('grouped: a spot moved to PLN_013 carries its deck, and one chip says so', async () => {
     await twoOff(grouped());
     tapPos('PLN_010'); tapPos('PLN_013');
     if (JSON.stringify(chips().sort()) !== CARRIED_CHIPS) throw new Error('carry: ' + JSON.stringify(chips()));
-    if (sorted(PIC.active) !== '["PLN_008","PLN_012","PLN_013","PLN_014"]') throw new Error('active: ' + sorted(PIC.active));
+    if (sorted(PIC.active) !== '["PLN_012","PLN_013"]') throw new Error('active: ' + sorted(PIC.active));
     if (tagsOf() !== 'PLN_012:R2 PLN_013:L1') throw new Error('tags: ' + tagsOf());
     if (pairsOf() !== 'PLN_005<PLN_006,PLN_010,PLN_013 PLN_008<PLN_007,PLN_012') throw new Error('the pairing moved: ' + pairsOf());
     tapPos('PLN_014');
-    expectIn('the carried deck', 'PLN_014 · Left Hand · on deck for PLN_013', hint());
-    if (lit().length) throw new Error('the carried deck lit ' + JSON.stringify(lit()));
+    if (PIC.selected || lit().length) throw new Error('the carried deck, with nowhere to go, was selected: ' + PIC.selected);
 });
 groupedTest('grouped: the carry chip\'s ✕ undoes the spot and its deck together', async () => {
     await twoOff(grouped());
     tapPos('PLN_010'); tapPos('PLN_013');
     tap('unmove', { node: 'PLN_006' });
-    if (JSON.stringify(chips()) !== '["PLN_007 → PLN_012 ✕"]') throw new Error('undo: ' + JSON.stringify(chips()));
+    if (chips().length) throw new Error('undo: ' + JSON.stringify(chips()));
     CALLS.length = 0;
     tap('next');
-    if (JSON.stringify(lastPreview().overrides) !== '{"PLN_007":"PLN_012"}') throw new Error('body ' + JSON.stringify(lastPreview()));
+    if (sortedKeys(lastPreview().overrides) !== '{"PLN_006":"PLN_010","PLN_007":"PLN_012"}') {
+        throw new Error('body ' + JSON.stringify(lastPreview()));
+    }
 });
 groupedTest('grouped: back from PLN_013 to PLN_010 the deck goes home', async () => {
     await twoOff(grouped());
     tapPos('PLN_010'); tapPos('PLN_013');
     tapPos('PLN_013'); tapPos('PLN_010');
-    if (JSON.stringify(chips().sort()) !== PREFILL_CHIPS) throw new Error('back: ' + JSON.stringify(chips()));
+    if (chips().length) throw new Error('back: ' + JSON.stringify(chips()));
 });
 groupedTest('grouped: the deck lights the list of the stand its spot stands on now', async () => {
     // As if Left Hand listed PLN_015 on deck for PLN_013 as well: the card's
@@ -700,7 +705,7 @@ groupedTest('grouped: the deck lights the list of the stand its spot stands on n
     tapPos('PLN_010'); tapPos('PLN_013'); tapPos('PLN_014');
     if (JSON.stringify(lit()) !== '["PLN_015"]') throw new Error('lit at PLN_013: ' + JSON.stringify(lit()));
     tapPos('PLN_015');
-    if (JSON.stringify(chips().sort()) !== '["PLN_006 → PLN_013 (on deck PLN_015) ✕","PLN_007 → PLN_012 ✕"]') {
+    if (JSON.stringify(chips()) !== '["PLN_010 → PLN_013 (on deck PLN_015) ✕"]') {
         throw new Error('chips: ' + JSON.stringify(chips()));
     }
 });
@@ -786,16 +791,19 @@ groupedTest('grouped: the Spots taps send nothing; Next is the one request', asy
     tap('next');
     if (urls().join() !== '/api/processes/1/flow/preview?preflight=1') throw new Error('Next sent ' + urls().join());
 });
-groupedTest('grouped: a part moved twice keeps one chip, and its ✕ goes back to the recipe\'s spot', async () => {
+groupedTest('grouped: a part moved twice keeps one chip, and its ✕ goes back to where it opened', async () => {
     await twoOff(grouped());
     tapPos('PLN_010'); tapPos('PLN_013');
     tapPos('PLN_013'); tapPos('PLN_006');
-    if (JSON.stringify(chips()) !== '["PLN_007 → PLN_012 ✕"]') throw new Error('twice: ' + JSON.stringify(chips()));
+    if (JSON.stringify(chips()) !== '["PLN_010 → PLN_006 ✕"]') throw new Error('twice: ' + JSON.stringify(chips()));
     tapPos('PLN_006'); tapPos('PLN_013');
     tap('unmove', { node: 'PLN_006' });
+    if (chips().length) throw new Error('undo: ' + JSON.stringify(chips()));
     CALLS.length = 0;
     tap('next');
-    if (JSON.stringify(lastPreview().overrides) !== '{"PLN_007":"PLN_012"}') throw new Error('body ' + JSON.stringify(lastPreview()));
+    if (sortedKeys(lastPreview().overrides) !== '{"PLN_006":"PLN_010","PLN_007":"PLN_012"}') {
+        throw new Error('body ' + JSON.stringify(lastPreview()));
+    }
 });
 groupedTest('grouped: the hash entry reaches PLN_010 selected', async () => {
     const flow = grouped();
