@@ -92,6 +92,12 @@
 .os-comp-card h2 { margin: 6px 0 4px; font-size: 28px; font-weight: 600; letter-spacing: -.01em; }
 .os-comp-card .desc { display: flex; align-items: center; gap: 10px; color: var(--os-text-muted); font-size: 14px; }
 .os-comp-note { margin-top: 12px; color: var(--os-text-muted); font-size: 14px; text-align: center; }
+/* The confirm a style tap asks with HMI setup off: the name, Back and Start,
+   Go's buttons at Go's size. A refused start says why above them. */
+.os-comp-acts { display: flex; justify-content: flex-end; gap: 12px; margin-top: 24px; }
+.os-comp-confirm .os-comp-acts .os-btn-quiet { border-color: var(--sub-3); }
+.os-comp-acts .os-btn-primary { min-width: 220px; }
+.os-comp-confirm .os-comp-refusal { margin-top: 14px; color: var(--os-red); font-size: 15px; font-weight: 600; }
 
 /* ── chips ─────────────────────────────────────────────────────────────── */
 .os-chips { display: flex; gap: 8px; flex-wrap: wrap; }

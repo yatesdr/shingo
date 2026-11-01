@@ -469,7 +469,9 @@ func TestComposerShots(t *testing.T) {
 		}
 	}
 	modal("01-saved.png", "#compose=saved", "styles", "data-act=\"saved\"")
-	modal("05b-go-saved.png", fmt.Sprintf("#compose=go;style=%d", seeded.Styles[idx]), "Change over to "+idx, "Start changeover")
+	// Setup off, a style tapped: the confirm, not the card.
+	modal("05b-confirm-saved.png", fmt.Sprintf("#compose=confirm;style=%d", seeded.Styles[idx]),
+		"Change over to "+idx+"?", `data-act="start">Start<`)
 	if err := db.SetFlowComposerEnabled(seeded.ProcessID, true); err != nil {
 		t.Fatalf("turn HMI setup on: %v", err)
 	}

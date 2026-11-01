@@ -212,12 +212,13 @@ test('setup off lists the styles, the running one first and marked, and no parts
     expectOut('saved list', 'data-act="part"', b);
     if (b.indexOf('data-style="1"') > b.indexOf('data-style="2"')) throw new Error('the running style is not first');
 });
-test('setup off: a style tapped previews that style, nothing minted', async () => {
+test('setup off: a style tapped asks "Change over to …?" and reads nothing', async () => {
     await open({ part_rows: ROWS, presets: [ONE] }, false);
     CALLS.length = 0;
     tap('saved', { style: '2' });
-    expectIn('saved go', 'Checking what this changeover does');
-    if (JSON.stringify(lastPreview()) !== '{"style_id":2,"station_id":5}') throw new Error('body ' + JSON.stringify(lastPreview()));
+    expectIn('confirm', 'Change over to B-RUN?');
+    expectOut('confirm', 'Checking what this changeover does');
+    if (CALLS.length) throw new Error('the tap sent ' + urls().join());
 });
 
 // ── CHANGEOVER to Start, a style tapped, by the switch ──────────────────────
@@ -267,28 +268,37 @@ test('setup on: a style tapped is the card, then mint and start on its fingerpri
     }
     expectIn('started', 'Changeover started', r.after);
 });
-test('setup off: a style tapped, the station sends the same as setup on', async () => {
+test('setup off: a style tapped is the confirm, and Start is the start alone', async () => {
     const r = await styleToStart(false);
-    if (r.opened.join() !== '/api/operator-stations/5/composer') throw new Error('on open: ' + r.opened.join());
-    if (r.tapped.join() !== '/api/processes/1/flow/preview?preflight=1') throw new Error('on the tap: ' + r.tapped.join());
-    for (const want of ['Change over to B-RUN?', 'class="picture"', 'os-comp-trips', 'Start changeover']) {
-        expectIn('the card', want, r.card);
+    if (r.opened.length) throw new Error('on open: ' + r.opened.join());
+    if (r.tapped.length) throw new Error('on the tap: ' + r.tapped.join());
+    for (const want of ['Change over to B-RUN?', 'data-act="back">Back<', 'data-act="start">Start<']) {
+        expectIn('the confirm', want, r.card);
     }
-    if (r.started.join() !== '/api/processes/1/flow/mint,/api/processes/1/changeover/start') {
-        throw new Error('on Start: ' + r.started.join());
+    for (const not of ['class="picture"', 'os-comp-trips', 'Start changeover', 'os-comp-sentence']) {
+        expectOut('the confirm', not, r.card);
     }
-    if (bodyOf('/changeover/start') !== '{"to_style_id":2,"called_by":"Screen 5","flow_fingerprint":"fp-2"}') {
+    if (r.started.join() !== '/api/processes/1/changeover/start') throw new Error('on Start: ' + r.started.join());
+    if (bodyOf('/changeover/start') !== '{"to_style_id":2,"called_by":"Screen 5"}') {
         throw new Error('start ' + bodyOf('/changeover/start'));
     }
     expectIn('started', 'Changeover started', r.after);
+    expectIn('started', 'B-RUN.', r.after);
+});
+test('setup off: Back from the confirm is the style list', async () => {
+    await open({ part_rows: ROWS, presets: [ONE] }, false);
+    tap('saved', { style: '2' });
+    tap('back');
+    expectIn('back', 'data-act="saved" data-style="2"', box());
 });
 test('setup off: the running style tapped says so and offers no Start', async () => {
     await open({ part_rows: ROWS, presets: [ONE] }, false);
-    PREVIEW = { running: true, mint: { style_id: 1, style_name: 'A-RUN', running: true } };
+    CALLS.length = 0;
     tap('saved', { style: '1' });
     await settle(); await settle();
     expectIn('running', 'A-RUN is already running — there is nothing to change over.');
     expectOut('running', 'data-act="start"');
+    if (CALLS.length) throw new Error('the tap sent ' + urls().join());
 });
 test('setup off: a refused start says why where Start was', async () => {
     await open({ part_rows: ROWS, presets: [ONE] }, false);
@@ -772,7 +782,7 @@ groupedTest('grouped process: the ungrouped One spot still lends and names no gr
 
 // ── Go says what happens and draws the press ─────────────────────────────────
 test('Go says what comes off, what comes on, and Core\'s word, and draws the press', async () => {
-    await open({ part_rows: ROWS, presets: [ONE] }, false);
+    await open({ part_rows: ROWS, presets: [ONE] }, true);   // the card is setup on only
     PREVIEW = {
         order_count: 3,
         actions: [

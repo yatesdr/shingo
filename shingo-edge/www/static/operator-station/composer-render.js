@@ -2,9 +2,11 @@
 //
 // TWO WAYS IN, BY THE PROCESS'S "HMI SETUP" SWITCH (flow_composer_enabled).
 //
-// Off: CHANGEOVER lists the styles an engineer made — tap one, check
-// what it does, Start. The floor sets nothing up, and the server refuses a
-// flow write from it (engine.gateRefusal).
+// Off: CHANGEOVER lists the styles an engineer made — tap one, "Change over
+// to <style>?", Start. No card: the floor sets nothing up here, so there is
+// nothing for it to check, and the server refuses a flow write from it
+// (engine.gateRefusal). The confirm is the guard against a mis-tap on a touch
+// screen. Nothing is read for it: the list is the station view's.
 //
 // On: the styles first, then every part the process runs. A part leads
 // to how the press runs it — One Part, One Spot / Two Parts, Two Spots / One
@@ -18,6 +20,7 @@
 // THE SCREENS, each shown only when it has a question to ask:
 //
 //   saved     setup off: the styles, searchable by name, part or CATID
+//   confirm   setup off, a style tapped: its name, Back and Start
 //   part      setup on: the styles, then the part list
 //   count     One Part, One Spot / Two Parts, Two Spots / One Part, Two Spots —
 //             only the ones a recipe here can run, skipped when that is one
@@ -42,6 +45,8 @@
 // NOTHING IS WRITTEN UNTIL START. Every screen before it is local state; Go's
 // words come from flow/preview's mint form (read-only), and Start is flow/mint
 // (open, resolve or mint) then changeover/start on the fingerprint it returns.
+// The confirm's Start is changeover/start alone, with no fingerprint: no card
+// was read, so there is nothing for one to hold the start to.
 //
 // THE HASH ENTRY. #compose=<screen>[;parts=A,B][;recipe=ID][;moves=X:Y,…]
 // [;sel=NODE][;style=ID][;split=1][;hold=1] sets LOCAL UI STATE ONLY and never
@@ -190,12 +195,14 @@ export function close() {
 }
 
 // ── open ─────────────────────────────────────────────────────────────────────
+// The composer read is the part rows, the recipe cards and the card's picture:
+// setup off shows none of them, so it is not fetched.
 export function openPicker(v) {
     if (v) view = v;
     reset();
     screen = setupOn() ? 'part' : 'saved';
     drawPartSheet('Change over to');
-    ensureFlow().then(() => { if (listing()) drawRows(''); });
+    if (screen === 'part') ensureFlow().then(() => { if (listing()) drawRows(''); });
 }
 
 function listing() { return screen === 'part' || screen === 'second' || screen === 'saved'; }
@@ -332,7 +339,36 @@ function onSaved(id) {
     reset();
     chosen = s.id;
     picks = partsOf(s);
+    if (!setupOn()) { screen = 'confirm'; drawConfirm(s); return; }
     go();
+}
+
+// The confirm, setup off: the style's name, Back and Start. The running style
+// says so in the card's words and offers no Start. A refused start lands in
+// .os-comp-say (showRefusal).
+function drawConfirm(s) {
+    const running = s.id === runningID();
+    show().innerHTML =
+        '<div class="os-comp-scrim on"></div>' +
+        '<div class="os-comp-setup on"><div class="os-comp-card os-comp-confirm" role="dialog" aria-label="Change over">' +
+        '<div class="top"><div><h2>' + esc(running ? s.name : 'Change over to ' + s.name + '?') + '</h2>' +
+        (running ? '<div class="desc">' + esc(s.name) + ' is already running — there is nothing to change over.</div>' : '') +
+        '</div></div>' +
+        '<div class="os-comp-say"></div>' +
+        '<div class="os-comp-acts"><button class="os-btn os-btn-quiet os-btn-lg" data-act="back">Back</button>' +
+        (running ? '' : '<button class="os-btn os-btn-primary os-btn-lg" data-act="start">Start</button>') +
+        '</div></div></div>';
+}
+
+async function startSaved() {
+    const btn = root().querySelector('[data-act="start"]');
+    if (btn) btn.disabled = true;
+    const s = styles().find(x => x.id === chosen) || { name: '' };
+    const started = await postJSON('/api/processes/' + processID() + '/changeover/start', {
+        to_style_id: chosen, called_by: stationName(),
+    });
+    if (!started.ok) { showRefusal(started.body, started.status); return; }
+    openStarted({ style_name: s.name });
 }
 
 // ── a part, and how the press runs it ────────────────────────────────────────
@@ -908,7 +944,7 @@ function onClick(e) {
         }
         case 'unmove': moves = M().spotsUnmove(recipe, moves, btn.dataset.node); drawPositions(); break;
         case 'next': go(); break;
-        case 'start': start(); break;
+        case 'start': if (screen === 'confirm') startSaved(); else start(); break;
         default: break;
     }
 }
@@ -941,6 +977,11 @@ export function openFromHash() {
         case 'which': screen = 'which'; drawWhich(fits()); break;
         case 'positions': if (recipe) { screen = 'positions'; drawPositions(); } break;
         case 'none': screen = 'none'; drawNone(); break;
+        case 'confirm': {
+            const s = styles().find(x => x.id === chosen);
+            if (s) { screen = 'confirm'; drawConfirm(s); }
+            break;
+        }
         case 'go': go(); break;
         case 'started':
             runPreview().then(() => openStarted({ style_name: (preview && preview.mint && preview.mint.style_name) || '',
@@ -971,7 +1012,7 @@ window.addEventListener('error', e => {
 // here would CREATE the modal on a page that never opened it.
 export function onEscape() {
     if (!screen || screen === 'started') return;
-    if (['positions', 'which', 'count', 'reuse', 'none'].indexOf(screen) >= 0) { openPicker(); return; }
+    if (['positions', 'which', 'count', 'reuse', 'none', 'confirm'].indexOf(screen) >= 0) { openPicker(); return; }
     close();
 }
 
