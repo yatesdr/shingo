@@ -71,30 +71,23 @@ func TestSeedKanbanPress_CoreHoldsTheKanbans(t *testing.T) {
 		return out
 	}
 
-	k, z45, z32, k2, spare := node("PRESS-KANBAN"), node("ZONE-45"), node("ZONE-32"), node("WELD-KANBAN"), node("ZONE-45-SPARE")
+	k, k2 := node("PRESS-KANBAN"), node("WELD-KANBAN")
 
 	row, err := db.GetKanban(k)
 	if err != nil || row == nil {
 		t.Fatalf("K: %v", err)
 	}
-	if row.RunningCover != 4 || row.Strict || row.StationID != "edge1.line1" ||
-		row.OverflowNodeID == nil || *row.OverflowNodeID != spare {
-		t.Errorf("K = %+v, want cover 4, not strict, station edge1.line1, overflow ZONE-45-SPARE", row)
+	if row.RunningCover != 4 || row.Strict || row.StationID != "edge1.line1" || row.OverflowNodeID != nil {
+		t.Errorf("K = %+v, want cover 4, not strict, station edge1.line1, no overflow", row)
 	}
 	levels := levelsOf(k)
-	for code, want := range map[string]int{"SMALL-45": 1, "BIG-45": 1, "TOTES-45": 1, "CART-32": 0} {
-		if l, ok := levels[code]; !ok || l.Want != want {
-			t.Errorf("K's %s = %+v, want %d", code, l, want)
+	for _, code := range []string{"SMALL-45", "BIG-45", "TOTES-45", "CART-32"} {
+		if l, ok := levels[code]; !ok || l.Want != 2 || l.OverflowNodeID != nil {
+			t.Errorf("K's %s = %+v, want 2 and no overflow", code, l)
 		}
 	}
-	if ov := levels["CART-32"].OverflowNodeID; ov == nil || *ov != z32 {
-		t.Errorf("K's CART-32 overflow = %v, want ZONE-32 (%d)", ov, z32)
-	}
-	if ov := levels["SMALL-45"].OverflowNodeID; ov != nil {
-		t.Errorf("K's SMALL-45 overflow = %d, want the kanban's default", *ov)
-	}
-	if got := sourcesOf(k); !slices.Equal(got, []int64{z45, z32, spare}) {
-		t.Errorf("K's sources = %v, want ZONE-45, ZONE-32, ZONE-45-SPARE in that rank", got)
+	if got := sourcesOf(k); len(got) != 0 {
+		t.Errorf("K's sources = %v, want none: its keeper searches plant-wide", got)
 	}
 	if got := supportsOf(k); !slices.Equal(got, []string{"PLN_021", "PLN_022", "PLN_023", "PLN_024"}) {
 		t.Errorf("K's supports = %v, want the four positions", got)
@@ -104,53 +97,31 @@ func TestSeedKanbanPress_CoreHoldsTheKanbans(t *testing.T) {
 	if err != nil || row2 == nil {
 		t.Fatalf("K2: %v", err)
 	}
-	if row2.RunningCover != 1 || row2.StationID != "edge1.line1" {
-		t.Errorf("K2 = %+v", row2)
+	if row2.RunningCover != 1 || row2.StationID != "edge1.line1" || row2.OverflowNodeID != nil {
+		t.Errorf("K2 = %+v, want cover 1, station edge1.line1, no overflow", row2)
 	}
-	if got := sourcesOf(k2); !slices.Equal(got, []int64{z45}) {
-		t.Errorf("K2's sources = %v, want ZONE-45", got)
+	if got := sourcesOf(k2); len(got) != 0 {
+		t.Errorf("K2's sources = %v, want none", got)
 	}
 	if got := supportsOf(k2); !slices.Equal(got, []string{"ALN_021"}) {
 		t.Errorf("K2's supports = %v, want the weld", got)
 	}
 
-	for group, want := range map[int64]map[string]int{
-		z45: {"SMALL-45": 2, "BIG-45": 2, "TOTES-45": 2},
-		z32: {"CART-32": 6},
-	} {
-		row, err := db.GetKanban(group)
-		if err != nil || row == nil {
-			t.Fatalf("lender %d: %v", group, err)
-		}
-		if row.Strict || row.StationID != "" {
-			t.Errorf("lender %+v, want not strict and no station", row)
-		}
-		if got := supportsOf(group); len(got) != 0 {
-			t.Errorf("lender %d supports %v, want none", group, got)
-		}
-		if got := sourcesOf(group); len(got) != 0 {
-			t.Errorf("lender %d sources %v, want none", group, got)
-		}
-		levels := levelsOf(group)
-		if len(levels) != len(want) {
-			t.Errorf("lender %d levels = %v, want %v", group, levels, want)
-		}
-		for code, n := range want {
-			if levels[code].Want != n {
-				t.Errorf("lender %d %s = %d, want %d", group, code, levels[code].Want, n)
-			}
-		}
-	}
-
-	// SM and the spare zone are plain groups: no kanban row, so nobody counts them.
+	// SM is a plain group: no kanban row, so nobody counts it.
 	if sm, err := db.GetKanban(node("KP-SM")); err != nil || sm != nil {
 		t.Errorf("KP-SM kanban row = %+v, %v; want a plain group", sm, err)
 	}
-	if sp, err := db.GetKanban(spare); err != nil || sp != nil {
-		t.Errorf("ZONE-45-SPARE kanban row = %+v, %v; want a plain group", sp, err)
-	}
-	if ls := levelsOf(spare); len(ls) != 0 {
-		t.Errorf("ZONE-45-SPARE levels = %v, want none", ls)
+
+	// THE SETUP GAP, as it stands: the seed writes no slot's allowed types, so they go on
+	// after it (rigSlotTypes). A characterization: plantspec.Slot has nowhere to state them.
+	for _, slot := range []string{"PKB_001", "PKB_016"} {
+		types, err := db.ListBinTypesForNode(node(slot))
+		if err != nil {
+			t.Fatalf("types of %s: %v", slot, err)
+		}
+		if len(types) != 0 || db.GetNodeProperty(node(slot), "bin_type_mode") != "" {
+			t.Errorf("the seed wrote %v on %s; rigSlotTypes and the driver's table are no longer the only place", types, slot)
+		}
 	}
 
 	// Floor sizes on all four types: three of one floor, one of another.
@@ -212,7 +183,7 @@ func TestSeedKanbanPress_CoreHoldsTheKanbans(t *testing.T) {
 	if err := seedCore(db, plant, map[string]int64{}); err != nil {
 		t.Fatalf("re-seed: %v", err)
 	}
-	if got := sourcesOf(k); !slices.Equal(got, []int64{z45, z32, spare}) {
+	if got := sourcesOf(k); len(got) != 0 {
 		t.Errorf("after a re-seed K's sources = %v", got)
 	}
 }

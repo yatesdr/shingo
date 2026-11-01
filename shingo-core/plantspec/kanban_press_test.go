@@ -170,7 +170,8 @@ func TestKanbanPressPlant_TheUnloader(t *testing.T) {
 	}
 }
 
-// The kanbans, as the brief states them.
+// The kanbans, as the file's head states them: one lineside kanban for the press and one
+// for the weld, nothing behind either, and the plain supermarket beside them.
 func TestKanbanPressPlant_TheKanbans(t *testing.T) {
 	t.Parallel()
 	p := loadKanbanPress(t)
@@ -179,50 +180,42 @@ func TestKanbanPressPlant_TheKanbans(t *testing.T) {
 		byName[g.Group] = g
 	}
 
+	if len(p.Kanbans) != 2 {
+		t.Errorf("kanbans = %d, want K and K2 and no lender", len(p.Kanbans))
+	}
 	k := byName["PRESS-KANBAN"]
-	if k.RunningCover != 4 || k.Strict || k.Overflow != "ZONE-45-SPARE" || strings.Join(k.Sources, ",") != "ZONE-45,ZONE-32,ZONE-45-SPARE" ||
+	if k.RunningCover != 4 || k.Strict || k.Overflow != "" || len(k.Sources) != 0 ||
 		strings.Join(k.Supports, ",") != "KP-PRESS" || k.Station == "" {
-		t.Errorf("PRESS-KANBAN = %+v", k)
+		t.Errorf("PRESS-KANBAN = %+v, want cover 4, supports the press, no sources, no overflow", k)
 	}
 	levels := map[string]KanbanLevel{}
 	for _, l := range k.Levels {
 		levels[l.BinType] = l
 	}
-	for bt, want := range map[string]int{"SMALL-45": 1, "BIG-45": 1, "TOTES-45": 1, "CART-32": 0} {
-		if l, ok := levels[bt]; !ok || l.Want != want {
-			t.Errorf("PRESS-KANBAN %s = %+v, want %d", bt, l, want)
+	for _, bt := range []string{"SMALL-45", "BIG-45", "TOTES-45", "CART-32"} {
+		if l, ok := levels[bt]; !ok || l.Want != 2 || l.Overflow != "" {
+			t.Errorf("PRESS-KANBAN %s = %+v, want 2 and no overflow of its own", bt, l)
 		}
-	}
-	if levels["CART-32"].Overflow != "ZONE-32" {
-		t.Errorf("CART-32's own overflow = %q, want ZONE-32", levels["CART-32"].Overflow)
 	}
 
 	k2 := byName["WELD-KANBAN"]
-	if strings.Join(k2.Sources, ",") != "ZONE-45" || strings.Join(k2.Supports, ",") != "KW-WELD" || k2.Station == "" {
-		t.Errorf("WELD-KANBAN = %+v", k2)
+	if len(k2.Sources) != 0 || k2.Overflow != "" || strings.Join(k2.Supports, ",") != "KW-WELD" || k2.Station == "" {
+		t.Errorf("WELD-KANBAN = %+v, want supports the weld, no sources, no overflow", k2)
 	}
 
-	for _, lender := range []string{"ZONE-45", "ZONE-32"} {
-		g := byName[lender]
-		if len(g.Supports) != 0 || g.Station != "" || g.Strict || len(g.Levels) == 0 {
-			t.Errorf("%s = %+v, want levels and no supports, no station, not strict", lender, g)
-		}
-	}
 	if _, levelled := byName["KP-SM"]; levelled {
-		t.Error("KP-SM declares a level; R5 needs a lender that cannot be repaid by count")
+		t.Error("KP-SM declares a level; R5 needs a plain group that nothing repays")
 	}
-	if _, levelled := byName["ZONE-45-SPARE"]; levelled {
-		t.Error("ZONE-45-SPARE declares a level; it would refuse the carts past the others' levels")
+	for _, c := range p.Claims {
+		if c.Role == "produce" && c.Style != "KW-RUN" && c.InboundSource != "PRESS-KANBAN" {
+			t.Errorf("claim %s/%s draws from %q, want PRESS-KANBAN", c.CoreNode, c.Style, c.InboundSource)
+		}
 	}
 	for _, z := range p.Zones {
 		switch z.Name {
-		case "ZONE-45-SPARE":
-			if len(z.Positions) != 10 || len(z.Lanes) != 0 {
-				t.Errorf("ZONE-45-SPARE: %d positions, %d lanes, want 10 flat", len(z.Positions), len(z.Lanes))
-			}
 		case "PRESS-KANBAN":
-			if len(z.Positions) != 8 || len(z.Lanes) != 0 {
-				t.Errorf("PRESS-KANBAN: %d positions, %d lanes, want 8 flat", len(z.Positions), len(z.Lanes))
+			if len(z.Positions) != 16 || len(z.Lanes) != 0 {
+				t.Errorf("PRESS-KANBAN: %d positions, %d lanes, want 16 flat", len(z.Positions), len(z.Lanes))
 			}
 		case "KP-SM":
 			if len(z.Lanes) == 0 {

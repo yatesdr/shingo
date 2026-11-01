@@ -49,7 +49,7 @@ hardware seams.
 | Fake WarLink PLC | `shingo-edge/plc/simwarlink` | Emits counter ticks per process node; injected at `engine.New`, handshake-verified like a real PLC. |
 | Sim operator | `shingo-edge/engine/sim_operator.go` | Performs the operator's LOAD / CLEAR on a configurable delay when a bin is delivered to a `manual_swap` node. |
 | Plant spec + validator | `shingo-core/plantspec` | Declarative plant schema (zones, stations, processes, styles, claims, bins, demands, …) + validation. |
-| Kanban rig | `plants/kanban-press.yaml`, `scripts/kanban-rig.sh` | The certification plant for Kanban, and its six runs (`docs/fleet-simulator/kanban.md`). Seeded with `SHINGO_PLANT=/plants/kanban-press.yaml`; the operator works its unloaders' panels (`sim.operators.unloader_taps`). |
+| Kanban rig | `plants/kanban-press.yaml`, `scripts/kanban-rig.sh` | The certification plant for Kanban, its six runs and its walk (`docs/fleet-simulator/kanban.md`). Seeded with `SHINGO_PLANT=/plants/kanban-press.yaml`; the operator works its unloaders' panels (`sim.operators.unloader_taps`). |
 | Demo plant | `plants/demo-sim.yaml` | The seeded plant (compose's default `SHINGO_PLANT`): `plants/demo.yaml` plus the rig's stock and Core's loader switches. `demo.yaml` itself is the planner golden's plant and gives the unloader no Core `auto_push`, so a sim seeded from it wedges. |
 | Seed tool | `shingo-core/cmd/seeddev` | Loads + validates a plant spec, seeds core (Postgres, via store accessors) + edge (SQLite, raw SQL), cross-validates. |
 | Dev configs | `shingocore.dev.yaml`, `shingoedge.dev.yaml` | Sim knobs (`sim.enabled`, transit time, jitter, fault rate, per-process tick intervals, operator delays). Separate from prod configs. |

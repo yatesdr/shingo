@@ -32,7 +32,7 @@ Core v169 (run `store.KanbanMigrationCensusSQL` first), Edge one literal. Ship C
 - A changeover's episode names its target's first produce part and node, and a failed open reaches Core once the outbox clears
 - CLEAR and PUSH AS offer only the cart's floor size, plus the lit choice; `NodeListResponse.floor` is per type
 - Known, not built: wrong-type carts standing on positions after a cancel; the next START's lift takes them
-- `plants/kanban-press.yaml` is a permanent certification rig; R1 and R5's loop run in the docker shards, R1-R6 on the stack before a merge
+- `plants/kanban-press.yaml` is a permanent certification rig on one lineside kanban; R1 and R5's loop run in the docker shards, R1-R6 and the walk (`W`, `W5`) on the stack before a merge
 - A plant file's change now runs the tests that seed it, in CI and in `gate.sh scope`
 - A kanban's Supports offer every position of a claim, paired ones included, and its table fits the Nodes modal
 

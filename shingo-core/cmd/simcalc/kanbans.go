@@ -218,8 +218,10 @@ type roomLine struct {
 	spare     int      // the slots of the plain groups this floor overflows to
 	spareZone []string // those groups
 	toSpare   int      // carts past the levels that land there
-	excess    int      // carts past the levels and the spare room: they park, on a window
+	excess    int      // carts past the levels and the spare room: off the process they park, on a window
 	short     int      // lineside − carts, above 0: the kanban's want cannot be covered
+	windows   int      // the windows of the unloaders whose outbound is the kanban
+	seated    int      // of the excess, seeded in the kanban above its want under the seed's style
 }
 
 // plainOverflow is where a kanban's types on a floor overflow to that holds no
@@ -270,6 +272,16 @@ func (v *kanbanView) changeoverRoom(g plantspec.Kanban) []roomLine {
 		floors = append(floors, f)
 	}
 	sort.Strings(floors)
+	seededHere := map[string]int{}
+	for bt, n := range v.seeded[g.Group] {
+		seededHere[v.floorOf[bt]] += n
+	}
+	windows := map[string]bool{}
+	for _, c := range v.plant.Claims {
+		if c.WindowOf != "" && c.OutboundDestination == g.Group {
+			windows[c.CoreNode] = true
+		}
+	}
 
 	for _, proc := range g.Supports {
 		for _, style := range v.stylesOf[proc] {
@@ -283,12 +295,14 @@ func (v *kanbanView) changeoverRoom(g plantspec.Kanban) []roomLine {
 			}
 			running[proc] = style
 			for _, f := range floors {
-				r := roomLine{style: style, floor: f, carts: cartsByFloor[f]}
+				r := roomLine{style: style, floor: f, carts: cartsByFloor[f], windows: len(windows)}
+				wants := 0
 				for _, l := range v.lines(g, running) {
 					if v.floorOf[l.binType] == f {
-						r.lineside += l.want
+						wants += l.want
 					}
 				}
+				r.lineside = wants
 				for _, bt := range types {
 					if v.floorOf[bt] == f {
 						r.lineside += positions
@@ -310,6 +324,9 @@ func (v *kanbanView) changeoverRoom(g plantspec.Kanban) []roomLine {
 				r.toSpare = min(past, r.spare)
 				r.excess = past - r.toSpare
 				r.short = max(0, r.lineside-r.carts)
+				if active[proc] == style {
+					r.seated = min(r.excess, max(0, seededHere[f]-wants))
+				}
 				out = append(out, r)
 			}
 		}
@@ -321,7 +338,8 @@ func (v *kanbanView) changeoverRoom(g plantspec.Kanban) []roomLine {
 // fails the check when a kanban starts below its want, or when a pool's rate
 // deficit drains its stock inside the run. The room table is a statement about a
 // changeover, an event of a run rather than its steady state, so it reports and
-// does not fail the command.
+// does not fail the command. It counts a floor's carts against a floor's wants and
+// does not know which slots admit which type: plantspec.Slot has no field for that.
 func reportKanbans(plant *plantspec.Plant, plan carrierPlan, rate map[string]float64, runMins float64) bool {
 	if len(plant.Kanbans) == 0 {
 		return true
@@ -387,10 +405,17 @@ func reportKanbans(plant *plantspec.Plant, plan carrierPlan, rate map[string]flo
 					"until a source is short it keeps that surplus", r.toSpare, strings.Join(r.spareZone, ",")))
 			}
 			if r.excess > 0 {
-				says = append(says, fmt.Sprintf("%d carts with nowhere to land: they park on the windows", r.excess))
+				say := fmt.Sprintf("%d carts past the levels with no room: off the process they park on a window", r.excess)
+				if r.windows > 0 && r.excess >= r.windows {
+					say += fmt.Sprintf(", which is all %d, so the style's fulls have none", r.windows)
+				}
+				if r.seated > 0 {
+					say += fmt.Sprintf("; as seeded %d stand above their want in the kanban", r.seated)
+				}
+				says = append(says, say)
 			}
 			if r.short > 0 {
-				says = append(says, fmt.Sprintf("kanban short %d: cannot be covered, cover over the pool and not a defect", r.short))
+				says = append(says, fmt.Sprintf("kanban short %d of its wants and positions: cover over the pool, a standing gap on its card", r.short))
 			}
 			if len(says) == 0 {
 				says = append(says, "fits")

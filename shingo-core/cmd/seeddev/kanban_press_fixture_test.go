@@ -2,8 +2,10 @@ package main
 
 import (
 	"database/sql"
+	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -45,10 +47,10 @@ func kanbanPressGroupOf(p *plantspec.Plant) map[string]string {
 	return out
 }
 
-// TestKanbanPressFixture_ThePool: every carrier where the file's head says, each
-// kanban at its want under the seed's styles (want = level + cover x 1 for the type
-// the process runs), so no run opens on a cold-start refill it did not ask for and
-// no window or in-flight cart is seeded as a surplus with no level to land on.
+// TestKanbanPressFixture_ThePool: every carrier where the file's head says: 10 of 45x48
+// (K's 2/2/2 and the 4 positions), 6 of 32x30 in K, the weld's own 3 and nothing in the
+// plain supermarket, because a keeper with no sources would pull it in at once. K's small
+// is seated at 2 of its want of 6: its cover is the carts on the positions.
 func TestKanbanPressFixture_ThePool(t *testing.T) {
 	t.Parallel()
 	p := kanbanPressPlant(t)
@@ -70,12 +72,10 @@ func TestKanbanPressFixture_ThePool(t *testing.T) {
 		got[place{where, b.BinType}]++
 	}
 	want := map[place]int{
-		{"PRESS-KANBAN", "SMALL-45"}: 5, {"PRESS-KANBAN", "BIG-45"}: 1, {"PRESS-KANBAN", "TOTES-45"}: 1,
-		{"PLN_021", "SMALL-45"}: 1, {"PLN_022", "SMALL-45"}: 1, {"PLN_023", "SMALL-45"}: 1, {"PLN_024", "SMALL-45"}: 1,
-		{"ZONE-45", "SMALL-45"}: 2, {"ZONE-45", "BIG-45"}: 2, {"ZONE-45", "TOTES-45"}: 2,
+		{"PRESS-KANBAN", "SMALL-45"}: 2, {"PRESS-KANBAN", "BIG-45"}: 2, {"PRESS-KANBAN", "TOTES-45"}: 2,
+		{"PRESS-KANBAN", "CART-32"}: 6,
+		{"PLN_021", "SMALL-45"}:     1, {"PLN_022", "SMALL-45"}: 1, {"PLN_023", "SMALL-45"}: 1, {"PLN_024", "SMALL-45"}: 1,
 		{"WELD-KANBAN", "SMALL-45"}: 2, {"ALN_021", "SMALL-45"}: 1,
-		{"KP-SM", "SMALL-45"}: 2, {"KP-SM", "BIG-45"}: 1,
-		{"ZONE-32", "CART-32"}: 6,
 	}
 	for k, n := range want {
 		if got[k] != n {
@@ -88,15 +88,60 @@ func TestKanbanPressFixture_ThePool(t *testing.T) {
 		}
 	}
 
-	// The room each group needs: K one spare over its 7, the spare zone the 8 carts
-	// past the levels under KP-32, the lenders their levels inside their slots.
+	// Each seated cart stands on a slot its type is allowed, by the table the driver and
+	// the docker tests apply, and K has the sixteen slots the table names.
 	slots := map[string]int{}
 	for _, z := range p.Zones {
 		slots[z.Name] = len(z.Positions)
 	}
-	for group, n := range map[string]int{"PRESS-KANBAN": 8, "ZONE-45": 8, "ZONE-45-SPARE": 10, "ZONE-32": 8, "PRESS-UNLOAD": 4} {
+	for group, n := range map[string]int{"PRESS-KANBAN": 16, "PRESS-UNLOAD": 4} {
 		if slots[group] != n {
 			t.Errorf("%s has %d slots, the file's head says %d", group, slots[group], n)
+		}
+	}
+	table := rigSlotTypes()
+	if len(table) != 16 {
+		t.Errorf("the slot table names %d slots, want 16", len(table))
+	}
+	for _, b := range p.Bins {
+		if groupOf[b.Slot] != "PRESS-KANBAN" {
+			continue
+		}
+		if !slices.Contains(table[b.Slot], b.BinType) {
+			t.Errorf("%s stands on %s, which allows %v, not %s", b.Name, b.Slot, table[b.Slot], b.BinType)
+		}
+	}
+}
+
+// rigSlotTypes is what each of K's slots allows, the table plantspec.Slot cannot state:
+// scripts/kanban-rig.sh apply_slot_types posts the same through the Nodes page's doors.
+func rigSlotTypes() map[string][]string {
+	out := map[string][]string{}
+	for i := 1; i <= 16; i++ {
+		types := []string{"SMALL-45", "BIG-45", "TOTES-45"}
+		if i > 10 {
+			types = []string{"CART-32"}
+		}
+		out[fmt.Sprintf("PKB_%03d", i)] = types
+	}
+	return out
+}
+
+// TestKanbanPressFixture_TheDriverStatesTheSameTable: the driver's slot table is shell, so
+// this reads it: the two lines that name the slots and their types.
+func TestKanbanPressFixture_TheDriverStatesTheSameTable(t *testing.T) {
+	t.Parallel()
+	raw, err := os.ReadFile(filepath.Join("..", "..", "..", "scripts", "kanban-rig.sh"))
+	if err != nil {
+		t.Fatalf("read the driver: %v", err)
+	}
+	driver := string(raw)
+	for _, line := range []string{
+		`PKB_001 PKB_002 PKB_003 PKB_004 PKB_005 PKB_006 PKB_007 PKB_008 PKB_009 PKB_010:$SMALL $BIG $TOTES`,
+		`PKB_011 PKB_012 PKB_013 PKB_014 PKB_015 PKB_016:$C32`,
+	} {
+		if !strings.Contains(driver, line) {
+			t.Errorf("scripts/kanban-rig.sh does not state %q", line)
 		}
 	}
 }
