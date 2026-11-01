@@ -321,6 +321,17 @@ test('setup off has no Set up a part; setup on has it', async () => {
     await open({ part_rows: ROWS, presets: [ONE] }, true);
     expectIn('setup on', 'Set up a part', box());
 });
+test('the search box keeps the touch keyboard down: inputmode none, focused on open', async () => {
+    let focused = 0;
+    els['os-comp-q'].focus = () => { focused++; };
+    await open({ part_rows: ROWS, presets: [ONE, TWO] }, true);
+    expectIn('picker', 'placeholder="type a part number" inputmode="none"');
+    tap('part', { part: 'PART-C' });
+    tap('two');
+    expectIn('second part', 'inputmode="none"');
+    els['os-comp-q'].focus = () => {};
+    if (focused !== 2) throw new Error('focused ' + focused + ' times, want 2 (the picker, the second part)');
+});
 test('the search box: "type a part number", no CATID shown, a search by CATID still finds it', async () => {
     const v = viewWith(true);
     v.composer.styles[1].catid = 'CAT-B';
@@ -762,6 +773,29 @@ groupedTest('grouped: the Spots svg is the picture\'s own width, so a wider grid
     tap('two');
     tap('part', { part: 'SYN-P6-Y' });
     expectIn('spots svg', 'viewBox="0 0 1500 560" width="1500" height="560"');
+});
+// ── the Spots step as the floor drives it: requests, a part moved twice ─────
+groupedTest('grouped: the Spots taps send nothing; Next is the one request', async () => {
+    await twoOff(grouped());
+    CALLS.length = 0;
+    tapPos('PLN_010'); tapPos('PLN_013');
+    tap('unmove', { node: 'PLN_006' });
+    tapPos('PLN_005');
+    tapPos('PLN_012'); tapPos('PLN_007');
+    if (CALLS.length) throw new Error('a Spots tap sent ' + urls().join());
+    tap('next');
+    if (urls().join() !== '/api/processes/1/flow/preview?preflight=1') throw new Error('Next sent ' + urls().join());
+});
+groupedTest('grouped: a part moved twice keeps one chip, and its ✕ goes back to the recipe\'s spot', async () => {
+    await twoOff(grouped());
+    tapPos('PLN_010'); tapPos('PLN_013');
+    tapPos('PLN_013'); tapPos('PLN_006');
+    if (JSON.stringify(chips()) !== '["PLN_007 → PLN_012 ✕"]') throw new Error('twice: ' + JSON.stringify(chips()));
+    tapPos('PLN_006'); tapPos('PLN_013');
+    tap('unmove', { node: 'PLN_006' });
+    CALLS.length = 0;
+    tap('next');
+    if (JSON.stringify(lastPreview().overrides) !== '{"PLN_007":"PLN_012"}') throw new Error('body ' + JSON.stringify(lastPreview()));
 });
 groupedTest('grouped: the hash entry reaches PLN_010 selected', async () => {
     const flow = grouped();
