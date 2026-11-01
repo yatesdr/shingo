@@ -38,7 +38,7 @@
 namespace: edge1
 line_id: line1
 
-# STANDARD-SM is carried by no payload, on purpose: it gives the maintained group
+# STANDARD-SM is carried by no payload, on purpose: it gives the kanban
 # a SECOND carrier type so the fixture freezes the mixed-level shape, and a type no
 # payload maps to cannot be drawn into any other flow. STANDARD stays first — a bin
 # naming no type falls back to bin_types[0].
@@ -199,9 +199,9 @@ zones:
     wait_points: [SYN_SM_FGD-WAIT]
     lanes:
       - {name: Lane_39, slots: [{name: SMN_058, depth: 1}, {name: SMN_059, depth: 2}, {name: SMN_060, depth: 3}]}
-  # A MAINTAINED GROUP, and the FLAT topology shape this fixture exists to freeze:
+  # A KANBAN, and the FLAT topology shape this fixture exists to freeze:
   # positions parented by the zone with no lane between them. The save-time rules
-  # refuse a maintained group with lanes, so this is the only shape one can have.
+  # refuse a kanban with lanes, so this is the only shape one can have.
   - name: SYN_PRESS_EMPTIES
     retrieve_algorithm: FIFO
     store_algorithm: LKND
@@ -805,7 +805,7 @@ cell_configs:
 # The kanban config shape seeddev must write: a kanbans row and its node-keyed
 # tables, with supports resolved from process names to the core
 # nodes those processes' claims name.
-maintained_groups:
+kanbans:
   - group: SYN_PRESS_EMPTIES
     station: edge1.line1
     strict: true

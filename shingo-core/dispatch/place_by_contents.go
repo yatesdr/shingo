@@ -16,14 +16,14 @@ import (
 )
 
 // place_by_contents.go — choosing a lifted carrier's drop by what it holds
-// (dropByContents): the partial arm, then the maintainer arm.
+// (dropByContents): the partial arm, then the keeper arm.
 //
 // A carrier leaves a line full, empty, or UNFINISHED: its part set, its count
 // above 0 and below the part's capacity. A full goes where the claim sends it;
 // so does an unfinished one, unless the claim names a partial home
 // (partial_destination), where it waits to be called back and finished. An
-// EMPTY lifted off a line position goes to a maintained group that is short of
-// it, when one supporting that position is: the maintainer wins over the
+// EMPTY lifted off a line position goes to a kanban that is short of
+// it, when one supporting that position is: the keeper wins over the
 // planned drop. Core owns the count, so Core decides: the Edge authors the
 // route and never reads the count to choose a drop.
 //
@@ -122,8 +122,8 @@ func liftOff(steps []resolvedStep, node string, from, to int) int {
 // dropByContents is the one by-contents choice, every door's: where carrier b,
 // lifted off liftNode and planned to current, goes by what it holds. The
 // partial arm first (partialHome: an unfinished carrier to its claim's partial
-// home), then the maintainer arm (maintainerSlot: an empty off a line position
-// to a maintained group short of it). "" keeps the planned drop, and nothing
+// home), then the keeper arm (kanbanSlot: an empty off a line position
+// to a kanban short of it). "" keeps the planned drop, and nothing
 // stalls for want of either. why is the reason, for the door's log. count is
 // the carrier's final count: the bin's at a release, the operator's at a move
 // that declares one.
@@ -135,8 +135,8 @@ func dropByContents(db *store.DB, pure *plan.Planner, order *orders.Order, b *bi
 	if t := partialHome(db, pure, order, b, count, liftNode, current, stated); t != "" {
 		return t, fmt.Sprintf("leaves %s unfinished (%d of %s) — to its partial home", liftNode, count, b.PayloadCode)
 	}
-	if t := maintainerSlot(db, pure, order, b, liftNode, current); t != "" {
-		return t, fmt.Sprintf("leaves %s empty — to the maintained group short of it,", liftNode)
+	if t := kanbanSlot(db, pure, order, b, liftNode, current); t != "" {
+		return t, fmt.Sprintf("leaves %s empty — to the kanban short of it,", liftNode)
 	}
 	return "", ""
 }
@@ -207,9 +207,9 @@ func partialHome(db *store.DB, pure *plan.Planner, order *orders.Order, b *bins.
 	return res.Node.Name
 }
 
-// maintainerSlot is the maintainer arm: where an empty lifted off a line
-// position goes when a maintained group supporting that position wants it,
-// "" when none does. The maintainer is absolute where it wants the carrier and
+// kanbanSlot is the keeper arm: where an empty lifted off a line
+// position goes when a kanban supporting that position wants it,
+// "" when none does. The keeper is absolute where it wants the carrier and
 // the door knows what the carrier is.
 //
 //   - The carrier is empty (no part) and not bare; the lift node is a line
@@ -229,10 +229,10 @@ func partialHome(db *store.DB, pure *plan.Planner, order *orders.Order, b *bins.
 //
 // Reads, only for an empty off a line position: the line-position read, the
 // fed-outside read for a tote cart, the supporting groups; per supporting
-// group its node and levels; once, the open maintain episodes; per group with a
+// group its node and levels; once, the open kanban episodes; per group with a
 // level of the type, the keeper's count (two or three statements) and, for a
 // tote cart, its layer wants and residents by totes; then the slot choice.
-func maintainerSlot(db *store.DB, pure *plan.Planner, order *orders.Order, b *bins.Bin, liftNode, current string) string {
+func kanbanSlot(db *store.DB, pure *plan.Planner, order *orders.Order, b *bins.Bin, liftNode, current string) string {
 	if b == nil || pure == nil || liftNode == "" {
 		return ""
 	}
@@ -260,7 +260,7 @@ func maintainerSlot(db *store.DB, pure *plan.Planner, order *orders.Order, b *bi
 	}
 	groups, err := groupsWanting(db, b, liftNode)
 	if err != nil {
-		log.Printf("dispatch: maintained groups wanting bin %d off %s — order %d keeps its drop: %v",
+		log.Printf("dispatch: kanbans wanting bin %d off %s — order %d keeps its drop: %v",
 			b.ID, liftNode, order.ID, err)
 		return ""
 	}
@@ -272,7 +272,7 @@ func maintainerSlot(db *store.DB, pure *plan.Planner, order *orders.Order, b *bi
 		}
 		res, err := pure.StoreDestination(g.node, "", binresolver.KnownCarrier(b), digAskerFor(order))
 		if err != nil || res == nil || res.Node == nil {
-			log.Printf("dispatch: maintained group %s is short %d of bin %d's kind but has no slot for it: %v",
+			log.Printf("dispatch: kanban %s is short %d of bin %d's kind but has no slot for it: %v",
 				g.node.Name, g.gap, b.ID, err)
 			continue
 		}
@@ -281,16 +281,16 @@ func maintainerSlot(db *store.DB, pure *plan.Planner, order *orders.Order, b *bi
 	return ""
 }
 
-// wantingGroup is a maintained group that wants a carrier, and by how many.
+// wantingGroup is a kanban that wants a carrier, and by how many.
 type wantingGroup struct {
 	node *nodes.Node
 	gap  int
 }
 
-// groupsWanting is the maintained groups supporting liftNode that are short of
+// groupsWanting is the kanbans supporting liftNode that are short of
 // carrier b, the largest gap first, ties by name.
 func groupsWanting(db *store.DB, b *bins.Bin, liftNode string) ([]wantingGroup, error) {
-	ids, err := db.MaintainedGroupsSupporting(liftNode)
+	ids, err := db.KanbansSupporting(liftNode)
 	if err != nil || len(ids) == 0 {
 		return nil, err
 	}
@@ -301,11 +301,11 @@ func groupsWanting(db *store.DB, b *bins.Bin, liftNode string) ([]wantingGroup, 
 		if err != nil {
 			return nil, err
 		}
-		levels, err := db.ListMaintainLevels(id)
+		levels, err := db.ListKanbanLevels(id)
 		if err != nil {
 			return nil, err
 		}
-		var lv *store.MaintainLevel
+		var lv *store.KanbanLevel
 		for i := range levels {
 			if levels[i].BinTypeID == b.BinTypeID {
 				lv = &levels[i]
@@ -315,7 +315,7 @@ func groupsWanting(db *store.DB, b *bins.Bin, liftNode string) ([]wantingGroup, 
 			continue
 		}
 		if open == nil {
-			eps, err := db.ListOpenEpisodesOfKind(protocol.EpisodeKindMaintain)
+			eps, err := db.ListOpenEpisodesOfKind(protocol.EpisodeKindKanban)
 			if err != nil {
 				return nil, err
 			}
@@ -324,7 +324,7 @@ func groupsWanting(db *store.DB, b *bins.Bin, liftNode string) ([]wantingGroup, 
 				open[e.EpisodeKey] = e
 			}
 		}
-		gap, err := carrierGap(db, g, *lv, open[protocol.MaintainEpisodeKey(g.Name, lv.BinTypeCode)], b)
+		gap, err := carrierGap(db, g, *lv, open[protocol.KanbanEpisodeKey(g.Name, lv.BinTypeCode)], b)
 		if err != nil {
 			return nil, err
 		}
@@ -338,11 +338,11 @@ func groupsWanting(db *store.DB, b *bins.Bin, liftNode string) ([]wantingGroup, 
 
 // carrierGap is how short group g is of carrier b, by the keeper's arithmetic
 // (kanban.Line.GapFor). A tote cart's line reads the group's layer wants as well.
-func carrierGap(db *store.DB, g *nodes.Node, lv store.MaintainLevel, episode store.DemandOrigin, b *bins.Bin) (int, error) {
-	var wants []store.MaintainLayerWant
+func carrierGap(db *store.DB, g *nodes.Node, lv store.KanbanLevel, episode store.DemandOrigin, b *bins.Bin) (int, error) {
+	var wants []store.KanbanLayerWant
 	if protocol.IsToteType(b.TotesPerLayer) {
 		var err error
-		if wants, err = db.ListMaintainLayerWants(g.ID); err != nil {
+		if wants, err = db.ListKanbanLayerWants(g.ID); err != nil {
 			return 0, err
 		}
 	}

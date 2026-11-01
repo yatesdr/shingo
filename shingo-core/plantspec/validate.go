@@ -137,7 +137,7 @@ func (p *Plant) Validate() error {
 		}
 		// Flat positions: slots parented by the zone itself. They count as slots
 		// for the hierarchy check below — they ARE storage under an NGRP — but not
-		// as lanes, which is the distinction a maintained group turns on.
+		// as lanes, which is the distinction a kanban turns on.
 		for _, s := range z.Positions {
 			addNode(s.Name, "position")
 			slotCount++
@@ -155,9 +155,9 @@ func (p *Plant) Validate() error {
 		add("storage hierarchy missing: need at least one zone → lane → slot (threshold replenishment only sees nodes under a LANE/NGRP parent)")
 	}
 	ref := func(name string) bool { _, ok := nodes[name]; return ok }
-	maintained := make(map[string]bool, len(p.MaintainedGroups))
-	for _, mg := range p.MaintainedGroups {
-		maintained[mg.Group] = true
+	kanbans := make(map[string]bool, len(p.Kanbans))
+	for _, mg := range p.Kanbans {
+		kanbans[mg.Group] = true
 	}
 
 	// loaderIdentities are SYNTHETIC loader-aggregate ids named by window_of claims
@@ -296,12 +296,12 @@ func (p *Plant) Validate() error {
 				add("%s: %s %q is a lane; a lane is not a source — name its group", where, leg.field, leg.name)
 			}
 		}
-		// A CONSUMER'S FULLS DO NOT COME FROM AN EMPTIES BANK. A maintained group
+		// A CONSUMER'S FULLS DO NOT COME FROM A KANBAN. A kanban
 		// refuses a carrier holding a part (binresolver.ResolveStore's empties-only
 		// refusal), so a full could be drawn from it and never put back. The same
-		// refusal as service.ErrFullsFromAnEmptiesBank.
-		if c.Role == "consume" && c.InboundSource != "" && maintained[c.InboundSource] {
-			add("%s: inbound_source %q is a maintained (empties) group; a consumer's fulls cannot come from it",
+		// refusal as service.ErrFullsFromAKanban.
+		if c.Role == "consume" && c.InboundSource != "" && kanbans[c.InboundSource] {
+			add("%s: inbound_source %q is a kanban; a consumer's fulls cannot come from it",
 				where, c.InboundSource)
 		}
 		if c.PairedCoreNode != "" && !ref(c.PairedCoreNode) {
@@ -566,7 +566,7 @@ func (p *Plant) Validate() error {
 		}
 	}
 
-	// ── Maintained groups ────────────────────────────────────────────────────
+	// ── Kanbans ────────────────────────────────────────────────────
 	//
 	// MIRRORS THE SAVE-TIME REFUSALS, one for one. A spec that can declare a
 	// configuration the settings modal refuses would seed a plant nobody could
@@ -578,91 +578,91 @@ func (p *Plant) Validate() error {
 	// and are absent here: a seed is allowed to be in a state a plant is allowed
 	// to be in.
 	seenGroup := map[string]bool{}
-	for _, mg := range p.MaintainedGroups {
+	for _, mg := range p.Kanbans {
 		if mg.Group == "" {
-			add("maintained_group with empty group")
+			add("kanban with empty group")
 			continue
 		}
 		if seenGroup[mg.Group] {
-			add("duplicate maintained_group %q", mg.Group)
+			add("duplicate kanban %q", mg.Group)
 		}
 		seenGroup[mg.Group] = true
 
 		if kind, ok := nodes[mg.Group]; !ok {
-			add("maintained_group %q references unknown zone", mg.Group)
+			add("kanban %q references unknown zone", mg.Group)
 		} else if kind != "zone" {
-			add("maintained_group %q names a %s; a maintained group is a zone", mg.Group, kind)
+			add("kanban %q names a %s; a kanban is a zone", mg.Group, kind)
 		} else {
 			// FLAT, because the save-time rule is flat. A lane means a carrier can
 			// be buried, and a level counted over buried carriers is a number whose
 			// meaning changes with what is parked in front of it.
 			if zoneLanes[mg.Group] > 0 {
-				add("maintained_group %q has %d lane(s); a maintained group is flat — declare its slots as positions",
+				add("kanban %q has %d lane(s); a kanban is flat — declare its slots as positions",
 					mg.Group, zoneLanes[mg.Group])
 			}
 			if zonePositions[mg.Group] == 0 {
-				add("maintained_group %q has no positions to hold a level in", mg.Group)
+				add("kanban %q has no positions to hold a level in", mg.Group)
 			}
 		}
 		// projectOrder no-ops on a blank StationID. A kanban with no supports
 		// declares what it holds and needs none.
 		if len(mg.Supports) > 0 && strings.TrimSpace(mg.Station) == "" {
-			add("maintained_group %q has no station; its top-up orders would show on no board", mg.Group)
+			add("kanban %q has no station; its top-up orders would show on no board", mg.Group)
 		}
 		if mg.RunningCover < 0 {
-			add("maintained_group %q has running_cover %d; it cannot be negative", mg.Group, mg.RunningCover)
+			add("kanban %q has running_cover %d; it cannot be negative", mg.Group, mg.RunningCover)
 		}
 		checkOverflow := func(overflow string) {
 			if overflow == "" {
 				return
 			}
 			if overflow == mg.Group {
-				add("maintained_group %q overflows to itself", mg.Group)
+				add("kanban %q overflows to itself", mg.Group)
 			} else if kind, ok := nodes[overflow]; !ok || kind != "zone" {
-				add("maintained_group %q overflows to %q, which is not a declared zone", mg.Group, overflow)
+				add("kanban %q overflows to %q, which is not a declared zone", mg.Group, overflow)
 			}
 		}
 		checkOverflow(mg.Overflow)
 		seenSource := map[string]bool{}
 		for _, src := range mg.Sources {
 			if src == mg.Group {
-				add("maintained_group %q names itself as a source", mg.Group)
+				add("kanban %q names itself as a source", mg.Group)
 			} else if kind, ok := nodes[src]; !ok || kind != "zone" {
-				add("maintained_group %q sources from %q, which is not a declared zone", mg.Group, src)
+				add("kanban %q sources from %q, which is not a declared zone", mg.Group, src)
 			}
 			if seenSource[src] {
-				add("maintained_group %q lists source %q twice", mg.Group, src)
+				add("kanban %q lists source %q twice", mg.Group, src)
 			}
 			seenSource[src] = true
 		}
 		if len(mg.Levels) == 0 {
-			add("maintained_group %q declares no levels", mg.Group)
+			add("kanban %q declares no levels", mg.Group)
 		}
 		seenType := map[string]bool{}
 		for _, l := range mg.Levels {
 			if l.BinType == "" || !binTypes[l.BinType] {
-				add("maintained_group %q level references unknown bin_type %q", mg.Group, l.BinType)
+				add("kanban %q level references unknown bin_type %q", mg.Group, l.BinType)
 				continue
 			}
 			if seenType[l.BinType] {
-				add("maintained_group %q declares bin_type %q twice", mg.Group, l.BinType)
+				add("kanban %q declares bin_type %q twice", mg.Group, l.BinType)
 			}
 			seenType[l.BinType] = true
 			checkOverflow(l.Overflow)
 			if l.Want < 0 {
-				add("maintained_group %q wants %d of %q; a level cannot be negative", mg.Group, l.Want, l.BinType)
+				add("kanban %q wants %d of %q; a level cannot be negative", mg.Group, l.Want, l.BinType)
 			}
 			// The episode key is `mnt|<group>|<type>`, so a code carrying the
 			// separator parses back into different components than it was built
 			// from. Refused where a code can still be changed.
 			if strings.Contains(l.BinType, "|") {
-				add("maintained_group %q level bin_type %q contains %q, which cannot be used in an episode key",
+				add("kanban %q level bin_type %q contains %q, which cannot be used in an episode key",
 					mg.Group, l.BinType, "|")
 			}
 		}
 		for _, proc := range mg.Supports {
 			if !processes[proc] {
-				add("maintained_group %q supports unknown process %q", mg.Group, proc)
+				add("kanban %q supports unknown process %q", mg.Group, proc)
 			}
 		}
 	}

@@ -265,7 +265,7 @@ cell_configs:
   - {process: WELD-2,  station: WELD-2-OPS}
   - {process: UNLOADER-A, station: UNLOADER-A-OPS}
 
-maintained_groups:
+kanbans:
   - group: SYN_PRESS_EMPTIES
     station: edge1.line1
     strict: false

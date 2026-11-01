@@ -85,7 +85,7 @@ func TestResolveStoreVacated_Refusals(t *testing.T) {
 			f.effBinTypes[c.ID] = []*bins.BinType{{ID: vsType + 2}}
 		}, "", KnownBinType(vsType)},
 		{"a payload into an empties-only group", func(f *fakeStore, c *nodes.Node) {
-			f.maintainLevels = map[int64][]nodes.MaintainLevel{vsGroup: {{GroupNodeID: vsGroup, BinTypeID: vsType, BinTypeCode: vsTypeC, Want: 9}}}
+			f.kanbanLevels = map[int64][]nodes.KanbanLevel{vsGroup: {{GroupNodeID: vsGroup, BinTypeID: vsType, BinTypeCode: vsTypeC, Want: 9}}}
 		}, "SYN-PART", KnownBinType(vsType)},
 	}
 	for _, c := range cases {
@@ -104,12 +104,12 @@ func TestResolveStoreVacated_Refusals(t *testing.T) {
 	}
 }
 
-// The maintained level, all three lifts. Levels count EMPTY carriers of a type,
+// The kanban level, all three lifts. Levels count EMPTY carriers of a type,
 // so one-out-one-in is level-neutral only when the lifted carrier is an empty of
 // the same type as the one the store puts down.
 func TestResolveStoreVacated_LevelCombinations(t *testing.T) {
 	t.Parallel()
-	level := []nodes.MaintainLevel{{GroupNodeID: vsGroup, BinTypeID: vsType, BinTypeCode: vsTypeC, Want: 4}}
+	level := []nodes.KanbanLevel{{GroupNodeID: vsGroup, BinTypeID: vsType, BinTypeCode: vsTypeC, Want: 4}}
 	cases := []struct {
 		name      string
 		emptiesAt map[groupKey]int
@@ -121,7 +121,7 @@ func TestResolveStoreVacated_LevelCombinations(t *testing.T) {
 	}
 	for _, c := range cases {
 		f, grp, child := vacatedStore()
-		f.maintainLevels = map[int64][]nodes.MaintainLevel{vsGroup: level}
+		f.kanbanLevels = map[int64][]nodes.KanbanLevel{vsGroup: level}
 		f.emptyCounts = map[groupKey]int{{vsGroup, vsTypeC}: 4}
 		f.emptiesAt = c.emptiesAt
 		err := resolveVacated(f, grp, child, "", KnownBinType(vsType))

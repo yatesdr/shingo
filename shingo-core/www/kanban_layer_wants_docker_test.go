@@ -17,23 +17,23 @@ import (
 	"shingocore/store/nodes"
 )
 
-// maintained_group_layer_wants_docker_test.go — a level's wanted heights ride
+// kanban_layer_wants_docker_test.go — a level's wanted heights ride
 // the level's own save and go with the level's remove (the Nodes page's
-// maintained-group section). A height is wanted only of a type that states its
+// kanban section). A height is wanted only of a type that states its
 // totes per layer, and 0 layers is the tops & bottoms row.
 
 // layerWantsOf reads a group's wanted heights through the editor's GET, as
 // "TYPE:layers=want" in the answer's order.
 func layerWantsOf(t *testing.T, h *Handlers, grpID int64) []string {
 	t.Helper()
-	rec := getPlain(t, h.apiMaintainedGroup, fmt.Sprintf("/api/nodes/maintained-group?id=%d", grpID))
+	rec := getPlain(t, h.apiKanban, fmt.Sprintf("/api/nodes/kanban?id=%d", grpID))
 	if rec.Code != http.StatusOK {
-		t.Fatalf("GET maintained group: status %d; body=%s", rec.Code, rec.Body.String())
+		t.Fatalf("GET kanban: status %d; body=%s", rec.Code, rec.Body.String())
 	}
 	var cfg struct {
-		LayerWants []store.MaintainLayerWant `json:"layer_wants"`
+		LayerWants []store.KanbanLayerWant `json:"layer_wants"`
 	}
-	testutil.MustNoErr(t, json.Unmarshal(rec.Body.Bytes(), &cfg), "decode maintained group")
+	testutil.MustNoErr(t, json.Unmarshal(rec.Body.Bytes(), &cfg), "decode kanban")
 	out := []string{}
 	for _, w := range cfg.LayerWants {
 		out = append(out, fmt.Sprintf("%s:%d=%d", w.BinTypeCode, w.Layers, w.Want))
@@ -41,7 +41,7 @@ func layerWantsOf(t *testing.T, h *Handlers, grpID int64) []string {
 	return out
 }
 
-func TestMaintainedGroupLevel_LayerWants(t *testing.T) {
+func TestKanbanLevel_LayerWants(t *testing.T) {
 	t.Parallel()
 	h, db := testHandlers(t)
 	grpID, err := db.CreateNodeGroup("GRP-MGLW")
@@ -63,7 +63,7 @@ func TestMaintainedGroupLevel_LayerWants(t *testing.T) {
 		if layerWants != nil {
 			body["layer_wants"] = layerWants
 		}
-		rec := postJSON(t, h.apiMaintainedGroupLevelSet, "/api/nodes/maintained-group/level", body)
+		rec := postJSON(t, h.apiKanbanLevelSet, "/api/nodes/kanban/level", body)
 		if rec.Code != http.StatusOK && rec.Code != http.StatusBadRequest && rec.Code != http.StatusConflict {
 			t.Fatalf("level save: status %d; body=%s", rec.Code, rec.Body.String())
 		}
@@ -118,7 +118,7 @@ func TestMaintainedGroupLevel_LayerWants(t *testing.T) {
 
 	saveLevel(tote, 4, []map[string]int{{"layers": 3, "want": 2}})
 	saveLevel(small, 1, []map[string]int{{"layers": 1, "want": 1}})
-	rec := postJSON(t, h.apiMaintainedGroupLevelRemove, "/api/nodes/maintained-group/level/remove",
+	rec := postJSON(t, h.apiKanbanLevelRemove, "/api/nodes/kanban/level/remove",
 		map[string]any{"group_node_id": grpID, "bin_type_id": tote})
 	if rec.Code != http.StatusOK {
 		t.Fatalf("level remove: status %d; body=%s", rec.Code, rec.Body.String())
@@ -126,17 +126,17 @@ func TestMaintainedGroupLevel_LayerWants(t *testing.T) {
 	want("removing the level removes its heights and no other type's", layerWantsOf(t, h, grpID),
 		[]string{"MGLW-SMALL:1=1"})
 
-	levels, err := db.ListMaintainLevels(grpID)
-	testutil.MustNoErr(t, err, "ListMaintainLevels")
+	levels, err := db.ListKanbanLevels(grpID)
+	testutil.MustNoErr(t, err, "ListKanbanLevels")
 	if len(levels) != 2 || levels[0].BinTypeID != kd || levels[0].Want != 2 || levels[1].BinTypeID != small || levels[1].Want != 1 {
 		t.Errorf("levels after the remove = %+v, want KD at 2 and SMALL at 1: the layer wants change no level", levels)
 	}
 }
 
-// The Nodes page renders its maintained-group section, the wanted heights'
+// The Nodes page renders its kanban section, the wanted heights'
 // hint beside the level, for a signed-in viewer; the heights themselves are
-// drawn by nodes-maintain.js from the GET above.
-func TestMaintainedGroupLevel_NodesPageRenders(t *testing.T) {
+// drawn by nodes-kanban.js from the GET above.
+func TestKanbanLevel_NodesPageRenders(t *testing.T) {
 	t.Parallel()
 	h, _ := testHandlersForPages(t)
 	req := httptest.NewRequest(http.MethodGet, "/nodes", nil)
@@ -147,7 +147,7 @@ func TestMaintainedGroupLevel_NodesPageRenders(t *testing.T) {
 		t.Fatalf("nodes page status %d; body=%s", rec.Code, rec.Body.String())
 	}
 	body := rec.Body.String()
-	for _, want := range []string{`id="nf-maintain-levels"`, "the heights wanted here tell the unloader"} {
+	for _, want := range []string{`id="nf-kanban-levels"`, "the heights wanted here tell the unloader"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("nodes page missing %q", want)
 		}

@@ -25,7 +25,7 @@ var _allBinTypes = JSON.parse(document.getElementById('page-data').dataset.binTy
 // One screen's worth of staged state. Rebuilt from the server on every open, so
 // nothing survives a modal close — a stale level from the last group you looked
 // at is exactly the edit nobody would catch.
-var _mg = null;
+var _kanban = null;
 
 function blank(nodeID) {
   return {
@@ -52,25 +52,25 @@ function blank(nodeID) {
   };
 }
 
-// renderMaintainSection loads and draws the section, or hides it.
+// renderKanbanSection loads and draws the section, or hides it.
 //
 // Hidden for anything that is not a node group. It is also hidden for an
 // unauthenticated viewer, because the whole section lives inside the auth-only
 // half of the modal and does not exist in the read-only one.
-export function renderMaintainSection(isGroupType, nodeID) {
-  var box = document.getElementById('nf-maintain');
+export function renderKanbanSection(isGroupType, nodeID) {
+  var box = document.getElementById('nf-kanban');
   if (!box) return;
-  _mg = null;
+  _kanban = null;
   if (!isGroupType || !nodeID) {
     box.classList.add('hide');
     setAlgoNote(false);
     return;
   }
   box.classList.remove('hide');
-  _mg = blank(Number(nodeID));
+  _kanban = blank(Number(nodeID));
 
   Promise.all([
-    apiGet('/api/nodes/maintained-group?id=' + nodeID),
+    apiGet('/api/nodes/kanban?id=' + nodeID),
     // The picker's contents are a plant-wide fact, not a per-group one, but it
     // is fetched per open rather than once: a claim set that changed while the
     // page was left open is exactly the case where a cached list offers a
@@ -78,14 +78,14 @@ export function renderMaintainSection(isGroupType, nodeID) {
     apiGet('/api/nodes/process-options').catch(function (err) {
       // A missing claim mirror must not stop the rest of the section from
       // rendering — the level is editable without it.
-      console.warn('maintained group: process options', err);
+      console.warn('kanban: process options', err);
       return { processes: [] };
     })
   ]).then(function (res) {
     var cfg = res[0] || {};
     var opts = (res[1] && res[1].processes) || [];
-    if (!_mg || _mg.nodeID !== Number(nodeID)) return; // modal moved on
-    _mg.levels = (cfg.levels || []).map(function (l) {
+    if (!_kanban || _kanban.nodeID !== Number(nodeID)) return; // modal moved on
+    _kanban.levels = (cfg.levels || []).map(function (l) {
       return {
         bin_type_id: Number(l.bin_type_id), bin_type_code: l.bin_type_code, want: Number(l.want),
         overflow_node_id: Number(l.overflow_node_id || 0), overflow_node: l.overflow_node || '',
@@ -94,11 +94,11 @@ export function renderMaintainSection(isGroupType, nodeID) {
         }).map(function (w) { return { layers: Number(w.layers), want: Number(w.want) }; })
       };
     });
-    _mg.savedLevels = _mg.levels.map(savedLevel);
-    _mg.sources = (cfg.sources || []).map(function (s) {
+    _kanban.savedLevels = _kanban.levels.map(savedLevel);
+    _kanban.sources = (cfg.sources || []).map(function (s) {
       return { id: Number(s.source_node_id), name: s.source_node_name };
     });
-    _mg.processes = opts;
+    _kanban.processes = opts;
 
     var storedNodes = new Set((cfg.supports || []).map(function (s) { return Number(s.process_node_id); }));
     var claimed = new Set();
@@ -109,25 +109,25 @@ export function renderMaintainSection(isGroupType, nodeID) {
       // Partial overlap reads as not-selected on purpose: ticking the box would
       // claim the operator asked for positions they never saw.
       if (ids.length && ids.every(function (id) { return storedNodes.has(id); })) {
-        _mg.selected.add(p.process_id);
+        _kanban.selected.add(p.process_id);
       }
     });
-    _mg.orphans = Array.from(storedNodes).filter(function (id) { return !claimed.has(id); });
+    _kanban.orphans = Array.from(storedNodes).filter(function (id) { return !claimed.has(id); });
 
-    document.getElementById('nf-maintain-strict').checked = !!cfg.strict_sourcing;
-    document.getElementById('nf-maintain-cover').value = String(Number(cfg.running_cover || 0));
+    document.getElementById('nf-kanban-strict').checked = !!cfg.strict_sourcing;
+    document.getElementById('nf-kanban-cover').value = String(Number(cfg.running_cover || 0));
     fillStations(cfg.maintenance_station || '');
     fillOverflow(cfg.overflow_destination || '');
     renderLevels();
     renderSources();
     renderSupports();
   }).catch(function (err) {
-    console.error('renderMaintainSection', err);
+    console.error('renderKanbanSection', err);
     // Loud, and the section stays hidden. A section rendered from a failed fetch
     // shows an empty level an operator can save, which turns a read error into a
     // configuration change.
     box.classList.add('hide');
-    _mg = null;
+    _kanban = null;
     toast('Could not load the kanban settings for this group.', 'error');
   });
 }
@@ -142,7 +142,7 @@ function savedLevel(l) {
 // the empty pull. Saying which half stopped applying is information — a control
 // that vanished would just be a question.
 function setAlgoNote(on) {
-  var note = document.getElementById('nf-maintain-algo-note');
+  var note = document.getElementById('nf-kanban-algo-note');
   if (note) note.classList.toggle('hide', !on);
 }
 
@@ -156,7 +156,7 @@ function otherGroups() {
     if (t.dataset.typeCode !== 'NGRP') return;
     var name = t.dataset.name;
     if (!name || seen[name]) return;
-    if (_mg && String(t.dataset.id) === String(_mg.nodeID)) return; // never itself
+    if (_kanban && String(t.dataset.id) === String(_kanban.nodeID)) return; // never itself
     seen[name] = true;
     out.push({ id: Number(t.dataset.id), name: name });
   });
@@ -165,7 +165,7 @@ function otherGroups() {
 }
 
 function fillStations(current) {
-  var sel = document.getElementById('nf-maintain-station');
+  var sel = document.getElementById('nf-kanban-station');
   if (!sel) return;
   var html = '<option value="">— none —</option>';
   _allStations.forEach(function (e) {
@@ -184,7 +184,7 @@ function fillStations(current) {
 }
 
 function fillOverflow(current) {
-  var sel = document.getElementById('nf-maintain-overflow');
+  var sel = document.getElementById('nf-kanban-overflow');
   if (!sel) return;
   var html = '<option value="">— none —</option>';
   var seen = {};
@@ -217,7 +217,7 @@ function levelOverflowSelect(l) {
       + escapeHtml(l.overflow_node || String(l.overflow_node_id)) + ' (not on this page)</option>';
   }
   return '<select class="form-input" aria-label="Overflow for ' + escapeHtml(l.bin_type_code) + '"'
-    + ' data-action-change="setMaintainLevelOverflow" data-bin-type-id="' + l.bin_type_id + '">' + html + '</select>';
+    + ' data-action-change="setKanbanLevelOverflow" data-bin-type-id="' + l.bin_type_id + '">' + html + '</select>';
 }
 
 // renderLevels draws the declared level, one row per carrier type with its
@@ -225,21 +225,21 @@ function levelOverflowSelect(l) {
 // but the two are not the same promise: a mix is a preference bounded by the
 // loader's windows, a level is the number Core holds.
 function renderLevels() {
-  var host = document.getElementById('nf-maintain-levels');
-  if (!host || !_mg) return;
-  setAlgoNote(_mg.levels.length > 0);
+  var host = document.getElementById('nf-kanban-levels');
+  if (!host || !_kanban) return;
+  setAlgoNote(_kanban.levels.length > 0);
   var declared = {};
-  _mg.levels.forEach(function (l) { declared[l.bin_type_id] = true; });
+  _kanban.levels.forEach(function (l) { declared[l.bin_type_id] = true; });
 
-  var rows = _mg.levels.map(function (l) {
+  var rows = _kanban.levels.map(function (l) {
     return '<div class="loader-mix-line">'
       + '<span class="loader-chip">' + escapeHtml(l.bin_type_code) + '</span>'
       + '<input type="number" class="form-input loader-mix-want" min="0" value="' + Number(l.want) + '"'
       + ' aria-label="How many ' + escapeHtml(l.bin_type_code) + ' to keep on hand"'
-      + ' data-action-change="setMaintainWant" data-bin-type-id="' + l.bin_type_id + '">'
+      + ' data-action-change="setKanbanWant" data-bin-type-id="' + l.bin_type_id + '">'
       + levelOverflowSelect(l)
       + '<button type="button" class="btn btn-sm" title="Remove"'
-      + ' data-action="removeMaintainLevel" data-bin-type-id="' + l.bin_type_id + '">&times;</button>'
+      + ' data-action="removeKanbanLevel" data-bin-type-id="' + l.bin_type_id + '">&times;</button>'
       + '</div>'
       + renderLayerWants(l);
   }).join('');
@@ -248,13 +248,13 @@ function renderLevels() {
   var add = '';
   if (rest.length) {
     add = '<div class="loader-mix-add">'
-      + '<select id="nf-maintain-add-type" class="form-input" aria-label="Carrier type">'
+      + '<select id="nf-kanban-add-type" class="form-input" aria-label="Carrier type">'
       + rest.map(function (t) {
         return '<option value="' + Number(t.id) + '">' + escapeHtml(t.code || t.label || '') + '</option>';
       }).join('')
       + '</select>'
-      + '<input type="number" id="nf-maintain-add-want" class="form-input loader-mix-want" min="0" value="1" aria-label="How many">'
-      + '<button type="button" class="btn btn-sm" data-action="addMaintainLevel">Add</button>'
+      + '<input type="number" id="nf-kanban-add-want" class="form-input loader-mix-want" min="0" value="1" aria-label="How many">'
+      + '<button type="button" class="btn btn-sm" data-action="addKanbanLevel">Add</button>'
       + '</div>';
   }
   host.innerHTML = (rows || '<div class="text-muted" style="font-size:0.75rem">No level declared.</div>') + add;
@@ -282,42 +282,42 @@ function renderLayerWants(l) {
     + '<span class="text-sm">Tops &amp; bottoms</span>'
     + '<input type="number" class="form-input loader-mix-want" min="0" value="' + (tb ? Number(tb.want) : 0) + '"'
     + ' aria-label="How many ' + code + ' tops &amp; bottoms to keep"'
-    + ' data-action-change="setMaintainTopsAndBottoms" data-bin-type-id="' + id + '">'
+    + ' data-action-change="setKanbanTopsAndBottoms" data-bin-type-id="' + id + '">'
     + '</div>';
   var rows = (l.layer_wants || []).filter(function (w) { return w.layers > 0; }).map(function (w) {
     return '<div class="loader-mix-line" style="margin-left:1.5rem">'
       + '<span class="text-sm">' + Number(w.layers) + ' high</span>'
       + '<input type="number" class="form-input loader-mix-want" min="0" value="' + Number(w.want) + '"'
       + ' aria-label="How many ' + code + ' carts ' + Number(w.layers) + ' high"'
-      + ' data-action-change="setMaintainLayerWant" data-bin-type-id="' + id + '"'
+      + ' data-action-change="setKanbanLayerWant" data-bin-type-id="' + id + '"'
       + ' data-layers="' + Number(w.layers) + '">'
       + '<button type="button" class="btn btn-sm" title="Remove this height"'
-      + ' data-action="removeMaintainLayerWant" data-bin-type-id="' + id + '"'
+      + ' data-action="removeKanbanLayerWant" data-bin-type-id="' + id + '"'
       + ' data-layers="' + Number(w.layers) + '">&times;</button>'
       + '</div>';
   }).join('');
   return tbRow + rows
     + '<div class="loader-mix-add" style="margin-left:1.5rem">'
     + '<input type="number" class="form-input loader-mix-want" min="1" placeholder="Layers"'
-    + ' id="nf-maintain-add-layers-' + id + '" aria-label="' + code + ' height in layers">'
+    + ' id="nf-kanban-add-layers-' + id + '" aria-label="' + code + ' height in layers">'
     + '<span class="text-sm">high, want</span>'
     + '<input type="number" class="form-input loader-mix-want" min="0" value="1"'
-    + ' id="nf-maintain-add-layer-want-' + id + '" aria-label="How many ' + code + ' carts at that height">'
-    + '<button type="button" class="btn btn-sm" data-action="addMaintainLayerWant"'
+    + ' id="nf-kanban-add-layer-want-' + id + '" aria-label="How many ' + code + ' carts at that height">'
+    + '<button type="button" class="btn btn-sm" data-action="addKanbanLayerWant"'
     + ' data-bin-type-id="' + id + '">Add height</button>'
     + '</div>';
 }
 
 function levelByID(id) {
-  return _mg && _mg.levels.find(function (l) { return l.bin_type_id === id; });
+  return _kanban && _kanban.levels.find(function (l) { return l.bin_type_id === id; });
 }
 
-export function addMaintainLayerWant(el) {
+export function addKanbanLayerWant(el) {
   var id = Number(el.getAttribute('data-bin-type-id'));
   var l = levelByID(id);
   if (!l) return;
-  var layers = Number((document.getElementById('nf-maintain-add-layers-' + id) || {}).value);
-  var n = Number((document.getElementById('nf-maintain-add-layer-want-' + id) || {}).value);
+  var layers = Number((document.getElementById('nf-kanban-add-layers-' + id) || {}).value);
+  var n = Number((document.getElementById('nf-kanban-add-layer-want-' + id) || {}).value);
   if (!(layers >= 1) || Math.floor(layers) !== layers) {
     toast('A height is a whole number of layers, 1 or more.', 'error');
     return;
@@ -330,7 +330,7 @@ export function addMaintainLayerWant(el) {
   renderLevels();
 }
 
-export function setMaintainLayerWant(el) {
+export function setKanbanLayerWant(el) {
   var l = levelByID(Number(el.getAttribute('data-bin-type-id')));
   if (!l) return;
   var layers = Number(el.getAttribute('data-layers'));
@@ -339,9 +339,9 @@ export function setMaintainLayerWant(el) {
   l.layer_wants.forEach(function (w) { if (w.layers === layers) w.want = n; });
 }
 
-// setMaintainTopsAndBottoms sets the type's tops & bottoms row; 0 removes it,
+// setKanbanTopsAndBottoms sets the type's tops & bottoms row; 0 removes it,
 // so the card offers tops & bottoms only where a group keeps some.
-export function setMaintainTopsAndBottoms(el) {
+export function setKanbanTopsAndBottoms(el) {
   var l = levelByID(Number(el.getAttribute('data-bin-type-id')));
   if (!l) return;
   var n = Number(el.value);
@@ -350,7 +350,7 @@ export function setMaintainTopsAndBottoms(el) {
   if (n > 0) l.layer_wants.unshift({ layers: 0, want: n });
 }
 
-export function removeMaintainLayerWant(el) {
+export function removeKanbanLayerWant(el) {
   var l = levelByID(Number(el.getAttribute('data-bin-type-id')));
   if (!l) return;
   var layers = Number(el.getAttribute('data-layers'));
@@ -358,39 +358,39 @@ export function removeMaintainLayerWant(el) {
   renderLevels();
 }
 
-export function addMaintainLevel() {
-  if (!_mg) return;
-  var sel = document.getElementById('nf-maintain-add-type');
-  var want = document.getElementById('nf-maintain-add-want');
+export function addKanbanLevel() {
+  if (!_kanban) return;
+  var sel = document.getElementById('nf-kanban-add-type');
+  var want = document.getElementById('nf-kanban-add-want');
   var id = Number(sel && sel.value);
   if (!id) return;
   var n = Number(want && want.value);
   if (!(n >= 0)) n = 0;
   var t = _allBinTypes.find(function (x) { return Number(x.id) === id; });
-  _mg.levels.push({ bin_type_id: id, bin_type_code: (t && (t.code || t.label)) || String(id), want: n, overflow_node_id: 0, layer_wants: [] });
-  _mg.levels.sort(function (a, b) { return a.bin_type_code.localeCompare(b.bin_type_code); });
+  _kanban.levels.push({ bin_type_id: id, bin_type_code: (t && (t.code || t.label)) || String(id), want: n, overflow_node_id: 0, layer_wants: [] });
+  _kanban.levels.sort(function (a, b) { return a.bin_type_code.localeCompare(b.bin_type_code); });
   renderLevels();
 }
 
-export function setMaintainWant(el) {
-  if (!_mg) return;
+export function setKanbanWant(el) {
+  if (!_kanban) return;
   var id = Number(el.getAttribute('data-bin-type-id'));
   var n = Number(el.value);
   // Zero is a real declared value — "none of this type, on purpose" — so it is
   // kept rather than treated as a removal. Negative is not a smaller level, it
   // is a number nothing can act on.
   if (!(n >= 0)) { n = 0; el.value = '0'; }
-  _mg.levels.forEach(function (l) { if (l.bin_type_id === id) l.want = n; });
+  _kanban.levels.forEach(function (l) { if (l.bin_type_id === id) l.want = n; });
 }
 
-export function removeMaintainLevel(el) {
-  if (!_mg) return;
+export function removeKanbanLevel(el) {
+  if (!_kanban) return;
   var id = Number(el.getAttribute('data-bin-type-id'));
-  _mg.levels = _mg.levels.filter(function (l) { return l.bin_type_id !== id; });
+  _kanban.levels = _kanban.levels.filter(function (l) { return l.bin_type_id !== id; });
   renderLevels();
 }
 
-export function setMaintainLevelOverflow(el) {
+export function setKanbanLevelOverflow(el) {
   var l = levelByID(Number(el.getAttribute('data-bin-type-id')));
   if (l) l.overflow_node_id = Number(el.value) || 0;
 }
@@ -414,11 +414,11 @@ function sourceRowsHtml(sources, groups) {
     return '<div class="loader-mix-line">'
       + '<span class="text-sm tnum">' + (i + 1) + '.</span>'
       + '<span class="loader-chip">' + escapeHtml(s.name) + '</span>'
-      + '<button type="button" class="btn btn-sm" title="Earlier" data-action="moveMaintainSource" data-index="' + i + '" data-delta="-1"'
+      + '<button type="button" class="btn btn-sm" title="Earlier" data-action="moveKanbanSource" data-index="' + i + '" data-delta="-1"'
       + (i === 0 ? ' disabled' : '') + '>&uarr;</button>'
-      + '<button type="button" class="btn btn-sm" title="Later" data-action="moveMaintainSource" data-index="' + i + '" data-delta="1"'
+      + '<button type="button" class="btn btn-sm" title="Later" data-action="moveKanbanSource" data-index="' + i + '" data-delta="1"'
       + (i === sources.length - 1 ? ' disabled' : '') + '>&darr;</button>'
-      + '<button type="button" class="btn btn-sm" title="Remove" data-action="removeMaintainSource" data-index="' + i + '">&times;</button>'
+      + '<button type="button" class="btn btn-sm" title="Remove" data-action="removeKanbanSource" data-index="' + i + '">&times;</button>'
       + '</div>';
   }).join('');
   var listed = {};
@@ -427,41 +427,41 @@ function sourceRowsHtml(sources, groups) {
   var add = '';
   if (rest.length) {
     add = '<div class="loader-mix-add">'
-      + '<select id="nf-maintain-add-source" class="form-input" aria-label="Source group">'
+      + '<select id="nf-kanban-add-source" class="form-input" aria-label="Source group">'
       + rest.map(function (g) { return '<option value="' + g.id + '">' + escapeHtml(g.name) + '</option>'; }).join('')
       + '</select>'
-      + '<button type="button" class="btn btn-sm" data-action="addMaintainSource">Add</button>'
+      + '<button type="button" class="btn btn-sm" data-action="addKanbanSource">Add</button>'
       + '</div>';
   }
   return (rows || '<div class="text-muted" style="font-size:0.75rem">No sources: the keeper searches the plant.</div>') + add;
 }
 
 function renderSources() {
-  var host = document.getElementById('nf-maintain-sources');
-  if (!host || !_mg) return;
-  host.innerHTML = sourceRowsHtml(_mg.sources, otherGroups());
+  var host = document.getElementById('nf-kanban-sources');
+  if (!host || !_kanban) return;
+  host.innerHTML = sourceRowsHtml(_kanban.sources, otherGroups());
 }
 
-export function addMaintainSource() {
-  if (!_mg) return;
-  var sel = document.getElementById('nf-maintain-add-source');
+export function addKanbanSource() {
+  if (!_kanban) return;
+  var sel = document.getElementById('nf-kanban-add-source');
   var id = Number(sel && sel.value);
   if (!id) return;
   var g = otherGroups().find(function (x) { return x.id === id; });
-  if (g) _mg.sources.push(g);
+  if (g) _kanban.sources.push(g);
   renderSources();
 }
 
-export function removeMaintainSource(el) {
-  if (!_mg) return;
+export function removeKanbanSource(el) {
+  if (!_kanban) return;
   var i = Number(el.getAttribute('data-index'));
-  _mg.sources = _mg.sources.filter(function (_, at) { return at !== i; });
+  _kanban.sources = _kanban.sources.filter(function (_, at) { return at !== i; });
   renderSources();
 }
 
-export function moveMaintainSource(el) {
-  if (!_mg) return;
-  _mg.sources = moveInList(_mg.sources, Number(el.getAttribute('data-index')), Number(el.getAttribute('data-delta')));
+export function moveKanbanSource(el) {
+  if (!_kanban) return;
+  _kanban.sources = moveInList(_kanban.sources, Number(el.getAttribute('data-index')), Number(el.getAttribute('data-delta')));
   renderSources();
 }
 
@@ -470,37 +470,37 @@ export function moveMaintainSource(el) {
 // point at on the floor; what gets stored is the positions, because a claim
 // lives on the Edge and Core cannot read one when it has to decide anything.
 function renderSupports() {
-  var host = document.getElementById('nf-maintain-supports');
-  if (!host || !_mg) return;
-  if (!_mg.processes.length) {
+  var host = document.getElementById('nf-kanban-supports');
+  if (!host || !_kanban) return;
+  if (!_kanban.processes.length) {
     host.innerHTML = '<div class="text-muted" style="font-size:0.75rem">'
       + 'No processes have reported claims yet.</div>';
     return;
   }
-  var html = _mg.processes.map(function (p) {
+  var html = _kanban.processes.map(function (p) {
     var names = p.nodes.map(function (n) { return n.name; }).join(', ');
     return '<label class="text-sm" style="display:flex;align-items:flex-start;gap:8px;margin-bottom:6px;cursor:pointer">'
-      + '<input type="checkbox" data-action-change="toggleMaintainSupport"'
+      + '<input type="checkbox" data-action-change="toggleKanbanSupport"'
       + ' data-process-id="' + escapeHtml(p.process_id) + '"'
-      + (_mg.selected.has(p.process_id) ? ' checked' : '') + '>'
+      + (_kanban.selected.has(p.process_id) ? ' checked' : '') + '>'
       + '<span><strong>' + escapeHtml(p.process_id) + '</strong>'
       + '<span class="text-muted" style="display:block;font-size:0.72rem">' + escapeHtml(names) + '</span>'
       + '</span></label>';
   }).join('');
-  if (_mg.orphans.length) {
+  if (_kanban.orphans.length) {
     html += '<div class="text-muted" style="font-size:0.72rem;margin-top:6px">'
-      + _mg.orphans.length + ' saved position'
-      + (_mg.orphans.length === 1 ? ' matches' : 's match')
+      + _kanban.orphans.length + ' saved position'
+      + (_kanban.orphans.length === 1 ? ' matches' : 's match')
       + ' no known process. Kept as-is — clear them in the claims.</div>';
   }
   host.innerHTML = html;
 }
 
-export function toggleMaintainSupport(el) {
-  if (!_mg) return;
+export function toggleKanbanSupport(el) {
+  if (!_kanban) return;
   var pid = el.getAttribute('data-process-id');
-  if (el.checked) _mg.selected.add(pid);
-  else _mg.selected.delete(pid);
+  if (el.checked) _kanban.selected.add(pid);
+  else _kanban.selected.delete(pid);
 }
 
 // rawPost is apiPost without the envelope-unwrapping.
@@ -562,7 +562,7 @@ async function postConfirmable(url, body) {
 }
 
 // confirmAllowedBinsNarrowing asks before the node form posts a narrower Allowed
-// Bins set at a maintained group, and returns whether to go ahead.
+// Bins set at a kanban, and returns whether to go ahead.
 //
 // The form navigates, so the server cannot ask — a 409 there replaces the page
 // with an error document. It answers the question here and carries the answer in
@@ -575,7 +575,7 @@ export async function confirmAllowedBinsNarrowing(nodeID, binTypeIDs, form) {
   if (!nodeID) return true;
   var res;
   try {
-    res = await apiPost('/api/nodes/maintained-group/check-types',
+    res = await apiPost('/api/nodes/kanban/check-types',
       { node_id: Number(nodeID), bin_type_ids: binTypeIDs.map(Number) });
   } catch (err) {
     // A check that could not run must not silently become a pass — but it also
@@ -596,7 +596,7 @@ export async function confirmAllowedBinsNarrowing(nodeID, binTypeIDs, form) {
   return true;
 }
 
-// saveMaintainedGroup flushes the section. Called from the modal's Save, before
+// saveKanban flushes the section. Called from the modal's Save, before
 // the form posts.
 //
 // Settings first, then the level, then the supports and sources — a refusal names
@@ -604,15 +604,15 @@ export async function confirmAllowedBinsNarrowing(nodeID, binTypeIDs, form) {
 // loader's staging group" wants it against the switch they just flipped, not
 // against a level row they did not touch. The station comes ahead of the supports
 // because the supports need it.
-export async function saveMaintainedGroup() {
-  var box = document.getElementById('nf-maintain');
-  if (!box || box.classList.contains('hide') || !_mg) return;
+export async function saveKanban() {
+  var box = document.getElementById('nf-kanban');
+  if (!box || box.classList.contains('hide') || !_kanban) return;
 
-  var nodeID = _mg.nodeID;
-  var strict = document.getElementById('nf-maintain-strict').checked;
-  var station = document.getElementById('nf-maintain-station').value;
-  var overflow = document.getElementById('nf-maintain-overflow').value;
-  var cover = Number(document.getElementById('nf-maintain-cover').value);
+  var nodeID = _kanban.nodeID;
+  var strict = document.getElementById('nf-kanban-strict').checked;
+  var station = document.getElementById('nf-kanban-station').value;
+  var overflow = document.getElementById('nf-kanban-overflow').value;
+  var cover = Number(document.getElementById('nf-kanban-cover').value);
   if (!(cover >= 0) || Math.floor(cover) !== cover) cover = 0;
 
   // Warnings collect across the whole flush and are shown once. Four toasts for
@@ -628,58 +628,58 @@ export async function saveMaintainedGroup() {
   };
 
   try {
-    collect(await postConfirmable('/api/nodes/maintained-group/settings', {
+    collect(await postConfirmable('/api/nodes/kanban/settings', {
       group_node_id: nodeID,
       strict_sourcing: strict,
       maintenance_station: station,
       overflow_destination: overflow
     }));
-    collect(await apiPost('/api/nodes/maintained-group/cover', { group_node_id: nodeID, running_cover: cover }));
+    collect(await apiPost('/api/nodes/kanban/cover', { group_node_id: nodeID, running_cover: cover }));
 
     // Removals come off the DIFF against what the server had. Deleting every row
     // and re-adding would be simpler and would also, for a moment, leave a
     // kanban with no declared level at all.
     var still = {};
-    _mg.levels.forEach(function (l) { still[l.bin_type_id] = true; });
-    for (var i = 0; i < _mg.savedLevels.length; i++) {
-      var was = _mg.savedLevels[i];
+    _kanban.levels.forEach(function (l) { still[l.bin_type_id] = true; });
+    for (var i = 0; i < _kanban.savedLevels.length; i++) {
+      var was = _kanban.savedLevels[i];
       if (!still[was.bin_type_id]) {
-        collect(await apiPost('/api/nodes/maintained-group/level/remove',
+        collect(await apiPost('/api/nodes/kanban/level/remove',
           { group_node_id: nodeID, bin_type_id: was.bin_type_id }));
       }
     }
     // Each level carries its wanted heights. They were loaded with the level
     // (the section stays hidden when that load fails), so the list sent is
     // the one on screen and replaces what is stored, an empty list included.
-    for (var j = 0; j < _mg.levels.length; j++) {
-      var l = _mg.levels[j];
-      collect(await apiPost('/api/nodes/maintained-group/level', {
+    for (var j = 0; j < _kanban.levels.length; j++) {
+      var l = _kanban.levels[j];
+      collect(await apiPost('/api/nodes/kanban/level', {
         group_node_id: nodeID, bin_type_id: l.bin_type_id, want: l.want,
         layer_wants: l.layer_wants.map(function (w) { return { layers: w.layers, want: w.want }; })
       }));
-      var had = _mg.savedLevels.find(function (s) { return s.bin_type_id === l.bin_type_id; });
+      var had = _kanban.savedLevels.find(function (s) { return s.bin_type_id === l.bin_type_id; });
       if (l.overflow_node_id !== (had ? had.overflow_node_id : 0)) {
-        collect(await apiPost('/api/nodes/maintained-group/level/overflow', {
+        collect(await apiPost('/api/nodes/kanban/level/overflow', {
           group_node_id: nodeID, bin_type_id: l.bin_type_id, overflow_node_id: l.overflow_node_id
         }));
       }
     }
 
-    var nodeIDs = _mg.orphans.slice();
-    _mg.processes.forEach(function (p) {
-      if (!_mg.selected.has(p.process_id)) return;
+    var nodeIDs = _kanban.orphans.slice();
+    _kanban.processes.forEach(function (p) {
+      if (!_kanban.selected.has(p.process_id)) return;
       p.nodes.forEach(function (n) {
         if (nodeIDs.indexOf(Number(n.id)) < 0) nodeIDs.push(Number(n.id));
       });
     });
-    collect(await postConfirmable('/api/nodes/maintained-group/supports',
+    collect(await postConfirmable('/api/nodes/kanban/supports',
       { group_node_id: nodeID, process_node_ids: nodeIDs }));
-    collect(await apiPost('/api/nodes/maintained-group/sources',
-      { group_node_id: nodeID, source_node_ids: _mg.sources.map(function (s) { return s.id; }) }));
+    collect(await apiPost('/api/nodes/kanban/sources',
+      { group_node_id: nodeID, source_node_ids: _kanban.sources.map(function (s) { return s.id; }) }));
 
     // The staged state now matches the server, so a second Save without
     // reopening does not re-issue removals for rows already gone.
-    _mg.savedLevels = _mg.levels.map(savedLevel);
+    _kanban.savedLevels = _kanban.levels.map(savedLevel);
 
     // Deduplicated: the same warning comes back from every endpoint that
     // re-validated the whole configuration, which is all of them.
@@ -702,18 +702,18 @@ export async function saveMaintainedGroup() {
 }
 
 delegateActions(document.body, {
-  addMaintainLayerWant,
-  addMaintainLevel,
-  addMaintainSource,
-  moveMaintainSource,
-  removeMaintainLayerWant,
-  removeMaintainLevel,
-  removeMaintainSource,
-  setMaintainLayerWant,
-  setMaintainLevelOverflow,
-  setMaintainTopsAndBottoms,
-  setMaintainWant,
-  toggleMaintainSupport
+  addKanbanLayerWant,
+  addKanbanLevel,
+  addKanbanSource,
+  moveKanbanSource,
+  removeKanbanLayerWant,
+  removeKanbanLevel,
+  removeKanbanSource,
+  setKanbanLayerWant,
+  setKanbanLevelOverflow,
+  setKanbanTopsAndBottoms,
+  setKanbanWant,
+  toggleKanbanSupport
 }, { events: ['click', 'change'] });
 
 // ── The keeper's levels (moved from /inventory, owner 2026-10-29) ──────────
@@ -745,7 +745,7 @@ export function renderKeeperLevels(groupName) {
   if (note) note.innerHTML = '';
   _keeperFor = groupName || '';
   if (!groupName) return;
-  apiGet('/api/inventory/maintained-groups').then(function (all) {
+  apiGet('/api/nodes/kanban/levels').then(function (all) {
     if (_keeperFor !== groupName) return; // the modal moved on
     var rows = (Array.isArray(all) ? all : []).filter(function (r) { return r.group_node === groupName; });
     if (!rows.length) return;
@@ -765,8 +765,11 @@ export function keeperRowHtml(r) {
   var gap = r.gap || 0;
   // Short is the only coloured number on the row. A gap of 0 or less is not
   // "good" needing a green tick, it is nothing happening.
+  var shortTitle = r.held_by
+    ? 'Core is short ' + gap + ' and is held: ' + escapeHtml(r.held_by)
+    : 'Core is short ' + gap + ' and has asks out or is placing them';
   var gapCell = gap > 0
-    ? '<td class="rh-num mg-short" title="Core is short ' + gap + ' and has asks out or is placing them">' + gap + '</td>'
+    ? '<td class="rh-num kanban-short" title="' + shortTitle + '">' + gap + '</td>'
     : '<td class="rh-num text-muted" title="the level is covered">0</td>';
   var parked = r.oldest_ask_cause
     ? '<span class="tnum" title="the longest-waiting ask against this level has been parked '

@@ -159,7 +159,7 @@ func TestTopsAndBottomsPull_TakesExactlyTopsAndBottoms(t *testing.T) {
 
 // TestTopsAndBottomsPull_AStrictGroupThatSupportsThePressServesIt: the pull's
 // asker is the fed press (the find sets it as the need's process node), so a
-// strict maintained group that supports the press serves it; one that does
+// strict kanban that supports the press serves it; one that does
 // not support it is fenced.
 func TestTopsAndBottomsPull_AStrictGroupThatSupportsThePressServesIt(t *testing.T) {
 	t.Parallel()

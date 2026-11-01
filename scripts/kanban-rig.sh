@@ -28,7 +28,7 @@ set -uo pipefail
 export MSYS_NO_PATHCONV=1
 
 # ── THE NAMES, in one place: the rename pass moves these ────────────────────────────────
-KANBAN_API=/api/inventory/maintained-groups
+KANBAN_API=/api/nodes/kanban/levels
 CARD_GROUP=group_node
 CARD_TYPE=bin_type_code
 K=PRESS-KANBAN

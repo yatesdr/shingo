@@ -69,7 +69,7 @@ func TestKanbanPin_TheKeeperFollowsTheEffectiveWant(t *testing.T) {
 	grpID, small := mntFixture(t, db, "KEW", 8, "KEW-SMALL", 1)
 	var big int64
 	testutil.MustNoErr(t, db.QueryRow(`INSERT INTO bin_types (code) VALUES ('KEW-BIG') RETURNING id`).Scan(&big), "big")
-	testutil.MustNoErr(t, db.SetMaintainLevel(store.MaintainLevel{GroupNodeID: grpID, BinTypeID: big, Want: 0}), "big's level")
+	testutil.MustNoErr(t, db.SetKanbanLevel(store.KanbanLevel{GroupNodeID: grpID, BinTypeID: big, Want: 0}), "big's level")
 	testdb.KanbanCover(t, db, grpID, 2)
 	for _, n := range []string{"KEW-OUT1", "KEW-OUT2", "KEW-OUT3", "KEW-OUT4", "KEW-OUT5"} {
 		mntOutsideEmpty(t, db, small, n)
@@ -83,10 +83,10 @@ func TestKanbanPin_TheKeeperFollowsTheEffectiveWant(t *testing.T) {
 	testutil.MustNoErr(t, db.CreateNode(weld), "another process's position")
 	support, err := db.GetNodeByDotName("KEW-SUPPORT")
 	testutil.MustNoErr(t, err, "the support")
-	testutil.MustNoErr(t, nodes.SetMaintainSupports(db.DB, grpID, []int64{support.ID, second.ID, weld.ID}), "supports")
+	testutil.MustNoErr(t, nodes.SetKanbanSupports(db.DB, grpID, []int64{support.ID, second.ID, weld.ID}), "supports")
 	coverProcess(t, db, "KEW-PRESS", coverStyle{"S", true, [][2]string{{"KEW-SUPPORT", "KEW-L"}, {"KEW-SECOND", "KEW-R"}}})
 
-	m := eng.Maintainer()
+	m := eng.KanbanKeeper()
 	m.Tick()
 	st := mntState(t, m, "KEW", "KEW-SMALL")
 	if st.Want != 3 || st.Base != 1 || st.Created != 3 {
@@ -121,7 +121,7 @@ func TestKanbanPin_CoverFollowsTheTargetAndRevertsWithinATick(t *testing.T) {
 	grpID, small := mntFixture(t, db, "KET", 8, "KET-SMALL", 1)
 	var totes int64
 	testutil.MustNoErr(t, db.QueryRow(`INSERT INTO bin_types (code) VALUES ('KET-TOTES') RETURNING id`).Scan(&totes), "totes")
-	testutil.MustNoErr(t, db.SetMaintainLevel(store.MaintainLevel{GroupNodeID: grpID, BinTypeID: totes, Want: 1}), "totes' level")
+	testutil.MustNoErr(t, db.SetKanbanLevel(store.KanbanLevel{GroupNodeID: grpID, BinTypeID: totes, Want: 1}), "totes' level")
 	testdb.KanbanCover(t, db, grpID, 4)
 	coverPart(t, db, "KET-SP", small)
 	coverPart(t, db, "KET-TP", totes)
@@ -131,7 +131,7 @@ func TestKanbanPin_CoverFollowsTheTargetAndRevertsWithinATick(t *testing.T) {
 
 	wants := func(what string, wantSmall, wantTotes int) {
 		t.Helper()
-		m := eng.Maintainer()
+		m := eng.KanbanKeeper()
 		m.Tick()
 		s, tt := mntState(t, m, "KET", "KET-SMALL"), mntState(t, m, "KET", "KET-TOTES")
 		if s.Want != wantSmall || tt.Want != wantTotes {
@@ -210,14 +210,14 @@ func TestKanban_ANoSupportsKanbanRunsNoKeeper(t *testing.T) {
 	grpID, btID := mntFixture(t, db, "KNS", 3, "KNS-T", 2)
 	mntOutsideEmpty(t, db, btID, "KNS-OUT1")
 	mntOutsideEmpty(t, db, btID, "KNS-OUT2")
-	testutil.MustNoErr(t, nodes.SetMaintainSupports(db.DB, grpID, nil), "no supports")
+	testutil.MustNoErr(t, nodes.SetKanbanSupports(db.DB, grpID, nil), "no supports")
 	landAt(t, db, btID, firstChild(t, db, grpID).ID, "KNS-STANDING")
 
 	noStation := testdb.MarkedGroup(t, db, "KNS-NOSTATION")
 	testutil.MustNoErr(t, db.CreateNode(&nodes.Node{Name: "KNS-NOSTATION-P", Enabled: true, ParentID: noStation}), "position")
-	testutil.MustNoErr(t, db.SetMaintainLevel(store.MaintainLevel{GroupNodeID: *noStation, BinTypeID: btID, Want: 1}), "level")
+	testutil.MustNoErr(t, db.SetKanbanLevel(store.KanbanLevel{GroupNodeID: *noStation, BinTypeID: btID, Want: 1}), "level")
 
-	m := eng.Maintainer()
+	m := eng.KanbanKeeper()
 	m.Tick()
 	st := mntState(t, m, "KNS", "KNS-T")
 	if st.Want != 2 || st.Resident != 1 || st.Gap != 1 || st.Created != 0 || st.OriginID != "" || st.HeldBy == "" {
@@ -226,7 +226,7 @@ func TestKanban_ANoSupportsKanbanRunsNoKeeper(t *testing.T) {
 	if st = mntState(t, m, "KNS-NOSTATION", "KNS-T"); st.Gap != 1 || st.Created != 0 {
 		t.Errorf("no station and no supports: %+v; want the shortfall of 1 shown and nothing asked", st)
 	}
-	open, err := db.ListOpenEpisodesOfKind(protocol.EpisodeKindMaintain)
+	open, err := db.ListOpenEpisodesOfKind(protocol.EpisodeKindKanban)
 	testutil.MustNoErr(t, err, "open")
 	if len(open) != 0 {
 		t.Errorf("a kanban with no supports opened %d episodes", len(open))
@@ -240,14 +240,14 @@ func TestKanban_ANoSupportsKanbanRunsNoKeeper(t *testing.T) {
 	// Supports back: it asks. Taken away with the ask live: the episode withdraws.
 	pos := &nodes.Node{Name: "KNS-PRESS", Enabled: true}
 	testutil.MustNoErr(t, db.CreateNode(pos), "a position")
-	testutil.MustNoErr(t, nodes.SetMaintainSupports(db.DB, grpID, []int64{pos.ID}), "supports")
+	testutil.MustNoErr(t, nodes.SetKanbanSupports(db.DB, grpID, []int64{pos.ID}), "supports")
 	m.Tick()
 	st = mntState(t, m, "KNS", "KNS-T")
 	if st.Created != 1 || st.OriginID == "" {
 		t.Fatalf("with a support: %+v, want the ask and the episode", st)
 	}
 	origin := st.OriginID
-	testutil.MustNoErr(t, nodes.SetMaintainSupports(db.DB, grpID, nil), "supports gone")
+	testutil.MustNoErr(t, nodes.SetKanbanSupports(db.DB, grpID, nil), "supports gone")
 	m.Tick()
 	closed, err := db.GetDemandOrigin(origin)
 	testutil.MustNoErr(t, err, "the episode")
@@ -262,7 +262,7 @@ type sourcesRig struct {
 	eng  *Engine
 	k    int64
 	bt   int64
-	m    *Maintainer
+	m    *KanbanKeeper
 	code string
 }
 
@@ -271,7 +271,7 @@ func newSourcesRig(t *testing.T, name string, want int) *sourcesRig {
 	db := testdb.Open(t)
 	eng := newTestEngine(t, db, simulator.New())
 	k, bt := mntFixture(t, db, name, 4, name+"-T", want)
-	return &sourcesRig{db: db, eng: eng, k: k, bt: bt, m: eng.Maintainer(), code: name + "-T"}
+	return &sourcesRig{db: db, eng: eng, k: k, bt: bt, m: eng.KanbanKeeper(), code: name + "-T"}
 }
 
 // zone makes a flat group of positions.
@@ -309,7 +309,7 @@ func (r *sourcesRig) sources(t *testing.T, ids ...int64) {
 }
 
 // asksFrom ticks and says which bins the tick's asks took, in order of asking.
-func (r *sourcesRig) asksFrom(t *testing.T, name string) (map[int64]bool, MaintainerGroupState) {
+func (r *sourcesRig) asksFrom(t *testing.T, name string) (map[int64]bool, KanbanLineState) {
 	t.Helper()
 	r.m.Tick()
 	st := mntState(t, r.m, name, r.code)
@@ -428,7 +428,7 @@ func TestKanbanSources_NoLinesideRaid(t *testing.T) {
 	lineside := func(t *testing.T, r *sourcesRig, name string) *nodes.Node {
 		t.Helper()
 		other := r.zone(t, name, 2)
-		testutil.MustNoErr(t, r.db.SetMaintainLevel(store.MaintainLevel{GroupNodeID: other.ID, BinTypeID: r.bt, Want: 0}), "its level")
+		testutil.MustNoErr(t, r.db.SetKanbanLevel(store.KanbanLevel{GroupNodeID: other.ID, BinTypeID: r.bt, Want: 0}), "its level")
 		testdb.KanbanKeeper(t, r.db, other.ID, "test-core")
 		r.stand(t, other, name+"-SPARE")
 		return other
@@ -458,7 +458,7 @@ func TestKanbanSources_NoLinesideRaid(t *testing.T) {
 		t.Parallel()
 		r := newSourcesRig(t, "KRZ", 1)
 		zone := r.zone(t, "KRZ-Z45", 2)
-		testutil.MustNoErr(t, r.db.SetMaintainLevel(store.MaintainLevel{GroupNodeID: zone.ID, BinTypeID: r.bt, Want: 2}), "its level")
+		testutil.MustNoErr(t, r.db.SetKanbanLevel(store.KanbanLevel{GroupNodeID: zone.ID, BinTypeID: r.bt, Want: 2}), "its level")
 		in := r.stand(t, zone, "KRZ-LENT")
 		if got, st := r.asksFrom(t, "KRZ"); st.Created != 1 || !got[in] {
 			t.Errorf("created %d, bins %v; want Z45's %d by the plant-wide scan", st.Created, got, in)
@@ -539,7 +539,7 @@ func TestKanbanForecast_AgreesWithTheFinder(t *testing.T) {
 				r.sources(t, sources...)
 			}
 			id, err := r.db.OpenCoreEpisode(store.DemandOrigin{OriginID: "fcfcfcfc-0000-4000-8000-000000000001",
-				EpisodeKey: protocol.MaintainEpisodeKey(name, r.code), Kind: protocol.EpisodeKindMaintain,
+				EpisodeKey: protocol.KanbanEpisodeKey(name, r.code), Kind: protocol.EpisodeKindKanban,
 				StationID: "test-core", CoreNodeName: name, OpenedAt: time.Now().UTC(), Threshold: 2})
 			testutil.MustNoErr(t, err, "the episode")
 

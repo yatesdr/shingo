@@ -35,8 +35,8 @@ const (
 // unloader whose outbound is the kanban and the kanban declares a level: that is the
 // shape the door decides on Short, and every other push keeps the cap. The overflow
 // has a row of its own, as well as its source's row if it is one. $1 kanban, $2 type,
-// $3 the window's name, $4 the asking order (0: none yet), $5 the maintain kind. The
-// asks' episode key is protocol.MaintainEpisodeKey spelled in SQL, per group of the door;
+// $3 the window's name, $4 the asking order (0: none yet), $5 the kanban kind. The
+// asks' episode key is protocol.KanbanEpisodeKey spelled in SQL, per group of the door;
 // TestKanbanDoor_AgreesWithTheKeepersCounts holds the two together.
 var kanbanDoorSQL = `
 WITH RECURSIVE door AS (
@@ -104,7 +104,7 @@ SELECT ` + nodes.SelectCols + `, da.role, l.bin_type_id, bt.code, l.want, k.runn
 // outbound is the kanban, or the kanban declares no level (no statement more than
 // this one either way). self is the asking order, 0 when it has no row yet.
 func (db *DB) ReadKanbanDoor(kanbanID, binTypeID int64, source string, self int64) (*KanbanDoor, error) {
-	rows, err := db.DB.Query(kanbanDoorSQL, kanbanID, binTypeID, nodes.WindowNameOf(source), self, protocol.EpisodeKindMaintain)
+	rows, err := db.DB.Query(kanbanDoorSQL, kanbanID, binTypeID, nodes.WindowNameOf(source), self, protocol.EpisodeKindKanban)
 	if err != nil {
 		return nil, fmt.Errorf("kanban door %d: %w", kanbanID, err)
 	}
@@ -131,7 +131,7 @@ func (db *DB) ReadKanbanDoor(kanbanID, binTypeID int64, source string, self int6
 			lv := KanbanPictureRow{KanbanNodeID: n.ID, BinTypeID: *typeID, BinTypeCode: *code, LevelOverflowNodeID: levelOverflow,
 				OverflowNode: levelOverflowName}
 			lv.Base, lv.Cover, lv.Running = *wantBase, *wantCover, *wantR
-			m := lv.MaintainLevel()
+			m := lv.KanbanLevel()
 			l.Level = &m
 		}
 		if door == nil {
@@ -159,7 +159,7 @@ func (db *DB) DoorReads(groupID int64, line *DoorLine) *KanbanAskReads {
 	if line == nil {
 		return &KanbanAskReads{GroupPassReads: db.GroupPassReads(groupID)}
 	}
-	var levels []MaintainLevel
+	var levels []KanbanLevel
 	residents := map[string]int{}
 	if line.Level != nil {
 		levels = append(levels, *line.Level)

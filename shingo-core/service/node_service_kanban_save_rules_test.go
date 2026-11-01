@@ -12,15 +12,15 @@ import (
 	"shingocore/store/loaders"
 )
 
-// node_service_maintain_save_rules_test.go — what the Nodes page's maintained
-// group save says about two configurations that cannot work: levels past the
-// enabled positions of a maintained group, and levels on a live unloader's
+// node_service_kanban_save_rules_test.go — what the Nodes page's kanban
+//  save says about two configurations that cannot work: levels past the
+// enabled positions of a kanban, and levels on a live unloader's
 // outbound with no overflow destination. The first is a warning (the card shows
 // what cannot be covered), the second a refusal; their neighbours
 // (an overflow set) save as before.
 //
-// Each case saves a level through SetMaintainLevel (the level door of
-// www/handlers_maintained_groups.go) and records whether it saved, what it
+// Each case saves a level through SetKanbanLevel (the level door of
+// www/handlers_kanbans.go) and records whether it saved, what it
 // refused and what it warned. The positions and the unloader are built first;
 // the level is the save under test.
 
@@ -33,10 +33,10 @@ type mgSaveOutcome struct {
 // mgSaveLevel saves one level and reads back whether it stands.
 func mgSaveLevel(t *testing.T, svc *NodeService, grpID, btID int64, want int) mgSaveOutcome {
 	t.Helper()
-	chk, err := svc.SetMaintainLevel(grpID, btID, want)
-	testutil.MustNoErr(t, err, "SetMaintainLevel")
-	levels, err := svc.ListMaintainLevels(grpID)
-	testutil.MustNoErr(t, err, "ListMaintainLevels")
+	chk, err := svc.SetKanbanLevel(grpID, btID, want)
+	testutil.MustNoErr(t, err, "SetKanbanLevel")
+	levels, err := svc.ListKanbanLevels(grpID)
+	testutil.MustNoErr(t, err, "ListKanbanLevels")
 	saved := false
 	for _, l := range levels {
 		if l.BinTypeID == btID && l.Want == want {
@@ -54,9 +54,9 @@ func mgUnloaderSendingTo(t *testing.T, svc *NodeService, name, dest string) {
 	testutil.MustNoErr(t, err, "create unloader "+name)
 }
 
-// TestMaintainedGroupSave_WhatTheChooserCannotRepay: the words a kanban's save says
+// TestKanbanSave_WhatTheChooserCannotRepay: the words a kanban's save says
 // about its sources and overflow, per type, none of them a refusal.
-func TestMaintainedGroupSave_WhatTheChooserCannotRepay(t *testing.T) {
+func TestKanbanSave_WhatTheChooserCannotRepay(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
 	svc := NewNodeService(db)
@@ -68,7 +68,7 @@ func TestMaintainedGroupSave_WhatTheChooserCannotRepay(t *testing.T) {
 	}
 	small, big, wide := sized("WCR-SMALL", 45, 48), sized("WCR-BIG", 48, 45), sized("WCR-WIDE", 32, 30)
 	declare := func(g, bt int64, want int) {
-		testutil.MustNoErr(t, db.SetMaintainLevel(store.MaintainLevel{GroupNodeID: g, BinTypeID: bt, Want: want}), "level")
+		testutil.MustNoErr(t, db.SetKanbanLevel(store.KanbanLevel{GroupNodeID: g, BinTypeID: bt, Want: want}), "level")
 	}
 	said := func(got mgSaveOutcome) string { return strings.Join(got.warnings, "; ") }
 
@@ -113,7 +113,7 @@ func TestMaintainedGroupSave_WhatTheChooserCannotRepay(t *testing.T) {
 	}
 }
 
-func TestMaintainedGroupSave_LevelsAndTheUnloaderOutbound(t *testing.T) {
+func TestKanbanSave_LevelsAndTheUnloaderOutbound(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
 	svc := NewNodeService(db)
@@ -121,7 +121,7 @@ func TestMaintainedGroupSave_LevelsAndTheUnloaderOutbound(t *testing.T) {
 		testdb.KanbanStation(t, db, grpID, "EDGE-1")
 	}
 
-	t.Run("levels summing past the enabled positions of a maintained group", func(t *testing.T) {
+	t.Run("levels summing past the enabled positions of a kanban", func(t *testing.T) {
 		grpID, _ := mgGroup(t, db, "SR-PAST", 2)
 		on(grpID)
 		got := mgSaveLevel(t, svc, grpID, mgBinType(t, db, "SR-PAST-TOTE"), 3)

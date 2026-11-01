@@ -19,7 +19,7 @@ import (
 // the feed compares.
 //
 // THE TWO PATHS DEGRADE DIFFERENTLY. A reply keeps today's posture: a failed
-// read of a slice the Edge holds only in memory (maintained marks, bin types,
+// read of a slice the Edge holds only in memory (kanban marks, bin types,
 // the scene) still sends the rest. The feed path is strict: any failed read
 // fails the build, the key is left out of the ack, and nothing is sent — a
 // digest of a partial read would confirm a copy nobody read. A degraded reply
@@ -72,15 +72,15 @@ func (s *CoreDataService) buildNodeList(stationID string, strict bool) (*protoco
 	// failed read sends the list unmarked, which the Edge reads exactly as it
 	// reads an older Core — it refuses nothing on this account — so the read
 	// does not hold the topology back.
-	maintained, merr := s.db.MaintainedGroupIDs()
+	kanbans, merr := s.db.KanbanIDs()
 	if merr != nil {
 		if strict {
-			return nil, fmt.Errorf("list maintained groups: %w", merr)
+			return nil, fmt.Errorf("list kanbans: %w", merr)
 		}
-		log.Printf("core_handler: list maintained groups for %s: %v", stationID, merr)
+		log.Printf("core_handler: list kanbans for %s: %v", stationID, merr)
 	}
 	// Windows of a loader that takes partials, for the Edge's partial-home
-	// refusal. A failed read sends no marks on a reply, as maintained does.
+	// refusal. A failed read sends no marks on a reply, as the kanbans read does.
 	partials, perr := s.db.AcceptsPartialsNodeIDs()
 	if perr != nil {
 		if strict {
@@ -88,7 +88,7 @@ func (s *CoreDataService) buildNodeList(stationID string, strict bool) (*protoco
 		}
 		log.Printf("core_handler: list accept-partials windows for %s: %v", stationID, perr)
 	}
-	infos := nodeInfos(nodeList, stationScoped, maintained, partials)
+	infos := nodeInfos(nodeList, stationScoped, kanbans, partials)
 
 	// Loader refactor cutover: include the Core-owned loader config as a sibling
 	// slice so Edge's persistent cache receives it atomically with the topology.
@@ -165,7 +165,7 @@ func binTypeFloors(types []*bins.BinType) map[string]string {
 // nodeInfos projects the node rows for the wire: a station-scoped list names
 // group children "Group.Child"; the plant-wide fallback sends the roots and the
 // children of node groups.
-func nodeInfos(nodeList []*nodes.Node, stationScoped bool, maintained, partials map[int64]bool) []protocol.NodeInfo {
+func nodeInfos(nodeList []*nodes.Node, stationScoped bool, kanbans, partials map[int64]bool) []protocol.NodeInfo {
 	var infos []protocol.NodeInfo
 	if stationScoped {
 		for _, n := range nodeList {
@@ -173,7 +173,7 @@ func nodeInfos(nodeList []*nodes.Node, stationScoped bool, maintained, partials 
 			if n.ParentID != nil && !n.IsSynthetic && n.ParentName != "" {
 				name = n.ParentName + "." + n.Name
 			}
-			infos = append(infos, protocol.NodeInfo{Name: name, NodeType: n.NodeTypeCode, Maintained: maintained[n.ID],
+			infos = append(infos, protocol.NodeInfo{Name: name, NodeType: n.NodeTypeCode, Kanban: kanbans[n.ID],
 				AcceptsPartials: partials[n.ID]})
 		}
 		return infos
@@ -184,12 +184,12 @@ func nodeInfos(nodeList []*nodes.Node, stationScoped bool, maintained, partials 
 	}
 	for _, n := range nodeList {
 		if n.ParentID == nil {
-			infos = append(infos, protocol.NodeInfo{Name: n.Name, NodeType: n.NodeTypeCode, Maintained: maintained[n.ID],
+			infos = append(infos, protocol.NodeInfo{Name: n.Name, NodeType: n.NodeTypeCode, Kanban: kanbans[n.ID],
 				AcceptsPartials: partials[n.ID]})
 		} else if !n.IsSynthetic {
 			if parent, ok := nodeMap[*n.ParentID]; ok && parent.NodeTypeCode == protocol.NodeClassNGRP {
 				infos = append(infos, protocol.NodeInfo{
-					Name: parent.Name + "." + n.Name, NodeType: n.NodeTypeCode, Maintained: maintained[n.ID],
+					Name: parent.Name + "." + n.Name, NodeType: n.NodeTypeCode, Kanban: kanbans[n.ID],
 					AcceptsPartials: partials[n.ID],
 				})
 			}

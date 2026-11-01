@@ -51,7 +51,7 @@ import (
 // the deciders against a shape the sim never runs; the demo plant is the one
 // every sim pair runs, and it has what the golden needs to be wide — a shared
 // multi-payload market of depth-3 lanes, empties in their own lanes, a
-// maintained group, loaders and an unloader, stations of every kind.
+// kanban, loaders and an unloader, stations of every kind.
 //
 // ── WHY THE ENGINE IS STARTED AND STOPPED ─────────────────────────────────
 //
@@ -1168,7 +1168,7 @@ func TestPlannerGolden_Doors(t *testing.T) {
 				for _, m := range [][2]string{{"BIN-PEB-01", "PLN_005"}, {"BIN-PEB-02", "PLN_006"}, {"BIN-PEB-03", "SLN_010"}} {
 					g.exec(`UPDATE bins SET node_id = (SELECT id FROM nodes WHERE name = $2) WHERE label = $1`, m[0], m[1])
 				}
-				g.eng.Maintainer().Tick()
+				g.eng.KanbanKeeper().Tick()
 				g.eng.RunFulfillmentScan()
 			},
 		},

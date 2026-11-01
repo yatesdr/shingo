@@ -14,7 +14,7 @@ import (
 	"shingocore/store/nodes"
 )
 
-// A MAINTAINED GROUP MUST NOT SOURCE FROM ITSELF.
+// A KANBAN MUST NOT SOURCE FROM ITSELF.
 //
 // Found by the MG2 sim campaign, on the first scenario. The design had named
 // the rule before the keeper was built — "sourcing tiers for top-offs ... never
@@ -36,9 +36,9 @@ import (
 // shuffles itself and never reaches its level.
 //
 // preferZone is what made it easy to hit: the plant-wide empty search prefers
-// the destination's zone, and a maintained group's own positions share its
+// the destination's zone, and a kanban's own positions share its
 // zone, so the group's own carriers ranked FIRST.
-func TestMaintainer_DoesNotSourceFromItsOwnGroup(t *testing.T) {
+func TestKanbanKeeper_DoesNotSourceFromItsOwnGroup(t *testing.T) {
 	t.Parallel()
 	db := testdb.Open(t)
 	eng := newTestEngine(t, db, simulator.New())
@@ -65,7 +65,7 @@ func TestMaintainer_DoesNotSourceFromItsOwnGroup(t *testing.T) {
 	testutil.MustNoErr(t, db.CreateNode(outsideSlot), "create SELFSRC-FAR")
 	landCarrier(t, db, bt, outsideSlot.ID, "SELF-BIN-OUTSIDE")
 
-	m := eng.Maintainer()
+	m := eng.KanbanKeeper()
 	m.Tick()
 
 	// Two carriers leave. The keeper is now short two, and the two still

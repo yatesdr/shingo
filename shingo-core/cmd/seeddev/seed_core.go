@@ -152,7 +152,7 @@ func seedCore(db *store.DB, p *plantspec.Plant, binIDByNode map[string]int64) er
 			}
 		}
 		// Flat positions: STOR children of the ZONE, with no lane between. This
-		// is the shape a maintained group has to be in — the save-time rules
+		// is the shape a kanban has to be in — the save-time rules
 		// refuse a group with lanes — so a spec that could not express it could
 		// not stage one.
 		for _, s := range z.Positions {
@@ -278,16 +278,16 @@ func seedCore(db *store.DB, p *plantspec.Plant, binIDByNode map[string]int64) er
 		}
 	}
 
-	if err := seedMaintainedGroups(db, p, nodeIDs, binTypeIDs); err != nil {
-		return fmt.Errorf("seed maintained groups: %w", err)
+	if err := seedKanbans(db, p, nodeIDs, binTypeIDs); err != nil {
+		return fmt.Errorf("seed kanbans: %w", err)
 	}
 
-	log.Printf("core: %d node types, %d payloads, %d nodes, %d bins, %d demands, %d maintained groups",
-		4, len(payloadIDs), len(nodeIDs), len(p.Bins), len(entries), len(p.MaintainedGroups))
+	log.Printf("core: %d node types, %d payloads, %d nodes, %d bins, %d demands, %d kanbans",
+		4, len(payloadIDs), len(nodeIDs), len(p.Bins), len(entries), len(p.Kanbans))
 	return nil
 }
 
-// seedMaintainedGroups writes the config a kanban is, through store.SaveKanban.
+// seedKanbans writes the config a kanban is, through store.SaveKanban.
 //
 // THE SAME WRITE THE UI MAKES, not a seed-only shortcut, so a seeded kanban and a
 // hand-configured one are the same rows — which is the only thing that makes the
@@ -298,10 +298,10 @@ func seedCore(db *store.DB, p *plantspec.Plant, binIDByNode map[string]int64) er
 // name, which is the same resolution the settings modal does at save time.
 //
 // Written unconditionally rather than only-when-absent: re-seeding an edited
-// spec has to be able to CHANGE a level, and a maintained group is spec-owned
+// spec has to be able to CHANGE a level, and a kanban is spec-owned
 // state, not operator-owned state a seed should preserve. Same rule the lane gate
 // point follows.
-func seedMaintainedGroups(db *store.DB, p *plantspec.Plant, nodeIDs map[string]int64, binTypeIDs map[string]int64) error {
+func seedKanbans(db *store.DB, p *plantspec.Plant, nodeIDs map[string]int64, binTypeIDs map[string]int64) error {
 	// process name → the positions its claims name, in spec order: each claim's
 	// node and the two paired with it. A press-index back position is where the
 	// empty lands, and it is a supported position like the front (seedEdge gives
@@ -323,10 +323,10 @@ func seedMaintainedGroups(db *store.DB, p *plantspec.Plant, nodeIDs map[string]i
 		}
 	}
 
-	for _, mg := range p.MaintainedGroups {
+	for _, mg := range p.Kanbans {
 		groupID, ok := nodeIDs[mg.Group]
 		if !ok {
-			return fmt.Errorf("maintained group %q: zone not found among seeded nodes", mg.Group)
+			return fmt.Errorf("kanban %q: zone not found among seeded nodes", mg.Group)
 		}
 		// zoneID is a named zone's node; a blank name is 0, which clears.
 		zoneID := func(name string) (int64, error) {
@@ -335,7 +335,7 @@ func seedMaintainedGroups(db *store.DB, p *plantspec.Plant, nodeIDs map[string]i
 			}
 			id, ok := nodeIDs[name]
 			if !ok {
-				return 0, fmt.Errorf("maintained group %q: zone %q not found among seeded nodes", mg.Group, name)
+				return 0, fmt.Errorf("kanban %q: zone %q not found among seeded nodes", mg.Group, name)
 			}
 			return id, nil
 		}
@@ -348,7 +348,7 @@ func seedMaintainedGroups(db *store.DB, p *plantspec.Plant, nodeIDs map[string]i
 		for _, l := range mg.Levels {
 			btID, ok := binTypeIDs[l.BinType]
 			if !ok {
-				return fmt.Errorf("maintained group %q: bin type %q not seeded", mg.Group, l.BinType)
+				return fmt.Errorf("kanban %q: bin type %q not seeded", mg.Group, l.BinType)
 			}
 			levelOverflow, err := zoneID(l.Overflow)
 			if err != nil {
@@ -378,7 +378,7 @@ func seedMaintainedGroups(db *store.DB, p *plantspec.Plant, nodeIDs map[string]i
 		}
 		change.Supports = &supportIDs
 		if err := db.SaveKanban(change, "seeddev"); err != nil {
-			return fmt.Errorf("maintained group %q: %w", mg.Group, err)
+			return fmt.Errorf("kanban %q: %w", mg.Group, err)
 		}
 	}
 	return nil

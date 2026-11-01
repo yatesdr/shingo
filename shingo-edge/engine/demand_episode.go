@@ -578,7 +578,7 @@ func (e *Engine) emitOriginState(o *store.OpenOrigin, closedAt *time.Time, close
 		Kind: o.Kind, Direction: o.Direction, Trigger: o.TriggerKind,
 		TriggerRef: o.TriggerRef, ProcessID: o.ProcessID,
 		CoreNodeName: o.CoreNodeName, PayloadCode: o.PayloadCode,
-		// Threshold is not set: it is Core's (a threshold or maintain
+		// Threshold is not set: it is Core's (a threshold or kanban
 		// episode's level), and this is a cell episode, whose level is the
 		// Edge's reorder point and stays on the Edge (Core shows a cell
 		// episode's threshold as not applicable).

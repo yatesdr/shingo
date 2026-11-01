@@ -43,7 +43,7 @@ func TestSaveKanban_AuditsEachChangeOnce(t *testing.T) {
 	testutil.MustNoErr(t, db.QueryRow(`INSERT INTO bin_types (code) VALUES ('SK-BIG') RETURNING id`).Scan(&big), "big")
 
 	station, strict, cover, want := "edge.1", true, 4, 2
-	wants := []store.MaintainLayerWant{{Layers: 0, Want: 1}, {Layers: 3, Want: 2}}
+	wants := []store.KanbanLayerWant{{Layers: 0, Want: 1}, {Layers: 3, Want: 2}}
 	first := store.KanbanChange{NodeID: *k, EnsureRow: true, Station: &station, Strict: &strict, Cover: &cover, Overflow: spill,
 		Levels: []store.KanbanLevelChange{
 			{BinTypeID: small, Want: &want, LayerWants: &wants, Overflow: other},

@@ -80,7 +80,7 @@ type Params struct {
 	NoToteCarrier bool
 
 	// The capacity gate's: the destination it gated, the bins standing there,
-	// the orders already inbound, and whether a maintained group is at its level.
+	// the orders already inbound, and whether a kanban is at its level.
 	Destination   string
 	BlockingBins  int
 	InboundOrders int
@@ -147,7 +147,7 @@ func BuriedOrStructural(err error) (*binresolver.BuriedError, *binresolver.Struc
 // survives every wrap. dispatch's classifier and the planner's vacated-slot arm
 // read them through CapacityShape, so the two cannot disagree.
 const (
-	CapacityEmptiesOnly = "empties-only" // a labelled store aimed at an empties bank
+	CapacityEmptiesOnly = "empties-only" // a labelled store aimed at a kanban
 	CapacitySlot        = "slot"         // the group has no free slot
 	CapacityPayload     = "payload"      // the group holds none of the payload
 	CapacityBin         = "bin"          // the empty-fetch pool is dry

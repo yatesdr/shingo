@@ -35,7 +35,7 @@ type GroupPassReads struct {
 	state     *nodes.GroupSlotState
 	stateRead bool
 	props     map[passPropKey]string
-	levels    map[int64][]nodes.MaintainLevel
+	levels    map[int64][]nodes.KanbanLevel
 	payloads  map[int64][]*payloads.Payload
 	binTypes  map[int64][]*bins.BinType
 	bare      map[int64]*int64
@@ -51,7 +51,7 @@ type passPropKey struct {
 // GroupPassReads is a fresh read view for one gate pass over groupID (dispatch
 // evaluateGroupReleasesPass); see the type.
 func (db *DB) GroupPassReads(groupID int64) *GroupPassReads {
-	return &GroupPassReads{DB: db, groupID: groupID, props: map[passPropKey]string{}, levels: map[int64][]nodes.MaintainLevel{},
+	return &GroupPassReads{DB: db, groupID: groupID, props: map[passPropKey]string{}, levels: map[int64][]nodes.KanbanLevel{},
 		payloads: map[int64][]*payloads.Payload{}, binTypes: map[int64][]*bins.BinType{}, bare: map[int64]*int64{},
 		binsAt: map[int64][]*bins.Bin{}, orderType: map[orderGroupKey]orderCarrier{}}
 }
@@ -93,12 +93,12 @@ func (r *GroupPassReads) GetNodeProperty(nodeID int64, key string) string {
 	return v
 }
 
-// ListMaintainLevels memoises a group's declared levels for the pass.
-func (r *GroupPassReads) ListMaintainLevels(groupNodeID int64) ([]nodes.MaintainLevel, error) {
+// ListKanbanLevels memoises a group's declared levels for the pass.
+func (r *GroupPassReads) ListKanbanLevels(groupNodeID int64) ([]nodes.KanbanLevel, error) {
 	if v, ok := r.levels[groupNodeID]; ok {
 		return v, nil
 	}
-	v, err := r.DB.ListMaintainLevels(groupNodeID)
+	v, err := r.DB.ListKanbanLevels(groupNodeID)
 	if err == nil {
 		r.levels[groupNodeID] = v
 	}

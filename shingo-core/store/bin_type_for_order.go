@@ -10,7 +10,7 @@ import (
 // going to put down. It exists because the per-node Allowed Bin Types gate had
 // no way to find out. Beside the type it answers what stands on that cart (its
 // carrier state), from the same bin, so the store caps judge a cart at 0 on
-// its own line (binresolver.AtDeclaredLevel); blank when the type came from no
+// its own line (kanban.AtLevel); blank when the type came from no
 // one cart.
 //
 // ── WHY THIS IS A LOOKUP AND NOT A PARAMETER ────────────────────────────────

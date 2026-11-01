@@ -1940,7 +1940,7 @@ func CountLiveByOrigin(db *sql.DB, originID string) (int, error) {
 func CountLiveRootsByOrigin(db *sql.DB, originID string) (int, error) {
 	if originID == "" {
 		// origin_id is a UUID column; comparing it to "" is a type error rather
-		// than an empty result. Same guard MaintainedEpisodeForOrigin carries.
+		// than an empty result. Same guard KanbanEpisodeForOrigin carries.
 		return 0, nil
 	}
 	var count int
@@ -1960,7 +1960,7 @@ func CountLiveRootsByOrigin(db *sql.DB, originID string) (int, error) {
 //
 // THE THIRD POPULATION, and the one that is neither "standing there" nor "I
 // asked for it". An unloader pushing a drained empty back, a changeover
-// evacuating one, an operator move — none carries a maintain origin, all land in
+// evacuating one, an operator move — none carries a kanban origin, all land in
 // the group, and a keeper blind to them over-asks by exactly their number and
 // then overfills. This is the 241-duplicates shape arriving from the other
 // direction.
@@ -1992,7 +1992,7 @@ func CountLiveRootsByOrigin(db *sql.DB, originID string) (int, error) {
 // re-resolution on isMove). Those orders are real, they are coming, and matching
 // only on descendants would miss every one of them.
 //
-// EVERY MAINTAIN ORIGIN IS EXCLUDED, not just the asking one. An order minted by
+// EVERY KANBAN ORIGIN IS EXCLUDED, not just the asking one. An order minted by
 // the keeper is already counted as "asked" by CountLiveRootsByOrigin, so
 // counting it here too would double-subtract; and a SECOND group's keeper order
 // inbound to THIS group cannot happen (a keeper only ever delivers into its own
@@ -2056,7 +2056,7 @@ func ListTypedInboundToGroup(db *sql.DB, groupNodeID int64, groupNodeName, binTy
 		kind:  "$4",
 	})+`
 		ORDER BY bin_id`,
-		groupNodeID, binTypeCode, groupNodeName, protocol.EpisodeKindMaintain)
+		groupNodeID, binTypeCode, groupNodeName, protocol.EpisodeKindKanban)
 	if err != nil {
 		return nil, fmt.Errorf("list typed inbound to group %s (%s): %w", groupNodeName, binTypeCode, err)
 	}
@@ -2078,7 +2078,7 @@ func ListTypedInboundToGroup(db *sql.DB, groupNodeID int64, groupNodeName, binTy
 // the arm over an order's cart rows, whose delivery node is the row's drop step
 // (typedInboundDropSQL); named is the arm over a cart an order names and holds no
 // row for, delivered to the order's delivery node. kind is the expression carrying
-// the maintain kind.
+// the kanban kind.
 type typedInboundScope struct {
 	cols, outer, joins string
 	rows, named        string
@@ -2155,7 +2155,7 @@ func ListKanbanInbound(db *sql.DB, kanbanIDs []int64) ([]KanbanInbound, error) {
 		named: "TRUE",
 		kind:  "$2",
 	})+`
-		ORDER BY kanban, code, bin_id`, arg, protocol.EpisodeKindMaintain)
+		ORDER BY kanban, code, bin_id`, arg, protocol.EpisodeKindKanban)
 	if err != nil {
 		return nil, fmt.Errorf("list kanban inbound: %w", err)
 	}
@@ -2175,7 +2175,7 @@ func ListKanbanInbound(db *sql.DB, kanbanIDs []int64) ([]KanbanInbound, error) {
 // fragment a door's one read composes: per group of the walk the caller's statement
 // names (kanban_tree(kanban, id), whose first row per group is the group itself), the
 // stock coming and the carts at 0 coming. typeExpr, selfExpr and kindExpr carry the
-// type's id, the asking order's id (0 for one with no row yet) and the maintain kind.
+// type's id, the asking order's id (0 for one with no row yet) and the kanban kind.
 //
 // THE ASKER AND THOSE BEHIND IT DO NOT COUNT. A push counts as coming from its birth
 // (CountTypedInboundToGroup), so a parked push would read itself as filling the gap it

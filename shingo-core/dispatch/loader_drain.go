@@ -31,7 +31,7 @@ import (
 // next, as it does when the windows are full (TestDrain_AndAFullAskNeverShareAWindow).
 //
 // EACH MOVE NAMES ITS BIN, so it goes straight to dispatch and never reaches an
-// empty finder, and the empties-to-maintainer door (W9) never re-points it: it
+// empty finder, and the empties-to-kanban door (W9) never re-points it: it
 // lifts off no line position.
 
 // DrainLoader moves carts of the states an unloader ticked from its inbound
@@ -106,12 +106,12 @@ func (d *Dispatcher) drainLocked(l *loaders.Loader) (int, error) {
 	case err != nil:
 		return 0, fmt.Errorf("%s drains from %q: %w", l.Name, l.InboundSource, err)
 	}
-	maintained, err := d.db.DeclaresLevel(source.ID)
+	isKanban, err := d.db.DeclaresLevel(source.ID)
 	if err != nil {
 		return 0, err
 	}
-	if maintained {
-		d.dbg("drain loader=%d: %s declares a level now; an unloader never drains a maintained group", l.ID, source.Name)
+	if isKanban {
+		d.dbg("drain loader=%d: %s declares a level now; an unloader never drains a kanban", l.ID, source.Name)
 		return 0, nil
 	}
 	windows, err := d.drainWindows(l)

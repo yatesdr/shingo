@@ -577,7 +577,7 @@ func (p *Planner) StepNode(step protocol.ComplexOrderStep, orderPayload string,
 // TestStrictGroup_ComplexLegToThePairedNodeIsNotFencedForItsSupportedPress.
 //
 // INERT ON EMPTY CONFIG, deliberately. A plant with no per-position bin types
-// and no maintained groups threads a node name that changes no decision. That is
+// and no kanbans threads a node name that changes no decision. That is
 // why it lands regardless of what the census says about how many positions are
 // typed today: the wire has to exist before the config is worth populating.
 //

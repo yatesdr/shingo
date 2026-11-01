@@ -19,7 +19,7 @@ import (
 // fence_test.go — MG3-1. THE TWO RULES THAT HIDE A CARRIER, at the query.
 //
 // A carrier is hidden from a plant-wide empty search when its node sits under a
-// maintained group G and EITHER:
+// kanban G and EITHER:
 //
 //	(i)  G is strict and the asker is not supported at G — THE FENCE;
 //	(ii) G is the group the ask exists to FILL — MG2-11's rule.
@@ -29,14 +29,14 @@ import (
 // keeper is not, at its own group — while rule (ii) asks "are you filling this
 // group?". The keeper is exempt from (i) at its own group and caught by (ii)
 // there anyway. Net: the keeper sources from the market and the cells and never
-// from any maintained group; a supported press reaches its own group through
+// from any kanban; a supported press reaches its own group through
 // the supports list.
 //
 // THIS FILE CARRIES MG2-11's TESTS. TestFindEmptyOfTypeOutsideGroup asserted
 // rule (ii) against a finder that no longer exists — the rule survived, its
 // spelling did not. Behaviour preserved, assertions carried, one spelling.
 
-// fenceFixture builds a maintained group holding one empty carrier of `code`,
+// fenceFixture builds a kanban holding one empty carrier of `code`,
 // plus an identical carrier OUTSIDE it. Returns the two bin ids.
 //
 // THE OUTSIDE CARRIER IS NOT DECORATION. Every assertion below is of the form
@@ -87,7 +87,7 @@ func supportProcess(t *testing.T, db *store.DB, grpID int64, name string) {
 	t.Helper()
 	p := &nodes.Node{Name: name, Enabled: true}
 	testutil.MustNoErr(t, nodes.Create(db.DB, p), "create process node")
-	testutil.MustNoErr(t, nodes.SetMaintainSupports(db.DB, grpID, []int64{p.ID}), "set supports")
+	testutil.MustNoErr(t, nodes.SetKanbanSupports(db.DB, grpID, []int64{p.ID}), "set supports")
 }
 
 // ── The default: SHARING ────────────────────────────────────────────────────
@@ -95,7 +95,7 @@ func supportProcess(t *testing.T, db *store.DB, grpID int64, name string) {
 // A ZERO FENCE FENCES NOTHING, and a non-strict group fences nothing either.
 //
 // This is the ruling that governs everything else: plant-wide sharing stays the
-// default everywhere, and the only fenced zones are maintained groups with
+// default everywhere, and the only fenced zones are kanbans with
 // strict on. Derek added the sharing deliberately, to keep lines
 // running rather than run pure-strict, and phase 3 does not take it away.
 func TestFence_SharingIsTheDefault(t *testing.T) {
@@ -260,7 +260,7 @@ func TestFence_ReciprocityFallsOutOfTheSameRule(t *testing.T) {
 		bins.EmptyFence{OriginGroup: "RECIP-A-GRP"}, reservations.Anyone, domain.Height{})
 	if got != nil {
 		t.Errorf("got carrier %d (A holds %d, B holds %d). A keeper must reach neither its "+
-			"own group nor another maintained one — the market and the cells are where it "+
+			"own group nor another kanban — the market and the cells are where it "+
 			"sources", got.ID, aInside, bInside)
 	}
 	if !errors.Is(err, sql.ErrNoRows) {
@@ -304,7 +304,7 @@ func TestFence_ClosesNesting(t *testing.T) {
 	testutil.MustNoErr(t, ferr, "find")
 	if got == nil || got.ID != outside {
 		t.Errorf("got %v, want the carrier outside the fence (%d) — the nested carrier %d "+
-			"leaked. Membership is in ANY maintained ancestor, which is what a descendant "+
+			"leaked. Membership is in ANY kanban ancestor, which is what a descendant "+
 			"walk from the fenced roots answers and what a direct-children check does not",
 			got, outside, nested)
 	}

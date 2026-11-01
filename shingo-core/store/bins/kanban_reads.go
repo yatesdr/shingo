@@ -83,7 +83,7 @@ func KanbanResidentsOfTypeSQL(typeExpr string) string {
 // (FindEmptyOfTypes with no destination, no height said, reservations.Anyone). A
 // carrier it would find buried counts: a dig reaches it. Pins:
 // TestKanbanForecast_AgreesWithTheFinder,
-// TestMaintainer_MintsNoAskForATypeNothingOutsideCanSource.
+// TestKanbanKeeper_MintsNoAskForATypeNothingOutsideCanSource.
 func SourceableTypes(db *sql.DB, codes []string, fence EmptyFence) (map[string]bool, error) {
 	if len(codes) == 0 {
 		return nil, nil

@@ -34,21 +34,21 @@ func TestSetQuota_RefusesBare(t *testing.T) {
 	}
 }
 
-// TestSetMaintainLevel_RefusesBare: a maintained level keeps N empties of a
+// TestSetKanbanLevel_RefusesBare: a kanban level keeps N empties of a
 // type in a group; a bare cart is nobody's empty, so the keeper would chase a
 // level it can never count.
-func TestSetMaintainLevel_RefusesBare(t *testing.T) {
+func TestSetKanbanLevel_RefusesBare(t *testing.T) {
 	t.Parallel()
 	f := newTwoStageFixture(t)
 	marker, err := f.db.EnsureBareMarker(f.carrier.ID)
 	testutil.MustNoErr(t, err, "marker")
 	grpID, _ := mgGroup(t, f.db, "TS-MNT-GRP", 2)
 
-	chk, err := NewNodeService(f.db).SetMaintainLevel(grpID, marker, 1)
+	chk, err := NewNodeService(f.db).SetKanbanLevel(grpID, marker, 1)
 	if err == nil && chk.Err() == nil {
-		t.Fatal("SetMaintainLevel accepted a bare marker: the keeper would chase a level no finder counts")
+		t.Fatal("SetKanbanLevel accepted a bare marker: the keeper would chase a level no finder counts")
 	}
-	levels, err := f.db.ListMaintainLevels(grpID)
+	levels, err := f.db.ListKanbanLevels(grpID)
 	testutil.MustNoErr(t, err, "levels")
 	if len(levels) != 0 {
 		t.Errorf("levels = %v, want the refused level not stored", levels)

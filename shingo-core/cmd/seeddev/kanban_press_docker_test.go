@@ -33,13 +33,13 @@ func TestSeedKanbanPress_CoreHoldsTheKanbans(t *testing.T) {
 		}
 		return n.ID
 	}
-	levelsOf := func(group int64) map[string]store.MaintainLevel {
+	levelsOf := func(group int64) map[string]store.KanbanLevel {
 		t.Helper()
-		rows, err := db.ListMaintainLevels(group)
+		rows, err := db.ListKanbanLevels(group)
 		if err != nil {
 			t.Fatalf("levels: %v", err)
 		}
-		out := map[string]store.MaintainLevel{}
+		out := map[string]store.KanbanLevel{}
 		for _, l := range rows {
 			out[l.BinTypeCode] = l
 		}
@@ -59,7 +59,7 @@ func TestSeedKanbanPress_CoreHoldsTheKanbans(t *testing.T) {
 	}
 	supportsOf := func(group int64) []string {
 		t.Helper()
-		rows, err := db.ListMaintainSupports(group)
+		rows, err := db.ListKanbanSupports(group)
 		if err != nil {
 			t.Fatalf("supports: %v", err)
 		}

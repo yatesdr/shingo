@@ -19,7 +19,7 @@ import (
 //
 // That is not a bug in the fence. It is one value carrying two facts, which is
 // the same shape that left payloadAllowedAt spelled into two of four branches
-// and needed ngrpAtDeclaredLevel copied into the capacity gate to stop the two
+// and needed ngrpAtLevel copied into the capacity gate to stop the two
 // disagreeing. A caller cannot omit this any more: it says what it is placing,
 // or it says why it does not know, and "I forgot" is not spellable.
 //

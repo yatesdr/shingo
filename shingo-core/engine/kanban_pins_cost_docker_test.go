@@ -136,7 +136,7 @@ func newKanbanCostRig(t *testing.T, z45Small, z45Big, z45Totes int) *kanbanCostR
 	r.totes, r.t32 = typ("KC-TOTES", 45, 48, 6), typ("KC-32X30", 32, 30, 25)
 
 	level := func(g *nodes.Node, bt int64, want int) {
-		testutil.MustNoErr(t, db.SetMaintainLevel(store.MaintainLevel{GroupNodeID: g.ID, BinTypeID: bt, Want: want}), "level")
+		testutil.MustNoErr(t, db.SetKanbanLevel(store.KanbanLevel{GroupNodeID: g.ID, BinTypeID: bt, Want: want}), "level")
 	}
 	stand := func(bt int64, at []*nodes.Node, label string) []*nodes.Node {
 		for i, n := range at {
@@ -152,7 +152,7 @@ func newKanbanCostRig(t *testing.T, z45Small, z45Big, z45Totes int) *kanbanCostR
 			testutil.MustNoErr(t, db.CreateNode(n), "supported position")
 			ids = append(ids, n.ID)
 		}
-		testutil.MustNoErr(t, nodes.SetMaintainSupports(db.DB, g.ID, ids), "supports")
+		testutil.MustNoErr(t, nodes.SetKanbanSupports(db.DB, g.ID, ids), "supports")
 	}
 
 	var kids []*nodes.Node
@@ -256,7 +256,7 @@ func reAim(stmts []string) int {
 func TestKanbanCost_KeeperTick(t *testing.T) {
 	t.Parallel()
 	r := newKanbanCostRig(t, 2, 2, 2)
-	m := r.eng.Maintainer()
+	m := r.eng.KanbanKeeper()
 
 	r.counter.Reset()
 	m.Tick()
@@ -279,7 +279,7 @@ func TestKanbanCost_KeeperTick(t *testing.T) {
 	}
 	more, _ := kanbanCostFlat(t, r.db, "KC-K3", 4)
 	testdb.KanbanKeeper(t, r.db, more.ID, "kc-edge")
-	testutil.MustNoErr(t, r.db.SetMaintainLevel(store.MaintainLevel{GroupNodeID: more.ID, BinTypeID: r.small, Want: 0}), "a level")
+	testutil.MustNoErr(t, r.db.SetKanbanLevel(store.KanbanLevel{GroupNodeID: more.ID, BinTypeID: r.small, Want: 0}), "a level")
 	r.counter.Reset()
 	m.Tick()
 	if got := r.counter.Count(); got != keeperTickSteady {
@@ -288,7 +288,7 @@ func TestKanbanCost_KeeperTick(t *testing.T) {
 	}
 
 	// The burst: K wants 5 of small with 1 standing, four asks.
-	testutil.MustNoErr(t, r.db.SetMaintainLevel(store.MaintainLevel{GroupNodeID: r.k.ID, BinTypeID: r.small, Want: 5}), "the burst")
+	testutil.MustNoErr(t, r.db.SetKanbanLevel(store.KanbanLevel{GroupNodeID: r.k.ID, BinTypeID: r.small, Want: 5}), "the burst")
 	r.counter.Reset()
 	m.Tick()
 	got := r.counter.Count()
@@ -325,8 +325,8 @@ func TestKanbanCost_SurplusArm(t *testing.T) {
 	for i, c := range kids[3:] {
 		landAt(t, r.db, r.big, c.ID, fmt.Sprintf("KC-OVER-%d", i))
 	}
-	testutil.MustNoErr(t, r.db.SetMaintainLevel(store.MaintainLevel{GroupNodeID: r.k.ID, BinTypeID: r.totes, Want: 2}), "totes short")
-	m := r.eng.Maintainer()
+	testutil.MustNoErr(t, r.db.SetKanbanLevel(store.KanbanLevel{GroupNodeID: r.k.ID, BinTypeID: r.totes, Want: 2}), "totes short")
+	m := r.eng.KanbanKeeper()
 
 	// One window open (W4): the read says so, and the arm reads nothing to learn it.
 	r.counter.Reset()
@@ -367,7 +367,7 @@ func TestKanbanCost_SnapshotBuild(t *testing.T) {
 		t.Parallel()
 		r := newKanbanCostRig(t, 2, 2, 2)
 		for bt, want := range map[int64]int{r.small: 3, r.big: 2} {
-			testutil.MustNoErr(t, r.db.SetMaintainLevel(store.MaintainLevel{GroupNodeID: r.k.ID, BinTypeID: bt, Want: want}), "K short")
+			testutil.MustNoErr(t, r.db.SetKanbanLevel(store.KanbanLevel{GroupNodeID: r.k.ID, BinTypeID: bt, Want: want}), "K short")
 		}
 		kanbanCostSnapshot(t, r, snapshotBuild, snapshotBodyBytes)
 	})

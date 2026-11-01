@@ -46,14 +46,14 @@ const (
 // name node groups, never lanes: a need that names a lane searches that lane
 // only, so a bin put in a sibling lane of the same group is invisible to it.
 // A staging leg names the one spot a robot waits at, and a lane has no bin of
-// its own to answer for that spot. And a maintained group holds empties, so a
+// its own to answer for that spot. And a kanban holds empties, so a
 // full of a part can be taken from it but never put back. Core's loader save
 // and the Edge's claim save both say these, so they are spelled once here.
 const (
-	MsgLaneIsNotASource       = "a lane is not a source; name its group"
-	MsgLaneIsNotADestination  = "a lane is not a destination; name its group"
-	MsgLaneIsNotAStagingNode  = "a lane is not a staging node; name the spot a robot waits at"
-	MsgFullsFromAnEmptiesBank = "an unloader's fulls cannot come from a maintained (empties) group"
+	MsgLaneIsNotASource      = "a lane is not a source; name its group"
+	MsgLaneIsNotADestination = "a lane is not a destination; name its group"
+	MsgLaneIsNotAStagingNode = "a lane is not a staging node; name the spot a robot waits at"
+	MsgFullsFromAKanban      = "an unloader's fulls cannot come from a kanban"
 )
 
 // AuditActorUI is the audit-trail actor recorded for web-UI-initiated actions

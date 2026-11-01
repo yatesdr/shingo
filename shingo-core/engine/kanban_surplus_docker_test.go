@@ -74,7 +74,7 @@ func surplusRigOn(t *testing.T, db *store.DB, sim *simulator.SimulatorBackend, e
 
 func (r *surplusRig) level(t *testing.T, g *nodes.Node, bt int64, want int) {
 	t.Helper()
-	testutil.MustNoErr(t, r.db.SetMaintainLevel(store.MaintainLevel{GroupNodeID: g.ID, BinTypeID: bt, Want: want}), "level")
+	testutil.MustNoErr(t, r.db.SetKanbanLevel(store.KanbanLevel{GroupNodeID: g.ID, BinTypeID: bt, Want: want}), "level")
 }
 
 // stand puts one empty on K's next position, each newer than the last by a minute.
@@ -143,9 +143,9 @@ func (r *surplusRig) zone(t *testing.T, name string, n int, levels map[int64]int
 	return g, kids
 }
 
-func (r *surplusRig) tick(t *testing.T) *Maintainer {
+func (r *surplusRig) tick(t *testing.T) *KanbanKeeper {
 	t.Helper()
-	m := r.eng.Maintainer()
+	m := r.eng.KanbanKeeper()
 	m.Tick()
 	return m
 }
@@ -160,7 +160,7 @@ func TestKanbanPin_NothingMovesAResidentOutOfAGroup(t *testing.T) {
 	for i := 0; i < 3; i++ {
 		r.tick(t)
 	}
-	st := mntState(t, r.eng.Maintainer(), "SP-K", "SP-SMALL")
+	st := mntState(t, r.eng.KanbanKeeper(), "SP-K", "SP-SMALL")
 	if st.Resident != 2 || st.Gap != -1 || st.Created != 0 || st.OriginID != "" {
 		t.Errorf("the type above its level, nothing short: %+v, want 2 resident, gap -1, nothing asked or open", st)
 	}
@@ -228,7 +228,7 @@ func TestKanbanSurplus_ReTypeEndToEnd(t *testing.T) {
 			rows = append(rows, w.Row)
 		}
 	}
-	levels, err := r.db.ListMaintainLevels(r.k.ID)
+	levels, err := r.db.ListKanbanLevels(r.k.ID)
 	testutil.MustNoErr(t, err, "levels")
 	lines, err := r.eng.UnloaderGroupLines([]store.GroupLineAsk{{Group: r.k, Levels: levels, Windows: rows}})
 	testutil.MustNoErr(t, err, "the line")
@@ -248,7 +248,7 @@ func TestKanbanSurplus_ReTypeEndToEnd(t *testing.T) {
 	testutil.MustNoErr(t, err, "CLEAR as totes")
 	r.eng.Dispatcher().HandleOrderRequest(testEnvelope(), &protocol.OrderRequest{OrderUUID: "sp-u2",
 		OrderType: protocol.OrderTypeMove, SourceNode: r.windows[2].Name, DeliveryNode: r.k.Name, Quantity: 1, BinID: oldest})
-	st := func() MaintainerGroupState { return mntState(t, r.tick(t), "SP-K", "SP-TOTES") }
+	st := func() KanbanLineState { return mntState(t, r.tick(t), "SP-K", "SP-TOTES") }
 	if s := st(); s.Coming != 1 || s.Gap != 1 {
 		t.Errorf("after the send-out: %+v, want coming 1, gap 1: counted as coming, and once", s)
 	}
@@ -521,7 +521,7 @@ func TestKanbanSurplus_TheAsksAreNetted(t *testing.T) {
 			marked[w.Row.Node] = true
 		}
 	}
-	levels, err := r.db.ListMaintainLevels(r.k.ID)
+	levels, err := r.db.ListKanbanLevels(r.k.ID)
 	testutil.MustNoErr(t, err, "levels")
 	lines, err := r.eng.UnloaderGroupLines([]store.GroupLineAsk{{Group: r.k, Levels: levels, Windows: rows}})
 	testutil.MustNoErr(t, err, "the line")
@@ -662,7 +662,7 @@ func TestKanbanSurplus_ANonLinesideKanbanNeverFires(t *testing.T) {
 	r.level(t, r.k, r.totes, 1)
 	r.stand(t, r.small)
 	r.stand(t, r.small)
-	testutil.MustNoErr(t, nodes.SetMaintainSupports(r.db.DB, r.k.ID, nil), "no supports")
+	testutil.MustNoErr(t, nodes.SetKanbanSupports(r.db.DB, r.k.ID, nil), "no supports")
 	st := mntState(t, r.tick(t), "SP-K", "SP-SMALL")
 	if got := r.moves(t); len(got) != 0 {
 		t.Fatalf("%d carts moved out of a kanban with no supports", len(got))

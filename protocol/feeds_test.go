@@ -65,7 +65,7 @@ func TestNodesDigest_Golden(t *testing.T) {
 
 	for name, changed := range map[string]string{
 		"node type":   d(NodesDigest([]NodeInfo{{Name: "LN-1", NodeType: "LM"}}, nil, bins, nil)),
-		"maintained":  d(NodesDigest([]NodeInfo{{Name: "LN-1", NodeType: "AP", Maintained: true}}, nil, bins, nil)),
+		"kanban":      d(NodesDigest([]NodeInfo{{Name: "LN-1", NodeType: "AP", Kanban: true}}, nil, bins, nil)),
 		"bin type":    d(NodesDigest(nodes, nil, []PayloadBinTypeInfo{{PayloadCode: "P1", BinTypeCode: "B2"}}, nil)),
 		"loader":      d(NodesDigest(nodes, []LoaderInfo{{LoaderKey: "loader:1"}}, bins, nil)),
 		"loader flag": d(NodesDigest(nodes, []LoaderInfo{{LoaderKey: "loader:1", AutoPush: true}}, bins, nil)),

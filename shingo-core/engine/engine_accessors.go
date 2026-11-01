@@ -83,5 +83,5 @@ func (e *Engine) EventBus() *EventBus                         { return e.Events 
 func (e *Engine) EtaCache() *eta.Cache                        { return e.etaCache }
 func (e *Engine) Notifier() *notify.Notifier                  { return e.notifier }
 
-// Maintainer returns the level keeper, for a test to drive its tick.
-func (e *Engine) Maintainer() *Maintainer { return e.maintainer }
+// KanbanKeeper returns the level keeper, for a test to drive its tick.
+func (e *Engine) KanbanKeeper() *KanbanKeeper { return e.keeper }

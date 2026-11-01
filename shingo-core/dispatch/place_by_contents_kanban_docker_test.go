@@ -16,16 +16,16 @@ import (
 	"shingocore/store/plantclaims"
 )
 
-// place_by_contents_maintainer_docker_test.go — the maintainer arm of the
+// place_by_contents_kanban_docker_test.go — the keeper arm of the
 // by-contents choice (dropByContents): an empty lifted off a line position
-// goes to a maintained group short of it, the maintainer winning over the
+// goes to a kanban short of it, the keeper winning over the
 // planned drop; a tote cart only as its own height, and never off a fed
 // press's outside. Driven through each door: a plain move that names its bin
 // (decideTransport), a release (placeByContentsAtRelease), and a lift with no
 // wait ahead of it at its reserve (placeByContentsAtReserve).
 
 // mtCell is a fed press cell (the press, its outside DECK) whose claim the
-// maintained group GRP supports, both positions; OUT is the planned drop and
+// kanban GRP supports, both positions; OUT is the planned drop and
 // AWAY a node no claim names (a loader window's or a storage node's stand-in).
 // TOTE is a tote carrier of 8 to a layer, KD a knockdown.
 type mtCell struct {
@@ -42,7 +42,7 @@ func newMTCell(t *testing.T, prefix string, role protocol.ClaimRole) mtCell {
 	t.Helper()
 	db := testDB(t)
 	sd := testdb.SetupStandardData(t, db)
-	// With the group resolver production wires: the maintainer arm chooses a
+	// With the group resolver production wires: the keeper arm chooses a
 	// group's slot through it.
 	d := NewDispatcher(db, testdb.NewTrackingBackend(), &mockEmitter{}, "core", "shingo.dispatch", &DefaultResolver{DB: db})
 	d.DebugLog = testDebugLog(t)
@@ -66,18 +66,18 @@ func newMTCell(t *testing.T, prefix string, role protocol.ClaimRole) mtCell {
 		testutil.MustNoErr(t, db.CreateNode(&nodes.Node{Name: fmt.Sprintf("%s-GRP-%d", prefix, i), Enabled: true,
 			ParentID: &c.grp}), "slot")
 	}
-	testutil.MustNoErr(t, db.SetMaintainSupports(c.grp, []int64{c.press.ID, c.deck.ID}), "supports")
+	testutil.MustNoErr(t, db.SetKanbanSupports(c.grp, []int64{c.press.ID, c.deck.ID}), "supports")
 	return c
 }
 
 // keep declares the group's level of a type, with its layer wants.
 func (c mtCell) keep(binType int64, want int, heights map[int]int) {
 	c.t.Helper()
-	var wants []store.MaintainLayerWant
+	var wants []store.KanbanLayerWant
 	for layers, n := range heights {
-		wants = append(wants, store.MaintainLayerWant{Layers: layers, Want: n})
+		wants = append(wants, store.KanbanLayerWant{Layers: layers, Want: n})
 	}
-	testutil.MustNoErr(c.t, c.db.SetMaintainLevelAndLayerWants(store.MaintainLevel{GroupNodeID: c.grp, BinTypeID: binType,
+	testutil.MustNoErr(c.t, c.db.SetKanbanLevelAndLayerWants(store.KanbanLevel{GroupNodeID: c.grp, BinTypeID: binType,
 		Want: want}, wants), "level")
 }
 
@@ -104,7 +104,7 @@ func (c mtCell) moveOff(uuid string, from *nodes.Node, b *bins.Bin) string {
 	return c.where(o.DeliveryNode)
 }
 
-// where says "GRP" for a slot of the maintained group, else the node's name.
+// where says "GRP" for a slot of the kanban, else the node's name.
 func (c mtCell) where(node string) string {
 	c.t.Helper()
 	n, err := c.db.GetNodeByDotName(node)
@@ -115,11 +115,11 @@ func (c mtCell) where(node string) string {
 	return n.Name
 }
 
-// TestMaintainerArm_ToteCartsByHeight: off the press's own position, a tote
+// TestKanbanArm_ToteCartsByHeight: off the press's own position, a tote
 // cart goes to the group only as its own height: 3 high to a group short of 3
 // highs, tops & bottoms to a group short of its row; 3 high + 2 and an
 // unknown count keep the planned drop.
-func TestMaintainerArm_ToteCartsByHeight(t *testing.T) {
+func TestKanbanArm_ToteCartsByHeight(t *testing.T) {
 	t.Parallel()
 	for _, c := range []struct {
 		name  string
@@ -147,12 +147,12 @@ func TestMaintainerArm_ToteCartsByHeight(t *testing.T) {
 	}
 }
 
-// TestMaintainerArm_AToteCartOffAFedOutsideKeepsItsDrop: SEND BACK's case, a
+// TestKanbanArm_AToteCartOffAFedOutsideKeepsItsDrop: SEND BACK's case, a
 // tote cart lifted off the press's outside set down 5 high with 2 drawn,
 // keeps its planned drop though the group is short of 5 highs; and so does a
 // cart standing exactly 3 high there with the group short of 3 highs: its count
 // is exact only at its lift, so the unloader's card decides.
-func TestMaintainerArm_AToteCartOffAFedOutsideKeepsItsDrop(t *testing.T) {
+func TestKanbanArm_AToteCartOffAFedOutsideKeepsItsDrop(t *testing.T) {
 	t.Parallel()
 	for _, c := range []struct {
 		name  string
@@ -170,12 +170,12 @@ func TestMaintainerArm_AToteCartOffAFedOutsideKeepsItsDrop(t *testing.T) {
 	}
 }
 
-// TestMaintainerArm_AKnockdownOffALinePosition: a named-bin move of an empty
+// TestKanbanArm_AKnockdownOffALinePosition: a named-bin move of an empty
 // knockdown off a line position (the shape of a clear) goes to the short
 // group; the same move off a node that is no line position (a drain off a
 // loader window, a pull off storage) keeps its drop; a group at its level
 // wants nothing; a cart with a part is no empty.
-func TestMaintainerArm_AKnockdownOffALinePosition(t *testing.T) {
+func TestKanbanArm_AKnockdownOffALinePosition(t *testing.T) {
 	t.Parallel()
 	t.Run("off the press: a short group", func(t *testing.T) {
 		t.Parallel()
@@ -189,7 +189,7 @@ func TestMaintainerArm_AKnockdownOffALinePosition(t *testing.T) {
 		t.Parallel()
 		c := newMTCell(t, "MTK2", protocol.ClaimRoleConsume)
 		c.keep(c.kd, 2, nil)
-		if err := c.db.SetMaintainSupports(c.grp, []int64{c.press.ID, c.deck.ID, c.away.ID}); err != nil {
+		if err := c.db.SetKanbanSupports(c.grp, []int64{c.press.ID, c.deck.ID, c.away.ID}); err != nil {
 			t.Fatal(err)
 		}
 		if got := c.moveOff("mtk2", c.away, c.cart(c.away, c.kd, "MTK2-KD", nil)); got != c.out.Name {
@@ -209,10 +209,10 @@ func TestMaintainerArm_AKnockdownOffALinePosition(t *testing.T) {
 	})
 }
 
-// TestMaintainerArm_TheGapReadsTheEffectiveWant: at its base the group is whole and
+// TestKanbanArm_TheGapReadsTheEffectiveWant: at its base the group is whole and
 // the cart keeps its drop; with the group's cover and the press running the cart's
 // type, the same group is short and takes it.
-func TestMaintainerArm_TheGapReadsTheEffectiveWant(t *testing.T) {
+func TestKanbanArm_TheGapReadsTheEffectiveWant(t *testing.T) {
 	t.Parallel()
 	c := newMTCell(t, "MTC", protocol.ClaimRoleProduce)
 	c.keep(c.kd, 1, nil)
@@ -236,9 +236,9 @@ func TestMaintainerArm_TheGapReadsTheEffectiveWant(t *testing.T) {
 	}
 }
 
-// TestMaintainerArm_TwoShortGroupsTheLargestGap: two groups support the press
+// TestKanbanArm_TwoShortGroupsTheLargestGap: two groups support the press
 // and both are short of the knockdown; the one short by more takes it.
-func TestMaintainerArm_TwoShortGroupsTheLargestGap(t *testing.T) {
+func TestKanbanArm_TwoShortGroupsTheLargestGap(t *testing.T) {
 	t.Parallel()
 	c := newMTCell(t, "MTG", protocol.ClaimRoleConsume)
 	c.keep(c.kd, 1, nil)
@@ -246,8 +246,8 @@ func TestMaintainerArm_TwoShortGroupsTheLargestGap(t *testing.T) {
 	testutil.MustNoErr(t, err, "second group")
 	testdb.MarkGroup(t, c.db, big)
 	testutil.MustNoErr(t, c.db.CreateNode(&nodes.Node{Name: "MTG-BIG-1", Enabled: true, ParentID: &big}), "slot")
-	testutil.MustNoErr(t, c.db.SetMaintainSupports(big, []int64{c.press.ID}), "supports")
-	testutil.MustNoErr(t, c.db.SetMaintainLevelAndLayerWants(store.MaintainLevel{GroupNodeID: big, BinTypeID: c.kd, Want: 3}, nil), "level")
+	testutil.MustNoErr(t, c.db.SetKanbanSupports(big, []int64{c.press.ID}), "supports")
+	testutil.MustNoErr(t, c.db.SetKanbanLevelAndLayerWants(store.KanbanLevel{GroupNodeID: big, BinTypeID: c.kd, Want: 3}, nil), "level")
 	c.d.HandleOrderRequest(testEnvelope(), &protocol.OrderRequest{OrderUUID: "mtg", OrderType: OrderTypeMove,
 		SourceNode: c.press.Name, DeliveryNode: c.out.Name, Quantity: 1, BinID: c.cart(c.press, c.kd, "MTG-KD", nil).ID})
 	o, err := c.db.GetOrderByUUID("mtg")
@@ -273,9 +273,9 @@ func (c mtCell) mtLeg(uuid string, b *bins.Bin) *orders.Order {
 	return o
 }
 
-// TestMaintainerArm_AtTheRelease: a consume evac's drained empty goes to the
+// TestKanbanArm_AtTheRelease: a consume evac's drained empty goes to the
 // short group at its release; a produce evac's full keeps its planned drop.
-func TestMaintainerArm_AtTheRelease(t *testing.T) {
+func TestKanbanArm_AtTheRelease(t *testing.T) {
 	t.Parallel()
 	for _, c := range []struct {
 		name  string
@@ -312,12 +312,12 @@ func TestMaintainerArm_AtTheRelease(t *testing.T) {
 	}
 }
 
-// TestMaintainerArm_AtTheReserve: the tooling evac lifts at its first step,
+// TestKanbanArm_AtTheReserve: the tooling evac lifts at its first step,
 // with no wait ahead of it, so no release can divert it. Its drop is
 // re-pointed at the reserve, once its removal pickup has bound the empty; the
 // keeper's count sees it coming before the confirm (no second ask), and the
 // order goes to the fleet with the group's slot.
-func TestMaintainerArm_AtTheReserve(t *testing.T) {
+func TestKanbanArm_AtTheReserve(t *testing.T) {
 	t.Parallel()
 	c := newMTCell(t, "MTV", protocol.ClaimRoleConsume)
 	c.keep(c.kd, 1, nil)
@@ -346,7 +346,7 @@ func TestMaintainerArm_AtTheReserve(t *testing.T) {
 	}
 	group, err := c.db.GetNode(c.grp)
 	testutil.MustNoErr(t, err, "group")
-	lc, err := c.db.CountLevel(group, store.MaintainLevel{GroupNodeID: c.grp, BinTypeID: c.kd, BinTypeCode: "MTV-KD", Want: 1},
+	lc, err := c.db.CountLevel(group, store.KanbanLevel{GroupNodeID: c.grp, BinTypeID: c.kd, BinTypeCode: "MTV-KD", Want: 1},
 		store.DemandOrigin{})
 	testutil.MustNoErr(t, err, "the keeper's count")
 	if lc.Coming != 1 || lc.Short() != 0 {

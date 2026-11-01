@@ -26,7 +26,7 @@ func TestKanbanPin_AStrictGroupFencesABlankProcess(t *testing.T) {
 	testdb.MarkGroup(t, db, open)
 	proc := &nodes.Node{Name: "KPF-PROC", Enabled: true}
 	testutil.MustNoErr(t, nodes.Create(db.DB, proc), "process node")
-	testutil.MustNoErr(t, nodes.SetMaintainSupports(db.DB, strict, []int64{proc.ID}), "supports")
+	testutil.MustNoErr(t, nodes.SetKanbanSupports(db.DB, strict, []int64{proc.ID}), "supports")
 
 	for _, tc := range []struct {
 		name  string

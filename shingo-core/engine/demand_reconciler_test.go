@@ -277,7 +277,7 @@ func TestDemandReconciler_ChildlessEpisodeClosesUnattributed(t *testing.T) {
 	db := testDB(t)
 	eng := newTestEngine(t, db, simulator.New())
 	// A CELL episode: the childless pass reads only the Edge-authored kinds.
-	// Threshold and maintain are Core's own and exempt — see
+	// Threshold and kanban are Core's own and exempt — see
 	// TestDemandReconciler_LeavesThresholdEpisodesToTheMonitor.
 	const station = "PLANT.LINE1"
 	registerActiveEdge(t, db, station)
@@ -645,11 +645,11 @@ func orderClassCounts(t *testing.T, db *store.DB) map[string]int {
 	return counts
 }
 
-// THE CHILDLESS SWEEP IS EXEMPT FROM MAINTAIN EPISODES, and this test pins the
+// THE CHILDLESS SWEEP IS EXEMPT FROM KANBAN EPISODES, and this test pins the
 // reason rather than the exemption: zero children is not evidence for a demand
 // whose orders Core creates itself.
 //
-// A maintained group with no free position opens an episode on the gap and then
+// A kanban with no free position opens an episode on the gap and then
 // pre-resolves nothing, because there is nowhere to put a carrier. That is a
 // group that is FULL — a steady state that can last a shift — and the sweep
 // reading it as a stranded demand would close an episode the keeper re-opens
@@ -659,7 +659,7 @@ func orderClassCounts(t *testing.T, db *store.DB) map[string]int {
 // The threshold half of the test is the control: the same pass, same grace, same
 // live Edge, still closes a genuinely stranded threshold episode. Without it
 // this test would also pass if the sweep had simply stopped working.
-func TestDemandReconciler_LeavesMaintainEpisodesToTheKeeper(t *testing.T) {
+func TestDemandReconciler_LeavesKanbanEpisodesToTheKeeper(t *testing.T) {
 	t.Parallel()
 
 	db := testDB(t)
@@ -676,8 +676,8 @@ func TestDemandReconciler_LeavesMaintainEpisodesToTheKeeper(t *testing.T) {
 		btID, children[0].ID)
 	testutil.MustNoErr(t, err, "occupy the only position")
 
-	eng.Maintainer().Tick()
-	st := mntState(t, eng.Maintainer(), "MNT-RECON", "MNT-RC")
+	eng.KanbanKeeper().Tick()
+	st := mntState(t, eng.KanbanKeeper(), "MNT-RECON", "MNT-RC")
 	if st.OriginID == "" {
 		t.Fatal("setup: the keeper opened no episode despite a gap of one")
 	}
@@ -685,8 +685,8 @@ func TestDemandReconciler_LeavesMaintainEpisodesToTheKeeper(t *testing.T) {
 		t.Fatalf("setup: created=%d asks, want 0 — the fixture left a free position "+
 			"and no longer builds the childless case this test is about", st.Created)
 	}
-	maintainOrigin := st.OriginID
-	backdateEpisode(t, db, maintainOrigin, time.Hour)
+	kanbanOrigin := st.OriginID
+	backdateEpisode(t, db, kanbanOrigin, time.Hour)
 
 	// The control: a stranded CELL episode of the same age. (It used to be a
 	// threshold episode; those are exempt too now, for the same reason.)
@@ -695,8 +695,8 @@ func TestDemandReconciler_LeavesMaintainEpisodesToTheKeeper(t *testing.T) {
 
 	eng.reconcileDemandEpisodes()
 
-	if got := mustGetOrigin(t, db, maintainOrigin); got.ClosedAt != nil {
-		t.Errorf("the sweep closed a maintain episode as %q — the keeper owns ending these, "+
+	if got := mustGetOrigin(t, db, kanbanOrigin); got.ClosedAt != nil {
+		t.Errorf("the sweep closed a kanban episode as %q — the keeper owns ending these, "+
 			"and it will re-open this key on its next tick", got.CloseReason)
 	}
 	if got := mustGetOrigin(t, db, controlOrigin); got.ClosedAt == nil {

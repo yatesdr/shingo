@@ -15,7 +15,7 @@ import (
 // kanban_pins_docker_test.go — characterization pins of the store's half of the
 // kanban paths, at today's schema.
 
-// TestKanbanPin_APassReadsAGroupsLevelsOnce: GroupPassReads.ListMaintainLevels is
+// TestKanbanPin_APassReadsAGroupsLevelsOnce: GroupPassReads.ListKanbanLevels is
 // one statement per group per view, and a fresh view reads again. Its only reader
 // today is the lane gate's pass.
 func TestKanbanPin_APassReadsAGroupsLevelsOnce(t *testing.T) {
@@ -24,7 +24,7 @@ func TestKanbanPin_APassReadsAGroupsLevelsOnce(t *testing.T) {
 	a, b := testdb.MarkedGroup(t, db, "KPM-A"), testdb.MarkedGroup(t, db, "KPM-B")
 	var bt int64
 	testutil.MustNoErr(t, db.QueryRow(`INSERT INTO bin_types (code) VALUES ('KPM-T') RETURNING id`).Scan(&bt), "bin type")
-	testutil.MustNoErr(t, db.SetMaintainLevel(store.MaintainLevel{GroupNodeID: *a, BinTypeID: bt, Want: 2}), "level")
+	testutil.MustNoErr(t, db.SetKanbanLevel(store.KanbanLevel{GroupNodeID: *a, BinTypeID: bt, Want: 2}), "level")
 
 	cdb, counter, err := store.OpenCounting(cfg)
 	testutil.MustNoErr(t, err, "counting db")
@@ -33,7 +33,7 @@ func TestKanbanPin_APassReadsAGroupsLevelsOnce(t *testing.T) {
 	pass := cdb.GroupPassReads(*a)
 	counter.Reset()
 	for i := 0; i < 3; i++ {
-		lv, err := pass.ListMaintainLevels(*a)
+		lv, err := pass.ListKanbanLevels(*a)
 		testutil.MustNoErr(t, err, "levels")
 		if len(lv) != 1 || lv[0].Want != 2 {
 			t.Fatalf("levels = %+v, want the one row at 2", lv)
@@ -45,7 +45,7 @@ func TestKanbanPin_APassReadsAGroupsLevelsOnce(t *testing.T) {
 	// A group with no row is remembered as well: nothing is not a miss.
 	counter.Reset()
 	for i := 0; i < 2; i++ {
-		if _, err := pass.ListMaintainLevels(*b); err != nil {
+		if _, err := pass.ListKanbanLevels(*b); err != nil {
 			t.Fatalf("levels of the other group: %v", err)
 		}
 	}
@@ -53,7 +53,7 @@ func TestKanbanPin_APassReadsAGroupsLevelsOnce(t *testing.T) {
 		t.Errorf("two asks of a group with no row = %d statements, want 1", got)
 	}
 	counter.Reset()
-	if _, err := cdb.GroupPassReads(*a).ListMaintainLevels(*a); err != nil {
+	if _, err := cdb.GroupPassReads(*a).ListKanbanLevels(*a); err != nil {
 		t.Fatalf("levels through a new view: %v", err)
 	}
 	if got := counter.Count(); got != 1 {

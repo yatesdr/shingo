@@ -13,7 +13,7 @@ import (
 
 // threshold_episodes.go — the demand grain, Core side.
 //
-// Core owns two of the episode kinds, threshold and maintain; this file is the
+// Core owns two of the episode kinds, threshold and kanban; this file is the
 // threshold monitor's. A threshold episode is a continuous period during which
 // a place's plant-wide in-loop total for a payload sat below its configured
 // threshold. Cell and changeover episodes are authored on Edge and arrive
@@ -150,7 +150,7 @@ func (m *ThresholdMonitor) closeThresholdEpisodeByID(originID, key, reason, clos
 // live binding, and returns the keys it actually closed.
 //
 // The set difference itself lives in staleEpisodeKeys, shared with the
-// maintainer's config-withdrawn pass. Keys where the UPDATE moved no row are
+// keeper's config-withdrawn pass. Keys where the UPDATE moved no row are
 // left out on purpose: another path had already closed that episode.
 func (m *ThresholdMonitor) closeThresholdEpisodesNotIn(candidates map[string]string, live map[string]bool, closedBy string) []string {
 	if m.eng == nil || m.eng.db == nil {

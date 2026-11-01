@@ -254,9 +254,9 @@ func TestPin_TypedGroupNeedWaitsScopedRatherThanWidening(t *testing.T) {
 	db.typedEmpty["PIN-OTHER"] = &bins.Bin{ID: 900, Label: "WRONG-TYPE"}
 	db.globalEmpty = &bins.Bin{ID: 901, Label: "RIGHT-TYPE-PLANT-WIDE"}
 
-	// A maintain origin pins the type — the one wire that makes a need typed.
-	db.maintainedType["11111111-2222-3333-4444-555555555555"] = "PIN-WANTED"
-	db.maintainedGroup["11111111-2222-3333-4444-555555555555"] = "PIN-TYPED-GRP"
+	// A kanban origin pins the type — the one wire that makes a need typed.
+	db.kanbanType["11111111-2222-3333-4444-555555555555"] = "PIN-WANTED"
+	db.kanban["11111111-2222-3333-4444-555555555555"] = "PIN-TYPED-GRP"
 
 	f := NewSourceFinder(db, nil, nil)
 	got := f.FindSourceForNeed(SourceNeed{

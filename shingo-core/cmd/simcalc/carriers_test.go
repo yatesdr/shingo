@@ -324,32 +324,32 @@ func TestHeadroom_GatedFreeSlotsDoCount(t *testing.T) {
 	}
 }
 
-// TestFlatPositionsAreCountedAsSlots pins the shape a MAINTAINED group is
+// TestFlatPositionsAreCountedAsSlots pins the shape a KANBAN is
 // always in: a zone that holds its slots DIRECTLY, with no lane between.
 //
 // THE TOOL WALKED z.Lanes AND NOTHING ELSE, so such a zone contributed zero
 // slots and its seeded carriers were attributed to no pool. On demo.yaml that
 // made SYN_PRESS_EMPTIES — eight positions, six of them seeded — report as a
 // zone with no capacity holding nothing, and the per-pool check said "SHORT BY
-// 6" about a bank that was exactly at its level. A tool that raises a false
+// 6" about a kanban that was exactly at its level. A tool that raises a false
 // alarm on the healthiest pool in the plant is worse than one that says nothing:
 // the next real shortage reads as more of the same noise.
 //
-// The save-time rules REFUSE a maintained group with lanes, so this is not an
+// The save-time rules REFUSE a kanban with lanes, so this is not an
 // exotic shape the tool could reasonably not know about — it is the only shape
-// a maintained group can have.
+// a kanban can have.
 func TestFlatPositionsAreCountedAsSlots(t *testing.T) {
 	t.Parallel()
 	p := carrierPlant(30, 30)
 	p.Zones = []plantspec.Zone{{
-		Name: "FLATBANK",
+		Name: "FLATKANBAN",
 		Positions: []plantspec.Slot{
 			{Name: "P1", Depth: 1}, {Name: "P2", Depth: 1},
 			{Name: "P3", Depth: 1}, {Name: "P4", Depth: 1},
 		},
 	}}
 	p.Bins = []plantspec.Bin{
-		{Name: "B1", Slot: "P1"}, // empty carrier, in the flat bank
+		{Name: "B1", Slot: "P1"}, // empty carrier, in the flat kanban
 		{Name: "B2", Slot: "P2"},
 	}
 
@@ -363,13 +363,13 @@ func TestFlatPositionsAreCountedAsSlots(t *testing.T) {
 		t.Errorf("slotsUsed = %d, want 2 — the two seeded carriers stand in real slots",
 			plan.slotsUsed)
 	}
-	pool := plan.pools["FLATBANK"]
+	pool := plan.pools["FLATKANBAN"]
 	if pool == nil {
-		t.Fatalf("no pool for FLATBANK: a seeded empty in a flat zone was attributed to no " +
-			"pool at all, so the per-pool stock check judged the bank as holding nothing")
+		t.Fatalf("no pool for FLATKANBAN: a seeded empty in a flat zone was attributed to no " +
+			"pool at all, so the per-pool stock check judged the kanban as holding nothing")
 	}
 	if pool.seededEmpty != 2 {
-		t.Errorf("FLATBANK seededEmpty = %d, want 2", pool.seededEmpty)
+		t.Errorf("FLATKANBAN seededEmpty = %d, want 2", pool.seededEmpty)
 	}
 
 	hs := computeHeadroom(p)
@@ -474,23 +474,23 @@ func TestCarriers_ClosedDedicatedLoopIsNotADrawOnTheMarket(t *testing.T) {
 	}
 }
 
-// TestCarriers_MaintainedGroupSurplusOverflowsToItsCounterparty pins the second
-// mis-model. A maintained group is a LEVEL-CONTROLLED buffer: Core holds it at
+// TestCarriers_KanbanSurplusOverflowsToItsCounterparty pins the second
+// mis-model. A kanban is a LEVEL-CONTROLLED buffer: Core holds it at
 // its declared want, so a surplus does not pile up in it forever — it goes to the
 // overflow zone, which is where the carriers actually end up.
 //
 // Modelling the group as closed stranded that surplus and left the overflow pool
 // wearing a deficit for carriers it was in fact receiving.
-func TestCarriers_MaintainedGroupSurplusOverflowsToItsCounterparty(t *testing.T) {
+func TestCarriers_KanbanSurplusOverflowsToItsCounterparty(t *testing.T) {
 	t.Parallel()
 	plant := carrierPlant(30, 30)
-	// The press draws its empties from the kept bank; the weld cell returns them
-	// there too, but the fixture makes the return side faster so the bank runs a
+	// The press draws its empties from the kanban; the weld cell returns them
+	// there too, but the fixture makes the return side faster so the kanban runs a
 	// surplus that has to go somewhere.
-	plant.Claims[0].InboundSource = "BANK"
-	plant.Claims[1].OutboundDestination = "BANK"
+	plant.Claims[0].InboundSource = "KANBAN"
+	plant.Claims[1].OutboundDestination = "KANBAN"
 	plant.Zones = append(plant.Zones, plantspec.Zone{
-		Name:      "BANK",
+		Name:      "KANBAN",
 		Positions: []plantspec.Slot{{Name: "B1", Depth: 1}, {Name: "B2", Depth: 1}, {Name: "B3", Depth: 1}},
 	}, plantspec.Zone{
 		Name:  "MARKET",
@@ -498,38 +498,38 @@ func TestCarriers_MaintainedGroupSurplusOverflowsToItsCounterparty(t *testing.T)
 	})
 	plant.Bins = append(plant.Bins,
 		plantspec.Bin{Name: "mt1", Slot: "B1"}, plantspec.Bin{Name: "mt2", Slot: "B2"})
-	plant.MaintainedGroups = []plantspec.MaintainedGroup{{
-		Group: "BANK", Station: "edge1.line1", Overflow: "MARKET",
-		Levels: []plantspec.MaintainLevel{{BinType: "STANDARD", Want: 2}},
+	plant.Kanbans = []plantspec.Kanban{{
+		Group: "KANBAN", Station: "edge1.line1", Overflow: "MARKET",
+		Levels: []plantspec.KanbanLevel{{BinType: "STANDARD", Want: 2}},
 	}}
 
-	// Consumer twice the producer: the bank frees more than it spends.
+	// Consumer twice the producer: the kanban frees more than it spends.
 	p := computeCarriers(plant, map[string]float64{"PRESS": 6.0, "WELD": 12.0}, 0, 0)
 
-	bank, market := p.pools["BANK"], p.pools["MARKET"]
-	if bank == nil || market == nil {
+	kanbanPool, market := p.pools["KANBAN"], p.pools["MARKET"]
+	if kanbanPool == nil || market == nil {
 		t.Fatalf("pools not attributed: %v", p.pools)
 	}
-	if !bank.isMaintained || bank.levelWant != 2 {
-		t.Errorf("BANK isMaintained=%v levelWant=%d, want true/2 — a kept group is judged against "+
-			"its declared level, not against demand x transit", bank.isMaintained, bank.levelWant)
+	if !kanbanPool.isKanban || kanbanPool.levelWant != 2 {
+		t.Errorf("KANBAN isKanban=%v levelWant=%d, want true/2 — a kept group is judged against "+
+			"its declared level, not against demand x transit", kanbanPool.isKanban, kanbanPool.levelWant)
 	}
-	net := bank.emptySupply - bank.emptyDemand
+	net := kanbanPool.emptySupply - kanbanPool.emptyDemand
 	if net < 0.001 {
-		t.Fatalf("fixture: the bank must run a SURPLUS to test the overflow, got %+.3f", net)
+		t.Fatalf("fixture: the kanban must run a SURPLUS to test the overflow, got %+.3f", net)
 	}
-	if math.Abs(bank.keeperOut-net) > 0.001 {
+	if math.Abs(kanbanPool.keeperOut-net) > 0.001 {
 		t.Errorf("keeperOut = %.3f, want %.3f — the surplus leaves the group for its overflow zone "+
 			"rather than accumulating in positions declared to hold a fixed level",
-			bank.keeperOut, net)
+			kanbanPool.keeperOut, net)
 	}
 	if math.Abs(market.keeperIn-net) > 0.001 {
-		t.Errorf("MARKET keeperIn = %.3f, want %.3f. The carriers the bank sheds arrive HERE, and "+
+		t.Errorf("MARKET keeperIn = %.3f, want %.3f. The carriers the kanban sheds arrive HERE, and "+
 			"without this term the overflow pool wears a deficit for empties it is being handed",
 			market.keeperIn, net)
 	}
 	// The two must settle against each other, which is the whole point.
-	if eff := (bank.emptySupply + bank.keeperIn) - (bank.emptyDemand + bank.keeperOut); math.Abs(eff) > 0.001 {
+	if eff := (kanbanPool.emptySupply + kanbanPool.keeperIn) - (kanbanPool.emptyDemand + kanbanPool.keeperOut); math.Abs(eff) > 0.001 {
 		t.Errorf("the kept group nets %+.3f after the keeper flow; a level-held pool settles to zero", eff)
 	}
 }

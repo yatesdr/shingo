@@ -496,8 +496,8 @@ func TestHandleInventory_PageShape(t *testing.T) {
 		t.Error("the flagged-carriers modal shell is not on /inventory/count-history")
 	}
 	// Moved off count history (owner, 2026-10-29): the keeper's levels to the
-	// Nodes page's maintained group, the lineside piles to the Bins page.
-	for _, gone := range []string{`id="mg"`, "Maintained Groups", "Lineside Buckets", "/api/buckets", "maintained-groups"} {
+	// Nodes page's kanban, the lineside piles to the Bins page.
+	for _, gone := range []string{`id="mg"`, "Lineside Buckets", "/api/buckets"} {
 		if strings.Contains(body, gone) {
 			t.Errorf("%q is still on /inventory/count-history", gone)
 		}

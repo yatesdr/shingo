@@ -24,7 +24,7 @@ import (
 // fences_campaign_docker_test.go — the PHASE 3 sim campaign, as scripted runs.
 //
 // Same rig and same honest boundary as the MG2 campaign: real Postgres, real
-// Engine, real Maintainer, real source finder, simulator fleet backend. Carrier
+// Engine, real KanbanKeeper, real source finder, simulator fleet backend. Carrier
 // ARRIVAL is staged by writing the bin where a delivered one would be, except
 // in F9, which drives the dispatch path end-to-end on purpose.
 //
@@ -34,7 +34,7 @@ import (
 
 // ── the rig ─────────────────────────────────────────────────────────────────
 
-// fenceGroup builds a maintained group: `slots` positions, one declared level,
+// fenceGroup builds a kanban: `slots` positions, one declared level,
 // `strict` on or off, and the process nodes it supports.
 func fenceGroup(t *testing.T, db *store.DB, name, code string, want, slots int,
 	strict bool, supports ...string) (grpID, btID int64) {
@@ -54,7 +54,7 @@ func fenceGroup(t *testing.T, db *store.DB, name, code string, want, slots int,
 	}
 	testdb.KanbanKeeper(t, db, grpID, "test-core")
 	if want > 0 {
-		testutil.MustNoErr(t, db.SetMaintainLevel(store.MaintainLevel{
+		testutil.MustNoErr(t, db.SetKanbanLevel(store.KanbanLevel{
 			GroupNodeID: grpID, BinTypeID: btID, Want: want,
 		}), "declare level")
 	}
@@ -68,7 +68,7 @@ func fenceGroup(t *testing.T, db *store.DB, name, code string, want, slots int,
 		ids = append(ids, pn.ID)
 	}
 	if len(ids) > 0 {
-		testutil.MustNoErr(t, nodes.SetMaintainSupports(db.DB, grpID, ids), "supports")
+		testutil.MustNoErr(t, nodes.SetKanbanSupports(db.DB, grpID, ids), "supports")
 	}
 	return grpID, btID
 }
@@ -142,19 +142,19 @@ func TestFences_F2_TwoGroupsCannotDrainEachOther(t *testing.T) {
 	got, err := bins.FindEmptyOfType(db.DB, "F2-45x58", "", 0,
 		bins.EmptyFence{OriginGroup: "F2-A"}, reservations.Anyone, domain.Height{})
 	if got != nil {
-		t.Errorf("A's keeper reached bin %d. Neither its own group nor another maintained "+
+		t.Errorf("A's keeper reached bin %d. Neither its own group nor another kanban "+
 			"one is a source — the market and the cells are", got.ID)
 	}
-	t.Logf("F2: A's keeper found nothing across two stocked maintained groups (err %v). "+
+	t.Logf("F2: A's keeper found nothing across two stocked kanbans (err %v). "+
 		"Reciprocity is not configured anywhere; it falls out of the supports rule.", err)
 }
 
-// ── F3: the maintainer tops off ACROSS the fence ────────────────────────────
+// ── F3: the keeper tops off ACROSS the fence ────────────────────────────
 //
 // The fence hides a group's carriers from outsiders. It must not hide the
 // MARKET from the keeper, or a fenced plant is a plant whose groups can never
 // be filled.
-func TestFences_F3_MaintainerTopsOffAcrossTheFence(t *testing.T) {
+func TestFences_F3_KanbanKeeperTopsOffAcrossTheFence(t *testing.T) {
 	t.Parallel()
 	db := testdb.Open(t)
 	eng := newTestEngine(t, db, simulator.New())
@@ -165,7 +165,7 @@ func TestFences_F3_MaintainerTopsOffAcrossTheFence(t *testing.T) {
 	testutil.MustNoErr(t, db.CreateNode(market), "market slot")
 	marketBin := landAt(t, db, btID, market.ID, "F3-MARKET-BIN")
 
-	m := eng.Maintainer()
+	m := eng.KanbanKeeper()
 	m.Tick()
 	st := mntState(t, m, "F3-GRP", "F3-45x58")
 	if st.Created == 0 {
@@ -257,7 +257,7 @@ func TestFences_F9_ComingIsSubtracted(t *testing.T) {
 	push.HoldFromBirth(inbound)
 	testutil.MustNoErr(t, db.CreateOrder(push), "create the inbound push")
 
-	m := eng.Maintainer()
+	m := eng.KanbanKeeper()
 	m.Tick()
 	st := mntState(t, m, "F9-GRP", "F9-45x58")
 

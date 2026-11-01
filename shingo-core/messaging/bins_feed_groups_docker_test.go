@@ -60,7 +60,7 @@ func newGroupsFixture(t *testing.T, levelled bool) *groupsFixture {
 		testutil.MustNoErr(t, db.UpsertLoaderHome(loaders.Home{LoaderID: id, PositionNodeID: win, SortOrder: i}), "window")
 	}
 	if levelled {
-		testutil.MustNoErr(t, db.SetMaintainLevel(store.MaintainLevel{GroupNodeID: grpID, BinTypeID: f.tote, Want: 3}), "level")
+		testutil.MustNoErr(t, db.SetKanbanLevel(store.KanbanLevel{GroupNodeID: grpID, BinTypeID: f.tote, Want: 3}), "level")
 	}
 
 	cdb, counter, err := store.OpenCounting(cfg)
@@ -161,7 +161,7 @@ func TestBuildNodeBins_NoLevelsNoGroupNoStatement(t *testing.T) {
 		t.Errorf("groups sent as %s, want []", b)
 	}
 
-	testutil.MustNoErr(t, f.db.SetMaintainLevel(store.MaintainLevel{GroupNodeID: f.group.ID, BinTypeID: f.tote, Want: 3}), "level")
+	testutil.MustNoErr(t, f.db.SetKanbanLevel(store.KanbanLevel{GroupNodeID: f.group.ID, BinTypeID: f.tote, Want: 3}), "level")
 	f.svc.bins.delay = 20 * time.Millisecond
 	f.svc.BinsLevelChanged(f.group.ID)
 	settle(t, f.svc)

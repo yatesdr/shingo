@@ -87,11 +87,11 @@ type poolPlan struct {
 	// had lost track of which pool was holding it.
 	keeperIn  float64 // empties arriving from a level keeper or a group overflow
 	keeperOut float64 // empties leaving to one
-	// isMaintained marks a pool Core holds at a declared level. Its stock is not
+	// isKanban marks a pool Core holds at a declared level. Its stock is not
 	// a function of transit — the keeper sets it — so it is judged against
 	// levelWant instead of the in-flight floor.
-	isMaintained bool
-	levelWant    int
+	isKanban  bool
+	levelWant int
 	// isClosedLoop marks a pool that is a dedicated-loader circuit rather than a
 	// stocked zone: the same carriers go round it and none enter or leave.
 	isClosedLoop bool
@@ -245,15 +245,15 @@ func computeCarriers(plant *plantspec.Plant, rate map[string]float64, loaderCap,
 			p.totalSlots += len(l.Slots)
 		}
 		// FLAT POSITIONS COUNT TOO, and they were invisible. A zone can hold its
-		// slots directly, with no lane between — that is the shape a MAINTAINED
-		// group must be in, because the save-time rules refuse a group with lanes
+		// slots directly, with no lane between — that is the shape a KANBAN
+		//  must be in, because the save-time rules refuse a group with lanes
 		// — and demo.yaml's SYN_PRESS_EMPTIES is exactly that: EIGHT POSITIONS,
 		// SIX OF THEM SEEDED, two left free (plants/demo.yaml, BIN-PEB-01..06 on
 		// PEB_001..006; PEB_007/008 stay open as the spare positions the
 		// pre-resolve loop needs). Walking only z.Lanes counted its slot capacity
 		// as zero and attributed its seeded empties to no pool, so the tool
 		// reported a plant short of the eight slots and six carriers it actually
-		// has, and reported the press empties bank as holding nothing.
+		// has, and reported the lineside kanban as holding nothing.
 		for _, s := range z.Positions {
 			slotZone[s.Name] = z.Name
 		}
@@ -459,9 +459,9 @@ func computeCarriers(plant *plantspec.Plant, rate map[string]float64, loaderCap,
 			}
 		}
 	}
-	// ── A MAINTAINED GROUP DOES NOT ACCUMULATE; IT OVERFLOWS ─────────────────
+	// ── A KANBAN DOES NOT ACCUMULATE; IT OVERFLOWS ─────────────────
 	//
-	// A group named in maintained_groups is a LEVEL-CONTROLLED buffer, not a free
+	// A group named in kanbans is a LEVEL-CONTROLLED buffer, not a free
 	// pool. Core holds it at its want (level + cover, kanbans.go): a cart arriving
 	// above it goes on to the overflow zone, and a shortfall is borrowed from its
 	// sources in rank order, or from the plant at large when it names none. Either way the
@@ -480,9 +480,9 @@ func computeCarriers(plant *plantspec.Plant, rate map[string]float64, loaderCap,
 	// that now lands there, where it belongs and where it can be seeded.
 	view := newKanbanView(plant)
 	active := view.activeStyles()
-	for _, g := range plant.MaintainedGroups {
+	for _, g := range plant.Kanbans {
 		q := pool(g.Group)
-		q.isMaintained = true
+		q.isKanban = true
 		for _, l := range view.lines(g, active) {
 			q.levelWant += l.want
 		}
@@ -540,7 +540,7 @@ func computeHeadroom(plant *plantspec.Plant) []zoneHeadroom {
 		// unloader was read as evidence when the model had no term for it.
 		zoneGated := len(dispatch.ParseWaitPoints(strings.Join(z.WaitPoints, ","))) > 0
 		// Flat positions first: a zone that holds its slots directly has no lane
-		// to walk, and a maintained group is always that shape. They are never
+		// to walk, and a kanban is always that shape. They are never
 		// gated (a gate is a lane's admission, and a flat position has no lane
 		// to be admitted to) and they can never be dug (there is nothing in
 		// front of anything), so they contribute free UNGATED slots and leave
@@ -668,7 +668,7 @@ func reportStockFloor(plan carrierPlan, mins float64) bool {
 	fmt.Println(strings.Repeat("─", 84))
 	for _, q := range sortedPools(plan.pools) {
 		// SPENDS and FREES are what the swap points do; KEEPER is what crosses the
-		// pool boundary on top of that — a maintained group's overflow, or the
+		// pool boundary on top of that — a kanban's overflow, or the
 		// keeper's ask coming the other way. The balance is judged on the sum,
 		// because a pool that gives away its surplus is not in surplus.
 		spends := q.emptyDemand + q.keeperOut
@@ -688,7 +688,7 @@ func reportStockFloor(plan carrierPlan, mins float64) bool {
 			// with no referent, next to a number that was never counted.
 			verdict = "closed circuit — carriers conserved, no floor applies"
 			pFloor = 0
-		case q.isMaintained:
+		case q.isKanban:
 			// A LEVEL IS NOT A FLOOR. Core holds this pool at its declared want,
 			// so what it needs seeded is that want — not demand x transit, which
 			// describes a pool nobody is topping up. Judging a kept group on the
@@ -729,7 +729,7 @@ func reportStockFloor(plan carrierPlan, mins float64) bool {
 		fmt.Printf("  outbound_destination, so their carriers belong to no pool this can check.\n")
 	}
 	fmt.Printf("\n  KEEPER is carriers crossing a pool boundary outside the swap points: a\n")
-	fmt.Printf("  maintained group sends its surplus to the overflow zone and asks the plant\n")
+	fmt.Printf("  kanban sends its surplus to the overflow zone and asks the plant\n")
 	fmt.Printf("  for its shortfall, so the two pools settle against each other rather than\n")
 	fmt.Printf("  one draining while the other piles up. Without this term SYN_PRESS_EMPTIES\n")
 	fmt.Printf("  read +0.20/min forever and SYN_MARKET wore the matching deficit.\n")

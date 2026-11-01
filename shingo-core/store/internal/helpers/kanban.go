@@ -1,11 +1,10 @@
 package helpers
 
 // DeclaresLevelSQL is true when the node at groupExpr declares a level: a
-// maintained group, an empties bank its keeper tops up. One spelling for
-// every reader that asks it, so the loader save's refusal of a maintained
-// inbound source and the drain's re-check of the same source are one test
+// kanban. One spelling for every reader that asks it, so the loader save's refusal
+// of a kanban inbound source and the drain's re-check of the same source are one test
 // (nodes.DeclaresLevel), and the drain's walk stops at the same groups inside
-// the source (nodetree.UnmaintainedDescendantsOf). kanban_levels.bin_type_id is a
+// the source (nodetree.NonKanbanDescendantsOf). kanban_levels.bin_type_id is a
 // foreign key, so every row is a row of the level list. Binds nothing.
 func DeclaresLevelSQL(groupExpr string) string {
 	return `EXISTS (SELECT 1 FROM kanban_levels ml WHERE ml.kanban_node_id = ` + groupExpr + `)`

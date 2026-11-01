@@ -9,7 +9,7 @@ import (
 	"shingocore/store/loaders"
 )
 
-// Save-time rules for a maintained group.
+// Save-time rules for a kanban.
 //
 // ONE FUNCTION, EVALUATED AGAINST THE WHOLE POST-STATE, called by every endpoint
 // that changes any part of the configuration. Not per-field checks at each
@@ -30,22 +30,52 @@ import (
 // EVERY MESSAGE NAMES THE THING. "level refused" sends somebody to read code;
 // "45x58x32 is allowed at none of GRP-PRESS-A's positions" does not.
 
-// MaintainedGroupCheck is what the rules found: what stops the save, and what
+// KanbanCheck is what the rules found: what stops the save, and what
 // the operator should see anyway.
-type MaintainedGroupCheck struct {
+type KanbanCheck struct {
 	Refusals []string `json:"refusals,omitempty"`
 	Warnings []string `json:"warnings,omitempty"`
 }
 
 // Err returns the refusals as one error, or nil if there were none.
-func (c MaintainedGroupCheck) Err() error {
+func (c KanbanCheck) Err() error {
 	if len(c.Refusals) == 0 {
 		return nil
 	}
 	return fmt.Errorf("%s", strings.Join(c.Refusals, "; "))
 }
 
-// ValidateMaintainedGroup runs every save-time rule against the configuration a
+// typesAllowedSomewhere is which carrier types some enabled child will accept, read
+// through the SAME predicate the resolver uses: an empty effective set means "no
+// restriction", so it accepts everything. Copying that rule rather than sharing it is
+// how a config screen ends up refusing what the floor would have allowed. Pins:
+// TestKanban_RefusesLevelNoChildAccepts, TestKanban_UnrestrictedChildAcceptsAnyLevel.
+func (s *NodeService) typesAllowedSomewhere(children []*domain.Node, levels []store.KanbanLevel) (map[int64]bool, error) {
+	allowed := map[int64]bool{}
+	for _, c := range children {
+		if !c.Enabled {
+			continue
+		}
+		bts, err := s.db.GetEffectiveBinTypes(c.ID)
+		if err != nil {
+			return nil, fmt.Errorf("read allowed bins at %s: %w", c.Name, err)
+		}
+		if len(bts) == 0 {
+			// Unrestricted: this child takes any carrier, so every declared type
+			// has a home and there is nothing left to check.
+			for _, l := range levels {
+				allowed[l.BinTypeID] = true
+			}
+			continue
+		}
+		for _, bt := range bts {
+			allowed[bt.ID] = true
+		}
+	}
+	return allowed, nil
+}
+
+// ValidateKanban runs every save-time rule against the configuration a
 // save would leave behind.
 //
 // The error return is for READ failures — a database that could not answer. It
@@ -53,8 +83,8 @@ func (c MaintainedGroupCheck) Err() error {
 // find out" must never collapse into one another, because collapsing them either
 // blocks saves during a blip or, far worse, lets a save through on the strength
 // of a query that failed.
-func (s *NodeService) ValidateMaintainedGroup(cfg MaintainedGroupConfig) (MaintainedGroupCheck, error) {
-	var chk MaintainedGroupCheck
+func (s *NodeService) ValidateKanban(cfg KanbanConfig) (KanbanCheck, error) {
+	var chk KanbanCheck
 	refuse := func(f string, a ...any) { chk.Refusals = append(chk.Refusals, fmt.Sprintf(f, a...)) }
 	warn := func(f string, a ...any) { chk.Warnings = append(chk.Warnings, fmt.Sprintf(f, a...)) }
 
@@ -88,7 +118,7 @@ func (s *NodeService) ValidateMaintainedGroup(cfg MaintainedGroupConfig) (Mainta
 		}
 	}
 	if len(nested) > 0 && (len(cfg.Levels) > 0 || strings.TrimSpace(cfg.MaintenanceStation) != "") {
-		refuse("%s is not flat — %s %s a lane or a group of its own, and a maintained group holds its level in direct positions only",
+		refuse("%s is not flat — %s %s a lane or a group of its own, and a kanban holds its level in direct positions only",
 			groupName, strings.Join(nested, ", "), plural(len(nested), "is", "are"))
 	}
 
@@ -109,30 +139,9 @@ func (s *NodeService) ValidateMaintainedGroup(cfg MaintainedGroupConfig) (Mainta
 	}
 
 	// ── Level rows ───────────────────────────────────────────────────────────
-	// Which carrier types each enabled child will accept, read through the SAME
-	// predicate the resolver uses: an empty effective set means "no restriction",
-	// so it accepts everything. Copying that rule rather than sharing it is how
-	// a config screen ends up refusing what the floor would have allowed.
-	allowedSomewhere := map[int64]bool{}
-	for _, c := range children {
-		if !c.Enabled {
-			continue
-		}
-		bts, err := s.db.GetEffectiveBinTypes(c.ID)
-		if err != nil {
-			return chk, fmt.Errorf("read allowed bins at %s: %w", c.Name, err)
-		}
-		if len(bts) == 0 {
-			// Unrestricted: this child takes any carrier, so every declared type
-			// has a home and there is nothing left to check.
-			for _, l := range cfg.Levels {
-				allowedSomewhere[l.BinTypeID] = true
-			}
-			continue
-		}
-		for _, bt := range bts {
-			allowedSomewhere[bt.ID] = true
-		}
+	allowedSomewhere, err := s.typesAllowedSomewhere(children, cfg.Levels)
+	if err != nil {
+		return chk, err
 	}
 
 	for _, l := range cfg.Levels {
@@ -141,7 +150,7 @@ func (s *NodeService) ValidateMaintainedGroup(cfg MaintainedGroupConfig) (Mainta
 		// components than it was built from. Refused at the only point where a
 		// person can still choose a different code.
 		if strings.Contains(l.BinTypeCode, "|") {
-			refuse("carrier type %q contains a %q, which cannot be used in a maintained level", l.BinTypeCode, "|")
+			refuse("carrier type %q contains a %q, which cannot be used in a kanban level", l.BinTypeCode, "|")
 		}
 
 		// A declared level nothing can hold is a permanent, silent shortfall:
@@ -199,13 +208,13 @@ func (s *NodeService) ValidateMaintainedGroup(cfg MaintainedGroupConfig) (Mainta
 // covered. Past the enabled positions the level is not met while it stands.
 // Exactly at them the level can be held, but it leaves the unloader nowhere to
 // put the next carrier it drains. Pin:
-// TestMaintainedGroupSave_LevelsAndTheUnloaderOutbound.
+// TestKanbanSave_LevelsAndTheUnloaderOutbound.
 //
 // The levels and the tops & bottoms rows (layer wants at 0) are counted
 // together: each is a line of its own that a cart stands in, and neither takes
-// the other's room (binresolver.AtDeclaredLevel). Heights of 1 or more are not
+// the other's room (kanban.AtLevel). Heights of 1 or more are not
 // counted; they are the stack level said by height.
-func roomWarnings(cfg MaintainedGroupConfig, groupName string, enabledChildren int) []string {
+func roomWarnings(cfg KanbanConfig, groupName string, enabledChildren int) []string {
 	total, topsAndBottoms := 0, 0
 	for _, l := range cfg.Levels {
 		total += l.Want
@@ -234,7 +243,7 @@ func roomWarnings(cfg MaintainedGroupConfig, groupName string, enabledChildren i
 // sourceWarnings judges a kanban's sources: a source is not the kanban and is
 // listed once (refuse), and a lineside kanban's keeper never takes from another
 // kanban that has supports of its own, which is said here and never refused.
-func (s *NodeService) sourceWarnings(cfg MaintainedGroupConfig, groupName string, refuse func(string, ...any)) []string {
+func (s *NodeService) sourceWarnings(cfg KanbanConfig, groupName string, refuse func(string, ...any)) []string {
 	var warnings []string
 	seen := make(map[int64]bool, len(cfg.Sources))
 	for _, src := range cfg.Sources {
@@ -266,8 +275,8 @@ func (s *NodeService) sourceWarnings(cfg MaintainedGroupConfig, groupName string
 // A live unloader that sends its empties to the group has its push parked once the
 // group and its sources are whole (plan.Planner.ChoosePush), and the cart stays on
 // its window, unless an overflow destination takes it. Pin:
-// TestMaintainedGroupSave_LevelsAndTheUnloaderOutbound.
-func outboundWithoutOverflow(cfg MaintainedGroupConfig, groupName string, feeding []string) string {
+// TestKanbanSave_LevelsAndTheUnloaderOutbound.
+func outboundWithoutOverflow(cfg KanbanConfig, groupName string, feeding []string) string {
 	if len(cfg.Levels) == 0 || len(feeding) == 0 || strings.TrimSpace(cfg.OverflowDestination) != "" {
 		return ""
 	}
@@ -320,8 +329,8 @@ func (s *NodeService) unloadersSendingTo(groupName string) ([]string, error) {
 //
 // "ON A FLOOR" IS THE WALK'S RULE (engine windowWalk.fits): a type with no size is on
 // every floor as a cart, and on none as the thing a sized cart is asked for. Pin:
-// TestMaintainedGroupSave_WhatTheChooserCannotRepay.
-func (s *NodeService) repaymentWarnings(cfg MaintainedGroupConfig, groupName string, feeding bool) ([]string, error) {
+// TestKanbanSave_WhatTheChooserCannotRepay.
+func (s *NodeService) repaymentWarnings(cfg KanbanConfig, groupName string, feeding bool) ([]string, error) {
 	if len(cfg.Levels) == 0 {
 		return nil, nil
 	}
@@ -343,7 +352,7 @@ func (s *NodeService) repaymentWarnings(cfg MaintainedGroupConfig, groupName str
 		fs, ok := sizes[asked]
 		return ok && fs == own
 	}
-	sourceLevels := make([][]store.MaintainLevel, len(cfg.Sources))
+	sourceLevels := make([][]store.KanbanLevel, len(cfg.Sources))
 	for i, src := range cfg.Sources {
 		if sourceLevels[i], err = s.db.ListDeclaredLevels(src.SourceNodeID); err != nil {
 			return nil, fmt.Errorf("read levels of source %s: %w", src.SourceNodeName, err)

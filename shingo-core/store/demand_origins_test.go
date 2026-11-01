@@ -200,7 +200,7 @@ func TestUpsertDemandOrigin_DoesNotZeroCoreOwnedFields(t *testing.T) {
 	}
 }
 
-// ── The maintained-group keeper's two reads ────────────────────────────────
+// ── The kanban keeper's two reads ────────────────────────────────
 
 // ListOpenEpisodesOfKind is the kind-parameterised read that
 // ListOpenThresholdEpisodes became an adapter over. The keeper holds NO
@@ -218,24 +218,24 @@ func TestListOpenEpisodesOfKind_SeparatesKinds(t *testing.T) {
 		CoreNodeName: "SLN_002", PayloadCode: "PANEL-A", OpenedAt: now,
 	}
 	mnt := store.DemandOrigin{
-		OriginID: "bbbbbbbb-1111-2222-3333-444444444444", EpisodeKey: protocol.MaintainEpisodeKey("SYN_EMPTIES", "45x58x32"),
-		Kind: protocol.EpisodeKindMaintain, StationID: "PLANT.LINE1",
+		OriginID: "bbbbbbbb-1111-2222-3333-444444444444", EpisodeKey: protocol.KanbanEpisodeKey("SYN_EMPTIES", "45x58x32"),
+		Kind: protocol.EpisodeKindKanban, StationID: "PLANT.LINE1",
 		CoreNodeName: "SYN_EMPTIES", OpenedAt: now,
 	}
 	_, err := db.OpenCoreEpisode(thr)
 	testutil.MustNoErr(t, err, "mint threshold")
 	_, err = db.OpenCoreEpisode(mnt)
-	testutil.MustNoErr(t, err, "mint maintain")
+	testutil.MustNoErr(t, err, "mint kanban")
 
-	gotMnt, err := db.ListOpenEpisodesOfKind(protocol.EpisodeKindMaintain)
-	testutil.MustNoErr(t, err, "ListOpenEpisodesOfKind maintain")
+	gotMnt, err := db.ListOpenEpisodesOfKind(protocol.EpisodeKindKanban)
+	testutil.MustNoErr(t, err, "ListOpenEpisodesOfKind kanban")
 	if len(gotMnt) != 1 || gotMnt[0].OriginID != "bbbbbbbb-1111-2222-3333-444444444444" {
-		t.Fatalf("maintain episodes = %+v, want only kind-mnt-1", gotMnt)
+		t.Fatalf("kanban episodes = %+v, want only kind-mnt-1", gotMnt)
 	}
 	// The kind is stamped back onto the row from the argument, so a caller can
 	// read it without a second lookup.
-	if gotMnt[0].Kind != protocol.EpisodeKindMaintain {
-		t.Errorf("Kind = %q, want %q", gotMnt[0].Kind, protocol.EpisodeKindMaintain)
+	if gotMnt[0].Kind != protocol.EpisodeKindKanban {
+		t.Errorf("Kind = %q, want %q", gotMnt[0].Kind, protocol.EpisodeKindKanban)
 	}
 
 	// The adapter still answers only its own kind.
@@ -245,43 +245,43 @@ func TestListOpenEpisodesOfKind_SeparatesKinds(t *testing.T) {
 		t.Fatalf("threshold episodes = %+v, want only kind-thr-1", gotThr)
 	}
 
-	// A CLOSED maintain episode leaves the open set. The keeper re-reads this
+	// A CLOSED kanban episode leaves the open set. The keeper re-reads this
 	// every tick, so a settled episode that kept showing up would suppress the
 	// next mint for that group and type forever.
 	closed, err := db.CloseDemandOriginByID("bbbbbbbb-1111-2222-3333-444444444444", protocol.CloseReasonRecovered,
 		protocol.ClosedByNotification, now.Add(time.Minute))
-	testutil.MustNoErr(t, err, "close maintain")
+	testutil.MustNoErr(t, err, "close kanban")
 	if !closed {
 		t.Fatal("close reported no row moved")
 	}
-	gotMnt, err = db.ListOpenEpisodesOfKind(protocol.EpisodeKindMaintain)
+	gotMnt, err = db.ListOpenEpisodesOfKind(protocol.EpisodeKindKanban)
 	testutil.MustNoErr(t, err, "ListOpenEpisodesOfKind after close")
 	if len(gotMnt) != 0 {
-		t.Errorf("maintain episodes after close = %+v, want none", gotMnt)
+		t.Errorf("kanban episodes after close = %+v, want none", gotMnt)
 	}
 }
 
-// MaintainedEpisodeForOrigin is the sourcing side's whole view of the typed ask:
+// KanbanEpisodeForOrigin is the sourcing side's whole view of the typed ask:
 // the group it belongs to and the carrier type it is short of, from one read.
 //
 // The blank-origin case is the one that MUST NOT reach the database:
 // orders.origin_id is a UUID column and comparing it to "" is a type error at
-// Postgres, not an empty result — and every non-maintainer order in the plant
+// Postgres, not an empty result — and every non-keeper order in the plant
 // carries a blank origin, so this is the overwhelmingly common call.
-func TestMaintainedEpisodeForOrigin(t *testing.T) {
+func TestKanbanEpisodeForOrigin(t *testing.T) {
 	t.Parallel()
 	db := testdb.Open(t)
 	now := time.Now().UTC()
 
 	mustOpenCore(t, db, store.DemandOrigin{
 		OriginID:   "11111111-2222-3333-4444-555555555555",
-		EpisodeKey: protocol.MaintainEpisodeKey("SYN_EMPTIES", "45x58x32"),
-		Kind:       protocol.EpisodeKindMaintain, StationID: "PLANT.LINE1",
+		EpisodeKey: protocol.KanbanEpisodeKey("SYN_EMPTIES", "45x58x32"),
+		Kind:       protocol.EpisodeKindKanban, StationID: "PLANT.LINE1",
 		CoreNodeName: "SYN_EMPTIES", OpenedAt: now,
-	}, "mint maintain")
+	}, "mint kanban")
 
-	group, got, err := db.MaintainedEpisodeForOrigin("11111111-2222-3333-4444-555555555555")
-	testutil.MustNoErr(t, err, "MaintainedEpisodeForOrigin")
+	group, got, err := db.KanbanEpisodeForOrigin("11111111-2222-3333-4444-555555555555")
+	testutil.MustNoErr(t, err, "KanbanEpisodeForOrigin")
 	if got != "45x58x32" {
 		t.Errorf("type = %q, want 45x58x32", got)
 	}
@@ -293,13 +293,13 @@ func TestMaintainedEpisodeForOrigin(t *testing.T) {
 
 	// BLANK ORIGIN: no query, no error, no type. If this ever reaches Postgres
 	// it fails with a UUID cast error rather than returning nothing.
-	group, got, err = db.MaintainedEpisodeForOrigin("")
-	testutil.MustNoErr(t, err, "MaintainedEpisodeForOrigin blank")
+	group, got, err = db.KanbanEpisodeForOrigin("")
+	testutil.MustNoErr(t, err, "KanbanEpisodeForOrigin blank")
 	if got != "" || group != "" {
 		t.Errorf("blank origin gave group=%q type=%q, want both empty", group, got)
 	}
 
-	// An origin that is not a maintain episode is not an error — it is the
+	// An origin that is not a kanban episode is not an error — it is the
 	// ordinary answer for every other order in the plant.
 	mustOpenCore(t, db, store.DemandOrigin{
 		OriginID:   "99999999-8888-7777-6666-555555555555",
@@ -307,10 +307,10 @@ func TestMaintainedEpisodeForOrigin(t *testing.T) {
 		Kind:       protocol.EpisodeKindThreshold, StationID: "PLANT.LINE1",
 		CoreNodeName: "SLN_002", PayloadCode: "PANEL-A", OpenedAt: now,
 	}, "mint threshold")
-	group, got, err = db.MaintainedEpisodeForOrigin("99999999-8888-7777-6666-555555555555")
-	testutil.MustNoErr(t, err, "MaintainedEpisodeForOrigin threshold origin")
+	group, got, err = db.KanbanEpisodeForOrigin("99999999-8888-7777-6666-555555555555")
+	testutil.MustNoErr(t, err, "KanbanEpisodeForOrigin threshold origin")
 	if got != "" || group != "" {
-		t.Errorf("threshold origin gave group=%q type=%q, want both empty. A non-maintain "+
+		t.Errorf("threshold origin gave group=%q type=%q, want both empty. A non-kanban "+
 			"episode has neither, and returning its core node as a `group` would hand the "+
 			"finder a subtree to exclude that nothing asked it to exclude", group, got)
 	}
@@ -320,9 +320,9 @@ func TestMaintainedEpisodeForOrigin(t *testing.T) {
 	// keep sourcing for a demand nobody is counting.
 	_, err = db.CloseDemandOriginByID("11111111-2222-3333-4444-555555555555",
 		protocol.CloseReasonRecovered, protocol.ClosedByNotification, now.Add(time.Minute))
-	testutil.MustNoErr(t, err, "close maintain")
-	group, got, err = db.MaintainedEpisodeForOrigin("11111111-2222-3333-4444-555555555555")
-	testutil.MustNoErr(t, err, "MaintainedEpisodeForOrigin after close")
+	testutil.MustNoErr(t, err, "close kanban")
+	group, got, err = db.KanbanEpisodeForOrigin("11111111-2222-3333-4444-555555555555")
+	testutil.MustNoErr(t, err, "KanbanEpisodeForOrigin after close")
 	if got != "" || group != "" {
 		t.Errorf("closed episode gave group=%q type=%q, want both empty", group, got)
 	}

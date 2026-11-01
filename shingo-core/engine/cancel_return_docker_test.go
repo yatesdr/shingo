@@ -303,13 +303,13 @@ func TestCancelReturn_AnEmptyGoesWhereClaimsDeclareEmptiesGo(t *testing.T) {
 		t.Parallel()
 		db := testdb.Open(t)
 		eng := newTestEngine(t, db, testdb.NewTrackingBackend())
-		// A maintained group supporting the line is NOT a declaration.
+		// A kanban supporting the line is NOT a declaration.
 		line := &nodes.Node{Name: "CRE3-LINE", Enabled: true}
 		testutil.MustNoErr(t, db.CreateNode(line), "create line")
 		empty, _ := evacOff(t, db, "AMR-CRE3", "", line)
-		bank, _ := storeGroupWithSlot(t, db, "CRE3-BANK")
-		testutil.MustNoErr(t, db.SetMaintainLevel(store.MaintainLevel{GroupNodeID: bank.ID, BinTypeID: empty.BinTypeID, Want: 3}), "level")
-		testutil.MustNoErr(t, db.SetMaintainSupports(bank.ID, []int64{line.ID}), "supports the line")
+		kanbanNode, _ := storeGroupWithSlot(t, db, "CRE3-KANBAN")
+		testutil.MustNoErr(t, db.SetKanbanLevel(store.KanbanLevel{GroupNodeID: kanbanNode.ID, BinTypeID: empty.BinTypeID, Want: 3}), "level")
+		testutil.MustNoErr(t, db.SetKanbanSupports(kanbanNode.ID, []int64{line.ID}), "supports the line")
 		cacheRobot(eng, loadedDispatchable("AMR-CRE3"))
 		eng.sweepCarriedBins()
 		assertNoRecoveryOrder(t, db, empty.ID)
@@ -328,7 +328,7 @@ func TestCancelReturn_AnEmptyGoesWhereClaimsDeclareEmptiesGo(t *testing.T) {
 		other := &nodes.Node{Name: "CRE4-OTHER", Enabled: true}
 		testutil.MustNoErr(t, db.CreateNode(other), "create the other press")
 		strict, _ := storeGroupWithSlot(t, db, "CRE4-STRICT")
-		testutil.MustNoErr(t, db.SetMaintainSupports(strict.ID, []int64{other.ID}), "supports another press only")
+		testutil.MustNoErr(t, db.SetKanbanSupports(strict.ID, []int64{other.ID}), "supports another press only")
 		testdb.KanbanStrict(t, db, strict.ID, true)
 		seedRoleClaim(t, db, "PROC-CRE4", press.Name, protocol.ClaimRoleProduce, "CRE4-P", strict.Name, "")
 		empty, _ := seedCancelledCarry(t, db, "AMR-CRE4", "", press.Name)
@@ -860,25 +860,25 @@ func TestCancelReturn_TwoHostsOnTwoBinsNeverChooseOneSlot(t *testing.T) {
 
 // ── the overflow hop (owner's rule, SHAPE §3.3) ──────────────────────────────
 
-// emptiesBank is a maintained group of one carrier type at its declared level
+// kanbanAtLevel is a kanban of one carrier type at its declared level
 // (one slot holds the level's one empty, one slot stands free), DECLARED by the
-// press's produce claim as where it draws empties, with `overflow` as the bank's
+// press's produce claim as where it draws empties, with `overflow` as the kanban's
 // configured overflow destination ("" for none).
-func emptiesBank(t *testing.T, db *store.DB, prefix string, binTypeID int64, press *nodes.Node, overflow string) *nodes.Node {
+func kanbanAtLevel(t *testing.T, db *store.DB, prefix string, binTypeID int64, press *nodes.Node, overflow string) *nodes.Node {
 	t.Helper()
-	bank, full := storeGroupWithSlot(t, db, prefix)
+	kanbanNode, full := storeGroupWithSlot(t, db, prefix)
 	st := storNodeType(t, db)
-	testutil.MustNoErr(t, db.CreateNode(&nodes.Node{Name: prefix + "-S2", NodeTypeID: &st.ID, ParentID: &bank.ID, Enabled: true}),
-		"a free slot: the bank refuses for its LEVEL, not for room")
+	testutil.MustNoErr(t, db.CreateNode(&nodes.Node{Name: prefix + "-S2", NodeTypeID: &st.ID, ParentID: &kanbanNode.ID, Enabled: true}),
+		"a free slot: the kanban refuses for its LEVEL, not for room")
 	testutil.MustNoErr(t, db.CreateBin(&bins.Bin{BinTypeID: binTypeID, Label: prefix + "-resident",
 		NodeID: &full.ID, Status: "available"}), "the empty that makes the level")
-	testutil.MustNoErr(t, db.SetMaintainLevel(store.MaintainLevel{GroupNodeID: bank.ID, BinTypeID: binTypeID, Want: 1}),
+	testutil.MustNoErr(t, db.SetKanbanLevel(store.KanbanLevel{GroupNodeID: kanbanNode.ID, BinTypeID: binTypeID, Want: 1}),
 		"a level of one")
-	seedRoleClaim(t, db, "PROC-"+prefix, press.Name, protocol.ClaimRoleProduce, prefix+"-PART", bank.Name, "")
+	seedRoleClaim(t, db, "PROC-"+prefix, press.Name, protocol.ClaimRoleProduce, prefix+"-PART", kanbanNode.Name, "")
 	if overflow != "" {
-		testdb.KanbanOverflow(t, db, bank.ID, overflow)
+		testdb.KanbanOverflow(t, db, kanbanNode.ID, overflow)
 	}
-	return bank
+	return kanbanNode
 }
 
 // evacOff makes the carried bin an evacuation off `node` (a press or a line):
@@ -893,7 +893,7 @@ func evacOff(t *testing.T, db *store.DB, robot, payload string, node *nodes.Node
 }
 
 // Each case on its own database, because the empties walk is plant-wide.
-func TestCancelReturn_AMaintainedGroupAtLevelOverflowsOneHop(t *testing.T) {
+func TestCancelReturn_AKanbanAtLevelOverflowsOneHop(t *testing.T) {
 	t.Parallel()
 
 	t.Run("at level with an overflow: lands in the overflow, and the audit names the hop", func(t *testing.T) {
@@ -904,11 +904,11 @@ func TestCancelReturn_AMaintainedGroupAtLevelOverflowsOneHop(t *testing.T) {
 		testutil.MustNoErr(t, db.CreateNode(press), "create press")
 		market, marketSlot := storeGroupWithSlot(t, db, "CR16A-MKT")
 		a, _ := evacOff(t, db, "AMR-CR16A", "", press)
-		bank := emptiesBank(t, db, "CR16A-BANK", a.BinTypeID, press, market.Name)
+		kanbanNode := kanbanAtLevel(t, db, "CR16A-KANBAN", a.BinTypeID, press, market.Name)
 		cacheRobot(eng, loadedDispatchable("AMR-CR16A"))
 		eng.sweepCarriedBins()
 		if ret := theReturn(t, db, a.ID); ret.DeliveryNode != marketSlot.Name {
-			t.Errorf("return goes to %q, want %s in the overflow group — %s is at its level", ret.DeliveryNode, marketSlot.Name, bank.Name)
+			t.Errorf("return goes to %q, want %s in the overflow group — %s is at its level", ret.DeliveryNode, marketSlot.Name, kanbanNode.Name)
 		}
 		if _, _, detail := lastBinAction(t, db, a.ID); !strings.Contains(detail, "at its declared level, overflowed to "+market.Name) {
 			t.Errorf("audit detail %q does not name the hop", detail)
@@ -922,7 +922,7 @@ func TestCancelReturn_AMaintainedGroupAtLevelOverflowsOneHop(t *testing.T) {
 		press := &nodes.Node{Name: "CR16B-PRESS", Enabled: true}
 		testutil.MustNoErr(t, db.CreateNode(press), "create press")
 		b, _ := evacOff(t, db, "AMR-CR16B", "", press)
-		emptiesBank(t, db, "CR16B-BANK", b.BinTypeID, press, "")
+		kanbanAtLevel(t, db, "CR16B-KANBAN", b.BinTypeID, press, "")
 		cacheRobot(eng, loadedDispatchable("AMR-CR16B"))
 		eng.sweepCarriedBins()
 		assertNoRecoveryOrder(t, db, b.ID)
@@ -936,14 +936,14 @@ func TestCancelReturn_AMaintainedGroupAtLevelOverflowsOneHop(t *testing.T) {
 		t.Parallel()
 		db := testdb.Open(t)
 		eng := newTestEngine(t, db, testdb.NewTrackingBackend())
-		// A payload bin offered to an empties-only bank is refused for what it
+		// A payload bin offered to a kanban is refused for what it
 		// carries, not for the level — overflow or not.
 		press := &nodes.Node{Name: "CR16C-PRESS", Enabled: true}
 		testutil.MustNoErr(t, db.CreateNode(press), "create press")
 		market, _ := storeGroupWithSlot(t, db, "CR16C-MKT")
 		c, _ := evacOff(t, db, "AMR-CR16C", "CR16C-P", press)
-		bank := emptiesBank(t, db, "CR16C-BANK", c.BinTypeID, press, market.Name)
-		seedClaim(t, db, "PROC-CR16C", "STY", "LINE-CR16C", "CR16C-P", bank.Name, true)
+		kanbanNode := kanbanAtLevel(t, db, "CR16C-KANBAN", c.BinTypeID, press, market.Name)
+		seedClaim(t, db, "PROC-CR16C", "STY", "LINE-CR16C", "CR16C-P", kanbanNode.Name, true)
 		cacheRobot(eng, loadedDispatchable("AMR-CR16C"))
 		eng.sweepCarriedBins()
 		assertNoRecoveryOrder(t, db, c.ID)

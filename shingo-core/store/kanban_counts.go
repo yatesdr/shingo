@@ -65,7 +65,7 @@ func (db *DB) ReadKanbanCounts(ids []int64) (*KanbanCounts, error) {
 
 // Level is one level type's populations, as CountLevel answers them: asked is the
 // open episode's, read with the episodes (ListOpenKeeperEpisodes).
-func (c *KanbanCounts) Level(lv MaintainLevel, asked int) LevelState {
+func (c *KanbanCounts) Level(lv KanbanLevel, asked int) LevelState {
 	k := kanbanTypeKey{lv.GroupNodeID, lv.BinTypeCode}
 	inbound := c.inbound[k]
 	return LevelState{Level: lv, Have: kanban.Have{Resident: c.resident[k], Asked: asked,
@@ -73,7 +73,7 @@ func (c *KanbanCounts) Level(lv MaintainLevel, asked int) LevelState {
 }
 
 // TypeLine is one level type's line, as TypeLineOf answers it.
-func (c *KanbanCounts) TypeLine(lv MaintainLevel, asked int, layerWants []MaintainLayerWant) (kanban.Line, LevelState) {
+func (c *KanbanCounts) TypeLine(lv KanbanLevel, asked int, layerWants []KanbanLayerWant) (kanban.Line, LevelState) {
 	s := c.Level(lv, asked)
 	return typeLineOf(s, layerWants, c.byTotes[kanbanTypeKey{lv.GroupNodeID, lv.BinTypeCode}]), s
 }
@@ -81,7 +81,7 @@ func (c *KanbanCounts) TypeLine(lv MaintainLevel, asked int, layerWants []Mainta
 // typeLineOf composes a level type's line from its count and, for a type with
 // wanted heights, its residents by totes. The comings at a height are the count's
 // coming rows (LevelState.Inbound), so no second read spells "coming".
-func typeLineOf(c LevelState, layerWants []MaintainLayerWant, residentByTotes map[int]int) kanban.Line {
+func typeLineOf(c LevelState, layerWants []KanbanLayerWant, residentByTotes map[int]int) kanban.Line {
 	lv := c.Level
 	tl := kanban.LineOf(lv.BinTypeCode, lv.Want, c.Have)
 	for _, w := range layerWants {
@@ -120,7 +120,7 @@ func (db *DB) SourceableTypes(codes []string, fence bins.EmptyFence) (map[string
 // unloader's windows in the plant's order.
 type GroupLineAsk struct {
 	Group   *nodes.Node
-	Levels  []MaintainLevel
+	Levels  []KanbanLevel
 	Windows []protocol.NodeBinsRow
 	// Sources are the group's sources in rank order, each with its levels: none for
 	// one that declares none, which is short of nothing.
@@ -131,5 +131,5 @@ type GroupLineAsk struct {
 type GroupLineSource struct {
 	ID     int64
 	Name   string
-	Levels []MaintainLevel
+	Levels []KanbanLevel
 }

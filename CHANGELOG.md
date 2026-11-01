@@ -14,6 +14,18 @@ No migration. Edge only.
 - A Spots chip appears only once a part moves, and its ✕ undoes the move
 - A tap on the search box raises the touch keyboard
 - An on-deck spot with nowhere to go can't be tapped
+## 2026-11-01 — A kanban is called a kanban
+
+Core v171, Edge no migration. Ship Core and Edge together: until both are up, a claim save naming a kanban as its inbound source is not refused on the Edge.
+
+- Pages, docs and the glossary say Kanban, Level, Running cover, Supports, Sources, Overflow, Strict
+- Routes move to `/api/nodes/kanban/*`; the levels read is `/api/nodes/kanban/levels`
+- `NodeInfo.maintained` is `kanban` on the wire; each Edge's node digest moves once at the upgrade
+- The plant spec key `maintained_groups` is `kanbans`
+- The episode kind is `kanban`; v171 rewrites `demand_origins.kind`, and the `mnt|` key and `core-mnt-` uuid prefixes stay, since live orders carry them
+- The old "kanban" of UOP reorder is now "threshold replenishment", and the Edge's retired `/kanbans` redirects are gone
+- A short row held by its keeper says so in its title, instead of claiming asks are out
+
 ## 2026-11-01 — The changeover load directive is gone
 
 Core v170, Edge v36, either order: a missing wire field reads as off.

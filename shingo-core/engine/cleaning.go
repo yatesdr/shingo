@@ -8,7 +8,7 @@
 // due. The knife is preventive and runs on a clock: no signal selects a robot.
 // A person can send one robot now (CleanNow) and opt a robot out.
 //
-// ZERO IN-MEMORY DECISION STATE (the keeper's lesson, maintainer.go): every
+// ZERO IN-MEMORY DECISION STATE (the keeper's lesson, kanban_keeper.go): every
 // tick re-reads the setup, the open missions and each robot's last dispatch
 // from the database, so a restart is an ordinary tick. What the runner keeps
 // is a memo of the points check, keyed by the setup's updated_at, and log-once

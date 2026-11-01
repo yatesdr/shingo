@@ -111,7 +111,7 @@ func TestLoaderService_DrainsRefusedWhereTheyCannotHold(t *testing.T) {
 	perTypeOverflowing := drainGroup(t, db, "DRR-TYPE-OVERFLOWING", 0)
 	var perType int64
 	testutil.MustNoErr(t, db.QueryRow(`INSERT INTO bin_types (code) VALUES ('DRR-T') RETURNING id`).Scan(&perType), "a type")
-	testutil.MustNoErr(t, db.SetMaintainLevel(store.MaintainLevel{GroupNodeID: perTypeOverflowing.ID, BinTypeID: perType, Want: 1}), "a level")
+	testutil.MustNoErr(t, db.SetKanbanLevel(store.KanbanLevel{GroupNodeID: perTypeOverflowing.ID, BinTypeID: perType, Want: 1}), "a level")
 	innerID := inner.ID
 	testutil.MustNoErr(t, db.SaveKanban(store.KanbanChange{NodeID: perTypeOverflowing.ID, EnsureRow: true,
 		Levels: []store.KanbanLevelChange{{BinTypeID: perType, Overflow: &innerID}}}, "test"), "its type overflows into the source")
@@ -178,29 +178,29 @@ func TestLoaderService_DrainsRefusedWhereTheyCannotHold(t *testing.T) {
 	}
 }
 
-// TestLoaderService_DrainsFromAMaintainedSourceIsTheOneRefusal: an unloader
+// TestLoaderService_DrainsFromAKanbanSourceIsTheOneRefusal: an unloader
 // whose inbound source declares a level is refused whatever its boxes, by the
-// refusal every such unloader already meets (ErrFullsFromAnEmptiesBank), and
+// refusal every such unloader already meets (ErrFullsFromAKanban), and
 // its sentence says the boxes drain nothing from one; no second refusal is
 // spelled for the boxes.
-func TestLoaderService_DrainsFromAMaintainedSourceIsTheOneRefusal(t *testing.T) {
+func TestLoaderService_DrainsFromAKanbanSourceIsTheOneRefusal(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
 	svc := NewLoaderService(db, nil)
-	bank := drainGroup(t, db, "DRM-BANK", 0)
+	kanbanNode := drainGroup(t, db, "DRM-KANBAN", 0)
 	bt := &bins.BinType{Code: "DRM-TOTE", Description: "tote"}
 	testutil.MustNoErr(t, db.CreateBinType(bt), "bin type")
-	testutil.MustNoErr(t, db.SetMaintainLevel(store.MaintainLevel{GroupNodeID: bank.ID, BinTypeID: bt.ID, Want: 2}),
-		"the bank's level")
+	testutil.MustNoErr(t, db.SetKanbanLevel(store.KanbanLevel{GroupNodeID: kanbanNode.ID, BinTypeID: bt.ID, Want: 2}),
+		"the kanban's level")
 	for _, drains := range [][]protocol.CarrierState{nil, leftovers} {
 		_, err := svc.CreateLoader(LoaderCreate{Name: "DRM-UNL", Role: loaders.RoleConsume,
-			InboundSource: bank.Name, Drains: drains})
-		if !errors.Is(err, ErrFullsFromAnEmptiesBank) {
-			t.Fatalf("drains %v from a maintained group: err = %v, want ErrFullsFromAnEmptiesBank", drains, err)
+			InboundSource: kanbanNode.Name, Drains: drains})
+		if !errors.Is(err, ErrFullsFromAKanban) {
+			t.Fatalf("drains %v from a kanban: err = %v, want ErrFullsFromAKanban", drains, err)
 		}
 	}
-	if want := "drain boxes drain nothing"; !strings.Contains(ErrFullsFromAnEmptiesBank.Error(), want) {
-		t.Errorf("the refusal reads %q; it must say the boxes drain nothing from one (%q)", ErrFullsFromAnEmptiesBank, want)
+	if want := "drain boxes drain nothing"; !strings.Contains(ErrFullsFromAKanban.Error(), want) {
+		t.Errorf("the refusal reads %q; it must say the boxes drain nothing from one (%q)", ErrFullsFromAKanban, want)
 	}
 }
 

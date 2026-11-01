@@ -22,12 +22,12 @@ import (
 // model (e.g. a partial error from a specific method), add it inline
 // in that test rather than growing this struct.
 type fakeStore struct {
-	// maintainLevels / emptyCounts drive the MG4-1 level filter. Absent means
-	// "not a maintained group", which is the default and the plant-wide truth.
-	maintainLevels    map[int64][]nodes.MaintainLevel
-	maintainLevelsErr error
-	emptyCounts       map[groupKey]int
-	emptyCountErr     error
+	// kanbanLevels / emptyCounts drive the MG4-1 level filter. Absent means
+	// "not a kanban", which is the default and the plant-wide truth.
+	kanbanLevels    map[int64][]nodes.KanbanLevel
+	kanbanLevelsErr error
+	emptyCounts     map[groupKey]int
+	emptyCountErr   error
 	// emptiesAt: counted empties standing on one node (keyed {nodeID, code}),
 	// which the excluding count subtracts.
 	emptiesAt map[groupKey]int
@@ -320,17 +320,17 @@ func (f *fakeStore) TopsAndBottomsWant(_, binTypeID int64) (int, bool, error) {
 // Compile-time check: *fakeStore satisfies Store.
 var _ Store = (*fakeStore)(nil)
 
-// ── The maintained-group level (MG4-1) ──────────────────────────────────────
+// ── The kanban level (MG4-1) ──────────────────────────────────────
 //
 // Both default to "no level declared", which is what every group in every plant
 // is today — so every existing resolver test keeps its behaviour without being
-// told about levels at all. A test that wants the cap sets maintainLevels.
+// told about levels at all. A test that wants the cap sets kanbanLevels.
 
-func (f *fakeStore) ListMaintainLevels(groupNodeID int64) ([]nodes.MaintainLevel, error) {
-	if f.maintainLevelsErr != nil {
-		return nil, f.maintainLevelsErr
+func (f *fakeStore) ListKanbanLevels(groupNodeID int64) ([]nodes.KanbanLevel, error) {
+	if f.kanbanLevelsErr != nil {
+		return nil, f.kanbanLevelsErr
 	}
-	return f.maintainLevels[groupNodeID], nil
+	return f.kanbanLevels[groupNodeID], nil
 }
 
 func (f *fakeStore) CountEmptyBinsOfTypeInGroup(binTypeCode string, groupNodeID int64, h domain.Height) (int, error) {

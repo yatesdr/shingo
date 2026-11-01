@@ -20,7 +20,7 @@ import (
 //	                 standing somewhere it may not stand
 //
 // SEPARATE FROM THE SAVE-TIME RULES, and the difference is what they read. The
-// rules in node_service_maintain_validate.go read CONFIGURATION and are true or
+// rules in node_service_kanban_validate.go read CONFIGURATION and are true or
 // false regardless of the floor. This reads the FLOOR — which carriers are
 // standing there right now — and it is a delta check: it fires on the
 // transition, not on the state, because a group that has been reserved for a
@@ -37,8 +37,8 @@ import (
 // actions on a screen a person is looking at, and the alternative — locking the
 // group for the length of a modal — is worse than the thing it prevents.
 
-// MaintainedGroupGuard is what the floor says about a pending change.
-type MaintainedGroupGuard struct {
+// KanbanGuard is what the floor says about a pending change.
+type KanbanGuard struct {
 	// Blocked is the human sentence, empty when nothing is in the way.
 	Blocked string `json:"blocked,omitempty"`
 	// Drain names live orders that were already sourcing from this group when
@@ -48,8 +48,10 @@ type MaintainedGroupGuard struct {
 
 // residents returns the carriers standing at a group's DIRECT children.
 //
-// Direct children only, which is exact rather than a shortcut: a maintained
-// group is refused at save time unless it is flat, so its direct children are
+// Direct children only, which is exact rather than a shortcut: a kanban
+//
+//	is refused at save time unless it is flat, so its direct children are
+//
 // all of it. A recursive walk here would be code whose extra reach can never be
 // exercised, and the first person to make groups nestable would find it already
 // written and assume it had been thought about.
@@ -80,14 +82,14 @@ func binLabels(bs []*bins.Bin) []string {
 	return out
 }
 
-// CheckMaintainedGroupSettingsChange runs the guard for the settings transition
+// CheckKanbanSettingsChange runs the guard for the settings transition
 // that changes what residents mean: turning the reserve on.
 //
 // It compares against what is stored, so a save that leaves the switch where it
 // was asks nothing: only the EDGE trips the guard.
-func (s *NodeService) CheckMaintainedGroupSettingsChange(groupNodeID int64, set MaintainedGroupSettings, force bool) (MaintainedGroupGuard, error) {
-	var g MaintainedGroupGuard
-	before, err := s.GetMaintainedGroup(groupNodeID)
+func (s *NodeService) CheckKanbanSettingsChange(groupNodeID int64, set KanbanSettings, force bool) (KanbanGuard, error) {
+	var g KanbanGuard
+	before, err := s.GetKanban(groupNodeID)
 	if err != nil {
 		return g, err
 	}
@@ -124,18 +126,18 @@ func (s *NodeService) CheckMaintainedGroupSettingsChange(groupNodeID int64, set 
 	return g, nil
 }
 
-// CheckMaintainedGroupSupportsChange runs the guard when the supported set
+// CheckKanbanSupportsChange runs the guard when the supported set
 // NARROWS.
 //
 // Only on narrowing. Adding a process gives more people access to what is
 // standing there, which strands nobody; removing one takes it away from a
 // process that may be mid-order for exactly those carriers.
-func (s *NodeService) CheckMaintainedGroupSupportsChange(groupNodeID int64, processNodeIDs []int64, force bool) (MaintainedGroupGuard, error) {
-	var g MaintainedGroupGuard
+func (s *NodeService) CheckKanbanSupportsChange(groupNodeID int64, processNodeIDs []int64, force bool) (KanbanGuard, error) {
+	var g KanbanGuard
 	if force {
 		return g, nil
 	}
-	before, err := s.GetMaintainedGroup(groupNodeID)
+	before, err := s.GetKanban(groupNodeID)
 	if err != nil {
 		return g, err
 	}
@@ -166,7 +168,7 @@ func (s *NodeService) CheckMaintainedGroupSupportsChange(groupNodeID int64, proc
 	return g, nil
 }
 
-// CheckMaintainedGroupTypesChange runs the guard when a group's ALLOWED carrier
+// CheckKanbanTypesChange runs the guard when a group's ALLOWED carrier
 // types narrow.
 //
 // SCOPED TO THE CARRIERS ACTUALLY AFFECTED, unlike the other three. Dropping one
@@ -177,8 +179,8 @@ func (s *NodeService) CheckMaintainedGroupSupportsChange(groupNodeID int64, proc
 // keeping is the type-id set the save would leave; an EMPTY set means "no
 // restriction" — the same reading the resolver's own predicate has — so it
 // strands nothing and is not a narrowing at all.
-func (s *NodeService) CheckMaintainedGroupTypesChange(groupNodeID int64, keeping []int64, force bool) (MaintainedGroupGuard, error) {
-	var g MaintainedGroupGuard
+func (s *NodeService) CheckKanbanTypesChange(groupNodeID int64, keeping []int64, force bool) (KanbanGuard, error) {
+	var g KanbanGuard
 	if force || len(keeping) == 0 {
 		return g, nil
 	}

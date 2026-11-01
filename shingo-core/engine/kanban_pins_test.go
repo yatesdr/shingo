@@ -34,11 +34,11 @@ func TestKanbanPin_LandedReceiptConfirmsThreePrefixesOnly(t *testing.T) {
 	}
 }
 
-// TestMaintainerGroupState_TheCardsJSON: what the card reads is on the wire, and the
+// TestKanbanLineState_TheCardsJSON: what the card reads is on the wire, and the
 // tick's own fields are not.
-func TestMaintainerGroupState_TheCardsJSON(t *testing.T) {
+func TestKanbanLineState_TheCardsJSON(t *testing.T) {
 	t.Parallel()
-	raw, err := json.Marshal(MaintainerGroupState{GroupNode: "K", BinTypeCode: "T", Want: 9, Base: 1, Created: 3,
+	raw, err := json.Marshal(KanbanLineState{GroupNode: "K", BinTypeCode: "T", Want: 9, Base: 1, Created: 3,
 		OriginID: "o", OpenedAt: time.Now(), HeldBy: "why", RunningProcesses: []string{"P"}, Slots: 8, TotalWant: 9, CannotCover: 1,
 		NothingProcesses: []string{"N"}, FallbackProcesses: []string{"F"}})
 	if err != nil {

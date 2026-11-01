@@ -33,8 +33,8 @@ import (
 //     lane mouth to clear instead;
 //   - not in a lane a dig holds (NotForeignDugArm, asked as nobody's dig);
 //   - across the source node itself and its subtree, but never inside a group
-//     that declares a level below it (nodetree.UnmaintainedDescendantsOf): an
-//     unloader never drains a maintained group (owner, 2026-10-22). Whether the
+//     that declares a level below it (nodetree.NonKanbanDescendantsOf): an
+//     unloader never drains a kanban (owner, 2026-10-22). Whether the
 //     source itself declares one is the caller's re-check (store.DeclaresLevel).
 //
 // NOT ListBareInGroup's clauses: those admit `staged` and exclude no loader or
@@ -47,8 +47,8 @@ func ListDrainableInGroup(db *sql.DB, groupNodeID int64, ticked []string) ([]*Bi
 		return nil, nil
 	}
 	a := &emptyQueryArgs{vals: []any{groupNodeID, int64(0), ticked}}
-	q := nodetree.UnmaintainedDescendantsOf(1) + " " + BinJoinQuery + EmptyCarrierWhereInGroup(2, 1) + `
-	  AND (b.node_id = $1 OR b.node_id IN (SELECT id FROM unmaintained))
+	q := nodetree.NonKanbanDescendantsOf(1) + " " + BinJoinQuery + EmptyCarrierWhereInGroup(2, 1) + `
+	  AND (b.node_id = $1 OR b.node_id IN (SELECT id FROM plain))
 	  AND ` + helpers.CarrierStateSQL("b", "bt") + ` = ANY($3)
 	  AND (n.parent_id IS NULL OR n.depth IS NULL OR ` + helpers.ReachableSQL("n") + `)` +
 		NotForeignDugArm(a.add(string(reservations.ModeDig)),

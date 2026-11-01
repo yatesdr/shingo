@@ -447,14 +447,14 @@ func BuildEpisodeRow(e domain.DemandEpisode, now time.Time, c config.DisplayConf
 		OrdersText:   FormatCount(children),
 	}
 
-	// ── The maintain kind's two borrowed columns ─────────────────────────────
+	// ── The kanban kind's two borrowed columns ─────────────────────────────
 	//
-	// A maintain episode has no payload and no formula, so two columns that are
+	// A kanban episode has no payload and no formula, so two columns that are
 	// load-bearing for every other kind arrive empty. Both are filled from what
 	// the row ALREADY STORES rather than from a new column or a second query.
 	//
 	// PLACE: the carrier type is the identity here — one episode per (group,
-	// type) — and it lives in the episode key, which is where the maintainer put
+	// type) — and it lives in the episode key, which is where the keeper put
 	// it. Parsing it back is not a workaround: the key is the canonical spelling
 	// of that pair, and a duplicate copy in payload_code would be a second
 	// spelling free to disagree with it.
@@ -466,7 +466,7 @@ func BuildEpisodeRow(e domain.DemandEpisode, now time.Time, c config.DisplayConf
 	// also subtracts what was already coming, and a denominator that shrinks
 	// because the keeper was smart would flatter the ratio for the wrong reason.
 	expected := o.ExpectedOrders
-	if o.Kind == protocol.EpisodeKindMaintain {
+	if o.Kind == protocol.EpisodeKindKanban {
 		if parsed, perr := protocol.ParseEpisodeKey(o.EpisodeKey); perr == nil && parsed.BinType != "" {
 			row.Payload = parsed.BinType
 		}
@@ -561,12 +561,12 @@ func kindLabel(kind string) string {
 		return "Cell"
 	case "changeover":
 		return "Changeover"
-	case protocol.EpisodeKindMaintain:
-		// "Maintained level", not "Maintain" — the noun says what the row is a
+	case protocol.EpisodeKindKanban:
+		// "Kanban level", not "Kanban": the noun says what the row is a
 		// record of. Every other kind on this page names a thing that happened to
 		// the plant; this one names a standing declaration that went unmet, and
 		// the verb form reads like an instruction to the operator.
-		return "Maintained level"
+		return "Kanban level"
 	default:
 		// Rule 3 again. origin kinds can grow the same way close reasons did.
 		return humanizeUnknown(kind)

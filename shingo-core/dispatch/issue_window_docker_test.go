@@ -123,7 +123,7 @@ func TestCoreAsk_HoldsItsWindowAtIssue(t *testing.T) {
 		db := testdb.IssueCensusDB(t)
 		d, _ := newTestDispatcher(t, db, nil)
 		grp, err := db.CreateNodeGroup("CAH-MNT")
-		testutil.MustNoErr(t, err, "the maintained group")
+		testutil.MustNoErr(t, err, "the kanban")
 		slot := &nodes.Node{Name: "CAH-MNT-PA", Enabled: true, ParentID: &grp}
 		testutil.MustNoErr(t, db.CreateNode(slot), "its position")
 		o, err := d.AdmitCoreAsk(CoreAskSpec{UUIDPrefix: "core-mnt-", OrderType: OrderTypeRetrieveEmpty,

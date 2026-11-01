@@ -17,7 +17,7 @@ type DoorLine struct {
 	Group *Node
 	// Level is the group's row for the type, Want effective; nil when it declares
 	// none, which leaves it short of nothing: it can be reached only as an overflow.
-	Level *MaintainLevel
+	Level *KanbanLevel
 	kanban.Have
 	// TopsAndBottoms is the type's tops & bottoms line, a cart at 0's own: the row's
 	// want (0 with no row), the carts at 0 standing and coming. The keeper never

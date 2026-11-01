@@ -15,7 +15,7 @@ import (
 //     no tote_layers. Any stack.
 //   - Layers(n): n layers. At 0, tops & bottoms or any stack.
 //   - TopsAndBottomsOnly: tops & bottoms and nothing else (SEND BACK's pull,
-//     and a maintained group's tops & bottoms row: its count and its cap).
+//     and a kanban's tops & bottoms row: its count and its cap).
 //
 // Tops & bottoms is nobody's ordinary empty: none and a stack never take it,
 // Layers(0) and TopsAndBottomsOnly do (Admits). Which of the carts a height

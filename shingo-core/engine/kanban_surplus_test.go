@@ -77,7 +77,7 @@ func TestPlanSurplus(t *testing.T) {
 // on a take that breaks it (-tags docker,lockcheck, TestKanbanSurplus_*).
 func TestKanbanSurplus_TheLoaderLockOutranksTheKeepersOwn(t *testing.T) {
 	t.Parallel()
-	loader, scan, keeper := lockorder.LoaderBudget{}.Rank(), lockorder.Scan{}.Rank(), lockorder.Maintainer{}.Rank()
+	loader, scan, keeper := lockorder.LoaderBudget{}.Rank(), lockorder.Scan{}.Rank(), lockorder.KanbanKeeper{}.Rank()
 	if loader >= scan || scan >= keeper {
 		t.Errorf("ranks loader %d, scan %d, keeper %d: want them in that order", loader, scan, keeper)
 	}

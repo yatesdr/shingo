@@ -195,7 +195,7 @@ var issueWalk = map[string]issueEntry{
 	// The openers: where a door is entered.
 	"dispatch/lifecycle_service.go:LifecycleService.CreateInboundOrder": {issueOpener, nil, "the wire intake (a plain order or a named move)"},
 	"dispatch/loader_replenish.go:Dispatcher.admitReplenishOrder":       {issueOpener, nil, "loader replenish: the loader's ask"},
-	"engine/maintainer.go:Maintainer.createAsks":                        {issueOpener, nil, "the maintained-group level keeper's ask"},
+	"engine/kanban_keeper.go:KanbanKeeper.createAsks":                   {issueOpener, nil, "the kanban level keeper's ask"},
 	"dispatch/complex_intake.go:Dispatcher.HandleComplexOrderRequest":   {issueOpener, nil, "complex intake's door, under the scan lock"},
 	"dispatch/compound.go:Dispatcher.createCompoundOrder":               {issueOpener, nil, "a dig's compound, every dig planner's"},
 	"dispatch/loader_drain.go:Dispatcher.drainLocked":                   {issueOpener, nil, "the loader drain's pass, under the loader's lock"},
@@ -410,22 +410,22 @@ func TestCensus_OrderReceivedAtBirth(t *testing.T) {
 	// == "") carry the emit, and why. A door without an emit is asked of its
 	// site's file.
 	answers := map[string]struct{ emitsIn, why string }{
-		"wire plain order":              {"dispatch/lifecycle_service.go", "the Edge wire intake: receipt of a request, with the sender's values"},
-		"wire named move":               {"dispatch/lifecycle_service.go", "the same receipt"},
-		"complex intake":                {"dispatch/complex_intake.go", "a multi-leg Edge request: the same receipt"},
-		"loader replenish":              {"dispatch/loader_replenish.go", "AdmitCoreAsk, the loader replenishment's ask: Core's part and window"},
-		"maintained-group level keeper": {"dispatch/loader_replenish.go", "the keeper reaches the orders table through AdmitCoreAsk"},
-		"dig legs":                      {"", "a dig's children: internal moves under a parent already received; seen at dispatch"},
-		"person's bin move":             {"", "a person moving one bin from Core's pages; no Edge asked; seen at dispatch"},
-		"stage 2's pull":                {"", "a pull Core makes; no Edge asked; seen at dispatch"},
-		"carried-bin recovery":          {"", "Core putting a carried bin down; no Edge asked; seen at dispatch"},
-		"the cancel's return":           {"", "the same, with nobody pressing anything"},
-		"home clear":                    {"", "the home clear: the door's own bin push (engine/clear_home.go notifyBinChanged) rebuilds the home's watchers at its issue"},
-		"home clear's child":            {"", "the same"},
-		"home clear's spot move":        {"", "the same"},
-		"home clear's trade":            {"", "the same"},
-		"loader drain":                  {"", "a drain's move: Core-born, no Edge asked, as the bin move is; seen at dispatch"},
-		"the surplus arm":               {"", "the keeper moving its own resident: Core-born, no Edge asked; seen at dispatch"},
+		"wire plain order":       {"dispatch/lifecycle_service.go", "the Edge wire intake: receipt of a request, with the sender's values"},
+		"wire named move":        {"dispatch/lifecycle_service.go", "the same receipt"},
+		"complex intake":         {"dispatch/complex_intake.go", "a multi-leg Edge request: the same receipt"},
+		"loader replenish":       {"dispatch/loader_replenish.go", "AdmitCoreAsk, the loader replenishment's ask: Core's part and window"},
+		"kanban level keeper":    {"dispatch/loader_replenish.go", "the keeper reaches the orders table through AdmitCoreAsk"},
+		"dig legs":               {"", "a dig's children: internal moves under a parent already received; seen at dispatch"},
+		"person's bin move":      {"", "a person moving one bin from Core's pages; no Edge asked; seen at dispatch"},
+		"stage 2's pull":         {"", "a pull Core makes; no Edge asked; seen at dispatch"},
+		"carried-bin recovery":   {"", "Core putting a carried bin down; no Edge asked; seen at dispatch"},
+		"the cancel's return":    {"", "the same, with nobody pressing anything"},
+		"home clear":             {"", "the home clear: the door's own bin push (engine/clear_home.go notifyBinChanged) rebuilds the home's watchers at its issue"},
+		"home clear's child":     {"", "the same"},
+		"home clear's spot move": {"", "the same"},
+		"home clear's trade":     {"", "the same"},
+		"loader drain":           {"", "a drain's move: Core-born, no Edge asked, as the bin move is; seen at dispatch"},
+		"the surplus arm":        {"", "the keeper moving its own resident: Core-born, no Edge asked; seen at dispatch"},
 	}
 	sources := scanCoreSources(t)
 	for _, d := range testdb.IssueDoors {

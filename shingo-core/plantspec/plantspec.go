@@ -53,8 +53,8 @@ type Plant struct {
 	Demands          []Demand               `yaml:"demands"`
 	ReportingPoints  []ReportingPoint       `yaml:"reporting_points"`
 	CellConfigs      []CellConfig           `yaml:"cell_configs"`
-	// MaintainedGroups declares which zones Core holds an empty-carrier level in.
-	MaintainedGroups []MaintainedGroup `yaml:"maintained_groups,omitempty"`
+	// Kanbans declares which zones Core holds an empty-carrier level in.
+	Kanbans []Kanban `yaml:"kanbans,omitempty"`
 	// LoaderSettings holds the per-loader switches a claim cannot express, keyed
 	// by loader name: the anchor node a claim names, or a window_of / home_of
 	// label. Absent = the column defaults, which is every loader today.
@@ -153,7 +153,7 @@ type Payload struct {
 //
 // A zone holds LANES (the deep-storage shape: aisles of depth-ordered slots), or
 // POSITIONS (the flat shape: slots hanging directly off the group), or both. The
-// flat shape exists because a MAINTAINED group is refused at save time unless it
+// flat shape exists because a KANBAN is refused at save time unless it
 // is depth-1 — no lanes, no nested groups — and until now a spec had no way to
 // write one down, which would have left phase 2's soak unable to stage the very
 // shape it is soaking.
@@ -266,14 +266,14 @@ type Bin struct {
 	AgeS int64 `yaml:"age_s,omitempty"`
 }
 
-// MaintainedGroup declares that Core holds a standing supply of EMPTY carriers
+// Kanban declares that Core holds a standing supply of EMPTY carriers
 // in a zone, for the equipment that zone serves.
 //
 // "So many 45x58x32 and so many 45x48x24, unclaimed, at all times." The zone must
 // be FLAT — positions, no lanes — because that is what the save-time rules
-// require of a maintained group, and a spec that could declare a shape the UI
+// require of a kanban, and a spec that could declare a shape the UI
 // refuses would seed a plant nobody could then edit.
-type MaintainedGroup struct {
+type Kanban struct {
 	// Group names the zone. It must be a declared zone with positions and no lanes.
 	Group string `yaml:"group"`
 	// Station is the Edge station the top-up orders are projected to. Required
@@ -295,7 +295,7 @@ type MaintainedGroup struct {
 	// instead.
 	Overflow string `yaml:"overflow,omitempty"`
 	// Levels is how many empty carriers of each type to hold.
-	Levels []MaintainLevel `yaml:"levels"`
+	Levels []KanbanLevel `yaml:"levels"`
 	// Supports names PROCESSES. What the seeder writes is the core nodes those
 	// processes' claims name — the same editor-speaks-process, storage-holds-nodes
 	// split the UI makes, and for the same reason: a claim is Edge-local and Core
@@ -303,14 +303,14 @@ type MaintainedGroup struct {
 	Supports []string `yaml:"supports,omitempty"`
 }
 
-// MaintainLevel is one line of a maintained group's declared level.
+// KanbanLevel is one line of a kanban's declared level.
 //
 // Want may be zero, which declares the type and asks for none of it — a
 // different statement from leaving the line out, and the distinction the store
 // preserves.
 //
 // Overflow names this type's own overflow zone, ahead of the group's.
-type MaintainLevel struct {
+type KanbanLevel struct {
 	BinType  string `yaml:"bin_type"`
 	Want     int    `yaml:"want"`
 	Overflow string `yaml:"overflow,omitempty"`

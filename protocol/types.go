@@ -608,7 +608,7 @@ func IsTerminal(status Status) bool {
 
 // TerminalStatuses returns every terminal status — those that appear as a
 // transition TARGET but have no outgoing edges of their own. Derived from
-// validTransitions for the same reason IsTerminal is: a hand-maintained list
+// validTransitions for the same reason IsTerminal is: a hand-kanban list
 // silently rots the moment a terminal status is added.
 //
 // Exists so persistence can express "only if this row is still live" as a SQL

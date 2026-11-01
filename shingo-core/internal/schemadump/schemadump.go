@@ -11,7 +11,7 @@
 // EXISTS, which does NOTHING to a table that already exists — so a column
 // added to a baseline CREATE TABLE reaches a fresh database instantly and a
 // plant database never. migrateAddBaselineColumns exists to patch that, and
-// it is a hand-maintained list whose own comment states the rule with nothing
+// it is a hand-kanban list whose own comment states the rule with nothing
 // enforcing it. It has failed twice: the misplaced code/ref index (worked on a
 // fresh DB, absent at the plant) and the five long-inert baseline indexes an
 // old dump trips.

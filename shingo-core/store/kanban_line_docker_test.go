@@ -58,7 +58,7 @@ func TestCountLevel_TopsAndBottomsIsNoStockOfTheLevel(t *testing.T) {
 
 	group, err := db.GetNode(grpID)
 	testutil.MustNoErr(t, err, "group")
-	lv := store.MaintainLevel{GroupNodeID: grpID, BinTypeID: btID, BinTypeCode: "CL-TOTE", Want: 4}
+	lv := store.KanbanLevel{GroupNodeID: grpID, BinTypeID: btID, BinTypeCode: "CL-TOTE", Want: 4}
 	c, err := db.CountLevel(group, lv, store.DemandOrigin{})
 	testutil.MustNoErr(t, err, "count")
 	if c.Resident != 2 || c.Coming != 2 || c.Short() != 0 || len(c.Inbound) != 3 {

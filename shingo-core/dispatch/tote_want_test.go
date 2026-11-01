@@ -47,7 +47,7 @@ func TestToteWant_ReachesTheFinder(t *testing.T) {
 			db.addNode(&nodes.Node{ID: 1, Name: "TW-GRP", IsSynthetic: true, NodeTypeCode: protocol.NodeClassNGRP})
 			db.addNode(&nodes.Node{ID: 2, Name: "TW-OUT"})
 			db.wantAt = map[string]int{"TW-OUT": 5}
-			db.maintainedType = map[string]string{"ep-1": "TW-TOTE"}
+			db.kanbanType = map[string]string{"ep-1": "TW-TOTE"}
 			NewSourceFinder(db, nil, nil).FindSourceForNeed(tc.need)
 			if wantText(db.lastWant) != wantText(tc.want) {
 				t.Errorf("the finder ranked by %s layers, want %s", wantText(db.lastWant), wantText(tc.want))

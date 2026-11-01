@@ -6,7 +6,7 @@ import "sort"
 // configuration no longer calls for" path, and there is exactly one of it.
 //
 // Two sites ask the identical question — the threshold reconciling sweep
-// (reconcileThresholdBindings) and the maintainer's config-withdrawn pass
+// (reconcileThresholdBindings) and the keeper's config-withdrawn pass
 // (closeWithdrawn) — and they must not be able to answer it differently. A
 // third, the threshold monitor's own notification path, went with the binding
 // memory it compared against. Two
@@ -19,13 +19,13 @@ import "sort"
 // that actually happens — a payload bound at two stations loses one of them,
 // the set is still non-empty, and the removed station's episode is stranded.
 // Comparing keys covers both and costs nothing extra. It was learned once, on
-// the threshold side, and the maintainer inherits it rather than re-learning it
+// the threshold side, and the keeper inherits it rather than re-learning it
 // on a plant floor.
 //
 // What the callers legitimately differ on is only WHERE THE CANDIDATES COME
 // FROM and what they do with the answer. The notification path knows which
 // payload it just rebuilt and reads the monitor's own hold; the sweep knows
-// nothing and reads the database; the maintainer reads the open maintain
+// nothing and reads the database; the keeper reads the open kanban
 // episodes. Those are a parameter and a return value, not a second function.
 //
 // A READ FAILURE MUST NEVER REACH HERE AS AN EMPTY `live`. Every caller returns

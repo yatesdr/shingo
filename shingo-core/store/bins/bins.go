@@ -242,7 +242,7 @@ func NotForeignDugArm(modeParam, askerParam, laneOwnerParam int) string {
 
 // emptyQueryArgs accumulates bind values and hands out their positions.
 //
-// The empty finders compose optional arms — a zone preference, a maintained-
+// The empty finders compose optional arms — a zone preference, a kanban-
 // group fence, a dig exclusion — and each one that is absent shifts every
 // placeholder after it. Hand-numbering that across two query variants per
 // finder is arithmetic nobody can review, and getting it wrong binds the right
@@ -260,11 +260,11 @@ func (a *emptyQueryArgs) add(v any) int {
 
 // ── THE FENCE ───────────────────────────────────────────────────────────────
 
-// EmptyFence is what a plant-wide empty search needs to know about maintained
-// groups: who is asking, and on whose behalf.
+// EmptyFence is what a plant-wide empty search needs to know about kanban
+// : who is asking, and on whose behalf.
 //
 // SHARING IS THE PLANT DEFAULT. Derek's plant-wide empty sharing stays exactly
-// as it is for everyone; the ONLY fenced zones are maintained groups with
+// as it is for everyone; the ONLY fenced zones are kanbans with
 // kanbans.strict on. A blank EmptyFence fences nothing, which is what every
 // caller that has no order in hand keeps getting.
 type EmptyFence struct {
@@ -273,7 +273,7 @@ type EmptyFence struct {
 	// reading for an ask that names no process: it is an outsider at every
 	// strict group, which is the safe direction.
 	ProcessNode string
-	// OriginGroup is the maintained group this ask exists to FILL, by name.
+	// OriginGroup is the kanban this ask exists to FILL, by name.
 	// Blank for everything that is not a level keeper's top-off.
 	OriginGroup string
 	// Sources are the groups a keeper's ask may pull from, in rank order: its
@@ -339,7 +339,7 @@ func (f EmptyFence) Args() []any { return []any{f.ProcessNode, f.OriginGroup} }
 //
 // ── RULE (i): THE FENCE ─────────────────────────────────────────────────────
 //
-// A strict maintained group's empties are RESERVED for the processes it
+// A strict kanban's empties are RESERVED for the processes it
 // supports. An outsider's plant-wide scan cannot see them. That is the whole
 // point of the feature: nothing may steal from the press empty zones, and
 // everyone else keeps sharing.
@@ -359,7 +359,7 @@ func (f EmptyFence) Args() []any { return []any{f.ProcessNode, f.OriginGroup} }
 //
 // A top-off ask may not source a carrier already standing in the group it is
 // filling. That is MG2-11, absorbed here so there is ONE spelling of "not from
-// a maintained group" rather than two that can drift.
+// a kanban" rather than two that can drift.
 //
 // It is a SEPARATE RULE and not a special case of the fence, and the difference
 // matters: the fence asks "are you an outsider here?" — a keeper is not, at its
@@ -393,7 +393,7 @@ func (f EmptyFence) Args() []any { return []any{f.ProcessNode, f.OriginGroup} }
 // ancestor walk from each candidate — a correlated recursion per row. Inverting
 // it into one descendant walk from the fenced ROOTS computes the same set once,
 // and closes NESTING by construction: a group inside a fenced group is in the
-// subtree, so membership-in-any-maintained-ancestor is what the walk already
+// subtree, so membership-in-any-kanban-ancestor is what the walk already
 // answers.
 //
 // processParam and originParam are the 1-based positional parameters that will
@@ -750,7 +750,7 @@ func ExcludeNodeArm(nodeParam int) string {
 //   - claimed and locked bins, for the same reason;
 //   - synthetic and disabled nodes — a carrier parked on a disabled position is
 //     not on hand in any sense the keeper can act on;
-//   - anything carrying a payload. A maintained level counts EMPTIES. A carrier
+//   - anything carrying a payload. A kanban level counts EMPTIES. A carrier
 //     that gained a payload while resident has left the level, which is stated
 //     policy (design §2.3: strict hides empties only) rather than an oversight.
 //
@@ -1571,8 +1571,8 @@ func claimBin(db binExecer, binID, orderID int64) error {
 // a nested group is invisible.
 //
 // Same question, two live answers, split by what is being sourced. Predates the
-// maintained-groups program and is not caused by it. NESTING SEMANTICS FOR
-// SOURCING IS AN OPEN OWNER RULING: maintained groups sidestep it (refused at
+// kanbans program and is not caused by it. NESTING SEMANTICS FOR
+// SOURCING IS AN OPEN OWNER RULING: kanbans sidestep it (refused at
 // save time unless flat), every other group still lives with it, and whoever
 // needs it decided should get the ruling rather than quietly change one side.
 //
@@ -1654,7 +1654,7 @@ func CountEmptyOfTypeInGroup(db *sql.DB, binTypeCode string, groupNodeID int64, 
 }
 
 // CountEmptyOfTypeInGroupExcludingNode is CountEmptyOfTypeInGroup with one
-// node's carriers left out: the level a maintained group will hold once the
+// node's carriers left out: the level a kanban will hold once the
 // carrier a committed lift takes off that node has gone (the vacated-slot store,
 // binresolver.ResolveStoreVacated). EmptyOfTypeInGroupWhere itself (its
 // destination and exclude arm at 0, as the count passes them), one more

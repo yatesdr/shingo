@@ -20,13 +20,13 @@ import (
 // routing-set save and composer saying the same, from the node list Core
 // already sends.
 
-// laneLegsCore is a group with one lane and a maintained (empties) group, as
+// laneLegsCore is a group with one lane and a kanban, as
 // Core's node list carries them once the Edge has bare-named the children.
 func laneLegsCore() map[string]protocol.NodeInfo {
 	return map[string]protocol.NodeInfo{
 		"LL-SUP":     {Name: "LL-SUP", NodeType: protocol.NodeClassNGRP},
 		"LL-LANE":    {Name: "LL-LANE", NodeType: protocol.NodeClassLANE},
-		"LL-EMPTIES": {Name: "LL-EMPTIES", NodeType: protocol.NodeClassNGRP, Maintained: true},
+		"LL-EMPTIES": {Name: "LL-EMPTIES", NodeType: protocol.NodeClassNGRP, Kanban: true},
 		"LL-PRESS":   {Name: "LL-PRESS"},
 		"LL-STG":     {Name: "LL-STG"},
 	}

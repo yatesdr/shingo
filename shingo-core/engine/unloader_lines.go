@@ -15,7 +15,7 @@ import (
 //
 // THE KEEPER'S ARITHMETIC. A level type's shortfall is the keeper's own
 // (store.KanbanCounts: the effective want less resident, asked and coming), read
-// against the same open maintain episodes Maintainer.Tick reads. Nothing here is
+// against the same open kanban episodes KanbanKeeper.Tick reads. Nothing here is
 // a fifth term. The walk over the carts is kanban.AssignAcross.
 //
 // KEYED ON LEVELS, NOT ON TOTE NUMBERS. A group with no levels gets no line and
@@ -32,7 +32,7 @@ import (
 // A failed read is an error and no line: never a line built on a count that was not
 // made.
 //
-// FOUR STATEMENTS PER CALL, however many groups and levels: the open maintain
+// FOUR STATEMENTS PER CALL, however many groups and levels: the open kanban
 // episodes with their asks, the types in play (the level types, the sources' and the
 // window carts' types, each with its floor size and the groups' layer wants,
 // ListTypesInPlay), the comings and the residents (store.DB.ReadKanbanCounts, whose
@@ -82,7 +82,7 @@ func (e *Engine) UnloaderGroupLines(asks []store.GroupLineAsk) ([]protocol.NodeB
 	if err != nil {
 		return nil, fmt.Errorf("group lines: %w", err)
 	}
-	wantsByGroup := map[int64][]store.MaintainLayerWant{}
+	wantsByGroup := map[int64][]store.KanbanLayerWant{}
 	sizes := map[string]domain.FloorSize{}
 	for _, t := range types {
 		for _, w := range t.LayerWants {
@@ -103,10 +103,10 @@ func (e *Engine) UnloaderGroupLines(asks []store.GroupLineAsk) ([]protocol.NodeB
 			continue
 		}
 		inbound := map[int64]bool{}
-		linesOf := func(groupID int64, group string, levels []store.MaintainLevel) []kanban.Line {
+		linesOf := func(groupID int64, group string, levels []store.KanbanLevel) []kanban.Line {
 			lines := make([]kanban.Line, 0, len(levels))
 			for _, lv := range levels {
-				asked := askedByKey[protocol.MaintainEpisodeKey(group, lv.BinTypeCode)]
+				asked := askedByKey[protocol.KanbanEpisodeKey(group, lv.BinTypeCode)]
 				tl, c := counts.TypeLine(lv, asked, wantsByGroup[groupID])
 				for _, ib := range c.Inbound {
 					inbound[ib.BinID] = true

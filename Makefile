@@ -69,7 +69,7 @@ dev-rates: ## Fill/starve AND carrier-deadlock check on $(PLANT) (no Docker need
 	# full, zero empty, PRESS-2 stalled, retrieve_empty orders queued for the
 	# rest of the run. What that run exposed was a tool defect too: simcalc
 	# read SYN_MARKET at a 0.45 bins/min deficit it created itself (half a
-	# closed loader loop charged as a market draw; a maintained group's surplus
+	# closed loader loop charged as a market draw; a kanban's surplus
 	# stranded instead of overflowing back — fixed in the simcalc rework). The
 	# rig jam was real anyway — the pool DID run dry — and the corrected
 	# checker still names the mechanism that dries it: input coupling, where a

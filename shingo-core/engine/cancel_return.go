@@ -358,8 +358,10 @@ func (e *Engine) returnSources(bin *bins.Bin, carrier *orders.Order) ([]returnSo
 	return out, nil
 }
 
-// fencedFor reports whether a declared empties place is a strict maintained
-// group that fences the cancelled order's process — the same admission the
+// fencedFor reports whether a declared empties place is a strict kanban
+//
+//	that fences the cancelled order's process — the same admission the
+//
 // finder's tier 3 applies to a need naming that group (nodes.GroupFencesAsker).
 // DECLARED AND NOT FENCED: a place some claim declares, but that this process
 // may not draw from, is a place the next empty need from this process would be
@@ -431,18 +433,18 @@ func (e *Engine) storeInto(src *nodes.Node, bin *bins.Bin, carrier *orders.Order
 	if err == nil && res != nil && res.Node != nil {
 		return res.Node, ""
 	}
-	// A MAINTAINED GROUP AT ITS LEVEL OVERFLOWS, ONE HOP, as any store into it
-	// does at intake (LifecycleService.tryOverflow): the keeper topping a bank
+	// A KANBAN AT ITS LEVEL OVERFLOWS, ONE HOP, as any store into it
+	// does at intake (LifecycleService.tryOverflow): the keeper topping a kanban
 	// back up after this bin was lifted out of it is ordinary, and the plant has
 	// already said where the next carrier goes. Only that refusal — a group
 	// that is full, or a fence that refuses this bin, holds as before — and
 	// only one hop: an overflow at its own level holds rather than consulting
 	// its overflow.
 	//
-	// THE HOP FOLLOWS A DECLARATION BY THE BANK, NOT BY A CONSUMER. No retrieve
+	// THE HOP FOLLOWS A DECLARATION BY THE KANBAN, NOT BY A CONSUMER. No retrieve
 	// tier reads the overflow, so a bin that took the hop is found by
 	// blank-source needs (the keeper's top-ups, the plant-wide tier) only.
-	// Empties-only in practice: a payload is refused by an empties bank before
+	// Empties-only in practice: a payload is refused by a kanban before
 	// its level is asked.
 	if !errors.Is(err, kanban.ErrAtLevel) {
 		return nil, refusalText(err, "no slot in "+group.Name)

@@ -1965,15 +1965,15 @@ body[data-dashboard-kind="node-report"] #dash-main {
 }
 
 /* Count history and the pages that took its sections: the tables (the tick feed
-   on count history, Maintained Groups on the Nodes page, Lineside Buckets on the
+   on count history, Kanbans on the Nodes page, Lineside Buckets on the
    Bins page) and the flagged-carrier link in count history's banner. */
 .rh-table { width: 100%; border-collapse: collapse; font-size: var(--font-sm); }
 .rh-table th { font-weight: 600; color: var(--text-muted); font-size: var(--font-xs); text-transform: uppercase; letter-spacing: 0.05em; text-align: left; padding: 0.45rem 0.6rem; border-bottom: 1px solid var(--border); }
 .rh-table td { padding: 0.5rem 0.6rem; border-bottom: 1px solid var(--border); vertical-align: middle; }
 .rh-num { text-align: right; font-variant-numeric: tabular-nums; }
-/* The only coloured number on a Maintained Groups row. A covered level is not
+/* The only coloured number on a Kanbans row. A covered level is not
    a green tick, it is nothing happening — so only the short case is marked. */
-.mg-short { color: var(--warning); font-weight: 600; }
+.kanban-short { color: var(--warning); font-weight: 600; }
 .chev { display: inline-block; transition: transform var(--dur-fast, 0.15s) var(--ease, ease); color: var(--text-muted); }
 .alerts-banner .link-btn { background: none; border: 0; padding: 0; font: inherit; color: inherit; text-decoration: underline; cursor: pointer; }
 

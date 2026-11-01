@@ -28,7 +28,7 @@ func (r *kanbanCostRig) doorZone(t *testing.T, name string, slots, want, held in
 	t.Helper()
 	g, kids := kanbanCostFlat(t, r.db, name, slots)
 	if want > 0 {
-		testutil.MustNoErr(t, r.db.SetMaintainLevel(store.MaintainLevel{GroupNodeID: g.ID, BinTypeID: r.small, Want: want}), "level")
+		testutil.MustNoErr(t, r.db.SetKanbanLevel(store.KanbanLevel{GroupNodeID: g.ID, BinTypeID: r.small, Want: want}), "level")
 	}
 	for i := 0; i < held; i++ {
 		landAt(t, r.db, r.small, kids[i].ID, fmt.Sprintf("%s-S%d", name, i))
@@ -72,10 +72,10 @@ func (r *kanbanCostRig) walk(t *testing.T, rows ...protocol.NodeBinsRow) []proto
 	t.Helper()
 	picture, err := r.db.ListKanbanPictureWithSources([]int64{r.k.ID})
 	testutil.MustNoErr(t, err, "the picture")
-	levels := map[int64][]store.MaintainLevel{}
+	levels := map[int64][]store.KanbanLevel{}
 	var sources []store.KanbanRef
 	for _, row := range picture {
-		levels[row.KanbanNodeID] = append(levels[row.KanbanNodeID], row.MaintainLevel())
+		levels[row.KanbanNodeID] = append(levels[row.KanbanNodeID], row.KanbanLevel())
 		if row.KanbanNodeID == r.k.ID {
 			sources = row.Sources
 		}
@@ -188,7 +188,7 @@ func TestKanbanDoor_TheOutboundFull(t *testing.T) {
 	t.Parallel()
 	// K short of small with no child free: every child stands a big.
 	fullK := func(t *testing.T, r *kanbanCostRig) {
-		testutil.MustNoErr(t, r.db.SetMaintainLevel(store.MaintainLevel{GroupNodeID: r.k.ID, BinTypeID: r.small, Want: 4}), "K short of small")
+		testutil.MustNoErr(t, r.db.SetKanbanLevel(store.KanbanLevel{GroupNodeID: r.k.ID, BinTypeID: r.small, Want: 4}), "K short of small")
 		kids, err := r.db.ListChildNodes(r.k.ID)
 		testutil.MustNoErr(t, err, "K's children")
 		for i, c := range kids {
@@ -249,7 +249,7 @@ func TestKanbanDoor_AGapAnAskCoversIsNotAdmitted(t *testing.T) {
 		testdb.KanbanOverflow(t, r.db, r.k.ID, "")
 		_, err := r.db.Exec(`DELETE FROM bins WHERE label = 'KC-K-S-1'`)
 		testutil.MustNoErr(t, err, "K short of small")
-		m := r.eng.Maintainer()
+		m := r.eng.KanbanKeeper()
 		m.Tick()
 		if st := mntState(t, m, r.k.Name, "KC-SMALL"); st.Created != 1 {
 			t.Fatalf("fixture drift: the keeper asked %d: %+v", st.Created, st)
@@ -342,7 +342,7 @@ func TestKanbanDoor_APersonsNamedDropStaysNamed(t *testing.T) {
 		r := newKanbanCostRig(t, 2, 2, 2)
 		_, err := r.db.Exec(`DELETE FROM bins WHERE label = 'KC-K-S-1'`)
 		testutil.MustNoErr(t, err, "K short of small")
-		r.eng.Maintainer().Tick()
+		r.eng.KanbanKeeper().Tick()
 		res, err := move(r, "KC-W2-EMPTY", r.k.Name)
 		testutil.MustNoErr(t, err, "a person's move")
 		got, err := r.db.GetOrder(res.OrderID)
@@ -485,7 +485,7 @@ func TestKanbanDoor_AgreesWithTheKeepersCounts(t *testing.T) {
 	r := newKanbanCostRig(t, 1, 2, 2)
 	_, err := r.db.Exec(`DELETE FROM bins WHERE label = 'KC-K-S-1'`)
 	testutil.MustNoErr(t, err, "K short of small")
-	m := r.eng.Maintainer()
+	m := r.eng.KanbanKeeper()
 	m.Tick()
 	// One push aimed into Z45: a coming of the source's.
 	kids, err := r.db.ListChildNodes(r.z45.ID)
@@ -520,8 +520,8 @@ func TestKanbanDoor_AgreesWithTheKeepersCounts(t *testing.T) {
 			if row.KanbanNodeID != line.Group.ID || row.BinTypeID != r.small {
 				continue
 			}
-			lv := row.MaintainLevel()
-			want := counts.Level(lv, asked[protocol.MaintainEpisodeKey(line.Group.Name, lv.BinTypeCode)])
+			lv := row.KanbanLevel()
+			want := counts.Level(lv, asked[protocol.KanbanEpisodeKey(line.Group.Name, lv.BinTypeCode)])
 			if got := line.Short(protocol.CarrierEmpty); got != want.Short() || line.Resident != want.Resident ||
 				line.Asked != want.Asked || line.Coming != want.Coming || line.Level.Want != lv.Want {
 				t.Errorf("%s: door short %d (resident %d asked %d coming %d want %d), keeper short %d (resident %d asked %d coming %d want %d)",

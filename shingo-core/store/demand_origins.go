@@ -217,7 +217,7 @@ func (db *DB) SupersedeOpenEpisode(episodeKey, newOriginID string, at time.Time)
 // invariant the whole surface rests on, and a mint race is worth surfacing
 // rather than resolving into whichever wrote last.
 //
-// Core mints two kinds now — this one and the maintained-group keeper's. Cell
+// Core mints two kinds now — this one and the kanban keeper's. Cell
 // and changeover episodes are authored on Edge and arrive through the
 // state-transfer seam. One line over OpenCoreEpisode; kept as a name because the
 // threshold monitor and its tests read better asking for the thing they mean.
@@ -228,7 +228,7 @@ func (db *DB) OpenThresholdEpisode(o DemandOrigin) (string, error) {
 // OpenCoreEpisode mints a Core-owned episode of any kind at revision 1.
 //
 // KIND COMES OFF THE ROW, which is what makes this the same INSERT for both
-// kinds Core mints — the threshold monitor's and the maintained-group keeper's.
+// kinds Core mints — the threshold monitor's and the kanban keeper's.
 // It was already written that way; only the name said otherwise.
 //
 // THE DUPLICATE GUARD IS THE DATABASE. A partial unique index on
@@ -309,7 +309,7 @@ func (db *DB) OpenOriginForKey(episodeKey string) (string, error) {
 	return id, nil
 }
 
-// CloseDemandOriginByID ends an episode Core owns — threshold or maintain.
+// CloseDemandOriginByID ends an episode Core owns — threshold or kanban.
 //
 // IT DOES NOT TOUCH THE REVISION, and this comment used to say it bumped it.
 // Its UPDATE is byte-identical to CloseDemandOriginInferred's: both set
@@ -544,7 +544,7 @@ func (db *DB) ListOrphanFindings() ([]OrphanFinding, error) {
 //
 // KIND-PARAMETERISED BECAUSE CORE NOW MINTS TWO. It was
 // ListOpenThresholdEpisodes with "threshold" baked into the WHERE and stamped
-// back onto every row; the maintained-group keeper needs the identical read for
+// back onto every row; the kanban keeper needs the identical read for
 // its own kind, and a second copy of this query is a second set of columns to
 // forget to add to.
 //
@@ -579,7 +579,7 @@ func (db *DB) ListOpenEpisodesOfKind(kind string) ([]DemandOrigin, error) {
 	return out, rows.Err()
 }
 
-// KeeperEpisode is an open maintain episode with what the keeper asks of its live
+// KeeperEpisode is an open kanban episode with what the keeper asks of its live
 // orders: its asks (CountLiveRootsByOrigin's count) and the oldest parked one's
 // queue cause, sentence and birth (OldestAt nil: nothing is parked).
 type KeeperEpisode struct {
@@ -590,7 +590,7 @@ type KeeperEpisode struct {
 	OldestAt     *time.Time
 }
 
-// ListOpenKeeperEpisodes reads every open maintain episode with its live orders,
+// ListOpenKeeperEpisodes reads every open kanban episode with its live orders,
 // in one statement: the keeper's memory, its asked count and its parked-ness
 // together. Asked counts live root orders, for the reason on
 // CountLiveRootsByOrigin: a dig's legs are not more demand. Parked reads every live
@@ -610,7 +610,7 @@ func (db *DB) ListOpenKeeperEpisodes() ([]KeeperEpisode, error) {
 		  FROM demand_origins d
 		  LEFT JOIN orders o ON o.origin_id = d.origin_id
 		 WHERE d.kind = $1 AND `+helpers.DemandOpenSQL("d")+`
-		 GROUP BY d.origin_id`, protocol.EpisodeKindMaintain)
+		 GROUP BY d.origin_id`, protocol.EpisodeKindKanban)
 	if err != nil {
 		return nil, fmt.Errorf("list open keeper episodes: %w", err)
 	}
@@ -623,7 +623,7 @@ func (db *DB) ListOpenKeeperEpisodes() ([]KeeperEpisode, error) {
 			&e.Asked, &e.OldestCause, &e.OldestReason, &e.OldestAt); err != nil {
 			return nil, fmt.Errorf("scan open keeper episode: %w", err)
 		}
-		e.Kind = protocol.EpisodeKindMaintain
+		e.Kind = protocol.EpisodeKindKanban
 		out = append(out, e)
 	}
 	return out, rows.Err()
@@ -636,9 +636,9 @@ func (db *DB) ListOpenThresholdEpisodes() ([]DemandOrigin, error) {
 	return db.ListOpenEpisodesOfKind(protocol.EpisodeKindThreshold)
 }
 
-// MaintainedEpisodeForOrigin resolves an ask's origin to BOTH halves of the
-// (group, carrier type) pair its open maintain episode names. Blank group and
-// blank type mean "this origin is not an open maintain episode" — an ordinary
+// KanbanEpisodeForOrigin resolves an ask's origin to BOTH halves of the
+// (group, carrier type) pair its open kanban episode names. Blank group and
+// blank type mean "this origin is not an open kanban episode" — an ordinary
 // answer, not an error.
 //
 // ONE READ, TWO ANSWERS, because the sourcing path needs both and they come out
@@ -652,21 +652,21 @@ func (db *DB) ListOpenThresholdEpisodes() ([]DemandOrigin, error) {
 // that group and deliver it to another position in the same group: a null trip
 // that also claims the carrier, drops `resident`, and re-opens the gap. The
 // design named this before the keeper existed — "never from the group itself".
-func (db *DB) MaintainedEpisodeForOrigin(originID string) (groupNode, binType string, err error) {
-	ep, err := db.MaintainedEpisodeOf(originID)
+func (db *DB) KanbanEpisodeForOrigin(originID string) (groupNode, binType string, err error) {
+	ep, err := db.KanbanEpisodeOf(originID)
 	return ep.Group, ep.BinType, err
 }
 
-// MaintainedEpisodeOf is that one read, with the group's sources in rank order
+// KanbanEpisodeOf is that one read, with the group's sources in rank order
 // riding it: the finder's whole view of a keeper's ask (plan.Finder), so a Pick pays
 // one statement for the type, the fence and the sources. The zero value means this
-// origin is no open maintain episode. The group in the SELECT is the episode key's
+// origin is no open kanban episode. The group in the SELECT is the episode key's
 // second part, which ParseEpisodeKey below reads as CoreNode.
-func (db *DB) MaintainedEpisodeOf(originID string) (nodes.MaintainedEpisode, error) {
+func (db *DB) KanbanEpisodeOf(originID string) (nodes.KanbanEpisode, error) {
 	if originID == "" {
 		// The blank-origin guard, and it must come BEFORE the query: origin_id is
 		// a UUID column and Postgres errors on '' rather than returning no rows.
-		return nodes.MaintainedEpisode{}, nil
+		return nodes.KanbanEpisode{}, nil
 	}
 	var (
 		key     string
@@ -679,25 +679,25 @@ func (db *DB) MaintainedEpisodeOf(originID string) (nodes.MaintainedEpisode, err
 		          WHERE g.name = split_part(d.episode_key, '|', 2)), '[]')
 		  FROM demand_origins d
 		 WHERE d.origin_id = $1 AND d.kind = $2 AND `+helpers.DemandOpenSQL("d"),
-		originID, protocol.EpisodeKindMaintain).Scan(&key, &sources)
+		originID, protocol.EpisodeKindKanban).Scan(&key, &sources)
 	if errors.Is(qerr, sql.ErrNoRows) {
-		return nodes.MaintainedEpisode{}, nil
+		return nodes.KanbanEpisode{}, nil
 	}
 	if qerr != nil {
-		return nodes.MaintainedEpisode{}, fmt.Errorf("maintained episode for origin %s: %w", originID, qerr)
+		return nodes.KanbanEpisode{}, fmt.Errorf("kanban episode for origin %s: %w", originID, qerr)
 	}
 	parsed, perr := protocol.ParseEpisodeKey(key)
 	if perr != nil {
 		// A key that will not parse is a mint site that built the string by
-		// hand. Loud rather than silently untyped: an untyped maintainer ask
+		// hand. Loud rather than silently untyped: an untyped keeper ask
 		// sources any compatible empty, which is the mix drift the type exists
 		// to prevent.
-		return nodes.MaintainedEpisode{}, fmt.Errorf("maintained episode for origin %s: episode key %q: %w",
+		return nodes.KanbanEpisode{}, fmt.Errorf("kanban episode for origin %s: episode key %q: %w",
 			originID, key, perr)
 	}
-	ep := nodes.MaintainedEpisode{Group: parsed.CoreNode, BinType: parsed.BinType}
+	ep := nodes.KanbanEpisode{Group: parsed.CoreNode, BinType: parsed.BinType}
 	if err := json.Unmarshal(sources, &ep.Sources); err != nil {
-		return nodes.MaintainedEpisode{}, fmt.Errorf("maintained episode for origin %s: sources: %w", originID, err)
+		return nodes.KanbanEpisode{}, fmt.Errorf("kanban episode for origin %s: sources: %w", originID, err)
 	}
 	return ep, nil
 }
@@ -863,8 +863,8 @@ func (db *DB) ListClosedBySince(since time.Time) ([]string, error) {
 	return out, rows.Err()
 }
 
-// MaintainedBinTypeIDForOrigin resolves an ask's origin to the bin type ID its
-// open maintain episode names. Nil means "not an open maintain episode", which
+// KanbanBinTypeIDForOrigin resolves an ask's origin to the bin type ID its
+// open kanban episode names. Nil means "not an open kanban episode", which
 // is every other order in the plant.
 //
 // THE ID, BECAUSE THE RESOLVER TAKES ONE. The episode key carries the CODE —
@@ -877,8 +877,8 @@ func (db *DB) ListClosedBySince(since time.Time) ([]string, error) {
 // deleted out from under an open episode, and the honest consequence is an
 // untyped resolve — the same behaviour every order had before MG4-2 — rather
 // than refusing to place a carrier at all.
-func (db *DB) MaintainedBinTypeIDForOrigin(originID string) (*int64, error) {
-	_, code, err := db.MaintainedEpisodeForOrigin(originID)
+func (db *DB) KanbanBinTypeIDForOrigin(originID string) (*int64, error) {
+	_, code, err := db.KanbanEpisodeForOrigin(originID)
 	if err != nil || code == "" {
 		return nil, err
 	}

@@ -27,7 +27,7 @@ const SurplusEdgeUUIDPrefix = store.SurplusEdgeUUIDPrefix
 //
 // THE DECISION IS UNDER THE LOADER'S OWN LOCK (loaderLock, the one a full ask and a
 // drain hold): a full ask and the arm are decided one at a time, and no second lock or
-// rank is added. The keeper holds no lock of its own across this: Maintainer.mu guards
+// rank is added. The keeper holds no lock of its own across this: KanbanKeeper.mu guards
 // its snapshot only and is the inner of the two by rank, so taking this under it fails a
 // lockcheck build. Pin: TestKanbanSurplus_TheLoaderLockOutranksTheKeepersOwn.
 //

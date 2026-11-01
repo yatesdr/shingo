@@ -4542,6 +4542,13 @@ func migrationList() []migration {
 			func(q schema.Querier) bool {
 				return schema.ColumnAbsent(q, "bin_loaders", "changeover_load_directive")
 			}},
+		{171, "an episode a kanban keeper opened has kind kanban - demand_origins.kind rewritten from its old word",
+			v171KanbanEpisodeKind,
+			func(q schema.Querier) bool {
+				var left bool
+				err := q.QueryRow(`SELECT EXISTS (SELECT 1 FROM demand_origins WHERE kind = 'maintain')`).Scan(&left)
+				return err == nil && !left
+			}},
 		{173, "order_bins: an order's carts, one row per lift (pick_step, drop_step), for every order that carries a cart, kept after it ends; the census lists what the walk cannot place",
 			v173OrderCarts,
 			func(q schema.Querier) bool {
@@ -4554,6 +4561,19 @@ func migrationList() []migration {
 					schema.ColumnAbsent(q, "order_bins", "node_name") && schema.ColumnAbsent(q, "order_bins", "action")
 			}},
 	}
+}
+
+// v171KanbanEpisodeKind rewrites the kind on every episode row, open and closed, so
+// one word reads them all: the keeper's open set, the demand pages and the door's asks
+// ask for protocol.EpisodeKindKanban. The mnt| episode key prefix stays: a key is an
+// identifier, and an open episode has to keep matching the orders that carry it.
+// ROLLBACK is the previous binary plus the reverse UPDATE. Pin:
+// TestMigrate_V171_TheEpisodeKindIsKanban.
+func v171KanbanEpisodeKind(tx *sql.Tx) error {
+	if _, err := tx.Exec(`UPDATE demand_origins SET kind = 'kanban' WHERE kind = 'maintain'`); err != nil {
+		return fmt.Errorf("v171 demand_origins.kind: %w", err)
+	}
+	return nil
 }
 
 // v170DropChangeoverLoadDirective drops a setting that did not do what it said.
@@ -4650,7 +4670,7 @@ func v165LoaderDrainStates(tx *sql.Tx) error {
 //
 // THE ROW AT 0 IS A CAP, the rest are not. A type's tops & bottoms row is its
 // own line: the store caps judge a cart at 0 against the row's want, and the
-// stack level counts it never (binresolver.AtDeclaredLevel); a group that keeps
+// stack level counts it never (kanban.AtLevel); a group that keeps
 // a type and has no row refuses it, and the group's save counts the level plus
 // the row against its enabled positions. A row of 1 layer or more is still what
 // it was at v161: which heights the group is short of, told to the unloader,

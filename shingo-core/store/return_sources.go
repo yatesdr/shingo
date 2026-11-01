@@ -91,9 +91,9 @@ func (db *DB) ReturnSourcesForPayload(payload string, ownNodes []string) ([]stri
 //	               carts it puts an empty on (loaders.ActsAsUnloaderSQL).
 //	produce loader inbound_source — where a loader's empties come from.
 //
-// NOT the maintained groups supporting a process, and not any bank's overflow:
-// neither says where this line's empties go. A bank at its level still follows
-// its OWN overflow when a declaration names that bank (the caller's one hop).
+// NOT the kanbans supporting a process, and not any kanban's overflow:
+// neither says where this line's empties go. A kanban at its level still follows
+// its OWN overflow when a declaration names that kanban (the caller's one hop).
 //
 // WHICH CLAIMS COUNT FOR A TYPE. A claim declares a part, not a carrier; it
 // counts for this type when its payload's carrier rule admits the type — the

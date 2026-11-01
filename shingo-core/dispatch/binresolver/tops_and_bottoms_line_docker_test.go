@@ -55,8 +55,8 @@ func TestGroupAdmitsStore_ACartAtZeroOnARealGroup(t *testing.T) {
 	if atZero.CarrierState() != protocol.CarrierTopsAndBottoms {
 		t.Fatalf("fixture: the cart at 0 reads %s", atZero.CarrierState())
 	}
-	level := store.MaintainLevel{GroupNodeID: grpID, BinTypeID: btID, Want: 2}
-	testutil.MustNoErr(t, db.SetMaintainLevel(level), "level")
+	level := store.KanbanLevel{GroupNodeID: grpID, BinTypeID: btID, Want: 2}
+	testutil.MustNoErr(t, db.SetKanbanLevel(level), "level")
 
 	cdb, counter, err := store.OpenCounting(cfg)
 	testutil.MustNoErr(t, err, "counting db")
@@ -79,7 +79,7 @@ func TestGroupAdmitsStore_ACartAtZeroOnARealGroup(t *testing.T) {
 	if ok, _ := admits(atZero); ok {
 		t.Error("a cart at 0 was admitted to a group that keeps its type and has no tops & bottoms row")
 	}
-	testutil.MustNoErr(t, db.SetMaintainLevelAndLayerWants(level, []store.MaintainLayerWant{{Layers: 0, Want: 2}}), "the row")
+	testutil.MustNoErr(t, db.SetKanbanLevelAndLayerWants(level, []store.KanbanLayerWant{{Layers: 0, Want: 2}}), "the row")
 	okStack, stackStmts := admits(stack)
 	okZero, zeroStmts := admits(atZero)
 	if okStack {

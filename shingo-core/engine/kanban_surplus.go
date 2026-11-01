@@ -28,7 +28,7 @@ import (
 //	ANOTHER FLOOR, OR A TYPE WITH NO FLOOR ENTERED. Re-typing cannot help, so the oldest
 //	surplus goes to the first source of the kanban declaring a level of its own type with
 //	room: residents and comings under that level, no supports, and a free slot. None: it
-//	waits, and its line says why (MaintainerGroupState.SurplusCause).
+//	waits, and its line says why (KanbanLineState.SurplusCause).
 //
 // A PLAIN GROUP AND THE OVERFLOW ARE NEVER ASKED, here. A plain group has no level, so
 // no count says it wants the cart, and only a door or a keeper's source reaches it. A
@@ -170,7 +170,7 @@ func surplusAtWindows(rows []store.KanbanPictureRow, lines []keeperLine, windows
 // surplusArm runs the arm on a kanban the tick found short, after its asks, and answers
 // the causes by surplus type. Nothing above its want, or a child free for every short
 // type: nothing is moved, and with nothing above its want nothing is read.
-func (m *Maintainer) surplusArm(k store.KanbanPictureRow, rows []store.KanbanPictureRow, lines []keeperLine,
+func (m *KanbanKeeper) surplusArm(k store.KanbanPictureRow, rows []store.KanbanPictureRow, lines []keeperLine,
 	ask *kanbanAsks, windows []store.KanbanWindow, picture map[int64][]store.KanbanPictureRow,
 	counts *store.KanbanCounts) map[string]string {
 
@@ -213,7 +213,7 @@ func (m *Maintainer) surplusArm(k store.KanbanPictureRow, rows []store.KanbanPic
 	}
 	carts, err := m.eng.db.ListKanbanSurplus(k.KanbanNodeID, distinct(p.toWindows, p.toSources))
 	if err != nil {
-		m.eng.logFn("maintainer: %s: read its surplus: %v", k.KanbanName, err)
+		m.eng.logFn("keeper: %s: read its surplus: %v", k.KanbanName, err)
 		return causes
 	}
 	handed := map[int64]bool{}
@@ -230,13 +230,13 @@ func noSourceHasRoom(kanban string) string {
 // group, whether a child would take this type. Exact where the counts are not: it sees
 // a loaded cart, a claimed one, a locked slot and an ask's hold. A failed read says a
 // child is free: the arm moves nothing on a count that was not made.
-func (m *Maintainer) childFreeFor(ask *kanbanAsks, binTypeID int64) bool {
-	res, err := m.eng.dispatcher.PlanMaintainedSlot(ask.reads, ask.group, binTypeID)
+func (m *KanbanKeeper) childFreeFor(ask *kanbanAsks, binTypeID int64) bool {
+	res, err := m.eng.dispatcher.PlanKanbanSlot(ask.reads, ask.group, binTypeID)
 	if err != nil {
 		if plan.CapacityShape(err) == plan.CapacitySlot {
 			return false
 		}
-		m.eng.logFn("maintainer: %s: is a child free: %v", ask.group.Name, err)
+		m.eng.logFn("keeper: %s: is a child free: %v", ask.group.Name, err)
 		return true
 	}
 	return res != nil && res.Node != nil
@@ -260,7 +260,7 @@ func sourcesWithRoom(k store.KanbanPictureRow, code string, picture map[int64][]
 			if r.BinTypeCode != code || !r.Live || len(r.Supports) > 0 {
 				continue
 			}
-			if short := counts.Level(r.MaintainLevel(), 0).Short(); short > 0 {
+			if short := counts.Level(r.KanbanLevel(), 0).Short(); short > 0 {
 				out = append(out, sourceRoom{room: short,
 					group: &nodes.Node{ID: r.KanbanNodeID, Name: r.KanbanName, IsSynthetic: true, Enabled: true}})
 			}
@@ -273,10 +273,10 @@ func sourcesWithRoom(k store.KanbanPictureRow, code string, picture map[int64][]
 // each frees a child when it is lifted, and the short type still reads short only because
 // a robot has not got there. A move to a window is not one: its cart is netted as what it
 // is lit as. One statement, only when a cart would go to a source.
-func (m *Maintainer) lessLeaving(k store.KanbanPictureRow, codes []string, windows []store.KanbanWindow) []string {
+func (m *KanbanKeeper) lessLeaving(k store.KanbanPictureRow, codes []string, windows []store.KanbanWindow) []string {
 	leaving, err := m.eng.db.CountSurplusLeaving(k.KanbanNodeID)
 	if err != nil {
-		m.eng.logFn("maintainer: %s: read its surplus moves: %v", k.KanbanName, err)
+		m.eng.logFn("keeper: %s: read its surplus moves: %v", k.KanbanName, err)
 		return nil
 	}
 	for _, w := range windows {
@@ -290,7 +290,7 @@ func (m *Maintainer) lessLeaving(k store.KanbanPictureRow, codes []string, windo
 // surplusToWindows sends the carts to the windows of the kanban's unloaders, loader by
 // loader, each under its own lock. Fewer than two windows standing open is what the
 // tick's read already says, with none of freeWindows' statements.
-func (m *Maintainer) surplusToWindows(k store.KanbanPictureRow, queue []*bins.Bin, windows []store.KanbanWindow,
+func (m *KanbanKeeper) surplusToWindows(k store.KanbanPictureRow, queue []*bins.Bin, windows []store.KanbanWindow,
 	causes map[string]string) {
 	if len(queue) == 0 {
 		return
@@ -323,7 +323,7 @@ func (m *Maintainer) surplusToWindows(k store.KanbanPictureRow, queue []*bins.Bi
 		}
 		moved, free, err := m.eng.dispatcher.SurplusToWindows(id, open, queue, "surplus of "+k.KanbanName)
 		if err != nil {
-			m.eng.logFn("maintainer: %s: surplus to loader %d: %v", k.KanbanName, id, err)
+			m.eng.logFn("keeper: %s: surplus to loader %d: %v", k.KanbanName, id, err)
 		}
 		if free >= 2 && len(moved) == 0 {
 			why = "above its want, and no free window takes it"
@@ -331,7 +331,7 @@ func (m *Maintainer) surplusToWindows(k store.KanbanPictureRow, queue []*bins.Bi
 		went := make(map[int64]bool, len(moved))
 		for _, c := range moved {
 			went[c] = true
-			m.eng.logFn("maintainer: SURPLUS bin=%d of %s to a window of loader %d", c, k.KanbanName, id)
+			m.eng.logFn("keeper: SURPLUS bin=%d of %s to a window of loader %d", c, k.KanbanName, id)
 		}
 		var rest []*bins.Bin
 		for _, c := range queue {
@@ -349,7 +349,7 @@ func (m *Maintainer) surplusToWindows(k store.KanbanPictureRow, queue []*bins.Bi
 // surplusToSources sends the carts to the kanban's sources: the first in rank order whose
 // count has room and which has a free slot, one read of it a cart. A slot lost since it
 // was read free is the next source's question.
-func (m *Maintainer) surplusToSources(k store.KanbanPictureRow, queue []*bins.Bin,
+func (m *KanbanKeeper) surplusToSources(k store.KanbanPictureRow, queue []*bins.Bin,
 	picture map[int64][]store.KanbanPictureRow, counts *store.KanbanCounts, causes map[string]string) {
 	used := map[int64]int{}
 	for _, c := range queue {
@@ -367,12 +367,12 @@ func (m *Maintainer) surplusToSources(k store.KanbanPictureRow, queue []*bins.Bi
 				continue
 			}
 			if err != nil {
-				m.eng.logFn("maintainer: %s: surplus %s to %s: %v", k.KanbanName, c.Label, res.Node.Name, err)
+				m.eng.logFn("keeper: %s: surplus %s to %s: %v", k.KanbanName, c.Label, res.Node.Name, err)
 				continue
 			}
 			used[s.group.ID]++
 			sent = true
-			m.eng.logFn("maintainer: SURPLUS bin=%s of %s to %s", c.Label, k.KanbanName, res.Node.Name)
+			m.eng.logFn("keeper: SURPLUS bin=%s of %s to %s", c.Label, k.KanbanName, res.Node.Name)
 			break
 		}
 		if !sent {

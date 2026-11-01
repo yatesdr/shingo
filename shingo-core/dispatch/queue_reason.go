@@ -137,7 +137,7 @@ type QueueParams struct {
 	// different fix, so it gets its own sentence.
 	DestUnresolved bool
 	// Reserved marks a material wait where the group DOES hold what is wanted
-	// and this asker may not have it — a strict maintained group the need is not
+	// and this asker may not have it — a strict kanban the need is not
 	// supported at.
 	//
 	// It exists because "waiting for an empty bin in PRESS-BUFFER" is a lie by

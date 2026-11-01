@@ -38,7 +38,7 @@ type KanbanChange struct {
 type KanbanLevelChange struct {
 	BinTypeID  int64
 	Want       *int
-	LayerWants *[]MaintainLayerWant
+	LayerWants *[]KanbanLayerWant
 	// Overflow is this type's own overflow node; 0 clears it.
 	Overflow *int64
 }
@@ -51,7 +51,7 @@ type KanbanLevelChange struct {
 // resolved as v169 resolves one, so a group never has both.
 //
 // It enforces no save rules: those read the plant around the kanban and live in
-// service.ValidateMaintainedGroup, which runs before this.
+// service.ValidateKanban, which runs before this.
 func (db *DB) SaveKanban(c KanbanChange, actor string) error {
 	tx, err := db.Begin()
 	if err != nil {
@@ -257,7 +257,7 @@ func (s kanbanSave) applyLevels(c KanbanChange) error {
 	for _, r := range picture {
 		before[r.BinTypeID] = r
 	}
-	wants, err := nodes.ListMaintainLayerWants(s.tx, s.id)
+	wants, err := nodes.ListKanbanLayerWants(s.tx, s.id)
 	if err != nil {
 		return err
 	}
@@ -287,7 +287,7 @@ func (s kanbanSave) applyLevels(c KanbanChange) error {
 	return nil
 }
 
-func (s kanbanSave) applyLevel(lc KanbanLevelChange, before map[int64]KanbanPictureRow, wants []MaintainLayerWant) error {
+func (s kanbanSave) applyLevel(lc KanbanLevelChange, before map[int64]KanbanPictureRow, wants []KanbanLayerWant) error {
 	row, had := before[lc.BinTypeID]
 	code := row.BinTypeCode
 	if !had {
@@ -299,7 +299,7 @@ func (s kanbanSave) applyLevel(lc KanbanLevelChange, before map[int64]KanbanPict
 		}
 	}
 	if lc.Want != nil && (!had || *lc.Want != row.Base) {
-		if err := nodes.UpsertLevel(s.tx, MaintainLevel{GroupNodeID: s.id, BinTypeID: lc.BinTypeID, Want: *lc.Want}); err != nil {
+		if err := nodes.UpsertLevel(s.tx, KanbanLevel{GroupNodeID: s.id, BinTypeID: lc.BinTypeID, Want: *lc.Want}); err != nil {
 			return err
 		}
 		was := ""
@@ -332,8 +332,8 @@ func (s kanbanSave) applyLevel(lc KanbanLevelChange, before map[int64]KanbanPict
 	return nil
 }
 
-func layerWantsOf(all []MaintainLayerWant, binTypeID int64) []MaintainLayerWant {
-	var out []MaintainLayerWant
+func layerWantsOf(all []KanbanLayerWant, binTypeID int64) []KanbanLayerWant {
+	var out []KanbanLayerWant
 	for _, w := range all {
 		if w.BinTypeID == binTypeID {
 			out = append(out, w)
@@ -343,7 +343,7 @@ func layerWantsOf(all []MaintainLayerWant, binTypeID int64) []MaintainLayerWant 
 }
 
 // auditLayerWants appends one row per height added, changed or removed.
-func (s kanbanSave) auditLayerWants(code string, before, after []MaintainLayerWant) error {
+func (s kanbanSave) auditLayerWants(code string, before, after []KanbanLayerWant) error {
 	was := map[int]int{}
 	for _, w := range before {
 		was[w.Layers] = w.Want
@@ -397,7 +397,7 @@ func (s kanbanSave) auditLevelOverflow(code string, before, after *int64) error 
 
 // applySupports replaces the set, one audit row per node added or removed.
 func (s kanbanSave) applySupports(next []int64) error {
-	before, err := nodes.ListMaintainSupports(s.tx, s.id)
+	before, err := nodes.ListKanbanSupports(s.tx, s.id)
 	if err != nil {
 		return err
 	}

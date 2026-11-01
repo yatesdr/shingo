@@ -588,7 +588,7 @@ const (
 	// read, so the finder declined to answer rather than guessing. The finder's
 	// member of the undetermined family.
 	CauseFinderAccessibilityUnreadable QueueCause = "finder-accessibility-unreadable"
-	// CauseNGRPAtLevel — a maintained group is holding what it was told to hold,
+	// CauseNGRPAtLevel — a kanban is holding what it was told to hold,
 	// so it will not take another carrier of this type.
 	//
 	// NOT CauseNGRPFull, which says every position is physically occupied. This
@@ -599,7 +599,7 @@ const (
 	// the level.
 	CauseNGRPAtLevel QueueCause = "ngrp-at-level"
 	// CauseGroupHoldsEmptiesOnly — a store carrying a payload named a group that
-	// declares a maintain level, which makes it an empties bank.
+	// declares a level, which makes it a kanban.
 	//
 	// NOT CauseNGRPAtLevel and not CauseNGRPFull, and the difference is what an
 	// operator does next. Those two say the group is holding enough; both clear
@@ -610,11 +610,11 @@ const (
 	// group, or the carrier being aimed somewhere else.
 	//
 	// It is a fail-safe: the ordering race that produced labelled carriers into a
-	// press empties bank is closed at the operator's CLEAR, so a park under this
+	// lineside kanban is closed at the operator's CLEAR, so a park under this
 	// cause means a path nobody has found yet is still aiming one here. Treat a
 	// row carrying it as a lead, not as routine backpressure.
 	CauseGroupHoldsEmptiesOnly QueueCause = "group-holds-empties-only"
-	// CauseFinderGroupFenced — the need named a STRICT maintained group it is not
+	// CauseFinderGroupFenced — the need named a STRICT kanban it is not
 	// supported at. The group holds carriers; they are not this asker's.
 	//
 	// A DISPOSITION, NOT A FILTER, and that is the whole reason it is a separate

@@ -33,7 +33,7 @@ const (
 	EpisodeKindCell = "cell"
 	// EpisodeKindChangeover is a style transition.
 	EpisodeKindChangeover = "changeover"
-	// EpisodeKindMaintain is Core's maintained-group level keeper: a node group
+	// EpisodeKindKanban is Core's kanban level keeper: a node group
 	// is holding fewer unclaimed empty carriers of one type than it is declared
 	// to hold.
 	//
@@ -43,7 +43,7 @@ const (
 	// hand" is expressible in payload terms, and the episode has to be
 	// identifiable per type or one group's two declared types would share one
 	// open episode and one counting stream.
-	EpisodeKindMaintain = "maintain"
+	EpisodeKindKanban = "kanban"
 )
 
 // ── AN EPISODE IS PRODUCE OR CONSUME, AND THAT IS THE CLAIM'S OWN WORD ────
@@ -243,7 +243,7 @@ func ChangeoverEpisodeKey(station string, processChangeoverID int64) string {
 	return fmt.Sprintf("co|%s|%d", station, processChangeoverID)
 }
 
-// MaintainEpisodeKey identifies a Core maintained-group episode: one node group
+// KanbanEpisodeKey identifies a Core kanban episode: one node group
 // falling short of its declared level in ONE carrier type.
 //
 // NO STATION, for the threshold key's reason and more strongly: nodes.name is
@@ -263,12 +263,12 @@ func ChangeoverEpisodeKey(station string, processChangeoverID int64) string {
 //
 // binTypeCode, not bin_type_id. The id is a local key; the code is what travels
 // on every other carrier-typed surface, what a person reads, and what
-// MaintainedEpisodeForOrigin hands back to the finder. An id here would make the
+// KanbanEpisodeForOrigin hands back to the finder. An id here would make the
 // key unreadable in a log and unresolvable across a restore.
 //
 // The code must not contain "|" — config save refuses one that does
-// (service.ValidateMaintainedGroup), because this key is split on it.
-func MaintainEpisodeKey(groupNodeName, binTypeCode string) string {
+// (service.ValidateKanban), because this key is split on it.
+func KanbanEpisodeKey(groupNodeName, binTypeCode string) string {
 	return strings.Join([]string{"mnt", groupNodeName, binTypeCode}, "|")
 }
 
@@ -296,9 +296,9 @@ type ParsedEpisodeKey struct {
 	// CellEpisodeKey for why it is not the SQLite row id.
 	ProcessID    string
 	ChangeoverID int64
-	// BinType is populated for the MAINTAIN kind only — the carrier type the
+	// BinType is populated for the KANBAN kind only — the carrier type the
 	// group is short of. It sits where the other kinds carry a payload, and
-	// deliberately does not reuse Payload: a maintained group's demand is for an
+	// deliberately does not reuse Payload: a kanban's demand is for an
 	// EMPTY carrier, and a reader that found a value in Payload would reasonably
 	// conclude the episode wanted parts in it.
 	BinType string
@@ -356,21 +356,21 @@ func ParseEpisodeKey(key string) (ParsedEpisodeKey, error) {
 		}, nil
 	case "mnt":
 		if len(parts) != 3 {
-			return ParsedEpisodeKey{}, fmt.Errorf("maintain episode key %q: want 3 parts, got %d", key, len(parts))
+			return ParsedEpisodeKey{}, fmt.Errorf("kanban episode key %q: want 3 parts, got %d", key, len(parts))
 		}
 		if parts[1] == "" {
 			return ParsedEpisodeKey{}, fmt.Errorf(
-				"maintain episode key %q: empty group node name — the group IS the place here, so a "+
+				"kanban episode key %q: empty group node name — the group IS the place here, so a "+
 					"key without one identifies nothing and collides with every other such key", key)
 		}
 		if parts[2] == "" {
 			return ParsedEpisodeKey{}, fmt.Errorf(
-				"maintain episode key %q: empty carrier type — a maintained group's demand is per TYPE, "+
+				"kanban episode key %q: empty carrier type — a kanban's demand is per TYPE, "+
 					"so a key without one cannot say what the group is short of and would merge every "+
 					"declared type into one episode", key)
 		}
 		return ParsedEpisodeKey{
-			Kind: EpisodeKindMaintain, CoreNode: parts[1], BinType: parts[2],
+			Kind: EpisodeKindKanban, CoreNode: parts[1], BinType: parts[2],
 		}, nil
 	case "co":
 		if len(parts) != 3 {

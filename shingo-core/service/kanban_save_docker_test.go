@@ -50,7 +50,7 @@ func TestSaveKanban_ThePlainGroupsSaveWritesNoRow(t *testing.T) {
 	if got := db.GetNodeProperty(grpID, nodes.PropOverflowDestination); got != "SKS-SPILL" {
 		t.Errorf("property = %q", got)
 	}
-	cfg, err := svc.GetMaintainedGroup(grpID)
+	cfg, err := svc.GetKanban(grpID)
 	testutil.MustNoErr(t, err, "config")
 	if cfg.OverflowDestination != "SKS-SPILL" {
 		t.Errorf("the modal reads overflow %q, want the property", cfg.OverflowDestination)
@@ -71,8 +71,8 @@ func TestKanbanSave_APlainGroupsOverflowIsAProperty(t *testing.T) {
 	mgGroup(t, db, "SKL-SPILL", 1)
 
 	strict, station, overflow, cover := false, "", "SKL-SPILL", 0
-	settings := MaintainedGroupSettings{OverflowDestination: overflow}
-	chk, err := svc.CheckMaintainedGroupSettings(grpID, settings)
+	settings := KanbanSettings{OverflowDestination: overflow}
+	chk, err := svc.CheckKanbanSettings(grpID, settings)
 	testutil.MustNoErr(t, err, "the settings' check")
 	if chk.Err() != nil {
 		t.Fatalf("the check refused a plain group's overflow: %v", chk.Refusals)
@@ -152,12 +152,12 @@ func TestKanbanSave_TheModalReadsAndWritesTheBase(t *testing.T) {
 		[]plantclaims.ClaimRow{{ProcessID: "SKB-PROC", StyleID: "S", CoreNodeName: "SKB-PRESS", Role: protocol.ClaimRoleProduce,
 			SwapMode: protocol.SwapMode("press_index"), PayloadCode: "SKB-P"}}, 0), "the press")
 
-	effective, err := db.ListMaintainLevels(grpID)
+	effective, err := db.ListKanbanLevels(grpID)
 	testutil.MustNoErr(t, err, "the plant's read")
 	if len(effective) != 1 || effective[0].Want != 5 || effective[0].Base != 1 {
 		t.Fatalf("the plant reads %+v, want 5 of base 1", effective)
 	}
-	cfg, err := svc.GetMaintainedGroup(grpID)
+	cfg, err := svc.GetKanban(grpID)
 	testutil.MustNoErr(t, err, "the modal's read")
 	if len(cfg.Levels) != 1 || cfg.Levels[0].Want != 1 {
 		t.Fatalf("the modal reads %+v, want the declared 1", cfg.Levels)
@@ -182,7 +182,7 @@ func TestSaveKanban_OverflowMustBeANodeOnAKanban(t *testing.T) {
 	grpID, _ := mgGroup(t, db, "SKO-K", 2)
 	spillID, _ := mgGroup(t, db, "SKO-SPILL", 1)
 	bt := mgBinType(t, db, "SKO-T")
-	chk, err := svc.SetMaintainLevel(grpID, bt, 1)
+	chk, err := svc.SetKanbanLevel(grpID, bt, 1)
 	testutil.MustNoErr(t, err, "level")
 	if chk.Err() != nil {
 		t.Fatalf("refused: %v", chk.Refusals)
@@ -208,7 +208,7 @@ func TestSaveKanban_OverflowMustBeANodeOnAKanban(t *testing.T) {
 	if chk.Err() != nil {
 		t.Fatalf("refused: %v", chk.Refusals)
 	}
-	cfg, err := svc.GetMaintainedGroup(grpID)
+	cfg, err := svc.GetKanban(grpID)
 	testutil.MustNoErr(t, err, "config")
 	if cfg.OverflowDestination != "SKO-SPILL" || cfg.Levels[0].OverflowNode != "SKO-SPILL" {
 		t.Errorf("config = %+v", cfg)
@@ -236,18 +236,18 @@ func TestSaveKanban_Sources(t *testing.T) {
 	b, _ := mgGroup(t, db, "SKR-B", 1)
 	lineside, lsKids := mgGroup(t, db, "SKR-LINESIDE", 1)
 	testdb.KanbanStation(t, db, lineside, "EDGE-1")
-	chk, err := svc.SetMaintainSupports(lineside, []int64{lsKids[0].ID})
+	chk, err := svc.SetKanbanSupports(lineside, []int64{lsKids[0].ID})
 	testutil.MustNoErr(t, err, "supports of the other kanban")
 	if chk.Err() != nil {
 		t.Fatalf("refused: %v", chk.Refusals)
 	}
-	chk, err = svc.SetMaintainSupports(grpID, []int64{kids[0].ID})
+	chk, err = svc.SetKanbanSupports(grpID, []int64{kids[0].ID})
 	testutil.MustNoErr(t, err, "supports")
 	if chk.Err() != nil {
 		t.Fatalf("refused: %v", chk.Refusals)
 	}
 
-	saveSources := func(ids ...int64) MaintainedGroupCheck {
+	saveSources := func(ids ...int64) KanbanCheck {
 		t.Helper()
 		chk, err := svc.SaveKanban(KanbanSave{GroupNodeID: grpID, Sources: &ids})
 		testutil.MustNoErr(t, err, "sources")
@@ -288,7 +288,7 @@ func TestSaveKanban_Sources(t *testing.T) {
 	if chk.Err() != nil {
 		t.Fatalf("refused: %v", chk.Refusals)
 	}
-	cfg, err := svc.GetMaintainedGroup(grpID)
+	cfg, err := svc.GetKanban(grpID)
 	testutil.MustNoErr(t, err, "config")
 	if cfg.RunningCover != 3 || len(cfg.Sources) != 1 {
 		t.Errorf("config = %+v", cfg)

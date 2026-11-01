@@ -11,7 +11,7 @@ import (
 
 // TestPreviewFlow_RefusesALaneLegAndFullsFromAnEmptiesGroup is the composer's
 // door onto the same refusals the claim editor makes: the flow's validator
-// reads the lane and maintained-group facts from Core's node list, so a draft
+// reads the lane and kanban facts from Core's node list, so a draft
 // whose source names a lane, or whose consume source names an empties group,
 // carries the finding in Core's sentence.
 func TestPreviewFlow_RefusesALaneLegAndFullsFromAnEmptiesGroup(t *testing.T) {
@@ -22,7 +22,7 @@ func TestPreviewFlow_RefusesALaneLegAndFullsFromAnEmptiesGroup(t *testing.T) {
 	eng.SetCoreNodes([]protocol.NodeInfo{
 		{Name: "FLOW-SUP", NodeType: protocol.NodeClassNGRP},
 		{Name: "FLOW-SUP.FLOW-LANE", NodeType: protocol.NodeClassLANE},
-		{Name: "FLOW-EMPTIES", NodeType: protocol.NodeClassNGRP, Maintained: true},
+		{Name: "FLOW-EMPTIES", NodeType: protocol.NodeClassNGRP, Kanban: true},
 	})
 
 	cells := cellsOf(t, db, toStyleID)
@@ -51,7 +51,7 @@ func TestPreviewFlow_RefusesALaneLegAndFullsFromAnEmptiesGroup(t *testing.T) {
 	want := map[string]string{
 		"FLOW-SWAP/inbound_source":       protocol.MsgLaneIsNotASource + `: "FLOW-LANE"`,
 		"FLOW-SAME/outbound_destination": protocol.MsgLaneIsNotADestination + `: "FLOW-LANE"`,
-		"FLOW-ADD/inbound_source":        protocol.MsgFullsFromAnEmptiesBank + `: "FLOW-EMPTIES"`,
+		"FLOW-ADD/inbound_source":        protocol.MsgFullsFromAKanban + `: "FLOW-EMPTIES"`,
 	}
 	for k, msg := range want {
 		if got[k] != msg {

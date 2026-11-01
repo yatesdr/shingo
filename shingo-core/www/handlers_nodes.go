@@ -258,15 +258,15 @@ func (h *Handlers) handleNodeUpdate(w http.ResponseWriter, r *http.Request) {
 	a := parseNodeAssignments(r)
 
 	// The holds-bins guard, BEFORE anything is written. Narrowing what a
-	// MAINTAINED group may hold can strand the carriers already standing in it;
+	// KANBAN may hold can strand the carriers already standing in it;
 	// for every other node, and for a widening, this is a no-op.
 	//
-	// The browser asks the question first (via /maintained-group/check-types) and
+	// The browser asks the question first (via /kanban/check-types) and
 	// carries the answer here as force, because this form POST navigates and a
 	// 409 would replace the page with an error document. The guard still runs on
 	// this side so a caller that skipped the question is still refused.
 	if a.BinTypeMode == "specific" {
-		g, gErr := h.engine.NodeService().CheckMaintainedGroupTypesChange(
+		g, gErr := h.engine.NodeService().CheckKanbanTypesChange(
 			node.ID, a.BinTypeIDs, r.FormValue("force") == "on")
 		if gErr != nil {
 			http.Error(w, gErr.Error(), http.StatusInternalServerError)
@@ -612,15 +612,15 @@ func (h *Handlers) apiSetNodeBinTypes(w http.ResponseWriter, r *http.Request) {
 	// the write, it only makes the trail poorer.
 	before := h.nodeBinTypeCodes(req.NodeID)
 
-	// Narrowing what a MAINTAINED group may hold can strand the carriers already
+	// Narrowing what a KANBAN may hold can strand the carriers already
 	// standing in it. The guard is a no-op for every other node, and for a
 	// widening: it only fires when a resident's type is on its way out.
-	g, err := h.engine.NodeService().CheckMaintainedGroupTypesChange(req.NodeID, req.BinTypeIDs, req.Force)
+	g, err := h.engine.NodeService().CheckKanbanTypesChange(req.NodeID, req.BinTypeIDs, req.Force)
 	if err != nil {
 		h.jsonError(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	if !h.maintainedGroupHeld(w, g) {
+	if !h.kanbanHeld(w, g) {
 		return
 	}
 

@@ -36,7 +36,7 @@ func TestKanbanRings_WhatMovesAProcess(t *testing.T) {
 
 	press := &nodes.Node{Name: "RING-PRESS", Enabled: true}
 	testutil.MustNoErr(t, f.db.CreateNode(press), "a supported position")
-	testutil.MustNoErr(t, nodes.SetMaintainSupports(f.db.DB, f.group.ID, []int64{press.ID}), "supports")
+	testutil.MustNoErr(t, nodes.SetKanbanSupports(f.db.DB, f.group.ID, []int64{press.ID}), "supports")
 	report := func(process, node string) *protocol.PlantClaimsReport {
 		return &protocol.PlantClaimsReport{ProcessID: process, Styles: []protocol.PlantClaimsStyle{{StyleID: "S", Active: true,
 			Claims: []protocol.PlantClaim{{CoreNodeName: node, Role: protocol.ClaimRoleProduce,

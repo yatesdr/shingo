@@ -13,7 +13,7 @@ import (
 	"shingocore/store/orders"
 )
 
-// overflow_docker_test.go — MG6-1. A maintained group at its level refuses the
+// overflow_docker_test.go — MG6-1. A kanban at its level refuses the
 // push; if somebody named an overflow, the carrier goes there instead of
 // parking.
 //
@@ -21,7 +21,7 @@ import (
 // to read and should not grow one — so this is Core answering "where does this
 // actually go" at admission, the same shape as every other placement decision.
 
-// levelledGroup builds a maintained group with one position, one declared level
+// levelledGroup builds a kanban with one position, one declared level
 // of `want`, and `held` carriers of that type already standing in it.
 func levelledGroup(t *testing.T, db *store.DB, name, code string, want, held, slots int) (int64, int64) {
 	t.Helper()
@@ -48,7 +48,7 @@ func levelledGroup(t *testing.T, db *store.DB, name, code string, want, held, sl
 		testutil.MustNoErr(t, err, "resident carrier")
 	}
 	if want > 0 {
-		testutil.MustNoErr(t, db.SetMaintainLevel(store.MaintainLevel{
+		testutil.MustNoErr(t, db.SetKanbanLevel(store.KanbanLevel{
 			GroupNodeID: grpID, BinTypeID: btID, Want: want,
 		}), "declare level")
 	}

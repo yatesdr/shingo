@@ -17,7 +17,7 @@ import (
 )
 
 // overflow_parked_docker_test.go — MG6-1 for a parked push. Intake sends a push
-// to a maintained group's overflow when the group is at its level; a push that
+// to a kanban's overflow when the group is at its level; a push that
 // parked because the overflow had no room either is asked again on every
 // scanner pass, and takes the overflow once it has room, through the one re-aim
 // the reserve makes (the group's resolve, the back-to-group arm). An order a
@@ -27,7 +27,7 @@ import (
 // SYN_PRESS_EMPTIES at its level while SYN_MARKET had no slot, parked, and held
 // the unloader's window for 233 sim-min while SYN_MARKET's slots came and went.
 
-// parkedPush is a maintained group at its level (one position held of two, a
+// parkedPush is a kanban at its level (one position held of two, a
 // level of one), its overflow with one position a blocker stands on, and a
 // move holding an empty cart at a line, aimed at the group, waiting.
 type parkedPush struct {
@@ -71,7 +71,7 @@ func newParkedPush(t *testing.T, db *store.DB, pfx string, withOverflow bool) pa
 	fx := parkedPush{group: pfx + "-FULL", overflow: pfx + "-SPILL"}
 	grpID, grpPos := group(fx.group, 2)
 	carrier(pfx+"-RES", grpPos[0])
-	testutil.MustNoErr(t, db.SetMaintainLevel(store.MaintainLevel{GroupNodeID: grpID, BinTypeID: btID, Want: 1}), "level")
+	testutil.MustNoErr(t, db.SetKanbanLevel(store.KanbanLevel{GroupNodeID: grpID, BinTypeID: btID, Want: 1}), "level")
 	_, spillPos := group(fx.overflow, 1)
 	fx.blocker = carrier(pfx+"-BLOCK", spillPos[0])
 	if withOverflow {
@@ -273,7 +273,7 @@ func TestOverflow_AParkedPushIsNotPlacedOverItsTypesLevel(t *testing.T) {
 	testutil.MustNoErr(t, db.CreateNode(third), "a third position")
 	var other int64
 	testutil.MustNoErr(t, db.QueryRow(`INSERT INTO bin_types (code) VALUES ('OVP4-OTHER') RETURNING id`).Scan(&other), "another type")
-	testutil.MustNoErr(t, db.SetMaintainLevel(store.MaintainLevel{GroupNodeID: grp.ID, BinTypeID: other, Want: 1}), "its level, unmet")
+	testutil.MustNoErr(t, db.SetKanbanLevel(store.KanbanLevel{GroupNodeID: grp.ID, BinTypeID: other, Want: 1}), "its level, unmet")
 
 	eng.fulfillment.RunOnce()
 	got, err := db.GetOrder(fx.push.ID)

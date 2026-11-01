@@ -209,10 +209,10 @@ console.log('the sections count history gave away render where they went (owner,
     };
     const esc = (s) => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;')
         .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-    // The keeper's levels, on the Nodes page's maintained group.
-    const keeper = liftFrom('nodes-maintain.js', 'export function', 'keeperRowHtml');
+    // The keeper's levels, on the Nodes page's kanban.
+    const keeper = liftFrom('nodes-kanban.js', 'export function', 'keeperRowHtml');
     if (!keeper) {
-        check('nodes-maintain.js defines keeperRowHtml', false);
+        check('nodes-kanban.js defines keeperRowHtml', false);
     } else {
         const kctx = { escapeHtml: esc };
         vm.createContext(kctx);
@@ -221,14 +221,14 @@ console.log('the sections count history gave away render where they went (owner,
             want: 4, resident: 1, asked: 1, coming: 0, gap: 2, oldest_ask_cause: 'no_source', oldest_ask_reason: 'Waiting for an empty',
             oldest_ask_age: '12m' }) + ')', kctx);
         check('keeper: the level printed term by term, short marked', short.includes('>4<') && short.includes('>1<')
-            && short.includes('mg-short') && short.includes('>2<') && short.includes('Waiting for an empty &middot; 12m'), short);
+            && short.includes('kanban-short') && short.includes('>2<') && short.includes('Waiting for an empty &middot; 12m'), short);
         const covered = vm.runInContext('keeperRowHtml(' + JSON.stringify({ bin_type_code: 'STANDARD', want: 4, resident: 4, gap: 0 }) + ')', kctx);
-        check('keeper: a covered level is a quiet 0 and a dash', !covered.includes('mg-short') && covered.includes('&mdash;'), covered);
+        check('keeper: a covered level is a quiet 0 and a dash', !covered.includes('kanban-short') && covered.includes('&mdash;'), covered);
         const driven = vm.runInContext('keeperRowHtml(' + JSON.stringify({ bin_type_code: 'SMALL', want: 5, base: 1,
             running_processes: ['PRESS-6', 'WELD-2'], resident: 1, gap: 4, held_by: 'no empty SMALL at any source' }) + ')', kctx);
         check('keeper: the want beside its base and the processes driving it', driven.includes('>5<') && driven.includes('>1<')
             && driven.includes('PRESS-6, WELD-2'), driven);
-        check('keeper: why nothing was asked stands beside the gap', driven.indexOf('mg-short') < driven.indexOf('no empty SMALL at any source')
+        check('keeper: why nothing was asked stands beside the gap', driven.indexOf('kanban-short') < driven.indexOf('no empty SMALL at any source')
             && !driven.includes('&mdash;'), driven);
         const both = vm.runInContext('keeperRowHtml(' + JSON.stringify({ bin_type_code: 'SMALL', want: 5, gap: 2, held_by: 'no free slot',
             oldest_ask_cause: 'c', oldest_ask_reason: 'Waiting for an empty', oldest_ask_age: '12m' }) + ')', kctx);
@@ -237,9 +237,9 @@ console.log('the sections count history gave away render where they went (owner,
             held_by: 'no free slot', surplus_cause: 'above its want, and no source of K has room for it' }) + ')', kctx);
         check('keeper: why a surplus waits stands beside why nothing was asked', above.includes('no free slot<')
             && above.includes('no source of K has room for it') && !above.includes('&mdash;'), above);
-        const note = liftFrom('nodes-maintain.js', 'export function', 'keeperNoteHtml');
+        const note = liftFrom('nodes-kanban.js', 'export function', 'keeperNoteHtml');
         if (!note) {
-            check('nodes-maintain.js defines keeperNoteHtml', false);
+            check('nodes-kanban.js defines keeperNoteHtml', false);
         } else {
             vm.runInContext(note.replace(/^export /, ''), kctx);
             const over = vm.runInContext('keeperNoteHtml(' + JSON.stringify([{ total_want: 9, slots: 8, cannot_cover: 1,
@@ -251,10 +251,10 @@ console.log('the sections count history gave away render where they went (owner,
         }
     }
     // The kanban's Sources list on the same module: ordered, one group at a time.
-    const srcRows = liftFrom('nodes-maintain.js', 'function', 'sourceRowsHtml');
-    const moveIn = liftFrom('nodes-maintain.js', 'function', 'moveInList');
+    const srcRows = liftFrom('nodes-kanban.js', 'function', 'sourceRowsHtml');
+    const moveIn = liftFrom('nodes-kanban.js', 'function', 'moveInList');
     if (!srcRows || !moveIn) {
-        check('nodes-maintain.js defines sourceRowsHtml and moveInList', false);
+        check('nodes-kanban.js defines sourceRowsHtml and moveInList', false);
     } else {
         const sctx = { escapeHtml: esc };
         vm.createContext(sctx);
@@ -277,8 +277,8 @@ console.log('the sections count history gave away render where they went (owner,
         check('sources: up past the top stays', moved(0, -1) === '["Z45","Z32"]', moved(0, -1));
         check('sources: down past the bottom stays', moved(1, 1) === '["Z45","Z32"]', moved(1, 1));
     }
-    const moduleSrc = fs.readFileSync(path.join(__dirname, 'nodes-maintain.js'), 'utf8');
-    check('modal: the enabled toggle is gone', !moduleSrc.includes('maintain_enabled') && !moduleSrc.includes('nf-maintain-enabled'));
+    const moduleSrc = fs.readFileSync(path.join(__dirname, 'nodes-kanban.js'), 'utf8');
+    check('modal: the enabled toggle is gone', !moduleSrc.includes('nf-kanban-enabled'));
     // The lineside piles, on the Bins page.
     const rows = liftFrom('bins-lineside.js', 'function', 'bucketRowsHtml');
     const age = liftFrom('bins-lineside.js', 'function', 'bucketAgeMs');

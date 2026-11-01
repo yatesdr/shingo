@@ -213,16 +213,18 @@ func TestDrain_ABareMarkerIsNeverDrained(t *testing.T) {
 	}
 }
 
-// TestDrain_NeverFromAMaintainedGroup: an unloader never drains a maintained
-// group (owner). A level declared on the inbound source after the save stops
+// TestDrain_NeverFromAKanban: an unloader never drains a kanban
+//
+//	(owner). A level declared on the inbound source after the save stops
+//
 // the pull — the save's own test asked again — and inside a plain source a
 // group that declares a level is never pulled from, while a plain group beside
 // it is.
 //
 // MUTATION: drop the DeclaresLevel re-check from drainLocked and the first
 // half goes red; walk the source with DescendantsOf instead of
-// UnmaintainedDescendantsOf and the second does.
-func TestDrain_NeverFromAMaintainedGroup(t *testing.T) {
+// NonKanbanDescendantsOf and the second does.
+func TestDrain_NeverFromAKanban(t *testing.T) {
 	t.Parallel()
 
 	t.Run("a level declared on the source later", func(t *testing.T) {
@@ -230,7 +232,7 @@ func TestDrain_NeverFromAMaintainedGroup(t *testing.T) {
 		db := testDB(t)
 		f := newDrainFixture(t, db, "DRL", 1, 1, protocol.CarrierLeftover)
 		f.cart(t, f.slots[0].ID, f.tote, totes(13))
-		testutil.MustNoErr(t, db.SetMaintainLevel(store.MaintainLevel{GroupNodeID: f.source.ID, BinTypeID: f.tote.ID, Want: 1}),
+		testutil.MustNoErr(t, db.SetKanbanLevel(store.KanbanLevel{GroupNodeID: f.source.ID, BinTypeID: f.tote.ID, Want: 1}),
 			"a level on the source")
 		n, err := f.d.DrainLoader(f.loader)
 		testutil.MustNoErr(t, err, "drain")
@@ -256,7 +258,7 @@ func TestDrain_NeverFromAMaintainedGroup(t *testing.T) {
 		keptSlot, plainSlot := sub("DRD-KEPT"), sub("DRD-PLAIN")
 		kept := f.cart(t, keptSlot.ID, f.tote, totes(13))
 		plain := f.cart(t, plainSlot.ID, f.tote, totes(13))
-		testutil.MustNoErr(t, db.SetMaintainLevel(store.MaintainLevel{GroupNodeID: *keptSlot.ParentID, BinTypeID: f.tote.ID, Want: 1}),
+		testutil.MustNoErr(t, db.SetKanbanLevel(store.KanbanLevel{GroupNodeID: *keptSlot.ParentID, BinTypeID: f.tote.ID, Want: 1}),
 			"a level on the inner group")
 		n, err := f.d.DrainLoader(f.loader)
 		testutil.MustNoErr(t, err, "drain")

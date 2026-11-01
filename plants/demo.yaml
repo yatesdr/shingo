@@ -12,7 +12,7 @@
 #   PRESS-2 (PANEL-B, sequential A/B)        ├─→ SYN_SM_Stamp (shared, PANEL-A + PANEL-B) ─→ WELD-1 (PANEL-A→ASSY)
 #                                            ┘                                            ─→ WELD-2 (PANEL-B→ASSY)
 #
-# THE MAINTAINED-GROUP LOOP (MG2-0) — the empty side of the same circle:
+# THE KANBAN LOOP (MG2-0) — the empty side of the same circle:
 #   SYN_PRESS_EMPTIES ──(empties)──→ PRESS-1, PRESS-2 ──(fulls)──→ SYN_MARKET
 #           ↑                                                          │
 #           ├──────── UNLOADER-A pushes drained STANDARD carriers ──────┘
@@ -48,7 +48,7 @@ line_id: line1
 # doing nothing.
 #
 # STANDARD-SM is the small carrier. PANEL-B and PANEL-C ride it, and both are
-# produced by presses the maintained group supports, so the group's "two of the
+# produced by presses the kanban supports, so the group's "two of the
 # other" is drawn down by real production and refilled by the keeper.
 #
 # STANDARD stays first — a bin that names no type falls back to bin_types[0],
@@ -90,7 +90,7 @@ payloads:
      near_empty_enabled: true, near_empty_robot_group: SMALL-600, near_empty_threshold_pct: 20}
   # PANEL-C is PRESS-1's ALTERNATE style, and it deliberately rides the OTHER
   # carrier type from PANEL-A. A PRESS-1 changeover therefore changes WHICH TYPE
-  # the press asks the maintained group for — which is the whole wrong-type and
+  # the press asks the kanban for — which is the whole wrong-type and
   # mix-churn scenario, and it cannot be staged with one type per process.
   - {code: PANEL-C, uop_capacity: 30, bin_type: STANDARD-SM, robot_group: HEAVY-1500}
   # PANEL-D is in PRESS-1's part set and in no style: the part a station mints a
@@ -116,7 +116,7 @@ payloads:
 # below says the opposite: SYN_MT_Return was FOLDED INTO SYN_MARKET (2026-07-12),
 # empty is one of its payload segments, and Lane_11-13 hold the empties. There is no
 # SYN_MT_Return zone in this file. Anybody reading the old sentence and then looking
-# for a separate empties bank finds nothing and concludes the spec is broken.
+# for a separate kanban finds nothing and concludes the spec is broken.
 # ── EVERY ZONE CARRIES WAIT POINTS, WHICH IS HOW EVERY LANE GETS AN ORACLE ──
 #
 # `wait_points` reads like a traffic feature and is really two things welded to one
@@ -224,13 +224,13 @@ zones:
       # Lane_19 = extra empty headroom so returned empties don't leave air bubbles behind.
       - {name: Lane_19, slots: [{name: UTN_013, depth: 1}, {name: UTN_014, depth: 2}, {name: UTN_015, depth: 3}]}
 
-  # ── Press empty bank — a MAINTAINED GROUP, and the only flat zone here. ──
+  # ── A lineside kanban, and the only flat zone here. ──
   #
   # Core holds a standing level of empty carriers beside the presses, so a press
-  # never waits for one. Declared in maintained_groups at the foot of this file.
+  # never waits for one. Declared in kanbans at the foot of this file.
   #
-  # FLAT — positions, no lanes — because the save-time rules refuse a maintained
-  # group that has any. A lane means a carrier can be buried, and a level counted
+  # FLAT — positions, no lanes — because the save-time rules refuse a kanban
+  #  that has any. A lane means a carrier can be buried, and a level counted
   # over buried carriers is a number whose meaning changes with what is parked in
   # front of it.
   #
@@ -238,7 +238,7 @@ zones:
   # (inbound_source below), the unloader pushes its drained carriers back in
   # (outbound_destination), and the level keeper refills whatever that leaves
   # short. Eight positions against a level of six: two spare, on purpose, because
-  # a maintained group with no spare position has nowhere to put a carrier coming
+  # a kanban with no spare position has nowhere to put a carrier coming
   # back in — the save-time rules warn about exactly that.
   - name: SYN_PRESS_EMPTIES
     retrieve_algorithm: FIFO
@@ -253,7 +253,7 @@ zones:
       - {name: PEB_007, depth: 1}
       - {name: PEB_008, depth: 1}
 
-  # ── Changeover clearance bank — the OPTIONAL OVERRIDE, demonstrated honestly ──
+  # ── Changeover clearance zone — the OPTIONAL OVERRIDE, demonstrated honestly ──
   #
   # A cell whose ordinary outbound is the wrong place to put material during a
   # setup can name somewhere else in changeover_evac_destination. It is a
@@ -483,7 +483,7 @@ bins:
   - {name: BIN-SHIM-01, slot: PLK_H1, payload: SHIM, uop: 40}         # PLK_H1 home stock (the one SHIM home)
   - {name: BIN-SHIM-02, slot: PLK_H2, payload: SHIM, uop: 40}         # parked on a buffer, as a returned carrier would be
   - {name: BIN-ACT-W5-SH, slot: ALN_008, payload: SHIM,     uop: 40}  # WELD-5 SHIM consume
-  # --- The maintained group, seeded AT its declared level (4 STANDARD + 2 SM) ---
+  # --- The kanban, seeded AT its declared level (4 STANDARD + 2 SM) ---
   #     Six of eight positions, so the keeper starts settled and the first thing a
   #     scenario sees is the steady state rather than a cold-start refill it did
   #     not ask for. PEB_007/008 stay free: the spare positions the pre-resolve
@@ -529,13 +529,13 @@ bins:
   # there is no placement here that costs nothing. Lane_15/16's note says what the
   # room is actually for — "empty MOUTHS let findShuffleSlots Pass 2 unbury
   # without air bubbles" — so filling behind the mouth and leaving SMN_034 open
-  # preserves the property that comment names while still banking the carriers.
+  # preserves the property that comment names while still holding the carriers.
   #
   # THIS DOES NOT CURE THE MARKET POOL, and nothing about a count could.
   # When these carriers were added the tool read SYN_MARKET at a 0.45/min
   # deficit — spends outrunning returns — and said "drains regardless of size".
   # That reading was the TOOL's, not the plant's: half a closed loader loop
-  # counted as a market draw, and the maintained group's surplus was stranded
+  # counted as a market draw, and the kanban's surplus was stranded
   # instead of overflowing back (the simcalc commit titled "three rules it was
 # enforcing that the plant and the dispatcher had both moved on from"). Against the corrected
   # checker the market reads 1.00 in / 1.00 out and SUSTAINS. The floor of 23
@@ -569,7 +569,7 @@ processes:
 #
 # The pair is deliberately CROSS-TYPE: PRESS-1-RUN produces PANEL-A on STANDARD
 # and PRESS-1-ALT produces PANEL-C on STANDARD-SM. Flipping PRESS-1 therefore
-# changes which carrier type the press asks the maintained group for — the
+# changes which carrier type the press asks the kanban for — the
 # wrong-type-pressure and mix-churn scenarios in one move. An alternate style on
 # the same carrier type would exercise the changeover machinery and tell the
 # level keeper nothing.
@@ -619,10 +619,10 @@ operator_stations: [PRESS-1-OPS, PRESS-2-OPS, WELD-1-OPS, WELD-2-OPS, WELD-3-OPS
 
 claims:
   # ── PRESS-1 (two_robot_press_index): one claim on the front node, paired back ──
-  # INBOUND FROM THE MAINTAINED GROUP, not the market. This is the whole point of
+  # INBOUND FROM THE KANBAN, not the market. This is the whole point of
   # MG2-0: the presses draw their empties from SYN_PRESS_EMPTIES, which drains it,
   # which is what gives the level keeper something to keep. Outbound stays the
-  # market — a FULL panel belongs in the supermarket, not in the empty bank.
+  # market — a FULL panel belongs in the supermarket, not in the kanban.
   - core_node: PLN_001
     style: PRESS-1-RUN
     role: produce
@@ -1027,8 +1027,8 @@ claims:
 
   # ── UNLOADER-A (manual_swap: pull full ASSY, return empty) ──
   #
-  # OUTBOUND INTO THE MAINTAINED GROUP (MG2-0). The drained carrier goes straight
-  # to the press empty bank rather than back to the market, which closes the loop
+  # OUTBOUND INTO THE KANBAN (MG2-0). The drained carrier goes straight
+  # to the lineside kanban rather than back to the market, which closes the loop
   # the keeper sits in: presses draw the group down, the unloader pushes some of
   # it back, and the keeper covers whatever difference is left.
   #
@@ -1149,14 +1149,14 @@ cell_configs:
   # Loaders have no single cell station — their windows are per-node operator stations
   # (PLK_W1/2-OPS, PLK_X1-OPS, PLK_X2-OPS), declared via operator_station above.
 
-# ── Maintained groups ───────────────────────────────────────────────────────
+# ── Kanbans ───────────────────────────────────────────────────────
 #
 # The empty-carrier level Core holds, and for whom. LIVE as of MG2-0: both
 # supported presses source their empties here, so the level is drawn down by real
 # production rather than staged and left alone.
 #
 # Sum is six across eight positions, which deliberately leaves two free: a
-# maintained group with no spare position has nowhere to put a carrier coming
+# kanban with no spare position has nowhere to put a carrier coming
 # back in, and the pre-resolve loop is bounded by free positions — a full group
 # opens an episode and creates nothing until one frees up.
 #
@@ -1164,7 +1164,7 @@ cell_configs:
 # PANEL-B and PANEL-C ride STANDARD-SM. A PRESS-1 changeover to PANEL-C moves the
 # demand from one half to the other without touching this declaration, which is
 # the wrong-type / mix-churn measurement the campaign runs.
-maintained_groups:
+kanbans:
   - group: SYN_PRESS_EMPTIES
     station: edge1.line1
     strict: false

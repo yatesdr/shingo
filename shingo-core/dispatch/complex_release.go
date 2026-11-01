@@ -181,7 +181,7 @@ func (d *Dispatcher) HandleOrderRelease(env *protocol.Envelope, p *protocol.Orde
 
 	// The count is final now: the carrier this segment lifts off the line goes
 	// where it goes by what it holds (place_by_contents.go): an unfinished one
-	// to its claim's partial home, an empty to a maintained group short of it.
+	// to its claim's partial home, an empty to a kanban short of it.
 	// A re-point rewrites the stored plan, so the segment is split again from it.
 	if d.placeByContentsAtRelease(order, steps, order.WaitIndex) {
 		if again, ok := decodeSteps(order.StepsJSON); ok {

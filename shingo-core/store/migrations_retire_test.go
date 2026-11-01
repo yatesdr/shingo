@@ -45,7 +45,7 @@ import (
 // and v24's are — a live post-condition that a later migration undoes makes the
 // two re-run each other on every boot.
 //
-// v90 is the maintained-group config surface (two node-keyed set tables,
+// v90 is the kanban config surface (two node-keyed set tables,
 // bin_types.length_in, mtimes on node_properties/node_bin_types). Appended below
 // v89, which is where the head has to stay.
 //

@@ -453,11 +453,11 @@ func (db *DB) keepOwnedEntries(stationID string, entries []demands.RegistryEntry
 // group: the group's node id (0 when no node carries its name) and whether the
 // group declares any level.
 type ConsumeWindow struct {
-	Group      string
-	GroupID    int64
-	Maintained bool
-	NodeID     int64
-	NodeName   string
+	Group    string
+	GroupID  int64
+	Kanban   bool
+	NodeID   int64
+	NodeName string
 }
 
 // ConsumeWindowsAt returns every window of the active loaders acting as an
@@ -495,7 +495,7 @@ func (db *DB) ConsumeWindowsAt(nodeIDs []int64) ([]ConsumeWindow, error) {
 	var out []ConsumeWindow
 	for rows.Next() {
 		var w ConsumeWindow
-		if err := rows.Scan(&w.Group, &w.GroupID, &w.Maintained, &w.NodeID, &w.NodeName); err != nil {
+		if err := rows.Scan(&w.Group, &w.GroupID, &w.Kanban, &w.NodeID, &w.NodeName); err != nil {
 			return nil, fmt.Errorf("scan consume window: %w", err)
 		}
 		out = append(out, w)

@@ -13,7 +13,7 @@ import "net/http"
 // any ?v= in a src or href). That worked, at the cost of refetching every asset
 // on every page load, and it only covered assets a TEMPLATE names: a module reached
 // by a bare `import` (shared/utils.js, components/*, pages/overview/*,
-// nodes-detail.js, nodes-maintain.js) carried no query and had no validator
+// nodes-detail.js, nodes-kanban.js) carried no query and had no validator
 // either, so it was cached heuristically and could go stale after a deploy with
 // nothing to correct it.
 //

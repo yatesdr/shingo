@@ -8,7 +8,7 @@ import (
 	"shingocore/store/internal/nodetree"
 )
 
-// maintain_heights.go — a level type's residents by the totes on each cart,
+// kanban_heights.go — a level type's residents by the totes on each cart,
 // for an unloader's group line (engine.UnloaderGroupLines), which counts a cart
 // toward a wanted height only on an exact multiple of its type's totes per
 // layer. Its comings need no read of their own: the keeper's coming is

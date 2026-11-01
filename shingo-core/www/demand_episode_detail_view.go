@@ -232,7 +232,7 @@ func BuildEpisodeDetail(
 	switch o.Kind {
 	case "threshold":
 		d.Threshold = Value(FormatCount(o.Threshold))
-	case protocol.EpisodeKindMaintain:
+	case protocol.EpisodeKindKanban:
 		d.Threshold = Value(FormatCount(o.Threshold) + " when opened")
 	default:
 		d.Threshold = NA("not a threshold episode — no level was being watched")

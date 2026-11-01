@@ -218,10 +218,10 @@ func TestSeedCore_DemoPlant(t *testing.T) {
 		}
 	}
 
-	// ── The maintained group ──────────────────────────────────────────────
+	// ── The kanban ──────────────────────────────────────────────
 	//
 	// FLAT: positions parented by the ZONE, no lane between. That is the only
-	// shape a maintained group can have — the save-time rules refuse one with
+	// shape a kanban can have — the save-time rules refuse one with
 	// lanes — and until the spec grew `positions` it could not be written down at
 	// all, which would have left phase 2's soak unable to stage what it soaks.
 	mgZone, err := db.GetNodeByName("SYN_PRESS_EMPTIES")
@@ -260,19 +260,19 @@ func TestSeedCore_DemoPlant(t *testing.T) {
 		t.Errorf("SYN_PRESS_EMPTIES overflow_destination property = %q; a kanban holds its overflow on its row", got)
 	}
 
-	levels, err := db.ListMaintainLevels(mgZone.ID)
+	levels, err := db.ListKanbanLevels(mgZone.ID)
 	if err != nil {
-		t.Fatalf("ListMaintainLevels: %v", err)
+		t.Fatalf("ListKanbanLevels: %v", err)
 	}
 	if len(levels) != 2 {
-		t.Fatalf("maintained levels = %d, want the fixture's mixed level of 2 lines", len(levels))
+		t.Fatalf("kanban levels = %d, want the fixture's mixed level of 2 lines", len(levels))
 	}
 	byCode := map[string]int{}
 	for _, l := range levels {
 		byCode[l.BinTypeCode] = l.Want
 	}
 	if byCode["STANDARD"] != 2 || byCode["STANDARD-SM"] != 1 {
-		t.Errorf("maintained level = %v, want STANDARD:2 STANDARD-SM:1", byCode)
+		t.Errorf("kanban level = %v, want STANDARD:2 STANDARD-SM:1", byCode)
 	}
 
 	// SUPPORTS RESOLVE FROM PROCESS TO NODE at seed time — the spec says PRESS-1,
@@ -280,30 +280,30 @@ func TestSeedCore_DemoPlant(t *testing.T) {
 	// one paired with it, where the empty lands. Same resolution the settings
 	// modal does at save, and for the same reason: Core cannot read an Edge claim
 	// when it has to decide anything.
-	sup, err := db.ListMaintainSupports(mgZone.ID)
+	sup, err := db.ListKanbanSupports(mgZone.ID)
 	if err != nil {
-		t.Fatalf("ListMaintainSupports: %v", err)
+		t.Fatalf("ListKanbanSupports: %v", err)
 	}
 	if len(sup) != 2 || sup[0].ProcessNodeName != "PLN_001" || sup[1].ProcessNodeName != "PLN_002" {
-		t.Fatalf("maintained supports = %+v, want the two positions PRESS-1's claim names (PLN_001, PLN_002)", sup)
+		t.Fatalf("kanban supports = %+v, want the two positions PRESS-1's claim names (PLN_001, PLN_002)", sup)
 	}
 
 	// Idempotent: a second run must not error or duplicate.
 	if err := seedCore(db, plant, map[string]int64{}); err != nil {
 		t.Fatalf("seedCore re-run (idempotency): %v", err)
 	}
-	levels, err = db.ListMaintainLevels(mgZone.ID)
+	levels, err = db.ListKanbanLevels(mgZone.ID)
 	if err != nil {
-		t.Fatalf("ListMaintainLevels after re-seed: %v", err)
+		t.Fatalf("ListKanbanLevels after re-seed: %v", err)
 	}
 	if len(levels) != 2 {
-		t.Errorf("maintained levels after re-seed = %d, want 2 (upsert, not insert)", len(levels))
+		t.Errorf("kanban levels after re-seed = %d, want 2 (upsert, not insert)", len(levels))
 	}
-	sup, err = db.ListMaintainSupports(mgZone.ID)
+	sup, err = db.ListKanbanSupports(mgZone.ID)
 	if err != nil {
-		t.Fatalf("ListMaintainSupports after re-seed: %v", err)
+		t.Fatalf("ListKanbanSupports after re-seed: %v", err)
 	}
 	if len(sup) != 2 {
-		t.Errorf("maintained supports after re-seed = %d, want 2 (replace, not append)", len(sup))
+		t.Errorf("kanban supports after re-seed = %d, want 2 (replace, not append)", len(sup))
 	}
 }

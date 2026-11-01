@@ -263,12 +263,12 @@ func NewRouter(eng *engine.Engine, doors *Doors, dbg *debuglog.Logger) (http.Han
 			r.Get("/nodes/occupancy", h.apiNodeOccupancy)
 			r.Get("/nodes/detail", h.apiNodeDetail)
 			r.Get("/nodes/bin-types", h.apiGetNodeBinTypes)
-			// Maintained-group config: read beside the other node reads, written
+			// Kanban-group config: read beside the other node reads, written
 			// under auth below. The section is admin-only on screen; the read is
 			// public for the same reason /nodes/detail is — it is what the node
 			// IS, and the shop floor gets to look at that.
-			r.Get("/nodes/maintained-group", h.apiMaintainedGroup)
-			r.Get("/nodes/process-options", h.apiMaintainedGroupProcessOptions)
+			r.Get("/nodes/kanban", h.apiKanban)
+			r.Get("/nodes/process-options", h.apiKanbanProcessOptions)
 			r.Get("/nodestate", h.apiNodeState)
 			// Loaders are part of the node layout (shop-floor read access) — the
 			// box render reads this; all loader WRITES stay auth-gated below.
@@ -391,7 +391,7 @@ func NewRouter(eng *engine.Engine, doors *Doors, dbg *debuglog.Logger) (http.Han
 			r.Get("/inventory/loop", h.apiInventoryLoop)
 			r.Get("/inventory/anomaly-summary", h.apiInventoryAnomalySummary)
 			r.Get("/inventory/ledger-exceptions", h.apiInventoryLedgerExceptions)
-			r.Get("/inventory/maintained-groups", h.apiInventoryMaintainedGroups)
+			r.Get("/nodes/kanban/levels", h.apiKanbanLevels)
 			r.Get("/sourceability/events", h.apiSourceabilityEvents)
 			r.Get("/core/health", h.apiCoreHealth)
 			r.Get("/inventory/rejected-deltas", h.apiInventoryRejectedDeltas)
@@ -445,19 +445,19 @@ func NewRouter(eng *engine.Engine, doors *Doors, dbg *debuglog.Logger) (http.Han
 				// an edit box may touch (handlers_nodes.go) - the node's own
 				// name is the fleet's identity and scenesync owns it.
 				r.Post("/nodes/{id}/display-name", h.apiNodeDisplayNameSet)
-				// Maintained groups: one endpoint per thing an operator edits.
+				// Kanbans: one endpoint per thing an operator edits.
 				// A single save-everything call would have to decide what an
 				// omitted field means, and both answers are wrong — one deletes
 				// a level when the form fails to populate, the other makes
 				// clearing impossible.
-				r.Post("/nodes/maintained-group/check-types", h.apiMaintainedGroupCheckTypes)
-				r.Post("/nodes/maintained-group/settings", h.apiMaintainedGroupSettingsSet)
-				r.Post("/nodes/maintained-group/level", h.apiMaintainedGroupLevelSet)
-				r.Post("/nodes/maintained-group/level/remove", h.apiMaintainedGroupLevelRemove)
-				r.Post("/nodes/maintained-group/level/overflow", h.apiMaintainedGroupLevelOverflowSet)
-				r.Post("/nodes/maintained-group/cover", h.apiMaintainedGroupCoverSet)
-				r.Post("/nodes/maintained-group/sources", h.apiMaintainedGroupSourcesSet)
-				r.Post("/nodes/maintained-group/supports", h.apiMaintainedGroupSupportsSet)
+				r.Post("/nodes/kanban/check-types", h.apiKanbanCheckTypes)
+				r.Post("/nodes/kanban/settings", h.apiKanbanSettingsSet)
+				r.Post("/nodes/kanban/level", h.apiKanbanLevelSet)
+				r.Post("/nodes/kanban/level/remove", h.apiKanbanLevelRemove)
+				r.Post("/nodes/kanban/level/overflow", h.apiKanbanLevelOverflowSet)
+				r.Post("/nodes/kanban/cover", h.apiKanbanCoverSet)
+				r.Post("/nodes/kanban/sources", h.apiKanbanSourcesSet)
+				r.Post("/nodes/kanban/supports", h.apiKanbanSupportsSet)
 				r.Post("/nodes/properties/delete", h.apiNodePropertyDelete)
 				r.Post("/nodes/reparent", h.apiReparentNode)
 

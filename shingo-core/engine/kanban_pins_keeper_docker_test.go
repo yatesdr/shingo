@@ -33,7 +33,7 @@ func kanbanAsksOf(t *testing.T, db *store.DB, origin string) []*orders.Order {
 }
 
 // TestKanbanPin_TheKeeperFollowsTheDeclaredLevel: the asks, the episode's stored
-// threshold and the settle edge each read the row's want (maintainer.go:273, :301).
+// threshold and the settle edge each read the row's want (kanban_keeper.go:273, :301).
 // Raised, the same episode asks the difference and keeps the threshold it opened
 // with. Lowered to what stands there with nothing outstanding, the episode closes.
 func TestKanbanPin_TheKeeperFollowsTheDeclaredLevel(t *testing.T) {
@@ -44,7 +44,7 @@ func TestKanbanPin_TheKeeperFollowsTheDeclaredLevel(t *testing.T) {
 	for _, n := range []string{"KPW-OUT1", "KPW-OUT2", "KPW-OUT3"} {
 		mntOutsideEmpty(t, db, btID, n)
 	}
-	m := eng.Maintainer()
+	m := eng.KanbanKeeper()
 
 	m.Tick()
 	st := mntState(t, m, "KPW", "KPW-T")
@@ -58,7 +58,7 @@ func TestKanbanPin_TheKeeperFollowsTheDeclaredLevel(t *testing.T) {
 		t.Errorf("the episode's threshold = %d, want the level it opened at, 1", opened.Threshold)
 	}
 
-	testutil.MustNoErr(t, db.SetMaintainLevel(store.MaintainLevel{GroupNodeID: grpID, BinTypeID: btID, Want: 3}), "raise")
+	testutil.MustNoErr(t, db.SetKanbanLevel(store.KanbanLevel{GroupNodeID: grpID, BinTypeID: btID, Want: 3}), "raise")
 	m.Tick()
 	st = mntState(t, m, "KPW", "KPW-T")
 	if st.Want != 3 || st.Created != 2 || st.OriginID != origin {
@@ -71,7 +71,7 @@ func TestKanbanPin_TheKeeperFollowsTheDeclaredLevel(t *testing.T) {
 	// The asks done with, one carrier standing, the level lowered to it.
 	terminaliseAsks(t, db, origin)
 	landCarrier(t, db, btID, freePosition(t, db, grpID), "KPW-LANDED")
-	testutil.MustNoErr(t, db.SetMaintainLevel(store.MaintainLevel{GroupNodeID: grpID, BinTypeID: btID, Want: 1}), "lower")
+	testutil.MustNoErr(t, db.SetKanbanLevel(store.KanbanLevel{GroupNodeID: grpID, BinTypeID: btID, Want: 1}), "lower")
 	m.Tick()
 	st = mntState(t, m, "KPW", "KPW-T")
 	if st.Want != 1 || st.OriginID != "" {
@@ -114,7 +114,7 @@ func TestKanbanPin_ALevelZeroRowRefusesEveryStore(t *testing.T) {
 
 	// The keeper: the line stands, at 0, with nothing asked.
 	mntOutsideEmpty(t, db, types["KPZ-ZERO"], "KPZ-OUT")
-	m := eng.Maintainer()
+	m := eng.KanbanKeeper()
 	m.Tick()
 	st := mntState(t, m, "KPZ", "KPZ-ZERO")
 	if st.Want != 0 || st.Gap != 0 || st.Created != 0 || st.OriginID != "" {
@@ -169,7 +169,7 @@ func TestKanbanPin_TheKeepersAskIsBornWithNoSource(t *testing.T) {
 	testutil.MustNoErr(t, db.CreateNode(lendSlot), "the lending group's slot")
 	bin := landAt(t, db, btID, lendSlot.ID, "KPB-LENT")
 
-	m := eng.Maintainer()
+	m := eng.KanbanKeeper()
 	m.Tick()
 	st := mntState(t, m, "KPB", "KPB-T")
 	asks := kanbanAsksOf(t, db, st.OriginID)

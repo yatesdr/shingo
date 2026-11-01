@@ -247,7 +247,7 @@ func (h *Handlers) apiCloneStyle(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]int64{"id": newID})
 }
 
-// coreNodeKinds is Core's lane and maintained-group sets as the engine holds
+// coreNodeKinds is Core's lane and kanban sets as the engine holds
 // them, for a store write that refuses a lane on a leg. Empty before the first
 // node list, which refuses nothing.
 func (h *Handlers) coreNodeKinds() domain.CoreNodeKinds {

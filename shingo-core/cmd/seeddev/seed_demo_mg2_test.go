@@ -13,7 +13,7 @@ import (
 	"shingocore/plantspec"
 )
 
-// seed_demo_mg2_test.go — the maintained-group LOOP, asserted against the plant
+// seed_demo_mg2_test.go — the kanban LOOP, asserted against the plant
 // the campaign actually runs on.
 //
 // WHY THIS ONE READS plants/demo.yaml when every other seed test reads a pinned
@@ -42,7 +42,7 @@ func demoPlant(t *testing.T) *plantspec.Plant {
 }
 
 // The Core half: the group, its positions, its carriers and its levels.
-func TestSeedDemo_MaintainedGroupIsSeededAtItsLevel(t *testing.T) {
+func TestSeedDemo_KanbanIsSeededAtItsLevel(t *testing.T) {
 	t.Parallel()
 
 	db := testdb.Open(t)
@@ -64,11 +64,11 @@ func TestSeedDemo_MaintainedGroupIsSeededAtItsLevel(t *testing.T) {
 		t.Fatalf("list positions: %v", err)
 	}
 	if len(children) == 0 {
-		t.Fatal("the maintained group has no positions")
+		t.Fatal("the kanban has no positions")
 	}
 	for _, c := range children {
 		if c.Depth != nil && *c.Depth > 1 {
-			t.Errorf("position %s has depth %d — a maintained group must be flat", c.Name, *c.Depth)
+			t.Errorf("position %s has depth %d — a kanban must be flat", c.Name, *c.Depth)
 		}
 		if kids, kerr := db.ListChildNodes(c.ID); kerr == nil && len(kids) > 0 {
 			t.Errorf("position %s has %d children of its own — that is a lane", c.Name, len(kids))
@@ -76,7 +76,7 @@ func TestSeedDemo_MaintainedGroupIsSeededAtItsLevel(t *testing.T) {
 	}
 
 	// The declared level, and the carriers standing against it.
-	levels, err := db.ListMaintainLevels(grp.ID)
+	levels, err := db.ListKanbanLevels(grp.ID)
 	if err != nil {
 		t.Fatalf("list levels: %v", err)
 	}
@@ -91,7 +91,7 @@ func TestSeedDemo_MaintainedGroupIsSeededAtItsLevel(t *testing.T) {
 			"single-type group makes every mixed assertion in the campaign vacuous", want)
 	}
 	if total >= len(children) {
-		t.Errorf("levels sum to %d across %d positions — a maintained group with no spare "+
+		t.Errorf("levels sum to %d across %d positions — a kanban with no spare "+
 			"position has nowhere to put a carrier coming back in, and the pre-resolve loop "+
 			"is bounded by free positions", total, len(children))
 	}
@@ -146,7 +146,7 @@ func TestSeedDemo_PressesDrawFromTheGroupAndTheUnloaderPushesBack(t *testing.T) 
 	// Reading the supports list rather than naming PRESS-1/PRESS-2 means adding a
 	// third supported press to the yaml without wiring it fails here.
 	supported := map[string]bool{}
-	for _, mg := range plant.MaintainedGroups {
+	for _, mg := range plant.Kanbans {
 		if mg.Group != group {
 			continue
 		}

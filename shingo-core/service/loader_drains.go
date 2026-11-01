@@ -20,9 +20,9 @@ import (
 // inbound source cleared later (or "fed directly" ticked), the outbound pointed
 // back at the source. Pinned by TestLoaderService_DrainsRefusedWhereTheyCannotHold.
 //
-// A maintained inbound source is not refused here: every unloader with one is
+// A kanban inbound source is not refused here: every unloader with one is
 // refused already, whatever its boxes (checkFlowEndpoints,
-// ErrFullsFromAnEmptiesBank, whose sentence says the boxes drain nothing from
+// ErrFullsFromAKanban, whose sentence says the boxes drain nothing from
 // one), and the pull re-asks the same test because a level can be declared
 // later.
 

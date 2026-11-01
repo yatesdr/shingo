@@ -12,14 +12,14 @@ import (
 // empties_only_store_test.go — THE ADMISSION RULE, AND THE ONLY THING THAT
 // CERTIFIES IT.
 //
-// A group that declares a maintain level is an empties bank: every level counts
+// A group that declares a level is a kanban: every level counts
 // EMPTY carriers of a bin type, and the keeper tops the group up with empty
 // carriers. A store carrying a payload does not belong in one — it is a carrier
 // the keeper's own count cannot see, standing in a slot the keeper will then try
 // to refill.
 //
 // THIS IS A FAIL-SAFE, AND ITS RUNTIME POPULATION MAY BE EMPTY. The path that
-// actually put labelled carriers into a press empties bank was an ordering race
+// actually put labelled carriers into a lineside kanban was an ordering race
 // at the operator's CLEAR (shingo-edge engine/operator_bin_ops.go), and that
 // race is closed in the same change as this refusal. So a sim run that never
 // fires this arm has proved nothing about it — a totally broken arm produces the
@@ -33,7 +33,7 @@ func emptiesOnlyStore() (*fakeStore, *nodes.Node) {
 	f.nodes[grp.ID] = grp
 	f.nodes[slot.ID] = slot
 	f.children[grp.ID] = []*nodes.Node{slot}
-	f.maintainLevels = map[int64][]nodes.MaintainLevel{
+	f.kanbanLevels = map[int64][]nodes.KanbanLevel{
 		900: {{GroupNodeID: 900, BinTypeID: 7, BinTypeCode: "PEB-45x58", Want: 4}},
 	}
 	// Deliberately BELOW level and with a free slot, so nothing else in
@@ -42,7 +42,7 @@ func emptiesOnlyStore() (*fakeStore, *nodes.Node) {
 	return f, grp
 }
 
-// A LABELLED STORE AIMED AT AN EMPTIES BANK IS REFUSED — with a free slot and
+// A LABELLED STORE AIMED AT A KANBAN IS REFUSED — with a free slot and
 // the group below its level, so the refusal can only be the payload.
 func TestEmptiesOnly_LabelledStoreRefused(t *testing.T) {
 	t.Parallel()
@@ -50,7 +50,7 @@ func TestEmptiesOnly_LabelledStoreRefused(t *testing.T) {
 	r := &GroupResolver{DB: f}
 
 	if _, err := r.ResolveStore(grp, "PANEL-A", UnknownBinType("test: caller names no carrier"), reservations.Anyone); err == nil {
-		t.Fatal("a PANEL-A store landed in SYN_PRESS_EMPTIES. A maintained group's level " +
+		t.Fatal("a PANEL-A store landed in SYN_PRESS_EMPTIES. A kanban's level " +
 			"counts EMPTY carriers, so a payload-bearing bin parked there is invisible to " +
 			"the keeper, which then fetches another carrier to stand beside it")
 	} else if !strings.Contains(err.Error(), "empties-only node group SYN_PRESS_EMPTIES") {
@@ -64,7 +64,7 @@ func TestEmptiesOnly_LabelledStoreRefused(t *testing.T) {
 }
 
 // THE KEEPER CANNOT BE REFUSED BY ITS OWN RULE. Its stores pass an empty payload
-// code, which is the whole point of the bank.
+// code, which is the whole point of the kanban.
 func TestEmptiesOnly_EmptyCarrierStillLands(t *testing.T) {
 	t.Parallel()
 	f, grp := emptiesOnlyStore()
@@ -73,19 +73,19 @@ func TestEmptiesOnly_EmptyCarrierStillLands(t *testing.T) {
 	res, err := r.ResolveStore(grp, "", UnknownBinType("test: caller names no carrier"), reservations.Anyone)
 	if err != nil {
 		t.Fatalf("an EMPTY carrier was refused by the empties-only rule: %v. The refusal "+
-			"would close the bank against the keeper that fills it", err)
+			"would close the kanban against the keeper that fills it", err)
 	}
 	if res.Node.Name != "PEB_001" {
 		t.Errorf("resolved to %s, want PEB_001", res.Node.Name)
 	}
 }
 
-// A GROUP WITH NO DECLARED LEVEL IS NOT AN EMPTIES BANK, and takes payloads
+// A GROUP WITH NO DECLARED LEVEL IS NOT A KANBAN, and takes payloads
 // exactly as it did before. This is every group in every plant today.
 func TestEmptiesOnly_UndeclaredGroupUnaffected(t *testing.T) {
 	t.Parallel()
 	f, grp := emptiesOnlyStore()
-	f.maintainLevels = nil
+	f.kanbanLevels = nil
 	r := &GroupResolver{DB: f}
 
 	if _, err := r.ResolveStore(grp, "PANEL-A", UnknownBinType("test: caller names no carrier"), reservations.Anyone); err != nil {

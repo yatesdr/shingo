@@ -226,7 +226,7 @@ How many layers of totes a payload's full stack stands: `payloads.tote_layers`, 
 
 ### Tops & Bottoms
 
-A tote cart at a known 0 totes with no part on it: the cart's frame alone (`protocol.CarrierTopsAndBottoms`). It is nobody's ordinary empty: a want of no height, or of a stack, never takes it; a want of 0 (the press of a cell fed from behind) takes it first; a want of it alone (a maintained group's tops & bottoms row) takes nothing else. A maintained group keeps it on a row of its own (`node_maintain_layer_levels` at 0 layers), a cap beside the type's level that neither takes the other's room; the keeper never fetches it (it is made at the unloader, and the card asks the crew for it), and a group that keeps the type with no such row refuses one. On a cell's own position it belongs to that cell, so a press's index leg lifts it whatever height the press would ask for. An unknown count is not tops & bottoms: it is unverified.
+A tote cart at a known 0 totes with no part on it: the cart's frame alone (`protocol.CarrierTopsAndBottoms`). It is nobody's ordinary empty: a want of no height, or of a stack, never takes it; a want of 0 (the press of a cell fed from behind) takes it first; a want of it alone (a kanban's tops & bottoms row) takes nothing else. A kanban keeps it on a row of its own (`kanban_layer_levels` at 0 layers), a cap beside the type's level that neither takes the other's room; the keeper never fetches it (it is made at the unloader, and the card asks the crew for it), and a group that keeps the type with no such row refuses one. On a cell's own position it belongs to that cell, so a press's index leg lifts it whatever height the press would ask for. An unknown count is not tops & bottoms: it is unverified.
 
 ### Vacant
 
@@ -321,6 +321,34 @@ A swap leg that has finished with its **cell** but is not finished as an order: 
 A departed leg is still live — Core, telemetry, the orders page and swap-peer handling all still own it. What it stops being is the *cell's*: the two admission guards, the station card's action button and the auto-relief tick all treat the cell as free. Rendered on the card as **TO MARKET**, the opposite number of ROBOT IN TRANSIT (a cell *waiting on* a delivery).
 
 Derived from `steps_json` against the claim's cell set, never from the swap mode. See [order-lifecycle.md](order-lifecycle.md#departed-legs-and-cell-done).
+
+## Kanban
+
+A kanban is the card loop of empty carriers around a process: the card is a cart, the level is the number of cards in the loop, the empty is the signal, the sources are where the loop borrows from, and the unloader repays whichever source is short. Core holds all of it (`shingocore/kanban`, `engine.KanbanKeeper`, the `kanbans` tables). The word means nothing else in this repo: the UOP reorder a loader's threshold fires is **threshold replenishment** (`docs/uop-threshold-replenishment.md`).
+
+### Kanban
+A node group that declares a **level** per carrier type. Core counts it, fetches when it is short, caps stores at the level, and tells the group's unloader what to send each cart back as. A kanban with **supports** is a lineside kanban and runs a keeper. A kanban with no supports declares what it holds and is refilled by other kanbans' unloaders; it runs no keeper. A group with no level is a plain group, and nobody counts it.
+
+### Level
+The base want of one carrier type in a kanban (`kanban_levels.want`). Effective want is `level + running cover x processes running the type` (`kanban.Level.Want`), with no clamp: a want past the kanban's slots shows as one that cannot be covered.
+
+### Running Cover
+The extra a kanban wants of a type per supported process running that type (`kanbans.running_cover`). A process runs its target style's types while a changeover is open, otherwise its active style's.
+
+### Supports
+The process nodes a kanban serves (`kanban_supports`). A kanban with supports needs a station, the board its keeper's orders show on.
+
+### Sources
+The ordered groups a kanban's keeper may pull from (`kanban_sources`, in rank order). An empty list searches the plant. A lineside kanban's keeper never pulls from another kanban that has supports. An unloader repays the kanban, then the first source short of the cart.
+
+### Overflow
+Where a cart goes when nothing else takes it: one hop, per type with a default (`kanban_levels.overflow_node_id`, then `kanbans.overflow_node_id`). None named, and the push parks named at the kanban, visible. A plain group's overflow is its `overflow_destination` property.
+
+### Strict
+Nobody else may pull from this kanban (`kanbans.strict`).
+
+### Family
+Carrier types sharing a floor size (`domain.BinType.FloorSize`). A cart is only asked to come back as a type of its own family.
 
 ## Naming Conventions
 

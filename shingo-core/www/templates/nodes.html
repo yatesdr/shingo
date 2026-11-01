@@ -220,7 +220,7 @@
            that case, deliberately: they still decide everything about loaded
            carriers here. Saying which half they stop deciding is information; a
            control that vanishes is a question. -->
-      <div id="nf-maintain-algo-note" class="form-hint hide" style="margin-top:6px">
+      <div id="nf-kanban-algo-note" class="form-hint hide" style="margin-top:6px">
         Inert for empty pulls while a level is held here. Loaded carriers unaffected.
       </div>
     </div>
@@ -229,7 +229,7 @@
          The level Core holds here in EMPTY carriers. A group with a level is a
          kanban. Not a "buffer": a loader window with home_kind=buffer is a
          different, existing thing. -->
-    <div id="nf-maintain" class="hide mb-2">
+    <div id="nf-kanban" class="hide mb-2">
       <label class="text-sm" style="display:block;margin-bottom:6px;font-weight:600">Kanban</label>
       <div class="text-muted" style="font-size:0.75rem;margin-bottom:10px">
         Declare a level and Core keeps that many empty carriers here, so the equipment this group
@@ -237,20 +237,20 @@
       </div>
 
       <label class="text-sm" style="display:flex;align-items:center;gap:8px;margin-bottom:10px;cursor:pointer">
-        <input type="checkbox" id="nf-maintain-strict">
+        <input type="checkbox" id="nf-kanban-strict">
         Strict: only the processes under Supports may take empties from here
       </label>
 
       <div class="grid grid-2 text-sm">
         <div class="form-group">
-          <label for="nf-maintain-station">Board these orders show on</label>
-          <select id="nf-maintain-station"></select>
+          <label for="nf-kanban-station">Board these orders show on</label>
+          <select id="nf-kanban-station"></select>
           <div class="form-hint">Needed with Supports: without one, the top-up orders show on no board
             at all, so Core does not place them.</div>
         </div>
         <div class="form-group">
-          <label for="nf-maintain-overflow">Overflow</label>
-          <select id="nf-maintain-overflow"></select>
+          <label for="nf-kanban-overflow">Overflow</label>
+          <select id="nf-kanban-overflow"></select>
           <div class="form-hint">Where extras go when this group has its level. Optional. Without one,
             a carrier that turns up anyway waits where it is, still loaded.</div>
         </div>
@@ -258,7 +258,7 @@
 
       <div class="form-group">
         <label>Level</label>
-        <div id="nf-maintain-levels"></div>
+        <div id="nf-kanban-levels"></div>
         <div class="form-hint">How many of each carrier type to keep here. Zero means none of that
           type, on purpose. A type's Overflow goes ahead of the group's. Under a type,
           the heights wanted here tell the unloader what to send a cart back as; they do not change
@@ -266,21 +266,21 @@
       </div>
 
       <div class="form-group text-sm">
-        <label for="nf-maintain-cover">Running cover</label>
-        <input type="number" id="nf-maintain-cover" class="form-input loader-mix-want" min="0" value="0">
+        <label for="nf-kanban-cover">Running cover</label>
+        <input type="number" id="nf-kanban-cover" class="form-input loader-mix-want" min="0" value="0">
         <div class="form-hint">Extra of a type to keep per process under Supports running that type.</div>
       </div>
 
       <div class="form-group">
         <label>Sources</label>
-        <div id="nf-maintain-sources"></div>
+        <div id="nf-kanban-sources"></div>
         <div class="form-hint">Groups the keeper may pull from, first to last. With none, it searches
           the plant.</div>
       </div>
 
       <!-- The keeper's last tick for this group (moved from /inventory,
            2026-10-29): level − here − asked − coming = short, term by term.
-           Hidden until the group has a tick. nodes-maintain.js
+           Hidden until the group has a tick. nodes-kanban.js
            renderKeeperLevels. -->
       <div id="keeper-levels" class="form-group hide">
         <label>The keeper's last tick</label>
@@ -295,7 +295,7 @@
       </div>
       <div class="form-group">
         <label>Supports</label>
-        <div id="nf-maintain-supports"></div>
+        <div id="nf-kanban-supports"></div>
         <div class="form-hint">Pick the processes that pull empties from here. Their positions are
           what gets saved.</div>
       </div>
@@ -346,7 +346,7 @@
     </div>
       <!-- The keeper's last tick for this group (moved from /inventory,
            2026-10-29): level − here − asked − coming = short, term by term.
-           Hidden until the group has a tick. nodes-maintain.js
+           Hidden until the group has a tick. nodes-kanban.js
            renderKeeperLevels. -->
     <div id="keeper-levels" class="form-group hide mb-2">
         <label>The keeper's last tick</label>
@@ -379,7 +379,7 @@
      holds, and which copy a handler sees depends on load order. Worse after a
      deploy: the two instances can be different VERSIONS of the file. Tags stay
      bare; staticCache's ETag is what makes a bare URL fresh across a restart.
-     nodes-detail.js and nodes-maintain.js are therefore imported, never tagged;
+     nodes-detail.js and nodes-kanban.js are therefore imported, never tagged;
      see nodes-overview.js, which declares the dependency. -->
 <script type="module" src="/static/pages/nodes-overview.js"></script>
 <script type="module" src="/static/pages/nodes-supermarket.js"></script>

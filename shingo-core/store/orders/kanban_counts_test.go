@@ -179,8 +179,8 @@ func TestCountTypedInboundToGroup_FourShapes(t *testing.T) {
 	const mntOrigin = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
 	_, err := db.Exec(`INSERT INTO demand_origins (origin_id, revision, episode_key, kind, opened_at)
 		VALUES ($1, 1, $2, $3, NOW())`,
-		mntOrigin, protocol.MaintainEpisodeKey("INB-GRP", "INB-45x58"), protocol.EpisodeKindMaintain)
-	testutil.MustNoErr(t, err, "mint maintain episode")
+		mntOrigin, protocol.KanbanEpisodeKey("INB-GRP", "INB-45x58"), protocol.EpisodeKindKanban)
+	testutil.MustNoErr(t, err, "mint kanban episode")
 
 	binD := mkEmptyBin(t, db, btID, "INB-BIN-D")
 	own := newPendingOrder("inb-own")
@@ -189,7 +189,7 @@ func TestCountTypedInboundToGroup_FourShapes(t *testing.T) {
 	own.OriginID = mntOrigin
 	testutil.MustNoErr(t, orders.Create(db, own), "create own-origin order")
 	testdb.ReserveBin(t, d, own.ID, binD) // (C1: as shape 1's)
-	if got := count(t, "own maintain origin"); got != 3 {
+	if got := count(t, "own kanban origin"); got != 3 {
 		t.Errorf("with the keeper's own ask inbound = %d, want 3 — it is already counted as asked", got)
 	}
 

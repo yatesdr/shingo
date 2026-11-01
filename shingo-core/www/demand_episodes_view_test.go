@@ -491,21 +491,21 @@ func TestOpenEpisodeDurationUsesTheInjectedClock(t *testing.T) {
 	}
 }
 
-// A maintain episode fills its two otherwise-empty columns from what the row
+// A kanban episode fills its two otherwise-empty columns from what the row
 // already stores, and neither fill is allowed to touch any other kind.
 //
 // THE POINT IS THAT NOTHING NEW IS STORED. The carrier type comes back out of
 // the episode key — the canonical spelling of the (group, type) pair — and the
-// denominator is Threshold − OpenedTotal, two columns the maintainer already
+// denominator is Threshold − OpenedTotal, two columns the keeper already
 // writes. A duplicate copy in payload_code, or a new expected_orders write,
 // would each be a second spelling free to disagree with the first.
-func TestMaintainRowFillsPlaceAndExpectedFromWhatIsStored(t *testing.T) {
+func TestKanbanRowFillsPlaceAndExpectedFromWhatIsStored(t *testing.T) {
 	now := time.Date(2026, 8, 17, 9, 0, 0, 0, time.UTC)
 	row := BuildEpisodeRow(domain.DemandEpisode{
 		DemandOrigin: domain.DemandOrigin{
 			OriginID:     "mnt-1",
 			EpisodeKey:   "mnt|PRESS-BUFFER|45x58",
-			Kind:         "maintain",
+			Kind:         "kanban",
 			StationID:    "core",
 			CoreNodeName: "PRESS-BUFFER",
 			OpenedAt:     now.Add(-at(20)),
@@ -515,8 +515,8 @@ func TestMaintainRowFillsPlaceAndExpectedFromWhatIsStored(t *testing.T) {
 		Children: 3,
 	}, now, disp())
 
-	if row.KindLabel != "Maintained level" {
-		t.Errorf("KindLabel = %q, want %q", row.KindLabel, "Maintained level")
+	if row.KindLabel != "Kanban level" {
+		t.Errorf("KindLabel = %q, want %q", row.KindLabel, "Kanban level")
 	}
 	if row.Payload != "45x58" {
 		t.Errorf("Payload = %q, want the carrier type off the episode key — otherwise "+
@@ -531,7 +531,7 @@ func TestMaintainRowFillsPlaceAndExpectedFromWhatIsStored(t *testing.T) {
 			row.Ratio)
 	}
 	if row.SortGroup == sortGroupNoRatio {
-		t.Error("a maintain row landed in the unrankable group — it has a denominator, so " +
+		t.Error("a kanban row landed in the unrankable group — it has a denominator, so " +
 			"it belongs in the ranked body where the ratio can order it")
 	}
 }

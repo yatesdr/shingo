@@ -157,7 +157,7 @@ type Engine struct {
 	// In-memory, so a restart resets it. That is honest — it counts what THIS
 	// process dropped, and a process that just started has dropped nothing.
 	cmsBuildFailures atomic.Int64
-	maintainer       *Maintainer
+	keeper           *KanbanKeeper
 	etaCache         *eta.Cache
 	notifier         *notify.Notifier
 	stopChan         chan struct{}
@@ -354,7 +354,7 @@ func New(c Config) *Engine {
 	e.heartbeatService = service.NewHeartbeatService(e.db)
 	e.thresholdMonitor = NewThresholdMonitor(e)
 	e.sourceabilityMonitor = NewSourceabilityMonitor(e)
-	e.maintainer = NewMaintainer(e, nil)
+	e.keeper = NewKanbanKeeper(e, nil)
 	e.notifier = notify.New(&c.AppConfig.Notifications)
 	// Loader CRUD re-derives demand_registry + nudges the monitor on each edit.
 	e.loaderService = service.NewLoaderService(e.db, e.thresholdMonitor)

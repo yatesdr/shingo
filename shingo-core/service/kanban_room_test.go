@@ -14,9 +14,9 @@ import (
 // says how many of the carts are tops & bottoms.
 func TestRoomWarnings_TheRowCountsBesideTheLevel(t *testing.T) {
 	t.Parallel()
-	cfg := MaintainedGroupConfig{
-		Levels: []store.MaintainLevel{{BinTypeID: 7, Want: 3}},
-		LayerWants: []store.MaintainLayerWant{
+	cfg := KanbanConfig{
+		Levels: []store.KanbanLevel{{BinTypeID: 7, Want: 3}},
+		LayerWants: []store.KanbanLayerWant{
 			{BinTypeID: 7, Layers: 0, Want: 2},
 			{BinTypeID: 7, Layers: 2, Want: 3},
 		}}

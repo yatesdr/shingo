@@ -633,8 +633,8 @@ func (e *Engine) StartProcessChangeover(processID, toStyleID int64, calledBy, no
 // ── DRAINED, NOT EMPTY, AND THE TWO WORDS MEAN DIFFERENT THINGS ───────────
 //
 // This was binEmptyAtCoreNode, and "empty" is Core's word for a carrier with NO
-// PAYLOAD CODE — the thing EmptyCarrierWhere selects, the thing a maintained
-// group's level counts, the thing a retrieve_empty fetches. What this reads is
+// PAYLOAD CODE — the thing EmptyCarrierWhere selects, the thing a kanban
+// 's level counts, the thing a retrieve_empty fetches. What this reads is
 // an EDGE runtime counter: how many parts the operator (or a PLC tick) says are
 // left in a bin that still carries its payload and its manifest. A drained bin
 // is not an empty carrier; Core would refuse to call it one.

@@ -117,9 +117,9 @@ var IssueDoors = []IssueDoor{
 	{Name: "home clear's trade", Site: "dispatch/clear_home.go:Dispatcher.issueClearTrade", Arm: "engine",
 		At: AtCommit{CartRow: true, NamedBin: true, BinRow: true}, Take: TakeTaken,
 		Why: "the clear's trade at confirm: the empty's move into the partial's place, sibling-linked to the partial's, holding its cart; the same take as the spot move"},
-	{Name: "maintained-group level keeper", Site: "dispatch/lifecycle_service.go:LifecycleService.issue", Arm: "engine",
+	{Name: "kanban level keeper", Site: "dispatch/lifecycle_service.go:LifecycleService.issue", Arm: "engine",
 		At: AtCommit{SlotRow: true}, Take: TakeNoCart,
-		Why: "a maintained group is below its level: Core asks for an empty at the slot it pre-resolved, holding the slot from its issue"},
+		Why: "a kanban is below its level: Core asks for an empty at the slot it pre-resolved, holding the slot from its issue"},
 }
 
 // InstallIssueCensus installs the at-commit record in db: a table and a

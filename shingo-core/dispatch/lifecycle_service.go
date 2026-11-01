@@ -494,7 +494,7 @@ func (s *LifecycleService) checkOrderRefs(order *orders.Order) (*nodes.Node, *li
 //
 // THREE SOURCES, IN DESCENDING CERTAINTY:
 //
-//  1. The maintained episode behind the origin. The level keeper names a carrier
+//  1. The kanban episode behind the origin. The level keeper names a carrier
 //     type before any carrier exists and is the one door that always could.
 //  2. The order's own bin, when the door already chose one (a bin move names the
 //     bin; the wire can carry one).
@@ -512,9 +512,9 @@ func (s *LifecycleService) checkOrderRefs(order *orders.Order) (*nodes.Node, *li
 // instead of in somebody's reading of the call graph.
 func (s *LifecycleService) binTypeAtIntake(order *orders.Order) binresolver.BinTypeStatement {
 	if order.OriginID != "" {
-		id, err := s.db.MaintainedBinTypeIDForOrigin(order.OriginID)
+		id, err := s.db.KanbanBinTypeIDForOrigin(order.OriginID)
 		if err != nil {
-			s.dbg("intake: maintained bin type for origin %s unreadable (%v)", order.OriginID, err)
+			s.dbg("intake: kanban bin type for origin %s unreadable (%v)", order.OriginID, err)
 		} else if id != nil {
 			return binresolver.KnownBinType(*id)
 		}
@@ -595,7 +595,7 @@ func (s *LifecycleService) resolveSyntheticDestination(order *orders.Order, dest
 
 		// ── MG6-1: TRY THE OVERFLOW ─────────────────────────────────────────
 		//
-		// A maintained group at its level refuses the push. If somebody named an
+		// A kanban at its level refuses the push. If somebody named an
 		// overflow destination for it, the carrier goes there instead of parking.
 		//
 		// CORE-SIDE ONLY. Edge keeps naming the group unconditionally — it has no
@@ -900,7 +900,7 @@ func (s *LifecycleService) PrepareRedirect(order *orders.Order, newDeliveryNode 
 	return sourceNode, newDest, nil
 }
 
-// tryOverflow resolves a maintained group's configured overflow destination.
+// tryOverflow resolves a kanban's configured overflow destination.
 // Reports whether it found one and where.
 //
 // ── THE RESIDUALS, STATED RATHER THAN SOLVED ────────────────────────────────

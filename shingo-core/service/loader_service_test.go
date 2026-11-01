@@ -52,7 +52,7 @@ func TestLoaderService_SetHome_RejectsSyntheticWindow(t *testing.T) {
 // error at read, and a silent change of sourcing behaviour nobody could connect
 // to the edit that caused it.
 //
-// It matters more now. A maintained group is named by exactly this field, and
+// It matters more now. A kanban is named by exactly this field, and
 // phase 3 makes naming it consequential: the group either serves this claim or
 // fences it, and both are decisions about a node. A field that might name
 // nothing at all cannot carry either.
@@ -109,9 +109,9 @@ func TestLoaderService_InboundSourceIsResolveChecked(t *testing.T) {
 }
 
 // A source is a node group or a loader position — never a lane, and an
-// unloader's fulls never come from an empties bank. Refused at save, where the
+// unloader's fulls never come from a kanban. Refused at save, where the
 // operator can fix it, rather than discovered when a bin put back in a sibling
-// lane, or a full refused by the bank, is never found again.
+// lane, or a full refused by the kanban, is never found again.
 func TestLoaderService_FlowEndpointsAreTheRightKindOfNode(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
@@ -126,12 +126,12 @@ func TestLoaderService_FlowEndpointsAreTheRightKindOfNode(t *testing.T) {
 	testdb.MarkGroup(t, db, group.ID)
 	lane := &nodes.Node{Name: "FE-LANE", NodeTypeID: &laneType.ID, ParentID: &group.ID, Enabled: true, IsSynthetic: true}
 	testutil.MustNoErr(t, db.CreateNode(lane), "lane")
-	bank := &nodes.Node{Name: "FE-BANK", NodeTypeID: &ngrp.ID, Enabled: true, IsSynthetic: true}
-	testutil.MustNoErr(t, db.CreateNode(bank), "bank")
+	kanbanNode := &nodes.Node{Name: "FE-KANBAN", NodeTypeID: &ngrp.ID, Enabled: true, IsSynthetic: true}
+	testutil.MustNoErr(t, db.CreateNode(kanbanNode), "kanban")
 	bt := &bins.BinType{Code: "FE-T", Description: "tote"}
 	testutil.MustNoErr(t, db.CreateBinType(bt), "bin type")
-	testutil.MustNoErr(t, db.SetMaintainLevel(store.MaintainLevel{GroupNodeID: bank.ID, BinTypeID: bt.ID, Want: 2}),
-		"the bank's level")
+	testutil.MustNoErr(t, db.SetKanbanLevel(store.KanbanLevel{GroupNodeID: kanbanNode.ID, BinTypeID: bt.ID, Want: 2}),
+		"the kanban's level")
 
 	if _, err := svc.Create("FE-IN-LANE", "consume", "dedicated_positions",
 		loaders.ReplenishmentOperator, "", lane.Name, false); !errors.Is(err, ErrSourceIsALane) {
@@ -141,14 +141,14 @@ func TestLoaderService_FlowEndpointsAreTheRightKindOfNode(t *testing.T) {
 		loaders.ReplenishmentOperator, lane.Name, "", false); !errors.Is(err, ErrSourceIsALane) {
 		t.Errorf("an outbound destination naming a lane: err = %v, want ErrSourceIsALane", err)
 	}
-	if _, err := svc.Create("FE-FULLS-BANK", "consume", "dedicated_positions",
-		loaders.ReplenishmentOperator, "", bank.Name, false); !errors.Is(err, ErrFullsFromAnEmptiesBank) {
-		t.Errorf("an unloader's fulls from a maintained group: err = %v, want ErrFullsFromAnEmptiesBank", err)
+	if _, err := svc.Create("FE-FULLS-KANBAN", "consume", "dedicated_positions",
+		loaders.ReplenishmentOperator, "", kanbanNode.Name, false); !errors.Is(err, ErrFullsFromAKanban) {
+		t.Errorf("an unloader's fulls from a kanban: err = %v, want ErrFullsFromAKanban", err)
 	}
-	// A loader's EMPTIES coming from a bank is what a bank is for.
-	if _, err := svc.Create("FE-EMPTIES-BANK", "produce", "dedicated_positions",
-		loaders.ReplenishmentThreshold, "", bank.Name, false); err != nil {
-		t.Errorf("a loader drawing empties from a maintained group was refused: %v", err)
+	// A loader's EMPTIES coming from a kanban is what a kanban is for.
+	if _, err := svc.Create("FE-EMPTIES-KANBAN", "produce", "dedicated_positions",
+		loaders.ReplenishmentThreshold, "", kanbanNode.Name, false); err != nil {
+		t.Errorf("a loader drawing empties from a kanban was refused: %v", err)
 	}
 	if _, err := svc.Create("FE-GROUP-OK", "consume", "dedicated_positions",
 		loaders.ReplenishmentOperator, "", group.Name, false); err != nil {

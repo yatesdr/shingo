@@ -25,7 +25,7 @@ func (db *DB) ConfirmBinManifest(binID int64, producedAt string) error {
 // matching the given payload code, using FIFO ordering. excludeNodeID > 0
 // skips bins at that node (pass destination to avoid same-node retrieve).
 // FindEmptyBinOfType returns an empty carrier of one bin type, preferring the
-// destination's zone, with the maintained-group fence applied. See
+// destination's zone, with the kanban fence applied. See
 // bins.FindEmptyOfType and bins.FencedNodesCTE.
 //
 // A ZERO FENCE FENCES NOTHING, which is what every caller outside the source
@@ -40,8 +40,8 @@ func (db *DB) FindEmptyBinOfType(binTypeCode, preferZone string, excludeNodeID i
 // It was MG2-11's keeper-only exclusion: "an ask to top a group up must not
 // source from that group". That rule did not go away — it became rule (ii) of
 // bins.FencedNodesCTE, where it sits beside the strict fence as one of two
-// reasons a maintained group can hide a carrier. Two spellings of "not from a
-// maintained group" is exactly what the consolidation exists to prevent, and
+// reasons a kanban can hide a carrier. Two spellings of "not from a
+// kanban" is exactly what the consolidation exists to prevent, and
 // the keeper now passes an EmptyFence carrying its OriginGroup like any other
 // asker.
 

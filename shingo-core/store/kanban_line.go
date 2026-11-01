@@ -9,7 +9,7 @@ import (
 	"shingocore/store/orders"
 )
 
-// maintain_line.go — what a maintained group is short of, one level type at a
+// kanban_line.go — what a kanban is short of, one level type at a
 // time: the arithmetic (LevelState) and the line an unloader's card reads
 // (kanban.Line). Moved out of engine so a reader in dispatch, which engine
 // imports, asks the same spelling.
@@ -34,17 +34,17 @@ import (
 //     and which window carts are already on their way); the keeper only
 //     counts them.
 //
-// ONE SPELLING. The keeper's tick (engine Maintainer) and an unloader's group line
+// ONE SPELLING. The keeper's tick (engine KanbanKeeper) and an unloader's group line
 // (engine UnloaderGroupLines) read every kanban's at once (KanbanCounts); the lift
 // divert reads one through CountLevel and TypeLineOf. All three answer in this
 // type over the same fragments, and an agreement test holds the batched reads to
 // the single ones (TestKanbanCounts_TheBatchedReadsAgreeWithTheSingleReads), so
 // they cannot disagree about how short a group is of a type.
 //
-// Level.Want is the effective want when the level came from DB.ListMaintainLevels
+// Level.Want is the effective want when the level came from DB.ListKanbanLevels
 // or the picture, which is every reader's.
 type LevelState struct {
-	Level MaintainLevel
+	Level KanbanLevel
 	kanban.Have
 	Inbound []orders.InboundCarrier
 }
@@ -54,9 +54,9 @@ type LevelState struct {
 func (c LevelState) Short() int { return c.Have.Short(c.Level.Want) }
 
 // CountLevel reads one level type's three populations for group g, against the
-// type's open maintain episode (zero when none is open). An error names the
+// type's open kanban episode (zero when none is open). An error names the
 // count that failed and leaves the answer unusable.
-func (db *DB) CountLevel(g *nodes.Node, lv MaintainLevel, episode DemandOrigin) (LevelState, error) {
+func (db *DB) CountLevel(g *nodes.Node, lv KanbanLevel, episode DemandOrigin) (LevelState, error) {
 	c := LevelState{Level: lv}
 	var err error
 	if c.Resident, err = db.CountEmptyBinsOfTypeInGroup(lv.BinTypeCode, g.ID, domain.Height{}); err != nil {
@@ -75,14 +75,14 @@ func (db *DB) CountLevel(g *nodes.Node, lv MaintainLevel, episode DemandOrigin) 
 }
 
 // TypeLineOf reads one level type's line for group g, for the lift divert: the count
-// (CountLevel, against the type's open maintain episode), then, for a type
+// (CountLevel, against the type's open kanban episode), then, for a type
 // that states its totes per layer and has wanted heights among layerWants (the
-// group's, ListMaintainLayerWants), each height's residents and comings: the
+// group's, ListKanbanLayerWants), each height's residents and comings: the
 // carts whose totes_on_cart is exactly that many layers. The comings are the
 // count's coming rows (LevelState.Inbound), so no second read spells
 // "coming". The count comes back too, for the rows it read.
-func (db *DB) TypeLineOf(g *nodes.Node, lv MaintainLevel, episode DemandOrigin,
-	layerWants []MaintainLayerWant) (kanban.Line, LevelState, error) {
+func (db *DB) TypeLineOf(g *nodes.Node, lv KanbanLevel, episode DemandOrigin,
+	layerWants []KanbanLayerWant) (kanban.Line, LevelState, error) {
 	c, err := db.CountLevel(g, lv, episode)
 	if err != nil {
 		return kanban.Line{}, c, err

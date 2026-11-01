@@ -15,15 +15,15 @@ import (
 // without spinning up the dispatcher harness. Each call returns
 // pre-loaded values; nil/zero values represent "not found" or "empty."
 type fakeCapacityDB struct {
-	maintainLevels map[int64][]nodes.MaintainLevel
-	emptyInGroup   map[int64]int
-	tbInGroup      map[int64]int // the carts at 0, the count at TopsAndBottomsOnly
-	node           *nodes.Node
-	getNodeErr     error
-	binCount       int
-	binCountErr    error
-	inFlight       int
-	inFlightErr    error
+	kanbanLevels map[int64][]nodes.KanbanLevel
+	emptyInGroup map[int64]int
+	tbInGroup    map[int64]int // the carts at 0, the count at TopsAndBottomsOnly
+	node         *nodes.Node
+	getNodeErr   error
+	binCount     int
+	binCountErr  error
+	inFlight     int
+	inFlightErr  error
 
 	// NGRP support: walk children + per-child counts.
 	children       []*nodes.Node
@@ -346,14 +346,14 @@ func TestCheckDropoffCapacity(t *testing.T) {
 	}
 }
 
-// ── The maintained-group level (MG4-3) ──────────────────────────────────────
+// ── The kanban level (MG4-3) ──────────────────────────────────────
 //
 // Both default to "no level declared", so every existing case keeps its
 // behaviour: the level gate is a no-op for a group nobody configured, which is
 // every group in every plant today.
 
-func (f *fakeCapacityDB) ListMaintainLevels(groupNodeID int64) ([]nodes.MaintainLevel, error) {
-	return f.maintainLevels[groupNodeID], nil
+func (f *fakeCapacityDB) ListKanbanLevels(groupNodeID int64) ([]nodes.KanbanLevel, error) {
+	return f.kanbanLevels[groupNodeID], nil
 }
 
 func (f *fakeCapacityDB) CountEmptyBinsOfTypeInGroup(binTypeCode string, groupNodeID int64, h domain.Height) (int, error) {

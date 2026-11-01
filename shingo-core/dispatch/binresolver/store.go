@@ -41,9 +41,9 @@ type Store interface {
 	ListBinsByNode(nodeID int64) ([]*bins.Bin, error)
 	CountBinsByNode(nodeID int64) (int, error)
 
-	// ── The maintained-group level (MG4-1) ──────────────────────────────────
+	// ── The kanban level (MG4-1) ──────────────────────────────────
 	//
-	// ListMaintainLevels is the CAP, its Want the effective want (store.DB reads it
+	// ListKanbanLevels is the CAP, its Want the effective want (store.DB reads it
 	// through the picture); CountEmptyBinsOfTypeInGroup is what the group is
 	// actually holding. The filter refuses a store into a group that
 	// has reached its level, so the two are read together.
@@ -54,7 +54,7 @@ type Store interface {
 	// resolver that counted the group its own way would be a second answer to
 	// "how full is this group", and the keeper and the resolver disagreeing about
 	// that is the whole feature quietly not working.
-	ListMaintainLevels(groupNodeID int64) ([]nodes.MaintainLevel, error)
+	ListKanbanLevels(groupNodeID int64) ([]nodes.KanbanLevel, error)
 	CountEmptyBinsOfTypeInGroup(binTypeCode string, groupNodeID int64, h domain.Height) (int, error)
 	// TopsAndBottomsWant is a level's tops & bottoms row (false: none), the cap
 	// of its own line, read only for a cart at 0 (kanban.AtLevel).

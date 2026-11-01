@@ -374,7 +374,7 @@ func TestThresholdAndTriggerRefAreNotApplicableOnTheWrongKind(t *testing.T) {
 	// A kanban's is the effective want it opened over, and says so: the want has
 	// moved with the processes since.
 	mnt := originFor()
-	mnt.Kind = protocol.EpisodeKindMaintain
+	mnt.Kind = protocol.EpisodeKindKanban
 	mnt.Threshold = 5
 	if md := BuildEpisodeDetail(mnt, nil, false, nil, now, disp()); md.Threshold.Kind != CellValue || md.Threshold.Text != "5 when opened" {
 		t.Errorf("a kanban episode's threshold: kind=%q text=%q, want 5 when opened", md.Threshold.Kind, md.Threshold.Text)

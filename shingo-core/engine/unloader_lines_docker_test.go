@@ -66,7 +66,7 @@ func (f linesFixture) empty(t *testing.T, btID int64, slot int, label string, to
 	testutil.MustNoErr(t, err, "set totes on "+label)
 }
 
-func (f linesFixture) lines(t *testing.T, levels []store.MaintainLevel, windows []protocol.NodeBinsRow) *protocol.NodeBinsGroup {
+func (f linesFixture) lines(t *testing.T, levels []store.KanbanLevel, windows []protocol.NodeBinsRow) *protocol.NodeBinsGroup {
 	t.Helper()
 	f.counter.Reset()
 	got, err := f.eng.UnloaderGroupLines([]store.GroupLineAsk{{Group: f.grp, Levels: levels, Windows: windows}})
@@ -77,15 +77,15 @@ func (f linesFixture) lines(t *testing.T, levels []store.MaintainLevel, windows 
 	return &got[0]
 }
 
-func (f linesFixture) levels(t *testing.T, wants map[int64]int, layers map[int64][]store.MaintainLayerWant) []store.MaintainLevel {
+func (f linesFixture) levels(t *testing.T, wants map[int64]int, layers map[int64][]store.KanbanLayerWant) []store.KanbanLevel {
 	t.Helper()
 	for bt, want := range wants {
-		testutil.MustNoErr(t, f.db.SetMaintainLevelAndLayerWants(store.MaintainLevel{
+		testutil.MustNoErr(t, f.db.SetKanbanLevelAndLayerWants(store.KanbanLevel{
 			GroupNodeID: f.grp.ID, BinTypeID: bt, Want: want,
 		}, layers[bt]), "declare level")
 	}
-	lv, err := f.db.ListMaintainLevels(f.grp.ID)
-	testutil.MustNoErr(t, err, "ListMaintainLevels")
+	lv, err := f.db.ListKanbanLevels(f.grp.ID)
+	testutil.MustNoErr(t, err, "ListKanbanLevels")
 	return lv
 }
 
@@ -166,7 +166,7 @@ func TestUnloaderGroupLines_HeightsCountOnAnExactMultiple(t *testing.T) {
 		o.DeliveryNode = "LINES-H"
 		o.NamedBinID = &coming
 	})
-	levels := f.levels(t, map[int64]int{f.tote: 6}, map[int64][]store.MaintainLayerWant{
+	levels := f.levels(t, map[int64]int{f.tote: 6}, map[int64][]store.KanbanLayerWant{
 		f.tote: {{Layers: 3, Want: 2}, {Layers: 5, Want: 1}},
 	})
 
@@ -252,7 +252,7 @@ func TestUnloaderGroupLines_TheEffectiveWant(t *testing.T) {
 	coverPart(t, f.db, "LINES-COVER-P", f.kd)
 	coverProcess(t, f.db, "LINES-COVER-PRESS", coverStyle{"S", true, [][2]string{{"LINES-COVER-SUPPORT", "LINES-COVER-P"}}})
 
-	levels, err := f.db.ListMaintainLevels(f.grp.ID)
+	levels, err := f.db.ListKanbanLevels(f.grp.ID)
 	testutil.MustNoErr(t, err, "levels")
 	got := f.lines(t, levels, []protocol.NodeBinsRow{cart("W1", "KD-L", false)})
 	want := []protocol.NodeBinsWant{{BinType: "KD-L", Want: 3}}
@@ -272,16 +272,16 @@ func TestUnloaderGroupLines_CountsAreTheKeepers(t *testing.T) {
 	eng := newTestEngine(t, db, simulator.New())
 	grpID, btID := mntFixture(t, db, "LINES-KEEP", 4, "LINES-KEEP-T", 2)
 	mntOutsideEmpty(t, db, btID, "LINES-KEEP-MARKET")
-	eng.Maintainer().Tick()
-	eng.Maintainer().Tick()
-	st := mntState(t, eng.Maintainer(), "LINES-KEEP", "LINES-KEEP-T")
+	eng.KanbanKeeper().Tick()
+	eng.KanbanKeeper().Tick()
+	st := mntState(t, eng.KanbanKeeper(), "LINES-KEEP", "LINES-KEEP-T")
 	if st.Asked == 0 {
 		t.Fatalf("the keeper has no live ask, so the asked term is not exercised: %+v", st)
 	}
 
 	grp, err := db.GetNode(grpID)
 	testutil.MustNoErr(t, err, "read group")
-	levels, err := db.ListMaintainLevels(grpID)
+	levels, err := db.ListKanbanLevels(grpID)
 	testutil.MustNoErr(t, err, "levels")
 	// One full cart of another type at a window: assigned the keeper's type
 	// only while the keeper's gap says the group is short.

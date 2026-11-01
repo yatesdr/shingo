@@ -77,17 +77,17 @@ type ClaimNodeContext struct {
 //
 // Lines name node groups, never lanes (owner, 2026-10-03). A leg that names a
 // lane searches that lane only, so a bin put in a sibling lane of the same
-// group is invisible to it. And a maintained group holds empties: the store
+// group is invisible to it. And a kanban holds empties: the store
 // refuses a full there, so a consume line's fulls could be taken from it but
 // never put back. Core refuses both for a loader at its own save; these sets
 // let the Edge say the same at its claim and routing-set saves.
 //
 // EMPTY REFUSES NOTHING. No node list heard yet leaves both sets empty, and an
-// older Core never sends the maintained flag, so its groups read as unmarked.
+// older Core never sends the kanban flag, so its groups read as unmarked.
 // Neither is evidence, and neither refuses a write.
 type CoreNodeKinds struct {
-	Lanes      map[string]bool
-	Maintained map[string]bool
+	Lanes  map[string]bool
+	Kanban map[string]bool
 	// AcceptsPartials: windows of a loader that takes partly filled carriers,
 	// and the groups above them (protocol.NodeInfo.AcceptsPartials). A partial
 	// home may not be one.
@@ -105,11 +105,11 @@ func CoreNodeKindsOf(known map[string]protocol.NodeInfo) CoreNodeKinds {
 			}
 			k.Lanes[name] = true
 		}
-		if n.Maintained {
-			if k.Maintained == nil {
-				k.Maintained = map[string]bool{}
+		if n.Kanban {
+			if k.Kanban == nil {
+				k.Kanban = map[string]bool{}
 			}
-			k.Maintained[name] = true
+			k.Kanban[name] = true
 		}
 		if n.AcceptsPartials {
 			if k.AcceptsPartials == nil {
@@ -134,8 +134,8 @@ func kindsHas(set map[string]bool, name string) bool {
 	return false
 }
 
-// IsMaintained reports whether name is a group Core keeps a level of empties in.
-func (k CoreNodeKinds) IsMaintained(name string) bool { return kindsHas(k.Maintained, name) }
+// IsKanban reports whether name is a group Core keeps a level of empties in.
+func (k CoreNodeKinds) IsKanban(name string) bool { return kindsHas(k.Kanban, name) }
 
 // LegRefusal is the refusal for a lane named in a routing role, in the
 // sentence Core and the claim editor both use, or "" when the name is fine.
@@ -244,7 +244,7 @@ func (k CoreNodeKinds) RefuseLaneRow(role, name string) error {
 }
 
 // validateLegKinds refuses a lane on any of the claim's legs (LaneLegs, the
-// same answer the store gives), and a maintained group as a consume claim's
+// same answer the store gives), and a kanban as a consume claim's
 // source. A field already refused for another reason is not refused twice.
 func validateLegKinds(in NodeClaimInput, kinds CoreNodeKinds, reported map[string]bool, add func(field, msg string)) {
 	for _, f := range kinds.LaneLegs(in) {
@@ -253,8 +253,8 @@ func validateLegKinds(in NodeClaimInput, kinds CoreNodeKinds, reported map[strin
 		}
 	}
 	if in.Role == protocol.ClaimRoleConsume && in.InboundSource != "" && !reported["inbound_source"] &&
-		kinds.IsMaintained(in.InboundSource) {
-		add("inbound_source", fmt.Sprintf("%s: %q", protocol.MsgFullsFromAnEmptiesBank, in.InboundSource))
+		kinds.IsKanban(in.InboundSource) {
+		add("inbound_source", fmt.Sprintf("%s: %q", protocol.MsgFullsFromAKanban, in.InboundSource))
 	}
 }
 
@@ -313,7 +313,7 @@ type ClaimContextInput struct {
 	// vendor map's point set.
 	KnownCoreNodes   map[string]bool
 	KnownScenePoints map[string]bool
-	// Kinds is the lane and maintained-group sets (CoreNodeKindsOf).
+	// Kinds is the lane and kanban sets (CoreNodeKindsOf).
 	Kinds CoreNodeKinds
 }
 
@@ -346,7 +346,7 @@ func NewClaimContextSet(in ClaimContextInput) ClaimContextSet {
 	}
 }
 
-// Kinds is the lane and maintained-group sets the set was built with, for the
+// Kinds is the lane and kanban sets the set was built with, for the
 // store writes that follow the validation.
 func (s ClaimContextSet) Kinds() CoreNodeKinds { return s.kinds }
 

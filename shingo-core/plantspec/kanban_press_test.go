@@ -174,8 +174,8 @@ func TestKanbanPressPlant_TheUnloader(t *testing.T) {
 func TestKanbanPressPlant_TheKanbans(t *testing.T) {
 	t.Parallel()
 	p := loadKanbanPress(t)
-	byName := map[string]MaintainedGroup{}
-	for _, g := range p.MaintainedGroups {
+	byName := map[string]Kanban{}
+	for _, g := range p.Kanbans {
 		byName[g.Group] = g
 	}
 
@@ -184,7 +184,7 @@ func TestKanbanPressPlant_TheKanbans(t *testing.T) {
 		strings.Join(k.Supports, ",") != "KP-PRESS" || k.Station == "" {
 		t.Errorf("PRESS-KANBAN = %+v", k)
 	}
-	levels := map[string]MaintainLevel{}
+	levels := map[string]KanbanLevel{}
 	for _, l := range k.Levels {
 		levels[l.BinType] = l
 	}

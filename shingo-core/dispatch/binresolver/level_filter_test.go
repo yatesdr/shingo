@@ -15,7 +15,7 @@ import (
 // The keeper tops UP to the declared number. Without a filter refusing a store
 // PAST it, the level is only a floor: a group told to hold four would accept a
 // fifth, a sixth, and every carrier anybody wanted to put down — which is how a
-// press empty bank becomes the place the plant parks its overflow.
+// lineside kanban becomes the place the plant parks its overflow.
 
 func levelGroup(id int64, name string) *nodes.Node {
 	return &nodes.Node{ID: id, Name: name, Enabled: true, IsSynthetic: true}
@@ -23,14 +23,14 @@ func levelGroup(id int64, name string) *nodes.Node {
 
 // levelStore builds a fake with one group, one free child slot, and whatever
 // levels and counts the case wants.
-func levelStore(groupID int64, levels []nodes.MaintainLevel, counts map[groupKey]int) (*fakeStore, *nodes.Node) {
+func levelStore(groupID int64, levels []nodes.KanbanLevel, counts map[groupKey]int) (*fakeStore, *nodes.Node) {
 	f := newFakeStore()
 	grp := levelGroup(groupID, "LVL-GRP")
 	child := &nodes.Node{ID: groupID + 1, Name: "LVL-SLOT", Enabled: true, ParentID: &grp.ID}
 	f.nodes[grp.ID] = grp
 	f.nodes[child.ID] = child
 	f.children[grp.ID] = []*nodes.Node{child}
-	f.maintainLevels = map[int64][]nodes.MaintainLevel{groupID: levels}
+	f.kanbanLevels = map[int64][]nodes.KanbanLevel{groupID: levels}
 	f.emptyCounts = counts
 	return f, grp
 }
@@ -40,7 +40,7 @@ func TestLevelFilter_AtLevelRefuses(t *testing.T) {
 	t.Parallel()
 	bt := int64(7)
 	f, grp := levelStore(100,
-		[]nodes.MaintainLevel{{GroupNodeID: 100, BinTypeID: bt, BinTypeCode: "LVL-45x58", Want: 4}},
+		[]nodes.KanbanLevel{{GroupNodeID: 100, BinTypeID: bt, BinTypeCode: "LVL-45x58", Want: 4}},
 		map[groupKey]int{{100, "LVL-45x58"}: 4})
 
 	r := &GroupResolver{DB: f}
@@ -84,7 +84,7 @@ func TestLevelFilter_BelowLevelIsUnaffected(t *testing.T) {
 	t.Parallel()
 	bt := int64(7)
 	f, grp := levelStore(200,
-		[]nodes.MaintainLevel{{GroupNodeID: 200, BinTypeID: bt, BinTypeCode: "LVL-45x58", Want: 4}},
+		[]nodes.KanbanLevel{{GroupNodeID: 200, BinTypeID: bt, BinTypeCode: "LVL-45x58", Want: 4}},
 		map[groupKey]int{{200, "LVL-45x58"}: 3})
 
 	r := &GroupResolver{DB: f}
@@ -100,7 +100,7 @@ func TestLevelFilter_BelowLevelIsUnaffected(t *testing.T) {
 func TestLevelFilter_PerTypeWhenTheTypeIsKnown(t *testing.T) {
 	t.Parallel()
 	big, small := int64(7), int64(8)
-	f, grp := levelStore(300, []nodes.MaintainLevel{
+	f, grp := levelStore(300, []nodes.KanbanLevel{
 		{GroupNodeID: 300, BinTypeID: big, BinTypeCode: "LVL-BIG", Want: 4},
 		{GroupNodeID: 300, BinTypeID: small, BinTypeCode: "LVL-SMALL", Want: 2},
 	}, map[groupKey]int{
@@ -125,12 +125,12 @@ func TestLevelFilter_UndeclaredTypeIsNotFenced(t *testing.T) {
 	t.Parallel()
 	declared, other := int64(7), int64(99)
 	f, grp := levelStore(400,
-		[]nodes.MaintainLevel{{GroupNodeID: 400, BinTypeID: declared, BinTypeCode: "LVL-D", Want: 1}},
+		[]nodes.KanbanLevel{{GroupNodeID: 400, BinTypeID: declared, BinTypeCode: "LVL-D", Want: 1}},
 		map[groupKey]int{{400, "LVL-D"}: 1})
 
 	r := &GroupResolver{DB: f}
 	if got, err := r.ResolveStore(grp, "", KnownBinType(other), reservations.Anyone); err != nil || got == nil {
-		t.Errorf("an UNDECLARED type was refused (%v). A maintained group is a group with a "+
+		t.Errorf("an UNDECLARED type was refused (%v). A kanban is a group with a "+
 			"level on some types, not a group closed to every other", err)
 	}
 }
@@ -144,7 +144,7 @@ func TestLevelFilter_UndeclaredTypeIsNotFenced(t *testing.T) {
 func TestLevelFilter_UntypedUsesTheGroupTotal(t *testing.T) {
 	t.Parallel()
 	big, small := int64(7), int64(8)
-	levels := []nodes.MaintainLevel{
+	levels := []nodes.KanbanLevel{
 		{GroupNodeID: 500, BinTypeID: big, BinTypeCode: "LVL-BIG", Want: 4},
 		{GroupNodeID: 500, BinTypeID: small, BinTypeCode: "LVL-SMALL", Want: 2},
 	}
@@ -171,7 +171,7 @@ func TestLevelFilter_UntypedUsesTheGroupTotal(t *testing.T) {
 
 // A GROUP WITH NO DECLARED LEVEL IS UNTOUCHED, which is every group in every
 // plant today.
-func TestLevelFilter_UnmaintainedGroupIsANoOp(t *testing.T) {
+func TestLevelFilter_PlainGroupIsANoOp(t *testing.T) {
 	t.Parallel()
 	f := newFakeStore()
 	grp := levelGroup(600, "PLAIN-GRP")
@@ -199,12 +199,12 @@ func TestLevelFilter_ReadFailureRefusesAndPropagates(t *testing.T) {
 		name  string
 		spoil func(*fakeStore)
 	}{
-		{"the level read fails", func(f *fakeStore) { f.maintainLevelsErr = errors.New("boom") }},
+		{"the level read fails", func(f *fakeStore) { f.kanbanLevelsErr = errors.New("boom") }},
 		{"the count read fails", func(f *fakeStore) { f.emptyCountErr = errors.New("boom") }},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f, grp := levelStore(700,
-				[]nodes.MaintainLevel{{GroupNodeID: 700, BinTypeID: bt, BinTypeCode: "LVL-X", Want: 4}},
+				[]nodes.KanbanLevel{{GroupNodeID: 700, BinTypeID: bt, BinTypeCode: "LVL-X", Want: 4}},
 				map[groupKey]int{{700, "LVL-X"}: 0})
 			tc.spoil(f)
 

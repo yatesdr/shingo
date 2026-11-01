@@ -58,8 +58,8 @@ func TestKanbanPress_PoolsBalanceAndAreJudgedOnTheirWant(t *testing.T) {
 		if q == nil {
 			t.Fatalf("no pool %s", name)
 		}
-		if !q.isMaintained || q.levelWant != want {
-			t.Errorf("%s: maintained %v, want %d; expected %d", name, q.isMaintained, q.levelWant, want)
+		if !q.isKanban || q.levelWant != want {
+			t.Errorf("%s: kanban %v, want %d; expected %d", name, q.isKanban, q.levelWant, want)
 		}
 		if q.seededEmpty < q.levelWant {
 			t.Errorf("%s seeded %d against a want of %d", name, q.seededEmpty, q.levelWant)

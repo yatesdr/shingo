@@ -21,8 +21,8 @@ import (
 // for mutations, per-method error toggles. If a new test needs behaviour the fake
 // doesn't model, extend the struct rather than reaching past it.
 type fakeStore struct {
-	maintainLevels map[int64][]nodes.MaintainLevel
-	emptyInGroup   map[int64]int
+	kanbanLevels map[int64][]nodes.KanbanLevel
+	emptyInGroup map[int64]int
 	// Per-node Allowed Bin Types: what each node declares, and what carrier the
 	// asking order is placing. Both empty by default = the fence is inert.
 	effBinTypes   map[int64][]*bins.BinType
@@ -271,14 +271,14 @@ func (f *fakeStore) SetOrderQueueDetail(id int64, reason string, code protocol.Q
 	return nil
 }
 
-// ── The maintained-group level (MG4-3) ──────────────────────────────────────
+// ── The kanban level (MG4-3) ──────────────────────────────────────
 //
 // Both default to "no level declared", so every existing case keeps its
 // behaviour: the level gate is a no-op for a group nobody configured, which is
 // every group in every plant today.
 
-func (f *fakeStore) ListMaintainLevels(groupNodeID int64) ([]nodes.MaintainLevel, error) {
-	return f.maintainLevels[groupNodeID], nil
+func (f *fakeStore) ListKanbanLevels(groupNodeID int64) ([]nodes.KanbanLevel, error) {
+	return f.kanbanLevels[groupNodeID], nil
 }
 
 func (f *fakeStore) CountEmptyBinsOfTypeInGroup(binTypeCode string, groupNodeID int64, _ domain.Height) (int, error) {

@@ -15,7 +15,7 @@ import (
 // carriers of each declared type, near the equipment that consumes them. This
 // file is the read/write surface the group settings modal talks to.
 //
-// The level keeper (engine/maintainer.go) holds the levels saved here. The
+// The level keeper (engine/kanban_keeper.go) holds the levels saved here. The
 // layer wants saved beside them tell the unloader which heights the group is
 // short of; the one at 0 layers (tops & bottoms) is a cap of its own, beside
 // the type's stack level, and the keeper fetches neither.
@@ -25,7 +25,7 @@ import (
 // field or list entry (store.SaveKanban). The per-thing methods below each carry
 // their partial to it.
 
-// MaintainedGroupConfig is one group's whole configuration, as the settings modal
+// KanbanConfig is one group's whole configuration, as the settings modal
 // reads it: the scalars, the levels with every level's wanted heights
 // (LayerWants, in the levels' order), the supports and the sources, in one
 // answer.
@@ -33,16 +33,16 @@ import (
 // One read rather than six, because a half-loaded configuration screen is a
 // screen an operator can save from — and saving what a failed fetch left blank
 // is how a level silently becomes zero.
-type MaintainedGroupConfig struct {
-	GroupNodeID         int64                     `json:"group_node_id"`
-	StrictSourcing      bool                      `json:"strict_sourcing"`
-	MaintenanceStation  string                    `json:"maintenance_station"`
-	OverflowDestination string                    `json:"overflow_destination"`
-	RunningCover        int                       `json:"running_cover"`
-	Levels              []store.MaintainLevel     `json:"levels"`
-	LayerWants          []store.MaintainLayerWant `json:"layer_wants"`
-	Supports            []store.MaintainSupport   `json:"supports"`
-	Sources             []store.KanbanSource      `json:"sources"`
+type KanbanConfig struct {
+	GroupNodeID         int64                   `json:"group_node_id"`
+	StrictSourcing      bool                    `json:"strict_sourcing"`
+	MaintenanceStation  string                  `json:"maintenance_station"`
+	OverflowDestination string                  `json:"overflow_destination"`
+	RunningCover        int                     `json:"running_cover"`
+	Levels              []store.KanbanLevel     `json:"levels"`
+	LayerWants          []store.KanbanLayerWant `json:"layer_wants"`
+	Supports            []store.KanbanSupport   `json:"supports"`
+	Sources             []store.KanbanSource    `json:"sources"`
 	// hasRow says the group has its kanbans row. overflowNodeID is the default
 	// overflow's node, 0 when none; a plain group's overflow is its property's name
 	// alone, and may not resolve.
@@ -53,28 +53,28 @@ type MaintainedGroupConfig struct {
 // isKanban says the configuration needs a kanbans row: it has one, or something
 // in it hangs off one. A group that is none of these stays plain, and a save of
 // its all-default settings (the modal posts them for every group) writes nothing.
-func (c MaintainedGroupConfig) isKanban() bool {
+func (c KanbanConfig) isKanban() bool {
 	return c.hasRow || len(c.Levels) > 0 || len(c.Supports) > 0 || len(c.Sources) > 0 ||
 		len(c.LayerWants) > 0 || c.StrictSourcing || c.RunningCover > 0 ||
 		strings.TrimSpace(c.MaintenanceStation) != ""
 }
 
-// GetMaintainedGroup returns everything the modal needs for one group.
+// GetKanban returns everything the modal needs for one group.
 //
 // A group with nothing configured is not an error and not a nil: it is a config
 // with empty sets, which is what every plain NGRP looks like and what the modal
 // must be able to render. A kanban's overflow comes off its row, a plain group's
 // off its property (store.OverflowTargetOf reads whichever applies).
-func (s *NodeService) GetMaintainedGroup(groupNodeID int64) (*MaintainedGroupConfig, error) {
+func (s *NodeService) GetKanban(groupNodeID int64) (*KanbanConfig, error) {
 	levels, err := s.db.ListDeclaredLevels(groupNodeID)
 	if err != nil {
 		return nil, err
 	}
-	layerWants, err := s.db.ListMaintainLayerWants(groupNodeID)
+	layerWants, err := s.db.ListKanbanLayerWants(groupNodeID)
 	if err != nil {
 		return nil, err
 	}
-	supports, err := s.db.ListMaintainSupports(groupNodeID)
+	supports, err := s.db.ListKanbanSupports(groupNodeID)
 	if err != nil {
 		return nil, err
 	}
@@ -90,7 +90,7 @@ func (s *NodeService) GetMaintainedGroup(groupNodeID int64) (*MaintainedGroupCon
 	if err != nil {
 		return nil, err
 	}
-	cfg := &MaintainedGroupConfig{
+	cfg := &KanbanConfig{
 		GroupNodeID:         groupNodeID,
 		OverflowDestination: overflow.Name,
 		overflowNodeID:      overflow.NodeID,
@@ -108,9 +108,9 @@ func (s *NodeService) GetMaintainedGroup(groupNodeID int64) (*MaintainedGroupCon
 	return cfg, nil
 }
 
-// MaintainedGroupSettings is the settings cluster as one save: strict, station
+// KanbanSettings is the settings cluster as one save: strict, station
 // and default overflow.
-type MaintainedGroupSettings struct {
+type KanbanSettings struct {
 	StrictSourcing      bool
 	MaintenanceStation  string
 	OverflowDestination string
@@ -139,33 +139,33 @@ type KanbanSave struct {
 type KanbanLevelSave struct {
 	BinTypeID  int64
 	Want       *int
-	LayerWants *[]MaintainLayerWant
+	LayerWants *[]KanbanLayerWant
 	// Overflow is the type's own overflow node id; 0 clears it, and the type takes
 	// the kanban's default.
 	Overflow *int64
 }
 
-// MaintainLayerWant is one wanted height of a level (store.MaintainLayerWant),
+// KanbanLayerWant is one wanted height of a level (store.KanbanLayerWant),
 // named here so the www layer can build a save without the store.
-type MaintainLayerWant = store.MaintainLayerWant
+type KanbanLayerWant = store.KanbanLayerWant
 
 // SaveKanban is the one write of a kanban's configuration: it builds the
 // configuration the save would leave behind, asks the rules, and hands what
 // passed to store.SaveKanban. A refusal writes nothing and is the returned check,
 // not the error, which is for a read or write that failed.
-func (s *NodeService) SaveKanban(save KanbanSave) (MaintainedGroupCheck, error) {
-	post, err := s.GetMaintainedGroup(save.GroupNodeID)
+func (s *NodeService) SaveKanban(save KanbanSave) (KanbanCheck, error) {
+	post, err := s.GetKanban(save.GroupNodeID)
 	if err != nil {
-		return MaintainedGroupCheck{}, err
+		return KanbanCheck{}, err
 	}
 	refusals, err := s.applyKanbanSave(post, save)
 	if err != nil {
-		return MaintainedGroupCheck{}, err
+		return KanbanCheck{}, err
 	}
 	if len(refusals) > 0 {
-		return MaintainedGroupCheck{Refusals: refusals}, nil
+		return KanbanCheck{Refusals: refusals}, nil
 	}
-	chk, err := s.ValidateMaintainedGroup(*post)
+	chk, err := s.ValidateKanban(*post)
 	if err != nil || chk.Err() != nil {
 		return chk, err
 	}
@@ -209,7 +209,7 @@ func (s KanbanSave) changesTheLine() bool {
 
 // applyKanbanSave turns post into the configuration save would leave behind, and
 // returns what refuses a line on its own, before the whole is judged.
-func (s *NodeService) applyKanbanSave(post *MaintainedGroupConfig, save KanbanSave) ([]string, error) {
+func (s *NodeService) applyKanbanSave(post *KanbanConfig, save KanbanSave) ([]string, error) {
 	var refusals []string
 	if save.Strict != nil {
 		post.StrictSourcing = *save.Strict
@@ -258,7 +258,7 @@ func (s *NodeService) applyKanbanSave(post *MaintainedGroupConfig, save KanbanSa
 			if err != nil {
 				return nil, fmt.Errorf("read supported position %d: %w", id, err)
 			}
-			post.Supports = append(post.Supports, store.MaintainSupport{
+			post.Supports = append(post.Supports, store.KanbanSupport{
 				GroupNodeID: post.GroupNodeID, ProcessNodeID: id, ProcessNodeName: n.Name,
 			})
 		}
@@ -288,9 +288,9 @@ func containsID(ids []int64, id int64) bool {
 }
 
 // applyLevelSave applies one level line to post, and returns what refuses it.
-func (s *NodeService) applyLevelSave(post *MaintainedGroupConfig, lv KanbanLevelSave) (string, error) {
+func (s *NodeService) applyLevelSave(post *KanbanConfig, lv KanbanLevelSave) (string, error) {
 	if lv.Want != nil && *lv.Want < 0 {
-		return fmt.Sprintf("a maintained level cannot be negative (got %d)", *lv.Want), nil
+		return fmt.Sprintf("a kanban level cannot be negative (got %d)", *lv.Want), nil
 	}
 	bt, err := s.db.GetBinType(lv.BinTypeID)
 	if err != nil {
@@ -320,7 +320,7 @@ func (s *NodeService) applyLevelSave(post *MaintainedGroupConfig, lv KanbanLevel
 		}
 		post.LayerWants = kept
 	}
-	var line *store.MaintainLevel
+	var line *store.KanbanLevel
 	for i := range post.Levels {
 		if post.Levels[i].BinTypeID == lv.BinTypeID {
 			line = &post.Levels[i]
@@ -330,7 +330,7 @@ func (s *NodeService) applyLevelSave(post *MaintainedGroupConfig, lv KanbanLevel
 		if lv.Want == nil {
 			return fmt.Sprintf("%s has no level here to change", bt.Code), nil
 		}
-		post.Levels = append(post.Levels, store.MaintainLevel{
+		post.Levels = append(post.Levels, store.KanbanLevel{
 			GroupNodeID: post.GroupNodeID, BinTypeID: lv.BinTypeID, BinTypeCode: bt.Code, Want: *lv.Want,
 		})
 		return "", nil
@@ -343,7 +343,7 @@ func (s *NodeService) applyLevelSave(post *MaintainedGroupConfig, lv KanbanLevel
 
 // kanbanChange is the store's half of the save, and the refusal of an overflow a
 // row cannot hold: a kanban's overflow is a node, and it is not the kanban.
-func (s *NodeService) kanbanChange(post *MaintainedGroupConfig, save KanbanSave) (store.KanbanChange, string, error) {
+func (s *NodeService) kanbanChange(post *KanbanConfig, save KanbanSave) (store.KanbanChange, string, error) {
 	change := store.KanbanChange{
 		NodeID:       save.GroupNodeID,
 		EnsureRow:    post.isKanban(),
@@ -390,59 +390,59 @@ func (s *NodeService) kanbanChange(post *MaintainedGroupConfig, save KanbanSave)
 	return change, "", nil
 }
 
-// SetMaintainLevel declares how many empty carriers of one type a group holds.
-func (s *NodeService) SetMaintainLevel(groupNodeID, binTypeID int64, want int) (MaintainedGroupCheck, error) {
+// SetKanbanLevel declares how many empty carriers of one type a group holds.
+func (s *NodeService) SetKanbanLevel(groupNodeID, binTypeID int64, want int) (KanbanCheck, error) {
 	return s.SaveKanban(KanbanSave{GroupNodeID: groupNodeID,
 		Levels: []KanbanLevelSave{{BinTypeID: binTypeID, Want: &want}}})
 }
 
-// SetMaintainLevelAndLayerWants is SetMaintainLevel with the type's layer
+// SetKanbanLevelAndLayerWants is SetKanbanLevel with the type's layer
 // wants replaced by layerWants in the same transaction (an empty set clears
 // them). A height on a type that states no totes per layer is refused, and the
 // tops & bottoms row (0 layers) counts against the group's positions beside the
 // level.
-func (s *NodeService) SetMaintainLevelAndLayerWants(groupNodeID, binTypeID int64, want int,
-	layerWants []MaintainLayerWant) (MaintainedGroupCheck, error) {
+func (s *NodeService) SetKanbanLevelAndLayerWants(groupNodeID, binTypeID int64, want int,
+	layerWants []KanbanLayerWant) (KanbanCheck, error) {
 	if layerWants == nil {
-		layerWants = []MaintainLayerWant{}
+		layerWants = []KanbanLayerWant{}
 	}
 	return s.SaveKanban(KanbanSave{GroupNodeID: groupNodeID,
 		Levels: []KanbanLevelSave{{BinTypeID: binTypeID, Want: &want, LayerWants: &layerWants}}})
 }
 
-// RemoveMaintainLevel stops declaring a carrier type for a group, and its layer
+// RemoveKanbanLevel stops declaring a carrier type for a group, and its layer
 // wants go with it. Distinct from setting want=0, which keeps the line.
-func (s *NodeService) RemoveMaintainLevel(groupNodeID, binTypeID int64) (MaintainedGroupCheck, error) {
+func (s *NodeService) RemoveKanbanLevel(groupNodeID, binTypeID int64) (KanbanCheck, error) {
 	return s.SaveKanban(KanbanSave{GroupNodeID: groupNodeID, RemoveLevels: []int64{binTypeID}})
 }
 
-// ListMaintainLevels returns a group's declared level.
-func (s *NodeService) ListMaintainLevels(groupNodeID int64) ([]store.MaintainLevel, error) {
+// ListKanbanLevels returns a group's declared level.
+func (s *NodeService) ListKanbanLevels(groupNodeID int64) ([]store.KanbanLevel, error) {
 	return s.db.ListDeclaredLevels(groupNodeID)
 }
 
-// SetMaintainSupports replaces the set of process nodes a group serves.
-func (s *NodeService) SetMaintainSupports(groupNodeID int64, processNodeIDs []int64) (MaintainedGroupCheck, error) {
+// SetKanbanSupports replaces the set of process nodes a group serves.
+func (s *NodeService) SetKanbanSupports(groupNodeID int64, processNodeIDs []int64) (KanbanCheck, error) {
 	return s.SaveKanban(KanbanSave{GroupNodeID: groupNodeID, Supports: &processNodeIDs})
 }
 
-// CheckMaintainedGroupSettings runs the save-time rules against a settings change
+// CheckKanbanSettings runs the save-time rules against a settings change
 // WITHOUT writing it. The settings endpoint runs this and the floor guard before
 // it saves, so a refusal is named ahead of the question the guard asks.
-func (s *NodeService) CheckMaintainedGroupSettings(groupNodeID int64, set MaintainedGroupSettings) (MaintainedGroupCheck, error) {
-	post, err := s.GetMaintainedGroup(groupNodeID)
+func (s *NodeService) CheckKanbanSettings(groupNodeID int64, set KanbanSettings) (KanbanCheck, error) {
+	post, err := s.GetKanban(groupNodeID)
 	if err != nil {
-		return MaintainedGroupCheck{}, err
+		return KanbanCheck{}, err
 	}
 	post.StrictSourcing = set.StrictSourcing
 	post.MaintenanceStation = set.MaintenanceStation
 	post.OverflowDestination = set.OverflowDestination
-	return s.ValidateMaintainedGroup(*post)
+	return s.ValidateKanban(*post)
 }
 
-// ListMaintainSupports returns the process nodes a group serves.
-func (s *NodeService) ListMaintainSupports(groupNodeID int64) ([]store.MaintainSupport, error) {
-	return s.db.ListMaintainSupports(groupNodeID)
+// ListKanbanSupports returns the process nodes a group serves.
+func (s *NodeService) ListKanbanSupports(groupNodeID int64) ([]store.KanbanSupport, error) {
+	return s.db.ListKanbanSupports(groupNodeID)
 }
 
 // ListProcessNodeOptions returns each process with the Core nodes its claims

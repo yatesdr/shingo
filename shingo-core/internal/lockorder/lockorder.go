@@ -49,7 +49,7 @@ type (
 
 	ThresholdMonitor     struct{}
 	SourceabilityMonitor struct{}
-	Maintainer           struct{}
+	KanbanKeeper         struct{}
 	Stage2Pulls          struct{}
 	StrandedNotes        struct{}
 	DropObs              struct{}
@@ -112,7 +112,7 @@ func (Notifier) Rank() int        { return 120 }
 
 func (ThresholdMonitor) Rank() int     { return 130 }
 func (SourceabilityMonitor) Rank() int { return 131 }
-func (Maintainer) Rank() int           { return 132 }
+func (KanbanKeeper) Rank() int         { return 132 }
 func (Stage2Pulls) Rank() int          { return 133 }
 func (StrandedNotes) Rank() int        { return 134 }
 func (DropObs) Rank() int              { return 135 }
@@ -174,7 +174,7 @@ func (Notifier) Name() string        { return "notify.Notifier.mu" }
 
 func (ThresholdMonitor) Name() string     { return "engine.ThresholdMonitor.mu" }
 func (SourceabilityMonitor) Name() string { return "engine.SourceabilityMonitor.mu" }
-func (Maintainer) Name() string           { return "engine.Maintainer.mu" }
+func (KanbanKeeper) Name() string         { return "engine.KanbanKeeper.mu" }
 func (Stage2Pulls) Name() string          { return "engine.stage2Puller.mu" }
 func (StrandedNotes) Name() string        { return "engine.strandedNotesMu" }
 func (DropObs) Name() string              { return "engine.dropObsMu" }

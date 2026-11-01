@@ -630,7 +630,7 @@ func (d *Dispatcher) admitReplenishOrder(req ReplenishRequest, t loaders.Target,
 // the two things Core asks for on its own initiative.
 //
 // TWO CALLERS, ONE DOOR. The loader replenishment loop (a loader's empties, an
-// unloader's fulls) and the maintained-group level keeper (empties) both mint
+// unloader's fulls) and the kanban level keeper (empties) both mint
 // carrier pulls nobody on the Edge requested. What
 // they share — the order shape, the admit, the projection, the origin-class rule
 // — is everything except the fields below, and a second copy of that body is
@@ -649,7 +649,7 @@ type CoreAskSpec struct {
 	SourceNode string
 	// DeliveryNode is the window the ask chose: a loader's window (the loop's
 	// choice, plan.LoaderWindows) or the slot the keeper pre-resolved
-	// (plan.MaintainedSlot). The ask holds it from its issue (Need.Window); a
+	// (plan.KanbanSlot). The ask holds it from its issue (Need.Window); a
 	// window another order holds refuses the ask (ErrWindowTaken), and each
 	// caller goes on to its next window.
 	DeliveryNode string

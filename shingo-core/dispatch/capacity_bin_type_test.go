@@ -15,7 +15,7 @@ import (
 // The resolver then refused, and the order was admitted, resolved, refused and
 // parked one layer deeper under a cause that says nothing about the fence — the
 // same admitted-then-parked loop the level question was given a shared read to
-// avoid (see ngrpAtDeclaredLevel's comment).
+// avoid (see ngrpAtLevel's comment).
 //
 // That divergence was harmless only while the resolver's own bin-type check was
 // inert. It goes live with it, which is why these land in the same change.

@@ -73,7 +73,7 @@ var kanbanWindowsSQL = `SELECT ` + nodes.SelectCols + `, l.id, l.layout, l.funne
 	ORDER BY l.id, h.sort_order, h.position_node_id`
 
 // ListKanbanWindows reads a kanban's windows and their carts, in one statement. Only a
-// short kanban pays it (Maintainer.tickKanban): a steady tick reads none. Pin:
+// short kanban pays it (KanbanKeeper.tickKanban): a steady tick reads none. Pin:
 // TestKanbanCost_KeeperTick.
 func (db *DB) ListKanbanWindows(kanbanID int64) ([]KanbanWindow, error) {
 	rows, err := db.DB.Query(kanbanWindowsSQL, kanbanID, SurplusEdgeUUIDPrefix+"%")

@@ -111,11 +111,11 @@ func TestThresholdSweep_AForecastIsNotOpen(t *testing.T) {
 	}
 }
 
-// TestMaintainer_AForecastIsNotItsEpisode: the keeper's open set is its whole
+// TestKanbanKeeper_AForecastIsNotItsEpisode: the keeper's open set is its whole
 // memory. A forecast at one group's key must not stop the tick for every other
 // group, must not be treated as that group's open episode, and must never be
 // the origin an ask rides on while it is still a forecast.
-func TestMaintainer_AForecastIsNotItsEpisode(t *testing.T) {
+func TestKanbanKeeper_AForecastIsNotItsEpisode(t *testing.T) {
 	t.Parallel()
 	db := testdb.Open(t)
 	eng := newTestEngine(t, db, simulator.New())
@@ -123,10 +123,10 @@ func TestMaintainer_AForecastIsNotItsEpisode(t *testing.T) {
 	_, btB := mntFixture(t, db, "MNT-FCB", 2, "MNT-FCB-T", 1)
 	mntOutsideEmpty(t, db, btA, "MNT-FCA-MARKET")
 	mntOutsideEmpty(t, db, btB, "MNT-FCB-MARKET")
-	insertForecastRow(t, db, protocol.MaintainEpisodeKey("MNT-FCA", "MNT-FCA-T"),
-		protocol.EpisodeKindMaintain, "test-core", "MNT-FCA", "")
+	insertForecastRow(t, db, protocol.KanbanEpisodeKey("MNT-FCA", "MNT-FCA-T"),
+		protocol.EpisodeKindKanban, "test-core", "MNT-FCA", "")
 
-	m := eng.Maintainer()
+	m := eng.KanbanKeeper()
 	m.Tick()
 
 	b := mntState(t, m, "MNT-FCB", "MNT-FCB-T")
@@ -170,16 +170,16 @@ func TestOpenCoreEpisode_PromotesTheForecastAtItsKey(t *testing.T) {
 		}
 	})
 
-	t.Run("maintain", func(t *testing.T) {
+	t.Run("kanban", func(t *testing.T) {
 		t.Parallel()
 		db := testdb.Open(t)
 		eng := newTestEngine(t, db, simulator.New())
 		_, btID := mntFixture(t, db, "MNT-FCP", 2, "MNT-FCP-T", 1)
 		mntOutsideEmpty(t, db, btID, "MNT-FCP-MARKET")
-		fc := insertForecastRow(t, db, protocol.MaintainEpisodeKey("MNT-FCP", "MNT-FCP-T"),
-			protocol.EpisodeKindMaintain, "test-core", "MNT-FCP", "")
+		fc := insertForecastRow(t, db, protocol.KanbanEpisodeKey("MNT-FCP", "MNT-FCP-T"),
+			protocol.EpisodeKindKanban, "test-core", "MNT-FCP", "")
 
-		m := eng.Maintainer()
+		m := eng.KanbanKeeper()
 		m.Tick()
 
 		st := mntState(t, m, "MNT-FCP", "MNT-FCP-T")

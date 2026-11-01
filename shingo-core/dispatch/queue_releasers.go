@@ -862,13 +862,13 @@ var causeReleasers = []causeReleaser{
 		finding: "THE GROUP FREEING UP IS NOT THE RELEASER, which is what separates this from " +
 			"ngrp-at-level and ngrp-full. Those two are about how much room there is and " +
 			"clear when a carrier leaves. This is about what the arriving carrier IS: a " +
-			"payload-bearing bin aimed at a bank whose declared level counts empties, so an " +
+			"payload-bearing bin aimed at a kanban whose declared level counts empties, so an " +
 			"empty group refuses it exactly as a full one does. " +
 			"MOST ROWS SHOULD NEVER REACH THE PARK. Admission tries the group's configured " +
 			"overflow first, so a group with an overflow diverts and never queues; only a " +
 			"group without one parks. A run of these is therefore two findings at once — an " +
 			"unconfigured overflow, and a path still aiming labelled carriers at an empties " +
-			"bank after the operator-CLEAR ordering race was closed.",
+			"kanban after the operator-CLEAR ordering race was closed.",
 	},
 	{
 		cause:       CauseFinderGroupFenced,

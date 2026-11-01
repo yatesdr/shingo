@@ -48,23 +48,23 @@ type fakeFinderDB struct {
 	homeBinTypes map[int64]map[int64][]string
 	typedEmpty   map[string]*bins.Bin
 
-	// maintainedType stands for the open maintained-group episodes: origin id →
+	// kanbanType stands for the open kanban episodes: origin id →
 	// the carrier type that episode is short of. An origin absent from the map is
-	// not a maintain episode, which is every other order in the plant.
-	maintainedType map[string]string
-	// maintainedGroup is the other half of the same episode: origin id → the
+	// not a kanban episode, which is every other order in the plant.
+	kanbanType map[string]string
+	// kanban is the other half of the same episode: origin id → the
 	// group node name. It is what the finder turns into a subtree exclusion so a
 	// top-off ask cannot source out of the group it is filling.
-	maintainedGroup map[string]string
-	// lastFence records the maintained-group fence the plant-wide finders were
+	kanban map[string]string
+	// lastFence records the kanban fence the plant-wide finders were
 	// actually handed. Recorded rather than ignored because the fence IS the
 	// behaviour under test; it replaced lastExcludedSubtree when MG3-1 absorbed
 	// MG2-11's subtree exclusion into the fence's second rule.
 	lastFence bins.EmptyFence
-	// maintainedSources are the sources the same read answers, and episodeReads how
+	// kanbanSources are the sources the same read answers, and episodeReads how
 	// many times it was read: a Pick reads it once.
-	maintainedSources map[string][]int64
-	episodeReads      int
+	kanbanSources map[string][]int64
+	episodeReads  int
 	// lastAsker records the dig asker the finders were handed. MG3-0 pinned that
 	// this was the ZERO value on the simple path; MG3-1b makes it real, so the
 	// record is what the inverted pin asserts against.
@@ -79,7 +79,7 @@ type fakeFinderDB struct {
 	lineReads     int
 	// fencedGroups are the group node ids that turn every asker away, and
 	// fencedGroupErr makes the fence read FAIL. Both stand for a strict
-	// maintained group the need is not supported at.
+	// kanban the need is not supported at.
 	fencedGroups   map[int64]bool
 	fencedGroupErr error
 
@@ -91,9 +91,9 @@ type fakeFinderDB struct {
 	// before the rule landed keeps its original verdicts.
 	binTypeRule    map[string][]int64
 	binTypeRuleErr error
-	// maintainedTypeErr makes the episode read FAIL rather than answer, so the
+	// kanbanTypeErr makes the episode read FAIL rather than answer, so the
 	// "a read failure returns no type rather than guessing" arm is exercisable.
-	maintainedTypeErr error
+	kanbanTypeErr error
 	// searchErr makes EVERY empty/full finder fail with a real error rather than
 	// sql.ErrNoRows — the "the query did not run" case MG3-1a separates from
 	// "nothing matched". One field for all of them because they share one
@@ -145,11 +145,11 @@ func newFakeFinderDB() *fakeFinderDB {
 		homeBinTypes: map[int64]map[int64][]string{},
 		typedEmpty:   map[string]*bins.Bin{},
 		// Both episode maps are made here rather than lazily by each test. They
-		// were nil until MG3-0, so a test that stated a maintain origin panicked
+		// were nil until MG3-0, so a test that stated a kanban origin panicked
 		// on assignment instead of exercising the arm — which is a fixture that
 		// can only be used by someone who already knows it is broken.
-		maintainedType:    map[string]string{},
-		maintainedGroup:   map[string]string{},
+		kanbanType:        map[string]string{},
+		kanban:            map[string]string{},
 		fencedGroups:      map[int64]bool{},
 		effectiveBinTypes: map[int64][]*bins.BinType{},
 	}
@@ -275,18 +275,18 @@ func (f *fakeFinderDB) GroupFencesAsker(groupNodeID int64, _ string) (bool, erro
 	return f.fencedGroups[groupNodeID], nil
 }
 
-func (f *fakeFinderDB) MaintainedEpisodeOf(originID string) (nodes.MaintainedEpisode, error) {
-	if f.maintainedTypeErr != nil {
-		return nodes.MaintainedEpisode{}, f.maintainedTypeErr
+func (f *fakeFinderDB) KanbanEpisodeOf(originID string) (nodes.KanbanEpisode, error) {
+	if f.kanbanTypeErr != nil {
+		return nodes.KanbanEpisode{}, f.kanbanTypeErr
 	}
 	if originID == "" {
 		// The real one returns without querying: origin_id is a UUID column and
 		// "" is a cast error, not an empty result.
-		return nodes.MaintainedEpisode{}, nil
+		return nodes.KanbanEpisode{}, nil
 	}
 	f.episodeReads++
-	return nodes.MaintainedEpisode{Group: f.maintainedGroup[originID], BinType: f.maintainedType[originID],
-		Sources: f.maintainedSources[originID]}, nil
+	return nodes.KanbanEpisode{Group: f.kanban[originID], BinType: f.kanbanType[originID],
+		Sources: f.kanbanSources[originID]}, nil
 }
 
 func (f *fakeFinderDB) FindEmptyBinOfTypeInGroup(binTypeCode string, _, _ int64, asker reservations.DigAsker, want domain.Height) (*bins.Bin, error) {
@@ -768,12 +768,12 @@ func TestIntakeAndReplayAgree(t *testing.T) {
 
 // ── MG2-4: the typed ask, pinned at mint ──────────────────────────────────
 //
-// An ask carrying an origin that names an open maintained-group episode sources
+// An ask carrying an origin that names an open kanban episode sources
 // THAT type and never re-derives one. These pin the routing consequence: the
 // need must reach the TYPED group finder, not the compatible one, and a group
 // that has no carrier of the wanted type must WAIT rather than substitute.
 
-func TestFindSource_MaintainOriginPinsTheType(t *testing.T) {
+func TestFindSource_KanbanOriginPinsTheType(t *testing.T) {
 	t.Parallel()
 
 	db := newFakeFinderDB()
@@ -786,7 +786,7 @@ func TestFindSource_MaintainOriginPinsTheType(t *testing.T) {
 	db.addNode(&nodes.Node{ID: slot, Name: "PEB_001"})
 
 	const origin = "11111111-2222-3333-4444-555555555555"
-	db.maintainedType = map[string]string{origin: "45x58x32"}
+	db.kanbanType = map[string]string{origin: "45x58x32"}
 
 	// Both types are physically present in the group. Only the pinned one may
 	// be taken.
@@ -827,7 +827,7 @@ func TestFindSource_MaintainOriginPinsTheType(t *testing.T) {
 // type. The ask WAITS under the type-specific cause rather than taking what is
 // there: substituting would deliver a carrier the keeper is not counting, so the
 // level never converges and nothing reports an error.
-func TestFindSource_MaintainOriginWaitsRatherThanSubstitute(t *testing.T) {
+func TestFindSource_KanbanOriginWaitsRatherThanSubstitute(t *testing.T) {
 	t.Parallel()
 
 	db := newFakeFinderDB()
@@ -836,7 +836,7 @@ func TestFindSource_MaintainOriginWaitsRatherThanSubstitute(t *testing.T) {
 	db.addNode(&nodes.Node{ID: 101, Name: "PEB_001"})
 
 	const origin = "11111111-2222-3333-4444-555555555555"
-	db.maintainedType = map[string]string{origin: "45x58x32"}
+	db.kanbanType = map[string]string{origin: "45x58x32"}
 
 	// No 45x58x32 anywhere — but a compatible empty IS in the group, and one is
 	// also available plant-wide. Neither may be taken.
@@ -892,7 +892,7 @@ func TestFindSource_BlankOriginUnchanged(t *testing.T) {
 // A FAILED episode read returns no type rather than a guess. The ask falls
 // through untyped — one carrier the keeper will not count, retried next tick —
 // which is strictly better than confidently sourcing the wrong type.
-func TestFindSource_MaintainedTypeReadFailureDoesNotGuess(t *testing.T) {
+func TestFindSource_KanbanTypeReadFailureDoesNotGuess(t *testing.T) {
 	t.Parallel()
 
 	db := newFakeFinderDB()
@@ -901,7 +901,7 @@ func TestFindSource_MaintainedTypeReadFailureDoesNotGuess(t *testing.T) {
 	at := int64(101)
 	db.addNode(&nodes.Node{ID: at, Name: "GROUP-A-LANE-1"})
 	db.groupEmpty = &bins.Bin{ID: 801, PayloadCode: "", NodeID: &at}
-	db.maintainedTypeErr = errors.New("episode read failed")
+	db.kanbanTypeErr = errors.New("episode read failed")
 
 	finder := NewSourceFinder(db, nil, nil)
 	order := &orders.Order{

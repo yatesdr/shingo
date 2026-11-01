@@ -10,12 +10,12 @@ import (
 	"shingocore/service"
 )
 
-// Maintained-group settings endpoints — the Maintained Group section of the node
+// Kanban-group settings endpoints — the Kanban section of the node
 // group settings modal.
 //
-// A maintained group is an NGRP whose EMPTY-CARRIER level Core holds: so many
+// A kanban is an NGRP whose EMPTY-CARRIER level Core holds: so many
 // unclaimed carriers of each declared type, at all times, near the equipment that
-// consumes them. The level keeper (engine/maintainer.go) holds the levels
+// consumes them. The level keeper (engine/kanban_keeper.go) holds the levels
 // written here. The layer wants that ride a level's save tell the unloader
 // which heights the group is short of; the one at 0 layers is the type's tops &
 // bottoms row, a cap of its own that the store caps judge a cart at 0 against.
@@ -41,10 +41,10 @@ func (h *Handlers) kanbanActor(r *http.Request) string {
 	return protocol.AuditActorUI
 }
 
-// maintainedGroupSettings is the settings cluster, as one save: they are one
+// kanbanSettings is the settings cluster, as one save: they are one
 // group of controls on one screen. The audit trail reads one row per setting that
 // changed.
-type maintainedGroupSettings struct {
+type kanbanSettings struct {
 	GroupNodeID         int64  `json:"group_node_id"`
 	StrictSourcing      bool   `json:"strict_sourcing"`
 	MaintenanceStation  string `json:"maintenance_station"`
@@ -56,16 +56,16 @@ type maintainedGroupSettings struct {
 	Force bool `json:"force"`
 }
 
-// apiMaintainedGroup returns one group's whole maintained-group configuration.
+// apiKanban returns one group's whole kanban configuration.
 //
-// GET /api/nodes/maintained-group?id=<group node id>
-func (h *Handlers) apiMaintainedGroup(w http.ResponseWriter, r *http.Request) {
+// GET /api/nodes/kanban?id=<group node id>
+func (h *Handlers) apiKanban(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.ParseInt(r.URL.Query().Get("id"), 10, 64)
 	if err != nil || id == 0 {
 		h.jsonError(w, "invalid id", http.StatusBadRequest)
 		return
 	}
-	cfg, err := h.engine.NodeService().GetMaintainedGroup(id)
+	cfg, err := h.engine.NodeService().GetKanban(id)
 	if err != nil {
 		h.jsonError(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -73,11 +73,11 @@ func (h *Handlers) apiMaintainedGroup(w http.ResponseWriter, r *http.Request) {
 	h.jsonOK(w, cfg)
 }
 
-// apiMaintainedGroupProcessOptions returns the picker's contents: each process
+// apiKanbanProcessOptions returns the picker's contents: each process
 // with the Core nodes its claims resolve to.
 //
 // GET /api/nodes/process-options
-func (h *Handlers) apiMaintainedGroupProcessOptions(w http.ResponseWriter, r *http.Request) {
+func (h *Handlers) apiKanbanProcessOptions(w http.ResponseWriter, r *http.Request) {
 	opts, err := h.engine.NodeService().ListProcessNodeOptions()
 	if err != nil {
 		h.jsonError(w, err.Error(), http.StatusInternalServerError)
@@ -86,10 +86,10 @@ func (h *Handlers) apiMaintainedGroupProcessOptions(w http.ResponseWriter, r *ht
 	h.jsonOK(w, map[string]any{"processes": opts})
 }
 
-// apiMaintainedGroupCheckTypes runs the holds-bins guard for a pending Allowed
+// apiKanbanCheckTypes runs the holds-bins guard for a pending Allowed
 // Bins change WITHOUT writing anything.
 //
-// POST /api/nodes/maintained-group/check-types
+// POST /api/nodes/kanban/check-types
 //
 // It exists because that control does not save through JSON — it rides the node
 // form's ordinary POST, which navigates. A 409 there would replace the page with
@@ -97,7 +97,7 @@ func (h *Handlers) apiMaintainedGroupProcessOptions(w http.ResponseWriter, r *ht
 // through this, and carries the answer into the form as force; the form handler
 // still runs the same guard, so a caller that skips the question is still
 // refused.
-func (h *Handlers) apiMaintainedGroupCheckTypes(w http.ResponseWriter, r *http.Request) {
+func (h *Handlers) apiKanbanCheckTypes(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		NodeID     int64   `json:"node_id"`
 		BinTypeIDs []int64 `json:"bin_type_ids"`
@@ -109,7 +109,7 @@ func (h *Handlers) apiMaintainedGroupCheckTypes(w http.ResponseWriter, r *http.R
 		h.jsonError(w, "node_id is required", http.StatusBadRequest)
 		return
 	}
-	g, err := h.engine.NodeService().CheckMaintainedGroupTypesChange(req.NodeID, req.BinTypeIDs, false)
+	g, err := h.engine.NodeService().CheckKanbanTypesChange(req.NodeID, req.BinTypeIDs, false)
 	if err != nil {
 		h.jsonError(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -117,12 +117,12 @@ func (h *Handlers) apiMaintainedGroupCheckTypes(w http.ResponseWriter, r *http.R
 	h.jsonOK(w, map[string]any{"blocked": g.Blocked})
 }
 
-// apiMaintainedGroupSettingsSet writes the settings: strict, station and the
+// apiKanbanSettingsSet writes the settings: strict, station and the
 // default overflow.
 //
-// POST /api/nodes/maintained-group/settings
-func (h *Handlers) apiMaintainedGroupSettingsSet(w http.ResponseWriter, r *http.Request) {
-	var req maintainedGroupSettings
+// POST /api/nodes/kanban/settings
+func (h *Handlers) apiKanbanSettingsSet(w http.ResponseWriter, r *http.Request) {
+	var req kanbanSettings
 	if !h.parseJSON(w, r, &req) {
 		return
 	}
@@ -130,29 +130,29 @@ func (h *Handlers) apiMaintainedGroupSettingsSet(w http.ResponseWriter, r *http.
 		h.jsonError(w, "group_node_id is required", http.StatusBadRequest)
 		return
 	}
-	set := service.MaintainedGroupSettings{
+	set := service.KanbanSettings{
 		StrictSourcing:      req.StrictSourcing,
 		MaintenanceStation:  req.MaintenanceStation,
 		OverflowDestination: req.OverflowDestination,
 	}
 	// The rules first, so a refusal is named ahead of the question the guard asks.
-	chk, err := h.engine.NodeService().CheckMaintainedGroupSettings(req.GroupNodeID, set)
+	chk, err := h.engine.NodeService().CheckKanbanSettings(req.GroupNodeID, set)
 	if err != nil {
 		h.jsonError(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	if !h.maintainedGroupRefused(w, chk) {
+	if !h.kanbanRefused(w, chk) {
 		return
 	}
 	// The floor guard, second: turning the reserve on changes what the carriers
 	// standing in the group MEAN, and force is the operator saying they already
 	// know.
-	g, err := h.engine.NodeService().CheckMaintainedGroupSettingsChange(req.GroupNodeID, set, req.Force)
+	g, err := h.engine.NodeService().CheckKanbanSettingsChange(req.GroupNodeID, set, req.Force)
 	if err != nil {
 		h.jsonError(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	if !h.maintainedGroupHeld(w, g) {
+	if !h.kanbanHeld(w, g) {
 		return
 	}
 	chk, err = h.engine.NodeService().SaveKanban(service.KanbanSave{
@@ -166,17 +166,17 @@ func (h *Handlers) apiMaintainedGroupSettingsSet(w http.ResponseWriter, r *http.
 		h.jsonError(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	if !h.maintainedGroupRefused(w, chk) {
+	if !h.kanbanRefused(w, chk) {
 		return
 	}
-	h.maintainedGroupOK(w, chk, g)
+	h.kanbanOK(w, chk, g)
 }
 
-// apiMaintainedGroupCoverSet sets the running cover: the extra the kanban wants
+// apiKanbanCoverSet sets the running cover: the extra the kanban wants
 // of a type per supported process running it.
 //
-// POST /api/nodes/maintained-group/cover
-func (h *Handlers) apiMaintainedGroupCoverSet(w http.ResponseWriter, r *http.Request) {
+// POST /api/nodes/kanban/cover
+func (h *Handlers) apiKanbanCoverSet(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		GroupNodeID  int64 `json:"group_node_id"`
 		RunningCover int   `json:"running_cover"`
@@ -191,11 +191,11 @@ func (h *Handlers) apiMaintainedGroupCoverSet(w http.ResponseWriter, r *http.Req
 	h.saveKanbanAnswer(w, service.KanbanSave{GroupNodeID: req.GroupNodeID, Actor: h.kanbanActor(r), Cover: &req.RunningCover})
 }
 
-// apiMaintainedGroupSourcesSet replaces the sources: the groups the keeper may
+// apiKanbanSourcesSet replaces the sources: the groups the keeper may
 // pull from, the list order being the rank.
 //
-// POST /api/nodes/maintained-group/sources
-func (h *Handlers) apiMaintainedGroupSourcesSet(w http.ResponseWriter, r *http.Request) {
+// POST /api/nodes/kanban/sources
+func (h *Handlers) apiKanbanSourcesSet(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		GroupNodeID   int64   `json:"group_node_id"`
 		SourceNodeIDs []int64 `json:"source_node_ids"`
@@ -213,11 +213,11 @@ func (h *Handlers) apiMaintainedGroupSourcesSet(w http.ResponseWriter, r *http.R
 	h.saveKanbanAnswer(w, service.KanbanSave{GroupNodeID: req.GroupNodeID, Actor: h.kanbanActor(r), Sources: &req.SourceNodeIDs})
 }
 
-// apiMaintainedGroupLevelOverflowSet sets one level's own overflow; 0 clears it,
+// apiKanbanLevelOverflowSet sets one level's own overflow; 0 clears it,
 // and the type takes the kanban's default.
 //
-// POST /api/nodes/maintained-group/level/overflow
-func (h *Handlers) apiMaintainedGroupLevelOverflowSet(w http.ResponseWriter, r *http.Request) {
+// POST /api/nodes/kanban/level/overflow
+func (h *Handlers) apiKanbanLevelOverflowSet(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		GroupNodeID    int64 `json:"group_node_id"`
 		BinTypeID      int64 `json:"bin_type_id"`
@@ -241,34 +241,34 @@ func (h *Handlers) saveKanbanAnswer(w http.ResponseWriter, save service.KanbanSa
 		h.jsonError(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	if !h.maintainedGroupRefused(w, chk) {
+	if !h.kanbanRefused(w, chk) {
 		return
 	}
-	h.maintainedGroupOK(w, chk, service.MaintainedGroupGuard{})
+	h.kanbanOK(w, chk, service.KanbanGuard{})
 }
 
-// maintainLayerWant is one wanted height on a level's save: how many carts of
+// kanbanLayerWant is one wanted height on a level's save: how many carts of
 // the level's type, standing this many layers high, the group wants.
-type maintainLayerWant struct {
+type kanbanLayerWant struct {
 	Layers int `json:"layers"`
 	Want   int `json:"want"`
 }
 
-// apiMaintainedGroupLevelSet declares how many empties of one type a group holds,
+// apiKanbanLevelSet declares how many empties of one type a group holds,
 // and, when the request carries layer_wants, replaces that type's wanted
 // heights in the same transaction.
 //
-// POST /api/nodes/maintained-group/level
+// POST /api/nodes/kanban/level
 //
 // AN ABSENT layer_wants LEAVES THE STORED ONES STANDING; a list, empty
 // included, replaces them. So a caller that never loaded the heights cannot
-// clear them by saving the level. Pin: TestMaintainedGroupLevel_LayerWants.
-func (h *Handlers) apiMaintainedGroupLevelSet(w http.ResponseWriter, r *http.Request) {
+// clear them by saving the level. Pin: TestKanbanLevel_LayerWants.
+func (h *Handlers) apiKanbanLevelSet(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		GroupNodeID int64                `json:"group_node_id"`
-		BinTypeID   int64                `json:"bin_type_id"`
-		Want        int                  `json:"want"`
-		LayerWants  *[]maintainLayerWant `json:"layer_wants"`
+		GroupNodeID int64              `json:"group_node_id"`
+		BinTypeID   int64              `json:"bin_type_id"`
+		Want        int                `json:"want"`
+		LayerWants  *[]kanbanLayerWant `json:"layer_wants"`
 	}
 	if !h.parseJSON(w, r, &req) {
 		return
@@ -300,9 +300,9 @@ func (h *Handlers) apiMaintainedGroupLevelSet(w http.ResponseWriter, r *http.Req
 // bottoms row) or more, wanted zero or more times, no height twice. A
 // malformed list is the request's fault (400), the same as a missing id; what
 // the group can hold, and whether the type can be wanted at a height at all,
-// are the save's rules (the service's setMaintainLevel).
-func layerWantRows(in []maintainLayerWant) ([]service.MaintainLayerWant, error) {
-	out := make([]service.MaintainLayerWant, 0, len(in))
+// are the save's rules (the service's setKanbanLevel).
+func layerWantRows(in []kanbanLayerWant) ([]service.KanbanLayerWant, error) {
+	out := make([]service.KanbanLayerWant, 0, len(in))
 	seen := map[int]bool{}
 	for _, lw := range in {
 		if lw.Layers < 0 {
@@ -315,16 +315,16 @@ func layerWantRows(in []maintainLayerWant) ([]service.MaintainLayerWant, error) 
 			return nil, fmt.Errorf("%d layers is listed twice", lw.Layers)
 		}
 		seen[lw.Layers] = true
-		out = append(out, service.MaintainLayerWant{Layers: lw.Layers, Want: lw.Want})
+		out = append(out, service.KanbanLayerWant{Layers: lw.Layers, Want: lw.Want})
 	}
 	return out, nil
 }
 
-// apiMaintainedGroupLevelRemove stops declaring a carrier type for a group; its
+// apiKanbanLevelRemove stops declaring a carrier type for a group; its
 // layer wants are removed with it.
 //
-// POST /api/nodes/maintained-group/level/remove
-func (h *Handlers) apiMaintainedGroupLevelRemove(w http.ResponseWriter, r *http.Request) {
+// POST /api/nodes/kanban/level/remove
+func (h *Handlers) apiKanbanLevelRemove(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		GroupNodeID int64 `json:"group_node_id"`
 		BinTypeID   int64 `json:"bin_type_id"`
@@ -342,15 +342,15 @@ func (h *Handlers) apiMaintainedGroupLevelRemove(w http.ResponseWriter, r *http.
 		RemoveLevels: []int64{req.BinTypeID}})
 }
 
-// apiMaintainedGroupSupportsSet replaces the set of process nodes a group serves.
+// apiKanbanSupportsSet replaces the set of process nodes a group serves.
 //
-// POST /api/nodes/maintained-group/supports
+// POST /api/nodes/kanban/supports
 //
 // NODE IDS ON THE WIRE, resolved by the browser from the process options it was
 // handed. The editor speaks process; what is stored and later enforced is nodes,
 // and the resolution happens once at save time because a claim lives on the Edge
 // and Core cannot read one when it matters.
-func (h *Handlers) apiMaintainedGroupSupportsSet(w http.ResponseWriter, r *http.Request) {
+func (h *Handlers) apiKanbanSupportsSet(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		GroupNodeID    int64   `json:"group_node_id"`
 		ProcessNodeIDs []int64 `json:"process_node_ids"`
@@ -366,12 +366,12 @@ func (h *Handlers) apiMaintainedGroupSupportsSet(w http.ResponseWriter, r *http.
 	// The floor guard runs BEFORE the write, and only on a narrowing: adding a
 	// process gives more people access to what is standing there and strands
 	// nobody.
-	g, err := h.engine.NodeService().CheckMaintainedGroupSupportsChange(req.GroupNodeID, req.ProcessNodeIDs, req.Force)
+	g, err := h.engine.NodeService().CheckKanbanSupportsChange(req.GroupNodeID, req.ProcessNodeIDs, req.Force)
 	if err != nil {
 		h.jsonError(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	if !h.maintainedGroupHeld(w, g) {
+	if !h.kanbanHeld(w, g) {
 		return
 	}
 	// An empty set is a legitimate save: it is what "this group serves nobody
@@ -386,19 +386,19 @@ func (h *Handlers) apiMaintainedGroupSupportsSet(w http.ResponseWriter, r *http.
 		h.jsonError(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	if !h.maintainedGroupRefused(w, chk) {
+	if !h.kanbanRefused(w, chk) {
 		return
 	}
-	h.maintainedGroupOK(w, chk, g)
+	h.kanbanOK(w, chk, g)
 }
 
-// maintainedGroupRefused writes the refusal response and reports whether the
+// kanbanRefused writes the refusal response and reports whether the
 // caller should CONTINUE (true = nothing was refused).
 //
 // 409 rather than 400: the request is well-formed, and what stops it is the
 // state of the plant's configuration around it — a distinction worth keeping,
 // because a client cannot fix a 400 by changing anything but the request.
-func (h *Handlers) maintainedGroupRefused(w http.ResponseWriter, chk service.MaintainedGroupCheck) bool {
+func (h *Handlers) kanbanRefused(w http.ResponseWriter, chk service.KanbanCheck) bool {
 	if err := chk.Err(); err != nil {
 		h.jsonError(w, err.Error(), http.StatusConflict)
 		return false
@@ -406,13 +406,13 @@ func (h *Handlers) maintainedGroupRefused(w http.ResponseWriter, chk service.Mai
 	return true
 }
 
-// maintainedGroupHeld writes the holds-bins response and reports whether the
+// kanbanHeld writes the holds-bins response and reports whether the
 // caller should CONTINUE (true = nothing is standing in the way).
 //
 // 409 with needs_force, which the browser turns into a confirm dialog and
 // re-sends with force. The distinction from a plain refusal matters to the
 // client and to nobody else: a rule refusal is final, this one has an answer.
-func (h *Handlers) maintainedGroupHeld(w http.ResponseWriter, g service.MaintainedGroupGuard) bool {
+func (h *Handlers) kanbanHeld(w http.ResponseWriter, g service.KanbanGuard) bool {
 	if g.Blocked == "" {
 		return true
 	}
@@ -426,7 +426,7 @@ func (h *Handlers) maintainedGroupHeld(w http.ResponseWriter, g service.Maintain
 	return false
 }
 
-// maintainedGroupOK answers a successful save, carrying any warnings with it.
+// kanbanOK answers a successful save, carrying any warnings with it.
 //
 // WARNINGS RIDE WITH SUCCESS. Every one of them describes a state a plant can
 // legitimately be in mid-configuration, so none may block the save — but an
@@ -436,7 +436,7 @@ func (h *Handlers) maintainedGroupHeld(w http.ResponseWriter, g service.Maintain
 // The drain list rides here too, and it is the reason it is not a warning: it is
 // not about the configuration being questionable, it is a list of orders already
 // on their way that the reserve does not reach back and stop.
-func (h *Handlers) maintainedGroupOK(w http.ResponseWriter, chk service.MaintainedGroupCheck, g service.MaintainedGroupGuard) {
+func (h *Handlers) kanbanOK(w http.ResponseWriter, chk service.KanbanCheck, g service.KanbanGuard) {
 	h.jsonOK(w, map[string]any{
 		"status":   "ok",
 		"warnings": chk.Warnings,

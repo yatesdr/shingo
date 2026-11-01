@@ -1026,15 +1026,15 @@ type NodeListRequest struct {
 
 // NodeInfo describes a single node in the core's node list.
 //
-// Maintained is true for a group Core keeps a level of empties in (a group
-// with a maintained level), so the Edge can refuse that group as a full-bin
+// Kanban is true for a group Core keeps a level of empties in (a group
+// with a level), so the Edge can refuse that group as a full-bin
 // source when a claim is saved, as Core refuses it for a loader. Omitted when
 // false, and an older Core never sends it: absent reads as false, so an Edge
 // talking to such a Core refuses nothing on this account.
 type NodeInfo struct {
-	Name       string `json:"name"`
-	NodeType   string `json:"node_type"`
-	Maintained bool   `json:"maintained,omitempty"`
+	Name     string `json:"name"`
+	NodeType string `json:"node_type"`
+	Kanban   bool   `json:"kanban,omitempty"`
 	// AcceptsPartials marks a window of a loader whose windows take partly
 	// filled carriers (accept_partials), and every group above one. A claim's
 	// partial home may not be one: the two say opposite things about the same

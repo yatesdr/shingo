@@ -50,7 +50,7 @@ var writtenByTheWriterItself = map[string]string{
 // Coverage is enforced by reflection: every field on domain.Order must have a
 // probe value here, or be excluded by name with a reason. Adding a field to the
 // struct without doing one or the other fails this test, which is the point —
-// the alternative is a hand-maintained list that quietly stops being total.
+// the alternative is a hand-kanban list that quietly stops being total.
 func TestWriter_RoundTripsEveryFieldItWrites(t *testing.T) {
 	// The probe row is born holding a cart (its row) and stamps a status because
 	// status is a column, and the pair happens to spell an acquiring order

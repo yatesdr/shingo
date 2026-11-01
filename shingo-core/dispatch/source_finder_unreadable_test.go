@@ -106,13 +106,13 @@ func TestUnreadableSearch_ParksRatherThanAnswering(t *testing.T) {
 			noneFoundCause: CauseFinderPlantEmpty,
 		},
 		{
-			name: "tier 5 — plant-wide empty, typed by a maintain origin",
+			name: "tier 5 — plant-wide empty, typed by a kanban origin",
 			build: func() (*SourceFinder, SourceNeed) {
 				db := newFakeFinderDB()
 				db.addNode(pinNode(141, "UNR-LINE3"))
 				db.addNode(pinGroup(142, "UNR-KEEPER-GRP"))
-				db.maintainedType["11111111-2222-3333-4444-555555555555"] = "UNR-45x58"
-				db.maintainedGroup["11111111-2222-3333-4444-555555555555"] = "UNR-KEEPER-GRP"
+				db.kanbanType["11111111-2222-3333-4444-555555555555"] = "UNR-45x58"
+				db.kanban["11111111-2222-3333-4444-555555555555"] = "UNR-KEEPER-GRP"
 				db.searchErr = boom
 				return NewSourceFinder(db, nil, nil), SourceNeed{
 					DeliveryNode: "UNR-LINE3", Intent: IntentEmpty,
@@ -240,8 +240,8 @@ func TestEmptyFence_ReachesThePlantWideSearch(t *testing.T) {
 			t.Parallel()
 			db := newFakeFinderDB()
 			db.addNode(pinNode(200, "FN-DEST"))
-			db.maintainedType["11111111-2222-3333-4444-555555555555"] = "FN-45x58"
-			db.maintainedGroup["11111111-2222-3333-4444-555555555555"] = "FN-KEEPER-GRP"
+			db.kanbanType["11111111-2222-3333-4444-555555555555"] = "FN-45x58"
+			db.kanban["11111111-2222-3333-4444-555555555555"] = "FN-KEEPER-GRP"
 
 			NewSourceFinder(db, nil, nil).FindSourceForNeed(tc.need)
 
@@ -262,7 +262,7 @@ func TestEmptyFence_ReadFailureDoesNotFenceEverything(t *testing.T) {
 	t.Parallel()
 	db := newFakeFinderDB()
 	db.addNode(pinNode(210, "FN-ERR-DEST"))
-	db.maintainedTypeErr = errors.New("episode read failed")
+	db.kanbanTypeErr = errors.New("episode read failed")
 
 	NewSourceFinder(db, nil, nil).FindSourceForNeed(SourceNeed{
 		DeliveryNode: "FN-ERR-DEST", PayloadCode: "PANEL-A", Intent: IntentEmpty,

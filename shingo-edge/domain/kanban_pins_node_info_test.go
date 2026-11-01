@@ -8,15 +8,15 @@ import (
 	"shingo/protocol"
 )
 
-// TestKanbanPin_NodeInfoMaintainedOnTheEdge pins how the Edge reads Core's node
-// list at main 26a82fdf: the wire key, the one set it feeds, and the one refusal
+// TestKanbanPin_NodeInfoKanbanOnTheEdge pins how the Edge reads Core's node
+// list: the wire key, the one set it feeds, and the one refusal
 // that set decides. An absent key is false, so a Core that does not send it refuses
-// nothing. U7's rename moves the literal key and IsMaintained together.
-func TestKanbanPin_NodeInfoMaintainedOnTheEdge(t *testing.T) {
+// nothing.
+func TestKanbanPin_NodeInfoKanbanOnTheEdge(t *testing.T) {
 	t.Parallel()
 	var nodes []protocol.NodeInfo
 	if err := json.Unmarshal([]byte(`[
-		{"name":"KEPT","node_type":"NGRP","maintained":true},
+		{"name":"KEPT","node_type":"NGRP","kanban":true},
 		{"name":"PLAIN","node_type":"NGRP"}]`), &nodes); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
@@ -26,11 +26,11 @@ func TestKanbanPin_NodeInfoMaintainedOnTheEdge(t *testing.T) {
 	}
 	kinds := CoreNodeKindsOf(known)
 	for name, want := range map[string]bool{"KEPT": true, "Parent.KEPT": true, "PLAIN": false, "UNKNOWN": false} {
-		if got := kinds.IsMaintained(name); got != want {
-			t.Errorf("IsMaintained(%q) = %v, want %v", name, got, want)
+		if got := kinds.IsKanban(name); got != want {
+			t.Errorf("IsKanban(%q) = %v, want %v", name, got, want)
 		}
 	}
-	if kept := CoreNodeKindsOf(nil); kept.IsMaintained("KEPT") {
+	if kept := CoreNodeKindsOf(nil); kept.IsKanban("KEPT") {
 		t.Error("no node list heard yet must refuse nothing")
 	}
 
@@ -47,7 +47,7 @@ func TestKanbanPin_NodeInfoMaintainedOnTheEdge(t *testing.T) {
 		var msgs []string
 		validateLegKinds(NodeClaimInput{Role: tc.role, InboundSource: tc.source}, kinds, map[string]bool{},
 			func(field, msg string) { msgs = append(msgs, field+": "+msg) })
-		refused := len(msgs) == 1 && strings.HasPrefix(msgs[0], "inbound_source: "+protocol.MsgFullsFromAnEmptiesBank)
+		refused := len(msgs) == 1 && strings.HasPrefix(msgs[0], "inbound_source: "+protocol.MsgFullsFromAKanban)
 		if refused != tc.refused || (!tc.refused && len(msgs) != 0) {
 			t.Errorf("%s: findings %v, refused want %v", tc.name, msgs, tc.refused)
 		}

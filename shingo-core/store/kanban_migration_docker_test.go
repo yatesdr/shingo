@@ -198,7 +198,7 @@ func TestMigrate_Kanbans_ThePivot(t *testing.T) {
 		if moved != 0 || flags != 0 {
 			t.Errorf("%d moved keys and %d maintain_enabled rows remain; want none", moved, flags)
 		}
-		levels, err := db.ListMaintainLevels(ids["AGED-FULL"])
+		levels, err := db.ListKanbanLevels(ids["AGED-FULL"])
 		testutil.MustNoErr(t, err, "levels")
 		if len(levels) != 1 || levels[0].Want != 3 {
 			t.Errorf("AGED-FULL's levels = %+v, want the row carried over", levels)
@@ -235,4 +235,39 @@ func readKanbanCensus(t *testing.T, db *store.DB) map[string]bool {
 	}
 	testutil.MustNoErr(t, rows.Err(), "census rows")
 	return out
+}
+
+// TestMigrate_V171_TheEpisodeKindIsKanban: rows under the old word, open and closed,
+// read as kanban afterwards with their episode keys as they were, another kind's row is
+// untouched, and a second pass changes nothing.
+func TestMigrate_V171_TheEpisodeKindIsKanban(t *testing.T) {
+	t.Parallel()
+	db := testdb.Open(t)
+	insert := func(id, key, kind, closed string) {
+		t.Helper()
+		_, err := db.DB.Exec(`INSERT INTO demand_origins (origin_id, episode_key, kind, opened_at, closed_at)
+			VALUES ($1, $2, $3, NOW(), `+closed+`)`, id, key, kind)
+		testutil.MustNoErr(t, err, "insert "+key)
+	}
+	const open, shut, other = "00000000-0000-0000-0000-000000000171", "00000000-0000-0000-0000-000000000172", "00000000-0000-0000-0000-000000000173"
+	insert(open, "mnt|V171|T", "maintain", "NULL")
+	insert(shut, "mnt|V171|T", "maintain", "NOW()")
+	insert(other, "chg|V171|P", "changeover", "NULL")
+	_, err := db.DB.Exec(`DELETE FROM schema_migrations WHERE version = 171`)
+	testutil.MustNoErr(t, err, "forget v171")
+
+	for pass := 1; pass <= 2; pass++ {
+		testutil.MustNoErr(t, db.MigrateForTest(), "migrate")
+		for id, want := range map[string][2]string{open: {"kanban", "mnt|V171|T"}, shut: {"kanban", "mnt|V171|T"},
+			other: {"changeover", "chg|V171|P"}} {
+			var kind, key string
+			testutil.MustNoErr(t, db.DB.QueryRow(`SELECT kind, episode_key FROM demand_origins WHERE origin_id = $1`, id).Scan(&kind, &key), "read")
+			if kind != want[0] || key != want[1] {
+				t.Errorf("pass %d: %s = %s %s, want %v", pass, id, kind, key, want)
+			}
+		}
+	}
+	if failing := db.MigrationsFailingTheirPostCondition(); len(failing) != 0 {
+		t.Errorf("migrations failing their post-condition: %v", failing)
+	}
 }

@@ -20,8 +20,8 @@ func TestKanbanPin_TheKeepersNeedReachesOnlyThePlantWideTier(t *testing.T) {
 	at := pinNode(301, "KP-FOUND-AT")
 	db.addNode(at)
 	db.addNode(pinGroup(302, "KP-GROUP"))
-	db.maintainedType[origin] = "KP-T"
-	db.maintainedGroup[origin] = "KP-GROUP"
+	db.kanbanType[origin] = "KP-T"
+	db.kanban[origin] = "KP-GROUP"
 	db.typedEmpty = map[string]*bins.Bin{"KP-T": {ID: 901, NodeID: &at.ID, NodeName: at.Name}}
 
 	res := NewSourceFinder(db, nil, nil).FindSourceForNeed(SourceNeed{Intent: IntentEmpty, OriginID: origin})
@@ -46,7 +46,7 @@ func TestKanbanPin_TheKeepersNeedReachesOnlyThePlantWideTier(t *testing.T) {
 	// The kanban's sources ride that one read to the same search; still the one
 	// search, no scoped tier, and the ask still names no source.
 	db.typedGlobalCalls, db.episodeReads = 0, 0
-	db.maintainedSources = map[string][]int64{origin: {41, 42}}
+	db.kanbanSources = map[string][]int64{origin: {41, 42}}
 	res = NewSourceFinder(db, nil, nil).FindSourceForNeed(SourceNeed{Intent: IntentEmpty, OriginID: origin})
 	if res.Outcome != OutcomeFound || db.typedGlobalCalls != 1 || db.typedGroupCalls != 0 || db.groupEmptyCalls != 0 {
 		t.Errorf("with sources: outcome %v, typed plant-wide %d, typed group %d, group %d; want the one plant-wide search",

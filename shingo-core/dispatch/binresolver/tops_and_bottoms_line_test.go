@@ -8,7 +8,7 @@ import (
 	"shingocore/store/reservations"
 )
 
-// tops_and_bottoms_line_test.go — a maintained group's room, per line. A cart at
+// tops_and_bottoms_line_test.go — a kanban's room, per line. A cart at
 // 0 with no part (tops & bottoms) is judged on its type's tops & bottoms row,
 // every other cart on the stack level, and neither line takes the other's room.
 
@@ -32,7 +32,7 @@ func TestResolveStore_ACartAtZeroGoesToItsOwnLine(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			t.Parallel()
 			f, grp := levelStore(200,
-				[]nodes.MaintainLevel{{GroupNodeID: 200, BinTypeID: bt, BinTypeCode: "TB-TOTE", Want: 2}},
+				[]nodes.KanbanLevel{{GroupNodeID: 200, BinTypeID: bt, BinTypeCode: "TB-TOTE", Want: 2}},
 				map[groupKey]int{{200, "TB-TOTE"}: 2})
 			f.orderBinTypes = map[int64]int64{55: bt}
 			f.orderStates = map[int64]protocol.CarrierState{55: c.state}

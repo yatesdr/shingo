@@ -7,7 +7,7 @@ import (
 )
 
 // kanban_ask_reads.go — one short kanban's asks in one keeper tick: the slot
-// chooser (plan.MaintainedSlot) reading through one read of the group, so a burst of
+// chooser (plan.KanbanSlot) reading through one read of the group, so a burst of
 // asks pays for the group once and a free child costs no statement.
 //
 // GroupPassReads answers the lane questions from its one read of the group. A
@@ -30,7 +30,7 @@ type KanbanAskReads struct {
 
 // KanbanAskReads is a fresh view over a kanban, its levels and residents already
 // in the tick's hand so the chooser's cap asks no statement for them.
-func (db *DB) KanbanAskReads(kanbanID int64, levels []MaintainLevel, residents map[string]int) *KanbanAskReads {
+func (db *DB) KanbanAskReads(kanbanID int64, levels []KanbanLevel, residents map[string]int) *KanbanAskReads {
 	pass := db.GroupPassReads(kanbanID)
 	pass.levels[kanbanID] = levels
 	return &KanbanAskReads{GroupPassReads: pass, residents: residents}

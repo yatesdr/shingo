@@ -1,5 +1,5 @@
 import { api, apiGet, apiPost, delegateActions, el, escapeHtml, openFromQuery, toast, uiConfirm } from '/static/app.js';
-import { confirmAllowedBinsNarrowing, renderKeeperLevels, renderMaintainSection, saveMaintainedGroup } from '/static/pages/nodes-maintain.js';
+import { confirmAllowedBinsNarrowing, renderKeeperLevels, renderKanbanSection, saveKanban } from '/static/pages/nodes-kanban.js';
 
 // Node detail modal: form fields, chip pickers (bin types & stations),
 // inventory list with editable manifest, occupancy comparison modal.
@@ -73,12 +73,12 @@ export function openNodeModal(el, opts) {
     }
   }
 
-  // Maintained group — the same group-type test the algorithms use, and only
+  // Kanban — the same group-type test the algorithms use, and only
   // for an operator who can edit: the section lives in the auth-only half of
   // the modal and has no read-only twin.
-  renderMaintainSection(isAuth && isGroupType, d.id);
-  // The keeper's last tick for a maintained group, for every viewer: inside
-  // the maintained section with a session, in the read-only half without.
+  renderKanbanSection(isAuth && isGroupType, d.id);
+  // The keeper's last tick for a kanban, for every viewer: inside
+  // the kanban section with a session, in the read-only half without.
   renderKeeperLevels(isGroupType ? d.name : '');
 
   if (isAuth) {
@@ -423,7 +423,7 @@ function loadInventory(nodeID) {
 // abandoned mid-flight and, worse, any question it wanted to ask is asked of a
 // page that is on its way out. That was already true of the waiting-point save
 // (whose confirm could not be seen) and it is load-bearing now: the
-// maintained-group save can be REFUSED, and a refusal nobody sees is a refusal
+// kanban save can be REFUSED, and a refusal nobody sees is a refusal
 // that did not happen.
 //
 // form.submit() at the end does not fire a submit event, so this cannot re-enter.
@@ -453,7 +453,7 @@ async function handleNodeSave(el, evt) {
 
   // This one can ask the human a question (a mark the map does not know).
   if (await saveLaneGatePoints() === false) return;
-  await saveMaintainedGroup();
+  await saveKanban();
 
   form.submit();
 }

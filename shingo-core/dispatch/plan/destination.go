@@ -100,24 +100,24 @@ func (p *Planner) OverflowDestination(group *nodes.Node, payloadCode string, sta
 	return choice.Slot.Name, true
 }
 
-// MaintainedSlot chooses the free slot of a maintained group that one keeper
+// KanbanSlot chooses the free slot of a kanban that one keeper
 // ask fills: the group resolver's store mode, asked with the level's carrier
 // type (the one door that has always named its carrier) and as nobody's dig.
 //
-// The group resolver directly, not StoreDestination: a maintained group is an
+// The group resolver directly, not StoreDestination: a kanban is an
 // NGRP (its config save refuses anything else), so the child listing the
 // general resolver makes before delegating would be a read the keeper never
 // made. The resolver's per-child count + inflight >= 1 check is what bounds the
 // keeper's loop, which is why the keeper births each ask before asking again.
-func (p *Planner) MaintainedSlot(group *nodes.Node, binTypeID int64) (*binresolver.ResolveResult, error) {
-	defer observe(p.db, "maintained-slot")()
+func (p *Planner) KanbanSlot(group *nodes.Node, binTypeID int64) (*binresolver.ResolveResult, error) {
+	defer observe(p.db, "kanban-slot")()
 	return p.groupStore(group, "", binresolver.KnownBinType(binTypeID))
 }
 
 // GroupStoreSlot chooses the free child of a node group a carrier is stored in:
 // the group resolver's store mode, asked with the carrier the caller states and
 // as nobody's dig. The cancel-return's store into a claim's declared source
-// asks it (engine storeInto), and reads its refusal: a maintained group at its
+// asks it (engine storeInto), and reads its refusal: a kanban at its
 // level answers kanban.ErrAtLevel, which is what sends the bin
 // one hop to the group's overflow.
 func (p *Planner) GroupStoreSlot(group *nodes.Node, payloadCode string, stated binresolver.BinTypeStatement) (*binresolver.ResolveResult, error) {
@@ -125,9 +125,9 @@ func (p *Planner) GroupStoreSlot(group *nodes.Node, payloadCode string, stated b
 	return p.groupStore(group, payloadCode, stated)
 }
 
-// groupStore is MaintainedSlot's and GroupStoreSlot's one ask of the chooser
+// groupStore is KanbanSlot's and GroupStoreSlot's one ask of the chooser
 // (ChooseDrop, RULINGS-C2c-run-through §3.2), as nobody's dig and taking the
-// group resolver's store arm directly (see MaintainedSlot for why no child
+// group resolver's store arm directly (see KanbanSlot for why no child
 // listing). Asked for no order, it is offered no paper; its refusal is the
 // resolver's own, so kanban.ErrAtLevel still reads through.
 func (p *Planner) groupStore(group *nodes.Node, payloadCode string, stated binresolver.BinTypeStatement) (*binresolver.ResolveResult, error) {

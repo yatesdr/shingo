@@ -15,17 +15,17 @@ import (
 	"shingocore/store/nodes"
 )
 
-// TestNodeListResponse_MarksMaintainedGroups: the node list the Edge already
+// TestNodeListResponse_MarksKanbans: the node list the Edge already
 // receives says which groups keep a level of empties, on both the
 // station-scoped and the plant-wide path, so the Edge's claim save can refuse
 // such a group as a consume line's source the way Core refuses it for an
 // unloader. A group with no level, and every other node, carries no flag.
-func TestNodeListResponse_MarksMaintainedGroups(t *testing.T) {
+func TestNodeListResponse_MarksKanbans(t *testing.T) {
 	t.Parallel()
 	db := testdb.Open(t)
 	grpType, err := db.GetNodeTypeByCode(protocol.NodeClassNGRP)
 	testutil.MustNoErr(t, err, "get NGRP type")
-	bt := &bins.BinType{Code: "MG-LIST-TOTE", Description: "maintained list fixture"}
+	bt := &bins.BinType{Code: "MG-LIST-TOTE", Description: "kanban list fixture"}
 	testutil.MustNoErr(t, db.CreateBinType(bt), "create bin type")
 
 	group := func(name string) *nodes.Node {
@@ -38,7 +38,7 @@ func TestNodeListResponse_MarksMaintainedGroups(t *testing.T) {
 	}
 	empties := group("MG-EMPTIES")
 	group("MG-FULLS")
-	testutil.MustNoErr(t, db.SetMaintainLevel(store.MaintainLevel{
+	testutil.MustNoErr(t, db.SetKanbanLevel(store.KanbanLevel{
 		GroupNodeID: empties.ID, BinTypeID: bt.ID, Want: 2}), "set level")
 
 	for _, station := range []string{"edge.mg", "edge.unscoped"} {
@@ -56,14 +56,14 @@ func TestNodeListResponse_MarksMaintainedGroups(t *testing.T) {
 		testutil.MustNoErr(t, json.Unmarshal(raw, &got), "unmarshal")
 		flags := map[string]bool{}
 		for _, n := range got.Nodes {
-			flags[n.Name] = n.Maintained
+			flags[n.Name] = n.Kanban
 		}
 		if _, ok := flags["MG-EMPTIES"]; !ok || !flags["MG-EMPTIES"] {
-			t.Errorf("%s: MG-EMPTIES not marked maintained: %v", station, nodeNames(got.Nodes))
+			t.Errorf("%s: MG-EMPTIES not marked kanban: %v", station, nodeNames(got.Nodes))
 		}
 		for name, m := range flags {
 			if m && name != "MG-EMPTIES" {
-				t.Errorf("%s: %s marked maintained", station, name)
+				t.Errorf("%s: %s marked kanban", station, name)
 			}
 		}
 	}

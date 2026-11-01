@@ -171,8 +171,8 @@ const (
 	capacityPayload
 	// capacityBin: empty-fetch pool is dry (no empty carrier available).
 	capacityBin
-	// capacityEmptiesOnly: the destination group declares a maintain level, which
-	// makes it an empties bank, and this store carries a payload. Grouped with
+	// capacityEmptiesOnly: the destination group declares a level, which
+	// makes it a kanban, and this store carries a payload. Grouped with
 	// the capacity shapes because it must reach the SAME disposition they do —
 	// queue rather than terminal-fail, and let the group's configured overflow
 	// destination catch it at admission. It is not a shortage of anything, so it

@@ -114,14 +114,14 @@ func TestEpisodeKeys_EveryKindIsParseable(t *testing.T) {
 			},
 		},
 		{
-			// The carrier type lands in BinType, NOT Payload. A maintained
-			// group's demand is for an EMPTY carrier, and a reader finding
+			// The carrier type lands in BinType, NOT Payload. A kanban
+			// 's demand is for an EMPTY carrier, and a reader finding
 			// "45x58x32" in Payload would reasonably conclude the episode wanted
 			// parts of that code in it.
-			name: "maintain",
-			key:  protocol.MaintainEpisodeKey("SYN_PRESS_EMPTIES", "45x58x32"),
+			name: "kanban",
+			key:  protocol.KanbanEpisodeKey("SYN_PRESS_EMPTIES", "45x58x32"),
 			want: protocol.ParsedEpisodeKey{
-				Kind:     protocol.EpisodeKindMaintain,
+				Kind:     protocol.EpisodeKindKanban,
 				CoreNode: "SYN_PRESS_EMPTIES", BinType: "45x58x32",
 			},
 		},
@@ -246,12 +246,12 @@ func TestEpisodeKeys_KindsDoNotCollide(t *testing.T) {
 		"threshold":  protocol.ThresholdEpisodeKey("N1", "P"),
 		"cell":       protocol.CellEpisodeKey("P1", "P", protocol.ClaimRoleConsume),
 		"changeover": protocol.ChangeoverEpisodeKey("line-1", 1),
-		// maintain is a three-part key like threshold and changeover, and it is
+		// kanban is a three-part key like threshold and changeover, and it is
 		// keyed on a NODE NAME exactly as threshold is — so "thr" vs "mnt" is
 		// the only thing separating a group's level episode from a threshold
 		// episode on a node of the same name. That is a real shape: a loader
 		// anchored at a node named like a group is not forbidden anywhere.
-		"maintain": protocol.MaintainEpisodeKey("N1", "P"),
+		"kanban": protocol.KanbanEpisodeKey("N1", "P"),
 	}
 	seen := map[string]string{}
 	for kind, key := range keys {

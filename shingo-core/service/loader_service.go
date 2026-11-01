@@ -689,16 +689,15 @@ var ErrInboundSourceUnresolved = errors.New("inbound source does not resolve to 
 // so anything placed in a sibling lane of the same group is invisible to it.
 var ErrSourceIsALane = errors.New(protocol.MsgLaneIsNotASource)
 
-// ErrFullsFromAnEmptiesBank is returned when a CONSUME loader's inbound source
-// (where its fulls come from) names a maintained group. A maintained group is an
-// empties bank: the store resolver refuses a carrier holding a part there, so
+// ErrFullsFromAKanban is returned when a CONSUME loader's inbound source
+// (where its fulls come from) names a kanban. A kanban holds empties:
+// the store resolver refuses a carrier holding a part there, so
 // fulls could be pulled from it but never put back into it. And an unloader
-// never drains one (owner, 2026-10-22: "unloader should not drain the source
-// levels or threshold keeper"), so the sentence says so too: this is the one
+// never drains one, so the sentence says so too: this is the one
 // refusal, whatever the drain boxes say, and no second one is spelled for them.
-// The Edge's claim save says the shared stem (protocol.MsgFullsFromAnEmptiesBank)
+// The Edge's claim save says the shared stem (protocol.MsgFullsFromAKanban)
 // alone, because an Edge claim has no drain boxes.
-var ErrFullsFromAnEmptiesBank = errors.New(protocol.MsgFullsFromAnEmptiesBank + ", and its drain boxes drain nothing from one")
+var ErrFullsFromAKanban = errors.New(protocol.MsgFullsFromAKanban + ", and its drain boxes drain nothing from one")
 
 // checkFlowEndpoints is the second half of the save-time check: not whether the
 // endpoints exist (checkInboundSource) but whether they are the KIND of node a
@@ -706,11 +705,11 @@ var ErrFullsFromAnEmptiesBank = errors.New(protocol.MsgFullsFromAnEmptiesBank + 
 // found again:
 //
 //   - a LANE as the inbound source or the outbound destination (ErrSourceIsALane);
-//   - a MAINTAINED GROUP as an unloader's inbound source (ErrFullsFromAnEmptiesBank):
+//   - a KANBAN as an unloader's inbound source (ErrFullsFromAKanban):
 //     the empties-only store refusal (binresolver.ResolveStore) means a full of
 //     the part can be retrieved from it but not returned to it.
 //
-// The maintained test is store.DeclaresLevel, the one the drain re-asks of the
+// The kanban test is store.DeclaresLevel, the one the drain re-asks of the
 // same source before it pulls (a level can be declared after the save).
 //
 // A blank endpoint is valid, as it is for checkInboundSource.
@@ -734,12 +733,12 @@ func (s *LoaderService) checkFlowEndpoints(role, inboundSource, outboundDest str
 	if err != nil || n == nil {
 		return nil
 	}
-	maintained, err := s.db.DeclaresLevel(n.ID)
+	isKanban, err := s.db.DeclaresLevel(n.ID)
 	if err != nil {
-		return fmt.Errorf("read maintained levels of %s: %w", inboundSource, err)
+		return fmt.Errorf("read kanban levels of %s: %w", inboundSource, err)
 	}
-	if maintained {
-		return fmt.Errorf("%w: %q", ErrFullsFromAnEmptiesBank, inboundSource)
+	if isKanban {
+		return fmt.Errorf("%w: %q", ErrFullsFromAKanban, inboundSource)
 	}
 	return nil
 }
@@ -755,7 +754,7 @@ func (s *LoaderService) checkFlowEndpoints(role, inboundSource, outboundDest str
 // error at read, and a silent change of sourcing behaviour that nobody could
 // connect to the edit that caused it.
 //
-// It matters more now than it did. A maintained group is named by exactly this
+// It matters more now than it did. A kanban is named by exactly this
 // field, and phase 3 makes naming it consequential: the group either serves this
 // claim or fences it, and both of those are decisions about a node. A field that
 // might name nothing at all cannot carry either.

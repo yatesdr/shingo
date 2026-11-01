@@ -68,7 +68,7 @@ func TestOpenReaders_AForecastIsNotOpen(t *testing.T) {
 	db := testdb.Open(t)
 	thrKey := protocol.ThresholdEpisodeKey("SLN_FC", "PANEL-FC")
 	thr := insertForecast(t, db, thrKey, protocol.EpisodeKindThreshold, "PLANT.FC")
-	mnt := insertForecast(t, db, protocol.MaintainEpisodeKey("MNT-FC", "MNT-FC-T"), protocol.EpisodeKindMaintain, "test-core")
+	mnt := insertForecast(t, db, protocol.KanbanEpisodeKey("MNT-FC", "MNT-FC-T"), protocol.EpisodeKindKanban, "test-core")
 
 	id, err := db.OpenOriginForKey(thrKey)
 	testutil.MustNoErr(t, err, "OpenOriginForKey")
@@ -76,7 +76,7 @@ func TestOpenReaders_AForecastIsNotOpen(t *testing.T) {
 		t.Errorf("OpenOriginForKey returned the forecast %s as the open episode", id)
 	}
 
-	for _, kind := range []string{protocol.EpisodeKindThreshold, protocol.EpisodeKindMaintain} {
+	for _, kind := range []string{protocol.EpisodeKindThreshold, protocol.EpisodeKindKanban} {
 		open, err := db.ListOpenEpisodesOfKind(kind)
 		if err != nil {
 			t.Fatalf("ListOpenEpisodesOfKind(%s) failed on a forecast row: %v", kind, err)
@@ -98,10 +98,10 @@ func TestOpenReaders_AForecastIsNotOpen(t *testing.T) {
 		}
 	}
 
-	group, bt, err := db.MaintainedEpisodeForOrigin(mnt)
-	testutil.MustNoErr(t, err, "MaintainedEpisodeForOrigin")
+	group, bt, err := db.KanbanEpisodeForOrigin(mnt)
+	testutil.MustNoErr(t, err, "KanbanEpisodeForOrigin")
 	if group != "" || bt != "" {
-		t.Errorf("MaintainedEpisodeForOrigin(forecast) = %q/%q, want blank: a forecast is not an open maintain episode", group, bt)
+		t.Errorf("KanbanEpisodeForOrigin(forecast) = %q/%q, want blank: a forecast is not an open kanban episode", group, bt)
 	}
 }
 

@@ -523,7 +523,7 @@ func (f *Finder) Pick(need Need) Plan {
 
 		// ── MG3-2: THE EXPLICIT-GROUP BOUNDARY ──────────────────────────────
 		//
-		// A need that NAMED a strict maintained group it is not supported at is
+		// A need that NAMED a strict kanban it is not supported at is
 		// turned away with a cause, before the group is searched at all.
 		//
 		// The plant-wide fence hides those carriers inside the query, which is
@@ -804,9 +804,9 @@ func (f *Finder) Pick(need Need) Plan {
 			var err error
 			cause := CauseFinderPlantEmpty
 			// THE FENCE, on both arms. Zero for every need that names no process
-			// and carries no maintain origin, and then these render byte-for-byte
+			// and carries no kanban origin, and then these render byte-for-byte
 			// the queries they were before MG3-1: sharing is the plant default and
-			// the only fenced zones are maintained groups.
+			// the only fenced zones are kanbans.
 			fence := f.emptyFenceFor(need)
 			switch len(wantTypes) {
 			case 0:

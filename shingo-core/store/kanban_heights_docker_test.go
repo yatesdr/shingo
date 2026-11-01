@@ -13,7 +13,7 @@ import (
 	"shingocore/store/orders"
 )
 
-// maintain_heights_docker_test.go — what an unloader's group line reads for a
+// kanban_heights_docker_test.go — what an unloader's group line reads for a
 // wanted height is the keeper's two populations: the residents by totes add up
 // (with the carts that have no number) to the keeper's resident count, and the
 // coming rows, each cart's number carried, are the keeper's coming counted.
@@ -104,7 +104,7 @@ func TestCountsByTotes_AgreeWithTheKeepersCounts(t *testing.T) {
 	order("hgt-named", "HGT-GRP", func(o *orders.Order) { o.NamedBinID = &d })
 	const mnt = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeee01"
 	exec(`INSERT INTO demand_origins (origin_id, revision, episode_key, kind, opened_at) VALUES ($1, 1, $2, $3, NOW())`,
-		mnt, protocol.MaintainEpisodeKey("HGT-GRP", "HGT-TOTE"), protocol.EpisodeKindMaintain)
+		mnt, protocol.KanbanEpisodeKey("HGT-GRP", "HGT-TOTE"), protocol.EpisodeKindKanban)
 	e := bin(btID, "HGT-C5", nil, 40)
 	order("hgt-own", "HGT-SLOT", func(o *orders.Order) { o.HoldFromBirth(e); o.OriginID = mnt })
 	tb := bin(btID, "HGT-C7", nil, 0)

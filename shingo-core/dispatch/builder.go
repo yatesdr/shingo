@@ -387,7 +387,7 @@ func issueOwnTx(db *store.DB, need Need, p plan.Plan) (*orders.Order, Taken, err
 // (Need.Window) is held by another order: nothing was written. The refusal
 // names the window, and for a person's order the robot's order that holds it
 // (holdWindow). Its readers outside the package are the level keeper's
-// loop (engine Maintainer.createAsks), which goes on to its next slot, and the
+// loop (engine KanbanKeeper.createAsks), which goes on to its next slot, and the
 // carried-bin recovery, which refuses (CarriedBinNotRecoverable).
 var ErrWindowTaken = errors.New("the window is held by another order")
 
@@ -428,11 +428,11 @@ func (e *CartHeldError) Error() string {
 	return fmt.Sprintf("bin %s is held by order %d", bin, e.Holder)
 }
 
-// PlanMaintainedSlot asks the planner for the slot one keeper ask fills
-// (plan.MaintainedSlot), through the tick's one view of the kanban
+// PlanKanbanSlot asks the planner for the slot one keeper ask fills
+// (plan.KanbanSlot), through the tick's one view of the kanban
 // (store.KanbanAskReads), so a burst of asks reads the group once.
-func (d *Dispatcher) PlanMaintainedSlot(reads plan.Reader, group *nodes.Node, binTypeID int64) (*binresolver.ResolveResult, error) {
-	return d.pure.Over(reads).MaintainedSlot(group, binTypeID)
+func (d *Dispatcher) PlanKanbanSlot(reads plan.Reader, group *nodes.Node, binTypeID int64) (*binresolver.ResolveResult, error) {
+	return d.pure.Over(reads).KanbanSlot(group, binTypeID)
 }
 
 // PlanGroupStoreSlot asks the planner for the slot a carrier is stored in when it

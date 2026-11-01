@@ -241,7 +241,7 @@ func checkShallowestBuried(r *GroupResolver, children []*nodes.Node, payloadCode
 // they have simply never been reconciled.
 //
 // NESTING SEMANTICS FOR SOURCING IS AN OPEN OWNER RULING. It is not decided, and
-// this comment is not deciding it. Maintained groups sidestep the question
+// this comment is not deciding it. Kanbans sidestep the question
 // entirely — they are refused at save time unless they are flat — but every
 // other group in the plant still lives with the disagreement, so the first
 // person who needs nested sourcing to behave one specific way has to get that
@@ -639,53 +639,53 @@ func (r *GroupResolver) groupAdmitsStore(group *nodes.Node, payloadCode string, 
 func (r *GroupResolver) groupAdmitsStoreVacating(group, vacated *nodes.Node, payloadCode string, stated BinTypeStatement) error {
 	// ── MG4-1: THE LEVEL IS A CAP, AND THIS IS WHERE IT BINDS ───────────────
 	//
-	// A maintained group holds a declared number of empty carriers. The keeper
+	// A kanban holds a declared number of empty carriers. The keeper
 	// tops UP to that number; this refuses a store that would push PAST it.
 	// Without both halves the level is only a floor, and a group configured to
 	// hold four would accept a fifth, a sixth, and every carrier anybody wanted
-	// to put down — which is how a press empty bank becomes the place the plant
+	// to put down — which is how a lineside kanban becomes the place the plant
 	// parks its overflow.
 	//
 	// ResolutionCapacity, which means QUEUE-ON-FULL: the caller parks the push
 	// and retries, inheriting the whole park / re-resolve / revert path a full
 	// group already has. It is not an error and nothing is cancelled. A push that
-	// finds every maintained destination at level is backpressure, which is
+	// finds every kanban destination at level is backpressure, which is
 	// uncomfortable and correct.
 	//
 	// EVALUATED PER RESOLVE, NOT PER CHILD. The level is a property of the GROUP
 	// — four carriers across it, wherever they stand — so a per-child evaluation
 	// would be asking a question the configuration does not answer.
-	levels, err := r.DB.ListMaintainLevels(group.ID)
+	levels, err := r.DB.ListKanbanLevels(group.ID)
 	if err != nil {
 		return fmt.Errorf("read declared level for %s: %w", group.Name, err)
 	}
 
 	// ── A DECLARED LEVEL SAYS WHAT THE GROUP HOLDS, AND IT IS EMPTIES ───────
 	//
-	// Every maintain level counts EMPTY carriers of a bin type
+	// Every kanban level counts EMPTY carriers of a bin type
 	// (CountEmptyBinsOfTypeInGroup) and the keeper tops the group up with empty
 	// carriers. Declaring one is therefore a declaration that the group is an
-	// empties bank, and a store carrying a payload does not belong in it — it is
+	// kanban, and a store carrying a payload does not belong in it — it is
 	// not merely a poor fit, it is a carrier the keeper's own count cannot see,
 	// occupying a slot the keeper will then try to refill.
 	//
 	// FAIL-SAFE, AND SAID PLAINLY. The path that produced labelled stores into a
-	// press empties bank was an ordering race at the operator's CLEAR
+	// lineside kanban was an ordering race at the operator's CLEAR
 	// (shingo-edge operator_bin_ops.go), and that race is closed. So this arm's
 	// runtime population may well be empty, and a run that never fires it has
 	// proved nothing about it either way — it is certified by a unit test, not by
 	// a board read. It is here because the refusal is one line and the failure it
-	// catches is a payload-bearing carrier parked in an empties bank, where
+	// catches is a payload-bearing carrier parked in a kanban, where
 	// nothing looks for it.
 	//
-	// CAPACITY-SHAPED ON PURPOSE, so the maintained group's configured overflow
+	// CAPACITY-SHAPED ON PURPOSE, so the kanban's configured overflow
 	// destination catches it at admission and the carrier goes somewhere real
 	// instead of parking (LifecycleService.tryOverflow). A group with no overflow
 	// configured parks under its own cause, which names the condition rather than
 	// reading as a slot shortage.
 	//
 	// THE KEEPER CANNOT BE REFUSED BY THIS. Its own stores pass an empty
-	// payloadCode (maintainer.go), which is what an empties bank is for.
+	// payloadCode (kanban_keeper.go), which is what a kanban is for.
 	if payloadCode != "" && len(levels) > 0 {
 		return fmt.Errorf("payload %s cannot be stored in empties-only node group %s", payloadCode, group.Name)
 	}
@@ -705,7 +705,7 @@ func (r *GroupResolver) groupAdmitsStoreVacating(group, vacated *nodes.Node, pay
 //
 // THE RESOLVER'S OWN FENCES, NOT A COPY OF THEM. Enabled, dig-free, unclaimed by
 // anyone else, payloadAllowedAt and binTypeAllowed are asked here, and the
-// empties-only refusal and the maintained level through groupAdmitsStoreVacating, so
+// empties-only refusal and the kanban level through groupAdmitsStoreVacating, so
 // the vacated arm cannot admit a store the ordinary one would refuse for any
 // reason other than the bin standing there.
 //
@@ -1223,7 +1223,7 @@ func (r *GroupResolver) payloadAllowedAt(nodeID int64, payloadCode string) bool 
 	return false
 }
 
-// atDeclaredLevel reports whether a maintained group is already holding what it
+// atDeclaredLevel reports whether a kanban is already holding what it
 // was told to hold.
 //
 // ── THE ASYMMETRY, STATED ───────────────────────────────────────────────────
@@ -1251,9 +1251,9 @@ func (r *GroupResolver) payloadAllowedAt(nodeID int64, payloadCode string) bool 
 // applies here too.
 //
 // The levels are READ BY THE CALLER and passed in, because ResolveStore needs
-// the same list one line earlier to decide whether the group is an empties bank
+// the same list one line earlier to decide whether the group is a kanban
 // at all. One read, two questions.
-func (r *GroupResolver) atDeclaredLevel(group, vacated *nodes.Node, stated BinTypeStatement, levels []nodes.MaintainLevel) (bool, error) {
+func (r *GroupResolver) atDeclaredLevel(group, vacated *nodes.Node, stated BinTypeStatement, levels []nodes.KanbanLevel) (bool, error) {
 	full, err := kanban.AtLevel(levels, stated.TypeID(), stated.State(), func(code string, h domain.Height) (int, error) {
 		if vacated != nil {
 			return r.DB.CountEmptyBinsOfTypeInGroupExcludingNode(code, group.ID, vacated.ID, h)

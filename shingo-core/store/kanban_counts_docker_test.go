@@ -68,12 +68,12 @@ func TestKanbanCounts_TheBatchedReadsAgreeWithTheSingleReads(t *testing.T) {
 			VALUES ($1,$2,$3,'available',$4) RETURNING id`, bt, label, node, totes).Scan(&id), "bin "+label)
 		return id
 	}
-	levels := []store.MaintainLevel{
+	levels := []store.KanbanLevel{
 		{GroupNodeID: k1.ID, BinTypeID: tote, Want: 9}, {GroupNodeID: k1.ID, BinTypeID: kd, Want: 9},
 		{GroupNodeID: k2.ID, BinTypeID: kd, Want: 1},
 	}
 	for _, l := range levels {
-		testutil.MustNoErr(t, db.SetMaintainLevel(l), "level")
+		testutil.MustNoErr(t, db.SetKanbanLevel(l), "level")
 	}
 
 	// Residents the count takes.
@@ -175,7 +175,7 @@ func TestKanbanCounts_TheBatchedReadsAgreeWithTheSingleReads(t *testing.T) {
 
 	const mnt = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeee02"
 	exec(`INSERT INTO demand_origins (origin_id, revision, episode_key, kind, opened_at) VALUES ($1, 1, $2, $3, NOW())`,
-		mnt, protocol.MaintainEpisodeKey(k1.Name, "KCT-KD"), protocol.EpisodeKindMaintain)
+		mnt, protocol.KanbanEpisodeKey(k1.Name, "KCT-KD"), protocol.EpisodeKindKanban)
 	c10 := bin(kd, "KCT-C10", nil, nil)
 	own := order("kct-own", s1[1].Name, func(o *orders.Order) { o.HoldFromBirth(c10); o.OriginID = mnt })
 	// The episode's asks: a live root (own), a live leg that is no more demand and is
@@ -222,7 +222,7 @@ func TestKanbanCounts_TheBatchedReadsAgreeWithTheSingleReads(t *testing.T) {
 		bt               int64
 		resident, coming int
 	}{{k1, "KCT-TOTE", tote, 3, 2}, {k1, "KCT-KD", kd, 3, 2}, {k2, "KCT-KD", kd, 1, 1}} {
-		lv := store.MaintainLevel{GroupNodeID: c.g.ID, BinTypeID: c.bt, BinTypeCode: c.code, Want: 9}
+		lv := store.KanbanLevel{GroupNodeID: c.g.ID, BinTypeID: c.bt, BinTypeCode: c.code, Want: 9}
 		single, err := db.CountLevel(c.g, lv, store.DemandOrigin{})
 		testutil.MustNoErr(t, err, "the single read")
 		got := counts.Level(lv, 0)
@@ -236,10 +236,10 @@ func TestKanbanCounts_TheBatchedReadsAgreeWithTheSingleReads(t *testing.T) {
 		}
 		byTotes, err := db.CountEmptyBinsOfTypeInGroupByTotes(c.code, c.g.ID)
 		testutil.MustNoErr(t, err, "the single census")
-		wants := []store.MaintainLayerWant{}
+		wants := []store.KanbanLayerWant{}
 		totes := 8
 		for layers := 0; layers <= 5; layers++ {
-			wants = append(wants, store.MaintainLayerWant{BinTypeID: c.bt, Layers: layers, Want: 1, TotesPerLayer: &totes})
+			wants = append(wants, store.KanbanLayerWant{BinTypeID: c.bt, Layers: layers, Want: 1, TotesPerLayer: &totes})
 		}
 		tl, _ := counts.TypeLine(lv, 0, wants)
 		for _, h := range tl.Heights {
@@ -254,11 +254,11 @@ func TestKanbanCounts_TheBatchedReadsAgreeWithTheSingleReads(t *testing.T) {
 			}
 		}
 	}
-	lvK2 := store.MaintainLevel{GroupNodeID: k2.ID, BinTypeID: kd, BinTypeCode: "KCT-KD", Want: 1}
+	lvK2 := store.KanbanLevel{GroupNodeID: k2.ID, BinTypeID: kd, BinTypeCode: "KCT-KD", Want: 1}
 	if got := scoped.Level(lvK2, 0); got.Resident != 1 || got.Coming != 1 {
 		t.Errorf("scoped to K2: %+v, want its one and one", got)
 	}
-	lvK1 := store.MaintainLevel{GroupNodeID: k1.ID, BinTypeID: kd, BinTypeCode: "KCT-KD", Want: 1}
+	lvK1 := store.KanbanLevel{GroupNodeID: k1.ID, BinTypeID: kd, BinTypeCode: "KCT-KD", Want: 1}
 	if got := scoped.Level(lvK1, 0); got.Resident != 0 || got.Coming != 0 {
 		t.Errorf("a read scoped to K2 answered for K1: %+v", got)
 	}

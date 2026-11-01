@@ -156,12 +156,12 @@ var engineIssueDrivers = map[string]testdb.IssueDriver{
 		}
 		return r.db, 0
 	},
-	"maintained-group level keeper": func(t *testing.T, _ bool) (*store.DB, int64) {
+	"kanban level keeper": func(t *testing.T, _ bool) (*store.DB, int64) {
 		db := testdb.IssueCensusDB(t)
 		eng := newTestEngine(t, db, simulator.New())
 		_, btID := mntFixture(t, db, "ICK", 1, "ICK-45x58", 1)
 		mntOutsideEmpty(t, db, btID, "ICK-MARKET")
-		eng.Maintainer().Tick()
+		eng.KanbanKeeper().Tick()
 		var id int64
 		testutil.MustNoErr(t, db.QueryRow(`SELECT id FROM orders WHERE order_type = 'retrieve_empty'
 			ORDER BY id DESC LIMIT 1`).Scan(&id), "the keeper's ask")

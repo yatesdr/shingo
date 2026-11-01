@@ -59,7 +59,7 @@ A self-sustaining circle (the full map is the header of `plants/demo-sim.yaml`):
 2. **Unloader** — `UNLOADER-A` at `FGN_001` drains ASSY. Core's `auto_push` re-pulls its next
    full when its window frees; the sim operator CLEARs after `unloader_auto_clear` and the
    empty goes to `SYN_PRESS_EMPTIES`.
-3. **Maintained group** — `SYN_PRESS_EMPTIES` keeps a level of empties beside the presses;
+3. **Kanban** — `SYN_PRESS_EMPTIES` keeps a level of empties beside the presses;
    its keeper tops it up and the surplus overflows to `SYN_MARKET`.
 4. **Loader legs** — `PLK_X1` (CLIP → WELD-3), `PLK_X2` (STUD → WELD-4), the two-window
    BRKT loader `PLK_W1/W2` (→ WELD-2), and the dedicated SHIM home `PLK_H1` that `WELD-5`

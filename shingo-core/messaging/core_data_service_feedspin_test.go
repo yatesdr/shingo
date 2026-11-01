@@ -298,7 +298,7 @@ func TestFeedsPin_HandleNodeListRequest_Scope(t *testing.T) {
 			seedFeedsPinNodes(t, db)
 			if tc.breakStationRead {
 				// node_stations is read by the station-scoped list only; the
-				// plant-wide list, loaders, maintained groups, bin types and
+				// plant-wide list, loaders, kanbans, bin types and
 				// scene do not touch it.
 				hideTable(t, db, "node_stations")
 			}

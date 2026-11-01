@@ -17,7 +17,7 @@ import (
 //
 // Its evidence is "Core never heard an order attributed to this demand", which
 // only means something for demand whose orders arrive from somewhere else: the
-// Edge-authored kinds, cell and changeover. The Core-authored kinds, maintain
+// Edge-authored kinds, cell and changeover. The Core-authored kinds, kanban
 // and threshold, create their own orders in this process with the origin
 // already stamped, so zero children there is not a missing message.
 
@@ -57,7 +57,7 @@ func TestDemandReconciler_ChildlessChangeoverEpisodeCloses(t *testing.T) {
 // fireSignalCached creates the orders in this process and stamps the open
 // origin on them, so a threshold episode with no children is a demand whose
 // orders were not wanted yet: debounce held the fire, the loader's windows
-// were full, or its config refused. That is the maintain exemption's
+// were full, or its config refused. That is the kanban exemption's
 // reasoning word for word. Closing it wrote an `unattributed` row the monitor
 // never heard about. The monitor then kept stamping the closed origin on new
 // orders, and never minted a replacement while the level stayed below.

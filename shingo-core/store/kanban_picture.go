@@ -68,7 +68,7 @@ type KanbanPictureRow struct {
 // RUNNING. A process runs its effective style: the target of its latest open
 // changeover episode when that resolves to a type, else its active style
 // (process_styles.is_active). Every levels reader takes it through
-// DB.ListMaintainLevels or this read directly.
+// DB.ListKanbanLevels or this read directly.
 //
 //   - open_changeover: the latest open episode per process. A changeover episode
 //     carries its target's first produce claim as (process_id, core_node_name,
@@ -250,10 +250,10 @@ func (db *DB) ListKanbanPictureWithSources(ids []int64) ([]KanbanPictureRow, err
 	return scanKanbanPicture(db.DB.Query(kanbanPictureWithSourcesSQL, ids))
 }
 
-// MaintainLevel is the row as a levels reader takes it: Want the effective want,
+// KanbanLevel is the row as a levels reader takes it: Want the effective want,
 // Base the declared number, the overflow the row's own.
-func (r KanbanPictureRow) MaintainLevel() MaintainLevel {
-	lv := MaintainLevel{GroupNodeID: r.KanbanNodeID, BinTypeID: r.BinTypeID, BinTypeCode: r.BinTypeCode,
+func (r KanbanPictureRow) KanbanLevel() KanbanLevel {
+	lv := KanbanLevel{GroupNodeID: r.KanbanNodeID, BinTypeID: r.BinTypeID, BinTypeCode: r.BinTypeCode,
 		Want: r.Want(), Base: r.Base, OverflowNodeID: r.LevelOverflowNodeID}
 	if r.LevelOverflowNodeID != nil {
 		lv.OverflowNode = r.OverflowNode
@@ -263,10 +263,10 @@ func (r KanbanPictureRow) MaintainLevel() MaintainLevel {
 
 // LevelsOfPicture is the rows as levels, in the picture's order (by code within a
 // kanban).
-func LevelsOfPicture(rows []KanbanPictureRow) []MaintainLevel {
-	var out []MaintainLevel
+func LevelsOfPicture(rows []KanbanPictureRow) []KanbanLevel {
+	var out []KanbanLevel
 	for _, r := range rows {
-		out = append(out, r.MaintainLevel())
+		out = append(out, r.KanbanLevel())
 	}
 	return out
 }

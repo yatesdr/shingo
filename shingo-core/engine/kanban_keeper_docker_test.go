@@ -20,7 +20,7 @@ import (
 // These drive Tick() directly rather than waiting on the ticker: the cadence is
 // not what is under test, the subtraction and the two edges are.
 
-// mntFixture builds a maintained group with `slots` free positions and one
+// mntFixture builds a kanban with `slots` free positions and one
 // declared level, and returns the group id and bin type id.
 func mntFixture(t *testing.T, db *store.DB, group string, slots int, typeCode string, want int) (int64, int64) {
 	t.Helper()
@@ -38,7 +38,7 @@ func mntFixture(t *testing.T, db *store.DB, group string, slots int, typeCode st
 		`INSERT INTO bin_types (code) VALUES ($1) RETURNING id`, typeCode).Scan(&btID), "bin type")
 
 	testdb.KanbanKeeper(t, db, grpID, "test-core")
-	testutil.MustNoErr(t, db.SetMaintainLevel(store.MaintainLevel{
+	testutil.MustNoErr(t, db.SetKanbanLevel(store.KanbanLevel{
 		GroupNodeID: grpID, BinTypeID: btID, Want: want,
 	}), "declare level")
 	return grpID, btID
@@ -47,7 +47,7 @@ func mntFixture(t *testing.T, db *store.DB, group string, slots int, typeCode st
 // mntOutsideEmpty stands one empty of a level's type on a plain node outside
 // every group, so the keeper has a carrier it could source and asks. A type no
 // empty outside the group can supply gets no ask
-// (TestMaintainer_MintsNoAskForATypeNothingOutsideCanSource).
+// (TestKanbanKeeper_MintsNoAskForATypeNothingOutsideCanSource).
 func mntOutsideEmpty(t *testing.T, db *store.DB, btID int64, node string) int64 {
 	t.Helper()
 	n := &nodes.Node{Name: node, Enabled: true}
@@ -55,7 +55,7 @@ func mntOutsideEmpty(t *testing.T, db *store.DB, btID int64, node string) int64 
 	return landAt(t, db, btID, n.ID, node+"-EMPTY")
 }
 
-func mntState(t *testing.T, m *Maintainer, group, typeCode string) MaintainerGroupState {
+func mntState(t *testing.T, m *KanbanKeeper, group, typeCode string) KanbanLineState {
 	t.Helper()
 	for _, s := range m.Snapshot() {
 		if s.GroupNode == group && s.BinTypeCode == typeCode {
@@ -63,7 +63,7 @@ func mntState(t *testing.T, m *Maintainer, group, typeCode string) MaintainerGro
 		}
 	}
 	t.Fatalf("no snapshot row for %s/%s in %+v", group, typeCode, m.Snapshot())
-	return MaintainerGroupState{}
+	return KanbanLineState{}
 }
 
 // The subtraction chain, and that a second tick does not re-ask.
@@ -72,14 +72,14 @@ func mntState(t *testing.T, m *Maintainer, group, typeCode string) MaintainerGro
 // debounce, a warm-up and an in-memory below-since map. If a second tick asked
 // again, the keeper would rebuild the 241-duplicates incident at a new grain
 // within one minute.
-func TestMaintainer_SubtractsWhatItAlreadyAsked(t *testing.T) {
+func TestKanbanKeeper_SubtractsWhatItAlreadyAsked(t *testing.T) {
 	t.Parallel()
 	db := testdb.Open(t)
 	eng := newTestEngine(t, db, simulator.New())
 	_, btID := mntFixture(t, db, "MNT-STEADY", 4, "MNT-45x58", 2)
 	mntOutsideEmpty(t, db, btID, "MNT-STEADY-MARKET")
 
-	m := eng.Maintainer()
+	m := eng.KanbanKeeper()
 	m.Tick()
 
 	st := mntState(t, m, "MNT-STEADY", "MNT-45x58")
@@ -115,14 +115,14 @@ func TestMaintainer_SubtractsWhatItAlreadyAsked(t *testing.T) {
 
 // THE SETTLE EDGE. An episode closes only when the level is met AND nothing is
 // outstanding. Closing on the rising edge alone re-opens the duplicate window.
-func TestMaintainer_ClosesOnTheSettleEdgeNotTheRisingEdge(t *testing.T) {
+func TestKanbanKeeper_ClosesOnTheSettleEdgeNotTheRisingEdge(t *testing.T) {
 	t.Parallel()
 	db := testdb.Open(t)
 	eng := newTestEngine(t, db, simulator.New())
 	grpID, btID := mntFixture(t, db, "MNT-SETTLE", 4, "MNT-SET", 1)
 	mntOutsideEmpty(t, db, btID, "MNT-SETTLE-MARKET")
 
-	m := eng.Maintainer()
+	m := eng.KanbanKeeper()
 	m.Tick()
 	st := mntState(t, m, "MNT-SETTLE", "MNT-SET")
 	if st.Created != 1 || st.OriginID == "" {
@@ -160,7 +160,7 @@ func TestMaintainer_ClosesOnTheSettleEdgeNotTheRisingEdge(t *testing.T) {
 	if st.OriginID != "" {
 		t.Errorf("episode still open after the level settled and the ask went terminal: %s", st.OriginID)
 	}
-	openNow, err := db.ListOpenEpisodesOfKind(protocol.EpisodeKindMaintain)
+	openNow, err := db.ListOpenEpisodesOfKind(protocol.EpisodeKindKanban)
 	testutil.MustNoErr(t, err, "list open")
 	for _, o := range openNow {
 		if o.OriginID == origin {
@@ -171,13 +171,13 @@ func TestMaintainer_ClosesOnTheSettleEdgeNotTheRisingEdge(t *testing.T) {
 
 // CONFIG-WITHDRAWN closes as threshold_removed, not recovered. The need did not
 // get its carriers — it stopped being watched.
-func TestMaintainer_ConfigWithdrawnClosesAsRemoved(t *testing.T) {
+func TestKanbanKeeper_ConfigWithdrawnClosesAsRemoved(t *testing.T) {
 	t.Parallel()
 	db := testdb.Open(t)
 	eng := newTestEngine(t, db, simulator.New())
 	grpID, btID := mntFixture(t, db, "MNT-WITHDRAW", 2, "MNT-WD", 1)
 
-	m := eng.Maintainer()
+	m := eng.KanbanKeeper()
 	m.Tick()
 	st := mntState(t, m, "MNT-WITHDRAW", "MNT-WD")
 	origin := st.OriginID
@@ -186,10 +186,10 @@ func TestMaintainer_ConfigWithdrawnClosesAsRemoved(t *testing.T) {
 	}
 
 	// The operator deletes the level line.
-	testutil.MustNoErr(t, db.RemoveMaintainLevel(grpID, btID), "remove level")
+	testutil.MustNoErr(t, db.RemoveKanbanLevel(grpID, btID), "remove level")
 
 	m.Tick()
-	openNow, err := db.ListOpenEpisodesOfKind(protocol.EpisodeKindMaintain)
+	openNow, err := db.ListOpenEpisodesOfKind(protocol.EpisodeKindKanban)
 	testutil.MustNoErr(t, err, "list open")
 	for _, o := range openNow {
 		if o.OriginID == origin {
@@ -210,7 +210,7 @@ func TestMaintainer_ConfigWithdrawnClosesAsRemoved(t *testing.T) {
 // A kanban with no station is SKIPPED, not run. projectOrder no-ops on a blank
 // StationID, so its asks would run on the floor and appear on no board anywhere —
 // the phantom-order family.
-func TestMaintainer_RefusesAGroupWithNoStation(t *testing.T) {
+func TestKanbanKeeper_RefusesAGroupWithNoStation(t *testing.T) {
 	t.Parallel()
 	db := testdb.Open(t)
 	eng := newTestEngine(t, db, simulator.New())
@@ -218,14 +218,14 @@ func TestMaintainer_RefusesAGroupWithNoStation(t *testing.T) {
 	// Written directly, bypassing the save-time rule that refuses it with supports.
 	testdb.KanbanStation(t, db, grpID, "")
 
-	m := eng.Maintainer()
+	m := eng.KanbanKeeper()
 	m.Tick()
 
 	st := mntState(t, m, "MNT-NOSTATION", "MNT-NS")
 	if st.Gap != 1 || st.Created != 0 || st.OriginID != "" || !strings.Contains(st.HeldBy, "no station") {
 		t.Errorf("a stationless group's line = %+v; want its gap counted, nothing asked or open, and why on the card", st)
 	}
-	open, err := db.ListOpenEpisodesOfKind(protocol.EpisodeKindMaintain)
+	open, err := db.ListOpenEpisodesOfKind(protocol.EpisodeKindKanban)
 	testutil.MustNoErr(t, err, "list open")
 	if len(open) != 0 {
 		t.Errorf("a stationless group minted %d episode(s); it must not run at all", len(open))
@@ -234,7 +234,7 @@ func TestMaintainer_RefusesAGroupWithNoStation(t *testing.T) {
 
 // A group that declares no level is not the keeper's business at all, whatever
 // its row says. This is the whole live-capability gate: no flag, just config.
-func TestMaintainer_IgnoresUnmaintainedGroups(t *testing.T) {
+func TestKanbanKeeper_IgnoresPlainGroups(t *testing.T) {
 	t.Parallel()
 	db := testdb.Open(t)
 	eng := newTestEngine(t, db, simulator.New())
@@ -246,30 +246,30 @@ func TestMaintainer_IgnoresUnmaintainedGroups(t *testing.T) {
 	testdb.MarkGroup(t, db, noLevel)
 	testdb.KanbanStation(t, db, noLevel, "test-core")
 
-	m := eng.Maintainer()
+	m := eng.KanbanKeeper()
 	m.Tick()
 
 	if len(m.Snapshot()) != 0 {
-		t.Fatalf("an unmaintained group produced snapshot rows: %+v", m.Snapshot())
+		t.Fatalf("an plain group produced snapshot rows: %+v", m.Snapshot())
 	}
-	open, err := db.ListOpenEpisodesOfKind(protocol.EpisodeKindMaintain)
+	open, err := db.ListOpenEpisodesOfKind(protocol.EpisodeKindKanban)
 	testutil.MustNoErr(t, err, "list open")
 	if len(open) != 0 {
-		t.Errorf("an unmaintained group minted %d episode(s)", len(open))
+		t.Errorf("an plain group minted %d episode(s)", len(open))
 	}
 }
 
-// RESTART: the keeper holds no in-memory episode state, so a fresh Maintainer
+// RESTART: the keeper holds no in-memory episode state, so a fresh KanbanKeeper
 // over the same database must reach the identical conclusion and create nothing
 // new. This is the whole restart-duplication class, tested by construction.
-func TestMaintainer_RestartMintsNoDuplicate(t *testing.T) {
+func TestKanbanKeeper_RestartMintsNoDuplicate(t *testing.T) {
 	t.Parallel()
 	db := testdb.Open(t)
 	eng := newTestEngine(t, db, simulator.New())
 	_, btID := mntFixture(t, db, "MNT-RESTART", 3, "MNT-RS", 2)
 	mntOutsideEmpty(t, db, btID, "MNT-RESTART-MARKET")
 
-	first := eng.Maintainer()
+	first := eng.KanbanKeeper()
 	first.Tick()
 	before := mntState(t, first, "MNT-RESTART", "MNT-RS")
 	if before.Created == 0 || before.OriginID == "" {
@@ -278,7 +278,7 @@ func TestMaintainer_RestartMintsNoDuplicate(t *testing.T) {
 
 	// A brand-new keeper — the equivalent of a Core restart. It has never seen
 	// this group and remembers nothing.
-	restarted := NewMaintainer(eng, func() time.Time { return time.Now().UTC() })
+	restarted := NewKanbanKeeper(eng, func() time.Time { return time.Now().UTC() })
 	restarted.Tick()
 	after := mntState(t, restarted, "MNT-RESTART", "MNT-RS")
 
@@ -292,25 +292,25 @@ func TestMaintainer_RestartMintsNoDuplicate(t *testing.T) {
 		t.Errorf("restarted keeper counts asked=%d, first keeper created=%d — the subtraction "+
 			"must be identical after a reboot", after.Asked, before.Created)
 	}
-	open, err := db.ListOpenEpisodesOfKind(protocol.EpisodeKindMaintain)
+	open, err := db.ListOpenEpisodesOfKind(protocol.EpisodeKindKanban)
 	testutil.MustNoErr(t, err, "list open")
 	if len(open) != 1 {
-		t.Errorf("open maintain episodes = %d, want exactly 1 after a restart", len(open))
+		t.Errorf("open kanban episodes = %d, want exactly 1 after a restart", len(open))
 	}
 }
 
-// THE PARKED ASK SAYS WHY IN WORDS. The Maintained Groups "Waiting on" cell
+// THE PARKED ASK SAYS WHY IN WORDS. The Kanbans "Waiting on" cell
 // printed the engineer tag (finder-no-empty-of-type) and a Go duration string
 // (11m3s). The ask is an order and already carries the operator sentence
 // FormatQueueSentence wrote for it; the age is a duration like every other.
-func TestMaintainer_OldestAskSaysWhyInWords(t *testing.T) {
+func TestKanbanKeeper_OldestAskSaysWhyInWords(t *testing.T) {
 	t.Parallel()
 	db := testdb.Open(t)
 	eng := newTestEngine(t, db, simulator.New())
 	_, btID := mntFixture(t, db, "MNT-WHY", 2, "MNT-WHY-T", 1)
 	mntOutsideEmpty(t, db, btID, "MNT-WHY-MARKET")
 
-	m := eng.Maintainer()
+	m := eng.KanbanKeeper()
 	m.Tick()
 	origin := mntState(t, m, "MNT-WHY", "MNT-WHY-T").OriginID
 	if origin == "" {

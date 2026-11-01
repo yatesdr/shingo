@@ -923,7 +923,7 @@ func (db *DB) migrate() error {
 	// order_projection_drift_test.go was written to make impossible to repeat.
 	//
 	// payload_desc is what an operator READS. Every Core-authored order shows the
-	// payload code on the board and nothing else, so a maintained-group ask
+	// payload code on the board and nothing else, so a kanban ask
 	// currently renders as a robot arriving for no stated reason. It has been on
 	// the wire for its whole life.
 	//

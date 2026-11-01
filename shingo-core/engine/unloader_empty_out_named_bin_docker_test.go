@@ -26,7 +26,7 @@ import (
 // capacity gate judged it against the group's total, so another type over its
 // own level parked it.
 
-// levelledEmptiesGroup builds a maintained group with `slots` positions and one
+// levelledEmptiesGroup builds a kanban with `slots` positions and one
 // level per entry of wants, with held[i] empties of that type already in it.
 func levelledEmptiesGroup(t *testing.T, db *store.DB, name string, slots int,
 	codes []string, wants, held []int) (*nodes.Node, []int64) {
@@ -48,7 +48,7 @@ func levelledEmptiesGroup(t *testing.T, db *store.DB, name string, slots int,
 		testutil.MustNoErr(t, db.QueryRow(`INSERT INTO bin_types (code) VALUES ($1) RETURNING id`, code).Scan(&btID),
 			"bin type "+code)
 		typeIDs = append(typeIDs, btID)
-		testutil.MustNoErr(t, db.SetMaintainLevel(store.MaintainLevel{
+		testutil.MustNoErr(t, db.SetKanbanLevel(store.KanbanLevel{
 			GroupNodeID: grpID, BinTypeID: btID, Want: wants[i]}), "level "+code)
 		for j := 0; j < held[i]; j++ {
 			landAt(t, db, btID, positions[next].ID, fmt.Sprintf("%s-HELD-%d", code, j))

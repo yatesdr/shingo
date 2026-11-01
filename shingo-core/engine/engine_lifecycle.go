@@ -206,13 +206,13 @@ func (e *Engine) Start() {
 	// LAST, and after the dispatcher exists: the keeper mints orders through
 	// AdmitCoreAsk, and Engine.New leaves e.dispatcher nil (Start constructs it
 	// above). A keeper ticking before that would panic on its first gap.
-	if e.maintainer != nil {
+	if e.keeper != nil {
 		mntCtx, cancel := context.WithCancel(context.Background())
 		go func() {
 			<-e.stopChan
 			cancel()
 		}()
-		e.maintainer.Run(mntCtx)
+		e.keeper.Run(mntCtx)
 	}
 
 	// The CMS poster's LOOP. The poster itself was built in New; only its

@@ -81,7 +81,7 @@ type CapacityDB interface {
 	// dispatch.
 	ListChildNodes(parentID int64) ([]*nodes.Node, error)
 
-	// ── The maintained-group level (MG4-3) ──────────────────────────────────
+	// ── The kanban level (MG4-3) ──────────────────────────────────
 	//
 	// The gate and the resolver must not disagree about whether a group can take
 	// a carrier, so the gate reads the level through the SAME two calls the
@@ -89,7 +89,7 @@ type CapacityDB interface {
 	// — it has empty positions, they are just spoken for — and the order is
 	// admitted, resolved, refused, and parked one layer deeper with a cause that
 	// says nothing about the level.
-	ListMaintainLevels(groupNodeID int64) ([]nodes.MaintainLevel, error)
+	ListKanbanLevels(groupNodeID int64) ([]nodes.KanbanLevel, error)
 	CountEmptyBinsOfTypeInGroup(binTypeCode string, groupNodeID int64, h domain.Height) (int, error)
 
 	// ── The per-node Allowed Bin Types fence ────────────────────────────────
@@ -306,7 +306,7 @@ func checkNGRPCapacity(db CapacityDB, ngrp *nodes.Node, ngrpName string, exclude
 
 	// ── THE LEVEL, BEFORE THE PHYSICS ───────────────────────────────────────
 	//
-	// A maintained group at its declared level is FULL in the sense that matters,
+	// A kanban at its declared level is FULL in the sense that matters,
 	// and it does not look full physically: it has empty positions, and they are
 	// spoken for by a number somebody configured. Asking here means the order
 	// parks with a cause that says so, instead of being admitted, resolved,
@@ -316,7 +316,7 @@ func checkNGRPCapacity(db CapacityDB, ngrp *nodes.Node, ngrpName string, exclude
 	// SAME PREDICATE AS THE RESOLVER, read through the same two calls. Two
 	// answers to "is this group full" is exactly the drift that puts an order in
 	// a loop between a gate that admits it and a resolver that refuses it.
-	if atLevel, err := ngrpAtDeclaredLevel(db, ngrp, stated); err != nil {
+	if atLevel, err := ngrpAtLevel(db, ngrp, stated); err != nil {
 		// Unknown is not permission, and it is not a claim of fullness either —
 		// it is the check failing, which has its own cause.
 		return true, CapacityVerdict{Cause: CauseCapacityCheckFailed, Params: params}
@@ -417,7 +417,7 @@ func checkNGRPCapacity(db CapacityDB, ngrp *nodes.Node, ngrpName string, exclude
 }
 
 // BinTypeAllowedAt is the gate's copy of binresolver.binTypeAllowed, and — like
-// ngrpAtDeclaredLevel below — it is a copy of the CALL and not of the LOGIC:
+// ngrpAtLevel below — it is a copy of the CALL and not of the LOGIC:
 // both read GetEffectiveBinTypes, and both take an empty result as "nothing
 // declared, so nothing refused".
 //
@@ -448,12 +448,12 @@ func BinTypeAllowedAt(db CapacityDB, nodeID int64, binTypeID *int64) (bool, erro
 	return bareOf != nil && bins.TypeAdmits(bts, *binTypeID, bareOf), nil
 }
 
-// ngrpAtDeclaredLevel is the gate's level question: the group's declared
+// ngrpAtLevel is the gate's level question: the group's declared
 // levels, asked through kanban.AtLevel — the resolver's own
 // function, so the gate and the resolver cannot disagree about whether a group
 // is full — with the same count the resolver passes.
-func ngrpAtDeclaredLevel(db CapacityDB, ngrp *nodes.Node, stated binresolver.BinTypeStatement) (bool, error) {
-	levels, err := db.ListMaintainLevels(ngrp.ID)
+func ngrpAtLevel(db CapacityDB, ngrp *nodes.Node, stated binresolver.BinTypeStatement) (bool, error) {
+	levels, err := db.ListKanbanLevels(ngrp.ID)
 	if err != nil {
 		return false, err
 	}

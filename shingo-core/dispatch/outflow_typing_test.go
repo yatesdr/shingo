@@ -111,15 +111,15 @@ func TestOutflowTyping_ZeroOrManyChangesNothing(t *testing.T) {
 	}
 }
 
-// A MAINTAIN ORIGIN STILL WINS. The pinned type comes off the episode and is
+// A KANBAN ORIGIN STILL WINS. The pinned type comes off the episode and is
 // never re-derived — that was MG2-4's whole argument, and outflow typing is a
 // derivation.
-func TestOutflowTyping_MaintainOriginStillWins(t *testing.T) {
+func TestOutflowTyping_KanbanOriginStillWins(t *testing.T) {
 	t.Parallel()
 	db := newFakeFinderDB()
 	db.addNode(pinNode(520, "OT-POS-2"))
 	db.effectiveBinTypes[520] = []*bins.BinType{{ID: 9, Code: "OT-POSITION-SAYS"}}
-	db.maintainedType["11111111-2222-3333-4444-555555555555"] = "OT-EPISODE-SAYS"
+	db.kanbanType["11111111-2222-3333-4444-555555555555"] = "OT-EPISODE-SAYS"
 
 	got := NewSourceFinder(db, nil, nil).picker.WantedBinType(SourceNeed{
 		Intent: IntentEmpty, SetDownNode: "OT-POS-2",

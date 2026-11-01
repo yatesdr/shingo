@@ -131,7 +131,7 @@ func TestC2cPin_OneChooserNoWidenArm(t *testing.T) {
 // dispatch (where the doors ask): outside ChooseDrop itself, nothing calls the
 // resolver's store arm (Resolve with ResolveModeStore, ResolveStore,
 // ResolveStoreExcludingLanes, RankStoreExcludingLanes), and the planner's store
-// entries (StoreDestination, MaintainedSlot, GroupStoreSlot) reach their answer
+// entries (StoreDestination, KanbanSlot, GroupStoreSlot) reach their answer
 // through ChooseDrop.
 //
 // RED AT BASE (56a702c6): StoreDestination calls Resolve with ResolveModeStore

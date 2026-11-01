@@ -29,14 +29,14 @@ func TestCapacityGate_ACartAtZeroIsJudgedOnItsOwnLine(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			t.Parallel()
 			db := &fakeCapacityDB{
-				node:           &nodes.Node{ID: grpID, Name: "TB-GRP", IsSynthetic: true, NodeTypeCode: protocol.NodeClassNGRP, Enabled: true},
-				children:       []*nodes.Node{{ID: 301, Name: "TB-GRP-1", Enabled: true}, {ID: 302, Name: "TB-GRP-2", Enabled: true}},
-				binsByChild:    map[int64]int{301: 0, 302: 0},
-				maintainLevels: map[int64][]nodes.MaintainLevel{grpID: {{GroupNodeID: grpID, BinTypeID: 7, BinTypeCode: "TB-TOTE", Want: 2}}},
-				emptyInGroup:   map[int64]int{grpID: 2},
-				tbInGroup:      map[int64]int{grpID: 0},
-				orderBinTypes:  map[int64]int64{55: 7},
-				orderStates:    map[int64]protocol.CarrierState{55: c.state},
+				node:          &nodes.Node{ID: grpID, Name: "TB-GRP", IsSynthetic: true, NodeTypeCode: protocol.NodeClassNGRP, Enabled: true},
+				children:      []*nodes.Node{{ID: 301, Name: "TB-GRP-1", Enabled: true}, {ID: 302, Name: "TB-GRP-2", Enabled: true}},
+				binsByChild:   map[int64]int{301: 0, 302: 0},
+				kanbanLevels:  map[int64][]nodes.KanbanLevel{grpID: {{GroupNodeID: grpID, BinTypeID: 7, BinTypeCode: "TB-TOTE", Want: 2}}},
+				emptyInGroup:  map[int64]int{grpID: 2},
+				tbInGroup:     map[int64]int{grpID: 0},
+				orderBinTypes: map[int64]int64{55: 7},
+				orderStates:   map[int64]protocol.CarrierState{55: c.state},
 			}
 			if c.row {
 				db.tbRows = map[int64]int{7: 1}

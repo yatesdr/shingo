@@ -98,7 +98,7 @@ type ServiceAccess interface {
 	// gated per-(process, style) verdicts plus claim/pool drill-in context and
 	// the replenishment queue. A pure read of the monitor snapshot.
 	SourceabilityPage() (engine.SourceabilityPageView, error)
-	// MaintainedGroupStates is the keeper's last tick, one line per (group, bin
+	// KanbanLineStates is the keeper's last tick, one line per (group, bin
 	// type): the declared level and the three populations it subtracted to reach
 	// its gap.
 	//
@@ -106,8 +106,8 @@ type ServiceAccess interface {
 	// the keeper actually decided, so an operator reading a surprising gap is
 	// reading the arithmetic that produced the asks in front of them rather than a
 	// second opinion computed at render time. Empty until the first tick, and
-	// empty forever on a plant with no maintained group.
-	MaintainedGroupStates() []engine.MaintainerGroupState
+	// empty forever on a plant with no kanban.
+	KanbanLineStates() []engine.KanbanLineState
 	// EdgeFeedFlags lists the plain-text feed conditions flagged for one
 	// station (a feed resent without converging, a process reported by two
 	// stations), shown on its row of the Edges page. A pure read.

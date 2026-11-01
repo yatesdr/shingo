@@ -122,9 +122,9 @@ linters:
           msg: "Direct FindSourceBinFIFO calls bypass the shared source seam. Route through dispatch.SourceFinder.FindSource (source_finder.go)."
         - pattern: 'db\.FindEmptyCompatibleBin'
           msg: "Direct FindEmptyCompatibleBin(InGroup) calls bypass the shared source seam. Route through dispatch.SourceFinder.FindSource (source_finder.go)."
-        # The TYPED empty finders, added with maintained groups (MG2). Same guard,
+        # The TYPED empty finders, added with kanbans (MG2). Same guard,
         # same reason, and it matters more here than for the payload-matched
-        # finders: a maintained group's asks are empty pulls, and an empty pulled
+        # finders: a kanban's asks are empty pulls, and an empty pulled
         # outside the seam skips the group scoping and the tier order that decide
         # WHICH empty — which is the drift that produced wrong-source-on-replay
         # for the untyped finders. `db\.FindEmptyBinOfType` prefix-matches

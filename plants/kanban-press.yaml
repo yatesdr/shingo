@@ -152,7 +152,7 @@ zones:
       - {name: Z45_006, depth: 1}
       - {name: Z45_007, depth: 1}
       - {name: Z45_008, depth: 1}
-  # The family's spare room: no entry under maintained_groups, so no level and nobody
+  # The family's spare room: no entry under kanbans, so no level and nobody
   # counts it. Ten slots for the eight carts past the levels under KP-32, and two over.
   - name: ZONE-45-SPARE
     retrieve_algorithm: FIFO
@@ -326,7 +326,7 @@ cell_configs:
   - {process: KW-UNLOAD, station: KW-UNLOAD-OPS}
 
 # The key is the spec's name for it until the rename pass: each entry is a kanban.
-maintained_groups:
+kanbans:
   # K: 1/1/1/0, cover 4. 32x30 has its own overflow because it has a level of 0 here and
   # its own floor. The spare is K's overflow and its last source: the head says why.
   - group: PRESS-KANBAN

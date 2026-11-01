@@ -135,7 +135,7 @@ func (v *kanbanView) styleTypes(style string) []string {
 }
 
 // lines is a kanban's levels under the running styles given (process → style).
-func (v *kanbanView) lines(g plantspec.MaintainedGroup, running map[string]string) []kanbanLine {
+func (v *kanbanView) lines(g plantspec.Kanban, running map[string]string) []kanbanLine {
 	out := make([]kanbanLine, 0, len(g.Levels))
 	for _, lv := range g.Levels {
 		n := 0
@@ -153,13 +153,13 @@ func (v *kanbanView) lines(g plantspec.MaintainedGroup, running map[string]strin
 	return out
 }
 
-func (v *kanbanView) groupNamed(name string) (plantspec.MaintainedGroup, bool) {
-	for _, g := range v.plant.MaintainedGroups {
+func (v *kanbanView) groupNamed(name string) (plantspec.Kanban, bool) {
+	for _, g := range v.plant.Kanbans {
 		if g.Group == name {
 			return g, true
 		}
 	}
-	return plantspec.MaintainedGroup{}, false
+	return plantspec.Kanban{}, false
 }
 
 // clockLine is how long one kanban's running type lasts with its returns stopped.
@@ -177,7 +177,7 @@ type clockLine struct {
 func (v *kanbanView) clock(rate map[string]float64) []clockLine {
 	active := v.activeStyles()
 	var out []clockLine
-	for _, g := range v.plant.MaintainedGroups {
+	for _, g := range v.plant.Kanbans {
 		for _, lv := range g.Levels {
 			spend := 0.0
 			for _, proc := range g.Supports {
@@ -226,7 +226,7 @@ type roomLine struct {
 // level: a store there is refused by nothing but its slots, so they are room for
 // carts no level wants. An overflow with a level is not counted: it refuses at
 // that level (TestOverflow_AFullOverflowDoesNotChain), and one hop ends there.
-func (v *kanbanView) plainOverflow(g plantspec.MaintainedGroup, floor string) (zones []string, slots int) {
+func (v *kanbanView) plainOverflow(g plantspec.Kanban, floor string) (zones []string, slots int) {
 	for _, lv := range g.Levels {
 		if v.floorOf[lv.BinType] != floor {
 			continue
@@ -246,7 +246,7 @@ func (v *kanbanView) plainOverflow(g plantspec.MaintainedGroup, floor string) (z
 
 // changeoverRoom walks every style of a kanban's supported processes. A style
 // whose parts have no carrier is left out: it changes no want.
-func (v *kanbanView) changeoverRoom(g plantspec.MaintainedGroup) []roomLine {
+func (v *kanbanView) changeoverRoom(g plantspec.Kanban) []roomLine {
 	var out []roomLine
 	active := v.activeStyles()
 
@@ -323,7 +323,7 @@ func (v *kanbanView) changeoverRoom(g plantspec.MaintainedGroup) []roomLine {
 // changeover, an event of a run rather than its steady state, so it reports and
 // does not fail the command.
 func reportKanbans(plant *plantspec.Plant, plan carrierPlan, rate map[string]float64, runMins float64) bool {
-	if len(plant.MaintainedGroups) == 0 {
+	if len(plant.Kanbans) == 0 {
 		return true
 	}
 	ok := true
@@ -333,7 +333,7 @@ func reportKanbans(plant *plantspec.Plant, plan carrierPlan, rate map[string]flo
 	fmt.Printf("\nKANBANS (want = level + cover × supported processes running the type)\n")
 	fmt.Printf("  %-18s %-12s %-6s %-6s %-8s %-6s %-7s %s\n", "KANBAN", "TYPE", "LEVEL", "COVER", "RUNNING", "WANT", "SEEDED", "VERDICT")
 	fmt.Println(strings.Repeat("─", 84))
-	for _, g := range plant.MaintainedGroups {
+	for _, g := range plant.Kanbans {
 		for _, l := range v.lines(g, active) {
 			verdict := "ok"
 			if l.seeded < l.want {
@@ -367,7 +367,7 @@ func reportKanbans(plant *plantspec.Plant, plan carrierPlan, rate map[string]flo
 	}
 
 	printed := false
-	for _, g := range plant.MaintainedGroups {
+	for _, g := range plant.Kanbans {
 		if len(g.Supports) == 0 {
 			continue
 		}

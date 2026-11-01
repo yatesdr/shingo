@@ -53,10 +53,10 @@ func TestCensus_BinTypeStatements(t *testing.T) {
 	sites := []site{
 		// KNOWN — the site holds the answer and says it.
 		{"dispatch/lifecycle_service.go", "resolveSyntheticDestination", "known",
-			"binTypeAtIntake: the maintained episode, the order's own bin, or the source node holding exactly one carrier. THE SITE THAT PLACED A KNOCKDOWN IN A TOTE-ONLY POSITION before it had this"},
+			"binTypeAtIntake: the kanban episode, the order's own bin, or the source node holding exactly one carrier. THE SITE THAT PLACED A KNOCKDOWN IN A TOTE-ONLY POSITION before it had this"},
 		{"dispatch/lifecycle_service.go", "tryOverflow", "known",
 			"the same placement one group over, so it gets the same answer rather than a second weaker one"},
-		{"engine/maintainer.go", "createAsks", "known",
+		{"engine/kanban_keeper.go", "createAsks", "known",
 			"the level IS a bin type; the one door that always named it, and the only caller that exercised the fence for years"},
 		{"engine/cancel_return.go", "storeInto", "known",
 			"the bin is on the deck and its own bin type is in hand; the store into the source's group is asked with it"},
@@ -104,7 +104,7 @@ func TestCensus_BinTypeStatements(t *testing.T) {
 
 	// AND THE DIRECTION THAT CATCHES A NEW WAY IN: no file may call ResolveStore
 	// or Resolve(...ResolveModeStore...) without being named above. This is the
-	// arm that would have caught engine/maintainer.go, which calls ResolveStore
+	// arm that would have caught engine/kanban_keeper.go, which calls ResolveStore
 	// DIRECTLY rather than through Resolve and was missed by a hand census of
 	// `.Resolve(` while this change was being written.
 	named := map[string]bool{}

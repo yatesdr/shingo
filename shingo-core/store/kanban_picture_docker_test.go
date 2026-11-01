@@ -42,12 +42,12 @@ func newPictureRig(t *testing.T, cover int) *pictureRig {
 		testutil.MustNoErr(t, db.CreateNode(n), "supported position")
 		supports = append(supports, n.ID)
 	}
-	testutil.MustNoErr(t, db.SetMaintainSupports(*k, supports), "supports")
+	testutil.MustNoErr(t, db.SetKanbanSupports(*k, supports), "supports")
 	for _, code := range []string{"PIC-SMALL", "PIC-BIG", "PIC-TOTES"} {
 		var id int64
 		testutil.MustNoErr(t, db.QueryRow(`INSERT INTO bin_types (code) VALUES ($1) RETURNING id`, code).Scan(&id), "type")
 		r.types[code] = id
-		testutil.MustNoErr(t, db.SetMaintainLevel(store.MaintainLevel{GroupNodeID: *k, BinTypeID: id, Want: 1}), "level")
+		testutil.MustNoErr(t, db.SetKanbanLevel(store.KanbanLevel{GroupNodeID: *k, BinTypeID: id, Want: 1}), "level")
 	}
 	return r
 }
@@ -286,7 +286,7 @@ func TestKanbanPicture_TheRow(t *testing.T) {
 	noLevel := testdb.MarkedGroup(t, db, "PIC-ROW-NO-LEVEL")
 	testdb.KanbanStrict(t, db, *noLevel, true)
 	strict, station := true, "edge.1"
-	wants := []store.MaintainLayerWant{{Layers: 0, Want: 2}, {Layers: 3, Want: 1}}
+	wants := []store.KanbanLayerWant{{Layers: 0, Want: 2}, {Layers: 3, Want: 1}}
 	testutil.MustNoErr(t, db.SaveKanban(store.KanbanChange{NodeID: r.k, EnsureRow: true, Strict: &strict, Station: &station,
 		Overflow: z45,
 		Levels: []store.KanbanLevelChange{

@@ -11,10 +11,10 @@ import (
 	"shingocore/store/internal/helpers"
 )
 
-// Maintained-group config: the level a node group holds in EMPTY CARRIERS, and
+// Kanban-group config: the level a node group holds in EMPTY CARRIERS, and
 // which process nodes that level exists to serve.
 //
-// A maintained group is an NGRP near the equipment it feeds — presses, most of
+// A kanban is an NGRP near the equipment it feeds — presses, most of
 // the time — that Core keeps stocked with unclaimed empties of declared types:
 // "four 45x58x32 and two 45x48x24, at all times". The level is Core's to hold;
 // the group's own retrieve/store algorithms decide nothing about it.
@@ -29,7 +29,7 @@ import (
 // keyed on it. Production writes all of it through store.SaveKanban, which
 // appends one audit row per changed field or list entry.
 //
-// READ BY THE LEVEL KEEPER (engine/maintainer.go), which tops each group up to
+// READ BY THE LEVEL KEEPER (engine/kanban_keeper.go), which tops each group up to
 // its levels, and by the resolver and the capacity plan, which hold a push to
 // them. The layer wants (kanban_layer_levels, v161): a height of 1 or more says
 // which heights a group wants, read by an unloader's group line, and nothing caps
@@ -45,17 +45,17 @@ const (
 	PropOverflowDestination = "overflow_destination"
 )
 
-// MaintainLevel is one line of a kanban's declared level (kanban.TypeLevel).
-type MaintainLevel = kanban.TypeLevel
+// KanbanLevel is one line of a kanban's declared level (kanban.TypeLevel).
+type KanbanLevel = kanban.TypeLevel
 
-// MaintainSupport is one process node a maintained group serves.
+// KanbanSupport is one process node a kanban serves.
 //
 // NODES, not claims or processes, and the editor's vocabulary is the only place
 // "process" survives. Claims are Edge-local and structurally unreachable from
 // Core, so a rule that had to resolve one at read time could not be evaluated on
 // this side at all; the resolved node set is the thing Core can actually check a
 // need against.
-type MaintainSupport struct {
+type KanbanSupport struct {
 	GroupNodeID     int64  `json:"group_node_id"`
 	ProcessNodeID   int64  `json:"process_node_id"`
 	ProcessNodeName string `json:"process_node_name"`
@@ -78,7 +78,7 @@ func EnsureKanban(x Execer, nodeID int64) error {
 
 // UpsertLevel declares (or re-declares) how many empties of one type a kanban
 // holds; the row's own overflow is left as it stands. The kanban's row exists.
-func UpsertLevel(x Execer, l MaintainLevel) error {
+func UpsertLevel(x Execer, l KanbanLevel) error {
 	_, err := x.Exec(`
 		INSERT INTO kanban_levels (kanban_node_id, bin_type_id, want)
 		VALUES ($1,$2,$3)
@@ -86,14 +86,14 @@ func UpsertLevel(x Execer, l MaintainLevel) error {
 		DO UPDATE SET want=EXCLUDED.want, updated_at=NOW()`,
 		l.GroupNodeID, l.BinTypeID, l.Want)
 	if err != nil {
-		return fmt.Errorf("set maintain level group=%d/bin_type=%d: %w", l.GroupNodeID, l.BinTypeID, err)
+		return fmt.Errorf("set kanban level group=%d/bin_type=%d: %w", l.GroupNodeID, l.BinTypeID, err)
 	}
 	return nil
 }
 
 // ReplaceLayerWants replaces one level type's layer wants with the given set; an
 // empty set clears them. Only Layers and Want of each row are read.
-func ReplaceLayerWants(x Execer, kanbanNodeID, binTypeID int64, wants []MaintainLayerWant) error {
+func ReplaceLayerWants(x Execer, kanbanNodeID, binTypeID int64, wants []KanbanLayerWant) error {
 	if _, err := x.Exec(`DELETE FROM kanban_layer_levels WHERE kanban_node_id=$1 AND bin_type_id=$2`,
 		kanbanNodeID, binTypeID); err != nil {
 		return fmt.Errorf("clear layer wants group=%d/bin_type=%d: %w", kanbanNodeID, binTypeID, err)
@@ -121,7 +121,7 @@ func DeleteLevel(x Execer, kanbanNodeID, binTypeID int64) error {
 	}
 	if _, err := x.Exec(`DELETE FROM kanban_levels WHERE kanban_node_id=$1 AND bin_type_id=$2`,
 		kanbanNodeID, binTypeID); err != nil {
-		return fmt.Errorf("remove maintain level group=%d/bin_type=%d: %w", kanbanNodeID, binTypeID, err)
+		return fmt.Errorf("remove kanban level group=%d/bin_type=%d: %w", kanbanNodeID, binTypeID, err)
 	}
 	return nil
 }
@@ -129,13 +129,13 @@ func DeleteLevel(x Execer, kanbanNodeID, binTypeID int64) error {
 // ReplaceSupports replaces the whole supported-process-node set of a kanban.
 func ReplaceSupports(x Execer, kanbanNodeID int64, processNodeIDs []int64) error {
 	if _, err := x.Exec(`DELETE FROM kanban_supports WHERE kanban_node_id=$1`, kanbanNodeID); err != nil {
-		return fmt.Errorf("clear maintain supports group=%d: %w", kanbanNodeID, err)
+		return fmt.Errorf("clear kanban supports group=%d: %w", kanbanNodeID, err)
 	}
 	for _, pnID := range processNodeIDs {
 		if _, err := x.Exec(`
 			INSERT INTO kanban_supports (kanban_node_id, process_node_id)
 			VALUES ($1,$2) ON CONFLICT DO NOTHING`, kanbanNodeID, pnID); err != nil {
-			return fmt.Errorf("add maintain support group=%d/node=%d: %w", kanbanNodeID, pnID, err)
+			return fmt.Errorf("add kanban support group=%d/node=%d: %w", kanbanNodeID, pnID, err)
 		}
 	}
 	return nil
@@ -231,10 +231,10 @@ func ListKanbans(q helpers.RowsQuerier) ([]Kanban, error) {
 	return out, rows.Err()
 }
 
-// MaintainedEpisode is what an open maintain episode tells the finder: the group it
+// KanbanEpisode is what an open kanban episode tells the finder: the group it
 // fills, the carrier type it is short of, and the groups it may pull from in rank
 // order (none: the plant). The zero value is no such episode.
-type MaintainedEpisode struct {
+type KanbanEpisode struct {
 	Group   string
 	BinType string
 	Sources []int64
@@ -392,9 +392,9 @@ func ResolveDotNameID(q helpers.QueryRower, name string) (int64, bool, error) {
 	return id, true, nil
 }
 
-// SetMaintainLevel seeds one level, its row made if absent, with no audit: a
+// SetKanbanLevel seeds one level, its row made if absent, with no audit: a
 // fixture's write. Production saves go through store.SaveKanban.
-func SetMaintainLevel(db *sql.DB, l MaintainLevel) error {
+func SetKanbanLevel(db *sql.DB, l KanbanLevel) error {
 	return inTx(db, func(tx *sql.Tx) error {
 		if err := EnsureKanban(tx, l.GroupNodeID); err != nil {
 			return err
@@ -416,28 +416,28 @@ func inTx(db *sql.DB, fn func(*sql.Tx) error) error {
 	return tx.Commit()
 }
 
-// MaintainLayerWant is how many carts of one level's type, standing a given
-// number of layers high, a maintained group wants: one row of
+// KanbanLayerWant is how many carts of one level's type, standing a given
+// number of layers high, a kanban wants: one row of
 // kanban_layer_levels.
 //
 // A HEIGHT OF 1 OR MORE IS THE STACK LEVEL SAID BY HEIGHT: the cap is the
-// type's MaintainLevel, those wants are not summed against it, and nothing
+// type's KanbanLevel, those wants are not summed against it, and nothing
 // refuses a push or mints an ask on them. They say which heights the group is
 // short of, so a person at an unloader can be told what to send a cart back as.
 //
 // THE ROW AT 0 LAYERS IS TOPS & BOTTOMS, AND IT IS A CAP (v164): its own line
 // beside the stack level. The store caps judge a cart at 0 against its want
-// (TopsAndBottomsWant, binresolver.AtDeclaredLevel), a group that keeps the
+// (TopsAndBottomsWant, kanban.AtLevel), a group that keeps the
 // type with no such row refuses one, and the save counts it against the
 // group's positions. The keeper never fetches tops & bottoms: it is made at
 // the unloader.
 //
 // A layer want belongs to its level: it is written with the level's save and
-// removed with the level (SetMaintainLevelAndLayerWants, RemoveMaintainLevel).
+// removed with the level (SetKanbanLevelAndLayerWants, RemoveKanbanLevel).
 // TotesPerLayer is the type's bin_types.totes_per_layer, joined on read; nil
 // when the type does not state one, and then no cart can be counted at a
 // height.
-type MaintainLayerWant struct {
+type KanbanLayerWant struct {
 	GroupNodeID   int64  `json:"group_node_id"`
 	BinTypeID     int64  `json:"bin_type_id"`
 	BinTypeCode   string `json:"bin_type_code"`
@@ -446,11 +446,11 @@ type MaintainLayerWant struct {
 	TotesPerLayer *int   `json:"totes_per_layer,omitempty"`
 }
 
-// SetMaintainLevelAndLayerWants seeds a level and that type's layer wants in one
+// SetKanbanLevelAndLayerWants seeds a level and that type's layer wants in one
 // transaction, its row made if absent, with no audit: a fixture's write.
 // Production saves go through store.SaveKanban. The rows' GroupNodeID and
 // BinTypeID are the level's; only Layers and Want are read.
-func SetMaintainLevelAndLayerWants(db *sql.DB, l MaintainLevel, wants []MaintainLayerWant) error {
+func SetKanbanLevelAndLayerWants(db *sql.DB, l KanbanLevel, wants []KanbanLayerWant) error {
 	return inTx(db, func(tx *sql.Tx) error {
 		if err := EnsureKanban(tx, l.GroupNodeID); err != nil {
 			return err
@@ -462,16 +462,16 @@ func SetMaintainLevelAndLayerWants(db *sql.DB, l MaintainLevel, wants []Maintain
 	})
 }
 
-// RemoveMaintainLevel removes a seeded level and its layer wants with no audit:
+// RemoveKanbanLevel removes a seeded level and its layer wants with no audit:
 // a fixture's write (DeleteLevel). Production saves go through store.SaveKanban.
-func RemoveMaintainLevel(db *sql.DB, groupNodeID, binTypeID int64) error {
+func RemoveKanbanLevel(db *sql.DB, groupNodeID, binTypeID int64) error {
 	return inTx(db, func(tx *sql.Tx) error { return DeleteLevel(tx, groupNodeID, binTypeID) })
 }
 
-// ListMaintainLayerWants returns a group's layer wants, every type's, in the
-// levels' order (by code, as ListMaintainLevels) and then by height, with the
+// ListKanbanLayerWants returns a group's layer wants, every type's, in the
+// levels' order (by code, as ListKanbanLevels) and then by height, with the
 // code and the type's totes per layer joined on.
-func ListMaintainLayerWants(db helpers.RowsQuerier, groupNodeID int64) ([]MaintainLayerWant, error) {
+func ListKanbanLayerWants(db helpers.RowsQuerier, groupNodeID int64) ([]KanbanLayerWant, error) {
 	rows, err := db.Query(`
 		SELECT w.kanban_node_id, w.bin_type_id, bt.code, w.layers, w.want, bt.totes_per_layer
 		FROM kanban_layer_levels w
@@ -482,9 +482,9 @@ func ListMaintainLayerWants(db helpers.RowsQuerier, groupNodeID int64) ([]Mainta
 		return nil, fmt.Errorf("list layer wants group=%d: %w", groupNodeID, err)
 	}
 	defer rows.Close()
-	var out []MaintainLayerWant
+	var out []KanbanLayerWant
 	for rows.Next() {
-		var w MaintainLayerWant
+		var w KanbanLayerWant
 		if err := rows.Scan(&w.GroupNodeID, &w.BinTypeID, &w.BinTypeCode, &w.Layers, &w.Want, &w.TotesPerLayer); err != nil {
 			return nil, fmt.Errorf("scan layer want: %w", err)
 		}
@@ -495,7 +495,7 @@ func ListMaintainLayerWants(db helpers.RowsQuerier, groupNodeID int64) ([]Mainta
 
 // TopsAndBottomsWant is the want of the tops & bottoms row (layers 0) of one
 // level's type in a group, and false when the group has no such row: the cap
-// the tops & bottoms line is judged against (binresolver.AtDeclaredLevel). One
+// the tops & bottoms line is judged against (kanban.AtLevel). One
 // statement, asked only for a cart at 0.
 func TopsAndBottomsWant(db *sql.DB, groupNodeID, binTypeID int64) (int, bool, error) {
 	var want int
@@ -515,14 +515,14 @@ func TopsAndBottomsWant(db *sql.DB, groupNodeID, binTypeID int64) (int, bool, er
 // (by group and height, none when they want none).
 type TypeInPlay struct {
 	Type       domain.BinType
-	LayerWants []MaintainLayerWant
+	LayerWants []KanbanLayerWant
 }
 
 // ListTypesInPlay reads, in one statement, the bin types named by codes (the
 // groups' level types and the types of the carts at their unloaders' windows)
 // with their width, length and totes per layer, and the named groups' layer
 // wants of each, by code, then group, then height. It is a snapshot build's one
-// types read, in place of ListMaintainLayerWants there: the floor sizes ride
+// types read, in place of ListKanbanLayerWants there: the floor sizes ride
 // the read the heights already made.
 func ListTypesInPlay(db *sql.DB, groupNodeIDs []int64, codes []string) ([]TypeInPlay, error) {
 	if len(codes) == 0 {
@@ -552,20 +552,20 @@ func ListTypesInPlay(db *sql.DB, groupNodeIDs []int64, codes []string) ([]TypeIn
 		}
 		if layers.Valid {
 			t := &out[len(out)-1]
-			t.LayerWants = append(t.LayerWants, MaintainLayerWant{GroupNodeID: group.Int64, BinTypeID: bt.ID,
+			t.LayerWants = append(t.LayerWants, KanbanLayerWant{GroupNodeID: group.Int64, BinTypeID: bt.ID,
 				BinTypeCode: bt.Code, Layers: int(layers.Int64), Want: int(want.Int64), TotesPerLayer: bt.TotesPerLayer})
 		}
 	}
 	return out, rows.Err()
 }
 
-// ListMaintainLevels returns a group's DECLARED level with the bin-type CODES
+// ListKanbanLevels returns a group's DECLARED level with the bin-type CODES
 // joined on, because the code is what a person reads and what every other
 // carrier-typed surface in the system prints — the id is a local key. Same
 // reason loaders.ListQuotas carries one. A reader holding the plant to a level
-// asks store.DB.ListMaintainLevels, which answers the effective want; this one
+// asks store.DB.ListKanbanLevels, which answers the effective want; this one
 // is the configuration's.
-func ListMaintainLevels(db helpers.RowsQuerier, groupNodeID int64) ([]MaintainLevel, error) {
+func ListKanbanLevels(db helpers.RowsQuerier, groupNodeID int64) ([]KanbanLevel, error) {
 	rows, err := db.Query(`
 		SELECT l.kanban_node_id, l.bin_type_id, bt.code, l.want, l.overflow_node_id, COALESCE(o.name, '')
 		FROM kanban_levels l
@@ -574,14 +574,14 @@ func ListMaintainLevels(db helpers.RowsQuerier, groupNodeID int64) ([]MaintainLe
 		WHERE l.kanban_node_id=$1
 		ORDER BY bt.code`, groupNodeID)
 	if err != nil {
-		return nil, fmt.Errorf("list maintain levels group=%d: %w", groupNodeID, err)
+		return nil, fmt.Errorf("list kanban levels group=%d: %w", groupNodeID, err)
 	}
 	defer rows.Close()
-	var out []MaintainLevel
+	var out []KanbanLevel
 	for rows.Next() {
-		var l MaintainLevel
+		var l KanbanLevel
 		if err := rows.Scan(&l.GroupNodeID, &l.BinTypeID, &l.BinTypeCode, &l.Want, &l.OverflowNodeID, &l.OverflowNode); err != nil {
-			return nil, fmt.Errorf("scan maintain level: %w", err)
+			return nil, fmt.Errorf("scan kanban level: %w", err)
 		}
 		l.Base = l.Want
 		out = append(out, l)
@@ -590,9 +590,9 @@ func ListMaintainLevels(db helpers.RowsQuerier, groupNodeID int64) ([]MaintainLe
 }
 
 // DeclaresLevel reports whether a group declares a level, in one statement
-// (helpers.DeclaresLevelSQL): whether ListMaintainLevels would answer non-empty.
-// It is the one test of a maintained inbound source: the loader save refuses
-// an unloader whose source is one (service ErrFullsFromAnEmptiesBank).
+// (helpers.DeclaresLevelSQL): whether ListKanbanLevels would answer non-empty.
+// It is the one test of a kanban inbound source: the loader save refuses
+// an unloader whose source is one (service ErrFullsFromAKanban).
 func DeclaresLevel(db *sql.DB, groupNodeID int64) (bool, error) {
 	var declares bool
 	if err := db.QueryRow(`SELECT `+helpers.DeclaresLevelSQL("$1"), groupNodeID).Scan(&declares); err != nil {
@@ -601,32 +601,32 @@ func DeclaresLevel(db *sql.DB, groupNodeID int64) (bool, error) {
 	return declares, nil
 }
 
-// MaintainedGroupIDs is the set of groups that declare a level — the groups
-// for which ListMaintainLevels answers non-empty, read for every group in one
+// KanbanIDs is the set of groups that declare a level — the groups
+// for which ListKanbanLevels answers non-empty, read for every group in one
 // statement. The node list marks them for the Edge (protocol.NodeInfo's
-// Maintained), which is why this is one read per list and not one per node.
-// The join is ListMaintainLevels' own, so the two cannot disagree about a row.
-func MaintainedGroupIDs(db *sql.DB) (map[int64]bool, error) {
+// Kanban), which is why this is one read per list and not one per node.
+// The join is ListKanbanLevels' own, so the two cannot disagree about a row.
+func KanbanIDs(db *sql.DB) (map[int64]bool, error) {
 	rows, err := db.Query(`
 		SELECT DISTINCT l.kanban_node_id
 		FROM kanban_levels l
 		JOIN bin_types bt ON bt.id = l.bin_type_id`)
 	if err != nil {
-		return nil, fmt.Errorf("list maintained groups: %w", err)
+		return nil, fmt.Errorf("list kanbans: %w", err)
 	}
 	defer rows.Close()
 	out := map[int64]bool{}
 	for rows.Next() {
 		var id int64
 		if err := rows.Scan(&id); err != nil {
-			return nil, fmt.Errorf("scan maintained group: %w", err)
+			return nil, fmt.Errorf("scan kanban: %w", err)
 		}
 		out[id] = true
 	}
 	return out, rows.Err()
 }
 
-// SetMaintainSupports seeds the whole supported-process-node set in one
+// SetKanbanSupports seeds the whole supported-process-node set in one
 // transaction, the row made if absent, with no audit: a fixture's write.
 // Production saves go through store.SaveKanban.
 //
@@ -635,7 +635,7 @@ func MaintainedGroupIDs(db *sql.DB) (map[int64]bool, error) {
 // only invent a way for the screen and the table to disagree. An empty set is
 // legal and means the group supports nobody, which is what a group in the middle
 // of being configured looks like.
-func SetMaintainSupports(db *sql.DB, groupNodeID int64, processNodeIDs []int64) error {
+func SetKanbanSupports(db *sql.DB, groupNodeID int64, processNodeIDs []int64) error {
 	return inTx(db, func(tx *sql.Tx) error {
 		if err := EnsureKanban(tx, groupNodeID); err != nil {
 			return err
@@ -644,9 +644,9 @@ func SetMaintainSupports(db *sql.DB, groupNodeID int64, processNodeIDs []int64) 
 	})
 }
 
-// ListMaintainSupports returns the process nodes a group serves, names joined
+// ListKanbanSupports returns the process nodes a group serves, names joined
 // on for the same reason the levels carry codes.
-func ListMaintainSupports(db helpers.RowsQuerier, groupNodeID int64) ([]MaintainSupport, error) {
+func ListKanbanSupports(db helpers.RowsQuerier, groupNodeID int64) ([]KanbanSupport, error) {
 	rows, err := db.Query(`
 		SELECT s.kanban_node_id, s.process_node_id, n.name
 		FROM kanban_supports s
@@ -654,21 +654,21 @@ func ListMaintainSupports(db helpers.RowsQuerier, groupNodeID int64) ([]Maintain
 		WHERE s.kanban_node_id=$1
 		ORDER BY n.name`, groupNodeID)
 	if err != nil {
-		return nil, fmt.Errorf("list maintain supports group=%d: %w", groupNodeID, err)
+		return nil, fmt.Errorf("list kanban supports group=%d: %w", groupNodeID, err)
 	}
 	defer rows.Close()
-	var out []MaintainSupport
+	var out []KanbanSupport
 	for rows.Next() {
-		var s MaintainSupport
+		var s KanbanSupport
 		if err := rows.Scan(&s.GroupNodeID, &s.ProcessNodeID, &s.ProcessNodeName); err != nil {
-			return nil, fmt.Errorf("scan maintain support: %w", err)
+			return nil, fmt.Errorf("scan kanban support: %w", err)
 		}
 		out = append(out, s)
 	}
 	return out, rows.Err()
 }
 
-// GroupFencesAsker reports whether a STRICT maintained group excludes an asker
+// GroupFencesAsker reports whether a STRICT kanban excludes an asker
 // that has named it explicitly.
 //
 // bins.FencedNodesCTE's FIRST RULE as an answer, and it exists because the two
@@ -694,9 +694,9 @@ func GroupFencesAsker(db *sql.DB, groupNodeID int64, processNode string) (bool, 
 	return fenced, nil
 }
 
-// MaintainedGroupsSupporting returns the maintained groups that serve a process
+// KanbansSupporting returns the kanbans that serve a process
 // node, whether or not they are strict.
-func MaintainedGroupsSupporting(db *sql.DB, processNode string) ([]int64, error) {
+func KanbansSupporting(db *sql.DB, processNode string) ([]int64, error) {
 	if processNode == "" {
 		return nil, nil
 	}
@@ -706,14 +706,14 @@ func MaintainedGroupsSupporting(db *sql.DB, processNode string) ([]int64, error)
 		  JOIN nodes pn ON pn.id = s.process_node_id
 		 WHERE pn.name = $1`, processNode)
 	if err != nil {
-		return nil, fmt.Errorf("maintained groups supporting %q: %w", processNode, err)
+		return nil, fmt.Errorf("kanbans supporting %q: %w", processNode, err)
 	}
 	defer rows.Close()
 	var out []int64
 	for rows.Next() {
 		var id int64
 		if err := rows.Scan(&id); err != nil {
-			return nil, fmt.Errorf("scan maintained group: %w", err)
+			return nil, fmt.Errorf("scan kanban: %w", err)
 		}
 		out = append(out, id)
 	}

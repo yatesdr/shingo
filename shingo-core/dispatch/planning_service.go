@@ -518,7 +518,7 @@ func (s *PlanningService) decideTransport(order *orders.Order, payloadCode strin
 	// free capacity passes CheckDropoffCapacity on the first pass and reaches
 	// here with the group name still on it.
 	//
-	// MAINTAINED-GROUP ASKS DO NOT DEPEND ON THIS. The keeper pre-resolves each
+	// KANBAN ASKS DO NOT DEPEND ON THIS. The keeper pre-resolves each
 	// ask to a concrete position before admitting it, so this branch is a no-op
 	// for them by construction — which is the point of pre-resolving. This fixes
 	// the OTHER empties: the ones that arrive from a station naming a group.

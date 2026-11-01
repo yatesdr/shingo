@@ -96,7 +96,7 @@ func (b *binsFeed) setGroups(station, digest string, windows []store.ConsumeWind
 	var groups []watchGroup
 	for _, win := range windows {
 		if n := len(groups); n == 0 || groups[n-1].name != win.Group {
-			groups = append(groups, watchGroup{name: win.Group, id: win.GroupID, levelled: win.Maintained})
+			groups = append(groups, watchGroup{name: win.Group, id: win.GroupID, levelled: win.Kanban})
 		}
 		g := &groups[len(groups)-1]
 		g.windows = append(g.windows, win)
@@ -262,10 +262,10 @@ func (s *CoreDataService) groupLines(station, digest string, groups []watchGroup
 	if err != nil {
 		return nil, fmt.Errorf("bins: levels of %v: %w", groupNames(groups), err)
 	}
-	levels := map[int64][]store.MaintainLevel{}
+	levels := map[int64][]store.KanbanLevel{}
 	sources := map[int64][]store.KanbanRef{}
 	for _, r := range picture {
-		levels[r.KanbanNodeID] = append(levels[r.KanbanNodeID], r.MaintainLevel())
+		levels[r.KanbanNodeID] = append(levels[r.KanbanNodeID], r.KanbanLevel())
 		sources[r.KanbanNodeID] = r.Sources
 	}
 	var asks []store.GroupLineAsk

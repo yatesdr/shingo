@@ -6,7 +6,7 @@ import (
 	"shingocore/store/nodes"
 )
 
-// finder_want.go — which carrier TYPE an empty should be: the maintained-group
+// finder_want.go — which carrier TYPE an empty should be: the kanban
 // episode's type, else the loader window's derivation, else what fits where the
 // carrier is set down. Its sibling requiresFullCarrier (finder.go) answers
 // full-vs-partial, not which type.
@@ -82,7 +82,7 @@ func (f *Finder) wantedEmpty(need Need) (types []string, height domain.Height) {
 }
 
 // derivedEmpty is wantedEmpty's answer for a need that states no want: the
-// maintained-group episode's type, else the loader window's derivation, else
+// kanban episode's type, else the loader window's derivation, else
 // what fits where the carrier is set down, and the height wanted there.
 func (f *Finder) derivedEmpty(need Need) (types []string, height domain.Height) {
 	if need.Intent != IntentEmpty {
@@ -91,7 +91,7 @@ func (f *Finder) derivedEmpty(need Need) (types []string, height domain.Height) 
 
 	// ── FIRST ARM: THE TYPE IS PINNED, NOT DERIVED ──────────────────────────
 	//
-	// An ask carrying an origin that names an OPEN maintained-group episode
+	// An ask carrying an origin that names an OPEN kanban episode
 	// sources the type that episode is short of, full stop. It does not fall
 	// through to the loader derivation below and it never re-derives.
 	//
@@ -263,7 +263,7 @@ func (f *Finder) NoToteCarrier(need Need, p Plan) Plan {
 	return p
 }
 
-// emptyFenceFor builds the maintained-group fence for one need.
+// emptyFenceFor builds the kanban fence for one need.
 //
 // TWO INPUTS, TWO RULES. ProcessNode decides rule (i) — whether this asker is
 // supported at a strict group — and OriginGroup decides rule (ii), whether the
@@ -272,7 +272,7 @@ func (f *Finder) NoToteCarrier(need Need, p Plan) Plan {
 //
 // SHARING IS THE DEFAULT, so a need with neither returns the zero fence and the
 // query renders without a CTE or an arm — byte-for-byte what it was before
-// MG3-1. Only an ask that names a process or carries a maintain origin can be
+// MG3-1. Only an ask that names a process or carries a kanban origin can be
 // fenced at all.
 //
 // A READ FAILURE RETURNS THE ZERO FENCE rather than refusing to source, and the
@@ -290,21 +290,21 @@ func (f *Finder) emptyFenceFor(need Need) bins.EmptyFence {
 	return bins.EmptyFence{ProcessNode: need.ProcessNode, OriginGroup: ep.Group, Sources: ep.Sources}
 }
 
-// keeperAsk is the need's open maintain episode: the read Pick has already made
+// keeperAsk is the need's open kanban episode: the read Pick has already made
 // (Need.episode) or the one read of it now. The zero value for a need with no such
 // origin, and for a read that failed: see derivedEmpty and emptyFenceFor for why
 // each of its readers takes that direction.
-func (f *Finder) keeperAsk(need Need) nodes.MaintainedEpisode {
+func (f *Finder) keeperAsk(need Need) nodes.KanbanEpisode {
 	if need.episode != nil {
 		return *need.episode
 	}
 	if need.OriginID == "" || need.Intent != IntentEmpty {
-		return nodes.MaintainedEpisode{}
+		return nodes.KanbanEpisode{}
 	}
-	ep, err := f.db.MaintainedEpisodeOf(need.OriginID)
+	ep, err := f.db.KanbanEpisodeOf(need.OriginID)
 	if err != nil {
-		f.debug("finder: maintained episode for origin %s: %v", need.OriginID, err)
-		return nodes.MaintainedEpisode{}
+		f.debug("finder: kanban episode for origin %s: %v", need.OriginID, err)
+		return nodes.KanbanEpisode{}
 	}
 	return ep
 }

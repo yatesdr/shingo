@@ -16,12 +16,12 @@ import (
 	"shingocore/store/orders"
 )
 
-// maintainer_campaign_docker_test.go — the MG2 sim campaign, as scripted runs.
+// kanban_keeper_campaign_docker_test.go — the MG2 sim campaign, as scripted runs.
 //
 // ── WHAT THESE PROVE, AND WHAT THEY DO NOT ────────────────────────────────
 //
 // PROVE: the level keeper's arithmetic and its two edges, against a REAL
-// Postgres, through the real store queries, driven by the real Maintainer over
+// Postgres, through the real store queries, driven by the real KanbanKeeper over
 // a real Engine. Every count the subtraction depends on is computed by the same
 // SQL production runs. Where a scenario is about the keeper deciding something,
 // that decision is the real one.
@@ -43,7 +43,7 @@ import (
 
 // ── the rig ─────────────────────────────────────────────────────────────────
 
-// campaignGroup builds a maintained group: `slots` free positions, one declared
+// campaignGroup builds a kanban: `slots` free positions, one declared
 // level per (type, want) pair given. Returns the group id and the type ids.
 func campaignGroup(t *testing.T, db *store.DB, group string, slots int, levels map[string]int) (int64, map[string]int64) {
 	t.Helper()
@@ -62,7 +62,7 @@ func campaignGroup(t *testing.T, db *store.DB, group string, slots int, levels m
 		testutil.MustNoErr(t, db.QueryRow(
 			`INSERT INTO bin_types (code) VALUES ($1) RETURNING id`, code).Scan(&btID), "bin type "+code)
 		ids[code] = btID
-		testutil.MustNoErr(t, db.SetMaintainLevel(store.MaintainLevel{
+		testutil.MustNoErr(t, db.SetKanbanLevel(store.KanbanLevel{
 			GroupNodeID: grpID, BinTypeID: btID, Want: want,
 		}), "declare level "+code)
 	}
@@ -96,7 +96,7 @@ func freePosition(t *testing.T, db *store.DB, grpID int64) int64 {
 }
 
 // evidence prints one line of the subtraction for a (group, type).
-func evidence(t *testing.T, m *Maintainer, step, group, typeCode string) MaintainerGroupState {
+func evidence(t *testing.T, m *KanbanKeeper, step, group, typeCode string) KanbanLineState {
 	t.Helper()
 	st := mntState(t, m, group, typeCode)
 	t.Logf("%-28s %s/%-10s want=%d resident=%d asked=%d coming=%d gap=%d created=%d origin=%s%s",
@@ -115,7 +115,7 @@ func shortOrigin(id string) string {
 	return id
 }
 
-func parkedNote(st MaintainerGroupState) string {
+func parkedNote(st KanbanLineState) string {
 	if st.OldestAskCause == "" {
 		return ""
 	}
@@ -150,7 +150,7 @@ func TestCampaign_S1_SteadyRefill(t *testing.T) {
 		landCarrier(t, db, bt, children[i].ID, fmt.Sprintf("S1-BIN-%d", i+1))
 	}
 
-	m := eng.Maintainer()
+	m := eng.KanbanKeeper()
 	m.Tick()
 	st := evidence(t, m, "settled at level", "CMP-S1", "S1-STD")
 	if st.OriginID != "" || st.Created != 0 {
@@ -201,7 +201,7 @@ func TestCampaign_S1_SteadyRefill(t *testing.T) {
 //
 // Nothing to source. The episode opens (the group is short and says so) and no
 // ask is made: an ask would hold a position for a carrier that does not exist
-// (TestMaintainer_MintsNoAskForATypeNothingOutsideCanSource). The property under
+// (TestKanbanKeeper_MintsNoAskForATypeNothingOutsideCanSource). The property under
 // test is that a dry episode does not accumulate asks while it waits, which is
 // the failure mode a level keeper invites, and that it asks once the market has
 // a carrier.
@@ -212,7 +212,7 @@ func TestCampaign_S2_DryMarketParksThenUnparks(t *testing.T) {
 	grpID, types := campaignGroup(t, db, "CMP-S2", 4, map[string]int{"S2-STD": 2})
 	bt := types["S2-STD"]
 
-	m := eng.Maintainer()
+	m := eng.KanbanKeeper()
 	m.Tick()
 	st := evidence(t, m, "dry, first tick", "CMP-S2", "S2-STD")
 	origin := st.OriginID
@@ -291,7 +291,7 @@ func TestCampaign_S3_LastSlotBoundsTheAskCount(t *testing.T) {
 		landCarrier(t, db, otherBT, children[i].ID, fmt.Sprintf("S3-OTHER-%d", i+1))
 	}
 
-	m := eng.Maintainer()
+	m := eng.KanbanKeeper()
 	m.Tick()
 	st := evidence(t, m, "gap 4, one slot free", "CMP-S3", "S3-STD")
 	if st.Gap != 4 {
@@ -316,7 +316,7 @@ func TestCampaign_S4_DigChildDoesNotInflateAsked(t *testing.T) {
 	_, types := campaignGroup(t, db, "CMP-S4", 4, map[string]int{"S4-STD": 2})
 	mntOutsideEmpty(t, db, types["S4-STD"], "CMP-S4-MARKET")
 
-	m := eng.Maintainer()
+	m := eng.KanbanKeeper()
 	m.Tick()
 	st := evidence(t, m, "two asks out", "CMP-S4", "S4-STD")
 	origin := st.OriginID
@@ -365,13 +365,13 @@ func TestCampaign_S5_RestartInBothWindows(t *testing.T) {
 	mntOutsideEmpty(t, db, types["S5-STD"], "CMP-S5-MARKET")
 
 	// ── Window A: mint + asks, then restart.
-	first := eng.Maintainer()
+	first := eng.KanbanKeeper()
 	first.Tick()
 	a := evidence(t, first, "window A: before restart", "CMP-S5", "S5-STD")
 	if a.Created == 0 {
 		t.Fatal("setup: no asks created")
 	}
-	restartedA := NewMaintainer(eng, func() time.Time { return time.Now().UTC() })
+	restartedA := NewKanbanKeeper(eng, func() time.Time { return time.Now().UTC() })
 	restartedA.Tick()
 	ar := evidence(t, restartedA, "window A: after restart", "CMP-S5", "S5-STD")
 	if ar.Created != 0 || ar.OriginID != a.OriginID || ar.Asked != a.Created {
@@ -401,7 +401,7 @@ func TestCampaign_S5_RestartInBothWindows(t *testing.T) {
 	_, err := db.Exec(`DELETE FROM orders WHERE origin_id = $1`, a.OriginID)
 	testutil.MustNoErr(t, err, "erase the asks, keep the episode")
 
-	restartedB := NewMaintainer(eng, func() time.Time { return time.Now().UTC() })
+	restartedB := NewKanbanKeeper(eng, func() time.Time { return time.Now().UTC() })
 	restartedB.Tick()
 	br := evidence(t, restartedB, "window B: after restart", "CMP-S5", "S5-STD")
 	if br.OriginID != a.OriginID {
@@ -413,10 +413,10 @@ func TestCampaign_S5_RestartInBothWindows(t *testing.T) {
 		t.Errorf("window B created nothing. An episode open with zero asks and a real gap is " +
 			"a job half done, and the tick that finds it is the one that has to finish it")
 	}
-	open, err := db.ListOpenEpisodesOfKind(protocol.EpisodeKindMaintain)
+	open, err := db.ListOpenEpisodesOfKind(protocol.EpisodeKindKanban)
 	testutil.MustNoErr(t, err, "list open")
 	if len(open) != 1 {
-		t.Errorf("open maintain episodes = %d, want exactly 1 across both restart windows", len(open))
+		t.Errorf("open kanban episodes = %d, want exactly 1 across both restart windows", len(open))
 	}
 }
 
@@ -432,7 +432,7 @@ func TestCampaign_S6_ChangeoverMovesTheDemandBetweenTypes(t *testing.T) {
 	eng := newTestEngine(t, db, simulator.New())
 	grpID, types := campaignGroup(t, db, "CMP-S6", 6, map[string]int{"S6-BIG": 2, "S6-SMALL": 2})
 
-	m := eng.Maintainer()
+	m := eng.KanbanKeeper()
 	m.Tick()
 	big := evidence(t, m, "pre-changeover BIG", "CMP-S6", "S6-BIG")
 	small := evidence(t, m, "pre-changeover SMALL", "CMP-S6", "S6-SMALL")
@@ -444,8 +444,8 @@ func TestCampaign_S6_ChangeoverMovesTheDemandBetweenTypes(t *testing.T) {
 	}
 
 	// The changeover: BIG is no longer wanted here, SMALL doubles.
-	testutil.MustNoErr(t, db.RemoveMaintainLevel(grpID, types["S6-BIG"]), "withdraw BIG")
-	testutil.MustNoErr(t, db.SetMaintainLevel(store.MaintainLevel{
+	testutil.MustNoErr(t, db.RemoveKanbanLevel(grpID, types["S6-BIG"]), "withdraw BIG")
+	testutil.MustNoErr(t, db.SetKanbanLevel(store.KanbanLevel{
 		GroupNodeID: grpID, BinTypeID: types["S6-SMALL"], Want: 4,
 	}), "raise SMALL")
 
@@ -496,7 +496,7 @@ func TestCampaign_S7_WrongTypePressureBaseline(t *testing.T) {
 		landCarrier(t, db, wrongBT, children[i].ID, fmt.Sprintf("S7-WRONG-%d", i+1))
 	}
 
-	m := eng.Maintainer()
+	m := eng.KanbanKeeper()
 	m.Tick()
 	st := evidence(t, m, "4 wrong-type resident", "CMP-S7", "S7-WANTED")
 
@@ -537,7 +537,7 @@ func TestCampaign_S8_MixChurnCost(t *testing.T) {
 		mntOutsideEmpty(t, db, types["S8-B"], fmt.Sprintf("CMP-S8-MARKET-B%d", i))
 	}
 
-	m := eng.Maintainer()
+	m := eng.KanbanKeeper()
 	asksByType := map[string]int{}
 	episodes := map[string]int{}
 	seen := map[string]bool{}
@@ -558,9 +558,9 @@ func TestCampaign_S8_MixChurnCost(t *testing.T) {
 
 	// The mix moves three times, the way a shift of changeovers moves it.
 	for i, mix := range []struct{ a, b int }{{5, 1}, {1, 5}, {3, 3}} {
-		testutil.MustNoErr(t, db.SetMaintainLevel(store.MaintainLevel{
+		testutil.MustNoErr(t, db.SetKanbanLevel(store.KanbanLevel{
 			GroupNodeID: grpID, BinTypeID: types["S8-A"], Want: mix.a}), "set A")
-		testutil.MustNoErr(t, db.SetMaintainLevel(store.MaintainLevel{
+		testutil.MustNoErr(t, db.SetKanbanLevel(store.KanbanLevel{
 			GroupNodeID: grpID, BinTypeID: types["S8-B"], Want: mix.b}), "set B")
 		m.Tick()
 		record(fmt.Sprintf("mix %d/%d (flip %d)", mix.a, mix.b, i+1))
@@ -577,10 +577,10 @@ func TestCampaign_S8_MixChurnCost(t *testing.T) {
 	// The one property this measurement rests on: the episode per (group, type)
 	// survives a mix change rather than churning, or the number above would be
 	// measuring re-minting rather than carrier demand.
-	open, err := db.ListOpenEpisodesOfKind(protocol.EpisodeKindMaintain)
+	open, err := db.ListOpenEpisodesOfKind(protocol.EpisodeKindKanban)
 	testutil.MustNoErr(t, err, "list open")
 	if len(open) > 2 {
-		t.Errorf("%d open maintain episodes for a two-type group — the grain is (group, type), "+
+		t.Errorf("%d open kanban episodes for a two-type group — the grain is (group, type), "+
 			"so a mix change must move a level, not mint a new episode", len(open))
 	}
 }

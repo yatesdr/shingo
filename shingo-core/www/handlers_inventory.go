@@ -398,10 +398,10 @@ func cell(col string, row int) string {
 	return fmt.Sprintf("%s%d", col, row)
 }
 
-// apiInventoryMaintainedGroups returns the keeper's last tick, one row per
+// apiKanbanLevels returns the keeper's last tick, one row per
 // (group, bin type): the effective want, its base and the process driving it, the
 // three populations it subtracted, and the kanban's want against its positions.
-// Read by the Nodes page's group modal (nodes-maintain.js renderKeeperLevels),
+// Read by the Nodes page's group modal (nodes-kanban.js renderKeeperLevels),
 // beside the level it keeps; the path keeps its /inventory prefix from when
 // the inventory page drew it.
 //
@@ -412,10 +412,10 @@ func cell(col string, row int) string {
 // separate question with a separate way of being wrong, so every term is a
 // column.
 //
-// EMPTY ON A PLANT WITH NO MAINTAINED GROUP, and empty before the first tick.
+// EMPTY ON A PLANT WITH NO KANBAN, and empty before the first tick.
 // Both render as the section not appearing, which is correct: there is nothing
 // to say, and a card reading "0 groups" is a card that has to be scrolled past
 // forever.
-func (h *Handlers) apiInventoryMaintainedGroups(w http.ResponseWriter, r *http.Request) {
-	h.jsonOK(w, h.engine.MaintainedGroupStates())
+func (h *Handlers) apiKanbanLevels(w http.ResponseWriter, r *http.Request) {
+	h.jsonOK(w, h.engine.KanbanLineStates())
 }

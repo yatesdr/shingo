@@ -211,7 +211,7 @@ func TestScoreTTE_RespectsSince(t *testing.T) {
 	}
 }
 
-// Kinds Core does not forecast — changeover, maintain — are not in the
+// Kinds Core does not forecast — changeover, kanban — are not in the
 // population at all. A changeover is not a line running dry.
 func TestScoreTTE_OnlyCellAndThresholdKinds(t *testing.T) {
 	db := testdb.Open(t)
@@ -219,14 +219,14 @@ func TestScoreTTE_OnlyCellAndThresholdKinds(t *testing.T) {
 	insertEpisode(t, db, "99999999-9999-9999-9999-999999999999",
 		"co|PLANT.LINE1|7", "changeover", "P", "", "", scoreBase.Add(-time.Hour), "operator")
 	insertEpisode(t, db, "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
-		"mnt|GROUP-1|BT-1", "maintain", "P", "GROUP-1", "", scoreBase.Add(-time.Hour), "autoreorder")
+		"mnt|GROUP-1|BT-1", "kanban", "P", "GROUP-1", "", scoreBase.Add(-time.Hour), "autoreorder")
 
 	scores, err := sourceability.ScoreTTE(db.DB, scoreBase.Add(-24*time.Hour))
 	if err != nil {
 		t.Fatalf("ScoreTTE: %v", err)
 	}
 	if len(scores) != 0 {
-		t.Errorf("scores = %+v, want none — changeover and maintain are not forecast kinds", scores)
+		t.Errorf("scores = %+v, want none — changeover and kanban are not forecast kinds", scores)
 	}
 }
 
