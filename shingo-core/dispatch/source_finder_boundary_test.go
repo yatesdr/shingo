@@ -2,16 +2,13 @@ package dispatch
 
 import (
 	"errors"
-	"strings"
 	"testing"
 
-	"shingo/protocol"
 	"shingocore/store/bins"
 )
 
-// source_finder_boundary_test.go — MG3-2 and MG3-5. What happens when a need
-// meets a fence it NAMED, and what gets said when the fence was not the
-// problem.
+// source_finder_boundary_test.go — MG3-2. What happens when a need meets a fence
+// it NAMED.
 
 // ── MG3-2: the explicit-group boundary ──────────────────────────────────────
 
@@ -109,122 +106,5 @@ func TestGroupBoundary_UnreadableFenceParks(t *testing.T) {
 	if db.groupEmptyCalls != 0 {
 		t.Error("the group was searched after the fence read failed — a database blip must " +
 			"not be the way past a fence")
-	}
-}
-
-// ── MG3-5: the audit line ───────────────────────────────────────────────────
-
-// recordingFinder captures what the finder logged.
-func recordingFinder(db *fakeFinderDB, out *[]string) *SourceFinder {
-	return NewSourceFinder(db, nil, func(format string, args ...any) {
-		*out = append(*out, format)
-	})
-}
-
-func loggedMiss(lines []string) bool {
-	for _, l := range lines {
-		if strings.Contains(l, "MAINTAINED GROUP MISSED") {
-			return true
-		}
-	}
-	return false
-}
-
-// THE SIGNAL: a press the keeper serves took its carrier from somewhere else.
-//
-// Nothing failed — the press got a carrier and the line kept running — which is
-// exactly why it is invisible without this line. The group came up short at the
-// moment it was asked: level too low, mix wrong, or the keeper behind.
-func TestAudit_SupportedPressSourcingOutsideItsGroupIsLogged(t *testing.T) {
-	t.Parallel()
-	db := newFakeFinderDB()
-	at := int64(401)
-	db.addNode(pinNode(400, "AUD-DEST"))
-	db.addNode(pinNode(at, "AUD-FAR-SLOT"))
-	db.globalEmpty = &bins.Bin{ID: 4000, Label: "AUD-FAR-BIN", NodeID: &at}
-	db.supportingGroups["AUD-PRESS-1"] = []int64{900}
-	// The carrier's node sits under NO group — it came from the market.
-
-	var lines []string
-	got := recordingFinder(db, &lines).FindSourceForNeed(SourceNeed{
-		DeliveryNode: "AUD-DEST", PayloadCode: "PANEL-A", Intent: IntentEmpty,
-		ProcessNode: "AUD-PRESS-1",
-	})
-	if got.Outcome != OutcomeFound {
-		t.Fatalf("outcome = %v, want Found — the audit is about orders that SUCCEEDED", got.Outcome)
-	}
-	if !loggedMiss(lines) {
-		t.Error("no audit line. A supported press sourcing outside its group is the " +
-			"'maintainer is losing' signal, and it is invisible on every other surface " +
-			"because the order worked")
-	}
-}
-
-// SILENT WHEN THE GROUP DID ITS JOB — the carrier came from inside it.
-func TestAudit_SilentWhenTheCarrierCameFromTheGroup(t *testing.T) {
-	t.Parallel()
-	db := newFakeFinderDB()
-	at := int64(411)
-	db.addNode(pinNode(410, "AUD2-DEST"))
-	db.addNode(pinNode(at, "AUD2-GRP-SLOT"))
-	db.globalEmpty = &bins.Bin{ID: 4100, Label: "AUD2-BIN", NodeID: &at}
-	db.supportingGroups["AUD2-PRESS-1"] = []int64{901}
-	db.nodeUnder[at] = 901
-
-	var lines []string
-	recordingFinder(db, &lines).FindSourceForNeed(SourceNeed{
-		DeliveryNode: "AUD2-DEST", PayloadCode: "PANEL-A", Intent: IntentEmpty,
-		ProcessNode: "AUD2-PRESS-1",
-	})
-	if loggedMiss(lines) {
-		t.Error("audit line fired for a carrier that came from the group that serves this " +
-			"press — the group did exactly its job")
-	}
-}
-
-// SILENT FOR A PRESS NO GROUP SERVES, which is nearly every process in the
-// plant. An audit that fired for them would be noise that buries its own signal.
-func TestAudit_SilentForAProcessNoGroupServes(t *testing.T) {
-	t.Parallel()
-	db := newFakeFinderDB()
-	at := int64(421)
-	db.addNode(pinNode(420, "AUD3-DEST"))
-	db.addNode(pinNode(at, "AUD3-SLOT"))
-	db.globalEmpty = &bins.Bin{ID: 4200, Label: "AUD3-BIN", NodeID: &at}
-	// No supportingGroups entry at all.
-
-	var lines []string
-	recordingFinder(db, &lines).FindSourceForNeed(SourceNeed{
-		DeliveryNode: "AUD3-DEST", PayloadCode: "PANEL-A", Intent: IntentEmpty,
-		ProcessNode: "AUD3-PRESS-9",
-	})
-	if loggedMiss(lines) {
-		t.Error("audit line fired for a process no maintained group serves — that is every " +
-			"press in the plant today, and the signal would drown in it")
-	}
-}
-
-// A FAILED AUDIT READ CHANGES NOTHING ABOUT THE ORDER. The observation is about
-// an order that already succeeded; a read failure must not turn it into a wait.
-func TestAudit_ReadFailureDoesNotDisturbTheOrder(t *testing.T) {
-	t.Parallel()
-	db := newFakeFinderDB()
-	at := int64(431)
-	db.addNode(pinNode(430, "AUD4-DEST"))
-	db.addNode(pinNode(at, "AUD4-SLOT"))
-	db.globalEmpty = &bins.Bin{ID: 4300, Label: "AUD4-BIN", NodeID: &at}
-	db.supportingGroupsErr = errors.New("connection refused")
-
-	var lines []string
-	got := recordingFinder(db, &lines).FindSourceForNeed(SourceNeed{
-		DeliveryNode: "AUD4-DEST", PayloadCode: "PANEL-A", Intent: IntentEmpty,
-		ProcessNode: "AUD4-PRESS-1",
-	})
-	if got.Outcome != OutcomeFound || got.Bin == nil || got.Bin.ID != 4300 {
-		t.Fatalf("outcome=%v bin=%v — a failed AUDIT read changed what the order got",
-			got.Outcome, got.Bin)
-	}
-	if got.QueueCode != "" && got.QueueCode != protocol.QueueCode("") {
-		t.Errorf("QueueCode = %q on a found order", got.QueueCode)
 	}
 }

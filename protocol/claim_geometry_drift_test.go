@@ -16,7 +16,7 @@ import (
 //
 // It now has one derivation per shape — domain.NodeClaim.Positions and
 // ExtensionPositions for the stored claim, NodeClaimInput.Positions for the
-// input twin — and this is what stops a thirteenth spelling from appearing. The
+// input twin, plantspec.Claim.Positions for a plant file — and this is what stops a thirteenth spelling from appearing. The
 // cluster grows back one honest little literal at a time otherwise, each of
 // which looks fine in its own diff.
 //
@@ -48,14 +48,11 @@ var claimGeometryLiterals = map[string]modeReader{
 	// derivation. The third cannot: shingo-core and shingo-edge are separate Go
 	// modules, so the only shared homes are protocol/ — a WIRE package, and cell
 	// geometry is not wire — or a new shared/ package holding a helper over three
-	// strings. Neither is earned by one site, and the site is a validator that
-	// must name which field is wrong anyway.
-	//
-	// If Core ever grows a second spelling, that is when the shared home is
-	// earned, and this entry going from 1 to 2 is what says so.
-	"shingo-core/plantspec/validate.go": {1, "spec", "Core's own face of the geometry question — " +
-		"the changeover_evac_nodes held-set, checked at spec-read because a plant file is written " +
-		"long before an Edge sees it. Cross-module, so it cannot share the Edge derivation"},
+	// strings. Neither is earned while the spec has its own one method and only
+	// spec readers (the validator, the seeder, simcalc) ask it.
+	"shingo-core/plantspec/plantspec.go": {1, "spec", "Core's one derivation, plantspec.Claim.Positions: " +
+		"a plant file is read long before an Edge sees it. Cross-module, so it cannot share the " +
+		"Edge derivation"},
 }
 
 // TestClaimGeometryHasOneDerivationPoint walks every production file in every

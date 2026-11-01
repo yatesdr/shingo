@@ -275,16 +275,6 @@ func (c *countingFinderDB) ListLoaderHomes(id int64) ([]loaders.Home, error) {
 	return c.fakeFinderDB.ListLoaderHomes(id)
 }
 
-func (c *countingFinderDB) MaintainedGroupsSupporting(p string) ([]int64, error) {
-	c.reads++
-	return c.fakeFinderDB.MaintainedGroupsSupporting(p)
-}
-
-func (c *countingFinderDB) NodeIsUnderAny(id int64, roots []int64) (bool, error) {
-	c.reads++
-	return c.fakeFinderDB.NodeIsUnderAny(id, roots)
-}
-
 func (c *countingFinderDB) IsSlotAccessible(id int64) (bool, error) {
 	c.reads++
 	return c.fakeFinderDB.IsSlotAccessible(id)

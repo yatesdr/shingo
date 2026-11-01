@@ -5614,8 +5614,8 @@ func v120LinesideDrainLedger(tx *sql.Tx) error {
 //
 // bin_types.bare flags a carrier type that holds no container: the label a
 // stage-1 unloader's CLEAR stamps on the carrier it leaves behind. No empty
-// finder hands a bare carrier out (bins.EmptyCarrierWhere), and PUSH AS at
-// stage 2 overwrites the type. bin_loaders.bare_bin_type_id names, per unloader,
+// finder hands a bare carrier out (bins.EmptyCarrierWhere), and stage 2 stamps
+// the carrier back (v136's bare_of). bin_loaders.bare_bin_type_id names, per unloader,
 // the bare type its blank CLEAR stamps; NULL is every unloader today.
 //
 // DEFAULT FALSE and NULL: every existing type stays sourceable and every

@@ -332,7 +332,7 @@ function loaderPayload(state) {
     // Unloaders only, like the two above; sent back whole with every save.
     drain_states: unloader ? (state.drains || []).slice() : [],
     fed_directly: !!state.fedDirectly,
-    // A pair's stage 2 only; the server refuses it anywhere else.
+    // Any station but a stage 1, where the server refuses it.
     pulled_directly: !!state.pulledDirectly,
     board_hides_idle: !!state.boardHidesIdle,
     board_shows_all_parts: !!state.boardShowsAllParts,

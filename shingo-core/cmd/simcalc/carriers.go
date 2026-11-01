@@ -462,9 +462,9 @@ func computeCarriers(plant *plantspec.Plant, rate map[string]float64, loaderCap,
 	// ── A MAINTAINED GROUP DOES NOT ACCUMULATE; IT OVERFLOWS ─────────────────
 	//
 	// A group named in maintained_groups is a LEVEL-CONTROLLED buffer, not a free
-	// pool. Core holds it at its want (level + cover, kanbans.go): surplus goes out
-	// to the overflow zone, and a shortfall is borrowed from its sources in rank
-	// order, or from the plant at large when it names none. Either way the
+	// pool. Core holds it at its want (level + cover, kanbans.go): a cart arriving
+	// above it goes on to the overflow zone, and a shortfall is borrowed from its
+	// sources in rank order, or from the plant at large when it names none. Either way the
 	// difference MOVES, and its counterparty is the pool the config names: the
 	// overflow for a surplus, the first source (else the overflow) for a shortfall.
 	//

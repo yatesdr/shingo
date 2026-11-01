@@ -100,10 +100,8 @@ func newKanbanView(plant *plantspec.Plant) *kanbanView {
 	}
 	for _, c := range plant.Claims {
 		proc := processOf[c.Style]
-		for _, n := range []string{c.CoreNode, c.PairedCoreNode, c.SecondPairedCoreNode} {
-			if n != "" {
-				v.nodesOf[proc] = appendUniq(v.nodesOf[proc], n)
-			}
+		for _, n := range c.Positions() {
+			v.nodesOf[proc] = appendUniq(v.nodesOf[proc], n)
 		}
 		if c.Role == "produce" && !c.IsLoader() {
 			v.claimsOf[c.Style] = append(v.claimsOf[c.Style], c)

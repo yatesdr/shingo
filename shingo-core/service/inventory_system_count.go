@@ -72,7 +72,7 @@ type SystemUOPForPayloadResult struct {
 // (preserves the 2026-05-11 SNF2 fix semantics: production can't rely
 // on those bins so they don't count as loop inventory). A carrier stamped
 // undeclared_carrier_at is excluded too: nothing can fetch it. Every caller
-// is reorder-facing (the threshold monitor's decision, the replenishment-health
+// is reorder-facing (the threshold monitor's decision, the inventory page's
 // rollup, the sourceability loader sample), so all three agree with the
 // decision.
 //

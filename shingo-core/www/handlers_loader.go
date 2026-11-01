@@ -61,8 +61,9 @@ func (h *Handlers) apiCreateLoader(w http.ResponseWriter, r *http.Request) {
 		// FedDirectly: fed straight from a process; the inbound source is
 		// stored blank. Absent reads as false.
 		FedDirectly bool `json:"fed_directly"`
-		// PulledDirectly: a stage 2's finished carts are pulled straight off
-		// its windows by the process; the outbound is stored blank.
+		// PulledDirectly: the carriers this loader finishes are pulled straight
+		// off its windows by the process; the outbound is stored blank. Refused
+		// on a stage 1 only.
 		PulledDirectly bool `json:"pulled_directly"`
 		// DrainStates: the part-less carrier states an unloader drains from
 		// its inbound source (the four drain boxes). Absent drains nothing.
@@ -138,8 +139,9 @@ func (h *Handlers) apiUpdateLoader(w http.ResponseWriter, r *http.Request) {
 		// FedDirectly: fed straight from a process; the inbound source is
 		// stored blank. Absent reads as false.
 		FedDirectly bool `json:"fed_directly"`
-		// PulledDirectly: a stage 2's finished carts are pulled straight off
-		// its windows by the process; the outbound is stored blank.
+		// PulledDirectly: the carriers this loader finishes are pulled straight
+		// off its windows by the process; the outbound is stored blank. Refused
+		// on a stage 1 only.
 		PulledDirectly bool `json:"pulled_directly"`
 		// BoardHidesIdle / BoardShowsAllParts: how the station's Edge board
 		// draws. A full-row write like the rest: absent reads as false.

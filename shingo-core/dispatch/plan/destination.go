@@ -74,13 +74,13 @@ func (p *Planner) StoreDrop(group *nodes.Node, payloadCode string, stated binres
 //
 // The door (LifecycleService.tryOverflow) keeps the log line and the stamp.
 //
-// The overflow is the carrier type's own (OverflowGroupOf), so stated is what the
+// The overflow is the carrier type's own (nodes.OverflowGroupOf), so stated is what the
 // door already read of the cart. The group's slot is chosen over one read of its
 // children (overGroup).
 func (p *Planner) OverflowDestination(group *nodes.Node, payloadCode string, stated binresolver.BinTypeStatement,
 	asker domain.DigAsker) (string, bool) {
 	defer observe(p.db, "overflow-destination")()
-	dest, why := OverflowGroupOf(p.db, group, stated.TypeID())
+	dest, why := nodes.OverflowGroupOf(p.db, group, stated.TypeID())
 	if dest == nil {
 		if why != "" {
 			p.debug("intake: %s — parking instead", why)
@@ -98,64 +98,6 @@ func (p *Planner) OverflowDestination(group *nodes.Node, payloadCode string, sta
 		return "", false
 	}
 	return choice.Slot.Name, true
-}
-
-// OverflowReader is what OverflowGroupOf reads: where the group's overflow points
-// and the node there.
-type OverflowReader interface {
-	OverflowTargetOf(groupNodeID int64) (nodes.OverflowTarget, error)
-	PerTypeOverflowTargetOf(groupNodeID, binTypeID int64) (nodes.OverflowTarget, error)
-	GetNode(id int64) (*nodes.Node, error)
-	GetNodeByDotName(name string) (*nodes.Node, error)
-}
-
-// OverflowGroupOf is a group's configured overflow destination: the node it
-// names, or nil. With nil, why is "" when none is configured (a real answer, not
-// a missing one) and a sentence when one is configured and unusable.
-//
-// A kanban's overflow is the node on the type's level row, else on its own row; with
-// no type stated, its own row's. A plain group's is the name in its
-// overflow_destination property, which is why this can still fail to resolve
-// (nodes.OverflowTargetOf; the pin of the plain arm is
-// TestOverflow_APlainGroupKeepsItsProperty).
-//
-// THE LOOKUP HALF OF OverflowDestination. The cancel-return policy
-// (engine/cancel_return.go) follows the same overflow for a bin it is returning
-// to a group at its level, and two lookups would be two answers the first time
-// either grows a rule.
-func OverflowGroupOf(db OverflowReader, group *nodes.Node, binTypeID *int64) (*nodes.Node, string) {
-	var (
-		target nodes.OverflowTarget
-		err    error
-	)
-	if binTypeID != nil {
-		target, err = db.PerTypeOverflowTargetOf(group.ID, *binTypeID)
-	} else {
-		target, err = db.OverflowTargetOf(group.ID)
-	}
-	if err != nil {
-		return nil, fmt.Sprintf("overflow of %s could not be read (%v)", group.Name, err)
-	}
-	var dest *nodes.Node
-	switch {
-	case target.NodeID != 0:
-		dest, err = db.GetNode(target.NodeID)
-	case target.Name != "":
-		dest, err = db.GetNodeByDotName(target.Name)
-	default:
-		return nil, ""
-	}
-	if err != nil || dest == nil {
-		return nil, fmt.Sprintf("overflow %q of %s does not resolve (%v)", target.Name, group.Name, err)
-	}
-	if dest.ID == group.ID {
-		// A group naming itself is the one-hop rule's degenerate case, and it is
-		// worth refusing explicitly: without this it would re-resolve the same
-		// full group and return the same capacity error, which reads as a
-		// mysterious no-op rather than a configuration mistake.
-		return nil, fmt.Sprintf("overflow of %s names itself", group.Name)
-	}
-	return dest, ""
 }
 
 // MaintainedSlot chooses the free slot of a maintained group that one keeper

@@ -269,9 +269,6 @@ type FinderDB interface {
 	// a group explicitly. The plant-wide fence is a filter inside the query; this
 	// one has to produce a cause.
 	GroupFencesAsker(groupNodeID int64, processNode string) (bool, error)
-	// MaintainedGroupsSupporting and NodeIsUnderAny are the MG3-5 audit's two
-	// reads: which groups serve this process, and did the carrier come from
-	// inside one of them.
 	// GetEffectiveBinTypes is MG3-4's read: what physically fits at a position,
 	// resolved through the inherit chain. One type is a statement; zero or many
 	// leave the choice to the cascade's ordering.
@@ -280,8 +277,6 @@ type FinderDB interface {
 	// travel in (payload_bin_types), as opposed to which fit at a node. Read
 	// once per door call and judged against every candidate bin.
 	LoadBinTypeRule(payloadCode string) (domain.BinTypeRule, error)
-	MaintainedGroupsSupporting(processNode string) ([]int64, error)
-	NodeIsUnderAny(nodeID int64, roots []int64) (bool, error)
 	// FedPressFor is a tops & bottoms pull's one read: the fed press whose
 	// outside the delivery is and whose claim carries the part, "" for none
 	// (dispatch pressFor).

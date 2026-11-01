@@ -42,20 +42,6 @@ const (
 	// which is backpressure into whatever was pushing — uncomfortable, not
 	// dangerous.
 	PropOverflowDestination = "overflow_destination"
-
-	// PropBinTypeMode is NOT a maintained-group setting — it predates all of
-	// this and governs how a node's allowed carrier types resolve ("all",
-	// "specific", or ""/"inherit" to walk the parent chain). It is named here
-	// because a maintained group has to carry an EXPLICIT one: inherit-by-
-	// default means an ancestor's list can silently govern a group that has just
-	// been told to hold two specific types.
-	PropBinTypeMode = "bin_type_mode"
-
-	// BinTypeModeAll is the no-restriction value, and the one a group gets when
-	// a maintained level is declared on a group that never had a mode. It is
-	// what an unconfigured group already behaves as; narrowing on the operator's
-	// behalf would be making a decision for them.
-	BinTypeModeAll = "all"
 )
 
 // MaintainLevel is one line of a maintained group's declared level: how many
@@ -353,6 +339,64 @@ func scanOverflowTarget(row *sql.Row, group any) (OverflowTarget, error) {
 		return OverflowTarget{}, fmt.Errorf("read overflow of %v: %w", group, err)
 	}
 	return t, nil
+}
+
+// OverflowReader is what OverflowGroupOf reads: where the group's overflow points
+// and the node there.
+type OverflowReader interface {
+	OverflowTargetOf(groupNodeID int64) (OverflowTarget, error)
+	PerTypeOverflowTargetOf(groupNodeID, binTypeID int64) (OverflowTarget, error)
+	GetNode(id int64) (*Node, error)
+	GetNodeByDotName(name string) (*Node, error)
+}
+
+// OverflowGroupOf is a group's configured overflow destination: the node it
+// names, or nil. With nil, why is "" when none is configured (a real answer, not
+// a missing one) and a sentence when one is configured and unusable.
+//
+// A kanban's overflow is the node on the type's level row, else on its own row; with
+// no type stated, its own row's. A plain group's is the name in its
+// overflow_destination property, which is why this can still fail to resolve
+// (OverflowTargetOf; the pin of the plain arm is
+// TestOverflow_APlainGroupKeepsItsProperty).
+//
+// THE LOOKUP HALF OF plan.OverflowDestination. The cancel-return policy
+// (engine/cancel_return.go) follows the same overflow for a bin it is returning
+// to a group at its level, and two lookups would be two answers the first time
+// either grows a rule.
+func OverflowGroupOf(db OverflowReader, group *Node, binTypeID *int64) (*Node, string) {
+	var (
+		target OverflowTarget
+		err    error
+	)
+	if binTypeID != nil {
+		target, err = db.PerTypeOverflowTargetOf(group.ID, *binTypeID)
+	} else {
+		target, err = db.OverflowTargetOf(group.ID)
+	}
+	if err != nil {
+		return nil, fmt.Sprintf("overflow of %s could not be read (%v)", group.Name, err)
+	}
+	var dest *Node
+	switch {
+	case target.NodeID != 0:
+		dest, err = db.GetNode(target.NodeID)
+	case target.Name != "":
+		dest, err = db.GetNodeByDotName(target.Name)
+	default:
+		return nil, ""
+	}
+	if err != nil || dest == nil {
+		return nil, fmt.Sprintf("overflow %q of %s does not resolve (%v)", target.Name, group.Name, err)
+	}
+	if dest.ID == group.ID {
+		// A group naming itself is the one-hop rule's degenerate case, and it is
+		// worth refusing explicitly: without this it would re-resolve the same
+		// full group and return the same capacity error, which reads as a
+		// mysterious no-op rather than a configuration mistake.
+		return nil, fmt.Sprintf("overflow of %s names itself", group.Name)
+	}
+	return dest, ""
 }
 
 // ResolveDotNameID is GetByDotName's resolution of a name to a node id, on any
@@ -656,30 +700,22 @@ func ListMaintainSupports(db helpers.RowsQuerier, groupNodeID int64) ([]Maintain
 // GroupFencesAsker reports whether a STRICT maintained group excludes an asker
 // that has named it explicitly.
 //
-// THE GO TWIN OF bins.FencedNodesCTE's FIRST RULE, and it exists because the
-// two questions are asked at different moments. The CTE answers "which carriers
+// bins.FencedNodesCTE's FIRST RULE as an answer, and it exists because the two
+// questions are asked at different moments. The CTE answers "which carriers
 // can this plant-wide scan see", inside the query, silently. This answers "may
 // this need, which NAMED this group, be served from it" — and that one needs a
 // DISPOSITION, not a filter: a need turned away here parks with a cause an
 // operator can read, rather than quietly finding nothing.
 //
-// Same predicate, two forms, and they must not drift: kanbans.strict on, and the
-// process node absent from the supports list. A group that supports nobody
-// fences everybody, which is the same reading the CTE takes.
-//
-// A blank processNode is an outsider — an ask that names no process cannot be
-// supported anywhere, and the safe reading of that is "not for you".
+// One predicate, helpers.StrictFencesSQL, in the two places it is asked. A blank
+// processNode is an outsider — an ask that names no process cannot be supported
+// anywhere, and the safe reading of that is "not for you".
 func GroupFencesAsker(db *sql.DB, groupNodeID int64, processNode string) (bool, error) {
 	var fenced bool
 	err := db.QueryRow(`
 		SELECT EXISTS (
 			SELECT 1 FROM kanbans k
-			 WHERE k.node_id = $1 AND k.strict
-			   AND NOT EXISTS (
-				 SELECT 1 FROM kanban_supports s
-				 JOIN nodes pn ON pn.id = s.process_node_id
-				 WHERE s.kanban_node_id = k.node_id AND pn.name = $2
-			   )
+			 WHERE k.node_id = $1 AND `+helpers.StrictFencesSQL("$2")+`
 		)`, groupNodeID, processNode).Scan(&fenced)
 	if err != nil {
 		return false, fmt.Errorf("group %d fences %q: %w", groupNodeID, processNode, err)
@@ -688,13 +724,7 @@ func GroupFencesAsker(db *sql.DB, groupNodeID int64, processNode string) (bool, 
 }
 
 // MaintainedGroupsSupporting returns the maintained groups that serve a process
-// node.
-//
-// UNFILTERED BY strict, unlike the fence. The MG3-5 audit asks "did
-// the press that this group exists to serve have to go elsewhere", and that
-// question is about the LEVEL, not about the fence — a group holding a level
-// for a press it does not fence is still a group that came up short when the
-// press sourced from across the plant.
+// node, whether or not they are strict.
 func MaintainedGroupsSupporting(db *sql.DB, processNode string) ([]int64, error) {
 	if processNode == "" {
 		return nil, nil

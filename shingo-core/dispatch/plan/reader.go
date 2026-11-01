@@ -1,6 +1,9 @@
 package plan
 
-import "shingocore/dispatch/binresolver"
+import (
+	"shingocore/dispatch/binresolver"
+	"shingocore/store/nodes"
+)
 
 // Reader is the planner's only store type: the reads its parts make, and no
 // write. *store.DB satisfies it (dispatch asserts so), and nothing in this
@@ -11,7 +14,7 @@ import "shingocore/dispatch/binresolver"
 // used: the picker's (FinderDB), the group resolver's (binresolver.Store), the
 // capacity gate's (CapacityDB), the loader window choice's (LoaderWindowsDB),
 // the slot book's (SlotBookDB), the dig verdict's (DigDB), the group drop
-// chooser's (ChooseDropDB), the overflow's (OverflowReader) and the push's door
+// chooser's (ChooseDropDB), the overflow's (nodes.OverflowReader) and the push's door
 // (PushDB).
 type Reader interface {
 	FinderDB
@@ -21,6 +24,6 @@ type Reader interface {
 	SlotBookDB
 	DigDB
 	ChooseDropDB
-	OverflowReader
+	nodes.OverflowReader
 	PushDB
 }

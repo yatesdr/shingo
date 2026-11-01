@@ -374,10 +374,8 @@ func (p *Plant) Validate() error {
 		// ValidateNodeClaim applies; stated here too because a spec is written
 		// long before an Edge sees it.
 		held := map[string]bool{}
-		for _, n := range []string{c.CoreNode, c.PairedCoreNode, c.SecondPairedCoreNode} {
-			if n != "" {
-				held[n] = true
-			}
+		for _, n := range c.Positions() {
+			held[n] = true
 		}
 		seenMark := map[string]bool{}
 		for _, node := range c.ChangeoverEvacNodes {

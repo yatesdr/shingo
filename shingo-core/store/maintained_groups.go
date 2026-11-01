@@ -157,8 +157,6 @@ func (db *DB) KanbansSupportingProcess(processID string) ([]int64, error) {
 }
 
 // NodeIsUnderAny reports whether a node sits inside any of the given subtrees.
-// The MG3-5 audit's second read: did this carrier come from within a group that
-// serves the press that took it.
 func (db *DB) NodeIsUnderAny(nodeID int64, roots []int64) (bool, error) {
 	return nodes.NodeIsUnderAny(db.DB, nodeID, roots)
 }

@@ -293,15 +293,9 @@ func seedCore(db *store.DB, p *plantspec.Plant, binIDByNode map[string]int64) er
 // hand-configured one are the same rows — which is the only thing that makes the
 // sim's staged shape evidence about the real one.
 //
-// bin_type_mode is written explicitly, for the reason the save-time rules write
-// it: inherit-by-default would let an ancestor's allowed-bins list silently
-// govern a group that has just been told to hold two specific carrier types.
-//
 // SUPPORTS RESOLVE HERE. The spec names processes because that is what a person
 // writes down; what lands in the table is the core nodes those processes' claims
-// name, which is the same resolution the settings modal does at save time and for
-// the same reason — Core cannot read an Edge claim when it has to decide
-// anything.
+// name, which is the same resolution the settings modal does at save time.
 //
 // Written unconditionally rather than only-when-absent: re-seeding an edited
 // spec has to be able to CHANGE a level, and a maintained group is spec-owned
@@ -322,8 +316,8 @@ func seedMaintainedGroups(db *store.DB, p *plantspec.Plant, nodeIDs map[string]i
 		if !ok {
 			continue
 		}
-		for _, node := range []string{c.CoreNode, c.PairedCoreNode, c.SecondPairedCoreNode} {
-			if node != "" && !slices.Contains(processNodes[proc], node) {
+		for _, node := range c.Positions() {
+			if !slices.Contains(processNodes[proc], node) {
 				processNodes[proc] = append(processNodes[proc], node)
 			}
 		}
@@ -333,9 +327,6 @@ func seedMaintainedGroups(db *store.DB, p *plantspec.Plant, nodeIDs map[string]i
 		groupID, ok := nodeIDs[mg.Group]
 		if !ok {
 			return fmt.Errorf("maintained group %q: zone not found among seeded nodes", mg.Group)
-		}
-		if err := db.SetNodeProperty(groupID, nodes.PropBinTypeMode, nodes.BinTypeModeAll); err != nil {
-			return fmt.Errorf("maintained group %q property %s: %w", mg.Group, nodes.PropBinTypeMode, err)
 		}
 		// zoneID is a named zone's node; a blank name is 0, which clears.
 		zoneID := func(name string) (int64, error) {

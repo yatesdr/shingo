@@ -284,7 +284,7 @@ func TestEffectiveTypesOfChildren_AgreesWithTheSingleRead(t *testing.T) {
 		n := &nodes.Node{Name: name, Enabled: true, ParentID: parent}
 		testutil.MustNoErr(t, db.CreateNode(n), "child")
 		if mode != "" {
-			testutil.MustNoErr(t, db.SetNodeProperty(n.ID, nodes.PropBinTypeMode, mode), "mode")
+			testutil.MustNoErr(t, db.SetNodeProperty(n.ID, "bin_type_mode", mode), "mode")
 		}
 		if len(types) > 0 {
 			testutil.MustNoErr(t, db.SetNodeBinTypes(n.ID, types), "types")

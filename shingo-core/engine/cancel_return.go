@@ -42,7 +42,6 @@ import (
 	"shingo/protocol/eventbus"
 	"shingocore/dispatch"
 	"shingocore/dispatch/binresolver"
-	"shingocore/dispatch/plan"
 	"shingocore/domain"
 	"shingocore/fleet"
 	"shingocore/store/bins"
@@ -447,7 +446,7 @@ func (e *Engine) storeInto(src *nodes.Node, bin *bins.Bin, carrier *orders.Order
 	if !errors.Is(err, binresolver.ErrAtDeclaredLevel) {
 		return nil, refusalText(err, "no slot in "+group.Name)
 	}
-	over, why := plan.OverflowGroupOf(e.db, group, &bin.BinTypeID)
+	over, why := nodes.OverflowGroupOf(e.db, group, &bin.BinTypeID)
 	if over == nil {
 		if why == "" {
 			why = "it names no overflow"

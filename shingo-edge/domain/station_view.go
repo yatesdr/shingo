@@ -14,9 +14,9 @@ type NodeBinState struct {
 	BinID       int64  `json:"bin_id,omitempty"`
 	BinLabel    string `json:"bin_label,omitempty"`
 	BinTypeCode string `json:"bin_type_code,omitempty"`
-	// Bare is Core's bin_types.bare for the carrier: it holds no container, so
-	// the board hides plain PUSH EMPTY and PUSH AS a real type is the only way
-	// out of the window.
+	// Bare is Core's bin_types.bare for the carrier: it holds no container. The
+	// board draws it as no bin, and its panel sends it on, or at a stage 2 puts an
+	// empty or a partial on it (operator-board-model.js, push-empty).
 	Bare              bool    `json:"bare,omitempty"`
 	PayloadCode       string  `json:"payload_code,omitempty"`
 	UOPRemaining      int     `json:"uop_remaining"`

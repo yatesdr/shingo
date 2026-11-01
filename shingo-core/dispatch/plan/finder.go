@@ -989,7 +989,6 @@ func (f *Finder) Pick(need Need) Plan {
 		}
 	}
 
-	f.auditSourcedOutsideItsGroup(need, binNode)
 	return Plan{Outcome: OutcomeFound, Bin: bin, Node: binNode, ForeignCarrier: foreignCarrier, PassedOver: passedOver}
 }
 
@@ -1125,64 +1124,6 @@ func (f *Finder) sourceFromDedicatedLoader(srcNode *nodes.Node, payloadCode stri
 		return nil, nil, true, nil, fmt.Errorf("resolve node for bin %d: %w", chosen.ID, err)
 	}
 	return chosen, node, true, passedOver, nil
-}
-
-// auditSourcedOutsideItsGroup logs when a press the level keeper serves takes
-// its empty from SOMEWHERE ELSE. MG3-5.
-//
-// ── THE SIGNAL IS "THE MAINTAINER IS LOSING" ────────────────────────────────
-//
-// A maintained group exists so the presses it supports never wait for a
-// carrier. When a supported press sources from outside that group, the group
-// was empty of what it needed AT THE MOMENT IT ASKED — the keeper had not
-// caught up, or the level is set too low, or the mix is wrong. Nothing failed:
-// the press got its carrier and the line kept running, which is exactly why
-// this is invisible without a line in the log.
-//
-// It is the counterpart to the level itself. `resident` says what the group
-// holds; this says when holding it did not help.
-//
-// A LOG LINE AND NOT A CAUSE, deliberately. The order is not waiting and there
-// is nothing for an operator to do about this one occurrence — it is a rate,
-// read over a shift, and a queue cause on a successful order would be a lie
-// about the order's state. If it turns out to want a surface, the log line is
-// what a query would be built from.
-//
-// IT RIDES THE DEBUG CHANNEL, AND THAT IS A STATED LIMITATION rather than a
-// choice. Finder is constructed with one logger — the dispatcher's dbg —
-// so this is as loud as the seam can currently be. Promoting it means giving
-// the finder a second logger and threading it through every construction site,
-// which is a wider change than an observation warrants until somebody wants to
-// read the rate. Whoever does: that is the change.
-//
-// SILENT WHEN THERE IS NOTHING TO SAY: no process node, no carrier, or a
-// carrier that came from within a group this process is supported at.
-func (f *Finder) auditSourcedOutsideItsGroup(need Need, binNode *nodes.Node) {
-	if need.ProcessNode == "" || binNode == nil {
-		return
-	}
-	groups, err := f.db.MaintainedGroupsSupporting(need.ProcessNode)
-	if err != nil {
-		// Best-effort by construction: this is an observation about an order that
-		// already succeeded, and a failed read must not change what it got.
-		f.debug("audit: maintained groups supporting %s unreadable: %v", need.ProcessNode, err)
-		return
-	}
-	if len(groups) == 0 {
-		return
-	}
-	inside, err := f.db.NodeIsUnderAny(binNode.ID, groups)
-	if err != nil {
-		f.debug("audit: group membership for node %d unreadable: %v", binNode.ID, err)
-		return
-	}
-	if inside {
-		return
-	}
-	f.debug("MAINTAINED GROUP MISSED: process %s sourced an empty from %s, which is outside "+
-		"the %d maintained group(s) that serve it. The group was short of what this process "+
-		"needed when it asked — level too low, mix wrong, or the keeper had not caught up. "+
-		"Nothing failed; the process is running.", need.ProcessNode, binNode.Name, len(groups))
 }
 
 // PartialToFinish is the oldest-held unfinished carrier of payloadCode standing

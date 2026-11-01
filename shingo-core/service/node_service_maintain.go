@@ -177,14 +177,6 @@ func (s *NodeService) SaveKanban(save KanbanSave) (MaintainedGroupCheck, error) 
 		chk.Refusals = append(chk.Refusals, refusal)
 		return chk, nil
 	}
-	// The mode is written FIRST and only when absent: a group that is about to
-	// carry a declared level must not still be resolving its allowed types off an
-	// ancestor.
-	if len(save.Levels) > 0 {
-		if err := s.ensureExplicitBinTypeMode(save.GroupNodeID); err != nil {
-			return chk, err
-		}
-	}
 	actor := save.Actor
 	if actor == "" {
 		actor = protocol.AuditActorUI

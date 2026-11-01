@@ -401,12 +401,7 @@ func (f EmptyFence) Args() []any { return []any{f.ProcessNode, f.OriginGroup} }
 func FencedNodesCTE(processParam, originParam int) string {
 	return fmt.Sprintf(`WITH RECURSIVE fenced_roots(id) AS (
 		SELECT k.node_id FROM kanbans k
-		 WHERE k.strict
-		   AND NOT EXISTS (
-			 SELECT 1 FROM kanban_supports s
-			 JOIN nodes pn ON pn.id = s.process_node_id
-			 WHERE s.kanban_node_id = k.node_id AND pn.name = $%[1]d
-		   )
+		 WHERE %[1]s
 		UNION
 		SELECT g.id FROM nodes g WHERE $%[2]d <> '' AND g.name = $%[2]d
 		UNION
@@ -416,7 +411,7 @@ func FencedNodesCTE(processParam, originParam int) string {
 		SELECT id FROM fenced_roots
 		UNION ALL
 		SELECT n2.id FROM nodes n2 JOIN fenced f ON n2.parent_id = f.id
-	) `, processParam, originParam)
+	) `, helpers.StrictFencesSQL(fmt.Sprintf("$%d", processParam)), originParam)
 }
 
 // NotFencedArm keeps a candidate out of the fenced set. Assumes a `fenced(id)`

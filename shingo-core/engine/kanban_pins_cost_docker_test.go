@@ -102,14 +102,12 @@ type kanbanCostRig struct {
 	push    int64 // the empty small standing at windows[1]
 }
 
-// kanbanCostFlat is a flat group of n positions, its carrier types open as a
-// level save leaves them (service.ensureExplicitBinTypeMode).
+// kanbanCostFlat is a flat group of n positions.
 func kanbanCostFlat(t *testing.T, db *store.DB, name string, n int) (*nodes.Node, []*nodes.Node) {
 	t.Helper()
 	id, err := nodes.CreateGroup(db.DB, name)
 	testutil.MustNoErr(t, err, "group "+name)
 	testdb.MarkGroup(t, db, id)
-	testutil.MustNoErr(t, db.SetNodeProperty(id, nodes.PropBinTypeMode, nodes.BinTypeModeAll), "bin type mode")
 	var kids []*nodes.Node
 	for i := 0; i < n; i++ {
 		c := &nodes.Node{Name: fmt.Sprintf("%s-P%d", name, i+1), Enabled: true, ParentID: &id}

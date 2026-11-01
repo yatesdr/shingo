@@ -7,7 +7,6 @@ import (
 	"shingocore/domain"
 	"shingocore/store"
 	"shingocore/store/loaders"
-	"shingocore/store/nodes"
 )
 
 // Save-time rules for a maintained group.
@@ -388,23 +387,4 @@ func plural(n int, one, many string) string {
 		return one
 	}
 	return many
-}
-
-// ensureExplicitBinTypeMode writes bin_type_mode on a group that has never had
-// one, at the first save that declares a level.
-//
-// INHERIT-BY-DEFAULT CONTRADICTS A DECLARED MIX. An unset mode resolves by
-// walking up the parent chain, so a group that has just been told to hold four
-// of one type and two of another can silently be governed by an ancestor's
-// allowed-bins list that permits neither. The default is written as "all" —
-// no restriction — because that is what an unconfigured group behaves as today
-// and because narrowing on the operator's behalf is a decision they did not
-// make.
-//
-// Only when ABSENT. A mode somebody chose is never overwritten.
-func (s *NodeService) ensureExplicitBinTypeMode(groupNodeID int64) error {
-	if s.db.GetNodeProperty(groupNodeID, nodes.PropBinTypeMode) != "" {
-		return nil
-	}
-	return s.db.SetNodeProperty(groupNodeID, nodes.PropBinTypeMode, nodes.BinTypeModeAll)
 }

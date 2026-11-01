@@ -465,6 +465,19 @@ type Claim struct {
 	ActivePull *bool `yaml:"active_pull,omitempty"`
 }
 
+// Positions is the core nodes this claim occupies, front first, blanks dropped: the
+// spec's one spelling of a cell's geometry (protocol's
+// TestClaimGeometryHasOneDerivationPoint).
+func (c Claim) Positions() []string {
+	out := make([]string, 0, 3)
+	for _, n := range []string{c.CoreNode, c.PairedCoreNode, c.SecondPairedCoreNode} {
+		if n != "" {
+			out = append(out, n)
+		}
+	}
+	return out
+}
+
 // IsActivePull reports the node's seeded active-pull state (default true).
 func (c Claim) IsActivePull() bool { return c.ActivePull == nil || *c.ActivePull }
 

@@ -237,7 +237,7 @@ func TestFence_ExcludesTheGroupAndNothingElse(t *testing.T) {
 
 // ── Reciprocity, and nesting ────────────────────────────────────────────────
 
-// TWO MAINTAINED GROUPS CANNOT DRAIN EACH OTHER, and nothing had to be written
+// TWO STRICT KANBANS CANNOT DRAIN EACH OTHER, and nothing had to be written
 // to arrange it: a keeper topping up A is not in B's supports list either, so
 // it is an outsider at B by the same rule that makes a press an outsider at A.
 func TestFence_ReciprocityFallsOutOfTheSameRule(t *testing.T) {

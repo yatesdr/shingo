@@ -276,7 +276,7 @@ func inboundUnlessFedDirectly(l Loader) string {
 }
 
 // outboundUnlessPulledDirectly is the outbound destination a write stores:
-// blank for a stage 2 whose finished carts the process pulls straight off its
+// blank for a loader whose finished carts the process pulls straight off its
 // windows, whatever the caller left in the field.
 func outboundUnlessPulledDirectly(l Loader) string {
 	if l.PulledDirectly {

@@ -141,7 +141,7 @@ func TestMaintainedGroup_RefusesLevelNoChildAccepts(t *testing.T) {
 
 	// Both positions take only the small carrier.
 	for _, k := range kids {
-		testutil.MustNoErr(t, db.SetNodeProperty(k.ID, nodes.PropBinTypeMode, "specific"), "bin_type_mode")
+		testutil.MustNoErr(t, db.SetNodeProperty(k.ID, "bin_type_mode", "specific"), "bin_type_mode")
 		testutil.MustNoErr(t, db.SetNodeBinTypes(k.ID, []int64{small}), "SetNodeBinTypes")
 	}
 
@@ -203,35 +203,52 @@ func TestMaintainedGroup_RefusesPipeInBinTypeCode(t *testing.T) {
 	}
 }
 
-// Declaring a level on a group whose bin_type_mode was never set writes it
-// explicitly. Inherit-by-default would let an ancestor's allowed-bins list
-// silently govern a group that has just been told to hold specific types.
-func TestMaintainedGroup_FirstLevelPinsBinTypeMode(t *testing.T) {
+// A level save leaves a group's bin_type_mode alone, and the group's mode does not
+// reach its children: a child's types resolve by the child's own mode and the
+// nearest ancestor with rows, so an ancestor's list governs the children whatever
+// the group says. The save's refusal asks those children
+// (ValidateMaintainedGroup), which is what catches a level nothing can hold.
+func TestMaintainedGroup_ALevelSaveLeavesTheModeAlone(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
 	svc := NewNodeService(db)
 
-	grpID, _ := mgGroup(t, db, "GRP-MODE", 2)
+	parentID, _ := mgGroup(t, db, "GRP-MODE-PARENT", 0)
+	grpID, kids := mgGroup(t, db, "GRP-MODE", 2)
+	testutil.MustNoErr(t, db.SetNodeParent(grpID, parentID), "SetNodeParent")
 	bt := mgBinType(t, db, "MODE-TOTE")
+	testutil.MustNoErr(t, db.SetNodeProperty(parentID, "bin_type_mode", "specific"), "parent mode")
+	testutil.MustNoErr(t, db.SetNodeBinTypes(parentID, []int64{bt}), "parent types")
 
-	if got := db.GetNodeProperty(grpID, nodes.PropBinTypeMode); got != "" {
-		t.Fatalf("bin_type_mode on a fresh group = %q, want unset", got)
+	inherits := func(when string) {
+		t.Helper()
+		got, err := db.GetEffectiveBinTypes(kids[0].ID)
+		testutil.MustNoErr(t, err, "GetEffectiveBinTypes")
+		if len(got) != 1 || got[0].ID != bt {
+			t.Errorf("%s: the child's types = %+v, want the ancestor's one", when, got)
+		}
 	}
+	inherits("before the save")
+
 	chk, err := svc.SetMaintainLevel(grpID, bt, 1)
 	testutil.MustNoErr(t, err, "SetMaintainLevel")
 	if chk.Err() != nil {
 		t.Fatalf("refused: %v", chk.Refusals)
 	}
-	if got := db.GetNodeProperty(grpID, nodes.PropBinTypeMode); got != nodes.BinTypeModeAll {
-		t.Errorf("bin_type_mode after first level = %q, want %q", got, nodes.BinTypeModeAll)
+	if got := db.GetNodeProperty(grpID, "bin_type_mode"); got != "" {
+		t.Errorf("bin_type_mode after a level save = %q, want unset", got)
 	}
+	inherits("after the save")
 
-	// A mode somebody chose is never overwritten.
-	testutil.MustNoErr(t, db.SetNodeProperty(grpID, nodes.PropBinTypeMode, "specific"), "choose specific")
+	testutil.MustNoErr(t, db.SetNodeProperty(grpID, "bin_type_mode", "all"), "mode all")
+	inherits("with the group's mode at all")
+
+	// A mode somebody chose stays through a save.
+	testutil.MustNoErr(t, db.SetNodeProperty(grpID, "bin_type_mode", "specific"), "choose specific")
 	testutil.MustNoErr(t, db.SetNodeBinTypes(grpID, []int64{bt}), "SetNodeBinTypes")
 	_, err = svc.SetMaintainLevel(grpID, bt, 2)
 	testutil.MustNoErr(t, err, "SetMaintainLevel again")
-	if got := db.GetNodeProperty(grpID, nodes.PropBinTypeMode); got != "specific" {
+	if got := db.GetNodeProperty(grpID, "bin_type_mode"); got != "specific" {
 		t.Errorf("bin_type_mode after a second level = %q, want the chosen %q", got, "specific")
 	}
 }

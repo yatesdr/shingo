@@ -629,6 +629,13 @@ func (r *GroupResolver) StoreFitsPaper(group, lane, slot *nodes.Node, payloadCod
 // child: the empties-only declaration and the declared level. Moved out of
 // ResolveStore unchanged so StoreFitsPaper asks the same two.
 func (r *GroupResolver) groupAdmitsStore(group *nodes.Node, payloadCode string, stated BinTypeStatement) error {
+	return r.groupAdmitsStoreVacating(group, nil, payloadCode, stated)
+}
+
+// groupAdmitsStoreVacating is groupAdmitsStore with the group counted as it will
+// stand once a committed lift has emptied vacated: its carriers leave the level
+// count. A nil vacated counts the group as it stands.
+func (r *GroupResolver) groupAdmitsStoreVacating(group, vacated *nodes.Node, payloadCode string, stated BinTypeStatement) error {
 	// ── MG4-1: THE LEVEL IS A CAP, AND THIS IS WHERE IT BINDS ───────────────
 	//
 	// A maintained group holds a declared number of empty carriers. The keeper
@@ -682,7 +689,7 @@ func (r *GroupResolver) groupAdmitsStore(group *nodes.Node, payloadCode string, 
 		return fmt.Errorf("payload %s cannot be stored in empties-only node group %s", payloadCode, group.Name)
 	}
 
-	if full, err := r.atDeclaredLevel(group, stated, levels); err != nil {
+	if full, err := r.atDeclaredLevel(group, vacated, stated, levels); err != nil {
 		return err
 	} else if full {
 		return &atLevelError{group: group.Name}
@@ -696,8 +703,8 @@ func (r *GroupResolver) groupAdmitsStore(group *nodes.Node, payloadCode string, 
 // answered "no available slot".
 //
 // THE RESOLVER'S OWN FENCES, NOT A COPY OF THEM. Enabled, dig-free, unclaimed by
-// anyone else, payloadAllowedAt, binTypeAllowed, the empties-only refusal and the
-// maintained level are all asked here, the same way ResolveStore asks them, so
+// anyone else, payloadAllowedAt and binTypeAllowed are asked here, and the
+// empties-only refusal and the maintained level through groupAdmitsStoreVacating, so
 // the vacated arm cannot admit a store the ordinary one would refuse for any
 // reason other than the bin standing there.
 //
@@ -713,23 +720,8 @@ func (r *GroupResolver) ResolveStoreVacated(group, child *nodes.Node, vacating [
 	stated BinTypeStatement, asker domain.DigAsker) (*ResolveResult, error) {
 	stated = r.settleBinType(stated, asker, group)
 	binTypeID := stated.TypeID()
-	levels, err := r.DB.ListMaintainLevels(group.ID)
-	if err != nil {
-		return nil, fmt.Errorf("read declared level for %s: %w", group.Name, err)
-	}
-	if payloadCode != "" && len(levels) > 0 {
-		return nil, fmt.Errorf("payload %s cannot be stored in empties-only node group %s", payloadCode, group.Name)
-	}
-	full, err := AtDeclaredLevel(levels, stated, func(code string, h domain.Height) (int, error) {
-		return r.DB.CountEmptyBinsOfTypeInGroupExcludingNode(code, group.ID, child.ID, h)
-	}, func(binTypeID int64) (int, bool, error) {
-		return r.DB.TopsAndBottomsWant(group.ID, binTypeID)
-	})
-	if err != nil {
-		return nil, fmt.Errorf("%s: %w", group.Name, err)
-	}
-	if full {
-		return nil, fmt.Errorf("no available slot in node group %s", group.Name)
+	if err := r.groupAdmitsStoreVacating(group, child, payloadCode, stated); err != nil {
+		return nil, err
 	}
 	children, err := r.DB.ListChildNodesUnlocked(group.ID, asker)
 	if err != nil {
@@ -1249,9 +1241,7 @@ func (r *GroupResolver) payloadAllowedAt(nodeID int64, payloadCode string) bool 
 // The asymmetry is a consequence of what the caller knows, not a policy choice,
 // and it disappears the moment MG4-2 gives the untyped path a derived type.
 //
-// A GROUP WITH NO DECLARED LEVEL IS NOT MAINTAINED, and this is a no-op for it —
-// which is every group in every plant today. The read is one query against a
-// table that is empty almost everywhere.
+// A GROUP WITH NO DECLARED LEVEL IS A PLAIN GROUP, and this is a no-op for it.
 //
 // A READ FAILURE REFUSES THE STORE rather than allowing it, and that direction
 // is chosen: allowing means overfilling a group past a cap somebody set, which
@@ -1262,8 +1252,11 @@ func (r *GroupResolver) payloadAllowedAt(nodeID int64, payloadCode string) bool 
 // The levels are READ BY THE CALLER and passed in, because ResolveStore needs
 // the same list one line earlier to decide whether the group is an empties bank
 // at all. One read, two questions.
-func (r *GroupResolver) atDeclaredLevel(group *nodes.Node, stated BinTypeStatement, levels []nodes.MaintainLevel) (bool, error) {
+func (r *GroupResolver) atDeclaredLevel(group, vacated *nodes.Node, stated BinTypeStatement, levels []nodes.MaintainLevel) (bool, error) {
 	full, err := AtDeclaredLevel(levels, stated, func(code string, h domain.Height) (int, error) {
+		if vacated != nil {
+			return r.DB.CountEmptyBinsOfTypeInGroupExcludingNode(code, group.ID, vacated.ID, h)
+		}
 		return r.DB.CountEmptyBinsOfTypeInGroup(code, group.ID, h)
 	}, func(binTypeID int64) (int, bool, error) {
 		return r.DB.TopsAndBottomsWant(group.ID, binTypeID)

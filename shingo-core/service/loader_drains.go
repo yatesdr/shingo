@@ -104,7 +104,7 @@ func (s *LoaderService) DrainAllowed(l loaders.Loader) bool {
 }
 
 // checkDrainLoop refuses an outbound destination, or its overflow destination
-// (a kanban's row or a plain group's property, store.OverflowTargetOf),
+// (nodes.OverflowGroupOf: a kanban's row or a plain group's property),
 // that is the inbound source, contains it or lies in it. A name that resolves
 // to nothing is not this check's question (checkInboundSource; an outbound is
 // not resolve-checked).
@@ -123,18 +123,7 @@ func (s *LoaderService) checkDrainLoop(inboundSource, outboundDest string) error
 	if err := s.drainLoop("the outbound destination", out, src); err != nil {
 		return err
 	}
-	target, err := s.db.OverflowTargetOf(out.ID)
-	if err != nil {
-		return fmt.Errorf("read the overflow of %s: %w", out.Name, err)
-	}
-	var over *nodes.Node
-	switch {
-	case target.NodeID != 0:
-		over, err = s.db.GetNode(target.NodeID)
-	case target.Name != "":
-		over, err = s.db.GetNodeByDotName(target.Name)
-	}
-	if err == nil && over != nil {
+	if over, _ := nodes.OverflowGroupOf(s.db, out, nil); over != nil {
 		if err := s.drainLoop("the outbound destination's overflow", over, src); err != nil {
 			return err
 		}

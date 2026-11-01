@@ -125,7 +125,7 @@ func TestFences_F1_OutsiderPullExcluded(t *testing.T) {
 		"binds outsiders, not the press the group serves.", outside, inside)
 }
 
-// ── F2: two maintained groups cannot drain each other ───────────────────────
+// ── F2: two strict kanbans cannot drain each other ───────────────────────
 
 func TestFences_F2_TwoGroupsCannotDrainEachOther(t *testing.T) {
 	t.Parallel()

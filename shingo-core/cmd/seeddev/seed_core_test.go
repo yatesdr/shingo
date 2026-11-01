@@ -259,11 +259,6 @@ func TestSeedCore_DemoPlant(t *testing.T) {
 	if got := db.GetNodeProperty(mgZone.ID, "overflow_destination"); got != "" {
 		t.Errorf("SYN_PRESS_EMPTIES overflow_destination property = %q; a kanban holds its overflow on its row", got)
 	}
-	// Explicit, never inherited: an ancestor's allowed-bins list must not silently
-	// govern a group that has just been told to hold two types.
-	if got := db.GetNodeProperty(mgZone.ID, "bin_type_mode"); got != "all" {
-		t.Errorf("SYN_PRESS_EMPTIES bin_type_mode = %q, want all", got)
-	}
 
 	levels, err := db.ListMaintainLevels(mgZone.ID)
 	if err != nil {

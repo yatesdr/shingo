@@ -194,7 +194,7 @@ func TestToteWant_ThePoolsStatements(t *testing.T) {
 // finds and a source the pool tier misses paid them after the pool, so they
 // are unchanged. A pool holding nothing never reached them and pays them now.
 const (
-	wantPoolFound  = 11
-	wantPoolMissed = 9
+	wantPoolFound  = 10
+	wantPoolMissed = 8
 	wantPoolDry    = 9
 )

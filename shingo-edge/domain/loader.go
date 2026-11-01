@@ -164,7 +164,7 @@ type Loader struct {
 	leavesBare         bool   // stage 1 of a two-stage unloader: its CLEAR leaves the cart bare (see LeavesBare)
 	takesBare          bool   // stage 2 of a two-stage unloader: its windows take stage 1's bare carts (see TakesBare)
 	autoPush           bool   // a freed window re-pulls this unloader's next full (see WithAutoPush)
-	pulledDirectly     bool   // stage 2 whose finished carts the process pulls off its windows (see PulledDirectly)
+	pulledDirectly     bool   // finished carts stay for the process to pull off its windows (see PulledDirectly)
 	boardHidesIdle     bool   // the board leaves off spots with nothing to do (see BoardHidesIdle)
 	boardShowsAllParts bool   // the board lists every part, not only the running style's (see BoardShowsAllParts)
 }
@@ -379,14 +379,14 @@ func WithAutoPush(on bool) LoaderOption {
 	return func(l *Loader) { l.autoPush = on }
 }
 
-// WithPulledDirectly marks a two-stage unloader's stage 2 whose finished carts
-// the process pulls straight off its windows (CoreLoader.PulledDirectly, owned
-// by Core's bin_loaders.pulled_directly). Not passing it is today's stage 2.
+// WithPulledDirectly marks a loader, any but a stage 1, whose finished carts the
+// process pulls straight off its windows (CoreLoader.PulledDirectly, owned by
+// Core's bin_loaders.pulled_directly).
 func WithPulledDirectly(on bool) LoaderOption {
 	return func(l *Loader) { l.pulledDirectly = on }
 }
 
-// PulledDirectly reports whether this stage 2's finished carts stay on its
+// PulledDirectly reports whether this loader's finished carts stay on its
 // windows for the process to pull: its CLEAR sends the cart nowhere, and the
 // board says the cart waits for the line.
 func (l *Loader) PulledDirectly() bool { return l.pulledDirectly }

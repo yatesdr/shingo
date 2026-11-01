@@ -45,7 +45,7 @@ type CoreLoader struct {
 	// re-pulls its next full. Core owns it (bin_loaders.auto_push); false is
 	// also what a row from a Core predating the field reads as.
 	AutoPush bool
-	// PulledDirectly: a two-stage unloader's stage 2 whose finished carts the
+	// PulledDirectly: a loader, any but a stage 1, whose finished carts the
 	// process pulls straight off its windows; the CLEAR there sends the cart
 	// nowhere. Core owns it (bin_loaders.pulled_directly); false is also what a
 	// row from a Core predating the field reads as.

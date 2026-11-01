@@ -83,12 +83,7 @@ type fakeFinderDB struct {
 	fencedGroups   map[int64]bool
 	fencedGroupErr error
 
-	// supportingGroups: process node name -> the maintained groups serving it.
-	// nodeUnder: bin node id -> the group it sits under, if any.
-	supportingGroups    map[string][]int64
-	supportingGroupsErr error
-	nodeUnder           map[int64]int64
-	effectiveBinTypes   map[int64][]*bins.BinType
+	effectiveBinTypes map[int64][]*bins.BinType
 
 	// binTypeRule is payload_bin_types by payload code — which carriers a PART
 	// may travel in, the mirror of effectiveBinTypes' "what fits at a node". An
@@ -156,8 +151,6 @@ func newFakeFinderDB() *fakeFinderDB {
 		maintainedType:    map[string]string{},
 		maintainedGroup:   map[string]string{},
 		fencedGroups:      map[int64]bool{},
-		supportingGroups:  map[string][]int64{},
-		nodeUnder:         map[int64]int64{},
 		effectiveBinTypes: map[int64][]*bins.BinType{},
 	}
 }
@@ -254,10 +247,6 @@ func (f *fakeFinderDB) FindEmptyBinOfType(binTypeCode, _ string, _ int64, fence 
 	return nil, sql.ErrNoRows
 }
 
-// supportingGroups / nodeUnder stand for the MG3-5 audit's two reads. Recorded
-// rather than stubbed to nothing so the audit's SILENCE is testable: the line
-// must not fire for a press no group serves, and must not fire when the carrier
-// came from inside one that does.
 // effectiveBinTypes is MG3-4's input: what physically fits at a position.
 // Absent means "nobody has said", which is every position in every plant today
 // and must leave the choice alone.
@@ -277,22 +266,6 @@ func (f *fakeFinderDB) LoadBinTypeRule(payloadCode string) (domain.BinTypeRule, 
 		return domain.BinTypeRule{}, nil
 	}
 	return domain.NewBinTypeRule(ids, nil), nil
-}
-
-func (f *fakeFinderDB) MaintainedGroupsSupporting(processNode string) ([]int64, error) {
-	if f.supportingGroupsErr != nil {
-		return nil, f.supportingGroupsErr
-	}
-	return f.supportingGroups[processNode], nil
-}
-
-func (f *fakeFinderDB) NodeIsUnderAny(nodeID int64, roots []int64) (bool, error) {
-	for _, r := range roots {
-		if f.nodeUnder[nodeID] == r {
-			return true, nil
-		}
-	}
-	return false, nil
 }
 
 func (f *fakeFinderDB) GroupFencesAsker(groupNodeID int64, _ string) (bool, error) {

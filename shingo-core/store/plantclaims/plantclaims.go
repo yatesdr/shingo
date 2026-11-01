@@ -295,10 +295,8 @@ type ProcessNodeOption struct {
 //
 // It exists so a config screen can offer processes and PERSIST NODES. That
 // asymmetry is the round-1 ruling and it is not cosmetic: a process is what a
-// person points at, but a claim lives on the Edge and Core cannot read one at
-// decision time — so a rule stored as "process P" would have nothing to evaluate
-// against. Resolving here, at config time, is the only point where both halves
-// are in hand.
+// person points at, and what the fence and the door read is nodes. Resolving here,
+// at config time, is one read of the claim mirror for the whole save.
 //
 // The consequence is stated rather than hidden: a claim set that changes AFTER a
 // save leaves the stored node set describing the old topology. That is the same
