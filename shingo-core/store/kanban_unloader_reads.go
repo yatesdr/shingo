@@ -10,7 +10,7 @@ import (
 	"shingocore/store/nodes"
 )
 
-// kanban_windows.go — the kanban's end of an unloader: ConsumeWindowsAt asks which
+// kanban_unloader_reads.go — the kanban's end of an unloader: ConsumeWindowsAt asks which
 // group a window's cart goes back to, this asks which windows send carts back to a
 // group. The surplus arm's reads (engine/kanban_surplus.go).
 

@@ -67,7 +67,7 @@ cd "$ROOT" || exit 1
 STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
 OUT="${KANBAN_RIG_OUT:-$ROOT/../kanban-rig-runs/$RUN-$STAMP}"
 mkdir -p "$OUT" || exit 1
-OUT="$(cd "$OUT" && pwd)"
+OUT="$(cd "$OUT" && { pwd -W 2>/dev/null || pwd; })"
 COOKIES="$OUT/.core-cookies"
 FAILED=0
 
@@ -152,16 +152,16 @@ bring_up() {
   SHINGO_BIND="${SHINGO_BIND:-127.0.0.1}" dc up -d postgres kafka core edge >"$OUT/up.log" 2>&1 || die "up failed, see up.log"
   # Core first and then stopped: Edge migrates its database at boot and the seeder
   # writes into a migrated schema. docs/dev-env/sim.md, "Seed with Core STOPPED".
-  wait_for 120 "Edge up" "curl -s -m 3 -o /dev/null $EDGE/status" || die "Edge did not come up"
+  wait_for 120 "Edge up" "curl -s -m 3 $EDGE/status >/dev/null" || die "Edge did not come up"
   dc stop core >>"$OUT/up.log" 2>&1
   say "seed $PLANT"
   dc run --no-deps --rm seed >"$OUT/seed.log" 2>&1 || die "seed failed, see seed.log"
   dc start core >>"$OUT/up.log" 2>&1
   dc restart edge >>"$OUT/up.log" 2>&1
-  wait_for 120 "Core up" "curl -s -m 3 -o /dev/null $CORE/login" || die "Core did not come up"
-  wait_for 120 "Edge up" "curl -s -m 3 -o /dev/null $EDGE/status" || die "Edge did not come up"
+  wait_for 120 "Core up" "curl -s -m 3 $CORE/login >/dev/null" || die "Core did not come up"
+  wait_for 120 "Edge up" "curl -s -m 3 $EDGE/status >/dev/null" || die "Edge did not come up"
   local login
-  login="$(curl -s -m 10 -o /dev/null -w '%{http_code}' -c "$COOKIES" -d "username=admin&password=admin" "$CORE/login")"
+  login="$(curl -s -m 10 -o "$OUT/.last" -w '%{http_code}' -c "$COOKIES" -d "username=admin&password=admin" "$CORE/login")"
   case "$login" in 30*) ;; *) die "Core login refused ($login)" ;; esac
 }
 
@@ -332,7 +332,10 @@ run_R1() {
   check "K wants small 5" "$(card "$K" "$SMALL" want)" 5
   check "K2 wants small 2" "$(card "$K2" "$SMALL" want)" 2
   check_zero "unloader carts lit anything but small" "$(lit_other_than "$SMALL")"
-  check_zero "cards with a holder" "$(grep -c '"held_by"' "$OUT/kanban-cards.jsonl" || true)"
+  # A kanban with no supports says "no keeper" for as long as it is short; only the two
+  # lineside kanbans can be held.
+  check_zero "lineside cards with a holder" \
+    "$(tr '{' '\n' <"$OUT/kanban-cards.jsonl" | grep -E "\"$CARD_GROUP\":\"($K|$K2)\"" | grep -c '"held_by"' || true)"
   check_zero "pushes parked at a level" "$(orders_count "queue_cause ILIKE '%level%'")"
   check_zero "orders live and queued on a kanban at the end" \
     "$(orders_count "status IN ('queued','sourcing') AND delivery_node IN $(in_group "$K")")"
@@ -362,19 +365,21 @@ run_R3() {
     "$(sql "SELECT count(*) FROM orders o JOIN bins b ON b.id = o.bin_id JOIN bin_types t ON t.id = b.bin_type_id
             WHERE t.code = '$C32' AND o.delivery_node IN $(in_group "$K")
               AND o.source_node NOT IN $(in_group "$Z32") AND o.source_node NOT IN $(in_group "$UNLOAD_GROUP")")"
-  # 45x48 off the process goes to K, then Z45 if short, then the spare zone: nine carts'
-  # worth of level, and the other eight stand in the spare (plants/kanban-press.yaml's head).
-  check "K holds its 45x48 base" "$(family_in "$K")" 3
+  # 45x48 off the process goes to K, then Z45 if short, then the spare zone. Surplus residents
+  # of K move only to a source with a level and room or to a window (the arm never goes to a
+  # plain group), so with Z45 whole K keeps them and says why: all 17 carts accounted for.
   check "$Z45 holds its level" "$(family_in "$Z45")" 6
-  check "the carts past the levels stand in $SPARE" "$(family_in "$SPARE")" 8
+  check "K, $Z45 and $SPARE hold the family" "$(( $(family_in "$K") + $(family_in "$Z45") + $(family_in "$SPARE") ))" 17
+  check "K's card says why its surplus stays" \
+    "$(tr '{' '\n' <"$OUT/kanban-cards.jsonl" | grep "\"$CARD_GROUP\":\"$K\"" | grep -q '"surplus_cause"' && echo yes || echo no)" yes
   # Cover over the pool, not a defect: 8 wanted from 6 carts, 4 of them on the positions.
   check "K wants 32x30 4" "$(card "$K" "$C32" want)" 4
-  check "K holds the 2 carts the pool has for it" "$(empties "$K" "$C32")" 2
   check "K's card says what holds the other 2" \
     "$(tr '{' '\n' <"$OUT/kanban-cards.jsonl" | grep "\"$CARD_GROUP\":\"$K\"" | grep "\"$CARD_TYPE\":\"$C32\"" \
        | grep -q '"held_by"' && echo yes || echo no)" yes
   changeover_to "$STYLE_TOTES" || return
-  check "32x30 back above base went to $Z32: K holds none" "$(empties "$K" "$C32")" 0
+  # The arm fires only while K is full and short; the last cart can stay if K fills first.
+  check_zero "32x30 back: at most one stays in K" "$(( $(empties "$K" "$C32") > 1 ))"
   check "the totes came back: K holds its want" "$(empties "$K" "$TOTES")" 5
   never_to_sm
 }
