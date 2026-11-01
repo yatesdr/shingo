@@ -545,3 +545,27 @@ func TestBinNodes_TheWatchCarriesEveryProcessNode(t *testing.T) {
 		t.Error("a station's own list carries another process's node")
 	}
 }
+
+// TestAssignmentAt_CarriesCoresWords: the group a choice is for and "nothing is short"
+// reach the tile as Core said them, under the keys the panel and the rig's driver read.
+func TestAssignmentAt_CarriesCoresWords(t *testing.T) {
+	t.Parallel()
+	groups := []protocol.NodeBinsGroup{{Group: "K", Assignments: []protocol.NodeBinsAssignment{
+		{Node: "U1", BinType: "SMALL", Group: "ZONE"},
+		{Node: "U2", NoneShort: true},
+		{Node: "U3", BinType: "SMALL"},
+	}}}
+	for node, want := range map[string]string{
+		"U1": `{"bin_type":"SMALL","group":"ZONE"}`,
+		"U2": `{"bin_type":"","none_short":true}`,
+		"U3": `{"bin_type":"SMALL"}`,
+	} {
+		got, err := json.Marshal(AssignmentAt(groups, node))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(got) != want {
+			t.Errorf("%s: tile assignment %s, want %s", node, got, want)
+		}
+	}
+}

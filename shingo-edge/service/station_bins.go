@@ -547,7 +547,7 @@ func AssignmentAt(groups []protocol.NodeBinsGroup, node string) *domain.TileAssi
 	for _, g := range groups {
 		for _, a := range g.Assignments {
 			if a.Node == node {
-				out := &domain.TileAssignment{BinType: a.BinType}
+				out := &domain.TileAssignment{BinType: a.BinType, Group: a.Group, NoneShort: a.NoneShort}
 				if a.Layers != nil {
 					layers := *a.Layers
 					out.Layers = &layers

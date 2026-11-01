@@ -213,3 +213,20 @@ func TestSimOperator_TapSettingIsTheStations(t *testing.T) {
 		t.Errorf("an unknown setting reads %q, want the plain CLEAR", got)
 	}
 }
+
+// TestLitChoice_NothingShortLightsNothing: the operator reads the assignment as the
+// panel does (clearHighlight), so an empty nothing is short of is PUSH EMPTY.
+func TestLitChoice_NothingShortLightsNothing(t *testing.T) {
+	t.Parallel()
+	if got := litChoice(&domain.TileAssignment{NoneShort: true}); got != nil {
+		t.Errorf("litChoice(none short) = %+v, want nil", got)
+	}
+	big := &domain.TileAssignment{BinType: "BIG-45", Group: "ZONE-45"}
+	if got := litChoice(big); got != big {
+		t.Errorf("litChoice(a source's type) = %+v, want it lit", got)
+	}
+	tap := chooseUnloaderTap(config.SimTapLit, false, litChoice(&domain.TileAssignment{NoneShort: true}))
+	if !tap.pushEmpty {
+		t.Errorf("an empty nothing is short of: tap %+v, want PUSH EMPTY", tap)
+	}
+}

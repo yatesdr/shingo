@@ -5,6 +5,8 @@ import (
 
 	"shingo/protocol"
 	"shingocore/dispatch"
+	"shingocore/dispatch/binresolver"
+	"shingocore/dispatch/plan"
 	"shingocore/store/nodes"
 	"shingocore/store/orders"
 )
@@ -151,4 +153,11 @@ func TestScanner_ComplexOrder_BypassesCapacityGate(t *testing.T) {
 	if len(f.queueReasons) != 0 {
 		t.Errorf("queueReasons = %v, want none (complex orders bypass the scanner's capacity gate)", f.queueReasons)
 	}
+}
+
+func (s *stubDispatcher) ChooseWindowPush(*orders.Order, *nodes.Node, plan.PushRefusals) (plan.PushChoice, binresolver.BinTypeStatement) {
+	return plan.PushChoice{}, binresolver.BinTypeStatement{}
+}
+func (s *stubDispatcher) ReserveChosenPush(o *orders.Order, _ *nodes.Node) dispatch.StorageDropoff {
+	return s.ReserveStorageDropoff(o)
 }

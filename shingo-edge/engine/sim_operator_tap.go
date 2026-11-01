@@ -31,8 +31,11 @@ type unloaderTap struct {
 
 // litChoice is the choice the panel lights for an assignment, nil for none. The
 // one place an assignment is read as lit: an assignment that says nothing is
-// short lights nothing, and that reading belongs here.
+// short lights nothing (the panel's clearHighlight says the same).
 func litChoice(a *domain.TileAssignment) *domain.TileAssignment {
+	if a == nil || a.NoneShort {
+		return nil
+	}
 	return a
 }
 

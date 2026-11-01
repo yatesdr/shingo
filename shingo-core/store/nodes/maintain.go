@@ -79,8 +79,8 @@ const (
 // declared number: the modal's read is the declared one.
 //
 // OverflowNodeID and OverflowNode are this type's own overflow, nil and blank
-// when the type takes the kanban's default. Read back here for the settings
-// modal; the doors reach them in the repayment work.
+// when the type takes the kanban's default: the settings modal's, and the doors'
+// through PerTypeOverflowTargetOf and the door's one read.
 type MaintainLevel struct {
 	GroupNodeID    int64  `json:"group_node_id"`
 	BinTypeID      int64  `json:"bin_type_id"`

@@ -291,10 +291,11 @@ func TestOverflow_AParkedPushIsNotPlacedOverItsTypesLevel(t *testing.T) {
 // one that parked it, and pins the cost's SHAPE, not its numbers: the pass's own
 // overhead (P, what a pass costs an order waiting on an occupied line beyond its
 // gate), the capacity gate on the order's group (G) and on the overflow (O),
-// each measured here by calling dispatch.CheckDropoffCapacity alone. A parked
+// each measured here by calling the gate alone, the overflow's with the cart stated
+// because the arm hands on what the group's gate read of it. A parked
 // order at a group that names no overflow pays P + G + 1: the one read of the
-// group's overflow name. With one named and full, P + G + 1 + O: the overflow's
-// own gate, and no resolve. An order waiting on any other cause never asks.
+// overflow's name for the cart's type. With one named and full, P + G + 1 + O: the
+// overflow's own gate, and no resolve. An order waiting on any other cause never asks.
 // Before the shape (edb48c1e), the parked order paid the group's resolve every
 // pass (+8) and, with an overflow named, the overflow's (+12).
 func TestOverflow_OnlyAParkedPushPaysPerPass(t *testing.T) {
@@ -327,14 +328,13 @@ func TestOverflow_OnlyAParkedPushPaysPerPass(t *testing.T) {
 		var c cost
 		c.pass = counter.Count()
 		t.Logf("STATEMENTS: %s: %d per pass\n%s", pfx, c.pass, testutil.StatementBreakdown(counter.Statements()))
-		gate := func(name string) int64 {
-			counter.Reset()
-			dispatch.CheckDropoffCapacity(cdb, name, fx.push.ID)
-			return counter.Count()
-		}
-		c.gate = gate(dest)
+		counter.Reset()
+		_, block := dispatch.CheckDropoffCapacity(cdb, dest, fx.push.ID)
+		c.gate = counter.Count()
 		if withOverflow {
-			c.overflow = gate(fx.overflow)
+			counter.Reset()
+			dispatch.CheckDropoffCapacityForType(cdb, fx.overflow, fx.push.ID, block.Stated)
+			c.overflow = counter.Count()
 		}
 		return c
 	}

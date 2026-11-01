@@ -64,3 +64,13 @@ func KanbanCover(t testing.TB, db *store.DB, nodeID int64, cover int) {
 	t.Helper()
 	saveKanban(t, db, store.KanbanChange{NodeID: nodeID, EnsureRow: true, Cover: &cover})
 }
+
+// KanbanSources sets a kanban's sources, in rank order, its row made if absent; none
+// clears them.
+func KanbanSources(t testing.TB, db *store.DB, nodeID int64, sourceIDs ...int64) {
+	t.Helper()
+	if sourceIDs == nil {
+		sourceIDs = []int64{}
+	}
+	saveKanban(t, db, store.KanbanChange{NodeID: nodeID, EnsureRow: true, Sources: &sourceIDs})
+}

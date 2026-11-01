@@ -1,6 +1,7 @@
 package plan
 
 import (
+	"errors"
 	"fmt"
 
 	"shingocore/dispatch/binresolver"
@@ -151,7 +152,7 @@ func (p *Planner) ChooseDrop(group *nodes.Node, need DropNeed) (DropChoice, erro
 				first.Alternatives = choices[1:]
 				return first, nil
 			}
-			if CapacityShape(rErr) != CapacitySlot {
+			if CapacityShape(rErr) != CapacitySlot || errors.Is(rErr, binresolver.ErrAtDeclaredLevel) {
 				return DropChoice{}, rErr
 			}
 			if choice, ok := p.paperChoice(group, need, exclude); ok {
@@ -184,7 +185,9 @@ func (p *Planner) ChooseDrop(group *nodes.Node, need DropNeed) (DropChoice, erro
 	if err == nil {
 		return DropChoice{Slot: res.Node, LaneID: laneOfChild(group, res.Node)}, nil
 	}
-	if CapacityShape(err) != CapacitySlot {
+	// A GROUP AT ITS LEVEL OFFERS NO PAPER: StoreFitsPaper asks the same level of a
+	// paper slot and refuses it, so reading the paper could change no answer.
+	if CapacityShape(err) != CapacitySlot || errors.Is(err, binresolver.ErrAtDeclaredLevel) {
 		return DropChoice{}, err
 	}
 	if choice, ok := p.paperChoice(group, need, exclude); ok {

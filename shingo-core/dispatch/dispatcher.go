@@ -140,6 +140,7 @@ func NewDispatcher(db *store.DB, backend fleet.Backend, emitter Emitter, station
 	// two finder instances would be two seams.
 	d.finder = NewSourceFinder(db, resolver, d.dbg)
 	d.pure = plan.NewPlanner(db, d.finder.picker, resolver, d.dbg)
+	d.pure.SetSlotViews(func(groupID int64, l *nodes.DoorLine) plan.Reader { return db.DoorReads(groupID, l) })
 	d.lifecycle.pure = d.pure
 	d.planner = newPlanningService(db, resolver, d.finder, d.laneLock, d.dbg, d.createDigCompound, d.NotifyWaitChanged)
 	d.planner.pure = d.pure

@@ -121,4 +121,14 @@ type GroupLineAsk struct {
 	Group   *nodes.Node
 	Levels  []MaintainLevel
 	Windows []protocol.NodeBinsRow
+	// Sources are the group's sources in rank order, each with its levels: none for
+	// one that declares none, which is short of nothing.
+	Sources []GroupLineSource
+}
+
+// GroupLineSource is one source of a kanban an unloader's walk asks.
+type GroupLineSource struct {
+	ID     int64
+	Name   string
+	Levels []MaintainLevel
 }

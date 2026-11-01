@@ -10,6 +10,7 @@ package dispatch
 import (
 	"shingocore/dispatch/binresolver"
 	"shingocore/dispatch/plan"
+	"shingocore/store/nodes"
 )
 
 // CapacityDB is the gate's read interface; see plan.CapacityDB.
@@ -23,6 +24,8 @@ type CapacityDB = plan.CapacityDB
 type CapacityBlock struct {
 	Cause  QueueCause
 	Params QueueParams
+	// Stated is the cart as a group's gate settled it (plan.CapacityVerdict.Stated).
+	Stated binresolver.BinTypeStatement
 }
 
 // CheckDropoffCapacity returns (false, zero) when the named delivery node can
@@ -38,10 +41,22 @@ type CapacityBlock struct {
 // 0 when the caller has no order of its own (previews).
 func CheckDropoffCapacity(db CapacityDB, deliveryNode string, excludeOrderID int64) (blocked bool, block CapacityBlock) {
 	blocked, v := plan.DropoffCapacity(db, deliveryNode, excludeOrderID)
+	return capacityBlockOf(blocked, v)
+}
+
+func capacityBlockOf(blocked bool, v plan.CapacityVerdict) (bool, CapacityBlock) {
 	if !blocked {
 		return false, CapacityBlock{}
 	}
-	return true, CapacityBlock{Cause: queueCauseOf(v.Cause), Params: queueParamsOf(v.Params)}
+	return true, CapacityBlock{Cause: queueCauseOf(v.Cause), Params: queueParamsOf(v.Params), Stated: v.Stated}
+}
+
+// CheckDropoffCapacityAt is CheckDropoffCapacityForType for a caller holding the
+// node as well as the cart.
+func CheckDropoffCapacityAt(db CapacityDB, node *nodes.Node, deliveryNode string, excludeOrderID int64,
+	stated binresolver.BinTypeStatement) (blocked bool, block CapacityBlock) {
+	blocked, v := plan.DropoffCapacityAt(db, node, deliveryNode, excludeOrderID, stated)
+	return capacityBlockOf(blocked, v)
 }
 
 // CheckDropoffCapacityForType is CheckDropoffCapacity for a caller that holds
@@ -49,8 +64,5 @@ func CheckDropoffCapacity(db CapacityDB, deliveryNode string, excludeOrderID int
 func CheckDropoffCapacityForType(db CapacityDB, deliveryNode string, excludeOrderID int64,
 	stated binresolver.BinTypeStatement) (blocked bool, block CapacityBlock) {
 	blocked, v := plan.DropoffCapacityForType(db, deliveryNode, excludeOrderID, stated)
-	if !blocked {
-		return false, CapacityBlock{}
-	}
-	return true, CapacityBlock{Cause: queueCauseOf(v.Cause), Params: queueParamsOf(v.Params)}
+	return capacityBlockOf(blocked, v)
 }

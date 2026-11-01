@@ -69,19 +69,22 @@ function panel(fn) {
 }
 const plain = v => JSON.parse(JSON.stringify(v));
 
-// ── a lit type with no button lights nothing, and adds no button ──
+// ── the lit choice is always offered: a whole kanban's lit type is a source's, and may be
+// none of this loader's parts (the panels share clearChoices) ──
 view = {};
 let p = panel(function () { ctx.confirmPushEmpty(1, ['TOTE-S'], false, { bin_type: 'TOTE-L' }); });
-eq(p.buttons, ['PUSH EMPTY', 'PUSH AS TOTE-S', 'CANCEL'], 'PUSH AS: the lit type gets no button of its own');
-eq(p.lit, [], 'PUSH AS: a lit type with no button lights nothing');
+eq(p.buttons, ['PUSH EMPTY', 'PUSH AS TOTE-S', 'PUSH AS TOTE-L', 'CANCEL'], 'PUSH AS: the lit type is appended');
+eq(p.lit, ['PUSH AS TOTE-L'], 'PUSH AS: and lit');
 p = panel(function () { ctx.confirmUnloadSwap(1, ['TOTE-S', 'RACK-C'], 0, false, { bin_type: 'TOTE-L' }); });
-eq(p.buttons, ['TOTE-S', 'RACK-C', 'CANCEL'], 'CLEAR: the lit type gets no button of its own');
-eq(p.lit, [], 'CLEAR: a lit type with no button lights nothing');
+eq(p.buttons, ['TOTE-S', 'RACK-C', 'TOTE-L', 'CANCEL'], 'CLEAR: the lit type is appended');
+eq(p.lit, ['TOTE-L'], 'CLEAR: and lit');
 p = panel(function () { ctx.confirmPushEmpty(1, ['TOTE-S'], false, { bin_type: 'TOTE-S', layers: 3 }); });
-eq(p.buttons, ['PUSH EMPTY', 'PUSH AS TOTE-S', 'CANCEL'], 'a lit height the group does not want gets no button');
-eq(p.lit, [], 'a lit height the group does not want lights nothing, not even its plain type');
+eq(p.buttons, ['PUSH EMPTY', 'PUSH AS TOTE-S', 'PUSH AS TOTE-S · 3 high', 'CANCEL'], 'a lit height is appended with its height');
+eq(p.lit, ['PUSH AS TOTE-S · 3 high'], 'and it alone is lit');
 p = panel(function () { ctx.confirmPushEmpty(1, [], false, { bin_type: 'TOTE-L' }); });
-eq(p.buttons, ['PUSH EMPTY', 'CANCEL'], 'no carriers: nothing is added for the lit type');
+eq(p.buttons, ['PUSH EMPTY', 'PUSH AS TOTE-L', 'CANCEL'], 'no carriers: the lit type is still offered');
+p = panel(function () { ctx.confirmPushEmpty(1, ['TOTE-S'], false, null); });
+eq(p.buttons, ['PUSH EMPTY', 'PUSH AS TOTE-S', 'CANCEL'], 'nothing lit: nothing appended, PUSH EMPTY stays');
 
 // ── clearChoices: the cart's floor bounds the carriers, as it bounds Core's walk ──
 const floors = { floor: { 'TOTE-S': '45x48', 'KD-S': '45x48', 'TOTE-L': '30x32' } };
@@ -114,12 +117,14 @@ p = panel(function () { ctx.confirmUnloadSwap(1, ['TOTE-S', 'TOTE-L'], 0, false,
 eq(p.buttons, ['CONFIRM SWAP', 'CANCEL'], 'CLEAR: one type left on the floor is the one-tap auto-fill');
 view = {};
 
-// ── clearHighlight's fall-through with no assignment type ──
+// ── clearHighlight: nothing short lights nothing, before like for like ──
 const cart = { bin_state: { occupied: true, bin_type_code: 'TOTE-S' } };
-eq(plain(ctx.clearHighlight(Object.assign({ assignment: { none_short: true } }, cart), [])), { bin_type: 'TOTE-S' },
-    'an assignment naming no type falls through to like for like; no none_short is read');
+eq(ctx.clearHighlight(Object.assign({ assignment: { none_short: true } }, cart), []), null,
+    'no group is short of this cart: nothing lit, not like for like');
+eq(plain(ctx.clearHighlight(Object.assign({ assignment: {} }, cart), [])), { bin_type: 'TOTE-S' },
+    'an assignment naming nothing still falls through to like for like');
 eq(plain(ctx.clearHighlight(Object.assign({ assignment: { bin_type: 'TOTE-L', group: 'G2' } }, cart), [])), { bin_type: 'TOTE-L' },
-    'an assignment lights its type and carries no group');
+    'an assignment lights its type; the group is words on the card and on no choice');
 
 // ── carriersOf: the tile's list as Core sent it ──
 eq(plain(ctx.carriersOf({ loader: { carriers: ['TOTE-S', 'RACK-C'] } })), ['TOTE-S', 'RACK-C'], 'carriersOf reads the tile\'s list');

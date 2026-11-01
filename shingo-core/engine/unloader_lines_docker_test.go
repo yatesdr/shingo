@@ -171,6 +171,7 @@ func TestUnloaderGroupLines_HeightsCountOnAnExactMultiple(t *testing.T) {
 		},
 		Assignments: []protocol.NodeBinsAssignment{
 			{Node: "W1", BinType: "TOTE-L", Layers: intp(3)}, {Node: "W2", BinType: "TOTE-L"},
+			{Node: "W3", NoneShort: true},
 		},
 	}
 	if !reflect.DeepEqual(got, want) {
@@ -274,7 +275,7 @@ func TestUnloaderGroupLines_CountsAreTheKeepers(t *testing.T) {
 	got, err := eng.UnloaderGroupLines([]store.GroupLineAsk{{Group: grp, Levels: levels,
 		Windows: []protocol.NodeBinsRow{cart("W1", "OTHER-T", true)}}})
 	testutil.MustNoErr(t, err, "UnloaderGroupLines")
-	assigned := len(got[0].Assignments) == 1
+	assigned := len(got[0].Assignments) == 1 && !got[0].Assignments[0].NoneShort
 	if assigned != (st.Gap > 0) {
 		t.Errorf("keeper gap %d (resident %d asked %d coming %d), line assigned %v: the two disagree",
 			st.Gap, st.Resident, st.Asked, st.Coming, got[0].Assignments)

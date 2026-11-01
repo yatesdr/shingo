@@ -728,7 +728,7 @@ func (d *Dispatcher) AdmitCoreAsk(spec CoreAskSpec) (*orders.Order, error) {
 	// another. No pick rides the row: the scanner picks the carrier, as it
 	// always has for a Core ask. The station is projected the order below, so
 	// it has a row for it.
-	if lerr := d.lifecycle.admit(order, func() error {
+	if lerr := d.lifecycle.admit(order, nil, func() error {
 		window, err := d.db.GetNodeByDotName(order.DeliveryNode)
 		if err != nil {
 			return fmt.Errorf("read the ask's window %q: %w", order.DeliveryNode, err)

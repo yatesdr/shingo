@@ -12,6 +12,8 @@ import (
 	"shingo/protocol/clock"
 	"shingo/protocol/lockcheck"
 	"shingocore/dispatch"
+	"shingocore/dispatch/binresolver"
+	"shingocore/dispatch/plan"
 	"shingocore/domain"
 	"shingocore/internal/lockorder"
 	"shingocore/service"
@@ -51,11 +53,14 @@ type Scanner struct {
 	// askedThisPass is the orders this RunOnce has asked and not dispatched,
 	// guarded by scanMu; nil outside a RunOnce (AcquireOne asks once anyway).
 	askedThisPass map[int64]bool
-	// overflowRefusedThisPass is the groups whose overflow this RunOnce has asked
+	// pushRefusedThisPass is the (group, type) resolves this RunOnce found no slot in,
+	// shared by every window's push it asks (plan.PushRefusals); nil outside a RunOnce.
+	pushRefusedThisPass plan.PushRefusals
+	// overflowRefusedThisPass is the (group, type)s whose overflow this RunOnce has asked
 	// for an order parked on their room and been refused, or that name none
 	// (overflowsWhileParked), guarded by scanMu; nil outside a RunOnce. Every
 	// other order parked on the same group shares the answer.
-	overflowRefusedThisPass map[string]bool
+	overflowRefusedThisPass map[overflowAsk]bool
 
 	triggerMu lockcheck.Mutex[lockorder.ScanTrigger]
 	pending   bool // coalesce triggers during a scan
@@ -117,8 +122,9 @@ func (s *Scanner) RunOnce() int {
 	// cause. Every trigger also starts a fresh pass of its own
 	// (engine.triggerFulfillment), so nothing waits on this rerun to see it.
 	s.askedThisPass = map[int64]bool{}
-	s.overflowRefusedThisPass = map[string]bool{}
-	defer func() { s.askedThisPass, s.overflowRefusedThisPass = nil, nil }()
+	s.overflowRefusedThisPass = map[overflowAsk]bool{}
+	s.pushRefusedThisPass = plan.PushRefusals{}
+	defer func() { s.askedThisPass, s.overflowRefusedThisPass, s.pushRefusedThisPass = nil, nil, nil }()
 
 	fulfilled := s.scan()
 
@@ -279,42 +285,93 @@ func (s *Scanner) tryFulfill(order *orders.Order) bool {
 	return false
 }
 
+// overflowAsk keys a pass's overflow refusals: the group an order is parked on and
+// the type it carries. A kanban's overflow is per type, so one type's refusal says
+// nothing of another's; the group and the type name the target, so the memo saves the
+// read that would name it.
+type overflowAsk struct {
+	group string
+	typ   int64
+}
+
 // overflowsWhileParked is MG6-1 for an order the capacity gate parks on its
 // group's room (at its level, or full), and reports whether the order now holds
 // a drop in the group's overflow, so the acquire goes on to it. Every order here
 // is one no robot has (the acquiring set), and no other order pays for the ask.
+// A window's push never comes here: it took its one chooser in the gate arm above
+// (windowPushArm), sources before overflow. This is the cap's path, for every other
+// pusher.
 //
-// WHAT A GROUP'S PARKED ORDERS PAY PER PASS. One read, the group's overflow
-// name; a group that names none (or names itself) stops there. With one named,
-// the overflow's own capacity gate (the same predicate the resolver keeps to),
-// and only on a pass it has room the reserve, whose resolve takes the overflow
-// as intake does and is the one re-aim. A refusal anywhere leaves the order
-// aimed at its group, to park under the gate's cause.
+// WHAT A GROUP'S PARKED ORDERS PAY PER PASS. One read, the overflow of the group
+// for the cart the gate settled; a group that names none (or names itself) stops
+// there. With one named, the overflow's own capacity gate (the same predicate the
+// resolver keeps to), and only on a pass it has room the reserve, whose resolve takes
+// the overflow as intake does and is the one re-aim. A refusal anywhere leaves the
+// order aimed at its group, to park under the gate's cause.
 //
-// ONCE PER GROUP PER PASS, NOT PER ORDER. A refusal is the pass's answer for
-// every order parked on the group (overflowRefusedThisPass): the gate admits a
-// lane group's free positions where the resolve needs an admissible lane slot,
-// so on SYN_MARKET the refusal is the reserve's, and N parked orders paid it N
-// times. A take is not shared: the next order asks again, as the overflow may
-// have room for it too.
-func (s *Scanner) overflowsWhileParked(order *orders.Order, cause dispatch.QueueCause) bool {
-	if cause != dispatch.CauseNGRPAtLevel && cause != dispatch.CauseNGRPFull {
+// ONCE PER (GROUP, TYPE) PER PASS, NOT PER ORDER. A refusal is the pass's answer for
+// every order of the type parked on the group (overflowRefusedThisPass): the gate
+// admits a lane group's free positions where the resolve needs an admissible lane
+// slot, so on SYN_MARKET the refusal is the reserve's, and N parked orders paid it N
+// times. A take is not shared: the next order asks again, as the overflow may have
+// room for it too.
+func (s *Scanner) overflowsWhileParked(order *orders.Order, block dispatch.CapacityBlock) bool {
+	if block.Cause != dispatch.CauseNGRPAtLevel && block.Cause != dispatch.CauseNGRPFull {
 		return false
 	}
-	group := order.DeliveryNode
-	if s.overflowRefusedThisPass[group] {
+	ask := overflowAsk{group: order.DeliveryNode}
+	if id := block.Stated.TypeID(); id != nil {
+		ask.typ = *id
+	}
+	if s.overflowRefusedThisPass[ask] {
 		return false
 	}
-	overflow := s.db.OverflowNameOf(group)
-	took := overflow != "" && overflow != group
+	overflow := s.db.OverflowNameOf(ask.group, ask.typ)
+	took := overflow != "" && overflow != ask.group
 	if took {
-		blocked, _ := dispatch.CheckDropoffCapacity(s.db, overflow, order.ID)
+		blocked, _ := dispatch.CheckDropoffCapacityForType(s.db, overflow, order.ID, block.Stated)
 		took = !blocked && !s.dispatcher.ReserveStorageDropoff(order).Refused()
 	}
 	if !took && s.overflowRefusedThisPass != nil {
-		s.overflowRefusedThisPass[group] = true
+		s.overflowRefusedThisPass[ask] = true
 	}
 	return took
+}
+
+// windowPushArm is the gate arm for a push off an unloader's window (the shape:
+// dispatch.WindowPushShaped; the rest the chooser's one statement asks). A push is
+// decided on Short, so it asks the chooser in the capacity gate's place: the gate is
+// the cap, and it would admit a push whose gap an ask already covers.
+//
+//   - done: the push was the chooser's. On ok it holds its drop, and the acquire goes
+//     on to it; otherwise its wait is written. Nothing took it means it parks named
+//     at its group, under the cause the gate gives that group's park.
+//   - not done: it is no window's push, and the gate asks. It is handed the node and
+//     the cart read here, so a shaped order that is no push pays one statement more
+//     than an unshaped one and reads the cart once.
+func (s *Scanner) windowPushArm(order *orders.Order) (done, ok bool, node *nodes.Node, stated binresolver.BinTypeStatement) {
+	if !dispatch.WindowPushShaped(order) || s.dispatcher == nil {
+		return false, false, nil, stated
+	}
+	node, err := s.db.GetNodeByDotName(order.DeliveryNode)
+	if err != nil || node == nil || node.NodeTypeCode != protocol.NodeClassNGRP {
+		return false, false, node, stated
+	}
+	choice, stated := s.dispatcher.ChooseWindowPush(order, node, s.pushRefusedThisPass)
+	if !choice.Applies {
+		return false, false, node, stated
+	}
+	if choice.Slot == nil {
+		block := dispatch.PushParkBlock(order.DeliveryNode, choice)
+		s.setQueueReason(order, protocol.QueueWaitingForSlot, block.Cause, block.Params)
+		return true, false, node, stated
+	}
+	if dest := s.dispatcher.ReserveChosenPush(order, choice.Slot); dest.Refused() {
+		s.setQueueReason(order, protocol.QueueWaitingForSlot, dest.Cause,
+			dispatch.QueueParams{Destination: order.DeliveryNode})
+		return true, false, node, stated
+	}
+	return true, true, node, stated
 }
 
 // park is the tail of an acquire that did not dispatch: a `pending` order whose
@@ -432,8 +489,21 @@ func (s *Scanner) fulfill(order *orders.Order, pick *dispatch.SourceResult) bool
 	// order.ID self-exclusion (A7): the in-flight count reads every order holding a
 	// claimed bin bound here (orders.InFlightForDropoffSQL), so an order retrying
 	// after it has claimed must not count its own row.
-	if blocked, cap := dispatch.CheckDropoffCapacity(s.db, order.DeliveryNode, order.ID); blocked {
-		if !s.overflowsWhileParked(order, cap.Cause) {
+	done, pushed, drop, stated := s.windowPushArm(order)
+	switch {
+	case done && !pushed:
+		return false
+	case !done:
+		var (
+			blocked bool
+			cap     dispatch.CapacityBlock
+		)
+		if drop != nil {
+			blocked, cap = dispatch.CheckDropoffCapacityAt(s.db, drop, order.DeliveryNode, order.ID, stated)
+		} else {
+			blocked, cap = dispatch.CheckDropoffCapacity(s.db, order.DeliveryNode, order.ID)
+		}
+		if blocked && !s.overflowsWhileParked(order, cap) {
 			s.setQueueReason(order, protocol.QueueWaitingForSlot, cap.Cause, cap.Params)
 			return false
 		}

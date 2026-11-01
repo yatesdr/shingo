@@ -34,6 +34,12 @@ import (
 // KEYED ON LEVELS, NOT ON TOTE NUMBERS. A group with no levels gets no line and
 // costs no statement; a group with levels gets an assignment for every bin
 // type, numbers or none.
+//
+// A WHOLE KANBAN REPAYS ITS SOURCES. The kanban's walk runs over every window; each
+// source, in rank order, then walks what is left (walkGroups). An assignment for a
+// source names it (Group); a cart nothing is short of says so (NoneShort). The door
+// repeats the choice on the real count (plan.Planner.ChoosePush): a stale card sends a
+// cart to the door, never past it.
 
 // UnloaderGroupLines answers the lines of a snapshot build's outbound groups, in
 // the order asked. An ask's Levels are as the picture returns them (their order
@@ -46,11 +52,12 @@ import (
 // made.
 //
 // FOUR STATEMENTS PER CALL, however many groups and levels: the open maintain
-// episodes with their asks, the types in play (the level types and the window carts'
-// types, each with its floor size and the groups' layer wants, ListTypesInPlay), the
-// comings and the residents (store.DB.ReadKanbanCounts, whose rows carry what a
-// wanted height reads). A STOP in the brief to add one per kanban. Pin:
-// TestKanbanCost_SnapshotBuild.
+// episodes with their asks, the types in play (the level types, the sources' and the
+// window carts' types, each with its floor size and the groups' layer wants,
+// ListTypesInPlay), the comings and the residents (store.DB.ReadKanbanCounts, whose
+// rows carry what a wanted height reads). The sources ride the same reads as their
+// kanbans, whether the walk comes to ask them or not, so a whole kanban costs nothing
+// more. A STOP in the brief to add one per kanban. Pin: TestKanbanCost_SnapshotBuild.
 func (e *Engine) UnloaderGroupLines(asks []store.GroupLineAsk) ([]protocol.NodeBinsGroup, error) {
 	var ids []int64
 	var codes []string
@@ -68,6 +75,12 @@ func (e *Engine) UnloaderGroupLines(asks []store.GroupLineAsk) ([]protocol.NodeB
 		ids = append(ids, a.Group.ID)
 		for _, lv := range a.Levels {
 			addCode(lv.BinTypeCode)
+		}
+		for _, s := range a.Sources {
+			ids = append(ids, s.ID)
+			for _, lv := range s.Levels {
+				addCode(lv.BinTypeCode)
+			}
 		}
 		for _, w := range a.Windows {
 			addCode(w.BinTypeCode)
@@ -108,20 +121,87 @@ func (e *Engine) UnloaderGroupLines(asks []store.GroupLineAsk) ([]protocol.NodeB
 		if len(a.Levels) == 0 {
 			continue
 		}
-		lines := make([]store.TypeLine, 0, len(a.Levels))
 		inbound := map[int64]bool{}
-		for _, lv := range a.Levels {
-			asked := askedByKey[protocol.MaintainEpisodeKey(a.Group.Name, lv.BinTypeCode)]
-			tl, c := counts.TypeLine(lv, asked, wantsByGroup[a.Group.ID])
-			for _, ib := range c.Inbound {
-				inbound[ib.BinID] = true
+		linesOf := func(groupID int64, group string, levels []store.MaintainLevel) []store.TypeLine {
+			lines := make([]store.TypeLine, 0, len(levels))
+			for _, lv := range levels {
+				asked := askedByKey[protocol.MaintainEpisodeKey(group, lv.BinTypeCode)]
+				tl, c := counts.TypeLine(lv, asked, wantsByGroup[groupID])
+				for _, ib := range c.Inbound {
+					inbound[ib.BinID] = true
+				}
+				lines = append(lines, tl)
 			}
-			lines = append(lines, tl)
+			return lines
+		}
+		lines := linesOf(a.Group.ID, a.Group.Name, a.Levels)
+		sources := make([]sourceLines, 0, len(a.Sources))
+		for _, s := range a.Sources {
+			sources = append(sources, sourceLines{name: s.Name, lines: linesOf(s.ID, s.Name, s.Levels)})
 		}
 		out = append(out, protocol.NodeBinsGroup{Group: a.Group.Name, Wants: wantsOf(lines),
-			Assignments: assignWindows(lines, a.Windows, inbound, sizes)})
+			Assignments: walkGroups(lines, sources, a.Windows, inbound, sizes)})
 	}
 	return out, nil
+}
+
+// sourceLines is one of a kanban's sources as its walk reads it, in rank order. One
+// that declares no level has no lines and is short of nothing: it is reached only as
+// a type's overflow (the save warns, "repaid only as T's overflow").
+type sourceLines struct {
+	name  string
+	lines []store.TypeLine
+}
+
+// walkGroups is what every cart at a kanban's windows is asked: the kanban's walk over
+// all of them, then each source's, in rank order, over the carts still left. Sequential
+// walks, each with its own running counts: the walk keys what it has assigned by type
+// code, and a source's line of a type is not the kanban's. inbound is every group's, so
+// a cart already on its way into any of them is walked by none. The same floor rule
+// holds in each (windowWalk.fits): a 45 x 48 cart is never asked for a source of 32 x 30
+// alone. A cart nothing is short of answers NoneShort. In the windows' order.
+func walkGroups(lines []store.TypeLine, sources []sourceLines, windows []protocol.NodeBinsRow,
+	inbound map[int64]bool, sizes map[string]domain.FloorSize) []protocol.NodeBinsAssignment {
+	byNode := map[string]protocol.NodeBinsAssignment{}
+	take := func(as []protocol.NodeBinsAssignment, group string) {
+		for _, a := range as {
+			a.Group = group
+			byNode[a.Node] = a
+		}
+	}
+	take(assignWindows(lines, windows, inbound, sizes), "")
+	left := func() []protocol.NodeBinsRow {
+		var out []protocol.NodeBinsRow
+		for _, row := range windows {
+			if _, done := byNode[row.Node]; !done && walked(row, inbound) {
+				out = append(out, row)
+			}
+		}
+		return out
+	}
+	for _, s := range sources {
+		carts := left()
+		if len(carts) == 0 {
+			break
+		}
+		take(assignWindows(s.lines, carts, inbound, sizes), s.name)
+	}
+	for _, row := range left() {
+		byNode[row.Node] = protocol.NodeBinsAssignment{Node: row.Node, NoneShort: true}
+	}
+	out := []protocol.NodeBinsAssignment{}
+	for _, row := range windows {
+		if a, ok := byNode[row.Node]; ok {
+			out = append(out, a)
+		}
+	}
+	return out
+}
+
+// walked reports whether the walk asks anything of the cart at a window: a cart on
+// its way already chose at its CLEAR, and a bare cart is nobody's empty.
+func walked(row protocol.NodeBinsRow, inbound map[int64]bool) bool {
+	return row.Occupied && !inbound[row.BinID] && row.CarrierState() != protocol.CarrierBare
 }
 
 // wantsOf is the line's wants: each level type, then its wanted heights.
@@ -193,8 +273,7 @@ func assignWindows(lines []store.TypeLine, windows []protocol.NodeBinsRow, inbou
 	byNode := map[string]protocol.NodeBinsAssignment{}
 	pass := func(empty bool) {
 		for _, row := range windows {
-			if !row.Occupied || (row.PayloadCode == "") != empty || inbound[row.BinID] ||
-				row.CarrierState() == protocol.CarrierBare {
+			if !walked(row, inbound) || (row.PayloadCode == "") != empty {
 				continue
 			}
 			t, short := w.own(row)

@@ -980,7 +980,7 @@ func TestReturnSources_LandWhereTheFinderLooks(t *testing.T) {
 			t.Fatalf("no declared place for %q — the fixture declares one", payload)
 		}
 		for _, s := range srcs {
-			dest, why := eng.storeInto(s.node, b)
+			dest, why := eng.storeInto(s.node, b, nil)
 			if dest == nil {
 				t.Fatalf("%s refused (%s) in a fixture with room", s.name, why)
 			}

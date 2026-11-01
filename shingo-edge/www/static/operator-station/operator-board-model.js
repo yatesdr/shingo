@@ -246,10 +246,13 @@ export function coverage(view) {
 // (tile.assignment, from the group line of the Edge's copy; absent from a Core
 // that sends none); else a waiting row's bin type; else like for like, the
 // cart's own type, and for a tote cart the height it stands at (heightOf).
-// Nothing when nothing grounds a choice. A choice with no button on the panel
-// lights nothing (clearChoices, isLit).
+// Nothing when nothing grounds a choice, and nothing when Core says no group is
+// short of this cart (assignment.none_short): like for like would light a place
+// the cart has no need to go, and the operator's PUSH EMPTY parks it against the
+// kanban until something is short. clearChoices always offers the lit choice.
 export function clearHighlight(tile, serves) {
     const assignment = tile && tile.assignment;
+    if (assignment && assignment.none_short) return null;
     if (assignment && assignment.bin_type) {
         return typeof assignment.layers === 'number'
             ? { bin_type: assignment.bin_type, layers: assignment.layers } : { bin_type: assignment.bin_type };
@@ -328,10 +331,14 @@ export function wantedHeights(view, binType) {
 // THE CART'S FLOOR BOUNDS THE TYPES, as it bounds Core's walk (assignWindows,
 // windowWalk.fits). cartType is the type of the cart at the window, view.floor
 // Core's floor size per type: with both, only the types of the cart's own floor
-// are offered, and never one with no size. lit stays whatever its floor, because
-// the card says to send the cart back as it. A cart with no floor size, no cart
+// are offered, and never one with no size. A cart with no floor size, no cart
 // named, or a Core that sends no floors: every type, as before. Heights are the
 // kept types', untouched.
+//
+// THE LIT CHOICE IS ALWAYS OFFERED, whatever its floor and whether or not the window
+// has a part in it: the card says to send the cart back as it, and a whole kanban's
+// lit choice is a source's, whose type may be none of this loader's parts. Appended
+// last when nothing above is it, so the panels' PUSH AS and CLEAR both show it.
 export function clearChoices(view, carriers, cartType, lit) {
     const out = [];
     const floors = (view && view.floor) || {};
@@ -343,6 +350,9 @@ export function clearChoices(view, carriers, cartType, lit) {
         heights.forEach(function (h) { if (h > 0) out.push({ bin_type: t, layers: h }); });
         if (heights.indexOf(0) !== -1) out.push({ bin_type: t, layers: 0 });
     });
+    if (lit && lit.bin_type && !out.some(function (c) { return isLit(c, lit); })) {
+        out.push(typeof lit.layers === 'number' ? { bin_type: lit.bin_type, layers: lit.layers } : { bin_type: lit.bin_type });
+    }
     return out;
 }
 
@@ -963,6 +973,9 @@ function windowCards(consumers, ctx) {
         const leaving = !full && liveOrders(t).some(function (o) {
             return o.order_type === 'move' && shortNode(o.source_node) === shortNode(home);
         });
+        // The group the choice is for, when Core names one (a source a whole kanban
+        // repays): words only, the push still names the unloader's one outbound.
+        const forGroup = t.assignment && t.assignment.group ? ' · for ' + t.assignment.group : '';
         let note = '';
         if (full && bin.held_since) {
             const since = ctx.when(bin.held_since);
@@ -973,8 +986,9 @@ function windowCards(consumers, ctx) {
         // (EMPTY ON or PARTIAL ON) and the card names nothing to send back.
         else if (loader.pulled_directly && !full && !bin.bare) note = 'The cart waits here for the line';
         else if (bin.bare && takesBare(t)) note = '';
-        else if (changes) note = 'Change to ' + choiceLabel(lit);
-        else if (back && multi) note = full ? 'Send back ' + choiceLabel(lit) : 'Send it';
+        else if (t.assignment && t.assignment.none_short) note = 'No group is short of this cart';
+        else if (changes) note = 'Change to ' + choiceLabel(lit) + forGroup;
+        else if (back && (multi || forGroup)) note = (full ? 'Send back ' + choiceLabel(lit) : 'Send it') + forGroup;
         // A full at the window has arrived, ready to unload: green, ARRIVED and
         // where, pulsing until it is (flash; SPR 2026-10-28, shipping could not
         // see a bin arrive or at which spot, and the owner asked for green). A

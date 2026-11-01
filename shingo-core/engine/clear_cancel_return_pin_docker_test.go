@@ -81,11 +81,11 @@ func TestClearCancelReturn_TheEmptyNeverReturnsToTheHomeWhileTheClearIsLive(t *t
 	eng := newTestEngine(t, db, testdb.NewTrackingBackend())
 
 	grp, home, buffer, e := clearReturnFixture(t, db, "CCR")
-	if dest, why := eng.storeInto(grp, e); dest == nil || dest.ID != home.ID {
+	if dest, why := eng.storeInto(grp, e, nil); dest == nil || dest.ID != home.ID {
 		t.Fatalf("control: no clear live, the group arm chose %v (%s), want the free home %s", dest, why, home.Name)
 	}
 	clearPartialChild(t, db, "CCR", home)
-	if dest, _ := eng.storeInto(grp, e); dest != nil && dest.ID == home.ID {
+	if dest, _ := eng.storeInto(grp, e, nil); dest != nil && dest.ID == home.ID {
 		t.Errorf("group arm: the empty returns to %s while the clear's partial is coming to it", home.Name)
 	}
 	lh, err := db.GetLoaderHomeByPositionNode(home.ID)

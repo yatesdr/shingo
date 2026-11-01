@@ -387,6 +387,11 @@ type BinTotes struct {
 type TileAssignment struct {
 	BinType string `json:"bin_type"`
 	Layers  *int   `json:"layers,omitempty"`
+	// Group is the group the choice is for when Core says so: a source of the kanban
+	// the unloader sends to. Words for the card; the Edge routes nothing on it.
+	Group string `json:"group,omitempty"`
+	// NoneShort says no group is short of this cart: nothing is lit.
+	NoneShort bool `json:"none_short,omitempty"`
 }
 
 // BinsKnown is whether a view's bins are known, and as of when.

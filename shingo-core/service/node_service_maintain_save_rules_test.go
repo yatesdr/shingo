@@ -8,6 +8,7 @@ import (
 
 	"shingo/protocol/testutil"
 	"shingocore/internal/testdb"
+	"shingocore/store"
 	"shingocore/store/loaders"
 )
 
@@ -53,6 +54,65 @@ func mgUnloaderSendingTo(t *testing.T, svc *NodeService, name, dest string) {
 	testutil.MustNoErr(t, err, "create unloader "+name)
 }
 
+// TestMaintainedGroupSave_WhatTheChooserCannotRepay: the words a kanban's save says
+// about its sources and overflow, per type, none of them a refusal.
+func TestMaintainedGroupSave_WhatTheChooserCannotRepay(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	svc := NewNodeService(db)
+	sized := func(code string, w, l float64) int64 {
+		var id int64
+		testutil.MustNoErr(t, db.QueryRow(`INSERT INTO bin_types (code, width_in, length_in) VALUES ($1,$2,$3) RETURNING id`,
+			code, w, l).Scan(&id), "type "+code)
+		return id
+	}
+	small, big, wide := sized("WCR-SMALL", 45, 48), sized("WCR-BIG", 48, 45), sized("WCR-WIDE", 32, 30)
+	declare := func(g, bt int64, want int) {
+		testutil.MustNoErr(t, db.SetMaintainLevel(store.MaintainLevel{GroupNodeID: g, BinTypeID: bt, Want: want}), "level")
+	}
+	said := func(got mgSaveOutcome) string { return strings.Join(got.warnings, "; ") }
+
+	k, _ := mgGroup(t, db, "WCR-K", 8)
+	lender, _ := mgGroup(t, db, "WCR-LENDER", 4)
+	declare(lender, small, 2)
+	plainA, _ := mgGroup(t, db, "WCR-PLAIN-A", 4)
+	plainB, _ := mgGroup(t, db, "WCR-PLAIN-B", 4)
+	zone32, _ := mgGroup(t, db, "WCR-Z32", 4)
+	declare(zone32, wide, 2)
+
+	testdb.KanbanSources(t, db, k, lender, zone32)
+	got := mgSaveLevel(t, svc, k, small, 1)
+	if !got.saved || strings.Contains(said(got), "repaid only") || strings.Contains(said(got), "no source") {
+		t.Errorf("a source declaring the type: saved=%v warnings=%v; want nothing said, of it or of the other floor's zone", got.saved, got.warnings)
+	}
+
+	got = mgSaveLevel(t, svc, k, big, 1)
+	if !got.saved || !strings.Contains(said(got), "WCR-LENDER declares no level for WCR-BIG — repaid only as WCR-BIG's overflow") {
+		t.Errorf("a source on the floor with no level of the type: saved=%v warnings=%v", got.saved, got.warnings)
+	}
+	if strings.Contains(said(got), "WCR-Z32") {
+		t.Errorf("a source of another floor was warned of: %v", got.warnings)
+	}
+
+	testdb.KanbanSources(t, db, k, plainA, plainB)
+	got = mgSaveLevel(t, svc, k, small, 1)
+	if !strings.Contains(said(got), "WCR-PLAIN-A and WCR-PLAIN-B declare no level for WCR-SMALL — nothing can repay both; one drains") {
+		t.Errorf("two sources of a floor with no level: warnings=%v", got.warnings)
+	}
+
+	testdb.KanbanSources(t, db, k, zone32)
+	testdb.KanbanKeeper(t, db, k, "EDGE-WCR")
+	got = mgSaveLevel(t, svc, k, small, 1)
+	if !got.saved || !strings.Contains(said(got), "WCR-K declares WCR-SMALL with no source or overflow for it") {
+		t.Errorf("a type with no way out: saved=%v warnings=%v", got.saved, got.warnings)
+	}
+	testdb.KanbanOverflow(t, db, k, "WCR-PLAIN-A")
+	got = mgSaveLevel(t, svc, k, small, 1)
+	if strings.Contains(said(got), "no source or overflow") {
+		t.Errorf("with an overflow: warnings=%v", got.warnings)
+	}
+}
+
 func TestMaintainedGroupSave_LevelsAndTheUnloaderOutbound(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
@@ -75,8 +135,9 @@ func TestMaintainedGroupSave_LevelsAndTheUnloaderOutbound(t *testing.T) {
 		grpID, _ := mgGroup(t, db, "SR-OUT", 3)
 		mgUnloaderSendingTo(t, svc, "SR-OUT-UNL", "SR-OUT")
 		got := mgSaveLevel(t, svc, grpID, mgBinType(t, db, "SR-OUT-TOTE"), 1)
-		if got.saved || !mgRefusedBy(MaintainedGroupCheck{Refusals: got.refused}, "SR-OUT-UNL sends its empties to SR-OUT") {
-			t.Errorf("a level on SR-OUT-UNL's outbound: saved=%v refused=%v warnings=%v; want refused, "+
+		said := strings.Join(got.warnings, "; ")
+		if !got.saved || len(got.refused) != 0 || !strings.Contains(said, "SR-OUT-UNL sends its empties to SR-OUT") {
+			t.Errorf("a level on SR-OUT-UNL's outbound: saved=%v refused=%v warnings=%v; want saved, with a warning "+
 				"naming the unloader and the group", got.saved, got.refused, got.warnings)
 		}
 	})

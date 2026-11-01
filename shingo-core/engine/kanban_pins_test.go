@@ -2,6 +2,7 @@ package engine
 
 import (
 	"encoding/json"
+	"reflect"
 	"testing"
 	"time"
 
@@ -65,7 +66,38 @@ func TestKanbanPin_WalkLightsNothingOutsideItsOwnGroup(t *testing.T) {
 		cart("W3", "KP-BIG", false),
 	}
 	if got := said(assignWindows(lines, windows, nil, sizes)); got != "" {
-		t.Errorf("walk with the group whole = %q, want nothing lit", got)
+		t.Errorf("the kanban's own pass with the group whole = %q, want nothing lit", got)
+	}
+	noneShort := []protocol.NodeBinsAssignment{{Node: "W1", NoneShort: true}, {Node: "W2", NoneShort: true}, {Node: "W3", NoneShort: true}}
+	if got := walkGroups(lines, nil, windows, nil, sizes); !reflect.DeepEqual(got, noneShort) {
+		t.Errorf("walk with the group whole and no sources = %+v, want every cart none short", got)
+	}
+
+	// A whole group with a source short of big: the 45 x 48 carts are asked for it
+	// in the source's name, the empty first, and the 32 x 30 lights nothing on it.
+	source := []sourceLines{{name: "KP-Z45", lines: []store.TypeLine{{Code: "KP-BIG", Want: 2, Have: 1}}}}
+	want := []protocol.NodeBinsAssignment{{Node: "W1", NoneShort: true}, {Node: "W2", NoneShort: true},
+		{Node: "W3", BinType: "KP-BIG", Group: "KP-Z45"}}
+	if got := walkGroups(lines, source, windows, nil, sizes); !reflect.DeepEqual(got, want) {
+		t.Errorf("walk with a source short one big = %+v, want %+v", got, want)
+	}
+	// Short one at each of two sources: rank order over what is left.
+	two := []sourceLines{source[0], {name: "KP-Z2", lines: []store.TypeLine{{Code: "KP-SMALL", Want: 1, Have: 0}}}}
+	want = []protocol.NodeBinsAssignment{{Node: "W1", NoneShort: true}, {Node: "W2", BinType: "KP-SMALL", Group: "KP-Z2"},
+		{Node: "W3", BinType: "KP-BIG", Group: "KP-Z45"}}
+	if got := walkGroups(lines, two, windows, nil, sizes); !reflect.DeepEqual(got, want) {
+		t.Errorf("walk with two sources short = %+v, want %+v", got, want)
+	}
+	// A plain source has no lines: it is short of nothing and lights nothing.
+	if got := walkGroups(lines, []sourceLines{{name: "KP-PLAIN"}}, windows, nil, sizes); !reflect.DeepEqual(got, noneShort) {
+		t.Errorf("walk with a plain source = %+v, want every cart none short", got)
+	}
+	// A cart on its way already chose: walked by no group, and said nothing of.
+	inbound := map[int64]bool{7: true}
+	onWay := []protocol.NodeBinsRow{windows[0], windows[1]}
+	onWay[1].BinID = 7
+	if got := walkGroups(lines, nil, onWay, inbound, sizes); !reflect.DeepEqual(got, noneShort[:1]) {
+		t.Errorf("walk with a cart on its way = %+v, want only W1 said", got)
 	}
 
 	// Short of small only: the empty big and the full small are both 45 x 48, the

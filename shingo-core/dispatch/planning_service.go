@@ -453,6 +453,22 @@ func (s *PlanningService) decideTransport(order *orders.Order, payloadCode strin
 			gateNode = d.byContents.Name
 		}
 	}
+	// A WINDOW'S PUSH STILL NAMING ITS GROUP HERE IS ONE ITS ADMISSION PARKED: the cap
+	// below would admit one whose gap an ask covers, so it is the chooser's again.
+	if d.byContents == nil && cart != nil && WindowPushShaped(order) {
+		if group, err := s.db.GetNodeByDotName(gateNode); err == nil && group != nil && group.NodeTypeCode == protocol.NodeClassNGRP {
+			c := s.pure.ChoosePush(plan.PushAsk{Group: group, Source: order.SourceNode,
+				Stated: binresolver.KnownCarrier(cart), Asker: digAskerFor(order)})
+			switch {
+			case c.Applies && c.Slot == nil:
+				d.blocked, d.capacity = true, PushParkBlock(gateNode, c)
+				return d
+			case c.Applies:
+				d.byContents, d.byContentsWhy = c.Slot, c.Why
+				gateNode = c.Slot.Name
+			}
+		}
+	}
 	if d.blocked, d.capacity = CheckDropoffCapacity(s.db, gateNode, order.ID); d.blocked {
 		return d
 	}

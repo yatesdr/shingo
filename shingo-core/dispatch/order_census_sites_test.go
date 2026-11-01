@@ -183,7 +183,7 @@ func TestCensus_DropoffCapacityGateSites(t *testing.T) {
 	sameSites(t, "the dropoff-capacity gate's callers", got, map[string]string{
 		"dispatch/plan/capacity.go:DropoffCapacity":                   "the gate itself, through its typed form (the planner's since B2; dispatch's CheckDropoffCapacity is its face)",
 		"dispatch/capacity.go:CheckDropoffCapacityForType":            "the typed door's face, for the cancel-return chooser",
-		"dispatch/plan/capacity.go:DropoffCapacityForType":            "the gate's in-flight arm (the cleanup phase folds the wrapper away)",
+		"dispatch/plan/capacity.go:DropoffCapacityAt":                 "the gate's in-flight arm (the cleanup phase folds the wrapper away)",
 		"dispatch/plan/capacity.go:checkNGRPCapacity":                 "the NGRP arm: in-flight per child",
 		"dispatch/plan/loader_window_choice.go:LoaderWindows":         "loader replenish: per window at decision time (the planner's since B3)",
 		"dispatch/plan/move.go:moveDestination":                       "the bin move's destination verdict (B2), named when the census learned the planner's own name for the gate (B3)",

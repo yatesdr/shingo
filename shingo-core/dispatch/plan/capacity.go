@@ -120,6 +120,9 @@ type CapacityDB interface {
 type CapacityVerdict struct {
 	Cause  Cause
 	Params Params
+	// Stated is the cart as the gate settled it, for a group's verdict: the park's
+	// overflow arm reuses it rather than reading the cart again.
+	Stated binresolver.BinTypeStatement
 }
 
 // DropoffCapacity returns (false, zero) when the named delivery node can
@@ -206,6 +209,14 @@ func DropoffCapacityForType(db CapacityDB, deliveryNode string, excludeOrderID i
 	case err != nil:
 		return true, CapacityVerdict{Cause: CauseCapacityCheckFailed, Params: params}
 	}
+	return DropoffCapacityAt(db, node, deliveryNode, excludeOrderID, stated)
+}
+
+// DropoffCapacityAt is DropoffCapacityForType for a caller already holding the node
+// the name resolves to.
+func DropoffCapacityAt(db CapacityDB, node *nodes.Node, deliveryNode string, excludeOrderID int64,
+	stated binresolver.BinTypeStatement) (blocked bool, block CapacityVerdict) {
+	params := Params{Destination: deliveryNode}
 	if node.IsSynthetic {
 		if node.NodeTypeCode == protocol.NodeClassNGRP {
 			return checkNGRPCapacity(db, node, deliveryNode, excludeOrderID, stated)
@@ -290,6 +301,7 @@ func checkNGRPCapacity(db CapacityDB, ngrp *nodes.Node, ngrpName string, exclude
 		}
 	}
 	binTypeID := stated.TypeID()
+	defer func() { block.Stated = stated }()
 
 	// ── THE LEVEL, BEFORE THE PHYSICS ───────────────────────────────────────
 	//

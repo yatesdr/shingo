@@ -27,9 +27,8 @@ import (
 // Z45, a 32x30 zone Z32, a second lineside group K2, a plain market SM with
 // lanes, and an unloader of four windows whose outbound is K.
 //
-// Each const is the number measured at this tree,
-// asserted exactly so a read added or removed is a decision. The comment on each
-// names the settled target; the lane that lands the target changes the const.
+// Each const is the number measured at this tree, asserted exactly so a read added
+// or removed is a decision.
 const (
 	// keeperTickSteady is one steady tick, nothing short, whatever the plant's size:
 	// the picture, the open episodes with their asks, the comings, the residents.
@@ -44,30 +43,37 @@ const (
 	// picture of its groups, then UnloaderGroupLines (open episodes, types in play,
 	// comings, residents), however many groups and levels.
 	snapshotBuild = 10
-	// snapshotBodyBytes is that snapshot's body as it goes to the Edge. Measured at
-	// the base of this work, before any of the reads changed: 1000.
-	snapshotBodyBytes = 1000
-	// todayIntakeDoorShort is the intake door up to the order's birth, for an
-	// empty pushed at K at its level, into Z45 short of that type (three of its
-	// eight positions free). Settled: about 9-11.
-	todayIntakeDoorShort = 45
-	// todayIntakeDoorAllFree is the same door with all eight of Z45's positions
-	// free. Settled: about 9-11, the same number as the short case.
-	todayIntakeDoorAllFree = 60
-	// todayParkedArmShort is a scanner pass with one push parked at K's level that
-	// Z45 takes (three of its eight positions free), from the pass's start to the
-	// re-aim: the order list and read, K's gate, the overflow's gate, the reserve's
-	// resolve. Settled: about 8.
-	todayParkedArmShort = 84
-	// todayParkedArmAllFree is the same arm with all eight of Z45's positions free.
-	// Settled: about 8, the same number as the short case.
-	todayParkedArmAllFree = 104
-	// todayParkedPassShort is that whole pass: the arm, then the acquire's lane
-	// admission and the hand to the fleet. The brief's settled number covers the
-	// arm alone; this tail (62) has none yet.
-	todayParkedPassShort = 146
-	// todayParkedPassAllFree is that whole pass with all eight positions free.
-	todayParkedPassAllFree = 166
+	// snapshotBodyBytes is that snapshot's body as it goes to the Edge with every cart
+	// lit for K: three assignments of a type (114 over the base's 1000, K whole and none
+	// said), and the fields a source's row carries cost no byte here.
+	snapshotBodyBytes = 1114
+	// snapshotBodyBytesWhole is it with K whole and nothing short: the base's 1000, and
+	// an assignment for each of the three carts saying so (146 of them, none_short's
+	// own key 18 a row). Only rows that carry the field pay.
+	snapshotBodyBytesWhole = 1146
+	// intakeDoorToASource is the intake door up to the order's birth, for an empty
+	// pushed at K with K whole, into Z45 short of that type, however many of Z45's
+	// positions are free: the cart, K's node, the door's one read, Z45's properties,
+	// slot state and children's types, and the two node reads of the issue's window.
+	intakeDoorToASource = 8
+	// intakeDoorNoWindow is the same door for a move at K from a node that is no
+	// window: the cap's path, into K's overflow Z45. It pays the door's one read to
+	// learn that, and takes the overflow over one read of Z45. Measured before this
+	// work, with the overflow's name and the cart read twice: 45.
+	intakeDoorNoWindow = 15
+	// parkedArm is a scanner pass with one push parked at K that Z45 takes, however
+	// many of its positions are free, from the pass's start to the re-aim: the order
+	// list and read, K's node, the cart, the door's one read, Z45's properties, slot
+	// state and children's types.
+	parkedArm = 8
+	// parkedPass is that whole pass: the arm, then the acquire's lane admission and
+	// the hand to the fleet. Nothing in the tail is this work's; the second gate and
+	// resolve the arm used to leave in it went with the arm. 59 on order-carts' rows: the
+	// tail reads an order's cart as 4 SELECT order_bins where it read 5 SELECT orders.
+	parkedPass = 59
+	// cancelReturnDoor is the cancel-return's store of a window's cancelled push into
+	// K, Z45 short: the position's loader, the door's one read, Z45's three.
+	cancelReturnDoor = 5
 )
 
 // kanbanCostRig is the shape, on a database the counting engine reads.
@@ -165,10 +171,10 @@ func newKanbanCostRig(t *testing.T, z45Small, z45Big, z45Totes int) *kanbanCostR
 	stand(r.big, kids[z45Small:z45Small+z45Big], "KC-Z45-B")
 	stand(r.totes, kids[z45Small+z45Big:z45Small+z45Big+z45Totes], "KC-Z45-T")
 	testdb.KanbanOverflow(t, db, r.k.ID, r.z45.Name)
-
 	r.z32, kids = kanbanCostFlat(t, db, "KC-Z32", 8)
 	level(r.z32, r.t32, 6)
 	stand(r.t32, kids[:6], "KC-Z32")
+	testdb.KanbanSources(t, db, r.k.ID, r.z45.ID, r.z32.ID)
 
 	// Plain markets: lanes, no level, each lane one more synthetic node, which the
 	// tick no longer pays for.
@@ -305,7 +311,23 @@ func TestKanbanCost_KeeperTick(t *testing.T) {
 // its read snapshot's BEGIN to the outbox write that sends what it built.
 func TestKanbanCost_SnapshotBuild(t *testing.T) {
 	t.Parallel()
-	r := newKanbanCostRig(t, 2, 2, 2)
+	t.Run("every cart lit for K", func(t *testing.T) {
+		t.Parallel()
+		r := newKanbanCostRig(t, 2, 2, 2)
+		for bt, want := range map[int64]int{r.small: 3, r.big: 2} {
+			testutil.MustNoErr(t, r.db.SetMaintainLevel(store.MaintainLevel{GroupNodeID: r.k.ID, BinTypeID: bt, Want: want}), "K short")
+		}
+		kanbanCostSnapshot(t, r, snapshotBuild, snapshotBodyBytes)
+	})
+	t.Run("K whole, nothing short", func(t *testing.T) {
+		t.Parallel()
+		kanbanCostSnapshot(t, newKanbanCostRig(t, 2, 2, 2), snapshotBuild, snapshotBodyBytesWhole)
+	})
+}
+
+// kanbanCostSnapshot asserts one build's statements and its body's bytes.
+func kanbanCostSnapshot(t *testing.T, r *kanbanCostRig, wantBuild, wantBytes int) {
+	t.Helper()
 	svc := messaging.NewCoreDataService(r.eng.db, messaging.NewCoreHandler(r.eng.db, nil, "core", "shingo.dispatch", nil),
 		service.EpochAnnounce{})
 	svc.SetGroupLinesFunc(r.eng.UnloaderGroupLines)
@@ -334,8 +356,8 @@ func TestKanbanCost_SnapshotBuild(t *testing.T) {
 	if to == len(stmts) {
 		t.Fatalf("fixture drift: no snapshot reached the outbox:\n%s", strings.Join(stmts, "\n"))
 	}
-	if len(build) != snapshotBuild {
-		t.Errorf("snapshot build = %d statements, want %d", len(build), snapshotBuild)
+	if len(build) != wantBuild {
+		t.Errorf("snapshot build = %d statements, want %d", len(build), wantBuild)
 	}
 	var sent []byte
 	testutil.MustNoErr(t, r.db.QueryRow(`SELECT payload FROM outbox WHERE msg_type = $1`,
@@ -345,15 +367,59 @@ func TestKanbanCost_SnapshotBuild(t *testing.T) {
 	var data protocol.Data
 	testutil.MustNoErr(t, env.DecodePayload(&data), "the data")
 	t.Logf("BYTES: the snapshot to the Edge: %d (the envelope around it: %d)", len(data.Body), len(sent))
-	if len(data.Body) != snapshotBodyBytes {
-		t.Errorf("snapshot body = %d bytes, want %d: the Pi is sent nothing new", len(data.Body), snapshotBodyBytes)
+	if len(data.Body) != wantBytes {
+		t.Errorf("snapshot body = %d bytes, want %d: the Pi is sent nothing new\n%s", len(data.Body), wantBytes, data.Body)
 	}
 }
 
-// TestKanbanCost_IntakeDoor: an empty off a window, pushed at K at its level,
-// up to its birth in Z45: the reference to the node and the bin, K's refusal, the
-// overflow's name, and Z45's resolve. Z45 short of the type (its residents stand
-// on five positions), and all free.
+// TestKanbanCost_NoWindowDoor: a move at K at its level from a node that is no window
+// keeps the cap, and its door costs less than it did.
+func TestKanbanCost_NoWindowDoor(t *testing.T) {
+	t.Parallel()
+	r := newKanbanCostRig(t, 1, 2, 2)
+	line := &nodes.Node{Name: "KC-LINE", Enabled: true}
+	testutil.MustNoErr(t, r.db.CreateNode(line), "a line")
+	bin := landAt(t, r.db, r.small, line.ID, "KC-LINE-CART")
+	r.counter.Reset()
+	o, _, lerr := r.eng.dispatcher.Lifecycle().CreateInboundOrder("kc-edge", &protocol.OrderRequest{
+		OrderUUID: "kc-line-push", OrderType: dispatch.OrderTypeMove, Quantity: 1, OriginClass: protocol.OriginClassNoDemand,
+		SourceNode: line.Name, DeliveryNode: r.k.Name, BinID: bin}, nil)
+	if lerr != nil {
+		t.Fatalf("intake refused the move: %s", lerr.Detail)
+	}
+	if !r.inGroup(t, o.DeliveryNode, r.z45) {
+		t.Fatalf("fixture drift: the move went to %s, want K's overflow", o.DeliveryNode)
+	}
+	stmts := r.counter.Statements()
+	door := stmts[:firstBegin(stmts)]
+	t.Logf("STATEMENTS: the door %d\n%s", len(door), testutil.StatementBreakdown(door))
+	if len(door) != intakeDoorNoWindow {
+		t.Errorf("no-window door = %d statements, want %d", len(door), intakeDoorNoWindow)
+	}
+}
+
+// TestKanbanCost_CancelReturn: the cancel-return's store of a window's cancelled push.
+func TestKanbanCost_CancelReturn(t *testing.T) {
+	t.Parallel()
+	r := newKanbanCostRig(t, 1, 2, 2)
+	bin, err := r.db.GetBin(r.push)
+	testutil.MustNoErr(t, err, "the cart")
+	carrier := &orders.Order{SourceIntent: dispatch.SourceIntentLocal, SourceNode: r.windows[1].Name, NamedBinID: &r.push}
+	r.counter.Reset()
+	slot, why := r.eng.storeInto(r.k, bin, carrier)
+	if slot == nil || !r.inGroup(t, slot.Name, r.z45) {
+		t.Fatalf("fixture drift: the return took %+v (%s)", slot, why)
+	}
+	stmts := r.counter.Statements()
+	t.Logf("STATEMENTS: the store %d\n%s", len(stmts), testutil.StatementBreakdown(stmts))
+	if len(stmts) != cancelReturnDoor {
+		t.Errorf("cancel-return door = %d statements, want %d", len(stmts), cancelReturnDoor)
+	}
+}
+
+// TestKanbanCost_IntakeDoor: an empty off a window, pushed at K with K whole, up to
+// its birth in Z45. Z45 short of the type (its residents stand on five positions),
+// and all free: the same number, since no read is per child.
 func TestKanbanCost_IntakeDoor(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
@@ -361,8 +427,8 @@ func TestKanbanCost_IntakeDoor(t *testing.T) {
 		small, big, totes int
 		want              int
 	}{
-		{"Z45 short of the type", 1, 2, 2, todayIntakeDoorShort},
-		{"Z45 all free", 0, 0, 0, todayIntakeDoorAllFree},
+		{"Z45 short of the type", 1, 2, 2, intakeDoorToASource},
+		{"Z45 all free", 0, 0, 0, intakeDoorToASource},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -370,7 +436,8 @@ func TestKanbanCost_IntakeDoor(t *testing.T) {
 			r.counter.Reset()
 			o, _, lerr := r.eng.dispatcher.Lifecycle().CreateInboundOrder("kc-edge", &protocol.OrderRequest{
 				OrderUUID: "kc-push", OrderType: dispatch.OrderTypeMove, Quantity: 1,
-				SourceNode: r.windows[1].Name, DeliveryNode: r.k.Name, BinID: r.push}, nil)
+				OriginClass: protocol.OriginClassNoDemand,
+				SourceNode:  r.windows[1].Name, DeliveryNode: r.k.Name, BinID: r.push}, nil)
 			if lerr != nil {
 				t.Fatalf("intake refused the push: %s", lerr.Detail)
 			}
@@ -388,9 +455,9 @@ func TestKanbanCost_IntakeDoor(t *testing.T) {
 	}
 }
 
-// TestKanbanCost_ScannerParkedPass: a push parked at K's level, on the pass Z45
-// takes it. K names no overflow on the pass that parks it, so the measured pass
-// is the first to ask. Z45 short of the type, and all free.
+// TestKanbanCost_ScannerParkedPass: a push parked at K, on the pass Z45 takes it. K
+// has no source and no overflow on the pass that parks it, so the measured pass is
+// the first with anywhere to go. Z45 short of the type, and all free.
 func TestKanbanCost_ScannerParkedPass(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
@@ -398,19 +465,23 @@ func TestKanbanCost_ScannerParkedPass(t *testing.T) {
 		small, big, totes int
 		arm, pass         int
 	}{
-		{"Z45 short of the type", 1, 2, 2, todayParkedArmShort, todayParkedPassShort},
-		{"Z45 all free", 0, 0, 0, todayParkedArmAllFree, todayParkedPassAllFree},
+		{"Z45 short of the type", 1, 2, 2, parkedArm, parkedPass},
+		{"Z45 all free", 0, 0, 0, parkedArm, parkedPass},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			r := newKanbanCostRig(t, tc.small, tc.big, tc.totes)
 			testdb.KanbanOverflow(t, r.db, r.k.ID, "")
+			testdb.KanbanSources(t, r.db, r.k.ID)
 			push := testdb.CreateOrder(t, r.db, func(o *orders.Order) {
 				o.EdgeUUID = "kc-parked"
 				o.StationID = "kc-edge"
 				o.OrderType = dispatch.OrderTypeMove
+				o.SourceIntent = dispatch.SourceIntentLocal
+				o.OriginClass = protocol.OriginClassNoDemand
 				o.SourceNode = r.windows[1].Name
 				o.DeliveryNode = r.k.Name
+				o.NamedBinID = &r.push
 			})
 			testutil.MustNoErr(t, reservations.Acquire(r.db.DB, push.ID, push.ID, r.push, "test"), "the push holds its cart")
 			testdb.HoldCart(t, r.db, push.ID, r.push)
@@ -422,7 +493,7 @@ func TestKanbanCost_ScannerParkedPass(t *testing.T) {
 				t.Fatalf("fixture drift: the push is %s (%s), want parked at K's level", parked.Status, parked.QueueCause)
 			}
 
-			testdb.KanbanOverflow(t, r.db, r.k.ID, r.z45.Name)
+			testdb.KanbanSources(t, r.db, r.k.ID, r.z45.ID, r.z32.ID)
 			r.counter.Reset()
 			r.eng.fulfillment.RunOnce()
 			stmts := r.counter.Statements()

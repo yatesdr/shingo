@@ -446,6 +446,24 @@ eq([NOBIN, FULLBIN('PART-A'), EMPTYBIN('KD-1'), EMPTYBIN(''), { occupied: true, 
     eq([many.tiles.map(t => t.cell), many.more], [['C8'], 7], 'cells: past six, the covered cells fold into "+N more cells"');
 }
 
+// ── a whole kanban's card: the source the lit choice is for, or nothing short ──
+{
+    const assigned = (i, spot, a, bin) => Object.assign(
+        bt(i, spot, { role: 'consume', parts: ['PART-K'], bin: bin, carriers: ['TOTE-2'] }), { assignment: a });
+    const w = zone(B({ station: { name: 'Unloader' }, serves: [], nodes: [
+        assigned(1, 'SMN_D1', { bin_type: 'KD-1', group: 'ZONE-45' }, EMPTYBIN('TOTE-2')),
+        assigned(2, 'SMN_D2', { bin_type: 'TOTE-2', group: 'ZONE-45' }, EMPTYBIN('TOTE-2')),
+        assigned(3, 'SMN_D3', { none_short: true }, EMPTYBIN('TOTE-2')),
+        assigned(4, 'SMN_D4', { none_short: true }, FULLBIN('PART-K', 'TOTE-2')),
+    ] }), 'windows');
+    const by = {};
+    w.cards.forEach(c => { by[c.spot] = c.reason; });
+    eq(by.SMN_D1, 'Change to KD-1 · for ZONE-45', 'a source\'s type: the note names the group');
+    eq(by.SMN_D2, 'Send it · for ZONE-45', 'a cart already of the source\'s type: the note still names the group');
+    eq(by.SMN_D3, 'No group is short of this cart', 'nothing short: the card says so');
+    eq(by.SMN_D4, 'at SMN_D4 · No group is short of this cart', 'a full with nothing short says so, where it stands');
+}
+
 // ── the unloader: one list, one red per stopped press ──
 {
     const windows = [

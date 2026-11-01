@@ -376,11 +376,23 @@ func storageDropoffOf(db *store.DB, node *nodes.Node) (storage bool, lane *nodes
 // record was right and the robot still drove into the dug lane. Nil error ⇒ the
 // returned node is where the order is going, and the only one a caller may use.
 func (d *Dispatcher) ReserveStorageDropoff(order *orders.Order) StorageDropoff {
+	return d.settleDropoff(order, d.resolveSyntheticDropoff)
+}
+
+// ReserveChosenPush is ReserveStorageDropoff for a push whose slot the scanner's gate
+// arm already chose (ChooseWindowPush): the same re-aim, hold and back-to-group, and
+// no second resolve.
+func (d *Dispatcher) ReserveChosenPush(order *orders.Order, slot *nodes.Node) StorageDropoff {
+	return d.settleDropoff(order, func(o *orders.Order) error { return d.aimStoreAt(o, slot.Name) })
+}
+
+// settleDropoff is the settle with its resolve named.
+func (d *Dispatcher) settleDropoff(order *orders.Order, resolve func(*orders.Order) error) StorageDropoff {
 	refuse := func(err error) StorageDropoff {
 		return StorageDropoff{Cause: causeForStorageDropoff(err), Err: err}
 	}
 	asked := order.DeliveryNode
-	if err := d.resolveSyntheticDropoff(order); err != nil {
+	if err := resolve(order); err != nil {
 		return refuse(err)
 	}
 	resolved := order.DeliveryNode != asked
@@ -500,6 +512,11 @@ func IsSyntheticUnresolved(err error) bool {
 // write; an overflow slot then lost at the hold goes back to the order's own
 // group through the back-to-group arm (ReserveStorageDropoff), and the next pass
 // asks again. Only an order no robot has comes here.
+//
+// A WINDOW'S PUSH ASKS THE ONE CHOOSER FIRST (plan.Planner.ChoosePush), since the
+// group's resolve below is the cap. The scanner's gate arm has usually asked it
+// already, and settled the slot it chose (ReserveChosenPush); a door that holds its bin
+// and comes straight here (HandHeld) asks here.
 func (d *Dispatcher) resolveSyntheticDropoff(order *orders.Order) error {
 	if d.resolver == nil || order == nil || order.DeliveryNode == "" {
 		return nil
@@ -510,7 +527,16 @@ func (d *Dispatcher) resolveSyntheticDropoff(order *orders.Order) error {
 		// the order id attached rather than swallowing it here.
 		return nil
 	}
-	stated := binresolver.UnknownBinType("scanner deferral keeper: order holds no bin and no hold")
+	stated := d.carrierOf(order, node.Name)
+	if WindowPushShaped(order) && node.NodeTypeCode == protocol.NodeClassNGRP {
+		if c := d.pure.ChoosePush(plan.PushAsk{Group: node, Source: order.SourceNode, Stated: stated,
+			Asker: digAskerFor(order)}); c.Applies {
+			if c.Slot == nil {
+				return SyntheticUnresolved{OrderID: order.ID, Group: order.DeliveryNode, Err: c.Err}
+			}
+			return d.aimStoreAt(order, c.Slot.Name)
+		}
+	}
 	choice, rErr := d.pure.StoreDrop(node, order.PayloadCode, stated, digAskerFor(order))
 	if rErr == nil && choice.Slot == nil {
 		rErr = fmt.Errorf("resolver returned no node")
@@ -522,12 +548,17 @@ func (d *Dispatcher) resolveSyntheticDropoff(order *orders.Order) error {
 	if rErr == nil {
 		slot = choice.Slot.Name
 	} else if class, _ := classifyResolutionError(rErr); class == ResolutionCapacity {
-		slot, _ = d.pure.OverflowDestination(node, order.PayloadCode,
-			func() binresolver.BinTypeStatement { return stated }, digAskerFor(order))
+		slot, _ = d.pure.OverflowDestination(node, order.PayloadCode, stated, digAskerFor(order))
 	}
 	if slot == "" {
 		return SyntheticUnresolved{OrderID: order.ID, Group: order.DeliveryNode, Err: rErr}
 	}
+	return d.aimStoreAt(order, slot)
+}
+
+// aimStoreAt is the settle's one re-aim: a group's order aimed at the child chosen
+// for it.
+func (d *Dispatcher) aimStoreAt(order *orders.Order, slot string) error {
 	if uErr := d.db.UpdateOrderDeliveryNode(order.ID, slot); uErr != nil {
 		return fmt.Errorf("order %d resolved %s to %s but delivery_node could not be written: %w",
 			order.ID, order.DeliveryNode, slot, uErr)

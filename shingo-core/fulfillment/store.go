@@ -50,9 +50,10 @@ type Store interface {
 	// at dispatchHeldBin for one window before the spelling is cut over.
 	OrderOwnsNoCargo(orderID int64) (bool, error)
 	// OverflowNameOf is how the capacity gate's park asks whether the group it
-	// parked an order on names an overflow destination (a kanban's row, a plain
-	// group's property), one read before any resolve (overflowsWhileParked).
-	OverflowNameOf(groupName string) string
+	// parked an order on names an overflow destination for the cart's type (a
+	// kanban's level row or its own row, a plain group's property), one read before
+	// any resolve (overflowsWhileParked). A type of 0 is the group's own.
+	OverflowNameOf(groupName string, binTypeID int64) string
 
 	// Mutations performed on the order during fulfillment.
 	//

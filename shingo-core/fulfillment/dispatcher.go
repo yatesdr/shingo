@@ -3,6 +3,8 @@ package fulfillment
 import (
 	"shingo/protocol"
 	"shingocore/dispatch"
+	"shingocore/dispatch/binresolver"
+	"shingocore/dispatch/plan"
 	"shingocore/store/nodes"
 	"shingocore/store/orders"
 )
@@ -46,6 +48,13 @@ type Dispatcher interface {
 	// node, not one the caller read earlier, is where the order is going. Nil
 	// error ⇒ non-nil node.
 	ReserveStorageDropoff(order *orders.Order) dispatch.StorageDropoff
+
+	// ChooseWindowPush asks the one chooser of a push shaped like an unloader's
+	// (plan.Planner.ChoosePush), and returns the cart it read so the gate reads it no
+	// more. ReserveChosenPush settles the slot it chose, as ReserveStorageDropoff
+	// settles one it resolves.
+	ChooseWindowPush(order *orders.Order, group *nodes.Node, refused plan.PushRefusals) (plan.PushChoice, binresolver.BinTypeStatement)
+	ReserveChosenPush(order *orders.Order, slot *nodes.Node) dispatch.StorageDropoff
 
 	// DispatchHand takes the order's whole hand — the slot (if a storage
 	// dropoff), the soft-held bin, the lane mouths, the occupancy and the

@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"strings"
 
+	"shingocore/domain"
+	"shingocore/store"
 	"shingocore/store/loaders"
 	"shingocore/store/nodes"
 )
@@ -153,12 +155,19 @@ func (s *NodeService) ValidateMaintainedGroup(cfg MaintainedGroupConfig) (Mainta
 
 	chk.Warnings = append(chk.Warnings, roomWarnings(cfg, groupName, enabledChildren)...)
 
-	// ── An unloader's outbound needs somewhere to spill ──────────────────────
-	if msg, err := s.outboundWithoutOverflow(cfg, groupName); err != nil {
+	// ── An unloader's outbound, and where its repayments can go ──────────────
+	feeding, err := s.unloadersSendingTo(groupName)
+	if err != nil {
 		return chk, err
-	} else if msg != "" {
-		refuse("%s", msg)
 	}
+	if msg := outboundWithoutOverflow(cfg, groupName, feeding); msg != "" {
+		warn("%s", msg)
+	}
+	repay, err := s.repaymentWarnings(cfg, groupName, len(feeding) > 0)
+	if err != nil {
+		return chk, err
+	}
+	chk.Warnings = append(chk.Warnings, repay...)
 
 	// ── Untyped supported positions ──────────────────────────────────────────
 	// A warning because it is a data gap, not a contradiction, and because the
@@ -251,21 +260,35 @@ func (s *NodeService) sourceWarnings(cfg MaintainedGroupConfig, groupName string
 	return warnings
 }
 
-// outboundWithoutOverflow is the refusal for levels on a live unloader's
-// outbound with no overflow destination, or blank.
+// outboundWithoutOverflow is the warning for levels on a live unloader's outbound
+// with a type that has no overflow, or blank. It is said and never refused: a plant
+// can want the backpressure.
 //
-// A declared level is a cap (the store resolver refuses a push past it). A live
-// unloader that sends its empties to
-// the group has its empty-out parked once the group is at level, and the cart
-// stays on its window, unless an overflow destination takes the push. Pin:
+// A live unloader that sends its empties to the group has its push parked once the
+// group and its sources are whole (plan.Planner.ChoosePush), and the cart stays on
+// its window, unless an overflow destination takes it. Pin:
 // TestMaintainedGroupSave_LevelsAndTheUnloaderOutbound.
-func (s *NodeService) outboundWithoutOverflow(cfg MaintainedGroupConfig, groupName string) (string, error) {
-	if len(cfg.Levels) == 0 || strings.TrimSpace(cfg.OverflowDestination) != "" {
-		return "", nil
+func outboundWithoutOverflow(cfg MaintainedGroupConfig, groupName string, feeding []string) string {
+	if len(cfg.Levels) == 0 || len(feeding) == 0 || strings.TrimSpace(cfg.OverflowDestination) != "" {
+		return ""
 	}
+	everyType := true
+	for _, l := range cfg.Levels {
+		everyType = everyType && l.OverflowNode != ""
+	}
+	if everyType {
+		return ""
+	}
+	return fmt.Sprintf("%s sends its empties to %s, which declares a level and has no overflow destination — "+
+		"once the group and its sources are whole the empties wait on the unloader's windows; set an overflow destination",
+		strings.Join(feeding, ", "), groupName)
+}
+
+// unloadersSendingTo names the live unloaders whose outbound is the group.
+func (s *NodeService) unloadersSendingTo(groupName string) ([]string, error) {
 	all, err := s.db.ListLoaders()
 	if err != nil {
-		return "", fmt.Errorf("read loaders sending to %s: %w", groupName, err)
+		return nil, fmt.Errorf("read loaders sending to %s: %w", groupName, err)
 	}
 	// A two-stage unloader's stage 2 is produce and sends its carts out as
 	// empties all the same (loaders.ActsAsUnloaderSQL), so it counts.
@@ -281,12 +304,83 @@ func (s *NodeService) outboundWithoutOverflow(cfg MaintainedGroupConfig, groupNa
 			feeding = append(feeding, l.Name)
 		}
 	}
-	if len(feeding) == 0 {
-		return "", nil
+	return feeding, nil
+}
+
+// repaymentWarnings says what the chooser cannot do for each type the kanban declares
+// (plan.Planner.ChoosePush). Words, never refusals: a plant can want any of it.
+//
+//   - A source that declares no level of the type is short of nothing, so a cart can
+//     repay it only as the type's overflow. Sources of another floor say nothing
+//     of the type and are left out: a 32 x 30 zone is no lender of a 45 x 48 cart. A
+//     source with no level at all can hold any floor, so it is on every type's.
+//   - Two such sources: nothing can repay both, and one drains.
+//   - A type with no source on its floor and no overflow: a cart of it, once the group
+//     is whole, stays on its window. Said of a kanban a process draws from or an
+//     unloader sends to; one with neither (a zone that only lends) has nothing to say.
+//
+// "ON A FLOOR" IS THE WALK'S RULE (engine windowWalk.fits): a type with no size is on
+// every floor as a cart, and on none as the thing a sized cart is asked for. Pin:
+// TestMaintainedGroupSave_WhatTheChooserCannotRepay.
+func (s *NodeService) repaymentWarnings(cfg MaintainedGroupConfig, groupName string, feeding bool) ([]string, error) {
+	if len(cfg.Levels) == 0 {
+		return nil, nil
 	}
-	return fmt.Sprintf("%s sends its empties to %s, which declares a level and has no overflow destination — "+
-		"once the group is at level the empties wait on the unloader's windows; set an overflow destination",
-		strings.Join(feeding, ", "), groupName), nil
+	types, err := s.db.ListBinTypes()
+	if err != nil {
+		return nil, fmt.Errorf("read bin types for %s: %w", groupName, err)
+	}
+	sizes := make(map[string]domain.FloorSize, len(types))
+	for _, t := range types {
+		if fs, ok := t.FloorSize(); ok {
+			sizes[t.Code] = fs
+		}
+	}
+	fits := func(cart, asked string) bool {
+		own, ok := sizes[cart]
+		if !ok {
+			return true
+		}
+		fs, ok := sizes[asked]
+		return ok && fs == own
+	}
+	sourceLevels := make([][]store.MaintainLevel, len(cfg.Sources))
+	for i, src := range cfg.Sources {
+		if sourceLevels[i], err = s.db.ListDeclaredLevels(src.SourceNodeID); err != nil {
+			return nil, fmt.Errorf("read levels of source %s: %w", src.SourceNodeName, err)
+		}
+	}
+	var out []string
+	for _, l := range cfg.Levels {
+		routed := l.OverflowNode != "" || strings.TrimSpace(cfg.OverflowDestination) != ""
+		var unrepaid []string
+		for i, src := range cfg.Sources {
+			declares, onFloor := false, len(sourceLevels[i]) == 0
+			for _, sl := range sourceLevels[i] {
+				declares = declares || sl.BinTypeID == l.BinTypeID
+				onFloor = onFloor || fits(l.BinTypeCode, sl.BinTypeCode)
+			}
+			if declares {
+				routed = true
+				continue
+			}
+			if onFloor {
+				routed = true
+				unrepaid = append(unrepaid, src.SourceNodeName)
+				out = append(out, fmt.Sprintf("%s declares no level for %s — repaid only as %s's overflow",
+					src.SourceNodeName, l.BinTypeCode, l.BinTypeCode))
+			}
+		}
+		if len(unrepaid) >= 2 {
+			out = append(out, fmt.Sprintf("%s declare no level for %s — nothing can repay both; one drains",
+				strings.Join(unrepaid, " and "), l.BinTypeCode))
+		}
+		if !routed && (feeding || len(cfg.Supports) > 0) {
+			out = append(out, fmt.Sprintf("%s declares %s with no source or overflow for it — once the group is whole a cart of it stays on its window",
+				groupName, l.BinTypeCode))
+		}
+	}
+	return out, nil
 }
 
 func plural(n int, one, many string) string {

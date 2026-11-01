@@ -1,6 +1,7 @@
 package store
 
 import (
+	"database/sql"
 	"encoding/json"
 	"fmt"
 
@@ -83,7 +84,20 @@ const KanbanPictureSQL = `
 WITH scope AS (
 	SELECT k.node_id FROM kanbans k
 	 WHERE $1::bigint[] IS NULL OR k.node_id = ANY($1::bigint[])
-),
+),` + kanbanPictureCTEs + kanbanPictureSelect
+
+// kanbanPictureWithSourcesSQL is the picture of the named kanbans and of their
+// sources, in one statement. Rows as the picture's.
+const kanbanPictureWithSourcesSQL = `
+WITH scope AS (
+	SELECT k.node_id FROM kanbans k
+	 WHERE k.node_id = ANY($1::bigint[])
+	    OR k.node_id IN (SELECT s.source_node_id FROM kanban_sources s WHERE s.kanban_node_id = ANY($1::bigint[]))
+),` + kanbanPictureCTEs + kanbanPictureSelect
+
+// kanbanPictureCTEs is everything the picture composes from its scope CTE. A door
+// reading one type's want reads it through this (store.DB.ReadKanbanDoor).
+const kanbanPictureCTEs = `
 positions AS (
 	SELECT s.kanban_node_id, pn.name AS node_name
 	  FROM kanban_supports s
@@ -193,7 +207,9 @@ sources AS (
 	  JOIN scope ON scope.node_id = s.kanban_node_id
 	  JOIN nodes n ON n.id = s.source_node_id
 	 GROUP BY s.kanban_node_id
-)
+)`
+
+const kanbanPictureSelect = `
 SELECT g.id, g.name, l.bin_type_id, bt.code, l.want, k.running_cover, COALESCE(r.running, 0),
        COALESCE(sl.slots, 0), COALESCE(su.refs, '[]'), COALESCE(so.refs, '[]'),
        COALESCE(l.overflow_node_id, k.overflow_node_id), COALESCE(ov.name, ''), l.overflow_node_id,
@@ -217,6 +233,16 @@ SELECT g.id, g.name, l.bin_type_id, bt.code, l.want, k.running_cover, COALESCE(r
 // ListKanbanPicture reads the picture: every kanban for nil ids, else those named.
 func (db *DB) ListKanbanPicture(ids []int64) ([]KanbanPictureRow, error) {
 	return listKanbanPicture(db.DB, ids)
+}
+
+// ListKanbanPictureWithSources reads the picture of the named kanbans and of their
+// sources in one statement: a snapshot build's one levels read, so an unloader's
+// walk can ask a kanban's sources with no second one.
+func (db *DB) ListKanbanPictureWithSources(ids []int64) ([]KanbanPictureRow, error) {
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	return scanKanbanPicture(db.DB.Query(kanbanPictureWithSourcesSQL, ids))
 }
 
 // MaintainLevel is the row as a levels reader takes it: Want the effective want,
@@ -245,7 +271,10 @@ func listKanbanPicture(q helpers.RowsQuerier, ids []int64) ([]KanbanPictureRow, 
 	if ids != nil {
 		arg = ids
 	}
-	rows, err := q.Query(KanbanPictureSQL, arg)
+	return scanKanbanPicture(q.Query(KanbanPictureSQL, arg))
+}
+
+func scanKanbanPicture(rows *sql.Rows, err error) ([]KanbanPictureRow, error) {
 	if err != nil {
 		return nil, fmt.Errorf("kanban picture: %w", err)
 	}

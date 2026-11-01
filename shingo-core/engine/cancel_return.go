@@ -396,7 +396,12 @@ func (e *Engine) fencedFor(src *nodes.Node, carrier *orders.Order, binID int64) 
 // through its group: a need that names a lane searches that lane only
 // (SourceFinder tier 1), so a bin set down in a sibling lane would be one its
 // line never finds.
-func (e *Engine) storeInto(src *nodes.Node, bin *bins.Bin) (*nodes.Node, string) {
+//
+// A CANCELLED PUSH OFF AN UNLOADER'S WINDOW GOES WHERE THE PUSH WOULD HAVE GONE: the
+// one chooser (plan.Planner.ChoosePush), the kanban decided on Short and then its
+// sources and the type's overflow. Its refusal is the sentence. Every other return
+// keeps the cap below. Pin: TestKanbanDoor_ACancelledPushReturnsToTheShortSource.
+func (e *Engine) storeInto(src *nodes.Node, bin *bins.Bin, carrier *orders.Order) (*nodes.Node, string) {
 	if src == nil {
 		return nil, "it names no node Core knows"
 	}
@@ -414,6 +419,14 @@ func (e *Engine) storeInto(src *nodes.Node, bin *bins.Bin) (*nodes.Node, string)
 	// The slot is the planner's (plan.GroupStoreSlot), the group resolver the
 	// level keeper and intake ask.
 	stated := binresolver.KnownCarrier(bin)
+	if carrier != nil && dispatch.WindowPushShaped(carrier) {
+		if c := e.dispatcher.ChooseCancelledPush(cartPickNode(carrier, bin.ID), group, stated); c.Applies {
+			if c.Slot == nil {
+				return nil, group.Name + " and its sources are not short of it, and no overflow has room"
+			}
+			return c.Slot, c.Why
+		}
+	}
 	res, err := e.dispatcher.PlanGroupStoreSlot(group, bin.PayloadCode, stated)
 	if err == nil && res != nil && res.Node != nil {
 		return res.Node, ""
@@ -434,7 +447,7 @@ func (e *Engine) storeInto(src *nodes.Node, bin *bins.Bin) (*nodes.Node, string)
 	if !errors.Is(err, binresolver.ErrAtDeclaredLevel) {
 		return nil, refusalText(err, "no slot in "+group.Name)
 	}
-	over, why := plan.OverflowGroupOf(e.db, group)
+	over, why := plan.OverflowGroupOf(e.db, group, &bin.BinTypeID)
 	if over == nil {
 		if why == "" {
 			why = "it names no overflow"
@@ -548,7 +561,7 @@ func (e *Engine) chooseDeclared(bin *bins.Bin, _ fleet.RobotStatus, carrier *ord
 				continue
 			}
 		}
-		dest, why := e.storeInto(s.node, bin)
+		dest, why := e.storeInto(s.node, bin, carrier)
 		if dest != nil {
 			tier := "returned to " + s.name + ", where " + describeBinLoad(bin) + " is sourced from"
 			if bin.PayloadCode == "" {
@@ -598,6 +611,25 @@ func carrierProcessNodes(o *orders.Order, binID int64) []string {
 		}
 	}
 	return out
+}
+
+// cartPickNode is where o lifted the cart binID: the pick step of its newest row for that cart
+// (domain.StepNode), the walk carrierProcessNodes reads. A row in hand from birth has no pick
+// node, and an order with no row for the cart names none: o.SourceNode, then.
+func cartPickNode(o *orders.Order, binID int64) string {
+	for i := len(o.Carts) - 1; i >= 0; i-- {
+		c := o.Carts[i]
+		if c.BinID != binID {
+			continue
+		}
+		if c.PickStep != nil {
+			if n := domain.StepNode(o, *c.PickStep); n != "" {
+				return n
+			}
+		}
+		break
+	}
+	return o.SourceNode
 }
 
 func describeBinLoad(bin *bins.Bin) string {

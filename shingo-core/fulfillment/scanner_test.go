@@ -10,6 +10,8 @@ import (
 	"shingo/protocol"
 	"shingo/protocol/testutil"
 	"shingocore/dispatch"
+	"shingocore/dispatch/binresolver"
+	"shingocore/dispatch/plan"
 	"shingocore/store/bins"
 	"shingocore/store/nodes"
 	"shingocore/store/orders"
@@ -799,4 +801,13 @@ func TestScanner_AnOrderParkedThisPassIsNotReAskedInItsRerun(t *testing.T) {
 		t.Fatalf("order %d was asked %d times in one pass, want 1: the rerun re-asked an order this pass had "+
 			"just parked", order.ID, asked)
 	}
+}
+
+// ChooseWindowPush answers no window's push: the arm's reads are the store's, and
+// these fakes model the cap's path.
+func (d *recordingDispatcher) ChooseWindowPush(*orders.Order, *nodes.Node, plan.PushRefusals) (plan.PushChoice, binresolver.BinTypeStatement) {
+	return plan.PushChoice{}, binresolver.BinTypeStatement{}
+}
+func (d *recordingDispatcher) ReserveChosenPush(o *orders.Order, _ *nodes.Node) dispatch.StorageDropoff {
+	return d.ReserveStorageDropoff(o)
 }

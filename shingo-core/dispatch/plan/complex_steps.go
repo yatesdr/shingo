@@ -26,7 +26,14 @@ type Planner struct {
 	finder   *Finder
 	resolver binresolver.NodeResolver
 	dbg      func(string, ...any)
+	// slotViews takes one read of a group for a door choosing a slot in it
+	// (store.DB.DoorReads); nil asks the store per child (SetSlotViews).
+	slotViews func(groupID int64, l *nodes.DoorLine) Reader
 }
+
+// SetSlotViews gives the planner its door view. Set once, where it is built; a plan
+// package cannot name the store that makes one.
+func (p *Planner) SetSlotViews(fn func(groupID int64, l *nodes.DoorLine) Reader) { p.slotViews = fn }
 
 // NewPlanner builds the planner over the reader and the picker it shares with
 // its caller: one picker, so complex sourcing cannot drift from simple sourcing.

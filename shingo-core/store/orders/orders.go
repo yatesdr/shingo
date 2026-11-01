@@ -2171,6 +2171,37 @@ func ListKanbanInbound(db *sql.DB, kanbanIDs []int64) ([]KanbanInbound, error) {
 	return out, rows.Err()
 }
 
+// KanbanComingOfTypeSQL is ListKanbanInbound's statement for one carrier type, as a
+// fragment a door's one read composes: per group of the walk the caller's statement
+// names (kanban_tree(kanban, id), whose first row per group is the group itself), the
+// stock coming and the carts at 0 coming. typeExpr, selfExpr and kindExpr carry the
+// type's id, the asking order's id (0 for one with no row yet) and the maintain kind.
+//
+// THE ASKER AND THOSE BEHIND IT DO NOT COUNT. A push counts as coming from its birth
+// (CountTypedInboundToGroup), so a parked push would read itself as filling the gap it
+// is asking about. And two parked pushes would each read the other: a kanban short by
+// one with two carts parked against it would admit neither, and its keeper, which
+// counts both, would ask nothing. So a push reads the coming carts born before it, and
+// those of any age a robot or a slot is already spoken for; one still naming the group
+// behind it waits its turn. An order with no row yet is behind them all. Pin:
+// TestKanbanDoor_TwoParkedPushesDoNotWaitOnEachOther.
+func KanbanComingOfTypeSQL(typeExpr, selfExpr, kindExpr string) string {
+	behind := "bt.id = " + typeExpr + " AND o.id <> " + selfExpr +
+		" AND NOT (" + selfExpr + " <> 0 AND o.id > " + selfExpr + " AND dn.id = kt.kanban)"
+	return `SELECT kanban,
+			COUNT(*) FILTER (WHERE state <> '` + string(protocol.CarrierTopsAndBottoms) + `') AS stock,
+			COUNT(*) FILTER (WHERE state = '` + string(protocol.CarrierTopsAndBottoms) + `') AS at_zero
+		  FROM (` + typedInboundSQL(typedInboundScope{
+		cols:  "kt.kanban AS kanban, ",
+		outer: "kanban, ",
+		joins: "JOIN kanban_tree kt ON kt.id = dn.id",
+		rows:  behind,
+		named: behind,
+		kind:  kindExpr,
+	}) + `) AS coming
+		 GROUP BY kanban`
+}
+
 // CountLiveByDeliveryNode counts ALL non-terminal orders pointed at a delivery
 // node, from any origin and in any status — `queued` included.
 //

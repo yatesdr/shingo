@@ -62,6 +62,20 @@ func ListKanbanResidents(db *sql.DB, kanbanIDs []int64) ([]ResidentCount, error)
 	return out, rows.Err()
 }
 
+// KanbanResidentsOfTypeSQL is ListKanbanResidents' statement for one carrier type,
+// as a fragment a door's one read composes: per group of the walk the caller's
+// statement names (kanban_tree(kanban, id)), the stock of the type standing there
+// and the carts at 0. typeExpr is the expression carrying the type's id. The same
+// WHERE as the count's.
+func KanbanResidentsOfTypeSQL(typeExpr string) string {
+	return `SELECT kt.kanban AS kanban,
+			COUNT(*) FILTER (WHERE ` + noHeightSaidSQL() + `) AS stock,
+			COUNT(*) FILTER (WHERE NOT (` + noHeightSaidSQL() + `)) AS at_zero ` + BinFromClause + `
+		JOIN kanban_tree kt ON kt.id = b.node_id` + emptyCarrierWhere("NULL", "kt.kanban") + `
+		  AND bt.id = ` + typeExpr + `
+		GROUP BY kt.kanban`
+}
+
 // SourceableTypes is the keeper's forecast for one short kanban: which of codes
 // a plant-wide find would answer with something, in one statement, the finder's
 // own WHERE, fence, sources and dig arm for an ask that holds nothing

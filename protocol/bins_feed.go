@@ -172,8 +172,18 @@ type NodeBinsWant struct {
 
 // NodeBinsAssignment is what the cart at one watched window is asked to go
 // back as.
+//
+// Group and NoneShort are Core's words for the card; the Edge routes nothing on them.
+// Core re-aims the push at its door (plan.Planner.ChoosePush), and an Edge that does
+// not know them ignores them, so Core deploys first.
 type NodeBinsAssignment struct {
 	Node    string `json:"node"`
 	BinType string `json:"bin_type"`
 	Layers  *int   `json:"layers,omitempty"`
+	// Group is the group the choice is for, when that is not the group this line is
+	// the wants of: a source of it, short of the type while the kanban is whole.
+	Group string `json:"group,omitempty"`
+	// NoneShort says no group of the line is short of this cart: BinType is blank, and
+	// nothing is lit.
+	NoneShort bool `json:"none_short,omitempty"`
 }

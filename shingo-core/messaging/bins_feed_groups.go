@@ -236,10 +236,10 @@ func binsReadIDs(places map[int64]*nodes.Node, groups []watchGroup) []int64 {
 	return ids
 }
 
-// groupLines answers the levelled groups' lines: the picture of all of them (one
-// statement, the effective want its Want) and the line function's reads, none per
-// group. A group that no longer resolves, or has no levels, has no line. A failed
-// read fails the build: never a digest over a line nobody read.
+// groupLines answers the levelled groups' lines: the picture of all of them and of
+// their sources (one statement, the effective want its Want) and the line function's
+// reads, none per group. A group that no longer resolves, or has no levels, has no
+// line. A failed read fails the build: never a digest over a line nobody read.
 func (s *CoreDataService) groupLines(station, digest string, groups []watchGroup, names []string,
 	resolved map[string]*nodes.Node, first map[int64]*bins.Bin) ([]protocol.NodeBinsGroup, error) {
 	out := []protocol.NodeBinsGroup{}
@@ -258,13 +258,15 @@ func (s *CoreDataService) groupLines(station, digest string, groups []watchGroup
 	if len(ids) == 0 {
 		return out, nil
 	}
-	picture, err := s.db.ListKanbanPicture(ids)
+	picture, err := s.db.ListKanbanPictureWithSources(ids)
 	if err != nil {
 		return nil, fmt.Errorf("bins: levels of %v: %w", groupNames(groups), err)
 	}
 	levels := map[int64][]store.MaintainLevel{}
+	sources := map[int64][]store.KanbanRef{}
 	for _, r := range picture {
 		levels[r.KanbanNodeID] = append(levels[r.KanbanNodeID], r.MaintainLevel())
+		sources[r.KanbanNodeID] = r.Sources
 	}
 	var asks []store.GroupLineAsk
 	for _, g := range groups {
@@ -284,7 +286,11 @@ func (s *CoreDataService) groupLines(station, digest string, groups []watchGroup
 			}
 			rows = append(rows, binRow(name, first[win.NodeID]))
 		}
-		asks = append(asks, store.GroupLineAsk{Group: node, Levels: levels[node.ID], Windows: rows})
+		ask := store.GroupLineAsk{Group: node, Levels: levels[node.ID], Windows: rows}
+		for _, src := range sources[node.ID] {
+			ask.Sources = append(ask.Sources, store.GroupLineSource{ID: src.ID, Name: src.Name, Levels: levels[src.ID]})
+		}
+		asks = append(asks, ask)
 	}
 	if len(asks) == 0 {
 		return out, nil

@@ -191,7 +191,7 @@ func (s *LifecycleService) CreateInboundOrder(stationID string, p *protocol.Orde
 	// with the delivery as admission resolved it; the plan is the pick, when the
 	// decision found one.
 	var taken Taken
-	if lerr := s.admit(order, func() error {
+	if lerr := s.admit(order, cart, func() error {
 		var pl plan.Plan
 		if decide != nil {
 			pl = decide(order, payloadCode, cart)
@@ -306,12 +306,15 @@ func (s *LifecycleService) projectOrder(order *orders.Order) {
 // rest write their row another way. So anything hung off admission covers four
 // doors of the census, which is the number to hold in mind before saying "every
 // order gets this".
-func (s *LifecycleService) admit(order *orders.Order, write func() error) *lifecycleError {
+//
+// cart is the bin the door already read for the order, nil for none: what the drop
+// is chosen for, with no second read of it.
+func (s *LifecycleService) admit(order *orders.Order, cart *bins.Bin, write func() error) *lifecycleError {
 	destNode, lerr := s.checkOrderRefs(order)
 	if lerr != nil {
 		return lerr
 	}
-	resolvedAt, lerr := s.resolveSyntheticDestination(order, destNode)
+	resolvedAt, lerr := s.resolveSyntheticDestination(order, destNode, cart)
 	if lerr != nil {
 		return lerr
 	}
@@ -529,7 +532,7 @@ func (s *LifecycleService) binTypeAtIntake(order *orders.Order) binresolver.BinT
 		order.SourceNode))
 }
 
-func (s *LifecycleService) resolveSyntheticDestination(order *orders.Order, destNode *nodes.Node) (time.Time, *lifecycleError) {
+func (s *LifecycleService) resolveSyntheticDestination(order *orders.Order, destNode *nodes.Node, cart *bins.Bin) (time.Time, *lifecycleError) {
 	if destNode == nil || !destNode.IsSynthetic || s.resolver == nil {
 		return time.Time{}, nil
 	}
@@ -553,7 +556,28 @@ func (s *LifecycleService) resolveSyntheticDestination(order *orders.Order, dest
 	// A FAILED READ RESOLVES UNTYPED rather than refusing. That is the behaviour
 	// every order had before this line existed, so the failure mode is "no worse
 	// than yesterday" rather than a placement that does not happen.
-	carrier := s.binTypeAtIntake(order)
+	var carrier binresolver.BinTypeStatement
+	if cart != nil {
+		carrier = binresolver.KnownCarrier(cart)
+	} else {
+		carrier = s.binTypeAtIntake(order)
+	}
+
+	// A PUSH OFF AN UNLOADER'S WINDOW IS THE CHOOSER'S (plan.Planner.ChoosePush): Short,
+	// not the cap, and the kanban's sources before its overflow. Nothing taking it
+	// leaves the group's name on the order, which queues as a full group's does.
+	if WindowPushShaped(order) && destNode.NodeTypeCode == protocol.NodeClassNGRP {
+		if c := s.pure.ChoosePush(plan.PushAsk{Group: destNode, Source: order.SourceNode, Stated: carrier,
+			Asker: digAskerFor(order)}); c.Applies {
+			if c.Slot == nil {
+				s.dbg("intake: nothing takes the push into %s — creating order against group so it queues: %v", requested, c.Err)
+				return time.Time{}, nil
+			}
+			s.dbg("resolved push %s -> %s (%s)", requested, c.Slot.Name, c.Why)
+			order.DeliveryNode = c.Slot.Name
+			return clock.Now().UTC(), nil
+		}
+	}
 
 	result, err := s.pure.StoreDestination(destNode, order.PayloadCode, carrier, digAskerFor(order))
 	if err != nil {
@@ -590,7 +614,7 @@ func (s *LifecycleService) resolveSyntheticDestination(order *orders.Order, dest
 		// before a robot has been told anything. A push a robot has — one in flight
 		// that arrives at a just-topped group — parks at its dropoff with a named
 		// cause; it is never redirected underneath the robot carrying it.
-		if node, stamp, ok := s.tryOverflow(order, destNode); ok {
+		if node, stamp, ok := s.tryOverflow(order, destNode, carrier); ok {
 			s.dbg("intake: %s at level — overflowing to %s", requested, node)
 			order.DeliveryNode = node
 			return stamp, nil
@@ -898,8 +922,7 @@ func (s *LifecycleService) PrepareRedirect(order *orders.Order, newDeliveryNode 
 // It re-resolves rather than reusing anything from the first attempt, because
 // the overflow is a different group with its own algorithm, its own children,
 // and possibly its own level.
-func (s *LifecycleService) tryOverflow(order *orders.Order, group *nodes.Node) (string, time.Time, bool) {
-	stated := func() binresolver.BinTypeStatement { return s.binTypeAtIntake(order) }
+func (s *LifecycleService) tryOverflow(order *orders.Order, group *nodes.Node, stated binresolver.BinTypeStatement) (string, time.Time, bool) {
 	node, ok := s.pure.OverflowDestination(group, order.PayloadCode, stated, digAskerFor(order))
 	if !ok {
 		return "", time.Time{}, false

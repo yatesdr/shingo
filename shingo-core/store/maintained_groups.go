@@ -62,11 +62,12 @@ func (db *DB) OverflowTargetOf(groupNodeID int64) (OverflowTarget, error) {
 	return nodes.OverflowTargetOf(db.DB, groupNodeID)
 }
 
-// OverflowNameOf is the name of a group's overflow, by the group's name; blank
+// OverflowNameOf is the name of the overflow a store of one carrier type takes from
+// a group, by the group's name (0: the type is not known, the group's own); blank
 // for none, and for a read that failed, which leaves the push parked until the
 // next pass asks again. One statement.
-func (db *DB) OverflowNameOf(groupName string) string {
-	t, err := nodes.OverflowTargetByName(db.DB, groupName)
+func (db *DB) OverflowNameOf(groupName string, binTypeID int64) string {
+	t, err := nodes.PerTypeOverflowTargetByName(db.DB, groupName, binTypeID)
 	if err != nil {
 		log.Printf("store: %v", err)
 		return ""
@@ -160,4 +161,10 @@ func (db *DB) KanbansSupportingProcess(processID string) ([]int64, error) {
 // serves the press that took it.
 func (db *DB) NodeIsUnderAny(nodeID int64, roots []int64) (bool, error) {
 	return nodes.NodeIsUnderAny(db.DB, nodeID, roots)
+}
+
+// PerTypeOverflowTargetOf reads the overflow a store of one carrier type takes from
+// a group (nodes.PerTypeOverflowTargetOf). One statement.
+func (db *DB) PerTypeOverflowTargetOf(groupNodeID, binTypeID int64) (OverflowTarget, error) {
+	return nodes.PerTypeOverflowTargetOf(db.DB, groupNodeID, binTypeID)
 }
