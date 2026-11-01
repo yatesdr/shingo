@@ -173,7 +173,9 @@ type Engine struct {
 	// payloadBinTypesHeld is whether Core's catalog has arrived at all (an
 	// empty catalog included): the press-index changeover's gate.
 	payloadBinTypesHeld bool
-	payloadBinTypesMu   lockcheck.RWMutex[lockorder.PayloadBinTypes]
+	// binTypeFloors is Core's floor size per bin type; see setBinTypeFloors.
+	binTypeFloors     map[string]string
+	payloadBinTypesMu lockcheck.RWMutex[lockorder.PayloadBinTypes]
 	// The vendor map's own universe — see scene_graph.go. In-memory only and
 	// re-delivered on every node-list sync, like the catalog above.
 	scenePoints  []protocol.ScenePointInfo
@@ -348,6 +350,7 @@ func New(c Config) *Engine {
 	// delivers with every node-list sync.
 	e.stationService.SetBinTypeResolver(e.BinTypeForPayload)
 	e.stationService.SetCarrierCatalog(e.PayloadBinTypes)
+	e.stationService.SetBinTypeFloors(e.BinTypeFloors)
 	// A station's node list is matched by core_node_name everywhere, so a name
 	// Core does not have configures a row that resolves to nothing. Give the
 	// service the live name set to check against.

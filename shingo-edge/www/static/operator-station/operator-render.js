@@ -243,9 +243,9 @@ const boardActs = {
     act: function (a) {
         switch (a.kind) {
         case 'load': openLoadBinRef(a.node, a.codes, 0); break;
-        case 'unload': confirmUnloadSwap(a.node, a.carriers, a.discarding, a.leavesBare, a.lit); break;
+        case 'unload': confirmUnloadSwap(a.node, a.carriers, a.discarding, a.leavesBare, a.lit, a.cart); break;
         case 'unload-held': confirmUnloadHeld(a.node, a.heldFor, a.count, a.stageTwo); break;
-        case 'push-empty': confirmPushEmpty(a.node, a.carriers, a.bare, a.lit, a.stageTwo); break;
+        case 'push-empty': confirmPushEmpty(a.node, a.carriers, a.bare, a.lit, a.stageTwo, a.cart); break;
         case 'clear-home': confirmClearLoaderHome(a.node, a.home, a.spot); break;
         case 'modal': openModalRef(a.node); break;
         case 'request-empty': postFromBar(a, '/api/process-nodes/' + a.node + '/request-empty', {}); break;
@@ -417,6 +417,9 @@ function confirmUnloadHeld(nodeID, line, count, stageTwo) {
 // lit is the choice the board's card says to send back, {bin_type, layers?}
 // (clearHighlight): that button is lit, every button still tappable.
 //
+// cartType is the type of the cart at the window: the panel offers the types of
+// its floor size, and lit (clearChoices).
+//
 // HEIGHTS (clearChoices): a type the empties group wants heights of shows the
 // bin's name (the plain type, posting no layers), the bin's name with each
 // wanted height ("TOTE-1 · 3 high"), and, where the group has a "Tops &
@@ -427,12 +430,12 @@ function confirmUnloadHeld(nodeID, line, count, stageTwo) {
 //
 // Exported for the node modal's CLEAR BIN on an unloader, which goes through
 // this panel (operator-modal.js).
-export function confirmUnloadSwap(nodeID, carriers, discarding, leavesBare, lit) {
+export function confirmUnloadSwap(nodeID, carriers, discarding, leavesBare, lit, cartType) {
     if (leavesBare) {
         confirmFullOff(nodeID, discarding);
         return;
     }
-    const choices = clearChoices(getView(), carriers);
+    const choices = clearChoices(getView(), carriers, cartType, lit);
 
     const overlay = el('div', { className: 'os-co-picker-overlay' });
     const panel = el('div', { className: 'os-co-picker' });
@@ -608,8 +611,9 @@ function confirmStageTwoOn(nodeID, carriers, lit, on) {
 // the one-tap Send on panel instead (confirmSendOn), or, at a takes_bare
 // window, what goes on it (confirmStageTwoOn; stageTwo is then the card
 // stageTwoOn decided, null anywhere else). lit is the choice the board's card
-// says to send it back as: its PUSH AS is lit.
-function confirmPushEmpty(nodeID, carriers, bare, lit, stageTwo) {
+// says to send it back as: its PUSH AS is lit. cartType is the cart's type: PUSH
+// AS offers the types of its floor size, and lit (clearChoices).
+function confirmPushEmpty(nodeID, carriers, bare, lit, stageTwo, cartType) {
     if (bare) {
         if (stageTwo) confirmStageTwoOn(nodeID, carriers, lit, stageTwo);
         else confirmSendOn(nodeID, carriers, lit);
@@ -650,8 +654,9 @@ function confirmPushEmpty(nodeID, carriers, bare, lit, stageTwo) {
     // and it is NOT a way to argue with the Allowed Bin Types fence. Declaring
     // a carrier's real type is a correction; retyping a carrier so a refused
     // order will go through would be a lie about a physical object, and this
-    // panel only ever offers the types the node's payloads actually use.
-    const choices = clearChoices(getView(), carriers);
+    // panel offers the types the node's payloads use (or the whole catalog when
+    // they match none, service carriersFor), on the cart's floor.
+    const choices = clearChoices(getView(), carriers, cartType, lit);
     if (choices.length > 0) {
         panel.appendChild(el('div', { className: 'os-co-picker-subtitle',
             textContent: 'Or push it out and correct the carrier type:' }));

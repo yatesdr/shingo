@@ -1,8 +1,10 @@
 package service
 
 import (
+	"encoding/json"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 
 	"shingo/protocol"
@@ -435,4 +437,41 @@ func countingDB(t *testing.T) (*store.DB, *store.QueryCounter) {
 	}
 	t.Cleanup(func() { _ = db.Close() })
 	return db, counter
+}
+
+// TestFloorsForBoard: the view carries the floors only on a board where some tile
+// offers carriers, under the key the panels read; a Core that sends none and an
+// Edge with no resolver both leave it absent.
+func TestFloorsForBoard(t *testing.T) {
+	t.Parallel()
+	floors := map[string]string{"TOTE-1": "45x48"}
+	withCarriers := []store.StationNodeView{{}, {Loader: &domain.TileLoader{Carriers: []string{"TOTE-1"}}}}
+	without := []store.StationNodeView{{}, {Loader: &domain.TileLoader{}}}
+
+	s := &StationService{}
+	if got := s.floorsForBoard(withCarriers); got != nil {
+		t.Errorf("no resolver: %v, want none", got)
+	}
+	s.SetBinTypeFloors(func() map[string]string { return floors })
+	if got := s.floorsForBoard(without); got != nil {
+		t.Errorf("a board with no carriers: %v, want none", got)
+	}
+	got := s.floorsForBoard(withCarriers)
+	if got["TOTE-1"] != "45x48" {
+		t.Errorf("a board with carriers: %v, want the floors", got)
+	}
+	raw, err := json.Marshal(domain.OperatorStationView{Floor: got})
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if !strings.Contains(string(raw), `"floor":{"TOTE-1":"45x48"}`) {
+		t.Errorf("view JSON %s has no floor key", raw)
+	}
+	raw, err = json.Marshal(domain.OperatorStationView{})
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if strings.Contains(string(raw), `"floor"`) {
+		t.Errorf("a view with no floors sends the key: %s", raw)
+	}
 }

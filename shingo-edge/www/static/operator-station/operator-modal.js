@@ -1252,7 +1252,8 @@ const ACTION_HANDLERS = {
         // Lit as the board's card lights it (clearHighlight).
         confirmUnloadSwap(entry.node.id, carriersOf(entry),
             entry.runtime && entry.runtime.remaining_uop_cached, !!loader.leaves_bare,
-            loader.leaves_bare ? null : clearHighlight(entry, view.serves));
+            loader.leaves_bare ? null : clearHighlight(entry, view.serves),
+            entry.bin_state && entry.bin_state.bin_type_code);
     },
 
     'keypad': (arg) => {

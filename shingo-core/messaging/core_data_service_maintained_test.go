@@ -68,3 +68,39 @@ func TestNodeListResponse_MarksMaintainedGroups(t *testing.T) {
 		}
 	}
 }
+
+// TestNodeListResponse_CarriesEachTypesFloor: the list says each type's floor once,
+// by type code and orientation-blind, as the walk's floor rule compares them; a
+// type with no size has no entry. The digest covers it, so a floor edit reaches an
+// Edge holding the old digest.
+func TestNodeListResponse_CarriesEachTypesFloor(t *testing.T) {
+	t.Parallel()
+	db := testdb.Open(t)
+	wide := &bins.BinType{Code: "FL-WIDE", WidthIn: 45, LengthIn: 48}
+	long := &bins.BinType{Code: "FL-LONG", WidthIn: 48, LengthIn: 45}
+	bare := &bins.BinType{Code: "FL-BARE", WidthIn: 45}
+	for _, bt := range []*bins.BinType{wide, long, bare} {
+		testutil.MustNoErr(t, db.CreateBinType(bt), "create "+bt.Code)
+	}
+	svc := NewCoreDataService(db, &captureResponder{}, service.EpochAnnounce{})
+	got, err := svc.buildNodeList("edge.floor", true)
+	testutil.MustNoErr(t, err, "build")
+	if got.Floor["FL-WIDE"] != "45x48" || got.Floor["FL-LONG"] != "45x48" {
+		t.Errorf("floors = %v, want both at 45x48", got.Floor)
+	}
+	if f, ok := got.Floor["FL-BARE"]; ok {
+		t.Errorf("a type with no length has floor %q", f)
+	}
+	digest := got.Digest
+
+	long.WidthIn = 40
+	testutil.MustNoErr(t, db.UpdateBinType(long), "edit the floor")
+	got, err = svc.buildNodeList("edge.floor", true)
+	testutil.MustNoErr(t, err, "build again")
+	if got.Floor["FL-LONG"] != "40x45" {
+		t.Errorf("edited floor = %q, want 40x45", got.Floor["FL-LONG"])
+	}
+	if got.Digest == digest {
+		t.Error("a floor edit left the digest as it was: an Edge holding it would never hear")
+	}
+}

@@ -1,6 +1,9 @@
 package domain
 
-import "time"
+import (
+	"strconv"
+	"time"
+)
 
 // BinType is the lookup entity that classifies physical bins by their
 // outer dimensions. Bins point at a BinType via Bin.BinTypeID; the
@@ -8,9 +11,10 @@ import "time"
 // rendering paths don't need to follow the pointer.
 //
 // The three dimensions are a plant's carrier catalogue, read off the schema
-// instead of parsed out of codes like "45x58x32". One reader compares them: the
+// instead of parsed out of codes like "45x58x32". Two readers compare them: the
 // unloader's card asks a cart only for types of its own floor size (FloorSize,
-// width × length, when both are entered; engine assignWindows). A slot's fit is
+// width × length, when both are entered; engine assignWindows), and the Edge's
+// CLEAR panels offer only those types (NodeListResponse.Floor). A slot's fit is
 // still type identity everywhere else.
 type BinType struct {
 	ID          int64   `json:"id"`
@@ -56,6 +60,12 @@ type BinType struct {
 // order so that a 45 × 48 and a 48 × 45 are one size: two floors are the same
 // exactly when they are ==.
 type FloorSize struct{ short, long float64 }
+
+// String is the floor on the wire, short side first: "45x48". Each side is its
+// shortest exact spelling, so two strings are equal exactly when the sizes are ==.
+func (f FloorSize) String() string {
+	return strconv.FormatFloat(f.short, 'f', -1, 64) + "x" + strconv.FormatFloat(f.long, 'f', -1, 64)
+}
 
 // FloorSize is the type's floor size; false unless both its width and its
 // length are entered (above 0). A type with none has no size to compare.

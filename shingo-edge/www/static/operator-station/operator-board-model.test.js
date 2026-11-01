@@ -480,7 +480,7 @@ eq([NOBIN, FULLBIN('PART-A'), EMPTYBIN('KD-1'), EMPTYBIN(''), { occupied: true, 
     eq(b.words, ['2 arrived', '3 at the windows', 'PRESS-1 full'], 'top line: the fulls arrived, the carts, and the press that is full');
     eq(w.cards.map(c => c.act.kind), ['push-empty', 'unload', 'unload'],
         'unloader windows (the old slot grid): an empty opens the empty-cart panel, a full the CLEAR');
-    eq(w.cards[1].act, { kind: 'unload', node: 1, carriers: ['TOTE-2', 'KD-1'], discarding: 180, leavesBare: false, lit: { bin_type: 'TOTE-2' } },
+    eq(w.cards[1].act, { kind: 'unload', node: 1, carriers: ['TOTE-2', 'KD-1'], discarding: 180, leavesBare: false, lit: { bin_type: 'TOTE-2' }, cart: 'TOTE-2' },
         'a full\'s CLEAR: its carriers and its count, the waiting press\'s bin lit');
     // One bin type at the station: no "Send back" / "Send it".
     const one = B({ station: {}, nodes: [windows[1], windows[2]], serves: [serves[2]], empties: empties });

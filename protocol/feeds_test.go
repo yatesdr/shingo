@@ -18,7 +18,7 @@ import (
 // The golden strings are SHA-256 of the JSON written beside each case.
 
 // digester returns a func that unwraps a digest function's two results, so a
-// case reads d(NodesDigest(...)).
+// case reads d(NodesDigest(..., nil)).
 func digester(t *testing.T) func(string, error) string {
 	return func(d string, err error) string {
 		t.Helper()
@@ -44,31 +44,32 @@ func TestNodesDigest_Golden(t *testing.T) {
 	nodes := []NodeInfo{{Name: "LN-1", NodeType: "AP"}}
 	bins := []PayloadBinTypeInfo{{PayloadCode: "P1", BinTypeCode: "B1"}}
 	// {"nodes":[{"name":"LN-1","node_type":"AP"}],"loaders":[],"payload_bin_types":[{"payload_code":"P1","bin_type_code":"B1"}]}
-	base := d(NodesDigest(nodes, nil, bins))
+	base := d(NodesDigest(nodes, nil, bins, nil))
 	if base != "66f5fcfce290e0b6" {
 		t.Errorf("NodesDigest = %s, want 66f5fcfce290e0b6", base)
 	}
-	if got := d(NodesDigest(nodes, []LoaderInfo{}, bins)); got != base {
+	if got := d(NodesDigest(nodes, []LoaderInfo{}, bins, nil)); got != base {
 		t.Errorf("nil vs empty loaders: %s != %s", got, base)
 	}
 
 	two := []NodeInfo{{Name: "LN-1", NodeType: "AP"}, {Name: "LN-2", NodeType: "AP"}}
 	rev := []NodeInfo{two[1], two[0]}
-	if a, b := d(NodesDigest(two, nil, nil)), d(NodesDigest(rev, nil, nil)); a != b {
+	if a, b := d(NodesDigest(two, nil, nil, nil)), d(NodesDigest(rev, nil, nil, nil)); a != b {
 		t.Errorf("reordered nodes: %s != %s", a, b)
 	}
 	loaders := []LoaderInfo{{LoaderKey: "loader:1"}, {LoaderKey: "loader:2"}}
-	if a, b := d(NodesDigest(nil, loaders, nil)),
-		d(NodesDigest(nil, []LoaderInfo{loaders[1], loaders[0]}, nil)); a != b {
+	if a, b := d(NodesDigest(nil, loaders, nil, nil)),
+		d(NodesDigest(nil, []LoaderInfo{loaders[1], loaders[0]}, nil, nil)); a != b {
 		t.Errorf("reordered loaders: %s != %s", a, b)
 	}
 
 	for name, changed := range map[string]string{
-		"node type":   d(NodesDigest([]NodeInfo{{Name: "LN-1", NodeType: "LM"}}, nil, bins)),
-		"maintained":  d(NodesDigest([]NodeInfo{{Name: "LN-1", NodeType: "AP", Maintained: true}}, nil, bins)),
-		"bin type":    d(NodesDigest(nodes, nil, []PayloadBinTypeInfo{{PayloadCode: "P1", BinTypeCode: "B2"}})),
-		"loader":      d(NodesDigest(nodes, []LoaderInfo{{LoaderKey: "loader:1"}}, bins)),
-		"loader flag": d(NodesDigest(nodes, []LoaderInfo{{LoaderKey: "loader:1", AutoPush: true}}, bins)),
+		"node type":   d(NodesDigest([]NodeInfo{{Name: "LN-1", NodeType: "LM"}}, nil, bins, nil)),
+		"maintained":  d(NodesDigest([]NodeInfo{{Name: "LN-1", NodeType: "AP", Maintained: true}}, nil, bins, nil)),
+		"bin type":    d(NodesDigest(nodes, nil, []PayloadBinTypeInfo{{PayloadCode: "P1", BinTypeCode: "B2"}}, nil)),
+		"loader":      d(NodesDigest(nodes, []LoaderInfo{{LoaderKey: "loader:1"}}, bins, nil)),
+		"loader flag": d(NodesDigest(nodes, []LoaderInfo{{LoaderKey: "loader:1", AutoPush: true}}, bins, nil)),
+		"floor":       d(NodesDigest(nodes, nil, bins, map[string]string{"B1": "45x48"})),
 	} {
 		if changed == base {
 			t.Errorf("%s change left the digest at %s", name, base)

@@ -1061,6 +1061,13 @@ type NodeListResponse struct {
 	Nodes           []NodeInfo           `json:"nodes"`
 	Loaders         []LoaderInfo         `json:"loaders,omitempty"`
 	PayloadBinTypes []PayloadBinTypeInfo `json:"payload_bin_types,omitempty"`
+	// Floor is each bin type's floor size, by bin-type code, for the types that
+	// have one (width and length entered): the one spelling, so two types share a
+	// floor exactly when their strings are equal. Per type, not per
+	// PayloadBinTypes row, because a type's floor does not vary by payload. Absent
+	// from an older Core, and an older Edge ignores it; an Edge holding none does
+	// not filter its picker.
+	Floor map[string]string `json:"floor,omitempty"`
 	// ScenePoints and SceneEdges are the vendor map's own universe of
 	// locations and the drivable segments between them. Sibling slices for the
 	// same reason as the two above, and additive in the same way.
@@ -1087,9 +1094,9 @@ type NodeListResponse struct {
 	// counter: two Cores, or one Core restarted, answer the same scene with the
 	// same revision.
 	SceneRevision string `json:"scene_revision,omitempty"`
-	// Digest is the FeedNodes digest of Nodes, Loaders and PayloadBinTypes as
-	// this reply carries them (NodesDigest), on every path that builds the
-	// reply. An Edge holding that digest already applies none of the three.
+	// Digest is the FeedNodes digest of Nodes, Loaders, PayloadBinTypes and Floor
+	// as this reply carries them (NodesDigest), on every path that builds the
+	// reply. An Edge holding that digest already applies none of the four.
 	// Absent from an older Core, whose replies apply as they always did.
 	Digest string `json:"digest,omitempty"`
 }

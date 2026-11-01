@@ -23,7 +23,7 @@ func applyNodeListReply(e *Engine, resp *protocol.NodeListResponse) {
 // pin's nodes, loaders and bin types.
 func feedspinDigest(t *testing.T) string {
 	t.Helper()
-	d, err := protocol.NodesDigest(feedspinNodes(), feedspinLoaders(), feedspinBinTypes())
+	d, err := protocol.NodesDigest(feedspinNodes(), feedspinLoaders(), feedspinBinTypes(), nil)
 	testutil.MustNoErr(t, err, "digest")
 	return d
 }
@@ -239,5 +239,26 @@ func TestFeedsPin_CatalogApplyUnchangedWritesNothing(t *testing.T) {
 		if got := totalChanges(t, db) - before; got != tc.want {
 			t.Errorf("%s wrote %d rows, want %d (after %s: %d)", tc.name, got, tc.want, tc.label, tc.after)
 		}
+	}
+}
+
+// TestApplyNodeList_HoldsTheFloors: the floors apply with the catalog, a reply
+// whose digest is the held one applies none, and a reply from a Core that sends
+// none clears them, so the panels do not filter on a stale copy.
+func TestApplyNodeList_HoldsTheFloors(t *testing.T) {
+	t.Parallel()
+	eng := testEngine(t, testEngineDB(t))
+	floors := map[string]string{"B1": "45x48"}
+	eng.ApplyNodeList(&protocol.NodeListResponse{Floor: floors, Digest: "held"})
+	if eng.BinTypeFloors()["B1"] != "45x48" {
+		t.Fatalf("floors = %v after the first apply", eng.BinTypeFloors())
+	}
+	eng.ApplyNodeList(&protocol.NodeListResponse{Digest: "held"})
+	if eng.BinTypeFloors()["B1"] != "45x48" {
+		t.Errorf("a reply with the held digest changed the floors to %v", eng.BinTypeFloors())
+	}
+	eng.ApplyNodeList(&protocol.NodeListResponse{})
+	if len(eng.BinTypeFloors()) != 0 {
+		t.Errorf("a Core that sends none left the floors at %v", eng.BinTypeFloors())
 	}
 }

@@ -10,7 +10,7 @@ import (
 
 // ApplyNodeList applies one node-list message from Core.
 //
-// A DIGEST EQUAL TO THE ONE HELD APPLIES NONE OF THE THREE SLICES IT COVERS.
+// A DIGEST EQUAL TO THE ONE HELD APPLIES NONE OF THE VALUES IT COVERS.
 // Each of them costs something on every call — SetCoreNodes bumps the plant
 // generation and rebuilds every station view, SetCoreLoaders rewrites the
 // loader cache — and an identical list changes nothing they produce. A reply
@@ -27,6 +27,7 @@ func (e *Engine) ApplyNodeList(resp *protocol.NodeListResponse) {
 	if resp.Digest == "" || resp.Digest != e.heldDigest(protocol.FeedNodes) {
 		e.SetCoreNodes(resp.Nodes)
 		loadersErr := e.SetCoreLoaders(resp.Loaders)
+		e.setBinTypeFloors(resp.Floor)
 		e.SetPayloadBinTypes(resp.PayloadBinTypes)
 		if loadersErr == nil && resp.Digest != "" {
 			e.holdFeed(protocol.FeedNodes, resp.Digest, "")

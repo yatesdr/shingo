@@ -70,8 +70,9 @@ export function partCodes(tile) {
 }
 
 // carriersOf is the bin types an unloader tile's CLEAR panels offer, from
-// Core's catalog for the tile's parts (service carriersFor). Empty when Core
-// has sent no catalog: the panel then asks no type.
+// Core's catalog for the tile's parts, or every type in the catalog when the
+// parts match none or there are none (service carriersFor). Empty when Core has
+// sent no catalog: the panel then asks no type.
 export function carriersOf(tile) {
     const loader = loaderOf(tile);
     return (loader && loader.carriers) || [];
@@ -323,9 +324,20 @@ export function wantedHeights(view, binType) {
 // height at 0). Only that choice declares 0. A choice with layers posts them
 // with the CLEAR; one without posts none. A type the group wants no heights of
 // keeps its one choice, so a window with one type keeps its one tap.
-export function clearChoices(view, carriers) {
+//
+// THE CART'S FLOOR BOUNDS THE TYPES, as it bounds Core's walk (assignWindows,
+// windowWalk.fits). cartType is the type of the cart at the window, view.floor
+// Core's floor size per type: with both, only the types of the cart's own floor
+// are offered, and never one with no size. lit stays whatever its floor, because
+// the card says to send the cart back as it. A cart with no floor size, no cart
+// named, or a Core that sends no floors: every type, as before. Heights are the
+// kept types', untouched.
+export function clearChoices(view, carriers, cartType, lit) {
     const out = [];
+    const floors = (view && view.floor) || {};
+    const own = floors[cartType];
     (carriers || []).forEach(function (t) {
+        if (own && floors[t] !== own && !(lit && lit.bin_type === t)) return;
         out.push({ bin_type: t });
         const heights = wantedHeights(view, t);
         heights.forEach(function (h) { if (h > 0) out.push({ bin_type: t, layers: h }); });
@@ -769,7 +781,7 @@ function unloadAct(tile, lit) {
     return {
         kind: 'unload', node: tile.node.id, carriers: carriersOf(tile),
         discarding: (tile.runtime && tile.runtime.remaining_uop_cached) || 0,
-        leavesBare: !!loaderOf(tile).leaves_bare, lit: lit,
+        leavesBare: !!loaderOf(tile).leaves_bare, lit: lit, cart: bin.bin_type_code,
     };
 }
 
@@ -784,7 +796,7 @@ function windowAct(tile, kind, lit) {
         // A bare cart at a stage-2 window (takesBare) carries its card
         // (stageTwo, stageTwoOn); anywhere else stageTwo is null.
         return { kind: 'push-empty', node: tile.node.id, carriers: carriersOf(tile), bare: !!bin.bare, lit: lit,
-            stageTwo: bin.bare && takesBare(tile) ? stageTwoOn(tile) : null };
+            cart: bin.bin_type_code, stageTwo: bin.bare && takesBare(tile) ? stageTwoOn(tile) : null };
     }
     const codes = bin.payload_code ? [bin.payload_code] : partCodes(tile);
     if (codes.some(function (c) { return partAct(tile, c) === 'unload'; })) return unloadAct(tile, lit);

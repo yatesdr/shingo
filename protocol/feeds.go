@@ -32,7 +32,7 @@ const (
 	// SubjectSupplyRefusalSnapshot.
 	FeedRefusals = "refusals"
 	// FeedNodes is one station's node list with its loaders and payload bin
-	// types — the three slices NodesDigest covers. Carrier: NodeListResponse.
+	// types and floors — what NodesDigest covers. Carrier: NodeListResponse.
 	FeedNodes = "nodes"
 	// FeedScene is the vendor scene's revision (NodeListResponse.SceneRevision).
 	// It is the one key whose value is not a Digest: the revision already
@@ -94,10 +94,11 @@ func Digest(v any) (string, error) {
 // data. Order inside a row (a loader's positions, a style's claims) is part of
 // the data — Core stores a claim's index as its sequence — and is kept.
 
-// NodesDigest is the FeedNodes digest: exactly the node list, loaders and payload
-// bin types one station's NodeListResponse carries. Geometry and the scene
-// revision are outside it; they have FeedScene.
-func NodesDigest(nodes []NodeInfo, loaders []LoaderInfo, binTypes []PayloadBinTypeInfo) (string, error) {
+// NodesDigest is the FeedNodes digest: exactly the node list, loaders, payload
+// bin types and floors one station's NodeListResponse carries. Geometry and the
+// scene revision are outside it; they have FeedScene. No floors digests as a Core
+// that sends none does.
+func NodesDigest(nodes []NodeInfo, loaders []LoaderInfo, binTypes []PayloadBinTypeInfo, floors map[string]string) (string, error) {
 	n := append([]NodeInfo{}, nodes...)
 	sort.Slice(n, func(i, j int) bool { return n[i].Name < n[j].Name })
 	l := append([]LoaderInfo{}, loaders...)
@@ -113,7 +114,8 @@ func NodesDigest(nodes []NodeInfo, loaders []LoaderInfo, binTypes []PayloadBinTy
 		Nodes    []NodeInfo           `json:"nodes"`
 		Loaders  []LoaderInfo         `json:"loaders"`
 		BinTypes []PayloadBinTypeInfo `json:"payload_bin_types"`
-	}{n, l, b})
+		Floors   map[string]string    `json:"floor,omitempty"`
+	}{n, l, b, floors})
 }
 
 // CatalogDigest is the FeedCatalog digest over the payload list.

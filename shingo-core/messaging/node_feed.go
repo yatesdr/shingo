@@ -6,6 +6,7 @@ import (
 
 	"shingo/protocol"
 	"shingo/protocol/clock"
+	"shingocore/store/bins"
 	"shingocore/store/nodes"
 	"shingocore/store/payloads"
 	"shingocore/store/scene"
@@ -120,7 +121,19 @@ func (s *CoreDataService) buildNodeList(stationID string, strict bool) (*protoco
 		payloadBinTypes = append(payloadBinTypes, protocol.PayloadBinTypeInfo{PayloadCode: p[0], BinTypeCode: p[1]})
 	}
 
-	digest, err := protocol.NodesDigest(infos, loaderInfos, payloadBinTypes)
+	// Each bin type's floor, for the Edge's CLEAR panels. Memory-only on the Edge
+	// like the slice above, and degrades the same way: a reply with none leaves
+	// its panels unfiltered until the next heartbeat's digest differs.
+	binTypes, btErr := s.db.ListBinTypes()
+	if btErr != nil {
+		if strict {
+			return nil, fmt.Errorf("list bin types: %w", btErr)
+		}
+		log.Printf("core_handler: list bin types for %s: %v", stationID, btErr)
+	}
+	floors := binTypeFloors(binTypes)
+
+	digest, err := protocol.NodesDigest(infos, loaderInfos, payloadBinTypes, floors)
 	if err != nil {
 		return nil, fmt.Errorf("digest node list: %w", err)
 	}
@@ -128,8 +141,25 @@ func (s *CoreDataService) buildNodeList(stationID string, strict bool) (*protoco
 		Nodes:           infos,
 		Loaders:         loaderInfos,
 		PayloadBinTypes: payloadBinTypes,
+		Floor:           floors,
 		Digest:          digest,
 	}, nil
+}
+
+// binTypeFloors is NodeListResponse.Floor: each type with a floor size, as the
+// walk's floor rule compares them (domain.BinType.FloorSize, assignWindows). Nil
+// when no type has one, so the field and the digest read as an older Core's.
+func binTypeFloors(types []*bins.BinType) map[string]string {
+	var out map[string]string
+	for _, t := range types {
+		if fs, ok := t.FloorSize(); ok {
+			if out == nil {
+				out = make(map[string]string, len(types))
+			}
+			out[t.Code] = fs.String()
+		}
+	}
+	return out
 }
 
 // nodeInfos projects the node rows for the wire: a station-scoped list names

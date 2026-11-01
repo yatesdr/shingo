@@ -384,11 +384,11 @@ func TestFeedsPin_HandleNodeListRequest_GeometryAndDigest(t *testing.T) {
 			t.Errorf("%s: scene_revision = %q, want the current %q on every reply (after: same)", tc.name, r.SceneRevision, current)
 		}
 		// F4: "digest" present and equal to the FeedNodes digest of
-		// {Nodes, Loaders, PayloadBinTypes} (protocol.NodesDigest — the pin
+		// {Nodes, Loaders, PayloadBinTypes, Floor} (protocol.NodesDigest — the pin
 		// predicted protocol.Digest; the canonical-copy function is the one
 		// both paths use), identical across these three replies because only
 		// the held scene revision differs.
-		wantDigest, err := protocol.NodesDigest(r.Nodes, r.Loaders, r.PayloadBinTypes)
+		wantDigest, err := protocol.NodesDigest(r.Nodes, r.Loaders, r.PayloadBinTypes, r.Floor)
 		testutil.MustNoErr(t, err, "digest")
 		if r.Digest == "" || r.Digest != wantDigest {
 			t.Errorf("%s: digest = %q, want %q", tc.name, r.Digest, wantDigest)
