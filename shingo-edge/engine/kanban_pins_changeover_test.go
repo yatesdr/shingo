@@ -266,10 +266,10 @@ func TestKanbanPin_CancelLeavesAnUnlinkedOrderOfTheEpisodeLive(t *testing.T) {
 
 // ── the changeover episode ───────────────────────────────────────────────────
 
-// TestKanbanPin_ChangeoverEpisodeOpensBlank: the row and the state message carry
-// no payload and no node, open and close alike. Core holds nothing of the target
-// style from this message.
-func TestKanbanPin_ChangeoverEpisodeOpensBlank(t *testing.T) {
+// TestKanbanPin_ChangeoverEpisodeNamesTheTargetsFirstProduceClaim: the row and the
+// state message carry the incoming style's first produce claim, open and close
+// alike, read from the claims the start already holds.
+func TestKanbanPin_ChangeoverEpisodeNamesTheTargetsFirstProduceClaim(t *testing.T) {
 	t.Parallel()
 	p := seedKPPress(t)
 	co := p.start(t)
@@ -277,8 +277,8 @@ func TestKanbanPin_ChangeoverEpisodeOpensBlank(t *testing.T) {
 	if open == nil {
 		t.Fatal("no open episode after START")
 	}
-	if open.PayloadCode != "" || open.CoreNodeName != "" {
-		t.Errorf("open row payload=%q node=%q, want both blank", open.PayloadCode, open.CoreNodeName)
+	if open.PayloadCode != "KP-NEW" || open.CoreNodeName != kpFront {
+		t.Errorf("open row payload=%q node=%q, want KP-NEW at %s", open.PayloadCode, open.CoreNodeName, kpFront)
 	}
 	if open.ProcessID != "KP-PROC" || open.TriggerRef != fmt.Sprintf("changeover:%d", co.ID) {
 		t.Errorf("open row process=%q trigger=%q", open.ProcessID, open.TriggerRef)
@@ -290,8 +290,8 @@ func TestKanbanPin_ChangeoverEpisodeOpensBlank(t *testing.T) {
 			continue
 		}
 		seen++
-		if s.PayloadCode != "" || s.CoreNodeName != "" {
-			t.Errorf("state message (closed=%v) payload=%q node=%q, want both blank", s.ClosedAt != nil, s.PayloadCode, s.CoreNodeName)
+		if s.PayloadCode != "KP-NEW" || s.CoreNodeName != kpFront {
+			t.Errorf("state message (closed=%v) payload=%q node=%q, want KP-NEW at %s", s.ClosedAt != nil, s.PayloadCode, s.CoreNodeName, kpFront)
 		}
 	}
 	if seen != 2 {
@@ -299,10 +299,24 @@ func TestKanbanPin_ChangeoverEpisodeOpensBlank(t *testing.T) {
 	}
 }
 
-// TestKanbanPin_ChangeoverOpenIgnoresAFailedEnqueue: the outbox refuses the OPEN,
-// START goes on regardless. The episode is open on the Edge, stamped on the
-// changeover and its legs carry it; Core is told nothing until the close.
-func TestKanbanPin_ChangeoverOpenIgnoresAFailedEnqueue(t *testing.T) {
+func TestFirstProduceClaim(t *testing.T) {
+	t.Parallel()
+	consume := processes.NodeClaim{CoreNodeName: "A", Role: protocol.ClaimRoleConsume}
+	first := processes.NodeClaim{CoreNodeName: "B", Role: protocol.ClaimRoleProduce}
+	second := processes.NodeClaim{CoreNodeName: "C", Role: protocol.ClaimRoleProduce}
+	if got := firstProduceClaim([]processes.NodeClaim{consume, first, second}); got == nil || got.CoreNodeName != "B" {
+		t.Errorf("first produce claim = %+v, want B", got)
+	}
+	if got := firstProduceClaim([]processes.NodeClaim{consume}); got != nil {
+		t.Errorf("a style with no produce claim = %+v, want nil", got)
+	}
+}
+
+// TestKanbanPin_AFailedChangeoverOpenReachesTheOutboxOnceItClears: the outbox
+// refuses the OPEN and START goes on. The episode is open on the Edge, stamped on
+// the changeover and its legs carry it. The sweep sends the OPEN on the first pass
+// after the refusal clears, once, and nothing after that.
+func TestKanbanPin_AFailedChangeoverOpenReachesTheOutboxOnceItClears(t *testing.T) {
 	t.Parallel()
 	p := seedKPPress(t)
 	kpFailInserts(t, p.db, "outbox", fmt.Sprintf("NEW.msg_type = '%s'", protocol.SubjectDemandOrigin))
@@ -322,6 +336,82 @@ func TestKanbanPin_ChangeoverOpenIgnoresAFailedEnqueue(t *testing.T) {
 	testutil.MustNoErr(t, err, "leg")
 	if leg.OriginID != open.OriginID {
 		t.Errorf("leg origin = %q, want the episode %q", leg.OriginID, open.OriginID)
+	}
+
+	p.eng.reconcileDemandEpisodes()
+	if states := decodeOriginStates(t, p.db); len(states) != 0 {
+		t.Errorf("state messages = %d while the outbox still refuses, want 0", len(states))
+	}
+	if got := kpOpenEpisode(t, p.eng, co.ID); got.Revision != store.RevisionUnsent {
+		t.Errorf("revision = %d while the outbox still refuses, want it kept for the next pass", got.Revision)
+	}
+
+	_, err = p.db.Exec(`DROP TRIGGER kp_fail`)
+	testutil.MustNoErr(t, err, "clear the failure")
+	p.eng.reconcileDemandEpisodes()
+	p.eng.reconcileDemandEpisodes()
+	states := decodeOriginStates(t, p.db)
+	if len(states) != 1 {
+		t.Fatalf("state messages = %d after the failure cleared and two passes, want the one OPEN", len(states))
+	}
+	s := states[0]
+	if s.OriginID != open.OriginID || s.Revision != 1 || s.ClosedAt != nil || s.PayloadCode != "KP-NEW" || s.CoreNodeName != kpFront {
+		t.Errorf("the OPEN = %+v, want origin %s at revision 1, open, KP-NEW at %s", s, open.OriginID, kpFront)
+	}
+}
+
+// TestKanbanPin_AChangeoverClosedBeforeItsOpenWasSentConverges: the close of an
+// episode whose OPEN was refused is the first thing Core hears, whole, and the
+// sweep has nothing left to send.
+func TestKanbanPin_AChangeoverClosedBeforeItsOpenWasSentConverges(t *testing.T) {
+	t.Parallel()
+	p := seedKPPress(t)
+	kpFailInserts(t, p.db, "outbox", fmt.Sprintf("NEW.msg_type = '%s'", protocol.SubjectDemandOrigin))
+	co := p.start(t)
+	open := kpOpenEpisode(t, p.eng, co.ID)
+	_, err := p.db.Exec(`DROP TRIGGER kp_fail`)
+	testutil.MustNoErr(t, err, "clear the failure")
+	testutil.MustNoErr(t, p.eng.CancelProcessChangeover(p.processID), "cancel")
+	p.eng.reconcileDemandEpisodes()
+	states := decodeOriginStates(t, p.db)
+	if len(states) != 1 || states[0].OriginID != open.OriginID || states[0].ClosedAt == nil || states[0].Revision != 1 {
+		t.Fatalf("state messages = %+v, want the one close at revision 1", states)
+	}
+}
+
+// TestKanbanPin_StartWhoseRereadFailsLeavesTheEpisodeOpen: the one error return
+// after the open reports a read, not the changeover. Its orders are out, so the
+// episode stays open and nothing tells Core otherwise.
+func TestKanbanPin_StartWhoseRereadFailsLeavesTheEpisodeOpen(t *testing.T) {
+	t.Parallel()
+	p := seedKPPress(t)
+	_, err := p.db.Exec(`CREATE TRIGGER kp_end AFTER INSERT ON orders
+		BEGIN UPDATE process_changeovers SET state = 'cancelled'; END`)
+	testutil.MustNoErr(t, err, "arm the failure")
+	if _, err := p.eng.StartProcessChangeover(p.processID, p.toStyle, "test", "kanban pin"); err == nil {
+		t.Fatal("START returned no error; want the re-read's")
+	}
+	open, err := p.db.ListOpenDemandOrigins()
+	testutil.MustNoErr(t, err, "open episodes")
+	if len(open) != 1 {
+		t.Errorf("open episodes = %+v, want the changeover's", open)
+	}
+	for _, s := range decodeOriginStates(t, p.db) {
+		if s.ClosedAt != nil {
+			t.Errorf("a close went out: %+v", s)
+		}
+	}
+}
+
+// TestKanbanPin_RetiringTheNodeAChangeoverNamesLeavesItsEpisodeOpen: the episode
+// names the target's first produce node and is not that node's demand.
+func TestKanbanPin_RetiringTheNodeAChangeoverNamesLeavesItsEpisodeOpen(t *testing.T) {
+	t.Parallel()
+	p := seedKPPress(t)
+	co := p.start(t)
+	testutil.MustNoErr(t, p.eng.RetireNode(p.front), "retire")
+	if kpOpenEpisode(t, p.eng, co.ID) == nil {
+		t.Error("the changeover's episode closed with the node it names")
 	}
 }
 

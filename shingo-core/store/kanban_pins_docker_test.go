@@ -61,11 +61,10 @@ func TestKanbanPin_APassReadsAGroupsLevelsOnce(t *testing.T) {
 	}
 }
 
-// TestKanbanPin_TheUpsertOverwritesPayloadAndNodeOnConflict: a later revision of
-// an episode writes its payload_code and core_node_name whatever they are, blank
-// included: the changeover episode opens blank, and a revision that says nothing
-// erases what an earlier one said. An older revision writes nothing.
-func TestKanbanPin_TheUpsertOverwritesPayloadAndNodeOnConflict(t *testing.T) {
+// TestKanbanPin_TheUpsertKeepsPayloadAndNodeABlankRevisionOmits: a later revision
+// of an episode writes the payload_code and core_node_name it names, and a blank
+// keeps what an earlier revision said. An older revision writes nothing.
+func TestKanbanPin_TheUpsertKeepsPayloadAndNodeABlankRevisionOmits(t *testing.T) {
 	t.Parallel()
 	db := testdb.Open(t)
 	opened := time.Now().UTC().Add(-time.Hour).Truncate(time.Millisecond)
@@ -92,7 +91,10 @@ func TestKanbanPin_TheUpsertOverwritesPayloadAndNodeOnConflict(t *testing.T) {
 	if got := apply(2, "KP-LATE", "KP-LATE"); got.PayloadCode != "KP-PART" || got.CoreNodeName != "KP-NODE" {
 		t.Errorf("a redelivered revision wrote %q / %q", got.PayloadCode, got.CoreNodeName)
 	}
-	if got := apply(3, "", ""); got.PayloadCode != "" || got.CoreNodeName != "" {
-		t.Errorf("revision 3 said nothing and the row keeps %q / %q; today it overwrites with blank", got.PayloadCode, got.CoreNodeName)
+	if got := apply(3, "", ""); got.PayloadCode != "KP-PART" || got.CoreNodeName != "KP-NODE" {
+		t.Errorf("revision 3 said nothing and the row holds %q / %q; want KP-PART / KP-NODE kept", got.PayloadCode, got.CoreNodeName)
+	}
+	if got := apply(4, "KP-NEXT", ""); got.PayloadCode != "KP-NEXT" || got.CoreNodeName != "KP-NODE" {
+		t.Errorf("revision 4 named a payload alone and the row holds %q / %q; want KP-NEXT / KP-NODE", got.PayloadCode, got.CoreNodeName)
 	}
 }

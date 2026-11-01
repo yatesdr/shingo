@@ -33,6 +33,7 @@ type OpenOrigin struct {
 	EpisodeKey string
 	OriginID   string
 	// Revision is monotonic per episode and is what Core's upsert compares.
+	// RevisionUnsent marks a row whose open the outbox refused.
 	Revision int64
 
 	Kind string
@@ -71,6 +72,12 @@ type OpenOrigin struct {
 
 // ErrOriginNotOpen is returned when no episode is open for a key.
 var ErrOriginNotOpen = errors.New("no open demand origin for that episode key")
+
+// RevisionUnsent is the revision of an open row Core has heard nothing about: its
+// revision 1 never reached the outbox, so no message stands behind the number and
+// taking it back breaks nothing Core compares. The sweep reads it off the rows it
+// already lists, so the mark costs a statement only when an enqueue failed.
+const RevisionUnsent = 0
 
 const openOriginCols = `episode_key, origin_id, revision, kind, direction, trigger_kind,
 	trigger_ref, process_id, core_node_name, payload_code, opened_total, reorder_point,
@@ -141,6 +148,31 @@ func (db *DB) GetOpenDemandOrigin(episodeKey string) (*OpenOrigin, error) {
 		return nil, fmt.Errorf("get open demand origin %q: %w", episodeKey, err)
 	}
 	return o, nil
+}
+
+// MarkDemandOriginUnsent takes a row whose revision 1 was refused back to
+// RevisionUnsent. A row already past 1 has a later message to carry it.
+func (db *DB) MarkDemandOriginUnsent(episodeKey string) error {
+	if _, err := db.Exec(`UPDATE demand_origins_open SET revision = ? WHERE episode_key = ? AND revision = 1`,
+		RevisionUnsent, episodeKey); err != nil {
+		return fmt.Errorf("mark demand origin %q unsent: %w", episodeKey, err)
+	}
+	return nil
+}
+
+// MarkDemandOriginSent moves a RevisionUnsent row to revision 1, reporting whether
+// one was there. The caller sends only when it was.
+func (db *DB) MarkDemandOriginSent(episodeKey string) (bool, error) {
+	res, err := db.Exec(`UPDATE demand_origins_open SET revision = 1 WHERE episode_key = ? AND revision = ?`,
+		episodeKey, RevisionUnsent)
+	if err != nil {
+		return false, fmt.Errorf("mark demand origin %q sent: %w", episodeKey, err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("mark demand origin %q sent: %w", episodeKey, err)
+	}
+	return n > 0, nil
 }
 
 // JoinDemandOrigin records an operator push that joined an already-open

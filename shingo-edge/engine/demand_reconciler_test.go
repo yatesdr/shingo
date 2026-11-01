@@ -237,7 +237,7 @@ func TestReconciler_ClosesChangeoverOnTerminalState(t *testing.T) {
 			if err != nil || co == nil {
 				t.Fatalf("read changeover: %v", err)
 			}
-			if origin := eng.openChangeoverEpisode(co, 3); origin == "" {
+			if origin := eng.openChangeoverEpisode(co, 3, nil); origin == "" {
 				t.Fatal("changeover episode did not open")
 			}
 

@@ -146,7 +146,7 @@ func TestOriginState_ChangeoverUsesTheSamePath(t *testing.T) {
 		t.Fatalf("read changeover: %v", err)
 	}
 
-	originID := eng.openChangeoverEpisode(co, 6)
+	originID := eng.openChangeoverEpisode(co, 6, nil)
 	if originID == "" {
 		t.Fatal("no origin minted")
 	}

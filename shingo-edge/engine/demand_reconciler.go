@@ -348,6 +348,10 @@ func (e *Engine) reconcileDemandEpisodes() {
 			continue
 		}
 		if !stale {
+			// Only a row at revision 0 is sent: this pass republishes nothing else.
+			if ep.Revision == store.RevisionUnsent {
+				e.resendUnsentOpen(ep)
+			}
 			continue
 		}
 		e.logFn("demand_reconciler: closing %s (origin=%s kind=%s) — precondition no longer holds: %s",

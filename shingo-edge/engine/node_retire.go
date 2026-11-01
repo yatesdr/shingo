@@ -78,7 +78,11 @@ func (e *Engine) closeNodeEpisodes(processName, coreNodeName string) error {
 	}
 	for i := range open {
 		ep := &open[i]
-		if ep.CoreNodeName != coreNodeName {
+		// A changeover episode names its target's first produce node without being
+		// that node's demand: it ends with the changeover row
+		// (changeoverPreconditionGone). Pin:
+		// TestKanbanPin_RetiringTheNodeAChangeoverNamesLeavesItsEpisodeOpen.
+		if ep.Kind != protocol.EpisodeKindCell || ep.CoreNodeName != coreNodeName {
 			continue
 		}
 		e.logFn("demand_episode: node %s is being retired — closing origin=%s key=%s kind=%s",

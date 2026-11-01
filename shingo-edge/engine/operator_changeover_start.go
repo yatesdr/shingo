@@ -597,13 +597,18 @@ func (e *Engine) StartProcessChangeover(processID, toStyleID int64, calledBy, no
 	// edge, so there is no level and no hysteresis. It counts the legs and the
 	// returns; a keeper refill behind a leg's lift joins the leg's episode
 	// (liftingOrigin) without being counted here.
-	e.openChangeoverEpisode(changeover, orderPlan.OrderCount()+len(returns))
+	e.openChangeoverEpisode(changeover, orderPlan.OrderCount()+len(returns), plan.toClaims)
 	e.rearmKeptLines(plan.toClaims, plan.nodes)
 	e.applyChangeoverPlan(changeover, orderPlan)
 	e.applyChangeoverSpots(returns, spotReads, e.changeoverOrigin(changeover.ID))
 
 	final, err := e.db.GetActiveProcessChangeover(processID)
 	if err != nil {
+		// The changeover row stands and its orders are out, so the episode stays
+		// open: this read failing says nothing about the changeover, and closing
+		// would take the running cover off it. CANCEL closes the episode, as it
+		// does a running changeover whose node leg failed in the apply
+		// (TestKanbanPin_StartWhoseApplyFailsLeavesTheEpisodeOpen).
 		return nil, err
 	}
 	// Advisory, never blocking: participants with no process_nodes row. Logged

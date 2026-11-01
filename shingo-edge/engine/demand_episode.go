@@ -561,13 +561,14 @@ func itoa64(n int64) string {
 // Best-effort by design: a failure to record an episode must never fail the
 // material request it describes. Observability does not get to stop the plant.
 //
-// IT RETURNS THE ERROR ANYWAY, because one caller must act on it. On OPEN and
-// JOIN a failed enqueue self-heals — the row stays on disk and the close
+// IT RETURNS THE ERROR ANYWAY, because two callers must act on it. On a cell's
+// OPEN and JOIN a failed enqueue self-heals — the row stays on disk and the close
 // carries the whole episode, so losing an open costs nothing once the last
 // message lands. On CLOSE it does not: the row is about to be deleted, and
 // deleting it after a failed enqueue loses the close outright, with no sweep
 // able to notice because the sweep reads that table. So close checks this and
-// keeps the row; the open paths deliberately ignore it.
+// keeps the row. A changeover's OPEN checks it too, because Core acts on that
+// open while the changeover runs (openChangeoverEpisode); the cell paths ignore it.
 func (e *Engine) emitOriginState(o *store.OpenOrigin, closedAt *time.Time, closeReason, closedBy string) error {
 	if o == nil {
 		return nil
@@ -625,7 +626,18 @@ func (e *Engine) emitOriginState(o *store.OpenOrigin, closedAt *time.Time, close
 // Two emission paths for one subject is where the second one drifts — and the
 // state message needs content, above all expected_orders, that the changeover
 // row has nowhere to put.
-func (e *Engine) openChangeoverEpisode(co *processes.Changeover, expectedOrders int) string {
+//
+// IT NAMES THE TARGET. toClaims is the incoming style's claims, already in hand
+// at the start, so the row and every message carry its first produce claim's
+// payload and node with no read of their own: that is what tells Core which style
+// this process is changing to. A style with no produce claim leaves both blank.
+// Pin: TestKanbanPin_ChangeoverEpisodeNamesTheTargetsFirstProduceClaim.
+//
+// A FAILED OPEN IS KEPT, unlike a cell's. Core follows the target only while it
+// holds this episode, so an open that waits for the close is no use to it: the
+// row goes to revision 0 and the sweep sends it (resendUnsentOpen). Pin:
+// TestKanbanPin_AFailedChangeoverOpenReachesTheOutboxOnceItClears.
+func (e *Engine) openChangeoverEpisode(co *processes.Changeover, expectedOrders int, toClaims []processes.NodeClaim) string {
 	if co == nil {
 		return ""
 	}
@@ -635,6 +647,7 @@ func (e *Engine) openChangeoverEpisode(co *processes.Changeover, expectedOrders 
 	}
 
 	expected := expectedOrders
+	target := firstProduceClaim(toClaims)
 	row := &store.OpenOrigin{
 		EpisodeKey: key,
 		OriginID:   uuid.NewString(),
@@ -651,6 +664,9 @@ func (e *Engine) openChangeoverEpisode(co *processes.Changeover, expectedOrders 
 		ExpectedOrders: &expected,
 		OpenedAt:       time.Now().UTC(),
 	}
+	if target != nil {
+		row.CoreNodeName, row.PayloadCode = target.CoreNodeName, string(target.PayloadCode)
+	}
 	if err := e.db.OpenDemandOrigin(row); err != nil {
 		e.logFn("demand_episode: open changeover episode co=%d: %v", co.ID, err)
 		return ""
@@ -665,9 +681,51 @@ func (e *Engine) openChangeoverEpisode(co *processes.Changeover, expectedOrders 
 	// question about the data instead of about which branch wrote the line.
 	e.logFn("demand_episode: OPENED kind=%s origin=%s key=%s process=%d expected_orders=%d",
 		row.Kind, row.OriginID, key, co.ProcessID, expected)
-	// Ignored deliberately — see emitOriginState.
-	_ = e.emitOriginState(row, nil, "", "")
+	if err := e.emitOriginState(row, nil, "", ""); err != nil {
+		e.logFn("demand_episode: open %s not enqueued, kept for the sweep: %v", key, err)
+		if merr := e.db.MarkDemandOriginUnsent(key); merr != nil {
+			e.logFn("demand_episode: mark %s unsent: %v — Core hears of it at the close", key, merr)
+		}
+	}
 	return row.OriginID
+}
+
+// firstProduceClaim is the first produce claim of a style's claims, in their
+// stored order (sequence, node), nil when it has none.
+func firstProduceClaim(claims []processes.NodeClaim) *processes.NodeClaim {
+	for i := range claims {
+		if claims[i].Role == protocol.ClaimRoleProduce {
+			return &claims[i]
+		}
+	}
+	return nil
+}
+
+// resendUnsentOpen is the sweep's half of a changeover open the outbox refused:
+// one send of the row as revision 1, the revision the refused one carried. Marked
+// sent first, so a close racing this pass bumps past it and wins at Core; a close
+// that got there first leaves no row at revision 0 and nothing is sent. A refused
+// send goes back to revision 0 for the next pass. A row that has been sent is
+// never sent again from here.
+func (e *Engine) resendUnsentOpen(ep *store.OpenOrigin) {
+	marked, err := e.db.MarkDemandOriginSent(ep.EpisodeKey)
+	if err != nil {
+		e.logFn("demand_reconciler: mark %s sent: %v", ep.EpisodeKey, err)
+		return
+	}
+	if !marked {
+		return
+	}
+	sent := *ep
+	sent.Revision = 1
+	if err := e.emitOriginState(&sent, nil, "", ""); err != nil {
+		e.logFn("demand_reconciler: open %s still not enqueued: %v", ep.EpisodeKey, err)
+		if merr := e.db.MarkDemandOriginUnsent(ep.EpisodeKey); merr != nil {
+			e.logFn("demand_reconciler: mark %s unsent: %v — Core hears of it at the close", ep.EpisodeKey, merr)
+		}
+		return
+	}
+	e.logFn("demand_reconciler: open %s (origin=%s) reached the outbox", ep.EpisodeKey, ep.OriginID)
 }
 
 // closeChangeoverEpisode ends a changeover's episode.

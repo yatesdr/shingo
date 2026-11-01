@@ -92,6 +92,11 @@ const (
 // protection has to exist before the writer does, not after — but do not read it
 // as evidence the column carries data. See domain.DemandOrigin, which carries
 // the full finding and what it means for Stage 5.3.
+//
+// A BLANK PAYLOAD OR NODE SAYS NOTHING: it keeps what an earlier revision said. An
+// older Edge's changeover episode carries neither, and no Edge has a later
+// revision to say a named one is gone. Pin:
+// TestKanbanPin_TheUpsertKeepsPayloadAndNodeABlankRevisionOmits.
 func (db *DB) UpsertDemandOrigin(o DemandOrigin) error {
 	var expected any
 	if o.ExpectedOrders != nil {
@@ -114,8 +119,8 @@ func (db *DB) UpsertDemandOrigin(o DemandOrigin) error {
 		    trigger_ref      = EXCLUDED.trigger_ref,
 		    station_id       = EXCLUDED.station_id,
 		    process_id       = EXCLUDED.process_id,
-		    core_node_name   = EXCLUDED.core_node_name,
-		    payload_code     = EXCLUDED.payload_code,
+		    core_node_name   = COALESCE(NULLIF(EXCLUDED.core_node_name, ''), demand_origins.core_node_name),
+		    payload_code     = COALESCE(NULLIF(EXCLUDED.payload_code, ''), demand_origins.payload_code),
 		    opened_at        = EXCLUDED.opened_at,
 		    opened_total     = EXCLUDED.opened_total,
 		    threshold        = EXCLUDED.threshold,
