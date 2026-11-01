@@ -3,15 +3,14 @@ package store
 import (
 	"fmt"
 
-	"shingo/protocol"
 	"shingocore/domain"
 	"shingocore/store/nodes"
 	"shingocore/store/orders"
 )
 
 // maintain_line.go — what a maintained group is short of, one level type at a
-// time: the keeper's arithmetic (CountLevel) and the line an unloader's card
-// reads (TypeLine). Moved out of engine so a reader in dispatch, which engine
+// time: the arithmetic (LevelState) and the line an unloader's card reads
+// (TypeLine). Moved out of engine so a reader in dispatch, which engine
 // imports, asks the same spelling.
 
 // LevelState is one level type's four terms: what the group wants of the type
@@ -34,9 +33,15 @@ import (
 //     and which window carts are already on their way); the keeper only
 //     counts them.
 //
-// ONE SPELLING. The keeper's tick (engine tickOne) and an unloader's group line
-// (engine UnloaderGroupLines, through TypeLineOf) both count through CountLevel,
-// so the two cannot disagree about how short a group is of a type.
+// ONE SPELLING. The keeper's tick (engine Maintainer) and an unloader's group line
+// (engine UnloaderGroupLines) read every kanban's at once (KanbanCounts); the lift
+// divert reads one through CountLevel and TypeLineOf. All three answer in this
+// type over the same fragments, and an agreement test holds the batched reads to
+// the single ones (TestKanbanCounts_TheBatchedReadsAgreeWithTheSingleReads), so
+// they cannot disagree about how short a group is of a type.
+//
+// Level.Want is the effective want when the level came from DB.ListMaintainLevels
+// or the picture, which is every reader's.
 type LevelState struct {
 	Level    MaintainLevel
 	Resident int
@@ -115,7 +120,7 @@ func (tl TypeLine) HeightShort(layers int) int {
 	return 0
 }
 
-// TypeLineOf reads one level type's line for group g: the keeper's count
+// TypeLineOf reads one level type's line for group g, for the lift divert: the count
 // (CountLevel, against the type's open maintain episode), then, for a type
 // that states its totes per layer and has wanted heights among layerWants (the
 // group's, ListMaintainLayerWants), each height's residents and comings: the
@@ -128,14 +133,7 @@ func (db *DB) TypeLineOf(g *nodes.Node, lv MaintainLevel, episode DemandOrigin,
 	if err != nil {
 		return TypeLine{}, c, err
 	}
-	tl := TypeLine{Code: lv.BinTypeCode, Want: lv.Want, Have: lv.Want - c.Short()}
-	for _, w := range layerWants {
-		if w.BinTypeID != lv.BinTypeID || !protocol.IsToteType(w.TotesPerLayer) {
-			continue
-		}
-		tl.TotesPerLayer = *w.TotesPerLayer
-		tl.Heights = append(tl.Heights, HeightLine{Layers: w.Layers, Want: w.Want})
-	}
+	tl := typeLineOf(c, layerWants, nil)
 	if len(tl.Heights) == 0 {
 		return tl, c, nil
 	}
@@ -143,15 +141,5 @@ func (db *DB) TypeLineOf(g *nodes.Node, lv MaintainLevel, episode DemandOrigin,
 	if err != nil {
 		return TypeLine{}, c, fmt.Errorf("group line: %w", err)
 	}
-	coming := map[int]int{}
-	for _, ib := range c.Inbound {
-		if ib.TotesOnCart != nil {
-			coming[*ib.TotesOnCart]++
-		}
-	}
-	for i := range tl.Heights {
-		totes := tl.Heights[i].Layers * tl.TotesPerLayer
-		tl.Heights[i].Have = resident[totes] + coming[totes]
-	}
-	return tl, c, nil
+	return typeLineOf(c, layerWants, resident), c, nil
 }

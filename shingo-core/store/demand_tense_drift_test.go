@@ -75,13 +75,14 @@ var tenseSQLSites = []sqlSite{
 	{"4 the inferred close", "demand_origins.go", "func (db *DB) CloseDemandOriginInferred(", 1},
 	{"5 the childless sweep's open set", "demand_origins.go", "func (db *DB) ListOpenEpisodeStates(", 1},
 	{"6 the open set of one kind", "demand_origins.go", "func (db *DB) ListOpenEpisodesOfKind(", 1},
-	{"7 an ask's open maintain episode", "demand_origins.go", "func (db *DB) MaintainedEpisodeForOrigin(", 1},
+	{"7 an ask's open maintain episode", "demand_origins.go", "func (db *DB) MaintainedEpisodeOf(", 1},
 	{"8 the demand browser's scope", "demand_origins.go", "func (db *DB) ListDemandEpisodes(", 2},
 	{"9 the child-outcome scope", "demand_child_outcomes.go", "func (db *DB) CountChildrenByStatus(", 2},
 	// 10 and 11: the statement moved from CountTypedInboundToGroup, now a count
-	// over this one read, so the keeper and an unloader's group line share it.
-	{"10 typed inbound to a group, arm 1", "orders/orders.go", "func ListTypedInboundToGroup(", 1},
-	{"11 typed inbound to a group, arm 2", "orders/orders.go", "func ListTypedInboundToGroup(", 2},
+	// over this one read, so the keeper and an unloader's group line share it. Its
+	// two arms decide the tense in one predicate, spelled once for both.
+	{"10 and 11 typed inbound to a group, both arms", "orders/orders.go", "func typedInboundSQL(", 1},
+	{"13 the keeper's open episodes with their asks", "demand_origins.go", "func (db *DB) ListOpenKeeperEpisodes(", 1},
 }
 
 func checkSQLSite(t *testing.T, s sqlSite) {
@@ -115,7 +116,7 @@ var tenseGoSites = []goSite{
 	{name: "G3 the binding sweep's candidates", file: "../engine/threshold_episodes.go",
 		fn: "func (m *ThresholdMonitor) reconcileThresholdBindings(", reader: "ListOpenThresholdEpisodes", readerOf: 5},
 	{name: "G4 the keeper's memory", file: "../engine/maintainer.go",
-		fn: "func (m *Maintainer) Tick(", reader: "ListOpenEpisodesOfKind", readerOf: 5},
+		fn: "func (m *Maintainer) Tick(", reader: "ListOpenKeeperEpisodes", readerOf: 10},
 	{name: "G5 the childless sweep's age test", file: "../engine/demand_reconciler.go",
 		fn: "func (e *Engine) reconcileChildlessEpisodes(", reader: "ListOpenEpisodeStates", readerOf: 4},
 	{name: "G6 the Edge's open message", file: "../messaging/demand_origin_handler.go",

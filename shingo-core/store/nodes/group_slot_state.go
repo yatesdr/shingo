@@ -66,7 +66,10 @@ type slotStateRow struct {
 	resCreatedAt time.Time
 	resDemand    int64
 	// namers are the live dispatched orders naming the node as delivery_node.
-	namers    []int64
+	namers []int64
+	// live are the live orders naming it in any status, pre-dispatch included
+	// (orders.CountActiveByDeliveryNode's set).
+	live      []int64
 	reachable bool
 	// coming are the live orders coming for a bin deeper in the node's lane
 	// (ComingForBinSQL); moving the same as a committed robot reads it
@@ -102,6 +105,7 @@ func ReadGroupSlotState(db *sql.DB, groupID int64) (*GroupSlotState, error) {
 		%s,
 		%s,
 		%s,
+		%s,
 		ROW_NUMBER() OVER (ORDER BY n.name)
 		%s
 		LEFT JOIN reservations r ON r.node_id = n.id AND r.resource_kind = '%s' AND %s
@@ -116,6 +120,8 @@ func ReadGroupSlotState(db *sql.DB, groupID int64) (*GroupSlotState, error) {
 		"COALESCE(hp.priority, ho.priority)", "COALESCE(hp.created_at, ho.created_at)", "COALESCE(hp.id, ho.id)",
 		agg("nm.id", `FROM orders nm WHERE nm.delivery_node = n.name
 			AND nm.status NOT IN (`+protocol.TerminalStatusSQLList()+`, `+protocol.PreDispatchStatusSQLList()+`)`),
+		agg("lv.id", `FROM orders lv WHERE lv.delivery_node = n.name
+			AND lv.status NOT IN (`+protocol.TerminalStatusSQLList()+`)`),
 		helpers.ReachableSQL("n"),
 		coming(helpers.ComingForBinSQL("holder", "held_bin", "held")),
 		coming(helpers.ComingForBinCommittedSQL("holder", "held_bin", "held")),
@@ -129,14 +135,14 @@ func ReadGroupSlotState(db *sql.DB, groupID int64) (*GroupSlotState, error) {
 	s := &GroupSlotState{GroupID: groupID, byID: map[int64]*slotStateRow{}}
 	for rows.Next() {
 		var r slotStateRow
-		var dig, namers, coming, moving string
+		var dig, namers, live, coming, moving string
 		n, err := ScanNode(withTrailingCols{rows, []any{&dig, &r.bins, &r.resOrder, &r.resPending, &r.resTag,
-			&r.resSent, &r.resPriority, &r.resCreatedAt, &r.resDemand, &namers, &r.reachable, &coming, &moving, &r.nameOrder}})
+			&r.resSent, &r.resPriority, &r.resCreatedAt, &r.resDemand, &namers, &live, &r.reachable, &coming, &moving, &r.nameOrder}})
 		if err != nil {
 			return nil, fmt.Errorf("scan group slot state %d: %w", groupID, err)
 		}
 		r.node = n
-		for dst, src := range map[*[]int64]string{&r.digHolders: dig, &r.namers: namers, &r.coming: coming, &r.moving: moving} {
+		for dst, src := range map[*[]int64]string{&r.digHolders: dig, &r.namers: namers, &r.live: live, &r.coming: coming, &r.moving: moving} {
 			if *dst, err = parseIDList(src); err != nil {
 				return nil, fmt.Errorf("group slot state %d: %w", groupID, err)
 			}
@@ -174,7 +180,8 @@ func onlyBy(ids []int64, owner int64) bool {
 	return true
 }
 
-// HasLane reports whether laneID is a child of the group the state read.
+// HasLane reports whether a node is a child of the group the state read: a lane,
+// or a flat child of a kanban.
 func (s *GroupSlotState) HasLane(laneID int64) bool {
 	r := s.byID[laneID]
 	return r != nil && r.node.ParentID != nil && *r.node.ParentID == s.GroupID
@@ -320,6 +327,50 @@ func (s *GroupSlotState) ChildrenUnlocked(asker reservations.DigAsker) []*Node {
 		out[i] = r.node
 	}
 	return out
+}
+
+// BinsAt answers CountByNode for a node of the read; false for one it did not read.
+func (s *GroupSlotState) BinsAt(nodeID int64) (int, bool) {
+	r := s.byID[nodeID]
+	if r == nil {
+		return 0, false
+	}
+	return r.bins, true
+}
+
+// LiveNaming answers CountActiveByDeliveryNodeExcluding for a node of the read, by
+// name; false for one it did not read.
+func (s *GroupSlotState) LiveNaming(nodeName string, except int64) (int, bool) {
+	for _, r := range s.rows {
+		if r.node.Name != nodeName {
+			continue
+		}
+		n := 0
+		for _, id := range r.live {
+			if id != except {
+				n++
+			}
+		}
+		return n, true
+	}
+	return 0, false
+}
+
+// SpokenForByStranger answers SlotSpokenForByStrangerSQL for a node of the read;
+// false for one it did not read.
+func (s *GroupSlotState) SpokenForByStranger(nodeID, owner int64) (spoken, ok bool) {
+	r := s.byID[nodeID]
+	if r == nil {
+		return false, false
+	}
+	return r.resOrder != 0 && r.resOrder != owner, true
+}
+
+// NoteNaming writes a live order naming a node into the read.
+func (s *GroupSlotState) NoteNaming(nodeID, orderID int64) {
+	if r := s.byID[nodeID]; r != nil {
+		r.live = append(r.live, orderID)
+	}
 }
 
 // LaneSlots answers ListLaneSlots(laneID): the lane's slots, shallowest first.

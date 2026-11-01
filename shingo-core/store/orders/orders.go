@@ -2042,47 +2042,20 @@ func LevelComing(inbound []InboundCarrier) int {
 }
 
 // ListTypedInboundToGroup is the inbound set CountTypedInboundToGroup counts,
-// as rows: each carrier once, in bin id order. ONE SPELLING of "coming": the
-// level keeper counts it (store CountLevel), and an unloader's group line
-// reads its carriers for a wanted height and for the windows whose cart is
-// already on its way (engine.UnloaderGroupLines). Every rule documented on
-// CountTypedInboundToGroup is this statement's.
+// as rows: each carrier once, in bin id order. ONE SPELLING of "coming"
+// (typedInboundSQL): the lift divert counts it (store CountLevel), and
+// ListKanbanInbound reads it for the keeper and an unloader's group line. Every rule
+// documented on CountTypedInboundToGroup is this statement's.
 func ListTypedInboundToGroup(db *sql.DB, groupNodeID int64, groupNodeName, binTypeCode string) ([]InboundCarrier, error) {
 	if binTypeCode == "" || groupNodeName == "" {
 		return nil, nil
 	}
-	dropNode := helpers.StepNodeSQL("o", "ob.drop_step")
-	rows, err := db.Query(nodetree.DescendantsOf(1)+fmt.Sprintf(`
-		SELECT DISTINCT bin_id, totes_on_cart, state FROM (
-		    SELECT ob.bin_id AS bin_id, b.totes_on_cart, %[2]s AS state
-		      FROM order_bins ob
-		      JOIN orders o ON o.id = ob.order_id
-		      JOIN bins b  ON b.id = ob.bin_id
-		      JOIN bin_types bt ON bt.id = b.bin_type_id
-		      LEFT JOIN nodes dn ON dn.name = `+dropNode+`
-		     WHERE o.status IN (%[1]s)
-		       AND bt.code = $2
-		       AND COALESCE(b.payload_code, '') = ''
-		       AND (`+dropNode+` = $3 OR dn.id IN (SELECT id FROM descendants))
-		       AND NOT EXISTS (
-		           SELECT 1 FROM demand_origins d
-		            WHERE d.origin_id = o.origin_id AND d.kind = $4 AND `+helpers.DemandOpenSQL("d")+`)
-		    UNION ALL
-		    SELECT b.id AS bin_id, b.totes_on_cart, %[2]s AS state
-		      FROM orders o
-		      JOIN bins b  ON b.id = o.named_bin_id
-		      JOIN bin_types bt ON bt.id = b.bin_type_id
-		      LEFT JOIN nodes dn ON dn.name = o.delivery_node
-		     WHERE o.status IN (%[1]s)
-		       AND NOT EXISTS (SELECT 1 FROM order_bins ob WHERE ob.order_id = o.id)
-		       AND bt.code = $2
-		       AND COALESCE(b.payload_code, '') = ''
-		       AND (o.delivery_node = $3 OR dn.id IN (SELECT id FROM descendants))
-		       AND NOT EXISTS (
-		           SELECT 1 FROM demand_origins d
-		            WHERE d.origin_id = o.origin_id AND d.kind = $4 AND `+helpers.DemandOpenSQL("d")+`)
-		) AS inbound
-		ORDER BY bin_id`, protocol.NonTerminalStatusSQLList(), helpers.CarrierStateSQL("b", "bt")),
+	rows, err := db.Query(nodetree.DescendantsOf(1)+typedInboundSQL(typedInboundScope{
+		rows:  `bt.code = $2 AND (` + typedInboundDropSQL + ` = $3 OR dn.id IN (SELECT id FROM descendants))`,
+		named: `bt.code = $2 AND (o.delivery_node = $3 OR dn.id IN (SELECT id FROM descendants))`,
+		kind:  "$4",
+	})+`
+		ORDER BY bin_id`,
 		groupNodeID, binTypeCode, groupNodeName, protocol.EpisodeKindMaintain)
 	if err != nil {
 		return nil, fmt.Errorf("list typed inbound to group %s (%s): %w", groupNodeName, binTypeCode, err)
@@ -2093,6 +2066,105 @@ func ListTypedInboundToGroup(db *sql.DB, groupNodeID int64, groupNodeName, binTy
 		var c InboundCarrier
 		if err := rows.Scan(&c.BinID, &c.TotesOnCart, &c.State); err != nil {
 			return nil, fmt.Errorf("scan inbound carrier: %w", err)
+		}
+		out = append(out, c)
+	}
+	return out, rows.Err()
+}
+
+// typedInboundScope is what one read of the inbound set narrows it by: what it
+// selects ahead of the carrier (cols inside, outer around them), what it joins, and
+// the predicate on each arm over its delivery node dn and carrier type bt. rows is
+// the arm over an order's cart rows, whose delivery node is the row's drop step
+// (typedInboundDropSQL); named is the arm over a cart an order names and holds no
+// row for, delivered to the order's delivery node. kind is the expression carrying
+// the maintain kind.
+type typedInboundScope struct {
+	cols, outer, joins string
+	rows, named        string
+	kind               string
+}
+
+// typedInboundDropSQL is where a cart row sets its cart down: its drop step in the
+// order's plan.
+var typedInboundDropSQL = helpers.StepNodeSQL("o", "ob.drop_step")
+
+// typedInboundSQL is the inbound statement's one spelling, its two arms over the
+// scope (the rules are on CountTypedInboundToGroup).
+func typedInboundSQL(s typedInboundScope) string {
+	status, state := protocol.NonTerminalStatusSQLList(), helpers.CarrierStateSQL("b", "bt")
+	notAsked := `NOT EXISTS (
+		           SELECT 1 FROM demand_origins d
+		            WHERE d.origin_id = o.origin_id AND d.kind = ` + s.kind + ` AND ` + helpers.DemandOpenSQL("d") + `)`
+	return `
+		SELECT DISTINCT ` + s.outer + `bin_id, totes_on_cart, state FROM (
+		    SELECT ` + s.cols + `ob.bin_id AS bin_id, b.totes_on_cart, ` + state + ` AS state
+		      FROM order_bins ob
+		      JOIN orders o ON o.id = ob.order_id
+		      JOIN bins b  ON b.id = ob.bin_id
+		      JOIN bin_types bt ON bt.id = b.bin_type_id
+		      LEFT JOIN nodes dn ON dn.name = ` + typedInboundDropSQL + `
+		      ` + s.joins + `
+		     WHERE o.status IN (` + status + `)
+		       AND COALESCE(b.payload_code, '') = ''
+		       AND ` + s.rows + `
+		       AND ` + notAsked + `
+		    UNION ALL
+		    SELECT ` + s.cols + `b.id AS bin_id, b.totes_on_cart, ` + state + ` AS state
+		      FROM orders o
+		      JOIN bins b  ON b.id = o.named_bin_id
+		      JOIN bin_types bt ON bt.id = b.bin_type_id
+		      LEFT JOIN nodes dn ON dn.name = o.delivery_node
+		      ` + s.joins + `
+		     WHERE o.status IN (` + status + `)
+		       AND NOT EXISTS (SELECT 1 FROM order_bins ob WHERE ob.order_id = o.id)
+		       AND COALESCE(b.payload_code, '') = ''
+		       AND ` + s.named + `
+		       AND ` + notAsked + `
+		) AS inbound`
+}
+
+// KanbanInbound is one row of ListKanbanInbound: a carrier on its way into a
+// kanban, of a type the kanban declares.
+type KanbanInbound struct {
+	Kanban int64
+	Code   string
+	InboundCarrier
+}
+
+// ListKanbanInbound is ListTypedInboundToGroup for every declared type of the named
+// kanbans (nil: all), in one statement: the same two arms, the group's name and its
+// descendants being the walk, whose first row is the kanban itself (node names are
+// unique, so a delivery naming the group resolves to it). Pin:
+// TestKanbanCounts_TheBatchedReadsAgreeWithTheSingleReads.
+func ListKanbanInbound(db *sql.DB, kanbanIDs []int64) ([]KanbanInbound, error) {
+	var arg any
+	if kanbanIDs != nil {
+		arg = kanbanIDs
+	}
+	rows, err := db.Query(`WITH RECURSIVE kanban_tree(kanban, id) AS (
+			SELECT k.node_id, k.node_id FROM kanbans k
+			 WHERE $1::bigint[] IS NULL OR k.node_id = ANY($1::bigint[])
+			UNION ALL
+			SELECT t.kanban, n2.id FROM nodes n2 JOIN kanban_tree t ON n2.parent_id = t.id
+		) `+typedInboundSQL(typedInboundScope{
+		cols:  "kt.kanban AS kanban, bt.code AS code, ",
+		outer: "kanban, code, ",
+		joins: "JOIN kanban_tree kt ON kt.id = dn.id JOIN kanban_levels kl ON kl.kanban_node_id = kt.kanban AND kl.bin_type_id = bt.id",
+		rows:  "TRUE",
+		named: "TRUE",
+		kind:  "$2",
+	})+`
+		ORDER BY kanban, code, bin_id`, arg, protocol.EpisodeKindMaintain)
+	if err != nil {
+		return nil, fmt.Errorf("list kanban inbound: %w", err)
+	}
+	defer rows.Close()
+	var out []KanbanInbound
+	for rows.Next() {
+		var c KanbanInbound
+		if err := rows.Scan(&c.Kanban, &c.Code, &c.BinID, &c.TotesOnCart, &c.State); err != nil {
+			return nil, fmt.Errorf("scan kanban inbound: %w", err)
 		}
 		out = append(out, c)
 	}

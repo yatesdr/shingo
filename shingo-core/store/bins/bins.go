@@ -52,14 +52,27 @@ func HeightArm(h domain.Height) string {
 		return ""
 	}
 	return `
-	  AND ` + state + ` <> '` + string(protocol.CarrierTopsAndBottoms) + `'`
+	  AND ` + noHeightSaidSQL()
+}
+
+// noHeightSaidSQL is what HeightArm admits for no height said: the candidate is
+// not tops & bottoms. The keeper's count, and the batched census beside it
+// (ListKanbanResidents), which reads it as a column.
+func noHeightSaidSQL() string {
+	return helpers.CarrierStateSQL("b", "bt") + ` <> '` + string(protocol.CarrierTopsAndBottoms) + `'`
 }
 
 // emptyTail is how every empty finder ends: the height its want admits
 // (HeightArm), then the ladder and today's order (preferredEmptyOrder). One
 // function so no finder takes the order without the arm.
 func emptyTail(a *emptyQueryArgs, want domain.Height) string {
-	return HeightArm(want) + preferredEmptyOrder(a, want)
+	return emptyTailRanked(a, want, "")
+}
+
+// emptyTailRanked is emptyTail with a keeper's source rank ahead of the order
+// (EmptyFence.rankTerm, blank with no sources).
+func emptyTailRanked(a *emptyQueryArgs, want domain.Height, rank string) string {
+	return HeightArm(want) + rankedEmptyOrder(a, want, rank)
 }
 
 // BinJoinQuery (the const below) is the SELECT prefix used by every
@@ -263,11 +276,58 @@ type EmptyFence struct {
 	// OriginGroup is the maintained group this ask exists to FILL, by name.
 	// Blank for everything that is not a level keeper's top-off.
 	OriginGroup string
+	// Sources are the groups a keeper's ask may pull from, in rank order: its
+	// kanban's sources, read with the episode. Non-empty is exclusive and ranks the
+	// find (the source's order, ahead of AccessibleEmptyOrder's); empty is the
+	// plant-wide predicate. The scoped tiers never read it: only the plant-wide
+	// finders do, and only a keeper's fence carries it.
+	Sources []int64
 }
 
 // Empty reports whether this fence excludes nothing, so a caller can skip
 // rendering the CTE entirely rather than run a walk over an empty root set.
-func (f EmptyFence) Empty() bool { return f.ProcessNode == "" && f.OriginGroup == "" }
+func (f EmptyFence) Empty() bool {
+	return f.ProcessNode == "" && f.OriginGroup == "" && len(f.Sources) == 0
+}
+
+// fenceArms renders the fence for one plant-wide find: the CTE that goes in front
+// of the statement, the WHERE arms that read it, and the parameter that carries
+// the sources (0 with none).
+func (f EmptyFence) fenceArms(a *emptyQueryArgs) (cte, where string, sourcesParam int) {
+	if f.Empty() {
+		return "", "", 0
+	}
+	cte = FencedNodesCTE(a.add(f.ProcessNode), a.add(f.OriginGroup))
+	where = NotFencedArm()
+	if len(f.Sources) > 0 {
+		sourcesParam = a.add(f.Sources)
+		cte += sourcedNodesCTE(sourcesParam)
+		where += `
+	  AND b.node_id IN (SELECT id FROM sourced)`
+	}
+	return cte, where, sourcesParam
+}
+
+// sourcedNodesCTE continues FencedNodesCTE's WITH with the sources' nodes, each
+// source's own and its descendants', every one with the source it stands under: a
+// source may hold its carriers in lanes.
+func sourcedNodesCTE(sourcesParam int) string {
+	return fmt.Sprintf(`, sourced(id, root) AS (
+		SELECT id, id FROM nodes WHERE id = ANY($%d::bigint[])
+		UNION ALL
+		SELECT n3.id, s.root FROM nodes n3 JOIN sourced s ON n3.parent_id = s.id
+	) `, sourcesParam)
+}
+
+// rankTerm is the sort key that takes a candidate from the sources in rank order,
+// blank with no sources. sourcesParam is the parameter fenceArms named.
+func (f EmptyFence) rankTerm(sourcesParam int) string {
+	if len(f.Sources) == 0 {
+		return ""
+	}
+	return fmt.Sprintf(`(SELECT MIN(array_position($%d::bigint[], so.root)) FROM sourced so WHERE so.id = b.node_id) ASC,
+	         `, sourcesParam)
+}
 
 // Args returns the two bind values FencedNodesCTE's placeholders take, in the
 // order the placeholders were named. Beside the renderer, on DigAsker.Args's
@@ -305,8 +365,9 @@ func (f EmptyFence) Args() []any { return []any{f.ProcessNode, f.OriginGroup} }
 // matters: the fence asks "are you an outsider here?" — a keeper is not, at its
 // own group — while this asks "are you filling this group?". The keeper is
 // exempt from rule (i) at its own group and caught by rule (ii) there anyway.
-// Net effect: the keeper sources from anywhere but its own group and the strict
-// ones, and a supported press reaches its own group through the supports list.
+// Net effect: the keeper sources from anywhere but its own group, the strict ones
+// and rule (iii)'s, and a supported press reaches its own group through the
+// supports list.
 //
 // The measured consequence of not having rule (ii): a six-position group
 // standing at 2 of a level of 4 dispatched both its top-off asks against its
@@ -316,6 +377,15 @@ func (f EmptyFence) Args() []any { return []any{f.ProcessNode, f.OriginGroup} }
 //
 // APPLIED WITHOUT REGARD TO strict, unlike rule (i). Filling a group
 // from itself is a null trip whether or not anybody has fenced it.
+//
+// ── RULE (iii): NO RAID BETWEEN LINESIDE KANBANS ────────────────────────────
+//
+// A keeper's ask does not take from another kanban that has supports: those
+// empties stand there for the process they serve, and two lineside kanbans short
+// at once would trade carts. One arm, so the plant-wide scan and a sources entry
+// answer alike; a source that names one is warned of at its save and yields
+// nothing here. Only a keeper's ask carries an origin group, so everyone else
+// reads this arm as empty. Pin: TestKanbanSources_NoLinesideRaid.
 //
 // ── WHY A NODE SET AND NOT A PER-ROW TEST ───────────────────────────────────
 //
@@ -335,16 +405,18 @@ func FencedNodesCTE(processParam, originParam int) string {
 		   AND NOT EXISTS (
 			 SELECT 1 FROM kanban_supports s
 			 JOIN nodes pn ON pn.id = s.process_node_id
-			 WHERE s.kanban_node_id = k.node_id AND pn.name = $%d
+			 WHERE s.kanban_node_id = k.node_id AND pn.name = $%[1]d
 		   )
 		UNION
-		SELECT g.id FROM nodes g WHERE $%d <> '' AND g.name = $%d
+		SELECT g.id FROM nodes g WHERE $%[2]d <> '' AND g.name = $%[2]d
+		UNION
+		SELECT s.kanban_node_id FROM kanban_supports s WHERE $%[2]d <> ''
 	),
 	fenced(id) AS (
 		SELECT id FROM fenced_roots
 		UNION ALL
 		SELECT n2.id FROM nodes n2 JOIN fenced f ON n2.parent_id = f.id
-	) `, processParam, originParam, originParam)
+	) `, processParam, originParam)
 }
 
 // NotFencedArm keeps a candidate out of the fenced set. Assumes a `fenced(id)`
@@ -853,17 +925,30 @@ var accessibleEmptyTerms = `(n.parent_id IS NULL OR n.depth IS NULL OR ` + helpe
 // the three terms above in this order), and the two are held equal by one
 // agreement table, TestHeightLadder_ThePoolAgreesWithTheFinders. A rung
 // changed here is changed there.
+//
 // Pins: TestPreferredEmptyOrder_NoWantIsToday, TestEmptyFinders_HeightLadder,
 // TestEmptyFinders_OnlyShorterOrUnknownStillFound,
 // TestEmptyFinders_CountAndFindAgreeWithAWant.
 func preferredEmptyOrder(a *emptyQueryArgs, want domain.Height) string {
+	return rankedEmptyOrder(a, want, "")
+}
+
+// rankedEmptyOrder is preferredEmptyOrder with a sort term ahead of everything
+// (EmptyFence.rankTerm), which only a keeper's find with sources has. Pin:
+// TestKanbanSources_TheKeepersFind.
+func rankedEmptyOrder(a *emptyQueryArgs, want domain.Height, rank string) string {
 	layers, ok := want.Stated()
 	if !ok {
-		return AccessibleEmptyOrder
+		if rank == "" {
+			return AccessibleEmptyOrder
+		}
+		return `
+	ORDER BY ` + rank + accessibleEmptyTerms + `
+	LIMIT 1`
 	}
 	totes := fmt.Sprintf("($%d::int * bt.totes_per_layer)", a.add(layers))
 	return `
-	ORDER BY (b.totes_on_cart IS NULL OR bt.totes_per_layer IS NULL) ASC,
+	ORDER BY ` + rank + `(b.totes_on_cart IS NULL OR bt.totes_per_layer IS NULL) ASC,
 	         (b.totes_on_cart < ` + totes + `) ASC,
 	         abs(b.totes_on_cart - ` + totes + `) ASC,
 	         ` + accessibleEmptyTerms + `
@@ -1665,17 +1750,16 @@ func findEmptyTyped(db *sql.DB, typeArm func(int) string, typeVal any, preferZon
 			where += InZoneArm(a.add(preferZone))
 		}
 		where += ExcludeNodeArm(destP)
-		cte := ""
-		if !fence.Empty() {
-			cte = FencedNodesCTE(a.add(fence.ProcessNode), a.add(fence.OriginGroup))
-			where += NotFencedArm()
-		}
+		cte, arms, sourcesP := fence.fenceArms(a)
+		where += arms
 		where += NotForeignDugArm(a.add(string(reservations.ModeDig)),
 			a.add(asker.OrderID), a.add(asker.LaneOwner))
-		return cte + BinJoinQuery + where + emptyTail(a, want), a.vals
+		return cte + BinJoinQuery + where + emptyTailRanked(a, want, fence.rankTerm(sourcesP)), a.vals
 	}
 
-	if preferZone != "" {
+	// ONE STATEMENT WITH SOURCES: their rank is the order, and a zone pass ahead of
+	// it would take a nearer second source over a first.
+	if preferZone != "" && len(fence.Sources) == 0 {
 		q, args := build(true)
 		b, err := ScanBin(db.QueryRow(q, args...))
 		if err == nil {
@@ -1722,18 +1806,15 @@ func FindEmptyCompatible(db *sql.DB, payloadCode, preferZone string, excludeNode
 			where += InZoneArm(a.add(preferZone))
 		}
 		where += ExcludeNodeArm(destP)
-		cte := ""
-		if !fence.Empty() {
-			cte = FencedNodesCTE(a.add(fence.ProcessNode), a.add(fence.OriginGroup))
-			where += NotFencedArm()
-		}
+		cte, arms, sourcesP := fence.fenceArms(a)
+		where += arms
 		where += NotForeignDugArm(a.add(string(reservations.ModeDig)),
 			a.add(asker.OrderID), a.add(asker.LaneOwner))
 		return cte + BinJoinQuery + where +
-			PayloadBinTypeRuleArm(fmt.Sprintf("$%d", payloadP)) + emptyTail(a, want), a.vals
+			PayloadBinTypeRuleArm(fmt.Sprintf("$%d", payloadP)) + emptyTailRanked(a, want, fence.rankTerm(sourcesP)), a.vals
 	}
 
-	if preferZone != "" {
+	if preferZone != "" && len(fence.Sources) == 0 {
 		q, args := build(true)
 		b, err := ScanBin(db.QueryRow(q, args...))
 		if err == nil {

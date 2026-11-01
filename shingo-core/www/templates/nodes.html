@@ -286,11 +286,12 @@
         <label>The keeper's last tick</label>
         <div class="table-scroll-y">
           <table class="rh-table">
-            <thead><tr><th>Carrier type</th><th class="rh-num">Level</th><th class="rh-num">Here</th><th class="rh-num">Asked</th><th class="rh-num">Coming</th><th class="rh-num">Short</th><th>Waiting on</th></tr></thead>
+            <thead><tr><th>Carrier type</th><th class="rh-num">Level</th><th class="rh-num">Base</th><th>Driven by</th><th class="rh-num">Here</th><th class="rh-num">Asked</th><th class="rh-num">Coming</th><th class="rh-num">Short</th><th>Waiting on</th></tr></thead>
             <tbody id="keeper-levels-body"></tbody>
           </table>
         </div>
-        <div class="form-hint">Empty carriers Core keeps standing by: level &minus; here &minus; asked &minus; coming = short.</div>
+        <div id="keeper-levels-note" class="form-hint"></div>
+        <div class="form-hint">Empty carriers Core keeps standing by: level &minus; here &minus; asked &minus; coming = short. The level is the base plus the running cover per process driving it.</div>
       </div>
       <div class="form-group">
         <label>Supports</label>
@@ -351,11 +352,12 @@
         <label>The keeper's last tick</label>
         <div class="table-scroll-y">
           <table class="rh-table">
-            <thead><tr><th>Carrier type</th><th class="rh-num">Level</th><th class="rh-num">Here</th><th class="rh-num">Asked</th><th class="rh-num">Coming</th><th class="rh-num">Short</th><th>Waiting on</th></tr></thead>
+            <thead><tr><th>Carrier type</th><th class="rh-num">Level</th><th class="rh-num">Base</th><th>Driven by</th><th class="rh-num">Here</th><th class="rh-num">Asked</th><th class="rh-num">Coming</th><th class="rh-num">Short</th><th>Waiting on</th></tr></thead>
             <tbody id="keeper-levels-body"></tbody>
           </table>
         </div>
-        <div class="form-hint">Empty carriers Core keeps standing by: level &minus; here &minus; asked &minus; coming = short.</div>
+        <div id="keeper-levels-note" class="form-hint"></div>
+        <div class="form-hint">Empty carriers Core keeps standing by: level &minus; here &minus; asked &minus; coming = short. The level is the base plus the running cover per process driving it.</div>
       </div>
     <!-- Occupant section (read-only) -->
     <div id="modal-inventory" class="hide mb-2">

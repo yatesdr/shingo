@@ -1,6 +1,7 @@
 package dispatch
 
 import (
+	"reflect"
 	"testing"
 
 	"shingocore/store/bins"
@@ -9,7 +10,7 @@ import (
 // kanban_pins_test.go — characterization pins with no database.
 
 // TestKanbanPin_TheKeepersNeedReachesOnlyThePlantWideTier: what the keeper asks
-// the finder (Maintainer.nothingToSource, its ask's acquire) names no source and
+// the finder (its ask's acquire) names no source and
 // an origin: the typed plant-wide search answers, the one search, carrying the
 // fill rule's fence, and no group or loader tier runs.
 func TestKanbanPin_TheKeepersNeedReachesOnlyThePlantWideTier(t *testing.T) {
@@ -35,7 +36,26 @@ func TestKanbanPin_TheKeepersNeedReachesOnlyThePlantWideTier(t *testing.T) {
 		t.Errorf("other searches ran: typed group %d, group %d, untyped plant-wide %d, FIFO %d; want none",
 			db.typedGroupCalls, db.groupEmptyCalls, db.globalEmptyCalls, db.fifoCalls)
 	}
-	if db.lastFence != (bins.EmptyFence{OriginGroup: "KP-GROUP"}) {
+	if !reflect.DeepEqual(db.lastFence, bins.EmptyFence{OriginGroup: "KP-GROUP"}) {
 		t.Errorf("fence = %+v, want the group it fills and no process", db.lastFence)
+	}
+	if db.episodeReads != 1 {
+		t.Errorf("the episode was read %d times in one Pick, want once", db.episodeReads)
+	}
+
+	// The kanban's sources ride that one read to the same search; still the one
+	// search, no scoped tier, and the ask still names no source.
+	db.typedGlobalCalls, db.episodeReads = 0, 0
+	db.maintainedSources = map[string][]int64{origin: {41, 42}}
+	res = NewSourceFinder(db, nil, nil).FindSourceForNeed(SourceNeed{Intent: IntentEmpty, OriginID: origin})
+	if res.Outcome != OutcomeFound || db.typedGlobalCalls != 1 || db.typedGroupCalls != 0 || db.groupEmptyCalls != 0 {
+		t.Errorf("with sources: outcome %v, typed plant-wide %d, typed group %d, group %d; want the one plant-wide search",
+			res.Outcome, db.typedGlobalCalls, db.typedGroupCalls, db.groupEmptyCalls)
+	}
+	if !reflect.DeepEqual(db.lastFence, bins.EmptyFence{OriginGroup: "KP-GROUP", Sources: []int64{41, 42}}) {
+		t.Errorf("fence = %+v, want the group it fills and its sources in rank order", db.lastFence)
+	}
+	if db.episodeReads != 1 {
+		t.Errorf("with sources the episode was read %d times in one Pick, want once", db.episodeReads)
 	}
 }

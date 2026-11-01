@@ -41,6 +41,12 @@ type KanbanPictureRow struct {
 	TopsAndBottomsWant int
 	StationID          string
 	Strict             bool
+	// Live says the kanban's node is an enabled group: a disabled one is counted
+	// by nobody and keeps nothing.
+	Live bool
+	// RunningProcesses are the processes Running counts, by name: the card's
+	// answer to which process is driving the want.
+	RunningProcesses []string
 	// NothingProcesses are the kanban's processes with a part that contributes
 	// nothing to Running: no payload_bin_types row, or several. A process can be
 	// here and also count for another part. The kanban's card names them.
@@ -56,8 +62,8 @@ type KanbanPictureRow struct {
 //
 // RUNNING. A process runs its effective style: the target of its latest open
 // changeover episode when that resolves to a type, else its active style
-// (process_styles.is_active). The keeper's reader of Running is the effective
-// want work (U2); until it lands nothing but this statement's tests read it.
+// (process_styles.is_active). Every levels reader takes it through
+// DB.ListMaintainLevels or this read directly.
 //
 //   - open_changeover: the latest open episode per process. A changeover episode
 //     carries its target's first produce claim as (process_id, core_node_name,
@@ -145,7 +151,8 @@ connected AS (
 	  JOIN positions pos ON pos.node_name IN (sc.core_node_name, sc.paired_core_node, sc.second_paired_core_node)
 ),
 running AS (
-	SELECT c.kanban_node_id, sp.bin_type_id, COUNT(DISTINCT c.process_id) AS running
+	SELECT c.kanban_node_id, sp.bin_type_id, COUNT(DISTINCT c.process_id) AS running,
+	       json_agg(DISTINCT c.process_id ORDER BY c.process_id) AS processes
 	  FROM connected c
 	  JOIN style_part sp ON sp.process_id = c.process_id AND sp.style_id = c.style_id
 	 WHERE sp.bin_type_id IS NOT NULL
@@ -190,8 +197,8 @@ sources AS (
 SELECT g.id, g.name, l.bin_type_id, bt.code, l.want, k.running_cover, COALESCE(r.running, 0),
        COALESCE(sl.slots, 0), COALESCE(su.refs, '[]'), COALESCE(so.refs, '[]'),
        COALESCE(l.overflow_node_id, k.overflow_node_id), COALESCE(ov.name, ''), l.overflow_node_id,
-       COALESCE(tb.want, 0), COALESCE(k.station_id, ''), k.strict,
-       COALESCE(nt.processes, '[]'), COALESCE(fa.processes, '[]')
+       COALESCE(tb.want, 0), COALESCE(k.station_id, ''), k.strict, g.enabled AND g.is_synthetic,
+       COALESCE(r.processes, '[]'), COALESCE(nt.processes, '[]'), COALESCE(fa.processes, '[]')
   FROM scope
   JOIN kanbans k ON k.node_id = scope.node_id
   JOIN nodes g ON g.id = k.node_id
@@ -212,6 +219,27 @@ func (db *DB) ListKanbanPicture(ids []int64) ([]KanbanPictureRow, error) {
 	return listKanbanPicture(db.DB, ids)
 }
 
+// MaintainLevel is the row as a levels reader takes it: Want the effective want,
+// Base the declared number, the overflow the row's own.
+func (r KanbanPictureRow) MaintainLevel() MaintainLevel {
+	lv := MaintainLevel{GroupNodeID: r.KanbanNodeID, BinTypeID: r.BinTypeID, BinTypeCode: r.BinTypeCode,
+		Want: r.Want(), Base: r.Base, OverflowNodeID: r.LevelOverflowNodeID}
+	if r.LevelOverflowNodeID != nil {
+		lv.OverflowNode = r.OverflowNode
+	}
+	return lv
+}
+
+// LevelsOfPicture is the rows as levels, in the picture's order (by code within a
+// kanban).
+func LevelsOfPicture(rows []KanbanPictureRow) []MaintainLevel {
+	var out []MaintainLevel
+	for _, r := range rows {
+		out = append(out, r.MaintainLevel())
+	}
+	return out
+}
+
 func listKanbanPicture(q helpers.RowsQuerier, ids []int64) ([]KanbanPictureRow, error) {
 	var arg any
 	if ids != nil {
@@ -225,19 +253,20 @@ func listKanbanPicture(q helpers.RowsQuerier, ids []int64) ([]KanbanPictureRow, 
 	var out []KanbanPictureRow
 	for rows.Next() {
 		var (
-			r                                KanbanPictureRow
-			supports, sources, nothing, fell []byte
+			r                                         KanbanPictureRow
+			supports, sources, running, nothing, fell []byte
 		)
 		if err := rows.Scan(&r.KanbanNodeID, &r.KanbanName, &r.BinTypeID, &r.BinTypeCode,
 			&r.Base, &r.Cover, &r.Running, &r.Slots, &supports, &sources,
 			&r.OverflowNodeID, &r.OverflowNode, &r.LevelOverflowNodeID,
-			&r.TopsAndBottomsWant, &r.StationID, &r.Strict, &nothing, &fell); err != nil {
+			&r.TopsAndBottomsWant, &r.StationID, &r.Strict, &r.Live, &running, &nothing, &fell); err != nil {
 			return nil, fmt.Errorf("kanban picture: scan: %w", err)
 		}
 		for _, f := range []struct {
 			raw []byte
 			to  any
-		}{{supports, &r.Supports}, {sources, &r.Sources}, {nothing, &r.NothingProcesses}, {fell, &r.FallbackProcesses}} {
+		}{{supports, &r.Supports}, {sources, &r.Sources}, {running, &r.RunningProcesses},
+			{nothing, &r.NothingProcesses}, {fell, &r.FallbackProcesses}} {
 			if err := json.Unmarshal(f.raw, f.to); err != nil {
 				return nil, fmt.Errorf("kanban picture: decode: %w", err)
 			}

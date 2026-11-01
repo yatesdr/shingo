@@ -2,6 +2,7 @@ package store
 
 import (
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -11,6 +12,7 @@ import (
 	"shingo/protocol"
 	"shingocore/domain"
 	"shingocore/store/internal/helpers"
+	"shingocore/store/nodes"
 )
 
 // ErrEpisodeAlreadyOpen is what OpenCoreEpisode wraps when the partial unique
@@ -577,6 +579,56 @@ func (db *DB) ListOpenEpisodesOfKind(kind string) ([]DemandOrigin, error) {
 	return out, rows.Err()
 }
 
+// KeeperEpisode is an open maintain episode with what the keeper asks of its live
+// orders: its asks (CountLiveRootsByOrigin's count) and the oldest parked one's
+// queue cause, sentence and birth (OldestAt nil: nothing is parked).
+type KeeperEpisode struct {
+	DemandOrigin
+	Asked        int
+	OldestCause  string
+	OldestReason string
+	OldestAt     *time.Time
+}
+
+// ListOpenKeeperEpisodes reads every open maintain episode with its live orders,
+// in one statement: the keeper's memory, its asked count and its parked-ness
+// together. Asked counts live root orders, for the reason on
+// CountLiveRootsByOrigin: a dig's legs are not more demand. Parked reads every live
+// order of the episode with a queue cause, the longest-waiting first (by created_at
+// then id, as ListOrdersByOrigin reads them). Pin:
+// TestKanbanCounts_TheBatchedReadsAgreeWithTheSingleReads.
+func (db *DB) ListOpenKeeperEpisodes() ([]KeeperEpisode, error) {
+	live := `o.status NOT IN (` + protocol.TerminalStatusSQLList() + `)`
+	parked := live + ` AND COALESCE(o.queue_cause, '') <> ''`
+	rows, err := db.Query(`
+		SELECT d.origin_id, d.revision, d.episode_key, d.station_id, d.core_node_name,
+		       d.payload_code, d.opened_at, d.opened_total, d.threshold,
+		       COUNT(o.id) FILTER (WHERE `+live+` AND o.parent_order_id IS NULL),
+		       COALESCE((array_agg(o.queue_cause ORDER BY o.created_at, o.id) FILTER (WHERE `+parked+`))[1], ''),
+		       COALESCE((array_agg(o.queue_reason ORDER BY o.created_at, o.id) FILTER (WHERE `+parked+`))[1], ''),
+		       (array_agg(o.created_at ORDER BY o.created_at, o.id) FILTER (WHERE `+parked+`))[1]
+		  FROM demand_origins d
+		  LEFT JOIN orders o ON o.origin_id = d.origin_id
+		 WHERE d.kind = $1 AND `+helpers.DemandOpenSQL("d")+`
+		 GROUP BY d.origin_id`, protocol.EpisodeKindMaintain)
+	if err != nil {
+		return nil, fmt.Errorf("list open keeper episodes: %w", err)
+	}
+	defer rows.Close()
+	var out []KeeperEpisode
+	for rows.Next() {
+		var e KeeperEpisode
+		if err := rows.Scan(&e.OriginID, &e.Revision, &e.EpisodeKey, &e.StationID,
+			&e.CoreNodeName, &e.PayloadCode, &e.OpenedAt, &e.OpenedTotal, &e.Threshold,
+			&e.Asked, &e.OldestCause, &e.OldestReason, &e.OldestAt); err != nil {
+			return nil, fmt.Errorf("scan open keeper episode: %w", err)
+		}
+		e.Kind = protocol.EpisodeKindMaintain
+		out = append(out, e)
+	}
+	return out, rows.Err()
+}
+
 // ListOpenThresholdEpisodes returns every open Core-owned threshold episode.
 // One line over ListOpenEpisodesOfKind — kept as a name because startupSweep and
 // its tests read better asking for the thing they mean.
@@ -601,21 +653,38 @@ func (db *DB) ListOpenThresholdEpisodes() ([]DemandOrigin, error) {
 // that also claims the carrier, drops `resident`, and re-opens the gap. The
 // design named this before the keeper existed — "never from the group itself".
 func (db *DB) MaintainedEpisodeForOrigin(originID string) (groupNode, binType string, err error) {
+	ep, err := db.MaintainedEpisodeOf(originID)
+	return ep.Group, ep.BinType, err
+}
+
+// MaintainedEpisodeOf is that one read, with the group's sources in rank order
+// riding it: the finder's whole view of a keeper's ask (plan.Finder), so a Pick pays
+// one statement for the type, the fence and the sources. The zero value means this
+// origin is no open maintain episode. The group in the SELECT is the episode key's
+// second part, which ParseEpisodeKey below reads as CoreNode.
+func (db *DB) MaintainedEpisodeOf(originID string) (nodes.MaintainedEpisode, error) {
 	if originID == "" {
 		// The blank-origin guard, and it must come BEFORE the query: origin_id is
 		// a UUID column and Postgres errors on '' rather than returning no rows.
-		return "", "", nil
+		return nodes.MaintainedEpisode{}, nil
 	}
-	var key string
+	var (
+		key     string
+		sources []byte
+	)
 	qerr := db.QueryRow(`
-		SELECT episode_key FROM demand_origins
-		 WHERE origin_id = $1 AND kind = $2 AND `+helpers.DemandOpenSQL(""),
-		originID, protocol.EpisodeKindMaintain).Scan(&key)
+		SELECT d.episode_key, COALESCE((
+		         SELECT json_agg(s.source_node_id ORDER BY s.rank)
+		           FROM kanban_sources s JOIN nodes g ON g.id = s.kanban_node_id
+		          WHERE g.name = split_part(d.episode_key, '|', 2)), '[]')
+		  FROM demand_origins d
+		 WHERE d.origin_id = $1 AND d.kind = $2 AND `+helpers.DemandOpenSQL("d"),
+		originID, protocol.EpisodeKindMaintain).Scan(&key, &sources)
 	if errors.Is(qerr, sql.ErrNoRows) {
-		return "", "", nil
+		return nodes.MaintainedEpisode{}, nil
 	}
 	if qerr != nil {
-		return "", "", fmt.Errorf("maintained episode for origin %s: %w", originID, qerr)
+		return nodes.MaintainedEpisode{}, fmt.Errorf("maintained episode for origin %s: %w", originID, qerr)
 	}
 	parsed, perr := protocol.ParseEpisodeKey(key)
 	if perr != nil {
@@ -623,10 +692,14 @@ func (db *DB) MaintainedEpisodeForOrigin(originID string) (groupNode, binType st
 		// hand. Loud rather than silently untyped: an untyped maintainer ask
 		// sources any compatible empty, which is the mix drift the type exists
 		// to prevent.
-		return "", "", fmt.Errorf("maintained episode for origin %s: episode key %q: %w",
+		return nodes.MaintainedEpisode{}, fmt.Errorf("maintained episode for origin %s: episode key %q: %w",
 			originID, key, perr)
 	}
-	return parsed.CoreNode, parsed.BinType, nil
+	ep := nodes.MaintainedEpisode{Group: parsed.CoreNode, BinType: parsed.BinType}
+	if err := json.Unmarshal(sources, &ep.Sources); err != nil {
+		return nodes.MaintainedEpisode{}, fmt.Errorf("maintained episode for origin %s: sources: %w", originID, err)
+	}
+	return ep, nil
 }
 
 // GetDemandOrigin reads one episode back. Returns nil when absent.

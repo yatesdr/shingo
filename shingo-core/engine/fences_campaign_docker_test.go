@@ -52,7 +52,7 @@ func fenceGroup(t *testing.T, db *store.DB, name, code string, want, slots int,
 		n := &nodes.Node{Name: fmt.Sprintf("%s-P%02d", name, i+1), Enabled: true, ParentID: &grpID}
 		testutil.MustNoErr(t, db.CreateNode(n), "create position")
 	}
-	testdb.KanbanStation(t, db, grpID, "test-core")
+	testdb.KanbanKeeper(t, db, grpID, "test-core")
 	if want > 0 {
 		testutil.MustNoErr(t, db.SetMaintainLevel(store.MaintainLevel{
 			GroupNodeID: grpID, BinTypeID: btID, Want: want,

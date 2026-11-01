@@ -2,6 +2,7 @@ package dispatch
 
 import (
 	"errors"
+	"reflect"
 	"testing"
 
 	"shingo/protocol"
@@ -244,7 +245,7 @@ func TestEmptyFence_ReachesThePlantWideSearch(t *testing.T) {
 
 			NewSourceFinder(db, nil, nil).FindSourceForNeed(tc.need)
 
-			if db.lastFence != tc.want {
+			if !reflect.DeepEqual(db.lastFence, tc.want) {
 				t.Errorf("fence handed to the search = %+v, want %+v", db.lastFence, tc.want)
 			}
 		})

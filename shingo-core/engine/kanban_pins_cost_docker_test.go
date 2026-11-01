@@ -3,6 +3,7 @@
 package engine
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 	"testing"
@@ -26,18 +27,26 @@ import (
 // Z45, a 32x30 zone Z32, a second lineside group K2, a plain market SM with
 // lanes, and an unloader of four windows whose outbound is K.
 //
-// CHARACTERIZATION PINS. Each today* const is the number measured at this tree,
+// Each const is the number measured at this tree,
 // asserted exactly so a read added or removed is a decision. The comment on each
 // names the settled target; the lane that lands the target changes the const.
 const (
-	// todayKeeperTickFixed is one steady tick, nothing short, whatever the plant's
-	// synthetic node count: the node list, the open episodes, the kanbans, and per
-	// kept kanban (K, K2) its levels and two counts per level. Settled: 4.
-	todayKeeperTickFixed = 15
-	// todaySnapshotBuild is one bins feed build for the Edge watching the
-	// windows: the read snapshot (5), K's levels, then UnloaderGroupLines (open
-	// episodes, types in play, two counts per level). Settled: about 9.
-	todaySnapshotBuild = 16
+	// keeperTickSteady is one steady tick, nothing short, whatever the plant's size:
+	// the picture, the open episodes with their asks, the comings, the residents.
+	keeperTickSteady = 4
+	// keeperTickBurstToFirstAsk is a tick with one type short by 4, up to the first
+	// ask's transaction: the steady four, the forecast, the episode's open, the
+	// group's properties, slot state and children's types, and the two node reads of
+	// the ask's admission. Each ask after it chooses its slot with no statement.
+	keeperTickBurstToFirstAsk = 11
+	// snapshotBuild is one bins feed build for the Edge watching the windows: the
+	// read snapshot (5: BEGIN, the names, the orders inbound, the bins, COMMIT), the
+	// picture of its groups, then UnloaderGroupLines (open episodes, types in play,
+	// comings, residents), however many groups and levels.
+	snapshotBuild = 10
+	// snapshotBodyBytes is that snapshot's body as it goes to the Edge. Measured at
+	// the base of this work, before any of the reads changed: 1000.
+	snapshotBodyBytes = 1000
 	// todayIntakeDoorShort is the intake door up to the order's birth, for an
 	// empty pushed at K at its level, into Z45 short of that type (three of its
 	// eight positions free). Settled: about 9-11.
@@ -226,9 +235,9 @@ func reAim(stmts []string) int {
 	return len(stmts)
 }
 
-// TestKanbanCost_KeeperTick: one steady tick. Asserted with Z45 and Z32 running no
-// keeper (no station); logged with a station on them as well, the reading the
-// round-4 census assumed for "≈22+S".
+// TestKanbanCost_KeeperTick: one steady tick is four statements whatever the
+// plant's size: the same with more kanbans, a station on the two with no supports,
+// and one kanban running as a keeper more. Then the burst: one type short by 4.
 func TestKanbanCost_KeeperTick(t *testing.T) {
 	t.Parallel()
 	r := newKanbanCostRig(t, 2, 2, 2)
@@ -243,19 +252,52 @@ func TestKanbanCost_KeeperTick(t *testing.T) {
 			t.Fatalf("fixture drift: the tick is not steady: %+v", st)
 		}
 	}
-	if len(m.Snapshot()) != 5 {
-		t.Fatalf("fixture drift: %d lines kept, want K's 4 and K2's 1: %+v", len(m.Snapshot()), m.Snapshot())
+	if len(m.Snapshot()) != 9 {
+		t.Fatalf("fixture drift: %d lines, want K's 4, K2's 1, Z45's 3 and Z32's 1: %+v", len(m.Snapshot()), m.Snapshot())
 	}
-	if n != todayKeeperTickFixed {
-		t.Errorf("keeper tick = %d statements, want %d", n, todayKeeperTickFixed)
+	if n != keeperTickSteady {
+		t.Errorf("keeper tick = %d statements, want %d", n, keeperTickSteady)
 	}
 
 	for _, g := range []*nodes.Node{r.z45, r.z32} {
 		testdb.KanbanStation(t, r.db, g.ID, "kc-edge")
 	}
+	more, _ := kanbanCostFlat(t, r.db, "KC-K3", 4)
+	testdb.KanbanKeeper(t, r.db, more.ID, "kc-edge")
+	testutil.MustNoErr(t, r.db.SetMaintainLevel(store.MaintainLevel{GroupNodeID: more.ID, BinTypeID: r.small, Want: 0}), "a level")
 	r.counter.Reset()
 	m.Tick()
-	t.Logf("STATEMENTS: the same tick with a station on Z45 and Z32: %d", r.counter.Count())
+	if got := r.counter.Count(); got != keeperTickSteady {
+		t.Errorf("the same tick with more of the plant: %d statements, want %d\n%s", got, keeperTickSteady,
+			testutil.StatementBreakdown(r.counter.Statements()))
+	}
+
+	// The burst: K wants 5 of small with 1 standing, four asks.
+	testutil.MustNoErr(t, r.db.SetMaintainLevel(store.MaintainLevel{GroupNodeID: r.k.ID, BinTypeID: r.small, Want: 5}), "the burst")
+	r.counter.Reset()
+	m.Tick()
+	got := r.counter.Count()
+	if st := mntState(t, m, "KC-K", "KC-SMALL"); st.Created != 4 {
+		t.Fatalf("fixture drift: the burst asked %d: %+v", st.Created, st)
+	}
+	stmts := r.counter.Statements()
+	t.Logf("STATEMENTS: keeper tick, one type short by 4: %d, the first %d to the first ask's birth\n%s",
+		got, firstBegin(stmts), testutil.StatementBreakdown(stmts))
+	if n := firstBegin(stmts); n != keeperTickBurstToFirstAsk {
+		t.Errorf("the burst to the first ask = %d statements, want %d", n, keeperTickBurstToFirstAsk)
+	}
+	for what, one := range map[string]string{"slot state": "group-slot-state", "children's types": "up(child, id, parent_id, depth)",
+		"the group's properties": "FROM node_properties WHERE node_id=$1 ORDER BY key"} {
+		n := 0
+		for _, s := range stmts {
+			if strings.Contains(s, one) {
+				n++
+			}
+		}
+		if n != 1 {
+			t.Errorf("the group's %s read %d times over four asks, want once", what, n)
+		}
+	}
 }
 
 // TestKanbanCost_SnapshotBuild: one bins feed build for the Edge watching the
@@ -292,8 +334,19 @@ func TestKanbanCost_SnapshotBuild(t *testing.T) {
 	if to == len(stmts) {
 		t.Fatalf("fixture drift: no snapshot reached the outbox:\n%s", strings.Join(stmts, "\n"))
 	}
-	if len(build) != todaySnapshotBuild {
-		t.Errorf("snapshot build = %d statements, want %d", len(build), todaySnapshotBuild)
+	if len(build) != snapshotBuild {
+		t.Errorf("snapshot build = %d statements, want %d", len(build), snapshotBuild)
+	}
+	var sent []byte
+	testutil.MustNoErr(t, r.db.QueryRow(`SELECT payload FROM outbox WHERE msg_type = $1`,
+		"data."+protocol.SubjectBinsSnapshot).Scan(&sent), "the snapshot off the outbox")
+	var env protocol.Envelope
+	testutil.MustNoErr(t, json.Unmarshal(sent, &env), "the envelope")
+	var data protocol.Data
+	testutil.MustNoErr(t, env.DecodePayload(&data), "the data")
+	t.Logf("BYTES: the snapshot to the Edge: %d (the envelope around it: %d)", len(data.Body), len(sent))
+	if len(data.Body) != snapshotBodyBytes {
+		t.Errorf("snapshot body = %d bytes, want %d: the Pi is sent nothing new", len(data.Body), snapshotBodyBytes)
 	}
 }
 

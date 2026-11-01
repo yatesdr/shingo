@@ -459,8 +459,8 @@ func BuildEpisodeRow(e domain.DemandEpisode, now time.Time, c config.DisplayConf
 	// of that pair, and a duplicate copy in payload_code would be a second
 	// spelling free to disagree with it.
 	//
-	// EXPECTED: want − resident at the moment the episode opened, which is
-	// exactly Threshold − OpenedTotal, both already stored. That is the shortfall
+	// EXPECTED: the effective want − resident at the moment the episode opened,
+	// which is exactly Threshold − OpenedTotal, both already stored. That is the shortfall
 	// the episode was opened over, so the ratio reads as "carriers this shortfall
 	// eventually cost". It is deliberately NOT the keeper's first gap: the gap
 	// also subtracts what was already coming, and a denominator that shrinks

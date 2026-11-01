@@ -1,7 +1,9 @@
 package engine
 
 import (
+	"encoding/json"
 	"testing"
+	"time"
 
 	"shingo/protocol"
 	"shingocore/dispatch"
@@ -71,5 +73,32 @@ func TestKanbanPin_WalkLightsNothingOutsideItsOwnGroup(t *testing.T) {
 	lines[2].Have = 0
 	if got := said(assignWindows(lines, windows, nil, sizes)); got != "W3=KP-SMALL" {
 		t.Errorf("walk short one small = %q, want W3=KP-SMALL", got)
+	}
+}
+
+// TestMaintainerGroupState_TheCardsJSON: what the card reads is on the wire, and the
+// tick's own fields are not.
+func TestMaintainerGroupState_TheCardsJSON(t *testing.T) {
+	t.Parallel()
+	raw, err := json.Marshal(MaintainerGroupState{GroupNode: "K", BinTypeCode: "T", Want: 9, Base: 1, Created: 3,
+		OriginID: "o", OpenedAt: time.Now(), HeldBy: "why", RunningProcesses: []string{"P"}, Slots: 8, TotalWant: 9, CannotCover: 1,
+		NothingProcesses: []string{"N"}, FallbackProcesses: []string{"F"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got map[string]any
+	if err := json.Unmarshal(raw, &got); err != nil {
+		t.Fatal(err)
+	}
+	for _, gone := range []string{"created", "origin_id", "opened_at", "Created", "OriginID", "OpenedAt"} {
+		if _, ok := got[gone]; ok {
+			t.Errorf("%s is on the wire: %s", gone, raw)
+		}
+	}
+	for _, kept := range []string{"want", "base", "held_by", "running_processes", "slots", "total_want", "cannot_cover",
+		"nothing_processes", "fallback_processes"} {
+		if _, ok := got[kept]; !ok {
+			t.Errorf("%s is not on the wire: %s", kept, raw)
+		}
 	}
 }

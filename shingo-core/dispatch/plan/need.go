@@ -94,6 +94,11 @@ type Need struct {
 	// Blank for every non-keeper order, which is nearly all of them.
 	OriginID string
 
+	// episode is the origin's open maintain episode once read: Pick reads it at
+	// most once and hands it down, so the type and the fence share one statement
+	// (Finder.keeperAsk). nil is not read yet.
+	episode *nodes.MaintainedEpisode
+
 	// ProcessNode is the equipment position this need is being sourced FOR: the
 	// asker, the order's own process node, never where the carrier goes.
 	//
@@ -255,10 +260,11 @@ type FinderDB interface {
 	// ride more than one carrier type (Finder.wantedEmpty).
 	FindEmptyBinOfTypes(binTypeCodes []string, preferZone string, excludeNodeID int64, fence bins.EmptyFence, asker domain.DigAsker, want domain.Height) (*bins.Bin, error)
 	FindEmptyBinOfTypesInGroup(binTypeCodes []string, groupNodeID, excludeNodeID int64, asker domain.DigAsker, want domain.Height) (*bins.Bin, error)
-	// MaintainedEpisodeForOrigin is the same read with BOTH halves of the pair:
-	// the group the episode belongs to as well as its carrier type. The group is
-	// what keeps a top-off ask from sourcing out of the group it is filling.
-	MaintainedEpisodeForOrigin(originID string) (groupNode, binType string, err error)
+	// MaintainedEpisodeOf is what an origin's open maintain episode says, one read
+	// per Pick (Finder.keeperAsk): its carrier type, the group it fills, which is
+	// what keeps a top-off ask from sourcing out of the group it is filling, and
+	// that group's sources in rank order.
+	MaintainedEpisodeOf(originID string) (nodes.MaintainedEpisode, error)
 	// GroupFencesAsker answers the fence as a DISPOSITION, for a need that named
 	// a group explicitly. The plant-wide fence is a filter inside the query; this
 	// one has to produce a cause.

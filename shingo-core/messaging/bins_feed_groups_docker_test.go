@@ -68,13 +68,14 @@ func newGroupsFixture(t *testing.T, levelled bool) *groupsFixture {
 	t.Cleanup(func() { cdb.Close() })
 	f.counter = counter
 	f.svc = NewCoreDataService(cdb, &feedsPinResponder{}, service.EpochAnnounce{})
-	f.svc.SetGroupLinesFunc(func(g *nodes.Node, levels []store.MaintainLevel, windows []protocol.NodeBinsRow) (*protocol.NodeBinsGroup, error) {
-		f.calls = append(f.calls, lineCall{group: g.Name, levels: len(levels), windows: windows})
-		if len(levels) == 0 {
-			return nil, nil
+	f.svc.SetGroupLinesFunc(func(asks []store.GroupLineAsk) ([]protocol.NodeBinsGroup, error) {
+		var out []protocol.NodeBinsGroup
+		for _, a := range asks {
+			f.calls = append(f.calls, lineCall{group: a.Group.Name, levels: len(a.Levels), windows: a.Windows})
+			out = append(out, protocol.NodeBinsGroup{Group: a.Group.Name, Wants: []protocol.NodeBinsWant{{BinType: "TOTE", Want: 3}},
+				Assignments: []protocol.NodeBinsAssignment{{Node: "SMN_A2", BinType: "TOTE"}}})
 		}
-		return &protocol.NodeBinsGroup{Group: g.Name, Wants: []protocol.NodeBinsWant{{BinType: "TOTE", Want: 3}},
-			Assignments: []protocol.NodeBinsAssignment{{Node: "SMN_A2", BinType: "TOTE"}}}, nil
+		return out, nil
 	})
 	return f
 }

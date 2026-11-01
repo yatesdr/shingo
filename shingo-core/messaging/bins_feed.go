@@ -38,8 +38,10 @@ import (
 //
 // AFTER A KNOWN CHANGE, ONE TIMER PER DIRTY EDGE. A bin event at a watched
 // node or group window, a station door (LOAD, count, CLEAR) on a watched bin,
-// an order to or from a watched node or group, and a level save on a group
-// (BinsLevelChanged) mark the Edges watching it dirty; each dirty
+// an order to or from a watched node or group, a save that moves a group's line
+// (BinsLevelChanged) and what moves the process a kanban supports, its plant claims
+// or a changeover opening or closing (ringProcessKanbans), mark the Edges watching
+// it dirty; each dirty
 // Edge gets one time.AfterFunc, binsPushDelay later, so a burst of changes is
 // one rebuild. The push sends only a digest that differs from the last one
 // sent to that Edge, so a count that stays above zero sends nothing. A row
@@ -307,8 +309,8 @@ func (s *CoreDataService) HandleBinWatch(env *protocol.Envelope, list *protocol.
 // — BEGIN, the names and the levelled groups' names, the orders inbound to
 // every place, the bins at every place and levelled group window, COMMIT —
 // and a sixth, the members of every watched group in one, when a group is
-// watched. Then, outside it, per held partial its line (markHeldLines) and per
-// levelled group its levels and its line (groupLines). Pinned by
+// watched. Then, outside it, per held partial its line (markHeldLines) and, once
+// for all the levelled groups, their picture and their lines (groupLines). Pinned by
 // TestBuildNodeBins_FiveStatementsWhateverTheListLength,
 // TestBuildNodeBins_AWatchedGroupsMembers and TestBuildNodeBins_ALevelledGroupsLine.
 func (s *CoreDataService) buildNodeBins(station string) (snap *protocol.NodeBinsSnapshot, known bool, err error) {

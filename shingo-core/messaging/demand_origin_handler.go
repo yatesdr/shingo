@@ -97,5 +97,12 @@ func (s *CoreDataService) HandleDemandOrigin(env *protocol.Envelope, st *protoco
 	}); err != nil {
 		log.Printf("core_handler: upsert demand origin %s (station=%s key=%s rev=%d): %v",
 			st.OriginID, station, st.EpisodeKey, st.Revision, err)
+		return
+	}
+	// A changeover opening or closing moves the cover of the kanbans its process's
+	// nodes are supported by. Every other kind would push on every cell episode's
+	// transition, for a line none of them moves.
+	if st.Kind == protocol.EpisodeKindChangeover {
+		s.ringProcessKanbans(st.ProcessID)
 	}
 }

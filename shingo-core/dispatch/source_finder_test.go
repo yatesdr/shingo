@@ -61,6 +61,10 @@ type fakeFinderDB struct {
 	// behaviour under test; it replaced lastExcludedSubtree when MG3-1 absorbed
 	// MG2-11's subtree exclusion into the fence's second rule.
 	lastFence bins.EmptyFence
+	// maintainedSources are the sources the same read answers, and episodeReads how
+	// many times it was read: a Pick reads it once.
+	maintainedSources map[string][]int64
+	episodeReads      int
 	// lastAsker records the dig asker the finders were handed. MG3-0 pinned that
 	// this was the ZERO value on the simple path; MG3-1b makes it real, so the
 	// record is what the inverted pin asserts against.
@@ -298,16 +302,18 @@ func (f *fakeFinderDB) GroupFencesAsker(groupNodeID int64, _ string) (bool, erro
 	return f.fencedGroups[groupNodeID], nil
 }
 
-func (f *fakeFinderDB) MaintainedEpisodeForOrigin(originID string) (string, string, error) {
+func (f *fakeFinderDB) MaintainedEpisodeOf(originID string) (nodes.MaintainedEpisode, error) {
 	if f.maintainedTypeErr != nil {
-		return "", "", f.maintainedTypeErr
+		return nodes.MaintainedEpisode{}, f.maintainedTypeErr
 	}
 	if originID == "" {
 		// The real one returns without querying: origin_id is a UUID column and
 		// "" is a cast error, not an empty result.
-		return "", "", nil
+		return nodes.MaintainedEpisode{}, nil
 	}
-	return f.maintainedGroup[originID], f.maintainedType[originID], nil
+	f.episodeReads++
+	return nodes.MaintainedEpisode{Group: f.maintainedGroup[originID], BinType: f.maintainedType[originID],
+		Sources: f.maintainedSources[originID]}, nil
 }
 
 func (f *fakeFinderDB) FindEmptyBinOfTypeInGroup(binTypeCode string, _, _ int64, asker reservations.DigAsker, want domain.Height) (*bins.Bin, error) {

@@ -93,6 +93,7 @@ var sanctionedLegReaders = map[string]string{
 	"store/return_sources.go":          "the cancel-return policy: where a line's bins come from and its empties go",
 	"store/containment.go":             "the containment divert scopes itself to the claim's own outbound flow",
 	"store/kanban_picture.go":          "the kanban's running processes: a claim belongs to a kanban when its core, paired or second paired node is supported",
+	"store/nodes/maintain.go":          "which kanbans a process's claims have a supported position in, by the picture's own match: a claim's move rings their lines",
 	"store/migrations.go":              "the schema",
 	"store/bins/bins.go":               "the empty scan leaves a cell's own positions alone, a press-index cell's paired positions included",
 	"store/bins/tote_want.go":          "the height an empty is wanted at: 0 at the press of a cell fed from its paired position (FedClaimSQL's shape test), read with the set-down node",

@@ -225,11 +225,16 @@ func BuildEpisodeDetail(
 	}
 
 	// threshold is the level the monitor was watching. Zero is meaningful only
-	// for the kind that has one; on a cell or changeover episode there is no
-	// threshold at all and a printed 0 would read as "the threshold is zero".
-	if o.Kind == "threshold" {
+	// for the kinds that have one; on a cell or changeover episode there is no
+	// threshold at all and a printed 0 would read as "the threshold is zero". A
+	// kanban's is the effective want it opened over, which moves with the processes
+	// while the episode stands, so the page says when it was true.
+	switch o.Kind {
+	case "threshold":
 		d.Threshold = Value(FormatCount(o.Threshold))
-	} else {
+	case protocol.EpisodeKindMaintain:
+		d.Threshold = Value(FormatCount(o.Threshold) + " when opened")
+	default:
 		d.Threshold = NA("not a threshold episode — no level was being watched")
 	}
 

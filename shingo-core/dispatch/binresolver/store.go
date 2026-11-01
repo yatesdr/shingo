@@ -43,8 +43,9 @@ type Store interface {
 
 	// ── The maintained-group level (MG4-1) ──────────────────────────────────
 	//
-	// ListMaintainLevels is the declared CAP; CountEmptyBinsOfTypeInGroup is what
-	// the group is actually holding. The filter refuses a store into a group that
+	// ListMaintainLevels is the CAP, its Want the effective want (store.DB reads it
+	// through the picture); CountEmptyBinsOfTypeInGroup is what the group is
+	// actually holding. The filter refuses a store into a group that
 	// has reached its level, so the two are read together.
 	//
 	// THE COUNT IS THE FROZEN PREDICATE. It is the same query the level keeper

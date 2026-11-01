@@ -224,6 +224,27 @@ console.log('the sections count history gave away render where they went (owner,
             && short.includes('mg-short') && short.includes('>2<') && short.includes('Waiting for an empty &middot; 12m'), short);
         const covered = vm.runInContext('keeperRowHtml(' + JSON.stringify({ bin_type_code: 'STANDARD', want: 4, resident: 4, gap: 0 }) + ')', kctx);
         check('keeper: a covered level is a quiet 0 and a dash', !covered.includes('mg-short') && covered.includes('&mdash;'), covered);
+        const driven = vm.runInContext('keeperRowHtml(' + JSON.stringify({ bin_type_code: 'SMALL', want: 5, base: 1,
+            running_processes: ['PRESS-6', 'WELD-2'], resident: 1, gap: 4, held_by: 'no empty SMALL at any source' }) + ')', kctx);
+        check('keeper: the want beside its base and the processes driving it', driven.includes('>5<') && driven.includes('>1<')
+            && driven.includes('PRESS-6, WELD-2'), driven);
+        check('keeper: why nothing was asked stands beside the gap', driven.indexOf('mg-short') < driven.indexOf('no empty SMALL at any source')
+            && !driven.includes('&mdash;'), driven);
+        const both = vm.runInContext('keeperRowHtml(' + JSON.stringify({ bin_type_code: 'SMALL', want: 5, gap: 2, held_by: 'no free slot',
+            oldest_ask_cause: 'c', oldest_ask_reason: 'Waiting for an empty', oldest_ask_age: '12m' }) + ')', kctx);
+        check('keeper: a parked ask and a held reason both show', both.includes('Waiting for an empty') && both.includes('no free slot'), both);
+        const note = liftFrom('nodes-maintain.js', 'export function', 'keeperNoteHtml');
+        if (!note) {
+            check('nodes-maintain.js defines keeperNoteHtml', false);
+        } else {
+            vm.runInContext(note.replace(/^export /, ''), kctx);
+            const over = vm.runInContext('keeperNoteHtml(' + JSON.stringify([{ total_want: 9, slots: 8, cannot_cover: 1,
+                nothing_processes: ['PRESS-6'], fallback_processes: ['WELD-2'] }]) + ')', kctx);
+            check('keeper: a want past the positions says what cannot be covered', over.includes('9 wanted on 8 enabled positions: 1 cannot be covered'), over);
+            check('keeper: the processes the picture could not read are named', over.includes('PRESS-6 runs a part') && over.includes('WELD-2 is changing over'), over);
+            const fits = vm.runInContext('keeperNoteHtml(' + JSON.stringify([{ total_want: 3, slots: 8 }]) + ')', kctx);
+            check('keeper: a want that fits says only that', fits.includes('3 wanted on 8 enabled positions') && !fits.includes('cannot'), fits);
+        }
     }
     // The kanban's Sources list on the same module: ordered, one group at a time.
     const srcRows = liftFrom('nodes-maintain.js', 'function', 'sourceRowsHtml');

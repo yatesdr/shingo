@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"shingocore/store"
+	"shingocore/store/nodes"
 )
 
 // KanbanStation seeds a kanban's station through the one write, its row made if
@@ -40,4 +41,26 @@ func saveKanban(t testing.TB, db *store.DB, c store.KanbanChange) {
 	if err := db.SaveKanban(c, "test"); err != nil {
 		t.Fatalf("save kanban %d: %v", c.NodeID, err)
 	}
+}
+
+// KanbanKeeper gives a kanban what makes it run a keeper: a station, and a supported
+// process position of its own (<group>-SUPPORT, created here).
+func KanbanKeeper(t testing.TB, db *store.DB, nodeID int64, station string) {
+	t.Helper()
+	g, err := db.GetNode(nodeID)
+	if err != nil || g == nil {
+		t.Fatalf("kanban keeper %d: %v", nodeID, err)
+	}
+	pos := &nodes.Node{Name: g.Name + "-SUPPORT", Enabled: true}
+	if err := db.CreateNode(pos); err != nil {
+		t.Fatalf("kanban keeper %s: supported position: %v", g.Name, err)
+	}
+	supports := []int64{pos.ID}
+	saveKanban(t, db, store.KanbanChange{NodeID: nodeID, EnsureRow: true, Station: &station, Supports: &supports})
+}
+
+// KanbanCover seeds a kanban's running cover through the one write.
+func KanbanCover(t testing.TB, db *store.DB, nodeID int64, cover int) {
+	t.Helper()
+	saveKanban(t, db, store.KanbanChange{NodeID: nodeID, EnsureRow: true, Cover: &cover})
 }

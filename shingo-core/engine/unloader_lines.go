@@ -6,7 +6,6 @@ import (
 	"shingo/protocol"
 	"shingocore/domain"
 	"shingocore/store"
-	"shingocore/store/nodes"
 )
 
 // unloader_lines.go — an unloader's group line: what the outbound group of an
@@ -14,9 +13,9 @@ import (
 // asked to go back as.
 //
 // THE KEEPER'S ARITHMETIC. A level type's shortfall is the keeper's own
-// (store.CountLevel: want less resident, asked and coming), read against the
-// same open maintain episodes Maintainer.Tick reads. Nothing here is a fifth
-// term. The line's model (store.TypeLine) lives in store beside it.
+// (store.KanbanCounts: the effective want less resident, asked and coming), read
+// against the same open maintain episodes Maintainer.Tick reads. Nothing here is
+// a fifth term. The line's model (store.TypeLine) lives in store beside it.
 //
 // HEIGHTS, FOR A TYPE WITH LAYER WANTS. When the type states its totes per
 // layer, each wanted height is a thing of its own: a cart counts toward a
@@ -36,76 +35,93 @@ import (
 // costs no statement; a group with levels gets an assignment for every bin
 // type, numbers or none.
 
-// UnloaderGroupLines answers one outbound group's line. levels are the group's
-// levels as ListMaintainLevels returns them (their order breaks ties);
-// windows are the rows of the bins at the unloader's windows in the plant's
-// order (bin_loader_homes.sort_order), unoccupied windows included or not.
+// UnloaderGroupLines answers the lines of a snapshot build's outbound groups, in
+// the order asked. An ask's Levels are as the picture returns them (their order
+// breaks ties); its Windows are the rows of the bins at the unloader's windows in
+// the plant's order (bin_loader_homes.sort_order), unoccupied windows included or
+// not.
 //
-// nil, with no statement, for a group with no levels. A failed read is an
-// error and no line: never a line built on a count that was not made.
+// A group with no levels has no line, and with none anywhere there is no statement.
+// A failed read is an error and no line: never a line built on a count that was not
+// made.
 //
-// COST per call with levels: the open maintain episodes (one read); per level
-// type the keeper's counts (resident, coming, and asked while an episode is
-// open: two or three reads); the types in play (one read: the level types and
-// the window carts' types, each with its floor size and the group's layer
-// wants of it, ListTypesInPlay); per type with a wanted height and totes per
-// layer, its residents by totes (one read). The comings at a height are read
-// off the keeper's own coming rows.
-func (e *Engine) UnloaderGroupLines(group *nodes.Node, levels []store.MaintainLevel,
-	windows []protocol.NodeBinsRow) (*protocol.NodeBinsGroup, error) {
-	if len(levels) == 0 {
+// FOUR STATEMENTS PER CALL, however many groups and levels: the open maintain
+// episodes with their asks, the types in play (the level types and the window carts'
+// types, each with its floor size and the groups' layer wants, ListTypesInPlay), the
+// comings and the residents (store.DB.ReadKanbanCounts, whose rows carry what a
+// wanted height reads). A STOP in the brief to add one per kanban. Pin:
+// TestKanbanCost_SnapshotBuild.
+func (e *Engine) UnloaderGroupLines(asks []store.GroupLineAsk) ([]protocol.NodeBinsGroup, error) {
+	var ids []int64
+	var codes []string
+	seen := map[string]bool{}
+	addCode := func(code string) {
+		if code != "" && !seen[code] {
+			seen[code] = true
+			codes = append(codes, code)
+		}
+	}
+	for _, a := range asks {
+		if len(a.Levels) == 0 {
+			continue
+		}
+		ids = append(ids, a.Group.ID)
+		for _, lv := range a.Levels {
+			addCode(lv.BinTypeCode)
+		}
+		for _, w := range a.Windows {
+			addCode(w.BinTypeCode)
+		}
+	}
+	if len(ids) == 0 {
 		return nil, nil
 	}
-	open, err := e.db.ListOpenEpisodesOfKind(protocol.EpisodeKindMaintain)
+	open, err := e.db.ListOpenKeeperEpisodes()
 	if err != nil {
-		return nil, fmt.Errorf("group line %s: list open episodes: %w", group.Name, err)
+		return nil, fmt.Errorf("group lines: list open episodes: %w", err)
 	}
-	openByKey := make(map[string]store.DemandOrigin, len(open))
+	askedByKey := make(map[string]int, len(open))
 	for _, o := range open {
-		openByKey[o.EpisodeKey] = o
+		askedByKey[o.EpisodeKey] = o.Asked
 	}
-	codes := make([]string, 0, len(levels)+len(windows))
-	seen := map[string]bool{}
-	for _, lv := range levels {
-		if !seen[lv.BinTypeCode] {
-			seen[lv.BinTypeCode] = true
-			codes = append(codes, lv.BinTypeCode)
-		}
-	}
-	for _, w := range windows {
-		if w.BinTypeCode != "" && !seen[w.BinTypeCode] {
-			seen[w.BinTypeCode] = true
-			codes = append(codes, w.BinTypeCode)
-		}
-	}
-	types, err := e.db.ListTypesInPlay(group.ID, codes)
+	types, err := e.db.ListTypesInPlay(ids, codes)
 	if err != nil {
-		return nil, fmt.Errorf("group line %s: %w", group.Name, err)
+		return nil, fmt.Errorf("group lines: %w", err)
 	}
-	var layerWants []store.MaintainLayerWant
+	wantsByGroup := map[int64][]store.MaintainLayerWant{}
 	sizes := map[string]domain.FloorSize{}
 	for _, t := range types {
-		layerWants = append(layerWants, t.LayerWants...)
+		for _, w := range t.LayerWants {
+			wantsByGroup[w.GroupNodeID] = append(wantsByGroup[w.GroupNodeID], w)
+		}
 		if fs, ok := t.Type.FloorSize(); ok {
 			sizes[t.Type.Code] = fs
 		}
 	}
-
-	lines := make([]store.TypeLine, 0, len(levels))
-	inbound := map[int64]bool{}
-	for _, lv := range levels {
-		tl, c, err := e.db.TypeLineOf(group, lv, openByKey[protocol.MaintainEpisodeKey(group.Name, lv.BinTypeCode)], layerWants)
-		if err != nil {
-			return nil, fmt.Errorf("group line: %w", err)
-		}
-		for _, ib := range c.Inbound {
-			inbound[ib.BinID] = true
-		}
-		lines = append(lines, tl)
+	counts, err := e.db.ReadKanbanCounts(ids)
+	if err != nil {
+		return nil, fmt.Errorf("group lines: %w", err)
 	}
 
-	return &protocol.NodeBinsGroup{Group: group.Name, Wants: wantsOf(lines),
-		Assignments: assignWindows(lines, windows, inbound, sizes)}, nil
+	var out []protocol.NodeBinsGroup
+	for _, a := range asks {
+		if len(a.Levels) == 0 {
+			continue
+		}
+		lines := make([]store.TypeLine, 0, len(a.Levels))
+		inbound := map[int64]bool{}
+		for _, lv := range a.Levels {
+			asked := askedByKey[protocol.MaintainEpisodeKey(a.Group.Name, lv.BinTypeCode)]
+			tl, c := counts.TypeLine(lv, asked, wantsByGroup[a.Group.ID])
+			for _, ib := range c.Inbound {
+				inbound[ib.BinID] = true
+			}
+			lines = append(lines, tl)
+		}
+		out = append(out, protocol.NodeBinsGroup{Group: a.Group.Name, Wants: wantsOf(lines),
+			Assignments: assignWindows(lines, a.Windows, inbound, sizes)})
+	}
+	return out, nil
 }
 
 // wantsOf is the line's wants: each level type, then its wanted heights.

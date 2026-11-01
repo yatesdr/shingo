@@ -64,11 +64,14 @@ func (s *NodeService) ValidateMaintainedGroup(cfg MaintainedGroupConfig) (Mainta
 	groupName := group.Name
 
 	// ── Depth-1 ──────────────────────────────────────────────────────────────
-	// Maintained groups are FLAT: direct children only, no lanes, no nested
-	// groups. It is a scope decision rather than a technical limit — depth
-	// dissolves the dig-lock counting question and most of the ASRS interaction,
-	// and a level held over buried carriers would be a number whose meaning
-	// changes with what is parked in front of it.
+	// A LEVEL is held in direct positions: no lanes, no nested groups. It is a
+	// scope decision rather than a technical limit — depth dissolves the dig-lock
+	// counting question and most of the ASRS interaction, and a level held over
+	// buried carriers would be a number whose meaning changes with what is parked
+	// in front of it. A group with no levels and no station counts nothing and keeps
+	// nothing, so a plain lane group, whose modal posts its overflow and all-default
+	// settings like any group's, or its strict row, is no such number. Pin:
+	// TestKanbanSave_APlainGroupsOverflowIsAProperty.
 	children, err := s.db.ListChildNodes(cfg.GroupNodeID)
 	if err != nil {
 		return chk, fmt.Errorf("read children of %s: %w", groupName, err)
@@ -83,7 +86,7 @@ func (s *NodeService) ValidateMaintainedGroup(cfg MaintainedGroupConfig) (Mainta
 			enabledChildren++
 		}
 	}
-	if len(nested) > 0 {
+	if len(nested) > 0 && (len(cfg.Levels) > 0 || strings.TrimSpace(cfg.MaintenanceStation) != "") {
 		refuse("%s is not flat — %s %s a lane or a group of its own, and a maintained group holds its level in direct positions only",
 			groupName, strings.Join(nested, ", "), plural(len(nested), "is", "are"))
 	}
@@ -148,9 +151,7 @@ func (s *NodeService) ValidateMaintainedGroup(cfg MaintainedGroupConfig) (Mainta
 		}
 	}
 
-	refusals, warnings := roomRefusals(cfg, groupName, enabledChildren)
-	chk.Refusals = append(chk.Refusals, refusals...)
-	chk.Warnings = append(chk.Warnings, warnings...)
+	chk.Warnings = append(chk.Warnings, roomWarnings(cfg, groupName, enabledChildren)...)
 
 	// ── An unloader's outbound needs somewhere to spill ──────────────────────
 	if msg, err := s.outboundWithoutOverflow(cfg, groupName); err != nil {
@@ -184,21 +185,19 @@ func (s *NodeService) ValidateMaintainedGroup(cfg MaintainedGroupConfig) (Mainta
 	return chk, nil
 }
 
-// roomRefusals is the group's room against what its levels declare: more than
-// it can hold, or no room for a return.
-//
-// Past the enabled positions is a REFUSAL: a kanban cannot stand more carriers
-// than it has positions, so its level could never be met and the keeper would
-// stay short of it for good. Exactly at them is a WARNING: the level can be held,
-// but it leaves the unloader nowhere to put the next carrier it drains, and the
-// group can gain positions or re-enable children. Pin:
+// roomWarnings is the group's room against what its levels declare: more than it
+// can hold, or no room for a return. Neither refuses: a plant can want either,
+// and the card shows the want against the enabled positions with what cannot be
+// covered. Past the enabled positions the level is not met while it stands.
+// Exactly at them the level can be held, but it leaves the unloader nowhere to
+// put the next carrier it drains. Pin:
 // TestMaintainedGroupSave_LevelsAndTheUnloaderOutbound.
 //
 // The levels and the tops & bottoms rows (layer wants at 0) are counted
 // together: each is a line of its own that a cart stands in, and neither takes
 // the other's room (binresolver.AtDeclaredLevel). Heights of 1 or more are not
 // counted; they are the stack level said by height.
-func roomRefusals(cfg MaintainedGroupConfig, groupName string, enabledChildren int) (refusals, warnings []string) {
+func roomWarnings(cfg MaintainedGroupConfig, groupName string, enabledChildren int) []string {
 	total, topsAndBottoms := 0, 0
 	for _, l := range cfg.Levels {
 		total += l.Want
@@ -215,13 +214,13 @@ func roomRefusals(cfg MaintainedGroupConfig, groupName string, enabledChildren i
 	}
 	switch {
 	case total > enabledChildren:
-		refusals = append(refusals, fmt.Sprintf("%s declares %s across %d enabled position%s — more than it can hold, so its level could never be met",
-			groupName, carriers, enabledChildren, plural(enabledChildren, "", "s")))
+		return []string{fmt.Sprintf("%s declares %s across %d enabled position%s — more than it can hold, so %d cannot be covered",
+			groupName, carriers, enabledChildren, plural(enabledChildren, "", "s"), total-enabledChildren)}
 	case enabledChildren > 0 && total == enabledChildren:
-		warnings = append(warnings, fmt.Sprintf("%s declares %s across %d position%s — nothing is left free for a carrier coming back in",
-			groupName, carriers, enabledChildren, plural(enabledChildren, "", "s")))
+		return []string{fmt.Sprintf("%s declares %s across %d position%s — nothing is left free for a carrier coming back in",
+			groupName, carriers, enabledChildren, plural(enabledChildren, "", "s"))}
 	}
-	return refusals, warnings
+	return nil
 }
 
 // sourceWarnings judges a kanban's sources: a source is not the kanban and is

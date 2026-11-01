@@ -209,6 +209,33 @@ func TestMaintainerArm_AKnockdownOffALinePosition(t *testing.T) {
 	})
 }
 
+// TestMaintainerArm_TheGapReadsTheEffectiveWant: at its base the group is whole and
+// the cart keeps its drop; with the group's cover and the press running the cart's
+// type, the same group is short and takes it.
+func TestMaintainerArm_TheGapReadsTheEffectiveWant(t *testing.T) {
+	t.Parallel()
+	c := newMTCell(t, "MTC", protocol.ClaimRoleProduce)
+	c.keep(c.kd, 1, nil)
+	slot, err := c.db.GetNodeByDotName("MTC-GRP-1")
+	testutil.MustNoErr(t, err, "slot")
+	c.cart(slot, c.kd, "MTC-RESIDENT", nil)
+	if got := c.moveOff("mtc1", c.press, c.cart(c.press, c.kd, "MTC-KD", nil)); got != c.out.Name {
+		t.Fatalf("at its base: went to %s, want the planned drop %s", got, c.out.Name)
+	}
+
+	testdb.KanbanCover(t, c.db, c.grp, 1)
+	var part int64
+	testutil.MustNoErr(t, c.db.QueryRow(`SELECT id FROM payloads WHERE code = $1`, c.part).Scan(&part), "the part")
+	_, err = c.db.DB.Exec(`DELETE FROM payload_bin_types WHERE payload_id = $1`, part)
+	testutil.MustNoErr(t, err, "the part's carriers")
+	_, err = c.db.DB.Exec(`INSERT INTO payload_bin_types (payload_id, bin_type_id) VALUES ($1,$2)`, part, c.kd)
+	testutil.MustNoErr(t, err, "the part rides the type")
+	// The first move's cart still stands on the press: it has not flown.
+	if got := c.moveOff("mtc2", c.deck, c.cart(c.deck, c.kd, "MTC-KD2", nil)); got != "GRP" {
+		t.Errorf("the press running the type, cover 1: went to %s, want the group", got)
+	}
+}
+
 // TestMaintainerArm_TwoShortGroupsTheLargestGap: two groups support the press
 // and both are short of the knockdown; the one short by more takes it.
 func TestMaintainerArm_TwoShortGroupsTheLargestGap(t *testing.T) {

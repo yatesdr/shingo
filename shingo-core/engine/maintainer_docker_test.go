@@ -3,6 +3,7 @@
 package engine
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -36,7 +37,7 @@ func mntFixture(t *testing.T, db *store.DB, group string, slots int, typeCode st
 	testutil.MustNoErr(t, db.QueryRow(
 		`INSERT INTO bin_types (code) VALUES ($1) RETURNING id`, typeCode).Scan(&btID), "bin type")
 
-	testdb.KanbanStation(t, db, grpID, "test-core")
+	testdb.KanbanKeeper(t, db, grpID, "test-core")
 	testutil.MustNoErr(t, db.SetMaintainLevel(store.MaintainLevel{
 		GroupNodeID: grpID, BinTypeID: btID, Want: want,
 	}), "declare level")
@@ -220,10 +221,9 @@ func TestMaintainer_RefusesAGroupWithNoStation(t *testing.T) {
 	m := eng.Maintainer()
 	m.Tick()
 
-	for _, s := range m.Snapshot() {
-		if s.GroupNode == "MNT-NOSTATION" {
-			t.Fatalf("a stationless group was ticked: %+v", s)
-		}
+	st := mntState(t, m, "MNT-NOSTATION", "MNT-NS")
+	if st.Gap != 1 || st.Created != 0 || st.OriginID != "" || !strings.Contains(st.HeldBy, "no station") {
+		t.Errorf("a stationless group's line = %+v; want its gap counted, nothing asked or open, and why on the card", st)
 	}
 	open, err := db.ListOpenEpisodesOfKind(protocol.EpisodeKindMaintain)
 	testutil.MustNoErr(t, err, "list open")

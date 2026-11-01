@@ -40,7 +40,7 @@ func levelledEmptiesGroup(t *testing.T, db *store.DB, name string, slots int,
 		testutil.MustNoErr(t, db.CreateNode(n), "position")
 		positions = append(positions, n)
 	}
-	testdb.KanbanStation(t, db, grpID, "test-core")
+	testdb.KanbanKeeper(t, db, grpID, "test-core")
 	next := 0
 	var typeIDs []int64
 	for i, code := range codes {

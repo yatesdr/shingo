@@ -5,6 +5,7 @@ package store
 // store/ level owns the *DB method set the service layer calls.
 
 import (
+	"fmt"
 	"log"
 
 	"shingocore/store/nodes"
@@ -80,9 +81,9 @@ func (db *DB) ListMaintainLayerWants(groupNodeID int64) ([]MaintainLayerWant, er
 }
 
 // ListTypesInPlay reads the bin types named by codes, with their dimensions and
-// the group's layer wants of each, in one statement (nodes.ListTypesInPlay).
-func (db *DB) ListTypesInPlay(groupNodeID int64, codes []string) ([]TypeInPlay, error) {
-	return nodes.ListTypesInPlay(db.DB, groupNodeID, codes)
+// the groups' layer wants of each, in one statement (nodes.ListTypesInPlay).
+func (db *DB) ListTypesInPlay(groupNodeIDs []int64, codes []string) ([]TypeInPlay, error) {
+	return nodes.ListTypesInPlay(db.DB, groupNodeIDs, codes)
 }
 
 // TopsAndBottomsWant is the want of a level's tops & bottoms row, false when
@@ -91,8 +92,24 @@ func (db *DB) TopsAndBottomsWant(groupNodeID, binTypeID int64) (int, bool, error
 	return nodes.TopsAndBottomsWant(db.DB, groupNodeID, binTypeID)
 }
 
-// ListMaintainLevels returns a group's declared level, bin-type codes joined on.
+// ListMaintainLevels is the one read of a group's levels for everything that holds
+// the plant to them: the resolver's cap, the capacity gate, the pass memo, the lift
+// divert, the keeper's arithmetic. It answers through the picture, so Want is the
+// effective want (kanban.Level.Want) and Base the declared number. Pins:
+// TestKanbanPin_ALevelZeroRowLiftedByCover,
+// TestMaintainerArm_TheGapReadsTheEffectiveWant. The settings modal reads
+// ListDeclaredLevels: a save writes a declared number and nothing else.
 func (db *DB) ListMaintainLevels(groupNodeID int64) ([]MaintainLevel, error) {
+	rows, err := db.ListKanbanPicture([]int64{groupNodeID})
+	if err != nil {
+		return nil, fmt.Errorf("list levels group=%d: %w", groupNodeID, err)
+	}
+	return LevelsOfPicture(rows), nil
+}
+
+// ListDeclaredLevels returns a group's declared level, bin-type codes joined on:
+// the configuration's read, Want the number a person typed.
+func (db *DB) ListDeclaredLevels(groupNodeID int64) ([]MaintainLevel, error) {
 	return nodes.ListMaintainLevels(db.DB, groupNodeID)
 }
 
@@ -130,6 +147,12 @@ func (db *DB) GroupFencesAsker(groupNodeID int64, processNode string) (bool, err
 // node, by name. Empty for a process no group serves, which is most of them.
 func (db *DB) MaintainedGroupsSupporting(processNode string) ([]int64, error) {
 	return nodes.MaintainedGroupsSupporting(db.DB, processNode)
+}
+
+// KanbansSupportingProcess returns the kanbans a process's claims have a supported
+// position in. One statement.
+func (db *DB) KanbansSupportingProcess(processID string) ([]int64, error) {
+	return nodes.KanbansSupportingProcess(db.DB, processID)
 }
 
 // NodeIsUnderAny reports whether a node sits inside any of the given subtrees.

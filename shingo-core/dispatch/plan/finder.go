@@ -433,7 +433,12 @@ func (f *Finder) Pick(need Need) Plan {
 	// payloads may ride (wantedEmpty), searched FOR in the same way and waiting
 	// under the same typed cause. nil is any carrier; several are searched as
 	// one set. The pool judges its carriers by the part's own rule instead.
-	// A full need derives nothing and reads nothing here.
+	// A full need derives nothing and reads nothing here. The origin's episode is
+	// read once, here, for the type and for tier 5's fence.
+	if need.Intent == IntentEmpty && need.OriginID != "" {
+		ep := f.keeperAsk(need)
+		need.episode = &ep
+	}
 	wantTypes, height := f.wantedEmpty(need)
 
 	// ── Tier 2: dedicated-loader pool ─────────────────────────────────────

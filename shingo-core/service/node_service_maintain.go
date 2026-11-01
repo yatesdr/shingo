@@ -66,7 +66,7 @@ func (c MaintainedGroupConfig) isKanban() bool {
 // must be able to render. A kanban's overflow comes off its row, a plain group's
 // off its property (store.OverflowTargetOf reads whichever applies).
 func (s *NodeService) GetMaintainedGroup(groupNodeID int64) (*MaintainedGroupConfig, error) {
-	levels, err := s.db.ListMaintainLevels(groupNodeID)
+	levels, err := s.db.ListDeclaredLevels(groupNodeID)
 	if err != nil {
 		return nil, err
 	}
@@ -199,9 +199,12 @@ func (s *NodeService) SaveKanban(save KanbanSave) (MaintainedGroupCheck, error) 
 }
 
 // changesTheLine says the save changes what an Edge shown the group's line sees:
-// a level or its heights. An overflow alone does not.
+// a level or its heights, the cover, or the supports the cover counts over. The
+// snapshot carries neither a kanban's sources nor its overflow, so those do not
+// ring. A ring is latency: a save it misses reaches the Edge on the heartbeat's
+// compare. Pin: TestKanbanSaves_RingTheLineOnlyWhenTheLineMoves.
 func (s KanbanSave) changesTheLine() bool {
-	if len(s.RemoveLevels) > 0 {
+	if len(s.RemoveLevels) > 0 || s.Cover != nil || s.Supports != nil {
 		return true
 	}
 	for _, lv := range s.Levels {
@@ -423,7 +426,7 @@ func (s *NodeService) RemoveMaintainLevel(groupNodeID, binTypeID int64) (Maintai
 
 // ListMaintainLevels returns a group's declared level.
 func (s *NodeService) ListMaintainLevels(groupNodeID int64) ([]store.MaintainLevel, error) {
-	return s.db.ListMaintainLevels(groupNodeID)
+	return s.db.ListDeclaredLevels(groupNodeID)
 }
 
 // SetMaintainSupports replaces the set of process nodes a group serves.

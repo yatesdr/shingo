@@ -3,6 +3,7 @@
 package service
 
 import (
+	"strings"
 	"testing"
 
 	"shingo/protocol/testutil"
@@ -13,7 +14,8 @@ import (
 // node_service_maintain_save_rules_test.go — what the Nodes page's maintained
 // group save says about two configurations that cannot work: levels past the
 // enabled positions of a maintained group, and levels on a live unloader's
-// outbound with no overflow destination. Both are refused; their neighbours
+// outbound with no overflow destination. The first is a warning (the card shows
+// what cannot be covered), the second a refusal; their neighbours
 // (an overflow set) save as before.
 //
 // Each case saves a level through SetMaintainLevel (the level door of
@@ -63,8 +65,8 @@ func TestMaintainedGroupSave_LevelsAndTheUnloaderOutbound(t *testing.T) {
 		grpID, _ := mgGroup(t, db, "SR-PAST", 2)
 		on(grpID)
 		got := mgSaveLevel(t, svc, grpID, mgBinType(t, db, "SR-PAST-TOTE"), 3)
-		if got.saved || !mgRefusedBy(MaintainedGroupCheck{Refusals: got.refused}, "SR-PAST declares 3 carriers across 2") {
-			t.Errorf("3 wanted across 2 positions: saved=%v refused=%v warnings=%v; want refused, "+
+		if !got.saved || len(got.warnings) != 1 || !strings.Contains(got.warnings[0], "SR-PAST declares 3 carriers across 2") {
+			t.Errorf("3 wanted across 2 positions: saved=%v refused=%v warnings=%v; want saved, a warning "+
 				"naming the group and both numbers", got.saved, got.refused, got.warnings)
 		}
 	})

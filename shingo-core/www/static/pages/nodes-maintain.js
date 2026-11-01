@@ -718,27 +718,30 @@ delegateActions(document.body, {
 
 // ── The keeper's levels (moved from /inventory, owner 2026-10-29) ──────────
 //
-// The keeper's last tick for one maintained group, one row per carrier type,
-// beside the level it keeps: level − here − asked − coming = short, printed
-// term by term rather than collapsed into a status, because a group that is
-// short and quiet has two opposite explanations — asks already out, or carriers
-// already coming — and a single pill hides which.
+// The keeper's last tick for one kanban, one row per carrier type: level − here −
+// asked − coming = short, printed term by term rather than collapsed into a status,
+// because a group that is short and quiet has two opposite explanations — asks
+// already out, or carriers already coming — and a single pill hides which. The level
+// is the effective want, its base and the processes driving it beside it.
 //
 // HIDDEN when there is nothing to say: no tick for this group yet, or it is
-// not maintained. Read for a viewer with no session too: the gate removes a
+// not a kanban. Read for a viewer with no session too: the gate removes a
 // button, not a screen.
 //
 // "WAITING ON" PRINTS THE ASK'S OWN QUEUE SENTENCE (the dispatcher's words for
-// an operator) and keeps the engineer's queue cause in the title. No label map:
-// an ask with no sentence prints its cause as itself.
+// an operator) and keeps the engineer's queue cause in the title, then why nothing
+// more was asked (held_by), beside the gap it explains. No label map: an ask with no
+// sentence prints its cause as itself.
 var _keeperFor = '';
 
 export function renderKeeperLevels(groupName) {
   var box = document.getElementById('keeper-levels');
   var body = document.getElementById('keeper-levels-body');
+  var note = document.getElementById('keeper-levels-note');
   if (!box || !body) return;
   box.classList.add('hide');
   body.innerHTML = '';
+  if (note) note.innerHTML = '';
   _keeperFor = groupName || '';
   if (!groupName) return;
   apiGet('/api/inventory/maintained-groups').then(function (all) {
@@ -749,6 +752,7 @@ export function renderKeeperLevels(groupName) {
       return (b.gap || 0) - (a.gap || 0) || String(a.bin_type_code).localeCompare(String(b.bin_type_code));
     });
     body.innerHTML = rows.map(keeperRowHtml).join('');
+    if (note) note.innerHTML = keeperNoteHtml(rows);
     box.classList.remove('hide');
   }).catch(function (err) {
     // A failed read leaves the block hidden: the level editor above still works.
@@ -763,18 +767,44 @@ export function keeperRowHtml(r) {
   var gapCell = gap > 0
     ? '<td class="rh-num mg-short" title="Core is short ' + gap + ' and has asks out or is placing them">' + gap + '</td>'
     : '<td class="rh-num text-muted" title="the level is covered">0</td>';
-  var waiting = r.oldest_ask_cause
+  var parked = r.oldest_ask_cause
     ? '<span class="tnum" title="the longest-waiting ask against this level has been parked '
       + escapeHtml(r.oldest_ask_age || '') + ' (' + escapeHtml(r.oldest_ask_cause) + ')">'
       + escapeHtml(r.oldest_ask_reason || r.oldest_ask_cause) + ' &middot; ' + escapeHtml(r.oldest_ask_age || '') + '</span>'
+    : '';
+  var held = r.held_by ? '<span>' + escapeHtml(r.held_by) + '</span>' : '';
+  var waiting = parked || held
+    ? parked + (parked && held ? '<br>' : '') + held
     : '<span class="text-muted" title="nothing parked — every ask this level made is moving">&mdash;</span>';
+  var driving = (r.running_processes || []).length
+    ? escapeHtml(r.running_processes.join(', '))
+    : '<span class="text-muted">&mdash;</span>';
   return '<tr>'
     + '<td>' + escapeHtml(r.bin_type_code || '') + '</td>'
     + '<td class="rh-num">' + (r.want || 0) + '</td>'
+    + '<td class="rh-num">' + (r.base || 0) + '</td>'
+    + '<td>' + driving + '</td>'
     + '<td class="rh-num">' + (r.resident || 0) + '</td>'
     + '<td class="rh-num">' + (r.asked || 0) + '</td>'
     + '<td class="rh-num">' + (r.coming || 0) + '</td>'
     + gapCell
     + '<td>' + waiting + '</td>'
     + '</tr>';
+}
+
+// keeperNoteHtml is what is true of the kanban and of no one row: what it wants
+// against its enabled positions (a want past them is shown, never lowered), and the
+// processes the want cannot read a type for. Every row carries the same values.
+export function keeperNoteHtml(rows) {
+  var r = rows[0];
+  if (!r) return '';
+  var lines = [(r.total_want || 0) + ' wanted on ' + (r.slots || 0) + ' enabled positions'
+    + (r.cannot_cover ? ': ' + r.cannot_cover + ' cannot be covered' : '')];
+  if ((r.nothing_processes || []).length) {
+    lines.push(escapeHtml(r.nothing_processes.join(', ')) + ' runs a part with no one carrier type, which counts for nothing');
+  }
+  if ((r.fallback_processes || []).length) {
+    lines.push(escapeHtml(r.fallback_processes.join(', ')) + ' is changing over to a style with no carrier type, so it counts on its active style');
+  }
+  return lines.map(function (l) { return '<div>' + l + '</div>'; }).join('');
 }

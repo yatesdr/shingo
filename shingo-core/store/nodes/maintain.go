@@ -72,6 +72,12 @@ const (
 // zero a line without forgetting it existed. RemoveMaintainLevel is how a type
 // stops being declared at all.
 //
+// Base is the declared number and Want the number a reader holds the group to.
+// Read for configuration (this package's ListMaintainLevels) the two are the same
+// and Want is what the modal edits; read for the plant (store.DB.ListMaintainLevels)
+// Want is the effective want, kanban.Level.Want(). A save only ever writes a
+// declared number: the modal's read is the declared one.
+//
 // OverflowNodeID and OverflowNode are this type's own overflow, nil and blank
 // when the type takes the kanban's default. Read back here for the settings
 // modal; the doors reach them in the repayment work.
@@ -80,6 +86,7 @@ type MaintainLevel struct {
 	BinTypeID      int64  `json:"bin_type_id"`
 	BinTypeCode    string `json:"bin_type_code"`
 	Want           int    `json:"want"`
+	Base           int    `json:"-"`
 	OverflowNodeID *int64 `json:"overflow_node_id,omitempty"`
 	OverflowNode   string `json:"overflow_node,omitempty"`
 }
@@ -265,6 +272,15 @@ func ListKanbans(q helpers.RowsQuerier) ([]Kanban, error) {
 		out = append(out, k)
 	}
 	return out, rows.Err()
+}
+
+// MaintainedEpisode is what an open maintain episode tells the finder: the group it
+// fills, the carrier type it is short of, and the groups it may pull from in rank
+// order (none: the plant). The zero value is no such episode.
+type MaintainedEpisode struct {
+	Group   string
+	BinType string
+	Sources []int64
 }
 
 // KanbanSource is one entry of a kanban's sources, in rank order.
@@ -480,45 +496,40 @@ func TopsAndBottomsWant(db *sql.DB, groupNodeID, binTypeID int64) (int, bool, er
 }
 
 // TypeInPlay is a bin type an unloader's group line reads (ListTypesInPlay):
-// the type's dimensions and totes per layer, and the group's layer wants of it
-// (by height, none when it wants none).
+// the type's dimensions and totes per layer, and the groups' layer wants of it
+// (by group and height, none when they want none).
 type TypeInPlay struct {
 	Type       domain.BinType
 	LayerWants []MaintainLayerWant
 }
 
-// ListTypesInPlay reads, in one statement, the bin types named by codes (a
-// group's level types and the types of the carts at its unloader's windows)
-// with their width, length and totes per layer, and group groupNodeID's layer
-// wants of each, by code and then height. It is the group line's one types
-// read, in place of ListMaintainLayerWants there: the floor sizes ride the
-// read the heights already made.
-func ListTypesInPlay(db *sql.DB, groupNodeID int64, codes []string) ([]TypeInPlay, error) {
+// ListTypesInPlay reads, in one statement, the bin types named by codes (the
+// groups' level types and the types of the carts at their unloaders' windows)
+// with their width, length and totes per layer, and the named groups' layer
+// wants of each, by code, then group, then height. It is a snapshot build's one
+// types read, in place of ListMaintainLayerWants there: the floor sizes ride
+// the read the heights already made.
+func ListTypesInPlay(db *sql.DB, groupNodeIDs []int64, codes []string) ([]TypeInPlay, error) {
 	if len(codes) == 0 {
 		return nil, nil
 	}
-	args := make([]any, 0, len(codes)+1)
-	args = append(args, groupNodeID)
-	for _, c := range codes {
-		args = append(args, c)
-	}
 	rows, err := db.Query(`
-		SELECT bt.id, bt.code, bt.width_in, bt.length_in, bt.totes_per_layer, w.layers, w.want
+		SELECT bt.id, bt.code, bt.width_in, bt.length_in, bt.totes_per_layer, w.kanban_node_id, w.layers, w.want
 		  FROM bin_types bt
-		  LEFT JOIN kanban_layer_levels w ON w.bin_type_id = bt.id AND w.kanban_node_id = $1
-		 WHERE bt.code IN (`+placeholders(2, len(codes))+`)
-		 ORDER BY bt.code, w.layers`, args...)
+		  LEFT JOIN kanban_layer_levels w ON w.bin_type_id = bt.id AND w.kanban_node_id = ANY($1::bigint[])
+		 WHERE bt.code = ANY($2::text[])
+		 ORDER BY bt.code, w.kanban_node_id, w.layers`, groupNodeIDs, codes)
 	if err != nil {
-		return nil, fmt.Errorf("list types in play group=%d: %w", groupNodeID, err)
+		return nil, fmt.Errorf("list types in play groups=%v: %w", groupNodeIDs, err)
 	}
 	defer rows.Close()
 	var out []TypeInPlay
 	for rows.Next() {
 		var (
-			bt           domain.BinType
-			layers, want sql.NullInt64
+			bt                  domain.BinType
+			group, layers, want sql.NullInt64
 		)
-		if err := rows.Scan(&bt.ID, &bt.Code, &bt.WidthIn, &bt.LengthIn, &bt.TotesPerLayer, &layers, &want); err != nil {
+		if err := rows.Scan(&bt.ID, &bt.Code, &bt.WidthIn, &bt.LengthIn, &bt.TotesPerLayer, &group, &layers, &want); err != nil {
 			return nil, fmt.Errorf("scan type in play: %w", err)
 		}
 		if len(out) == 0 || out[len(out)-1].Type.ID != bt.ID {
@@ -526,17 +537,19 @@ func ListTypesInPlay(db *sql.DB, groupNodeID int64, codes []string) ([]TypeInPla
 		}
 		if layers.Valid {
 			t := &out[len(out)-1]
-			t.LayerWants = append(t.LayerWants, MaintainLayerWant{GroupNodeID: groupNodeID, BinTypeID: bt.ID,
+			t.LayerWants = append(t.LayerWants, MaintainLayerWant{GroupNodeID: group.Int64, BinTypeID: bt.ID,
 				BinTypeCode: bt.Code, Layers: int(layers.Int64), Want: int(want.Int64), TotesPerLayer: bt.TotesPerLayer})
 		}
 	}
 	return out, rows.Err()
 }
 
-// ListMaintainLevels returns a group's declared level with the bin-type CODES
+// ListMaintainLevels returns a group's DECLARED level with the bin-type CODES
 // joined on, because the code is what a person reads and what every other
 // carrier-typed surface in the system prints — the id is a local key. Same
-// reason loaders.ListQuotas carries one.
+// reason loaders.ListQuotas carries one. A reader holding the plant to a level
+// asks store.DB.ListMaintainLevels, which answers the effective want; this one
+// is the configuration's.
 func ListMaintainLevels(db helpers.RowsQuerier, groupNodeID int64) ([]MaintainLevel, error) {
 	rows, err := db.Query(`
 		SELECT l.kanban_node_id, l.bin_type_id, bt.code, l.want, l.overflow_node_id, COALESCE(o.name, '')
@@ -555,6 +568,7 @@ func ListMaintainLevels(db helpers.RowsQuerier, groupNodeID int64) ([]MaintainLe
 		if err := rows.Scan(&l.GroupNodeID, &l.BinTypeID, &l.BinTypeCode, &l.Want, &l.OverflowNodeID, &l.OverflowNode); err != nil {
 			return nil, fmt.Errorf("scan maintain level: %w", err)
 		}
+		l.Base = l.Want
 		out = append(out, l)
 	}
 	return out, rows.Err()
@@ -699,6 +713,32 @@ func MaintainedGroupsSupporting(db *sql.DB, processNode string) ([]int64, error)
 		var id int64
 		if err := rows.Scan(&id); err != nil {
 			return nil, fmt.Errorf("scan maintained group: %w", err)
+		}
+		out = append(out, id)
+	}
+	return out, rows.Err()
+}
+
+// KanbansSupportingProcess returns the kanbans with a supported position a process's
+// claims name (core, paired or second paired), by the same match as the picture's
+// connected set. Each once, by id.
+func KanbansSupportingProcess(db *sql.DB, processID string) ([]int64, error) {
+	rows, err := db.Query(`
+		SELECT DISTINCT s.kanban_node_id
+		  FROM kanban_supports s
+		  JOIN nodes pn ON pn.id = s.process_node_id
+		  JOIN style_claims sc ON sc.process_id = $1
+		   AND pn.name IN (sc.core_node_name, sc.paired_core_node, sc.second_paired_core_node)
+		 ORDER BY s.kanban_node_id`, processID)
+	if err != nil {
+		return nil, fmt.Errorf("kanbans supporting process %q: %w", processID, err)
+	}
+	defer rows.Close()
+	var out []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("scan kanban: %w", err)
 		}
 		out = append(out, id)
 	}

@@ -69,9 +69,12 @@ func (f linesFixture) empty(t *testing.T, btID int64, slot int, label string, to
 func (f linesFixture) lines(t *testing.T, levels []store.MaintainLevel, windows []protocol.NodeBinsRow) *protocol.NodeBinsGroup {
 	t.Helper()
 	f.counter.Reset()
-	got, err := f.eng.UnloaderGroupLines(f.grp, levels, windows)
+	got, err := f.eng.UnloaderGroupLines([]store.GroupLineAsk{{Group: f.grp, Levels: levels, Windows: windows}})
 	testutil.MustNoErr(t, err, "UnloaderGroupLines")
-	return got
+	if len(got) == 0 {
+		return nil
+	}
+	return &got[0]
 }
 
 func (f linesFixture) levels(t *testing.T, wants map[int64]int, layers map[int64][]store.MaintainLayerWant) []store.MaintainLevel {
@@ -98,9 +101,8 @@ func toteL(r protocol.NodeBinsRow) protocol.NodeBinsRow {
 
 // The reference case on a database: 2 KD empties resident, nothing of the
 // totes. The empty KD at the last window takes KD to 3 of 3; both fulls are
-// asked for totes. Six statements: the open episodes, the layer wants, and
-// resident and coming for each of the two types (no episode is open, so no
-// asked count is read).
+// asked for totes. Four statements, whatever the types: the open episodes, the
+// types in play, the comings and the residents.
 func TestUnloaderGroupLines_ReferenceCase(t *testing.T) {
 	t.Parallel()
 	f := newLinesFixture(t, "LINES-REF")
@@ -123,8 +125,8 @@ func TestUnloaderGroupLines_ReferenceCase(t *testing.T) {
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("line =\n  %+v\nwant\n  %+v", got, want)
 	}
-	if n := f.counter.Count(); n != 6 {
-		t.Errorf("statements = %d, want 6:\n%v", n, f.counter.Statements())
+	if n := f.counter.Count(); n != 4 {
+		t.Errorf("statements = %d, want 4 (episodes, types in play, comings, residents):\n%v", n, f.counter.Statements())
 	}
 }
 
@@ -134,9 +136,9 @@ func TestUnloaderGroupLines_ReferenceCase(t *testing.T) {
 // totes, 3 high x2 and 5 high x1: short 2 of the type, 1 at 3 high, none at
 // 5 high. A full 5-high cart at a window has no height of its own (its stack
 // leaves with the parts), so it is asked for the largest shortfall, 3 high,
-// and the next for the type at any height. One more statement than the plain case for the
-// type with heights: its residents by totes (its comings at a height are read
-// off the keeper's own coming rows).
+// and the next for the type at any height. No more statements than the plain case:
+// the residents read carries the totes, and the comings at a height are read off
+// the keeper's own coming rows.
 func TestUnloaderGroupLines_HeightsCountOnAnExactMultiple(t *testing.T) {
 	t.Parallel()
 	f := newLinesFixture(t, "LINES-H")
@@ -174,8 +176,8 @@ func TestUnloaderGroupLines_HeightsCountOnAnExactMultiple(t *testing.T) {
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("line =\n  %+v\nwant\n  %+v", got, want)
 	}
-	if n := f.counter.Count(); n != 5 {
-		t.Errorf("statements = %d, want 5 (episodes, layer wants, resident, coming, residents by totes):\n%v",
+	if n := f.counter.Count(); n != 4 {
+		t.Errorf("statements = %d, want 4 (episodes, types in play, comings, residents):\n%v",
 			n, f.counter.Statements())
 	}
 }
@@ -206,8 +208,8 @@ func TestUnloaderGroupLines_AClearedCartIsCountedOnce(t *testing.T) {
 	if !reflect.DeepEqual(got.Assignments, want) {
 		t.Errorf("assignments = %+v, want %+v", got.Assignments, want)
 	}
-	if n := f.counter.Count(); n != 6 {
-		t.Errorf("statements = %d, want 6:\n%v", n, f.counter.Statements())
+	if n := f.counter.Count(); n != 4 {
+		t.Errorf("statements = %d, want 4 (episodes, types in play, comings, residents):\n%v", n, f.counter.Statements())
 	}
 }
 
@@ -221,6 +223,30 @@ func TestUnloaderGroupLines_NoLevelsNothing(t *testing.T) {
 	}
 	if n := f.counter.Count(); n != 0 {
 		t.Errorf("statements = %d, want 0", n)
+	}
+}
+
+// The line an Edge is sent reads the effective want through the feed's own read: a
+// process running the type lifts the want past the base, and a cart comes back as it.
+func TestUnloaderGroupLines_TheEffectiveWant(t *testing.T) {
+	t.Parallel()
+	f := newLinesFixture(t, "LINES-COVER")
+	f.levels(t, map[int64]int{f.kd: 1}, nil)
+	f.empty(t, f.kd, 0, "LINES-COVER-KD", nil)
+	testdb.KanbanKeeper(t, f.db, f.grp.ID, "edge.1")
+	testdb.KanbanCover(t, f.db, f.grp.ID, 2)
+	coverPart(t, f.db, "LINES-COVER-P", f.kd)
+	coverProcess(t, f.db, "LINES-COVER-PRESS", coverStyle{"S", true, [][2]string{{"LINES-COVER-SUPPORT", "LINES-COVER-P"}}})
+
+	levels, err := f.db.ListMaintainLevels(f.grp.ID)
+	testutil.MustNoErr(t, err, "levels")
+	got := f.lines(t, levels, []protocol.NodeBinsRow{cart("W1", "KD-L", false)})
+	want := []protocol.NodeBinsWant{{BinType: "KD-L", Want: 3}}
+	if !reflect.DeepEqual(got.Wants, want) {
+		t.Errorf("wants = %+v, want the effective %+v", got.Wants, want)
+	}
+	if assigned := []protocol.NodeBinsAssignment{{Node: "W1", BinType: "KD-L"}}; !reflect.DeepEqual(got.Assignments, assigned) {
+		t.Errorf("assignments = %+v, want %+v: one resident of 3 wanted is short", got.Assignments, assigned)
 	}
 }
 
@@ -245,20 +271,20 @@ func TestUnloaderGroupLines_CountsAreTheKeepers(t *testing.T) {
 	testutil.MustNoErr(t, err, "levels")
 	// One full cart of another type at a window: assigned the keeper's type
 	// only while the keeper's gap says the group is short.
-	got, err := eng.UnloaderGroupLines(grp, levels, []protocol.NodeBinsRow{cart("W1", "OTHER-T", true)})
+	got, err := eng.UnloaderGroupLines([]store.GroupLineAsk{{Group: grp, Levels: levels,
+		Windows: []protocol.NodeBinsRow{cart("W1", "OTHER-T", true)}}})
 	testutil.MustNoErr(t, err, "UnloaderGroupLines")
-	assigned := len(got.Assignments) == 1
+	assigned := len(got[0].Assignments) == 1
 	if assigned != (st.Gap > 0) {
 		t.Errorf("keeper gap %d (resident %d asked %d coming %d), line assigned %v: the two disagree",
-			st.Gap, st.Resident, st.Asked, st.Coming, got.Assignments)
+			st.Gap, st.Resident, st.Asked, st.Coming, got[0].Assignments)
 	}
 }
 
 // A window cart whose type is no level of the group still reads its floor
 // size, in the same one types read: a full 45 x 48 cart of a type the group
 // keeps no level of is asked for the 45 x 48 knockdown the group is short of,
-// never the 36 x 36 it is shortest of. Six statements, as the reference case:
-// the open episodes, the types in play, and resident and coming per level type.
+// never the 36 x 36 it is shortest of. Four statements, as the reference case.
 func TestUnloaderGroupLines_AWindowCartReadsItsSizeThoughNoLevel(t *testing.T) {
 	t.Parallel()
 	f := newLinesFixture(t, "LINES-SIZE")
@@ -276,7 +302,7 @@ func TestUnloaderGroupLines_AWindowCartReadsItsSizeThoughNoLevel(t *testing.T) {
 	if !reflect.DeepEqual(got.Assignments, want) {
 		t.Errorf("assignments = %+v, want %+v", got.Assignments, want)
 	}
-	if n := f.counter.Count(); n != 6 {
-		t.Errorf("statements = %d, want 6:\n%v", n, f.counter.Statements())
+	if n := f.counter.Count(); n != 4 {
+		t.Errorf("statements = %d, want 4 (episodes, types in play, comings, residents):\n%v", n, f.counter.Statements())
 	}
 }

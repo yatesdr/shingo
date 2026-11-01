@@ -114,12 +114,8 @@ func (f *Finder) derivedEmpty(need Need) (types []string, height domain.Height) 
 	// direction here: an untyped ask sources any compatible empty, which the
 	// keeper will then not count — one wasted carrier and a retry next tick,
 	// versus a wrong-typed carrier delivered as though it were right.
-	if need.OriginID != "" {
-		if _, code, err := f.db.MaintainedEpisodeForOrigin(need.OriginID); err == nil && code != "" {
-			return []string{code}, domain.Height{}
-		} else if err != nil {
-			f.debug("WantedBinType: maintained episode for origin %s: %v", need.OriginID, err)
-		}
+	if code := f.keeperAsk(need).BinType; code != "" {
+		return []string{code}, domain.Height{}
 	}
 
 	// ── The loader derivation. Needs a destination WINDOW to derive from. ────
@@ -284,18 +280,33 @@ func (f *Finder) NoToteCarrier(need Need, p Plan) Plan {
 // group, which the next tick corrects, against parking every empty pull in the
 // plant on a database blip. The alternative — treat an unreadable episode as
 // "fence everything" — would turn one bad read into a plant-wide stall.
+//
+// THE SOURCES RIDE THE SAME READ. A keeper's ask names no source (its order stays
+// plant-scoped, TestKanbanPin_TheKeepersAskIsBornWithNoSource), and the group it
+// fills says where it may pull from: the plant-wide finders read Sources off this
+// fence and no scoped tier does.
 func (f *Finder) emptyFenceFor(need Need) bins.EmptyFence {
-	fence := bins.EmptyFence{ProcessNode: need.ProcessNode}
-	if need.OriginID == "" {
-		return fence
+	ep := f.keeperAsk(need)
+	return bins.EmptyFence{ProcessNode: need.ProcessNode, OriginGroup: ep.Group, Sources: ep.Sources}
+}
+
+// keeperAsk is the need's open maintain episode: the read Pick has already made
+// (Need.episode) or the one read of it now. The zero value for a need with no such
+// origin, and for a read that failed: see derivedEmpty and emptyFenceFor for why
+// each of its readers takes that direction.
+func (f *Finder) keeperAsk(need Need) nodes.MaintainedEpisode {
+	if need.episode != nil {
+		return *need.episode
 	}
-	group, _, err := f.db.MaintainedEpisodeForOrigin(need.OriginID)
+	if need.OriginID == "" || need.Intent != IntentEmpty {
+		return nodes.MaintainedEpisode{}
+	}
+	ep, err := f.db.MaintainedEpisodeOf(need.OriginID)
 	if err != nil {
-		f.debug("emptyFenceFor: maintained episode for origin %s: %v", need.OriginID, err)
-		return fence
+		f.debug("finder: maintained episode for origin %s: %v", need.OriginID, err)
+		return nodes.MaintainedEpisode{}
 	}
-	fence.OriginGroup = group
-	return fence
+	return ep
 }
 
 // typeFromDestinationPosition is MG3-4's half of the answer: OUTFLOW TYPING.

@@ -429,9 +429,10 @@ func (e *CartHeldError) Error() string {
 }
 
 // PlanMaintainedSlot asks the planner for the slot one keeper ask fills
-// (plan.MaintainedSlot).
-func (d *Dispatcher) PlanMaintainedSlot(group *nodes.Node, binTypeID int64) (*binresolver.ResolveResult, error) {
-	return d.pure.MaintainedSlot(group, binTypeID)
+// (plan.MaintainedSlot), through the tick's one view of the kanban
+// (store.KanbanAskReads), so a burst of asks reads the group once.
+func (d *Dispatcher) PlanMaintainedSlot(reads plan.Reader, group *nodes.Node, binTypeID int64) (*binresolver.ResolveResult, error) {
+	return d.pure.Over(reads).MaintainedSlot(group, binTypeID)
 }
 
 // PlanGroupStoreSlot asks the planner for the slot a carrier is stored in when it

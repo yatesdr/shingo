@@ -775,6 +775,7 @@ func (s *CoreDataService) HandlePlantClaims(env *protocol.Envelope, report *prot
 	if len(report.Positions) > 0 {
 		s.rederiveLoaderOwners()
 	}
+	s.ringProcessKanbans(report.ProcessID)
 }
 
 // rederiveLoaderOwners re-derives every station's loader rows after a report

@@ -29,10 +29,9 @@ import (
 // watch keeps the node's own name. The windows' bins are read in the build's
 // one bins read, so an unwatched window costs no statement.
 
-// groupLinesFunc answers one levelled group's line; nil for a group with no
-// levels. engine.UnloaderGroupLines.
-type groupLinesFunc func(group *nodes.Node, levels []store.MaintainLevel,
-	windows []protocol.NodeBinsRow) (*protocol.NodeBinsGroup, error)
+// groupLinesFunc answers the lines of a build's levelled groups, in the order
+// asked. engine.UnloaderGroupLines.
+type groupLinesFunc func(asks []store.GroupLineAsk) ([]protocol.NodeBinsGroup, error)
 
 // watchGroup is one outbound group of a consume loader with a window on an
 // Edge's list: the group, whether it declares a level, and every window of its
@@ -47,8 +46,7 @@ type watchGroup struct {
 // SetGroupLinesFunc installs what answers a levelled group's line. Set once at
 // the composition root before messages are consumed. Unset: the snapshot
 // carries no groups and no level is read.
-func (s *CoreDataService) SetGroupLinesFunc(fn func(group *nodes.Node, levels []store.MaintainLevel,
-	windows []protocol.NodeBinsRow) (*protocol.NodeBinsGroup, error)) {
+func (s *CoreDataService) SetGroupLinesFunc(fn func(asks []store.GroupLineAsk) ([]protocol.NodeBinsGroup, error)) {
 	s.lines = fn
 }
 
@@ -170,11 +168,43 @@ func (b *binsFeed) levelChanged(groupID int64) []string {
 	return out
 }
 
-// BinsLevelChanged is called after a group's level or layer wants are saved
-// or removed. The Edges with a consume loader feeding that group on their list
-// are pushed their snapshot, the group now read for its line.
+// BinsLevelChanged is called after a save that moves a group's line (a level, its
+// layer wants, the cover, the supports). The Edges with a consume loader feeding
+// that group on their list are pushed their snapshot, the group now read for its
+// line.
 func (s *CoreDataService) BinsLevelChanged(groupID int64) {
 	s.bins.markDirty(s.bins.levelChanged(groupID), s.pushBins)
+}
+
+// ringProcessKanbans pushes the line of every kanban supporting a process, after
+// what that process runs moved: its plant claims, or a changeover opening or
+// closing. A ring is latency, and the heartbeat's compare stays the floor: a read
+// that fails is logged and rings nothing. No Edge watching a group's line, no
+// statement. Pin: TestKanbanRings_WhatMovesAProcess.
+func (s *CoreDataService) ringProcessKanbans(process string) {
+	if process == "" || !s.bins.watchesAGroup() {
+		return
+	}
+	ids, err := s.db.KanbansSupportingProcess(process)
+	if err != nil {
+		log.Printf("core_feeds: kanbans supporting %s: %v — left to the heartbeat", process, err)
+		return
+	}
+	for _, id := range ids {
+		s.BinsLevelChanged(id)
+	}
+}
+
+// watchesAGroup reports whether any Edge's list has an outbound group.
+func (b *binsFeed) watchesAGroup() bool {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	for _, w := range b.lists {
+		if len(w.groups) > 0 {
+			return true
+		}
+	}
+	return false
 }
 
 func groupNames(groups []watchGroup) []string {
@@ -206,10 +236,10 @@ func binsReadIDs(places map[int64]*nodes.Node, groups []watchGroup) []int64 {
 	return ids
 }
 
-// groupLines answers each levelled group's line: its levels (one statement)
-// and the line function's reads. A group that no longer resolves, or has no
-// levels, has no line. A failed read fails the build: never a digest over a
-// line nobody read.
+// groupLines answers the levelled groups' lines: the picture of all of them (one
+// statement, the effective want its Want) and the line function's reads, none per
+// group. A group that no longer resolves, or has no levels, has no line. A failed
+// read fails the build: never a digest over a line nobody read.
 func (s *CoreDataService) groupLines(station, digest string, groups []watchGroup, names []string,
 	resolved map[string]*nodes.Node, first map[int64]*bins.Bin) ([]protocol.NodeBinsGroup, error) {
 	out := []protocol.NodeBinsGroup{}
@@ -219,16 +249,30 @@ func (s *CoreDataService) groupLines(station, digest string, groups []watchGroup
 			watched[n.ID] = name
 		}
 	}
+	var ids []int64
+	for _, g := range groups {
+		if node := resolved[g.name]; node != nil {
+			ids = append(ids, node.ID)
+		}
+	}
+	if len(ids) == 0 {
+		return out, nil
+	}
+	picture, err := s.db.ListKanbanPicture(ids)
+	if err != nil {
+		return nil, fmt.Errorf("bins: levels of %v: %w", groupNames(groups), err)
+	}
+	levels := map[int64][]store.MaintainLevel{}
+	for _, r := range picture {
+		levels[r.KanbanNodeID] = append(levels[r.KanbanNodeID], r.MaintainLevel())
+	}
+	var asks []store.GroupLineAsk
 	for _, g := range groups {
 		node := resolved[g.name]
 		if node == nil {
 			continue
 		}
-		levels, err := s.db.ListMaintainLevels(node.ID)
-		if err != nil {
-			return nil, fmt.Errorf("bins: levels of %s: %w", g.name, err)
-		}
-		if len(levels) == 0 {
+		if len(levels[node.ID]) == 0 {
 			s.bins.setLevelled(station, digest, g.id, false)
 			continue
 		}
@@ -240,13 +284,14 @@ func (s *CoreDataService) groupLines(station, digest string, groups []watchGroup
 			}
 			rows = append(rows, binRow(name, first[win.NodeID]))
 		}
-		line, err := s.lines(node, levels, rows)
-		if err != nil {
-			return nil, fmt.Errorf("bins: line of %s: %w", g.name, err)
-		}
-		if line != nil {
-			out = append(out, *line)
-		}
+		asks = append(asks, store.GroupLineAsk{Group: node, Levels: levels[node.ID], Windows: rows})
 	}
-	return out, nil
+	if len(asks) == 0 {
+		return out, nil
+	}
+	lines, err := s.lines(asks)
+	if err != nil {
+		return nil, fmt.Errorf("bins: lines of %v: %w", groupNames(groups), err)
+	}
+	return append(out, lines...), nil
 }

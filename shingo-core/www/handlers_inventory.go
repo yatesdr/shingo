@@ -399,7 +399,8 @@ func cell(col string, row int) string {
 }
 
 // apiInventoryMaintainedGroups returns the keeper's last tick, one row per
-// (group, bin type): the declared level and the three populations it subtracted.
+// (group, bin type): the effective want, its base and the process driving it, the
+// three populations it subtracted, and the kanban's want against its positions.
 // Read by the Nodes page's group modal (nodes-maintain.js renderKeeperLevels),
 // beside the level it keeps; the path keeps its /inventory prefix from when
 // the inventory page drew it.
