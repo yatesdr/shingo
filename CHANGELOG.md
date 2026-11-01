@@ -3,6 +3,18 @@
 One line per change. If a change needs a paragraph to explain, the paragraph
 belongs in the commit message or in `docs/` — this file is the index.
 
+## 2026-11-01 — At the station, recipes follow Settings
+
+No migration. Edge only.
+
+- The station's changeover card shows only where the process's HMI setup is on
+- With HMI setup off, a style tap asks "Change over to <style>?" Back / Start, and Start starts it
+- The search box says "type a part number"; a CATID still finds its style, but no row prints one
+- The Spots picture fits the screen and keeps its scroll across taps
+- A Spots chip appears only once a part moves, and its ✕ undoes the move
+- A tap on the search box raises the touch keyboard
+- An on-deck spot with nowhere to go can't be tapped
+
 ## 2026-10-30 — The wall map can be turned
 
 No migration. Core only.
