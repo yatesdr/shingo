@@ -259,7 +259,9 @@ func TestSaveKanban_Sources(t *testing.T) {
 	if chk := saveSources(a, a); !mgRefusedBy(chk, "twice") {
 		t.Errorf("a source twice: refusals = %v", chk.Refusals)
 	}
-	if got, _ := db.ListKanbanSources(grpID); len(got) != 0 {
+	if got, err := db.ListKanbanSources(grpID); err != nil {
+		t.Fatal(err)
+	} else if len(got) != 0 {
 		t.Errorf("a refused list was written: %+v", got)
 	}
 
@@ -279,7 +281,9 @@ func TestSaveKanban_Sources(t *testing.T) {
 	if chk.Err() != nil || !mgWarnedAbout(chk, "SKR-LINESIDE") {
 		t.Errorf("a lineside source: %+v, want saved with a warning", chk)
 	}
-	if got, _ := db.ListKanbanSources(grpID); len(got) != 1 || got[0].SourceNodeID != lineside {
+	if got, err := db.ListKanbanSources(grpID); err != nil {
+		t.Fatal(err)
+	} else if len(got) != 1 || got[0].SourceNodeID != lineside {
 		t.Errorf("the warned list did not save: %+v", got)
 	}
 	cover := 3

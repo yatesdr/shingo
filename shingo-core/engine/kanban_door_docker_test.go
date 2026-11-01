@@ -192,7 +192,9 @@ func TestKanbanDoor_TheOutboundFull(t *testing.T) {
 		kids, err := r.db.ListChildNodes(r.k.ID)
 		testutil.MustNoErr(t, err, "K's children")
 		for i, c := range kids {
-			if n, _ := r.db.CountBinsByNode(c.ID); n == 0 {
+			if n, err := r.db.CountBinsByNode(c.ID); err != nil {
+				t.Fatal(err)
+			} else if n == 0 {
 				landAt(t, r.db, r.big, c.ID, fmt.Sprintf("KD3-FILL-%d", i))
 			}
 		}

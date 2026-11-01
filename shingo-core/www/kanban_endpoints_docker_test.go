@@ -100,7 +100,9 @@ func TestKanban_TheKanbanEndpoints(t *testing.T) {
 	post(h.apiKanbanCoverSet, "/api/nodes/kanban/cover", map[string]any{"running_cover": -1}, http.StatusConflict)
 	post(h.apiKanbanLevelOverflowSet, "/api/nodes/kanban/level/overflow",
 		map[string]any{"bin_type_id": small, "overflow_node_id": grpID}, http.StatusConflict)
-	if got, _ := db.ListKanbanSources(grpID); len(got) != 2 {
+	if got, err := db.ListKanbanSources(grpID); err != nil {
+		t.Fatal(err)
+	} else if len(got) != 2 {
 		t.Errorf("a refused list was written: %+v", got)
 	}
 

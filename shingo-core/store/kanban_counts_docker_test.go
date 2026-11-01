@@ -356,23 +356,29 @@ func TestKanbanAskReads_AnswerAsTheSingleReads(t *testing.T) {
 	check := func() {
 		t.Helper()
 		for _, k := range kids {
-			nb, _ := reads.CountBinsByNode(k.ID)
+			nb, err := reads.CountBinsByNode(k.ID)
+			testutil.MustNoErr(t, err, "the memo read")
 			sb, err := db.CountBinsByNode(k.ID)
 			testutil.MustNoErr(t, err, "single bins")
-			nl, _ := reads.CountActiveOrdersByDeliveryNodeExcluding(k.Name, pending.ID)
+			nl, err := reads.CountActiveOrdersByDeliveryNodeExcluding(k.Name, pending.ID)
+			testutil.MustNoErr(t, err, "the memo read")
 			sl, err := db.CountActiveOrdersByDeliveryNodeExcluding(k.Name, pending.ID)
 			testutil.MustNoErr(t, err, "single live")
-			nl2, _ := reads.CountActiveOrdersByDeliveryNodeExcluding(k.Name, 0)
+			nl2, err := reads.CountActiveOrdersByDeliveryNodeExcluding(k.Name, 0)
+			testutil.MustNoErr(t, err, "the memo read")
 			sl2, err := db.CountActiveOrdersByDeliveryNodeExcluding(k.Name, 0)
 			testutil.MustNoErr(t, err, "single live, excluding nobody")
-			ns, _ := reads.SlotSpokenForByStranger(k.ID, pending.ID)
+			ns, err := reads.SlotSpokenForByStranger(k.ID, pending.ID)
+			testutil.MustNoErr(t, err, "the memo read")
 			ss, err := db.SlotSpokenForByStranger(k.ID, pending.ID)
 			testutil.MustNoErr(t, err, "single spoken")
 			if nb != sb || nl != sl || nl2 != sl2 || ns != ss {
 				t.Errorf("%s: read says bins %d, live %d/%d, spoken %v; single says %d, %d/%d, %v", k.Name, nb, nl, nl2, ns, sb, sl, sl2, ss)
 			}
 		}
-		if n, _ := reads.CountEmptyBinsOfTypeInGroup("KAR-T", *g, domain.Height{}); n != 7 {
+		if n, err := reads.CountEmptyBinsOfTypeInGroup("KAR-T", *g, domain.Height{}); err != nil {
+			t.Fatal(err)
+		} else if n != 7 {
 			t.Errorf("the cap's count = %d, want the tick's 7", n)
 		}
 	}
@@ -382,10 +388,14 @@ func TestKanbanAskReads_AnswerAsTheSingleReads(t *testing.T) {
 		t.Errorf("the slot state read %d times, want once", n)
 	}
 	reads.NoteAsked(kids[3].ID, 4242)
-	if n, _ := reads.CountActiveOrdersByDeliveryNodeExcluding(kids[3].Name, 0); n != 1 {
+	if n, err := reads.CountActiveOrdersByDeliveryNodeExcluding(kids[3].Name, 0); err != nil {
+		t.Fatal(err)
+	} else if n != 1 {
 		t.Errorf("after an ask is noted the child reads %d live, want 1", n)
 	}
-	if n, _ := reads.CountActiveOrdersByDeliveryNodeExcluding(kids[3].Name, 4242); n != 0 {
+	if n, err := reads.CountActiveOrdersByDeliveryNodeExcluding(kids[3].Name, 4242); err != nil {
+		t.Fatal(err)
+	} else if n != 0 {
 		t.Errorf("the asker's own ask counted against it: %d", n)
 	}
 }

@@ -4,6 +4,7 @@ package messaging
 
 import (
 	"reflect"
+	"sync"
 	"testing"
 	"time"
 
@@ -28,6 +29,7 @@ type groupsFixture struct {
 	db        *store.DB
 	counter   *store.QueryCounter
 	svc       *CoreDataService
+	callsMu   sync.Mutex // guards calls against a push on its own goroutine
 	calls     []lineCall
 }
 
@@ -71,13 +73,33 @@ func newGroupsFixture(t *testing.T, levelled bool) *groupsFixture {
 	f.svc.SetGroupLinesFunc(func(asks []store.GroupLineAsk) ([]protocol.NodeBinsGroup, error) {
 		var out []protocol.NodeBinsGroup
 		for _, a := range asks {
+			f.callsMu.Lock()
 			f.calls = append(f.calls, lineCall{group: a.Group.Name, levels: len(a.Levels), windows: a.Windows})
+			f.callsMu.Unlock()
 			out = append(out, protocol.NodeBinsGroup{Group: a.Group.Name, Wants: []protocol.NodeBinsWant{{BinType: "TOTE", Want: 3}},
 				Assignments: []protocol.NodeBinsAssignment{{Node: "SMN_A2", BinType: "TOTE"}}})
 		}
 		return out, nil
 	})
 	return f
+}
+
+// awaitLineCall waits until a build has called the line function.
+func (f *groupsFixture) awaitLineCall(t *testing.T) {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		f.callsMu.Lock()
+		n := len(f.calls)
+		f.callsMu.Unlock()
+		if n > 0 {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("no build called the line function within 10 s")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
 }
 
 // A levelled group of a consume loader with a watched window gets its line in
@@ -164,6 +186,9 @@ func TestBuildNodeBins_NoLevelsNoGroupNoStatement(t *testing.T) {
 	testutil.MustNoErr(t, f.db.SetKanbanLevel(store.KanbanLevel{GroupNodeID: f.group.ID, BinTypeID: f.tote, Want: 3}), "level")
 	f.svc.bins.delay = 20 * time.Millisecond
 	f.svc.BinsLevelChanged(f.group.ID)
+	// The ring's push builds on its own goroutine: wait for its one line call, or a slow
+	// machine has it land inside the count below.
+	f.awaitLineCall(t)
 	settle(t, f.svc)
 	f.calls = nil
 	f.counter.Reset()

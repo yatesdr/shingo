@@ -87,7 +87,9 @@ func TestKanban_RefusesSupportsWithoutStation(t *testing.T) {
 	if !mgRefusedBy(chk, "station") {
 		t.Fatalf("refusals = %v, want one about the missing station", chk.Refusals)
 	}
-	if got, _ := svc.ListKanbanSupports(grpID); len(got) != 0 {
+	if got, err := svc.ListKanbanSupports(grpID); err != nil {
+		t.Fatal(err)
+	} else if len(got) != 0 {
 		t.Errorf("the refused supports were written: %+v", got)
 	}
 
