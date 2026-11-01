@@ -321,13 +321,13 @@ test('setup off has no Set up a part; setup on has it', async () => {
     await open({ part_rows: ROWS, presets: [ONE] }, true);
     expectIn('setup on', 'Set up a part', box());
 });
-test('the search box: its words, the CATID shown on a row, and a search by CATID', async () => {
+test('the search box: "type a part number", no CATID shown, a search by CATID still finds it', async () => {
     const v = viewWith(true);
     v.composer.styles[1].catid = 'CAT-B';
     await open({ part_rows: ROWS, presets: [ONE, TWO] }, true, v);
-    expectIn('picker', 'placeholder="scan or type a part, a name or a CATID"');
-    expectIn('a part row', 'CATID CAT-A', box());
-    expectIn('a style row', 'CATID CAT-B', box());
+    expectIn('picker', 'placeholder="type a part number"');
+    expectOut('picker', 'scan');
+    expectOut('picker rows', 'CATID', box());
     typeQ('cat-a');
     expectIn('search by CATID', 'data-part="PART-A"', box());
     expectOut('search by CATID', 'data-part="PART-C"', box());
@@ -336,16 +336,21 @@ test('the search box: its words, the CATID shown on a row, and a search by CATID
     typeQ('');
     tap('part', { part: 'PART-C' });
     tap('two');
-    expectIn('second part', 'placeholder="scan or type a part, a name or a CATID"');
-    expectIn('second part', 'CATID CAT-A', box());
+    expectIn('second part', 'placeholder="type a part number"');
+    expectOut('second part rows', 'CATID', box());
+    const off = viewWith(false);
+    off.composer.styles[1].catid = 'CAT-B';
+    await open({ part_rows: ROWS, presets: [ONE] }, false, off);
+    expectIn('setup off', 'placeholder="type a part number"');
+    expectOut('setup off rows', 'CATID', box());
 });
 
 // ── HMI setup on ─────────────────────────────────────────────────────────────
-test('setup on: the styles lead, then the parts with Core\'s word and a CATID', async () => {
+test('setup on: the styles lead, then the parts with Core\'s word', async () => {
     await open({ part_rows: ROWS, presets: [ONE] });
     const b = box();
     if (!(b.indexOf('>Styles<') < b.indexOf('Set up a part'))) throw new Error('order: ' + b.slice(0, 400));
-    for (const want of ['data-part="PART-C"', 'CATID CAT-A', 'in A-RUN', 'No bin at Core', 'Stock not checked',
+    for (const want of ['data-part="PART-C"', 'in A-RUN', 'No bin at Core', 'Stock not checked',
         '<span class="vd build">Not set up yet</span>']) {
         expectIn('part list', want, b);
     }

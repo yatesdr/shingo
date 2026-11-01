@@ -207,9 +207,10 @@ export function openPicker(v) {
 
 function listing() { return screen === 'part' || screen === 'second' || screen === 'saved'; }
 
-// The sheet's frame: a title, the scanner field and the rows' box. The field
-// is the SCANNER'S target — focused on open, inputmode="none" so no on-screen
-// keypad covers the rows the scan is meant to filter.
+// The sheet's frame: a title, the search field and the rows' box. The field
+// filters the rows as a part number is typed. It is focused on open with
+// inputmode="none", so a touch screen's own keyboard never covers the rows:
+// typing takes a keyboard at the screen.
 function drawPartSheet(title) {
     show().innerHTML =
         '<div class="os-comp-scrim on"></div>' +
@@ -220,7 +221,7 @@ function drawPartSheet(title) {
         '<circle cx="7.5" cy="7.5" r="5.5" fill="none" stroke="currentColor" stroke-width="1.6"/>' +
         '<path d="M11.5 11.5 L16 16" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>' +
         '<input id="os-comp-q" type="text" autocomplete="off" ' +
-        'placeholder="scan or type a part, a name or a CATID" inputmode="none"></label>' +
+        'placeholder="type a part number" inputmode="none"></label>' +
         '<button class="os-btn os-btn-quiet" data-act="close">Close</button></div>' +
         '<div class="os-comp-sheet-b" id="os-comp-pick"><div class="grp"><span class="n">Loading…</span></div></div></div>';
     drawRows('');
@@ -247,13 +248,14 @@ function verdict(styleName) {
 function spotsWord(n) { return n === 1 ? '1 spot' : (n || 0) + ' spots'; }
 
 // One style row: its name, its parts and spots, Core's word on it. The
-// running one says so.
+// running one says so. A CATID is still searched (drawRows) and not printed:
+// the floor knows a part by its number.
 function savedRow(s) {
     const running = s.id === runningID();
     const v = running ? { cls: 'ok', text: 'Running' } : verdict(s.name);
     const parts = partsOf(s).map(p => M().shortPart(p));
     const meta = [parts.join(' + '), spotsWord(s.spots || 0), (s.claim_nodes || []).join(', '),
-        s.catid ? 'CATID ' + s.catid : '', v.note || ''].filter(Boolean).join(' · ');
+        v.note || ''].filter(Boolean).join(' · ');
     return '<button class="os-comp-row" data-act="saved" data-style="' + esc(s.id) + '">' +
         '<span class="id">' + esc(s.name) + '</span>' +
         '<span class="meta">' + esc(meta) + '</span>' +
@@ -264,7 +266,7 @@ function savedRow(s) {
 function partRow(r) {
     const runs = styles().filter(s => partsOf(s).indexOf(r.code) >= 0);
     const v = runs.length ? verdict(runs[0].name) : { cls: 'build', text: 'Not set up yet' };
-    const meta = [r.name && r.name !== r.code ? r.name : '', r.catid ? 'CATID ' + r.catid : '',
+    const meta = [r.name && r.name !== r.code ? r.name : '',
         runs.length ? 'in ' + runs.map(s => s.name).join(', ') : '', v.note || '']
         .filter(Boolean).join(' · ');
     return '<button class="os-comp-row" data-act="part" data-part="' + esc(r.code) + '">' +
@@ -1007,7 +1009,7 @@ window.addEventListener('error', e => {
 });
 
 // ESCAPE PUTS THE MODAL AWAY, except over the started screen (it closes by its
-// own countdown) and Go mid-start. The scanner field's text is filtering, not
+// own countdown) and Go mid-start. The search field's text is filtering, not
 // work, so nothing is asked. `screen` is the module's own state — asking root()
 // here would CREATE the modal on a page that never opened it.
 export function onEscape() {
