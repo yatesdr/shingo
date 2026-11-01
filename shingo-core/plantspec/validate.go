@@ -78,11 +78,23 @@ func (p *Plant) Validate() error {
 			add("duplicate payload code %q", pl.Code)
 		}
 		payloads[pl.Code] = true
-		if pl.BinType == "" || !binTypes[pl.BinType] {
+		switch {
+		case pl.NoBinType && pl.BinType != "":
+			add("payload %q says no_bin_type and names bin_type %q; it is one or the other", pl.Code, pl.BinType)
+		case pl.NoBinType:
+		case pl.BinType == "" || !binTypes[pl.BinType]:
 			add("payload %q references unknown bin_type %q", pl.Code, pl.BinType)
 		}
 		if pl.UOPCapacity <= 0 {
 			add("payload %q has non-positive uop_capacity %d", pl.Code, pl.UOPCapacity)
+		}
+	}
+	for code, size := range p.CarrierSizes {
+		if !binTypes[code] {
+			add("carrier_sizes names %q, which is not a bin_type", code)
+		}
+		if size.WidthIn <= 0 || size.LengthIn <= 0 || size.HeightIn < 0 {
+			add("carrier_sizes %q: width_in and length_in must be above 0 and height_in not below it (a type with no floor size has no entry)", code)
 		}
 	}
 
@@ -523,25 +535,30 @@ func (p *Plant) Validate() error {
 			}
 			continue
 		}
-		fl := flowByPayload[c.Payload]
-		if fl == nil {
-			fl = &payloadFlow{}
-			flowByPayload[c.Payload] = fl
-		}
-		// A dedicated home produces without an outbound: the line's swap lifts the
-		// carrier off it. Counting only claims that push meant such a loader read as
-		// "not a producer", and its payload as consumed-but-never-produced.
-		if c.Role == "produce" && (c.OutboundDestination != "" || c.HomeOf != "") {
-			fl.produce++
-		}
-		// The mirror of the produce case above. An unloader can receive DIRECT from
-		// the cell it serves and name no inbound source at all — Springfield's
-		// loader 9 is exactly that: blank inbound_source, outbound_dest to the node
-		// group SMN_BUF_100. Counting only claims that name an inbound made such an
-		// unloader invisible as a consumer, so its payload read as produced-but-
-		// never-consumed and the plant was refused for a shape the plant actually runs.
-		if c.Role == "consume" && (c.InboundSource != "" || c.WindowOf != "" || c.HomeOf != "") {
-			fl.consume++
+		// EVERY PART THE CLAIM SERVES. A shared loader's parts are its allowed list
+		// (the seeder's rule, seed_core.seedBinLoaders), so an unloader that takes
+		// five parts is a consumer of all five.
+		for _, code := range c.FlowPayloads() {
+			fl := flowByPayload[code]
+			if fl == nil {
+				fl = &payloadFlow{}
+				flowByPayload[code] = fl
+			}
+			// A dedicated home produces without an outbound: the line's swap lifts the
+			// carrier off it. Counting only claims that push meant such a loader read as
+			// "not a producer", and its payload as consumed-but-never-produced.
+			if c.Role == "produce" && (c.OutboundDestination != "" || c.HomeOf != "") {
+				fl.produce++
+			}
+			// The mirror of the produce case above. An unloader can receive DIRECT from
+			// the cell it serves and name no inbound source at all — Springfield's
+			// loader 9 is exactly that: blank inbound_source, outbound_dest to the node
+			// group SMN_BUF_100. Counting only claims that name an inbound made such an
+			// unloader invisible as a consumer, so its payload read as produced-but-
+			// never-consumed and the plant was refused for a shape the plant actually runs.
+			if c.Role == "consume" && (c.InboundSource != "" || c.WindowOf != "" || c.HomeOf != "") {
+				fl.consume++
+			}
 		}
 	}
 	for code, fl := range flowByPayload {

@@ -353,7 +353,8 @@ type SimProcessConfig struct {
 // simOperator: loader_auto_load in loaderDelay, unloader_auto_clear in
 // unloaderDelay, swap_release in swapReleaseDelay, lineside_pull_percent in
 // consumeDisposition, pair_release in runRelease, changeovers in
-// driveChangeovers. Check that before adding another.
+// driveChangeovers, unloader_taps in unloaderTapAt. Check that before adding
+// another.
 type SimOperatorsConfig struct {
 	Enabled           bool          `yaml:"enabled"`
 	LoaderAutoLoad    time.Duration `yaml:"loader_auto_load"`    // default 5s
@@ -396,7 +397,31 @@ type SimOperatorsConfig struct {
 	// offers, and CUTOVER once the changeover's own gate says can_complete with
 	// no blockers. Read by simOperator.driveChangeovers. Empty: none.
 	Changeovers []SimChangeover `yaml:"changeovers"`
+	// UnloaderTaps says what the operator taps at an unloader's windows, per
+	// operator station. A station not listed keeps the plain CLEAR, and leaves an
+	// empty cart standing.
+	//
+	//	lit    the panel's lit choice (a CLEAR or PUSH AS of the assigned type);
+	//	       with nothing lit, PUSH EMPTY for an empty and a plain CLEAR for a full.
+	//	empty  PUSH EMPTY whatever is lit, after a plain CLEAR for a full.
+	//
+	// A setting here rather than a column on Core's loader row because it is
+	// about the simulated person, and a production table has no business carrying
+	// that. Read by simOperator.unloaderTapAt.
+	UnloaderTaps []SimUnloaderTap `yaml:"unloader_taps"`
 }
+
+// SimUnloaderTap is one station's entry in SimOperatorsConfig.UnloaderTaps.
+type SimUnloaderTap struct {
+	Station string `yaml:"station"` // an operator station's code
+	Tap     string `yaml:"tap"`     // SimTapLit or SimTapEmpty
+}
+
+// The values of SimUnloaderTap.Tap.
+const (
+	SimTapLit   = "lit"
+	SimTapEmpty = "empty"
+)
 
 // SimChangeover is one scheduled changeover (SimOperatorsConfig.Changeovers):
 // the process and the style to change it to, by name, and the sim time after
@@ -692,6 +717,7 @@ func (c *Config) Clone() *Config {
 	}
 	out.Sim.Processes = cloneSlice(c.Sim.Processes)
 	out.Sim.Operators.Changeovers = cloneSlice(c.Sim.Operators.Changeovers)
+	out.Sim.Operators.UnloaderTaps = cloneSlice(c.Sim.Operators.UnloaderTaps)
 	out.Logging.StderrSubsystems = cloneSlice(c.Logging.StderrSubsystems)
 	if c.Demand.HysteresisPercent != nil {
 		v := *c.Demand.HysteresisPercent

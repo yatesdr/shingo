@@ -44,6 +44,7 @@ sim.operators.loader_auto_load = 5s
 sim.operators.pair_release = false
 sim.operators.swap_release = 3s
 sim.operators.unloader_auto_clear = 8s
+sim.operators.unloader_taps = <empty>
 sim.processes = <empty>
 sim.seed = 0
 sim.speed = 0

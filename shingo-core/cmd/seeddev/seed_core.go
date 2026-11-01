@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -51,7 +52,7 @@ func seedCore(db *store.DB, p *plantspec.Plant, binIDByNode map[string]int64) er
 	// --- bin types + payloads (+ payload→bin-type links) ---
 	binTypeIDs := make(map[string]int64)
 	for _, bt := range p.BinTypes {
-		id, err := ensureBinType(db, bt, p.CarrierRobotGroups[bt])
+		id, err := ensureBinType(db, bt, p.CarrierRobotGroups[bt], p.CarrierSizes[bt])
 		if err != nil {
 			return err
 		}
@@ -307,7 +308,10 @@ func seedCore(db *store.DB, p *plantspec.Plant, binIDByNode map[string]int64) er
 // state, not operator-owned state a seed should preserve. Same rule the lane gate
 // point follows.
 func seedMaintainedGroups(db *store.DB, p *plantspec.Plant, nodeIDs map[string]int64, binTypeIDs map[string]int64) error {
-	// process name → the core nodes its claims name, in spec order.
+	// process name → the positions its claims name, in spec order: each claim's
+	// node and the two paired with it. A press-index back position is where the
+	// empty lands, and it is a supported position like the front (seedEdge gives
+	// it a process node for the same reason).
 	processNodes := map[string][]string{}
 	styleProcess := map[string]string{}
 	for _, s := range p.Styles {
@@ -315,18 +319,13 @@ func seedMaintainedGroups(db *store.DB, p *plantspec.Plant, nodeIDs map[string]i
 	}
 	for _, c := range p.Claims {
 		proc, ok := styleProcess[c.Style]
-		if !ok || c.CoreNode == "" {
+		if !ok {
 			continue
 		}
-		already := false
-		for _, n := range processNodes[proc] {
-			if n == c.CoreNode {
-				already = true
-				break
+		for _, node := range []string{c.CoreNode, c.PairedCoreNode, c.SecondPairedCoreNode} {
+			if node != "" && !slices.Contains(processNodes[proc], node) {
+				processNodes[proc] = append(processNodes[proc], node)
 			}
-		}
-		if !already {
-			processNodes[proc] = append(processNodes[proc], c.CoreNode)
 		}
 	}
 
@@ -769,21 +768,25 @@ func ensureNode(db *store.DB, name string, typeID, parentID *int64, zone string,
 	return n.ID, nil
 }
 
-func ensureBinType(db *store.DB, code, requiredRobotGroup string) (int64, error) {
+func ensureBinType(db *store.DB, code, requiredRobotGroup string, size plantspec.CarrierSize) (int64, error) {
 	if bt, err := db.GetBinTypeByCode(code); err == nil && bt != nil {
 		// Re-seed onto an existing plant, same reasoning as ensurePayload: the
-		// yaml is the source of truth for the carrier restriction, and a plant
-		// seeded before the spec carried one would otherwise keep dispatching
-		// its empties unrestricted while the spec says they are held back.
-		if bt.RequiredRobotGroup != requiredRobotGroup {
+		// yaml is the source of truth for the carrier restriction and its size,
+		// and a plant seeded before the spec carried one would otherwise keep
+		// dispatching its empties unrestricted while the spec says they are held
+		// back.
+		if bt.RequiredRobotGroup != requiredRobotGroup || bt.WidthIn != size.WidthIn ||
+			bt.LengthIn != size.LengthIn || bt.HeightIn != size.HeightIn {
 			bt.RequiredRobotGroup = requiredRobotGroup
+			bt.WidthIn, bt.LengthIn, bt.HeightIn = size.WidthIn, size.LengthIn, size.HeightIn
 			if err := db.UpdateBinType(bt); err != nil {
 				return 0, fmt.Errorf("update bin type %s: %w", code, err)
 			}
 		}
 		return bt.ID, nil
 	}
-	bt := &bins.BinType{Code: code, Description: code + " (dev)", RequiredRobotGroup: requiredRobotGroup}
+	bt := &bins.BinType{Code: code, Description: code + " (dev)", RequiredRobotGroup: requiredRobotGroup,
+		WidthIn: size.WidthIn, LengthIn: size.LengthIn, HeightIn: size.HeightIn}
 	if err := db.CreateBinType(bt); err != nil {
 		return 0, fmt.Errorf("create bin type %s: %w", code, err)
 	}

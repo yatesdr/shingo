@@ -1,0 +1,364 @@
+# plants/kanban-press.yaml — the Kanban certification rig.
+#
+# A permanent sim fixture, not a model of a plant. Its shape comes from a two-off press
+# at Springfield (Press 6: one press, left and right, four positions, an unloader that
+# re-types carts); every name, part and number here is synthetic. It runs on Edge 1
+# (station edge1.line1) alone: SHINGO_PLANT=/plants/kanban-press.yaml, no edge2.
+# The runs, what each catches and how to drive them: docs/fleet-simulator/kanban.md and
+# scripts/kanban-rig.sh. Pinned by plantspec TestKanbanPressPlant_* and cmd/seeddev
+# TestKanbanPressFixture_* / TestSeedKanbanPress_*.
+#
+# ── THE LOOP. Produce and consume are one circular problem ─────────────────────────────
+#
+#   PRESS-KANBAN ──(empties)──→ KP-PRESS (4 positions) ──(fulls)──→ PRESS-UNLOAD (4 windows)
+#        ↑                                                               │
+#        └──────── the unloader's CLEAR: PUSH AS the lit type ───────────┘
+#
+#   WELD-KANBAN  ──(empties)──→ KW-WELD (two-robot)    ──(fulls)──→ WELD-UNLOAD (2 windows)
+#        ↑                                                               │
+#        └──────────────────────── CLEAR ────────────────────────────────┘
+#
+#   ZONE-45, ZONE-32  the lenders: levels, no supports, no keeper. Each kanban's keeper
+#                     borrows from its sources; an unloader repays whichever is short.
+#   ZONE-45-SPARE     plain and flat, no level, seeded empty: K's overflow, and the last
+#                     of its sources. Where the family's carts stand while the press runs
+#                     off the family.
+#   KP-SM             a plain supermarket, no level, holding spare carts: R5 shows what
+#                     a lender that cannot hold a level is not repaid (R17a).
+#
+# The unloaders ARE the consumers: a press's full goes straight to a window (no market,
+# no weld drawing it), a person takes the parts off, and the empty goes back. So nothing
+# here is a payload balance to tune: a part's fills and drains are one rate by
+# construction, and the ticks only set how often a cart goes round.
+#
+# ── THE CLOCK: 200 SIM-MINUTES (20 wall-minutes at the rig's 10x) ──────────────────────
+#
+# Rates (shingo-edge/shingoedge.dev.yaml, sim.processes; simcalc reads them):
+#
+#   KP-PRESS  tick 20s, 3 parts/min per position, pack 30 -> a pair of carts every 10 sim-min
+#             = 0.20 carts/min drawn from PRESS-KANBAN and 0.20/min coming back
+#   KW-WELD   tick 15s, 4 parts/min, pack 30               -> one cart every 7.5 sim-min
+#             = 0.13 carts/min drawn from WELD-KANBAN and 0.13/min coming back
+#
+# Both pools balance, so in steady state nothing drains: 40 press carts and 27 weld carts
+# in a 200 sim-minute run, and the stock at the end is the stock at the start. What starves
+# first is what starves if a return path stops. WELD-KANBAN holds 2 against 0.13/min and
+# has no second carrier behind it but ZONE-45's 2 small: 30 sim-min. PRESS-KANBAN's small
+# 5 + ZONE-45's 2 = 7 at 0.20/min: 35 sim-min. WELD-KANBAN goes first. `simcalc -carriers`
+# prints these as THE CLOCK.
+#
+# ── THE POOL, THE WAY demo-sim COUNTS ITS +5 ───────────────────────────────────────────
+#
+# Want is base + cover x processes running the type (store.KanbanPictureSQL). One process
+# is one, however many positions it holds, so PRESS-KANBAN wants small 1 + 4 x 1 = 5 under
+# KP-SMALL, and big 1, totes 1, 32x30 0: 7 of its 8 children, one spare to land on.
+#
+#   45x48 carts                                  small  big  totes
+#     PRESS-KANBAN at want under KP-SMALL            5    1    1     7
+#     the press's 4 positions                        4               4
+#     ZONE-45 at its level                           2    2    2     6     = 17 in the press's loop
+#     WELD-KANBAN at want (1 + 1 x 1)                2               2
+#     the weld's position                            1               1     = 3 in the weld's loop
+#     KP-SM, spare, unreachable by any keeper        2    1          3     = 23 carts
+#
+#   32x30 carts: 6, all on ZONE-32 at its level.
+#
+# Nothing extra is seeded for the windows or for carts in flight, because adding any would
+# be a surplus with no level to land on. Cover IS that allowance: a pair leaving the press
+# takes PRESS-KANBAN's small from 5 to 3 while the pair is at the windows, so the keeper
+# borrows 2 from ZONE-45 and the unloader repays them. A round trip is about 3 sim-min
+# against a 10 sim-min cycle, so one pair is out at a time and those 2 are enough.
+#
+# ── LEAVING THE FLOOR, WHICH IS WHY ZONE-45-SPARE EXISTS ───────────────────────────────
+#
+# A changeover within 45x48 conserves: K's cover moves from one type to another of the
+# same floor and the unloader re-types the carts. Leaving the floor does not. Under KP-32
+# the 4 positions and K's cover both leave 45x48, so its wants are K's 3 and ZONE-45's 6,
+# nine, against the 17 in that loop. Whatever the pool, eight carts have no level to land
+# on: K and ZONE-45 both refuse at level, and overflow is one hop
+# (TestOverflow_AFullOverflowDoesNotChain), so without room they would park and take all
+# 4 windows from KP-32's fulls. ZONE-45-SPARE's 10 slots are that room: the carts go to K,
+# then ZONE-45 if short, then the spare, never to KP-SM. They come back when ZONE-45 has
+# none, because the spare is K's last source. The save's "repaid only as T's overflow"
+# names it: R17a, on the rig.
+#
+# 32x30 UNDER KP-32 STAYS 2 SHORT, AND THAT IS NOT A DEFECT. K's 4 of cover + 4 positions
+# want 8 from 6 carts: cover over the pool. It shows on the card as "cannot be covered",
+# with HeldBy. `simcalc -carriers` prints both under CHANGEOVER ROOM.
+
+namespace: edge1
+line_id: line1
+
+# THREE TYPES ON ONE FLOOR AND ONE ON ANOTHER, floor sizes entered on all four, which is
+# what bounds a cart's PUSH AS to its own family (domain.BinType.FloorSize). Every bin
+# below names its type: bin_types[0] is only a seeder's fallback.
+bin_types: [SMALL-45, BIG-45, TOTES-45, CART-32]
+
+carrier_sizes:
+  SMALL-45: {width_in: 48, length_in: 45, height_in: 25}
+  BIG-45:   {width_in: 48, length_in: 45, height_in: 34}
+  TOTES-45: {width_in: 48, length_in: 45, height_in: 6}   # a pallet
+  CART-32:  {width_in: 32, length_in: 30, height_in: 25}
+
+payloads:
+  # KP-SMALL runs two parts, left and right, on one type: the running-type rule counts
+  # the process once for the type, not once per part.
+  - {code: KP-SM-L, uop_capacity: 30, bin_type: SMALL-45}
+  - {code: KP-SM-R, uop_capacity: 30, bin_type: SMALL-45}
+  - {code: KP-BIG,  uop_capacity: 30, bin_type: BIG-45}
+  - {code: KP-TOTE, uop_capacity: 30, bin_type: TOTES-45}
+  - {code: KP-32,   uop_capacity: 30, bin_type: CART-32}
+  # DELIBERATELY NO CARRIER: the part a plant has not typed yet. It contributes nothing
+  # to a running type and the process is named on the kanban's card. No run changes over
+  # to it; it is here so the card's sentence has something real to say.
+  - {code: KP-UNTYPED, uop_capacity: 30, no_bin_type: true}
+  - {code: KW-PART, uop_capacity: 30, bin_type: SMALL-45}
+
+zones:
+  # K. Eight flat children: want 7 under a 45x48 style or under KP-32, one spare.
+  - name: PRESS-KANBAN
+    retrieve_algorithm: FIFO
+    store_algorithm: LKND
+    positions:
+      - {name: PKB_001, depth: 1}
+      - {name: PKB_002, depth: 1}
+      - {name: PKB_003, depth: 1}
+      - {name: PKB_004, depth: 1}
+      - {name: PKB_005, depth: 1}
+      - {name: PKB_006, depth: 1}
+      - {name: PKB_007, depth: 1}
+      - {name: PKB_008, depth: 1}
+  # K2. The weld's own, so two lineside kanbans share a lender and R6 can show that
+  # neither raids the other.
+  - name: WELD-KANBAN
+    retrieve_algorithm: FIFO
+    store_algorithm: LKND
+    positions:
+      - {name: WKB_001, depth: 1}
+      - {name: WKB_002, depth: 1}
+      - {name: WKB_003, depth: 1}
+      - {name: WKB_004, depth: 1}
+  # Z45, the 45x48 lender. Eight children: its level and two spare, as Z32. It refuses at
+  # that level whatever its slots, so more of them would be room nothing can land in.
+  - name: ZONE-45
+    retrieve_algorithm: FIFO
+    store_algorithm: LKND
+    positions:
+      - {name: Z45_001, depth: 1}
+      - {name: Z45_002, depth: 1}
+      - {name: Z45_003, depth: 1}
+      - {name: Z45_004, depth: 1}
+      - {name: Z45_005, depth: 1}
+      - {name: Z45_006, depth: 1}
+      - {name: Z45_007, depth: 1}
+      - {name: Z45_008, depth: 1}
+  # The family's spare room: no entry under maintained_groups, so no level and nobody
+  # counts it. Ten slots for the eight carts past the levels under KP-32, and two over.
+  - name: ZONE-45-SPARE
+    retrieve_algorithm: FIFO
+    store_algorithm: LKND
+    positions:
+      - {name: Z4S_001, depth: 1}
+      - {name: Z4S_002, depth: 1}
+      - {name: Z4S_003, depth: 1}
+      - {name: Z4S_004, depth: 1}
+      - {name: Z4S_005, depth: 1}
+      - {name: Z4S_006, depth: 1}
+      - {name: Z4S_007, depth: 1}
+      - {name: Z4S_008, depth: 1}
+      - {name: Z4S_009, depth: 1}
+      - {name: Z4S_010, depth: 1}
+  # Z32, the 32x30 lender.
+  - name: ZONE-32
+    retrieve_algorithm: FIFO
+    store_algorithm: LKND
+    positions:
+      - {name: Z32_001, depth: 1}
+      - {name: Z32_002, depth: 1}
+      - {name: Z32_003, depth: 1}
+      - {name: Z32_004, depth: 1}
+      - {name: Z32_005, depth: 1}
+      - {name: Z32_006, depth: 1}
+      - {name: Z32_007, depth: 1}
+      - {name: Z32_008, depth: 1}
+  # SM. A plain supermarket: lanes, no level, nobody counts it. Packed from the back;
+  # the mouths are the room a dig needs (plantspec census).
+  - name: KP-SM
+    retrieve_algorithm: FIFO
+    store_algorithm: LKND
+    wait_points: [KP-SM-WAIT]
+    lanes:
+      - {name: KP_SM_L1, slots: [{name: KSM_001, depth: 1}, {name: KSM_002, depth: 2}]}
+      - {name: KP_SM_L2, slots: [{name: KSM_003, depth: 1}, {name: KSM_004, depth: 2}]}
+      - {name: KP_SM_L3, slots: [{name: KSM_005, depth: 1}, {name: KSM_006, depth: 2}]}
+      # Empty, and the mouths above: where R5 and R6 stand the carts they take out by hand.
+      - {name: KP_SM_L4, slots: [{name: KSM_007, depth: 1}, {name: KSM_008, depth: 2}]}
+  # The press's unloader, as a group of windows: the press's outbound names the group and
+  # Core takes a free window (Springfield's Press Unloader is this shape).
+  - name: PRESS-UNLOAD
+    retrieve_algorithm: FIFO
+    store_algorithm: LKND
+    positions:
+      - {name: ULN_021, depth: 1}
+      - {name: ULN_022, depth: 1}
+      - {name: ULN_023, depth: 1}
+      - {name: ULN_024, depth: 1}
+  - name: WELD-UNLOAD
+    retrieve_algorithm: FIFO
+    store_algorithm: LKND
+    positions:
+      - {name: ULN_031, depth: 1}
+      - {name: ULN_032, depth: 1}
+
+stations:
+  # Two-off, left and right. Each claim is a front and a back; the back indexes to the
+  # front. Four positions, two per side, and the kanban supports all four.
+  - {name: PLN_021, kind: press}     # left front
+  - {name: PLN_022, kind: press}     # left back
+  - {name: PLN_023, kind: press}     # right front
+  - {name: PLN_024, kind: press}     # right back
+  - {name: ALN_021, kind: weld}      # the weld's position
+  - {name: SLN_021, kind: staging}   # the weld's inbound stage
+
+processes:
+  - {name: KP-PRESS, active_style: KP-SMALL}
+  - {name: KW-WELD, active_style: KW-RUN}
+  - {name: KP-UNLOAD, active_style: KP-UNLOAD-RUN}
+  - {name: KW-UNLOAD, active_style: KW-UNLOAD-RUN}
+
+styles:
+  - {name: KP-SMALL, process: KP-PRESS, payload: KP-SM-L}
+  - {name: KP-BIG, process: KP-PRESS, payload: KP-BIG}
+  - {name: KP-TOTES, process: KP-PRESS, payload: KP-TOTE}
+  - {name: KP-32, process: KP-PRESS, payload: KP-32}
+  - {name: KP-UNTYPED, process: KP-PRESS, payload: KP-UNTYPED}
+  - {name: KW-RUN, process: KW-WELD, payload: KW-PART}
+  - {name: KP-UNLOAD-RUN, process: KP-UNLOAD, payload: KP-SM-L}
+  - {name: KW-UNLOAD-RUN, process: KW-UNLOAD, payload: KW-PART}
+
+# An unloader station holding only its windows draws kind `grid` (operator-board-model.js
+# boardLayout), so a tap on an empty is the PUSH EMPTY / PUSH AS panel. Keep the windows
+# off any other station: a press tile beside them would still read grid, a loader's would
+# not.
+operator_stations: [KP-PRESS-OPS, KW-WELD-OPS, KP-UNLOAD-OPS, KW-UNLOAD-OPS]
+
+claims:
+  # ── KP-PRESS. Same four positions under every style, so a changeover is a swap on each.
+  # No evac marks and no staging: a part change here is the per-position changeover, whose
+  # old carts leave through outbound_destination. That is the path the kanban's cover and
+  # the unloader's re-type have to carry.
+  - {core_node: PLN_021, style: KP-SMALL, role: produce, swap_mode: two_robot_press_index, payload: KP-SM-L, uop_capacity: 30, auto_reorder: true, paired_core_node: PLN_022, inbound_source: PRESS-KANBAN, outbound_destination: PRESS-UNLOAD, operator_station: KP-PRESS-OPS}
+  - {core_node: PLN_023, style: KP-SMALL, role: produce, swap_mode: two_robot_press_index, payload: KP-SM-R, uop_capacity: 30, auto_reorder: true, paired_core_node: PLN_024, inbound_source: PRESS-KANBAN, outbound_destination: PRESS-UNLOAD, operator_station: KP-PRESS-OPS}
+  - {core_node: PLN_021, style: KP-BIG, role: produce, swap_mode: two_robot_press_index, payload: KP-BIG, uop_capacity: 30, auto_reorder: true, paired_core_node: PLN_022, inbound_source: PRESS-KANBAN, outbound_destination: PRESS-UNLOAD, operator_station: KP-PRESS-OPS}
+  - {core_node: PLN_023, style: KP-BIG, role: produce, swap_mode: two_robot_press_index, payload: KP-BIG, uop_capacity: 30, auto_reorder: true, paired_core_node: PLN_024, inbound_source: PRESS-KANBAN, outbound_destination: PRESS-UNLOAD, operator_station: KP-PRESS-OPS}
+  - {core_node: PLN_021, style: KP-TOTES, role: produce, swap_mode: two_robot_press_index, payload: KP-TOTE, uop_capacity: 30, auto_reorder: true, paired_core_node: PLN_022, inbound_source: PRESS-KANBAN, outbound_destination: PRESS-UNLOAD, operator_station: KP-PRESS-OPS}
+  - {core_node: PLN_023, style: KP-TOTES, role: produce, swap_mode: two_robot_press_index, payload: KP-TOTE, uop_capacity: 30, auto_reorder: true, paired_core_node: PLN_024, inbound_source: PRESS-KANBAN, outbound_destination: PRESS-UNLOAD, operator_station: KP-PRESS-OPS}
+  - {core_node: PLN_021, style: KP-32, role: produce, swap_mode: two_robot_press_index, payload: KP-32, uop_capacity: 30, auto_reorder: true, paired_core_node: PLN_022, inbound_source: PRESS-KANBAN, outbound_destination: PRESS-UNLOAD, operator_station: KP-PRESS-OPS}
+  - {core_node: PLN_023, style: KP-32, role: produce, swap_mode: two_robot_press_index, payload: KP-32, uop_capacity: 30, auto_reorder: true, paired_core_node: PLN_024, inbound_source: PRESS-KANBAN, outbound_destination: PRESS-UNLOAD, operator_station: KP-PRESS-OPS}
+  - {core_node: PLN_021, style: KP-UNTYPED, role: produce, swap_mode: two_robot_press_index, payload: KP-UNTYPED, uop_capacity: 30, auto_reorder: true, paired_core_node: PLN_022, inbound_source: PRESS-KANBAN, outbound_destination: PRESS-UNLOAD, operator_station: KP-PRESS-OPS}
+  - {core_node: PLN_023, style: KP-UNTYPED, role: produce, swap_mode: two_robot_press_index, payload: KP-UNTYPED, uop_capacity: 30, auto_reorder: true, paired_core_node: PLN_024, inbound_source: PRESS-KANBAN, outbound_destination: PRESS-UNLOAD, operator_station: KP-PRESS-OPS}
+
+  # ── KW-WELD. A produce cell that asks ahead: 10 ticks x 15 s gives the empty 2.5 sim-min
+  # to reach the stage, the round trip on this stack. Fills on the same floor as the press.
+  - {core_node: ALN_021, style: KW-RUN, role: produce, swap_mode: two_robot, payload: KW-PART, uop_capacity: 30, reorder_point: 20, auto_reorder: true, inbound_source: WELD-KANBAN, inbound_staging: SLN_021, outbound_destination: WELD-UNLOAD, operator_station: KW-WELD-OPS}
+
+  # ── THE UNLOADERS. Single stage, one shared loader over its windows. No inbound source:
+  # each is fed directly by the cell it serves, so it asks for no full and Core's auto_push
+  # has nothing to pull, which is why this file sets no loader_settings. KP-UNTYPED is on
+  # the list because the validator's parity holds for every part a style names.
+  - {core_node: ULN_021, style: KP-UNLOAD-RUN, role: consume, swap_mode: manual_swap, allowed_payloads: [KP-SM-L, KP-SM-R, KP-BIG, KP-TOTE, KP-32, KP-UNTYPED], outbound_destination: PRESS-KANBAN, window_of: KP-UNLOADER, operator_station: KP-UNLOAD-OPS}
+  - {core_node: ULN_022, style: KP-UNLOAD-RUN, role: consume, swap_mode: manual_swap, allowed_payloads: [KP-SM-L, KP-SM-R, KP-BIG, KP-TOTE, KP-32, KP-UNTYPED], outbound_destination: PRESS-KANBAN, window_of: KP-UNLOADER, operator_station: KP-UNLOAD-OPS}
+  - {core_node: ULN_023, style: KP-UNLOAD-RUN, role: consume, swap_mode: manual_swap, allowed_payloads: [KP-SM-L, KP-SM-R, KP-BIG, KP-TOTE, KP-32, KP-UNTYPED], outbound_destination: PRESS-KANBAN, window_of: KP-UNLOADER, operator_station: KP-UNLOAD-OPS}
+  - {core_node: ULN_024, style: KP-UNLOAD-RUN, role: consume, swap_mode: manual_swap, allowed_payloads: [KP-SM-L, KP-SM-R, KP-BIG, KP-TOTE, KP-32, KP-UNTYPED], outbound_destination: PRESS-KANBAN, window_of: KP-UNLOADER, operator_station: KP-UNLOAD-OPS}
+  - {core_node: ULN_031, style: KW-UNLOAD-RUN, role: consume, swap_mode: manual_swap, allowed_payloads: [KW-PART], outbound_destination: WELD-KANBAN, window_of: KW-UNLOADER, operator_station: KW-UNLOAD-OPS}
+  - {core_node: ULN_032, style: KW-UNLOAD-RUN, role: consume, swap_mode: manual_swap, allowed_payloads: [KW-PART], outbound_destination: WELD-KANBAN, window_of: KW-UNLOADER, operator_station: KW-UNLOAD-OPS}
+
+bins:
+  # K at its want under KP-SMALL.
+  - {name: KB-K-S1, slot: PKB_001, bin_type: SMALL-45}
+  - {name: KB-K-S2, slot: PKB_002, bin_type: SMALL-45}
+  - {name: KB-K-S3, slot: PKB_003, bin_type: SMALL-45}
+  - {name: KB-K-S4, slot: PKB_004, bin_type: SMALL-45}
+  - {name: KB-K-S5, slot: PKB_005, bin_type: SMALL-45}
+  - {name: KB-K-B1, slot: PKB_006, bin_type: BIG-45}
+  - {name: KB-K-T1, slot: PKB_007, bin_type: TOTES-45}
+  # The press's positions: a cart filling at each front, a staged empty at each back.
+  # Without one at the front seeddev binds no runtime and the cell never counts.
+  - {name: KB-P-LF, slot: PLN_021, bin_type: SMALL-45}
+  - {name: KB-P-LB, slot: PLN_022, bin_type: SMALL-45}
+  - {name: KB-P-RF, slot: PLN_023, bin_type: SMALL-45}
+  - {name: KB-P-RB, slot: PLN_024, bin_type: SMALL-45}
+  # Z45 at its level.
+  - {name: KB-Z45-S1, slot: Z45_001, bin_type: SMALL-45}
+  - {name: KB-Z45-S2, slot: Z45_002, bin_type: SMALL-45}
+  - {name: KB-Z45-B1, slot: Z45_003, bin_type: BIG-45}
+  - {name: KB-Z45-B2, slot: Z45_004, bin_type: BIG-45}
+  - {name: KB-Z45-T1, slot: Z45_005, bin_type: TOTES-45}
+  - {name: KB-Z45-T2, slot: Z45_006, bin_type: TOTES-45}
+  # K2 at its want, and the weld's cart.
+  - {name: KB-K2-S1, slot: WKB_001, bin_type: SMALL-45}
+  - {name: KB-K2-S2, slot: WKB_002, bin_type: SMALL-45}
+  - {name: KB-W-F, slot: ALN_021, bin_type: SMALL-45}
+  # Z32 at its level.
+  - {name: KB-Z32-1, slot: Z32_001, bin_type: CART-32}
+  - {name: KB-Z32-2, slot: Z32_002, bin_type: CART-32}
+  - {name: KB-Z32-3, slot: Z32_003, bin_type: CART-32}
+  - {name: KB-Z32-4, slot: Z32_004, bin_type: CART-32}
+  - {name: KB-Z32-5, slot: Z32_005, bin_type: CART-32}
+  - {name: KB-Z32-6, slot: Z32_006, bin_type: CART-32}
+  # SM's spares, at the back of each lane.
+  - {name: KB-SM-S1, slot: KSM_002, bin_type: SMALL-45}
+  - {name: KB-SM-S2, slot: KSM_004, bin_type: SMALL-45}
+  - {name: KB-SM-B1, slot: KSM_006, bin_type: BIG-45}
+
+# One counter per process. A reporting point moves with the style at cutover
+# (Engine.SyncProcessCounter; TestCounterSeed_StyleRepointOnTheSameTagKeepsCounting), so
+# one row on the seed's style counts under all of them. plc_name is the process's name
+# because simcalc keys rates on it, and both match sim.processes in shingoedge.dev.yaml.
+reporting_points:
+  - {plc_name: KP-PRESS, tag_name: KP-PRESS_COUNTER, node: PLN_021, style: KP-SMALL}
+  - {plc_name: KW-WELD, tag_name: KW-WELD_COUNTER, node: ALN_021, style: KW-RUN}
+
+cell_configs:
+  - {process: KP-PRESS, station: KP-PRESS-OPS}
+  - {process: KW-WELD, station: KW-WELD-OPS}
+  - {process: KP-UNLOAD, station: KP-UNLOAD-OPS}
+  - {process: KW-UNLOAD, station: KW-UNLOAD-OPS}
+
+# The key is the spec's name for it until the rename pass: each entry is a kanban.
+maintained_groups:
+  # K: 1/1/1/0, cover 4. 32x30 has its own overflow because it has a level of 0 here and
+  # its own floor. The spare is K's overflow and its last source: the head says why.
+  - group: PRESS-KANBAN
+    station: edge1.line1
+    strict: false
+    running_cover: 4
+    sources: [ZONE-45, ZONE-32, ZONE-45-SPARE]
+    overflow: ZONE-45-SPARE
+    levels:
+      - {bin_type: SMALL-45, want: 1}
+      - {bin_type: BIG-45, want: 1}
+      - {bin_type: TOTES-45, want: 1}
+      - {bin_type: CART-32, want: 0, overflow: ZONE-32}
+    supports: [KP-PRESS]
+  # K2: wants 2 while the weld runs small, sourced from the same lender as K. No overflow:
+  # the weld's one style never leaves the family (simcalc's CHANGEOVER ROOM says it fits).
+  - group: WELD-KANBAN
+    station: edge1.line1
+    strict: false
+    running_cover: 1
+    sources: [ZONE-45]
+    levels:
+      - {bin_type: SMALL-45, want: 1}
+    supports: [KW-WELD]
+  # The lenders: what they hold, no supports, no station, no keeper.
+  - group: ZONE-45
+    strict: false
+    levels:
+      - {bin_type: SMALL-45, want: 2}
+      - {bin_type: BIG-45, want: 2}
+      - {bin_type: TOTES-45, want: 2}
+  - group: ZONE-32
+    strict: false
+    levels:
+      - {bin_type: CART-32, want: 6}

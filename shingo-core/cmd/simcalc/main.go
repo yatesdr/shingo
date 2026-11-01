@@ -104,6 +104,7 @@ func main() {
 	lineRate := flag.Float64("line-rate", 6.0, "solve: anchor rate (parts/min) for line/cell processes")
 	transit := flag.String("transit", "", "solve/fleet: robot transit per move (e.g. 15m). fleet defaults to 10m")
 	util := flag.Float64("util", 0.75, "fleet: target robot utilization (0..1); headroom for queueing + empty travel")
+	run := flag.Duration("run", 200*time.Minute, "carriers: the run's length in sim time (the rig: 20 wall-minutes at 10x)")
 	flag.Parse()
 
 	plant, err := plantspec.Load(*plantPath)
@@ -127,7 +128,7 @@ func main() {
 		return
 	}
 	if *carriers {
-		runCarriers(plant, rate, *transit, *plantPath,
+		runCarriers(plant, rate, *transit, *plantPath, run.Minutes(),
 			capacityPerMin(edge.Sim.Operators.LoaderAutoLoad),
 			capacityPerMin(edge.Sim.Operators.UnloaderAutoClear))
 		return
@@ -185,18 +186,25 @@ func walkClaims(plant *plantspec.Plant, rate map[string]float64) map[string]*flo
 		return f
 	}
 
+	addManual := func(f *flow, c plantspec.Claim, proc string) {
+		switch c.Role {
+		case "produce":
+			f.loaders = appendUniq(f.loaders, proc)
+		case "consume":
+			f.unloaders = appendUniq(f.unloaders, proc)
+		}
+	}
 	for _, ac := range activeClaims(plant) {
 		c, proc := ac.claim, ac.proc
-		f := get(c.Payload)
 		if c.IsLoader() {
-			switch c.Role {
-			case "produce":
-				f.loaders = appendUniq(f.loaders, proc)
-			case "consume":
-				f.unloaders = appendUniq(f.unloaders, proc)
+			// A window that names no part is in no part's flow by its payload; its
+			// parts, if any, are its allowed list, below.
+			if c.Payload != "" {
+				addManual(get(c.Payload), c, proc)
 			}
 			continue
 		}
+		f := get(c.Payload)
 		if !c.IsActivePull() { // parked A/B side — the counter skips it
 			continue
 		}
@@ -208,6 +216,20 @@ func walkClaims(plant *plantspec.Plant, rate map[string]float64) map[string]*flo
 		case "consume":
 			f.consume += r
 			f.consumers = appendUniq(f.consumers, proc)
+		}
+	}
+	// A SHARED LOADER'S ALLOWED LIST IS ITS PARTS (Claim.FlowPayloads). It serves
+	// whichever of them is flowing. One no style runs today is not a part with no
+	// source: an unloader's list covers styles the process has not changed over
+	// to, so an idle entry makes no flow of its own.
+	for _, ac := range activeClaims(plant) {
+		if !ac.claim.IsLoader() {
+			continue
+		}
+		for _, code := range ac.claim.AllowedPayloads {
+			if f := flows[code]; f != nil {
+				addManual(f, ac.claim, ac.proc)
+			}
 		}
 	}
 	for _, b := range plant.Bins {

@@ -174,7 +174,7 @@ type zoneHeadroom struct {
 	deepestLane string
 }
 
-func runCarriers(plant *plantspec.Plant, rate map[string]float64, transit, plantPath string, loaderCap, unloaderCap float64) {
+func runCarriers(plant *plantspec.Plant, rate map[string]float64, transit, plantPath string, runMins, loaderCap, unloaderCap float64) {
 	d := 10 * time.Minute
 	if transit != "" {
 		parsed, err := time.ParseDuration(transit)
@@ -203,9 +203,10 @@ func runCarriers(plant *plantspec.Plant, rate map[string]float64, transit, plant
 	balanceOK := reportBalance(plan)
 	floorOK := reportStockFloor(plan, mins)
 	headroomOK := reportHeadroom(zones)
+	kanbansOK := reportKanbans(plant, plan, rate, runMins)
 	// Informational only, and it returns nothing to AND in: see inputCoupling.
 	reportCoupling(computeCoupling(plant, rate))
-	ok := balanceOK && floorOK && headroomOK
+	ok := balanceOK && floorOK && headroomOK && kanbansOK
 
 	fmt.Printf("\n%s\n", headline(ok))
 	if !ok {
@@ -285,7 +286,9 @@ func computeCarriers(plant *plantspec.Plant, rate map[string]float64, loaderCap,
 	for _, ac := range activeClaims(plant) {
 		c := ac.claim
 		if c.Role == "consume" && c.OutboundDestination != "" {
-			returnsTo[c.Payload] = appendUniq(returnsTo[c.Payload], c.OutboundDestination)
+			for _, code := range c.FlowPayloads() {
+				returnsTo[code] = appendUniq(returnsTo[code], c.OutboundDestination)
+			}
 		}
 		if c.HomeOf != "" {
 			homeGroup[c.CoreNode] = c.HomeOf
@@ -459,13 +462,11 @@ func computeCarriers(plant *plantspec.Plant, rate map[string]float64, loaderCap,
 	// ── A MAINTAINED GROUP DOES NOT ACCUMULATE; IT OVERFLOWS ─────────────────
 	//
 	// A group named in maintained_groups is a LEVEL-CONTROLLED buffer, not a free
-	// pool. Core holds it at its declared want: surplus above the level goes out
-	// to the overflow zone, and a shortfall is asked for from the plant at large
-	// — Maintainer.createAsks deliberately sends its ask with SourceNode "" so
-	// the finder's tiers pick the source, because "naming the group here would
-	// make the keeper source from the group it is trying to fill". Either way the
-	// difference MOVES, and the only pool the config names as its counterparty is
-	// the overflow.
+	// pool. Core holds it at its want (level + cover, kanbans.go): surplus goes out
+	// to the overflow zone, and a shortfall is borrowed from its sources in rank
+	// order, or from the plant at large when it names none. Either way the
+	// difference MOVES, and its counterparty is the pool the config names: the
+	// overflow for a surplus, the first source (else the overflow) for a shortfall.
 	//
 	// Modelling the group as closed strands that difference. demo.yaml's
 	// SYN_PRESS_EMPTIES takes 0.60 bins/min back from the ASSY unloader and gives
@@ -477,25 +478,29 @@ func computeCarriers(plant *plantspec.Plant, rate map[string]float64, loaderCap,
 	// is exactly what the keeper is for, so a group in rate deficit is a group
 	// doing its job. What CAN go wrong is the pool behind it running out, and
 	// that now lands there, where it belongs and where it can be seeded.
+	view := newKanbanView(plant)
+	active := view.activeStyles()
 	for _, g := range plant.MaintainedGroups {
 		q := pool(g.Group)
 		q.isMaintained = true
-		for _, lv := range g.Levels {
-			q.levelWant += lv.Want
+		for _, l := range view.lines(g, active) {
+			q.levelWant += l.want
 		}
-		if g.Overflow == "" {
-			// No counterparty declared. The keeper still sources plant-wide, but
-			// nothing in the file says from where, and putting the number against
-			// a pool the config never paired it with is how this check got its
-			// last wrong answer.
-			continue
+		// The named counterparty per direction. A plain name missing on the side
+		// the difference runs leaves it unattributed: putting the number against a
+		// pool the config never paired it with is how this check got its last
+		// wrong answer.
+		lender := g.Overflow
+		if len(g.Sources) > 0 {
+			lender = g.Sources[0]
 		}
-		o := pool(g.Overflow)
 		switch net := q.emptySupply - q.emptyDemand; {
-		case net > 0:
+		case net > 0 && g.Overflow != "":
+			o := pool(g.Overflow)
 			q.keeperOut += net
 			o.keeperIn += net
-		case net < 0:
+		case net < 0 && lender != "":
+			o := pool(lender)
 			q.keeperIn += -net
 			o.keeperOut += -net
 		}

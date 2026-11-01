@@ -616,6 +616,7 @@ func (op *simOperator) sweepManualSwapNodes() {
 	type target struct {
 		id         int64
 		wantsEmpty bool
+		taps       bool // the station's panel is worked for every cart (sim_operator_tap.go)
 	}
 	byName := make(map[string]target, len(nodes))
 	names := make([]string, 0, len(nodes))
@@ -626,7 +627,7 @@ func (op *simOperator) sweepManualSwapNodes() {
 		}
 		// THE ENGINE METHOD, not the package function — see classifyFromClaim for
 		// why that distinction is load-bearing for Core-owned loaders.
-		_, runtime, claim, lErr := op.e.loadActiveNode(n.ID)
+		node, runtime, claim, lErr := op.e.loadActiveNode(n.ID)
 		if lErr != nil || !claim.IsLoaderNode() {
 			continue
 		}
@@ -639,7 +640,7 @@ func (op *simOperator) sweepManualSwapNodes() {
 		// unloader's: it wants a stocked cart, never an empty one.
 		switch {
 		case claim.ActsAsUnloader():
-			byName[n.CoreNodeName] = target{id: n.ID, wantsEmpty: false}
+			byName[n.CoreNodeName] = target{id: n.ID, wantsEmpty: false, taps: op.unloaderTapAt(node) != ""}
 		case claim.Role == protocol.ClaimRoleProduce:
 			byName[n.CoreNodeName] = target{id: n.ID, wantsEmpty: true}
 		default:
@@ -657,7 +658,11 @@ func (op *simOperator) sweepManualSwapNodes() {
 			continue
 		}
 		t := byName[name]
-		if !operatorHasWorkAt(t.wantsEmpty, row.BinID, row.Stocked) {
+		work := operatorHasWorkAt(t.wantsEmpty, row.BinID, row.Stocked)
+		if t.taps {
+			work = op.operatorTapsAt(row)
+		}
+		if !work {
 			continue // nothing for the operator to do at this node right now
 		}
 		op.schedule(t.id) // deduped against anything already pending
@@ -1156,6 +1161,10 @@ func (op *simOperator) classifyFromClaim(nodeID int64) (time.Duration, string, f
 		c.PayloadCode = op.fullOnPart(node.CoreNodeName)
 		return op.unloaderDelay(), "full on", func() error { return op.loadBin(nodeID, &c) }, true
 	case claim.ActsAsUnloader(): // unloader: full bin arrived → CLEAR it; at a stage 2 a bare cart → Send on
+		if mode := op.unloaderTapAt(node); mode != "" { // the panel's lit choice (sim_operator_tap.go)
+			name := node.CoreNodeName
+			return op.unloaderDelay(), "tap", func() error { return op.tapUnloader(nodeID, name, mode) }, true
+		}
 		return op.unloaderDelay(), "clear", func() error { return op.e.ClearBin(nodeID, "", false, nil) }, true
 	case claim.Role == protocol.ClaimRoleProduce: // loader: empty bin arrived → LOAD it
 		c := claim

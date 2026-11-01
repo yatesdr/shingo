@@ -192,10 +192,28 @@ sim:
       tag_name: WELD-5_COUNTER
       tick_interval: 6s
       uop_per_tick: 1
+    # The Kanban rig's two cells (plants/kanban-press.yaml, whose head has the arithmetic).
+    # Nothing reports these counters under any other plant: a tick with no reporting point
+    # counts nothing. The plc_name is the process name, which is how simcalc keys its rates.
+    - plc_name: KP-PRESS
+      tag_name: KP-PRESS_COUNTER
+      tick_interval: 20s
+      uop_per_tick: 1
+    - plc_name: KW-WELD
+      tag_name: KW-WELD_COUNTER
+      tick_interval: 15s
+      uop_per_tick: 1
   operators:
     enabled: true
     loader_auto_load: 5s
     unloader_auto_clear: 8s
+    # What the operator taps at the Kanban rig's unloaders, by operator station
+    # (simOperator.unloaderTapAt): lit taps the PUSH AS the panel lights and PUSH EMPTY when
+    # nothing is lit; empty taps PUSH EMPTY whatever is lit (R14). A station not listed
+    # keeps the plain CLEAR. Baked into the image: a change here is an edge rebuild.
+    unloader_taps:
+      - {station: KP-UNLOAD-OPS, tap: lit}
+      - {station: KW-UNLOAD-OPS, tap: lit}
     # The floor's pull (owner, 2026-10-10): at a consume release with 5% of the
     # pack or less left, the operator pulls it into the lineside bucket and
     # releases the bin empty; the weld runs on the bucket through the exchange.

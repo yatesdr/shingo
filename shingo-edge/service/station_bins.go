@@ -273,7 +273,7 @@ func (s *StationService) StampBins(view *domain.OperatorStationView, rows map[st
 				tile.BinTotes = &domain.BinTotes{TotesOnCart: row.TotesOnCart, TotesPerLayer: row.TotesPerLayer}
 			}
 		}
-		if a := assignmentAt(groups, name); a != nil && read {
+		if a := AssignmentAt(groups, name); a != nil && read {
 			tile.Assignment = a
 		}
 		if tile.Loader == nil || s.loaders == nil {
@@ -538,8 +538,9 @@ func (s *StationService) boardEmpties(view *domain.OperatorStationView, outbound
 	return out
 }
 
-// assignmentAt is the group lines' assignment for the window at node, or nil.
-func assignmentAt(groups []protocol.NodeBinsGroup, node string) *domain.TileAssignment {
+// AssignmentAt is the group lines' assignment for the window at node, or nil:
+// what the board's card lights, and what the sim operator taps.
+func AssignmentAt(groups []protocol.NodeBinsGroup, node string) *domain.TileAssignment {
 	if node == "" {
 		return nil
 	}

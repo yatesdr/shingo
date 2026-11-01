@@ -37,17 +37,22 @@ type Plant struct {
 	// the near-empty relaxation rather than overriding a loaded bin's group, so
 	// a spec can stage the heavy-rack case: empty, and still not a small robot.
 	CarrierRobotGroups map[string]string `yaml:"carrier_robot_groups,omitempty"`
-	Payloads           []Payload         `yaml:"payloads"`
-	Zones              []Zone            `yaml:"zones"`
-	Stations           []Station         `yaml:"stations"`
-	Bins               []Bin             `yaml:"bins"`
-	Processes          []Process         `yaml:"processes"`
-	Styles             []Style           `yaml:"styles"`
-	OperatorStations   []string          `yaml:"operator_stations"`
-	Claims             []Claim           `yaml:"claims"`
-	Demands            []Demand          `yaml:"demands"`
-	ReportingPoints    []ReportingPoint  `yaml:"reporting_points"`
-	CellConfigs        []CellConfig      `yaml:"cell_configs"`
+	// CarrierSizes maps a bin-type code to its outer dimensions (→ bin_types
+	// width_in, length_in, height_in). A type with width and length has a floor
+	// size, which is what the unloader's card and the CLEAR panels compare
+	// (domain.BinType.FloorSize). Absent = no size.
+	CarrierSizes     map[string]CarrierSize `yaml:"carrier_sizes,omitempty"`
+	Payloads         []Payload              `yaml:"payloads"`
+	Zones            []Zone                 `yaml:"zones"`
+	Stations         []Station              `yaml:"stations"`
+	Bins             []Bin                  `yaml:"bins"`
+	Processes        []Process              `yaml:"processes"`
+	Styles           []Style                `yaml:"styles"`
+	OperatorStations []string               `yaml:"operator_stations"`
+	Claims           []Claim                `yaml:"claims"`
+	Demands          []Demand               `yaml:"demands"`
+	ReportingPoints  []ReportingPoint       `yaml:"reporting_points"`
+	CellConfigs      []CellConfig           `yaml:"cell_configs"`
 	// MaintainedGroups declares which zones Core holds an empty-carrier level in.
 	MaintainedGroups []MaintainedGroup `yaml:"maintained_groups,omitempty"`
 	// LoaderSettings holds the per-loader switches a claim cannot express, keyed
@@ -100,11 +105,23 @@ func (h Headroom) LanesFree() int {
 	return *h.FreeLanes
 }
 
+// CarrierSize is one carrier type's outer dimensions, in inches.
+type CarrierSize struct {
+	WidthIn  float64 `yaml:"width_in"`
+	LengthIn float64 `yaml:"length_in"`
+	HeightIn float64 `yaml:"height_in,omitempty"`
+}
+
 // Payload is a part type with its bin capacity.
 type Payload struct {
 	Code        string `yaml:"code"`
 	UOPCapacity int64  `yaml:"uop_capacity"`
-	BinType     string `yaml:"bin_type"`
+	BinType     string `yaml:"bin_type,omitempty"`
+	// NoBinType seeds the part with no payload_bin_types row, and says so on
+	// purpose: a part a plant has not typed yet contributes nothing to a kanban's
+	// running types and is named on its card (store.KanbanPictureRow
+	// NothingProcesses). A blank BinType without it is a mistake and is refused.
+	NoBinType bool `yaml:"no_bin_type,omitempty"`
 	// RobotGroup names the SEER robot-dispatch group allowed to carry this part
 	// (→ payloads.robot_group → rds.SetOrderRequest.Group). Empty = the vendor's
 	// default assignment, i.e. any robot.
@@ -456,6 +473,15 @@ type Claim struct {
 
 // IsActivePull reports the node's seeded active-pull state (default true).
 func (c Claim) IsActivePull() bool { return c.ActivePull == nil || *c.ActivePull }
+
+// FlowPayloads is the parts this claim moves: a loader's allowed list when it
+// has one (the seeder's rule, seed_core.seedBinLoaders), else its one payload.
+func (c Claim) FlowPayloads() []string {
+	if c.IsLoader() && len(c.AllowedPayloads) > 0 {
+		return c.AllowedPayloads
+	}
+	return []string{c.Payload}
+}
 
 // IsLoader reports whether this claim describes a forklift-managed
 // loader/unloader window rather than a robot-served line cell.

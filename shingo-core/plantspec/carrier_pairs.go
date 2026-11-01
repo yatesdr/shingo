@@ -123,6 +123,11 @@ func (p *Plant) CarrierPairsAtBirth() CarrierPairs {
 	for key, set := range positions {
 		style, payload := splitKey(key)
 		binType := binTypeByPayload[payload]
+		// A part declared with no carrier (Payload.NoBinType) has no type whose
+		// carriers could be counted, and the plant runs it on nothing until it does.
+		if binType == "" {
+			continue
+		}
 		want := len(set)
 		have := carriersByType[binType]
 		if have < want {

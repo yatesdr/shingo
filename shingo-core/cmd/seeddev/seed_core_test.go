@@ -281,15 +281,16 @@ func TestSeedCore_DemoPlant(t *testing.T) {
 	}
 
 	// SUPPORTS RESOLVE FROM PROCESS TO NODE at seed time — the spec says PRESS-1,
-	// the table holds the core node that process's claim names. Same resolution
-	// the settings modal does at save, and for the same reason: Core cannot read
-	// an Edge claim when it has to decide anything.
+	// the table holds the positions that process's claim names: its node and the
+	// one paired with it, where the empty lands. Same resolution the settings
+	// modal does at save, and for the same reason: Core cannot read an Edge claim
+	// when it has to decide anything.
 	sup, err := db.ListMaintainSupports(mgZone.ID)
 	if err != nil {
 		t.Fatalf("ListMaintainSupports: %v", err)
 	}
-	if len(sup) != 1 || sup[0].ProcessNodeName != "PLN_001" {
-		t.Fatalf("maintained supports = %+v, want the one node PRESS-1's claim names (PLN_001)", sup)
+	if len(sup) != 2 || sup[0].ProcessNodeName != "PLN_001" || sup[1].ProcessNodeName != "PLN_002" {
+		t.Fatalf("maintained supports = %+v, want the two positions PRESS-1's claim names (PLN_001, PLN_002)", sup)
 	}
 
 	// Idempotent: a second run must not error or duplicate.
@@ -307,7 +308,7 @@ func TestSeedCore_DemoPlant(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListMaintainSupports after re-seed: %v", err)
 	}
-	if len(sup) != 1 {
-		t.Errorf("maintained supports after re-seed = %d, want 1 (replace, not append)", len(sup))
+	if len(sup) != 2 {
+		t.Errorf("maintained supports after re-seed = %d, want 2 (replace, not append)", len(sup))
 	}
 }
