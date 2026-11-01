@@ -209,9 +209,10 @@ export function openPicker(v) {
 function listing() { return screen === 'part' || screen === 'second' || screen === 'saved'; }
 
 // The sheet's frame: a title, the search field and the rows' box. The field
-// filters the rows as a part number is typed. It is focused on open with
-// inputmode="none", so a touch screen's own keyboard never covers the rows:
-// typing takes a keyboard at the screen.
+// filters the rows as a part number is typed, and a tap on it raises the touch
+// screen's keyboard: it takes the device's own text input, and it is not
+// focused on open, so the keyboard comes up when the operator asks for it and
+// never over the rows of someone who only taps one.
 function drawPartSheet(title) {
     show().innerHTML =
         '<div class="os-comp-scrim on"></div>' +
@@ -222,12 +223,12 @@ function drawPartSheet(title) {
         '<circle cx="7.5" cy="7.5" r="5.5" fill="none" stroke="currentColor" stroke-width="1.6"/>' +
         '<path d="M11.5 11.5 L16 16" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>' +
         '<input id="os-comp-q" type="text" autocomplete="off" ' +
-        'placeholder="type a part number" inputmode="none"></label>' +
+        'placeholder="type a part number"></label>' +
         '<button class="os-btn os-btn-quiet" data-act="close">Close</button></div>' +
         '<div class="os-comp-sheet-b" id="os-comp-pick"><div class="grp"><span class="n">Loading…</span></div></div></div>';
     drawRows('');
     const q = $('os-comp-q');
-    if (q) { q.addEventListener('input', () => drawRows(q.value)); q.focus(); }
+    if (q) q.addEventListener('input', () => drawRows(q.value));
 }
 
 // CORE'S WORD ON THE PARTS, read from the same feed the board reads — the

@@ -323,16 +323,18 @@ test('setup off has no Set up a part; setup on has it', async () => {
     await open({ part_rows: ROWS, presets: [ONE] }, true);
     expectIn('setup on', 'Set up a part', box());
 });
-test('the search box keeps the touch keyboard down: inputmode none, focused on open', async () => {
+test('the search box lets the touch keyboard up: no inputmode none, not focused on open', async () => {
     let focused = 0;
     els['os-comp-q'].focus = () => { focused++; };
     await open({ part_rows: ROWS, presets: [ONE, TWO] }, true);
-    expectIn('picker', 'placeholder="type a part number" inputmode="none"');
+    expectIn('picker', 'placeholder="type a part number">');
+    expectOut('picker', 'inputmode');
+    expectOut('picker', 'readonly');
     tap('part', { part: 'PART-C' });
     tap('two');
-    expectIn('second part', 'inputmode="none"');
+    expectOut('second part', 'inputmode');
     els['os-comp-q'].focus = () => {};
-    if (focused !== 2) throw new Error('focused ' + focused + ' times, want 2 (the picker, the second part)');
+    if (focused) throw new Error('focused ' + focused + ' times on open; the tap is what raises the keyboard');
 });
 test('the search box: "type a part number", no CATID shown, a search by CATID still finds it', async () => {
     const v = viewWith(true);
