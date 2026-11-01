@@ -253,6 +253,22 @@ linters:
             - pkg: "shingoedge/store"
               desc: "www handlers must use a service interface, not *store.DB directly"
 
+        # ── the kanban package is arithmetic ─────────────────────────────
+        #
+        # It holds a kanban's numbers and its walk, so the store, the planner, the
+        # engine and the doors can all import it. A shingocore import other than
+        # domain would close a cycle with one of them, or bring SQL in. The longer
+        # allow prefix wins, as in dispatch-sub-pkg-isolation.
+        kanban-is-arithmetic:
+          list-mode: lax
+          files:
+            - "**/shingo-core/kanban/**"
+          allow:
+            - "shingocore/domain"
+          deny:
+            - pkg: "shingocore/"
+              desc: "the kanban package imports domain and protocol only: no SQL, no engine, no doors"
+
         # ── dispatch sub-package isolation ────────────────────────────────
         #
         # dispatch/ is being decomposed outward: binresolver, binsource and eta

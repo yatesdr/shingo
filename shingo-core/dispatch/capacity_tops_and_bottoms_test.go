@@ -9,7 +9,7 @@ import (
 )
 
 // TestCapacityGate_ACartAtZeroIsJudgedOnItsOwnLine: the capacity gate asks the
-// resolver's own level question (binresolver.AtDeclaredLevel) with the cart the
+// resolver's own level question (kanban.AtLevel) with the cart the
 // asking order places, its state read beside its type (BinTypeForOrder), so a
 // group whose stack level is met admits the tops & bottoms its row is short of,
 // and parks it at level when its type has no row; a stack parks at level.

@@ -45,7 +45,7 @@ type BinTypeStatement struct {
 	// state is what stands on the cart being placed, when a site holds the cart
 	// (KnownCarrier); blank when it names a type and no cart (KnownBinType).
 	// The caps read it: a cart at 0 (tops & bottoms) is judged against its own
-	// line, never the stack level (AtDeclaredLevel).
+	// line, never the stack level (kanban.AtLevel).
 	state protocol.CarrierState
 }
 

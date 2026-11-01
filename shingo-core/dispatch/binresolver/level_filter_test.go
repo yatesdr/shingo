@@ -4,6 +4,7 @@ import (
 	"errors"
 	"testing"
 
+	"shingocore/kanban"
 	"shingocore/store/nodes"
 	"shingocore/store/reservations"
 )
@@ -55,8 +56,8 @@ func TestLevelFilter_AtLevelRefuses(t *testing.T) {
 			"as structural and FAIL the push instead of parking it", got)
 	}
 	// And it says WHY, to a caller that asks the type: at its level, not full.
-	if !errors.Is(err, ErrAtDeclaredLevel) {
-		t.Errorf("err = %v does not match ErrAtDeclaredLevel — a caller that follows an overflow "+
+	if !errors.Is(err, kanban.ErrAtLevel) {
+		t.Errorf("err = %v does not match kanban.ErrAtLevel — a caller that follows an overflow "+
 			"only for a group at its level cannot tell this refusal from a full one", err)
 	}
 }
@@ -73,8 +74,8 @@ func TestLevelFilter_AFullGroupIsNotAtLevel(t *testing.T) {
 	if err == nil {
 		t.Fatal("a group with no children took a store")
 	}
-	if errors.Is(err, ErrAtDeclaredLevel) {
-		t.Errorf("err = %v matched ErrAtDeclaredLevel for a group with no level declared", err)
+	if errors.Is(err, kanban.ErrAtLevel) {
+		t.Errorf("err = %v matched kanban.ErrAtLevel for a group with no level declared", err)
 	}
 }
 

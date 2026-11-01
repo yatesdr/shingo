@@ -13,7 +13,7 @@ import (
 // The three dimensions are a plant's carrier catalogue, read off the schema
 // instead of parsed out of codes like "45x58x32". Two readers compare them: the
 // unloader's card asks a cart only for types of its own floor size (FloorSize,
-// width × length, when both are entered; engine assignWindows), and the Edge's
+// width × length, when both are entered; kanban.Assign), and the Edge's
 // CLEAR panels offer only those types (NodeListResponse.Floor). A slot's fit is
 // still type identity everywhere else.
 type BinType struct {

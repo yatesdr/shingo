@@ -18,7 +18,7 @@ import (
 )
 
 // kanban_door_docker_test.go — the one chooser at its doors and in the walk
-// (plan.Planner.ChoosePush, engine walkGroups), on the cost rig's shape: K whole,
+// (plan.Planner.ChoosePush, kanban.AssignAcross), on the cost rig's shape: K whole,
 // sources and overflow set per test: two sources with K whole, a loan repaid before
 // the overflow, the outbound full; Short against the cap; the floor; a person's drop;
 // a robot; a source with no level.

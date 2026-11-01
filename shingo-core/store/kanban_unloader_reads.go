@@ -28,7 +28,7 @@ type KanbanWindow struct {
 	// window at a time.
 	Shared, Funnel bool
 	Node           *nodes.Node
-	// Row is the cart as a window's walk reads it (engine assignWindows): the bin
+	// Row is the cart as a window's walk reads it (kanban.Assign): the bin
 	// standing there, or the cart a surplus move is bringing to it, Occupied for both.
 	Row protocol.NodeBinsRow
 	// Floor is the cart's floor, Sized false for a type with none entered.

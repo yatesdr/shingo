@@ -9,6 +9,7 @@ import (
 	"shingocore/dispatch/binresolver"
 	"shingocore/dispatch/plan"
 	"shingocore/domain"
+	"shingocore/kanban"
 	"shingocore/store"
 	"shingocore/store/bins"
 	"shingocore/store/nodes"
@@ -122,7 +123,7 @@ func planSurplus(shorts []surplusShort, above []surplusLine, room map[string]int
 }
 
 // surplusAtWindows is what the walk asks of the arm's carts, by the type each is lit as:
-// the walk's own (assignWindows, the kanban's pass, which runs first whatever the sources
+// the walk's own (kanban.Assign, the kanban's pass, which runs first whatever the sources
 // say), over the same counts the keeper is about to ask on. A cart on its way reads as
 // standing there. None of the arm's carts: no walk.
 func surplusAtWindows(rows []store.KanbanPictureRow, lines []keeperLine, windows []store.KanbanWindow) map[string]int {
@@ -133,12 +134,12 @@ func surplusAtWindows(rows []store.KanbanPictureRow, lines []keeperLine, windows
 	if !some {
 		return nil
 	}
-	typeLines := make([]store.TypeLine, len(lines))
+	typeLines := make([]kanban.Line, len(lines))
 	sizes := map[string]domain.FloorSize{}
 	inbound := map[int64]bool{}
 	for i, l := range lines {
 		lv := l.count.Level
-		typeLines[i] = store.TypeLine{Code: lv.BinTypeCode, Want: lv.Want, Have: lv.Want - l.count.Short()}
+		typeLines[i] = kanban.LineOf(lv.BinTypeCode, lv.Want, l.count.Have)
 		if rows[i].Sized {
 			sizes[rows[i].BinTypeCode] = rows[i].Floor
 		}
@@ -158,7 +159,7 @@ func surplusAtWindows(rows []store.KanbanPictureRow, lines []keeperLine, windows
 		}
 	}
 	out := map[string]int{}
-	for _, a := range assignWindows(typeLines, carts, inbound, sizes) {
+	for _, a := range kanban.Assign(typeLines, carts, inbound, sizes) {
 		if mine[a.Node] {
 			out[a.BinType]++
 		}

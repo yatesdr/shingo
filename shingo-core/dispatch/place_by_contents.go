@@ -4,11 +4,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
-	"sort"
 
 	"shingo/protocol"
 	"shingocore/dispatch/binresolver"
 	"shingocore/dispatch/plan"
+	"shingocore/kanban"
 	"shingocore/store"
 	"shingocore/store/bins"
 	"shingocore/store/nodes"
@@ -332,43 +332,25 @@ func groupsWanting(db *store.DB, b *bins.Bin, liftNode string) ([]wantingGroup, 
 			out = append(out, wantingGroup{node: g, gap: gap})
 		}
 	}
-	sort.SliceStable(out, func(i, j int) bool {
-		if out[i].gap != out[j].gap {
-			return out[i].gap > out[j].gap
-		}
-		return out[i].node.Name < out[j].node.Name
-	})
+	kanban.Rank(out, func(g wantingGroup) string { return g.node.Name }, func(g wantingGroup) int { return g.gap })
 	return out, nil
 }
 
-// carrierGap is how short group g is of carrier b, by the keeper's arithmetic:
-// the type's Short for a carrier that is no tote cart; for a tote cart its own
-// height's (store.TypeLine.HeightShort): the tops & bottoms row for a cart at
-// 0, its wanted height for a cart at whole layers, or the type's Short where
-// the group wants no stack heights of the type.
+// carrierGap is how short group g is of carrier b, by the keeper's arithmetic
+// (kanban.Line.GapFor). A tote cart's line reads the group's layer wants as well.
 func carrierGap(db *store.DB, g *nodes.Node, lv store.MaintainLevel, episode store.DemandOrigin, b *bins.Bin) (int, error) {
-	if !protocol.IsToteType(b.TotesPerLayer) {
-		c, err := db.CountLevel(g, lv, episode)
-		return c.Short(), err
-	}
-	wants, err := db.ListMaintainLayerWants(g.ID)
-	if err != nil {
-		return 0, err
+	var wants []store.MaintainLayerWant
+	if protocol.IsToteType(b.TotesPerLayer) {
+		var err error
+		if wants, err = db.ListMaintainLayerWants(g.ID); err != nil {
+			return 0, err
+		}
 	}
 	tl, _, err := db.TypeLineOf(g, lv, episode, wants)
 	if err != nil {
 		return 0, err
 	}
-	if b.CarrierState() == protocol.CarrierTopsAndBottoms {
-		return tl.HeightShort(0), nil
-	}
-	layers, _ := b.Layers()
-	for _, h := range tl.Heights {
-		if h.Layers > 0 {
-			return tl.HeightShort(layers), nil
-		}
-	}
-	return tl.Short(), nil
+	return tl.GapFor(kanban.CartOf(b)), nil
 }
 
 // containedAt reports whether payloadCode is contained and lineNode's claim

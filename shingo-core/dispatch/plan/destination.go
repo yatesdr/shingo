@@ -118,7 +118,7 @@ func (p *Planner) MaintainedSlot(group *nodes.Node, binTypeID int64) (*binresolv
 // the group resolver's store mode, asked with the carrier the caller states and
 // as nobody's dig. The cancel-return's store into a claim's declared source
 // asks it (engine storeInto), and reads its refusal: a maintained group at its
-// level answers binresolver.ErrAtDeclaredLevel, which is what sends the bin
+// level answers kanban.ErrAtLevel, which is what sends the bin
 // one hop to the group's overflow.
 func (p *Planner) GroupStoreSlot(group *nodes.Node, payloadCode string, stated binresolver.BinTypeStatement) (*binresolver.ResolveResult, error) {
 	defer observe(p.db, "group-store-slot")()
@@ -129,7 +129,7 @@ func (p *Planner) GroupStoreSlot(group *nodes.Node, payloadCode string, stated b
 // (ChooseDrop, RULINGS-C2c-run-through §3.2), as nobody's dig and taking the
 // group resolver's store arm directly (see MaintainedSlot for why no child
 // listing). Asked for no order, it is offered no paper; its refusal is the
-// resolver's own, so ErrAtDeclaredLevel still reads through.
+// resolver's own, so kanban.ErrAtLevel still reads through.
 func (p *Planner) groupStore(group *nodes.Node, payloadCode string, stated binresolver.BinTypeStatement) (*binresolver.ResolveResult, error) {
 	choice, err := p.ChooseDrop(group, DropNeed{Payload: payloadCode, Stated: stated, Asker: domain.Anyone, direct: true})
 	if err != nil {

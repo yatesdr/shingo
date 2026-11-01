@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"shingo/protocol"
+	"shingocore/kanban"
 	"shingocore/store/bins"
 	"shingocore/store/nodes"
 	"shingocore/store/orders"
@@ -67,12 +68,12 @@ func (db *DB) ReadKanbanCounts(ids []int64) (*KanbanCounts, error) {
 func (c *KanbanCounts) Level(lv MaintainLevel, asked int) LevelState {
 	k := kanbanTypeKey{lv.GroupNodeID, lv.BinTypeCode}
 	inbound := c.inbound[k]
-	return LevelState{Level: lv, Resident: c.resident[k], Asked: asked,
-		Coming: orders.LevelComing(inbound), Inbound: inbound}
+	return LevelState{Level: lv, Have: kanban.Have{Resident: c.resident[k], Asked: asked,
+		Coming: orders.LevelComing(inbound)}, Inbound: inbound}
 }
 
 // TypeLine is one level type's line, as TypeLineOf answers it.
-func (c *KanbanCounts) TypeLine(lv MaintainLevel, asked int, layerWants []MaintainLayerWant) (TypeLine, LevelState) {
+func (c *KanbanCounts) TypeLine(lv MaintainLevel, asked int, layerWants []MaintainLayerWant) (kanban.Line, LevelState) {
 	s := c.Level(lv, asked)
 	return typeLineOf(s, layerWants, c.byTotes[kanbanTypeKey{lv.GroupNodeID, lv.BinTypeCode}]), s
 }
@@ -80,15 +81,15 @@ func (c *KanbanCounts) TypeLine(lv MaintainLevel, asked int, layerWants []Mainta
 // typeLineOf composes a level type's line from its count and, for a type with
 // wanted heights, its residents by totes. The comings at a height are the count's
 // coming rows (LevelState.Inbound), so no second read spells "coming".
-func typeLineOf(c LevelState, layerWants []MaintainLayerWant, residentByTotes map[int]int) TypeLine {
+func typeLineOf(c LevelState, layerWants []MaintainLayerWant, residentByTotes map[int]int) kanban.Line {
 	lv := c.Level
-	tl := TypeLine{Code: lv.BinTypeCode, Want: lv.Want, Have: lv.Want - c.Short()}
+	tl := kanban.LineOf(lv.BinTypeCode, lv.Want, c.Have)
 	for _, w := range layerWants {
 		if w.BinTypeID != lv.BinTypeID || !protocol.IsToteType(w.TotesPerLayer) {
 			continue
 		}
 		tl.TotesPerLayer = *w.TotesPerLayer
-		tl.Heights = append(tl.Heights, HeightLine{Layers: w.Layers, Want: w.Want})
+		tl.Heights = append(tl.Heights, kanban.HeightLine{Layers: w.Layers, Want: w.Want})
 	}
 	coming := map[int]int{}
 	for _, ib := range c.Inbound {

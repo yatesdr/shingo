@@ -147,7 +147,7 @@ func (s *CoreDataService) buildNodeList(stationID string, strict bool) (*protoco
 }
 
 // binTypeFloors is NodeListResponse.Floor: each type with a floor size, as the
-// walk's floor rule compares them (domain.BinType.FloorSize, assignWindows). Nil
+// walk's floor rule compares them (domain.BinType.FloorSize, kanban.Assign). Nil
 // when no type has one, so the field and the digest read as an older Core's.
 func binTypeFloors(types []*bins.BinType) map[string]string {
 	var out map[string]string

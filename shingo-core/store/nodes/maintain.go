@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"shingocore/domain"
+	"shingocore/kanban"
 	"shingocore/store/internal/helpers"
 )
 
@@ -44,38 +45,8 @@ const (
 	PropOverflowDestination = "overflow_destination"
 )
 
-// MaintainLevel is one line of a maintained group's declared level: how many
-// unclaimed empty carriers of one type the group is to hold.
-//
-// A CAP, and this is where it differs from loaders.Quota — which is a
-// PREFERENCE bounded by the never-2N window count, deciding only which type to
-// fetch next. Want here is the number itself: the keeper tops up TO it and the
-// resolver will later refuse a push that would exceed it. The two tables stay
-// separate for exactly that reason; merging them would put cap semantics in a
-// table documented as not-a-cap.
-//
-// want=0 is a legitimate declared value meaning "none of this type" — a way to
-// zero a line without forgetting it existed. RemoveMaintainLevel is how a type
-// stops being declared at all.
-//
-// Base is the declared number and Want the number a reader holds the group to.
-// Read for configuration (this package's ListMaintainLevels) the two are the same
-// and Want is what the modal edits; read for the plant (store.DB.ListMaintainLevels)
-// Want is the effective want, kanban.Level.Want(). A save only ever writes a
-// declared number: the modal's read is the declared one.
-//
-// OverflowNodeID and OverflowNode are this type's own overflow, nil and blank
-// when the type takes the kanban's default: the settings modal's, and the doors'
-// through PerTypeOverflowTargetOf and the door's one read.
-type MaintainLevel struct {
-	GroupNodeID    int64  `json:"group_node_id"`
-	BinTypeID      int64  `json:"bin_type_id"`
-	BinTypeCode    string `json:"bin_type_code"`
-	Want           int    `json:"want"`
-	Base           int    `json:"-"`
-	OverflowNodeID *int64 `json:"overflow_node_id,omitempty"`
-	OverflowNode   string `json:"overflow_node,omitempty"`
-}
+// MaintainLevel is one line of a kanban's declared level (kanban.TypeLevel).
+type MaintainLevel = kanban.TypeLevel
 
 // MaintainSupport is one process node a maintained group serves.
 //

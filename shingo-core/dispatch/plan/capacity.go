@@ -62,6 +62,7 @@ import (
 	"shingo/protocol"
 	"shingocore/dispatch/binresolver"
 	"shingocore/domain"
+	"shingocore/kanban"
 	"shingocore/store/bins"
 	"shingocore/store/nodes"
 )
@@ -107,7 +108,7 @@ type CapacityDB interface {
 	GetEffectiveBinTypes(nodeID int64) ([]*bins.BinType, error)
 	BinTypeForOrder(orderID int64, group string) (*int64, protocol.CarrierState, error)
 	// TopsAndBottomsWant is a level's tops & bottoms row, read only for a cart
-	// at 0 (binresolver.AtDeclaredLevel's row).
+	// at 0 (kanban.AtLevel's row).
 	TopsAndBottomsWant(groupNodeID, binTypeID int64) (int, bool, error)
 	// BinTypeBareOf names the carrier a bare marker stands for, so a slot
 	// fenced to the carrier admits the bare cart too (bins.TypeAdmits).
@@ -448,7 +449,7 @@ func BinTypeAllowedAt(db CapacityDB, nodeID int64, binTypeID *int64) (bool, erro
 }
 
 // ngrpAtDeclaredLevel is the gate's level question: the group's declared
-// levels, asked through binresolver.AtDeclaredLevel — the resolver's own
+// levels, asked through kanban.AtLevel — the resolver's own
 // function, so the gate and the resolver cannot disagree about whether a group
 // is full — with the same count the resolver passes.
 func ngrpAtDeclaredLevel(db CapacityDB, ngrp *nodes.Node, stated binresolver.BinTypeStatement) (bool, error) {
@@ -456,7 +457,7 @@ func ngrpAtDeclaredLevel(db CapacityDB, ngrp *nodes.Node, stated binresolver.Bin
 	if err != nil {
 		return false, err
 	}
-	return binresolver.AtDeclaredLevel(levels, stated,
+	return kanban.AtLevel(levels, stated.TypeID(), stated.State(),
 		func(code string, h domain.Height) (int, error) {
 			return db.CountEmptyBinsOfTypeInGroup(code, ngrp.ID, h)
 		},

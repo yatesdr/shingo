@@ -57,7 +57,7 @@ type Store interface {
 	ListMaintainLevels(groupNodeID int64) ([]nodes.MaintainLevel, error)
 	CountEmptyBinsOfTypeInGroup(binTypeCode string, groupNodeID int64, h domain.Height) (int, error)
 	// TopsAndBottomsWant is a level's tops & bottoms row (false: none), the cap
-	// of its own line, read only for a cart at 0 (AtDeclaredLevel).
+	// of its own line, read only for a cart at 0 (kanban.AtLevel).
 	TopsAndBottomsWant(groupNodeID, binTypeID int64) (int, bool, error)
 	// The same count with one node's carriers left out — the level after a
 	// committed lift empties that node (ResolveStoreVacated).

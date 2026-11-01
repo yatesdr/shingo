@@ -15,6 +15,7 @@ import (
 	"shingocore/domain"
 	"shingocore/fleet/simulator"
 	"shingocore/internal/testdb"
+	"shingocore/kanban"
 	"shingocore/store"
 	"shingocore/store/bins"
 	"shingocore/store/nodes"
@@ -170,7 +171,7 @@ func TestKanbanPin_ALevelZeroRowLiftedByCover(t *testing.T) {
 		_, err := d.PlanGroupStoreSlot(grp, "", binresolver.KnownBinType(t32))
 		return err
 	}
-	if err := store0(); !errors.Is(err, binresolver.ErrAtDeclaredLevel) {
+	if err := store0(); !errors.Is(err, kanban.ErrAtLevel) {
 		t.Fatalf("nothing running the type: %v, want at its declared level", err)
 	}
 
@@ -194,7 +195,7 @@ func TestKanbanPin_ALevelZeroRowLiftedByCover(t *testing.T) {
 
 	// At the want the cap binds again.
 	landCarrier(t, db, t32, freePosition(t, db, grpID), "KEZ-LANDED")
-	if err := store0(); !errors.Is(err, binresolver.ErrAtDeclaredLevel) {
+	if err := store0(); !errors.Is(err, kanban.ErrAtLevel) {
 		t.Errorf("at the effective want: %v, want at its declared level", err)
 	}
 }

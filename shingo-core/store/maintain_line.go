@@ -4,13 +4,14 @@ import (
 	"fmt"
 
 	"shingocore/domain"
+	"shingocore/kanban"
 	"shingocore/store/nodes"
 	"shingocore/store/orders"
 )
 
 // maintain_line.go — what a maintained group is short of, one level type at a
 // time: the arithmetic (LevelState) and the line an unloader's card reads
-// (TypeLine). Moved out of engine so a reader in dispatch, which engine
+// (kanban.Line). Moved out of engine so a reader in dispatch, which engine
 // imports, asks the same spelling.
 
 // LevelState is one level type's four terms: what the group wants of the type
@@ -43,18 +44,14 @@ import (
 // Level.Want is the effective want when the level came from DB.ListMaintainLevels
 // or the picture, which is every reader's.
 type LevelState struct {
-	Level    MaintainLevel
-	Resident int
-	Asked    int
-	Coming   int
-	Inbound  []orders.InboundCarrier
+	Level MaintainLevel
+	kanban.Have
+	Inbound []orders.InboundCarrier
 }
 
 // Short is the want less resident, asked and coming: the keeper's gap. At or
 // below zero the group is not short of the type.
-func (c LevelState) Short() int {
-	return c.Level.Want - c.Resident - c.Asked - c.Coming
-}
+func (c LevelState) Short() int { return c.Have.Short(c.Level.Want) }
 
 // CountLevel reads one level type's three populations for group g, against the
 // type's open maintain episode (zero when none is open). An error names the
@@ -77,49 +74,6 @@ func (db *DB) CountLevel(g *nodes.Node, lv MaintainLevel, episode DemandOrigin) 
 	return c, nil
 }
 
-// TypeLine is one level type of a group as its line reads it: what the group
-// wants of the type, what it has (resident, asked and coming: want less the
-// keeper's Short), and its wanted heights when the type states its totes per
-// layer. Its readers are an unloader's group line (engine UnloaderGroupLines
-// and its walk) and the drop choice.
-type TypeLine struct {
-	Code          string
-	Want, Have    int
-	TotesPerLayer int // 0: the type states none, and has no heights
-	Heights       []HeightLine
-}
-
-// HeightLine is one wanted height of a type: how many carts standing layers
-// high the group wants, and how many it has (resident and coming at exactly
-// that many totes).
-type HeightLine struct {
-	Layers     int
-	Want, Have int
-}
-
-// Short is how many more of the type the group wants: want less have. At or
-// below zero the group is not short of it.
-func (tl TypeLine) Short() int { return tl.Want - tl.Have }
-
-// HeightShort is how many more carts standing layers high the group wants: the
-// wanted height's want less have, held under the type's Short (a cart at a
-// height is a cart of the type), but for the tops & bottoms row (0 layers),
-// which is a line of its own. 0 for a height the group does not want. Its
-// reader is the by-contents choice (dispatch dropByContents), which takes a
-// tote cart into a group only as its own height.
-func (tl TypeLine) HeightShort(layers int) int {
-	for _, h := range tl.Heights {
-		if h.Layers != layers {
-			continue
-		}
-		if layers == 0 {
-			return h.Want - h.Have
-		}
-		return min(h.Want-h.Have, tl.Short())
-	}
-	return 0
-}
-
 // TypeLineOf reads one level type's line for group g, for the lift divert: the count
 // (CountLevel, against the type's open maintain episode), then, for a type
 // that states its totes per layer and has wanted heights among layerWants (the
@@ -128,10 +82,10 @@ func (tl TypeLine) HeightShort(layers int) int {
 // count's coming rows (LevelState.Inbound), so no second read spells
 // "coming". The count comes back too, for the rows it read.
 func (db *DB) TypeLineOf(g *nodes.Node, lv MaintainLevel, episode DemandOrigin,
-	layerWants []MaintainLayerWant) (TypeLine, LevelState, error) {
+	layerWants []MaintainLayerWant) (kanban.Line, LevelState, error) {
 	c, err := db.CountLevel(g, lv, episode)
 	if err != nil {
-		return TypeLine{}, c, err
+		return kanban.Line{}, c, err
 	}
 	tl := typeLineOf(c, layerWants, nil)
 	if len(tl.Heights) == 0 {
@@ -139,7 +93,7 @@ func (db *DB) TypeLineOf(g *nodes.Node, lv MaintainLevel, episode DemandOrigin,
 	}
 	resident, err := db.CountEmptyBinsOfTypeInGroupByTotes(tl.Code, g.ID)
 	if err != nil {
-		return TypeLine{}, c, fmt.Errorf("group line: %w", err)
+		return kanban.Line{}, c, fmt.Errorf("group line: %w", err)
 	}
 	return typeLineOf(c, layerWants, resident), c, nil
 }

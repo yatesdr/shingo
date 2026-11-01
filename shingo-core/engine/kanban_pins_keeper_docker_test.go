@@ -14,6 +14,7 @@ import (
 	"shingocore/dispatch/plan"
 	"shingocore/fleet/simulator"
 	"shingocore/internal/testdb"
+	"shingocore/kanban"
 	"shingocore/store"
 	"shingocore/store/nodes"
 	"shingocore/store/orders"
@@ -101,7 +102,7 @@ func TestKanbanPin_ALevelZeroRowRefusesEveryStore(t *testing.T) {
 		return err
 	}
 
-	if err := store0(grp, binresolver.KnownBinType(types["KPZ-ZERO"])); !errors.Is(err, binresolver.ErrAtDeclaredLevel) {
+	if err := store0(grp, binresolver.KnownBinType(types["KPZ-ZERO"])); !errors.Is(err, kanban.ErrAtLevel) {
 		t.Errorf("a store of the type at 0, with four positions free: %v, want at its declared level", err)
 	}
 	if err := store0(grp, binresolver.KnownBinType(types["KPZ-ONE"])); err != nil {
@@ -140,10 +141,10 @@ func TestKanbanPin_ALevelZeroRowRefusesEveryStore(t *testing.T) {
 	only, typesOnly := campaignGroup(t, db, "KPZ2", 4, map[string]int{"KPZ2-ZERO": 0})
 	onlyGrp, err := db.GetNode(only)
 	testutil.MustNoErr(t, err, "the second group")
-	if err := store0(onlyGrp, binresolver.NoBinType); !errors.Is(err, binresolver.ErrAtDeclaredLevel) {
+	if err := store0(onlyGrp, binresolver.NoBinType); !errors.Is(err, kanban.ErrAtLevel) {
 		t.Errorf("a store stating no type into a group whose only row is at 0: %v, want at its declared level", err)
 	}
-	if err := store0(onlyGrp, binresolver.KnownBinType(typesOnly["KPZ2-ZERO"])); !errors.Is(err, binresolver.ErrAtDeclaredLevel) {
+	if err := store0(onlyGrp, binresolver.KnownBinType(typesOnly["KPZ2-ZERO"])); !errors.Is(err, kanban.ErrAtLevel) {
 		t.Errorf("a store of the type at 0: %v, want at its declared level", err)
 	}
 }

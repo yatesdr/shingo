@@ -6,6 +6,7 @@ import (
 	"shingo/protocol"
 	"shingocore/dispatch/binresolver"
 	"shingocore/domain"
+	"shingocore/kanban"
 	"shingocore/store/nodes"
 )
 
@@ -130,15 +131,8 @@ func (p *Planner) ChoosePush(ask PushAsk) PushChoice {
 		}
 	}
 	p.debug("plan: nothing takes a %s from %s — it parks named at %s", state, ask.Source, ask.Group.Name)
-	return PushChoice{Applies: true, Err: &nothingTakesIt{group: ask.Group.Name}, RoomOnly: door.Kanban.Short(state) > 0}
+	return PushChoice{Applies: true, Err: kanban.RefusedAtLevel(ask.Group.Name), RoomOnly: door.Kanban.Short(state) > 0}
 }
-
-// nothingTakesIt carries ErrAtDeclaredLevel with the capacity sentence every parked
-// store's reader matches on.
-type nothingTakesIt struct{ group string }
-
-func (e *nothingTakesIt) Error() string        { return "no available slot in node group " + e.group }
-func (e *nothingTakesIt) Is(target error) bool { return target == binresolver.ErrAtDeclaredLevel }
 
 // slotInLine is the free slot of one line's group, nil for none: the group's own
 // resolve over one read of its children, with the line in hand for its cap. A slot

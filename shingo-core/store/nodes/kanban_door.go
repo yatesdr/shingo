@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"shingo/protocol"
+	"shingocore/kanban"
 )
 
 // kanban_door.go — what one read tells the door about a window's push into a
@@ -16,10 +17,8 @@ type DoorLine struct {
 	Group *Node
 	// Level is the group's row for the type, Want effective; nil when it declares
 	// none, which leaves it short of nothing: it can be reached only as an overflow.
-	Level    *MaintainLevel
-	Resident int
-	Asked    int
-	Coming   int
+	Level *MaintainLevel
+	kanban.Have
 	// TopsAndBottoms is the type's tops & bottoms line, a cart at 0's own: the row's
 	// want (0 with no row), the carts at 0 standing and coming. The keeper never
 	// fetches them, so nothing is asked.
@@ -34,9 +33,9 @@ func (l DoorLine) Short(state protocol.CarrierState) int {
 		return 0
 	}
 	if state == protocol.CarrierTopsAndBottoms {
-		return l.TopsWant - l.TopsResident - l.TopsComing
+		return kanban.Have{Resident: l.TopsResident, Coming: l.TopsComing}.Short(l.TopsWant)
 	}
-	return l.Level.Want - l.Resident - l.Asked - l.Coming
+	return l.Have.Short(l.Level.Want)
 }
 
 // KanbanDoor is one read of a window's push: the kanban the unloader's outbound

@@ -10,6 +10,7 @@ import (
 	"shingo/protocol"
 	"shingo/protocol/testutil"
 	"shingocore/internal/testdb"
+	"shingocore/kanban"
 	"shingocore/store"
 	"shingocore/store/bins"
 	"shingocore/store/nodes"
@@ -66,7 +67,7 @@ func TestGroupAdmitsStore_ACartAtZeroOnARealGroup(t *testing.T) {
 	admits := func(b *bins.Bin) (bool, int64) {
 		counter.Reset()
 		err := r.groupAdmitsStore(group, "", KnownCarrier(b))
-		if err != nil && !errors.Is(err, ErrAtDeclaredLevel) {
+		if err != nil && !errors.Is(err, kanban.ErrAtLevel) {
 			t.Fatalf("%s: %v", b.Label, err)
 		}
 		return err == nil, counter.Count()

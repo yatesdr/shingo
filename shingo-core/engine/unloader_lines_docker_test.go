@@ -91,6 +91,19 @@ func (f linesFixture) levels(t *testing.T, wants map[int64]int, layers map[int64
 
 func intp(n int) *int { return &n }
 
+// cart is a window's row holding a cart of the type, full or empty, with its totes when said.
+func cart(node, binType string, full bool, totes ...int) protocol.NodeBinsRow {
+	r := protocol.NodeBinsRow{Node: node, Occupied: true, BinTypeCode: binType}
+	if full {
+		r.PayloadCode = "PART-A"
+	}
+	if len(totes) == 1 {
+		n := totes[0]
+		r.TotesOnCart = &n
+	}
+	return r
+}
+
 // toteL states a window's row as a cart of TOTE-L, 8 totes to a layer, as the
 // bins feed does: a tote cart by its own row.
 func toteL(r protocol.NodeBinsRow) protocol.NodeBinsRow {

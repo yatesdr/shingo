@@ -6,6 +6,7 @@ import (
 
 	"shingocore/dispatch/binresolver"
 	"shingocore/domain"
+	"shingocore/kanban"
 	"shingocore/store/nodes"
 	"shingocore/store/orders"
 )
@@ -152,7 +153,7 @@ func (p *Planner) ChooseDrop(group *nodes.Node, need DropNeed) (DropChoice, erro
 				first.Alternatives = choices[1:]
 				return first, nil
 			}
-			if CapacityShape(rErr) != CapacitySlot || errors.Is(rErr, binresolver.ErrAtDeclaredLevel) {
+			if CapacityShape(rErr) != CapacitySlot || errors.Is(rErr, kanban.ErrAtLevel) {
 				return DropChoice{}, rErr
 			}
 			if choice, ok := p.paperChoice(group, need, exclude); ok {
@@ -187,7 +188,7 @@ func (p *Planner) ChooseDrop(group *nodes.Node, need DropNeed) (DropChoice, erro
 	}
 	// A GROUP AT ITS LEVEL OFFERS NO PAPER: StoreFitsPaper asks the same level of a
 	// paper slot and refuses it, so reading the paper could change no answer.
-	if CapacityShape(err) != CapacitySlot || errors.Is(err, binresolver.ErrAtDeclaredLevel) {
+	if CapacityShape(err) != CapacitySlot || errors.Is(err, kanban.ErrAtLevel) {
 		return DropChoice{}, err
 	}
 	if choice, ok := p.paperChoice(group, need, exclude); ok {

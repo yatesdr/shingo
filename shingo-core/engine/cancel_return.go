@@ -44,6 +44,7 @@ import (
 	"shingocore/dispatch/binresolver"
 	"shingocore/domain"
 	"shingocore/fleet"
+	"shingocore/kanban"
 	"shingocore/store/bins"
 	"shingocore/store/loaders"
 	"shingocore/store/nodes"
@@ -443,7 +444,7 @@ func (e *Engine) storeInto(src *nodes.Node, bin *bins.Bin, carrier *orders.Order
 	// blank-source needs (the keeper's top-ups, the plant-wide tier) only.
 	// Empties-only in practice: a payload is refused by an empties bank before
 	// its level is asked.
-	if !errors.Is(err, binresolver.ErrAtDeclaredLevel) {
+	if !errors.Is(err, kanban.ErrAtLevel) {
 		return nil, refusalText(err, "no slot in "+group.Name)
 	}
 	over, why := nodes.OverflowGroupOf(e.db, group, &bin.BinTypeID)

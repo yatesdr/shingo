@@ -1,19 +1,18 @@
-package engine
+package kanban
 
 import (
 	"fmt"
+	"reflect"
 	"strings"
 	"testing"
 
 	"shingo/protocol"
 	"shingocore/domain"
-	"shingocore/store"
 )
 
-// unloader_lines_test.go — the walk that tells each cart at an unloader's
-// windows what to go back as (assignWindows), on lines built by hand. The
-// counts that feed it are the keeper's own and are pinned against a database
-// in unloader_lines_docker_test.go.
+// assign_test.go — the walk that tells each cart at an unloader's windows what to
+// go back as, on lines built by hand. The counts that feed it are the keeper's own
+// and are pinned against a database in engine/unloader_lines_docker_test.go.
 
 func cart(node, binType string, full bool, totes ...int) protocol.NodeBinsRow {
 	r := protocol.NodeBinsRow{Node: node, Occupied: true, BinTypeCode: binType}
@@ -50,9 +49,9 @@ func said(as []protocol.NodeBinsAssignment) string {
 	return strings.Join(parts, " ")
 }
 
-func requireWalk(t *testing.T, lines []store.TypeLine, windows []protocol.NodeBinsRow, want string) {
+func requireWalk(t *testing.T, lines []Line, windows []protocol.NodeBinsRow, want string) {
 	t.Helper()
-	if got := said(assignWindows(lines, windows, nil, nil)); got != want {
+	if got := said(Assign(lines, windows, nil, nil)); got != want {
 		t.Errorf("walk = %q, want %q", got, want)
 	}
 }
@@ -63,7 +62,7 @@ func requireWalk(t *testing.T, lines []store.TypeLine, windows []protocol.NodeBi
 // asked for totes.
 func TestAssignWindows_ReferenceCase(t *testing.T) {
 	t.Parallel()
-	lines := []store.TypeLine{
+	lines := []Line{
 		{Code: "KD-1", Want: 3, Have: 2},
 		{Code: "TOTE-1", Want: 3, Have: 0},
 	}
@@ -78,7 +77,7 @@ func TestAssignWindows_ReferenceCase(t *testing.T) {
 // another type is shorter; once the group has its own type, as the shortest.
 func TestAssignWindows_OwnFirstThenLargestShortfall(t *testing.T) {
 	t.Parallel()
-	lines := []store.TypeLine{
+	lines := []Line{
 		{Code: "KD-1", Want: 1, Have: 0},
 		{Code: "TOTE-1", Want: 5, Have: 0},
 	}
@@ -91,7 +90,7 @@ func TestAssignWindows_OwnFirstThenLargestShortfall(t *testing.T) {
 // Equal shortfalls go to the first level in the levels' order.
 func TestAssignWindows_TiesByTheLevelsOrder(t *testing.T) {
 	t.Parallel()
-	lines := []store.TypeLine{
+	lines := []Line{
 		{Code: "B-TYPE", Want: 2, Have: 0},
 		{Code: "A-TYPE", Want: 2, Have: 0},
 	}
@@ -103,7 +102,7 @@ func TestAssignWindows_TiesByTheLevelsOrder(t *testing.T) {
 // before it is asked for something else.
 func TestAssignWindows_EmptiesFirst(t *testing.T) {
 	t.Parallel()
-	lines := []store.TypeLine{
+	lines := []Line{
 		{Code: "KD-1", Want: 1, Have: 0},
 		{Code: "TOTE-1", Want: 1, Have: 0},
 	}
@@ -116,7 +115,7 @@ func TestAssignWindows_EmptiesFirst(t *testing.T) {
 // A group short of nothing assigns nothing, and an empty window is not walked.
 func TestAssignWindows_NothingShortNothingAssigned(t *testing.T) {
 	t.Parallel()
-	lines := []store.TypeLine{
+	lines := []Line{
 		{Code: "KD-1", Want: 2, Have: 2},
 		{Code: "TOTE-1", Want: 1, Have: 3},
 	}
@@ -125,7 +124,7 @@ func TestAssignWindows_NothingShortNothingAssigned(t *testing.T) {
 		{Node: "W2"},
 		cart("W3", "TOTE-1", false),
 	}, "")
-	if as := assignWindows(lines, nil, nil, nil); as == nil || len(as) != 0 {
+	if as := Assign(lines, nil, nil, nil); as == nil || len(as) != 0 {
 		t.Errorf("no windows: %v, want an empty list", as)
 	}
 }
@@ -135,9 +134,9 @@ func TestAssignWindows_NothingShortNothingAssigned(t *testing.T) {
 // is a remainder and no number is unknown, and both count to the type alone.
 func TestAssignWindows_ExactMultipleHeights(t *testing.T) {
 	t.Parallel()
-	tote := func() []store.TypeLine {
-		return []store.TypeLine{{Code: "TOTE-1", Want: 6, Have: 0, TotesPerLayer: 8,
-			Heights: []store.HeightLine{{Layers: 3, Want: 1}, {Layers: 5, Want: 1}}}}
+	tote := func() []Line {
+		return []Line{{Code: "TOTE-1", Want: 6, Have: 0, TotesPerLayer: 8,
+			Heights: []HeightLine{{Layers: 3, Want: 1}, {Layers: 5, Want: 1}}}}
 	}
 	// The 3-high cart is sent as 3 high (its own height); the 40-tote cart as
 	// 5 high; the remainder and the unknown as the type at any height.
@@ -161,8 +160,8 @@ func TestAssignWindows_ExactMultipleHeights(t *testing.T) {
 // height met and the type short, both go back as the type.
 func TestAssignWindows_RemainderAndUnknownCountToTheType(t *testing.T) {
 	t.Parallel()
-	lines := []store.TypeLine{{Code: "TOTE-1", Want: 3, Have: 1, TotesPerLayer: 8,
-		Heights: []store.HeightLine{{Layers: 3, Want: 1, Have: 1}}}}
+	lines := []Line{{Code: "TOTE-1", Want: 3, Have: 1, TotesPerLayer: 8,
+		Heights: []HeightLine{{Layers: 3, Want: 1, Have: 1}}}}
 	requireWalk(t, lines, []protocol.NodeBinsRow{
 		toteCart("W1", false, 26),
 		toteCart("W2", false),
@@ -171,8 +170,8 @@ func TestAssignWindows_RemainderAndUnknownCountToTheType(t *testing.T) {
 
 	// 26 totes is 3 layers and 2 over: with 3 high still short, the cart is
 	// sent as the type it is, not as 3 high.
-	short := []store.TypeLine{{Code: "TOTE-1", Want: 2, Have: 0, TotesPerLayer: 8,
-		Heights: []store.HeightLine{{Layers: 3, Want: 1}}}}
+	short := []Line{{Code: "TOTE-1", Want: 2, Have: 0, TotesPerLayer: 8,
+		Heights: []HeightLine{{Layers: 3, Want: 1}}}}
 	requireWalk(t, short, []protocol.NodeBinsRow{toteCart("W1", false, 26)}, "W1=TOTE-1")
 }
 
@@ -182,8 +181,8 @@ func TestAssignWindows_RemainderAndUnknownCountToTheType(t *testing.T) {
 // the largest one instead of going back as the bare type.
 func TestAssignWindows_NoHeightOfItsOwnTakesTheLargestHeight(t *testing.T) {
 	t.Parallel()
-	lines := []store.TypeLine{{Code: "TOTE-1", Want: 3, Have: 0, TotesPerLayer: 8,
-		Heights: []store.HeightLine{{Layers: 5, Want: 2}, {Layers: 3, Want: 1}}}}
+	lines := []Line{{Code: "TOTE-1", Want: 3, Have: 0, TotesPerLayer: 8,
+		Heights: []HeightLine{{Layers: 5, Want: 2}, {Layers: 3, Want: 1}}}}
 	requireWalk(t, lines, []protocol.NodeBinsRow{
 		toteCart("W1", false),
 		toteCart("W2", false, 26),
@@ -194,8 +193,8 @@ func TestAssignWindows_NoHeightOfItsOwnTakesTheLargestHeight(t *testing.T) {
 // still under its own want assigns nothing.
 func TestAssignWindows_AHeightIsHeldUnderItsType(t *testing.T) {
 	t.Parallel()
-	lines := []store.TypeLine{{Code: "TOTE-1", Want: 2, Have: 2, TotesPerLayer: 8,
-		Heights: []store.HeightLine{{Layers: 3, Want: 2, Have: 0}}}}
+	lines := []Line{{Code: "TOTE-1", Want: 2, Have: 2, TotesPerLayer: 8,
+		Heights: []HeightLine{{Layers: 3, Want: 2, Have: 0}}}}
 	requireWalk(t, lines, []protocol.NodeBinsRow{toteCart("W1", true, 24)}, "")
 }
 
@@ -203,10 +202,10 @@ func TestAssignWindows_AHeightIsHeldUnderItsType(t *testing.T) {
 // assignments move the running shortfall: a KD cart dressed as a tote stack.
 func TestAssignWindows_HeightsTieAheadOfAnyHeight(t *testing.T) {
 	t.Parallel()
-	lines := []store.TypeLine{
+	lines := []Line{
 		{Code: "KD-1", Want: 1, Have: 1},
 		{Code: "TOTE-1", Want: 2, Have: 0, TotesPerLayer: 8,
-			Heights: []store.HeightLine{{Layers: 3, Want: 1}}},
+			Heights: []HeightLine{{Layers: 3, Want: 1}}},
 	}
 	// TOTE-1 is short 2: 3 high speaks for 1, any height for the other. The
 	// first KD ties 3 high against any height and takes 3 high; the second
@@ -224,8 +223,8 @@ func TestAssignWindows_HeightsTieAheadOfAnyHeight(t *testing.T) {
 // the row met and nothing else short.
 func TestAssignWindows_TopsAndBottomsIsItsOwnLine(t *testing.T) {
 	t.Parallel()
-	lines := []store.TypeLine{{Code: "TOTE-1", Want: 2, Have: 2, TotesPerLayer: 8,
-		Heights: []store.HeightLine{{Layers: 0, Want: 1}, {Layers: 3, Want: 1}}}}
+	lines := []Line{{Code: "TOTE-1", Want: 2, Have: 2, TotesPerLayer: 8,
+		Heights: []HeightLine{{Layers: 0, Want: 1}, {Layers: 3, Want: 1}}}}
 	requireWalk(t, lines, []protocol.NodeBinsRow{
 		toteCart("W1", false, 0),
 		toteCart("W2", false, 0),
@@ -238,8 +237,8 @@ func TestAssignWindows_TopsAndBottomsIsItsOwnLine(t *testing.T) {
 // at 0 after them still takes the row.
 func TestAssignWindows_TheRowTakesNothingFromTheType(t *testing.T) {
 	t.Parallel()
-	lines := []store.TypeLine{{Code: "TOTE-1", Want: 2, Have: 0, TotesPerLayer: 8,
-		Heights: []store.HeightLine{{Layers: 0, Want: 1}}}}
+	lines := []Line{{Code: "TOTE-1", Want: 2, Have: 0, TotesPerLayer: 8,
+		Heights: []HeightLine{{Layers: 0, Want: 1}}}}
 	requireWalk(t, lines, []protocol.NodeBinsRow{
 		toteCart("W1", false),
 		toteCart("W2", false),
@@ -253,13 +252,13 @@ func TestAssignWindows_TheRowTakesNothingFromTheType(t *testing.T) {
 // row met and a stack height short, for that height.
 func TestAssignWindows_ACartAtZeroWithNoRowHasNoOwnThing(t *testing.T) {
 	t.Parallel()
-	noRow := []store.TypeLine{
+	noRow := []Line{
 		{Code: "KD-1", Want: 3, Have: 0},
 		{Code: "TOTE-1", Want: 1, Have: 0, TotesPerLayer: 8},
 	}
 	requireWalk(t, noRow, []protocol.NodeBinsRow{toteCart("W1", false, 0)}, "W1=KD-1")
-	rowMet := []store.TypeLine{{Code: "TOTE-1", Want: 3, Have: 1, TotesPerLayer: 8,
-		Heights: []store.HeightLine{{Layers: 0, Want: 1, Have: 1}, {Layers: 3, Want: 2}}}}
+	rowMet := []Line{{Code: "TOTE-1", Want: 3, Have: 1, TotesPerLayer: 8,
+		Heights: []HeightLine{{Layers: 0, Want: 1, Have: 1}, {Layers: 3, Want: 2}}}}
 	requireWalk(t, rowMet, []protocol.NodeBinsRow{toteCart("W1", false, 0)}, "W1=TOTE-1·3")
 }
 
@@ -269,10 +268,10 @@ func TestAssignWindows_ACartAtZeroWithNoRowHasNoOwnThing(t *testing.T) {
 // A full knockdown keeps its type.
 func TestAssignWindows_AFullToteCartTakesTheLargest(t *testing.T) {
 	t.Parallel()
-	lines := []store.TypeLine{
+	lines := []Line{
 		{Code: "KD-1", Want: 3, Have: 0},
 		{Code: "TOTE-1", Want: 2, Have: 0, TotesPerLayer: 8,
-			Heights: []store.HeightLine{{Layers: 3, Want: 1}}},
+			Heights: []HeightLine{{Layers: 3, Want: 1}}},
 	}
 	requireWalk(t, lines, []protocol.NodeBinsRow{
 		toteCart("W1", true, 24),
@@ -284,8 +283,8 @@ func TestAssignWindows_AFullToteCartTakesTheLargest(t *testing.T) {
 // third cart at that height finds it met.
 func TestAssignWindows_TwoWindowsAtOneHeight(t *testing.T) {
 	t.Parallel()
-	lines := []store.TypeLine{{Code: "TOTE-1", Want: 2, Have: 0, TotesPerLayer: 8,
-		Heights: []store.HeightLine{{Layers: 3, Want: 2}}}}
+	lines := []Line{{Code: "TOTE-1", Want: 2, Have: 0, TotesPerLayer: 8,
+		Heights: []HeightLine{{Layers: 3, Want: 2}}}}
 	requireWalk(t, lines, []protocol.NodeBinsRow{
 		toteCart("W1", false, 24),
 		toteCart("W2", false, 24),
@@ -297,7 +296,7 @@ func TestAssignWindows_TwoWindowsAtOneHeight(t *testing.T) {
 // every line is short.
 func TestAssignWindows_ABareCartIsAssignedNothing(t *testing.T) {
 	t.Parallel()
-	lines := []store.TypeLine{{Code: "TOTE-1", Want: 2, Have: 0}}
+	lines := []Line{{Code: "TOTE-1", Want: 2, Have: 0}}
 	bare := cart("W1", "TOTE-1", false)
 	bare.Bare = true
 	requireWalk(t, lines, []protocol.NodeBinsRow{bare}, "")
@@ -315,9 +314,9 @@ func sizes() map[string]domain.FloorSize {
 	return out
 }
 
-func requireSizedWalk(t *testing.T, lines []store.TypeLine, windows []protocol.NodeBinsRow, want string) {
+func requireSizedWalk(t *testing.T, lines []Line, windows []protocol.NodeBinsRow, want string) {
 	t.Helper()
-	if got := said(assignWindows(lines, windows, nil, sizes())); got != want {
+	if got := said(Assign(lines, windows, nil, sizes())); got != want {
 		t.Errorf("walk = %q, want %q", got, want)
 	}
 }
@@ -328,7 +327,7 @@ func requireSizedWalk(t *testing.T, lines []store.TypeLine, windows []protocol.N
 // group is shortest of, and never as a type with no size.
 func TestAssignWindows_ACartIsAskedWithinItsFloorSize(t *testing.T) {
 	t.Parallel()
-	lines := []store.TypeLine{
+	lines := []Line{
 		{Code: "KD-36", Want: 9, Have: 0},
 		{Code: "NODIM", Want: 8, Have: 0},
 		{Code: "KD-45", Want: 1, Have: 0},
@@ -346,7 +345,7 @@ func TestAssignWindows_ACartIsAskedWithinItsFloorSize(t *testing.T) {
 	// The reference case with sizes: the full tote cart (48 x 45) is asked for
 	// totes, its own size; the full 36 x 36 knockdown is never asked for totes
 	// and, its own type met, is asked for nothing.
-	ref := []store.TypeLine{
+	ref := []Line{
 		{Code: "KD-36", Want: 3, Have: 2},
 		{Code: "TOTE-1", Want: 3, Have: 0},
 	}
@@ -361,9 +360,81 @@ func TestAssignWindows_ACartIsAskedWithinItsFloorSize(t *testing.T) {
 // any type, sized or not.
 func TestAssignWindows_ACartWithNoSizeAsToday(t *testing.T) {
 	t.Parallel()
-	lines := []store.TypeLine{
+	lines := []Line{
 		{Code: "KD-36", Want: 9, Have: 0},
 		{Code: "NODIM", Want: 1, Have: 1},
 	}
 	requireSizedWalk(t, lines, []protocol.NodeBinsRow{cart("W1", "NODIM", true)}, "W1=KD-36")
+}
+
+// TestKanbanPin_WalkLightsNothingOutsideItsOwnGroup: the walk's whole world is
+// its group's lines. A 32 x 30 cart at a line declared at 0, its own floor having
+// no other line, is assigned nothing; a 45 x 48 cart with its group whole is
+// assigned nothing, wherever it could otherwise be repaid. The assignment names a
+// type and a height and says nothing of what a panel can show: the panel half
+// (a choice with no button lights nothing) is the Edge's clearHighlight/isLit.
+func TestKanbanPin_WalkLightsNothingOutsideItsOwnGroup(t *testing.T) {
+	t.Parallel()
+	lines := []Line{
+		{Code: "KP-32X30", Want: 0, Have: 0},
+		{Code: "KP-BIG", Want: 1, Have: 1},
+		{Code: "KP-SMALL", Want: 1, Have: 1},
+		{Code: "KP-TOTES", Want: 1, Have: 1},
+	}
+	sizes := map[string]domain.FloorSize{}
+	for code, wl := range map[string][2]float64{
+		"KP-32X30": {32, 30}, "KP-BIG": {45, 48}, "KP-SMALL": {45, 48}, "KP-TOTES": {48, 45},
+	} {
+		fs, ok := domain.BinType{WidthIn: wl[0], LengthIn: wl[1]}.FloorSize()
+		if !ok {
+			t.Fatalf("no floor size for %s", code)
+		}
+		sizes[code] = fs
+	}
+	windows := []protocol.NodeBinsRow{
+		cart("W1", "KP-32X30", false),
+		cart("W2", "KP-SMALL", true),
+		cart("W3", "KP-BIG", false),
+	}
+	if got := said(Assign(lines, windows, nil, sizes)); got != "" {
+		t.Errorf("the kanban's own pass with the group whole = %q, want nothing lit", got)
+	}
+	noneShort := []protocol.NodeBinsAssignment{{Node: "W1", NoneShort: true}, {Node: "W2", NoneShort: true}, {Node: "W3", NoneShort: true}}
+	if got := AssignAcross(lines, nil, windows, nil, sizes); !reflect.DeepEqual(got, noneShort) {
+		t.Errorf("walk with the group whole and no sources = %+v, want every cart none short", got)
+	}
+
+	// A whole group with a source short of big: the 45 x 48 carts are asked for it
+	// in the source's name, the empty first, and the 32 x 30 lights nothing on it.
+	source := []Source{{Name: "KP-Z45", Lines: []Line{{Code: "KP-BIG", Want: 2, Have: 1}}}}
+	want := []protocol.NodeBinsAssignment{{Node: "W1", NoneShort: true}, {Node: "W2", NoneShort: true},
+		{Node: "W3", BinType: "KP-BIG", Group: "KP-Z45"}}
+	if got := AssignAcross(lines, source, windows, nil, sizes); !reflect.DeepEqual(got, want) {
+		t.Errorf("walk with a source short one big = %+v, want %+v", got, want)
+	}
+	// Short one at each of two sources: rank order over what is left.
+	two := []Source{source[0], {Name: "KP-Z2", Lines: []Line{{Code: "KP-SMALL", Want: 1, Have: 0}}}}
+	want = []protocol.NodeBinsAssignment{{Node: "W1", NoneShort: true}, {Node: "W2", BinType: "KP-SMALL", Group: "KP-Z2"},
+		{Node: "W3", BinType: "KP-BIG", Group: "KP-Z45"}}
+	if got := AssignAcross(lines, two, windows, nil, sizes); !reflect.DeepEqual(got, want) {
+		t.Errorf("walk with two sources short = %+v, want %+v", got, want)
+	}
+	// A plain source has no lines: it is short of nothing and lights nothing.
+	if got := AssignAcross(lines, []Source{{Name: "KP-PLAIN"}}, windows, nil, sizes); !reflect.DeepEqual(got, noneShort) {
+		t.Errorf("walk with a plain source = %+v, want every cart none short", got)
+	}
+	// A cart on its way already chose: walked by no group, and said nothing of.
+	inbound := map[int64]bool{7: true}
+	onWay := []protocol.NodeBinsRow{windows[0], windows[1]}
+	onWay[1].BinID = 7
+	if got := AssignAcross(lines, nil, onWay, inbound, sizes); !reflect.DeepEqual(got, noneShort[:1]) {
+		t.Errorf("walk with a cart on its way = %+v, want only W1 said", got)
+	}
+
+	// Short of small only: the empty big and the full small are both 45 x 48, the
+	// empty walked first takes the one short; the 32 x 30 still lights nothing.
+	lines[2].Have = 0
+	if got := said(Assign(lines, windows, nil, sizes)); got != "W3=KP-SMALL" {
+		t.Errorf("walk short one small = %q, want W3=KP-SMALL", got)
+	}
 }

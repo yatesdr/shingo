@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"shingo/protocol"
+	"shingocore/kanban"
 	"shingocore/store/bins"
 	"shingocore/store/nodes"
 )
@@ -692,7 +693,7 @@ func (r *GroupResolver) groupAdmitsStoreVacating(group, vacated *nodes.Node, pay
 	if full, err := r.atDeclaredLevel(group, vacated, stated, levels); err != nil {
 		return err
 	} else if full {
-		return &atLevelError{group: group.Name}
+		return kanban.RefusedAtLevel(group.Name)
 	}
 	return nil
 }
@@ -1253,7 +1254,7 @@ func (r *GroupResolver) payloadAllowedAt(nodeID int64, payloadCode string) bool 
 // the same list one line earlier to decide whether the group is an empties bank
 // at all. One read, two questions.
 func (r *GroupResolver) atDeclaredLevel(group, vacated *nodes.Node, stated BinTypeStatement, levels []nodes.MaintainLevel) (bool, error) {
-	full, err := AtDeclaredLevel(levels, stated, func(code string, h domain.Height) (int, error) {
+	full, err := kanban.AtLevel(levels, stated.TypeID(), stated.State(), func(code string, h domain.Height) (int, error) {
 		if vacated != nil {
 			return r.DB.CountEmptyBinsOfTypeInGroupExcludingNode(code, group.ID, vacated.ID, h)
 		}
@@ -1265,71 +1266,4 @@ func (r *GroupResolver) atDeclaredLevel(group, vacated *nodes.Node, stated BinTy
 		return false, fmt.Errorf("%s: %w", group.Name, err)
 	}
 	return full, nil
-}
-
-// AtDeclaredLevel is the level question with the counts supplied: is a group
-// whose declared levels are levels at its level for the cart stated, when
-// count answers how many empties of a type it holds at a height and row the
-// want of a type's tops & bottoms row (false when it has none). Pure, and
-// exported so the capacity gate (plan.ngrpAtDeclaredLevel) asks this function
-// and not a copy of it. The resolver's store passes the group as it stands
-// (atDeclaredLevel); its vacated-slot store passes the group as it will stand
-// once a committed lift has emptied one child. See atDeclaredLevel for the
-// per-type / group-total asymmetry and why each direction is chosen.
-//
-// TWO LINES PER TYPE, AND NEITHER TAKES THE OTHER'S ROOM. A cart stated at 0
-// with no part (tops & bottoms) is judged on the type's tops & bottoms line:
-// the carts at 0 of the type in the group (count at TopsAndBottomsOnly)
-// against the row's want. A type the group keeps with no such row refuses it;
-// a type the group declares no level of does not, as on the stack line. Every
-// other cart, and a type named with no cart, is judged on the stack line as
-// before: the empties of the type at no height said, which leaves tops &
-// bottoms out (domain.Height.Admits), against the level. The row is read only
-// for a cart at 0.
-func AtDeclaredLevel(levels []nodes.MaintainLevel, stated BinTypeStatement,
-	count func(binTypeCode string, h domain.Height) (int, error),
-	row func(binTypeID int64) (want int, ok bool, err error)) (bool, error) {
-	if len(levels) == 0 {
-		return false, nil
-	}
-
-	if binTypeID := stated.TypeID(); binTypeID != nil {
-		for _, l := range levels {
-			if l.BinTypeID != *binTypeID {
-				continue
-			}
-			want, h := l.Want, domain.Height{}
-			if stated.State() == protocol.CarrierTopsAndBottoms {
-				rowWant, ok, rerr := row(l.BinTypeID)
-				if rerr != nil {
-					return false, fmt.Errorf("tops & bottoms row of %s: %w", l.BinTypeCode, rerr)
-				}
-				if !ok {
-					return true, nil
-				}
-				want, h = rowWant, protocol.TopsAndBottomsOnly
-			}
-			held, cerr := count(l.BinTypeCode, h)
-			if cerr != nil {
-				return false, fmt.Errorf("count %s: %w", l.BinTypeCode, cerr)
-			}
-			return held >= want, nil
-		}
-		// A type nobody declared. NOT refused: a maintained group is a group with
-		// a level on some types, not a group closed to every other. Declaring a
-		// level is saying "hold at least these"; it is not saying "and nothing
-		// else may ever stand here".
-		return false, nil
-	}
-
-	want, held := 0, 0
-	for _, l := range levels {
-		want += l.Want
-		n, cerr := count(l.BinTypeCode, domain.Height{})
-		if cerr != nil {
-			return false, fmt.Errorf("count %s: %w", l.BinTypeCode, cerr)
-		}
-		held += n
-	}
-	return held >= want, nil
 }
