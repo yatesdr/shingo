@@ -25,6 +25,18 @@
         "blocks": [
           "Lane_04-WAIT Wait"
         ]
+      },
+      {
+        "external": "order 4 of this case",
+        "blocks": [
+          "Lane_05-WAIT Wait"
+        ]
+      },
+      {
+        "external": "order 5 of this case",
+        "blocks": [
+          "Lane_06-WAIT Wait"
+        ]
       }
     ],
     "orders": [
@@ -98,10 +110,68 @@
           "slot:confirmed:PEB_003"
         ],
         "to_fleet": true
+      },
+      {
+        "index": 4,
+        "type": "retrieve_empty",
+        "status": "in_transit",
+        "source": "UTN_013",
+        "delivery": "PEB_007",
+        "bin": "BIN-MT-13",
+        "steps": [
+          "wait Lane_05-WAIT",
+          "pickup UTN_013 (empty)",
+          "dropoff PEB_007"
+        ],
+        "hard_bins": [
+          "BIN-MT-13"
+        ],
+        "hard_slots": [
+          "PEB_007"
+        ],
+        "reservations": [
+          "bin:confirmed:BIN-MT-13",
+          "mouth:confirmed:Lane_19",
+          "occupancy:confirmed:Lane_19",
+          "slot:confirmed:PEB_007"
+        ],
+        "to_fleet": true
+      },
+      {
+        "index": 5,
+        "type": "retrieve_empty",
+        "status": "in_transit",
+        "source": "SMN_035",
+        "delivery": "PEB_008",
+        "bin": "BIN-MT-16",
+        "steps": [
+          "wait Lane_06-WAIT",
+          "pickup SMN_035 (empty)",
+          "dropoff PEB_008"
+        ],
+        "hard_bins": [
+          "BIN-MT-16"
+        ],
+        "hard_slots": [
+          "PEB_008"
+        ],
+        "reservations": [
+          "bin:confirmed:BIN-MT-16",
+          "mouth:confirmed:Lane_16",
+          "occupancy:confirmed:Lane_16",
+          "slot:confirmed:PEB_008"
+        ],
+        "to_fleet": true
       }
     ],
     "refusals": null,
     "replies": [
+      "data.order.projected status=pending",
+      "order.ack",
+      "order.waybill",
+      "data.order.projected status=pending",
+      "order.ack",
+      "order.waybill",
       "data.order.projected status=pending",
       "order.ack",
       "order.waybill",

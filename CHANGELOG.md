@@ -14,37 +14,44 @@ No migration. Edge only.
 - A Spots chip appears only once a part moves, and its ✕ undoes the move
 - A tap on the search box raises the touch keyboard
 - An on-deck spot with nowhere to go can't be tapped
-## 2026-11-01 — Kanban: a group holds a level, follows the job, and repays what it borrows
+## 2026-11-01 — Kanban: a loop of carts around a process
 
-Core v169 (run `store.KanbanMigrationCensusSQL` first), Edge one literal. Ship Core and Edge together.
+Core v169-172 (run `store.KanbanMigrationCensusSQL` and `store.FamilyCensusSQL` first), Edge one literal. Ship Core and Edge together.
 
-- A group with a level is a kanban: `kanbans`, `kanban_levels`, `kanban_supports`, `kanban_layer_levels`, `kanban_sources`
-- `maintain_enabled` is gone; station, strict and overflow leave properties for columns; plain groups keep their overflow property
-- Want = level + running cover x processes running the type, following a changeover's target from START
-- The keeper's tick is 4 statements, any plant size; the bins build 10; a window push's door 8; the parked arm 8
-- Sources: an ordered list a kanban's keeper pulls from; empty means plant-wide; never another lineside kanban
-- A kanban with no supports runs no keeper: it counts, shows its shortfall, and is refilled by unloaders
-- One chooser at all four doors: the kanban if short, then its first source short of the cart, then overflow, then park named
-- The unloader's card lights the source's type and names it, or says "No group is short of this cart"
-- A surplus cart moves to the unloader's window to re-type, or to a source with room; never the last free window
-- Overflow is per type with a default; saves warn on what a source cannot repay, and no longer refuse levels over positions
-- A cancel also cancels a supply whose evac could not be created
-- A changeover's episode names its target's first produce part and node, and a failed open reaches Core once the outbox clears
-- CLEAR and PUSH AS offer only the cart's floor size, plus the lit choice; `NodeListResponse.floor` is per type
-- Known, not built: wrong-type carts standing on positions after a cancel; the next START's lift takes them
-- `plants/kanban-press.yaml` is a permanent certification rig on one lineside kanban; R1 and R5's loop run in the docker shards, R1-R6 and the walk (`W`, `W5`) on the stack before a merge
+- A group with a level is a kanban: `kanbans`, `kanban_levels`, `kanban_supports`, `kanban_layer_levels`, `kanban_sources`, `kanban_families`
+- `maintain_enabled` is gone; station and strict leave properties for columns; plain groups keep their overflow property; a kanban has none
+- Carrier families: `carrier_families`, `bin_types.family_id` NOT NULL, every type a family of one until grouped on the Bin Types page
+- `kanban.SameFamily` is the one test of what a cart may be set as, read by the walk, arm, save, CLEAR door, simcalc and the Edge's panels
+- CLEAR refuses a type of another family; the admin re-type stays. `FloorSize` is `Footprint`, a label and a check, never a decision
+- Want = level + cover, the positions the effective style's claims put on the line; a mixed style covers each type with its own
+- Pool per family, typed, at the minimum until said; found by place, flights included, in one read of the loop
+- A cart of the loop lands whenever a slot admits it, at intake, the scanner, cancel-return and the lift; the cap stays for strangers
+- A door's one read says which line has a slot for the cart, so it pays for one fit wherever the cart goes
+- An order that ends with a cart on its robot names that cart, so the stranded watch, the cancel-return and a kanban's count find it
+- A cancelled order's cart of a loop goes home, whichever order carried it
+- The keeper asks outside only for a family's deficit, by a counted forecast; a type short inside a whole family is the arm's
+- A cart above another kanban's pool may go home by a keeper's ask; a kanban never gives a cart it owns
+- The arm moves the largest surplus in the family, oldest arrival, to a window lit as the short type, leaving windows for the changeover's evacs
+- Episode keys are by id, so a rename leaves an open episode whole
+- The keeper's tick is 3 statements, any plant size; the bins build 9; a door 8; a CLEAR 22, unchanged
+- The card reads per family: pool, found by place, room, floaters, minimum; strangers and lost carts in words
+- The save warns on room, minimum, a slot taking part of a family, an unlevelled claimed type, members disagreeing; it refuses two kanbans levelling one family on one support
+- Sources: an ordered list a kanban's keeper pulls from; empty means plant-wide. A kanban with no supports runs no keeper
+- A cancel also cancels a supply whose evac could not be created; a changeover's episode names its target and reaches Core once the outbox clears
+- "Cleared · robot on its way" says so only with a robot, and after "No group is short"
+- `plants/kanban-press.yaml` and `plants/kanban-press5.yaml` are permanent certification rigs; R1, R5 and five-press steady run in the docker shards, R1-R6, the walks and P1-P6 on the stack
 - A plant file's change now runs the tests that seed it, in CI and in `gate.sh scope`
-- A kanban's Supports offer every position of a claim, paired ones included, and its table fits the Nodes modal
+- A kanban's Supports offer every position of a claim, paired ones included
 
 ## 2026-11-01 — A kanban is called a kanban
 
 Core v171, Edge no migration. Ship Core and Edge together: until both are up, a claim save naming a kanban as its inbound source is not refused on the Edge.
 
-- Pages, docs and the glossary say Kanban, Level, Running cover, Supports, Sources, Overflow, Strict
+- Pages, docs and the glossary say Kanban, Level, Cover, Supports, Sources, Strict
 - Routes move to `/api/nodes/kanban/*`; the levels read is `/api/nodes/kanban/levels`
 - `NodeInfo.maintained` is `kanban` on the wire; each Edge's node digest moves once at the upgrade
 - The plant spec key `maintained_groups` is `kanbans`
-- The episode kind is `kanban`; v171 rewrites `demand_origins.kind`, and the `mnt|` key and `core-mnt-` uuid prefixes stay, since live orders carry them
+- The episode kind is `kanban`; v171 rewrites `demand_origins.kind`, and the `core-mnt-` uuid prefix stays, since live orders carry it
 - The old "kanban" of UOP reorder is now "threshold replenishment", and the Edge's retired `/kanbans` redirects are gone
 - A short row held by its keeper says so in its title, instead of claiming asks are out
 

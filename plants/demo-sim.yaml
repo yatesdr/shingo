@@ -1207,7 +1207,6 @@ kanbans:
   - group: SYN_PRESS_EMPTIES
     station: edge1.line1
     strict: false
-    overflow: SYN_MARKET
     levels:
       - {bin_type: STANDARD, want: 4}
       - {bin_type: STANDARD-SM, want: 2}

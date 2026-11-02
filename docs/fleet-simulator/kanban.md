@@ -18,18 +18,18 @@ WELD-KANBAN  ──empties──→ KW-WELD (two-robot)    ──fulls──→ 
      ↑                                                           │
      └────────────────────────── CLEAR ──────────────────────────┘
 
-KP-SM              a plain supermarket: no level, seeded empty, nobody counts it
+KP-SM              a plain supermarket: no level, stocked with 45x48 empties, nobody counts it
 ```
 
 | Name | In the plant | What it is |
 |---|---|---|
-| K | `PRESS-KANBAN` | 16 flat children: `PKB_001..010` allow small, big and totes, `PKB_011..016` allow 32x30; levels small 2, big 2, totes 2, 32x30 2; cover 4; supports the press's 4 positions; no sources, no overflow |
-| K2 | `WELD-KANBAN` | 4 flat children; small 1; cover 1; supports the weld; no sources, no overflow; its own 3 carts |
-| SM | `KP-SM` | Lanes, no level, seeded empty. A keeper with no sources searches plant-wide, so an empty standing here is pulled into a short kanban at once. R5 puts one here by hand |
+| K | `PRESS-KANBAN` | 16 flat children: `PKB_001..010` admit the 45x48 family, `PKB_011..016` admit `CART-32`; mix 2/2/2/2; pools 10 and 6; supports the press's 4 positions; no sources |
+| K2 | `WELD-KANBAN` | 4 flat children; small 2; pool 3; supports the weld; no sources; of the same family as K and on no support of K's |
+| SM | `KP-SM` | Lanes, no level, stocked with 4 of 45x48. The raid's target: a keeper asking per type would empty it through a changeover. A keeper asks only for its family's deficit, so it stands untouched while a family is whole |
 
-**The slots' allowed types are not in the plant file.** `plantspec.Slot` has a name and a depth and the seeder writes no `node_bin_types`, so the driver applies them right after the seed, through two of the Nodes page's doors (`/api/nodes/bin-types`, `/api/nodes/properties/set` with `bin_type_mode`): `apply_slot_types`, with the table at the top of the script. The docker tests apply the same through `SetNodeBinTypes` and `SetNodeProperty`. `simcalc` reads the plant file and so cannot see them either: it counts a floor's carts against a floor's wants.
+**A slot says what it admits in the plant file:** `admits: [45x48]` takes a type code or a family code, and the seeder writes per-type rows.
 
-**The pool.** 10 of 45x48: the 4 positions on small, and K's 2, 2 and 2 on `PKB_001..006`. 6 of 32x30, all on `PKB_011..016`. The weld's 3. So K's card reads small want 6, resident 2 on `KP-SMALL`: its cover is the carts on the positions, K is 4 short for as long as the press runs, nothing outside it can source one, and the line says "no empty SMALL-45 outside the group". `simcalc -carriers` reads this as BELOW WANT by 4 and exits 1: it is true of the fixture and left true.
+**The pool.** 10 of 45x48: the 4 positions on small, and K's 2, 2 and 2 on `PKB_001..006`. 6 of 32x30, all on `PKB_011..016`. The weld's 3. A running type's want is its level plus its cover, the positions the style puts on the line: under `KP-SMALL` K wants small 6, and the 4 on the line are held, so small reads short 0.
 
 The press runs five styles on the same positions: `KP-SMALL` (two parts, left and right), `KP-BIG`, `KP-TOTES`, `KP-32`, and `KP-UNTYPED`, whose part has no carrier row and is named on the kanban's card. The unloaders are the consumers: a full goes straight to a window, the parts come off, the empty goes back. The file's head has the pool arithmetic. `simcalc -carriers` prints the wants, what starves first and what each changeover leaves.
 
@@ -49,29 +49,28 @@ Both rig stations ship as `lit`. To see the `empty` case (a cart parks against K
 ## The runs
 
 ```sh
-bash scripts/kanban-rig.sh R1      # R1..R6, W, W5
+bash scripts/kanban-rig.sh R1      # R1..R6, W, W5, W6, P1..P6
 ```
 
 It refuses while `shingo-dev` is running, because it starts with `down -v`. `KANBAN_RIG_REPLACE=1` says that stack is yours to drop. `KANBAN_RIG_NO_BUILD=1` reuses the images. It takes the gate lock, so a gate and a run never overlap. It seeds with Core stopped, applies the slots' types, runs the injections, collects, prints the verdict and leaves the stack up. The exit code is the verdict's.
 
-Each run writes under `../kanban-rig-runs/<run>-<stamp>/` (or `KANBAN_RIG_OUT`): `verdict.txt`; `long-orders.tsv`, every order over 10 sim-min by id, payload and cause; `stranded.txt` and `soakstat.txt` from `cmd/soakstat`; `no-door.txt`; samples every 30 s of the kanban cards, the windows and the unloader's board. Sim-minutes here are at the rig's 10x, so one is 6 wall-seconds.
+Each run writes under `../kanban-rig-runs/<run>-<stamp>/` (or `KANBAN_RIG_OUT`): `verdict.txt`; `long-orders.tsv`, every order over 10 sim-min by id, payload and cause; `stranded.txt` and `soakstat.txt` from `cmd/soakstat`; `no-door.txt`; samples every 30 s of the kanban cards, the windows and the unloader's board. Sim-minutes here are at the rig's 10x, so one is 6 wall-seconds. `family-watch.tsv` and `cart-watch.tsv` read found by place and every cart every 3 s; `orders.tsv` and `order-history.tsv` keep the orders past the next run.
 
-A check that fails on this fixture stays failing. R3's and R5's say what the fixture leaves, below.
 
 | Run | Length | Injection | Passes when | What it catches |
 |---|---|---|---|---|
-| **R1** steady on small | 20 wall-min | None | K wants small 6; K2 wants 2; every unloader cart lit small; no park at a level; K's small rests at resident 2 and says "no empty SMALL-45 outside the group"; no other lineside line held across two samples | Cover counted per position instead of per process; a loop that drifts; the statement counts belong here too, and they come from the cost tests, not this script |
+| **R1** steady on small | 20 wall-min | None | K wants small 6; K2 wants 3; every unloader cart lit small; no park at a level; small reads short 0 with its 4 held on the line; found equals pool at every sample; `KP-SM` unchanged | Cover not read from the claims; the keeper raiding a whole family; a loop that drifts; the statement counts belong here too, and they come from the cost tests, not this script |
 | **R2** small → totes | To cutover + 10 sim-min | START `KP-TOTES` at 20 sim-min, CUTOVER at the gate | Cover moved at START (totes 6, small 2); K holds 2/2/2 and the 4 positions totes; K2 took nothing from K; nothing delivered to SM | Cover following the active style instead of the target; carts off the process not re-typed |
-| **R3** totes → 32x30 → totes | Each to cutover + 10 sim-min | START and CUTOVER, three times | Under `KP-32`: K wants 32x30 6 and says what holds it; the 4 positions hold 32x30; no 45x48 parked at K's level on a window. Back on `KP-TOTES`: K holds 2/2/2, the positions totes, its 32x30 back at 6 and none parked | Crossing a floor with no overflow: what comes off the process when K is at its level, and whether the fulls keep a window |
+| **R3** totes → 32x30 → totes | Each to cutover + 10 sim-min | START and CUTOVER, three times | Under `KP-32`: K wants 32x30 6; the 4 positions hold 32x30; the 4 of 45x48 land and none stands on a window past its unload. Back on `KP-TOTES`: K holds its mix, the positions totes, its 32x30 back at 6 and none parked | Crossing a family: what comes off the process when K is at its level, and whether the fulls keep a window |
 | **R4** flip-flop | To cutover + 10 sim-min | START totes, CANCEL once two positions hold totes, START big, CUTOVER | Cover reverts within a tick; no leg left live; the next START lifts the totes | Cancel leaving orders or cover behind; a stranded order; a cart on a window with no door |
-| **R5** what K does whole, and SM | About 10 wall-min | 4 carts registered on K's free slots until it is whole, one more stood on a window. Then one of K's small carried to SM with K short by 2 or more | The card says no group is short, the cart parks named at K and leaves when K is short. K takes SM's cart by its plant-wide search, nothing delivers to SM, and no ask of K stands queued on an empty that does not exist | A push with no source and no overflow; what a plain group gets back; asks minted past the carts that exist |
-| **R6** raiding | About 5 wall-min | K2's two carts carried into K by hand | K holds carts; K2's keeper takes nothing from K, then or after settle; with nothing to source the keeper asks nothing, and K2's card says `held_by`: no empty SMALL-45 outside the group. The carts carried back: the weld's orders move | A lineside kanban sourcing from another lineside kanban |
+| **R5** what K does whole, and SM | About 10 wall-min | 4 carts registered on K's free slots until it is whole, one more stood on a window. Then one of K's small carried to SM with K short by 2 or more | The card says no group is short and the cart lands while a slot admits it; with none it parks named at K as full, naming the family, and leaves when a slot frees. K takes SM's cart for its family's deficit only, nothing delivers to SM, and no ask of K stands queued on an empty that does not exist | A loop cart refused at its level; what a plain group gets back; asks minted past the carts that exist |
+| **R6** raiding | About 5 wall-min | K2's two carts carried into K by hand | K stands above its pool and K2 below; K2's keeper takes K's carts above its pool and no others, and the weld's orders move | A kanban giving a cart it owns; a stranger with no way home |
 
 Every run also fails on a stranded order with no releaser (`soakstat -stranded`), on an empty standing on a window with no live order for 20 sim-min, and on all four press windows held across two samples.
 
 ## The walk
 
-`scripts/kanban-rig.sh W` and `W5` are for following the carts one by one, not for a verdict: a step that cannot proceed marks why and the walk goes on to collect. Every 3 wall-seconds from the run's start:
+`scripts/kanban-rig.sh W`, `W5` and `W6` follow the carts one by one and hold the acceptance states: a step that cannot proceed fails, marks why, and the walk goes on to collect. Each adds samples every 3 wall-seconds.
 
 - `walk.tsv`: wall time, sim clock (Core `/api/sim/status`), and for every carrier but the weld's own 3: label, type, node, its group, claimed order.
 - `walk-orders.tsv`: each order touching K, the 4 positions or the 4 windows, live or moved in the last sim-minute: id, type, payload, source, delivery, status, queue cause, age in seconds on the orders' clock.
@@ -82,16 +81,31 @@ Every run also fails on a stranded order with no releaser (`soakstat -stranded`)
 |---|---|
 | **W** | Settle on small 20 sim-min, `STEP1`. START `KP-32`, `STEP2-START`; gate open (15 wall-min at most, else `GATE NEVER OPENED`), `GATE-OPEN`; CUTOVER; 20 sim-min, `STEP3`. START `KP-BIG`, `STEP4-START`; gate open; CUTOVER; 20 sim-min, `END` |
 | **W5** | Settle on small 20 sim-min. START `KP-32`; when two positions hold 32x30, CANCEL; 10 sim-min. START `KP-BIG`; gate open; CUTOVER; 10 sim-min, `END` |
+| **W6** | START `KP-BIG`, CUTOVER, 10 sim-min. Every cart of the family in K set big on the bin page: K B6, C6. START `KP-SMALL`; gate open; CUTOVER; 20 sim-min. K ends S2 B2 T2 C6: 8 re-types, the line's 4 at the windows on their way back, K's 4 through the arm |
+| **P1** | Five presses steady on small, 20 wall-min, on `plants/kanban-press5.yaml` |
+| **P2** | Press 3 onto 32x30; then presses 1 and 2 onto 32x30 in one cycle as press 3 returns to small |
+| **P3** | Press 1 onto big, every standing cart set big, back to small |
+| **P4** | A cart carried out by hand: the family one short, one ask brings it home |
+| **P5** | Presses 1 and 2 onto 32x30, press 2 cancels with two positions held. `KANBAN_RIG_P5_CANCEL_ON_ROBOT=1` holds the CANCEL for a 32x30 on a robot bound for press 2 |
+| **P6** | Presses 1 and 2 onto big in one cycle |
 
-## Leaving the floor
+## Leaving the family
 
-`simcalc -carriers` prints this as CHANGEOVER ROOM. A changeover within 45x48 conserves: K's cover moves from one type to another of the floor and the unloader re-types the carts. Leaving the floor does not: the 4 positions and K's cover both leave.
+A return always lands: the level governs the keeper's asks, never a cart of the loop. `simcalc -carriers` prints each family's pool, minimum, room and carts, and fails a file that does not hold its pool or whose pool will not fit.
 
-| Running | 45x48 carts | K's 45x48 wants + positions | 32x30 carts | K's 32x30 want + positions |
-|---|---|---|---|---|
-| `KP-SMALL`, `KP-BIG`, `KP-TOTES` | 10 | 10 + 4: K 4 short | 6 | 2: 4 past K's level |
-| `KP-32` | 10 | 6: 4 past K's level | 6 | 6 + 4: K 4 short |
+| Step | What moves | K ends |
+|---|---|---|
+| Steady on small | Line S4 | S2 B2 T2 C6, short 0 everywhere |
+| START small → 32x30 | The 4 smalls land; 4 32x30 out in parallel | S6 B2 T2 C2 |
+| Steady on 32x30 | Nothing lights, nothing moves; floaters 4 small | S6 B2 T2 C2 |
+| START 32x30 → big | The 4 32x30 land; 2 bigs straight; the 4 floaters cycle through the windows lit BIG | S2 B2 T2 C6, floaters 0 |
+| START big → small, all ten set big | 8 re-types: the line's 4 at the windows on the way back, K's 4 extras through the arm | S2 B2 T2 C6 |
+| CANCEL mid-way | Cover reverts, placed carts stay, nothing parks, the next START proceeds | |
 
-K refuses a store at its level, and it has no source and no overflow, so the 4 past its level have nowhere to land if they come off the process. On a window, each is lit nothing, tapped PUSH EMPTY and parks named at K, and 4 of them are all 4 windows, which leaves `KP-32`'s fulls none. As seeded, the 32x30 stand above their want in their own slots: nothing moves them there. Once they have left K, the same arithmetic holds on the way back.
+## The five presses
 
-simcalc counts a floor's carts against a floor's wants. It cannot see which slots allow which type, because the plant file cannot say.
+`plants/kanban-press5.yaml`: five presses of this shape, one shared unloader `P5-UNLOAD` of 10 windows, one kanban `P5-KANBAN` over all 20 positions, mix 2/2/2/2, pools 26 and 22, 48 slots admitting by family, a plain `P5-SM` stocked with 45x48. One name in `bin_loaders.outbound_dest` is why sharing the unloader means one kanban.
+
+Runs: R1 on all five, steady, 20 wall-min; two presses leaving 45x48 in one cycle while a third returns; the all-bigs case on one press; a hand move between positions and the kanban; CANCEL on one press while another changes over; two presses STARTing onto big in one cycle.
+
+Both rigs, every run: found equals pool per family at every sample; the supermarket unchanged; no loop cart parked at a level; no window held past its unload and a tick; every START's gate opens; a keeper tick of at most 4 statements whatever the press count.

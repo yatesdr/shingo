@@ -40,6 +40,30 @@
       "origin_class": "attached",
       "origin_id": "episode 1 of this case",
       "projected": "pending"
+    },
+    {
+      "index": 4,
+      "type": "retrieve_empty",
+      "status": "pending",
+      "station": "edge1.line1",
+      "quantity": 1,
+      "delivery": "PEB_007",
+      "source_intent": "empty",
+      "origin_class": "attached",
+      "origin_id": "episode 2 of this case",
+      "projected": "pending"
+    },
+    {
+      "index": 5,
+      "type": "retrieve_empty",
+      "status": "pending",
+      "station": "edge1.line1",
+      "quantity": 1,
+      "delivery": "PEB_008",
+      "source_intent": "empty",
+      "origin_class": "attached",
+      "origin_id": "episode 2 of this case",
+      "projected": "pending"
     }
   ]
 }

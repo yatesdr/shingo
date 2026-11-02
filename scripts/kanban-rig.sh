@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# bash scripts/kanban-rig.sh <R1|R2|R3|R4|R5|R6|W|W4|W5> — one run of the Kanban certification rig
-# on the visible dev stack: compose project shingo-dev, plants/kanban-press.yaml, Core :8083,
-# Edge :8081. docs/fleet-simulator/kanban.md says what each run injects and catches.
+# bash scripts/kanban-rig.sh <R1..R6|W|W5|W6|P1..P6> — one run of the Kanban certification rig
+# on the visible dev stack: compose project shingo-dev, plants/kanban-press.yaml (P1..P6:
+# plants/kanban-press5.yaml), Core :8083, Edge :8081. docs/fleet-simulator/kanban.md says what each run injects and catches.
 #
 # It brings the stack up from nothing, seeds with Core stopped (docs/dev-env/sim.md),
 # presses the run's buttons over Core and Edge HTTP, waits to the event plus settle,
@@ -16,8 +16,13 @@
 #   windows.tsv         each window's cart every 30 s, with its live orders
 #   lit.jsonl           the unloader's board every 30 s, its assignments among it
 #   log.txt             what the run pressed, and when
+#   orders.tsv          every order at the run's end, order-history.tsv every history row: a
+#                       long order is read from these, the database goes with the next run
+#   family-watch.tsv    every 3 s, K's families: pool, slot, line, window, flight, found
+#   cart-watch.tsv      every 3 s, each cart of the loop: where it stands, its hard claim, its
+#                       live orders, its live legs, the last order that named it
 #
-# W and W5, the walk, add, every 3 wall-seconds from the run's start:
+# W, W5 and W6, the walk, add, every 3 wall-seconds from the run's start:
 #
 #   walk.tsv            wall time, sim clock, and each carrier of the press's loop: label,
 #                       type, node, its group, claimed order
@@ -32,12 +37,14 @@
 # so a gate and a run never overlap.
 #
 # Env: KANBAN_RIG_OUT, KANBAN_RIG_REPLACE, KANBAN_RIG_NO_BUILD=1 (reuse the images),
-#      SHINGO_BIND (default 127.0.0.1).
+#      SHINGO_BIND (default 127.0.0.1), KANBAN_RIG_P5_CANCEL_ON_ROBOT=1 (P5's CANCEL waits
+#      for a 32x30 on a robot bound for press 2).
 set -uo pipefail
 export MSYS_NO_PATHCONV=1
 
 # ── THE NAMES, in one place: the rename pass moves these ────────────────────────────────
 KANBAN_API=/api/nodes/kanban/levels
+FAMILY_API=/api/nodes/kanban/families
 CARD_GROUP=group_node
 CARD_TYPE=bin_type_code
 K=PRESS-KANBAN
@@ -54,18 +61,11 @@ STYLE_SMALL=KP-SMALL
 STYLE_BIG=KP-BIG
 STYLE_TOTES=KP-TOTES
 STYLE_32=KP-32
+POSITIONS="'PLN_021','PLN_022','PLN_023','PLN_024'"
 LIT_NONE_SHORT='"none_short":true'  # the card's "no group is short", on a tile's assignment
-PARKED_AT_LEVEL=ngrp-at-level       # dispatch.CauseNGRPAtLevel, a push refused at a level
+PARKED_AT_LEVEL=ngrp-at-level       # dispatch.CauseNGRPAtLevel, a stranger refused at a level
+PARKED_NO_SLOT=waiting_for_slot     # the history code of a push no slot admits
 NO_EMPTY=finder-no-empty-of-type    # the queue cause of an ask with nothing to fetch
-
-# K's slots and what each allows, in one place. plantspec.Slot has no field for it and the
-# seeder writes none (plants/kanban-press.yaml's head), so apply_slot_types posts this after
-# the seed. cmd/seeddev rigSlotTypes is the docker tests' copy, and
-# TestKanbanPressFixture_TheDriverStatesTheSameTable keeps the two lines below as they are.
-SLOT_TYPES=(
-  "PKB_001 PKB_002 PKB_003 PKB_004 PKB_005 PKB_006 PKB_007 PKB_008 PKB_009 PKB_010:$SMALL $BIG $TOTES"
-  "PKB_011 PKB_012 PKB_013 PKB_014 PKB_015 PKB_016:$C32"
-)
 
 SIM_SPEED=10            # shingo-*/*.dev.yaml sim.speed; 1 sim-minute is 6 wall-seconds
 CORE=http://127.0.0.1:8083
@@ -75,8 +75,18 @@ PROJECT=shingo-dev
 
 RUN="${1:-}"
 case "$RUN" in
-  R1|R2|R3|R4|R5|R6|W|W4|W5) ;;
-  *) echo "usage: bash scripts/kanban-rig.sh <R1|R2|R3|R4|R5|R6|W|W4|W5>" >&2; exit 2 ;;
+  R1|R2|R3|R4|R5|R6|W|W5|W6) ;;
+  P1|P2|P3|P4|P5|P6)
+    PLANT=/plants/kanban-press5.yaml
+    K=P5-KANBAN
+    K2=""
+    SM=P5-SM
+    UNLOAD_GROUP=P5-UNLOAD
+    PRESS_OPS=P5-PRESS-1-OPS
+    UNLOAD_OPS=P5-UNLOAD-OPS
+    POSITIONS="$(for p in 1 2 3 4 5; do for i in 1 2 3 4; do printf "'PLN_5%d%d'," "$p" "$i"; done; done | sed 's/,$//')"
+    ;;
+  *) echo "usage: bash scripts/kanban-rig.sh <R1..R6|W|W5|W6|P1..P6>" >&2; exit 2 ;;
 esac
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -113,6 +123,16 @@ empties() {
        WHERE g.name = '$1' AND t.code = '$2' AND b.payload_code = ''"
 }
 node_id() { sql "SELECT id FROM nodes WHERE name = '$1'"; }
+
+# step_node <order alias> <step expr>: the SQL for where a plan step happens, as Core's
+# helpers.StepNodeSQL spells it (an order's carts are its order_bins rows, one per lift, and a
+# row names steps, not nodes): the step's node, else its group; a plain order's 0 and 1 are its
+# source and delivery.
+step_node() {
+  local o="$1" i="$2"
+  printf "(CASE WHEN (%s) IS NULL OR (%s) < 0 THEN '' WHEN left(COALESCE(%s.steps_json,''),1) = '[' AND jsonb_array_length(%s.steps_json::jsonb) > 0 THEN COALESCE(NULLIF(%s.steps_json::jsonb->(%s)->>'node',''), %s.steps_json::jsonb->(%s)->>'group','') WHEN (%s) = 0 THEN COALESCE(%s.source_node,'') WHEN (%s) = 1 THEN COALESCE(%s.delivery_node,'') ELSE '' END)" \
+    "$i" "$i" "$o" "$o" "$o" "$i" "$o" "$i" "$i" "$o" "$i" "$o"
+}
 bin_id() { sql "SELECT id FROM bins WHERE label = '$1'"; }
 
 # oldest_empty <group> <type>: the label of one such cart nothing has claimed.
@@ -197,37 +217,6 @@ bring_up() {
   local login
   login="$(curl -s -m 10 -o "$OUT/.last" -w '%{http_code}' -c "$COOKIES" -d "username=admin&password=admin" "$CORE/login")"
   case "$login" in 30*) ;; *) die "Core login refused ($login)" ;; esac
-  apply_slot_types
-}
-
-# apply_slot_types: K's slots' allowed types, through two of the Nodes page's doors: the rows
-# (/api/nodes/bin-types) and the mode (/api/nodes/properties/set). The modal's own post is
-# /nodes/update, which also rewrites a slot's station mode and name; these write only this. No
-# force: the holds-bins guard on a slot reads the slot's own children, of which it has none.
-# Core and the Edge are up, and the press's first cart is 10 sim-min off: a minute's wall
-# clock against these few posts. K is short and nothing outside it holds an empty, so no ask
-# is holding a slot in the meantime.
-apply_slot_types() {
-  local entry slots types code ids id slot node posted=0
-  for entry in "${SLOT_TYPES[@]}"; do
-    slots="${entry%%:*}"; types="${entry##*:}"
-    ids=""
-    for code in $types; do
-      id="$(sql "SELECT id FROM bin_types WHERE code = '$code'")"
-      [ -n "$id" ] || die "no bin type $code"
-      ids="${ids:+$ids,}$id"
-    done
-    for slot in $slots; do
-      node="$(node_id "$slot")"
-      [ -n "$node" ] || die "no slot $slot"
-      http_ok "$(core_post /api/nodes/bin-types "{\"node_id\":$node,\"bin_type_ids\":[$ids]}")" \
-        || die "the types of $slot refused: $(cut -c1-200 "$OUT/.last")"
-      http_ok "$(core_post /api/nodes/properties/set "{\"node_id\":$node,\"key\":\"bin_type_mode\",\"value\":\"specific\"}")" \
-        || die "the mode of $slot refused: $(cut -c1-200 "$OUT/.last")"
-      posted=$(( posted + 1 ))
-    done
-  done
-  say "slot types applied on $posted of $K's slots"
 }
 
 # station_view <code>: the Edge's public view of the operator station with that code.
@@ -247,7 +236,7 @@ resolve_edge_ids() {
   view="$(station_view "$PRESS_OPS")" || die "no operator station $PRESS_OPS on the Edge"
   PROCESS_ID="$(printf '%s' "$view" | grep -o '"process":{"id":[0-9]*' | grep -o '[0-9]*$' | head -1)"
   [ -n "$PROCESS_ID" ] || die "the press's view names no process"
-  say "KP-PRESS is Edge process $PROCESS_ID"
+  say "$PRESS_OPS is Edge process $PROCESS_ID"
 }
 style_id() {
   station_view "$PRESS_OPS" | grep -o "\"id\":[0-9]*,\"name\":\"$1\"" | head -1 | sed 's/"id":\([0-9]*\).*/\1/'
@@ -339,16 +328,52 @@ sample_loop() {
     esac
   done
   while :; do
-    printf '{"at":"%s","cards":%s}\n' "$(date -u +%H:%M:%SZ)" "$(curl -s -m 10 "$CORE$KANBAN_API")" >>"$OUT/kanban-cards.jsonl"
+    printf '{"at":"%s","cards":%s,"families":%s}\n' "$(date -u +%H:%M:%SZ)" "$(curl -s -m 10 "$CORE$KANBAN_API")" \
+      "$(curl -s -m 10 "$CORE$FAMILY_API?group_node_id=$K_ID")" >>"$OUT/kanban-cards.jsonl"
     [ -n "$unload_id" ] && printf '{"at":"%s","view":%s}\n' "$(date -u +%H:%M:%SZ)" \
       "$(curl -s -m 10 "$EDGE/api/operator-stations/$unload_id/view")" >>"$OUT/lit.jsonl"
     sql "SELECT to_char(now(),'HH24:MI:SS'), n.name, COALESCE(b.label,''), COALESCE(t.code,''), COALESCE(b.payload_code,''),
-                (SELECT count(*) FROM orders o WHERE o.bin_id = b.id
+                (SELECT count(*) FROM order_bins ob JOIN orders o ON o.id = ob.order_id WHERE ob.bin_id = b.id
                   AND o.status NOT IN ('confirmed','failed','cancelled','skipped'))
            FROM nodes n JOIN nodes g ON g.id = n.parent_id
            LEFT JOIN bins b ON b.node_id = n.id LEFT JOIN bin_types t ON t.id = b.bin_type_id
           WHERE g.name IN ('$UNLOAD_GROUP','WELD-UNLOAD') ORDER BY n.name" >>"$OUT/windows.tsv" 2>/dev/null
     sleep 30
+  done
+}
+
+# loop_watcher: found by place and every cart, every 3 s. Found is read before the carts, so a
+# row of family-watch.tsv reads against the cart-watch.tsv rows with the same `at`.
+loop_watcher() {
+  local at
+  printf 'at\tfamily\tpool\tslot\tline\twindow\tflight\tfound\n' >"$OUT/family-watch.tsv"
+  printf 'at\ttype\tfamily\tlabel\tnode\tgroup\tclaimed_order\tlive_orders\tlive_legs\tlast_named\n' >"$OUT/cart-watch.tsv"
+  while :; do
+    at="$(date -u +%H:%M:%SZ)"
+    curl -s -m 5 "$CORE$FAMILY_API?group_node_id=$K_ID" \
+      | grep -o '"family":"[^"]*","family_id":[0-9]*,"pool":[0-9]*,"pool_declared":[a-z]*,"minimum":[0-9]*,"mix":[0-9]*,"slot":[0-9]*,"line":[0-9]*,"window":[0-9]*,"flight":[0-9]*,"found":[0-9]*' \
+      | sed -E "s/.*\"family\":\"([^\"]*)\".*\"pool\":([0-9]+),.*\"slot\":([0-9]+),\"line\":([0-9]+),\"window\":([0-9]+),\"flight\":([0-9]+),\"found\":([0-9]+)/$at\t\1\t\2\t\3\t\4\t\5\t\6\t\7/" \
+      >>"$OUT/family-watch.tsv"
+    sql "SELECT '$at', t.code, f.code, b.label, COALESCE(n.name,''), COALESCE(g.name,''), COALESCE(b.claimed_by::text,''),
+                COALESCE((SELECT string_agg(o.id||':'||o.status||':'||COALESCE(o.source_node,'')||'>'||COALESCE(o.delivery_node,''), ',')
+                            FROM orders o WHERE (o.named_bin_id = b.id
+                                 OR EXISTS (SELECT 1 FROM order_bins ob WHERE ob.order_id = o.id AND ob.bin_id = b.id))
+                             AND o.status NOT IN ('confirmed','failed','cancelled','skipped')),''),
+                COALESCE((SELECT string_agg(o.id||':'||o.status||':'||$(step_node o ob.pick_step)||'>'||$(step_node o ob.drop_step), ',')
+                            FROM order_bins ob JOIN orders o ON o.id = ob.order_id WHERE ob.bin_id = b.id
+                             AND o.status NOT IN ('confirmed','failed','cancelled','skipped')),''),
+                COALESCE((SELECT x.id||':'||x.status||':'||x.s||'>'||x.d FROM (
+                            SELECT o.id, o.status, COALESCE(o.source_node,'') s, COALESCE(o.delivery_node,'') d
+                              FROM orders o WHERE o.named_bin_id = b.id
+                                AND NOT EXISTS (SELECT 1 FROM order_bins ob WHERE ob.order_id = o.id)
+                            UNION ALL
+                            SELECT o.id, o.status, $(step_node o ob.pick_step), $(step_node o ob.drop_step)
+                              FROM order_bins ob JOIN orders o ON o.id = ob.order_id WHERE ob.bin_id = b.id
+                          ) x ORDER BY x.id DESC LIMIT 1),'')
+           FROM bins b JOIN bin_types t ON t.id = b.bin_type_id JOIN carrier_families f ON f.id = t.family_id
+           LEFT JOIN nodes n ON n.id = b.node_id LEFT JOIN nodes g ON g.id = n.parent_id
+          WHERE b.label NOT LIKE '%-SM-%' ORDER BY f.code, b.label" >>"$OUT/cart-watch.tsv" 2>/dev/null
+    sleep 3
   done
 }
 
@@ -373,12 +398,18 @@ long_orders() {
 collect() {
   say "collect"
   long_orders
+  sql "SELECT id, order_type, status, COALESCE(source_node,''), COALESCE(delivery_node,''), COALESCE(queue_cause,''),
+              COALESCE(error_detail,''), created_at, updated_at, completed_at,
+              COALESCE((SELECT string_agg(ob.bin_id::text, '+' ORDER BY ob.id) FROM order_bins ob WHERE ob.order_id = orders.id),''),
+              COALESCE(parent_order_id::text,''), COALESCE(edge_uuid,'') FROM orders ORDER BY id" >"$OUT/orders.tsv"
+  sql "SELECT * FROM order_history ORDER BY order_id, id" >"$OUT/order-history.tsv"
   ( cd shingo-core && GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o "$OUT/soakstat" ./cmd/soakstat ) \
     || { fail "soakstat did not build"; return; }
   local cid; cid="$(dc ps -q core)"
   docker cp "$OUT/soakstat" "$cid:/tmp/soakstat" >/dev/null 2>&1 || { fail "could not place soakstat"; return; }
   docker exec "$cid" /tmp/soakstat -config /etc/shingo/shingocore.dev.yaml -stranded >"$OUT/stranded.txt" 2>&1
   docker exec "$cid" /tmp/soakstat -config /etc/shingo/shingocore.dev.yaml >"$OUT/soakstat.txt" 2>&1
+  rm -f "$OUT/soakstat"
 
   # A STRANDED ORDER AND A WINDOW WITH NO DOOR ARE EVERY RUN'S STOPS (the brief's U9).
   local stranded
@@ -415,46 +446,78 @@ in_group() {
 
 never_to_sm() { check_zero "no order delivered to $SM" "$(orders_count "delivery_node IN $(in_group "$SM")")"; }
 
-# lit_other_than <type>: unloader assignments naming any other type, across the samples.
+# lit_other_than <type>: unloader assignments naming any other type, across the samples. A blank
+# assignment is "no group is short", which lights nothing.
 lit_other_than() {
-  grep -o '"assignment":{"bin_type":"[^"]*"' "$OUT/lit.jsonl" 2>/dev/null | grep -vc "\"$1\"" || true
+  grep -o '"assignment":{"bin_type":"[^"]*"' "$OUT/lit.jsonl" 2>/dev/null | grep -v '"bin_type":""' | grep -vc "\"$1\"" || true
 }
 
 # ── THE RUNS. A criterion the fixture must meet stays a check, failing if it fails. ──────
-# In this fixture K's card reads its running type short by the 4 on the positions, for as long
-# as the press runs: 6 wanted, 2 standing, "no empty <type> outside the group".
-line_of() { printf '"%s":"%s","%s":"%s"' "$CARD_GROUP" "$K" "$CARD_TYPE" "$1"; }
+
+# mix_is <small> <big> <totes> <32x30>: K stands exactly that many empties of each.
+mix_is() {
+  [ "$(empties "$K" "$SMALL")" = "$1" ] && [ "$(empties "$K" "$BIG")" = "$2" ] \
+    && [ "$(empties "$K" "$TOTES")" = "$3" ] && [ "$(empties "$K" "$C32")" = "$4" ]
+}
+mix_said() {
+  echo "K S$(empties "$K" "$SMALL") B$(empties "$K" "$BIG") T$(empties "$K" "$TOTES") C$(empties "$K" "$C32")"
+}
+# expect_mix <what> <small> <big> <totes> <32x30>: waited for, a refill's carts leave K between two
+# samples.
+expect_mix() {
+  local what=$1; shift
+  if wait_for 180 "$what: K S$1 B$2 T$3 C$4" "mix_is $1 $2 $3 $4"; then
+    pass "$what: K S$1 B$2 T$3 C$4"
+  else
+    fail "$what: $(mix_said), want S$1 B$2 T$3 C$4"
+  fi
+}
+
+# expect_on_press <what> <type> <n>: waited for, a swap takes a position's cart between two samples.
+expect_on_press() {
+  if wait_for 180 "$1" "[ \"\$(on_press \"$2\")\" = \"$3\" ]"; then
+    pass "$1 ($3)"
+  else
+    fail "$1: got $(on_press "$2"), want $3"
+  fi
+}
+
+# found_held: found equals the pool at every sample of the run, per (kanban, family).
+found_held() {
+  local bad
+  bad="$(grep -o '"family":"[^"]*","family_id":[0-9]*,"pool":[0-9]*,"pool_declared":[a-z]*,"minimum":[0-9]*,"mix":[0-9]*,"slot":[0-9]*,"line":[0-9]*,"window":[0-9]*,"flight":[0-9]*,"found":[0-9]*' \
+    "$OUT/kanban-cards.jsonl" 2>/dev/null \
+    | sed -E 's/.*"family":"([^"]*)".*"pool":([0-9]+),.*"found":([0-9]+)/\1 \2 \3/' \
+    | awk '$2 != $3 { n++ } END { print n + 0 }')"
+  check_zero "samples where found differs from the pool" "$bad"
+  check_zero "3 s samples where found differs from the pool" \
+    "$(awk -F'\t' 'NR > 1 && $3 != $8 { n++ } END { print n + 0 }' "$OUT/family-watch.tsv")"
+}
+
+# sm_unchanged: the plain supermarket stands the 4 carts its plant file stocks it with.
+sm_unchanged() {
+  check "$SM still holds what it was stocked with" "$(sql "SELECT count(*) FROM bins b JOIN nodes n ON n.id = b.node_id
+      JOIN nodes l ON l.id = n.parent_id JOIN nodes g ON g.id = l.parent_id WHERE g.name = '$SM' AND b.label LIKE '%-SM-%'")" 4
+  check_zero "no keeper's ask outside the loop" "$(orders_count "edge_uuid LIKE 'core-mnt-%'")"
+}
 
 run_R1() {
   say "R1: steady state on small, 20 wall-minutes"
   sleep $(( 20 * 60 ))
   check "K wants small 6" "$(card "$K" "$SMALL" want)" 6
-  check "K2 wants small 2" "$(card "$K2" "$SMALL" want)" 2
+  check "K2 wants small 3" "$(card "$K2" "$SMALL" want)" 3
   check_zero "unloader carts lit anything but small" "$(lit_other_than "$SMALL")"
-  # K's small rests at 2 with the pair home: read when it does, not on a sample mid-refill.
   if wait_for 120 "K's small rests at 2" '[ "$(card "$K" "$SMALL" resident)" = 2 ]'; then
-    pass "K's small line rests at want 6, resident 2"
+    pass "K's small line rests at want 6, resident 2, held on the line"
   else
     fail "K's small line never rested at 2: resident $(card "$K" "$SMALL" resident)"
   fi
-  check "K's small line says what holds it" "$(card_said "$K" "$SMALL" "\"held_by\":\"no empty $SMALL outside the group")" yes
-  # K's small is held by that for the whole run, so it is not one of the lines this judges. A
-  # refill's two carts stand on K's slots until they are lifted, so another line can read
-  # held for one tick: held across two samples is the defect. The one-tick ones are counted
-  # in held-one-tick.txt.
-  tr '{' '\n' <"$OUT/kanban-cards.jsonl" | grep -E "\"$CARD_GROUP\":\"($K|$K2)\"" | grep '"held_by"' \
-    | grep -vF "$(line_of "$SMALL")" >"$OUT/held-one-tick.txt" || true
-  check_zero "lineside lines other than K's small held across two samples" "$(awk -v a="\"$CARD_GROUP\":\"$K\"" -v b="\"$CARD_GROUP\":\"$K2\"" -v s="$(line_of "$SMALL")" '
-    { n = split($0, card, "{"); delete now
-      for (i = 1; i <= n; i++)
-        if ((index(card[i], a) || index(card[i], b)) && index(card[i], "\"held_by\"") && !index(card[i], s)) {
-          key = substr(card[i], 1, index(card[i], "\"want\"")); now[key] = 1; if (key in was) bad++
-        }
-      delete was; for (key in now) was[key] = 1 }
-    END { print bad + 0 }' "$OUT/kanban-cards.jsonl")"
+  check "K's small reads short 0" "$(card "$K" "$SMALL" gap)" 0
   check_zero "pushes parked at a level" "$(orders_count "queue_cause = '$PARKED_AT_LEVEL'")"
   check_zero "orders live and queued on a kanban at the end" \
     "$(orders_count "status IN ('queued','sourcing') AND delivery_node IN $(in_group "$K")")"
+  found_held
+  sm_unchanged
   never_to_sm
 }
 
@@ -468,14 +531,11 @@ run_R2() {
   cutover 600 || { fail "the changeover did not reach its cutover"; return; }
   pass "cut over to totes"
   sim_min 10
-  # The 4 positions hold totes and K its 2/2/2. A refill's carts leave K between two ticks, so
-  # the picture is waited for, not sampled once.
-  if wait_for 120 "K holds 2 of each and the positions totes" 'family_settled "$TOTES" 2 2 2'; then
-    pass "K holds its 2/2/2 and the 4 positions totes"
-  else
-    fail "never K's 2/2/2 with totes on the positions: $(family_said "$TOTES")"
-  fi
+  expect_mix "on totes" 2 2 2 6
+  expect_on_press "the 4 positions hold totes" "$TOTES" 4
   check_zero "K2's keeper took from K" "$(orders_count "delivery_node IN $(in_group "$K2") AND source_node IN $(in_group "$K")")"
+  found_held
+  sm_unchanged
   never_to_sm
 }
 
@@ -485,47 +545,27 @@ run_R3() {
   changeover_to "$STYLE_TOTES" || return
   changeover_to "$STYLE_32" || return
   check "K wants 32x30 6" "$(card "$K" "$C32" want)" 6
-  # K's 6 and the 4 positions want 10 of the 6 carts. K's card says so, and nothing fetches any.
-  check "K's card says what holds its 32x30" "$(card_said "$K" "$C32" "\"held_by\":\"no empty $C32 outside the group")" yes
   if wait_for 120 "the positions hold 32x30" '[ "$(on_press "$C32")" = 4 ]'; then
     pass "the 4 positions hold 32x30"
   else
     fail "the positions hold $(on_press "$C32") of 4 32x30"
   fi
-  # K wants 6 of the 10 45x48 and has no source and no overflow: the 4 off the positions have no
-  # level to land on. simcalc's CHANGEOVER ROOM says so. This fails on the fixture as it stands.
-  check_zero "45x48 carts parked at K's level on the windows under $STYLE_32" "$(parked_on_windows)"
-  check_zero "windows held by a push that cannot land, under $STYLE_32" "$(windows_held)"
+  # The 4 off the positions have no level to land on and land all the same: a return is never
+  # refused at a level. Their slots stand free for them.
+  expect_mix "on 32x30, the family's extras stand as what they came off as" 2 2 6 2
+  check_zero "carts parked at K's level on the windows under $STYLE_32" "$(parked_on_windows)"
   changeover_to "$STYLE_TOTES" || return
-  if wait_for 120 "K holds 2 of each and the positions totes" 'family_settled "$TOTES" 2 2 2'; then
-    pass "back on totes: K holds its 2/2/2 and the 4 positions totes"
-  else
-    fail "back on totes, never K's 2/2/2 with totes on the positions: $(family_said "$TOTES")"
-  fi
-  # The mirror of the above: K wants 2 32x30, so those off the positions have no level either.
-  check_zero "32x30 carts parked at K's level on the windows, back on $STYLE_TOTES" "$(parked_on_windows)"
-  check "K's 32x30 back at 6" "$(empties "$K" "$C32")" 6
+  expect_mix "back on totes" 2 2 2 6
+  check_zero "carts parked at K's level on the windows, back on $STYLE_TOTES" "$(parked_on_windows)"
+  expect_on_press "the 4 positions hold totes" "$TOTES" 4
+  found_held
+  sm_unchanged
   never_to_sm
-}
-
-# family_settled <running type> <small> <big> <totes>: K holds those of the two types the press
-# is not on and of the running type its 2, and the 4 positions hold the running type.
-family_settled() {
-  [ "$(on_press "$1")" = 4 ] && [ "$(empties "$K" "$SMALL")" = "$2" ] && [ "$(empties "$K" "$BIG")" = "$3" ] \
-    && [ "$(empties "$K" "$TOTES")" = "$4" ]
-}
-family_said() {
-  echo "positions $(on_press "$1"), K small $(empties "$K" "$SMALL") big $(empties "$K" "$BIG") totes $(empties "$K" "$TOTES")"
 }
 
 # parked_on_windows: the pushes standing parked at a level, off the press's windows.
 parked_on_windows() {
   orders_count "status = 'queued' AND queue_cause = '$PARKED_AT_LEVEL' AND source_node IN $(in_group "$UNLOAD_GROUP")"
-}
-# windows_held: the press's windows standing with an empty whose push is parked.
-windows_held() {
-  sql "SELECT count(DISTINCT o.source_node) FROM orders o
-       WHERE o.status = 'queued' AND o.queue_cause = '$PARKED_AT_LEVEL' AND o.source_node IN $(in_group "$UNLOAD_GROUP")"
 }
 
 run_R4() {
@@ -539,18 +579,29 @@ run_R4() {
   check "CANCEL reverts cover within a tick: K wants totes 2" "$(card "$K" "$TOTES" want)" 2
   check_zero "changeover legs left live after the CANCEL settled" \
     "$(sim_min 2; orders_count "status NOT IN ('confirmed','failed','cancelled','skipped') AND queue_cause ILIKE '%changeover%'")"
+  check_zero "carts parked at K's level after the CANCEL" "$(parked_on_windows)"
   start "$STYLE_BIG" || { fail "START big refused"; return; }
   cutover 600 || { fail "small -> big did not reach its cutover"; return; }
   pass "cut over to big"
   sim_min 10
   check_zero "totes left on the positions: the next START lifts them" "$(on_press "$TOTES")"
+  found_held
+  sm_unchanged
   never_to_sm
 }
 
 # on_press <type>: carts of a type on the press's four positions.
 on_press() {
   sql "SELECT count(*) FROM bins b JOIN nodes n ON n.id = b.node_id JOIN bin_types t ON t.id = b.bin_type_id
-       WHERE n.name IN ('PLN_021','PLN_022','PLN_023','PLN_024') AND t.code = '$1'"
+       WHERE n.name IN ($POSITIONS) AND t.code = '$1'"
+}
+
+# plant_at_rest: no order moving and none on its way, staged swaps aside. A cart stood on a slot by
+# hand ahead of a cart already filed to it holds that cart on its robot (STOPS 15).
+plant_at_rest() {
+  wait_for 300 "the plant at rest" \
+    '[ "$(orders_count "status NOT IN ('"'"'confirmed'"'"','"'"'failed'"'"','"'"'cancelled'"'"','"'"'skipped'"'"','"'"'staged'"'"')")" = 0 ]' \
+    || fail "the plant never came to rest"
 }
 
 # hand_register <label prefix> <type> [node]: a person bringing a new cart in, by the bin page's
@@ -564,27 +615,29 @@ hand_register() {
   http_ok "$code"
 }
 
-# R5 keeps what the fixture can show. K over-handed first: K's asks past SM's one cart (below)
-# would otherwise hold the slots the over-hand needs.
+# R5: every slot admitting the family taken, the next cart parks visible and lands when a slot
+# frees. Then a cart carried out of the loop: the family is one short, and its keeper takes one
+# from SM, one ask for one cart, and nothing ever repays SM.
 run_R5() {
-  say "R5: K whole parks the next cart; K takes from SM and nothing repays it"
+  say "R5: K full parks the next cart; a cart lost is one ask; SM is not repaid"
   sim_min 10
 
   local i slot
   for i in 1 2 3 4; do
+    plant_at_rest
     slot="$(free_child "$K" "$SMALL")"
     [ -n "$slot" ] || die "no free slot in K for a small"
     hand_register "KB-HAND-$i-" "$SMALL" "$slot" || fail "could not register a cart on $slot"
   done
-  if wait_for 180 "K is whole of small" '[ "$(card "$K" "$SMALL" resident)" = 6 ]'; then
-    pass "K over-handed reads resident 6 of its want of 6"
+  if wait_for 180 "K holds 6 small" '[ "$(card "$K" "$SMALL" resident)" = 6 ]'; then
+    pass "K over-handed reads resident 6"
   else
-    fail "K never read whole: resident $(card "$K" "$SMALL" resident)"
+    fail "K never read 6: resident $(card "$K" "$SMALL" resident)"
   fi
+  check_zero "asks outside with K above its pool" "$(orders_count "edge_uuid LIKE 'core-mnt-%'")"
 
-  # The next cart: one more stood on a window, as the next off the process would. It has no
-  # source and no overflow. The card stands only while the cart is on its window, so the board
-  # is read every second here; the 30 s samples can fall either side of it.
+  # The next cart: one more stood on a window, as the next off the process would. The card stands
+  # only while the cart is on its window, so the board is read every second here.
   hand_register "KB-HAND-5-" "$SMALL" || fail "could not register the next cart"
   stand_on_window "KB-HAND-5-0001" || fail "could not stand the cart on a window"
   local unload_id="" id saw=no parked=""
@@ -595,32 +648,42 @@ run_R5() {
   done
   for _ in $(seq 1 120); do
     case "$(curl -s -m 5 "$EDGE/api/operator-stations/$unload_id/view")" in *"$LIT_NONE_SHORT"*) saw=yes ;; esac
-    parked="$(sql "SELECT o.id FROM orders o JOIN bins b ON b.id = o.bin_id
-                   WHERE b.label = 'KB-HAND-5-0001' AND o.status = 'queued' AND o.queue_cause = '$PARKED_AT_LEVEL'
-                     AND o.delivery_node = '$K' LIMIT 1")"
+    # From the order's history: a park can last seconds, and a slot freeing ends it between samples.
+    parked="$(sql "SELECT o.id FROM orders o JOIN bins b ON (b.id = o.named_bin_id
+                     OR b.id IN (SELECT ob.bin_id FROM order_bins ob WHERE ob.order_id = o.id))
+                     JOIN order_history h ON h.order_id = o.id
+                   WHERE b.label = 'KB-HAND-5-0001' AND h.status = 'queued' AND h.code = '$PARKED_NO_SLOT'
+                     AND h.detail LIKE 'No slot of $K admits%' LIMIT 1")"
     [ -n "$parked" ] && [ "$saw" = yes ] && break
     sleep 1
   done
   check "the card says no group is short" "$saw" yes
-  check "the cart parks named at K" "$([ -n "$parked" ] && echo yes || echo no)" yes
-  # It leaves when K is short: the press's next refill makes it so, within a cycle.
+  check "the cart parks named at K, no slot" "$([ -n "$parked" ] && echo yes || echo no)" yes
   if [ -n "$parked" ]; then
-    if wait_for 180 "the parked cart left when K was short" \
+    if wait_for 180 "the parked cart left when a slot freed" \
         "[ \"\$(sql \"SELECT status NOT IN ('queued','pending','sourcing') FROM orders WHERE id = $parked\")\" = t ]"; then
-      pass "the parked cart left when K was short"
+      pass "the parked cart left when a slot freed"
     else
       fail "the parked cart stayed parked: $(sql "SELECT status, queue_cause FROM orders WHERE id = $parked")"
     fi
   fi
+  check_zero "pushes parked at a level" "$(orders_count "queue_cause = '$PARKED_AT_LEVEL'")"
   never_to_sm
 
-  # K takes a cart from SM, plain, by its plant-wide search. Asked with the pair out so K is
-  # short by more than the one cart SM holds: the keeper's forecast is per type, so it asks for
-  # its whole gap, and the asks past the one cart stand queued, each holding a slot and counted
-  # as asked. TestKanbanRig_R5_SMIsNotRepaid names it. The last check is that finding's.
-  wait_for 120 "K is short by 2 or more" '[ "$(card "$K" "$SMALL" gap)" -ge 2 ]' \
-    || say "K's small gap stayed at $(card "$K" "$SMALL" gap)"
-  local cart="" spot=""
+  # The over-hand leaves the floor, each once it stands free, so the family is whole; then one
+  # cart is carried out of the loop.
+  local left=""
+  for _ in $(seq 1 150); do
+    sql "UPDATE bins SET node_id = NULL WHERE label LIKE 'KB-HAND-%' AND claimed_by IS NULL
+          AND node_id IN (SELECT id FROM nodes WHERE parent_id = (SELECT id FROM nodes WHERE name = '$K'))" >/dev/null
+    left="$(sql "SELECT count(*) FROM bins WHERE label LIKE 'KB-HAND-%' AND node_id IS NOT NULL")"
+    [ "$left" = 0 ] && break
+    sleep 2
+  done
+  check_zero "over-hand carts still on the floor" "$left"
+  sim_min 2
+  local asks; asks="$(orders_count "edge_uuid LIKE 'core-mnt-%'")"
+  local cart spot
   for _ in $(seq 1 30); do
     cart="$(oldest_empty "$K" "$SMALL")"; spot="$(free_child_lane)"
     if [ -n "$cart" ] && [ -n "$spot" ] && move_bin "$cart" "$spot"; then break; fi
@@ -628,16 +691,15 @@ run_R5() {
     sleep 2
   done
   [ -n "$cart" ] || die "could not carry a cart to $SM"
-  # K2 searches plant-wide too and K is whole here, so whichever keeper is short takes it.
-  if wait_for 180 "a keeper took the cart off $SM" \
-      '[ "$(orders_count "order_type = '"'"'retrieve_empty'"'"' AND status = '"'"'confirmed'"'"' AND source_node IN $(in_group "$SM")")" -ge 1 ]'; then
-    pass "a keeper took the cart off $SM by its plant-wide search: $(sql "SELECT delivery_node FROM orders WHERE order_type = 'retrieve_empty' AND source_node IN $(in_group "$SM") ORDER BY id DESC LIMIT 1")"
+  if wait_for 180 "K's keeper asked for the one it lost" \
+      '[ "$(orders_count "edge_uuid LIKE '"'"'core-mnt-%'"'"' AND status = '"'"'confirmed'"'"'")" -gt '"$asks"' ]'; then
+    pass "K's keeper took one off $SM: $(sql "SELECT source_node || ' -> ' || delivery_node FROM orders WHERE edge_uuid LIKE 'core-mnt-%' ORDER BY id DESC LIMIT 1")"
   else
-    fail "no keeper took the cart off $SM"
+    fail "K's keeper never fetched the cart it lost"
   fi
   sim_min 2
   never_to_sm
-  check_zero "K's asks standing queued on an empty that does not exist" \
+  check_zero "asks standing queued on an empty that does not exist" \
     "$(orders_count "status = 'queued' AND queue_cause = '$NO_EMPTY' AND delivery_node IN $(in_group "$K")")"
 }
 
@@ -655,49 +717,34 @@ carry_small() {
   return 1
 }
 
+# R6: a cart in the wrong buffer goes home. K2's two carried into K, K stands above its pool and
+# K2 below. K2's keeper may take what stands above K's pool and nothing K owns; K never drops below
+# its pool. SM holds carts too, and either is the keeper's to find: what R6 pins is K.
 run_R6() {
-  say "R6: raiding: K2 short, nothing plant-wide, K holding carts"
+  say "R6: K2's carts carried into K: K's keeper gives only above its pool"
   sim_min 10
-  # K2's two carts, by hand, into K: nothing stands outside the two kanbans.
-  local mark; mark="$(sql "SELECT COALESCE(max(id),0) FROM orders")"
   carry_small "$K2" "$K" || fail "could not take K2's first cart"
   carry_small "$K2" "$K" || fail "could not take K2's second cart"
-  sim_min 2
-  check "K holds carts" "$([ "$(empties "$K" "$SMALL")" -ge 1 ] && echo yes || echo no)" yes
-  check_zero "K2's keeper took from K" \
-    "$(orders_count "id > $mark AND delivery_node IN $(in_group "$K2") AND source_node IN $(in_group "$K")")"
-  sim_min 10
-  check_zero "K2's keeper took from K, after settle" \
-    "$(orders_count "id > $mark AND delivery_node IN $(in_group "$K2") AND source_node IN $(in_group "$K")")"
-  # Nothing can source it, so the keeper rightly asks nothing and K2's card says what holds it.
-  # K2 has no sources, so the sentence is keeper.nothingToSource's "outside the group". Read
-  # after the settle: the samples come every 30 s and the check before it is at 12.
-  check "K2's card says no empty anywhere it may look" "$(card_said "$K2" "$SMALL" "\"held_by\":\"no empty $SMALL outside the group")" yes
-  never_to_sm
-  # The run starved the weld by hand, so its orders wait on carts nothing can bring. Hand the
-  # carts back to K2: every order waiting on K2 moves, and the weld with them.
-  local moved; moved="$(orders_count "status = 'confirmed' AND source_node IN $(in_group "$K2")")"
-  carry_small "$K" "$K2" || fail "could not hand K2 its first cart back"
-  carry_small "$K" "$K2" || fail "could not hand K2 its second cart back"
-  wait_for 180 "the weld's waiting orders moved" \
-    '[ "$(orders_count "status = '"'"'queued'"'"' AND source_node IN $(in_group "$K2")")" = 0 ]' \
-    || fail "the weld's orders stayed queued after the carts came back"
-  if wait_for 180 "the weld took a cart from K2 again" \
-      '[ "$(orders_count "status = '"'"'confirmed'"'"' AND source_node IN $(in_group "$K2")")" -gt '"$moved"' ]'; then
-    pass "the weld moved after the carts came back"
+  if wait_for 240 "K2 whole again" '[ "$(empties "$K2" "$SMALL")" = 2 ]'; then
+    pass "K2 fetched back what it lost"
   else
-    fail "the weld took nothing from K2 after the carts came back"
+    fail "K2 holds $(empties "$K2" "$SMALL"), want 2"
   fi
+  check_zero "a cart K owns given away: K below its pool of small" \
+    "$([ "$(empties "$K" "$SMALL")" -lt 2 ] && echo 1 || echo 0)"
+  sim_min 10
+  never_to_sm
 }
 
 # free_child_lane: a mouth in SM, where a cart taken out of the loop stands.
 free_child_lane() {
   sql "SELECT n.name FROM nodes n JOIN nodes l ON l.id = n.parent_id JOIN nodes g ON g.id = l.parent_id
-       WHERE g.name = '$SM' AND n.depth = 1 AND NOT EXISTS (SELECT 1 FROM bins b WHERE b.node_id = n.id)
-       ORDER BY n.name LIMIT 1"
+       WHERE g.name = '$SM' AND NOT EXISTS (SELECT 1 FROM bins b WHERE b.node_id = n.id)
+         AND NOT EXISTS (SELECT 1 FROM orders o WHERE o.delivery_node = n.name AND o.status NOT IN ('confirmed','failed','cancelled','skipped'))
+       ORDER BY n.depth, n.name LIMIT 1"
 }
 
-# ── THE WALK. For watching cart by cart, not a verdict: no step's failure stops it. ─────────
+# ── THE WALK. Cart by cart, and its acceptance. No step's failure stops it. ────────
 mark() {
   local line; line="$(date -u +%H:%M:%SZ) sim=$(sim_clock) $*"
   echo "$line" >>"$OUT/walk-log.txt"
@@ -707,7 +754,7 @@ sim_clock() { curl -s -m 5 "$CORE/api/sim/status" | sed -n 's/.*"sim_now":"\([^"
 
 # walk_sampler: walk.tsv, walk-orders.tsv and walk-cards.jsonl, every 3 wall-seconds.
 walk_sampler() {
-  local unload_id="" id at sim positions
+  local unload_id="" id at sim
   for id in $(seq 1 12); do
     case "$(curl -s -m 10 "$EDGE/api/operator-stations/$id/view")" in
       *"\"code\":\"$UNLOAD_OPS\""*) unload_id="$id"; break ;;
@@ -715,7 +762,6 @@ walk_sampler() {
   done
   printf 'at\tsim\tlabel\ttype\tnode\tgroup\tclaimed_order\n' >"$OUT/walk.tsv"
   printf 'at\tsim\tid\ttype\tpayload\tsource\tdelivery\tstatus\tqueue_cause\tage_s\n' >"$OUT/walk-orders.tsv"
-  positions="'PLN_021','PLN_022','PLN_023','PLN_024'"
   while :; do
     at="$(date -u +%H:%M:%SZ)"; sim="$(sim_clock)"
     # Every carrier but the weld's own 3. A cart in flight stands on its transit node.
@@ -729,32 +775,34 @@ walk_sampler() {
                 o.status, COALESCE(NULLIF(o.queue_cause,''),'-'),
                 round(EXTRACT(EPOCH FROM (clock.now - o.created_at))::numeric, 0)
            FROM orders o, clock
-          WHERE (o.status NOT IN ('confirmed','failed','cancelled','skipped') OR o.updated_at > clock.now - interval '60 seconds')
+          WHERE (o.status NOT IN ('confirmed','failed','cancelled','skipped') OR o.updated_at > clock.now - interval '30 seconds')
             AND (o.source_node IN $(in_group "$K") OR o.delivery_node IN $(in_group "$K")
-              OR o.source_node IN ($positions) OR o.delivery_node IN ($positions)
+              OR o.source_node IN ($POSITIONS) OR o.delivery_node IN ($POSITIONS)
               OR o.source_node IN $(in_group "$UNLOAD_GROUP") OR o.delivery_node IN $(in_group "$UNLOAD_GROUP"))
           ORDER BY o.id" >>"$OUT/walk-orders.tsv" 2>/dev/null
-    printf '{"at":"%s","sim":"%s","cards":%s,"board":%s}\n' "$at" "$sim" \
+    printf '{"at":"%s","sim":"%s","cards":%s,"families":%s,"board":%s}\n' "$at" "$sim" \
       "$(curl -s -m 5 "$CORE$KANBAN_API")" \
+      "$(curl -s -m 5 "$CORE$FAMILY_API?group_node_id=$K_ID")" \
       "$(curl -s -m 5 "$EDGE/api/operator-stations/$unload_id/view" || echo null)" >>"$OUT/walk-cards.jsonl"
     sleep 3
   done
 }
 
-# walk_gate_and_cutover: wait for the gate, 15 wall-minutes at most, and press CUTOVER. A gate
-# that never opens is marked and the walk goes on: the press stays where it is and what the
-# next step finds is what the walk is for.
+# walk_gate_and_cutover: wait for the gate, 15 wall-minutes at most, and press CUTOVER.
 walk_gate_and_cutover() {
-  local deadline=$(( $(date +%s) + 900 )) code
+  local deadline=$(( $(date +%s) + 900 )) code begin
+  begin=$(date +%s)
   while ! gate_open; do
     if [ "$(date +%s)" -ge "$deadline" ]; then
       curl -s -m 10 "$EDGE/api/processes/$PROCESS_ID/changeover/gate-status" >"$OUT/gate-at-timeout-$1.json"
       mark "GATE NEVER OPENED $1 (15 wall-min): gate-at-timeout-$1.json"
+      fail "the gate never opened for $1"
       return 1
     fi
     sleep 2
   done
-  mark "GATE-OPEN $1"
+  mark "GATE-OPEN $1 after $(( $(date +%s) - begin )) wall-s"
+  pass "gate opened for $1 after $(( $(date +%s) - begin )) wall-s"
   code="$(edge_post "/api/processes/$PROCESS_ID/changeover/cutover" '{}')"
   mark "CUTOVER $1: $code $(cut -c1-200 "$OUT/.last")"
   http_ok "$code"
@@ -766,65 +814,80 @@ walk_start() {
     mark "$2 START $1"
   else
     mark "$2 START $1 REFUSED: $(cut -c1-200 "$OUT/.last")"
+    fail "START $1 refused"
   fi
 }
 
+# windows_clear <what>: every cart off the windows, within the unloader's own handling.
+windows_clear() {
+  local n="$(sql "SELECT count(*) FROM bins b JOIN nodes n ON n.id = b.node_id JOIN nodes g ON g.id = n.parent_id
+                  WHERE g.name = '$UNLOAD_GROUP' AND b.payload_code = ''")"
+  check_zero "$1: empties standing on the windows" "$n"
+}
+
 run_W() {
-  say "W: small settle, -> 32x30, -> big, each to cutover + 20 sim-min"
+  say "W: small settle, -> 32x30, steady, -> big"
   mark "BEGIN"
   sim_min 20
   mark "STEP1 settled on small"
+  expect_mix "step 1, steady on small" 2 2 2 6
+  expect_on_press "step 1: the line holds 4 small" "$SMALL" 4
+  check "step 1: small reads short 0" "$(card "$K" "$SMALL" gap)" 0
   walk_start "$STYLE_32" STEP2-START
   walk_gate_and_cutover 32x30
   sim_min 20
   mark "STEP3 20 sim-min on 32x30"
+  expect_mix "step 3, steady on 32x30: S2 B2 T2 held, the 4 extras small" 6 2 2 2
+  expect_on_press "step 3: the line holds 4 32x30" "$C32" 4
+  check_zero "step 3: the arm moves nothing with the mix whole" "$(orders_count "edge_uuid LIKE 'core-sp-%' AND status NOT IN ('confirmed','failed','cancelled','skipped')")"
+  windows_clear "step 3"
   walk_start "$STYLE_BIG" STEP4-START
   walk_gate_and_cutover big
   sim_min 20
   mark "END"
+  expect_mix "step 4 ends S2 B2 T2 C6, floaters 0" 2 2 2 6
+  expect_on_press "step 4: the line holds 4 big" "$BIG" 4
+  check_zero "pushes parked at a level" "$(orders_count "queue_cause = '$PARKED_AT_LEVEL'")"
+  found_held
+  sm_unchanged
+  never_to_sm
 }
 
-# hand_clear_windows: a person's relief, for the walk only: every empty on the press's windows
-# has its parked push terminated and is moved by hand onto a free child of K that admits it.
-# Without this a change off the floor leaves all 4 windows held and nothing past it can be seen.
-hand_clear_windows() {
-  local node label type oid slot done
-  while IFS=$'\t' read -r node label type <&3; do
-    [ -n "$label" ] || continue
-    done=""
-    # The sim operator files a new push about 2 s after a terminate, so each try does both.
-    for _ in $(seq 1 30); do
-      for oid in $(sql "SELECT id FROM orders WHERE source_node = '$node' AND status NOT IN ('confirmed','failed','cancelled','skipped')"); do
-        core_post /api/orders/terminate "{\"order_id\":$oid}" >/dev/null
-      done
-      slot="$(free_child "$K" "$type")"
-      if [ -n "$slot" ] && move_bin "$label" "$slot"; then mark "HAND $label $type $node -> $slot"; done=1; break; fi
-      sleep 1
-    done
-    [ -n "$done" ] || mark "HAND $label on $node could not be moved"
-  done 3< <(sql "SELECT n.name, b.label, t.code FROM bins b JOIN nodes n ON n.id = b.node_id JOIN nodes g ON g.id = n.parent_id
-                JOIN bin_types t ON t.id = b.bin_type_id
-                WHERE g.name = '$UNLOAD_GROUP' AND b.payload_code = '' ORDER BY n.name")
+# re_type <type>: an admin stamping every empty standing in K of the family, on the bin page's door.
+re_type() {
+  local bt label code
+  bt="$(sql "SELECT id FROM bin_types WHERE code = '$1'")"
+  for label in $(sql "SELECT b.label FROM bins b JOIN nodes n ON n.id = b.node_id JOIN nodes g ON g.id = n.parent_id
+                       JOIN bin_types t ON t.id = b.bin_type_id
+                      WHERE g.name = '$K' AND b.payload_code = '' AND b.claimed_by IS NULL AND t.code IN ('$SMALL','$BIG','$TOTES')"); do
+    code="$(core_post /api/bins/action "{\"id\":$(bin_id "$label"),\"action\":\"update\",\"params\":{\"bin_type_id\":$bt}}")"
+    http_ok "$code" || fail "re-type of $label: $code $(cut -c1-160 "$OUT/.last")"
+  done
 }
 
-# run_W4: W with the windows cleared by hand after the cutover, because W wedges there: what
-# step 3 and step 4 do once a person has made room. It is labelled in the log as a person's act.
-run_W4() {
-  say "W4: W, with the windows cleared by hand after the cutover to 32x30"
+# W6: the owner's case: all ten of the family set big, then big -> small. 8 re-types: the
+# line's 4 at the windows on their way back, K's 4 extras through the arm.
+run_W6() {
+  say "W6: -> big, every cart of the family set big, -> small"
   mark "BEGIN"
-  sim_min 20
-  mark "STEP1 settled on small"
-  walk_start "$STYLE_32" STEP2-START
-  walk_gate_and_cutover 32x30
-  sim_min 2
-  hand_clear_windows
-  mark "HAND windows cleared"
-  sim_min 20
-  mark "STEP3 20 sim-min on 32x30"
-  walk_start "$STYLE_BIG" STEP4-START
+  sim_min 10
+  walk_start "$STYLE_BIG" STEP-TO-BIG
   walk_gate_and_cutover big
+  sim_min 10
+  re_type "$BIG"
+  local all_big; all_big="$(mix_said)"
+  mark "ALL BIG: $all_big"
+  check "all ten set big" "$all_big" "K S0 B6 T0 C6"
+  walk_start "$STYLE_SMALL" STEP-TO-SMALL
+  walk_gate_and_cutover small
   sim_min 20
   mark "END"
+  expect_mix "back on small" 2 2 2 6
+  expect_on_press "the line holds 4 small" "$SMALL" 4
+  check_zero "pushes parked at a level" "$(orders_count "queue_cause = '$PARKED_AT_LEVEL'")"
+  found_held
+  sm_unchanged
+  never_to_sm
 }
 
 run_W5() {
@@ -835,17 +898,153 @@ run_W5() {
   walk_start "$STYLE_32" STEP2-START
   local deadline=$(( $(date +%s) + 900 ))
   while [ "$(on_press "$C32")" -lt 2 ]; do
-    if [ "$(date +%s)" -ge "$deadline" ]; then mark "TWO POSITIONS NEVER HELD 32x30 (15 wall-min)"; break; fi
+    if [ "$(date +%s)" -ge "$deadline" ]; then mark "TWO POSITIONS NEVER HELD 32x30 (15 wall-min)"; fail "two positions never held 32x30"; break; fi
     sleep 2
   done
   mark "$(on_press "$C32") positions hold 32x30"
-  if cancel_changeover; then mark "CANCEL"; else mark "CANCEL REFUSED: $(cut -c1-200 "$OUT/.last")"; fi
+  if cancel_changeover; then mark "CANCEL"; else mark "CANCEL REFUSED: $(cut -c1-200 "$OUT/.last")"; fail "CANCEL refused"; fi
   sim_min 10
   mark "10 sim-min after the CANCEL"
+  check_zero "the CANCEL parked nothing" "$(parked_on_windows)"
   walk_start "$STYLE_BIG" STEP4-START
   walk_gate_and_cutover big
   sim_min 10
   mark "END"
+  expect_on_press "the line holds 4 big" "$BIG" 4
+  found_held
+  sm_unchanged
+  never_to_sm
+}
+
+# ── FIVE PRESSES ON ONE UNLOADER ───────────────────────
+# press_n <n>: aim START, CANCEL and the gate at press n.
+press_n() {
+  PRESS_OPS="P5-PRESS-$1-OPS"
+  local view; view="$(station_view "$PRESS_OPS")" || die "no operator station $PRESS_OPS on the Edge"
+  PROCESS_ID="$(printf '%s' "$view" | grep -o '"process":{"id":[0-9]*' | grep -o '[0-9]*$' | head -1)"
+  [ -n "$PROCESS_ID" ] || die "$PRESS_OPS names no process"
+}
+press_gate_cut() {
+  press_n "$1"
+  walk_gate_and_cutover "press $1 to $2"
+}
+
+run_P1() {
+  say "P1: five presses steady on small, 20 wall-minutes"
+  sleep $(( 20 * 60 ))
+  check "the kanban wants small 22" "$(card "$K" "$SMALL" want)" 22
+  expect_on_press "the positions hold 20 small" "$SMALL" 20
+  check_zero "unloader carts lit anything but small" "$(lit_other_than "$SMALL")"
+  check_zero "pushes parked at a level" "$(orders_count "queue_cause = '$PARKED_AT_LEVEL'")"
+  found_held
+  sm_unchanged
+  never_to_sm
+}
+
+# P2: two presses leaving 45x48 in one cycle, while a third returns to it from 32x30.
+run_P2() {
+  say "P2: press 3 onto 32x30, then presses 1 and 2 onto 32x30 as press 3 comes back"
+  sim_min 10
+  press_n 3; walk_start P5-3-32 P3-OFF; walk_gate_and_cutover "press 3 to 32x30"
+  sim_min 10
+  press_n 1; start P5-1-32 || fail "START press 1"
+  press_n 2; start P5-2-32 || fail "START press 2"
+  press_n 3; start P5-3-SMALL || fail "START press 3 back"
+  press_gate_cut 1 32x30
+  press_gate_cut 2 32x30
+  press_gate_cut 3 small
+  sim_min 20
+  expect_on_press "8 positions hold 32x30" "$C32" 8
+  check_zero "pushes parked at a level" "$(orders_count "queue_cause = '$PARKED_AT_LEVEL'")"
+  found_held
+  sm_unchanged
+  never_to_sm
+}
+
+# P3: the all-bigs case, on one press.
+run_P3() {
+  say "P3: press 1 onto big, every standing cart set big, back to small"
+  sim_min 10
+  press_n 1; walk_start P5-1-BIG P1-BIG; walk_gate_and_cutover "press 1 to big"
+  sim_min 10
+  re_type "$BIG"
+  mark "ALL BIG: $(mix_said)"
+  sim_min 2
+  press_n 1; walk_start P5-1-SMALL P1-SMALL; walk_gate_and_cutover "press 1 to small"
+  sim_min 20
+  expect_mix "back on small" 2 2 2 22
+  check_zero "pushes parked at a level" "$(orders_count "queue_cause = '$PARKED_AT_LEVEL'")"
+  found_held
+  sm_unchanged
+  never_to_sm
+}
+
+# P4: a hand move out of the kanban's buffer into the plain supermarket: the family is one short, and
+# one ask brings a cart home. Nothing is above any pool on this plant, so nothing else is reachable.
+run_P4() {
+  say "P4: a cart carried out by hand; one ask brings it home"
+  sim_min 10
+  local cart spot
+  for _ in $(seq 1 30); do
+    cart="$(oldest_empty "$K" "$BIG")"; spot="$(free_child_lane)"
+    if [ -n "$cart" ] && [ -n "$spot" ] && move_bin "$cart" "$spot"; then break; fi
+    cart=""
+    sleep 2
+  done
+  [ -n "$cart" ] || die "could not carry a cart out"
+  sim_min 10
+  check "one ask brought the family home" "$(orders_count "edge_uuid LIKE 'core-mnt-%' AND status = 'confirmed'")" 1
+  check_zero "pushes parked at a level" "$(orders_count "queue_cause = '$PARKED_AT_LEVEL'")"
+  never_to_sm
+}
+
+# P5: CANCEL on one press while another changes over.
+run_P5() {
+  say "P5: presses 1 and 2 onto 32x30, press 2 cancels with two positions held"
+  sim_min 10
+  press_n 1; start P5-1-32 || fail "START press 1"
+  press_n 2; start P5-2-32 || fail "START press 2"
+  local deadline=$(( $(date +%s) + 600 ))
+  while [ "$(on_press "$C32")" -lt 2 ]; do
+    [ "$(date +%s)" -lt "$deadline" ] || { fail "no position took 32x30"; break; }
+    sleep 2
+  done
+  press_n 2
+  # KANBAN_RIG_P5_CANCEL_ON_ROBOT=1 holds the CANCEL for a 32x30 on a robot bound for press 2.
+  if [ -n "${KANBAN_RIG_P5_CANCEL_ON_ROBOT:-}" ]; then
+    deadline=$(( $(date +%s) + 300 ))
+    until [ "$(sql "SELECT count(*) FROM bins b JOIN bin_types t ON t.id = b.bin_type_id JOIN nodes n ON n.id = b.node_id
+                     JOIN order_bins ob ON ob.bin_id = b.id JOIN orders o ON o.id = ob.order_id
+                    WHERE t.code = '$C32' AND (n.name = '_TRANSIT' OR n.name LIKE '\_ROBOT:%')
+                      AND $(step_node o ob.drop_step) LIKE 'PLN_52%' AND o.status NOT IN ('confirmed','failed','cancelled','skipped')")" != 0 ]; do
+      [ "$(date +%s)" -lt "$deadline" ] || { say "no 32x30 on a robot bound for press 2 in time"; break; }
+    done
+    say "CANCEL with a 32x30 on a robot"
+  fi
+  cancel_changeover || fail "CANCEL press 2"
+  press_gate_cut 1 32x30
+  sim_min 10
+  check_zero "pushes parked at a level" "$(orders_count "queue_cause = '$PARKED_AT_LEVEL'")"
+  found_held
+  sm_unchanged
+  never_to_sm
+}
+
+# P6: two presses STARTing onto BIG in one cycle.
+run_P6() {
+  say "P6: presses 1 and 2 onto big in one cycle"
+  sim_min 10
+  press_n 1; start P5-1-BIG || fail "START press 1"
+  press_n 2; start P5-2-BIG || fail "START press 2"
+  press_gate_cut 1 big
+  press_gate_cut 2 big
+  sim_min 20
+  expect_on_press "8 positions hold big" "$BIG" 8
+  expect_mix "after both" 2 2 2 22
+  check_zero "pushes parked at a level" "$(orders_count "queue_cause = '$PARKED_AT_LEVEL'")"
+  found_held
+  sm_unchanged
+  never_to_sm
 }
 
 # ── THE RUN ─────────────────────────────────────────────────────────────────────────────
@@ -853,7 +1052,9 @@ run_W5() {
 gate_lock_acquire "kanban-rig $RUN" || { echo "no gate lock" >&2; exit 3; }
 SAMPLER=""
 WALKER=""
+WATCHER=""
 cleanup() {
+  [ -n "$WATCHER" ] && kill "$WATCHER" 2>/dev/null
   [ -n "$SAMPLER" ] && kill "$SAMPLER" 2>/dev/null
   [ -n "$WALKER" ] && kill "$WALKER" 2>/dev/null
   rm -f "$COOKIES" "$OUT/.last" "$OUT/.full-windows"
@@ -869,10 +1070,12 @@ trap cleanup EXIT
 } >"$OUT/run-meta.txt"
 
 bring_up
+K_ID="$(node_id "$K")"
 resolve_edge_ids
 START_S=$(date +%s)
 sample_loop & SAMPLER=$!
-case "$RUN" in W|W4|W5) walk_sampler & WALKER=$! ;; esac
+loop_watcher & WATCHER=$!
+case "$RUN" in W|W5|W6|P2|P3|P5|P6) walk_sampler & WALKER=$! ;; esac
 say "run $RUN: Core $CORE, Edge $EDGE, out $OUT"
 
 "run_$RUN"

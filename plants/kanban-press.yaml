@@ -19,11 +19,11 @@
 #        ↑                                                               │
 #        └──────────────────────── CLEAR ────────────────────────────────┘
 #
-#   ONE LINESIDE KANBAN FOR THE PRESS, no sources, no overflow: every carrier the press
-#   ever runs stands in it.
-#   KP-SM  a plain supermarket, no level, SEEDED EMPTY. A keeper with no sources searches
-#          plant-wide (bins.EmptyFence), so any empty standing here is pulled into a short
-#          kanban at once: R5 puts a cart here by hand to show it (R17a).
+#   ONE LINESIDE KANBAN FOR THE PRESS, no sources: every carrier the press ever runs stands in
+#   it, and a family's carts are on the line or in the buffer.
+#   KP-SM  a plain supermarket, no level, STOCKED WITH 45x48 EMPTIES. A keeper with no sources
+#          searches plant-wide (bins.EmptyFence), so this is what a keeper asking per type would
+#          raid. It must never lose a cart while K's family is whole.
 #
 # The unloaders ARE the consumers: a press's full goes straight to a window (no market,
 # no weld drawing it), a person takes the parts off, and the empty goes back. So nothing
@@ -32,14 +32,8 @@
 #
 # ── K'S SIXTEEN SLOTS ──────────────────────────────────────────────────────────────────
 #
-#   PKB_001..010  admit SMALL-45, BIG-45, TOTES-45
+#   PKB_001..010  admit the 45x48 family
 #   PKB_011..016  admit CART-32
-#
-# THE FILE CANNOT SAY THAT. plantspec.Slot has a name and a depth and the seeder writes no
-# node_bin_types, so the allowed types are set after the seed through what the Nodes page's
-# modal posts: scripts/kanban-rig.sh apply_slot_types, the docker tests' rigSlotTypes. A
-# plant seeded from this file alone has all sixteen slots open to every type, and the
-# arithmetic below does not hold on it.
 #
 # ── THE CLOCK ──────────────────────────────────────────────────────────────────────────
 #
@@ -58,51 +52,39 @@
 #
 # ── THE POOL ───────────────────────────────────────────────────────────────────────────
 #
-# Levels small 2, big 2, totes 2, 32x30 2, cover 4. Want is base + cover x processes running
-# the type (store.KanbanPictureSQL). One process is one, however many positions it holds, so
-# under KP-SMALL K wants small 6, big 2, totes 2, 32x30 2.
+# Mix small 2, big 2, totes 2, 32x30 2. Want is level + cover, the positions the running style's
+# claims put on the line (store.KanbanPictureSQL), so under KP-SMALL K wants small 6, big 2,
+# totes 2, 32x30 2. Pool is what the loop owns; minimum is the mix plus the press's most
+# positions: 6 + 4 = 10 and 2 + 4 = 6.
 #
 #   45x48 carts, 10                              small  big  totes
 #     the press's 4 positions                        4               4
 #     PRESS-KANBAN, PKB_001..006                     2    2    2     6
 #   32x30 carts, 6: all in PRESS-KANBAN, PKB_011..016
 #   The weld's own, 3: WELD-KANBAN 2 small, its position 1 small
-#   KP-SM: none
+#   KP-SM: 4 of 45x48, standing as what the raid would want
 #
-# SO K'S CARD READS SMALL WANT 6, RESIDENT 2, on the running type, whatever the run: its 4 of
-# cover are the 4 carts standing on the positions. K is 4 short for as long as the press runs,
-# nothing outside it can source one, and the card says "no empty SMALL-45 outside the group".
-# `simcalc -carriers` reads that seat as BELOW WANT by 4 and ends WILL JAM, exit 1. That is true
-# of the seat and is left true; `simcalc` with no flag reads SUSTAINS.
+# AT POOL = MINIMUM the running type's level dips in K by the carts at the windows during every
+# unload, and the types a changeover draws on never dip. K's card says so. Want the running type
+# whole too, and the pool is the minimum plus the carts you expect at the windows.
 #
-# NOTHING IS SEEDED FOR THE WINDOWS OR FOR CARTS IN FLIGHT. `simcalc -carriers` asks for no
-# allowance for either: its in-flight line is plant-wide context, 7 required against 19 seeded,
-# and it judges K's pool on its want. A pair leaving the press is drawn from K's 2 small and the
-# pair at the windows is lit small and comes straight back: a round trip is about 3 sim-min
-# against a 10 sim-min cycle, so one pair is out at a time.
+# ── LEAVING THE FAMILY ─────────────────────────────────────────────────────────────────
 #
-# ── LEAVING THE FLOOR ──────────────────────────────────────────────────────────────────
-#
-# A changeover within 45x48 conserves: K's cover moves from one type to another of the same
-# floor and the unloader re-types the carts. Leaving the floor does not. Under KP-32:
-#
-#   45x48: K wants 2/2/2 = 6 of the 10 carts, and stands at that. The 4 off the positions
-#          are lit nothing, PUSH EMPTY, and refused at K's level with no source and no overflow
-#          (plan.Planner.ChoosePush): they park named at K, one on each of the 4 windows.
-#   32x30: K wants 6 and the positions 4, from 6 carts: K is 4 short.
-#
-# The same on the way back: under KP-SMALL, K's 32x30 want is 2, so 4 of the 6 have no level
-# to land on once they have left K. As seeded they stand above their want in their own slots.
-# `simcalc -carriers` prints both under CHANGEOVER ROOM. Neither is tuned away here: what the
-# press does with no window left is what the rig's R3 and W runs are for.
+# A return always lands: the level governs the keeper's asks, never a cart of the loop. Under
+# KP-32 the 4 smalls off the positions land in K's free admitting slots, as S6 B2 T2, and 4 32x30
+# go out in parallel. Under KP-BIG off 32x30, K holds big 2 and wants 6: the keeper asks nothing
+# outside, because the family is whole, and the arm moves the extras through the windows lit BIG.
 
 namespace: edge1
 line_id: line1
 
-# THREE TYPES ON ONE FLOOR AND ONE ON ANOTHER, floor sizes entered on all four, which is
-# what bounds a cart's PUSH AS to its own family (domain.BinType.FloorSize). Every bin
-# below names its type: bin_types[0] is only a seeder's fallback.
+# THREE TYPES OF ONE FAMILY AND ONE OF ITS OWN: what bounds a cart's PUSH AS and its CLEAR
+# (kanban.SameFamily). Footprints are the check and the card's label. Every bin below names its
+# type: bin_types[0] is only a seeder's fallback.
 bin_types: [SMALL-45, BIG-45, TOTES-45, CART-32]
+
+carrier_families:
+  - {code: 45x48, types: [SMALL-45, BIG-45, TOTES-45]}
 
 carrier_sizes:
   SMALL-45: {width_in: 48, length_in: 45, height_in: 25}
@@ -125,28 +107,27 @@ payloads:
   - {code: KW-PART, uop_capacity: 30, bin_type: SMALL-45}
 
 zones:
-  # K. Sixteen flat children, ten of the 45x48 floor and six of 32x30: the head says how
-  # they get their types.
+  # K. Sixteen flat children, ten of the 45x48 family and six of 32x30.
   - name: PRESS-KANBAN
     retrieve_algorithm: FIFO
     store_algorithm: LKND
     positions:
-      - {name: PKB_001, depth: 1}
-      - {name: PKB_002, depth: 1}
-      - {name: PKB_003, depth: 1}
-      - {name: PKB_004, depth: 1}
-      - {name: PKB_005, depth: 1}
-      - {name: PKB_006, depth: 1}
-      - {name: PKB_007, depth: 1}
-      - {name: PKB_008, depth: 1}
-      - {name: PKB_009, depth: 1}
-      - {name: PKB_010, depth: 1}
-      - {name: PKB_011, depth: 1}
-      - {name: PKB_012, depth: 1}
-      - {name: PKB_013, depth: 1}
-      - {name: PKB_014, depth: 1}
-      - {name: PKB_015, depth: 1}
-      - {name: PKB_016, depth: 1}
+      - {name: PKB_001, depth: 1, admits: [45x48]}
+      - {name: PKB_002, depth: 1, admits: [45x48]}
+      - {name: PKB_003, depth: 1, admits: [45x48]}
+      - {name: PKB_004, depth: 1, admits: [45x48]}
+      - {name: PKB_005, depth: 1, admits: [45x48]}
+      - {name: PKB_006, depth: 1, admits: [45x48]}
+      - {name: PKB_007, depth: 1, admits: [45x48]}
+      - {name: PKB_008, depth: 1, admits: [45x48]}
+      - {name: PKB_009, depth: 1, admits: [45x48]}
+      - {name: PKB_010, depth: 1, admits: [45x48]}
+      - {name: PKB_011, depth: 1, admits: [CART-32]}
+      - {name: PKB_012, depth: 1, admits: [CART-32]}
+      - {name: PKB_013, depth: 1, admits: [CART-32]}
+      - {name: PKB_014, depth: 1, admits: [CART-32]}
+      - {name: PKB_015, depth: 1, admits: [CART-32]}
+      - {name: PKB_016, depth: 1, admits: [CART-32]}
   # K2. The weld's own, so R6 can show that one lineside kanban does not raid another.
   - name: WELD-KANBAN
     retrieve_algorithm: FIFO
@@ -156,8 +137,8 @@ zones:
       - {name: WKB_002, depth: 1}
       - {name: WKB_003, depth: 1}
       - {name: WKB_004, depth: 1}
-  # SM. A plain supermarket: lanes, no level, nobody counts it, seeded empty. Its slots are
-  # the room for the one cart R5 carries here by hand.
+  # SM. A plain supermarket: lanes, no level, nobody counts it, stocked with 45x48 empties: the
+  # raid pin needs something to raid. Its free slots are the room for the cart R5 hand-carries.
   - name: KP-SM
     retrieve_algorithm: FIFO
     store_algorithm: LKND
@@ -271,6 +252,11 @@ bins:
   - {name: KB-K2-S1, slot: WKB_001, bin_type: SMALL-45}
   - {name: KB-K2-S2, slot: WKB_002, bin_type: SMALL-45}
   - {name: KB-W-F, slot: ALN_021, bin_type: SMALL-45}
+  # SM, stocked with what a keeper asking per type would raid.
+  - {name: KB-SM-S1, slot: KSM_002, bin_type: SMALL-45}
+  - {name: KB-SM-S2, slot: KSM_004, bin_type: SMALL-45}
+  - {name: KB-SM-B1, slot: KSM_006, bin_type: BIG-45}
+  - {name: KB-SM-B2, slot: KSM_008, bin_type: BIG-45}
 
 # One counter per process. A reporting point moves with the style at cutover
 # (Engine.SyncProcessCounter; TestCounterSeed_StyleRepointOnTheSameTagKeepsCounting), so
@@ -287,24 +273,24 @@ cell_configs:
   - {process: KW-UNLOAD, station: KW-UNLOAD-OPS}
 
 kanbans:
-  # K: 2/2/2/2, cover 4. No sources and no overflow: its keeper searches plant-wide and finds
-  # what stands in the plain supermarket, and a push it is whole of parks named at it.
+  # K: mix 2/2/2/2, pool 10 and 6, cover from the claims. No sources: its keeper searches
+  # plant-wide only for a family's deficit, and every cart of its loop lands.
   - group: PRESS-KANBAN
     station: edge1.line1
     strict: false
-    running_cover: 4
+    pools: {45x48: 10, CART-32: 6}
     levels:
       - {bin_type: SMALL-45, want: 2}
       - {bin_type: BIG-45, want: 2}
       - {bin_type: TOTES-45, want: 2}
       - {bin_type: CART-32, want: 2}
     supports: [KP-PRESS]
-  # K2: wants 2 while the weld runs small. No sources and no overflow, its own 3 carts: the
-  # weld's one style never leaves the family (simcalc's CHANGEOVER ROOM says it fits).
+  # K2: wants 2 while the weld runs small. No sources, its own 3 carts. It shares the family with
+  # K and no support with it.
   - group: WELD-KANBAN
     station: edge1.line1
     strict: false
-    running_cover: 1
+    pools: {45x48: 3}
     levels:
-      - {bin_type: SMALL-45, want: 1}
+      - {bin_type: SMALL-45, want: 2}
     supports: [KW-WELD]

@@ -15,7 +15,7 @@
         "external": "g-move",
         "blocks": [
           "PLN_001 JackLoad",
-          "Lane_02-WAIT Wait"
+          "PEB_007 JackUnload"
         ]
       }
     ],
@@ -23,25 +23,19 @@
       {
         "index": 1,
         "type": "move",
-        "status": "in_transit",
+        "status": "dispatched",
         "source": "PLN_001",
-        "delivery": "SMN_009",
+        "delivery": "PEB_007",
         "bin": "BIN-ACT-P1F",
-        "steps": [
-          "pickup PLN_001",
-          "wait Lane_02-WAIT",
-          "dropoff SMN_009"
-        ],
         "hard_bins": [
           "BIN-ACT-P1F"
         ],
         "hard_slots": [
-          "SMN_009"
+          "PEB_007"
         ],
         "reservations": [
           "bin:confirmed:BIN-ACT-P1F",
-          "occupancy:confirmed:Lane_03",
-          "slot:confirmed:SMN_009"
+          "slot:confirmed:PEB_007"
         ],
         "to_fleet": true
       }
