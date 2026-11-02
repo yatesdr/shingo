@@ -1,6 +1,8 @@
 package engine
 
 import (
+	"encoding/json"
+	"os"
 	"reflect"
 	"testing"
 
@@ -80,5 +82,50 @@ func TestKanbanSurplus_TheLoaderLockOutranksTheKeepersOwn(t *testing.T) {
 	loader, scan, keeper := lockorder.LoaderBudget{}.Rank(), lockorder.Scan{}.Rank(), lockorder.KanbanKeeper{}.Rank()
 	if loader >= scan || scan >= keeper {
 		t.Errorf("ranks loader %d, scan %d, keeper %d: want them in that order", loader, scan, keeper)
+	}
+}
+
+// pinArmLine is one type as the arm's plan reads it. At the tree, a footprint.
+func pinArmLine(sizes map[string]*[]float64, code string) (domain.FloorSize, bool) {
+	s := sizes[code]
+	if s == nil {
+		return domain.FloorSize{}, false
+	}
+	return domain.BinType{WidthIn: (*s)[0], LengthIn: (*s)[1]}.FloorSize()
+}
+
+// TestKanbanPin_TheArmReadsTheFamilyTable: the one truth table at the arm. A surplus of the
+// cart's type and a shortage of the asked type: it goes to a window exactly where the table
+// says the two are one family.
+func TestKanbanPin_TheArmReadsTheFamilyTable(t *testing.T) {
+	t.Parallel()
+	raw, err := os.ReadFile("../kanban/testdata/same_family.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var table struct {
+		Types map[string]struct {
+			Footprint *[]float64 `json:"footprint"`
+		} `json:"types"`
+		Cases []struct {
+			Cart, Asked string
+			Same        bool
+		} `json:"cases"`
+	}
+	if err := json.Unmarshal(raw, &table); err != nil {
+		t.Fatal(err)
+	}
+	sizes := map[string]*[]float64{}
+	for code, ty := range table.Types {
+		sizes[code] = ty.Footprint
+	}
+	for _, c := range table.Cases {
+		sf, ss := pinArmLine(sizes, c.Asked)
+		cf, cs := pinArmLine(sizes, c.Cart)
+		p := planSurplus([]surplusShort{{code: c.Asked, floor: sf, sized: ss, need: 1}},
+			[]surplusLine{{code: c.Cart, floor: cf, sized: cs, above: 1}}, nil)
+		if moved := len(p.toWindows) == 1; moved != c.Same {
+			t.Errorf("a %s above, a %s short: moved %v, the table says one family: %v", c.Cart, c.Asked, moved, c.Same)
+		}
 	}
 }

@@ -71,6 +71,8 @@ const (
 	rigSnapshotBuild    = 10
 	rigIntakeDoor       = 8
 	rigParkedArm        = 8
+	// rigClearStatements is the CLEAR door measured at ec95f722 on this plant.
+	rigClearStatements = 22
 )
 
 // rigSide is one side of the two-off press: a claim's front and back, and its part.

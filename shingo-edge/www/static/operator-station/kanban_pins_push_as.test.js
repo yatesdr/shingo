@@ -130,6 +130,16 @@ eq(plain(ctx.clearHighlight(Object.assign({ assignment: { bin_type: 'TOTE-L', gr
 eq(plain(ctx.carriersOf({ loader: { carriers: ['TOTE-S', 'RACK-C'] } })), ['TOTE-S', 'RACK-C'], 'carriersOf reads the tile\'s list');
 eq(plain(ctx.carriersOf({})), [], 'carriersOf with no loader is empty');
 
+// ── the one truth table of a cart's family (shingo-core/kanban/testdata/same_family.json),
+// which Core's walk, arm, save and CLEAR door and simcalc read too ──
+const familyTable = JSON.parse(fs.readFileSync(path.join(__dirname, '../../../../shingo-core/kanban/testdata/same_family.json'), 'utf8'));
+const familyView = { family: {} };
+Object.keys(familyTable.types).forEach(function (code) { familyView.family[code] = familyTable.types[code].family; });
+familyTable.cases.forEach(function (c) {
+    const offered = types(ctx.clearChoices(familyView, [c.cart, c.asked], c.cart)).indexOf(c.asked) !== -1;
+    eq(offered, c.same, 'a ' + c.cart + ' is offered ' + c.asked + ' exactly where the table says one family');
+});
+
 if (failed > 0) {
     console.error(failed + ' failed, ' + passed + ' passed');
     process.exit(1);

@@ -364,3 +364,19 @@ func TestKanbanArm_AtTheReserve(t *testing.T) {
 		t.Errorf("the evac does not hold its bin (claimed by %v)", held.ClaimedBy)
 	}
 }
+
+// TestKanbanPin_TheDivertAsksTheDoor: an empty off a supported position is a cart of the
+// loop, so it lands in the kanban whatever the level says: K here is whole of it, with
+// slots free. The private chooser asked for a gap and kept the planned drop.
+func TestKanbanPin_TheDivertAsksTheDoor(t *testing.T) {
+	t.Parallel()
+	cell := newMTCell(t, "MTD", protocol.ClaimRoleProduce)
+	cell.keep(cell.kd, 1, nil)
+	kids, err := cell.db.ListChildNodes(cell.grp)
+	testutil.MustNoErr(t, err, "slots")
+	cell.cart(kids[0], cell.kd, "MTD-HELD", nil)
+	b := cell.cart(cell.press, cell.kd, "MTD-CART", nil)
+	if got := cell.moveOff("mtd-move", cell.press, b); got != "GRP" {
+		t.Errorf("the empty off the supported position went to %s, want a slot of the kanban", got)
+	}
+}

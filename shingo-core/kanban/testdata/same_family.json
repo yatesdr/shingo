@@ -1,0 +1,24 @@
+{
+  "types": {
+    "SMALL": {"family": "45x48", "footprint": [45, 48]},
+    "BIG": {"family": "45x48", "footprint": [48, 45]},
+    "TOTES": {"family": "45x48", "footprint": [45, 48]},
+    "CART32": {"family": "CART32", "footprint": [30, 32]},
+    "TWIN": {"family": "TWIN", "footprint": [45, 48]},
+    "UNSIZED-A": {"family": "UNSIZED", "footprint": null},
+    "UNSIZED-B": {"family": "UNSIZED", "footprint": null},
+    "LONE": {"family": "LONE", "footprint": null}
+  },
+  "cases": [
+    {"cart": "SMALL", "asked": "BIG", "same": true},
+    {"cart": "BIG", "asked": "TOTES", "same": true},
+    {"cart": "SMALL", "asked": "CART32", "same": false},
+    {"cart": "CART32", "asked": "SMALL", "same": false},
+    {"cart": "SMALL", "asked": "TWIN", "same": false},
+    {"cart": "TWIN", "asked": "SMALL", "same": false},
+    {"cart": "UNSIZED-A", "asked": "UNSIZED-B", "same": true},
+    {"cart": "LONE", "asked": "SMALL", "same": false},
+    {"cart": "LONE", "asked": "UNSIZED-A", "same": false},
+    {"cart": "SMALL", "asked": "LONE", "same": false}
+  ]
+}
