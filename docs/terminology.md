@@ -324,31 +324,51 @@ Derived from `steps_json` against the claim's cell set, never from the swap mode
 
 ## Kanban
 
-A kanban is the card loop of empty carriers around a process: the card is a cart, the level is the number of cards in the loop, the empty is the signal, the sources are where the loop borrows from, and the unloader repays whichever source is short. Core holds all of it (`shingocore/kanban`, `engine.KanbanKeeper`, the `kanbans` tables). The word means nothing else in this repo: the UOP reorder a loader's threshold fires is **threshold replenishment** (`docs/uop-threshold-replenishment.md`).
+A kanban is the card loop of empty carriers around a process: the card is a cart, the pool is the number of cards in the loop, the level is the mix held ready, the empty is the signal, the sources are where the loop borrows from. It holds EMPTY carriers; a part's stock at a line is threshold replenishment.
 
 ### Kanban
-A node group that declares a **level** per carrier type. Core counts it, fetches when it is short, caps stores at the level, and tells the group's unloader what to send each cart back as. A kanban with **supports** is a lineside kanban and runs a keeper. A kanban with no supports declares what it holds and is refilled by other kanbans' unloaders; it runs no keeper. A group with no level is a plain group, and nobody counts it.
+A node group that declares a **level** per bin type and a **pool** per **carrier family**. Core counts its **loop**, admits every cart of the loop, fetches only what the loop has lost, and caps stores from outside the loop at the level. It holds EMPTY carriers; a part's stock at a line is threshold replenishment.
+
+### Carrier Family
+The physical cart a bin type is one setting of (`carrier_families`, `bin_types.family_id`). Every type is of one family, by default its own; a bare marker is of its carrier's. A CLEAR may re-stamp a bin within its family, never across. **Footprint** is the label and the check, never the key.
+
+### Loop
+Where a kanban's carts may be: its slots, its supports' positions, the windows of every unloader whose outbound it is, and the flights between them.
+
+### Pool
+How many carts of a family a kanban's loop is meant to hold (`kanban_families.pool`). Declared; **found** is counted against it.
+
+### Found
+The loop's carts of a family by place: slot, line, window, flight. Below the pool a cart has left the loop; above it a stranger is in it.
+
+### Room
+The kanban's slots whose bin types admit the family. Below the pool a return cannot always land.
 
 ### Level
-The base want of one carrier type in a kanban (`kanban_levels.want`). Effective want is `level + running cover x processes running the type` (`kanban.Level.Want`), with no clamp: a want past the kanban's slots shows as one that cannot be covered.
+The ready mix of one bin type a kanban holds at all times (`kanban_levels.want`); not the pool. Want is level + **cover**, with no clamp.
 
-### Running Cover
-The extra a kanban wants of a type per supported process running that type (`kanbans.running_cover`). A process runs its target style's types while a changeover is open, otherwise its active style's.
+### Cover
+The positions the running style's claims put on the line, per bin type. Counted from the claims, never declared. A process runs its target style while a changeover is open, otherwise its active style.
+
+### Minimum Pool
+The sum of a family's levels plus, summed over the supported processes, the most positions any of that process's styles puts on the line in the family. Below it the line eats the mix.
+
+### Floaters
+Pool less mix less the line: the family's carts standing in the kanban as whatever they came off as, re-stamped only when a type is short.
+
+### Footprint
+A bin type's width by length, either way round (`domain.BinType.Footprint`). Members of a family must agree. Not the backstop **Floor**.
 
 ### Supports
 The process nodes a kanban serves (`kanban_supports`). A kanban with supports needs a station, the board its keeper's orders show on.
 
 ### Sources
-The ordered groups a kanban's keeper may pull from (`kanban_sources`, in rank order). An empty list searches the plant. A lineside kanban's keeper never pulls from another kanban that has supports. An unloader repays the kanban, then the first source short of the cart.
+The ordered groups a kanban's keeper may pull from (`kanban_sources`, in rank order). An empty list searches the plant. A lineside kanban's keeper never pulls from another kanban that has supports, except carts above that kanban's pool. An unloader repays the kanban, then the first source short of the cart.
 
-### Overflow
-Where a cart goes when nothing else takes it: one hop, per type with a default (`kanban_levels.overflow_node_id`, then `kanbans.overflow_node_id`). None named, and the push parks named at the kanban, visible. A plain group's overflow is its `overflow_destination` property.
 
 ### Strict
 Nobody else may pull from this kanban (`kanbans.strict`).
 
-### Family
-Carrier types sharing a floor size (`domain.BinType.FloorSize`). A cart is only asked to come back as a type of its own family.
 
 ## Naming Conventions
 

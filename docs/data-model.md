@@ -90,7 +90,11 @@ Classification for physical containers. Controls compatibility with nodes and pa
 |-------|-------------|
 | `code` | Unique identifier (e.g., `TOTE-A`, `PALLET`) |
 | `description` | Human-readable label |
-| `width_in`, `height_in` | Physical dimensions (inches) |
+| `width_in`, `length_in`, `height_in` | Physical dimensions (inches). Width and length are its footprint |
+| `family_id` | Its carrier family (`carrier_families`): the physical cart this type is one setting of. Every type has one, by default its own |
+| `required_robot_group` | The robot group an empty of this type needs. Empty: any |
+| `bare_of` | On a bare marker, the carrier it stands for. `bare` is generated from it |
+| `totes_per_layer` | How many totes one layer holds. Null: not a tote carrier, or not said |
 
 **Relationships:**
 - Has many **Bins**
