@@ -23,12 +23,11 @@ import (
 // count, the episode's key, and a system with no unloader at all. Taken before the shape
 // changes. Predictions: PINS.md, "BRIEF v5".
 
-// wholeK is the cost rig with K whole, no sources, no overflow: nothing but K can take a cart.
+// wholeK is the cost rig with K whole and no sources: nothing but K can take a cart.
 func wholeK(t *testing.T) *kanbanCostRig {
 	t.Helper()
 	r := newKanbanCostRig(t, 2, 2, 2)
 	testdb.KanbanSources(t, r.db, r.k.ID)
-	testdb.KanbanOverflow(t, r.db, r.k.ID, "")
 	return r
 }
 
@@ -46,7 +45,7 @@ func pinFamilyOf(t *testing.T, db *store.DB, family string, ids ...int64) {
 }
 
 // TestKanbanPin_ALoopCartLandsWithASlotFree: K whole of small, slots free, no source, no
-// overflow. A cart of the loop lands, at every door a push meets. The level governs the
+// A cart of the loop lands, at every door a push meets. The level governs the
 // keeper's asks only: this is the wedge.
 func TestKanbanPin_ALoopCartLandsWithASlotFree(t *testing.T) {
 	t.Parallel()
@@ -128,7 +127,7 @@ func (s stubDoor) ReadKanbanDoor(int64, int64, string, int64) (*nodes.KanbanDoor
 // pinLoopLine is K's line with K whole of the type, in the verdict the door carries.
 func pinLoopLine(r *kanbanCostRig) *nodes.KanbanDoor {
 	lv := store.KanbanLevel{GroupNodeID: r.k.ID, BinTypeID: r.small, BinTypeCode: "KC-SMALL", Want: 1, Base: 1}
-	return &nodes.KanbanDoor{Kanban: nodes.DoorLine{Group: r.k, Level: &lv, Have: kanban.Have{Resident: 1}}}
+	return &nodes.KanbanDoor{Loop: true, Kanban: nodes.DoorLine{Group: r.k, Level: &lv, Have: kanban.Have{Resident: 1}, FreeSlots: 1}}
 }
 
 // TestKanbanPin_NoDoorReDerivesTheVerdict: the door's read says the cart is the loop's, from a
@@ -174,6 +173,8 @@ func TestKanbanPin_AWindowCartCountsAsWhatItIsLit(t *testing.T) {
 func TestKanbanPin_RenamingATypeMidEpisodeAsksNothingNew(t *testing.T) {
 	t.Parallel()
 	r := newKanbanCostRig(t, 2, 2, 2)
+	_, err := r.db.Exec(`DELETE FROM bins WHERE label IN ('KC-W1-FULL', 'KC-W2-EMPTY', 'KC-W3-EMPTY')`)
+	testutil.MustNoErr(t, err, "clear the windows")
 	testutil.MustNoErr(t, r.db.SetKanbanLevel(store.KanbanLevel{GroupNodeID: r.k.ID, BinTypeID: r.small, Want: 2}), "short one")
 	m := r.eng.KanbanKeeper()
 	m.Tick()

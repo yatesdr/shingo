@@ -370,6 +370,7 @@ func TestApiBinClear_BinTypeCodeKnownNotInNodeSet_Returns200(t *testing.T) {
 	if err := db.CreateBinType(other); err != nil {
 		t.Fatalf("create other bin type: %v", err)
 	}
+	clearsWithin(t, db, sd.BinType.Code, other.Code)
 
 	rec := postJSON(t, h.apiBinClear, "/api/telemetry/bin-clear",
 		map[string]any{"node_name": sd.StorageNode.Name, "bin_type_code": "45x48-OTHER"})
@@ -751,6 +752,7 @@ func TestBinClearDoor_Arms(t *testing.T) {
 			arrange: func(t *testing.T, f *doorFix) (any, []int64) {
 				testutil.MustNoErr(t, f.db.CreateBinType(&bins.BinType{Code: "CL-DUNNAGE"}), "a dunnage type")
 				b := onStorage(t, f, "CL-RETYPE")
+				clearsWithin(t, f.db, b.BinTypeCode, "CL-DUNNAGE")
 				return clearBody(f, map[string]any{"bin_type_code": "CL-DUNNAGE"}), []int64{b.ID}
 			},
 			answer: cleared("CL-RETYPE", "PART-A", 100, "CL-DUNNAGE"),
@@ -896,4 +898,17 @@ func TestHeldPartialsDoor_Arms(t *testing.T) {
 		assertDoor(t, ask(t, f, "?payload=HP-X"), http.StatusOK, doorJSON(t, want))
 		snap.assertNothingWritten(t, f.db)
 	})
+}
+
+// clearsWithin puts bin types in one carrier family: a CLEAR re-stamps within a family, never
+// across, and these tests are about what the stamp does.
+func clearsWithin(t *testing.T, db *store.DB, codes ...string) {
+	t.Helper()
+	family, err := db.EnsureCarrierFamily("CLEARS-" + codes[0])
+	testutil.MustNoErr(t, err, "the family")
+	for _, code := range codes {
+		bt, err := db.GetBinTypeByCode(code)
+		testutil.MustNoErr(t, err, "type "+code)
+		testutil.MustNoErr(t, db.SetBinTypeFamily(bt.ID, family), "family of "+code)
+	}
 }

@@ -78,6 +78,7 @@ func TestKanbanKeeper_SubtractsWhatItAlreadyAsked(t *testing.T) {
 	eng := newTestEngine(t, db, simulator.New())
 	_, btID := mntFixture(t, db, "MNT-STEADY", 4, "MNT-45x58", 2)
 	mntOutsideEmpty(t, db, btID, "MNT-STEADY-MARKET")
+	mntOutsideEmpty(t, db, btID, "MNT-STEADY-MARKET2")
 
 	m := eng.KanbanKeeper()
 	m.Tick()

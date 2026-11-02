@@ -31,29 +31,26 @@ import (
 // or removed is a decision.
 const (
 	// keeperTickSteady is one steady tick, nothing short, whatever the plant's size:
-	// the picture, the open episodes with their asks, the comings, the residents.
-	keeperTickSteady = 4
-	// keeperTickBurstToFirstAsk is a tick with one type short by 4, up to the first
-	// ask's transaction: the steady four, the read of the unloaders' windows, the
-	// forecast, the episode's open, the group's properties, slot state and children's
-	// types, and the two node reads of the ask's admission. Each ask after it chooses
+	// the picture, the open episodes with their asks, the loops.
+	keeperTickSteady = 3
+	// keeperTickBurstToFirstAsk is a tick with one family short by 2, up to the first
+	// ask's transaction: the steady three, the forecast, the episode's open, the group's
+	// properties, slot state and children's types, and the two node reads of the ask's admission. Each ask after it chooses
 	// its slot with no statement.
-	keeperTickBurstToFirstAsk = 12
-	// surplusArmNoWindow is a tick the surplus arm's precondition holds on with one
-	// window open: the steady four, the windows, the forecast, the episode's open, the
-	// slot state, the properties and types the choice reads. The windows' read says one
-	// is open, so nothing more.
-	surplusArmNoWindow = 10
+	keeperTickBurstToFirstAsk = 10
+	// surplusArmNoWindow is a tick the surplus arm's precondition holds on with one window
+	// open: the steady three, the windows and the surplus list. The windows' read says one is
+	// open, so nothing more.
+	surplusArmNoWindow = 5
 	// surplusArmToFirstMove is the same tick with two windows open, up to the move's
-	// transaction: that, the surplus list, freeWindows' three reads a window, the
-	// loader's capability list, the window's Allowed Bin Types and the cart's type row,
-	// and the move's plan.
-	surplusArmToFirstMove = 28
+	// transaction: that, freeWindows' three reads a window, the loader's capability list, the
+	// window's Allowed Bin Types and the cart's type row, and the move's plan.
+	surplusArmToFirstMove = 24
 	// snapshotBuild is one bins feed build for the Edge watching the windows: the
 	// read snapshot (5: BEGIN, the names, the orders inbound, the bins, COMMIT), the
-	// picture of its groups, then UnloaderGroupLines (open episodes, types in play,
-	// comings, residents), however many groups and levels.
-	snapshotBuild = 10
+	// picture of its groups, then UnloaderGroupLines (open episodes, types in play, the loops),
+	// however many groups and levels.
+	snapshotBuild = 9
 	// snapshotBodyBytes is that snapshot's body as it goes to the Edge with every cart
 	// lit for K: three assignments of a type (114 over the base's 1000, K whole and none
 	// said), and the fields a source's row carries cost no byte here.
@@ -62,17 +59,15 @@ const (
 	// an assignment for each of the three carts saying so (146 of them, none_short's
 	// own key 18 a row). Only rows that carry the field pay.
 	snapshotBodyBytesWhole = 1146
-	// intakeDoorToASource is the intake door up to the order's birth, for an empty
-	// pushed at K with K whole, into Z45 short of that type, however many of Z45's
-	// positions are free: the cart, K's node, the door's one read, Z45's properties,
+	// intakeDoorToASource is the intake door up to the order's birth, for an empty pushed at K
+	// with no slot of K free, into Z45 short of that type, however many of Z45's positions are
+	// free: the cart, K's node, the door's one read, Z45's properties,
 	// slot state and children's types, and the two node reads of the issue's window.
 	intakeDoorToASource = 8
-	// intakeDoorNoWindow is the same door for a move at K from a node that is no
-	// window: the cap's path, into K's overflow Z45. It pays the door's one read to
-	// learn that, and takes the overflow over one read of Z45. Measured before this
-	// work, with the overflow's name and the cart read twice: 45.
-	intakeDoorNoWindow = 15
-	// parkedArm is a scanner pass with one push parked at K that Z45 takes, however
+	// intakeDoorNoWindow is the same door for a move at K from a node that is no part of the
+	// loop: the cap's path, refused at K's level. It pays the door's one read to learn that.
+	intakeDoorNoWindow = 8
+	// parkedArm is a scanner pass with one push parked at K, no slot of K free, that Z45 takes, however
 	// many of its positions are free, from the pass's start to the re-aim: the order
 	// list and read, K's node, the cart, the door's one read, Z45's properties, slot
 	// state and children's types.
@@ -134,6 +129,7 @@ func newKanbanCostRig(t *testing.T, z45Small, z45Big, z45Totes int) *kanbanCostR
 	}
 	r.small, r.big = typ("KC-SMALL", 45, 48, 25), typ("KC-BIG", 45, 48, 34)
 	r.totes, r.t32 = typ("KC-TOTES", 45, 48, 6), typ("KC-32X30", 32, 30, 25)
+	pinFamilyOf(t, db, "KC-45", r.small, r.big, r.totes)
 
 	level := func(g *nodes.Node, bt int64, want int) {
 		testutil.MustNoErr(t, db.SetKanbanLevel(store.KanbanLevel{GroupNodeID: g.ID, BinTypeID: bt, Want: want}), "level")
@@ -179,7 +175,6 @@ func newKanbanCostRig(t *testing.T, z45Small, z45Big, z45Totes int) *kanbanCostR
 	stand(r.small, kids[:z45Small], "KC-Z45-S")
 	stand(r.big, kids[z45Small:z45Small+z45Big], "KC-Z45-B")
 	stand(r.totes, kids[z45Small+z45Big:z45Small+z45Big+z45Totes], "KC-Z45-T")
-	testdb.KanbanOverflow(t, db, r.k.ID, r.z45.Name)
 	r.z32, kids = kanbanCostFlat(t, db, "KC-Z32", 8)
 	level(r.z32, r.t32, 6)
 	stand(r.t32, kids[:6], "KC-Z32")
@@ -276,16 +271,18 @@ func TestKanbanCost_KeeperTick(t *testing.T) {
 			testutil.StatementBreakdown(r.counter.Statements()))
 	}
 
-	// The burst: K wants 5 of small with 1 standing, four asks.
-	testutil.MustNoErr(t, r.db.SetKanbanLevel(store.KanbanLevel{GroupNodeID: r.k.ID, BinTypeID: r.small, Want: 5}), "the burst")
+	// The burst: K wants 3 of small with 1 standing and its windows clear: two asks, all Z45 has.
+	_, err := r.db.Exec(`DELETE FROM bins WHERE label IN ('KC-W1-FULL', 'KC-W2-EMPTY', 'KC-W3-EMPTY')`)
+	testutil.MustNoErr(t, err, "clear the windows")
+	testutil.MustNoErr(t, r.db.SetKanbanLevel(store.KanbanLevel{GroupNodeID: r.k.ID, BinTypeID: r.small, Want: 3}), "the burst")
 	r.counter.Reset()
 	m.Tick()
 	got := r.counter.Count()
-	if st := mntState(t, m, "KC-K", "KC-SMALL"); st.Created != 4 {
+	if st := mntState(t, m, "KC-K", "KC-SMALL"); st.Created != 2 {
 		t.Fatalf("fixture drift: the burst asked %d: %+v", st.Created, st)
 	}
 	stmts := r.counter.Statements()
-	t.Logf("STATEMENTS: keeper tick, one type short by 4: %d, the first %d to the first ask's birth\n%s",
+	t.Logf("STATEMENTS: keeper tick, one type short by 2: %d, the first %d to the first ask's birth\n%s",
 		got, testutil.FirstBegin(stmts), testutil.StatementBreakdown(stmts))
 	if n := testutil.FirstBegin(stmts); n != keeperTickBurstToFirstAsk {
 		t.Errorf("the burst to the first ask = %d statements, want %d", n, keeperTickBurstToFirstAsk)
@@ -299,7 +296,7 @@ func TestKanbanCost_KeeperTick(t *testing.T) {
 			}
 		}
 		if n != 1 {
-			t.Errorf("the group's %s read %d times over four asks, want once", what, n)
+			t.Errorf("the group's %s read %d times over two asks, want once", what, n)
 		}
 	}
 }
@@ -315,6 +312,8 @@ func TestKanbanCost_SurplusArm(t *testing.T) {
 		landAt(t, r.db, r.big, c.ID, fmt.Sprintf("KC-OVER-%d", i))
 	}
 	testutil.MustNoErr(t, r.db.SetKanbanLevel(store.KanbanLevel{GroupNodeID: r.k.ID, BinTypeID: r.totes, Want: 2}), "totes short")
+	_, err = r.db.Exec(`UPDATE bins SET bin_type_id = $1 WHERE label IN ('KC-W1-FULL', 'KC-W2-EMPTY', 'KC-W3-EMPTY')`, r.t32)
+	testutil.MustNoErr(t, err, "the windows' carts cannot be lit for totes")
 	m := r.eng.KanbanKeeper()
 
 	// One window open (W4): the read says so, and the arm reads nothing to learn it.
@@ -428,8 +427,8 @@ func TestKanbanCost_NoWindowDoor(t *testing.T) {
 	if lerr != nil {
 		t.Fatalf("intake refused the move: %s", lerr.Detail)
 	}
-	if !r.inGroup(t, o.DeliveryNode, r.z45) {
-		t.Fatalf("fixture drift: the move went to %s, want K's overflow", o.DeliveryNode)
+	if o.DeliveryNode != r.k.Name {
+		t.Fatalf("fixture drift: the move went to %s, want it left naming K: a stranger meets the cap", o.DeliveryNode)
 	}
 	stmts := r.counter.Statements()
 	door := stmts[:testutil.FirstBegin(stmts)]
@@ -448,7 +447,7 @@ func TestKanbanCost_CancelReturn(t *testing.T) {
 	carrier := &orders.Order{SourceIntent: dispatch.SourceIntentLocal, SourceNode: r.windows[1].Name, NamedBinID: &r.push}
 	r.counter.Reset()
 	slot, why := r.eng.storeInto(r.k, bin, carrier)
-	if slot == nil || !r.inGroup(t, slot.Name, r.z45) {
+	if slot == nil || !r.inGroup(t, slot.Name, r.k) {
 		t.Fatalf("fixture drift: the return took %+v (%s)", slot, why)
 	}
 	stmts := r.counter.Statements()
@@ -474,6 +473,7 @@ func TestKanbanCost_IntakeDoor(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			r := newKanbanCostRig(t, tc.small, tc.big, tc.totes)
+			r.fullK(t)
 			r.counter.Reset()
 			o, _, lerr := r.eng.dispatcher.Lifecycle().CreateInboundOrder("kc-edge", &protocol.OrderRequest{
 				OrderUUID: "kc-push", OrderType: dispatch.OrderTypeMove, Quantity: 1,
@@ -512,7 +512,7 @@ func TestKanbanCost_ScannerParkedPass(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			r := newKanbanCostRig(t, tc.small, tc.big, tc.totes)
-			testdb.KanbanOverflow(t, r.db, r.k.ID, "")
+			r.fullK(t)
 			testdb.KanbanSources(t, r.db, r.k.ID)
 			push := testdb.CreateOrder(t, r.db, func(o *orders.Order) {
 				o.EdgeUUID = "kc-parked"
@@ -530,7 +530,7 @@ func TestKanbanCost_ScannerParkedPass(t *testing.T) {
 			r.eng.fulfillment.RunOnce()
 			parked, err := r.db.GetOrder(push.ID)
 			testutil.MustNoErr(t, err, "reload the push")
-			if parked.Status != protocol.StatusQueued || parked.QueueCause != string(dispatch.CauseNGRPAtLevel) {
+			if parked.Status != protocol.StatusQueued || parked.QueueCause != string(dispatch.CauseNGRPFull) {
 				t.Fatalf("fixture drift: the push is %s (%s), want parked at K's level", parked.Status, parked.QueueCause)
 			}
 

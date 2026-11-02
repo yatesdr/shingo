@@ -37,7 +37,8 @@ type KanbanWindow struct {
 // kanbanWindowsSQL is one kanban's windows in the plant's order, each with what stands
 // on it. A window's arm order is the newest naming it: a live one, or one landed whose
 // cart still stands there and has had no order since (a CLEAR's empty-out names the
-// cart, so it ends the arm's claim on it).
+// cart, so it ends the arm's claim on it). An arm move carries one cart: its row, else the
+// cart it names.
 var kanbanWindowsSQL = `SELECT ` + nodes.SelectCols + `, l.id, l.layout, l.funnel_windows,
 		COALESCE(b.id, 0), COALESCE(b.label, ''), COALESCE(bt.code, ''), COALESCE(bt.bare, false),
 		COALESCE(b.payload_code, ''), b.totes_on_cart, bt.totes_per_layer,
@@ -48,16 +49,17 @@ var kanbanWindowsSQL = `SELECT ` + nodes.SelectCols + `, l.id, l.layout, l.funne
 	JOIN bin_loaders l ON l.id = h.loader_id
 	JOIN nodes g ON g.name = l.outbound_dest
 	LEFT JOIN LATERAL (
-		SELECT o.id, COALESCE(o.bin_id, o.named_bin_id) AS cart,
-		       o.status NOT IN (` + protocol.TerminalStatusSQLList() + `) AS live
+		SELECT o.id, c.cart, o.status NOT IN (` + protocol.TerminalStatusSQLList() + `) AS live
 		  FROM orders o
+		  CROSS JOIN LATERAL (SELECT COALESCE(
+			(SELECT ob.bin_id FROM order_bins ob WHERE ob.order_id = o.id ORDER BY ob.id DESC LIMIT 1),
+			o.named_bin_id) AS cart) c
 		 WHERE o.delivery_node = n.name AND o.edge_uuid LIKE $2
 		   AND (o.status NOT IN (` + protocol.TerminalStatusSQLList() + `)
 		        OR (o.status = '` + string(protocol.StatusConfirmed) + `'
-		            AND EXISTS (SELECT 1 FROM bins lb WHERE lb.id = COALESCE(o.bin_id, o.named_bin_id) AND lb.node_id = n.id)
-		            AND NOT EXISTS (SELECT 1 FROM orders later
-		                             WHERE COALESCE(later.bin_id, later.named_bin_id) = COALESCE(o.bin_id, o.named_bin_id)
-		                               AND later.id > o.id)))
+		            AND EXISTS (SELECT 1 FROM bins lb WHERE lb.id = c.cart AND lb.node_id = n.id)
+		            AND NOT EXISTS (SELECT 1 FROM order_bins later WHERE later.bin_id = c.cart AND later.order_id > o.id)
+		            AND NOT EXISTS (SELECT 1 FROM orders later WHERE later.named_bin_id = c.cart AND later.id > o.id)))
 		 ORDER BY o.id DESC LIMIT 1
 	) arm ON TRUE
 	LEFT JOIN LATERAL (SELECT sb.id FROM bins sb WHERE sb.node_id = n.id ORDER BY sb.id LIMIT 1) here ON TRUE
@@ -99,17 +101,4 @@ func (db *DB) ListKanbanWindows(kanbanID int64) ([]KanbanWindow, error) {
 // a kanban (bins.ListKanbanSurplus): oldest first.
 func (db *DB) ListKanbanSurplus(kanbanID int64, codes []string) ([]*bins.Bin, error) {
 	return bins.ListKanbanSurplus(db.DB, kanbanID, codes)
-}
-
-// CountSurplusLeaving counts the arm's live moves lifting from a kanban's positions.
-func (db *DB) CountSurplusLeaving(kanbanID int64) (int, error) {
-	var n int
-	err := db.DB.QueryRow(`SELECT COUNT(*) FROM orders o
-		JOIN nodes sn ON sn.name = o.source_node
-		WHERE sn.parent_id = $1 AND o.edge_uuid LIKE $2
-		  AND o.status NOT IN (`+protocol.TerminalStatusSQLList()+`)`, kanbanID, SurplusEdgeUUIDPrefix+"%").Scan(&n)
-	if err != nil {
-		return 0, fmt.Errorf("surplus leaving %d: %w", kanbanID, err)
-	}
-	return n, nil
 }

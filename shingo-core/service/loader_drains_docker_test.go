@@ -105,17 +105,6 @@ func TestLoaderService_DrainsRefusedWhereTheyCannotHold(t *testing.T) {
 	testutil.MustNoErr(t, db.SetNodeProperty(overflowing.ID, nodes.PropOverflowDestination, inner.Name),
 		"its overflow lands in the source")
 
-	kanbanOverflowing := drainGroup(t, db, "DRR-KANBAN-OVERFLOWING", 0)
-	testdb.KanbanOverflow(t, db, kanbanOverflowing.ID, inner.Name)
-
-	perTypeOverflowing := drainGroup(t, db, "DRR-TYPE-OVERFLOWING", 0)
-	var perType int64
-	testutil.MustNoErr(t, db.QueryRow(`INSERT INTO bin_types (code) VALUES ('DRR-T') RETURNING id`).Scan(&perType), "a type")
-	testutil.MustNoErr(t, db.SetKanbanLevel(store.KanbanLevel{GroupNodeID: perTypeOverflowing.ID, BinTypeID: perType, Want: 1}), "a level")
-	innerID := inner.ID
-	testutil.MustNoErr(t, db.SaveKanban(store.KanbanChange{NodeID: perTypeOverflowing.ID, EnsureRow: true,
-		Levels: []store.KanbanLevelChange{{BinTypeID: perType, Overflow: &innerID}}}, "test"), "its type overflows into the source")
-
 	if _, err := svc.CreateLoader(LoaderCreate{Name: "DRR-LOADER", Role: loaders.RoleProduce,
 		InboundSource: src.Name, Drains: leftovers}); !errors.Is(err, ErrDrainProduce) {
 		t.Errorf("a produce loader with a box: err = %v, want ErrDrainProduce", err)
@@ -149,8 +138,6 @@ func TestLoaderService_DrainsRefusedWhereTheyCannotHold(t *testing.T) {
 		{"the outbound lies in the source", inner.Name},
 		{"the outbound contains the source", outer.Name},
 		{"the outbound's overflow lies in the source", overflowing.Name},
-		{"a kanban outbound's overflow lies in the source", kanbanOverflowing.Name},
-		{"a type's own overflow lies in the source", perTypeOverflowing.Name},
 	} {
 		err := save(LoaderUpdate{InboundSource: src.Name, OutboundDest: c.outbound, Drains: leftovers})
 		if !errors.Is(err, ErrDrainIntoItsSource) {

@@ -31,41 +31,15 @@ import (
 // A failed read is an error and no line: never a line built on a count that was not
 // made.
 //
-// FOUR STATEMENTS PER CALL, however many groups and levels: the open kanban
+// THREE STATEMENTS PER CALL, however many groups and levels: the open kanban
 // episodes with their asks, the types in play (the level types, the sources' and the
-// window carts' types, each with its floor size and the groups' layer wants,
-// ListTypesInPlay), the comings and the residents (store.DB.ReadKanbanCounts, whose
-// rows carry what a wanted height reads). The sources ride the same reads as their
+// window carts' types, each with its family and the groups' layer wants,
+// ListTypesInPlay), and the loops (store.DB.ReadKanbanCounts, whose rows carry what a
+// wanted height reads). The sources ride the same reads as their
 // kanbans, whether the walk comes to ask them or not, so a whole kanban costs nothing
 // more. A STOP in the brief to add one per kanban. Pin: TestKanbanCost_SnapshotBuild.
 func (e *Engine) UnloaderGroupLines(asks []store.GroupLineAsk) ([]protocol.NodeBinsGroup, error) {
-	var ids []int64
-	var codes []string
-	seen := map[string]bool{}
-	addCode := func(code string) {
-		if code != "" && !seen[code] {
-			seen[code] = true
-			codes = append(codes, code)
-		}
-	}
-	for _, a := range asks {
-		if len(a.Levels) == 0 {
-			continue
-		}
-		ids = append(ids, a.Group.ID)
-		for _, lv := range a.Levels {
-			addCode(lv.BinTypeCode)
-		}
-		for _, s := range a.Sources {
-			ids = append(ids, s.ID)
-			for _, lv := range s.Levels {
-				addCode(lv.BinTypeCode)
-			}
-		}
-		for _, w := range a.Windows {
-			addCode(w.BinTypeCode)
-		}
-	}
+	ids, codes := groupLineScope(asks)
 	if len(ids) == 0 {
 		return nil, nil
 	}
@@ -82,12 +56,12 @@ func (e *Engine) UnloaderGroupLines(asks []store.GroupLineAsk) ([]protocol.NodeB
 		return nil, fmt.Errorf("group lines: %w", err)
 	}
 	wantsByGroup := map[int64][]store.KanbanLayerWant{}
-	sizes := map[string]int64{}
+	families := map[string]int64{}
 	for _, t := range types {
 		for _, w := range t.LayerWants {
 			wantsByGroup[w.GroupNodeID] = append(wantsByGroup[w.GroupNodeID], w)
 		}
-		sizes[t.Type.Code] = t.Type.FamilyID
+		families[t.Type.Code] = t.Type.FamilyID
 	}
 	counts, err := e.db.ReadKanbanCounts(ids)
 	if err != nil {
@@ -113,12 +87,48 @@ func (e *Engine) UnloaderGroupLines(asks []store.GroupLineAsk) ([]protocol.NodeB
 			return lines
 		}
 		lines := linesOf(a.Group.ID, a.Group.Name, a.Levels)
+		// A LOOP CART LANDS AT HOME FIRST (plan.Planner.ChoosePush): a source is asked for only
+		// with no slot left here, or the board would say a cart is for a source and it would land
+		// at home.
 		sources := make([]kanban.Source, 0, len(a.Sources))
 		for _, s := range a.Sources {
 			sources = append(sources, kanban.Source{Name: s.Name, Lines: linesOf(s.ID, s.Name, s.Levels)})
 		}
+		if counts.SlotsSpoken(a.Group.ID) < a.Slots {
+			sources = nil
+		}
 		out = append(out, protocol.NodeBinsGroup{Group: a.Group.Name, Wants: kanban.Wants(lines),
-			Assignments: kanban.AssignAcross(lines, sources, a.Windows, inbound, sizes)})
+			Assignments: kanban.AssignAcross(lines, sources, a.Windows, inbound, families)})
 	}
 	return out, nil
+}
+
+// groupLineScope is the groups and types a board's asks name, each type once.
+func groupLineScope(asks []store.GroupLineAsk) (ids []int64, codes []string) {
+	seen := map[string]bool{}
+	addCode := func(code string) {
+		if code != "" && !seen[code] {
+			seen[code] = true
+			codes = append(codes, code)
+		}
+	}
+	for _, a := range asks {
+		if len(a.Levels) == 0 {
+			continue
+		}
+		ids = append(ids, a.Group.ID)
+		for _, lv := range a.Levels {
+			addCode(lv.BinTypeCode)
+		}
+		for _, s := range a.Sources {
+			ids = append(ids, s.ID)
+			for _, lv := range s.Levels {
+				addCode(lv.BinTypeCode)
+			}
+		}
+		for _, w := range a.Windows {
+			addCode(w.BinTypeCode)
+		}
+	}
+	return ids, codes
 }

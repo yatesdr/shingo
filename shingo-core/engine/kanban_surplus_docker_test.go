@@ -58,6 +58,7 @@ func surplusRigOn(t *testing.T, db *store.DB, sim *simulator.SimulatorBackend, e
 	}
 	r.small, r.big = typ("SP-SMALL", 45, 48, 25), typ("SP-BIG", 48, 45, 34)
 	r.totes, r.t32 = typ("SP-TOTES", 45, 48, 6), typ("SP-32", 32, 30, 25)
+	pinFamilyOf(t, db, "SP-45", r.small, r.big, r.totes)
 	r.k, r.kids = kanbanCostFlat(t, db, "SP-K", n)
 	testdb.KanbanKeeper(t, db, r.k.ID, "sp-edge")
 	lid, err := db.CreateLoader(loaders.Loader{Name: "SP-UNL", Role: loaders.RoleConsume,
@@ -81,18 +82,19 @@ func (r *surplusRig) level(t *testing.T, g *nodes.Node, bt int64, want int) {
 func (r *surplusRig) stand(t *testing.T, bt int64) int64 {
 	t.Helper()
 	id := landAt(t, r.db, bt, r.kids[r.next].ID, fmt.Sprintf("SP-CART-%d", r.next))
-	_, err := r.db.Exec(`UPDATE bins SET updated_at = $1 WHERE id = $2`,
+	_, err := r.db.Exec(`UPDATE bins SET created_at = $1 WHERE id = $2`,
 		time.Date(2026, 1, 1, 0, r.next, 0, 0, time.UTC), id)
 	testutil.MustNoErr(t, err, "age the cart")
 	r.next++
 	return id
 }
 
-// blockWindows stands a full cart on the first n windows.
+// blockWindows stands a full cart on the first n windows, of a family the walk cannot light for
+// the rig's short types.
 func (r *surplusRig) blockWindows(t *testing.T, n int) {
 	t.Helper()
 	for i := 0; i < n; i++ {
-		id := landAt(t, r.db, r.small, r.windows[i].ID, fmt.Sprintf("SP-FULL-%d", i))
+		id := landAt(t, r.db, r.t32, r.windows[i].ID, fmt.Sprintf("SP-FULL-%d", i))
 		testutil.MustNoErr(t, r.db.SetBinManifest(id, `{"items": []}`, "SP-PART", 10), "fill it")
 	}
 }
@@ -333,81 +335,6 @@ func TestKanbanSurplus_LargestOnTheFloorThenOldest(t *testing.T) {
 	}
 }
 
-// TestKanbanSurplus_AnotherFloorGoesToTheFirstSourceWithRoom: K short of 32x30, its
-// surplus on 45x48. A source with no level of the type, then one at its level, have no
-// room; the third does, for one; its slot takes it and the landed move confirms. The
-// next tick has no room left and waits, with the cause on the type's line.
-func TestKanbanSurplus_AnotherFloorGoesToTheFirstSourceWithRoom(t *testing.T) {
-	t.Parallel()
-	r := newSurplusRig(t, 3)
-	r.level(t, r.k, r.totes, 1)
-	r.level(t, r.k, r.t32, 2)
-	oldest := r.stand(t, r.totes)
-	r.stand(t, r.totes)
-	r.stand(t, r.totes)
-	noLevel, _ := r.zone(t, "SP-Z32", 4, map[int64]int{r.t32: 2})
-	atLevel, full := r.zone(t, "SP-ZFULL", 4, map[int64]int{r.totes: 1})
-	landAt(t, r.db, r.totes, full[0].ID, "SP-ZFULL-1")
-	roomy, _ := r.zone(t, "SP-Z45", 4, map[int64]int{r.totes: 1})
-	testdb.KanbanSources(t, r.db, r.k.ID, noLevel.ID, atLevel.ID, roomy.ID)
-
-	r.tick(t)
-	got := r.moves(t)
-	if len(got) != 1 || surplusCart(t, got[0]) != oldest {
-		t.Fatalf("moves %+v, want the oldest surplus, bin %d", got, oldest)
-	}
-	dest, err := r.db.GetNodeByDotName(got[0].DeliveryNode)
-	testutil.MustNoErr(t, err, "the slot")
-	if dest.ParentID == nil || *dest.ParentID != roomy.ID {
-		t.Fatalf("delivered to %s, want a position of %s", got[0].DeliveryNode, roomy.Name)
-	}
-	if got[0].OriginClass != protocol.OriginClassNoDemand || got[0].OriginID != "" {
-		t.Errorf("the move's provenance: %q %q, want no demand and no episode", got[0].OriginClass, got[0].OriginID)
-	}
-
-	// In flight: its source is spoken for, and the move is not made twice.
-	st := mntState(t, r.tick(t), "SP-K", "SP-TOTES")
-	if n := len(r.moves(t)); n != 1 {
-		t.Errorf("%d moves after a second tick, want still one", n)
-	}
-	if !strings.Contains(st.SurplusCause, "no source of SP-K has room") {
-		t.Errorf("the surplus left, every source at its level: cause %q", st.SurplusCause)
-	}
-
-	r.land(t, got[0])
-	cart, err := r.db.GetBin(oldest)
-	testutil.MustNoErr(t, err, "the cart")
-	if cart.NodeID == nil || *cart.NodeID != dest.ID || cart.ClaimedBy != nil {
-		t.Errorf("landed: at %v claimed by %v, want on %s and free", cart.NodeID, cart.ClaimedBy, dest.Name)
-	}
-}
-
-// TestKanbanSurplus_NeverToAPlainGroupOrTheOverflow: a plain group with free slots stands
-// in K's sources and as its overflow, and a source with a level has supports. No cart
-// goes to any of them. It waits, and says so.
-func TestKanbanSurplus_NeverToAPlainGroupOrTheOverflow(t *testing.T) {
-	t.Parallel()
-	r := newSurplusRig(t, 3)
-	r.level(t, r.k, r.totes, 1)
-	r.level(t, r.k, r.t32, 2)
-	for i := 0; i < 3; i++ {
-		r.stand(t, r.totes)
-	}
-	plain, _ := kanbanCostFlat(t, r.db, "SP-PLAIN", 4)
-	otherLineside, _ := r.zone(t, "SP-K2", 4, map[int64]int{r.totes: 3})
-	testdb.KanbanKeeper(t, r.db, otherLineside.ID, "sp-edge")
-	testdb.KanbanSources(t, r.db, r.k.ID, plain.ID, otherLineside.ID)
-	testdb.KanbanOverflow(t, r.db, r.k.ID, plain.Name)
-
-	st := mntState(t, r.tick(t), "SP-K", "SP-TOTES")
-	if got := r.moves(t); len(got) != 0 {
-		t.Fatalf("%d carts moved to %s: never to a plain group, the overflow or another process's kanban", len(got), got[0].DeliveryNode)
-	}
-	if !strings.Contains(st.SurplusCause, "no source of SP-K has room") {
-		t.Errorf("cause %q, want no source with room", st.SurplusCause)
-	}
-}
-
 // TestKanbanSurplus_NeverMovesWhatTheCountRefuses: the oldest carts in K are claimed,
 // reserved, locked, staged and loaded, and K reads none of them as a resident. The arm
 // lists only what it counts, so the one above its want it moves is the plain one, and
@@ -451,7 +378,7 @@ func TestKanbanSurplus_NeverMovesWhatTheCountRefuses(t *testing.T) {
 		testutil.MustNoErr(t, err, "windows")
 		return ws[0].LoaderID
 	}()
-	moved, _, err := r.eng.Dispatcher().SurplusToWindows(loaderID, r.windows[1:], []*bins.Bin{stale, listed[2]}, "stale")
+	moved, _, err := r.eng.Dispatcher().SurplusToWindows(loaderID, r.windows[1:], []*bins.Bin{stale, listed[2]}, "test", 0)
 	testutil.MustNoErr(t, err, "the moves")
 	if len(moved) != 1 || moved[0] != listed[2].ID {
 		t.Errorf("moved %v, want the reserved cart passed over for %d", moved, listed[2].ID)
@@ -491,8 +418,8 @@ func TestKanbanSurplus_TheAsksAreNetted(t *testing.T) {
 	// Two carts of three still lift: 1 landed, 2 live; all three lit totes.
 	m.Tick()
 	st := mntState(t, m, "SP-K", "SP-TOTES")
-	if st.Gap != 3 || st.Created != 0 {
-		t.Errorf("three lit against a gap of three: %+v, want gap 3 and nothing asked", st)
+	if st.Gap != 0 || st.Created != 0 {
+		t.Errorf("three lit against a short of three: %+v, want gap 0 and nothing asked", st)
 	}
 	if !strings.Contains(st.HeldBy, "3 at the unloader's windows") {
 		t.Errorf("held by %q, want the windows named", st.HeldBy)
@@ -502,8 +429,8 @@ func TestKanbanSurplus_TheAsksAreNetted(t *testing.T) {
 	r.level(t, r.k, r.totes, 4)
 	m.Tick()
 	st = mntState(t, m, "SP-K", "SP-TOTES")
-	if st.Gap != 4 || st.Created != 1 {
-		t.Errorf("want 4, three lit: %+v, want gap 4 and one ask", st)
+	if st.Gap != 1 || st.Created != 1 {
+		t.Errorf("want 4, three lit: %+v, want gap 1 and one ask", st)
 	}
 
 	// Landed, the line an Edge is sent lights the same three carts the keeper left out.
@@ -563,7 +490,7 @@ func TestKanbanSurplus_ARestartMidMoveIsNotStranded(t *testing.T) {
 	if n := len(r.moves(t)); n != 1 {
 		t.Fatalf("%d moves after the restart, want the same one", n)
 	}
-	if st.Gap != 1 || st.Created != 0 {
+	if st.Gap != 0 || st.Created != 0 {
 		t.Errorf("after the restart: %+v, want the arm's cart netted", st)
 	}
 	r.eng.RunFulfillmentScan()
@@ -588,7 +515,6 @@ func TestKanbanSurplus_CoverMovingAwayDrivesIt(t *testing.T) {
 		r.level(t, r.k, r.small, 1)
 		r.level(t, r.k, r.totes, 1)
 		r.level(t, r.k, r.t32, 0)
-		testdb.KanbanCover(t, r.db, r.k.ID, 2)
 		coverPart(t, r.db, name+"-SP", r.small)
 		coverPart(t, r.db, name+"-TP", r.totes)
 		coverPart(t, r.db, name+"-32", r.t32)
@@ -606,7 +532,7 @@ func TestKanbanSurplus_CoverMovingAwayDrivesIt(t *testing.T) {
 		return r, name
 	}
 
-	t.Run("within the floor", func(t *testing.T) {
+	t.Run("within the family", func(t *testing.T) {
 		t.Parallel()
 		r, name := setup(t, "SPA")
 		open(t, r, name, name+"-TP", "SP-K-SUPPORT")
@@ -614,40 +540,17 @@ func TestKanbanSurplus_CoverMovingAwayDrivesIt(t *testing.T) {
 		if st := mntState(t, m, "SP-K", "SP-SMALL"); st.Want != 1 || st.Resident != 3 {
 			t.Fatalf("small's line: %+v, want want 1 and the three it read", st)
 		}
-		if got := r.moves(t); len(got) != 2 {
-			t.Fatalf("%d moves, want 2: small 2 above with totes short 2 and K full", len(got))
+		if got := r.moves(t); len(got) != 1 {
+			t.Fatalf("%d moves, want 1: small 2 above with totes short 1", len(got))
 		}
 	})
-	t.Run("across floors, a source short", func(t *testing.T) {
+	t.Run("across families", func(t *testing.T) {
 		t.Parallel()
 		r, name := setup(t, "SPB")
-		z, _ := r.zone(t, "SP-Z45B", 4, map[int64]int{r.small: 2})
-		testdb.KanbanSources(t, r.db, r.k.ID, z.ID)
 		open(t, r, name, name+"-32", "SP-K-SUPPORT")
 		r.tick(t)
-		got := r.moves(t)
-		if len(got) != 2 {
-			t.Fatalf("%d moves, want 2: 32x30 short 2, K full, the zone short 2 of small", len(got))
-		}
-		dest, err := r.db.GetNodeByDotName(got[0].DeliveryNode)
-		testutil.MustNoErr(t, err, "slot")
-		if dest.ParentID == nil || *dest.ParentID != z.ID {
-			t.Errorf("delivered to %s, want the zone", got[0].DeliveryNode)
-		}
-	})
-	t.Run("across floors, every source at its level", func(t *testing.T) {
-		t.Parallel()
-		r, name := setup(t, "SPC")
-		z, kids := r.zone(t, "SP-Z45C", 4, map[int64]int{r.small: 1})
-		landAt(t, r.db, r.small, kids[0].ID, "SP-Z45C-1")
-		testdb.KanbanSources(t, r.db, r.k.ID, z.ID)
-		open(t, r, name, name+"-32", "SP-K-SUPPORT")
-		st := mntState(t, r.tick(t), "SP-K", "SP-SMALL")
 		if got := r.moves(t); len(got) != 0 {
-			t.Fatalf("%d moves with no source short", len(got))
-		}
-		if !strings.Contains(st.SurplusCause, "no source") {
-			t.Errorf("cause %q", st.SurplusCause)
+			t.Fatalf("%d moves: a 45x48 cart is no 32x30", len(got))
 		}
 	})
 }
@@ -672,72 +575,6 @@ func TestKanbanSurplus_ANonLinesideKanbanNeverFires(t *testing.T) {
 	}
 }
 
-// TestKanbanSurplus_NoChildFreeIsExact: the arm fires on the group's own slot read, not
-// on slots less residents. A child standing free holds it, with nothing to source for S.
-// A child holding a loaded cart, which the keeper's count does not see, does not.
-func TestKanbanSurplus_NoChildFreeIsExact(t *testing.T) {
-	t.Parallel()
-	setup := func(t *testing.T) *surplusRig {
-		r := newSurplusRig(t, 3)
-		r.level(t, r.k, r.small, 1)
-		r.level(t, r.k, r.totes, 1)
-		r.stand(t, r.small)
-		r.stand(t, r.small)
-		return r
-	}
-	t.Run("a child free", func(t *testing.T) {
-		t.Parallel()
-		r := setup(t)
-		st := mntState(t, r.tick(t), "SP-K", "SP-TOTES")
-		if got := r.moves(t); len(got) != 0 {
-			t.Fatalf("%d moves with a child free", len(got))
-		}
-		if st.Gap != 1 || !strings.Contains(st.HeldBy, "no empty") {
-			t.Errorf("%+v, want the gap and why nothing was asked", st)
-		}
-	})
-	t.Run("the child holds a loaded cart", func(t *testing.T) {
-		t.Parallel()
-		r := setup(t)
-		testutil.MustNoErr(t, r.db.SetBinManifest(r.stand(t, r.small), `{"items": []}`, "SP-PART", 10), "load it")
-		r.tick(t)
-		if got := r.moves(t); len(got) != 1 {
-			t.Fatalf("%d moves, want 1: slots 3 less residents 2 reads one free, and it is not", len(got))
-		}
-	})
-}
-
-// TestKanbanSurplus_ASourcesComingsFillItsRoom: a source under its level by residents
-// with a cart on its way to it has no room, which its own cap, reading residents alone,
-// would admit. A person's move stands in for the cart on its way.
-func TestKanbanSurplus_ASourcesComingsFillItsRoom(t *testing.T) {
-	t.Parallel()
-	r := newSurplusRig(t, 2)
-	r.level(t, r.k, r.totes, 0)
-	r.level(t, r.k, r.t32, 1)
-	r.stand(t, r.totes)
-	r.stand(t, r.totes)
-	z, kids := r.zone(t, "SP-Z45", 4, map[int64]int{r.totes: 1})
-	testdb.KanbanSources(t, r.db, r.k.ID, z.ID)
-	dock := &nodes.Node{Name: "SP-DOCK", Enabled: true}
-	testutil.MustNoErr(t, r.db.CreateNode(dock), "dock")
-	comer := landAt(t, r.db, r.totes, dock.ID, "SP-COMER")
-	testdb.CreateOrder(t, r.db, func(o *orders.Order) {
-		o.EdgeUUID, o.OrderType, o.Status = "sp-comer", protocol.OrderTypeMove, protocol.StatusDispatched
-		o.SourceNode, o.DeliveryNode = dock.Name, kids[0].Name
-		o.HoldFromBirth(comer)
-	})
-	testdb.ClaimBinForTest(t, r.db, comer, testdb.RequireOrder(t, r.db, "sp-comer").ID)
-
-	st := mntState(t, r.tick(t), "SP-K", "SP-TOTES")
-	if got := r.moves(t); len(got) != 0 {
-		t.Fatalf("moves %+v, want none: the source's level is spoken for", got)
-	}
-	if !strings.Contains(st.SurplusCause, "no source of SP-K has room") {
-		t.Errorf("cause %q", st.SurplusCause)
-	}
-}
-
 // TestKanbanSurplus_R2Shape walks a small-to-totes changeover at the tick on a kanban with a
 // lender (the rig had this shape until plants/kanban-press.yaml went to one lineside kanban):
 // K 8 children under small (5 + 1 + 1, one free), cover 4 moving to totes. One ask fills the free child,
@@ -757,7 +594,6 @@ func TestKanbanSurplus_R2Shape(t *testing.T) {
 	r.level(t, r.k, r.small, 1)
 	r.level(t, r.k, r.big, 1)
 	r.level(t, r.k, r.totes, 1)
-	testdb.KanbanCover(t, r.db, r.k.ID, 4)
 	coverPart(t, r.db, "SPR2-S", r.small)
 	coverPart(t, r.db, "SPR2-T", r.totes)
 	coverProcess(t, r.db, "SPR2", coverStyle{"SMALL", true, [][2]string{{"SP-K-SUPPORT", "SPR2-S"}}},
@@ -778,12 +614,12 @@ func TestKanbanSurplus_R2Shape(t *testing.T) {
 		PayloadCode: "SPR2-T", OpenedAt: time.Now().UTC()}), "open the changeover")
 	m := r.tick(t)
 	tt := mntState(t, m, "SP-K", "SP-TOTES")
-	if tt.Want != 5 || tt.Gap != 4 || tt.Created != 1 {
-		t.Errorf("totes at START: %+v, want want 5, gap 4, one ask into the free child", tt)
+	if tt.Want != 2 || tt.Gap != 1 || tt.Created != 0 {
+		t.Errorf("totes at START: %+v, want want 2, gap 1, no ask: the family is whole", tt)
 	}
 	got := r.moves(t)
-	if len(got) != 3 {
-		t.Fatalf("%d moves at START, want 3: four windows free, one kept", len(got))
+	if len(got) != 1 {
+		t.Fatalf("%d moves at START, want the one short", len(got))
 	}
 	for _, o := range got {
 		if !strings.HasPrefix(o.DeliveryNode, "SP-W") {
@@ -792,14 +628,14 @@ func TestKanbanSurplus_R2Shape(t *testing.T) {
 		r.land(t, o)
 	}
 
-	// Three lit, one asked: the gap is spoken for, and small's last spare stays.
+	// Lit: the gap is spoken for.
 	m.Tick()
 	tt = mntState(t, m, "SP-K", "SP-TOTES")
-	if tt.Gap != 3 || tt.Created != 0 {
-		t.Errorf("totes with three at the windows: %+v, want gap 3 and no ask", tt)
+	if tt.Gap != 0 || tt.Created != 0 {
+		t.Errorf("totes with one at the windows: %+v, want gap 0 and no ask", tt)
 	}
-	if n := len(r.moves(t)); n != 3 {
-		t.Errorf("%d moves, want still 3: nothing is left short", n)
+	if n := len(r.moves(t)); n != 1 {
+		t.Errorf("%d moves, want still 1: nothing is left short", n)
 	}
 	var toSM int
 	testutil.MustNoErr(t, r.db.QueryRow(`SELECT COUNT(*) FROM orders o JOIN nodes n ON n.name = o.delivery_node
@@ -807,136 +643,6 @@ func TestKanbanSurplus_R2Shape(t *testing.T) {
 	if toSM != 0 {
 		t.Errorf("%d orders to the plain market", toSM)
 	}
-}
-
-// TestKanbanSurplus_R3Shape walks a floor-leaving changeover at the tick, on the shape the rig
-// had with lenders (plants/kanban-press.yaml has since gone to one lineside kanban). K 8
-// children, 1 + 1 + 1 + cover 4 on the running type; Z45 at 2/2/2; Z32 at 6; the spare zone
-// plain and K's overflow and last source.
-func TestKanbanSurplus_R3Shape(t *testing.T) {
-	t.Parallel()
-	r := newSurplusRig(t, 8)
-	z45, z45Kids := r.zone(t, "SP-Z45", 8, map[int64]int{r.small: 2, r.big: 2, r.totes: 2})
-	z32, z32Kids := r.zone(t, "SP-Z32", 8, map[int64]int{r.t32: 6})
-	spare, _ := kanbanCostFlat(t, r.db, "SP-SPARE", 10)
-	testdb.KanbanSources(t, r.db, r.k.ID, z45.ID, z32.ID, spare.ID)
-	testdb.KanbanOverflow(t, r.db, r.k.ID, spare.Name)
-	r.level(t, r.k, r.small, 1)
-	r.level(t, r.k, r.big, 1)
-	r.level(t, r.k, r.totes, 1)
-	r.level(t, r.k, r.t32, 0)
-	testdb.KanbanCover(t, r.db, r.k.ID, 4)
-	coverPart(t, r.db, "SPR-T", r.totes)
-	coverPart(t, r.db, "SPR-32", r.t32)
-	coverProcess(t, r.db, "SPR", coverStyle{"TOTES", true, [][2]string{{"SP-K-SUPPORT", "SPR-T"}}},
-		coverStyle{"C32", false, [][2]string{{"SP-K-SUPPORT", "SPR-32"}}})
-	// Under totes: K small 1, big 1, totes 5, one child free. The lenders whole.
-	r.stand(t, r.small)
-	r.stand(t, r.big)
-	var kTotes []int64
-	for i := 0; i < 5; i++ {
-		kTotes = append(kTotes, r.stand(t, r.totes))
-	}
-	for i, bt := range []int64{r.small, r.small, r.big, r.big, r.totes, r.totes} {
-		landAt(t, r.db, bt, z45Kids[i].ID, fmt.Sprintf("SP-Z45-%d", i))
-	}
-	for i := 0; i < 5; i++ { // the sixth is the 32x30 K asks for
-		landAt(t, r.db, r.t32, z32Kids[i].ID, fmt.Sprintf("SP-Z32-%d", i))
-	}
-	r.tick(t)
-	if got := r.moves(t); len(got) != 0 {
-		t.Fatalf("steady under totes: %d moves", len(got))
-	}
-
-	// START KP-32. 32x30 wants 4. One child free: one ask, three short with none free.
-	// Totes are 4 above their want, and Z45 is whole, and Z32 declares no totes, and the
-	// spare zone is plain: the arm waits, K holds 7 of 45x48, and says why.
-	id := "c0c0c0c0-0000-4000-8000-000000000321"
-	testutil.MustNoErr(t, r.db.UpsertDemandOrigin(store.DemandOrigin{OriginID: id, Revision: 1, EpisodeKey: "co|" + id,
-		Kind: protocol.EpisodeKindChangeover, StationID: "sp-edge", ProcessID: "SPR", CoreNodeName: "SP-K-SUPPORT",
-		PayloadCode: "SPR-32", OpenedAt: time.Now().UTC()}), "open the changeover")
-	m := r.tick(t)
-	c, tt := mntState(t, m, "SP-K", "SP-32"), mntState(t, m, "SP-K", "SP-TOTES")
-	if c.Want != 4 || c.Created != 1 || c.Gap != 4 {
-		t.Errorf("32x30 under KP-32: %+v, want want 4, one ask into the one free child", c)
-	}
-	if tt.Resident != 5 || tt.Want != 1 || !strings.Contains(tt.SurplusCause, "no source of SP-K has room") {
-		t.Errorf("totes under KP-32: %+v, want 5 resident of 1 wanted, waiting with the cause", tt)
-	}
-	if got := r.moves(t); len(got) != 0 {
-		t.Fatalf("Z45 whole, spare plain: %d moves; the spare zone is reached by doors and sources only", len(got))
-	}
-
-	// Z45 short of totes by 2 (K borrowed): two go home.
-	_, err := r.db.Exec(`DELETE FROM bins WHERE label IN ('SP-Z45-4', 'SP-Z45-5')`)
-	testutil.MustNoErr(t, err, "Z45 lends its totes")
-	r.tick(t)
-	got := r.moves(t)
-	if len(got) != 2 || surplusCart(t, got[0]) != kTotes[0] || surplusCart(t, got[1]) != kTotes[1] {
-		t.Fatalf("moves %+v, want K's two oldest totes", got)
-	}
-	for _, o := range got {
-		dest, err := r.db.GetNodeByDotName(o.DeliveryNode)
-		testutil.MustNoErr(t, err, "slot")
-		if dest.ParentID == nil || *dest.ParentID != z45.ID {
-			t.Errorf("delivered to %s, want Z45", o.DeliveryNode)
-		}
-	}
-}
-
-// TestKanbanSurplus_R3Return_TheLastCartOnlyLeavesWithKFull is the cutover back: K 8/8
-// with one 32x30 above its want. It moves only while totes read short with no child
-// free, which is the positions' legs holding K's totes before a robot lifts them. Once
-// the children are free the asks fill them, nothing reads short, and it stays.
-func TestKanbanSurplus_R3Return_TheLastCartOnlyLeavesWithKFull(t *testing.T) {
-	t.Parallel()
-	setup := func(t *testing.T) (*surplusRig, []int64) {
-		r := newSurplusRig(t, 8)
-		z32, _ := r.zone(t, "SP-Z32", 8, map[int64]int{r.t32: 6})
-		z45, z45Kids := r.zone(t, "SP-Z45", 8, map[int64]int{r.totes: 2})
-		for i := 0; i < 2; i++ {
-			landAt(t, r.db, r.totes, z45Kids[i].ID, fmt.Sprintf("SP-Z45-%d", i))
-		}
-		testdb.KanbanSources(t, r.db, r.k.ID, z45.ID, z32.ID)
-		r.level(t, r.k, r.small, 1)
-		r.level(t, r.k, r.big, 1)
-		r.level(t, r.k, r.totes, 5)
-		r.level(t, r.k, r.t32, 0)
-		r.stand(t, r.small)
-		r.stand(t, r.big)
-		r.stand(t, r.t32)
-		var totes []int64
-		for i := 0; i < 5; i++ {
-			totes = append(totes, r.stand(t, r.totes))
-		}
-		r.tick(t)
-		if got := r.moves(t); len(got) != 0 {
-			t.Fatalf("K whole on totes: %d moves with nothing short", len(got))
-		}
-		return r, totes
-	}
-	t.Run("a leg holds a cart and no child is free", func(t *testing.T) {
-		t.Parallel()
-		r, totes := setup(t)
-		testdb.ClaimBinForTest(t, r.db, totes[0], dispatched(t, r.db, "sp-leg"))
-		r.tick(t)
-		if got := r.moves(t); len(got) != 1 || !strings.HasPrefix(got[0].DeliveryNode, "SP-Z32") {
-			t.Fatalf("moves %+v, want the 32x30 to Z32", got)
-		}
-	})
-	t.Run("the carts already lifted", func(t *testing.T) {
-		t.Parallel()
-		r, totes := setup(t)
-		_, err := r.db.Exec(`DELETE FROM bins WHERE id = ANY($1)`, totes[:2])
-		testutil.MustNoErr(t, err, "two lifted")
-		st := mntState(t, r.tick(t), "SP-K", "SP-32")
-		if got := r.moves(t); len(got) != 0 {
-			t.Fatalf("moves %+v: a child is free for each short cart, so the arm has no business", got)
-		}
-		if st.Resident != 1 || st.Gap != -1 || st.SurplusCause != "" {
-			t.Errorf("the 32x30's line: %+v: it stands above its want, Z32 short, and nothing says so", st)
-		}
-	})
 }
 
 // dispatched is an order a robot has, which is what a hard claim belongs to.

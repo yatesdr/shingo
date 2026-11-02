@@ -121,7 +121,7 @@ var dispatchIssueDrivers = map[string]testdb.IssueDriver{
 		}
 		read, err := db.GetBin(cart.ID)
 		testutil.MustNoErr(t, err, "the cart")
-		moved, _, err := f.d.SurplusToWindows(f.loader, f.windows, []*bins.Bin{read}, "census")
+		moved, _, err := f.d.SurplusToWindows(f.loader, f.windows, []*bins.Bin{read}, "census", 0)
 		testutil.MustNoErr(t, err, "the arm")
 		if len(moved) != 1 {
 			return db, 0

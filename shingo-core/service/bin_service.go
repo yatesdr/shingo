@@ -773,6 +773,26 @@ func (s *BinService) UpdateBinType(bt *bins.BinType) error {
 	return s.db.UpdateBinType(bt)
 }
 
+// SetBinTypeFamilyByCode moves a type and its bare marker to the family of this code, making the
+// family when it is new. Blank leaves the type where it stands: a new type stands in a family of
+// one, and a form that does not carry the field changes nothing.
+func (s *BinService) SetBinTypeFamilyByCode(typeID int64, code string) error {
+	code = strings.TrimSpace(code)
+	if code == "" {
+		return nil
+	}
+	family, err := s.db.EnsureCarrierFamily(code)
+	if err != nil {
+		return err
+	}
+	return s.db.SetBinTypeFamily(typeID, family)
+}
+
+// ListCarrierFamilies is every family and its members, for the Bin Types page's picker.
+func (s *BinService) ListCarrierFamilies() ([]bins.CarrierFamily, error) {
+	return s.db.ListCarrierFamilies()
+}
+
 // DeleteBinType removes a bin type row. Absorbed from
 // engine_db_methods.go as part of the www-handler service migration
 // (PR 3a.2).

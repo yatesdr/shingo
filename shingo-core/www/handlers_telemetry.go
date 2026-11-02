@@ -17,6 +17,7 @@ import (
 	"shingocore/asks"
 	"shingocore/domain"
 	"shingocore/fleet"
+	"shingocore/kanban"
 	"shingocore/service"
 )
 
@@ -309,13 +310,19 @@ func (d *Doors) binClear(req protocol.BinClearRequest) asks.Result {
 		return *refusal
 	}
 
-	// Resolve optional dunnage re-type. Existence check keeps the blast radius
-	// of a mis-pick to "starves out, repair via re-type" (R3 severity).
+	// Resolve optional dunnage re-type. A re-type within the family is the floor's. Across it
+	// is a different physical cart, and a stamp would corrupt two families' counts, so it is
+	// refused here with a sentence; the admin re-type stays for a person who means it.
 	var binTypeID *int64
 	if req.BinTypeCode != "" && stamp == domain.StampNone {
 		bt, err := d.engine.BinService().GetBinTypeByCode(req.BinTypeCode)
 		if err != nil {
 			return d.refuseAt(req.NodeName, http.StatusBadRequest, fmt.Sprintf("unknown bin type code %q", req.BinTypeCode))
+		}
+		if !kanban.SameFamily(bin.BinFamilyID, bt.FamilyID) {
+			return d.refuseAt(req.NodeName, http.StatusConflict, fmt.Sprintf(
+				"bin %s is a %s and cannot be set as %s, which is another cart: re-type it on the Bins page if that is meant",
+				bin.Label, bin.BinTypeCode, req.BinTypeCode))
 		}
 		id := bt.ID
 		binTypeID = &id

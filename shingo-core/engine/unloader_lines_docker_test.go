@@ -48,6 +48,7 @@ func newLinesFixture(t *testing.T, name string) linesFixture {
 		`INSERT INTO bin_types (code) VALUES ('KD-L') RETURNING id`).Scan(&f.kd), "KD type")
 	testutil.MustNoErr(t, db.QueryRow(
 		`INSERT INTO bin_types (code, totes_per_layer) VALUES ('TOTE-L', 8) RETURNING id`).Scan(&f.tote), "tote type")
+	pinFamilyOf(t, db, "LINES-F", f.kd, f.tote)
 	f.grp, err = db.GetNode(grpID)
 	testutil.MustNoErr(t, err, "read group")
 	cdb, counter, err := store.OpenCounting(cfg)
@@ -138,8 +139,8 @@ func TestUnloaderGroupLines_ReferenceCase(t *testing.T) {
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("line =\n  %+v\nwant\n  %+v", got, want)
 	}
-	if n := f.counter.Count(); n != 4 {
-		t.Errorf("statements = %d, want 4 (episodes, types in play, comings, residents):\n%v", n, f.counter.Statements())
+	if n := f.counter.Count(); n != 3 {
+		t.Errorf("statements = %d, want 3 (episodes, types in play, the loops):\n%v", n, f.counter.Statements())
 	}
 }
 
@@ -190,8 +191,8 @@ func TestUnloaderGroupLines_HeightsCountOnAnExactMultiple(t *testing.T) {
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("line =\n  %+v\nwant\n  %+v", got, want)
 	}
-	if n := f.counter.Count(); n != 4 {
-		t.Errorf("statements = %d, want 4 (episodes, types in play, comings, residents):\n%v",
+	if n := f.counter.Count(); n != 3 {
+		t.Errorf("statements = %d, want 3 (episodes, types in play, the loops):\n%v",
 			n, f.counter.Statements())
 	}
 }
@@ -222,8 +223,8 @@ func TestUnloaderGroupLines_AClearedCartIsCountedOnce(t *testing.T) {
 	if !reflect.DeepEqual(got.Assignments, want) {
 		t.Errorf("assignments = %+v, want %+v", got.Assignments, want)
 	}
-	if n := f.counter.Count(); n != 4 {
-		t.Errorf("statements = %d, want 4 (episodes, types in play, comings, residents):\n%v", n, f.counter.Statements())
+	if n := f.counter.Count(); n != 3 {
+		t.Errorf("statements = %d, want 3 (episodes, types in play, the loops):\n%v", n, f.counter.Statements())
 	}
 }
 
@@ -248,14 +249,13 @@ func TestUnloaderGroupLines_TheEffectiveWant(t *testing.T) {
 	f.levels(t, map[int64]int{f.kd: 1}, nil)
 	f.empty(t, f.kd, 0, "LINES-COVER-KD", nil)
 	testdb.KanbanKeeper(t, f.db, f.grp.ID, "edge.1")
-	testdb.KanbanCover(t, f.db, f.grp.ID, 2)
 	coverPart(t, f.db, "LINES-COVER-P", f.kd)
 	coverProcess(t, f.db, "LINES-COVER-PRESS", coverStyle{"S", true, [][2]string{{"LINES-COVER-SUPPORT", "LINES-COVER-P"}}})
 
 	levels, err := f.db.ListKanbanLevels(f.grp.ID)
 	testutil.MustNoErr(t, err, "levels")
 	got := f.lines(t, levels, []protocol.NodeBinsRow{cart("W1", "KD-L", false)})
-	want := []protocol.NodeBinsWant{{BinType: "KD-L", Want: 3}}
+	want := []protocol.NodeBinsWant{{BinType: "KD-L", Want: 2}}
 	if !reflect.DeepEqual(got.Wants, want) {
 		t.Errorf("wants = %+v, want the effective %+v", got.Wants, want)
 	}
@@ -271,6 +271,9 @@ func TestUnloaderGroupLines_CountsAreTheKeepers(t *testing.T) {
 	db := testdb.Open(t)
 	eng := newTestEngine(t, db, simulator.New())
 	grpID, btID := mntFixture(t, db, "LINES-KEEP", 4, "LINES-KEEP-T", 2)
+	var other int64
+	testutil.MustNoErr(t, db.QueryRow(`INSERT INTO bin_types (code) VALUES ('OTHER-T') RETURNING id`).Scan(&other), "the window cart's type")
+	pinFamilyOf(t, db, "LINES-KEEP-F", btID, other)
 	mntOutsideEmpty(t, db, btID, "LINES-KEEP-MARKET")
 	eng.KanbanKeeper().Tick()
 	eng.KanbanKeeper().Tick()
@@ -298,17 +301,14 @@ func TestUnloaderGroupLines_CountsAreTheKeepers(t *testing.T) {
 // A window cart whose type is no level of the group still reads its floor
 // size, in the same one types read: a full 45 x 48 cart of a type the group
 // keeps no level of is asked for the 45 x 48 knockdown the group is short of,
-// never the 36 x 36 it is shortest of. Four statements, as the reference case.
+// never the 36 x 36 it is shortest of. Three statements, as the reference case.
 func TestUnloaderGroupLines_AWindowCartReadsItsSizeThoughNoLevel(t *testing.T) {
 	t.Parallel()
 	f := newLinesFixture(t, "LINES-SIZE")
-	var small int64
-	testutil.MustNoErr(t, f.db.QueryRow(`INSERT INTO bin_types (code, width_in, length_in) VALUES ('SMALL-L', 36, 36)
-		RETURNING id`).Scan(&small), "36 x 36 type")
-	_, err := f.db.Exec(`INSERT INTO bin_types (code, width_in, length_in) VALUES ('WIN-L', 48, 45)`)
-	testutil.MustNoErr(t, err, "the window cart's type")
-	_, err = f.db.Exec(`UPDATE bin_types SET width_in = 45, length_in = 48 WHERE id = $1`, f.kd)
-	testutil.MustNoErr(t, err, "size the knockdown")
+	var small, win int64
+	testutil.MustNoErr(t, f.db.QueryRow(`INSERT INTO bin_types (code) VALUES ('SMALL-L') RETURNING id`).Scan(&small), "another family")
+	testutil.MustNoErr(t, f.db.QueryRow(`INSERT INTO bin_types (code) VALUES ('WIN-L') RETURNING id`).Scan(&win), "the window cart's type")
+	pinFamilyOf(t, f.db, "LINES-45", f.kd, win)
 	levels := f.levels(t, map[int64]int{small: 5, f.kd: 1}, nil)
 
 	got := f.lines(t, levels, []protocol.NodeBinsRow{cart("W1", "WIN-L", true)})
@@ -316,7 +316,7 @@ func TestUnloaderGroupLines_AWindowCartReadsItsSizeThoughNoLevel(t *testing.T) {
 	if !reflect.DeepEqual(got.Assignments, want) {
 		t.Errorf("assignments = %+v, want %+v", got.Assignments, want)
 	}
-	if n := f.counter.Count(); n != 4 {
-		t.Errorf("statements = %d, want 4 (episodes, types in play, comings, residents):\n%v", n, f.counter.Statements())
+	if n := f.counter.Count(); n != 3 {
+		t.Errorf("statements = %d, want 3 (episodes, types in play, the loops):\n%v", n, f.counter.Statements())
 	}
 }

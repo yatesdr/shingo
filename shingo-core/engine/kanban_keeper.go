@@ -15,6 +15,7 @@ import (
 	"shingo/protocol/lockcheck"
 	"shingocore/dispatch"
 	"shingocore/internal/lockorder"
+	"shingocore/kanban"
 	"shingocore/store"
 	"shingocore/store/bins"
 	"shingocore/store/nodes"
@@ -94,7 +95,11 @@ type KanbanLineState struct {
 	Resident int `json:"resident"`
 	Asked    int `json:"asked"`
 	Coming   int `json:"coming"`
-	Gap      int `json:"gap"`
+	// Held is the carts of the type on the line with no order on them, Lit those at the
+	// windows the walk lights as it. Gap is the shortfall net of both.
+	Held int `json:"held"`
+	Lit  int `json:"lit"`
+	Gap  int `json:"gap"`
 	// Created, OriginID and OpenedAt are for the tick's own tests and logs: the
 	// card reads none of them.
 	Created  int       `json:"-"`
@@ -104,11 +109,6 @@ type KanbanLineState struct {
 	// RunningProcesses are the processes the cover counts for this type: what is
 	// driving the want above its base.
 	RunningProcesses []string `json:"running_processes,omitempty"`
-	// Slots are the kanban's enabled positions and TotalWant what its levels and
-	// tops & bottoms rows want of them; CannotCover is what they cannot hold.
-	Slots       int `json:"slots"`
-	TotalWant   int `json:"total_want"`
-	CannotCover int `json:"cannot_cover,omitempty"`
 	// NothingProcesses are the kanban's processes with a part that contributes no
 	// type, FallbackProcesses those counting on their active style because their
 	// changeover's target resolves to no type.
@@ -124,9 +124,9 @@ type KanbanLineState struct {
 	// OldestAskAge is rendered on the one duration ladder (protocol.FormatDuration),
 	// not Go's "11m3s".
 	OldestAskAge string `json:"oldest_ask_age,omitempty"`
-	// SurplusCause is why a cart of this type stands above its want while the kanban
-	// is short and has no child free (engine/kanban_surplus.go). A surplus has no ask, so
-	// it has no oldest ask to name.
+	// SurplusCause is why a cart of this type stands above its want while a type of its
+	// family is short (engine/kanban_surplus.go). A surplus has no ask, so it has no oldest
+	// ask to name.
 	SurplusCause string `json:"surplus_cause,omitempty"`
 }
 
@@ -140,6 +140,7 @@ type KanbanKeeper struct {
 	// mu guards the snapshot ONLY. There is no episode state to guard.
 	mu       lockcheck.Mutex[lockorder.KanbanKeeper]
 	snapshot []KanbanLineState
+	families []KanbanFamilyState
 	ticks    int
 }
 
@@ -167,6 +168,46 @@ func (m *KanbanKeeper) Run(ctx context.Context) {
 	}()
 }
 
+// KanbanFamilyState is one (kanban, family) of the last tick: what the card's family row
+// reads. Room is not here: it reads each slot's admits, which the card asks for itself and the
+// tick has no reason to.
+type KanbanFamilyState struct {
+	GroupNode string `json:"group_node"`
+	Family    string `json:"family"`
+	FamilyID  int64  `json:"family_id"`
+	// Pool is what the loop is meant to hold, Minimum what it must to hold the mix and the
+	// line. PoolDeclared false says it stands at the minimum because nobody has said.
+	Pool         int  `json:"pool"`
+	PoolDeclared bool `json:"pool_declared"`
+	Minimum      int  `json:"minimum"`
+	// Mix is the family's declared levels. Found is where its carts are; a keeper's asks are
+	// not in it.
+	Mix    int `json:"mix"`
+	Slot   int `json:"slot"`
+	Line   int `json:"line"`
+	Window int `json:"window"`
+	Flight int `json:"flight"`
+	Found  int `json:"found"`
+	Asked  int `json:"asked"`
+	// Unowned is carts of Flight on a robot with no live order. Floaters is pool less mix and
+	// the line: the carts standing as whatever they came off as.
+	Unowned  int `json:"unowned,omitempty"`
+	Floaters int `json:"floaters"`
+	// Strangers and Lost are found past the pool and short of it, named where a person can act
+	// on them.
+	Strangers []string `json:"strangers,omitempty"`
+	Lost      int      `json:"lost,omitempty"`
+}
+
+// FamilySnapshot returns the last tick's per-(kanban, family) state.
+func (m *KanbanKeeper) FamilySnapshot() []KanbanFamilyState {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := make([]KanbanFamilyState, len(m.families))
+	copy(out, m.families)
+	return out
+}
+
 // Snapshot returns the last tick's per-(group, type) state.
 func (m *KanbanKeeper) Snapshot() []KanbanLineState {
 	m.mu.Lock()
@@ -189,13 +230,11 @@ func (m *KanbanKeeper) Ticks() int {
 // remembered between passes, and a pass that decides to create nothing has
 // written nothing.
 //
-// FOUR STATEMENTS WHEN NOTHING IS SHORT, WHATEVER THE PLANT'S SIZE: the picture,
-// the open episodes with their asks, the comings, the residents. The order is the
-// safe one: a cart landing mid-read counts in two terms and asks one less until the
-// next tick, and is never in none, which would ask for a cart already there. A
-// short kanban adds one read of its unloaders' windows and one forecast, an asking
-// kanban one read of its slot state, its properties and its children's types, and an
-// ask what its birth costs. Pin: TestKanbanCost_KeeperTick.
+// THREE STATEMENTS WHEN NOTHING IS OUT, WHATEVER THE PLANT'S SIZE: the picture, the open
+// episodes with their asks, one read of the loops. A family short of its pool adds a forecast,
+// an asking kanban one read of its slot state, its properties and its children's types, and an
+// ask what its birth costs; a type short with a family member above it adds what the arm reads.
+// Pin: TestKanbanCost_KeeperTick.
 func (m *KanbanKeeper) Tick() {
 	if m.eng == nil || m.eng.db == nil {
 		return
@@ -227,22 +266,20 @@ func (m *KanbanKeeper) Tick() {
 	}
 
 	var states []KanbanLineState
+	var families []KanbanFamilyState
 	// configuredKeys is every episode key the CONFIG still calls for. Anything
 	// open and absent from it is config-withdrawn — see closeWithdrawn.
 	configuredKeys := map[string]bool{}
 	asked := false
-	byKanban := make(map[int64][]store.KanbanPictureRow)
-	for _, r := range picture {
-		byKanban[r.KanbanNodeID] = append(byKanban[r.KanbanNodeID], r)
-	}
 
 	for from := 0; from < len(picture); {
 		to := from
 		for to < len(picture) && picture[to].KanbanNodeID == picture[from].KanbanNodeID {
 			to++
 		}
-		got, created := m.tickKanban(picture[from:to], byKanban, openByKey, counts, configuredKeys)
+		got, fams, created := m.tickKanban(picture[from:to], openByKey, counts, configuredKeys)
 		states = append(states, got...)
+		families = append(families, fams...)
 		asked = asked || created
 		from = to
 	}
@@ -263,23 +300,29 @@ func (m *KanbanKeeper) Tick() {
 	})
 	m.mu.Lock()
 	m.snapshot = states
+	m.families = families
 	m.ticks++
 	m.mu.Unlock()
 }
 
-// tickKanban is one kanban's lines, and whether it asked. A disabled group has no
-// lines. A kanban runs a keeper when it has supports and a station. With no supports
-// it declares what it holds and other kanbans' unloaders refill it, so it counts and
-// shows its shortfall, and opens and asks nothing. With supports and no station its
-// asks would be invisible on every Edge board (the phantom-order family): the save
-// refuses that, a migrated row can hold it, and it is skipped out loud. Pins:
-// TestKanban_ANoSupportsKanbanRunsNoKeeper, TestKanbanKeeper_RefusesAGroupWithNoStation.
-func (m *KanbanKeeper) tickKanban(rows []store.KanbanPictureRow, picture map[int64][]store.KanbanPictureRow,
-	openByKey map[string]store.KeeperEpisode, counts *store.KanbanCounts, configured map[string]bool) ([]KanbanLineState, bool) {
+// tickKanban is one kanban's lines and families, and whether it asked. A disabled group has no
+// lines. A kanban runs a keeper when it has supports and a station. With no supports it declares
+// what it holds and other kanbans' unloaders refill it, so it counts and shows its shortfall,
+// and opens and asks nothing. With supports and no station its asks would be invisible on every
+// Edge board (the phantom-order family): the save refuses that, a migrated row can hold it, and
+// it is skipped out loud. Pins: TestKanban_ANoSupportsKanbanRunsNoKeeper,
+// TestKanbanKeeper_RefusesAGroupWithNoStation.
+//
+// TWO GRAINS. The keeper keeps the loop: it asks outside only for the family's deficit, pool
+// less found less asked. A type short inside a whole family is never an outside ask, it is the
+// arm's: a keeper that asked per type would raid a supermarket through every changeover and end
+// the loop past its pool.
+func (m *KanbanKeeper) tickKanban(rows []store.KanbanPictureRow, openByKey map[string]store.KeeperEpisode,
+	counts *store.KanbanCounts, configured map[string]bool) ([]KanbanLineState, []KanbanFamilyState, bool) {
 
 	k := rows[0]
 	if !k.Live {
-		return nil, false
+		return nil, nil, false
 	}
 	supported := len(k.Supports) > 0
 	keeper := supported && k.StationID != ""
@@ -287,77 +330,59 @@ func (m *KanbanKeeper) tickKanban(rows []store.KanbanPictureRow, picture map[int
 		m.eng.logFn("keeper: kanban %s has supports and no station — skipped; "+
 			"its asks would be invisible on every Edge board", k.KanbanName)
 	}
-	total := 0
-	for _, r := range rows {
-		total += r.Want() + r.TopsAndBottomsWant
-	}
 
 	lines := make([]keeperLine, len(rows))
 	residents := make(map[string]int, len(rows))
 	levels := store.LevelsOfPicture(rows)
-	var short []string
+	walkLines := make([]kanban.Line, len(rows))
+	typeFamilies := make(map[string]int64, len(rows))
 	for i, r := range rows {
 		key := protocol.KanbanEpisodeKey(k.KanbanNodeID, r.BinTypeID)
 		episode := openByKey[key]
 		c := counts.Level(levels[i], episode.Asked)
 		lines[i] = keeperLine{key: key, episode: episode, count: c, state: KanbanLineState{
 			GroupNode: k.KanbanName, BinTypeCode: r.BinTypeCode, Want: r.Want(), Base: r.Base,
-			Resident: c.Resident, Asked: c.Asked, Coming: c.Coming, Gap: c.Short(),
+			Resident: c.Resident, Asked: c.Asked, Coming: c.Coming, Held: c.Held,
 			OriginID: episode.OriginID, OpenedAt: episode.OpenedAt,
-			RunningProcesses: r.RunningProcesses, Slots: r.Slots, TotalWant: total, CannotCover: max(0, total-r.Slots),
+			RunningProcesses: r.RunningProcesses,
 			NothingProcesses: r.NothingProcesses, FallbackProcesses: r.FallbackProcesses,
 		}}
 		residents[r.BinTypeCode] = c.Resident
-		switch {
-		case keeper:
+		walkLines[i] = kanban.LineOf(r.BinTypeCode, r.Want(), c.Have)
+		typeFamilies[r.BinTypeCode] = r.FamilyID
+		if keeper {
 			configured[key] = true
-			if c.Short() >= 1 {
-				short = append(short, r.BinTypeCode)
-			}
-		case supported:
-			lines[i].state.HeldBy = "no station: its asks would show on no board"
-		case c.Short() >= 1:
-			lines[i].state.HeldBy = "no supports, so no keeper: other kanbans' unloaders refill it"
 		}
 	}
+	lit := counts.Lit(k.KanbanNodeID, walkLines, typeFamilies)
+	for i := range lines {
+		lines[i].atWindows = lit[rows[i].BinTypeCode]
+		lines[i].state.Lit = lines[i].atWindows
+		lines[i].state.Gap = lines[i].count.Short() - lines[i].atWindows
+	}
+	families := familyStates(rows, lines, counts)
 
 	var ask *kanbanAsks
-	var windows []store.KanbanWindow
-	if len(short) > 0 {
-		var err error
-		if windows, err = m.eng.db.ListKanbanWindows(k.KanbanNodeID); err != nil {
-			// Asking on a count that was not made could fill one gap twice. Nothing is
-			// asked or moved, and the next tick reads again.
-			m.eng.logFn("keeper: %s: read its windows: %v", k.KanbanName, err)
-		}
-		lit := surplusAtWindows(rows, lines, windows)
-		var need []string
-		for i := range lines {
-			lines[i].atWindows = lit[rows[i].BinTypeCode]
-			if err == nil && lines[i].count.Short()-lines[i].atWindows >= 1 {
-				need = append(need, rows[i].BinTypeCode)
-			}
-		}
-		ask = &kanbanAsks{
-			group:         &nodes.Node{ID: k.KanbanNodeID, Name: k.KanbanName, IsSynthetic: true, Enabled: true},
-			station:       k.StationID,
-			hasSources:    len(k.Sources) > 0,
-			sourceable:    m.forecast(k, need),
-			reads:         m.eng.db.KanbanAskReads(k.KanbanNodeID, levels, residents),
-			windowsUnread: err != nil,
-		}
+	wants := map[string]int{}
+	if keeper {
+		ask, wants = m.planAsks(k, rows, lines, families, levels, residents)
 	}
 	created := false
 	for i := range lines {
 		l := &lines[i]
-		if keeper {
-			m.tickLine(l, ask)
+		switch {
+		case keeper:
+			m.tickLine(l, ask, rows[i].FamilyID, wants[rows[i].BinTypeCode])
+		case supported:
+			l.state.HeldBy = "no station: its asks would show on no board"
+		case l.state.Gap >= 1:
+			l.state.HeldBy = "no supports, so no keeper: other kanbans' unloaders refill it"
 		}
 		parked(&l.state, l.episode, m.now())
 		created = created || l.state.Created > 0
 	}
-	if ask != nil && !ask.windowsUnread {
-		for code, cause := range m.surplusArm(k, rows, lines, ask, windows, picture, counts) {
+	if keeper {
+		for code, cause := range m.surplusArm(k, rows, lines) {
 			for i := range lines {
 				if lines[i].state.BinTypeCode == code {
 					lines[i].state.SurplusCause = cause
@@ -372,10 +397,97 @@ func (m *KanbanKeeper) tickKanban(rows []store.KanbanPictureRow, picture map[int
 		// ONE LINE PER TICK PER GROUP, ALWAYS — the full chain, not "would create N".
 		// A reader has to see WHY the number came out as it did, and every term is a
 		// separate question with a separate way of being wrong.
-		m.eng.dbg("keeper: group=%s type=%s want=%d resident=%d asked=%d coming=%d at_windows=%d gap=%d created=%d held_by=%s surplus=%s",
-			st.GroupNode, st.BinTypeCode, st.Want, st.Resident, st.Asked, st.Coming, lines[i].atWindows, st.Gap, st.Created, st.HeldBy, st.SurplusCause)
+		m.eng.dbg("keeper: group=%s type=%s want=%d resident=%d held=%d asked=%d coming=%d lit=%d gap=%d created=%d held_by=%s surplus=%s",
+			st.GroupNode, st.BinTypeCode, st.Want, st.Resident, st.Held, st.Asked, st.Coming, st.Lit, st.Gap, st.Created, st.HeldBy, st.SurplusCause)
 	}
-	return states, created
+	return states, families, created
+}
+
+// familyStates is the family row of each family the kanban levels, and of any family standing
+// in its loop that it does not: those are strangers whatever the count.
+func familyStates(rows []store.KanbanPictureRow, lines []keeperLine, counts *store.KanbanCounts) []KanbanFamilyState {
+	k := rows[0]
+	var order []int64
+	byID := map[int64]*KanbanFamilyState{}
+	for i, r := range rows {
+		f := byID[r.FamilyID]
+		if f == nil {
+			f = &KanbanFamilyState{GroupNode: k.KanbanName, Family: r.FamilyCode, FamilyID: r.FamilyID,
+				Pool: r.Pool, PoolDeclared: r.PoolDeclared, Minimum: r.Minimum}
+			byID[r.FamilyID] = f
+			order = append(order, r.FamilyID)
+		}
+		f.Mix += r.Base + r.TopsAndBottomsWant
+		f.Asked += lines[i].count.Asked
+	}
+	carts := counts.Carts(k.KanbanNodeID)
+	for _, c := range carts {
+		if byID[c.FamilyID] == nil && !c.Asked {
+			byID[c.FamilyID] = &KanbanFamilyState{GroupNode: k.KanbanName, Family: c.FamilyCode, FamilyID: c.FamilyID, PoolDeclared: true}
+			order = append(order, c.FamilyID)
+		}
+	}
+	out := make([]KanbanFamilyState, 0, len(order))
+	for _, id := range order {
+		f := byID[id]
+		found := counts.Found(k.KanbanNodeID, id)
+		f.Slot, f.Line, f.Window, f.Flight, f.Unowned = found.Slot, found.Line, found.Window, found.Flight, found.Unowned
+		f.Found = found.Total()
+		f.Floaters = max(0, f.Pool-f.Mix-f.Line)
+		if f.Found < f.Pool {
+			f.Lost = f.Pool - f.Found
+		}
+		if past := f.Found - f.Pool; past > 0 {
+			for _, c := range carts {
+				if c.FamilyID == id && !c.Asked && c.Place == store.LoopPlaceSlot && c.Into == "" && len(f.Strangers) < past {
+					f.Strangers = append(f.Strangers, c.Label+" stands at "+c.Node)
+				}
+			}
+		}
+		out = append(out, *f)
+	}
+	return out
+}
+
+// familyDeficits is each family's deficit, pool less found less asked, where it has one.
+func familyDeficits(rows []store.KanbanPictureRow, lines []keeperLine, families []KanbanFamilyState) map[int64]int {
+	out := map[int64]int{}
+	for _, f := range families {
+		if d := f.Pool - f.Found - f.Asked; d > 0 {
+			out[f.FamilyID] = d
+		}
+	}
+	return out
+}
+
+// askByLargestGap names the type of each ask: the family's largest per-type gap, ties by the
+// levels' order, as long as the forecast says one exists outside. The asks never pass the
+// family's deficit or the carts there are.
+func askByLargestGap(rows []store.KanbanPictureRow, lines []keeperLine, deficit map[int64]int, sourceable map[string]int) map[string]int {
+	out := map[string]int{}
+	gap := make([]int, len(lines))
+	for i := range lines {
+		gap[i] = lines[i].state.Gap
+	}
+	for family, d := range deficit {
+		for ; d > 0; d-- {
+			best := -1
+			for i, r := range rows {
+				if r.FamilyID != family || sourceable[r.BinTypeCode]-out[r.BinTypeCode] <= 0 {
+					continue
+				}
+				if best < 0 || gap[i] > gap[best] {
+					best = i
+				}
+			}
+			if best < 0 {
+				break
+			}
+			out[rows[best].BinTypeCode]++
+			gap[best]--
+		}
+	}
+	return out
 }
 
 // keeperLine is one (kanban, type) in a tick.
@@ -384,51 +496,45 @@ type keeperLine struct {
 	episode store.KeeperEpisode
 	count   store.LevelState
 	state   KanbanLineState
-	// atWindows is the arm's carts the walk has lit as this type, read only on a short
-	// kanban. The keeper asks for the gap less these (surplusAtWindows).
+	// atWindows is the carts at the windows the walk lights as this type.
 	atWindows int
 }
 
-// kanbanAsks is what a short kanban's asks share in one tick.
+// kanbanAsks is what a family's deficit shares in one tick. Nil: the loop is whole.
 type kanbanAsks struct {
 	group      *nodes.Node
 	station    string
 	hasSources bool
-	sourceable map[string]bool
+	deficit    map[int64]int
 	reads      *store.KanbanAskReads
-	// windowsUnread says the read of the unloaders' windows failed, so the tick neither
-	// asks nor moves.
-	windowsUnread bool
 }
 
 // forecast asks, before any ask is minted, the question each ask would put to the
 // finder: the fence and the sources its orders carry (no process, the kanban as the
-// group it fills), for every type the kanban is short of, in one statement
-// (store.DB.SourceableTypes). A read the finder could not make answers "none", and
+// group it fills), for every type of the kanban, in one statement
+// (store.DB.SourceableCounts). A read the finder could not make answers none, and
 // the next tick asks again.
-func (m *KanbanKeeper) forecast(k store.KanbanPictureRow, short []string) map[string]bool {
+func (m *KanbanKeeper) forecast(k store.KanbanPictureRow, codes []string) map[string]int {
 	fence := bins.EmptyFence{OriginGroup: k.KanbanName}
 	for _, s := range k.Sources {
 		fence.Sources = append(fence.Sources, s.ID)
 	}
-	counts, err := m.eng.db.SourceableCounts(short, fence)
+	found, err := m.eng.db.SourceableCounts(codes, fence)
 	if err != nil {
 		m.eng.logFn("keeper: %s: %v", k.KanbanName, err)
 		return nil
 	}
-	found := make(map[string]bool, len(counts))
-	for code, n := range counts {
-		found[code] = n > 0
-	}
 	return found
 }
 
-// tickLine is the decision for one (kanban, type) with a keeper.
-func (m *KanbanKeeper) tickLine(l *keeperLine, ask *kanbanAsks) {
+// tickLine is the decision for one (kanban, type) with a keeper. want is how many asks the
+// family's deficit gives this type.
+func (m *KanbanKeeper) tickLine(l *keeperLine, ask *kanbanAsks, family int64, want int) {
 	st, c := &l.state, l.count
 	lv := c.Level
+	deficit := ask != nil && ask.deficit[family] > 0
 	switch {
-	case c.Short() >= 1:
+	case deficit && (want > 0 || st.Gap >= 1):
 		// Mint the episode if this is the first tick that has been short. The
 		// INSERT is the duplicate guard, not a lock: two Cores racing here both
 		// try, the loser fails on the partial unique open-key index, and a failed
@@ -459,28 +565,26 @@ func (m *KanbanKeeper) tickLine(l *keeperLine, ask *kanbanAsks) {
 				origin.OriginID, ask.group.Name, lv.BinTypeCode, lv.Want, c.Resident)
 		}
 		// NOTHING TO SOURCE, NOTHING ASKED. An ask is pre-resolved to a free
-		// position and holds it while it waits for a carrier, so asking for a
-		// type no source can supply speaks for positions an unloader's empty-out
-		// needs, for carriers that do not exist. The episode stays open (the group
-		// is short, and says so) and HeldBy says why nothing was asked. Pin:
+		// position and holds it while it waits for a carrier, so asking past the
+		// carts that exist speaks for positions an unloader's empty-out needs. The
+		// episode stays open (the family is short, and says so) and HeldBy says why
+		// nothing was asked. Pin:
 		// TestKanbanKeeper_MintsNoAskForATypeNothingOutsideCanSource.
-		//
-		// WHAT THE ARM HAS AT THE WINDOWS IS NOT ASKED FOR AGAIN: the walk has lit those
-		// carts as this type, so they fill this gap. Pin:
-		// TestKanbanSurplus_TheAsksAreNetted.
-		gap := c.Short() - l.atWindows
-		switch {
-		case ask.windowsUnread:
-			st.HeldBy = "the unloader's windows could not be read"
-		case gap <= 0:
-			st.HeldBy = fmt.Sprintf("%d at the unloader's windows coming back as %s", l.atWindows, lv.BinTypeCode)
-		case !ask.sourceable[lv.BinTypeCode]:
+		if want > 0 {
+			st.Created, st.HeldBy = m.createAsks(ask, lv, l.episode.OriginID, want)
+		} else {
 			st.HeldBy = nothingToSource(lv.BinTypeCode, ask.hasSources)
-		default:
-			st.Created, st.HeldBy = m.createAsks(ask, lv, l.episode.OriginID, gap)
 		}
 
-	case c.Resident >= lv.Want && c.Asked == 0:
+	case st.Gap >= 1:
+		// INSIDE A WHOLE FAMILY: never an outside ask. The arm re-types.
+		st.HeldBy = "the family is whole: re-typed at the unloader"
+
+	case c.Short() >= 1:
+		// Short only of what the walk has lit at the windows.
+		st.HeldBy = fmt.Sprintf("%d at the unloader's windows coming back as %s", st.Lit, lv.BinTypeCode)
+
+	case c.Resident+c.Held >= lv.Want && c.Asked == 0:
 		// ── THE SETTLE EDGE, NOT THE RISING EDGE ──────────────────────────
 		//
 		// Closing the moment the level touches want re-opens the duplicate
@@ -550,7 +654,7 @@ func (m *KanbanKeeper) refreshParked(states []KanbanLineState) {
 // sees a group-named delivery from here; and the ask count is bounded by PHYSICAL
 // FREE SLOTS through ResolveStore's own per-child count+inflight>=1 check — the
 // proven ReplenishLoader shape. A clamp above that loop would be unreachable code
-// dressed as a guard.
+// written as a guard.
 //
 // N ASKS, NOT ONE. Serial filling of a four-deep buffer takes four drive-times,
 // which defeats the point of a rate-mismatch buffer.
@@ -575,6 +679,7 @@ func (m *KanbanKeeper) createAsks(ask *kanbanAsks, lv store.KanbanLevel, originI
 			return created, "no free slot"
 		}
 		order, aerr := m.eng.dispatcher.AdmitCoreAsk(dispatch.CoreAskSpec{
+			// A level is of EMPTIES: this order type is one of the five fragments a kanban of fulls would widen.
 			UUIDPrefix: "core-mnt-",
 			OrderType:  dispatch.OrderTypeRetrieveEmpty,
 			StationID:  ask.station,
@@ -664,6 +769,14 @@ func (m *KanbanKeeper) closeWithdrawn(open []store.KeeperEpisode, configured map
 	}
 }
 
+// KanbanFamilyStates is the family half of the same accessor.
+func (e *Engine) KanbanFamilyStates() []KanbanFamilyState {
+	if e == nil || e.keeper == nil {
+		return nil
+	}
+	return e.keeper.FamilySnapshot()
+}
+
 // KanbanLineStates is the accessor the www layer reads. It exists so www
 // never has to reach through KanbanKeeper() into engine internals, and so a Core
 // running without a keeper answers "nothing kept" rather than panicking.
@@ -672,4 +785,29 @@ func (e *Engine) KanbanLineStates() []KanbanLineState {
 		return nil
 	}
 	return e.keeper.Snapshot()
+}
+
+// planAsks is what a keeper's tick may ask outside for: each family's deficit, by the types'
+// largest gaps against the counted forecast. No deficit asks nothing and reads nothing.
+func (m *KanbanKeeper) planAsks(k store.KanbanPictureRow, rows []store.KanbanPictureRow, lines []keeperLine,
+	families []KanbanFamilyState, levels []store.KanbanLevel, residents map[string]int) (*kanbanAsks, map[string]int) {
+	need := familyDeficits(rows, lines, families)
+	if len(need) == 0 {
+		return nil, map[string]int{}
+	}
+	var codes []string
+	for i := range rows {
+		codes = append(codes, rows[i].BinTypeCode)
+	}
+	wants := askByLargestGap(rows, lines, need, m.forecast(k, codes))
+	ask := &kanbanAsks{
+		group:      &nodes.Node{ID: k.KanbanNodeID, Name: k.KanbanName, IsSynthetic: true, Enabled: true},
+		station:    k.StationID,
+		hasSources: len(k.Sources) > 0,
+		deficit:    need,
+	}
+	if len(wants) > 0 {
+		ask.reads = m.eng.db.KanbanAskReads(k.KanbanNodeID, levels, residents)
+	}
+	return ask, wants
 }

@@ -203,7 +203,6 @@ var issueWalk = map[string]issueEntry{
 	"www/handlers_test_orders_direct.go:Handlers.apiDirectOrderSubmit":  {issueOpener, nil, "a person's bin move: the /test-orders direct form"},
 	"dispatch/loader_window.go:Dispatcher.PullStage2":                   {issueOpener, nil, "stage 2's pull, under stage 2's loader lock"},
 	"dispatch/kanban_surplus.go:Dispatcher.SurplusToWindows":            {issueOpener, nil, "the keeper's surplus arm to a window, under the loader's lock"},
-	"dispatch/kanban_surplus.go:Dispatcher.SurplusToSlot":               {issueOpener, nil, "the keeper's surplus arm to a source's slot"},
 	"engine/carried_bin_recovery.go:Engine.RecoverCarriedBin":           {issueOpener, nil, "the Recover button on an anomaly"},
 	"engine/cancel_return.go:Engine.tryReturnCarriedBin": {issueOpener, nil, "THE CANCEL'S RETURN: an order cancelled while its robot " +
 		"carries a bin opens the recovery's door with nobody pressing it"},
