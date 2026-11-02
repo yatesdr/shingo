@@ -131,7 +131,7 @@ func TestSeedKanbanPress_CoreHoldsTheKanbans(t *testing.T) {
 		if err != nil || bt == nil {
 			t.Fatalf("bin type %s: %v", code, err)
 		}
-		fs, ok := domain.BinType{WidthIn: bt.WidthIn, LengthIn: bt.LengthIn}.FloorSize()
+		fs, ok := domain.BinType{WidthIn: bt.WidthIn, LengthIn: bt.LengthIn}.Footprint()
 		if !ok {
 			t.Errorf("%s has no floor size: width %g, length %g", code, bt.WidthIn, bt.LengthIn)
 		}

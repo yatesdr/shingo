@@ -523,7 +523,7 @@ func TestKanbanDoor_AgreesWithTheKeepersCounts(t *testing.T) {
 				continue
 			}
 			lv := row.KanbanLevel()
-			want := counts.Level(lv, asked[protocol.KanbanEpisodeKey(line.Group.Name, lv.BinTypeCode)])
+			want := counts.Level(lv, asked[protocol.KanbanEpisodeKey(line.Group.ID, lv.BinTypeID)])
 			if got := line.Short(protocol.CarrierEmpty); got != want.Short() || line.Resident != want.Resident ||
 				line.Asked != want.Asked || line.Coming != want.Coming || line.Level.Want != lv.Want {
 				t.Errorf("%s: door short %d (resident %d asked %d coming %d want %d), keeper short %d (resident %d asked %d coming %d want %d)",

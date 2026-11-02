@@ -504,8 +504,9 @@ func TestKanbanRowFillsPlaceAndExpectedFromWhatIsStored(t *testing.T) {
 	row := BuildEpisodeRow(domain.DemandEpisode{
 		DemandOrigin: domain.DemandOrigin{
 			OriginID:     "mnt-1",
-			EpisodeKey:   "mnt|PRESS-BUFFER|45x58",
+			EpisodeKey:   "mnt|12|34",
 			Kind:         "kanban",
+			PayloadCode:  "45x58",
 			StationID:    "core",
 			CoreNodeName: "PRESS-BUFFER",
 			OpenedAt:     now.Add(-at(20)),
@@ -519,7 +520,7 @@ func TestKanbanRowFillsPlaceAndExpectedFromWhatIsStored(t *testing.T) {
 		t.Errorf("KindLabel = %q, want %q", row.KindLabel, "Kanban level")
 	}
 	if row.Payload != "45x58" {
-		t.Errorf("Payload = %q, want the carrier type off the episode key — otherwise "+
+		t.Errorf("Payload = %q, want the bin type the episode service named — otherwise "+
 			"the Place column identifies the group but not what it is short OF", row.Payload)
 	}
 	if row.Expected.Kind != CellValue || row.Expected.Text != "3" {

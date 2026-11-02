@@ -119,11 +119,11 @@ func TestKanbanKeeper_AForecastIsNotItsEpisode(t *testing.T) {
 	t.Parallel()
 	db := testdb.Open(t)
 	eng := newTestEngine(t, db, simulator.New())
-	_, btA := mntFixture(t, db, "MNT-FCA", 2, "MNT-FCA-T", 1)
+	grpA, btA := mntFixture(t, db, "MNT-FCA", 2, "MNT-FCA-T", 1)
 	_, btB := mntFixture(t, db, "MNT-FCB", 2, "MNT-FCB-T", 1)
 	mntOutsideEmpty(t, db, btA, "MNT-FCA-MARKET")
 	mntOutsideEmpty(t, db, btB, "MNT-FCB-MARKET")
-	insertForecastRow(t, db, protocol.KanbanEpisodeKey("MNT-FCA", "MNT-FCA-T"),
+	insertForecastRow(t, db, protocol.KanbanEpisodeKey(grpA, btA),
 		protocol.EpisodeKindKanban, "test-core", "MNT-FCA", "")
 
 	m := eng.KanbanKeeper()
@@ -174,9 +174,9 @@ func TestOpenCoreEpisode_PromotesTheForecastAtItsKey(t *testing.T) {
 		t.Parallel()
 		db := testdb.Open(t)
 		eng := newTestEngine(t, db, simulator.New())
-		_, btID := mntFixture(t, db, "MNT-FCP", 2, "MNT-FCP-T", 1)
+		grpP, btID := mntFixture(t, db, "MNT-FCP", 2, "MNT-FCP-T", 1)
 		mntOutsideEmpty(t, db, btID, "MNT-FCP-MARKET")
-		fc := insertForecastRow(t, db, protocol.KanbanEpisodeKey("MNT-FCP", "MNT-FCP-T"),
+		fc := insertForecastRow(t, db, protocol.KanbanEpisodeKey(grpP, btID),
 			protocol.EpisodeKindKanban, "test-core", "MNT-FCP", "")
 
 		m := eng.KanbanKeeper()

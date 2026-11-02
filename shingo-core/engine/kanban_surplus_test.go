@@ -14,8 +14,8 @@ import (
 
 func TestPlanSurplus(t *testing.T) {
 	t.Parallel()
-	f45, _ := domain.BinType{WidthIn: 45, LengthIn: 48}.FloorSize()
-	f32, _ := domain.BinType{WidthIn: 32, LengthIn: 30}.FloorSize()
+	f45, _ := domain.BinType{WidthIn: 45, LengthIn: 48}.Footprint()
+	f32, _ := domain.BinType{WidthIn: 32, LengthIn: 30}.Footprint()
 	for _, tc := range []struct {
 		name   string
 		shorts []surplusShort
@@ -86,12 +86,12 @@ func TestKanbanSurplus_TheLoaderLockOutranksTheKeepersOwn(t *testing.T) {
 }
 
 // pinArmLine is one type as the arm's plan reads it. At the tree, a footprint.
-func pinArmLine(sizes map[string]*[]float64, code string) (domain.FloorSize, bool) {
+func pinArmLine(sizes map[string]*[]float64, code string) (domain.Footprint, bool) {
 	s := sizes[code]
 	if s == nil {
-		return domain.FloorSize{}, false
+		return domain.Footprint{}, false
 	}
-	return domain.BinType{WidthIn: (*s)[0], LengthIn: (*s)[1]}.FloorSize()
+	return domain.BinType{WidthIn: (*s)[0], LengthIn: (*s)[1]}.Footprint()
 }
 
 // TestKanbanPin_TheArmReadsTheFamilyTable: the one truth table at the arm. A surplus of the

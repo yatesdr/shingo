@@ -324,7 +324,7 @@ func groupsWanting(db *store.DB, b *bins.Bin, liftNode string) ([]wantingGroup, 
 				open[e.EpisodeKey] = e
 			}
 		}
-		gap, err := carrierGap(db, g, *lv, open[protocol.KanbanEpisodeKey(g.Name, lv.BinTypeCode)], b)
+		gap, err := carrierGap(db, g, *lv, open[protocol.KanbanEpisodeKey(g.ID, lv.BinTypeID)], b)
 		if err != nil {
 			return nil, err
 		}

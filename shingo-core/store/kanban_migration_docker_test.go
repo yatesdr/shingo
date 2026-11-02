@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"shingo/protocol"
 	"shingo/protocol/testutil"
 	"shingocore/internal/testdb"
 	"shingocore/store"
@@ -24,7 +25,7 @@ func ageKanbanSchema(t *testing.T, db *store.DB) {
 		`ALTER TABLE kanban_levels DROP CONSTRAINT kanban_levels_kanban_node_id_fkey`,
 		`ALTER TABLE kanban_supports DROP CONSTRAINT kanban_supports_kanban_node_id_fkey`,
 		`ALTER TABLE kanban_layer_levels DROP CONSTRAINT kanban_layer_levels_kanban_node_id_fkey`,
-		`ALTER TABLE kanban_levels DROP COLUMN overflow_node_id`,
+		`DROP TABLE kanban_families`,
 		`DROP TABLE kanban_sources`,
 		`DROP TABLE kanbans`,
 		`DROP INDEX idx_nodes_parent`,
@@ -50,7 +51,7 @@ func ageKanbanSchema(t *testing.T, db *store.DB) {
 			FOREIGN KEY (group_node_id) REFERENCES nodes(id) ON DELETE CASCADE`,
 		`ALTER TABLE node_maintain_layer_levels ADD CONSTRAINT node_maintain_layer_levels_group_node_id_fkey
 			FOREIGN KEY (group_node_id) REFERENCES nodes(id) ON DELETE CASCADE`,
-		`DELETE FROM schema_migrations WHERE version = 169`,
+		`DELETE FROM schema_migrations WHERE version IN (169, 172)`,
 	} {
 		if _, err := db.DB.Exec(s); err != nil {
 			t.Fatalf("age the schema: %s: %v", s, err)
@@ -155,22 +156,22 @@ func TestMigrate_Kanbans_ThePivot(t *testing.T) {
 			testutil.MustNoErr(t, err, "read kanban "+name)
 			return k
 		}
-		if k := kanban("AGED-FULL"); k == nil || k.StationID != "edge.1" || !k.Strict || k.OverflowNode != "AGED-SPILL" || !k.HasSupports {
+		if k := kanban("AGED-FULL"); k == nil || k.StationID != "edge.1" || !k.Strict || !k.HasSupports {
 			t.Errorf("AGED-FULL = %+v, want the three properties as columns", k)
 		}
-		if k := kanban("AGED-DOTNAME"); k == nil || k.OverflowNodeID == nil || *k.OverflowNodeID != dotted.ID {
-			t.Errorf("AGED-DOTNAME = %+v, want the dotted name resolved to its child %d", k, dotted.ID)
+		if k := kanban("AGED-DOTNAME"); k == nil {
+			t.Errorf("AGED-DOTNAME has no row")
 		}
 		if k := kanban("AGED-FLAGOFF"); k == nil || k.StationID != "edge.2" {
 			t.Errorf("AGED-FLAGOFF = %+v, want a kanban with its station: a group with levels is one", k)
 		}
-		if k := kanban("AGED-DANGLING"); k == nil || k.OverflowNodeID != nil || k.StationID != "" {
-			t.Errorf("AGED-DANGLING = %+v, want NULL station and overflow", k)
+		if k := kanban("AGED-DANGLING"); k == nil || k.StationID != "" {
+			t.Errorf("AGED-DANGLING = %+v, want a NULL station", k)
 		}
-		if k := kanban("AGED-SELF"); k == nil || k.OverflowNodeID != nil {
-			t.Errorf("AGED-SELF = %+v, want a self-named overflow NULL", k)
+		if k := kanban("AGED-SELF"); k == nil {
+			t.Error("AGED-SELF has no row")
 		}
-		if k := kanban("AGED-SUPPORTS"); k == nil || !k.HasSupports || k.StationID != "edge.3" || k.OverflowNode != "AGED-SPILL" {
+		if k := kanban("AGED-SUPPORTS"); k == nil || !k.HasSupports || k.StationID != "edge.3" {
 			t.Errorf("AGED-SUPPORTS = %+v, want a row carrying its settings for the foreign key", k)
 		}
 		if k := kanban("AGED-LAYERS"); k == nil {
@@ -270,4 +271,92 @@ func TestMigrate_V171_TheEpisodeKindIsKanban(t *testing.T) {
 	if failing := db.MigrationsFailingTheirPostCondition(); len(failing) != 0 {
 		t.Errorf("migrations failing their post-condition: %v", failing)
 	}
+}
+
+// TestMigrate_V172_TheFamilies: types aged to before the family. One family per normalised
+// footprint coded by it, either way round; a family of one per remaining type; a marker takes its
+// carrier's; a code a footprint family already holds does not join it; an open kanban episode's
+// key moves to ids, a closed one's does not; every later insert names a family or takes one; and a
+// second pass changes nothing.
+func TestMigrate_V172_TheFamilies(t *testing.T) {
+	t.Parallel()
+	db := testdb.Open(t)
+	exec := func(q string, args ...any) {
+		t.Helper()
+		if _, err := db.DB.Exec(q, args...); err != nil {
+			t.Fatalf("%s: %v", q, err)
+		}
+	}
+	k := testdb.MarkedGroup(t, db, "V172-K")
+	var small, big, wide, unsized, named, marker int64
+	insert := func(to *int64, code string, w, l float64) {
+		t.Helper()
+		testutil.MustNoErr(t, db.QueryRow(`INSERT INTO bin_types (code, width_in, length_in) VALUES ($1,$2,$3) RETURNING id`,
+			code, w, l).Scan(to), "type "+code)
+	}
+	insert(&small, "V172-SMALL", 45, 48)
+	insert(&big, "V172-BIG", 48, 45)
+	insert(&wide, "V172-WIDE", 32.5, 30)
+	insert(&unsized, "V172-UNSIZED", 0, 0)
+	insert(&named, "45x48", 0, 0)
+	testutil.MustNoErr(t, db.QueryRow(`INSERT INTO bin_types (code, bare_of) VALUES ('V172-SMALL-BARE', $1) RETURNING id`, small).Scan(&marker), "marker")
+	const open, shut = "00000000-0000-0000-0000-000000000173", "00000000-0000-0000-0000-000000000174"
+	exec(`INSERT INTO demand_origins (origin_id, episode_key, kind, opened_at) VALUES ($1, 'mnt|V172-K|V172-SMALL', 'kanban', NOW())`, open)
+	exec(`INSERT INTO demand_origins (origin_id, episode_key, kind, opened_at, closed_at) VALUES ($1, 'mnt|V172-K|V172-BIG', 'kanban', NOW(), NOW())`, shut)
+
+	exec(`DROP TRIGGER bin_types_family_of_one ON bin_types`)
+	exec(`ALTER TABLE bin_types DROP COLUMN family_id`)
+	exec(`DROP TABLE kanban_families`)
+	exec(`DELETE FROM carrier_families`)
+	exec(`DELETE FROM schema_migrations WHERE version = 172`)
+
+	check := func(pass int) {
+		t.Helper()
+		family := func(id int64) string {
+			t.Helper()
+			var code string
+			testutil.MustNoErr(t, db.QueryRow(`SELECT f.code FROM bin_types bt JOIN carrier_families f ON f.id = bt.family_id WHERE bt.id = $1`, id).Scan(&code), "family")
+			return code
+		}
+		for id, want := range map[int64]string{small: "45x48", big: "45x48", wide: "30x32.5", unsized: "V172-UNSIZED", marker: "45x48"} {
+			if got := family(id); got != want {
+				t.Errorf("pass %d: type %d is of %q, want %q", pass, id, got, want)
+			}
+		}
+		if got := family(named); got == "45x48" {
+			t.Errorf("pass %d: an unsized type coded 45x48 joined the footprint's family", pass)
+		}
+		var key string
+		testutil.MustNoErr(t, db.DB.QueryRow(`SELECT episode_key FROM demand_origins WHERE origin_id = $1`, open).Scan(&key), "open key")
+		if want := protocol.KanbanEpisodeKey(*k, small); key != want {
+			t.Errorf("pass %d: the open episode's key = %q, want %q", pass, key, want)
+		}
+		testutil.MustNoErr(t, db.DB.QueryRow(`SELECT episode_key FROM demand_origins WHERE origin_id = $1`, shut).Scan(&key), "shut key")
+		if key != "mnt|V172-K|V172-BIG" {
+			t.Errorf("pass %d: the closed episode's key = %q, want it as it was", pass, key)
+		}
+	}
+	testutil.MustNoErr(t, db.MigrateForTest(), "migrate")
+	check(1)
+	testutil.MustNoErr(t, db.MigrateForTest(), "re-migrate")
+	check(2)
+	if failing := db.MigrationsFailingTheirPostCondition(); len(failing) != 0 {
+		t.Errorf("migrations failing their post-condition: %v", failing)
+	}
+
+	var late int64
+	insert(&late, "V172-LATE", 45, 48)
+	var code string
+	testutil.MustNoErr(t, db.QueryRow(`SELECT f.code FROM bin_types bt JOIN carrier_families f ON f.id = bt.family_id WHERE bt.id = $1`, late).Scan(&code), "late")
+	if code != "V172-LATE" {
+		t.Errorf("a type inserted after the migration is of %q, want a family of its own", code)
+	}
+	var census int
+	rows, err := db.DB.Query(store.FamilyCensusSQL)
+	testutil.MustNoErr(t, err, "the census runs")
+	defer rows.Close()
+	for rows.Next() {
+		census++
+	}
+	testutil.MustNoErr(t, rows.Err(), "census rows")
 }

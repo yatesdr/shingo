@@ -313,7 +313,6 @@ func v169Done(q schema.Querier) bool {
 	}
 	return schema.TableExists(q, "kanbans") &&
 		schema.TableExists(q, "kanban_sources") &&
-		schema.ColumnExists(q, "kanban_levels", "overflow_node_id") &&
 		schema.IndexExists(q, "idx_nodes_parent") &&
 		schema.IndexExists(q, "idx_node_properties_key") &&
 		schema.NodePropertyKeyAbsent(q, "maintain_enabled")

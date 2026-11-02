@@ -104,7 +104,7 @@ func TestCountsByTotes_AgreeWithTheKeepersCounts(t *testing.T) {
 	order("hgt-named", "HGT-GRP", func(o *orders.Order) { o.NamedBinID = &d })
 	const mnt = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeee01"
 	exec(`INSERT INTO demand_origins (origin_id, revision, episode_key, kind, opened_at) VALUES ($1, 1, $2, $3, NOW())`,
-		mnt, protocol.KanbanEpisodeKey("HGT-GRP", "HGT-TOTE"), protocol.EpisodeKindKanban)
+		mnt, protocol.KanbanEpisodeKey(grpID, btID), protocol.EpisodeKindKanban)
 	e := bin(btID, "HGT-C5", nil, 40)
 	order("hgt-own", "HGT-SLOT", func(o *orders.Order) { o.HoldFromBirth(e); o.OriginID = mnt })
 	tb := bin(btID, "HGT-C7", nil, 0)

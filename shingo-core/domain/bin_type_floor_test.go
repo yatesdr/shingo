@@ -2,21 +2,21 @@ package domain
 
 import "testing"
 
-// TestFloorSize_StringEqualsExactlyWhenTheSizesDo: the wire spelling keeps the
+// TestFootprint_StringEqualsExactlyWhenTheSizesDo: the wire spelling keeps the
 // floor rule's comparison, orientation-blind and with no rounding.
 func TestFloorSize_StringEqualsExactlyWhenTheSizesDo(t *testing.T) {
 	t.Parallel()
-	floor := func(w, l float64) FloorSize {
-		fs, ok := BinType{WidthIn: w, LengthIn: l}.FloorSize()
+	floor := func(w, l float64) Footprint {
+		fs, ok := BinType{WidthIn: w, LengthIn: l}.Footprint()
 		if !ok {
-			t.Fatalf("%gx%g has no floor size", w, l)
+			t.Fatalf("%gx%g has no footprint", w, l)
 		}
 		return fs
 	}
 	if got := floor(48, 45).String(); got != "45x48" {
 		t.Errorf("48x45 = %q, want 45x48", got)
 	}
-	for _, c := range []struct{ a, b FloorSize }{
+	for _, c := range []struct{ a, b Footprint }{
 		{floor(45, 48), floor(48, 45)},
 		{floor(45, 48), floor(45, 48.5)},
 		{floor(45.25, 48), floor(45.5, 48)},

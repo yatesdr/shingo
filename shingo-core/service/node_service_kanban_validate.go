@@ -338,9 +338,9 @@ func (s *NodeService) repaymentWarnings(cfg KanbanConfig, groupName string, feed
 	if err != nil {
 		return nil, fmt.Errorf("read bin types for %s: %w", groupName, err)
 	}
-	sizes := make(map[string]domain.FloorSize, len(types))
+	sizes := make(map[string]domain.Footprint, len(types))
 	for _, t := range types {
-		if fs, ok := t.FloorSize(); ok {
+		if fs, ok := t.Footprint(); ok {
 			sizes[t.Code] = fs
 		}
 	}

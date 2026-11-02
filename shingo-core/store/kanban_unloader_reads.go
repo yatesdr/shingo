@@ -32,7 +32,7 @@ type KanbanWindow struct {
 	// standing there, or the cart a surplus move is bringing to it, Occupied for both.
 	Row protocol.NodeBinsRow
 	// Floor is the cart's floor, Sized false for a type with none entered.
-	Floor domain.FloorSize
+	Floor domain.Footprint
 	Sized bool
 	// Surplus says the cart is the arm's: its move is on the way, or it landed and
 	// nothing has moved the cart since. Moving says the move is still live.
@@ -97,7 +97,7 @@ func (db *DB) ListKanbanWindows(kanbanID int64) ([]KanbanWindow, error) {
 		}
 		w.Node, w.Shared = n, layout == loaders.LayoutSharedWindow
 		w.Row.Node, w.Row.Occupied = n.Name, w.Row.BinID != 0
-		w.Floor, w.Sized = domain.BinType{WidthIn: width, LengthIn: length}.FloorSize()
+		w.Floor, w.Sized = domain.BinType{WidthIn: width, LengthIn: length}.Footprint()
 		out = append(out, w)
 	}
 	return out, rows.Err()

@@ -3,6 +3,7 @@ package service
 import (
 	"time"
 
+	"shingo/protocol"
 	"shingocore/domain"
 	"shingocore/store"
 	"shingocore/store/orders"
@@ -35,7 +36,44 @@ func NewDemandEpisodeService(db *store.DB) *DemandEpisodeService {
 // because the PAGE has to say so — a truncated list rendered as though it were
 // complete is a page that lies about what the floor is doing.
 func (s *DemandEpisodeService) List(since time.Time, limit int) ([]domain.DemandEpisode, bool, error) {
-	return s.db.ListDemandEpisodes(since, limit)
+	eps, truncated, err := s.db.ListDemandEpisodes(since, limit)
+	if err != nil {
+		return nil, false, err
+	}
+	origins := make([]*domain.DemandOrigin, len(eps))
+	for i := range eps {
+		origins[i] = &eps[i].DemandOrigin
+	}
+	s.nameKanbanTypes(origins...)
+	return eps, truncated, nil
+}
+
+// nameKanbanTypes writes a kanban episode's bin type code where the pages read a part. Its
+// key names ids, because a code is rewritten in place, so the code is read when it renders.
+// One statement, only when a kanban episode is in hand. A type since deleted reads blank.
+func (s *DemandEpisodeService) nameKanbanTypes(origins ...*domain.DemandOrigin) {
+	var kanbans []*domain.DemandOrigin
+	for _, o := range origins {
+		if o != nil && o.Kind == protocol.EpisodeKindKanban {
+			kanbans = append(kanbans, o)
+		}
+	}
+	if len(kanbans) == 0 {
+		return
+	}
+	types, err := s.db.ListBinTypes()
+	if err != nil {
+		return
+	}
+	codes := make(map[int64]string, len(types))
+	for _, t := range types {
+		codes[t.ID] = t.Code
+	}
+	for _, o := range kanbans {
+		if parsed, err := protocol.ParseEpisodeKey(o.EpisodeKey); err == nil {
+			o.PayloadCode = codes[parsed.BinTypeID]
+		}
+	}
 }
 
 // ClosedBySince returns the raw closed_by of every episode closed since
@@ -84,7 +122,12 @@ func (s *DemandEpisodeService) OrphanSites() ([]domain.OrphanSite, error) {
 // apart, and the first refactor that wrapped the error would silently reclassify
 // every unknown id as an outage.
 func (s *DemandEpisodeService) Get(originID string) (*domain.DemandOrigin, error) {
-	return s.db.GetDemandOrigin(originID)
+	o, err := s.db.GetDemandOrigin(originID)
+	if err != nil {
+		return nil, err
+	}
+	s.nameKanbanTypes(o)
+	return o, nil
 }
 
 // Orders returns every order this episode spawned, oldest first, capped at

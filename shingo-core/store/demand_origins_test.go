@@ -10,6 +10,7 @@ import (
 	"shingo/protocol/testutil"
 	"shingocore/internal/testdb"
 	"shingocore/store"
+	"shingocore/store/nodes"
 )
 
 func originAt(key, id string, rev int64, opened time.Time) store.DemandOrigin {
@@ -218,7 +219,7 @@ func TestListOpenEpisodesOfKind_SeparatesKinds(t *testing.T) {
 		CoreNodeName: "SLN_002", PayloadCode: "PANEL-A", OpenedAt: now,
 	}
 	mnt := store.DemandOrigin{
-		OriginID: "bbbbbbbb-1111-2222-3333-444444444444", EpisodeKey: protocol.KanbanEpisodeKey("SYN_EMPTIES", "45x58x32"),
+		OriginID: "bbbbbbbb-1111-2222-3333-444444444444", EpisodeKey: protocol.KanbanEpisodeKey(7, 8),
 		Kind: protocol.EpisodeKindKanban, StationID: "PLANT.LINE1",
 		CoreNodeName: "SYN_EMPTIES", OpenedAt: now,
 	}
@@ -272,31 +273,35 @@ func TestKanbanEpisodeForOrigin(t *testing.T) {
 	t.Parallel()
 	db := testdb.Open(t)
 	now := time.Now().UTC()
+	group := &nodes.Node{Name: "SYN_EMPTIES", Enabled: true}
+	testutil.MustNoErr(t, db.CreateNode(group), "the kanban's node")
+	var typeID int64
+	testutil.MustNoErr(t, db.QueryRow(`INSERT INTO bin_types (code) VALUES ('45x58x32') RETURNING id`).Scan(&typeID), "the type")
 
 	mustOpenCore(t, db, store.DemandOrigin{
 		OriginID:   "11111111-2222-3333-4444-555555555555",
-		EpisodeKey: protocol.KanbanEpisodeKey("SYN_EMPTIES", "45x58x32"),
+		EpisodeKey: protocol.KanbanEpisodeKey(group.ID, typeID),
 		Kind:       protocol.EpisodeKindKanban, StationID: "PLANT.LINE1",
 		CoreNodeName: "SYN_EMPTIES", OpenedAt: now,
 	}, "mint kanban")
 
-	group, got, err := db.KanbanEpisodeForOrigin("11111111-2222-3333-4444-555555555555")
+	name, got, err := db.KanbanEpisodeForOrigin("11111111-2222-3333-4444-555555555555")
 	testutil.MustNoErr(t, err, "KanbanEpisodeForOrigin")
 	if got != "45x58x32" {
 		t.Errorf("type = %q, want 45x58x32", got)
 	}
 	// THE GROUP IS THE OTHER HALF, and it is load-bearing: it is what keeps a
 	// top-off ask from sourcing out of the group it is filling.
-	if group != "SYN_EMPTIES" {
-		t.Errorf("group = %q, want SYN_EMPTIES", group)
+	if name != "SYN_EMPTIES" {
+		t.Errorf("group = %q, want SYN_EMPTIES", name)
 	}
 
 	// BLANK ORIGIN: no query, no error, no type. If this ever reaches Postgres
 	// it fails with a UUID cast error rather than returning nothing.
-	group, got, err = db.KanbanEpisodeForOrigin("")
+	name, got, err = db.KanbanEpisodeForOrigin("")
 	testutil.MustNoErr(t, err, "KanbanEpisodeForOrigin blank")
-	if got != "" || group != "" {
-		t.Errorf("blank origin gave group=%q type=%q, want both empty", group, got)
+	if got != "" || name != "" {
+		t.Errorf("blank origin gave group=%q type=%q, want both empty", name, got)
 	}
 
 	// An origin that is not a kanban episode is not an error — it is the
@@ -307,12 +312,12 @@ func TestKanbanEpisodeForOrigin(t *testing.T) {
 		Kind:       protocol.EpisodeKindThreshold, StationID: "PLANT.LINE1",
 		CoreNodeName: "SLN_002", PayloadCode: "PANEL-A", OpenedAt: now,
 	}, "mint threshold")
-	group, got, err = db.KanbanEpisodeForOrigin("99999999-8888-7777-6666-555555555555")
+	name, got, err = db.KanbanEpisodeForOrigin("99999999-8888-7777-6666-555555555555")
 	testutil.MustNoErr(t, err, "KanbanEpisodeForOrigin threshold origin")
-	if got != "" || group != "" {
+	if got != "" || name != "" {
 		t.Errorf("threshold origin gave group=%q type=%q, want both empty. A non-kanban "+
 			"episode has neither, and returning its core node as a `group` would hand the "+
-			"finder a subtree to exclude that nothing asked it to exclude", group, got)
+			"finder a subtree to exclude that nothing asked it to exclude", name, got)
 	}
 
 	// OPEN ONLY. A closed episode's type is history; an ask still live against a
@@ -321,9 +326,9 @@ func TestKanbanEpisodeForOrigin(t *testing.T) {
 	_, err = db.CloseDemandOriginByID("11111111-2222-3333-4444-555555555555",
 		protocol.CloseReasonRecovered, protocol.ClosedByNotification, now.Add(time.Minute))
 	testutil.MustNoErr(t, err, "close kanban")
-	group, got, err = db.KanbanEpisodeForOrigin("11111111-2222-3333-4444-555555555555")
+	name, got, err = db.KanbanEpisodeForOrigin("11111111-2222-3333-4444-555555555555")
 	testutil.MustNoErr(t, err, "KanbanEpisodeForOrigin after close")
-	if got != "" || group != "" {
-		t.Errorf("closed episode gave group=%q type=%q, want both empty", group, got)
+	if got != "" || name != "" {
+		t.Errorf("closed episode gave group=%q type=%q, want both empty", name, got)
 	}
 }

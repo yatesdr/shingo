@@ -68,7 +68,7 @@ func TestOpenReaders_AForecastIsNotOpen(t *testing.T) {
 	db := testdb.Open(t)
 	thrKey := protocol.ThresholdEpisodeKey("SLN_FC", "PANEL-FC")
 	thr := insertForecast(t, db, thrKey, protocol.EpisodeKindThreshold, "PLANT.FC")
-	mnt := insertForecast(t, db, protocol.KanbanEpisodeKey("MNT-FC", "MNT-FC-T"), protocol.EpisodeKindKanban, "test-core")
+	mnt := insertForecast(t, db, protocol.KanbanEpisodeKey(1, 2), protocol.EpisodeKindKanban, "test-core")
 
 	id, err := db.OpenOriginForKey(thrKey)
 	testutil.MustNoErr(t, err, "OpenOriginForKey")

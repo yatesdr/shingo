@@ -52,7 +52,7 @@ import (
 // surplusShort is a type short with no child free for it, and how many more it needs.
 type surplusShort struct {
 	code  string
-	floor domain.FloorSize
+	floor domain.Footprint
 	sized bool
 	need  int
 }
@@ -60,7 +60,7 @@ type surplusShort struct {
 // surplusLine is a type above its want, and by how many.
 type surplusLine struct {
 	code  string
-	floor domain.FloorSize
+	floor domain.Footprint
 	sized bool
 	above int
 }
@@ -135,7 +135,7 @@ func surplusAtWindows(rows []store.KanbanPictureRow, lines []keeperLine, windows
 		return nil
 	}
 	typeLines := make([]kanban.Line, len(lines))
-	sizes := map[string]domain.FloorSize{}
+	sizes := map[string]domain.Footprint{}
 	inbound := map[int64]bool{}
 	for i, l := range lines {
 		lv := l.count.Level

@@ -83,12 +83,12 @@ func (e *Engine) UnloaderGroupLines(asks []store.GroupLineAsk) ([]protocol.NodeB
 		return nil, fmt.Errorf("group lines: %w", err)
 	}
 	wantsByGroup := map[int64][]store.KanbanLayerWant{}
-	sizes := map[string]domain.FloorSize{}
+	sizes := map[string]domain.Footprint{}
 	for _, t := range types {
 		for _, w := range t.LayerWants {
 			wantsByGroup[w.GroupNodeID] = append(wantsByGroup[w.GroupNodeID], w)
 		}
-		if fs, ok := t.Type.FloorSize(); ok {
+		if fs, ok := t.Type.Footprint(); ok {
 			sizes[t.Type.Code] = fs
 		}
 	}
@@ -106,7 +106,7 @@ func (e *Engine) UnloaderGroupLines(asks []store.GroupLineAsk) ([]protocol.NodeB
 		linesOf := func(groupID int64, group string, levels []store.KanbanLevel) []kanban.Line {
 			lines := make([]kanban.Line, 0, len(levels))
 			for _, lv := range levels {
-				asked := askedByKey[protocol.KanbanEpisodeKey(group, lv.BinTypeCode)]
+				asked := askedByKey[protocol.KanbanEpisodeKey(groupID, lv.BinTypeID)]
 				tl, c := counts.TypeLine(lv, asked, wantsByGroup[groupID])
 				for _, ib := range c.Inbound {
 					inbound[ib.BinID] = true

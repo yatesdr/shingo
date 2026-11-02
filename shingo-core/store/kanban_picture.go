@@ -34,7 +34,7 @@ type KanbanPictureRow struct {
 	// Sources are the groups its keeper may pull from, in rank order.
 	Sources []KanbanRef
 	// Floor is the type's floor size, Sized false with none entered.
-	Floor domain.FloorSize
+	Floor domain.Footprint
 	Sized bool
 	// OverflowNodeID and OverflowNode are where this type overflows:
 	// COALESCE(level, kanban). LevelOverflowNodeID is the level row's own, nil
@@ -298,7 +298,7 @@ func scanKanbanPicture(rows *sql.Rows, err error) ([]KanbanPictureRow, error) {
 			&width, &length); err != nil {
 			return nil, fmt.Errorf("kanban picture: scan: %w", err)
 		}
-		r.Floor, r.Sized = domain.BinType{WidthIn: width, LengthIn: length}.FloorSize()
+		r.Floor, r.Sized = domain.BinType{WidthIn: width, LengthIn: length}.Footprint()
 		for _, f := range []struct {
 			raw []byte
 			to  any

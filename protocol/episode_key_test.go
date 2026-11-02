@@ -119,10 +119,10 @@ func TestEpisodeKeys_EveryKindIsParseable(t *testing.T) {
 			// "45x58x32" in Payload would reasonably conclude the episode wanted
 			// parts of that code in it.
 			name: "kanban",
-			key:  protocol.KanbanEpisodeKey("SYN_PRESS_EMPTIES", "45x58x32"),
+			key:  protocol.KanbanEpisodeKey(12, 34),
 			want: protocol.ParsedEpisodeKey{
-				Kind:     protocol.EpisodeKindKanban,
-				CoreNode: "SYN_PRESS_EMPTIES", BinType: "45x58x32",
+				Kind:         protocol.EpisodeKindKanban,
+				KanbanNodeID: 12, BinTypeID: 34,
 			},
 		},
 	} {
@@ -251,7 +251,7 @@ func TestEpisodeKeys_KindsDoNotCollide(t *testing.T) {
 		// the only thing separating a group's level episode from a threshold
 		// episode on a node of the same name. That is a real shape: a loader
 		// anchored at a node named like a group is not forbidden anywhere.
-		"kanban": protocol.KanbanEpisodeKey("N1", "P"),
+		"kanban": protocol.KanbanEpisodeKey(1, 2),
 	}
 	seen := map[string]string{}
 	for kind, key := range keys {
@@ -281,10 +281,11 @@ func TestParseEpisodeKey_RejectsMalformed(t *testing.T) {
 		"cell||PANEL-B|supply",       // no process — names no place
 		"cell|SNF2|PANEL-B|sideways", // direction is not a direction
 		"thr|SMN_001",                // missing payload
-		"mnt|SYN_EMPTIES",            // missing carrier type
-		"mnt||45x58x32",              // no group — names no place
-		"mnt|SYN_EMPTIES|",           // no type — cannot say what it is short OF
-		"mnt|SYN_EMPTIES|45x58|32",   // a type code carrying the separator
+		"mnt|12",                     // missing bin type
+		"mnt||34",                    // no kanban — names no place
+		"mnt|12|",                    // no type — cannot say what it is short OF
+		"mnt|12|34|56",               // one part too many
+		"mnt|SYN_EMPTIES|45x58",      // names, which a rename rewrites out from under the key
 		"thr||SYN-PART07A.06",        // no Core node — names no place
 		"co|line-1",                  // missing id
 		"threshold|SMN_001|P",        // the kind's NAME, not its prefix

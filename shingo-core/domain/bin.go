@@ -49,6 +49,8 @@ type Bin struct {
 	UpdatedAt   time.Time `json:"updated_at"`
 	// Joined fields
 	BinTypeCode string `json:"bin_type_code"`
+	// BinFamilyID is its bin type's carrier family: what a CLEAR may not change.
+	BinFamilyID int64  `json:"-"`
 	NodeName    string `json:"node_name"`
 	UOPCapacity int    `json:"uop_capacity,omitempty"` // JOIN from payloads.uop_capacity
 	// The robot-group facts, joined so the dispatch capability decision is a

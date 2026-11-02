@@ -152,7 +152,7 @@ func (s *CoreDataService) buildNodeList(stationID string, strict bool) (*protoco
 func binTypeFloors(types []*bins.BinType) map[string]string {
 	var out map[string]string
 	for _, t := range types {
-		if fs, ok := t.FloorSize(); ok {
+		if fs, ok := t.Footprint(); ok {
 			if out == nil {
 				out = make(map[string]string, len(types))
 			}

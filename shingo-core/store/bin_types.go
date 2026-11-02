@@ -13,6 +13,17 @@ func (db *DB) GetBinTypeByCode(code string) (*bins.BinType, error) {
 }
 func (db *DB) ListBinTypes() ([]*bins.BinType, error) { return bins.ListTypes(db.DB) }
 
+// ListCarrierFamilies reads every family and its members.
+func (db *DB) ListCarrierFamilies() ([]bins.CarrierFamily, error) { return bins.ListFamilies(db.DB) }
+
+// EnsureCarrierFamily answers the family of this code, creating it when absent.
+func (db *DB) EnsureCarrierFamily(code string) (int64, error) { return bins.EnsureFamily(db.DB, code) }
+
+// SetBinTypeFamily moves a type and its bare marker to a family.
+func (db *DB) SetBinTypeFamily(typeID, familyID int64) error {
+	return bins.SetTypeFamily(db.DB, typeID, familyID)
+}
+
 // BareBinTypeCodes returns the codes, among ids, of the types flagged bare.
 func (db *DB) BareBinTypeCodes(ids []int64) ([]string, error) { return bins.BareTypeCodes(db.DB, ids) }
 

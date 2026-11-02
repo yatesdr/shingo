@@ -660,8 +660,7 @@ func (db *DB) KanbanEpisodeForOrigin(originID string) (groupNode, binType string
 // KanbanEpisodeOf is that one read, with the group's sources in rank order
 // riding it: the finder's whole view of a keeper's ask (plan.Finder), so a Pick pays
 // one statement for the type, the fence and the sources. The zero value means this
-// origin is no open kanban episode. The group in the SELECT is the episode key's
-// second part, which ParseEpisodeKey below reads as CoreNode.
+// origin is no open kanban episode. The key names ids, and the names ride the read.
 func (db *DB) KanbanEpisodeOf(originID string) (nodes.KanbanEpisode, error) {
 	if originID == "" {
 		// The blank-origin guard, and it must come BEFORE the query: origin_id is
@@ -669,33 +668,24 @@ func (db *DB) KanbanEpisodeOf(originID string) (nodes.KanbanEpisode, error) {
 		return nodes.KanbanEpisode{}, nil
 	}
 	var (
-		key     string
+		ep      nodes.KanbanEpisode
 		sources []byte
 	)
 	qerr := db.QueryRow(`
-		SELECT d.episode_key, COALESCE((
+		SELECT COALESCE(g.name, ''), COALESCE(bt.code, ''), COALESCE((
 		         SELECT json_agg(s.source_node_id ORDER BY s.rank)
-		           FROM kanban_sources s JOIN nodes g ON g.id = s.kanban_node_id
-		          WHERE g.name = split_part(d.episode_key, '|', 2)), '[]')
+		           FROM kanban_sources s WHERE s.kanban_node_id = g.id), '[]')
 		  FROM demand_origins d
+		  LEFT JOIN nodes g ON g.id = NULLIF(split_part(d.episode_key, '|', 2), '')::bigint
+		  LEFT JOIN bin_types bt ON bt.id = NULLIF(split_part(d.episode_key, '|', 3), '')::bigint
 		 WHERE d.origin_id = $1 AND d.kind = $2 AND `+helpers.DemandOpenSQL("d"),
-		originID, protocol.EpisodeKindKanban).Scan(&key, &sources)
+		originID, protocol.EpisodeKindKanban).Scan(&ep.Group, &ep.BinType, &sources)
 	if errors.Is(qerr, sql.ErrNoRows) {
 		return nodes.KanbanEpisode{}, nil
 	}
 	if qerr != nil {
 		return nodes.KanbanEpisode{}, fmt.Errorf("kanban episode for origin %s: %w", originID, qerr)
 	}
-	parsed, perr := protocol.ParseEpisodeKey(key)
-	if perr != nil {
-		// A key that will not parse is a mint site that built the string by
-		// hand. Loud rather than silently untyped: an untyped keeper ask
-		// sources any compatible empty, which is the mix drift the type exists
-		// to prevent.
-		return nodes.KanbanEpisode{}, fmt.Errorf("kanban episode for origin %s: episode key %q: %w",
-			originID, key, perr)
-	}
-	ep := nodes.KanbanEpisode{Group: parsed.CoreNode, BinType: parsed.BinType}
 	if err := json.Unmarshal(sources, &ep.Sources); err != nil {
 		return nodes.KanbanEpisode{}, fmt.Errorf("kanban episode for origin %s: sources: %w", originID, err)
 	}

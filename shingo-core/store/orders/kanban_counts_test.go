@@ -179,7 +179,7 @@ func TestCountTypedInboundToGroup_FourShapes(t *testing.T) {
 	const mntOrigin = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
 	_, err := db.Exec(`INSERT INTO demand_origins (origin_id, revision, episode_key, kind, opened_at)
 		VALUES ($1, 1, $2, $3, NOW())`,
-		mntOrigin, protocol.KanbanEpisodeKey("INB-GRP", "INB-45x58"), protocol.EpisodeKindKanban)
+		mntOrigin, protocol.KanbanEpisodeKey(1, 2), protocol.EpisodeKindKanban)
 	testutil.MustNoErr(t, err, "mint kanban episode")
 
 	binD := mkEmptyBin(t, db, btID, "INB-BIN-D")

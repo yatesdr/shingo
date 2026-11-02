@@ -2,6 +2,7 @@ package bins
 
 import (
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -18,14 +19,14 @@ type BinType = domain.BinType
 
 // BinTypeSelectCols is exported so cross-aggregate readers (e.g. GetEffectiveBinTypes
 // at the outer store/ level, which JOINs node ancestors) can reuse the column list.
-const BinTypeSelectCols = `id, code, description, width_in, height_in, length_in, required_robot_group, bare, bare_of, totes_per_layer, created_at, updated_at`
+const BinTypeSelectCols = `id, code, description, width_in, height_in, length_in, family_id, (SELECT f.code FROM carrier_families f WHERE f.id = family_id) AS family_code, required_robot_group, bare, bare_of, totes_per_layer, created_at, updated_at`
 
 // ScanBinType reads a single bin_types row. Exported so cross-aggregate readers
 // at the outer store/ level can use it.
 func ScanBinType(row interface{ Scan(...any) error }) (*BinType, error) {
 	var bt BinType
 	var bareOf sql.NullInt64
-	err := row.Scan(&bt.ID, &bt.Code, &bt.Description, &bt.WidthIn, &bt.HeightIn, &bt.LengthIn,
+	err := row.Scan(&bt.ID, &bt.Code, &bt.Description, &bt.WidthIn, &bt.HeightIn, &bt.LengthIn, &bt.FamilyID, &bt.FamilyCode,
 		&bt.RequiredRobotGroup, &bt.Bare, &bareOf, &bt.TotesPerLayer, &bt.CreatedAt, &bt.UpdatedAt)
 	if err != nil {
 		return nil, err
@@ -51,11 +52,12 @@ func ScanBinTypes(rows *sql.Rows) ([]*BinType, error) {
 
 // CreateType inserts a new bin type and sets bt.ID on success. Bare and BareOf
 // are not written: bare is generated from bare_of, and bare_of has one writer,
-// EnsureBareMarkerTx.
+// EnsureBareMarkerTx. A type with no family stated takes a family of one, in the same
+// statement (the insert trigger, store.v172Families).
 func CreateType(db *sql.DB, bt *BinType) error {
-	id, err := helpers.InsertID(db, `INSERT INTO bin_types (code, description, width_in, height_in, length_in, required_robot_group, totes_per_layer)
-		VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id`,
-		bt.Code, bt.Description, bt.WidthIn, bt.HeightIn, bt.LengthIn, bt.RequiredRobotGroup, bt.TotesPerLayer)
+	id, err := helpers.InsertID(db, `INSERT INTO bin_types (code, description, width_in, height_in, length_in, required_robot_group, totes_per_layer, family_id)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, NULLIF($8, 0)) RETURNING id`,
+		bt.Code, bt.Description, bt.WidthIn, bt.HeightIn, bt.LengthIn, bt.RequiredRobotGroup, bt.TotesPerLayer, bt.FamilyID)
 	if err != nil {
 		return fmt.Errorf("create bin type: %w", err)
 	}
@@ -98,8 +100,8 @@ func EnsureBareMarkerTx(tx *sql.Tx, typeID int64) (int64, error) {
 	if bareOf.Valid {
 		return typeID, nil
 	}
-	if _, err := tx.Exec(`INSERT INTO bin_types (code, description, required_robot_group, bare_of)
-		SELECT code || $2, code || ' with no bin on it, between the stages of a two-stage unloader', required_robot_group, id
+	if _, err := tx.Exec(`INSERT INTO bin_types (code, description, required_robot_group, bare_of, family_id)
+		SELECT code || $2, code || ' with no bin on it, between the stages of a two-stage unloader', required_robot_group, id, family_id
 		  FROM bin_types WHERE id = $1
 		ON CONFLICT DO NOTHING`, typeID, BareMarkerSuffix); err != nil {
 		return 0, fmt.Errorf("create bare marker of type %d: %w", typeID, err)
@@ -198,7 +200,12 @@ func BareTypeCodes(db *sql.DB, ids []int64) ([]string, error) {
 
 // DeleteType removes a bin type.
 func DeleteType(db *sql.DB, id int64) error {
-	_, err := db.Exec(`DELETE FROM bin_types WHERE id=$1`, id)
+	// A family left with no member goes with its last type, or a type later created
+	// under this code would find its family of one's code already taken.
+	_, err := db.Exec(`WITH gone AS (DELETE FROM bin_types WHERE id=$1 RETURNING family_id)
+		DELETE FROM carrier_families f USING gone
+		 WHERE f.id = gone.family_id
+		   AND NOT EXISTS (SELECT 1 FROM bin_types o WHERE o.family_id = f.id AND o.id <> $1)`, id)
 	return err
 }
 
@@ -257,4 +264,68 @@ func ListTypesForPayload(db *sql.DB, payloadID int64) ([]*BinType, error) {
 	}
 	defer rows.Close()
 	return ScanBinTypes(rows)
+}
+
+// CarrierFamily is one row of carrier_families, with the types that are of it.
+type CarrierFamily struct {
+	ID          int64    `json:"id"`
+	Code        string   `json:"code"`
+	Description string   `json:"description"`
+	Types       []string `json:"types"`
+}
+
+// ListFamilies reads every family and its members' codes, markers left out: one
+// statement.
+func ListFamilies(db *sql.DB) ([]CarrierFamily, error) {
+	rows, err := db.Query(`SELECT f.id, f.code, f.description,
+			COALESCE(array_to_json(array_agg(bt.code ORDER BY bt.code) FILTER (WHERE bt.code IS NOT NULL)), '[]')
+		  FROM carrier_families f
+		  LEFT JOIN bin_types bt ON bt.family_id = f.id AND NOT bt.bare
+		 GROUP BY f.id ORDER BY f.code`)
+	if err != nil {
+		return nil, fmt.Errorf("list families: %w", err)
+	}
+	defer rows.Close()
+	var out []CarrierFamily
+	for rows.Next() {
+		var (
+			f   CarrierFamily
+			raw []byte
+		)
+		if err := rows.Scan(&f.ID, &f.Code, &f.Description, &raw); err != nil {
+			return nil, fmt.Errorf("scan family: %w", err)
+		}
+		if err := json.Unmarshal(raw, &f.Types); err != nil {
+			return nil, fmt.Errorf("decode family: %w", err)
+		}
+		out = append(out, f)
+	}
+	return out, rows.Err()
+}
+
+// EnsureFamily answers the family of this code, creating it when absent.
+func EnsureFamily(db *sql.DB, code string) (int64, error) {
+	var id int64
+	err := db.QueryRow(`WITH made AS (
+			INSERT INTO carrier_families (code) VALUES ($1) ON CONFLICT (code) DO NOTHING RETURNING id
+		)
+		SELECT id FROM made UNION ALL SELECT id FROM carrier_families WHERE code = $1 LIMIT 1`, code).Scan(&id)
+	if err != nil {
+		return 0, fmt.Errorf("family %s: %w", code, err)
+	}
+	return id, nil
+}
+
+// SetTypeFamily moves a type and its bare marker to a family. A family left with no
+// member goes with them.
+func SetTypeFamily(db *sql.DB, typeID, familyID int64) error {
+	_, err := db.Exec(`WITH before AS (SELECT family_id FROM bin_types WHERE id = $1),
+		moved AS (UPDATE bin_types SET family_id = $2, updated_at = NOW() WHERE id = $1 OR bare_of = $1 RETURNING id)
+		DELETE FROM carrier_families f USING before
+		 WHERE f.id = before.family_id AND f.id <> $2
+		   AND NOT EXISTS (SELECT 1 FROM bin_types o WHERE o.family_id = f.id AND o.id NOT IN (SELECT id FROM moved))`, typeID, familyID)
+	if err != nil {
+		return fmt.Errorf("set family of type %d: %w", typeID, err)
+	}
+	return nil
 }

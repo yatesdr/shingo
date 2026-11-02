@@ -40,13 +40,13 @@ func readFamilyTable(t *testing.T) familyTable {
 }
 
 // pinWalkFamilies is what the walk compares. At the tree it is the footprint.
-func pinWalkFamilies(table familyTable) map[string]domain.FloorSize {
-	out := map[string]domain.FloorSize{}
+func pinWalkFamilies(table familyTable) map[string]domain.Footprint {
+	out := map[string]domain.Footprint{}
 	for code, ty := range table.Types {
 		if ty.Footprint == nil {
 			continue
 		}
-		fs, ok := domain.BinType{WidthIn: (*ty.Footprint)[0], LengthIn: (*ty.Footprint)[1]}.FloorSize()
+		fs, ok := domain.BinType{WidthIn: (*ty.Footprint)[0], LengthIn: (*ty.Footprint)[1]}.Footprint()
 		if ok {
 			out[code] = fs
 		}

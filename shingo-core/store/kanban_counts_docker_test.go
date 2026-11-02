@@ -175,7 +175,7 @@ func TestKanbanCounts_TheBatchedReadsAgreeWithTheSingleReads(t *testing.T) {
 
 	const mnt = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeee02"
 	exec(`INSERT INTO demand_origins (origin_id, revision, episode_key, kind, opened_at) VALUES ($1, 1, $2, $3, NOW())`,
-		mnt, protocol.KanbanEpisodeKey(k1.Name, "KCT-KD"), protocol.EpisodeKindKanban)
+		mnt, protocol.KanbanEpisodeKey(k1.ID, kd), protocol.EpisodeKindKanban)
 	c10 := bin(kd, "KCT-C10", nil, nil)
 	own := order("kct-own", s1[1].Name, func(o *orders.Order) { o.HoldFromBirth(c10); o.OriginID = mnt })
 	// The episode's asks: a live root (own), a live leg that is no more demand and is
@@ -223,12 +223,14 @@ func TestKanbanCounts_TheBatchedReadsAgreeWithTheSingleReads(t *testing.T) {
 		resident, coming int
 	}{{k1, "KCT-TOTE", tote, 3, 2}, {k1, "KCT-KD", kd, 3, 2}, {k2, "KCT-KD", kd, 1, 1}} {
 		lv := store.KanbanLevel{GroupNodeID: c.g.ID, BinTypeID: c.bt, BinTypeCode: c.code, Want: 9}
-		single, err := db.CountLevel(c.g, lv, store.DemandOrigin{})
-		testutil.MustNoErr(t, err, "the single read")
+		resident, err := db.CountEmptyBinsOfTypeInGroup(c.code, c.g.ID, domain.Height{})
+		testutil.MustNoErr(t, err, "the single count")
+		inbound, err := db.ListTypedInboundToGroup(c.g.ID, c.g.Name, c.code)
+		testutil.MustNoErr(t, err, "the single inbound")
 		got := counts.Level(lv, 0)
-		if got.Resident != single.Resident || got.Coming != single.Coming ||
-			!reflect.DeepEqual(binIDs(got.Inbound), binIDs(single.Inbound)) {
-			t.Errorf("%s/%s batched %+v, single %+v", c.g.Name, c.code, got, single)
+		if got.Resident != resident || got.Coming != orders.LevelComing(inbound) ||
+			!reflect.DeepEqual(binIDs(got.Inbound), binIDs(inbound)) {
+			t.Errorf("%s/%s batched %+v, single resident %d inbound %+v", c.g.Name, c.code, got, resident, inbound)
 		}
 		// The count is the fixture's, so a population lost from both is caught too.
 		if got.Resident != c.resident || got.Coming != c.coming {
@@ -244,7 +246,7 @@ func TestKanbanCounts_TheBatchedReadsAgreeWithTheSingleReads(t *testing.T) {
 		tl, _ := counts.TypeLine(lv, 0, wants)
 		for _, h := range tl.Heights {
 			want := byTotes[h.Layers*totes]
-			for _, in := range single.Inbound {
+			for _, in := range inbound {
 				if in.TotesOnCart != nil && *in.TotesOnCart == h.Layers*totes {
 					want++
 				}

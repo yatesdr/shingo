@@ -1,3 +1,31 @@
+CREATE FUNCTION public.bin_types_family_of_one() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+		 DECLARE
+		   family_code TEXT := NEW.code;
+		 BEGIN
+		   IF NEW.family_id IS NOT NULL THEN
+		     RETURN NEW;
+		   END IF;
+		   IF NEW.bare_of IS NOT NULL THEN
+		     SELECT family_id INTO NEW.family_id FROM bin_types WHERE id = NEW.bare_of;
+		     RETURN NEW;
+		   END IF;
+		   -- A code already held is an insert about to conflict: it makes no family.
+		   SELECT family_id INTO NEW.family_id FROM bin_types WHERE code = NEW.code;
+		   IF NEW.family_id IS NOT NULL THEN
+		     RETURN NEW;
+		   END IF;
+		   IF EXISTS (SELECT 1 FROM carrier_families WHERE code = family_code) THEN
+		     family_code := NEW.code || '-' || NEW.id;
+		   END IF;
+		   -- Two first inserts of one code race here, and only one of them will stand.
+		   INSERT INTO carrier_families (code) VALUES (family_code)
+		     ON CONFLICT (code) DO UPDATE SET updated_at = NOW() RETURNING id INTO NEW.family_id;
+		   RETURN NEW;
+		 END
+		 $$;
+
 CREATE TABLE public.admin_users (
     id bigint NOT NULL,
     username text NOT NULL,
@@ -142,6 +170,7 @@ CREATE TABLE public.bin_types (
     totes_per_layer integer,
     bare_of bigint,
     bare boolean GENERATED ALWAYS AS ((bare_of IS NOT NULL)) STORED NOT NULL,
+    family_id bigint NOT NULL,
     CONSTRAINT bin_types_bare_of_not_self CHECK ((bare_of <> id)),
     CONSTRAINT bin_types_totes_per_layer_check CHECK ((totes_per_layer > 0))
 );
@@ -268,6 +297,23 @@ CREATE SEQUENCE public.bins_id_seq
     CACHE 1;
 
 ALTER SEQUENCE public.bins_id_seq OWNED BY public.bins.id;
+
+CREATE TABLE public.carrier_families (
+    id bigint NOT NULL,
+    code text NOT NULL,
+    description text DEFAULT ''::text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+CREATE SEQUENCE public.carrier_families_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+ALTER SEQUENCE public.carrier_families_id_seq OWNED BY public.carrier_families.id;
 
 CREATE TABLE public.cell_config (
     cell_id text NOT NULL,
@@ -569,6 +615,15 @@ CREATE TABLE public.inventory_delta_dedup (
     applied_window_end timestamp with time zone
 );
 
+CREATE TABLE public.kanban_families (
+    kanban_node_id bigint NOT NULL,
+    family_id bigint NOT NULL,
+    pool integer NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT kanban_families_pool_check CHECK ((pool >= 0))
+);
+
 CREATE TABLE public.kanban_layer_levels (
     kanban_node_id bigint NOT NULL,
     bin_type_id bigint NOT NULL,
@@ -584,7 +639,6 @@ CREATE TABLE public.kanban_levels (
     want integer NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
-    overflow_node_id bigint,
     CONSTRAINT kanban_levels_want_check CHECK ((want >= 0))
 );
 
@@ -606,12 +660,8 @@ CREATE TABLE public.kanbans (
     node_id bigint NOT NULL,
     station_id text,
     strict boolean DEFAULT false NOT NULL,
-    running_cover integer DEFAULT 0 NOT NULL,
-    overflow_node_id bigint,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
-    updated_at timestamp with time zone DEFAULT now() NOT NULL,
-    CONSTRAINT kanbans_check CHECK ((overflow_node_id <> node_id)),
-    CONSTRAINT kanbans_running_cover_check CHECK ((running_cover >= 0))
+    updated_at timestamp with time zone DEFAULT now() NOT NULL
 );
 
 CREATE TABLE public.lane_confidence_daily (
@@ -1543,6 +1593,8 @@ ALTER TABLE ONLY public.bin_uop_ledger ALTER COLUMN id SET DEFAULT nextval('publ
 
 ALTER TABLE ONLY public.bins ALTER COLUMN id SET DEFAULT nextval('public.bins_id_seq'::regclass);
 
+ALTER TABLE ONLY public.carrier_families ALTER COLUMN id SET DEFAULT nextval('public.carrier_families_id_seq'::regclass);
+
 ALTER TABLE ONLY public.cell_part_events ALTER COLUMN id SET DEFAULT nextval('public.cell_part_events_id_seq'::regclass);
 
 ALTER TABLE ONLY public.cleaning_missions ALTER COLUMN id SET DEFAULT nextval('public.cleaning_missions_id_seq'::regclass);
@@ -1665,6 +1717,12 @@ ALTER TABLE ONLY public.bin_uop_ledger
 ALTER TABLE ONLY public.bins
     ADD CONSTRAINT bins_pkey PRIMARY KEY (id);
 
+ALTER TABLE ONLY public.carrier_families
+    ADD CONSTRAINT carrier_families_code_key UNIQUE (code);
+
+ALTER TABLE ONLY public.carrier_families
+    ADD CONSTRAINT carrier_families_pkey PRIMARY KEY (id);
+
 ALTER TABLE ONLY public.cell_config
     ADD CONSTRAINT cell_config_pkey PRIMARY KEY (cell_id);
 
@@ -1718,6 +1776,9 @@ ALTER TABLE ONLY public.inbox
 
 ALTER TABLE ONLY public.inventory_delta_dedup
     ADD CONSTRAINT inventory_delta_dedup_pkey PRIMARY KEY (station, scope_kind, scope_key, epoch);
+
+ALTER TABLE ONLY public.kanban_families
+    ADD CONSTRAINT kanban_families_pkey PRIMARY KEY (kanban_node_id, family_id);
 
 ALTER TABLE ONLY public.kanban_layer_levels
     ADD CONSTRAINT kanban_layer_levels_pkey PRIMARY KEY (kanban_node_id, bin_type_id, layers);
@@ -1912,6 +1973,8 @@ CREATE INDEX idx_audit_entity ON public.audit_log USING btree (entity_type, enti
 
 CREATE INDEX idx_bin_loader_homes_loader ON public.bin_loader_homes USING btree (loader_id);
 
+CREATE INDEX idx_bin_types_family ON public.bin_types USING btree (family_id);
+
 CREATE INDEX idx_bin_uop_exception_bin ON public.bin_uop_exception USING btree (bin_id, occurred_at DESC);
 
 CREATE INDEX idx_bin_uop_exception_occurred ON public.bin_uop_exception USING btree (occurred_at DESC);
@@ -2092,6 +2155,8 @@ CREATE UNIQUE INDEX uq_reservations_bin_active ON public.reservations USING btre
 
 CREATE UNIQUE INDEX uq_reservations_slot_active ON public.reservations USING btree (node_id) WHERE ((resource_kind = 'slot'::text) AND (state = ANY (ARRAY['pending'::text, 'confirmed'::text])));
 
+CREATE TRIGGER bin_types_family_of_one BEFORE INSERT ON public.bin_types FOR EACH ROW EXECUTE FUNCTION public.bin_types_family_of_one();
+
 ALTER TABLE ONLY public.bin_loader_home_bin_types
     ADD CONSTRAINT bin_loader_home_bin_types_bin_type_id_fkey FOREIGN KEY (bin_type_id) REFERENCES public.bin_types(id) ON DELETE CASCADE;
 
@@ -2119,6 +2184,9 @@ ALTER TABLE ONLY public.bin_loaders
 ALTER TABLE ONLY public.bin_types
     ADD CONSTRAINT bin_types_bare_of_fkey FOREIGN KEY (bare_of) REFERENCES public.bin_types(id);
 
+ALTER TABLE ONLY public.bin_types
+    ADD CONSTRAINT bin_types_family_id_fkey FOREIGN KEY (family_id) REFERENCES public.carrier_families(id) ON DELETE RESTRICT;
+
 ALTER TABLE ONLY public.bins
     ADD CONSTRAINT bins_bin_type_id_fkey FOREIGN KEY (bin_type_id) REFERENCES public.bin_types(id);
 
@@ -2134,6 +2202,12 @@ ALTER TABLE ONLY public.cms_transactions
 ALTER TABLE ONLY public.cms_transactions
     ADD CONSTRAINT cms_transactions_order_id_fkey FOREIGN KEY (order_id) REFERENCES public.orders(id);
 
+ALTER TABLE ONLY public.kanban_families
+    ADD CONSTRAINT kanban_families_family_id_fkey FOREIGN KEY (family_id) REFERENCES public.carrier_families(id) ON DELETE RESTRICT;
+
+ALTER TABLE ONLY public.kanban_families
+    ADD CONSTRAINT kanban_families_kanban_node_id_fkey FOREIGN KEY (kanban_node_id) REFERENCES public.kanbans(node_id) ON DELETE CASCADE;
+
 ALTER TABLE ONLY public.kanban_layer_levels
     ADD CONSTRAINT kanban_layer_levels_bin_type_id_fkey FOREIGN KEY (bin_type_id) REFERENCES public.bin_types(id) ON DELETE CASCADE;
 
@@ -2145,9 +2219,6 @@ ALTER TABLE ONLY public.kanban_levels
 
 ALTER TABLE ONLY public.kanban_levels
     ADD CONSTRAINT kanban_levels_kanban_node_id_fkey FOREIGN KEY (kanban_node_id) REFERENCES public.kanbans(node_id) ON DELETE CASCADE;
-
-ALTER TABLE ONLY public.kanban_levels
-    ADD CONSTRAINT kanban_levels_overflow_node_id_fkey FOREIGN KEY (overflow_node_id) REFERENCES public.nodes(id) ON DELETE SET NULL;
 
 ALTER TABLE ONLY public.kanban_sources
     ADD CONSTRAINT kanban_sources_kanban_node_id_fkey FOREIGN KEY (kanban_node_id) REFERENCES public.kanbans(node_id) ON DELETE CASCADE;
@@ -2163,9 +2234,6 @@ ALTER TABLE ONLY public.kanban_supports
 
 ALTER TABLE ONLY public.kanbans
     ADD CONSTRAINT kanbans_node_id_fkey FOREIGN KEY (node_id) REFERENCES public.nodes(id) ON DELETE CASCADE;
-
-ALTER TABLE ONLY public.kanbans
-    ADD CONSTRAINT kanbans_overflow_node_id_fkey FOREIGN KEY (overflow_node_id) REFERENCES public.nodes(id) ON DELETE SET NULL;
 
 ALTER TABLE ONLY public.lane_confidence_daily
     ADD CONSTRAINT lane_confidence_daily_version_id_fkey FOREIGN KEY (version_id) REFERENCES public.scene_lane_versions(id);

@@ -46,7 +46,7 @@ type Source struct {
 // holds in each (windowWalk.fits): a 45 x 48 cart is never asked for a source of 32 x 30
 // alone. A cart nothing is short of answers NoneShort. In the windows' order.
 func AssignAcross(lines []Line, sources []Source, windows []protocol.NodeBinsRow,
-	inbound map[int64]bool, sizes map[string]domain.FloorSize) []protocol.NodeBinsAssignment {
+	inbound map[int64]bool, sizes map[string]domain.Footprint) []protocol.NodeBinsAssignment {
 	byNode := map[string]protocol.NodeBinsAssignment{}
 	take := func(as []protocol.NodeBinsAssignment, group string) {
 		for _, a := range as {
@@ -153,7 +153,7 @@ func (t thing) layers() *int {
 //
 // The answer is in the windows' order. Pins: TestAssignWindows_*.
 func Assign(lines []Line, windows []protocol.NodeBinsRow, inbound map[int64]bool,
-	sizes map[string]domain.FloorSize) []protocol.NodeBinsAssignment {
+	sizes map[string]domain.Footprint) []protocol.NodeBinsAssignment {
 	w := &windowWalk{lines: lines, sizes: sizes, assignedType: map[string]int{}, assignedHeight: map[thing]int{}}
 	byNode := map[string]protocol.NodeBinsAssignment{}
 	pass := func(empty bool) {
@@ -187,7 +187,7 @@ func Assign(lines []Line, windows []protocol.NodeBinsRow, inbound map[int64]bool
 // so far, subtracted from each line's shortfall.
 type windowWalk struct {
 	lines          []Line
-	sizes          map[string]domain.FloorSize
+	sizes          map[string]domain.Footprint
 	assignedType   map[string]int
 	assignedHeight map[thing]int
 }

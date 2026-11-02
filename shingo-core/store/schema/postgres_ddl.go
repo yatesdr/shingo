@@ -28,9 +28,9 @@ CREATE TABLE IF NOT EXISTS nodes (
 
 -- bin_types.length_in is the third dimension, added at v90. The table carried
 -- width and height only, which left a code like "45x58x32" holding its own
--- length in the STRING and nowhere a query could reach it. One reader compares
--- them: the unloader's card asks a cart only for types of its own floor size
--- (width × length, both entered). A slot's fit is type identity everywhere.
+-- length in the STRING and nowhere a query could reach it. Width × length is a type's
+-- footprint: a label and a check, never a decision. What a cart may be stamped as is its
+-- carrier family (v172). A slot's fit is type identity everywhere.
 CREATE TABLE IF NOT EXISTS bin_types (
     id          BIGSERIAL PRIMARY KEY,
     code        TEXT NOT NULL UNIQUE,

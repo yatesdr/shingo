@@ -467,9 +467,6 @@ func BuildEpisodeRow(e domain.DemandEpisode, now time.Time, c config.DisplayConf
 	// because the keeper was smart would flatter the ratio for the wrong reason.
 	expected := o.ExpectedOrders
 	if o.Kind == protocol.EpisodeKindKanban {
-		if parsed, perr := protocol.ParseEpisodeKey(o.EpisodeKey); perr == nil && parsed.BinType != "" {
-			row.Payload = parsed.BinType
-		}
 		if expected == nil {
 			if shortfall := o.Threshold - o.OpenedTotal; shortfall > 0 {
 				expected = &shortfall

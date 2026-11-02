@@ -539,7 +539,7 @@ func TestKanbanForecast_AgreesWithTheFinder(t *testing.T) {
 				r.sources(t, sources...)
 			}
 			id, err := r.db.OpenCoreEpisode(store.DemandOrigin{OriginID: "fcfcfcfc-0000-4000-8000-000000000001",
-				EpisodeKey: protocol.KanbanEpisodeKey(name, r.code), Kind: protocol.EpisodeKindKanban,
+				EpisodeKey: protocol.KanbanEpisodeKey(1, 2), Kind: protocol.EpisodeKindKanban,
 				StationID: "test-core", CoreNodeName: name, OpenedAt: time.Now().UTC(), Threshold: 2})
 			testutil.MustNoErr(t, err, "the episode")
 

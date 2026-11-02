@@ -4549,6 +4549,7 @@ func migrationList() []migration {
 				err := q.QueryRow(`SELECT EXISTS (SELECT 1 FROM demand_origins WHERE kind = 'maintain')`).Scan(&left)
 				return err == nil && !left
 			}},
+		{172, "carrier_families and bin_types.family_id; kanban_families; open kanban episode keys by id", v172Families, v172Done},
 		{173, "order_bins: an order's carts, one row per lift (pick_step, drop_step), for every order that carries a cart, kept after it ends; the census lists what the walk cannot place",
 			v173OrderCarts,
 			func(q schema.Querier) bool {

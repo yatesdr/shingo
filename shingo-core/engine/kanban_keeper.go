@@ -297,7 +297,7 @@ func (m *KanbanKeeper) tickKanban(rows []store.KanbanPictureRow, picture map[int
 	levels := store.LevelsOfPicture(rows)
 	var short []string
 	for i, r := range rows {
-		key := protocol.KanbanEpisodeKey(k.KanbanName, r.BinTypeCode)
+		key := protocol.KanbanEpisodeKey(k.KanbanNodeID, r.BinTypeID)
 		episode := openByKey[key]
 		c := counts.Level(levels[i], episode.Asked)
 		lines[i] = keeperLine{key: key, episode: episode, count: c, state: KanbanLineState{

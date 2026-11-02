@@ -10,12 +10,10 @@ import (
 // BinTypeCode copy on Bin is the most common joined field, so most
 // rendering paths don't need to follow the pointer.
 //
-// The three dimensions are a plant's carrier catalogue, read off the schema
-// instead of parsed out of codes like "45x58x32". Two readers compare them: the
-// unloader's card asks a cart only for types of its own floor size (FloorSize,
-// width × length, when both are entered; kanban.Assign), and the Edge's
-// CLEAR panels offer only those types (NodeListResponse.Floor). A slot's fit is
-// still type identity everywhere else.
+// The three dimensions are a plant's carrier catalogue, read off the schema instead
+// of parsed out of codes like "45x58x32". Width and length make its Footprint, which
+// the kanban save checks a family's members agree on and the card prints. Nothing
+// decides on a footprint: what a cart may be stamped as is its family (FamilyID).
 type BinType struct {
 	ID          int64   `json:"id"`
 	Code        string  `json:"code"`
@@ -23,6 +21,11 @@ type BinType struct {
 	WidthIn     float64 `json:"width_in"`
 	HeightIn    float64 `json:"height_in"`
 	LengthIn    float64 `json:"length_in"`
+	// FamilyID is the physical cart this type is one setting of (carrier_families):
+	// the one thing a CLEAR never changes. Every type has one, by default a family of
+	// its own; a bare marker has its carrier's. FamilyCode is its name.
+	FamilyID   int64  `json:"family_id"`
+	FamilyCode string `json:"family_code"`
 	// RequiredRobotGroup is the SEER robot group required to move this carrier.
 	// Empty = no restriction, which is every carrier until one is configured.
 	//
@@ -56,24 +59,24 @@ type BinType struct {
 	UpdatedAt     time.Time `json:"updated_at"`
 }
 
-// FloorSize is a carrier's floor, its width and length as entered, held in
-// order so that a 45 × 48 and a 48 × 45 are one size: two floors are the same
-// exactly when they are ==.
-type FloorSize struct{ short, long float64 }
+// Footprint is a carrier's width and length as entered, held in order so that a
+// 45 × 48 and a 48 × 45 are one size: two are the same exactly when they are ==. Not
+// the backstop Floor.
+type Footprint struct{ short, long float64 }
 
-// String is the floor on the wire, short side first: "45x48". Each side is its
+// String is the footprint short side first: "45x48". Each side is its
 // shortest exact spelling, so two strings are equal exactly when the sizes are ==.
-func (f FloorSize) String() string {
+func (f Footprint) String() string {
 	return strconv.FormatFloat(f.short, 'f', -1, 64) + "x" + strconv.FormatFloat(f.long, 'f', -1, 64)
 }
 
-// FloorSize is the type's floor size; false unless both its width and its
+// Footprint is the type's footprint; false unless both its width and its
 // length are entered (above 0). A type with none has no size to compare.
-func (bt BinType) FloorSize() (FloorSize, bool) {
+func (bt BinType) Footprint() (Footprint, bool) {
 	if bt.WidthIn <= 0 || bt.LengthIn <= 0 {
-		return FloorSize{}, false
+		return Footprint{}, false
 	}
-	return FloorSize{min(bt.WidthIn, bt.LengthIn), max(bt.WidthIn, bt.LengthIn)}, true
+	return Footprint{min(bt.WidthIn, bt.LengthIn), max(bt.WidthIn, bt.LengthIn)}, true
 }
 
 // BareStamp is what a CLEAR does to a cart's type in a two-stage unloader,

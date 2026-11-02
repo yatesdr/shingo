@@ -305,10 +305,10 @@ func TestAssignWindows_ABareCartIsAssignedNothing(t *testing.T) {
 // sizes is the floor sizes the walk's tests give their types: three 45 x 48
 // types (a knockdown, a tote cart and a basket, the tote entered the other way
 // round) and a 36 x 36 knockdown; NODIM has none entered.
-func sizes() map[string]domain.FloorSize {
-	out := map[string]domain.FloorSize{}
+func sizes() map[string]domain.Footprint {
+	out := map[string]domain.Footprint{}
 	for code, wl := range map[string][2]float64{"KD-45": {45, 48}, "TOTE-1": {48, 45}, "WB-45": {45, 48}, "KD-36": {36, 36}} {
-		fs, _ := domain.BinType{WidthIn: wl[0], LengthIn: wl[1]}.FloorSize()
+		fs, _ := domain.BinType{WidthIn: wl[0], LengthIn: wl[1]}.Footprint()
 		out[code] = fs
 	}
 	return out
@@ -381,11 +381,11 @@ func TestKanbanPin_WalkLightsNothingOutsideItsOwnGroup(t *testing.T) {
 		{Code: "KP-SMALL", Want: 1, Have: 1},
 		{Code: "KP-TOTES", Want: 1, Have: 1},
 	}
-	sizes := map[string]domain.FloorSize{}
+	sizes := map[string]domain.Footprint{}
 	for code, wl := range map[string][2]float64{
 		"KP-32X30": {32, 30}, "KP-BIG": {45, 48}, "KP-SMALL": {45, 48}, "KP-TOTES": {48, 45},
 	} {
-		fs, ok := domain.BinType{WidthIn: wl[0], LengthIn: wl[1]}.FloorSize()
+		fs, ok := domain.BinType{WidthIn: wl[0], LengthIn: wl[1]}.Footprint()
 		if !ok {
 			t.Fatalf("no floor size for %s", code)
 		}
