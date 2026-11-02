@@ -71,6 +71,9 @@ type DropNeed struct {
 	// release walks it when a lane refuses (ruling 3) without reading the group
 	// again (DESIGN-C2c §7.3: the group's slot state read once per release).
 	Ranked bool
+	// Loop carries the door's verdict that the cart is of the kanban's loop
+	// (nodes.KanbanDoor.Loop): asked with direct, the store arm does not ask the level.
+	Loop bool
 	// direct asks the group resolver's store arm itself rather than the general
 	// resolver, which lists the group's children before delegating: the keeper's
 	// and the cancel-return's ask (groupStore), whose group is an NGRP by its
@@ -168,7 +171,7 @@ func (p *Planner) ChooseDrop(group *nodes.Node, need DropNeed) (DropChoice, erro
 	)
 	switch {
 	case need.direct && len(exclude) == 0:
-		gr := &binresolver.GroupResolver{DB: p.db, DebugLog: p.dbg}
+		gr := &binresolver.GroupResolver{DB: p.db, DebugLog: p.dbg, Loop: need.Loop}
 		res, err = gr.ResolveStore(group, need.Payload, need.Stated, need.Asker)
 	case len(exclude) == 0:
 		// THE SAME CALL THE PLAN HAS ALWAYS MADE, so a drop with nothing to set

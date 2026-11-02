@@ -71,36 +71,6 @@ func pushInto(t *testing.T, d *Dispatcher, db *store.DB, uuid, group string) str
 	return got.DeliveryNode
 }
 
-// AT LEVEL WITH AN OVERFLOW: the carrier goes to the overflow.
-func TestOverflow_AtLevelRoutesToTheOverflow(t *testing.T) {
-	t.Parallel()
-	db := testdb.Open(t)
-	_ = testdb.SetupStandardData(t, db)
-	// A REAL RESOLVER. newTestDispatcher passes nil, and resolveSyntheticDestination
-	// returns early on a nil resolver — so every case here would pass by never
-	// reaching the code under test.
-	d := NewDispatcher(db, testdb.NewSuccessBackend(), &mockEmitter{}, "core",
-		"shingo.dispatch", &DefaultResolver{DB: db})
-
-	src := &nodes.Node{Name: "OVF-SRC", Enabled: true}
-	testutil.MustNoErr(t, db.CreateNode(src), "source node")
-
-	// Full: level 1, holding 1, and a spare position so it is not PHYSICALLY
-	// full — the level is the only thing refusing.
-	grpID, _ := levelledGroup(t, db, "OVF-FULL", "OVF-45x58", 1, 1, 2)
-	levelledGroup(t, db, "OVF-SPILL", "OVF-45x58", 0, 0, 2)
-	testdb.KanbanOverflow(t, db, grpID, "OVF-SPILL")
-
-	got := pushInto(t, d, db, "ovf-1", "OVF-FULL")
-	if got == "OVF-FULL" {
-		t.Fatal("the order kept the full group as its destination — the overflow was not tried")
-	}
-	if got != "OVF-SPILL-PA" && got != "OVF-SPILL-PB" {
-		t.Errorf("delivery = %q, want a position inside OVF-SPILL. The group is at its level "+
-			"and has an overflow configured; parking is what happens when it does NOT", got)
-	}
-}
-
 // NO OVERFLOW CONFIGURED: the push parks, holding its bin.
 //
 // STATED, NOT SOLVED. That is backpressure into whatever was pushing — an
@@ -147,16 +117,15 @@ func TestOverflow_AFullOverflowDoesNotChain(t *testing.T) {
 	src := &nodes.Node{Name: "OVF-SRC", Enabled: true}
 	testutil.MustNoErr(t, db.CreateNode(src), "source node")
 
-	first, _ := levelledGroup(t, db, "OVF-A", "OVF-CH-45x58", 1, 1, 2)
-	second, _ := levelledGroup(t, db, "OVF-B", "OVF-CH-45x58", 1, 1, 2)
-	third, _ := levelledGroup(t, db, "OVF-C", "OVF-CH-45x58", 0, 0, 2)
-	testdb.KanbanOverflow(t, db, first, "OVF-B")
-	testdb.KanbanOverflow(t, db, second, "OVF-C")
-	_ = third
+	first, _ := levelledGroup(t, db, "OVF-A", "OVF-CH-45x58", 0, 2, 2)
+	second, _ := levelledGroup(t, db, "OVF-B", "OVF-CH-45x58", 0, 2, 2)
+	levelledGroup(t, db, "OVF-C", "OVF-CH-45x58", 0, 0, 2)
+	testutil.MustNoErr(t, db.SetNodeProperty(first, nodes.PropOverflowDestination, "OVF-B"), "A's overflow")
+	testutil.MustNoErr(t, db.SetNodeProperty(second, nodes.PropOverflowDestination, "OVF-C"), "B's overflow")
 
 	got := pushInto(t, d, db, "ovf-3", "OVF-A")
 	if got != "OVF-A" {
-		t.Errorf("delivery = %q, want OVF-A kept (a park). B is also at its level, and one "+
+		t.Errorf("delivery = %q, want OVF-A kept (a park). B is full too, and one "+
 			"hop means B's own overflow is NOT consulted — C has room and must not be "+
 			"reached", got)
 	}
@@ -180,8 +149,7 @@ func TestOverflow_MisconfiguredOverflowStillParks(t *testing.T) {
 	src := &nodes.Node{Name: "OVF-SRC", Enabled: true}
 	testutil.MustNoErr(t, db.CreateNode(src), "source node")
 
-	// A kanban's overflow is a foreign key that can name neither, so these are a
-	// plain group's: full, with its property as written.
+	// A plain group's: full, with its property as written.
 	for _, tc := range []struct {
 		name, group, overflow string
 	}{
@@ -201,8 +169,8 @@ func TestOverflow_MisconfiguredOverflowStillParks(t *testing.T) {
 }
 
 // A PLAIN GROUP KEEPS ITS PROPERTY: no level, no kanbans row, and a full group's
-// push still takes the overflow_destination it names. A kanban with a stale copy
-// of the property reads its row instead: the row decides which is read.
+// push still takes the overflow_destination it names. A kanban has no overflow, whatever a stale
+// copy of the property says.
 func TestOverflow_APlainGroupKeepsItsProperty(t *testing.T) {
 	t.Parallel()
 	db := testdb.Open(t)
@@ -221,11 +189,11 @@ func TestOverflow_APlainGroupKeepsItsProperty(t *testing.T) {
 	row, _ := levelledGroup(t, db, "OVF-ROW", "OVF-PL-T", 1, 1, 2)
 	testutil.MustNoErr(t, db.SetNodeProperty(row, nodes.PropOverflowDestination, "OVF-PLAIN-SPILL"), "a stale property")
 	if got := pushInto(t, d, db, "ovf-row", "OVF-ROW"); got != "OVF-ROW" {
-		t.Errorf("delivery = %q, want OVF-ROW kept (a park): a kanban with no overflow on its row has none", got)
+		t.Errorf("delivery = %q, want OVF-ROW kept (a park): a kanban has no overflow", got)
 	}
 }
 
-// A GROUP BELOW ITS LEVEL NEVER REACHES THE OVERFLOW AT ALL.
+// A KANBAN BELOW ITS LEVEL TAKES A STRANGER'S CART IN ITSELF.
 func TestOverflow_BelowLevelIsUnaffected(t *testing.T) {
 	t.Parallel()
 	db := testdb.Open(t)
@@ -239,14 +207,9 @@ func TestOverflow_BelowLevelIsUnaffected(t *testing.T) {
 	src := &nodes.Node{Name: "OVF-SRC", Enabled: true}
 	testutil.MustNoErr(t, db.CreateNode(src), "source node")
 
-	grpID, _ := levelledGroup(t, db, "OVF-ROOM", "OVF-RM-45x58", 4, 1, 3)
-	levelledGroup(t, db, "OVF-UNUSED", "OVF-RM-45x58", 0, 0, 2)
-	testdb.KanbanOverflow(t, db, grpID, "OVF-UNUSED")
+	levelledGroup(t, db, "OVF-ROOM", "OVF-RM-45x58", 4, 1, 3)
 
 	got := pushInto(t, d, db, "ovf-room", "OVF-ROOM")
-	if strings.HasPrefix(got, "OVF-UNUSED") {
-		t.Errorf("delivery = %q — a group with room took the overflow path", got)
-	}
 	if !strings.HasPrefix(got, "OVF-ROOM") {
 		t.Errorf("delivery = %q, want a position inside OVF-ROOM", got)
 	}

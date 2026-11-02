@@ -399,9 +399,11 @@ func (e *Engine) fencedFor(src *nodes.Node, carrier *orders.Order, binID int64) 
 // (SourceFinder tier 1), so a bin set down in a sibling lane would be one its
 // line never finds.
 //
-// A CANCELLED PUSH OF A KANBAN'S LOOP GOES WHERE THE PUSH WOULD HAVE GONE: the one chooser
-// (plan.Planner.ChoosePush), home first and then its sources. Its refusal is the sentence.
-// Every other return keeps the cap below. Pin: TestKanbanPin_ALoopCartLandsWithASlotFree.
+// A CANCELLED ORDER'S CART OF A KANBAN'S LOOP GOES WHERE A PUSH OF IT WOULD HAVE GONE: the one
+// chooser (plan.Planner.ChoosePush), home first and then its sources, whichever order was
+// carrying it. Its read says whether the source is the loop's, and its refusal is the sentence.
+// A cart from elsewhere keeps the cap below. Pins: TestKanbanPin_ALoopCartLandsWithASlotFree,
+// TestKanbanDoor_ACancelledSwapsCartLands.
 func (e *Engine) storeInto(src *nodes.Node, bin *bins.Bin, carrier *orders.Order) (*nodes.Node, string) {
 	if src == nil {
 		return nil, "it names no node Core knows"
@@ -420,7 +422,7 @@ func (e *Engine) storeInto(src *nodes.Node, bin *bins.Bin, carrier *orders.Order
 	// The slot is the planner's (plan.GroupStoreSlot), the group resolver the
 	// level keeper and intake ask.
 	stated := binresolver.KnownCarrier(bin)
-	if carrier != nil && dispatch.WindowPushShaped(carrier) {
+	if carrier != nil {
 		if c := e.dispatcher.ChooseCancelledPush(cartPickNode(carrier, bin.ID), group, stated); c.Applies {
 			if c.Slot == nil {
 				return nil, "no slot of " + group.Name + " admits it, and no source is short of it"

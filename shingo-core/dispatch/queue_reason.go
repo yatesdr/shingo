@@ -167,6 +167,9 @@ type QueueParams struct {
 	// false here: none could serve it. What ends the wait is a person adding a
 	// tote carrier to the part's carriers (CauseFinderNoToteCarrier).
 	NoToteCarrier bool
+	// Family is the carrier family a kanban's own cart waits for room for: every slot admitting
+	// it stands taken, and the sentence names what a person would make room for.
+	Family string
 	// AtLevel marks a slot wait where the group is holding the number of empties
 	// it was configured to hold, rather than being physically out of space.
 	//
@@ -337,6 +340,9 @@ func slotSentence(p QueueParams) string {
 			return "Waiting on a destination that cannot be resolved right now"
 		}
 		return fmt.Sprintf("Waiting on destination %s — cannot be resolved right now", p.Destination)
+	}
+	if p.Family != "" {
+		return fmt.Sprintf("No slot of %s admits a cart of %s — waiting for one to leave", p.Destination, p.Family)
 	}
 	// AT LEVEL IS NOT OUT OF ROOM, and it gets its own sentence for the reason
 	// QueueParams.AtLevel gives: the positions are free.

@@ -11,11 +11,10 @@ import (
 // window_push.go — dispatch's face on the one chooser (plan.Planner.ChoosePush): which
 // orders are asked of it, and the cart it is asked with.
 
-// WindowPushShaped reports whether an order could be an unloader's push by what it
-// says of itself, with no read: a station's move for one empty cart, named from its
-// source. The chooser's one statement then asks whether that source is a window of an
-// unloader whose outbound is the group; a shaped order that is not comes back to the
-// cap's path.
+// WindowPushShaped reports whether an order could be a push of a kanban's loop by what it says
+// of itself, with no read: a station's move for one empty cart, named from its source. The
+// chooser's one statement then asks whether that source is of the group's loop; a shaped order
+// that is not comes back to the cap's path.
 //
 // A PERSON'S NAMED DROP IS NOT SHAPED, and stays named. Core's own bin move (a person
 // at a page, station-unaware) names its drop as a person chose it, and a station's
@@ -74,12 +73,8 @@ func (d *Dispatcher) ChooseCancelledPush(source string, group *nodes.Node, state
 	return d.pure.ChoosePush(plan.PushAsk{Group: group, Source: source, Stated: stated, Asker: domain.Anyone})
 }
 
-// PushParkBlock is the park of a push no group of its door takes, named at group, in
-// the sentence the gate's own park says: a group holding what it was told to, or, short
-// of the cart with no slot free, a full one.
+// PushParkBlock is the park of a push no slot of its door takes, named at group, in the sentence
+// a full group's park says. A loop cart never parks at a level.
 func PushParkBlock(group string, c plan.PushChoice) CapacityBlock {
-	if c.RoomOnly {
-		return CapacityBlock{Cause: CauseNGRPFull, Params: QueueParams{Destination: group}}
-	}
-	return CapacityBlock{Cause: CauseNGRPAtLevel, Params: QueueParams{Destination: group, AtLevel: true}}
+	return CapacityBlock{Cause: CauseNGRPFull, Params: QueueParams{Destination: group, Family: c.Family}}
 }

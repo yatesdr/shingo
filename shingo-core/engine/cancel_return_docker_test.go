@@ -875,9 +875,6 @@ func kanbanAtLevel(t *testing.T, db *store.DB, prefix string, binTypeID int64, p
 	testutil.MustNoErr(t, db.SetKanbanLevel(store.KanbanLevel{GroupNodeID: kanbanNode.ID, BinTypeID: binTypeID, Want: 1}),
 		"a level of one")
 	seedRoleClaim(t, db, "PROC-"+prefix, press.Name, protocol.ClaimRoleProduce, prefix+"-PART", kanbanNode.Name, "")
-	if overflow != "" {
-		testdb.KanbanOverflow(t, db, kanbanNode.ID, overflow)
-	}
 	return kanbanNode
 }
 
@@ -893,27 +890,8 @@ func evacOff(t *testing.T, db *store.DB, robot, payload string, node *nodes.Node
 }
 
 // Each case on its own database, because the empties walk is plant-wide.
-func TestCancelReturn_AKanbanAtLevelOverflowsOneHop(t *testing.T) {
+func TestCancelReturn_AKanbanAtLevelHolds(t *testing.T) {
 	t.Parallel()
-
-	t.Run("at level with an overflow: lands in the overflow, and the audit names the hop", func(t *testing.T) {
-		t.Parallel()
-		db := testdb.Open(t)
-		eng := newTestEngine(t, db, testdb.NewTrackingBackend())
-		press := &nodes.Node{Name: "CR16A-PRESS", Enabled: true}
-		testutil.MustNoErr(t, db.CreateNode(press), "create press")
-		market, marketSlot := storeGroupWithSlot(t, db, "CR16A-MKT")
-		a, _ := evacOff(t, db, "AMR-CR16A", "", press)
-		kanbanNode := kanbanAtLevel(t, db, "CR16A-KANBAN", a.BinTypeID, press, market.Name)
-		cacheRobot(eng, loadedDispatchable("AMR-CR16A"))
-		eng.sweepCarriedBins()
-		if ret := theReturn(t, db, a.ID); ret.DeliveryNode != marketSlot.Name {
-			t.Errorf("return goes to %q, want %s in the overflow group — %s is at its level", ret.DeliveryNode, marketSlot.Name, kanbanNode.Name)
-		}
-		if _, _, detail := lastBinAction(t, db, a.ID); !strings.Contains(detail, "at its declared level, overflowed to "+market.Name) {
-			t.Errorf("audit detail %q does not name the hop", detail)
-		}
-	})
 
 	t.Run("at level with no overflow: hold, saying why", func(t *testing.T) {
 		t.Parallel()

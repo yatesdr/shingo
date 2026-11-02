@@ -16,16 +16,21 @@ import (
 type DoorLine struct {
 	Group *Node
 	// Level is the group's row for the type, Want effective; nil when it declares
-	// none, which leaves it short of nothing: it can be reached only as an overflow.
+	// none, which leaves it short of nothing.
 	Level *KanbanLevel
 	kanban.Have
 	// TopsAndBottoms is the type's tops & bottoms line, a cart at 0's own: the row's
 	// want (0 with no row), the carts at 0 standing and coming. The keeper never
 	// fetches them, so nothing is asked.
 	TopsWant, TopsResident, TopsComing int
+	// FreeSlots is the group's slots the store resolver's flat arm would take this cart on, its
+	// admits included: at 0 the door passes the group with no statement. A level is held in
+	// direct positions, so a line asked for a fit is flat. Pin:
+	// TestKanbanDoor_ItsFreeSlotsAreTheResolversSlots.
+	FreeSlots int
 }
 
-// Short is how short the group is of a cart in this state: the keeper's gap
+// Short is how short the group is of a cart in this state: want less what it has
 // (store.LevelState.Short) on the stack line, or the tops & bottoms line's for a
 // cart at 0. Never positive with no level.
 func (l DoorLine) Short(state protocol.CarrierState) int {
@@ -38,12 +43,17 @@ func (l DoorLine) Short(state protocol.CarrierState) int {
 	return l.Have.Short(l.Level.Want)
 }
 
-// KanbanDoor is one read of a window's push: the kanban the unloader's outbound
-// names, its sources in rank order, and the type's overflow (nil with none).
+// KanbanDoor is one read of a push: the kanban named, and its sources in rank order.
+//
+// LOOP is the verdict, decided once, in the read. A cart of the kanban's loop lands whenever a
+// slot admits its type: no door below the read asks the level of it. A read that finds the
+// source is no part of the loop answers no door at all, and the cap stands.
 type KanbanDoor struct {
-	Kanban   DoorLine
-	Sources  []DoorLine
-	Overflow *DoorLine
+	Loop bool
+	// Family is the cart's carrier family, what a park says it waits for room for.
+	Family  string
+	Kanban  DoorLine
+	Sources []DoorLine
 }
 
 // WindowNameOf is the node name a door matches a window on: a name is split at its
@@ -61,26 +71,3 @@ func WindowNameOf(dotName string) string {
 func ScanDoorLine(rows *sql.Rows, extra ...any) (*Node, error) {
 	return ScanNode(withTrailingCols{rows, extra})
 }
-
-// PerTypeOverflowTargetOf reads the overflow a store of one carrier type takes
-// from a group: for a kanban the type's own row, then the kanban's default; for a
-// plain group its property. One statement. Pin:
-// TestOverflow_ATypesOwnOverflowOutranksTheKanbansDefault.
-func PerTypeOverflowTargetOf(db *sql.DB, groupNodeID, binTypeID int64) (OverflowTarget, error) {
-	return scanOverflowTarget(db.QueryRow(perTypeOverflowSQL+` WHERE g.id=$1`, groupNodeID, binTypeID), groupNodeID)
-}
-
-// PerTypeOverflowTargetByName is PerTypeOverflowTargetOf for a caller holding the
-// group's name. A binTypeID of 0 names no level row, and reads the group's own.
-func PerTypeOverflowTargetByName(db *sql.DB, groupName string, binTypeID int64) (OverflowTarget, error) {
-	return scanOverflowTarget(db.QueryRow(perTypeOverflowSQL+` WHERE g.name=$1`, groupName, binTypeID), groupName)
-}
-
-const perTypeOverflowSQL = `SELECT COALESCE(l.overflow_node_id, k.overflow_node_id, 0),
-		CASE WHEN k.node_id IS NOT NULL THEN COALESCE(lo.name, o.name, '') ELSE COALESCE(p.value, '') END
-	  FROM nodes g
-	  LEFT JOIN kanbans k ON k.node_id = g.id
-	  LEFT JOIN nodes o ON o.id = k.overflow_node_id
-	  LEFT JOIN kanban_levels l ON l.kanban_node_id = g.id AND l.bin_type_id = $2
-	  LEFT JOIN nodes lo ON lo.id = l.overflow_node_id
-	  LEFT JOIN node_properties p ON p.node_id = g.id AND p.key = '` + PropOverflowDestination + `'`

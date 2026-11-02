@@ -77,6 +77,10 @@ type GroupResolver struct {
 	// stand in front of a later pickup of its own plan in that lane (plan
 	// OwnPickupLane, C2b Q1). Nil excludes nothing. Store paths only.
 	ExcludeLanes map[int64]bool
+	// Loop says the door's read found this cart of the kanban's own loop (nodes.KanbanDoor.Loop).
+	// The level governs the keeper's asks and strangers' stores: a cart of the loop lands
+	// whenever a slot admits it. Decided there, never again here.
+	Loop bool
 }
 
 // withoutExcludedLanes is children less ExcludeLanes.
@@ -637,14 +641,11 @@ func (r *GroupResolver) groupAdmitsStore(group *nodes.Node, payloadCode string, 
 // stand once a committed lift has emptied vacated: its carriers leave the level
 // count. A nil vacated counts the group as it stands.
 func (r *GroupResolver) groupAdmitsStoreVacating(group, vacated *nodes.Node, payloadCode string, stated BinTypeStatement) error {
-	// ── MG4-1: THE LEVEL IS A CAP, AND THIS IS WHERE IT BINDS ───────────────
+	// ── THE LEVEL IS A CAP ON STRANGERS, AND THIS IS WHERE IT BINDS ─────────
 	//
-	// A kanban holds a declared number of empty carriers. The keeper
-	// tops UP to that number; this refuses a store that would push PAST it.
-	// Without both halves the level is only a floor, and a group configured to
-	// hold four would accept a fifth, a sixth, and every carrier anybody wanted
-	// to put down — which is how a lineside kanban becomes the place the plant
-	// parks its overflow.
+	// A kanban holds a declared mix of empty carriers. Its own loop's carts land whatever
+	// the mix says (r.Loop). A cart from anywhere else is refused past the level, or the
+	// kanban becomes the place the plant parks whatever it has no room for.
 	//
 	// ResolutionCapacity, which means QUEUE-ON-FULL: the caller parks the push
 	// and retries, inheriting the whole park / re-resolve / revert path a full
@@ -660,6 +661,7 @@ func (r *GroupResolver) groupAdmitsStoreVacating(group, vacated *nodes.Node, pay
 		return fmt.Errorf("read declared level for %s: %w", group.Name, err)
 	}
 
+	// A level is of EMPTIES: this refusal is one of the five fragments a kanban of fulls would widen.
 	// ── A DECLARED LEVEL SAYS WHAT THE GROUP HOLDS, AND IT IS EMPTIES ───────
 	//
 	// Every kanban level counts EMPTY carriers of a bin type
@@ -678,11 +680,8 @@ func (r *GroupResolver) groupAdmitsStoreVacating(group, vacated *nodes.Node, pay
 	// catches is a payload-bearing carrier parked in a kanban, where
 	// nothing looks for it.
 	//
-	// CAPACITY-SHAPED ON PURPOSE, so the kanban's configured overflow
-	// destination catches it at admission and the carrier goes somewhere real
-	// instead of parking (LifecycleService.tryOverflow). A group with no overflow
-	// configured parks under its own cause, which names the condition rather than
-	// reading as a slot shortage.
+	// CAPACITY-SHAPED ON PURPOSE: the order parks under its own cause, which names the
+	// condition rather than reading as a slot shortage.
 	//
 	// THE KEEPER CANNOT BE REFUSED BY THIS. Its own stores pass an empty
 	// payloadCode (kanban_keeper.go), which is what a kanban is for.
@@ -690,6 +689,9 @@ func (r *GroupResolver) groupAdmitsStoreVacating(group, vacated *nodes.Node, pay
 		return fmt.Errorf("payload %s cannot be stored in empties-only node group %s", payloadCode, group.Name)
 	}
 
+	if r.Loop {
+		return nil
+	}
 	if full, err := r.atDeclaredLevel(group, vacated, stated, levels); err != nil {
 		return err
 	} else if full {

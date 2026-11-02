@@ -6,33 +6,37 @@ import (
 	"shingo/protocol"
 	"shingocore/dispatch/binresolver"
 	"shingocore/domain"
-	"shingocore/kanban"
 	"shingocore/store/nodes"
 )
 
-// push.go — where an unloader's cart goes: the one chooser behind the four doors
-// a push into a kanban can meet (intake, the scanner's gate arm and its resolve,
-// the cancel-return's store).
+// push.go — where a cart of a kanban's loop goes: the one chooser behind every door a push
+// into a kanban can meet (intake, the scanner's gate arm and its resolve, the cancel-return's
+// store, the lift's divert).
 //
-// A kanban borrows from its sources, and an unloader repays whichever is short. So
-// a push from a window of the unloader whose outbound is the kanban is decided on
-// Short (residents, asks and comings against the effective want), never on the cap,
-// which counts residents alone and would admit a push whose gap an ask already
-// covers. In order, stopping at the first that takes it:
+// THE SHAPE IS WIDER THAN AN UNLOADER. A pusher is any node the door's read calls the loop's: a
+// window of the kanban's own unloader, a position it supports, a slot of its own. Another kind
+// of pusher is one more arm of that read.
 //
-//	the kanban, while short of the type
+// A LOOP CART ALWAYS LANDS. The level governs the keeper's asks, never a return: this is what
+// keeps a changeover off the family from holding every window. In order, stopping at the first
+// that takes it:
+//
+//	the kanban, whenever a slot admits the cart's type
 //	each source in rank order, while short of the type
-//	the type's overflow (the level's, then the kanban's default)
-//	nothing: the push parks named at the kanban, visible, re-asked every pass
+//	nothing: the push parks named at the kanban as a full group does, visible, re-asked
+//	every pass, and its cause names the family
 //
-// ONE HOP. A source's sources and an overflow's overflow are not asked: "the cart
-// went three groups away from where anybody expected" is worse than a park an
-// operator can see. Pin: TestOverflow_AFullOverflowDoesNotChain (the cap's hop), and
-// TestKanbanDoor_* here.
+// A kanban has no overflow: a sized loop always has a slot, and pool past room is a warning at
+// its save. A cart from outside the loop answers no door here and keeps the cap.
 //
-// NO LEDGER. A source declaring no level of the type is short of nothing and is
-// reached only as the type's overflow; the save warns. Two kanbans sharing a source
-// both see its count: whoever borrowed, the next cart that fits repays it.
+// ONE FIT. The door's read says which of the lines has a slot for the cart, so a line with none
+// costs nothing to pass, and the door pays for one fit wherever the cart goes.
+//
+// ONE HOP. A source's sources are not asked: "the cart went three groups away from where
+// anybody expected" is worse than a park an operator can see.
+//
+// NO LEDGER. A source declaring no level of the type is short of nothing. Two kanbans sharing a
+// source both see its count: whoever borrowed, the next cart that fits repays it.
 //
 // NEVER UNDER A ROBOT, and that is the callers': each door asks only for an order no
 // robot has. A person's named drop never comes here either (dispatch.WindowPushShaped).
@@ -69,9 +73,9 @@ type PushAsk struct {
 	Refused PushRefusals
 }
 
-// PushChoice is the chooser's answer. Applies false: the push does not have the
-// window's shape (or its group declares no level), the chooser read one statement,
-// and the door keeps its own path, which is the cap's. Applies with no Slot: nothing
+// PushChoice is the chooser's answer. Applies false: the source is no part of the kanban's loop
+// (or its group declares no level), the chooser read one statement, and the door keeps its own
+// path, which is the cap's. Applies with no Slot: nothing
 // takes the cart now, and it parks named at the group.
 type PushChoice struct {
 	Applies bool
@@ -82,9 +86,11 @@ type PushChoice struct {
 	Why string
 	// Err says why nothing took it: the capacity sentence a parked store reads.
 	Err error
-	// RoomOnly says the group the push stays named at is short of the cart and only
-	// has no slot free: it parks as a full group does, not as one at its level.
+	// RoomOnly says the push parks because no slot admits it: as a full group does, never at
+	// a level. Every park here is one: a loop cart is not refused at its level.
 	RoomOnly bool
+	// Family is the cart's family, named by the park.
+	Family string
 }
 
 // ChoosePush answers one push; see the file's head. A failed read parks the push
@@ -104,41 +110,37 @@ func (p *Planner) ChoosePush(ask PushAsk) PushChoice {
 	if door == nil {
 		return PushChoice{}
 	}
-	take := func(l *nodes.DoorLine, why string) (PushChoice, bool) {
-		slot := p.slotInLine(l, ask, *typeID)
+	take := func(l *nodes.DoorLine, loop bool, why string) (PushChoice, bool) {
+		if l.FreeSlots == 0 {
+			return PushChoice{}, false
+		}
+		slot := p.slotInLine(l, ask, *typeID, loop)
 		if slot == nil {
 			return PushChoice{}, false
 		}
 		return PushChoice{Applies: true, Slot: slot, Into: l.Group, Why: why}, true
 	}
-	if door.Kanban.Short(state) > 0 {
-		if c, ok := take(&door.Kanban, ""); ok {
-			return c
-		}
+	if c, ok := take(&door.Kanban, door.Loop, ""); ok {
+		return c
 	}
 	for i := range door.Sources {
 		s := &door.Sources[i]
 		if s.Short(state) <= 0 {
 			continue
 		}
-		if c, ok := take(s, fmt.Sprintf("%s is the first of %s's sources short of it", s.Group.Name, ask.Group.Name)); ok {
+		if c, ok := take(s, false, fmt.Sprintf("%s has no slot for it; %s is the first of its sources short of it", door.Kanban.Group.Name, s.Group.Name)); ok {
 			return c
 		}
 	}
-	if o := door.Overflow; o != nil {
-		if c, ok := take(o, fmt.Sprintf("nothing at %s takes it; overflowed to %s", ask.Group.Name, o.Group.Name)); ok {
-			return c
-		}
-	}
-	p.debug("plan: nothing takes a %s from %s — it parks named at %s", state, ask.Source, ask.Group.Name)
-	return PushChoice{Applies: true, Err: kanban.RefusedAtLevel(ask.Group.Name), RoomOnly: door.Kanban.Short(state) > 0}
+	p.debug("plan: no slot admits a %s from %s — it parks named at %s", state, ask.Source, door.Kanban.Group.Name)
+	return PushChoice{Applies: true, Err: fmt.Errorf("no slot of %s admits a cart of %s", door.Kanban.Group.Name, door.Family), RoomOnly: true, Family: door.Family}
 }
 
 // slotInLine is the free slot of one line's group, nil for none: the group's own
 // resolve over one read of its children, with the line in hand for its cap. A slot
 // that would take a stranger's paper is none here: intake has no order row to take
 // it with, and a parked push is asked again.
-func (p *Planner) slotInLine(l *nodes.DoorLine, ask PushAsk, typeID int64) *nodes.Node {
+func (p *Planner) slotInLine(l *nodes.DoorLine, ask PushAsk, typeID int64, loop bool) *nodes.Node {
 	key := PushRefusal{Target: l.Group.ID, Type: typeID}
 	if ask.Refused[key] {
 		return nil
@@ -146,7 +148,7 @@ func (p *Planner) slotInLine(l *nodes.DoorLine, ask PushAsk, typeID int64) *node
 	if !l.Group.Enabled || l.Group.NodeTypeCode != protocol.NodeClassNGRP {
 		return nil
 	}
-	choice, err := p.overGroup(l.Group, l).ChooseDrop(l.Group, DropNeed{Stated: ask.Stated, Asker: ask.Asker, direct: true})
+	choice, err := p.overGroup(l.Group, l).ChooseDrop(l.Group, DropNeed{Stated: ask.Stated, Asker: ask.Asker, Loop: loop, direct: true})
 	if err != nil || choice.Take != nil || choice.Slot == nil {
 		if ask.Refused != nil {
 			ask.Refused[key] = true

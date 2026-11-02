@@ -27,8 +27,7 @@ import (
 // SYN_PRESS_EMPTIES at its level while SYN_MARKET had no slot, parked, and held
 // the unloader's window for 233 sim-min while SYN_MARKET's slots came and went.
 
-// parkedPush is a kanban at its level (one position held of two, a
-// level of one), its overflow with one position a blocker stands on, and a
+// parkedPush is a plain group holding its one position, its overflow with one position a blocker stands on, and a
 // move holding an empty cart at a line, aimed at the group, waiting.
 type parkedPush struct {
 	group, overflow string
@@ -69,13 +68,12 @@ func newParkedPush(t *testing.T, db *store.DB, pfx string, withOverflow bool) pa
 	}
 
 	fx := parkedPush{group: pfx + "-FULL", overflow: pfx + "-SPILL"}
-	grpID, grpPos := group(fx.group, 2)
+	grpID, grpPos := group(fx.group, 1)
 	carrier(pfx+"-RES", grpPos[0])
-	testutil.MustNoErr(t, db.SetKanbanLevel(store.KanbanLevel{GroupNodeID: grpID, BinTypeID: btID, Want: 1}), "level")
 	_, spillPos := group(fx.overflow, 1)
 	fx.blocker = carrier(pfx+"-BLOCK", spillPos[0])
 	if withOverflow {
-		testdb.KanbanOverflow(t, db, grpID, fx.overflow)
+		testutil.MustNoErr(t, db.SetNodeProperty(grpID, nodes.PropOverflowDestination, fx.overflow), "overflow")
 	}
 	fx.away = plain(pfx + "-AWAY")
 	src := pfx + "-SRC"
@@ -134,9 +132,9 @@ func TestOverflow_AParkedPushTakesTheOverflowOnThePassAfterASlotFreesThere(t *te
 	eng.fulfillment.RunOnce()
 	parked, err := db.GetOrder(fx.push.ID)
 	testutil.MustNoErr(t, err, "reload the push")
-	if parked.Status != protocol.StatusQueued || parked.DeliveryNode != fx.group || parked.QueueCause != string(dispatch.CauseNGRPAtLevel) {
+	if parked.Status != protocol.StatusQueued || parked.DeliveryNode != fx.group || parked.QueueCause != string(dispatch.CauseNGRPFull) {
 		t.Fatalf("with the overflow full the push is %s to %s (%s), want queued to %s (%s)",
-			parked.Status, parked.DeliveryNode, parked.QueueCause, fx.group, dispatch.CauseNGRPAtLevel)
+			parked.Status, parked.DeliveryNode, parked.QueueCause, fx.group, dispatch.CauseNGRPFull)
 	}
 
 	fx.freeOverflow(t, db)
@@ -274,6 +272,9 @@ func TestOverflow_AParkedPushIsNotPlacedOverItsTypesLevel(t *testing.T) {
 	var other int64
 	testutil.MustNoErr(t, db.QueryRow(`INSERT INTO bin_types (code) VALUES ('OVP4-OTHER') RETURNING id`).Scan(&other), "another type")
 	testutil.MustNoErr(t, db.SetKanbanLevel(store.KanbanLevel{GroupNodeID: grp.ID, BinTypeID: other, Want: 1}), "its level, unmet")
+	own, err := db.GetBinTypeByCode("OVP4-T")
+	testutil.MustNoErr(t, err, "its type")
+	testutil.MustNoErr(t, db.SetKanbanLevel(store.KanbanLevel{GroupNodeID: grp.ID, BinTypeID: own.ID, Want: 1}), "the push's type at its level")
 
 	eng.fulfillment.RunOnce()
 	got, err := db.GetOrder(fx.push.ID)
@@ -387,7 +388,7 @@ func laneOverflow(t *testing.T, db *store.DB, pfx string, fx parkedPush) string 
 	binAt(t, db, slots[0][0], "")
 	g, err := db.GetNodeByDotName(fx.group)
 	testutil.MustNoErr(t, err, "the parked group")
-	testdb.KanbanOverflow(t, db, g.ID, grp.Name)
+	testutil.MustNoErr(t, db.SetNodeProperty(g.ID, nodes.PropOverflowDestination, grp.Name), "overflow")
 	return grp.Name
 }
 
