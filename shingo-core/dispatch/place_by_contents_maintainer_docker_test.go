@@ -311,6 +311,12 @@ func TestMaintainerArm_AtTheReserve(t *testing.T) {
 	if c.where(pre.DeliveryNode) != "GRP" {
 		t.Fatalf("pre-confirm: the evac goes to %s, want the group", pre.DeliveryNode)
 	}
+	// The re-point names the evac's cart; it writes the cart's row where it
+	// points the order at it (order-carts U0: every cart-writing door).
+	if !testdb.HasCartRow(t, c.db, o.ID, b.ID) {
+		t.Errorf("pre-confirm: the re-pointed evac has cart rows %v, want a row for its cart %d",
+			testdb.CartRowBins(t, c.db, o.ID), b.ID)
+	}
 	group, err := c.db.GetNode(c.grp)
 	testutil.MustNoErr(t, err, "group")
 	lc, err := c.db.CountLevel(group, store.MaintainLevel{GroupNodeID: c.grp, BinTypeID: c.kd, BinTypeCode: "MTV-KD", Want: 1},

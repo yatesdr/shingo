@@ -188,6 +188,12 @@ func TestABStrand_ADiggerWithNoStationWaitTakesTheMouth(t *testing.T) {
 			t.Errorf("holder junction for the deep bin names %s, want %s", ob.NodeName, r.deep.Name)
 		}
 	}
+	// The exchange rewrites the holder's unlifted row from the mouth bin to the
+	// deep one (order-carts U0: every cart-writing door writes its row).
+	if !testdb.HasCartRow(t, r.db, h.ID, r.deepBin) || testdb.HasCartRow(t, r.db, h.ID, r.mouthBin) {
+		t.Errorf("holder %d's cart rows are %v after the exchange, want the deep bin %d and not the mouth bin %d",
+			h.ID, testdb.CartRowBins(t, r.db, h.ID), r.deepBin, r.mouthBin)
+	}
 	for _, row := range []struct {
 		entity string
 		id     int64

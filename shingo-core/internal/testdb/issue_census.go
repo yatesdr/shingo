@@ -49,6 +49,11 @@ type AtCommit struct {
 	Robot    bool // orders.robot_id is stamped
 	BinRow   bool // a pending bin reservation of the order's own
 	SlotRow  bool // a pending slot reservation of the order's own
+	// CartRow: an order_bins row names the cart the door stamped (bin_id, else
+	// named_bin_id). Every door that stamps a cart writes its row in the same
+	// transaction (BRIEF order-carts v1, rule 1); a door that names none has
+	// none.
+	CartRow bool
 }
 
 // Take is what becomes of a stranger's pending hold on the cart an order is
@@ -72,43 +77,43 @@ var IssueDoors = []IssueDoor{
 		At: AtCommit{}, Take: TakeNoCart,
 		Why: "an Edge station sends a retrieve: its row is not whole at its INSERT (the apply writes after it) and its pick rides as orders.plan, held after the gate and the slot by the acquire"},
 	{Name: "wire named move", Site: "dispatch/lifecycle_service.go:LifecycleService.issue", Arm: "dispatch",
-		At: AtCommit{BinID: true, NamedBin: true, BinRow: true, SlotRow: true}, Take: TakeTaken,
+		At: AtCommit{BinID: true, CartRow: true, NamedBin: true, BinRow: true, SlotRow: true}, Take: TakeTaken,
 		Why: "an Edge station's move naming its bin (SEND BACK, W6's clear, a spare's return, a containment move): issued for its cart and holding it from its issue, parked or not, and holding its drop when the decision settled it on a position one carrier's at a time (the census drives a storage drop; a plain drop holds no slot); a station's move is a person's act and takes a stranger's pending hold out loud"},
 	{Name: "complex intake", Site: "dispatch/complex_intake.go:Dispatcher.handleComplexOrderRequest", Arm: "dispatch",
 		At: AtCommit{}, Take: TakeNoCart,
 		Why: "an Edge station sends a multi-leg order: issued through the one issue, the row only (its steps and its coordinated part); it knows neither its carts nor its slots at plan grain, so its holds are the reserve pass's, every pass: the family's declared shape"},
 	{Name: "dig legs", Site: "dispatch/compound.go:Dispatcher.issueLegsTx", Arm: "dispatch",
-		At: AtCommit{BinID: true, SlotRow: true}, Take: TakeTaken,
+		At: AtCommit{BinID: true, CartRow: true, SlotRow: true}, Take: TakeTaken,
 		Why: "a reshuffle's children in their parent's transaction: the blocker stamped and held by the parent's lane (no bin row), a stranger's pending hold on it stolen by rank, the parking pencilled"},
 	{Name: "loader drain", Site: "dispatch/loader_window.go:Dispatcher.windowMove", Arm: "dispatch",
-		At: AtCommit{BinID: true, NamedBin: true, BinRow: true, SlotRow: true}, Take: TakeRefused,
+		At: AtCommit{BinID: true, CartRow: true, NamedBin: true, BinRow: true, SlotRow: true}, Take: TakeRefused,
 		Why: "an unloader with a drain box ticked moves a cart of that state into a free window (the window move): the cart and the window held from the issue; its read of carts passes over a held one (BinUnheldSQL), and Core's own errand takes nothing in the race after that read"},
 	{Name: "loader replenish", Site: "dispatch/lifecycle_service.go:LifecycleService.issue", Arm: "dispatch",
 		At: AtCommit{SlotRow: true}, Take: TakeNoCart,
 		Why: "a loader's windows are below level: Core asks for an empty or a full at the window it chose, holding the window from its issue (a window another order holds refuses the ask, and the loop asks at its next window)"},
 	{Name: "person's bin move", Site: "engine/bin_move.go:Engine.CreateBinMove", Arm: "engine",
-		At: AtCommit{BinID: true, NamedBin: true, BinRow: true}, Take: TakeTaken,
+		At: AtCommit{BinID: true, CartRow: true, NamedBin: true, BinRow: true}, Take: TakeTaken,
 		Why: "a person moves one bin from Core's pages: the cart held from the issue, a stranger's pending hold taken out loud"},
 	{Name: "stage 2's pull", Site: "dispatch/loader_window.go:Dispatcher.windowMove", Arm: "engine",
-		At: AtCommit{BinID: true, NamedBin: true, BinRow: true, SlotRow: true}, Take: TakeRefused,
+		At: AtCommit{BinID: true, CartRow: true, NamedBin: true, BinRow: true, SlotRow: true}, Take: TakeRefused,
 		Why: "a two-stage loader's stage 2 pulls a bare cart into a free window (the window move): the cart and the window held from the issue; its read of carts passes over a held one (BinUnheldSQL), and Core's own errand takes nothing in the race after that read (TestStage2Pull_NeverTakesAStrangersHold)"},
 	{Name: "carried-bin recovery", Site: "engine/carried_bin_recovery.go:Engine.issueAndDispatchRecovery", Arm: "engine",
-		At: AtCommit{BinID: true, NamedBin: true, Robot: true, BinRow: true, SlotRow: true}, Take: TakeTaken,
+		At: AtCommit{BinID: true, CartRow: true, NamedBin: true, Robot: true, BinRow: true, SlotRow: true}, Take: TakeTaken,
 		Why: "an operator presses Recover: whole at its INSERT, the cart held and the robot pinned, and the drop its policy chose held when it is one carrier's at a time (dispatch.OneCarrierAt; the census drives a storage slot); a person pressed it, so a stranger's pending hold is taken out loud; dispatched in the door's own call through the held-bin body, and a fleet refusal ends it (owner, 2026-10-24: engineers handle it, it is usually for a good reason)"},
 	{Name: "the cancel's return", Site: "engine/carried_bin_recovery.go:Engine.issueAndDispatchRecovery", Arm: "engine",
-		At: AtCommit{BinID: true, NamedBin: true, Robot: true, BinRow: true, SlotRow: true}, Take: TakeRefused,
+		At: AtCommit{BinID: true, CartRow: true, NamedBin: true, Robot: true, BinRow: true, SlotRow: true}, Take: TakeRefused,
 		Why: "an order cancelled while its robot carries a bin: Core asks that robot to set it down, through the recovery's door, nobody pressing anything; a stranger on the cart is the bin's last order, and the return stands down before it issues; whole at its INSERT, its exclusive drop held as the recovery's is, and dispatched as the recovery is, a fleet refusal ending it"},
 	{Name: "home clear", Site: "dispatch/clear_home.go:Dispatcher.IssueClearTx", Arm: "engine",
 		At: AtCommit{}, Take: TakeNoCart,
 		Why: "an Edge station clears a dedicated loader's home: the clear's parent row, delivering to the home"},
 	{Name: "home clear's child", Site: "dispatch/clear_home.go:Dispatcher.IssueClearTx", Arm: "engine",
-		At: AtCommit{BinID: true, NamedBin: true, BinRow: true}, Take: TakeRefused,
+		At: AtCommit{BinID: true, CartRow: true, NamedBin: true, BinRow: true}, Take: TakeRefused,
 		Why: "the partial's move home, a leg of the clear in the parent's transaction, holding its cart from the issue as the station's act (a stranger met after the read is taken); the clear's read of buffer partials passes over a held one, so a stranger before it refuses the tap"},
 	{Name: "home clear's spot move", Site: "dispatch/clear_home.go:Dispatcher.issueClearSpot", Arm: "engine",
-		At: AtCommit{BinID: true, NamedBin: true, BinRow: true}, Take: TakeTaken,
+		At: AtCommit{BinID: true, CartRow: true, NamedBin: true, BinRow: true}, Take: TakeTaken,
 		Why: "the clear's empty, moved at confirm to the buffer spot chosen then, a leg of the clear holding its cart from the issue; the clear is the station's act, so a stranger's pending hold on the empty is taken out loud, and a robot's refuses it"},
 	{Name: "home clear's trade", Site: "dispatch/clear_home.go:Dispatcher.issueClearTrade", Arm: "engine",
-		At: AtCommit{BinID: true, NamedBin: true, BinRow: true}, Take: TakeTaken,
+		At: AtCommit{BinID: true, CartRow: true, NamedBin: true, BinRow: true}, Take: TakeTaken,
 		Why: "the clear's trade at confirm: the empty's move into the partial's place, sibling-linked to the partial's, holding its cart; the same take as the spot move"},
 	{Name: "maintained-group level keeper", Site: "dispatch/lifecycle_service.go:LifecycleService.issue", Arm: "engine",
 		At: AtCommit{SlotRow: true}, Take: TakeNoCart,
@@ -136,7 +141,8 @@ CREATE TABLE issue_census_at_commit (
 	robot_id      text NOT NULL,
 	own_bin_rows  int NOT NULL,
 	own_slot_rows int NOT NULL,
-	stranger_rows int NOT NULL
+	stranger_rows int NOT NULL,
+	cart_rows     int NOT NULL
 );
 CREATE FUNCTION issue_census_at_commit() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
@@ -148,7 +154,9 @@ BEGIN
 	         WHERE r.order_id = o.id AND r.resource_kind = 'slot' AND ` + reservations.BlockingStateSQL("r.") + `),
 	       (SELECT count(*) FROM reservations r
 	         WHERE r.resource_kind = 'bin' AND ` + reservations.BlockingStateSQL("r.") + ` AND r.order_id <> o.id
-	           AND r.bin_id = COALESCE(o.bin_id, o.named_bin_id))
+	           AND r.bin_id = COALESCE(o.bin_id, o.named_bin_id)),
+	       (SELECT count(*) FROM order_bins ob
+	         WHERE ob.order_id = o.id AND ob.bin_id = COALESCE(o.bin_id, o.named_bin_id))
 	  FROM orders o WHERE o.id = NEW.id;
 	RETURN NULL;
 END $$;
@@ -164,10 +172,10 @@ func IssuedAtCommit(t testing.TB, db *store.DB, orderID int64) (at AtCommit, tak
 	t.Helper()
 	var binID, named sql.NullInt64
 	var robot string
-	var ownBin, ownSlot, strangers int
-	err := db.QueryRow(`SELECT bin_id, named_bin_id, robot_id, own_bin_rows, own_slot_rows, stranger_rows
+	var ownBin, ownSlot, strangers, cartRows int
+	err := db.QueryRow(`SELECT bin_id, named_bin_id, robot_id, own_bin_rows, own_slot_rows, stranger_rows, cart_rows
 		FROM issue_census_at_commit WHERE order_id = $1`, orderID).
-		Scan(&binID, &named, &robot, &ownBin, &ownSlot, &strangers)
+		Scan(&binID, &named, &robot, &ownBin, &ownSlot, &strangers, &cartRows)
 	if errors.Is(err, sql.ErrNoRows) {
 		return AtCommit{}, TakeRefused, false
 	}
@@ -175,7 +183,7 @@ func IssuedAtCommit(t testing.TB, db *store.DB, orderID int64) (at AtCommit, tak
 		t.Fatalf("read the issue census for order %d: %v", orderID, err)
 	}
 	at = AtCommit{BinID: binID.Valid, NamedBin: named.Valid, Robot: robot != "",
-		BinRow: ownBin > 0, SlotRow: ownSlot > 0}
+		BinRow: ownBin > 0, SlotRow: ownSlot > 0, CartRow: cartRows > 0}
 	take = TakeTaken
 	if strangers > 0 {
 		take = TakeLeft
@@ -257,6 +265,6 @@ func RunIssueCensus(t *testing.T, arm string, drivers map[string]IssueDriver) {
 }
 
 func (a AtCommit) String() string {
-	return fmt.Sprintf("{bin_id %v, named_bin_id %v, robot_id %v, bin row %v, slot row %v}",
-		a.BinID, a.NamedBin, a.Robot, a.BinRow, a.SlotRow)
+	return fmt.Sprintf("{bin_id %v, named_bin_id %v, robot_id %v, bin row %v, slot row %v, cart row %v}",
+		a.BinID, a.NamedBin, a.Robot, a.BinRow, a.SlotRow, a.CartRow)
 }
