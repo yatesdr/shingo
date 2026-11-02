@@ -418,7 +418,7 @@ function confirmUnloadHeld(nodeID, line, count, stageTwo) {
 // (clearHighlight): that button is lit, every button still tappable.
 //
 // cartType is the type of the cart at the window: the panel offers the types of
-// its floor size, and lit (clearChoices).
+// its family, and lit (clearChoices).
 //
 // HEIGHTS (clearChoices): a type the empties group wants heights of shows the
 // bin's name (the plain type, posting no layers), the bin's name with each
@@ -612,7 +612,7 @@ function confirmStageTwoOn(nodeID, carriers, lit, on) {
 // window, what goes on it (confirmStageTwoOn; stageTwo is then the card
 // stageTwoOn decided, null anywhere else). lit is the choice the board's card
 // says to send it back as: its PUSH AS is lit. cartType is the cart's type: PUSH
-// AS offers the types of its floor size, and lit (clearChoices).
+// AS offers the types of its family, and lit (clearChoices).
 function confirmPushEmpty(nodeID, carriers, bare, lit, stageTwo, cartType) {
     if (bare) {
         if (stageTwo) confirmStageTwoOn(nodeID, carriers, lit, stageTwo);

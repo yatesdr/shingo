@@ -16,21 +16,21 @@ func (e *Engine) SetPayloadBinTypes(entries []protocol.PayloadBinTypeInfo) {
 	e.nudgeBoards()
 }
 
-// setBinTypeFloors holds Core's floor size per bin type (NodeListResponse.Floor),
+// setBinTypeFamilies holds Core's carrier family per bin type (NodeListResponse.Family),
 // replaced whole with the catalog, which nudges the boards. In memory for the same
 // reason; none from an older Core leaves the CLEAR panels unfiltered.
-func (e *Engine) setBinTypeFloors(floors map[string]string) {
+func (e *Engine) setBinTypeFamilies(families map[string]string) {
 	e.payloadBinTypesMu.Lock()
-	e.binTypeFloors = floors
+	e.binTypeFamilies = families
 	e.payloadBinTypesMu.Unlock()
 }
 
-// BinTypeFloors is the floor size per bin type a board's CLEAR panels compare, read
+// BinTypeFamilies is the carrier family per bin type a board's CLEAR panels compare, read
 // only: the map is replaced, never written.
-func (e *Engine) BinTypeFloors() map[string]string {
+func (e *Engine) BinTypeFamilies() map[string]string {
 	e.payloadBinTypesMu.RLock()
 	defer e.payloadBinTypesMu.RUnlock()
-	return e.binTypeFloors
+	return e.binTypeFamilies
 }
 
 // payloadBinTypesKnown reports whether Core's catalog has arrived (with the

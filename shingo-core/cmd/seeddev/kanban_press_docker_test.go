@@ -77,13 +77,27 @@ func TestSeedKanbanPress_CoreHoldsTheKanbans(t *testing.T) {
 	if err != nil || row == nil {
 		t.Fatalf("K: %v", err)
 	}
-	if row.RunningCover != 4 || row.Strict || row.StationID != "edge1.line1" || row.OverflowNodeID != nil {
-		t.Errorf("K = %+v, want cover 4, not strict, station edge1.line1, no overflow", row)
+	if row.Strict || row.StationID != "edge1.line1" {
+		t.Errorf("K = %+v, want not strict, station edge1.line1", row)
+	}
+	pools, err := db.ListKanbanPools(k)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fam := func(code string) int64 {
+		bt, err := db.GetBinTypeByCode(code)
+		if err != nil || bt == nil {
+			t.Fatalf("bin type %s: %v", code, err)
+		}
+		return bt.FamilyID
+	}
+	if pools[fam("SMALL-45")] != 10 || pools[fam("CART-32")] != 6 || fam("SMALL-45") != fam("BIG-45") || fam("SMALL-45") != fam("TOTES-45") {
+		t.Errorf("K's pools = %v, want 45x48 10 and CART-32 6", pools)
 	}
 	levels := levelsOf(k)
 	for _, code := range []string{"SMALL-45", "BIG-45", "TOTES-45", "CART-32"} {
-		if l, ok := levels[code]; !ok || l.Want != 2 || l.OverflowNodeID != nil {
-			t.Errorf("K's %s = %+v, want 2 and no overflow", code, l)
+		if l, ok := levels[code]; !ok || l.Want != 2 {
+			t.Errorf("K's %s = %+v, want 2", code, l)
 		}
 	}
 	if got := sourcesOf(k); len(got) != 0 {
@@ -97,8 +111,8 @@ func TestSeedKanbanPress_CoreHoldsTheKanbans(t *testing.T) {
 	if err != nil || row2 == nil {
 		t.Fatalf("K2: %v", err)
 	}
-	if row2.RunningCover != 1 || row2.StationID != "edge1.line1" || row2.OverflowNodeID != nil {
-		t.Errorf("K2 = %+v, want cover 1, station edge1.line1, no overflow", row2)
+	if row2.StationID != "edge1.line1" {
+		t.Errorf("K2 = %+v, want station edge1.line1", row2)
 	}
 	if got := sourcesOf(k2); len(got) != 0 {
 		t.Errorf("K2's sources = %v, want none", got)
@@ -112,15 +126,21 @@ func TestSeedKanbanPress_CoreHoldsTheKanbans(t *testing.T) {
 		t.Errorf("KP-SM kanban row = %+v, %v; want a plain group", sm, err)
 	}
 
-	// THE SETUP GAP, as it stands: the seed writes no slot's allowed types, so they go on
-	// after it (rigSlotTypes). A characterization: plantspec.Slot has nowhere to state them.
-	for _, slot := range []string{"PKB_001", "PKB_016"} {
-		types, err := db.ListBinTypesForNode(node(slot))
+	// The seed writes each slot's allowed types, per type, as the file's admits say.
+	for slot, types := range rigSlotTypes() {
+		got, err := db.ListBinTypesForNode(node(slot))
 		if err != nil {
 			t.Fatalf("types of %s: %v", slot, err)
 		}
-		if len(types) != 0 || db.GetNodeProperty(node(slot), "bin_type_mode") != "" {
-			t.Errorf("the seed wrote %v on %s; rigSlotTypes and the driver's table are no longer the only place", types, slot)
+		var codes []string
+		for _, bt := range got {
+			codes = append(codes, bt.Code)
+		}
+		slices.Sort(codes)
+		want := slices.Clone(types)
+		slices.Sort(want)
+		if !slices.Equal(codes, want) || db.GetNodeProperty(node(slot), "bin_type_mode") != "specific" {
+			t.Errorf("the seed wrote %v on %s, want %v", codes, slot, want)
 		}
 	}
 
@@ -133,7 +153,7 @@ func TestSeedKanbanPress_CoreHoldsTheKanbans(t *testing.T) {
 		}
 		fs, ok := domain.BinType{WidthIn: bt.WidthIn, LengthIn: bt.LengthIn}.Footprint()
 		if !ok {
-			t.Errorf("%s has no floor size: width %g, length %g", code, bt.WidthIn, bt.LengthIn)
+			t.Errorf("%s has no footprint: width %g, length %g", code, bt.WidthIn, bt.LengthIn)
 		}
 		floors[code] = fs.String()
 	}

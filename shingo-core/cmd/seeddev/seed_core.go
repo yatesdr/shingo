@@ -58,6 +58,17 @@ func seedCore(db *store.DB, p *plantspec.Plant, binIDByNode map[string]int64) er
 		}
 		binTypeIDs[bt] = id
 	}
+	for _, f := range p.CarrierFamilies {
+		family, err := db.EnsureCarrierFamily(f.Code)
+		if err != nil {
+			return err
+		}
+		for _, code := range f.Types {
+			if err := db.SetBinTypeFamily(binTypeIDs[code], family); err != nil {
+				return err
+			}
+		}
+	}
 	payloadIDs := make(map[string]int64)
 	for _, pl := range p.Payloads {
 		id, err := ensurePayload(db, pl)
@@ -162,6 +173,28 @@ func seedCore(db *store.DB, p *plantspec.Plant, binIDByNode map[string]int64) er
 				return err
 			}
 			nodeIDs[s.Name] = sID
+		}
+	}
+	// --- what each slot admits, by type or by family, written per type ---
+	for _, z := range p.Zones {
+		slots := append([]plantspec.Slot(nil), z.Positions...)
+		for _, ln := range z.Lanes {
+			slots = append(slots, ln.Slots...)
+		}
+		for _, s := range slots {
+			if len(s.Admits) == 0 {
+				continue
+			}
+			var allowed []int64
+			for _, code := range p.AdmitsTypes(s.Admits) {
+				allowed = append(allowed, binTypeIDs[code])
+			}
+			if err := db.SetNodeBinTypes(nodeIDs[s.Name], allowed); err != nil {
+				return fmt.Errorf("slot %s: %w", s.Name, err)
+			}
+			if err := db.SetNodeProperty(nodeIDs[s.Name], "bin_type_mode", "specific"); err != nil {
+				return fmt.Errorf("slot %s: %w", s.Name, err)
+			}
 		}
 	}
 	// --- stations (line/press/weld/loader/unloader/staging/dest) ---
@@ -328,34 +361,22 @@ func seedKanbans(db *store.DB, p *plantspec.Plant, nodeIDs map[string]int64, bin
 		if !ok {
 			return fmt.Errorf("kanban %q: zone not found among seeded nodes", mg.Group)
 		}
-		// zoneID is a named zone's node; a blank name is 0, which clears.
+		// zoneID is a named zone's node.
 		zoneID := func(name string) (int64, error) {
-			if name == "" {
-				return 0, nil
-			}
 			id, ok := nodeIDs[name]
 			if !ok {
 				return 0, fmt.Errorf("kanban %q: zone %q not found among seeded nodes", mg.Group, name)
 			}
 			return id, nil
 		}
-		overflow, err := zoneID(mg.Overflow)
-		if err != nil {
-			return err
-		}
-		change := store.KanbanChange{NodeID: groupID, EnsureRow: true, Station: &mg.Station, Strict: &mg.Strict,
-			Cover: &mg.RunningCover, Overflow: &overflow}
+		change := store.KanbanChange{NodeID: groupID, EnsureRow: true, Station: &mg.Station, Strict: &mg.Strict}
 		for _, l := range mg.Levels {
 			btID, ok := binTypeIDs[l.BinType]
 			if !ok {
 				return fmt.Errorf("kanban %q: bin type %q not seeded", mg.Group, l.BinType)
 			}
-			levelOverflow, err := zoneID(l.Overflow)
-			if err != nil {
-				return err
-			}
 			want := l.Want
-			change.Levels = append(change.Levels, store.KanbanLevelChange{BinTypeID: btID, Want: &want, Overflow: &levelOverflow})
+			change.Levels = append(change.Levels, store.KanbanLevelChange{BinTypeID: btID, Want: &want})
 		}
 		sources := make([]int64, 0, len(mg.Sources))
 		for _, name := range mg.Sources {
@@ -377,6 +398,16 @@ func seedKanbans(db *store.DB, p *plantspec.Plant, nodeIDs map[string]int64, bin
 			}
 		}
 		change.Supports = &supportIDs
+		if len(mg.Pools) > 0 {
+			change.Pools = map[int64]int{}
+			for code, pool := range mg.Pools {
+				family, err := db.EnsureCarrierFamily(code)
+				if err != nil {
+					return err
+				}
+				change.Pools[family] = pool
+			}
+		}
 		if err := db.SaveKanban(change, "seeddev"); err != nil {
 			return fmt.Errorf("kanban %q: %w", mg.Group, err)
 		}

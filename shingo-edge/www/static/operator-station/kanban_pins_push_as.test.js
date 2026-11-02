@@ -86,26 +86,26 @@ eq(p.buttons, ['PUSH EMPTY', 'PUSH AS TOTE-L', 'CANCEL'], 'no carriers: the lit 
 p = panel(function () { ctx.confirmPushEmpty(1, ['TOTE-S'], false, null); });
 eq(p.buttons, ['PUSH EMPTY', 'PUSH AS TOTE-S', 'CANCEL'], 'nothing lit: nothing appended, PUSH EMPTY stays');
 
-// ── clearChoices: the cart's floor bounds the carriers, as it bounds Core's walk ──
-const floors = { floor: { 'TOTE-S': '45x48', 'KD-S': '45x48', 'TOTE-L': '30x32' } };
+// ── clearChoices: the cart's family bounds the carriers, as it bounds Core's walk ──
+const families = { family: { 'TOTE-S': 'F45', 'KD-S': 'F45', 'TOTE-L': 'F32', 'NO-SIZE': 'NO-SIZE' } };
 const three = ['TOTE-S', 'KD-S', 'TOTE-L'];
 const types = c => plain(c).map(x => x.bin_type);
-eq(types(ctx.clearChoices(floors, three, 'TOTE-S')), ['TOTE-S', 'KD-S'], 'a 45x48 cart is offered the 45x48 types');
-eq(types(ctx.clearChoices(floors, three, 'TOTE-L')), ['TOTE-L'], 'a 30x32 cart is offered the 30x32 type');
-eq(types(ctx.clearChoices(floors, three, 'TOTE-S', { bin_type: 'TOTE-L' })), three,
-    'the lit choice stays whatever its floor, in the carriers\' order');
-eq(types(ctx.clearChoices(floors, ['TOTE-S', 'NO-SIZE'], 'TOTE-S')), ['TOTE-S'],
-    'a type with no size is not on a sized cart\'s floor (windowWalk.fits)');
-eq(types(ctx.clearChoices(floors, three, 'NO-SIZE')), three, 'a cart whose type has no size: no filter');
-eq(types(ctx.clearChoices(floors, three)), three, 'no cart named: no filter');
-eq(types(ctx.clearChoices({}, three, 'TOTE-S')), three, 'a Core that sends no floors: no filter');
+eq(types(ctx.clearChoices(families, three, 'TOTE-S')), ['TOTE-S', 'KD-S'], 'a cart of the family is offered its family\'s types');
+eq(types(ctx.clearChoices(families, three, 'TOTE-L')), ['TOTE-L'], 'a family of one is offered its one type');
+eq(types(ctx.clearChoices(families, three, 'TOTE-S', { bin_type: 'TOTE-L' })), three,
+    'the lit choice stays whatever its family, in the carriers\' order');
+eq(types(ctx.clearChoices(families, ['TOTE-S', 'NO-SIZE'], 'TOTE-S')), ['TOTE-S'],
+    'a type in no family of the cart\'s is not offered (windowWalk.fits)');
+eq(types(ctx.clearChoices(families, three, 'NO-SIZE')), [], 'a family of one offers no other type');
+eq(types(ctx.clearChoices(families, three)), three, 'no cart named: no filter');
+eq(types(ctx.clearChoices({}, three, 'TOTE-S')), three, 'a Core that sends no families: no filter');
 eq(types(ctx.clearChoices(null, three, 'TOTE-S')), three, 'no view: no filter');
-const tall = { floor: floors.floor, empties: { rows: [{ bin_type: 'TOTE-S', layers: 3 }, { bin_type: 'TOTE-L', layers: 2 }] } };
+const tall = { family: families.family, empties: { rows: [{ bin_type: 'TOTE-S', layers: 3 }, { bin_type: 'TOTE-L', layers: 2 }] } };
 eq(plain(ctx.clearChoices(tall, three, 'TOTE-S')), [{ bin_type: 'TOTE-S' }, { bin_type: 'TOTE-S', layers: 3 }, { bin_type: 'KD-S' }],
-    'a kept type keeps its heights; a type off the floor takes its heights with it');
+    'a kept type keeps its heights; a type of another family takes its heights with it');
 
 // ── the panels pass the cart's type through ──
-view = floors;
+view = families;
 p = panel(function () { ctx.confirmPushEmpty(1, three, false, { bin_type: 'KD-S' }, null, 'TOTE-S'); });
 eq(p.buttons, ['PUSH EMPTY', 'PUSH AS TOTE-S', 'PUSH AS KD-S', 'CANCEL'], 'PUSH AS: the cart\'s floor only');
 eq(p.lit, ['PUSH AS KD-S'], 'PUSH AS: the lit one lit');

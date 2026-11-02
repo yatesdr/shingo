@@ -2,7 +2,6 @@ package main
 
 import (
 	"path/filepath"
-	"slices"
 	"testing"
 
 	"shingocore/plantspec"
@@ -53,7 +52,7 @@ func TestKanbanPress_PoolsBalanceAndAreJudgedOnTheirWant(t *testing.T) {
 	t.Parallel()
 	p, rate := kanbanPress(t)
 	plan := computeCarriers(p, rate, 7.5, 7.5)
-	for name, want := range map[string]int{"PRESS-KANBAN": 12, "WELD-KANBAN": 2} {
+	for name, want := range map[string]int{"PRESS-KANBAN": 8, "WELD-KANBAN": 2} {
 		q := plan.pools[name]
 		if q == nil {
 			t.Fatalf("no pool %s", name)
@@ -61,7 +60,7 @@ func TestKanbanPress_PoolsBalanceAndAreJudgedOnTheirWant(t *testing.T) {
 		if !q.isKanban || q.levelWant != want {
 			t.Errorf("%s: kanban %v, want %d; expected %d", name, q.isKanban, q.levelWant, want)
 		}
-		if q.seededEmpty != q.levelWant {
+		if q.seededEmpty < q.levelWant {
 			t.Errorf("%s seeded %d against a want of %d", name, q.seededEmpty, q.levelWant)
 		}
 		if q.keeperIn != 0 || q.keeperOut != 0 {
@@ -73,10 +72,9 @@ func TestKanbanPress_PoolsBalanceAndAreJudgedOnTheirWant(t *testing.T) {
 	}
 }
 
-// K's cover is the 4 carts on the positions, so K seats 4 under its want of the running
-// type: the fixture's numbers, and simcalc says so and fails. The pool total above hides it,
-// 12 of want against 12 seeded, because K's 32x30 stand 4 over.
-func TestKanbanPress_KSeatsBelowItsWantOfTheRunningType(t *testing.T) {
+// K's cover is the 4 carts on the positions, and they count: K's small want of 6 is its 2 and
+// the line's 4, and the plant's own file passes.
+func TestKanbanPress_KHoldsItsWantOfTheRunningType(t *testing.T) {
 	t.Parallel()
 	p, rate := kanbanPress(t)
 	v := newKanbanView(p)
@@ -84,14 +82,14 @@ func TestKanbanPress_KSeatsBelowItsWantOfTheRunningType(t *testing.T) {
 	if !ok {
 		t.Fatal("no PRESS-KANBAN")
 	}
-	want := map[string][2]int{"SMALL-45": {6, 2}, "BIG-45": {2, 2}, "TOTES-45": {2, 2}, "CART-32": {2, 6}}
+	want := map[string][3]int{"SMALL-45": {6, 2, 4}, "BIG-45": {2, 2, 0}, "TOTES-45": {2, 2, 0}, "CART-32": {2, 6, 0}}
 	for _, l := range v.lines(g, v.activeStyles()) {
-		if w := want[l.binType]; l.want != w[0] || l.seeded != w[1] {
-			t.Errorf("K's %s = want %d, seeded %d; expected %v", l.binType, l.want, l.seeded, w)
+		if w := want[l.binType]; l.want != w[0] || l.seeded != w[1] || l.held != w[2] {
+			t.Errorf("K's %s = want %d, seeded %d, held %d; expected %v", l.binType, l.want, l.seeded, l.held, w)
 		}
 	}
-	if reportKanbans(p, computeCarriers(p, rate, 7.5, 7.5), rate, 200) {
-		t.Error("K seats 4 under its want of small, and the kanban check passed")
+	if !reportKanbans(p, computeCarriers(p, rate, 7.5, 7.5), rate, 200) {
+		t.Error("the plant's own file did not pass the kanban check")
 	}
 }
 
@@ -140,71 +138,32 @@ func TestKanbanPress_TheClock(t *testing.T) {
 	}
 }
 
-// CHANGEOVER ROOM, the arithmetic behind R2, R3 and the walk. A style on 45x48 leaves its
-// floor's 10 carts against K's 10 of want and the 4 positions: K 4 short, and all of it
-// cover over the pool. 32x30 has 4 past K's level of 2 with nowhere to land if they leave K;
-// as seeded they stand in it. KP-32 is the mirror: 4 45x48 past K's levels, no room for them,
-// and those 4 are all 4 windows, so KP-32's fulls have none.
-func TestKanbanPress_ChangeoverRoom(t *testing.T) {
+// THE FAMILIES, the arithmetic behind R2, R3 and the walk: 45x48 is 10 carts on a minimum of
+// 6 + 4 and 10 slots, 32x30 is 6 on 2 + 4 and 6, and the weld's small is its own 3.
+func TestKanbanPress_TheFamilies(t *testing.T) {
 	t.Parallel()
 	p, _ := kanbanPress(t)
 	v := newKanbanView(p)
-	g, ok := v.groupNamed("PRESS-KANBAN")
-	if !ok {
-		t.Fatal("no PRESS-KANBAN")
+	want := map[string]map[string]familyLine{
+		"PRESS-KANBAN": {
+			"45x48":   {family: "45x48", pool: 10, minimum: 10, room: 10, carts: 10},
+			"CART-32": {family: "CART-32", pool: 6, minimum: 6, room: 6, carts: 6},
+		},
+		"WELD-KANBAN": {"45x48": {family: "45x48", pool: 3, minimum: 3, room: 4, carts: 3}},
 	}
-	type key struct{ style, floor string }
-	got := map[key]roomLine{}
-	for _, r := range v.changeoverRoom(g) {
-		got[key{r.style, r.floor}] = r
-	}
-	for _, style := range []string{"KP-SMALL", "KP-BIG", "KP-TOTES"} {
-		if r := got[key{style, "45x48"}]; r.carts != 10 || r.lineside != 14 || r.short != 4 || r.excess != 0 {
-			t.Errorf("%s on 45x48 = %+v, want 10 carts, 14 of want and positions, 4 short", style, r)
+	for group, families := range want {
+		g, ok := v.groupNamed(group)
+		if !ok {
+			t.Fatalf("no %s", group)
 		}
-		r := got[key{style, "30x32"}]
-		if r.carts != 6 || r.lineside != 2 || r.excess != 4 || r.short != 0 {
-			t.Errorf("%s on 30x32 = %+v, want 6 carts, K's level of 2, 4 past it", style, r)
+		got := v.families(g)
+		if len(got) != len(families) {
+			t.Errorf("%s has %d families, want %d: %+v", group, len(got), len(families), got)
 		}
-		wantSeated := 0
-		if style == "KP-SMALL" {
-			wantSeated = 4
-		}
-		if r.seated != wantSeated {
-			t.Errorf("%s on 30x32 seats %d above their want, want %d", style, r.seated, wantSeated)
-		}
-	}
-	r := got[key{"KP-32", "45x48"}]
-	if r.carts != 10 || r.lineside != 6 || r.spare != 0 || r.toSpare != 0 || r.excess != 4 || r.windows != 4 {
-		t.Errorf("KP-32 on 45x48 = %+v, want 4 of 10 carts past K's 6, no room, and the 4 windows", r)
-	}
-	if r := got[key{"KP-32", "30x32"}]; r.carts != 6 || r.lineside != 10 || r.short != 4 || r.excess != 0 {
-		t.Errorf("KP-32 on 30x32 = %+v, want K's 6 and the 4 positions from 6 carts", r)
-	}
-	if _, ok := got[key{"KP-UNTYPED", "45x48"}]; ok {
-		t.Error("the style with no carrier changes no want and has no row")
-	}
-
-	// The weld's style does not leave the family, so K2 needs no overflow.
-	k2, ok := v.groupNamed("WELD-KANBAN")
-	if !ok {
-		t.Fatal("no WELD-KANBAN")
-	}
-	if k2.Overflow != "" || len(k2.Sources) != 0 {
-		t.Errorf("K2 overflows to %q and sources %v; it has its own carts and nothing else", k2.Overflow, k2.Sources)
-	}
-	for _, r := range v.changeoverRoom(k2) {
-		if r.toSpare != 0 || r.excess != 0 || r.short != 0 {
-			t.Errorf("K2 %+v, want it to fit with no overflow", r)
-		}
-	}
-
-	// Red: the same carts with a plain overflow land in its room and take no window.
-	withRoom := g
-	withRoom.Overflow = "KP-SM"
-	for _, r := range v.changeoverRoom(withRoom) {
-		if r.style == "KP-32" && r.floor == "45x48" && (r.toSpare != 4 || r.excess != 0 || !slices.Equal(r.spareZone, []string{"KP-SM"})) {
-			t.Errorf("KP-32 overflowing to a plain zone = %+v, want the 4 in its room", r)
+		for _, f := range got {
+			if f != families[f.family] {
+				t.Errorf("%s %s = %+v, want %+v", group, f.family, f, families[f.family])
+			}
 		}
 	}
 }
@@ -215,22 +174,18 @@ func TestReportKanbans_FailsBelowWantAndOnADrainInsideTheRun(t *testing.T) {
 	t.Parallel()
 	p, rate := kanbanPress(t)
 	whole := *p
-	whole.Bins = append([]plantspec.Bin(nil), p.Bins...)
-	for _, slot := range []string{"PKB_007", "PKB_008", "PKB_009", "PKB_010"} {
-		whole.Bins = append(whole.Bins, plantspec.Bin{Name: "HAND-" + slot, Slot: slot, BinType: "SMALL-45"})
-	}
 	if !reportKanbans(&whole, computeCarriers(&whole, rate, 7.5, 7.5), rate, 200) {
-		t.Error("K whole by hand did not pass")
+		t.Error("the plant's own file did not pass")
 	}
 	short := whole
 	short.Bins = nil
 	for _, b := range whole.Bins {
-		if b.Name != "HAND-PKB_010" {
+		if b.Name != "KB-K-S2" {
 			short.Bins = append(short.Bins, b)
 		}
 	}
 	if reportKanbans(&short, computeCarriers(&short, rate, 7.5, 7.5), rate, 200) {
-		t.Error("K one under its want passed")
+		t.Error("K one under its want and its pool passed")
 	}
 
 	plan := computeCarriers(&whole, rate, 7.5, 7.5)

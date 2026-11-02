@@ -328,23 +328,21 @@ export function wantedHeights(view, binType) {
 // with the CLEAR; one without posts none. A type the group wants no heights of
 // keeps its one choice, so a window with one type keeps its one tap.
 //
-// THE CART'S FLOOR BOUNDS THE TYPES, as it bounds Core's walk (assignWindows,
-// windowWalk.fits). cartType is the type of the cart at the window, view.floor
-// Core's floor size per type: with both, only the types of the cart's own floor
-// are offered, and never one with no size. A cart with no floor size, no cart
-// named, or a Core that sends no floors: every type, as before. Heights are the
-// kept types', untouched.
+// THE CART'S FAMILY BOUNDS THE TYPES, as it bounds Core's walk (kanban.SameFamily).
+// cartType is the type of the cart at the window, view.family Core's family per type: with
+// both, only the types of the cart's own family are offered. No cart named, or a Core that
+// sends no families: every type. Heights are the kept types', untouched.
 //
-// THE LIT CHOICE IS ALWAYS OFFERED, whatever its floor and whether or not the window
+// THE LIT CHOICE IS ALWAYS OFFERED, whatever its family and whether or not the window
 // has a part in it: the card says to send the cart back as it, and a whole kanban's
 // lit choice is a source's, whose type may be none of this loader's parts. Appended
 // last when nothing above is it, so the panels' PUSH AS and CLEAR both show it.
 export function clearChoices(view, carriers, cartType, lit) {
     const out = [];
-    const floors = (view && view.floor) || {};
-    const own = floors[cartType];
+    const families = (view && view.family) || {};
+    const own = families[cartType];
     (carriers || []).forEach(function (t) {
-        if (own && floors[t] !== own && !(lit && lit.bin_type === t)) return;
+        if (own && families[t] !== own && !(lit && lit.bin_type === t)) return;
         out.push({ bin_type: t });
         const heights = wantedHeights(view, t);
         heights.forEach(function (h) { if (h > 0) out.push({ bin_type: t, layers: h }); });
@@ -493,6 +491,10 @@ export function spotWords(tile) {
     if (bin.bin_type_code) return { words: 'holds an empty', code: bin.bin_type_code };
     return { words: 'holds an empty bin', code: '' };
 }
+
+// ROBOT_ON_IT is the order statuses with a robot given the order: protocol.IsVendorActive as
+// the board holds it. Before them the order is waiting, a slot or a cart or a turn.
+const ROBOT_ON_IT = ['dispatched', 'in_transit', 'staged'];
 
 function liveOrders(tile) {
     return (tile.orders || []).filter(function (o) { return isActiveStatus(o.status); });
@@ -970,9 +972,14 @@ function windowCards(consumers, ctx) {
         // until a robot lifts it, and says so rather than nothing (SPR
         // 2026-10-28: a cleared cart read as if nobody had dealt with it).
         const home = (t.node && t.node.core_node_name) || '';
-        const leaving = !full && liveOrders(t).some(function (o) {
+        const outbound = !full ? liveOrders(t).filter(function (o) {
             return o.order_type === 'move' && shortNode(o.source_node) === shortNode(home);
-        });
+        }) : [];
+        const leaving = outbound.length > 0;
+        // ON ITS WAY MEANS A ROBOT HAS IT. A parked push is a live move with no robot, and
+        // telling the window it is coming sends a person away from a cart that is staying.
+        const robot = outbound.some(function (o) { return ROBOT_ON_IT.indexOf(o.status) !== -1; });
+        const noneShort = !!(t.assignment && t.assignment.none_short);
         // The group the choice is for, when Core names one (a source a whole kanban
         // repays): words only, the push still names the unloader's one outbound.
         const forGroup = t.assignment && t.assignment.group ? ' · for ' + t.assignment.group : '';
@@ -980,13 +987,13 @@ function windowCards(consumers, ctx) {
         if (full && bin.held_since) {
             const since = ctx.when(bin.held_since);
             note = 'Partial · held for ' + (bin.held_for || 'its line') + (since ? ' · since ' + since : '');
-        } else if (leaving) note = 'Cleared · robot on its way';
+        } else if (leaving && !noneShort) note = robot ? 'Cleared · robot on its way' : 'Cleared · waiting to move';
         // A bare cart is not finished, so it does not wait for the line (a bug
         // fixed: it said so); at a stage-2 window its tap says what to put on
         // (EMPTY ON or PARTIAL ON) and the card names nothing to send back.
         else if (loader.pulled_directly && !full && !bin.bare) note = 'The cart waits here for the line';
         else if (bin.bare && takesBare(t)) note = '';
-        else if (t.assignment && t.assignment.none_short) note = 'No group is short of this cart';
+        else if (noneShort) note = 'No group is short of this cart';
         else if (changes) note = 'Change to ' + choiceLabel(lit) + forGroup;
         else if (back && (multi || forGroup)) note = (full ? 'Send back ' + choiceLabel(lit) : 'Send it') + forGroup;
         // A full at the window has arrived, ready to unload: green, ARRIVED and

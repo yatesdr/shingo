@@ -65,6 +65,43 @@ func (p *Plant) Validate() error {
 
 	// --- bin types + payloads ---
 	binTypes := toSet(p.BinTypes)
+	familyCodes := map[string]bool{}
+	familyOfType := map[string]string{}
+	for _, f := range p.CarrierFamilies {
+		if familyCodes[f.Code] {
+			add("carrier family %q is declared twice", f.Code)
+		}
+		familyCodes[f.Code] = true
+		for _, t := range f.Types {
+			if !binTypes[t] {
+				add("carrier family %q names unknown bin type %q", f.Code, t)
+			}
+			if other, ok := familyOfType[t]; ok && other != f.Code {
+				add("bin type %q is in two families, %q and %q", t, other, f.Code)
+			}
+			familyOfType[t] = f.Code
+		}
+	}
+	checkAdmits := func(s Slot) {
+		for _, code := range s.Admits {
+			switch {
+			case familyCodes[code] && binTypes[code]:
+				add("slot %q admits %q, which is both a bin type and a carrier family", s.Name, code)
+			case !familyCodes[code] && !binTypes[code]:
+				add("slot %q admits %q, which is no bin type and no carrier family", s.Name, code)
+			}
+		}
+	}
+	for _, z := range p.Zones {
+		for _, s := range z.Positions {
+			checkAdmits(s)
+		}
+		for _, l := range z.Lanes {
+			for _, s := range l.Slots {
+				checkAdmits(s)
+			}
+		}
+	}
 	if len(binTypes) == 0 {
 		add("at least one bin_type is required")
 	}
@@ -94,7 +131,7 @@ func (p *Plant) Validate() error {
 			add("carrier_sizes names %q, which is not a bin_type", code)
 		}
 		if size.WidthIn <= 0 || size.LengthIn <= 0 || size.HeightIn < 0 {
-			add("carrier_sizes %q: width_in and length_in must be above 0 and height_in not below it (a type with no floor size has no entry)", code)
+			add("carrier_sizes %q: width_in and length_in must be above 0 and height_in not below it (a type with no footprint has no entry)", code)
 		}
 	}
 
@@ -609,20 +646,14 @@ func (p *Plant) Validate() error {
 		if len(mg.Supports) > 0 && strings.TrimSpace(mg.Station) == "" {
 			add("kanban %q has no station; its top-up orders would show on no board", mg.Group)
 		}
-		if mg.RunningCover < 0 {
-			add("kanban %q has running_cover %d; it cannot be negative", mg.Group, mg.RunningCover)
-		}
-		checkOverflow := func(overflow string) {
-			if overflow == "" {
-				return
+		for family, pool := range mg.Pools {
+			if pool < 0 {
+				add("kanban %q has pool %d of %q; it cannot be negative", mg.Group, pool, family)
 			}
-			if overflow == mg.Group {
-				add("kanban %q overflows to itself", mg.Group)
-			} else if kind, ok := nodes[overflow]; !ok || kind != "zone" {
-				add("kanban %q overflows to %q, which is not a declared zone", mg.Group, overflow)
+			if !familyCodes[family] && !binTypes[family] {
+				add("kanban %q has a pool of %q, which is no family and no bin type", mg.Group, family)
 			}
 		}
-		checkOverflow(mg.Overflow)
 		seenSource := map[string]bool{}
 		for _, src := range mg.Sources {
 			if src == mg.Group {
@@ -648,16 +679,8 @@ func (p *Plant) Validate() error {
 				add("kanban %q declares bin_type %q twice", mg.Group, l.BinType)
 			}
 			seenType[l.BinType] = true
-			checkOverflow(l.Overflow)
 			if l.Want < 0 {
 				add("kanban %q wants %d of %q; a level cannot be negative", mg.Group, l.Want, l.BinType)
-			}
-			// The episode key is `mnt|<group>|<type>`, so a code carrying the
-			// separator parses back into different components than it was built
-			// from. Refused where a code can still be changed.
-			if strings.Contains(l.BinType, "|") {
-				add("kanban %q level bin_type %q contains %q, which cannot be used in an episode key",
-					mg.Group, l.BinType, "|")
 			}
 		}
 		for _, proc := range mg.Supports {

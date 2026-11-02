@@ -21,6 +21,7 @@
             <th>ID</th>
             <th>Code</th>
             <th>Description</th>
+            <th>Family</th>
             <th>Dimensions (in, W x L x H)</th>
             <th>Empty carrier robots</th>
             <th>Actions</th>
@@ -32,12 +33,14 @@
             <td>{{.ID}}</td>
             <td><code>{{.Code}}</code>{{if .Bare}} <span class="badge badge-empty badge-sm" title="Bare bin type: holds no container, never handed out as an empty">bare</span>{{end}}</td>
             <td>{{if .Description}}{{.Description}}{{else}}<span class="text-muted">-</span>{{end}}</td>
+            <td><code>{{.FamilyCode}}</code></td>
             <td>{{if .WidthIn}}{{.WidthIn}} x {{.LengthIn}}{{if .HeightIn}} x {{.HeightIn}}{{end}}{{else}}<span class="text-muted">-</span>{{end}}</td>
             <td>{{if .RequiredRobotGroup}}<code>{{.RequiredRobotGroup}}</code>{{else}}<span class="text-muted">Any robot</span>{{end}}</td>
             <td>
               <button class="btn btn-sm" data-action="openEditBTModal"
                 data-id="{{.ID}}"
                 data-code="{{.Code}}"
+                data-family="{{.FamilyCode}}"
                 data-desc="{{.Description}}"
                 data-width="{{.WidthIn}}"
                 data-height="{{.HeightIn}}"
@@ -234,7 +237,11 @@
         </div>
       </div>
       <div class="form-group">
-        <label>Dimensions (in) <span class="tooltip-trigger" title="Width and length are the cart's floor size: with both entered, an unloader's card asks a cart of this type only for types of the same floor size (45 x 48 and 48 x 45 are one). Height is recorded for reference.">?</span></label>
+        <label>Family <span class="tooltip-trigger" title="The physical cart this type is one setting of. A CLEAR may set a cart as any type of its family, never another. Blank keeps a family of its own.">?</span></label>
+        <input type="text" name="family" list="bt-families" placeholder="(a family of its own)">
+      </div>
+      <div class="form-group">
+        <label>Dimensions (in) <span class="tooltip-trigger" title="Width and length are the cart's footprint: a family's types should agree on it, and the Kanban save says when they do not.">?</span></label>
         <div class="flex gap-05">
           <div style="flex:1"><label class="text-sm" for="bt-new-w">Width</label>
             <input type="number" name="width_in" id="bt-new-w" placeholder="W" step="0.1"></div>
@@ -258,6 +265,8 @@
   </div>
 </div>
 
+<datalist id="bt-families">{{range .CarrierFamilies}}<option value="{{.}}"></option>{{end}}</datalist>
+
 <!-- Edit Bin Type Modal -->
 <div id="bt-edit-modal" class="modal-overlay" data-backdrop-close>
   <div class="modal" style="max-width:480px">
@@ -278,7 +287,11 @@
         </div>
       </div>
       <div class="form-group">
-        <label>Dimensions (in) <span class="tooltip-trigger" title="Width and length are the cart's floor size: with both entered, an unloader's card asks a cart of this type only for types of the same floor size (45 x 48 and 48 x 45 are one). Height is recorded for reference.">?</span></label>
+        <label>Family <span class="tooltip-trigger" title="The physical cart this type is one setting of. A CLEAR may set a cart as any type of its family, never another.">?</span></label>
+        <input type="text" name="family" id="bt-edit-family" list="bt-families">
+      </div>
+      <div class="form-group">
+        <label>Dimensions (in) <span class="tooltip-trigger" title="Width and length are the cart's footprint: a family's types should agree on it, and the Kanban save says when they do not.">?</span></label>
         <div class="flex gap-05">
           <div style="flex:1"><label class="text-sm" for="bt-edit-w">Width</label>
             <input type="number" name="width_in" id="bt-edit-w" placeholder="W" step="0.1"></div>

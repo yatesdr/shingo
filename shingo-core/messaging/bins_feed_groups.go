@@ -264,7 +264,9 @@ func (s *CoreDataService) groupLines(station, digest string, groups []watchGroup
 	}
 	levels := map[int64][]store.KanbanLevel{}
 	sources := map[int64][]store.KanbanRef{}
+	slots := map[int64]int{}
 	for _, r := range picture {
+		slots[r.KanbanNodeID] = r.Slots
 		levels[r.KanbanNodeID] = append(levels[r.KanbanNodeID], r.KanbanLevel())
 		sources[r.KanbanNodeID] = r.Sources
 	}
@@ -286,7 +288,7 @@ func (s *CoreDataService) groupLines(station, digest string, groups []watchGroup
 			}
 			rows = append(rows, binRow(name, first[win.NodeID]))
 		}
-		ask := store.GroupLineAsk{Group: node, Levels: levels[node.ID], Windows: rows}
+		ask := store.GroupLineAsk{Group: node, Levels: levels[node.ID], Windows: rows, Slots: slots[node.ID]}
 		for _, src := range sources[node.ID] {
 			ask.Sources = append(ask.Sources, store.GroupLineSource{ID: src.ID, Name: src.Name, Levels: levels[src.ID]})
 		}

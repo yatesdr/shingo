@@ -327,11 +327,11 @@ type OperatorStationView struct {
 	// from it: its cells row, which parts run, and a Load card's colour and
 	// reason (operator-board-model.js coverage). Built by StationService.servedRows.
 	Serves []ServedRow `json:"serves,omitzero"`
-	// Floor is Core's floor size per bin type (NodeListResponse.Floor), on a board
+	// Family is Core's carrier family per bin type (NodeListResponse.Family), on a board
 	// where some tile offers carriers. The CLEAR panels compare it to keep only the
-	// choices on the cart's floor (operator-board-model.js clearChoices). Absent
+	// choices of the cart's family (operator-board-model.js clearChoices). Absent
 	// from a Core that sends none, and the panels then do not filter.
-	Floor map[string]string `json:"floor,omitempty"`
+	Family map[string]string `json:"family,omitempty"`
 	// Empties is what the outbound group of the board's unloader holds:
 	// per bin type, the empties standing in it, and the group's open spots.
 	// Absent on a board with no such loader, for a stage-1 unloader (its group

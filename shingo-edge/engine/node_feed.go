@@ -27,7 +27,7 @@ func (e *Engine) ApplyNodeList(resp *protocol.NodeListResponse) {
 	if resp.Digest == "" || resp.Digest != e.heldDigest(protocol.FeedNodes) {
 		e.SetCoreNodes(resp.Nodes)
 		loadersErr := e.SetCoreLoaders(resp.Loaders)
-		e.setBinTypeFloors(resp.Floor)
+		e.setBinTypeFamilies(resp.Family)
 		e.SetPayloadBinTypes(resp.PayloadBinTypes)
 		if loadersErr == nil && resp.Digest != "" {
 			e.holdFeed(protocol.FeedNodes, resp.Digest, "")

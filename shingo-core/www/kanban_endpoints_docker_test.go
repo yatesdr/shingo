@@ -51,10 +51,7 @@ func TestKanban_TheKanbanEndpoints(t *testing.T) {
 
 	post(h.apiKanbanSettingsSet, "/api/nodes/kanban/settings", map[string]any{
 		"strict_sourcing": true, "maintenance_station": "edge.1", "overflow_destination": "GRP-KB-Z45"}, http.StatusOK)
-	post(h.apiKanbanCoverSet, "/api/nodes/kanban/cover", map[string]any{"running_cover": 4}, http.StatusOK)
 	post(h.apiKanbanLevelSet, "/api/nodes/kanban/level", map[string]any{"bin_type_id": small, "want": 1}, http.StatusOK)
-	post(h.apiKanbanLevelOverflowSet, "/api/nodes/kanban/level/overflow",
-		map[string]any{"bin_type_id": small, "overflow_node_id": z32}, http.StatusOK)
 	post(h.apiKanbanSourcesSet, "/api/nodes/kanban/sources",
 		map[string]any{"source_node_ids": []int64{z32, z45}}, http.StatusOK)
 
@@ -66,15 +63,14 @@ func TestKanban_TheKanbanEndpoints(t *testing.T) {
 		Strict   bool                 `json:"strict_sourcing"`
 		Station  string               `json:"maintenance_station"`
 		Overflow string               `json:"overflow_destination"`
-		Cover    int                  `json:"running_cover"`
 		Levels   []store.KanbanLevel  `json:"levels"`
 		Sources  []store.KanbanSource `json:"sources"`
 	}
 	testutil.MustNoErr(t, json.Unmarshal(rec.Body.Bytes(), &cfg), "decode")
-	if !cfg.Strict || cfg.Station != "edge.1" || cfg.Overflow != "GRP-KB-Z45" || cfg.Cover != 4 {
+	if !cfg.Strict || cfg.Station != "edge.1" || cfg.Overflow != "" {
 		t.Errorf("settings = %+v", cfg)
 	}
-	if len(cfg.Levels) != 1 || cfg.Levels[0].OverflowNode != "GRP-KB-Z32" {
+	if len(cfg.Levels) != 1 {
 		t.Errorf("levels = %+v", cfg.Levels)
 	}
 	if len(cfg.Sources) != 2 || cfg.Sources[0].SourceNodeName != "GRP-KB-Z32" || cfg.Sources[1].Rank != 2 {
@@ -87,8 +83,8 @@ func TestKanban_TheKanbanEndpoints(t *testing.T) {
 	}
 	rows, err := db.ListEntityAudit("node", grpID)
 	testutil.MustNoErr(t, err, "audit")
-	if len(rows) != 8 {
-		t.Errorf("audit rows = %d, want 8: strict, station, overflow, cover, level, level overflow, two sources", len(rows))
+	if len(rows) != 6 {
+		t.Errorf("audit rows = %d, want 6: strict, station, level, its pool, two sources", len(rows))
 	}
 
 	// A refusal is a 409 with the rule's sentence, and writes nothing.
@@ -97,9 +93,6 @@ func TestKanban_TheKanbanEndpoints(t *testing.T) {
 	if out["error"] == nil {
 		t.Errorf("no sentence: %+v", out)
 	}
-	post(h.apiKanbanCoverSet, "/api/nodes/kanban/cover", map[string]any{"running_cover": -1}, http.StatusConflict)
-	post(h.apiKanbanLevelOverflowSet, "/api/nodes/kanban/level/overflow",
-		map[string]any{"bin_type_id": small, "overflow_node_id": grpID}, http.StatusConflict)
 	if got, err := db.ListKanbanSources(grpID); err != nil {
 		t.Fatal(err)
 	} else if len(got) != 2 {
@@ -107,7 +100,7 @@ func TestKanban_TheKanbanEndpoints(t *testing.T) {
 	}
 
 	// A malformed request is the request's fault.
-	if rec := postJSON(t, h.apiKanbanLevelOverflowSet, "/api/nodes/kanban/level/overflow",
+	if rec := postJSON(t, h.apiKanbanLevelSet, "/api/nodes/kanban/level",
 		map[string]any{"group_node_id": grpID}); rec.Code != http.StatusBadRequest {
 		t.Errorf("no bin type: status %d", rec.Code)
 	}

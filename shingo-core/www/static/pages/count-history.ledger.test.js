@@ -242,12 +242,29 @@ console.log('the sections count history gave away render where they went (owner,
             check('nodes-kanban.js defines keeperNoteHtml', false);
         } else {
             vm.runInContext(note.replace(/^export /, ''), kctx);
-            const over = vm.runInContext('keeperNoteHtml(' + JSON.stringify([{ total_want: 9, slots: 8, cannot_cover: 1,
-                nothing_processes: ['PRESS-6'], fallback_processes: ['WELD-2'] }]) + ')', kctx);
-            check('keeper: a want past the positions says what cannot be covered', over.includes('9 wanted on 8 enabled positions: 1 cannot be covered'), over);
+            const over = vm.runInContext('keeperNoteHtml(' + JSON.stringify([{ nothing_processes: ['PRESS-6'], fallback_processes: ['WELD-2'] }]) + ')', kctx);
             check('keeper: the processes the picture could not read are named', over.includes('PRESS-6 runs a part') && over.includes('WELD-2 is changing over'), over);
-            const fits = vm.runInContext('keeperNoteHtml(' + JSON.stringify([{ total_want: 3, slots: 8 }]) + ')', kctx);
-            check('keeper: a want that fits says only that', fits.includes('3 wanted on 8 enabled positions') && !fits.includes('cannot'), fits);
+            const quiet = vm.runInContext('keeperNoteHtml(' + JSON.stringify([{ want: 3 }]) + ')', kctx);
+            check('keeper: a kanban with nothing to say says nothing', quiet === '', quiet);
+            const merge = liftFrom('nodes-kanban.js', 'export function', 'mergeFamilies');
+            const fRow = liftFrom('nodes-kanban.js', 'export function', 'familyRowHtml');
+            const fNote = liftFrom('nodes-kanban.js', 'export function', 'familyNoteHtml');
+            if (!merge || !fRow || !fNote) {
+                check('nodes-kanban.js defines the family table', false);
+            } else {
+                [merge, fRow, fNote].forEach(function (src) { vm.runInContext(src.replace(/^export /, ''), kctx); });
+                const said = JSON.stringify({ family_id: 1, family: '45x48', pool: 10, minimum: 10, room: 8, cannot_cover: 2, dips: 4, pool_declared: true });
+                const tick = JSON.stringify({ family_id: 1, family: '45x48', found: 9, slot: 5, line: 3, window: 0, flight: 1, floaters: 2, lost: 1 });
+                const row = vm.runInContext('familyRowHtml(mergeFamilies([' + said + '], [' + tick + '])[0], false)', kctx);
+                check('family: pool, minimum, found by place, room and floaters in that order',
+                    /45x48.*>10<.*>10<.*>9<.*>5<.*>3<.*>0<.*>1<.*>8<.*>2</.test(row), row);
+                check('family: found under the pool is marked', row.includes('kanban-short'), row);
+                const words = vm.runInContext('familyNoteHtml(mergeFamilies([' + said + '], [' + tick + ']))', kctx);
+                check('family: the lost, the uncovered and the dip are in words', words.includes('1 of 45x48 left the loop')
+                    && words.includes('2 of 45x48 cannot be covered: 10 carts on 8 slots') && words.includes('running level dips by 4 during unloads'), words);
+                const stranger = vm.runInContext('familyNoteHtml(mergeFamilies([], [' + JSON.stringify({ family_id: 2, family: 'CART-32', found: 1, strangers: ['KB-C7 stands at PKB_007'] }) + ']))', kctx);
+                check('family: a cart past the pool is named where it stands', stranger.includes('KB-C7 stands at PKB_007'), stranger);
+            }
         }
     }
     // The kanban's Sources list on the same module: ordered, one group at a time.

@@ -12,12 +12,9 @@ import (
 	"shingocore/store/loaders"
 )
 
-// node_service_kanban_save_rules_test.go — what the Nodes page's kanban
-//  save says about two configurations that cannot work: levels past the
-// enabled positions of a kanban, and levels on a live unloader's
-// outbound with no overflow destination. The first is a warning (the card shows
-// what cannot be covered), the second a refusal; their neighbours
-// (an overflow set) save as before.
+// node_service_kanban_save_rules_test.go — what the Nodes page's kanban save says: levels past
+// the slots of a kanban are a warning (the card shows what cannot be covered), and a level on a
+// live unloader's outbound saves with nothing said, since its returns always land.
 //
 // Each case saves a level through SetKanbanLevel (the level door of
 // www/handlers_kanbans.go) and records whether it saved, what it
@@ -67,6 +64,10 @@ func TestKanbanSave_WhatTheChooserCannotRepay(t *testing.T) {
 		return id
 	}
 	small, big, wide := sized("WCR-SMALL", 45, 48), sized("WCR-BIG", 48, 45), sized("WCR-WIDE", 32, 30)
+	family, err := db.EnsureCarrierFamily("WCR-45")
+	testutil.MustNoErr(t, err, "the family")
+	testutil.MustNoErr(t, db.SetBinTypeFamily(small, family), "small")
+	testutil.MustNoErr(t, db.SetBinTypeFamily(big, family), "big")
 	declare := func(g, bt int64, want int) {
 		testutil.MustNoErr(t, db.SetKanbanLevel(store.KanbanLevel{GroupNodeID: g, BinTypeID: bt, Want: want}), "level")
 	}
@@ -82,34 +83,29 @@ func TestKanbanSave_WhatTheChooserCannotRepay(t *testing.T) {
 
 	testdb.KanbanSources(t, db, k, lender, zone32)
 	got := mgSaveLevel(t, svc, k, small, 1)
-	if !got.saved || strings.Contains(said(got), "repaid only") || strings.Contains(said(got), "no source") {
-		t.Errorf("a source declaring the type: saved=%v warnings=%v; want nothing said, of it or of the other floor's zone", got.saved, got.warnings)
+	if !got.saved || strings.Contains(said(got), "never repays") || strings.Contains(said(got), "no source") {
+		t.Errorf("a source declaring the type: saved=%v warnings=%v; want nothing said, of it or of the other family's zone", got.saved, got.warnings)
 	}
 
 	got = mgSaveLevel(t, svc, k, big, 1)
-	if !got.saved || !strings.Contains(said(got), "WCR-LENDER declares no level for WCR-BIG — repaid only as WCR-BIG's overflow") {
-		t.Errorf("a source on the floor with no level of the type: saved=%v warnings=%v", got.saved, got.warnings)
+	if !got.saved || !strings.Contains(said(got), "WCR-LENDER declares no level for WCR-BIG — a cart of it never repays that source") {
+		t.Errorf("a source of the family with no level of the type: saved=%v warnings=%v", got.saved, got.warnings)
 	}
 	if strings.Contains(said(got), "WCR-Z32") {
-		t.Errorf("a source of another floor was warned of: %v", got.warnings)
+		t.Errorf("a source of another family was warned of: %v", got.warnings)
 	}
 
 	testdb.KanbanSources(t, db, k, plainA, plainB)
 	got = mgSaveLevel(t, svc, k, small, 1)
-	if !strings.Contains(said(got), "WCR-PLAIN-A and WCR-PLAIN-B declare no level for WCR-SMALL — nothing can repay both; one drains") {
-		t.Errorf("two sources of a floor with no level: warnings=%v", got.warnings)
+	if !strings.Contains(said(got), "WCR-PLAIN-A declares no level for WCR-SMALL") {
+		t.Errorf("a plain source: warnings=%v", got.warnings)
 	}
 
 	testdb.KanbanSources(t, db, k, zone32)
 	testdb.KanbanKeeper(t, db, k, "EDGE-WCR")
 	got = mgSaveLevel(t, svc, k, small, 1)
-	if !got.saved || !strings.Contains(said(got), "WCR-K declares WCR-SMALL with no source or overflow for it") {
+	if !got.saved || !strings.Contains(said(got), "WCR-K declares WCR-SMALL with no source of its family") {
 		t.Errorf("a type with no way out: saved=%v warnings=%v", got.saved, got.warnings)
-	}
-	testdb.KanbanOverflow(t, db, k, "WCR-PLAIN-A")
-	got = mgSaveLevel(t, svc, k, small, 1)
-	if strings.Contains(said(got), "no source or overflow") {
-		t.Errorf("with an overflow: warnings=%v", got.warnings)
 	}
 }
 
@@ -125,32 +121,20 @@ func TestKanbanSave_LevelsAndTheUnloaderOutbound(t *testing.T) {
 		grpID, _ := mgGroup(t, db, "SR-PAST", 2)
 		on(grpID)
 		got := mgSaveLevel(t, svc, grpID, mgBinType(t, db, "SR-PAST-TOTE"), 3)
-		if !got.saved || len(got.warnings) != 1 || !strings.Contains(got.warnings[0], "SR-PAST declares 3 carriers across 2") {
+		if !got.saved || !strings.Contains(strings.Join(got.warnings, "; "), "SR-PAST has room for 2 of") {
 			t.Errorf("3 wanted across 2 positions: saved=%v refused=%v warnings=%v; want saved, a warning "+
 				"naming the group and both numbers", got.saved, got.refused, got.warnings)
 		}
 	})
 
-	t.Run("a level on a live unloader's outbound with no overflow", func(t *testing.T) {
+	t.Run("a level on a live unloader's outbound", func(t *testing.T) {
 		grpID, _ := mgGroup(t, db, "SR-OUT", 3)
 		mgUnloaderSendingTo(t, svc, "SR-OUT-UNL", "SR-OUT")
 		got := mgSaveLevel(t, svc, grpID, mgBinType(t, db, "SR-OUT-TOTE"), 1)
 		said := strings.Join(got.warnings, "; ")
-		if !got.saved || len(got.refused) != 0 || !strings.Contains(said, "SR-OUT-UNL sends its empties to SR-OUT") {
-			t.Errorf("a level on SR-OUT-UNL's outbound: saved=%v refused=%v warnings=%v; want saved, with a warning "+
-				"naming the unloader and the group", got.saved, got.refused, got.warnings)
-		}
-	})
-
-	t.Run("a level on a live unloader's outbound with an overflow", func(t *testing.T) {
-		grpID, _ := mgGroup(t, db, "SR-OVF", 3)
-		mgGroup(t, db, "SR-OVF-SPILL", 1)
-		mgUnloaderSendingTo(t, svc, "SR-OVF-UNL", "SR-OVF")
-		testdb.KanbanOverflow(t, db, grpID, "SR-OVF-SPILL")
-		got := mgSaveLevel(t, svc, grpID, mgBinType(t, db, "SR-OVF-TOTE"), 1)
-		if !got.saved || len(got.refused) != 0 || len(got.warnings) != 0 {
-			t.Errorf("a level on SR-OVF-UNL's outbound, overflow set: saved=%v refused=%v warnings=%v; "+
-				"want saved with nothing said", got.saved, got.refused, got.warnings)
+		if !got.saved || len(got.refused) != 0 || strings.Contains(said, "SR-OUT-UNL") {
+			t.Errorf("a level on SR-OUT-UNL's outbound: saved=%v refused=%v warnings=%v; want saved with nothing said of the unloader: its returns always land",
+				got.saved, got.refused, got.warnings)
 		}
 	})
 }

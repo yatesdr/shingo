@@ -606,7 +606,7 @@ func (e *Engine) StartProcessChangeover(processID, toStyleID int64, calledBy, no
 	if err != nil {
 		// The changeover row stands and its orders are out, so the episode stays
 		// open: this read failing says nothing about the changeover, and closing
-		// would take the running cover off it. CANCEL closes the episode, as it
+		// would take the changeover's cover off it. CANCEL closes the episode, as it
 		// does a running changeover whose node leg failed in the apply
 		// (TestKanbanPin_StartWhoseApplyFailsLeavesTheEpisodeOpen).
 		return nil, err

@@ -1232,6 +1232,12 @@ const loadBody = { payload_code: 'PART-A', uop_count: 24,
     eq(presses().length, 0, 'presses: a second tap folds them');
     eq(cardText(pcCard('TOTE-1', 'ULN_P2')).slice(-1), ['Cleared · robot on its way'],
         'a cart cleared and on its way out says so');
+    leaving.status = 'queued';
+    render();
+    eq(cardText(pcCard('TOTE-1', 'ULN_P2')).slice(-1), ['Cleared · waiting to move'],
+        'a cleared cart whose move has no robot says it waits');
+    leaving.status = 'in_transit';
+    render();
 }
 
 // ── 17. A two-stage unloader's stage 2, at every site the role census names ─

@@ -7,23 +7,23 @@ import (
 	"strconv"
 
 	"shingo/protocol"
+	"shingocore/engine"
 	"shingocore/service"
 )
 
 // Kanban-group settings endpoints — the Kanban section of the node
 // group settings modal.
 //
-// A kanban is an NGRP whose EMPTY-CARRIER level Core holds: so many
-// unclaimed carriers of each declared type, at all times, near the equipment that
-// consumes them. The level keeper (engine/kanban_keeper.go) holds the levels
+// A kanban is an NGRP whose loop of EMPTY carriers Core holds: a ready mix of each declared
+// type, at all times, near the equipment that consumes them. The level keeper (engine/kanban_keeper.go) holds the levels
 // written here. The layer wants that ride a level's save tell the unloader
 // which heights the group is short of; the one at 0 layers is the type's tops &
 // bottoms row, a cap of its own that the store caps judge a cart at 0 against.
 // Nothing sources on any of them.
 //
 // ONE WRITE ENDPOINT PER THING AN OPERATOR EDITS, rather than one save-everything
-// call. The section has independent halves — the settings, the running cover, one
-// level line, one level's overflow, the supported processes, the sources — and a
+// call. The section has independent halves — the settings, one level line, a family's pool,
+// the supported processes, the sources — and a
 // single endpoint that took all of them would have to decide what an omitted
 // field means. Omitted-means-clear silently deletes a level when the form fails
 // to populate; omitted-means-keep makes clearing impossible. Per-thing endpoints
@@ -73,6 +73,66 @@ func (h *Handlers) apiKanban(w http.ResponseWriter, r *http.Request) {
 	h.jsonOK(w, cfg)
 }
 
+// apiKanbanFamilies is the card's family table: pool, minimum and room from the save's own
+// arithmetic, and the keeper's last tick for where the carts are. The page joins them. One
+// statement per read here, on a page and never on a tick.
+//
+// GET /api/nodes/kanban/families?group_node_id=<group node id>
+func (h *Handlers) apiKanbanFamilies(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(r.URL.Query().Get("group_node_id"), 10, 64)
+	if err != nil || id == 0 {
+		h.jsonError(w, "invalid group_node_id", http.StatusBadRequest)
+		return
+	}
+	svc := h.engine.NodeService()
+	node, err := svc.GetNode(id)
+	if err != nil {
+		h.jsonError(w, err.Error(), http.StatusNotFound)
+		return
+	}
+	rows, err := svc.ListKanbanFamilies(id)
+	if err != nil {
+		h.jsonError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	found := []engine.KanbanFamilyState{}
+	for _, f := range h.engine.KanbanFamilyStates() {
+		if f.GroupNode == node.Name {
+			found = append(found, f)
+		}
+	}
+	h.jsonOK(w, map[string]any{"families": rows, "found": found})
+}
+
+// apiKanbanPoolsSet sets the pools of the families named: what the loop owns of each.
+//
+// POST /api/nodes/kanban/pools
+func (h *Handlers) apiKanbanPoolsSet(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		GroupNodeID int64 `json:"group_node_id"`
+		Pools       []struct {
+			FamilyID int64 `json:"family_id"`
+			Pool     int   `json:"pool"`
+		} `json:"pools"`
+	}
+	if !h.parseJSON(w, r, &req) {
+		return
+	}
+	if req.GroupNodeID == 0 {
+		h.jsonError(w, "group_node_id is required", http.StatusBadRequest)
+		return
+	}
+	pools := make(map[int64]int, len(req.Pools))
+	for _, p := range req.Pools {
+		if p.Pool < 0 || p.FamilyID == 0 {
+			h.jsonError(w, "a pool names its family and cannot be negative", http.StatusBadRequest)
+			return
+		}
+		pools[p.FamilyID] = p.Pool
+	}
+	h.saveKanbanAnswer(w, service.KanbanSave{GroupNodeID: req.GroupNodeID, Actor: h.kanbanActor(r), Pools: pools})
+}
+
 // apiKanbanProcessOptions returns the picker's contents: each process
 // with the Core nodes its claims resolve to.
 //
@@ -117,8 +177,7 @@ func (h *Handlers) apiKanbanCheckTypes(w http.ResponseWriter, r *http.Request) {
 	h.jsonOK(w, map[string]any{"blocked": g.Blocked})
 }
 
-// apiKanbanSettingsSet writes the settings: strict, station and the
-// default overflow.
+// apiKanbanSettingsSet writes the settings: strict, station, and a plain group's overflow.
 //
 // POST /api/nodes/kanban/settings
 func (h *Handlers) apiKanbanSettingsSet(w http.ResponseWriter, r *http.Request) {
@@ -172,25 +231,6 @@ func (h *Handlers) apiKanbanSettingsSet(w http.ResponseWriter, r *http.Request) 
 	h.kanbanOK(w, chk, g)
 }
 
-// apiKanbanCoverSet sets the running cover: the extra the kanban wants
-// of a type per supported process running it.
-//
-// POST /api/nodes/kanban/cover
-func (h *Handlers) apiKanbanCoverSet(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		GroupNodeID  int64 `json:"group_node_id"`
-		RunningCover int   `json:"running_cover"`
-	}
-	if !h.parseJSON(w, r, &req) {
-		return
-	}
-	if req.GroupNodeID == 0 {
-		h.jsonError(w, "group_node_id is required", http.StatusBadRequest)
-		return
-	}
-	h.saveKanbanAnswer(w, service.KanbanSave{GroupNodeID: req.GroupNodeID, Actor: h.kanbanActor(r), Cover: &req.RunningCover})
-}
-
 // apiKanbanSourcesSet replaces the sources: the groups the keeper may
 // pull from, the list order being the rank.
 //
@@ -211,27 +251,6 @@ func (h *Handlers) apiKanbanSourcesSet(w http.ResponseWriter, r *http.Request) {
 		req.SourceNodeIDs = []int64{}
 	}
 	h.saveKanbanAnswer(w, service.KanbanSave{GroupNodeID: req.GroupNodeID, Actor: h.kanbanActor(r), Sources: &req.SourceNodeIDs})
-}
-
-// apiKanbanLevelOverflowSet sets one level's own overflow; 0 clears it,
-// and the type takes the kanban's default.
-//
-// POST /api/nodes/kanban/level/overflow
-func (h *Handlers) apiKanbanLevelOverflowSet(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		GroupNodeID    int64 `json:"group_node_id"`
-		BinTypeID      int64 `json:"bin_type_id"`
-		OverflowNodeID int64 `json:"overflow_node_id"`
-	}
-	if !h.parseJSON(w, r, &req) {
-		return
-	}
-	if req.GroupNodeID == 0 || req.BinTypeID == 0 {
-		h.jsonError(w, "group_node_id and bin_type_id are required", http.StatusBadRequest)
-		return
-	}
-	h.saveKanbanAnswer(w, service.KanbanSave{GroupNodeID: req.GroupNodeID, Actor: h.kanbanActor(r),
-		Levels: []service.KanbanLevelSave{{BinTypeID: req.BinTypeID, Overflow: &req.OverflowNodeID}}})
 }
 
 // saveKanbanAnswer runs a save with no floor guard and answers it.

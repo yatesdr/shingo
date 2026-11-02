@@ -47,13 +47,11 @@ func SameFamily(cart, asked int64) bool { return cart != 0 && cart == asked }
 // read for the plant (the store's level read) Want is the effective want,
 // Level.Want(). A save only ever writes a declared number.
 type TypeLevel struct {
-	OverflowNodeID *int64 `json:"overflow_node_id,omitempty"`
-	OverflowNode   string `json:"overflow_node,omitempty"`
-	GroupNodeID    int64  `json:"group_node_id"`
-	BinTypeID      int64  `json:"bin_type_id"`
-	BinTypeCode    string `json:"bin_type_code"`
-	Want           int    `json:"want"`
-	Base           int    `json:"-"`
+	GroupNodeID int64  `json:"group_node_id"`
+	BinTypeID   int64  `json:"bin_type_id"`
+	BinTypeCode string `json:"bin_type_code"`
+	Want        int    `json:"want"`
+	Base        int    `json:"-"`
 }
 
 // Have is a level type's four populations: what the keeper subtracts from the want.

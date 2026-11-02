@@ -281,6 +281,14 @@ func (h *Handlers) handleNodeUpdate(w http.ResponseWriter, r *http.Request) {
 	// THE OLD ASSIGNMENTS FIRST, for the audit rows below.
 	beforeAssign := h.nodeAssignmentSnapshot(node.ID)
 
+	if previous, err := h.engine.NodeService().GetNode(node.ID); err == nil {
+		if said, err := h.engine.NodeService().RenameWarnings(previous, node.Name); err != nil {
+			log.Printf("nodes: what joins %s by name: %v", previous.Name, err)
+		} else if len(said) > 0 {
+			log.Printf("nodes: %s", strings.Join(said, "; "))
+			_ = h.engine.AuditService().Append("node", node.ID, "rename_warning", previous.Name, strings.Join(said, "; "), h.kanbanActor(r))
+		}
+	}
 	if err := h.engine.NodeService().UpdateNode(node); err != nil {
 		// THIS is the path a parentage cycle can actually arrive by. The
 		// drag-and-drop reparent endpoint already refuses these shapes for

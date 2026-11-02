@@ -42,11 +42,14 @@ func TestSaveKanban_AuditsEachChangeOnce(t *testing.T) {
 	testutil.MustNoErr(t, db.QueryRow(`INSERT INTO bin_types (code, totes_per_layer) VALUES ('SK-SMALL', 8) RETURNING id`).Scan(&small), "small")
 	testutil.MustNoErr(t, db.QueryRow(`INSERT INTO bin_types (code) VALUES ('SK-BIG') RETURNING id`).Scan(&big), "big")
 
-	station, strict, cover, want := "edge.1", true, 4, 2
+	station, strict, want := "edge.1", true, 2
+	family, err := db.EnsureCarrierFamily("SK-FAMILY")
+	testutil.MustNoErr(t, err, "the family")
 	wants := []store.KanbanLayerWant{{Layers: 0, Want: 1}, {Layers: 3, Want: 2}}
-	first := store.KanbanChange{NodeID: *k, EnsureRow: true, Station: &station, Strict: &strict, Cover: &cover, Overflow: spill,
+	first := store.KanbanChange{NodeID: *k, EnsureRow: true, Station: &station, Strict: &strict,
+		Pools: map[int64]int{family: 5},
 		Levels: []store.KanbanLevelChange{
-			{BinTypeID: small, Want: &want, LayerWants: &wants, Overflow: other},
+			{BinTypeID: small, Want: &want, LayerWants: &wants},
 			{BinTypeID: big, Want: &want},
 		},
 		Supports: &[]int64{press.ID},
@@ -56,11 +59,9 @@ func TestSaveKanban_AuditsEachChangeOnce(t *testing.T) {
 	wantRows := []string{
 		"kanban:level:SK-BIG >2@stephen",
 		"kanban:level:SK-SMALL >2@stephen",
-		"kanban:level_overflow:SK-SMALL >SK-OTHER@stephen",
 		"kanban:layer_want:SK-SMALL:0 >1@stephen",
 		"kanban:layer_want:SK-SMALL:3 >2@stephen",
-		"kanban:overflow >SK-SPILL@stephen",
-		"kanban:running_cover 0>4@stephen",
+		"kanban:pool:SK-FAMILY >5@stephen",
 		"kanban:source:SK-OTHER >2@stephen",
 		"kanban:source:SK-SPILL >1@stephen",
 		"kanban:station >edge.1@stephen",
@@ -79,7 +80,7 @@ func TestSaveKanban_AuditsEachChangeOnce(t *testing.T) {
 	}
 
 	// A list entry that moves, one that goes: a row each. The level's removal takes
-	// its layer wants and overflow with it, each named.
+	// its layer wants with it, each named.
 	before := len(wantRows)
 	testutil.MustNoErr(t, db.SaveKanban(store.KanbanChange{NodeID: *k,
 		RemoveLevels: []int64{small},
@@ -89,7 +90,6 @@ func TestSaveKanban_AuditsEachChangeOnce(t *testing.T) {
 	got := kanbanAudit(t, db, *k)
 	for _, row := range []string{
 		"kanban:level:SK-SMALL 2>@ann",
-		"kanban:level_overflow:SK-SMALL SK-OTHER>@ann",
 		"kanban:layer_want:SK-SMALL:0 1>@ann",
 		"kanban:layer_want:SK-SMALL:3 2>@ann",
 		"kanban:support SK-PRESS>@ann",
@@ -100,8 +100,8 @@ func TestSaveKanban_AuditsEachChangeOnce(t *testing.T) {
 			t.Errorf("no audit row %q in %v", row, got)
 		}
 	}
-	if len(got) != before+7 {
-		t.Errorf("second save wrote %d rows, want 7: %v", len(got)-before, got)
+	if len(got) != before+6 {
+		t.Errorf("second save wrote %d rows, want 6: %v", len(got)-before, got)
 	}
 	sources, err := db.ListKanbanSources(*k)
 	testutil.MustNoErr(t, err, "sources")
@@ -119,13 +119,12 @@ func contains(xs []string, x string) bool {
 	return false
 }
 
-// A plain group stays plain: its overflow is a property with the property's audit
-// row. Its first row takes the property with it, and one that does not resolve is
-// gone with the row, since a NULL parks the push as it did.
+// A plain group stays plain: its overflow is a property with the property's audit row. Its first
+// row ends the property, with an audit row: a kanban has no overflow.
 func TestSaveKanban_APlainGroupAndItsFirstRow(t *testing.T) {
 	t.Parallel()
 	db := testdb.Open(t)
-	spill := testdb.MarkedGroup(t, db, "SKP-SPILL")
+	testdb.MarkedGroup(t, db, "SKP-SPILL")
 	p := testdb.MarkedGroup(t, db, "SKP-PLAIN")
 
 	name := "SKP-SPILL"
@@ -141,7 +140,7 @@ func TestSaveKanban_APlainGroupAndItsFirstRow(t *testing.T) {
 	}
 	target, err := db.OverflowTargetOf(*p)
 	testutil.MustNoErr(t, err, "target")
-	if target.NodeID != 0 || target.Name != name {
+	if target.Name != name {
 		t.Errorf("target = %+v, want the property's name", target)
 	}
 
@@ -152,26 +151,24 @@ func TestSaveKanban_APlainGroupAndItsFirstRow(t *testing.T) {
 		Levels: []store.KanbanLevelChange{{BinTypeID: bt, Want: &want}}}, "stephen"), "first level")
 	k, err := db.GetKanban(*p)
 	testutil.MustNoErr(t, err, "kanban")
-	if k == nil || k.OverflowNodeID == nil || *k.OverflowNodeID != *spill {
-		t.Errorf("kanban = %+v, want the property's node on the row", k)
+	if k == nil {
+		t.Errorf("no row after the first level")
+	}
+	if got := kanbanAudit(t, db, *p); !contains(got, "property:overflow_destination SKP-SPILL>@stephen") {
+		t.Errorf("audit = %v, want the property's end named", got)
 	}
 	if got := db.GetNodeProperty(*p, nodes.PropOverflowDestination); got != "" {
-		t.Errorf("property = %q after the first row; a group has one or the other", got)
+		t.Errorf("property = %q after the first row; a kanban has no overflow", got)
 	}
 	target, err = db.OverflowTargetOf(*p)
 	testutil.MustNoErr(t, err, "target")
-	if target.NodeID != *spill || target.Name != "SKP-SPILL" {
-		t.Errorf("target = %+v, want the row's node", target)
+	if target.Name != "" {
+		t.Errorf("target = %+v, want none: a kanban has no overflow", target)
 	}
 
 	dangling := testdb.MarkedGroup(t, db, "SKP-DANGLING")
 	testutil.MustNoErr(t, db.SetNodeProperty(*dangling, nodes.PropOverflowDestination, "SKP-NOWHERE"), "dangling")
 	testutil.MustNoErr(t, db.SaveKanban(store.KanbanChange{NodeID: *dangling, EnsureRow: true}, "stephen"), "row")
-	k, err = db.GetKanban(*dangling)
-	testutil.MustNoErr(t, err, "kanban")
-	if k == nil || k.OverflowNodeID != nil {
-		t.Errorf("kanban = %+v, want NULL", k)
-	}
 	if got := db.GetNodeProperty(*dangling, nodes.PropOverflowDestination); got != "" {
 		t.Errorf("property = %q", got)
 	}

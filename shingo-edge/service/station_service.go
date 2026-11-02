@@ -166,9 +166,9 @@ type StationService struct {
 	// carrierCatalog is Core's payload-to-bin-type catalog, for an unloader
 	// tile's carriers. Optional: unset leaves carriers empty.
 	carrierCatalog func() []protocol.PayloadBinTypeInfo
-	// binTypeFloors is Core's floor size per bin type, for a board that offers
+	// binTypeFamilies is Core's carrier family per bin type, for a board that offers
 	// carriers. Optional: unset sends none, and its panels do not filter.
-	binTypeFloors func() map[string]string
+	binTypeFamilies func() map[string]string
 	// coreNodes reports the Core node names this edge currently knows, as a set.
 	// Optional, and the nil-safety is load-bearing rather than incidental — see
 	// unknownCoreNodes for why an unwired or empty resolver must accept
@@ -265,8 +265,8 @@ func (s *StationService) SetCarrierCatalog(r func() []protocol.PayloadBinTypeInf
 	s.carrierCatalog = r
 }
 
-// SetBinTypeFloors injects Core's floor size per bin type. Optional.
-func (s *StationService) SetBinTypeFloors(r func() map[string]string) { s.binTypeFloors = r }
+// SetBinTypeFamilies injects Core's carrier family per bin type. Optional.
+func (s *StationService) SetBinTypeFamilies(r func() map[string]string) { s.binTypeFamilies = r }
 
 // SetCoreNodeResolver injects the set of Core node names this edge knows, used
 // to refuse a station node list that names something Core does not have.
@@ -746,21 +746,21 @@ func (s *StationService) BuildView(ctx context.Context, stationID int64) (*store
 	}
 
 	view.Serves = s.servedRows(view.Nodes)
-	view.Floor = s.floorsForBoard(view.Nodes)
+	view.Family = s.familiesForBoard(view.Nodes)
 
 	return view, nil
 }
 
-// floorsForBoard is the view's Floor: Core's floor size per bin type, only on a
+// familiesForBoard is the view's Family: Core's carrier family per bin type, only on a
 // board where some tile offers carriers, so every other board's poll carries none.
 // Read from memory: no statement.
-func (s *StationService) floorsForBoard(tiles []store.StationNodeView) map[string]string {
-	if s.binTypeFloors == nil {
+func (s *StationService) familiesForBoard(tiles []store.StationNodeView) map[string]string {
+	if s.binTypeFamilies == nil {
 		return nil
 	}
 	for i := range tiles {
 		if l := tiles[i].Loader; l != nil && len(l.Carriers) > 0 {
-			return s.binTypeFloors()
+			return s.binTypeFamilies()
 		}
 	}
 	return nil

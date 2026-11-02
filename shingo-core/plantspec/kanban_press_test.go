@@ -103,7 +103,7 @@ func TestKanbanPressPlant_ThePress(t *testing.T) {
 	for bt := range onTypes {
 		s, ok := p.CarrierSizes[bt]
 		if !ok {
-			t.Errorf("type %s has no floor size", bt)
+			t.Errorf("type %s has no footprint", bt)
 			continue
 		}
 		floors[strings.Join([]string{floorSide(min(s.WidthIn, s.LengthIn)), floorSide(max(s.WidthIn, s.LengthIn))}, "x")]++
@@ -184,23 +184,23 @@ func TestKanbanPressPlant_TheKanbans(t *testing.T) {
 		t.Errorf("kanbans = %d, want K and K2 and no lender", len(p.Kanbans))
 	}
 	k := byName["PRESS-KANBAN"]
-	if k.RunningCover != 4 || k.Strict || k.Overflow != "" || len(k.Sources) != 0 ||
+	if k.Pools["45x48"] != 10 || k.Pools["CART-32"] != 6 || k.Strict || len(k.Sources) != 0 ||
 		strings.Join(k.Supports, ",") != "KP-PRESS" || k.Station == "" {
-		t.Errorf("PRESS-KANBAN = %+v, want cover 4, supports the press, no sources, no overflow", k)
+		t.Errorf("PRESS-KANBAN = %+v, want pools 10 and 6, supports the press, no sources", k)
 	}
 	levels := map[string]KanbanLevel{}
 	for _, l := range k.Levels {
 		levels[l.BinType] = l
 	}
 	for _, bt := range []string{"SMALL-45", "BIG-45", "TOTES-45", "CART-32"} {
-		if l, ok := levels[bt]; !ok || l.Want != 2 || l.Overflow != "" {
-			t.Errorf("PRESS-KANBAN %s = %+v, want 2 and no overflow of its own", bt, l)
+		if l, ok := levels[bt]; !ok || l.Want != 2 {
+			t.Errorf("PRESS-KANBAN %s = %+v, want 2", bt, l)
 		}
 	}
 
 	k2 := byName["WELD-KANBAN"]
-	if len(k2.Sources) != 0 || k2.Overflow != "" || strings.Join(k2.Supports, ",") != "KW-WELD" || k2.Station == "" {
-		t.Errorf("WELD-KANBAN = %+v, want supports the weld, no sources, no overflow", k2)
+	if len(k2.Sources) != 0 || strings.Join(k2.Supports, ",") != "KW-WELD" || k2.Station == "" {
+		t.Errorf("WELD-KANBAN = %+v, want supports the weld, no sources", k2)
 	}
 
 	if _, levelled := byName["KP-SM"]; levelled {

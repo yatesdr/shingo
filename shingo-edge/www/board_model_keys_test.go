@@ -104,7 +104,7 @@ func boardFixture() domain.OperatorStationView {
 		Serves: []domain.ServedRow{{Cell: "PRESS-1", Part: "PART-A", Role: "produce", Carrier: "TOTE-1",
 			HaveUOP: &have, CapacityUOP: 10, Incoming: true, Node: "PLN_1", ProcessID: 2, ProcessNodeID: 3,
 			ReorderUOP: 5, Waiting: true}},
-		Floor:       map[string]string{"TOTE-1": "45x48"},
+		Family:      map[string]string{"TOTE-1": "45x48"},
 		Empties:     &domain.Empties{Group: "EMPTY-SUPER", Rows: []domain.EmptiesRow{{BinType: "TOTE-1", Have: 1, Spots: 2}}},
 		Bins:        &domain.BinsKnown{Known: true},
 		Containment: &domain.ContainmentKnown{Known: false},

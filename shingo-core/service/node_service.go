@@ -7,6 +7,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"shingo/protocol"
 	"shingocore/store"
 	"shingocore/store/bins"
 	"shingocore/store/nodes"
@@ -438,6 +439,17 @@ func (s *NodeService) ReparentNode(nodeID int64, parentID *int64, position int) 
 	return s.db.ReparentNode(nodeID, parentID, position)
 }
 
+// isSlotOfGroup says the node is a position directly under a node group. A read that fails says
+// no, and the save writes what it always has.
+func (s *NodeService) isSlotOfGroup(nodeID int64) bool {
+	n, err := s.db.GetNode(nodeID)
+	if err != nil || n == nil || n.ParentID == nil || n.IsSynthetic {
+		return false
+	}
+	parent, err := s.db.GetNode(*n.ParentID)
+	return err == nil && parent != nil && parent.NodeTypeCode == protocol.NodeClassNGRP
+}
+
 // ApplyAssignments writes the station and bin-type selections for a
 // node. Each sub-step is best-effort: if one step fails the others
 // still run, and all errors are joined and returned so the caller can
@@ -447,17 +459,20 @@ func (s *NodeService) ReparentNode(nodeID int64, parentID *int64, position int) 
 func (s *NodeService) ApplyAssignments(nodeID int64, a NodeAssignments) error {
 	var errs []error
 
-	// Station mode + station assignments.
-	if err := s.db.SetNodeProperty(nodeID, "station_mode", a.StationMode); err != nil {
-		errs = append(errs, fmt.Errorf("set station_mode: %w", err))
-	}
-	if a.StationMode == "specific" {
-		if err := s.db.SetNodeStations(nodeID, a.Stations); err != nil {
-			errs = append(errs, fmt.Errorf("set stations: %w", err))
+	// Station mode + station assignments. A slot of a group has none of its own: its section
+	// is hidden, the form posts a default, and writing that would fence the slot off its group.
+	if !s.isSlotOfGroup(nodeID) {
+		if err := s.db.SetNodeProperty(nodeID, "station_mode", a.StationMode); err != nil {
+			errs = append(errs, fmt.Errorf("set station_mode: %w", err))
 		}
-	} else {
-		if err := s.db.SetNodeStations(nodeID, nil); err != nil {
-			errs = append(errs, fmt.Errorf("clear stations: %w", err))
+		if a.StationMode == "specific" {
+			if err := s.db.SetNodeStations(nodeID, a.Stations); err != nil {
+				errs = append(errs, fmt.Errorf("set stations: %w", err))
+			}
+		} else {
+			if err := s.db.SetNodeStations(nodeID, nil); err != nil {
+				errs = append(errs, fmt.Errorf("clear stations: %w", err))
+			}
 		}
 	}
 

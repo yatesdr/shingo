@@ -38,16 +38,12 @@ type KanbanConfig struct {
 	StrictSourcing      bool                    `json:"strict_sourcing"`
 	MaintenanceStation  string                  `json:"maintenance_station"`
 	OverflowDestination string                  `json:"overflow_destination"`
-	RunningCover        int                     `json:"running_cover"`
 	Levels              []store.KanbanLevel     `json:"levels"`
 	LayerWants          []store.KanbanLayerWant `json:"layer_wants"`
 	Supports            []store.KanbanSupport   `json:"supports"`
 	Sources             []store.KanbanSource    `json:"sources"`
-	// hasRow says the group has its kanbans row. overflowNodeID is the default
-	// overflow's node, 0 when none; a plain group's overflow is its property's name
-	// alone, and may not resolve.
-	hasRow         bool
-	overflowNodeID int64
+	// hasRow says the group has its kanbans row.
+	hasRow bool
 }
 
 // isKanban says the configuration needs a kanbans row: it has one, or something
@@ -55,7 +51,7 @@ type KanbanConfig struct {
 // its all-default settings (the modal posts them for every group) writes nothing.
 func (c KanbanConfig) isKanban() bool {
 	return c.hasRow || len(c.Levels) > 0 || len(c.Supports) > 0 || len(c.Sources) > 0 ||
-		len(c.LayerWants) > 0 || c.StrictSourcing || c.RunningCover > 0 ||
+		len(c.LayerWants) > 0 || c.StrictSourcing ||
 		strings.TrimSpace(c.MaintenanceStation) != ""
 }
 
@@ -63,8 +59,7 @@ func (c KanbanConfig) isKanban() bool {
 //
 // A group with nothing configured is not an error and not a nil: it is a config
 // with empty sets, which is what every plain NGRP looks like and what the modal
-// must be able to render. A kanban's overflow comes off its row, a plain group's
-// off its property (store.OverflowTargetOf reads whichever applies).
+// must be able to render. A plain group's overflow comes off its property; a kanban has none.
 func (s *NodeService) GetKanban(groupNodeID int64) (*KanbanConfig, error) {
 	levels, err := s.db.ListDeclaredLevels(groupNodeID)
 	if err != nil {
@@ -93,7 +88,6 @@ func (s *NodeService) GetKanban(groupNodeID int64) (*KanbanConfig, error) {
 	cfg := &KanbanConfig{
 		GroupNodeID:         groupNodeID,
 		OverflowDestination: overflow.Name,
-		overflowNodeID:      overflow.NodeID,
 		Levels:              levels,
 		LayerWants:          layerWants,
 		Supports:            supports,
@@ -103,13 +97,12 @@ func (s *NodeService) GetKanban(groupNodeID int64) (*KanbanConfig, error) {
 		cfg.hasRow = true
 		cfg.StrictSourcing = k.Strict
 		cfg.MaintenanceStation = k.StationID
-		cfg.RunningCover = k.RunningCover
 	}
 	return cfg, nil
 }
 
-// KanbanSettings is the settings cluster as one save: strict, station
-// and default overflow.
+// KanbanSettings is the settings cluster as one save: strict, station, and a plain group's
+// overflow.
 type KanbanSettings struct {
 	StrictSourcing      bool
 	MaintenanceStation  string
@@ -123,10 +116,10 @@ type KanbanSave struct {
 	Actor       string
 	Strict      *bool
 	Station     *string
-	// Overflow names the default overflow by name; blank clears it. On a kanban it
-	// must resolve to another node; a plain group keeps the name as written.
+	// Overflow names a plain group's overflow by name; blank clears it. A kanban has none.
 	Overflow *string
-	Cover    *int
+	// Pools sets a family's pool, by family id.
+	Pools map[int64]int
 	// Levels are the level lines to set, RemoveLevels those to stop declaring.
 	Levels       []KanbanLevelSave
 	RemoveLevels []int64
@@ -140,9 +133,6 @@ type KanbanLevelSave struct {
 	BinTypeID  int64
 	Want       *int
 	LayerWants *[]KanbanLayerWant
-	// Overflow is the type's own overflow node id; 0 clears it, and the type takes
-	// the kanban's default.
-	Overflow *int64
 }
 
 // KanbanLayerWant is one wanted height of a level (store.KanbanLayerWant),
@@ -169,20 +159,20 @@ func (s *NodeService) SaveKanban(save KanbanSave) (KanbanCheck, error) {
 	if err != nil || chk.Err() != nil {
 		return chk, err
 	}
-	change, refusal, err := s.kanbanChange(post, save)
-	if err != nil {
-		return chk, err
-	}
-	if refusal != "" {
-		chk.Refusals = append(chk.Refusals, refusal)
-		return chk, nil
-	}
+	change := s.kanbanChange(post, save)
 	actor := save.Actor
 	if actor == "" {
 		actor = protocol.AuditActorUI
 	}
 	if err := s.db.SaveKanban(change, actor); err != nil {
 		return chk, err
+	}
+	if change.EnsureRow {
+		said, err := s.familyWarnings(save.GroupNodeID, actor)
+		if err != nil {
+			return chk, err
+		}
+		chk.Warnings = append(chk.Warnings, said...)
 	}
 	if save.changesTheLine() {
 		s.notifyLevelChanged(save.GroupNodeID)
@@ -191,12 +181,11 @@ func (s *NodeService) SaveKanban(save KanbanSave) (KanbanCheck, error) {
 }
 
 // changesTheLine says the save changes what an Edge shown the group's line sees:
-// a level or its heights, the cover, or the supports the cover counts over. The
-// snapshot carries neither a kanban's sources nor its overflow, so those do not
-// ring. A ring is latency: a save it misses reaches the Edge on the heartbeat's
+// a level or its heights, or the supports the cover counts over. The snapshot does not carry a
+// kanban's sources or pool, so those do not ring. A ring is latency: a save it misses reaches the Edge on the heartbeat's
 // compare. Pin: TestKanbanSaves_RingTheLineOnlyWhenTheLineMoves.
 func (s KanbanSave) changesTheLine() bool {
-	if len(s.RemoveLevels) > 0 || s.Cover != nil || s.Supports != nil {
+	if len(s.RemoveLevels) > 0 || s.Supports != nil {
 		return true
 	}
 	for _, lv := range s.Levels {
@@ -219,12 +208,6 @@ func (s *NodeService) applyKanbanSave(post *KanbanConfig, save KanbanSave) ([]st
 	}
 	if save.Overflow != nil {
 		post.OverflowDestination = *save.Overflow
-	}
-	if save.Cover != nil {
-		if *save.Cover < 0 {
-			refusals = append(refusals, fmt.Sprintf("a running cover cannot be negative (got %d)", *save.Cover))
-		}
-		post.RunningCover = *save.Cover
 	}
 	if len(save.RemoveLevels) > 0 {
 		kept := post.Levels[:0]
@@ -341,53 +324,28 @@ func (s *NodeService) applyLevelSave(post *KanbanConfig, lv KanbanLevelSave) (st
 	return "", nil
 }
 
-// kanbanChange is the store's half of the save, and the refusal of an overflow a
-// row cannot hold: a kanban's overflow is a node, and it is not the kanban.
-func (s *NodeService) kanbanChange(post *KanbanConfig, save KanbanSave) (store.KanbanChange, string, error) {
+// kanbanChange is the store's half of the save.
+func (s *NodeService) kanbanChange(post *KanbanConfig, save KanbanSave) store.KanbanChange {
 	change := store.KanbanChange{
 		NodeID:       save.GroupNodeID,
 		EnsureRow:    post.isKanban(),
 		Station:      save.Station,
 		Strict:       save.Strict,
-		Cover:        save.Cover,
+		Pools:        save.Pools,
 		RemoveLevels: save.RemoveLevels,
 		Supports:     save.Supports,
 		Sources:      save.Sources,
 	}
 	for _, lv := range save.Levels {
-		if lv.Overflow != nil && *lv.Overflow == save.GroupNodeID {
-			return change, "a carrier type cannot overflow into the kanban that holds it", nil
-		}
-		if lv.Overflow != nil && *lv.Overflow != 0 {
-			if _, err := s.db.GetNode(*lv.Overflow); err != nil {
-				return change, fmt.Sprintf("overflow node %d does not exist", *lv.Overflow), nil
-			}
-		}
 		change.Levels = append(change.Levels, store.KanbanLevelChange{
-			BinTypeID: lv.BinTypeID, Want: lv.Want, LayerWants: lv.LayerWants, Overflow: lv.Overflow,
+			BinTypeID: lv.BinTypeID, Want: lv.Want, LayerWants: lv.LayerWants,
 		})
 	}
-	if save.Overflow == nil {
-		return change, "", nil
-	}
-	name := strings.TrimSpace(*save.Overflow)
-	if !post.isKanban() {
+	if save.Overflow != nil && !post.isKanban() {
+		name := strings.TrimSpace(*save.Overflow)
 		change.PlainOverflow = &name
-		return change, "", nil
 	}
-	id := int64(0)
-	if name != "" {
-		n, err := s.db.GetNodeByDotName(name)
-		if err != nil || n == nil {
-			return change, fmt.Sprintf("overflow %q does not resolve to a node", name), nil
-		}
-		if n.ID == save.GroupNodeID {
-			return change, fmt.Sprintf("%s cannot overflow into itself", name), nil
-		}
-		id = n.ID
-	}
-	change.Overflow = &id
-	return change, "", nil
+	return change
 }
 
 // SetKanbanLevel declares how many empty carriers of one type a group holds.

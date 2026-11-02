@@ -484,23 +484,15 @@ func computeCarriers(plant *plantspec.Plant, rate map[string]float64, loaderCap,
 		q := pool(g.Group)
 		q.isKanban = true
 		for _, l := range view.lines(g, active) {
-			q.levelWant += l.want
+			// What the kanban itself must stand: the line's cover is on the line.
+			q.levelWant += max(0, l.want-l.held)
 		}
 		// The named counterparty per direction. A plain name missing on the side
 		// the difference runs leaves it unattributed: putting the number against a
 		// pool the config never paired it with is how this check got its last
 		// wrong answer.
-		lender := g.Overflow
-		if len(g.Sources) > 0 {
-			lender = g.Sources[0]
-		}
-		switch net := q.emptySupply - q.emptyDemand; {
-		case net > 0 && g.Overflow != "":
-			o := pool(g.Overflow)
-			q.keeperOut += net
-			o.keeperIn += net
-		case net < 0 && lender != "":
-			o := pool(lender)
+		if net := q.emptySupply - q.emptyDemand; net < 0 && len(g.Sources) > 0 {
+			o := pool(g.Sources[0])
 			q.keeperIn += -net
 			o.keeperOut += -net
 		}

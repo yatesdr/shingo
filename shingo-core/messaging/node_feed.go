@@ -121,7 +121,7 @@ func (s *CoreDataService) buildNodeList(stationID string, strict bool) (*protoco
 		payloadBinTypes = append(payloadBinTypes, protocol.PayloadBinTypeInfo{PayloadCode: p[0], BinTypeCode: p[1]})
 	}
 
-	// Each bin type's floor, for the Edge's CLEAR panels. Memory-only on the Edge
+	// Each bin type's family, for the Edge's CLEAR panels. Memory-only on the Edge
 	// like the slice above, and degrades the same way: a reply with none leaves
 	// its panels unfiltered until the next heartbeat's digest differs.
 	binTypes, btErr := s.db.ListBinTypes()
@@ -131,9 +131,9 @@ func (s *CoreDataService) buildNodeList(stationID string, strict bool) (*protoco
 		}
 		log.Printf("core_handler: list bin types for %s: %v", stationID, btErr)
 	}
-	floors := binTypeFloors(binTypes)
+	families := binTypeFamilies(binTypes)
 
-	digest, err := protocol.NodesDigest(infos, loaderInfos, payloadBinTypes, floors)
+	digest, err := protocol.NodesDigest(infos, loaderInfos, payloadBinTypes, families)
 	if err != nil {
 		return nil, fmt.Errorf("digest node list: %w", err)
 	}
@@ -141,23 +141,23 @@ func (s *CoreDataService) buildNodeList(stationID string, strict bool) (*protoco
 		Nodes:           infos,
 		Loaders:         loaderInfos,
 		PayloadBinTypes: payloadBinTypes,
-		Floor:           floors,
+		Family:          families,
 		Digest:          digest,
 	}, nil
 }
 
-// binTypeFloors is NodeListResponse.Floor: each type with a floor size, as the
-// walk's floor rule compares them (domain.BinType.FloorSize, kanban.Assign). Nil
-// when no type has one, so the field and the digest read as an older Core's.
-func binTypeFloors(types []*bins.BinType) map[string]string {
+// binTypeFamilies is NodeListResponse.Family: each type's carrier family, as the walk compares
+// them (kanban.SameFamily). Nil with no types.
+func binTypeFamilies(types []*bins.BinType) map[string]string {
 	var out map[string]string
 	for _, t := range types {
-		if fs, ok := t.Footprint(); ok {
-			if out == nil {
-				out = make(map[string]string, len(types))
-			}
-			out[t.Code] = fs.String()
+		if t.Bare {
+			continue
 		}
+		if out == nil {
+			out = make(map[string]string, len(types))
+		}
+		out[t.Code] = t.FamilyCode
 	}
 	return out
 }

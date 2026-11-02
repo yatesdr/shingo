@@ -12,7 +12,6 @@ import (
 
 	"shingo/protocol"
 	"shingo/protocol/testutil"
-	"shingocore/store/bins"
 )
 
 // kanban_pins_v5_docker_test.go — the family's acceptance on the rig's plant file: the
@@ -23,34 +22,18 @@ import (
 // moved to the unloader, then a retrieve of the new type off K. It is the counts and who
 // fills which gap that are pinned here; the stack runs the complex legs.
 
-// pinFamilyTypes is the rig's two families at the tree: the footprint says so.
-var pinFamilyTypes = map[string][]string{
-	"45x48":   {rigSmall, rigBig, rigTotes},
-	"CART-32": {rig32},
-}
-
 var pinPositions = []string{"PLN_021", "PLN_022", "PLN_023", "PLN_024"}
 
-// pinFound is the family's found. At the tree the only count there is, K's residents and
-// comings; the loop read replaces it.
+// pinFound is the family's found, off the one read of the loop.
 func (r *kanbanRig) pinFound(family string) int {
 	r.t.Helper()
 	k, err := r.db.GetNodeByName(rigK)
 	testutil.MustNoErr(r.t, err, "K")
 	counts, err := r.db.ReadKanbanCounts([]int64{k.ID})
 	testutil.MustNoErr(r.t, err, "counts")
-	levels, err := r.db.ListKanbanLevels(k.ID)
-	testutil.MustNoErr(r.t, err, "levels")
-	n := 0
-	for _, lv := range levels {
-		for _, code := range pinFamilyTypes[family] {
-			if lv.BinTypeCode == code {
-				c := counts.Level(lv, 0)
-				n += c.Resident + c.Coming
-			}
-		}
-	}
-	return n
+	id, err := r.db.EnsureCarrierFamily(family)
+	testutil.MustNoErr(r.t, err, "family")
+	return counts.Found(k.ID, id).Total()
 }
 
 // foundIsPool is the acceptance at one sample, 10 and 6.
@@ -249,20 +232,17 @@ func (r *kanbanRig) moves() int {
 	return n
 }
 
-// stockSM stands 45x48 empties in the plain supermarket: the raid needs something to raid.
+// stockSM is what the plant file stocks the plain supermarket with: the raid needs something to
+// raid.
 func (r *kanbanRig) stockSM() map[string]int64 {
 	r.t.Helper()
 	stock := map[string]int64{}
-	for i, code := range []string{rigSmall, rigSmall, rigBig, rigBig} {
-		bt, err := r.db.GetBinTypeByCode(code)
-		testutil.MustNoErr(r.t, err, "type")
-		slot := fmt.Sprintf("KSM_00%d", i*2+2)
-		n, err := r.db.GetNodeByName(slot)
-		testutil.MustNoErr(r.t, err, "slot")
-		id := n.ID
-		b := &bins.Bin{BinTypeID: bt.ID, Label: "KB-SM-" + slot, NodeID: &id, Status: "available"}
-		testutil.MustNoErr(r.t, r.db.CreateBin(b), "stock")
-		stock[slot] = b.ID
+	for _, slot := range []string{"KSM_002", "KSM_004", "KSM_006", "KSM_008"} {
+		id := r.cartAt(slot)
+		if id == 0 {
+			r.t.Fatalf("%s is not stocked", slot)
+		}
+		stock[slot] = id
 	}
 	return stock
 }
@@ -400,6 +380,7 @@ func (r *kanbanRig) clearStatements(window, as string) []string {
 	cart := r.cartAt(window)
 	raw, err := json.Marshal(protocol.BinClearRequest{NodeName: window, BinID: cart, BinTypeCode: as})
 	testutil.MustNoErr(r.t, err, "the CLEAR")
+	r.settled()
 	r.counter.Reset()
 	if res := r.doors.AskBinClear(rigStation, raw); res.Status != http.StatusOK {
 		r.t.Fatalf("CLEAR at %s refused (%d): %s", window, res.Status, res.Sentence)
@@ -468,9 +449,10 @@ func TestKanbanPin_TheClearRefusesAnotherFamily(t *testing.T) {
 		bt, err := r.db.GetBinTypeByCode(c.Cart)
 		testutil.MustNoErr(t, err, "cart type")
 		id := w.ID
-		b := &bins.Bin{BinTypeID: bt.ID, Label: fmt.Sprintf("KB-TABLE-%d", i), NodeID: &id, Status: "available"}
-		testutil.MustNoErr(t, r.db.CreateBin(b), "the cart")
-		raw, err := json.Marshal(protocol.BinClearRequest{NodeName: w.Name, BinID: b.ID, BinTypeCode: c.Asked})
+		var binID int64
+		testutil.MustNoErr(t, r.db.QueryRow(`INSERT INTO bins (bin_type_id, label, node_id, status) VALUES ($1,$2,$3,'available') RETURNING id`,
+			bt.ID, fmt.Sprintf("KB-TABLE-%d", i), id).Scan(&binID), "the cart")
+		raw, err := json.Marshal(protocol.BinClearRequest{NodeName: w.Name, BinID: binID, BinTypeCode: c.Asked})
 		testutil.MustNoErr(t, err, "the CLEAR")
 		res := r.doors.AskBinClear(rigStation, raw)
 		if ok := res.Status == http.StatusOK; ok != c.Same {
@@ -479,7 +461,7 @@ func TestKanbanPin_TheClearRefusesAnotherFamily(t *testing.T) {
 		if !c.Same && !strings.Contains(res.Sentence, c.Asked) {
 			t.Errorf("the refusal does not name %s: %q", c.Asked, res.Sentence)
 		}
-		_, err = r.db.Exec(`DELETE FROM bins WHERE id = $1`, b.ID)
+		_, err = r.db.Exec(`DELETE FROM bins WHERE id = $1`, binID)
 		testutil.MustNoErr(t, err, "the cart goes")
 	}
 }
@@ -500,5 +482,43 @@ func TestKanbanPin_AnAdminReTypeCrossesTheFamily(t *testing.T) {
 	testutil.MustNoErr(t, err, "the cart")
 	if got.BinTypeID != bt.ID {
 		t.Errorf("the admin's re-type did not take: %d", got.BinTypeID)
+	}
+}
+
+// TestKanbanPin_ACartAbovePoolGoesHome: K2's carts hand-carried into K leave K above its pool and
+// K2 below. With nothing else outside, K2's keeper takes K's carts above its pool, and stops at K's
+// pool: a kanban never gives a cart it owns.
+func TestKanbanPin_ACartAbovePoolGoesHome(t *testing.T) {
+	t.Parallel()
+	r := newKanbanRig(t)
+	for slot := range r.stockSM() {
+		_, err := r.db.Exec(`DELETE FROM bins WHERE id = $1`, r.cartAt(slot))
+		testutil.MustNoErr(t, err, "empty the supermarket")
+	}
+	r.byHand(r.cartAt("WKB_001"), "PKB_007")
+	r.byHand(r.cartAt("WKB_002"), "PKB_008")
+	r.tick()
+	if got := r.pinFound("45x48"); got != 12 {
+		t.Fatalf("K's family with K2's carts in it: found %d, want 12", got)
+	}
+	r.fly()
+	r.tick()
+	r.fly()
+	if got := r.pinFound("45x48"); got != 10 {
+		t.Errorf("K's family after K2 asked: found %d, want its pool of 10", got)
+	}
+	if got := r.residents(rigK2, rigSmall); got != 2 {
+		t.Errorf("K2 holds %d small, want its 2 back", got)
+	}
+	// K at its pool gives nothing, and K2 short with nothing outside says so.
+	_, err := r.db.Exec(`UPDATE bins SET status = 'retired', node_id = NULL WHERE id = $1`, r.cartAt("WKB_001"))
+	testutil.MustNoErr(t, err, "K2 loses one for good")
+	r.tick()
+	r.fly()
+	if got := r.pinFound("45x48"); got != 10 {
+		t.Errorf("K at its pool gave a cart: found %d", got)
+	}
+	if got := r.card(rigK2, rigSmall); got.HeldBy != "no empty "+rigSmall+" outside the group" {
+		t.Errorf("K2's card reads %+v", got)
 	}
 }

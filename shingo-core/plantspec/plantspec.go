@@ -38,21 +38,23 @@ type Plant struct {
 	// a spec can stage the heavy-rack case: empty, and still not a small robot.
 	CarrierRobotGroups map[string]string `yaml:"carrier_robot_groups,omitempty"`
 	// CarrierSizes maps a bin-type code to its outer dimensions (→ bin_types
-	// width_in, length_in, height_in). A type with width and length has a floor
-	// size, which is what the unloader's card and the CLEAR panels compare
-	// (domain.BinType.FloorSize). Absent = no size.
-	CarrierSizes     map[string]CarrierSize `yaml:"carrier_sizes,omitempty"`
-	Payloads         []Payload              `yaml:"payloads"`
-	Zones            []Zone                 `yaml:"zones"`
-	Stations         []Station              `yaml:"stations"`
-	Bins             []Bin                  `yaml:"bins"`
-	Processes        []Process              `yaml:"processes"`
-	Styles           []Style                `yaml:"styles"`
-	OperatorStations []string               `yaml:"operator_stations"`
-	Claims           []Claim                `yaml:"claims"`
-	Demands          []Demand               `yaml:"demands"`
-	ReportingPoints  []ReportingPoint       `yaml:"reporting_points"`
-	CellConfigs      []CellConfig           `yaml:"cell_configs"`
+	// width_in, length_in, height_in). Width and length are a type's footprint, which the
+	// card prints and a family's members are checked to agree on. Absent = no size.
+	CarrierSizes map[string]CarrierSize `yaml:"carrier_sizes,omitempty"`
+	// CarrierFamilies groups bin types that are one physical cart. A type named by none is a
+	// family of one, coded by its own code.
+	CarrierFamilies  []CarrierFamily  `yaml:"carrier_families,omitempty"`
+	Payloads         []Payload        `yaml:"payloads"`
+	Zones            []Zone           `yaml:"zones"`
+	Stations         []Station        `yaml:"stations"`
+	Bins             []Bin            `yaml:"bins"`
+	Processes        []Process        `yaml:"processes"`
+	Styles           []Style          `yaml:"styles"`
+	OperatorStations []string         `yaml:"operator_stations"`
+	Claims           []Claim          `yaml:"claims"`
+	Demands          []Demand         `yaml:"demands"`
+	ReportingPoints  []ReportingPoint `yaml:"reporting_points"`
+	CellConfigs      []CellConfig     `yaml:"cell_configs"`
 	// Kanbans declares which zones Core holds an empty-carrier level in.
 	Kanbans []Kanban `yaml:"kanbans,omitempty"`
 	// LoaderSettings holds the per-loader switches a claim cannot express, keyed
@@ -103,6 +105,40 @@ func (h Headroom) LanesFree() int {
 		return 1
 	}
 	return *h.FreeLanes
+}
+
+// CarrierFamily is one physical cart and the bin types it can be set as.
+type CarrierFamily struct {
+	Code  string   `yaml:"code"`
+	Types []string `yaml:"types"`
+}
+
+// AdmitsTypes expands a slot's admits, each a type code or a family code, into type codes in
+// the order named.
+func (p *Plant) AdmitsTypes(admits []string) []string {
+	var out []string
+	seen := map[string]bool{}
+	add := func(code string) {
+		if !seen[code] {
+			seen[code] = true
+			out = append(out, code)
+		}
+	}
+	for _, code := range admits {
+		named := false
+		for _, f := range p.CarrierFamilies {
+			if f.Code == code {
+				named = true
+				for _, t := range f.Types {
+					add(t)
+				}
+			}
+		}
+		if !named {
+			add(code)
+		}
+	}
+	return out
 }
 
 // CarrierSize is one carrier type's outer dimensions, in inches.
@@ -222,10 +258,12 @@ type Lane struct {
 	GatePoint string `yaml:"gate_point,omitempty"`
 }
 
-// Slot is a depth-ordered storage position (depth 1 = lane mouth).
+// Slot is a depth-ordered storage position (depth 1 = lane mouth). Admits is the bin types it
+// takes, each entry a type code or a family code; empty takes anything.
 type Slot struct {
-	Name  string `yaml:"name"`
-	Depth int    `yaml:"depth"`
+	Name   string   `yaml:"name"`
+	Depth  int      `yaml:"depth"`
+	Admits []string `yaml:"admits,omitempty"`
 }
 
 // Station is a non-storage node: a line position, press, weld cell, loader,
@@ -284,16 +322,12 @@ type Kanban struct {
 	Station string `yaml:"station,omitempty"`
 	// Strict reserves the group's empties for the supported processes.
 	Strict bool `yaml:"strict,omitempty"`
-	// RunningCover is the extra the kanban wants of a type per supported process
-	// running that type. Zero means the levels alone.
-	RunningCover int `yaml:"running_cover,omitempty"`
+	// Pools is how many carts of each family the kanban's loop owns, by family code. A family
+	// it levels with no entry stands at its minimum.
+	Pools map[string]int `yaml:"pools,omitempty"`
 	// Sources names, in order, the zones the kanban's keeper may pull from. Empty
 	// means the plant-wide search.
 	Sources []string `yaml:"sources,omitempty"`
-	// Overflow names a second zone to try when this one is at level, for every
-	// type without its own. Optional; blank means an arriving carrier waits
-	// instead.
-	Overflow string `yaml:"overflow,omitempty"`
 	// Levels is how many empty carriers of each type to hold.
 	Levels []KanbanLevel `yaml:"levels"`
 	// Supports names PROCESSES. What the seeder writes is the core nodes those
@@ -311,9 +345,8 @@ type Kanban struct {
 //
 // Overflow names this type's own overflow zone, ahead of the group's.
 type KanbanLevel struct {
-	BinType  string `yaml:"bin_type"`
-	Want     int    `yaml:"want"`
-	Overflow string `yaml:"overflow,omitempty"`
+	BinType string `yaml:"bin_type"`
+	Want    int    `yaml:"want"`
 }
 
 // Process is an edge process (one independently-counting cell or line). Each

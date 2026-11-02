@@ -79,7 +79,7 @@ export function openNodeModal(el, opts) {
   renderKanbanSection(isAuth && isGroupType, d.id);
   // The keeper's last tick for a kanban, for every viewer: inside
   // the kanban section with a session, in the read-only half without.
-  renderKeeperLevels(isGroupType ? d.name : '');
+  renderKeeperLevels(isGroupType ? d.name : '', d.id);
 
   if (isAuth) {
     var assocSection = document.getElementById('nf-assoc-section');
@@ -196,7 +196,7 @@ function loadNodeDetail(nodeID, isSynthetic) {
 // assigned-chips mapping produces; serializeChipPickers writes it into a form
 // field either way, and ApplyAssignments parses it.
 var _allBinTypes = JSON.parse(document.getElementById('page-data').dataset.binTypes || '[]')
-  .map(function(b) { return { id: String(b.id), label: b.code }; });
+  .map(function(b) { return { id: String(b.id), label: b.code, family: b.family_code || '', bare: !!b.bare }; });
 var _allStations = JSON.parse(document.getElementById('page-data').dataset.edges || '[]')
   .map(function(e) { return { id: e.station_uid, label: e.display_name || e.station_uid }; });
 var _chipSelections = { 'bin-types': [], 'stations': [] };
@@ -287,6 +287,7 @@ function renderChips(name) {
     host.appendChild(none);
     return;
   }
+  if (name === 'bin-types') appendFamilyShortcut(host);
   var selectedIds = _chipSelections[name].map(function(i) { return i.id; });
   cfg.all.forEach(function(item) {
     var row = document.createElement('label');
@@ -300,6 +301,37 @@ function renderChips(name) {
     row.appendChild(document.createTextNode(' ' + item.label));
     host.appendChild(row);
   });
+}
+
+// A family shortcut: every type of one carrier family at a tap, written as per-type rows like any
+// other tick, so a slot under a mezzanine can still drop one. Only a family of more than one type
+// has anything to shorten.
+function appendFamilyShortcut(host) {
+  var byFamily = {};
+  _allBinTypes.forEach(function(b) {
+    if (!b.family || b.bare) return;
+    (byFamily[b.family] = byFamily[b.family] || []).push(b);
+  });
+  var codes = Object.keys(byFamily).filter(function(f) { return byFamily[f].length > 1; }).sort();
+  if (!codes.length) return;
+  var sel = document.createElement('select');
+  sel.className = 'mode-select text-sm';
+  sel.setAttribute('aria-label', 'Add every type of a family');
+  var first = document.createElement('option');
+  first.value = '';
+  first.textContent = 'Add a family';
+  sel.appendChild(first);
+  codes.forEach(function(f) {
+    var o = document.createElement('option');
+    o.value = f;
+    o.textContent = f + ' (' + byFamily[f].length + ' types)';
+    sel.appendChild(o);
+  });
+  sel.onchange = function() {
+    (byFamily[sel.value] || []).forEach(function(b) { toggleChip('bin-types', b, true); });
+    renderChips('bin-types');
+  };
+  host.appendChild(sel);
 }
 
 function toggleChip(name, item, on) {

@@ -474,66 +474,6 @@ func TestCarriers_ClosedDedicatedLoopIsNotADrawOnTheMarket(t *testing.T) {
 	}
 }
 
-// TestCarriers_KanbanSurplusOverflowsToItsCounterparty pins the second
-// mis-model. A kanban is a LEVEL-CONTROLLED buffer: Core holds it at
-// its declared want, so a surplus does not pile up in it forever — it goes to the
-// overflow zone, which is where the carriers actually end up.
-//
-// Modelling the group as closed stranded that surplus and left the overflow pool
-// wearing a deficit for carriers it was in fact receiving.
-func TestCarriers_KanbanSurplusOverflowsToItsCounterparty(t *testing.T) {
-	t.Parallel()
-	plant := carrierPlant(30, 30)
-	// The press draws its empties from the kanban; the weld cell returns them
-	// there too, but the fixture makes the return side faster so the kanban runs a
-	// surplus that has to go somewhere.
-	plant.Claims[0].InboundSource = "KANBAN"
-	plant.Claims[1].OutboundDestination = "KANBAN"
-	plant.Zones = append(plant.Zones, plantspec.Zone{
-		Name:      "KANBAN",
-		Positions: []plantspec.Slot{{Name: "B1", Depth: 1}, {Name: "B2", Depth: 1}, {Name: "B3", Depth: 1}},
-	}, plantspec.Zone{
-		Name:  "MARKET",
-		Lanes: []plantspec.Lane{{Name: "ML", Slots: []plantspec.Slot{{Name: "M1", Depth: 1}}}},
-	})
-	plant.Bins = append(plant.Bins,
-		plantspec.Bin{Name: "mt1", Slot: "B1"}, plantspec.Bin{Name: "mt2", Slot: "B2"})
-	plant.Kanbans = []plantspec.Kanban{{
-		Group: "KANBAN", Station: "edge1.line1", Overflow: "MARKET",
-		Levels: []plantspec.KanbanLevel{{BinType: "STANDARD", Want: 2}},
-	}}
-
-	// Consumer twice the producer: the kanban frees more than it spends.
-	p := computeCarriers(plant, map[string]float64{"PRESS": 6.0, "WELD": 12.0}, 0, 0)
-
-	kanbanPool, market := p.pools["KANBAN"], p.pools["MARKET"]
-	if kanbanPool == nil || market == nil {
-		t.Fatalf("pools not attributed: %v", p.pools)
-	}
-	if !kanbanPool.isKanban || kanbanPool.levelWant != 2 {
-		t.Errorf("KANBAN isKanban=%v levelWant=%d, want true/2 — a kept group is judged against "+
-			"its declared level, not against demand x transit", kanbanPool.isKanban, kanbanPool.levelWant)
-	}
-	net := kanbanPool.emptySupply - kanbanPool.emptyDemand
-	if net < 0.001 {
-		t.Fatalf("fixture: the kanban must run a SURPLUS to test the overflow, got %+.3f", net)
-	}
-	if math.Abs(kanbanPool.keeperOut-net) > 0.001 {
-		t.Errorf("keeperOut = %.3f, want %.3f — the surplus leaves the group for its overflow zone "+
-			"rather than accumulating in positions declared to hold a fixed level",
-			kanbanPool.keeperOut, net)
-	}
-	if math.Abs(market.keeperIn-net) > 0.001 {
-		t.Errorf("MARKET keeperIn = %.3f, want %.3f. The carriers the kanban sheds arrive HERE, and "+
-			"without this term the overflow pool wears a deficit for empties it is being handed",
-			market.keeperIn, net)
-	}
-	// The two must settle against each other, which is the whole point.
-	if eff := (kanbanPool.emptySupply + kanbanPool.keeperIn) - (kanbanPool.emptyDemand + kanbanPool.keeperOut); math.Abs(eff) > 0.001 {
-		t.Errorf("the kept group nets %+.3f after the keeper flow; a level-held pool settles to zero", eff)
-	}
-}
-
 // coupledPlant builds demo.yaml's WELD-2 shape: a press feeding a weld cell that
 // also waits on a second part from somewhere else.
 //

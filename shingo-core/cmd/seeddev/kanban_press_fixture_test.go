@@ -76,6 +76,7 @@ func TestKanbanPressFixture_ThePool(t *testing.T) {
 		{"PRESS-KANBAN", "CART-32"}: 6,
 		{"PLN_021", "SMALL-45"}:     1, {"PLN_022", "SMALL-45"}: 1, {"PLN_023", "SMALL-45"}: 1, {"PLN_024", "SMALL-45"}: 1,
 		{"WELD-KANBAN", "SMALL-45"}: 2, {"ALN_021", "SMALL-45"}: 1,
+		{"KP-SM", "SMALL-45"}: 2, {"KP-SM", "BIG-45"}: 2,
 	}
 	for k, n := range want {
 		if got[k] != n {
@@ -114,7 +115,7 @@ func TestKanbanPressFixture_ThePool(t *testing.T) {
 }
 
 // rigSlotTypes is what each of K's slots allows, the table plantspec.Slot cannot state:
-// scripts/kanban-rig.sh apply_slot_types posts the same through the Nodes page's doors.
+// plants/kanban-press.yaml states the same in each slot's admits.
 func rigSlotTypes() map[string][]string {
 	out := map[string][]string{}
 	for i := 1; i <= 16; i++ {
@@ -125,25 +126,6 @@ func rigSlotTypes() map[string][]string {
 		out[fmt.Sprintf("PKB_%03d", i)] = types
 	}
 	return out
-}
-
-// TestKanbanPressFixture_TheDriverStatesTheSameTable: the driver's slot table is shell, so
-// this reads it: the two lines that name the slots and their types.
-func TestKanbanPressFixture_TheDriverStatesTheSameTable(t *testing.T) {
-	t.Parallel()
-	raw, err := os.ReadFile(filepath.Join("..", "..", "..", "scripts", "kanban-rig.sh"))
-	if err != nil {
-		t.Fatalf("read the driver: %v", err)
-	}
-	driver := string(raw)
-	for _, line := range []string{
-		`PKB_001 PKB_002 PKB_003 PKB_004 PKB_005 PKB_006 PKB_007 PKB_008 PKB_009 PKB_010:$SMALL $BIG $TOTES`,
-		`PKB_011 PKB_012 PKB_013 PKB_014 PKB_015 PKB_016:$C32`,
-	} {
-		if !strings.Contains(driver, line) {
-			t.Errorf("scripts/kanban-rig.sh does not state %q", line)
-		}
-	}
 }
 
 // devSim is the slice of shingoedge.dev.yaml the rig reads.
@@ -194,7 +176,11 @@ func TestKanbanPressFixture_DevConfigMatches(t *testing.T) {
 		}
 	}
 	windowStations := map[string]bool{}
-	for _, c := range p.Claims {
+	five, err := plantspec.Load(filepath.Join("..", "..", "..", "plants", "kanban-press5.yaml"))
+	if err != nil {
+		t.Fatalf("the five-press plant: %v", err)
+	}
+	for _, c := range append(append([]plantspec.Claim(nil), p.Claims...), five.Claims...) {
 		if c.WindowOf != "" {
 			windowStations[c.OperatorStation] = true
 		}

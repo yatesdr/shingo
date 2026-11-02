@@ -2,30 +2,27 @@ package main
 
 import (
 	"fmt"
-	"slices"
 	"sort"
 	"strings"
 
 	"shingocore/plantspec"
 )
 
-// kanbans.go — what the carrier check needs to know about a kanban: its want is
-// not its level, it borrows from named groups, and leaving a carrier's floor
-// leaves carts with no level to land on.
+// kanbans.go — what the carrier check needs to know about a kanban: its want is not its level,
+// and its pool per family must fit the line, the mix and its slots.
 //
-// THE WANT IS CORE'S: level + cover × the distinct supported processes running
-// the type (store.KanbanPictureSQL, kanban.Level.Want). Read off the plant file
-// here: a process runs its style's produce parts, and a part counts only with a
-// carrier (a part declared no_bin_type contributes nothing).
+// THE WANT IS CORE'S: level + cover, the positions the running style's claims put on the line in
+// the type (store.KanbanPictureSQL, kanban.Level.Want). Read off the plant file here. A part
+// counts only with a carrier (a part declared no_bin_type contributes nothing).
 
 // kanbanLine is one (kanban, type) under one choice of running styles.
 type kanbanLine struct {
 	binType string
 	base    int
 	cover   int
-	running int
 	want    int
 	seeded  int
+	held    int // seeded on the supported positions
 }
 
 // kanbanView reads a plant's kanbans once, for the three questions below.
@@ -39,7 +36,7 @@ type kanbanView struct {
 	claimsOf   map[string][]plantspec.Claim // style → its produce claims
 	nodesOf    map[string][]string          // process → the positions its claims name
 	cartsAt    map[string]string            // seeded node → the cart's type
-	floorOf    map[string]string            // type → floor key
+	familyOf   map[string]string            // type → family code
 	zoneSlots  map[string]int               // zone → its slots, positions and lanes
 }
 
@@ -48,7 +45,7 @@ func newKanbanView(plant *plantspec.Plant) *kanbanView {
 		plant: plant, binTypeOf: map[string]string{}, capOf: map[string]int64{},
 		seeded: map[string]map[string]int{}, stylesOf: map[string][]string{}, styleParts: map[string][]string{},
 		claimsOf: map[string][]plantspec.Claim{}, nodesOf: map[string][]string{}, cartsAt: map[string]string{},
-		floorOf: map[string]string{}, zoneSlots: map[string]int{},
+		familyOf: map[string]string{}, zoneSlots: map[string]int{},
 	}
 	for _, pl := range plant.Payloads {
 		v.capOf[pl.Code] = pl.UOPCapacity
@@ -57,10 +54,12 @@ func newKanbanView(plant *plantspec.Plant) *kanbanView {
 		}
 	}
 	for _, bt := range plant.BinTypes {
-		// A type with no size is its own floor: nothing else is known to share it.
-		v.floorOf[bt] = bt
-		if s, ok := plant.CarrierSizes[bt]; ok {
-			v.floorOf[bt] = fmt.Sprintf("%gx%g", min(s.WidthIn, s.LengthIn), max(s.WidthIn, s.LengthIn))
+		// A type no family names is a family of one, coded by its own code.
+		v.familyOf[bt] = bt
+	}
+	for _, f := range plant.CarrierFamilies {
+		for _, t := range f.Types {
+			v.familyOf[t] = f.Code
 		}
 	}
 	groupOf := map[string]string{}
@@ -122,33 +121,22 @@ func (v *kanbanView) activeStyles() map[string]string {
 	return out
 }
 
-// styleTypes is the carrier types a style runs. Empty for a style whose parts all
-// have no carrier.
-func (v *kanbanView) styleTypes(style string) []string {
-	var out []string
-	for _, part := range v.styleParts[style] {
-		if bt := v.binTypeOf[part]; bt != "" {
-			out = appendUniq(out, bt)
-		}
-	}
-	return out
-}
-
 // lines is a kanban's levels under the running styles given (process → style).
 func (v *kanbanView) lines(g plantspec.Kanban, running map[string]string) []kanbanLine {
 	out := make([]kanbanLine, 0, len(g.Levels))
 	for _, lv := range g.Levels {
-		n := 0
+		cover := 0
+		held := 0
 		for _, proc := range g.Supports {
-			for _, bt := range v.styleTypes(running[proc]) {
-				if bt == lv.BinType {
-					n++
-					break
+			cover += v.claimedPositions(running[proc], func(bt string) bool { return bt == lv.BinType })
+			for _, n := range v.nodesOf[proc] {
+				if v.cartsAt[n] == lv.BinType {
+					held++
 				}
 			}
 		}
-		out = append(out, kanbanLine{binType: lv.BinType, base: lv.Want, cover: g.RunningCover, running: n,
-			want: lv.Want + g.RunningCover*n, seeded: v.seeded[g.Group][lv.BinType]})
+		out = append(out, kanbanLine{binType: lv.BinType, base: lv.Want, cover: cover,
+			want: lv.Want + cover, seeded: v.seeded[g.Group][lv.BinType], held: held})
 	}
 	return out
 }
@@ -207,139 +195,117 @@ func (v *kanbanView) clock(rate map[string]float64) []clockLine {
 	return out
 }
 
-// roomLine is one (style, floor) of a kanban's loop: the carts on that floor and
-// the wants that could hold them while the style runs.
-type roomLine struct {
-	style     string
-	floor     string
-	carts     int      // in the kanban, its sources and at the supported positions
-	lineside  int      // the kanban's wants on this floor + the positions the style fills
-	levels    int      // lineside + the sources' levels on this floor
-	spare     int      // the slots of the plain groups this floor overflows to
-	spareZone []string // those groups
-	toSpare   int      // carts past the levels that land there
-	excess    int      // carts past the levels and the spare room: off the process they park, on a window
-	short     int      // lineside − carts, above 0: the kanban's want cannot be covered
-	windows   int      // the windows of the unloaders whose outbound is the kanban
-	seated    int      // of the excess, seeded in the kanban above its want under the seed's style
-}
-
-// plainOverflow is where a kanban's types on a floor overflow to that holds no
-// level: a store there is refused by nothing but its slots, so they are room for
-// carts no level wants. An overflow with a level is not counted: it refuses at
-// that level (TestOverflow_AFullOverflowDoesNotChain), and one hop ends there.
-func (v *kanbanView) plainOverflow(g plantspec.Kanban, floor string) (zones []string, slots int) {
-	for _, lv := range g.Levels {
-		if v.floorOf[lv.BinType] != floor {
-			continue
-		}
-		target := lv.Overflow
-		if target == "" {
-			target = g.Overflow
-		}
-		if _, levelled := v.groupNamed(target); target == "" || levelled || slices.Contains(zones, target) {
-			continue
-		}
-		zones = append(zones, target)
-		slots += v.zoneSlots[target]
-	}
-	return zones, slots
-}
-
-// changeoverRoom walks every style of a kanban's supported processes. A style
-// whose parts have no carrier is left out: it changes no want.
-func (v *kanbanView) changeoverRoom(g plantspec.Kanban) []roomLine {
-	var out []roomLine
-	active := v.activeStyles()
-
-	cartsByFloor := map[string]int{}
-	for _, grp := range append([]string{g.Group}, g.Sources...) {
-		for bt, n := range v.seeded[grp] {
-			cartsByFloor[v.floorOf[bt]] += n
-		}
-	}
-	positions := 0
-	for _, proc := range g.Supports {
-		for _, n := range v.nodesOf[proc] {
-			if bt, ok := v.cartsAt[n]; ok {
-				cartsByFloor[v.floorOf[bt]]++
+// claimedPositions is the DISTINCT positions a style's produce claims put on the line in the types
+// asked: a claim's core, paired and second paired nodes, by the claim's own part.
+func (v *kanbanView) claimedPositions(style string, ofType func(string) bool) int {
+	seen := map[string]bool{}
+	for _, c := range v.claimsOf[style] {
+		if bt, ok := v.binTypeOf[c.Payload]; ok && ofType(bt) {
+			for _, n := range c.Positions() {
+				seen[n] = true
 			}
-			positions++
 		}
 	}
-	floors := make([]string, 0, len(cartsByFloor))
-	for f := range cartsByFloor {
-		floors = append(floors, f)
-	}
-	sort.Strings(floors)
-	seededHere := map[string]int{}
-	for bt, n := range v.seeded[g.Group] {
-		seededHere[v.floorOf[bt]] += n
-	}
-	windows := map[string]bool{}
-	for _, c := range v.plant.Claims {
-		if c.WindowOf != "" && c.OutboundDestination == g.Group {
-			windows[c.CoreNode] = true
-		}
-	}
+	return len(seen)
+}
 
-	for _, proc := range g.Supports {
-		for _, style := range v.stylesOf[proc] {
-			types := v.styleTypes(style)
-			if len(types) == 0 {
+// familyLine is one (kanban, family): what its pool has to fit.
+type familyLine struct {
+	family  string
+	pool    int
+	minimum int
+	room    int
+	carts   int // seeded in the kanban, on its positions and on its unloader's windows
+}
+
+// families is the kanban's family lines: the mix of each family's types, the most positions each
+// supported process's styles put on the line in it, the slots admitting it, and the carts the file
+// seeds in the loop. A family with no pool stands at its minimum, as Core holds it.
+func (v *kanbanView) families(g plantspec.Kanban) []familyLine {
+	byFamily := map[string]*familyLine{}
+	var order []string
+	line := func(family string) *familyLine {
+		f := byFamily[family]
+		if f == nil {
+			f = &familyLine{family: family}
+			byFamily[family] = f
+			order = append(order, family)
+		}
+		return f
+	}
+	for _, lv := range g.Levels {
+		line(v.familyOf[lv.BinType]).minimum += lv.Want
+	}
+	for _, f := range order {
+		for _, proc := range g.Supports {
+			most := 0
+			for _, style := range v.stylesOf[proc] {
+				most = max(most, v.claimedPositions(style, func(bt string) bool { return v.familyOf[bt] == f }))
+			}
+			byFamily[f].minimum += most
+		}
+	}
+	for _, z := range v.plant.Zones {
+		if z.Name != g.Group {
+			continue
+		}
+		for _, s := range z.Positions {
+			if len(s.Admits) == 0 {
+				for _, f := range order {
+					byFamily[f].room++
+				}
 				continue
 			}
-			running := map[string]string{}
-			for k, s := range active {
-				running[k] = s
+			hit := map[string]bool{}
+			for _, t := range v.plant.AdmitsTypes(s.Admits) {
+				hit[v.familyOf[t]] = true
 			}
-			running[proc] = style
-			for _, f := range floors {
-				r := roomLine{style: style, floor: f, carts: cartsByFloor[f], windows: len(windows)}
-				wants := 0
-				for _, l := range v.lines(g, running) {
-					if v.floorOf[l.binType] == f {
-						wants += l.want
-					}
+			for f := range hit {
+				if byFamily[f] != nil {
+					byFamily[f].room++
 				}
-				r.lineside = wants
-				for _, bt := range types {
-					if v.floorOf[bt] == f {
-						r.lineside += positions
-						break
-					}
-				}
-				r.levels = r.lineside
-				for _, src := range g.Sources {
-					if sg, ok := v.groupNamed(src); ok {
-						for _, l := range v.lines(sg, running) {
-							if v.floorOf[l.binType] == f {
-								r.levels += l.want
-							}
-						}
-					}
-				}
-				r.spareZone, r.spare = v.plainOverflow(g, f)
-				past := max(0, r.carts-r.levels)
-				r.toSpare = min(past, r.spare)
-				r.excess = past - r.toSpare
-				r.short = max(0, r.lineside-r.carts)
-				if active[proc] == style {
-					r.seated = min(r.excess, max(0, seededHere[f]-wants))
-				}
-				out = append(out, r)
 			}
 		}
+	}
+	places := map[string]bool{}
+	for _, z := range v.plant.Zones {
+		if z.Name == g.Group {
+			for _, s := range z.Positions {
+				places[s.Name] = true
+			}
+		}
+	}
+	for _, proc := range g.Supports {
+		for _, n := range v.nodesOf[proc] {
+			places[n] = true
+		}
+	}
+	for _, c := range v.plant.Claims {
+		if c.WindowOf != "" && c.OutboundDestination == g.Group {
+			places[c.CoreNode] = true
+		}
+	}
+	for n, bt := range v.cartsAt {
+		if places[n] && byFamily[v.familyOf[bt]] != nil {
+			byFamily[v.familyOf[bt]].carts++
+		}
+	}
+	out := make([]familyLine, 0, len(order))
+	for _, f := range order {
+		l := byFamily[f]
+		l.pool = l.minimum
+		if pool, ok := g.Pools[f]; ok {
+			l.pool = pool
+		}
+		out = append(out, *l)
 	}
 	return out
 }
 
-// reportKanbans prints the kanbans' wants, THE CLOCK and CHANGEOVER ROOM. It
-// fails the check when a kanban starts below its want, or when a pool's rate
-// deficit drains its stock inside the run. The room table is a statement about a
-// changeover, an event of a run rather than its steady state, so it reports and
-// does not fail the command. It counts a floor's carts against a floor's wants and
-// does not know which slots admit which type: plantspec.Slot has no field for that.
+// reportKanbans prints the kanbans' wants, their families and THE CLOCK. It fails the check when a
+// family's file does not hold what its pool says, when a pool will not fit the line and the mix or
+// its slots, when a kanban starts below its want, or when a pool's rate deficit drains its stock
+// inside the run.
 func reportKanbans(plant *plantspec.Plant, plan carrierPlan, rate map[string]float64, runMins float64) bool {
 	if len(plant.Kanbans) == 0 {
 		return true
@@ -348,17 +314,41 @@ func reportKanbans(plant *plantspec.Plant, plan carrierPlan, rate map[string]flo
 	v := newKanbanView(plant)
 	active := v.activeStyles()
 
-	fmt.Printf("\nKANBANS (want = level + cover × supported processes running the type)\n")
-	fmt.Printf("  %-18s %-12s %-6s %-6s %-8s %-6s %-7s %s\n", "KANBAN", "TYPE", "LEVEL", "COVER", "RUNNING", "WANT", "SEEDED", "VERDICT")
+	fmt.Printf("\nKANBANS (want = level + cover, the positions the running styles put on the line)\n")
+	fmt.Printf("  %-18s %-12s %-6s %-6s %-6s %-7s %-6s %s\n", "KANBAN", "TYPE", "LEVEL", "COVER", "WANT", "SEEDED", "HELD", "VERDICT")
 	fmt.Println(strings.Repeat("─", 84))
 	for _, g := range plant.Kanbans {
 		for _, l := range v.lines(g, active) {
 			verdict := "ok"
-			if l.seeded < l.want {
+			if l.seeded+l.held < l.want {
 				ok = false
-				verdict = fmt.Sprintf("BELOW WANT by %d", l.want-l.seeded)
+				verdict = fmt.Sprintf("BELOW WANT by %d", l.want-l.seeded-l.held)
 			}
-			fmt.Printf("  %-18s %-12s %-6d %-6d %-8d %-6d %-7d %s\n", g.Group, l.binType, l.base, l.cover, l.running, l.want, l.seeded, verdict)
+			fmt.Printf("  %-18s %-12s %-6d %-6d %-6d %-7d %-6d %s\n", g.Group, l.binType, l.base, l.cover, l.want, l.seeded, l.held, verdict)
+		}
+	}
+
+	fmt.Printf("\nFAMILIES (pool = carts the loop owns; minimum = mix + each process's most positions; room = slots admitting it)\n")
+	fmt.Printf("  %-18s %-12s %-6s %-8s %-6s %-6s %s\n", "KANBAN", "FAMILY", "POOL", "MINIMUM", "ROOM", "CARTS", "VERDICT")
+	fmt.Println(strings.Repeat("─", 84))
+	for _, g := range plant.Kanbans {
+		for _, f := range v.families(g) {
+			var says []string
+			if f.carts != f.pool {
+				says = append(says, fmt.Sprintf("SEEDS %d OF ITS POOL OF %d", f.carts, f.pool))
+			}
+			if f.pool < f.minimum {
+				says = append(says, fmt.Sprintf("POOL UNDER ITS MINIMUM by %d: the line eats the mix", f.minimum-f.pool))
+			}
+			if f.room < f.pool {
+				says = append(says, fmt.Sprintf("ROOM UNDER ITS POOL by %d: returns cannot all land", f.pool-f.room))
+			}
+			verdict := "ok"
+			if len(says) > 0 {
+				ok = false
+				verdict = strings.Join(says, "; ")
+			}
+			fmt.Printf("  %-18s %-12s %-6d %-8d %-6d %-6d %s\n", g.Group, f.family, f.pool, f.minimum, f.room, f.carts, verdict)
 		}
 	}
 
@@ -382,46 +372,6 @@ func reportKanbans(plant *plantspec.Plant, plan carrierPlan, rate map[string]flo
 	}
 	if len(clock) > 0 {
 		fmt.Printf("  starves first: %s %s, at %.0f sim-min with its returns stopped\n", clock[0].kanban, clock[0].binType, clock[0].mins)
-	}
-
-	printed := false
-	for _, g := range plant.Kanbans {
-		if len(g.Supports) == 0 {
-			continue
-		}
-		rows := v.changeoverRoom(g)
-		if !printed && len(rows) > 0 {
-			printed = true
-			fmt.Printf("\nCHANGEOVER ROOM (CARTS in the kanban, its sources and the positions; LINESIDE = kanban's wants +\n")
-			fmt.Printf("positions; LEVELS = LINESIDE + the sources' levels; SPARE = the slots of a plain overflow, a group\n")
-			fmt.Printf("with no level, counted as room. Reports; a changeover is an event, not the steady state)\n")
-			fmt.Printf("  %-18s %-12s %-8s %-6s %-9s %-7s %-6s %s\n", "KANBAN", "STYLE", "FLOOR", "CARTS", "LINESIDE", "LEVELS", "SPARE", "SAYS")
-			fmt.Println(strings.Repeat("─", 84))
-		}
-		for _, r := range rows {
-			var says []string
-			if r.toSpare > 0 {
-				says = append(says, fmt.Sprintf("%d carts past the levels, settled: in %s once the kanban's surplus can leave; "+
-					"until a source is short it keeps that surplus", r.toSpare, strings.Join(r.spareZone, ",")))
-			}
-			if r.excess > 0 {
-				say := fmt.Sprintf("%d carts past the levels with no room: off the process they park on a window", r.excess)
-				if r.windows > 0 && r.excess >= r.windows {
-					say += fmt.Sprintf(", which is all %d, so the style's fulls have none", r.windows)
-				}
-				if r.seated > 0 {
-					say += fmt.Sprintf("; as seeded %d stand above their want in the kanban", r.seated)
-				}
-				says = append(says, say)
-			}
-			if r.short > 0 {
-				says = append(says, fmt.Sprintf("kanban short %d of its wants and positions: cover over the pool, a standing gap on its card", r.short))
-			}
-			if len(says) == 0 {
-				says = append(says, "fits")
-			}
-			fmt.Printf("  %-18s %-12s %-8s %-6d %-9d %-7d %-6d %s\n", g.Group, r.style, r.floor, r.carts, r.lineside, r.levels, r.spare, strings.Join(says, "; "))
-		}
 	}
 	return ok
 }

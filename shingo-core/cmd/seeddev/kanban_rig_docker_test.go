@@ -57,18 +57,10 @@ const (
 	rigTotes   = "TOTES-45"
 	rig32      = "CART-32"
 
-	// What K's card says for as long as the press runs small and nothing outside K holds one.
-	rigNoSmall = "no empty SMALL-45 outside the group"
-
-	// The settled counts. TestKanbanCost_* assert the like in engine on the cost rig's
-	// shape (kanban_pins_cost_docker_test.go: keeperTickSteady, snapshotBuild,
-	// intakeDoorToASource, parkedArm). Here they are on the plant the runs use, after the
-	// loop has gone round. rigKeeperTickSteady is K whole by hand, the only way this fixture
-	// has nothing short; rigKeeperTickShort is the tick as it runs here. rigIntakeDoor is the
-	// door into K itself, K having no source to send it to.
-	rigKeeperTickSteady = 4
-	rigKeeperTickShort  = 9
-	rigSnapshotBuild    = 10
+	// The settled counts on the plant the runs use, after the loop has gone round. TestKanbanCost_*
+	// assert the like in engine on the cost rig's shape.
+	rigKeeperTickSteady = 3
+	rigSnapshotBuild    = 9
 	rigIntakeDoor       = 8
 	rigParkedArm        = 8
 	// rigClearStatements is the CLEAR door measured at ec95f722 on this plant.
@@ -100,11 +92,17 @@ type kanbanRig struct {
 
 func newKanbanRig(t *testing.T) *kanbanRig {
 	t.Helper()
+	r := newKanbanRigOf(t, kanbanPressPlant(t), []string{"ULN_021", "ULN_022", "ULN_023", "ULN_024"})
+	r.atRest("as seeded")
+	return r
+}
+
+// newKanbanRigOf seeds a rig's plant, on the windows its unloader has.
+func newKanbanRigOf(t *testing.T, plant *plantspec.Plant, windows []string) *kanbanRig {
+	t.Helper()
 	db, dbcfg := testdb.OpenWithConfig(t)
-	plant := kanbanPressPlant(t)
 	testutil.MustNoErr(t, seedCore(db, plant, map[string]int64{}), "seed the rig")
 	seedClaimsMirror(t, db, rigClaimedPlant(plant))
-	applyRigSlotTypes(t, db)
 
 	cdb, counter, err := store.OpenCounting(dbcfg)
 	testutil.MustNoErr(t, err, "open the counting store")
@@ -120,37 +118,12 @@ func newKanbanRig(t *testing.T) *kanbanRig {
 	feed := messaging.NewCoreDataService(cdb, messaging.NewCoreHandler(cdb, nil, "core", "shingo.dispatch", nil),
 		service.EpochAnnounce{})
 	feed.SetGroupLinesFunc(eng.UnloaderGroupLines)
-	windows := []string{"ULN_021", "ULN_022", "ULN_023", "ULN_024"}
 	digest, err := protocol.BinWatchDigest(windows)
 	testutil.MustNoErr(t, err, "watch digest")
 	r := &kanbanRig{t: t, db: db, eng: eng, sim: sim, counter: counter, doors: www.NewDoors(eng), feed: feed,
 		windows: windows, digest: digest}
 	r.tick()
-	r.atRest("as seeded")
 	return r
-}
-
-// applyRigSlotTypes sets each of K's slots' allowed types as the Nodes page's modal does
-// and scripts/kanban-rig.sh apply_slot_types does on the stack: the rows and the mode. The
-// plant file cannot state them (plantspec.Slot).
-func applyRigSlotTypes(t *testing.T, db *store.DB) {
-	t.Helper()
-	ids := map[string]int64{}
-	for slot, types := range rigSlotTypes() {
-		n, err := db.GetNodeByName(slot)
-		testutil.MustNoErr(t, err, "slot "+slot)
-		var allowed []int64
-		for _, code := range types {
-			if _, ok := ids[code]; !ok {
-				bt, err := db.GetBinTypeByCode(code)
-				testutil.MustNoErr(t, err, "type "+code)
-				ids[code] = bt.ID
-			}
-			allowed = append(allowed, ids[code])
-		}
-		testutil.MustNoErr(t, db.SetNodeBinTypes(n.ID, allowed), "types of "+slot)
-		testutil.MustNoErr(t, db.SetNodeProperty(n.ID, "bin_type_mode", "specific"), "mode of "+slot)
-	}
 }
 
 // rigClaimedPlant is the plant as far as the Edge's claims go: a loader's windows carry
@@ -449,24 +422,24 @@ func (r *kanbanRig) cardReads(when string, lines ...rigLine) {
 	}
 }
 
-// atRest is the steady picture on KP-SMALL, on the last tick's cards. K's small reads its
-// want of 6 against its 2: its cover is the 4 carts on the positions, and nothing outside it
-// can source one. K's 32x30 stand 4 over their want in their own slots.
+// atRest is the steady picture on KP-SMALL, on the last tick's cards. K's small wants 6, 2 in K
+// and 4 held on the positions, short of nothing. K's 32x30 stand 4 over their want in their own
+// slots.
 func (r *kanbanRig) atRest(when string) {
 	r.t.Helper()
 	r.cardReads(when,
-		rigLine{rigK, rigSmall, 6, 2, 4, rigNoSmall},
+		rigLine{rigK, rigSmall, 6, 2, 0, ""},
 		rigLine{rigK, rigBig, 2, 2, 0, ""},
 		rigLine{rigK, rigTotes, 2, 2, 0, ""},
 		rigLine{rigK, rig32, 2, 6, -4, ""},
-		rigLine{rigK2, rigSmall, 2, 2, 0, ""},
+		rigLine{rigK2, rigSmall, 3, 2, 0, ""},
 	)
 }
 
-// TestKanbanRig_R1_SteadyLoop: the press's loop on the rig's plant. Each cycle a pair of
-// fulls leaves the positions for the windows and K refills the backs; K then holds none of
-// the running type, the windows' carts are lit small for K and land on a slot that allows
-// them, and K is back at its 2 of 6 with nothing parked. Then the counts on the plant file,
+// TestKanbanRig_R1_SteadyLoop: the press's loop on the rig's plant. Each cycle a pair of fulls
+// leaves the positions for the windows and K refills the backs; K then holds none of the running
+// type, the windows' carts are lit small for K and land on a slot that allows them, and K is
+// back at its 2 with nothing parked. Then the counts on the plant file,
 // after the loop has gone round.
 //
 // RED with the walk lighting nothing (kanban.AssignAcross): the windows' carts light
@@ -487,10 +460,11 @@ func TestKanbanRig_R1_SteadyLoop(t *testing.T) {
 		if got := r.residents(rigK, rigSmall); got != 0 {
 			t.Fatalf("%s: the refills left K %d small, want 0", when, got)
 		}
-		// A keeper tick here changes nothing: nothing outside K holds an empty.
+		// A keeper tick here asks nothing: the family is whole, and the pair at the windows is
+		// what small is short of.
 		r.tick()
 		r.fly()
-		r.cardReads(when+", the pair at the windows", rigLine{rigK, rigSmall, 6, 0, 6, rigNoSmall})
+		r.cardReads(when+", the pair at the windows", rigLine{rigK, rigSmall, 6, 0, 0, "2 at the unloader's windows coming back as " + rigSmall})
 
 		lit := r.lit()
 		carts := r.standing()
@@ -596,13 +570,10 @@ func (r *kanbanRig) counts() {
 	t := r.t
 	t.Helper()
 
-	// K short of what it runs, as it is for as long as the press runs: the tick pays for
-	// its windows, its forecast and, with K's 32x30 above their want, the arm's question of
-	// whether a child is free.
 	stmts := r.countTick()
-	t.Logf("STATEMENTS: keeper tick, K short of small: %d", len(stmts))
-	if len(stmts) != rigKeeperTickShort {
-		t.Errorf("keeper tick, K short = %d statements, want %d\n%s", len(stmts), rigKeeperTickShort, testutil.StatementBreakdown(stmts))
+	t.Logf("STATEMENTS: keeper tick, nothing short: %d", len(stmts))
+	if len(stmts) != rigKeeperTickSteady {
+		t.Errorf("keeper tick = %d statements, want %d\n%s", len(stmts), rigKeeperTickSteady, testutil.StatementBreakdown(stmts))
 	}
 
 	stmts = r.countBuild()
@@ -611,7 +582,7 @@ func (r *kanbanRig) counts() {
 		t.Errorf("snapshot build = %d statements, want %d\n%s", len(stmts), rigSnapshotBuild, testutil.StatementBreakdown(stmts))
 	}
 
-	// A cart off the process, re-typed, K short: the intake door up to the order's birth.
+	// A cart off the process: the intake door up to the order's birth.
 	s := rigSides[0]
 	r.leave(s)
 	w := r.standing()[0]
@@ -627,26 +598,18 @@ func (r *kanbanRig) counts() {
 	r.refill(s)
 	r.fly()
 
-	// K whole by hand: nothing short anywhere, the tick the cost tests name.
-	r.handCarts(rigSmall, "PKB_007", "PKB_008", "PKB_009", "PKB_010")
-	r.tick() // closes K's episode: a tick with something to close is not the one counted
-	stmts = r.countTick()
-	t.Logf("STATEMENTS: keeper tick, nothing short: %d", len(stmts))
-	if len(stmts) != rigKeeperTickSteady {
-		t.Errorf("keeper tick, nothing short = %d statements, want %d\n%s", len(stmts), rigKeeperTickSteady, testutil.StatementBreakdown(stmts))
-	}
-
-	// The same cart's shape parked: K whole, no source, no overflow. A person standing K's
-	// next cart on the empty back leaves K short with nothing else moving, and the pass that
-	// finds it so takes the push: the arm is the pass to the re-aim.
+	// Every slot admitting the family taken: a return parks, visible, as a full group's does.
+	// Standing a cart elsewhere frees one, and the pass that finds it so takes the push: the arm
+	// is the pass to the re-aim.
+	r.fillK()
 	r.leave(s)
 	w = r.standing()[0]
 	parked := r.move(w, rigK, r.clear(w, rigSmall))
 	r.eng.RunFulfillmentScan()
 	got, err := r.db.GetOrder(parked.ID)
 	testutil.MustNoErr(t, err, "the push")
-	if got.Status != protocol.StatusQueued || got.QueueCause != string(dispatch.CauseNGRPAtLevel) {
-		t.Fatalf("the push is %s (%s), want parked at K's level", got.Status, got.QueueCause)
+	if got.Status != protocol.StatusQueued || got.QueueCause != string(dispatch.CauseNGRPFull) {
+		t.Fatalf("the push is %s (%s), want parked with no slot", got.Status, got.QueueCause)
 	}
 	r.byHand(r.oneOf(rigK, rigSmall), s.back)
 	r.settled()
@@ -668,6 +631,16 @@ func (r *kanbanRig) counts() {
 	t.Logf("STATEMENTS: parked arm to the re-aim: %d, the pass %d", arm, len(stmts))
 	if arm != rigParkedArm {
 		t.Errorf("parked arm = %d statements, want %d\n%s", arm, rigParkedArm, testutil.StatementBreakdown(stmts[:arm]))
+	}
+}
+
+// fillK stands a hand cart on every slot of K admitting the family that holds none.
+func (r *kanbanRig) fillK() {
+	r.t.Helper()
+	for i := 1; i <= 10; i++ {
+		if slot := fmt.Sprintf("PKB_%03d", i); r.cartAt(slot) == 0 {
+			r.handCarts(rigSmall, slot)
+		}
 	}
 }
 
@@ -702,40 +675,35 @@ func (r *kanbanRig) byHand(cart int64, to string) {
 	testutil.MustNoErr(r.t, r.db.MoveBinClearingStaging(cart, n.ID, false), "carry to "+to)
 }
 
-// TestKanbanRig_R5_SMIsNotRepaid: K takes a cart from SM, a plain group, by its plant-wide
-// search (it names no source), and no order ever delivers into SM.
-//
-// SKIPPED AT THE FINDING, with the defect in the sentence. K is short by more than the one
-// cart SM holds, and the keeper's forecast answers per type, not per cart
-// (engine/kanban_keeper.go tickKanban's m.forecast, tickLine's !ask.sourceable): createAsks mints
-// the whole gap, so K's 5 short takes 1 cart and leaves 4 retrieve_empty asks queued
-// finder-no-empty-of-type, each holding a free slot and each counted as asked. K then reads 0
-// short with 4 carts missing, and the next cart off the process lights nothing. Below the
-// skip is what the test holds once the asks are one per cart.
+// TestKanbanRig_R5_SMIsNotRepaid: a cart leaves the loop by hand. K's family is one short, so its
+// keeper takes one from SM, a plain group, by its plant-wide search (it names no source), one ask
+// for the one cart it lost, and no order ever delivers into SM.
 func TestKanbanRig_R5_SMIsNotRepaid(t *testing.T) {
 	t.Parallel()
 	r := newKanbanRig(t)
 	r.byHand(r.cartAt("PKB_001"), "KSM_001")
 	r.tick()
-	if got := r.card(rigK, rigSmall); got.Want != 6 || got.Resident != 1 {
-		t.Fatalf("K with one small out = %+v", got)
+	if got := r.card(rigK, rigSmall); got.Want != 6 || got.Resident != 1 || got.Created != 1 {
+		t.Fatalf("K with one small out = %+v, want one ask", got)
 	}
 	r.fly()
 	var fromSM int
-	testutil.MustNoErr(t, r.db.QueryRow(`SELECT count(*) FROM orders WHERE source_node = 'KSM_001' AND status = $1`,
+	testutil.MustNoErr(t, r.db.QueryRow(`SELECT count(*) FROM orders WHERE source_node LIKE 'KSM_%' AND status = $1`,
 		protocol.StatusConfirmed).Scan(&fromSM), "from SM")
 	if fromSM != 1 {
-		t.Errorf("%d orders brought the cart off SM, want 1: %s", fromSM, r.said(r.live()))
+		t.Errorf("%d orders brought a cart off SM, want 1: %s", fromSM, r.said(r.live()))
 	}
-	if got, here := r.residents(rigK, rigSmall), r.cartAt("KSM_001"); got != 2 || here != 0 {
-		t.Errorf("K holds %d small, and SM's slot holds cart %d; want K's 2 and SM empty", got, here)
+	if got := r.residents(rigK, rigSmall); got != 2 {
+		t.Errorf("K holds %d small, want its 2", got)
 	}
 	r.nothingToSM("K took from SM")
 	r.slotsKeepTheirTypes("K took from SM")
-
 	if left := r.live(); len(left) != 0 {
-		r.tick()
-		t.Skipf("FINDING, K's asks past the one cart stand queued: %s; K's card: %s", r.said(left), r.cardsSaid())
+		t.Errorf("asks left past the one cart: %s; K's card: %s", r.said(left), r.cardsSaid())
+	}
+	r.tick()
+	if got := r.card(rigK, rigSmall); got.OriginID != "" || got.Gap > 0 {
+		t.Errorf("K whole again reads %+v, want its episode closed", got)
 	}
 
 	// The next cart off the process is lit for K and goes to K: SM is short of nothing.
@@ -757,13 +725,9 @@ func TestKanbanRig_R5_SMIsNotRepaid(t *testing.T) {
 	r.nothingToSM("the next cart")
 }
 
-// TestKanbanRig_R5_Repayment: with no source and no overflow, repayment is K itself. K
-// over-handed until it is whole: the next cart off the process lights nothing and says so
-// (NoneShort), and it parks named at K. When K is short it leaves.
-//
-// RED with the chooser's park reading K as a full group (plan.Planner.ChoosePush's RoomOnly):
-// the push stands ngrp-full, not at K's level. Checked by mutation. K whole has every 45x48 slot
-// taken, so answering K always is not red here: it finds no slot and parks at the level all the same.
+// TestKanbanRig_R5_Repayment: with no source, repayment is K itself. K over-handed until every
+// slot admitting the family stands taken: the next cart off the process lights nothing and says
+// so (NoneShort), and it parks named at K as a full group's does. A slot freed, it lands.
 func TestKanbanRig_R5_Repayment(t *testing.T) {
 	t.Parallel()
 	r := newKanbanRig(t)
@@ -771,7 +735,7 @@ func TestKanbanRig_R5_Repayment(t *testing.T) {
 
 	r.handCarts(rigSmall, "PKB_007", "PKB_008", "PKB_009", "PKB_010")
 	r.tick()
-	r.cardReads("K whole by hand", rigLine{rigK, rigSmall, 6, 6, 0, ""})
+	r.cardReads("K over-handed", rigLine{rigK, rigSmall, 6, 6, -4, ""})
 
 	r.leave(s)
 	carts := r.standing()
@@ -782,20 +746,20 @@ func TestKanbanRig_R5_Repayment(t *testing.T) {
 		t.Errorf("the cart with nothing short lit %+v, want its line to say none short", a)
 	}
 	push := r.tap(carts[0], rigK, "")
-	if push.Status != protocol.StatusQueued || push.QueueCause != string(dispatch.CauseNGRPAtLevel) || push.DeliveryNode != rigK {
-		t.Errorf("the push is %s to %s (%s), want parked named at K", push.Status, push.DeliveryNode, push.QueueCause)
+	if push.Status != protocol.StatusQueued || push.QueueCause != string(dispatch.CauseNGRPFull) || push.DeliveryNode != rigK {
+		t.Errorf("the push is %s to %s (%s), want parked named at K, no slot", push.Status, push.DeliveryNode, push.QueueCause)
 	}
 	r.eng.RunFulfillmentScan()
 	again, err := r.db.GetOrder(push.ID)
 	testutil.MustNoErr(t, err, "the push")
 	if again.Status != protocol.StatusQueued {
-		t.Errorf("a pass took the push with K whole: %s to %s", again.Status, again.DeliveryNode)
+		t.Errorf("a pass took the push with no slot: %s to %s", again.Status, again.DeliveryNode)
 	}
 	if got := len(r.standing()); got != 1 {
 		t.Errorf("%d carts on the windows, want the parked one", got)
 	}
 
-	// The refill leaves K short: the parked push is taken on the next pass, and K whole.
+	// The refill leaves a slot free: the parked push is taken on the next pass.
 	r.refill(s)
 	r.fly()
 	again, err = r.db.GetOrder(push.ID)
@@ -825,9 +789,8 @@ func (r *kanbanRig) openChangeover(part string) string {
 	return id
 }
 
-// TestKanbanRig_WalkCounts logs the statements of a keeper tick, a snapshot build and the
-// intake door on the fixture in the four states of the walk (scripts/kanban-rig.sh W). It
-// asserts nothing past running: the numbers are the hand-back's. Each state's first tick
+// TestKanbanRig_WalkCounts holds the statements of a keeper tick, a snapshot build and the
+// intake door to their budgets on the fixture in the four states of the walk. Each state's first tick
 // pays once for what the state changed (an episode opened or closed), so both are logged.
 //
 // THE STATES ARE SET, NOT DRIVEN: carts are landed by hand as the walk would have left them
@@ -847,6 +810,9 @@ func TestKanbanRig_WalkCounts(t *testing.T) {
 			t.Logf("WALK %s: the settled tick\n%s", state, testutil.StatementBreakdown(settled))
 		}
 		t.Logf("WALK %s: cards %s", state, r.cardsSaid())
+		if len(settled) > 4 || len(build) > 10 || len(door) > 8 {
+			t.Errorf("WALK %s: over budget: tick %d of 4, build %d of 10, door %d of 8\n%s", state, len(settled), len(build), len(door), testutil.StatementBreakdown(door))
+		}
 	}
 	s := rigSides[0]
 
@@ -945,4 +911,35 @@ func (r *kanbanRig) cardsSaid() string {
 		}
 	}
 	return strings.Join(out, "; ")
+}
+
+// TestKanbanRig_FivePressSteady: plants/kanban-press5.yaml on its one kanban: steady, each press
+// lets a pair go and takes a pair back, the family stays whole, and the counts are the one-press
+// counts whatever the presses.
+func TestKanbanRig_FivePressSteady(t *testing.T) {
+	t.Parallel()
+	windows := []string{"ULN_501", "ULN_502", "ULN_503", "ULN_504", "ULN_505", "ULN_506", "ULN_507", "ULN_508", "ULN_509", "ULN_510"}
+	plant, err := plantspec.Load("../../../plants/kanban-press5.yaml")
+	testutil.MustNoErr(t, err, "the plant file")
+	r := newKanbanRigOf(t, plant, windows)
+	r.settled()
+	const k = "P5-KANBAN"
+	line := func() engine.KanbanLineState { return r.card(k, rigSmall) }
+	if got := line(); got.Want != 22 || got.Resident != 2 || got.Gap != 0 || got.Held != 20 {
+		t.Fatalf("steady: %+v, want 22 wanted, 2 standing, 20 on the line, short 0", got)
+	}
+	if stmts := r.countTick(); len(stmts) > 3 {
+		t.Errorf("tick = %d statements on five presses\n%s", len(stmts), testutil.StatementBreakdown(stmts))
+	}
+	var asked int
+	testutil.MustNoErr(t, r.db.QueryRow(`SELECT count(*) FROM orders`).Scan(&asked), "orders")
+	if asked != 0 {
+		t.Errorf("%d orders with every family whole: %s", asked, r.said(r.live()))
+	}
+	families := r.eng.KanbanFamilyStates()
+	for _, f := range families {
+		if f.GroupNode == k && f.Found != f.Pool {
+			t.Errorf("%s: found %d of its pool %d", f.Family, f.Found, f.Pool)
+		}
+	}
 }

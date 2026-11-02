@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"shingocore/domain"
+	"shingocore/kanban"
 	"shingocore/store"
 	"shingocore/store/loaders"
 )
@@ -108,13 +109,9 @@ func (s *NodeService) ValidateKanban(cfg KanbanConfig) (KanbanCheck, error) {
 		return chk, fmt.Errorf("read children of %s: %w", groupName, err)
 	}
 	var nested []string
-	enabledChildren := 0
 	for _, c := range children {
 		if c.IsSynthetic || c.NodeTypeCode == "LANE" {
 			nested = append(nested, c.Name)
-		}
-		if c.Enabled {
-			enabledChildren++
 		}
 	}
 	if len(nested) > 0 && (len(cfg.Levels) > 0 || strings.TrimSpace(cfg.MaintenanceStation) != "") {
@@ -145,13 +142,6 @@ func (s *NodeService) ValidateKanban(cfg KanbanConfig) (KanbanCheck, error) {
 	}
 
 	for _, l := range cfg.Levels {
-		// The episode key is `mnt|<group>|<type code>`, and a code carrying the
-		// separator would produce a key that parses back into different
-		// components than it was built from. Refused at the only point where a
-		// person can still choose a different code.
-		if strings.Contains(l.BinTypeCode, "|") {
-			refuse("carrier type %q contains a %q, which cannot be used in a kanban level", l.BinTypeCode, "|")
-		}
 
 		// A declared level nothing can hold is a permanent, silent shortfall:
 		// the keeper would ask forever and every placement would be refused.
@@ -161,15 +151,14 @@ func (s *NodeService) ValidateKanban(cfg KanbanConfig) (KanbanCheck, error) {
 		}
 	}
 
-	chk.Warnings = append(chk.Warnings, roomWarnings(cfg, groupName, enabledChildren)...)
+	if err := s.familyRefusal(cfg, refuse); err != nil {
+		return chk, err
+	}
 
 	// ── An unloader's outbound, and where its repayments can go ──────────────
 	feeding, err := s.unloadersSendingTo(groupName)
 	if err != nil {
 		return chk, err
-	}
-	if msg := outboundWithoutOverflow(cfg, groupName, feeding); msg != "" {
-		warn("%s", msg)
 	}
 	repay, err := s.repaymentWarnings(cfg, groupName, len(feeding) > 0)
 	if err != nil {
@@ -202,44 +191,6 @@ func (s *NodeService) ValidateKanban(cfg KanbanConfig) (KanbanCheck, error) {
 	return chk, nil
 }
 
-// roomWarnings is the group's room against what its levels declare: more than it
-// can hold, or no room for a return. Neither refuses: a plant can want either,
-// and the card shows the want against the enabled positions with what cannot be
-// covered. Past the enabled positions the level is not met while it stands.
-// Exactly at them the level can be held, but it leaves the unloader nowhere to
-// put the next carrier it drains. Pin:
-// TestKanbanSave_LevelsAndTheUnloaderOutbound.
-//
-// The levels and the tops & bottoms rows (layer wants at 0) are counted
-// together: each is a line of its own that a cart stands in, and neither takes
-// the other's room (kanban.AtLevel). Heights of 1 or more are not
-// counted; they are the stack level said by height.
-func roomWarnings(cfg KanbanConfig, groupName string, enabledChildren int) []string {
-	total, topsAndBottoms := 0, 0
-	for _, l := range cfg.Levels {
-		total += l.Want
-	}
-	for _, w := range cfg.LayerWants {
-		if w.Layers == 0 {
-			topsAndBottoms += w.Want
-		}
-	}
-	total += topsAndBottoms
-	carriers := fmt.Sprintf("%d carriers", total)
-	if topsAndBottoms > 0 {
-		carriers = fmt.Sprintf("%d carriers (%d of them tops & bottoms)", total, topsAndBottoms)
-	}
-	switch {
-	case total > enabledChildren:
-		return []string{fmt.Sprintf("%s declares %s across %d enabled position%s — more than it can hold, so %d cannot be covered",
-			groupName, carriers, enabledChildren, plural(enabledChildren, "", "s"), total-enabledChildren)}
-	case enabledChildren > 0 && total == enabledChildren:
-		return []string{fmt.Sprintf("%s declares %s across %d position%s — nothing is left free for a carrier coming back in",
-			groupName, carriers, enabledChildren, plural(enabledChildren, "", "s"))}
-	}
-	return nil
-}
-
 // sourceWarnings judges a kanban's sources: a source is not the kanban and is
 // listed once (refuse), and a lineside kanban's keeper never takes from another
 // kanban that has supports of its own, which is said here and never refused.
@@ -268,30 +219,6 @@ func (s *NodeService) sourceWarnings(cfg KanbanConfig, groupName string, refuse 
 	return warnings
 }
 
-// outboundWithoutOverflow is the warning for levels on a live unloader's outbound
-// with a type that has no overflow, or blank. It is said and never refused: a plant
-// can want the backpressure.
-//
-// A live unloader that sends its empties to the group has its push parked once the
-// group and its sources are whole (plan.Planner.ChoosePush), and the cart stays on
-// its window, unless an overflow destination takes it. Pin:
-// TestKanbanSave_LevelsAndTheUnloaderOutbound.
-func outboundWithoutOverflow(cfg KanbanConfig, groupName string, feeding []string) string {
-	if len(cfg.Levels) == 0 || len(feeding) == 0 || strings.TrimSpace(cfg.OverflowDestination) != "" {
-		return ""
-	}
-	everyType := true
-	for _, l := range cfg.Levels {
-		everyType = everyType && l.OverflowNode != ""
-	}
-	if everyType {
-		return ""
-	}
-	return fmt.Sprintf("%s sends its empties to %s, which declares a level and has no overflow destination — "+
-		"once the group and its sources are whole the empties wait on the unloader's windows; set an overflow destination",
-		strings.Join(feeding, ", "), groupName)
-}
-
 // unloadersSendingTo names the live unloaders whose outbound is the group.
 func (s *NodeService) unloadersSendingTo(groupName string) ([]string, error) {
 	all, err := s.db.ListLoaders()
@@ -318,18 +245,15 @@ func (s *NodeService) unloadersSendingTo(groupName string) ([]string, error) {
 // repaymentWarnings says what the chooser cannot do for each type the kanban declares
 // (plan.Planner.ChoosePush). Words, never refusals: a plant can want any of it.
 //
-//   - A source that declares no level of the type is short of nothing, so a cart can
-//     repay it only as the type's overflow. Sources of another floor say nothing
-//     of the type and are left out: a 32 x 30 zone is no lender of a 45 x 48 cart. A
-//     source with no level at all can hold any floor, so it is on every type's.
-//   - Two such sources: nothing can repay both, and one drains.
-//   - A type with no source on its floor and no overflow: a cart of it, once the group
-//     is whole, stays on its window. Said of a kanban a process draws from or an
-//     unloader sends to; one with neither (a zone that only lends) has nothing to say.
+//   - A source that declares no level of the type is short of nothing, so a cart of it never
+//     repays that source. Sources of another family say nothing of the type and are left out:
+//     a 32 x 30 zone is no lender of a 45 x 48 cart. A source with no level at all can hold any
+//     family, so it is on every type's.
+//   - A type with no source of its family: a cart of it, with no slot left here, waits on its
+//     window. Said of a kanban a process draws from or an unloader sends to; one with neither
+//     (a zone that only lends) has nothing to say.
 //
-// "ON A FLOOR" IS THE WALK'S RULE (engine windowWalk.fits): a type with no size is on
-// every floor as a cart, and on none as the thing a sized cart is asked for. Pin:
-// TestKanbanSave_WhatTheChooserCannotRepay.
+// Pin: TestKanbanSave_WhatTheChooserCannotRepay.
 func (s *NodeService) repaymentWarnings(cfg KanbanConfig, groupName string, feeding bool) ([]string, error) {
 	if len(cfg.Levels) == 0 {
 		return nil, nil
@@ -338,19 +262,9 @@ func (s *NodeService) repaymentWarnings(cfg KanbanConfig, groupName string, feed
 	if err != nil {
 		return nil, fmt.Errorf("read bin types for %s: %w", groupName, err)
 	}
-	sizes := make(map[string]domain.Footprint, len(types))
+	family := make(map[string]int64, len(types))
 	for _, t := range types {
-		if fs, ok := t.Footprint(); ok {
-			sizes[t.Code] = fs
-		}
-	}
-	fits := func(cart, asked string) bool {
-		own, ok := sizes[cart]
-		if !ok {
-			return true
-		}
-		fs, ok := sizes[asked]
-		return ok && fs == own
+		family[t.Code] = t.FamilyID
 	}
 	sourceLevels := make([][]store.KanbanLevel, len(cfg.Sources))
 	for i, src := range cfg.Sources {
@@ -360,31 +274,25 @@ func (s *NodeService) repaymentWarnings(cfg KanbanConfig, groupName string, feed
 	}
 	var out []string
 	for _, l := range cfg.Levels {
-		routed := l.OverflowNode != "" || strings.TrimSpace(cfg.OverflowDestination) != ""
-		var unrepaid []string
+		routed := false
 		for i, src := range cfg.Sources {
-			declares, onFloor := false, len(sourceLevels[i]) == 0
+			declares, ofFamily := false, len(sourceLevels[i]) == 0
 			for _, sl := range sourceLevels[i] {
 				declares = declares || sl.BinTypeID == l.BinTypeID
-				onFloor = onFloor || fits(l.BinTypeCode, sl.BinTypeCode)
+				ofFamily = ofFamily || kanban.SameFamily(family[l.BinTypeCode], family[sl.BinTypeCode])
 			}
 			if declares {
 				routed = true
 				continue
 			}
-			if onFloor {
+			if ofFamily {
 				routed = true
-				unrepaid = append(unrepaid, src.SourceNodeName)
-				out = append(out, fmt.Sprintf("%s declares no level for %s — repaid only as %s's overflow",
-					src.SourceNodeName, l.BinTypeCode, l.BinTypeCode))
+				out = append(out, fmt.Sprintf("%s declares no level for %s — a cart of it never repays that source",
+					src.SourceNodeName, l.BinTypeCode))
 			}
 		}
-		if len(unrepaid) >= 2 {
-			out = append(out, fmt.Sprintf("%s declare no level for %s — nothing can repay both; one drains",
-				strings.Join(unrepaid, " and "), l.BinTypeCode))
-		}
-		if !routed && (feeding || len(cfg.Supports) > 0) {
-			out = append(out, fmt.Sprintf("%s declares %s with no source or overflow for it — once the group is whole a cart of it stays on its window",
+		if !routed && len(cfg.Sources) > 0 && (feeding || len(cfg.Supports) > 0) {
+			out = append(out, fmt.Sprintf("%s declares %s with no source of its family — with no slot left here a cart of it waits on its window",
 				groupName, l.BinTypeCode))
 		}
 	}

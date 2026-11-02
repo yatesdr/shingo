@@ -1159,6 +1159,7 @@ function openEditBTModal(btn) {
   document.getElementById('bt-edit-id').value = d.id;
   document.getElementById('bt-edit-code').value = d.code;
   document.getElementById('bt-edit-desc').value = d.desc || '';
+  document.getElementById('bt-edit-family').value = d.family || '';
   document.getElementById('bt-edit-w').value = d.width && d.width !== '0' ? d.width : '';
   document.getElementById('bt-edit-h').value = d.height && d.height !== '0' ? d.height : '';
   document.getElementById('bt-edit-l').value = d.length && d.length !== '0' ? d.length : '';

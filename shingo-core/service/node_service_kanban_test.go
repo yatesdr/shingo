@@ -187,24 +187,6 @@ func TestKanban_UnrestrictedChildAcceptsAnyLevel(t *testing.T) {
 	}
 }
 
-// The episode key is `mnt|<group>|<type code>`, so a code carrying the separator
-// would parse back into different components than it was built from. Refused at
-// the only point where a person can still choose a different code.
-func TestKanban_RefusesPipeInBinTypeCode(t *testing.T) {
-	t.Parallel()
-	db := testDB(t)
-	svc := NewNodeService(db)
-
-	grpID, _ := mgGroup(t, db, "GRP-PIPE", 2)
-	bad := mgBinType(t, db, "45x58|32")
-
-	chk, err := svc.SetKanbanLevel(grpID, bad, 1)
-	testutil.MustNoErr(t, err, "SetKanbanLevel")
-	if !mgRefusedBy(chk, "45x58|32") {
-		t.Fatalf("refusals = %v, want one naming the carrier code with the separator", chk.Refusals)
-	}
-}
-
 // A level save leaves a group's bin_type_mode alone, and the group's mode does not
 // reach its children: a child's types resolve by the child's own mode and the
 // nearest ancestor with rows, so an ancestor's list governs the children whatever

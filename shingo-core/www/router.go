@@ -268,6 +268,7 @@ func NewRouter(eng *engine.Engine, doors *Doors, dbg *debuglog.Logger) (http.Han
 			// public for the same reason /nodes/detail is — it is what the node
 			// IS, and the shop floor gets to look at that.
 			r.Get("/nodes/kanban", h.apiKanban)
+			r.Get("/nodes/kanban/families", h.apiKanbanFamilies)
 			r.Get("/nodes/process-options", h.apiKanbanProcessOptions)
 			r.Get("/nodestate", h.apiNodeState)
 			// Loaders are part of the node layout (shop-floor read access) — the
@@ -452,10 +453,9 @@ func NewRouter(eng *engine.Engine, doors *Doors, dbg *debuglog.Logger) (http.Han
 				// clearing impossible.
 				r.Post("/nodes/kanban/check-types", h.apiKanbanCheckTypes)
 				r.Post("/nodes/kanban/settings", h.apiKanbanSettingsSet)
+				r.Post("/nodes/kanban/pools", h.apiKanbanPoolsSet)
 				r.Post("/nodes/kanban/level", h.apiKanbanLevelSet)
 				r.Post("/nodes/kanban/level/remove", h.apiKanbanLevelRemove)
-				r.Post("/nodes/kanban/level/overflow", h.apiKanbanLevelOverflowSet)
-				r.Post("/nodes/kanban/cover", h.apiKanbanCoverSet)
 				r.Post("/nodes/kanban/sources", h.apiKanbanSourcesSet)
 				r.Post("/nodes/kanban/supports", h.apiKanbanSupportsSet)
 				r.Post("/nodes/properties/delete", h.apiNodePropertyDelete)

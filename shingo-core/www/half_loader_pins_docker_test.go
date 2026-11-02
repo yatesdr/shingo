@@ -93,6 +93,7 @@ func TestPinBinClear_DeclaredTypeOnAFullBinAtAConsumeLoaderWindow_StampsIt(t *te
 	sd := testdb.SetupStandardData(t, db)
 	win := halfLoaderWindow(t, db, sd, "HLPIN-S1-W1")
 	stage1 := mintBareType(t, db, "HLPIN-S1-CARRIER")
+	clearsWithin(t, db, sd.BinType.Code, stage1.Code)
 	bin := testdb.CreateBinAtNode(t, db, sd.Payload.Code, win.ID, "BIN-HLPIN-S1")
 
 	rec := postJSON(t, h.apiBinClear, "/api/telemetry/bin-clear",
@@ -127,6 +128,7 @@ func TestPinBinClear_ReClearOfAnEmptyCarrier_RestampsItsType(t *testing.T) {
 	win := halfLoaderWindow(t, db, sd, "HLPIN-S2-W1")
 	stage1 := mintBinType(t, db, "HLPIN-S2-FROM")
 	realType := mintBinType(t, db, "HLPIN-S2-REAL")
+	clearsWithin(t, db, stage1.Code, realType.Code)
 	bin := testdb.CreateBinAtNode(t, db, "", win.ID, "BIN-HLPIN-S2")
 	_, err := db.Exec(`UPDATE bins SET bin_type_id=$1 WHERE id=$2`, stage1.ID, bin.ID)
 	testutil.MustNoErr(t, err, "retype to the from carrier")

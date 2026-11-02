@@ -2,9 +2,9 @@ import { apiGet, apiPost, delegateActions, escapeHtml, toast, uiConfirm } from '
 
 // Kanban section of the node group settings modal.
 //
-// A kanban is a node group whose EMPTY-CARRIER level Core holds: so many
-// unclaimed carriers of each declared type, near the equipment that consumes
-// them. A group with a level is one; there is no switch. This module owns the
+// A kanban is a node group that declares a level per bin type and a pool per carrier
+// family: Core counts its loop, admits every cart of the loop, fetches only what the loop
+// has lost. A group with a level is one; there is no switch. This module owns the
 // section's whole lifecycle — load, render, stage, save.
 //
 // NOT "buffer" in any string a person reads. A loader window can have
@@ -30,14 +30,17 @@ var _kanban = null;
 function blank(nodeID) {
   return {
     nodeID: nodeID,
-    // levels: [{bin_type_id, bin_type_code, want, overflow_node_id,
-    // layer_wants: [{layers, want}]}] as edited. overflow_node_id is the type's own
-    // overflow, 0 for the group's. layer_wants are the level's wanted heights, told
+    // levels: [{bin_type_id, bin_type_code, want,
+    // layer_wants: [{layers, want}]}] as edited. layer_wants are the level's wanted heights, told
     // to the unloader; the one at 0 layers is the type's tops & bottoms row, a cap
     // of its own beside the level (a tote type only).
     levels: [],
     // savedLevels: what the server had, for the remove-diff on save.
     savedLevels: [],
+    // pools: {family_id: pool} as edited on the family table, savedPools what the server had.
+    // Only a changed pool is posted: an untouched one stands at whatever Core says.
+    pools: {},
+    savedPools: {},
     // sources: [{id, name}], the groups the keeper may pull from, first to last.
     sources: [],
     // processes: [{process_id, nodes:[{id,name}]}] — the picker's contents.
@@ -88,7 +91,6 @@ export function renderKanbanSection(isGroupType, nodeID) {
     _kanban.levels = (cfg.levels || []).map(function (l) {
       return {
         bin_type_id: Number(l.bin_type_id), bin_type_code: l.bin_type_code, want: Number(l.want),
-        overflow_node_id: Number(l.overflow_node_id || 0), overflow_node: l.overflow_node || '',
         layer_wants: (cfg.layer_wants || []).filter(function (w) {
           return Number(w.bin_type_id) === Number(l.bin_type_id);
         }).map(function (w) { return { layers: Number(w.layers), want: Number(w.want) }; })
@@ -115,7 +117,6 @@ export function renderKanbanSection(isGroupType, nodeID) {
     _kanban.orphans = Array.from(storedNodes).filter(function (id) { return !claimed.has(id); });
 
     document.getElementById('nf-kanban-strict').checked = !!cfg.strict_sourcing;
-    document.getElementById('nf-kanban-cover').value = String(Number(cfg.running_cover || 0));
     fillStations(cfg.maintenance_station || '');
     fillOverflow(cfg.overflow_destination || '');
     renderLevels();
@@ -134,7 +135,7 @@ export function renderKanbanSection(isGroupType, nodeID) {
 
 // savedLevel is what a save diffs a level line against.
 function savedLevel(l) {
-  return { bin_type_id: l.bin_type_id, want: l.want, overflow_node_id: l.overflow_node_id };
+  return { bin_type_id: l.bin_type_id, want: l.want };
 }
 
 // setAlgoNote annotates the ASRS/algorithm controls instead of hiding them. They
@@ -200,26 +201,6 @@ function fillOverflow(current) {
   sel.value = current;
 }
 
-// levelOverflowSelect is one level's own overflow: the group's by default, or a
-// group of its own. A chosen group that is not on this page still shows, so the
-// next Save does not clear it.
-function levelOverflowSelect(l) {
-  var groups = otherGroups();
-  var html = '<option value="0">Overflow: the group\'s</option>';
-  var found = false;
-  groups.forEach(function (g) {
-    if (g.id === l.overflow_node_id) found = true;
-    html += '<option value="' + g.id + '"' + (g.id === l.overflow_node_id ? ' selected' : '') + '>Overflow: '
-      + escapeHtml(g.name) + '</option>';
-  });
-  if (l.overflow_node_id && !found) {
-    html += '<option value="' + l.overflow_node_id + '" selected>Overflow: '
-      + escapeHtml(l.overflow_node || String(l.overflow_node_id)) + ' (not on this page)</option>';
-  }
-  return '<select class="form-input" aria-label="Overflow for ' + escapeHtml(l.bin_type_code) + '"'
-    + ' data-action-change="setKanbanLevelOverflow" data-bin-type-id="' + l.bin_type_id + '">' + html + '</select>';
-}
-
 // renderLevels draws the declared level, one row per carrier type with its
 // wanted heights under it, plus the add row. Same controls and the same vocabulary as the loaders page's carrier mix —
 // but the two are not the same promise: a mix is a preference bounded by the
@@ -228,6 +209,9 @@ function renderLevels() {
   var host = document.getElementById('nf-kanban-levels');
   if (!host || !_kanban) return;
   setAlgoNote(_kanban.levels.length > 0);
+  // A kanban has no overflow: a sized loop always has a slot. A plain group keeps its field.
+  var overflowBox = document.getElementById('nf-kanban-overflow-box');
+  if (overflowBox) overflowBox.classList.toggle('hide', _kanban.levels.length > 0);
   var declared = {};
   _kanban.levels.forEach(function (l) { declared[l.bin_type_id] = true; });
 
@@ -237,7 +221,6 @@ function renderLevels() {
       + '<input type="number" class="form-input loader-mix-want" min="0" value="' + Number(l.want) + '"'
       + ' aria-label="How many ' + escapeHtml(l.bin_type_code) + ' to keep on hand"'
       + ' data-action-change="setKanbanWant" data-bin-type-id="' + l.bin_type_id + '">'
-      + levelOverflowSelect(l)
       + '<button type="button" class="btn btn-sm" title="Remove"'
       + ' data-action="removeKanbanLevel" data-bin-type-id="' + l.bin_type_id + '">&times;</button>'
       + '</div>'
@@ -367,7 +350,7 @@ export function addKanbanLevel() {
   var n = Number(want && want.value);
   if (!(n >= 0)) n = 0;
   var t = _allBinTypes.find(function (x) { return Number(x.id) === id; });
-  _kanban.levels.push({ bin_type_id: id, bin_type_code: (t && (t.code || t.label)) || String(id), want: n, overflow_node_id: 0, layer_wants: [] });
+  _kanban.levels.push({ bin_type_id: id, bin_type_code: (t && (t.code || t.label)) || String(id), want: n, layer_wants: [] });
   _kanban.levels.sort(function (a, b) { return a.bin_type_code.localeCompare(b.bin_type_code); });
   renderLevels();
 }
@@ -388,11 +371,6 @@ export function removeKanbanLevel(el) {
   var id = Number(el.getAttribute('data-bin-type-id'));
   _kanban.levels = _kanban.levels.filter(function (l) { return l.bin_type_id !== id; });
   renderLevels();
-}
-
-export function setKanbanLevelOverflow(el) {
-  var l = levelByID(Number(el.getAttribute('data-bin-type-id')));
-  if (l) l.overflow_node_id = Number(el.value) || 0;
 }
 
 // moveInList returns list with the entry at index i moved by delta, a copy; the
@@ -612,8 +590,6 @@ export async function saveKanban() {
   var strict = document.getElementById('nf-kanban-strict').checked;
   var station = document.getElementById('nf-kanban-station').value;
   var overflow = document.getElementById('nf-kanban-overflow').value;
-  var cover = Number(document.getElementById('nf-kanban-cover').value);
-  if (!(cover >= 0) || Math.floor(cover) !== cover) cover = 0;
 
   // Warnings collect across the whole flush and are shown once. Four toasts for
   // one Save is four things to dismiss and one thing to read.
@@ -634,7 +610,6 @@ export async function saveKanban() {
       maintenance_station: station,
       overflow_destination: overflow
     }));
-    collect(await apiPost('/api/nodes/kanban/cover', { group_node_id: nodeID, running_cover: cover }));
 
     // Removals come off the DIFF against what the server had. Deleting every row
     // and re-adding would be simpler and would also, for a moment, leave a
@@ -657,12 +632,6 @@ export async function saveKanban() {
         group_node_id: nodeID, bin_type_id: l.bin_type_id, want: l.want,
         layer_wants: l.layer_wants.map(function (w) { return { layers: w.layers, want: w.want }; })
       }));
-      var had = _kanban.savedLevels.find(function (s) { return s.bin_type_id === l.bin_type_id; });
-      if (l.overflow_node_id !== (had ? had.overflow_node_id : 0)) {
-        collect(await apiPost('/api/nodes/kanban/level/overflow', {
-          group_node_id: nodeID, bin_type_id: l.bin_type_id, overflow_node_id: l.overflow_node_id
-        }));
-      }
     }
 
     var nodeIDs = _kanban.orphans.slice();
@@ -676,6 +645,12 @@ export async function saveKanban() {
       { group_node_id: nodeID, process_node_ids: nodeIDs }));
     collect(await apiPost('/api/nodes/kanban/sources',
       { group_node_id: nodeID, source_node_ids: _kanban.sources.map(function (s) { return s.id; }) }));
+    var changed = Object.keys(_kanban.pools).filter(function (id) { return _kanban.pools[id] !== _kanban.savedPools[id]; })
+      .map(function (id) { return { family_id: Number(id), pool: _kanban.pools[id] }; });
+    if (changed.length) {
+      collect(await apiPost('/api/nodes/kanban/pools', { group_node_id: nodeID, pools: changed }));
+      _kanban.savedPools = Object.assign({}, _kanban.pools);
+    }
 
     // The staged state now matches the server, so a second Save without
     // reopening does not re-issue removals for rows already gone.
@@ -710,7 +685,7 @@ delegateActions(document.body, {
   removeKanbanLevel,
   removeKanbanSource,
   setKanbanLayerWant,
-  setKanbanLevelOverflow,
+  setKanbanPool,
   setKanbanTopsAndBottoms,
   setKanbanWant,
   toggleKanbanSupport
@@ -718,11 +693,11 @@ delegateActions(document.body, {
 
 // ── The keeper's levels (moved from /inventory, owner 2026-10-29) ──────────
 //
-// The keeper's last tick for one kanban, one row per carrier type: level − here −
-// asked − coming = short, printed term by term rather than collapsed into a status,
-// because a group that is short and quiet has two opposite explanations — asks
-// already out, or carriers already coming — and a single pill hides which. The level
-// is the effective want, its base and the processes driving it beside it.
+// The keeper's last tick for one kanban. Per family: pool, minimum, where its carts are, the
+// room that admits it, and the floaters. Per type: want − here − on the line − asked − coming −
+// at the windows = short, printed term by term rather than collapsed into a status, because a
+// group that is short and quiet has opposite explanations and a single pill hides which. The
+// want is the type's level and cover, its level and the processes driving it beside it.
 //
 // HIDDEN when there is nothing to say: no tick for this group yet, or it is
 // not a kanban. Read for a viewer with no session too: the gate removes a
@@ -735,14 +710,18 @@ delegateActions(document.body, {
 // itself.
 var _keeperFor = '';
 
-export function renderKeeperLevels(groupName) {
+export function renderKeeperLevels(groupName, nodeID) {
   var box = document.getElementById('keeper-levels');
   var body = document.getElementById('keeper-levels-body');
   var note = document.getElementById('keeper-levels-note');
+  var families = document.getElementById('keeper-families-body');
+  var familyNote = document.getElementById('keeper-families-note');
   if (!box || !body) return;
   box.classList.add('hide');
   body.innerHTML = '';
   if (note) note.innerHTML = '';
+  if (families) families.innerHTML = '';
+  if (familyNote) familyNote.innerHTML = '';
   _keeperFor = groupName || '';
   if (!groupName) return;
   apiGet('/api/nodes/kanban/levels').then(function (all) {
@@ -755,10 +734,93 @@ export function renderKeeperLevels(groupName) {
     body.innerHTML = rows.map(keeperRowHtml).join('');
     if (note) note.innerHTML = keeperNoteHtml(rows);
     box.classList.remove('hide');
+    if (nodeID) renderKanbanFamilies(groupName, nodeID);
   }).catch(function (err) {
     // A failed read leaves the block hidden: the level editor above still works.
     console.warn('keeper levels', err);
   });
+}
+
+// renderKanbanFamilies draws the family table beside the type table: the keeper's last tick
+// for where the carts are, the page's read for pool, minimum and room, joined on the family.
+function renderKanbanFamilies(groupName, nodeID) {
+  var body = document.getElementById('keeper-families-body');
+  var note = document.getElementById('keeper-families-note');
+  if (!body) return;
+  apiGet('/api/nodes/kanban/families?group_node_id=' + nodeID).then(function (res) {
+    if (_keeperFor !== groupName) return; // the modal moved on
+    var rows = mergeFamilies((res && res.families) || [], (res && res.found) || []);
+    if (_kanban && _kanban.nodeID === Number(nodeID)) {
+      rows.forEach(function (r) {
+        _kanban.pools[r.family_id] = r.pool;
+        _kanban.savedPools[r.family_id] = r.pool;
+      });
+    }
+    var editable = !!(_kanban && _kanban.nodeID === Number(nodeID));
+    body.innerHTML = rows.map(function (r) { return familyRowHtml(r, editable); }).join('');
+    if (note) note.innerHTML = familyNoteHtml(rows);
+  }).catch(function (err) {
+    // The type table above stands without it.
+    console.warn('kanban families', err);
+  });
+}
+
+// mergeFamilies joins the two reads on the family: rows from the save's arithmetic, and found
+// from the tick. A family standing in the loop that the kanban does not level comes from the
+// tick alone, with a pool of 0: every cart of it is a stranger.
+export function mergeFamilies(rows, found) {
+  var out = [];
+  var seen = {};
+  rows.forEach(function (r) {
+    var f = found.find(function (x) { return x.family_id === r.family_id; }) || {};
+    seen[r.family_id] = true;
+    out.push(Object.assign({}, f, r));
+  });
+  found.forEach(function (f) {
+    if (!seen[f.family_id]) out.push(Object.assign({ room: 0, minimum: 0, pool: 0 }, f));
+  });
+  return out;
+}
+
+export function familyRowHtml(r, editable) {
+  var pool = editable
+    ? '<input type="number" class="form-input loader-mix-want" min="0" value="' + (r.pool || 0) + '"'
+      + ' aria-label="Pool of ' + escapeHtml(r.family || '') + '"'
+      + ' data-action-change="setKanbanPool" data-family-id="' + Number(r.family_id) + '">'
+    : String(r.pool || 0);
+  var found = r.found || 0;
+  var foundCell = found === (r.pool || 0)
+    ? '<td class="rh-num">' + found + '</td>'
+    : '<td class="rh-num kanban-short">' + found + '</td>';
+  return '<tr>'
+    + '<td>' + escapeHtml(r.family || '') + '</td>'
+    + '<td class="rh-num">' + pool + '</td>'
+    + '<td class="rh-num">' + (r.minimum || 0) + '</td>'
+    + foundCell
+    + '<td class="rh-num">' + (r.slot || 0) + '</td>'
+    + '<td class="rh-num">' + (r.line || 0) + '</td>'
+    + '<td class="rh-num">' + (r.window || 0) + '</td>'
+    + '<td class="rh-num">' + (r.flight || 0) + '</td>'
+    + '<td class="rh-num">' + (r.room || 0) + '</td>'
+    + '<td class="rh-num">' + (r.floaters || 0) + '</td>'
+    + '</tr>';
+}
+
+// familyNoteHtml is what the numbers cannot say: which cart to send home, what has left the loop,
+// what a return will not fit, and what the plant accepted by standing at its minimum.
+export function familyNoteHtml(rows) {
+  var lines = [];
+  rows.forEach(function (r) {
+    var name = escapeHtml(r.family || '');
+    (r.strangers || []).forEach(function (s) { lines.push(escapeHtml(s) + ': past the pool of ' + name); });
+    if (r.lost) lines.push(r.lost + ' of ' + name + ' left the loop');
+    if (r.unowned) lines.push(r.unowned + ' of ' + name + ' in flight, unowned');
+    if (r.cannot_cover) lines.push(r.cannot_cover + ' of ' + name + ' cannot be covered: ' + (r.pool || 0) + ' carts on ' + (r.room || 0) + ' slots');
+    if (r.pool < r.minimum) lines.push(name + ' is under its minimum: the line eats the mix');
+    if (!r.pool_declared && r.pool) lines.push(name + ' stands at its minimum: nobody has typed a pool');
+    if (r.dips) lines.push(name + ': running level dips by ' + r.dips + ' during unloads');
+  });
+  return lines.map(function (l) { return '<div>' + l + '</div>'; }).join('');
 }
 
 export function keeperRowHtml(r) {
@@ -790,21 +852,21 @@ export function keeperRowHtml(r) {
     + '<td class="rh-num">' + (r.base || 0) + '</td>'
     + '<td>' + driving + '</td>'
     + '<td class="rh-num">' + (r.resident || 0) + '</td>'
+    + '<td class="rh-num">' + (r.held || 0) + '</td>'
     + '<td class="rh-num">' + (r.asked || 0) + '</td>'
     + '<td class="rh-num">' + (r.coming || 0) + '</td>'
+    + '<td class="rh-num">' + (r.lit || 0) + '</td>'
     + gapCell
     + '<td>' + waiting + '</td>'
     + '</tr>';
 }
 
-// keeperNoteHtml is what is true of the kanban and of no one row: what it wants
-// against its enabled positions (a want past them is shown, never lowered), and the
-// processes the want cannot read a type for. Every row carries the same values.
+// keeperNoteHtml is what is true of the kanban and of no one row: the processes the want cannot
+// read a type for. Every row carries the same values.
 export function keeperNoteHtml(rows) {
   var r = rows[0];
   if (!r) return '';
-  var lines = [(r.total_want || 0) + ' wanted on ' + (r.slots || 0) + ' enabled positions'
-    + (r.cannot_cover ? ': ' + r.cannot_cover + ' cannot be covered' : '')];
+  var lines = [];
   if ((r.nothing_processes || []).length) {
     lines.push(escapeHtml(r.nothing_processes.join(', ')) + ' runs a part with no one carrier type, which counts for nothing');
   }
@@ -812,4 +874,15 @@ export function keeperNoteHtml(rows) {
     lines.push(escapeHtml(r.fallback_processes.join(', ')) + ' is changing over to a style with no carrier type, so it counts on its active style');
   }
   return lines.map(function (l) { return '<div>' + l + '</div>'; }).join('');
+}
+
+// setKanbanPool stages a family's pool. Flushed on Save, as the rest of the section is.
+export function setKanbanPool(el) {
+  if (!_kanban) return;
+  var pool = Number(el.value);
+  if (!(pool >= 0) || Math.floor(pool) !== pool) {
+    el.value = String(_kanban.pools[el.dataset.familyId] || 0);
+    return;
+  }
+  _kanban.pools[el.dataset.familyId] = pool;
 }

@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"shingo/protocol/testutil"
+	"shingocore/internal/testdb"
 	"shingocore/store"
 	"shingocore/store/nodes"
 )
@@ -65,6 +66,7 @@ func newPinSaveRig(t *testing.T) *pinSaveRig {
 	pinFamilyOf(t, db, "PSV-45", r.small, r.big, r.totes)
 	var kids []*nodes.Node
 	r.k, kids = mgGroup(t, db, "PSV-K", 4)
+	testutil.MustNoErr(t, db.SaveKanban(store.KanbanChange{NodeID: r.k, EnsureRow: true}, "test"), "the row")
 	r.kids = kids
 	return r
 }
@@ -141,21 +143,25 @@ func TestKanbanPin_TwoKanbansOnOneSupportRefused(t *testing.T) {
 	pos := &nodes.Node{Name: "PSV-POS", Enabled: true}
 	testutil.MustNoErr(t, r.db.CreateNode(pos), "position")
 	testutil.MustNoErr(t, r.db.SetKanbanSupports(r.k, []int64{pos.ID}), "supports")
-	testdbLevel := func(g, bt int64) {
-		testutil.MustNoErr(t, r.db.SetKanbanLevel(store.KanbanLevel{GroupNodeID: g, BinTypeID: bt, Want: 1}), "level")
-	}
-	testdbLevel(r.k, r.small)
+	testdb.KanbanStation(t, r.db, r.k, "PSV-EDGE")
+	testutil.MustNoErr(t, r.db.SetKanbanLevel(store.KanbanLevel{GroupNodeID: r.k, BinTypeID: r.small, Want: 1}), "level")
 	k2, _ := mgGroup(t, r.db, "PSV-K2", 2)
+	testdb.KanbanStation(t, r.db, k2, "PSV-EDGE")
 	testutil.MustNoErr(t, r.db.SetKanbanSupports(k2, []int64{pos.ID}), "supports")
 	chk, err := r.svc.SetKanbanLevel(k2, r.big, 1)
 	testutil.MustNoErr(t, err, "the save")
-	if len(chk.Refusals) == 0 {
-		t.Errorf("two kanbans levelling one family on one support saved: %+v", chk)
+	if !strings.Contains(strings.Join(chk.Refusals, "; "), "PSV-45") {
+		t.Errorf("two kanbans levelling one family on one support: refusals %v, want one naming the family", chk.Refusals)
 	}
 }
 
-// pinRenameSays is what the node save says before a rename. Nothing at the tree.
-func pinRenameSays(*NodeService, *nodes.Node, string) []string { return nil }
+// pinRenameSays is what the node save says before a rename.
+func pinRenameSays(t *testing.T, svc *NodeService, n *nodes.Node, name string) []string {
+	t.Helper()
+	said, err := svc.RenameWarnings(n, name)
+	testutil.MustNoErr(t, err, "the rename's words")
+	return said
+}
 
 // TestKanbanPin_ARenameListsWhatJoinsByName: a loader's outbound and a claim's positions are
 // joined by node name, so a rename warns and names them.
@@ -165,7 +171,7 @@ func TestKanbanPin_ARenameListsWhatJoinsByName(t *testing.T) {
 	mgUnloaderSendingTo(t, r.svc, "PSV-UNL", "PSV-K")
 	g, err := r.db.GetNode(r.k)
 	testutil.MustNoErr(t, err, "K")
-	said := strings.Join(pinRenameSays(r.svc, g, "PSV-K-NEW"), "; ")
+	said := strings.Join(pinRenameSays(t, r.svc, g, "PSV-K-NEW"), "; ")
 	if !strings.Contains(said, "PSV-UNL") {
 		t.Errorf("the rename says %q, want it to name the loader PSV-UNL", said)
 	}

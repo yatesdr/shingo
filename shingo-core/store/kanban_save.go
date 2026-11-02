@@ -21,8 +21,6 @@ type KanbanChange struct {
 	EnsureRow bool
 	Station   *string
 	Strict    *bool
-	Cover     *int
-	Overflow  *int64
 	// PlainOverflow is a plain group's overflow_destination property.
 	PlainOverflow *string
 	Levels        []KanbanLevelChange
@@ -39,7 +37,6 @@ type KanbanLevelChange struct {
 	BinTypeID  int64
 	Want       *int
 	LayerWants *[]KanbanLayerWant
-	Overflow   *int64
 }
 
 // SaveKanban applies one change in one transaction and appends one audit row

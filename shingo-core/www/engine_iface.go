@@ -108,6 +108,8 @@ type ServiceAccess interface {
 	// second opinion computed at render time. Empty until the first tick, and
 	// empty forever on a plant with no kanban.
 	KanbanLineStates() []engine.KanbanLineState
+	// KanbanFamilyStates is the same tick by carrier family: where each kanban's carts are.
+	KanbanFamilyStates() []engine.KanbanFamilyState
 	// EdgeFeedFlags lists the plain-text feed conditions flagged for one
 	// station (a feed resent without converging, a process reported by two
 	// stations), shown on its row of the Edges page. A pure read.

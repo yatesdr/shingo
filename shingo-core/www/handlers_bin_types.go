@@ -52,6 +52,10 @@ func (h *Handlers) handleBinTypeCreate(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+	if err := h.engine.BinService().SetBinTypeFamilyByCode(bt.ID, r.FormValue("family")); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
 
 	http.Redirect(w, r, "/bins", http.StatusSeeOther)
 }
@@ -99,6 +103,10 @@ func (h *Handlers) handleBinTypeUpdate(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := svc.UpdateBinType(bt); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if err := svc.SetBinTypeFamilyByCode(bt.ID, r.FormValue("family")); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}

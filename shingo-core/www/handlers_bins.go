@@ -165,6 +165,7 @@ func (h *Handlers) handleBins(w http.ResponseWriter, r *http.Request) {
 		"Page":                "bins",
 		"Bins":                rows,
 		"BinTypes":            binTypes,
+		"CarrierFamilies":     h.carrierFamilyCodes(),
 		"Nodes":               nodes,
 		"Payloads":            payloads,
 		"BinHasNotes":         binHasNotes,
@@ -534,4 +535,19 @@ func (h *Handlers) apiBinsByNode(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.jsonOK(w, bins)
+}
+
+// carrierFamilyCodes is the Bin Types form's picker. A failed read leaves it empty, and the box
+// still takes a typed code.
+func (h *Handlers) carrierFamilyCodes() []string {
+	families, err := h.engine.BinService().ListCarrierFamilies()
+	if err != nil {
+		log.Printf("bins: list carrier families: %v", err)
+		return nil
+	}
+	out := make([]string, 0, len(families))
+	for _, f := range families {
+		out = append(out, f.Code)
+	}
+	return out
 }

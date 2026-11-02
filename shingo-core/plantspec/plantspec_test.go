@@ -218,24 +218,15 @@ func TestValidate_KanbanRefusals(t *testing.T) {
 		{"no positions", func(p *Plant) { p.Zones[1].Positions = nil }, "no positions to hold a level"},
 		// projectOrder no-ops on a blank StationID.
 		{"supports and no station", func(p *Plant) { p.Kanbans[0].Station = "" }, "show on no board"},
-		{"negative cover", func(p *Plant) { p.Kanbans[0].RunningCover = -1 }, "cannot be negative"},
+		{"negative pool", func(p *Plant) { p.Kanbans[0].Pools = map[string]int{p.BinTypes[0]: -1} }, "cannot be negative"},
 		{"a source that is itself", func(p *Plant) { p.Kanbans[0].Sources = []string{"PRESS-EMPTIES"} }, "itself as a source"},
 		{"a source that is no zone", func(p *Plant) { p.Kanbans[0].Sources = []string{"NOPE"} }, "not a declared zone"},
 		{"a source twice", func(p *Plant) { p.Kanbans[0].Sources = []string{"SYN_MARKET", "SYN_MARKET"} }, "twice"},
-		{"a level overflow that is no zone", func(p *Plant) { p.Kanbans[0].Levels[0].Overflow = "NOPE" }, "not a declared zone"},
-		{"a level overflow that is itself", func(p *Plant) { p.Kanbans[0].Levels[0].Overflow = "PRESS-EMPTIES" }, "overflows to itself"},
 		{"no levels", func(p *Plant) { p.Kanbans[0].Levels = nil }, "declares no levels"},
 		{"unknown bin type", func(p *Plant) { p.Kanbans[0].Levels[0].BinType = "BOGUS" }, "unknown bin_type"},
 		{"duplicate bin type", func(p *Plant) { p.Kanbans[0].Levels[1].BinType = "STANDARD" }, "twice"},
 		{"negative want", func(p *Plant) { p.Kanbans[0].Levels[0].Want = -1 }, "cannot be negative"},
-		// The episode key is `mnt|<group>|<type>`.
-		{"pipe in bin type", func(p *Plant) {
-			p.BinTypes = append(p.BinTypes, "BIG|SMALL")
-			p.Kanbans[0].Levels[0].BinType = "BIG|SMALL"
-		}, "episode key"},
 		{"unknown process", func(p *Plant) { p.Kanbans[0].Supports = []string{"GHOST"} }, "unknown process"},
-		{"overflow to itself", func(p *Plant) { p.Kanbans[0].Overflow = "PRESS-EMPTIES" }, "overflows to itself"},
-		{"overflow not a zone", func(p *Plant) { p.Kanbans[0].Overflow = "PRESS-1" }, "not a declared zone"},
 		{"duplicate group", func(p *Plant) {
 			p.Kanbans = append(p.Kanbans, p.Kanbans[0])
 		}, "duplicate kanban"},

@@ -170,13 +170,10 @@ func SetKanbanScalars(x Execer, k Kanban) error {
 // Kanban is one kanbans row: a kanban's settings. HasSupports is read beside
 // them because the keeper's skip of a kanban with no station needs it.
 type Kanban struct {
-	NodeID         int64
-	StationID      string
-	Strict         bool
-	RunningCover   int
-	OverflowNodeID *int64
-	OverflowNode   string
-	HasSupports    bool
+	NodeID      int64
+	StationID   string
+	Strict      bool
+	HasSupports bool
 }
 
 const kanbanSelect = `SELECT k.node_id, COALESCE(k.station_id, ''), k.strict,
@@ -262,8 +259,7 @@ func ListKanbanSources(q helpers.RowsQuerier, kanbanNodeID int64) ([]KanbanSourc
 // OverflowTarget is where a plain group's overflow points: its overflow_destination property
 // as written, which may not resolve. A kanban has none.
 type OverflowTarget struct {
-	NodeID int64
-	Name   string
+	Name string
 }
 
 const overflowTargetSQL = `SELECT CASE WHEN k.node_id IS NULL THEN COALESCE(p.value, '') ELSE '' END

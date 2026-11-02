@@ -11,17 +11,19 @@ import (
 // kanban_pins_family_test.go — the one truth table at simcalc: a plant file's families,
 // never a size it re-measures. Prediction: PINS.md, "BRIEF v5".
 
-// pinFamilyPlant states the table as a plant file can at this tree, with sizes.
+// pinFamilyPlant states the table as a plant file does.
 func pinFamilyPlant(types map[string]struct {
 	Family    string     `json:"family"`
 	Footprint *[]float64 `json:"footprint"`
 }) *plantspec.Plant {
-	p := &plantspec.Plant{CarrierSizes: map[string]plantspec.CarrierSize{}}
+	p := &plantspec.Plant{}
+	members := map[string][]string{}
 	for code, ty := range types {
 		p.BinTypes = append(p.BinTypes, code)
-		if ty.Footprint != nil {
-			p.CarrierSizes[code] = plantspec.CarrierSize{WidthIn: (*ty.Footprint)[0], LengthIn: (*ty.Footprint)[1]}
-		}
+		members[ty.Family] = append(members[ty.Family], code)
+	}
+	for family, codes := range members {
+		p.CarrierFamilies = append(p.CarrierFamilies, plantspec.CarrierFamily{Code: family, Types: codes})
 	}
 	return p
 }
@@ -46,7 +48,7 @@ func TestKanbanPin_SimcalcReadsTheFamilyTable(t *testing.T) {
 	}
 	v := newKanbanView(pinFamilyPlant(table.Types))
 	for _, c := range table.Cases {
-		if same := v.floorOf[c.Cart] == v.floorOf[c.Asked]; same != c.Same {
+		if same := v.familyOf[c.Cart] == v.familyOf[c.Asked]; same != c.Same {
 			t.Errorf("%s and %s: simcalc says one family %v, the table says %v", c.Cart, c.Asked, same, c.Same)
 		}
 	}

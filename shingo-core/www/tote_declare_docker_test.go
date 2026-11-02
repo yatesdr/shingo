@@ -125,6 +125,7 @@ func TestBinClear_DeclaresTheHeight(t *testing.T) {
 
 	t.Run("re-typed by the CLEAR, the declare reads the new type", func(t *testing.T) {
 		b := fullOfTypeAt(t, db, sd, kd, "TD-N-RETYPE")
+		clearsWithin(t, db, "TD-TOTE", kd.Code)
 		if code := clearAt(t, h, map[string]any{"node_name": "TD-N-RETYPE", "bin_type_code": "TD-TOTE", "layers": 3}); code != http.StatusOK {
 			t.Fatalf("clear status %d", code)
 		}

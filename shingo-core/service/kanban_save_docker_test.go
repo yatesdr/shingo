@@ -26,8 +26,8 @@ func TestSaveKanban_ThePlainGroupsSaveWritesNoRow(t *testing.T) {
 	grpID, _ := mgGroup(t, db, "SKS-PLAIN", 2)
 	mgGroup(t, db, "SKS-SPILL", 1)
 
-	strict, station, overflow, cover := false, "", "", 0
-	save := KanbanSave{GroupNodeID: grpID, Strict: &strict, Station: &station, Overflow: &overflow, Cover: &cover,
+	strict, station, overflow := false, "", ""
+	save := KanbanSave{GroupNodeID: grpID, Strict: &strict, Station: &station, Overflow: &overflow,
 		Sources: &[]int64{}, Supports: &[]int64{}}
 	chk, err := svc.SaveKanban(save)
 	testutil.MustNoErr(t, err, "all-default save")
@@ -70,7 +70,7 @@ func TestKanbanSave_APlainGroupsOverflowIsAProperty(t *testing.T) {
 	testutil.MustNoErr(t, err, "lane")
 	mgGroup(t, db, "SKL-SPILL", 1)
 
-	strict, station, overflow, cover := false, "", "SKL-SPILL", 0
+	strict, station, overflow := false, "", "SKL-SPILL"
 	settings := KanbanSettings{OverflowDestination: overflow}
 	chk, err := svc.CheckKanbanSettings(grpID, settings)
 	testutil.MustNoErr(t, err, "the settings' check")
@@ -79,7 +79,6 @@ func TestKanbanSave_APlainGroupsOverflowIsAProperty(t *testing.T) {
 	}
 	for what, save := range map[string]KanbanSave{
 		"settings": {Strict: &strict, Station: &station, Overflow: &overflow},
-		"cover":    {Cover: &cover},
 		"supports": {Supports: &[]int64{}},
 		"sources":  {Sources: &[]int64{}},
 	} {
@@ -126,7 +125,7 @@ func TestKanbanSave_APlainGroupsOverflowIsAProperty(t *testing.T) {
 	}
 }
 
-// TestKanbanSave_TheModalReadsAndWritesTheBase: with the cover running, the
+// TestKanbanSave_TheModalReadsAndWritesTheBase: with a position on the line, the
 // configuration reads the declared number while every reader of the plant reads the
 // effective want, so the modal writing back what it read changes nothing.
 func TestKanbanSave_TheModalReadsAndWritesTheBase(t *testing.T) {
@@ -136,8 +135,8 @@ func TestKanbanSave_TheModalReadsAndWritesTheBase(t *testing.T) {
 	grpID, _ := mgGroup(t, db, "SKB", 8)
 	bt := mgBinType(t, db, "SKB-T")
 	press := mgSupportNode(t, db, "SKB-PRESS")
-	want, cover, station := 1, 4, "EDGE-1"
-	chk, err := svc.SaveKanban(KanbanSave{GroupNodeID: grpID, Station: &station, Cover: &cover, Supports: &[]int64{press},
+	want, station := 1, "EDGE-1"
+	chk, err := svc.SaveKanban(KanbanSave{GroupNodeID: grpID, Station: &station, Supports: &[]int64{press},
 		Levels: []KanbanLevelSave{{BinTypeID: bt, Want: &want}}})
 	testutil.MustNoErr(t, err, "the kanban")
 	if chk.Err() != nil {
@@ -154,8 +153,8 @@ func TestKanbanSave_TheModalReadsAndWritesTheBase(t *testing.T) {
 
 	effective, err := db.ListKanbanLevels(grpID)
 	testutil.MustNoErr(t, err, "the plant's read")
-	if len(effective) != 1 || effective[0].Want != 5 || effective[0].Base != 1 {
-		t.Fatalf("the plant reads %+v, want 5 of base 1", effective)
+	if len(effective) != 1 || effective[0].Want != 2 || effective[0].Base != 1 {
+		t.Fatalf("the plant reads %+v, want 2 of base 1, its one position on the line", effective)
 	}
 	cfg, err := svc.GetKanban(grpID)
 	testutil.MustNoErr(t, err, "the modal's read")
@@ -175,12 +174,12 @@ func TestKanbanSave_TheModalReadsAndWritesTheBase(t *testing.T) {
 	}
 }
 
-func TestSaveKanban_OverflowMustBeANodeOnAKanban(t *testing.T) {
+func TestSaveKanban_AKanbanHasNoOverflow(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
 	svc := NewNodeService(db)
 	grpID, _ := mgGroup(t, db, "SKO-K", 2)
-	spillID, _ := mgGroup(t, db, "SKO-SPILL", 1)
+	mgGroup(t, db, "SKO-SPILL", 1)
 	bt := mgBinType(t, db, "SKO-T")
 	chk, err := svc.SetKanbanLevel(grpID, bt, 1)
 	testutil.MustNoErr(t, err, "level")
@@ -188,39 +187,26 @@ func TestSaveKanban_OverflowMustBeANodeOnAKanban(t *testing.T) {
 		t.Fatalf("refused: %v", chk.Refusals)
 	}
 
-	for name, overflow := range map[string]string{"no such node": "SKO-NOWHERE", "itself": "SKO-K"} {
-		chk, err := svc.SaveKanban(KanbanSave{GroupNodeID: grpID, Overflow: &overflow})
-		testutil.MustNoErr(t, err, name)
-		if chk.Err() == nil {
-			t.Errorf("%s: overflow %q saved; a kanban's overflow is another node", name, overflow)
-		}
-	}
-	self := grpID
-	chk, err = svc.SaveKanban(KanbanSave{GroupNodeID: grpID, Levels: []KanbanLevelSave{{BinTypeID: bt, Overflow: &self}}})
-	testutil.MustNoErr(t, err, "level overflow onto itself")
-	if chk.Err() == nil {
-		t.Error("a type's overflow saved as the kanban itself")
-	}
-
 	spill := "SKO-SPILL"
-	chk, err = svc.SaveKanban(KanbanSave{GroupNodeID: grpID, Overflow: &spill, Levels: []KanbanLevelSave{{BinTypeID: bt, Overflow: &spillID}}})
-	testutil.MustNoErr(t, err, "good overflow")
+	chk, err = svc.SaveKanban(KanbanSave{GroupNodeID: grpID, Overflow: &spill})
+	testutil.MustNoErr(t, err, "an overflow on a kanban")
 	if chk.Err() != nil {
 		t.Fatalf("refused: %v", chk.Refusals)
-	}
-	cfg, err := svc.GetKanban(grpID)
-	testutil.MustNoErr(t, err, "config")
-	if cfg.OverflowDestination != "SKO-SPILL" || cfg.Levels[0].OverflowNode != "SKO-SPILL" {
-		t.Errorf("config = %+v", cfg)
 	}
 	if got := db.GetNodeProperty(grpID, nodes.PropOverflowDestination); got != "" {
 		t.Errorf("a kanban wrote the property: %q", got)
 	}
+	cfg, err := svc.GetKanban(grpID)
+	testutil.MustNoErr(t, err, "config")
+	if cfg.OverflowDestination != "" {
+		t.Errorf("config = %+v, want no overflow", cfg)
+	}
 
-	// A level line carrying only its overflow needs the level to exist.
+	// A level line changing only its heights needs the level to exist.
 	other := mgBinType(t, db, "SKO-OTHER")
-	chk, err = svc.SaveKanban(KanbanSave{GroupNodeID: grpID, Levels: []KanbanLevelSave{{BinTypeID: other, Overflow: &spillID}}})
-	testutil.MustNoErr(t, err, "overflow of no level")
+	wants := []store.KanbanLayerWant{{Layers: 0, Want: 1}}
+	chk, err = svc.SaveKanban(KanbanSave{GroupNodeID: grpID, Levels: []KanbanLevelSave{{BinTypeID: other, LayerWants: &wants}}})
+	testutil.MustNoErr(t, err, "heights of no level")
 	if !mgRefusedBy(chk, "SKO-OTHER") {
 		t.Errorf("refusals = %v, want one naming the type with no level", chk.Refusals)
 	}
@@ -286,22 +272,10 @@ func TestSaveKanban_Sources(t *testing.T) {
 	} else if len(got) != 1 || got[0].SourceNodeID != lineside {
 		t.Errorf("the warned list did not save: %+v", got)
 	}
-	cover := 3
-	chk, err = svc.SaveKanban(KanbanSave{GroupNodeID: grpID, Cover: &cover})
-	testutil.MustNoErr(t, err, "cover")
-	if chk.Err() != nil {
-		t.Fatalf("refused: %v", chk.Refusals)
-	}
 	cfg, err := svc.GetKanban(grpID)
 	testutil.MustNoErr(t, err, "config")
-	if cfg.RunningCover != 3 || len(cfg.Sources) != 1 {
+	if len(cfg.Sources) != 1 {
 		t.Errorf("config = %+v", cfg)
-	}
-	negative := -1
-	chk, err = svc.SaveKanban(KanbanSave{GroupNodeID: grpID, Cover: &negative})
-	testutil.MustNoErr(t, err, "negative cover")
-	if !mgRefusedBy(chk, "negative") {
-		t.Errorf("a negative cover: refusals = %v", chk.Refusals)
 	}
 }
 
@@ -322,8 +296,15 @@ func TestSaveKanban_NamesItsActor(t *testing.T) {
 	}
 	rows, err := db.ListEntityAudit("node", grpID)
 	testutil.MustNoErr(t, err, "audit")
-	if len(rows) != 1 || rows[0].Action != "kanban:level:SKA-T" || rows[0].Actor != "ann" || rows[0].NewValue != "1" {
-		t.Errorf("audit = %+v", rows)
+	found := false
+	for _, r := range rows {
+		found = found || (r.Action == "kanban:level:SKA-T" && r.NewValue == "1")
+		if r.Actor != "ann" {
+			t.Errorf("audit row %+v is not ann's", r)
+		}
+	}
+	if !found {
+		t.Errorf("no level row among %d", len(rows))
 	}
 }
 

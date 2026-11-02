@@ -203,6 +203,27 @@ sim:
       tag_name: KW-WELD_COUNTER
       tick_interval: 15s
       uop_per_tick: 1
+    # The five presses of plants/kanban-press5.yaml, each at KP-PRESS's rate.
+    - plc_name: P5-PRESS-1
+      tag_name: P5-PRESS-1_COUNTER
+      tick_interval: 20s
+      uop_per_tick: 1
+    - plc_name: P5-PRESS-2
+      tag_name: P5-PRESS-2_COUNTER
+      tick_interval: 20s
+      uop_per_tick: 1
+    - plc_name: P5-PRESS-3
+      tag_name: P5-PRESS-3_COUNTER
+      tick_interval: 20s
+      uop_per_tick: 1
+    - plc_name: P5-PRESS-4
+      tag_name: P5-PRESS-4_COUNTER
+      tick_interval: 20s
+      uop_per_tick: 1
+    - plc_name: P5-PRESS-5
+      tag_name: P5-PRESS-5_COUNTER
+      tick_interval: 20s
+      uop_per_tick: 1
   operators:
     enabled: true
     loader_auto_load: 5s
@@ -214,6 +235,7 @@ sim:
     unloader_taps:
       - {station: KP-UNLOAD-OPS, tap: lit}
       - {station: KW-UNLOAD-OPS, tap: lit}
+      - {station: P5-UNLOAD-OPS, tap: lit}
     # The floor's pull (owner, 2026-10-10): at a consume release with 5% of the
     # pack or less left, the operator pulls it into the lineside bucket and
     # releases the bin empty; the weld runs on the bucket through the exchange.

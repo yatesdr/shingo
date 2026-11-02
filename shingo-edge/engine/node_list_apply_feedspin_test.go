@@ -242,23 +242,23 @@ func TestFeedsPin_CatalogApplyUnchangedWritesNothing(t *testing.T) {
 	}
 }
 
-// TestApplyNodeList_HoldsTheFloors: the floors apply with the catalog, a reply
+// TestApplyNodeList_HoldsTheFamilies: the families apply with the catalog, a reply
 // whose digest is the held one applies none, and a reply from a Core that sends
 // none clears them, so the panels do not filter on a stale copy.
-func TestApplyNodeList_HoldsTheFloors(t *testing.T) {
+func TestApplyNodeList_HoldsTheFamilies(t *testing.T) {
 	t.Parallel()
 	eng := testEngine(t, testEngineDB(t))
-	floors := map[string]string{"B1": "45x48"}
-	eng.ApplyNodeList(&protocol.NodeListResponse{Floor: floors, Digest: "held"})
-	if eng.BinTypeFloors()["B1"] != "45x48" {
-		t.Fatalf("floors = %v after the first apply", eng.BinTypeFloors())
+	families := map[string]string{"B1": "45x48"}
+	eng.ApplyNodeList(&protocol.NodeListResponse{Family: families, Digest: "held"})
+	if eng.BinTypeFamilies()["B1"] != "45x48" {
+		t.Fatalf("families = %v after the first apply", eng.BinTypeFamilies())
 	}
 	eng.ApplyNodeList(&protocol.NodeListResponse{Digest: "held"})
-	if eng.BinTypeFloors()["B1"] != "45x48" {
-		t.Errorf("a reply with the held digest changed the floors to %v", eng.BinTypeFloors())
+	if eng.BinTypeFamilies()["B1"] != "45x48" {
+		t.Errorf("a reply with the held digest changed the families to %v", eng.BinTypeFamilies())
 	}
 	eng.ApplyNodeList(&protocol.NodeListResponse{})
-	if len(eng.BinTypeFloors()) != 0 {
-		t.Errorf("a Core that sends none left the floors at %v", eng.BinTypeFloors())
+	if len(eng.BinTypeFamilies()) != 0 {
+		t.Errorf("a Core that sends none left the families at %v", eng.BinTypeFamilies())
 	}
 }

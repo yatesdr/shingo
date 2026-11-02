@@ -232,8 +232,8 @@
     <div id="nf-kanban" class="hide mb-2">
       <label class="text-sm" style="display:block;margin-bottom:6px;font-weight:600">Kanban</label>
       <div class="text-muted" style="font-size:0.75rem;margin-bottom:10px">
-        Declare a level and Core keeps that many empty carriers here, so the equipment this group
-        supports never has to wait for one.
+        Declare a level and Core keeps that mix of empty carriers ready here, running or idle, so the
+        equipment this group supports never has to wait for one.
       </div>
 
       <label class="text-sm" style="display:flex;align-items:center;gap:8px;margin-bottom:10px;cursor:pointer">
@@ -248,27 +248,21 @@
           <div class="form-hint">Needed with Supports: without one, the top-up orders show on no board
             at all, so Core does not place them.</div>
         </div>
-        <div class="form-group">
+        <div class="form-group" id="nf-kanban-overflow-box">
           <label for="nf-kanban-overflow">Overflow</label>
           <select id="nf-kanban-overflow"></select>
-          <div class="form-hint">Where extras go when this group has its level. Optional. Without one,
-            a carrier that turns up anyway waits where it is, still loaded.</div>
+          <div class="form-hint">Where a cart goes when this plain group has no slot for it. Optional.
+            A group with a level has none.</div>
         </div>
       </div>
 
       <div class="form-group">
         <label>Level</label>
         <div id="nf-kanban-levels"></div>
-        <div class="form-hint">How many of each carrier type to keep here. Zero means none of that
-          type, on purpose. A type's Overflow goes ahead of the group's. Under a type,
+        <div class="form-hint">How many of each bin type to hold ready here. Zero means none of that
+          type, on purpose. Under a type,
           the heights wanted here tell the unloader what to send a cart back as; they do not change
           how many Core keeps.</div>
-      </div>
-
-      <div class="form-group text-sm">
-        <label for="nf-kanban-cover">Running cover</label>
-        <input type="number" id="nf-kanban-cover" class="form-input loader-mix-want" min="0" value="0">
-        <div class="form-hint">Extra of a type to keep per process under Supports running that type.</div>
       </div>
 
       <div class="form-group">
@@ -279,19 +273,28 @@
       </div>
 
       <!-- The keeper's last tick for this group (moved from /inventory,
-           2026-10-29): level − here − asked − coming = short, term by term.
+           2026-10-29): by family and by type, term by term.
            Hidden until the group has a tick. nodes-kanban.js
            renderKeeperLevels. -->
       <div id="keeper-levels" class="form-group hide">
+                <label>Families</label>
+        <div class="table-scroll-y">
+          <table class="rh-table">
+            <thead><tr><th>Family</th><th class="rh-num">Pool</th><th class="rh-num">Minimum</th><th class="rh-num">Found</th><th class="rh-num">Slots</th><th class="rh-num">Line</th><th class="rh-num">Windows</th><th class="rh-num">Flight</th><th class="rh-num">Room</th><th class="rh-num">Floaters</th></tr></thead>
+            <tbody id="keeper-families-body"></tbody>
+          </table>
+        </div>
+        <div id="keeper-families-note" class="form-hint"></div>
+        <div class="form-hint">Pool: carts the loop owns. Minimum: the mix and the line. Found: where they are now, in slots, on the line, at windows, in flight. Room: slots admitting the family. Floaters: pool less mix and line.</div>
         <label>The keeper's last tick</label>
         <div class="table-scroll-y">
           <table class="rh-table">
-            <thead><tr><th>Carrier type</th><th class="rh-num">Level</th><th class="rh-num">Base</th><th>Driven by</th><th class="rh-num">Here</th><th class="rh-num">Asked</th><th class="rh-num">Coming</th><th class="rh-num">Short</th><th>Waiting on</th></tr></thead>
+            <thead><tr><th>Bin type</th><th class="rh-num">Want</th><th class="rh-num">Level</th><th>Driven by</th><th class="rh-num">Here</th><th class="rh-num">On line</th><th class="rh-num">Asked</th><th class="rh-num">Coming</th><th class="rh-num">At windows</th><th class="rh-num">Short</th><th>Waiting on</th></tr></thead>
             <tbody id="keeper-levels-body"></tbody>
           </table>
         </div>
         <div id="keeper-levels-note" class="form-hint"></div>
-        <div class="form-hint">Empty carriers Core keeps standing by: level &minus; here &minus; asked &minus; coming = short. The level is the base plus the running cover per process driving it.</div>
+        <div class="form-hint">Want &minus; here &minus; on line &minus; asked &minus; coming &minus; at windows = short. Want is the level plus the positions the running style puts on the line.</div>
       </div>
       <div class="form-group">
         <label>Supports</label>
@@ -345,19 +348,28 @@
       </div>
     </div>
       <!-- The keeper's last tick for this group (moved from /inventory,
-           2026-10-29): level − here − asked − coming = short, term by term.
+           2026-10-29): by family and by type, term by term.
            Hidden until the group has a tick. nodes-kanban.js
            renderKeeperLevels. -->
     <div id="keeper-levels" class="form-group hide mb-2">
+                <label>Families</label>
+        <div class="table-scroll-y">
+          <table class="rh-table">
+            <thead><tr><th>Family</th><th class="rh-num">Pool</th><th class="rh-num">Minimum</th><th class="rh-num">Found</th><th class="rh-num">Slots</th><th class="rh-num">Line</th><th class="rh-num">Windows</th><th class="rh-num">Flight</th><th class="rh-num">Room</th><th class="rh-num">Floaters</th></tr></thead>
+            <tbody id="keeper-families-body"></tbody>
+          </table>
+        </div>
+        <div id="keeper-families-note" class="form-hint"></div>
+        <div class="form-hint">Pool: carts the loop owns. Minimum: the mix and the line. Found: where they are now, in slots, on the line, at windows, in flight. Room: slots admitting the family. Floaters: pool less mix and line.</div>
         <label>The keeper's last tick</label>
         <div class="table-scroll-y">
           <table class="rh-table">
-            <thead><tr><th>Carrier type</th><th class="rh-num">Level</th><th class="rh-num">Base</th><th>Driven by</th><th class="rh-num">Here</th><th class="rh-num">Asked</th><th class="rh-num">Coming</th><th class="rh-num">Short</th><th>Waiting on</th></tr></thead>
+            <thead><tr><th>Bin type</th><th class="rh-num">Want</th><th class="rh-num">Level</th><th>Driven by</th><th class="rh-num">Here</th><th class="rh-num">On line</th><th class="rh-num">Asked</th><th class="rh-num">Coming</th><th class="rh-num">At windows</th><th class="rh-num">Short</th><th>Waiting on</th></tr></thead>
             <tbody id="keeper-levels-body"></tbody>
           </table>
         </div>
         <div id="keeper-levels-note" class="form-hint"></div>
-        <div class="form-hint">Empty carriers Core keeps standing by: level &minus; here &minus; asked &minus; coming = short. The level is the base plus the running cover per process driving it.</div>
+        <div class="form-hint">Want &minus; here &minus; on line &minus; asked &minus; coming &minus; at windows = short. Want is the level plus the positions the running style puts on the line.</div>
       </div>
     <!-- Occupant section (read-only) -->
     <div id="modal-inventory" class="hide mb-2">
