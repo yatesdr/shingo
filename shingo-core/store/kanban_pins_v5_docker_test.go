@@ -313,6 +313,45 @@ func TestKanbanPin_ACartOnARobotOnASwapCountsOnce(t *testing.T) {
 	}
 }
 
+// TestKanbanPin_ASwapsOldCartIsGoingToAWindow: a live two-cart swap carries the line's old cart to a
+// window and a fresh one from the kanban to the line, each a row of its own. The read says each
+// cart's own drop: the old cart is going to the window, not the line. Before order_bins rows the
+// order's one cart field and its junction row tied for that cart, and the read could say the line
+// (ISSUE-one-cart-field finding 2): Short and coming were one off for the swap's length.
+func TestKanbanPin_ASwapsOldCartIsGoingToAWindow(t *testing.T) {
+	t.Parallel()
+	r := newLoopRig(t)
+	old := r.cart("LOOP-SWAP-OLD", "PIC-SMALL", r.position.ID)
+	fresh := r.cart("LOOP-SWAP-FRESH", "PIC-SMALL", r.slot.ID)
+	swap := testdb.CreateOrder(t, r.db, func(o *orders.Order) {
+		o.EdgeUUID = "loop-swap-live"
+		o.StationID = "edge.1"
+		o.OrderType = "complex"
+		o.OriginClass = protocol.OriginClassNoDemand
+		o.SourceNode = r.position.Name
+		o.DeliveryNode = r.position.Name
+		o.Status = protocol.StatusInTransit
+		o.StepsJSON = `[{"action":"pickup","node":"` + r.position.Name + `"},{"action":"dropoff","node":"` + r.window.Name +
+			`"},{"action":"pickup","node":"` + r.slot.Name + `"},{"action":"dropoff","node":"` + r.position.Name + `"}]`
+	})
+	testdb.SeedCartRow(t, r.db, swap.ID, old, 0, 1)
+	testdb.SeedCartRow(t, r.db, swap.ID, fresh, 2, 3)
+	_, err := r.db.Exec(`UPDATE bins SET node_id = $1, claimed_by = $2 WHERE id = $3`, r.transit.ID, swap.ID, fresh)
+	testutil.MustNoErr(t, err, "the fresh cart's lift")
+	carts, err := r.db.ListKanbanLoop([]int64{r.k})
+	testutil.MustNoErr(t, err, "the loop")
+	into := map[int64]string{}
+	for _, c := range carts {
+		into[c.BinID] = c.Into
+	}
+	if into[old] != store.LoopPlaceWindow || into[fresh] != store.LoopPlaceLine {
+		t.Errorf("into: the old cart %q, the fresh one %q; want window and line: %+v", into[old], into[fresh], carts)
+	}
+	if got := pinFound(t, r.db, r.k, "PIC-SMALL"); got.found() != 2 || got.flight != 1 {
+		t.Errorf("found %+v = %d, want both carts, the fresh one in flight", got, got.found())
+	}
+}
+
 // TestKanbanPin_ACartOnARobotAfterItsSwapEndedStaysCounted: a two-cart swap carries the cart at its
 // process node and the cart it has lifted off the kanban, each a row of its own. Cancelled with the
 // second on its robot, the rows stay, so that cart still has its order on record: the loop counts it

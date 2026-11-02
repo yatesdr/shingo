@@ -414,6 +414,55 @@ func TestKanbanSources_TheKeepersFind(t *testing.T) {
 			t.Errorf("created %d, bins %v; want the first source's %d, not the same zone's %d", st.Created, got, far, near)
 		}
 	})
+
+	// A stranger: a cart standing in another kanban above that kanban's pool (pool 0, one cart).
+	stranger := func(t *testing.T, r *sourcesRig, name string) int64 {
+		t.Helper()
+		other := r.zone(t, name, 1)
+		var family int64
+		testutil.MustNoErr(t, r.db.QueryRow(`SELECT family_id FROM bin_types WHERE id = $1`, r.bt).Scan(&family), "family")
+		testutil.MustNoErr(t, r.db.SaveKanban(store.KanbanChange{NodeID: other.ID, EnsureRow: true, Pools: map[int64]int{family: 0}}, "test"), "its pool")
+		return r.stand(t, other, name+"-STRANGER")
+	}
+
+	t.Run("a stranger above another kanban's pool before the plant's lower id", func(t *testing.T) {
+		t.Parallel()
+		r := newSourcesRig(t, "KSA", 1)
+		plain := r.stand(t, r.zone(t, "KSA-PLAIN", 1), "KSA-PLAIN-1")
+		home := stranger(t, r, "KSA-K6")
+		got, st := r.asksFrom(t, "KSA")
+		if st.Created != 1 || !got[home] || got[plain] {
+			t.Errorf("created %d, bins %v; want the stranger %d ahead of the lower id %d", st.Created, got, home, plain)
+		}
+	})
+
+	t.Run("the destination's zone does not outrank a stranger", func(t *testing.T) {
+		t.Parallel()
+		r := newSourcesRig(t, "KSY", 1)
+		near := r.zone(t, "KSY-NEAR", 1)
+		plain := r.stand(t, near, "KSY-NEAR-1")
+		home := stranger(t, r, "KSY-K6")
+		_, err := r.db.DB.Exec(`UPDATE nodes SET zone = 'Z1' WHERE parent_id = $1 OR parent_id = $2`, r.k, near.ID)
+		testutil.MustNoErr(t, err, "zones")
+		got, st := r.asksFrom(t, "KSY")
+		if st.Created != 1 || !got[home] || got[plain] {
+			t.Errorf("created %d, bins %v; want the stranger %d, not the same zone's %d", st.Created, got, home, plain)
+		}
+	})
+
+	t.Run("with no stranger the zone still ranks the plant", func(t *testing.T) {
+		t.Parallel()
+		r := newSourcesRig(t, "KSW", 1)
+		far := r.stand(t, r.zone(t, "KSW-FAR", 1), "KSW-FAR-1")
+		near := r.zone(t, "KSW-NEAR", 1)
+		inZone := r.stand(t, near, "KSW-NEAR-1")
+		_, err := r.db.DB.Exec(`UPDATE nodes SET zone = 'Z1' WHERE parent_id = $1 OR parent_id = $2`, r.k, near.ID)
+		testutil.MustNoErr(t, err, "zones")
+		got, st := r.asksFrom(t, "KSW")
+		if st.Created != 1 || !got[inZone] || got[far] {
+			t.Errorf("created %d, bins %v; want the same zone's %d ahead of the lower id %d", st.Created, got, inZone, far)
+		}
+	})
 }
 
 // TestKanbanSources_NoLinesideRaid: a lineside kanban's keeper takes nothing from

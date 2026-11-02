@@ -277,10 +277,11 @@ type EmptyFence struct {
 	// Blank for everything that is not a level keeper's top-off.
 	OriginGroup string
 	// Sources are the groups a keeper's ask may pull from, in rank order: its
-	// kanban's sources, read with the episode. Non-empty is exclusive and ranks the
-	// find (the source's order, ahead of AccessibleEmptyOrder's); empty is the
-	// plant-wide predicate. The scoped tiers never read it: only the plant-wide
-	// finders do, and only a keeper's fence carries it.
+	// kanban's sources, read with the episode. Non-empty is exclusive of every owned
+	// cart and ranks the find (the source's order, ahead of AccessibleEmptyOrder's);
+	// empty is the plant-wide predicate. A cart above another kanban's pool is owned
+	// by nobody and reachable either way (FencedNodesCTE). The scoped tiers never read
+	// it: only the plant-wide finders do, and only a keeper's fence carries it.
 	Sources []int64
 }
 
@@ -297,13 +298,13 @@ func (f EmptyFence) fenceArms(a *emptyQueryArgs) (cte, where string, sourcesPara
 	if f.Empty() {
 		return "", "", 0
 	}
-	cte = FencedNodesCTE(a.add(f.ProcessNode), a.add(f.OriginGroup))
+	cte = FencedNodesCTE(a.add(f.ProcessNode), a.add(f.OriginGroup), a.add(protocol.EpisodeKindKanban))
 	where = NotFencedArm()
 	if len(f.Sources) > 0 {
 		sourcesParam = a.add(f.Sources)
 		cte += sourcedNodesCTE(sourcesParam)
 		where += `
-	  AND b.node_id IN (SELECT id FROM sourced)`
+	  AND (b.node_id IN (SELECT id FROM sourced) OR ` + abovePoolCartSQL() + `)`
 	}
 	return cte, where, sourcesParam
 }
@@ -319,20 +320,43 @@ func sourcedNodesCTE(sourcesParam int) string {
 	) `, sourcesParam)
 }
 
-// rankTerm is the sort key that takes a candidate from the sources in rank order,
-// blank with no sources. sourcesParam is the parameter fenceArms named.
-func (f EmptyFence) rankTerm(sourcesParam int) string {
-	if len(f.Sources) == 0 {
+// ranked reports whether this fence's find is one statement in its own order: a keeper's
+// deficit ask, which takes another kanban's cart above its pool first, or a find with sources,
+// which takes them by rank. A zone pass ahead of it would take a nearer cart over a ranked one,
+// so where the zone still counts it is a term of the order (rankTerm).
+func (f EmptyFence) ranked() bool { return f.OriginGroup != "" || len(f.Sources) > 0 }
+
+// rankTerm is the sort key ahead of the plant's order for a ranked find, blank for any other:
+// another kanban's cart above its pool first (A8, so a stranger goes home before a supermarket
+// gives one), then the sources in rank order, or with none the asker's zone. sourcesParam is the
+// parameter fenceArms named. Pins: TestKanbanSources_TheKeepersFind,
+// TestKanbanPin_AStrangerGoesHomeWhateverTheFence.
+func (f EmptyFence) rankTerm(a *emptyQueryArgs, sourcesParam int, zone string) string {
+	if !f.ranked() {
 		return ""
 	}
-	return fmt.Sprintf(`(SELECT MIN(array_position($%d::bigint[], so.root)) FROM sourced so WHERE so.id = b.node_id) ASC,
+	var terms string
+	if f.OriginGroup != "" {
+		terms += abovePoolCartSQL() + ` DESC,
+	         `
+	}
+	switch {
+	case len(f.Sources) > 0:
+		terms += fmt.Sprintf(`(SELECT MIN(array_position($%d::bigint[], so.root)) FROM sourced so WHERE so.id = b.node_id) ASC,
 	         `, sourcesParam)
+	case zone != "":
+		terms += fmt.Sprintf(`(n.zone = $%d) IS NOT TRUE,
+	         `, a.add(zone))
+	}
+	return terms
 }
 
-// Args returns the two bind values FencedNodesCTE's placeholders take, in the
+// Args returns the three bind values FencedNodesCTE's placeholders take, in the
 // order the placeholders were named. Beside the renderer, on DigAsker.Args's
 // precedent, so a caller cannot pass them in the wrong order or forget one.
-func (f EmptyFence) Args() []any { return []any{f.ProcessNode, f.OriginGroup} }
+func (f EmptyFence) Args() []any {
+	return []any{f.ProcessNode, f.OriginGroup, protocol.EpisodeKindKanban}
+}
 
 // FencedNodesCTE renders the set of nodes this asker may not source an empty
 // from, as a recursive walk over the two rules that hide a carrier.
@@ -353,7 +377,7 @@ func (f EmptyFence) Args() []any { return []any{f.ProcessNode, f.OriginGroup} }
 // A KEEPER IS AN OUTSIDER TOO: its ask names no process, so a keeper topping up
 // group A cannot see strict group B's empties by the same rule that makes a press
 // an outsider at A. This holds only where B is strict; a group that is not strict
-// fences nobody, keeper included.
+// fences nobody, keeper included. What stands above B's pool is not B's (below).
 //
 // ── RULE (ii): NOT FROM THE GROUP YOU ARE FILLING ───────────────────────────
 //
@@ -384,14 +408,30 @@ func (f EmptyFence) Args() []any { return []any{f.ProcessNode, f.OriginGroup} }
 // empties stand there for the process they serve, and two lineside kanbans short
 // at once would trade carts. One arm, so the plant-wide scan and a sources entry
 // answer alike; a source that names one is warned of at its save and yields
-// nothing here. Only a keeper's ask carries an origin group, so everyone else
-// reads this arm as empty. Pin: TestKanbanSources_NoLinesideRaid.
+// nothing here but what stands above its pool. Only a keeper's ask carries an
+// origin group, so everyone else reads this arm as empty. Pin:
+// TestKanbanSources_NoLinesideRaid.
 //
-// A CART ABOVE THAT KANBAN'S POOL IS NOT ITS OWN. A kanban never gives a cart it owns, but one
-// standing in a kanban whose loop holds more of its family than its pool is a stranger there,
-// and the only way it goes home with no ledger is another keeper's deficit taking it. Its own
-// slots only, never a line position; a strict kanban stays fenced by rule (i). Only a declared
-// pool can be above: with no row the kanban's pool is its minimum and nothing here reads it.
+// ── OWNED, AND OWNED BY NOBODY ──────────────────────────────────────────────
+//
+// SOURCES AND STRICT FENCE A KANBAN'S OWNED CARTS. A CART ABOVE A KANBAN'S POOL IS
+// OWNED BY NOBODY, AND ANY DEFICIT ASK REACHES IT, RANKED FIRST. One standing in a
+// kanban whose loop holds more of its family than its pool is a stranger there, and
+// the only way it goes home with no ledger is another keeper's deficit taking it: so
+// rules (i) and (iii) and an asker's sources all let it through (NotFencedArm,
+// fenceArms), and EmptyFence.rankTerm takes it ahead of anything else. A kanban
+// never gives a cart it owns: at or below its pool nothing of it is above. Its own
+// slots only, never a line position. Only a declared pool can be above: with no row
+// the kanban's pool is its minimum and nothing here reads it. Pins:
+// TestKanbanPin_AStrangerGoesHomeWhateverTheFence, TestKanbanSources_TheKeepersFind.
+//
+// ABOVE IS COUNTED BY THE LOOP READ'S OWN RULE: above_pool renders KanbanLoopCTEs,
+// so a cart a live order is bringing into a kanban's loop is the loop's wherever it
+// is. Counted by place alone, a kanban with two of its carts on robots read at its
+// pool while two above it, its stranger was not a candidate, and the asker took a
+// supermarket's (R6 ended at 11 of 10: TestKanbanPin_R6WithKsCartsOnRobots). It is
+// the loop's found less a cart on a robot with no live order, which can only make
+// above smaller.
 //
 // ── WHY A NODE SET AND NOT A PER-ROW TEST ───────────────────────────────────
 //
@@ -402,9 +442,9 @@ func (f EmptyFence) Args() []any { return []any{f.ProcessNode, f.OriginGroup} }
 // subtree, so membership-in-any-kanban-ancestor is what the walk already
 // answers.
 //
-// processParam and originParam are the 1-based positional parameters that will
-// carry EmptyFence.Args().
-func FencedNodesCTE(processParam, originParam int) string {
+// processParam, originParam and kindParam are the 1-based positional parameters
+// that will carry EmptyFence.Args().
+func FencedNodesCTE(processParam, originParam, kindParam int) string {
 	return fmt.Sprintf(`WITH RECURSIVE fenced_roots(id) AS (
 		SELECT k.node_id FROM kanbans k
 		 WHERE %[1]s
@@ -418,23 +458,27 @@ func FencedNodesCTE(processParam, originParam int) string {
 		UNION ALL
 		SELECT n2.id FROM nodes n2 JOIN fenced f ON n2.parent_id = f.id
 	),
+	scope(node_id) AS (
+		SELECT DISTINCT kf.kanban_node_id FROM kanban_families kf WHERE $%[2]d <> ''
+	),
+	%[3]s,
 	above_pool(kanban, family_id, above) AS (
 		SELECT kf.kanban_node_id, kf.family_id, COUNT(lb.id) - kf.pool
 		  FROM kanban_families kf
-		  JOIN kanbans k ON k.node_id = kf.kanban_node_id
-		  JOIN nodes ag ON ag.id = k.node_id
-		  JOIN LATERAL (
-			SELECT c.id AS node_id FROM nodes c WHERE c.parent_id = k.node_id
-			UNION SELECT s.process_node_id FROM kanban_supports s WHERE s.kanban_node_id = k.node_id
-			UNION SELECT h.position_node_id FROM bin_loaders l JOIN bin_loader_homes h ON h.loader_id = l.id
-			       WHERE l.archived_at IS NULL AND l.outbound_dest = ag.name
-		  ) place ON TRUE
-		  JOIN bins lb ON lb.node_id = place.node_id AND lb.status <> 'retired'
+		  JOIN nodes ag ON ag.id = kf.kanban_node_id
+		  JOIN (
+			SELECT sp.kanban, sp.cart FROM spoken sp WHERE NOT sp.asked
+			UNION ALL
+			SELECT st.kanban, st.cart FROM standing st
+			  LEFT JOIN spoken sp ON sp.kanban = st.kanban AND sp.cart = st.cart
+			 WHERE sp.cart IS NULL
+		  ) lc ON lc.kanban = kf.kanban_node_id
+		  JOIN bins lb ON lb.id = lc.cart
 		  JOIN bin_types lt ON lt.id = lb.bin_type_id AND lt.family_id = kf.family_id
-		 WHERE $%[2]d <> '' AND ag.name <> $%[2]d AND NOT (%[3]s)
+		 WHERE ag.name <> $%[2]d
 		 GROUP BY kf.kanban_node_id, kf.family_id, kf.pool
 		HAVING COUNT(lb.id) > kf.pool
-	) `, helpers.StrictFencesSQL(fmt.Sprintf("$%d", processParam)), originParam, helpers.StrictFencesSQL(fmt.Sprintf("$%d", processParam)))
+	) `, helpers.StrictFencesSQL(fmt.Sprintf("$%d", processParam)), originParam, KanbanLoopCTEs(kindParam))
 }
 
 // NotFencedArm keeps a candidate out of the fenced set, but for a cart above its kanban's pool
@@ -446,8 +490,15 @@ func FencedNodesCTE(processParam, originParam int) string {
 func NotFencedArm() string {
 	return `
 	  AND (b.node_id NOT IN (SELECT id FROM fenced)
-	       OR EXISTS (SELECT 1 FROM above_pool ap JOIN nodes an ON an.parent_id = ap.kanban
-	                   WHERE an.id = b.node_id AND ap.family_id = bt.family_id))`
+	       OR ` + abovePoolCartSQL() + `)`
+}
+
+// abovePoolCartSQL is true for a cart b (type bt) on a slot of a kanban whose loop holds more of
+// its family than its pool. One spelling for the arm that admits it and the order that takes it
+// first. Assumes FencedNodesCTE's CTEs are in scope.
+func abovePoolCartSQL() string {
+	return `EXISTS (SELECT 1 FROM above_pool ap JOIN nodes an ON an.parent_id = ap.kanban
+	                   WHERE an.id = b.node_id AND ap.family_id = bt.family_id)`
 }
 
 // ── THE EMPTY-CARRIER FRAGMENT FAMILY ───────────────────────────────────────
@@ -1775,12 +1826,12 @@ func findEmptyTyped(db *sql.DB, typeArm func(int) string, typeVal any, preferZon
 		where += arms
 		where += NotForeignDugArm(a.add(string(reservations.ModeDig)),
 			a.add(asker.OrderID), a.add(asker.LaneOwner))
-		return cte + BinJoinQuery + where + emptyTailRanked(a, want, fence.rankTerm(sourcesP)), a.vals
+		return cte + BinJoinQuery + where + emptyTailRanked(a, want, fence.rankTerm(a, sourcesP, preferZone)), a.vals
 	}
 
-	// ONE STATEMENT WITH SOURCES: their rank is the order, and a zone pass ahead of
-	// it would take a nearer second source over a first.
-	if preferZone != "" && len(fence.Sources) == 0 {
+	// ONE STATEMENT FOR A RANKED FIND: its rank is the order (EmptyFence.ranked), and
+	// a zone pass ahead of it would take a nearer cart over a first-ranked one.
+	if preferZone != "" && !fence.ranked() {
 		q, args := build(true)
 		b, err := ScanBin(db.QueryRow(q, args...))
 		if err == nil {
@@ -1832,10 +1883,10 @@ func FindEmptyCompatible(db *sql.DB, payloadCode, preferZone string, excludeNode
 		where += NotForeignDugArm(a.add(string(reservations.ModeDig)),
 			a.add(asker.OrderID), a.add(asker.LaneOwner))
 		return cte + BinJoinQuery + where +
-			PayloadBinTypeRuleArm(fmt.Sprintf("$%d", payloadP)) + emptyTailRanked(a, want, fence.rankTerm(sourcesP)), a.vals
+			PayloadBinTypeRuleArm(fmt.Sprintf("$%d", payloadP)) + emptyTailRanked(a, want, fence.rankTerm(a, sourcesP, preferZone)), a.vals
 	}
 
-	if preferZone != "" && len(fence.Sources) == 0 {
+	if preferZone != "" && !fence.ranked() {
 		q, args := build(true)
 		b, err := ScanBin(db.QueryRow(q, args...))
 		if err == nil {

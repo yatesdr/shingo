@@ -12,6 +12,7 @@ import (
 
 	"shingo/protocol"
 	"shingo/protocol/testutil"
+	"shingocore/domain"
 )
 
 // kanban_pins_v5_docker_test.go — the family's acceptance on the rig's plant file: the
@@ -520,5 +521,147 @@ func TestKanbanPin_ACartAbovePoolGoesHome(t *testing.T) {
 	}
 	if got := r.card(rigK2, rigSmall); got.HeldBy != "no empty "+rigSmall+" outside the group" {
 		t.Errorf("K2's card reads %+v", got)
+	}
+}
+
+// TestKanbanPin_R6WithKsCartsOnRobots: R6's own state when K2 asked the second time. Two of K's
+// carts were on robots coming back into K (orders 14 and 15, windows to PKB_002 and PKB_007), so by
+// place K held 10 of its 12 and read at its pool. K2's ask took the supermarket's cart, K2 was
+// whole, and nothing asked again: K ended at 11 of 10. A cart a live order delivers into the loop
+// is the loop's wherever it is (store.kanbanLoopSQL), so K is above its pool on a robot too.
+func TestKanbanPin_R6WithKsCartsOnRobots(t *testing.T) {
+	t.Parallel()
+	r := newKanbanRig(t)
+	stock := r.stockSM()
+	r.byHand(r.cartAt("WKB_001"), "PKB_007")
+	r.byHand(r.cartAt("WKB_002"), "PKB_008")
+	var transit int64
+	testutil.MustNoErr(t, r.db.QueryRow(`SELECT id FROM nodes WHERE name = $1`, domain.TransitNodeName).Scan(&transit), "transit")
+	for from, to := range map[string]string{"PKB_003": "PKB_009", "PKB_004": "PKB_010"} {
+		cart := r.cartAt(from)
+		o := r.move(from, to, cart)
+		_, err := r.db.Exec(`UPDATE bins SET node_id = $1, claimed_by = $2 WHERE id = $3`, transit, o.ID, cart)
+		testutil.MustNoErr(t, err, "the lift off "+from)
+	}
+	if got := r.pinFound("45x48"); got != 12 {
+		t.Fatalf("fixture drift: K's family with K2's carts in it and two on robots: found %d, want 12", got)
+	}
+	r.tick()
+	r.fly()
+	r.tick()
+	r.fly()
+	if got := r.pinFound("45x48"); got != 10 {
+		t.Errorf("K's family after K2 asked with two of K's on robots: found %d, want 10 of 10: %s", got, r.said(r.live()))
+	}
+	if got := r.residents(rigK2, rigSmall); got != 2 {
+		t.Errorf("K2 holds %d small, want its 2 back", got)
+	}
+	for slot, id := range stock {
+		if got := r.cartAt(slot); got != id {
+			t.Errorf("%s holds cart %d, want its stocked %d: K2 took the supermarket's while K stood above its pool", slot, got, id)
+		}
+	}
+}
+
+// TestKanbanPin_AStrangerGoesHomeWhateverTheFence: R6 at rest, the supermarket stocked, and the same
+// with each fence. Sources and strict fence a kanban's owned carts, and a cart above a kanban's pool
+// is owned by nobody (bins.FencedNodesCTE). K2's keeper takes K's two strangers home before any other
+// cart: with no fence, with a source of its own that is not K, and with K strict, where K2 is an
+// outsider at K. In none does it take a cart at or below K's pool: K2 short again with K at 10, the
+// cart comes from the supermarket.
+func TestKanbanPin_AStrangerGoesHomeWhateverTheFence(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name  string
+		fence func(r *kanbanRig)
+	}{
+		{"no fence", func(*kanbanRig) {}},
+		{"K2 has a source that is not K", func(r *kanbanRig) {
+			_, err := r.db.Exec(`INSERT INTO kanban_sources (kanban_node_id, rank, source_node_id)
+				SELECT k2.id, 1, sm.id FROM nodes k2, nodes sm WHERE k2.name = $1 AND sm.name = $2`, rigK2, rigSM)
+			testutil.MustNoErr(r.t, err, "K2's source")
+		}},
+		{"K is strict", func(r *kanbanRig) {
+			_, err := r.db.Exec(`UPDATE kanbans SET strict = true WHERE node_id = (SELECT id FROM nodes WHERE name = $1)`, rigK)
+			testutil.MustNoErr(r.t, err, "K strict")
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			r := newKanbanRig(t)
+			stock := r.stockSM()
+			tc.fence(r)
+			r.byHand(r.cartAt("WKB_001"), "PKB_007")
+			r.byHand(r.cartAt("WKB_002"), "PKB_008")
+			r.tick()
+			r.fly()
+			r.tick()
+			r.fly()
+			if got := r.pinFound("45x48"); got != 10 {
+				t.Errorf("K's family after K2 asked: found %d, want 10 of 10: %s", got, r.said(r.live()))
+			}
+			if got := r.residents(rigK2, rigSmall); got != 2 {
+				t.Errorf("K2 holds %d small, want its 2 back", got)
+			}
+			for slot, id := range stock {
+				if got := r.cartAt(slot); got != id {
+					t.Errorf("%s holds cart %d, want its stocked %d: K's strangers did not go first", slot, got, id)
+				}
+			}
+			// K at its pool: K2 one short takes nothing of K's.
+			_, err := r.db.Exec(`UPDATE bins SET status = 'retired', node_id = NULL WHERE id = (
+				SELECT b.id FROM bins b JOIN nodes n ON n.id = b.node_id JOIN nodes g ON g.id = n.parent_id
+				 WHERE g.name = $1 ORDER BY b.id LIMIT 1)`, rigK2)
+			testutil.MustNoErr(t, err, "K2 loses one for good")
+			r.tick()
+			r.fly()
+			if got := r.pinFound("45x48"); got != 10 {
+				t.Errorf("K at its pool gave a cart: found %d", got)
+			}
+			if got := r.residents(rigK2, rigSmall); got != 2 {
+				t.Errorf("K2 holds %d small, want 2: one from the supermarket", got)
+			}
+			gone := 0
+			for slot, id := range stock {
+				if r.cartAt(slot) != id {
+					gone++
+				}
+			}
+			if gone != 1 {
+				t.Errorf("the supermarket gave %d, want 1", gone)
+			}
+		})
+	}
+}
+
+// TestKanbanPin_ADeficitPastTheSurplusTakesTheRestElsewhere: K one above its pool, K2 two short. One
+// tick asks twice. The first takes K's extra; the second must not take another of K's while the
+// first still stands claimed on K's slot: a claimed cart is spoken for, not K's surplus. It comes
+// from the supermarket.
+func TestKanbanPin_ADeficitPastTheSurplusTakesTheRestElsewhere(t *testing.T) {
+	t.Parallel()
+	r := newKanbanRig(t)
+	stock := r.stockSM()
+	r.byHand(r.cartAt("WKB_001"), "PKB_007")
+	_, err := r.db.Exec(`UPDATE bins SET status = 'retired', node_id = NULL WHERE id = $1`, r.cartAt("WKB_002"))
+	testutil.MustNoErr(t, err, "K2 loses one for good")
+	r.tick()
+	r.fly()
+	r.tick()
+	r.fly()
+	if got := r.pinFound("45x48"); got != 10 {
+		t.Errorf("K's family after K2 asked twice: found %d, want 10 of 10: %s", got, r.said(r.live()))
+	}
+	if got := r.residents(rigK2, rigSmall); got != 2 {
+		t.Errorf("K2 holds %d small, want 2", got)
+	}
+	gone := 0
+	for slot, id := range stock {
+		if r.cartAt(slot) != id {
+			gone++
+		}
+	}
+	if gone != 1 {
+		t.Errorf("the supermarket gave %d, want 1: K2's second cart", gone)
 	}
 }

@@ -363,11 +363,13 @@ A bin type's width by length, either way round (`domain.BinType.Footprint`). Mem
 The process nodes a kanban serves (`kanban_supports`). A kanban with supports needs a station, the board its keeper's orders show on.
 
 ### Sources
-The ordered groups a kanban's keeper may pull from (`kanban_sources`, in rank order). An empty list searches the plant. A lineside kanban's keeper never pulls from another kanban that has supports, except carts above that kanban's pool. An unloader repays the kanban, then the first source short of the cart.
+The ordered groups a kanban's keeper may pull from (`kanban_sources`, in rank order). An empty list searches the plant. A lineside kanban's keeper never pulls from another kanban that has supports. An unloader repays the kanban, then the first source short of the cart.
+
+Sources and strict fence a kanban's owned carts. A cart above a kanban's pool (found, flights included) is owned by nobody: any keeper's deficit ask takes it first, whatever its own sources. A kanban never gives a cart it owns.
 
 
 ### Strict
-Nobody else may pull from this kanban (`kanbans.strict`).
+Nobody else may pull this kanban's owned carts (`kanbans.strict`); a cart above its pool is anyone's.
 
 
 ## Naming Conventions

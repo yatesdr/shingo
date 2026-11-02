@@ -482,6 +482,13 @@ expect_on_press() {
   fi
 }
 
+# found_of <family>: K's found for one family, now, off the families read.
+found_of() {
+  curl -s -m 10 "$CORE$FAMILY_API?group_node_id=$K_ID" \
+    | grep -o "\"family\":\"$1\",\"family_id\":[0-9]*,\"pool\":[0-9]*,\"pool_declared\":[a-z]*,\"minimum\":[0-9]*,\"mix\":[0-9]*,\"slot\":[0-9]*,\"line\":[0-9]*,\"window\":[0-9]*,\"flight\":[0-9]*,\"found\":[0-9]*" \
+    | sed -n 's/.*"found":\([0-9]*\)$/\1/p' | head -1
+}
+
 # found_held: found equals the pool at every sample of the run, per (kanban, family).
 found_held() {
   local bad
@@ -718,10 +725,10 @@ carry_small() {
 }
 
 # R6: a cart in the wrong buffer goes home. K2's two carried into K, K stands above its pool and
-# K2 below. K2's keeper may take what stands above K's pool and nothing K owns; K never drops below
-# its pool. SM holds carts too, and either is the keeper's to find: what R6 pins is K.
+# K2 below. K2's keeper takes what stands above K's pool before any other cart, and nothing K owns;
+# K never drops below its pool. SM holds carts too and gives none: K ends at 10 of 10.
 run_R6() {
-  say "R6: K2's carts carried into K: K's keeper gives only above its pool"
+  say "R6: K2's carts carried into K: K2's keeper takes K's carts above its pool first"
   sim_min 10
   carry_small "$K2" "$K" || fail "could not take K2's first cart"
   carry_small "$K2" "$K" || fail "could not take K2's second cart"
@@ -733,6 +740,9 @@ run_R6() {
   check_zero "a cart K owns given away: K below its pool of small" \
     "$([ "$(empties "$K" "$SMALL")" -lt 2 ] && echo 1 || echo 0)"
   sim_min 10
+  check "K's 45x48 ends at its pool" "$(found_of 45x48)" 10
+  check "$SM gave none: K's extras went first" "$(sql "SELECT count(*) FROM bins b JOIN nodes n ON n.id = b.node_id
+      JOIN nodes l ON l.id = n.parent_id JOIN nodes g ON g.id = l.parent_id WHERE g.name = '$SM' AND b.label LIKE '%-SM-%'")" 4
   never_to_sm
 }
 

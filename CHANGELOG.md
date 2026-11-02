@@ -14,9 +14,10 @@ No migration. Edge only.
 - A Spots chip appears only once a part moves, and its ✕ undoes the move
 - A tap on the search box raises the touch keyboard
 - An on-deck spot with nowhere to go can't be tapped
+
 ## 2026-11-01 — Kanban: a loop of carts around a process
 
-Core v169-172 (run `store.KanbanMigrationCensusSQL` and `store.FamilyCensusSQL` first), Edge one literal. Ship Core and Edge together.
+Core v169-172, on order-carts' v173-174 (run `store.KanbanMigrationCensusSQL` and `store.FamilyCensusSQL` first), Edge one literal. Ship Core and Edge together.
 
 - A group with a level is a kanban: `kanbans`, `kanban_levels`, `kanban_supports`, `kanban_layer_levels`, `kanban_sources`, `kanban_families`
 - `maintain_enabled` is gone; station and strict leave properties for columns; plain groups keep their overflow property; a kanban has none
@@ -27,10 +28,9 @@ Core v169-172 (run `store.KanbanMigrationCensusSQL` and `store.FamilyCensusSQL` 
 - Pool per family, typed, at the minimum until said; found by place, flights included, in one read of the loop
 - A cart of the loop lands whenever a slot admits it, at intake, the scanner, cancel-return and the lift; the cap stays for strangers
 - A door's one read says which line has a slot for the cart, so it pays for one fit wherever the cart goes
-- An order that ends with a cart on its robot names that cart, so the stranded watch, the cancel-return and a kanban's count find it
-- A cancelled order's cart of a loop goes home, whichever order carried it
+- A cancelled order's cart of a loop goes home, whichever order carried it, asked from where that cart was lifted
 - The keeper asks outside only for a family's deficit, by a counted forecast; a type short inside a whole family is the arm's
-- A cart above another kanban's pool may go home by a keeper's ask; a kanban never gives a cart it owns
+- A cart above another kanban's pool, flights counted, is any deficit ask's first, past sources and strict; never one it owns
 - The arm moves the largest surplus in the family, oldest arrival, to a window lit as the short type, leaving windows for the changeover's evacs
 - Episode keys are by id, so a rename leaves an open episode whole
 - The keeper's tick is 3 statements, any plant size; the bins build 9; a door 8; a CLEAR 22, unchanged
