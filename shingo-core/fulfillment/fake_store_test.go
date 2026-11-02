@@ -111,7 +111,7 @@ func (f *fakeStore) ListAcquiringOrders() ([]*orders.Order, error) {
 // value that preserves every existing guard's behaviour.
 func (f *fakeStore) OrderOwnsNoCargo(int64) (bool, error) { return false, nil }
 
-func (f *fakeStore) OverflowNameOf(string, int64) string { return "" }
+func (f *fakeStore) OverflowNameOf(string) string { return "" }
 
 // PlannedPickStands: the fake keeps no bins, so no birth pick stands and every
 // order picks, which is what every order did before orders.plan.

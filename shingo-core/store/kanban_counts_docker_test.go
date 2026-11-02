@@ -158,7 +158,10 @@ func TestKanbanCounts_TheBatchedReadsAgreeWithTheSingleReads(t *testing.T) {
 	})
 	testdb.SeedCartRow(t, db, elsewhere.ID, c4, 0, 1)
 	c5 := bin(kd, "KCT-C5", nil, nil)
-	order("kct-both", s2[1].Name, func(o *orders.Order) { o.NamedBinID = &c5; o.HoldFromBirth(c5) })
+	testdb.CreateOrder(t, db, func(o *orders.Order) {
+		o.EdgeUUID, o.DeliveryNode, o.OrderType, o.NamedBinID = "kct-both", s2[1].Name, "move", &c5
+		o.HoldFromBirth(c5)
+	})
 	c6 := bin(tote, "KCT-C6-TB", nil, 0)
 	order("kct-tb", s1[0].Name, func(o *orders.Order) { o.HoldFromBirth(c6) })
 	// Not coming: loaded, a terminal order, another type, the keeper's own asks.

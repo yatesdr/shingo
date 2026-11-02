@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log"
 
+	"shingocore/store/bins"
 	"shingocore/store/nodes"
 )
 
@@ -56,18 +57,16 @@ func (db *DB) ListKanbanSources(kanbanNodeID int64) ([]KanbanSource, error) {
 	return nodes.ListKanbanSources(db.DB, kanbanNodeID)
 }
 
-// OverflowTargetOf reads a group's overflow: a kanban's row, or a plain group's
-// property. One statement.
+// OverflowTargetOf reads a plain group's overflow property. One statement.
 func (db *DB) OverflowTargetOf(groupNodeID int64) (OverflowTarget, error) {
 	return nodes.OverflowTargetOf(db.DB, groupNodeID)
 }
 
-// OverflowNameOf is the name of the overflow a store of one carrier type takes from
-// a group, by the group's name (0: the type is not known, the group's own); blank
-// for none, and for a read that failed, which leaves the push parked until the
-// next pass asks again. One statement.
-func (db *DB) OverflowNameOf(groupName string, binTypeID int64) string {
-	t, err := nodes.PerTypeOverflowTargetByName(db.DB, groupName, binTypeID)
+// OverflowNameOf is the name of a plain group's overflow, by the group's name; blank for none,
+// and for a read that failed, which leaves the push parked until the next pass asks again. One
+// statement.
+func (db *DB) OverflowNameOf(groupName string) string {
+	t, err := nodes.OverflowTargetByName(db.DB, groupName)
 	if err != nil {
 		log.Printf("store: %v", err)
 		return ""
@@ -161,8 +160,110 @@ func (db *DB) NodeIsUnderAny(nodeID int64, roots []int64) (bool, error) {
 	return nodes.NodeIsUnderAny(db.DB, nodeID, roots)
 }
 
-// PerTypeOverflowTargetOf reads the overflow a store of one carrier type takes from
-// a group (nodes.PerTypeOverflowTargetOf). One statement.
-func (db *DB) PerTypeOverflowTargetOf(groupNodeID, binTypeID int64) (OverflowTarget, error) {
-	return nodes.PerTypeOverflowTargetOf(db.DB, groupNodeID, binTypeID)
+// ListKanbanPools reads a kanban's declared pools, by family id. One statement.
+func (db *DB) ListKanbanPools(kanbanNodeID int64) (map[int64]int, error) {
+	rows, err := db.DB.Query(`SELECT family_id, pool FROM kanban_families WHERE kanban_node_id = $1`, kanbanNodeID)
+	if err != nil {
+		return nil, fmt.Errorf("kanban pools %d: %w", kanbanNodeID, err)
+	}
+	defer rows.Close()
+	out := map[int64]int{}
+	for rows.Next() {
+		var family int64
+		var pool int
+		if err := rows.Scan(&family, &pool); err != nil {
+			return nil, fmt.Errorf("kanban pools %d: scan: %w", kanbanNodeID, err)
+		}
+		out[family] = pool
+	}
+	return out, rows.Err()
+}
+
+// EffectiveTypesOfChildren is what each child of a group admits (bins.EffectiveTypesOfChildren).
+func (db *DB) EffectiveTypesOfChildren(groupNodeID int64) (map[int64][]*bins.BinType, error) {
+	return bins.EffectiveTypesOfChildren(db.DB, groupNodeID)
+}
+
+// KanbanFamilyClash is another kanban levelling a family on a support.
+type KanbanFamilyClash struct{ Kanban, Family, Support string }
+
+// KanbansLevellingAFamilyOn names the other kanbans that level one of these types' families on
+// one of these supports. One statement, at a save.
+func (db *DB) KanbansLevellingAFamilyOn(kanbanNodeID int64, types, supports []int64) ([]KanbanFamilyClash, error) {
+	rows, err := db.DB.Query(`SELECT DISTINCT g.name, f.code, pn.name
+		  FROM kanban_supports s
+		  JOIN kanban_levels l ON l.kanban_node_id = s.kanban_node_id
+		  JOIN bin_types bt ON bt.id = l.bin_type_id
+		  JOIN carrier_families f ON f.id = bt.family_id
+		  JOIN nodes g ON g.id = s.kanban_node_id
+		  JOIN nodes pn ON pn.id = s.process_node_id
+		 WHERE s.kanban_node_id <> $1 AND s.process_node_id = ANY($3::bigint[])
+		   AND bt.family_id IN (SELECT family_id FROM bin_types WHERE id = ANY($2::bigint[]))
+		 ORDER BY g.name, f.code, pn.name`, kanbanNodeID, types, supports)
+	if err != nil {
+		return nil, fmt.Errorf("kanbans on the supports of %d: %w", kanbanNodeID, err)
+	}
+	defer rows.Close()
+	var out []KanbanFamilyClash
+	for rows.Next() {
+		var c KanbanFamilyClash
+		if err := rows.Scan(&c.Kanban, &c.Family, &c.Support); err != nil {
+			return nil, fmt.Errorf("kanbans on the supports of %d: scan: %w", kanbanNodeID, err)
+		}
+		out = append(out, c)
+	}
+	return out, rows.Err()
+}
+
+// ClaimedTypesNotLevelled names the bin types a style of the kanban's supports puts on the line
+// that the kanban declares no level of. One statement, at a save.
+func (db *DB) ClaimedTypesNotLevelled(kanbanNodeID int64) ([]string, error) {
+	rows, err := db.DB.Query(`
+		WITH scope AS (SELECT $1::bigint AS node_id),`+kanbanPictureCTEs+`
+		SELECT DISTINCT bt.code
+		  FROM style_part sp
+		  JOIN bin_types bt ON bt.id = sp.bin_type_id
+		  JOIN style_claims sc ON sc.process_id = sp.process_id AND sc.style_id = sp.style_id AND sc.payload_code = sp.payload_code
+		  JOIN positions pos ON pos.node_name IN (sc.core_node_name, sc.paired_core_node, sc.second_paired_core_node)
+		 WHERE NOT EXISTS (SELECT 1 FROM kanban_levels l WHERE l.kanban_node_id = $1 AND l.bin_type_id = bt.id)
+		 ORDER BY bt.code`, kanbanNodeID)
+	if err != nil {
+		return nil, fmt.Errorf("claimed types of %d: %w", kanbanNodeID, err)
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var code string
+		if err := rows.Scan(&code); err != nil {
+			return nil, fmt.Errorf("claimed types of %d: scan: %w", kanbanNodeID, err)
+		}
+		out = append(out, code)
+	}
+	return out, rows.Err()
+}
+
+// ReferencesToNodeName says what joins a node by its name: loaders' outbound and inbound, and
+// claims' positions, each in words a person can look up. One statement.
+func (db *DB) ReferencesToNodeName(name string) ([]string, error) {
+	rows, err := db.DB.Query(`
+		SELECT 'loader ' || l.name || ' (outbound)' FROM bin_loaders l WHERE l.archived_at IS NULL AND l.outbound_dest = $1
+		UNION ALL
+		SELECT 'loader ' || l.name || ' (inbound)' FROM bin_loaders l WHERE l.archived_at IS NULL AND l.inbound_source = $1
+		UNION ALL
+		SELECT DISTINCT 'claim of ' || sc.process_id || ' / ' || sc.style_id FROM style_claims sc
+		 WHERE $1 IN (sc.core_node_name, sc.paired_core_node, sc.second_paired_core_node, sc.inbound_source, sc.outbound_destination)
+		 ORDER BY 1`, name)
+	if err != nil {
+		return nil, fmt.Errorf("references to %s: %w", name, err)
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var ref string
+		if err := rows.Scan(&ref); err != nil {
+			return nil, fmt.Errorf("references to %s: scan: %w", name, err)
+		}
+		out = append(out, ref)
+	}
+	return out, rows.Err()
 }

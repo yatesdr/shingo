@@ -104,7 +104,7 @@ func (s *LoaderService) DrainAllowed(l loaders.Loader) bool {
 }
 
 // checkDrainLoop refuses an outbound destination, or its overflow destination
-// (nodes.OverflowGroupOf: a kanban's row or a plain group's property),
+// (nodes.OverflowGroupOf: a plain group's property; a kanban has none),
 // that is the inbound source, contains it or lies in it. A name that resolves
 // to nothing is not this check's question (checkInboundSource; an outbound is
 // not resolve-checked).
@@ -123,26 +123,8 @@ func (s *LoaderService) checkDrainLoop(inboundSource, outboundDest string) error
 	if err := s.drainLoop("the outbound destination", out, src); err != nil {
 		return err
 	}
-	if over, _ := nodes.OverflowGroupOf(s.db, out, nil); over != nil {
+	if over, _ := nodes.OverflowGroupOf(s.db, out); over != nil {
 		if err := s.drainLoop("the outbound destination's overflow", over, src); err != nil {
-			return err
-		}
-	}
-	// A TYPE'S OWN OVERFLOW LOOPS AS THE DEFAULT DOES: a cart of it pushed at the
-	// outbound lands back where the drain draws from, and no other save can see it.
-	levels, err := s.db.ListDeclaredLevels(out.ID)
-	if err != nil {
-		return fmt.Errorf("read the levels of %s: %w", out.Name, err)
-	}
-	for _, l := range levels {
-		if l.OverflowNodeID == nil {
-			continue
-		}
-		perType, err := s.db.GetNode(*l.OverflowNodeID)
-		if err != nil || perType == nil {
-			continue
-		}
-		if err := s.drainLoop("the outbound destination's overflow for "+l.BinTypeCode, perType, src); err != nil {
 			return err
 		}
 	}

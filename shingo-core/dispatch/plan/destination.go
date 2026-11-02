@@ -74,13 +74,12 @@ func (p *Planner) StoreDrop(group *nodes.Node, payloadCode string, stated binres
 //
 // The door (LifecycleService.tryOverflow) keeps the log line and the stamp.
 //
-// The overflow is the carrier type's own (nodes.OverflowGroupOf), so stated is what the
-// door already read of the cart. The group's slot is chosen over one read of its
-// children (overGroup).
+// Only a plain group has one (nodes.OverflowGroupOf). The group's slot is chosen over one read
+// of its children (overGroup).
 func (p *Planner) OverflowDestination(group *nodes.Node, payloadCode string, stated binresolver.BinTypeStatement,
 	asker domain.DigAsker) (string, bool) {
 	defer observe(p.db, "overflow-destination")()
-	dest, why := nodes.OverflowGroupOf(p.db, group, stated.TypeID())
+	dest, why := nodes.OverflowGroupOf(p.db, group)
 	if dest == nil {
 		if why != "" {
 			p.debug("intake: %s — parking instead", why)

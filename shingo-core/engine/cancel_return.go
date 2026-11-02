@@ -399,10 +399,9 @@ func (e *Engine) fencedFor(src *nodes.Node, carrier *orders.Order, binID int64) 
 // (SourceFinder tier 1), so a bin set down in a sibling lane would be one its
 // line never finds.
 //
-// A CANCELLED PUSH OFF AN UNLOADER'S WINDOW GOES WHERE THE PUSH WOULD HAVE GONE: the
-// one chooser (plan.Planner.ChoosePush), the kanban decided on Short and then its
-// sources and the type's overflow. Its refusal is the sentence. Every other return
-// keeps the cap below. Pin: TestKanbanDoor_ACancelledPushReturnsToTheShortSource.
+// A CANCELLED PUSH OF A KANBAN'S LOOP GOES WHERE THE PUSH WOULD HAVE GONE: the one chooser
+// (plan.Planner.ChoosePush), home first and then its sources. Its refusal is the sentence.
+// Every other return keeps the cap below. Pin: TestKanbanPin_ALoopCartLandsWithASlotFree.
 func (e *Engine) storeInto(src *nodes.Node, bin *bins.Bin, carrier *orders.Order) (*nodes.Node, string) {
 	if src == nil {
 		return nil, "it names no node Core knows"
@@ -424,7 +423,7 @@ func (e *Engine) storeInto(src *nodes.Node, bin *bins.Bin, carrier *orders.Order
 	if carrier != nil && dispatch.WindowPushShaped(carrier) {
 		if c := e.dispatcher.ChooseCancelledPush(cartPickNode(carrier, bin.ID), group, stated); c.Applies {
 			if c.Slot == nil {
-				return nil, group.Name + " and its sources are not short of it, and no overflow has room"
+				return nil, "no slot of " + group.Name + " admits it, and no source is short of it"
 			}
 			return c.Slot, c.Why
 		}
@@ -433,23 +432,13 @@ func (e *Engine) storeInto(src *nodes.Node, bin *bins.Bin, carrier *orders.Order
 	if err == nil && res != nil && res.Node != nil {
 		return res.Node, ""
 	}
-	// A KANBAN AT ITS LEVEL OVERFLOWS, ONE HOP, as any store into it
-	// does at intake (LifecycleService.tryOverflow): the keeper topping a kanban
-	// back up after this bin was lifted out of it is ordinary, and the plant has
-	// already said where the next carrier goes. Only that refusal — a group
-	// that is full, or a fence that refuses this bin, holds as before — and
-	// only one hop: an overflow at its own level holds rather than consulting
-	// its overflow.
-	//
-	// THE HOP FOLLOWS A DECLARATION BY THE KANBAN, NOT BY A CONSUMER. No retrieve
-	// tier reads the overflow, so a bin that took the hop is found by
-	// blank-source needs (the keeper's top-ups, the plant-wide tier) only.
-	// Empties-only in practice: a payload is refused by a kanban before
-	// its level is asked.
+	// A PLAIN GROUP'S OVERFLOW, ONE HOP, as any store into it does at intake
+	// (LifecycleService.tryOverflow). Only that refusal holds: a group that is full, or a fence
+	// that refuses this bin. A kanban has none, and a stranger at its level holds.
 	if !errors.Is(err, kanban.ErrAtLevel) {
 		return nil, refusalText(err, "no slot in "+group.Name)
 	}
-	over, why := nodes.OverflowGroupOf(e.db, group, &bin.BinTypeID)
+	over, why := nodes.OverflowGroupOf(e.db, group)
 	if over == nil {
 		if why == "" {
 			why = "it names no overflow"

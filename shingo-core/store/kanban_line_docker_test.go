@@ -12,14 +12,14 @@ import (
 	"shingocore/store/orders"
 )
 
-// TestCountLevel_TopsAndBottomsIsNoStockOfTheLevel: the keeper's resident and
+// TestKanbanCounts_TopsAndBottomsIsNoStockOfTheLevel: the keeper's resident and
 // coming leave tops & bottoms out (it is the tops & bottoms row's, never the
 // stack level's), and a coming cart whose count is unknown is coming — it is
 // unverified, not tops & bottoms. A level of 4 with two stacks standing and
 // tops & bottoms standing and on its way, and two inbound (one two layers
 // high, one unknown): resident 2, coming 2, short 0, so the keeper asks for
 // nothing; the inbound rows stay whole, all three, for the card.
-func TestCountLevel_TopsAndBottomsIsNoStockOfTheLevel(t *testing.T) {
+func TestKanbanCounts_TopsAndBottomsIsNoStockOfTheLevel(t *testing.T) {
 	t.Parallel()
 	db := testdb.Open(t)
 	var grpID, btID int64
@@ -56,11 +56,11 @@ func TestCountLevel_TopsAndBottomsIsNoStockOfTheLevel(t *testing.T) {
 	coming("cl-two-high", bin("CL-COMING-16", nil, 16))
 	coming("cl-unknown", bin("CL-COMING-NULL", nil, nil))
 
-	group, err := db.GetNode(grpID)
-	testutil.MustNoErr(t, err, "group")
+	testutil.MustNoErr(t, db.SetKanbanLevel(store.KanbanLevel{GroupNodeID: grpID, BinTypeID: btID, Want: 4}), "a level")
 	lv := store.KanbanLevel{GroupNodeID: grpID, BinTypeID: btID, BinTypeCode: "CL-TOTE", Want: 4}
-	c, err := db.CountLevel(group, lv, store.DemandOrigin{})
+	counts, err := db.ReadKanbanCounts([]int64{grpID})
 	testutil.MustNoErr(t, err, "count")
+	c := counts.Level(lv, 0)
 	if c.Resident != 2 || c.Coming != 2 || c.Short() != 0 || len(c.Inbound) != 3 {
 		t.Errorf("resident %d, coming %d, short %d, inbound rows %d; want 2, 2, 0 and the three rows whole",
 			c.Resident, c.Coming, c.Short(), len(c.Inbound))

@@ -4,7 +4,6 @@ package store_test
 
 import (
 	"fmt"
-	"strings"
 	"testing"
 
 	"shingo/protocol"
@@ -26,25 +25,15 @@ type pinFamily struct{ slot, line, window, flight, coming int }
 
 func (f pinFamily) found() int { return f.slot + f.line + f.window + f.flight + f.coming }
 
-// pinFound reads the family's found. At the tree all it can say is the kanban's own
-// residents and comings of the family's types.
+// pinFound reads the family's found, by place, off the kanban's one loop read.
 func pinFound(t *testing.T, db *store.DB, kanban int64, types ...string) pinFamily {
 	t.Helper()
 	counts, err := db.ReadKanbanCounts([]int64{kanban})
 	testutil.MustNoErr(t, err, "the counts")
-	levels, err := db.ListKanbanLevels(kanban)
-	testutil.MustNoErr(t, err, "the levels")
-	var f pinFamily
-	for _, lv := range levels {
-		for _, code := range types {
-			if lv.BinTypeCode == code {
-				c := counts.Level(lv, 0)
-				f.slot += c.Resident
-				f.coming += c.Coming
-			}
-		}
-	}
-	return f
+	bt, err := db.GetBinTypeByCode(types[0])
+	testutil.MustNoErr(t, err, "the type")
+	found := counts.Found(kanban, bt.FamilyID)
+	return pinFamily{slot: found.Slot, line: found.Line, window: found.Window, flight: found.Flight}
 }
 
 // pinFamilyOf groups types into a family, where the table exists to say so.
@@ -68,7 +57,7 @@ type loopRig struct {
 
 func newLoopRig(t *testing.T) *loopRig {
 	t.Helper()
-	r := &loopRig{pictureRig: newPictureRig(t, 0)}
+	r := &loopRig{pictureRig: newPictureRig(t)}
 	db := r.db
 	r.window = &nodes.Node{Name: "PIC-WINDOW", Enabled: true}
 	testutil.MustNoErr(t, db.CreateNode(r.window), "window")
@@ -165,7 +154,7 @@ func TestKanbanPin_ABareCartAtAWindowCountsUnderItsCarrier(t *testing.T) {
 // it copies the robot group.
 func TestKanbanPin_MarkerTakesItsCarriersFamily(t *testing.T) {
 	t.Parallel()
-	r := newPictureRig(t, 0)
+	r := newPictureRig(t)
 	pinFamilyOf(t, r.db, "PIC-FAM", "PIC-SMALL", "PIC-BIG")
 	tx, err := r.db.DB.Begin()
 	testutil.MustNoErr(t, err, "tx")
@@ -184,7 +173,7 @@ func TestKanbanPin_MarkerTakesItsCarriersFamily(t *testing.T) {
 // kanban's cover in full: want 6 + 6 of 10 carts, short 2 of each forever.
 func TestKanbanPin_AMixedStyleCoversByItsOwnClaims(t *testing.T) {
 	t.Parallel()
-	r := newPictureRig(t, 4)
+	r := newPictureRig(t)
 	for _, code := range []string{"PIC-SMALL", "PIC-BIG", "PIC-TOTES"} {
 		testutil.MustNoErr(t, r.db.SetKanbanLevel(store.KanbanLevel{GroupNodeID: r.k, BinTypeID: r.types[code], Want: 2}), "level")
 	}
@@ -205,23 +194,21 @@ func TestKanbanPin_AMixedStyleCoversByItsOwnClaims(t *testing.T) {
 // save and the census share.
 func pinMinimum(t *testing.T, db *store.DB, kanban int64, family string) int {
 	t.Helper()
-	var n int
-	err := db.QueryRow(`SELECT minimum FROM kanban_family_minimums WHERE kanban_node_id = $1 AND family_code = $2`, kanban, family).Scan(&n)
-	if err != nil {
-		if strings.Contains(err.Error(), "does not exist") {
-			t.Errorf("no minimum read at this tree: %v", err)
-			return -1
+	mins, err := db.ListKanbanMinimums([]int64{kanban})
+	testutil.MustNoErr(t, err, "the minimums")
+	for _, m := range mins {
+		if m.FamilyCode == family {
+			return m.Minimum()
 		}
-		t.Fatalf("minimum: %v", err)
 	}
-	return n
+	return -1
 }
 
 // fivePresses is five Press-6 shapes on one kanban, each with a 45x48 style and a 32x30
 // style on its four positions, and a mix of 2/2/2/2.
 func fivePresses(t *testing.T) *pictureRig {
 	t.Helper()
-	r := newPictureRig(t, 0)
+	r := newPictureRig(t)
 	db := r.db
 	var t32 int64
 	testutil.MustNoErr(t, db.QueryRow(`INSERT INTO bin_types (code) VALUES ('PIC-32') RETURNING id`).Scan(&t32), "32")
@@ -296,5 +283,75 @@ func TestKanbanPin_TheDoorKnowsTheLoopBySource(t *testing.T) {
 		if (door != nil) != loop {
 			t.Errorf("door from %s answered %v, the source is the loop's: %v", name, door != nil, loop)
 		}
+	}
+}
+
+// TestKanbanPin_ACartOnARobotOnASwapCountsOnce: a swap's cart is a row of the swap's, lifted at the
+// slot and set down on the position. Lifted, it stands on a robot with a live order, and that order
+// speaks for it: it is not also a cart on a robot with none, whatever its last plain order named.
+func TestKanbanPin_ACartOnARobotOnASwapCountsOnce(t *testing.T) {
+	t.Parallel()
+	r := newLoopRig(t)
+	onRobot := r.cart("LOOP-SWAP", "PIC-SMALL", r.slot.ID)
+	last := r.delivering("loop-last", onRobot, r.window.Name, r.slot.Name)
+	_, err := r.db.Exec(`UPDATE orders SET status = 'confirmed' WHERE id = $1`, last.ID)
+	testutil.MustNoErr(t, err, "its last order ends")
+	_, err = r.db.Exec(`UPDATE bins SET node_id = $1 WHERE id = $2`, r.transit.ID, onRobot)
+	testutil.MustNoErr(t, err, "the lift")
+	swap := testdb.CreateOrder(t, r.db, func(o *orders.Order) {
+		o.EdgeUUID = "loop-swap"
+		o.StationID = "edge.1"
+		o.OrderType = "complex"
+		o.OriginClass = protocol.OriginClassNoDemand
+		o.Status = protocol.StatusInTransit
+		o.StepsJSON = `[{"action":"pickup","node":"` + r.slot.Name + `"},{"action":"dropoff","node":"` + r.position.Name + `"}]`
+	})
+	testdb.SeedCartRow(t, r.db, swap.ID, onRobot, 0, 1)
+	got := pinFound(t, r.db, r.k, "PIC-SMALL")
+	if got.found() != 1 || got.flight != 1 {
+		t.Errorf("found %+v = %d, want the one cart, in flight", got, got.found())
+	}
+}
+
+// TestKanbanPin_ACartOnARobotAfterItsSwapEndedStaysCounted: a two-cart swap carries the cart at its
+// process node and the cart it has lifted off the kanban, each a row of its own. Cancelled with the
+// second on its robot, the rows stay, so that cart still has its order on record: the loop counts it
+// in flight and the stranded watch can find it. With no order naming it the rig read 21 of 22.
+func TestKanbanPin_ACartOnARobotAfterItsSwapEndedStaysCounted(t *testing.T) {
+	t.Parallel()
+	for _, status := range []protocol.Status{protocol.StatusCancelled, protocol.StatusFailed} {
+		t.Run(string(status), func(t *testing.T) {
+			t.Parallel()
+			r := newLoopRig(t)
+			atLine := r.cart("LOOP-SWAP-LINE", "PIC-SMALL", r.position.ID)
+			onRobot := r.cart("LOOP-SWAP-END", "PIC-SMALL", r.slot.ID)
+			swap := testdb.CreateOrder(t, r.db, func(o *orders.Order) {
+				o.EdgeUUID = "loop-swap-end"
+				o.StationID = "edge.1"
+				o.OrderType = "complex"
+				o.OriginClass = protocol.OriginClassNoDemand
+				o.SourceNode = r.position.Name
+				o.DeliveryNode = r.position.Name
+				o.Status = protocol.StatusInTransit
+				o.StepsJSON = `[{"action":"pickup","node":"` + r.position.Name + `"},{"action":"dropoff","node":"` + r.window.Name +
+					`"},{"action":"pickup","node":"` + r.slot.Name + `"},{"action":"dropoff","node":"` + r.position.Name + `"}]`
+			})
+			testdb.SeedCartRow(t, r.db, swap.ID, atLine, 0, 1)
+			testdb.SeedCartRow(t, r.db, swap.ID, onRobot, 2, 3)
+			_, err := r.db.Exec(`UPDATE bins SET node_id = $1, claimed_by = $2 WHERE id = $3`, r.transit.ID, swap.ID, onRobot)
+			testutil.MustNoErr(t, err, "the lift")
+			if got := pinFound(t, r.db, r.k, "PIC-SMALL"); got.found() != 2 {
+				t.Fatalf("fixture drift: found %+v before the end, want both carts", got)
+			}
+			_, err = r.db.TerminalizeOrder(swap.ID, status, "test")
+			testutil.MustNoErr(t, err, "the swap ends")
+			got := pinFound(t, r.db, r.k, "PIC-SMALL")
+			if got.found() != 2 || got.flight != 1 {
+				t.Errorf("found %+v = %d, want both carts, the lifted one in flight", got, got.found())
+			}
+			if !testdb.HasCartRow(t, r.db, swap.ID, onRobot) {
+				t.Errorf("the ended swap's rows %v lost the cart on the robot, %d", testdb.CartRowBins(t, r.db, swap.ID), onRobot)
+			}
+		})
 	}
 }

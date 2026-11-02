@@ -65,6 +65,11 @@ func (r *KanbanAskReads) GetNodeProperty(nodeID int64, key string) string {
 	return r.groupProps[key]
 }
 
+// BinTypeBareOf answers nothing and reads nothing: what this view is asked to place is a level's
+// type or a door's cart, and neither is ever a bare marker (plan.Planner.ChoosePush turns a bare
+// cart away before it reads). A slot's list then says no with no read of the type.
+func (r *KanbanAskReads) BinTypeBareOf(int64) (*int64, error) { return nil, nil }
+
 // CountBinsByNode answers a child from the group's one read.
 func (r *KanbanAskReads) CountBinsByNode(nodeID int64) (int, error) {
 	if s := r.slotState(); s != nil {

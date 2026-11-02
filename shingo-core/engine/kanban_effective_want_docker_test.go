@@ -60,8 +60,8 @@ func coverProcess(t *testing.T, db *store.DB, process string, styles ...coverSty
 
 // TestKanbanPin_TheKeeperFollowsTheEffectiveWant: base 1 and cover 2 with one process
 // running the type ask 3, and 3 is what the episode stores as its threshold. A
-// process on several positions with two parts on the type counts once, a type
-// nothing runs stays at its base, and a second process adds another cover.
+// process on two positions with two parts on the type covers both, a type nothing runs stays at
+// its base, and a second process adds its own positions.
 func TestKanbanPin_TheKeeperFollowsTheEffectiveWant(t *testing.T) {
 	t.Parallel()
 	db := testdb.Open(t)
@@ -70,7 +70,6 @@ func TestKanbanPin_TheKeeperFollowsTheEffectiveWant(t *testing.T) {
 	var big int64
 	testutil.MustNoErr(t, db.QueryRow(`INSERT INTO bin_types (code) VALUES ('KEW-BIG') RETURNING id`).Scan(&big), "big")
 	testutil.MustNoErr(t, db.SetKanbanLevel(store.KanbanLevel{GroupNodeID: grpID, BinTypeID: big, Want: 0}), "big's level")
-	testdb.KanbanCover(t, db, grpID, 2)
 	for _, n := range []string{"KEW-OUT1", "KEW-OUT2", "KEW-OUT3", "KEW-OUT4", "KEW-OUT5"} {
 		mntOutsideEmpty(t, db, small, n)
 	}
@@ -106,8 +105,8 @@ func TestKanbanPin_TheKeeperFollowsTheEffectiveWant(t *testing.T) {
 
 	coverProcess(t, db, "KEW-WELD-P", coverStyle{"W", true, [][2]string{{"KEW-WELD", "KEW-L"}}})
 	m.Tick()
-	if st = mntState(t, m, "KEW", "KEW-SMALL"); st.Want != 5 || st.Created != 2 {
-		t.Errorf("a second process on the type: %+v; want 1 + 2x2 = 5, two more asks", st)
+	if st = mntState(t, m, "KEW", "KEW-SMALL"); st.Want != 4 || st.Created != 1 {
+		t.Errorf("a second process on the type: %+v; want 1 + 3 positions = 4, one more ask", st)
 	}
 }
 
@@ -122,7 +121,6 @@ func TestKanbanPin_CoverFollowsTheTargetAndRevertsWithinATick(t *testing.T) {
 	var totes int64
 	testutil.MustNoErr(t, db.QueryRow(`INSERT INTO bin_types (code) VALUES ('KET-TOTES') RETURNING id`).Scan(&totes), "totes")
 	testutil.MustNoErr(t, db.SetKanbanLevel(store.KanbanLevel{GroupNodeID: grpID, BinTypeID: totes, Want: 1}), "totes' level")
-	testdb.KanbanCover(t, db, grpID, 4)
 	coverPart(t, db, "KET-SP", small)
 	coverPart(t, db, "KET-TP", totes)
 	coverProcess(t, db, "KET-PRESS", coverStyle{"SMALL", true, [][2]string{{"KET-SUPPORT", "KET-SP"}}},
@@ -138,20 +136,20 @@ func TestKanbanPin_CoverFollowsTheTargetAndRevertsWithinATick(t *testing.T) {
 			t.Errorf("%s: small wants %d, totes %d; want %d and %d", what, s.Want, tt.Want, wantSmall, wantTotes)
 		}
 	}
-	wants("the active style", 5, 1)
+	wants("the active style", 2, 1)
 
 	const co = "c0c0c0c0-0000-4000-8000-000000000001"
 	testutil.MustNoErr(t, db.UpsertDemandOrigin(store.DemandOrigin{OriginID: co, Revision: 1, EpisodeKey: "co|" + co,
 		Kind: protocol.EpisodeKindChangeover, StationID: "edge.1", ProcessID: "KET-PRESS", CoreNodeName: "KET-SUPPORT",
 		PayloadCode: "KET-TP", OpenedAt: time.Now().UTC()}), "open the changeover")
-	wants("a changeover opened for totes", 1, 5)
+	wants("a changeover opened for totes", 1, 2)
 
 	closed, err := db.CloseDemandOriginByID(co, "cancelled", protocol.ClosedByNotification, time.Now().UTC())
 	testutil.MustNoErr(t, err, "close")
 	if !closed {
 		t.Fatal("the changeover did not close")
 	}
-	wants("the changeover cancelled", 5, 1)
+	wants("the changeover cancelled", 2, 1)
 }
 
 // TestKanbanPin_ALevelZeroRowLiftedByCover: a row at 0 refuses every store while
@@ -163,7 +161,6 @@ func TestKanbanPin_ALevelZeroRowLiftedByCover(t *testing.T) {
 	db := testdb.Open(t)
 	eng := newTestEngine(t, db, simulator.New())
 	grpID, t32 := mntFixture(t, db, "KEZ", 4, "KEZ-32", 0)
-	testdb.KanbanCover(t, db, grpID, 1)
 	grp, err := db.GetNode(grpID)
 	testutil.MustNoErr(t, err, "the group")
 	d := eng.Dispatcher()
@@ -539,16 +536,16 @@ func TestKanbanForecast_AgreesWithTheFinder(t *testing.T) {
 				r.sources(t, sources...)
 			}
 			id, err := r.db.OpenCoreEpisode(store.DemandOrigin{OriginID: "fcfcfcfc-0000-4000-8000-000000000001",
-				EpisodeKey: protocol.KanbanEpisodeKey(1, 2), Kind: protocol.EpisodeKindKanban,
+				EpisodeKey: protocol.KanbanEpisodeKey(r.k, r.bt), Kind: protocol.EpisodeKindKanban,
 				StationID: "test-core", CoreNodeName: name, OpenedAt: time.Now().UTC(), Threshold: 2})
 			testutil.MustNoErr(t, err, "the episode")
 
-			got, err := r.db.SourceableTypes([]string{r.code}, bins.EmptyFence{OriginGroup: name, Sources: sources})
+			got, err := r.db.SourceableCounts([]string{r.code}, bins.EmptyFence{OriginGroup: name, Sources: sources})
 			testutil.MustNoErr(t, err, "the forecast")
 			pick := dispatch.MapFinderOutcome(r.eng.Dispatcher().ForecastPick(dispatch.SourceNeed{
 				Intent: dispatch.IntentEmpty, OriginID: id}))
-			if picked := pick == dispatch.OutcomeFound || pick == dispatch.OutcomeReshuffle; picked != got[r.code] || picked != tc.want {
-				t.Errorf("the finder's pick says %v, the forecast %v; want %v", picked, got[r.code], tc.want)
+			if picked := pick == dispatch.OutcomeFound || pick == dispatch.OutcomeReshuffle; picked != (got[r.code] > 0) || picked != tc.want {
+				t.Errorf("the finder's pick says %v, the forecast %v; want %v", picked, got[r.code] > 0, tc.want)
 			}
 
 			r.m.Tick()

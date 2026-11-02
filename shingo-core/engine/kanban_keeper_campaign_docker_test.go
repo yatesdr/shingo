@@ -143,6 +143,7 @@ func TestCampaign_S1_SteadyRefill(t *testing.T) {
 	grpID, types := campaignGroup(t, db, "CMP-S1", 6, map[string]int{"S1-STD": 4})
 	bt := types["S1-STD"]
 	mntOutsideEmpty(t, db, bt, "CMP-S1-MARKET")
+	mntOutsideEmpty(t, db, bt, "CMP-S1-MARKET2")
 
 	children, err := db.ListChildNodes(grpID)
 	testutil.MustNoErr(t, err, "positions")
@@ -250,6 +251,7 @@ func TestCampaign_S2_DryMarketParksThenUnparks(t *testing.T) {
 	market := &nodes.Node{Name: "CMP-S2-MARKET", Enabled: true}
 	testutil.MustNoErr(t, db.CreateNode(market), "market slot")
 	landCarrier(t, db, bt, market.ID, "S2-MARKET-BIN")
+	mntOutsideEmpty(t, db, bt, "CMP-S2-MARKET2")
 	m.Tick()
 	st = evidence(t, m, "market has a carrier", "CMP-S2", "S2-STD")
 	if st.Created != 2 || st.OriginID != origin {
@@ -315,6 +317,7 @@ func TestCampaign_S4_DigChildDoesNotInflateAsked(t *testing.T) {
 	eng := newTestEngine(t, db, simulator.New())
 	_, types := campaignGroup(t, db, "CMP-S4", 4, map[string]int{"S4-STD": 2})
 	mntOutsideEmpty(t, db, types["S4-STD"], "CMP-S4-MARKET")
+	mntOutsideEmpty(t, db, types["S4-STD"], "CMP-S4-MARKET2")
 
 	m := eng.KanbanKeeper()
 	m.Tick()

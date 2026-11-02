@@ -6,7 +6,6 @@ import (
 	"testing"
 
 	"shingo/protocol"
-	"shingocore/domain"
 )
 
 // kanban_pins_family_test.go — the one truth table of "may this cart be asked for that
@@ -39,17 +38,15 @@ func readFamilyTable(t *testing.T) familyTable {
 	return out
 }
 
-// pinWalkFamilies is what the walk compares. At the tree it is the footprint.
-func pinWalkFamilies(table familyTable) map[string]domain.Footprint {
-	out := map[string]domain.Footprint{}
+// pinWalkFamilies is what the walk compares: each type's family, as an id.
+func pinWalkFamilies(table familyTable) map[string]int64 {
+	ids := map[string]int64{}
+	out := map[string]int64{}
 	for code, ty := range table.Types {
-		if ty.Footprint == nil {
-			continue
+		if ids[ty.Family] == 0 {
+			ids[ty.Family] = int64(len(ids) + 1)
 		}
-		fs, ok := domain.BinType{WidthIn: (*ty.Footprint)[0], LengthIn: (*ty.Footprint)[1]}.Footprint()
-		if ok {
-			out[code] = fs
-		}
+		out[code] = ids[ty.Family]
 	}
 	return out
 }

@@ -411,10 +411,14 @@ func (m *KanbanKeeper) forecast(k store.KanbanPictureRow, short []string) map[st
 	for _, s := range k.Sources {
 		fence.Sources = append(fence.Sources, s.ID)
 	}
-	found, err := m.eng.db.SourceableTypes(short, fence)
+	counts, err := m.eng.db.SourceableCounts(short, fence)
 	if err != nil {
 		m.eng.logFn("keeper: %s: %v", k.KanbanName, err)
 		return nil
+	}
+	found := make(map[string]bool, len(counts))
+	for code, n := range counts {
+		found[code] = n > 0
 	}
 	return found
 }

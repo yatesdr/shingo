@@ -4,7 +4,6 @@ import (
 	"fmt"
 
 	"shingo/protocol"
-	"shingocore/domain"
 	"shingocore/kanban"
 	"shingocore/store"
 )
@@ -83,14 +82,12 @@ func (e *Engine) UnloaderGroupLines(asks []store.GroupLineAsk) ([]protocol.NodeB
 		return nil, fmt.Errorf("group lines: %w", err)
 	}
 	wantsByGroup := map[int64][]store.KanbanLayerWant{}
-	sizes := map[string]domain.Footprint{}
+	sizes := map[string]int64{}
 	for _, t := range types {
 		for _, w := range t.LayerWants {
 			wantsByGroup[w.GroupNodeID] = append(wantsByGroup[w.GroupNodeID], w)
 		}
-		if fs, ok := t.Type.Footprint(); ok {
-			sizes[t.Type.Code] = fs
-		}
+		sizes[t.Type.Code] = t.Type.FamilyID
 	}
 	counts, err := e.db.ReadKanbanCounts(ids)
 	if err != nil {

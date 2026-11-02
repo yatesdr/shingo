@@ -2,13 +2,13 @@ package engine
 
 import (
 	"errors"
+	"shingocore/domain"
 	"sort"
 
 	"shingo/protocol"
 	"shingocore/dispatch"
 	"shingocore/dispatch/binresolver"
 	"shingocore/dispatch/plan"
-	"shingocore/domain"
 	"shingocore/kanban"
 	"shingocore/store"
 	"shingocore/store/bins"
@@ -51,18 +51,20 @@ import (
 
 // surplusShort is a type short with no child free for it, and how many more it needs.
 type surplusShort struct {
-	code  string
-	floor domain.Footprint
-	sized bool
-	need  int
+	code   string
+	family int64
+	floor  domain.Footprint
+	sized  bool
+	need   int
 }
 
 // surplusLine is a type above its want, and by how many.
 type surplusLine struct {
-	code  string
-	floor domain.Footprint
-	sized bool
-	above int
+	code   string
+	family int64
+	floor  domain.Footprint
+	sized  bool
+	above  int
 }
 
 // surplusPlan is which types the tick moves, one entry a cart, in order, and which have
@@ -99,7 +101,9 @@ func planSurplus(shorts []surplusShort, above []surplusLine, room map[string]int
 	noRoom := map[string]bool{}
 	for _, s := range order {
 		for i := 0; i < s.need; i++ {
-			if x := largest(func(l surplusLine) bool { return s.sized && l.sized && l.floor == s.floor }); x != nil {
+			if x := largest(func(l surplusLine) bool {
+				return (s.family != 0 && l.family == s.family) || (s.sized && l.sized && l.floor == s.floor)
+			}); x != nil {
 				x.above--
 				p.toWindows = append(p.toWindows, x.code)
 				continue
@@ -135,14 +139,12 @@ func surplusAtWindows(rows []store.KanbanPictureRow, lines []keeperLine, windows
 		return nil
 	}
 	typeLines := make([]kanban.Line, len(lines))
-	sizes := map[string]domain.Footprint{}
+	sizes := map[string]int64{}
 	inbound := map[int64]bool{}
 	for i, l := range lines {
 		lv := l.count.Level
 		typeLines[i] = kanban.LineOf(lv.BinTypeCode, lv.Want, l.count.Have)
-		if rows[i].Sized {
-			sizes[rows[i].BinTypeCode] = rows[i].Floor
-		}
+		sizes[rows[i].BinTypeCode] = rows[i].FamilyID
 		for _, ib := range l.count.Inbound {
 			inbound[ib.BinID] = true
 		}
@@ -151,9 +153,6 @@ func surplusAtWindows(rows []store.KanbanPictureRow, lines []keeperLine, windows
 	mine := map[string]bool{}
 	for i, w := range windows {
 		carts[i] = w.Row
-		if w.Sized {
-			sizes[w.Row.BinTypeCode] = w.Floor
-		}
 		if w.Surplus {
 			mine[w.Row.Node] = true
 		}
@@ -177,7 +176,7 @@ func (m *KanbanKeeper) surplusArm(k store.KanbanPictureRow, rows []store.KanbanP
 	var above []surplusLine
 	for i, l := range lines {
 		if n := l.count.Resident - l.count.Level.Want; n > 0 {
-			above = append(above, surplusLine{code: rows[i].BinTypeCode, floor: rows[i].Floor, sized: rows[i].Sized, above: n})
+			above = append(above, surplusLine{code: rows[i].BinTypeCode, family: rows[i].FamilyID, above: n})
 		}
 	}
 	if len(above) == 0 {
@@ -188,7 +187,7 @@ func (m *KanbanKeeper) surplusArm(k store.KanbanPictureRow, rows []store.KanbanP
 		l := &lines[i]
 		need := l.count.Short() - l.atWindows - l.state.Created
 		if need > 0 && !m.childFreeFor(ask, l.count.Level.BinTypeID) {
-			shorts = append(shorts, surplusShort{code: rows[i].BinTypeCode, floor: rows[i].Floor, sized: rows[i].Sized, need: need})
+			shorts = append(shorts, surplusShort{code: rows[i].BinTypeCode, family: rows[i].FamilyID, need: need})
 		}
 	}
 	if len(shorts) == 0 {

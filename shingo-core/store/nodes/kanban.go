@@ -37,8 +37,8 @@ import (
 
 const (
 	// PropOverflowDestination is a PLAIN group's overflow: a second group to try
-	// when a push into this one is refused for room. A kanban holds its overflow
-	// as kanbans.overflow_node_id instead (OverflowTargetOf reads both). Blank
+	// when a push into this one is refused for room. A kanban has none: a sized loop always
+	// has a slot, and a cart that cannot land parks visible. Blank
 	// means none, and none is a real answer: the push then parks holding its bin,
 	// which is backpressure into whatever was pushing — uncomfortable, not
 	// dangerous.
@@ -77,7 +77,7 @@ func EnsureKanban(x Execer, nodeID int64) error {
 }
 
 // UpsertLevel declares (or re-declares) how many empties of one type a kanban
-// holds; the row's own overflow is left as it stands. The kanban's row exists.
+// holds. The kanban's row exists.
 func UpsertLevel(x Execer, l KanbanLevel) error {
 	_, err := x.Exec(`
 		INSERT INTO kanban_levels (kanban_node_id, bin_type_id, want)
@@ -156,22 +156,12 @@ func ReplaceSources(x Execer, kanbanNodeID int64, sourceNodeIDs []int64) error {
 	return nil
 }
 
-// SetLevelOverflow sets one level type's own overflow; nil clears it, and the
-// type then takes the kanban's default.
-func SetLevelOverflow(x Execer, kanbanNodeID, binTypeID int64, overflowNodeID *int64) error {
-	if _, err := x.Exec(`UPDATE kanban_levels SET overflow_node_id=$3, updated_at=NOW()
-		WHERE kanban_node_id=$1 AND bin_type_id=$2`, kanbanNodeID, binTypeID, overflowNodeID); err != nil {
-		return fmt.Errorf("set level overflow kanban=%d/bin_type=%d: %w", kanbanNodeID, binTypeID, err)
-	}
-	return nil
-}
-
-// SetKanbanScalars writes the kanbans row's four settings. A blank station is
+// SetKanbanScalars writes the kanbans row's two settings. A blank station is
 // NULL.
 func SetKanbanScalars(x Execer, k Kanban) error {
 	if _, err := x.Exec(`UPDATE kanbans
-		SET station_id=NULLIF($2::text,''), strict=$3, running_cover=$4, overflow_node_id=$5, updated_at=NOW()
-		WHERE node_id=$1`, k.NodeID, k.StationID, k.Strict, k.RunningCover, k.OverflowNodeID); err != nil {
+		SET station_id=NULLIF($2::text,''), strict=$3, updated_at=NOW()
+		WHERE node_id=$1`, k.NodeID, k.StationID, k.Strict); err != nil {
 		return fmt.Errorf("set kanban %d: %w", k.NodeID, err)
 	}
 	return nil
@@ -189,15 +179,13 @@ type Kanban struct {
 	HasSupports    bool
 }
 
-const kanbanSelect = `SELECT k.node_id, COALESCE(k.station_id, ''), k.strict, k.running_cover,
-		k.overflow_node_id, COALESCE(o.name, ''),
+const kanbanSelect = `SELECT k.node_id, COALESCE(k.station_id, ''), k.strict,
 		EXISTS (SELECT 1 FROM kanban_supports s WHERE s.kanban_node_id = k.node_id)
-	  FROM kanbans k
-	  LEFT JOIN nodes o ON o.id = k.overflow_node_id`
+	  FROM kanbans k`
 
 func scanKanban(row interface{ Scan(dest ...any) error }) (Kanban, error) {
 	var k Kanban
-	err := row.Scan(&k.NodeID, &k.StationID, &k.Strict, &k.RunningCover, &k.OverflowNodeID, &k.OverflowNode, &k.HasSupports)
+	err := row.Scan(&k.NodeID, &k.StationID, &k.Strict, &k.HasSupports)
 	return k, err
 }
 
@@ -271,22 +259,16 @@ func ListKanbanSources(q helpers.RowsQuerier, kanbanNodeID int64) ([]KanbanSourc
 	return out, rows.Err()
 }
 
-// OverflowTarget is where a group's overflow points. A kanban's is a node
-// (NodeID non-zero, Name its name, both zero for none). A plain group's is its
-// overflow_destination property as written (NodeID 0, Name the property), which
-// may not resolve.
+// OverflowTarget is where a plain group's overflow points: its overflow_destination property
+// as written, which may not resolve. A kanban has none.
 type OverflowTarget struct {
 	NodeID int64
 	Name   string
 }
 
-// overflowTargetSQL answers for a kanban from its row and for a plain group from
-// its property: the row decides which, so a kanban never reads the property.
-const overflowTargetSQL = `SELECT COALESCE(k.overflow_node_id, 0),
-		CASE WHEN k.node_id IS NOT NULL THEN COALESCE(o.name, '') ELSE COALESCE(p.value, '') END
+const overflowTargetSQL = `SELECT CASE WHEN k.node_id IS NULL THEN COALESCE(p.value, '') ELSE '' END
 	  FROM nodes g
 	  LEFT JOIN kanbans k ON k.node_id = g.id
-	  LEFT JOIN nodes o ON o.id = k.overflow_node_id
 	  LEFT JOIN node_properties p ON p.node_id = g.id AND p.key = '` + PropOverflowDestination + `'`
 
 // OverflowTargetOf reads a group's overflow in one statement. Unknown group:
@@ -302,7 +284,7 @@ func OverflowTargetByName(q helpers.QueryRower, groupName string) (OverflowTarge
 
 func scanOverflowTarget(row *sql.Row, group any) (OverflowTarget, error) {
 	var t OverflowTarget
-	err := row.Scan(&t.NodeID, &t.Name)
+	err := row.Scan(&t.Name)
 	if errors.Is(err, sql.ErrNoRows) {
 		return OverflowTarget{}, nil
 	}
@@ -316,7 +298,6 @@ func scanOverflowTarget(row *sql.Row, group any) (OverflowTarget, error) {
 // and the node there.
 type OverflowReader interface {
 	OverflowTargetOf(groupNodeID int64) (OverflowTarget, error)
-	PerTypeOverflowTargetOf(groupNodeID, binTypeID int64) (OverflowTarget, error)
 	GetNode(id int64) (*Node, error)
 	GetNodeByDotName(name string) (*Node, error)
 }
@@ -325,7 +306,6 @@ type OverflowReader interface {
 // names, or nil. With nil, why is "" when none is configured (a real answer, not
 // a missing one) and a sentence when one is configured and unusable.
 //
-// A kanban's overflow is the node on the type's level row, else on its own row; with
 // no type stated, its own row's. A plain group's is the name in its
 // overflow_destination property, which is why this can still fail to resolve
 // (OverflowTargetOf; the pin of the plain arm is
@@ -335,28 +315,15 @@ type OverflowReader interface {
 // (engine/cancel_return.go) follows the same overflow for a bin it is returning
 // to a group at its level, and two lookups would be two answers the first time
 // either grows a rule.
-func OverflowGroupOf(db OverflowReader, group *Node, binTypeID *int64) (*Node, string) {
-	var (
-		target OverflowTarget
-		err    error
-	)
-	if binTypeID != nil {
-		target, err = db.PerTypeOverflowTargetOf(group.ID, *binTypeID)
-	} else {
-		target, err = db.OverflowTargetOf(group.ID)
-	}
+func OverflowGroupOf(db OverflowReader, group *Node) (*Node, string) {
+	target, err := db.OverflowTargetOf(group.ID)
 	if err != nil {
 		return nil, fmt.Sprintf("overflow of %s could not be read (%v)", group.Name, err)
 	}
-	var dest *Node
-	switch {
-	case target.NodeID != 0:
-		dest, err = db.GetNode(target.NodeID)
-	case target.Name != "":
-		dest, err = db.GetNodeByDotName(target.Name)
-	default:
+	if target.Name == "" {
 		return nil, ""
 	}
+	dest, err := db.GetNodeByDotName(target.Name)
 	if err != nil || dest == nil {
 		return nil, fmt.Sprintf("overflow %q of %s does not resolve (%v)", target.Name, group.Name, err)
 	}
@@ -520,16 +487,15 @@ type TypeInPlay struct {
 
 // ListTypesInPlay reads, in one statement, the bin types named by codes (the
 // groups' level types and the types of the carts at their unloaders' windows)
-// with their width, length and totes per layer, and the named groups' layer
-// wants of each, by code, then group, then height. It is a snapshot build's one
-// types read, in place of ListKanbanLayerWants there: the floor sizes ride
-// the read the heights already made.
+// with their family and totes per layer, and the named groups' layer wants of each, by code,
+// then group, then height. It is a snapshot build's one types read, in place of
+// ListKanbanLayerWants there: the families ride the read the heights already made.
 func ListTypesInPlay(db *sql.DB, groupNodeIDs []int64, codes []string) ([]TypeInPlay, error) {
 	if len(codes) == 0 {
 		return nil, nil
 	}
 	rows, err := db.Query(`
-		SELECT bt.id, bt.code, bt.width_in, bt.length_in, bt.totes_per_layer, w.kanban_node_id, w.layers, w.want
+		SELECT bt.id, bt.code, bt.family_id, bt.totes_per_layer, w.kanban_node_id, w.layers, w.want
 		  FROM bin_types bt
 		  LEFT JOIN kanban_layer_levels w ON w.bin_type_id = bt.id AND w.kanban_node_id = ANY($1::bigint[])
 		 WHERE bt.code = ANY($2::text[])
@@ -544,7 +510,7 @@ func ListTypesInPlay(db *sql.DB, groupNodeIDs []int64, codes []string) ([]TypeIn
 			bt                  domain.BinType
 			group, layers, want sql.NullInt64
 		)
-		if err := rows.Scan(&bt.ID, &bt.Code, &bt.WidthIn, &bt.LengthIn, &bt.TotesPerLayer, &group, &layers, &want); err != nil {
+		if err := rows.Scan(&bt.ID, &bt.Code, &bt.FamilyID, &bt.TotesPerLayer, &group, &layers, &want); err != nil {
 			return nil, fmt.Errorf("scan type in play: %w", err)
 		}
 		if len(out) == 0 || out[len(out)-1].Type.ID != bt.ID {
@@ -567,10 +533,9 @@ func ListTypesInPlay(db *sql.DB, groupNodeIDs []int64, codes []string) ([]TypeIn
 // is the configuration's.
 func ListKanbanLevels(db helpers.RowsQuerier, groupNodeID int64) ([]KanbanLevel, error) {
 	rows, err := db.Query(`
-		SELECT l.kanban_node_id, l.bin_type_id, bt.code, l.want, l.overflow_node_id, COALESCE(o.name, '')
+		SELECT l.kanban_node_id, l.bin_type_id, bt.code, l.want
 		FROM kanban_levels l
 		JOIN bin_types bt ON bt.id = l.bin_type_id
-		LEFT JOIN nodes o ON o.id = l.overflow_node_id
 		WHERE l.kanban_node_id=$1
 		ORDER BY bt.code`, groupNodeID)
 	if err != nil {
@@ -580,7 +545,7 @@ func ListKanbanLevels(db helpers.RowsQuerier, groupNodeID int64) ([]KanbanLevel,
 	var out []KanbanLevel
 	for rows.Next() {
 		var l KanbanLevel
-		if err := rows.Scan(&l.GroupNodeID, &l.BinTypeID, &l.BinTypeCode, &l.Want, &l.OverflowNodeID, &l.OverflowNode); err != nil {
+		if err := rows.Scan(&l.GroupNodeID, &l.BinTypeID, &l.BinTypeCode, &l.Want); err != nil {
 			return nil, fmt.Errorf("scan kanban level: %w", err)
 		}
 		l.Base = l.Want

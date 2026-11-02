@@ -26,7 +26,7 @@ type pictureRig struct {
 	types map[string]int64
 }
 
-func newPictureRig(t *testing.T, cover int) *pictureRig {
+func newPictureRig(t *testing.T) *pictureRig {
 	t.Helper()
 	db := testdb.Open(t)
 	k := testdb.MarkedGroup(t, db, "PIC-K")
@@ -35,7 +35,7 @@ func newPictureRig(t *testing.T, cover int) *pictureRig {
 	}
 	testutil.MustNoErr(t, db.CreateNode(&nodes.Node{Name: "PIC-K-OFF", Enabled: false, ParentID: k}), "a disabled position")
 	r := &pictureRig{t: t, db: db, k: *k, types: map[string]int64{}}
-	testutil.MustNoErr(t, db.SaveKanban(store.KanbanChange{NodeID: *k, EnsureRow: true, Cover: &cover}, "test"), "cover")
+	testutil.MustNoErr(t, db.SaveKanban(store.KanbanChange{NodeID: *k, EnsureRow: true}, "test"), "row")
 	var supports []int64
 	for _, name := range []string{"PIC-FRONT", "PIC-PAIRED", "PIC-SECOND", "PIC-WELD"} {
 		n := &nodes.Node{Name: name, Enabled: true}
@@ -112,54 +112,56 @@ func (r *pictureRig) picture() map[string]store.KanbanPictureRow {
 	return out
 }
 
-func (r *pictureRig) wantRunning(what string, want map[string]int) {
+// wantCover is each type's cover, the positions the effective style's claims put on the line,
+// and the want it makes.
+func (r *pictureRig) wantCover(what string, want map[string]int) {
 	r.t.Helper()
 	got := r.picture()
 	for code := range r.types {
-		if got[code].Running != want[code] {
-			r.t.Errorf("%s: %s running = %d, want %d", what, code, got[code].Running, want[code])
+		if got[code].Cover != want[code] {
+			r.t.Errorf("%s: %s cover = %d, want %d", what, code, got[code].Cover, want[code])
 		}
-		if wantWant := got[code].Base + got[code].Cover*want[code]; got[code].Want() != wantWant {
+		if wantWant := got[code].Base + want[code]; got[code].Want() != wantWant {
 			r.t.Errorf("%s: %s Want() = %d, want %d", what, code, got[code].Want(), wantWant)
 		}
 	}
 }
 
-func TestKanbanPicture_Running(t *testing.T) {
+func TestKanbanPicture_Cover(t *testing.T) {
 	t.Parallel()
 
-	t.Run("cover 0: running is counted, the want stays the base", func(t *testing.T) {
-		r := newPictureRig(t, 0)
+	t.Run("one position: the want is the level and its cover", func(t *testing.T) {
+		r := newPictureRig(t)
 		r.part("P-SMALL", "PIC-SMALL")
 		r.mirror("PRESS", styleOf{"S", true, [][2]string{{"PIC-FRONT", "P-SMALL"}}})
-		r.wantRunning("cover 0", map[string]int{"PIC-SMALL": 1})
-		if row := r.picture()["PIC-SMALL"]; row.Want() != 1 {
-			t.Errorf("Want() = %d, want the base 1", row.Want())
+		r.wantCover("one position", map[string]int{"PIC-SMALL": 1})
+		if row := r.picture()["PIC-SMALL"]; row.Want() != 2 {
+			t.Errorf("Want() = %d, want the base 1 + 1", row.Want())
 		}
 	})
 
 	t.Run("two processes running one type", func(t *testing.T) {
-		r := newPictureRig(t, 4)
+		r := newPictureRig(t)
 		r.part("P-SMALL", "PIC-SMALL")
 		r.mirror("PRESS", styleOf{"S", true, [][2]string{{"PIC-FRONT", "P-SMALL"}}})
 		r.mirror("WELD", styleOf{"W", true, [][2]string{{"PIC-WELD", "P-SMALL"}}})
-		r.wantRunning("two processes", map[string]int{"PIC-SMALL": 2})
-		if row := r.picture()["PIC-SMALL"]; row.Want() != 9 {
-			t.Errorf("Want() = %d, want 1 + 4x2", row.Want())
+		r.wantCover("two processes", map[string]int{"PIC-SMALL": 2})
+		if row := r.picture()["PIC-SMALL"]; row.Want() != 3 {
+			t.Errorf("Want() = %d, want 1 + 2 positions", row.Want())
 		}
 	})
 
-	t.Run("DISTINCT: a process on four positions, two parts on one type, counts once", func(t *testing.T) {
-		r := newPictureRig(t, 4)
+	t.Run("DISTINCT: a process on four positions, two parts on one type, covers four", func(t *testing.T) {
+		r := newPictureRig(t)
 		r.part("P-L", "PIC-SMALL")
 		r.part("P-R", "PIC-SMALL")
 		r.mirror("PRESS", styleOf{"S", true, [][2]string{
 			{"PIC-FRONT", "P-L"}, {"PIC-PAIRED", "P-R"}, {"PIC-SECOND", "P-L"}, {"PIC-WELD", "P-R"}}})
-		r.wantRunning("distinct", map[string]int{"PIC-SMALL": 1})
+		r.wantCover("distinct", map[string]int{"PIC-SMALL": 4})
 	})
 
 	t.Run("the paired and second nodes of a claim connect it", func(t *testing.T) {
-		r := newPictureRig(t, 4)
+		r := newPictureRig(t)
 		r.part("P-SMALL", "PIC-SMALL")
 		outside := &nodes.Node{Name: "PIC-OUTSIDE", Enabled: true}
 		testutil.MustNoErr(t, r.db.CreateNode(outside), "outside")
@@ -168,35 +170,35 @@ func TestKanbanPicture_Running(t *testing.T) {
 			[]plantclaims.ClaimRow{{ProcessID: "PRESS", StyleID: "S", CoreNodeName: "PIC-OUTSIDE",
 				Role: protocol.ClaimRoleProduce, SwapMode: protocol.SwapMode("press_index"), PayloadCode: "P-SMALL",
 				SecondPairedCoreNode: "PIC-SECOND"}}, 0), "mirror")
-		r.wantRunning("second paired", map[string]int{"PIC-SMALL": 1})
+		r.wantCover("second paired", map[string]int{"PIC-SMALL": 1})
 	})
 
 	t.Run("a process on no supported node does not count", func(t *testing.T) {
-		r := newPictureRig(t, 4)
+		r := newPictureRig(t)
 		r.part("P-SMALL", "PIC-SMALL")
 		r.mirror("ELSEWHERE", styleOf{"S", true, [][2]string{{"PIC-K-P1", "P-SMALL"}}})
-		r.wantRunning("elsewhere", map[string]int{})
+		r.wantCover("elsewhere", map[string]int{})
 	})
 
-	t.Run("a two-part style runs two types", func(t *testing.T) {
-		r := newPictureRig(t, 4)
+	t.Run("a two-part style covers each type with its own positions", func(t *testing.T) {
+		r := newPictureRig(t)
 		r.part("P-L", "PIC-SMALL")
 		r.part("P-R", "PIC-BIG")
 		r.mirror("PRESS", styleOf{"S", true, [][2]string{{"PIC-FRONT", "P-L"}, {"PIC-PAIRED", "P-R"}}})
-		r.wantRunning("two parts", map[string]int{"PIC-SMALL": 1, "PIC-BIG": 1})
+		r.wantCover("two parts", map[string]int{"PIC-SMALL": 1, "PIC-BIG": 1})
 	})
 
 	t.Run("an open changeover moves the term to the target", func(t *testing.T) {
-		r := newPictureRig(t, 4)
+		r := newPictureRig(t)
 		r.part("P-SMALL", "PIC-SMALL")
 		r.part("P-TOTES", "PIC-TOTES")
 		r.mirror("PRESS", styleOf{"SMALL", true, [][2]string{{"PIC-FRONT", "P-SMALL"}}},
 			styleOf{"TOTES", false, [][2]string{{"PIC-FRONT", "P-TOTES"}}})
-		r.wantRunning("before", map[string]int{"PIC-SMALL": 1})
+		r.wantCover("before", map[string]int{"PIC-SMALL": 1})
 		// An older open episode at the same process loses to the latest.
 		r.openChangeover("11111111-1111-1111-1111-111111111111", "PRESS", "PIC-FRONT", "P-SMALL", 2*time.Hour)
 		r.openChangeover("22222222-2222-2222-2222-222222222222", "PRESS", "PIC-FRONT", "P-TOTES", time.Minute)
-		r.wantRunning("open", map[string]int{"PIC-TOTES": 1})
+		r.wantCover("open", map[string]int{"PIC-TOTES": 1})
 		row := r.picture()["PIC-TOTES"]
 		if len(row.FallbackProcesses) != 0 {
 			t.Errorf("a target that resolves named a fallback: %v", row.FallbackProcesses)
@@ -207,51 +209,51 @@ func TestKanbanPicture_Running(t *testing.T) {
 			_, err := r.db.CloseDemandOriginByID(id, "resolved", protocol.ClosedByNotification, closed)
 			testutil.MustNoErr(t, err, "close")
 		}
-		r.wantRunning("closed", map[string]int{"PIC-SMALL": 1})
+		r.wantCover("closed", map[string]int{"PIC-SMALL": 1})
 	})
 
 	t.Run("a target shared with the active style is the style that is not active", func(t *testing.T) {
-		r := newPictureRig(t, 4)
+		r := newPictureRig(t)
 		r.part("P-SMALL", "PIC-SMALL")
 		r.part("P-BIG", "PIC-BIG")
 		r.mirror("PRESS", styleOf{"ONE", true, [][2]string{{"PIC-FRONT", "P-SMALL"}}},
 			styleOf{"TWO", false, [][2]string{{"PIC-FRONT", "P-SMALL"}, {"PIC-PAIRED", "P-BIG"}}})
 		r.openChangeover("33333333-3333-3333-3333-333333333333", "PRESS", "PIC-FRONT", "P-SMALL", time.Minute)
-		r.wantRunning("shared claim", map[string]int{"PIC-SMALL": 1, "PIC-BIG": 1})
+		r.wantCover("shared claim", map[string]int{"PIC-SMALL": 1, "PIC-BIG": 1})
 	})
 
 	t.Run("a part with no row contributes nothing and is named", func(t *testing.T) {
-		r := newPictureRig(t, 4)
+		r := newPictureRig(t)
 		r.part("P-SMALL", "PIC-SMALL")
 		r.part("P-NONE")
 		r.mirror("PRESS", styleOf{"S", true, [][2]string{{"PIC-FRONT", "P-SMALL"}, {"PIC-PAIRED", "P-NONE"}}})
-		r.wantRunning("no row", map[string]int{"PIC-SMALL": 1})
+		r.wantCover("no row", map[string]int{"PIC-SMALL": 1})
 		if got := r.picture()["PIC-BIG"].NothingProcesses; !reflect.DeepEqual(got, []string{"PRESS"}) {
 			t.Errorf("nothing processes = %v, want [PRESS] on every row of the kanban", got)
 		}
 	})
 
 	t.Run("a part mirrored with no payload at all contributes nothing and is named", func(t *testing.T) {
-		r := newPictureRig(t, 4)
+		r := newPictureRig(t)
 		r.mirror("PRESS", styleOf{"S", true, [][2]string{{"PIC-FRONT", "P-UNKNOWN"}}})
-		r.wantRunning("no payload", map[string]int{})
+		r.wantCover("no payload", map[string]int{})
 		if got := r.picture()["PIC-SMALL"].NothingProcesses; !reflect.DeepEqual(got, []string{"PRESS"}) {
 			t.Errorf("nothing processes = %v, want [PRESS]", got)
 		}
 	})
 
 	t.Run("a part with two rows contributes nothing and is named", func(t *testing.T) {
-		r := newPictureRig(t, 4)
+		r := newPictureRig(t)
 		r.part("P-TWO", "PIC-SMALL", "PIC-BIG")
 		r.mirror("PRESS", styleOf{"S", true, [][2]string{{"PIC-FRONT", "P-TWO"}}})
-		r.wantRunning("two rows", map[string]int{})
+		r.wantCover("two rows", map[string]int{})
 		if got := r.picture()["PIC-SMALL"].NothingProcesses; !reflect.DeepEqual(got, []string{"PRESS"}) {
 			t.Errorf("nothing processes = %v, want [PRESS]", got)
 		}
 	})
 
 	t.Run("a target that resolves to nothing falls back to the active types and is named", func(t *testing.T) {
-		r := newPictureRig(t, 4)
+		r := newPictureRig(t)
 		r.part("P-SMALL", "PIC-SMALL")
 		r.part("P-TWO", "PIC-SMALL", "PIC-BIG")
 		r.mirror("PRESS", styleOf{"S", true, [][2]string{{"PIC-FRONT", "P-SMALL"}}},
@@ -259,14 +261,14 @@ func TestKanbanPicture_Running(t *testing.T) {
 
 		// A claim no style has (a blank episode from an Edge that does not stamp).
 		r.openChangeover("44444444-4444-4444-4444-444444444444", "PRESS", "", "", time.Hour)
-		r.wantRunning("blank episode", map[string]int{"PIC-SMALL": 1})
+		r.wantCover("blank episode", map[string]int{"PIC-SMALL": 1})
 		if got := r.picture()["PIC-SMALL"].FallbackProcesses; !reflect.DeepEqual(got, []string{"PRESS"}) {
 			t.Errorf("fallback processes = %v, want [PRESS]", got)
 		}
 
 		// A style whose only part resolves to no type.
 		r.openChangeover("55555555-5555-5555-5555-555555555555", "PRESS", "PIC-FRONT", "P-TWO", time.Minute)
-		r.wantRunning("target with no type", map[string]int{"PIC-SMALL": 1})
+		r.wantCover("target with no type", map[string]int{"PIC-SMALL": 1})
 		row := r.picture()["PIC-BIG"]
 		if !reflect.DeepEqual(row.FallbackProcesses, []string{"PRESS"}) {
 			t.Errorf("fallback processes = %v, want [PRESS]", row.FallbackProcesses)
@@ -280,7 +282,7 @@ func TestKanbanPicture_Running(t *testing.T) {
 // The rest of the row, on one kanban, and the NULL/ids scope.
 func TestKanbanPicture_TheRow(t *testing.T) {
 	t.Parallel()
-	r := newPictureRig(t, 4)
+	r := newPictureRig(t)
 	db := r.db
 	z45, z32 := testdb.MarkedGroup(t, db, "PIC-Z45"), testdb.MarkedGroup(t, db, "PIC-Z32")
 	noLevel := testdb.MarkedGroup(t, db, "PIC-ROW-NO-LEVEL")
@@ -288,26 +290,18 @@ func TestKanbanPicture_TheRow(t *testing.T) {
 	strict, station := true, "edge.1"
 	wants := []store.KanbanLayerWant{{Layers: 0, Want: 2}, {Layers: 3, Want: 1}}
 	testutil.MustNoErr(t, db.SaveKanban(store.KanbanChange{NodeID: r.k, EnsureRow: true, Strict: &strict, Station: &station,
-		Overflow: z45,
 		Levels: []store.KanbanLevelChange{
-			{BinTypeID: r.types["PIC-SMALL"], Overflow: z32, LayerWants: &wants},
+			{BinTypeID: r.types["PIC-SMALL"], LayerWants: &wants},
 		},
 		Sources: &[]int64{*z32, *z45},
 	}, "test"), "save")
 
 	row := r.picture()["PIC-SMALL"]
-	if row.KanbanName != "PIC-K" || row.StationID != "edge.1" || !row.Strict || row.Slots != 3 || row.Base != 1 || row.Cover != 4 {
+	if row.KanbanName != "PIC-K" || row.StationID != "edge.1" || !row.Strict || row.Slots != 3 || row.Base != 1 || row.Cover != 0 {
 		t.Errorf("row = %+v", row)
 	}
 	if row.TopsAndBottomsWant != 2 {
 		t.Errorf("tops & bottoms = %d, want the row at 0 layers", row.TopsAndBottomsWant)
-	}
-	if row.OverflowNode != "PIC-Z32" || row.OverflowNodeID == nil || *row.OverflowNodeID != *z32 ||
-		row.LevelOverflowNodeID == nil || *row.LevelOverflowNodeID != *z32 {
-		t.Errorf("per-type overflow: %+v", row)
-	}
-	if other := r.picture()["PIC-BIG"]; other.OverflowNode != "PIC-Z45" || other.LevelOverflowNodeID != nil {
-		t.Errorf("default overflow: %+v", other)
 	}
 	if names := refNames(row.Sources); !reflect.DeepEqual(names, []string{"PIC-Z32", "PIC-Z45"}) {
 		t.Errorf("sources = %v, want rank order", names)

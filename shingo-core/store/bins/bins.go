@@ -57,7 +57,7 @@ func HeightArm(h domain.Height) string {
 
 // noHeightSaidSQL is what HeightArm admits for no height said: the candidate is
 // not tops & bottoms. The keeper's count, and the batched census beside it
-// (ListKanbanResidents), which reads it as a column.
+// (store.DB.ListKanbanLoop), which reads it as a column.
 func noHeightSaidSQL() string {
 	return helpers.CarrierStateSQL("b", "bt") + ` <> '` + string(protocol.CarrierTopsAndBottoms) + `'`
 }
@@ -152,7 +152,7 @@ const BinJoinQuery = `SELECT b.id, b.bin_type_id, b.label, b.description, b.node
 	b.locked, b.locked_by, b.locked_at, b.last_counted_at, b.last_counted_by,
 	b.loaded_at, b.anomaly_at, COALESCE(b.anomaly_note, ''), b.created_at, b.updated_at,
 	bt.code, COALESCE(n.name, ''), COALESCE(p.uop_capacity, 0),
-	bt.required_robot_group, bt.bare, COALESCE(p.robot_group, ''),
+	bt.required_robot_group, bt.bare, bt.family_id, COALESCE(p.robot_group, ''),
 	COALESCE(p.near_empty_enabled, false), COALESCE(p.near_empty_robot_group, ''),
 	COALESCE(p.near_empty_threshold_pct, 0),
 	` + reservations.BinSpokenForByOrderSQL + ` AS pending_reserved_by,
@@ -387,6 +387,12 @@ func (f EmptyFence) Args() []any { return []any{f.ProcessNode, f.OriginGroup} }
 // nothing here. Only a keeper's ask carries an origin group, so everyone else
 // reads this arm as empty. Pin: TestKanbanSources_NoLinesideRaid.
 //
+// A CART ABOVE THAT KANBAN'S POOL IS NOT ITS OWN. A kanban never gives a cart it owns, but one
+// standing in a kanban whose loop holds more of its family than its pool is a stranger there,
+// and the only way it goes home with no ledger is another keeper's deficit taking it. Its own
+// slots only, never a line position; a strict kanban stays fenced by rule (i). Only a declared
+// pool can be above: with no row the kanban's pool is its minimum and nothing here reads it.
+//
 // ── WHY A NODE SET AND NOT A PER-ROW TEST ───────────────────────────────────
 //
 // The question is "does this carrier sit under a fenced group", which is an
@@ -411,18 +417,37 @@ func FencedNodesCTE(processParam, originParam int) string {
 		SELECT id FROM fenced_roots
 		UNION ALL
 		SELECT n2.id FROM nodes n2 JOIN fenced f ON n2.parent_id = f.id
-	) `, helpers.StrictFencesSQL(fmt.Sprintf("$%d", processParam)), originParam)
+	),
+	above_pool(kanban, family_id, above) AS (
+		SELECT kf.kanban_node_id, kf.family_id, COUNT(lb.id) - kf.pool
+		  FROM kanban_families kf
+		  JOIN kanbans k ON k.node_id = kf.kanban_node_id
+		  JOIN nodes ag ON ag.id = k.node_id
+		  JOIN LATERAL (
+			SELECT c.id AS node_id FROM nodes c WHERE c.parent_id = k.node_id
+			UNION SELECT s.process_node_id FROM kanban_supports s WHERE s.kanban_node_id = k.node_id
+			UNION SELECT h.position_node_id FROM bin_loaders l JOIN bin_loader_homes h ON h.loader_id = l.id
+			       WHERE l.archived_at IS NULL AND l.outbound_dest = ag.name
+		  ) place ON TRUE
+		  JOIN bins lb ON lb.node_id = place.node_id AND lb.status <> 'retired'
+		  JOIN bin_types lt ON lt.id = lb.bin_type_id AND lt.family_id = kf.family_id
+		 WHERE $%[2]d <> '' AND ag.name <> $%[2]d AND NOT (%[3]s)
+		 GROUP BY kf.kanban_node_id, kf.family_id, kf.pool
+		HAVING COUNT(lb.id) > kf.pool
+	) `, helpers.StrictFencesSQL(fmt.Sprintf("$%d", processParam)), originParam, helpers.StrictFencesSQL(fmt.Sprintf("$%d", processParam)))
 }
 
-// NotFencedArm keeps a candidate out of the fenced set. Assumes a `fenced(id)`
-// CTE is in scope — compose FencedNodesCTE for it.
+// NotFencedArm keeps a candidate out of the fenced set, but for a cart above its kanban's pool
+// on that kanban's own slot. Assumes FencedNodesCTE's CTEs are in scope, and bt the cart's type.
 //
 // FIND-SIDE ONLY, and that is a standing ruling rather than an oversight. See
 // EmptyOfTypeInGroupWhere for why no fence, no dig arm and no asker may ever
 // enter a count.
 func NotFencedArm() string {
 	return `
-	  AND b.node_id NOT IN (SELECT id FROM fenced)`
+	  AND (b.node_id NOT IN (SELECT id FROM fenced)
+	       OR EXISTS (SELECT 1 FROM above_pool ap JOIN nodes an ON an.parent_id = ap.kanban
+	                   WHERE an.id = b.node_id AND ap.family_id = bt.family_id))`
 }
 
 // ── THE EMPTY-CARRIER FRAGMENT FAMILY ───────────────────────────────────────
@@ -642,6 +667,7 @@ func IsLinePosition(db *sql.DB, nodeName string) (bool, error) {
 	return is, err
 }
 
+// A level is of EMPTIES: this WHERE is one of the five fragments a kanban of fulls would widen.
 func emptyCarrierWhere(destExpr, groupExpr string) string {
 	return `
 	WHERE ` + SourceableStatusSQL + ` AND b.status <> 'staged'
@@ -961,7 +987,7 @@ func ScanBin(row interface{ Scan(...any) error }) (*Bin, error) {
 		&b.PayloadCode, &manifest, &b.UOPRemaining, &b.DeltaEpoch, &b.ManifestConfirmed,
 		&b.Locked, &b.LockedBy, &b.LockedAt, &b.LastCountedAt, &b.LastCountedBy,
 		&b.LoadedAt, &b.AnomalyAt, &b.AnomalyNote, &b.CreatedAt, &b.UpdatedAt, &b.BinTypeCode, &b.NodeName, &b.UOPCapacity,
-		&b.CarrierRequiredRobotGroup, &b.BinTypeBare, &b.PayloadRobotGroup,
+		&b.CarrierRequiredRobotGroup, &b.BinTypeBare, &b.BinFamilyID, &b.PayloadRobotGroup,
 		&b.PayloadNearEmptyEnabled, &b.PayloadNearEmptyGroup, &b.PayloadNearEmptyPct,
 		&reservedBy, &b.QualityHold, &b.AtSyntheticNode, &b.AtDisabledNode, &b.TotesOnCart, &b.TotesPerLayer, &b.HeldSince)
 	if err != nil {

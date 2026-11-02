@@ -3,7 +3,6 @@ package store
 import (
 	"database/sql"
 	"fmt"
-	"log"
 	"sort"
 	"strconv"
 	"strings"
@@ -23,14 +22,15 @@ type KanbanChange struct {
 	Station   *string
 	Strict    *bool
 	Cover     *int
-	// Overflow is the kanban's default overflow node; 0 clears it.
-	Overflow *int64
+	Overflow  *int64
 	// PlainOverflow is a plain group's overflow_destination property.
 	PlainOverflow *string
 	Levels        []KanbanLevelChange
 	RemoveLevels  []int64
-	Supports      *[]int64
-	Sources       *[]int64
+	// Pools sets a family's pool, by family id.
+	Pools    map[int64]int
+	Supports *[]int64
+	Sources  *[]int64
 }
 
 // KanbanLevelChange is what one save changes of one level. A level that does not
@@ -39,16 +39,15 @@ type KanbanLevelChange struct {
 	BinTypeID  int64
 	Want       *int
 	LayerWants *[]KanbanLayerWant
-	// Overflow is this type's own overflow node; 0 clears it.
-	Overflow *int64
+	Overflow   *int64
 }
 
 // SaveKanban applies one change in one transaction and appends one audit row
 // per changed field or list entry, naming actor. The group's row locks against a
 // second save, so each audit row reads what it replaced.
 //
-// A group's first row takes its plain overflow_destination property with it,
-// resolved as v169 resolves one, so a group never has both.
+// A group's first row ends its plain overflow_destination property: a kanban has no overflow,
+// and the audit row says it went.
 //
 // It enforces no save rules: those read the plant around the kanban and live in
 // service.ValidateKanban, which runs before this.
@@ -107,6 +106,9 @@ func (s kanbanSave) apply(c KanbanChange) error {
 			return err
 		}
 	}
+	if err := s.applyPools(c.Pools); err != nil {
+		return err
+	}
 	if c.Sources != nil {
 		return s.applySources(*c.Sources)
 	}
@@ -144,9 +146,7 @@ func (s kanbanSave) applyPlainOverflow(next *string) error {
 	return s.audit("property:"+nodes.PropOverflowDestination, before, *next)
 }
 
-// becomeKanban makes the row and moves the group's overflow property onto it. A
-// property that resolves to nothing, or to the group, is gone with a log line and
-// an audit row: it would have parked the push, and a NULL does the same.
+// becomeKanban makes the row and ends the group's overflow property: a kanban has none.
 func (s kanbanSave) becomeKanban() (*nodes.Kanban, error) {
 	if err := nodes.EnsureKanban(s.tx, s.id); err != nil {
 		return nil, err
@@ -156,20 +156,6 @@ func (s kanbanSave) becomeKanban() (*nodes.Kanban, error) {
 		return nil, fmt.Errorf("read overflow property: %w", err)
 	}
 	if name != "" {
-		id, ok, err := nodes.ResolveDotNameID(s.tx, strings.TrimSpace(name))
-		if err != nil {
-			return nil, err
-		}
-		if ok && id != s.id {
-			if _, err := s.tx.Exec(`UPDATE kanbans SET overflow_node_id=$2 WHERE node_id=$1`, s.id, id); err != nil {
-				return nil, fmt.Errorf("move overflow: %w", err)
-			}
-			if err := s.audit("kanban:overflow", "", name); err != nil {
-				return nil, err
-			}
-		} else {
-			log.Printf("kanban %d: overflow property %q does not resolve to another node; dropped with its row", s.id, name)
-		}
 		if _, err := s.tx.Exec(`DELETE FROM node_properties WHERE node_id=$1 AND key=$2`,
 			s.id, nodes.PropOverflowDestination); err != nil {
 			return nil, fmt.Errorf("delete overflow property: %w", err)
@@ -179,6 +165,31 @@ func (s kanbanSave) becomeKanban() (*nodes.Kanban, error) {
 		}
 	}
 	return nodes.GetKanban(s.tx, s.id)
+}
+
+// applyPools writes each family's pool, and audits the ones that changed.
+func (s kanbanSave) applyPools(pools map[int64]int) error {
+	for familyID, pool := range pools {
+		var code string
+		var before sql.NullInt64
+		if err := s.tx.QueryRow(`SELECT f.code, kf.pool FROM carrier_families f
+			LEFT JOIN kanban_families kf ON kf.family_id = f.id AND kf.kanban_node_id = $1
+			WHERE f.id = $2`, s.id, familyID).Scan(&code, &before); err != nil {
+			return fmt.Errorf("read pool of family %d: %w", familyID, err)
+		}
+		if _, err := s.tx.Exec(`INSERT INTO kanban_families (kanban_node_id, family_id, pool) VALUES ($1,$2,$3)
+			ON CONFLICT (kanban_node_id, family_id) DO UPDATE SET pool = EXCLUDED.pool, updated_at = NOW()`, s.id, familyID, pool); err != nil {
+			return fmt.Errorf("write pool of family %d: %w", familyID, err)
+		}
+		was := ""
+		if before.Valid {
+			was = strconv.FormatInt(before.Int64, 10)
+		}
+		if err := s.audit("kanban:pool:"+code, was, strconv.Itoa(pool)); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func onOff(b bool) string {
@@ -210,22 +221,7 @@ func (s kanbanSave) applyScalars(k nodes.Kanban, c KanbanChange) error {
 	if c.Strict != nil {
 		next.Strict = *c.Strict
 	}
-	if c.Cover != nil {
-		next.RunningCover = *c.Cover
-	}
-	if c.Overflow != nil {
-		next.OverflowNodeID = nil
-		next.OverflowNode = ""
-		if *c.Overflow != 0 {
-			name, err := s.nodeName(*c.Overflow)
-			if err != nil {
-				return err
-			}
-			next.OverflowNodeID, next.OverflowNode = c.Overflow, name
-		}
-	}
-	if next.StationID == k.StationID && next.Strict == k.Strict && next.RunningCover == k.RunningCover &&
-		next.OverflowNode == k.OverflowNode {
+	if next.StationID == k.StationID && next.Strict == k.Strict {
 		return nil
 	}
 	if err := nodes.SetKanbanScalars(s.tx, next); err != nil {
@@ -234,8 +230,6 @@ func (s kanbanSave) applyScalars(k nodes.Kanban, c KanbanChange) error {
 	for _, r := range []struct{ action, before, after string }{
 		{"kanban:station", k.StationID, next.StationID},
 		{"kanban:strict", onOff(k.Strict), onOff(next.Strict)},
-		{"kanban:running_cover", strconv.Itoa(k.RunningCover), strconv.Itoa(next.RunningCover)},
-		{"kanban:overflow", k.OverflowNode, next.OverflowNode},
 	} {
 		if err := s.audit(r.action, r.before, r.after); err != nil {
 			return err
@@ -273,9 +267,6 @@ func (s kanbanSave) applyLevels(c KanbanChange) error {
 			return err
 		}
 		if err := s.auditLayerWants(row.BinTypeCode, layerWantsOf(wants, id), nil); err != nil {
-			return err
-		}
-		if err := s.auditLevelOverflow(row.BinTypeCode, row.LevelOverflowNodeID, nil); err != nil {
 			return err
 		}
 	}
@@ -318,16 +309,6 @@ func (s kanbanSave) applyLevel(lc KanbanLevelChange, before map[int64]KanbanPict
 		if err := s.auditLayerWants(code, old, *lc.LayerWants); err != nil {
 			return err
 		}
-	}
-	if lc.Overflow != nil {
-		var next *int64
-		if *lc.Overflow != 0 {
-			next = lc.Overflow
-		}
-		if err := nodes.SetLevelOverflow(s.tx, s.id, lc.BinTypeID, next); err != nil {
-			return err
-		}
-		return s.auditLevelOverflow(code, row.LevelOverflowNodeID, next)
 	}
 	return nil
 }
@@ -375,24 +356,6 @@ func (s kanbanSave) auditLayerWants(code string, before, after []KanbanLayerWant
 		}
 	}
 	return nil
-}
-
-func (s kanbanSave) auditLevelOverflow(code string, before, after *int64) error {
-	name := func(id *int64) (string, error) {
-		if id == nil {
-			return "", nil
-		}
-		return s.nodeName(*id)
-	}
-	was, err := name(before)
-	if err != nil {
-		return err
-	}
-	now, err := name(after)
-	if err != nil {
-		return err
-	}
-	return s.audit("kanban:level_overflow:"+code, was, now)
 }
 
 // applySupports replaces the set, one audit row per node added or removed.

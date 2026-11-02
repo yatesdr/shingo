@@ -7,7 +7,6 @@ import (
 	"testing"
 
 	"shingo/protocol"
-	"shingocore/domain"
 )
 
 // assign_test.go — the walk that tells each cart at an unloader's windows what to
@@ -49,9 +48,22 @@ func said(as []protocol.NodeBinsAssignment) string {
 	return strings.Join(parts, " ")
 }
 
+// oneFamily is every type in play as one physical cart, for the tests that are not about the
+// family.
+func oneFamily(lines []Line, windows []protocol.NodeBinsRow) map[string]int64 {
+	out := map[string]int64{}
+	for _, l := range lines {
+		out[l.Code] = 1
+	}
+	for _, w := range windows {
+		out[w.BinTypeCode] = 1
+	}
+	return out
+}
+
 func requireWalk(t *testing.T, lines []Line, windows []protocol.NodeBinsRow, want string) {
 	t.Helper()
-	if got := said(Assign(lines, windows, nil, nil)); got != want {
+	if got := said(Assign(lines, windows, nil, oneFamily(lines, windows))); got != want {
 		t.Errorf("walk = %q, want %q", got, want)
 	}
 }
@@ -302,30 +314,23 @@ func TestAssignWindows_ABareCartIsAssignedNothing(t *testing.T) {
 	requireWalk(t, lines, []protocol.NodeBinsRow{bare}, "")
 }
 
-// sizes is the floor sizes the walk's tests give their types: three 45 x 48
-// types (a knockdown, a tote cart and a basket, the tote entered the other way
-// round) and a 36 x 36 knockdown; NODIM has none entered.
-func sizes() map[string]domain.Footprint {
-	out := map[string]domain.Footprint{}
-	for code, wl := range map[string][2]float64{"KD-45": {45, 48}, "TOTE-1": {48, 45}, "WB-45": {45, 48}, "KD-36": {36, 36}} {
-		fs, _ := domain.BinType{WidthIn: wl[0], LengthIn: wl[1]}.Footprint()
-		out[code] = fs
-	}
-	return out
+// families is the families the walk's tests give their types: three of one cart (a knockdown,
+// a tote cart and a basket), a knockdown of another, and NODIM, a family of one.
+func families() map[string]int64 {
+	return map[string]int64{"KD-45": 45, "TOTE-1": 45, "WB-45": 45, "KD-36": 36, "NODIM": 99}
 }
 
 func requireSizedWalk(t *testing.T, lines []Line, windows []protocol.NodeBinsRow, want string) {
 	t.Helper()
-	if got := said(Assign(lines, windows, nil, sizes())); got != want {
+	if got := said(Assign(lines, windows, nil, families())); got != want {
 		t.Errorf("walk = %q, want %q", got, want)
 	}
 }
 
-// THE CART'S FLOOR SIZE BOUNDS THE ASK. A 45 x 48 knockdown goes back as its
-// own type while the group is short of it; then as the largest shortfall among
-// 45 x 48 types (the tote cart, entered 48 x 45), never as the 36 x 36 the
-// group is shortest of, and never as a type with no size.
-func TestAssignWindows_ACartIsAskedWithinItsFloorSize(t *testing.T) {
+// THE CART'S FAMILY BOUNDS THE ASK. A knockdown goes back as its own type while the group is
+// short of it; then as the largest shortfall of its family (the tote cart), never as another
+// family's type the group is shortest of, and never as a family of one.
+func TestAssignWindows_ACartIsAskedWithinItsFamily(t *testing.T) {
 	t.Parallel()
 	lines := []Line{
 		{Code: "KD-36", Want: 9, Have: 0},
@@ -342,8 +347,8 @@ func TestAssignWindows_ACartIsAskedWithinItsFloorSize(t *testing.T) {
 		cart("W5", "KD-45", true),
 	}, "W1=KD-45 W2=TOTE-1 W3=TOTE-1 W4=WB-45")
 
-	// The reference case with sizes: the full tote cart (48 x 45) is asked for
-	// totes, its own size; the full 36 x 36 knockdown is never asked for totes
+	// The reference case with families: the full tote cart is asked for totes, its own type;
+	// the full 36 x 36 knockdown is never asked for totes
 	// and, its own type met, is asked for nothing.
 	ref := []Line{
 		{Code: "KD-36", Want: 3, Have: 2},
@@ -356,15 +361,15 @@ func TestAssignWindows_ACartIsAskedWithinItsFloorSize(t *testing.T) {
 	}, "W1=TOTE-1 W3=KD-36")
 }
 
-// A cart whose type has no size is asked as before: the largest shortfall of
-// any type, sized or not.
-func TestAssignWindows_ACartWithNoSizeAsToday(t *testing.T) {
+// A family of one is asked for nothing but its own type, whatever else is short. A type's size
+// plays no part in it.
+func TestAssignWindows_AFamilyOfOneIsAskedOnlyAsItself(t *testing.T) {
 	t.Parallel()
 	lines := []Line{
 		{Code: "KD-36", Want: 9, Have: 0},
 		{Code: "NODIM", Want: 1, Have: 1},
 	}
-	requireSizedWalk(t, lines, []protocol.NodeBinsRow{cart("W1", "NODIM", true)}, "W1=KD-36")
+	requireSizedWalk(t, lines, []protocol.NodeBinsRow{cart("W1", "NODIM", true)}, "")
 }
 
 // TestKanbanPin_WalkLightsNothingOutsideItsOwnGroup: the walk's whole world is
@@ -381,16 +386,7 @@ func TestKanbanPin_WalkLightsNothingOutsideItsOwnGroup(t *testing.T) {
 		{Code: "KP-SMALL", Want: 1, Have: 1},
 		{Code: "KP-TOTES", Want: 1, Have: 1},
 	}
-	sizes := map[string]domain.Footprint{}
-	for code, wl := range map[string][2]float64{
-		"KP-32X30": {32, 30}, "KP-BIG": {45, 48}, "KP-SMALL": {45, 48}, "KP-TOTES": {48, 45},
-	} {
-		fs, ok := domain.BinType{WidthIn: wl[0], LengthIn: wl[1]}.Footprint()
-		if !ok {
-			t.Fatalf("no floor size for %s", code)
-		}
-		sizes[code] = fs
-	}
+	sizes := map[string]int64{"KP-32X30": 32, "KP-BIG": 45, "KP-SMALL": 45, "KP-TOTES": 45}
 	windows := []protocol.NodeBinsRow{
 		cart("W1", "KP-32X30", false),
 		cart("W2", "KP-SMALL", true),

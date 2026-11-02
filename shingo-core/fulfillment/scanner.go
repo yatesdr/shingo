@@ -299,8 +299,8 @@ type overflowAsk struct {
 // a drop in the group's overflow, so the acquire goes on to it. Every order here
 // is one no robot has (the acquiring set), and no other order pays for the ask.
 // A window's push never comes here: it took its one chooser in the gate arm above
-// (windowPushArm), sources before overflow. This is the cap's path, for every other
-// pusher.
+// (windowPushArm). This is the cap's path, for every other pusher; only a plain group has an
+// overflow.
 //
 // WHAT A GROUP'S PARKED ORDERS PAY PER PASS. One read, the overflow of the group
 // for the cart the gate settled; a group that names none (or names itself) stops
@@ -326,7 +326,7 @@ func (s *Scanner) overflowsWhileParked(order *orders.Order, block dispatch.Capac
 	if s.overflowRefusedThisPass[ask] {
 		return false
 	}
-	overflow := s.db.OverflowNameOf(ask.group, ask.typ)
+	overflow := s.db.OverflowNameOf(ask.group)
 	took := overflow != "" && overflow != ask.group
 	if took {
 		blocked, _ := dispatch.CheckDropoffCapacityForType(s.db, overflow, order.ID, block.Stated)

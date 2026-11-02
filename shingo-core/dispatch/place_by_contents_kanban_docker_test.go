@@ -196,65 +196,17 @@ func TestKanbanArm_AKnockdownOffALinePosition(t *testing.T) {
 			t.Errorf("went to %s, want the planned drop %s", got, c.out.Name)
 		}
 	})
-	t.Run("a group at its level: its drop", func(t *testing.T) {
+	t.Run("a group at its level: still the loop's, it lands", func(t *testing.T) {
 		t.Parallel()
 		c := newMTCell(t, "MTK3", protocol.ClaimRoleConsume)
 		c.keep(c.kd, 1, nil)
 		slot, err := c.db.GetNodeByDotName("MTK3-GRP-1")
 		testutil.MustNoErr(t, err, "slot")
 		c.cart(slot, c.kd, "MTK3-RESIDENT", nil)
-		if got := c.moveOff("mtk3", c.press, c.cart(c.press, c.kd, "MTK3-KD", nil)); got != c.out.Name {
-			t.Errorf("went to %s, want the planned drop %s", got, c.out.Name)
+		if got := c.moveOff("mtk3", c.press, c.cart(c.press, c.kd, "MTK3-KD", nil)); got != "GRP" {
+			t.Errorf("went to %s, want a slot of the kanban", got)
 		}
 	})
-}
-
-// TestKanbanArm_TheGapReadsTheEffectiveWant: at its base the group is whole and
-// the cart keeps its drop; with the group's cover and the press running the cart's
-// type, the same group is short and takes it.
-func TestKanbanArm_TheGapReadsTheEffectiveWant(t *testing.T) {
-	t.Parallel()
-	c := newMTCell(t, "MTC", protocol.ClaimRoleProduce)
-	c.keep(c.kd, 1, nil)
-	slot, err := c.db.GetNodeByDotName("MTC-GRP-1")
-	testutil.MustNoErr(t, err, "slot")
-	c.cart(slot, c.kd, "MTC-RESIDENT", nil)
-	if got := c.moveOff("mtc1", c.press, c.cart(c.press, c.kd, "MTC-KD", nil)); got != c.out.Name {
-		t.Fatalf("at its base: went to %s, want the planned drop %s", got, c.out.Name)
-	}
-
-	testdb.KanbanCover(t, c.db, c.grp, 1)
-	var part int64
-	testutil.MustNoErr(t, c.db.QueryRow(`SELECT id FROM payloads WHERE code = $1`, c.part).Scan(&part), "the part")
-	_, err = c.db.DB.Exec(`DELETE FROM payload_bin_types WHERE payload_id = $1`, part)
-	testutil.MustNoErr(t, err, "the part's carriers")
-	_, err = c.db.DB.Exec(`INSERT INTO payload_bin_types (payload_id, bin_type_id) VALUES ($1,$2)`, part, c.kd)
-	testutil.MustNoErr(t, err, "the part rides the type")
-	// The first move's cart still stands on the press: it has not flown.
-	if got := c.moveOff("mtc2", c.deck, c.cart(c.deck, c.kd, "MTC-KD2", nil)); got != "GRP" {
-		t.Errorf("the press running the type, cover 1: went to %s, want the group", got)
-	}
-}
-
-// TestKanbanArm_TwoShortGroupsTheLargestGap: two groups support the press
-// and both are short of the knockdown; the one short by more takes it.
-func TestKanbanArm_TwoShortGroupsTheLargestGap(t *testing.T) {
-	t.Parallel()
-	c := newMTCell(t, "MTG", protocol.ClaimRoleConsume)
-	c.keep(c.kd, 1, nil)
-	big, err := c.db.CreateNodeGroup("MTG-BIG")
-	testutil.MustNoErr(t, err, "second group")
-	testdb.MarkGroup(t, c.db, big)
-	testutil.MustNoErr(t, c.db.CreateNode(&nodes.Node{Name: "MTG-BIG-1", Enabled: true, ParentID: &big}), "slot")
-	testutil.MustNoErr(t, c.db.SetKanbanSupports(big, []int64{c.press.ID}), "supports")
-	testutil.MustNoErr(t, c.db.SetKanbanLevelAndLayerWants(store.KanbanLevel{GroupNodeID: big, BinTypeID: c.kd, Want: 3}, nil), "level")
-	c.d.HandleOrderRequest(testEnvelope(), &protocol.OrderRequest{OrderUUID: "mtg", OrderType: OrderTypeMove,
-		SourceNode: c.press.Name, DeliveryNode: c.out.Name, Quantity: 1, BinID: c.cart(c.press, c.kd, "MTG-KD", nil).ID})
-	o, err := c.db.GetOrderByUUID("mtg")
-	testutil.MustNoErr(t, err, "the move")
-	if o.DeliveryNode != "MTG-BIG-1" {
-		t.Errorf("went to %s, want MTG-BIG-1 (short 3, against 1)", o.DeliveryNode)
-	}
 }
 
 // mtLeg writes the evac a release diverts: staged at its station wait on the
@@ -344,11 +296,9 @@ func TestKanbanArm_AtTheReserve(t *testing.T) {
 		t.Errorf("pre-confirm: the re-pointed evac has cart rows %v, want a row for its cart %d",
 			testdb.CartRowBins(t, c.db, o.ID), b.ID)
 	}
-	group, err := c.db.GetNode(c.grp)
-	testutil.MustNoErr(t, err, "group")
-	lc, err := c.db.CountLevel(group, store.KanbanLevel{GroupNodeID: c.grp, BinTypeID: c.kd, BinTypeCode: "MTV-KD", Want: 1},
-		store.DemandOrigin{})
+	counts, err := c.db.ReadKanbanCounts([]int64{c.grp})
 	testutil.MustNoErr(t, err, "the keeper's count")
+	lc := counts.Level(store.KanbanLevel{GroupNodeID: c.grp, BinTypeID: c.kd, BinTypeCode: "MTV-KD", Want: 1}, 0)
 	if lc.Coming != 1 || lc.Short() != 0 {
 		t.Errorf("pre-confirm: the keeper counts coming %d, short %d; want 1 and 0: it must not ask again", lc.Coming, lc.Short())
 	}

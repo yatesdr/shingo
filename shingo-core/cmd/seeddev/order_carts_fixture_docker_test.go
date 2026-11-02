@@ -149,6 +149,10 @@ func (p *ocPlant) lastOrderIs(t *testing.T, label string, binID int64, want *ord
 func (p *ocPlant) pressIndex(t *testing.T, tag string) (r2 *orders.Order, onDeck, empty int64) {
 	t.Helper()
 	full := p.bin(t, "BIN-ACT-P1F")
+	// R1 carries the press's full: the plant seeds the front cart empty, and an empty off a
+	// position a kanban supports goes to that kanban, not to the outbound.
+	_, err := p.db.Exec(`UPDATE bins SET payload_code = 'PANEL-A', uop_remaining = 30 WHERE id = $1`, full)
+	testutil.MustNoErr(t, err, "the press's full")
 	r1 := p.order(t, tag+"-r1", "PANEL-A", "PLN_001",
 		protocol.ComplexOrderStep{Action: protocol.ActionPickup, Node: "PLN_001"},
 		protocol.ComplexOrderStep{Action: protocol.ActionDropoff, Node: "SLN_015"})

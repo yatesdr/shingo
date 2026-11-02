@@ -128,9 +128,8 @@ func (db *DB) ReadKanbanDoor(kanbanID, binTypeID int64, source string, self int6
 		}
 		l.Group = n
 		if typeID != nil {
-			lv := KanbanPictureRow{KanbanNodeID: n.ID, BinTypeID: *typeID, BinTypeCode: *code, LevelOverflowNodeID: levelOverflow,
-				OverflowNode: levelOverflowName}
-			lv.Base, lv.Cover, lv.Running = *wantBase, *wantCover, *wantR
+			lv := KanbanPictureRow{KanbanNodeID: n.ID, BinTypeID: *typeID, BinTypeCode: *code}
+			lv.Base, lv.Cover = *wantBase, *wantCover
 			m := lv.KanbanLevel()
 			l.Level = &m
 		}

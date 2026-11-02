@@ -7,8 +7,8 @@ import (
 
 // assign.go — what each cart standing at an unloader's windows is asked to go
 // back as, on lines already read: the walk, with no reads of its own. Its reader
-// is the unloader's card (engine.UnloaderGroupLines) and the surplus arm's count of
-// its own carts (engine.surplusAtWindows).
+// is the unloader's card (engine.UnloaderGroupLines) and the keeper's count of what the walk
+// lights (store.KanbanCounts.Lit).
 //
 // HEIGHTS, FOR A TYPE WITH LAYER WANTS. When the type states its totes per
 // layer, each wanted height is a thing of its own: a cart counts toward a
@@ -31,8 +31,8 @@ import (
 // cart to the door, never past it.
 
 // Source is one of a kanban's sources as its walk reads it, in rank order. One
-// that declares no level has no lines and is short of nothing: it is reached only as
-// a type's overflow (the save warns, "repaid only as T's overflow").
+// that declares no level has no lines and is short of nothing: it is reached by
+// nothing (the save warns).
 type Source struct {
 	Name  string
 	Lines []Line
@@ -42,11 +42,10 @@ type Source struct {
 // all of them, then each source's, in rank order, over the carts still left. Sequential
 // walks, each with its own running counts: the walk keys what it has assigned by type
 // code, and a source's line of a type is not the kanban's. inbound is every group's, so
-// a cart already on its way into any of them is walked by none. The same floor rule
-// holds in each (windowWalk.fits): a 45 x 48 cart is never asked for a source of 32 x 30
-// alone. A cart nothing is short of answers NoneShort. In the windows' order.
+// a cart already on its way into any of them is walked by none. The same family rule
+// holds in each (windowWalk.fits): a cart is never asked for a source of another family. A cart nothing is short of answers NoneShort. In the windows' order.
 func AssignAcross(lines []Line, sources []Source, windows []protocol.NodeBinsRow,
-	inbound map[int64]bool, sizes map[string]domain.Footprint) []protocol.NodeBinsAssignment {
+	inbound map[int64]bool, families map[string]int64) []protocol.NodeBinsAssignment {
 	byNode := map[string]protocol.NodeBinsAssignment{}
 	take := func(as []protocol.NodeBinsAssignment, group string) {
 		for _, a := range as {
@@ -54,7 +53,7 @@ func AssignAcross(lines []Line, sources []Source, windows []protocol.NodeBinsRow
 			byNode[a.Node] = a
 		}
 	}
-	take(Assign(lines, windows, inbound, sizes), "")
+	take(Assign(lines, windows, inbound, families), "")
 	left := func() []protocol.NodeBinsRow {
 		var out []protocol.NodeBinsRow
 		for _, row := range windows {
@@ -69,7 +68,7 @@ func AssignAcross(lines []Line, sources []Source, windows []protocol.NodeBinsRow
 		if len(carts) == 0 {
 			break
 		}
-		take(Assign(s.Lines, carts, inbound, sizes), s.Name)
+		take(Assign(s.Lines, carts, inbound, families), s.Name)
 	}
 	for _, row := range left() {
 		byNode[row.Node] = protocol.NodeBinsAssignment{Node: row.Node, NoneShort: true}
@@ -144,17 +143,14 @@ func (t thing) layers() *int {
 //     remaining shortfall, ties by the levels' order (within a type, its
 //     heights from the lowest, then the type at any height). Nothing short:
 //     no assignment. A bare cart is not walked: it is nobody's empty.
-//   - THE CART'S FLOOR SIZE BOUNDS THE ASK. A cart whose type has its width and
-//     length entered (sizes, domain.BinType.FloorSize) is asked only for types
-//     of the same floor size, orientation-blind, and never for a type with no
-//     size: a 45 × 48 cart comes back as a 45 × 48 knockdown, tote cart or
-//     basket, never as a 36 × 36. A cart whose type has no size is asked as
-//     before. Tops & bottoms is a height of its tote type, inside its size.
+//   - THE CART'S FAMILY BOUNDS THE ASK (families, code to carrier family, SameFamily): a
+//     cart is only asked for a type it can physically be stamped as. Tops & bottoms is a
+//     height of its tote type, inside its family.
 //
 // The answer is in the windows' order. Pins: TestAssignWindows_*.
 func Assign(lines []Line, windows []protocol.NodeBinsRow, inbound map[int64]bool,
-	sizes map[string]domain.Footprint) []protocol.NodeBinsAssignment {
-	w := &windowWalk{lines: lines, sizes: sizes, assignedType: map[string]int{}, assignedHeight: map[thing]int{}}
+	families map[string]int64) []protocol.NodeBinsAssignment {
+	w := &windowWalk{lines: lines, families: families, assignedType: map[string]int{}, assignedHeight: map[thing]int{}}
 	byNode := map[string]protocol.NodeBinsAssignment{}
 	pass := func(empty bool) {
 		for _, row := range windows {
@@ -182,27 +178,20 @@ func Assign(lines []Line, windows []protocol.NodeBinsRow, inbound map[int64]bool
 	return out
 }
 
-// windowWalk is the walk's running state: the group's lines, the floor size of
-// each type in play that has one, and what the walk has assigned of each thing
+// windowWalk is the walk's running state: the group's lines, the family of each type in
+// play, and what the walk has assigned of each thing
 // so far, subtracted from each line's shortfall.
 type windowWalk struct {
 	lines          []Line
-	sizes          map[string]domain.Footprint
+	families       map[string]int64
 	assignedType   map[string]int
 	assignedHeight map[thing]int
 }
 
-// fits is the types a cart may be asked for: every type for a cart whose type
-// has no floor size, else the types of its own floor size only.
+// fits is the types a cart may be asked for: the types of its own family.
 func (w *windowWalk) fits(row protocol.NodeBinsRow) func(code string) bool {
-	own, ok := w.sizes[row.BinTypeCode]
-	if !ok {
-		return func(string) bool { return true }
-	}
-	return func(code string) bool {
-		fs, ok := w.sizes[code]
-		return ok && fs == own
-	}
+	own := w.families[row.BinTypeCode]
+	return func(code string) bool { return SameFamily(own, w.families[code]) }
 }
 
 func (w *windowWalk) typeShort(tl Line) int { return tl.Short() - w.assignedType[tl.Code] }

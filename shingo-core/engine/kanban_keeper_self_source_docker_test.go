@@ -64,6 +64,7 @@ func TestKanbanKeeper_DoesNotSourceFromItsOwnGroup(t *testing.T) {
 	outsideSlot := &nodes.Node{Name: "SELFSRC-FAR", Enabled: true, ParentID: &outsideGrp}
 	testutil.MustNoErr(t, db.CreateNode(outsideSlot), "create SELFSRC-FAR")
 	landCarrier(t, db, bt, outsideSlot.ID, "SELF-BIN-OUTSIDE")
+	mntOutsideEmpty(t, db, bt, "SELFSRC-FAR2")
 
 	m := eng.KanbanKeeper()
 	m.Tick()

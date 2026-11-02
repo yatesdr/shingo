@@ -4,7 +4,6 @@ import (
 	"fmt"
 
 	"shingo/protocol"
-	"shingocore/domain"
 	"shingocore/store/bins"
 	"shingocore/store/loaders"
 	"shingocore/store/nodes"
@@ -15,8 +14,7 @@ import (
 // group. The surplus arm's reads (engine/kanban_surplus.go).
 
 // SurplusEdgeUUIDPrefix marks the surplus arm's own moves, readably, on the row: a
-// resident of a kanban on its way to a window of the kanban's unloader, or to a source
-// of the kanban. Dispatch issues them and the engine confirms a landed one
+// resident of a kanban on its way to a window of the kanban's unloader. Dispatch issues them and the engine confirms a landed one
 // (TestKanbanPin_LandedReceiptConfirmsThreePrefixesOnly).
 const SurplusEdgeUUIDPrefix = "core-sp-"
 
@@ -31,9 +29,6 @@ type KanbanWindow struct {
 	// Row is the cart as a window's walk reads it (kanban.Assign): the bin
 	// standing there, or the cart a surplus move is bringing to it, Occupied for both.
 	Row protocol.NodeBinsRow
-	// Floor is the cart's floor, Sized false for a type with none entered.
-	Floor domain.Footprint
-	Sized bool
 	// Surplus says the cart is the arm's: its move is on the way, or it landed and
 	// nothing has moved the cart since. Moving says the move is still live.
 	Surplus, Moving bool
@@ -46,7 +41,6 @@ type KanbanWindow struct {
 var kanbanWindowsSQL = `SELECT ` + nodes.SelectCols + `, l.id, l.layout, l.funnel_windows,
 		COALESCE(b.id, 0), COALESCE(b.label, ''), COALESCE(bt.code, ''), COALESCE(bt.bare, false),
 		COALESCE(b.payload_code, ''), b.totes_on_cart, bt.totes_per_layer,
-		COALESCE(bt.width_in, 0), COALESCE(bt.length_in, 0),
 		COALESCE(arm.id IS NOT NULL AND b.id = arm.cart, false),
 		COALESCE(arm.id IS NOT NULL AND b.id = arm.cart AND arm.live, false)
 	` + nodes.FromClause + `
@@ -72,8 +66,8 @@ var kanbanWindowsSQL = `SELECT ` + nodes.SelectCols + `, l.id, l.layout, l.funne
 	WHERE g.id = $1 AND l.archived_at IS NULL AND ` + loaders.ActsAsUnloaderSQL("l") + `
 	ORDER BY l.id, h.sort_order, h.position_node_id`
 
-// ListKanbanWindows reads a kanban's windows and their carts, in one statement. Only a
-// short kanban pays it (KanbanKeeper.tickKanban): a steady tick reads none. Pin:
+// ListKanbanWindows reads a kanban's windows and their carts, in one statement. Only the arm
+// firing pays it (KanbanKeeper.surplusArm): a steady tick reads none. Pin:
 // TestKanbanCost_KeeperTick.
 func (db *DB) ListKanbanWindows(kanbanID int64) ([]KanbanWindow, error) {
 	rows, err := db.DB.Query(kanbanWindowsSQL, kanbanID, SurplusEdgeUUIDPrefix+"%")
@@ -84,20 +78,18 @@ func (db *DB) ListKanbanWindows(kanbanID int64) ([]KanbanWindow, error) {
 	var out []KanbanWindow
 	for rows.Next() {
 		var (
-			w             KanbanWindow
-			layout        string
-			width, length float64
+			w      KanbanWindow
+			layout string
 		)
 		n, err := nodes.ScanDoorLine(rows, &w.LoaderID, &layout, &w.Funnel,
 			&w.Row.BinID, &w.Row.BinLabel, &w.Row.BinTypeCode, &w.Row.Bare,
 			&w.Row.PayloadCode, &w.Row.TotesOnCart, &w.Row.TotesPerLayer,
-			&width, &length, &w.Surplus, &w.Moving)
+			&w.Surplus, &w.Moving)
 		if err != nil {
 			return nil, fmt.Errorf("kanban windows %d: scan: %w", kanbanID, err)
 		}
 		w.Node, w.Shared = n, layout == loaders.LayoutSharedWindow
 		w.Row.Node, w.Row.Occupied = n.Name, w.Row.BinID != 0
-		w.Floor, w.Sized = domain.BinType{WidthIn: width, LengthIn: length}.Footprint()
 		out = append(out, w)
 	}
 	return out, rows.Err()
@@ -110,7 +102,6 @@ func (db *DB) ListKanbanSurplus(kanbanID int64, codes []string) ([]*bins.Bin, er
 }
 
 // CountSurplusLeaving counts the arm's live moves lifting from a kanban's positions.
-// One statement, and only when the arm is about to send a cart to a source.
 func (db *DB) CountSurplusLeaving(kanbanID int64) (int, error) {
 	var n int
 	err := db.DB.QueryRow(`SELECT COUNT(*) FROM orders o

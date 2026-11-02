@@ -1974,8 +1974,8 @@ func CountLiveRootsByOrigin(db *sql.DB, originID string) (int, error) {
 // the cart its asker named. An order with neither is INVISIBLE here,
 // deliberately and statedly: crediting an inbound with no carrier would let the
 // keeper subtract one that may never arrive. Over-asking is the safe direction —
-// it is bounded by want, and the loser of a race re-queues, which is a normal
-// outcome.
+// it is bounded by the family's deficit, and the loser of a race re-queues,
+// which is a normal outcome.
 //
 // ONE ARM OVER THE ROWS: a cart is coming into the group when a row of a live
 // order sets it down there (its drop step's node, helpers.StepNodeSQL). The
@@ -2043,8 +2043,7 @@ func LevelComing(inbound []InboundCarrier) int {
 
 // ListTypedInboundToGroup is the inbound set CountTypedInboundToGroup counts,
 // as rows: each carrier once, in bin id order. ONE SPELLING of "coming"
-// (typedInboundSQL): the lift divert counts it (store CountLevel), and
-// ListKanbanInbound reads it for the keeper and an unloader's group line. Every rule
+// (typedInboundSQL). Every rule
 // documented on CountTypedInboundToGroup is this statement's.
 func ListTypedInboundToGroup(db *sql.DB, groupNodeID int64, groupNodeName, binTypeCode string) ([]InboundCarrier, error) {
 	if binTypeCode == "" || groupNodeName == "" {
@@ -2089,6 +2088,8 @@ type typedInboundScope struct {
 // order's plan.
 var typedInboundDropSQL = helpers.StepNodeSQL("o", "ob.drop_step")
 
+// A level is of EMPTIES: the blank-payload test here is one of the five fragments a kanban of
+// fulls would widen.
 // typedInboundSQL is the inbound statement's one spelling, its two arms over the
 // scope (the rules are on CountTypedInboundToGroup).
 func typedInboundSQL(s typedInboundScope) string {
@@ -2124,54 +2125,7 @@ func typedInboundSQL(s typedInboundScope) string {
 		) AS inbound`
 }
 
-// KanbanInbound is one row of ListKanbanInbound: a carrier on its way into a
-// kanban, of a type the kanban declares.
-type KanbanInbound struct {
-	Kanban int64
-	Code   string
-	InboundCarrier
-}
-
-// ListKanbanInbound is ListTypedInboundToGroup for every declared type of the named
-// kanbans (nil: all), in one statement: the same two arms, the group's name and its
-// descendants being the walk, whose first row is the kanban itself (node names are
-// unique, so a delivery naming the group resolves to it). Pin:
-// TestKanbanCounts_TheBatchedReadsAgreeWithTheSingleReads.
-func ListKanbanInbound(db *sql.DB, kanbanIDs []int64) ([]KanbanInbound, error) {
-	var arg any
-	if kanbanIDs != nil {
-		arg = kanbanIDs
-	}
-	rows, err := db.Query(`WITH RECURSIVE kanban_tree(kanban, id) AS (
-			SELECT k.node_id, k.node_id FROM kanbans k
-			 WHERE $1::bigint[] IS NULL OR k.node_id = ANY($1::bigint[])
-			UNION ALL
-			SELECT t.kanban, n2.id FROM nodes n2 JOIN kanban_tree t ON n2.parent_id = t.id
-		) `+typedInboundSQL(typedInboundScope{
-		cols:  "kt.kanban AS kanban, bt.code AS code, ",
-		outer: "kanban, code, ",
-		joins: "JOIN kanban_tree kt ON kt.id = dn.id JOIN kanban_levels kl ON kl.kanban_node_id = kt.kanban AND kl.bin_type_id = bt.id",
-		rows:  "TRUE",
-		named: "TRUE",
-		kind:  "$2",
-	})+`
-		ORDER BY kanban, code, bin_id`, arg, protocol.EpisodeKindKanban)
-	if err != nil {
-		return nil, fmt.Errorf("list kanban inbound: %w", err)
-	}
-	defer rows.Close()
-	var out []KanbanInbound
-	for rows.Next() {
-		var c KanbanInbound
-		if err := rows.Scan(&c.Kanban, &c.Code, &c.BinID, &c.TotesOnCart, &c.State); err != nil {
-			return nil, fmt.Errorf("scan kanban inbound: %w", err)
-		}
-		out = append(out, c)
-	}
-	return out, rows.Err()
-}
-
-// KanbanComingOfTypeSQL is ListKanbanInbound's statement for one carrier type, as a
+// KanbanComingOfTypeSQL is the comings of one carrier type, as a
 // fragment a door's one read composes: per group of the walk the caller's statement
 // names (kanban_tree(kanban, id), whose first row per group is the group itself), the
 // stock coming and the carts at 0 coming. typeExpr, selfExpr and kindExpr carry the

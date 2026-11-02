@@ -4,11 +4,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"strconv"
 
 	"shingo/protocol"
 	"shingocore/dispatch/binresolver"
 	"shingocore/dispatch/plan"
-	"shingocore/kanban"
 	"shingocore/store"
 	"shingocore/store/bins"
 	"shingocore/store/nodes"
@@ -136,7 +136,7 @@ func dropByContents(db *store.DB, pure *plan.Planner, order *orders.Order, b *bi
 		return t, fmt.Sprintf("leaves %s unfinished (%d of %s) — to its partial home", liftNode, count, b.PayloadCode)
 	}
 	if t := kanbanSlot(db, pure, order, b, liftNode, current); t != "" {
-		return t, fmt.Sprintf("leaves %s empty — to the kanban short of it,", liftNode)
+		return t, fmt.Sprintf("leaves %s empty — to its kanban,", liftNode)
 	}
 	return "", ""
 }
@@ -258,99 +258,27 @@ func kanbanSlot(db *store.DB, pure *plan.Planner, order *orders.Order, b *bins.B
 			return ""
 		}
 	}
-	groups, err := groupsWanting(db, b, liftNode)
+	ids, err := db.KanbansSupporting(liftNode)
 	if err != nil {
-		log.Printf("dispatch: kanbans wanting bin %d off %s — order %d keeps its drop: %v",
-			b.ID, liftNode, order.ID, err)
+		log.Printf("dispatch: kanbans of %s — order %d keeps its drop: %v", liftNode, order.ID, err)
+		return ""
+	}
+	if len(ids) == 0 {
 		return ""
 	}
 	cur, _ := db.GetNodeByDotName(current)
-	for _, g := range groups {
+	for _, id := range ids {
 		// Already going there: a replay, or a release after the move's planning.
-		if cur != nil && cur.ParentID != nil && *cur.ParentID == g.node.ID {
+		if cur != nil && cur.ParentID != nil && *cur.ParentID == id {
 			return cur.Name
 		}
-		res, err := pure.StoreDestination(g.node, "", binresolver.KnownCarrier(b), digAskerFor(order))
-		if err != nil || res == nil || res.Node == nil {
-			log.Printf("dispatch: kanban %s is short %d of bin %d's kind but has no slot for it: %v",
-				g.node.Name, g.gap, b.ID, err)
-			continue
+		c := pure.ChoosePush(plan.PushAsk{Group: &nodes.Node{ID: id, Name: "kanban " + strconv.FormatInt(id, 10)}, Source: liftNode,
+			Stated: binresolver.KnownCarrier(b), Asker: digAskerFor(order)})
+		if c.Applies && c.Slot != nil {
+			return c.Slot.Name
 		}
-		return res.Node.Name
 	}
 	return ""
-}
-
-// wantingGroup is a kanban that wants a carrier, and by how many.
-type wantingGroup struct {
-	node *nodes.Node
-	gap  int
-}
-
-// groupsWanting is the kanbans supporting liftNode that are short of
-// carrier b, the largest gap first, ties by name.
-func groupsWanting(db *store.DB, b *bins.Bin, liftNode string) ([]wantingGroup, error) {
-	ids, err := db.KanbansSupporting(liftNode)
-	if err != nil || len(ids) == 0 {
-		return nil, err
-	}
-	var open map[string]store.DemandOrigin
-	var out []wantingGroup
-	for _, id := range ids {
-		g, err := db.GetNode(id)
-		if err != nil {
-			return nil, err
-		}
-		levels, err := db.ListKanbanLevels(id)
-		if err != nil {
-			return nil, err
-		}
-		var lv *store.KanbanLevel
-		for i := range levels {
-			if levels[i].BinTypeID == b.BinTypeID {
-				lv = &levels[i]
-			}
-		}
-		if lv == nil {
-			continue
-		}
-		if open == nil {
-			eps, err := db.ListOpenEpisodesOfKind(protocol.EpisodeKindKanban)
-			if err != nil {
-				return nil, err
-			}
-			open = make(map[string]store.DemandOrigin, len(eps))
-			for _, e := range eps {
-				open[e.EpisodeKey] = e
-			}
-		}
-		gap, err := carrierGap(db, g, *lv, open[protocol.KanbanEpisodeKey(g.ID, lv.BinTypeID)], b)
-		if err != nil {
-			return nil, err
-		}
-		if gap > 0 {
-			out = append(out, wantingGroup{node: g, gap: gap})
-		}
-	}
-	kanban.Rank(out, func(g wantingGroup) string { return g.node.Name }, func(g wantingGroup) int { return g.gap })
-	return out, nil
-}
-
-// carrierGap is how short group g is of carrier b, by the keeper's arithmetic
-// (kanban.Line.GapFor). A tote cart's line reads the group's layer wants as well.
-func carrierGap(db *store.DB, g *nodes.Node, lv store.KanbanLevel, episode store.DemandOrigin, b *bins.Bin) (int, error) {
-	var wants []store.KanbanLayerWant
-	if protocol.IsToteType(b.TotesPerLayer) {
-		var err error
-		if wants, err = db.ListKanbanLayerWants(g.ID); err != nil {
-			return 0, err
-		}
-	}
-	tl, _, err := db.TypeLineOf(g, lv, episode, wants)
-	if err != nil {
-		return 0, err
-	}
-	return tl.GapFor(kanban.CartOf(b)), nil
 }
 
 // containedAt reports whether payloadCode is contained and lineNode's claim

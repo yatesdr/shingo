@@ -53,7 +53,7 @@ type Store interface {
 	// parked an order on names an overflow destination for the cart's type (a
 	// kanban's level row or its own row, a plain group's property), one read before
 	// any resolve (overflowsWhileParked). A type of 0 is the group's own.
-	OverflowNameOf(groupName string, binTypeID int64) string
+	OverflowNameOf(groupName string) string
 
 	// Mutations performed on the order during fulfillment.
 	//

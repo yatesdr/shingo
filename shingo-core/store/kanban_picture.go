@@ -6,7 +6,6 @@ import (
 	"fmt"
 
 	"shingo/protocol"
-	"shingocore/domain"
 	"shingocore/kanban"
 	"shingocore/store/internal/helpers"
 )
@@ -19,8 +18,8 @@ type KanbanRef struct {
 	Name string `json:"name"`
 }
 
-// KanbanPictureRow is one (kanban, level) of KanbanPictureSQL. The embedded
-// kanban.Level carries Base, Cover and Running, and composes Want().
+// KanbanPictureRow is one (kanban, level) of KanbanPictureSQL. The embedded kanban.Level
+// carries Base and Cover, and composes Want().
 type KanbanPictureRow struct {
 	kanban.Level
 	KanbanNodeID int64
@@ -33,15 +32,15 @@ type KanbanPictureRow struct {
 	Supports []KanbanRef
 	// Sources are the groups its keeper may pull from, in rank order.
 	Sources []KanbanRef
-	// Floor is the type's floor size, Sized false with none entered.
-	Floor domain.Footprint
-	Sized bool
-	// OverflowNodeID and OverflowNode are where this type overflows:
-	// COALESCE(level, kanban). LevelOverflowNodeID is the level row's own, nil
-	// when the type takes the kanban's default.
-	OverflowNodeID      *int64
-	OverflowNode        string
-	LevelOverflowNodeID *int64
+	// FamilyID and FamilyCode are the type's carrier family. Pool is what the kanban is meant
+	// to hold of the family: its kanban_families row, else the minimum, with PoolDeclared
+	// false to say which. Minimum is the mix of the family's types and the most positions
+	// each supported process puts on the line in it.
+	FamilyID     int64
+	FamilyCode   string
+	Pool         int
+	PoolDeclared bool
+	Minimum      int
 	// TopsAndBottomsWant is the want of the type's row at 0 layers, 0 with none.
 	TopsAndBottomsWant int
 	StationID          string
@@ -49,11 +48,11 @@ type KanbanPictureRow struct {
 	// Live says the kanban's node is an enabled group: a disabled one is counted
 	// by nobody and keeps nothing.
 	Live bool
-	// RunningProcesses are the processes Running counts, by name: the card's
+	// RunningProcesses are the processes Cover counts, by name: the card's
 	// answer to which process is driving the want.
 	RunningProcesses []string
 	// NothingProcesses are the kanban's processes with a part that contributes
-	// nothing to Running: no payload_bin_types row, or several. A process can be
+	// nothing to Cover: no payload_bin_types row, or several. A process can be
 	// here and also count for another part. The kanban's card names them.
 	NothingProcesses []string
 	// FallbackProcesses are the kanban's processes with an open changeover whose
@@ -65,7 +64,7 @@ type KanbanPictureRow struct {
 // KanbanPictureSQL is the kanban's one read: one row per (kanban, level), $1 NULL
 // for all kanbans or an array of node ids. A kanban with no level has no row.
 //
-// RUNNING. A process runs its effective style: the target of its latest open
+// COVER. A process runs its effective style: the target of its latest open
 // changeover episode when that resolves to a type, else its active style
 // (process_styles.is_active). Every levels reader takes it through
 // DB.ListKanbanLevels or this read directly.
@@ -81,7 +80,11 @@ type KanbanPictureRow struct {
 //     episode whose target resolved to no type.
 //   - connected: a process belongs to a kanban when its effective style's claims
 //     name a supported node as core, paired or second paired node.
-//   - running: DISTINCT processes per (kanban, type).
+//   - claimed: DISTINCT positions per (kanban, type), joining the claim's own part, so a
+//     style running two types covers each with its own positions.
+//   - line_family and mix_family: the minimum pool's two terms, per (kanban, family): the
+//     most positions each supported process's styles put on the line in the family, summed
+//     over the processes, and the family's declared levels.
 //
 // Everything is one statement over the mirror; no read is per kanban or per level.
 const KanbanPictureSQL = `
@@ -168,13 +171,42 @@ connected AS (
 	  JOIN style_claims sc ON sc.process_id = e.process_id AND sc.style_id = e.style_id
 	  JOIN positions pos ON pos.node_name IN (sc.core_node_name, sc.paired_core_node, sc.second_paired_core_node)
 ),
-running AS (
-	SELECT c.kanban_node_id, sp.bin_type_id, COUNT(DISTINCT c.process_id) AS running,
+claimed AS (
+	SELECT c.kanban_node_id, sp.bin_type_id, COUNT(DISTINCT pos.node_name) AS claimed,
 	       json_agg(DISTINCT c.process_id ORDER BY c.process_id) AS processes
 	  FROM connected c
-	  JOIN style_part sp ON sp.process_id = c.process_id AND sp.style_id = c.style_id
+	  JOIN style_claims sc ON sc.process_id = c.process_id AND sc.style_id = c.style_id
+	                      AND sc.role = '` + string(protocol.ClaimRoleProduce) + `'
+	  JOIN style_part sp ON sp.process_id = sc.process_id AND sp.style_id = sc.style_id AND sp.payload_code = sc.payload_code
+	  JOIN positions pos ON pos.kanban_node_id = c.kanban_node_id
+	                    AND pos.node_name IN (sc.core_node_name, sc.paired_core_node, sc.second_paired_core_node)
 	 WHERE sp.bin_type_id IS NOT NULL
 	 GROUP BY c.kanban_node_id, sp.bin_type_id
+),
+style_family AS (
+	SELECT pos.kanban_node_id, sc.process_id, sc.style_id, bt.family_id, COUNT(DISTINCT pos.node_name) AS positions
+	  FROM style_claims sc
+	  JOIN style_part sp ON sp.process_id = sc.process_id AND sp.style_id = sc.style_id AND sp.payload_code = sc.payload_code
+	  JOIN bin_types bt ON bt.id = sp.bin_type_id
+	  JOIN positions pos ON pos.node_name IN (sc.core_node_name, sc.paired_core_node, sc.second_paired_core_node)
+	 WHERE sc.role = '` + string(protocol.ClaimRoleProduce) + `'
+	 GROUP BY pos.kanban_node_id, sc.process_id, sc.style_id, bt.family_id
+),
+process_family AS (
+	SELECT kanban_node_id, process_id, family_id, MAX(positions) AS positions
+	  FROM style_family GROUP BY kanban_node_id, process_id, family_id
+),
+line_family AS (
+	SELECT kanban_node_id, family_id, SUM(positions)::int AS positions
+	  FROM process_family GROUP BY kanban_node_id, family_id
+),
+mix_family AS (
+	SELECT lv.kanban_node_id, bt.family_id, SUM(lv.want + COALESCE(tb.want, 0))::int AS mix
+	  FROM kanban_levels lv
+	  JOIN scope ON scope.node_id = lv.kanban_node_id
+	  JOIN bin_types bt ON bt.id = lv.bin_type_id
+	  LEFT JOIN kanban_layer_levels tb ON tb.kanban_node_id = lv.kanban_node_id AND tb.bin_type_id = lv.bin_type_id AND tb.layers = 0
+	 GROUP BY lv.kanban_node_id, bt.family_id
 ),
 nothing AS (
 	SELECT c.kanban_node_id, json_agg(DISTINCT c.process_id ORDER BY c.process_id) AS processes
@@ -214,20 +246,24 @@ sources AS (
 )`
 
 const kanbanPictureSelect = `
-SELECT g.id, g.name, l.bin_type_id, bt.code, l.want, k.running_cover, COALESCE(r.running, 0),
+SELECT g.id, g.name, l.bin_type_id, bt.code, l.want, COALESCE(r.claimed, 0),
        COALESCE(sl.slots, 0), COALESCE(su.refs, '[]'), COALESCE(so.refs, '[]'),
-       COALESCE(l.overflow_node_id, k.overflow_node_id), COALESCE(ov.name, ''), l.overflow_node_id,
        COALESCE(tb.want, 0), COALESCE(k.station_id, ''), k.strict, g.enabled AND g.is_synthetic,
        COALESCE(r.processes, '[]'), COALESCE(nt.processes, '[]'), COALESCE(fa.processes, '[]'),
-       COALESCE(bt.width_in, 0), COALESCE(bt.length_in, 0)
+       bt.family_id, f.code,
+       COALESCE(kf.pool, COALESCE(mf.mix, 0) + COALESCE(lf.positions, 0)), kf.pool IS NOT NULL,
+       COALESCE(mf.mix, 0) + COALESCE(lf.positions, 0)
   FROM scope
   JOIN kanbans k ON k.node_id = scope.node_id
   JOIN nodes g ON g.id = k.node_id
   JOIN kanban_levels l ON l.kanban_node_id = k.node_id
   JOIN bin_types bt ON bt.id = l.bin_type_id
-  LEFT JOIN nodes ov ON ov.id = COALESCE(l.overflow_node_id, k.overflow_node_id)
+  JOIN carrier_families f ON f.id = bt.family_id
+  LEFT JOIN kanban_families kf ON kf.kanban_node_id = k.node_id AND kf.family_id = bt.family_id
+  LEFT JOIN mix_family mf ON mf.kanban_node_id = k.node_id AND mf.family_id = bt.family_id
+  LEFT JOIN line_family lf ON lf.kanban_node_id = k.node_id AND lf.family_id = bt.family_id
   LEFT JOIN kanban_layer_levels tb ON tb.kanban_node_id = k.node_id AND tb.bin_type_id = l.bin_type_id AND tb.layers = 0
-  LEFT JOIN running r ON r.kanban_node_id = k.node_id AND r.bin_type_id = l.bin_type_id
+  LEFT JOIN claimed r ON r.kanban_node_id = k.node_id AND r.bin_type_id = l.bin_type_id
   LEFT JOIN slots sl ON sl.kanban_node_id = k.node_id
   LEFT JOIN supports su ON su.kanban_node_id = k.node_id
   LEFT JOIN sources so ON so.kanban_node_id = k.node_id
@@ -250,15 +286,11 @@ func (db *DB) ListKanbanPictureWithSources(ids []int64) ([]KanbanPictureRow, err
 	return scanKanbanPicture(db.DB.Query(kanbanPictureWithSourcesSQL, ids))
 }
 
-// KanbanLevel is the row as a levels reader takes it: Want the effective want,
-// Base the declared number, the overflow the row's own.
+// KanbanLevel is the row as a levels reader takes it: Want the effective want, Base the
+// declared number.
 func (r KanbanPictureRow) KanbanLevel() KanbanLevel {
-	lv := KanbanLevel{GroupNodeID: r.KanbanNodeID, BinTypeID: r.BinTypeID, BinTypeCode: r.BinTypeCode,
-		Want: r.Want(), Base: r.Base, OverflowNodeID: r.LevelOverflowNodeID}
-	if r.LevelOverflowNodeID != nil {
-		lv.OverflowNode = r.OverflowNode
-	}
-	return lv
+	return KanbanLevel{GroupNodeID: r.KanbanNodeID, BinTypeID: r.BinTypeID, BinTypeCode: r.BinTypeCode,
+		Want: r.Want(), Base: r.Base}
 }
 
 // LevelsOfPicture is the rows as levels, in the picture's order (by code within a
@@ -289,16 +321,13 @@ func scanKanbanPicture(rows *sql.Rows, err error) ([]KanbanPictureRow, error) {
 		var (
 			r                                         KanbanPictureRow
 			supports, sources, running, nothing, fell []byte
-			width, length                             float64
 		)
 		if err := rows.Scan(&r.KanbanNodeID, &r.KanbanName, &r.BinTypeID, &r.BinTypeCode,
-			&r.Base, &r.Cover, &r.Running, &r.Slots, &supports, &sources,
-			&r.OverflowNodeID, &r.OverflowNode, &r.LevelOverflowNodeID,
+			&r.Base, &r.Cover, &r.Slots, &supports, &sources,
 			&r.TopsAndBottomsWant, &r.StationID, &r.Strict, &r.Live, &running, &nothing, &fell,
-			&width, &length); err != nil {
+			&r.FamilyID, &r.FamilyCode, &r.Pool, &r.PoolDeclared, &r.Minimum); err != nil {
 			return nil, fmt.Errorf("kanban picture: scan: %w", err)
 		}
-		r.Floor, r.Sized = domain.BinType{WidthIn: width, LengthIn: length}.Footprint()
 		for _, f := range []struct {
 			raw []byte
 			to  any
@@ -309,6 +338,47 @@ func scanKanbanPicture(rows *sql.Rows, err error) ([]KanbanPictureRow, error) {
 			}
 		}
 		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+// KanbanMinimum is one (kanban, family)'s minimum pool: the mix declared of the family's types
+// and the most positions each supported process puts on the line in the family.
+type KanbanMinimum struct {
+	KanbanNodeID int64
+	FamilyID     int64
+	FamilyCode   string
+	Mix          int
+	Line         int
+}
+
+// Minimum is the pool below which the line eats the mix.
+func (m KanbanMinimum) Minimum() int { return m.Mix + m.Line }
+
+// kanbanMinimumsSQL is the one statement of the minimum pool, for the save, the census and
+// the card: every family the kanban levels or a style of its supports runs.
+const kanbanMinimumsSQL = `
+WITH scope AS (SELECT k.node_id FROM kanbans k WHERE k.node_id = ANY($1::bigint[])),` + kanbanPictureCTEs + `
+SELECT COALESCE(m.kanban_node_id, l.kanban_node_id), f.id, f.code, COALESCE(m.mix, 0), COALESCE(l.positions, 0)
+  FROM mix_family m
+  FULL JOIN line_family l ON l.kanban_node_id = m.kanban_node_id AND l.family_id = m.family_id
+  JOIN carrier_families f ON f.id = COALESCE(m.family_id, l.family_id)
+ ORDER BY 1, f.code`
+
+// ListKanbanMinimums reads the minimum pools of the named kanbans.
+func (db *DB) ListKanbanMinimums(ids []int64) ([]KanbanMinimum, error) {
+	rows, err := db.DB.Query(kanbanMinimumsSQL, ids)
+	if err != nil {
+		return nil, fmt.Errorf("kanban minimums: %w", err)
+	}
+	defer rows.Close()
+	var out []KanbanMinimum
+	for rows.Next() {
+		var m KanbanMinimum
+		if err := rows.Scan(&m.KanbanNodeID, &m.FamilyID, &m.FamilyCode, &m.Mix, &m.Line); err != nil {
+			return nil, fmt.Errorf("kanban minimums: scan: %w", err)
+		}
+		out = append(out, m)
 	}
 	return out, rows.Err()
 }

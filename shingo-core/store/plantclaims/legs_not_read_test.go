@@ -89,6 +89,8 @@ func assertNoLegColumnsBut(t *testing.T, what, src, allow string) {
 // style_claims, each with the reason it may. A new reader is a decision, not an
 // accident: add it here with its reason, or move the read behind one of these.
 var sanctionedLegReaders = map[string]string{
+	"store/kanban_family_migration.go": "the census lists a claim's position no kanban support names: it reads the paired positions at a migration and at a plant's pre-deploy run, and decides nothing",
+	"store/kanbans.go":                 "a node rename lists what joins it by name, a claim's legs among them (ReferencesToNodeName): a warning read at a save, never a decision",
 	"store/plantclaims/plantclaims.go": "the writer (ReplaceProcess), and the addressing read: a station binds at its cell's paired positions too (Lane H, H.3)",
 	"store/return_sources.go":          "the cancel-return policy: where a line's bins come from and its empties go",
 	"store/containment.go":             "the containment divert scopes itself to the claim's own outbound flow",

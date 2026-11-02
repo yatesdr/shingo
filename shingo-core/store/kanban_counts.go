@@ -10,69 +10,179 @@ import (
 	"shingocore/store/orders"
 )
 
-// kanban_counts.go — the keeper's populations for many kanbans at once: what
-// CountLevel and TypeLineOf read one (group, type) at a time, in two statements
-// whatever the plant's size, so neither the keeper's tick nor a snapshot build
-// pays per kanban or per level. Each read composes the single read's fragments
-// (bins.ListKanbanResidents, orders.ListKanbanInbound); the arithmetic on top is
-// LevelState's and TypeLine's, as it is for the single reads.
+// kanban_counts.go — the keeper's populations for many kanbans at once, from one read of
+// their loops (DB.ListKanbanLoop), so neither the keeper's tick nor a snapshot build pays per
+// kanban or per level. The arithmetic on top is LevelState's and kanban.Line's.
 
 type kanbanTypeKey struct {
 	kanban int64
 	code   string
 }
 
-// KanbanCounts is one read of the residents and the comings.
+type kanbanFamilyKey struct {
+	kanban int64
+	family int64
+}
+
+// FamilyFound is where one family's carts are, per place of the loop. A keeper's own asks are
+// not in it: they are counted as asked, once.
+type FamilyFound struct {
+	Slot, Line, Window, Flight int
+	// Unowned is how many of Flight stand on a robot with no live order.
+	Unowned int
+}
+
+// Total is everything found.
+func (f FamilyFound) Total() int { return f.Slot + f.Line + f.Window + f.Flight }
+
+// KanbanCounts is one read of the loops.
 type KanbanCounts struct {
 	resident map[kanbanTypeKey]int
 	byTotes  map[kanbanTypeKey]map[int]int
 	inbound  map[kanbanTypeKey][]orders.InboundCarrier
+	toLine   map[kanbanTypeKey]int
+	held     map[kanbanTypeKey]int
+	windows  map[int64][]protocol.NodeBinsRow
+	found    map[kanbanFamilyKey]*FamilyFound
+	families map[string]int64
+	carts    map[int64][]LoopCart
 }
 
-// ReadKanbanCounts reads the populations of the named kanbans (nil: all). The
-// comings are read first: a cart landing between the two statements then counts
-// in both for this read, which asks one less now and is right on the next read,
-// and never in neither, which would ask for a cart that is already there.
+// ReadKanbanCounts reads the populations of the named kanbans (nil: all), in one statement.
 func (db *DB) ReadKanbanCounts(ids []int64) (*KanbanCounts, error) {
-	inbound, err := orders.ListKanbanInbound(db.DB, ids)
+	carts, err := db.ListKanbanLoop(ids)
 	if err != nil {
 		return nil, err
 	}
-	residents, err := bins.ListKanbanResidents(db.DB, ids)
-	if err != nil {
-		return nil, err
-	}
-	c := &KanbanCounts{resident: map[kanbanTypeKey]int{}, byTotes: map[kanbanTypeKey]map[int]int{},
-		inbound: map[kanbanTypeKey][]orders.InboundCarrier{}}
-	for _, r := range residents {
-		k := kanbanTypeKey{r.Kanban, r.Code}
-		if r.Stock {
-			c.resident[k] += r.N
-		}
-		if r.Totes != nil {
-			if c.byTotes[k] == nil {
-				c.byTotes[k] = map[int]int{}
-			}
-			c.byTotes[k][*r.Totes] += r.N
-		}
-	}
-	for _, in := range inbound {
-		k := kanbanTypeKey{in.Kanban, in.Code}
-		c.inbound[k] = append(c.inbound[k], in.InboundCarrier)
-	}
-	return c, nil
+	return countsOfLoop(carts), nil
 }
 
-// Level is one level type's populations, as CountLevel answers them: asked is the
-// open episode's, read with the episodes (ListOpenKeeperEpisodes).
+// countsOfLoop sorts each cart into what it is to its kanban.
+//
+//	Standing in the kanban, an empty the finder would take: resident.
+//	Standing on a supported position, not spoken for: held.
+//	Carried into the kanban: coming (and its row, for the walk's "already on its way").
+//	Carried onto a supported position: coming.
+//	At a window or carried to one: the walk's, by the type it lights.
+func countsOfLoop(carts []LoopCart) *KanbanCounts {
+	c := &KanbanCounts{resident: map[kanbanTypeKey]int{}, byTotes: map[kanbanTypeKey]map[int]int{},
+		inbound: map[kanbanTypeKey][]orders.InboundCarrier{}, toLine: map[kanbanTypeKey]int{}, held: map[kanbanTypeKey]int{},
+		windows: map[int64][]protocol.NodeBinsRow{}, found: map[kanbanFamilyKey]*FamilyFound{}, families: map[string]int64{},
+		carts: map[int64][]LoopCart{}}
+	for _, lc := range carts {
+		c.families[lc.Code] = lc.FamilyID
+		c.carts[lc.Kanban] = append(c.carts[lc.Kanban], lc)
+		k := kanbanTypeKey{lc.Kanban, lc.Code}
+		if !lc.Asked {
+			f := c.found[kanbanFamilyKey{lc.Kanban, lc.FamilyID}]
+			if f == nil {
+				f = &FamilyFound{}
+				c.found[kanbanFamilyKey{lc.Kanban, lc.FamilyID}] = f
+			}
+			switch lc.Place {
+			case LoopPlaceSlot:
+				f.Slot++
+			case LoopPlaceLine:
+				f.Line++
+			case LoopPlaceWindow:
+				f.Window++
+			default:
+				f.Flight++
+				if lc.Unowned {
+					f.Unowned++
+				}
+			}
+		}
+		if lc.Resident && lc.Into == "" {
+			if lc.Stock {
+				c.resident[k]++
+			}
+			if lc.TotesOnCart != nil {
+				if c.byTotes[k] == nil {
+					c.byTotes[k] = map[int]int{}
+				}
+				c.byTotes[k][*lc.TotesOnCart]++
+			}
+		}
+		switch {
+		case lc.Asked || lc.Unowned || lc.Bare:
+		case lc.Into == LoopPlaceSlot:
+			if lc.PayloadCode == "" {
+				c.inbound[k] = append(c.inbound[k], orders.InboundCarrier{BinID: lc.BinID, TotesOnCart: lc.TotesOnCart, State: lc.State})
+			}
+		case lc.Into == LoopPlaceLine:
+			if lc.Stock {
+				c.toLine[k]++
+			}
+		case lc.Into == LoopPlaceWindow || lc.Place == LoopPlaceWindow:
+			c.windows[lc.Kanban] = append(c.windows[lc.Kanban], protocol.NodeBinsRow{Node: fmt.Sprintf("cart-%d", lc.BinID), BinID: lc.BinID,
+				BinLabel: lc.Label, BinTypeCode: lc.Code, PayloadCode: lc.PayloadCode, TotesOnCart: lc.TotesOnCart,
+				TotesPerLayer: lc.TotesPerLayer, Occupied: true})
+		case lc.Place == LoopPlaceLine:
+			c.held[k]++
+		}
+	}
+	return c
+}
+
+// Level is one level type's populations, against the open episode's asks (the keeper's own
+// read, ListOpenKeeperEpisodes).
 func (c *KanbanCounts) Level(lv KanbanLevel, asked int) LevelState {
 	k := kanbanTypeKey{lv.GroupNodeID, lv.BinTypeCode}
 	inbound := c.inbound[k]
 	return LevelState{Level: lv, Have: kanban.Have{Resident: c.resident[k], Asked: asked,
-		Coming: orders.LevelComing(inbound)}, Inbound: inbound}
+		Coming: orders.LevelComing(inbound) + c.toLine[k], Held: c.held[k]}, Inbound: inbound}
 }
 
-// TypeLine is one level type's line, as TypeLineOf answers it.
+// Found is one (kanban, family)'s carts by place.
+func (c *KanbanCounts) Found(kanbanID, familyID int64) FamilyFound {
+	if f := c.found[kanbanFamilyKey{kanbanID, familyID}]; f != nil {
+		return *f
+	}
+	return FamilyFound{}
+}
+
+// WindowCarts is the carts at a kanban's windows and on their way to one, as the walk reads
+// them. Their Node is a key of the walk's alone.
+func (c *KanbanCounts) WindowCarts(kanbanID int64) []protocol.NodeBinsRow { return c.windows[kanbanID] }
+
+// SlotsSpoken is the kanban's slots with a cart on them or an order delivering one, for the
+// walk's word on whether a return lands at home. Admits are not read: it is a word, and the door
+// repeats the choice on the slots themselves.
+func (c *KanbanCounts) SlotsSpoken(kanbanID int64) int {
+	n := 0
+	for _, lc := range c.carts[kanbanID] {
+		if lc.Place == LoopPlaceSlot || lc.Into == LoopPlaceSlot {
+			n++
+		}
+	}
+	return n
+}
+
+// Carts is every cart of a kanban's loop.
+func (c *KanbanCounts) Carts(kanbanID int64) []LoopCart { return c.carts[kanbanID] }
+
+// Lit is the type each cart at the kanban's windows would come back as, by type: the walk
+// over the lines given, which are the kanban's with its windows left out. A cart the walk
+// lights nothing keeps its own type and is nobody's shortfall.
+func (c *KanbanCounts) Lit(kanbanID int64, lines []kanban.Line, families map[string]int64) map[string]int {
+	carts := c.windows[kanbanID]
+	if len(carts) == 0 {
+		return nil
+	}
+	for code, family := range c.families {
+		if _, ok := families[code]; !ok {
+			families[code] = family
+		}
+	}
+	out := map[string]int{}
+	for _, a := range kanban.Assign(lines, carts, nil, families) {
+		out[a.BinType]++
+	}
+	return out
+}
+
+// TypeLine is one level type's line.
 func (c *KanbanCounts) TypeLine(lv KanbanLevel, asked int, layerWants []KanbanLayerWant) (kanban.Line, LevelState) {
 	s := c.Level(lv, asked)
 	return typeLineOf(s, layerWants, c.byTotes[kanbanTypeKey{lv.GroupNodeID, lv.BinTypeCode}]), s
@@ -104,15 +214,17 @@ func typeLineOf(c LevelState, layerWants []KanbanLayerWant, residentByTotes map[
 	return tl
 }
 
-// SourceableTypes is the keeper's forecast for one short kanban: which of codes a
-// plant-wide find with this fence would answer with something
-// (bins.SourceableTypes).
-func (db *DB) SourceableTypes(codes []string, fence bins.EmptyFence) (map[string]bool, error) {
-	types, err := bins.SourceableTypes(db.DB, codes, fence)
+// A level is of EMPTIES: the forecast counts empties, one of the five fragments a kanban of fulls
+// would widen.
+// SourceableCounts is the keeper's forecast for one short kanban: how many empties of each of
+// codes a plant-wide find with this fence would answer with, so asks never pass the carts
+// that exist (bins.SourceableCounts).
+func (db *DB) SourceableCounts(codes []string, fence bins.EmptyFence) (map[string]int, error) {
+	counts, err := bins.SourceableCounts(db.DB, codes, fence)
 	if err != nil {
 		return nil, fmt.Errorf("keeper forecast: %w", err)
 	}
-	return types, nil
+	return counts, nil
 }
 
 // GroupLineAsk is one outbound group a snapshot build wants the line of: the group,
@@ -122,6 +234,8 @@ type GroupLineAsk struct {
 	Group   *nodes.Node
 	Levels  []KanbanLevel
 	Windows []protocol.NodeBinsRow
+	// Slots is the kanban's enabled children.
+	Slots int
 	// Sources are the group's sources in rank order, each with its levels: none for
 	// one that declares none, which is short of nothing.
 	Sources []GroupLineSource
