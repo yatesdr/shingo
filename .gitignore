@@ -115,3 +115,7 @@ AGENTS.md
 # beside it in the GitHub root, which is where the owner reads them. They were
 # tracked until 2026-09-13.
 composer-shots/
+
+# Built by a sim run, never tracked.
+/bin/shingocore-sim
+/bin/shingoedge-sim
