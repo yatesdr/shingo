@@ -1,0 +1,276 @@
+# plants/order-carts.yaml — the multi-cart fixture.
+#
+# The two cell shapes in which one order carries more than one cart, and nothing
+# else: an order's carts are its order_bins rows, one per lift (docs/data-model.md,
+# "Order carts"), and these are the orders that have several.
+#
+#   PRESS-1 (PANEL-A, two_robot_press_index). R2, the index robot, lifts the
+#     on-deck cart off PLN_002, sets it on the press PLN_001, then lifts the rear
+#     cart and sets it on PLN_002: two carts, one order.
+#   WELD-2 (PANEL-B, single_robot) at ALN_003. One robot parks the fresh cart at
+#     inbound staging, lifts the spent one off the line, parks it at outbound
+#     staging, re-lifts the fresh one onto the line and re-lifts the spent one to
+#     the market: two carts, four lifts, two of them relays.
+#
+# The rest of the loop is demo-sim.yaml's, kept only so the two cells run: PRESS-2
+# (sequential) feeds WELD-2's PANEL-B, WELD-1 (two_robot) eats PANEL-A, both welds
+# make ASSY, UNLOADER-A drains ASSY back to the press empties, and the level keeper
+# tops SYN_PRESS_EMPTIES up from SYN_MARKET. WELD-2 consumes no BRKT here: the
+# loaders that fed it are not this fixture's subject.
+#
+# The injected states (a CANCEL with the second cart on the robot, a store event
+# withheld, a hand move of a cart on a robot) are driven by its docker test,
+# shingo-core/cmd/seeddev/order_carts_fixture_docker_test.go, against this file.
+#
+# Sizing (shingo-core/cmd/simcalc -plant plants/order-carts.yaml -carriers): see
+# plants/README.md. The market stock is demo-sim.yaml's PANEL-A and PANEL-B,
+# which holds a 40-minute run at 10x.
+
+namespace: edge1
+line_id: line1
+
+bin_types: [STANDARD, STANDARD-SM]
+
+carrier_robot_groups:
+  STANDARD-SM: HEAVY-1500
+
+payloads:
+  - {code: PANEL-A, uop_capacity: 30, bin_type: STANDARD, robot_group: HEAVY-1500,
+     near_empty_enabled: true, near_empty_robot_group: SMALL-600, near_empty_threshold_pct: 20}
+  - {code: PANEL-B, uop_capacity: 30, bin_type: STANDARD-SM, robot_group: HEAVY-1500,
+     near_empty_enabled: true, near_empty_robot_group: SMALL-600, near_empty_threshold_pct: 20}
+  - {code: ASSY,    uop_capacity: 20, bin_type: STANDARD, robot_group: HEAVY-1500}
+
+zones:
+  - name: SYN_MARKET
+    retrieve_algorithm: FIFO
+    store_algorithm: LKND
+    wait_points: [Lane_01-WAIT, Lane_02-WAIT, Lane_03-WAIT, Lane_04-WAIT, Lane_05-WAIT, Lane_06-WAIT, Lane_07-WAIT, Lane_08-WAIT, Lane_11-WAIT, Lane_12-WAIT, Lane_13-WAIT, Lane_14-WAIT, Lane_15-WAIT, Lane_16-WAIT, Lane_19-WAIT]
+    lanes:
+      - {name: Lane_01, slots: [{name: SMN_001, depth: 1}, {name: SMN_002, depth: 2}, {name: SMN_003, depth: 3}]}
+      - {name: Lane_02, slots: [{name: SMN_004, depth: 1}, {name: SMN_005, depth: 2}, {name: SMN_006, depth: 3}]}
+      - {name: Lane_03, slots: [{name: SMN_007, depth: 1}, {name: SMN_008, depth: 2}, {name: SMN_009, depth: 3}]}
+      - {name: Lane_15, slots: [{name: SMN_031, depth: 1}, {name: SMN_032, depth: 2}, {name: SMN_033, depth: 3}]}
+      - {name: Lane_16, slots: [{name: SMN_034, depth: 1}, {name: SMN_035, depth: 2}, {name: SMN_036, depth: 3}]}
+      # Lane_04-06 carried components in demo; here they are headroom for digs.
+      - {name: Lane_04, slots: [{name: SMN_010, depth: 1}, {name: SMN_011, depth: 2}, {name: SMN_012, depth: 3}]}
+      - {name: Lane_05, slots: [{name: SMN_013, depth: 1}, {name: SMN_014, depth: 2}, {name: SMN_015, depth: 3}]}
+      - {name: Lane_06, slots: [{name: SMN_016, depth: 1}, {name: SMN_017, depth: 2}, {name: SMN_018, depth: 3}]}
+      - {name: Lane_07, slots: [{name: SMN_019, depth: 1}, {name: SMN_020, depth: 2}, {name: SMN_021, depth: 3}]}
+      - {name: Lane_08, slots: [{name: SMN_022, depth: 1}, {name: SMN_023, depth: 2}, {name: SMN_024, depth: 3}]}
+      - {name: Lane_11, slots: [{name: UTN_001, depth: 1}, {name: UTN_002, depth: 2}, {name: UTN_003, depth: 3}]}
+      - {name: Lane_12, slots: [{name: UTN_004, depth: 1}, {name: UTN_005, depth: 2}, {name: UTN_006, depth: 3}]}
+      - {name: Lane_13, slots: [{name: UTN_007, depth: 1}, {name: UTN_008, depth: 2}, {name: UTN_009, depth: 3}]}
+      - {name: Lane_14, slots: [{name: UTN_010, depth: 1}, {name: UTN_011, depth: 2}, {name: UTN_012, depth: 3}]}
+      - {name: Lane_19, slots: [{name: UTN_013, depth: 1}, {name: UTN_014, depth: 2}, {name: UTN_015, depth: 3}]}
+  - name: SYN_PRESS_EMPTIES
+    retrieve_algorithm: FIFO
+    store_algorithm: LKND
+    positions:
+      - {name: PEB_001, depth: 1}
+      - {name: PEB_002, depth: 1}
+      - {name: PEB_003, depth: 1}
+      - {name: PEB_004, depth: 1}
+      - {name: PEB_005, depth: 1}
+      - {name: PEB_006, depth: 1}
+      - {name: PEB_007, depth: 1}
+      - {name: PEB_008, depth: 1}
+
+stations:
+  - {name: PLN_001, kind: press}     # PRESS-1 front (produce PANEL-A)
+  - {name: PLN_002, kind: press}     # PRESS-1 back / paired index position (no own claim)
+  - {name: PLN_003, kind: press}     # PRESS-2 A (active)  produce PANEL-B
+  - {name: PLN_004, kind: press}     # PRESS-2 B (parked)  produce PANEL-B
+  - {name: ALN_001, kind: weld}      # WELD-1 consume PANEL-A
+  - {name: ALN_002, kind: weld}      # WELD-1 produce ASSY
+  - {name: SLN_001, kind: staging}   # WELD-1 ALN_001 inbound stage
+  - {name: SLN_002, kind: staging}   # WELD-1 ALN_002 inbound stage
+  - {name: SLN_011, kind: staging}   # WELD-1 ALN_001 outbound stage
+  - {name: ALN_003, kind: weld}      # WELD-2 consume PANEL-B (the relay swap)
+  - {name: ALN_005, kind: weld}      # WELD-2 produce ASSY
+  - {name: SLN_003, kind: staging}   # WELD-2 ALN_003 inbound
+  - {name: SLN_004, kind: staging}   # WELD-2 ALN_003 outbound
+  - {name: SLN_007, kind: staging}   # WELD-2 ALN_005 inbound
+  - {name: SLN_008, kind: staging}   # WELD-2 ALN_005 outbound
+  - {name: FGN_001, kind: unloader}  # drains ASSY finished goods
+  - {name: SLN_014, kind: staging}   # PRESS-1 inbound stage
+  - {name: SLN_015, kind: staging}   # PRESS-1 outbound stage
+
+bins:
+  - {name: BIN-PA-01, slot: SMN_001, payload: PANEL-A, uop: 30}
+  - {name: BIN-PA-02, slot: SMN_002, payload: PANEL-A, uop: 30}
+  - {name: BIN-PA-03, slot: SMN_003, payload: PANEL-A, uop: 30, age_s: 3600}
+  - {name: BIN-PB-01, slot: SMN_004, payload: PANEL-B, uop: 30, bin_type: STANDARD-SM}
+  - {name: BIN-PB-02, slot: SMN_005, payload: PANEL-B, uop: 30, bin_type: STANDARD-SM}
+  - {name: BIN-PB-03, slot: SMN_006, payload: PANEL-B, uop: 30, age_s: 1800, bin_type: STANDARD-SM}
+  - {name: BIN-PB-S1, slot: SMN_021, payload: PANEL-B, uop: 30, bin_type: STANDARD-SM}
+  - {name: BIN-PB-S2, slot: SMN_020, payload: PANEL-B, uop: 30, bin_type: STANDARD-SM}
+  - {name: BIN-PB-S3, slot: SMN_019, payload: PANEL-B, uop: 30, bin_type: STANDARD-SM}
+  - {name: BIN-PB-S4, slot: SMN_009, payload: PANEL-B, uop: 30, bin_type: STANDARD-SM}
+  - {name: BIN-PB-S5, slot: SMN_008, payload: PANEL-B, uop: 30, bin_type: STANDARD-SM}
+  - {name: BIN-ACT-P1F, slot: PLN_001}   # PRESS-1 front (filling)
+  - {name: BIN-ACT-P1B, slot: PLN_002}   # PRESS-1 back (staged empty, indexes to front)
+  - {name: BIN-ACT-P2A, slot: PLN_003, bin_type: STANDARD-SM}
+  - {name: BIN-ACT-P2B, slot: PLN_004, bin_type: STANDARD-SM}
+  - {name: BIN-ACT-W1,  slot: ALN_002}
+  - {name: BIN-ACT-W2,  slot: ALN_005}
+  - {name: BIN-ACT-W1-PA, slot: ALN_001, payload: PANEL-A, uop: 25}
+  - {name: BIN-ACT-W2-PB, slot: ALN_003, payload: PANEL-B, uop: 25, bin_type: STANDARD-SM}
+  - {name: BIN-PEB-01, slot: PEB_001}
+  - {name: BIN-PEB-02, slot: PEB_002}
+  - {name: BIN-PEB-03, slot: PEB_003}
+  - {name: BIN-PEB-04, slot: PEB_004}
+  - {name: BIN-PEB-05, slot: PEB_005, bin_type: STANDARD-SM}
+  - {name: BIN-PEB-06, slot: PEB_006, bin_type: STANDARD-SM}
+  - {name: BIN-MT-01, slot: UTN_001}
+  - {name: BIN-MT-02, slot: UTN_002}
+  - {name: BIN-MT-03, slot: UTN_003}
+  - {name: BIN-MT-04, slot: UTN_004}
+  - {name: BIN-MT-05, slot: UTN_005}
+  - {name: BIN-MT-06, slot: UTN_006}
+  - {name: BIN-MT-07, slot: UTN_007}
+  - {name: BIN-MT-08, slot: UTN_008}
+  - {name: BIN-MT-09, slot: UTN_009}
+  - {name: BIN-MT-13, slot: UTN_013, bin_type: STANDARD-SM}
+  - {name: BIN-MT-14, slot: UTN_014, bin_type: STANDARD-SM}
+  - {name: BIN-MT-15, slot: UTN_015, bin_type: STANDARD-SM}
+
+processes:
+  - {name: PRESS-1, active_style: PRESS-1-RUN}   # two_robot_press_index → PANEL-A (R2 carries two carts)
+  - {name: PRESS-2, active_style: PRESS-2-RUN}   # A/B sequential → PANEL-B
+  - {name: WELD-1,  active_style: WELD-1-RUN}    # two_robot: PANEL-A → ASSY
+  - {name: WELD-2,  active_style: WELD-2-RUN}    # single_robot: PANEL-B → ASSY (two carts, two relays)
+  - {name: UNLOADER-A, active_style: UNLOADER-A-RUN}
+
+styles:
+  - {name: PRESS-1-RUN,    process: PRESS-1,    payload: PANEL-A}
+  - {name: PRESS-2-RUN,    process: PRESS-2,    payload: PANEL-B}
+  - {name: WELD-1-RUN,     process: WELD-1,     payload: ASSY}
+  - {name: WELD-2-RUN,     process: WELD-2,     payload: ASSY}
+  - {name: UNLOADER-A-RUN, process: UNLOADER-A, payload: ASSY}
+
+operator_stations: [PRESS-1-OPS, PRESS-2-OPS, WELD-1-OPS, WELD-2-OPS, UNLOADER-A-OPS]
+
+claims:
+  - core_node: PLN_001
+    style: PRESS-1-RUN
+    role: produce
+    swap_mode: two_robot_press_index
+    payload: PANEL-A
+    uop_capacity: 30
+    auto_reorder: true
+    paired_core_node: PLN_002
+    inbound_source: SYN_PRESS_EMPTIES
+    outbound_destination: SYN_MARKET
+    inbound_staging: SLN_014
+    outbound_staging: SLN_015
+
+  - core_node: PLN_003
+    style: PRESS-2-RUN
+    role: produce
+    swap_mode: sequential
+    payload: PANEL-B
+    uop_capacity: 30
+    auto_reorder: true
+    paired_core_node: PLN_004
+    inbound_source: SYN_PRESS_EMPTIES
+    outbound_destination: SYN_MARKET
+  - core_node: PLN_004
+    style: PRESS-2-RUN
+    role: produce
+    swap_mode: sequential
+    payload: PANEL-B
+    uop_capacity: 30
+    auto_reorder: true
+    paired_core_node: PLN_003
+    active_pull: false
+    inbound_source: SYN_PRESS_EMPTIES
+    outbound_destination: SYN_MARKET
+
+  - core_node: ALN_001
+    style: WELD-1-RUN
+    role: consume
+    swap_mode: two_robot
+    payload: PANEL-A
+    uop_capacity: 30
+    reorder_point: 15
+    auto_reorder: true
+    inbound_source: SYN_MARKET
+    outbound_destination: SYN_MARKET
+    inbound_staging: SLN_001
+    outbound_staging: SLN_011
+  - core_node: ALN_002
+    style: WELD-1-RUN
+    role: produce
+    swap_mode: two_robot
+    payload: ASSY
+    uop_capacity: 20
+    auto_reorder: true
+    inbound_source: SYN_MARKET
+    outbound_destination: SYN_MARKET
+    inbound_staging: SLN_002
+
+  - core_node: ALN_003
+    style: WELD-2-RUN
+    role: consume
+    swap_mode: single_robot
+    payload: PANEL-B
+    uop_capacity: 30
+    reorder_point: 15
+    auto_reorder: true
+    inbound_source: SYN_MARKET
+    outbound_destination: SYN_MARKET
+    inbound_staging: SLN_003
+    outbound_staging: SLN_004
+  - core_node: ALN_005
+    style: WELD-2-RUN
+    role: produce
+    swap_mode: single_robot
+    payload: ASSY
+    uop_capacity: 20
+    auto_reorder: true
+    inbound_source: SYN_MARKET
+    outbound_destination: SYN_MARKET
+    inbound_staging: SLN_007
+    outbound_staging: SLN_008
+
+  - core_node: FGN_001
+    style: UNLOADER-A-RUN
+    role: consume
+    swap_mode: manual_swap
+    payload: ASSY
+    uop_capacity: 20
+    reorder_point: 0
+    auto_reorder: false
+    inbound_source: SYN_MARKET
+    outbound_destination: SYN_PRESS_EMPTIES
+    auto_push: true
+
+loader_settings:
+  FGN_001: {auto_push: true}
+
+demands:
+  - {payload: ASSY, node: FGN_001, replenish_uop_threshold: 0}
+
+reporting_points:
+  - {plc_name: PRESS-1, tag_name: PRESS-1_COUNTER, node: PLN_001, style: PRESS-1-RUN}
+  - {plc_name: PRESS-2, tag_name: PRESS-2_COUNTER, node: PLN_003, style: PRESS-2-RUN}
+  - {plc_name: WELD-1,  tag_name: WELD-1_COUNTER,  node: ALN_001, style: WELD-1-RUN}
+  - {plc_name: WELD-2,  tag_name: WELD-2_COUNTER,  node: ALN_003, style: WELD-2-RUN}
+
+cell_configs:
+  - {process: PRESS-1, station: PRESS-1-OPS}
+  - {process: PRESS-2, station: PRESS-2-OPS}
+  - {process: WELD-1,  station: WELD-1-OPS}
+  - {process: WELD-2,  station: WELD-2-OPS}
+  - {process: UNLOADER-A, station: UNLOADER-A-OPS}
+
+maintained_groups:
+  - group: SYN_PRESS_EMPTIES
+    station: edge1.line1
+    strict: false
+    overflow: SYN_MARKET
+    levels:
+      - {bin_type: STANDARD, want: 4}
+      - {bin_type: STANDARD-SM, want: 2}
+    supports: [PRESS-1, PRESS-2]

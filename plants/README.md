@@ -16,6 +16,7 @@ and Hopkinsville are configured through the Nodes page, not from a spec file.
 | `lane-stress.yaml` | A rig aimed at one seam: single-file lanes, the mouth gate, digs, and contention for a corridor. **Frozen baseline, retired from certification** — see below. |
 | `lane-stress-packed.yaml` | The corrected re-cut of the above. **New baselines are cut here.** Carries two extra PANEL-B bins (2026-09-26) so a 40-minute run stays healthy. |
 | `edge2.yaml` | EDGE 2's line (station `edge2.line1`): the observable-window changeover plant, seeded by the `seed-edge2` service onto the same Core as `demo-sim.yaml`. |
+| `order-carts.yaml` | The multi-cart fixture: the two cell shapes in which one order carries several carts (PRESS-1's press-index R2, WELD-2's single_robot relay), with demo-sim's loop around them so they run. Seeded and driven by `cmd/seeddev/order_carts_fixture_docker_test.go` (in the docker shards): the two-cart swap, the relay swap, a CANCEL with the second cart on the robot, a set-down's event withheld, and a hand move of a cart on a robot. See below. |
 
 `docker-compose.dev.yml`'s `seed` reads `SHINGO_PLANT`, default `/plants/demo-sim.yaml`
 (it was `demo.yaml` until 2026-10-28; a sim seeded from that wedges, see below).
@@ -87,6 +88,38 @@ rebalanced, so a long wait in the pair reads as a defect until shown otherwise:
 
 The baseline for the pair is one run with no rig cases at the tip, read before the
 pair (soakstat's FIXTURE BALANCE and every wait over 10 sim-min by order id).
+
+### The multi-cart fixture (`order-carts.yaml`)
+
+An order's carts are its `order_bins` rows, one per lift (`docs/data-model.md`,
+"Order carts"). Most orders carry one. This plant keeps only the two cells
+whose orders carry several, so a run or a test reads their carts and nothing else:
+
+- **PRESS-1**, `two_robot_press_index`. R2 lifts the on-deck cart off PLN_002,
+  sets it on the press PLN_001, lifts an empty from SYN_PRESS_EMPTIES and sets it
+  on PLN_002: two carts, one order.
+- **WELD-2** at ALN_003, `single_robot`. One robot parks the fresh cart at inbound
+  staging, waits at the line, lifts the spent cart and parks it at outbound
+  staging, re-lifts the fresh one onto the line and the spent one away: two
+  carts, four lifts, two of them relays.
+
+PRESS-2, WELD-1, UNLOADER-A and the level keeper are demo-sim's, kept so the loop
+runs. WELD-2 eats no BRKT here (the loaders are not this plant's subject), which
+removes the input coupling `shingoedge.dev.yaml` notes against WELD-2's draw.
+
+**Sizing.** `simcalc -plant plants/order-carts.yaml -carriers` passes: 24 empties
+seeded against 12 required, SYN_MARKET ok, SYN_PRESS_EMPTIES level-kept at 6, dig
+headroom ok. On nameplate rates `simcalc` reads PANEL-A and PANEL-B as STARVE, as
+it does for `demo-sim.yaml`; both plants run on the welds' measured draw, set by
+their swap cadence (about 1.8-2.0 per minute against the presses' 2.4-3.9, see
+`shingoedge.dev.yaml`). The market stock is demo-sim's: 115 uop of PANEL-A and
+265 of PANEL-B.
+
+**The test.** `TestOrderCartsFixture_*` seeds this file into a fresh database,
+starts an engine on the simulator, and drives each scenario through the
+dispatcher's doors and the fleet's block events. After every injected state it
+asks the invariant: every cart has an order on record, and it is the order that
+moved it.
 
 ### The census will tell you
 
