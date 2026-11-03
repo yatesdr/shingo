@@ -14,6 +14,7 @@ Edge only, v37. Ship after a restored-copy migrate.
 - The reporting point follows its tag, not its style; a blanked counter stops counting (v37: identity tag)
 - A counter or identity edit is refused mid-changeover, refuses a non-integer tag, and re-primes the CATID monitor
 - Core's cell catalog lists the points a live process counts on, disabled ones included
+- Run-out ticks across a changeover are held for the incoming cart; a cancel puts them back on the staying part
 
 ## 2026-11-03 — An order's carts are its rows
 

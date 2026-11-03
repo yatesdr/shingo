@@ -36,6 +36,7 @@ import (
 
 	"shingo/protocol"
 	"shingoedge/domain"
+	"shingoedge/store"
 	"shingoedge/store/processes"
 	"shingoedge/uop"
 )
@@ -243,6 +244,24 @@ func (e *Engine) HandleBinPickedUpMessage(bp protocol.BinPickedUp) {
 		orderUUID, binID, order.Status)
 }
 
+// liftIncomingPart is incomingConsumePart for a lift, which has no claim set
+// in hand: the process, and its two styles' claims only when a changeover is
+// open.
+func (e *Engine) liftIncomingPart(node *processes.Node, claim *processes.NodeClaim) string {
+	if claim == nil {
+		return ""
+	}
+	process, err := e.db.GetProcess(node.ProcessID)
+	if err != nil || process == nil || process.TargetStyleID == nil {
+		return ""
+	}
+	claims, err := e.db.NodeClaimsForStyles(store.ClaimStyleIDs(process))
+	if err != nil {
+		return ""
+	}
+	return incomingConsumePart(process, node, claim, claims)
+}
+
 // takeTicksAfterLift is the Edge half of the late-lift rule (Lane H R4,
 // DECISIONS D11 (ii)). Core ended the carrier's generation at the lift, at
 // time T = bp.PickedUpAt, and refuses every window of that generation that
@@ -295,6 +314,11 @@ func (e *Engine) takeTicksAfterLift(node *processes.Node, rt *processes.RuntimeS
 			_ = e.inventoryDelta.Consumed(uop.TickEvent{NodeID: node.ID, CoreNodeName: node.CoreNodeName, Drains: drains})
 		}
 		held = rest
+		// Mid-changeover the ticks after the lift are the incoming cart's, as
+		// a gap tick's are (holdPartFor). Two reads, at a changeover lift only.
+		if in := e.liftIncomingPart(node, claim); held > 0 && in != "" {
+			part = in
+		}
 	}
 	if held <= 0 {
 		return 0, ""

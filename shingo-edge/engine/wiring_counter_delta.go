@@ -110,6 +110,7 @@ func (e *Engine) handleCounterDelta(delta CounterDeltaEvent) {
 	var pairedFallbackNode *processes.Node
 	var pairedFallbackRuntime *processes.RuntimeState
 	var pairedFallbackClaim *processes.NodeClaim
+	var pairedFallbackHold string
 	pairedConsumeHandled := false
 
 	process, claims, runtimes := e.counterDeltaRows(delta.ProcessID, nodes)
@@ -154,6 +155,7 @@ func (e *Engine) handleCounterDelta(delta CounterDeltaEvent) {
 				if pairedFallbackNode == nil {
 					nodeCopy := node
 					pairedFallbackNode = &nodeCopy
+					pairedFallbackHold = holdPartFor(process, &nodeCopy, claim, claims)
 					pairedFallbackRuntime = runtime
 					// Capture the claim that just passed the
 					// claim.StyleID == delta.StyleID guard above so the
@@ -168,7 +170,7 @@ func (e *Engine) handleCounterDelta(delta CounterDeltaEvent) {
 			}
 			nodeCopy := node
 			attr.consumeTicks++
-			e.handleConsumeTick(&nodeCopy, runtime, claim, int(delta.Delta))
+			e.handleConsumeTick(&nodeCopy, runtime, claim, holdPartFor(process, &nodeCopy, claim, claims), int(delta.Delta))
 
 		case protocol.ClaimRoleProduce:
 			// A/B cycling: only increment the active-pull side.
@@ -191,7 +193,7 @@ func (e *Engine) handleCounterDelta(delta CounterDeltaEvent) {
 	// the "count to lineside storage" case when neither A nor B is active.
 	if !pairedConsumeHandled && pairedFallbackNode != nil && pairedFallbackRuntime != nil {
 		attr.fallthroughTicks++
-		e.handleABFallthrough(delta.ProcessID, pairedFallbackNode, pairedFallbackRuntime, pairedFallbackClaim, int(delta.Delta))
+		e.handleABFallthrough(delta.ProcessID, pairedFallbackNode, pairedFallbackRuntime, pairedFallbackClaim, pairedFallbackHold, int(delta.Delta))
 	}
 
 	if !attr.landed() {
@@ -409,10 +411,10 @@ func (e *Engine) chargeOrHold(node *processes.Node, rt *processes.RuntimeState, 
 			return e.dropPileAndLogTick(node, rt, input, parts.tick, pastPack)
 		}
 	}
-	if held == 0 || holdIsOf(rt.PendingUOPPayload, parts.tick) {
+	if held == 0 || holdIsOf(rt.PendingUOPPayload, parts.hold) {
 		noBin := e.noBinRows(node.ID)
 		ok, err := e.writeSeatWithDrops(node, noBin, func(ex processes.DBTX) (bool, error) {
-			return processes.HoldSeatUOP(ex, node.ID, input, parts.tick, seat)
+			return processes.HoldSeatUOP(ex, node.ID, input, parts.hold, seat)
 		})
 		if err != nil {
 			log.Printf("hold pending UOP for node %d: %v", node.ID, err)
@@ -430,9 +432,13 @@ func (e *Engine) chargeOrHold(node *processes.Node, rt *processes.RuntimeState, 
 
 // tickParts is what applyHoldAndReplay compares for one tick (D12).
 type tickParts struct {
-	// tick is the part the tick is of: the matched claim's part. A hold
-	// written for this tick records it.
+	// tick is the part the tick is of: the matched claim's part, for the
+	// log line.
 	tick string
+	// hold is the part a hold written for this tick records, and the part an
+	// existing hold must be of for the tick to join it: the tick's part, or on
+	// a consume seat mid-changeover the incoming claim's (holdPartFor).
+	hold string
 	// carrier is the part of the bound carrier, as the tick's bin delta is
 	// stamped (binAtNode for a draw, the claim's part for a fill). A hold
 	// replays onto the carrier only when it is of this part.
@@ -451,6 +457,35 @@ type tickParts struct {
 	// binPack is a produce tick's pack, the claim's UOPCapacity whether or not
 	// strict_pack is set: the cap on an unbound seat's hold between bins.
 	binPack int
+}
+
+// holdPartFor is the part a consume tick is held under when no carrier takes
+// it (B v1): the incoming claim's part while the process changes over and
+// incomingConsumePart applies, else the matched claim's. The run-out strokes
+// between a changeover's lift and its new cart's landing are the new cart's to
+// absorb, as at every swap, whichever side of the cutover the PLC switched on
+// (TestPinChangeover_RunOutTicksPrepayTheIncomingCart).
+func holdPartFor(process *processes.Process, node *processes.Node, matched *processes.NodeClaim, claims *store.NodeClaimSet) string {
+	if part := incomingConsumePart(process, node, matched, claims); part != "" {
+		return part
+	}
+	return matched.PayloadCode
+}
+
+// incomingConsumePart is B v1's rule: with a changeover open, a node whose
+// incoming claim (the target style's) is consume, not a loader node, and runs
+// a part other than matched's holds under the incoming part. "" when the rule
+// does not apply. The incoming claim is read from the claim set the walk
+// already loaded for both styles: +0 statements per tick.
+func incomingConsumePart(process *processes.Process, node *processes.Node, matched *processes.NodeClaim, claims *store.NodeClaimSet) string {
+	if process == nil || process.TargetStyleID == nil || matched == nil {
+		return ""
+	}
+	in := claims.Resolve(process, node, store.TargetStyleFirst)
+	if in == nil || in.Role != protocol.ClaimRoleConsume || in.IsLoaderNode() || in.PayloadCode == matched.PayloadCode {
+		return ""
+	}
+	return in.PayloadCode
 }
 
 // holdIsOf reports whether a hold recorded as heldPart may take, or replay
@@ -508,7 +543,7 @@ func (e *Engine) endUnheldEpisode(nodeID int64) {
 // must mirror this; clamping at zero would force a permanent drift
 // against Core (which doesn't clamp) and noisy reconciliation logs
 // as the heal/clamp/heal/clamp loop ping-pongs forever.
-func (e *Engine) handleConsumeTick(node *processes.Node, runtime *processes.RuntimeState, claim *processes.NodeClaim, delta int) {
+func (e *Engine) handleConsumeTick(node *processes.Node, runtime *processes.RuntimeState, claim *processes.NodeClaim, hold string, delta int) {
 	// The drain, the count write and the record are one change to the seat;
 	// the lineside report must see all of it or none (countMu).
 	e.countMu.Lock()
@@ -536,7 +571,7 @@ func (e *Engine) handleConsumeTick(node *processes.Node, runtime *processes.Runt
 	// lift (R1).
 	runtime, _, binAttributed := e.applyHoldAndReplay(node, runtime, binRemainder, -1, func(rt *processes.RuntimeState) tickParts {
 		_, carrierPart, _ := e.binAtNode(rt, claim)
-		return tickParts{tick: claim.PayloadCode, carrier: carrierPart, notCharged: rt.ReleasedEmpty}
+		return tickParts{tick: claim.PayloadCode, hold: hold, carrier: carrierPart, notCharged: rt.ReleasedEmpty}
 	})
 
 	// emitConsumeTickDeltas marks the drained piles always, and records a
@@ -576,7 +611,7 @@ func (e *Engine) handleProduceTick(node *processes.Node, runtime *processes.Runt
 		binPack = claim.UOPCapacity
 	}
 	runtime, _, binAttributed := e.applyHoldAndReplay(node, runtime, delta, +1, func(*processes.RuntimeState) tickParts {
-		return tickParts{tick: part, carrier: part, pack: pack, produce: true, binPack: binPack}
+		return tickParts{tick: part, hold: part, carrier: part, pack: pack, produce: true, binPack: binPack}
 	})
 
 	if e.inventoryDelta != nil && binAttributed > 0 {
@@ -828,7 +863,7 @@ func dropsQueued(q queuedDrops) {
 // (B5 fix) singles this path out — it's the case where neither
 // operator action nor active-pull state surfaces a flush trigger, so
 // the periodic flush is the only signal that captures the change.
-func (e *Engine) handleABFallthrough(processID int64, node *processes.Node, runtime *processes.RuntimeState, claim *processes.NodeClaim, delta int) {
+func (e *Engine) handleABFallthrough(processID int64, node *processes.Node, runtime *processes.RuntimeState, claim *processes.NodeClaim, hold string, delta int) {
 	log.Printf("A/B fallthrough: no active-pull node for process %d, decrementing fallback node %s",
 		processID, node.Name)
 	e.countMu.Lock() // one change to the seat, as in handleConsumeTick
@@ -850,7 +885,7 @@ func (e *Engine) handleABFallthrough(processID int64, node *processes.Node, runt
 			return tickParts{}
 		}
 		_, carrierPart, _ := e.binAtNode(rt, claim)
-		return tickParts{tick: claim.PayloadCode, carrier: carrierPart}
+		return tickParts{tick: claim.PayloadCode, hold: hold, carrier: carrierPart}
 	}
 
 	// Hold-and-replay, mirror of handleConsumeTick: decrement the bound

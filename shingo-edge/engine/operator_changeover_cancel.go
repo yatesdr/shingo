@@ -5,10 +5,13 @@ package engine
 
 import (
 	"errors"
+	"fmt"
 	"log"
-	"shingo/protocol"
+	"strings"
 
+	"shingo/protocol"
 	"shingoedge/domain"
+	"shingoedge/store/processes"
 )
 
 func (e *Engine) CancelProcessChangeover(processID int64) error {
@@ -82,6 +85,7 @@ func (e *Engine) cancelProcessChangeoverInternal(processID int64, nextStyleID *i
 	// keep draining a bin that has left the slot (Springfield 2026-06-02:
 	// aborted RH→LH at ALN_003 drained bin 18 in the supermarket until a manual
 	// cycle_count). Re-resolve each node against Core's physical bin-at-node.
+	var retagged []string
 	for _, task := range nodeTasks {
 		runtime, err := e.db.GetProcessNodeRuntime(task.ProcessNodeID)
 		if err != nil || runtime == nil {
@@ -90,10 +94,14 @@ func (e *Engine) cancelProcessChangeoverInternal(processID int64, nextStyleID *i
 		if err := e.db.ClearProcessNodeRuntimeOrders(task.ProcessNodeID); err != nil {
 			log.Printf("changeover: update runtime orders for node %d: %v", task.ProcessNodeID, err)
 		}
+		if line := e.retagHoldToStayingPart(task); line != "" {
+			retagged = append(retagged, line)
+		}
 		e.reconcileActiveBinAfterCancel(task.ProcessNodeID)
 	}
 
-	if err := e.db.UpdateProcessChangeoverState(changeover.ID, domain.ChangeoverCancelled); err != nil {
+	if err := e.db.UpdateProcessChangeoverStateWithTrigger(changeover.ID, domain.ChangeoverCancelled, "",
+		strings.Join(retagged, "; ")); err != nil {
 		return err
 	}
 	// The episode ends CANCELLED, not complete. They are different outcomes and
@@ -132,6 +140,40 @@ func (e *Engine) cancelProcessChangeoverInternal(processID int64, nextStyleID *i
 	}
 
 	return nil
+}
+
+// retagHoldToStayingPart puts a consume seat's hold back under the staying
+// part when the changeover had it held under the incoming one (holdPartFor):
+// the ticks are real assemblies of the staying part, and the next cart to land
+// after a cancel is the staying part's. A retag, not a drop — the same rule as
+// at every swap. Returns the line the cancel records on its row, "" when there
+// was nothing to retag.
+func (e *Engine) retagHoldToStayingPart(task processes.NodeTask) string {
+	if task.FromClaimID == nil || task.ToClaimID == nil {
+		return ""
+	}
+	from, err := e.db.GetStyleNodeClaim(*task.FromClaimID)
+	if err != nil || from == nil || from.Role != protocol.ClaimRoleConsume {
+		return ""
+	}
+	to, err := e.db.GetStyleNodeClaim(*task.ToClaimID)
+	if err != nil || to == nil || to.PayloadCode == from.PayloadCode {
+		return ""
+	}
+	e.countMu.Lock()
+	defer e.countMu.Unlock()
+	rt, err := e.db.GetProcessNodeRuntime(task.ProcessNodeID)
+	if err != nil || rt == nil || rt.PendingUOPDelta == 0 || rt.PendingUOPPayload != to.PayloadCode {
+		return ""
+	}
+	ok, err := processes.SetSeatHold(e.db.DB, task.ProcessNodeID, int(rt.PendingUOPDelta), from.PayloadCode, processes.SeatAsReadOf(rt))
+	if err != nil || !ok {
+		log.Printf("changeover cancel: retag the hold at node %s: written=%t %v", task.NodeName, ok, err)
+		return ""
+	}
+	line := fmt.Sprintf("hold of %d at %s retagged %s to %s", rt.PendingUOPDelta, task.NodeName, to.PayloadCode, from.PayloadCode)
+	e.logFn("changeover cancel: %s", line)
+	return line
 }
 
 // reconcileActiveBinAfterCancel re-seats a node after a changeover cancel or a
