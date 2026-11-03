@@ -340,3 +340,38 @@ func TestSnapshot_PublishedOnConfirmAndSwappedOnReprime(t *testing.T) {
 		t.Errorf("after the re-prime: %+v, want no value, no read, the observed values kept", after)
 	}
 }
+
+// TestSave_UnlistedMemberAcceptedByItsRead: WarLink's tag list carries the
+// structs, not their members, so a dotted counter member is not on it. Such a
+// tag is enabled and read, and a whole-number read is accepted (the type is
+// inferred from the read, not declared).
+func TestSave_UnlistedMemberAcceptedByItsRead(t *testing.T) {
+	t.Parallel()
+	eng, db, pid, _, wl := counterRig(t)
+	wl.value = float64(1234)
+	err := eng.EditProcessCounter(pid, domain.ProcessCounterEdit{PLCName: "plc", TagName: "MES_Cell.Prod_Counter_02", Enabled: true})
+	if err != nil {
+		t.Fatalf("an unlisted member reading a whole number was refused: %v", err)
+	}
+	if p := mustProcess(t, db, pid); p.CounterTagName != "MES_Cell.Prod_Counter_02" {
+		t.Errorf("tag = %q, want the member", p.CounterTagName)
+	}
+	if got := strings.Join(wl.toggles(), ","); !strings.Contains(got, "on plc.MES_Cell.Prod_Counter_02") {
+		t.Errorf("toggles = %s, want the member enabled before its read", got)
+	}
+}
+
+// TestSave_UnlistedRealValueRefused: an unlisted tag whose read is not a whole
+// number is a REAL in all but name.
+func TestSave_UnlistedRealValueRefused(t *testing.T) {
+	t.Parallel()
+	eng, db, pid, _, wl := counterRig(t)
+	wl.value = 80.28
+	err := eng.EditProcessCounter(pid, domain.ProcessCounterEdit{PLCName: "plc", TagName: "MES_Cell.Prod_Counter_02", Enabled: true})
+	if err == nil || !strings.Contains(err.Error(), "80.28") {
+		t.Fatalf("an unlisted tag reading 80.28 = %v, want a refusal naming the value", err)
+	}
+	if p := mustProcess(t, db, pid); p.CounterTagName != "MES_Cell.Prod_Counter_01" {
+		t.Errorf("a refused edit wrote the tag: %q", p.CounterTagName)
+	}
+}

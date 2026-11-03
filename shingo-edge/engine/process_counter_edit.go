@@ -20,6 +20,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"math"
 	"strings"
 	"time"
 
@@ -116,9 +117,15 @@ func (e *Engine) counterEditAllowed(old *processes.Process, edit domain.ProcessC
 	return e.checkCounterTagType(edit.PLCName, edit.TagName)
 }
 
-// checkCounterTagType asks WarLink for the tag's declared type and refuses
-// anything but an integer, or a tag WarLink does not list. With no PLC manager
-// (no WarLink at all) there is nothing to ask.
+// checkCounterTagType checks a counter tag is an integer. A tag WarLink lists
+// carries its declared type, and anything but an integer type is refused. A tag
+// it does not list — a dotted member of a listed struct, which is how every
+// production counter is named, since WarLink lists structs and not their
+// members — is enabled and read, and accepted when the read is a whole number:
+// the type is inferred from the read, not declared. A read that fails or is not
+// whole is refused. (A REAL that happened to read whole is caught later by the
+// observed clicks-per-count health line.) With no PLC manager (no WarLink at
+// all) there is nothing to ask.
 func (e *Engine) checkCounterTagType(plcName, tagName string) error {
 	if e.plcMgr == nil {
 		return nil
@@ -138,7 +145,32 @@ func (e *Engine) checkCounterTagType(plcName, tagName string) error {
 		}
 		return fmt.Errorf("%s is a %s tag in WarLink; a counter must be an integer tag (DINT)", tagName, t.Type)
 	}
-	return fmt.Errorf("WarLink lists no tag %s on PLC %s", tagName, plcName)
+	if err := e.plcMgr.EnableTagPublishing(ctx, plcName, tagName); err != nil {
+		return fmt.Errorf("WarLink does not list %s on PLC %s and would not publish it, so it cannot be read: %w", tagName, plcName, err)
+	}
+	v, err := e.plcMgr.ReadTagDirect(ctx, plcName, tagName)
+	if err != nil {
+		return fmt.Errorf("WarLink does not list %s on PLC %s and its read failed: %w", tagName, plcName, err)
+	}
+	if !wholeNumber(v) {
+		return fmt.Errorf("%s on PLC %s reads %v; a counter must read a whole number", tagName, plcName, v)
+	}
+	log.Printf("counter tag %s/%s: not in WarLink's list; type inferred from the read (%v), not declared", plcName, tagName, v)
+	return nil
+}
+
+// wholeNumber reports whether a tag read is an integer value: an integer type,
+// or a float with no fractional part (every JSON number decodes as float64).
+func wholeNumber(v any) bool {
+	switch n := v.(type) {
+	case int, int32, int64:
+		return true
+	case float32:
+		return float64(n) == math.Trunc(float64(n))
+	case float64:
+		return !math.IsInf(n, 0) && !math.IsNaN(n) && n == math.Trunc(n)
+	}
+	return false
 }
 
 // republishIdentity moves WarLink's publishing from the process's old identity
