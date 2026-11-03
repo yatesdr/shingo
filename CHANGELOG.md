@@ -3,6 +3,16 @@
 One line per change. If a change needs a paragraph to explain, the paragraph
 belongs in the commit message or in `docs/` — this file is the index.
 
+## 2026-11-03 — An order's carts are its rows
+
+Core v173-174, then kanban's v169-172 (2026-11-01, below). Before a deploy, migrate a restored copy and read v173's and v174's boot lines. Ship Core and Edge together.
+
+- An order's carts are `order_bins` rows, one per lift (`pick_step`, `drop_step`), written at the claim and kept after the order ends
+- `orders.bin_id` and the junction's `action`, `node_name`, `dest_node` are gone (v174); where a lift happens is its plan's step
+- v173 writes rows for every live order by the allocator's walk, carries ended orders over, and lists what it cannot place
+- v174 waits while v173's `live_pick_step_ambiguous` list names a live order, re-runs each boot, and finishes once it is empty
+- `plants/order-carts.yaml` is the multi-cart fixture: a press-index swap and a single-robot relay
+
 ## 2026-11-01 — At the station, recipes follow Settings
 
 No migration. Edge only.

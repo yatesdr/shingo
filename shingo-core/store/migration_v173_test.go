@@ -12,6 +12,7 @@ import (
 
 	"shingocore/internal/testdb"
 	"shingocore/store"
+	"shingocore/store/orders"
 )
 
 // ageOrderCartsSchema puts order_bins and orders back in their pre-v173 shape:
@@ -39,7 +40,10 @@ CREATE INDEX idx_order_bins_bin ON order_bins (bin_id);
 // A in flight and one with A set down get their drops; a live plain order gets
 // its implied lift; a live order whose cart's pickup is ambiguous, a stale row
 // and the books' disagreements are listed and left; an ended order is carried
-// over with no steps; a second run changes nothing.
+// over with no steps; a second run changes nothing. While the ambiguous order is
+// live, v174 waits: the boot succeeds, the old columns stay, the log names the
+// order, and a cart row the writers insert still fits. Once it has ended, the next
+// boot completes v174 and the order keeps its carry-over row.
 //
 // Not parallel: it reads the migration's census lines from the process logger.
 func TestV173_AnOrdersCartsBecomeRowsPerLift(t *testing.T) {
@@ -47,6 +51,11 @@ func TestV173_AnOrdersCartsBecomeRowsPerLift(t *testing.T) {
 	sd := testdb.SetupStandardData(t, db)
 	if _, err := db.Exec(ageOrderCartsSchema); err != nil {
 		t.Fatalf("age order_bins to the pre-v173 shape: %v", err)
+	}
+	// As the pre-v173 schema had them: action and node_name NOT NULL with no default.
+	if _, err := db.Exec(`ALTER TABLE order_bins ALTER COLUMN action DROP DEFAULT;
+		ALTER TABLE order_bins ALTER COLUMN node_name DROP DEFAULT`); err != nil {
+		t.Fatalf("the node columns' defaults: %v", err)
 	}
 	bin := func(label string) int64 {
 		return testdb.CreateBinAtNode(t, db, "DEFAULT", sd.StorageNode.ID, label).ID
@@ -132,9 +141,10 @@ func TestV173_AnOrdersCartsBecomeRowsPerLift(t *testing.T) {
 	var logged bytes.Buffer
 	log.SetOutput(&logged)
 	t.Cleanup(func() { log.SetOutput(os.Stderr) })
-	// v174 drops orders.bin_id after each run; the second run is v173 again on
-	// the shape it reads, so the column and its values come back first (the
-	// rollback DDL's first half), and v174 runs again after it.
+	// Each run is v173 again on the shape it reads, so the columns and their values
+	// come back first (the rollback DDL's first half; v174 has not dropped them), and
+	// v174 waits after it: the ambiguous order is live and holds its cart only in
+	// orders.bin_id.
 	if _, err := db.Exec(`CREATE TABLE v173_test_bin_ids AS SELECT id, bin_id FROM orders`); err != nil {
 		t.Fatalf("keep the bin_id values: %v", err)
 	}
@@ -149,7 +159,20 @@ func TestV173_AnOrdersCartsBecomeRowsPerLift(t *testing.T) {
 		}
 		migrated, err := store.Open(cfg)
 		if err != nil {
-			t.Fatalf("run %d: v173: %v", run, err)
+			t.Fatalf("run %d: the boot with an ambiguous order live: %v, want it to boot with v174 deferred", run, err)
+		}
+		if !columnExists(t, db, "orders", "bin_id") || !columnExists(t, db, "order_bins", "node_name") {
+			t.Fatalf("run %d: v174 dropped the columns with an ambiguous order live", run)
+		}
+		// A cart row the writers insert without the node columns fits while they stay.
+		held := bin("V173-DEFERRED-" + strconv.Itoa(run))
+		o := testdb.CreateOrder(t, migrated, func(o *orders.Order) {
+			o.EdgeUUID, o.StationID, o.OrderType = "v173-deferred-"+strconv.Itoa(run), "line-1", "move"
+			o.SourceNode, o.DeliveryNode = sd.StorageNode.Name, "P"
+			o.HoldFromBirth(held)
+		})
+		if !testdb.HasCartRow(t, migrated, o.ID, held) {
+			t.Errorf("run %d: an order born holding a cart has no row with v174 deferred", run)
 		}
 		migrated.Close()
 	}
@@ -212,9 +235,38 @@ func TestV173_AnOrdersCartsBecomeRowsPerLift(t *testing.T) {
 		"v173 list plan_final_drop_disagrees: order " + strconv.FormatInt(stale, 10),
 		"v173 list dest_node_drift: order " + strconv.FormatInt(down, 10),
 		"ended_rows_carried_over=1",
+		"v174 deferred: order " + strconv.FormatInt(amb, 10) + " bin " + strconv.FormatInt(ambBin, 10),
 	} {
 		if !strings.Contains(out, line) {
 			t.Errorf("the census did not say %q; it said:\n%s", line, out)
 		}
 	}
+
+	// The ambiguous order ends: the list is empty, v174 runs, and the ended order
+	// keeps its cart as a carried-over row before orders.bin_id goes.
+	if _, err := db.Exec(`UPDATE orders SET status = 'confirmed' WHERE id = $1`, amb); err != nil {
+		t.Fatalf("the ambiguous order ends: %v", err)
+	}
+	migrated, err := store.Open(cfg)
+	if err != nil {
+		t.Fatalf("v174 with the ambiguous order ended: %v", err)
+	}
+	migrated.Close()
+	if columnExists(t, db, "orders", "bin_id") || columnExists(t, db, "order_bins", "node_name") {
+		t.Errorf("the columns are still there: v174 did not complete")
+	}
+	if got := rows(amb); len(got) != 1 || got[0] != (lift{ambBin, -1, -1}) {
+		t.Errorf("the ended ambiguous order's rows %v, want its cart carried over with no steps", got)
+	}
+}
+
+// columnExists reports whether table has column, read from the catalog.
+func columnExists(t *testing.T, db *store.DB, table, column string) bool {
+	t.Helper()
+	var ok bool
+	if err := db.QueryRow(`SELECT EXISTS (SELECT 1 FROM information_schema.columns
+		WHERE table_name = $1 AND column_name = $2)`, table, column).Scan(&ok); err != nil {
+		t.Fatalf("%s.%s: %v", table, column, err)
+	}
+	return ok
 }

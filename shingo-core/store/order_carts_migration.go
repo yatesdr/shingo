@@ -478,7 +478,51 @@ func v173Constraints(tx *sql.Tx) error {
 // reader is left: the stream moved every one onto the rows before this ran.
 //
 // IF EXISTS on every column, so the migration is its own re-run.
+//
+// IT WAITS WHILE v173's live_pick_step_ambiguous LIST IS NOT EMPTY. Such an order is live and
+// holds its cart only in orders.bin_id: its plan has no one non-relay pickup, so v173 gave it no
+// row, and dropping the column would lose that cart's only record. So v174 logs each such order
+// and cart, leaves orders.bin_id and the node columns in place, and returns: Core boots on v173's
+// shape. The node columns get defaults ('pickup', ”): they were NOT NULL with none, and the
+// writers insert a cart row without them. v174's verify (the columns gone) fails at the next boot,
+// so the runner runs it again (migrate.Run's self-heal) until the list is empty. The list is read
+// again at each run, not taken from v173's log; once it is empty, the listed orders that have
+// ended since get v173's carry-over row, so each stays its cart's last order, and the columns go
+// (MIGRATION-LIST, v174). Pin: TestV173_AnOrdersCartsBecomeRowsPerLift.
 func v174DropOneCartColumns(tx *sql.Tx) error {
+	left, err := v174AmbiguousLeft(tx)
+	if err != nil {
+		return fmt.Errorf("v174: read v173's live_pick_step_ambiguous list: %w", err)
+	}
+	if len(left) > 0 {
+		for _, stmt := range []string{
+			`ALTER TABLE order_bins ALTER COLUMN action SET DEFAULT 'pickup'`,
+			`ALTER TABLE order_bins ALTER COLUMN node_name SET DEFAULT ''`,
+			`ALTER TABLE order_bins ALTER COLUMN dest_node SET DEFAULT ''`,
+		} {
+			if _, err := tx.Exec(stmt); err != nil {
+				return fmt.Errorf("v174 deferred: %s: %w", stmt, err)
+			}
+		}
+		for _, f := range left {
+			log.Printf("store: v174 deferred: order %d bin %d — live, its cart only in orders.bin_id (v173 list live_pick_step_ambiguous: %s)",
+				f.orderID, f.binID, f.detail)
+		}
+		log.Printf("store: v174 deferred: %d live order(s) on v173's live_pick_step_ambiguous list; orders.bin_id and "+
+			"order_bins' node columns stay, and v174 runs again at the next boot", len(left))
+		return nil
+	}
+	// An order of the list that has ended since, its cart only in bin_id, gets v173's carry-over
+	// row, so the last order of that cart survives the drop.
+	if schema.ColumnExists(tx, "orders", "bin_id") {
+		carried, err := v173CarryEnded(tx)
+		if err != nil {
+			return fmt.Errorf("v174: %w", err)
+		}
+		if carried > 0 {
+			log.Printf("store: v174 carried %d ended order(s) over before the drop", carried)
+		}
+	}
 	for _, stmt := range []string{
 		`ALTER TABLE orders DROP COLUMN IF EXISTS bin_id`,
 		`ALTER TABLE order_bins DROP COLUMN IF EXISTS action`,
@@ -490,4 +534,28 @@ func v174DropOneCartColumns(tx *sql.Tx) error {
 		}
 	}
 	return nil
+}
+
+// v174AmbiguousLeft is v173's live_pick_step_ambiguous list as it stands when v174 runs: each live
+// order with a cart in orders.bin_id and no row, whose plan has no one non-relay pickup. Nothing
+// once the column is gone.
+func v174AmbiguousLeft(tx *sql.Tx) ([]v173Finding, error) {
+	if !schema.ColumnExists(tx, "orders", "bin_id") {
+		return nil, nil
+	}
+	live, err := v173ReadLive(tx)
+	if err != nil {
+		return nil, err
+	}
+	var left []v173Finding
+	for _, lo := range live {
+		if !lo.live || lo.bin == 0 || len(lo.rows) > 0 {
+			continue
+		}
+		if n, ok := v173OnePick(domain.OrderPlan(&lo.o)); !ok {
+			left = append(left, v173Finding{list: "live_pick_step_ambiguous", orderID: lo.o.ID, binID: lo.bin,
+				detail: fmt.Sprintf("%d non-relay pickups", n)})
+		}
+	}
+	return left, nil
 }
