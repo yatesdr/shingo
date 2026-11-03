@@ -87,9 +87,9 @@ func TestArrivalRefusalTally_CountsPerSite(t *testing.T) {
 	if tally[arrivalSiteCompletionNet] != 1 {
 		t.Errorf("%s = %d, want 1", arrivalSiteCompletionNet, tally[arrivalSiteCompletionNet])
 	}
-	if tally[arrivalSiteMultiBinDelivery] != 0 {
-		t.Errorf("%s = %d, want 0 — a site that never refused must not appear",
-			arrivalSiteMultiBinDelivery, tally[arrivalSiteMultiBinDelivery])
+	if len(tally) != 2 {
+		t.Errorf("the tally has %d sites (%v), want the 2 that refused — a site that never refused must not appear",
+			len(tally), tally)
 	}
 }
 

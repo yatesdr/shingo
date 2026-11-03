@@ -711,6 +711,11 @@ func bindDwellTail(db *store.DB, leg *orders.Order, dest *nodes.Node) error {
 		return fmt.Errorf("dwelling leg %d: persist plan with its tail: %w", leg.ID, err)
 	}
 	leg.StepsJSON = string(patched)
+	// The leg's blocker was lifted on an open lift (a pick step, no drop yet):
+	// the appended step is where it is set down.
+	if err := db.SetOpenLiftDrop(leg.ID, len(steps)-1); err != nil {
+		return fmt.Errorf("dwelling leg %d: %w", leg.ID, err)
+	}
 	if err := db.UpdateOrderDeliveryNode(leg.ID, dest.Name); err != nil {
 		return fmt.Errorf("dwelling leg %d: record destination %s: %w", leg.ID, dest.Name, err)
 	}

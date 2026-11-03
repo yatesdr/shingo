@@ -652,8 +652,7 @@ func TestBuildNodeBins_InboundOrders(t *testing.T) {
 			testutil.MustNoErr(t, db.CreateBin(b), "carrier "+uuid)
 			_, err := db.DB.Exec(`UPDATE bins SET claimed_by = $1 WHERE id = $2`, o.ID, b.ID)
 			testutil.MustNoErr(t, err, "claim")
-			_, err = db.DB.Exec(`UPDATE orders SET bin_id = $1 WHERE id = $2`, b.ID, o.ID)
-			testutil.MustNoErr(t, err, "source")
+			testdb.SeedCartRow(t, db, o.ID, b.ID, 0, 1) // its cart, set down at dest
 		}
 		return o.ID
 	}

@@ -599,7 +599,7 @@ func (h *Handlers) apiGetOrderEnriched(w http.ResponseWriter, r *http.Request) {
 	type enrichedOrder struct {
 		Order        *domain.Order            `json:"order"`
 		History      []*domain.OrderHistory   `json:"history,omitempty"`
-		Bin          *domain.Bin              `json:"bin,omitempty"`
+		Carts        []*domain.Bin            `json:"carts,omitempty"`
 		SourceNode   *domain.Node             `json:"source_node,omitempty"`
 		DeliveryNode *domain.Node             `json:"delivery_node,omitempty"`
 		Children     []*domain.Order          `json:"children,omitempty"`
@@ -658,10 +658,10 @@ func (h *Handlers) apiGetOrderEnriched(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	if order.BinID != nil {
-		// The bin alone. Its manifest was read here too and never rendered —
-		// the pop-up looked for it under another key — so the read is gone.
-		result.Bin, _ = h.engine.BinService().GetBin(*order.BinID)
+	if len(order.Carts) > 0 {
+		// The carts alone (its rows), in the order they are lifted. Their
+		// manifests were read here once and never rendered, so they are not.
+		result.Carts, _ = h.engine.BinService().CartsOfOrder(order.ID)
 	}
 	if order.SourceNode != "" {
 		result.SourceNode, _ = h.engine.NodeService().GetByName(order.SourceNode)

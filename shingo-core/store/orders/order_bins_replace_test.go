@@ -61,9 +61,9 @@ func TestReplaceOrderBins_ReplacesTheSetRatherThanMergingIntoIt(t *testing.T) {
 	}
 
 	// The first allocation: two pickups, bins A and B.
-	testutil.MustNoErr(t, orders.ReplaceOrderBins(db, o.ID, []orders.OrderBinRow{
-		{BinID: binA, StepIndex: 1, Action: string(protocol.ActionPickup), NodeName: "SMN_011", DestNode: "SMN_010"},
-		{BinID: binB, StepIndex: 3, Action: string(protocol.ActionPickup), NodeName: "SMN_012", DestNode: "SMN_010"},
+	testutil.MustNoErr(t, orders.ReplaceOrderBins(db, o.ID, binA, []orders.OrderBinRow{
+		{BinID: binA, PickStep: 1, DropStep: 2, NodeName: "SMN_011", DestNode: "SMN_010"},
+		{BinID: binB, PickStep: 3, DropStep: 4, NodeName: "SMN_012", DestNode: "SMN_010"},
 	}), "first allocation")
 	if got := binsOf(); len(got) != 2 {
 		t.Fatalf("fixture: the first allocation recorded %v, want two rows", got)
@@ -71,9 +71,9 @@ func TestReplaceOrderBins_ReplacesTheSetRatherThanMergingIntoIt(t *testing.T) {
 
 	// It is refused at the lane, its claims roll back, and a later pass allocates
 	// a DIFFERENT pair. Only bin B is common to both.
-	testutil.MustNoErr(t, orders.ReplaceOrderBins(db, o.ID, []orders.OrderBinRow{
-		{BinID: binB, StepIndex: 1, Action: string(protocol.ActionPickup), NodeName: "SMN_013", DestNode: "SMN_010"},
-		{BinID: binC, StepIndex: 3, Action: string(protocol.ActionPickup), NodeName: "SMN_014", DestNode: "SMN_010"},
+	testutil.MustNoErr(t, orders.ReplaceOrderBins(db, o.ID, binB, []orders.OrderBinRow{
+		{BinID: binB, PickStep: 1, DropStep: 2, NodeName: "SMN_013", DestNode: "SMN_010"},
+		{BinID: binC, PickStep: 3, DropStep: 4, NodeName: "SMN_014", DestNode: "SMN_010"},
 	}), "second allocation")
 
 	got := binsOf()
@@ -95,9 +95,13 @@ func TestReplaceOrderBins_ReplacesTheSetRatherThanMergingIntoIt(t *testing.T) {
 	rows, err := orders.ListOrderBins(db, o.ID)
 	testutil.MustNoErr(t, err, "re-list")
 	for _, r := range rows {
-		if r.BinID == binB && r.NodeName != "SMN_013" {
-			t.Errorf("the re-claimed bin's pickup node is %q, want SMN_013 — it was re-claimed at a different node "+
-				"and the row still names the first allocation's", r.NodeName)
+		if r.BinID == binB && (r.PickStep != 1 || r.DropStep != 2) {
+			t.Errorf("the re-claimed bin's lift is (%d, %d), want (1, 2) — it was re-claimed at a different step "+
+				"and the row still names the first allocation's", r.PickStep, r.DropStep)
 		}
 	}
+	// The allocation holds what it points at, as the allocator's claims do; the
+	// teardown reads a pointer with no hold as a wedge.
+	testdb.ReserveBin(t, d, o.ID, binB)
+	testdb.ReserveBin(t, d, o.ID, binC)
 }

@@ -43,6 +43,7 @@ import (
 	"shingocore/dispatch"
 	"shingocore/dispatch/binresolver"
 	"shingocore/dispatch/plan"
+	"shingocore/domain"
 	"shingocore/fleet"
 	"shingocore/store/bins"
 	"shingocore/store/loaders"
@@ -252,7 +253,11 @@ func (e *Engine) returnOrderEnded(orderID int64, recovers *int64, state, reason 
 		return
 	}
 	ret, err := e.db.GetOrder(orderID)
-	if err != nil || ret == nil || ret.BinID == nil {
+	if err != nil || ret == nil {
+		return
+	}
+	cart, err := ret.OnlyBin()
+	if err != nil || cart == nil {
 		return
 	}
 	// EventOrderCompleted fires on (*, Delivered) AND on (Delivered,
@@ -264,7 +269,7 @@ func (e *Engine) returnOrderEnded(orderID int64, recovers *int64, state, reason 
 	if err != nil || cancelled == nil {
 		return
 	}
-	bin, err := e.BinService().GetBin(*ret.BinID)
+	bin, err := e.BinService().GetBin(*cart)
 	if err != nil || bin == nil {
 		return
 	}
@@ -322,7 +327,7 @@ type returnSource struct {
 // and no finder reads it to source: a bin put where it allows but no claim
 // names is a bin no need will look for.
 func (e *Engine) returnSources(bin *bins.Bin, carrier *orders.Order) ([]returnSource, error) {
-	own := carrierProcessNodes(carrier)
+	own := carrierProcessNodes(carrier, bin.ID)
 	if bin.PayloadCode != "" {
 		names, err := e.db.ReturnSourcesForPayload(bin.PayloadCode, own)
 		if err != nil {
@@ -358,14 +363,14 @@ func (e *Engine) returnSources(bin *bins.Bin, carrier *orders.Order) ([]returnSo
 // finder's tier 3 applies to a need naming that group (nodes.GroupFencesAsker).
 // DECLARED AND NOT FENCED: a place some claim declares, but that this process
 // may not draw from, is a place the next empty need from this process would be
-// turned away at. The asker is the order's process node, else the node it
-// delivered to or lifted from (carrierProcessNodes' first).
-func (e *Engine) fencedFor(src *nodes.Node, carrier *orders.Order) (bool, string) {
+// turned away at. The asker is the order's process node, else the node the
+// cart was set down at or lifted from (carrierProcessNodes' first).
+func (e *Engine) fencedFor(src *nodes.Node, carrier *orders.Order, binID int64) (bool, string) {
 	if src == nil || src.NodeTypeCode != protocol.NodeClassNGRP {
 		return false, ""
 	}
 	asker := ""
-	if own := carrierProcessNodes(carrier); len(own) > 0 {
+	if own := carrierProcessNodes(carrier, binID); len(own) > 0 {
 		asker = own[0]
 	}
 	fenced, err := e.db.GroupFencesAsker(src.ID, asker)
@@ -538,7 +543,7 @@ func (e *Engine) chooseDeclared(bin *bins.Bin, _ fleet.RobotStatus, carrier *ord
 	var refusals []string
 	for _, s := range srcs {
 		if bin.PayloadCode == "" {
-			if fenced, why := e.fencedFor(s.node, carrier); fenced {
+			if fenced, why := e.fencedFor(s.node, carrier, bin.ID); fenced {
 				refusals = append(refusals, s.name+": "+why)
 				continue
 			}
@@ -560,17 +565,33 @@ func (e *Engine) chooseDeclared(bin *bins.Bin, _ fleet.RobotStatus, carrier *ord
 		describeBinLoad(bin), strings.Join(refusals, "; "))
 }
 
-// carrierProcessNodes: the nodes that make a claim "the cancelled order's own".
-// Its process node when it carries one, and its delivery and source nodes —
-// a supply order delivers to the line that claims the payload, an evacuation
-// lifts off it — deduplicated, blanks dropped.
-func carrierProcessNodes(o *orders.Order) []string {
+// carrierProcessNodes: the nodes that make a claim "the cancelled order's own"
+// for this cart. The order's process node when it carries one, then the cart's
+// OWN drop and pick nodes — from the order's rows for the cart (domain.StepNode
+// of their drop and pick steps), not the order's delivery and source nodes,
+// which for a swap are the other cart's: a swap sourced at the press lifted its
+// second cart from a supermarket slot, and that slot is where it came from.
+// Deduplicated, blanks dropped; a row with no steps (carried over from before
+// the rows existed) adds nothing.
+func carrierProcessNodes(o *orders.Order, binID int64) []string {
 	if o == nil {
 		return nil
 	}
+	names := []string{o.ProcessNode}
+	for _, c := range o.Carts {
+		if c.BinID != binID {
+			continue
+		}
+		if c.DropStep != nil {
+			names = append(names, domain.StepNode(o, *c.DropStep))
+		}
+		if c.PickStep != nil {
+			names = append(names, domain.StepNode(o, *c.PickStep))
+		}
+	}
 	var out []string
 	seen := map[string]bool{}
-	for _, n := range []string{o.ProcessNode, o.DeliveryNode, o.SourceNode} {
+	for _, n := range names {
 		if n != "" && !seen[n] {
 			seen[n] = true
 			out = append(out, n)

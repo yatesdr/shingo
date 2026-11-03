@@ -47,9 +47,9 @@ const crashSliverAge = 5 * time.Minute
 // order: the bin is available to the next demand while a robot is on its way to
 // collect it.
 //
-// SCOPED TO ORDERS THAT POINT AT A BIN, and the scope is what makes it an
-// invariant rather than a style rule. An order with no bin_id has nothing this
-// clause can be about — a compound parent carries no cargo, and a fixture row
+// SCOPED TO ORDERS THAT CARRY A CART (a row), and the scope is what makes it
+// an invariant rather than a style rule. An order carrying none has nothing
+// this clause can be about — a compound parent carries no cargo, and a fixture row
 // conjured at `dispatched` to exercise a status guard is not a claim about
 // material. The pointer is what turns "this order is moving something" into a
 // checkable fact, which is exactly the scoping AssertNoPointerWedge uses from
@@ -107,16 +107,16 @@ func AssertArmorMatchesStatus(t testing.TB, db *store.DB) {
 func assertDispatchedIsArmored(t testing.TB, db *store.DB) {
 	t.Helper()
 	rows, err := db.DB.Query(`
-		SELECT o.id, o.bin_id, COALESCE(o.order_type, '')
+		SELECT DISTINCT o.id, ob.bin_id, COALESCE(o.order_type, '')
 		  FROM orders o
+		  JOIN order_bins ob ON ob.order_id = o.id
 		 WHERE o.status = $1
-		   AND o.bin_id IS NOT NULL
 		   -- Held by the order, or by anyone in its compound family: the parent,
 		   -- a sibling leg, or (for a parent) one of its own children. See the
 		   -- note above for why the family is the right grain.
 		   AND NOT EXISTS (
 		       SELECT 1 FROM bins b
-		        WHERE b.id = o.bin_id
+		        WHERE b.id = ob.bin_id
 		          AND (b.claimed_by = o.id
 		               OR b.claimed_by = o.parent_order_id
 		               OR b.claimed_by IN (
@@ -126,7 +126,7 @@ func assertDispatchedIsArmored(t testing.TB, db *store.DB) {
 		   )
 		   AND NOT EXISTS (
 		       SELECT 1 FROM reservations r
-		        WHERE r.order_id = o.id AND r.resource_kind = 'bin' AND r.bin_id = o.bin_id
+		        WHERE r.order_id = o.id AND r.resource_kind = 'bin' AND r.bin_id = ob.bin_id
 		          AND r.state = 'confirmed'
 		   )
 		 ORDER BY o.id`, string(protocol.StatusDispatched))

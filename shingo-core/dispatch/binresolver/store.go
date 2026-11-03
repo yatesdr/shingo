@@ -106,7 +106,7 @@ type Store interface {
 	// dig asker already carries. nil means "could not tell", which narrows
 	// nothing. The state is the cart's, from the same bin, blank when the type
 	// came from no one cart.
-	BinTypeForOrder(orderID int64) (*int64, protocol.CarrierState, error)
+	BinTypeForOrder(orderID int64, group string) (*int64, protocol.CarrierState, error)
 
 	// BinTypeBareOf names the carrier a bare marker stands for: a marker is
 	// admitted wherever its carrier is (bins.TypeAdmits). nil for a real type.

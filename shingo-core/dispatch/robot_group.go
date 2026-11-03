@@ -193,18 +193,60 @@ func decideRobotGroup(f groupFacts) (string, rule) {
 // payload lands on "" exactly as it did before this feature existed. They are
 // different failures with different answers, and the next reader is going to
 // want to "fix" one of them to match the other. Do not.
+//
+// ── EVERY CART THE ROBOT WILL LIFT, AND A STRICT VERDICT OUTRANKS ─────────────
+//
+// The decision is made per cart, over the order's rows (read fresh, one
+// statement): a consume swap lifts the drained cart off the line (near-empty: the
+// relaxed group) and a full one from storage (the payload's own group), and one
+// robot does both, so it must be the one that can lift the full. A cart decided
+// by its payload's own group (above the threshold, or no capacity to judge by)
+// is STRICT; the order takes the first strict cart's group. Two strict carts
+// naming different groups is a configuration conflict: logged, never relaxed to
+// "" (the census lists it). With no strict cart, the first cart's relaxed group
+// stands. It used to read orders.bin_id alone, the drained cart (finding 1).
 func (d *Dispatcher) robotGroupForOrder(order *orders.Order) string {
-	bin := d.capabilityBin(order)
-	if bin == nil {
-		// No bin to read. Fall back to the payload the ORDER names, which is
+	carts := d.capabilityBins(order)
+	if len(carts) == 0 {
+		// No cart to read. Fall back to the payload the ORDER names, which is
 		// the pre-feature behaviour verbatim, and say bin=none so the verdict
-		// is not mistaken for a rule that actually looked at a count.
+		// is distinguishable from a real near-empty decision.
 		group := d.robotGroupForPayload(order.PayloadCode)
 		d.dbg("robot group: order=%d bin=none payload=%q group=%q (no bin resolved; payload group only)",
 			order.ID, order.PayloadCode, group)
 		return group
 	}
 
+	group, strict := "", false
+	for i, bin := range carts {
+		g, r := decideRobotGroup(cartGroupFacts(order, bin))
+		d.dbg("robot group: order=%d bin=%s payload=%q remaining=%d/%d pct=%d rule=%s group=%q",
+			order.ID, bin.Label, bin.PayloadCode, bin.UOPRemaining, bin.UOPCapacity,
+			nearEmptyPct(bin.UOPRemaining, bin.UOPCapacity), r, g)
+		// A payload-bearing bin reading below zero is still worth saying out loud:
+		// the count is off even though dispatch treats the bin as empty.
+		if r == ruleNegativeCount {
+			log.Printf("dispatch: bin %s carries %s but reads %d units — negative count, treated as empty for robot group %q",
+				bin.Label, bin.PayloadCode, bin.UOPRemaining, g)
+		}
+		cartStrict := r == ruleNoCapacity || r == ruleAboveThreshold
+		switch {
+		case i == 0:
+			group, strict = g, cartStrict
+		case cartStrict && !strict:
+			group, strict = g, true
+		case cartStrict && strict && g != group:
+			log.Printf("dispatch: order %d lifts carts that need robot groups %q and %q — a configuration conflict; "+
+				"it dispatches to %q, the first, and never to any robot", order.ID, group, g, group)
+		}
+	}
+	return group
+}
+
+// cartGroupFacts is the group decision's inputs for one cart of the order. An
+// order that asks for an empty is planned as one (SourcesEmpty): its cart's
+// payload, and so its payload groups, do not decide.
+func cartGroupFacts(order *orders.Order, bin *bins.Bin) groupFacts {
 	facts := groupFacts{
 		requiredGroup:  bin.CarrierRequiredRobotGroup,
 		payloadCode:    bin.PayloadCode,
@@ -215,70 +257,36 @@ func (d *Dispatcher) robotGroupForOrder(order *orders.Order) string {
 		allowNearEmpty: bin.PayloadNearEmptyEnabled,
 		thresholdPct:   bin.PayloadNearEmptyPct,
 	}
-
-	// AN EMPTY-INTENT FETCH IS CARRYING NOTHING, whatever tag the row still
-	// holds. The order says the bin is wanted AS an empty carrier, and a bin
-	// picked as an empty can still carry a stale payload_code — the manifest is
-	// cleared when the bin is released, not when somebody decides to come and
-	// get it. Reading that leftover tag would ask for the robot group of the
-	// part the carrier used to hold.
-	//
-	// It is the same carve-out payloadForDispatch has always made for this
-	// intent, and it has to be made here too now that the group is resolved from
-	// the bin rather than from the order. Blanking the code drops it to
-	// ruleNoPayload, which is what an empty carrier is.
-	//
-	// The CARRIER's own requirement is deliberately left standing: a bare FG
-	// rack is exactly the case that must not be relaxed, and it is the reason
-	// bin_types.required_robot_group exists.
 	if SourcesEmpty(order.SourceIntent) {
 		facts.payloadCode = ""
 		facts.payloadGroup, facts.nearEmptyGroup = "", ""
 		facts.allowNearEmpty, facts.thresholdPct = false, 0
 	}
-	group, r := decideRobotGroup(facts)
-
-	d.dbg("robot group: order=%d bin=%s payload=%q remaining=%d/%d pct=%d rule=%s group=%q",
-		order.ID, bin.Label, bin.PayloadCode, bin.UOPRemaining, bin.UOPCapacity,
-		nearEmptyPct(bin.UOPRemaining, bin.UOPCapacity), r, group)
-
-	// A payload-bearing bin reading below zero is still worth saying out loud:
-	// the count is off even though dispatch treats the bin as empty.
-	if r == ruleNegativeCount {
-		log.Printf("dispatch: bin %s carries %s but reads %d units — negative count, treated as empty for robot group %q",
-			bin.Label, bin.PayloadCode, bin.UOPRemaining, group)
-	}
-	return group
+	return facts
 }
 
-// capabilityBin returns the bin whose contents decide this order's robot group,
-// or nil when none can be resolved.
+// capabilityBins returns the carts whose contents decide this order's robot
+// group, read fresh (the rows a moment ago, not the copy in hand: the scanner's
+// hold writes them just before dispatch), or the bin the order means when it
+// carries none.
 //
-// Two ways in, and the second is the one that matters for a swap. An order that
-// already holds its bin is re-read fresh, because the scanner writes bin_id
-// moments before dispatch is called and the copy in hand is routinely stale.
-//
-// An order with no bin_id is the coordinated-pair evac leg: it dispatches as
+// An order with no carts is the coordinated-pair evac leg: it dispatches as
 // wait(LINE) and its pickup is appended at release, so at the moment the fleet
 // order is created there is nothing claimed. findFallbackBinAtSource is the
 // existing answer to "which bin does this order mean" — claim-first, then the
 // bin at the line node, already preferring ProcessNode when several are
-// claimed. Writing a second node lookup here would be a second derivation of
-// the same fact, and it would pick arbitrarily when two bins sit at the line.
-func (d *Dispatcher) capabilityBin(order *orders.Order) *bins.Bin {
-	binID := order.BinID
-	if fresh, err := d.db.GetOrder(order.ID); err == nil && fresh != nil && fresh.BinID != nil {
-		binID = fresh.BinID
+// present. If it finds nothing too, the caller degrades to the payload group,
+// which is what the evac leg dispatched with before this.
+func (d *Dispatcher) capabilityBins(order *orders.Order) []*bins.Bin {
+	carts, err := d.db.CartsOfOrder(order.ID)
+	if err == nil && len(carts) > 0 {
+		return carts
 	}
-	if binID != nil {
-		bin, err := d.db.GetBin(*binID)
-		if err == nil && bin != nil {
-			return bin
-		}
-		return nil
+	if err != nil {
+		log.Printf("dispatch: order %d: read its carts for its robot group: %v — deciding on the bin it means", order.ID, err)
 	}
 	if bin, ok := d.findFallbackBinAtSource(order); ok {
-		return bin
+		return []*bins.Bin{bin}
 	}
 	return nil
 }

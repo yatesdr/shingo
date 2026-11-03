@@ -294,15 +294,19 @@ function planHTML(o) {
 // One bin, one name. A dig leg's description is written as "reshuffle
 // unbury: bin 42" (dispatch/compound.go), so the pop-up said "bin 42" in one
 // line and "BIN-MT-07" in the next. When the text names this order's own bin by
-// id, it is shown by its label.
-function bySameBin(text, bin) {
+// id, it is shown by its label: each of the carts it carries.
+function bySameBin(text, carts) {
   var out = escapeHtml(text);
-  if (!bin || !bin.label) return out;
-  return out.replace(new RegExp('\\bbin ' + bin.id + '\\b'), binRef(bin));
+  (carts || []).forEach(function(bin) {
+    if (bin && bin.label) out = out.replace(new RegExp('\\bbin ' + bin.id + '\\b'), binRef(bin));
+  });
+  return out;
 }
-function bySameBinPlain(text, bin) {
-  if (!bin || !bin.label) return text;
-  return text.replace(new RegExp('\\bbin ' + bin.id + '\\b'), bin.label);
+function bySameBinPlain(text, carts) {
+  (carts || []).forEach(function(bin) {
+    if (bin && bin.label) text = text.replace(new RegExp('\\bbin ' + bin.id + '\\b'), bin.label);
+  });
+  return text;
 }
 
 // timelineExtra adds what a fault row knows and the timeline never read: the
@@ -393,7 +397,7 @@ function buildManifest(data, opts) {
   // say something: "qty 0 · priority 0" was the column defaults.
   var ident = [];
   ident.push(escapeHtml(o.order_type));
-  if (o.payload_desc && !o.payload_code) ident.push(bySameBin(o.payload_desc, data.bin));
+  if (o.payload_desc && !o.payload_code) ident.push(bySameBin(o.payload_desc, data.carts));
   var fromGroup = data.source_node && data.source_node.parent_name;
   var toGroup = data.delivery_node && data.delivery_node.parent_name;
   if (fromGroup && fromGroup === toGroup) {
@@ -427,16 +431,17 @@ function buildManifest(data, opts) {
   // space on this page came from there. Fields now wrap naturally and only
   // occupy what they need.
   var facts = [];
-  if (data.bin) {
-    facts.push(field('Bin', binRef(data.bin) + ' <span class="manifest-sub">(' + escapeHtml(data.bin.bin_type_code) + ')</span>'));
-    facts.push(field('Bin Status', '<span class="badge">' + escapeHtml(data.bin.status) + '</span>'));
-  }
+  // Every cart the order carries, in the order it lifts them (its rows).
+  (data.carts || []).forEach(function(b) {
+    facts.push(field('Bin', binRef(b) + ' <span class="manifest-sub">(' + escapeHtml(b.bin_type_code) + ')</span>'));
+    facts.push(field('Bin Status', '<span class="badge">' + escapeHtml(b.status) + '</span>'));
+  });
   // The payload, as the board's row prints it: the code, its description in
   // the title.
   if (o.payload_code) {
     // escapeHtml leaves quotes alone, and this one lands in an attribute.
     var pdesc = o.payload_desc
-      ? ' title="' + escapeHtml(bySameBinPlain(o.payload_desc, data.bin)) + '"' : '';
+      ? ' title="' + escapeHtml(bySameBinPlain(o.payload_desc, data.carts)) + '"' : '';
     facts.push(field('Payload', '<code' + pdesc + '>' + escapeHtml(o.payload_code) + '</code>'));
   }
   if (o.vendor_order_id) {

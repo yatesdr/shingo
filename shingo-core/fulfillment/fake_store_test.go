@@ -226,10 +226,10 @@ func (f *fakeStore) UpdateOrderBinID(orderID, binID int64) error {
 	return nil
 }
 
-// ClearOrderBinID records a forgotten held-bin pointer. Recorded as binID 0 in
+// ForgetHeldCart records a forgotten held-bin pointer. Recorded as binID 0 in
 // the same slice the updates use, because a test asserting "the order gave its
 // bin up" wants the ordering against the updates, not a second list to correlate.
-func (f *fakeStore) ClearOrderBinID(orderID int64) error {
+func (f *fakeStore) ForgetHeldCart(orderID int64) error {
 	f.clearedBinIDs = append(f.clearedBinIDs, orderID)
 	return nil
 }
@@ -303,7 +303,7 @@ func (f *fakeStore) GetEffectiveBinTypes(nodeID int64) ([]*bins.BinType, error) 
 // BinTypeBareOf: every type is a real one here.
 func (f *fakeStore) BinTypeBareOf(int64) (*int64, error) { return nil, nil }
 
-func (f *fakeStore) BinTypeForOrder(orderID int64) (*int64, protocol.CarrierState, error) {
+func (f *fakeStore) BinTypeForOrder(orderID int64, group string) (*int64, protocol.CarrierState, error) {
 	if id, ok := f.orderBinTypes[orderID]; ok {
 		return &id, "", nil
 	}

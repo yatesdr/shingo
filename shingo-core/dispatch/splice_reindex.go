@@ -5,16 +5,18 @@ import (
 	"log"
 
 	"shingo/protocol"
+	"shingocore/domain"
 	"shingocore/store/orders"
 )
 
 // ── THE SPLICE MOVES THE PLAN OUT FROM UNDER order_bins ───────────────────
 //
-// order_bins.step_index is a POSITION IN THE ORDER'S PLAN. The allocator writes
-// it during confirmComplexPlan, against the plan as it exists at claim time.
-// spliceLaneWait then INSERTS a wait step ahead of every gated lane entry, so
-// every recorded position at or after an insertion is off by the number of waits
-// inserted ahead of it — and the plan that gets persisted is the spliced one.
+// An order_bins row's pick_step and drop_step are POSITIONS IN THE ORDER'S
+// PLAN. The allocator writes them during confirmComplexPlan, against the plan as
+// it exists at claim time. spliceLaneWait then INSERTS a wait step ahead of
+// every gated lane entry, so every recorded position at or after an insertion
+// is off by the number of waits inserted ahead of it — and the plan that gets
+// persisted is the spliced one.
 //
 // Nothing detected the divergence because both halves stayed internally
 // consistent: the junction described a plan that was correct when written, and
@@ -63,137 +65,124 @@ func spliceStepShift(spliced []resolvedStep) map[int]int {
 	return shift
 }
 
-// reindexOrderBinsForSplice moves an order's junction rows onto the spliced
-// plan's positions.
+// reindexCartsForSplice moves an order's rows onto the spliced plan's
+// positions (moveCarts), then checks them against it.
 //
-// Orders with no junction rows are the overwhelming majority — the allocator
-// writes them only for multi-bin complex orders — so this is a no-op for almost
-// every order and must stay cheap and quiet for them.
-//
-// A FAILURE HERE IS NOT ADVISORY. Leaving the rows on stale indices is what
+// A FAILURE HERE IS NOT ADVISORY. Leaving the rows on stale positions is what
 // produced the 44-minute wedge, and it is invisible from every other vantage
 // point, so the error is returned rather than logged past.
-func (d *Dispatcher) reindexOrderBinsForSplice(orderID int64, spliced []resolvedStep) error {
-	shift := spliceStepShift(spliced)
-	if len(shift) == 0 {
-		return nil
-	}
-	rows, err := d.db.ListOrderBins(orderID)
+func (d *Dispatcher) reindexCartsForSplice(order *orders.Order, spliced []resolvedStep) error {
+	n, err := d.moveCarts(order, spliceStepShift(spliced))
 	if err != nil {
-		return fmt.Errorf("reindex order_bins for order %d: %w", orderID, err)
+		return fmt.Errorf("reindex the carts of order %d: %w", order.ID, err)
 	}
-	if len(rows) == 0 {
+	if n == 0 {
 		return nil
 	}
-	// Restrict the shift to indices this order actually recorded, so the write
-	// touches only rows that exist.
-	applicable := make(map[int]int, len(rows))
-	for _, r := range rows {
-		if to, ok := shift[r.StepIndex]; ok {
-			applicable[r.StepIndex] = to
-		}
-	}
-	if len(applicable) == 0 {
-		return nil
-	}
-	if err := d.db.ShiftOrderBinSteps(orderID, applicable); err != nil {
-		return fmt.Errorf("reindex order_bins for order %d: %w", orderID, err)
-	}
-	d.dbg("splice: order %d junction re-indexed onto the spliced plan (%d row(s) moved)",
-		orderID, len(applicable))
+	d.dbg("splice: order %d's carts re-indexed onto the spliced plan (%d position(s) moved)", order.ID, n)
 
 	// ── AND THEN IT CHECKS ITSELF, LIVE ──────────────────────────────────
 	//
-	// assertJunctionMatchesPlan was written as "the invariant that would have
-	// caught this on the day it landed" and then called only from tests — so the
-	// next position-shifting transform would get no runtime seam check, which is
-	// precisely the gap that let this one live. Its analog
-	// assertEachWaitGatesItsEntry runs inside the splice; this now runs beside it.
+	// cartsPlanMismatch is the invariant that would have caught the drift on the
+	// day it landed; its analog assertEachWaitGatesItsEntry runs inside the
+	// splice, and this runs beside it.
 	//
-	// RE-READ RATHER THAN CHECK `rows`: the shift has just moved the indices, and
-	// the rows in memory still carry the old ones. Asserting against them would
-	// pass while proving nothing, which is the failure mode of an invariant that
-	// checks its own input.
-	after, err := d.db.ListOrderBins(orderID)
-	if err != nil {
-		return fmt.Errorf("reindex order_bins for order %d: re-read for the invariant: %w", orderID, err)
-	}
 	// LOUD RATHER THAN FATAL, and that is a deliberate difference from the analog.
-	//
 	// assertEachWaitGatesItsEntry REFUSES the splice, because a wait that gates
 	// nothing sends a robot into a gated lane unannounced — an unsafe plan, where
-	// not shipping is the safe direction. A drifted junction row is not unsafe in
-	// that way: it makes the lane gate resolve a bin the entry is not for, which
-	// under binForStep's fail-closed contract lands as a REFUSAL carrying a cause,
-	// a releaser and a heal-dig proposal — not the wedge it once was.
-	//
-	// The dispositions differ because the consequences do. Failing the order here
-	// would kill demand over a defect in Core's own bookkeeping, which is exactly
-	// what the arm above stopped doing; and a retry cannot help, because a
+	// not shipping is the safe direction. A drifted row is not unsafe in that way:
+	// it makes the lane gate resolve a cart the entry is not for, which lands as
+	// a REFUSAL carrying a cause, not a wedge. Failing the order here would kill
+	// demand over a defect in Core's own bookkeeping, and a retry cannot help: a
 	// mismatch is a code fault, not a plant condition. What it needs is a human,
 	// and what a human needs is to be told.
-	if vErr := junctionPlanMismatch(spliced, after); vErr != nil {
-		log.Printf("INVARIANT: order %d's junction does not describe the plan it will run: %v "+
+	if vErr := cartsPlanMismatch(spliced, order.Carts); vErr != nil {
+		log.Printf("INVARIANT: order %d's carts do not describe the plan it will run: %v "+
 			"— the re-index ran and did not land the rows where they belong. The lane gate resolves "+
-			"WHICH BIN an entry wants from these rows, so this order's entry will be answered with "+
-			"the wrong bin. It refuses rather than wedges, but the answer never changes. This is a "+
+			"WHICH CART an entry wants from these rows, so this order's entry will be answered with "+
+			"the wrong cart. It refuses rather than wedges, but the answer never changes. This is a "+
 			"defect in the shift, not a plant condition, and it will not clear on a retry",
-			orderID, vErr)
+			order.ID, vErr)
 	}
 	return nil
 }
 
-// junctionPlanMismatch adapts the store's rows to the invariant and returns the
-// breach, or nil.
-//
-// It is the seam the dispatch path calls and a test can call, WITHOUT capturing
-// the global logger — which every test in this package would race on, since they
-// all run parallel, and which carries its own landmine (a restored nil writer
-// poisons `log` process-wide).
-func junctionPlanMismatch(spliced []resolvedStep, rows []*orders.OrderBin) error {
-	jr := make([]junctionRow, 0, len(rows))
-	for _, r := range rows {
-		jr = append(jr, junctionRow{BinID: r.BinID, StepIndex: r.StepIndex, NodeName: r.NodeName})
+// moveCarts moves the order's rows with its plan after a transform moved plan
+// positions: moved[old] = new. Only the positions a row names are written, in
+// one write (ShiftOrderBinSteps), none when no row moves; order.Carts follows.
+// Returns how many positions moved.
+func (d *Dispatcher) moveCarts(order *orders.Order, moved map[int]int) (int, error) {
+	applicable := map[int]int{}
+	for _, c := range order.Carts {
+		for _, at := range []*int{c.PickStep, c.DropStep} {
+			if at == nil {
+				continue
+			}
+			if to, ok := moved[*at]; ok {
+				applicable[*at] = to
+			}
+		}
 	}
-	return assertJunctionMatchesPlan(spliced, jr)
+	if len(applicable) == 0 {
+		return 0, nil
+	}
+	if err := d.db.ShiftOrderBinSteps(order.ID, applicable); err != nil {
+		return 0, err
+	}
+	for i := range order.Carts {
+		c := &order.Carts[i]
+		c.PickStep, c.DropStep = shiftedStep(c.PickStep, applicable), shiftedStep(c.DropStep, applicable)
+	}
+	return len(applicable), nil
 }
 
-// assertJunctionMatchesPlan checks that every junction row names the step it is
-// filed under — the invariant the splice broke.
+// shiftedStep is at after the shift, a fresh pointer when it moved.
+func shiftedStep(at *int, shift map[int]int) *int {
+	if at == nil {
+		return nil
+	}
+	if to, ok := shift[*at]; ok {
+		return &to
+	}
+	return at
+}
+
+// cartsPlanMismatch checks that every row names steps of the plan that do what
+// the row says: its pick step a pickup (or domain.InHand, a cart in hand when
+// the plan starts), its drop step a dropoff after it. Returns the breach, or
+// nil.
 //
 // It is the order_bins analog of assertEachWaitGatesItsEntry, and it exists for
-// the same reason: a positional reference that drifts still READS as valid, so
-// the only way to catch it is to ask the plan whether the position means what
-// the row says it means. Comparing the node is what makes it a real check; an
-// index alone is always "present".
-//
-// The pure form, so it is callable from a fixture. The dispatch path reaches it
-// through junctionPlanMismatch at the end of reindexOrderBinsForSplice — see
-// there for why a breach is loud rather than fatal, and its analog the reverse.
-func assertJunctionMatchesPlan(steps []resolvedStep, rows []junctionRow) error {
-	for _, r := range rows {
-		if r.StepIndex < 0 || r.StepIndex >= len(steps) {
-			return fmt.Errorf(
-				"order_bins row for bin %d names step %d, but the plan has %d steps - "+
-					"the row points outside the plan it describes",
-				r.BinID, r.StepIndex, len(steps))
+// the same reason: a position that drifts still READS as valid, so the only way
+// to catch it is to ask the plan whether the position means what the row says
+// it means. After a splice, a row left on its old position names a WAIT or the
+// wrong kind of step; an index alone is always "present".
+func cartsPlanMismatch(steps []resolvedStep, carts []domain.Cart) error {
+	for _, c := range carts {
+		if c.PickStep == nil {
+			continue // carried over from before the rows (v173): no steps to check
 		}
-		s := steps[r.StepIndex]
-		if r.NodeName != "" && s.Node != r.NodeName {
-			return fmt.Errorf(
-				"order_bins row for bin %d names step %d as a pickup at %q, but step %d of the "+
-					"plan is %q at %q - the junction is describing a different plan than the one "+
-					"that will run, which is how a lane entry resolves to a bin it is not for",
-				r.BinID, r.StepIndex, r.NodeName, r.StepIndex, s.Action, s.Node)
+		pick := *c.PickStep
+		if pick != domain.InHand {
+			if pick < 0 || pick >= len(steps) {
+				return fmt.Errorf("the row for cart %d names pick step %d, but the plan has %d steps", c.BinID, pick, len(steps))
+			}
+			if steps[pick].Action != protocol.ActionPickup {
+				return fmt.Errorf("the row for cart %d names step %d as its pickup, but step %d of the plan is %q at %q — "+
+					"the rows describe a different plan than the one that will run", c.BinID, pick, pick, steps[pick].Action, steps[pick].Node)
+			}
+		}
+		if c.DropStep == nil {
+			continue
+		}
+		drop := *c.DropStep
+		if drop <= pick || drop >= len(steps) {
+			return fmt.Errorf("the row for cart %d names drop step %d after pick step %d, outside a plan of %d steps", c.BinID, drop, pick, len(steps))
+		}
+		if steps[drop].Action != protocol.ActionDropoff {
+			return fmt.Errorf("the row for cart %d names step %d as its set-down, but step %d of the plan is %q at %q — "+
+				"the rows describe a different plan than the one that will run", c.BinID, drop, drop, steps[drop].Action, steps[drop].Node)
 		}
 	}
 	return nil
-}
-
-// junctionRow is the subset of a junction row the invariant needs, so the check
-// is callable from both the store type and a test fixture.
-type junctionRow struct {
-	BinID     int64
-	StepIndex int
-	NodeName  string
 }

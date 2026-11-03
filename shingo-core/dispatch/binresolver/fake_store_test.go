@@ -300,7 +300,7 @@ func (f *fakeStore) LoadBinTypeRule(payloadCode string) (domain.BinTypeRule, err
 // BinTypeForOrder defaults to "could not tell", which is what an order with
 // no bin and no holds answers in production and what leaves every pre-existing
 // resolver test untyped — the state they were all written in.
-func (f *fakeStore) BinTypeForOrder(orderID int64) (*int64, protocol.CarrierState, error) {
+func (f *fakeStore) BinTypeForOrder(orderID int64, group string) (*int64, protocol.CarrierState, error) {
 	if f.orderBinTypeErr != nil {
 		return nil, "", f.orderBinTypeErr
 	}

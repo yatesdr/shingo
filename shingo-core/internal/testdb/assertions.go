@@ -215,13 +215,13 @@ func assertNoOrphanedClaims(t *testing.T, db *store.DB, table, dead string) {
 // --- The pointer wedge (contract-v2 clause (iii)) ---
 
 // AssertNoPointerWedge sweeps for the shape the whole ownership stream exists to
-// kill: an order still trying to acquire, pointing at a bin, holding NEITHER a
-// reservation on it NOR a claim of it.
+// kill: an order still trying to acquire, with a row for a cart (its pointer),
+// holding NEITHER a reservation on it NOR a claim of it.
 //
 // ── WHY THAT SHAPE IS TERMINAL AND SILENT ────────────────────────
 //
-// bin_id is stamped at SOFT-RESERVE time, not at claim time, and the scanner
-// routes on it: an order with a bin_id goes to dispatchHeldBin, which never
+// The row is written at SOFT-RESERVE time, not at claim time, and the scanner
+// routes on it: an order holding a cart goes to dispatchHeldBin, which never
 // re-finds and never re-acquires — by design, because re-finding would shop a
 // second bin. The confirm below it requires a live reservation row for exactly
 // (this order, this bin). So an order in this state confirms by id against a row
@@ -237,10 +237,12 @@ func assertNoOrphanedClaims(t *testing.T, db *store.DB, table, dead string) {
 //
 // ── SCOPE ─────────────────────────────────────────────
 //
-// The ACQUIRING set only (pending, queued), top-level — the population the
-// scanner asks, and the only one for which "has not got its bin yet" is a live
-// claim about the future. A dispatched order legitimately points at a bin it has
-// already handed to a robot; a compound child is the compound's to hold (its
+// The ACQUIRING set only (pending, queued), top-level and plain — the
+// population the scanner's held arm asks (a coordinated order re-allocates on
+// every pass, so a row of its is never a pointer it is stuck on), and the only
+// one for which "has not got its bin yet" is a live claim about the future. A
+// dispatched order legitimately points at a bin it has already handed to a
+// robot; a compound child is the compound's to hold (its
 // claims are written per step, and the last step's write stands); a terminal one
 // is finished and AssertNoOrphanedHolds covers what it left behind.
 //
@@ -253,16 +255,23 @@ func assertNoOrphanedClaims(t *testing.T, db *store.DB, table, dead string) {
 func AssertNoPointerWedge(t testing.TB, db *store.DB) {
 	t.Helper()
 	rows, err := db.DB.Query(`
-		SELECT o.id, o.bin_id, o.status, COALESCE(o.order_type, ''), COALESCE(b.claimed_by, 0)
+		SELECT DISTINCT o.id, ob.bin_id, o.status, COALESCE(o.order_type, ''), COALESCE(b.claimed_by, 0)
 		  FROM orders o
-		  LEFT JOIN bins b ON b.id = o.bin_id
-		 WHERE o.bin_id IS NOT NULL
-		   AND o.status IN (` + protocol.AcquiringStatusSQLList() + `)
+		  JOIN order_bins ob ON ob.order_id = o.id
+		  LEFT JOIN bins b ON b.id = ob.bin_id
+		 WHERE o.status IN (` + protocol.AcquiringStatusSQLList() + `)
 		   AND o.parent_order_id IS NULL
+		   -- The PLAIN population: its row routes it to dispatchHeldBin. A
+		   -- coordinated order re-allocates on every pass (ReplaceOrderBins); a
+		   -- compound parent carries nothing of its own.
+		   AND NOT o.coordinated AND COALESCE(o.order_type, '') NOT IN ('complex', 'compound')
+		   -- A NAMED order keeps its row when its hold is reaped and holds the
+		   -- cart again on its next pass (fulfillment reholdNamedCart): it heals.
+		   AND ob.bin_id IS DISTINCT FROM o.named_bin_id
 		   AND (b.claimed_by IS NULL OR b.claimed_by <> o.id)
 		   AND NOT EXISTS (
 		       SELECT 1 FROM reservations r
-		        WHERE r.order_id = o.id AND r.resource_kind = 'bin' AND r.bin_id = o.bin_id
+		        WHERE r.order_id = o.id AND r.resource_kind = 'bin' AND r.bin_id = ob.bin_id
 		   )
 		 ORDER BY o.id`)
 	if err != nil {
@@ -279,14 +288,14 @@ func AssertNoPointerWedge(t testing.TB, db *store.DB) {
 		if claimedBy != 0 {
 			held = fmt.Sprintf("order %d", claimedBy)
 		}
-		t.Errorf("POINTER WEDGE: order %d (%s, %s) points at bin %d and holds neither a reservation "+
+		t.Errorf("POINTER WEDGE: order %d (%s, %s) has a row for cart %d and holds neither a reservation "+
 			"nor the claim (bin is claimed by %s).\n"+
-			"    This order will never move. bin_id routes it to dispatchHeldBin, which never "+
+			"    This order will never move. Its row routes it to dispatchHeldBin, which never "+
 			"re-acquires, and the confirm underneath requires the reservation row that is missing — "+
 			"so it parks under claim-failed and retries forever, with a live owner no sweep will "+
 			"touch and no age-based reap to end it.\n"+
 			"    Find the write that cleared one book and not the other: a hold released without "+
-			"its pointer, or a pointer stamped without a hold.",
+			"its row, or a row written without a hold.",
 			orderID, orderType, status, binID, held)
 	}
 	if err := rows.Err(); err != nil {

@@ -10,6 +10,7 @@ import (
 
 	"shingo/protocol"
 	"shingocore/dispatch"
+	"shingocore/store"
 )
 
 // STRANDED ORDERS: the jam check, and the first thing a run report says.
@@ -171,7 +172,9 @@ func readActive(db *sql.DB, now any) (*runEnd, error) {
 		       o.station_id, o.payload_code, o.robot_id, o.vendor_state,
 		       COALESCE(o.queue_cause, ''), o.queue_reason, o.steps_json, o.wait_index,
 		       o.edge_uuid, COALESCE(o.sibling_order_uuid, ''),
-		       COALESCE((SELECT b.payload_code FROM bins b WHERE b.id = o.bin_id), o.payload_code),
+		       COALESCE((SELECT b.payload_code FROM order_bins ob JOIN bins b ON b.id = ob.bin_id
+		                  WHERE ob.order_id = o.id AND `+store.StepNodeSQL("o", "ob.drop_step")+` = o.delivery_node
+		                  ORDER BY ob.drop_step DESC LIMIT 1), o.payload_code),
 		       COALESCE(EXTRACT(EPOCH FROM ((SELECT t FROM now_sim) - COALESCE(h.first_at, o.created_at))) / 60.0, 0),
 		       COALESCE(EXTRACT(EPOCH FROM ((SELECT t FROM now_sim) - COALESCE(h.last_at, o.updated_at))) / 60.0, 0)
 		FROM orders o LEFT JOIN h ON h.order_id = o.id

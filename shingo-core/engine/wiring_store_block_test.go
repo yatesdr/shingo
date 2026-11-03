@@ -43,11 +43,13 @@ func TestHandleStoreBlockCompleted_RecordsIntermediateStore(t *testing.T) {
 		DeliveryNode: lineNode.Name,
 		ProcessNode:  lineNode.Name,
 		PayloadDesc:  "swap",
+		StepsJSON:    `[{"action":"pickup","node":"` + lineNode.Name + `"},{"action":"dropoff","node":"` + storeNode.Name + `"},{"action":"pickup","node":"EMPTY-SRC"},{"action":"dropoff","node":"` + lineNode.Name + `"}]`,
 	}
 	testutil.MustNoErr(t, db.CreateOrder(ord), "create complex order")
 
 	// The full line bin being stored and the empty being retrieved — both
-	// claimed by the order (in flight). Junction rows carry each bin's dest.
+	// claimed by the order (in flight). Each cart's row names its lift and its
+	// set-down in the plan.
 	//
 	// THE STORED BIN IS SEEDED AT _TRANSIT, because that is where a bin about to
 	// be dropped actually is. It was seeded at the LINE node — its source — which
@@ -66,8 +68,8 @@ func TestHandleStoreBlockCompleted_RecordsIntermediateStore(t *testing.T) {
 	binRetr := testdb.CreateBinAtNode(t, db, sd.Payload.Code, lineNode.ID, "CARRIER-RETR")
 	testdb.ClaimBinForTest(t, db, binStore.ID, ord.ID)
 	testdb.ClaimBinForTest(t, db, binRetr.ID, ord.ID)
-	testutil.MustNoErr(t, db.InsertOrderBin(ord.ID, binStore.ID, 1, "pickup", lineNode.Name, storeNode.Name), "order_bin store leg")
-	testutil.MustNoErr(t, db.InsertOrderBin(ord.ID, binRetr.ID, 3, "pickup", "EMPTY-SRC", lineNode.Name), "order_bin retrieve leg")
+	testdb.SeedCartRow(t, db, ord.ID, binStore.ID, 0, 1) // the store leg
+	testdb.SeedCartRow(t, db, ord.ID, binRetr.ID, 2, 3)  // the retrieve leg
 
 	// Store dropoff block finishes at the supermarket slot.
 	eng.handleStoreBlockCompleted(BlockCompletedEvent{
@@ -129,7 +131,7 @@ func TestHandleStoreBlockCompleted_RecordsIntermediateStore(t *testing.T) {
 	}
 }
 
-// TestHandleStoreBlockCompleted_StagingDropWithNoJunctionRowForIt is the
+// TestHandleStoreBlockCompleted_StagingDropResolvesThroughItsRow is the
 // three-pinned-robots wedge, reproduced.
 //
 // A two_robot swap drops its bin at the cell's INBOUND STAGING node on the way
@@ -139,13 +141,14 @@ func TestHandleStoreBlockCompleted_RecordsIntermediateStore(t *testing.T) {
 // matched on dest_node, found nothing, logged "no in-flight claimed bin matched"
 // and returned: the bin was never recorded at staging, the order's OWN next step
 // (a pickup there) had nothing to pick, and it sat at its wait holding an AMR.
+// Every lift is a row now, so the set-down at staging is a row's drop step.
 //
 // Measured on the lane-stress rig 2026-08-11: orders 7 and 10 staged from the
 // first minute of the run to the end of the soak, one robot each.
 //
 // MUTATION (fires): resolve by matching a junction row whose dest_node equals
 // the location, and the bin is never recorded at staging.
-func TestHandleStoreBlockCompleted_StagingDropWithNoJunctionRowForIt(t *testing.T) {
+func TestHandleStoreBlockCompleted_StagingDropResolvesThroughItsRow(t *testing.T) {
 	t.Parallel()
 
 	db := testDB(t)
@@ -160,6 +163,7 @@ func TestHandleStoreBlockCompleted_StagingDropWithNoJunctionRowForIt(t *testing.
 		OrderType: dispatch.OrderTypeComplex, Status: dispatch.StatusInTransit,
 		SourceNode: lineNode.Name, DeliveryNode: lineNode.Name, ProcessNode: lineNode.Name,
 		PayloadDesc: "swap",
+		StepsJSON:   `[{"action":"pickup","node":"` + lineNode.Name + `"},{"action":"dropoff","node":"` + staging.Name + `"},{"action":"pickup","node":"` + staging.Name + `"},{"action":"dropoff","node":"` + lineNode.Name + `"}]`,
 	}
 	testutil.MustNoErr(t, db.CreateOrder(ord), "create complex order")
 
@@ -169,11 +173,10 @@ func TestHandleStoreBlockCompleted_StagingDropWithNoJunctionRowForIt(t *testing.
 	carried := testdb.CreateBinAtNode(t, db, sd.Payload.Code, transitID, "CARRIER-STAGED")
 	testdb.ClaimBinForTest(t, db, carried.ID, ord.ID)
 
-	// The junction as the allocator writes it: the bin's FINAL destination is the
-	// line, and nothing anywhere names the staging node it is about to be put
-	// down at.
-	testutil.MustNoErr(t, db.InsertOrderBin(ord.ID, carried.ID, 1, "pickup", lineNode.Name, lineNode.Name),
-		"order_bin: dest is the LINE, not the staging slot")
+	// The rows as the walk writes them: the cart set down at staging (step 1),
+	// and re-lifted there for the line (steps 2 and 3).
+	testdb.SeedCartRow(t, db, ord.ID, carried.ID, 0, 1)
+	testdb.SeedCartRow(t, db, ord.ID, carried.ID, 2, 3)
 
 	eng.handleStoreBlockCompleted(BlockCompletedEvent{
 		OrderID: ord.ID, BlockID: "staging-drop-1-b3",
@@ -183,18 +186,16 @@ func TestHandleStoreBlockCompleted_StagingDropWithNoJunctionRowForIt(t *testing.
 	testdb.RequireBinAtNode(t, db, carried.ID, staging.ID)
 }
 
-// TestHandleStoreBlockCompleted_SingleBinOrderHasNoJunctionAtAll is the same
+// TestHandleStoreBlockCompleted_ASingleCartSetsDownThroughItsRow is the same
 // wedge reached from the other side.
 //
-// The allocator writes junction rows only for MULTI-bin orders, so a single-bin
-// complex order has none — dispatch.binForStep says so, and its sibling
-// resolvePickupBin has carried an order.BinID fallback all along. The dropoff
-// half never got one: it exited at len(rows)==0 and the store was never
-// recorded.
+// The allocator wrote junction rows only for MULTI-bin orders, so a single-bin
+// complex order had none, and the dropoff half exited at len(rows)==0 and the
+// store was never recorded. Every order that carries a cart has its row now.
 //
 // Measured: order 1 on the same run — bin 5, claimed by order 1, zero junction
 // rows, staged holding an AMR for the whole soak.
-func TestHandleStoreBlockCompleted_SingleBinOrderHasNoJunctionAtAll(t *testing.T) {
+func TestHandleStoreBlockCompleted_ASingleCartSetsDownThroughItsRow(t *testing.T) {
 	t.Parallel()
 
 	db := testDB(t)
@@ -208,6 +209,7 @@ func TestHandleStoreBlockCompleted_SingleBinOrderHasNoJunctionAtAll(t *testing.T
 		EdgeUUID: "single-bin-1", StationID: "line-1",
 		OrderType: dispatch.OrderTypeComplex, Status: dispatch.StatusInTransit,
 		SourceNode: lineNode.Name, DeliveryNode: lineNode.Name, ProcessNode: lineNode.Name,
+		StepsJSON: `[{"action":"pickup","node":"` + lineNode.Name + `"},{"action":"dropoff","node":"` + staging.Name + `"}]`,
 	}
 	testutil.MustNoErr(t, db.CreateOrder(ord), "create complex order")
 
@@ -216,15 +218,7 @@ func TestHandleStoreBlockCompleted_SingleBinOrderHasNoJunctionAtAll(t *testing.T
 		"lookup _TRANSIT")
 	only := testdb.CreateBinAtNode(t, db, sd.Payload.Code, transitID, "CARRIER-ONLY")
 	testdb.ClaimBinForTest(t, db, only.ID, ord.ID)
-	testutil.MustNoErr(t, db.UpdateOrderBinID(ord.ID, only.ID), "bin_id")
-	// Deliberately NO InsertOrderBin — that is the shape.
-
-	rows, err := db.ListOrderBins(ord.ID)
-	testutil.MustNoErr(t, err, "list junction")
-	if len(rows) != 0 {
-		t.Fatalf("fixture: %d junction rows, want 0 — this test is only a test while there are none",
-			len(rows))
-	}
+	testdb.SeedCartRow(t, db, ord.ID, only.ID, 0, 1) // its one cart's row
 
 	eng.handleStoreBlockCompleted(BlockCompletedEvent{
 		OrderID: ord.ID, BlockID: "single-bin-1-b3",
@@ -255,12 +249,13 @@ func TestHandleStoreBlockCompleted_SkipsFinalDelivery(t *testing.T) {
 		DeliveryNode: lineNode.Name,
 		ProcessNode:  lineNode.Name,
 		PayloadDesc:  "swap",
+		StepsJSON:    `[{"action":"wait","node":"` + lineNode.Name + `"},{"action":"pickup","node":"` + lineNode.Name + `"},{"action":"dropoff","node":"STORE-X"},{"action":"pickup","node":"EMPTY-SRC"},{"action":"dropoff","node":"` + lineNode.Name + `"}]`,
 	}
 	testutil.MustNoErr(t, db.CreateOrder(ord), "create complex order")
 
 	binRetr := testdb.CreateBinAtNode(t, db, sd.Payload.Code, sd.StorageNode.ID, "CARRIER-RETR2")
 	testdb.ClaimBinForTest(t, db, binRetr.ID, ord.ID)
-	testutil.MustNoErr(t, db.InsertOrderBin(ord.ID, binRetr.ID, 3, "pickup", "EMPTY-SRC", lineNode.Name), "order_bin retrieve leg")
+	testdb.SeedCartRow(t, db, ord.ID, binRetr.ID, 3, 4) // the retrieve leg
 
 	// Dropoff at the FINAL delivery node — must be skipped here.
 	eng.handleStoreBlockCompleted(BlockCompletedEvent{
@@ -312,6 +307,7 @@ func TestBinRoundTrip_IntermediateStoreThenFinalDelivery(t *testing.T) {
 		OrderType: dispatch.OrderTypeComplex, Status: dispatch.StatusInTransit,
 		SourceNode: lineNode.Name, DeliveryNode: lineNode.Name, ProcessNode: lineNode.Name,
 		PayloadDesc: "swap",
+		StepsJSON:   `[{"action":"pickup","node":"` + lineNode.Name + `"},{"action":"dropoff","node":"` + staging.Name + `"},{"action":"pickup","node":"` + staging.Name + `"},{"action":"dropoff","node":"` + lineNode.Name + `"}]`,
 	}
 	testutil.MustNoErr(t, db.CreateOrder(ord), "create complex order")
 
@@ -320,8 +316,8 @@ func TestBinRoundTrip_IntermediateStoreThenFinalDelivery(t *testing.T) {
 		"lookup _TRANSIT")
 	carried := testdb.CreateBinAtNode(t, db, sd.Payload.Code, transitID, "CARRIER-ROUNDTRIP")
 	testdb.ClaimBinForTest(t, db, carried.ID, ord.ID)
-	testutil.MustNoErr(t, db.InsertOrderBin(ord.ID, carried.ID, 1, "pickup", lineNode.Name, lineNode.Name),
-		"order_bin: final dest is the LINE")
+	testdb.SeedCartRow(t, db, ord.ID, carried.ID, 0, 1) // set down at staging
+	testdb.SeedCartRow(t, db, ord.ID, carried.ID, 2, 3) // re-lifted there for the line
 
 	// Leg 1: the robot sets the bin down at staging, mid-plan.
 	eng.handleStoreBlockCompleted(BlockCompletedEvent{
@@ -334,10 +330,15 @@ func TestBinRoundTrip_IntermediateStoreThenFinalDelivery(t *testing.T) {
 	// refused as a teleport and the bin strands.
 	testdb.RequireBinClaimedBy(t, db, carried.ID, ord.ID)
 
-	// Leg 2: picked back up and delivered to the line.
-	ord.BinID = &carried.ID
-	testutil.MustNoErr(t, db.UpdateOrderBinID(ord.ID, carried.ID), "set order bin for delivery")
-	eng.applyBinArrivalForOrder(ord)
+	// Leg 2: picked back up at staging (its second row) and delivered to the line.
+	eng.handlePickupBlockCompleted(BlockCompletedEvent{
+		OrderID: ord.ID, BlockID: "round-trip-1-b5",
+		Location: staging.Name, BinTask: "JackLoad",
+	})
+	testdb.RequireBinAtNode(t, db, carried.ID, transitID)
+	delivered, err := db.GetOrder(ord.ID)
+	testutil.MustNoErr(t, err, "reload the order with its carts")
+	eng.applyBinArrivalForOrder(delivered)
 
 	// The bin reaches the line. It does not sit at _TRANSIT holding a carrier
 	// out of circulation while the cell reads empty.
@@ -351,9 +352,11 @@ func TestBinRoundTrip_IntermediateStoreThenFinalDelivery(t *testing.T) {
 // THE SHAPE. A single_robot swap is one order carrying two bins. It parks the
 // FRESH carrier at InboundStaging (step 2) and collects it again at step 6; it
 // parks the SPENT one at OutboundStaging (step 5) and collects it again at step
-// 8. The junction is written at ALLOCATION time and names the allocator's
-// endpoints, so neither re-pickup has a junction row — and the single-bin
-// fallback answers with order.BinID WITHOUT ASKING WHERE THAT BIN IS.
+// 8. The junction was written at ALLOCATION time and named the allocator's
+// endpoints, so neither re-pickup had a junction row — and the single-bin
+// fallback answered with order.BinID WITHOUT ASKING WHERE THAT BIN IS. The walk
+// writes every lift as a row now (domain.Lifts), the re-lifts included, so the
+// re-pickup at InboundStaging names the fresh carrier by its own row.
 //
 // So the step-6 pickup at InboundStaging resolved to the spent carrier sitting
 // at OutboundStaging, and the step-7 dropoff then recorded the SPENT carrier
@@ -386,6 +389,11 @@ func TestResolvePickupBin_IntermediateRePickupTakesTheBinThatIsThere(t *testing.
 		OrderType: dispatch.OrderTypeComplex, Status: dispatch.StatusInTransit,
 		SourceNode: sd.StorageNode.Name, DeliveryNode: sd.StorageNode.Name,
 		ProcessNode: sd.LineNode.Name, PayloadDesc: "single_robot swap",
+		StepsJSON: `[{"action":"pickup","node":"` + sd.StorageNode.Name + `"},{"action":"dropoff","node":"` + inbound.Name + `"},` +
+			`{"action":"wait","node":"` + sd.LineNode.Name + `"},{"action":"pickup","node":"` + sd.LineNode.Name + `"},` +
+			`{"action":"dropoff","node":"` + outbound.Name + `"},{"action":"pickup","node":"` + inbound.Name + `"},` +
+			`{"action":"dropoff","node":"` + sd.LineNode.Name + `"},{"action":"pickup","node":"` + outbound.Name + `"},` +
+			`{"action":"dropoff","node":"` + sd.StorageNode.Name + `"}]`,
 	}
 	testutil.MustNoErr(t, db.CreateOrder(ord), "create swap order")
 
@@ -395,21 +403,12 @@ func TestResolvePickupBin_IntermediateRePickupTakesTheBinThatIsThere(t *testing.
 	testdb.ClaimBinForTest(t, db, fresh.ID, ord.ID)
 	testdb.ClaimBinForTest(t, db, spent.ID, ord.ID)
 
-	// order.BinID names the SPENT carrier — the line bin the allocator picked the
-	// order up around. That is the value the fallback returns, and returning it
-	// here is the defect.
-	testutil.MustNoErr(t, db.UpdateOrderBinID(ord.ID, spent.ID), "bin_id = the spent carrier")
-
-	// No junction row for either staging pickup. That is the shape, not a
-	// shortcut: the allocator writes endpoints, and these are intermediate.
-	rows, err := db.ListOrderBins(ord.ID)
-	testutil.MustNoErr(t, err, "list junction")
-	for _, ob := range rows {
-		if ob.NodeName == inbound.Name || ob.NodeName == outbound.Name {
-			t.Fatalf("fixture: a junction row names %s — this case is only a case while the "+
-				"re-pickups have none", ob.NodeName)
-		}
-	}
+	// The rows as the walk writes them: each carrier's first lift and its
+	// re-lift at the staging node it was parked on.
+	testdb.SeedCartRow(t, db, ord.ID, fresh.ID, 0, 1)
+	testdb.SeedCartRow(t, db, ord.ID, spent.ID, 3, 4)
+	testdb.SeedCartRow(t, db, ord.ID, fresh.ID, 5, 6)
+	testdb.SeedCartRow(t, db, ord.ID, spent.ID, 7, 8)
 
 	// Step 6: collect the fresh carrier from inbound staging.
 	eng.handlePickupBlockCompleted(BlockCompletedEvent{
@@ -425,12 +424,12 @@ func TestResolvePickupBin_IntermediateRePickupTakesTheBinThatIsThere(t *testing.
 	testdb.RequireBinAtNode(t, db, spent.ID, outbound.ID)
 }
 
-// TestResolvePickupBin_SingleBinFallbackStillAnswers pins that the new arm did
-// not take work away from the old one. A single-bin order with no junction rows
-// and no claim registered still resolves through order.BinID — the shape
-// TestHandleStoreBlockCompleted_SingleBinOrderHasNoJunctionAtAll describes from
-// the dropoff side, and the reason the fallback exists.
-func TestResolvePickupBin_SingleBinFallbackStillAnswers(t *testing.T) {
+// TestResolvePickupBin_ASingleCartLiftsThroughItsRow pins the lift of a
+// single-cart order with no claim registered: its row names the cart, and the
+// cart standing at the pickup is lifted — the shape
+// TestHandleStoreBlockCompleted_ASingleCartSetsDownThroughItsRow describes from
+// the dropoff side. (The orders.bin_id fallback that answered this is gone.)
+func TestResolvePickupBin_ASingleCartLiftsThroughItsRow(t *testing.T) {
 	t.Parallel()
 
 	db := testDB(t)
@@ -446,8 +445,8 @@ func TestResolvePickupBin_SingleBinFallbackStillAnswers(t *testing.T) {
 	testutil.MustNoErr(t, db.CreateOrder(ord), "create order")
 
 	only := testdb.CreateBinAtNode(t, db, sd.Payload.Code, sd.StorageNode.ID, "CARRIER-FALLBACK")
-	testutil.MustNoErr(t, db.UpdateOrderBinID(ord.ID, only.ID), "bin_id")
-	// Deliberately NOT claimed and NOT in the junction: nothing but bin_id names it.
+	testdb.SeedCartRow(t, db, ord.ID, only.ID, 0, 1)
+	// Deliberately NOT claimed: nothing but its row names it.
 
 	eng.handlePickupBlockCompleted(BlockCompletedEvent{
 		OrderID: ord.ID, BlockID: "repickup-fallback-1-b2",
@@ -498,6 +497,7 @@ func TestHandleStoreBlockCompleted_IntermediateDropoffCarriesRealFromNode(t *tes
 		DeliveryNode: lineNode.Name,
 		ProcessNode:  lineNode.Name,
 		PayloadDesc:  "swap",
+		StepsJSON:    `[{"action":"pickup","node":"` + lineNode.Name + `"},{"action":"dropoff","node":"` + storeNode.Name + `"},{"action":"pickup","node":"EMPTY-SRC"},{"action":"dropoff","node":"` + lineNode.Name + `"}]`,
 	}
 	testutil.MustNoErr(t, db.CreateOrder(ord), "create complex order")
 
@@ -506,7 +506,7 @@ func TestHandleStoreBlockCompleted_IntermediateDropoffCarriesRealFromNode(t *tes
 		"lookup _TRANSIT")
 	binStore := testdb.CreateBinAtNode(t, db, sd.Payload.Code, transitID, "CARRIER-FROM")
 	testdb.ClaimBinForTest(t, db, binStore.ID, ord.ID)
-	testutil.MustNoErr(t, db.InsertOrderBin(ord.ID, binStore.ID, 1, "pickup", lineNode.Name, storeNode.Name), "order_bin store leg")
+	testdb.SeedCartRow(t, db, ord.ID, binStore.ID, 0, 1) // the store leg
 
 	captured := make(chan BinUpdatedEvent, 4)
 	eng.Events.SubscribeTypes(func(evt Event) {

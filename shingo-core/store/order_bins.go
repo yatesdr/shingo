@@ -12,37 +12,21 @@ import (
 	"shingocore/store/orders"
 )
 
-// InsertOrderBin records a claimed bin and its resolved destination for a
-// complex order.
-func (db *DB) InsertOrderBin(orderID, binID int64, stepIndex int, action, nodeName, destNode string) error {
-	return orders.InsertOrderBin(db.DB, orderID, binID, stepIndex, action, nodeName, destNode)
+// ReplaceOrderBins makes an order's carts say exactly what the current
+// allocation claimed, and points orders.bin_id at primary, in one statement —
+// the set is replaced, not merged into. See the orders-package doc for the
+// stale-row failure this closes.
+func (db *DB) ReplaceOrderBins(orderID, primary int64, rows []orders.OrderBinRow) error {
+	return orders.ReplaceOrderBins(db.DB, orderID, primary, rows)
 }
 
-// ReplaceOrderBins makes an order's junction rows say exactly what the current
-// allocation claimed — the set is replaced, not merged into. See the orders-package
-// doc for the stale-row failure this closes.
-func (db *DB) ReplaceOrderBins(orderID int64, rows []orders.OrderBinRow) error {
-	return orders.ReplaceOrderBins(db.DB, orderID, rows)
-}
-
-// ListOrderBins returns all junction rows for an order, ordered by step_index.
+// ListOrderBins returns an order's rows in plan order.
 func (db *DB) ListOrderBins(orderID int64) ([]*orders.OrderBin, error) {
 	return orders.ListOrderBins(db.DB, orderID)
 }
 
-// UpdateOrderBinDestNode re-points one bin's recorded destination, keyed by bin
-// because step_index names the pickup. Returns rows changed (0 or 1); zero is the
-// ordinary answer for a single-bin order, which has no junction rows.
-func (db *DB) UpdateOrderBinDestNode(orderID, binID int64, destNode string) (int64, error) {
-	return orders.UpdateOrderBinDestNode(db.DB, orderID, binID, destNode)
-}
-
-// DeleteOrderBins removes all junction rows for an order. Called alongside
-// UnclaimOrderBins on cancel/fail paths to keep the junction table clean.
-func (db *DB) DeleteOrderBins(orderID int64) { orders.DeleteOrderBins(db.DB, orderID) }
-
-// ShiftOrderBinSteps rewrites an order's junction step_index values after a
-// transform inserted steps into its plan.
+// ShiftOrderBinSteps moves an order's rows with its plan after a transform
+// inserted steps into it.
 func (db *DB) ShiftOrderBinSteps(orderID int64, shift map[int]int) error {
 	return orders.ShiftOrderBinSteps(db.DB, orderID, shift)
 }
@@ -162,3 +146,20 @@ func (db *DB) OrderOwnsNoCargo(orderID int64) (bool, error) {
 	}
 	return owns, nil
 }
+
+// SetOpenLiftDrop gives the order's open lift its set-down at plan step drop
+// (orders.SetOpenLiftDrop): a dwelling dig leg's tail, bound at its release.
+func (db *DB) SetOpenLiftDrop(orderID int64, drop int) error {
+	return orders.SetOpenLiftDrop(db.DB, orderID, drop)
+}
+
+// RecordAppendedLift writes the row of a lift the order's plan grew after its
+// rows were written (orders.RecordAppendedLift).
+func (db *DB) RecordAppendedLift(o *orders.Order, binID int64, pick int) error {
+	return orders.RecordAppendedLift(db.DB, o, binID, pick)
+}
+
+// StepNodeSQL is where plan step i of order o happens, in SQL
+// (helpers.StepNodeSQL, the twin of domain.StepNode): for readers outside the
+// store that read an order's rows as nodes.
+func StepNodeSQL(o, i string) string { return helpers.StepNodeSQL(o, i) }

@@ -71,9 +71,9 @@ func TestCountsByTotes_AgreeWithTheKeepersCounts(t *testing.T) {
 	}
 
 	// Comings, one per shape the keeper counts: a plain order's own carrier,
-	// an order still naming the group, a junction row's carrier, and an empty-
-	// out's named carrier before it is sourced. The keeper's own ask and a
-	// loaded carrier are not coming.
+	// an order still naming the group, a cart a complex order sets down there,
+	// and an empty-out's named carrier before it is sourced. The keeper's own
+	// ask and a loaded carrier are not coming.
 	order := func(uuid, delivery string, setup func(o *orders.Order)) *orders.Order {
 		t.Helper()
 		o := testdb.CreateOrder(t, db, func(o *orders.Order) {
@@ -94,8 +94,12 @@ func TestCountsByTotes_AgreeWithTheKeepersCounts(t *testing.T) {
 	b := bin(btID, "HGT-C2", nil, 40)
 	order("hgt-group", "HGT-GRP", func(o *orders.Order) { o.BinID = &b })
 	c := bin(btID, "HGT-C3", nil, 16)
-	cplx := order("hgt-complex", "ELSEWHERE", nil)
-	testutil.MustNoErr(t, orders.InsertOrderBin(db.DB, cplx.ID, c, 0, "store", "PICKUP", "HGT-SLOT"), "junction")
+	cplx := order("hgt-complex", "ELSEWHERE", func(o *orders.Order) {
+		o.OrderType = "complex"
+		o.StepsJSON = `[{"action":"pickup","node":"PICKUP"},{"action":"dropoff","node":"HGT-SLOT"},` +
+			`{"action":"pickup","node":"PICKUP-2"},{"action":"dropoff","node":"ELSEWHERE"}]`
+	})
+	testdb.SeedCartRow(t, db, cplx.ID, c, 0, 1)
 	d := bin(btID, "HGT-C4", nil, nil)
 	order("hgt-named", "HGT-GRP", func(o *orders.Order) { o.NamedBinID = &d })
 	const mnt = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeee01"

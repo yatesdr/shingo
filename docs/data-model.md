@@ -19,7 +19,7 @@ Node (floor location)     -->  NodeType (location class)
 Order (transport request)
 ```
 
-A **Payload** defines what a container should hold. A **Bin** is the physical container; it carries its payload assignment, manifest, and UOP remaining directly. An **Order** moves a bin between **Nodes**.
+A **Payload** defines what a container should hold. A **Bin** is the physical container; it carries its payload assignment, manifest, and UOP remaining directly. An **Order** moves bins between **Nodes**: its carts, one `order_bins` row per lift.
 
 ---
 
@@ -148,8 +148,11 @@ A transport request to move a bin between nodes.
 | `robot_id` | Assigned robot |
 | `priority` | Dispatch priority (higher = more urgent) |
 | `payload_code` | What payload was requested (for retrieve orders) |
-| `bin_id` | Which bin is being moved |
+| `named_bin_id` | The one bin the asker named the order for, if any — a constraint, not a record |
 | `parent_order_id` | Parent compound order (for reshuffle child orders) |
+
+The bins an order carries are not a column of the order: they are its rows in
+`order_bins` ([Order carts](#order-carts-order_bins)).
 | `sequence` | Step sequence within a compound order |
 
 #### `delivery_node` — read this before using it
@@ -192,6 +195,47 @@ column holds without reading that first.
 One site still infers role positionally and is knowingly wrong for press-index:
 `ResolveSwapPair` (Edge `station_views.go`). It is masked by the produce-role
 release path and is marked for the planned `leg_role` field.
+
+### Order carts (`order_bins`)
+
+An order's carts: one row per **lift** — the cart, the plan step that picks it
+up and the plan step that sets it down. Every order that carries a cart has its
+rows, written where the order comes to hold the cart and in the same statement
+(the plain hold, a named issue, a dig leg's issue, the complex allocation, a
+recovery, a re-point, the claim exchange). The rows are **never deleted when the
+order ends**: "the carts of this order" and "the last order of this cart" read
+the same table, live or ended.
+
+| Column | Description |
+|---|---|
+| `order_id` | The order |
+| `bin_id` | The cart |
+| `pick_step` | Plan position that lifts it; `-1` when it is already in the robot's hands as the plan starts (a recovery's unload-only plan) |
+| `drop_step` | Plan position that sets it down; NULL on an open lift (a dwelling dig leg, whose set-down its release binds) |
+
+The rows hold **plan positions, never nodes**. Where a step happens is the
+plan's: `domain.StepNode` in Go, `StepNodeSQL` in SQL, pinned to each other. A
+plain order has no stored plan; its plan is the two steps its endpoints imply
+(the lift at `source_node`, the set-down at `delivery_node`), and its rows point
+into that. A relayed cart (set down at staging and lifted again) has a row per
+lift. Which cart is in the robot's forks is a fact about the plant, never a
+column: the order's rows whose cart the order has claimed and that stands on
+`_TRANSIT` or a robot's carrier node.
+
+Unique on `(order_id, pick_step)` and on `(order_id, drop_step)`; checked
+`(pick_step IS NOT NULL OR drop_step IS NULL) AND (drop_step IS NULL OR pick_step < drop_step)`;
+indexed on `(bin_id, order_id DESC)` for the cart → order direction (the
+stranded sweep, the orphan guard, cancel-return, the pages).
+
+Who may delete a row: only a release of a cart not yet lifted, before the order
+ends — a new allocation replacing the set (`ReplaceOrderBins`), a taker, the
+pair release, the scanner's forget. Who may change one: a transform that moves
+plan positions moves the rows with it (`ShiftOrderBinSteps`); the claim
+exchange rewrites a row whose cart is not lifted yet.
+
+A row carried over from the old `orders.bin_id` column for an order that ended
+before the rows existed (v173) has both steps NULL: the link is true, the steps
+are not known.
 
 ### Reservations
 
@@ -370,7 +414,7 @@ node_types --< nodes --< node_properties
 orders --< order_history
   |
   |---> nodes (source_node_id, dest_node_id)
-  |---> bins
+  |--< order_bins ---> bins   (one row per lift: pick_step, drop_step)
   +--< reservations (resource_kind bin→bins / slot→nodes)
 
 cms_transactions ---> nodes, bins, orders

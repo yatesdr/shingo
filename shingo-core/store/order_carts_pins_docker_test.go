@@ -102,7 +102,7 @@ func TestOrderCartsPin_ThePairReleaseDeletesItsUnliftedRows(t *testing.T) {
 
 // TestOrderCartsPin_TheScannersForgetKeepsANamedOrdersRow: a named order (one
 // cart, named by its asker) whose hold was reaped is forgotten by the scanner
-// (ClearOrderBinID); its row for the cart it was issued for survives, because
+// (ForgetHeldCart); its row for the cart it was issued for survives, because
 // re-finding it can only ever fetch that cart. GREEN at main (the forget touches
 // no row).
 func TestOrderCartsPin_TheScannersForgetKeepsANamedOrdersRow(t *testing.T) {
@@ -115,7 +115,7 @@ func TestOrderCartsPin_TheScannersForgetKeepsANamedOrdersRow(t *testing.T) {
 	})
 	testdb.SeedCartRow(t, db, o.ID, bin.ID, 0, 1)
 
-	testutil.MustNoErr(t, db.ClearOrderBinID(o.ID), "the scanner's forget")
+	testutil.MustNoErr(t, db.ForgetHeldCart(o.ID), "the scanner's forget")
 
 	if !testdb.HasCartRow(t, db, o.ID, bin.ID) {
 		t.Fatalf("the named order lost its row for the cart it names (%d)", bin.ID)
@@ -134,7 +134,7 @@ func TestOrderCartsPin_TheScannersForgetDeletesAPlainOrdersRow(t *testing.T) {
 	o := testdb.CreateOrder(t, db, func(o *orders.Order) { o.EdgeUUID, o.BinID = "carts-forget", &bin.ID })
 	testdb.SeedCartRow(t, db, o.ID, bin.ID, 0, 1)
 
-	testutil.MustNoErr(t, db.ClearOrderBinID(o.ID), "the scanner's forget")
+	testutil.MustNoErr(t, db.ForgetHeldCart(o.ID), "the scanner's forget")
 
 	if rows := testdb.CartRowBins(t, db, o.ID); len(rows) != 0 {
 		t.Fatalf("the forgotten order still has cart rows %v", rows)

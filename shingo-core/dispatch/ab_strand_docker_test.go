@@ -178,14 +178,12 @@ func TestABStrand_ADiggerWithNoStationWaitTakesTheMouth(t *testing.T) {
 	if !strings.Contains(h.StepsJSON, `"`+r.deep.Name+`"`) || strings.Contains(h.StepsJSON, `"`+r.mouth.Name+`"`) {
 		t.Errorf("holder plan %s, want its pickup at %s, not %s", h.StepsJSON, r.deep.Name, r.mouth.Name)
 	}
-	obs, err := r.db.ListOrderBins(h.ID)
-	testutil.MustNoErr(t, err, "list holder order_bins")
-	for _, ob := range obs {
-		if ob.BinID == r.mouthBin {
-			t.Errorf("holder junction still names the mouth bin: %+v", ob)
+	for _, l := range testdb.CartLifts(t, r.db, h.ID) {
+		if l.BinID == r.mouthBin {
+			t.Errorf("holder's rows still name the mouth bin: %+v", l)
 		}
-		if ob.BinID == r.deepBin && ob.NodeName != r.deep.Name {
-			t.Errorf("holder junction for the deep bin names %s, want %s", ob.NodeName, r.deep.Name)
+		if l.BinID == r.deepBin && l.From != r.deep.Name {
+			t.Errorf("holder's row for the deep bin lifts it at %s, want %s", l.From, r.deep.Name)
 		}
 	}
 	// The exchange rewrites the holder's unlifted row from the mouth bin to the

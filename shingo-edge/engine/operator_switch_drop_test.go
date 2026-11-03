@@ -96,8 +96,8 @@ func TestHandleNodeOrderFailed_DropNoBinAutoClears(t *testing.T) {
 	}
 	evacOrderID := *task.OldMaterialReleaseOrderID
 
-	// Simulate Core's no_bin failure for the evac order. Reason
-	// matches the wire shape from complex_claims.go:141.
+	// Simulate Core's no_bin failure for the evac order, in the
+	// wording isNoBinFailure matches.
 	order, _ := db.GetOrder(evacOrderID)
 	emitOrderFailed(eng, evacOrderID, order.UUID, protocol.OrderType("complex"),
 		"no available bin at pickup node(s) for order "+itoa(evacOrderID))

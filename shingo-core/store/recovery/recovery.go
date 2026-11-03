@@ -60,13 +60,14 @@ func ListActions(db *sql.DB, limit int) ([]*Action, error) {
 }
 
 // RepairConfirmedOrderCompletion finalizes an order that is already
-// confirmed but missing completed_at, while atomically applying the bin
-// arrival.
+// confirmed but missing completed_at, while atomically applying the arrival of
+// each of its carts still owed one (places: the caller skips a cart already at
+// its drop; none is a completion with nothing left to place).
 //
 // onPlaced is the landing verb (Lane H, H.2), called in this transaction: a
 // repair may be the only record that the carrier arrived, so its seat hears of
 // it like any other drop (DESIGN-H §3). Nil announces nothing.
-func RepairConfirmedOrderCompletion(db *sql.DB, orderID, binID, toNodeID int64, staged bool, expiresAt *time.Time, onPlaced helpers.OnPlaced) error {
+func RepairConfirmedOrderCompletion(db *sql.DB, orderID int64, places []RepairPlace, onPlaced helpers.OnPlaced) error {
 	tx, err := db.Begin()
 	if err != nil {
 		return fmt.Errorf("begin tx: %w", err)
@@ -102,30 +103,41 @@ func RepairConfirmedOrderCompletion(db *sql.DB, orderID, binID, toNodeID int64, 
 	// that already happened, possibly long ago; the slot's dispatch-time claim,
 	// if there is one, belongs to whatever is driving there now, and clearing it
 	// would take a live claim off a slot on the strength of a historical event.
-	placed, err := helpers.PlaceBinTx(tx, helpers.BinPlacement{
-		BinID:                  binID,
-		ToNodeID:               toNodeID,
-		PlacedByOrder:          orderID,
-		ReleaseClaim:           true,
-		ReleaseDestinationSlot: false,
-		Staged:                 staged,
-		ExpiresAt:              expiresAt,
-	})
-	if err != nil {
-		return err
-	}
-	if onPlaced != nil {
-		if err := onPlaced(tx, placed); err != nil {
+	for _, p := range places {
+		placed, err := helpers.PlaceBinTx(tx, helpers.BinPlacement{
+			BinID:                  p.BinID,
+			ToNodeID:               p.ToNodeID,
+			PlacedByOrder:          orderID,
+			ReleaseClaim:           true,
+			ReleaseDestinationSlot: false,
+			Staged:                 p.Staged,
+			ExpiresAt:              p.ExpiresAt,
+		})
+		if err != nil {
 			return err
 		}
-	}
-	for _, ghostID := range placed.Evicted {
-		log.Printf("WARN: completion repair for order %d evicted a stale bin record (bin %d) to "+
-			"_TRANSIT — the slot it repaired onto already recorded another bin; recover via the "+
-			"anomalies page", orderID, ghostID)
+		if onPlaced != nil {
+			if err := onPlaced(tx, placed); err != nil {
+				return err
+			}
+		}
+		for _, ghostID := range placed.Evicted {
+			log.Printf("WARN: completion repair for order %d evicted a stale bin record (bin %d) to "+
+				"_TRANSIT — the slot it repaired onto already recorded another bin; recover via the "+
+				"anomalies page", orderID, ghostID)
+		}
 	}
 
 	return tx.Commit()
+}
+
+// RepairPlace is one cart a completion repair places: the cart, the node its
+// order's plan sets it down at last, and whether it lands staged.
+type RepairPlace struct {
+	BinID     int64
+	ToNodeID  int64
+	Staged    bool
+	ExpiresAt *time.Time
 }
 
 // ReleaseTerminalBinClaim clears a stale bin claim only when the

@@ -537,10 +537,14 @@ func (d *Dispatcher) payloadForDispatch(order *orders.Order) string {
 	// Read the bin id fresh. The scanner writes it moments before calling here,
 	// and after the snapshot the caller is holding — so the copy in hand is
 	// routinely nil when the database already knows the answer.
-	binID := order.BinID
-	if fresh, err := d.db.GetOrder(order.ID); err == nil && fresh != nil && fresh.BinID != nil {
-		binID = fresh.BinID
+	// The order's carts as written moments ago (the copy in hand is routinely
+	// stale): its one cart, or of several the one its plan leaves at its
+	// process node — the material the order is for.
+	fresh, err := d.db.GetOrder(order.ID)
+	if err != nil || fresh == nil {
+		return order.PayloadCode
 	}
+	binID := materialCart(fresh)
 	if binID == nil {
 		return order.PayloadCode
 	}
@@ -721,24 +725,26 @@ func (d *Dispatcher) dispatchToFleetCore(order *orders.Order, sourceNode, destNo
 		hand.Slots = append(hand.Slots, HandSlot{Node: destNode})
 		hand.DropGroup = ""
 	}
-	// A no-op on this path today: the junction is written only for multi-bin
-	// complex orders and this builds a fresh single-bin transport plan. It is
-	// called anyway because the rule belongs to the SPLICE, not to one caller's
-	// current order shape — the wedge this repairs came from exactly that kind of
-	// "cannot happen here" reasoning going stale.
+	// A GATED ORDER'S PLAN IS PERSISTED (the valve, buildUnsealedCreate), so its
+	// cart's rows are written against the plan it will run, by the walk: the
+	// lane wait moves the pickup, a dig leg's tail-less drop becomes a dwell and
+	// its lift an open one, and a cart already on the robot is in hand from the
+	// start. An order that is not gated keeps the plan its endpoints imply, which
+	// its rows were written against.
 	//
 	// THE CAUSE GOES ON THE ROW HERE, because neither caller downstream can name
-	// this one. A re-index failure is a database error; both of this function's
+	// this one. A failed write is a database error; both of this function's
 	// callers treat any error from it as a FLEET refusal, which is the vocabulary
 	// they were built for — the scanner parks under fleet-unavailable (a wait, so
 	// wait-not-fail holds, but the sentence is wrong), and the redirect door
 	// fails the row because a person is waiting on the reply. Writing the real
 	// cause at the moment it happens is the only place the truth is still known.
-	if rErr := d.reindexOrderBinsForSplice(order.ID, spliced); rErr != nil {
-		log.Printf("dispatch: order %d — could not re-index its junction onto the spliced plan: %v",
-			order.ID, rErr)
-		d.setQueueReason(order, protocol.QueueWaitingForSlot, CauseReadFailed, QueueParams{})
-		return "", rErr
+	if gated {
+		if rErr := d.recordCartsForPlan(order, spliced); rErr != nil {
+			log.Printf("dispatch: order %d — could not write its carts against the gated plan: %v", order.ID, rErr)
+			d.setQueueReason(order, protocol.QueueWaitingForSlot, CauseReadFailed, QueueParams{})
+			return "", rErr
+		}
 	}
 	if gated {
 		return d.dispatchGated(order, target, spliced, d.loadSequenceForPayload(payloadCode), hand)

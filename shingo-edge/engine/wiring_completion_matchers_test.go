@@ -2,9 +2,8 @@ package engine
 
 import "testing"
 
-// TestIsNoBinFailure pins the pickup-side recognition. These strings
-// come from dispatch/complex_claims.go:139/141 — a change there must
-// either keep these wordings or update the matcher in lockstep.
+// TestIsNoBinFailure pins the pickup-side recognition of the two wordings
+// isNoBinFailure documents.
 func TestIsNoBinFailure(t *testing.T) {
 	t.Parallel()
 

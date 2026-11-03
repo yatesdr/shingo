@@ -1104,7 +1104,11 @@ func (d *Dispatcher) advanceCompound(parentOrderID int64, dispatched *bool) erro
 
 	// Build a synthetic envelope for the child dispatch
 	env := d.syntheticEnvelope(next.StationID)
-	if err := d.dispatchToFleet(next, env, sourceNode, destNode, legHand(next)); err != nil {
+	hand, herr := legHand(next)
+	if herr != nil {
+		return fmt.Errorf("compound %d: leg %d: %w", parentOrderID, next.ID, herr)
+	}
+	if err := d.dispatchToFleet(next, env, sourceNode, destNode, hand); err != nil {
 		// NOWHERE TO STAND IS GEOMETRY, AND IT FAILS LOUD.
 		//
 		// This is where the old "missing source or delivery node" arm went. A
@@ -1162,13 +1166,15 @@ func (d *Dispatcher) advanceCompound(parentOrderID int64, dispatched *bool) erro
 }
 
 // legHand is what a dig leg takes at its handover: the bin it moves, claimed
-// through the compound's own claim (HandBin.DigLeg). A leg naming no bin takes
-// only its occupancy and status.
-func legHand(leg *orders.Order) Hand {
-	if leg.BinID == nil {
-		return Hand{}
+// through the compound's own claim (HandBin.DigLeg). A leg carrying no cart
+// takes only its occupancy and status; a leg with several is refused
+// (Order.OnlyBin): a dig leg moves one.
+func legHand(leg *orders.Order) (Hand, error) {
+	bin, err := leg.OnlyBin()
+	if err != nil || bin == nil {
+		return Hand{}, err
 	}
-	return Hand{Bins: []HandBin{{BinID: *leg.BinID, DigLeg: true}}}
+	return Hand{Bins: []HandBin{{BinID: *bin, DigLeg: true}}}, nil
 }
 
 // advanceCompoundChapterEnd is the sql.ErrNoRows half of AdvanceCompoundOrder:

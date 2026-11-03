@@ -169,8 +169,7 @@ func TestFleetRefusal_TheJunctionRowsSurvive(t *testing.T) {
 	db := testDB(t)
 	d, _ := newTestDispatcher(t, db, testdb.NewFailingBackend())
 	order, binID := armedOrderAwaitingFleet(t, db, d, "demote-junction")
-	testutil.MustNoErr(t, orders.InsertOrderBin(db.DB, order.ID, binID, 0, "pickup", "SRC", "DST"),
-		"seed the junction row")
+	testdb.SeedCartRow(t, db, order.ID, binID, 0, 1) // its cart's row
 
 	srcNode, lineNode, _ := setupTestData(t, db)
 	if _, err := d.DispatchDirect(order, srcNode, lineNode); err == nil {

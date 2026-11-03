@@ -214,10 +214,8 @@ func reapplyRefused(order *orders.Order, bin *bins.Bin, destNodeID int64, site s
 
 // The sites, named once so the tally's keys cannot drift from the call sites.
 const (
-	arrivalSiteDelivery          = "delivery"
-	arrivalSiteMultiBinDelivery  = "multi-bin delivery"
-	arrivalSiteCompletionNet     = "completion safety-net"
-	arrivalSiteMultiBinCompleted = "multi-bin completion safety-net"
+	arrivalSiteDelivery      = "delivery"
+	arrivalSiteCompletionNet = "completion safety-net"
 )
 
 // arrivalRefusalTally counts refusals per site for the run. It is the number the

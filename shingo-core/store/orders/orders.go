@@ -44,7 +44,43 @@ type History = domain.OrderHistory
 // SelectCols is exported so cross-aggregate readers at the outer store/
 // level (e.g. ListOrdersByBin, which joins orders from the bin side) can
 // reuse the column list.
-const SelectCols = `id, edge_uuid, station_id, order_type, status, quantity, source_node, delivery_node, process_node, vendor_order_id, vendor_state, robot_id, priority, payload_desc, error_detail, created_at, updated_at, completed_at, parent_order_id, sequence, steps_json, bin_id, payload_code, wait_index, queue_reason, queue_code, queue_cause, skip_auto_confirm, sibling_order_uuid, key_route, key_task, source_intent, coordinated, remaining_uop, origin_id, origin_class, open_for_children, recovers_order_id, named_bin_id, station_unaware, projects_to, plan, want, steps_done`
+//
+// The last column is the order's carts (order_bins, one row per lift), read in
+// the same statement over idx_order_bins_order: every reader of an order has
+// its carts for no further statement. It names the outer row as orders.id, so
+// a statement using SelectCols reads FROM orders unaliased (all of them do).
+const SelectCols = `id, edge_uuid, station_id, order_type, status, quantity, source_node, delivery_node, process_node, vendor_order_id, vendor_state, robot_id, priority, payload_desc, error_detail, created_at, updated_at, completed_at, parent_order_id, sequence, steps_json, bin_id, payload_code, wait_index, queue_reason, queue_code, queue_cause, skip_auto_confirm, sibling_order_uuid, key_route, key_task, source_intent, coordinated, remaining_uop, origin_id, origin_class, open_for_children, recovers_order_id, named_bin_id, station_unaware, projects_to, plan, want, steps_done, ` + CartsColSQL
+
+// CartsColSQL is the order's carts as one JSON text column: an array of
+// [bin_id, pick_step, drop_step], in plan order (a carried-over row, with no
+// steps, first). '[]' for an order that carries none.
+const CartsColSQL = `COALESCE((SELECT json_agg(json_build_array(ob.bin_id, ob.pick_step, ob.drop_step)
+	ORDER BY ob.pick_step NULLS FIRST, ob.id) FROM order_bins ob WHERE ob.order_id = orders.id)::text, '[]')`
+
+// scanCarts reads CartsColSQL's text into the order's carts.
+func scanCarts(o *Order, text string) error {
+	var raw [][3]*int64
+	if err := json.Unmarshal([]byte(text), &raw); err != nil {
+		return fmt.Errorf("order %d: read its carts %q: %w", o.ID, text, err)
+	}
+	o.Carts = nil // an order that carries no cart has none, not an empty list
+	for _, r := range raw {
+		if r[0] == nil {
+			return fmt.Errorf("order %d: a cart row with no bin in %q", o.ID, text)
+		}
+		c := domain.Cart{BinID: *r[0]}
+		if r[1] != nil {
+			p := int(*r[1])
+			c.PickStep = &p
+		}
+		if r[2] != nil {
+			d := int(*r[2])
+			c.DropStep = &d
+		}
+		o.Carts = append(o.Carts, c)
+	}
+	return nil
+}
 
 // Admin-facing list queries (List, ListFiltered, ListActive, ListActiveBoard,
 // CountActive) return EVERY order type. They used to exclude reshuffle_restore —
@@ -71,6 +107,8 @@ func ScanOrder(row interface{ Scan(...any) error }) (*Order, error) {
 	var planJSON string
 	// want is the stated height in its one spelling (protocol.Height, v166).
 	var want string
+	// carts is CartsColSQL's text, the order's order_bins rows.
+	var carts string
 	err := row.Scan(&o.ID, &o.EdgeUUID, &o.StationID, &o.OrderType, &o.Status,
 		&o.Quantity,
 		&o.SourceNode, &o.DeliveryNode, &o.ProcessNode, &o.VendorOrderID, &o.VendorState, &o.RobotID,
@@ -78,8 +116,13 @@ func ScanOrder(row interface{ Scan(...any) error }) (*Order, error) {
 		&parentOrderID, &o.Sequence, &o.StepsJSON, &binID, &o.PayloadCode, &o.WaitIndex, &o.QueueReason, &queueCode, &queueCause,
 		&o.SkipAutoConfirm, &o.SiblingOrderUUID, &keyRouteJSON, &o.KeyTask,
 		&o.SourceIntent, &o.Coordinated, &remainingUOP,
-		&originID, &o.OriginClass, &o.OpenForChildren, &recoversOrderID, &namedBinID, &o.StationUnaware, &o.ProjectsTo, &planJSON, &want, &o.StepsDone)
+		&originID, &o.OriginClass, &o.OpenForChildren, &recoversOrderID, &namedBinID, &o.StationUnaware, &o.ProjectsTo, &planJSON, &want, &o.StepsDone, &carts)
 	if err != nil {
+		return nil, err
+	}
+	// AN UNREADABLE CARTS READ FAILS THE ORDER'S READ: a reader that cannot
+	// know which carts the order carries must not go on as if it carried none.
+	if err := scanCarts(&o, carts); err != nil {
 		return nil, err
 	}
 	if err := o.Want.UnmarshalText([]byte(want)); err != nil {
@@ -198,7 +241,21 @@ func ScanOrders(rows *sql.Rows) ([]*Order, error) {
 // invariant is only a hope.
 func Create(db helpers.QueryRower, o *Order) error {
 	now := clock.Now().UTC()
-	id, err := helpers.InsertID(db, `INSERT INTO orders (edge_uuid, station_id, order_type, status, quantity, source_node, delivery_node, process_node, priority, payload_desc, parent_order_id, sequence, steps_json, bin_id, payload_code, skip_auto_confirm, sibling_order_uuid, key_route, key_task, source_intent, coordinated, origin_id, origin_class, recovers_order_id, named_bin_id, station_unaware, projects_to, plan, robot_id, want, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $27, $28, $29, $30, $31, $26, $26) RETURNING id`,
+	// AN ORDER BORN HOLDING A CART (a named cart, a dig leg's bin) WRITES THE
+	// CART'S ROWS WITH ITSELF, in this one statement: the carts it carries in
+	// memory (Order.HoldFromBirth), else (until v174) the cart orders.bin_id is
+	// born naming, lifted at the plan's first pickup. An order born holding
+	// nothing writes none.
+	carts := RowsOf(o, o.Carts)
+	if len(carts) == 0 && o.BinID != nil {
+		carts = CartRows(o, map[int]int64{domain.FirstPickup(domain.OrderPlan(o)): *o.BinID})
+	}
+	cb, cp, cd, cn, cdest := cartArrays(carts)
+	id, err := helpers.InsertID(db, `WITH ins AS (INSERT INTO orders (edge_uuid, station_id, order_type, status, quantity, source_node, delivery_node, process_node, priority, payload_desc, parent_order_id, sequence, steps_json, bin_id, payload_code, skip_auto_confirm, sibling_order_uuid, key_route, key_task, source_intent, coordinated, origin_id, origin_class, recovers_order_id, named_bin_id, station_unaware, projects_to, plan, robot_id, want, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $27, $28, $29, $30, $31, $26, $26) RETURNING id),
+		carts AS (INSERT INTO order_bins (order_id, bin_id, pick_step, drop_step, action, node_name, dest_node)
+		          SELECT ins.id, r.bin, r.pick, NULLIF(r.drop, -1), 'pickup', r.node, r.dest
+		            FROM ins, unnest($32::bigint[], $33::bigint[], $34::bigint[], $35::text[], $36::text[]) AS r(bin, pick, drop, node, dest))
+		SELECT id FROM ins`,
 		o.EdgeUUID, o.StationID, o.OrderType, o.Status,
 		o.Quantity,
 		o.SourceNode, o.DeliveryNode, o.ProcessNode, o.Priority, o.PayloadDesc,
@@ -208,11 +265,21 @@ func Create(db helpers.QueryRower, o *Order) error {
 		helpers.NullableText(o.OriginID), o.OriginClass,
 		helpers.NullableInt64(o.RecoversOrderID),
 		helpers.NullableInt64(o.NamedBinID),
-		now, o.StationUnaware, o.ProjectsTo, marshalPlan(o.Plan), o.RobotID, o.Want.String())
+		now, o.StationUnaware, o.ProjectsTo, marshalPlan(o.Plan), o.RobotID, o.Want.String(),
+		cb, cp, cd, cn, cdest)
 	if err != nil {
 		return fmt.Errorf("create order: %w", err)
 	}
 	o.ID = id
+	o.Carts = nil
+	for _, r := range carts {
+		p, d := r.PickStep, r.DropStep
+		c := domain.Cart{BinID: r.BinID, PickStep: &p}
+		if d != OpenLift {
+			c.DropStep = &d
+		}
+		o.Carts = append(o.Carts, c)
+	}
 	// InsertID rather than Exec: Create takes a QueryRower so it can run inside
 	// the issue's transaction, and RETURNING id is how a QueryRower
 	// executes an INSERT. The id is discarded.
@@ -1135,7 +1202,8 @@ func ActiveByDeliveryNodes(db *sql.DB, names []string) ([]*Order, error) {
 // plan — neither its first actionable step nor its last. A spliced plan has
 // exactly that shape whenever the lane is not an endpoint.
 //
-// EACH ROW CARRIES THE NODE ITS BIN READS AT, in the same statement. A dig leg
+// EACH ROW CARRIES THE NODE ITS FIRST CART READS AT (its lowest pick step's;
+// a dig leg carries one), in the same statement. A dig leg
 // is waiting at its lane only once it has lifted its blocker, and the lift is
 // the bin leaving its slot; every reader of these rows asks that, so the answer
 // rides on the read they already make instead of a bin read per order.
@@ -1148,8 +1216,10 @@ func ActiveGateCandidates(db *sql.DB) ([]*GateCandidate, error) {
 	rows, err := db.Query(fmt.Sprintf(
 		`SELECT q.*, %s
 		   FROM (SELECT %s,
-		                COALESCE((SELECT n.name FROM bins b JOIN nodes n ON n.id = b.node_id
-		                           WHERE b.id = orders.bin_id), '') AS gate_bin_node
+		                COALESCE((SELECT n.name FROM order_bins ob JOIN bins b ON b.id = ob.bin_id
+		                            JOIN nodes n ON n.id = b.node_id
+		                           WHERE ob.order_id = orders.id
+		                           ORDER BY ob.pick_step NULLS FIRST, ob.id LIMIT 1), '') AS gate_bin_node
 		           FROM orders
 		          WHERE vendor_order_id <> '' AND steps_json <> ''
 		            AND status NOT IN (%s)) q
@@ -1739,7 +1809,9 @@ func UpdatePayloadCode(db *sql.DB, orderID int64, payloadCode string) error {
 // own status list, because they count something else.
 func InFlightForDropoffSQL() string {
 	return `(EXISTS (SELECT 1 FROM bins b WHERE b.claimed_by = orders.id)
-	         OR (orders.parent_order_id IS NOT NULL AND orders.bin_id IS NOT NULL AND ` + AwaitingFleetSQL("orders") + `))`
+	         OR (orders.parent_order_id IS NOT NULL
+	             AND EXISTS (SELECT 1 FROM order_bins ob WHERE ob.order_id = orders.id)
+	             AND ` + AwaitingFleetSQL("orders") + `))`
 }
 
 // CountInFlightByDeliveryNode counts the orders delivering to a node that hold a
@@ -1765,8 +1837,9 @@ func CountInFlightByDeliveryNodeExcluding(db *sql.DB, deliveryNode string, exclu
 
 // DropoffInbound is one order the dropoff gate counts as on its way to a node:
 // the order (its id and Edge UUID), the delivery node as the order names it,
-// where it comes from, its payload, and the bin type of the carrier it names
-// (orders.bin_id once sourced, else orders.named_bin_id; "" when it names none).
+// where it comes from, its payload, and the bin type of the cart it sets down
+// there (the order's row whose drop step is at its delivery node, else the cart
+// the asker named; "" when it names none).
 type DropoffInbound struct {
 	OrderID      int64
 	EdgeUUID     string
@@ -1793,7 +1866,10 @@ func ListInFlightByDeliveryNodes(db helpers.RowsQuerier, deliveryNodes []string)
 	rows, err := db.Query(fmt.Sprintf(`SELECT orders.id, orders.edge_uuid, orders.delivery_node, orders.source_node,
 		       orders.payload_code, COALESCE(cbt.code, '')
 		  FROM orders
-		  LEFT JOIN bins cb ON cb.id = COALESCE(orders.bin_id, orders.named_bin_id)
+		  LEFT JOIN LATERAL (SELECT ob.bin_id FROM order_bins ob
+		               WHERE ob.order_id = orders.id AND `+helpers.StepNodeSQL("orders", "ob.drop_step")+` = orders.delivery_node
+		               ORDER BY ob.drop_step DESC LIMIT 1) here ON true
+		  LEFT JOIN bins cb ON cb.id = COALESCE(here.bin_id, orders.named_bin_id)
 		  LEFT JOIN bin_types cbt ON cbt.id = cb.bin_type_id
 		 WHERE orders.delivery_node IN (%s) AND %s
 		 ORDER BY orders.id`, strings.Join(placeholders, ","), InFlightForDropoffSQL()), args...)
@@ -1895,22 +1971,23 @@ func CountLiveRootsByOrigin(db *sql.DB, originID string) (int, error) {
 //
 // TYPED BY THE CARRIER ALREADY CHOSEN, not by a requested type, because these
 // orders have no requested type — nothing in the plant carries one. The carrier
-// is orders.bin_id once sourced, else orders.named_bin_id: an unloader's
-// empty-out names the cart standing at its window, and that cart is coming
-// before dispatch claims it. Pin:
-// TestUnloaderEmptyOut_NamedBinCountsAsComingBeforeItIsSourced. An order with
-// neither is INVISIBLE here, deliberately and statedly: crediting an inbound
-// with no carrier would let the keeper subtract one that may never arrive.
-// Over-asking is the safe direction — it is bounded by want, and the loser of a
-// race re-queues, which is a normal outcome.
+// is a cart the order carries (its order_bins rows, written where it comes to
+// hold the cart: an unloader's empty-out names the cart standing at its window
+// and writes its row at its issue, so that cart is coming before dispatch claims
+// it — pin TestUnloaderEmptyOut_NamedBinCountsAsComingBeforeItIsSourced), else
+// the cart its asker named. An order with neither is INVISIBLE here,
+// deliberately and statedly: crediting an inbound with no carrier would let the
+// keeper subtract one that may never arrive. Over-asking is the safe direction —
+// it is bounded by want, and the loser of a race re-queues, which is a normal
+// outcome.
 //
-// TWO ARMS, because a complex order records its carriers in two places. The
-// direct arm reads the order's carrier against the order's own delivery_node; the
-// junction arm reads order_bins.bin_id against that row's dest_node, which is
-// where a multi-pickup complex order records "this carrier goes to that node".
-// A single-pickup complex order writes no junction row at all
-// (allocator.go:743's len(claimed) > 1 guard), so the direct arm is what covers
-// it. DISTINCT on the carrier because the two arms can name the same one.
+// ONE ARM OVER THE ROWS: a cart is coming into the group when a row of a live
+// order sets it down there (its drop step's node, helpers.StepNodeSQL). The
+// named arm covers only a named cart with no row. A cart its order LIFTS out of
+// the group is not coming into it: the direct arm that read orders.bin_id
+// against the order's delivery_node counted a swap's outgoing cart as incoming
+// (finding 2's shape on the kanban branch). DISTINCT on the carrier because a
+// relayed cart has a row per lift.
 //
 // THE GROUP-NAME ARM IS NOT REDUNDANT. resolveSyntheticDestination rewrites
 // delivery_node from the group to a concrete child at admit, so a settled order
@@ -1943,8 +2020,8 @@ func CountTypedInboundToGroup(db *sql.DB, groupNodeID int64, groupNodeName, binT
 }
 
 // InboundCarrier is one carrier on its way into a group: the carrier the order
-// names (orders.bin_id once sourced, else orders.named_bin_id, or a junction
-// row's bin) and the totes on it, nil when unknown.
+// carries (a row of its order's, else the cart its asker named)
+// and the totes on it, nil when unknown.
 type InboundCarrier struct {
 	BinID       int64
 	TotesOnCart *int
@@ -1978,31 +2055,33 @@ func ListTypedInboundToGroup(db *sql.DB, groupNodeID int64, groupNodeName, binTy
 	if binTypeCode == "" || groupNodeName == "" {
 		return nil, nil
 	}
+	dropNode := helpers.StepNodeSQL("o", "ob.drop_step")
 	rows, err := db.Query(nodetree.DescendantsOf(1)+fmt.Sprintf(`
 		SELECT DISTINCT bin_id, totes_on_cart, state FROM (
-		    SELECT b.id AS bin_id, b.totes_on_cart, %[2]s AS state
-		      FROM orders o
-		      JOIN bins b  ON b.id = COALESCE(o.bin_id, o.named_bin_id)
-		      JOIN bin_types bt ON bt.id = b.bin_type_id
-		      LEFT JOIN nodes dn ON dn.name = o.delivery_node
-		     WHERE o.status IN (%[1]s)
-		       AND bt.code = $2
-		       AND COALESCE(b.payload_code, '') = ''
-		       AND (o.delivery_node = $3 OR dn.id IN (SELECT id FROM descendants))
-		       AND NOT EXISTS (
-		           SELECT 1 FROM demand_origins d
-		            WHERE d.origin_id = o.origin_id AND d.kind = $4 AND `+helpers.DemandOpenSQL("d")+`)
-		    UNION ALL
 		    SELECT ob.bin_id AS bin_id, b.totes_on_cart, %[2]s AS state
 		      FROM order_bins ob
 		      JOIN orders o ON o.id = ob.order_id
 		      JOIN bins b  ON b.id = ob.bin_id
 		      JOIN bin_types bt ON bt.id = b.bin_type_id
-		      LEFT JOIN nodes dn ON dn.name = ob.dest_node
+		      LEFT JOIN nodes dn ON dn.name = `+dropNode+`
 		     WHERE o.status IN (%[1]s)
 		       AND bt.code = $2
 		       AND COALESCE(b.payload_code, '') = ''
-		       AND (ob.dest_node = $3 OR dn.id IN (SELECT id FROM descendants))
+		       AND (`+dropNode+` = $3 OR dn.id IN (SELECT id FROM descendants))
+		       AND NOT EXISTS (
+		           SELECT 1 FROM demand_origins d
+		            WHERE d.origin_id = o.origin_id AND d.kind = $4 AND `+helpers.DemandOpenSQL("d")+`)
+		    UNION ALL
+		    SELECT b.id AS bin_id, b.totes_on_cart, %[2]s AS state
+		      FROM orders o
+		      JOIN bins b  ON b.id = o.named_bin_id
+		      JOIN bin_types bt ON bt.id = b.bin_type_id
+		      LEFT JOIN nodes dn ON dn.name = o.delivery_node
+		     WHERE o.status IN (%[1]s)
+		       AND NOT EXISTS (SELECT 1 FROM order_bins ob WHERE ob.order_id = o.id)
+		       AND bt.code = $2
+		       AND COALESCE(b.payload_code, '') = ''
+		       AND (o.delivery_node = $3 OR dn.id IN (SELECT id FROM descendants))
 		       AND NOT EXISTS (
 		           SELECT 1 FROM demand_origins d
 		            WHERE d.origin_id = o.origin_id AND d.kind = $4 AND `+helpers.DemandOpenSQL("d")+`)
@@ -2162,15 +2241,20 @@ func UpdateRobotID(db *sql.DB, id int64, robotID string) error {
 	return err
 }
 
-// ClearBinID forgets which bin an order was going to take.
+// ForgetHeldCart forgets the cart an order was going to take: its rows, and
+// the orders.bin_id pointer beside them (until v174), in one statement. The
+// plain scanner routes on the rows (Order.OnlyBin), so the finder picks again
+// from nothing. The one caller is the held-bin path giving up a stale hold that
+// has been reaped — see fulfillment.dispatchHeldBin.
 //
-// SEPARATE FROM UpdateBinID because the column is NULLABLE and "no bin" is not
-// bin zero: the plain scanner routes on `order.BinID != nil`, so a 0 would keep
-// the order in the held-bin arm forever, pointed at a bin that does not exist.
-// The one caller is the held-bin path giving up a stale pointer whose
-// reservation has been reaped — see fulfillment.dispatchHeldBin.
-func ClearBinID(db *sql.DB, orderID int64) error {
-	_, err := db.Exec(`UPDATE orders SET bin_id=NULL, updated_at=$2 WHERE id=$1`, orderID, clock.Now().UTC())
+// A named order keeps its row for the cart it names: re-finding it can only
+// ever fetch that cart, so the held-bin path holds it again instead
+// (reholdNamedCart) and never calls this for it.
+func ForgetHeldCart(db *sql.DB, orderID int64) error {
+	_, err := db.Exec(`WITH unrowed AS (
+		DELETE FROM order_bins ob USING orders o
+		 WHERE o.id = $1 AND ob.order_id = o.id AND ob.bin_id IS DISTINCT FROM o.named_bin_id)
+		UPDATE orders SET bin_id=NULL, updated_at=$2 WHERE id=$1`, orderID, clock.Now().UTC())
 	return err
 }
 
@@ -2201,16 +2285,37 @@ func ClearBinID(db *sql.DB, orderID int64) error {
 // IS DISTINCT FROM, not `<>`: bin_id is NULLABLE, and `bin_id <> $1` is NULL —
 // not true — for a row whose bin_id is NULL, which would make this refuse to
 // write the FIRST binding, the one case that always matters.
+//
+// The cart's row goes with the pointer, in the same statement: the order now
+// carries this cart, lifted at its plan's first pickup (the implied plan's
+// step 0). Its other rows stand.
 func UpdateBinID(db *sql.DB, orderID, binID int64) error {
-	_, err := db.Exec(`UPDATE orders SET bin_id=$1, updated_at=$3
-		WHERE id=$2 AND bin_id IS DISTINCT FROM $1`, binID, orderID, clock.Now().UTC())
+	o, err := Get(db, orderID)
+	if err != nil {
+		return fmt.Errorf("point order %d at bin %d: %w", orderID, binID, err)
+	}
+	rows := CartRows(o, map[int]int64{domain.FirstPickup(domain.OrderPlan(o)): binID})
+	bins, picks, drops, nodes, dests := cartArrays(rows)
+	_, err = db.Exec(`WITH ptr AS (UPDATE orders SET bin_id=$1, updated_at=$3
+		WHERE id=$2 AND bin_id IS DISTINCT FROM $1)
+		INSERT INTO order_bins (order_id, bin_id, pick_step, drop_step, action, node_name, dest_node)
+		SELECT $2, r.bin, r.pick, NULLIF(r.drop, -1), 'pickup', r.node, r.dest
+		  FROM unnest($4::bigint[], $5::bigint[], $6::bigint[], $7::text[], $8::text[]) AS r(bin, pick, drop, node, dest)
+		ON CONFLICT (order_id, pick_step) DO UPDATE
+		   SET bin_id = EXCLUDED.bin_id, drop_step = EXCLUDED.drop_step,
+		       node_name = EXCLUDED.node_name, dest_node = EXCLUDED.dest_node`,
+		binID, orderID, clock.Now().UTC(), bins, picks, drops, nodes, dests)
 	return err
 }
 
 // ListByBinID returns recent orders involving a specific bin.
 // Owned by orders/ because the return type is *Order.
 func ListByBinID(db *sql.DB, binID int64, limit int) ([]*Order, error) {
-	rows, err := db.Query(fmt.Sprintf(`SELECT %s FROM orders WHERE bin_id=$1 ORDER BY id DESC LIMIT $2`, SelectCols), binID, limit)
+	// A cart's orders are the orders with a row for it (order_bins_by_bin, newest
+	// first): live or ended, whichever cart of its order it was.
+	rows, err := db.Query(fmt.Sprintf(`SELECT %s FROM orders WHERE id IN (
+		SELECT DISTINCT ob.order_id FROM order_bins ob WHERE ob.bin_id = $1 ORDER BY ob.order_id DESC LIMIT $2)
+		ORDER BY id DESC`, SelectCols), binID, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -2218,18 +2323,21 @@ func ListByBinID(db *sql.DB, binID int64, limit int) ([]*Order, error) {
 	return ScanOrders(rows)
 }
 
-// ActiveByBinID returns non-terminal orders currently referencing a bin via
-// bin_id. BinService consults it to refuse a manual retire/move that would
-// orphan a live order — the SMN_029 zombie (2026-07-22): a delivered
+// ActiveByBinID returns the non-terminal orders that carry a bin: a live order
+// with a row for it. BinService consults it to refuse a manual retire/move that
+// would orphan a live order — the SMN_029 zombie (2026-07-22): a delivered
 // retrieve_empty still pointing at a carrier an operator retired + moved kept
 // its delivery card on the HMI and its loader slot budget spent while the
 // carrier was recycled into another part elsewhere. Core CLEARS bins.claimed_by
-// on arrival (ApplyArrival), so orders.bin_id is the only durable bin↔order tie
-// a post-delivery guard can key on. No LIMIT: correctness can't ride on a bin's
-// active order being among its N most recent rows.
+// on arrival (ApplyArrival), so the order's rows are the durable bin↔order tie
+// a post-delivery guard keys on — every cart of the order, not the one cart
+// orders.bin_id named (a swap's second cart on the robot passed the guard). No
+// LIMIT: correctness can't ride on a bin's active order being among its N most
+// recent rows.
 func ActiveByBinID(db *sql.DB, binID int64) ([]*Order, error) {
 	rows, err := db.Query(fmt.Sprintf(
-		`SELECT %s FROM orders WHERE bin_id=$1 AND status NOT IN (%s) ORDER BY id DESC`,
+		`SELECT %s FROM orders WHERE status NOT IN (%s)
+		   AND id IN (SELECT ob.order_id FROM order_bins ob WHERE ob.bin_id = $1) ORDER BY id DESC`,
 		SelectCols, protocol.TerminalStatusSQLList()), binID)
 	if err != nil {
 		return nil, err

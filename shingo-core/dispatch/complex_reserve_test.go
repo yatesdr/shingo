@@ -1050,9 +1050,9 @@ func TestEvacMismatchedPressBin_DispatchesCompleteAndSurfaces(t *testing.T) {
 		t.Fatalf("order_bins rows = %d, want 2 — a complete evac records both pickups; a 1-of-2 partial is exactly the HK damage", len(obs))
 	}
 	var pressRowBin int64 = -1
-	for _, ob := range obs {
-		if ob.NodeName == press.Name {
-			pressRowBin = ob.BinID
+	for _, l := range testdb.CartLifts(t, db, order.ID) {
+		if l.From == press.Name {
+			pressRowBin = l.BinID
 		}
 	}
 	if pressRowBin != pressBin.ID {

@@ -686,7 +686,8 @@ func TestCountByDeliveryNode(t *testing.T) {
 // list to the dropoff gate's count: for every delivery name, the rows listed
 // are exactly as many as CountInFlightByDeliveryNodeExcluding(name, 0) counts,
 // in order id order, each with the order's Edge UUID, source, payload and the
-// bin type of the carrier it names (bin_id, else named_bin_id, else none).
+// bin type of the carrier it sets down there (its row whose drop step is the
+// delivery node, else named_bin_id, else none).
 func TestListInFlightByDeliveryNodes_IsTheGatesSet(t *testing.T) {
 	t.Parallel()
 	d := testdb.Open(t)
@@ -717,8 +718,9 @@ func TestListInFlightByDeliveryNodes_IsTheGatesSet(t *testing.T) {
 		kd).Scan(&named), "named bin")
 	_, err := db.Exec(`UPDATE orders SET named_bin_id = $1 WHERE id = $2`, named, ids["t"])
 	testutil.MustNoErr(t, err, "name a carrier")
-	_, err = db.Exec(`UPDATE orders SET bin_id = (SELECT id FROM bins WHERE claimed_by = $1) WHERE id = $1`, ids["d"])
-	testutil.MustNoErr(t, err, "source a carrier")
+	var sourced int64
+	testutil.MustNoErr(t, db.QueryRow(`SELECT id FROM bins WHERE claimed_by = $1`, ids["d"]).Scan(&sourced), "the claimed carrier")
+	testdb.SeedCartRow(t, d, ids["d"], sourced, 0, 1) // source a carrier: its row sets it down at LINE1-IN
 
 	names := []string{"LINE1-IN", "GRP.LINE1-IN", "LINE2-IN", "NOWHERE"}
 	got, err := orders.ListInFlightByDeliveryNodes(db, names)
@@ -1014,28 +1016,21 @@ func TestUpdateBinIDAndListByBinID(t *testing.T) {
 	}
 }
 
-// -------- Order <-> Bin junction: InsertOrderBin, ListOrderBins, DeleteOrderBins
+// -------- An order's carts: ReplaceOrderBins, ListOrderBins, Order.Carts
 
-// TestOrderBinsJunction_ReRecordingAClaimUpdatesInPlace pins the grain the
-// junction always claimed to have and did not enforce.
-//
-// "One row per claimed bin" is what UpdateOrderBinDestNode is written against —
-// it keys on the bin and says so — and what binForStep assumes when it reads the
-// first row matching a step index as if it were the only one. InsertOrderBin was
-// a bare INSERT, so every re-run of an allocation added the same row again.
+// TestOrderBins_ReRecordingALiftUpdatesInPlace pins the grain: one row per
+// lift, upserted on its pick step.
 //
 // Measured on the lane-stress rig 2026-08-13, during a window in which five
 // demands were stuck in a re-drive loop: 2,472 junction rows for a handful of
-// orders, 450 of them identical for one (order, step, bin). Nothing read a wrong
-// answer — the duplicates were identical and the first match wins — so the cost
-// was writes, unbounded growth for as long as an order stayed stuck, and a table
-// nobody could read during the incident that produced it.
+// orders, 450 of them identical for one (order, step, bin), because the insert
+// was bare and every re-run of an allocation added the same row again. Nothing
+// read a wrong answer, so the cost was writes, unbounded growth for as long as
+// an order stayed stuck, and a table nobody could read during the incident.
 //
-// THE SECOND HALF IS WHY IT IS AN UPDATE AND NOT DO NOTHING. An allocation that
-// retries after the plan moved carries a NEW step index for the same bin, and
-// DO NOTHING would keep the stale one while reporting success — a junction that
-// disagrees with the plan, which is the one thing binForStep cannot survive.
-func TestOrderBinsJunction_ReRecordingAClaimUpdatesInPlace(t *testing.T) {
+// A DIFFERENT PICK STEP IS A DIFFERENT LIFT, not the same claim moved: a
+// relayed cart is lifted twice, and has two rows.
+func TestOrderBins_ReRecordingALiftUpdatesInPlace(t *testing.T) {
 	t.Parallel()
 	d := testdb.Open(t)
 	fx := testdb.SetupStandardData(t, d)
@@ -1044,41 +1039,37 @@ func TestOrderBinsJunction_ReRecordingAClaimUpdatesInPlace(t *testing.T) {
 	bin := testdb.CreateBinAtNode(t, d, "PART-A", fx.StorageNode.ID, "BIN-DUP")
 	o := newPendingOrder("junction-dup")
 	o.OrderType = "compound"
+	o.StepsJSON = `[{"action":"wait","node":"LINE1-IN"},{"action":"pickup","node":"STORAGE-A1"},{"action":"dropoff","node":"STAGE"},` +
+		`{"action":"wait","node":"LINE1-IN"},{"action":"pickup","node":"STAGE"},{"action":"dropoff","node":"LINE1-IN"}]`
 	testutil.MustNoErr(t, orders.Create(db, o), "Create order")
 
+	lift := orders.OrderBinRow{BinID: bin.ID, PickStep: 1, DropStep: 2, NodeName: "STORAGE-A1", DestNode: "STAGE"}
 	for i := 0; i < 3; i++ {
-		testutil.MustNoErr(t, orders.InsertOrderBin(db, o.ID, bin.ID, 1, "pick", "STORAGE-A1", ""),
-			"re-record the same claim")
+		testutil.MustNoErr(t, orders.ReplaceOrderBins(db, o.ID, bin.ID, []orders.OrderBinRow{lift}),
+			"re-record the same lift")
 	}
 	list, err := orders.ListOrderBins(db, o.ID)
-	if err != nil {
-		t.Fatalf("ListOrderBins: %v", err)
-	}
+	testutil.MustNoErr(t, err, "ListOrderBins")
 	if len(list) != 1 {
-		t.Fatalf("len = %d after recording one claim three times, want 1. A retried allocation must "+
-			"not grow the junction: on the rig this reached 450 identical rows for a single bin while "+
+		t.Fatalf("len = %d after recording one lift three times, want 1. A retried allocation must "+
+			"not grow the rows: on the rig this reached 450 identical rows for a single bin while "+
 			"its order sat stuck", len(list))
 	}
 
-	// AND A MOVED PLAN REWRITES THE ROW rather than being silently dropped.
-	testutil.MustNoErr(t, orders.InsertOrderBin(db, o.ID, bin.ID, 4, "pick", "STORAGE-A2", "LINE1-IN"),
-		"re-record the claim at a new step")
+	relay := orders.OrderBinRow{BinID: bin.ID, PickStep: 4, DropStep: 5, NodeName: "STAGE", DestNode: "LINE1-IN"}
+	testutil.MustNoErr(t, orders.ReplaceOrderBins(db, o.ID, bin.ID, []orders.OrderBinRow{lift, relay}),
+		"record a second lift of the cart")
 	list, err = orders.ListOrderBins(db, o.ID)
-	if err != nil {
-		t.Fatalf("ListOrderBins after the re-plan: %v", err)
-	}
-	if len(list) != 1 {
-		t.Fatalf("len = %d, want 1", len(list))
-	}
-	if list[0].StepIndex != 4 || list[0].NodeName != "STORAGE-A2" || list[0].DestNode != "LINE1-IN" {
-		t.Errorf("the junction row is (step %d, %s -> %s), want (4, STORAGE-A2 -> LINE1-IN). A "+
-			"conflict that keeps the OLD row leaves the junction disagreeing with the plan, and "+
-			"binForStep would hand the gate a bin for a step that no longer exists",
-			list[0].StepIndex, list[0].NodeName, list[0].DestNode)
+	testutil.MustNoErr(t, err, "ListOrderBins after the second lift")
+	if len(list) != 2 || list[0].PickStep != 1 || list[1].PickStep != 4 || list[1].DropStep != 5 {
+		t.Fatalf("rows = %+v, want the lift (1, 2) and the lift (4, 5)", list)
 	}
 }
 
-func TestOrderBinsJunction(t *testing.T) {
+// TestOrderBins_ReadInPlanOrder pins the order an order's rows are read in, by
+// both readers: ListOrderBins and the order's own carts (SelectCols), by pick
+// step whatever order they were written in.
+func TestOrderBins_ReadInPlanOrder(t *testing.T) {
 	t.Parallel()
 	d := testdb.Open(t)
 	fx := testdb.SetupStandardData(t, d)
@@ -1089,68 +1080,35 @@ func TestOrderBinsJunction(t *testing.T) {
 
 	o := newPendingOrder("junction")
 	o.OrderType = "compound"
+	o.StepsJSON = `[{"action":"pickup","node":"STORAGE-A1"},{"action":"dropoff","node":"LINE1-IN"},` +
+		`{"action":"pickup","node":"STORAGE-A1"},{"action":"dropoff","node":"LINE1-IN"}]`
 	testutil.MustNoErr(t, orders.Create(db, o), "Create order")
 
-	// Insert rows out of step_index order; ListOrderBins must sort ascending.
-	testutil.MustNoErr(t, orders.InsertOrderBin(db, o.ID, bin2.ID, 2, "deliver", "STORAGE-A1", "LINE1-IN"), "InsertOrderBin bin2")
-	testutil.MustNoErr(t, orders.InsertOrderBin(db, o.ID, bin1.ID, 1, "pick", "STORAGE-A1", ""), "InsertOrderBin bin1")
+	testutil.MustNoErr(t, orders.ReplaceOrderBins(db, o.ID, bin1.ID, []orders.OrderBinRow{
+		{BinID: bin2.ID, PickStep: 2, DropStep: 3, NodeName: "STORAGE-A1", DestNode: "LINE1-IN"},
+		{BinID: bin1.ID, PickStep: 0, DropStep: 1, NodeName: "STORAGE-A1", DestNode: "LINE1-IN"},
+	}), "rows written out of plan order")
 
 	list, err := orders.ListOrderBins(db, o.ID)
-	if err != nil {
-		t.Fatalf("ListOrderBins: %v", err)
-	}
-	if len(list) != 2 {
-		t.Fatalf("len = %d, want 2", len(list))
-	}
-	// Sorted by step_index ascending.
-	if list[0].StepIndex != 1 || list[1].StepIndex != 2 {
-		t.Errorf("step_index order wrong: [%d, %d], want [1, 2]",
-			list[0].StepIndex, list[1].StepIndex)
-	}
-	if list[0].BinID != bin1.ID {
-		t.Errorf("list[0].BinID = %d, want %d", list[0].BinID, bin1.ID)
-	}
-	if list[0].Action != "pick" {
-		t.Errorf("list[0].Action = %q, want pick", list[0].Action)
-	}
-	if list[0].NodeName != "STORAGE-A1" {
-		t.Errorf("list[0].NodeName = %q, want STORAGE-A1", list[0].NodeName)
-	}
-	if list[1].BinID != bin2.ID {
-		t.Errorf("list[1].BinID = %d, want %d", list[1].BinID, bin2.ID)
-	}
-	if list[1].Action != "deliver" {
-		t.Errorf("list[1].Action = %q, want deliver", list[1].Action)
-	}
-	if list[1].DestNode != "LINE1-IN" {
-		t.Errorf("list[1].DestNode = %q, want LINE1-IN", list[1].DestNode)
+	testutil.MustNoErr(t, err, "ListOrderBins")
+	if len(list) != 2 || list[0].BinID != bin1.ID || list[0].PickStep != 0 || list[1].BinID != bin2.ID || list[1].PickStep != 2 {
+		t.Fatalf("rows = %+v, want bin %d at 0 then bin %d at 2", list, bin1.ID, bin2.ID)
 	}
 	for _, ob := range list {
-		if ob.OrderID != o.ID {
-			t.Errorf("OrderID = %d, want %d", ob.OrderID, o.ID)
+		if ob.OrderID != o.ID || ob.CreatedAt.IsZero() {
+			t.Errorf("row %+v: want order %d and a created_at", ob, o.ID)
 		}
-		if ob.CreatedAt.IsZero() {
-			t.Errorf("CreatedAt zero for step %d", ob.StepIndex)
-		}
+	}
+	got, err := orders.Get(db, o.ID)
+	testutil.MustNoErr(t, err, "the order with its carts")
+	if len(got.Carts) != 2 || got.Carts[0].BinID != bin1.ID || got.Carts[1].BinID != bin2.ID {
+		t.Errorf("carts = %+v, want bin %d then bin %d", got.Carts, bin1.ID, bin2.ID)
 	}
 
-	// Unknown order returns empty.
 	none, err := orders.ListOrderBins(db, 999999)
-	if err != nil {
-		t.Fatalf("ListOrderBins unknown: %v", err)
-	}
+	testutil.MustNoErr(t, err, "ListOrderBins unknown")
 	if len(none) != 0 {
 		t.Errorf("unknown-order len = %d, want 0", len(none))
-	}
-
-	// DeleteOrderBins removes all rows for the order.
-	orders.DeleteOrderBins(db, o.ID)
-	after, err := orders.ListOrderBins(db, o.ID)
-	if err != nil {
-		t.Fatalf("ListOrderBins post-delete: %v", err)
-	}
-	if len(after) != 0 {
-		t.Errorf("post-delete len = %d, want 0", len(after))
 	}
 }
 

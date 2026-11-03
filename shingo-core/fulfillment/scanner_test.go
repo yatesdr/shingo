@@ -547,7 +547,7 @@ func TestStoreReplayDispatchesOwnClaimedBin(t *testing.T) {
 	order := &orders.Order{
 		ID:     4,
 		Status: protocol.StatusQueued,
-		// The type is incidental: the branch under test keys on BinID != nil,
+		// The type is incidental: the branch under test keys on the held cart,
 		// not on the order type. Kept as the literal because "store" is no
 		// longer a kind of order — it was the resolver direction, and it now
 		// has its own type.
@@ -556,6 +556,7 @@ func TestStoreReplayDispatchesOwnClaimedBin(t *testing.T) {
 		SourceNode:   "STORE-SRC",
 		DeliveryNode: "STORE-DEST",
 	}
+	order.HoldFromBirth(binID)
 	f.queued = append(f.queued, order)
 	f.ordersByID[4] = order
 	f.nodesByDot["STORE-SRC"] = &nodes.Node{ID: 500, Name: "STORE-SRC"}
@@ -630,6 +631,7 @@ func TestScannerRetriesAnAcquiringOrder(t *testing.T) {
 			BinID:      &heldBin, // already holds its bin — must be reused, never re-found
 			SourceNode: "src-held", DeliveryNode: "dest-x", PayloadCode: "PN-X",
 		}
+		order.HoldFromBirth(heldBin)
 		f.queued = append(f.queued, order)
 		f.ordersByID[43] = order
 
@@ -740,6 +742,7 @@ func TestHeldBin_DeclaresItselfAsHeldBinEntry(t *testing.T) {
 		ID: 4, Status: protocol.StatusQueued, OrderType: protocol.OrderType("store"),
 		BinID: &binID, SourceNode: "HB-SRC", DeliveryNode: "HB-DEST",
 	}
+	order.HoldFromBirth(binID)
 	f.queued = append(f.queued, order)
 	f.ordersByID[4] = order
 	f.nodesByDot["HB-SRC"] = &nodes.Node{ID: 500, Name: "HB-SRC"}

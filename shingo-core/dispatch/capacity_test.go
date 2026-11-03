@@ -384,7 +384,7 @@ func (f *fakeCapacityDB) BinTypeBareOf(binTypeID int64) (*int64, error) {
 	return nil, nil
 }
 
-func (f *fakeCapacityDB) BinTypeForOrder(orderID int64) (*int64, protocol.CarrierState, error) {
+func (f *fakeCapacityDB) BinTypeForOrder(orderID int64, group string) (*int64, protocol.CarrierState, error) {
 	if id, ok := f.orderBinTypes[orderID]; ok {
 		return &id, f.orderStates[orderID], nil
 	}

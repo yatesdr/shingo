@@ -93,10 +93,9 @@ func TestOrderCartsPin_BinForStepResolvesARelayFromItsRow(t *testing.T) {
 	var steps []resolvedStep
 	testutil.MustNoErr(t, json.Unmarshal([]byte(o.StepsJSON), &steps), "read the plan")
 
-	sb, err := d.binForStep(o, steps, 5)
-	testutil.MustNoErr(t, err, "bin for the relay step")
-	if sb.binID != fresh.ID {
-		t.Fatalf("the relay step's cart = bin %d (at node %q), want the fresh cart %d from its row", sb.binID, sb.atNode, fresh.ID)
+	sb := binForStep(o, 5)
+	if !sb.known || sb.binID != fresh.ID {
+		t.Fatalf("the relay step's cart = %+v, want the fresh cart %d from its row", sb, fresh.ID)
 	}
 }
 
@@ -147,13 +146,14 @@ func TestOrderCartsPin_AContainmentDivertKeepsEachCartsDropWithItsPlan(t *testin
 }
 
 const (
-	// costMultiCartAllocation: recordClaimedBins for a two-cart order
-	// (UpdateOrderBinID; ReplaceOrderBins' BEGIN, owner-live CTE, an INSERT per
-	// cart, COMMIT). Budget 1.
-	costMultiCartAllocation = 6
-	// costRobotGroup: robotGroupForOrder for a cart-carrying order (GetOrder,
-	// GetBin). Budget 1.
-	costRobotGroup = 2
+	// costMultiCartAllocation: recordClaimedBins for a two-cart order, one
+	// statement (ReplaceOrderBins: the owner test, the pointer, the stale rows
+	// deleted, every lift written). Main f8f22f19 took 6 (UpdateOrderBinID; then
+	// BEGIN, the owner-live CTE, an INSERT per cart, COMMIT).
+	costMultiCartAllocation = 1
+	// costRobotGroup: robotGroupForOrder for a cart-carrying order: one read of
+	// its carts, decided per cart. Main f8f22f19: 2 (GetOrder, GetBin).
+	costRobotGroup = 1
 )
 
 // cartsCostOrder is a live two-cart order on a database with a counting handle

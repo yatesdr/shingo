@@ -1,6 +1,7 @@
 package dispatch
 
 import (
+	"encoding/json"
 	"fmt"
 	"log"
 	"sort"
@@ -410,7 +411,7 @@ func (d *Dispatcher) placeByContentsAtRelease(order *orders.Order, steps []resol
 		return false
 	}
 	target, why := dropByContents(d.db, d.planner.pure, order, b, b.UOPRemaining, line, steps[f].Node,
-		d.carriedType(order, steps, f))
+		d.carriedType(order, f))
 	if target == "" || target == steps[f].Node {
 		return false
 	}
@@ -481,9 +482,20 @@ func (d *Dispatcher) placeByContentsAtReserve(order *orders.Order, plan *Complex
 		return
 	}
 	plan.Reanchored = true
-	order.BinID = &b.ID
-	if err := d.db.UpdateOrderBinID(order.ID, b.ID); err != nil {
-		log.Printf("dispatch: order %d: record bin %d after the re-point: %v", order.ID, b.ID, err)
+	// The order's carts are written with the re-pointed plan: every cart this
+	// reserve holds, by its pickup, and the pointer at the one re-pointed.
+	claimedAt := make(map[int]int64, len(assigned))
+	for _, rp := range assigned {
+		claimedAt[rp.stepIndex] = rp.binID
+	}
+	planned := *order
+	if j, err := json.Marshal(steps); err == nil {
+		planned.StepsJSON = string(j)
+	}
+	if err := d.db.ReplaceOrderBins(order.ID, b.ID, orders.CartRows(&planned, claimedAt)); err != nil {
+		log.Printf("dispatch: order %d: record its carts after the re-point of bin %d: %v", order.ID, b.ID, err)
+	} else {
+		order.BinID = &b.ID
 	}
 	log.Printf("dispatch: order %d: bin %d %s %s instead of %s (at its reserve: it lifts with no wait ahead)",
 		order.ID, b.ID, why, target, from)
@@ -554,11 +566,6 @@ func (d *Dispatcher) repointDrop(order *orders.Order, steps []resolvedStep, f in
 		}
 	} else {
 		applyPlanNode(d.db, order, target, f, protocol.ActionDropoff)
-	}
-	if b != nil {
-		if _, err := d.db.UpdateOrderBinDestNode(order.ID, b.ID, target); err != nil {
-			log.Printf("dispatch: re-point order %d bin %d junction: %v", order.ID, b.ID, err)
-		}
 	}
 	log.Printf("dispatch: order %d: bin %d %s %s instead of %s", order.ID, b.ID, why, target, from)
 	return true

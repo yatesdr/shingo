@@ -57,11 +57,16 @@ func newToteCell(t *testing.T, db *store.DB, eng *Engine, prefix string) toteCel
 	return c
 }
 
-// order makes a complex order holding bin, with its two-robot sibling's uuid.
+// order makes a complex order holding bin, with its two-robot sibling's uuid:
+// its plan lifts the cart where it stands now and sets it down at the market,
+// and its cart's row (Create writes it) is that lift.
 func (c toteCell) order(t *testing.T, uuid, sibling string, bin int64, processNode string) *orders.Order {
 	t.Helper()
+	var at string
+	_ = c.db.QueryRow(`SELECT n.name FROM bins b JOIN nodes n ON n.id = b.node_id WHERE b.id = $1`, bin).Scan(&at)
 	o := &orders.Order{EdgeUUID: uuid, StationID: "line-1", OrderType: "complex", Status: "in_transit",
-		Quantity: 1, ProcessNode: processNode, SiblingOrderUUID: sibling, BinID: &bin, StepsJSON: "[]"}
+		Quantity: 1, ProcessNode: processNode, SiblingOrderUUID: sibling, BinID: &bin,
+		StepsJSON: `[{"action":"pickup","node":"` + at + `"},{"action":"dropoff","node":"MARKET"}]`}
 	testutil.MustNoErr(t, c.db.CreateOrder(o), "order "+uuid)
 	_, err := c.db.Exec(`UPDATE bins SET claimed_by = $1 WHERE id = $2`, o.ID, bin)
 	testutil.MustNoErr(t, err, "claim")
@@ -126,7 +131,6 @@ func TestToteLift_TheFrontAlreadyLiftedBySibling(t *testing.T) {
 	db := testDB(t)
 	c := newToteCell(t, db, newTestEngine(t, db, simulator.New()), "TLS")
 	evac := c.order(t, "tls-evac", "tls-index", c.front, c.press.Name)
-	testutil.MustNoErr(t, db.InsertOrderBin(evac.ID, c.front, 1, "pickup", c.press.Name, "TLS-MARKET"), "junction")
 	index := c.order(t, "tls-index", "tls-evac", c.outside, c.press.Name)
 	c.lift(evac, c.press.Name)
 	c.lift(index, c.out.Name)

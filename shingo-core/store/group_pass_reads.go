@@ -40,7 +40,7 @@ type GroupPassReads struct {
 	binTypes  map[int64][]*bins.BinType
 	bare      map[int64]*int64
 	binsAt    map[int64][]*bins.Bin
-	orderType map[int64]orderCarrier
+	orderType map[orderGroupKey]orderCarrier
 }
 
 type passPropKey struct {
@@ -53,7 +53,7 @@ type passPropKey struct {
 func (db *DB) GroupPassReads(groupID int64) *GroupPassReads {
 	return &GroupPassReads{DB: db, groupID: groupID, props: map[passPropKey]string{}, levels: map[int64][]nodes.MaintainLevel{},
 		payloads: map[int64][]*payloads.Payload{}, binTypes: map[int64][]*bins.BinType{}, bare: map[int64]*int64{},
-		binsAt: map[int64][]*bins.Bin{}, orderType: map[int64]orderCarrier{}}
+		binsAt: map[int64][]*bins.Bin{}, orderType: map[orderGroupKey]orderCarrier{}}
 }
 
 // slotState is the group's one read, taken on the first ask that needs it. A
@@ -180,6 +180,12 @@ func (r *GroupPassReads) ListBinsByNode(nodeID int64) ([]*bins.Bin, error) {
 	return v, err
 }
 
+// orderGroupKey is a BinTypeForOrder question: an order's drop into a group.
+type orderGroupKey struct {
+	orderID int64
+	group   string
+}
+
 // orderCarrier is one BinTypeForOrder answer, memoised.
 type orderCarrier struct {
 	typeID *int64
@@ -187,13 +193,14 @@ type orderCarrier struct {
 }
 
 // BinTypeForOrder memoises an order's carrier for the pass.
-func (r *GroupPassReads) BinTypeForOrder(orderID int64) (*int64, protocol.CarrierState, error) {
-	if v, ok := r.orderType[orderID]; ok {
+func (r *GroupPassReads) BinTypeForOrder(orderID int64, group string) (*int64, protocol.CarrierState, error) {
+	key := orderGroupKey{orderID, group}
+	if v, ok := r.orderType[key]; ok {
 		return v.typeID, v.state, nil
 	}
-	id, state, err := r.DB.BinTypeForOrder(orderID)
+	id, state, err := r.DB.BinTypeForOrder(orderID, group)
 	if err == nil {
-		r.orderType[orderID] = orderCarrier{id, state}
+		r.orderType[key] = orderCarrier{id, state}
 	}
 	return id, state, err
 }

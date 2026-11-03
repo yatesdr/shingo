@@ -69,6 +69,10 @@ A transport request to move a bin between nodes. Orders flow from Shingo Edge to
 
 Order statuses: `pending`, `queued`, `dispatched`, `in_transit`, `delivered`, `confirmed`, `failed`, `cancelled` (plus `submitted`, `acknowledged`, `staged`, `faulted`, `reshuffling`, `skipped`; the full set is in [order-lifecycle.md](order-lifecycle.md)). (There is no `completed` status — terminal completion is `confirmed`.) Every order is issued `pending`, goes to `dispatched` when its whole hand is had, or rests in `queued` with a cause until it is.
 
+### Cart (of an order)
+
+A bin an order carries, recorded as one `order_bins` row per **lift**: the plan step that picks it up and the plan step that sets it down. Every order that carries a bin has its rows, kept after the order ends; an order has no single "bin" column. Where a lift happens is read from the order's plan, never stored on the row. See [data-model.md](data-model.md#order-carts-order_bins).
+
 ### Reservation
 
 A soft, revocable hold recording that an order intends to use a resource — a source **bin** or a destination **slot** — set *before* the bin is claimed. Reservations are what let Core hold an unfulfillable order (`queued`) and retry as inventory appears, rather than failing the order. Reclaimed when the owning order ends; never time-based. See [reservations.md](reservations.md).

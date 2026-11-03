@@ -233,7 +233,8 @@ func ListOrderCompletionAnomalies(db *sql.DB) ([]*CompletionAnomaly, error) {
 		UNION ALL
 		SELECT o.id AS order_id, NULL::bigint AS bin_id, o.status AS order_status, '' AS bin_status, 'completed_order_missing_bin' AS issue, COALESCE(o.completed_at, o.updated_at) AS observed_at
 		FROM orders o
-		WHERE o.completed_at IS NOT NULL AND o.bin_id IS NULL
+		WHERE o.completed_at IS NOT NULL
+		  AND NOT EXISTS (SELECT 1 FROM order_bins ob WHERE ob.order_id = o.id)
 		  -- A COMPOUND PARENT CARRIES NO BIN, so asking it for one is asking the
 		  -- wrong row. Its legs hold the bins: a service dig's parent is a
 		  -- container with no cargo and no robot, and a plain buried retrieve
@@ -263,9 +264,11 @@ func ListOrderCompletionAnomalies(db *sql.DB) ([]*CompletionAnomaly, error) {
 		  -- spelling, lifted so the other seven can reach it.
 		  AND NOT `+helpers.OwnsNoCargoSQL("o")+`
 		UNION ALL
-		SELECT o.id AS order_id, o.bin_id AS bin_id, o.status AS order_status, COALESCE(b.status, '') AS bin_status, 'confirmed_without_completed_at' AS issue, COALESCE(o.completed_at, o.updated_at) AS observed_at
+		SELECT o.id AS order_id, first.bin_id AS bin_id, o.status AS order_status, COALESCE(b.status, '') AS bin_status, 'confirmed_without_completed_at' AS issue, COALESCE(o.completed_at, o.updated_at) AS observed_at
 		FROM orders o
-		LEFT JOIN bins b ON b.id = o.bin_id
+		LEFT JOIN LATERAL (SELECT ob.bin_id FROM order_bins ob WHERE ob.order_id = o.id
+		                    ORDER BY ob.pick_step NULLS FIRST, ob.id LIMIT 1) first ON true
+		LEFT JOIN bins b ON b.id = first.bin_id
 		WHERE o.status = 'confirmed' AND o.completed_at IS NULL
 		ORDER BY order_id, issue`, protocol.FailureTerminalStatusSQLList()))
 	if err != nil {

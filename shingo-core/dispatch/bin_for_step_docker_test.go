@@ -9,6 +9,7 @@ import (
 
 	"shingo/protocol"
 	"shingo/protocol/testutil"
+	"shingocore/domain"
 	"shingocore/internal/testdb"
 	"shingocore/store"
 	"shingocore/store/orders"
@@ -45,12 +46,12 @@ func setSteps(t *testing.T, db *store.DB, o *orders.Order, steps []resolvedStep)
 // ── THE FIXTURE IS THE SHAPE THAT BREAKS ──────────────────────────────────
 //
 // Three conditions have to coincide, and this builds exactly them: more than one
-// claimed bin, one of them AT the process node (so it wins bin_id), and a lane
-// entry that is a PICKUP at a different node.
+// cart, one of them AT the process node (the one orders.bin_id named), and a
+// lane entry that is a PICKUP at a different node.
 //
 // MUTATIONS RUN (both fire):
-//  1. point pickupSlotNow back at order.BinID → (a) the storage bin is never
-//     found and the entry is refused for a bin it was not coming for.
+//  1. answer wantedBin with the cart at the process node → (a) the storage cart
+//     is never found and the entry is refused for a cart it was not coming for.
 //  2. return a bare error instead of ErrPickupNotInLane → (c) the verdict is an
 //     error rather than a refusal, so the order carries no usable cause and the
 //     evaluator can only log and skip it.
@@ -64,7 +65,7 @@ func TestPickupSlot_AsksWhichBinTHISSTEPWants(t *testing.T) {
 
 	// The FRESH bin, in the lane — what the robot is actually coming in for.
 	fresh := createTestBinAtNode(t, db, bp.Code, w[0].ID, "BIN-STEPBIN-FRESH")
-	// The ACTIVE bin, at the machine — where it belongs, and what bin_id names.
+	// The ACTIVE bin, at the machine — where it belongs.
 	active := createTestBinAtNode(t, db, bp.Code, cell.ID, "BIN-STEPBIN-ACTIVE")
 
 	order := testdb.CreateOrder(t, db, func(o *orders.Order) {
@@ -82,25 +83,22 @@ func TestPickupSlot_AsksWhichBinTHISSTEPWants(t *testing.T) {
 		{Action: protocol.ActionDropoff, Node: w[1].Name}, // step 4
 	})
 
-	// The allocator's rule: bin_id is the bin claimed at the PROCESS NODE.
-	testutil.MustNoErr(t, db.UpdateOrderBinID(order.ID, active.ID), "bin_id = the active bin")
-	// ...and the per-step truth it records alongside it.
-	testutil.MustNoErr(t, db.InsertOrderBin(order.ID, fresh.ID, 1, protocol.ActionPickup, w[0].Name, cell.Name), "junction step 1")
-	testutil.MustNoErr(t, db.InsertOrderBin(order.ID, active.ID, 3, protocol.ActionPickup, cell.Name, w[1].Name), "junction step 3")
+	// The order's carts: the fresh one lifted at step 1, the active one at 3.
+	testdb.SeedCartRow(t, db, order.ID, fresh.ID, 1, 2)
+	testdb.SeedCartRow(t, db, order.ID, active.ID, 3, 4)
 	order, err := db.GetOrder(order.ID)
 	testutil.MustNoErr(t, err, "reload")
 
 	// (a) THE GATE RESOLVES THE BIN THE ENTRY IS FOR.
-	got, err := d.wantedBin(order)
-	testutil.MustNoErr(t, err, "wantedBin")
+	got := wantedBin(order)
 	if !got.known {
 		t.Fatal("no bin resolved for the lane entry — the gate cannot answer 'where is the thing " +
 			"you are coming in for' at all")
 	}
 	if got.binID != fresh.ID {
-		t.Errorf("lane entry resolved to bin %d, want %d (the FRESH bin in the lane). bin_id names "+
-			"the ACTIVE bin at the machine (%d) — right for a status board, wrong for this step. "+
-			"The gate must ask the step, not the order", got.binID, fresh.ID, active.ID)
+		t.Errorf("lane entry resolved to bin %d, want %d (the FRESH bin in the lane), not the "+
+			"ACTIVE bin at the machine (%d). The gate must ask the step, not the order",
+			got.binID, fresh.ID, active.ID)
 	}
 
 	// (b) AND FINDS IT IN THE LANE, so the entry is admissible.
@@ -134,7 +132,7 @@ func TestPickupSlot_BinElsewhereIsARefusalNotAnError(t *testing.T) {
 		o.Status = "staged"
 		o.SourceNode = w[0].Name
 	})
-	testutil.MustNoErr(t, db.UpdateOrderBinID(order.ID, gone.ID), "bin_id")
+	testdb.SeedCartRow(t, db, order.ID, gone.ID, 0, 1)
 	order, err := db.GetOrder(order.ID)
 	testutil.MustNoErr(t, err, "reload")
 
@@ -149,111 +147,21 @@ func TestPickupSlot_BinElsewhereIsARefusalNotAnError(t *testing.T) {
 	}
 }
 
-// TestPickupSlot_UnreadableJunctionIsUndeterminedNotElsewhere is R2-2: the two
-// answers that look identical and must not be treated alike.
-//
-// ── THE TWO CASES ─────────────────────────────────────────────────────────
-//
-//	"the plan names no bin for this step"  → an ANSWER. Single-bin orders
-//	                                          produce it, and order.BinID is the
-//	                                          right resolution for them.
-//	"I could not read the junction"        → NOT an answer. Nothing may be
-//	                                          substituted for it.
-//
-// binForStep's doc has always said the second one fails closed. It could not:
-// it returned a bare stepBin, so both cases arrived at the caller as
-// `known: false`, and wantedBin resolved that by falling through to
-// order.BinID — which on a multi-bin complex order is the bin at the MACHINE.
-// That is F-25's exact wrong source, reached through the error path instead of
-// the index path, and it would have refused the entry DEFINITIVELY
-// (gate-pickup-elsewhere: "the plant moved it") for a database that was simply
-// not answering.
-//
-// The distinction is worth a test because the two dispositions differ in kind:
-// an undetermined candidate is held and re-asked on the next pass, while a
-// definite refusal is a fact about the plant that a heal dig may be proposed
-// against. Reporting an outage as the latter sends the reader to the floor.
-//
-// MUTATION (fires): drop the `if err != nil` propagation in wantedBin and return
-// `fromOrder` → the error becomes nil, pickupSlotNow reports the bin at the
-// machine as outside the lane, and this test fails with err wrapping
-// ErrPickupNotInLane.
-func TestPickupSlot_UnreadableJunctionIsUndeterminedNotElsewhere(t *testing.T) {
+// TestBinForStep_ARelayIsItsRow pins that a relay pickup is answered by its own
+// row: a step that re-lifts a cart THIS ORDER set down there itself claims no
+// cart, and the walk (domain.Lifts) writes its lift as a row all the same. No
+// positional answer is left to give.
+func TestBinForStep_ARelayIsItsRow(t *testing.T) {
 	t.Parallel()
-	db := testdb.Open(t)
-	d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
-
-	lane, _, w, _, bp := clearLaneFixture(t, db, "STEPBINR")
-	cell := lineNode(t, db, "STEPBINR-CELL")
-
-	// The F-25 shape: two claimed bins, bin_id naming the one at the MACHINE,
-	// and a lane entry that is a pickup of the OTHER one.
-	fresh := createTestBinAtNode(t, db, bp.Code, w[0].ID, "BIN-STEPBINR-FRESH")
-	active := createTestBinAtNode(t, db, bp.Code, cell.ID, "BIN-STEPBINR-ACTIVE")
-	order := testdb.CreateOrder(t, db, func(o *orders.Order) {
-		o.Status = "staged"
-		o.SourceNode = w[0].Name
-	})
-	order = setSteps(t, db, order, []resolvedStep{
-		{Action: protocol.ActionWait, Node: "STEPBINR-WALL-WAIT", WaitKind: WaitKindLane, WaitLane: lane.ID},
-		{Action: protocol.ActionPickup, Node: w[0].Name},
-		{Action: protocol.ActionDropoff, Node: cell.Name},
-	})
-	testutil.MustNoErr(t, db.UpdateOrderBinID(order.ID, active.ID), "bin_id = the active bin")
-	testutil.MustNoErr(t, db.InsertOrderBin(order.ID, fresh.ID, 1, protocol.ActionPickup, w[0].Name, cell.Name), "junction step 1")
-	order, err := db.GetOrder(order.ID)
-	testutil.MustNoErr(t, err, "reload")
-
-	// Precondition: with the junction readable the entry binds cleanly. Without
-	// this the test could pass on a fixture that was broken for another reason.
-	if _, _, pErr := d.pickupSlotNow(order, lane); pErr != nil {
-		t.Fatalf("precondition: the entry should bind while the junction is readable: %v", pErr)
+	o := &orders.Order{
+		StepsJSON: `[{"action":"pickup","node":"SRC"},{"action":"dropoff","node":"STAGE"},` +
+			`{"action":"pickup","node":"STAGE"},{"action":"dropoff","node":"LINE"}]`,
 	}
-
-	// Now break the junction read specifically — the same technique
-	// TestAdvanceCompoundOrder_SurfacesDBError uses.
-	_, err = db.DB.Exec(`ALTER TABLE order_bins RENAME COLUMN step_index TO step_index_broken`)
-	testutil.MustNoErr(t, err, "break the junction read")
-
-	_, _, err = d.pickupSlotNow(order, lane)
-	if err == nil {
-		t.Fatal("an unreadable junction was answered rather than refused. Whatever bin it named, it " +
-			"was a guess — and the caller cannot tell a guess from a fact")
+	o.Carts = domain.Lifts(domain.OrderPlan(o), map[int]int64{0: 41})
+	if got := binForStep(o, 2); !got.known || got.binID != 41 {
+		t.Fatalf("the relay step's cart = %+v, want bin 41 from its row: the cart this order set down at STAGE", got)
 	}
-	if errors.Is(err, ErrPickupNotInLane) {
-		t.Errorf("err = %v, and it carries ErrPickupNotInLane — the DEFINITE answer. The junction "+
-			"could not be read, so the gate fell back to order.BinID (the bin at the machine), found "+
-			"it outside the lane, and reported a database outage as a bin that moved. That refusal "+
-			"never changes and a gate-staged order is exempt from the abandon sweep", err)
-	}
-}
-
-// TestBinForStep_RelayPickupNeedsNoClaim pins the shape an assertion would have
-// broken.
-//
-// Not every pickup claims a bin, by design: a step that re-picks a bin THIS ORDER
-// DROPPED THERE ITSELF needs no claim, and the planner records such steps as
-// skips. The bin is whatever the order left at that node, so the node answers it.
-// A "every pickup step has a junction row" check would fail every one of these.
-func TestBinForStep_RelayPickupNeedsNoClaim(t *testing.T) {
-	t.Parallel()
-	db := testdb.Open(t)
-	d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
-
-	order := testdb.CreateOrder(t, db, func(o *orders.Order) { o.Status = "staged" })
-	steps := []resolvedStep{
-		{Action: protocol.ActionPickup, Node: "SRC"},
-		{Action: protocol.ActionDropoff, Node: "STAGE"}, // the order puts a bin here
-		{Action: protocol.ActionPickup, Node: "STAGE"},  // ...and re-picks it: a RELAY
-	}
-	got, err := d.binForStep(order, steps, 2)
-	testutil.MustNoErr(t, err, "binForStep")
-	if !got.known {
-		t.Fatal("a relay pickup resolved to nothing. It claims no bin because it does not need one — " +
-			"the bin is the one this order dropped at that node — and treating that as unanswerable " +
-			"would wedge the entry exactly like the bug this fixes")
-	}
-	if got.atNode != "STAGE" {
-		t.Errorf("relay resolved to node %q, want STAGE — the node IS the answer", got.atNode)
+	if got := binForStep(o, 3); !got.known || got.binID != 41 {
+		t.Errorf("the relay's set-down = %+v, want bin 41", got)
 	}
 }

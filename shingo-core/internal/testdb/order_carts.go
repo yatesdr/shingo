@@ -4,6 +4,8 @@ import (
 	"slices"
 	"testing"
 
+	"shingo/protocol"
+	"shingocore/domain"
 	"shingocore/store"
 )
 
@@ -13,36 +15,39 @@ import (
 // text when the shape moves.
 
 // SeedCartRow writes one cart row for orderID: binID lifted at plan step pick
-// and set down at plan step drop. The junction's node copies are filled from
-// the order's plan (steps_json), else its source and delivery nodes.
+// and set down at plan step drop. The junction's node copies (until v174) are
+// filled from the order's plan.
 func SeedCartRow(t testing.TB, db *store.DB, orderID, binID int64, pick, drop int) {
 	t.Helper()
-	if _, err := db.Exec(`INSERT INTO order_bins (order_id, bin_id, step_index, action, node_name, dest_node)
-		SELECT o.id, $2, $3, 'pickup',
-		       COALESCE(CASE WHEN o.steps_json LIKE '[%' THEN o.steps_json::jsonb->($3::int)->>'node' END, o.source_node, ''),
-		       COALESCE(CASE WHEN o.steps_json LIKE '[%' THEN o.steps_json::jsonb->($4::int)->>'node' END, o.delivery_node, '')
-		  FROM orders o WHERE o.id = $1`, orderID, binID, pick, drop); err != nil {
+	o, err := db.GetOrder(orderID)
+	if err != nil {
+		t.Fatalf("testdb.SeedCartRow(order=%d): read the order: %v", orderID, err)
+	}
+	if _, err := db.Exec(`INSERT INTO order_bins (order_id, bin_id, pick_step, drop_step, action, node_name, dest_node)
+		VALUES ($1, $2, $3, $4, 'pickup', $5, $6)
+		ON CONFLICT (order_id, pick_step) DO UPDATE SET bin_id = EXCLUDED.bin_id, drop_step = EXCLUDED.drop_step,
+			node_name = EXCLUDED.node_name, dest_node = EXCLUDED.dest_node`,
+		orderID, binID, pick, drop, domain.StepNode(o, pick), domain.StepNode(o, drop)); err != nil {
 		t.Fatalf("testdb.SeedCartRow(order=%d bin=%d pick=%d drop=%d): %v", orderID, binID, pick, drop, err)
 	}
 }
 
 // CartDropNodes is, for each of orderID's cart rows, the node the row says its
-// cart is set down at, keyed by bin (a relayed cart has one per lift).
+// cart is set down at — its drop step in the order's plan — keyed by bin (a
+// relayed cart has one per lift).
 func CartDropNodes(t testing.TB, db *store.DB, orderID int64) map[int64][]string {
 	t.Helper()
-	rows, err := db.Query(`SELECT bin_id, dest_node FROM order_bins WHERE order_id=$1 ORDER BY id`, orderID)
+	o, err := db.GetOrder(orderID)
 	if err != nil {
 		t.Fatalf("testdb.CartDropNodes(order=%d): %v", orderID, err)
 	}
-	defer rows.Close()
 	out := map[int64][]string{}
-	for rows.Next() {
-		var id int64
-		var node string
-		if err := rows.Scan(&id, &node); err != nil {
-			t.Fatalf("testdb.CartDropNodes(order=%d): scan: %v", orderID, err)
+	for _, c := range o.Carts {
+		node := ""
+		if c.DropStep != nil {
+			node = domain.StepNode(o, *c.DropStep)
 		}
-		out[id] = append(out[id], node)
+		out[c.BinID] = append(out[c.BinID], node)
 	}
 	return out
 }
@@ -70,4 +75,52 @@ func CartRowBins(t testing.TB, db *store.DB, orderID int64) []int64 {
 func HasCartRow(t testing.TB, db *store.DB, orderID, binID int64) bool {
 	t.Helper()
 	return slices.Contains(CartRowBins(t, db, orderID), binID)
+}
+
+// CartLift is one of an order's cart rows as nodes: the cart, where its pick
+// step lifts it (From) and where its drop step sets it down (To), read through
+// the order's plan (domain.StepNode); "" for a step the row does not know.
+type CartLift struct {
+	BinID    int64
+	From, To string
+}
+
+// CartLifts is orderID's cart rows as nodes, in row order.
+func CartLifts(t testing.TB, db *store.DB, orderID int64) []CartLift {
+	t.Helper()
+	o, err := db.GetOrder(orderID)
+	if err != nil {
+		t.Fatalf("testdb.CartLifts(order=%d): %v", orderID, err)
+	}
+	out := make([]CartLift, 0, len(o.Carts))
+	for _, c := range o.Carts {
+		l := CartLift{BinID: c.BinID}
+		if c.PickStep != nil {
+			l.From = domain.StepNode(o, *c.PickStep)
+		}
+		if c.DropStep != nil {
+			l.To = domain.StepNode(o, *c.DropStep)
+		}
+		out = append(out, l)
+	}
+	return out
+}
+
+// SeedLift writes orderID's row for binID lifted at plan step pick and set down
+// at the plan's next dropoff after it (SeedCartRow): the lift as the plan walk
+// (domain.Lifts) writes a claim at pick.
+func SeedLift(t testing.TB, db *store.DB, orderID, binID int64, pick int) {
+	t.Helper()
+	o, err := db.GetOrder(orderID)
+	if err != nil {
+		t.Fatalf("testdb.SeedLift(order=%d): %v", orderID, err)
+	}
+	steps := domain.OrderPlan(o)
+	for i := pick + 1; i < len(steps); i++ {
+		if steps[i].Action == protocol.ActionDropoff {
+			SeedCartRow(t, db, orderID, binID, pick, i)
+			return
+		}
+	}
+	t.Fatalf("testdb.SeedLift(order=%d bin=%d pick=%d): the plan sets nothing down after the pick", orderID, binID, pick)
 }

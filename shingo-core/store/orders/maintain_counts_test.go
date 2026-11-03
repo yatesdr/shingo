@@ -150,24 +150,27 @@ func TestCountTypedInboundToGroup_FourShapes(t *testing.T) {
 		t.Fatalf("with a group-named order = %d, want 2", got)
 	}
 
-	// SHAPE 3 — a multi-pickup complex order, which records its carriers in
-	// order_bins with a per-carrier dest_node. The order's OWN delivery_node is
-	// its LAST step and may be somewhere else entirely.
+	// SHAPE 3 — a multi-cart complex order: a cart is coming when its row's
+	// drop step is in the group. The order's OWN delivery_node is its LAST step
+	// and may be somewhere else entirely.
 	binC := mkEmptyBin(t, db, btID, "INB-BIN-C")
 	cplx := newPendingOrder("inb-complex")
+	cplx.OrderType = "complex"
 	cplx.DeliveryNode = "SOMEWHERE-ELSE"
+	cplx.StepsJSON = `[{"action":"pickup","node":"PICKUP"},{"action":"dropoff","node":"INB-SLOT"},` +
+		`{"action":"pickup","node":"INB-SLOT"},{"action":"dropoff","node":"INB-SLOT"},` +
+		`{"action":"pickup","node":"PICKUP-2"},{"action":"dropoff","node":"SOMEWHERE-ELSE"}]`
 	testutil.MustNoErr(t, orders.Create(db, cplx), "create complex")
-	testutil.MustNoErr(t, orders.InsertOrderBin(db, cplx.ID, binC, 0, "store", "PICKUP", "INB-SLOT"),
-		"junction row")
-	if got := count(t, "complex junction"); got != 3 {
-		t.Fatalf("with a junction-recorded carrier = %d, want 3", got)
+	testdb.SeedCartRow(t, d, cplx.ID, binC, 0, 1)
+	if got := count(t, "complex cart"); got != 3 {
+		t.Fatalf("with a complex order's cart set down in the group = %d, want 3", got)
 	}
 
-	// The same carrier named by BOTH arms counts ONCE — COUNT(DISTINCT bin_id).
-	testutil.MustNoErr(t, orders.InsertOrderBin(db, plain.ID, binA, 0, "store", "PICKUP", "INB-SLOT"),
-		"junction row for the plain order too")
-	if got := count(t, "both arms name one carrier"); got != 3 {
-		t.Errorf("double-named carrier = %d, want 3 (DISTINCT)", got)
+	// A cart with two lifts into the group (a relay) counts ONCE — DISTINCT on
+	// the carrier.
+	testdb.SeedCartRow(t, d, cplx.ID, binC, 2, 3)
+	if got := count(t, "a relayed carrier"); got != 3 {
+		t.Errorf("relayed carrier = %d, want 3 (DISTINCT)", got)
 	}
 
 	// SHAPE 4 — the keeper's OWN ask is excluded. It is already counted as

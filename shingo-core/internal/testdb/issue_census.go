@@ -49,8 +49,8 @@ type AtCommit struct {
 	Robot    bool // orders.robot_id is stamped
 	BinRow   bool // a pending bin reservation of the order's own
 	SlotRow  bool // a pending slot reservation of the order's own
-	// CartRow: an order_bins row names the cart the door stamped (bin_id, else
-	// named_bin_id). Every door that stamps a cart writes its row in the same
+	// CartRow: an order_bins row names the door's cart (the one its rows hold,
+	// else named_bin_id). Every door that stamps a cart writes its row in the same
 	// transaction (BRIEF order-carts v1, rule 1); a door that names none has
 	// none.
 	CartRow bool
@@ -154,10 +154,14 @@ BEGIN
 	         WHERE r.order_id = o.id AND r.resource_kind = 'slot' AND ` + reservations.BlockingStateSQL("r.") + `),
 	       (SELECT count(*) FROM reservations r
 	         WHERE r.resource_kind = 'bin' AND ` + reservations.BlockingStateSQL("r.") + ` AND r.order_id <> o.id
-	           AND r.bin_id = COALESCE(o.bin_id, o.named_bin_id)),
-	       (SELECT count(*) FROM order_bins ob
-	         WHERE ob.order_id = o.id AND ob.bin_id = COALESCE(o.bin_id, o.named_bin_id))
-	  FROM orders o WHERE o.id = NEW.id;
+	           AND r.bin_id = c.cart),
+	       (SELECT count(*) FROM order_bins ob WHERE ob.order_id = o.id AND ob.bin_id = c.cart)
+	  FROM orders o
+	  -- The door's cart: the one its rows hold, else the one it names.
+	  CROSS JOIN LATERAL (SELECT COALESCE(
+	        (SELECT ob.bin_id FROM order_bins ob WHERE ob.order_id = o.id
+	          ORDER BY ob.pick_step NULLS FIRST, ob.id LIMIT 1), o.named_bin_id) AS cart) c
+	 WHERE o.id = NEW.id;
 	RETURN NULL;
 END $$;
 CREATE CONSTRAINT TRIGGER issue_census_at_commit AFTER INSERT ON orders

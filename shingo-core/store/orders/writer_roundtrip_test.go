@@ -152,6 +152,12 @@ func TestWriter_RoundTripsEveryFieldItWrites(t *testing.T) {
 	// Every excluded field must be excluded for a reason that is written down,
 	// and the two reason maps must name real columns. Otherwise "excluded"
 	// degrades into "we gave up on this one".
+	// Fields read with the order that are no column of orders, each with who
+	// writes them.
+	notAnOrdersColumn := map[string]string{
+		"Carts": "the order's order_bins rows, one per lift: Create writes a born-held cart's from BinID " +
+			"(CartRows), every other door its own (ReplaceOrderBins, the plain hold); read back by SelectCols",
+	}
 	for field, col := range notFromTheStruct {
 		_, skipped := deliberatelyNotWritten[col]
 		_, byClock := writtenByTheWriterItself[col]
@@ -174,6 +180,9 @@ func TestWriter_RoundTripsEveryFieldItWrites(t *testing.T) {
 	for i := range rt.NumField() {
 		name := rt.Field(i).Name
 		if _, ok := notFromTheStruct[name]; ok {
+			continue
+		}
+		if _, ok := notAnOrdersColumn[name]; ok {
 			continue
 		}
 		want, ok := probe[name]
@@ -216,6 +225,9 @@ func TestWriter_RoundTripsEveryFieldItWrites(t *testing.T) {
 		if _, ok := notFromTheStruct[name]; ok {
 			continue
 		}
+		if _, ok := notAnOrdersColumn[name]; ok {
+			continue
+		}
 		want := probe[name]
 		have := gv.Field(i).Interface()
 		if !equalMaybePointer(want, have) {
@@ -226,6 +238,11 @@ func TestWriter_RoundTripsEveryFieldItWrites(t *testing.T) {
 		t.Errorf("values set before Create did not survive the round trip:\n  %s\n"+
 			"Each of these is a column the INSERT names but does not carry to the right field.",
 			strings.Join(lost, "\n  "))
+	}
+	// Carts: the born-held cart Create was handed is its one row, lifted at the
+	// plan's first pickup.
+	if len(got.Carts) != 1 || got.Carts[0].BinID != bin.ID {
+		t.Errorf("carts after create = %+v, want the one born-held cart %d", got.Carts, bin.ID)
 	}
 
 	// The exclusions, verified rather than assumed.

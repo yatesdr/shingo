@@ -944,8 +944,9 @@ func (e *Engine) handleNodeOrderFailed(failed OrderFailedEvent) {
 //   - no_bin         "no available bin at pickup node(s) for order N"
 //   - no_source_bin  "no bin at pickup node(s) for order N — source was emptied externally"
 //
-// Strings are stable in complex_claims.go:139/141. If those move, add
-// the new wording here or plumb the code through OrderFailedEvent.
+// Core has not emitted either wording since its complex orders reserve at
+// plan time; the matcher stays for an older Core on the wire. A new wording
+// goes here, or plumb the code through OrderFailedEvent.
 //
 // IMPORTANT: order of matchers in the call site matters — this matcher
 // MUST be checked before isCapacityBlocked. The capacity matcher uses a

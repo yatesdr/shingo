@@ -3,6 +3,7 @@
 package dispatch
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -64,6 +65,10 @@ func TestReserveConfirm_EmptyLegClaimsEmptyCarrier(t *testing.T) {
 		{Action: "pickup", Node: src.Name, Empty: true},
 		{Action: "dropoff", Node: lineNode.Name},
 	}
+	// The plan as persisted: the order's rows point into it.
+	stepsJSON, err := json.Marshal(steps)
+	testutil.MustNoErr(t, err, "marshal the plan")
+	testutil.MustNoErr(t, db.UpdateOrderStepsJSON(order.ID, string(stepsJSON)), "persist the plan")
 	plan := BuildComplexPlan(steps)
 	// The store drop first, as DispatchPreparedComplex does (slots before bins):
 	// it is a standalone STOR node, a slot need since 2026-10-25 (slotNeeds asks
@@ -92,15 +97,11 @@ func TestReserveConfirm_EmptyLegClaimsEmptyCarrier(t *testing.T) {
 		t.Errorf("full bin at source claimed_by = %v, want nil — the empty leg must NOT claim the full", *gotFull.ClaimedBy)
 	}
 
-	// The order_bins row for the source node points at the empty carrier.
-	obs, err := db.ListOrderBins(order.ID)
-	if err != nil {
-		t.Fatalf("ListOrderBins: %v", err)
-	}
+	// The order's row lifting at the source node names the empty carrier.
 	var srcBinID int64
-	for _, ob := range obs {
-		if ob.NodeName == src.Name {
-			srcBinID = ob.BinID
+	for _, l := range testdb.CartLifts(t, db, order.ID) {
+		if l.From == src.Name {
+			srcBinID = l.BinID
 		}
 	}
 	if srcBinID != emptyAtSrc.ID {

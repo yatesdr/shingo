@@ -74,25 +74,34 @@ func claimWriters() []claimWriter {
 		}},
 		{"replace-order-bins", func(t *testing.T, f *endedOwnerFixture, owner int64) {
 			// A row already there, so the DELETE has something to lock.
-			testutil.MustNoErr(t, f.db.InsertOrderBin(owner, f.bin, 0, "pickup", f.src.Name, ""), "a junction row")
+			testdb.SeedCartRow(t, f.db, owner, f.bin, 0, 1)
 		}, func(f *endedOwnerFixture, owner int64) error {
-			return f.db.ReplaceOrderBins(owner, []orders.OrderBinRow{{BinID: f.bin, StepIndex: 0, Action: "pickup", NodeName: f.src.Name}})
-		}},
-		{"insert-order-bin", nil, func(f *endedOwnerFixture, owner int64) error {
-			return f.db.InsertOrderBin(owner, f.bin, 0, "pickup", f.src.Name, "")
+			return f.db.ReplaceOrderBins(owner, f.bin, []orders.OrderBinRow{{BinID: f.bin, PickStep: 0, DropStep: 1, NodeName: f.src.Name}})
 		}},
 	}
 }
 
-// holdsNoClaims: nothing claimed by the order and no junction row for it.
+// holdsNoClaims: nothing claimed by the order. Its rows are not a hold: a
+// writer that won the race wrote them while the order lived, and the end keeps
+// them as its record (wroteNoRows is the open-terminalize question).
 func (f *endedOwnerFixture) holdsNoClaims(t *testing.T, orderID int64) {
 	t.Helper()
-	var b, n, j int
+	var b, n int
 	testutil.MustNoErr(t, f.db.DB.QueryRow(`SELECT count(*) FROM bins WHERE claimed_by=$1`, orderID).Scan(&b), "bins")
 	testutil.MustNoErr(t, f.db.DB.QueryRow(`SELECT count(*) FROM nodes WHERE claimed_by=$1`, orderID).Scan(&n), "nodes")
+	if b+n != 0 {
+		t.Fatalf("the ended order holds bins=%d nodes=%d", b, n)
+	}
+}
+
+// wroteNoRows: no cart row was written for the order — a write that ran while
+// its terminalize was open found the owner ended and wrote nothing.
+func (f *endedOwnerFixture) wroteNoRows(t *testing.T, orderID int64) {
+	t.Helper()
+	var j int
 	testutil.MustNoErr(t, f.db.DB.QueryRow(`SELECT count(*) FROM order_bins WHERE order_id=$1`, orderID).Scan(&j), "order_bins")
-	if b+n+j != 0 {
-		t.Fatalf("the ended order holds bins=%d nodes=%d order_bins=%d", b, n, j)
+	if j != 0 {
+		t.Fatalf("the ended order has %d cart rows written after its end", j)
 	}
 }
 
@@ -121,6 +130,7 @@ func TestClaims_NoneWrittenAlongsideAnOpenTerminalize(t *testing.T) {
 				t.Fatal("the write never returned")
 			}
 			f.holdsNoClaims(t, owner.ID)
+			f.wroteNoRows(t, owner.ID)
 		})
 	}
 }
@@ -138,6 +148,7 @@ func TestClaims_NoJunctionWrittenForAnOrderAlreadyEnded(t *testing.T) {
 			t.Errorf("%s for an ended order = %v, want ErrOwnerEnded", w.name, err)
 		}
 		f.holdsNoClaims(t, owner.ID)
+		f.wroteNoRows(t, owner.ID)
 	}
 }
 

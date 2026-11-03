@@ -679,17 +679,15 @@ func (d *Dispatcher) holderStillOwesTheLane(holder *orders.Order, laneID int64) 
 //
 // A leg whose bin cannot be read counts as still needing the lane, which is the
 // fail-closed direction: an unreadable bin must not shorten a claim.
-// ── AND IT ASKS ABOUT EVERY BIN THE ORDER HOLDS, NOT ONLY bin_id (§R.101) ─
+// ── AND IT ASKS ABOUT EVERY CART THE ORDER CARRIES (§R.101) ───────────────
 //
-// `leg.BinID` is the whole answer for a dig leg, which moves one bin. It is not
-// the whole answer for a DEMAND, and §R.101 made a demand a lane holder: a
-// coordinated order claims its bins through the order_bins junction and may hold
-// several, so a bin_id-only read would say "nothing of mine is in this lane"
-// while one of its other claimed bins sits there — and drop the lock under it.
+// A dig leg moves one cart. A DEMAND may carry several, and §R.101 made a
+// demand a lane holder: a read of one cart would say "nothing of mine is in
+// this lane" while another of its carts sits there — and drop the lock under
+// it.
 //
-// So the claim is the key. It is the same key findFallbackBinAtSource calls
-// canonical for "this order's bin(s)", it is owner-scoped, and it degrades to
-// exactly the old behaviour for a leg: one claimed bin, the one in bin_id.
+// So the claim is the key, with the order's own carts (its rows) beside it for
+// the stretches between holds. For a leg both name its one cart.
 func (d *Dispatcher) legStillNeedsLane(leg *orders.Order, laneID int64) (bool, string) {
 	if d.holdsOccupancyThroughDwell(leg.ID, laneID) {
 		return true, "is dwelling in it, holding a blocker that has not left"
@@ -698,17 +696,15 @@ func (d *Dispatcher) legStillNeedsLane(leg *orders.Order, laneID int64) (bool, s
 	if err != nil {
 		return true, "holds bins whose positions could not be read"
 	}
-	if leg.BinID != nil {
-		// bin_id may name a bin the junction does not (a plain order's claim is
-		// written before the junction row, and a re-entry reuses it), so both are
-		// consulted. Fail closed on a read that does not answer.
-		bin, bErr := d.db.GetBin(*leg.BinID)
-		if bErr != nil {
+	if len(leg.Carts) > 0 {
+		// Its carts name what it carries between holds, when its claims are
+		// released (a hold is taken and released around each movement), so both
+		// are consulted. Fail closed on a read that does not answer.
+		carts, cErr := d.db.CartsOfOrder(leg.ID)
+		if cErr != nil {
 			return true, "carries a bin whose position could not be read"
 		}
-		if bin != nil {
-			claimed = append(claimed, bin)
-		}
+		claimed = append(claimed, carts...)
 	}
 	for _, bin := range claimed {
 		if bin == nil || bin.NodeID == nil {

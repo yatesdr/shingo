@@ -105,7 +105,7 @@ type CapacityDB interface {
 	// derives from, keyed on the asking order, so the two cannot answer
 	// differently about what is arriving.
 	GetEffectiveBinTypes(nodeID int64) ([]*bins.BinType, error)
-	BinTypeForOrder(orderID int64) (*int64, protocol.CarrierState, error)
+	BinTypeForOrder(orderID int64, group string) (*int64, protocol.CarrierState, error)
 	// TopsAndBottomsWant is a level's tops & bottoms row, read only for a cart
 	// at 0 (binresolver.AtDeclaredLevel's row).
 	TopsAndBottomsWant(groupNodeID, binTypeID int64) (int, bool, error)
@@ -285,7 +285,7 @@ func checkNGRPCapacity(db CapacityDB, ngrp *nodes.Node, ngrpName string, exclude
 	// judges its own type parks for a level its carrier is short of. Pin:
 	// TestUnloaderEmptyOut_NamedBinIsNotParkedByAnotherTypeOverLevel.
 	if stated.TypeID() == nil && excludeOrderID != 0 {
-		if id, state, err := db.BinTypeForOrder(excludeOrderID); err == nil && id != nil {
+		if id, state, err := db.BinTypeForOrder(excludeOrderID, ngrpName); err == nil && id != nil {
 			stated = binresolver.KnownTypeInState(*id, state)
 		}
 	}

@@ -495,9 +495,9 @@ func (e *Engine) dispatchRecoveryOrder(order *orders.Order, binID int64, sourceN
 //
 // ── WHAT RE-DRIVES IT ─────────────────────────────────────────────────
 //
-// A recovery order is born with orders.bin_id set, so the scanner routes it to
-// dispatchHeldBin (fulfillment/scanner.go, the `order.BinID != nil` branch),
-// which reuses the held bin and never consults a finder:
+// A recovery order is born holding its cart (its row), so the scanner routes it
+// to dispatchHeldBin (fulfillment/scanner.go, the held-cart branch), which
+// reuses the held cart and never consults a finder:
 //
 //   - ListAcquiring selects {pending, queued}, so a parked recovery order is in
 //     the scan set (store/orders/orders.go).
@@ -529,10 +529,14 @@ func (e *Engine) queueRecoveryForUnreadableLane(order *orders.Order, destNode *n
 		// nobody can read.
 		e.logFn("engine: parked recovery order %d could not be queued: %v", order.ID, err)
 		e.failOrderAndEmit(order.ID, "lane_park_failed", "the route was not clear and the order could not be queued")
-		if rerr := e.db.ReleaseReservation(order.ID, *order.BinID); rerr != nil {
-			e.dbg("engine: carried bin recovery: release reservation for bin %d: %v", *order.BinID, rerr)
+		cart := int64(0)
+		if held, _ := order.OnlyBin(); held != nil {
+			cart = *held
+			if rerr := e.db.ReleaseReservation(order.ID, cart); rerr != nil {
+				e.dbg("engine: carried bin recovery: release reservation for bin %d: %v", cart, rerr)
+			}
 		}
-		return &CarriedBinNotRecoverable{BinID: *order.BinID,
+		return &CarriedBinNotRecoverable{BinID: cart,
 			Reason: fmt.Sprintf("the route to %s was not clear and the order could not be queued: %v", destNode.Name, err)}
 	}
 	// No scan trigger here: this park runs under the scan lock the door holds

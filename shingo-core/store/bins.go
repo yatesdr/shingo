@@ -281,3 +281,19 @@ func (db *DB) InventoryRecordAccuracy(since time.Time, staleAfter time.Duration)
 func (db *DB) BinStandsUnheld(binID int64, nodeName string) (bool, error) {
 	return bins.StandsUnheld(db.DB, binID, nodeName)
 }
+
+// BinsStandingAt is bins.StandingAt: the candidate carts recorded on location,
+// or, with none, the order's claimed carts there.
+func (db *DB) BinsStandingAt(ids []int64, claimedBy int64, location string) ([]*bins.Bin, error) {
+	return bins.StandingAt(db.DB, ids, claimedBy, location)
+}
+
+// CartInHandAmong is bins.InHandAmong: the cart among ids the order's robot holds.
+func (db *DB) CartInHandAmong(ids []int64, orderID int64) (int64, bool, error) {
+	return bins.InHandAmong(db.DB, ids, orderID)
+}
+
+// CartsOfOrder is bins.OfOrder: the carts an order carries, read fresh.
+func (db *DB) CartsOfOrder(orderID int64) ([]*bins.Bin, error) {
+	return bins.OfOrder(db.DB, orderID)
+}

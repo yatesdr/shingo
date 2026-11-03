@@ -49,14 +49,28 @@ func settleFixture(t *testing.T, db *store.DB, tag string) (order *orders.Order,
 		o.SourceNode = src.Name
 		o.DeliveryNode = destB.Name
 		o.Status = "delivered"
+		o.StepsJSON = twoDropPlan(src.Name, destA.Name, destB.Name)
 	})
 	testdb.ClaimBinForTest(t, db, landed.ID, order.ID)
 	testdb.ClaimBinForTest(t, db, inFlight.ID, order.ID)
-	testutil.MustNoErr(t, db.InsertOrderBin(order.ID, landed.ID, 3, "dropoff", src.Name, destA.Name),
-		"junction row: the already-placed leg")
-	testutil.MustNoErr(t, db.InsertOrderBin(order.ID, inFlight.ID, 5, "dropoff", src.Name, destB.Name),
-		"junction row: the in-flight leg")
-	return order, landed, inFlight, destA, destB
+	testdb.SeedCartRow(t, db, order.ID, landed.ID, 0, 1)   // the already-placed leg
+	testdb.SeedCartRow(t, db, order.ID, inFlight.ID, 2, 3) // the in-flight leg
+	return reloadOrder(t, db, order.ID), landed, inFlight, destA, destB
+}
+
+// twoDropPlan is a two-cart plan: a cart lifted at src set down at first (steps
+// 0 and 1), another lifted at src set down at second (steps 2 and 3).
+func twoDropPlan(src, first, second string) string {
+	return `[{"action":"pickup","node":"` + src + `"},{"action":"dropoff","node":"` + first + `"},` +
+		`{"action":"pickup","node":"` + src + `"},{"action":"dropoff","node":"` + second + `"}]`
+}
+
+// reloadOrder is the order as a reader loads it: its row and its carts.
+func reloadOrder(t *testing.T, db *store.DB, id int64) *orders.Order {
+	t.Helper()
+	o, err := db.GetOrder(id)
+	testutil.MustNoErr(t, err, "reload the order")
+	return o
 }
 
 // TestMultiBinSettle_RefusalWritesNothing is the R.26 assert: a settlement that
@@ -99,6 +113,7 @@ func TestMultiBinSettle_RefusalWritesNothing(t *testing.T) {
 		o.SourceNode = src.Name
 		o.DeliveryNode = destB.Name
 		o.Status = "delivered"
+		o.StepsJSON = twoDropPlan(src.Name, destA.Name, destB.Name)
 	})
 
 	// Leg one: genuinely this order's bin, in flight, ready to settle.
@@ -138,13 +153,11 @@ func TestMultiBinSettle_RefusalWritesNothing(t *testing.T) {
 	}
 	testdb.ClaimBinForTest(t, db, foreign.ID, thief.ID)
 
-	testutil.MustNoErr(t, db.InsertOrderBin(order.ID, good.ID, 0, "pickup", src.Name, destA.Name), "row: good")
-	testutil.MustNoErr(t, db.InsertOrderBin(order.ID, foreign.ID, 2, "pickup", src.Name, destB.Name), "row: foreign")
+	testdb.SeedCartRow(t, db, order.ID, good.ID, 0, 1)
+	testdb.SeedCartRow(t, db, order.ID, foreign.ID, 2, 3)
+	order = reloadOrder(t, db, order.ID)
 
-	obs, err := db.ListOrderBins(order.ID)
-	testutil.MustNoErr(t, err, "list junction rows")
-
-	refusals := eng.applyMultiBinArrivalForOrder(order, obs)
+	refusals := eng.settleCarts(order, order.FinalDrops())
 	if len(refusals) != 1 {
 		t.Fatalf("refusals = %d, want 1 — the foreign leg must be refused", len(refusals))
 	}
@@ -176,6 +189,7 @@ func TestMultiBinSettle_RefusalWritesNothing(t *testing.T) {
 		o.SourceNode = src.Name
 		o.DeliveryNode = destB.Name
 		o.Status = "delivered"
+		o.StepsJSON = twoDropPlan(src.Name, destA.Name, destB.Name)
 	})
 	one := &bins.Bin{BinTypeID: bt.ID, Label: "PARTIAL-OK1", NodeID: &transit.ID, Status: "available"}
 	two := &bins.Bin{BinTypeID: bt.ID, Label: "PARTIAL-OK2", NodeID: &transit.ID, Status: "available"}
@@ -183,12 +197,10 @@ func TestMultiBinSettle_RefusalWritesNothing(t *testing.T) {
 	testutil.MustNoErr(t, db.CreateBin(two), "create ok2")
 	testdb.ClaimBinForTest(t, db, one.ID, healthy.ID)
 	testdb.ClaimBinForTest(t, db, two.ID, healthy.ID)
-	testutil.MustNoErr(t, db.InsertOrderBin(healthy.ID, one.ID, 0, "pickup", src.Name, destA.Name), "row: ok1")
-	testutil.MustNoErr(t, db.InsertOrderBin(healthy.ID, two.ID, 2, "pickup", src.Name, destB.Name), "row: ok2")
-
-	healthyObs, err := db.ListOrderBins(healthy.ID)
-	testutil.MustNoErr(t, err, "list healthy junction rows")
-	if rs := eng.applyMultiBinArrivalForOrder(healthy, healthyObs); len(rs) != 0 {
+	testdb.SeedCartRow(t, db, healthy.ID, one.ID, 0, 1)
+	testdb.SeedCartRow(t, db, healthy.ID, two.ID, 2, 3)
+	healthy = reloadOrder(t, db, healthy.ID)
+	if rs := eng.settleCarts(healthy, healthy.FinalDrops()); len(rs) != 0 {
 		t.Fatalf("healthy settlement refused %d legs, want 0", len(rs))
 	}
 	for _, want := range []struct {
@@ -204,145 +216,34 @@ func TestMultiBinSettle_RefusalWritesNothing(t *testing.T) {
 	}
 }
 
-// TestMultiBinSettle_UnsetStatusDoesNotDeleteTheJunction is D3, at the site that
-// destroys data.
+// TestMultiBinSettle_TheCompletionNetDeletesNoRow: an order's carts are kept
+// after it ends, so the completion net deletes no row, whatever the order's
+// status reads — unset (D3: protocol.IsTerminal("") is TRUE, and an order whose
+// status did not load was once treated as finished and lost its rows) or
+// genuinely terminal.
 //
-// The completion handler deletes an order's junction rows once the order is
-// terminal — correct, and the natural cleanup point. But it asked with a bare
-// protocol.IsTerminal, and IsTerminal("") is TRUE, so an order whose status did
-// not load read as finished and its per-bin destinations were thrown away.
+// D3's evidence argument now covers every order: the rows deleted at the end
+// were exactly the evidence two specimens needed (PLAN §R.5's bin 17, §R.9's bin
+// 20), and an order's carts are its record for its whole life and after.
 //
-// Those are the rows whose absence made two specimens unreconstructable after
-// the fact (PLAN §R.5's bin 17, §R.9's bin 20): order_bins is deleted at
-// terminal and there is no bin-position history, so once they are gone the
-// per-bin destinations cannot be recovered from anything. An order that could
-// not be read is the last one whose evidence should be discarded.
-//
-// MUTATION: put the bare protocol.IsTerminal(order.Status) back and this fires —
-// the rows are gone.
-func TestMultiBinSettle_UnsetStatusDoesNotDeleteTheJunction(t *testing.T) {
+// MUTATION: put a DeleteOrderBins back into the net and either arm fires.
+func TestMultiBinSettle_TheCompletionNetDeletesNoRow(t *testing.T) {
 	t.Parallel()
 	db := testdb.Open(t)
 	eng := newTestEngine(t, db, testdb.NewSuccessBackend())
 
-	order, _, _, _, _ := settleFixture(t, db, "D3JUNC")
-	// The zero-value status: a row that did not load, or loaded partially. Written
-	// straight to the column so the struct and the DB agree on the bad state.
-	if _, err := db.Exec(`UPDATE orders SET status='' WHERE id=$1`, order.ID); err != nil {
-		t.Fatalf("force unset status: %v", err)
-	}
-	order.Status = ""
+	for _, status := range []string{"", "confirmed"} {
+		order, _, _, _, _ := settleFixture(t, db, "D3-"+status)
+		if _, err := db.Exec(`UPDATE orders SET status=$2 WHERE id=$1`, order.ID, status); err != nil {
+			t.Fatalf("set status %q: %v", status, err)
+		}
+		order.Status = protocol.Status(status)
 
-	obs, err := db.ListOrderBins(order.ID)
-	testutil.MustNoErr(t, err, "list junction rows before")
-	if len(obs) != 2 {
-		t.Fatalf("junction rows before = %d, want 2", len(obs))
-	}
+		eng.completionNet(order, order.FinalDrops())
 
-	eng.handleMultiBinCompleted(order, obs)
-
-	after, err := db.ListOrderBins(order.ID)
-	testutil.MustNoErr(t, err, "list junction rows after")
-	if len(after) != 2 {
-		t.Fatalf("junction rows after = %d, want 2 — an order whose status could not be read was "+
-			"treated as terminal and its per-bin destinations were deleted, which is exactly the "+
-			"evidence two prior specimens needed and did not have (D3)", len(after))
-	}
-
-	// And the control: a genuinely terminal order still gets cleaned up, or the
-	// fix would trade a data-loss bug for a junction-row leak.
-	live, _, _, _, _ := settleFixture(t, db, "D3TERM")
-	if _, err := db.Exec(`UPDATE orders SET status='confirmed' WHERE id=$1`, live.ID); err != nil {
-		t.Fatalf("set confirmed: %v", err)
-	}
-	live.Status = "confirmed"
-	liveObs, err := db.ListOrderBins(live.ID)
-	testutil.MustNoErr(t, err, "list terminal order's rows")
-
-	eng.handleMultiBinCompleted(live, liveObs)
-
-	remaining, err := db.ListOrderBins(live.ID)
-	testutil.MustNoErr(t, err, "list after terminal completion")
-	if len(remaining) != 0 {
-		t.Errorf("junction rows after a terminal completion = %d, want 0 — the cleanup must still "+
-			"happen for an order that really is finished", len(remaining))
-	}
-}
-
-// TestMultiBinSettle_DriftTripwireIsWiredAtBothSites proves the counter is
-// actually reached from the two settle paths, which the unit tests next to the
-// tripwire cannot: they call it directly.
-//
-// Two call sites, one line each, and a line that is never called is the whole
-// failure mode of an instrument. The per-site split is the point of asserting
-// both — this handler fires on (X → delivered) and again on (delivered →
-// confirmed), so "drifted at delivery" and "still drifted when the safety net
-// looked" are different facts and the tally keeps them apart.
-//
-// MUTATION: delete either noteDestNodeDrift call and that site's count is 0.
-func TestMultiBinSettle_DriftTripwireIsWiredAtBothSites(t *testing.T) {
-	db := testdb.Open(t)
-	eng := newTestEngine(t, db, testdb.NewSuccessBackend())
-	resetDestNodeDriftTally()
-	t.Cleanup(resetDestNodeDriftTally)
-
-	bt := &bins.BinType{Code: "DRIFTW-BT", Description: "tote"}
-	testutil.MustNoErr(t, db.CreateBinType(bt), "create bin type")
-	transit, err := db.GetNodeByName(domain.TransitNodeName)
-	testutil.MustNoErr(t, err, "lookup _TRANSIT")
-	press := &nodes.Node{Name: "DRIFTW-PRESS", Enabled: true}
-	empties := &nodes.Node{Name: "DRIFTW-EMPTIES", Enabled: true}
-	slot := &nodes.Node{Name: "DRIFTW-SLOT", Enabled: true}
-	stale := &nodes.Node{Name: "DRIFTW-STALE", Enabled: true}
-	for _, n := range []*nodes.Node{press, empties, slot, stale} {
-		testutil.MustNoErr(t, db.CreateNode(n), "create "+n.Name)
-	}
-
-	full := &bins.Bin{BinTypeID: bt.ID, Label: "DRIFTW-FULL", NodeID: &transit.ID, Status: "available"}
-	testutil.MustNoErr(t, db.CreateBin(full), "create full bin")
-	empty := &bins.Bin{BinTypeID: bt.ID, Label: "DRIFTW-EMPTY", NodeID: &transit.ID, Status: "available"}
-	testutil.MustNoErr(t, db.CreateBin(empty), "create empty bin")
-
-	// The plan sends the full bin to the slot and the empty back to the press.
-	plan := `[{"action":"pickup","node":"DRIFTW-PRESS"},` +
-		`{"action":"dropoff","node":"DRIFTW-SLOT"},` +
-		`{"action":"pickup","node":"DRIFTW-EMPTIES","empty":true},` +
-		`{"action":"dropoff","node":"DRIFTW-PRESS"}]`
-
-	order := testdb.CreateOrder(t, db, func(o *orders.Order) {
-		o.OrderType = "complex"
-		o.SourceNode = press.Name
-		o.DeliveryNode = press.Name
-		o.Status = "delivered"
-		o.StepsJSON = plan
-	})
-	if _, err := db.Exec(`UPDATE orders SET steps_json=$2 WHERE id=$1`, order.ID, plan); err != nil {
-		t.Fatalf("persist plan: %v", err)
-	}
-	order, err = db.GetOrder(order.ID)
-	testutil.MustNoErr(t, err, "reload order")
-
-	testdb.ClaimBinForTest(t, db, full.ID, order.ID)
-	testdb.ClaimBinForTest(t, db, empty.ID, order.ID)
-	// The full bin's row agrees with the plan. The empty's row is STALE — it still
-	// names a slot, while the plan takes the empty back to the press. That is D2's
-	// shape: a writer moved the plan and left the projection behind.
-	testutil.MustNoErr(t, db.InsertOrderBin(order.ID, full.ID, 0, "pickup", press.Name, slot.Name), "row: full")
-	testutil.MustNoErr(t, db.InsertOrderBin(order.ID, empty.ID, 2, "pickup", empties.Name, stale.Name), "row: empty")
-
-	obs, err := db.ListOrderBins(order.ID)
-	testutil.MustNoErr(t, err, "list junction rows")
-
-	eng.applyMultiBinArrivalForOrder(order, obs)
-	if n := DestNodeDriftTally()[driftSiteDelivery]; n != 1 {
-		t.Errorf("%s = %d, want 1 — the delivery-time settle must read the tripwire before it places",
-			driftSiteDelivery, n)
-	}
-
-	eng.handleMultiBinCompleted(order, obs)
-	if n := DestNodeDriftTally()[driftSiteCompleted]; n != 1 {
-		t.Errorf("%s = %d, want 1 — the completion-time settle must read it too, under its own key",
-			driftSiteCompleted, n)
+		if rows := testdb.CartRowBins(t, db, order.ID); len(rows) != 2 {
+			t.Errorf("status %q: rows after the completion net = %v, want both carts' rows kept", status, rows)
+		}
 	}
 }
 
@@ -377,13 +278,11 @@ func TestMultiBinSettle_LandedBinGetsNoInstruction(t *testing.T) {
 
 	order, landed, inFlight, destA, destB := settleFixture(t, db, "SETTLE1")
 
-	obs, err := db.ListOrderBins(order.ID)
-	testutil.MustNoErr(t, err, "list junction rows")
-	if len(obs) != 2 {
-		t.Fatalf("junction rows = %d, want 2", len(obs))
+	if len(order.Carts) != 2 {
+		t.Fatalf("the order's carts = %d, want 2", len(order.Carts))
 	}
 
-	refusals := eng.applyMultiBinArrivalForOrder(order, obs)
+	refusals := eng.settleCarts(order, order.FinalDrops())
 	if len(refusals) != 0 {
 		t.Fatalf("refusals = %d, want 0 — both legs are this order's own bins", len(refusals))
 	}
@@ -429,7 +328,7 @@ func TestMultiBinSettle_LandedBinGetsNoInstruction(t *testing.T) {
 // by reading the SQL. Reading the SQL only ever answers "is this UPDATE
 // scoped", which is a narrower question that looks exactly like the one asked.
 //
-// SO IT RUNS THE CALLER. applyMultiBinArrivalForOrder is the delivery-time
+// SO IT RUNS THE CALLER. settleCarts is the delivery-time
 // settle, and its guard is refuseArrival.
 //
 // THE VERDICT IS: BOTH READINGS WERE PARTLY RIGHT, AND IT IS LIVE.
@@ -486,6 +385,7 @@ func TestMultiBinSettle_CompoundChildScopesItsUnclaim(t *testing.T) {
 		o.SourceNode = src.Name
 		o.DeliveryNode = destS.Name
 		o.Status = "delivered"
+		o.StepsJSON = twoDropPlan(src.Name, destF.Name, destS.Name)
 	})
 
 	// Both claim holders stay OUT of the acquiring set, for the reason spelled
@@ -510,23 +410,20 @@ func TestMultiBinSettle_CompoundChildScopesItsUnclaim(t *testing.T) {
 	foreign := &bins.Bin{BinTypeID: bt.ID, Label: "SCOPE-FOREIGN", NodeID: &transit.ID, Status: "available"}
 	testutil.MustNoErr(t, db.CreateBin(foreign), "create foreign bin")
 	testdb.ClaimBinForTest(t, db, foreign.ID, stranger.ID)
-	testutil.MustNoErr(t, db.InsertOrderBin(child.ID, foreign.ID, 0, "dropoff", src.Name, destF.Name),
-		"junction row: the stranger-claimed leg")
+	testdb.SeedCartRow(t, db, child.ID, foreign.ID, 0, 1) // the stranger-claimed leg
 
 	// ARM 2 — a SIBLING's claim, which the compound exemption must still clear.
 	shared := &bins.Bin{BinTypeID: bt.ID, Label: "SCOPE-SIBLING", NodeID: &transit.ID, Status: "available"}
 	testutil.MustNoErr(t, db.CreateBin(shared), "create sibling-claimed bin")
 	testdb.ClaimBinForTest(t, db, shared.ID, sibling.ID)
-	testutil.MustNoErr(t, db.InsertOrderBin(child.ID, shared.ID, 1, "dropoff", src.Name, destS.Name),
-		"junction row: the sibling-claimed leg")
+	testdb.SeedCartRow(t, db, child.ID, shared.ID, 2, 3) // the sibling-claimed leg
 
-	obs, err := db.ListOrderBins(child.ID)
-	testutil.MustNoErr(t, err, "list junction rows")
-	if len(obs) != 2 {
-		t.Fatalf("junction rows = %d, want 2", len(obs))
+	child = reloadOrder(t, db, child.ID)
+	if len(child.Carts) != 2 {
+		t.Fatalf("the child's carts = %d, want 2", len(child.Carts))
 	}
 
-	refusals := eng.applyMultiBinArrivalForOrder(child, obs)
+	refusals := eng.settleCarts(child, child.FinalDrops())
 
 	// THE SETTLING OBSERVATION, and it is this assertion rather than the claim
 	// ones that answers the round's question. Zero refusals on a batch where

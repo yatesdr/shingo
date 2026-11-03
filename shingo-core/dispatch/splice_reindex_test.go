@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"shingo/protocol"
+	"shingocore/domain"
 )
 
 // TestSpliceStepShift_MapsOntoThePersistedPlan pins the mapping against ORDER 7,
@@ -69,32 +70,38 @@ func TestSpliceStepShift_UngatedPlanIsUntouched(t *testing.T) {
 	}
 }
 
-// TestAssertJunctionMatchesPlan_CatchesTheDrift is the invariant that would have
-// caught this the day it landed.
+// TestCartsPlanMismatch_CatchesTheDrift is the invariant that would have caught
+// this the day it landed.
 //
-// The stale row is not malformed and points at a real step; it simply names a
-// different node than the step at that position. That is the entire signal, and
-// an index-only check has none of it.
-func TestAssertJunctionMatchesPlan_CatchesTheDrift(t *testing.T) {
+// The stale row is not malformed and points at a real step; the step at that
+// position simply does not do what the row says (a wait where a pickup should
+// be, a pickup where its set-down should be). That is the entire signal, and an
+// index-only check has none of it.
+func TestCartsPlanMismatch_CatchesTheDrift(t *testing.T) {
 	t.Parallel()
 	spliced := []resolvedStep{
 		{Action: protocol.ActionWait, Node: "LSD-M1-WAIT", WaitKind: WaitKindLane, WaitLane: 27},
 		{Action: protocol.ActionPickup, Node: "LSD_023"},
+		{Action: protocol.ActionDropoff, Node: "SLN_003"},
+	}
+	lift := func(pick, drop int) []domain.Cart {
+		return []domain.Cart{{BinID: 13, PickStep: &pick, DropStep: &drop}}
 	}
 
-	stale := []junctionRow{{BinID: 13, StepIndex: 0, NodeName: "LSD_023"}}
-	if err := assertJunctionMatchesPlan(spliced, stale); err == nil {
-		t.Fatal("a junction row filed under a WAIT step passed the check — this is exactly the " +
-			"state orders 7 and 10 were in for 44 minutes, and it must not read as valid")
+	if err := cartsPlanMismatch(spliced, lift(0, 1)); err == nil {
+		t.Fatal("a row whose pick step is a WAIT passed the check — this is exactly the state " +
+			"orders 7 and 10 were in for 44 minutes, and it must not read as valid")
 	}
-
-	repaired := []junctionRow{{BinID: 13, StepIndex: 1, NodeName: "LSD_023"}}
-	if err := assertJunctionMatchesPlan(spliced, repaired); err != nil {
+	if err := cartsPlanMismatch(spliced, lift(1, 2)); err != nil {
 		t.Errorf("the re-indexed row was rejected: %v", err)
 	}
-
-	outside := []junctionRow{{BinID: 13, StepIndex: 9, NodeName: "LSD_023"}}
-	if err := assertJunctionMatchesPlan(spliced, outside); err == nil {
+	if err := cartsPlanMismatch(spliced, lift(1, 9)); err == nil {
+		t.Error("a row whose set-down points past the end of the plan passed the check")
+	}
+	if err := cartsPlanMismatch(spliced, lift(9, 10)); err == nil {
 		t.Error("a row pointing past the end of the plan passed the check")
+	}
+	if err := cartsPlanMismatch(spliced[1:], lift(domain.InHand, 1)); err != nil {
+		t.Errorf("a cart in hand from the start, set down at a dropoff, was rejected: %v", err)
 	}
 }

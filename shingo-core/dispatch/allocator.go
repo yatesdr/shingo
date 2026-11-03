@@ -1139,24 +1139,30 @@ func (a *Allocator) confirmComplexPlan(order *orders.Order, plan *ComplexPlan, a
 		return &planningError{Code: codeNoBin, Detail: fmt.Sprintf("complex order %d has no source pickup", order.ID)}
 	}
 
-	return a.recordClaimedBins(order, steps, claimed)
+	if err := a.recordClaimedBins(order, steps, claimed); err != nil {
+		if ownerEnded(err) {
+			return err
+		}
+		return &planningError{Code: codeClaimFailed, Detail: err.Error()}
+	}
+	return nil
 }
 
-// recordClaimedBins writes the order's plan of bins: the primary bin pointer
-// (the one at the order's process node, else the first) and, for a multi-pickup
-// parent, the per-bin order_bins rows with their destinations. Shared by the
-// pair's confirmComplexPlan and the solo order's hand, which writes it before
-// the hand confirms — it is the plan, not a hold. Its one error is
-// reservations.ErrOwnerEnded from the order_bins write: the order ended, and the
-// caller stops.
+// recordClaimedBins writes the order's carts: one order_bins row per lift, from
+// the plan walk over the carts this allocation claimed (domain.Lifts), and the
+// one-cart pointer orders.bin_id keeps until v174 (the claim at the order's
+// process node, else the first) — in one statement (ReplaceOrderBins). Every
+// order that claims a cart writes its rows here: one cart or several, a root or
+// a compound's leg. Shared by the pair's confirmComplexPlan and the solo order's
+// hand, which writes it before the hand confirms: it is the plan, not a hold.
+// An error stops the caller: ErrOwnerEnded when the order ended after its
+// claims, anything else because an allocation whose carts are not on record
+// must not reach the fleet.
 func (a *Allocator) recordClaimedBins(order *orders.Order, steps []resolvedStep, claimed []claimedBin) error {
 	processNode := order.ProcessNode
 	if processNode == "" {
 		processNode = order.SourceNode
 	}
-
-	// order.BinID tracks the bin claimed at the process node, else the first —
-	// the index over the bins we actually claimed (same as ApplyComplexPlan).
 	primaryIdx := 0
 	for i, cb := range claimed {
 		if cb.nodeName == processNode {
@@ -1164,47 +1170,23 @@ func (a *Allocator) recordClaimedBins(order *orders.Order, steps []resolvedStep,
 			break
 		}
 	}
-	order.BinID = &claimed[primaryIdx].binID
-	if err := a.db.UpdateOrderBinID(order.ID, claimed[primaryIdx].binID); err != nil {
-		a.dbg("complex confirm: WARNING order %d UpdateOrderBinID(bin=%d) failed: %v",
-			order.ID, claimed[primaryIdx].binID, err)
+	claimedAt := make(map[int]int64, len(claimed))
+	for _, cb := range claimed {
+		claimedAt[cb.stepIndex] = cb.binID
 	}
-
-	// Multi-bin: per-bin destinations in order_bins, resolved from the bins we
-	// claimed (a sibling fallback would change which bin lands where). Compound
-	// children never use the junction — each is a single-bin legacy-path order.
-	if len(claimed) > 1 && order.ParentOrderID == nil {
-		claimedMap := make(map[string]int64, len(claimed))
-		for _, cb := range claimed {
-			claimedMap[cb.nodeName] = cb.binID
-		}
-		destinations := resolvePerBinDestinations(steps, claimedMap)
-		// REPLACE THE SET, DO NOT MERGE INTO IT. This allocation is the whole
-		// answer to "which bins is this order carrying"; per-bin upserts left the
-		// rows of every bin an earlier attempt claimed and then rolled back, and
-		// the arrival check FAILS an order on a junction row it does not hold.
-		rows := make([]orders.OrderBinRow, 0, len(claimed))
-		for _, cb := range claimed {
-			rows = append(rows, orders.OrderBinRow{
-				BinID:     cb.binID,
-				StepIndex: cb.stepIndex,
-				Action:    string(protocol.ActionPickup),
-				NodeName:  cb.nodeName,
-				DestNode:  destinations[cb.binID],
-			})
-		}
-		if err := a.db.ReplaceOrderBins(order.ID, rows); ownerEnded(err) {
-			// The order ended after its claims: the junction is not written, and
-			// the pass stops here rather than reaching the fleet handover.
-			return err
-		} else if err != nil {
-			log.Printf("dispatch: record order_bins for order %d: %v", order.ID, err)
-		}
-		log.Printf("dispatch: complex order %d has %d pickups — per-bin destinations recorded in order_bins",
-			order.ID, len(claimed))
-	} else if len(claimed) > 1 {
-		log.Printf("dispatch: complex order %d has %d pickups — Order.BinID tracks first bin %d only (compound child, no junction)",
-			order.ID, len(claimed), claimed[0].binID)
+	planned := *order
+	if j, err := json.Marshal(steps); err == nil {
+		planned.StepsJSON = string(j)
+	}
+	rows := orders.CartRows(&planned, claimedAt)
+	if err := a.db.ReplaceOrderBins(order.ID, claimed[primaryIdx].binID, rows); err != nil {
+		return fmt.Errorf("record the carts of order %d: %w", order.ID, err)
+	}
+	order.BinID = &claimed[primaryIdx].binID
+	order.Carts = cartsOf(rows)
+	if len(rows) < len(claimed) {
+		log.Printf("dispatch: order %d claimed %d carts and its plan sets down %d lifts of them — a claim its plan never sets down has no row",
+			order.ID, len(claimed), len(rows))
 	}
 	return nil
 }

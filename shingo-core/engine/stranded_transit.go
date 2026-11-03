@@ -30,6 +30,7 @@ import (
 
 	"shingo/protocol"
 	"shingo/protocol/clock"
+	"shingocore/domain"
 	"shingocore/fleet"
 	"shingocore/service"
 	"shingocore/store/bins"
@@ -58,25 +59,30 @@ func (e *Engine) inferStrandedTransitBin(orderID int64) {
 		e.logFn("engine: stranded transit: order %d: %v", orderID, err)
 		return
 	}
-	// orders.bin_id, not claimed_by and not the order_bins junction: by the time
-	// any terminal handler runs, TerminalizeOrderWithReason has cleared the
-	// claim and deleted the junction rows. The order's own bin_id is what
-	// survives its own terminalisation, and a compound's legs each carry theirs.
-	if order.BinID == nil {
-		return
+	// The order's carts, not claimed_by: by the time any terminal handler runs,
+	// TerminalizeOrderWithReason has cleared the claims. Its rows survive its
+	// end (an order's carts are kept), so every cart it carried is asked — a
+	// swap cancelled with its second cart on the robot left THAT cart there,
+	// and the first may be set down at its window.
+	seen := map[int64]bool{}
+	for _, c := range order.Carts {
+		if seen[c.BinID] {
+			continue
+		}
+		seen[c.BinID] = true
+		bin, err := e.BinService().GetBin(c.BinID)
+		if err != nil || bin == nil {
+			continue
+		}
+		// Only a cart actually stranded: on _TRANSIT with nobody holding it. A
+		// cart that reached its drop, or that another order has already picked
+		// up, is not this function's business.
+		if bin.NodeName != transitNodeName || bin.ClaimedBy != nil {
+			continue
+		}
+		robot, haveRobot := e.GetCachedRobotStatus(order.RobotID)
+		e.placeStrandedBin(bin.ID, order.RobotID, robot, haveRobot, true)
 	}
-	bin, err := e.BinService().GetBin(*order.BinID)
-	if err != nil || bin == nil {
-		return
-	}
-	// Only a bin actually stranded: parked at _TRANSIT with nobody holding it.
-	// A bin that reached its destination, or that another order has already
-	// picked up, is not this function's business.
-	if bin.NodeName != transitNodeName || bin.ClaimedBy != nil {
-		return
-	}
-	robot, haveRobot := e.GetCachedRobotStatus(order.RobotID)
-	e.placeStrandedBin(bin.ID, order.RobotID, robot, haveRobot, true)
 }
 
 // transitNodeName is the synthetic node a picked-up bin parks at.
@@ -101,7 +107,7 @@ func (e *Engine) placeStrandedBin(binID int64, robotID string, robot fleet.Robot
 	var pickedUpAt time.Time
 	lifted := false
 	if haveOrder {
-		pickedUpAt, lifted = e.pickupAt(ord)
+		pickedUpAt, lifted = e.pickupAt(ord, binID)
 	}
 	if !lifted {
 		why := "no robot pickup on record"
@@ -218,28 +224,42 @@ func (e *Engine) placeStrandedBin(binID int64, robotID string, robot fleet.Robot
 	e.placeInferred(binID, robotID, observeDrop(robotID, robot, clock.Now().UTC()), false)
 }
 
-// pickupAt reports when the order's robot lifted its bin, and whether it ever
+// pickupAt reports when the order's robot lifted THIS cart, and whether it ever
 // did.
 //
 // THE PICKUP LEG, NOT THE `in_transit` ROW. `in_transit` is RDS reporting the
 // order RUNNING — a robot assigned and driving toward the source — and it was
 // read as the lift for a month. The lift is the pickup block completing:
 // handleBlockCompleted records that leg in mission_events and then, for a
-// pickup-shaped binTask, moves the bin to _TRANSIT. Same predicate
-// (IsPickupBlock), same event, recorded first — so a bin a robot put at
-// _TRANSIT has this row, and a bin that got there any other way does not.
+// pickup-shaped binTask, moves the cart to _TRANSIT. Same predicate
+// (IsPickupBlock), same event, recorded first — so a cart a robot put at
+// _TRANSIT has this row, and a cart that got there any other way does not.
 // Checked against every inferred placement at SPR and HK up to 2026-09-24:
 // all 50 had one; the three bins that reached _TRANSIT without a robot had none.
 //
-// THE FIRST SUCH LEG. A replanned order may report more blocks later; the bin
-// left the floor once. Known limit: a complex order with pickups of several
-// bins answers for all of them with its first.
+// THE CART'S OWN LIFT: a pickup leg at the node of one of the order's rows for
+// this cart (its pick step, domain.StepNode). It used to be the order's first
+// pickup leg, so a swap's second cart rode on the first cart's lift. The first
+// such leg: a replanned order may report more blocks later; the cart left the
+// floor once.
 //
-// FAIL CLOSED. An unreadable or missing row reports false: this gates writes
-// that move a bin, and "no pickup on record" sends an operator to look, where a
-// wrong answer would send the floor to fetch a bin that is not there.
-func (e *Engine) pickupAt(ord *orders.Order) (time.Time, bool) {
+// FAIL CLOSED. An unreadable or missing leg, or a row with no pick step (one
+// carried over from before the rows existed), reports false: this gates writes
+// that move a cart, and "no pickup on record" sends an operator to look, where
+// a wrong answer would send the floor to fetch a cart that is not there.
+func (e *Engine) pickupAt(ord *orders.Order, binID int64) (time.Time, bool) {
 	if ord == nil {
+		return time.Time{}, false
+	}
+	picks := map[string]bool{}
+	for _, c := range ord.Carts {
+		if c.BinID == binID && c.PickStep != nil && *c.PickStep >= 0 {
+			if node := strings.TrimSpace(domain.StepNode(ord, *c.PickStep)); node != "" {
+				picks[node] = true
+			}
+		}
+	}
+	if len(picks) == 0 {
 		return time.Time{}, false
 	}
 	events, err := e.db.ListMissionEvents(ord.ID)
@@ -256,7 +276,7 @@ func (e *Engine) pickupAt(ord *orders.Order) (time.Time, bool) {
 			continue
 		}
 		for _, leg := range legs {
-			if IsPickupBlock(leg.BinTask) {
+			if IsPickupBlock(leg.BinTask) && picks[strings.TrimSpace(leg.Location)] {
 				return ev.CreatedAt, true
 			}
 		}
@@ -376,17 +396,25 @@ func (e *Engine) declineInferred(binID int64, robotID string, obs dropObservatio
 	e.strandedAnomaly(binID, robotID, obs.status(), true, strings.Join(parts, "; "))
 }
 
-// placementIntent is where the last order that owned this bin was taking it.
+// placementIntent is where the last order that carried this cart was taking IT:
+// the plan step its row sets it down at last (domain.StepNode). The order's
+// delivery_node is the order's last drop, which for a swap is the other cart's:
+// a swap's first cart is set down at its window, not at the line. "" for a row
+// with no drop step (an open lift, or one carried over from before the rows).
 //
-// `orders.delivery_node`, and NOT `blocks_json`: neither call site holds the
-// vendor block snapshot, and the stopped block names the same node this column
-// does. It would be a second query for a corroborator already in hand.
+// The plan, and NOT `blocks_json`: neither call site holds the vendor block
+// snapshot, and the plan is in hand with the order (no statement).
 func (e *Engine) placementIntent(binID int64) string {
 	ord, _, ok := e.lastClaimingOrder(binID)
 	if !ok || ord == nil {
 		return ""
 	}
-	return ord.DeliveryNode
+	for _, c := range ord.FinalDrops() {
+		if c.BinID == binID {
+			return domain.StepNode(ord, *c.DropStep)
+		}
+	}
+	return ""
 }
 
 func intentPhrase(intent string) string {
@@ -962,9 +990,10 @@ func (e *Engine) terminalWithin(ord *orders.Order, window time.Duration) (time.T
 // lastClaimingOrder finds the order that most recently owned this bin, and the
 // robot it was on.
 //
-// orders.bin_id survives terminalisation (bins.claimed_by and the order_bins
-// junction do not), so the order's own column is the only durable link back from
-// a stranded bin to the robot that was carrying it.
+// A cart's orders are the orders with a row for it, kept after they end
+// (bins.claimed_by is not), read newest first over order_bins_by_bin: the only
+// durable link back from a stranded cart to the robot that was carrying it — for
+// every cart of an order, not the one orders.bin_id named.
 func (e *Engine) lastClaimingOrder(binID int64) (ord *orders.Order, robotID string, ok bool) {
 	ords, err := e.db.ListOrdersByBin(binID, 1)
 	if err != nil || len(ords) == 0 {

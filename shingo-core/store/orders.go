@@ -283,13 +283,17 @@ func HoldLegTx(tx *sql.Tx, c CompoundChild) ([]DisplacedForCart, Steals, error) 
 	//
 	// The holder's row and its bin_id go together, in the steal, so it re-enters
 	// through the finder and re-resolves rather than confirming a bin that is
-	// leaving.
-	if o.BinID != nil {
+	// leaving. The leg's blocker is its one cart, written with it (Create).
+	blocker, err := o.OnlyBin()
+	if err != nil {
+		return nil, nil, err
+	}
+	if blocker != nil {
 		parentID := int64(0)
 		if o.ParentOrderID != nil {
 			parentID = *o.ParentOrderID
 		}
-		byHand, took, err := stealSoftHolds(tx, *o.BinID, o.ID, parentID, o.DeliveryNode)
+		byHand, took, err := stealSoftHolds(tx, *blocker, o.ID, parentID, o.DeliveryNode)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -367,7 +371,8 @@ func stealSoftHolds(tx *sql.Tx, binID, childID, parentID int64, parkedAt string)
 	rows, err := tx.Query(`SELECT b.claimed_by,
 		       (b.claimed_by = $2 OR b.claimed_by = $3
 		        OR b.claimed_by IN (SELECT id FROM orders WHERE parent_order_id = $3)),
-		       r.order_id, COALESCE(o.named_bin_id,0), COALESCE(o.bin_id,0)
+		       r.order_id, COALESCE(o.named_bin_id,0),
+		       EXISTS (SELECT 1 FROM order_bins ob WHERE ob.order_id = o.id AND ob.bin_id = b.id)
 		FROM bins b
 		LEFT JOIN reservations r ON r.bin_id = b.id AND r.resource_kind='bin'
 		  AND `+reservations.BlockingStateSQL("r.")+`
@@ -391,7 +396,7 @@ func stealSoftHolds(tx *sql.Tx, binID, childID, parentID int64, parkedAt string)
 		found = true
 		var holder sql.NullInt64
 		var namedBin int64
-		var pointsAt int64
+		var pointsAt bool
 		if err := rows.Scan(&claimedBy, &claimOurs, &holder, &namedBin, &pointsAt); err != nil {
 			rows.Close()
 			return nil, nil, fmt.Errorf("scan soft hold on bin %d: %w", binID, err)
@@ -402,7 +407,7 @@ func stealSoftHolds(tx *sql.Tx, binID, childID, parentID int64, parkedAt string)
 		victims = append(victims, victim{
 			orderID:    holder.Int64,
 			forCart:    forThisCart(namedBin, binID),
-			pointsHere: pointsAt == binID,
+			pointsHere: pointsAt,
 		})
 	}
 	if err := rows.Err(); err != nil {
@@ -504,7 +509,8 @@ func stealSoftHolds(tx *sql.Tx, binID, childID, parentID int64, parkedAt string)
 		var taken int
 		if err := tx.QueryRow(
 			`WITH released AS (DELETE FROM reservations WHERE bin_id=$2 AND order_id=$1 AND resource_kind='bin' AND state=$4 RETURNING 1),
-			 unpointed AS (UPDATE orders SET bin_id=NULL, updated_at=$3 WHERE id=$1 AND bin_id=$2 AND EXISTS (SELECT 1 FROM released))
+			 unpointed AS (UPDATE orders SET bin_id=NULL, updated_at=$3 WHERE id=$1 AND bin_id=$2 AND EXISTS (SELECT 1 FROM released)),
+			 unrowed AS (DELETE FROM order_bins WHERE order_id=$1 AND bin_id=$2 AND EXISTS (SELECT 1 FROM released))
 			 SELECT COUNT(*) FROM released`,
 			v.orderID, binID, clock.Now().UTC(), string(reservations.StatePending)).Scan(&taken); err != nil {
 			return nil, nil, fmt.Errorf("clear bin %d off holder %d: %w", binID, v.orderID, err)
@@ -602,8 +608,9 @@ type HolderNote struct {
 // person is authoritative over soft holds (the 08-28 ruling). The dig's ranked
 // steal (stealSoftHolds) is the other taker, and C2b folds it onto this.
 //
-// EACH HOLDER'S ROW IS DELETED, and a holder still pointing at the bin is
-// un-pointed and told why: its queue detail names the taker, and an
+// EACH HOLDER'S ROW IS DELETED, and a holder that carries the bin (a row of its
+// for it: any cart of the order, not only the one orders.bin_id named) is
+// un-pointed — its row for the cart deleted with its pointer — and told why: its queue detail names the taker, and an
 // order_history row at its current status (code bin-taken, ref taken_by) keeps
 // the take after the queue columns are overwritten by its next wait. Un-pointed,
 // it re-finds through the finder on the next pass instead of confirming a bin
@@ -626,7 +633,8 @@ func TakeSoftHolds(tx *sql.Tx, binID, takerID int64, note HolderNote) (named []i
 	// below: a terminalize takes an order row, then its reservations, and a take
 	// that deleted the promise first and wrote the order after deadlocked with it
 	// (LOCKS.md §3). Ordered by id, so two takes lock holders in one order too.
-	rows, err := tx.Query(`SELECT r.order_id, o.status, COALESCE(o.named_bin_id,0), COALESCE(o.bin_id,0)
+	rows, err := tx.Query(`SELECT r.order_id, o.status, COALESCE(o.named_bin_id,0),
+		EXISTS (SELECT 1 FROM order_bins ob WHERE ob.order_id = o.id AND ob.bin_id = $1)
 		FROM reservations r
 		JOIN orders o ON o.id = r.order_id
 		WHERE r.bin_id=$1 AND r.resource_kind='bin' AND r.state=$2 AND r.order_id <> $3
@@ -639,13 +647,13 @@ func TakeSoftHolds(tx *sql.Tx, binID, takerID int64, note HolderNote) (named []i
 	for rows.Next() {
 		var h holder
 		var namedBin int64
-		var pointsAt int64
+		var pointsAt bool
 		if err := rows.Scan(&h.orderID, &h.status, &namedBin, &pointsAt); err != nil {
 			rows.Close()
 			return nil, 0, fmt.Errorf("scan soft hold on bin %d: %w", binID, err)
 		}
 		h.forCart = forThisCart(namedBin, binID)
-		h.pointsHere = pointsAt == binID
+		h.pointsHere = pointsAt
 		holders = append(holders, h)
 	}
 	if err := rows.Err(); err != nil {
@@ -686,8 +694,10 @@ func TakeSoftHolds(tx *sql.Tx, binID, takerID int64, note HolderNote) (named []i
 			named = append(named, h.orderID)
 			continue
 		}
-		if _, err := tx.Exec(`UPDATE orders SET bin_id=NULL, queue_reason=$3, queue_code=$4, queue_cause=$5, updated_at=$6
-			WHERE id=$1 AND bin_id=$2`,
+		if _, err := tx.Exec(`WITH unrowed AS (DELETE FROM order_bins WHERE order_id=$1 AND bin_id=$2)
+			UPDATE orders SET bin_id = CASE WHEN bin_id = $2 THEN NULL ELSE bin_id END,
+			       queue_reason=$3, queue_code=$4, queue_cause=$5, updated_at=$6
+			WHERE id=$1`,
 			h.orderID, binID, note.Reason, string(note.Code), note.Cause, now); err != nil {
 			return nil, 0, fmt.Errorf("un-point order %d from bin %d: %w", h.orderID, binID, err)
 		}
@@ -1083,7 +1093,10 @@ func ClaimCompoundLegBinTx(tx *sql.Tx, binID, legID, parentID int64) error {
 // already held (ClaimCompoundLegBinTx).
 func supersedeBinLedger(tx *sql.Tx, binID, childID, parentID int64) error {
 	if _, err := tx.Exec(
-		`WITH gone AS (DELETE FROM reservations WHERE bin_id=$1 AND resource_kind='bin' RETURNING order_id)
+		`WITH gone AS (DELETE FROM reservations WHERE bin_id=$1 AND resource_kind='bin' RETURNING order_id),
+		 unrowed AS (DELETE FROM order_bins ob USING orders o
+		  WHERE ob.bin_id = $1 AND o.id = ob.order_id AND o.id IN (SELECT order_id FROM gone)
+		    AND o.id <> $2 AND o.parent_order_id IS DISTINCT FROM $2)
 		 UPDATE orders SET bin_id = NULL, updated_at = $3
 		  WHERE id IN (SELECT order_id FROM gone) AND bin_id = $1
 		    AND id <> $2 AND parent_order_id IS DISTINCT FROM $2`,
@@ -1490,10 +1503,10 @@ func (db *DB) UpdateOrderBinID(orderID, binID int64) error {
 	return orders.UpdateBinID(db.DB, orderID, binID)
 }
 
-// ClearOrderBinID forgets which bin an order was going to take, so the scanner
-// routes it back through the finder instead of the held-bin arm.
-func (db *DB) ClearOrderBinID(orderID int64) error {
-	return orders.ClearBinID(db.DB, orderID)
+// ForgetHeldCart forgets the cart a plain order was going to take (its row), so
+// the scanner routes it back through the finder instead of the held-bin arm.
+func (db *DB) ForgetHeldCart(orderID int64) error {
+	return orders.ForgetHeldCart(db.DB, orderID)
 }
 
 // ListOrdersByBin returns recent orders involving a specific bin.
@@ -1503,15 +1516,17 @@ func (db *DB) ListOrdersByBin(binID int64, limit int) ([]*orders.Order, error) {
 	return orders.ListByBinID(db.DB, binID, limit)
 }
 
-// ActiveOrdersByBin returns non-terminal orders referencing a bin via bin_id.
+// ActiveOrdersByBin returns the live orders carrying a bin (a row for it).
 // Cross-aggregate delegate for BinService's orphan-order guard on retire/move.
 func (db *DB) ActiveOrdersByBin(binID int64) ([]*orders.Order, error) {
 	return orders.ActiveByBinID(db.DB, binID)
 }
 
 // TerminalizeOrder transitions an order to a terminal status and releases ALL of
-// its holds — bin claims, destination-slot claims, order_bins junction rows, and
-// reservations (pending and confirmed) — in a single transaction. It is the one
+// its holds — bin claims, destination-slot claims and reservations (pending and
+// confirmed) — in a single transaction. Its carts (order_bins rows) are KEPT:
+// they are its record, live or ended, and "the last order of this cart" reads
+// them. It is the one
 // chokepoint that makes "reaching a terminal status releases everything" a
 // structural invariant rather than several divergent write paths; transition()
 // routes every IsTerminal target here (including the success terminal
@@ -1665,8 +1680,8 @@ func (db *DB) TerminalizeOrderWithReason(orderID int64, status protocol.Status, 
 }
 
 // releaseOrderHoldingsTx gives an order's acquisitions back: its hard bin
-// claims, its destination-slot claims, its order_bins junction rows, and its
-// reservations (pending and confirmed). One transaction, one body, and
+// claims, its destination-slot claims and its reservations (pending and
+// confirmed). One transaction, one body, and
 // idempotent by construction — every statement is keyed on the order id and
 // matches zero rows the second time.
 //
@@ -1708,9 +1723,6 @@ func releaseOrderHoldingsTx(tx *sql.Tx, orderID int64) error {
 	if _, err := tx.Exec(`UPDATE nodes SET claimed_by=NULL, updated_at=NOW() WHERE claimed_by=$1`, orderID); err != nil {
 		return err
 	}
-	if _, err := tx.Exec(`DELETE FROM order_bins WHERE order_id=$1`, orderID); err != nil {
-		return err
-	}
 	// Release any reservations this order holds (pending or confirmed). Must run
 	// in the same tx so no window exists where the order is terminal but its
 	// reservation still blocks the bin. The owner-liveness reaper is the
@@ -1748,7 +1760,11 @@ func (db *DB) ReleaseOrderHoldings(orderID int64) error {
 	if err := releaseOrderHoldingsTx(tx, orderID); err != nil {
 		return err
 	}
-	if _, err := tx.Exec(`UPDATE orders SET bin_id=NULL WHERE id=$1 AND bin_id IS NOT NULL`, orderID); err != nil {
+	// The carts go with the pointer, in its statement: the leg lifted none of
+	// them (it was never sent), so it no longer carries them. The next
+	// allocation writes the set it claims.
+	if _, err := tx.Exec(`WITH unrowed AS (DELETE FROM order_bins WHERE order_id=$1)
+		UPDATE orders SET bin_id=NULL WHERE id=$1 AND bin_id IS NOT NULL`, orderID); err != nil {
 		return err
 	}
 	return tx.Commit()

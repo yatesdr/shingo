@@ -128,11 +128,11 @@ var bumpPushCensus = map[string]censusNode{
 	"service:BinManifestService.syncOrClearForReleased": {push: pushBinsChanged},
 
 	// The lift: the pickup ends a streamed bin's generation.
-	"store/bins:LiftToTransitTx":               {callers: []string{"store:DB.LiftBinToTransitTx"}},
-	"store:DB.LiftBinToTransitTx":              {callers: []string{"service:BinService.Lift"}},
-	"service:BinService.Lift":                  {callers: []string{"engine:Engine.handlePickupBlockCompleted", "service:BinService.MoveToTransit"}},
-	"service:BinService.MoveToTransit":         {unreach: "tests only"},
-	"engine:Engine.handlePickupBlockCompleted": {push: pushBinEnteredTransit},
+	"store/bins:LiftToTransitTx":                  {callers: []string{"store:DB.LiftBinToTransitTx"}},
+	"store:DB.LiftBinToTransitTx":                 {callers: []string{"service:BinService.Lift"}},
+	"service:BinService.Lift":                     {callers: []string{"engine:Engine.handlePickupBlockCompletedFor", "service:BinService.MoveToTransit"}},
+	"service:BinService.MoveToTransit":            {unreach: "tests only"},
+	"engine:Engine.handlePickupBlockCompletedFor": {push: pushBinEnteredTransit},
 }
 
 const (

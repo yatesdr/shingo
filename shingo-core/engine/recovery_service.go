@@ -6,6 +6,8 @@ import (
 	"shingo/protocol"
 	"shingocore/domain"
 	"shingocore/service"
+	"shingocore/store"
+	"shingocore/store/nodes"
 )
 
 // RecoveryService owns the operator-triggered recovery actions
@@ -27,6 +29,15 @@ func newRecoveryService(e *Engine) *RecoveryService {
 	return &RecoveryService{engine: e, db: e.db}
 }
 
+// ReapplyOrderCompletion finishes a confirmed order whose completion did not
+// land: the one arrival over its carts (its rows), each cart to the node its
+// plan sets it down at last, a cart already there skipped. It used to place
+// orders.bin_id at delivery_node, so a landed two-cart swap's first cart was
+// moved onto the line and evicted the second (finding 4).
+//
+// An order that ended before its carts were recorded per lift (v173 carried its
+// one cart over with no steps) has no drop to repair to, and is refused with a
+// sentence: its cart is moved by hand, where it physically is.
 func (s *RecoveryService) ReapplyOrderCompletion(orderID int64, actor string) error {
 	e := s.engine
 	order, err := s.db.GetOrder(orderID)
@@ -36,28 +47,44 @@ func (s *RecoveryService) ReapplyOrderCompletion(orderID int64, actor string) er
 	if order.Status != "confirmed" || order.CompletedAt != nil {
 		return fmt.Errorf("order %d is not awaiting completion recovery", orderID)
 	}
-	if order.BinID == nil {
+	if len(order.Carts) == 0 {
 		// SHADOWED — reachability by a coordinator was NOT established by reading.
 		owns, oerr := s.db.OrderOwnsNoCargo(order.ID)
 		service.NoteFolderShadow(service.FolderSiteRecoveryReapply, order.ID, owns, oerr)
 		return fmt.Errorf("order %d has no bin to complete", orderID)
 	}
-	if order.DeliveryNode == "" {
-		return fmt.Errorf("order %d has no delivery node", orderID)
+	finals := order.FinalDrops()
+	if len(finals) == 0 {
+		return fmt.Errorf("order %d ended before its carts were recorded with their steps, so where its "+
+			"plan set them down is not known — move its cart by hand to where it is", orderID)
 	}
 
-	destNode, err := s.db.GetNodeByDotName(order.DeliveryNode)
-	if err != nil {
-		return fmt.Errorf("load delivery node: %w", err)
+	type moved struct {
+		bin, from int64
+		to        *nodes.Node
+	}
+	var places []store.RepairPlace
+	var events []moved
+	for _, c := range finals {
+		dest, err := s.db.GetNodeByDotName(domain.StepNode(order, *c.DropStep))
+		if err != nil || dest == nil {
+			return fmt.Errorf("load the drop of order %d's cart %d: %v", orderID, c.BinID, err)
+		}
+		bin, err := s.db.GetBin(c.BinID)
+		if err != nil || bin == nil {
+			return fmt.Errorf("read order %d's cart %d: %v", orderID, c.BinID, err)
+		}
+		if binAlreadyAt(bin, dest.ID) {
+			continue
+		}
+		// No expiry: staging does not expire (resolveNodeStaging).
+		places = append(places, store.RepairPlace{BinID: c.BinID, ToNodeID: dest.ID, Staged: !e.isStorageSlot(dest.ID)})
+		events = append(events, moved{bin: c.BinID, from: e.stepNodeID(order, c.PickStep), to: dest})
 	}
 
-	isStorage := e.isStorageSlot(destNode.ID)
-
-	// No expiry: staging does not expire (resolveNodeStaging).
-	// The repair announces its drop like any arrival (Lane H, H.2): it may be
-	// the only record that the carrier came to rest there.
-	if err := s.db.RepairConfirmedOrderCompletion(order.ID, *order.BinID, destNode.ID, !isStorage, nil,
-		e.binService.LandingHook(order.ID, false)); err != nil {
+	// The repair announces its drops like any arrival (Lane H, H.2): it may be
+	// the only record that a cart came to rest there.
+	if err := s.db.RepairConfirmedOrderCompletion(order.ID, places, e.binService.LandingHook(order.ID, false)); err != nil {
 		return err
 	}
 
@@ -68,20 +95,18 @@ func (s *RecoveryService) ReapplyOrderCompletion(orderID int64, actor string) er
 	s.db.AppendAudit("order", order.ID, "recovery.reapply_completion", "", actor, actor)
 	s.db.RecordRecoveryAction("reapply_completion", "order", order.ID, "reapplied confirmed completion side effects", actor)
 
-	sourceNodeID := int64(0)
-	if order.SourceNode != "" {
-		if node, err := s.db.GetNodeByDotName(order.SourceNode); err == nil {
-			sourceNodeID = node.ID
+	for _, m := range events {
+		bin, err := s.db.GetBin(m.bin)
+		if err != nil {
+			continue
 		}
-	}
-	if bin, err := s.db.GetBin(*order.BinID); err == nil {
 		e.Events.Emit(Event{Type: EventBinUpdated, Payload: BinUpdatedEvent{
 			Action:      BinActionMoved,
 			BinID:       bin.ID,
 			PayloadCode: bin.PayloadCode,
-			FromNodeID:  sourceNodeID,
-			ToNodeID:    destNode.ID,
-			NodeID:      destNode.ID,
+			FromNodeID:  m.from,
+			ToNodeID:    m.to.ID,
+			NodeID:      m.to.ID,
 			// The order is loaded above, so both travel even though the CMS
 			// path skips a replay: any other subscriber that wants to know who
 			// moved the bin gets the same answer here as on a live delivery.

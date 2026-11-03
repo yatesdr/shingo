@@ -161,7 +161,6 @@ func (s *ReconciliationService) Loop(stopCh <-chan struct{}, interval, autoConfi
 			s.logBurialShadow()
 			s.logFolderShadow()
 			s.logArrivalRefusals()
-			s.logDestNodeDrift()
 		}
 	}
 }
@@ -298,36 +297,6 @@ func (s *ReconciliationService) logArrivalRefusals() {
 		"lines search the journal for %q followed by %q — split here so this line stays out of its "+
 		"own results.",
 		total, tally, head, tail)
-}
-
-// logDestNodeDrift reports the bin-state drift tripwire — the third should-be-zero
-// on this sweep, and the first one about a bin-state FACT rather than a guard.
-//
-// A drift means one bin's destination is recorded in two places that disagree: the
-// order's plan, and the order_bins row the settle is about to place from. Silent
-// at zero for the same reason as its neighbours — a plant where this never fires
-// should not spend a line every sweep saying so.
-//
-// THE READ INSTRUCTION DOES NOT CONTAIN ITS OWN SEARCH PATTERN. Splitting it is
-// not fussiness: a tally line that quotes its grep string is matched by that
-// string, so the count read back is tally-lines-plus-events and a should-be-zero
-// reads non-zero forever (PLAN §R.9, and see the two lines above this one).
-func (s *ReconciliationService) logDestNodeDrift() {
-	tally := DestNodeDriftTally()
-	total := 0
-	for _, n := range tally {
-		total += n
-	}
-	if total == 0 {
-		return
-	}
-	driftHead, driftTail, _ := strings.Cut(DestNodeDriftMarker, " ")
-	s.logFn("bin-state DRIFTS=%d (expected 0) — a bin's recorded destination disagreed with its own "+
-		"plan at settle time, so the robot and the ledger are about to disagree about where that bin "+
-		"is; by site %v. THIS COUNT is the number, not a grep of it. For the per-order detail (order, "+
-		"bin, both nodes) search the journal for the words %q and %q adjacent — written apart here so "+
-		"this line stays out of its own results.",
-		total, tally, driftHead, driftTail)
 }
 
 // AutoConfirmStuckDeliveredOrders confirms delivered orders that have been

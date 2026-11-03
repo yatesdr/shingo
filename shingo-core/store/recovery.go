@@ -5,15 +5,16 @@ package store
 // don't need to change.
 
 import (
-	"time"
-
 	"shingocore/store/recovery"
 )
 
-func (db *DB) RepairConfirmedOrderCompletion(orderID, binID, toNodeID int64, staged bool, expiresAt *time.Time, onPlaced OnPlaced) error {
-	return recovery.RepairConfirmedOrderCompletion(db.DB, orderID, binID, toNodeID, staged, expiresAt, onPlaced)
+func (db *DB) RepairConfirmedOrderCompletion(orderID int64, places []RepairPlace, onPlaced OnPlaced) error {
+	return recovery.RepairConfirmedOrderCompletion(db.DB, orderID, places, onPlaced)
 }
 
 func (db *DB) ReleaseTerminalBinClaim(binID int64) (int64, error) {
 	return recovery.ReleaseTerminalBinClaim(db.DB, binID)
 }
+
+// RepairPlace is one cart a completion repair places (recovery.RepairPlace).
+type RepairPlace = recovery.RepairPlace

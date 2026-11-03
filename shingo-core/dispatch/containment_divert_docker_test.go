@@ -3,6 +3,7 @@
 package dispatch
 
 import (
+	"reflect"
 	"testing"
 	"time"
 
@@ -69,14 +70,13 @@ func containmentSteps(fgnName, prodName string) []resolvedStep {
 	}
 }
 
-// TestPlaceForContainment_MultiBinJunctionRepoints pins the junction half of
-// the divert. A multi-bin complex order's bins land at their JUNCTION
-// dest_node (applyMultiBinArrivalForOrder), not at the order's delivery_node
-// - so re-pointing only the order row lands every FG-bound bin at FG with
-// the divert a silent no-op. Every junction row destined to the diverted
-// node re-points with it; the bins bound for the interior consuming node
-// stay put.
-func TestPlaceForContainment_MultiBinJunctionRepoints(t *testing.T) {
+// TestPlaceForContainment_MultiCartDropFollowsThePlan pins the cart half of the
+// divert. A multi-cart order's carts land at their drop steps' nodes, read
+// from the plan, so re-pointing the plan's final dropoff re-points the cart
+// set down there with it, and the cart bound for the interior consuming node
+// stays put. There is no second record to keep in step (the junction's
+// dest_node was one, re-pointed by hand, D2).
+func TestPlaceForContainment_MultiCartDropFollowsThePlan(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
 	_, fgn, hold := containmentFixture(t, db)
@@ -86,10 +86,10 @@ func TestPlaceForContainment_MultiBinJunctionRepoints(t *testing.T) {
 	cellBin := makeLoaderBin(t, db, "PART-QC", fgn.ID, "qc-cell-bin", 4, time.Now().UTC())
 
 	o := containmentOrder(t, db, "qc-multi-1", fgn.Name, "PROD-QC", &fgBin.ID)
-	testutil.MustNoErr(t, db.ReplaceOrderBins(o.ID, []orders.OrderBinRow{
-		{BinID: cellBin.ID, StepIndex: 0, Action: protocol.ActionPickup, NodeName: "SRC-QC", DestNode: "PROD-QC"},
-		{BinID: fgBin.ID, StepIndex: 2, Action: protocol.ActionPickup, NodeName: "SRC-QC", DestNode: fgn.Name},
-	}), "seed junction rows")
+	testutil.MustNoErr(t, db.ReplaceOrderBins(o.ID, fgBin.ID, []orders.OrderBinRow{
+		{BinID: cellBin.ID, PickStep: 0, DropStep: 1, NodeName: "SRC-QC", DestNode: "PROD-QC"},
+		{BinID: fgBin.ID, PickStep: 2, DropStep: 3, NodeName: "SRC-QC", DestNode: fgn.Name},
+	}), "seed the carts")
 
 	if st := d.placeForContainment(o, containmentSteps(fgn.Name, "PROD-QC")); st != nil {
 		t.Fatalf("divert parked instead of re-pointing: %+v", st)
@@ -100,44 +100,25 @@ func TestPlaceForContainment_MultiBinJunctionRepoints(t *testing.T) {
 	if got.DeliveryNode != hold.Name {
 		t.Fatalf("DeliveryNode = %q, want %q", got.DeliveryNode, hold.Name)
 	}
-	rows, err := db.ListOrderBins(o.ID)
-	testutil.MustNoErr(t, err, "list junction rows")
-	if len(rows) != 2 {
-		t.Fatalf("junction rows = %d, want 2", len(rows))
-	}
-	for _, r := range rows {
-		want := hold.Name
-		if r.BinID == cellBin.ID {
-			want = "PROD-QC"
-		}
-		if r.DestNode != want {
-			t.Errorf("bin %d junction DestNode = %q, want %q", r.BinID, r.DestNode, want)
-		}
+	want := map[int64][]string{fgBin.ID: {hold.Name}, cellBin.ID: {"PROD-QC"}}
+	if drops := testdb.CartDropNodes(t, db, o.ID); !reflect.DeepEqual(drops, want) {
+		t.Errorf("the carts set down at %v, want %v", drops, want)
 	}
 	if want := `[{"action":"pickup","node":"SRC-QC"},{"action":"dropoff","node":"PROD-QC"},{"action":"pickup","node":"SRC-QC"},{"action":"dropoff","node":"QC-HOLD"}]`; got.StepsJSON != want {
 		t.Errorf("StepsJSON = %s\nwant          %s", got.StepsJSON, want)
 	}
 
-	// Replay: the order row is already re-pointed, the junction patch still
-	// runs (idempotent), and nothing moves.
+	// Replay: the order row is already re-pointed and nothing moves.
 	if st := d.placeForContainment(got, containmentSteps(fgn.Name, "PROD-QC")); st != nil {
 		t.Fatalf("replay parked: %+v", st)
 	}
-	rows2, err := db.ListOrderBins(o.ID)
-	testutil.MustNoErr(t, err, "re-list junction rows")
-	for _, r := range rows2 {
-		want := hold.Name
-		if r.BinID == cellBin.ID {
-			want = "PROD-QC"
-		}
-		if r.DestNode != want {
-			t.Errorf("after replay: bin %d junction DestNode = %q, want %q", r.BinID, r.DestNode, want)
-		}
+	if drops := testdb.CartDropNodes(t, db, o.ID); !reflect.DeepEqual(drops, want) {
+		t.Errorf("after replay the carts set down at %v, want %v", drops, want)
 	}
 }
 
-// TestPlaceForContainment_SingleBinRepoints pins the plain shape: a
-// single-bin FG leg re-points, junction rows absent (the loop no-ops).
+// TestPlaceForContainment_SingleBinRepoints pins the plain shape: a single-cart
+// FG leg re-points, and its one cart's set-down follows the plan.
 func TestPlaceForContainment_SingleBinRepoints(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
@@ -145,9 +126,19 @@ func TestPlaceForContainment_SingleBinRepoints(t *testing.T) {
 	d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
 
 	fgBin := makeLoaderBin(t, db, "PART-QC", fgn.ID, "qc-single-bin", 4, time.Now().UTC())
-	o := containmentOrder(t, db, "qc-single-1", fgn.Name, "PROD-QC", &fgBin.ID)
+	o := &orders.Order{
+		EdgeUUID: "qc-single-1", StationID: "test", OrderType: protocol.OrderTypeRetrieve, Status: "staged",
+		Quantity: 1, SourceNode: "SRC-QC", DeliveryNode: fgn.Name, PayloadCode: "PART-QC",
+		ProcessNode: "PROD-QC", BinID: &fgBin.ID,
+		StepsJSON: `[{"action":"pickup","node":"SRC-QC"},{"action":"dropoff","node":"` + fgn.Name + `"}]`,
+	}
+	testutil.MustNoErr(t, db.CreateOrder(o), "the single-cart FG leg")
+	steps := []resolvedStep{
+		{Action: protocol.ActionPickup, Node: "SRC-QC"},
+		{Action: protocol.ActionDropoff, Node: fgn.Name},
+	}
 
-	if st := d.placeForContainment(o, containmentSteps(fgn.Name, "PROD-QC")); st != nil {
+	if st := d.placeForContainment(o, steps); st != nil {
 		t.Fatalf("divert parked instead of re-pointing: %+v", st)
 	}
 	got, err := db.GetOrder(o.ID)
@@ -155,10 +146,8 @@ func TestPlaceForContainment_SingleBinRepoints(t *testing.T) {
 	if got.DeliveryNode != hold.Name {
 		t.Fatalf("DeliveryNode = %q, want %q", got.DeliveryNode, hold.Name)
 	}
-	rows, err := db.ListOrderBins(o.ID)
-	testutil.MustNoErr(t, err, "list order bins")
-	if len(rows) != 0 {
-		t.Fatalf("single-bin order grew %d junction rows", len(rows))
+	if drops := testdb.CartDropNodes(t, db, o.ID); !reflect.DeepEqual(drops, map[int64][]string{fgBin.ID: {hold.Name}}) {
+		t.Errorf("the one cart sets down at %v, want %s", drops, hold.Name)
 	}
 }
 

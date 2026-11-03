@@ -6,6 +6,7 @@ import (
 	"log"
 
 	"shingo/protocol"
+	"shingocore/domain"
 	"shingocore/store"
 	"shingocore/store/bins"
 	"shingocore/store/nodes"
@@ -59,7 +60,8 @@ type exchangeRead struct {
 }
 
 // readHolder reads the holder's plan against the mouth bin (at mouthNode) and
-// the dug lane. One statement only for a holder with junction rows.
+// the dug lane: k is the holder's row lifting the mouth bin at mouthNode. It
+// reads nothing; the holder's rows came with it.
 func (d *Dispatcher) readHolder(holder *orders.Order, mouthBin int64, mouthNode string, laneID int64) exchangeRead {
 	r := exchangeRead{k: -1}
 	steps, ok := decodeSteps(holder.StepsJSON)
@@ -67,19 +69,10 @@ func (d *Dispatcher) readHolder(holder *orders.Order, mouthBin int64, mouthNode 
 		return r
 	}
 	r.steps = steps
-	if obs, err := d.db.ListOrderBins(holder.ID); err == nil {
-		for _, ob := range obs {
-			if ob.BinID == mouthBin && ob.StepIndex >= 0 && ob.StepIndex < len(steps) {
-				r.k = ob.StepIndex
-			}
-		}
-	}
-	if r.k < 0 {
-		for i, s := range steps {
-			if s.Action == protocol.ActionPickup && s.Node == mouthNode {
-				r.k = i
-				break
-			}
+	for _, c := range holder.Carts {
+		if c.BinID == mouthBin && c.PickStep != nil && *c.PickStep >= 0 && *c.PickStep < len(steps) &&
+			domain.StepNode(holder, *c.PickStep) == mouthNode {
+			r.k = *c.PickStep
 		}
 	}
 	waitPos, seen := -1, 0

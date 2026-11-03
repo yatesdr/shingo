@@ -658,6 +658,12 @@ func (s *BinService) GetBin(id int64) (*bins.Bin, error) {
 	return s.db.GetBin(id)
 }
 
+// CartsOfOrder is the carts an order carries (its rows), read fresh, in the
+// order its rows lift them.
+func (s *BinService) CartsOfOrder(orderID int64) ([]*bins.Bin, error) {
+	return s.db.CartsOfOrder(orderID)
+}
+
 // ListBins returns every bin in the store. Absorbed from
 // engine_db_methods.go as part of the www-handler service migration
 // (PR 3a.2).
@@ -714,9 +720,10 @@ func (s *BinService) Retire(id int64) error {
 // budget and let the next signal dispatch a fresh empty while stale bins rows
 // still read the slot occupied — trading a stall for a collision. The operator
 // cancels the named order first (or the UI offers to, as a follow-up), then
-// retires/moves. Keys on orders.bin_id, not bins.claimed_by: ApplyArrival
-// clears the claim on landing, which is exactly why the manual retire slipped
-// through.
+// retires/moves. Keys on the order's rows (a live order with a row for this
+// cart: every cart it carries, a swap's second cart on the robot included), not
+// bins.claimed_by: ApplyArrival clears the claim on landing, which is exactly
+// why the manual retire slipped through.
 func (s *BinService) guardNoOrphanedOrder(binID int64, action string) error {
 	active, err := s.db.ActiveOrdersByBin(binID)
 	if err != nil {

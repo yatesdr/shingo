@@ -326,7 +326,9 @@ func Acquire(db RowExecer, orderID, laneOwner, binID int64, reservedBy string) e
 }
 
 // AcquireAndPoint is Acquire that also points the order at the bin
-// (orders.bin_id), in the same statement and only when the row was inserted.
+// (orders.bin_id) and writes the order's cart row (order_bins, the implied
+// plan's lift: pick 0, drop 1), in the same statement and only when the
+// reservation was inserted.
 // The scanner reserved and then stamped the pointer in a second statement; a
 // steal landing between the two left a pointer on a bin the order held no row
 // on (LOCKS.md §3, the claim sweep's F3). One statement: there is no between.
@@ -475,6 +477,16 @@ func acquire(db RowExecer, orderID, laneOwner int64, ref Ref, reservedBy string,
 		 ptr AS (
 		   UPDATE orders SET bin_id = $3, updated_at = $5
 		    WHERE $8 AND $2 = 'bin' AND id = $1 AND EXISTS (SELECT 1 FROM ins)
+		 ),
+		 -- The plain order's cart row, with its pointer: the implied plan's lift at
+		 -- source_node (step 0) and drop at delivery_node (step 1).
+		 cart AS (
+		   INSERT INTO order_bins (order_id, bin_id, pick_step, drop_step, action, node_name, dest_node)
+		   SELECT o.id, $3, 0, 1, 'pickup', COALESCE(o.source_node, ''), COALESCE(o.delivery_node, '')
+		     FROM orders o WHERE $8 AND $2 = 'bin' AND o.id = $1 AND EXISTS (SELECT 1 FROM ins)
+		   ON CONFLICT (order_id, pick_step) DO UPDATE
+		      SET bin_id = EXCLUDED.bin_id, drop_step = EXCLUDED.drop_step,
+		          node_name = EXCLUDED.node_name, dest_node = EXCLUDED.dest_node
 		 )
 		 SELECT (SELECT ok FROM live), (SELECT ok FROM named), (SELECT blocked FROM dug), (SELECT count(*) FROM ins)`,
 		orderID, string(ref.Kind), ref.ID, reservedBy, clock.Now().UTC(),

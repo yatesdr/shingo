@@ -994,16 +994,17 @@ func (db *DB) OrderIsCompoundLeg(orderID int64) (bool, error) {
 // same query returns LSD_006 through LSD_009: the four slots in front of it, one
 // of which is the slot the burial used.
 //
-// IT IS PAIRED WITH source_node, WHICH IS WHAT MAKES IT A DIRECTION. bin_id
-// alone says "this order's bin", not "this order is coming for it" — a store's
-// bin_id goes on pointing at its bin after it has PLACED it, and a bare aim term
-// therefore lets an order close a lane behind itself. An order coming to collect
-// names the slot the bin is standing in; one that has delivered names where it
-// came from. Together the two columns say the thing this guard needs and neither
-// says alone.
+// IT IS A ROW WHOSE PICK STEP IS AT THE BIN'S SLOT, WHICH IS WHAT MAKES IT A
+// DIRECTION. "This order's cart" alone is not "this order is coming for it" — a
+// store's cart is still its cart after it has PLACED it, and a bare aim term
+// therefore lets an order close a lane behind itself. An order coming to
+// collect lifts the cart at the slot it stands in (its row's pick step names
+// that slot); one that has delivered lifted it where it came from. It was
+// spelled bin_id + source_node, which said this for the one cart bin_id named
+// (helpers.ComingForBinSQL, an order's carts as rows).
 //
 // THE TERMINAL FILTER IS NOT OPTIONAL WITH THIS TERM. claimed_by is reaped when
-// an order terminalizes; bin_id is not, and a finished order's bin_id would
+// an order terminalizes; its rows are not, and a finished order's row would
 // otherwise protect a bin forever. It is written as a status filter on the holder
 // rather than as a second lookup so both spellings pass the same liveness test.
 //

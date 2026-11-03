@@ -230,6 +230,10 @@ func row(need Need, p plan.Plan) *orders.Order {
 		o.Plan = &domain.PlannedPick{BinID: p.Bin.ID, Node: p.Node.Name, Payload: p.Bin.PayloadCode,
 			Status: string(p.Bin.Status), Confirmed: p.Bin.ManifestConfirmed}
 	}
+	// The cart it is born holding, as its rows: Create writes them with it.
+	if o.BinID != nil {
+		o.HoldFromBirth(*o.BinID)
+	}
 	return o
 }
 
@@ -262,6 +266,8 @@ func issue(tx *sql.Tx, need Need, p plan.Plan) (*orders.Order, Taken, error) {
 		return nil, Taken{}, errors.New("issue: a declared window is the delivery; a need names one or the other")
 	}
 	o := row(need, p)
+	// An order born holding a cart (a named cart, a dig leg's bin) writes the
+	// cart's rows in its own INSERT (orders.Create).
 	if err := orders.Create(tx, o); err != nil {
 		return nil, Taken{}, err
 	}

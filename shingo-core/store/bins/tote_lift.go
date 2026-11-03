@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"shingocore/domain"
+	"shingocore/store/internal/helpers"
 )
 
 // tote_lift.go — what a press build drew from the cart outside it, written
@@ -25,8 +26,9 @@ const OpTotesDerived = "totes_derived"
 //     are not);
 //   - whether this (cart, order) has already been derived (op $5);
 //   - the FRONT, always by id: the cart standing on that cell's press, else
-//     the bin the sibling lifted off the press (its order_bins pickup there,
-//     else its bin pointer when the sibling is the press's own order);
+//     the cart the sibling lifted off the press (its row whose pick step is at
+//     the press: the sibling's carts are its order_bins rows, one per lift, kept
+//     after it ends);
 //   - the front's count, whether its manifest is confirmed, its totes, and its
 //     part's UOP per tote.
 var toteLiftSQL = `
@@ -37,11 +39,9 @@ var toteLiftSQL = `
 			  WHERE b.id <> $2 ORDER BY b.id DESC LIMIT 1),
 			(SELECT ob.bin_id FROM orders s
 			   JOIN order_bins ob ON ob.order_id = s.id
-			   JOIN cell ON ob.node_name = cell.core
-			  WHERE $3 <> '' AND s.edge_uuid = $3 AND ob.action = 'pickup' AND ob.bin_id <> $2
-			  ORDER BY ob.step_index LIMIT 1),
-			(SELECT s.bin_id FROM orders s JOIN cell ON s.process_node = cell.core
-			  WHERE $3 <> '' AND s.edge_uuid = $3 AND s.bin_id <> $2)) AS id)
+			   JOIN cell ON ` + helpers.StepNodeSQL("s", "ob.pick_step") + ` = cell.core
+			  WHERE $3 <> '' AND s.edge_uuid = $3 AND ob.bin_id <> $2
+			  ORDER BY ob.pick_step LIMIT 1)) AS id)
 	SELECT EXISTS (SELECT 1 FROM cell),
 	       EXISTS (SELECT 1 FROM bin_uop_ledger g WHERE g.bin_id = $2 AND g.order_id = $4 AND g.op = $5),
 	       f.id, f.totes_on_cart, f.uop_remaining, f.manifest_confirmed, p.uop_per_tote

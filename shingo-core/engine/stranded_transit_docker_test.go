@@ -45,13 +45,15 @@ func seedStranded(t *testing.T, db *store.DB, robotID string) (*bins.Bin, *order
 	// BinService.Move's orphaned-order guard, which is right to refuse it.
 	ord := &orders.Order{
 		EdgeUUID: "stranded-" + robotID, StationID: "edge.test", OrderType: "retrieve",
-		Status: protocol.StatusCancelled, Quantity: 1, DeliveryNode: "DELV.1",
+		Status: protocol.StatusCancelled, Quantity: 1, SourceNode: "SRC", DeliveryNode: "DELV.1",
 		RobotID: robotID, BinID: &bin.ID,
 	}
+	// Its cart's row (Create writes it): lifted at SRC, where the pickup leg
+	// below is recorded — the lift proof is the cart's own.
 	testutil.MustNoErr(t, db.CreateOrder(ord), "create order")
-	_, err := db.DB.Exec(`UPDATE orders SET robot_id=$1, bin_id=$2, status='cancelled' WHERE id=$3`,
-		robotID, bin.ID, ord.ID)
-	testutil.MustNoErr(t, err, "set robot, bin and terminal status on order")
+	_, err := db.DB.Exec(`UPDATE orders SET robot_id=$1, status='cancelled' WHERE id=$2`,
+		robotID, ord.ID)
+	testutil.MustNoErr(t, err, "set robot and terminal status on order")
 	// The TERMINAL HISTORY ROW, because the sweep dates the bin from it. Written
 	// at "now" so the default fixture is a freshly stranded bin — the case the
 	// inference is for. strandOrderAt backdates it for the cases it is not.

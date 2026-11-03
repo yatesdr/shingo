@@ -756,9 +756,8 @@ func swapGateFixture(t *testing.T, db *store.DB, tag string) swapGateCase {
 		t.Fatalf("persist plan: %v", err)
 	}
 
-	// THE JUNCTION, written the way the allocator writes it: one row per claimed
-	// bin, keyed on the PICKUP step, carrying the destination the plan implied at
-	// allocation time. This is the copy nothing updated.
+	// THE CARTS, written the way the allocator writes them: one row per lift, its
+	// pick step and its drop step in the plan.
 	bt := &bins.BinType{Code: tag + "-BT", Description: "tote"}
 	if err := db.CreateBinType(bt); err != nil {
 		t.Fatalf("create bin type: %v", err)
@@ -771,14 +770,10 @@ func swapGateFixture(t *testing.T, db *store.DB, tag string) swapGateCase {
 	if err := db.CreateBin(emptyBin); err != nil {
 		t.Fatalf("create empty bin: %v", err)
 	}
-	// step 1 = pickup at the press (the full bin) → dropoff at the lane slot.
-	// step 4 = pickup at the empties node        → dropoff back at the press.
-	if err := db.InsertOrderBin(swap.ID, fullBin.ID, 1, protocol.ActionPickup, press.Name, slots[0].Name); err != nil {
-		t.Fatalf("junction row for the full bin: %v", err)
-	}
-	if err := db.InsertOrderBin(swap.ID, emptyBin.ID, 4, protocol.ActionPickup, emptySrc.Name, press.Name); err != nil {
-		t.Fatalf("junction row for the empty bin: %v", err)
-	}
+	// step 1 = pickup at the press (the full bin) → step 3, the lane slot.
+	// step 4 = pickup at the empties node        → step 5, back at the press.
+	testdb.SeedCartRow(t, db, swap.ID, fullBin.ID, 1, 3)
+	testdb.SeedCartRow(t, db, swap.ID, emptyBin.ID, 4, 5)
 
 	swap, err = db.GetOrder(swap.ID)
 	if err != nil {
@@ -790,20 +785,15 @@ func swapGateFixture(t *testing.T, db *store.DB, tag string) swapGateCase {
 	}
 }
 
-// destNodeFor reads one bin's recorded destination back out of the junction.
+// destNodeFor is where one cart's last lift sets it down: its row's drop step
+// in the order's plan (testdb.CartDropNodes).
 func destNodeFor(t *testing.T, db *store.DB, orderID, binID int64) string {
 	t.Helper()
-	rows, err := db.ListOrderBins(orderID)
-	if err != nil {
-		t.Fatalf("list junction rows: %v", err)
+	drops := testdb.CartDropNodes(t, db, orderID)[binID]
+	if len(drops) == 0 {
+		t.Fatalf("no cart row for bin %d on order %d", binID, orderID)
 	}
-	for _, ob := range rows {
-		if ob.BinID == binID {
-			return ob.DestNode
-		}
-	}
-	t.Fatalf("no junction row for bin %d on order %d", binID, orderID)
-	return ""
+	return drops[len(drops)-1]
 }
 
 // TestGateRebind_SwapPatchesLaneEntryNotFinalDropoff pins the fix for the swap
@@ -888,20 +878,20 @@ func TestGateRebind_SwapPatchesLaneEntryNotFinalDropoff(t *testing.T) {
 			steps[4].Node, emptySrc.Name)
 	}
 
-	// ── THE THIRD COPY (D2) ───────────────────────────────────────────────
-	// order_bins.dest_node was written once at allocation and updated by nothing,
+	// ── NO THIRD COPY (D2) ────────────────────────────────────────────────
+	// order_bins.dest_node was written once at allocation and updated by hand,
 	// so the robot drove to the new slot while the ledger still named the old one
 	// and the whole-order settle placed the bin at the row's stale value. The row
-	// now follows the re-bind.
+	// holds the drop step now, so the cart's set-down is the plan's.
 	if got := destNodeFor(t, db, swap.ID, tc.fullBin.ID); got != rebound.Name {
-		t.Errorf("full bin's junction dest_node = %s, want the re-bound slot %s — the ledger still "+
+		t.Errorf("full bin's set-down = %s, want the re-bound slot %s — the record still "+
 			"names the slot allocation picked, so the settle would place the bin where the robot "+
 			"did not go (PLAN §R.25, D2)", got, rebound.Name)
 	}
-	// And the OTHER row is the junction's version of the step-5 assertion above:
-	// re-deriving all the destinations must not drag the empty's leg along.
+	// And the OTHER row is the rows' version of the step-5 assertion above: the
+	// re-bind must not drag the empty's leg along.
 	if got := destNodeFor(t, db, swap.ID, tc.emptyBin.ID); got != press.Name {
-		t.Errorf("empty bin's junction dest_node = %s, want the press %s — the re-derivation moved a "+
+		t.Errorf("empty bin's set-down = %s, want the press %s — the re-bind moved a "+
 			"leg the gate does not speak for", got, press.Name)
 	}
 }

@@ -516,8 +516,8 @@ func (s *LifecycleService) binTypeAtIntake(order *orders.Order) binresolver.BinT
 			return binresolver.KnownBinType(*id)
 		}
 	}
-	if order.BinID != nil {
-		if bin, err := s.db.GetBin(*order.BinID); err == nil && bin != nil {
+	if cart, err := order.OnlyBin(); err == nil && cart != nil {
+		if bin, err := s.db.GetBin(*cart); err == nil && bin != nil {
 			return binresolver.KnownCarrier(bin)
 		}
 	}

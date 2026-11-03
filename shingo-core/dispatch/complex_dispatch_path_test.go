@@ -80,8 +80,8 @@ func TestComplexDispatch_ApplyEndState(t *testing.T) {
 		t.Fatalf("junction rows = %d, want 2", len(obs))
 	}
 	dest := map[string]string{}
-	for _, ob := range obs {
-		dest[ob.NodeName] = ob.DestNode
+	for _, l := range testdb.CartLifts(t, db, order.ID) {
+		dest[l.From] = l.To
 	}
 	if dest["SMKT"] != "LINE" {
 		t.Errorf("SMKT bin destination = %q, want LINE", dest["SMKT"])

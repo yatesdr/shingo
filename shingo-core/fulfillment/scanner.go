@@ -369,7 +369,8 @@ func (s *Scanner) fulfill(order *orders.Order, pick *dispatch.SourceResult) bool
 	// legitimate assertion (Stage-5 forbidigo carve-out).
 	//
 	// Plain orders re-enter idempotently — a held bin is reused, never re-found
-	// (see the BinID branch below) — so a waiting plain order safely re-dispatches.
+	// (see the held-cart branch below) — so a waiting plain order safely
+	// re-dispatches.
 	dispatch.AssertSimpleNotCoordinated(order)
 
 	// Compound children (reshuffle legs) are dispatched by the compound machinery
@@ -446,7 +447,7 @@ func (s *Scanner) fulfill(order *orders.Order, pick *dispatch.SourceResult) bool
 	// dispatch (in dispatchHeldBin here, and after the source claim in the finder
 	// path below) — after the malformed-order guards, so an invalid order fails
 	// without acquiring a reservation.
-	if order.BinID != nil {
+	if held, err := order.OnlyBin(); err != nil || held != nil {
 		return s.dispatchHeldBin(order)
 	}
 
@@ -605,7 +606,7 @@ func (s *Scanner) fulfill(order *orders.Order, pick *dispatch.SourceResult) bool
 	// reservations, no hard claimed_by); the hard claim for BOTH lands at dispatch,
 	// in one confirm step, immediately before the fleet call. A soft-holding order
 	// that hits any of the requeue branches below parks in `queued`, KEEPS its
-	// soft holds, and is retried next tick (re-entering via the BinID branch, which
+	// soft holds, and is retried next tick (re-entering via the held-cart branch, which
 	// reuses — never re-finds — its own held bin).
 
 	// Resolve destination BEFORE the slot reserve so the reserve targets a real
@@ -645,9 +646,9 @@ func (s *Scanner) fulfill(order *orders.Order, pick *dispatch.SourceResult) bool
 
 	// Bin SOFT-acquire: a pending reservation (no hard claim). On a lost race the
 	// bin was reserved by a concurrent order — park under waiting_for_material and
-	// retry. On success, stamp BinID NOW: an order holding a pending bin reservation
-	// re-enters via the BinID branch next tick and reuses THIS bin (the owner-aware
-	// keep arm — the finders exclude pending-reserved bins owner-blind, so re-finding
+	// retry. On success, record its cart NOW: an order holding a pending bin
+	// reservation re-enters via the held-cart branch next tick and reuses THIS
+	// bin (the owner-aware keep arm — the finders exclude pending-reserved bins owner-blind, so re-finding
 	// would shop a second bin and double-source). RemainingUOP is the operator's
 	// release-correction count, persisted at intake; it is threaded through the
 	// confirm at dispatch (nil for retrieve/retrieve_empty = a plain claim).
@@ -684,6 +685,9 @@ func (s *Scanner) fulfill(order *orders.Order, pick *dispatch.SourceResult) bool
 	// cause for the floor to free (demo 103, 267, 409).
 	order.BinID = &bin.ID
 	order.SourceNode = sourceNode.Name
+	// And its cart, as the hold wrote it (the implied plan's lift: pick 0, drop
+	// 1): the gated create writes its rows against the plan it builds from these.
+	order.Carts = domain.Lifts(domain.OrderPlan(order), map[int]int64{0: bin.ID})
 
 	// Lane admission (P4), with no row written. Every lane is marked, so the
 	// in-lane questions are the gate's, asked at the tail append; what parks the
@@ -817,22 +821,25 @@ func (s *Scanner) dispatchHeldBin(order *orders.Order) bool {
 	// on the row explaining it, which is the "stuck in queued, no cause" residue
 	// the liveness floor kept reporting as "(none)" — a gap in the arms, never in
 	// the releaser inventory.
-	if order.BinID == nil {
+	held, herr := order.OnlyBin()
+	if herr != nil || held == nil {
 		// SHADOWED. "A construction bug" is true of a broken order and FALSE of a
-		// coordinator, whose NULL bin_id is permanent and correct — so this arm
-		// would file a fault against a folder. Reachability here was NOT
+		// coordinator, which carries no cart, permanently and correctly — so this
+		// arm would file a fault against a folder. Reachability here was NOT
 		// established by reading (the scanner's own coordinator skip and
 		// reshuffling ∉ IsAcquiring both guard upstream), which is exactly why
 		// the spelling is measured before it is cut.
 		owns, oerr := s.db.OrderOwnsNoCargo(order.ID)
 		service.NoteFolderShadow(service.FolderSiteHeldBinDispatch, order.ID, owns, oerr)
-		// The plain path only routes here when order.BinID != nil, so a nil here
-		// is a construction bug — surface it, don't dispatch with no bin.
-		s.logFn("fulfillment: order %d reached dispatchHeldBin with no claimed bin; skipping", order.ID)
+		// The plain path only routes here when the order holds a cart, so none
+		// here is a construction bug, and several is one too (a plain order
+		// carries one) — surface it, don't dispatch with no cart or a guess.
+		s.logFn("fulfillment: order %d reached dispatchHeldBin with no one held cart (%v); skipping", order.ID, herr)
 		s.setQueueReason(order, protocol.QueueWaitingForMaterial, dispatch.CauseHeldBinMissing,
 			dispatch.QueueParams{Payload: order.PayloadCode})
 		return false
 	}
+	cart := *held
 	sourceNode, err := s.db.GetNodeByDotName(order.SourceNode)
 	if err != nil {
 		s.logFn("fulfillment: held-bin order %d source node %q not found: %v", order.ID, order.SourceNode, err)
@@ -858,7 +865,7 @@ func (s *Scanner) dispatchHeldBin(order *orders.Order) bool {
 	// hand, so its history never says it waited when it did not. The held bin is
 	// still SOFT (a pending reservation from a prior tick) until the hand takes
 	// it. What follows is this caller's disposition of each refusal.
-	h, err := dispatch.HandHeld(s.dispatcher, order, *order.BinID, sourceNode)
+	h, err := dispatch.HandHeld(s.dispatcher, order, cart, sourceNode)
 	if dest := h.Dropoff; dest.Refused() {
 		// A loser, or a slot that filled, requeues holding its bin and never
 		// drops into an occupied slot (#115/#117, generalized).
@@ -879,7 +886,7 @@ func (s *Scanner) dispatchHeldBin(order *orders.Order) bool {
 		s.yieldLostHand(order, err)
 		return false
 	}
-	if s.endedOrSkipped(order, err, *order.BinID, sourceNode.Name) {
+	if s.endedOrSkipped(order, err, cart, sourceNode.Name) {
 		return false
 	}
 	if r, refused := dispatch.AsHandRefusal(err); refused {
@@ -889,7 +896,7 @@ func (s *Scanner) dispatchHeldBin(order *orders.Order) bool {
 		// the retry is not a wait — it is a loop with no releaser. the hand's bin leg
 		// runs the claim seatbelt (reservations.HeldByOwnerSQL): a hard claim may
 		// only land where THIS order already holds a live reservation. So an order
-		// whose soft hold has been reaped, but whose orders.bin_id survived, fails
+		// whose soft hold has been reaped, but whose cart row survived, fails
 		// the seatbelt on every tick, forever, and never shops for another bin —
 		// dispatchHeldBin never re-finds, by design.
 		//
@@ -918,11 +925,20 @@ func (s *Scanner) dispatchHeldBin(order *orders.Order) bool {
 		// A LANE refusal is not this question: the hold is not in doubt, a
 		// corridor is busy. Only a slot or bin refusal asks whether the hold is
 		// still there.
-		if r.Leg != dispatch.HandLegLane && !s.stillHoldsBin(order) {
+		//
+		// A NAMED order keeps its row (it is the cart it was issued for), and
+		// re-finding it could only ever fetch that cart: so the hold on it is
+		// taken again here, in the finder's one statement, and a cart that has
+		// left its source ends the move as the finder's refusal would.
+		if r.Leg != dispatch.HandLegLane && !s.stillHoldsBin(order, cart) {
+			if order.NamedBinID != nil && *order.NamedBinID == cart {
+				s.reholdNamedCart(order, cart, sourceNode.Name)
+				return false
+			}
 			s.logFn("fulfillment: held-bin order %d no longer holds a reservation on bin %d — its soft "+
 				"hold was reaped and only the pointer survived, so the claim seatbelt can never open. "+
-				"Forgetting the bin so the finder picks again.", order.ID, *order.BinID)
-			if cerr := s.db.ClearOrderBinID(order.ID); cerr != nil {
+				"Forgetting the bin so the finder picks again.", order.ID, cart)
+			if cerr := s.db.ForgetHeldCart(order.ID); cerr != nil {
 				// Keep the old disposition: it retries, which is where it already was.
 				s.logFn("fulfillment: order %d could not forget its stale bin pointer: %v", order.ID, cerr)
 			}
@@ -947,7 +963,7 @@ func (s *Scanner) dispatchHeldBin(order *orders.Order) bool {
 		return false
 	}
 	s.logFn("fulfillment: held-bin order %d fulfilled — bin %d (%s -> %s) vendor=%s",
-		order.ID, *order.BinID, sourceNode.Name, destNode.Name, vendorOrderID)
+		order.ID, cart, sourceNode.Name, destNode.Name, vendorOrderID)
 	s.notifyEdgeDispatched(order, sourceNode, vendorOrderID)
 	return true
 }
@@ -967,8 +983,8 @@ func (s *Scanner) statusWriteFailed(order *orders.Order, err error) bool {
 	return true
 }
 
-// stillHoldsBin reports whether this order still has a live reservation on the
-// bin its pointer names.
+// stillHoldsBin reports whether this order still has a live reservation on
+// cart, the cart it holds.
 //
 // It is the question "is the premise of the retry above still true". Release
 // DELETES the row rather than marking it, so any bin row returned for this order
@@ -979,8 +995,8 @@ func (s *Scanner) statusWriteFailed(order *orders.Order, err error) bool {
 // here: the caller uses a false answer to THROW AWAY a soft hold, and doing that
 // because the database blinked would send an order shopping for a second bin
 // while it still owns the first.
-func (s *Scanner) stillHoldsBin(order *orders.Order) bool {
-	if order == nil || order.BinID == nil {
+func (s *Scanner) stillHoldsBin(order *orders.Order, cart int64) bool {
+	if order == nil {
 		return false
 	}
 	held, err := s.db.ListReservationsByOrder(order.ID)
@@ -990,11 +1006,33 @@ func (s *Scanner) stillHoldsBin(order *orders.Order) bool {
 		return true
 	}
 	for _, r := range held {
-		if r.Kind == reservations.KindBin && r.BinID == *order.BinID {
+		if r.Kind == reservations.KindBin && r.BinID == cart {
 			return true
 		}
 	}
 	return false
+}
+
+// reholdNamedCart takes the soft hold on a named order's cart again after its
+// hold was reaped, in the finder's one statement (ReserveForDispatchAndPoint):
+// the order keeps its row for the cart it names, and re-finding could only
+// ever fetch that cart. A cart no longer standing on its source ends the move,
+// as the finder's refusal does (skipForNamedBin); a hold lost to a race waits
+// under the finder's cause. The next pass dispatches the held cart.
+func (s *Scanner) reholdNamedCart(order *orders.Order, cart int64, source string) {
+	err := s.claimer.ReserveForDispatchAndPoint(cart, order.ID)
+	switch {
+	case err == nil:
+		s.logFn("fulfillment: named order %d held its cart %d again — its soft hold was reaped", order.ID, cart)
+		s.setQueueReason(order, protocol.QueueWaitingForMaterial, dispatch.CauseHeldBinMissing,
+			dispatch.QueueParams{Payload: order.PayloadCode})
+	case errors.Is(err, reservations.ErrOwnerEnded):
+	case errors.Is(err, reservations.ErrNotTheNamedBin):
+		s.skipForNamedBin(order, cart, source)
+	default:
+		s.setQueueReason(order, protocol.QueueWaitingForMaterial, dispatch.CauseBinLockRace,
+			dispatch.QueueParams{Payload: order.PayloadCode})
+	}
 }
 
 // parkRefusedHand parks an order whose hand refused. The hand held nothing —

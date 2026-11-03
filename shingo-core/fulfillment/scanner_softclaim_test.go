@@ -118,6 +118,7 @@ func TestRule1_ReentryReusesOwnBin(t *testing.T) {
 		ID: 202, Status: protocol.StatusQueued, OrderType: protocol.OrderTypeRetrieve,
 		BinID: &heldBin, SourceNode: "SRC-03", DeliveryNode: "STOR-03", PayloadCode: "PN-R1C",
 	}
+	order.HoldFromBirth(heldBin)
 	f.queued = append(f.queued, order)
 	f.ordersByID[202] = order
 	f.nodesByDot["SRC-03"] = &nodes.Node{ID: 903, Name: "SRC-03"}
@@ -154,6 +155,7 @@ func TestRule1_ConfirmFailKeepsSoftHold(t *testing.T) {
 		ID: 203, Status: protocol.StatusQueued, OrderType: protocol.OrderTypeRetrieve,
 		BinID: &heldBin, SourceNode: "SRC-04", DeliveryNode: "STOR-04", PayloadCode: "PN-R1D",
 	}
+	order.HoldFromBirth(heldBin)
 	f.queued = append(f.queued, order)
 	f.ordersByID[203] = order
 	f.nodesByDot["SRC-04"] = &nodes.Node{ID: 904, Name: "SRC-04"}
@@ -215,6 +217,7 @@ func TestRule1_ConfirmFailWithNoHoldForgetsTheBin(t *testing.T) {
 		ID: 303, Status: protocol.StatusQueued, OrderType: protocol.OrderTypeRetrieve,
 		BinID: &heldBin, SourceNode: "SRC-05", DeliveryNode: "STOR-05", PayloadCode: "PN-R1E",
 	}
+	order.HoldFromBirth(heldBin)
 	f.queued = append(f.queued, order)
 	f.ordersByID[303] = order
 	f.nodesByDot["SRC-05"] = &nodes.Node{ID: 905, Name: "SRC-05"}
@@ -239,6 +242,47 @@ func TestRule1_ConfirmFailWithNoHoldForgetsTheBin(t *testing.T) {
 	}
 }
 
+// TestRule1_ConfirmFailWithNoHoldHoldsANamedCartAgain is the named half of
+// order 22. A named order keeps its row for the cart it was issued for (the
+// scanner's forget leaves it), so forgetting would route it straight back to
+// the held arm. Re-finding it could only ever fetch that cart, so the held arm
+// takes the soft hold on it again, in the finder's one statement, and forgets
+// nothing.
+func TestRule1_ConfirmFailWithNoHoldHoldsANamedCartAgain(t *testing.T) {
+	t.Parallel()
+	f := newFakeStore()
+	named := int64(314)
+	order := &orders.Order{
+		ID: 313, Status: protocol.StatusQueued, OrderType: protocol.OrderTypeMove,
+		NamedBinID: &named, SourceNode: "SRC-07", DeliveryNode: "STOR-07", PayloadCode: "PN-R1G",
+	}
+	order.HoldFromBirth(named)
+	f.queued = append(f.queued, order)
+	f.ordersByID[313] = order
+	f.nodesByDot["SRC-07"] = &nodes.Node{ID: 907, Name: "SRC-07"}
+	storageDest(f, "STOR-07", 2007)
+	// NO reservation for this order: the hold was reaped and only its row is left.
+	dispatcher := &recordingDispatcher{confirmErr: errors.New("bin is locked, already claimed, or does not exist")}
+	s := newScannerWith(t, f, foundFinderFor(314, "SRC-07"), dispatcher, func(int64, string, string) {
+		t.Errorf("a lost hold on a named cart must hold it again, not fail the order")
+	})
+
+	if got := s.RunOnce(); got != 0 {
+		t.Fatalf("RunOnce: got %d, want 0", got)
+	}
+	if len(f.clearedBinIDs) != 0 {
+		t.Errorf("the named order was forgotten (%v): its row survives, so it would come straight "+
+			"back to the held arm and the seatbelt that cannot open", f.clearedBinIDs)
+	}
+	held := false
+	for _, r := range f.reservedBins {
+		held = held || (r[0] == named && r[1] == order.ID)
+	}
+	if !held {
+		t.Fatalf("the named cart %d was not held again (reserved: %v)", named, f.reservedBins)
+	}
+}
+
 // TestRule1_ConfirmFailUnreadableReservationsKeepsTheHold pins the direction of
 // the doubt. The caller uses a false answer to THROW AWAY a soft hold, so an
 // unreadable reservations table must read as "the hold stands" — otherwise a
@@ -252,6 +296,7 @@ func TestRule1_ConfirmFailUnreadableReservationsKeepsTheHold(t *testing.T) {
 		ID: 403, Status: protocol.StatusQueued, OrderType: protocol.OrderTypeRetrieve,
 		BinID: &heldBin, SourceNode: "SRC-06", DeliveryNode: "STOR-06", PayloadCode: "PN-R1F",
 	}
+	order.HoldFromBirth(heldBin)
 	f.queued = append(f.queued, order)
 	f.ordersByID[403] = order
 	f.nodesByDot["SRC-06"] = &nodes.Node{ID: 906, Name: "SRC-06"}

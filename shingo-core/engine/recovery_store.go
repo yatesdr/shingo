@@ -1,8 +1,6 @@
 package engine
 
 import (
-	"time"
-
 	"shingocore/store"
 	"shingocore/store/bins"
 	"shingocore/store/nodes"
@@ -33,7 +31,7 @@ type RecoveryStore interface {
 	// Recovery-specific mutations.
 	// onPlaced is the landing verb (service.BinService.LandingHook), run in the
 	// repair's transaction.
-	RepairConfirmedOrderCompletion(orderID, binID, toNodeID int64, staged bool, expiresAt *time.Time, onPlaced store.OnPlaced) error
+	RepairConfirmedOrderCompletion(orderID int64, places []store.RepairPlace, onPlaced store.OnPlaced) error
 	ReleaseTerminalBinClaim(binID int64) (int64, error)
 	ReleaseStagedBin(binID int64) (released bool, err error)
 

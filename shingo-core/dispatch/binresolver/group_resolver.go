@@ -1115,7 +1115,7 @@ func (r *GroupResolver) settleBinType(stated BinTypeStatement, asker domain.DigA
 		return stated // already named, or a retrieve that places nothing
 	}
 	if asker.OrderID != 0 {
-		id, state, err := r.DB.BinTypeForOrder(asker.OrderID)
+		id, state, err := r.DB.BinTypeForOrder(asker.OrderID, group.Name)
 		if err != nil {
 			log.Printf("store slot: bin type for order %d unreadable (%v) — resolving %s untyped",
 				asker.OrderID, err, group.Name)

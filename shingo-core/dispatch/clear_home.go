@@ -440,7 +440,11 @@ func (d *Dispatcher) issueClearSpot(f ClearFacts, x *nodes.Node) error {
 // chooseClearTrade is choose's last arm: no pull took the empty and no spot is
 // open, so the two robots trade. "" when the trade cannot be born.
 func (d *Dispatcher) chooseClearTrade(f ClearFacts) (string, error) {
-	if f.Partial == nil || f.Partial.BinID == nil {
+	var partial *int64
+	if f.Partial != nil {
+		partial, _ = f.Partial.OnlyBin()
+	}
+	if partial == nil {
 		return "", fmt.Errorf("clear %d: the trade needs the partial's move and its bin", f.Parent.ID)
 	}
 	if !f.Prepared || f.Spot != nil {
@@ -448,9 +452,9 @@ func (d *Dispatcher) chooseClearTrade(f ClearFacts) (string, error) {
 		if err != nil || s == nil {
 			return "", fmt.Errorf("clear %d: the partial's spot %q: %v", f.Parent.ID, f.PartialAt, err)
 		}
-		p, err := d.db.GetBin(*f.Partial.BinID)
+		p, err := d.db.GetBin(*partial)
 		if err != nil || p == nil {
-			return "", fmt.Errorf("clear %d: the partial %d: %v", f.Parent.ID, *f.Partial.BinID, err)
+			return "", fmt.Errorf("clear %d: the partial %d: %v", f.Parent.ID, *partial, err)
 		}
 		refusal, err := d.ClearTradeRefusal(f.LoaderID, f.Home, s, f.EmptyBin, p)
 		if err != nil {
@@ -518,9 +522,13 @@ func (d *Dispatcher) issueClearTrade(f ClearFacts) error {
 	if st == nil {
 		return fmt.Errorf("clear %d: the partial's move %d carries no stamp", f.Parent.ID, l1.ID)
 	}
+	partial, err := l1.OnlyBin()
+	if err != nil || partial == nil {
+		return fmt.Errorf("clear %d: the partial's move %d carries no one cart (%v)", f.Parent.ID, l1.ID, err)
+	}
 	now := clock.Now().UTC()
 	l2Steps, err := json.Marshal(tradeSteps(f.Home.Name, f.PartialAt,
-		plan.Vacate{Node: f.PartialAt, Bin: *l1.BinID, StampedAt: &now}))
+		plan.Vacate{Node: f.PartialAt, Bin: *partial, StampedAt: &now}))
 	if err != nil {
 		return err
 	}
@@ -890,8 +898,10 @@ func (d *Dispatcher) tradeLegSendable(o, partner *orders.Order) (protocol.QueueC
 	if !v.Admitted() {
 		return protocol.QueueStorageRearranging, v.Cause(), QueueParams{Lane: v.Lane(), Payload: o.PayloadCode}, false
 	}
-	if o.BinID != nil {
-		b, err := d.db.GetBin(*o.BinID)
+	if cart, cerr := o.OnlyBin(); cerr != nil {
+		return protocol.QueueWaitingForSlot, CauseReadFailed, QueueParams{}, false
+	} else if cart != nil {
+		b, err := d.db.GetBin(*cart)
 		if err != nil || b == nil {
 			return protocol.QueueWaitingForSlot, CauseReadFailed, QueueParams{}, false
 		}

@@ -63,8 +63,9 @@ type Store interface {
 	// was written yet.
 	ReleaseReservation(orderID, binID int64) error
 	UpdateOrderBinID(orderID, binID int64) error
-	// ClearOrderBinID forgets a stale held-bin pointer so the order re-finds.
-	ClearOrderBinID(orderID int64) error
+	// ForgetHeldCart forgets a plain order's stale held cart (its row) so the
+	// order re-finds.
+	ForgetHeldCart(orderID int64) error
 	// ListReservationsByOrder is how the held-bin arm asks whether the soft hold
 	// it is retrying against still exists. Release DELETES the row, so any row
 	// returned here is a live hold.

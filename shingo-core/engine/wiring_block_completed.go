@@ -25,13 +25,10 @@
 // already at _TRANSIT, so duplicate or replayed events are safe; the tote hook
 // runs only on a lift that moved the bin.
 //
-// Failure mode: if order_bins lookup misses for the block's location
-// (concrete bin couldn't be claimed at order-creation time, or the
-// junction row was never written for a single-bin complex order), we
-// fall back to order.BinID. That covers the simpler case where there's
-// only one bin per order. If neither path resolves a bin, we log and
-// drop — the bin's source slot stays nominally occupied until delivery,
-// which is the pre-Phase-2 behavior. Acceptable degradation.
+// Which cart a block moves is the order's row for that lift (an order's carts
+// are a row per lift: resolvePickupBinRow, resolveDropoffBin). A block no row
+// names moves nothing: we log and drop, and the cart moves to its drop at
+// whole-order FINISHED, the pre-Phase-2 behavior.
 
 package engine
 
@@ -75,7 +72,7 @@ func (e *Engine) handleBlockCompleted(ev BlockCompletedEvent) {
 
 	switch {
 	case IsPickupBlock(ev.BinTask):
-		e.handlePickupBlockCompleted(ev)
+		e.handlePickupBlockCompletedFor(ev, order)
 	case IsDropoffBlock(ev.BinTask):
 		e.handleStoreBlockCompleted(ev)
 	}
@@ -213,13 +210,30 @@ func (e *Engine) recordBlockLeg(ev BlockCompletedEvent, order *orders.Order) boo
 	return fresh
 }
 
-// handlePickupBlockCompleted drives the bin claimed at a pickup block onto
-// the synthetic _TRANSIT node so the source slot frees immediately — the
+// handlePickupBlockCompleted drives the cart a pickup block lifted onto the
+// synthetic _TRANSIT node so the source slot frees immediately — the
 // slot-vacancy signal queued orders need to unblock.
 func (e *Engine) handlePickupBlockCompleted(ev BlockCompletedEvent) {
-	bin, stepIndex, fromNodeID, ok := e.resolvePickupBinRow(ev.OrderID, ev.Location)
+	order, err := e.db.GetOrder(ev.OrderID)
+	if err != nil {
+		order = nil
+	}
+	e.handlePickupBlockCompletedFor(ev, order)
+}
+
+// handlePickupBlockCompletedFor is handlePickupBlockCompleted with the order
+// already read (handleBlockCompleted reads it once for the leg, the count and
+// this). An order that could not be read lifts nothing: its carts are not
+// known, and a wrong cart on _TRANSIT is worse than a late one.
+func (e *Engine) handlePickupBlockCompletedFor(ev BlockCompletedEvent, order *orders.Order) {
+	if order == nil {
+		e.logFn("transit: order %d block %s @ %s — the order could not be read; nothing lifted",
+			ev.OrderID, ev.BlockID, ev.Location)
+		return
+	}
+	bin, stepIndex, fromNodeID, ok := e.resolvePickupBinRow(order, ev.Location)
 	if !ok {
-		e.logFn("transit: order %d block %s @ %s — no claimed bin matched; bin will move to dest at delivery (pre-Phase-2 behavior)",
+		e.logFn("transit: order %d block %s @ %s — no cart of this order stands here to lift; it moves to its drop at delivery",
 			ev.OrderID, ev.BlockID, ev.Location)
 		return
 	}
@@ -235,12 +249,8 @@ func (e *Engine) handlePickupBlockCompleted(ev BlockCompletedEvent) {
 	// carrying the new Epoch and the lift time is that bump's announcement. It
 	// used to be the UPDATE, then a separate outbox row after it; a crash
 	// between them moved the bin and told nobody.
-	order, err := e.db.GetOrder(ev.OrderID)
-	notice := service.PickupNotice{OrderID: ev.OrderID, Location: ev.Location}
-	if err == nil && order != nil {
-		notice.Station, _ = materialStation(order)
-		notice.OrderUUID = order.EdgeUUID
-	}
+	notice := service.PickupNotice{OrderID: ev.OrderID, Location: ev.Location, OrderUUID: order.EdgeUUID}
+	notice.Station, _ = materialStation(order)
 	binID := bin.ID
 	lift, err := e.binService.Lift(binID, notice)
 	if err != nil {
@@ -282,200 +292,133 @@ func (e *Engine) deriveTotesAtLift(bin *bins.Bin, order *orders.Order, orderID i
 	}
 }
 
-// resolvePickupBin finds the bin claimed at the given pickup-block
-// location. Returns binID, stepIndex, fromNodeID (the source node ID
-// the bin is leaving), and ok.
-//
-// Lookup order:
-//  1. Multi-bin complex order: order_bins junction. Match by
-//     NodeName == location AND Action == "pickup". When multiple
-//     pickups share a location (rare — same supermarket lane twice
-//     in one swap), pick the earliest unmoved one (lowest step_index
-//     whose bin's NodeID still equals the source node — others have
-//     already transitioned).
-//  2. The order's own claimed bin AT this location — see below.
-//  3. Single-bin order fallback: order.BinID, only when its record stands
-//     on the block's node (or the location names no node).
-//
-// ── WHY (2) EXISTS: A PLAN'S RE-PICKUPS HAVE NO JUNCTION ROWS ──────────────
-//
-// The junction is written at ALLOCATION time and names the endpoints the
-// allocator chose. A plan's INTERMEDIATE pickups are not among them. A
-// single_robot swap parks the fresh carrier at InboundStaging (step 2) and
-// collects it again at step 6; it parks the spent one at OutboundStaging
-// (step 5) and collects it again at step 8. Neither of those two pickups has a
-// junction row, so both fell straight through to (3) — which returns
-// `order.BinID` WITHOUT ASKING WHERE THAT BIN IS.
-//
-// So the step-6 pickup at InboundStaging resolved to the SPENT carrier sitting
-// at OutboundStaging, and the step-7 dropoff then recorded the spent carrier
-// onto the LINE — with its own count, which is what the Edge binds and charges
-// PLC ticks against. The fresh carrier stayed recorded at InboundStaging until
-// whole-order FINISHED.
-//
-// Measured on the demo plant, 2026-09-06, order 8 at ALN_004 (and identically
-// order 5 at ALN_003, same run, and again on a clean re-run):
-//
-//	b3 SLN_005 JackUnload   bin 7  stored at SLN_005   the fresh carrier, parked
-//	b6 SLN_006 JackUnload   bin 24 stored at SLN_006   the spent carrier, parked
-//	b7 SLN_005 JackLoad     bin 24 entered _TRANSIT    <- WRONG: bin 24 is at SLN_006
-//	b8 ALN_004 JackUnload   bin 24 stored at ALN_004   <- WRONG: the spent one, on the line
-//	b9 SLN_006 JackLoad     bin 24 entered _TRANSIT    <- and off again
-//
-// The second consequence is the one that wedged cells: because b9 lifted the
-// only bin Core believed was on the line, ALN_004 read EMPTY from step 8
-// onward, and the level sweep minted a bare move into a position that
-// physically held the fresh carrier. That move holds forever. See
-// ISSUE-sim-position-hold-deadlock-2026-09-06.md.
-//
-// (2) ASKS THE SAME QUESTION resolveDropoffBin ASKS, from the other side. That
-// function resolves a dropoff as "the one bin this order has claimed at
-// _TRANSIT" — what the robot is holding — and its header records why one rule
-// beat two special cases. A pickup is the dual: the bin this order lifts at L
-// is the one bin it has claimed AT L. No junction, no step index, no agreement
-// with anything.
-//
-// Zero claimed bins at the location or more than one leaves (3) to answer.
-// (3) no longer answers with a bin recorded on another node: a lift releases a
-// vacate hold, so a false one is load-bearing (see the check in
-// resolvePickupBinRow).
+// resolvePickupBin is resolvePickupBinRow for an order by id, answering with
+// the bin's id. It reads the order; the block handler passes the one it read.
 func (e *Engine) resolvePickupBin(orderID int64, location string) (binID int64, stepIndex int, fromNodeID int64, ok bool) {
-	bin, stepIndex, fromNodeID, ok := e.resolvePickupBinRow(orderID, location)
+	order, err := e.db.GetOrder(orderID)
+	if err != nil || order == nil {
+		return 0, 0, 0, false
+	}
+	bin, stepIndex, fromNodeID, ok := e.resolvePickupBinRow(order, location)
 	if !ok {
 		return 0, 0, 0, false
 	}
 	return bin.ID, stepIndex, fromNodeID, true
 }
 
-// resolvePickupBinRow is resolvePickupBin answering with the bin row it read,
-// as it stood before the lift: the lift's tote hook judges the cart on it.
-func (e *Engine) resolvePickupBinRow(orderID int64, location string) (bin *bins.Bin, stepIndex int, fromNodeID int64, ok bool) {
-	// LOAD-BEARING (same contract as shingo-edge/engine/handler_bin_picked_up.go):
-	// `location` arrives from BlockCompletedEvent.Location, originally
-	// an un-normalized RDS vendor string. `ob.NodeName` comes from
-	// the order_bins junction, populated at order-creation time from
-	// nodes.name. All Core write paths trim on write today, but
-	// tainted rows from a pre-trim install (or any future write path
-	// that bypasses the trim) would silently break this filter,
-	// leaving the bin nominally occupied at source.
-	//
-	// Defensive TrimSpace on both sides. Trim only — NOT case-fold;
-	// case mismatch is a real config error.
-	locationTrimmed := strings.TrimSpace(location)
-	// Multi-bin path: junction table.
-	rows, err := e.db.ListOrderBins(orderID)
-	if err == nil && len(rows) > 0 {
-		for _, ob := range rows {
-			if ob.Action != protocol.ActionPickup {
-				continue
-			}
-			if strings.TrimSpace(ob.NodeName) != locationTrimmed {
-				continue
-			}
-			bin, err := e.db.GetBin(ob.BinID)
-			if err != nil || bin == nil {
-				continue
-			}
-			// Skip bins that have already transitioned (their NodeID
-			// is no longer at the source). This handles duplicate
-			// pickup events for repeated-location orders.
-			srcNode, srcErr := e.db.GetNodeByDotName(ob.NodeName)
-			if srcErr != nil || srcNode == nil {
-				continue
-			}
-			if bin.NodeID == nil || *bin.NodeID != srcNode.ID {
-				continue
-			}
-			return bin, ob.StepIndex, srcNode.ID, true
+// resolvePickupBinRow is the cart a pickup block at location lifts, as its row
+// stood before the lift (the lift's tote hook judges the cart on it), the plan
+// step that lifts it, and the node it is leaving.
+//
+// ONE READ OVER THE ORDER'S ROWS. The order's carts are a row per lift (read
+// with the order, no statement); the candidates are the rows whose pick step
+// happens at location (domain.StepNode), and the one statement asks which of
+// those carts is still recorded THERE — the lift has not happened yet. The
+// earliest such pick wins. A relay's re-lift has its own row (the single_robot
+// swap's fresh cart re-lifted at inbound staging), so nothing is inferred from
+// what the order happens to have claimed at the node, and nothing falls back to
+// orders.bin_id.
+//
+// THE BIN'S RECORD MUST STAND ON THE BLOCK'S NODE. A lift writes last_lift_at,
+// and that is the fact a vacate hold releases on (bins.LeftSince), so naming a
+// cart that stands elsewhere — a replayed pickup after a restart, a re-pickup
+// whose cart is parked at another node — releases a hold for a lift that never
+// happened. Measured on the demo plant, 2026-09-06, order 8 at ALN_004: a
+// re-pickup at inbound staging resolved to the spent carrier parked at outbound
+// staging, put it on the line with its own count, and wedged the cell
+// (ISSUE-sim-position-hold-deadlock-2026-09-06.md). Pinned by
+// TestPickupBlock_FallbackDoesNotLiftABinRecordedElsewhere.
+//
+// AN ORDER THAT HAS ENDED STILL LIFTS. A Core cancel untracks nothing, and the
+// poller diffs blocks before it checks the order's state (rds/poller.go), so a
+// pickup that finished on the floor reaches here after the order is cancelled.
+// Its row survives the end, and the lift is recorded where the cart physically
+// is: on _TRANSIT, unclaimed, for the stranded sweep. Refusing it would leave
+// the cart recorded at its slot while it rides a robot (finding 7).
+//
+// A LIFT WITH NO ROW AT THIS NODE (an appended pickup the plan grew after its
+// rows were written) lifts the one cart the order has claimed here, and writes
+// that lift's row in its own statement: the plan's first pickup at this node
+// with no row, set down at the plan's next dropoff after it, open when there is
+// none.
+func (e *Engine) resolvePickupBinRow(order *orders.Order, location string) (bin *bins.Bin, stepIndex int, fromNodeID int64, ok bool) {
+	// Trim only — NOT case-fold; case mismatch is a real config error. The
+	// location is an un-normalized RDS vendor string (same contract as
+	// shingo-edge/engine/handler_bin_picked_up.go).
+	loc := strings.TrimSpace(location)
+	if loc == "" {
+		return nil, 0, 0, false
+	}
+	var ids []int64
+	pickOf := map[int64]int{}
+	for _, c := range order.Carts {
+		if c.PickStep == nil || *c.PickStep < 0 || strings.TrimSpace(domain.StepNode(order, *c.PickStep)) != loc {
+			continue
+		}
+		if _, seen := pickOf[c.BinID]; !seen {
+			ids = append(ids, c.BinID)
+			pickOf[c.BinID] = *c.PickStep
 		}
 	}
-
-	// The order's own claimed bin AT this location. See the header: a plan's
-	// intermediate re-pickups carry no junction row, and the fallback below
-	// answers with order.BinID wherever that bin happens to be.
-	if held, from, ok := e.claimedBinAt(orderID, locationTrimmed); ok {
-		return held, 0, from, true
+	standing, err := e.db.BinsStandingAt(ids, order.ID, loc)
+	if err != nil {
+		e.logFn("transit: order %d pickup @ %s — read its carts there: %v", order.ID, loc, err)
+		return nil, 0, 0, false
 	}
+	if len(ids) == 0 {
+		return e.appendedLift(order, loc, standing)
+	}
+	if len(standing) == 0 {
+		return nil, 0, 0, false
+	}
+	b := standing[0]
+	from := int64(0)
+	if b.NodeID != nil {
+		from = *b.NodeID
+	}
+	return b, pickOf[b.ID], from, true
+}
 
-	// Single-bin fallback.
-	order, err := e.db.GetOrder(orderID)
-	if err != nil || order == nil || order.BinID == nil {
-		if err == nil && order != nil && order.BinID == nil {
-			// SHADOWED: the single-bin fallback gives up here for a coordinator
-			// and for a defect alike.
-			owns, oerr := e.db.OrderOwnsNoCargo(order.ID)
-			service.NoteFolderShadow(service.FolderSiteBlockCompleted, order.ID, owns, oerr)
+// appendedLift is a pickup at a node where the order has no row: exactly one of
+// its claimed carts stands there, and its lift's row is written now. Zero or
+// several is not a lift this handler can name.
+func (e *Engine) appendedLift(order *orders.Order, loc string, claimed []*bins.Bin) (*bins.Bin, int, int64, bool) {
+	if len(claimed) != 1 {
+		if len(claimed) > 1 {
+			e.logFn("transit: order %d pickup @ %s — no row lifts here and %d of its claimed carts stand here; nothing lifted",
+				order.ID, loc, len(claimed))
 		}
 		return nil, 0, 0, false
 	}
-	bin, err = e.db.GetBin(*order.BinID)
-	if err != nil || bin == nil {
+	b := claimed[0]
+	steps := domain.OrderPlan(order)
+	rowed := map[int]bool{}
+	for _, c := range order.Carts {
+		if c.PickStep != nil {
+			rowed[*c.PickStep] = true
+		}
+	}
+	pick := -1
+	for i, s := range steps {
+		if s.Action == protocol.ActionPickup && !rowed[i] && strings.TrimSpace(s.Node) == loc {
+			pick = i
+			break
+		}
+	}
+	if pick < 0 {
+		e.logFn("transit: order %d pickup @ %s — its plan has no pickup here without a row; cart %d not lifted",
+			order.ID, loc, b.ID)
 		return nil, 0, 0, false
 	}
-	// THE BIN'S RECORD MUST STAND ON THE BLOCK'S NODE. A lift writes
-	// last_lift_at, and that is the fact a vacate hold releases on
-	// (bins.LeftSince), so naming a bin that stands elsewhere — a replayed
-	// pickup after a restart, a re-pickup whose carrier is parked at another
-	// staging node — releases a hold for a lift that never happened. When the
-	// location names a node and the bin is not recorded on it, nothing
-	// resolves: no lift, no transit event. A location that names no node
-	// keeps the answer it always had. Pinned by
-	// TestPickupBlock_FallbackDoesNotLiftABinRecordedElsewhere.
-	if at, nerr := e.db.GetNodeByDotName(locationTrimmed); nerr == nil && at != nil &&
-		(bin.NodeID == nil || *bin.NodeID != at.ID) {
-		recorded := bin.NodeName
-		if bin.NodeID == nil {
-			recorded = "no node"
-		}
-		e.logFn("transit: order %d pickup @ %s — its bin %s is recorded on %s, not here; not lifting it",
-			orderID, at.Name, bin.Label, recorded)
+	if err := e.db.RecordAppendedLift(order, b.ID, pick); err != nil {
+		e.logFn("transit: order %d pickup @ %s — record the lift of cart %d: %v", order.ID, loc, b.ID, err)
 		return nil, 0, 0, false
 	}
 	from := int64(0)
-	if bin.NodeID != nil {
-		from = *bin.NodeID
+	if b.NodeID != nil {
+		from = *b.NodeID
 	}
-	return bin, 0, from, true
-}
-
-// claimedBinAt returns the single bin this order has claimed at `location` (its
-// row, as ListBinsByClaim read it), and
-// the node it is leaving. The pickup dual of resolveDropoffBin's transit rule:
-// one robot lifts one bin, so if exactly one of the order's own bins is sitting
-// at the node the block completed at, that is the bin.
-//
-// Ambiguity is not resolved here, deliberately. Zero means the order has nothing
-// of its own at this node — a junction-less pickup of a bin it does not hold, or
-// a replayed block whose bin has already moved to _TRANSIT. More than one means
-// two of its bins share the node, which one robot cannot lift. Either way the
-// caller falls through to the behaviour that predates this, rather than guessing
-// — and a wrong bin identity here writes a wrong count onto a line position.
-func (e *Engine) claimedBinAt(orderID int64, location string) (bin *bins.Bin, fromNodeID int64, ok bool) {
-	if location == "" {
-		return nil, 0, false
-	}
-	node, err := e.db.GetNodeByDotName(location)
-	if err != nil || node == nil {
-		return nil, 0, false
-	}
-	held, err := e.db.ListBinsByClaim(orderID)
-	if err != nil {
-		return nil, 0, false
-	}
-	var found []*bins.Bin
-	for _, b := range held {
-		if b.NodeID != nil && *b.NodeID == node.ID {
-			found = append(found, b)
-		}
-	}
-	if len(found) != 1 {
-		if len(found) > 1 {
-			e.logFn("transit: order %d pickup @ %s — %d of its own bins are at this node, want exactly 1; "+
-				"falling back to the order's bin_id", orderID, location, len(found))
-		}
-		return nil, 0, false
-	}
-	return found[0], node.ID, true
+	return b, pick, from, true
 }
 
 // handleStoreBlockCompleted records a bin at its destination slot the moment
@@ -488,10 +431,10 @@ func (e *Engine) claimedBinAt(orderID int64, location string) (bin *bins.Bin, fr
 // bin into the physically-occupied slot (the Hopkinsville #130/#132 divergence).
 //
 // Scope is deliberately narrow:
-//   - Only multi-bin complex orders (order_bins junction populated) have an
-//     intermediate dropoff; resolveDropoffBin no-ops for single-bin orders
-//     and compound children (no junction rows), leaving their well-tested
-//     completion path untouched.
+//   - Only an intermediate set-down is recorded here, for any order: a cart
+//     whose row sets it down at this node and that is in hand. A set-down no
+//     row names (a drop the order makes with nothing of its own in hand) is
+//     left to the completion path.
 //   - The FINAL delivery (location == order.DeliveryNode) is skipped — it is
 //     driven by handleOrderDelivered at whole-order FINISHED, which also ships
 //     the Edge OrderDelivered notification; racing it here would buy nothing.
@@ -642,12 +585,12 @@ const lineRebindUnannouncedAction = "line_rebind_unannounced"
 //
 // A single_robot consume swap places the fresh carrier on the line at step 7 of
 // nine, and that placement is an INTERMEDIATE dropoff (the order ends at the
-// market at step 9). The rebind rides the UOPAdjustment{Bound} broadcast a few
-// lines below, and the broadcast only happens if resolveDropoffBin resolved a
-// bin. It resolves "the ONE bin this order still has claimed at _TRANSIT", so it
-// declines whenever an earlier step did not land — a step-5 store whose block
-// event was lost leaves the spent carrier at _TRANSIT, and step 6 then puts the
-// fresh one there too.
+// market at step 9). The rebind rides the landing ApplyIntermediateStore writes,
+// and that happens only if resolveDropoffBin resolved a cart. Since the set-down
+// is resolved by its own row (an order's carts are a row per lift), a lost
+// earlier store event no longer makes it decline; it declines when the cart its
+// row names is NOT IN HAND — its lift was never recorded (the pickup block was
+// lost), or it was set down already.
 //
 // The decline returns quietly. Edge never hears the announcement, and every arm
 // of HandleUOPAdjustment that could bind an empty slot refuses one on purpose,
@@ -684,14 +627,9 @@ const lineRebindUnannouncedAction = "line_rebind_unannounced"
 // the bind seam's behaviour changes here — this path already returned without
 // binding, and it still does. All that is added is that it says so.
 //
-// TODO(2026-09-10): study a better shape.
-// This alarm is the BACKSTOP, not the fix. It fires because the rebind had to
-// INFER which bin was placed by counting bins at _TRANSIT, and the count was
-// ambiguous — a derived fact failing, not a placement failing. The better shape
-// is for the dropoff step to carry the bin it placed, which would make this
-// decline unreachable rather than audible; see resolveDropoffBin for what was
-// already checked and why nobody has built it. Until then the operator's
-// "Record Count" is the recovery, and that is a recovery, not a design.
+// The alarm stays a BACKSTOP: what is left to decline is a set-down whose cart's
+// lift Core never heard, which no row can repair. The operator's "Record Count"
+// is the recovery for that.
 func (e *Engine) noteUnannouncedLineRebind(order *orders.Order, location string) {
 	if order == nil || order.ProcessNode == "" || location != order.ProcessNode {
 		return
@@ -708,100 +646,51 @@ func (e *Engine) noteUnannouncedLineRebind(order *orders.Order, location string)
 	}
 }
 
-// resolveDropoffBin finds the bin this order just set down at `location`: the
-// one bin the order still has claimed at _TRANSIT — what the robot is carrying.
-// A bin already delivered is unclaimed and not at _TRANSIT, which makes the
-// caller idempotent against duplicate/replayed block events. Returns false when
-// the order has no bin in transit under its claim, or more than one.
+// resolveDropoffBin finds the cart this order just set down at `location`: the
+// cart of the order's row whose drop step happens there, claimed by the order
+// and in the robot's hands (on _TRANSIT or a robot's carrier node). A cart
+// already set down is not in hand, which makes the caller idempotent against
+// duplicate and replayed block events.
 //
-// It does NOT read the order_bins junction, and this summary used to say it did
-// (dest_node == location, "returns false when no junction rows exist"). That
-// describes the version this replaced; the paragraphs below document the
-// rewrite and were correct while the summary above them was not.
-// ── IT ASKS WHAT THE ROBOT IS CARRYING, AND IT USED TO ASK SOMETHING ELSE ──
+// ── THE ROW SAYS WHICH CART; THE PLANT SAYS WHETHER IT IS IN HAND ──────────
 //
-// A dropoff places the bin the robot has in its forks. That bin is, by
-// construction, the one this order most recently picked up and has not yet put
-// down — which is the bin sitting at _TRANSIT under this order's claim. One
-// robot carries one bin, so the question has exactly one answer and the database
-// already holds it.
+// The set-down is asked by its step, not inferred. This used to count the
+// order's claimed bins at _TRANSIT and decline unless exactly one stood there,
+// so an earlier step that did not land — a store event lost — left two carts
+// in transit and the next set-down gave up silently (its own TODO,
+// 2026-09-10, asked for the dropoff step to carry the cart it places; a row per
+// lift does). Measured on the lane-stress rig 2026-08-11 before that: orders 1,
+// 7 and 10 staged from the first minute of the run, each holding an AMR,
+// because a set-down at an intermediate staging node matched no row whose
+// dest_node was the cart's final drop.
 //
-// WHAT IT ASKED BEFORE: it walked the order_bins junction for a row whose
-// DEST_NODE equalled this location. That is a different question — "which bin
-// ENDS UP here" — and it is only accidentally the same one when the dropoff
-// being completed happens to be the bin's final destination.
+// Which cart is in the forks is a fact about the plant (bins.InHandAmong), never
+// stamped on the row: of two candidates in hand, the one lifted last is the one
+// being set down. One statement; none when the order's plan sets nothing down
+// here.
 //
-// Two shapes therefore never matched, and both pin a robot forever:
-//
-//	INTERMEDIATE DROPS. The junction records PICKUP rows only (node_name = where
-//	it is picked, dest_node = where it finally goes); there is no dropoff row to
-//	match. A two_robot swap that drops at inbound staging on its way to the cell
-//	has no row whose dest_node is that staging node, so the store was never
-//	recorded, the bin never appeared at the staging slot, and the order's OWN
-//	next step — a pickup at that slot — had nothing to pick.
-//
-//	SINGLE-BIN ORDERS. They carry no junction rows at all (the allocator writes
-//	them only for multi-bin orders — see dispatch.binForStep), so the walk exited
-//	at len(rows)==0. Its sibling resolvePickupBin has had the order.BinID
-//	fallback all along; this half never got it.
-//
-// MEASURED, lane-stress rig 2026-08-11: orders 1, 7 and 10 staged from the first
-// minute of the run, each holding an AMR, for the entire soak. Order 1 is the
-// single-bin shape (bin 5, claimed by order 1, zero junction rows); 7 and 10 are
-// the intermediate-drop shape (rows naming ALN_003/ALN_004 as dest while the
-// block completed at SLN_003/SLN_004). Core logged "no in-flight claimed bin
-// matched; store recorded at order FINISHED instead" and moved on, and the order
-// never reached FINISHED because it was waiting on the step that store would
-// have enabled.
-//
-// ONE RULE REPLACES TWO SPECIAL CASES. The obvious patch was to add the
-// single-bin fallback and to match intermediate drops by step index. Both work,
-// and both leave two readers of "which bin is this block about" answering with
-// different machinery — which is the drift that produced this. Asking the plant
-// what the robot is holding needs no junction, no step index, and no agreement
-// with anything.
-//
-// FAILS CLOSED on an ambiguous answer. Zero bins in transit means the pickup was
-// never recorded and there is nothing to place; more than one means this order
-// has two bins in flight, which one robot cannot do — either way, guessing would
-// record a bin at a slot it is not in, and a wrong location is worse than a late
-// one (the order-FINISHED path still catches the honest case).
-//
-// TODO(2026-09-10): study a better shape.
-// This INFERS which bin was placed by counting what the order holds at _TRANSIT
-// — a derived fact — so an earlier step that did not land leaves two bins here
-// and the rebind gives up (see noteUnannouncedLineRebind, which alarms on it).
-// The better shape is for the DROPOFF STEP to carry the identity of the bin it
-// placed, so nothing has to count. Checked before writing this: no such field
-// exists on protocol.ComplexOrderStep or on resolvedStep, and the order_bins
-// junction cannot stand in — it records PICKUP rows only, and its dest_node
-// answers "where does this bin end up", which is the different question this
-// predicate replaced. Carrying it means stamping the step after the allocator
-// selects bins, which is a writer nobody has built.
+// FAILS CLOSED: no candidate in hand means there is nothing to place, and a
+// wrong location is worse than a late one (the order-FINISHED path still
+// catches the honest case).
 func (e *Engine) resolveDropoffBin(order *orders.Order, location string) (int64, bool) {
-	transit, err := e.db.GetNodeByDotName(domain.TransitNodeName)
-	if err != nil || transit == nil {
-		e.logFn("transit: order %d dropoff @ %s — cannot resolve the %s node: %v",
-			order.ID, location, domain.TransitNodeName, err)
+	loc := strings.TrimSpace(location)
+	var ids []int64
+	for _, c := range order.CartsSettingDownAt(loc) {
+		ids = append(ids, c.BinID)
+	}
+	if len(ids) == 0 {
+		e.dbg("transit: order %d dropoff @ %s — no row of this order sets a cart down here", order.ID, loc)
 		return 0, false
 	}
-	held, err := e.db.ListBinsByClaim(order.ID)
+	bin, ok, err := e.db.CartInHandAmong(ids, order.ID)
 	if err != nil {
-		e.logFn("transit: order %d dropoff @ %s — claimed-bin read failed: %v", order.ID, location, err)
+		e.logFn("transit: order %d dropoff @ %s — read which of its carts is in hand: %v", order.ID, loc, err)
 		return 0, false
 	}
-	var carried []int64
-	for _, b := range held {
-		if b.NodeID != nil && *b.NodeID == transit.ID {
-			carried = append(carried, b.ID)
-		}
+	if !ok {
+		e.dbg("transit: order %d dropoff @ %s — none of carts %v is in hand under this order", order.ID, loc, ids)
 	}
-	if len(carried) != 1 {
-		e.dbg("transit: order %d dropoff @ %s — %d bin(s) in transit under this claim, want exactly 1",
-			order.ID, location, len(carried))
-		return 0, false
-	}
-	return carried[0], true
+	return bin, ok
 }
 
 // IsPickupBlock returns true when a block's BinTask designates a

@@ -5,13 +5,16 @@ import (
 	"fmt"
 	"time"
 
+	"shingo/protocol"
+	"shingo/protocol/clock"
+
 	"shingocore/domain"
 	"shingocore/store/reservations"
 )
 
 // OrderBin is the order-bin junction domain type. The struct lives in
 // shingocore/domain (Stage 2A); this alias keeps the orders.OrderBin
-// name used by InsertOrderBin/ListOrderBins and the outer store/
+// name used by ListOrderBins and the outer store/
 // order_bins.go re-export (store.OrderBin). BinArrivalInstruction
 // stays local — it is a persistence-layer intent (a batched staging
 // update passed into ApplyMultiBinArrival), not a domain entity.
@@ -29,115 +32,134 @@ type BinArrivalInstruction struct {
 	ExpiresAt *time.Time
 }
 
-// OrderBinRow is one junction row an allocation wants recorded.
+// OrderBinRow is one lift an allocation records: the cart, the plan step that
+// lifts it and the plan step that sets it down. NodeName and DestNode are the
+// junction's node copies (the pick's node, the cart's final drop), written
+// until v174 drops them.
 type OrderBinRow struct {
-	BinID     int64
-	StepIndex int
-	Action    string
-	NodeName  string
-	DestNode  string
+	BinID    int64
+	PickStep int
+	DropStep int
+	NodeName string
+	DestNode string
 }
 
-// ReplaceOrderBins makes an order's junction rows say exactly what THIS
-// allocation claimed: delete the set, write the new one, one transaction.
+// ReplaceOrderBins makes an order's carts say exactly what THIS allocation
+// claimed, and points orders.bin_id at primary (the column v174 drops), in ONE
+// statement: the owner test, the pointer, the rows this allocation no longer
+// lifts deleted, every lift written (one per row, upserted on its pick step).
 //
-// ── UPSERTING PER BIN MERGED WHERE IT SHOULD HAVE REPLACED ────────────────
+// ── THE SET IS REPLACED, NEVER MERGED ─────────────────────────────────────
 //
-// InsertOrderBin's conflict target is (order_id, bin_id), so re-recording the
-// SAME bin updates its row — which is the duplicate problem it was written for.
-// A retry that claims a DIFFERENT bin does not conflict with anything: it adds a
-// row and leaves the old bin's behind. Nothing deletes junction rows outside
-// delivery and TerminalizeOrder, so a complex order refused at a lane and
-// re-allocated carries the union of every bin it ever considered.
+// A retry that claims a DIFFERENT cart must not leave the old cart's row
+// behind: the settle refuses any cart the order does not hold, and the refusal
+// fails the order loud (cargo_ledger_mismatch). Measured in the sim 2027-11-09:
+// order 45 refused ~40 times at Lane_01, re-allocated each time, dispatched
+// holding bin 7, and failed on the junction row for bin 24 that an early
+// attempt had left. The set is a fact about the CURRENT allocation, so writing
+// it replaces it. The fleet-demote door keeps the rows (§8): its re-dispatch
+// does not re-allocate.
 //
-// That is not cosmetic. applyMultiBinArrivalForOrder walks these rows at
-// delivery and refuses any bin the order does not hold, and the refusal FAILS
-// the order loud (cargo_ledger_mismatch) — so one stale row from an earlier
-// attempt kills an order that arrived carrying exactly what it should. Measured
-// in the sim 2027-11-09: order 45 refused ~40 times at Lane_01 (lane-occupied),
-// re-allocated each time, dispatched holding bin 7, and failed on the junction
-// row for bin 24 that an early attempt had left behind.
+// THE OWNER TEST IS IN THE STATEMENT, ahead of every write: a terminalize holds
+// the order row, so a write that took the rows first and then waited on the
+// order would be a cycle (reservations.OwnerLiveSQL locks the order). An ended
+// owner writes nothing and is ErrOwnerEnded.
 //
-// The set is a fact about the CURRENT allocation, so writing it replaces it.
-// This does not conflict with the fleet-demote door keeping order_bins (§8):
-// that keeps the rows for a re-dispatch which does NOT re-allocate, and this
-// runs only when a new allocation has just decided what the order holds.
-func ReplaceOrderBins(db *sql.DB, orderID int64, rows []OrderBinRow) error {
-	tx, err := db.Begin()
-	if err != nil {
-		return fmt.Errorf("replace order_bins: begin: %w", err)
-	}
-	defer tx.Rollback() //nolint:errcheck // committed below; rollback is the error close
-	// THE OWNER TEST IS THE FIRST STATEMENT, because the DELETE is the first
-	// lock: a terminalize holds the order row and deletes these rows, so taking
-	// them first and then waiting on the order row is a cycle. The CTE takes the
-	// order row (reservations.OwnerLiveSQL) before the DELETE locks anything, in
-	// the same statement; the inserts after it run under that lock.
+// An error is returned, never logged and dropped: an allocation whose carts
+// were not recorded does not go on to the fleet.
+func ReplaceOrderBins(db *sql.DB, orderID int64, primary int64, rows []OrderBinRow) error {
+	bins, picks, drops, nodes, dests := cartArrays(rows)
 	var live bool
-	if err := tx.QueryRow(`WITH live AS (SELECT `+reservations.OwnerLiveSQL(1)+` AS ok),
-		del AS (DELETE FROM order_bins WHERE order_id = $1 AND (SELECT ok FROM live) RETURNING 1)
-		SELECT (SELECT ok FROM live), (SELECT count(*) FROM del)`, orderID).Scan(&live, new(int)); err != nil {
-		return fmt.Errorf("replace order_bins: clear order %d: %w", orderID, err)
+	if err := db.QueryRow(`WITH live AS (SELECT `+reservations.OwnerLiveSQL(1)+` AS ok),
+		ptr AS (UPDATE orders SET bin_id = $2, updated_at = $8
+		         WHERE id = $1 AND (SELECT ok FROM live) AND bin_id IS DISTINCT FROM $2 RETURNING 1),
+		del AS (DELETE FROM order_bins WHERE order_id = $1 AND (SELECT ok FROM live)
+		         AND (pick_step IS NULL OR pick_step <> ALL($4::bigint[])) RETURNING 1),
+		ins AS (INSERT INTO order_bins (order_id, bin_id, pick_step, drop_step, action, node_name, dest_node)
+		         SELECT $1, r.bin, r.pick, NULLIF(r.drop, -1), 'pickup', r.node, r.dest
+		           FROM unnest($3::bigint[], $4::bigint[], $5::bigint[], $6::text[], $7::text[]) AS r(bin, pick, drop, node, dest)
+		          WHERE (SELECT ok FROM live)
+		         ON CONFLICT (order_id, pick_step) DO UPDATE
+		            SET bin_id = EXCLUDED.bin_id, drop_step = EXCLUDED.drop_step,
+		                node_name = EXCLUDED.node_name, dest_node = EXCLUDED.dest_node
+		         RETURNING 1)
+		SELECT (SELECT ok FROM live), (SELECT count(*) FROM ptr) + (SELECT count(*) FROM del) + (SELECT count(*) FROM ins)`,
+		orderID, primary, bins, picks, drops, nodes, dests, clock.Now().UTC()).Scan(&live, new(int)); err != nil {
+		return fmt.Errorf("record the carts of order %d: %w", orderID, err)
 	}
 	if !live {
-		return reservations.ErrOwnerEnded
-	}
-	for _, r := range rows {
-		if _, err := tx.Exec(
-			`INSERT INTO order_bins (order_id, bin_id, step_index, action, node_name, dest_node)
-			 VALUES ($1, $2, $3, $4, $5, $6)`,
-			orderID, r.BinID, r.StepIndex, r.Action, r.NodeName, r.DestNode); err != nil {
-			return fmt.Errorf("replace order_bins: write bin %d for order %d: %w", r.BinID, orderID, err)
-		}
-	}
-	return tx.Commit()
-}
-
-// InsertOrderBin records a claimed bin and its resolved destination for a complex
-// order. Idempotent per (order, bin): re-recording a claim updates the row rather
-// than adding a second one.
-//
-// ── IT WAS A BARE INSERT, AND ALLOCATION RETRIES ───────────────────────────
-//
-// The grain has always been one row per claimed bin — UpdateOrderBinDestNode
-// keys on the bin and says so, and binForStep reads the first row matching a
-// step index as if it were the only one. Nothing enforced it, so every re-run of
-// an allocation added the same row again. Measured on the lane-stress rig
-// 2026-08-13, during a window in which five demands were stuck in a re-drive
-// loop: 2,472 rows for a handful of orders, 450 of them identical for one
-// (order, step, bin), growing for as long as the orders stayed stuck.
-//
-// Nothing read a wrong answer — the duplicates are identical and the first match
-// wins — so what this costs is writes and the ability to read the table during
-// an incident, which is exactly when somebody does.
-//
-// ON CONFLICT DO UPDATE rather than DO NOTHING, because the two differ on the
-// case that matters: an allocation that retries after the plan moved carries a
-// NEW step index or destination for the same bin, and DO NOTHING would keep the
-// stale one while reporting success. The unique index (v80) is what makes either
-// possible.
-func InsertOrderBin(db *sql.DB, orderID, binID int64, stepIndex int, action, nodeName, destNode string) error {
-	res, err := db.Exec(`INSERT INTO order_bins (order_id, bin_id, step_index, action, node_name, dest_node)
-		SELECT $1, $2, $3, $4, $5, $6 WHERE `+reservations.OwnerLiveSQL(1)+`
-		ON CONFLICT (order_id, bin_id) DO UPDATE
-		SET step_index = EXCLUDED.step_index,
-		    action     = EXCLUDED.action,
-		    node_name  = EXCLUDED.node_name,
-		    dest_node  = EXCLUDED.dest_node`,
-		orderID, binID, stepIndex, action, nodeName, destNode)
-	if err != nil {
-		return fmt.Errorf("insert order_bin: %w", err)
-	}
-	if n, _ := res.RowsAffected(); n == 0 {
 		return reservations.ErrOwnerEnded
 	}
 	return nil
 }
 
-// ListOrderBins returns all junction rows for an order, ordered by step_index.
+// cartArrays is rows as the column arrays a single INSERT … SELECT FROM
+// unnest(…) writes.
+func cartArrays(rows []OrderBinRow) (bins, picks, drops []int64, nodes, dests []string) {
+	bins = make([]int64, len(rows))
+	picks = make([]int64, len(rows))
+	drops = make([]int64, len(rows))
+	nodes = make([]string, len(rows))
+	dests = make([]string, len(rows))
+	for i, r := range rows {
+		bins[i], picks[i], drops[i], nodes[i], dests[i] = r.BinID, int64(r.PickStep), int64(r.DropStep), r.NodeName, r.DestNode
+	}
+	return bins, picks, drops, nodes, dests
+}
+
+// CartRows is the rows a cart-carrying order writes for the carts it holds:
+// the plan walk (domain.Lifts) over the order's plan (RowsOf).
+func CartRows(o *Order, claimedAt map[int]int64) []OrderBinRow {
+	return RowsOf(o, domain.Lifts(domain.OrderPlan(o), claimedAt))
+}
+
+// RowsOf is lifts as the rows the order writes, each with the junction's node
+// copies (its pick's node, its cart's final drop) until v174.
+func RowsOf(o *Order, lifts []domain.Cart) []OrderBinRow {
+	steps := domain.OrderPlan(o)
+	final := map[int64]string{}
+	for _, c := range lifts {
+		if c.DropStep != nil {
+			final[c.BinID] = steps[*c.DropStep].Node
+		}
+	}
+	out := make([]OrderBinRow, 0, len(lifts))
+	for _, c := range lifts {
+		if c.PickStep == nil {
+			continue // a carried-over row (v173) is never written again
+		}
+		drop := OpenLift
+		if c.DropStep != nil {
+			drop = *c.DropStep
+		}
+		out = append(out, OrderBinRow{BinID: c.BinID, PickStep: *c.PickStep, DropStep: drop,
+			NodeName: domain.StepNode(o, *c.PickStep), DestNode: final[c.BinID]})
+	}
+	return out
+}
+
+// OpenLift is OrderBinRow.DropStep for a lift whose set-down the plan has not
+// placed yet; it is written as NULL.
+const OpenLift = -1
+
+// SetOpenLiftDrop gives the order's open lift its set-down: the plan step drop
+// a writer has just appended (a dwelling dig leg's tail). The plan writer owns
+// the row's steps, so it sets this in the write that places the drop. Zero rows
+// is an order with no open lift picked before drop, and not an error.
+func SetOpenLiftDrop(db *sql.DB, orderID int64, drop int) error {
+	if _, err := db.Exec(`UPDATE order_bins SET drop_step = $2
+		WHERE order_id = $1 AND drop_step IS NULL AND pick_step IS NOT NULL AND pick_step < $2`,
+		orderID, drop); err != nil {
+		return fmt.Errorf("set the open lift's drop of order %d to step %d: %w", orderID, drop, err)
+	}
+	return nil
+}
+
+// ListOrderBins returns an order's rows in plan order (a carried-over row, with
+// no steps, first): -1 for a step a row does not know.
 func ListOrderBins(db *sql.DB, orderID int64) ([]*OrderBin, error) {
-	rows, err := db.Query(`SELECT id, order_id, bin_id, step_index, action, node_name, dest_node, created_at
-		FROM order_bins WHERE order_id = $1 ORDER BY step_index`, orderID)
+	rows, err := db.Query(`SELECT id, order_id, bin_id, COALESCE(pick_step, -1), COALESCE(drop_step, -1), created_at
+		FROM order_bins WHERE order_id = $1 ORDER BY pick_step NULLS FIRST, id`, orderID)
 	if err != nil {
 		return nil, fmt.Errorf("list order_bins: %w", err)
 	}
@@ -146,86 +168,82 @@ func ListOrderBins(db *sql.DB, orderID int64) ([]*OrderBin, error) {
 	var result []*OrderBin
 	for rows.Next() {
 		ob := &OrderBin{}
-		if err := rows.Scan(&ob.ID, &ob.OrderID, &ob.BinID, &ob.StepIndex, &ob.Action, &ob.NodeName, &ob.DestNode, &ob.CreatedAt); err != nil {
+		if err := rows.Scan(&ob.ID, &ob.OrderID, &ob.BinID, &ob.PickStep, &ob.DropStep, &ob.CreatedAt); err != nil {
 			return nil, fmt.Errorf("scan order_bin: %w", err)
 		}
 		result = append(result, ob)
 	}
-	return result, nil
+	return result, rows.Err()
 }
 
-// UpdateOrderBinDestNode re-points one bin's recorded destination. Returns the
-// number of rows changed, which is 0 or 1.
+// ShiftOrderBinSteps moves an order's rows with its plan: shift[old] = new is
+// applied to the pick step and the drop step of every row. A step with no entry
+// stays where it is.
 //
-// KEYED BY BIN, NOT BY step_index, and that is forced by what the column means.
-// step_index names the PICKUP the allocator claimed this bin at
-// (InsertOrderBin's action argument is hard-coded ActionPickup), while every
-// caller wanting to re-point a destination knows a DROPOFF. Keying an update on
-// the dropoff's index would match no row and report success — the junction has
-// one row per claimed bin, so the bin is its natural grain and the only key that
-// cannot silently miss.
-//
-// Zero rows is NOT an error. Single-bin orders have no junction rows at all (the
-// allocator writes them only when an order claims more than one), so "nothing to
-// update" is the ordinary answer for most of the plant. The count is returned
-// rather than swallowed so a caller can tell "no rows exist" from "the row I
-// meant to hit was not there", which are different facts.
-func UpdateOrderBinDestNode(db *sql.DB, orderID, binID int64, destNode string) (int64, error) {
-	res, err := db.Exec(`UPDATE order_bins SET dest_node = $3 WHERE order_id = $1 AND bin_id = $2`,
-		orderID, binID, destNode)
-	if err != nil {
-		return 0, fmt.Errorf("update order_bin dest_node (order %d bin %d): %w", orderID, binID, err)
-	}
-	n, err := res.RowsAffected()
-	if err != nil {
-		return 0, fmt.Errorf("update order_bin dest_node (order %d bin %d): rows affected: %w", orderID, binID, err)
-	}
-	return n, nil
-}
-
-// DeleteOrderBins removes all junction rows for an order. Called alongside
-// UnclaimOrderBins on cancel/fail paths to keep the junction table clean.
-func DeleteOrderBins(db *sql.DB, orderID int64) {
-	db.Exec(`DELETE FROM order_bins WHERE order_id = $1`, orderID)
-}
-
-// ShiftOrderBinSteps rewrites step_index for an order's junction rows, applying
-// shift[oldIndex] = newIndex. Rows whose index has no entry are left alone.
-//
-// step_index is a POSITION IN THE ORDER'S PLAN, so any transform that inserts
-// steps invalidates every row after the insertion. The transform owns the
-// repair; this is the write it makes. Doing it in one transaction matters
-// because the shift moves indices UPWARD into positions other rows still
-// occupy — row-at-a-time updates would transiently collide with the
-// (order_id, step_index) uniqueness the table relies on.
+// The steps are POSITIONS IN THE ORDER'S PLAN, so a transform that inserts steps
+// moves every row after the insertion; the transform owns the repair and this is
+// the write it makes. A shift moves positions UPWARD into positions other rows
+// still hold, and (order_id, pick_step) and (order_id, drop_step) are unique, so
+// the rows the shift touches are first parked far above any real position (one
+// offset on both steps keeps pick < drop), then landed: two statements, in one
+// transaction, for any number of rows. A cart in hand from the start (pick step
+// domain.InHand, -1) parks one below the offset and lands with the rest.
 func ShiftOrderBinSteps(db *sql.DB, orderID int64, shift map[int]int) error {
 	if len(shift) == 0 {
 		return nil
+	}
+	const parked = 1_000_000
+	olds := make([]int64, 0, len(shift))
+	news := make([]int64, 0, len(shift))
+	for o, n := range shift {
+		olds, news = append(olds, int64(o)), append(news, int64(n))
 	}
 	tx, err := db.Begin()
 	if err != nil {
 		return fmt.Errorf("shift order_bins: begin: %w", err)
 	}
 	defer tx.Rollback()
-
-	// Park every row out of the way first (negative indices cannot collide with
-	// a real position), then land each on its final index.
-	for old := range shift {
-		if _, err := tx.Exec(
-			`UPDATE order_bins SET step_index = -1 - step_index
-			   WHERE order_id = $1 AND step_index = $2`, orderID, old); err != nil {
-			return fmt.Errorf("shift order_bins: park step %d: %w", old, err)
-		}
+	if _, err := tx.Exec(`UPDATE order_bins SET pick_step = pick_step + $3, drop_step = drop_step + $3
+		 WHERE order_id = $1 AND (pick_step = ANY($2::bigint[]) OR drop_step = ANY($2::bigint[]))`,
+		orderID, olds, parked); err != nil {
+		return fmt.Errorf("shift order_bins: park order %d's rows: %w", orderID, err)
 	}
-	for old, new := range shift {
-		if _, err := tx.Exec(
-			`UPDATE order_bins SET step_index = $3
-			   WHERE order_id = $1 AND step_index = $2`, orderID, -1-old, new); err != nil {
-			return fmt.Errorf("shift order_bins: step %d -> %d: %w", old, new, err)
-		}
+	if _, err := tx.Exec(`UPDATE order_bins SET
+		   pick_step = COALESCE((SELECT m.n FROM unnest($2::bigint[], $3::bigint[]) AS m(o, n) WHERE m.o = pick_step - $4), pick_step - $4),
+		   drop_step = COALESCE((SELECT m.n FROM unnest($2::bigint[], $3::bigint[]) AS m(o, n) WHERE m.o = drop_step - $4), drop_step - $4)
+		 WHERE order_id = $1 AND pick_step >= $4 - 1`,
+		orderID, olds, news, parked); err != nil {
+		return fmt.Errorf("shift order_bins: land order %d's rows: %w", orderID, err)
 	}
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("shift order_bins: commit: %w", err)
+	}
+	return nil
+}
+
+// RecordAppendedLift writes the row of a lift the order's plan grew after its
+// rows were written (an appended pickup): binID lifted at plan step pick, set
+// down at the plan's next dropoff after it, open when there is none. The lift
+// that finds it writes it, in this one statement; a row already at that pick
+// stands.
+func RecordAppendedLift(db *sql.DB, o *Order, binID int64, pick int) error {
+	steps := domain.OrderPlan(o)
+	drop := OpenLift
+	for i := pick + 1; i < len(steps); i++ {
+		if steps[i].Action == protocol.ActionDropoff {
+			drop = i
+			break
+		}
+	}
+	dest := ""
+	if drop != OpenLift {
+		dest = steps[drop].Node
+	}
+	if _, err := db.Exec(`INSERT INTO order_bins (order_id, bin_id, pick_step, drop_step, action, node_name, dest_node)
+		VALUES ($1, $2, $3, NULLIF($4::int, -1), 'pickup', $5, $6)
+		ON CONFLICT (order_id, pick_step) DO NOTHING`,
+		o.ID, binID, pick, drop, domain.StepNode(o, pick), dest); err != nil {
+		return fmt.Errorf("record order %d's appended lift of bin %d at step %d: %w", o.ID, binID, pick, err)
 	}
 	return nil
 }

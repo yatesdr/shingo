@@ -182,7 +182,7 @@ func FindStoreSlotInLaneExcluding(db *sql.DB, laneID, excludeOrderID int64) (*No
 // the two ways it can be true. Every caller matches with errors.Is, so the text
 // is reporting only.
 var ErrLaneClosedByClaim = errors.New(
-	"lane closed to stores: an order is coming for a bin deeper in this lane (claimed, aimed at by bin_id+source_node, or soft-held by a demand that dug for it)")
+	"lane closed to stores: an order is coming for a bin deeper in this lane (claimed, aimed at by an order that lifts it there, or soft-held by a demand that dug for it)")
 
 // findStoreSlot is the selector body. `guard` toggles THE BURIAL CLAUSE, and the
 // off form exists only to attribute a miss (see the caller); nothing in
@@ -246,11 +246,11 @@ func findStoreSlot(db *sql.DB, laneID, excludeOrderID int64, guard bool) (*Node,
 	if guard {
 		// ── COMING FOR IT HAS TWO SPELLINGS, AND THIS ASKED ONE ───────────
 		//
-		// claimed_by is the hold; bin_id is the resolve's durable record of which
-		// bin an order is for. A claim is taken and released around each movement,
-		// so a demand that has picked its bin and is waiting to be dispatched
-		// often holds no claim at all — and that wait is not a sliver, it is most
-		// of the order's life.
+		// claimed_by is the hold; the order's cart rows (order_bins) are the
+		// resolve's durable record of which bin it lifts where. A claim is taken
+		// and released around each movement, so a demand that has picked its bin
+		// and is waiting to be dispatched often holds no claim at all — and that
+		// wait is not a sliver, it is most of the order's life.
 		//
 		// Measured on the lane-stress rig 2026-08-13: order 22 had resolved onto
 		// bin 30 at LSC_033 and was parked under reserve-holding. Order 29, an
@@ -266,22 +266,23 @@ func findStoreSlot(db *sql.DB, laneID, excludeOrderID int64, guard bool) (*Node,
 		//
 		// ── THE AIM IS "COMING FOR IT", NOT "CARRYING IT" ─────────────────
 		//
-		// bin_id alone says neither. A store order's bin_id goes on pointing at
-		// its bin after it has PLACED it, so a bare aim term lets a store close
-		// the lane behind itself: four dwellers in one burst stalled at the mark
-		// with the corridor empty, because the one that had just placed was still
-		// "aiming" at what it had put down (TestStoreBurst_DivertedOntoAMarkedLane).
+		// A bare "this order has a row for this bin" says neither. A store
+		// order's row goes on naming its bin after it has PLACED it, so a bare
+		// aim term lets a store close the lane behind itself: four dwellers in
+		// one burst stalled at the mark with the corridor empty, because the one
+		// that had just placed was still "aiming" at what it had put down
+		// (TestStoreBurst_DivertedOntoAMarkedLane).
 		//
-		// source_node is what makes it a direction. An order coming to collect a
-		// bin names the slot that bin is standing in; an order that has delivered
-		// one names where it came FROM, which is not this lane. So the two columns
-		// together say the thing this guard needs and neither says alone: THIS
-		// order is coming to THIS slot for THIS bin.
+		// The row's pick step is what makes it a direction. An order coming to
+		// collect a bin lifts it at the slot that bin is standing in; an order
+		// that has delivered one lifted it somewhere else, which is not this
+		// lane. So the row and the node of its pick step together say the thing
+		// this guard needs: THIS order is coming to THIS slot for THIS bin.
 		//
 		// THE TERMINAL FILTER IS LOAD-BEARING TOO. claimed_by is reaped when an
-		// order terminalizes and bin_id is not, so without it a finished order's
-		// aim would close a lane to stores for the life of the plant. It is a
-		// filter on the HOLDER so both spellings pass one liveness test.
+		// order terminalizes and its rows are not, so without it a finished
+		// order's aim would close a lane to stores for the life of the plant. It
+		// is a filter on the HOLDER so both spellings pass one liveness test.
 		//
 		// ── A PLAN NEVER BLOCKS A COMMITTED ROBOT ─────────────────────────
 		//

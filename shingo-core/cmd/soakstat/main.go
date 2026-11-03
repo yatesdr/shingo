@@ -1658,7 +1658,7 @@ func checkPhantomEntrants(db *store.DB) []string {
 	// judgement is the reader's — unchanged from the original, and the reason the
 	// original was salvageable at all.
 	phantomQ := fmt.Sprintf(`
-		SELECT o.id, o.status, l.name
+		SELECT DISTINCT o.id, o.status, l.name
 		FROM orders o
 		JOIN nodes s ON s.name = o.source_node
 		JOIN nodes l ON l.id = s.parent_id
@@ -1666,7 +1666,8 @@ func checkPhantomEntrants(db *store.DB) []string {
 		LEFT JOIN reservations r
 		       ON r.order_id = o.id AND r.resource_kind = 'occupancy'
 		      AND r.node_id = l.id AND r.state <> 'released'
-		JOIN bins b   ON b.id = o.bin_id
+		JOIN order_bins ob ON ob.order_id = o.id AND `+store.StepNodeSQL("o", "ob.pick_step")+` = o.source_node
+		JOIN bins b   ON b.id = ob.bin_id
 		LEFT JOIN nodes bn ON bn.id = b.node_id
 		WHERE o.vendor_order_id <> ''
 		  AND o.status NOT IN (%s)
@@ -1709,8 +1710,8 @@ func checkNotJudgedAtDestEnd(db *store.DB) []string {
 	//
 	// Two populations: the dest-end rows above (correct-by-design or not, this
 	// tool cannot tell without parsing the plan), and executing orders carrying no
-	// bin_id at all, which have no bin to locate. The second is its own finding —
-	// it is the nil-BinID family the round left open.
+	// cart at all (no row), which have no cart to locate. The second is its own
+	// finding — it is the no-cart family the round left open.
 	n, err := scalar(db, fmt.Sprintf(`
 		SELECT COUNT(DISTINCT o.id)
 		FROM orders o
@@ -1757,7 +1758,7 @@ func checkNotJudgedNoBin(db *store.DB) []string {
 		  AND o.status NOT IN (%s)
 		  AND o.status <> '%s'
 		  AND r.id IS NULL
-		  AND o.bin_id IS NULL`,
+		  AND NOT EXISTS (SELECT 1 FROM order_bins ob WHERE ob.order_id = o.id)`,
 		protocol.TerminalStatusSQLList(), protocol.PreDispatchStatusSQLList(),
 		protocol.StatusStaged))
 	if err != nil {
@@ -1766,8 +1767,8 @@ func checkNotJudgedNoBin(db *store.DB) []string {
 	if n > 0 {
 		out = append(out, fmt.Sprintf(
 			"NOT JUDGED (no bin): %d executing order(s) in a lane hold no occupancy row AND carry no "+
-				"bin_id, so there is no bin to locate against the mouth. An executing order with no "+
-				"bin_id is its own finding", n))
+				"cart (no row), so there is no cart to locate against the mouth. An executing order "+
+				"carrying no cart is its own finding", n))
 	}
 	return out
 }
@@ -1801,7 +1802,8 @@ func checkTraversalOverlap(db *store.DB) []string {
 		LEFT JOIN reservations r
 		       ON r.order_id = o.id AND r.resource_kind = 'occupancy'
 		      AND r.node_id = l.id AND r.state <> 'released'
-		JOIN bins b   ON b.id = o.bin_id
+		JOIN order_bins ob ON ob.order_id = o.id AND `+store.StepNodeSQL("o", "ob.pick_step")+` = o.source_node
+		JOIN bins b   ON b.id = ob.bin_id
 		LEFT JOIN nodes bn ON bn.id = b.node_id
 		WHERE o.vendor_order_id <> ''
 		  AND o.status NOT IN (%s)
@@ -2391,7 +2393,10 @@ func checkBinResidenceOverlap(db *store.DB) []string {
 
 	// ── EXECUTED BLOCKS ────────────────────────────────────────────────────
 	rows, err := db.DB.Query(`
-		SELECT me.order_id, me.created_at, me.blocks_json, COALESCE(o.bin_id, 0)
+		SELECT me.order_id, me.created_at, me.blocks_json,
+		       COALESCE((SELECT json_agg(json_build_array(ob.bin_id, `+store.StepNodeSQL("o", "ob.pick_step")+`,
+		                                                  `+store.StepNodeSQL("o", "ob.drop_step")+`) ORDER BY ob.pick_step, ob.id)
+		                   FROM order_bins ob WHERE ob.order_id = o.id)::text, '[]')
 		FROM mission_events me
 		JOIN orders o ON o.id = me.order_id
 		WHERE me.new_state = $1`, engine.BlockLegState)
@@ -2405,10 +2410,10 @@ func checkBinResidenceOverlap(db *store.DB) []string {
 	ledgerDropoff := map[orderNode]bool{}
 	defer rows.Close()
 	for rows.Next() {
-		var orderID, binID int64
+		var orderID int64
 		var at time.Time
-		var blocksJSON string
-		if err := rows.Scan(&orderID, &at, &blocksJSON, &binID); err != nil {
+		var blocksJSON, cartsJSON string
+		if err := rows.Scan(&orderID, &at, &blocksJSON, &cartsJSON); err != nil {
 			return []string{failedToRun("bin residence overlap (block ledger)", err)}
 		}
 		var legs []struct {
@@ -2425,11 +2430,11 @@ func checkBinResidenceOverlap(db *store.DB) []string {
 			switch {
 			case engine.IsDropoffBlock(leg.BinTask):
 				events[leg.Location] = append(events[leg.Location],
-					ev{at: at, arrival: true, orderID: orderID, binID: binID})
+					ev{at: at, arrival: true, orderID: orderID, binID: cartAt(cartsJSON, leg.Location, 2)})
 				ledgerDropoff[orderNode{orderID, leg.Location}] = true
 			case engine.IsPickupBlock(leg.BinTask):
 				events[leg.Location] = append(events[leg.Location],
-					ev{at: at, arrival: false, orderID: orderID, binID: binID})
+					ev{at: at, arrival: false, orderID: orderID, binID: cartAt(cartsJSON, leg.Location, 1)})
 			}
 		}
 	}
@@ -2501,7 +2506,10 @@ type residenceKey struct {
 // failed-to-run rather than judging a partial event list.
 func addFinalDeliveries(db *store.DB, events map[string][]residenceEvent, ledgerDropoff map[residenceKey]bool) error {
 	dels, err := db.DB.Query(`
-		SELECT o.id, o.delivery_node, COALESCE(o.bin_id, 0),
+		SELECT o.id, o.delivery_node,
+		       COALESCE((SELECT ob.bin_id FROM order_bins ob WHERE ob.order_id = o.id
+		                    AND ` + store.StepNodeSQL("o", "ob.drop_step") + ` = o.delivery_node
+		                  ORDER BY ob.drop_step DESC LIMIT 1), 0),
 		       (SELECT MIN(h.created_at) FROM order_history h
 		         WHERE h.order_id = o.id AND h.status = 'delivered')
 		FROM orders o
@@ -2523,4 +2531,22 @@ func addFinalDeliveries(db *store.DB, events map[string][]residenceEvent, ledger
 		events[node] = append(events[node], residenceEvent{at: at.Time, arrival: true, orderID: orderID, binID: binID})
 	}
 	return dels.Err()
+}
+
+// cartAt is the cart of an order's rows (cartsJSON: [bin, pick node, drop node]
+// per row, in plan order) that lifts at node (at = 1) or sets down there
+// (at = 2): a label for the residence check. 0 when no row names node.
+func cartAt(cartsJSON, node string, at int) int64 {
+	var rows [][3]any
+	if json.Unmarshal([]byte(cartsJSON), &rows) != nil {
+		return 0
+	}
+	for _, r := range rows {
+		if n, _ := r[at].(string); n == node {
+			if b, ok := r[0].(float64); ok {
+				return int64(b)
+			}
+		}
+	}
+	return 0
 }

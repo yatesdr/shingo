@@ -13,10 +13,11 @@ import (
 // whose child legs are separate Order rows.
 //
 // StepsJSON is the serialised step list for complex orders; WaitIndex
-// marks how many wait segments have been released. BinID is set for
-// simple orders once the resolver picks a source bin; complex orders
-// use the order_bins junction (OrderBin) to track multiple claimed
-// bins, one per step.
+// marks how many wait segments have been released. The carts the order
+// carries are its order_bins rows, one per lift, read with the order
+// (Carts); BinID is the one-cart column the rows replace (one cart, chosen by
+// shape: a complex order's claim at the process node, else its first; a plain
+// order's held cart), kept until v174.
 type Order struct {
 	ID            int64              `json:"id"`
 	EdgeUUID      string             `json:"edge_uuid"`
@@ -40,8 +41,12 @@ type Order struct {
 	Sequence      int                `json:"sequence"`
 	StepsJSON     string             `json:"steps_json,omitempty"`
 	BinID         *int64             `json:"bin_id,omitempty"`
-	PayloadCode   string             `json:"payload_code"`
-	WaitIndex     int                `json:"wait_index"`
+	// Carts are the order's order_bins rows, one per lift (order_carts.go),
+	// read in the order's own statement (orders.SelectCols): every reader that
+	// loads the order has them for no further statement.
+	Carts       []Cart `json:"carts,omitempty"`
+	PayloadCode string `json:"payload_code"`
+	WaitIndex   int    `json:"wait_index"`
 	// StepsDone is how many steps of the plan the fleet has finished, by
 	// position: the block subscriber advances it as each block finishes the
 	// plan's next open step (StepsDoneAfter), and the route strip reads where

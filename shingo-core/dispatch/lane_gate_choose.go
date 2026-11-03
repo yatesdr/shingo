@@ -407,7 +407,7 @@ func (d *Dispatcher) dropNeedFor(order *orders.Order, steps []resolvedStep, c ga
 		Payload: plan.DropPayload(i, steps[i].PayloadCode, order.PayloadCode,
 			func(j int) bool { return steps[j].Action == protocol.ActionPickup },
 			func(j int) bool { return steps[j].Action == protocol.ActionPickup && steps[j].Empty }),
-		Stated:       d.carriedType(order, steps, i),
+		Stated:       d.carriedType(order, i),
 		Asker:        digAskerFor(order),
 		LaterPickups: plan.LaterPickups(steps, i),
 		Refused:      map[int64]bool{},
@@ -423,23 +423,17 @@ func (d *Dispatcher) dropNeedFor(order *orders.Order, steps []resolvedStep, c ga
 	return need
 }
 
-// carriedType is the type of the bin the robot carries into the drop at step i:
-// the bin of the nearest pickup ahead of it (binForStep, the junction first). At
-// release the pickup's node no longer holds it, so the plan-time reading
-// (BinTypeBeforeStep, the bin standing at the pickup) would read the wrong node.
-// Unknown leaves the resolver to settle it from the order, as it always has.
-func (d *Dispatcher) carriedType(order *orders.Order, steps []resolvedStep, i int) binresolver.BinTypeStatement {
-	for j := i - 1; j >= 0; j-- {
-		if steps[j].Action != protocol.ActionPickup {
-			continue
+// carriedType is the type of the cart the robot carries into the drop at step
+// i: the cart of the order's row whose drop step is i (binForStep). At release
+// the pickup's node no longer holds it, so the plan-time reading
+// (BinTypeBeforeStep, the cart standing at the pickup) would read the wrong
+// node. Unknown leaves the resolver to settle it from the order, as it always
+// has.
+func (d *Dispatcher) carriedType(order *orders.Order, i int) binresolver.BinTypeStatement {
+	if b := binForStep(order, i); b.known {
+		if bin, err := d.db.GetBin(b.binID); err == nil && bin != nil {
+			return binresolver.KnownCarrier(bin)
 		}
-		b, err := d.binForStep(order, steps, j)
-		if err == nil && b.known && b.binID != 0 {
-			if bin, gErr := d.db.GetBin(b.binID); gErr == nil && bin != nil {
-				return binresolver.KnownCarrier(bin)
-			}
-		}
-		break
 	}
 	return binresolver.UnknownBinType("lane-gate release: the carried bin is not known")
 }
@@ -620,8 +614,6 @@ func (d *Dispatcher) patchChosenDrop(order *orders.Order, c gateCandidate, steps
 			return fmt.Errorf("the plan no longer holds after moving to %s: %w", slot.Name, err)
 		}
 	}
-	// After the step patch, not before: the derivation reads the plan.
-	d.refreshOrderBinDestinations(order)
 	return nil
 }
 

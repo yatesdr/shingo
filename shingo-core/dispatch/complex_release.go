@@ -292,19 +292,29 @@ func stationReleased(steps []resolvedStep, waitIndex int) bool {
 // doesn't proceed against an inconsistent manifest.
 //
 // THE COUNT IS THE LINE'S, about the cart standing on it: it is applied to
-// order.BinID only while that bin stands at the order's process node (its
-// source node when it names none, as recordClaimedBins reads it). An order's
-// bin is the one it claimed there, else its first pickup, so a leg that fetches
-// a full and lifts nothing at the line holds the incoming full: a count on its
-// release would empty a real full (TestHandleOrderRelease_ACountLandsOnlyOnTheCartAtTheLine).
+// the cart the order lifts off the line (its row whose pick step is at the
+// order's process node, its source node when it names none), and only while that
+// cart stands there. A leg that fetches a full and lifts nothing at the line has
+// no such cart, so a count on its release never empties a real full
+// (TestHandleOrderRelease_ACountLandsOnlyOnTheCartAtTheLine).
 //
-// When order.BinID is nil (the complex claim missed), falls back to locating
+// An order that carries carts and lifts none at the line is not counting a cart:
+// nothing is applied (a supply's incoming full is not the line's). Only an order
+// that carries no cart at all (the complex claim missed) falls back to locating
 // the bin at order.ProcessNode/SourceNode — the ALN_002 incident path.
 func (d *Dispatcher) syncManifestForRelease(env *protocol.Envelope, order *orders.Order, p *protocol.OrderRelease) error {
+	line := order.ProcessNode
+	if line == "" {
+		line = order.SourceNode
+	}
+	// The cart the release is about is the one the order lifts off the line (its
+	// row whose pick step is there): the evac cart of a swap, the line's own cart
+	// of a single-cart release.
+	lineCart := cartLiftedAt(order, line)
 	if p.Disposition != nil {
 		var binIDForAudit int64
-		if order.BinID != nil {
-			binIDForAudit = *order.BinID
+		if lineCart != nil {
+			binIDForAudit = *lineCart
 		} else if b, ok := d.findFallbackBinAtSource(order); ok {
 			binIDForAudit = b.ID
 		}
@@ -334,14 +344,10 @@ func (d *Dispatcher) syncManifestForRelease(env *protocol.Envelope, order *order
 		fence = &service.ReleaseFence{Station: env.Src.Station, ReleaseFence: *p.AsOf}
 	}
 
-	line := order.ProcessNode
-	if line == "" {
-		line = order.SourceNode
-	}
-	if order.BinID != nil {
-		bin, err := d.db.GetBin(*order.BinID)
+	if lineCart != nil {
+		bin, err := d.db.GetBin(*lineCart)
 		if err != nil {
-			log.Printf("dispatch: release for order %d: read its bin %d: %v", order.ID, *order.BinID, err)
+			log.Printf("dispatch: release for order %d: read its bin %d: %v", order.ID, *lineCart, err)
 			d.sendError(env, p.OrderUUID, "manifest_sync_failed", err.Error())
 			return err
 		}
@@ -350,7 +356,7 @@ func (d *Dispatcher) syncManifestForRelease(env *protocol.Envelope, order *order
 				"(%v) — the count is not applied", order.ID, bin.ID, bin.NodeName, line, lerr)
 			return nil
 		}
-		if err := d.binManifest.SyncOrClearForReleasedFenced(*order.BinID, order.ID, p.RemainingUOP, kind, p.CalledBy, fence); err != nil {
+		if err := d.binManifest.SyncOrClearForReleasedFenced(*lineCart, order.ID, p.RemainingUOP, kind, p.CalledBy, fence); err != nil {
 			log.Printf("dispatch: manifest sync on release for order %d: %v", order.ID, err)
 			d.sendError(env, p.OrderUUID, "manifest_sync_failed", err.Error())
 			return err
@@ -358,20 +364,25 @@ func (d *Dispatcher) syncManifestForRelease(env *protocol.Envelope, order *order
 		return nil
 	}
 
+	if len(order.Carts) > 0 {
+		log.Printf("dispatch: release for order %d lifts none of its carts at %q — the count is about the cart at the line, so it is not applied",
+			order.ID, line)
+		return nil
+	}
 	if line == "" {
-		log.Printf("dispatch: release for order %d had nil BinID and no ProcessNode/SourceNode — manifest will not clear",
+		log.Printf("dispatch: release for order %d lifts no cart at the line and has no ProcessNode/SourceNode — manifest will not clear",
 			order.ID)
 		return nil
 	}
 
 	fallbackBin, ok := d.findFallbackBinAtSource(order)
 	if !ok {
-		log.Printf("dispatch: release for order %d had nil BinID and no fallback bin at %s — manifest will not clear",
+		log.Printf("dispatch: release for order %d lifts no cart at the line and no fallback bin stands at %s — manifest will not clear",
 			order.ID, line)
 		return nil
 	}
 
-	log.Printf("dispatch: release for order %d had nil BinID; fallback located bin %d at %s",
+	log.Printf("dispatch: release for order %d lifts no cart at the line; fallback located bin %d at %s",
 		order.ID, fallbackBin.ID, line)
 
 	if err := d.binManifest.SyncOrClearForReleasedNoOwnerFenced(fallbackBin.ID, order.ID, p.RemainingUOP, p.CalledBy, fence); err != nil {

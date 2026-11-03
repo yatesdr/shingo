@@ -1,6 +1,10 @@
 package store
 
-import "shingo/protocol"
+import (
+	"shingo/protocol"
+	"shingocore/domain"
+	"shingocore/store/orders"
+)
 
 // BinTypeForOrder answers ONE question: which bin type is this order
 // going to put down. It exists because the per-node Allowed Bin Types gate had
@@ -27,15 +31,20 @@ import "shingo/protocol"
 //
 // The same question is asked at different moments in an order's life:
 //
-//  1. orders.bin_id — the bin type is chosen and recorded. Every simple move and
-//     retrieve that has reached dispatch is here. This is the physical thing the
-//     robot is holding, so it outranks anything inferred.
+//  1. the order's carts (its order_bins rows, read with the order) — the cart
+//     this drop sets down: the order's one cart, or, for an order carrying
+//     several, the cart whose row sets it down into group (the drop's step names
+//     the group, or a node under it as the plan resolved it). A swap's first
+//     cart goes into a window group and its second to the line, and they may be
+//     of two types; orders.bin_id named one of them for both (it "is the
+//     physical thing the robot is holding" was false after the first drop). An
+//     order of several carts with none set down into group has no answer here.
 //  2. orders.named_bin_id — the order is for that carrier (a station named it,
 //     as an unloader's empty-out names the cart at its window, or Core issued
 //     the order for it), so the type is known before dispatch claims it. Pin:
 //     TestUnloaderEmptyOut_NamedBinIsNotParkedByAnotherTypeOverLevel.
 //  3. the order's BIN reservations — a complex order's legs hold their carriers
-//     before bin_id means anything, so a dropoff step resolving into a group
+//     before its carts are recorded, so a dropoff step resolving into a group
 //     reads the hold its paired pickup took.
 //  4. nothing — the caller's own parameter covers the pre-carrier case (a level
 //     keeper ask names a type before any bin exists) and stays an override.
@@ -56,7 +65,7 @@ import "shingo/protocol"
 // The error is returned rather than swallowed so the resolver can say a read
 // failed. A silent nil on a database fault is how an un-narrowed placement
 // becomes unexplainable after the fact.
-func (db *DB) BinTypeForOrder(orderID int64) (*int64, protocol.CarrierState, error) {
+func (db *DB) BinTypeForOrder(orderID int64, group string) (*int64, protocol.CarrierState, error) {
 	if orderID == 0 {
 		return nil, "", nil
 	}
@@ -68,7 +77,11 @@ func (db *DB) BinTypeForOrder(orderID int64) (*int64, protocol.CarrierState, err
 		return nil, "", nil
 	}
 
-	for _, carrier := range []*int64{order.BinID, order.NamedBinID} {
+	cart, several := cartIntoGroup(order, group)
+	if several && cart == nil {
+		return nil, "", nil // several carts, none set down into group: no answer
+	}
+	for _, carrier := range []*int64{cart, order.NamedBinID} {
 		if carrier == nil {
 			continue
 		}
@@ -126,4 +139,24 @@ func (db *DB) heldBinType(orderID int64) (*int64, protocol.CarrierState, error) 
 		state = ""
 	}
 	return found, state, nil
+}
+
+// cartIntoGroup is the cart an order's drop into group sets down: its one cart,
+// or of several the one whose row sets it down into group — the drop step
+// names the group (its node, or its group stamp beside a node the plan
+// resolved). several reports an order carrying more than one cart.
+func cartIntoGroup(order *orders.Order, group string) (cart *int64, several bool) {
+	only, err := order.OnlyBin()
+	if err == nil {
+		return only, false
+	}
+	steps := domain.OrderPlan(order)
+	for _, c := range order.FinalDrops() {
+		s := steps[*c.DropStep]
+		if group != "" && (s.Node == group || s.Group == group) {
+			b := c.BinID
+			return &b, true
+		}
+	}
+	return nil, true
 }

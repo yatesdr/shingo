@@ -21,19 +21,21 @@ import (
 )
 
 const (
-	// costLiftResolve: the lift resolve for a cart with a row (ListOrderBins,
-	// GetBin, GetNodeByDotName). Budget 1.
-	costLiftResolve = 3
-	// costSetDownResolve: the set-down resolve (GetNodeByDotName _TRANSIT,
-	// ListBinsByClaim). Budget 1.
-	costSetDownResolve = 2
+	// costLiftResolve: the lift resolve, the order loaded with its carts: one read
+	// of which candidate cart stands at the block's node. Main f8f22f19: 3
+	// (ListOrderBins, GetBin, GetNodeByDotName; 6 on its bin_id fallback).
+	costLiftResolve = 1
+	// costSetDownResolve: the set-down resolve: one read of which candidate cart
+	// is in hand. Main: 2 (GetNodeByDotName _TRANSIT, ListBinsByClaim).
+	costSetDownResolve = 1
 	// costFinished: handleOrderDelivered for the two-cart swap with A set down
 	// and B in hand. Budget: no more than today.
-	costFinished = 25
+	costFinished = 24
 	// costTerminalize: TerminalizeOrder on a live order that wins (BEGIN, the
 	// status, the history row, the anomaly stamp, the claim release, the slot
-	// release, the junction DELETE, the reservations, COMMIT). Budget today - 1.
-	costTerminalize = 9
+	// release, the reservations, COMMIT). Main f8f22f19: 9, with the junction
+	// DELETE the end no longer makes.
+	costTerminalize = 8
 )
 
 // countingCartsSwap is the swap on a database with a counting handle beside
@@ -50,9 +52,11 @@ func countingCartsSwap(t *testing.T, uuid string) (*cartsSwap, *Engine, *store.Q
 
 func TestOrderCartsCost_LiftResolve(t *testing.T) {
 	t.Parallel()
-	c, eng, counter, _ := countingCartsSwap(t, "carts-cost-lift")
+	c, eng, counter, cdb := countingCartsSwap(t, "carts-cost-lift")
+	o, err := cdb.GetOrder(c.order.ID)
+	testutil.MustNoErr(t, err, "load the swap with its carts")
 	counter.Reset()
-	bin, _, _, ok := eng.resolvePickupBinRow(c.order.ID, c.p.Name)
+	bin, _, _, ok := eng.resolvePickupBinRow(o, c.p.Name)
 	n := counter.Count()
 	if !ok || bin.ID != c.a.ID {
 		t.Fatalf("the lift at %s resolved ok=%v bin=%v, want A (%d)", c.p.Name, ok, bin, c.a.ID)

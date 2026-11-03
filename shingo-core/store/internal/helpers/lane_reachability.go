@@ -128,13 +128,15 @@ func ShallowerInSameLane(shallow, deep string) string {
 // admits one active row per bin.
 func ComingForBinSQL(holder, bin, slot string) string {
 	return fmt.Sprintf(`(%[1]s.id = %[2]s.claimed_by
-			   OR (%[1]s.bin_id = %[2]s.id AND %[1]s.source_node = %[3]s.name)
+			   OR EXISTS (SELECT 1 FROM order_bins aim WHERE aim.order_id = %[1]s.id AND aim.bin_id = %[2]s.id
+			                AND %[6]s = %[3]s.name)
 			   OR (%[1]s.id = (SELECT coming_r.order_id FROM reservations coming_r
 			                    WHERE coming_r.bin_id = %[2]s.id AND coming_r.resource_kind = 'bin'
 			                      AND %[4]s)
 			       AND %[5]s
 			       AND EXISTS (SELECT 1 FROM orders coming_dig WHERE coming_dig.parent_order_id = %[1]s.id)))`,
-		holder, bin, slot, reservations.BlockingStateSQL("coming_r."), AwaitingFleetSQL(holder))
+		holder, bin, slot, reservations.BlockingStateSQL("coming_r."), AwaitingFleetSQL(holder),
+		StepNodeSQL(holder, "aim.pick_step"))
 }
 
 // ComingForBinCommittedSQL is ComingForBinSQL as a committed robot reads it:
@@ -144,8 +146,9 @@ func ComingForBinSQL(holder, bin, slot string) string {
 // requester is one).
 func ComingForBinCommittedSQL(holder, bin, slot string) string {
 	return fmt.Sprintf(`(%[1]s.id = %[2]s.claimed_by
-			   OR (%[1]s.bin_id = %[2]s.id AND %[1]s.source_node = %[3]s.name AND NOT (%[4]s)))`,
-		holder, bin, slot, AwaitingFleetSQL(holder))
+			   OR (EXISTS (SELECT 1 FROM order_bins aim WHERE aim.order_id = %[1]s.id AND aim.bin_id = %[2]s.id
+			                AND %[5]s = %[3]s.name) AND NOT (%[4]s)))`,
+		holder, bin, slot, AwaitingFleetSQL(holder), StepNodeSQL(holder, "aim.pick_step"))
 }
 
 // AwaitingFleetSQL is orders.AwaitingFleetSQL's one spelling — see it for why

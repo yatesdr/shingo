@@ -334,7 +334,11 @@ func (d *Dispatcher) handFromComplexPlan(order *orders.Order, plan *ComplexPlan,
 		claimed = append(claimed, claimedBin{binID: rp.binID, stepIndex: rp.stepIndex, nodeName: rp.nodeName})
 	}
 	if err := a.recordClaimedBins(order, steps, claimed); err != nil {
-		d.dbg("complex: order %d ended before its plan of bins was written: nothing held", order.ID)
+		if ownerEnded(err) {
+			d.dbg("complex: order %d ended before its carts were written: nothing held", order.ID)
+		} else {
+			log.Printf("dispatch: order %d: its carts were not recorded, so it is not handed to the fleet: %v", order.ID, err)
+		}
 		return Hand{}, dispatchStep{done: true, err: err}
 	}
 	return hand, dispatchStep{}
@@ -725,24 +729,24 @@ func (d *Dispatcher) buildComplexCommit(order *orders.Order, resolvedSteps []res
 		d.failOrderInternal(order, "invalid_steps", err.Error())
 		return nil, err
 	}
-	// The splice moved the plan; order_bins still points at the old positions.
-	// Repair before anything reads the junction against the spliced plan — the
+	// The splice moved the plan; the order's rows still point at the old
+	// positions. Repair before anything reads them against the spliced plan — the
 	// lane gate is the first such reader and it is one dispatch away.
 	//
 	// A FAILURE HERE IS A DATABASE ERROR, SO IT WAITS. Every error this can
-	// return is one — a failed read of order_bins, or a failed UPDATE inside the
-	// shift transaction. It used to call failOrderInternal(order,
-	// "invalid_steps"), which is wrong twice: it TERMINATES demand for
-	// congestion, which is the one thing wait-not-fail forbids (F-04's shape, one
-	// commit old), and it terminates it under a label that sends the next reader
-	// to the planner to debug a plan that is perfectly well-formed.
+	// return is one: a failed UPDATE inside the shift transaction. It used to
+	// call failOrderInternal(order, "invalid_steps"), which is wrong twice: it
+	// TERMINATES demand for congestion, which is the one thing wait-not-fail
+	// forbids (F-04's shape, one commit old), and it terminates it under a
+	// label that sends the next reader to the planner to debug a plan that is
+	// perfectly well-formed.
 	//
 	// The order stays in its entry status and the scanner replays it — the same
 	// releaser every acquiring wait rides, and the same cause the class already
 	// uses for "the database did not answer" (compound.go's two node reads,
 	// complex_reshuffle.go's).
-	if rErr := d.reindexOrderBinsForSplice(order.ID, spliced); rErr != nil {
-		log.Printf("dispatch: complex order %d — could not re-index its junction onto the spliced "+
+	if rErr := d.reindexCartsForSplice(order, spliced); rErr != nil {
+		log.Printf("dispatch: complex order %d — could not re-index its carts onto the spliced "+
 			"plan: %v (holding; the scanner replays it)", order.ID, rErr)
 		d.setQueueReason(order, protocol.QueueWaitingForSlot, CauseReadFailed, QueueParams{})
 		return nil, rErr

@@ -105,7 +105,8 @@ func TestBinTypeAtIntake_NamedBinWins(t *testing.T) {
 	testutil.MustNoErr(t, db.CreateBin(named), "named bin")
 
 	lc, _ := newLifecycleForTest(t, db)
-	order := &orders.Order{SourceNode: srcNode.Name, BinID: &named.ID}
+	order := &orders.Order{SourceNode: srcNode.Name}
+	order.HoldFromBirth(named.ID) // as the builder writes an order born holding its cart
 
 	id := lc.binTypeAtIntake(order).TypeID()
 	if id == nil || *id != kdType {

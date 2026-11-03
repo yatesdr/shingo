@@ -723,11 +723,11 @@ func waitingAtLane(c *orders.GateCandidate) ([]resolvedStep, resolvedStep, bool)
 //
 // The lift's own durable fact answers it, no new column: a lifted blocker has
 // left its slot (handlePickupBlockCompleted). The bin's node rides on the
-// candidate row, so this reads nothing. A leg with no bin, or a bin on no node,
-// answers false and is kept, as it always has been.
+// candidate row, so this reads nothing. A leg carrying no cart, or a cart on no
+// node, answers false and is kept, as it always has been.
 func digLegNotYetLifted(c *orders.GateCandidate, steps []resolvedStep) bool {
 	o := c.Order
-	if o.ParentOrderID == nil || o.BinID == nil || o.SourceNode == "" {
+	if o.ParentOrderID == nil || len(o.Carts) == 0 || o.SourceNode == "" {
 		return false
 	}
 	if !waitGatesAnAppend(steps, o.WaitIndex) {
@@ -1100,10 +1100,10 @@ func (d *Dispatcher) laneGateRetrieveCause(sourceNode *nodes.Node, order *orders
 // so the classifier asking the same question a moment earlier is two reads of one
 // definition and not a second writer for one fact.
 //
-// Resolution is by BIN, not by slot, because the bin is what the order is owed.
-// bin_id is stamped by the scanner before dispatch (fulfillment/scanner.go), so a
-// gate-staged plain retrieve carries one; the nil case is the older/empty-intent
-// rows that never got a claim, and those fall back to the order's own source node
+// Resolution is by CART, not by slot, because the cart is what the order is
+// owed. The scanner writes a plain retrieve's row when it claims the cart
+// (fulfillment/scanner.go), so a gate-staged plain retrieve has one; an order
+// whose entry step names no cart of its own falls back to its own source node
 // — exactly what every retrieve did before this existed.
 //
 // A bin that has left the LANE is an error, not a rebind: there is no slot here to
@@ -1117,42 +1117,15 @@ func (d *Dispatcher) pickupSlotNow(order *orders.Order, lane *nodes.Node) (slot 
 		return nil, false, err
 	}
 
-	// WHICH BIN, ASKED PER STEP. It used to read order.BinID directly, which is
-	// one column with two meanings — the source bin for a plain retrieve, and
-	// "the bin claimed at the process node" for a complex order. A swap parked at
-	// a lane's mark to fetch a FRESH bin was therefore checked against the bin at
-	// the MACHINE, found elsewhere (correctly — that is where it belongs), and
-	// refused entry forever. See binForStep.
-	// AN UNREADABLE JUNCTION IS NOT AN ANSWER, so it leaves here as a plain
-	// error rather than as ErrPickupNotInLane. The distinction is the whole
-	// point of the sentinel: "the bin is somewhere else" is a fact about the
-	// plant that the gate refuses on, with a cause and a releaser; "I could not
-	// tell" is Core declining, and admitLane's error arm turns it into
-	// CauseAdmissionError — a candidate held as undetermined, re-asked next pass.
-	// Collapsing the two would report a database outage as a bin that moved.
-	want, err := d.wantedBin(order)
-	if err != nil {
-		return nil, false, err
-	}
-	switch {
-	case !want.known:
+	// WHICH CART, ASKED PER STEP: the row of the step the order's lane entry
+	// is for (wantedBin). A swap parked at a lane's mark to fetch a FRESH cart
+	// is asked about that cart, not the one at the machine. See binForStep.
+	want := wantedBin(order)
+	if !want.known {
 		if named == nil {
 			return nil, false, fmt.Errorf("pickup slot: source node %q not found", order.SourceNode)
 		}
 		return named, false, nil
-	case want.atNode != "":
-		// A RELAY — this order dropped the bin at that node itself, so the node is
-		// the answer and there is nothing to locate. It still has to be IN this
-		// lane for the gate to bind it.
-		at, rErr := d.db.GetNodeByDotName(want.atNode)
-		if rErr != nil {
-			return nil, false, rErr
-		}
-		if at == nil || at.ParentID == nil || *at.ParentID != lane.ID {
-			return nil, false, fmt.Errorf("%w: relay pickup for order %d is at %s, outside lane %s",
-				ErrPickupNotInLane, order.ID, want.atNode, lane.Name)
-		}
-		return at, at.ID != namedID(named), nil
 	}
 
 	bin, err := d.db.GetBin(want.binID)
@@ -1180,15 +1153,6 @@ func (d *Dispatcher) pickupSlotNow(order *orders.Order, lane *nodes.Node) (slot 
 			ErrPickupNotInLane, want.binID, order.ID, nodeName(at), lane.Name)
 	}
 	return at, true, nil
-}
-
-// namedID is nil-safe access to the order's remembered source node id, for the
-// `moved` flag. A nil named node means the order never had one to move from.
-func namedID(named *nodes.Node) int64 {
-	if named == nil {
-		return 0
-	}
-	return named.ID
 }
 
 // isOwnDigLeg WAS HERE AND IS NOW ownsDig (lane_gate.go).
@@ -1273,9 +1237,10 @@ func (d *Dispatcher) rebindGatedPickup(order *orders.Order, lane *nodes.Node, en
 		return nil, causeForGateRebind(err), err
 	}
 	if !moved {
-		// Unchanged. The emptiness check survives for the bin_id-less fallback, where
-		// pickupSlotNow can only report the slot the order names and cannot tell
-		// whether anything is still in it — refusing beats picking nothing.
+		// Unchanged. The emptiness check survives for an entry that names no cart
+		// of the order's, where pickupSlotNow can only report the slot the order
+		// names and cannot tell whether anything is still in it — refusing beats
+		// picking nothing.
 		bins, bErr := d.db.ListBinsByNode(at.ID)
 		if bErr != nil {
 			return nil, causeForGateRebind(bErr), bErr
@@ -1297,7 +1262,7 @@ func (d *Dispatcher) rebindGatedPickup(order *orders.Order, lane *nodes.Node, en
 		return nil, causeForGateRebind(err), err
 	}
 	log.Printf("lane gate: retrieve %d re-bound at release %s → %s (lane %s, bin %d)",
-		order.ID, was, at.Name, lane.Name, *order.BinID)
+		order.ID, was, at.Name, lane.Name, wantedBin(order).binID)
 	return at, "", nil
 }
 
@@ -1626,8 +1591,8 @@ func (d *Dispatcher) releaseDweller(c gateCandidate, lane *nodes.Node) (freed bo
 // the rest of a plan whose entry lane moved at release: the plan was spliced for
 // the lane it pencilled, and a later step in that lane was "still in the lane"
 // then, so it carries no wait of its own. An existing lane wait is kept and moves
-// the robot into its lane. The junction (order_bins) shifts with the plan, as the
-// splice's does (reindexOrderBinsForSplice).
+// the robot into its lane. The order's rows move with the plan (moveCarts), as
+// the splice's do.
 func (d *Dispatcher) gateLaterLaneEntries(order *orders.Order, entryIndex int, inLane int64) error {
 	var steps []resolvedStep
 	if err := json.Unmarshal([]byte(order.StepsJSON), &steps); err != nil {
@@ -1679,20 +1644,8 @@ func (d *Dispatcher) gateLaterLaneEntries(order *orders.Order, entryIndex int, i
 		return fmt.Errorf("gate later entries: persist steps for order %d: %w", order.ID, err)
 	}
 	order.StepsJSON = string(patched)
-	rows, err := d.db.ListOrderBins(order.ID)
-	if err != nil {
-		return fmt.Errorf("gate later entries: read order_bins for order %d: %w", order.ID, err)
-	}
-	shift := map[int]int{}
-	for _, r := range rows {
-		if to, ok := moved[r.StepIndex]; ok {
-			shift[r.StepIndex] = to
-		}
-	}
-	if len(shift) > 0 {
-		if err := d.db.ShiftOrderBinSteps(order.ID, shift); err != nil {
-			return fmt.Errorf("gate later entries: shift order_bins for order %d: %w", order.ID, err)
-		}
+	if _, err := d.moveCarts(order, moved); err != nil {
+		return fmt.Errorf("gate later entries: move the carts of order %d: %w", order.ID, err)
 	}
 	return nil
 }

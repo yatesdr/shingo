@@ -105,11 +105,12 @@ func dispatchMultiToteSwap(t *testing.T, db *store.DB, eng *Engine, sim *simulat
 		t.Fatalf("expected >= 2 order_bins (multi-tote), got %d", len(orderBins))
 	}
 
-	// The supply bin is reachable only via its per-bin dest_node == ProcessNode,
-	// and is NOT order.BinID (that names the evac bin claimed at the line).
+	// The supply bin is reachable only via its row, whose drop step is at the
+	// ProcessNode, and is NOT order.BinID (that names the evac bin claimed at the
+	// line).
 	var supplyDestFound bool
-	for _, ob := range orderBins {
-		if ob.BinID == supplyBin.ID && ob.DestNode == lineNode.Name {
+	for _, l := range testdb.CartLifts(t, db, order.ID) {
+		if l.BinID == supplyBin.ID && l.To == lineNode.Name {
 			supplyDestFound = true
 		}
 	}

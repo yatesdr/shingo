@@ -775,7 +775,16 @@ func v77CompoundSealedness(tx *sql.Tx) error {
 // The table is v9's, so it exists by the time this runs on every database that
 // reaches v86 — no existence guard, which would be dead code that looked
 // load-bearing.
+//
+// SUPERSEDED BY v173, which ends one row per (order, bin): an order's carts are
+// a row per LIFT, and a relayed cart is lifted twice. On a database v173 has
+// shaped (order_bins.drop_step exists) this step does nothing — running it
+// would delete every relay's second row and restore the index v173 dropped.
+// Its post-condition says the same (migrationList, v86).
 func v80OrderBinsOneRowPerBin(tx *sql.Tx) error {
+	if schema.ColumnExists(tx, "order_bins", "drop_step") {
+		return nil
+	}
 	if _, err := tx.Exec(`
 		DELETE FROM order_bins a
 		 USING order_bins b
@@ -3947,7 +3956,11 @@ func migrationList() []migration {
 		// row again on every pass. See v80OrderBinsOneRowPerBin.
 		{86, "dedupe order_bins and enforce one row per (order, bin)",
 			v80OrderBinsOneRowPerBin,
-			func(q schema.Querier) bool { return schema.IndexExists(q, "order_bins_order_bin_uniq") }},
+			func(q schema.Querier) bool {
+				// v173 ends one row per (order, bin) on purpose: its shape is this
+				// step's post-condition met by its successor.
+				return schema.IndexExists(q, "order_bins_order_bin_uniq") || schema.ColumnExists(q, "order_bins", "drop_step")
+			}},
 
 		// v87 is a DATA migration, not a shape one: no ALTER, so no matching edit
 		// in the DDL constants. It rewrites values inside two columns. See
@@ -4518,6 +4531,12 @@ func migrationList() []migration {
 				err := q.QueryRow(`SELECT EXISTS (SELECT 1 FROM bin_loaders WHERE role <> 'produce'
 					AND id IN (SELECT second_stage_loader_id FROM bin_loaders WHERE second_stage_loader_id IS NOT NULL))`).Scan(&left)
 				return err == nil && !left
+			}},
+		// v169-v172 are the kanban stream's (branch kanban), landing after this.
+		{173, "order_bins: an order's carts, one row per lift (pick_step, drop_step), for every order that carries a cart, kept after it ends; the census lists what the walk cannot place",
+			v173OrderCarts,
+			func(q schema.Querier) bool {
+				return schema.ColumnExists(q, "order_bins", "drop_step") && schema.IndexExists(q, "order_bins_by_bin")
 			}},
 	}
 }

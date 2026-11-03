@@ -305,8 +305,15 @@ func (d *Dispatcher) tryPlaceFromHomeSource(order *orders.Order, steps []resolve
 // means the node is in a state where "the carrier" does not name anything. Both
 // are honest "cannot say" answers, and homeAcceptsCarrier treats them as such.
 func (d *Dispatcher) carrierPayloadFor(order *orders.Order, steps []resolvedStep) (string, bool) {
-	if order.BinID != nil {
-		b, err := d.db.GetBin(*order.BinID)
+	// The leg's one cart (a home clear's leg carries one). A leg carrying
+	// several has no one carrier to answer for: "cannot say".
+	cart, err := order.OnlyBin()
+	if err != nil {
+		log.Printf("dispatch: order %d: %v — its carrier's payload cannot be said", order.ID, err)
+		return "", false
+	}
+	if cart != nil {
+		b, err := d.db.GetBin(*cart)
 		if err != nil || b == nil {
 			return "", false
 		}
@@ -659,28 +666,6 @@ func (d *Dispatcher) placeForContainment(order *orders.Order, steps []resolvedSt
 			d.setQueueReason(order, protocol.QueueWaitingForSlot, CauseContainmentCapacity,
 				QueueParams{Destination: containment, Payload: payload})
 			return &dispatchStep{done: true, err: fmt.Errorf("containment node %s has no room", containment)}
-		}
-	}
-	// MULTI-BIN CONSISTENCY: the junction rows are the per-bin placement
-	// truth — applyMultiBinArrivalForOrder places each claimed bin at its
-	// junction dest_node, not at the order's delivery_node — so re-pointing
-	// only the order row would land every FG-bound bin of a multi-bin order
-	// at FG with nothing but a debug line to show for it: the divert a
-	// silent no-op exactly where the plan is most complicated. Every
-	// junction row destined to the diverted node re-points with it.
-	// Updating to the same value is idempotent, so this runs on EVERY pass,
-	// including a replay that skips the order-row write below — a pass that
-	// crashed between the two writes is finished by the next one.
-	if orderBins, berr := d.db.ListOrderBins(order.ID); berr != nil {
-		log.Printf("dispatch: containment junction read for order %d: %v", order.ID, berr)
-	} else {
-		for _, ob := range orderBins {
-			if ob.DestNode != final {
-				continue
-			}
-			if _, uerr := d.db.UpdateOrderBinDestNode(order.ID, ob.BinID, containment); uerr != nil {
-				log.Printf("dispatch: containment junction re-point order %d bin %d: %v", order.ID, ob.BinID, uerr)
-			}
 		}
 	}
 	if order.DeliveryNode == containment {

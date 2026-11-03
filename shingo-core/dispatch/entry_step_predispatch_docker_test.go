@@ -41,11 +41,10 @@ import (
 // bin 42, standing at LSC_023 — inside the very lane it was being refused from.
 // The lookup was fine; the step index handed to it was not.
 //
-// ── WHY THIS TEST USES BOTH JUNCTION ROWS ─────────────────────────────────
+// ── WHY THIS TEST USES BOTH ROWS ──────────────────────────────────────────
 //
 // A fixture with only step 0's row would pass with the bug still in: binForStep
-// would find no row for step 3 and fall through to order.BinID. The bug is
-// specifically that the WRONG STEP is asked, so both steps must be answerable and
+// would find no row for step 3 and answer nothing. The bug is specifically that the WRONG STEP is asked, so both steps must be answerable and
 // the two answers must be different bins in different places.
 //
 // MUTATION: replace entryStepIndex's IsPreDispatch arm with the plain
@@ -64,17 +63,15 @@ func TestWantedBin_PreDispatchSwapWantsItsFirstStepNotThePostWaitPickup(t *testi
 	testutil.MustNoErr(t, db.CreateNode(station), "create the line station")
 	spent := createTestBinAtNode(t, db, bp.Code, station.ID, "ENTRYSTEP-SPENT")
 
-	// A SWAP THAT HAS NOT BEEN DISPATCHED. bin_id is the machine-side bin, which
-	// is what the column carries for a complex order — the bin claimed at the
-	// process node — and is exactly why it is the wrong thing to check a storage
-	// pickup against.
+	// A SWAP THAT HAS NOT BEEN DISPATCHED. The machine-side cart is the one
+	// claimed at the process node — what orders.bin_id carried for a complex
+	// order — and is exactly the wrong thing to check a storage pickup against.
 	order := testdb.CreateOrder(t, db, func(o *orders.Order) {
 		o.EdgeUUID = "entrystep-swap"
 		o.OrderType = OrderTypeComplex
 		o.PayloadCode = bp.Code
 		o.Status = protocol.StatusQueued // waiting pre-dispatch (C1: was `sourcing`)
 		o.SourceNode = slots[0].Name
-		o.BinID = &spent.ID
 		o.WaitIndex = 0
 		o.StepsJSON = `[{"action":"pickup","node":"` + slots[0].Name + `"},` +
 			`{"action":"dropoff","node":"` + station.Name + `-STG"},` +
@@ -82,16 +79,15 @@ func TestWantedBin_PreDispatchSwapWantsItsFirstStepNotThePostWaitPickup(t *testi
 			`{"action":"pickup","node":"` + station.Name + `"},` +
 			`{"action":"dropoff","node":"` + slots[1].Name + `"}]`
 	})
-	testutil.MustNoErr(t, db.InsertOrderBin(order.ID, fresh.ID, 0, "pickup", slots[0].Name, ""),
-		"junction row for the storage fetch")
-	testutil.MustNoErr(t, db.InsertOrderBin(order.ID, spent.ID, 3, "pickup", station.Name, ""),
-		"junction row for the machine pickup")
+	testdb.SeedCartRow(t, db, order.ID, fresh.ID, 0, 1)
+	testdb.SeedCartRow(t, db, order.ID, spent.ID, 3, 4)
+	order, err := db.GetOrder(order.ID)
+	testutil.MustNoErr(t, err, "reload the order with its carts")
 
-	got, err := d.wantedBin(order)
-	testutil.MustNoErr(t, err, "wantedBin")
+	got := wantedBin(order)
 	if !got.known {
-		t.Fatal("wantedBin does not know which bin this order's lane entry is for, with a junction " +
-			"row for every pickup in the plan")
+		t.Fatal("wantedBin does not know which bin this order's lane entry is for, with a row " +
+			"for every lift in the plan")
 	}
 	if got.binID != fresh.ID {
 		t.Fatalf("wantedBin says bin %d, want %d — the bin at %s, which is step 0 of this order's own "+
@@ -120,8 +116,7 @@ func TestWantedBin_PreDispatchSwapWantsItsFirstStepNotThePostWaitPickup(t *testi
 	testutil.MustNoErr(t, db.UpdateOrderStatus(order.ID, string(protocol.StatusStaged), ""), "stage the order")
 	staged, err := db.GetOrder(order.ID)
 	testutil.MustNoErr(t, err, "reload the staged order")
-	after, err := d.wantedBin(staged)
-	testutil.MustNoErr(t, err, "wantedBin for the staged order")
+	after := wantedBin(staged)
 	if after.binID != spent.ID {
 		t.Fatalf("a STAGED order's lane entry resolved to bin %d, want the machine-side bin %d. It is "+
 			"standing at its wait, so its next entry is the pickup after that wait — reading step 0 "+

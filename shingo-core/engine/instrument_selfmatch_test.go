@@ -39,7 +39,6 @@ func TestShouldBeZeroTalliesDoNotMatchThemselves(t *testing.T) {
 	}{
 		{"burial-shadow bypass", service.BurialBypassMarker},
 		{"arrival-guard refusals", ArrivalRefusalMarker},
-		{"bin-state drift", DestNodeDriftMarker},
 	}
 
 	for _, tc := range cases {
@@ -61,8 +60,8 @@ func TestShouldBeZeroTalliesDoNotMatchThemselves(t *testing.T) {
 	// The guard is only worth having if the lines it inspects actually exist —
 	// otherwise a refactor that stops emitting them turns this test green for the
 	// wrong reason.
-	if len(lines) < 4 {
-		t.Fatalf("captured %d tally lines, want at least 4 (bypass, churn, refusals, drift): %v",
+	if len(lines) < 3 {
+		t.Fatalf("captured %d tally lines, want at least 3 (bypass, churn, refusals): %v",
 			len(lines), lines)
 	}
 	_ = svc
@@ -73,9 +72,7 @@ func TestShouldBeZeroTalliesDoNotMatchThemselves(t *testing.T) {
 func captureTallyLines(t *testing.T) ([]string, *ReconciliationService) {
 	t.Helper()
 	resetArrivalRefusalTally()
-	resetDestNodeDriftTally()
 	t.Cleanup(resetArrivalRefusalTally)
-	t.Cleanup(resetDestNodeDriftTally)
 
 	var mu sync.Mutex
 	var lines []string
@@ -93,12 +90,6 @@ func captureTallyLines(t *testing.T) ([]string, *ReconciliationService) {
 		&bins.Bin{ID: 5, NodeID: &node},
 		9, arrivalSiteDelivery))
 
-	// A destination drift, through the real detector.
-	eng.noteDestNodeDrift(
-		&orders.Order{ID: 3, StepsJSON: driftPlan},
-		[]*orders.OrderBin{{BinID: 9, NodeName: "D-EMPTIES", DestNode: "D-LANE-S0"}},
-		driftSiteDelivery)
-
 	svc := &ReconciliationService{logFn: logFn}
 	svc.burialTally = func() service.BurialTally {
 		return service.BurialTally{Bypass: 3, Churn: 4, Soft: 1}
@@ -112,7 +103,6 @@ func captureTallyLines(t *testing.T) ([]string, *ReconciliationService) {
 
 	svc.logBurialShadow()
 	svc.logArrivalRefusals()
-	svc.logDestNodeDrift()
 
 	mu.Lock()
 	defer mu.Unlock()
