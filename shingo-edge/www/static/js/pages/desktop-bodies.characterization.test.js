@@ -50,16 +50,24 @@ function check(name, got, want) {
 check('processSettings: the counter rides untouched, the name and group are the draft\'s',
     B.processSettings(
         { id: 3, name: 'Press 1', counter_plc_name: 'PLC1', counter_tag_name: 'CNT1', counter_enabled: true },
-        { name: 'Press 1 west', description: 'the west press', counter_plc_name: 'PLC1', counter_tag_name: 'CNT1', counter_enabled: true, changeover_auto_arm: '', group_id: 2 }),
+        { name: 'Press 1 west', description: 'the west press', counter_plc_name: 'PLC1', counter_tag_name: 'CNT1', counter_enabled: true,
+            identity_tag_name: 'ID1', identity_none: false, changeover_auto_arm: '', group_id: 2 }),
     {
         name: 'Press 1 west', description: 'the west press',
         counter_plc_name: 'PLC1', counter_tag_name: 'CNT1', counter_enabled: true,
+        identity_tag_name: 'ID1', identity_none: false,
         changeover_auto_arm: '', group_id: 2,
     });
 
+check('processSettings: identity none rides the draft, so a rename keeps it',
+    B.processSettings({ id: 4 }, { name: 'Y', identity_none: true }),
+    { name: 'Y', description: '', counter_plc_name: '', counter_tag_name: '', counter_enabled: false,
+        identity_tag_name: '', identity_none: true, changeover_auto_arm: '', group_id: null });
+
 check('processSettings: empty strings and an unset group are the null the handler spells',
     B.processSettings({ id: 1 }, { name: 'X', description: '', group_id: 0 }),
-    { name: 'X', description: '', counter_plc_name: '', counter_tag_name: '', counter_enabled: false, changeover_auto_arm: '', group_id: null });
+    { name: 'X', description: '', counter_plc_name: '', counter_tag_name: '', counter_enabled: false,
+        identity_tag_name: '', identity_none: false, changeover_auto_arm: '', group_id: null });
 
 // ── the screens sheet's set-to (the other claimed-nodes writer) ──────────────
 check('stationNodes: trimmed, deduplicated, in the order picked',

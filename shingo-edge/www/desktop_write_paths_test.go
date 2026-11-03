@@ -135,8 +135,11 @@ func TestDesktopWritePaths_EveryBodyNamesEveryColumnItsHandlerWrites(t *testing.
 	// The rows are given every column a value, because a column that is
 	// already zero cannot show that a write zeroed it. This is the single
 	// biggest reason the original four bugs went unseen.
-	if err := db.UpdateProcess(pid, "WP-Press", "the description", "PLC-1", "TAG-1", true); err != nil {
+	if err := db.UpdateProcess(pid, "WP-Press", "the description"); err != nil {
 		t.Fatalf("seed process columns: %v", err)
+	}
+	if err := db.SetProcessCounter(pid, "PLC-1", "TAG-1", true, "ID-1", true); err != nil {
+		t.Fatalf("seed process counter: %v", err)
 	}
 	if err := db.SetProcessGroupID(pid, &groupID); err != nil {
 		t.Fatalf("seed process group: %v", err)
@@ -190,6 +193,7 @@ func TestDesktopWritePaths_EveryBodyNamesEveryColumnItsHandlerWrites(t *testing.
 			"name": "WP-Press renamed", "description": proc.Description,
 			"counter_plc_name": proc.CounterPLCName, "counter_tag_name": proc.CounterTagName,
 			"counter_enabled": proc.CounterEnabled, "changeover_auto_arm": proc.ChangeoverAutoArm,
+			"identity_tag_name": proc.IdentityTagName, "identity_none": proc.IdentityNone,
 			"group_id": groupID,
 		},
 		"style": map[string]any{
@@ -297,7 +301,8 @@ func TestDesktopWritePaths_EveryBodyNamesEveryColumnItsHandlerWrites(t *testing.
 			t.Errorf("name = %q, want the edit to have landed", got.Name)
 		}
 		if got.Description != proc.Description || got.CounterPLCName != proc.CounterPLCName ||
-			got.CounterTagName != proc.CounterTagName || got.CounterEnabled != proc.CounterEnabled {
+			got.CounterTagName != proc.CounterTagName || got.CounterEnabled != proc.CounterEnabled ||
+			got.IdentityTagName != proc.IdentityTagName || got.IdentityNone != proc.IdentityNone {
 			t.Errorf("a column nobody edited moved: %+v", got)
 		}
 	})

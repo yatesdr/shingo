@@ -29,6 +29,19 @@ type Process struct {
 	CounterPLCName string `json:"counter_plc_name"`
 	CounterTagName string `json:"counter_tag_name"`
 	CounterEnabled bool   `json:"counter_enabled"`
+	// IdentityTagName overrides the part-identity (CATID) tag the monitor
+	// reads; "" derives CATID_0N from the counter tag (deriveIdentityTag).
+	// IdentityNone = true says the process has no identity tag at all (a PLC
+	// whose derived tag reads an address error every boot): nothing is
+	// published, monitored or attributed. Two NOT NULL fields whose zero
+	// values mean "derive", so a settings save that sends every field as
+	// typed cannot switch the monitor off by accident.
+	IdentityTagName string `json:"identity_tag_name"`
+	IdentityNone    bool   `json:"identity_none"`
+	// IdentityWarlinkManaged is set when shingo enabled the identity tag's
+	// WarLink publishing: a re-point or "none" unpublishes the old tag only
+	// then.
+	IdentityWarlinkManaged bool `json:"-"`
 	// PLC-driven cutover (the Changeover_Active subscription) was REMOVED.
 	// It read a tag that was never wired at any plant, so the feature could
 	// not fire — and its opt-in flag actively HID the operator station's
@@ -1449,4 +1462,15 @@ type Participant struct {
 	Role          string
 	OwningTaskID  *int64
 	UpdatedAt     time.Time
+}
+
+// ProcessCounterEdit is the Settings save's counter and part-identity fields
+// (engine.EditProcessCounter). Zero values are "no counter" and "derive the
+// identity tag from the counter".
+type ProcessCounterEdit struct {
+	PLCName         string
+	TagName         string
+	Enabled         bool
+	IdentityTagName string
+	IdentityNone    bool
 }

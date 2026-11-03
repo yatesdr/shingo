@@ -9,7 +9,7 @@ import (
 	"shingoedge/store/counters"
 )
 
-// SyncProcessCounter and the counter seed. A reporting point re-pointed to
+// syncPrimaryPoint and the counter seed. A reporting point re-pointed to
 // another style on the SAME tag keeps counting: the tag's running total is the
 // one it has been reading. A reporting point re-pointed to a DIFFERENT tag is
 // unread again, so its first read of the new tag seeds rather than charging the
@@ -36,10 +36,10 @@ func seedRig(t *testing.T) (eng *Engine, db *store.DB, proc, s1, s2, rpID int64)
 	if err := db.SetActiveStyle(proc, &s1); err != nil {
 		t.Fatalf("set active style: %v", err)
 	}
-	if err := eng.SyncProcessCounter(proc); err != nil {
+	if err := eng.syncPrimaryPoint(proc, "", ""); err != nil {
 		t.Fatalf("sync: %v", err)
 	}
-	rp, err := db.GetReportingPointByStyleID(s1)
+	rp, err := db.GetReportingPointByTag(seedPLC, seedTagA)
 	if err != nil {
 		t.Fatalf("reporting point for s1: %v", err)
 	}
@@ -67,7 +67,7 @@ func TestCounterSeed_StyleRepointOnTheSameTagKeepsCounting(t *testing.T) {
 	if err := db.SetActiveStyle(proc, &s2); err != nil {
 		t.Fatalf("set active style: %v", err)
 	}
-	if err := eng.SyncProcessCounter(proc); err != nil {
+	if err := eng.syncPrimaryPoint(proc, seedPLC, seedTagA); err != nil {
 		t.Fatalf("sync: %v", err)
 	}
 
@@ -91,10 +91,10 @@ func TestCounterSeed_TagChangeSeeds(t *testing.T) {
 	t.Parallel()
 	eng, db, proc, s1, _, rpID := seedRig(t)
 
-	if err := db.UpdateProcess(proc, "PRESS", "", seedPLC, seedTagB, true); err != nil {
+	if err := db.SetProcessCounter(proc, seedPLC, seedTagB, true, "", false); err != nil {
 		t.Fatalf("update process: %v", err)
 	}
-	if err := eng.SyncProcessCounter(proc); err != nil {
+	if err := eng.syncPrimaryPoint(proc, seedPLC, seedTagA); err != nil {
 		t.Fatalf("sync: %v", err)
 	}
 

@@ -183,6 +183,7 @@ func TestEngineOrchestrationWidth(t *testing.T) {
 		"CreateRetrieveForAPI",
 		"DeleteProcess",
 		"DeliverNewMaterialForChangeover",
+		"EditProcessCounter",
 		"EnsureTagPublished",
 		"EvacuateNode",
 		"FetchMarketBins",
@@ -240,7 +241,6 @@ func TestEngineOrchestrationWidth(t *testing.T) {
 		"StyleService",
 		"SwitchNodeToTarget",
 		"SwitchOperatorStationToTarget",
-		"SyncProcessCounter",
 		"UndoSupplyRefusal",
 		"UpdateCellReorder",
 	}

@@ -40,7 +40,8 @@ func scanProcess(scanner interface{ Scan(...any) error }) (Process, error) {
 	var p Process
 	var createdAt string
 	var groupID sql.NullInt64
-	if err := scanner.Scan(&p.ID, &p.Name, &p.Description, &p.ActiveStyleID, &p.TargetStyleID, &p.CounterPLCName, &p.CounterTagName, &p.CounterEnabled, &p.ChangeoverAutoArm, &groupID, &p.FlowComposerEnabled, &createdAt); err != nil {
+	if err := scanner.Scan(&p.ID, &p.Name, &p.Description, &p.ActiveStyleID, &p.TargetStyleID, &p.CounterPLCName, &p.CounterTagName, &p.CounterEnabled,
+		&p.IdentityTagName, &p.IdentityNone, &p.IdentityWarlinkManaged, &p.ChangeoverAutoArm, &groupID, &p.FlowComposerEnabled, &createdAt); err != nil {
 		return p, err
 	}
 	p.CreatedAt = helpers.ScanTime(createdAt)
@@ -55,7 +56,8 @@ func scanProcess(scanner interface{ Scan(...any) error }) (Process, error) {
 // (the Changeover_Active tag was never wired at any plant). The column stays on
 // disk — dropping it means a SQLite table rebuild, and a rebuild is what
 // generates the dangling REFERENCES clauses the FK repair exists to fix.
-const processSelect = `id, name, description, active_style_id, target_style_id, counter_plc_name, counter_tag_name, counter_enabled, changeover_auto_arm, group_id, flow_composer_enabled, created_at`
+const processSelect = `id, name, description, active_style_id, target_style_id, counter_plc_name, counter_tag_name, counter_enabled,
+	identity_tag_name, identity_none, identity_warlink_managed, changeover_auto_arm, group_id, flow_composer_enabled, created_at`
 
 // List returns every process row sorted by name.
 func List(db *sql.DB) ([]Process, error) {
@@ -97,10 +99,38 @@ func Create(db *sql.DB, name, description string, counterPLC, counterTag string,
 }
 
 // Update modifies a process row.
-func Update(db *sql.DB, id int64, name, description string, counterPLC, counterTag string, counterEnabled bool) error {
-	_, err := db.Exec(`UPDATE processes SET name=?, description=?, counter_plc_name=?, counter_tag_name=?, counter_enabled=? WHERE id=?`,
-		name, description, counterPLC, counterTag, counterEnabled, id)
+func Update(db *sql.DB, id int64, name, description string) error {
+	_, err := db.Exec(`UPDATE processes SET name=?, description=? WHERE id=?`, name, description, id)
 	return err
+}
+
+// SetCounter writes the process's counter and part-identity configuration.
+// Its one caller is the engine's counter edit (EditProcessCounter), which
+// holds the changeover door's lock across it.
+func SetCounter(db *sql.DB, id int64, plcName, tagName string, enabled bool, identityTag string, identityNone bool) error {
+	_, err := db.Exec(`UPDATE processes SET counter_plc_name=?, counter_tag_name=?, counter_enabled=?,
+		identity_tag_name=?, identity_none=? WHERE id=?`,
+		plcName, tagName, enabled, identityTag, identityNone, id)
+	return err
+}
+
+// SetIdentityManaged records whether shingo enabled the identity tag's WarLink
+// publishing.
+func SetIdentityManaged(db *sql.DB, id int64, managed bool) error {
+	_, err := db.Exec(`UPDATE processes SET identity_warlink_managed=? WHERE id=?`, managed, id)
+	return err
+}
+
+// CounterOwner returns the id of a process other than exceptID that counts
+// on (plcName, tagName), or 0 when none does.
+func CounterOwner(db *sql.DB, plcName, tagName string, exceptID int64) (int64, error) {
+	var id int64
+	err := db.QueryRow(`SELECT id FROM processes WHERE counter_plc_name = ? AND counter_tag_name = ? AND id <> ? LIMIT 1`,
+		plcName, tagName, exceptID).Scan(&id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, nil
+	}
+	return id, err
 }
 
 // Delete removes a process and retires the rows that are meaningless without it.

@@ -465,6 +465,12 @@ func (a *anonymiser) processes(edge *fixturejson.Obj) ([]*fixturejson.Obj, error
 			}
 			p.Set("counter_tag_name", fixturejson.Str("MES_"+strings.ReplaceAll(name.S, " ", "_")+".Prod_Counter_01"))
 		}
+		if p.GetOrNull("identity_tag_name").Truthy() {
+			if name.Kind != fixturejson.String {
+				return nil, errors.New("a process with an identity tag has no name")
+			}
+			p.Set("identity_tag_name", fixturejson.Str("MES_"+strings.ReplaceAll(name.S, " ", "_")+".CATID_01"))
+		}
 	}
 	return out, nil
 }
@@ -808,7 +814,7 @@ func sensitiveStrings(src *value) map[string]bool {
 	add(edge, "payload_catalog", "code", "name", "description")
 	add(core, "payloads", "code", "name", "description")
 	add(edge, "styles", "name", "description", "expected_catid")
-	add(edge, "processes", "name", "description", "counter_plc_name", "counter_tag_name")
+	add(edge, "processes", "name", "description", "counter_plc_name", "counter_tag_name", "identity_tag_name")
 	add(edge, "operator_stations", "name", "note")
 	add(edge, "style_node_claims", "payload_code", "auto_request_payload")
 	addStr(src.O.GetOrNull("pulled_at"))

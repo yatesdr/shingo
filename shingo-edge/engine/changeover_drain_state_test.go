@@ -69,7 +69,7 @@ func TestBinDrainState_UnwiredCounterIsUnknownNotDrained(t *testing.T) {
 func TestBinDrainState_CounterEnabledButNoTagIsUnknown(t *testing.T) {
 	t.Parallel()
 	db := testEngineDB(t)
-	// The checkbox is on, but there is no tag behind it. SyncProcessCounter
+	// The checkbox is on, but there is no tag behind it. syncPrimaryPoint
 	// creates no reporting point in this state, so nothing polls.
 	processID, nodeID, claimID := seedDrainStateProcess(t, db, "PLC-1", "", true)
 	bin := int64(1)

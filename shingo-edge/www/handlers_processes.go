@@ -160,6 +160,8 @@ func (h *Handlers) apiUpdateProcess(w http.ResponseWriter, r *http.Request) {
 		CounterPLCName    string `json:"counter_plc_name"`
 		CounterTagName    string `json:"counter_tag_name"`
 		CounterEnabled    bool   `json:"counter_enabled"`
+		IdentityTagName   string `json:"identity_tag_name"`
+		IdentityNone      bool   `json:"identity_none"`
 		ChangeoverAutoArm string `json:"changeover_auto_arm"`
 		GroupID           *int64 `json:"group_id"`
 	}
@@ -185,7 +187,22 @@ func (h *Handlers) apiUpdateProcess(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
-	if err := h.engine.ProcessService().Update(id, req.Name, req.Description, req.CounterPLCName, req.CounterTagName, req.CounterEnabled); err != nil {
+	// The counter and identity first: the engine refuses a re-point while a
+	// changeover is open, and a refused save writes nothing. It re-points the
+	// reporting point by tag (blank names disable it) and re-primes the CATID
+	// monitor when the identity tag moved — no restart.
+	if err := h.orchestration.EditProcessCounter(id, domain.ProcessCounterEdit{
+		PLCName: req.CounterPLCName, TagName: req.CounterTagName, Enabled: req.CounterEnabled,
+		IdentityTagName: req.IdentityTagName, IdentityNone: req.IdentityNone,
+	}); err != nil {
+		status := http.StatusBadRequest
+		if errors.Is(err, engine.ErrChangeoverActive) {
+			status = http.StatusConflict
+		}
+		writeError(w, status, err.Error())
+		return
+	}
+	if err := h.engine.ProcessService().Update(id, req.Name, req.Description); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -198,17 +215,6 @@ func (h *Handlers) apiUpdateProcess(w http.ResponseWriter, r *http.Request) {
 	// so the user can ungroup via the General tab dropdown.
 	if err := h.engine.ProcessService().SetGroupID(id, gid); err != nil {
 		log.Printf("set group_id on process %d: %v", id, err)
-	}
-	// Re-sync the reporting point so the counter config edit takes effect
-	// immediately — previously, this only ran on SetActiveStyle, which meant
-	// that adding/changing counter fields on an already-active process
-	// silently did nothing until the style was re-activated. The sync is a
-	// no-op when counter config or active style is missing, so it's safe to
-	// call unconditionally. Log-and-continue on error: the process update
-	// itself succeeded and we don't want to fail the whole request if the
-	// secondary sync hits a transient issue.
-	if err := h.orchestration.SyncProcessCounter(id); err != nil {
-		log.Printf("sync reporting point after process %d update: %v", id, err)
 	}
 	h.requestBackup("process-updated")
 	writeJSON(w, map[string]string{"status": "ok"})

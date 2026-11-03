@@ -102,7 +102,7 @@ func (e *Engine) flipActiveStyle(processID int64, styleID *int64) error {
 	if err := e.db.SetActiveStyle(processID, styleID); err != nil {
 		return err
 	}
-	if err := e.SyncProcessCounter(processID); err != nil {
+	if err := e.syncPrimaryPoint(processID, proc.CounterPLCName, proc.CounterTagName); err != nil {
 		return fmt.Errorf("sync reporting point for process %d: %w", processID, err)
 	}
 	if sameStyle(proc.ActiveStyleID, styleID) {

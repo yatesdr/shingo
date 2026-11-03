@@ -179,7 +179,8 @@ func TestProcesses_CreateListGetUpdateDelete(t *testing.T) {
 		t.Errorf("counter fields wrong: %+v", got)
 	}
 
-	testutil.MustNoErr(t, db.UpdateProcess(id, "LINE-A-v2", "updated", "PLC2", "TAG2", false), "update")
+	testutil.MustNoErr(t, db.UpdateProcess(id, "LINE-A-v2", "updated"), "update")
+	testutil.MustNoErr(t, db.SetProcessCounter(id, "PLC2", "TAG2", false, "", false), "update counter")
 	got2, _ := db.GetProcess(id)
 	if got2.Name != "LINE-A-v2" {
 		t.Errorf("name after update = %q", got2.Name)
@@ -561,10 +562,6 @@ func TestReportingPoints_ListEnabledAndLookups(t *testing.T) {
 		t.Errorf("by tag: %v %+v", err, byTag)
 	}
 
-	byStyle, err := db.GetReportingPointByStyleID(sid)
-	if err != nil || byStyle == nil {
-		t.Errorf("by style: %v %+v", err, byStyle)
-	}
 }
 
 func TestReportingPoints_LookupMissingReturnsError(t *testing.T) {
@@ -574,9 +571,6 @@ func TestReportingPoints_LookupMissingReturnsError(t *testing.T) {
 		t.Fatal("expected error")
 	}
 	if _, err := db.GetReportingPointByTag("x", "y"); err == nil {
-		t.Fatal("expected error")
-	}
-	if _, err := db.GetReportingPointByStyleID(9999); err == nil {
 		t.Fatal("expected error")
 	}
 }

@@ -294,10 +294,11 @@ func setupKafkaSubscribers(eng *engine.Engine, msgClient *messaging.Client, cfg 
 	hb := messaging.NewHeartbeater(msgClient, stationID, Version, instanceID, cfg.Messaging.OrdersTopic)
 	hb.DebugLog = messaging.DebugLogFunc(dbg.Func("heartbeat"))
 	// Q-034: attach the PLC-grouped cell catalog to every register so Core can
-	// auto-derive cells (no manual cell setup). Read errors degrade to no
+	// auto-derive cells (no manual cell setup). The points that read a live
+	// process's counter, disabled ones included. Read errors degrade to no
 	// catalog — registration must still succeed.
 	hb.CatalogFn = func() []protocol.CellCatalogEntry {
-		pts, err := db.ListReportingPoints()
+		pts, err := db.ListCountedReportingPoints()
 		if err != nil {
 			log.Printf("heartbeat: cell catalog load failed: %v", err)
 			return nil

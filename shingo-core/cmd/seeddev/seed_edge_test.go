@@ -21,7 +21,9 @@ CREATE TABLE processes (
   id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL UNIQUE,
   description TEXT NOT NULL DEFAULT '', active_style_id INTEGER, target_style_id INTEGER,
   counter_plc_name TEXT NOT NULL DEFAULT '', counter_tag_name TEXT NOT NULL DEFAULT '',
-  counter_enabled INTEGER NOT NULL DEFAULT 0, auto_cutover_enabled INTEGER NOT NULL DEFAULT 0,
+  counter_enabled INTEGER NOT NULL DEFAULT 0, identity_tag_name TEXT NOT NULL DEFAULT '',
+  identity_none INTEGER NOT NULL DEFAULT 0, identity_warlink_managed INTEGER NOT NULL DEFAULT 0,
+  auto_cutover_enabled INTEGER NOT NULL DEFAULT 0,
   changeover_auto_arm TEXT NOT NULL DEFAULT 'auto', group_id INTEGER,
   flow_composer_enabled INTEGER NOT NULL DEFAULT 0,
   created_at TEXT NOT NULL DEFAULT (datetime('now')));

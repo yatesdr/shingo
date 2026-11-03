@@ -161,17 +161,19 @@ func (s *stubEngine) OrderManager() *orders.Manager       { return s.orderMgr }
 func (s *stubEngine) Reconciliation() *engine.ReconciliationService {
 	return engine.NewReconciliationService(s.db)
 }
-func (s *stubEngine) CoreSync() *engine.CoreSyncService                                   { return nil }
-func (s *stubEngine) ApplyWarLinkConfig()                                                 {}
-func (s *stubEngine) ReconnectKafka() error                                               { return nil }
-func (s *stubEngine) SendEnvelope(env *protocol.Envelope) error                           { return nil }
-func (s *stubEngine) CoreNodes() map[string]protocol.NodeInfo                             { return s.core }
-func (s *stubEngine) PayloadBinTypes() []protocol.PayloadBinTypeInfo                      { return nil }
-func (s *stubEngine) ScenePointNames() map[string]bool                                    { return nil }
-func (s *stubEngine) SceneAdjacency() map[string][]string                                 { return nil }
-func (s *stubEngine) RequestNodeSync()                                                    {}
-func (s *stubEngine) RequestCatalogSync()                                                 {}
-func (s *stubEngine) SyncProcessCounter(int64) error                                      { return nil }
+func (s *stubEngine) CoreSync() *engine.CoreSyncService              { return nil }
+func (s *stubEngine) ApplyWarLinkConfig()                            {}
+func (s *stubEngine) ReconnectKafka() error                          { return nil }
+func (s *stubEngine) SendEnvelope(env *protocol.Envelope) error      { return nil }
+func (s *stubEngine) CoreNodes() map[string]protocol.NodeInfo        { return s.core }
+func (s *stubEngine) PayloadBinTypes() []protocol.PayloadBinTypeInfo { return nil }
+func (s *stubEngine) ScenePointNames() map[string]bool               { return nil }
+func (s *stubEngine) SceneAdjacency() map[string][]string            { return nil }
+func (s *stubEngine) RequestNodeSync()                               {}
+func (s *stubEngine) RequestCatalogSync()                            {}
+func (s *stubEngine) EditProcessCounter(processID int64, edit domain.ProcessCounterEdit) error {
+	return s.db.SetProcessCounter(processID, edit.PLCName, edit.TagName, edit.Enabled, edit.IdentityTagName, edit.IdentityNone)
+}
 func (s *stubEngine) EnsureTagPublished(int64, string, string)                            {}
 func (s *stubEngine) ManageReportingPointTag(int64, string, string, bool, string, string) {}
 func (s *stubEngine) CleanupReportingPointTag(int64, string, string, bool)                {}

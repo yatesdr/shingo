@@ -5,12 +5,15 @@ belongs in the commit message or in `docs/` — this file is the index.
 
 ## 2026-11-03 — The cutover follows the PLC
 
-Edge only.
+Edge only, v37. Ship after a restored-copy migrate.
 
 - Auto-cutover fires on a CATID the outgoing style does not run, never on one both run or with both sets empty
 - 0 and negative CATIDs name no part: no wrong-part alert, no arm, the request guard stays open
 - One door completes every changeover; a terminal transition pokes the CATID monitor, which retries each minute
 - Mark as running completes an open changeover past its gate, leaves its legs running, and records every switch
+- The reporting point follows its tag, not its style; a blanked counter stops counting (v37: identity tag)
+- A counter or identity edit is refused mid-changeover, refuses a non-integer tag, and re-primes the CATID monitor
+- Core's cell catalog lists the points a live process counts on, disabled ones included
 
 ## 2026-11-03 — An order's carts are its rows
 

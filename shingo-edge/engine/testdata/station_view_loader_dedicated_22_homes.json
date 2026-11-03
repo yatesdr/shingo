@@ -22,6 +22,8 @@
     "counter_plc_name": "",
     "counter_tag_name": "",
     "counter_enabled": false,
+    "identity_tag_name": "",
+    "identity_none": false,
     "changeover_auto_arm": "auto",
     "flow_composer_enabled": false,
     "created_at": "<ts>"

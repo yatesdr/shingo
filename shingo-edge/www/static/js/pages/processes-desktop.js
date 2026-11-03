@@ -4413,6 +4413,8 @@ function settingsDraftFor(p) {
         counter_plc_name: p.counter_plc_name || '',
         counter_tag_name: p.counter_tag_name || '',
         counter_enabled: !!p.counter_enabled,
+        identity_tag_name: p.identity_tag_name || '',
+        identity_none: !!p.identity_none,
         changeover_auto_arm: p.changeover_auto_arm || 'auto',
         flow_composer_enabled: !!p.flow_composer_enabled,
         // Quality containment: DERIVED from the process's produce claims

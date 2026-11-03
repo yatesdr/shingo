@@ -61,6 +61,11 @@ function processSettings(process, draft) {
         counter_plc_name: draft.counter_plc_name || '',
         counter_tag_name: draft.counter_tag_name || '',
         counter_enabled: !!draft.counter_enabled,
+        // The part-identity tag: '' derives it from the counter tag, and
+        // identity_none says the process has none. Both ride the draft, so a
+        // rename cannot switch the CATID monitor off.
+        identity_tag_name: draft.identity_tag_name || '',
+        identity_none: !!draft.identity_none,
         changeover_auto_arm: draft.changeover_auto_arm || '',
         group_id: draft.group_id || null,
     };

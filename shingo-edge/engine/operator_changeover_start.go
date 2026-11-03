@@ -664,8 +664,9 @@ func (e *Engine) binDrainedAtCoreNode(processID int64) func(coreNodeName string)
 // counterWired is whether anything polls the process's counter.
 //
 // IS THERE A COUNTER AT ALL. Asked once, for the process, because that is
-// where the counter is configured: SyncProcessCounter creates no reporting
-// point unless both names are set, and leaves it disabled unless the
+// where the counter is configured: syncPrimaryPoint creates no reporting
+// point unless both names are set (and switches off the one that read a tag
+// since blanked), and leaves it disabled unless the
 // checkbox is on, so any of the three missing means nothing is polling and
 // RemainingUOPCached is 0 for want of a tick rather than for want of parts.
 //

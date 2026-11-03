@@ -290,11 +290,19 @@ func GetReportingPointByTag(db *sql.DB, plcName, tagName string) (*ReportingPoin
 	return rp, nil
 }
 
-// GetReportingPointByStyleID looks up a reporting_point by style_id.
-func GetReportingPointByStyleID(db *sql.DB, styleID int64) (*ReportingPoint, error) {
-	rp := &ReportingPoint{}
-	if err := scanReportingPoint(rp, db.QueryRow(`SELECT id, plc_name, tag_name, style_id, last_count, last_poll_at, enabled, warlink_managed FROM reporting_points WHERE style_id = ? LIMIT 1`, styleID)); err != nil {
+// ListCountedReportingPoints returns the reporting points that read a live
+// process's counter, disabled ones included, with that process's id: the
+// cell catalog the Edge sends Core. A point no process counts on (a re-point's
+// leftover, a deleted process's) is not a cell; a counter switched off still
+// is (liveness is a separate signal).
+func ListCountedReportingPoints(db *sql.DB) ([]ReportingPoint, error) {
+	rows, err := db.Query(`SELECT rp.id, rp.plc_name, rp.tag_name, rp.style_id, rp.last_count, rp.last_poll_at, rp.enabled, rp.warlink_managed, p.id
+		FROM reporting_points rp
+		JOIN processes p ON p.counter_plc_name = rp.plc_name AND p.counter_tag_name = rp.tag_name
+		ORDER BY rp.plc_name, rp.tag_name`)
+	if err != nil {
 		return nil, err
 	}
-	return rp, nil
+	defer rows.Close()
+	return scanReportingPointsWithLine(rows)
 }

@@ -206,7 +206,10 @@ type EngineOrchestration interface {
 	DeliverNewMaterialForChangeover(processID, nodeID int64) (*domain.Order, error)
 	SwitchNodeToTarget(processID, nodeID int64) error
 	SwitchOperatorStationToTarget(processID, stationID int64) error
-	SyncProcessCounter(processID int64) error
+	// EditProcessCounter writes a process's counter and part-identity
+	// configuration: refused while a changeover is open, re-points the
+	// reporting point by tag, and re-primes the CATID monitor.
+	EditProcessCounter(processID int64, edit domain.ProcessCounterEdit) error
 	// SetProcessActiveStyle is the admin style flip. It is here rather than
 	// on ProcessService because a flip is a cutover: it strands the
 	// process's lineside piles and sends their levels to Core.
@@ -215,7 +218,7 @@ type EngineOrchestration interface {
 	// ProcessService because it spans two subsystems: it closes the process's
 	// open demand episodes through the engine's close writer before the row is
 	// removed, so Core is told the episodes ended instead of keeping them open
-	// against a process that no longer exists. Same reason SyncProcessCounter
+	// against a process that no longer exists. Same reason EditProcessCounter
 	// above is an orchestration verb rather than a service call.
 	DeleteProcess(processID int64) error
 

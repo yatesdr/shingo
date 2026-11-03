@@ -40,6 +40,13 @@ CREATE TABLE IF NOT EXISTS processes (
     counter_plc_name    TEXT NOT NULL DEFAULT '',
     counter_tag_name    TEXT NOT NULL DEFAULT '',
     counter_enabled     INTEGER NOT NULL DEFAULT 0,
+    -- The part-identity (CATID) tag: '' derives CATID_0N from the counter
+    -- tag; identity_none = 1 is a process with none. NOT NULL, so a settings
+    -- save that sends every field as typed cannot switch the monitor off.
+    -- identity_warlink_managed: shingo enabled the tag's WarLink publishing.
+    identity_tag_name   TEXT NOT NULL DEFAULT '',
+    identity_none       INTEGER NOT NULL DEFAULT 0,
+    identity_warlink_managed INTEGER NOT NULL DEFAULT 0,
     auto_cutover_enabled INTEGER NOT NULL DEFAULT 0,
     changeover_auto_arm TEXT NOT NULL DEFAULT 'auto',
     group_id            INTEGER REFERENCES process_groups(id) ON DELETE SET NULL,

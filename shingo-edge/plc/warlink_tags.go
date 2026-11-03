@@ -17,12 +17,11 @@ import "context"
 // Named ReadTagValue (not ReadTag) to avoid collision with the cache-based
 // ReadTag(plcName, tagName) on this same type.
 func (m *Manager) ReadTagValue(ctx context.Context, plcName, tagName string) (any, error) {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-	if m.wl == nil {
+	wl := m.client()
+	if wl == nil {
 		return nil, nil
 	}
-	return m.wl.ReadTagValue(ctx, plcName, tagName)
+	return wl.ReadTagValue(ctx, plcName, tagName)
 }
 
 // WriteTagValue writes a value to a PLC tag via a live WarLink write.
@@ -30,42 +29,50 @@ func (m *Manager) ReadTagValue(ctx context.Context, plcName, tagName string) (an
 // PLC must be connected (HTTP 503 otherwise). Integer values auto-convert
 // to the tag's data type.
 func (m *Manager) WriteTagValue(ctx context.Context, plcName, tagName string, value any) error {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-	if m.wl == nil {
+	wl := m.client()
+	if wl == nil {
 		return nil
 	}
-	return m.wl.WriteTagValue(ctx, plcName, tagName, value)
+	return wl.WriteTagValue(ctx, plcName, tagName, value)
 }
 
 // EnableTagPublishing tells WarLink to start publishing a tag.
+//
+// The client is read under m.mu and called outside it, as are the two calls
+// below: each is an HTTP round trip of up to its context's deadline, and a
+// reconcile queued for the write lock behind a held read lock stalls the poll
+// and the CATID tick for that long.
 func (m *Manager) EnableTagPublishing(ctx context.Context, plcName, tagName string) error {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-	if m.wl == nil {
+	wl := m.client()
+	if wl == nil {
 		return nil
 	}
-	return m.wl.SetTagPublishing(ctx, plcName, tagName, true)
+	return wl.SetTagPublishing(ctx, plcName, tagName, true)
+}
+
+// client returns the WarLink client under the read lock, to be called outside it.
+func (m *Manager) client() WarlinkClient {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.wl
 }
 
 // DisableTagPublishing tells WarLink to stop publishing a tag.
 func (m *Manager) DisableTagPublishing(ctx context.Context, plcName, tagName string) error {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-	if m.wl == nil {
+	wl := m.client()
+	if wl == nil {
 		return nil
 	}
-	return m.wl.SetTagPublishing(ctx, plcName, tagName, false)
+	return wl.SetTagPublishing(ctx, plcName, tagName, false)
 }
 
 // FetchAllTags retrieves ALL tags (published and unpublished) from WarLink.
 func (m *Manager) FetchAllTags(ctx context.Context, plcName string) ([]WarlinkTagInfo, error) {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-	if m.wl == nil {
+	wl := m.client()
+	if wl == nil {
 		return nil, nil
 	}
-	return m.wl.ListAllTags(ctx, plcName)
+	return wl.ListAllTags(ctx, plcName)
 }
 
 // IsTagPublished checks whether a tag is currently in the local WarLink cache

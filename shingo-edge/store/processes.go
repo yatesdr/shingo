@@ -30,8 +30,26 @@ func (db *DB) CreateProcess(name, description string, counterPLC, counterTag str
 }
 
 // UpdateProcess modifies a process row.
-func (db *DB) UpdateProcess(id int64, name, description string, counterPLC, counterTag string, counterEnabled bool) error {
-	return processes.Update(db.DB, id, name, description, counterPLC, counterTag, counterEnabled)
+func (db *DB) UpdateProcess(id int64, name, description string) error {
+	return processes.Update(db.DB, id, name, description)
+}
+
+// SetProcessCounter writes a process's counter and part-identity
+// configuration (processes.SetCounter).
+func (db *DB) SetProcessCounter(id int64, plcName, tagName string, enabled bool, identityTag string, identityNone bool) error {
+	return processes.SetCounter(db.DB, id, plcName, tagName, enabled, identityTag, identityNone)
+}
+
+// SetProcessIdentityManaged records whether shingo enabled the identity tag's
+// WarLink publishing.
+func (db *DB) SetProcessIdentityManaged(id int64, managed bool) error {
+	return processes.SetIdentityManaged(db.DB, id, managed)
+}
+
+// ProcessCounterOwner returns the id of a process other than exceptID that
+// counts on (plcName, tagName), or 0.
+func (db *DB) ProcessCounterOwner(plcName, tagName string, exceptID int64) (int64, error) {
+	return processes.CounterOwner(db.DB, plcName, tagName, exceptID)
 }
 
 // DeleteProcess removes a process row.

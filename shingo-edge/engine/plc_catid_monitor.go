@@ -8,7 +8,7 @@ import (
 	"log"
 	"strconv"
 	"strings"
-	_ "sync" // the plain lock inlines only where sync is imported (protocol/lockcheck)
+	"sync"
 	"time"
 
 	"shingo/protocol/lockcheck"
@@ -132,6 +132,15 @@ type postCutoverVerify struct {
 	deadline     time.Time
 }
 
+// catidSnapshot is the monitor's published view of one process's part identity,
+// read without cm.mu: the poll attributes a counted tick by it, and must never
+// wait on the monitor. Immutable; a change publishes a new one.
+type catidSnapshot struct {
+	value    string              // the confirmed CATID; "" until one is confirmed
+	lastOK   time.Time           // the last good read of the identity tag
+	observed map[string]struct{} // every value the process has emitted (plc_catid_observations)
+}
+
 type catidMonitor struct {
 	eng    *Engine
 	states map[int64]*catidState // processID → state
@@ -139,6 +148,10 @@ type catidMonitor struct {
 	// the first cutover opens one). Guarded by mu, like states.
 	verify map[int64]*postCutoverVerify
 	mu     lockcheck.Mutex[lockorder.CATIDMonitor]
+	// snapshots holds each monitored process's *catidSnapshot (processID →
+	// snapshot). Written under mu, on each good read and each confirm edge, and
+	// swapped by reprime; read with no lock at all.
+	snapshots sync.Map
 	// completeCutover is the seam for the auto-cutover fire, defaulting to
 	// eng.completeCutover (wired in startCatidMonitor); tests inject a spy.
 	// Invoked OUTSIDE cm.mu — gate/DB/Core work must not run under the tick lock.
@@ -161,24 +174,26 @@ func (e *Engine) startCatidMonitor() {
 	go cm.run()
 }
 
-// prime enumerates counter-bound processes, derives the CATID tag, enables
-// WarLink publishing, and stores per-process state. Processes with no counter
-// binding or whose plant doesn't match the MES struct convention
-// (deriveIdentityTag returns empty) are skipped — the guard simply stays inert
-// for them.
+// prime enumerates the processes with an identity tag (identityTagOf: none for
+// a process with no counter PLC or identity "none", the override when typed,
+// else derived from the counter tag), enables WarLink publishing on each, and
+// stores per-process state and its first snapshot. Called once, before the
+// goroutine starts: it writes cm.states with no lock. A process whose tag
+// cannot be derived is skipped and logged — the guard stays inert for it.
 func (cm *catidMonitor) prime() {
 	procs, err := cm.eng.db.ListProcesses()
 	if err != nil {
 		log.Printf("plc-catid: list processes: %v", err)
 		return
 	}
-	for _, p := range procs {
-		if p.CounterPLCName == "" || p.CounterTagName == "" {
-			continue
-		}
-		derived := deriveIdentityTag(p.CounterTagName)
-		if derived == "" {
-			log.Printf("plc-catid: process %d (%s) counter tag %q has no parent struct — skipping (plant does not match MES_*.<leaf> convention)", p.ID, p.Name, p.CounterTagName)
+	observed := cm.observedByProcess()
+	for i := range procs {
+		p := &procs[i]
+		tag := identityTagOf(p)
+		if tag == "" {
+			if p.CounterPLCName != "" && p.CounterTagName != "" && !p.IdentityNone {
+				log.Printf("plc-catid: process %d (%s) counter tag %q has no parent struct — skipping (plant does not match MES_*.<leaf> convention)", p.ID, p.Name, p.CounterTagName)
+			}
 			continue
 		}
 		// A failed publish toggle is logged, not fatal: the tag may already be
@@ -186,13 +201,107 @@ func (cm *catidMonitor) prime() {
 		// path fails open). Skipping the process here switched A5, the
 		// auto-cutover and the verify off for it until the next restart.
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		if err := cm.eng.plcMgr.EnableTagPublishing(ctx, p.CounterPLCName, derived); err != nil {
-			log.Printf("plc-catid: enable publish for %s.%s: %v (monitoring anyway)", p.CounterPLCName, derived, err)
+		if err := cm.eng.plcMgr.EnableTagPublishing(ctx, p.CounterPLCName, tag); err != nil {
+			log.Printf("plc-catid: enable publish for %s.%s: %v (monitoring anyway)", p.CounterPLCName, tag, err)
+		} else if !p.IdentityWarlinkManaged {
+			if err := cm.eng.db.SetProcessIdentityManaged(p.ID, true); err != nil {
+				log.Printf("plc-catid: record identity publishing for process %d: %v", p.ID, err)
+			}
 		}
 		cancel()
-		log.Printf("plc-catid: monitoring process %d (%s) on %s.%s", p.ID, p.Name, p.CounterPLCName, derived)
-		cm.states[p.ID] = &catidState{plcName: p.CounterPLCName, tagName: derived, processName: p.Name}
+		log.Printf("plc-catid: monitoring process %d (%s) on %s.%s", p.ID, p.Name, p.CounterPLCName, tag)
+		cm.states[p.ID] = &catidState{plcName: p.CounterPLCName, tagName: tag, processName: p.Name}
+		cm.snapshots.Store(p.ID, &catidSnapshot{observed: observed[p.ID]})
 	}
+}
+
+// observedByProcess reads every value each process has emitted, from the
+// observation record, in one query.
+func (cm *catidMonitor) observedByProcess() map[int64]map[string]struct{} {
+	out := map[int64]map[string]struct{}{}
+	rows, err := cm.eng.db.ListPLCCATIDObservations()
+	if err != nil {
+		log.Printf("plc-catid: read observations: %v", err)
+		return out
+	}
+	for _, r := range rows {
+		if out[r.ProcessID] == nil {
+			out[r.ProcessID] = map[string]struct{}{}
+		}
+		out[r.ProcessID][r.CATID] = struct{}{}
+	}
+	return out
+}
+
+// reprime brings the monitor in line with a process's row after a counter or
+// identity edit changed its identity tag: a fresh tracker on the new tag, or no
+// state at all when the process has none; the open verify watch is dropped and
+// the snapshot swapped (the observed values stay — they are the process's).
+// Called after the WarLink PATCH, outside every other lock; it re-reads the row
+// under cm.mu so an edit and a tick cannot interleave on the maps the tick
+// iterates (TestReprime_ConcurrentWithTick).
+func (cm *catidMonitor) reprime(processID int64) {
+	cm.mu.Lock()
+	defer cm.mu.Unlock()
+	delete(cm.verify, processID)
+	p, err := cm.eng.db.GetProcess(processID)
+	tag := ""
+	if err == nil {
+		tag = identityTagOf(p)
+	}
+	if tag == "" {
+		delete(cm.states, processID)
+		cm.snapshots.Delete(processID)
+		return
+	}
+	cm.states[processID] = &catidState{plcName: p.CounterPLCName, tagName: tag, processName: p.Name}
+	var observed map[string]struct{}
+	if old, ok := cm.snapshot(processID); ok {
+		observed = old.observed
+	}
+	cm.snapshots.Store(processID, &catidSnapshot{observed: observed})
+	log.Printf("plc-catid: monitoring process %d (%s) on %s.%s", p.ID, p.Name, p.CounterPLCName, tag)
+}
+
+// forget drops a deleted process from the monitor.
+func (cm *catidMonitor) forget(processID int64) {
+	cm.mu.Lock()
+	defer cm.mu.Unlock()
+	delete(cm.states, processID)
+	delete(cm.verify, processID)
+	cm.snapshots.Delete(processID)
+}
+
+// snapshot returns the process's published identity snapshot. No lock.
+func (cm *catidMonitor) snapshot(processID int64) (*catidSnapshot, bool) {
+	v, ok := cm.snapshots.Load(processID)
+	if !ok {
+		return nil, false
+	}
+	return v.(*catidSnapshot), true
+}
+
+// publishRead refreshes the process's snapshot after a good read at now: the
+// confirmed value and the read's time, and, on a confirm edge, the value
+// added to the observed set (copied, never written in place). Called with
+// cm.mu held.
+func (cm *catidMonitor) publishRead(processID int64, st *catidState, now time.Time, confirmed bool) {
+	next := &catidSnapshot{lastOK: now}
+	if old, ok := cm.snapshot(processID); ok {
+		next.observed = old.observed
+	}
+	if st.seenValue {
+		next.value = st.lastConfirmed
+	}
+	if confirmed && isIdentity(next.value) && !catidSetHas(next.observed, next.value) {
+		grown := make(map[string]struct{}, len(next.observed)+1)
+		for v := range next.observed {
+			grown[v] = struct{}{}
+		}
+		grown[next.value] = struct{}{}
+		next.observed = grown
+	}
+	cm.snapshots.Store(processID, next)
 }
 
 func (cm *catidMonitor) run() {
@@ -256,6 +365,9 @@ func (cm *catidMonitor) evaluateProcess(processID int64, st *catidState, now tim
 	confirmed, isChange := applyCatidEdge(st, cur, ok, now)
 	if confirmed {
 		cm.onConfirmedCATID(processID, st, isChange)
+	}
+	if ok {
+		cm.publishRead(processID, st, now, confirmed)
 	}
 	cm.checkPostCutoverVerify(processID, st, now)
 	return cm.evaluateAutoArm(processID, st, ok, now)

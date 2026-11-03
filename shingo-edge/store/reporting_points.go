@@ -50,7 +50,8 @@ func (db *DB) GetReportingPointByTag(plcName, tagName string) (*counters.Reporti
 	return counters.GetReportingPointByTag(db.DB, plcName, tagName)
 }
 
-// GetReportingPointByStyleID looks up a reporting_point by style_id.
-func (db *DB) GetReportingPointByStyleID(styleID int64) (*counters.ReportingPoint, error) {
-	return counters.GetReportingPointByStyleID(db.DB, styleID)
+// ListCountedReportingPoints returns the points that read a live process's
+// counter, disabled included: the cell catalog (counters.ListCountedReportingPoints).
+func (db *DB) ListCountedReportingPoints() ([]counters.ReportingPoint, error) {
+	return counters.ListCountedReportingPoints(db.DB)
 }

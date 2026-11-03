@@ -36,7 +36,7 @@ import (
 // may not import the store at all (the `www-no-direct-store` depguard rule). So
 // the composition — refuse, close, delete — lives on the engine, www calls this
 // one verb, and the close stays in exactly one place. It sits beside
-// SyncProcessCounter on EngineOrchestration for the same reason that one does:
+// EditProcessCounter on EngineOrchestration for the same reason that one does:
 // a process-lifecycle action that spans more than the process aggregate.
 //
 // ── THE ORDER IS THE DESIGN, NOT AN ARRANGEMENT ───────────────────────────
@@ -135,6 +135,10 @@ func (e *Engine) DeleteProcess(id int64) error {
 		return err
 	}
 
+	e.unpublishProcessTags(proc)
+	if e.catidMon != nil {
+		e.catidMon.forget(id)
+	}
 	e.countMu.Lock()
 	defer e.countMu.Unlock()
 	return e.processService.Delete(id)

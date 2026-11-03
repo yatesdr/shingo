@@ -131,8 +131,11 @@ func (s *ProcessService) Create(name, description, counterPLC, counterTag string
 }
 
 // Update modifies an existing process.
-func (s *ProcessService) Update(id int64, name, description, counterPLC, counterTag string, counterEnabled bool) error {
-	return s.db.UpdateProcess(id, name, description, counterPLC, counterTag, counterEnabled)
+// Update writes a process's name and description. Its counter and
+// part-identity configuration go through the engine's EditProcessCounter,
+// which refuses while a changeover is open and re-points the reporting point.
+func (s *ProcessService) Update(id int64, name, description string) error {
+	return s.db.UpdateProcess(id, name, description)
 }
 
 // ErrDuplicateGroupName re-exports the store's UNIQUE-constraint refusal on
