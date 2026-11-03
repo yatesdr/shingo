@@ -158,3 +158,66 @@ func TestNodeClaimSet_SharesOneClaimPerRow(t *testing.T) {
 			"the other node had already recorded")
 	}
 }
+
+// TestResolveExact_EqualsActiveFirstPlusGuard: the counter walk resolves a
+// node under the tick's own style (ExactStyle). With the tick's style the
+// active one — every tick the poll makes today — it answers exactly what the
+// walk did before: ActiveStyleFirst, then the drop of a claim of another style.
+// Every node shape, mid-changeover and not.
+func TestResolveExact_EqualsActiveFirstPlusGuard(t *testing.T) {
+	t.Parallel()
+	db := coverageDB(t)
+	processID, err := db.CreateProcess("EXACT", "", "", "", false)
+	if err != nil {
+		t.Fatalf("create process: %v", err)
+	}
+	active, err := db.CreateStyle("EXACT-A", "", processID)
+	if err != nil {
+		t.Fatalf("create style: %v", err)
+	}
+	target, err := db.CreateStyle("EXACT-T", "", processID)
+	if err != nil {
+		t.Fatalf("create style: %v", err)
+	}
+	for i, name := range []string{"EX_BOTH", "EX_ACTIVEONLY", "EX_TARGETONLY", "EX_BARE"} {
+		if _, err := db.CreateProcessNode(processes.NodeInput{ProcessID: processID, CoreNodeName: name, Code: name,
+			Name: name, Sequence: i, Enabled: true}); err != nil {
+			t.Fatalf("create node %s: %v", name, err)
+		}
+	}
+	for _, c := range []struct {
+		style int64
+		node  string
+	}{{active, "EX_BOTH"}, {target, "EX_BOTH"}, {active, "EX_ACTIVEONLY"}, {target, "EX_TARGETONLY"}} {
+		if _, err := db.UpsertStyleNodeClaim(domain.CoreNodeKinds{}, processes.NodeClaimInput{
+			StyleID: c.style, CoreNodeName: c.node, Role: "consume", SwapMode: protocol.SwapModeSingleRobot,
+			PayloadCode: "P", UOPCapacity: 10, InboundStaging: "IN", OutboundStaging: "OUT", OutboundDestination: "DEST",
+		}); err != nil {
+			t.Fatalf("claim %s: %v", c.node, err)
+		}
+	}
+	nodes, err := db.ListProcessNodesByProcess(processID)
+	if err != nil {
+		t.Fatalf("list nodes: %v", err)
+	}
+	for _, proc := range []*processes.Process{
+		{ID: processID, ActiveStyleID: &active, TargetStyleID: &target},
+		{ID: processID, ActiveStyleID: &active},
+	} {
+		set, err := db.NodeClaimsForStyles(ClaimStyleIDs(proc))
+		if err != nil {
+			t.Fatalf("NodeClaimsForStyles: %v", err)
+		}
+		for i := range nodes {
+			node := &nodes[i]
+			before := set.Resolve(proc, node, ActiveStyleFirst)
+			if before != nil && before.StyleID != active {
+				before = nil // the walk's style-mismatch drop
+			}
+			if got := set.Resolve(proc, node, ExactStyle(active)); got != before {
+				t.Errorf("target %v, node %s: exact = %v, active-first plus the drop = %v",
+					proc.TargetStyleID != nil, node.CoreNodeName, got, before)
+			}
+		}
+	}
+}

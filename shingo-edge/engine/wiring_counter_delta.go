@@ -20,6 +20,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"slices"
 	"strings"
 	"time"
 
@@ -52,12 +53,19 @@ import (
 // It returns bare values rather than an error precisely because there is nothing
 // for a caller to do with one: the tick is already here and the ladder already
 // has an honest answer for each absence.
-func (e *Engine) counterDeltaRows(processID int64, nodes []processes.Node) (*processes.Process, *store.NodeClaimSet, map[int64]*processes.RuntimeState) {
+//
+// The claims are the active, the target and the tick's own style's, in the
+// one query: the walk resolves each node under the tick's style.
+func (e *Engine) counterDeltaRows(processID, tickStyleID int64, nodes []processes.Node) (*processes.Process, *store.NodeClaimSet, map[int64]*processes.RuntimeState) {
 	process, err := e.db.GetProcess(processID)
 	if err != nil {
 		process = nil
 	}
-	claims, err := e.db.NodeClaimsForStyles(store.ClaimStyleIDs(process))
+	styles := store.ClaimStyleIDs(process)
+	if !slices.Contains(styles, tickStyleID) {
+		styles = append(styles, tickStyleID)
+	}
+	claims, err := e.db.NodeClaimsForStyles(styles)
 	if err != nil {
 		claims = nil
 	}
@@ -98,6 +106,33 @@ func (e *Engine) handleCounterDelta(delta CounterDeltaEvent) {
 			delta.ProcessID, delta.StyleID, delta.Delta, err)
 		return
 	}
+	process, claims, runtimes := e.counterDeltaRows(delta.ProcessID, delta.StyleID, nodes)
+	e.walkTick(process, nodes, claims, runtimes, tickScope{
+		processID: delta.ProcessID,
+		styleID:   delta.StyleID,
+		delta:     int(delta.Delta),
+		source:    fmt.Sprintf("rp=%d", delta.ReportingPointID),
+	})
+}
+
+// tickScope is one counted tick as the walk takes it: whose count it is (for
+// the log line), the style it was made under, and how many.
+type tickScope struct {
+	processID int64
+	styleID   int64
+	delta     int
+	// source names the counter, "rp=N" for the process's reporting point.
+	source string
+}
+
+// walkTick charges one tick to the process's nodes. Each node's claim is the
+// one the tick's style has there (store.ExactStyle): a node that style claims
+// is charged under its claim, a node it does not claim is not — whichever
+// style is active. With the tick's style the active one this is what the
+// active-first resolution and its style-mismatch drop did. A tick no node took
+// is logged as unattributed, naming why each node declined it.
+func (e *Engine) walkTick(process *processes.Process, nodes []processes.Node, claims *store.NodeClaimSet,
+	runtimes map[int64]*processes.RuntimeState, tick tickScope) {
 	// Why this tick did or did not land. A counter tick that matches no
 	// node used to fall off the end of this function in silence: the
 	// consume path has the A/B fallthrough net below, produce has none,
@@ -113,8 +148,6 @@ func (e *Engine) handleCounterDelta(delta CounterDeltaEvent) {
 	var pairedFallbackHold string
 	pairedConsumeHandled := false
 
-	process, claims, runtimes := e.counterDeltaRows(delta.ProcessID, nodes)
-
 	for _, node := range nodes {
 		runtime := runtimes[node.ID]
 		if runtime == nil {
@@ -122,15 +155,16 @@ func (e *Engine) handleCounterDelta(delta CounterDeltaEvent) {
 			continue
 		}
 
-		// Look up active claim for this node
-		claim := claims.Resolve(process, &node, store.ActiveStyleFirst)
+		// The claim the tick's style has at this node. A node it does not
+		// claim is not charged: another style's claim there (the active or
+		// the target) is a style mismatch, none at all is no claim.
+		claim := claims.Resolve(process, &node, store.ExactStyle(tick.styleID))
 		if claim == nil {
-			attr.noClaim++
-			continue
-		}
-		// Only process nodes with a claim matching this style
-		if claim.StyleID != delta.StyleID {
-			attr.styleMismatch++
+			if claims.Resolve(process, &node, store.ActiveStyleFirst) != nil {
+				attr.styleMismatch++
+			} else {
+				attr.noClaim++
+			}
 			continue
 		}
 
@@ -157,10 +191,8 @@ func (e *Engine) handleCounterDelta(delta CounterDeltaEvent) {
 					pairedFallbackNode = &nodeCopy
 					pairedFallbackHold = holdPartFor(process, &nodeCopy, claim, claims)
 					pairedFallbackRuntime = runtime
-					// Capture the claim that just passed the
-					// claim.StyleID == delta.StyleID guard above so the
-					// fallback emits against the tick's style, not a
-					// re-derived one (R43-1).
+					// The tick's style's claim, so the fallback emits
+					// against the tick's style, not a re-derived one (R43-1).
 					pairedFallbackClaim = claim
 				}
 				continue
@@ -170,7 +202,7 @@ func (e *Engine) handleCounterDelta(delta CounterDeltaEvent) {
 			}
 			nodeCopy := node
 			attr.consumeTicks++
-			e.handleConsumeTick(&nodeCopy, runtime, claim, holdPartFor(process, &nodeCopy, claim, claims), int(delta.Delta))
+			e.handleConsumeTick(&nodeCopy, runtime, claim, holdPartFor(process, &nodeCopy, claim, claims), tick.delta)
 
 		case protocol.ClaimRoleProduce:
 			// A/B cycling: only increment the active-pull side.
@@ -181,7 +213,7 @@ func (e *Engine) handleCounterDelta(delta CounterDeltaEvent) {
 			}
 			nodeCopy := node
 			attr.produceTicks++
-			e.handleProduceTick(&nodeCopy, runtime, claim, int(delta.Delta))
+			e.handleProduceTick(&nodeCopy, runtime, claim, tick.delta)
 
 		default:
 			attr.unknownRole++
@@ -193,17 +225,17 @@ func (e *Engine) handleCounterDelta(delta CounterDeltaEvent) {
 	// the "count to lineside storage" case when neither A nor B is active.
 	if !pairedConsumeHandled && pairedFallbackNode != nil && pairedFallbackRuntime != nil {
 		attr.fallthroughTicks++
-		e.handleABFallthrough(delta.ProcessID, pairedFallbackNode, pairedFallbackRuntime, pairedFallbackClaim, pairedFallbackHold, int(delta.Delta))
+		e.handleABFallthrough(tick.processID, pairedFallbackNode, pairedFallbackRuntime, pairedFallbackClaim, pairedFallbackHold, tick.delta)
 	}
 
 	if !attr.landed() {
-		log.Printf("ERROR: counter delta unattributed: process=%d style=%d delta=%d rp=%d %s — the cell counted and no node took it",
-			delta.ProcessID, delta.StyleID, delta.Delta, delta.ReportingPointID, attr.skipReport())
+		log.Printf("ERROR: counter delta unattributed: process=%d style=%d delta=%d %s %s — the cell counted and no node took it",
+			tick.processID, tick.styleID, tick.delta, tick.source, attr.skipReport())
 		// Also to the debug log, where it lands on the diagnostics page
 		// under the "engine" subsystem. The journal is the record; this
 		// is the copy a technician can reach from the UI without SSH.
-		e.debugFn("counter delta unattributed: process=%d style=%d delta=%d rp=%d %s",
-			delta.ProcessID, delta.StyleID, delta.Delta, delta.ReportingPointID, attr.skipReport())
+		e.debugFn("counter delta unattributed: process=%d style=%d delta=%d %s %s",
+			tick.processID, tick.styleID, tick.delta, tick.source, attr.skipReport())
 	}
 }
 
@@ -313,7 +345,9 @@ func (a tickAttribution) skipReport() string {
 //     already drained what it could (drainLinesideFirst runs first), and the
 //     rest is logged once per episode, by part, and not charged (D12: no new
 //     anomaly rows for an over-pull). The stranded monitor (EventUOPStranded)
-//     watches a consume seat's hold as it grows.
+//     watches a consume seat's hold only while the seat is unbound and the
+//     hold rises (uop_stranded_monitor.go); a hold kept beside a bound
+//     carrier of another part has no watcher.
 //
 // A hold written before the part existed reads "" and replays as it always
 // did.

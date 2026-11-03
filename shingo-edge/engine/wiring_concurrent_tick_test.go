@@ -280,10 +280,10 @@ func TestRegression_TickDuringPartialBackPickupWindow(t *testing.T) {
 // TestRegression_TickDuringChangeoverRunout pins the runout window:
 // while a changeover task is in "preparing" / "ready" state but before
 // the operator clicks RELEASE, the line is still consuming the
-// from-style bin. Ticks during this window must attribute to the
-// from-style's claim/bin, not jump prematurely to the to-style. The
-// resolveReleaseClaim → toClaim transition only fires on release; until
-// then the active claim drives attribution.
+// from-style bin. Every tick in this window lands on that bin until its
+// lift (R1), whichever style it was made under: a from-style tick under
+// the from-claim, a to-style tick under the to-claim the node also has
+// (the walk resolves the tick's own style, store.ExactStyle).
 func TestRegression_TickDuringChangeoverRunout(t *testing.T) {
 	t.Parallel()
 	db := testEngineDB(t)
@@ -319,16 +319,15 @@ func TestRegression_TickDuringChangeoverRunout(t *testing.T) {
 		}})
 	}
 
-	// to-style ticks before cutover should be ignored — the runtime's
-	// active claim is still fromStyle. handleCounterDelta only matches
-	// claim.StyleID == delta.StyleID, so to-style ticks find no claim.
+	// to-style ticks before cutover: the to-style claims the node too, so
+	// they are charged under its claim — to the bin still bound there.
 	for i := 0; i < 2; i++ {
 		eng.Events.Emit(Event{Type: EventCounterDelta, Payload: CounterDeltaEvent{
 			ProcessID: processID, StyleID: toStyleID, Delta: 5,
 		}})
 	}
 
-	// Only the 3 from-style ticks should have produced bin deltas.
+	// All 5 ticks land on the from-style bin, still bound.
 	binTotal := 0
 	for _, c := range sink.binCalls {
 		if c.BinID != binID {
@@ -337,8 +336,8 @@ func TestRegression_TickDuringChangeoverRunout(t *testing.T) {
 		}
 		binTotal += -c.Delta
 	}
-	if binTotal != 15 {
-		t.Errorf("bin call total = %d, want 15 (3 ticks × 5 from-style only): %+v",
+	if binTotal != 25 {
+		t.Errorf("bin call total = %d, want 25 (5 ticks × 5, all on the bound bin): %+v",
 			binTotal, sink.binCalls)
 	}
 }
@@ -419,14 +418,13 @@ func TestRegression_TickDuringTwoRobotSwap(t *testing.T) {
 // TestRegression_ChangeoverDoesNotCarryUOPAcrossStyles pins the cross-
 // style invariant via the tick path: changing from style X to Y and
 // back to X must not leave Y's runtime UOP polluting X's tracking.
-// Ticks are dispatched by handleCounterDelta against `claim.StyleID
-// == delta.StyleID` — so during X, only X-style ticks attribute; the
-// runtime decrement targets the *X bin* via the active order. After
-// pivot to Y, X-style ticks find no active claim (the runtime now
-// points at Y's claim), and Y-style ticks decrement Y's runtime.
-// Pivot back to X with a fresh bin: ticks resume against the new X
-// bin, and the runtime starts from the new bin's count, not Y's
-// residue or X's prior session.
+// Each tick resolves the node's claim under its own style
+// (store.ExactStyle) and is charged to the bin bound at the node: after
+// the pivot to Y, an X-style tick (one stamped before the flip reached the
+// reporting point) still finds X's claim and is charged to the Y bin,
+// and Y-style ticks decrement Y's runtime. Pivot back to X with a fresh
+// bin: ticks resume against the new X bin, and the runtime starts from
+// the new bin's count, not Y's residue or X's prior session.
 func TestRegression_ChangeoverDoesNotCarryUOPAcrossStyles(t *testing.T) {
 	t.Parallel()
 	db := testEngineDB(t)
@@ -465,22 +463,24 @@ func TestRegression_ChangeoverDoesNotCarryUOPAcrossStyles(t *testing.T) {
 	bidY := binY
 	db.SetProcessNodeRuntimeWithBin(nodeID, &claimY, &bidY, 150) // Y capacity
 
-	// X-style tick: should be ignored (runtime active claim is Y).
+	// X-style tick: X claims the node, so it is charged to the bin bound
+	// there, Y's: 150 → 145.
 	sink.binCalls = nil
 	eng.Events.Emit(Event{Type: EventCounterDelta, Payload: CounterDeltaEvent{
 		ProcessID: processID, StyleID: styleX, Delta: 5,
 	}})
-	if len(sink.binCalls) != 0 {
-		t.Errorf("post-pivot X tick attributed (must find no claim): %+v", sink.binCalls)
+	if len(sink.binCalls) != 1 || sink.binCalls[0].BinID != binY {
+		t.Errorf("post-pivot X tick attribution: %+v (want one call to the bound bin %d)", sink.binCalls, binY)
 	}
 
-	// Y-style tick: decrements Y's bin from 150 → 130.
+	// Y-style tick: decrements Y's bin from 145 → 125.
+	sink.binCalls = nil
 	eng.Events.Emit(Event{Type: EventCounterDelta, Payload: CounterDeltaEvent{
 		ProcessID: processID, StyleID: styleY, Delta: 20,
 	}})
 	rt, _ = db.GetProcessNodeRuntime(nodeID)
-	if rt.RemainingUOPCached != 130 {
-		t.Errorf("after Y tick: runtime=%d, want 130 (150-20, NOT 170-20=150 from X residue)",
+	if rt.RemainingUOPCached != 125 {
+		t.Errorf("after Y tick: runtime=%d, want 125 (150-5-20, NOT 170-20=150 from X residue)",
 			rt.RemainingUOPCached)
 	}
 	if len(sink.binCalls) != 1 || sink.binCalls[0].BinID != binY {

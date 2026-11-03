@@ -19,7 +19,22 @@ import "shingoedge/store/processes"
 //
 // Naming the choice does not make either resolver wrong. It makes picking one
 // a decision a reader can see.
-type ClaimPrecedence int
+//
+// A value, comparable with ==: ActiveStyleFirst and TargetStyleFirst order
+// the process's two styles; ExactStyle(id) names one style and falls back to
+// nothing.
+type ClaimPrecedence struct {
+	order precedenceOrder
+	style int64 // ExactStyle's style
+}
+
+type precedenceOrder int
+
+const (
+	activeFirst precedenceOrder = iota
+	targetFirst
+	exactStyle
+)
 
 // BOTH CONSTANTS SELECT A STYLE. Neither can see a carrier: ResolveNodeClaim
 // reads process.ActiveStyleID and process.TargetStyleID and nothing else — no
@@ -30,14 +45,14 @@ type ClaimPrecedence int
 // spelled in the names of the type that was supposed to end it. The names now
 // say which style, and the question about what is standing there is answered
 // by the runtime row's lineside payload instead.
-const (
+var (
 	// ActiveStyleFirst prefers the ACTIVE style's claim, falling back to the
 	// target for a freshly-added node the active style does not claim yet.
 	//
 	// The right question for anything describing the cell AS IT IS CONFIGURED
-	// NOW — a count's owner, a release, an evacuation's geometry. It is not
-	// the answer to what carrier is on the node.
-	ActiveStyleFirst ClaimPrecedence = iota
+	// NOW — a release, an evacuation's geometry. It is not the answer to what
+	// carrier is on the node, nor to whose a counted tick is (ExactStyle).
+	ActiveStyleFirst = ClaimPrecedence{order: activeFirst}
 
 	// TargetStyleFirst prefers the TARGET style when it claims this node:
 	// "which claim should something newly asked for be for". Mid-changeover a
@@ -47,8 +62,17 @@ const (
 	// The right question only when the subject of the sentence does not exist
 	// yet. Asking it about a carrier already on the cell gets the incoming
 	// style's answer about the outgoing style's bin.
-	TargetStyleFirst
+	TargetStyleFirst = ClaimPrecedence{order: targetFirst}
 )
+
+// ExactStyle resolves the claim of one named style and nothing else: the
+// counter walk's question, "what does the style this tick was made under claim
+// at this node". With the active style named it answers what ActiveStyleFirst
+// plus the walk's style-mismatch drop answered
+// (TestResolveExact_EqualsActiveFirstPlusGuard).
+func ExactStyle(styleID int64) ClaimPrecedence {
+	return ClaimPrecedence{order: exactStyle, style: styleID}
+}
 
 // ResolveNodeClaim returns the style_node_claims row governing this node under
 // the given precedence, or nil for every reason a lookup can fail. Callers
@@ -76,10 +100,15 @@ func (db *DB) ResolveNodeClaim(process *processes.Process, node *processes.Node,
 // reversed pair would change every mid-changeover decision and nothing at all
 // outside a changeover — invisible to any test that seeds a single style.
 func claimStyleOrder(process *processes.Process, p ClaimPrecedence) [2]*int64 {
-	if p == TargetStyleFirst {
+	switch p.order {
+	case targetFirst:
 		return [2]*int64{process.TargetStyleID, process.ActiveStyleID}
+	case exactStyle:
+		style := p.style
+		return [2]*int64{&style, nil}
+	default:
+		return [2]*int64{process.ActiveStyleID, process.TargetStyleID}
 	}
-	return [2]*int64{process.ActiveStyleID, process.TargetStyleID}
 }
 
 // NodeClaimSet answers ResolveNodeClaim's question for a whole walk from rows
