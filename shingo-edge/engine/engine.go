@@ -133,6 +133,14 @@ type Engine struct {
 	// Hopkinsville 2026-07-23). Nil until Start() (and in test fixtures that
 	// build Engine directly) — the guard nil-checks and stays inert.
 	catidMon *catidMonitor
+	// cutoverMu is the changeover door's mutex (completeCutover): the
+	// operator's CUTOVER, the monitor's fire, the admin switch and the restore
+	// complete one at a time.
+	cutoverMu lockcheck.Mutex[lockorder.Cutover]
+	// cutoverPokes carries pokeCutover's process ids to the CATID monitor,
+	// which re-decides on its next tick. Made here, before any goroutine runs;
+	// a full buffer or no monitor drops the poke.
+	cutoverPokes chan int64
 	// warlinkClient is the injected WarLink client (sim fake) carried from
 	// Config.Warlink to the NewManager call in Start(). Nil → real HTTP client.
 	warlinkClient plc.WarlinkClient
@@ -336,6 +344,7 @@ func New(c Config) *Engine {
 		reconcileClock: c.DemandReconcileClock,
 		Events:         NewEventBus(),
 		stopChan:       make(chan struct{}),
+		cutoverPokes:   make(chan int64, 64),
 	}
 	// SEEDED FROM THE CLOCK, not from zero: this counter lives in memory and a
 	// browser outlives a restart of this process. Starting every run at a fresh

@@ -120,7 +120,7 @@ func routeFixtures() map[string]routeFixture {
 		"POST /api/processes/{id}/flow/mint": {want: 422, req: on(func(w *walk) (string, any) {
 			return pr(w) + "/flow/mint", map[string]any{"station_id": w.pressStation}
 		})},
-		"POST /api/processes/{id}/changeover/cutover": {want: 400, req: on(func(w *walk) (string, any) {
+		"POST /api/processes/{id}/changeover/cutover": {want: 200, req: on(func(w *walk) (string, any) {
 			return pr(w) + "/changeover/cutover", map[string]any{}
 		})},
 		"POST /api/processes/{id}/changeover/cancel": {want: 400, req: on(func(w *walk) (string, any) {

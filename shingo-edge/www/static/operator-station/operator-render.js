@@ -142,9 +142,9 @@ export function renderHeader() {
 // that failed says so and the next tap tries again — a Pi that lost one
 // request is not left without a changeover until it is rebooted.
 // Exported for the part-change prompt's Start changeover (operator.js).
-export function openComposerPicker() {
+export function openComposerPicker(targetStyleID) {
     return ensureComposer().then(function (ui) {
-        if (ui) ui.openPicker(getView());
+        if (ui) ui.openPicker(getView(), targetStyleID || 0);
         else showToast('The changeover screen did not load — tap CHANGEOVER again', 'error');
     });
 }

@@ -1,8 +1,10 @@
 // operator_changeover_cutover.go — process-wide cutover/completion.
 //
-// CompleteProcessProductionCutover (and its PLC twin) gate, flip active style,
-// and finalize. tryCompleteProcessChangeover is the auto-completion path
-// triggered by terminal-state events.
+// completeCutover is the one door every completion of a changeover goes
+// through: the operator's CUTOVER, the CATID monitor's fire, the admin switch
+// and the boot restore. The completion chain never calls it; a terminal
+// transition only pokes the monitor (pokeCutover), which decides on its own
+// tick.
 //
 // SequentialChangeoverCutover USED TO LIVE HERE and is gone (owner ruling
 // 2026-08-28). It bundled "flip the pull, then release the wait" into one
@@ -49,8 +51,9 @@ import (
 // away. domain.BlockersToReasons projects back to the old flat list, which
 // is what keeps the 400 toast byte-identical.
 //
-// Every blocker is Hard today: both conjuncts are hard, and there is no
-// override. See domain.Blocker for why the flag exists anyway.
+// Every blocker is Hard today: both conjuncts are hard. The door's
+// CutoverForced records them and completes anyway; nothing else overrides
+// them. See domain.Blocker for why the flag exists anyway.
 func (e *Engine) canCompleteChangeover(changeoverID int64) (bool, []domain.Blocker, error) {
 	tasks, err := e.db.ListChangeoverNodeTasks(changeoverID)
 	if err != nil {
@@ -251,73 +254,129 @@ func (e *Engine) autoConfirmDeliveredLinkedOrders(changeoverID int64) error {
 	return nil
 }
 
-// CompleteProcessProductionCutover runs the operator-driven cutover:
-// gate → flip active style → finalize. Trigger source is recorded as
-// "operator-hmi" on the changeover row.
-func (e *Engine) CompleteProcessProductionCutover(processID int64) error {
-	return e.completeCutover(processID, "operator-hmi")
-}
+// CutoverMode is how the changeover door treats a red gate.
+type CutoverMode int
 
-func (e *Engine) completeCutover(processID int64, triggeredBy string) error {
+const (
+	// CutoverGated refuses while the gate is red, with the gate's sentence.
+	// The operator's CUTOVER, the monitor's 60 s declaration and the restore
+	// use it. It has no bypass.
+	CutoverGated CutoverMode = iota
+	// CutoverForced evaluates the gate for the record only: the blockers it
+	// overrides go on the row's notes and back to the caller, the triggered_by
+	// gains "-forced", and every node task and order is left as it stands. A leg
+	// still moving lands as an ordinary delivery once no changeover is active.
+	// Its callers are counted by TestForceDoor_FourCallers.
+	CutoverForced
+)
+
+// The triggered_by values the door and the switches write (domain.Changeover).
+// A forced completion that overrode a red gate appends "-forced".
+const (
+	triggeredManual      = "manual"
+	triggeredAutoCATID   = "auto-catid"
+	triggeredAdminSwitch = "admin-switch"
+	triggeredRestore     = "restore"
+	triggeredForced      = "-forced"
+)
+
+// CompleteProcessProductionCutover is the operator's CUTOVER: the door, gated,
+// on the changeover open now. With none open it is a logged no-op.
+func (e *Engine) CompleteProcessProductionCutover(processID int64) error {
 	changeover, err := e.db.GetActiveProcessChangeover(processID)
+	if errors.Is(err, sql.ErrNoRows) {
+		e.logFn("cutover: process %d has no changeover open — nothing to cut over", processID)
+		return nil
+	}
 	if err != nil {
 		return err
+	}
+	_, err = e.completeCutover(processID, changeover.ID, triggeredManual, CutoverGated)
+	return err
+}
+
+// completeCutover is THE door: under one engine mutex it completes changeover
+// changeoverID on the process — the delivered-order pre-pass, the gate, the
+// flip, the finalize. A changeover that is no longer open, or is not the open
+// one, is a logged no-op (a decision taken for one changeover must not
+// complete the next). Returns the blockers a CutoverForced completion
+// overrode; nil otherwise.
+//
+// Never called from the completion chain: a call there would take cutoverMu
+// on a goroutine the door may already hold it on (the pre-pass confirms orders
+// synchronously). The chain pokes (TestDoor_CompletionChainOnlyPokes).
+func (e *Engine) completeCutover(processID, changeoverID int64, by string, mode CutoverMode) ([]domain.Blocker, error) {
+	e.cutoverMu.Lock()
+	defer e.cutoverMu.Unlock()
+	return e.completeCutoverLocked(processID, changeoverID, by, mode)
+}
+
+// completeCutoverLocked is the door's body; the caller holds cutoverMu (the
+// admin switch's third-style path completes, then flips, under one hold).
+func (e *Engine) completeCutoverLocked(processID, changeoverID int64, by string, mode CutoverMode) ([]domain.Blocker, error) {
+	changeover, err := e.db.GetActiveProcessChangeover(processID)
+	if errors.Is(err, sql.ErrNoRows) {
+		e.logFn("cutover: process %d changeover %d is not open — nothing to do (%s)", processID, changeoverID, by)
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	if changeover.ID != changeoverID {
+		e.logFn("cutover: process %d changeover %d is not the open one (%d) — nothing to do (%s)",
+			processID, changeoverID, changeover.ID, by)
+		return nil, nil
 	}
 	// Auto-confirm any linked order the fleet already delivered, so the gate
 	// below isn't blocked on an operator clerical step for material that is
 	// physically on the line. in_transit/staged/faulted still block.
 	if err := e.autoConfirmDeliveredLinkedOrders(changeover.ID); err != nil {
-		return err
+		return nil, err
 	}
-	// Gate must run before any of the five mutations below. The function
-	// flips active_style_id (line below) before writing the completed row;
-	// inserting the gate after the flip would leave the system on the
-	// to-style with an still-in-progress changeover row if the gate
-	// blocked. requestedClaimAtNode resolves from process.ActiveStyleID, so
-	// that order is unrecoverable without operator intervention.
-	// BlockersToReasons keeps this message byte-identical to what it produced
-	// before blockers became structured — the 400 toast is a contract the
-	// floor reads, and the panel is additive to it, not a replacement.
-	if ok, blockers, err := e.canCompleteChangeover(changeover.ID); err != nil || !ok {
-		if err != nil {
-			return err
+	// The gate runs before the flip: a gated refusal must leave the style and
+	// the row as they were. BlockersToReasons keeps the refusal byte-identical
+	// to what it produced before blockers became structured — the 400 toast is
+	// a contract the floor reads.
+	ok, blockers, err := e.canCompleteChangeover(changeover.ID)
+	if err != nil {
+		return nil, err
+	}
+	triggeredBy, notes := by, ""
+	if ok {
+		blockers = nil
+	} else {
+		reasons := strings.Join(domain.BlockersToReasons(blockers), "; ")
+		if mode == CutoverGated {
+			return nil, fmt.Errorf("cannot cutover: %s", reasons)
 		}
-		return fmt.Errorf("cannot cutover: %s", strings.Join(domain.BlockersToReasons(blockers), "; "))
+		triggeredBy = by + triggeredForced
+		notes = "forced past: " + reasons
+		e.logFn("cutover: process %d changeover %d completed past its gate (%s): %s", processID, changeover.ID, by, reasons)
 	}
 	toStyleID := changeover.ToStyleID
 	// The flip goes through the shared verb (lineside_strand.go) so it
-	// strands the piles AND publishes plant.claims — Core's is_active
-	// follows within one message. Verb errors are returned: a failed write
-	// must not finalize the changeover row.
+	// strands the piles, syncs the reporting point AND publishes plant.claims.
+	// Verb errors are returned: a failed write must not finalize the row.
 	if err := e.flipActiveStyle(processID, &toStyleID); err != nil {
-		return err
+		return nil, err
 	}
-	return e.finalizeChangeoverRow(processID, changeover.ID, triggeredBy)
+	return blockers, e.finalizeChangeoverRow(processID, changeover.ID, triggeredBy, notes)
 }
 
-// finalizeChangeoverRow runs the post-gate, post-flip steps shared by
-// CompleteProcessProductionCutover and tryCompleteProcessChangeover:
-// clear target style, mark production active, sync the counter
-// reporting-point's style_id, and write the completed row.
+// finalizeChangeoverRow runs the door's post-gate, post-flip steps: clear the
+// target style, write the completed row (latched: a row another writer ended
+// is processes.ErrChangeoverEnded), close the changeover's demand episode and
+// open the post-cutover verify watch.
 //
-// Step order is load-bearing: restoreChangeoverState reads
-// (active_style, changeover.state) jointly during crash recovery and the
-// invariant it relies on is "active_style flipped ⇒ changeover writeable
-// to completed." Reordering would break that recovery contract.
-//
-// SyncProcessCounter is included here so the auto-completion path
-// (tryCompleteProcessChangeover) keeps the reporting point's style_id
-// in sync — without this, a PLC- or event-driven cutover via the auto
-// path would land with the reporting point still pointing at the
-// from-style.
-func (e *Engine) finalizeChangeoverRow(processID, changeoverID int64, triggeredBy string) error {
+// Step order is load-bearing: restoreChangeoverState reads (active_style,
+// changeover.state) jointly during crash recovery and the invariant it relies
+// on is "active_style flipped ⇒ changeover writeable to completed."
+// Reordering would break that recovery contract.
+func (e *Engine) finalizeChangeoverRow(processID, changeoverID int64, triggeredBy, notes string) error {
 	if err := e.db.SetTargetStyle(processID, nil); err != nil {
 		return err
 	}
-	if err := e.SyncProcessCounter(processID); err != nil {
-		return err
-	}
-	if err := e.db.UpdateProcessChangeoverStateWithTrigger(changeoverID, domain.ChangeoverCompleted, triggeredBy); err != nil {
+	if err := e.db.UpdateProcessChangeoverStateWithTrigger(changeoverID, domain.ChangeoverCompleted, triggeredBy, notes); err != nil {
 		return err
 	}
 	e.closeChangeoverEpisode(changeoverID, protocol.CloseReasonChangeoverComplete, protocol.ClosedByNotification)
@@ -328,55 +387,13 @@ func (e *Engine) finalizeChangeoverRow(processID, changeoverID int64, triggeredB
 	return nil
 }
 
-func (e *Engine) tryCompleteProcessChangeover(processID int64) error {
-	process, err := e.db.GetProcess(processID)
-	if err != nil {
-		return err
+// pokeCutover tells the CATID monitor something that can change its decision
+// on the process happened — a node task or order reached a terminal state, or
+// a changeover started. Zero statements: a non-blocking send the monitor
+// drains on its goroutine, dropped when the buffer is full or no monitor runs.
+func (e *Engine) pokeCutover(processID int64) {
+	select {
+	case e.cutoverPokes <- processID:
+	default:
 	}
-	changeover, err := e.db.GetActiveProcessChangeover(processID)
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil // no active changeover — nothing to complete
-	}
-	if err != nil {
-		// Real DB error (not the everyday "no active changeover"): keep the same
-		// no-op control flow, but surface it so a changeover left open by a
-		// transient read failure is diagnosable instead of silent.
-		log.Printf("changeover: get active changeover for process %d: %v", processID, err)
-		return nil
-	}
-	if process.ActiveStyleID == nil || *process.ActiveStyleID != changeover.ToStyleID {
-		return nil
-	}
-	// PARITY with the operator path: auto-confirm any linked order the fleet
-	// already delivered before evaluating the gate. completeCutover has run
-	// this pre-pass since it existed; this path never did, so an auto-cutover
-	// could hang forever on a clerical confirm no operator was looking at —
-	// two definitions of "ready" for the same gate. Errors log and defer to
-	// the next trigger rather than failing the auto path.
-	if err := e.autoConfirmDeliveredLinkedOrders(changeover.ID); err != nil {
-		log.Printf("changeover: auto-path pre-pass for changeover %d: %v", changeover.ID, err)
-		return nil
-	}
-	// Gate before the station-task force-switch. Today's auto-completion
-	// path checked node-task terminality only; the broader gate also
-	// requires linked orders to be terminal so a late-arriving order
-	// completion doesn't leave a node task stranded after the row is
-	// closed.
-	ok, _, err := e.canCompleteChangeover(changeover.ID)
-	if err != nil {
-		return err
-	}
-	if !ok {
-		return nil
-	}
-	tasks, err := e.db.ListChangeoverStationTasks(changeover.ID)
-	if err != nil {
-		return err
-	}
-	for _, task := range tasks {
-		if err := e.db.UpdateChangeoverStationTaskState(task.ID, domain.StationTaskSwitched); err != nil {
-			log.Printf("changeover: update station task state: %v", err)
-		}
-	}
-	return e.finalizeChangeoverRow(processID, changeover.ID, "auto-task-terminal")
 }

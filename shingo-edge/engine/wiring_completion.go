@@ -251,9 +251,7 @@ func applyStagedDelivery(e *Engine, ctx *orderCompletionCtx) bool {
 	if err := e.db.UpdateChangeoverNodeTaskState(ctx.nodeTask.ID, domain.NodeTaskStaged); err != nil {
 		log.Printf("update node task %d to staged: %v", ctx.nodeTask.ID, err)
 	}
-	if err := e.tryCompleteProcessChangeover(ctx.node.ProcessID); err != nil {
-		log.Printf("changeover: try-complete after staged delivery for process %d: %v", ctx.node.ProcessID, err)
-	}
+	e.pokeCutover(ctx.node.ProcessID)
 	return true
 }
 
@@ -293,9 +291,7 @@ func applyOrderBComplex(e *Engine, ctx *orderCompletionCtx) bool {
 	if err := e.db.UpdateChangeoverNodeTaskState(ctx.nodeTask.ID, domain.NodeTaskReleased); err != nil {
 		log.Printf("update node task %d to released: %v", ctx.nodeTask.ID, err)
 	}
-	if err := e.tryCompleteProcessChangeover(ctx.node.ProcessID); err != nil {
-		log.Printf("changeover: try-complete after complex Order B for process %d: %v", ctx.node.ProcessID, err)
-	}
+	e.pokeCutover(ctx.node.ProcessID)
 	return true
 }
 
@@ -352,6 +348,7 @@ func applyOrderBSimple(e *Engine, ctx *orderCompletionCtx) bool {
 	if err := e.db.UpdateChangeoverNodeTaskState(ctx.nodeTask.ID, domain.NodeTaskLineCleared); err != nil {
 		log.Printf("update node task %d to line_cleared: %v", ctx.nodeTask.ID, err)
 	}
+	e.pokeCutover(ctx.node.ProcessID)
 	return true
 }
 
@@ -459,9 +456,7 @@ func applyChangeoverRelease(e *Engine, ctx *orderCompletionCtx) bool {
 	if err := e.db.UpdateChangeoverNodeTaskState(ctx.nodeTask.ID, domain.NodeTaskReleased); err != nil {
 		log.Printf("update node task %d to released: %v", ctx.nodeTask.ID, err)
 	}
-	if err := e.tryCompleteProcessChangeover(ctx.node.ProcessID); err != nil {
-		log.Printf("changeover: try-complete after release for process %d: %v", ctx.node.ProcessID, err)
-	}
+	e.pokeCutover(ctx.node.ProcessID)
 	return true
 }
 
@@ -836,9 +831,7 @@ func (e *Engine) handleOrphanedTaskOrderCompleted(order *storeorders.Order) {
 	if err != nil {
 		return
 	}
-	if err := e.tryCompleteProcessChangeover(node.ProcessID); err != nil {
-		log.Printf("orphan: try-complete after stamp for process %d: %v", node.ProcessID, err)
-	}
+	e.pokeCutover(node.ProcessID)
 }
 
 // orderEndReasonMax bounds the reason a chip line carries.
@@ -962,9 +955,7 @@ func (e *Engine) handleNodeOrderFailed(failed OrderFailedEvent) {
 		default:
 			log.Printf("changeover: order failed for node %s, marked as error — manual retry needed", node.Name)
 		}
-		if err := e.tryCompleteProcessChangeover(node.ProcessID); err != nil {
-			log.Printf("changeover: try-complete after order-failure for process %d: %v", node.ProcessID, err)
-		}
+		e.pokeCutover(node.ProcessID)
 	}
 }
 

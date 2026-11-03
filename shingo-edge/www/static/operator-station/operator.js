@@ -425,19 +425,30 @@ function forThisStation(data) {
     return !!view && !!view.process && !!data && data.process_id === view.process.id && !onBoard();
 }
 
+// A part the open changeover's target runs is the program changing ahead of a
+// planned cutover: a plain notice of what the cutover waits on, not the red
+// wrong-part alert.
 function handleCatidMismatch(data) {
     if (!forThisStation(data)) return;
-    showAlert('catid-mismatch', 'red', 'Wrong part on ' + (data.process_name || 'the process') + ': the process reports ' +
+    const name = data.process_name || 'the process';
+    if (data.changeover_to_style) {
+        const waiting = data.waiting_on || [];
+        showAlert('catid-mismatch', 'plain', name + ' is on ' + data.changeover_to_style +
+            (waiting.length ? ', waiting on ' + waiting.join('; ') : '') + '.', [dismissButton('catid-mismatch')]);
+        return;
+    }
+    showAlert('catid-mismatch', 'red', 'Wrong part on ' + name + ': the process reports ' +
         data.live_catid + '; ' + data.style_name + ' runs ' + data.expected_catid + '.', [dismissButton('catid-mismatch')]);
 }
 
 function handleCatidChangePrompt(data) {
     if (!forThisStation(data)) return;
     showAlert('catid-change-prompt', 'plain', 'The process\'s part changed.', [
-        // Today's picker: it takes no target, so none is passed.
+        // The style the new part maps to, when exactly one does, opens on the
+        // picker; none or several open the list.
         { label: 'Start changeover', primary: true, onClick: function () {
             removeAlert('catid-change-prompt');
-            openComposerPicker();
+            openComposerPicker(data.has_target ? data.target_style_id : 0);
         } },
         dismissButton('catid-change-prompt'),
     ]);

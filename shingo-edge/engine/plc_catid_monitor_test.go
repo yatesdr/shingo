@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"shingo/protocol/testutil"
+	"shingoedge/domain"
 )
 
 func TestDeriveIdentityTag(t *testing.T) {
@@ -248,9 +249,9 @@ func setupAutoCutover(t *testing.T, mode, activeCATID, targetCATID string, withC
 		states: map[int64]*catidState{
 			processID: {processName: "PRESS-1", plcName: "plc", seenValue: true},
 		},
-		completeCutover: func(pid int64, triggeredBy string) error {
-			recorded = append(recorded, autoCutoverSpyCall{pid, triggeredBy})
-			return nil
+		completeCutover: func(pid, _ int64, by string, _ CutoverMode) ([]domain.Blocker, error) {
+			recorded = append(recorded, autoCutoverSpyCall{pid, by})
+			return nil, nil
 		},
 	}
 	eng.catidMon = mon

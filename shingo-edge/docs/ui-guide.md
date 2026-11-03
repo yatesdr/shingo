@@ -81,9 +81,9 @@ Which button is live is decided by that node's `changeover_node_tasks` state (`s
 
 **Setup Done — Release Material** releases every leg of the changeover that is holding at inbound staging, in one click, instead of one release per order from the Orders page.
 
-**Complete Cutover** is the operator's control for ending the changeover. It stays disabled until every node task is terminal; while it is disabled, a panel above the tables reads "Cutover is waiting on *N* items" and names each blocker, with the node and order id. Both conditions are checked by `canCompleteChangeover` (`shingo-edge/engine/operator_changeover_cutover.go:29-36`): every node task terminal, and every order those tasks reference terminal. There is deliberately no override — an out-of-order style flip is unrecoverable, so the panel's job is visibility, not permission.
+**Complete Cutover** is the operator's control for ending the changeover. It stays disabled until every node task is terminal; while it is disabled, a panel above the tables reads "Cutover is waiting on *N* items" and names each blocker, with the node and order id. Both conditions are checked by `canCompleteChangeover` (`shingo-edge/engine/operator_changeover_cutover.go`): every node task terminal, and every order those tasks reference terminal. The button has no override, so the panel's job is visibility, not permission. Only the admin's **Mark as running** completes past the gate, writing what it overrode on the row.
 
-The same gate also runs unattended: `tryCompleteProcessChangeover` fires on terminal-state events, so a changeover whose last node finishes while nobody is watching completes on its own. The button is the operator's path to the same check, not a separate one.
+Every completion goes through one door, `completeCutover`. A terminal-state event no longer completes a changeover by itself: it pokes the CATID monitor, which cuts over through the same gate once the PLC reports the incoming part. The button is the operator's path to the same check, not a separate one.
 
 Each station card also carries a **Complete Station** button and its own state badge (`waiting` / `in_progress` / `switched` — `shingo-edge/domain/changeover_station_state.go:19-22`).
 

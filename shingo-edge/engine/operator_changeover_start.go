@@ -568,6 +568,10 @@ func (e *Engine) StartProcessChangeover(processID, toStyleID int64, calledBy, no
 		calledBy, notes, plan.stationIDs, plan.nodeTasks, plan.participants, plan.nodes); err != nil {
 		return nil, err
 	}
+	// The row is committed: once the start returns, the CATID monitor re-decides.
+	// A program that settled before the changeover opened is cut over on this
+	// poke rather than never (the decision is not re-taken on a clock).
+	defer e.pokeCutover(processID)
 
 	// Retrieve the changeover we just created so we can link node tasks.
 	changeover, err := e.db.GetActiveProcessChangeover(processID)

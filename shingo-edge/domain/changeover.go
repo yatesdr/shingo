@@ -16,13 +16,14 @@ type Changeover struct {
 	Notes       string          `json:"notes"`
 	StartedAt   time.Time       `json:"started_at"`
 	CompletedAt *time.Time      `json:"completed_at,omitempty"`
-	// TriggeredBy records the trigger source that drove the row to its
-	// current terminal state. Empty while in_progress; one of
-	// "operator-hmi" | "plc-auto" | "auto-task-terminal" once
-	// completed/cancelled. Audit-only: differentiates operator-driven
-	// cutover from PLC-driven cutover from the B.3 auto-completion
-	// path that fires when terminal task transitions land while the
-	// gate was open.
+	// TriggeredBy records what drove the row to completed. Empty while in
+	// progress and on a cancel. "manual" is the operator's CUTOVER,
+	// "auto-catid" the CATID monitor's declaration, "admin-switch" the
+	// admin's "Mark as running" (including the record row of a switch
+	// with no changeover), "restore" the boot restore of a row flipped
+	// before a stop; a completion past a red gate appends "-forced" and
+	// writes the overridden blockers to Notes. Rows written before
+	// 2026-11 carry "operator-hmi" or "auto-task-terminal". Audit-only.
 	TriggeredBy string `json:"triggered_by,omitempty"`
 	// VerifyLiveCATID is the live PLC part id observed disagreeing with this
 	// changeover's new active style within the short window after it completed
@@ -108,12 +109,14 @@ func IsNodeTaskStateTerminal(state NodeTaskState, situation string) bool {
 // link a blocker to the tile or order it names. Exactly one of them is set,
 // matching which conjunct produced the blocker.
 //
-// Hard is DISPLAY-ONLY. There is no override — the cutover gate has no
-// operator bypass and none is planned, because an out-of-order style flip is
-// unrecoverable (see completeCutover's irreversibility comment). The flag
-// exists so the panel can distinguish "this will clear itself" from "this
-// needs you" once the gate grows a soft conjunct; today every blocker is hard.
-// Do not grow a second code path off it.
+// Hard is DISPLAY-ONLY. The operator's CUTOVER has no bypass. The door's
+// force mode (engine.CutoverForced) completes past every blocker, hard or not,
+// writes them to the row's notes, and leaves the tasks and orders they name
+// running; its callers are the admin's "Mark as running" to the open
+// changeover's target and to a third style (engine TestForceDoor_FourCallers
+// counts them). The flag exists so the panel can distinguish "this will clear
+// itself" from "this needs you" once the gate grows a soft conjunct; today
+// every blocker is hard. Do not grow a second code path off it.
 type Blocker struct {
 	Reason   string `json:"reason"`
 	NodeName string `json:"node_name,omitempty"`

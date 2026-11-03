@@ -161,8 +161,12 @@ func GetChangeoverByID(db *sql.DB, id int64) (*Changeover, error) {
 // NOT touch triggered_by — callers that record a trigger source should
 // call UpdateChangeoverStateWithTrigger.
 func UpdateChangeoverState(db *sql.DB, id int64, state domain.ChangeoverState) error {
-	return UpdateChangeoverStateWithTrigger(db, id, state, "")
+	return UpdateChangeoverStateWithTrigger(db, id, state, "", "")
 }
+
+// ErrChangeoverEnded is a terminal write to a changeover that has already
+// ended: nothing was written.
+var ErrChangeoverEnded = errors.New("the changeover has already ended")
 
 // UpdateChangeoverStateWithTrigger writes the state and (when
 // non-empty) the triggered_by audit field together. Empty triggeredBy
@@ -179,29 +183,58 @@ func UpdateChangeoverState(db *sql.DB, id int64, state domain.ChangeoverState) e
 // would have two closes and no defined ending. The guard makes the revival
 // impossible rather than merely unlikely.
 //
-// Terminal transitions are still allowed from any state (a cancel must always
-// land), and re-writing the SAME terminal state is a no-op rather than an
-// error, so an idempotent completion path keeps working.
-func UpdateChangeoverStateWithTrigger(db *sql.DB, id int64, state domain.ChangeoverState, triggeredBy string) error {
+// THE TERMINAL WRITE IS LATCHED. A terminal target is written only to a row
+// that has not ended, and a write that finds the row ended writes nothing and
+// returns ErrChangeoverEnded: a second completion cannot rewrite completed_at
+// or triggered_by, and a cancel cannot overwrite a completed row
+// (TestDoor_TerminalWriteLatchedForCompleteAndCancel). A non-terminal write to
+// an ended row is the silent no-op it always was.
+//
+// notes, when non-empty, is appended to the row's notes (the start's own notes
+// stay): the door writes the blockers a forced completion overrode there.
+func UpdateChangeoverStateWithTrigger(db *sql.DB, id int64, state domain.ChangeoverState, triggeredBy, notes string) error {
 	completedAt := sql.NullString{}
 	if state.IsTerminal() {
 		completedAt = sql.NullString{Valid: true, String: clock.Now().UTC().Format(helpers.TimeLayout)}
 	}
 	now := clock.Now().UTC().Format(helpers.TimeLayout)
 
-	// The guard is on the ROW's current state, not the target: a non-terminal
-	// target may only be written to a row that is not already finished.
-	guard := ``
-	if !state.IsTerminal() {
-		guard = ` AND completed_at IS NULL`
-	}
-	_, err := db.Exec(`UPDATE process_changeovers SET state=?,
+	res, err := db.Exec(`UPDATE process_changeovers SET state=?,
 		completed_at=CASE WHEN ? != '' THEN ? ELSE completed_at END,
 		triggered_by=CASE WHEN ? != '' THEN ? ELSE triggered_by END,
-		updated_at=? WHERE id=?`+guard,
+		notes=CASE WHEN ? = '' THEN notes WHEN notes = '' THEN ? ELSE notes || '; ' || ? END,
+		updated_at=? WHERE id=? AND completed_at IS NULL`,
 		state, completedAt.String, completedAt.String,
-		triggeredBy, triggeredBy, now, id)
-	return err
+		triggeredBy, triggeredBy, notes, notes, notes, now, id)
+	if err != nil {
+		return err
+	}
+	if !state.IsTerminal() {
+		return nil
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return ErrChangeoverEnded
+	}
+	return nil
+}
+
+// InsertCompletedChangeover records a style switch that ran no changeover: a
+// row born completed (started_at = completed_at), with no node tasks, orders
+// or demand episode. The admin switch with no changeover open and the
+// admin's switch to a third style write one, so every switch leaves a trace.
+func InsertCompletedChangeover(db *sql.DB, processID int64, fromStyleID *int64, toStyleID int64, calledBy, triggeredBy, notes string) (int64, error) {
+	now := clock.Now().UTC().Format(helpers.TimeLayout)
+	res, err := db.Exec(`INSERT INTO process_changeovers (process_id, from_style_id, to_style_id, state, called_by, notes,
+		started_at, completed_at, triggered_by, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		processID, fromStyleID, toStyleID, domain.ChangeoverCompleted, calledBy, notes, now, now, triggeredBy, now)
+	if err != nil {
+		return 0, err
+	}
+	return res.LastInsertId()
 }
 
 // SetChangeoverVerifyMismatch records (or clears, when liveCATID is empty) the

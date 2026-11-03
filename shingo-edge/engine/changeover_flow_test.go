@@ -296,7 +296,7 @@ func TestChangeoverFlow_MultiNode(t *testing.T) {
 		t.Errorf("NODE-SWAP after both orders complete: state=%s, want released", swapTask.State)
 	}
 
-	// Switch swap node → verify tryComplete is blocked (drop/add not done)
+	// Switch swap node → verify the changeover stays open (drop/add not done)
 	eng.SwitchNodeToTarget(processID, nodes["NODE-SWAP"])
 	// Changeover should NOT complete yet (other nodes still pending)
 	co, _ := db.GetActiveProcessChangeover(processID)
@@ -601,12 +601,10 @@ func TestChangeoverFlow_PartialCompletion(t *testing.T) {
 	db.UpdateOrderStatus(obC.ID, string(orders.StatusFailed))
 	emitOrderFailed(eng, obC.ID, obC.UUID, obC.OrderType, "C failed")
 
-	// tryCompleteProcessChangeover is only triggered via SwitchNodeToTarget.
-	// CompleteProcessProductionCutover is the escape hatch that bypasses node
-	// task state checks. Verify the gate works: after switching A+B,
-	// tryComplete fires but blocks because node C is still in "error".
-	// (ActiveStyleID won't match ToStyleID until cutover, so tryComplete
-	// returns early — node C error is a secondary blocker documented here.)
+	// SwitchNodeToTarget only pokes the CATID monitor; nothing completes the
+	// changeover until the door runs (CompleteProcessProductionCutover, the
+	// monitor's fire, the admin switch). Node C's error is a blocker the gate
+	// would name.
 	co, _ := db.GetActiveProcessChangeover(processID)
 	if co == nil {
 		t.Error("expected changeover to still be active — cutover not yet called")
@@ -643,8 +641,8 @@ func TestChangeoverFlow_CutoverCompletion(t *testing.T) {
 		t.Fatalf("expected released, got %s", task.State)
 	}
 
-	// Switch node to target — tryComplete fires but ActiveStyleID doesn't
-	// match ToStyleID yet (set by cutover). So changeover stays active.
+	// Switch node to target — it pokes the monitor, and the changeover stays
+	// active until the cutover.
 	eng.SwitchNodeToTarget(processID, nodeID)
 
 	// Now call cutover — this sets ActiveStyleID, clears TargetStyleID,

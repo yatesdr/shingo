@@ -287,6 +287,16 @@ test('setup off: a style tapped is the confirm, and Start is the start alone', a
     expectIn('started', 'Changeover started', r.after);
     expectIn('started', 'B-RUN.', r.after);
 });
+test('the CATID prompt opens on the style its part maps to; one the view lacks opens the list', async () => {
+    UI.close();
+    UI.openPicker(viewWith(false), 2);
+    await settle();
+    expectIn('a target', 'Change over to B-RUN?', html());
+    UI.close();
+    UI.openPicker(viewWith(false), 99);
+    await settle();
+    expectIn('no such target', 'data-act="saved" data-style="2"', box());
+});
 test('setup off: Back from the confirm is the style list', async () => {
     await open({ part_rows: ROWS, presets: [ONE] }, false);
     tap('saved', { style: '2' });

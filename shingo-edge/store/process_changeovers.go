@@ -68,11 +68,18 @@ func (db *DB) LatestFlaggedChangeover(processID int64) (*processes.Changeover, e
 }
 
 // UpdateProcessChangeoverStateWithTrigger changes the state and records
-// the trigger source ("operator-hmi" | "plc-auto" | "auto-task-terminal")
-// on a process_changeover. Empty triggeredBy preserves the existing
-// audit value, so multi-step finalize paths don't blank it out.
-func (db *DB) UpdateProcessChangeoverStateWithTrigger(id int64, state domain.ChangeoverState, triggeredBy string) error {
-	return processes.UpdateChangeoverStateWithTrigger(db.DB, id, state, triggeredBy)
+// the trigger source (domain.Changeover.TriggeredBy) on a
+// process_changeover, appending notes when non-empty. Empty triggeredBy
+// preserves the existing audit value. A terminal write to an ended row is
+// processes.ErrChangeoverEnded.
+func (db *DB) UpdateProcessChangeoverStateWithTrigger(id int64, state domain.ChangeoverState, triggeredBy, notes string) error {
+	return processes.UpdateChangeoverStateWithTrigger(db.DB, id, state, triggeredBy, notes)
+}
+
+// InsertCompletedChangeover records a style switch that ran no changeover
+// (processes.InsertCompletedChangeover).
+func (db *DB) InsertCompletedChangeover(processID int64, fromStyleID *int64, toStyleID int64, calledBy, triggeredBy, notes string) (int64, error) {
+	return processes.InsertCompletedChangeover(db.DB, processID, fromStyleID, toStyleID, calledBy, triggeredBy, notes)
 }
 
 // ListChangeoverStationTasks returns every changeover_station_task

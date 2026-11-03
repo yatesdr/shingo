@@ -18,6 +18,7 @@ import (
 	"strings"
 
 	"shingo/protocol"
+	"shingoedge/domain"
 	"shingoedge/store/processes"
 )
 
@@ -155,6 +156,26 @@ func (e *Engine) cutoverCATIDSets(proc *processes.Process, targetStyleID int64) 
 		}
 	}
 	return out, in
+}
+
+// plannedChangeoverTo names the open changeover's target style when its CATID
+// set holds v — the program changed ahead of a planned cutover — with the
+// gate's blockers as they stand. ("", nil) when no changeover is open or its
+// target does not run v.
+func (e *Engine) plannedChangeoverTo(processID int64, v string) (string, []string) {
+	co, err := e.db.GetActiveProcessChangeover(processID)
+	if err != nil || co == nil {
+		return "", nil
+	}
+	style, err := e.db.GetStyle(co.ToStyleID)
+	if err != nil || style == nil || !catidSetHas(e.styleCATIDSet(style), v) {
+		return "", nil
+	}
+	_, blockers, err := e.canCompleteChangeover(co.ID)
+	if err != nil {
+		return style.Name, []string{"the gate could not be read"}
+	}
+	return style.Name, domain.BlockersToReasons(blockers)
 }
 
 // catidSetHas reports membership.

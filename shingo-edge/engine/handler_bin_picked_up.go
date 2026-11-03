@@ -169,6 +169,7 @@ func (e *Engine) HandleBinPickedUpMessage(bp protocol.BinPickedUp) {
 			if err := e.db.UpdateChangeoverNodeTaskState(task.ID, domain.NodeTaskLineCleared); err != nil {
 				e.logFn("bin_picked_up: advance drop task %d to line_cleared: %v", task.ID, err)
 			}
+			e.pokeCutover(node.ProcessID)
 		}
 	}
 

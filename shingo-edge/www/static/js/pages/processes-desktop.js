@@ -5778,12 +5778,7 @@ function styleAction(act, id) {
         // exactly what it does — because the old verb read like an instruction
         // to the cell, and this one is an admin correction to shingo's record.
         case 'running':
-            openSheet('Mark ' + st.name + ' as running?',
-                'No robots move — this tells shingo what the cell is already running.',
-                '<p class="pd-note">Use this when the plant changed parts without shingo. To change ' +
-                'parts WITH shingo, start a changeover from the operator screen.</p>',
-                'Mark as running', () => sheetSubmit('PUT', '/api/processes/' + S.processID + '/active-style',
-                    B().processActiveStyle(id), refreshProcess));
+            openRunningSheet(st, id);
             return;
         case 'delete':
             openSheet('Delete ' + st.name + '?', 'its flow goes with it.',
@@ -5793,6 +5788,34 @@ function styleAction(act, id) {
             return;
         default: return;
     }
+}
+
+// "Mark as running" is the admin's style switch. With a changeover open it
+// completes that changeover now — to its target, then to this style when this
+// is a third — past whatever the cutover still waits on, and leaves every robot
+// already moving to finish its trip. The sheet names what is in flight first.
+async function openRunningSheet(st, id) {
+    const p = process();
+    let inFlight = '';
+    if (p && p.target_style_id && p.target_style_id !== p.active_style_id) {
+        const target = styleByID(p.target_style_id);
+        let waiting = [];
+        try {
+            const res = await fetch('/api/processes/' + S.processID + '/changeover/gate-status', { cache: 'no-store' });
+            if (res.ok) waiting = ((await res.json()).blockers || []).map(b => b.reason);
+        } catch (e) { /* the sheet still says a changeover is open */ }
+        const how = id === p.target_style_id ? 'completes it now'
+            : 'completes it to ' + target.name + ' and then switches to ' + st.name;
+        inFlight = '<p class="pd-note">A changeover to ' + esc(target.name) + ' is open. Marking ' + esc(st.name) +
+            ' as running ' + esc(how) + (waiting.length ? ', past: ' + esc(waiting.join('; ')) +
+            '. Robots already moving finish their trips' : '') + '.</p>';
+    }
+    openSheet('Mark ' + st.name + ' as running?',
+        "Robots may move within a minute for the new style's levels and kept spots.",
+        inFlight + '<p class="pd-note">Use this when the plant changed parts without shingo. To change ' +
+        'parts WITH shingo, start a changeover from the operator screen.</p>',
+        'Mark as running', () => sheetSubmit('PUT', '/api/processes/' + S.processID + '/active-style',
+            B().processActiveStyle(id), refreshProcess));
 }
 
 // After any write that changes what a screen shows: re-read the process list

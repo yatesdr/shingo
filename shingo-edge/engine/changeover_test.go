@@ -430,7 +430,7 @@ func TestChangeover_EmptyCompletion(t *testing.T) {
 }
 
 // TestChangeover_ReleaseCompletion verifies that when a release order completes,
-// the node task state advances to released and tryCompleteProcessChangeover fires.
+// the node task state advances to released and the CATID monitor is poked.
 func TestChangeover_ReleaseCompletion(t *testing.T) {
 	t.Parallel()
 	db := testEngineDB(t)
@@ -528,7 +528,7 @@ func TestChangeover_FullLifecycle(t *testing.T) {
 		t.Fatalf("expected switched, got %s", task.State)
 	}
 
-	// Complete the cutover (sets active_style_id, which is required for tryCompleteProcessChangeover)
+	// Complete the cutover through the door (sets active_style_id)
 	testutil.MustNoErr(t, eng.CompleteProcessProductionCutover(processID), "cutover")
 
 	// Verify changeover completed

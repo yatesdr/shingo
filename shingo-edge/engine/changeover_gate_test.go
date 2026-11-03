@@ -96,48 +96,6 @@ func TestChangeover_PrematureComplete_OrdersInFlight_IsBlocked(t *testing.T) {
 	}
 }
 
-// TestChangeover_AutoCompleteFiresOnTerminalTransition pins the B.3
-// auto-completion trigger plumbing. After the operator-driven cutover
-// has flipped active_style_id but failed the gate (tasks non-terminal),
-// the subsequent order-completion handler that drives the last task to
-// released must fire tryCompleteProcessChangeover so the row advances
-// without operator intervention.
-func TestChangeover_AutoCompleteFiresOnTerminalTransition(t *testing.T) {
-	t.Parallel()
-	db := testEngineDB(t)
-	processID, nodeID, _, toStyleID := seedPhase3SwapScenario(t, db)
-	eng := testEngine(t, db)
-	eng.wireEventHandlers()
-
-	changeover, _ := startChangeover(t, eng, db, processID, toStyleID)
-	task, _ := db.GetChangeoverNodeTaskByNode(changeover.ID, nodeID)
-
-	// Simulate the operator having set active_style_id to to-style. In
-	// the real flow this happens at the top of CompleteProcessProductionCutover
-	// before the gate runs (the function flips active style first); the
-	// gate then blocks completion. Simulate by setting active style
-	// directly so tryCompleteProcessChangeover's first precondition holds.
-	testutil.MustNoErr(t, db.SetActiveStyle(processID, &toStyleID), "set active style")
-
-	// Drive both linked orders to terminal so the gate's order check
-	// passes. Then fire EventOrderCompleted for the release order — that
-	// handler stamps the task to released and (per B.3) fires tryComplete.
-	for _, orderIDPtr := range []*int64{task.NextMaterialOrderID, task.OldMaterialReleaseOrderID} {
-		if orderIDPtr == nil {
-			continue
-		}
-		markOrderTerminal(db, *orderIDPtr)
-	}
-	releaseOrderID := *task.OldMaterialReleaseOrderID
-	releaseOrder, _ := db.GetOrder(releaseOrderID)
-	emitOrderCompleted(eng, releaseOrderID, releaseOrder.UUID, releaseOrder.OrderType, &nodeID)
-
-	co, _ := db.GetActiveProcessChangeover(processID)
-	if co != nil {
-		t.Fatalf("expected changeover to auto-complete after terminal transition, got state=%s", co.State)
-	}
-}
-
 // TestChangeover_OrphanCancelStampsTask pins the orphan-cancellation
 // handler. When a linked order transitions to StatusCancelled outside
 // cancelProcessChangeoverInternal — e.g. via the operator's per-order

@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"shingoedge/domain"
+	"shingoedge/engine"
 )
 
 // --- Processes Admin ---
@@ -245,12 +246,16 @@ func (h *Handlers) apiSetActiveStyle(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	// The engine dispatches the switch by the process's changeover state and
+	// syncs the reporting point inside the flip (admin_style_switch.go). A
+	// switch refused because of that state is a conflict, not a fault.
 	if err := h.orchestration.SetProcessActiveStyle(id, req.StyleID); err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	if err := h.orchestration.SyncProcessCounter(id); err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		status := http.StatusInternalServerError
+		var refused *engine.SwitchRefused
+		if errors.As(err, &refused) {
+			status = http.StatusConflict
+		}
+		writeError(w, status, err.Error())
 		return
 	}
 	h.requestBackup("active-style-updated")

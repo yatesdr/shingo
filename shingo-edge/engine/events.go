@@ -5,6 +5,7 @@ import (
 
 	"shingo/protocol"
 	"shingo/protocol/eventbus"
+	"shingoedge/domain"
 )
 
 // EventType identifies the kind of event emitted by the Engine.
@@ -416,15 +417,23 @@ type UOPAdjustedEvent struct {
 // the operator station and greppable in the journal via its "CATID mismatch:"
 // log line. Purely informational — the relief block is enforced on the request
 // path by guardCatidMismatch.
+//
+// ChangeoverToStyle is set when the live part is one the open changeover's
+// target runs: the program changed ahead of the cutover, as it does at every
+// planned changeover. The station shows a plain "on <style>, waiting on …"
+// notice for it instead of the red wrong-part alert; WaitingOn is the gate's
+// blockers at the confirm.
 type CATIDMismatchEvent struct {
 	eventbus.PayloadBase
-	ProcessID     int64  `json:"process_id"`
-	ProcessName   string `json:"process_name"`
-	PLCName       string `json:"plc_name"`
-	StyleID       int64  `json:"style_id"`
-	StyleName     string `json:"style_name"`
-	LiveCATID     string `json:"live_catid"`
-	ExpectedCATID string `json:"expected_catid"`
+	ProcessID         int64    `json:"process_id"`
+	ProcessName       string   `json:"process_name"`
+	PLCName           string   `json:"plc_name"`
+	StyleID           int64    `json:"style_id"`
+	StyleName         string   `json:"style_name"`
+	LiveCATID         string   `json:"live_catid"`
+	ExpectedCATID     string   `json:"expected_catid"`
+	ChangeoverToStyle string   `json:"changeover_to_style,omitempty"`
+	WaitingOn         []string `json:"waiting_on,omitempty"`
 }
 
 // CATIDChangePromptEvent asks the operator to start a changeover after the
@@ -459,12 +468,18 @@ type CATIDCandidate struct {
 // told shingo yet. Carries no style: whether the new active style actually
 // matches the press is decided afterwards by the post-cutover verification
 // watch, which raises its own flag when it does not.
+//
+// Forced and Blockers are the record of a completion past a red gate: the
+// blockers the door overrode (also on the row's notes). Forced is false and
+// Blockers empty for a gated completion.
 type CATIDAutoCutoverEvent struct {
 	eventbus.PayloadBase
-	ProcessID    int64  `json:"process_id"`
-	ProcessName  string `json:"process_name"`
-	ChangeoverID int64  `json:"changeover_id"`
-	NewCATID     string `json:"new_catid"`
+	ProcessID    int64            `json:"process_id"`
+	ProcessName  string           `json:"process_name"`
+	ChangeoverID int64            `json:"changeover_id"`
+	NewCATID     string           `json:"new_catid"`
+	Forced       bool             `json:"forced"`
+	Blockers     []domain.Blocker `json:"blockers,omitempty"`
 }
 
 // CATIDVerifyMismatchEvent carries a post-cutover verification flag: after the

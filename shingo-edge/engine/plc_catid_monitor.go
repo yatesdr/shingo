@@ -25,6 +25,9 @@ import (
 const (
 	autoArmStableReads  = 3
 	autoArmStableWindow = 60 * time.Second
+	// cutoverRetryInterval is how often a refused auto-cutover is decided again
+	// with no poke. A poke re-decides at once.
+	cutoverRetryInterval = time.Minute
 )
 
 // autoCutoverIntent is the deferred auto-cutover decision collected under cm.mu
@@ -38,6 +41,8 @@ type autoCutoverIntent struct {
 	// mode is the process's auto-arm mode at the decision. Only auto calls the
 	// door; prompt and off log what auto would have done.
 	mode string
+	// decidedAt is the tick the decision was taken on; a refusal is dated by it.
+	decidedAt time.Time
 }
 
 // PLC part-identity (CATID) monitor — the A5 guard's data source.
@@ -78,13 +83,20 @@ type catidState struct {
 	pendingSince *time.Time
 	// Auto-arm stability tracker (B1). armCandidate is the debounced value being
 	// watched for stability; armCount is how many consecutive ticks it has held;
-	// armFirstSeen is when it first appeared; armHandled is set once the arm/no-arm
-	// decision has been made for the current candidate, so we neither re-fire nor
-	// re-log. Any value change, unreadable/zero read resets it (resetArm).
+	// armFirstSeen is when it first appeared. Any value change, unreadable read
+	// or value that names no part resets it (resetArm).
+	//
+	// armDecided is set once a decision has been taken on the stable candidate.
+	// It is taken again on a poke (poked: a terminal transition or a changeover
+	// start on the process), and, when the door refused it (armRefusedAt),
+	// at most once per cutoverRetryInterval. A predicate-false decision has no
+	// clock: the pokes cover what could change it.
 	armCandidate string
 	armCount     int
 	armFirstSeen time.Time
-	armHandled   bool
+	armDecided   bool
+	armRefusedAt time.Time
+	poked        bool
 }
 
 // resetArm clears the auto-arm stability tracker. Called on any value change,
@@ -93,7 +105,18 @@ func (st *catidState) resetArm() {
 	st.armCandidate = ""
 	st.armCount = 0
 	st.armFirstSeen = time.Time{}
-	st.armHandled = false
+	st.armDecided = false
+	st.armRefusedAt = time.Time{}
+	st.poked = false
+}
+
+// redecide reports whether a stable candidate's decision is to be taken (again)
+// at now.
+func (st *catidState) redecide(now time.Time) bool {
+	if !st.armDecided || st.poked {
+		return true
+	}
+	return !st.armRefusedAt.IsZero() && now.Sub(st.armRefusedAt) >= cutoverRetryInterval
 }
 
 // postCutoverVerify is an open post-cutover verification watch for one process:
@@ -119,7 +142,7 @@ type catidMonitor struct {
 	// completeCutover is the seam for the auto-cutover fire, defaulting to
 	// eng.completeCutover (wired in startCatidMonitor); tests inject a spy.
 	// Invoked OUTSIDE cm.mu — gate/DB/Core work must not run under the tick lock.
-	completeCutover func(processID int64, triggeredBy string) error
+	completeCutover func(processID, changeoverID int64, by string, mode CutoverMode) ([]domain.Blocker, error)
 }
 
 // startCatidMonitor primes per-process state from the database (every
@@ -181,7 +204,18 @@ func (cm *catidMonitor) run() {
 			return
 		case <-ticker.C:
 			cm.tick(time.Now())
+		case pid := <-cm.eng.cutoverPokes:
+			cm.notePoke(pid)
 		}
+	}
+}
+
+// notePoke marks the process's decision to be taken again on the next tick.
+func (cm *catidMonitor) notePoke(processID int64) {
+	cm.mu.Lock()
+	defer cm.mu.Unlock()
+	if st, ok := cm.states[processID]; ok {
+		st.poked = true
 	}
 }
 
@@ -373,16 +407,19 @@ func (cm *catidMonitor) onConfirmedCATID(processID int64, st *catidState, isChan
 	// part is NONE of them (not just != a single value — a two-position style runs
 	// two parts, and either side is fine). Empty set = inert (never alert).
 	if ok && len(set) > 0 && !catidSetHas(set, st.lastConfirmed) {
+		toStyle, waiting := cm.eng.plannedChangeoverTo(processID, st.lastConfirmed)
 		log.Printf("CATID mismatch: process %s (process %d) live CATID %q not among active style %q parts {%s} — outgoing-style relief is blocked",
 			st.processName, processID, st.lastConfirmed, styleName, formatCATIDSet(set))
 		cm.eng.Events.Emit(Event{Type: EventCATIDMismatch, Payload: CATIDMismatchEvent{
-			ProcessID:     processID,
-			ProcessName:   st.processName,
-			PLCName:       st.plcName,
-			StyleID:       styleID,
-			StyleName:     styleName,
-			LiveCATID:     st.lastConfirmed,
-			ExpectedCATID: formatCATIDSet(set),
+			ProcessID:         processID,
+			ProcessName:       st.processName,
+			PLCName:           st.plcName,
+			StyleID:           styleID,
+			StyleName:         styleName,
+			LiveCATID:         st.lastConfirmed,
+			ExpectedCATID:     formatCATIDSet(set),
+			ChangeoverToStyle: toStyle,
+			WaitingOn:         waiting,
 		}})
 	}
 	// B1: on an actual CHANGE of the physical part (not the first-read baseline),
@@ -396,7 +433,8 @@ func (cm *catidMonitor) onConfirmedCATID(processID int64, st *catidState, isChan
 // raiseCATIDChangePrompt emits EventCATIDChangePrompt after the press's part
 // changed, pre-filling the target style when the new CATID maps to a known
 // style's expected_catid. B1 PROMPT half only: it never starts the changeover —
-// the operator confirms through the existing Start Changeover flow. Called with
+// the operator confirms through the existing Start Changeover flow. Only while
+// no changeover is open (TestPrompt_OnlyWhenNoChangeoverOpen). Called with
 // cm.mu held.
 //
 // Suppressed when the new part matches the already-active style's expected_catid
@@ -404,6 +442,11 @@ func (cm *catidMonitor) onConfirmedCATID(processID int64, st *catidState, isChan
 // pending one), so a change that RESOLVES a mismatch does not nag the operator
 // to change to the style they are already running.
 func (cm *catidMonitor) raiseCATIDChangePrompt(processID int64, st *catidState) {
+	// The prompt offers to START a changeover: with one already open the start
+	// path would refuse it, and the cutover is the monitor's or the operator's.
+	if co, err := cm.eng.db.GetActiveProcessChangeover(processID); err == nil && co != nil {
+		return
+	}
 	newCATID := st.lastConfirmed
 	// Suppress when the new part already belongs to the active style's set (a
 	// completed cutover, not a pending one — the line is already correct).
@@ -465,19 +508,23 @@ func (cm *catidMonitor) evaluateAutoArm(processID int64, st *catidState, ok bool
 		st.armCandidate = v
 		st.armCount = 1
 		st.armFirstSeen = now
-		st.armHandled = false
+		st.armDecided, st.armRefusedAt, st.poked = false, time.Time{}, false
 		return nil
 	}
 	st.armCount++
-	if st.armHandled {
-		return nil // decision already made for this stable candidate
-	}
 	// Require BOTH >=3 consecutive confirmed reads AND >=60s since first seen.
 	if st.armCount < autoArmStableReads || now.Sub(st.armFirstSeen) < autoArmStableWindow {
 		return nil
 	}
-	st.armHandled = true // decide (arm or skip) exactly once per stable candidate
-	return cm.decideAutoArm(processID, st, v)
+	if !st.redecide(now) {
+		return nil
+	}
+	st.armDecided, st.poked, st.armRefusedAt = true, false, time.Time{}
+	intent := cm.decideAutoArm(processID, st, v)
+	if intent != nil {
+		intent.decidedAt = now
+	}
+	return intent
 }
 
 // decideAutoArm makes the auto-cutover decision once a value is stable: a
@@ -564,14 +611,16 @@ func (cm *catidMonitor) fireAutoCutover(in autoCutoverIntent) {
 	if complete == nil {
 		complete = cm.eng.completeCutover
 	}
-	// completeCutover runs canCompleteChangeover first, which refuses while any
-	// node task is non-terminal or an order is still placing a bin at a
-	// participant node. That gate IS the "has the material actually landed"
-	// check: an error here is the normal "not finished yet" answer, not a
-	// fault, so it stays a log line.
-	if err := complete(in.processID, "auto-catid"); err != nil {
+	// The door runs canCompleteChangeover first, which refuses while any node
+	// task is non-terminal or an order is still placing a bin at a participant
+	// node. That gate IS the "has the material actually landed" check: a
+	// refusal is the normal "not finished yet" answer, not a fault. It is
+	// decided again on the process's next poke, or within a minute.
+	blockers, err := complete(in.processID, in.changeoverID, triggeredAutoCATID, CutoverGated)
+	if err != nil {
 		cm.eng.logFn("plc-catid: process %s changeover %d: predicate held on CATID %s, waiting on %v, mode=%s — not cut over",
 			in.processName, in.changeoverID, in.catid, err, in.mode)
+		cm.noteRefusal(in)
 		return
 	}
 	cm.eng.logFn("plc-catid: process %s changeover %d: predicate held on CATID %s, gate green, mode=%s — cut over",
@@ -581,7 +630,19 @@ func (cm *catidMonitor) fireAutoCutover(in autoCutoverIntent) {
 		ProcessName:  in.processName,
 		ChangeoverID: in.changeoverID,
 		NewCATID:     in.catid,
+		Forced:       len(blockers) > 0,
+		Blockers:     blockers,
 	}})
+}
+
+// noteRefusal dates the door's refusal of an intent on the process's state,
+// when the candidate is still the one decided: the clock half of the retry.
+func (cm *catidMonitor) noteRefusal(in autoCutoverIntent) {
+	cm.mu.Lock()
+	defer cm.mu.Unlock()
+	if st, ok := cm.states[in.processID]; ok && st.armCandidate == in.catid {
+		st.armRefusedAt = in.decidedAt
+	}
 }
 
 // processChangeoverAutoArm returns the process's normalized CATID auto-arm mode

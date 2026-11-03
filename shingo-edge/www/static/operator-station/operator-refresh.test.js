@@ -286,6 +286,7 @@ let reloads = 0;
 
 const toasts = [];
 let composerOpens = 0;
+let composerTarget = null;
 const ctx = vm.createContext({
     console, JSON, Math, Number, Array, Object, String, Promise, Error, RegExp, Map, Set,
     parseInt, isNaN, encodeURIComponent, decodeURIComponent, AbortController,
@@ -303,7 +304,7 @@ const ctx = vm.createContext({
     serverNow: () => now,
     formatClock: (iso) => String(iso),
     mountFlowPanel() {}, openFlowPanel() {}, syncFlowPanel() {},
-    ensureComposer: async () => ({ openPicker() { composerOpens++; } }),
+    ensureComposer: async () => ({ openPicker(v, target) { composerOpens++; composerTarget = target; } }),
     openKeypad() {},
 });
 ctx.globalThis = ctx;
@@ -737,6 +738,12 @@ eq(['order-update', 'bins', 'supply-refusal', 'sourcing', 'containment', 'materi
     eq(alerts().length, 1, 'the alert stays until dismissed');
     await tapAlert('Dismiss');
     eq(alerts().length, 0, 'Dismiss takes it off this screen');
+    fire('catid-mismatch', Object.assign({}, mismatch, { live_catid: 'CAT-2', changeover_to_style: 'STYLE-2',
+        waiting_on: ['task at node N1 in staging_requested'] }));
+    await advance(600);
+    eq(alertTexts(), ['PRESS-1 is on STYLE-2, waiting on task at node N1 in staging_requested.'],
+        'a part the open changeover\'s target runs: what the cutover waits on, not a wrong part');
+    await tapAlert('Dismiss');
 
     fire('catid-change-prompt', { process_id: 1, process_name: 'PRESS-1', plc_name: 'PLC-1', new_catid: 'CAT-2',
         has_target: true, target_style_id: 12, target_style_name: 'STYLE-2' });
@@ -744,7 +751,8 @@ eq(['order-update', 'bins', 'supply-refusal', 'sourcing', 'containment', 'materi
     eq(alertTexts(), ['The process\'s part changed.'], 'the change prompt says the part changed');
     composerOpens = 0;
     await tapAlert('Start changeover');
-    eq([composerOpens, alerts().length], [1, 0], 'Start changeover opens today\'s picker, with no target, and the prompt goes');
+    eq([composerOpens, composerTarget, alerts().length], [1, 12, 0],
+        'Start changeover opens the picker on the one style the new part maps to, and the prompt goes');
     fire('catid-change-prompt', { process_id: 1, process_name: 'PRESS-1', new_catid: 'CAT-2' });
     await advance(600);
     await tapAlert('Dismiss');

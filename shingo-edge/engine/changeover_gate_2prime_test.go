@@ -135,11 +135,12 @@ func TestGate2Prime_UnreadableStepsFailClosed(t *testing.T) {
 	}
 }
 
-// TestTryComplete_AutoPathRunsTheConfirmPrePass is the parity fix: a DELIVERED
-// but unconfirmed placing leg must not hang the automatic cutover when the
-// operator path would have auto-confirmed it. One gate, one definition of
+// TestRestore_FlippedRowRunsTheConfirmPrePass is the parity fix: a DELIVERED
+// but unconfirmed placing leg must not hang a completion the operator path
+// would have auto-confirmed. Every completion goes through the door, so the
+// restore of a flipped row runs the same pre-pass. One gate, one definition of
 // ready.
-func TestTryComplete_AutoPathRunsTheConfirmPrePass(t *testing.T) {
+func TestRestore_FlippedRowRunsTheConfirmPrePass(t *testing.T) {
 	t.Parallel()
 	db := testEngineDB(t)
 	eng := testEngine(t, db)
@@ -151,20 +152,17 @@ func TestTryComplete_AutoPathRunsTheConfirmPrePass(t *testing.T) {
 		`[{"action":"pickup","node":"MARKET-X"},{"action":"dropoff","node":"P3-NODE"}]`), "placing steps")
 	testutil.MustNoErr(t, db.UpdateOrderStatus(evacID, string(orders.StatusDelivered)), "delivered")
 
-	// tryComplete's trigger precondition: the per-node switches have already
-	// flipped the active style to the to-style; the auto path then closes the
-	// row. Simulate that flip.
+	// The restore's precondition: the door flipped the active style to the
+	// to-style and the Edge stopped before it finalized. Simulate that flip.
 	co, err := db.GetActiveProcessChangeover(processID)
 	if err != nil {
 		t.Fatalf("get changeover: %v", err)
 	}
 	testutil.MustNoErr(t, db.SetActiveStyle(processID, &co.ToStyleID), "flip active style")
 
-	if err := eng.tryCompleteProcessChangeover(processID); err != nil {
-		t.Fatalf("tryComplete: %v", err)
-	}
+	eng.restoreChangeoverState()
 	if still, _ := db.GetActiveProcessChangeover(processID); still != nil {
-		t.Errorf("auto path left the changeover open on a delivered-unconfirmed leg (state %q) — parity with the operator pre-pass lost", still.State)
+		t.Errorf("the restore left the changeover open on a delivered-unconfirmed leg (state %q) — parity with the operator pre-pass lost", still.State)
 	}
 	got, _ := db.GetOrder(evacID)
 	if got.Status != orders.StatusConfirmed {

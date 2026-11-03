@@ -93,8 +93,6 @@ func (e *Engine) AbandonChangeoverSupply(processID, processNodeID int64, acceptH
 	log.Printf("changeover abandon: process=%d node=%s supply=%d accept_half=%t by=%s",
 		processID, task.NodeName, supply.ID, acceptHalf, calledBy)
 
-	if err := e.tryCompleteProcessChangeover(processID); err != nil {
-		log.Printf("changeover: try-complete after abandon for process %d: %v", processID, err)
-	}
+	e.pokeCutover(processID)
 	return nil
 }

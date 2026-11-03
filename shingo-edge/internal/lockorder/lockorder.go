@@ -9,6 +9,7 @@
 // The outer locks, in order (each may be held while taking any below it):
 //
 //	ConfigSave     a config save                       config/config.go
+//	Cutover        the changeover door                  engine/operator_changeover_cutover.go
 //	Node           a release act's process nodes, by id   engine/release_act.go
 //	Prime          a keep-staged cell, by core node     engine/operator_produce.go
 //	CATIDMonitor   the style changeover monitor         engine/plc_catid_monitor.go
@@ -16,6 +17,10 @@
 //	UOPFlush, UOPBin, UOPBucket   the unit accumulator  uop/accumulator.go
 //	PLCManager, ManagedPLC        the PLCs              plc/manager.go
 //	TickShipper, MessagingClient  the wire              messaging/
+//
+// Cutover is outer to Node and Prime: the door's delivered-order pre-pass
+// confirms orders on its own goroutine, and the completion cascade a confirm
+// runs takes a cell's lock (returnUnwantedLanding).
 //
 // Node and Prime are keyed: a release act takes its nodes sorted by id, and the
 // keep-staged changeover its cells sorted by name, so instances of each are held
@@ -30,6 +35,7 @@ package lockorder
 
 type (
 	ConfigSave      struct{}
+	Cutover         struct{}
 	Node            struct{}
 	Prime           struct{}
 	CATIDMonitor    struct{}
@@ -67,6 +73,7 @@ type (
 )
 
 func (ConfigSave) Rank() int      { return 5 }
+func (Cutover) Rank() int         { return 8 }
 func (Node) Rank() int            { return 10 }
 func (Prime) Rank() int           { return 20 }
 func (CATIDMonitor) Rank() int    { return 30 }
@@ -106,6 +113,7 @@ func (Node) Nests() bool  { return true }
 func (Prime) Nests() bool { return true }
 
 func (ConfigSave) Name() string      { return "config.Config.saveMu" }
+func (Cutover) Name() string         { return "engine.cutoverMu" }
 func (Node) Name() string            { return "engine.nodeLock(node)" }
 func (Prime) Name() string           { return "engine.primeNodeLock(cell)" }
 func (CATIDMonitor) Name() string    { return "engine.catidMonitor.mu" }

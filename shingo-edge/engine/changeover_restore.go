@@ -54,9 +54,16 @@ func (e *Engine) restoreChangeoverState() {
 				restored, process.ID, changeover.ID)
 		}
 
-		// Check if changeover can be completed (all orders terminal, all nodes done)
-		if err := e.tryCompleteProcessChangeover(process.ID); err != nil {
-			log.Printf("changeover: complete process changeover for %d: %v", process.ID, err)
+		// A process already flipped to the changeover's target crashed between the
+		// door's flip and its finalize. The monitor starts after this restore
+		// (Start: restoreChangeoverState, then startCatidMonitor), so nothing would
+		// poke it: call the door, gated. A red gate leaves the row open for the
+		// operator's CUTOVER.
+		if process.ActiveStyleID == nil || *process.ActiveStyleID != changeover.ToStyleID {
+			continue
+		}
+		if _, err := e.completeCutover(process.ID, changeover.ID, triggeredRestore, CutoverGated); err != nil {
+			log.Printf("changeover restore: process %d changeover %d flipped but not finalized: %v", process.ID, changeover.ID, err)
 		}
 	}
 }

@@ -198,8 +198,11 @@ export function close() {
 // ── open ─────────────────────────────────────────────────────────────────────
 // The composer read is the part rows, the recipe cards and the card's picture:
 // setup off shows none of them, so it is not fetched.
-export function openPicker(v) {
+// targetStyleID, when the view lists it, opens on that style as a tap on its
+// row would: the CATID prompt's one mapped style.
+export function openPicker(v, targetStyleID) {
     if (v) view = v;
+    if (targetStyleID && styles().some(s => s.id === targetStyleID)) { onSaved(targetStyleID); return; }
     reset();
     screen = setupOn() ? 'part' : 'saved';
     drawPartSheet('Change over to');

@@ -299,9 +299,7 @@ func (e *Engine) SwitchNodeToTarget(processID, nodeID int64) error {
 				log.Printf("switch_node: update drop task state for task %d: %v", nodeTask.ID, err)
 			}
 			e.rollupStationTaskAfterNodeSwitch(changeover.ID, node)
-			if err := e.tryCompleteProcessChangeover(processID); err != nil {
-				log.Printf("switch_node: complete changeover check for process %d after dropping node %d: %v", processID, nodeID, err)
-			}
+			e.pokeCutover(processID)
 			return nil
 		}
 	}
@@ -373,9 +371,7 @@ func (e *Engine) SwitchNodeToTarget(processID, nodeID int64) error {
 			}
 			e.rollupStationTaskAfterNodeSwitch(changeover.ID, node)
 		}
-		if err := e.tryCompleteProcessChangeover(processID); err != nil {
-			log.Printf("switch_node: complete changeover check for process %d after switching node %d: %v", processID, nodeID, err)
-		}
+		e.pokeCutover(processID)
 	}
 	return nil
 }

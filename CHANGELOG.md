@@ -9,6 +9,8 @@ Edge only.
 
 - Auto-cutover fires on a CATID the outgoing style does not run, never on one both run or with both sets empty
 - 0 and negative CATIDs name no part: no wrong-part alert, no arm, the request guard stays open
+- One door completes every changeover; a terminal transition pokes the CATID monitor, which retries each minute
+- Mark as running completes an open changeover past its gate, leaves its legs running, and records every switch
 
 ## 2026-11-03 — An order's carts are its rows
 
