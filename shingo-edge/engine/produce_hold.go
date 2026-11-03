@@ -253,16 +253,10 @@ type cutoverClear struct {
 // one) and styleID the incoming style. Two statements (the nodes, their
 // runtime rows), and the claims of both styles only when a seat holds
 // anything. Caller holds countMu, so the seats read here are the seats the
-// clear writes; each write still names its seat.
-func (e *Engine) cutoverHoldClears(proc *processes.Process, styleID *int64) (*cutoverClears, error) {
-	nodes, err := e.db.ListProcessNodesByProcess(proc.ID)
-	if err != nil {
-		return nil, err
-	}
-	runtimes, err := e.db.ProcessNodeRuntimes(nodeIDsOf(nodes))
-	if err != nil {
-		return nil, err
-	}
+// clear writes; each write still names its seat. nodes and runtimes are the
+// process's, read once by the strand for this and the pointer verb.
+func (e *Engine) cutoverHoldClears(proc *processes.Process, styleID *int64, nodes []processes.Node,
+	runtimes map[int64]*processes.RuntimeState) (*cutoverClears, error) {
 	var holding []*processes.Node
 	for i := range nodes {
 		if rt := runtimes[nodes[i].ID]; rt != nil && rt.PendingUOPDelta > 0 {

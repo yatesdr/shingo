@@ -811,7 +811,7 @@ func SetRuntime(db *sql.DB, processNodeID int64, activeClaimID *int64, remaining
 // pins TestPinH_ClaimAdvanceLeavesTheCount,
 // TestPinH_ClaimAdvanceStatementWritesNoCount). One statement, as before, with
 // one column less.
-func SetRuntimeClaim(db *sql.DB, processNodeID int64, activeClaimID *int64) error {
+func SetRuntimeClaim(db DBTX, processNodeID int64, activeClaimID *int64) error {
 	_, err := db.Exec(`UPDATE process_node_runtime_states SET
 		active_claim_id=?, updated_at=datetime('now')
 		WHERE process_node_id=?`,

@@ -1,9 +1,11 @@
 package engine
 
 import (
+	"database/sql"
 	"fmt"
 	"log"
 
+	"shingoedge/store"
 	"shingoedge/store/lineside"
 	"shingoedge/store/processes"
 )
@@ -23,10 +25,11 @@ import (
 //
 // "Cutover" is every active-style flip on the process: the changeover's
 // (completeCutover) and the admin's (SetProcessActiveStyle). Both route
-// through the one flip verb below (flipActiveStyle), which writes the style,
-// syncs the reporting point, strands the piles and clears the departing part's
-// produce holds, and publishes plant.claims.
-// A node the changeover does not touch is stranded too.
+// through the one flip verb below (flipActiveStyle). It writes the style and
+// syncs the reporting point, each its own statement; then, in one transaction,
+// strands the piles, clears the departing part's produce holds and points
+// every node the incoming style claims at that claim; then publishes
+// plant.claims. A node the changeover does not touch is stranded too.
 
 // strandLinesidePiles folds every active pile at the process's nodes into its
 // (node, payload) stranded row, logs each as a count anomaly, and sends both
@@ -40,6 +43,9 @@ import (
 // the next bin's. A consume seat's hold is not touched; it waits for the next
 // carrier of its part (pending_uop_payload, Lane H R2, DECISIONS D12).
 //
+// In the same transaction it points each node the incoming style claims at
+// that claim (pointNodesAtStyle).
+//
 // proc is the process as read before the flip, so its active style is the
 // departing one; styleID is the incoming style.
 func (e *Engine) strandLinesidePiles(proc *processes.Process, styleID *int64) error {
@@ -48,11 +54,28 @@ func (e *Engine) strandLinesidePiles(proc *processes.Process, styleID *int64) er
 	e.countMu.Lock()
 	defer e.countMu.Unlock()
 	processID := proc.ID
-	clears, err := e.cutoverHoldClears(proc, styleID)
+	nodes, err := e.db.ListProcessNodesByProcess(processID)
+	if err != nil {
+		return fmt.Errorf("cutover nodes for process %d: %w", processID, err)
+	}
+	runtimes, err := e.db.ProcessNodeRuntimes(nodeIDsOf(nodes))
+	if err != nil {
+		return fmt.Errorf("cutover seats for process %d: %w", processID, err)
+	}
+	clears, err := e.cutoverHoldClears(proc, styleID, nodes, runtimes)
 	if err != nil {
 		return fmt.Errorf("cutover holds for process %d: %w", processID, err)
 	}
-	stranded, err := e.db.StrandLinesidePiles(processID, clears.writeIn)
+	pointers, err := e.pointNodesAtStyle(styleID, nodes, runtimes)
+	if err != nil {
+		return fmt.Errorf("cutover claim pointers for process %d: %w", processID, err)
+	}
+	stranded, err := e.db.StrandLinesidePiles(processID, func(tx *sql.Tx) error {
+		if err := clears.writeIn(tx); err != nil {
+			return err
+		}
+		return pointers.writeIn(tx)
+	})
 	if err != nil {
 		return fmt.Errorf("strand lineside piles for process %d: %w", processID, err)
 	}
@@ -72,12 +95,13 @@ func (e *Engine) strandLinesidePiles(proc *processes.Process, styleID *int64) er
 }
 
 // flipActiveStyle is THE active-style flip: db.SetActiveStyle, the reporting
-// point's sync, and, when the style actually changed, the two side effects
-// every flip owes — strand the process's lineside piles and clear its
-// departing produce holds (below, one transaction) and publish the process's
-// plant.claims report so Core's mirror marks the new running style within one
-// message instead of up to the next snapshot. Re-setting the style a process
-// already runs is not a flip: no strand, no publish.
+// point's sync, and, when the style actually changed, what every flip owes —
+// in one transaction, strand the process's lineside piles, clear its departing
+// produce holds and point its nodes at the incoming style's claims
+// (strandLinesidePiles); then publish the process's plant.claims report so
+// Core's mirror marks the new running style within one message instead of up
+// to the next snapshot. Re-setting the style a process already runs is not a
+// flip: no strand, no pointers, no publish.
 //
 // Both doors route here — the admin switch (admin_style_switch.go) and the
 // changeover's completeCutover — so a flip cannot reach the DB without its
@@ -113,6 +137,72 @@ func (e *Engine) flipActiveStyle(processID int64, styleID *int64) error {
 	}
 	e.publishPlantClaims(processID)
 	return nil
+}
+
+// claimPointers is the pointer verb's writes: each node's runtime pointed at
+// the claim the style has for it.
+type claimPointers []claimPointer
+
+type claimPointer struct{ nodeID, claimID int64 }
+
+// pointNodesAtStyle reads what the pointer verb writes: every node the style
+// claims BY NAME whose runtime points elsewhere. A node the style does not
+// claim keeps its pointer — never NULL: a NULL pointer drops the operator's
+// RELEASE PARTIAL/EMPTY with no count (resolveReleaseClaim), and a fanned-out
+// position carries its parent's claim under no name of its own. Nodes whose
+// task already advanced the pointer write nothing. One statement (the
+// style's claims); the nodes and runtimes are the caller's, read before the
+// transaction the writes ride (the store is one connection).
+func (e *Engine) pointNodesAtStyle(styleID *int64, nodes []processes.Node,
+	runtimes map[int64]*processes.RuntimeState) (claimPointers, error) {
+	if styleID == nil || len(nodes) == 0 {
+		return nil, nil
+	}
+	claims, err := e.db.NodeClaimsForStyles([]int64{*styleID})
+	if err != nil {
+		return nil, err
+	}
+	only := &processes.Process{ActiveStyleID: styleID}
+	var out claimPointers
+	for i := range nodes {
+		rt := runtimes[nodes[i].ID]
+		claim := claims.Resolve(only, &nodes[i], store.ActiveStyleFirst)
+		if rt == nil || claim == nil || (rt.ActiveClaimID != nil && *rt.ActiveClaimID == claim.ID) {
+			continue
+		}
+		out = append(out, claimPointer{nodeID: nodes[i].ID, claimID: claim.ID})
+	}
+	return out, nil
+}
+
+// writeIn points each node at its claim: the claim only, never the count
+// (TestFlip_LeavesTheCount).
+func (p claimPointers) writeIn(ex processes.DBTX) error {
+	for _, w := range p {
+		claimID := w.claimID
+		if err := processes.SetRuntimeClaim(ex, w.nodeID, &claimID); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// pointProcessAtStyle is the pointer verb on its own, for the cancel: the
+// style does not change there, so no strand carries it.
+func (e *Engine) pointProcessAtStyle(processID int64, styleID *int64) error {
+	nodes, err := e.db.ListProcessNodesByProcess(processID)
+	if err != nil {
+		return err
+	}
+	runtimes, err := e.db.ProcessNodeRuntimes(nodeIDsOf(nodes))
+	if err != nil {
+		return err
+	}
+	pointers, err := e.pointNodesAtStyle(styleID, nodes, runtimes)
+	if err != nil {
+		return err
+	}
+	return pointers.writeIn(e.db.DB)
 }
 
 // publishPlantClaims rings the injected plant-claims publish (engine.go,

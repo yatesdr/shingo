@@ -112,6 +112,13 @@ func (e *Engine) cancelProcessChangeoverInternal(processID int64, nextStyleID *i
 	if err := e.db.SetTargetStyle(processID, nil); err != nil {
 		return err
 	}
+	// A swapped node whose incoming cart landed points at the to-claim; the
+	// style stays, so the pointers go back to it (the flip's pointer verb).
+	if proc, err := e.db.GetProcess(processID); err == nil && proc != nil {
+		if err := e.pointProcessAtStyle(processID, proc.ActiveStyleID); err != nil {
+			log.Printf("changeover cancel: point process %d's nodes at its style: %v", processID, err)
+		}
+	}
 
 	// Redirect — start new changeover immediately to a different target style
 	// A redirect starts the next changeover at once, and its start decides every
