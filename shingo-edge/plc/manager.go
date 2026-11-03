@@ -744,8 +744,8 @@ func (m *Manager) pollReportingPoint(rp counters.ReportingPoint) bool {
 	// read too; a failed read returned above and leaves it unread. One UPDATE,
 	// in place of the snapshot INSERT and the UPDATE a counted read writes.
 	if rp.LastPollAt == nil {
-		if err := m.db.UpdateReportingPointCounter(rp.ID, newCount); err != nil {
-			log.Printf("seed reporting point %d (%s/%s) at %d: %v", rp.ID, rp.PLCName, rp.TagName, newCount, err)
+		if wrote, err := m.db.UpdateReportingPointCounter(rp.ID, rp.PLCName, rp.TagName, newCount); err != nil || !wrote {
+			log.Printf("seed reporting point %d (%s/%s) at %d: written=%t %v", rp.ID, rp.PLCName, rp.TagName, newCount, wrote, err)
 			return false
 		}
 		m.DebugLog.Log("counter seed: rp=%d %s/%s first read %d, nothing charged", rp.ID, rp.PLCName, rp.TagName, newCount)
@@ -778,9 +778,14 @@ func (m *Manager) pollReportingPoint(rp counters.ReportingPoint) bool {
 		return false
 	}
 
-	// Update the reporting point's last known count
-	if err := m.db.UpdateReportingPointCounter(rp.ID, newCount); err != nil {
-		log.Printf("update reporting point counter: %v", err)
+	// The reporting point's last known count, written only while the point
+	// still reads this tag. No write, no emit: a failed write leaves the
+	// count where it was, so the next pass counts these strokes again, and a
+	// point re-pointed since the list is unread and seeds on its next read.
+	// The snapshot above is a real read of the tag the pass listed.
+	if wrote, err := m.db.UpdateReportingPointCounter(rp.ID, rp.PLCName, rp.TagName, newCount); err != nil || !wrote {
+		log.Printf("update reporting point %d (%s/%s) counter: written=%t %v — not emitted", rp.ID, rp.PLCName, rp.TagName, wrote, err)
+		return false
 	}
 
 	if rp.StyleID == 0 {

@@ -43,8 +43,8 @@ func seedRig(t *testing.T) (eng *Engine, db *store.DB, proc, s1, s2, rpID int64)
 	if err != nil {
 		t.Fatalf("reporting point for s1: %v", err)
 	}
-	if err := db.UpdateReportingPointCounter(rp.ID, 100); err != nil {
-		t.Fatalf("read the counter: %v", err)
+	if wrote, err := db.UpdateReportingPointCounter(rp.ID, seedPLC, seedTagA, 100); err != nil || !wrote {
+		t.Fatalf("read the counter: written=%t %v", wrote, err)
 	}
 	return eng, db, proc, s1, s2, rp.ID
 }

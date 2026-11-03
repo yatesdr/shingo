@@ -90,3 +90,49 @@ func TestCounterSeed_FailedFirstReadLeavesItUnread(t *testing.T) {
 		t.Errorf("last_count/last_poll_at = %d/%v, want 120 and a poll time", rp.LastCount, rp.LastPollAt)
 	}
 }
+
+// TestPoll_RepointMidPassKeepsTheSeed: a pass lists its points, then reads and
+// writes each. A re-point to another tag landing between the list and the
+// write made the point unread (its next read seeds); the pass's write of the
+// OLD tag's count must not mark it read again, or the next pass charges the
+// new tag's whole running total.
+func TestPoll_RepointMidPassKeepsTheSeed(t *testing.T) {
+	t.Parallel()
+	em := &deltaRecorder{}
+	r := newTickRigEmitting(t, em)
+	r.pass(10)
+	listed := r.rp()
+	if err := r.db.UpdateReportingPoint(r.rpID, rigPLC, "Other_Count", r.sty, true); err != nil {
+		t.Fatalf("re-point: %v", err)
+	}
+	r.setCount(15)
+	r.mgr.pollReportingPoint(listed)
+
+	got, err := r.db.GetReportingPoint(r.rpID)
+	if err != nil {
+		t.Fatalf("read point: %v", err)
+	}
+	if got.LastPollAt != nil || got.TagName != "Other_Count" {
+		t.Errorf("point after the pass = tag %q read at %v (count %d), want Other_Count unread: its first read must seed",
+			got.TagName, got.LastPollAt, got.LastCount)
+	}
+}
+
+// TestPoll_FailedWriteDoesNotEmit: a counted read whose write fails leaves the
+// point's count where it was, so the next pass counts the same strokes again.
+// Emitting them now as well would charge them twice.
+func TestPoll_FailedWriteDoesNotEmit(t *testing.T) {
+	t.Parallel()
+	em := &deltaRecorder{}
+	r := newTickRigEmitting(t, em)
+	r.pass(10)
+	before := len(em.emitted())
+	if _, err := r.db.Exec(`CREATE TRIGGER rp_write_refused BEFORE UPDATE OF last_count ON reporting_points
+		BEGIN SELECT RAISE(ABORT, 'write refused'); END`); err != nil {
+		t.Fatalf("trigger: %v", err)
+	}
+	r.pass(15)
+	if got := em.emitted(); len(got) != before {
+		t.Errorf("emitted %+v after a failed write, want nothing new", got[before:])
+	}
+}

@@ -268,10 +268,19 @@ func UpdateReportingPoint(db *sql.DB, id int64, plcName, tagName string, styleID
 }
 
 // UpdateReportingPointCounter writes the latest counter value and poll
-// time for a reporting_point.
-func UpdateReportingPointCounter(db *sql.DB, id int64, count int64) error {
-	_, err := db.Exec(`UPDATE reporting_points SET last_count=?, last_poll_at=datetime('now') WHERE id=?`, count, id)
-	return err
+// time for a reporting_point, ONLY while the point still reads the tag the
+// value came from: a re-point to another tag between the poll's list and this
+// write made the point unread, and writing the old tag's count would mark it
+// read, so the next pass charged the new tag's whole running total
+// (TestPoll_RepointMidPassKeepsTheSeed). Reports whether the row was written.
+func UpdateReportingPointCounter(db *sql.DB, id int64, plcName, tagName string, count int64) (bool, error) {
+	res, err := db.Exec(`UPDATE reporting_points SET last_count=?, last_poll_at=datetime('now')
+		WHERE id=? AND plc_name=? AND tag_name=?`, count, id, plcName, tagName)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n == 1, err
 }
 
 // SetReportingPointManaged toggles the warlink_managed flag.

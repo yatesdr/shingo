@@ -16,6 +16,7 @@ Edge only, v37. Ship after a restored-copy migrate.
 - Core's cell catalog lists the points a live process counts on, disabled ones included
 - Run-out ticks across a changeover are held for the incoming cart; a cancel puts them back on the staying part
 - A style flip points every node the new style claims at that claim (never NULL); a cancel points them back
+- The poll writes a counted read only while the point still reads that tag, and emits nothing it did not write
 
 ## 2026-11-03 — An order's carts are its rows
 

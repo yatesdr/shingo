@@ -35,8 +35,8 @@ func (db *DB) UpdateReportingPoint(id int64, plcName, tagName string, styleID in
 
 // UpdateReportingPointCounter writes the latest counter value and poll
 // time for a reporting_point.
-func (db *DB) UpdateReportingPointCounter(id int64, count int64) error {
-	return counters.UpdateReportingPointCounter(db.DB, id, count)
+func (db *DB) UpdateReportingPointCounter(id int64, plcName, tagName string, count int64) (bool, error) {
+	return counters.UpdateReportingPointCounter(db.DB, id, plcName, tagName, count)
 }
 
 // SetReportingPointManaged toggles the warlink_managed flag.

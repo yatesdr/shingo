@@ -505,7 +505,11 @@ func TestReportingPoints_UpdateCounter(t *testing.T) {
 	_, sid := seedProcessStyle(t, db, "P", "S")
 
 	id, _ := db.CreateReportingPoint("PLC", "TAG", sid)
-	testutil.MustNoErr(t, db.UpdateReportingPointCounter(id, 42), "update counter")
+	wrote, err := db.UpdateReportingPointCounter(id, "PLC", "TAG", 42)
+	testutil.MustNoErr(t, err, "update counter")
+	if !wrote {
+		t.Fatal("the counter write wrote nothing")
+	}
 	got, _ := db.GetReportingPoint(id)
 	if got.LastCount != 42 {
 		t.Errorf("last_count = %d, want 42", got.LastCount)
