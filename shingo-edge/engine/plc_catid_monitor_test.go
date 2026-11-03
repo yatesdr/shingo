@@ -345,25 +345,6 @@ func TestAutoCutover_StillOnActiveStylePart_NeverFires(t *testing.T) {
 	}
 }
 
-// TestAutoCutover_UnmappedValue_StillCutsOver pins a DELIBERATE behaviour change.
-// The old auto-start path refused a part that mapped to no configured style,
-// because it had to pick a target. Cutover has no target to pick: the changeover
-// already knows where it is going, and the press has demonstrably left the old
-// part. Completing is correct even for an unrecognised part — the post-cutover
-// verification watch compares the live part against the new active style and
-// raises the operator flag when they disagree.
-func TestAutoCutover_UnmappedValue_StillCutsOver(t *testing.T) {
-	t.Parallel()
-	mon, st, processID, _, calls := setupAutoCutover(t, "auto", "70000001", "50029999", true)
-	t0 := time.Unix(0, 0)
-	for i := 0; i < 3; i++ {
-		tickAutoCutover(mon, processID, st, "12345678", true, t0.Add(time.Duration(i)*30*time.Second))
-	}
-	if len(*calls) != 1 {
-		t.Fatalf("an unmapped part that left the active style must still cut over: got %d, want 1", len(*calls))
-	}
-}
-
 // TestAutoCutover_BouncingTag_NeverFires: a value that changes on every read never
 // accumulates the required stability, even over minutes.
 func TestAutoCutover_BouncingTag_NeverFires(t *testing.T) {

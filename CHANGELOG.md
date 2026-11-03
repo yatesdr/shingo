@@ -3,6 +3,13 @@
 One line per change. If a change needs a paragraph to explain, the paragraph
 belongs in the commit message or in `docs/` — this file is the index.
 
+## 2026-11-03 — The cutover follows the PLC
+
+Edge only.
+
+- Auto-cutover fires on a CATID the outgoing style does not run, never on one both run or with both sets empty
+- 0 and negative CATIDs name no part: no wrong-part alert, no arm, the request guard stays open
+
 ## 2026-11-03 — An order's carts are its rows
 
 Core v173-174, then kanban's v169-172 (2026-11-01, below). Before a deploy, migrate a restored copy and read v173's and v174's boot lines. Ship Core and Edge together.

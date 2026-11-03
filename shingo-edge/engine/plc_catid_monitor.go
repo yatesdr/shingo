@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"log"
 	"strconv"
 	"strings"
@@ -34,11 +35,14 @@ type autoCutoverIntent struct {
 	processName  string
 	changeoverID int64
 	catid        string
+	// mode is the process's auto-arm mode at the decision. Only auto calls the
+	// door; prompt and off log what auto would have done.
+	mode string
 }
 
 // PLC part-identity (CATID) monitor — the A5 guard's data source.
 //
-// Subscribes to each counter-bound process's CATID_01 tag (derived from
+// Subscribes to each counter-bound process's CATID_0N tag (derived from
 // counter_tag_name's parent struct via deriveIdentityTag) and tracks the live,
 // debounced part-identity value per process. Two jobs:
 //
@@ -95,11 +99,13 @@ func (st *catidState) resetArm() {
 // postCutoverVerify is an open post-cutover verification watch for one process:
 // within [now, deadline] after a cutover completed, the monitor checks whether
 // the press's live part id is one of the new active style's parts, and flags
-// changeoverID when it is not. The style's part-identity set is recomputed at
-// check time (derived-set model), so styleID is stored rather than a snapshot.
+// changeoverID when it is not. The style's part-identity set is read once, when
+// the watch opens: the check runs every 500 ms under cm.mu, which the request
+// guard waits on (TestVerify_SetComputedOnceAtOpen).
 type postCutoverVerify struct {
 	changeoverID int64
 	styleID      int64 // the new active style (the changeover's to-style)
+	set          map[string]struct{}
 	deadline     time.Time
 }
 
@@ -152,11 +158,13 @@ func (cm *catidMonitor) prime() {
 			log.Printf("plc-catid: process %d (%s) counter tag %q has no parent struct — skipping (plant does not match MES_*.<leaf> convention)", p.ID, p.Name, p.CounterTagName)
 			continue
 		}
+		// A failed publish toggle is logged, not fatal: the tag may already be
+		// published, and an unreadable tag is handled on every tick (the read
+		// path fails open). Skipping the process here switched A5, the
+		// auto-cutover and the verify off for it until the next restart.
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		if err := cm.eng.plcMgr.EnableTagPublishing(ctx, p.CounterPLCName, derived); err != nil {
-			log.Printf("plc-catid: enable publish for %s.%s: %v", p.CounterPLCName, derived, err)
-			cancel()
-			continue
+			log.Printf("plc-catid: enable publish for %s.%s: %v (monitoring anyway)", p.CounterPLCName, derived, err)
 		}
 		cancel()
 		log.Printf("plc-catid: monitoring process %d (%s) on %s.%s", p.ID, p.Name, p.CounterPLCName, derived)
@@ -221,9 +229,10 @@ func (cm *catidMonitor) evaluateProcess(processID int64, st *catidState, now tim
 
 // openPostCutoverVerify starts a post-cutover verification watch for a process:
 // within [now, deadline], the monitor checks whether the press's live part id
-// matches the new active style's expected_catid and flags changeoverID if it
-// does not. Called from the completion path (outside the tick); locks mu.
-func (cm *catidMonitor) openPostCutoverVerify(processID, changeoverID, styleID int64, deadline time.Time) {
+// is one of set (the new active style's parts, read by the caller) and flags
+// changeoverID if it is not. Called from the completion path (outside the
+// tick); locks mu.
+func (cm *catidMonitor) openPostCutoverVerify(processID, changeoverID, styleID int64, set map[string]struct{}, deadline time.Time) {
 	cm.mu.Lock()
 	defer cm.mu.Unlock()
 	if cm.verify == nil {
@@ -232,6 +241,7 @@ func (cm *catidMonitor) openPostCutoverVerify(processID, changeoverID, styleID i
 	cm.verify[processID] = &postCutoverVerify{
 		changeoverID: changeoverID,
 		styleID:      styleID,
+		set:          set,
 		deadline:     deadline,
 	}
 }
@@ -246,12 +256,9 @@ func (cm *catidMonitor) checkPostCutoverVerify(processID int64, st *catidState, 
 	if !ok {
 		return
 	}
-	// The new style's part-identity set, recomputed live (a side of a two-part
-	// style is a valid post-cutover reading).
-	var set map[string]struct{}
-	if style, err := cm.eng.db.GetStyle(pv.styleID); err == nil && style != nil {
-		set = cm.eng.styleCATIDSet(style)
-	}
+	// The new style's part-identity set, read when the watch opened (a side of
+	// a two-part style is a valid post-cutover reading).
+	set := pv.set
 	// Success short-circuit: the moment the live part is one of the new style's
 	// parts, the cutover is verified — clear any flag and close the watch.
 	if st.seenValue && catidSetHas(set, st.lastConfirmed) {
@@ -356,6 +363,11 @@ func (cm *catidMonitor) onConfirmedCATID(processID int64, st *catidState, isChan
 		log.Printf("plc-catid: record observation for process %d: %v", processID, err)
 	}
 
+	// A value that names no part (no program, an unused slot) is neither a
+	// wrong part nor a change of part.
+	if !isIdentity(st.lastConfirmed) {
+		return
+	}
 	styleID, styleName, set, ok := cm.eng.activeStyleCATIDSet(processID)
 	// A5: alert when the active style has configured/derivable CATIDs and the live
 	// part is NONE of them (not just != a single value — a two-position style runs
@@ -439,9 +451,9 @@ func (cm *catidMonitor) emitCATIDPrompt(processID int64, st *catidState, newCATI
 // can never arm inside the window. Called with cm.mu held; the returned intent is
 // fired after the lock releases.
 func (cm *catidMonitor) evaluateAutoArm(processID int64, st *catidState, ok bool, now time.Time) *autoCutoverIntent {
-	// Unreadable, never-seen, or zero/empty value: reset and stay silent. A blip can
-	// never accumulate toward an arm.
-	if !ok || !st.seenValue || st.lastConfirmed == "" || st.lastConfirmed == "0" {
+	// Unreadable, never-seen, or a value that names no part: reset and stay
+	// silent. A blip can never accumulate toward an arm.
+	if !ok || !st.seenValue || !isIdentity(st.lastConfirmed) {
 		st.resetArm()
 		return nil
 	}
@@ -468,43 +480,26 @@ func (cm *catidMonitor) evaluateAutoArm(processID int64, st *catidState, ok bool
 	return cm.decideAutoArm(processID, st, v)
 }
 
-// decideAutoArm applies the remaining auto-arm conditions once a value is stable:
-// the process must be in `auto` mode (2), the value must map to a configured style
-// (3), that style must differ from the active one (4), and no changeover may
-// already be in progress (5). Any failure returns nil (silent, at most one debug
-// line — armHandled prevents repeats). Called with cm.mu held; does light DB reads
-// only, never StartProcessChangeover.
+// decideAutoArm makes the auto-cutover decision once a value is stable: a
+// changeover must be open (the monitor never starts one: when it did, on
+// 2026-07-28, it put four robots on the floor chasing a style with zero stock), and
+// cutoverPredicate must hold over the active style's and the open changeover's
+// target's CATID sets, read in one process-wide query. The predicate is
+// computed before the mode: the intent carries the mode, and only auto calls
+// the door; prompt and off log what auto would have done. Called with cm.mu
+// held; light DB reads only.
+//
+// The live part need not be the target's when the outgoing style has parts:
+// a press set up for some third style has still left the outgoing part, and
+// leaving the changeover open would block the corrective changeover the
+// operator now needs. The post-cutover verify compares the live part against
+// the new active style and raises the operator flag when they disagree.
 func (cm *catidMonitor) decideAutoArm(processID int64, st *catidState, v string) *autoCutoverIntent {
-	// Mode gate: only `auto` processes auto-cutover. prompt/off are handled on the
-	// confirm edge (prompt) or silently (off).
-	if cm.eng.processChangeoverAutoArm(processID) != domain.ChangeoverAutoArmAuto {
+	proc, err := cm.eng.db.GetProcess(processID)
+	if err != nil || proc == nil {
+		log.Printf("plc-catid: cannot read process %d (%v) — not cutting over", processID, err)
 		return nil
 	}
-	// If the live part is still one of the ACTIVE style's parts, the press has not
-	// left the outgoing part yet — there is nothing to cut over to.
-	if _, _, activeSet, okActive := cm.eng.activeStyleCATIDSet(processID); okActive && catidSetHas(activeSet, v) {
-		return nil
-	}
-	// A changeover MUST already be in progress. This condition used to be
-	// inverted — the monitor skipped when one was running and STARTED one when
-	// none was, which is how HK 2026-07-28 put four robots on the floor chasing a
-	// style with zero stock.
-	//
-	// The problem this feature exists for is the opposite: the operator starts a
-	// changeover, the material moves, and then they forget to press CUTOVER, so
-	// the press stamps the new part while shingo keeps attributing it to the old
-	// style for hours. A stable CATID that has left the active style's part set IS
-	// the evidence the press already cut over. Press the button for them.
-	//
-	// We deliberately do NOT check that the live part maps to this changeover's
-	// to-style. If the press was set up for some third style, completing is still
-	// correct — the changeover physically did what it was told, and leaving it
-	// open would block the corrective changeover the operator now needs.
-	// finalizeChangeoverRow opens the post-cutover verification watch, which
-	// compares the live part against the NEW active style and raises the operator
-	// flag (with a one-tap corrective changeover) when they disagree. That path is
-	// purpose-built for exactly this and already tested; duplicating the check
-	// here would only decide worse, earlier.
 	changeover, err := cm.eng.db.GetActiveProcessChangeover(processID)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		// A real read failure, not the everyday "no active changeover". Say so and
@@ -513,8 +508,10 @@ func (cm *catidMonitor) decideAutoArm(processID int64, st *catidState, v string)
 		return nil
 	}
 	if err != nil || changeover == nil {
-		// No changeover in progress. Never start one — starting dispatches robots,
-		// and nothing here knows whether the material for it exists.
+		return nil
+	}
+	out, in := cm.eng.cutoverCATIDSets(proc, changeover.ToStyleID)
+	if !cutoverPredicate(v, out, in) {
 		return nil
 	}
 	return &autoCutoverIntent{
@@ -522,14 +519,47 @@ func (cm *catidMonitor) decideAutoArm(processID int64, st *catidState, v string)
 		processName:  st.processName,
 		changeoverID: changeover.ID,
 		catid:        v,
+		mode:         domain.NormalizeChangeoverAutoArm(proc.ChangeoverAutoArm),
 	}
 }
 
-// fireAutoArm executes a collected auto-arm intent OUTSIDE cm.mu: it starts the
-// changeover to the mapped style, writes the operator-readable audit line, and
-// raises the station notification. A failed start logs and returns without
-// notifying (nothing was armed). Never cancels or re-plans anything.
+// cutoverPredicate is the auto-cutover's decision on a stable CATID v: v names
+// a part, the outgoing style does not run it, and either the outgoing style
+// has parts to have left or v is one the incoming style runs. A CATID both
+// styles run never fires (TestPredicate_SharedCATIDNeverFires), and with both
+// sets empty a value says nothing (TestPredicate_BothSetsEmptyIsInert).
+func cutoverPredicate(v string, out, in map[string]struct{}) bool {
+	return isIdentity(v) && !catidSetHas(out, v) && (len(out) > 0 || catidSetHas(in, v))
+}
+
+// isIdentity reports whether a confirmed CATID names a part. "" (nothing read),
+// "0" (no program) and negative values (an unused slot reads -1) do not.
+func isIdentity(v string) bool {
+	if v == "" {
+		return false
+	}
+	if n, err := strconv.ParseInt(v, 10, 64); err == nil && n <= 0 {
+		return false
+	}
+	return true
+}
+
+// fireAutoCutover acts on a decided intent OUTSIDE cm.mu. In auto mode it calls
+// the door and, on success, raises the station notification; in prompt and off
+// it reads the gate (read-only) and logs what auto would have done. Every mode
+// logs the decision line. Never starts, cancels or re-plans anything.
 func (cm *catidMonitor) fireAutoCutover(in autoCutoverIntent) {
+	if in.mode != domain.ChangeoverAutoArmAuto {
+		gate := "gate green"
+		if ok, blockers, err := cm.eng.canCompleteChangeover(in.changeoverID); err != nil {
+			gate = fmt.Sprintf("gate unreadable (%v)", err)
+		} else if !ok {
+			gate = "waiting on " + strings.Join(domain.BlockersToReasons(blockers), "; ")
+		}
+		cm.eng.logFn("plc-catid: process %s changeover %d: predicate held on CATID %s, %s, mode=%s — would have cut over",
+			in.processName, in.changeoverID, in.catid, gate, in.mode)
+		return
+	}
 	complete := cm.completeCutover
 	if complete == nil {
 		complete = cm.eng.completeCutover
@@ -537,15 +567,15 @@ func (cm *catidMonitor) fireAutoCutover(in autoCutoverIntent) {
 	// completeCutover runs canCompleteChangeover first, which refuses while any
 	// node task is non-terminal or an order is still placing a bin at a
 	// participant node. That gate IS the "has the material actually landed"
-	// check — an error here is the normal "not finished yet" answer on most
-	// ticks, not a fault, so it stays a log line and the next tick retries.
+	// check: an error here is the normal "not finished yet" answer, not a
+	// fault, so it stays a log line.
 	if err := complete(in.processID, "auto-catid"); err != nil {
-		log.Printf("plc-catid: auto-cutover for process %d (changeover %d, CATID %s) not completed: %v",
-			in.processID, in.changeoverID, in.catid, err)
+		cm.eng.logFn("plc-catid: process %s changeover %d: predicate held on CATID %s, waiting on %v, mode=%s — not cut over",
+			in.processName, in.changeoverID, in.catid, err, in.mode)
 		return
 	}
-	log.Printf("auto-cutover: completed changeover %d at %s from CATID %s — the process had already cut over",
-		in.changeoverID, in.processName, in.catid)
+	cm.eng.logFn("plc-catid: process %s changeover %d: predicate held on CATID %s, gate green, mode=%s — cut over",
+		in.processName, in.changeoverID, in.catid, in.mode)
 	cm.eng.Events.Emit(Event{Type: EventCATIDAutoCutover, Payload: CATIDAutoCutoverEvent{
 		ProcessID:    in.processID,
 		ProcessName:  in.processName,
@@ -579,12 +609,13 @@ func (e *Engine) processChangeoverAutoArm(processID int64) string {
 
 // liveCATID returns the debounced part-identity value for a process, or
 // ("", false) when nothing has been observed yet (startup, unreadable tag,
-// process not monitored). The guard reads this; ok=false ⇒ guard stays inert.
+// process not monitored) or the value names no part (isIdentity). The guard
+// reads this; ok=false ⇒ guard stays inert.
 func (cm *catidMonitor) liveCATID(processID int64) (string, bool) {
 	cm.mu.Lock()
 	defer cm.mu.Unlock()
 	st, ok := cm.states[processID]
-	if !ok || !st.seenValue {
+	if !ok || !st.seenValue || !isIdentity(st.lastConfirmed) {
 		return "", false
 	}
 	return st.lastConfirmed, true

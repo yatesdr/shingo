@@ -135,6 +135,28 @@ func (e *Engine) processStyleCATIDSets(processID int64) []styleCATIDEntry {
 	return out
 }
 
+// cutoverCATIDSets returns the CATID sets the auto-cutover decides over: out,
+// the active style's, and in, the open changeover's target's, from the one
+// process-wide read. An active style missing from the live styles (retired
+// but still running) is read on its own, as activeStyleCATIDSet does.
+func (e *Engine) cutoverCATIDSets(proc *processes.Process, targetStyleID int64) (out, in map[string]struct{}) {
+	foundActive := proc.ActiveStyleID == nil
+	for _, st := range e.processStyleCATIDSets(proc.ID) {
+		if proc.ActiveStyleID != nil && st.ID == *proc.ActiveStyleID {
+			out, foundActive = st.Set, true
+		}
+		if st.ID == targetStyleID {
+			in = st.Set
+		}
+	}
+	if !foundActive {
+		if style, err := e.db.GetStyle(*proc.ActiveStyleID); err == nil && style != nil {
+			out = e.styleCATIDSet(style)
+		}
+	}
+	return out, in
+}
+
 // catidSetHas reports membership.
 func catidSetHas(set map[string]struct{}, catid string) bool {
 	_, ok := set[catid]

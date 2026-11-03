@@ -34,7 +34,7 @@ func TestPostCutoverVerify_MatchNoFlag(t *testing.T) {
 	seedCatidMonitor(eng, processID, "PROC", "70000001") // live matches the new style
 	cm := eng.catidMon
 	now := time.Now()
-	cm.openPostCutoverVerify(processID, coID, styleA, now.Add(time.Minute))
+	cm.openPostCutoverVerify(processID, coID, styleA, verifySet(t, eng, styleA), now.Add(time.Minute))
 	cm.checkPostCutoverVerify(processID, cm.states[processID], now)
 
 	co, err := db.LatestFlaggedChangeover(processID)
@@ -64,7 +64,7 @@ func TestPostCutoverVerify_MismatchMapped(t *testing.T) {
 	seedCatidMonitor(eng, processID, "PROC", "50029999") // wrong part — maps to style B
 	cm := eng.catidMon
 	now := time.Now()
-	cm.openPostCutoverVerify(processID, coID, styleA, now) // deadline = now ⇒ window elapsed
+	cm.openPostCutoverVerify(processID, coID, styleA, verifySet(t, eng, styleA), now) // deadline = now ⇒ window elapsed
 	cm.checkPostCutoverVerify(processID, cm.states[processID], now)
 
 	co, err := db.LatestFlaggedChangeover(processID)
@@ -109,7 +109,7 @@ func TestPostCutoverVerify_MismatchUnmapped(t *testing.T) {
 	seedCatidMonitor(eng, processID, "PROC", "99999999") // wrong part, maps to nothing
 	cm := eng.catidMon
 	now := time.Now()
-	cm.openPostCutoverVerify(processID, coID, styleA, now)
+	cm.openPostCutoverVerify(processID, coID, styleA, verifySet(t, eng, styleA), now)
 	cm.checkPostCutoverVerify(processID, cm.states[processID], now)
 
 	flag, ok := eng.PostCutoverFlag(processID)
@@ -142,7 +142,7 @@ func TestPostCutoverVerify_TwoPartMemberNoFlag(t *testing.T) {
 	seedCatidMonitor(eng, processID, "PROC", "70000012") // press settled on the RIGHT side
 	cm := eng.catidMon
 	now := time.Now()
-	cm.openPostCutoverVerify(processID, coID, styleA, now.Add(time.Minute))
+	cm.openPostCutoverVerify(processID, coID, styleA, verifySet(t, eng, styleA), now.Add(time.Minute))
 	cm.checkPostCutoverVerify(processID, cm.states[processID], now)
 
 	if co, err := db.LatestFlaggedChangeover(processID); err != nil {
@@ -153,4 +153,13 @@ func TestPostCutoverVerify_TwoPartMemberNoFlag(t *testing.T) {
 	if _, ok := eng.PostCutoverFlag(processID); ok {
 		t.Error("PostCutoverFlag must report no flag when the live part is in the new style's set")
 	}
+}
+
+// verifySet reads a style's CATID set as the completion path does when it opens
+// the watch.
+func verifySet(t *testing.T, eng *Engine, styleID int64) map[string]struct{} {
+	t.Helper()
+	style, err := eng.db.GetStyle(styleID)
+	testutil.MustNoErr(t, err, "get style")
+	return eng.styleCATIDSet(style)
 }

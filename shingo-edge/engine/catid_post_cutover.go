@@ -35,10 +35,11 @@ func (e *Engine) openPostCutoverVerify(processID, changeoverID int64) {
 	if err != nil || style == nil {
 		return
 	}
-	if len(e.styleCATIDSet(style)) == 0 {
+	set := e.styleCATIDSet(style)
+	if len(set) == 0 {
 		return // no configured/derivable parts ⇒ nothing to verify against
 	}
-	e.catidMon.openPostCutoverVerify(processID, changeoverID, style.ID,
+	e.catidMon.openPostCutoverVerify(processID, changeoverID, style.ID, set,
 		time.Now().Add(postCutoverVerifyWindow))
 }
 
