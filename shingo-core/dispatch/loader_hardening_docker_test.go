@@ -65,8 +65,8 @@ func TestPlanRetrieve_DedicatedLoaderPool_HomeFullNoBuffer_SourcesHome(t *testin
 	})
 
 	order := dispatchSimpleViaScanner(t, d, db, "home-full-1")
-	if order.BinID == nil || *order.BinID != homeFull.ID {
-		t.Fatalf("sourced bin %v, want the home full %d", order.BinID, homeFull.ID)
+	if testdb.OnlyCart(t, order) == nil || *testdb.OnlyCart(t, order) != homeFull.ID {
+		t.Fatalf("sourced bin %v, want the home full %d", testdb.OnlyCart(t, order), homeFull.ID)
 	}
 }
 
@@ -92,9 +92,9 @@ func TestPlanRetrieve_DedicatedLoaderPool_OlderFullBeatsNewerPartial(t *testing.
 	})
 
 	order := dispatchSimpleViaScanner(t, d, db, "older-full-1")
-	if order.BinID == nil || *order.BinID != olderFull.ID {
+	if testdb.OnlyCart(t, order) == nil || *testdb.OnlyCart(t, order) != olderFull.ID {
 		t.Fatalf("sourced bin %v, want the OLDER full %d (Drain is plain FIFO; newer partial %d must wait)",
-			order.BinID, olderFull.ID, newerPartial.ID)
+			testdb.OnlyCart(t, order), olderFull.ID, newerPartial.ID)
 	}
 }
 
@@ -122,8 +122,8 @@ func TestPlanRetrieve_DedicatedLoaderPool_MultiHomeSamePayload(t *testing.T) {
 	})
 
 	order := dispatchSimpleViaScanner(t, d, db, "multi-home-1")
-	if order.BinID == nil || *order.BinID != olderAtP2.ID {
-		t.Fatalf("sourced bin %v, want the older bin %d at the sibling home", order.BinID, olderAtP2.ID)
+	if testdb.OnlyCart(t, order) == nil || *testdb.OnlyCart(t, order) != olderAtP2.ID {
+		t.Fatalf("sourced bin %v, want the older bin %d at the sibling home", testdb.OnlyCart(t, order), olderAtP2.ID)
 	}
 }
 
@@ -167,9 +167,9 @@ func TestPlanRetrieve_SharedWindowLoader_LayoutGatedFromPool(t *testing.T) {
 	})
 
 	order := dispatchSimpleViaScanner(t, d, db, "shared-window-1")
-	if order.BinID != nil {
+	if testdb.OnlyCart(t, order) != nil {
 		t.Fatalf("sourced bin %d (the global full is %d) — a retrieve naming the window stays on the window",
-			*order.BinID, globalFull.ID)
+			*testdb.OnlyCart(t, order), globalFull.ID)
 	}
 	if order.QueueCause != string(CauseFinderNodeEmpty) {
 		t.Fatalf("queue_cause = %q, want %q — %q would mean the window entered the dedicated pool ranker",
@@ -183,7 +183,7 @@ func TestPlanRetrieve_SharedWindowLoader_LayoutGatedFromPool(t *testing.T) {
 		DeliveryNode: lineNode.Name, SourceNode: window.Name, Quantity: 1.0,
 	})
 	order = dispatchSimpleViaScanner(t, d, db, "shared-window-2")
-	if order.BinID == nil || *order.BinID != atWindow.ID {
-		t.Fatalf("sourced bin %v, want the full %d standing on the window", order.BinID, atWindow.ID)
+	if testdb.OnlyCart(t, order) == nil || *testdb.OnlyCart(t, order) != atWindow.ID {
+		t.Fatalf("sourced bin %v, want the full %d standing on the window", testdb.OnlyCart(t, order), atWindow.ID)
 	}
 }

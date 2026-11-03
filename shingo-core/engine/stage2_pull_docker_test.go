@@ -138,10 +138,10 @@ func awaitMoves(t *testing.T, db *store.DB, n int) []*orders.Order {
 }
 
 func binOf(o *orders.Order) int64 {
-	if o.BinID == nil {
-		return 0
+	if b, err := o.OnlyBin(); err == nil && b != nil {
+		return *b
 	}
-	return *o.BinID
+	return 0
 }
 
 func TestStage2Pull_MovesOldestOwnCartIntoFreeWindow(t *testing.T) {
@@ -495,18 +495,19 @@ func TestStage2Pull_NeverTakesAStrangersHold(t *testing.T) {
 	f := newS2Fixture(t, db, "S2T", 1)
 	p := f.pair(t, "S2T", 1)
 	cart := f.cart(t, f.slots[0].ID, f.marker, time.Hour)
-	stranger := &orders.Order{EdgeUUID: "s2t-stranger", StationID: "test", OrderType: "retrieve",
-		Status: "queued", Quantity: 1, BinID: &cart.ID}
+	stranger := testdb.Holding(&orders.Order{EdgeUUID: "s2t-stranger", StationID: "test", OrderType: "retrieve",
+		Status: "queued", Quantity: 1}, cart.ID)
 	testutil.MustNoErr(t, db.CreateOrder(stranger), "the stranger")
 	_, err := db.Exec(fmt.Sprintf(`
 		CREATE FUNCTION s2t_stranger_holds() RETURNS trigger AS $$
 		BEGIN
-			INSERT INTO reservations (order_id, resource_kind, bin_id, state, reserved_by, created_at)
-			VALUES (%d, 'bin', NEW.bin_id, 'pending', 'test', now());
+			IF EXISTS (SELECT 1 FROM orders o WHERE o.id = NEW.order_id AND o.edge_uuid LIKE 'core-s2-%%') THEN
+				INSERT INTO reservations (order_id, resource_kind, bin_id, state, reserved_by, created_at)
+				VALUES (%d, 'bin', NEW.bin_id, 'pending', 'test', now());
+			END IF;
 			RETURN NEW;
 		END $$ LANGUAGE plpgsql;
-		CREATE TRIGGER s2t_stranger_holds AFTER INSERT ON orders FOR EACH ROW
-			WHEN (NEW.edge_uuid LIKE 'core-s2-%%' AND NEW.bin_id IS NOT NULL)
+		CREATE TRIGGER s2t_stranger_holds AFTER INSERT ON order_bins FOR EACH ROW
 			EXECUTE FUNCTION s2t_stranger_holds();`, stranger.ID))
 	testutil.MustNoErr(t, err, "plant the stranger in the race")
 	eng := newTestEngine(t, db, simulator.New())
@@ -518,11 +519,11 @@ func TestStage2Pull_NeverTakesAStrangersHold(t *testing.T) {
 	}
 	got, err := db.GetOrder(stranger.ID)
 	testutil.MustNoErr(t, err, "the stranger")
-	if got.BinID == nil || *got.BinID != cart.ID {
-		t.Errorf("the stranger points at %v, want still the cart %d", got.BinID, cart.ID)
+	if testdb.OnlyCart(t, got) == nil || *testdb.OnlyCart(t, got) != cart.ID {
+		t.Errorf("the stranger points at %v, want still the cart %d", testdb.OnlyCart(t, got), cart.ID)
 	}
 	// The stranger was planted for the race and ends with the test: its hold
-	// went with the refused issue, so its pointer alone would read as a wedge.
-	_, err = db.Exec(`UPDATE orders SET status = 'cancelled', bin_id = NULL WHERE id = $1`, stranger.ID)
+	// went with the refused issue, so its row alone would read as a wedge.
+	_, err = db.Exec(`UPDATE orders SET status = 'cancelled' WHERE id = $1`, stranger.ID)
 	testutil.MustNoErr(t, err, "end the stranger")
 }

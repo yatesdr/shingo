@@ -117,8 +117,8 @@ func TestVendorStatus_FinishedDelivers(t *testing.T) {
 	got := testdb.AssertOrderStatus(t, db, "vs-order-1", "delivered")
 
 	// handleOrderDelivered should move the bin to the delivery node.
-	if got.BinID != nil {
-		testdb.AssertBinAtNode(t, db, *got.BinID, lineNode.ID)
+	if testdb.OnlyCart(t, got) != nil {
+		testdb.AssertBinAtNode(t, db, *testdb.OnlyCart(t, got), lineNode.ID)
 	}
 }
 

@@ -370,7 +370,7 @@ func c2cPlainStore(t *testing.T, db *store.DB, uuid, payload string, press, dest
 		o.OriginClass = originClass
 	})
 	testdb.ReserveBin(t, db, o.ID, bin)
-	testutil.MustNoErr(t, db.UpdateOrderBinID(o.ID, bin), "stamp the held bin")
+	testdb.HoldCart(t, db, o.ID, bin)
 	o, err := db.GetOrder(o.ID)
 	testutil.MustNoErr(t, err, "reload "+uuid)
 	return o

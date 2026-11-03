@@ -47,10 +47,10 @@ func TestClearFence_ChildDropCountsInboundFromBirth(t *testing.T) {
 		Status: StatusReshuffling, Quantity: 1, SourceNode: home.Name, DeliveryNode: home.Name}
 	testutil.MustNoErr(t, db.CreateOrder(parent), "parent")
 	child := func(uuid string, seq int, bin int64, from, to string) store.CompoundChild {
-		return store.CompoundChild{Order: &orders.Order{EdgeUUID: uuid, StationID: "edge.cfp",
+		return store.CompoundChild{Order: testdb.Holding(&orders.Order{EdgeUUID: uuid, StationID: "edge.cfp",
 			OrderType: OrderTypeMove, Status: StatusPending, Quantity: 1, ParentOrderID: &parent.ID,
-			Sequence: seq, BinID: &bin, SourceNode: from, DeliveryNode: to,
-			SourceIntent: SourceIntentForType(OrderTypeMove)}}
+			Sequence: seq, SourceNode: from, DeliveryNode: to,
+			SourceIntent: SourceIntentForType(OrderTypeMove)}, bin)}
 	}
 	_, err := testdb.CreateCompoundChildren(t, db, []store.CompoundChild{
 		child("cfp-e", 1, emptyOnHome.ID, home.Name, spot.Name),

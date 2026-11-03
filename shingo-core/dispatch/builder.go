@@ -202,13 +202,13 @@ func row(need Need, p plan.Plan) *orders.Order {
 		o.Coordinated = true
 		o.ProcessNode, o.KeyRoute, o.KeyTask = c.ProcessNode, c.KeyRoute, c.KeyTask
 	}
+	// held is the cart the order is born holding (a dig leg's bin, a named
+	// cart), 0 for none.
+	var held int64
 	if l := need.Leg; l != nil {
 		parent := l.Parent
 		o.ParentOrderID, o.Sequence = &parent, l.Sequence
-		if l.Bin != 0 {
-			bin := l.Bin
-			o.BinID = &bin
-		}
+		held = l.Bin
 	}
 	if p.Dest != nil {
 		o.DeliveryNode = p.Dest.Name
@@ -222,7 +222,7 @@ func row(need Need, p plan.Plan) *orders.Order {
 		// the order's source. A pick that is not held never names the source:
 		// the asked source (blank, a node or a group) scopes any re-pick.
 		cart := need.Cart
-		o.BinID, o.NamedBinID = &cart, &cart
+		held, o.NamedBinID = cart, &cart
 		if o.SourceNode == "" {
 			o.SourceNode = p.Node.Name
 		}
@@ -231,8 +231,8 @@ func row(need Need, p plan.Plan) *orders.Order {
 			Status: string(p.Bin.Status), Confirmed: p.Bin.ManifestConfirmed}
 	}
 	// The cart it is born holding, as its rows: Create writes them with it.
-	if o.BinID != nil {
-		o.HoldFromBirth(*o.BinID)
+	if held != 0 {
+		o.HoldFromBirth(held)
 	}
 	return o
 }

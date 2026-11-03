@@ -129,7 +129,7 @@ func TestCountTypedInboundToGroup_FourShapes(t *testing.T) {
 	binA := mkEmptyBin(t, db, btID, "INB-BIN-A")
 	plain := newPendingOrder("inb-plain")
 	plain.DeliveryNode = "INB-SLOT"
-	plain.BinID = &binA
+	plain.HoldFromBirth(binA)
 	testutil.MustNoErr(t, orders.Create(db, plain), "create plain")
 	// (C1: a top-level pending order pointing at a bin holds its reservation, or
 	// the teardown reads a pointer wedge; the pointer is incidental here.)
@@ -144,7 +144,7 @@ func TestCountTypedInboundToGroup_FourShapes(t *testing.T) {
 	binB := mkEmptyBin(t, db, btID, "INB-BIN-B")
 	grpNamed := newPendingOrder("inb-groupnamed")
 	grpNamed.DeliveryNode = "INB-GRP"
-	grpNamed.BinID = &binB
+	grpNamed.HoldFromBirth(binB)
 	testutil.MustNoErr(t, orders.Create(db, grpNamed), "create group-named")
 	if got := count(t, "group-named"); got != 2 {
 		t.Fatalf("with a group-named order = %d, want 2", got)
@@ -185,7 +185,7 @@ func TestCountTypedInboundToGroup_FourShapes(t *testing.T) {
 	binD := mkEmptyBin(t, db, btID, "INB-BIN-D")
 	own := newPendingOrder("inb-own")
 	own.DeliveryNode = "INB-SLOT"
-	own.BinID = &binD
+	own.HoldFromBirth(binD)
 	own.OriginID = mntOrigin
 	testutil.MustNoErr(t, orders.Create(db, own), "create own-origin order")
 	testdb.ReserveBin(t, d, own.ID, binD) // (C1: as shape 1's)

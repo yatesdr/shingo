@@ -50,7 +50,7 @@ func TestCancelDeliveredOrder_NoReturnCreated(t *testing.T) {
 	})
 
 	order := testdb.RequireOrderStatus(t, db, "tc38-1", dispatch.StatusDispatched)
-	binID := *order.BinID
+	binID := *testdb.OnlyCart(t, order)
 
 	// Step 2: Robot runs and finishes. Order status = "delivered".
 	// Bin is physically at lineside, but DB still has it at source (BinService.ApplyArrival
@@ -143,7 +143,7 @@ func TestTerminateOrder_RejectsConfirmedStatus_FullLifecycle(t *testing.T) {
 	})
 
 	order := testdb.RequireOrder(t, db, "tc39-1")
-	binID := *order.BinID
+	binID := *testdb.OnlyCart(t, order)
 
 	sim.DriveState(order.VendorOrderID, "RUNNING")
 	sim.DriveState(order.VendorOrderID, "FINISHED")

@@ -179,7 +179,7 @@ type HeldHand struct {
 	Vendor string
 }
 
-// HandHeld hands a plain order that already holds its bin (orders.bin_id), in
+// HandHeld hands a plain order that already holds its bin (its row), in
 // the one sequence both such doors use: secure and settle the destination slot
 // (ReserveStorageDropoff, owner-idempotent: a slot the order reserved earlier
 // passes through, a lost or filled one refuses and the order keeps its bin);

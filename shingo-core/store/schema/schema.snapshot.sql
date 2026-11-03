@@ -826,11 +826,10 @@ CREATE TABLE public.order_bins (
     id bigint NOT NULL,
     order_id bigint NOT NULL,
     bin_id bigint NOT NULL,
-    step_index integer NOT NULL,
-    action text NOT NULL,
-    node_name text NOT NULL,
-    dest_node text DEFAULT ''::text NOT NULL,
-    created_at timestamp with time zone DEFAULT now() NOT NULL
+    pick_step integer,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    drop_step integer,
+    CONSTRAINT order_bins_steps CHECK ((((pick_step IS NOT NULL) OR (drop_step IS NULL)) AND ((drop_step IS NULL) OR (pick_step < drop_step))))
 );
 
 CREATE SEQUENCE public.order_bins_id_seq
@@ -892,7 +891,6 @@ CREATE TABLE public.orders (
     completed_at timestamp with time zone,
     parent_order_id bigint,
     sequence integer DEFAULT 0 NOT NULL,
-    bin_id bigint,
     payload_code text DEFAULT ''::text NOT NULL,
     wait_index integer DEFAULT 0 NOT NULL,
     queue_reason text DEFAULT ''::text NOT NULL,
@@ -1961,8 +1959,6 @@ CREATE INDEX idx_node_stations_station ON public.node_stations USING btree (stat
 
 CREATE INDEX idx_nodes_claimed_by ON public.nodes USING btree (claimed_by) WHERE (claimed_by IS NOT NULL);
 
-CREATE INDEX idx_order_bins_bin ON public.order_bins USING btree (bin_id);
-
 CREATE INDEX idx_order_bins_order ON public.order_bins USING btree (order_id);
 
 CREATE INDEX idx_order_history_code ON public.order_history USING btree (code, created_at) WHERE (code IS NOT NULL);
@@ -2051,7 +2047,11 @@ CREATE INDEX idx_tte_samples_process_time ON public.tte_samples USING btree (pro
 
 CREATE INDEX ix_process_styles_active ON public.process_styles USING btree (process_id) WHERE is_active;
 
-CREATE UNIQUE INDEX order_bins_order_bin_uniq ON public.order_bins USING btree (order_id, bin_id);
+CREATE INDEX order_bins_by_bin ON public.order_bins USING btree (bin_id, order_id DESC);
+
+CREATE UNIQUE INDEX order_bins_drop ON public.order_bins USING btree (order_id, drop_step);
+
+CREATE UNIQUE INDEX order_bins_pick ON public.order_bins USING btree (order_id, pick_step);
 
 CREATE UNIQUE INDEX uq_cell_part_events_tick ON ONLY public.cell_part_events USING btree (cell_id, edge_snapshot_id, recorded_at);
 
@@ -2157,9 +2157,6 @@ ALTER TABLE ONLY public.order_bins
 
 ALTER TABLE ONLY public.order_history
     ADD CONSTRAINT order_history_order_id_fkey FOREIGN KEY (order_id) REFERENCES public.orders(id);
-
-ALTER TABLE ONLY public.orders
-    ADD CONSTRAINT orders_bin_id_fkey FOREIGN KEY (bin_id) REFERENCES public.bins(id);
 
 ALTER TABLE ONLY public.orders
     ADD CONSTRAINT orders_parent_order_id_fkey FOREIGN KEY (parent_order_id) REFERENCES public.orders(id);

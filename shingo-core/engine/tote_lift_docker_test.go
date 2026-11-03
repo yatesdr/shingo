@@ -64,9 +64,9 @@ func (c toteCell) order(t *testing.T, uuid, sibling string, bin int64, processNo
 	t.Helper()
 	var at string
 	_ = c.db.QueryRow(`SELECT n.name FROM bins b JOIN nodes n ON n.id = b.node_id WHERE b.id = $1`, bin).Scan(&at)
-	o := &orders.Order{EdgeUUID: uuid, StationID: "line-1", OrderType: "complex", Status: "in_transit",
-		Quantity: 1, ProcessNode: processNode, SiblingOrderUUID: sibling, BinID: &bin,
-		StepsJSON: `[{"action":"pickup","node":"` + at + `"},{"action":"dropoff","node":"MARKET"}]`}
+	o := testdb.Holding(&orders.Order{EdgeUUID: uuid, StationID: "line-1", OrderType: "complex", Status: "in_transit",
+		Quantity: 1, ProcessNode: processNode, SiblingOrderUUID: sibling,
+		StepsJSON: `[{"action":"pickup","node":"` + at + `"},{"action":"dropoff","node":"MARKET"}]`}, bin)
 	testutil.MustNoErr(t, c.db.CreateOrder(o), "order "+uuid)
 	_, err := c.db.Exec(`UPDATE bins SET claimed_by = $1 WHERE id = $2`, o.ID, bin)
 	testutil.MustNoErr(t, err, "claim")

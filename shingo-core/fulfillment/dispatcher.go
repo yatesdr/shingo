@@ -66,7 +66,7 @@ type Dispatcher interface {
 	SkipOrder(order *orders.Order, code, detail string)
 
 	// DemoteAfterFleetRefusal is the ONE door every fleet refusal goes through —
-	// armor off, paper demoted confirmed→pending, pointer and junction rows kept,
+	// armor off, paper demoted confirmed→pending, the order's cart rows kept,
 	// back to `queued` under the caller's cause (which it requires). See dispatch/dispatcher.go for
 	// the ruling and the clauses; the scanner's part is only to name the wait.
 	//

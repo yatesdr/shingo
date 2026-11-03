@@ -58,8 +58,8 @@ func TestSimulator_FullLifecycle(t *testing.T) {
 	order = testdb.RequireOrderStatus(t, db, "lc-1", "confirmed")
 
 	// Step 5: Verify bin moved to destination and claim released
-	testdb.AssertBinAtNode(t, db, *order.BinID, lineNode.ID)
-	testdb.AssertBinUnclaimed(t, db, *order.BinID)
+	testdb.AssertBinAtNode(t, db, *testdb.OnlyCart(t, order), lineNode.ID)
+	testdb.AssertBinUnclaimed(t, db, *testdb.OnlyCart(t, order))
 }
 
 // --- TC-2: Staged Complex Order Release ---

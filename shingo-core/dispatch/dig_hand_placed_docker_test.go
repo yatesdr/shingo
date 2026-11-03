@@ -47,11 +47,11 @@ func TestDigTakesAHandPlacedBin_FailsLoudlyWithItsOwnCode(t *testing.T) {
 		EdgeUUID: "uuid-hand-placed-move", StationID: "line-1",
 		OrderType: OrderTypeMove, Status: StatusPending, Quantity: 1,
 		SourceNode:   slots[0].Name,
-		BinID:        &blocker.ID,
 		NamedBinID:   &blocker.ID,
 		OriginClass:  protocol.OriginClassNoDemand,
 		SourceIntent: SourceIntentForType(OrderTypeMove),
 	}
+	byHand.HoldFromBirth(blocker.ID)
 	testutil.MustNoErr(t, db.CreateOrder(byHand), "create hand-placed move")
 	testutil.MustNoErr(t, reservations.Acquire(db.DB, byHand.ID, byHand.ID, blocker.ID, "test"), "reserve blocker")
 

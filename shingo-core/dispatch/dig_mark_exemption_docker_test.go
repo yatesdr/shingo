@@ -168,8 +168,8 @@ func TestDigMarkExemption_InTransitHolderStillRefusesTheDig(t *testing.T) {
 		o.OrderType = protocol.OrderTypeRetrieve
 		o.SourceNode = w[2].Name
 		o.DeliveryNode = line.Name
-		o.BinID = &srcBin.ID
 		o.Status = protocol.StatusPending
+		o.HoldFromBirth(srcBin.ID)
 	})
 	// It holds the bin it points at (EntryHeldBin): a pending order pointing at a
 	// bin it holds nothing on is a pointer wedge (C1 sweeps pending too).
@@ -406,8 +406,8 @@ func TestDigMarkExemption_SourceLockRetrieveIsAdmittedPastAMarkHolder(t *testing
 		o.OrderType = protocol.OrderTypeRetrieve
 		o.SourceNode = w[2].Name
 		o.DeliveryNode = line.Name
-		o.BinID = &deeper.ID
 		o.Status = protocol.StatusDispatched
+		o.HoldFromBirth(deeper.ID)
 	})
 	// It holds the bin it points at (EntryHeldBin): an order pointing at a bin it
 	// holds nothing on is a pointer wedge. (C1.5: the lane hold it takes below is
@@ -447,8 +447,8 @@ func TestDigMarkExemption_TheCycleBreaksEndToEnd(t *testing.T) {
 		o.OrderType = protocol.OrderTypeRetrieve
 		o.SourceNode = w[2].Name
 		o.DeliveryNode = line.Name
-		o.BinID = &deeper.ID
 		o.Status = protocol.StatusPending
+		o.HoldFromBirth(deeper.ID)
 	})
 	if adm, cause, ln, err := d.AcquireLanesForOrder(retrieve, w[2], line, EntryHeldBin); err != nil || !adm {
 		t.Fatalf("link 1: the retrieve must be admitted (%v %s %s)", err, cause, ln)

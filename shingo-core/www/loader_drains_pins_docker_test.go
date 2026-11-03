@@ -116,7 +116,8 @@ func TestLoaderUpdate_TickingABoxDrainsAtOnce(t *testing.T) {
 
 	drainMoves := func() []string {
 		t.Helper()
-		rows, err := db.Query(`SELECT delivery_node FROM orders WHERE edge_uuid LIKE 'core-dr-%' AND bin_id = $1`, cart.ID)
+		rows, err := db.Query(`SELECT delivery_node FROM orders WHERE edge_uuid LIKE 'core-dr-%'
+			AND EXISTS (SELECT 1 FROM order_bins ob WHERE ob.order_id = orders.id AND ob.bin_id = $1)`, cart.ID)
 		testutil.MustNoErr(t, err, "the drain's moves")
 		defer rows.Close()
 		var out []string

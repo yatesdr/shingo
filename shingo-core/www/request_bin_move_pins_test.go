@@ -55,8 +55,8 @@ func TestRequestBinMove_FilesAMoveOrderThroughTheManualMoveDoor(t *testing.T) {
 	if o.SourceNode != sd.StorageNode.Name || o.DeliveryNode != sd.LineNode.Name {
 		t.Errorf("order goes %s -> %s, want %s -> %s", o.SourceNode, o.DeliveryNode, sd.StorageNode.Name, sd.LineNode.Name)
 	}
-	if o.BinID == nil || *o.BinID != bin.ID {
-		t.Errorf("order holds bin %v, want %d", o.BinID, bin.ID)
+	if testdb.OnlyCart(t, o) == nil || *testdb.OnlyCart(t, o) != bin.ID {
+		t.Errorf("order holds bin %v, want %d", testdb.OnlyCart(t, o), bin.ID)
 	}
 	if o.OriginClass != string(protocol.OriginClassNoDemand) {
 		t.Errorf("origin class %q, want no_demand: a person's move, as on the Orders page", o.OriginClass)

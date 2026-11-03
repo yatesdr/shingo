@@ -145,10 +145,10 @@ func TestScanner_LosingTheCASToAHandYields(t *testing.T) {
 		Quantity:     1,
 		SourceNode:   storageNode.Name,
 		DeliveryNode: lineNode.Name,
-		BinID:        &binID,
 		OriginClass:  protocol.OriginClassNoDemand,
 		SourceIntent: dispatch.SourceIntentLocal,
 	}
+	order.HoldFromBirth(binID)
 	testutil.MustNoErr(t, db.CreateOrder(order), "create the queued held-bin order")
 	// A queued held-bin order holds its bin SOFT (a pending reservation); the hand
 	// is what hard-claims it.

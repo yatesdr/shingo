@@ -73,9 +73,7 @@ func parkedStore(t *testing.T, db *store.DB, d *Dispatcher, uuid string, dest *n
 	})
 	testutil.MustNoErr(t, db.ReserveSlot(dest.ID, o.ID), "reserve the destination slot")
 	testdb.ReserveBin(t, db, o.ID, bin)
-	if err := db.UpdateOrderBinID(o.ID, bin); err != nil {
-		t.Fatalf("stamp bin_id: %v", err)
-	}
+	testdb.HoldCart(t, db, o.ID, bin)
 	reloaded, err := db.GetOrder(o.ID)
 	testutil.MustNoErr(t, err, "reload order")
 	return reloaded
@@ -172,8 +170,8 @@ func TestStoreRedirect_DugLaneWithAFreeSibling_ReSelects(t *testing.T) {
 		t.Error("the order's BIN hold was released by a DESTINATION re-selection — it will now " +
 			"re-shop for material it already had, and the finder cannot see the bin it just let go")
 	}
-	if after.BinID == nil || *after.BinID != bin.ID {
-		t.Errorf("bin_id = %v, want the bin it already holds (%d)", after.BinID, bin.ID)
+	if testdb.OnlyCart(t, after) == nil || *testdb.OnlyCart(t, after) != bin.ID {
+		t.Errorf("bin_id = %v, want the bin it already holds (%d)", testdb.OnlyCart(t, after), bin.ID)
 	}
 }
 
@@ -290,7 +288,7 @@ func TestSettle_ResolvesASyntheticDestinationToAChild(t *testing.T) {
 		o.Status = protocol.StatusQueued
 	})
 	testdb.ReserveBin(t, db, order.ID, bin.ID)
-	testutil.MustNoErr(t, db.UpdateOrderBinID(order.ID, bin.ID), "stamp bin_id")
+	testdb.HoldCart(t, db, order.ID, bin.ID)
 	orderRaw, err := db.GetOrder(order.ID)
 	order = testutil.Must(t, orderRaw, err, "db.GetOrder(order.ID)")
 
@@ -336,7 +334,7 @@ func TestSettle_AFullGroupIsAWaitNotAFailure(t *testing.T) {
 		o.Status = protocol.StatusQueued
 	})
 	testdb.ReserveBin(t, db, order.ID, bin.ID)
-	testutil.MustNoErr(t, db.UpdateOrderBinID(order.ID, bin.ID), "stamp bin_id")
+	testdb.HoldCart(t, db, order.ID, bin.ID)
 	orderRaw, err := db.GetOrder(order.ID)
 	order = testutil.Must(t, orderRaw, err, "db.GetOrder(order.ID)")
 

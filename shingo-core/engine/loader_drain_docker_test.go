@@ -215,7 +215,7 @@ func TestDrain_SendBackLeftoverCartReachesAWindow(t *testing.T) {
 	}})
 
 	moves := awaitDrainMoves(t, db, 1)
-	if len(moves) != 1 || moves[0].BinID == nil || *moves[0].BinID != cart.ID {
+	if len(moves) != 1 || testdb.OnlyCart(t, moves[0]) == nil || *testdb.OnlyCart(t, moves[0]) != cart.ID {
 		t.Fatalf("drain moves = %v, want the leftover cart %d", moves, cart.ID)
 	}
 	m := awaitDispatched(t, db, moves[0])

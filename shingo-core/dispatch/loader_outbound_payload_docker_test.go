@@ -101,9 +101,10 @@ func TestPayloadForDispatch_ReadsTheBinOnlyForABlankNeed(t *testing.T) {
 		o := &orders.Order{
 			EdgeUUID: uuid, StationID: "test-station", OrderType: protocol.OrderTypeMove,
 			Status: protocol.StatusPending, Quantity: 1, SourceNode: storageNode.Name,
-			DeliveryNode: lineNode.Name, PayloadCode: payload, SourceIntent: intent, BinID: &bin.ID,
+			DeliveryNode: lineNode.Name, PayloadCode: payload, SourceIntent: intent,
 			OriginClass: protocol.OriginClassNoDemand,
 		}
+		o.HoldFromBirth(bin.ID)
 		testutil.MustNoErr(t, db.CreateOrder(o), "create "+uuid)
 		testdb.ReserveBin(t, db, o.ID, bin.ID)
 		return o

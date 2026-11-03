@@ -2332,8 +2332,8 @@ func checkExhaustedCarrierPool(db *store.DB) []string {
 //   - a single_robot consume swap, which is ONE order that lifts the resident
 //     and places the replacement, had its lift and its placement stamped at the
 //     same instant — the moment the order finished, often hours after the lift;
-//   - and the lift was attributed to orders.bin_id, which is the bin the order
-//     PLACED, not the one it lifted. So the previous resident's arrival never
+//   - and the lift was attributed to the order's one-bin column (since dropped),
+//     which named the bin the order PLACED, not the one it lifted. So the previous resident's arrival never
 //     found a departure, read as "never lifted (still standing)", and tripped on
 //     the next carrier's perfectly ordinary arrival.
 //

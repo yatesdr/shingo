@@ -567,15 +567,15 @@ func (d *Dispatcher) giveBackRelease(order *orders.Order, slot *nodes.Node, took
 	d.dbg("lane gate: order %d gives %s back as paper — its tail never reached the fleet", order.ID, slot.Name)
 }
 
-// patchChosenDrop moves the plan to the chosen slot. Three copies of "where is
-// this going", all or none (they were the widen's):
+// patchChosenDrop moves the plan to the chosen slot. Two copies of "where is
+// this going", all or none (they were the widen's; the third, the junction's
+// dest_node, is gone: a cart's set-down is its row's drop step in the plan):
 //
 //	the entry step (+ delivery_node    what the append emits, and what the row
 //	  when it is the plan's last drop)  says; an interior drop moves in the plan
 //	                                    alone (C2a A.5: delivery_node is the trip's end)
 //	the WAIT step's WaitLane           whose occupancy the append takes — a stale
 //	                                    one takes the wrong lane's (F-12's shape)
-//	order_bins.dest_node                what the whole-order settle places against
 //
 // A mid-trip drop that changed lane leaves the steps after it entering a lane the
 // robot is not in, so each such entry gets its own wait (gateLaterLaneEntries,

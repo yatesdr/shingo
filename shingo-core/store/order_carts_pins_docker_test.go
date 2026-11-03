@@ -32,7 +32,7 @@ func TestOrderCartsPin_APlainHoldWritesItsRow(t *testing.T) {
 
 	after, err := db.GetOrder(o.ID)
 	testutil.MustNoErr(t, err, "reload")
-	if after.BinID == nil || *after.BinID != bin.ID {
+	if testdb.OnlyCart(t, after) == nil || *testdb.OnlyCart(t, after) != bin.ID {
 		t.Fatalf("the hold did not point the order at bin %d", bin.ID)
 	}
 	if !testdb.HasCartRow(t, db, o.ID, bin.ID) {
@@ -56,7 +56,7 @@ func TestOrderCartsPin_ATakerUnpointsAJunctionOnlyHolder(t *testing.T) {
 	for _, b := range []int64{x.ID, y.ID} {
 		testutil.MustNoErr(t, reservations.Acquire(db.DB, holder.ID, holder.ID, b, "pin"), "the holder's promise")
 	}
-	testutil.MustNoErr(t, db.UpdateOrderBinID(holder.ID, x.ID), "the holder points at X")
+	testdb.HoldCart(t, db, holder.ID, x.ID)
 	testdb.SeedCartRow(t, db, holder.ID, x.ID, 0, 1)
 	testdb.SeedCartRow(t, db, holder.ID, y.ID, 2, 3)
 	taker := testdb.CreateOrder(t, db, func(o *orders.Order) {
@@ -90,7 +90,7 @@ func TestOrderCartsPin_ThePairReleaseDeletesItsUnliftedRows(t *testing.T) {
 	bin := testdb.CreateBinAtNode(t, db, "DEFAULT", sd.StorageNode.ID, "CARTS-PAIR")
 	o := testdb.CreateOrder(t, db, func(o *orders.Order) { o.EdgeUUID = "carts-pair" })
 	testutil.MustNoErr(t, reservations.Acquire(db.DB, o.ID, o.ID, bin.ID, "pin"), "the leg's promise")
-	testutil.MustNoErr(t, db.UpdateOrderBinID(o.ID, bin.ID), "the leg points at its cart")
+	testdb.HoldCart(t, db, o.ID, bin.ID)
 	testdb.SeedCartRow(t, db, o.ID, bin.ID, 0, 1)
 
 	testutil.MustNoErr(t, db.ReleaseOrderHoldings(o.ID), "the pair release")
@@ -111,7 +111,8 @@ func TestOrderCartsPin_TheScannersForgetKeepsANamedOrdersRow(t *testing.T) {
 	sd := testdb.SetupStandardData(t, db)
 	bin := testdb.CreateBinAtNode(t, db, "DEFAULT", sd.StorageNode.ID, "CARTS-NAMED")
 	o := testdb.CreateOrder(t, db, func(o *orders.Order) {
-		o.EdgeUUID, o.NamedBinID, o.BinID = "carts-named", &bin.ID, &bin.ID
+		o.EdgeUUID, o.NamedBinID = "carts-named", &bin.ID
+		o.HoldFromBirth(bin.ID)
 	})
 	testdb.SeedCartRow(t, db, o.ID, bin.ID, 0, 1)
 
@@ -131,7 +132,7 @@ func TestOrderCartsPin_TheScannersForgetDeletesAPlainOrdersRow(t *testing.T) {
 	db := testdb.Open(t)
 	sd := testdb.SetupStandardData(t, db)
 	bin := testdb.CreateBinAtNode(t, db, "DEFAULT", sd.StorageNode.ID, "CARTS-FORGET")
-	o := testdb.CreateOrder(t, db, func(o *orders.Order) { o.EdgeUUID, o.BinID = "carts-forget", &bin.ID })
+	o := testdb.CreateOrder(t, db, func(o *orders.Order) { o.EdgeUUID = "carts-forget"; o.HoldFromBirth(bin.ID) })
 	testdb.SeedCartRow(t, db, o.ID, bin.ID, 0, 1)
 
 	testutil.MustNoErr(t, db.ForgetHeldCart(o.ID), "the scanner's forget")

@@ -167,9 +167,10 @@ func TestPressIndex3_R2RebindsTheCarrierItSetOnThePress(t *testing.T) {
 		// bin_id names the REAR carrier on purpose. R2 holds two carriers and has
 		// one bin pointer, so its middle pickup must resolve by where it is, not by
 		// the pointer — which is what the MUTATION above breaks.
-		BinID: &rearBin.ID,
 	}
 	testutil.MustNoErr(t, db.CreateOrder(r2), "create R2")
+	// Its carts: the on-deck carrier lifted at mid, the rear bin at rear.
+	testdb.SeedCarts(t, db, r2.ID, map[int]int64{1: onDeck.ID, 3: rearBin.ID})
 	testdb.ClaimBinForTest(t, db, onDeck.ID, r2.ID)
 	testdb.ClaimBinForTest(t, db, rearBin.ID, r2.ID)
 

@@ -21,7 +21,6 @@ type HeldPickupExchange struct {
 	HolderID, DiggerID      int64
 	MouthBin, DeepBin       int64
 	MouthNodeID, DeepNodeID int64
-	DeepNodeName            string
 	HolderWaitIndex         int
 	HolderUpdatedAt         time.Time
 	HolderStepsWas          string
@@ -55,8 +54,7 @@ var ErrExchangeRefused = errors.New("claim exchange refused")
 // Then: the holder's claim and hold leave the mouth bin; the holder holds and
 // claims the deep bin (the ordinary reserve, claim CAS and confirm); the
 // digger holds the mouth bin, pending, as its own plan would; the holder's
-// plan, bin pointer (when it named the mouth bin) and junction row are
-// re-pointed; the digger's plan names the mouth slot; and one claim_exchanged
+// plan and its row for the mouth bin are re-pointed; the digger's plan names the mouth slot; and one claim_exchanged
 // ledger row is written on each order and each bin. The ledger is audit_log,
 // not order_history: a history row carries the order's status, and one more
 // `staged` row on the holder would read as a new staging to every dwell
@@ -90,12 +88,10 @@ func exchangeHeldPickupTx(tx *sql.Tx, ex HeldPickupExchange) error {
 		return nil
 	}
 
-	if err := one("the holder changed since the decision read it", fmt.Sprintf(`UPDATE orders SET steps_json=$1,
-		bin_id = CASE WHEN bin_id=$2 THEN $3 ELSE bin_id END, updated_at=$4
-		WHERE id=$5 AND wait_index=$6 AND updated_at=$7 AND steps_json=$8 AND status NOT IN (%s)`,
+	if err := one("the holder changed since the decision read it", fmt.Sprintf(`UPDATE orders SET steps_json=$1, updated_at=$2
+		WHERE id=$3 AND wait_index=$4 AND updated_at=$5 AND steps_json=$6 AND status NOT IN (%s)`,
 		protocol.TerminalStatusSQLList()),
-		ex.HolderStepsNow, ex.MouthBin, ex.DeepBin, now, ex.HolderID, ex.HolderWaitIndex, ex.HolderUpdatedAt,
-		ex.HolderStepsWas); err != nil {
+		ex.HolderStepsNow, now, ex.HolderID, ex.HolderWaitIndex, ex.HolderUpdatedAt, ex.HolderStepsWas); err != nil {
 		return err
 	}
 	if err := one("the digger changed since the decision read it", fmt.Sprintf(`UPDATE orders SET steps_json=$1, updated_at=$2
@@ -148,8 +144,8 @@ func exchangeHeldPickupTx(tx *sql.Tx, ex HeldPickupExchange) error {
 	if err := reservations.Acquire(tx, ex.DiggerID, ex.DiggerID, ex.MouthBin, claimExchangeActor); err != nil {
 		return refusedOr(err, refused)
 	}
-	if _, err := tx.Exec(`UPDATE order_bins SET bin_id=$3, node_name=$4 WHERE order_id=$1 AND bin_id=$2`,
-		ex.HolderID, ex.MouthBin, ex.DeepBin, ex.DeepNodeName); err != nil {
+	if _, err := tx.Exec(`UPDATE order_bins SET bin_id=$3 WHERE order_id=$1 AND bin_id=$2`,
+		ex.HolderID, ex.MouthBin, ex.DeepBin); err != nil {
 		return err
 	}
 	for _, row := range []struct {

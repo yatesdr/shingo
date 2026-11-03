@@ -99,8 +99,8 @@ func TestServiceDig_BuriedComplexDemand_DigsThenDispatchesItsOwnPlan(t *testing.
 		t.Fatalf("the dig has %d leg(s), want 1 (the single blocker) — and it must carry no retrieve: "+
 			"the demand owns its own pickup", len(legs))
 	}
-	if legs[0].BinID == nil || *legs[0].BinID != blocker.ID {
-		t.Errorf("the dig's leg moves %v, want the blocker %d", legs[0].BinID, blocker.ID)
+	if testdb.OnlyCart(t, legs[0]) == nil || *testdb.OnlyCart(t, legs[0]) != blocker.ID {
+		t.Errorf("the dig's leg moves %v, want the blocker %d", testdb.OnlyCart(t, legs[0]), blocker.ID)
 	}
 	if legs[0].VendorOrderID == "" {
 		t.Errorf("the dig's leg was never dispatched (queue_cause %q) — the group was quiet",
@@ -230,8 +230,8 @@ func driveDigToCompletion(t *testing.T, db *store.DB, d *Dispatcher, dig *orders
 		// The blocker physically arrives at the leg's destination.
 		dest, err := db.GetNodeByDotName(leg.DeliveryNode)
 		testutil.MustNoErr(t, err, "resolve the leg's destination")
-		if leg.BinID != nil {
-			testutil.MustNoErr(t, db.MoveBinClearingStaging(*leg.BinID, dest.ID, false), "land the blocker")
+		if testdb.OnlyCart(t, leg) != nil {
+			testutil.MustNoErr(t, db.MoveBinClearingStaging(*testdb.OnlyCart(t, leg), dest.ID, false), "land the blocker")
 		}
 		// CONFIRMED, not merely completed. AdvanceCompoundOrder's terminal block
 		// asks whether every child reached a TERMINAL STATUS; setting completed_at

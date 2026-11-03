@@ -864,8 +864,8 @@ func (d *Dispatcher) releaseReachedInTransit(order *orders.Order, err error, wha
 // "which bin is this order about" lookup written against the node alone would
 // disagree with this one whenever a claim exists or two bins sit at the line.
 //
-// Originally: locates a bin to manifest-sync when the
-// caller's order.BinID is nil at release time. Returns (binID, true)
+// Locates a bin to manifest-sync when the order carries no cart at release
+// time (the complex claim missed). Returns (binID, true)
 // on success.
 //
 // Lookup order:

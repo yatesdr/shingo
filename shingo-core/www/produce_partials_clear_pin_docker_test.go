@@ -241,9 +241,9 @@ func TestProducePartialsPin_PartialOnAtStageTwoIsFetchedFirst(t *testing.T) {
 	testutil.MustNoErr(t, err, "the refill")
 	fetched := "waits"
 	switch {
-	case o.BinID != nil && *o.BinID == bare.ID:
+	case testdb.OnlyCart(t, o) != nil && *testdb.OnlyCart(t, o) == bare.ID:
 		fetched = "partial"
-	case o.BinID != nil && *o.BinID == dressed.ID:
+	case testdb.OnlyCart(t, o) != nil && *testdb.OnlyCart(t, o) == dressed.ID:
 		fetched = "empty"
 	}
 	seen := fmt.Sprintf("load=%d type=%s part=%s uop=%d refill=%s",
@@ -297,7 +297,7 @@ func TestProducePartialsPin_FullOnAtStageTwoIsFetchedByTheCell(t *testing.T) {
 	o, err := db.GetOrderByUUID("ppf-feed")
 	testutil.MustNoErr(t, err, "the feed")
 	fetched := "waits"
-	if o.BinID != nil && *o.BinID == bare.ID {
+	if testdb.OnlyCart(t, o) != nil && *testdb.OnlyCart(t, o) == bare.ID {
 		fetched = "the full"
 	}
 	seen := fmt.Sprintf("load=%d type=%s part=%s uop=%d feed=%s",

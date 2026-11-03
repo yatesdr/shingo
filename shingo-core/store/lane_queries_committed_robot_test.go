@@ -103,7 +103,8 @@ func TestBurialGuard_AnUnsentOrdersAimIsAPlan(t *testing.T) {
 	target := testdb.CreateBinAtNode(t, db, "BIN-BG-AIM", slot3ID, "BIN-BG-AIM")
 	aimer := testdb.CreateOrder(t, db, func(o *orders.Order) {
 		o.OrderType, o.Status = "retrieve", protocol.StatusQueued
-		o.BinID, o.SourceNode = &target.ID, slot3.Name
+		o.SourceNode = slot3.Name
+		o.HoldFromBirth(target.ID)
 	})
 
 	committed := testdb.CreateOrder(t, db, func(o *orders.Order) {

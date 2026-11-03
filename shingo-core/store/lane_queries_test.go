@@ -392,7 +392,7 @@ func TestGroupSlotState_AnswersAsTheSelectorsDo(t *testing.T) {
 	deep := testdb.CreateBinAtNode(t, db, "", s1[3].ID, "GSS-DEEP")
 	h := order("gss-h", protocol.StatusQueued, "", func(o *orders.Order) { o.SourceNode = s1[3].Name })
 	mustNo(t, reservations.Acquire(db.DB, h.ID, h.ID, deep.ID, "test")) // its aim holds the bin softly
-	mustNo(t, db.UpdateOrderBinID(h.ID, deep.ID))
+	testdb.HoldCart(t, db, h.ID, deep.ID)
 	// D: a dig holding L2's mouth.
 	dig := order("gss-d", protocol.StatusInTransit, "GSS-VD", nil)
 	if _, err := db.DB.Exec(`INSERT INTO reservations (order_id, resource_kind, node_id, state, mode, reserved_by, created_at)

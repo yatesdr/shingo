@@ -69,8 +69,8 @@ func TestStage1_RetrievePlanDifferential_Dispatch(t *testing.T) {
 	// capture the unified create request and assert the plan's blocks are fleet-
 	// equivalent (same node sequence + SEER task kinds) and Complete=true (no-wait).
 	dispatched := dispatchSimpleViaScanner(t, d, db, order.EdgeUUID)
-	if dispatched.BinID == nil || *dispatched.BinID != src.ID {
-		t.Fatalf("scanner claimed source bin = %v, want %d", dispatched.BinID, src.ID)
+	if testdb.OnlyCart(t, dispatched) == nil || *testdb.OnlyCart(t, dispatched) != src.ID {
+		t.Fatalf("scanner claimed source bin = %v, want %d", testdb.OnlyCart(t, dispatched), src.ID)
 	}
 	reqs := backend.CreateRequests()
 	if len(reqs) != 1 {

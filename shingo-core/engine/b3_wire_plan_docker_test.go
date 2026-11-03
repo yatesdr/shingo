@@ -85,10 +85,10 @@ func (p planPlant) dispatchedBin(t *testing.T, id int64) int64 {
 	if o.Status != protocol.StatusDispatched && o.Status != protocol.StatusInTransit {
 		t.Fatalf("order status = %s (%s), want dispatched", o.Status, o.QueueReason)
 	}
-	if o.BinID == nil {
+	if testdb.OnlyCart(t, o) == nil {
 		t.Fatal("dispatched with no bin")
 	}
-	return *o.BinID
+	return *testdb.OnlyCart(t, o)
 }
 
 // A standing plan is taken: the planned bin leaves, not the one a pick takes.

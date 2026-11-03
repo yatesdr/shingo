@@ -4538,6 +4538,12 @@ func migrationList() []migration {
 			func(q schema.Querier) bool {
 				return schema.ColumnExists(q, "order_bins", "drop_step") && schema.IndexExists(q, "order_bins_by_bin")
 			}},
+		{174, "drop orders.bin_id and the junction's node copies (order_bins action, node_name, dest_node): an order's carts are its rows, where they happen is its plan's",
+			v174DropOneCartColumns,
+			func(q schema.Querier) bool {
+				return schema.ColumnAbsent(q, "orders", "bin_id") && schema.ColumnAbsent(q, "order_bins", "dest_node") &&
+					schema.ColumnAbsent(q, "order_bins", "node_name") && schema.ColumnAbsent(q, "order_bins", "action")
+			}},
 	}
 }
 

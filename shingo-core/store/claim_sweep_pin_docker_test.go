@@ -19,10 +19,12 @@ import (
 // what it wrote. Each finding here never leaves a pointer standing on a bin its
 // order holds no row on.
 
-func pointerAndRow(t *testing.T, db *store.DB, orderID, binID int64) (pointer sql.NullInt64, row bool) {
+// pointerAndRow is whether the order points at the bin (a cart row of its for
+// it) and whether it holds a reservation row on it.
+func pointerAndRow(t *testing.T, db *store.DB, orderID, binID int64) (pointer, row bool) {
 	t.Helper()
-	testutil.MustNoErr(t, db.DB.QueryRow(`SELECT bin_id, EXISTS (SELECT 1 FROM reservations
-		WHERE order_id = $1 AND bin_id = $2 AND resource_kind = 'bin') FROM orders WHERE id = $1`,
+	testutil.MustNoErr(t, db.DB.QueryRow(`SELECT EXISTS (SELECT 1 FROM order_bins WHERE order_id = $1 AND bin_id = $2),
+		EXISTS (SELECT 1 FROM reservations WHERE order_id = $1 AND bin_id = $2 AND resource_kind = 'bin')`,
 		orderID, binID).Scan(&pointer, &row), "the order's pointer and row")
 	return pointer, row
 }
@@ -38,12 +40,12 @@ func TestClaimSweepPin_ALegHandoverUnpointsTheStrangerWhoseRowItTakes(t *testing
 
 	late := testdb.CreateOrder(t, r.db, func(o *orders.Order) { o.EdgeUUID = "CSP-F1-late" })
 	testutil.MustNoErr(t, reservations.Acquire(r.db.DB, late.ID, late.ID, r.binID, "test"), "a stranger's hold lands after the birth")
-	testutil.MustNoErr(t, r.db.UpdateOrderBinID(late.ID, r.binID), "and points at the bin")
+	testdb.HoldCart(t, r.db, late.ID, r.binID)
 
 	testutil.MustNoErr(t, inTx(r.db, func(tx *sql.Tx) error {
 		return store.ClaimCompoundLegBinTx(tx, r.binID, r.child.ID, r.parent.ID)
 	}), "the leg's handover")
-	if pointer, row := pointerAndRow(t, r.db, late.ID, r.binID); pointer.Valid && !row {
+	if pointer, row := pointerAndRow(t, r.db, late.ID, r.binID); pointer && !row {
 		t.Fatalf("the stranger %d still points at bin %d with no row on it after the leg's handover", late.ID, r.binID)
 	}
 }
@@ -69,7 +71,7 @@ func TestClaimSweepPin_ATakeLeavesAHolderWhoseHandConfirmedFirst(t *testing.T) {
 	testutil.MustNoErr(t, htx.Commit(), "the hand commits")
 	<-done
 	pointer, row := pointerAndRow(t, r.db, r.holder.ID, r.binID)
-	if !row || !pointer.Valid || pointer.Int64 != r.binID {
+	if !row || !pointer {
 		t.Fatalf("after a take that came second the holder's pointer is %v and its row exists=%v; want both kept", pointer, row)
 	}
 	var told int
@@ -91,7 +93,7 @@ func TestClaimSweepPin_AReserveAndItsPointerHaveNothingBetweenThem(t *testing.T)
 	testutil.MustNoErr(t, scannerReserve(r.db, r.holder.ID, r.binID, func() {
 		testutil.MustNoErr(t, r.db.StealSoftHoldsForTest(r.binID, r.child.ID, r.parent.ID), "a dig steals between the reserve and the pointer")
 	}), "the scanner's reserve")
-	if pointer, row := pointerAndRow(t, r.db, r.holder.ID, r.binID); pointer.Valid && !row {
+	if pointer, row := pointerAndRow(t, r.db, r.holder.ID, r.binID); pointer && !row {
 		t.Fatalf("order %d points at bin %d with no row on it", r.holder.ID, r.binID)
 	}
 }

@@ -552,7 +552,6 @@ func TestStoreReplayDispatchesOwnClaimedBin(t *testing.T) {
 		// longer a kind of order — it was the resolver direction, and it now
 		// has its own type.
 		OrderType:    protocol.OrderType("store"),
-		BinID:        &binID,
 		SourceNode:   "STORE-SRC",
 		DeliveryNode: "STORE-DEST",
 	}
@@ -628,7 +627,6 @@ func TestScannerRetriesAnAcquiringOrder(t *testing.T) {
 		heldBin := int64(55)
 		order := &orders.Order{
 			ID: 43, Status: protocol.StatusQueued, OrderType: protocol.OrderTypeRetrieve,
-			BinID:      &heldBin, // already holds its bin — must be reused, never re-found
 			SourceNode: "src-held", DeliveryNode: "dest-x", PayloadCode: "PN-X",
 		}
 		order.HoldFromBirth(heldBin)
@@ -740,7 +738,7 @@ func TestHeldBin_DeclaresItselfAsHeldBinEntry(t *testing.T) {
 	binID := int64(77)
 	order := &orders.Order{
 		ID: 4, Status: protocol.StatusQueued, OrderType: protocol.OrderType("store"),
-		BinID: &binID, SourceNode: "HB-SRC", DeliveryNode: "HB-DEST",
+		SourceNode: "HB-SRC", DeliveryNode: "HB-DEST",
 	}
 	order.HoldFromBirth(binID)
 	f.queued = append(f.queued, order)

@@ -43,8 +43,8 @@ func TestDigLegs_OneBinTwoLegs_BothIssued(t *testing.T) {
 		t.Fatalf("%d legs issued, want 2: one bin may be two legs'", len(legs))
 	}
 	for _, l := range legs {
-		if l.BinID == nil || *l.BinID != bin.ID {
-			t.Errorf("leg %d (seq %d) stamps bin %v, want %d", l.ID, l.Sequence, l.BinID, bin.ID)
+		if testdb.OnlyCart(t, l) == nil || *testdb.OnlyCart(t, l) != bin.ID {
+			t.Errorf("leg %d (seq %d) stamps bin %v, want %d", l.ID, l.Sequence, testdb.OnlyCart(t, l), bin.ID)
 		}
 	}
 	var rows int
@@ -65,7 +65,8 @@ func TestDigLegs_OutrankedPendingHoldIsStolenAtIssue(t *testing.T) {
 	blocker := createTestBinAtNode(t, db, bp.Code, slots[0].ID, "DLS-BLOCKER")
 	_ = createTestBinAtNode(t, db, bp.Code, slots[1].ID, "DLS-TARGET")
 	stranger := testdb.CreateOrder(t, db, func(o *orders.Order) {
-		o.EdgeUUID, o.BinID, o.PayloadCode = "dls-stranger", &blocker.ID, bp.Code
+		o.EdgeUUID, o.PayloadCode = "dls-stranger", bp.Code
+		o.HoldFromBirth(blocker.ID)
 	})
 	testutil.MustNoErr(t, reservations.Acquire(db.DB, stranger.ID, stranger.ID, blocker.ID, "test"), "its promise")
 	// The dig outranks the stranger: a higher priority.
@@ -86,8 +87,8 @@ func TestDigLegs_OutrankedPendingHoldIsStolenAtIssue(t *testing.T) {
 	}
 	got, err := db.GetOrder(stranger.ID)
 	testutil.MustNoErr(t, err, "the stranger")
-	if got.BinID != nil {
-		t.Errorf("the stranger points at bin %d, want un-pointed to re-find", *got.BinID)
+	if testdb.OnlyCart(t, got) != nil {
+		t.Errorf("the stranger points at bin %d, want un-pointed to re-find", *testdb.OnlyCart(t, got))
 	}
 	legs, err := db.ListChildOrders(parent.ID)
 	testutil.MustNoErr(t, err, "the legs")

@@ -221,11 +221,6 @@ func (f *fakeStore) ReleaseReservation(orderID, _ int64) error {
 	return nil
 }
 
-func (f *fakeStore) UpdateOrderBinID(orderID, binID int64) error {
-	f.binIDUpdates = append(f.binIDUpdates, [2]int64{orderID, binID})
-	return nil
-}
-
 // ForgetHeldCart records a forgotten held-bin pointer. Recorded as binID 0 in
 // the same slice the updates use, because a test asserting "the order gave its
 // bin up" wants the ordering against the updates, not a second list to correlate.

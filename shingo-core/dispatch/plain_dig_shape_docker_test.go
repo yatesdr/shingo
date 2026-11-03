@@ -81,7 +81,7 @@ func TestPlainBuriedRetrieve_KeepsDemandAsItsOwnDigParent(t *testing.T) {
 	// resumption: when the last leg lands, the work is done.
 	movesTarget := false
 	for _, k := range kids {
-		if k.BinID != nil && *k.BinID == target.ID {
+		if testdb.OnlyCart(t, k) != nil && *testdb.OnlyCart(t, k) == target.ID {
 			movesTarget = true
 		}
 	}

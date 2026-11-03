@@ -101,7 +101,7 @@ func TestBuriedBin_ReshuffleViaEngine(t *testing.T) {
 	})
 
 	order := testdb.RequireOrder(t, db, "reshuffle-buried-1")
-	t.Logf("order %d: status=%s bin=%v vendor=%s", order.ID, order.Status, order.BinID, order.VendorOrderID)
+	t.Logf("order %d: status=%s bin=%v vendor=%s", order.ID, order.Status, testdb.OnlyCart(t, order), order.VendorOrderID)
 
 	// Order should be in "reshuffling" status (compound parent)
 	if order.Status != dispatch.StatusReshuffling {
@@ -120,7 +120,7 @@ func TestBuriedBin_ReshuffleViaEngine(t *testing.T) {
 	t.Logf("compound: %d children", len(children))
 	for _, c := range children {
 		t.Logf("  child %d: seq=%d status=%s desc=%s source=%s dest=%s bin=%v vendor=%s",
-			c.ID, c.Sequence, c.Status, c.PayloadDesc, c.SourceNode, c.DeliveryNode, c.BinID, c.VendorOrderID)
+			c.ID, c.Sequence, c.Status, c.PayloadDesc, c.SourceNode, c.DeliveryNode, testdb.OnlyCart(t, c), c.VendorOrderID)
 	}
 
 	// Drive each child through the fleet simulator lifecycle
@@ -602,7 +602,7 @@ func TestCompound_TwoRobotSwap_FullLifecycle(t *testing.T) {
 	t.Logf("compound: %d children", len(children))
 	for _, c := range children {
 		t.Logf("  child seq=%d: desc=%s src=%s dest=%s bin=%v",
-			c.Sequence, c.PayloadDesc, c.SourceNode, c.DeliveryNode, c.BinID)
+			c.Sequence, c.PayloadDesc, c.SourceNode, c.DeliveryNode, testdb.OnlyCart(t, c))
 	}
 
 	if len(children) < 3 {

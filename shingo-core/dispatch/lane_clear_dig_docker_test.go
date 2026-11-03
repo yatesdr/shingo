@@ -690,7 +690,7 @@ func appendsTo(backend *testdb.MockBackend, vendorOrderID string) int {
 func robotRunsDigLeg(t *testing.T, db *store.DB, leg *orders.Order, destNodeID int64) {
 	t.Helper()
 	testutil.MustNoErr(t, execAt(db, `UPDATE bins SET node_id=$1, claimed_by=NULL WHERE id=$2`,
-		destNodeID, *leg.BinID), "the robot places the blocker")
+		destNodeID, *testdb.OnlyCart(t, leg)), "the robot places the blocker")
 	if _, err := db.TerminalizeOrder(leg.ID, StatusConfirmed, "test harness: the leg placed its bin"); err != nil {
 		t.Fatalf("terminalize dig leg %d: %v", leg.ID, err)
 	}

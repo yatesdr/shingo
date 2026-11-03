@@ -195,7 +195,7 @@ func (c exchangeCase) exchange() (store.HeldPickupExchange, bool) {
 	return store.HeldPickupExchange{
 		HolderID: h.ID, DiggerID: g.ID,
 		MouthBin: c.mouth.ID, DeepBin: c.deep.ID,
-		MouthNodeID: c.mouthNode.ID, DeepNodeID: c.deepNode.ID, DeepNodeName: c.deepNode.Name,
+		MouthNodeID: c.mouthNode.ID, DeepNodeID: c.deepNode.ID,
 		HolderWaitIndex: h.WaitIndex, HolderUpdatedAt: h.UpdatedAt,
 		HolderStepsWas: h.StepsJSON, HolderStepsNow: string(hRaw),
 		DiggerStepsWas: g.StepsJSON, DiggerStepsNow: string(gRaw),

@@ -55,8 +55,8 @@ func TestRegression_BinMovesOnDelivered(t *testing.T) {
 	order = testdb.RequireOrderStatus(t, db, "regr-deliver-1", "delivered")
 
 	// KEY ASSERTION: bin should already be at the line node BEFORE confirmation
-	testdb.AssertBinAtNode(t, db, *order.BinID, lineNode.ID)
-	testdb.AssertBinUnclaimed(t, db, *order.BinID)
+	testdb.AssertBinAtNode(t, db, *testdb.OnlyCart(t, order), lineNode.ID)
+	testdb.AssertBinUnclaimed(t, db, *testdb.OnlyCart(t, order))
 
 	// Confirmation should still work (idempotent — bin already there)
 	d.HandleOrderReceipt(env, &protocol.OrderReceipt{
@@ -68,7 +68,7 @@ func TestRegression_BinMovesOnDelivered(t *testing.T) {
 	order = testdb.RequireOrderStatus(t, db, "regr-deliver-1", "confirmed")
 
 	// Bin still at line node after confirmation
-	testdb.AssertBinAtNode(t, db, *order.BinID, lineNode.ID)
+	testdb.AssertBinAtNode(t, db, *testdb.OnlyCart(t, order), lineNode.ID)
 }
 
 // TestRegression_OrderFailedNotifiesEdge regression-tests the fix that adds
@@ -166,9 +166,9 @@ func TestRegression_CancelEmptyEdgeUUID(t *testing.T) {
 		Status:       dispatch.StatusPending,
 		SourceNode:   lineNode.Name,
 		DeliveryNode: storageNode.Name,
-		BinID:        &bin.ID,
 		PayloadDesc:  "auto_return",
 	}
+	autoReturn.HoldFromBirth(bin.ID)
 	testutil.MustNoErr(t, db.CreateOrder(autoReturn), "create auto-return order")
 	// (C1: a top-level pending order pointing at a bin holds its reservation.)
 	testdb.ReserveBin(t, db, autoReturn.ID, bin.ID)
@@ -271,10 +271,10 @@ func TestRegression_MultiBinMovesOnDelivered(t *testing.T) {
 
 	order = testdb.RequireOrderStatus(t, db, "regr-multibin-1", "confirmed")
 
-	// Verify junction table was cleaned up on completion
+	// The order's rows are kept after it ends: its record of the carts it moved.
 	orderBinsAfter, _ := db.ListOrderBins(order.ID)
-	if len(orderBinsAfter) != 0 {
-		t.Errorf("order_bins rows after confirmation = %d, want 0 (should be cleaned up)", len(orderBinsAfter))
+	if len(orderBinsAfter) == 0 {
+		t.Errorf("order_bins rows after confirmation = 0, want its rows kept (an order's carts are its record)")
 	}
 }
 
@@ -306,7 +306,7 @@ func TestRegression_CompletionIdempotentAfterDelivery(t *testing.T) {
 	sim.DriveState(order.VendorOrderID, "RUNNING")
 	sim.DriveState(order.VendorOrderID, "FINISHED")
 
-	binAfterDelivery := testdb.RequireBin(t, db, *order.BinID)
+	binAfterDelivery := testdb.RequireBin(t, db, *testdb.OnlyCart(t, order))
 
 	// Record the bin state after delivery — confirmation must not change it
 	nodeAfterDelivery := *binAfterDelivery.NodeID
@@ -318,7 +318,7 @@ func TestRegression_CompletionIdempotentAfterDelivery(t *testing.T) {
 		FinalCount:  1,
 	})
 
-	binAfterConfirm := testdb.RequireBin(t, db, *order.BinID)
+	binAfterConfirm := testdb.RequireBin(t, db, *testdb.OnlyCart(t, order))
 
 	// Bin should still be at the same node — no double-move
 	if binAfterConfirm.NodeID == nil || *binAfterConfirm.NodeID != nodeAfterDelivery {

@@ -134,7 +134,7 @@ func moveThroughDelivery(t *testing.T, eng *Engine, db *store.DB, from, to *node
 	o, err := db.GetOrder(res.OrderID)
 	testutil.MustNoErr(t, err, "reload")
 	eng.handleOrderDelivered(o)
-	bin, err := db.GetBin(*o.BinID)
+	bin, err := db.GetBin(*testdb.OnlyCart(t, o))
 	testutil.MustNoErr(t, err, "reload the bin")
 	if bin.NodeID == nil || *bin.NodeID != to.ID {
 		t.Fatalf("the bin is not at %s after delivery; the handlers did not run the move", to.Name)
@@ -223,8 +223,8 @@ func TestAcquire_AStationKnownOrderKeepsItsAckAndWalksPendingToDispatched(t *tes
 			o.Status = protocol.StatusPending
 			o.SourceNode = storageNode.Name
 			o.DeliveryNode = lineNode.Name
-			o.BinID = &bin.ID
 			o.SourceIntent = "local"
+			o.HoldFromBirth(bin.ID)
 		})
 		testdb.ReserveBin(t, db, known.ID, bin.ID)
 		dispatched = eng.fulfillment.AcquireLocked(known.ID, nil)

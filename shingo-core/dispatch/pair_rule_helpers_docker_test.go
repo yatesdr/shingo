@@ -4,6 +4,7 @@ package dispatch
 
 import (
 	"encoding/json"
+	"shingocore/internal/testdb"
 	"testing"
 
 	"shingo/protocol"
@@ -160,9 +161,9 @@ func prAssertHoldsNothing(t *testing.T, db *store.DB, o *orders.Order, when stri
 	// leg that gave its claim back but still names the bin disagrees with itself,
 	// and every reader of the pointer between this pass and the next is told the
 	// order holds a bin somebody else may already have taken.
-	if fresh := prReload(t, db, o.ID); fresh.BinID != nil {
+	if fresh := prReload(t, db, o.ID); testdb.OnlyCart(t, fresh) != nil {
 		t.Errorf("%s: order %d (%s) released its holds but still points at bin %d — a hold released without "+
-			"its pointer", when, o.ID, o.EdgeUUID, *fresh.BinID)
+			"its pointer", when, o.ID, o.EdgeUUID, *testdb.OnlyCart(t, fresh))
 	}
 }
 

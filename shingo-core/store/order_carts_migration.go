@@ -127,6 +127,7 @@ func v173Shape(tx *sql.Tx) error {
 // v173Order is a live order as the walk reads it.
 type v173Order struct {
 	o     domain.Order
+	bin   int64 // orders.bin_id as it stood (the column v174 drops), 0 for none
 	rows  []v173Row
 	claim map[int64]bool // carts the order claims
 	live  bool           // the order has not ended
@@ -182,10 +183,7 @@ func v173ReadLive(tx *sql.Tx) ([]*v173Order, error) {
 			rows.Close()
 			return nil, fmt.Errorf("v173: scan a live order: %w", err)
 		}
-		if bin.Valid {
-			b := bin.Int64
-			lo.o.BinID = &b
-		}
+		lo.bin = bin.Int64
 		byID[lo.o.ID] = lo
 		out = append(out, lo)
 	}
@@ -254,10 +252,10 @@ func v173WalkOne(tx *sql.Tx, lo *v173Order) ([]v173Finding, error) {
 		// A single-cart order: its one non-relay pickup lifts its cart.
 		pick, ok := v173OnePick(steps)
 		if !ok {
-			return []v173Finding{{list: "live_pick_step_ambiguous", orderID: lo.o.ID, binID: *lo.o.BinID,
+			return []v173Finding{{list: "live_pick_step_ambiguous", orderID: lo.o.ID, binID: lo.bin,
 				detail: fmt.Sprintf("%d non-relay pickups in a plan of %d steps; keeps working on bin_id", pick, len(steps))}}, nil
 		}
-		claimedAt[pick] = *lo.o.BinID
+		claimedAt[pick] = lo.bin
 	}
 	lifts := domain.Lifts(steps, claimedAt)
 	final := map[int64]string{}
@@ -291,7 +289,7 @@ func v173WalkOne(tx *sql.Tx, lo *v173Order) ([]v173Finding, error) {
 		}
 	}
 	if len(lifts) == 0 && len(lo.rows) == 0 {
-		findings = append(findings, v173Finding{list: "live_row_without_drop", orderID: lo.o.ID, binID: *lo.o.BinID,
+		findings = append(findings, v173Finding{list: "live_row_without_drop", orderID: lo.o.ID, binID: lo.bin,
 			detail: "the plan never sets its cart down; no row"})
 	}
 	return findings, nil
@@ -467,6 +465,28 @@ func v173Constraints(tx *sql.Tx) error {
 	} {
 		if _, err := tx.Exec(q); err != nil {
 			return fmt.Errorf("v173: %s: %w", q, err)
+		}
+	}
+	return nil
+}
+
+// v174DropOneCartColumns drops what the rows replaced: orders.bin_id (one
+// column naming one cart, chosen by shape) and the junction's three node copies
+// of the plan, order_bins.action (always 'pickup'), node_name (the pick's node)
+// and dest_node (the cart's final drop). An order's carts are its rows (v173),
+// and where a lift happens is its plan's (domain.StepNode, StepNodeSQL). No
+// reader is left: the stream moved every one onto the rows before this ran.
+//
+// IF EXISTS on every column, so the migration is its own re-run.
+func v174DropOneCartColumns(tx *sql.Tx) error {
+	for _, stmt := range []string{
+		`ALTER TABLE orders DROP COLUMN IF EXISTS bin_id`,
+		`ALTER TABLE order_bins DROP COLUMN IF EXISTS action`,
+		`ALTER TABLE order_bins DROP COLUMN IF EXISTS node_name`,
+		`ALTER TABLE order_bins DROP COLUMN IF EXISTS dest_node`,
+	} {
+		if _, err := tx.Exec(stmt); err != nil {
+			return fmt.Errorf("v174: %s: %w", stmt, err)
 		}
 	}
 	return nil

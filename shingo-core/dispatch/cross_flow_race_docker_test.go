@@ -176,8 +176,8 @@ func releaseDwell(t *testing.T, d *Dispatcher, db *store.DB, leg *orders.Order) 
 // MoveBinToTransit writes it) unless it already left its slot.
 func arriveAtDwell(t *testing.T, db *store.DB, d *Dispatcher, leg *orders.Order) {
 	t.Helper()
-	if leg.BinID != nil {
-		bin, err := db.GetBin(*leg.BinID)
+	if testdb.OnlyCart(t, leg) != nil {
+		bin, err := db.GetBin(*testdb.OnlyCart(t, leg))
 		testutil.MustNoErr(t, err, "read the leg's bin")
 		if bin.NodeName == leg.SourceNode {
 			transit, tErr := db.GetNodeByName(domain.TransitNodeName)
@@ -201,13 +201,13 @@ func arriveAtDwell(t *testing.T, db *store.DB, d *Dispatcher, leg *orders.Order)
 // release calls releaseDwell itself.
 func landLeg(t *testing.T, d *Dispatcher, db *store.DB, leg *orders.Order) {
 	t.Helper()
-	if leg.BinID == nil {
+	if testdb.OnlyCart(t, leg) == nil {
 		t.Fatalf("leg %d carries no bin — the fixture is wrong, not the code", leg.ID)
 	}
 	leg = releaseDwell(t, d, db, leg)
 	dest, err := db.GetNodeByDotName(leg.DeliveryNode)
 	testutil.MustNoErr(t, err, "resolve leg destination "+leg.DeliveryNode)
-	testutil.MustNoErr(t, db.MoveBinClearingStaging(*leg.BinID, dest.ID, false), "land the leg's bin")
+	testutil.MustNoErr(t, db.MoveBinClearingStaging(*testdb.OnlyCart(t, leg), dest.ID, false), "land the leg's bin")
 	_, err = db.TerminalizeOrder(leg.ID, protocol.StatusConfirmed, "delivered")
 	testutil.MustNoErr(t, err, "terminalize the leg")
 }

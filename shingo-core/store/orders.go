@@ -503,13 +503,14 @@ func stealSoftHolds(tx *sql.Tx, binID, childID, parentID int64, parkedAt string)
 		// readers now care: ListAnomalies' runtime-stuck detector, and the stale-dig
 		// disposition's liveness test.
 		//
-		// ONLY A PENDING ROW IS TAKEN, AND THE POINTER GOES ONLY WITH A ROW TAKEN.
+		// ONLY A PENDING ROW IS TAKEN, AND THE HOLDER.S ROW GOES ONLY WITH A ROW
+		// TAKEN.
 		// A confirmed row is a hand's claim: the robot is coming for this bin,
 		// and the dig backs out naming the holder. The count is what tells.
 		var taken int
 		if err := tx.QueryRow(
 			`WITH released AS (DELETE FROM reservations WHERE bin_id=$2 AND order_id=$1 AND resource_kind='bin' AND state=$4 RETURNING 1),
-			 unpointed AS (UPDATE orders SET bin_id=NULL, updated_at=$3 WHERE id=$1 AND bin_id=$2 AND EXISTS (SELECT 1 FROM released)),
+			 touched AS (UPDATE orders SET updated_at=$3 WHERE id=$1 AND EXISTS (SELECT 1 FROM released)),
 			 unrowed AS (DELETE FROM order_bins WHERE order_id=$1 AND bin_id=$2 AND EXISTS (SELECT 1 FROM released))
 			 SELECT COUNT(*) FROM released`,
 			v.orderID, binID, clock.Now().UTC(), string(reservations.StatePending)).Scan(&taken); err != nil {
@@ -609,8 +610,8 @@ type HolderNote struct {
 // steal (stealSoftHolds) is the other taker, and C2b folds it onto this.
 //
 // EACH HOLDER'S ROW IS DELETED, and a holder that carries the bin (a row of its
-// for it: any cart of the order, not only the one orders.bin_id named) is
-// un-pointed — its row for the cart deleted with its pointer — and told why: its queue detail names the taker, and an
+// for it, whichever cart of the order it is) is un-pointed — its row for the
+// cart deleted — and told why: its queue detail names the taker, and an
 // order_history row at its current status (code bin-taken, ref taken_by) keeps
 // the take after the queue columns are overwritten by its next wait. Un-pointed,
 // it re-finds through the finder on the next pass instead of confirming a bin
@@ -695,8 +696,7 @@ func TakeSoftHolds(tx *sql.Tx, binID, takerID int64, note HolderNote) (named []i
 			continue
 		}
 		if _, err := tx.Exec(`WITH unrowed AS (DELETE FROM order_bins WHERE order_id=$1 AND bin_id=$2)
-			UPDATE orders SET bin_id = CASE WHEN bin_id = $2 THEN NULL ELSE bin_id END,
-			       queue_reason=$3, queue_code=$4, queue_cause=$5, updated_at=$6
+			UPDATE orders SET queue_reason=$3, queue_code=$4, queue_cause=$5, updated_at=$6
 			WHERE id=$1`,
 			h.orderID, binID, note.Reason, string(note.Code), note.Cause, now); err != nil {
 			return nil, 0, fmt.Errorf("un-point order %d from bin %d: %w", h.orderID, binID, err)
@@ -1097,8 +1097,9 @@ func supersedeBinLedger(tx *sql.Tx, binID, childID, parentID int64) error {
 		 unrowed AS (DELETE FROM order_bins ob USING orders o
 		  WHERE ob.bin_id = $1 AND o.id = ob.order_id AND o.id IN (SELECT order_id FROM gone)
 		    AND o.id <> $2 AND o.parent_order_id IS DISTINCT FROM $2)
-		 UPDATE orders SET bin_id = NULL, updated_at = $3
-		  WHERE id IN (SELECT order_id FROM gone) AND bin_id = $1
+		 UPDATE orders SET updated_at = $3
+		  WHERE id IN (SELECT order_id FROM gone)
+		    AND EXISTS (SELECT 1 FROM order_bins ob WHERE ob.order_id = orders.id AND ob.bin_id = $1)
 		    AND id <> $2 AND parent_order_id IS DISTINCT FROM $2`,
 		binID, parentID, clock.Now().UTC()); err != nil {
 		return fmt.Errorf("clear bin ledger for bin %d: %w", binID, err)
@@ -1496,13 +1497,6 @@ func (db *DB) UpdateOrderPayloadCode(orderID int64, payloadCode string) error {
 	return orders.UpdatePayloadCode(db.DB, orderID, payloadCode)
 }
 
-// UpdateOrderBinID sets the bin_id on an order. Kept as a delegate even
-// though the function lives in orders/ because every outer caller expects
-// this name.
-func (db *DB) UpdateOrderBinID(orderID, binID int64) error {
-	return orders.UpdateBinID(db.DB, orderID, binID)
-}
-
 // ForgetHeldCart forgets the cart a plain order was going to take (its row), so
 // the scanner routes it back through the finder instead of the held-bin arm.
 func (db *DB) ForgetHeldCart(orderID int64) error {
@@ -1760,11 +1754,9 @@ func (db *DB) ReleaseOrderHoldings(orderID int64) error {
 	if err := releaseOrderHoldingsTx(tx, orderID); err != nil {
 		return err
 	}
-	// The carts go with the pointer, in its statement: the leg lifted none of
-	// them (it was never sent), so it no longer carries them. The next
-	// allocation writes the set it claims.
-	if _, err := tx.Exec(`WITH unrowed AS (DELETE FROM order_bins WHERE order_id=$1)
-		UPDATE orders SET bin_id=NULL WHERE id=$1 AND bin_id IS NOT NULL`, orderID); err != nil {
+	// The carts go: the leg lifted none of them (it was never sent), so it no
+	// longer carries them. The next allocation writes the set it claims.
+	if _, err := tx.Exec(`DELETE FROM order_bins WHERE order_id=$1`, orderID); err != nil {
 		return err
 	}
 	return tx.Commit()
@@ -1825,17 +1817,16 @@ func (db *DB) ReleaseClaimForBin(binID, orderID int64) error {
 //
 //	PAPER DEMOTED, NEVER DELETED. confirmed → pending, which is exactly what the
 //	re-dispatch's confirm needs (it flips pending → confirmed and refuses without
-//	a pending row). Deleting it while orders.bin_id stays stamped IS the pointer
+//	a pending row). Deleting it while the order's cart row stands IS the pointer
 //	wedge: the order re-enters through dispatchHeldBin, which confirms by id and
 //	never re-acquires, so it parks under claim-failed and retries forever with a
 //	live owner no sweep will touch. Bin and slot only — a mouth row has no pending
 //	phase and an occupancy row is a measurement, not a promise.
 //
-//	POINTER AND JUNCTION KEPT. orders.bin_id is untouched: the bin is still spoken
-//	for, and on a blip the order re-wins its own uncontested bin seconds later.
-//	order_bins is untouched too — the fourth book. A release deletes those rows;
-//	the re-dispatch reads them to answer which bin a STEP is about
-//	(dispatch/bin_for_step.go), which bin_id cannot answer for a multi-bin order.
+//	THE ROWS ARE KEPT. The order's order_bins rows are untouched: the cart is
+//	still spoken for, and on a blip the order re-wins its own uncontested cart
+//	seconds later. A release deletes those rows; the re-dispatch reads them to
+//	answer which cart a STEP is about (dispatch/bin_for_step.go).
 //
 // releaseLanes is the CALLER's answer to "do these lane rows belong to this
 // order", because the store cannot tell: a compound child's mouth rows are held

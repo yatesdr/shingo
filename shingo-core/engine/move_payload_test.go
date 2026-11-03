@@ -27,9 +27,9 @@ func emptyIntentMoveOrder(t *testing.T, db *store.DB, binID int64, source, deliv
 		SourceNode:   source,
 		DeliveryNode: delivery,
 		SourceIntent: dispatch.SourceIntentEmpty,
-		BinID:        &binID,
 		OriginClass:  protocol.OriginClassNoDemand,
 	}
+	o.HoldFromBirth(binID)
 	if err := db.CreateOrder(o); err != nil {
 		t.Fatalf("create empty-intent order: %v", err)
 	}

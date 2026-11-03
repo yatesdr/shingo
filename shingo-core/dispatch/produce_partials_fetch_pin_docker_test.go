@@ -105,15 +105,18 @@ func ppFetchGroups(t *testing.T, db *store.DB, prefix string, r ppFetchRow) ppFe
 }
 
 func ppFetchClaimed(o *orders.Order, partialID, emptyID int64) string {
+	b, err := o.OnlyBin()
 	switch {
-	case o.BinID == nil:
+	case err != nil:
+		return err.Error()
+	case b == nil:
 		return "waits"
-	case *o.BinID == partialID:
+	case *b == partialID:
 		return "partial"
-	case emptyID != 0 && *o.BinID == emptyID:
+	case emptyID != 0 && *b == emptyID:
 		return "empty"
 	}
-	return fmt.Sprintf("bin %d", *o.BinID)
+	return fmt.Sprintf("bin %d", *b)
 }
 
 func TestProducePartialsPin_Fetch(t *testing.T) {
@@ -226,8 +229,8 @@ func TestProducePartialsPin_OldestHeldComesBackFirst(t *testing.T) {
 		DeliveryNode: lineNode.Name, SourceNode: c.src.Name, Quantity: 1,
 	})
 	o := dispatchSimpleViaScanner(t, d, db, "PPH-ORDER")
-	if o.BinID == nil || *o.BinID != second.ID {
+	if testdb.OnlyCart(t, o) == nil || *testdb.OnlyCart(t, o) != second.ID {
 		t.Errorf("the refill claimed %v, want the partial held longest (%d), not the one loaded first (%d)",
-			o.BinID, second.ID, c.partialID)
+			testdb.OnlyCart(t, o), second.ID, c.partialID)
 	}
 }

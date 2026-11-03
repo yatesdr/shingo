@@ -116,9 +116,9 @@ func TestHoldsAtRest_SplitConfirmParksHoldingTheSlot(t *testing.T) {
 	})
 	eng.RunFulfillmentScan()
 	o := testdb.RequireOrder(t, db, "har-split")
-	if o.BinID == nil || *o.BinID != bin.ID || o.QueueCause != string(dispatch.CauseFleetRefusedCreate) {
+	if testdb.OnlyCart(t, o) == nil || *testdb.OnlyCart(t, o) != bin.ID || o.QueueCause != string(dispatch.CauseFleetRefusedCreate) {
 		t.Fatalf("fixture: the move is %q under %q with bin %v, want it demoted by the fleet refusal "+
-			"holding bin %d", o.Status, o.QueueCause, o.BinID, bin.ID)
+			"holding bin %d", o.Status, o.QueueCause, testdb.OnlyCart(t, o), bin.ID)
 	}
 	if v := testdb.HoldsAtRest(t, db); len(v) != 0 {
 		t.Fatalf("fixture: the demoted move already holds hard before the split confirm runs: %v", v)

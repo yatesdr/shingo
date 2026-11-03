@@ -62,8 +62,8 @@ func TestOrderCompleted_BinAlreadyAtDest(t *testing.T) {
 	db, _, _, d, order, lineNode := deliveredOrder(t)
 
 	// Verify bin was already moved by handleOrderDelivered (FINISHED)
-	if order.BinID != nil {
-		bin, _ := db.GetBin(*order.BinID)
+	if testdb.OnlyCart(t, order) != nil {
+		bin, _ := db.GetBin(*testdb.OnlyCart(t, order))
 		if bin.NodeID != nil && *bin.NodeID == lineNode.ID {
 			t.Logf("bin already at line node before receipt — good, idempotency path will trigger")
 		}
@@ -81,8 +81,8 @@ func TestOrderCompleted_BinAlreadyAtDest(t *testing.T) {
 	got := testdb.AssertOrderStatus(t, db, "co-order-1", "confirmed")
 
 	// Bin should still be at line node (no double-move)
-	if got.BinID != nil {
-		testdb.AssertBinAtNode(t, db, *got.BinID, lineNode.ID)
+	if testdb.OnlyCart(t, got) != nil {
+		testdb.AssertBinAtNode(t, db, *testdb.OnlyCart(t, got), lineNode.ID)
 	}
 }
 
@@ -177,9 +177,9 @@ func TestOrderCompleted_SafetyNetArrival(t *testing.T) {
 		Status:       "delivered",
 		SourceNode:   sd.StorageNode.Name,
 		DeliveryNode: sd.LineNode.Name,
-		BinID:        &bin.ID,
 		PayloadCode:  sd.Payload.Code,
 	}
+	order.HoldFromBirth(bin.ID)
 	testutil.MustNoErr(t, db.CreateOrder(order), "create order")
 	// Claim the bin for this order — Phase 3 of bin-transit-state moved the
 	// safety-net guard predicate from "bin.NodeID == sourceNode" to
@@ -231,9 +231,9 @@ func TestOrderCompleted_ConfirmedNetNoOpsAfterClaimCleared(t *testing.T) {
 		Status:       "confirmed",
 		SourceNode:   sd.StorageNode.Name,
 		DeliveryNode: sd.LineNode.Name,
-		BinID:        &bin.ID,
 		PayloadCode:  sd.Payload.Code,
 	}
+	order.HoldFromBirth(bin.ID)
 	testutil.MustNoErr(t, db.CreateOrder(order), "create order")
 	// Deliberately NOT claimed — the chokepoint already released it.
 	testdb.RequireBinAtNode(t, db, bin.ID, sd.StorageNode.ID)
@@ -278,9 +278,9 @@ func TestRegression_LinesideStagingPreventsFifoPoach(t *testing.T) {
 		Status:       "delivered",
 		SourceNode:   sd.StorageNode.Name,
 		DeliveryNode: sd.LineNode.Name,
-		BinID:        &bin.ID,
 		PayloadCode:  sd.Payload.Code,
 	}
+	order.HoldFromBirth(bin.ID)
 	testutil.MustNoErr(t, db.CreateOrder(order), "create order")
 	testutil.MustNoErr(t, db.UpdateOrderWaitIndex(order.ID, 1), "update wait index")
 	// Phase 3 of bin-transit-state moved the safety-net guard from
@@ -347,9 +347,9 @@ func TestOrderCompleted_LinesideStaging(t *testing.T) {
 		Status:       "delivered",
 		SourceNode:   sd.StorageNode.Name,
 		DeliveryNode: sd.LineNode.Name,
-		BinID:        &binEmpty.ID,
 		PayloadCode:  sd.Payload.Code,
 	}
+	emptyOrder.HoldFromBirth(binEmpty.ID)
 	testutil.MustNoErr(t, db.CreateOrder(emptyOrder), "create empty order")
 	testdb.ClaimBinForTest(t, db, binEmpty.ID, emptyOrder.ID)
 	eng.handleOrderCompleted(OrderCompletedEvent{
@@ -372,9 +372,9 @@ func TestOrderCompleted_LinesideStaging(t *testing.T) {
 		Status:       "delivered",
 		SourceNode:   sd.StorageNode.Name,
 		DeliveryNode: sd.LineNode.Name,
-		BinID:        &binComplex.ID,
 		PayloadCode:  sd.Payload.Code,
 	}
+	complexOrder.HoldFromBirth(binComplex.ID)
 	testutil.MustNoErr(t, db.CreateOrder(complexOrder), "create complex order")
 	testutil.MustNoErr(t, db.UpdateOrderWaitIndex(complexOrder.ID, 1), "update wait index")
 	testdb.ClaimBinForTest(t, db, binComplex.ID, complexOrder.ID)
@@ -440,9 +440,9 @@ func TestRegression_LateConfirmDoesNotTeleportReclaimedBin(t *testing.T) {
 		Status:       "delivered",
 		SourceNode:   sd.LineNode.Name,
 		DeliveryNode: sd.StorageNode.Name,
-		BinID:        &bin.ID,
 		PayloadCode:  sd.Payload.Code,
 	}
+	order.HoldFromBirth(bin.ID)
 	testutil.MustNoErr(t, db.CreateOrder(order), "create order")
 
 	// Sanity: bin starts at the third node.

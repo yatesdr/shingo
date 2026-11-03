@@ -19,10 +19,10 @@ import (
 type RecoveryStore interface {
 	// Order / node / bin lookups used by every recovery action.
 	GetOrder(id int64) (*orders.Order, error)
-	// OrderOwnsNoCargo distinguishes a COORDINATOR (owns legs, NULL bin_id
-	// permanently and correctly) from a defective single-bin order (NULL
-	// bin_id because planMove never persisted one). `order.BinID == nil` is
-	// true of both; this asks the child rows, which is the fact that decides.
+	// OrderOwnsNoCargo distinguishes a COORDINATOR (owns legs, no cart of its own
+	// permanently and correctly) from a defective single-bin order (no cart
+	// because its cart was never recorded). Carrying no cart is true of both;
+	// this asks the child rows, which is the fact that decides.
 	// Shadowed here for one window before the spelling is cut over.
 	OrderOwnsNoCargo(orderID int64) (bool, error)
 	GetNodeByDotName(name string) (*nodes.Node, error)

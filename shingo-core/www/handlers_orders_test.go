@@ -323,8 +323,8 @@ func TestSubmitSpotRetrieveSpecific_FleetRefusalWaits(t *testing.T) {
 	if !protocol.IsAcquiring(got.Status) || got.QueueCode != string(protocol.QueueFleetUnavailable) {
 		t.Errorf("order is %s under %q, want waiting (queued or sourcing) under %q", got.Status, got.QueueCode, protocol.QueueFleetUnavailable)
 	}
-	if got.BinID == nil || *got.BinID != bin.ID {
-		t.Errorf("the waiting move lost its bin (bin_id %v)", got.BinID)
+	if testdb.OnlyCart(t, got) == nil || *testdb.OnlyCart(t, got) != bin.ID {
+		t.Errorf("the waiting move lost its bin (bin_id %v)", testdb.OnlyCart(t, got))
 	}
 }
 

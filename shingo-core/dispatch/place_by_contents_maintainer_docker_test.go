@@ -240,7 +240,7 @@ func (c mtCell) mtLeg(uuid string, b *bins.Bin) *orders.Order {
 		o.ProcessNode, o.DeliveryNode, o.StepsJSON = c.press.Name, c.out.Name, string(mustJSON(c.t, steps))
 	})
 	testutil.MustNoErr(c.t, c.db.UpdateOrderVendor(o.ID, "V-"+uuid, "WAITING", ""), "vendor")
-	testutil.MustNoErr(c.t, c.db.UpdateOrderBinID(o.ID, b.ID), "bind bin")
+	testdb.HoldCart(c.t, c.db, o.ID, b.ID)
 	_, err := c.db.Exec(`UPDATE bins SET claimed_by=$1 WHERE id=$2`, o.ID, b.ID)
 	testutil.MustNoErr(c.t, err, "claim bin for the leg")
 	return o

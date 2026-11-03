@@ -71,7 +71,7 @@ func TestCharSeam_PlainStore_TakesOccupancyBeforeTheCreate(t *testing.T) {
 	// and one that dispatches on it describes a robot committed to a bin nobody
 	// holds. Both assertions in the shared teardown say so.
 	testdb.ClaimBinForTest(t, db, bin.ID, order.ID)
-	testutil.MustNoErr(t, db.UpdateOrderBinID(order.ID, bin.ID), "stamp the bin")
+	testdb.HoldCart(t, db, order.ID, bin.ID)
 	order, _ = db.GetOrder(order.ID)
 
 	_, dErr := d.DispatchDirect(order, srcNode, mouth)
@@ -121,7 +121,7 @@ func TestCharSeam_PlainStore_ReleasesOccupancyWhenTheCreateFails(t *testing.T) {
 	// order never had one. The quarantine was mis-attributed, and fixing the door
 	// alone would have left it red for a reason that had nothing to do with it.
 	testdb.ClaimBinForTest(t, db, bin.ID, order.ID)
-	testutil.MustNoErr(t, db.UpdateOrderBinID(order.ID, bin.ID), "stamp the bin")
+	testdb.HoldCart(t, db, order.ID, bin.ID)
 	order, _ = db.GetOrder(order.ID)
 
 	if _, err := d.DispatchDirect(order, srcNode, mouth); err == nil {
@@ -195,7 +195,7 @@ func TestCharSeam_GatedCreate_TakesNoOccupancyUntilTheTail(t *testing.T) {
 	// and one that dispatches on it describes a robot committed to a bin nobody
 	// holds. Both assertions in the shared teardown say so.
 	testdb.ClaimBinForTest(t, db, bin.ID, order.ID)
-	testutil.MustNoErr(t, db.UpdateOrderBinID(order.ID, bin.ID), "stamp the bin")
+	testdb.HoldCart(t, db, order.ID, bin.ID)
 	order, _ = db.GetOrder(order.ID)
 	_, gErr := d.DispatchDirect(order, srcNode, mouth)
 	testutil.MustNoErr(t, gErr, "the gated dispatch must create, unsealed")

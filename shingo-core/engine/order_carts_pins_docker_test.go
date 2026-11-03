@@ -43,14 +43,16 @@ type cartsSwap struct {
 	s     *nodes.Node // B's pick
 }
 
-func newCartsSwap(t *testing.T, uuid string) *cartsSwap {
+func newCartsSwap(t *testing.T, uuid string, before ...func(*cartsSwap)) *cartsSwap {
 	t.Helper()
-	return newCartsSwapOn(t, testDB(t), uuid)
+	return newCartsSwapOn(t, testDB(t), uuid, before...)
 }
 
 // newCartsSwapOn is newCartsSwap on a database the caller opened (a cost pin
-// opens its own, to count through a second handle on it).
-func newCartsSwapOn(t *testing.T, db *store.DB, uuid string) *cartsSwap {
+// opens its own, to count through a second handle on it). before runs once the
+// carts stand, ahead of the swap's birth: an order that carried a cart earlier
+// is older than the swap.
+func newCartsSwapOn(t *testing.T, db *store.DB, uuid string, before ...func(*cartsSwap)) *cartsSwap {
 	t.Helper()
 	sim := simulator.New()
 	eng := newTestEngine(t, db, sim)
@@ -58,6 +60,9 @@ func newCartsSwapOn(t *testing.T, db *store.DB, uuid string) *cartsSwap {
 	c := &cartsSwap{db: db, eng: eng, sim: sim, uuid: uuid, p: p, w: w, s: s}
 	c.a = createTestBinAtNode(t, db, bp.Code, p.ID, "CART-A")
 	c.b = createTestBinAtNode(t, db, bp.Code, s.ID, "CART-B")
+	for _, f := range before {
+		f(c)
+	}
 	eng.Dispatcher().HandleComplexOrderRequest(testEnvelope(), &protocol.ComplexOrderRequest{
 		OrderUUID:   uuid,
 		PayloadCode: bp.Code,
@@ -159,9 +164,13 @@ func TestOrderCartsPin_ASwapKeepsBothCartsRowsAfterCancel(t *testing.T) {
 // to S.
 func TestOrderCartsPin_CancelWithBOnTheRobotFindsBsOrder(t *testing.T) {
 	t.Parallel()
-	c := newCartsSwap(t, "carts-b-on-robot")
-	older := testdb.CreateOrder(t, c.db, func(o *orders.Order) {
-		o.OrderType, o.Status, o.BinID, o.DeliveryNode = protocol.OrderTypeMove, protocol.StatusConfirmed, &c.b.ID, c.s.Name
+	var older *orders.Order
+	// The order that brought B to S, before the swap was born.
+	c := newCartsSwap(t, "carts-b-on-robot", func(c *cartsSwap) {
+		older = testdb.CreateOrder(t, c.db, func(o *orders.Order) {
+			o.OrderType, o.Status, o.DeliveryNode = protocol.OrderTypeMove, protocol.StatusConfirmed, c.s.Name
+			o.HoldFromBirth(c.b.ID)
+		})
 	})
 	c.block(t, c.p.Name, true)
 	c.block(t, c.w.Name, false)
@@ -187,9 +196,12 @@ func TestOrderCartsPin_CancelWithBOnTheRobotFindsBsOrder(t *testing.T) {
 // last order is the older one). The brief runs it ×10 (-count=10).
 func TestOrderCartsPin_TwoCartsInFlightKeepTheirOrder(t *testing.T) {
 	t.Parallel()
-	c := newCartsSwap(t, "carts-two-in-flight")
-	testdb.CreateOrder(t, c.db, func(o *orders.Order) {
-		o.OrderType, o.Status, o.BinID, o.DeliveryNode = protocol.OrderTypeMove, protocol.StatusConfirmed, &c.b.ID, c.s.Name
+	// The order that brought B to S, before the swap was born.
+	c := newCartsSwap(t, "carts-two-in-flight", func(c *cartsSwap) {
+		testdb.CreateOrder(t, c.db, func(o *orders.Order) {
+			o.OrderType, o.Status, o.DeliveryNode = protocol.OrderTypeMove, protocol.StatusConfirmed, c.s.Name
+			o.HoldFromBirth(c.b.ID)
+		})
 	})
 	c.block(t, c.p.Name, true)
 	c.block(t, c.s.Name, true) // A's drop at W lost
@@ -454,9 +466,12 @@ func TestOrderCartsPin_ASingleClaimComplexOrderWritesItsRow(t *testing.T) {
 // older confirmed order, and stands down.
 func TestOrderCartsPin_TheCancelReturnRecoversBThroughItsRow(t *testing.T) {
 	t.Parallel()
-	c := newCartsSwap(t, "carts-return")
-	testdb.CreateOrder(t, c.db, func(o *orders.Order) {
-		o.OrderType, o.Status, o.BinID, o.DeliveryNode = protocol.OrderTypeMove, protocol.StatusConfirmed, &c.b.ID, c.s.Name
+	// The order that brought B to S, before the swap was born.
+	c := newCartsSwap(t, "carts-return", func(c *cartsSwap) {
+		testdb.CreateOrder(t, c.db, func(o *orders.Order) {
+			o.OrderType, o.Status, o.DeliveryNode = protocol.OrderTypeMove, protocol.StatusConfirmed, c.s.Name
+			o.HoldFromBirth(c.b.ID)
+		})
 	})
 	c.block(t, c.p.Name, true)
 	c.block(t, c.w.Name, false)

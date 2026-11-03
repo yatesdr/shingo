@@ -51,7 +51,7 @@ func TestCompoundChild_PersistsEveryFieldSetOnIt(t *testing.T) {
 		EdgeUUID: "ccc-child", StationID: "edge.ccc", OrderType: OrderTypeMove,
 		Status: StatusPending, Quantity: 1,
 		SourceNode: src.Name, DeliveryNode: lineNode.Name,
-		ParentOrderID: &parent.ID, Sequence: 1, BinID: &childBin.ID,
+		ParentOrderID: &parent.ID, Sequence: 1,
 
 		// The five the short INSERT dropped. Each is set to a value that is
 		// distinguishable from the column default, so a dropped write reads back
@@ -62,6 +62,7 @@ func TestCompoundChild_PersistsEveryFieldSetOnIt(t *testing.T) {
 		SourceIntent:     SourceIntentLocal,
 		Coordinated:      true,
 	}
+	child.HoldFromBirth(childBin.ID)
 	_, ccErr := testdb.CreateCompoundChildren(t, db, []store.CompoundChild{{Order: child}}, nil)
 	testutil.MustNoErr(t, ccErr, "create child")
 

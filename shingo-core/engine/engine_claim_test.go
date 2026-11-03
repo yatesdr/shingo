@@ -95,16 +95,16 @@ func TestComplexOrder_BinPoachingPrevention(t *testing.T) {
 
 	complexOrder := testdb.RequireOrder(t, db, "complex-24")
 	t.Logf("complex order %d: status=%s, bin_id=%v, vendor_id=%s",
-		complexOrder.ID, complexOrder.Status, complexOrder.BinID, complexOrder.VendorOrderID)
+		complexOrder.ID, complexOrder.Status, testdb.OnlyCart(t, complexOrder), complexOrder.VendorOrderID)
 
 	// Complex order must now claim the bin at dispatch time
-	if complexOrder.BinID == nil {
+	if testdb.OnlyCart(t, complexOrder) == nil {
 		t.Fatalf("complex order has BinID=nil — ApplyComplexPlan did not set it")
 	}
-	if *complexOrder.BinID != bin.ID {
-		t.Fatalf("complex order claimed bin %d, want %d", *complexOrder.BinID, bin.ID)
+	if *testdb.OnlyCart(t, complexOrder) != bin.ID {
+		t.Fatalf("complex order claimed bin %d, want %d", *testdb.OnlyCart(t, complexOrder), bin.ID)
 	}
-	t.Logf("complex order claimed bin %d — protected from poaching", *complexOrder.BinID)
+	t.Logf("complex order claimed bin %d — protected from poaching", *testdb.OnlyCart(t, complexOrder))
 
 	// Drive robot to RUNNING — it's physically carrying the bin now
 	if complexOrder.VendorOrderID != "" {
@@ -132,12 +132,12 @@ func TestComplexOrder_BinPoachingPrevention(t *testing.T) {
 	poachOrder := testdb.RequireOrder(t, db, "retrieve-poach-24")
 
 	// KEY CHECK: the retrieve must NOT have claimed the bin the robot is carrying
-	if poachOrder.BinID != nil && *poachOrder.BinID == bin.ID {
+	if testdb.OnlyCart(t, poachOrder) != nil && *testdb.OnlyCart(t, poachOrder) == bin.ID {
 		t.Errorf("BUG: retrieve order %d claimed bin %d which is being carried by complex order %d",
 			poachOrder.ID, bin.ID, complexOrder.ID)
 	} else {
 		t.Logf("retrieve order correctly did not poach bin %d (status=%s, bin_id=%v)",
-			bin.ID, poachOrder.Status, poachOrder.BinID)
+			bin.ID, poachOrder.Status, testdb.OnlyCart(t, poachOrder))
 	}
 }
 
@@ -174,10 +174,10 @@ func TestComplexOrder_StaleBinLocation(t *testing.T) {
 	})
 
 	order := testdb.RequireOrder(t, db, "complex-24b")
-	if order.BinID == nil {
+	if testdb.OnlyCart(t, order) == nil {
 		t.Fatalf("complex order BinID=nil — ApplyComplexPlan did not set it")
 	}
-	t.Logf("complex order %d: vendor_id=%s, bin_id=%d", order.ID, order.VendorOrderID, *order.BinID)
+	t.Logf("complex order %d: vendor_id=%s, bin_id=%d", order.ID, order.VendorOrderID, *testdb.OnlyCart(t, order))
 
 	// Verify bin is at storage before robot moves
 	testdb.RequireBinAtNode(t, db, bin.ID, storageNode.ID)
@@ -246,7 +246,7 @@ func TestComplexOrder_PhantomInventoryRetrieve(t *testing.T) {
 	})
 
 	order := testdb.RequireOrder(t, db, "complex-24c")
-	if order.BinID == nil {
+	if testdb.OnlyCart(t, order) == nil {
 		t.Fatalf("complex order BinID=nil — ApplyComplexPlan did not set it")
 	}
 
@@ -283,11 +283,11 @@ func TestComplexOrder_PhantomInventoryRetrieve(t *testing.T) {
 	retrieveOrder := testdb.RequireOrder(t, db, "retrieve-24c")
 
 	t.Logf("retrieve order %d: status=%s, bin_id=%v",
-		retrieveOrder.ID, retrieveOrder.Status, retrieveOrder.BinID)
+		retrieveOrder.ID, retrieveOrder.Status, testdb.OnlyCart(t, retrieveOrder))
 
 	// The retrieve must NOT have claimed the bin that was moved to line —
 	// no phantom dispatch to an empty storage slot.
-	if retrieveOrder.BinID != nil && *retrieveOrder.BinID == bin.ID {
+	if testdb.OnlyCart(t, retrieveOrder) != nil && *testdb.OnlyCart(t, retrieveOrder) == bin.ID {
 		t.Errorf("retrieve order %d claimed bin %d which was moved to line — phantom dispatch",
 			retrieveOrder.ID, bin.ID)
 	} else {

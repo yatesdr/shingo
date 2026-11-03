@@ -61,8 +61,8 @@ func findDeliveredEnvelope(t *testing.T, db *store.DB) *protocol.OrderDelivered 
 
 // dispatchMultiToteSwap builds the consume-swap fixture used by the F1b tests:
 // a supply bin at storage (final dest = lineNode) and an evac bin at lineNode
-// (final dest = outboundDest). ProcessNode is the lineNode, so order.BinID
-// tracks the evac bin and the supply bin is reachable only via order_bins.
+// (final dest = outboundDest). ProcessNode is the lineNode; each cart is the
+// order's by its row.
 // Returns the delivered order plus both bin ids.
 func dispatchMultiToteSwap(t *testing.T, db *store.DB, eng *Engine, sim *simulator.SimulatorBackend) (supplyBinID, evacBinID int64, lineNodeName string) {
 	t.Helper()
@@ -117,11 +117,8 @@ func dispatchMultiToteSwap(t *testing.T, db *store.DB, eng *Engine, sim *simulat
 	if !supplyDestFound {
 		t.Fatalf("supply bin %d has no order_bins row destined for the process node %q", supplyBin.ID, lineNode.Name)
 	}
-	if order.BinID == nil {
-		t.Fatalf("expected order.BinID set (evac bin claimed at process node)")
-	}
-	if *order.BinID == supplyBin.ID {
-		t.Fatalf("order.BinID must NOT be the supply bin — the F1b gap requires the consumed bin to be the non-default one")
+	if !testdb.HasCartRow(t, db, order.ID, evacBin.ID) {
+		t.Fatalf("the evac bin %d (claimed at the process node) has no row of the order's", evacBin.ID)
 	}
 
 	// Drive to delivered — handleOrderDelivered fires and enqueues OrderDelivered.

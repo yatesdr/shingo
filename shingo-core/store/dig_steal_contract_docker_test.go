@@ -87,9 +87,7 @@ func TestDigSteal_ReleasesTheHolderAndClearsItsPointer(t *testing.T) {
 	// reserve time, not at claim time, which is what makes clearing it necessary).
 	holder := testdb.CreateOrder(t, db, func(o *orders.Order) { o.EdgeUUID = "steal-holder" })
 	testdb.ReserveBin(t, db, holder.ID, bin.ID)
-	if err := db.UpdateOrderBinID(holder.ID, bin.ID); err != nil {
-		t.Fatalf("stamp holder bin_id: %v", err)
-	}
+	testdb.HoldCart(t, db, holder.ID, bin.ID)
 	before, err := db.GetBin(bin.ID)
 	if err != nil {
 		t.Fatalf("reload bin: %v", err)
@@ -109,10 +107,10 @@ func TestDigSteal_ReleasesTheHolderAndClearsItsPointer(t *testing.T) {
 	if err != nil {
 		t.Fatalf("reload holder: %v", err)
 	}
-	if after.BinID != nil {
+	if testdb.OnlyCart(t, after) != nil {
 		t.Errorf("holder still points at bin %d. bin_id is stamped at soft-reserve time, so the "+
 			"holder would re-enter through dispatchHeldBin and confirm by id — and ConfirmClaim "+
-			"never re-acquires, so it would wedge on claim_failed instead of recalculating", *after.BinID)
+			"never re-acquires, so it would wedge on claim_failed instead of recalculating", *testdb.OnlyCart(t, after))
 	}
 	for _, r := range activeBinReservations(t, db, bin.ID) {
 		if r.OrderID == holder.ID {
@@ -226,9 +224,7 @@ func TestDigSteal_TheCompoundsOwnRowIsSupersededNotStolen(t *testing.T) {
 
 	parent := compoundParent(t, db, "own-parent")
 	testdb.ReserveBin(t, db, parent.ID, bin.ID)
-	if err := db.UpdateOrderBinID(parent.ID, bin.ID); err != nil {
-		t.Fatalf("stamp parent bin_id: %v", err)
-	}
+	testdb.HoldCart(t, db, parent.ID, bin.ID)
 
 	child := childFor(parent, bin.ID, 1)
 	if _, err := testdb.CreateCompoundChildren(t, db, []store.CompoundChild{child}, nil); err != nil {
@@ -242,7 +238,7 @@ func TestDigSteal_TheCompoundsOwnRowIsSupersededNotStolen(t *testing.T) {
 	if err != nil {
 		t.Fatalf("reload parent: %v", err)
 	}
-	if after.BinID == nil || *after.BinID != bin.ID {
+	if testdb.OnlyCart(t, after) == nil || *testdb.OnlyCart(t, after) != bin.ID {
 		t.Errorf("the parent's bin_id was cleared — its own compound is not a thief, and the parent " +
 			"still owes a retrieve of that very bin")
 	}

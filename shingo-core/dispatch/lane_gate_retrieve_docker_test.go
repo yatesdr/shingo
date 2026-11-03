@@ -372,10 +372,8 @@ func TestGateChoreo_RetrieveRebindsWhenItsBinMoved(t *testing.T) {
 	// refuses a foreign claim inside one. The collision is this fixture's premise,
 	// not an accident — see ClaimBinInDugLaneForTest.
 	testdb.ClaimBinInDugLaneForTest(t, db, target.ID, order.ID)
-	if err := db.UpdateOrderBinID(order.ID, target.ID); err != nil {
-		t.Fatalf("stamp bin_id: %v", err)
-	}
-	order.BinID = &target.ID
+	testdb.HoldCart(t, db, order.ID, target.ID)
+	order.HoldFromBirth(target.ID)
 
 	if _, err := d.DispatchDirect(order, s1, line); err != nil {
 		t.Fatalf("DispatchDirect: %v", err)

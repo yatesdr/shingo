@@ -128,7 +128,7 @@ func TestTwoHoldersThroughIntakeBuriedArm(t *testing.T) {
 	b := testdb.RequireOrder(t, db, "twoh-b")
 	children, err := db.ListChildOrders(b.ID)
 	testutil.MustNoErr(t, err, "list B's compound children")
-	t.Logf("A: id=%d status=%s bin=%v vendor=%q", a.ID, a.Status, a.BinID, a.VendorOrderID)
+	t.Logf("A: id=%d status=%s bin=%v vendor=%q", a.ID, a.Status, testdb.OnlyCart(t, a), a.VendorOrderID)
 	t.Logf("B: id=%d status=%s children=%d code=%s cause=%s", b.ID, b.Status, len(children), b.QueueCode, b.QueueCause)
 
 	// The holder census, exactly the dropoff gate's population.

@@ -168,7 +168,7 @@ func TestCollision_PlainStoreIsRefusedFromACorridorAComplexOrderOccupies(t *test
 		o.Status = StatusPending
 	})
 	testdb.ReserveBin(t, db, plain.ID, bin.ID) // the soft hold the pointer is stamped with
-	testutil.MustNoErr(t, db.UpdateOrderBinID(plain.ID, bin.ID), "stamp the bin")
+	testdb.HoldCart(t, db, plain.ID, bin.ID)
 	plainRaw, err := db.GetOrder(plain.ID)
 	plain = testutil.Must(t, plainRaw, err, "db.GetOrder(plain.ID)")
 
@@ -214,7 +214,7 @@ func TestCollision_ComplexIsRefusedFromACorridorAPlainStoreOccupies(t *testing.T
 		o.DeliveryNode = mouth.Name
 		o.Status = StatusPending
 	})
-	testutil.MustNoErr(t, db.UpdateOrderBinID(plain.ID, bin.ID), "stamp the bin")
+	testdb.HoldCart(t, db, plain.ID, bin.ID)
 	// And hold it, as dispatch's claim leaves a store it sends: the dropoff count
 	// reads the bins an order holds, not its status.
 	testdb.ClaimBinForTest(t, db, bin.ID, plain.ID)
@@ -307,7 +307,7 @@ func TestSeamGuard_UnderDeclaringALaneRefusesTheDispatch(t *testing.T) {
 		o.Status = StatusPending
 	})
 	testdb.ReserveBin(t, db, order.ID, bin.ID) // the soft hold the pointer is stamped with
-	testutil.MustNoErr(t, db.UpdateOrderBinID(order.ID, bin.ID), "stamp the bin")
+	testdb.HoldCart(t, db, order.ID, bin.ID)
 	orderRaw, err := db.GetOrder(order.ID)
 	order = testutil.Must(t, orderRaw, err, "db.GetOrder(order.ID)")
 
@@ -380,7 +380,7 @@ func TestSeamGuard_ASyntheticDestinationNeverReachesTheFleet(t *testing.T) {
 		o.Status = StatusPending
 	})
 	testdb.ReserveBin(t, db, order.ID, bin.ID) // the soft hold the pointer is stamped with
-	testutil.MustNoErr(t, db.UpdateOrderBinID(order.ID, bin.ID), "stamp the bin")
+	testdb.HoldCart(t, db, order.ID, bin.ID)
 	orderRaw, err := db.GetOrder(order.ID)
 	order = testutil.Must(t, orderRaw, err, "db.GetOrder(order.ID)")
 
@@ -432,7 +432,7 @@ func TestSeamGuard_AConcreteDestinationIsUntouched(t *testing.T) {
 		o.Status = StatusPending
 	})
 	testdb.ReserveBin(t, db, order.ID, bin.ID) // the soft hold the pointer is stamped with
-	testutil.MustNoErr(t, db.UpdateOrderBinID(order.ID, bin.ID), "stamp the bin")
+	testdb.HoldCart(t, db, order.ID, bin.ID)
 	orderRaw, err := db.GetOrder(order.ID)
 	order = testutil.Must(t, orderRaw, err, "db.GetOrder(order.ID)")
 

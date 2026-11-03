@@ -43,11 +43,11 @@ func TestCompoundChild_CarriesTheBinsPayloadCode(t *testing.T) {
 	children := laneClearChildren(t, db, parent)
 
 	for _, c := range children {
-		if c.BinID == nil {
+		if testdb.OnlyCart(t, c) == nil {
 			t.Errorf("child %d (seq %d) has no bin — every reshuffle child names the bin it moves", c.ID, c.Sequence)
 			continue
 		}
-		bin, err := db.GetBin(*c.BinID)
+		bin, err := db.GetBin(*testdb.OnlyCart(t, c))
 		testutil.MustNoErr(t, err, "read the child's bin")
 		if c.PayloadCode != bin.PayloadCode {
 			t.Errorf("child %d (seq %d) payload_code = %q, want %q — the code on the bin it is moving",

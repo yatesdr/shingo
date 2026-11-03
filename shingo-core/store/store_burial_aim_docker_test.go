@@ -70,8 +70,8 @@ func TestBurialGuard_RefusesInFrontOfABinAnOrderHasResolvedOnto(t *testing.T) {
 	}
 	demand := testdb.CreateOrder(t, db, func(o *orders.Order) {
 		o.Status = protocol.StatusPending
-		o.BinID = &bin.ID
 		o.SourceNode = slot3.Name
+		o.HoldFromBirth(bin.ID)
 	})
 	// The soft hold a resolve stamps bin_id with. A reservation alone does not
 	// close the lane (TestBurialGuard_SoftHoldIsBuriable), so the aim is still

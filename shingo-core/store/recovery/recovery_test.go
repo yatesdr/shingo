@@ -32,7 +32,8 @@ func TestCoverage_RepairConfirmedOrderCompletion(t *testing.T) {
 	if err := bins.Create(db.DB, bin); err != nil {
 		t.Fatalf("create bin: %v", err)
 	}
-	order := &orders.Order{EdgeUUID: "repair-order-1", StationID: "edge.1", OrderType: "retrieve", Status: "in_transit", SourceNode: origin.Name, DeliveryNode: dest.Name, BinID: &bin.ID}
+	order := &orders.Order{EdgeUUID: "repair-order-1", StationID: "edge.1", OrderType: "retrieve", Status: "in_transit", SourceNode: origin.Name, DeliveryNode: dest.Name}
+	order.HoldFromBirth(bin.ID)
 	if err := orders.Create(db.DB, order); err != nil {
 		t.Fatalf("create order: %v", err)
 	}
@@ -110,7 +111,10 @@ func TestRepair_ScopesItsUnclaimAndCouplesTheReservation(t *testing.T) {
 	}
 	mkOrder := func(uuid string, status protocol.Status, binID *int64, dest string) *orders.Order {
 		o := &orders.Order{EdgeUUID: uuid, StationID: "edge.1", OrderType: "retrieve",
-			Status: status, SourceNode: origin.Name, DeliveryNode: dest, BinID: binID}
+			Status: status, SourceNode: origin.Name, DeliveryNode: dest}
+		if binID != nil {
+			o.HoldFromBirth(*binID)
+		}
 		if err := orders.Create(db.DB, o); err != nil {
 			t.Fatalf("create order %s: %v", uuid, err)
 		}
@@ -199,7 +203,8 @@ func TestCoverage_ReleaseTerminalBinClaimRejectsActiveOrder(t *testing.T) {
 	if err := bins.Create(db.DB, bin); err != nil {
 		t.Fatalf("create bin: %v", err)
 	}
-	order := &orders.Order{EdgeUUID: "active-order", StationID: "edge.1", OrderType: "retrieve", Status: "dispatched", SourceNode: node.Name, BinID: &bin.ID}
+	order := &orders.Order{EdgeUUID: "active-order", StationID: "edge.1", OrderType: "retrieve", Status: "dispatched", SourceNode: node.Name}
+	order.HoldFromBirth(bin.ID)
 	if err := orders.Create(db.DB, order); err != nil {
 		t.Fatalf("create order: %v", err)
 	}
@@ -224,7 +229,8 @@ func TestCoverage_ReleaseTerminalBinClaimAllowsCancelledOrder(t *testing.T) {
 	if err := bins.Create(db.DB, bin); err != nil {
 		t.Fatalf("create bin: %v", err)
 	}
-	order := &orders.Order{EdgeUUID: "cancelled-order", StationID: "edge.1", OrderType: "retrieve", Status: "in_transit", SourceNode: node.Name, BinID: &bin.ID}
+	order := &orders.Order{EdgeUUID: "cancelled-order", StationID: "edge.1", OrderType: "retrieve", Status: "in_transit", SourceNode: node.Name}
+	order.HoldFromBirth(bin.ID)
 	if err := orders.Create(db.DB, order); err != nil {
 		t.Fatalf("create order: %v", err)
 	}

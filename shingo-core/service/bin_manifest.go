@@ -1732,8 +1732,8 @@ func applyReleaseFence(tx *sql.Tx, binID int64, f *ReleaseFence) (int, error) {
 // SyncOrClearForReleasedNoOwner is the source-node-fallback variant of
 // SyncOrClearForReleased. Identical routing (nil → no-op, 0 → clear,
 // >0 → sync UOP), identical audit, but the SQL guard drops the
-// claimed_by check — used by HandleOrderRelease when order.BinID is nil
-// and we've located the bin by source-node lookup instead.
+// claimed_by check — used by HandleOrderRelease when the order carries no
+// cart and we've located the bin by source-node lookup instead.
 //
 // Why no claim guard: the bin we're targeting wasn't claimed by this
 // order (ApplyComplexPlan missed it at creation time, which is the bug

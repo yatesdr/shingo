@@ -107,14 +107,14 @@ var engineIssueDrivers = map[string]testdb.IssueDriver{
 	},
 	"carried-bin recovery": func(t *testing.T, stranger bool) (*store.DB, int64) {
 		db, eng, carrier, uuid := censusRecovery(t, stranger)
-		if _, _, err := eng.RecoverCarriedBin(*carrier.BinID, "operator:test"); err != nil {
+		if _, _, err := eng.RecoverCarriedBin(*testdb.OnlyCart(t, carrier), "operator:test"); err != nil {
 			t.Logf("the recovery refused: %v", err)
 		}
 		return db, censusOrderByUUID(t, db, uuid)
 	},
 	"the cancel's return": func(t *testing.T, stranger bool) (*store.DB, int64) {
 		db, eng, carrier, uuid := censusRecovery(t, stranger)
-		bin, err := db.GetBin(*carrier.BinID)
+		bin, err := db.GetBin(*testdb.OnlyCart(t, carrier))
 		testutil.MustNoErr(t, err, "the carried bin")
 		eng.tryReturnCarriedBin(bin, "AMR-IC", loadedDispatchable("AMR-IC"), carrier)
 		return db, censusOrderByUUID(t, db, uuid)

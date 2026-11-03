@@ -56,7 +56,7 @@ func TestGateDwell_CarriesItsCauseAndClearsItOnEntry(t *testing.T) {
 		o.DeliveryNode = mouth.Name
 		o.Status = StatusPending
 	})
-	testutil.MustNoErr(t, db.UpdateOrderBinID(order.ID, bin.ID), "stamp the bin")
+	testdb.HoldCart(t, db, order.ID, bin.ID)
 	orderRaw, err := db.GetOrder(order.ID)
 	order = testutil.Must(t, orderRaw, err, "db.GetOrder(order.ID)")
 	_, dErr := d.DispatchDirect(order, srcNode, mouth)

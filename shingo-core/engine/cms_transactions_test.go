@@ -327,8 +327,8 @@ func TestOrdinaryDelivery_StampsRobotAndOrder(t *testing.T) {
 		Status:       "delivered",
 		SourceNode:   srcRoot.Name + "." + srcSlot.Name,
 		DeliveryNode: dstRoot.Name + "." + dstSlot.Name,
-		BinID:        &bin.ID,
 	}
+	order.HoldFromBirth(bin.ID)
 	testutil.MustNoErr(t, db.CreateOrder(order), "create order")
 	// robot_id is NOT an INSERT column — the fleet stamps it when it assigns a
 	// robot, so setting the struct field before CreateOrder writes nothing and

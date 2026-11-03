@@ -76,7 +76,7 @@ func claimWriters() []claimWriter {
 			// A row already there, so the DELETE has something to lock.
 			testdb.SeedCartRow(t, f.db, owner, f.bin, 0, 1)
 		}, func(f *endedOwnerFixture, owner int64) error {
-			return f.db.ReplaceOrderBins(owner, f.bin, []orders.OrderBinRow{{BinID: f.bin, PickStep: 0, DropStep: 1, NodeName: f.src.Name}})
+			return f.db.ReplaceOrderBins(owner, []orders.OrderBinRow{{BinID: f.bin, PickStep: 0, DropStep: 1}})
 		}},
 	}
 }

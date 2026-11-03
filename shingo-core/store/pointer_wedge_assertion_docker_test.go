@@ -62,7 +62,7 @@ func TestPointerWedge_AssertionCatchesIt(t *testing.T) {
 		o.Status = protocol.StatusQueued
 	})
 	testdb.ReserveBin(t, db, wedged.ID, bin.ID)
-	testutil.MustNoErr(t, db.UpdateOrderBinID(wedged.ID, bin.ID), "stamp bin_id")
+	testdb.HoldCart(t, db, wedged.ID, bin.ID)
 	_, err := db.DB.Exec(`DELETE FROM reservations WHERE order_id=$1 AND bin_id=$2`, wedged.ID, bin.ID)
 	testutil.MustNoErr(t, err, "drop the reservation and leave the pointer")
 
@@ -98,14 +98,14 @@ func TestPointerWedge_AssertionLeavesHealthyOwnershipAlone(t *testing.T) {
 	soft := testdb.CreateOrder(t, db, func(o *orders.Order) { o.EdgeUUID = "wedge-ok-soft" })
 	softBin := testdb.CreateBinAtNode(t, db, "DEFAULT", sd.StorageNode.ID, "WEDGE-OK-SOFT")
 	testdb.ReserveBin(t, db, soft.ID, softBin.ID)
-	testutil.MustNoErr(t, db.UpdateOrderBinID(soft.ID, softBin.ID), "stamp soft bin_id")
+	testdb.HoldCart(t, db, soft.ID, softBin.ID)
 
 	// 2. A hard claim whose ledger row was rewritten under it — the dig's
 	//    supersede leaves exactly this, and the claim is the live book.
 	claimed := testdb.CreateOrder(t, db, func(o *orders.Order) { o.EdgeUUID = "wedge-ok-claim" })
 	claimBin := testdb.CreateBinAtNode(t, db, "DEFAULT", sd.StorageNode.ID, "WEDGE-OK-CLAIM")
 	testdb.ClaimBinForTest(t, db, claimBin.ID, claimed.ID)
-	testutil.MustNoErr(t, db.UpdateOrderBinID(claimed.ID, claimBin.ID), "stamp claimed bin_id")
+	testdb.HoldCart(t, db, claimed.ID, claimBin.ID)
 	_, err := db.DB.Exec(`DELETE FROM reservations WHERE order_id=$1`, claimed.ID)
 	testutil.MustNoErr(t, err, "rewrite the ledger under the claim")
 
@@ -116,7 +116,7 @@ func TestPointerWedge_AssertionLeavesHealthyOwnershipAlone(t *testing.T) {
 		o.Status = protocol.StatusDispatched
 	})
 	goneBin := testdb.CreateBinAtNode(t, db, "DEFAULT", sd.StorageNode.ID, "WEDGE-OK-GONE")
-	testutil.MustNoErr(t, db.UpdateOrderBinID(gone.ID, goneBin.ID), "stamp dispatched bin_id")
+	testdb.HoldCart(t, db, gone.ID, goneBin.ID)
 
 	rec := &recorder{TB: t}
 	testdb.AssertNoPointerWedge(rec, db)

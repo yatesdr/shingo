@@ -109,8 +109,8 @@ func TestScanner_NeverAcquiresAHalfAppliedBirth(t *testing.T) {
 	if got.Status != protocol.StatusDispatched || got.RemainingUOP == nil || *got.RemainingUOP != 7 {
 		t.Fatalf("order is %s with remaining_uop %v, want dispatched carrying 7", got.Status, got.RemainingUOP)
 	}
-	if got.BinID == nil || *got.BinID != bin.ID {
-		t.Fatalf("order carries bin %v, want %d", got.BinID, bin.ID)
+	if testdb.OnlyCart(t, got) == nil || *testdb.OnlyCart(t, got) != bin.ID {
+		t.Fatalf("order carries bin %v, want %d", testdb.OnlyCart(t, got), bin.ID)
 	}
 }
 

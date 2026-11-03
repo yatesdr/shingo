@@ -104,7 +104,7 @@ func TestComplexIntake_BornSourcingIsScannedAllocatedAndDispatched(t *testing.T)
 	if protocol.IsAcquiring(final.Status) {
 		t.Errorf("status = %q — still acquiring after a successful dispatch", final.Status)
 	}
-	if final.BinID == nil {
+	if testdb.OnlyCart(t, final) == nil {
 		t.Error("the order dispatched holding no bin — the hunt is what its acquire does, " +
 			"and it has to have finished")
 	}

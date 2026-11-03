@@ -49,9 +49,12 @@ func containmentOrder(t *testing.T, db *store.DB, uuid, fgnName, prodName string
 	o := &orders.Order{
 		EdgeUUID: uuid, StationID: "test", OrderType: protocol.OrderTypeRetrieve, Status: "staged",
 		Quantity: 1, SourceNode: "SRC-QC", DeliveryNode: fgnName, PayloadCode: "PART-QC",
-		ProcessNode: prodName, BinID: binID,
+		ProcessNode: prodName,
 		StepsJSON: `[{"action":"pickup","node":"SRC-QC"},{"action":"dropoff","node":"` + prodName + `"},` +
 			`{"action":"pickup","node":"SRC-QC"},{"action":"dropoff","node":"` + fgnName + `"}]`,
+	}
+	if binID != nil {
+		o.HoldFromBirth(*binID)
 	}
 	if err := db.CreateOrder(o); err != nil {
 		t.Fatalf("create order %s: %v", uuid, err)
@@ -86,9 +89,9 @@ func TestPlaceForContainment_MultiCartDropFollowsThePlan(t *testing.T) {
 	cellBin := makeLoaderBin(t, db, "PART-QC", fgn.ID, "qc-cell-bin", 4, time.Now().UTC())
 
 	o := containmentOrder(t, db, "qc-multi-1", fgn.Name, "PROD-QC", &fgBin.ID)
-	testutil.MustNoErr(t, db.ReplaceOrderBins(o.ID, fgBin.ID, []orders.OrderBinRow{
-		{BinID: cellBin.ID, PickStep: 0, DropStep: 1, NodeName: "SRC-QC", DestNode: "PROD-QC"},
-		{BinID: fgBin.ID, PickStep: 2, DropStep: 3, NodeName: "SRC-QC", DestNode: fgn.Name},
+	testutil.MustNoErr(t, db.ReplaceOrderBins(o.ID, []orders.OrderBinRow{
+		{BinID: cellBin.ID, PickStep: 0, DropStep: 1},
+		{BinID: fgBin.ID, PickStep: 2, DropStep: 3},
 	}), "seed the carts")
 
 	if st := d.placeForContainment(o, containmentSteps(fgn.Name, "PROD-QC")); st != nil {
@@ -129,9 +132,10 @@ func TestPlaceForContainment_SingleBinRepoints(t *testing.T) {
 	o := &orders.Order{
 		EdgeUUID: "qc-single-1", StationID: "test", OrderType: protocol.OrderTypeRetrieve, Status: "staged",
 		Quantity: 1, SourceNode: "SRC-QC", DeliveryNode: fgn.Name, PayloadCode: "PART-QC",
-		ProcessNode: "PROD-QC", BinID: &fgBin.ID,
-		StepsJSON: `[{"action":"pickup","node":"SRC-QC"},{"action":"dropoff","node":"` + fgn.Name + `"}]`,
+		ProcessNode: "PROD-QC",
+		StepsJSON:   `[{"action":"pickup","node":"SRC-QC"},{"action":"dropoff","node":"` + fgn.Name + `"}]`,
 	}
+	o.HoldFromBirth(fgBin.ID)
 	testutil.MustNoErr(t, db.CreateOrder(o), "the single-cart FG leg")
 	steps := []resolvedStep{
 		{Action: protocol.ActionPickup, Node: "SRC-QC"},

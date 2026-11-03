@@ -64,8 +64,9 @@ func TestComplexDispatch_ApplyEndState(t *testing.T) {
 	if got.Status == StatusFailed {
 		t.Fatalf("order failed unexpectedly: status=%q", got.Status)
 	}
-	if got.BinID == nil || *got.BinID != smktBin.ID {
-		t.Errorf("primary Order.BinID = %v, want SMKT bin %d (process node)", got.BinID, smktBin.ID)
+	if !testdb.HasCartRow(t, db, order.ID, smktBin.ID) {
+		t.Errorf("the order has no row for the SMKT bin %d (its claim at the process node): %v",
+			smktBin.ID, testdb.CartRowBins(t, db, order.ID))
 	}
 
 	claimed, err := db.ListBinsByClaim(order.ID)

@@ -31,7 +31,8 @@ func TestCoverage_ListOrderCompletionAnomalies(t *testing.T) {
 		t.Fatalf("create bin: %v", err)
 	}
 
-	claimed := &orders.Order{EdgeUUID: "claimed-terminal", StationID: "edge.1", OrderType: "retrieve", Status: "pending", Quantity: 1, DeliveryNode: node.Name, BinID: &bin.ID}
+	claimed := &orders.Order{EdgeUUID: "claimed-terminal", StationID: "edge.1", OrderType: "retrieve", Status: "pending", Quantity: 1, DeliveryNode: node.Name}
+	claimed.HoldFromBirth(bin.ID)
 	if err := orders.Create(db.DB, claimed); err != nil {
 		t.Fatalf("create claimed order: %v", err)
 	}
@@ -46,7 +47,8 @@ func TestCoverage_ListOrderCompletionAnomalies(t *testing.T) {
 		t.Fatalf("complete order: %v", err)
 	}
 
-	confirmedNoComplete := &orders.Order{EdgeUUID: "confirmed-no-complete", StationID: "edge.1", OrderType: "retrieve", Status: "pending", Quantity: 1, DeliveryNode: node.Name, BinID: &bin.ID}
+	confirmedNoComplete := &orders.Order{EdgeUUID: "confirmed-no-complete", StationID: "edge.1", OrderType: "retrieve", Status: "pending", Quantity: 1, DeliveryNode: node.Name}
+	confirmedNoComplete.HoldFromBirth(bin.ID)
 	if err := orders.Create(db.DB, confirmedNoComplete); err != nil {
 		t.Fatalf("create confirmed-no-complete order: %v", err)
 	}
@@ -256,9 +258,9 @@ func TestCompletionAnomalies_ACompoundParentIsNotAMissingBin(t *testing.T) {
 		t.Fatalf("create the compound parent: %v", err)
 	}
 	bin := testdb.CreateBinAtNode(t, db, "PART-A", node.ID, "CP-BIN")
-	leg := &orders.Order{EdgeUUID: "cp-leg", StationID: "edge.1", OrderType: "move",
+	leg := testdb.Holding(&orders.Order{EdgeUUID: "cp-leg", StationID: "edge.1", OrderType: "move",
 		Status: "pending", Quantity: 1, DeliveryNode: node.Name,
-		ParentOrderID: &parent.ID, BinID: &bin.ID}
+		ParentOrderID: &parent.ID}, bin.ID)
 	if err := orders.Create(db.DB, leg); err != nil {
 		t.Fatalf("create the leg: %v", err)
 	}

@@ -973,9 +973,9 @@ func TestListAcquiring(t *testing.T) {
 	}
 }
 
-// -------- UpdateBinID + ListByBinID --------------------------------------
+// -------- ListByBinID: a cart's orders, through its rows ------------------
 
-func TestUpdateBinIDAndListByBinID(t *testing.T) {
+func TestListByBinID_ACartsOrdersByItsRows(t *testing.T) {
 	t.Parallel()
 	d := testdb.Open(t)
 	fx := testdb.SetupStandardData(t, d)
@@ -989,10 +989,10 @@ func TestUpdateBinIDAndListByBinID(t *testing.T) {
 	// (C1: a top-level pending order pointing at a bin holds its reservation, or
 	// the teardown reads a pointer wedge; the pointer is incidental here.)
 	testdb.ReserveBin(t, d, o.ID, bin.ID)
-	testutil.MustNoErr(t, orders.UpdateBinID(db, o.ID, bin.ID), "UpdateBinID")
+	testdb.HoldCart(t, d, o.ID, bin.ID)
 	got, _ := orders.Get(db, o.ID)
-	if got.BinID == nil || *got.BinID != bin.ID {
-		t.Errorf("BinID after update = %v, want %d", got.BinID, bin.ID)
+	if cart := testdb.OnlyCart(t, got); cart == nil || *cart != bin.ID {
+		t.Errorf("the order's cart = %v, want %d", cart, bin.ID)
 	}
 
 	list, err := orders.ListByBinID(db, bin.ID, 10)
@@ -1006,7 +1006,7 @@ func TestUpdateBinIDAndListByBinID(t *testing.T) {
 		t.Errorf("ListByBinID[0].ID = %d, want %d", list[0].ID, o.ID)
 	}
 
-	// Unknown bin_id returns empty.
+	// An unknown cart returns empty.
 	empty, err := orders.ListByBinID(db, 999999, 10)
 	if err != nil {
 		t.Fatalf("ListByBinID unknown: %v", err)
@@ -1043,9 +1043,9 @@ func TestOrderBins_ReRecordingALiftUpdatesInPlace(t *testing.T) {
 		`{"action":"wait","node":"LINE1-IN"},{"action":"pickup","node":"STAGE"},{"action":"dropoff","node":"LINE1-IN"}]`
 	testutil.MustNoErr(t, orders.Create(db, o), "Create order")
 
-	lift := orders.OrderBinRow{BinID: bin.ID, PickStep: 1, DropStep: 2, NodeName: "STORAGE-A1", DestNode: "STAGE"}
+	lift := orders.OrderBinRow{BinID: bin.ID, PickStep: 1, DropStep: 2}
 	for i := 0; i < 3; i++ {
-		testutil.MustNoErr(t, orders.ReplaceOrderBins(db, o.ID, bin.ID, []orders.OrderBinRow{lift}),
+		testutil.MustNoErr(t, orders.ReplaceOrderBins(db, o.ID, []orders.OrderBinRow{lift}),
 			"re-record the same lift")
 	}
 	list, err := orders.ListOrderBins(db, o.ID)
@@ -1056,8 +1056,8 @@ func TestOrderBins_ReRecordingALiftUpdatesInPlace(t *testing.T) {
 			"its order sat stuck", len(list))
 	}
 
-	relay := orders.OrderBinRow{BinID: bin.ID, PickStep: 4, DropStep: 5, NodeName: "STAGE", DestNode: "LINE1-IN"}
-	testutil.MustNoErr(t, orders.ReplaceOrderBins(db, o.ID, bin.ID, []orders.OrderBinRow{lift, relay}),
+	relay := orders.OrderBinRow{BinID: bin.ID, PickStep: 4, DropStep: 5}
+	testutil.MustNoErr(t, orders.ReplaceOrderBins(db, o.ID, []orders.OrderBinRow{lift, relay}),
 		"record a second lift of the cart")
 	list, err = orders.ListOrderBins(db, o.ID)
 	testutil.MustNoErr(t, err, "ListOrderBins after the second lift")
@@ -1084,9 +1084,9 @@ func TestOrderBins_ReadInPlanOrder(t *testing.T) {
 		`{"action":"pickup","node":"STORAGE-A1"},{"action":"dropoff","node":"LINE1-IN"}]`
 	testutil.MustNoErr(t, orders.Create(db, o), "Create order")
 
-	testutil.MustNoErr(t, orders.ReplaceOrderBins(db, o.ID, bin1.ID, []orders.OrderBinRow{
-		{BinID: bin2.ID, PickStep: 2, DropStep: 3, NodeName: "STORAGE-A1", DestNode: "LINE1-IN"},
-		{BinID: bin1.ID, PickStep: 0, DropStep: 1, NodeName: "STORAGE-A1", DestNode: "LINE1-IN"},
+	testutil.MustNoErr(t, orders.ReplaceOrderBins(db, o.ID, []orders.OrderBinRow{
+		{BinID: bin2.ID, PickStep: 2, DropStep: 3},
+		{BinID: bin1.ID, PickStep: 0, DropStep: 1},
 	}), "rows written out of plan order")
 
 	list, err := orders.ListOrderBins(db, o.ID)

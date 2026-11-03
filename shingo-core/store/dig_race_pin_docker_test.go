@@ -42,7 +42,7 @@ func newDigRace(t *testing.T, prefix string, holderPoints bool) *digRace {
 	holder := testdb.CreateOrder(t, db, func(o *orders.Order) { o.EdgeUUID = prefix + "-holder" })
 	testutil.MustNoErr(t, reservations.Acquire(db.DB, holder.ID, holder.ID, bin.ID, "test"), "the holder's soft hold")
 	if holderPoints {
-		testutil.MustNoErr(t, db.UpdateOrderBinID(holder.ID, bin.ID), "the holder points at the bin")
+		testdb.HoldCart(t, db, holder.ID, bin.ID)
 	}
 	parent := testdb.CreateOrder(t, db, func(o *orders.Order) { o.EdgeUUID = prefix + "-dig" })
 	_, err := db.Exec(`UPDATE orders SET priority = 100 WHERE id = $1`, parent.ID)
@@ -106,7 +106,7 @@ func (r *digRace) invariants(t *testing.T, digTook bool) {
 	var pointer sql.NullInt64
 	testutil.MustNoErr(t, r.db.DB.QueryRow(`SELECT b.claimed_by,
 		(SELECT state FROM reservations WHERE bin_id = b.id AND order_id = $2 AND resource_kind = 'bin'),
-		(SELECT bin_id FROM orders WHERE id = $2)
+		(SELECT ob.bin_id FROM order_bins ob WHERE ob.order_id = $2 AND ob.bin_id = $1 LIMIT 1)
 		FROM bins b WHERE b.id = $1`, r.binID, r.holder.ID).Scan(&claimedBy, &resState, &pointer), "the book")
 	if claimedBy.Valid && claimedBy.Int64 == r.holder.ID && !resState.Valid {
 		t.Errorf("claimed_by = holder %d with its reservation gone", r.holder.ID)
@@ -122,7 +122,7 @@ func (r *digRace) invariants(t *testing.T, digTook bool) {
 		if !claimedBy.Valid || claimedBy.Int64 != r.holder.ID || resState.String != string(reservations.StateConfirmed) {
 			t.Errorf("the hand won: claimed_by %v, reservation %q; want the holder's claim and a confirmed row", claimedBy, resState.String)
 		}
-		if r.holder.BinID != nil && (!pointer.Valid || pointer.Int64 != r.binID) {
+		if testdb.OnlyCart(t, r.holder) != nil && (!pointer.Valid || pointer.Int64 != r.binID) {
 			t.Errorf("the holder's pointer was cleared (%v) when its row was not taken", pointer)
 		}
 	}
@@ -144,7 +144,7 @@ func TestDigRacePin_HandFirstWhileTheDigWaits(t *testing.T) {
 	for _, points := range []bool{true, false} {
 		r := newDigRace(t, map[bool]string{true: "DRP-HW-P", false: "DRP-HW-N"}[points], points)
 		if points {
-			r.holder.BinID = &r.binID
+			r.holder.HoldFromBirth(r.binID)
 		}
 		htx, err := r.hand(t)
 		testutil.MustNoErr(t, err, "the hand")
@@ -189,7 +189,7 @@ func TestDigRacePin_DigFirstWhileTheHandWaits(t *testing.T) {
 func TestDigRacePin_InSequence(t *testing.T) {
 	t.Parallel()
 	r := newDigRace(t, "DRP-SEQ-H", true)
-	r.holder.BinID = &r.binID
+	r.holder.HoldFromBirth(r.binID)
 	htx, err := r.hand(t)
 	testutil.MustNoErr(t, err, "the hand")
 	testutil.MustNoErr(t, htx.Commit(), "commit")

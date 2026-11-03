@@ -48,7 +48,7 @@ func TestScenario_KeepStagedSingleRobot_TheCollectNeverTakesAStray(t *testing.T)
 	}
 	for _, l := range co.legs {
 		o := c.coreOf(l)
-		if o.BinID != nil && *o.BinID == stray {
+		if coreCart(o) != nil && *coreCart(o) == stray {
 			t.Fatalf("leg %d (%s) holds the stray empty %d: it would carry it to the line", l.ID, o.Status, stray)
 		}
 		res, err := coreDB.ListReservationsByOrder(o.ID)

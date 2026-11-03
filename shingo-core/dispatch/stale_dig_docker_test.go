@@ -533,7 +533,7 @@ func TestStaleDig_GateOwnDig_DissolvesResummonsAndCompletes(t *testing.T) {
 		o.Status = protocol.StatusPending
 	})
 	testdb.ReserveBin(t, db, order.ID, held.ID)
-	testutil.MustNoErr(t, db.UpdateOrderBinID(order.ID, held.ID), "stamp the held bin")
+	testdb.HoldCart(t, db, order.ID, held.ID)
 	order, err := db.GetOrder(order.ID)
 	testutil.MustNoErr(t, err, "reload the held-bin order")
 	reload := func(what string) *orders.Order {
@@ -573,9 +573,9 @@ func TestStaleDig_GateOwnDig_DissolvesResummonsAndCompletes(t *testing.T) {
 		t.Fatal("no leg carries the dissolve marker — the walled leg is waiting on a bin nothing will move")
 	}
 	if o := reload("after the dissolve"); protocol.IsTerminal(o.Status) || !IsGateStaged(o) ||
-		o.BinID == nil || *o.BinID != held.ID {
+		testdb.OnlyCart(t, o) == nil || *testdb.OnlyCart(t, o) != held.ID {
 		t.Fatalf("after the dissolve the demand is %s (staged=%v, bin %v), want it still at its mark holding "+
-			"bin %d: nothing is wrong with the demand, the lane changed", o.Status, IsGateStaged(o), o.BinID, held.ID)
+			"bin %d: nothing is wrong with the demand, the lane changed", o.Status, IsGateStaged(o), testdb.OnlyCart(t, o), held.ID)
 	}
 
 	// ── THE NEXT PASS SUMMONS A FRESH DIG, AND IT COMPLETES ───────────────

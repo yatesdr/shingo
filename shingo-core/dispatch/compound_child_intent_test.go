@@ -90,7 +90,7 @@ func TestCompoundChild_StaysOutOfTheSourceFinder(t *testing.T) {
 	for _, c := range children {
 		if inFinder[c.ID] {
 			t.Errorf("reshuffle child %d (seq %d) is visible to the source finder. It already names bin %v; the finder would pick a different one.",
-				c.ID, c.Sequence, c.BinID)
+				c.ID, c.Sequence, testdb.OnlyCart(t, c))
 		}
 		if c.ParentOrderID == nil {
 			t.Errorf("child %d has no parent_order_id — that column is what the scanner's skip keys on", c.ID)

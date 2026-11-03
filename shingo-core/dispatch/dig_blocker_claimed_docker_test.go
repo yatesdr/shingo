@@ -273,11 +273,11 @@ func TestBlockerClaimedError_CarriesTheHolder(t *testing.T) {
 	})
 	pid := parent.ID
 	_, err := testdb.CreateCompoundChildren(t, db, []store.CompoundChild{{
-		Order: &orders.Order{
+		Order: testdb.Holding(&orders.Order{
 			EdgeUUID: "holder-id-child", StationID: parent.StationID,
 			OrderType: protocol.OrderTypeMove, Status: protocol.StatusPending,
-			Quantity: 1, ParentOrderID: &pid, Sequence: 1, BinID: &bin.ID,
-		},
+			Quantity: 1, ParentOrderID: &pid, Sequence: 1,
+		}, bin.ID),
 	}}, nil)
 
 	if !errors.Is(err, store.ErrBlockerClaimed) {

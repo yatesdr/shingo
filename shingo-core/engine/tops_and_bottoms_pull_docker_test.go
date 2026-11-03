@@ -123,8 +123,8 @@ func TestTopsAndBottomsPull_ADryPullReplayedWaitsForTopsAndBottoms(t *testing.T)
 		if o.Status != protocol.StatusDispatched && o.Status != protocol.StatusInTransit {
 			t.Fatalf("with %s in the source the pull is %s under %q, want dispatched", step.name, o.Status, o.QueueReason)
 		}
-		if o.BinID == nil || *o.BinID != id {
-			t.Errorf("the pull took bin %v, want the tops & bottoms %d", o.BinID, id)
+		if testdb.OnlyCart(t, o) == nil || *testdb.OnlyCart(t, o) != id {
+			t.Errorf("the pull took bin %v, want the tops & bottoms %d", testdb.OnlyCart(t, o), id)
 		}
 	}
 }
@@ -178,10 +178,10 @@ func TestSendBackMove_TheCountAtTheLift(t *testing.T) {
 			db := testDB(t)
 			c := newToteCell(t, db, newTestEngine(t, db, simulator.New()), k.prefix)
 			k.front(t, c)
-			move := &orders.Order{EdgeUUID: k.prefix + "-sendback", StationID: "line-1",
+			move := testdb.Holding(&orders.Order{EdgeUUID: k.prefix + "-sendback", StationID: "line-1",
 				OrderType: dispatch.OrderTypeMove, SourceIntent: dispatch.SourceIntentLocal, Status: "in_transit",
-				Quantity: 1, SourceNode: c.out.Name, DeliveryNode: k.prefix + "-DEST", BinID: &c.outside,
-				NamedBinID: &c.outside}
+				Quantity: 1, SourceNode: c.out.Name, DeliveryNode: k.prefix + "-DEST",
+				NamedBinID: &c.outside}, c.outside)
 			testutil.MustNoErr(t, db.CreateOrder(move), "SEND BACK's move")
 			_, err := db.Exec(`UPDATE bins SET claimed_by = $1 WHERE id = $2`, move.ID, c.outside)
 			testutil.MustNoErr(t, err, "claim")

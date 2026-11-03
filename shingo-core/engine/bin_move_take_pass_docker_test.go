@@ -42,7 +42,7 @@ func TestBinMove_ATakenHolderIsReFoundAtOnce(t *testing.T) {
 		o.SourceIntent = "full"
 	})
 	testutil.MustNoErr(t, reservations.Acquire(db.DB, holder.ID, holder.ID, taken.ID, "test"), "the holder's promise")
-	testutil.MustNoErr(t, db.UpdateOrderBinID(holder.ID, taken.ID), "the holder points at the bin")
+	testdb.HoldCart(t, db, holder.ID, taken.ID)
 
 	res, err := eng.CreateBinMove(BinMoveRequest{
 		Selection: BinSelectionByLabel, BinLabel: taken.Label, DestNodeName: dest.Name, StationID: "take-person",
@@ -58,7 +58,7 @@ func TestBinMove_ATakenHolderIsReFoundAtOnce(t *testing.T) {
 		t.Errorf("the holder still waits with the bin-taken cause (%s, %q): nothing asked it after the take",
 			after.Status, after.QueueReason)
 	}
-	if after.BinID == nil || *after.BinID != other.ID || after.Status != protocol.StatusDispatched {
-		t.Errorf("holder is %s with bin %v, want dispatched with bin %d (%s)", after.Status, after.BinID, other.ID, other.Label)
+	if testdb.OnlyCart(t, after) == nil || *testdb.OnlyCart(t, after) != other.ID || after.Status != protocol.StatusDispatched {
+		t.Errorf("holder is %s with bin %v, want dispatched with bin %d (%s)", after.Status, testdb.OnlyCart(t, after), other.ID, other.Label)
 	}
 }

@@ -112,10 +112,10 @@ func drainMoves(t *testing.T, db *store.DB) []*orders.Order {
 }
 
 func drainBinOf(o *orders.Order) int64 {
-	if o.BinID == nil {
-		return 0
+	if b, err := o.OnlyBin(); err == nil && b != nil {
+		return *b
 	}
-	return *o.BinID
+	return 0
 }
 
 func totes(n int) *int { return &n }

@@ -13,11 +13,10 @@ import (
 )
 
 // ReplaceOrderBins makes an order's carts say exactly what the current
-// allocation claimed, and points orders.bin_id at primary, in one statement —
-// the set is replaced, not merged into. See the orders-package doc for the
-// stale-row failure this closes.
-func (db *DB) ReplaceOrderBins(orderID, primary int64, rows []orders.OrderBinRow) error {
-	return orders.ReplaceOrderBins(db.DB, orderID, primary, rows)
+// allocation claimed, in one statement — the set is replaced, not merged into.
+// See the orders-package doc for the stale-row failure this closes.
+func (db *DB) ReplaceOrderBins(orderID int64, rows []orders.OrderBinRow) error {
+	return orders.ReplaceOrderBins(db.DB, orderID, rows)
 }
 
 // ListOrderBins returns an order's rows in plan order.
@@ -121,11 +120,11 @@ func (db *DB) ApplyMultiBinArrival(placedByOrder int64, instructions []orders.Bi
 // OrderOwnsNoCargo answers "does this order move a bin of its own?" — the one
 // question, through the one spelling (helpers.OwnsNoCargoSQL).
 //
-// TRUE means the order is a COORDINATOR: it owns legs, and its NULL bin_id is
-// permanent and correct. FALSE means it is an ordinary order, and a NULL bin_id
-// on it is a real fault worth reporting.
+// TRUE means the order is a COORDINATOR: it owns legs, and carrying no cart is
+// permanent and correct. FALSE means it is an ordinary order, and carrying no
+// cart is a real fault worth reporting.
 //
-// `order.BinID == nil` cannot tell those apart, which is what made the bin-state
+// Carrying no cart cannot tell those apart, which is what made the bin-state
 // strip read "Core degraded" for a whole rig run against twelve coordinators and
 // zero actual defects. See helpers.OwnsNoCargoSQL for the measurement.
 //

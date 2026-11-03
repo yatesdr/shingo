@@ -87,7 +87,7 @@ func TestQuestionSet_PlainEntryDoesNotAskReachability(t *testing.T) {
 		o.EdgeUUID = "qs-plain-reach"
 		o.StationID = "line-1"
 		o.SourceNode = deep.Name
-		o.BinID = &wanted.ID
+		o.HoldFromBirth(wanted.ID)
 	})
 
 	admitted, cause, _, err := d.AcquireLanesForOrder(order, deep, line, EntryFreshBin)
@@ -185,7 +185,7 @@ func TestQuestionSet_GateStagedRetrieveAsksOccupancy(t *testing.T) {
 		o.EdgeUUID = "qs-retr-occ"
 		o.StationID = "line-1"
 		o.SourceNode = shallow.Name
-		o.BinID = &wanted.ID
+		o.HoldFromBirth(wanted.ID)
 	})
 
 	v, err := d.laneGateRetrieveCause(shallow, retrieve)
@@ -219,7 +219,7 @@ func TestQuestionSet_GateStagedRetrieveAsksDigAndReachability(t *testing.T) {
 		o.EdgeUUID = "qs-retr-buried"
 		o.StationID = "line-1"
 		o.SourceNode = deep.Name
-		o.BinID = &wanted.ID
+		o.HoldFromBirth(wanted.ID)
 	})
 
 	v, err := d.laneGateRetrieveCause(deep, buried)

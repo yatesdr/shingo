@@ -46,13 +46,13 @@ func TestOrphanedBinClaim_ReconciliationDetectsAndFixes(t *testing.T) {
 	})
 
 	order := testdb.RequireOrder(t, db, "retrieve-tc80")
-	if order.BinID == nil {
+	if testdb.OnlyCart(t, order) == nil {
 		t.Fatal("order should have a bin claimed")
 	}
-	t.Logf("order %d dispatched, bin %d claimed", order.ID, *order.BinID)
+	t.Logf("order %d dispatched, bin %d claimed", order.ID, *testdb.OnlyCart(t, order))
 
 	// Verify bin is claimed
-	testdb.RequireBinClaimedBy(t, db, *order.BinID, order.ID)
+	testdb.RequireBinClaimedBy(t, db, *testdb.OnlyCart(t, order), order.ID)
 
 	// Step 2: Simulate the pre-fix bug — manually set order to failed
 	// WITHOUT releasing the claim (simulates UnclaimOrderBins failing silently)
@@ -61,7 +61,7 @@ func TestOrphanedBinClaim_ReconciliationDetectsAndFixes(t *testing.T) {
 		t.Fatalf("manual fail order: %v", err)
 	}
 	// Bin should still be claimed (the bug state)
-	bin := testdb.RequireBin(t, db, *order.BinID)
+	bin := testdb.RequireBin(t, db, *testdb.OnlyCart(t, order))
 	if bin.ClaimedBy == nil {
 		t.Fatal("bin should still be claimed (simulating leaked claim)")
 	}
@@ -112,7 +112,7 @@ func TestOrphanedBinClaim_ReconciliationDetectsAndFixes(t *testing.T) {
 	}
 
 	// Step 6: Verify bin is now unclaimed
-	testdb.AssertBinUnclaimed(t, db, *order.BinID)
+	testdb.AssertBinUnclaimed(t, db, *testdb.OnlyCart(t, order))
 	t.Logf("sweep released orphaned claim — bin %d now unclaimed", bin.ID)
 
 	// Step 7: Verify anomalies no longer detect it

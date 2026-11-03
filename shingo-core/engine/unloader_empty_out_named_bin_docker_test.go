@@ -78,8 +78,8 @@ func TestUnloaderEmptyOut_NamedBinCountsAsComingBeforeItIsSourced(t *testing.T) 
 		o.DeliveryNode = grp.Name
 		o.NamedBinID = &carrier
 	})
-	if o.BinID != nil {
-		t.Fatalf("fixture: the empty-out already holds bin %d; this is about the window before it is sourced", *o.BinID)
+	if testdb.OnlyCart(t, o) != nil {
+		t.Fatalf("fixture: the empty-out already holds bin %d; this is about the window before it is sourced", *testdb.OnlyCart(t, o))
 	}
 
 	coming, err := db.CountTypedInboundToGroup(grp.ID, grp.Name, "UEO-C-TOTE-1")

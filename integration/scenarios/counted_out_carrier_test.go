@@ -140,8 +140,11 @@ func TestScenario_ACarrierCountedToNothingIsNoFull(t *testing.T) {
 	for _, o := range c.newRows(before) {
 		held, err := coreDB.ListReservationsByOrder(c.coreOf(o).ID)
 		mustNil(t, err, "reservations")
-		if b := c.coreOf(o).BinID; b != nil && *b == out.ID {
-			t.Errorf("order %d (%s) took the cart counted to nothing", o.ID, o.OrderType)
+		for _, cart := range c.coreOf(o).Carts {
+			if cart.BinID == out.ID {
+				t.Errorf("order %d (%s) took the cart counted to nothing", o.ID, o.OrderType)
+				break
+			}
 		}
 		for _, r := range held {
 			if r.BinID == out.ID {

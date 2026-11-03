@@ -63,7 +63,7 @@ func compoundParent(t *testing.T, db *store.DB, uuid string) *orders.Order {
 func childFor(parent *orders.Order, binID int64, seq int) store.CompoundChild {
 	pid := parent.ID
 	return store.CompoundChild{
-		Order: &orders.Order{
+		Order: testdb.Holding(&orders.Order{
 			EdgeUUID: parent.EdgeUUID + "-child" + string(rune('0'+seq)),
 			// The station a leg inherits from its parent (compound.go).
 			StationID:     parent.StationID,
@@ -72,8 +72,7 @@ func childFor(parent *orders.Order, binID int64, seq int) store.CompoundChild {
 			Quantity:      1,
 			ParentOrderID: &pid,
 			Sequence:      seq,
-			BinID:         &binID,
-		},
+		}, binID),
 	}
 }
 
@@ -88,7 +87,7 @@ func handOver(t *testing.T, db *store.DB, parentID int64, kids ...store.Compound
 		if err != nil {
 			t.Fatalf("begin handover: %v", err)
 		}
-		if err := store.ClaimCompoundLegBinTx(tx, *k.Order.BinID, k.Order.ID, parentID); err != nil {
+		if err := store.ClaimCompoundLegBinTx(tx, *testdb.OnlyCart(t, k.Order), k.Order.ID, parentID); err != nil {
 			_ = tx.Rollback()
 			return err
 		}

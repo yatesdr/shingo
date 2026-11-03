@@ -159,6 +159,8 @@ func TestSingleRobotSwap_LineDropoffAnnouncesTheRebind(t *testing.T) {
 	spent := testdb.CreateBinAtNode(t, db, sd.Payload.Code, outStage.ID, "SR-SPENT")
 	testdb.ClaimBinForTest(t, db, fresh.ID, ord.ID)
 	testdb.ClaimBinForTest(t, db, spent.ID, ord.ID)
+	// Its carts: the fresh one lifted at the market, the spent one at the line.
+	testdb.SeedCarts(t, db, ord.ID, map[int]int64{0: fresh.ID, 3: spent.ID})
 
 	// Step 7: the line dropoff block finishes.
 	eng.handleStoreBlockCompleted(BlockCompletedEvent{

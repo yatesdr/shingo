@@ -48,8 +48,12 @@ import (
 func (g *goldenPlant) recordBirths() {
 	g.t.Helper()
 	g.exec(`CREATE TABLE golden_births AS SELECT * FROM orders WITH NO DATA`)
+	// born_cart: the cart the order is born holding (its first row), which
+	// Create writes in the INSERT's own statement.
+	g.exec(`ALTER TABLE golden_births ADD COLUMN born_cart bigint`)
 	g.exec(`CREATE FUNCTION golden_birth() RETURNS trigger LANGUAGE plpgsql AS $$
-		BEGIN INSERT INTO golden_births SELECT NEW.*; RETURN NEW; END $$`)
+		BEGIN INSERT INTO golden_births SELECT NEW.*, (SELECT ob.bin_id FROM order_bins ob WHERE ob.order_id = NEW.id
+			ORDER BY ob.pick_step NULLS FIRST, ob.id LIMIT 1); RETURN NEW; END $$`)
 	g.exec(`CREATE TRIGGER golden_birth AFTER INSERT ON orders FOR EACH ROW EXECUTE FUNCTION golden_birth()`)
 }
 
@@ -87,7 +91,7 @@ func (g *goldenPlant) births(since int) []birthAnswer {
 	rows, err := g.db.DB.Query(`
 		SELECT id, parent_order_id, edge_uuid, order_type, status, COALESCE(station_id,''), quantity,
 		       COALESCE(payload_code,''), COALESCE(source_node,''), COALESCE(delivery_node,''),
-		       COALESCE(process_node,''), bin_id, COALESCE(steps_json,''), COALESCE(source_intent,''),
+		       COALESCE(process_node,''), born_cart, COALESCE(steps_json,''), COALESCE(source_intent,''),
 		       coordinated, sibling_order_uuid <> '', COALESCE(origin_class,''),
 		       COALESCE(origin_id::text,''), destination_resolved_at IS NOT NULL, plan
 		FROM golden_births WHERE edge_uuid NOT LIKE 'golden-holder-%' ORDER BY id`)

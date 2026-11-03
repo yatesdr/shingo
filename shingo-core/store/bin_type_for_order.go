@@ -98,9 +98,9 @@ func (db *DB) BinTypeForOrder(orderID int64, group string) (*int64, protocol.Car
 	return db.heldBinType(orderID)
 }
 
-// heldBinType reads the bin type off the order's bin reservations, for
-// the orders whose bin_id is not the answer — a complex order's legs hold their
-// carriers well before the column means anything. The state is the held
+// heldBinType reads the bin type off the order's bin reservations, for the
+// orders whose rows are not the answer yet — a complex order's legs hold their
+// carriers well before its rows are written. The state is the held
 // cart's when the order holds exactly one, blank otherwise.
 //
 // SLOT AND MOUTH ROWS ARE SKIPPED, not treated as unknown: ListByOrder returns

@@ -699,8 +699,8 @@ func (c *ksrCell) dump(label string) {
 		core := "no Core row"
 		if err == nil {
 			bin := int64(0)
-			if co.BinID != nil {
-				bin = *co.BinID
+			if coreCart(co) != nil {
+				bin = *coreCart(co)
 			}
 			core = fmt.Sprintf("status=%s cause=%q reason=%q vendor=%q bin=%d", co.Status, co.QueueCause,
 				co.QueueReason, co.VendorOrderID, bin)
@@ -1553,8 +1553,8 @@ func ksrDigMomentOf(c *ksrCell, co ksrCO, laneHeld bool) {
 	mustNil(c.t, err, "bins")
 	for _, b := range bins {
 		if b.Label == "KSR-C-BLOCKER" {
-			if child.BinID != nil && *child.BinID != b.ID {
-				c.t.Logf("case e: the dig leg carries bin %d, not the blocker %d", *child.BinID, b.ID)
+			if coreCart(child) != nil && *coreCart(child) != b.ID {
+				c.t.Logf("case e: the dig leg carries bin %d, not the blocker %d", *coreCart(child), b.ID)
 			}
 			c.dig.blocker = b.ID
 			c.t.Logf("case e: at the cancel the blocker %s (payload %q, type %s) is at %s; dig leg %d (%s, %s->%s) on %s, parent %d, %d children",

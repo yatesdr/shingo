@@ -8,16 +8,14 @@ import (
 
 // Order is a unit of work produced by the edge-station protocol and
 // executed by the fleet. An Order tracks its source and delivery
-// nodes, vendor-side identifiers once dispatched, the claim on a bin
-// (for simple orders), and a parent/sequence pair for complex orders
-// whose child legs are separate Order rows.
+// nodes, vendor-side identifiers once dispatched, the carts it carries, and a
+// parent/sequence pair for complex orders whose child legs are separate Order
+// rows.
 //
 // StepsJSON is the serialised step list for complex orders; WaitIndex
 // marks how many wait segments have been released. The carts the order
 // carries are its order_bins rows, one per lift, read with the order
-// (Carts); BinID is the one-cart column the rows replace (one cart, chosen by
-// shape: a complex order's claim at the process node, else its first; a plain
-// order's held cart), kept until v174.
+// (Carts); an order has no single "bin" column.
 type Order struct {
 	ID            int64              `json:"id"`
 	EdgeUUID      string             `json:"edge_uuid"`
@@ -40,7 +38,6 @@ type Order struct {
 	ParentOrderID *int64             `json:"parent_order_id,omitempty"`
 	Sequence      int                `json:"sequence"`
 	StepsJSON     string             `json:"steps_json,omitempty"`
-	BinID         *int64             `json:"bin_id,omitempty"`
 	// Carts are the order's order_bins rows, one per lift (order_carts.go),
 	// read in the order's own statement (orders.SelectCols): every reader that
 	// loads the order has them for no further statement.

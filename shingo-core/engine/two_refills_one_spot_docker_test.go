@@ -43,7 +43,7 @@ func TestTwoRefillsForOneSpot_TheSecondWaitsForTheFirst(t *testing.T) {
 
 	a := testdb.RequireOrder(t, db, "ks-refill-a")
 	b := testdb.RequireOrder(t, db, "ks-refill-b")
-	if a.VendorOrderID == "" || a.BinID == nil {
+	if a.VendorOrderID == "" || testdb.OnlyCart(t, a) == nil {
 		t.Fatalf("the first refill did not go: status %q (%s)", a.Status, a.QueueCause)
 	}
 	if b.VendorOrderID != "" || !protocol.IsAcquiring(b.Status) {

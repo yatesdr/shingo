@@ -38,8 +38,8 @@ func TestU2Pickup_WindowReadsEmptyBeforeTheLanding(t *testing.T) {
 		SourceNode: window.Name, DeliveryNode: empties.Name, Quantity: 1,
 	})
 	u2 := testdb.RequireOrder(t, db, "u2p-move")
-	if u2.BinID == nil || *u2.BinID != carrier.ID {
-		t.Fatalf("fixture: the U2 claimed bin %v, want the carrier %d (status %q)", u2.BinID, carrier.ID, u2.Status)
+	if testdb.OnlyCart(t, u2) == nil || *testdb.OnlyCart(t, u2) != carrier.ID {
+		t.Fatalf("fixture: the U2 claimed bin %v, want the carrier %d (status %q)", testdb.OnlyCart(t, u2), carrier.ID, u2.Status)
 	}
 
 	nodes := eng.NodeService()

@@ -82,17 +82,17 @@ func TestCountsByTotes_AgreeWithTheKeepersCounts(t *testing.T) {
 				setup(o)
 			}
 		})
-		if o.BinID != nil {
+		if testdb.OnlyCart(t, o) != nil {
 			// A live order pointing at a bin holds its reservation, or the
 			// teardown reads a pointer wedge.
-			testdb.ReserveBin(t, db, o.ID, *o.BinID)
+			testdb.ReserveBin(t, db, o.ID, *testdb.OnlyCart(t, o))
 		}
 		return o
 	}
 	a := bin(btID, "HGT-C1", nil, 40)
-	order("hgt-plain", "HGT-SLOT", func(o *orders.Order) { o.BinID = &a })
+	order("hgt-plain", "HGT-SLOT", func(o *orders.Order) { o.HoldFromBirth(a) })
 	b := bin(btID, "HGT-C2", nil, 40)
-	order("hgt-group", "HGT-GRP", func(o *orders.Order) { o.BinID = &b })
+	order("hgt-group", "HGT-GRP", func(o *orders.Order) { o.HoldFromBirth(b) })
 	c := bin(btID, "HGT-C3", nil, 16)
 	cplx := order("hgt-complex", "ELSEWHERE", func(o *orders.Order) {
 		o.OrderType = "complex"
@@ -106,12 +106,12 @@ func TestCountsByTotes_AgreeWithTheKeepersCounts(t *testing.T) {
 	exec(`INSERT INTO demand_origins (origin_id, revision, episode_key, kind, opened_at) VALUES ($1, 1, $2, $3, NOW())`,
 		mnt, protocol.MaintainEpisodeKey("HGT-GRP", "HGT-TOTE"), protocol.EpisodeKindMaintain)
 	e := bin(btID, "HGT-C5", nil, 40)
-	order("hgt-own", "HGT-SLOT", func(o *orders.Order) { o.BinID = &e; o.OriginID = mnt })
+	order("hgt-own", "HGT-SLOT", func(o *orders.Order) { o.HoldFromBirth(e); o.OriginID = mnt })
 	tb := bin(btID, "HGT-C7", nil, 0)
-	order("hgt-tops-bottoms", "HGT-SLOT", func(o *orders.Order) { o.BinID = &tb })
+	order("hgt-tops-bottoms", "HGT-SLOT", func(o *orders.Order) { o.HoldFromBirth(tb) })
 	f := bin(btID, "HGT-C6", nil, 40)
 	exec(`UPDATE bins SET payload_code = 'PART-A' WHERE id = $1`, f)
-	order("hgt-loaded", "HGT-SLOT", func(o *orders.Order) { o.BinID = &f })
+	order("hgt-loaded", "HGT-SLOT", func(o *orders.Order) { o.HoldFromBirth(f) })
 
 	coming, err := db.CountTypedInboundToGroup(grpID, "HGT-GRP", "HGT-TOTE")
 	testutil.MustNoErr(t, err, "keeper coming")

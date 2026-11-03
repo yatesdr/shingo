@@ -49,7 +49,7 @@ type History = domain.OrderHistory
 // the same statement over idx_order_bins_order: every reader of an order has
 // its carts for no further statement. It names the outer row as orders.id, so
 // a statement using SelectCols reads FROM orders unaliased (all of them do).
-const SelectCols = `id, edge_uuid, station_id, order_type, status, quantity, source_node, delivery_node, process_node, vendor_order_id, vendor_state, robot_id, priority, payload_desc, error_detail, created_at, updated_at, completed_at, parent_order_id, sequence, steps_json, bin_id, payload_code, wait_index, queue_reason, queue_code, queue_cause, skip_auto_confirm, sibling_order_uuid, key_route, key_task, source_intent, coordinated, remaining_uop, origin_id, origin_class, open_for_children, recovers_order_id, named_bin_id, station_unaware, projects_to, plan, want, steps_done, ` + CartsColSQL
+const SelectCols = `id, edge_uuid, station_id, order_type, status, quantity, source_node, delivery_node, process_node, vendor_order_id, vendor_state, robot_id, priority, payload_desc, error_detail, created_at, updated_at, completed_at, parent_order_id, sequence, steps_json, payload_code, wait_index, queue_reason, queue_code, queue_cause, skip_auto_confirm, sibling_order_uuid, key_route, key_task, source_intent, coordinated, remaining_uop, origin_id, origin_class, open_for_children, recovers_order_id, named_bin_id, station_unaware, projects_to, plan, want, steps_done, ` + CartsColSQL
 
 // CartsColSQL is the order's carts as one JSON text column: an array of
 // [bin_id, pick_step, drop_step], in plan order (a carried-over row, with no
@@ -95,7 +95,7 @@ func scanCarts(o *Order, text string) error {
 // Exported for cross-aggregate readers at the outer store/ level.
 func ScanOrder(row interface{ Scan(...any) error }) (*Order, error) {
 	var o Order
-	var parentOrderID, binID, recoversOrderID, namedBinID sql.NullInt64
+	var parentOrderID, recoversOrderID, namedBinID sql.NullInt64
 	var remainingUOP sql.NullInt64
 	var queueCode, queueCause sql.NullString
 	// origin_id is a nullable UUID — NULL is the honest reading for an order
@@ -113,7 +113,7 @@ func ScanOrder(row interface{ Scan(...any) error }) (*Order, error) {
 		&o.Quantity,
 		&o.SourceNode, &o.DeliveryNode, &o.ProcessNode, &o.VendorOrderID, &o.VendorState, &o.RobotID,
 		&o.Priority, &o.PayloadDesc, &o.ErrorDetail, &o.CreatedAt, &o.UpdatedAt, &o.CompletedAt,
-		&parentOrderID, &o.Sequence, &o.StepsJSON, &binID, &o.PayloadCode, &o.WaitIndex, &o.QueueReason, &queueCode, &queueCause,
+		&parentOrderID, &o.Sequence, &o.StepsJSON, &o.PayloadCode, &o.WaitIndex, &o.QueueReason, &queueCode, &queueCause,
 		&o.SkipAutoConfirm, &o.SiblingOrderUUID, &keyRouteJSON, &o.KeyTask,
 		&o.SourceIntent, &o.Coordinated, &remainingUOP,
 		&originID, &o.OriginClass, &o.OpenForChildren, &recoversOrderID, &namedBinID, &o.StationUnaware, &o.ProjectsTo, &planJSON, &want, &o.StepsDone, &carts)
@@ -154,9 +154,6 @@ func ScanOrder(row interface{ Scan(...any) error }) (*Order, error) {
 	}
 	if parentOrderID.Valid {
 		o.ParentOrderID = &parentOrderID.Int64
-	}
-	if binID.Valid {
-		o.BinID = &binID.Int64
 	}
 	if recoversOrderID.Valid {
 		o.RecoversOrderID = &recoversOrderID.Int64
@@ -243,30 +240,25 @@ func Create(db helpers.QueryRower, o *Order) error {
 	now := clock.Now().UTC()
 	// AN ORDER BORN HOLDING A CART (a named cart, a dig leg's bin) WRITES THE
 	// CART'S ROWS WITH ITSELF, in this one statement: the carts it carries in
-	// memory (Order.HoldFromBirth), else (until v174) the cart orders.bin_id is
-	// born naming, lifted at the plan's first pickup. An order born holding
-	// nothing writes none.
-	carts := RowsOf(o, o.Carts)
-	if len(carts) == 0 && o.BinID != nil {
-		carts = CartRows(o, map[int]int64{domain.FirstPickup(domain.OrderPlan(o)): *o.BinID})
-	}
-	cb, cp, cd, cn, cdest := cartArrays(carts)
-	id, err := helpers.InsertID(db, `WITH ins AS (INSERT INTO orders (edge_uuid, station_id, order_type, status, quantity, source_node, delivery_node, process_node, priority, payload_desc, parent_order_id, sequence, steps_json, bin_id, payload_code, skip_auto_confirm, sibling_order_uuid, key_route, key_task, source_intent, coordinated, origin_id, origin_class, recovers_order_id, named_bin_id, station_unaware, projects_to, plan, robot_id, want, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $27, $28, $29, $30, $31, $26, $26) RETURNING id),
-		carts AS (INSERT INTO order_bins (order_id, bin_id, pick_step, drop_step, action, node_name, dest_node)
-		          SELECT ins.id, r.bin, r.pick, NULLIF(r.drop, -1), 'pickup', r.node, r.dest
-		            FROM ins, unnest($32::bigint[], $33::bigint[], $34::bigint[], $35::text[], $36::text[]) AS r(bin, pick, drop, node, dest))
+	// memory (Order.HoldFromBirth). An order born holding nothing writes none.
+	carts := RowsOf(o.Carts)
+	cb, cp, cd := cartArrays(carts)
+	id, err := helpers.InsertID(db, `WITH ins AS (INSERT INTO orders (edge_uuid, station_id, order_type, status, quantity, source_node, delivery_node, process_node, priority, payload_desc, parent_order_id, sequence, steps_json, payload_code, skip_auto_confirm, sibling_order_uuid, key_route, key_task, source_intent, coordinated, origin_id, origin_class, recovers_order_id, named_bin_id, station_unaware, projects_to, plan, robot_id, want, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $26, $27, $28, $29, $30, $25, $25) RETURNING id),
+		carts AS (INSERT INTO order_bins (order_id, bin_id, pick_step, drop_step)
+		          SELECT ins.id, r.bin, r.pick, NULLIF(r.drop, -1)
+		            FROM ins, unnest($31::bigint[], $32::bigint[], $33::bigint[]) AS r(bin, pick, drop))
 		SELECT id FROM ins`,
 		o.EdgeUUID, o.StationID, o.OrderType, o.Status,
 		o.Quantity,
 		o.SourceNode, o.DeliveryNode, o.ProcessNode, o.Priority, o.PayloadDesc,
 		helpers.NullableInt64(o.ParentOrderID), o.Sequence, o.StepsJSON,
-		helpers.NullableInt64(o.BinID), o.PayloadCode, o.SkipAutoConfirm, o.SiblingOrderUUID,
+		o.PayloadCode, o.SkipAutoConfirm, o.SiblingOrderUUID,
 		marshalKeyRoute(o.KeyRoute), o.KeyTask, o.SourceIntent, o.Coordinated,
 		helpers.NullableText(o.OriginID), o.OriginClass,
 		helpers.NullableInt64(o.RecoversOrderID),
 		helpers.NullableInt64(o.NamedBinID),
 		now, o.StationUnaware, o.ProjectsTo, marshalPlan(o.Plan), o.RobotID, o.Want.String(),
-		cb, cp, cd, cn, cdest)
+		cb, cp, cd)
 	if err != nil {
 		return fmt.Errorf("create order: %w", err)
 	}
@@ -804,8 +796,9 @@ func LinkSiblingsByEdgeUUID(db *sql.DB, uuidA, uuidB string) (int64, error) {
 // statement: a home clear's partial move becoming one leg of the two-robot
 // trade (dispatch/clear_home.go, issueClearTrade). Guarded on no vendor order
 // and a live status, so a move the fleet already has is never re-planned.
-// Reports whether the row was written.
-func BindTradeLegTx(tx *sql.Tx, id int64, stepsJSON, siblingUUID string) (bool, error) {
+// Its carts move with the plan in the same transaction (rows: the walk over
+// the new plan, ReplaceOrderBins). Reports whether the row was written.
+func BindTradeLegTx(tx *sql.Tx, id int64, stepsJSON, siblingUUID string, rows []OrderBinRow) (bool, error) {
 	res, err := tx.Exec(fmt.Sprintf(`UPDATE orders SET steps_json=$2, sibling_order_uuid=$3, updated_at=$4
 		WHERE id=$1 AND vendor_order_id = '' AND status NOT IN (%s)`, protocol.TerminalStatusSQLList()),
 		id, stepsJSON, siblingUUID, clock.Now().UTC())
@@ -813,7 +806,10 @@ func BindTradeLegTx(tx *sql.Tx, id int64, stepsJSON, siblingUUID string) (bool, 
 		return false, err
 	}
 	n, err := res.RowsAffected()
-	return n == 1, err
+	if err != nil || n != 1 {
+		return false, err
+	}
+	return true, ReplaceOrderBins(tx, id, rows)
 }
 
 // ReleaseTerminalEdgeUUID blanks edge_uuid on TERMINAL orders holding it, so a
@@ -2241,9 +2237,8 @@ func UpdateRobotID(db *sql.DB, id int64, robotID string) error {
 	return err
 }
 
-// ForgetHeldCart forgets the cart an order was going to take: its rows, and
-// the orders.bin_id pointer beside them (until v174), in one statement. The
-// plain scanner routes on the rows (Order.OnlyBin), so the finder picks again
+// ForgetHeldCart forgets the cart an order was going to take: its rows, in one
+// statement. The plain scanner routes on the rows (Order.OnlyBin), so the finder picks again
 // from nothing. The one caller is the held-bin path giving up a stale hold that
 // has been reaped — see fulfillment.dispatchHeldBin.
 //
@@ -2254,57 +2249,7 @@ func ForgetHeldCart(db *sql.DB, orderID int64) error {
 	_, err := db.Exec(`WITH unrowed AS (
 		DELETE FROM order_bins ob USING orders o
 		 WHERE o.id = $1 AND ob.order_id = o.id AND ob.bin_id IS DISTINCT FROM o.named_bin_id)
-		UPDATE orders SET bin_id=NULL, updated_at=$2 WHERE id=$1`, orderID, clock.Now().UTC())
-	return err
-}
-
-// UpdateBinID sets the bin_id on an order.
-// (Junction-style write against the orders table; bins-aggregate readers
-// live at outer store/ as composition.)
-//
-// ── IT IS A NO-OP WHEN NOTHING CHANGES, AND THAT IS NOT A MICRO-OPTIMISATION ──
-//
-// `AND bin_id IS DISTINCT FROM $1` is the same guard SetFaultClock carries, for
-// the same reason. confirmComplexPlan calls this on EVERY confirm, and a complex
-// order that waits re-confirms every scanner tick — so without
-// the guard an order parked on a wait rewrote bin_id to the value it already
-// held and bumped updated_at for it, once per tick, for as long as the wait
-// lasted.
-//
-// updated_at is a real column that the staleness sweeps and every age instrument
-// on the board read. A spurious bump is not a wasted write, it is a WRONG
-// ANSWER: a wait that has lasted an hour reads as one tick old, and the row that
-// most needs noticing is the one that looks freshest. Same defect queue_detail.go
-// short-circuits against, arriving through a different column.
-//
-// FOUND BY THE PAIR RULE'S HARNESS, not by inspection: the pair releases what it
-// acquired when it parks and re-acquires on the next pass, which made a
-// re-confirm happen on every pass and turned an invisible bump into a visible
-// one. The defect predates that change — any re-confirming order had it.
-//
-// IS DISTINCT FROM, not `<>`: bin_id is NULLABLE, and `bin_id <> $1` is NULL —
-// not true — for a row whose bin_id is NULL, which would make this refuse to
-// write the FIRST binding, the one case that always matters.
-//
-// The cart's row goes with the pointer, in the same statement: the order now
-// carries this cart, lifted at its plan's first pickup (the implied plan's
-// step 0). Its other rows stand.
-func UpdateBinID(db *sql.DB, orderID, binID int64) error {
-	o, err := Get(db, orderID)
-	if err != nil {
-		return fmt.Errorf("point order %d at bin %d: %w", orderID, binID, err)
-	}
-	rows := CartRows(o, map[int]int64{domain.FirstPickup(domain.OrderPlan(o)): binID})
-	bins, picks, drops, nodes, dests := cartArrays(rows)
-	_, err = db.Exec(`WITH ptr AS (UPDATE orders SET bin_id=$1, updated_at=$3
-		WHERE id=$2 AND bin_id IS DISTINCT FROM $1)
-		INSERT INTO order_bins (order_id, bin_id, pick_step, drop_step, action, node_name, dest_node)
-		SELECT $2, r.bin, r.pick, NULLIF(r.drop, -1), 'pickup', r.node, r.dest
-		  FROM unnest($4::bigint[], $5::bigint[], $6::bigint[], $7::text[], $8::text[]) AS r(bin, pick, drop, node, dest)
-		ON CONFLICT (order_id, pick_step) DO UPDATE
-		   SET bin_id = EXCLUDED.bin_id, drop_step = EXCLUDED.drop_step,
-		       node_name = EXCLUDED.node_name, dest_node = EXCLUDED.dest_node`,
-		binID, orderID, clock.Now().UTC(), bins, picks, drops, nodes, dests)
+		UPDATE orders SET updated_at=$2 WHERE id=$1`, orderID, clock.Now().UTC())
 	return err
 }
 
@@ -2330,8 +2275,8 @@ func ListByBinID(db *sql.DB, binID int64, limit int) ([]*Order, error) {
 // its delivery card on the HMI and its loader slot budget spent while the
 // carrier was recycled into another part elsewhere. Core CLEARS bins.claimed_by
 // on arrival (ApplyArrival), so the order's rows are the durable bin↔order tie
-// a post-delivery guard keys on — every cart of the order, not the one cart
-// orders.bin_id named (a swap's second cart on the robot passed the guard). No
+// a post-delivery guard keys on — every cart of the order (the one-cart
+// column it replaced let a swap's second cart on the robot pass the guard). No
 // LIMIT: correctness can't ride on a bin's active order being among its N most
 // recent rows.
 func ActiveByBinID(db *sql.DB, binID int64) ([]*Order, error) {

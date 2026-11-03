@@ -235,10 +235,10 @@ func TestScenario_KeepStagedCell_CallChangeoverCancel(t *testing.T) {
 		return e.Status
 	}
 	holds := func(c *coreorders.Order) int64 {
-		if c.BinID == nil {
+		if coreCart(c) == nil {
 			return 0
 		}
-		return *c.BinID
+		return *coreCart(c)
 	}
 
 	// ── 1. The call: the short swap lifts the spare, and asks nothing of the

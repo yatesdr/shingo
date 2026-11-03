@@ -1138,7 +1138,7 @@ func CountByNode(db *sql.DB, nodeID int64) (int, error) {
 }
 
 // ListByClaim returns all non-retired bins claimed by the given order.
-// Used by HandleOrderRelease's fallback when order.BinID is nil — the
+// Used by HandleOrderRelease's fallback when the order carries no cart — the
 // claim is the canonical "this order's bin(s)" pointer regardless of
 // where the bin physically sits, which is critical under transit
 // semantics where node_id may be _TRANSIT instead of the original

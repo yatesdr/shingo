@@ -683,7 +683,6 @@ func (s *Scanner) fulfill(order *orders.Order, pick *dispatch.SourceResult) bool
 	// order.SourceNode, and the source it was born with (blank, or a group) is not
 	// the slot this bin stands on. It errored and left the order staged with no
 	// cause for the floor to free (demo 103, 267, 409).
-	order.BinID = &bin.ID
 	order.SourceNode = sourceNode.Name
 	// And its cart, as the hold wrote it (the implied plan's lift: pick 0, drop
 	// 1): the gated create writes its rows against the plan it builds from these.

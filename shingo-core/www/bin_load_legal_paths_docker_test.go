@@ -106,8 +106,8 @@ func TestLoad_ADeliveredPullsCarrierLoadsAsARestingOneDoes(t *testing.T) {
 	}
 	eng.RunFulfillmentScan()
 	o := testdb.RequireOrderStatus(t, db, "legal-pull", dispatch.StatusDispatched)
-	if o.BinID == nil || *o.BinID != empty.ID {
-		t.Fatalf("precondition: the pull carries bin %v, want the empty %d", o.BinID, empty.ID)
+	if testdb.OnlyCart(t, o) == nil || *testdb.OnlyCart(t, o) != empty.ID {
+		t.Fatalf("precondition: the pull carries bin %v, want the empty %d", testdb.OnlyCart(t, o), empty.ID)
 	}
 	before := loadEffect(t, db, empty.ID)
 

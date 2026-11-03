@@ -77,8 +77,8 @@ func intakeEdgeU1(t *testing.T, uuid string, acceptPartials bool) (*orders.Order
 func TestIntake_EdgeU1Envelope_PartialParksForAFullCarrier(t *testing.T) {
 	t.Parallel()
 	o, partial := intakeEdgeU1(t, "d1-u1-intake", false)
-	if o.BinID != nil {
-		t.Fatalf("U1 claimed bin %d (partial is %d) — a drain window is fed full carriers only", *o.BinID, partial.ID)
+	if testdb.OnlyCart(t, o) != nil {
+		t.Fatalf("U1 claimed bin %d (partial is %d) — a drain window is fed full carriers only", *testdb.OnlyCart(t, o), partial.ID)
 	}
 	if o.QueueCause != string(CauseFinderNoFullCarrier) {
 		t.Errorf("status=%s queue_cause=%q, want %q", o.Status, o.QueueCause, CauseFinderNoFullCarrier)
@@ -90,7 +90,7 @@ func TestIntake_EdgeU1Envelope_PartialParksForAFullCarrier(t *testing.T) {
 func TestIntake_EdgeU1Envelope_AcceptPartials_ClaimsThePartial(t *testing.T) {
 	t.Parallel()
 	o, partial := intakeEdgeU1(t, "d1-u1-intake-partials", true)
-	if o.BinID == nil || *o.BinID != partial.ID {
-		t.Fatalf("status=%s queue_cause=%q bin=%v, want the partial %d claimed", o.Status, o.QueueCause, o.BinID, partial.ID)
+	if testdb.OnlyCart(t, o) == nil || *testdb.OnlyCart(t, o) != partial.ID {
+		t.Fatalf("status=%s queue_cause=%q bin=%v, want the partial %d claimed", o.Status, o.QueueCause, testdb.OnlyCart(t, o), partial.ID)
 	}
 }

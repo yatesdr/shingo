@@ -122,7 +122,7 @@ func TestBudget_ScannerPass(t *testing.T) {
 		o.PayloadCode = sd.Payload.Code
 		o.SourceNode = lines[6].Name
 		o.DeliveryNode = stor[4].Name
-		o.BinID = &moveBin.ID
+		o.HoldFromBirth(moveBin.ID)
 	})
 
 	measure := func(name string) {

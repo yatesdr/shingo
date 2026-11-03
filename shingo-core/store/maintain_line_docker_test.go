@@ -44,7 +44,8 @@ func TestCountLevel_TopsAndBottomsIsNoStockOfTheLevel(t *testing.T) {
 	coming := func(uuid string, binID int64) {
 		t.Helper()
 		o := testdb.CreateOrder(t, db, func(o *orders.Order) {
-			o.EdgeUUID, o.DeliveryNode, o.OrderType, o.BinID = uuid, "CL-SLOT-3", "move", &binID
+			o.EdgeUUID, o.DeliveryNode, o.OrderType = uuid, "CL-SLOT-3", "move"
+			o.HoldFromBirth(binID)
 		})
 		testdb.ReserveBin(t, db, o.ID, binID)
 	}

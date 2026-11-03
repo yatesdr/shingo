@@ -8,8 +8,8 @@
 //
 //   wiring_vendor_status.go   — fleet status → order status mapping,
 //                                waybill/staged/terminal dispatch
-//   wiring_completion.go      — delivery arrival, completion cleanup,
-//                                multi-bin junction-table paths
+//   wiring_completion.go      — delivery arrival (each cart to its row's
+//                                drop step), the completion net
 //   wiring_staging.go         — resolveNodeStaging / isStorageSlot
 //   wiring_block_completed.go — per-block completion fan-out
 //   wiring_lane_gate.go       — lane-mouth gate hold/release

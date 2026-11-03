@@ -41,9 +41,9 @@ func TestOrderCartsPin_AConsumeSwapLiftingAFullTakesTheStrictGroup(t *testing.T)
 	o := testdb.CreateOrder(t, db, func(o *orders.Order) {
 		o.EdgeUUID, o.OrderType, o.PayloadCode = "carts-group", protocol.OrderTypeComplex, sd.Payload.Code
 		o.SourceNode, o.DeliveryNode, o.ProcessNode = sd.LineNode.Name, sd.LineNode.Name, sd.LineNode.Name
-		o.BinID = &drained.ID
 		o.StepsJSON = `[{"action":"pickup","node":"` + sd.LineNode.Name + `"},{"action":"dropoff","node":"OUT-CARTS"},` +
 			`{"action":"pickup","node":"` + sd.StorageNode.Name + `"},{"action":"dropoff","node":"` + sd.LineNode.Name + `"}]`
+		o.HoldFromBirth(drained.ID)
 	})
 	testdb.SeedCartRow(t, db, o.ID, drained.ID, 0, 1)
 	testdb.SeedCartRow(t, db, o.ID, full.ID, 2, 3)
@@ -115,10 +115,11 @@ func TestOrderCartsPin_AContainmentDivertKeepsEachCartsDropWithItsPlan(t *testin
 	o := &orders.Order{
 		EdgeUUID: "carts-divert", StationID: "test", OrderType: protocol.OrderTypeRetrieve, Status: "staged",
 		Quantity: 1, SourceNode: "SRC-QC", DeliveryNode: fgn.Name, PayloadCode: "PART-QC",
-		ProcessNode: "PROD-QC", BinID: &first.ID,
+		ProcessNode: "PROD-QC",
 		StepsJSON: `[{"action":"pickup","node":"SRC-QC"},{"action":"dropoff","node":"` + fgn.Name + `"},` +
 			`{"action":"pickup","node":"SRC-QC"},{"action":"dropoff","node":"` + fgn.Name + `"}]`,
 	}
+	o.HoldFromBirth(first.ID)
 	testutil.MustNoErr(t, db.CreateOrder(o), "the order")
 	testdb.SeedCartRow(t, db, o.ID, first.ID, 0, 1)
 	testdb.SeedCartRow(t, db, o.ID, second.ID, 2, 3)

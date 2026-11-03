@@ -46,8 +46,9 @@ func seedStranded(t *testing.T, db *store.DB, robotID string) (*bins.Bin, *order
 	ord := &orders.Order{
 		EdgeUUID: "stranded-" + robotID, StationID: "edge.test", OrderType: "retrieve",
 		Status: protocol.StatusCancelled, Quantity: 1, SourceNode: "SRC", DeliveryNode: "DELV.1",
-		RobotID: robotID, BinID: &bin.ID,
+		RobotID: robotID,
 	}
+	ord.HoldFromBirth(bin.ID)
 	// Its cart's row (Create writes it): lifted at SRC, where the pickup leg
 	// below is recorded — the lift proof is the cart's own.
 	testutil.MustNoErr(t, db.CreateOrder(ord), "create order")

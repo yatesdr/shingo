@@ -121,7 +121,7 @@ func TestBinMove_NowhereToParkABlockerIsRefusedAtOnce(t *testing.T) {
 
 	ordersFor := func(binID int64) int {
 		var n int
-		testutil.MustNoErr(t, db.DB.QueryRow(`SELECT count(*) FROM orders WHERE bin_id = $1`, binID).Scan(&n),
+		testutil.MustNoErr(t, db.DB.QueryRow(`SELECT count(DISTINCT order_id) FROM order_bins WHERE bin_id = $1`, binID).Scan(&n),
 			"count the bin's orders")
 		return n
 	}

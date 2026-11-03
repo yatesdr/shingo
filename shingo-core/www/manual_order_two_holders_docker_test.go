@@ -77,7 +77,7 @@ func TestManualOrderDoor_TwoHoldersOnOneNode(t *testing.T) {
 		t.Fatalf("%d orders hold a claimed bin bound for %s, want exactly 1", n, line.Name)
 	}
 	a := testdb.RequireOrder(t, db, "moth-a")
-	if a.BinID == nil || protocol.IsAcquiring(a.Status) {
+	if testdb.OnlyCart(t, a) == nil || protocol.IsAcquiring(a.Status) {
 		t.Errorf("A is not the holder (status %q)", a.Status)
 	}
 }

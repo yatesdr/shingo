@@ -71,8 +71,8 @@ func TestPushEmpty_CoreWritesNothingTheCarrierCarries(t *testing.T) {
 		SourceNode: window.Name, DeliveryNode: outbound.Name, Quantity: 1,
 	})
 	u2 := testdb.RequireOrder(t, db, "pe-move")
-	if u2.BinID == nil || *u2.BinID != carrier.ID {
-		t.Fatalf("fixture: the push claimed bin %v, want the carrier %d (status %q)", u2.BinID, carrier.ID, u2.Status)
+	if testdb.OnlyCart(t, u2) == nil || *testdb.OnlyCart(t, u2) != carrier.ID {
+		t.Fatalf("fixture: the push claimed bin %v, want the carrier %d (status %q)", testdb.OnlyCart(t, u2), carrier.ID, u2.Status)
 	}
 	eng.handlePickupBlockCompleted(BlockCompletedEvent{
 		OrderID: u2.ID, BlockID: "pe-b1", Location: window.Name, BinTask: "JackLoad",

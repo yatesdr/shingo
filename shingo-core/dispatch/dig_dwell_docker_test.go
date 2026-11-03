@@ -94,10 +94,10 @@ func setupDwellGroup(t *testing.T, db *store.DB, prefix string, sibDepth int, wi
 // state the plant cannot produce and the code should not be asked about.
 func liftBin(t *testing.T, db *store.DB, d *Dispatcher, leg *orders.Order, from, transit *nodes.Node) {
 	t.Helper()
-	if leg.BinID == nil {
+	if testdb.OnlyCart(t, leg) == nil {
 		t.Fatalf("leg %d carries no bin to lift", leg.ID)
 	}
-	testutil.MustNoErr(t, db.MoveBinToTransit(*leg.BinID, transit.ID), "lift the blocker into transit")
+	testutil.MustNoErr(t, db.MoveBinToTransit(*testdb.OnlyCart(t, leg), transit.ID), "lift the blocker into transit")
 	d.HandleTransitForLaneGate(leg.ID, from.ID)
 }
 
@@ -368,7 +368,7 @@ func TestDwell_ClosedDestinationWaitsWithACauseAndWakesOnAGroupSlot(t *testing.T
 	// the release under test is the arrival's.
 	transit, err := db.GetNodeByName(domain.TransitNodeName)
 	testutil.MustNoErr(t, err, "find the transit node")
-	testutil.MustNoErr(t, db.MoveBinToTransit(*legs[0].BinID, transit.ID), "lift the blocker")
+	testutil.MustNoErr(t, db.MoveBinToTransit(*testdb.OnlyCart(t, legs[0]), transit.ID), "lift the blocker")
 	d.EvaluateWaitLaneForStagedOrder(legs[0].ID)
 	held, err := db.GetOrder(legs[0].ID)
 	testutil.MustNoErr(t, err, "reload the dwelling leg")
@@ -1036,7 +1036,7 @@ func TestFlip2_TheDigKeepsItsLaneWhileALegDwellsInIt(t *testing.T) {
 		o.OriginClass = "demand"
 		o.Status = protocol.StatusPending
 	})
-	testutil.MustNoErr(t, db.UpdateOrderBinID(requester.ID, target.ID), "bind the demand to its target")
+	testdb.HoldCart(t, db, requester.ID, target.ID)
 	requester, err = db.GetOrder(requester.ID)
 	testutil.MustNoErr(t, err, "reload the requester")
 	plan, err2 := PlanLaneMouthClear(db, dugSlots[1], dug, grp.ID, reservations.Anyone)

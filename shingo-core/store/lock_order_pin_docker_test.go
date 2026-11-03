@@ -112,7 +112,7 @@ func TestLockOrderPin_ASoftHoldTakeAndATerminalizeDoNotDeadlock(t *testing.T) {
 	bin := testdb.CreateBinAtNode(t, db, "DEFAULT", sd.StorageNode.ID, "LOCK-ORDER-BIN")
 	holder := testdb.CreateOrder(t, db, func(o *orders.Order) { o.EdgeUUID = "lock-order-bin-holder" })
 	testutil.MustNoErr(t, reservations.Acquire(db.DB, holder.ID, holder.ID, bin.ID, "test"), "holder's promise")
-	testutil.MustNoErr(t, db.UpdateOrderBinID(holder.ID, bin.ID), "holder points at the bin")
+	testdb.HoldCart(t, db, holder.ID, bin.ID)
 	taker := testdb.CreateOrder(t, db, func(o *orders.Order) { o.EdgeUUID = "lock-order-bin-taker" })
 
 	takeErr, termErr := terminalizeAround(t, db, holder.ID, func() error {
@@ -153,7 +153,7 @@ func TestLockOrderPin_ADigStealAndATerminalizeDoNotDeadlock(t *testing.T) {
 	bin := testdb.CreateBinAtNode(t, db, "DEFAULT", sd.StorageNode.ID, "LOCK-ORDER-STEAL")
 	holder := testdb.CreateOrder(t, db, func(o *orders.Order) { o.EdgeUUID = "lock-order-steal-holder" })
 	testutil.MustNoErr(t, reservations.Acquire(db.DB, holder.ID, holder.ID, bin.ID, "test"), "holder's promise")
-	testutil.MustNoErr(t, db.UpdateOrderBinID(holder.ID, bin.ID), "holder points at the bin")
+	testdb.HoldCart(t, db, holder.ID, bin.ID)
 	parent := testdb.CreateOrder(t, db, func(o *orders.Order) { o.EdgeUUID = "lock-order-steal-dig" })
 	_, err := db.Exec(`UPDATE orders SET priority = 100 WHERE id = $1`, parent.ID)
 	testutil.MustNoErr(t, err, "rank the dig")

@@ -4,6 +4,7 @@ package engine
 
 import (
 	"fmt"
+	"shingocore/internal/testdb"
 	"testing"
 	"time"
 
@@ -46,7 +47,7 @@ func TestStaging_ABinDeliveredToALinesideNodeNeverExpires(t *testing.T) {
 			d.HandleOrderReceipt(env, &protocol.OrderReceipt{OrderUUID: uuid, ReceiptType: "confirmed", FinalCount: 1})
 
 			time.Sleep(5 * time.Millisecond) // past any expiry a 1ms ttl would have stamped
-			bin, err := db.GetBin(*order.BinID)
+			bin, err := db.GetBin(*testdb.OnlyCart(t, order))
 			testutil.MustNoErr(t, err, "the delivered bin")
 			if bin.Status != "staged" {
 				t.Fatalf("bin at the line is %q, want staged", bin.Status)

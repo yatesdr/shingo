@@ -120,16 +120,10 @@ func (e *Engine) handleVendorStatusChange(ev OrderStatusChangedEvent) {
 	case dispatch.StatusDelivered:
 		// Move bins to their destinations FIRST, then transition the order.
 		// The lifecycle's MarkDelivered fires the fireCompleted action which
-		// synchronously dispatches EventOrderCompleted to handleOrderCompleted;
-		// that subscriber's handleMultiBinCompleted path moves bins AND deletes
-		// the order_bins junction rows. If we transition first, handleOrderDelivered
-		// runs after the deletion and falls back to its single-bin branch (using
-		// order.DeliveryNode = the FINAL step's node, which is the wrong target
-		// for all but the last bin in a multi-step complex order).
-		//
-		// Calling handleOrderDelivered first makes handleMultiBinCompleted's
-		// "skip bins already at destination" idempotency guard trigger correctly,
-		// and the junction cleanup happens after the bins are already in place.
+		// synchronously dispatches EventOrderCompleted to handleOrderCompleted,
+		// whose completion net re-applies any cart still owed its drop. Calling
+		// handleOrderDelivered first lands every cart at its row's drop step, so
+		// the net's "already at destination" check finds nothing left to do.
 		e.handleOrderDelivered(order)
 		if err := lc.MarkDelivered(order, "fleet"); err != nil {
 			e.logFn("engine: mark delivered order %d: %v", order.ID, err)

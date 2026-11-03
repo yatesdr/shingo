@@ -875,7 +875,8 @@ func ReleaseOrphanedClaims(db *sql.DB) (int, error) {
 //	about WHO, which is a different defect with a different fix, and guessing
 //	here would resolve it by deletion.
 //
-//	orders.bin_id IS NEVER TOUCHED. A third book, already ruled: different fix.
+//	THE ORDER'S ROWS ARE NEVER TOUCHED. A third book, already ruled: different
+//	fix.
 //
 //	A COMPOUND CHILD IS NOT AN ACQUIRING ORDER here. A dig leg rests `pending`
 //	(in the acquiring set since C1) and is driven by its parent's dig, not by the

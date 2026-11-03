@@ -76,8 +76,9 @@ func seedCancelledCarry(t *testing.T, db *store.DB, robotID, payload, processNod
 	ord := &orders.Order{
 		EdgeUUID: "carry-" + robotID, StationID: "edge.test", OrderType: "retrieve",
 		Status: protocol.StatusCancelled, Quantity: 1, DeliveryNode: processNode,
-		ProcessNode: processNode, PayloadCode: payload, RobotID: robotID, BinID: &bin.ID,
+		ProcessNode: processNode, PayloadCode: payload, RobotID: robotID,
 	}
+	ord.HoldFromBirth(bin.ID)
 	testutil.MustNoErr(t, db.CreateOrder(ord), "create the cancelled carrier order")
 	_, err = db.DB.Exec(`UPDATE orders SET robot_id=$1 WHERE id=$2`, robotID, ord.ID)
 	testutil.MustNoErr(t, err, "stamp the carrier's robot")

@@ -47,7 +47,7 @@ func assertCarrierKept(t *testing.T, db *store.DB, parentID int64, legs []*order
 			"order that owns it leaves the bin on the robot with nowhere to go",
 			carrier.ID, carrier.Status, carrier.ErrorDetail)
 	}
-	bin, err := db.GetBin(*legs[0].BinID)
+	bin, err := db.GetBin(*testdb.OnlyCart(t, legs[0]))
 	testutil.MustNoErr(t, err, "reload the lifted bin")
 	if bin.ClaimedBy == nil || *bin.ClaimedBy != carrier.ID {
 		t.Errorf("the lifted bin is claimed by %v, want leg %d", bin.ClaimedBy, carrier.ID)
@@ -59,10 +59,10 @@ func assertCarrierKept(t *testing.T, db *store.DB, parentID int64, legs []*order
 			"anything, and the chapter is over", rest.Status, rest.ErrorDetail)
 	}
 	for _, c := range legsOf(t, db, parentID) {
-		if c.Status != protocol.StatusCancelled || c.BinID == nil {
+		if c.Status != protocol.StatusCancelled || testdb.OnlyCart(t, c) == nil {
 			continue
 		}
-		b, err := db.GetBin(*c.BinID)
+		b, err := db.GetBin(*testdb.OnlyCart(t, c))
 		testutil.MustNoErr(t, err, "reload a cancelled leg's bin")
 		if b.NodeID != nil && *b.NodeID == transit.ID {
 			t.Errorf("mid-lift cancel: leg %d was cancelled with its bin %d at _TRANSIT", c.ID, b.ID)

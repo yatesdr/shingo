@@ -14,10 +14,15 @@ import (
 	"shingocore/store"
 )
 
-// ageOrderCartsSchema puts order_bins back in its pre-v173 shape: step_index
+// ageOrderCartsSchema puts order_bins and orders back in their pre-v173 shape:
+// orders.bin_id and the junction's node copies (v174's drop undone), step_index
 // (the pick), no drop_step, one row per (order, bin), the plain by-bin index.
-// It is also v173's rollback DDL, run after the previous binary is back.
+// It is also the v174+v173 rollback DDL, run after the previous binary is back.
 const ageOrderCartsSchema = `
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS bin_id BIGINT REFERENCES bins(id);
+ALTER TABLE order_bins ADD COLUMN IF NOT EXISTS action TEXT NOT NULL DEFAULT 'pickup';
+ALTER TABLE order_bins ADD COLUMN IF NOT EXISTS node_name TEXT NOT NULL DEFAULT '';
+ALTER TABLE order_bins ADD COLUMN IF NOT EXISTS dest_node TEXT NOT NULL DEFAULT '';
 ALTER TABLE order_bins DROP CONSTRAINT IF EXISTS order_bins_steps;
 DROP INDEX IF EXISTS order_bins_pick;
 DROP INDEX IF EXISTS order_bins_drop;
@@ -127,9 +132,20 @@ func TestV173_AnOrdersCartsBecomeRowsPerLift(t *testing.T) {
 	var logged bytes.Buffer
 	log.SetOutput(&logged)
 	t.Cleanup(func() { log.SetOutput(os.Stderr) })
+	// v174 drops orders.bin_id after each run; the second run is v173 again on
+	// the shape it reads, so the column and its values come back first (the
+	// rollback DDL's first half), and v174 runs again after it.
+	if _, err := db.Exec(`CREATE TABLE v173_test_bin_ids AS SELECT id, bin_id FROM orders`); err != nil {
+		t.Fatalf("keep the bin_id values: %v", err)
+	}
 	for run := 1; run <= 2; run++ {
-		if _, err := db.Exec(`DELETE FROM schema_migrations WHERE version = 173`); err != nil {
-			t.Fatalf("forget v173: %v", err)
+		if _, err := db.Exec(`ALTER TABLE orders ADD COLUMN IF NOT EXISTS bin_id BIGINT;
+			UPDATE orders o SET bin_id = k.bin_id FROM v173_test_bin_ids k WHERE k.id = o.id;
+			ALTER TABLE order_bins ADD COLUMN IF NOT EXISTS action TEXT NOT NULL DEFAULT 'pickup';
+			ALTER TABLE order_bins ADD COLUMN IF NOT EXISTS node_name TEXT NOT NULL DEFAULT '';
+			ALTER TABLE order_bins ADD COLUMN IF NOT EXISTS dest_node TEXT NOT NULL DEFAULT '';
+			DELETE FROM schema_migrations WHERE version = 173`); err != nil {
+			t.Fatalf("run %d: v174 undone and v173 forgotten: %v", run, err)
 		}
 		migrated, err := store.Open(cfg)
 		if err != nil {

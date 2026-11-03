@@ -52,9 +52,9 @@ var writtenByTheWriterItself = map[string]string{
 // struct without doing one or the other fails this test, which is the point —
 // the alternative is a hand-maintained list that quietly stops being total.
 func TestWriter_RoundTripsEveryFieldItWrites(t *testing.T) {
-	// The probe row stamps bin_id because bin_id is a COLUMN, and a status
-	// because status is a column, and the pair happens to spell an acquiring
-	// order pointing at a bin it does not hold. Nothing here is sourcing
+	// The probe row is born holding a cart (its row) and stamps a status because
+	// status is a column, and the pair happens to spell an acquiring order
+	// pointing at a bin it does not hold. Nothing here is sourcing
 	// anything; the end-of-test wedge sweep would be reading a census as a
 	// scenario.
 	testdb.DisableWedgeSweep(t, "probe values for a column census, not a plant state")
@@ -86,7 +86,6 @@ func TestWriter_RoundTripsEveryFieldItWrites(t *testing.T) {
 		"ParentOrderID":    &parent.ID,
 		"Sequence":         3,
 		"StepsJSON":        `{"steps":["roundtrip"]}`,
-		"BinID":            &bin.ID,
 		"PayloadCode":      std.Payload.Code,
 		"SkipAutoConfirm":  true,
 		"SiblingOrderUUID": "roundtrip-sibling-uuid",
@@ -206,6 +205,7 @@ func TestWriter_RoundTripsEveryFieldItWrites(t *testing.T) {
 	o.CompletedAt = &completedAt
 	o.RemainingUOP = &remainingUOP
 
+	o.HoldFromBirth(bin.ID) // its born-held cart, written by Create as its row
 	if err := db.CreateOrder(o); err != nil {
 		t.Fatalf("create order: %v", err)
 	}

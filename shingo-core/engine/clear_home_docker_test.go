@@ -145,7 +145,7 @@ func (r *clearRig) children(t *testing.T, parentID int64) (partial *orders.Order
 	kids, err := r.db.ListChildOrders(parentID)
 	testutil.MustNoErr(t, err, "children")
 	for _, k := range kids {
-		if k.BinID != nil && *k.BinID == r.p.ID {
+		if testdb.OnlyCart(t, k) != nil && *testdb.OnlyCart(t, k) == r.p.ID {
 			partial = k
 		} else {
 			empties = append(empties, k)
@@ -317,8 +317,8 @@ func TestClearHome_DemandArm_DryPull(t *testing.T) {
 		t.Fatalf("tap: %d %+v, want 200 demand", ans.Status, ans.Body)
 	}
 	pull = r.reload(t, pull.ID)
-	if pull.BinID == nil || *pull.BinID != r.e.ID || pull.VendorOrderID == "" {
-		t.Fatalf("pull: bin=%v vendor=%q, want it dispatched with %s", pull.BinID, pull.VendorOrderID, r.e.Label)
+	if testdb.OnlyCart(t, pull) == nil || *testdb.OnlyCart(t, pull) != r.e.ID || pull.VendorOrderID == "" {
+		t.Fatalf("pull: bin=%v vendor=%q, want it dispatched with %s", testdb.OnlyCart(t, pull), pull.VendorOrderID, r.e.Label)
 	}
 	parent := r.parent(t)
 	partial, empties := r.children(t, parent.ID)
@@ -384,8 +384,8 @@ func TestClearHome_DemandArm_TheLoadersOwnPull(t *testing.T) {
 		t.Fatalf("tap: %d %+v, want 200 demand (the loader's own pull takes the carrier)", ans.Status, ans.Body)
 	}
 	pull = r.reload(t, pull.ID)
-	if pull.BinID == nil || *pull.BinID != r.e.ID || pull.VendorOrderID == "" {
-		t.Fatalf("pull: bin=%v vendor=%q, want it dispatched with %s", pull.BinID, pull.VendorOrderID, r.e.Label)
+	if testdb.OnlyCart(t, pull) == nil || *testdb.OnlyCart(t, pull) != r.e.ID || pull.VendorOrderID == "" {
+		t.Fatalf("pull: bin=%v vendor=%q, want it dispatched with %s", testdb.OnlyCart(t, pull), pull.VendorOrderID, r.e.Label)
 	}
 	parent := r.parent(t)
 	if partial, empties := r.children(t, parent.ID); len(empties) != 0 || partial == nil {
@@ -506,8 +506,8 @@ func TestClearHome_CandidatesDecline_BirthTheTrade(t *testing.T) {
 	if ans.Status != http.StatusOK || ans.Body.Arm != protocol.ClearArmTrade || ans.Body.BinID != r.e.ID || ans.Body.DeltaEpoch == 0 {
 		t.Fatalf("tap: %d %+v, want 200 arm trade with the zero carried", ans.Status, ans.Body)
 	}
-	if pull := testdb.RequireOrder(t, r.db, "chn-pull"); pull.BinID != nil {
-		t.Errorf("the declining pull holds bin %d", *pull.BinID)
+	if pull := testdb.RequireOrder(t, r.db, "chn-pull"); testdb.OnlyCart(t, pull) != nil {
+		t.Errorf("the declining pull holds bin %d", *testdb.OnlyCart(t, pull))
 	}
 	parent := r.parent(t)
 	if parent == nil || parent.Status != protocol.StatusReshuffling {

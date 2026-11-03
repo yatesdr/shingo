@@ -483,7 +483,7 @@ func (d *Dispatcher) placeByContentsAtReserve(order *orders.Order, plan *Complex
 	}
 	plan.Reanchored = true
 	// The order's carts are written with the re-pointed plan: every cart this
-	// reserve holds, by its pickup, and the pointer at the one re-pointed.
+	// reserve holds, by its pickup.
 	claimedAt := make(map[int]int64, len(assigned))
 	for _, rp := range assigned {
 		claimedAt[rp.stepIndex] = rp.binID
@@ -492,10 +492,11 @@ func (d *Dispatcher) placeByContentsAtReserve(order *orders.Order, plan *Complex
 	if j, err := json.Marshal(steps); err == nil {
 		planned.StepsJSON = string(j)
 	}
-	if err := d.db.ReplaceOrderBins(order.ID, b.ID, orders.CartRows(&planned, claimedAt)); err != nil {
+	rows := orders.CartRows(&planned, claimedAt)
+	if err := d.db.ReplaceOrderBins(order.ID, rows); err != nil {
 		log.Printf("dispatch: order %d: record its carts after the re-point of bin %d: %v", order.ID, b.ID, err)
 	} else {
-		order.BinID = &b.ID
+		order.Carts = cartsOf(rows)
 	}
 	log.Printf("dispatch: order %d: bin %d %s %s instead of %s (at its reserve: it lifts with no wait ahead)",
 		order.ID, b.ID, why, target, from)

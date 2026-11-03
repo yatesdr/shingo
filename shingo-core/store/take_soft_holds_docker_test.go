@@ -52,7 +52,7 @@ func TestTakeSoftHolds_UnpointsTheHolderAndLeavesTheTrail(t *testing.T) {
 	bin := testdb.CreateBinAtNode(t, db, "DEFAULT", sd.StorageNode.ID, "TAKE-CORE")
 	holder := testdb.CreateOrder(t, db, func(o *orders.Order) { o.EdgeUUID = "take-holder" })
 	testutil.MustNoErr(t, reservations.Acquire(db.DB, holder.ID, holder.ID, bin.ID, "test"), "holder's promise")
-	testutil.MustNoErr(t, db.UpdateOrderBinID(holder.ID, bin.ID), "holder points at the bin")
+	testdb.HoldCart(t, db, holder.ID, bin.ID)
 	taker := testdb.CreateOrder(t, db, func(o *orders.Order) {
 		o.EdgeUUID = "take-taker"
 		o.OriginClass = protocol.OriginClassNoDemand
@@ -64,8 +64,8 @@ func TestTakeSoftHolds_UnpointsTheHolderAndLeavesTheTrail(t *testing.T) {
 
 	after, err := db.GetOrder(holder.ID)
 	testutil.MustNoErr(t, err, "reload holder")
-	if after.BinID != nil {
-		t.Errorf("holder still points at bin %d: it would confirm a bin that is leaving", *after.BinID)
+	if testdb.OnlyCart(t, after) != nil {
+		t.Errorf("holder still points at bin %d: it would confirm a bin that is leaving", *testdb.OnlyCart(t, after))
 	}
 	if after.QueueCause != "bin-taken" || after.QueueReason != takeNote.Reason {
 		t.Errorf("holder queue detail = %q / %q, want bin-taken and the sentence naming the taker",
@@ -102,7 +102,7 @@ func TestTakeSoftHolds_AnOrderForTheCartIsHandedBackNotReaimed(t *testing.T) {
 		o.NamedBinID, o.SourceNode = &bin.ID, sd.StorageNode.Name
 	})
 	testutil.MustNoErr(t, reservations.Acquire(db.DB, holder.ID, holder.ID, bin.ID, "test"), "holder's promise")
-	testutil.MustNoErr(t, db.UpdateOrderBinID(holder.ID, bin.ID), "holder points at the bin")
+	testdb.HoldCart(t, db, holder.ID, bin.ID)
 	taker := testdb.CreateOrder(t, db, func(o *orders.Order) { o.EdgeUUID = "take-hand-taker" })
 
 	hp, n := take(t, db, bin.ID, taker.ID)
@@ -111,7 +111,7 @@ func TestTakeSoftHolds_AnOrderForTheCartIsHandedBackNotReaimed(t *testing.T) {
 	}
 	after, err := db.GetOrder(holder.ID)
 	testutil.MustNoErr(t, err, "reload holder")
-	if after.BinID == nil || *after.BinID != bin.ID {
+	if testdb.OnlyCart(t, after) == nil || *testdb.OnlyCart(t, after) != bin.ID {
 		t.Errorf("the holder for the cart lost its pointer: re-finding it re-aims it at another bin")
 	}
 }
@@ -131,7 +131,7 @@ func TestTakeSoftHolds_ANoDemandHolderForNoCartIsUnpointed(t *testing.T) {
 		o.OriginClass = protocol.OriginClassNoDemand
 	})
 	testutil.MustNoErr(t, reservations.Acquire(db.DB, holder.ID, holder.ID, bin.ID, "test"), "holder's promise")
-	testutil.MustNoErr(t, db.UpdateOrderBinID(holder.ID, bin.ID), "holder points at the bin")
+	testdb.HoldCart(t, db, holder.ID, bin.ID)
 	taker := testdb.CreateOrder(t, db, func(o *orders.Order) { o.EdgeUUID = "take-nd-taker" })
 
 	if hp, n := take(t, db, bin.ID, taker.ID); len(hp) != 0 || n != 1 {
@@ -139,8 +139,8 @@ func TestTakeSoftHolds_ANoDemandHolderForNoCartIsUnpointed(t *testing.T) {
 	}
 	after, err := db.GetOrder(holder.ID)
 	testutil.MustNoErr(t, err, "reload holder")
-	if after.BinID != nil {
-		t.Errorf("holder still points at bin %d: it would confirm a bin that is leaving", *after.BinID)
+	if testdb.OnlyCart(t, after) != nil {
+		t.Errorf("holder still points at bin %d: it would confirm a bin that is leaving", *testdb.OnlyCart(t, after))
 	}
 }
 
@@ -155,7 +155,7 @@ func TestTakeSoftHolds_NeverTakesARobotsBin(t *testing.T) {
 	_, err := db.DB.Exec(`INSERT INTO reservations (order_id, resource_kind, bin_id, state, reserved_by)
 		VALUES ($1, 'bin', $2, 'confirmed', 'test')`, holder.ID, bin.ID)
 	testutil.MustNoErr(t, err, "the robot's row")
-	testutil.MustNoErr(t, db.UpdateOrderBinID(holder.ID, bin.ID), "holder points at the bin")
+	testdb.HoldCart(t, db, holder.ID, bin.ID)
 	taker := testdb.CreateOrder(t, db, func(o *orders.Order) { o.EdgeUUID = "take-robot-taker" })
 
 	tx, err := db.Begin()
@@ -169,8 +169,8 @@ func TestTakeSoftHolds_NeverTakesARobotsBin(t *testing.T) {
 	}
 	after, err := db.GetOrder(holder.ID)
 	testutil.MustNoErr(t, err, "reload holder")
-	if after.BinID == nil || after.QueueCause == "bin-taken" {
-		t.Errorf("the robot's order was touched: bin_id %v, cause %q", after.BinID, after.QueueCause)
+	if testdb.OnlyCart(t, after) == nil || after.QueueCause == "bin-taken" {
+		t.Errorf("the robot's order was touched: bin_id %v, cause %q", testdb.OnlyCart(t, after), after.QueueCause)
 	}
 	if rows := activeBinReservations(t, db, bin.ID); len(rows) != 1 {
 		t.Errorf("bin has %d active reservations, want the robot's 1", len(rows))

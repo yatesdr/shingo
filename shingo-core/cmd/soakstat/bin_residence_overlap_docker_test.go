@@ -46,10 +46,10 @@ func mustOrder(t *testing.T, db *store.DB, label, deliveryNode, stepsJSON string
 		Status:       protocol.StatusDelivered,
 		Quantity:     1,
 		StepsJSON:    stepsJSON,
-		BinID:        &binID,
 		DeliveryNode: deliveryNode,
 		PayloadCode:  "PART-R",
 	}
+	o.HoldFromBirth(binID)
 	if err := db.CreateOrder(o); err != nil {
 		t.Fatalf("create order %s: %v", label, err)
 	}

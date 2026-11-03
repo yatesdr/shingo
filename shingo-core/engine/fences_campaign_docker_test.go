@@ -209,7 +209,7 @@ func TestFences_F7_AtLevelPushParksWithItsOwnCause(t *testing.T) {
 		o.Status = protocol.StatusPending
 		o.SourceNode = dock.Name
 		o.DeliveryNode = "F7-GRP"
-		o.BinID = &carrier
+		o.HoldFromBirth(carrier)
 	})
 	// Soft-held, as a pusher waiting on the gate holds its carrier.
 	testdb.ReserveBin(t, db, pusher.ID, carrier)
@@ -253,8 +253,9 @@ func TestFences_F9_ComingIsSubtracted(t *testing.T) {
 	push := &orders.Order{
 		EdgeUUID: "f9-push", StationID: "line-1", OrderType: protocol.OrderTypeMove,
 		Status: protocol.StatusQueued, Quantity: 1,
-		SourceNode: market.Name, DeliveryNode: dest.Name, BinID: &inbound,
+		SourceNode: market.Name, DeliveryNode: dest.Name,
 	}
+	push.HoldFromBirth(inbound)
 	testutil.MustNoErr(t, db.CreateOrder(push), "create the inbound push")
 
 	m := eng.Maintainer()

@@ -75,8 +75,8 @@ func TestConcurrent_ClaimSerialized_NoDoubleClaim(t *testing.T) {
 	orderB, err := db.GetOrderByUUID("race-order-1")
 	testutil.MustNoErr(t, err, "get order B")
 
-	t.Logf("order A: status=%s bin=%v vendor=%s", orderA.Status, orderA.BinID, orderA.VendorOrderID)
-	t.Logf("order B: status=%s bin=%v vendor=%s", orderB.Status, orderB.BinID, orderB.VendorOrderID)
+	t.Logf("order A: status=%s bin=%v vendor=%s", orderA.Status, testdb.OnlyCart(t, orderA), orderA.VendorOrderID)
+	t.Logf("order B: status=%s bin=%v vendor=%s", orderB.Status, testdb.OnlyCart(t, orderB), orderB.VendorOrderID)
 
 	// A lost claim is a WAIT, not a fail — neither order may be permanently failed.
 	for _, order := range []*orders.Order{orderA, orderB} {
@@ -88,7 +88,7 @@ func TestConcurrent_ClaimSerialized_NoDoubleClaim(t *testing.T) {
 	// Exactly one claimed the bin — scanMu serialized the claims, no double-claim.
 	claimed := 0
 	for _, order := range []*orders.Order{orderA, orderB} {
-		if order.BinID != nil {
+		if testdb.OnlyCart(t, order) != nil {
 			claimed++
 		}
 	}
@@ -195,7 +195,7 @@ func TestComplexOrder_ZeroSteps(t *testing.T) {
 		}
 		return
 	}
-	t.Logf("order status=%s bin=%v vendor=%s", order.Status, order.BinID, order.VendorOrderID)
+	t.Logf("order status=%s bin=%v vendor=%s", order.Status, testdb.OnlyCart(t, order), order.VendorOrderID)
 
 	// Order should NOT be dispatched to fleet
 	if sim.OrderCount() > 0 {
@@ -234,7 +234,7 @@ func TestComplexOrder_NonexistentDeliveryNode(t *testing.T) {
 		t.Logf("order not created (rejected by lifecycle) — correct")
 		return
 	}
-	t.Logf("order status=%s bin=%v vendor=%s", order.Status, order.BinID, order.VendorOrderID)
+	t.Logf("order status=%s bin=%v vendor=%s", order.Status, testdb.OnlyCart(t, order), order.VendorOrderID)
 
 	if sim.OrderCount() > 0 {
 		t.Errorf("BUG: fleet received order for nonexistent node (expected 0)")
@@ -270,7 +270,7 @@ func TestComplexOrder_ZeroQuantity(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get order: %v", err)
 	}
-	t.Logf("order status=%s bin=%v vendor=%s", order.Status, order.BinID, order.VendorOrderID)
+	t.Logf("order status=%s bin=%v vendor=%s", order.Status, testdb.OnlyCart(t, order), order.VendorOrderID)
 }
 
 // =============================================================================
@@ -326,7 +326,7 @@ func TestRedirect_MidTransit(t *testing.T) {
 	if order.Status != dispatch.StatusDispatched {
 		t.Fatalf("order status = %q, want dispatched", order.Status)
 	}
-	claimedBinID := *order.BinID
+	claimedBinID := *testdb.OnlyCart(t, order)
 	t.Logf("order %d dispatched: bin=%d, vendor=%s", order.ID, claimedBinID, order.VendorOrderID)
 
 	// Step 2: Drive to RUNNING (in_transit)
@@ -368,11 +368,11 @@ func TestRedirect_MidTransit(t *testing.T) {
 
 	// The bin claim is untouched, which was the one property the old version of
 	// this test genuinely pinned.
-	if order.BinID == nil {
+	if testdb.OnlyCart(t, order) == nil {
 		t.Fatalf("order lost bin claim after a refused redirect")
 	}
-	if *order.BinID != claimedBinID {
-		t.Errorf("bin changed after a refused redirect: got %d, want %d", *order.BinID, claimedBinID)
+	if *testdb.OnlyCart(t, order) != claimedBinID {
+		t.Errorf("bin changed after a refused redirect: got %d, want %d", *testdb.OnlyCart(t, order), claimedBinID)
 	}
 }
 
@@ -426,14 +426,14 @@ func TestFulfillmentScanner_QueueToDispatch(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get order after scan: %v", err)
 	}
-	t.Logf("order after scan: status=%s bin=%v vendor=%s", order.Status, order.BinID, order.VendorOrderID)
+	t.Logf("order after scan: status=%s bin=%v vendor=%s", order.Status, testdb.OnlyCart(t, order), order.VendorOrderID)
 	if order.Status != dispatch.StatusDispatched {
 		t.Errorf("BUG: order not dispatched after fulfillment scan (status=%s)", order.Status)
 	}
-	if order.BinID == nil {
+	if testdb.OnlyCart(t, order) == nil {
 		t.Errorf("BUG: order has no bin after fulfillment scan")
 	} else {
-		t.Logf("order dispatched with bin %d after fulfillment scan", *order.BinID)
+		t.Logf("order dispatched with bin %d after fulfillment scan", *testdb.OnlyCart(t, order))
 	}
 
 	// Drive lifecycle to completion
@@ -451,7 +451,7 @@ func TestFulfillmentScanner_QueueToDispatch(t *testing.T) {
 	if order.Status != dispatch.StatusConfirmed {
 		t.Fatalf("after receipt: status = %q, want confirmed", order.Status)
 	}
-	bin, err := db.GetBin(*order.BinID)
+	bin, err := db.GetBin(*testdb.OnlyCart(t, order))
 	if err != nil {
 		t.Fatalf("get bin after completion: %v", err)
 	}
@@ -531,8 +531,8 @@ func TestConcurrentRetrieve_SamePart(t *testing.T) {
 	order1 := testdb.RequireOrder(t, db, "retrieve-line1")
 	order2 := testdb.RequireOrder(t, db, "retrieve-line2")
 
-	t.Logf("order 1: status=%s, bin_id=%v, vendor_id=%s", order1.Status, order1.BinID, order1.VendorOrderID)
-	t.Logf("order 2: status=%s, bin_id=%v, vendor_id=%s", order2.Status, order2.BinID, order2.VendorOrderID)
+	t.Logf("order 1: status=%s, bin_id=%v, vendor_id=%s", order1.Status, testdb.OnlyCart(t, order1), order1.VendorOrderID)
+	t.Logf("order 2: status=%s, bin_id=%v, vendor_id=%s", order2.Status, testdb.OnlyCart(t, order2), order2.VendorOrderID)
 
 	// Both orders should have dispatched successfully
 	bothDispatched := order1.VendorOrderID != "" && order2.VendorOrderID != ""
@@ -548,11 +548,11 @@ func TestConcurrentRetrieve_SamePart(t *testing.T) {
 	}
 
 	// Each order should have claimed a DIFFERENT bin
-	if order1.BinID != nil && order2.BinID != nil {
-		if *order1.BinID == *order2.BinID {
-			t.Errorf("BUG: both orders claimed the same bin %d — double assignment", *order1.BinID)
+	if testdb.OnlyCart(t, order1) != nil && testdb.OnlyCart(t, order2) != nil {
+		if *testdb.OnlyCart(t, order1) == *testdb.OnlyCart(t, order2) {
+			t.Errorf("BUG: both orders claimed the same bin %d — double assignment", *testdb.OnlyCart(t, order1))
 		} else {
-			t.Logf("correct: order 1 claimed bin %d, order 2 claimed bin %d — no collision", *order1.BinID, *order2.BinID)
+			t.Logf("correct: order 1 claimed bin %d, order 2 claimed bin %d — no collision", *testdb.OnlyCart(t, order1), *testdb.OnlyCart(t, order2))
 		}
 	}
 
@@ -625,8 +625,8 @@ func TestRetrieveClaimFailure_QueueSurvives(t *testing.T) {
 	orderA := testdb.RequireOrder(t, db, "tc36-a")
 	orderB := testdb.RequireOrder(t, db, "tc36-b")
 
-	t.Logf("order A: status=%s bin=%v vendor=%s", orderA.Status, orderA.BinID, orderA.VendorOrderID)
-	t.Logf("order B: status=%s bin=%v vendor=%s", orderB.Status, orderB.BinID, orderB.VendorOrderID)
+	t.Logf("order A: status=%s bin=%v vendor=%s", orderA.Status, testdb.OnlyCart(t, orderA), orderA.VendorOrderID)
+	t.Logf("order B: status=%s bin=%v vendor=%s", orderB.Status, testdb.OnlyCart(t, orderB), orderB.VendorOrderID)
 
 	// Neither order should be permanently failed for a transient claim race.
 	for _, order := range []*orders.Order{orderA, orderB} {

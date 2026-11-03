@@ -14,20 +14,16 @@ import (
 // protocol.IsTerminal answers "does this status have outgoing transitions", and
 // the EMPTY STRING has none — so a zero-value Status reads as TERMINAL. Whether
 // that is safe depends entirely on what the caller does with the answer, and the
-// two callers here both act on it in a direction where "terminal" is the
-// dangerous answer:
+// caller here acts on it in a direction where "terminal" is the dangerous
+// answer: reapplyRefused SKIPS its teleport check on a terminal order. Skipping
+// is the permissive answer, and an order whose state cannot be read is exactly
+// when the check should still run.
 //
-//   - reapplyRefused SKIPS its teleport check on a terminal order. Skipping is
-//     the permissive answer, and an order whose state cannot be read is exactly
-//     when the check should still run.
-//   - handleMultiBinCompleted DELETES the order's junction rows on a terminal
-//     order. Deleting is the destructive answer.
-//
-// Both want the same fail-closed arm and only one of them had it. The site that
-// did not is the one that destroys data: order_bins carries the per-bin
-// destinations, and its deletion at terminal is precisely what left two
-// specimens unreconstructable after the fact (PLAN §R.5, §R.9). A zero-value
-// status reaching that line deletes the evidence of whatever produced the zero.
+// It had a second caller that wanted the same arm and did not have it: the
+// multi-bin completion DELETED the order's junction rows on a terminal order,
+// which is precisely what left two specimens unreconstructable after the fact
+// (PLAN §R.5, §R.9). That delete is gone: an order's rows are kept after it
+// ends.
 //
 // The arm lives INSIDE the predicate rather than at the call sites — the
 // cb7ed41d move. A guard that has to be remembered at each site is one that will

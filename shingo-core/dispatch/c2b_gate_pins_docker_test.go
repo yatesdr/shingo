@@ -131,9 +131,9 @@ func TestC2bPin_AnUnliftedDigLegIsNotStandingOutside(t *testing.T) {
 		o.EdgeUUID = "c2bs-leg"
 		o.OrderType = OrderTypeMove
 		o.ParentOrderID = &parent.ID
-		o.BinID = &blocker.ID
 		o.SourceNode = s0.Name
 		o.Status = StatusInTransit
+		o.HoldFromBirth(blocker.ID)
 	})
 	testutil.MustNoErr(t, db.UpdateOrderStepsJSON(leg.ID, string(planJSON)), "persist the leg's plan")
 	testutil.MustNoErr(t, db.UpdateOrderVendor(leg.ID, "C2BS-V1", "RUNNING", "AMR-1"), "the leg's vendor order")

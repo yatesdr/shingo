@@ -61,9 +61,9 @@ func TestReplaceOrderBins_ReplacesTheSetRatherThanMergingIntoIt(t *testing.T) {
 	}
 
 	// The first allocation: two pickups, bins A and B.
-	testutil.MustNoErr(t, orders.ReplaceOrderBins(db, o.ID, binA, []orders.OrderBinRow{
-		{BinID: binA, PickStep: 1, DropStep: 2, NodeName: "SMN_011", DestNode: "SMN_010"},
-		{BinID: binB, PickStep: 3, DropStep: 4, NodeName: "SMN_012", DestNode: "SMN_010"},
+	testutil.MustNoErr(t, orders.ReplaceOrderBins(db, o.ID, []orders.OrderBinRow{
+		{BinID: binA, PickStep: 1, DropStep: 2},
+		{BinID: binB, PickStep: 3, DropStep: 4},
 	}), "first allocation")
 	if got := binsOf(); len(got) != 2 {
 		t.Fatalf("fixture: the first allocation recorded %v, want two rows", got)
@@ -71,9 +71,9 @@ func TestReplaceOrderBins_ReplacesTheSetRatherThanMergingIntoIt(t *testing.T) {
 
 	// It is refused at the lane, its claims roll back, and a later pass allocates
 	// a DIFFERENT pair. Only bin B is common to both.
-	testutil.MustNoErr(t, orders.ReplaceOrderBins(db, o.ID, binB, []orders.OrderBinRow{
-		{BinID: binB, PickStep: 1, DropStep: 2, NodeName: "SMN_013", DestNode: "SMN_010"},
-		{BinID: binC, PickStep: 3, DropStep: 4, NodeName: "SMN_014", DestNode: "SMN_010"},
+	testutil.MustNoErr(t, orders.ReplaceOrderBins(db, o.ID, []orders.OrderBinRow{
+		{BinID: binB, PickStep: 1, DropStep: 2},
+		{BinID: binC, PickStep: 3, DropStep: 4},
 	}), "second allocation")
 
 	got := binsOf()

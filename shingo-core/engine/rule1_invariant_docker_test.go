@@ -166,8 +166,9 @@ func TestRule1_ACompoundChildIsBornHoldingNothing(t *testing.T) {
 		EdgeUUID: "r1exm-child", StationID: "edge.r1", OrderType: dispatch.OrderTypeMove,
 		Status: protocol.StatusQueued, Quantity: 1,
 		SourceNode: src.Name, DeliveryNode: sd.LineNode.Name,
-		ParentOrderID: &parent.ID, Sequence: 1, BinID: &childBin.ID,
+		ParentOrderID: &parent.ID, Sequence: 1,
 	}
+	child.HoldFromBirth(childBin.ID)
 	_, err := testdb.CreateCompoundChildren(t, db, []store.CompoundChild{{Order: child}}, nil)
 	testutil.MustNoErr(t, err, "create child")
 

@@ -104,7 +104,7 @@ func TestComplexOrder_CancelMidTransit(t *testing.T) {
 	for _, o := range allOrders {
 		if o.PayloadDesc == "auto_return" {
 			t.Errorf("unexpected auto-return order %d created for complex cancel mid-transit: source=%s dest=%s bin=%v",
-				o.ID, o.SourceNode, o.DeliveryNode, o.BinID)
+				o.ID, o.SourceNode, o.DeliveryNode, testdb.OnlyCart(t, o))
 		}
 	}
 
@@ -393,8 +393,8 @@ func TestComplexOrder_GhostRobotNoBin(t *testing.T) {
 	if order.QueueCode != string(protocol.QueueWaitingForMaterial) {
 		t.Errorf("QueueCode = %q, want %q", order.QueueCode, protocol.QueueWaitingForMaterial)
 	}
-	if order.BinID != nil {
-		t.Errorf("expected BinID=nil (no bin at pickup), got %d", *order.BinID)
+	if testdb.OnlyCart(t, order) != nil {
+		t.Errorf("expected BinID=nil (no bin at pickup), got %d", *testdb.OnlyCart(t, order))
 	}
 
 	// No vendor order should be created — robot never dispatched
@@ -457,7 +457,7 @@ func TestComplexOrder_ConcurrentSameNodeDoubleClaimRace(t *testing.T) {
 	order2, _ := db.GetOrderByUUID("cx-race-2")
 
 	// First order should have claimed the bin and dispatched
-	if order1.BinID == nil {
+	if testdb.OnlyCart(t, order1) == nil {
 		t.Fatalf("order1 should have claimed the bin")
 	}
 	if order1.Status != dispatch.StatusDispatched {
@@ -474,8 +474,8 @@ func TestComplexOrder_ConcurrentSameNodeDoubleClaimRace(t *testing.T) {
 	if order2.Status != dispatch.StatusFailed && order2.Status != dispatch.StatusQueued {
 		t.Errorf("order2 status = %q, want failed/queued (no bin available after order1 claimed it)", order2.Status)
 	}
-	if order2.BinID != nil {
-		t.Errorf("order2 should have BinID=nil, got %d", *order2.BinID)
+	if testdb.OnlyCart(t, order2) != nil {
+		t.Errorf("order2 should have BinID=nil, got %d", *testdb.OnlyCart(t, order2))
 	}
 
 	// No double-claim — bin belongs to order1 only
@@ -573,7 +573,7 @@ func TestComplexOrder_SequentialBackfill(t *testing.T) {
 	order := testdb.RequireOrderStatus(t, db, "seq-backfill-1", dispatch.StatusDispatched)
 
 	// Bin claimed at storage (first step is pickup)
-	if order.BinID == nil {
+	if testdb.OnlyCart(t, order) == nil {
 		t.Fatal("expected BinID to be set — ApplyComplexPlan should claim at pickup node")
 	}
 	bin, _ = db.GetBin(bin.ID)
@@ -658,7 +658,7 @@ func TestComplexOrder_SequentialRemoval(t *testing.T) {
 	order := testdb.RequireOrderStatus(t, db, "seq-removal-1", dispatch.StatusDispatched)
 
 	// Bin claimed — ApplyComplexPlan iterates ALL steps including post-wait
-	if order.BinID == nil {
+	if testdb.OnlyCart(t, order) == nil {
 		t.Fatal("expected BinID set — ApplyComplexPlan finds post-wait pickup step")
 	}
 
@@ -712,7 +712,7 @@ func TestComplexOrder_SequentialRemoval(t *testing.T) {
 	}
 
 	// Bin moved to outboundDest (single pickup — extractEndpoints correct)
-	bin, _ := db.GetBin(*order.BinID)
+	bin, _ := db.GetBin(*testdb.OnlyCart(t, order))
 	if bin.NodeID == nil || *bin.NodeID != outboundDest.ID {
 		t.Errorf("bin node = %v, want %d (outboundDest)", bin.NodeID, outboundDest.ID)
 	}
@@ -757,7 +757,7 @@ func TestComplexOrder_TwoRobotSwap_Resupply(t *testing.T) {
 	order := testdb.RequireOrderStatus(t, db, "tworobot-resupply-1", dispatch.StatusDispatched)
 
 	// Bin claimed at storage (first step is pickup)
-	if order.BinID == nil {
+	if testdb.OnlyCart(t, order) == nil {
 		t.Fatal("expected BinID — first step is pickup at storage")
 	}
 	bin, _ = db.GetBin(bin.ID)
@@ -863,7 +863,7 @@ func TestComplexOrder_TwoRobotSwap_Removal(t *testing.T) {
 	order := testdb.RequireOrderStatus(t, db, "tworobot-removal-1", dispatch.StatusDispatched)
 
 	// Bin claimed — ApplyComplexPlan iterates ALL steps including post-wait
-	if order.BinID == nil {
+	if testdb.OnlyCart(t, order) == nil {
 		t.Fatal("expected BinID set — ApplyComplexPlan finds post-wait pickup step")
 	}
 
@@ -915,7 +915,7 @@ func TestComplexOrder_TwoRobotSwap_Removal(t *testing.T) {
 	}
 
 	// Bin moved to outboundDest (unclaimed)
-	bin, _ := db.GetBin(*order.BinID)
+	bin, _ := db.GetBin(*testdb.OnlyCart(t, order))
 	if bin.NodeID == nil || *bin.NodeID != outboundDest.ID {
 		t.Errorf("bin node = %v, want %d (outboundDest)", bin.NodeID, outboundDest.ID)
 	}
@@ -955,7 +955,7 @@ func TestComplexOrder_StagingAndDeliver(t *testing.T) {
 	})
 
 	stageOrder := testdb.RequireOrderStatus(t, db, "stage-1", dispatch.StatusDispatched)
-	if stageOrder.BinID == nil {
+	if testdb.OnlyCart(t, stageOrder) == nil {
 		t.Fatal("stage order should have claimed bin at storage")
 	}
 
@@ -991,11 +991,11 @@ func TestComplexOrder_StagingAndDeliver(t *testing.T) {
 	deliverOrder := testdb.RequireOrderStatus(t, db, "deliver-1", dispatch.StatusDispatched)
 
 	// Deliver order claims the staged bin at inbound staging
-	if deliverOrder.BinID == nil {
+	if testdb.OnlyCart(t, deliverOrder) == nil {
 		t.Fatal("deliver order should have claimed the staged bin at inbound staging")
 	}
-	if *deliverOrder.BinID != bin.ID {
-		t.Errorf("deliver order bin_id = %d, want %d (the staged bin)", *deliverOrder.BinID, bin.ID)
+	if *testdb.OnlyCart(t, deliverOrder) != bin.ID {
+		t.Errorf("deliver order bin_id = %d, want %d (the staged bin)", *testdb.OnlyCart(t, deliverOrder), bin.ID)
 	}
 
 	// Two independent vendor orders
@@ -1081,9 +1081,9 @@ func TestComplexOrder_SingleRobotSwap(t *testing.T) {
 
 	order := testdb.RequireOrderStatus(t, db, "single-swap-1", dispatch.StatusDispatched)
 
-	// New bin at storage claimed (BinID = first claimed bin)
-	if order.BinID == nil {
-		t.Fatal("expected BinID — first pickup is at storage")
+	// New bin at storage claimed: the order has its row.
+	if !testdb.HasCartRow(t, db, order.ID, newBin.ID) {
+		t.Fatal("expected a row for the new bin — first pickup is at storage")
 	}
 	newBin, _ = db.GetBin(newBin.ID)
 	if newBin.ClaimedBy == nil || *newBin.ClaimedBy != order.ID {

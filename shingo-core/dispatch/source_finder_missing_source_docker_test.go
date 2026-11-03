@@ -29,8 +29,8 @@ func TestIntake_MissingSource_WaitsNamingIt(t *testing.T) {
 		DeliveryNode: line.Name, SourceNode: "GONE-NODE",
 	})
 	o := dispatchSimpleViaScanner(t, d, db, uuid)
-	if o.BinID != nil {
-		t.Fatalf("claimed bin %d from elsewhere for a source that does not exist", *o.BinID)
+	if testdb.OnlyCart(t, o) != nil {
+		t.Fatalf("claimed bin %d from elsewhere for a source that does not exist", *testdb.OnlyCart(t, o))
 	}
 	if o.QueueCause != string(CauseFinderSourceMissing) {
 		t.Errorf("status=%s queue_cause=%q, want %q", o.Status, o.QueueCause, CauseFinderSourceMissing)

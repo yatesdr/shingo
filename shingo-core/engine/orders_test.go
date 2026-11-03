@@ -3,6 +3,7 @@
 package engine
 
 import (
+	"shingocore/internal/testdb"
 	"strings"
 	"testing"
 	"time"
@@ -184,8 +185,8 @@ func TestCreateBinMove_FleetRefusalQueues(t *testing.T) {
 	if !protocol.IsAcquiring(o.Status) || o.QueueCode != string(protocol.QueueFleetUnavailable) {
 		t.Errorf("move is %s under %q, want waiting (queued or sourcing) under %q", o.Status, o.QueueCode, protocol.QueueFleetUnavailable)
 	}
-	if o.BinID == nil || *o.BinID != bin.ID {
-		t.Errorf("the waiting move lost its bin (bin_id %v): it keeps its paper and retries", o.BinID)
+	if testdb.OnlyCart(t, o) == nil || *testdb.OnlyCart(t, o) != bin.ID {
+		t.Errorf("the waiting move lost its bin (bin_id %v): it keeps its paper and retries", testdb.OnlyCart(t, o))
 	}
 	select {
 	case ev := <-failed:

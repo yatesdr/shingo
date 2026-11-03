@@ -125,11 +125,11 @@ func TestPlanRetrieve_DedicatedLoaderPool_DrainsBufferedPartialOldestFirst(t *te
 	})
 
 	order := dispatchSimpleViaScanner(t, d, db, "loader-drain-1")
-	if order.BinID == nil {
+	if testdb.OnlyCart(t, order) == nil {
 		t.Fatalf("order claimed no bin (status=%s) — expected the buffer partial", order.Status)
 	}
-	if *order.BinID != partial.ID {
-		t.Fatalf("claimed bin %d, want older buffer partial %d (fresh full was %d)", *order.BinID, partial.ID, full.ID)
+	if *testdb.OnlyCart(t, order) != partial.ID {
+		t.Fatalf("claimed bin %d, want older buffer partial %d (fresh full was %d)", *testdb.OnlyCart(t, order), partial.ID, full.ID)
 	}
 }
 
@@ -156,11 +156,11 @@ func TestPlanMove_DedicatedLoaderPool_DrainsBufferedPartialOldestFirst(t *testin
 	})
 
 	order := dispatchSimpleViaScanner(t, d, db, "loader-move-1")
-	if order.BinID == nil {
+	if testdb.OnlyCart(t, order) == nil {
 		t.Fatalf("move claimed no bin (status=%s) — expected the buffer partial", order.Status)
 	}
-	if *order.BinID != partial.ID {
-		t.Fatalf("move claimed bin %d, want older buffer partial %d (fresh full was %d)", *order.BinID, partial.ID, full.ID)
+	if *testdb.OnlyCart(t, order) != partial.ID {
+		t.Fatalf("move claimed bin %d, want older buffer partial %d (fresh full was %d)", *testdb.OnlyCart(t, order), partial.ID, full.ID)
 	}
 }
 
@@ -196,11 +196,11 @@ func TestPlanMove_DedicatedLoaderPosition_EmptyPayload_ClaimsPhysicalBin(t *test
 	if order.Status == "failed" {
 		t.Fatalf("empty-payload move FAILED (%s) — the loader-pool path must not swallow a payload-less relocation", order.Status)
 	}
-	if order.BinID == nil {
+	if testdb.OnlyCart(t, order) == nil {
 		t.Fatalf("empty-payload move claimed no bin (status=%s) — expected the physical empty carrier at the position", order.Status)
 	}
-	if *order.BinID != empty.ID {
-		t.Fatalf("claimed bin %d, want the empty carrier %d physically at the position", *order.BinID, empty.ID)
+	if *testdb.OnlyCart(t, order) != empty.ID {
+		t.Fatalf("claimed bin %d, want the empty carrier %d physically at the position", *testdb.OnlyCart(t, order), empty.ID)
 	}
 }
 
@@ -228,8 +228,8 @@ func TestPlanRetrieveEmpty_DedicatedLoaderPool_FillPrefersPartialOverEmpty(t *te
 	})
 
 	order := dispatchSimpleViaScanner(t, d, db, "loader-fill-1")
-	if order.BinID == nil || *order.BinID != partial.ID {
-		t.Fatalf("fill claimed %v, want the partial of X %d (fresh empty was %d)", order.BinID, partial.ID, emptyBin.ID)
+	if testdb.OnlyCart(t, order) == nil || *testdb.OnlyCart(t, order) != partial.ID {
+		t.Fatalf("fill claimed %v, want the partial of X %d (fresh empty was %d)", testdb.OnlyCart(t, order), partial.ID, emptyBin.ID)
 	}
 	got, err := db.GetBin(partial.ID)
 	if err != nil {
@@ -261,8 +261,8 @@ func TestPlanRetrieveEmpty_DedicatedLoaderPool_FillFallsBackToEmpty(t *testing.T
 	})
 
 	order := dispatchSimpleViaScanner(t, d, db, "loader-fill-empty-1")
-	if order.BinID == nil || *order.BinID != empty.ID {
-		t.Fatalf("fill claimed %v, want the empty %d", order.BinID, empty.ID)
+	if testdb.OnlyCart(t, order) == nil || *testdb.OnlyCart(t, order) != empty.ID {
+		t.Fatalf("fill claimed %v, want the empty %d", testdb.OnlyCart(t, order), empty.ID)
 	}
 }
 
@@ -297,7 +297,7 @@ func TestPlanRetrieve_DedicatedLoaderPool_NoPartInPoolQueues(t *testing.T) {
 		t.Fatalf("wait-changed tells = %d, want 1 (loader pool empty must queue, not pull globally)", len(emitter.waitChanged))
 	}
 	order := dispatchSimpleViaScanner(t, d, db, "loader-empty-pool-1")
-	if order.BinID != nil {
-		t.Fatalf("order claimed bin %d (stray global %d) — must not fall through to the global scan", *order.BinID, stray.ID)
+	if testdb.OnlyCart(t, order) != nil {
+		t.Fatalf("order claimed bin %d (stray global %d) — must not fall through to the global scan", *testdb.OnlyCart(t, order), stray.ID)
 	}
 }

@@ -95,7 +95,7 @@ func TestResolveLock_ClearsOnThePickupAndNotBefore(t *testing.T) {
 		o.DeliveryNode = line.Name
 		o.Status = protocol.StatusInTransit
 	})
-	testutil.MustNoErr(t, db.UpdateOrderBinID(demand.ID, bin.ID), "bind the demand to its bin")
+	testdb.HoldCart(t, db, demand.ID, bin.ID)
 
 	admitted, _, _, err := d.AcquireLanesForOrder(demand, slot, line, EntryFreshBin)
 	testutil.MustNoErr(t, err, "acquire")

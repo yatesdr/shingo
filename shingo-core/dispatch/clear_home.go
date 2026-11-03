@@ -14,6 +14,7 @@ import (
 	"shingo/protocol/clock"
 	"shingocore/dispatch/binresolver"
 	"shingocore/dispatch/plan"
+	"shingocore/domain"
 	"shingocore/store"
 	"shingocore/store/bins"
 	"shingocore/store/nodes"
@@ -539,6 +540,10 @@ func (d *Dispatcher) issueClearTrade(f ClearFacts) error {
 	if err != nil {
 		return err
 	}
+	// The partial's row moves with its plan: lifted at the spot, set down home.
+	replanned := *l1
+	replanned.StepsJSON = string(l1Steps)
+	l1Rows := orders.CartRows(&replanned, map[int]int64{domain.FirstPickup(domain.OrderPlan(&replanned)): *partial})
 
 	tx, err := d.db.Begin()
 	if err != nil {
@@ -552,7 +557,7 @@ func (d *Dispatcher) issueClearTrade(f ClearFacts) error {
 	if err != nil {
 		return fmt.Errorf("issue the empty's move: %w", err)
 	}
-	bound, err := orders.BindTradeLegTx(tx, l1.ID, string(l1Steps), l2.EdgeUUID)
+	bound, err := orders.BindTradeLegTx(tx, l1.ID, string(l1Steps), l2.EdgeUUID, l1Rows)
 	if err != nil {
 		return fmt.Errorf("re-plan the partial's move: %w", err)
 	}
@@ -562,7 +567,7 @@ func (d *Dispatcher) issueClearTrade(f ClearFacts) error {
 	if err := tx.Commit(); err != nil {
 		return err
 	}
-	l1.StepsJSON, l1.SiblingOrderUUID = string(l1Steps), l2.EdgeUUID
+	l1.StepsJSON, l1.SiblingOrderUUID, l1.Carts = string(l1Steps), l2.EdgeUUID, cartsOf(l1Rows)
 	d.lifecycle.failTakenForCart(taken, l2, f.EmptyBin)
 	d.projectClear(l2)
 	return nil

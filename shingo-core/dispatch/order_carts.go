@@ -37,7 +37,7 @@ func (d *Dispatcher) recordCartsForPlan(order *orders.Order, plan []resolvedStep
 	if sameCarts(order.Carts, rows) {
 		return nil
 	}
-	if err := d.db.ReplaceOrderBins(order.ID, *bin, rows); err != nil {
+	if err := d.db.ReplaceOrderBins(order.ID, rows); err != nil {
 		return err
 	}
 	order.Carts = cartsOf(rows)

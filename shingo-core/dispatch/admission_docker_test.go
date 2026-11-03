@@ -256,7 +256,7 @@ func TestAdmit_BuriedRefusesAtThePickupEndOnly(t *testing.T) {
 		o.EdgeUUID = "adm-buried"
 		o.StationID = "line-1"
 		o.SourceNode = deep.Name
-		o.BinID = &wanted.ID
+		o.HoldFromBirth(wanted.ID)
 	})
 
 	v, err := d.admit(admissionSituation{order: order, sourceNode: deep})

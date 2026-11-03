@@ -602,9 +602,9 @@ func TestCancelReturn_OneAttemptPerEpisode(t *testing.T) {
 	// map, is the record.
 	failed, fcarrier := seedCancelledCarry(t, db, "AMR-CR8R", "CR8-P", "LINE-CR8")
 	rec := fcarrier.ID
-	dead := &orders.Order{EdgeUUID: "cr8-dead-return", OrderType: dispatch.OrderTypeMove, Status: protocol.StatusFailed,
-		Quantity: 1, BinID: &failed.ID, SourceNode: failed.NodeName, DeliveryNode: "CR8-SOMEWHERE",
-		SourceIntent: dispatch.SourceIntentOnDeck, OriginClass: protocol.OriginClassNoDemand, RecoversOrderID: &rec}
+	dead := testdb.Holding(&orders.Order{EdgeUUID: "cr8-dead-return", OrderType: dispatch.OrderTypeMove, Status: protocol.StatusFailed,
+		Quantity: 1, SourceNode: failed.NodeName, DeliveryNode: "CR8-SOMEWHERE",
+		SourceIntent: dispatch.SourceIntentOnDeck, OriginClass: protocol.OriginClassNoDemand, RecoversOrderID: &rec}, failed.ID)
 	testutil.MustNoErr(t, db.CreateOrder(dead), "a return that failed before the restart")
 	forgetReturnAttempts(eng)
 	cacheRobot(eng, loadedDispatchable("AMR-CR8R"))
@@ -631,9 +631,9 @@ func TestCancelReturn_TheRecordIsKeyedOnTheCarrier(t *testing.T) {
 	eng.sweepCarriedBins()
 	assertNoRecoveryOrder(t, db, bin.ID)
 
-	second := &orders.Order{EdgeUUID: "cr9-second", StationID: "edge.test", OrderType: "retrieve",
+	second := testdb.Holding(&orders.Order{EdgeUUID: "cr9-second", StationID: "edge.test", OrderType: "retrieve",
 		Status: protocol.StatusCancelled, Quantity: 1, DeliveryNode: "LINE-CR9", ProcessNode: "LINE-CR9",
-		PayloadCode: "CR9-P", BinID: &bin.ID}
+		PayloadCode: "CR9-P"}, bin.ID)
 	testutil.MustNoErr(t, db.CreateOrder(second), "a later cancelled order for the same bin")
 	eng.sweepCarriedBins()
 	ret := theReturn(t, db, bin.ID)

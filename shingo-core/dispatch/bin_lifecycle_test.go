@@ -462,11 +462,11 @@ func stageComplexOrderWithLineBin(t *testing.T, db *store.DB, d *Dispatcher, lin
 			t.Fatalf("re-get order after dispatch: %v", err)
 		}
 	}
-	if order.BinID == nil {
+	if testdb.OnlyCart(t, order) == nil {
 		t.Fatalf("expected order.BinID to be set by ApplyComplexPlan; got nil")
 	}
-	if *order.BinID != bin.ID {
-		t.Fatalf("expected order to claim bin %d, got %d", bin.ID, *order.BinID)
+	if *testdb.OnlyCart(t, order) != bin.ID {
+		t.Fatalf("expected order to claim bin %d, got %d", bin.ID, *testdb.OnlyCart(t, order))
 	}
 
 	// Force StatusStaged so HandleOrderRelease accepts the release.
@@ -621,7 +621,7 @@ func TestHandleOrderRelease_ACountLandsOnlyOnTheCartAtTheLine(t *testing.T) {
 				OrderUUID: "g-count", PayloadCode: bp.Code, Quantity: 1, ProcessNode: lineNode.Name,
 				Steps: c.steps(lineNode.Name, "G-IN", "G-STG", "G-OUT"),
 			})
-			if o.BinID == nil {
+			if len(o.Carts) == 0 {
 				t.Fatalf("the order holds no bin after its dispatch (status %s)", o.Status)
 			}
 			// The fleet set the full down on staging before the wait.
@@ -633,8 +633,8 @@ func TestHandleOrderRelease_ACountLandsOnlyOnTheCartAtTheLine(t *testing.T) {
 			gotFull, err := db.GetBin(full.ID)
 			testutil.MustNoErr(t, err, "the full")
 			if gotFull.PayloadCode != bp.Code || gotFull.UOPRemaining != 40 {
-				t.Errorf("the incoming full (the order's bin: %v) reads %q at %d after the release, want %q at 40: "+
-					"a count names the cart at the line", *o.BinID == full.ID, gotFull.PayloadCode, gotFull.UOPRemaining, bp.Code)
+				t.Errorf("the incoming full (the order's carts: %v) reads %q at %d after the release, want %q at 40: "+
+					"a count names the cart at the line", testdb.CartRowBins(t, db, o.ID), gotFull.PayloadCode, gotFull.UOPRemaining, bp.Code)
 			}
 			gotLine, err := db.GetBin(lineCart.ID)
 			testutil.MustNoErr(t, err, "the line's cart")

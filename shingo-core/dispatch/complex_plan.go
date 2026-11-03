@@ -26,8 +26,8 @@ func BuildComplexPlan(steps []resolvedStep) *ComplexPlan {
 }
 
 // pickupNeed is one pickup step the plan-time reserve considers: its index in the
-// original step list (recorded in order_bins.step_index so junction rows stay
-// stably ordered) and whether it is a POTENTIAL relay re-grab (an earlier step
+// original step list (an order_bins row's pick_step, so the rows stay stably
+// ordered) and whether it is a POTENTIAL relay re-grab (an earlier step
 // dropped at this node).
 //
 // The relay rule is "an earlier dropoff at N AND N empty at reserve time (the

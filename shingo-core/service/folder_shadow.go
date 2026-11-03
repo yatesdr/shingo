@@ -10,13 +10,14 @@ import (
 
 // ── THE SHADOW WINDOW FOR "DOES THIS ORDER MOVE A BIN OF ITS OWN?" ────────
 //
-// Six sites ask that question by testing `order.BinID == nil`. That predicate
-// is TRUE OF A COORDINATOR AND TRUE OF A DEFECT, and cannot tell them apart:
+// Six sites ask that question by testing whether the order carries a cart (its
+// rows). That predicate is TRUE OF A COORDINATOR AND TRUE OF A DEFECT, and
+// cannot tell them apart:
 //
-//   - a compound PARENT is a folder. It owns legs, never touches a bin, and its
-//     bin_id is NULL permanently and correctly.
-//   - a single-bin order whose planMove never persisted a bin_id reaches
-//     FINISHED with its bin still at source. That is a real fault.
+//   - a compound PARENT is a folder. It owns legs, never touches a bin, and
+//     carries no cart, permanently and correctly.
+//   - a single-bin order whose cart was never recorded reaches FINISHED with
+//     its bin still at source. That is a real fault.
 //
 // The right spelling is the child rows — helpers.OwnsNoCargoSQL, the tree's own
 // ruling at store/reconciliation, which is the ONE site that already had it.

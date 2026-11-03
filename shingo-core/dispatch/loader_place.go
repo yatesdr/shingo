@@ -289,12 +289,12 @@ func (d *Dispatcher) tryPlaceFromHomeSource(order *orders.Order, steps []resolve
 // must not act on it.
 //
 // TWO SOURCES, IN THIS ORDER, AND THE SECOND IS THE ONE THAT MATTERS.
-// order.BinID is the direct answer but it is usually nil here:
-// prepareComplexSteps runs BEFORE reserveComplexSources in
-// prepareComplexHand (complex_dispatch.go), so at placement time the bin is resolved but
-// not yet claimed. That is not a defect to route around — placement is a
+// The leg's cart (its row) is the direct answer but it is usually absent here:
+// prepareComplexSteps runs BEFORE reserveComplexSources in prepareComplexHand
+// (complex_dispatch.go), so at placement time the bin is resolved but not yet
+// claimed. That is not a defect to route around — placement is a
 // resolution-time read on purpose, so the swap supply leg is never gated — it
-// just means the bin pointer cannot be the only source.
+// just means the row cannot be the only source.
 //
 // So the fallback is the physical one: read what is standing on the node this
 // leg opens its pickup at. That is the same question homeClearForReturn already

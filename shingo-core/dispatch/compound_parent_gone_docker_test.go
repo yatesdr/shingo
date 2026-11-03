@@ -231,8 +231,9 @@ func TestCompoundDig_StoreRefusesALegUnderAnEndedParent(t *testing.T) {
 	f.cancel(t)
 	leg := &orders.Order{
 		EdgeUUID: "PGONE6-leg", StationID: f.order.StationID, OrderType: OrderTypeMove, Status: StatusPending,
-		ParentOrderID: &f.order.ID, Sequence: 1, BinID: &f.sc.Blockers[0].ID, SourceNode: f.sc.Slots[0].Name,
+		ParentOrderID: &f.order.ID, Sequence: 1, SourceNode: f.sc.Slots[0].Name,
 	}
+	leg.HoldFromBirth(f.sc.Blockers[0].ID)
 
 	_, err := testdb.CreateCompoundChildren(t, f.db, []store.CompoundChild{{Order: leg}}, nil)
 

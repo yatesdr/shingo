@@ -502,8 +502,8 @@ func TestHandleChildOrderFailure_InFlightSibling(t *testing.T) {
 		Sequence:      3,
 		SourceNode:    slots[2].Name,
 		DeliveryNode:  slots[0].Name,
-		BinID:         &binC3.ID,
 	}
+	child3.HoldFromBirth(binC3.ID)
 	testutil.MustNoErr(t, db.CreateOrder(child3), "create child3")
 	testdb.ClaimBinForTest(t, db, binC3.ID, child3.ID)
 
@@ -518,8 +518,8 @@ func TestHandleChildOrderFailure_InFlightSibling(t *testing.T) {
 		Sequence:      4,
 		SourceNode:    slots[0].Name,
 		DeliveryNode:  slots[1].Name,
-		BinID:         &binC4.ID,
 	}
+	child4.HoldFromBirth(binC4.ID)
 	testutil.MustNoErr(t, db.CreateOrder(child4), "create child4")
 	testdb.ClaimBinForTest(t, db, binC4.ID, child4.ID)
 

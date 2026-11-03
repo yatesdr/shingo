@@ -61,9 +61,7 @@ func TestBinMove_TakesABinAnotherOrderOnlyReserved(t *testing.T) {
 		o.SourceIntent = "full"
 	})
 	testdb.ReserveBin(t, db, holder.ID, bin.ID)
-	if err := db.UpdateOrderBinID(holder.ID, bin.ID); err != nil {
-		t.Fatalf("point the holder at its bin: %v", err)
-	}
+	testdb.HoldCart(t, db, holder.ID, bin.ID)
 
 	resp, status := submitRetrieveSpecific(t, h, bin.Label, sd.LineNode.Name)
 	if status != http.StatusOK || resp.Status != string(protocol.StatusDispatched) {
@@ -74,7 +72,7 @@ func TestBinMove_TakesABinAnotherOrderOnlyReserved(t *testing.T) {
 	if err != nil {
 		t.Fatalf("reload holder: %v", err)
 	}
-	if after.BinID != nil && *after.BinID == bin.ID {
+	if testdb.OnlyCart(t, after) != nil && *testdb.OnlyCart(t, after) == bin.ID {
 		t.Errorf("the holder still points at bin %d, which is leaving on the operator's move", bin.ID)
 	}
 	if protocol.IsTerminal(after.Status) {

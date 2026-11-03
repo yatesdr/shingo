@@ -95,12 +95,12 @@ func ShallowerInSameLane(shallow, deep string) string {
 //
 // THREE SPELLINGS OF ONE FACT:
 //   - the hard claim (claimed_by): a robot is committed to the bin;
-//   - the aim (bin_id with source_node on the bin's slot): the order resolved
-//     onto the bin and is coming to collect it where it stands;
+//   - the aim (the order's row lifting the bin at the bin's slot): the order
+//     resolved onto the bin and is coming to collect it where it stands;
 //   - a pending bin reservation held by a demand that dug for it and is not
 //     yet with the fleet. A complex demand has no aim to read for its whole
-//     wait — its bin_id is written only at its confirm, and source_node names
-//     its pickup's group until the pickup resolves — so its dig soft-reserves
+//     wait — its rows are written only at its confirm, and its plan names its
+//     pickup's group until the pickup resolves — so its dig soft-reserves
 //     the bin it uncovers at the dig's birth (C2b A.1b; dispatch
 //     digLaneTake.aim), and this arm is what makes that row keep the slots the
 //     dig just emptied from re-burying the bin before the demand's next pass.
@@ -286,12 +286,12 @@ func EntombsASpokenForSlotSQL(candidate, ownerParam, terminalStatusList string) 
 
 // ── ONE SPELLING FOR "DOES THIS ORDER MOVE A BIN OF ITS OWN?" ─────────────
 //
-// A compound PARENT is a folder. It owns legs, it never touches a bin, and its
-// bin_id is NULL for that reason and permanently. A defective single-bin order
-// also has a NULL bin_id — because planMove failed to persist one, which is a
-// real fault worth a diagnostic.
+// A compound PARENT is a folder. It owns legs, it never touches a bin, and it
+// carries no cart for that reason and permanently. A defective single-bin order
+// also carries none — because its cart was never recorded, which is a real
+// fault worth a diagnostic.
 //
-// `order.BinID == nil` is TRUE OF BOTH AND CANNOT TELL THEM APART. That is the
+// Carrying no cart is TRUE OF BOTH AND CANNOT TELL THEM APART. That is the
 // whole defect: it is a true answer to a narrower question, and it reads exactly
 // like the answer the caller wanted.
 //

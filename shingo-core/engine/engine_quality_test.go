@@ -49,7 +49,7 @@ func TestDispatch_QualityHoldBin_QueuedNotFailed(t *testing.T) {
 
 	order := testdb.RequireOrder(t, db, "retrieve-qh-21")
 
-	t.Logf("order status: %s, bin_id: %v, vendor_order_id: %s", order.Status, order.BinID, order.VendorOrderID)
+	t.Logf("order status: %s, bin_id: %v, vendor_order_id: %s", order.Status, testdb.OnlyCart(t, order), order.VendorOrderID)
 
 	// The order should NOT be dispatched — no eligible bin exists
 	if order.Status == dispatch.StatusDispatched {

@@ -41,8 +41,8 @@ func TestCoreRestart_AnOrderInFlightFinishesAgainstTheFleetThatOutlivedIt(t *tes
 		},
 	})
 	before := testdb.RequireOrder(t, db, "restart-move")
-	if before.VendorOrderID == "" || before.BinID == nil || *before.BinID != bin.ID {
-		t.Fatalf("fixture: the order was not dispatched with its bin: vendor %q bin %v", before.VendorOrderID, before.BinID)
+	if before.VendorOrderID == "" || testdb.OnlyCart(t, before) == nil || *testdb.OnlyCart(t, before) != bin.ID {
+		t.Fatalf("fixture: the order was not dispatched with its bin: vendor %q bin %v", before.VendorOrderID, testdb.OnlyCart(t, before))
 	}
 	sim.DriveState(before.VendorOrderID, "RUNNING")
 	if o := testdb.RequireOrder(t, db, "restart-move"); o.Status != protocol.StatusInTransit {
@@ -61,8 +61,8 @@ func TestCoreRestart_AnOrderInFlightFinishesAgainstTheFleetThatOutlivedIt(t *tes
 	if fleetAfter.attached != 2 {
 		t.Fatalf("the fleet was attached %d time(s), want twice: the new Core did not take up the fleet that outlived the first", fleetAfter.attached)
 	}
-	if o := testdb.RequireOrder(t, db, "restart-move"); o.Status != protocol.StatusInTransit || o.BinID == nil || *o.BinID != bin.ID {
-		t.Fatalf("after the restart the order is %q holding %v, want in_transit holding bin %d", o.Status, o.BinID, bin.ID)
+	if o := testdb.RequireOrder(t, db, "restart-move"); o.Status != protocol.StatusInTransit || testdb.OnlyCart(t, o) == nil || *testdb.OnlyCart(t, o) != bin.ID {
+		t.Fatalf("after the restart the order is %q holding %v, want in_transit holding bin %d", o.Status, testdb.OnlyCart(t, o), bin.ID)
 	}
 
 	// The mission finishes against the new Core: the fleet's FINISHED alone

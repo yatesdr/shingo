@@ -62,7 +62,6 @@ type Store interface {
 	// (Rule 1: soft until complete). No claimed_by column is touched because none
 	// was written yet.
 	ReleaseReservation(orderID, binID int64) error
-	UpdateOrderBinID(orderID, binID int64) error
 	// ForgetHeldCart forgets a plain order's stale held cart (its row) so the
 	// order re-finds.
 	ForgetHeldCart(orderID int64) error

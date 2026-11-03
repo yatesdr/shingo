@@ -395,8 +395,8 @@ func TestConfirmPartialFailureConverges(t *testing.T) {
 			t.Errorf("bin %d reservation = %q, want confirmed", id, st)
 		}
 	}
-	if order.BinID == nil || *order.BinID != binA.ID {
-		t.Errorf("order.BinID = %v, want binA=%d (process node)", order.BinID, binA.ID)
+	if !testdb.HasCartRow(t, db, order.ID, binA.ID) {
+		t.Errorf("the order has no row for binA=%d (its claim at the process node)", binA.ID)
 	}
 	obs, _ := db.ListOrderBins(order.ID)
 	if len(obs) != 3 {

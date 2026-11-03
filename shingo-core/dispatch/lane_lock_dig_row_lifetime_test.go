@@ -94,8 +94,8 @@ func TestDigRow_SurvivesChildPickup(t *testing.T) {
 	target := testdb.CreateBinAtNode(t, db, "PAYLOAD-A", slots[len(slots)-1].ID, "BIN-DIGLIFE-TGT")
 	remaining := testdb.CreateOrder(t, db, func(o *orders.Order) {
 		o.ParentOrderID = &parent.ID
-		o.BinID = &target.ID
 		o.SourceNode = slots[len(slots)-1].Name
+		o.HoldFromBirth(target.ID)
 	})
 	// AND IT HOLDS THE BIN IT POINTS AT. A dispatched leg has claimed its bin in its
 	// hand (store.ClaimCompoundLegBinTx); a fixture that hand-builds a sent leg

@@ -514,11 +514,11 @@ func (p *pmCell) at(id int64) string {
 func (p *pmCell) binOf(o domain.Order) int64 {
 	p.t.Helper()
 	co := p.coreOf(o)
-	if co.BinID == nil {
+	if coreCart(co) == nil {
 		p.dump("no bin")
 		p.t.Fatalf("order %d (%s %s->%s) names no bin at Core", o.ID, o.OrderType, o.SourceNode, o.DeliveryNode)
 	}
-	return *co.BinID
+	return *coreCart(co)
 }
 
 // lineBinOut asserts the line's old bin went to the outbound and one bin
@@ -656,8 +656,8 @@ func (p *pmCell) wrongDeckSwap(label string, wrong *corebins.Bin) {
 		p.mustTap(label)
 		p.tick()
 		m = p.chain(label, before, 1, 1)
-		if got := p.coreOf(m.clears[0]); got.BinID == nil || *got.BinID != wrong.ID {
-			p.t.Errorf("%s: the clear names bin %v at Core, want the wrong carrier %d", label, got.BinID, wrong.ID)
+		if got := p.coreOf(m.clears[0]); coreCart(got) == nil || *coreCart(got) != wrong.ID {
+			p.t.Errorf("%s: the clear names bin %v at Core, want the wrong carrier %d", label, coreCart(got), wrong.ID)
 		}
 		p.eventually(label+": the clear with the fleet", func() bool { return p.coreOf(m.clears[0]).VendorOrderID != "" })
 		p.drive(p.coreOf(m.clears[0]), "RUNNING", "FINISHED")

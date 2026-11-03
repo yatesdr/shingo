@@ -4,9 +4,9 @@ import (
 	"slices"
 	"testing"
 
-	"shingo/protocol"
 	"shingocore/domain"
 	"shingocore/store"
+	"shingocore/store/orders"
 )
 
 // order_carts.go — fixture writers and readers for an order's carts
@@ -15,19 +15,13 @@ import (
 // text when the shape moves.
 
 // SeedCartRow writes one cart row for orderID: binID lifted at plan step pick
-// and set down at plan step drop. The junction's node copies (until v174) are
-// filled from the order's plan.
+// and set down at plan step drop.
 func SeedCartRow(t testing.TB, db *store.DB, orderID, binID int64, pick, drop int) {
 	t.Helper()
-	o, err := db.GetOrder(orderID)
-	if err != nil {
-		t.Fatalf("testdb.SeedCartRow(order=%d): read the order: %v", orderID, err)
-	}
-	if _, err := db.Exec(`INSERT INTO order_bins (order_id, bin_id, pick_step, drop_step, action, node_name, dest_node)
-		VALUES ($1, $2, $3, $4, 'pickup', $5, $6)
-		ON CONFLICT (order_id, pick_step) DO UPDATE SET bin_id = EXCLUDED.bin_id, drop_step = EXCLUDED.drop_step,
-			node_name = EXCLUDED.node_name, dest_node = EXCLUDED.dest_node`,
-		orderID, binID, pick, drop, domain.StepNode(o, pick), domain.StepNode(o, drop)); err != nil {
+	if _, err := db.Exec(`INSERT INTO order_bins (order_id, bin_id, pick_step, drop_step)
+		VALUES ($1, $2, $3, $4)
+		ON CONFLICT (order_id, pick_step) DO UPDATE SET bin_id = EXCLUDED.bin_id, drop_step = EXCLUDED.drop_step`,
+		orderID, binID, pick, drop); err != nil {
 		t.Fatalf("testdb.SeedCartRow(order=%d bin=%d pick=%d drop=%d): %v", orderID, binID, pick, drop, err)
 	}
 }
@@ -106,21 +100,59 @@ func CartLifts(t testing.TB, db *store.DB, orderID int64) []CartLift {
 	return out
 }
 
-// SeedLift writes orderID's row for binID lifted at plan step pick and set down
-// at the plan's next dropoff after it (SeedCartRow): the lift as the plan walk
-// (domain.Lifts) writes a claim at pick.
-func SeedLift(t testing.TB, db *store.DB, orderID, binID int64, pick int) {
+// HoldCart writes the row of the one cart orderID comes to hold, as a door
+// writes it: binID lifted at the plan's first pickup (in hand from the start
+// when the plan has none) and set down where the walk says (orders.CartRows).
+// The order's other rows stand.
+func HoldCart(t testing.TB, db *store.DB, orderID, binID int64) {
 	t.Helper()
 	o, err := db.GetOrder(orderID)
 	if err != nil {
-		t.Fatalf("testdb.SeedLift(order=%d): %v", orderID, err)
+		t.Fatalf("testdb.HoldCart(order=%d): read the order: %v", orderID, err)
 	}
-	steps := domain.OrderPlan(o)
-	for i := pick + 1; i < len(steps); i++ {
-		if steps[i].Action == protocol.ActionDropoff {
-			SeedCartRow(t, db, orderID, binID, pick, i)
-			return
+	pick := domain.FirstPickup(domain.OrderPlan(o))
+	if pick < 0 {
+		pick = domain.InHand
+	}
+	for _, r := range orders.CartRows(o, map[int]int64{pick: binID}) {
+		if _, err := db.Exec(`INSERT INTO order_bins (order_id, bin_id, pick_step, drop_step)
+			VALUES ($1, $2, $3, NULLIF($4::int, -1))
+			ON CONFLICT (order_id, pick_step) DO UPDATE SET bin_id = EXCLUDED.bin_id, drop_step = EXCLUDED.drop_step`,
+			orderID, r.BinID, r.PickStep, r.DropStep); err != nil {
+			t.Fatalf("testdb.HoldCart(order=%d bin=%d): %v", orderID, binID, err)
 		}
 	}
-	t.Fatalf("testdb.SeedLift(order=%d bin=%d pick=%d): the plan sets nothing down after the pick", orderID, binID, pick)
+}
+
+// OnlyCart is the one cart o carries (Order.OnlyBin), nil when it carries
+// none. An order with several fails the test: the caller asked "the order's
+// cart" of an order that has several, and must ask its rows instead.
+func OnlyCart(t testing.TB, o *orders.Order) *int64 {
+	t.Helper()
+	c, err := o.OnlyBin()
+	if err != nil {
+		t.Fatalf("testdb.OnlyCart: %v", err)
+	}
+	return c
+}
+
+// Holding is o born holding cart (Order.HoldFromBirth): its row is written
+// with it by Create. For fixtures that build the order in one expression.
+func Holding(o *orders.Order, cart int64) *orders.Order {
+	o.HoldFromBirth(cart)
+	return o
+}
+
+// SeedCarts writes orderID's rows as the allocator does for the carts it
+// claimed by plan step (claims[step] = bin): the plan walk over the order's
+// stored plan (orders.CartRows), relays and open lifts included.
+func SeedCarts(t testing.TB, db *store.DB, orderID int64, claims map[int]int64) {
+	t.Helper()
+	o, err := db.GetOrder(orderID)
+	if err != nil {
+		t.Fatalf("testdb.SeedCarts(order=%d): read the order: %v", orderID, err)
+	}
+	if err := db.ReplaceOrderBins(orderID, orders.CartRows(o, claims)); err != nil {
+		t.Fatalf("testdb.SeedCarts(order=%d): %v", orderID, err)
+	}
 }

@@ -1275,11 +1275,11 @@ func TestHandleRetrieve_BinTracking(t *testing.T) {
 	order := testdb.RequireOrder(t, db, "uuid-bin-track")
 
 	// Order should have BinID set
-	if order.BinID == nil {
+	if testdb.OnlyCart(t, order) == nil {
 		t.Fatal("order BinID should be set after retrieve")
 	}
-	if *order.BinID != bin.ID {
-		t.Errorf("order BinID = %d, want %d", *order.BinID, bin.ID)
+	if *testdb.OnlyCart(t, order) != bin.ID {
+		t.Errorf("order BinID = %d, want %d", *testdb.OnlyCart(t, order), bin.ID)
 	}
 
 	// Bin should be claimed
@@ -1388,11 +1388,11 @@ func TestDispatcher_RetrieveOrder_NGRPSource(t *testing.T) {
 
 	order := testdb.RequireOrderStatus(t, db, "retrieve-ngrp-1", StatusInTransit) // the lane is marked and free: the gate opens at once
 
-	if order.BinID == nil {
+	if testdb.OnlyCart(t, order) == nil {
 		t.Fatal("BinID nil — planRetrieve must claim a bin via NGRP resolver")
 	}
-	if *order.BinID != sc.TargetBin.ID {
-		t.Errorf("BinID = %d, want %d (target bin in NGRP lane)", *order.BinID, sc.TargetBin.ID)
+	if *testdb.OnlyCart(t, order) != sc.TargetBin.ID {
+		t.Errorf("BinID = %d, want %d (target bin in NGRP lane)", *testdb.OnlyCart(t, order), sc.TargetBin.ID)
 	}
 	if order.SourceNode == sc.Grp.Name {
 		t.Errorf("SourceNode = %q, want resolved to concrete slot %q", order.SourceNode, sc.Slots[0].Name)
@@ -1450,11 +1450,11 @@ func TestDispatcher_MoveOrder_NGRPSource(t *testing.T) {
 	order := testdb.RequireOrderStatus(t, db, "move-ngrp-1", StatusInTransit) // the lane is marked and free: the gate opens at once
 
 	// Verify the bin was claimed
-	if order.BinID == nil {
+	if testdb.OnlyCart(t, order) == nil {
 		t.Fatal("BinID should be set — planMove must claim a bin via NGRP resolver")
 	}
-	if *order.BinID != sc.TargetBin.ID {
-		t.Errorf("BinID = %d, want %d (target bin in the NGRP lane)", *order.BinID, sc.TargetBin.ID)
+	if *testdb.OnlyCart(t, order) != sc.TargetBin.ID {
+		t.Errorf("BinID = %d, want %d (target bin in the NGRP lane)", *testdb.OnlyCart(t, order), sc.TargetBin.ID)
 	}
 
 	// Verify the source node was resolved to the concrete slot, not the NGRP

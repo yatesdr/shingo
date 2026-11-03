@@ -79,7 +79,7 @@ func TestDigSteal_RepairsEveryHolderNotOne(t *testing.T) {
 			o.EdgeUUID = "steal-many-holder-" + string(rune('a'+i))
 		})
 		reserveBinNoIndex(t, db, h.ID, bin.ID, "pending")
-		testutil.MustNoErr(t, db.UpdateOrderBinID(h.ID, bin.ID), "stamp holder bin_id")
+		testdb.HoldCart(t, db, h.ID, bin.ID)
 		holders[i] = h
 	}
 
@@ -101,10 +101,10 @@ func TestDigSteal_RepairsEveryHolderNotOne(t *testing.T) {
 	for _, h := range holders {
 		after, err := db.GetOrder(h.ID)
 		testutil.MustNoErr(t, err, "reload holder")
-		if after.BinID != nil {
+		if testdb.OnlyCart(t, after) != nil {
 			t.Errorf("holder %d still points at bin %d. Its reservation is gone (the ledger is "+
 				"swept whole) and dispatchHeldBin never re-acquires, so this order confirms by id "+
-				"against a row that does not exist, every tick, forever", h.ID, *after.BinID)
+				"against a row that does not exist, every tick, forever", h.ID, *testdb.OnlyCart(t, after))
 		}
 		if protocol.IsTerminal(after.Status) {
 			t.Errorf("holder %d is %q — losing a reserved bin is a recalculation, not a failure",
@@ -153,7 +153,7 @@ func TestDigSteal_LeavesAHandPlacedOrderPointedAndReportsIt(t *testing.T) {
 		o.NamedBinID = &bin.ID // a person's move is issued for its bin
 	})
 	testdb.ReserveBin(t, db, byHand.ID, bin.ID)
-	testutil.MustNoErr(t, db.UpdateOrderBinID(byHand.ID, bin.ID), "stamp bin_id")
+	testdb.HoldCart(t, db, byHand.ID, bin.ID)
 
 	parent := compoundParent(t, db, "steal-hand-parent")
 	child := childFor(parent, bin.ID, 1)
@@ -171,10 +171,10 @@ func TestDigSteal_LeavesAHandPlacedOrderPointedAndReportsIt(t *testing.T) {
 
 	after, err := db.GetOrder(byHand.ID)
 	testutil.MustNoErr(t, err, "reload hand-placed order")
-	if after.BinID == nil || *after.BinID != bin.ID {
+	if testdb.OnlyCart(t, after) == nil || *testdb.OnlyCart(t, after) != bin.ID {
 		t.Errorf("the hand-placed order was un-pointed. That hands it to the finder, and a "+
 			"node-local move re-sourced from its node takes whatever bin is standing there — "+
 			"Core silently moving a different bin than the one a person named (bin_id = %v)",
-			after.BinID)
+			testdb.OnlyCart(t, after))
 	}
 }

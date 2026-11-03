@@ -89,7 +89,7 @@ func newParkedPush(t *testing.T, db *store.DB, pfx string, withOverflow bool) pa
 		o.DeliveryNode = fx.group
 	})
 	testutil.MustNoErr(t, reservations.Acquire(db.DB, fx.push.ID, fx.push.ID, cart, "test"), "the push holds its cart")
-	testutil.MustNoErr(t, db.UpdateOrderBinID(fx.push.ID, cart), "the push points at its cart")
+	testdb.HoldCart(t, db, fx.push.ID, cart)
 	return fx
 }
 
@@ -208,7 +208,7 @@ func TestOverflow_ADispatchedPushIsNeverReAimed(t *testing.T) {
 		o.SourceNode = "OVP2-AWAY"
 		o.DeliveryNode = fx.group + "-PB"
 		o.RobotID = "AMR-OVP2"
-		o.BinID = &inFlightBin
+		o.HoldFromBirth(inFlightBin)
 	})
 	testdb.ClaimBinForTest(t, db, inFlightBin, moving.ID)
 
@@ -373,7 +373,7 @@ func morePushes(t *testing.T, db *store.DB, pfx string, fx parkedPush, n int) {
 			o.DeliveryNode = fx.group
 		})
 		testutil.MustNoErr(t, reservations.Acquire(db.DB, o.ID, o.ID, cart, "test"), "the push holds its cart")
-		testutil.MustNoErr(t, db.UpdateOrderBinID(o.ID, cart), "the push points at its cart")
+		testdb.HoldCart(t, db, o.ID, cart)
 	}
 }
 

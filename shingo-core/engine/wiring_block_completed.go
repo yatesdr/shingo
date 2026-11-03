@@ -316,8 +316,7 @@ func (e *Engine) resolvePickupBin(orderID int64, location string) (binID int64, 
 // those carts is still recorded THERE — the lift has not happened yet. The
 // earliest such pick wins. A relay's re-lift has its own row (the single_robot
 // swap's fresh cart re-lifted at inbound staging), so nothing is inferred from
-// what the order happens to have claimed at the node, and nothing falls back to
-// orders.bin_id.
+// what the order happens to have claimed at the node.
 //
 // THE BIN'S RECORD MUST STAND ON THE BLOCK'S NODE. A lift writes last_lift_at,
 // and that is the fact a vacate hold releases on (bins.LeftSince), so naming a
@@ -369,6 +368,7 @@ func (e *Engine) resolvePickupBinRow(order *orders.Order, location string) (bin 
 		return e.appendedLift(order, loc, standing)
 	}
 	if len(standing) == 0 {
+		e.logCartsElsewhere(order, loc, ids)
 		return nil, 0, 0, false
 	}
 	b := standing[0]
@@ -377,6 +377,22 @@ func (e *Engine) resolvePickupBinRow(order *orders.Order, location string) (bin 
 		from = *b.NodeID
 	}
 	return b, pickOf[b.ID], from, true
+}
+
+// logCartsElsewhere names, for a pickup its rows place at loc, where each of
+// those carts is recorded instead: a replayed pickup, or a cart moved by hand
+// since the plan was made. One read, on this failure path only.
+func (e *Engine) logCartsElsewhere(order *orders.Order, loc string, ids []int64) {
+	for _, id := range ids {
+		b, err := e.db.GetBin(id)
+		if err != nil || b == nil {
+			e.logFn("transit: order %d pickup @ %s — its row lifts bin %d here and the bin could not be read (%v); nothing lifted",
+				order.ID, loc, id, err)
+			continue
+		}
+		e.logFn("transit: order %d pickup @ %s — its row lifts %s here, and %s is recorded on %s; nothing lifted",
+			order.ID, loc, b.Label, b.Label, b.NodeName)
+	}
 }
 
 // appendedLift is a pickup at a node where the order has no row: exactly one of
@@ -662,7 +678,7 @@ func (e *Engine) noteUnannouncedLineRebind(order *orders.Order, location string)
 // lift does). Measured on the lane-stress rig 2026-08-11 before that: orders 1,
 // 7 and 10 staged from the first minute of the run, each holding an AMR,
 // because a set-down at an intermediate staging node matched no row whose
-// dest_node was the cart's final drop.
+// (since dropped) dest_node was the cart's final drop.
 //
 // Which cart is in the forks is a fact about the plant (bins.InHandAmong), never
 // stamped on the row: of two candidates in hand, the one lifted last is the one

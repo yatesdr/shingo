@@ -75,18 +75,18 @@ func TestC2bPin_AnAimBuriedByACommittedRobotIsReMadeOnTheNextPass(t *testing.T) 
 			legs, err := db.ListChildOrders(o.ID)
 			testutil.MustNoErr(t, err, "list the order's dig legs")
 			dug := len(legs) > 0 || excavating(t, db, sc.Lane.ID)
-			repicked := after.BinID != nil && *after.BinID != aimed.ID &&
+			repicked := testdb.OnlyCart(t, after) != nil && *testdb.OnlyCart(t, after) != aimed.ID &&
 				(after.Status == protocol.StatusDispatched || after.Status == protocol.StatusInTransit)
 
 			switch {
-			case repicked && tc.another && *after.BinID != alt.ID:
-				t.Fatalf("re-picked bin %d, want the reachable bin %d", *after.BinID, alt.ID)
+			case repicked && tc.another && *testdb.OnlyCart(t, after) != alt.ID:
+				t.Fatalf("re-picked bin %d, want the reachable bin %d", *testdb.OnlyCart(t, after), alt.ID)
 			case repicked || dug:
 				// The pass found the burial and acted on it.
 			case after.QueueCause == "":
 				t.Fatalf("the order waits with no cause (status %s, bin %v, gate-staged %v) after a committed "+
 					"robot buried its aimed bin — the next pass must re-pick or dig",
-					after.Status, after.BinID, dispatch.IsGateStaged(after))
+					after.Status, testdb.OnlyCart(t, after), dispatch.IsGateStaged(after))
 			default:
 				t.Fatalf("the order waits under %q (status %s) after a committed robot buried its aimed bin; "+
 					"the next pass must re-pick or dig", after.QueueCause, after.Status)

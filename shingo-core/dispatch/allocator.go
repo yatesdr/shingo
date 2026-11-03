@@ -339,8 +339,8 @@ func (a *Allocator) reserveComplexPlan(order *orders.Order, plan *ComplexPlan) (
 		}
 		tally(m.pk, m.nodeHadBins, got, out)
 	}
-	// Back in step order, as the confirm reads them (Order.BinID is the one at
-	// the process node, else the first: recordClaimedBins).
+	// Back in step order, as the confirm reads them (recordClaimedBins writes the
+	// order's rows from them).
 	slices.SortFunc(assigned, func(x, y reservedPickup) int { return cmp.Compare(x.stepIndex, y.stepIndex) })
 
 	// Release held bins not matched to any current need. Slot rows are reconciled
@@ -1028,8 +1028,8 @@ func (a *Allocator) bindAt(pk pickupNeed, payloadCode string) (binresolver.BindA
 // confirmComplexPlan commits a COMPLETE reserved assignment to hard claims — the
 // apply-as-confirm half of the split. For each reserved pickup it ConfirmClaims the
 // bin (claim under the demoted-CAS seatbelt + confirm the reservation), then
-// records order.BinID and the order_bins junction exactly as the old live-claim
-// path did. It never re-walks live candidates: the bins were chosen at reserve.
+// records the order's carts (its order_bins rows, recordClaimedBins) exactly as
+// the old live-claim path did. It never re-walks live candidates: the bins were chosen at reserve.
 //
 // Idempotency (crash / partial-confirm-then-requeue): a reserved pickup already
 // confirmed AND claimed by THIS order is skipped (re-claiming would false-fail the
@@ -1149,9 +1149,8 @@ func (a *Allocator) confirmComplexPlan(order *orders.Order, plan *ComplexPlan, a
 }
 
 // recordClaimedBins writes the order's carts: one order_bins row per lift, from
-// the plan walk over the carts this allocation claimed (domain.Lifts), and the
-// one-cart pointer orders.bin_id keeps until v174 (the claim at the order's
-// process node, else the first) — in one statement (ReplaceOrderBins). Every
+// the plan walk over the carts this allocation claimed (domain.Lifts), in one
+// statement (ReplaceOrderBins). Every
 // order that claims a cart writes its rows here: one cart or several, a root or
 // a compound's leg. Shared by the pair's confirmComplexPlan and the solo order's
 // hand, which writes it before the hand confirms: it is the plan, not a hold.
@@ -1159,17 +1158,6 @@ func (a *Allocator) confirmComplexPlan(order *orders.Order, plan *ComplexPlan, a
 // claims, anything else because an allocation whose carts are not on record
 // must not reach the fleet.
 func (a *Allocator) recordClaimedBins(order *orders.Order, steps []resolvedStep, claimed []claimedBin) error {
-	processNode := order.ProcessNode
-	if processNode == "" {
-		processNode = order.SourceNode
-	}
-	primaryIdx := 0
-	for i, cb := range claimed {
-		if cb.nodeName == processNode {
-			primaryIdx = i
-			break
-		}
-	}
 	claimedAt := make(map[int]int64, len(claimed))
 	for _, cb := range claimed {
 		claimedAt[cb.stepIndex] = cb.binID
@@ -1179,10 +1167,9 @@ func (a *Allocator) recordClaimedBins(order *orders.Order, steps []resolvedStep,
 		planned.StepsJSON = string(j)
 	}
 	rows := orders.CartRows(&planned, claimedAt)
-	if err := a.db.ReplaceOrderBins(order.ID, claimed[primaryIdx].binID, rows); err != nil {
+	if err := a.db.ReplaceOrderBins(order.ID, rows); err != nil {
 		return fmt.Errorf("record the carts of order %d: %w", order.ID, err)
 	}
-	order.BinID = &claimed[primaryIdx].binID
 	order.Carts = cartsOf(rows)
 	if len(rows) < len(claimed) {
 		log.Printf("dispatch: order %d claimed %d carts and its plan sets down %d lifts of them — a claim its plan never sets down has no row",

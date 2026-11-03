@@ -45,7 +45,7 @@ func TestReleaseL11_RefusalsWriteNoCount(t *testing.T) {
 			bin := testdb.CreateBinAtNode(t, r.db, sd.Payload.Code, sd.LineNode.ID, "SYN-BIN-L11")
 			testutil.MustNoErr(t, r.db.SetBinManifest(bin.ID, `{"items":[{"part_number":"PART-X"}]}`, sd.Payload.Code, 30), "seed count")
 			o := rlLeg(t, r.db, "l11-leg", StatusStaged, c.waitIndex, string(mustJSON(t, c.steps)))
-			testutil.MustNoErr(t, r.db.UpdateOrderBinID(o.ID, bin.ID), "bind bin")
+			testdb.HoldCart(t, r.db, o.ID, bin.ID)
 			_, err := r.db.Exec(`UPDATE bins SET claimed_by=$1 WHERE id=$2`, o.ID, bin.ID)
 			testutil.MustNoErr(t, err, "claim bin for the leg")
 			zero := 0

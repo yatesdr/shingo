@@ -286,8 +286,8 @@ func TestDwell_TwoDwellersRacingForOneSlotBindTwo(t *testing.T) {
 		if legID != legA.ID || b != nil {
 			return
 		}
-		if legB.BinID != nil {
-			bin, err := db.GetBin(*legB.BinID)
+		if testdb.OnlyCart(t, legB) != nil {
+			bin, err := db.GetBin(*testdb.OnlyCart(t, legB))
 			testutil.MustNoErr(t, err, "read B's bin")
 			if bin.NodeName == legB.SourceNode {
 				transit, tErr := db.GetNodeByName(domain.TransitNodeName)

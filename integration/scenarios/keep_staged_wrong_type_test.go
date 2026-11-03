@@ -167,7 +167,7 @@ func TestScenario_KeepStagedWrongTypeEmpty_CoreMoveIsTheExit(t *testing.T) {
 		t.Logf("WEDGE %s %s->%s %s | Core: status=%s cause=%q reason=%q | Edge: status=%s reason=%q code=%q",
 			o.OrderType, o.SourceNode, o.DeliveryNode, o.PayloadCode,
 			c.Status, c.QueueCause, c.QueueReason, e.Status, e.QueueReason, e.QueueCode)
-		if c.VendorOrderID != "" && c.BinID != nil && *c.BinID == wrongEmpty.ID {
+		if c.VendorOrderID != "" && coreCart(c) != nil && *coreCart(c) == wrongEmpty.ID {
 			t.Fatalf("Core sent %s %d to the fleet holding the wrong-type empty", o.OrderType, o.ID)
 		}
 	}
@@ -191,8 +191,8 @@ func TestScenario_KeepStagedWrongTypeEmpty_CoreMoveIsTheExit(t *testing.T) {
 		move = m
 		return true
 	})
-	if move.BinID == nil || *move.BinID != wrongEmpty.ID {
-		t.Fatalf("the person's move holds bin %v, want the wrong empty %d", move.BinID, wrongEmpty.ID)
+	if coreCart(move) == nil || *coreCart(move) != wrongEmpty.ID {
+		t.Fatalf("the person's move holds bin %v, want the wrong empty %d", coreCart(move), wrongEmpty.ID)
 	}
 	sim.DriveSimpleLifecycle(move.VendorOrderID)
 	settle()
@@ -218,13 +218,13 @@ func TestScenario_KeepStagedWrongTypeEmpty_CoreMoveIsTheExit(t *testing.T) {
 		}
 		return false
 	})
-	if landed.BinID == nil || *landed.BinID != rightEmpty.ID {
-		t.Fatalf("the refill holds bin %v, want the right-type empty %d", landed.BinID, rightEmpty.ID)
+	if coreCart(landed) == nil || *coreCart(landed) != rightEmpty.ID {
+		t.Fatalf("the refill holds bin %v, want the right-type empty %d", coreCart(landed), rightEmpty.ID)
 	}
 	sim.DriveSimpleLifecycle(landed.VendorOrderID)
 	eventually("the swap to take the right empty", func() bool {
 		for _, l := range legs {
-			if c := coreOf(l); c.VendorOrderID != "" && c.BinID != nil && *c.BinID == rightEmpty.ID {
+			if c := coreOf(l); c.VendorOrderID != "" && coreCart(c) != nil && *coreCart(c) == rightEmpty.ID {
 				return true
 			}
 		}

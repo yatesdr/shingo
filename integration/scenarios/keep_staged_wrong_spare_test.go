@@ -225,8 +225,8 @@ func TestScenario_KeepStagedWrongSpare_APersonsMoveIsTheExit(t *testing.T) {
 		move = m
 		return true
 	})
-	if move.BinID == nil || *move.BinID != wrongBin.ID {
-		t.Fatalf("the person's move holds bin %v, want the wrong spare %d", move.BinID, wrongBin.ID)
+	if coreCart(move) == nil || *coreCart(move) != wrongBin.ID {
+		t.Fatalf("the person's move holds bin %v, want the wrong spare %d", coreCart(move), wrongBin.ID)
 	}
 	sim.DriveSimpleLifecycle(move.VendorOrderID)
 

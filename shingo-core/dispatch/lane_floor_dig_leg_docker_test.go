@@ -43,7 +43,7 @@ func TestFloor_LeavesADigLegThatHasNotLiftedAlone(t *testing.T) {
 		o.Status = protocol.StatusPending
 	})
 	leg := planDigFor(t, db, d, bp, dug, dugSlots[1], demand)[0]
-	if leg.VendorOrderID == "" || leg.DeliveryNode != "" || !IsGateStaged(leg) || leg.BinID == nil {
+	if leg.VendorOrderID == "" || leg.DeliveryNode != "" || !IsGateStaged(leg) || testdb.OnlyCart(t, leg) == nil {
 		t.Fatalf("fixture: the first leg is not a dispatched dig leg awaiting its tail "+
 			"(vendor %q, destination %q, gate-staged %v)", leg.VendorOrderID, leg.DeliveryNode, IsGateStaged(leg))
 	}
@@ -71,7 +71,7 @@ func TestFloor_LeavesADigLegThatHasNotLiftedAlone(t *testing.T) {
 	// Only the durable half of the lift: the blocker leaves its slot. No event.
 	transit, err := db.GetNodeByName(domain.TransitNodeName)
 	testutil.MustNoErr(t, err, "find the transit node")
-	testutil.MustNoErr(t, db.MoveBinToTransit(*leg.BinID, transit.ID), "lift the blocker")
+	testutil.MustNoErr(t, db.MoveBinToTransit(*testdb.OnlyCart(t, leg), transit.ID), "lift the blocker")
 
 	freed = d.SweepLaneWaiters()
 	after, err = db.GetOrder(leg.ID)
@@ -127,7 +127,7 @@ func TestLaneEvent_LeavesADigLegThatHasNotLiftedAlone(t *testing.T) {
 			o.Status = protocol.StatusPending
 		})
 		leg := planDigFor(t, db, d, bp, lane, slots[1], demand)[0]
-		if leg.VendorOrderID == "" || leg.DeliveryNode != "" || !IsGateStaged(leg) || leg.BinID == nil {
+		if leg.VendorOrderID == "" || leg.DeliveryNode != "" || !IsGateStaged(leg) || testdb.OnlyCart(t, leg) == nil {
 			t.Fatalf("fixture: dig %s's first leg is not a dispatched dig leg awaiting its tail "+
 				"(vendor %q, destination %q, gate-staged %v)", tag, leg.VendorOrderID, leg.DeliveryNode,
 				IsGateStaged(leg))

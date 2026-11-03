@@ -116,7 +116,7 @@ func TestRule1_ReentryReusesOwnBin(t *testing.T) {
 	heldBin := int64(203)
 	order := &orders.Order{
 		ID: 202, Status: protocol.StatusQueued, OrderType: protocol.OrderTypeRetrieve,
-		BinID: &heldBin, SourceNode: "SRC-03", DeliveryNode: "STOR-03", PayloadCode: "PN-R1C",
+		SourceNode: "SRC-03", DeliveryNode: "STOR-03", PayloadCode: "PN-R1C",
 	}
 	order.HoldFromBirth(heldBin)
 	f.queued = append(f.queued, order)
@@ -153,7 +153,7 @@ func TestRule1_ConfirmFailKeepsSoftHold(t *testing.T) {
 	heldBin := int64(204)
 	order := &orders.Order{
 		ID: 203, Status: protocol.StatusQueued, OrderType: protocol.OrderTypeRetrieve,
-		BinID: &heldBin, SourceNode: "SRC-04", DeliveryNode: "STOR-04", PayloadCode: "PN-R1D",
+		SourceNode: "SRC-04", DeliveryNode: "STOR-04", PayloadCode: "PN-R1D",
 	}
 	order.HoldFromBirth(heldBin)
 	f.queued = append(f.queued, order)
@@ -215,7 +215,7 @@ func TestRule1_ConfirmFailWithNoHoldForgetsTheBin(t *testing.T) {
 	heldBin := int64(304)
 	order := &orders.Order{
 		ID: 303, Status: protocol.StatusQueued, OrderType: protocol.OrderTypeRetrieve,
-		BinID: &heldBin, SourceNode: "SRC-05", DeliveryNode: "STOR-05", PayloadCode: "PN-R1E",
+		SourceNode: "SRC-05", DeliveryNode: "STOR-05", PayloadCode: "PN-R1E",
 	}
 	order.HoldFromBirth(heldBin)
 	f.queued = append(f.queued, order)
@@ -294,7 +294,7 @@ func TestRule1_ConfirmFailUnreadableReservationsKeepsTheHold(t *testing.T) {
 	heldBin := int64(404)
 	order := &orders.Order{
 		ID: 403, Status: protocol.StatusQueued, OrderType: protocol.OrderTypeRetrieve,
-		BinID: &heldBin, SourceNode: "SRC-06", DeliveryNode: "STOR-06", PayloadCode: "PN-R1F",
+		SourceNode: "SRC-06", DeliveryNode: "STOR-06", PayloadCode: "PN-R1F",
 	}
 	order.HoldFromBirth(heldBin)
 	f.queued = append(f.queued, order)

@@ -65,7 +65,7 @@ func TestHeldBinDig_NeverParksOnTheOrdersOwnDestination(t *testing.T) {
 		o.Status = protocol.StatusPending // (C1: born pending; was sourcing)
 	})
 	testdb.ReserveBin(t, db, move.ID, sc.TargetBin.ID)
-	testutil.MustNoErr(t, db.UpdateOrderBinID(move.ID, sc.TargetBin.ID), "stamp the held bin")
+	testdb.HoldCart(t, db, move.ID, sc.TargetBin.ID)
 
 	// ── The only free parking is the order's own destination: no dig ──────
 	// Every lane is marked: the move is sent to the lane's mark, and the dig is

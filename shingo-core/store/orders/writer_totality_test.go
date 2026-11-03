@@ -22,6 +22,7 @@ import (
 // Adding a column to the orders DDL therefore forces a decision: write it at
 // creation, or say here who writes it instead.
 var deliberatelyNotWritten = map[string]string{
+	"bin_id":          "the one-cart column v174 drops (an order's carts are its order_bins rows); the base DDL keeps it because v173 reads it on a database that predates the rows",
 	"id":              "serial primary key, assigned by RETURNING id",
 	"vendor_order_id": "fleet identifier, minted at dispatch (dispatcher.go)",
 	"vendor_state":    "vendor lifecycle mirror, written on vendor callbacks",

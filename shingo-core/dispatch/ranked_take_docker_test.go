@@ -32,7 +32,7 @@ func promiseHolder(t *testing.T, db *store.DB, uuid string, priority int, binID 
 		o.Priority = priority
 	})
 	testutil.MustNoErr(t, reservations.Acquire(db.DB, o.ID, o.ID, binID, "test-promise"), "the holder's promise")
-	testutil.MustNoErr(t, db.UpdateOrderBinID(o.ID, binID), "the holder's pointer")
+	testdb.HoldCart(t, db, o.ID, binID)
 	got, err := db.GetOrder(o.ID)
 	testutil.MustNoErr(t, err, "re-read the holder")
 	return got
@@ -50,8 +50,8 @@ func holdsOf(t *testing.T, db *store.DB, orderID int64) holdShapeOf {
 	var h holdShapeOf
 	o, err := db.GetOrder(orderID)
 	testutil.MustNoErr(t, err, "read the order")
-	if o.BinID != nil {
-		h.binID = *o.BinID
+	if testdb.OnlyCart(t, o) != nil {
+		h.binID = *testdb.OnlyCart(t, o)
 	}
 	testutil.MustNoErr(t, db.DB.QueryRow(
 		`SELECT COUNT(*) FROM reservations WHERE order_id=$1 AND resource_kind='bin'`, orderID).Scan(&h.res),
@@ -81,8 +81,8 @@ func digAgainstBlocker(t *testing.T, db *store.DB, prefix string, parentPriority
 		Quantity:      1,
 		ParentOrderID: &parent.ID,
 		Sequence:      1,
-		BinID:         &blocker.ID,
 	}
+	leg.HoldFromBirth(blocker.ID)
 	return parent, []store.CompoundChild{{Order: leg}}
 }
 

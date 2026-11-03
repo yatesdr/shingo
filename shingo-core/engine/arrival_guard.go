@@ -188,15 +188,16 @@ func reapplyRefused(order *orders.Order, bin *bins.Bin, destNodeID int64, site s
 	// bin has genuinely left. Specimen: order 7 (confirmed, dest LSD_023) against
 	// bin 62, already held by live order 67 at LSD_022 (PLAN §R.12).
 	//
-	// Skipping HERE and not at the call sites is deliberate: handleMultiBinCompleted
-	// deletes its junction rows on exactly this terminal firing, and an early return
-	// up there would leak them. Skip the bin's work, not the handler's.
+	// Skipping HERE and not at the call sites is deliberate: the completion net
+	// settles every cart of the order in one pass, and an early return up there
+	// would skip the others. Skip the bin's work, not the handler's.
 	//
 	// orderIsTerminal, not a bare protocol.IsTerminal: the fail-closed arm for an
 	// unset status lives inside the predicate, spelled once, and its reasoning is
 	// written out there. This site used to carry that arm inline while its twin at
-	// the junction-row delete did not — one rule, two spellings, and the fail-open
-	// one guarding the destructive act (D3).
+	// the end's junction-row delete (gone: an order's rows are kept after it ends)
+	// did not — one rule, two spellings, and the fail-open one guarding the
+	// destructive act (D3).
 	if orderIsTerminal(order) {
 		return true, nil
 	}

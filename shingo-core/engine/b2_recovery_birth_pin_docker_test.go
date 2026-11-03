@@ -39,8 +39,10 @@ func TestB2Pin_RecoveryBirth(t *testing.T) {
 	// After the fixture, so only the door's own INSERT is caught.
 	for _, q := range []string{
 		`CREATE TABLE golden_births AS SELECT * FROM orders WITH NO DATA`,
+		`ALTER TABLE golden_births ADD COLUMN born_cart bigint`,
 		`CREATE FUNCTION golden_birth() RETURNS trigger LANGUAGE plpgsql AS $$
-			BEGIN INSERT INTO golden_births SELECT NEW.*; RETURN NEW; END $$`,
+			BEGIN INSERT INTO golden_births SELECT NEW.*, (SELECT ob.bin_id FROM order_bins ob WHERE ob.order_id = NEW.id
+				ORDER BY ob.pick_step NULLS FIRST, ob.id LIMIT 1); RETURN NEW; END $$`,
 		`CREATE TRIGGER golden_birth AFTER INSERT ON orders FOR EACH ROW EXECUTE FUNCTION golden_birth()`,
 	} {
 		_, err := db.DB.Exec(q)
@@ -63,7 +65,7 @@ func TestB2Pin_RecoveryBirth(t *testing.T) {
 	testutil.MustNoErr(t, db.DB.QueryRow(`
 		SELECT order_type, status, COALESCE(station_id,''), COALESCE(source_node,''), COALESCE(delivery_node,''),
 		       COALESCE(payload_code,''), COALESCE(source_intent,''), COALESCE(origin_class,''),
-		       COALESCE(origin_id::text,''), bin_id, quantity, COALESCE(steps_json,''), destination_resolved_at IS NOT NULL
+		       COALESCE(origin_id::text,''), born_cart, quantity, COALESCE(steps_json,''), destination_resolved_at IS NOT NULL
 		FROM golden_births WHERE id = $1`, order.ID).Scan(&b.orderType, &b.status, &b.station, &b.source, &b.delivery,
 		&b.payload, &b.intent, &b.originClass, &b.originID, &b.binID, &b.quantity, &b.steps, &b.resolvedAt), "read the birth")
 

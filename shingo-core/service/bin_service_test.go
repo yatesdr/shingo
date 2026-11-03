@@ -1160,7 +1160,7 @@ func TestBinService_Retire_RefusesWhenBinBoundToLiveOrder(t *testing.T) {
 	order := testdb.CreateOrder(t, db, func(o *domain.Order) {
 		o.Status = "delivered"
 		o.DeliveryNode = "SMN_029"
-		o.BinID = &binID
+		o.HoldFromBirth(binID)
 	})
 
 	err := svc.Retire(bin.ID)
@@ -1198,7 +1198,7 @@ func TestBinService_Move_RefusesWhenBinBoundToLiveOrder(t *testing.T) {
 	binID := bin.ID
 	testdb.CreateOrder(t, db, func(o *domain.Order) {
 		o.Status = "in_transit"
-		o.BinID = &binID
+		o.HoldFromBirth(binID)
 	})
 
 	svc := newBinSvc(db)
@@ -1225,7 +1225,7 @@ func TestBinService_Retire_AllowedWhenOnlyTerminalOrders(t *testing.T) {
 	binID := bin.ID
 	testdb.CreateOrder(t, db, func(o *domain.Order) {
 		o.Status = "confirmed"
-		o.BinID = &binID
+		o.HoldFromBirth(binID)
 	})
 
 	testutil.MustNoErr(t, svc.Retire(bin.ID), "Retire with only terminal referencing orders")

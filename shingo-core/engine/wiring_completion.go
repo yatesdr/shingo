@@ -96,8 +96,8 @@ func (e *Engine) handleOrderDelivered(order *orders.Order) {
 	// epoch onto the envelope so Edge seeds its runtime cache and stamps
 	// outgoing BinUOPDeltas from these — no separate HTTP pull. Read AFTER
 	// applyBinArrivalForOrder above so the bin row reflects the arrival.
-	// Reads whichever bin was selected above: order.BinID for single-bin, or
-	// the consuming-node bin for multi-tote (F1b). binID nil (unmatched
+	// Reads whichever bin was selected above: the order's one cart, or the cart
+	// it sets down at the consuming node for multi-tote (F1b). binID nil (unmatched
 	// multi-bin) leaves the snapshot empty and Edge falls back to its default.
 	var uopRemaining *int
 	var deltaEpoch int64

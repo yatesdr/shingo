@@ -267,7 +267,7 @@ func dispatchSimpleViaScanner(t *testing.T, d *Dispatcher, db *store.DB, orderUU
 	if !protocol.IsAcquiring(o.Status) && o.Status != protocol.StatusPending {
 		return o // already dispatched / terminal / handled — nothing to replay
 	}
-	if o.BinID != nil {
+	if testdb.OnlyCart(t, o) != nil {
 		return o // already holds its bin (a prior replay) — the scanner would dispatchHeldBin
 	}
 	// Mirror the scanner's full occupancy gate: a capacity-blocked order stays
@@ -298,9 +298,7 @@ func dispatchSimpleViaScanner(t *testing.T, d *Dispatcher, db *store.DB, orderUU
 	if err := d.binManifest.ClaimForDispatch(bin.ID, o.ID, o.RemainingUOP); err != nil {
 		t.Fatalf("scanner-mirror claim %s: %v", orderUUID, err)
 	}
-	if err := db.UpdateOrderBinID(o.ID, bin.ID); err != nil {
-		t.Fatalf("scanner-mirror update bin_id %s: %v", orderUUID, err)
-	}
+	testdb.HoldCart(t, db, o.ID, bin.ID)
 	if err := db.UpdateOrderSourceNode(o.ID, sourceNode.Name); err != nil {
 		t.Fatalf("scanner-mirror update source_node %s: %v", orderUUID, err)
 	}

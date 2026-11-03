@@ -106,8 +106,8 @@ func TestDeadlockGate_PlainRetrieveToOccupiedLine_Gated(t *testing.T) {
 	if !result.Queued {
 		t.Fatal("a plain retrieve to an OCCUPIED line MUST be gated (queued), never dispatched")
 	}
-	if order.BinID != nil {
-		t.Errorf("a gated retrieve must not claim a source bin, got bin %d", *order.BinID)
+	if testdb.OnlyCart(t, order) != nil {
+		t.Errorf("a gated retrieve must not claim a source bin, got bin %d", *testdb.OnlyCart(t, order))
 	}
 	if reloaded, err := db.GetOrder(order.ID); err == nil && reloaded.QueueReason == "" {
 		t.Error("gated retrieve must carry a queue_reason")

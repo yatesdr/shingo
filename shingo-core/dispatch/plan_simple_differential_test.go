@@ -91,8 +91,8 @@ func TestStage2_RetrieveEmptyPlanDifferential_Dispatch(t *testing.T) {
 	// The scanner (mirrored) claims the empty and dispatches. Assert the claim-moved
 	// dispatch claims the right bin and is fleet-equivalent to the shadow plan.
 	dispatched := dispatchSimpleViaScanner(t, d, db, order.EdgeUUID)
-	if dispatched.BinID == nil || *dispatched.BinID != empty.ID {
-		t.Fatalf("scanner claimed bin = %v, want empty %d", dispatched.BinID, empty.ID)
+	if testdb.OnlyCart(t, dispatched) == nil || *testdb.OnlyCart(t, dispatched) != empty.ID {
+		t.Fatalf("scanner claimed bin = %v, want empty %d", testdb.OnlyCart(t, dispatched), empty.ID)
 	}
 	reqs := backend.CreateRequests()
 	if len(reqs) != 1 {
@@ -146,8 +146,8 @@ func TestStage2_MovePlanDifferential_Dispatch(t *testing.T) {
 	}
 	// The scanner (mirrored) claims + dispatches; assert fleet-equivalent to the plan.
 	dispatched := dispatchSimpleViaScanner(t, d, db, order.EdgeUUID)
-	if dispatched.BinID == nil || *dispatched.BinID != mvBin.ID {
-		t.Fatalf("scanner claimed bin = %v, want move bin %d", dispatched.BinID, mvBin.ID)
+	if testdb.OnlyCart(t, dispatched) == nil || *testdb.OnlyCart(t, dispatched) != mvBin.ID {
+		t.Fatalf("scanner claimed bin = %v, want move bin %d", testdb.OnlyCart(t, dispatched), mvBin.ID)
 	}
 	reqs := backend.CreateRequests()
 	if len(reqs) != 1 {

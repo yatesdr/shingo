@@ -474,8 +474,8 @@ const (
 	// complex path, which is why it is one constant rather than two.
 	CauseClaimFailed QueueCause = "claim-failed"
 	// CauseHeldBinMissing — the order reached the held-bin dispatch path with no
-	// bin_id. The routing into that path is `order.BinID != nil`, so this is a
-	// CONSTRUCTION BUG rather than a wait, and it is a cause only so the row is
+	// one held cart. The routing into that path is the order holding a cart (its
+	// row, Order.OnlyBin), so this is a CONSTRUCTION BUG rather than a wait, and it is a cause only so the row is
 	// not blank while it repeats: the scanner re-enters every tick and would
 	// otherwise leave an order sitting queued forever with nothing on it. Its
 	// releaser is a person.

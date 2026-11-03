@@ -66,15 +66,15 @@ func TestC2bPin_ADigLegIsBornHoldingNothing(t *testing.T) {
 	// AND THE SENT LEG HOLDS WHAT IT CARRIES: its hand took the bin claim and the
 	// confirmed row at its handover.
 	for _, leg := range legs {
-		if leg.VendorOrderID == "" || leg.BinID == nil {
+		if leg.VendorOrderID == "" || testdb.OnlyCart(t, leg) == nil {
 			continue
 		}
 		var claimed int
 		testutil.MustNoErr(t, db.DB.QueryRow(`SELECT COUNT(*) FROM bins WHERE id = $1 AND claimed_by = $2`,
-			*leg.BinID, leg.ID).Scan(&claimed), "read the sent leg's claim")
+			*testdb.OnlyCart(t, leg), leg.ID).Scan(&claimed), "read the sent leg's claim")
 		if claimed != 1 {
 			t.Errorf("sent leg %d does not hold bin %d — its hand should have claimed it at the handover",
-				leg.ID, *leg.BinID)
+				leg.ID, *testdb.OnlyCart(t, leg))
 		}
 	}
 	testdb.AssertNoHoldsAtRest(t, db, "a dig with a leg waiting its turn")

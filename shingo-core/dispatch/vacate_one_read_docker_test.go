@@ -49,9 +49,9 @@ func TestVacate_ALiftIsOneReadAndNoRowWhenNothingWaits(t *testing.T) {
 	steps, err := json.Marshal([]resolvedStep{{Action: protocol.ActionPickup, Node: src.Name},
 		{Action: protocol.ActionDropoff, Node: home.Name, Vacate: &plan.Vacate{Node: home.Name, Bin: e.ID, StampedAt: &stamped}}})
 	testutil.MustNoErr(t, err, "steps")
-	child := &orders.Order{EdgeUUID: "vor-p", StationID: "edge.vor", OrderType: OrderTypeMove, Status: StatusPending,
-		Quantity: 1, ParentOrderID: &parent.ID, Sequence: 2, BinID: &p.ID, SourceNode: src.Name,
-		DeliveryNode: home.Name, StepsJSON: string(steps), SourceIntent: SourceIntentForType(OrderTypeMove)}
+	child := testdb.Holding(&orders.Order{EdgeUUID: "vor-p", StationID: "edge.vor", OrderType: OrderTypeMove, Status: StatusPending,
+		Quantity: 1, ParentOrderID: &parent.ID, Sequence: 2, SourceNode: src.Name,
+		DeliveryNode: home.Name, StepsJSON: string(steps), SourceIntent: SourceIntentForType(OrderTypeMove)}, p.ID)
 	_, err = testdb.CreateCompoundChildren(t, db, []store.CompoundChild{{Order: child}}, nil)
 	testutil.MustNoErr(t, err, "the partial's move")
 
@@ -108,9 +108,9 @@ func TestVacate_TheLiftAsksItsOwnTradeLegInTheSameRead(t *testing.T) {
 		{Action: protocol.ActionWait, WaitKind: WaitKindVacate},
 		{Action: protocol.ActionDropoff, Node: home.Name, Vacate: &plan.Vacate{Node: home.Name, Bin: e.ID, StampedAt: &stamped}}})
 	testutil.MustNoErr(t, err, "steps")
-	leg := &orders.Order{EdgeUUID: "vtl-l1", StationID: "edge.vtl", OrderType: OrderTypeMove, Status: StatusDispatched,
-		Quantity: 1, ParentOrderID: &parent.ID, Sequence: 2, BinID: &p.ID, SourceNode: spot.Name,
-		DeliveryNode: home.Name, StepsJSON: string(steps)}
+	leg := testdb.Holding(&orders.Order{EdgeUUID: "vtl-l1", StationID: "edge.vtl", OrderType: OrderTypeMove, Status: StatusDispatched,
+		Quantity: 1, ParentOrderID: &parent.ID, Sequence: 2, SourceNode: spot.Name,
+		DeliveryNode: home.Name, StepsJSON: string(steps)}, p.ID)
 	testutil.MustNoErr(t, db.CreateOrder(leg), "the trade leg")
 	testutil.MustNoErr(t, db.UpdateOrderVendor(leg.ID, "V-vtl-l1", "CREATED", ""), "with the fleet")
 	vhLift(t, db, e.ID)

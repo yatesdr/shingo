@@ -57,8 +57,8 @@ func TestReapplyOrderCompletion_Success(t *testing.T) {
 		Status:       "in_transit", // claimed live, then confirmed below: an ended order takes no new hold
 		SourceNode:   storageNode.Name,
 		DeliveryNode: lineNode.Name,
-		BinID:        &bin.ID,
 	}
+	order.HoldFromBirth(bin.ID)
 	testutil.MustNoErr(t, db.CreateOrder(order), "create order")
 	testdb.ClaimBinForTest(t, db, bin.ID, order.ID)
 	testdb.SeedOrderStatus(t, db, order.ID, "confirmed", "seed")
@@ -152,8 +152,8 @@ func TestReapplyOrderCompletion_SkipsCMSBuildForReplay(t *testing.T) {
 		Status:       "in_transit", // claimed live, then confirmed below: an ended order takes no new hold
 		SourceNode:   srcRoot.Name + "." + srcSlot.Name,
 		DeliveryNode: dstRoot.Name + "." + dstSlot.Name,
-		BinID:        &bin.ID,
 	}
+	order.HoldFromBirth(bin.ID)
 	testutil.MustNoErr(t, db.CreateOrder(order), "create order")
 	testdb.ClaimBinForTest(t, db, bin.ID, order.ID)
 	testdb.SeedOrderStatus(t, db, order.ID, "confirmed", "seed")
@@ -189,9 +189,9 @@ func TestReapplyOrderCompletion_RejectsAlreadyCompleted(t *testing.T) {
 		Status:       "confirmed",
 		SourceNode:   storageNode.Name,
 		DeliveryNode: lineNode.Name,
-		BinID:        &bin.ID,
 		CompletedAt:  &now,
 	}
+	order.HoldFromBirth(bin.ID)
 	testutil.MustNoErr(t, db.CreateOrder(order), "create order")
 	// Force completed_at via direct update (CreateOrder drops it).
 	if _, err := db.Exec(`UPDATE orders SET completed_at = NOW() WHERE id = $1`, order.ID); err != nil {
@@ -262,8 +262,8 @@ func TestReleaseTerminalBinClaim_Success(t *testing.T) {
 		StationID: "line-1",
 		OrderType: "retrieve",
 		Status:    "in_transit", // claimed live, then cancelled below: an ended order takes no new hold
-		BinID:     &bin.ID,
 	}
+	order.HoldFromBirth(bin.ID)
 	testutil.MustNoErr(t, db.CreateOrder(order), "create order")
 	testdb.ClaimBinForTest(t, db, bin.ID, order.ID)
 	testdb.SeedOrderStatus(t, db, order.ID, "cancelled", "seed")
@@ -299,8 +299,8 @@ func TestReleaseTerminalBinClaim_RefusesActiveClaim(t *testing.T) {
 		StationID: "line-1",
 		OrderType: "retrieve",
 		Status:    "dispatched", // non-terminal
-		BinID:     &bin.ID,
 	}
+	order.HoldFromBirth(bin.ID)
 	testutil.MustNoErr(t, db.CreateOrder(order), "create order")
 	testdb.ClaimBinForTest(t, db, bin.ID, order.ID)
 

@@ -77,8 +77,8 @@ func TestFindShuffleSlots_WillNotWallInABinAnOrderHasResolvedOnto(t *testing.T) 
 		o.OrderType = OrderTypeRetrieve
 		o.PayloadCode = bp.Code
 		o.Status = protocol.StatusQueued
-		o.BinID = &parked.ID
 		o.SourceNode = parkSlots[len(parkSlots)-1].Name
+		o.HoldFromBirth(parked.ID)
 	})
 
 	// The pool the dig would be offered, asked exactly as planUnbury asks it.

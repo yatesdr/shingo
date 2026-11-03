@@ -54,8 +54,8 @@ func TestNamedBinMove_ARobotsBinIsRefusedNamingTheHolder(t *testing.T) {
 		},
 	})
 	leg := testdb.RequireOrder(t, db, "nb-leg")
-	if leg.BinID == nil || *leg.BinID != spare.ID {
-		t.Fatalf("fixture: the leg claimed %v, want the spare %d", leg.BinID, spare.ID)
+	if testdb.OnlyCart(t, leg) == nil || *testdb.OnlyCart(t, leg) != spare.ID {
+		t.Fatalf("fixture: the leg claimed %v, want the spare %d", testdb.OnlyCart(t, leg), spare.ID)
 	}
 	sim.DriveState(leg.VendorOrderID, "RUNNING")
 
@@ -158,8 +158,8 @@ func TestNamedBinMove_TwoBinsOnTheSourceLiftsItsOwn(t *testing.T) {
 		SourceNode: spot.Name, DeliveryNode: back.Name, BinID: named.ID,
 	})
 	ret := testdb.RequireOrder(t, db, "nb2b-return")
-	if ret.BinID == nil || *ret.BinID != named.ID || ret.VendorOrderID == "" || ret.Status == protocol.StatusSkipped {
-		t.Fatalf("the return = %q bin %v vendor %q, want dispatched with its named bin %d", ret.Status, ret.BinID, ret.VendorOrderID, named.ID)
+	if testdb.OnlyCart(t, ret) == nil || *testdb.OnlyCart(t, ret) != named.ID || ret.VendorOrderID == "" || ret.Status == protocol.StatusSkipped {
+		t.Fatalf("the return = %q bin %v vendor %q, want dispatched with its named bin %d", ret.Status, testdb.OnlyCart(t, ret), ret.VendorOrderID, named.ID)
 	}
 	if got, err := db.GetBin(other.ID); err != nil || got.ClaimedBy != nil {
 		t.Errorf("the other bin on the spot is claimed by %v (%v), want left alone", got.ClaimedBy, err)
@@ -185,9 +185,9 @@ func TestNamedBinMove_LiftsItsBinWhenItStands(t *testing.T) {
 	})
 
 	ret := testdb.RequireOrder(t, db, "nb2-return")
-	if ret.BinID == nil || *ret.BinID != spare.ID || ret.VendorOrderID == "" {
+	if testdb.OnlyCart(t, ret) == nil || *testdb.OnlyCart(t, ret) != spare.ID || ret.VendorOrderID == "" {
 		t.Fatalf("the return = status %q bin %v vendor %q, want dispatched with the spare %d",
-			ret.Status, ret.BinID, ret.VendorOrderID, spare.ID)
+			ret.Status, testdb.OnlyCart(t, ret), ret.VendorOrderID, spare.ID)
 	}
 }
 

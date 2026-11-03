@@ -79,7 +79,7 @@ func TestDissolve_NeverCancelsALiftedLeg(t *testing.T) {
 		t.Fatalf("the lifted leg %d is %q (%s) — a robot is holding its bin; cancelling the only order "+
 			"that owns it leaves the bin on the robot with nowhere to go", lifted.ID, lifted.Status, lifted.ErrorDetail)
 	}
-	blk, err := db.GetBin(*legs[0].BinID)
+	blk, err := db.GetBin(*testdb.OnlyCart(t, legs[0]))
 	testutil.MustNoErr(t, err, "reload the lifted bin")
 	if blk.ClaimedBy == nil || *blk.ClaimedBy != lifted.ID {
 		t.Errorf("the lifted bin is claimed by %v, want leg %d", blk.ClaimedBy, lifted.ID)
@@ -94,10 +94,10 @@ func TestDissolve_NeverCancelsALiftedLeg(t *testing.T) {
 	// SOAKSTAT'S MID-LIFT RULE, over the fixture: no child cancelled under the
 	// dissolve marker is carrying a lifted bin.
 	for _, c := range legsOf(t, db, parent.ID) {
-		if c.Status != protocol.StatusCancelled || c.ErrorDetail != reshuffleDissolveDetail || c.BinID == nil {
+		if c.Status != protocol.StatusCancelled || c.ErrorDetail != reshuffleDissolveDetail || testdb.OnlyCart(t, c) == nil {
 			continue
 		}
-		b, err := db.GetBin(*c.BinID)
+		b, err := db.GetBin(*testdb.OnlyCart(t, c))
 		testutil.MustNoErr(t, err, "reload a cancelled leg's bin")
 		if b.NodeID != nil && *b.NodeID == transit.ID {
 			t.Errorf("mid-lift dissolve: leg %d was cancelled with its bin %d at _TRANSIT", c.ID, b.ID)

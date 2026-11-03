@@ -176,7 +176,7 @@ func TestStoreBurst_FiveAtOneDugLane_DivertToDistinctSlots(t *testing.T) {
 		// And the BIN hold is untouched — the scope guard. A destination
 		// re-selection that dropped it would send the order back to a finder that
 		// excludes pending-reserved bins owner-blind.
-		if after.BinID == nil || !holdsBin(t, db, after.ID, *after.BinID) {
+		if testdb.OnlyCart(t, after) == nil || !holdsBin(t, db, after.ID, *testdb.OnlyCart(t, after)) {
 			t.Errorf("store %d lost the hold on the material it was already carrying", i)
 		}
 	}
@@ -325,7 +325,7 @@ func TestStoreBurst_DivertedOntoAMarkedLane_StagesInsteadOfParking(t *testing.T)
 	testutil.MustNoErr(t, err, "reload the order inside the lane")
 	placed, err := db.GetNodeByDotName(placer.DeliveryNode)
 	testutil.MustNoErr(t, err, "resolve where it placed")
-	testutil.MustNoErr(t, db.MoveBinClearingStaging(*placer.BinID, placed.ID, false), "place the bin")
+	testutil.MustNoErr(t, db.MoveBinClearingStaging(*testdb.OnlyCart(t, placer), placed.ID, false), "place the bin")
 	d.ReleaseInboundLaneForOrder(inside, placer.DeliveryNode)
 	d.ReleaseLaneOccupancy(inside)
 	d.EvaluateLaneReleases(laneMark.ID)

@@ -69,7 +69,6 @@ func TestScanner_RequeuePaths_SetQueueCode(t *testing.T) {
 		f := newFakeStore()
 		order := seedQueuedRetrieve(f, 11, "LINE-B")
 		binID := int64(30)
-		order.BinID = &binID
 		order.HoldFromBirth(binID)
 		order.SourceNode = "SRC-B"
 		f.nodesByDot["LINE-B"] = &nodes.Node{ID: 101, Name: "LINE-B"}

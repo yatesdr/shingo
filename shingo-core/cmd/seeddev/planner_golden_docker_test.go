@@ -361,7 +361,7 @@ func (g *goldenPlant) orders() []orderAnswer {
 	g.t.Helper()
 	rows, err := g.db.DB.Query(`
 		SELECT id, parent_order_id, order_type, status, COALESCE(payload_code,''), COALESCE(source_node,''),
-		       COALESCE(delivery_node,''), bin_id, COALESCE(queue_code,''), COALESCE(queue_cause,''),
+		       COALESCE(delivery_node,''), (SELECT ob.bin_id FROM order_bins ob WHERE ob.order_id = orders.id ORDER BY ob.pick_step NULLS FIRST, ob.id LIMIT 1), COALESCE(queue_code,''), COALESCE(queue_cause,''),
 		       COALESCE(steps_json,''), COALESCE(vendor_order_id,'')
 		FROM orders WHERE edge_uuid NOT LIKE 'golden-holder-%' ORDER BY id`)
 	testutil.MustNoErr(g.t, err, "list orders")

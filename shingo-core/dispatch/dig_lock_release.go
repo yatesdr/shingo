@@ -534,7 +534,8 @@ func (d *Dispatcher) handOffDugLane(parent *orders.Order, laneID int64) bool {
 	// only (v4 §2.6): converting the dig row into its outbound row was a hold at
 	// rest (orders.DigLocksAtRestSQL). What protects the uncovered bin is the
 	// demand's soft hold on it — the pending bin row its dig took at birth
-	// (digLaneTake.aim), or its aim (bin_id + source_node) for a plain order —
+	// (digLaneTake.aim), or its aim (its row lifting the bin at the bin's slot)
+	// for a plain order —
 	// which both burial guards read through helpers.ComingForBinSQL: the store
 	// selector (nodes.FindStoreSlotInLaneExcluding, so the group resolver, the
 	// gate's re-bind and a cancel's return through plan.GroupStoreSlot) and the

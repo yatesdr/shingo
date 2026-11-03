@@ -67,7 +67,7 @@ func armedOrderAwaitingFleet(t *testing.T, db *store.DB, d *Dispatcher, uuid str
 	// The soft hold the scanner takes, then the pointer, then the confirm — the
 	// same order the plain path runs them in.
 	testutil.MustNoErr(t, d.binManifest.ReserveForDispatch(bin.ID, order.ID), "soft-reserve the bin")
-	testutil.MustNoErr(t, db.UpdateOrderBinID(order.ID, bin.ID), "stamp the bin")
+	testdb.HoldCart(t, db, order.ID, bin.ID)
 	orderRaw, err := db.GetOrder(order.ID)
 	order = testutil.Must(t, orderRaw, err, "db.GetOrder(order.ID)")
 	// The hand's bin leg — a line destination has no slot to confirm.
@@ -129,9 +129,9 @@ func TestFleetRefusal_TheOrderKeepsItsPaperAndRetries(t *testing.T) {
 	if got.QueueCause != string(CauseFleetRefusedCreate) {
 		t.Errorf("queue_cause = %q, want %q", got.QueueCause, CauseFleetRefusedCreate)
 	}
-	if got.BinID == nil || *got.BinID != binID {
+	if testdb.OnlyCart(t, got) == nil || *testdb.OnlyCart(t, got) != binID {
 		t.Errorf("orders.bin_id = %v, want %d kept — the bin is still spoken for; §8 keeps the pointer",
-			got.BinID, binID)
+			testdb.OnlyCart(t, got), binID)
 	}
 
 	after := shapeOf(t, db, order.ID)

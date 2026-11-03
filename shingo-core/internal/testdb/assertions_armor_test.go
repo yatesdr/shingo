@@ -69,7 +69,7 @@ func TestArmorAssertion_CatchesAnUnarmoredDispatch(t *testing.T) {
 	db := testdb.Open(t)
 
 	o, binID := armorFixture(t, db, "unarmored", protocol.StatusDispatched)
-	testutil.MustNoErr(t, db.UpdateOrderBinID(o.ID, binID), "point at the bin")
+	testdb.HoldCart(t, db, o.ID, binID)
 	_, err := db.DB.Exec(`UPDATE orders SET vendor_order_id='RDS-1' WHERE id=$1`, o.ID)
 	testutil.MustNoErr(t, err, "the fleet said yes")
 
@@ -105,7 +105,7 @@ func TestArmorAssertion_ACompoundSiblingsClaimIsArmor(t *testing.T) {
 		o.EdgeUUID = "armor-sibling-b"
 		o.ParentOrderID = &parent.ID
 	})
-	testutil.MustNoErr(t, db.UpdateOrderBinID(legA.ID, binID), "leg A points at the bin")
+	testdb.HoldCart(t, db, legA.ID, binID)
 	// The later step's claim stands — that is the documented behaviour.
 	testdb.ClaimBinForTest(t, db, binID, legB.ID)
 

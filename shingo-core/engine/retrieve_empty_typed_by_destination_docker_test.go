@@ -54,12 +54,12 @@ func TestPlainRetrieveEmpty_TypedByItsDestinationsOneAdmittedType(t *testing.T) 
 		DeliveryNode: dest.Name, Quantity: 1,
 	})
 	o := testdb.RequireOrder(t, db, "rte-retrieve")
-	if o.BinID == nil {
+	if testdb.OnlyCart(t, o) == nil {
 		t.Fatalf("the retrieve sourced nothing (status %s, cause %q)", o.Status, o.QueueCause)
 	}
-	if *o.BinID != right.ID {
+	if *testdb.OnlyCart(t, o) != right.ID {
 		t.Errorf("the retrieve took bin %d, want %d (%s): %s admits only %s, and a plain "+
 			"retrieve's type is read from where the carrier is set down",
-			*o.BinID, right.ID, tote.Code, dest.Name, tote.Code)
+			*testdb.OnlyCart(t, o), right.ID, tote.Code, dest.Name, tote.Code)
 	}
 }

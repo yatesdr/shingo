@@ -41,12 +41,12 @@ func seedCarried(t *testing.T, db *store.DB, robotID, place string) *bins.Bin {
 	ord := &orders.Order{
 		EdgeUUID: "carried-" + robotID, StationID: "edge.test", OrderType: "retrieve",
 		Status: protocol.StatusCancelled, Quantity: 1, DeliveryNode: press, ProcessNode: press,
-		RobotID: robotID, BinID: &bin.ID,
+		RobotID: robotID,
 	}
+	ord.HoldFromBirth(bin.ID)
 	testutil.MustNoErr(t, db.CreateOrder(ord), "create prior order")
-	_, err := db.DB.Exec(`UPDATE orders SET robot_id=$1, bin_id=$2, status='cancelled' WHERE id=$3`,
-		robotID, bin.ID, ord.ID)
-	testutil.MustNoErr(t, err, "set robot, bin and terminal status")
+	_, err := db.DB.Exec(`UPDATE orders SET robot_id=$1, status='cancelled' WHERE id=$2`, robotID, ord.ID)
+	testutil.MustNoErr(t, err, "set robot and terminal status")
 	if place != "" {
 		seedRoleClaim(t, db, "PROC-"+robotID, press, protocol.ClaimRoleProduce, "", place, "")
 	}
@@ -340,7 +340,8 @@ func assertNoRecoveryOrder(t *testing.T, db *store.DB, binID int64) {
 	t.Helper()
 	var n int
 	testutil.MustNoErr(t, db.DB.QueryRow(
-		`SELECT count(*) FROM orders WHERE bin_id=$1 AND source_intent='on_deck'`, binID).Scan(&n),
+		`SELECT count(*) FROM orders o WHERE o.source_intent='on_deck'
+		   AND EXISTS (SELECT 1 FROM order_bins ob WHERE ob.order_id = o.id AND ob.bin_id = $1)`, binID).Scan(&n),
 		"count recovery orders")
 	if n != 0 {
 		t.Errorf("%d recovery order(s) created for bin %d — a refusal must leave nothing behind", n, binID)

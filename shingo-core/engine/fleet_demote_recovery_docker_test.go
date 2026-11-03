@@ -65,21 +65,21 @@ func TestFleetRecovery_TwoDemotedOrdersToOneLineOnlyOneGoes(t *testing.T) {
 	submit("fdr-a")
 	a := testdb.RequireOrder(t, db, "fdr-a")
 	if a.VendorOrderID != "" || a.Status != protocol.StatusQueued ||
-		a.QueueCause != string(dispatch.CauseFleetRefusedCreate) || a.BinID == nil {
+		a.QueueCause != string(dispatch.CauseFleetRefusedCreate) || testdb.OnlyCart(t, a) == nil {
 		t.Fatalf("fixture: order A is %q, cause %q, bin %v, vendor %q — want it demoted by the fleet "+
 			"refusal: queued, %s, holding its bin pointer, with no vendor order",
-			a.Status, a.QueueCause, a.BinID, a.VendorOrderID, dispatch.CauseFleetRefusedCreate)
+			a.Status, a.QueueCause, testdb.OnlyCart(t, a), a.VendorOrderID, dispatch.CauseFleetRefusedCreate)
 	}
 	assertHoldsNoClaim(t, eng, a, "order A after the fleet refused it")
 
 	// ── B arrives while A is demoted, and is admitted ──────────────────────
 	submit("fdr-b")
 	b := testdb.RequireOrder(t, db, "fdr-b")
-	if b.QueueCause != string(dispatch.CauseFleetRefusedCreate) || b.BinID == nil {
+	if b.QueueCause != string(dispatch.CauseFleetRefusedCreate) || testdb.OnlyCart(t, b) == nil {
 		t.Fatalf("order B is %q under cause %q with bin %v while order A is demoted — want B admitted "+
 			"through the dropoff gate and refused by the fleet (%s). A demoted order holds no claimed bin, "+
 			"so it counts for nothing at the gate; a status-based count would park B behind it",
-			b.Status, b.QueueCause, b.BinID, dispatch.CauseFleetRefusedCreate)
+			b.Status, b.QueueCause, testdb.OnlyCart(t, b), dispatch.CauseFleetRefusedCreate)
 	}
 
 	// ── The fleet recovers ─────────────────────────────────────────────────
@@ -127,7 +127,7 @@ func TestFleetRecovery_TwoDemotedOrdersToOneLineOnlyOneGoes(t *testing.T) {
 	assertHoldsNoClaim(t, eng, loser, "the order parked behind the winner")
 
 	// ── And the releaser fires: the winner's bin lands and then leaves ─────
-	winnerBin := *winner.BinID
+	winnerBin := *testdb.OnlyCart(t, winner)
 	testutil.MustNoErr(t, db.MoveBinClearingStaging(winnerBin, sd.LineNode.ID, false), "the winner's bin lands")
 	_, err := db.TerminalizeOrder(winner.ID, protocol.StatusConfirmed, "delivered")
 	testutil.MustNoErr(t, err, "the winner completes")

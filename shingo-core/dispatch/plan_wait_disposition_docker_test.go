@@ -63,8 +63,8 @@ func TestSimpleRetrieve_UnsourceableWaits_NeverSkipped(t *testing.T) {
 	if o.Status != StatusDispatched {
 		t.Fatalf("after source appeared, status = %q, want dispatched", o.Status)
 	}
-	if o.BinID == nil || *o.BinID != src.ID {
-		t.Fatalf("claimed bin = %v, want %d", o.BinID, src.ID)
+	if testdb.OnlyCart(t, o) == nil || *testdb.OnlyCart(t, o) != src.ID {
+		t.Fatalf("claimed bin = %v, want %d", testdb.OnlyCart(t, o), src.ID)
 	}
 }
 
@@ -121,7 +121,7 @@ func TestSimpleMove_OccupiedDest_Waits(t *testing.T) {
 	if o.Status != StatusDispatched {
 		t.Fatalf("after dest cleared, status = %q, want dispatched", o.Status)
 	}
-	if o.BinID == nil || *o.BinID != mvBin.ID {
-		t.Fatalf("claimed bin = %v, want move bin %d", o.BinID, mvBin.ID)
+	if testdb.OnlyCart(t, o) == nil || *testdb.OnlyCart(t, o) != mvBin.ID {
+		t.Fatalf("claimed bin = %v, want move bin %d", testdb.OnlyCart(t, o), mvBin.ID)
 	}
 }

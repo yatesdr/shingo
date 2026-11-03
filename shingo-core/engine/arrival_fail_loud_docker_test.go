@@ -80,8 +80,8 @@ func TestDeliveredWithForeignCargo_FailsLoud(t *testing.T) {
 	carrier := testdb.CreateOrder(t, db, func(o *orders.Order) {
 		o.SourceNode = src.Name
 		o.DeliveryNode = dst.Name
-		o.BinID = &bin.ID
 		o.Status = "delivered"
+		o.HoldFromBirth(bin.ID)
 	})
 	if _, err := db.Exec(`UPDATE orders SET status='delivered' WHERE id=$1`, carrier.ID); err != nil {
 		t.Fatalf("set delivered: %v", err)

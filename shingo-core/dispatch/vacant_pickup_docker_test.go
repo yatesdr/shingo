@@ -281,8 +281,8 @@ func TestVacantPickup_ANamedMoveOffTheOutsideHoldsThePair(t *testing.T) {
 		OrderType: protocol.OrderTypeMove, Quantity: 1, SourceNode: c.deck.Name, DeliveryNode: c.out.Name,
 		BinID: outside.ID})
 	move := prReloadUUID(t, c.db, "send-back-move")
-	if move.BinID == nil || *move.BinID != outside.ID {
-		t.Fatalf("fixture: SEND BACK's move holds %v, want its cart %d from its issue", move.BinID, outside.ID)
+	if testdb.OnlyCart(t, move) == nil || *testdb.OnlyCart(t, move) != outside.ID {
+		t.Fatalf("fixture: SEND BACK's move holds %v, want its cart %d from its issue", testdb.OnlyCart(t, move), outside.ID)
 	}
 
 	r1, r2 := c.submitPair("VP4", false, "VP4-r2", "VP4-r1")

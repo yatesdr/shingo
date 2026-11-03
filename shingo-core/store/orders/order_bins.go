@@ -6,9 +6,9 @@ import (
 	"time"
 
 	"shingo/protocol"
-	"shingo/protocol/clock"
 
 	"shingocore/domain"
+	"shingocore/store/internal/helpers"
 	"shingocore/store/reservations"
 )
 
@@ -33,21 +33,17 @@ type BinArrivalInstruction struct {
 }
 
 // OrderBinRow is one lift an allocation records: the cart, the plan step that
-// lifts it and the plan step that sets it down. NodeName and DestNode are the
-// junction's node copies (the pick's node, the cart's final drop), written
-// until v174 drops them.
+// lifts it and the plan step that sets it down (OpenLift for none yet).
 type OrderBinRow struct {
 	BinID    int64
 	PickStep int
 	DropStep int
-	NodeName string
-	DestNode string
 }
 
 // ReplaceOrderBins makes an order's carts say exactly what THIS allocation
-// claimed, and points orders.bin_id at primary (the column v174 drops), in ONE
-// statement: the owner test, the pointer, the rows this allocation no longer
-// lifts deleted, every lift written (one per row, upserted on its pick step).
+// claimed, in ONE statement: the owner test, the rows this allocation no
+// longer lifts deleted, every lift written (one per row, upserted on its pick
+// step).
 //
 // ── THE SET IS REPLACED, NEVER MERGED ─────────────────────────────────────
 //
@@ -67,24 +63,21 @@ type OrderBinRow struct {
 //
 // An error is returned, never logged and dropped: an allocation whose carts
 // were not recorded does not go on to the fleet.
-func ReplaceOrderBins(db *sql.DB, orderID int64, primary int64, rows []OrderBinRow) error {
-	bins, picks, drops, nodes, dests := cartArrays(rows)
+func ReplaceOrderBins(db helpers.QueryRower, orderID int64, rows []OrderBinRow) error {
+	bins, picks, drops := cartArrays(rows)
 	var live bool
 	if err := db.QueryRow(`WITH live AS (SELECT `+reservations.OwnerLiveSQL(1)+` AS ok),
-		ptr AS (UPDATE orders SET bin_id = $2, updated_at = $8
-		         WHERE id = $1 AND (SELECT ok FROM live) AND bin_id IS DISTINCT FROM $2 RETURNING 1),
 		del AS (DELETE FROM order_bins WHERE order_id = $1 AND (SELECT ok FROM live)
-		         AND (pick_step IS NULL OR pick_step <> ALL($4::bigint[])) RETURNING 1),
-		ins AS (INSERT INTO order_bins (order_id, bin_id, pick_step, drop_step, action, node_name, dest_node)
-		         SELECT $1, r.bin, r.pick, NULLIF(r.drop, -1), 'pickup', r.node, r.dest
-		           FROM unnest($3::bigint[], $4::bigint[], $5::bigint[], $6::text[], $7::text[]) AS r(bin, pick, drop, node, dest)
+		         AND (pick_step IS NULL OR pick_step <> ALL($3::bigint[])) RETURNING 1),
+		ins AS (INSERT INTO order_bins (order_id, bin_id, pick_step, drop_step)
+		         SELECT $1, r.bin, r.pick, NULLIF(r.drop, -1)
+		           FROM unnest($2::bigint[], $3::bigint[], $4::bigint[]) AS r(bin, pick, drop)
 		          WHERE (SELECT ok FROM live)
 		         ON CONFLICT (order_id, pick_step) DO UPDATE
-		            SET bin_id = EXCLUDED.bin_id, drop_step = EXCLUDED.drop_step,
-		                node_name = EXCLUDED.node_name, dest_node = EXCLUDED.dest_node
+		            SET bin_id = EXCLUDED.bin_id, drop_step = EXCLUDED.drop_step
 		         RETURNING 1)
-		SELECT (SELECT ok FROM live), (SELECT count(*) FROM ptr) + (SELECT count(*) FROM del) + (SELECT count(*) FROM ins)`,
-		orderID, primary, bins, picks, drops, nodes, dests, clock.Now().UTC()).Scan(&live, new(int)); err != nil {
+		SELECT (SELECT ok FROM live), (SELECT count(*) FROM del) + (SELECT count(*) FROM ins)`,
+		orderID, bins, picks, drops).Scan(&live, new(int)); err != nil {
 		return fmt.Errorf("record the carts of order %d: %w", orderID, err)
 	}
 	if !live {
@@ -95,34 +88,24 @@ func ReplaceOrderBins(db *sql.DB, orderID int64, primary int64, rows []OrderBinR
 
 // cartArrays is rows as the column arrays a single INSERT … SELECT FROM
 // unnest(…) writes.
-func cartArrays(rows []OrderBinRow) (bins, picks, drops []int64, nodes, dests []string) {
+func cartArrays(rows []OrderBinRow) (bins, picks, drops []int64) {
 	bins = make([]int64, len(rows))
 	picks = make([]int64, len(rows))
 	drops = make([]int64, len(rows))
-	nodes = make([]string, len(rows))
-	dests = make([]string, len(rows))
 	for i, r := range rows {
-		bins[i], picks[i], drops[i], nodes[i], dests[i] = r.BinID, int64(r.PickStep), int64(r.DropStep), r.NodeName, r.DestNode
+		bins[i], picks[i], drops[i] = r.BinID, int64(r.PickStep), int64(r.DropStep)
 	}
-	return bins, picks, drops, nodes, dests
+	return bins, picks, drops
 }
 
 // CartRows is the rows a cart-carrying order writes for the carts it holds:
 // the plan walk (domain.Lifts) over the order's plan (RowsOf).
 func CartRows(o *Order, claimedAt map[int]int64) []OrderBinRow {
-	return RowsOf(o, domain.Lifts(domain.OrderPlan(o), claimedAt))
+	return RowsOf(domain.Lifts(domain.OrderPlan(o), claimedAt))
 }
 
-// RowsOf is lifts as the rows the order writes, each with the junction's node
-// copies (its pick's node, its cart's final drop) until v174.
-func RowsOf(o *Order, lifts []domain.Cart) []OrderBinRow {
-	steps := domain.OrderPlan(o)
-	final := map[int64]string{}
-	for _, c := range lifts {
-		if c.DropStep != nil {
-			final[c.BinID] = steps[*c.DropStep].Node
-		}
-	}
+// RowsOf is lifts as the rows the order writes.
+func RowsOf(lifts []domain.Cart) []OrderBinRow {
 	out := make([]OrderBinRow, 0, len(lifts))
 	for _, c := range lifts {
 		if c.PickStep == nil {
@@ -132,8 +115,7 @@ func RowsOf(o *Order, lifts []domain.Cart) []OrderBinRow {
 		if c.DropStep != nil {
 			drop = *c.DropStep
 		}
-		out = append(out, OrderBinRow{BinID: c.BinID, PickStep: *c.PickStep, DropStep: drop,
-			NodeName: domain.StepNode(o, *c.PickStep), DestNode: final[c.BinID]})
+		out = append(out, OrderBinRow{BinID: c.BinID, PickStep: *c.PickStep, DropStep: drop})
 	}
 	return out
 }
@@ -235,14 +217,10 @@ func RecordAppendedLift(db *sql.DB, o *Order, binID int64, pick int) error {
 			break
 		}
 	}
-	dest := ""
-	if drop != OpenLift {
-		dest = steps[drop].Node
-	}
-	if _, err := db.Exec(`INSERT INTO order_bins (order_id, bin_id, pick_step, drop_step, action, node_name, dest_node)
-		VALUES ($1, $2, $3, NULLIF($4::int, -1), 'pickup', $5, $6)
+	if _, err := db.Exec(`INSERT INTO order_bins (order_id, bin_id, pick_step, drop_step)
+		VALUES ($1, $2, $3, NULLIF($4::int, -1))
 		ON CONFLICT (order_id, pick_step) DO NOTHING`,
-		o.ID, binID, pick, drop, domain.StepNode(o, pick), dest); err != nil {
+		o.ID, binID, pick, drop); err != nil {
 		return fmt.Errorf("record order %d's appended lift of bin %d at step %d: %w", o.ID, binID, pick, err)
 	}
 	return nil

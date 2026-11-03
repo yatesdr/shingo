@@ -36,8 +36,9 @@ func r10Fixture(t *testing.T, prefix string) (db *store.DB, storage, line *nodes
 	bin = createTestBinAtNode(t, db, bp.Code, line.ID, prefix+"-BIN")
 	o = testdb.CreateOrder(t, db, func(o *orders.Order) {
 		o.EdgeUUID, o.StationID, o.Status = strings.ToLower(prefix), "line-1", "in_transit"
+		o.SourceNode = storage.Name // its row lifts the cart at storage
 	})
-	testutil.MustNoErr(t, db.UpdateOrderBinID(o.ID, bin.ID), "order bin")
+	testdb.HoldCart(t, db, o.ID, bin.ID)
 	return db, storage, line, bin, o
 }
 
@@ -53,10 +54,13 @@ func TestReplayedPickup_SingleBinFallbackAsksWhereTheBinIs(t *testing.T) {
 			storage.Name, line.Name, got)
 	}
 	// Control: the same fallback at the bin's own node still answers it.
-	binID, _, from, ok = eng.resolvePickupBin(o.ID, line.Name)
-	if !ok || binID != bin.ID || from != line.ID {
-		t.Fatalf("a pickup at the bin's own node %s: ok=%v bin=%d from=%d, want bin %d from %d",
-			line.Name, ok, binID, from, bin.ID, line.ID)
+	// Where its row lifts it, once it stands there, the pickup lifts it.
+	_, err := db.DB.Exec(`UPDATE bins SET node_id=$1 WHERE id=$2`, storage.ID, bin.ID)
+	testutil.MustNoErr(t, err, "the cart back at storage")
+	binID, _, from, ok = eng.resolvePickupBin(o.ID, storage.Name)
+	if !ok || binID != bin.ID || from != storage.ID {
+		t.Fatalf("a pickup where its row lifts it, with the cart standing there (%s): ok=%v bin=%d from=%d, want bin %d from %d",
+			storage.Name, ok, binID, from, bin.ID, storage.ID)
 	}
 }
 
