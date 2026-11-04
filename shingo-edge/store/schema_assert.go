@@ -124,6 +124,7 @@ var requiredColumns = []requiredColumn{
 	{"processes", "identity_warlink_managed"},
 	{"process_changeovers", "triggered_by"},
 	{"process_changeovers", "verify_live_catid"},
+	{"counter_snapshots", "catid"},
 	{"process_changeovers", "start_catid"},
 	{"process_changeovers", "end_catid"},
 	{"payload_catalog", "catid"},

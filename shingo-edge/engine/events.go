@@ -6,6 +6,7 @@ import (
 	"shingo/protocol"
 	"shingo/protocol/eventbus"
 	"shingoedge/domain"
+	"shingoedge/plc"
 )
 
 // EventType identifies the kind of event emitted by the Engine.
@@ -189,13 +190,19 @@ type CounterReadEvent struct {
 }
 
 // CounterDeltaEvent is emitted when production count increases.
+//
+// StyleID is the ATTRIBUTED style (attributeTick): the style that runs the
+// part the PLC reported, or the reporting point's when the part says nothing.
+// CATID is that part ("" when none) and Kind how the style was decided.
 type CounterDeltaEvent struct {
 	eventbus.PayloadBase
-	ReportingPointID int64 `json:"reporting_point_id"`
-	ProcessID        int64 `json:"process_id"`
-	StyleID          int64 `json:"style_id"`
-	Delta            int64 `json:"delta"`
-	NewCount         int64 `json:"new_count"`
+	ReportingPointID int64        `json:"reporting_point_id"`
+	ProcessID        int64        `json:"process_id"`
+	StyleID          int64        `json:"style_id"`
+	CATID            string       `json:"catid,omitempty"`
+	Kind             plc.TickKind `json:"kind,omitempty"`
+	Delta            int64        `json:"delta"`
+	NewCount         int64        `json:"new_count"`
 	// Anomaly is how the counter moved: "" for normal, "jump" past the jump
 	// threshold, "reset" backward (Delta is then the new count). A record
 	// only; every consumer counts the delta whatever it says.

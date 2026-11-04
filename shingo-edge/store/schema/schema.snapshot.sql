@@ -155,13 +155,17 @@ CREATE TABLE counter_snapshots (
     -- The production tick feed ships from this table (messaging.TickShipper),
     -- so the row carries what the wire event needs, bound by the one INSERT the
     -- poll already runs: recorded_ms is the Go clock read just before that
-    -- INSERT (unix ms; recorded_at above has second granularity), and
-    -- process_id / style_id are the reporting point's at stroke time. NULL on
+    -- INSERT (unix ms; recorded_at above has second granularity), process_id
+    -- is the reporting point's, and style_id is the ATTRIBUTED style: the one
+    -- that runs the part the PLC reported for the stroke (catid), or the
+    -- point's style when the part says nothing (engine attributeTick). NULL on
     -- rows written before the shipper existed; those were sent through the
-    -- outbox.
+    -- outbox. catid is the PLC's confirmed part at the stroke, '' when it was
+    -- not fresh or named no part.
     recorded_ms        INTEGER,
     process_id         INTEGER,
-    style_id           INTEGER
+    style_id           INTEGER,
+    catid              TEXT NOT NULL DEFAULT ''
 );
 
 CREATE TABLE demand_origins_open (

@@ -178,6 +178,7 @@ func (e *Engine) startCatidMonitor() {
 	cm.completeCutover = e.completeCutover
 	cm.prime()
 	e.catidMon = cm
+	e.tickMonitor.Store(cm)
 	go cm.run()
 }
 

@@ -16,16 +16,19 @@ import (
 // cares that the poll loop reaches "Connected", not about emitted events.
 type nopEmitter struct{}
 
-func (nopEmitter) EmitCounterRead(int64, string, string, int64)               {}
-func (nopEmitter) EmitCounterDelta(int64, int64, int64, int64, int64, string) {}
-func (nopEmitter) EmitPLCConnected(string)                                    {}
-func (nopEmitter) EmitPLCDisconnected(string, error)                          {}
-func (nopEmitter) EmitPLCHealthAlert(string, string)                          {}
-func (nopEmitter) EmitPLCHealthRecover(string)                                {}
-func (nopEmitter) EmitCounterReadError(int64, string, string, string)         {}
-func (nopEmitter) EmitWarLinkConnected()                                      {}
-func (nopEmitter) EmitWarLinkDisconnected(error)                              {}
-func (nopEmitter) EmitCurtainChanged()                                        {}
+func (nopEmitter) EmitCounterRead(int64, string, string, int64)                          {}
+func (nopEmitter) EmitCounterDelta(int64, int64, int64, int64, string, plc.TickIdentity) {}
+func (nopEmitter) AttributeTick(_, styleID int64) plc.TickIdentity {
+	return plc.TickIdentity{StyleID: styleID, Kind: plc.TickToday}
+}
+func (nopEmitter) EmitPLCConnected(string)                            {}
+func (nopEmitter) EmitPLCDisconnected(string, error)                  {}
+func (nopEmitter) EmitPLCHealthAlert(string, string)                  {}
+func (nopEmitter) EmitPLCHealthRecover(string)                        {}
+func (nopEmitter) EmitCounterReadError(int64, string, string, string) {}
+func (nopEmitter) EmitWarLinkConnected()                              {}
+func (nopEmitter) EmitWarLinkDisconnected(error)                      {}
+func (nopEmitter) EmitCurtainChanged()                                {}
 
 // Gate 3 handshake: the fake satisfies the discovery handshake against the REAL
 // plc.Manager — poll loop → ListPLCs/ListTags → cache → IsConnected. This is the

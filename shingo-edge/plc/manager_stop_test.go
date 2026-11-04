@@ -14,7 +14,7 @@ type countingEmitter struct {
 	deltas int
 }
 
-func (e *countingEmitter) EmitCounterDelta(rpID, processID, styleID, delta, newCount int64, anomaly string) {
+func (e *countingEmitter) EmitCounterDelta(rpID, processID, delta, newCount int64, anomaly string, id TickIdentity) {
 	e.mu.Lock()
 	e.deltas++
 	e.mu.Unlock()

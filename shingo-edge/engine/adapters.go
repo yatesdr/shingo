@@ -1,10 +1,15 @@
 package engine
 
-import "shingo/protocol"
+import (
+	"shingo/protocol"
+	"shingoedge/plc"
+)
 
 // plcEmitter adapts the engine's EventBus to the plc.EventEmitter interface.
+// eng answers AttributeTick; nil attributes every tick to its point's style.
 type plcEmitter struct {
 	bus *EventBus
+	eng *Engine
 }
 
 func (e *plcEmitter) EmitCounterRead(rpID int64, plcName, tagName string, value int64) {
@@ -13,9 +18,17 @@ func (e *plcEmitter) EmitCounterRead(rpID int64, plcName, tagName string, value 
 	}})
 }
 
-func (e *plcEmitter) EmitCounterDelta(rpID, processID, styleID, delta, newCount int64, anomaly string) {
+func (e *plcEmitter) AttributeTick(processID, pointStyleID int64) plc.TickIdentity {
+	if e.eng == nil {
+		return plc.TickIdentity{StyleID: pointStyleID, Kind: plc.TickToday}
+	}
+	return e.eng.attributeTick(processID, pointStyleID)
+}
+
+func (e *plcEmitter) EmitCounterDelta(rpID, processID, delta, newCount int64, anomaly string, id plc.TickIdentity) {
 	e.bus.Emit(Event{Type: EventCounterDelta, Payload: CounterDeltaEvent{
-		ReportingPointID: rpID, ProcessID: processID, StyleID: styleID, Delta: delta, NewCount: newCount, Anomaly: anomaly,
+		ReportingPointID: rpID, ProcessID: processID, StyleID: id.StyleID, Delta: delta, NewCount: newCount, Anomaly: anomaly,
+		CATID: id.CATID, Kind: id.Kind,
 	}})
 }
 

@@ -772,7 +772,15 @@ func (m *Manager) pollReportingPoint(rp counters.ReportingPoint) bool {
 	// The clock is read BEFORE the INSERT, not after it and the reporting-point
 	// UPDATE as the outbox enqueue did: the stored value is what a re-ship after
 	// a reboot or a restore carries, which is what lets Core's key recognise it.
-	stamp := counters.TickStamp{RecordedAt: clock.Now().UTC(), ProcessID: rp.ProcessID, StyleID: rp.StyleID}
+	//
+	// The stroke's identity is decided here, before the INSERT, so the row, the
+	// event, hourly and Core all carry the same attributed style: the style that
+	// runs the part the PLC reported, or the point's when the part says nothing.
+	id := TickIdentity{StyleID: rp.StyleID, Kind: TickToday}
+	if rp.StyleID != 0 {
+		id = m.emitter.AttributeTick(rp.ProcessID, rp.StyleID)
+	}
+	stamp := counters.TickStamp{RecordedAt: clock.Now().UTC(), ProcessID: rp.ProcessID, StyleID: id.StyleID, CATID: id.CATID}
 	if _, err := m.db.InsertCounterSnapshot(rp.ID, newCount, delta, anomaly, stamp); err != nil {
 		log.Printf("insert counter snapshot: %v", err)
 		return false
@@ -804,7 +812,7 @@ func (m *Manager) pollReportingPoint(rp counters.ReportingPoint) bool {
 	// event and the row as a record of how the counter moved; nothing gates on
 	// it.
 	if delta > 0 {
-		m.emitter.EmitCounterDelta(rp.ID, rp.ProcessID, rp.StyleID, delta, newCount, anomaly)
+		m.emitter.EmitCounterDelta(rp.ID, rp.ProcessID, delta, newCount, anomaly, id)
 	}
 
 	// The shipper's filter in the poll's terms (counters.shippableWhere).

@@ -222,7 +222,7 @@ func (e *Engine) partItems(proc *processes.Process, f identityFacts, active, tar
 	if active != nil {
 		activeName = active.Name
 	}
-	n, _ := e.db.SumCounterDeltaSince(proc.ID, f.confirmedAt.UnixMilli())
+	n, _ := e.db.SumCounterDeltaSince(proc.ID, v, f.confirmedAt.UnixMilli())
 	since := "since restart"
 	item := CatidHealthItem{Kind: catidKindWrongPart, Severity: CatidHealthAmber,
 		Headline: fmt.Sprintf("Wrong part: the PLC is on %s; %s runs %s", v, activeName, formatCATIDSet(out)),

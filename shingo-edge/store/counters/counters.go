@@ -42,7 +42,10 @@ type (
 type TickStamp struct {
 	RecordedAt time.Time
 	ProcessID  int64
-	StyleID    int64
+	// StyleID is the attributed style (engine attributeTick).
+	StyleID int64
+	// CATID is the PLC's confirmed part at the stroke, "" when none.
+	CATID string
 }
 
 // InsertSnapshot writes one counter_snapshots row, stamp included, in one
@@ -65,9 +68,9 @@ func InsertSnapshot(db *sql.DB, rpID int64, countValue, delta int64, anomaly str
 		recordedMS = &ms
 	}
 	res, err := db.Exec(`INSERT INTO counter_snapshots
-		(reporting_point_id, count_value, delta, anomaly, operator_confirmed, recorded_ms, process_id, style_id)
-		VALUES (?, ?, ?, ?, 1, ?, ?, ?)`,
-		rpID, countValue, delta, anomalyPtr, recordedMS, stamp.ProcessID, stamp.StyleID)
+		(reporting_point_id, count_value, delta, anomaly, operator_confirmed, recorded_ms, process_id, style_id, catid)
+		VALUES (?, ?, ?, ?, 1, ?, ?, ?, ?)`,
+		rpID, countValue, delta, anomalyPtr, recordedMS, stamp.ProcessID, stamp.StyleID, stamp.CATID)
 	if err != nil {
 		return 0, err
 	}
@@ -84,12 +87,12 @@ func InsertSnapshot(db *sql.DB, rpID int64, countValue, delta int64, anomaly str
 // pre-2026-09 hours, which nothing reads or writes.
 const DateLayout = "2006-01-02"
 
-// SumDeltaSince sums the counted strokes the process's reporting points
-// recorded at or after sinceMs (unix ms, the row's own clock).
-func SumDeltaSince(db *sql.DB, processID, sinceMs int64) (int64, error) {
+// SumDeltaSince sums the strokes the process's reporting points counted with
+// the PLC on catid at or after sinceMs (unix ms, the row's own clock).
+func SumDeltaSince(db *sql.DB, processID int64, catid string, sinceMs int64) (int64, error) {
 	var n int64
 	err := db.QueryRow(`SELECT COALESCE(SUM(delta), 0) FROM counter_snapshots
-		WHERE process_id = ? AND recorded_ms >= ? AND delta > 0`, processID, sinceMs).Scan(&n)
+		WHERE process_id = ? AND catid = ? AND recorded_ms >= ? AND delta > 0`, processID, catid, sinceMs).Scan(&n)
 	return n, err
 }
 

@@ -21,7 +21,13 @@ type mockEmitter struct {
 }
 
 func (e *mockEmitter) EmitCounterRead(rpID int64, plcName, tagName string, value int64) {}
-func (e *mockEmitter) EmitCounterDelta(rpID, processID, styleID, delta, newCount int64, anomaly string) {
+func (e *mockEmitter) EmitCounterDelta(rpID, processID, delta, newCount int64, anomaly string, id TickIdentity) {
+}
+
+// AttributeTick attributes every tick to its point's style, as an Edge with no
+// CATID monitor does.
+func (e *mockEmitter) AttributeTick(processID, pointStyleID int64) TickIdentity {
+	return TickIdentity{StyleID: pointStyleID, Kind: TickToday}
 }
 
 func (e *mockEmitter) EmitPLCConnected(plcName string) {

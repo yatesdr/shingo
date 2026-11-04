@@ -3,6 +3,7 @@ package engine
 import (
 	"encoding/json"
 	"fmt"
+	"shingoedge/plc"
 	"strings"
 	"sync"
 	"testing"
@@ -297,7 +298,7 @@ func TestPlcEmitter_AllEvents(t *testing.T) {
 
 	em := &plcEmitter{bus: bus}
 	em.EmitCounterRead(7, "plc-1", "tag-1", 42)
-	em.EmitCounterDelta(7, 1, 2, 3, 42, "jump")
+	em.EmitCounterDelta(7, 1, 3, 42, "jump", plc.TickIdentity{StyleID: 2, Kind: plc.TickToday})
 	em.EmitPLCConnected("plc-1")
 	em.EmitPLCDisconnected("plc-1", fmt.Errorf("timeout"))
 	em.EmitPLCDisconnected("plc-2", nil) // nil-error branch

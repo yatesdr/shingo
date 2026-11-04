@@ -39,6 +39,10 @@ type StylePartIdentity struct {
 	// catalog row or not: zero is a consume-only style, whose set the catalog
 	// can never supply.
 	ProduceClaims int
+	// Active and Target say the style is the process's active style, or its
+	// open changeover's target, read in the same statement.
+	Active bool
+	Target bool
 }
 
 // ListStylePartIdentitiesByProcess returns every LIVE style of the process, in
@@ -57,8 +61,10 @@ type StylePartIdentity struct {
 // clause for the same reason — in the WHERE it would drop the style, not the
 // claim. A retired claim contributes no CATID, exactly as a deleted one did.
 func ListStylePartIdentitiesByProcess(db *sql.DB, processID int64) ([]StylePartIdentity, error) {
-	rows, err := db.Query(`SELECT s.id, s.name, COALESCE(s.expected_catid, ''), COALESCE(pc.catid, ''), c.id IS NOT NULL
+	rows, err := db.Query(`SELECT s.id, s.name, COALESCE(s.expected_catid, ''), COALESCE(pc.catid, ''), c.id IS NOT NULL,
+			COALESCE(p.active_style_id = s.id, 0), COALESCE(p.target_style_id = s.id, 0)
 		FROM styles s
+		JOIN processes p ON p.id = s.process_id
 		LEFT JOIN style_node_claims c ON c.style_id = s.id AND c.role = ? AND c.payload_code != '' AND c.retired_at IS NULL
 		LEFT JOIN payload_catalog pc ON pc.code = c.payload_code
 		WHERE s.process_id = ? AND`+liveStyles+`
@@ -76,14 +82,16 @@ func ListStylePartIdentitiesByProcess(db *sql.DB, processID int64) ([]StylePartI
 			expected string
 			catid    string
 			produce  bool
+			active   bool
+			target   bool
 		)
-		if err := rows.Scan(&id, &name, &expected, &catid, &produce); err != nil {
+		if err := rows.Scan(&id, &name, &expected, &catid, &produce, &active, &target); err != nil {
 			return nil, fmt.Errorf("style part identities for process %d: scan: %w", processID, err)
 		}
 		// Rows arrive grouped by style (ORDER BY s.name, s.id); the first row
 		// of a style opens its entry, every row's catalog value joins it.
 		if len(out) == 0 || out[len(out)-1].StyleID != id {
-			out = append(out, StylePartIdentity{StyleID: id, Name: name, ExpectedCATID: expected})
+			out = append(out, StylePartIdentity{StyleID: id, Name: name, ExpectedCATID: expected, Active: active, Target: target})
 		}
 		if produce {
 			out[len(out)-1].ProduceClaims++

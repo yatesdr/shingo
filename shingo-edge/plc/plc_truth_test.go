@@ -25,7 +25,7 @@ type deltaRecorder struct {
 	deltas []emittedDelta
 }
 
-func (d *deltaRecorder) EmitCounterDelta(rpID, processID, styleID, delta, newCount int64, anomaly string) {
+func (d *deltaRecorder) EmitCounterDelta(rpID, processID, delta, newCount int64, anomaly string, id TickIdentity) {
 	d.dmu.Lock()
 	d.deltas = append(d.deltas, emittedDelta{delta: delta, anomaly: anomaly})
 	d.dmu.Unlock()

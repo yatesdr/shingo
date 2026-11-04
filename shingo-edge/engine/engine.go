@@ -133,6 +133,10 @@ type Engine struct {
 	// Hopkinsville 2026-07-23). Nil until Start() (and in test fixtures that
 	// build Engine directly) — the guard nil-checks and stays inert.
 	catidMon *catidMonitor
+	// tickMonitor is catidMon for the poll's tick attribution, which runs on
+	// the poll goroutine from before the monitor starts: an atomic, so the
+	// poll reads nil until startCatidMonitor stores it.
+	tickMonitor atomic.Pointer[catidMonitor]
 	// cutoverMu is the changeover door's mutex (completeCutover): the
 	// operator's CUTOVER, the monitor's fire, the admin switch and the restore
 	// complete one at a time.
@@ -415,7 +419,7 @@ func (e *Engine) SetInventoryDeltaSink(s InventoryDeltaSink) {
 // Start creates all managers, wires event handlers, and starts subsystems.
 func (e *Engine) Start() {
 	// Create subsystem emitter adapters
-	plcEmit := &plcEmitter{bus: e.Events}
+	plcEmit := &plcEmitter{bus: e.Events, eng: e}
 	orderEmit := &orderEmitter{bus: e.Events}
 
 	// Create managers

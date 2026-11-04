@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"shingoedge/plc"
 	"testing"
 	"time"
 
@@ -42,7 +43,7 @@ func TestPLCTruth_ResetCountsNewCount(t *testing.T) {
 	eng.hourlyTracker = NewHourlyTracker(db)
 	eng.wireEventHandlers()
 
-	(&plcEmitter{bus: eng.Events}).EmitCounterDelta(0, processID, styleID, 3, 3, "reset")
+	(&plcEmitter{bus: eng.Events}).EmitCounterDelta(0, processID, 3, 3, "reset", plc.TickIdentity{StyleID: styleID, Kind: plc.TickToday})
 
 	rt := runtimeRow(t, db, nodeID)
 	if rt.RemainingUOPCached != 97 {
@@ -68,7 +69,7 @@ func TestPLCTruth_JumpChargesTheCarrierBoundAtTheRead(t *testing.T) {
 	eng.hourlyTracker = NewHourlyTracker(db)
 	eng.wireEventHandlers()
 
-	(&plcEmitter{bus: eng.Events}).EmitCounterDelta(0, processID, styleID, 150, 600, "jump")
+	(&plcEmitter{bus: eng.Events}).EmitCounterDelta(0, processID, 150, 600, "jump", plc.TickIdentity{StyleID: styleID, Kind: plc.TickToday})
 	if rt := runtimeRow(t, db, nodeID); rt.RemainingUOPCached != 150 {
 		t.Fatalf("RemainingUOP = %d, want 150 (the jump's 150 off the carrier bound at the read)", rt.RemainingUOPCached)
 	}
