@@ -326,6 +326,23 @@ func (s *stubEngine) AddStyleCATID(_, styleID int64, catid, _, _ string) error {
 	return s.db.SetStyleExpectedCATID(styleID, catid)
 }
 
+// The holds verbs: canned. Hold 1 is open and charges cleanly; any other
+// is already released. The rules are pinned against the real engine.
+func (s *stubEngine) PreviewCatidHold(id int64) (*engine.CatidHoldPreview, error) {
+	p := &engine.CatidHoldPreview{StyleID: 1, StyleName: "S1"}
+	if id != 1 {
+		p.Refusal = engine.ErrHoldResolved.Error()
+	}
+	return p, nil
+}
+func (s *stubEngine) ChargeCatidHold(id int64, _ string) error {
+	if id != 1 {
+		return engine.ErrHoldResolved
+	}
+	return nil
+}
+func (s *stubEngine) WriteOffCatidHold(id int64, by string) error { return s.ChargeCatidHold(id, by) }
+
 func (s *stubEngine) ChangeoverGateStatus(int64) (bool, []domain.Blocker, error) {
 	return s.gateCanComplete, s.gateBlockers, s.gateErr
 }

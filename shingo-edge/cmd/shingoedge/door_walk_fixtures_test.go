@@ -243,6 +243,14 @@ func routeFixtures() map[string]routeFixture {
 		"POST /api/processes/{id}/styles/{sid}/catid": {want: 200, moves: true, req: on(func(w *walk) (string, any) {
 			return pr(w) + "/styles/" + id(w.styleA) + "/catid", map[string]any{"catid": "4242", "evidence": "the walk"}
 		})},
+		// A hold's release latches it; the walk's hold is on a CATID only a
+		// claimless style runs, so the Charge draws from no cart.
+		"POST /api/catid-holds/{id}/charge": {want: 200, req: on(func(w *walk) (string, any) {
+			return "/api/catid-holds/" + id(w.freshHold()) + "/charge", map[string]any{}
+		})},
+		"POST /api/catid-holds/{id}/write-off": {want: 200, req: on(func(w *walk) (string, any) {
+			return "/api/catid-holds/" + id(w.freshHold()) + "/write-off", map[string]any{}
+		})},
 		"PUT /api/styles/{id}": {want: 200, moves: true, req: on(func(w *walk) (string, any) {
 			return "/api/styles/" + id(w.styleA), map[string]any{"name": w.uniq("STYLE-A"), "process_id": w.press}
 		})},
@@ -477,6 +485,29 @@ func (w *walk) freshOrder(status string) string {
 	}
 	w.prepped = true
 	return uuid
+}
+
+// freshHold opens a held draw on the press for a CATID a fresh, claimless
+// style runs, and returns the hold's id.
+func (w *walk) freshHold() int64 {
+	w.t.Helper()
+	catid := fmt.Sprintf("43%03d", w.seq)
+	sid, err := w.db.CreateStyle(w.uniq("STYLE-HOLD"), "", w.press)
+	if err != nil {
+		w.t.Fatalf("hold style: %v", err)
+	}
+	if err := w.db.SetStyleExpectedCATID(sid, catid); err != nil {
+		w.t.Fatalf("pin the hold style: %v", err)
+	}
+	if _, err := w.db.HoldCatidDraw(w.press, catid, 0, "", "held", 1, time.Now()); err != nil {
+		w.t.Fatalf("open a hold: %v", err)
+	}
+	hs, err := w.db.ListOpenCatidHolds(w.press)
+	if err != nil || len(hs) == 0 {
+		w.t.Fatalf("no hold: %v", err)
+	}
+	w.prepped = true
+	return hs[len(hs)-1].ID
 }
 
 func (w *walk) orderID(uuid string) int64 {

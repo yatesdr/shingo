@@ -965,7 +965,11 @@ body.pd-body .pd-sheet { flex: 1 1 auto; min-height: 0; overflow: auto; }
 
 /* The part-identity health strip above the process list (catid-health.js). */
 .pd-ch { margin: 0 24px 12px; display: flex; flex-direction: column; gap: 4px; }
-.pd-ch-row { padding: 6px 10px; border-left: 4px solid; border-radius: 3px; cursor: pointer; }
+.pd-ch-row { padding: 6px 10px; border-left: 4px solid; border-radius: 3px; }
 .pd-ch-red { border-color: #c62828; background: #fdecea; }
 .pd-ch-amber { border-color: #ef8f00; background: #fff4e0; }
 .pd-ch-info { border-color: #6b7a8f; background: #f1f3f6; }
+.pd-ch-name { cursor: pointer; margin-right: 8px; }
+.pd-ch-item { display: flex; justify-content: space-between; align-items: center; gap: 8px;
+    margin-top: 4px; padding: 4px 6px; border-left: 3px solid; border-radius: 2px; }
+.pd-ch-acts { display: flex; gap: 6px; align-items: center; }

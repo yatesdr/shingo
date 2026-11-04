@@ -68,6 +68,51 @@ func (h *Handlers) apiAddStyleCATID(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]string{"status": "ok"})
 }
 
+// apiPreviewCatidHold names the style, the nodes, the carts and the quantities
+// a Charge of the hold would draw, and why it would be refused.
+func (h *Handlers) apiPreviewCatidHold(w http.ResponseWriter, r *http.Request) {
+	id, err := parseID(r, "id")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid hold id")
+		return
+	}
+	p, err := h.orchestration.PreviewCatidHold(id)
+	if err != nil {
+		writeError(w, http.StatusNotFound, err.Error())
+		return
+	}
+	writeJSON(w, p)
+}
+
+// apiChargeCatidHold and apiWriteOffCatidHold release a hold: the Charge draws
+// it from the carts under the CATID's style, the Write off charges nothing.
+// Both are latched; a second release is a conflict.
+func (h *Handlers) apiChargeCatidHold(w http.ResponseWriter, r *http.Request) {
+	h.releaseCatidHold(w, r, h.orchestration.ChargeCatidHold)
+}
+
+func (h *Handlers) apiWriteOffCatidHold(w http.ResponseWriter, r *http.Request) {
+	h.releaseCatidHold(w, r, h.orchestration.WriteOffCatidHold)
+}
+
+func (h *Handlers) releaseCatidHold(w http.ResponseWriter, r *http.Request, release func(int64, string) error) {
+	id, err := parseID(r, "id")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid hold id")
+		return
+	}
+	if err := release(id, "engineer"); err != nil {
+		status := http.StatusBadRequest
+		if errors.Is(err, engine.ErrHoldResolved) {
+			status = http.StatusConflict
+		}
+		writeError(w, status, err.Error())
+		return
+	}
+	h.requestBackup("catid-hold-released")
+	writeJSON(w, map[string]string{"status": "ok"})
+}
+
 func (h *Handlers) apiCreateStyle(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Name          string `json:"name"`

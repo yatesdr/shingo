@@ -966,8 +966,9 @@ CREATE TABLE IF NOT EXISTS core_loader_payloads (
 
 -- Every part identity a press's PLC has actually declared, post-debounce.
 -- The plant's first persisted record of what the wire carries — see
--- store/plc_catid_observations.go for why that did not exist before. Nothing
--- reads it to make a decision.
+-- store/plc_catid_observations.go for why that did not exist before. The one
+-- decision read from it ("is the running style's set proven") can only
+-- suppress a hold.
 CREATE TABLE IF NOT EXISTS plc_catid_observations (
     process_id   INTEGER NOT NULL REFERENCES processes(id) ON DELETE CASCADE,
     plc_name     TEXT    NOT NULL DEFAULT '',
@@ -977,6 +978,31 @@ CREATE TABLE IF NOT EXISTS plc_catid_observations (
     observations INTEGER NOT NULL DEFAULT 1,
     PRIMARY KEY (process_id, catid)
 );
+
+-- catid_holds: the cart draw of counted strokes Shingo could not place by the
+-- PLC's part — a held tick's whole draw (process_node_id 0), or an off-plan
+-- tick's share at a node whose bound carrier is another part. The production
+-- record still ships; this holds only what the carts were not charged. One
+-- open row per (process, CATID, node, part), grown by each stroke; a release
+-- (a landing on its style, a person's Charge or Write off) latches
+-- resolved_at before anything moves. Never touches the seat holds.
+CREATE TABLE IF NOT EXISTS catid_holds (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    process_id      INTEGER NOT NULL,
+    catid           TEXT    NOT NULL,
+    process_node_id INTEGER NOT NULL DEFAULT 0,
+    payload_code    TEXT    NOT NULL DEFAULT '',
+    reason          TEXT    NOT NULL,
+    qty             INTEGER NOT NULL,
+    strokes         INTEGER NOT NULL,
+    first_tick_at   TEXT    NOT NULL,
+    last_tick_at    TEXT    NOT NULL,
+    resolved_at     TEXT,
+    resolution      TEXT    NOT NULL DEFAULT '',
+    resolved_by     TEXT    NOT NULL DEFAULT ''
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_catid_holds_open
+    ON catid_holds(process_id, catid, process_node_id, payload_code) WHERE resolved_at IS NULL;
 
 CREATE TABLE IF NOT EXISTS process_changeovers (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,

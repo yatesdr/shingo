@@ -22,6 +22,24 @@ check('no rows is no strip', () => {
     assert.strictEqual(H.listHTML(null), '');
 });
 
+check('a process with its items lists each with its verbs', () => {
+    const html = H.listHTML([{ process_id: 3, name: 'CELL-A', worst: 'red', count: 2, headline: 'x' }], {
+        3: [
+            { kind: 'held', severity: 'red', headline: '5 held on CATID 1007', detail: 'the whole draw',
+                data: { hold_id: 11, catid: '1007' } },
+            { kind: 'unmapped_catid', severity: 'amber', headline: 'CATID 1003 maps to no style',
+                data: { catid: '1003', suggestion: { style_id: 4, style_name: 'STYLE-B' },
+                    styles: [{ id: 4, name: 'STYLE-B' }, { id: 5, name: '<C>' }] } },
+        ],
+    });
+    assert.ok(html.indexOf('data-act="ch-charge" data-hold="11"') > 0, 'Charge on the hold');
+    assert.ok(html.indexOf('data-act="ch-writeoff" data-hold="11"') > 0, 'Write off on the hold');
+    assert.ok(html.indexOf('data-act="ch-pin" data-pid="3" data-style="4" data-name="STYLE-B" data-catid="1003"') > 0, 'the suggestion');
+    assert.ok(html.indexOf('Pin to STYLE-B') > 0, 'the suggestion names its style');
+    assert.ok(html.indexOf('data-act="ch-pin-pick"') > 0 && html.indexOf('&lt;C&gt;') > 0, 'the picker, escaped');
+    assert.ok(html.indexOf('data-open="3"') > 0, 'the name opens the process');
+});
+
 check('one block per process, toned by its worst item', () => {
     const html = H.listHTML([
         { process_id: 3, name: 'CELL-A', worst: 'red', count: 3, headline: 'Wrong part: the PLC is on 1002' },

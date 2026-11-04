@@ -386,6 +386,7 @@ func (e *Engine) finalizeChangeoverRow(processID, changeoverID int64, triggeredB
 	// the press's live CATID still disagrees with the new active style, this
 	// changeover is flagged for operator confirmation on the station.
 	e.openPostCutoverVerify(processID, changeoverID)
+	e.releaseHoldsOnLanding(processID, changeoverID)
 	e.catidHealthChanged(processID)
 	return nil
 }

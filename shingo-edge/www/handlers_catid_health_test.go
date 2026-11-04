@@ -53,3 +53,36 @@ func TestCatidHealthRoute_SummaryPerProcess(t *testing.T) {
 		t.Errorf("summary row = %v", r)
 	}
 }
+
+func catidHoldDo(t *testing.T, method, path string) (int, []byte) {
+	t.Helper()
+	h, r := newTestHandlers(t)
+	r.Get("/api/catid-holds/{id}/preview", h.apiPreviewCatidHold)
+	r.Post("/api/catid-holds/{id}/charge", h.apiChargeCatidHold)
+	r.Post("/api/catid-holds/{id}/write-off", h.apiWriteOffCatidHold)
+	req := httptest.NewRequest(method, path, nil)
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+	return rec.Code, rec.Body.Bytes()
+}
+
+// TestCatidHoldRoutes: the preview, the Charge and the Write off; a released
+// hold is a conflict, a bad id a bad request.
+func TestCatidHoldRoutes(t *testing.T) {
+	code, body := catidHoldDo(t, http.MethodGet, "/api/catid-holds/1/preview")
+	var p map[string]any
+	if code != http.StatusOK || json.Unmarshal(body, &p) != nil || p["style_name"] != "S1" || p["refusal"] != nil {
+		t.Errorf("preview 1: %d %s, want style S1 and no refusal", code, body)
+	}
+	for _, verb := range []string{"charge", "write-off"} {
+		if code, body := catidHoldDo(t, http.MethodPost, "/api/catid-holds/1/"+verb); code != http.StatusOK {
+			t.Errorf("%s 1: %d %s, want 200", verb, code, body)
+		}
+		if code, _ := catidHoldDo(t, http.MethodPost, "/api/catid-holds/2/"+verb); code != http.StatusConflict {
+			t.Errorf("%s of a released hold: %d, want 409", verb, code)
+		}
+		if code, _ := catidHoldDo(t, http.MethodPost, "/api/catid-holds/x/"+verb); code != http.StatusBadRequest {
+			t.Errorf("%s with a bad id: %d, want 400", verb, code)
+		}
+	}
+}

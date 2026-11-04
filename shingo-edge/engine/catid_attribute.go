@@ -24,9 +24,9 @@ const tickIdentityFresh = 5 * time.Second
 // attributeTick is the poll's AttributeTick. With no monitor, no snapshot, a
 // stale read or a value that names no part, the tick is the point's style.
 // Otherwise attributeCATID decides over the process-wide sets — one statement,
-// on identity ticks only. Off-plan and held ticks walk and ship as today
-// until the holds ledger takes them; their kind and part ride the row and the
-// event.
+// on identity ticks only. An off-plan tick walks and ships under the style
+// that runs its part; a held tick ships under the point's style and its draw
+// goes to the holds ledger (walkTick).
 func (e *Engine) attributeTick(processID, pointStyleID int64) plc.TickIdentity {
 	today := plc.TickIdentity{StyleID: pointStyleID, Kind: plc.TickToday}
 	cm := e.tickMonitor.Load()
@@ -37,11 +37,7 @@ func (e *Engine) attributeTick(processID, pointStyleID int64) plc.TickIdentity {
 	if !ok || snap.lastOK.IsZero() || clock.Now().Sub(snap.lastOK) > tickIdentityFresh || !isIdentity(snap.value) {
 		return today
 	}
-	id := attributeCATID(snap.value, pointStyleID, e.processStyleCATIDSets(processID), snap.observed)
-	if id.Kind == plc.TickOffPlan || id.Kind == plc.TickHeld {
-		id.StyleID = pointStyleID
-	}
-	return id
+	return attributeCATID(snap.value, pointStyleID, e.processStyleCATIDSets(processID), snap.observed)
 }
 
 // attributeCATID is the attribution rule (pure). A is the active style, T the

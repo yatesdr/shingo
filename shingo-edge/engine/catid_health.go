@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"shingo/protocol/clock"
+	"shingoedge/store"
 	"shingoedge/store/processes"
 )
 
@@ -37,6 +38,7 @@ const (
 	catidKindIdentity         = "identity"
 	catidKindPostCutover      = "post_cutover_failed"
 	catidKindAutoDecisions    = "automatic_decisions"
+	catidKindHeld             = "held"
 	catidHealthUnmappedWindow = 14 * 24 * time.Hour
 	catidHealthDecisionWindow = 24 * time.Hour
 	// catidIdentityStale is how old the last good identity read may be before
@@ -103,6 +105,9 @@ func (e *Engine) CatidHealth(processID int64) ([]CatidHealthItem, error) {
 		items = append(items, noCATIDItems(active, target)...)
 		items = append(items, e.unmappedItems(processID, sets, now)...)
 	}
+	holds, _ := e.db.ListOpenCatidHolds(processID)
+	items = append(items, heldItems(holds, now)...)
+	items = markUnmappedHeld(items, holds)
 	items = append(items, sharedItems(sets)...)
 	items = append(items, e.forcedItems(processID)...)
 	if flag, ok := e.PostCutoverFlag(processID); ok {
@@ -318,6 +323,41 @@ func suggestionFor(recent []processes.Changeover, sets []styleCATIDEntry, v stri
 		}
 	}
 	return processes.Changeover{}, false
+}
+
+// heldItems: each open hold, red, with its quantity and its age. Charge and
+// Write off act on its id.
+func heldItems(holds []store.CatidHold, now time.Time) []CatidHealthItem {
+	items := make([]CatidHealthItem, 0, len(holds))
+	for _, h := range holds {
+		where := "the whole draw"
+		if h.ProcessNodeID != 0 {
+			where = fmt.Sprintf("node %d's share of %s", h.ProcessNodeID, h.PayloadCode)
+		}
+		t := h.FirstTickAt
+		items = append(items, CatidHealthItem{Kind: catidKindHeld, Severity: CatidHealthRed,
+			Headline: fmt.Sprintf("%d held on CATID %s", h.Qty, h.CATID),
+			Detail: fmt.Sprintf("%s, %d strokes over %s (%s)", where, h.Strokes,
+				now.Sub(t).Round(time.Minute), h.Reason),
+			Since: &t,
+			Data: map[string]any{"hold_id": h.ID, "catid": h.CATID, "qty": h.Qty, "strokes": h.Strokes,
+				"process_node_id": h.ProcessNodeID, "payload_code": h.PayloadCode, "reason": h.Reason}})
+	}
+	return items
+}
+
+// markUnmappedHeld turns an unmapped CATID red while counts are held on it.
+func markUnmappedHeld(items []CatidHealthItem, holds []store.CatidHold) []CatidHealthItem {
+	held := map[string]bool{}
+	for _, h := range holds {
+		held[h.CATID] = true
+	}
+	for i := range items {
+		if items[i].Kind == catidKindUnmapped && held[fmt.Sprint(items[i].Data["catid"])] {
+			items[i].Severity = CatidHealthRed
+		}
+	}
+	return items
 }
 
 func anySetHas(sets []styleCATIDEntry, v string) bool {

@@ -88,7 +88,8 @@ func (e *Engine) adminSwitchNoChangeover(proc *processes.Process, styleID *int64
 
 // recordAdminSwitch flips the process to toStyleID and records the switch as a
 // completed changeover row from fromStyleID, then opens the post-cutover watch
-// on it — replacing a watch the door opened for the changeover's own target.
+// on it — replacing a watch the door opened for the changeover's own target —
+// and releases the holds the landing style runs, as the door's landing does.
 func (e *Engine) recordAdminSwitch(processID int64, fromStyleID *int64, toStyleID int64) error {
 	if err := e.flipActiveStyle(processID, &toStyleID); err != nil {
 		return err
@@ -98,5 +99,6 @@ func (e *Engine) recordAdminSwitch(processID int64, fromStyleID *int64, toStyleI
 		return fmt.Errorf("record the switch on process %d: %w", processID, err)
 	}
 	e.openPostCutoverVerify(processID, id)
+	e.releaseHoldsOnLanding(processID, id)
 	return nil
 }

@@ -287,8 +287,43 @@ async function refreshCatidHealth() {
     if (!box || !strip) return;
     try {
         const res = await fetch('/api/catid-health', { cache: 'no-store' });
-        if (res.ok) box.innerHTML = strip.listHTML(await res.json());
+        if (!res.ok) return;
+        const rows = await res.json();
+        const items = {};
+        await Promise.all((rows || []).map(async r => {
+            const one = await fetch('/api/processes/' + r.process_id + '/catid-health', { cache: 'no-store' });
+            if (one.ok) items[r.process_id] = ((await one.json()) || {}).items || [];
+        }));
+        box.innerHTML = strip.listHTML(rows, items);
     } catch (e) { /* advisory */ }
+}
+
+// The strip's verbs. Each asks first, in the page's one sheet, and the sheet
+// shows the Edge's refusal (a CATID another style runs, a cart of another
+// part) where it says it.
+function catidPin(pid, styleID, catid, name) {
+    openSheet('Pin CATID ' + catid + ' to ' + (name || 'style ' + styleID) + '?',
+        'the style\'s CATIDs become its set plus this one.', '',
+        'Pin', () => sheetSubmit('POST', '/api/processes/' + pid + '/styles/' + styleID + '/catid',
+            { catid: catid, evidence: 'the health strip' }, refreshCatidHealth));
+}
+
+async function catidCharge(holdID) {
+    const res = await fetch('/api/catid-holds/' + holdID + '/preview', { cache: 'no-store' });
+    if (!res.ok) return;
+    const p = await res.json();
+    const rows = (p.rows || []).map(r => '<li>' + esc(r.node) + ': ' + esc(r.qty) + ' from ' +
+        (r.bin_id ? 'cart ' + esc(r.bin_id) + ' (' + esc(r.carrier_part || 'part unknown') + ')' : 'no cart: held for the next') +
+        (r.wrong_part ? ' <b>(another part)</b>' : '') + '</li>').join('');
+    openSheet('Charge ' + p.hold.qty + ' on CATID ' + p.hold.catid + '?',
+        p.refusal ? p.refusal : 'charged under ' + p.style_name + ' to the carts below.',
+        '<ul class="pd-note">' + rows + '</ul>',
+        'Charge', () => sheetSubmit('POST', '/api/catid-holds/' + holdID + '/charge', {}, refreshCatidHealth));
+}
+
+function catidWriteOff(holdID) {
+    openSheet('Write off this hold?', 'nothing is charged; the hold is closed and logged.', '',
+        'Write off', () => sheetSubmit('POST', '/api/catid-holds/' + holdID + '/write-off', {}, refreshCatidHealth), true);
 }
 if (window.CatidHealth) window.CatidHealth.onHint(() => { if (!S.processID) refreshCatidHealth(); });
 
@@ -7668,6 +7703,14 @@ function onClick(e) {
     if (btn) {
         switch (btn.dataset.act) {
             case 'list': drawList(); return;
+            case 'ch-pin': catidPin(btn.dataset.pid, btn.dataset.style, btn.dataset.catid, btn.dataset.name); return;
+            case 'ch-pin-pick': {
+                const pick = root().querySelector('select[data-ch-pick="' + CSS.escape(btn.dataset.catid) + '"]');
+                if (pick) catidPin(btn.dataset.pid, pick.value, btn.dataset.catid, pick.selectedOptions[0].textContent);
+                return;
+            }
+            case 'ch-charge': catidCharge(btn.dataset.hold); return;
+            case 'ch-writeoff': catidWriteOff(btn.dataset.hold); return;
             case 'save': saveFlow(); return;
             case 'discard': selectStyle(S.styleID); return;
             case 'advanced': openAdvanced(btn.dataset.node); return;

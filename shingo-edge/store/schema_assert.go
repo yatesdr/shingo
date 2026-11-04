@@ -37,6 +37,7 @@ import (
 
 // requiredTables are tables every migrated edge database must have.
 var requiredTables = []string{
+	"catid_holds",
 	"orders",
 	"processes",
 	"styles",

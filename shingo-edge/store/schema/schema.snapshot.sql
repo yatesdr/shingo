@@ -1,3 +1,6 @@
+CREATE UNIQUE INDEX idx_catid_holds_open
+    ON catid_holds(process_id, catid, process_node_id, payload_code) WHERE resolved_at IS NULL;
+
 CREATE INDEX idx_changeovers_process_started ON process_changeovers(process_id, started_at DESC);
 
 CREATE INDEX idx_cnt_changeover_id ON changeover_node_tasks(process_changeover_id);
@@ -60,6 +63,22 @@ CREATE TABLE bin_returns (
 		destination  TEXT NOT NULL DEFAULT '',
 		reason       TEXT NOT NULL DEFAULT '',
 		updated_at   TEXT NOT NULL);
+
+CREATE TABLE catid_holds (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    process_id      INTEGER NOT NULL,
+    catid           TEXT    NOT NULL,
+    process_node_id INTEGER NOT NULL DEFAULT 0,
+    payload_code    TEXT    NOT NULL DEFAULT '',
+    reason          TEXT    NOT NULL,
+    qty             INTEGER NOT NULL,
+    strokes         INTEGER NOT NULL,
+    first_tick_at   TEXT    NOT NULL,
+    last_tick_at    TEXT    NOT NULL,
+    resolved_at     TEXT,
+    resolution      TEXT    NOT NULL DEFAULT '',
+    resolved_by     TEXT    NOT NULL DEFAULT ''
+);
 
 CREATE TABLE changeover_node_tasks (
     id                         INTEGER PRIMARY KEY AUTOINCREMENT,

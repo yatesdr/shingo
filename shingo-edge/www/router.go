@@ -500,6 +500,10 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger, backupSvc *backup.Servi
 				r.Put("/styles/{id}", h.apiUpdateStyle)
 				// The health strip's one-click: a CATID joins a style's set.
 				r.Post("/processes/{id}/styles/{sid}/catid", h.apiAddStyleCATID)
+				// The holds ledger: preview a Charge, Charge, Write off.
+				r.Get("/catid-holds/{id}/preview", h.apiPreviewCatidHold)
+				r.Post("/catid-holds/{id}/charge", h.apiChargeCatidHold)
+				r.Post("/catid-holds/{id}/write-off", h.apiWriteOffCatidHold)
 				r.Get("/styles/{id}/delete-impact", h.apiStyleDeleteImpact)
 				r.Delete("/styles/{id}", h.apiDeleteStyle)
 				r.Post("/styles/{id}/restore", h.apiRestoreStyle)

@@ -205,6 +205,11 @@ type EngineOrchestration interface {
 	// one-click, which writes the style's set plus the value.
 	CheckStyleCATIDPin(processID, styleID int64, pin string) error
 	AddStyleCATID(processID, styleID int64, catid, by, evidence string) error
+	// The holds ledger's verbs: what a Charge would draw, the Charge (under
+	// the one style that runs the CATID), and the Write off (nothing charged).
+	PreviewCatidHold(id int64) (*engine.CatidHoldPreview, error)
+	ChargeCatidHold(id int64, by string) error
+	WriteOffCatidHold(id int64, by string) error
 	// PostCutoverFlag returns the process's active post-cutover verification flag
 	// (the press's live part disagrees with the style the cutover was set to), or
 	// (nil, false) when none.

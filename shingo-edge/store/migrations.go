@@ -2222,6 +2222,40 @@ func edgeMigrations() []migrate.Migration {
 				return err == nil && n == 1
 			},
 		},
+		{
+			// catid_holds: the ledger of cart draws held per CATID, with its
+			// partial unique index on the open rows. A new table; IF NOT EXISTS
+			// guards it, as the baseline CREATE carries it for a fresh install.
+			Version: 40,
+			Name:    "catid_holds",
+			Fn: func(tx *sql.Tx) error {
+				if _, err := tx.Exec(`CREATE TABLE IF NOT EXISTS catid_holds (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    process_id      INTEGER NOT NULL,
+    catid           TEXT    NOT NULL,
+    process_node_id INTEGER NOT NULL DEFAULT 0,
+    payload_code    TEXT    NOT NULL DEFAULT '',
+    reason          TEXT    NOT NULL,
+    qty             INTEGER NOT NULL,
+    strokes         INTEGER NOT NULL,
+    first_tick_at   TEXT    NOT NULL,
+    last_tick_at    TEXT    NOT NULL,
+    resolved_at     TEXT,
+    resolution      TEXT    NOT NULL DEFAULT '',
+    resolved_by     TEXT    NOT NULL DEFAULT ''
+);`); err != nil {
+					return err
+				}
+				_, err := tx.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_catid_holds_open
+    ON catid_holds(process_id, catid, process_node_id, payload_code) WHERE resolved_at IS NULL;`)
+				return err
+			},
+			Verify: func(q migrate.Querier) bool {
+				var n int
+				err := q.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name = 'idx_catid_holds_open'`).Scan(&n)
+				return err == nil && n == 1
+			},
+		},
 	}
 }
 

@@ -5,7 +5,7 @@ belongs in the commit message or in `docs/` — this file is the index.
 
 ## 2026-11-03 — The cutover follows the PLC
 
-Edge only, v37-v39. Ship after a restored-copy migrate.
+Edge only, v37-v40. Ship after a restored-copy migrate.
 
 - Auto-cutover fires on a CATID the outgoing style does not run, never on one both run or with both sets empty
 - 0 and negative CATIDs name no part: no wrong-part alert, no arm, the request guard stays open
@@ -23,6 +23,7 @@ Edge only, v37-v39. Ship after a restored-copy migrate.
 - A changeover records the PLC's CATID at its start and its watch's close (v38); an unmapped CATID shows the suggestion
 - One CATID names one style: the typed pin, the strip's one-click and the flag's Confirm (which pins the value) refuse a taken one
 - A counted tick is stamped with the PLC's part and the style that runs it; row (v39), walk, hourly and Core count it there
+- A stroke on an unmapped or off-plan part ships under today's style; its cart draw is held (v40) until a landing, a Charge or a Write off
 
 ## 2026-11-03 — An order's carts are its rows
 

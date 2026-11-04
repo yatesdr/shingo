@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"shingo/protocol"
+	"shingoedge/plc"
 	"shingoedge/store"
 	storemsg "shingoedge/store/messaging"
 	"shingoedge/store/processes"
@@ -112,6 +113,8 @@ func (e *Engine) handleCounterDelta(delta CounterDeltaEvent) {
 		styleID:   delta.StyleID,
 		delta:     int(delta.Delta),
 		source:    fmt.Sprintf("rp=%d", delta.ReportingPointID),
+		catid:     delta.CATID,
+		kind:      delta.Kind,
 	})
 }
 
@@ -123,6 +126,12 @@ type tickScope struct {
 	delta     int
 	// source names the counter, "rp=N" for the process's reporting point.
 	source string
+	// catid and kind are how the tick was attributed (attributeTick). A held
+	// tick draws no cart: its draw goes to the holds ledger. An off-plan tick
+	// charges only a node whose bound carrier is the tick's style's part; the
+	// other shares go to the ledger.
+	catid string
+	kind  plc.TickKind
 }
 
 // walkTick charges one tick to the process's nodes. Each node's claim is the
@@ -140,6 +149,10 @@ func (e *Engine) walkTick(process *processes.Process, nodes []processes.Node, cl
 	// PLC count that nothing in this system ever recorded or mentioned.
 	// Diagnosing that took a database. It should take a log line.
 	attr := tickAttribution{nodesWalked: len(nodes)}
+	if tick.kind == plc.TickHeld {
+		e.holdCatidDraw(tick, 0, "", tick.delta)
+		return
+	}
 	// A/B fallthrough tracking: if all paired consume nodes are inactive,
 	// decrement the first one found as a safety net ("count to lineside storage").
 	var pairedFallbackNode *processes.Node
@@ -176,6 +189,11 @@ func (e *Engine) walkTick(process *processes.Process, nodes []processes.Node, cl
 		// doesn't drift from the operator-declared count.
 		if claim.IsLoaderNode() {
 			attr.manualSwap++
+			continue
+		}
+		if tick.kind == plc.TickOffPlan && !carrierIsPart(process, &node, runtime, claim, claims) {
+			e.holdCatidDraw(tick, node.ID, claim.PayloadCode, tick.delta)
+			attr.heldShares++
 			continue
 		}
 
@@ -260,11 +278,13 @@ type tickAttribution struct {
 	consumeTicks     int
 	produceTicks     int
 	fallthroughTicks int
+	// heldShares: an off-plan tick's shares held in the ledger.
+	heldShares int
 }
 
 // landed reports whether any node — or the A/B safety net — took the tick.
 func (a tickAttribution) landed() bool {
-	return a.consumeTicks+a.produceTicks+a.fallthroughTicks > 0
+	return a.consumeTicks+a.produceTicks+a.fallthroughTicks+a.heldShares > 0
 }
 
 // skipReport renders the walk for a log line: the node count followed by
@@ -491,6 +511,27 @@ type tickParts struct {
 	// binPack is a produce tick's pack, the claim's UOPCapacity whether or not
 	// strict_pack is set: the cap on an unbound seat's hold between bins.
 	binPack int
+}
+
+// carrierIsPart reports whether the node's bound carrier is the claim's part:
+// the resident payload when the landing carried it, else the ACTIVE style's
+// claim's part there (never the tick's own claim's, which would always match).
+// An empty seat has no carrier of any part.
+func carrierIsPart(process *processes.Process, node *processes.Node, rt *processes.RuntimeState,
+	claim *processes.NodeClaim, claims *store.NodeClaimSet) bool {
+	if rt == nil || rt.ActiveBinID == nil {
+		return false
+	}
+	part := string(rt.LinesidePayloadCode)
+	if !rt.LinesidePayloadKnown {
+		part = ""
+		if process != nil && process.ActiveStyleID != nil {
+			if active := claims.Resolve(process, node, store.ExactStyle(*process.ActiveStyleID)); active != nil {
+				part = active.PayloadCode
+			}
+		}
+	}
+	return part != "" && part == claim.PayloadCode
 }
 
 // holdPartFor is the part a consume tick is held under when no carrier takes
