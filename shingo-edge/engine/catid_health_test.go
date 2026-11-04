@@ -108,10 +108,10 @@ func TestCatidHealth_EveryItemShowsWhileTrueAndClears(t *testing.T) {
 		{catidKindPostCutover,
 			func(t *testing.T, eng *Engine, db *store.DB, pid, a, b int64, cm *catidMonitor) {
 				co := seedChangeoverTo(t, eng, db, pid, a)
-				testutil.MustNoErr(t, db.SetChangeoverVerifyMismatch(co, "1002"), "flag")
+				testutil.MustNoErr(t, db.SetChangeoverVerifyMismatch(co, "1005"), "flag")
 			},
 			func(t *testing.T, eng *Engine, db *store.DB, pid, a, b int64, cm *catidMonitor) {
-				testutil.MustNoErr(t, eng.ClearPostCutoverFlag(pid), "confirm")
+				testutil.MustNoErr(t, eng.ConfirmPostCutoverFlag(pid), "confirm")
 			}},
 		{catidKindAutoDecisions,
 			func(t *testing.T, eng *Engine, db *store.DB, pid, a, b int64, cm *catidMonitor) {

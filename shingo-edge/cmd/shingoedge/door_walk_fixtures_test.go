@@ -240,6 +240,9 @@ func routeFixtures() map[string]routeFixture {
 		"POST /api/styles": {want: 200, moves: true, req: on(func(w *walk) (string, any) {
 			return "/api/styles", map[string]any{"name": w.uniq("STYLE"), "process_id": w.press}
 		})},
+		"POST /api/processes/{id}/styles/{sid}/catid": {want: 200, moves: true, req: on(func(w *walk) (string, any) {
+			return pr(w) + "/styles/" + id(w.styleA) + "/catid", map[string]any{"catid": "4242", "evidence": "the walk"}
+		})},
 		"PUT /api/styles/{id}": {want: 200, moves: true, req: on(func(w *walk) (string, any) {
 			return "/api/styles/" + id(w.styleA), map[string]any{"name": w.uniq("STYLE-A"), "process_id": w.press}
 		})},

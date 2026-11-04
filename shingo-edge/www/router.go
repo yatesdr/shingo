@@ -498,6 +498,8 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger, backupSvc *backup.Servi
 				r.Get("/styles", h.apiListStyles)
 				r.Post("/styles", h.apiCreateStyle)
 				r.Put("/styles/{id}", h.apiUpdateStyle)
+				// The health strip's one-click: a CATID joins a style's set.
+				r.Post("/processes/{id}/styles/{sid}/catid", h.apiAddStyleCATID)
 				r.Get("/styles/{id}/delete-impact", h.apiStyleDeleteImpact)
 				r.Delete("/styles/{id}", h.apiDeleteStyle)
 				r.Post("/styles/{id}/restore", h.apiRestoreStyle)

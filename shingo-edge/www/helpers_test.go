@@ -302,7 +302,7 @@ func (s *stubEngine) CompleteProcessProductionCutover(int64) error          { re
 func (s *stubEngine) CancelProcessChangeover(int64) error                   { return nil }
 func (s *stubEngine) CancelProcessChangeoverRedirect(int64, *int64) error   { return nil }
 func (s *stubEngine) PostCutoverFlag(int64) (*engine.PostCutoverFlag, bool) { return nil, false }
-func (s *stubEngine) ClearPostCutoverFlag(int64) error {
+func (s *stubEngine) ConfirmPostCutoverFlag(int64) error {
 	s.clearFlagCalls++
 	return nil
 }
@@ -317,6 +317,13 @@ func (s *stubEngine) CatidHealth(processID int64) ([]engine.CatidHealthItem, err
 
 func (s *stubEngine) CatidHealthSummary() ([]engine.CatidHealthSummary, error) {
 	return []engine.CatidHealthSummary{{ProcessID: 1, Name: "P1", Worst: engine.CatidHealthRed, Count: 1, Headline: "Wrong part"}}, nil
+}
+
+// CheckStyleCATIDPin and AddStyleCATID: the stub accepts every pin; the rules
+// are pinned against the real engine (engine/catid_pin_verbs_test.go).
+func (s *stubEngine) CheckStyleCATIDPin(int64, int64, string) error { return nil }
+func (s *stubEngine) AddStyleCATID(_, styleID int64, catid, _, _ string) error {
+	return s.db.SetStyleExpectedCATID(styleID, catid)
 }
 
 func (s *stubEngine) ChangeoverGateStatus(int64) (bool, []domain.Blocker, error) {

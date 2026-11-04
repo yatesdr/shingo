@@ -64,6 +64,16 @@ func (db *DB) SetChangeoverVerifyMismatch(changeoverID int64, liveCATID string) 
 	return processes.SetChangeoverVerifyMismatch(db.DB, changeoverID, liveCATID)
 }
 
+// SetChangeoverStartCATID records the PLC's confirmed CATID at the start.
+func (db *DB) SetChangeoverStartCATID(changeoverID int64, catid string) error {
+	return processes.SetChangeoverStartCATID(db.DB, changeoverID, catid)
+}
+
+// SetChangeoverEndCATID records the PLC's confirmed CATID at the watch's close.
+func (db *DB) SetChangeoverEndCATID(changeoverID int64, catid string) error {
+	return processes.SetChangeoverEndCATID(db.DB, changeoverID, catid)
+}
+
 // LatestForcedChangeover returns the process's most recent changeover completed
 // past its gate, or (nil, nil).
 func (db *DB) LatestForcedChangeover(processID int64) (*processes.Changeover, error) {

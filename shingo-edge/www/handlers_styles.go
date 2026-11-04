@@ -14,6 +14,7 @@ import (
 	"strings"
 
 	"shingoedge/domain"
+	"shingoedge/engine"
 )
 
 // --- Styles Admin ---
@@ -25,6 +26,46 @@ func (h *Handlers) apiListStyles(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, styles)
+}
+
+// writeCATIDPinError answers a refused CATID pin: 409 when another style runs
+// the value, else 400.
+func writeCATIDPinError(w http.ResponseWriter, err error) {
+	status := http.StatusBadRequest
+	if errors.Is(err, engine.ErrCATIDTaken) {
+		status = http.StatusConflict
+	}
+	writeError(w, status, err.Error())
+}
+
+// apiAddStyleCATID is the health strip's one-click: the CATID joins the style's
+// set (its pin becomes the set plus the value). The evidence the strip showed
+// rides the body for the log.
+func (h *Handlers) apiAddStyleCATID(w http.ResponseWriter, r *http.Request) {
+	processID, err := parseID(r, "id")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid process id")
+		return
+	}
+	styleID, err := parseID(r, "sid")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid style id")
+		return
+	}
+	var req struct {
+		CATID    string `json:"catid"`
+		Evidence string `json:"evidence"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if err := h.orchestration.AddStyleCATID(processID, styleID, req.CATID, "engineer", req.Evidence); err != nil {
+		writeCATIDPinError(w, err)
+		return
+	}
+	h.requestBackup("style-catid-pinned")
+	writeJSON(w, map[string]string{"status": "ok"})
 }
 
 func (h *Handlers) apiCreateStyle(w http.ResponseWriter, r *http.Request) {
@@ -40,6 +81,10 @@ func (h *Handlers) apiCreateStyle(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.ProcessID == 0 {
 		writeError(w, http.StatusBadRequest, "process_id is required")
+		return
+	}
+	if err := h.orchestration.CheckStyleCATIDPin(req.ProcessID, 0, req.ExpectedCATID); err != nil {
+		writeCATIDPinError(w, err)
 		return
 	}
 	id, err := h.engine.StyleService().Create(req.Name, req.Description, req.ProcessID)
@@ -81,6 +126,12 @@ func (h *Handlers) apiUpdateStyle(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.ProcessID == 0 {
 		writeError(w, http.StatusBadRequest, "process_id is required")
+		return
+	}
+	// A typed pin names parts, and none another style of the process runs:
+	// one CATID names one style.
+	if err := h.orchestration.CheckStyleCATIDPin(req.ProcessID, id, req.ExpectedCATID); err != nil {
+		writeCATIDPinError(w, err)
 		return
 	}
 	// The process the style belonged to BEFORE the write. An update can move

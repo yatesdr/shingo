@@ -46,14 +46,16 @@ type (
 // --- changeover header ---
 
 const changeoverSelect = `c.id, c.process_id, c.from_style_id, c.to_style_id, c.state, c.called_by, c.notes,
-		c.started_at, COALESCE(c.completed_at, ''), COALESCE(c.triggered_by, ''), COALESCE(c.verify_live_catid, ''), c.updated_at,
+		c.started_at, COALESCE(c.completed_at, ''), COALESCE(c.triggered_by, ''), COALESCE(c.verify_live_catid, ''),
+		c.start_catid, c.end_catid, c.updated_at,
 		COALESCE(p.name, ''), COALESCE(fs.name, ''), COALESCE(ts.name, '')`
 
 func scanChangeover(scanner interface{ Scan(...any) error }) (Changeover, error) {
 	var c Changeover
 	var startedAt, completedAt, updatedAt string
 	err := scanner.Scan(&c.ID, &c.ProcessID, &c.FromStyleID, &c.ToStyleID, &c.State, &c.CalledBy, &c.Notes,
-		&startedAt, &completedAt, &c.TriggeredBy, &c.VerifyLiveCATID, &updatedAt, &c.ProcessName, &c.FromStyleName, &c.ToStyleName)
+		&startedAt, &completedAt, &c.TriggeredBy, &c.VerifyLiveCATID, &c.StartCATID, &c.EndCATID, &updatedAt,
+		&c.ProcessName, &c.FromStyleName, &c.ToStyleName)
 	if err != nil {
 		return c, err
 	}
@@ -236,6 +238,19 @@ func InsertCompletedChangeover(db *sql.DB, processID int64, fromStyleID *int64, 
 		return 0, err
 	}
 	return res.LastInsertId()
+}
+
+// SetChangeoverStartCATID records the PLC's confirmed CATID at the start.
+func SetChangeoverStartCATID(db *sql.DB, changeoverID int64, catid string) error {
+	_, err := db.Exec(`UPDATE process_changeovers SET start_catid=? WHERE id=?`, catid, changeoverID)
+	return err
+}
+
+// SetChangeoverEndCATID records the PLC's confirmed CATID when the
+// post-cutover watch closed.
+func SetChangeoverEndCATID(db *sql.DB, changeoverID int64, catid string) error {
+	_, err := db.Exec(`UPDATE process_changeovers SET end_catid=? WHERE id=?`, catid, changeoverID)
+	return err
 }
 
 // SetChangeoverVerifyMismatch records (or clears, when liveCATID is empty) the

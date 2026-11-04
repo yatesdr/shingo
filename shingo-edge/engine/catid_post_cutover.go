@@ -21,8 +21,10 @@ import (
 var postCutoverVerifyWindow = 2 * time.Minute
 
 // openPostCutoverVerify starts the post-cutover watch for a just-completed
-// changeover. Silent (no watch) when the new active style has no expected_catid —
-// there is nothing to verify against.
+// changeover on a monitored process. It opens with the new active style's set
+// EMPTY too: at its close it records the PLC's part on the row (end_catid),
+// the evidence a pin is suggested from (suggestCATIDPin); it flags only a
+// non-empty set the part is not in.
 func (e *Engine) openPostCutoverVerify(processID, changeoverID int64) {
 	if e.catidMon == nil {
 		return
@@ -35,12 +37,17 @@ func (e *Engine) openPostCutoverVerify(processID, changeoverID int64) {
 	if err != nil || style == nil {
 		return
 	}
-	set := e.styleCATIDSet(style)
-	if len(set) == 0 {
-		return // no configured/derivable parts ⇒ nothing to verify against
-	}
-	e.catidMon.openPostCutoverVerify(processID, changeoverID, style.ID, set,
+	e.catidMon.openPostCutoverVerify(processID, changeoverID, style.ID, e.styleCATIDSet(style),
 		time.Now().Add(postCutoverVerifyWindow))
+}
+
+// liveIdentity is the monitor's confirmed CATID for the process when it names
+// a part.
+func (e *Engine) liveIdentity(processID int64) (string, bool) {
+	if e.catidMon == nil {
+		return "", false
+	}
+	return e.catidMon.liveCATID(processID)
 }
 
 // PostCutoverFlag is the operator-facing post-cutover verification flag for a
@@ -103,8 +110,28 @@ func (e *Engine) PostCutoverFlag(processID int64) (*PostCutoverFlag, bool) {
 	return flag, true
 }
 
-// ClearPostCutoverFlag clears the process's post-cutover verification flag — the
-// operator confirmed or resolved it. No-op when nothing is flagged.
+// ConfirmPostCutoverFlag is the flag's Confirm: the operator says the part the
+// PLC reports IS the changeover's to-style's. The flagged value joins the
+// to-style's pin (AddStyleCATID: its set plus the value, refused when another
+// style holds it — then the corrective changeover the flag offers is the way),
+// and the flag clears. No-op when nothing is flagged.
+func (e *Engine) ConfirmPostCutoverFlag(processID int64) error {
+	co, err := e.db.LatestFlaggedChangeover(processID)
+	if err != nil || co == nil {
+		return err
+	}
+	if isIdentity(co.VerifyLiveCATID) {
+		if err := e.AddStyleCATID(processID, co.ToStyleID, co.VerifyLiveCATID, "operator",
+			fmt.Sprintf("confirmed the post-cutover flag on changeover %d", co.ID)); err != nil {
+			return err
+		}
+	}
+	return e.ClearPostCutoverFlag(processID)
+}
+
+// ClearPostCutoverFlag clears the process's post-cutover verification flag
+// without writing any pin: a new changeover resolves it (the operator is acting
+// on the mismatch). No-op when nothing is flagged.
 func (e *Engine) ClearPostCutoverFlag(processID int64) error {
 	co, err := e.db.LatestFlaggedChangeover(processID)
 	if err != nil || co == nil {

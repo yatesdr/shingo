@@ -200,12 +200,18 @@ type EngineOrchestration interface {
 	// process with any.
 	CatidHealth(processID int64) ([]engine.CatidHealthItem, error)
 	CatidHealthSummary() ([]engine.CatidHealthSummary, error)
+	// CheckStyleCATIDPin validates a typed expected_catid (each value names a
+	// part, none is another live style's); AddStyleCATID is the strip's
+	// one-click, which writes the style's set plus the value.
+	CheckStyleCATIDPin(processID, styleID int64, pin string) error
+	AddStyleCATID(processID, styleID int64, catid, by, evidence string) error
 	// PostCutoverFlag returns the process's active post-cutover verification flag
 	// (the press's live part disagrees with the style the cutover was set to), or
 	// (nil, false) when none.
 	PostCutoverFlag(processID int64) (*engine.PostCutoverFlag, bool)
-	// ClearPostCutoverFlag clears that flag — the operator confirmed or resolved it.
-	ClearPostCutoverFlag(processID int64) error
+	// ConfirmPostCutoverFlag is the flag's Confirm: the reported part joins
+	// the to-style's set, and the flag clears.
+	ConfirmPostCutoverFlag(processID int64) error
 	StageNodeChangeoverMaterial(processID, nodeID int64) (*domain.Order, error)
 	EvacuateNode(processID, nodeID int64, partialQty int64) (*domain.Order, error)
 	DeliverNewMaterialForChangeover(processID, nodeID int64) (*domain.Order, error)

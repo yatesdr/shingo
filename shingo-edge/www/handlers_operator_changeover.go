@@ -159,8 +159,8 @@ func (h *Handlers) apiConfirmPostCutoverFlag(w http.ResponseWriter, r *http.Requ
 		writeError(w, http.StatusBadRequest, "invalid process id")
 		return
 	}
-	if err := h.orchestration.ClearPostCutoverFlag(processID); err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
+	if err := h.orchestration.ConfirmPostCutoverFlag(processID); err != nil {
+		writeCATIDPinError(w, err)
 		return
 	}
 	h.eventHub.Broadcast(SSEEvent{Type: "changeover-verify-cleared", Data: map[string]int64{"process_id": processID}})

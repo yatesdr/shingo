@@ -459,6 +459,11 @@ CREATE TABLE process_changeovers (
     completed_at    TEXT,
     triggered_by    TEXT NOT NULL DEFAULT '',
     verify_live_catid TEXT NOT NULL DEFAULT '',
+    -- The PLC's confirmed CATID when the changeover started, and when its
+    -- post-cutover watch closed: the evidence a CATID pin is suggested from.
+    -- '' when the monitor had no identity at that moment.
+    start_catid     TEXT NOT NULL DEFAULT '',
+    end_catid       TEXT NOT NULL DEFAULT '',
     -- origin_id is this changeover's demand episode. Empty until minted.
     --
     -- It goes on THIS row rather than in demand_origins_open because this row

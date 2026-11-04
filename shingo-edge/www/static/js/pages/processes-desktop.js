@@ -5755,6 +5755,17 @@ function openStyleMenu(btn) {
     placePopover(pop, btn);
 }
 
+// What a blank Expected CATID means for a style: its produced parts' catalog
+// CATIDs, or — for a style with no produce claim — none at all, until one is
+// confirmed from a changeover (the health strip's one-click, or the
+// post-cutover flag's Confirm).
+function catidBlankHint(id) {
+    const cs = composerStyle(id);
+    const produces = !cs || (cs.claims || []).some(c => c.role === 'produce');
+    return produces ? 'blank means the CATIDs come from its parts in the catalog'
+        : 'blank — no part IDs; confirm one from a changeover';
+}
+
 function styleByID(id) { return S.styles.find(s => s.id === id) || composerStyle(id) || { id: id, name: '' }; }
 
 // apiUpdateStyle WRITES EVERY FIELD IT DECODES: name, description, process_id
@@ -5778,7 +5789,7 @@ function styleAction(act, id) {
         case 'catid':
             openSheet('Expected CATID · ' + st.name,
                 'what the PLC calls this part. A confirmed change to it is what arms a changeover cutover.',
-                sheetField('Expected CATID', 'blank means the CATIDs come from its parts in the catalog', 'catid', st.expected_catid),
+                sheetField('Expected CATID', catidBlankHint(id), 'catid', st.expected_catid),
                 'Save', () => sheetSubmit('PUT', '/api/styles/' + id,
                     styleBody(st, { expected_catid: sheetValue('catid') }), refreshProcess));
             return;
@@ -5911,7 +5922,8 @@ function openNewStyle(recipeID, sel) {
         '<div id="pd-newslots"></div>' +
         '<div id="pd-newspots"></div>' +
         '<div id="pd-newname">' + sheetField('Name', 'what this part is called here', 'name', '') + '</div>' +
-        sheetField('Expected CATID', 'what the PLC calls it — blank means the CATIDs come from its parts in the catalog',
+        sheetField('Expected CATID', 'what the PLC calls it — blank means the CATIDs come from its produced parts in ' +
+            'the catalog; a style that only consumes has none until one is confirmed from a changeover',
             'catid', '') +
         '<p class="pd-note">A confirmed change to the CATID is what arms a changeover cutover. Set one ' +
         'only when the catalog’s is wrong for this part; it can be set later from the part’s own ' +

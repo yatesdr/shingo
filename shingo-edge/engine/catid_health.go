@@ -263,12 +263,14 @@ func noCATIDItems(active, target *styleCATIDEntry) []CatidHealthItem {
 }
 
 // unmappedItems: a value the PLC sent in the last 14 days that no live style's
-// set holds, with the styles it could be pinned to.
+// set holds, with the styles it could be pinned to, and the suggestion when a
+// completed changeover's evidence names one (suggestCATIDPin).
 func (e *Engine) unmappedItems(processID int64, sets []styleCATIDEntry, now time.Time) []CatidHealthItem {
 	obs, err := e.db.ListPLCCATIDObservationsForProcess(processID, now.Add(-catidHealthUnmappedWindow))
 	if err != nil {
 		return nil
 	}
+	recent, _ := e.db.ListRecentProcessChangeovers(processID, catidSuggestionLookback)
 	styles := make([]map[string]any, 0, len(sets))
 	for _, s := range sets {
 		styles = append(styles, map[string]any{"id": s.ID, "name": s.Name})
@@ -278,12 +280,44 @@ func (e *Engine) unmappedItems(processID int64, sets []styleCATIDEntry, now time
 		if !isIdentity(o.CATID) || anySetHas(sets, o.CATID) {
 			continue
 		}
-		items = append(items, CatidHealthItem{Kind: catidKindUnmapped, Severity: CatidHealthAmber,
+		item := CatidHealthItem{Kind: catidKindUnmapped, Severity: CatidHealthAmber,
 			Headline: fmt.Sprintf("CATID %s maps to no style", o.CATID),
 			Detail:   fmt.Sprintf("seen %d times, last %s", o.Observations, o.LastSeen),
-			Data:     map[string]any{"catid": o.CATID, "last_seen": o.LastSeen, "observations": o.Observations, "styles": styles}})
+			Data:     map[string]any{"catid": o.CATID, "last_seen": o.LastSeen, "observations": o.Observations, "styles": styles}}
+		if co, ok := suggestionFor(recent, sets, o.CATID); ok {
+			item.Detail += fmt.Sprintf("; changeover #%d to %s ended on %s", co.ID, co.ToStyleName, o.CATID)
+			item.Data["suggestion"] = map[string]any{"style_id": co.ToStyleID, "style_name": co.ToStyleName, "changeover_id": co.ID}
+		}
+		items = append(items, item)
 	}
 	return items
+}
+
+// catidSuggestionLookback is how many of the process's latest changeovers a
+// suggestion is looked for in.
+const catidSuggestionLookback = 20
+
+// suggestionFor finds the newest completed changeover whose evidence suggests
+// v for its to-style.
+func suggestionFor(recent []processes.Changeover, sets []styleCATIDEntry, v string) (processes.Changeover, bool) {
+	setOf := func(id *int64) map[string]struct{} {
+		for _, s := range sets {
+			if id != nil && s.ID == *id {
+				return s.Set
+			}
+		}
+		return nil
+	}
+	for _, co := range recent {
+		if co.State != "completed" || co.EndCATID != v {
+			continue
+		}
+		to := co.ToStyleID
+		if _, ok := suggestCATIDPin(co, setOf(&to), setOf(co.FromStyleID)); ok {
+			return co, true
+		}
+	}
+	return processes.Changeover{}, false
 }
 
 func anySetHas(sets []styleCATIDEntry, v string) bool {

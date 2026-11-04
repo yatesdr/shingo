@@ -14,6 +14,9 @@
 package engine
 
 import (
+	"errors"
+	"fmt"
+	"log"
 	"sort"
 	"strings"
 
@@ -179,6 +182,89 @@ func (e *Engine) plannedChangeoverTo(processID int64, v string) (string, []strin
 		return style.Name, []string{"the gate could not be read"}
 	}
 	return style.Name, domain.BlockersToReasons(blockers)
+}
+
+// suggestCATIDPin is the pin suggestion from a completed changeover's evidence
+// (pure): the value the PLC was on when its post-cutover watch closed is
+// suggested for the changeover's to-style when it names a part, is not the
+// value the PLC was already on when the changeover started, is not already in
+// the to-style's set, and is not the from-style's (when that set has any).
+// Nothing is ever suggested from "the style that was active": a run with no
+// changeover leaves no evidence. Returns the value and whether to suggest it.
+func suggestCATIDPin(co processes.Changeover, toSet, fromSet map[string]struct{}) (string, bool) {
+	v := co.EndCATID
+	if !isIdentity(v) || v == co.StartCATID || catidSetHas(toSet, v) {
+		return "", false
+	}
+	if len(fromSet) > 0 && catidSetHas(fromSet, v) {
+		return "", false
+	}
+	return v, true
+}
+
+// ErrCATIDTaken is a pin refused because another live style's set already
+// holds the value: one CATID names one style.
+var ErrCATIDTaken = errors.New("another style already runs that CATID")
+
+// CheckStyleCATIDPin validates a typed expected_catid for a style of the
+// process: every value must name a part, and none may be in another live
+// style's set. A blank pin (derive from the catalog) passes. styleID 0 is a
+// style about to be created.
+func (e *Engine) CheckStyleCATIDPin(processID, styleID int64, pin string) error {
+	for v := range parseCATIDList(pin) {
+		if !isIdentity(v) {
+			return fmt.Errorf("CATID %q names no part (0 and negative values are what an unused slot reads)", v)
+		}
+		if other, ok := otherStyleHolding(e.processStyleCATIDSets(processID), styleID, v); ok {
+			return fmt.Errorf("%w: CATID %s is %s's", ErrCATIDTaken, v, other)
+		}
+	}
+	return nil
+}
+
+// AddStyleCATID writes v into a style's pin: the pin becomes the style's set
+// as it stands (its pin, or the catalog-derived set) plus v — a bare {v} would
+// evict a catalog set, since a pin IS the set. Refused when v names no part or
+// another live style holds it. The strip's one-click and the post-cutover
+// flag's Confirm write through it; by and evidence go to the log.
+func (e *Engine) AddStyleCATID(processID, styleID int64, v, by, evidence string) error {
+	v = strings.TrimSpace(v)
+	if !isIdentity(v) {
+		return fmt.Errorf("CATID %q names no part", v)
+	}
+	sets := e.processStyleCATIDSets(processID)
+	if other, ok := otherStyleHolding(sets, styleID, v); ok {
+		return fmt.Errorf("%w: CATID %s is %s's", ErrCATIDTaken, v, other)
+	}
+	style, err := e.db.GetStyle(styleID)
+	if err != nil || style == nil || style.ProcessID != processID {
+		return fmt.Errorf("style %d is not a style of process %d", styleID, processID)
+	}
+	set := e.styleCATIDSet(style)
+	if catidSetHas(set, v) {
+		return nil
+	}
+	merged := map[string]struct{}{v: {}}
+	for s := range set {
+		merged[s] = struct{}{}
+	}
+	pin := strings.ReplaceAll(formatCATIDSet(merged), " ", "")
+	if err := e.db.SetStyleExpectedCATID(styleID, pin); err != nil {
+		return err
+	}
+	log.Printf("catid pin: style %s (%d) on process %d now %s — added %s by %s: %s", style.Name, styleID, processID, pin, v, by, evidence)
+	e.catidHealthChanged(processID)
+	return nil
+}
+
+// otherStyleHolding names a live style other than styleID whose set holds v.
+func otherStyleHolding(sets []styleCATIDEntry, styleID int64, v string) (string, bool) {
+	for _, s := range sets {
+		if s.ID != styleID && catidSetHas(s.Set, v) {
+			return s.Name, true
+		}
+	}
+	return "", false
 }
 
 // catidSetHas reports membership.

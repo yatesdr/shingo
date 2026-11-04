@@ -417,11 +417,14 @@ func (cm *catidMonitor) evaluateProcess(processID int64, st *catidState, now tim
 // openPostCutoverVerify starts a post-cutover verification watch for a process:
 // within [now, deadline], the monitor checks whether the press's live part id
 // is one of set (the new active style's parts, read by the caller) and flags
-// changeoverID if it is not. Called from the completion path (outside the
-// tick); locks mu.
+// changeoverID if it is not. A process the monitor does not hold gets none.
+// Called from the completion path (outside the tick); locks mu.
 func (cm *catidMonitor) openPostCutoverVerify(processID, changeoverID, styleID int64, set map[string]struct{}, deadline time.Time) {
 	cm.mu.Lock()
 	defer cm.mu.Unlock()
+	if _, ok := cm.states[processID]; !ok {
+		return
+	}
 	if cm.verify == nil {
 		cm.verify = map[int64]*postCutoverVerify{}
 	}
@@ -452,6 +455,7 @@ func (cm *catidMonitor) checkPostCutoverVerify(processID int64, st *catidState, 
 		if err := cm.eng.db.SetChangeoverVerifyMismatch(pv.changeoverID, ""); err != nil {
 			log.Printf("plc-catid: clear post-cutover flag on changeover %d: %v", pv.changeoverID, err)
 		}
+		cm.recordEndCATID(pv, st)
 		delete(cm.verify, processID)
 		cm.eng.catidHealthChanged(processID)
 		return
@@ -459,9 +463,11 @@ func (cm *catidMonitor) checkPostCutoverVerify(processID int64, st *catidState, 
 	if now.Before(pv.deadline) {
 		return // still inside the window — give the press time to settle
 	}
-	// Window elapsed. If we saw a live value, the style has parts to check against,
-	// and the value is none of them, flag the changeover; otherwise close silently.
-	if st.seenValue && len(set) > 0 && !catidSetHas(set, st.lastConfirmed) {
+	// Window elapsed: record what the PLC is on (the pin suggestion's evidence),
+	// and if the style has parts to check against and the value names a part
+	// none of them is, flag the changeover; otherwise close silently.
+	cm.recordEndCATID(pv, st)
+	if st.seenValue && isIdentity(st.lastConfirmed) && len(set) > 0 && !catidSetHas(set, st.lastConfirmed) {
 		if err := cm.eng.db.SetChangeoverVerifyMismatch(pv.changeoverID, st.lastConfirmed); err != nil {
 			log.Printf("plc-catid: flag post-cutover mismatch on changeover %d: %v", pv.changeoverID, err)
 		} else {
@@ -479,6 +485,17 @@ func (cm *catidMonitor) checkPostCutoverVerify(processID int64, st *catidState, 
 		}
 	}
 	delete(cm.verify, processID)
+}
+
+// recordEndCATID writes the PLC's confirmed part on the watched changeover as
+// the watch closes, when it names one. Called with cm.mu held.
+func (cm *catidMonitor) recordEndCATID(pv *postCutoverVerify, st *catidState) {
+	if !st.seenValue || !isIdentity(st.lastConfirmed) {
+		return
+	}
+	if err := cm.eng.db.SetChangeoverEndCATID(pv.changeoverID, st.lastConfirmed); err != nil {
+		log.Printf("plc-catid: record end CATID on changeover %d: %v", pv.changeoverID, err)
+	}
 }
 
 // applyCatidEdge runs the value-change debounce state machine. Returns

@@ -579,6 +579,13 @@ func (e *Engine) StartProcessChangeover(processID, toStyleID int64, calledBy, no
 	if err != nil {
 		return nil, err
 	}
+	// The PLC's part as the changeover starts: the evidence a pin is later
+	// suggested from never suggests the value the cell was already on.
+	if v, ok := e.liveIdentity(processID); ok {
+		if err := e.db.SetChangeoverStartCATID(changeover.ID, v); err != nil {
+			log.Printf("changeover: record start CATID on changeover %d: %v", changeover.ID, err)
+		}
+	}
 
 	// The keep-staged spots, decided once each across the whole plan from the read
 	// above and the rows the pre-dispatch cancel read: what it cancelled is gone,

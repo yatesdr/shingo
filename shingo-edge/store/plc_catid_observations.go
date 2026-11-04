@@ -21,10 +21,12 @@ import (
 // flicker on the wire does not become a fact — including the ones that match,
 // which are the ones that certify the configuration is right.
 //
-// IT DECIDES NOTHING. No guard, prompt or arm reads this table; it is evidence
-// for a person, so a wrong row cannot cause a wrong action. That is deliberate:
-// the first pass of any measurement is the one most likely to be wrong about
-// what it is measuring.
+// IT DECIDES ONE CONSERVATIVE THING. It is evidence for a person: the health
+// strip lists the values no style holds, with the styles to pin them to. The
+// one decision read from it is whether a style's set is "proven" (holds a value
+// the process has emitted), and that can only suppress a hold, never cause a
+// charge or a switch — a wrong row cannot cause a wrong action. 0 and negative
+// values are recorded as sent; readers filter them (isIdentity).
 func (db *DB) RecordPLCCATIDObservation(processID int64, plcName, catid string) error {
 	if processID <= 0 || catid == "" {
 		return nil

@@ -30,8 +30,13 @@ type Changeover struct {
 	// (post-cutover verification). Non-empty flags the changeover for operator
 	// confirmation on the station; empty means verified, not yet checked, or the
 	// new style has no expected_catid (silent).
-	VerifyLiveCATID string    `json:"verify_live_catid,omitempty"`
-	UpdatedAt       time.Time `json:"updated_at"`
+	VerifyLiveCATID string `json:"verify_live_catid,omitempty"`
+	// StartCATID and EndCATID are the PLC's confirmed CATID when the
+	// changeover started and when its post-cutover watch closed ("" when the
+	// monitor had none): the evidence a CATID pin is suggested from.
+	StartCATID string    `json:"start_catid,omitempty"`
+	EndCATID   string    `json:"end_catid,omitempty"`
+	UpdatedAt  time.Time `json:"updated_at"`
 	// Joined fields
 	ProcessName   string `json:"process_name"`
 	FromStyleName string `json:"from_style_name"`
