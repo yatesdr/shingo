@@ -84,6 +84,15 @@ func InsertSnapshot(db *sql.DB, rpID int64, countValue, delta int64, anomaly str
 // pre-2026-09 hours, which nothing reads or writes.
 const DateLayout = "2006-01-02"
 
+// SumDeltaSince sums the counted strokes the process's reporting points
+// recorded at or after sinceMs (unix ms, the row's own clock).
+func SumDeltaSince(db *sql.DB, processID, sinceMs int64) (int64, error) {
+	var n int64
+	err := db.QueryRow(`SELECT COALESCE(SUM(delta), 0) FROM counter_snapshots
+		WHERE process_id = ? AND recorded_ms >= ? AND delta > 0`, processID, sinceMs).Scan(&n)
+	return n, err
+}
+
 // HourBucket is the single definition of which bucket an instant belongs to:
 // the start of its UTC hour, in unix seconds. Writer and reader both go
 // through this, so they cannot disagree about a boundary.

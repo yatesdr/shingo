@@ -14,7 +14,10 @@ package store
 
 import (
 	"fmt"
+	"time"
+
 	"shingoedge/domain"
+	"shingoedge/store/internal/helpers"
 	"shingoedge/store/processes"
 )
 
@@ -59,6 +62,18 @@ func (db *DB) UpdateProcessChangeoverState(id int64, state domain.ChangeoverStat
 // post-cutover CATID verification flag on a changeover.
 func (db *DB) SetChangeoverVerifyMismatch(changeoverID int64, liveCATID string) error {
 	return processes.SetChangeoverVerifyMismatch(db.DB, changeoverID, liveCATID)
+}
+
+// LatestForcedChangeover returns the process's most recent changeover completed
+// past its gate, or (nil, nil).
+func (db *DB) LatestForcedChangeover(processID int64) (*processes.Changeover, error) {
+	return processes.LatestForcedChangeover(db.DB, processID)
+}
+
+// ListChangeoversTriggeredSince returns the process's changeovers completed at
+// or after since (UTC) with one of the triggered_by values, newest first.
+func (db *DB) ListChangeoversTriggeredSince(processID int64, triggers []string, since time.Time) ([]processes.Changeover, error) {
+	return processes.ListChangeoversTriggeredSince(db.DB, processID, triggers, since.UTC().Format(helpers.TimeLayout))
 }
 
 // LatestFlaggedChangeover returns the most recent post-cutover-flagged

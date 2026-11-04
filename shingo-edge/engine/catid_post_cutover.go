@@ -110,5 +110,9 @@ func (e *Engine) ClearPostCutoverFlag(processID int64) error {
 	if err != nil || co == nil {
 		return err
 	}
-	return e.db.SetChangeoverVerifyMismatch(co.ID, "")
+	if err := e.db.SetChangeoverVerifyMismatch(co.ID, ""); err != nil {
+		return err
+	}
+	e.catidHealthChanged(processID)
+	return nil
 }

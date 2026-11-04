@@ -115,6 +115,9 @@ type styleCATIDEntry struct {
 	ID   int64
 	Name string
 	Set  map[string]struct{}
+	// ProduceClaims is the style's produce claims with a payload; zero is a
+	// consume-only style, whose set the catalog cannot supply.
+	ProduceClaims int
 }
 
 // processStyleCATIDSets returns every LIVE style of the process with its
@@ -131,7 +134,7 @@ func (e *Engine) processStyleCATIDSets(processID int64) []styleCATIDEntry {
 	}
 	out := make([]styleCATIDEntry, 0, len(rows))
 	for _, r := range rows {
-		out = append(out, styleCATIDEntry{ID: r.StyleID, Name: r.Name, Set: catidSetFromIdentity(r)})
+		out = append(out, styleCATIDEntry{ID: r.StyleID, Name: r.Name, Set: catidSetFromIdentity(r), ProduceClaims: r.ProduceClaims})
 	}
 	return out
 }

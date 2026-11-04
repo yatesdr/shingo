@@ -1,6 +1,9 @@
 package store
 
-import "fmt"
+import (
+	"fmt"
+	"time"
+)
 
 // RecordPLCCATIDObservation records that a press's PLC declared this part
 // identity, and when. One row per (process, cat id), with a first-seen, a
@@ -47,6 +50,27 @@ type PLCCATIDObservation struct {
 	FirstSeen    string `json:"first_seen"`
 	LastSeen     string `json:"last_seen"`
 	Observations int64  `json:"observations"`
+}
+
+// ListPLCCATIDObservationsForProcess returns one process's observations seen at
+// or after since, most recently seen first.
+func (db *DB) ListPLCCATIDObservationsForProcess(processID int64, since time.Time) ([]PLCCATIDObservation, error) {
+	rows, err := db.Query(`SELECT process_id, plc_name, catid, first_seen, last_seen, observations
+		FROM plc_catid_observations WHERE process_id = ? AND last_seen >= ?
+		ORDER BY last_seen DESC, catid`, processID, since.UTC().Format("2006-01-02 15:04:05"))
+	if err != nil {
+		return nil, fmt.Errorf("list plc catid observations for process %d: %w", processID, err)
+	}
+	defer rows.Close()
+	var out []PLCCATIDObservation
+	for rows.Next() {
+		var o PLCCATIDObservation
+		if err := rows.Scan(&o.ProcessID, &o.PLCName, &o.CATID, &o.FirstSeen, &o.LastSeen, &o.Observations); err != nil {
+			return nil, err
+		}
+		out = append(out, o)
+	}
+	return out, rows.Err()
 }
 
 // ListPLCCATIDObservations returns every observation, most recently seen first.

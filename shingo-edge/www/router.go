@@ -347,6 +347,10 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger, backupSvc *backup.Servi
 			// shop-floor changeover routes rather than behind admin auth
 			// because the operator station is the consumer.
 			r.Get("/processes/{id}/changeover/gate-status", h.apiChangeoverGateStatus)
+			// The part-identity health strip: read-only, computed on each call;
+			// the homepage reads the summary, the processes page the items.
+			r.Get("/processes/{id}/catid-health", h.apiCatidHealth)
+			r.Get("/catid-health", h.apiCatidHealthSummary)
 			r.Post("/processes/{id}/changeover/preview", h.apiPreviewProcessChangeover)
 			r.Post("/processes/{id}/changeover/start", h.apiStartProcessChangeover)
 			// The flow composer: preview a draft (read-only, allowed with the

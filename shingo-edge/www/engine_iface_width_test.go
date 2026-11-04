@@ -170,6 +170,8 @@ func TestEngineOrchestrationWidth(t *testing.T) {
 		"CancelProcessChangeover",
 		"CancelProcessChangeoverRedirect",
 		"CatalogService",
+		"CatidHealth",
+		"CatidHealthSummary",
 		"ChangeoverGateStatus",
 		"ChangeoverService",
 		"ClearBin",

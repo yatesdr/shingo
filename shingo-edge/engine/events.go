@@ -163,6 +163,11 @@ const (
 	// when Core's echo arrives (orders.Manager.AbortOrderWithReason transitions
 	// locally first), so it never fires this.
 	EventOrderCancelledByCore
+	// EventCATIDHealthChanged hints that a process's part-identity health
+	// items may have moved (a confirm edge, a switch or cutover, a start, the
+	// post-cutover flag changing). Pages refetch; the items are computed from
+	// state on each read, so a missed hint costs a refresh, never a wrong item.
+	EventCATIDHealthChanged
 )
 
 // Event is the envelope emitted by the Engine's EventBus.

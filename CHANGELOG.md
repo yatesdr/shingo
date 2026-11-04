@@ -19,6 +19,7 @@ Edge only, v37. Ship after a restored-copy migrate.
 - The poll writes a counted read only while the point still reads that tag, and emits nothing it did not write
 - The counter walk charges each node under the claim of the tick's own style; one walk body for every counter
 - A counter tag WarLink does not list (a struct member) is enabled and read, and saved when it reads a whole number
+- The CATID health strip: /api/processes/{id}/catid-health, /api/catid-health, a catid-health hint, a list on Processes
 
 ## 2026-11-03 — An order's carts are its rows
 

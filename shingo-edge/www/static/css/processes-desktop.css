@@ -962,3 +962,10 @@ body.pd-body .pd-sheet { flex: 1 1 auto; min-height: 0; overflow: auto; }
 @media (max-width: 1280px) {
     .pd-rail { width: 240px; flex-basis: 240px; }
 }
+
+/* The part-identity health strip above the process list (catid-health.js). */
+.pd-ch { margin: 0 24px 12px; display: flex; flex-direction: column; gap: 4px; }
+.pd-ch-row { padding: 6px 10px; border-left: 4px solid; border-radius: 3px; cursor: pointer; }
+.pd-ch-red { border-color: #c62828; background: #fdecea; }
+.pd-ch-amber { border-color: #ef8f00; background: #fff4e0; }
+.pd-ch-info { border-color: #6b7a8f; background: #f1f3f6; }

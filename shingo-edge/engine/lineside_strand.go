@@ -136,6 +136,7 @@ func (e *Engine) flipActiveStyle(processID int64, styleID *int64) error {
 		log.Printf("lineside: style flip on process %d: %v", processID, err)
 	}
 	e.publishPlantClaims(processID)
+	e.catidHealthChanged(processID)
 	return nil
 }
 

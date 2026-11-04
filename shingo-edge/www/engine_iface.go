@@ -195,6 +195,11 @@ type EngineOrchestration interface {
 	AbandonChangeoverSupply(processID, processNodeID int64, acceptHalf bool, calledBy string) error
 	// ChangeoverGateStatus is a pure read of the cutover gate — safe to poll.
 	ChangeoverGateStatus(processID int64) (bool, []domain.Blocker, error)
+	// CatidHealth and CatidHealthSummary are the part-identity health strip,
+	// computed from state on each read: one process's items, and one line per
+	// process with any.
+	CatidHealth(processID int64) ([]engine.CatidHealthItem, error)
+	CatidHealthSummary() ([]engine.CatidHealthSummary, error)
 	// PostCutoverFlag returns the process's active post-cutover verification flag
 	// (the press's live part disagrees with the style the cutover was set to), or
 	// (nil, false) when none.

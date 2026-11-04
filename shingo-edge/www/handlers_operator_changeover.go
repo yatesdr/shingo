@@ -263,6 +263,39 @@ func (h *Handlers) apiChangeoverGateStatus(w http.ResponseWriter, r *http.Reques
 	})
 }
 
+// apiCatidHealth returns one process's part-identity health items, worst
+// first: {"items": [...]}, never null.
+func (h *Handlers) apiCatidHealth(w http.ResponseWriter, r *http.Request) {
+	processID, err := parseID(r, "id")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid process id")
+		return
+	}
+	items, err := h.orchestration.CatidHealth(processID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if items == nil {
+		items = []engine.CatidHealthItem{}
+	}
+	writeJSON(w, map[string]any{"items": items})
+}
+
+// apiCatidHealthSummary returns one line per process with any health item:
+// its worst severity, its count and its worst item's headline.
+func (h *Handlers) apiCatidHealthSummary(w http.ResponseWriter, r *http.Request) {
+	rows, err := h.orchestration.CatidHealthSummary()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if rows == nil {
+		rows = []engine.CatidHealthSummary{}
+	}
+	writeJSON(w, rows)
+}
+
 func (h *Handlers) apiCompleteProcessProductionCutover(w http.ResponseWriter, r *http.Request) {
 	processID, err := parseID(r, "id")
 	if err != nil {

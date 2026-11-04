@@ -81,6 +81,13 @@ type catidState struct {
 	// plcEdgeDebounce before being confirmed. nil outside a change window.
 	pending      *string
 	pendingSince *time.Time
+	// confirmedAt is when lastConfirmed was confirmed; confirmedBaseline marks
+	// the first read after a start, whose value was already standing then.
+	// lastErr is the last read's failure, "" after a good read. The health
+	// strip reads all three (identityFacts).
+	confirmedAt       time.Time
+	confirmedBaseline bool
+	lastErr           string
 	// Auto-arm stability tracker (B1). armCandidate is the debounced value being
 	// watched for stability; armCount is how many consecutive ticks it has held;
 	// armFirstSeen is when it first appeared. Any value change, unreadable read
@@ -263,6 +270,35 @@ func (cm *catidMonitor) reprime(processID int64) {
 	log.Printf("plc-catid: monitoring process %d (%s) on %s.%s", p.ID, p.Name, p.CounterPLCName, tag)
 }
 
+// identityFacts is what the health strip reads of the monitor for a process.
+type identityFacts struct {
+	monitored         bool
+	value             string // the confirmed value; "" until one is confirmed
+	confirmedAt       time.Time
+	confirmedBaseline bool
+	lastOK            time.Time
+	lastErr           string
+}
+
+// identityFacts returns the monitor's facts for the process. Takes cm.mu
+// briefly: an HTTP read, never the poll.
+func (cm *catidMonitor) identityFacts(processID int64) identityFacts {
+	cm.mu.Lock()
+	st, ok := cm.states[processID]
+	var f identityFacts
+	if ok {
+		f = identityFacts{monitored: true, confirmedAt: st.confirmedAt, confirmedBaseline: st.confirmedBaseline, lastErr: st.lastErr}
+		if st.seenValue {
+			f.value = st.lastConfirmed
+		}
+	}
+	cm.mu.Unlock()
+	if snap, ok := cm.snapshot(processID); ok {
+		f.lastOK = snap.lastOK
+	}
+	return f
+}
+
 // forget drops a deleted process from the monitor.
 func (cm *catidMonitor) forget(processID int64) {
 	cm.mu.Lock()
@@ -356,14 +392,19 @@ func (cm *catidMonitor) evaluateProcess(processID int64, st *catidState, now tim
 	raw, err := cm.eng.plcMgr.ReadTag(st.plcName, st.tagName)
 	var cur string
 	ok := err == nil
-	if ok {
+	st.lastErr = ""
+	if !ok {
+		st.lastErr = err.Error()
+	} else {
 		cur, ok = catidToString(raw)
 		if !ok {
+			st.lastErr = fmt.Sprintf("unexpected value type %T", raw)
 			log.Printf("plc-catid: unexpected value type %T for %s.%s — skipping", raw, st.plcName, st.tagName)
 		}
 	}
 	confirmed, isChange := applyCatidEdge(st, cur, ok, now)
 	if confirmed {
+		st.confirmedAt, st.confirmedBaseline = now, !isChange
 		cm.onConfirmedCATID(processID, st, isChange)
 	}
 	if ok {
@@ -412,6 +453,7 @@ func (cm *catidMonitor) checkPostCutoverVerify(processID int64, st *catidState, 
 			log.Printf("plc-catid: clear post-cutover flag on changeover %d: %v", pv.changeoverID, err)
 		}
 		delete(cm.verify, processID)
+		cm.eng.catidHealthChanged(processID)
 		return
 	}
 	if now.Before(pv.deadline) {
@@ -433,6 +475,7 @@ func (cm *catidMonitor) checkPostCutoverVerify(processID int64, st *catidState, 
 				ExpectedCATID: formatCATIDSet(set),
 				LiveCATID:     st.lastConfirmed,
 			}})
+			cm.eng.catidHealthChanged(processID)
 		}
 	}
 	delete(cm.verify, processID)
@@ -508,6 +551,7 @@ func (cm *catidMonitor) onConfirmedCATID(processID int64, st *catidState, isChan
 	if err := cm.eng.db.RecordPLCCATIDObservation(processID, st.plcName, st.lastConfirmed); err != nil {
 		log.Printf("plc-catid: record observation for process %d: %v", processID, err)
 	}
+	cm.eng.catidHealthChanged(processID)
 
 	// A value that names no part (no program, an unused slot) is neither a
 	// wrong part nor a change of part.

@@ -35,6 +35,10 @@ type StylePartIdentity struct {
 	// catalog, or whose catalog CATID is blank, contributes no entry, exactly
 	// as the per-style derivation skipped it.
 	CatalogCATIDs []string
+	// ProduceClaims counts the style's live produce claims with a payload,
+	// catalog row or not: zero is a consume-only style, whose set the catalog
+	// can never supply.
+	ProduceClaims int
 }
 
 // ListStylePartIdentitiesByProcess returns every LIVE style of the process, in
@@ -53,7 +57,7 @@ type StylePartIdentity struct {
 // clause for the same reason — in the WHERE it would drop the style, not the
 // claim. A retired claim contributes no CATID, exactly as a deleted one did.
 func ListStylePartIdentitiesByProcess(db *sql.DB, processID int64) ([]StylePartIdentity, error) {
-	rows, err := db.Query(`SELECT s.id, s.name, COALESCE(s.expected_catid, ''), COALESCE(pc.catid, '')
+	rows, err := db.Query(`SELECT s.id, s.name, COALESCE(s.expected_catid, ''), COALESCE(pc.catid, ''), c.id IS NOT NULL
 		FROM styles s
 		LEFT JOIN style_node_claims c ON c.style_id = s.id AND c.role = ? AND c.payload_code != '' AND c.retired_at IS NULL
 		LEFT JOIN payload_catalog pc ON pc.code = c.payload_code
@@ -71,14 +75,18 @@ func ListStylePartIdentitiesByProcess(db *sql.DB, processID int64) ([]StylePartI
 			name     string
 			expected string
 			catid    string
+			produce  bool
 		)
-		if err := rows.Scan(&id, &name, &expected, &catid); err != nil {
+		if err := rows.Scan(&id, &name, &expected, &catid, &produce); err != nil {
 			return nil, fmt.Errorf("style part identities for process %d: scan: %w", processID, err)
 		}
 		// Rows arrive grouped by style (ORDER BY s.name, s.id); the first row
 		// of a style opens its entry, every row's catalog value joins it.
 		if len(out) == 0 || out[len(out)-1].StyleID != id {
 			out = append(out, StylePartIdentity{StyleID: id, Name: name, ExpectedCATID: expected})
+		}
+		if produce {
+			out[len(out)-1].ProduceClaims++
 		}
 		if catid != "" {
 			last := &out[len(out)-1]

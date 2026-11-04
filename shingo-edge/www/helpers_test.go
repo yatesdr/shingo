@@ -306,6 +306,19 @@ func (s *stubEngine) ClearPostCutoverFlag(int64) error {
 	s.clearFlagCalls++
 	return nil
 }
+
+// CatidHealth canned: process 1 has one red wrong-part item; others none.
+func (s *stubEngine) CatidHealth(processID int64) ([]engine.CatidHealthItem, error) {
+	if processID != 1 {
+		return nil, nil
+	}
+	return []engine.CatidHealthItem{{Kind: "wrong_part", Severity: engine.CatidHealthRed, Headline: "Wrong part"}}, nil
+}
+
+func (s *stubEngine) CatidHealthSummary() ([]engine.CatidHealthSummary, error) {
+	return []engine.CatidHealthSummary{{ProcessID: 1, Name: "P1", Worst: engine.CatidHealthRed, Count: 1, Headline: "Wrong part"}}, nil
+}
+
 func (s *stubEngine) ChangeoverGateStatus(int64) (bool, []domain.Blocker, error) {
 	return s.gateCanComplete, s.gateBlockers, s.gateErr
 }

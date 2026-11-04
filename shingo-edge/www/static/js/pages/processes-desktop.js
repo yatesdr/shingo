@@ -270,10 +270,27 @@ function drawList() {
         '<div class="pd-gate">' + searchBox('pd-q', 'find a process, station or part') +
         '<button class="pd-btn" data-act="add-group">Add group</button>' +
         '<button class="pd-btn primary" data-act="add-process">Add process</button></div></div>' +
+        '<div id="pd-catid"></div>' +
         '<div class="pd-list" id="pd-list">' + body + '</div>';
     const q = $('pd-q');
     if (q) q.addEventListener('input', () => filterList(q.value));
+    refreshCatidHealth();
 }
+
+// The part-identity health strip above the list: one block per process with a
+// standing condition (catid-health.js renders /api/catid-health). Advisory —
+// a failed read leaves the strip as it was. Refetched on the 'catid-health'
+// hint while the list is showing.
+async function refreshCatidHealth() {
+    const box = $('pd-catid');
+    const strip = window.CatidHealth;
+    if (!box || !strip) return;
+    try {
+        const res = await fetch('/api/catid-health', { cache: 'no-store' });
+        if (res.ok) box.innerHTML = strip.listHTML(await res.json());
+    } catch (e) { /* advisory */ }
+}
+if (window.CatidHealth) window.CatidHealth.onHint(() => { if (!S.processID) refreshCatidHealth(); });
 
 function filterList(text) {
     const needle = String(text || '').trim().toLowerCase();

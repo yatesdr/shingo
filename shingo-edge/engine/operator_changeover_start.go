@@ -572,6 +572,7 @@ func (e *Engine) StartProcessChangeover(processID, toStyleID int64, calledBy, no
 	// A program that settled before the changeover opened is cut over on this
 	// poke rather than never (the decision is not re-taken on a clock).
 	defer e.pokeCutover(processID)
+	defer e.catidHealthChanged(processID)
 
 	// Retrieve the changeover we just created so we can link node tasks.
 	changeover, err := e.db.GetActiveProcessChangeover(processID)
