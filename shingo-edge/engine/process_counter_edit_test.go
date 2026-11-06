@@ -5,6 +5,7 @@ package engine
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"strings"
 	"sync"
@@ -189,7 +190,9 @@ func primedRig(t *testing.T) (eng *Engine, db *store.DB, pid int64, cm *catidMon
 }
 
 // TestPrime_RepointTakesEffectWithoutRestart: a counter moved to another struct
-// moves the monitor to that struct's identity tag on the save.
+// moves the monitor to that struct's identity tag on the save. The new identity
+// is published and recorded as the Edge's; the old one, enabled only by prime,
+// is left published, and a save's own is unpublished when the next save moves.
 func TestPrime_RepointTakesEffectWithoutRestart(t *testing.T) {
 	t.Parallel()
 	eng, _, pid, cm, wl := primedRig(t)
@@ -200,8 +203,13 @@ func TestPrime_RepointTakesEffectWithoutRestart(t *testing.T) {
 		t.Fatalf("monitor state = %+v, want MES_Other.CATID_01", st)
 	}
 	toggles := strings.Join(wl.toggles(), ",")
-	if !strings.Contains(toggles, "off plc.MES_Cell.CATID_01") || !strings.Contains(toggles, "on plc.MES_Other.CATID_01") {
-		t.Errorf("publish toggles = %s, want the old identity off and the new on", toggles)
+	if strings.Contains(toggles, "off plc.MES_Cell.CATID_01") || !strings.Contains(toggles, "on plc.MES_Other.CATID_01") {
+		t.Errorf("publish toggles = %s, want the new identity on and prime's left alone", toggles)
+	}
+	testutil.MustNoErr(t, eng.EditProcessCounter(pid, domain.ProcessCounterEdit{
+		PLCName: "plc", TagName: "MES_Cell.Prod_Counter_01", Enabled: true}), "re-point back")
+	if toggles := strings.Join(wl.toggles(), ","); !strings.Contains(toggles, "off plc.MES_Other.CATID_01") {
+		t.Errorf("publish toggles = %s, want the identity the first save published off", toggles)
 	}
 }
 
@@ -358,6 +366,102 @@ func TestSave_UnlistedMemberAcceptedByItsRead(t *testing.T) {
 	}
 	if got := strings.Join(wl.toggles(), ","); !strings.Contains(got, "on plc.MES_Cell.Prod_Counter_02") {
 		t.Errorf("toggles = %s, want the member enabled before its read", got)
+	}
+}
+
+// TestSave_NullTypedMemberIsCheckedByItsRead: WarLink lists a member that is
+// configured but disabled with "type": null. Its listing declares nothing, so
+// it is treated as unlisted: enabled and read, and a whole number is accepted.
+func TestSave_NullTypedMemberIsCheckedByItsRead(t *testing.T) {
+	t.Parallel()
+	eng, db, pid, _, wl := counterRig(t)
+	var listed plc.WarlinkTagInfo
+	testutil.MustNoErr(t, json.Unmarshal([]byte(`{"name":"Sta01.Counter.ACC","type":null,"configured":true,"enabled":false}`), &listed), "decode the listing")
+	wl.tags = append(wl.tags, listed)
+	wl.value = float64(1599)
+	if err := eng.EditProcessCounter(pid, domain.ProcessCounterEdit{PLCName: "plc", TagName: "Sta01.Counter.ACC", Enabled: true}); err != nil {
+		t.Fatalf("a null-typed member reading a whole number was refused: %v", err)
+	}
+	if p := mustProcess(t, db, pid); p.CounterTagName != "Sta01.Counter.ACC" {
+		t.Errorf("tag = %q, want the member", p.CounterTagName)
+	}
+}
+
+// TestSave_RefusedReadLeavesNoTagPublished: the check enables an unlisted tag
+// to read it; when the read refuses the tag, the check takes the publishing
+// back, so a refused save leaves WarLink as it found it.
+func TestSave_RefusedReadLeavesNoTagPublished(t *testing.T) {
+	t.Parallel()
+	eng, _, pid, _, wl := counterRig(t)
+	wl.value = 80.28
+	if err := eng.EditProcessCounter(pid, domain.ProcessCounterEdit{PLCName: "plc", TagName: "MES_Cell.Prod_Counter_02", Enabled: true}); err == nil {
+		t.Fatal("an unlisted tag reading 80.28 was saved")
+	}
+	if got := strings.Join(wl.toggles(), ","); got != "on plc.MES_Cell.Prod_Counter_02,off plc.MES_Cell.Prod_Counter_02" {
+		t.Errorf("toggles = %s, want the tag enabled for its read and disabled after the refusal", got)
+	}
+}
+
+// TestPrime_LeavesTheIdentityManagedBitAsItFoundIt: at boot the manager's
+// cache cannot say whether WarLink already published the identity tag, so
+// prime enables it to read it but records nothing; only a save, which asks
+// IsTagPublished first, marks the tag shingo's.
+func TestPrime_LeavesTheIdentityManagedBitAsItFoundIt(t *testing.T) {
+	t.Parallel()
+	_, db, pid, _, wl := primedRig(t)
+	if got := strings.Join(wl.toggles(), ","); got != "on plc.MES_Cell.CATID_01" {
+		t.Fatalf("fixture: toggles = %s, want prime's enable", got)
+	}
+	if p := mustProcess(t, db, pid); p.IdentityWarlinkManaged {
+		t.Error("prime marked the identity tag shingo's")
+	}
+}
+
+// hangingWarlink is a recordingWarlink whose tag list answers only once
+// released, signalling when a caller is inside it.
+type hangingWarlink struct {
+	recordingWarlink
+	inside  chan struct{}
+	release chan struct{}
+}
+
+func (w *hangingWarlink) ListAllTags(ctx context.Context, plcName string) ([]plc.WarlinkTagInfo, error) {
+	close(w.inside)
+	<-w.release
+	return w.recordingWarlink.ListAllTags(ctx, plcName)
+}
+
+// TestCounterEdit_AHungWarLinkNeverHoldsTheDoor: the save's type check is a
+// WarLink round trip of up to 8 s. It runs before the door's lock, so the door
+// (the monitor's fire, the operator's CUTOVER) is not held while WarLink hangs.
+func TestCounterEdit_AHungWarLinkNeverHoldsTheDoor(t *testing.T) {
+	t.Parallel()
+	eng, db, pid, _, rec := counterRig(t)
+	wl := &hangingWarlink{inside: make(chan struct{}), release: make(chan struct{})}
+	wl.tags = rec.tags
+	eng.plcMgr = plc.NewManager(nil, config.WarLinkConfig{}, 0, 0, nil, wl)
+	saved := make(chan error, 1)
+	go func() {
+		saved <- eng.EditProcessCounter(pid, domain.ProcessCounterEdit{PLCName: "plc", TagName: "MES_Other.Prod_Counter_01", Enabled: true})
+	}()
+	<-wl.inside
+	door := make(chan error, 1)
+	go func() {
+		_, err := eng.completeCutover(pid, 1, "test", CutoverGated)
+		door <- err
+	}()
+	select {
+	case err := <-door:
+		if !errors.Is(err, errNotTheOpenChangeover) {
+			t.Errorf("door = %v, want the no-op", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Error("the door still waited after 2s: held by the counter save's WarLink call")
+	}
+	close(wl.release)
+	testutil.MustNoErr(t, <-saved, "the save, once WarLink answered")
+	if p := mustProcess(t, db, pid); p.CounterTagName != "MES_Other.Prod_Counter_01" {
+		t.Errorf("tag = %q, want the save written once WarLink answered", p.CounterTagName)
 	}
 }
 

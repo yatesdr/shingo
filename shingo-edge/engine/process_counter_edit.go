@@ -4,14 +4,16 @@
 // identity from another (the CATID monitor). The Settings save edits both
 // through EditProcessCounter, which:
 //
-//   - holds the changeover door's lock and refuses while a changeover is open
-//     (a re-point mid-changeover would move the count the cutover is about to
-//     attribute);
-//   - refuses a counter tag another process counts on, or one WarLink does not
-//     declare as an integer (the poll truncates a REAL's JSON float);
-//   - re-points the reporting point that read the old tag (syncPrimaryPoint);
-//   - and, when the identity tag changed, PATCHes WarLink outside every lock
-//     and re-primes the monitor's state for the process.
+//   - refuses while a changeover is open (a re-point mid-changeover would move
+//     the count the cutover is about to attribute), and a counter tag another
+//     process or a station counter counts on;
+//   - refuses a counter tag that does not read as an integer (the poll
+//     truncates a REAL's JSON float), asking WarLink before the door's lock;
+//   - under the door's lock, refuses again and writes the process and its
+//     reporting point's rows (syncPointRows);
+//   - after the unlock, moves the point's WarLink publishing and, when the
+//     identity tag changed, the identity's, and re-primes the monitor's state
+//     for the process.
 
 package engine
 
@@ -57,24 +59,39 @@ func (e *Engine) EditProcessCounter(processID int64, edit domain.ProcessCounterE
 	edit.TagName = strings.TrimSpace(edit.TagName)
 	edit.IdentityTagName = strings.TrimSpace(edit.IdentityTagName)
 
+	// WarLink is asked before the door's lock: the type check is up to three
+	// round trips, and the monitor fires the door on its only goroutine
+	// (TestCounterEdit_AHungWarLinkNeverHoldsTheDoor). The refusals run first,
+	// so a refused save makes no call, and again under the lock, beside the
+	// writes, since a changeover may have opened meanwhile.
+	pre, err := e.db.GetProcess(processID)
+	if err != nil {
+		return err
+	}
+	if err := e.counterEditAllowed(pre, edit); err != nil {
+		return err
+	}
+	if edit.PLCName != "" && edit.TagName != "" && (edit.PLCName != pre.CounterPLCName || edit.TagName != pre.CounterTagName) {
+		if err := e.checkCounterTagType(edit.PLCName, edit.TagName); err != nil {
+			return err
+		}
+	}
+
 	e.cutoverMu.Lock()
 	old, err := e.db.GetProcess(processID)
+	if err == nil {
+		err = e.counterEditAllowed(old, edit)
+	}
+	if err == nil {
+		err = e.db.SetProcessCounter(processID, edit.PLCName, edit.TagName, edit.Enabled, edit.IdentityTagName, edit.IdentityNone)
+	}
 	if err != nil {
 		e.cutoverMu.Unlock()
 		return err
 	}
-	moved := old.CounterPLCName != edit.PLCName || old.CounterTagName != edit.TagName ||
-		old.IdentityTagName != edit.IdentityTagName || old.IdentityNone != edit.IdentityNone
-	if err := e.counterEditAllowed(old, edit, moved); err != nil {
-		e.cutoverMu.Unlock()
-		return err
-	}
-	if err := e.db.SetProcessCounter(processID, edit.PLCName, edit.TagName, edit.Enabled, edit.IdentityTagName, edit.IdentityNone); err != nil {
-		e.cutoverMu.Unlock()
-		return err
-	}
-	syncErr := e.syncPrimaryPoint(processID, old.CounterPLCName, old.CounterTagName)
+	publish, syncErr := e.syncPointRows(processID, old.CounterPLCName, old.CounterTagName)
 	e.cutoverMu.Unlock()
+	publish()
 	if syncErr != nil {
 		return fmt.Errorf("re-point the reporting point: %w", syncErr)
 	}
@@ -94,10 +111,12 @@ func (e *Engine) EditProcessCounter(processID int64, edit domain.ProcessCounterE
 }
 
 // counterEditAllowed refuses an edit that moves the counter or the identity
-// while a changeover is open, a counter tag another process counts on, and a
-// counter tag WarLink does not declare as an integer. Called under cutoverMu.
-func (e *Engine) counterEditAllowed(old *processes.Process, edit domain.ProcessCounterEdit, moved bool) error {
-	if !moved {
+// while a changeover is open, and a counter tag another process or a station
+// counter counts on. Database reads only: the save runs it before WarLink's
+// type check and again under cutoverMu.
+func (e *Engine) counterEditAllowed(old *processes.Process, edit domain.ProcessCounterEdit) error {
+	if old.CounterPLCName == edit.PLCName && old.CounterTagName == edit.TagName &&
+		old.IdentityTagName == edit.IdentityTagName && old.IdentityNone == edit.IdentityNone {
 		return nil
 	}
 	if co, err := e.db.GetActiveProcessChangeover(old.ID); err == nil && co != nil {
@@ -116,21 +135,19 @@ func (e *Engine) counterEditAllowed(old *processes.Process, edit domain.ProcessC
 	} else if lc != nil {
 		return fmt.Errorf("%w: %s/%s is station counter %d", errStationTagRead, edit.PLCName, edit.TagName, lc.ID)
 	}
-	if edit.PLCName == old.CounterPLCName && edit.TagName == old.CounterTagName {
-		return nil // the counter tag is the one already counting; only the identity moved
-	}
-	return e.checkCounterTagType(edit.PLCName, edit.TagName)
+	return nil
 }
 
 // checkCounterTagType checks a counter tag is an integer. A tag WarLink lists
-// carries its declared type, and anything but an integer type is refused. A tag
-// it does not list — a dotted member of a listed struct, which is how every
-// production counter is named, since WarLink lists structs and not their
-// members — is enabled and read, and accepted when the read is a whole number:
-// the type is inferred from the read, not declared. A read that fails or is not
-// whole is refused. (A REAL that happened to read whole is caught later by the
-// observed clicks-per-count health line.) With no PLC manager (no WarLink at
-// all) there is nothing to ask.
+// with a type carries its declaration, and anything but an integer type is
+// refused. A tag it does not list — a dotted member of a listed struct, which
+// is how every production counter is named, since WarLink lists structs and
+// not their members — or lists with no type (a configured but disabled member
+// is listed with "type": null) is enabled and read, and accepted when the read
+// is a whole number: the type is inferred from the read, not declared. A read
+// that fails or is not whole is refused, and the publishing the check enabled
+// is taken back. A REAL that happens to read whole is not caught. With no PLC
+// manager (no WarLink at all) there is nothing to ask.
 func (e *Engine) checkCounterTagType(plcName, tagName string) error {
 	if e.plcMgr == nil {
 		return nil
@@ -142,25 +159,30 @@ func (e *Engine) checkCounterTagType(plcName, tagName string) error {
 		return fmt.Errorf("WarLink did not answer for PLC %s, so the counter tag's type cannot be checked: %w", plcName, err)
 	}
 	for _, t := range tags {
-		if t.Name != tagName {
+		declared := strings.ToUpper(strings.TrimSpace(t.Type))
+		if t.Name != tagName || declared == "" {
 			continue
 		}
-		if integerTagTypes[strings.ToUpper(strings.TrimSpace(t.Type))] {
+		if integerTagTypes[declared] {
 			return nil
 		}
 		return fmt.Errorf("%s is a %s tag in WarLink; a counter must be an integer tag (DINT)", tagName, t.Type)
 	}
+	already := e.plcMgr.IsTagPublished(plcName, tagName)
 	if err := e.plcMgr.EnableTagPublishing(ctx, plcName, tagName); err != nil {
-		return fmt.Errorf("WarLink does not list %s on PLC %s and would not publish it, so it cannot be read: %w", tagName, plcName, err)
+		return fmt.Errorf("WarLink does not declare %s on PLC %s and would not publish it, so it cannot be read: %w", tagName, plcName, err)
 	}
 	v, err := e.plcMgr.ReadTagDirect(ctx, plcName, tagName)
+	if err == nil && !wholeNumber(v) {
+		err = fmt.Errorf("%s on PLC %s reads %v; a counter must read a whole number", tagName, plcName, v)
+	} else if err != nil {
+		err = fmt.Errorf("WarLink does not declare %s on PLC %s and its read failed: %w", tagName, plcName, err)
+	}
 	if err != nil {
-		return fmt.Errorf("WarLink does not list %s on PLC %s and its read failed: %w", tagName, plcName, err)
+		e.unpublishTag(!already, plcName, tagName)
+		return err
 	}
-	if !wholeNumber(v) {
-		return fmt.Errorf("%s on PLC %s reads %v; a counter must read a whole number", tagName, plcName, v)
-	}
-	log.Printf("counter tag %s/%s: not in WarLink's list; type inferred from the read (%v), not declared", plcName, tagName, v)
+	log.Printf("counter tag %s/%s: no type in WarLink's list; type inferred from the read (%v), not declared", plcName, tagName, v)
 	return nil
 }
 
@@ -227,73 +249,90 @@ func (e *Engine) republishIdentity(old, cur *processes.Process) {
 // (TestSync_TagEditNeverRepointsTheOrphan). A tag another process counts on is
 // refused.
 func (e *Engine) syncPrimaryPoint(processID int64, oldPLC, oldTag string) error {
+	publish, err := e.syncPointRows(processID, oldPLC, oldTag)
+	publish()
+	return err
+}
+
+// noPublish is the WarLink step of a sync that moves no publishing.
+func noPublish() {}
+
+// syncPointRows is syncPrimaryPoint's database half: it writes the reporting
+// point's rows and returns the WarLink publishing they need (each call an HTTP
+// round trip), for the counter save to run after it releases the door's lock.
+// The step is never nil.
+func (e *Engine) syncPointRows(processID int64, oldPLC, oldTag string) (publish func(), err error) {
 	p, err := e.db.GetProcess(processID)
 	if err != nil {
-		return err
+		return noPublish, err
 	}
 	moved := oldPLC != p.CounterPLCName || oldTag != p.CounterTagName
 	if p.CounterPLCName == "" || p.CounterTagName == "" {
 		if oldPLC != "" && oldTag != "" {
-			e.disablePoint(oldPLC, oldTag)
+			return e.disablePoint(oldPLC, oldTag), nil
 		}
-		return nil
+		return noPublish, nil
 	}
 	if p.ActiveStyleID == nil {
-		return nil
+		return noPublish, nil
 	}
 	style := *p.ActiveStyleID
 	if owner, err := e.db.ProcessCounterOwner(p.CounterPLCName, p.CounterTagName, processID); err != nil {
-		return err
+		return noPublish, err
 	} else if owner != 0 {
-		return fmt.Errorf("%s/%s is the counter of another process", p.CounterPLCName, p.CounterTagName)
+		return noPublish, fmt.Errorf("%s/%s is the counter of another process", p.CounterPLCName, p.CounterTagName)
 	}
 	if cur, err := e.db.GetReportingPointByTag(p.CounterPLCName, p.CounterTagName); err == nil && cur != nil {
 		if cur.StyleID != style || cur.Enabled != p.CounterEnabled {
 			if err := e.db.UpdateReportingPoint(cur.ID, cur.PLCName, cur.TagName, style, p.CounterEnabled); err != nil {
-				return err
+				return noPublish, err
 			}
 		}
 		if moved && oldPLC != "" && oldTag != "" {
-			e.disablePoint(oldPLC, oldTag)
+			return e.disablePoint(oldPLC, oldTag), nil
 		}
-		return nil
+		return noPublish, nil
 	}
 	if moved && oldPLC != "" && oldTag != "" {
 		if prev, err := e.db.GetReportingPointByTag(oldPLC, oldTag); err == nil && prev != nil {
 			if err := e.db.UpdateReportingPoint(prev.ID, p.CounterPLCName, p.CounterTagName, style, p.CounterEnabled); err != nil {
-				return err
+				return noPublish, err
 			}
-			e.ManageReportingPointTag(prev.ID, oldPLC, oldTag, prev.WarlinkManaged, p.CounterPLCName, p.CounterTagName)
-			return nil
+			return func() {
+				e.ManageReportingPointTag(prev.ID, oldPLC, oldTag, prev.WarlinkManaged, p.CounterPLCName, p.CounterTagName)
+			}, nil
 		}
 	}
 	rpID, err := e.db.CreateReportingPoint(p.CounterPLCName, p.CounterTagName, style)
 	if err != nil {
-		return err
+		return noPublish, err
 	}
 	if !p.CounterEnabled {
 		if err := e.db.UpdateReportingPoint(rpID, p.CounterPLCName, p.CounterTagName, style, false); err != nil {
 			e.logFn("warlink: update reporting point for process %d: %v", p.ID, err)
 		}
 	}
-	e.EnsureTagPublished(rpID, p.CounterPLCName, p.CounterTagName)
-	return nil
+	return func() { e.EnsureTagPublished(rpID, p.CounterPLCName, p.CounterTagName) }, nil
 }
 
 // disablePoint switches off the reporting point reading (plcName, tagName),
-// if there is one, and unpublishes its tag when shingo published it.
-func (e *Engine) disablePoint(plcName, tagName string) {
+// if there is one, and returns the step that unpublishes its tag when shingo
+// published it.
+func (e *Engine) disablePoint(plcName, tagName string) (unpublish func()) {
 	rp, err := e.db.GetReportingPointByTag(plcName, tagName)
 	if err != nil || rp == nil {
-		return
+		return noPublish
 	}
 	if rp.Enabled {
 		if err := e.db.UpdateReportingPoint(rp.ID, rp.PLCName, rp.TagName, rp.StyleID, false); err != nil {
 			log.Printf("warlink: disable reporting point %d: %v", rp.ID, err)
-			return
+			return noPublish
 		}
 	}
-	if rp.WarlinkManaged && e.plcMgr != nil {
+	if !rp.WarlinkManaged || e.plcMgr == nil {
+		return noPublish
+	}
+	return func() {
 		e.EnsureTagUnpublished(rp.ID, rp.PLCName, rp.TagName)
 		if err := e.db.SetReportingPointManaged(rp.ID, false); err != nil {
 			log.Printf("warlink: clear RP %d managed: %v", rp.ID, err)

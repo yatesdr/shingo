@@ -44,7 +44,7 @@ func (e *Engine) ListStationCounters(processID int64) ([]counters.LineCounter, e
 // CreateStationCounter adds a station counter reading tagName on the process's
 // counter PLC. Refused for a process with no wired counter, a tag a reporting
 // point or another station counter reads, and a tag that is not an integer
-// (declared, or read whole when WarLink does not list it). The tag's
+// (declared, or read whole when WarLink declares no type). The tag's
 // publishing is enabled when WarLink is not already publishing it, and
 // recorded as the Edge's; a refusal after that unpublishes it again. The row
 // is unread and seeds from its first poll.
@@ -69,7 +69,7 @@ func (e *Engine) CreateStationCounter(processID int64, label, tagName string) (*
 	}
 	id, err := e.db.CreateLineCounter(processID, strings.TrimSpace(label), proc.CounterPLCName, tagName)
 	if err != nil {
-		e.unpublishStationTag(managed, proc.CounterPLCName, tagName)
+		e.unpublishTag(managed, proc.CounterPLCName, tagName)
 		return nil, err
 	}
 	if managed {
@@ -105,10 +105,10 @@ func (e *Engine) UpdateStationCounter(id int64, label, tagName string) error {
 		return err
 	}
 	if err := e.db.RepointLineCounter(id, label, tagName, managed); err != nil {
-		e.unpublishStationTag(managed, lc.PLCName, tagName)
+		e.unpublishTag(managed, lc.PLCName, tagName)
 		return err
 	}
-	e.unpublishStationTag(lc.WarlinkManaged, lc.PLCName, lc.TagName)
+	e.unpublishTag(lc.WarlinkManaged, lc.PLCName, lc.TagName)
 	e.logFn("station counter %d: %s/%s → %s/%s, unread — it seeds from the new tag's first poll", id,
 		lc.PLCName, lc.TagName, lc.PLCName, tagName)
 	return nil
@@ -127,7 +127,7 @@ func (e *Engine) DeleteStationCounter(id int64) error {
 	if err := e.db.DeleteLineCounter(id); err != nil {
 		return err
 	}
-	e.unpublishStationTag(lc.WarlinkManaged, lc.PLCName, lc.TagName)
+	e.unpublishTag(lc.WarlinkManaged, lc.PLCName, lc.TagName)
 	e.logFn("station counter %d (%s/%s) deleted: its positions are counted by the production counter again", id, lc.PLCName, lc.TagName)
 	return nil
 }
@@ -220,14 +220,13 @@ func (e *Engine) stationTagFree(plcName, tagName string, exceptID int64) error {
 
 // publishStationTag checks the tag reads an integer and leaves it published,
 // reporting whether the Edge enabled the publishing (WarLink was not already
-// publishing it). A refused check unpublishes what it enabled.
+// publishing it). A refused check has taken back what it enabled.
 func (e *Engine) publishStationTag(plcName, tagName string) (managed bool, err error) {
 	if e.plcMgr == nil {
 		return false, nil
 	}
 	already := e.plcMgr.IsTagPublished(plcName, tagName)
 	if err := e.checkCounterTagType(plcName, tagName); err != nil {
-		e.unpublishStationTag(!already, plcName, tagName)
 		return false, &StationCounterRefused{Sentence: err.Error()}
 	}
 	if already {
@@ -241,15 +240,15 @@ func (e *Engine) publishStationTag(plcName, tagName string) (managed bool, err e
 	return true, nil
 }
 
-// unpublishStationTag disables a tag's publishing when the Edge enabled it.
-func (e *Engine) unpublishStationTag(managed bool, plcName, tagName string) {
+// unpublishTag disables a counter tag's publishing when the Edge enabled it.
+func (e *Engine) unpublishTag(managed bool, plcName, tagName string) {
 	if !managed || e.plcMgr == nil {
 		return
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
 	defer cancel()
 	if err := e.plcMgr.DisableTagPublishing(ctx, plcName, tagName); err != nil {
-		e.logFn("station counter tag %s/%s: unpublish: %v", plcName, tagName, err)
+		e.logFn("counter tag %s/%s: unpublish: %v", plcName, tagName, err)
 	}
 }
 

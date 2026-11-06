@@ -38,6 +38,7 @@ Edge only, v37-v42 (the dev seeder learns station counters). Ship after a restor
 - A CATID pin (one-click, Confirm, the style save) pokes the monitor; a counted stroke pokes only when it is news; the switch's prompt or line comes once per value
 - A hold's release (landing or Charge) lands a share only on its part's cart, charges what it latched, and is refused, the hold left open, when nothing would land
 - The strip names the style a wrong part counts as, goes stale at 5 s and refreshes every 10 s; a switch records its start CATID and clears a flag on its style; an unchanged pin saves; the fire reports no cutover it did not make
+- The counter save asks WarLink before the door's lock; a member listed with no type is checked by its read, and a refused read unpublishes it; only a save marks an identity tag the Edge's
 
 ## 2026-11-03 — An order's carts are its rows
 

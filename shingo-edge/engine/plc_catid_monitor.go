@@ -288,9 +288,9 @@ func (e *Engine) startCatidMonitor() {
 // prime enumerates the processes with an identity tag (identityTagOf: none for
 // a process with no counter PLC or identity "none", the override when typed,
 // else derived from the counter tag), enables WarLink publishing on each (a
-// failed toggle is logged and the process is monitored anyway), records that
-// the Edge manages the tag's publishing, and stores per-process state and its
-// first snapshot with every value the process has emitted. Called once, from
+// failed toggle is logged and the process is monitored anyway), and stores
+// per-process state and its first snapshot with every value the process has
+// emitted. Called once, from
 // startCatidMonitor before the goroutine starts: it writes cm.states with no
 // lock. A process with a counter but no derivable tag is skipped and logged —
 // the guard stays inert for it; reprime brings an edited process in later.
@@ -313,14 +313,13 @@ func (cm *catidMonitor) prime() {
 		// A failed publish toggle is logged, not fatal: the tag may already be
 		// published, and an unreadable tag is handled on every tick (the read
 		// path fails open). Skipping the process here switched A5, the
-		// auto-cutover and the verify off for it until the next restart.
+		// auto-cutover and the verify off for it until the next restart. The
+		// managed bit is left as found: at boot the manager's cache cannot
+		// say whether WarLink was already publishing the tag, so only a save
+		// (republishIdentity, after IsTagPublished) marks it the Edge's.
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		if err := cm.eng.plcMgr.EnableTagPublishing(ctx, p.CounterPLCName, tag); err != nil {
 			log.Printf("plc-catid: enable publish for %s.%s: %v (monitoring anyway)", p.CounterPLCName, tag, err)
-		} else if !p.IdentityWarlinkManaged {
-			if err := cm.eng.db.SetProcessIdentityManaged(p.ID, true); err != nil {
-				log.Printf("plc-catid: record identity publishing for process %d: %v", p.ID, err)
-			}
 		}
 		cancel()
 		log.Printf("plc-catid: monitoring process %d (%s) on %s.%s", p.ID, p.Name, p.CounterPLCName, tag)
