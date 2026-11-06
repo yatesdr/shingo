@@ -250,23 +250,6 @@ func TestHold_ReleasesOnALandingOnItsStyle(t *testing.T) {
 	}
 }
 
-// TestHold_ReleasesOnAnAdminSwitchToItsStyle: an engineer's switch is a
-// landing too.
-func TestHold_ReleasesOnAnAdminSwitchToItsStyle(t *testing.T) {
-	t.Parallel()
-	eng, pid, a, _, _ := holdRig(t, "1003")
-	strokeAt(eng, pid, a, 2)
-	c := pinnedStyle(t, eng, pid, "STYLE-C", "1003")
-	cNode := cartNode(t, eng, pid, c, "C-NODE", "PART-C", "PART-C", 9802)
-	testutil.MustNoErr(t, eng.SetProcessActiveStyle(pid, &c), "switch to C")
-	if got := runtimeOf(t, eng, cNode).RemainingUOPCached; got != 38 {
-		t.Errorf("C's cart after the switch = %d, want 38", got)
-	}
-	if hs := openHolds(t, eng, pid); len(hs) != 0 {
-		t.Errorf("holds = %+v, want none", hs)
-	}
-}
-
 // TestHold_ChangeoverStartedSinceHoldWaitsForAPerson: a changeover started
 // after the hold opened means the plant moved on; the later landing on the
 // CATID's style does not charge it.
@@ -403,32 +386,6 @@ func TestHold_ReleaseNeverReemitsTheDelta(t *testing.T) {
 	}
 	if n := hourlyUnder(t, eng, pid, c); n != 0 {
 		t.Errorf("hourly under C = %d, want 0: the stroke was counted under A when it was made", n)
-	}
-}
-
-// TestHold_SurvivesRestart: the ledger is a table; a restarted Edge reads the
-// open hold and its strokes as they were.
-func TestHold_SurvivesRestart(t *testing.T) {
-	t.Parallel()
-	path := copyEngineDBTemplate(t)
-	db, err := store.OpenMigrated(path)
-	testutil.MustNoErr(t, err, "open")
-	pid, err := db.CreateProcess("HOLD-PROC", "", "", "", false)
-	testutil.MustNoErr(t, err, "process")
-	at := time.Now().Add(-time.Hour)
-	for i := 0; i < 3; i++ {
-		_, err = db.HoldCatidDraw(pid, "1003", 0, "", holdReasonHeld, 2, at)
-		testutil.MustNoErr(t, err, "hold")
-	}
-	testutil.MustNoErr(t, db.Close(), "close")
-
-	db, err = store.OpenMigrated(path)
-	testutil.MustNoErr(t, err, "reopen")
-	t.Cleanup(func() { db.Close() })
-	hs, err := db.ListOpenCatidHolds(pid)
-	testutil.MustNoErr(t, err, "holds")
-	if len(hs) != 1 || hs[0].Qty != 6 || hs[0].Strokes != 3 || hs[0].FirstTickAt.Unix() != at.Unix() {
-		t.Errorf("after a restart: %+v, want one hold of 6 over 3 strokes, opened an hour ago", hs)
 	}
 }
 

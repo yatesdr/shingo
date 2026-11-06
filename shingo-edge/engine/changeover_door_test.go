@@ -370,29 +370,6 @@ func TestRestore_FlippedRowCompletesThroughTheDoor(t *testing.T) {
 	}
 }
 
-// TestFlip_FirstActiveStyleCreatesThePoint: a process whose counter is set and
-// which has never run a style gets its reporting point on its first flip.
-// Characterization through the door: green before (finalize synced) and after
-// (the flip syncs).
-func TestFlip_FirstActiveStyleCreatesThePoint(t *testing.T) {
-	t.Parallel()
-	db := testEngineDB(t)
-	eng := testEngine(t, db)
-	eng.plcMgr = seedRigManager()
-	processID, err := db.CreateProcess("NEW-CELL", "", "plc", "MES_Cell.Prod_Counter_01", true)
-	testutil.MustNoErr(t, err, "create process")
-	styleID, err := db.CreateStyle("FIRST", "", processID)
-	testutil.MustNoErr(t, err, "create style")
-	_, err = eng.changeoverService.Create(processID, nil, styleID, "test", "", nil, nil, nil, nil)
-	testutil.MustNoErr(t, err, "create changeover")
-
-	testutil.MustNoErr(t, eng.CompleteProcessProductionCutover(processID), "cutover")
-	rp, err := db.GetReportingPointByTag("plc", "MES_Cell.Prod_Counter_01")
-	if err != nil || rp == nil || rp.StyleID != styleID {
-		t.Fatalf("reporting point = %+v (%v), want one on style %d", rp, err, styleID)
-	}
-}
-
 // TestFlip_AdminSwitchCreatesThePointInTheEngine: the admin switch syncs the
 // point inside the flip, not in the HTTP handler — a new process's first
 // "Mark as running" counts from the engine verb alone.

@@ -110,7 +110,7 @@ func (e *Engine) strandLinesidePiles(proc *processes.Process, styleID *int64) er
 //
 // THE SYNC CREATES THE POINT. It sits after the style write and before the
 // same-style return, so the first active style of a new process gets its
-// reporting point (TestFlip_FirstActiveStyleCreatesThePoint), and a retry
+// reporting point (TestFlip_AdminSwitchCreatesThePointInTheEngine), and a retry
 // after a partial failure still syncs. Its error is returned: a point left on
 // the old style charges the new style's ticks to nobody (style_mismatch).
 //

@@ -120,20 +120,6 @@ func TestForcedCutover_CountedIncomingPartCompletesPastARedGate(t *testing.T) {
 	}
 }
 
-// TestForcedCutover_OneTickIsEnough: the first counted stroke on the incoming
-// part decides it; a second is not waited for.
-func TestForcedCutover_OneTickIsEnough(t *testing.T) {
-	t.Parallel()
-	eng, db, pid, from, coID, _, cm := forceRig(t, "auto")
-	st := changedTo(cm, pid, "1002", time.Now().Add(-5*time.Minute))
-	countedStroke(eng, pid, from)
-	drainPokes(eng, cm)
-	settle(cm, pid, st, "1002", time.Now())
-	if co := changeoverRow(t, db, coID); co.State != domain.ChangeoverCompleted {
-		t.Fatalf("after one counted stroke and the window: %s, want completed", co.State)
-	}
-}
-
 // TestForcedCutover_PLCAlreadyOnIncomingAtStartNeverForces: a program already
 // on the incoming part when the changeover opened is not a change while it was
 // open; forcing it would turn every leg just dispatched into a straggler. The

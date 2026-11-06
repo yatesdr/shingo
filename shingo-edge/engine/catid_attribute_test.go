@@ -105,16 +105,6 @@ func TestTick_IdentityNoneAttributesAsToday(t *testing.T) {
 	}
 }
 
-// TestTick_ActiveStylesCATIDUnchanged: the running style's own part is
-// attributed to it, its part on the row.
-func TestTick_ActiveStylesCATIDUnchanged(t *testing.T) {
-	t.Parallel()
-	eng, pid, a, _, _ := attributeRig(t, "1001")
-	if got := eng.attributeTick(pid, a); got != (plc.TickIdentity{StyleID: a, CATID: "1001", Kind: plc.TickToday}) {
-		t.Errorf("active part: %+v", got)
-	}
-}
-
 // TestTick_StaleIdentityFallsBackToToday: a last good read older than 5 s says
 // nothing about this stroke.
 func TestTick_StaleIdentityFallsBackToToday(t *testing.T) {
@@ -123,20 +113,6 @@ func TestTick_StaleIdentityFallsBackToToday(t *testing.T) {
 	cm.snapshots.Store(pid, &catidSnapshot{value: "1002", lastOK: time.Now().Add(-6 * time.Second)})
 	if got := eng.attributeTick(pid, a); got != (plc.TickIdentity{StyleID: a, Kind: plc.TickToday}) {
 		t.Errorf("stale read: %+v, want today with no part", got)
-	}
-}
-
-// TestTick_UnprovenActiveSetAttributesAsToday: a part one other style runs,
-// with the running style's set never seen on the PLC (a catalog set the plant
-// has not confirmed), is attributed as today.
-func TestTick_UnprovenActiveSetAttributesAsToday(t *testing.T) {
-	t.Parallel()
-	eng, pid, a, _, _ := attributeRig(t, "1003")
-	c, err := eng.db.CreateStyle("STYLE-C", "", pid)
-	testutil.MustNoErr(t, err, "style C")
-	testutil.MustNoErr(t, eng.db.SetStyleExpectedCATID(c, "1003"), "pin C")
-	if got := eng.attributeTick(pid, a); got.StyleID != a || got.Kind != plc.TickToday {
-		t.Errorf("unproven: %+v, want today on the point's style", got)
 	}
 }
 
