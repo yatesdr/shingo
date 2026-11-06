@@ -608,13 +608,6 @@ func (db *DB) migrate() error {
 	// volatile slots so neither depends on race-prone state.
 	db.Exec("ALTER TABLE orders ADD COLUMN sibling_order_id INTEGER REFERENCES orders(id) ON DELETE SET NULL")
 
-	// v22 (AMR trial 2026-05-08): per-process opt-in for PLC-driven
-	// auto-cutover. The cutover monitor subscribes to the
-	// Changeover_Active tag derived from the process's existing
-	// counter_tag_name parent struct. Default off; operators enable
-	// via the process editor admin UI checkbox.
-	db.Exec("ALTER TABLE processes ADD COLUMN auto_cutover_enabled INTEGER NOT NULL DEFAULT 0")
-
 	// v23 (AMR trial 2026-05-08): audit column for which trigger source
 	// drove the changeover row to its current terminal state. One of
 	// "operator-hmi" | "plc-auto" | "auto-task-terminal". Empty while
@@ -2294,6 +2287,34 @@ func edgeMigrations() []migrate.Migration {
 				}
 				err := q.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('process_nodes') WHERE name = 'line_counter_id'`).Scan(&c)
 				return err == nil && t == 1 && c == 1
+			},
+		},
+		{
+			// processes.auto_cutover_enabled leaves: the PLC-driven cutover it
+			// opted into was removed, and nothing reads it. SQLite drops a
+			// column in place (no table rebuild). The frozen-chain step that
+			// re-added it on every boot was removed in the same change.
+			//
+			// A rolled-back Edge's boot re-adds the column (its frozen chain
+			// still has the step) before its schema assert, which still names
+			// it; rolled forward again, this version is already applied and
+			// does not run twice, so the column stays, unread at its default.
+			//
+			// Guarded, and NO Verify, as v36: a re-added column stays visible
+			// to the double-boot schema proof instead of being quietly dropped.
+			Version: 42,
+			Name:    "drop_processes_auto_cutover_enabled",
+			Fn: func(tx *sql.Tx) error {
+				var n int
+				if err := tx.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('processes')
+					WHERE name = 'auto_cutover_enabled'`).Scan(&n); err != nil {
+					return err
+				}
+				if n == 0 {
+					return nil
+				}
+				_, err := tx.Exec(`ALTER TABLE processes DROP COLUMN auto_cutover_enabled`)
+				return err
 			},
 		},
 	}

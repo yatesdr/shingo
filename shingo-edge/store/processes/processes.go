@@ -52,10 +52,6 @@ func scanProcess(scanner interface{ Scan(...any) error }) (Process, error) {
 	return p, nil
 }
 
-// auto_cutover_enabled is deliberately absent: PLC-driven cutover was removed
-// (the Changeover_Active tag was never wired at any plant). The column stays on
-// disk — dropping it means a SQLite table rebuild, and a rebuild is what
-// generates the dangling REFERENCES clauses the FK repair exists to fix.
 const processSelect = `id, name, description, active_style_id, target_style_id, counter_plc_name, counter_tag_name, counter_enabled,
 	identity_tag_name, identity_none, identity_warlink_managed, changeover_auto_arm, group_id, flow_composer_enabled, created_at`
 

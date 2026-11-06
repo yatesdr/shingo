@@ -710,7 +710,6 @@ CREATE TABLE processes (
     identity_tag_name   TEXT NOT NULL DEFAULT '',
     identity_none       INTEGER NOT NULL DEFAULT 0,
     identity_warlink_managed INTEGER NOT NULL DEFAULT 0,
-    auto_cutover_enabled INTEGER NOT NULL DEFAULT 0,
     changeover_auto_arm TEXT NOT NULL DEFAULT 'auto',
     group_id            INTEGER REFERENCES process_groups(id) ON DELETE SET NULL,
     -- flow_composer_enabled gates the HMI flow composer for this process. OFF

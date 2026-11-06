@@ -8,7 +8,7 @@ import "time"
 // These three symbols used to live in plc_cutover_monitor.go. That file
 // implemented PLC-driven changeover completion by subscribing to a
 // Changeover_Active tag; it was REMOVED because no process ever enabled it
-// (auto_cutover_enabled was 0 on every process measured). The plants' MES
+// (its opt-in column, since dropped, was 0 on every process measured). The plants' MES
 // structs do carry Changeover_Active; nothing on the Edge reads it. CATID
 // auto-arm replaced it.
 //

@@ -119,7 +119,6 @@ var requiredColumns = []requiredColumn{
 	{"style_node_claims", "source_preset_id"},
 	{"style_node_claims", "source_preset_version"},
 	{"styles", "expected_catid"},
-	{"processes", "auto_cutover_enabled"},
 	{"processes", "changeover_auto_arm"},
 	{"processes", "identity_tag_name"},
 	{"process_nodes", "line_counter_id"},

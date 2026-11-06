@@ -47,10 +47,8 @@ type Process struct {
 	// not fire — and its opt-in flag actively HID the operator station's
 	// CUTOVER button (operator-render.js), which would have stranded a
 	// changeover with neither an automatic nor a manual way to complete it.
-	// CATID auto-arm below is the mechanism that replaced it. The
-	// processes.auto_cutover_enabled column is unread; SQLite drops a column
-	// in place (ALTER TABLE ... DROP COLUMN, no table rebuild), which is how
-	// the versioned chain retires it.
+	// CATID auto-arm below is the mechanism that replaced it. Its column,
+	// processes.auto_cutover_enabled, is dropped by the versioned chain (v42).
 	//
 	// ChangeoverAutoArm controls the PLC CATID auto-arm behavior for this
 	// process, a 3-value mode (auto | prompt | off):

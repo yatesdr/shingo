@@ -5,7 +5,7 @@ belongs in the commit message or in `docs/` — this file is the index.
 
 ## 2026-11-03 — The cutover follows the PLC
 
-Edge only, v37-v41 (the dev seeder learns station counters). Ship after a restored-copy migrate.
+Edge only, v37-v42 (the dev seeder learns station counters). Ship after a restored-copy migrate; a rollback re-adds v42's column and boots.
 
 - Auto-cutover fires on a CATID the outgoing style does not run, never on one both run or with both sets empty
 - 0 and negative CATIDs name no part: no wrong-part alert, no arm, the request guard stays open
@@ -32,6 +32,7 @@ Edge only, v37-v41 (the dev seeder learns station counters). Ship after a restor
 - Station counters are created, re-pointed and deleted with their WarLink publishing; a position is counted at one only where a live style consumes, never a loader, producer or A/B pair
 - The process page: counter and identity tags suggested from WarLink (MES_ members marked, live values), identity derive/override/none, station counters and each position's Counted at
 - The process strip names a station counter stopped while the line produces, one not clicking once per part, an unreadable counter tag, and a bound position turned A/B pair
+- processes.auto_cutover_enabled is dropped (v42), and the boot that re-added it every time no longer does
 
 ## 2026-11-03 — An order's carts are its rows
 

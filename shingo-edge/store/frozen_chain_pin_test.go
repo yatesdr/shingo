@@ -83,7 +83,7 @@ func TestFrozenChainIsPinned(t *testing.T) {
 		t.Fatalf("no migrate() FuncDecl found in migrations.go")
 	}
 
-	const wantTotal = 159 // statements in migrate(): frozen chain + the runVersioned tail
+	const wantTotal = 158 // statements in migrate(): frozen chain + the runVersioned tail
 	if got := len(mig.Body.List); got != wantTotal {
 		t.Errorf("migrate() has %d statements, want %d — the frozen chain's shape changed. "+
 			"New schema changes go in edgeMigrations(), not here; frozen steps are never edited. "+
