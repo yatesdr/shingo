@@ -5,52 +5,37 @@ belongs in the commit message or in `docs/` — this file is the index.
 
 ## 2026-11-03 — The cutover follows the PLC
 
-Edge only, v37-v42 (the dev seeder learns station counters). Ship after a restored-copy migrate; a rollback re-adds v42's column and boots.
+Edge v37-v43; Core changes only dev tooling (plantspec, seeddev, simcalc). Migrate a restored copy first. Roll back only to a ≥ v32 build (it re-adds v42's column and boots); open holds are not charged while rolled back. The first boot publishes every monitored identity tag on WarLink.
 
-- Auto-cutover fires on a CATID the outgoing style does not run, never on one both run or with both sets empty
-- 0 and negative CATIDs name no part: no wrong-part alert, no arm, the request guard stays open
-- One door completes every changeover; a terminal transition pokes the CATID monitor, which retries each minute
-- Mark as running completes an open changeover past its gate, leaves its legs running, and records every switch
-- The reporting point follows its tag, not its style; a blanked counter stops counting (v37: identity tag)
-- A counter or identity edit is refused mid-changeover, refuses a non-integer tag, and re-primes the CATID monitor
-- Core's cell catalog lists the points a live process counts on, disabled ones included
-- Run-out ticks across a changeover are held for the incoming cart; a cancel puts them back on the staying part
-- A style flip points every node the new style claims at that claim (never NULL); a cancel points them back
-- The poll writes a counted read only while the point still reads that tag, and emits nothing it did not write
-- The counter walk charges each node under the claim of the tick's own style; one walk body for every counter
-- A counter tag WarLink does not list (a struct member) is enabled and read, and saved when it reads a whole number
-- The CATID health strip, eight kinds: /api/processes/{id}/catid-health, /api/catid-health, a catid-health hint, a list on Processes
-- A changeover records the PLC's CATID at its start and its watch's close (v38); an unmapped CATID shows the suggestion
-- One CATID names one style: the typed pin, the strip's one-click and the flag's Confirm (which pins the value) refuse a taken one
-- A counted tick is stamped with the PLC's part and the style that runs it; row (v39), walk, hourly and Core count it there
-- A stroke on an unmapped or off-plan part ships under today's style; its cart draw is held (v40) until a landing, a Charge or a Write off
-- A press that changed to the incoming part mid-changeover, held it a minute and counted it completes the changeover past its gate (auto)
-- With no changeover open, a counted part only one other style runs by a person's pin, changed after the last landing, switches the process (auto-catid-flip); a part several run asks; a part standing since before a landing is run-out and prepays the incoming cart
-- The history panel names what completed each changeover; the automatic-cutover notice names the changeover, the part and what it left running; a non-numeric counter read is raised
-- An A/B pair is two positions that name each other: one lit side charged per tick, each pair its own fallthrough; a one-way pair is warned
-- Station counters (v41): a tag that clicks where the part leaves the cart charges the positions bound to it, under the PLC's part's style; the production walk leaves them
-- Station counters are created, re-pointed and deleted with their WarLink publishing; a position is counted at one only where a live style consumes, never a loader, producer or A/B pair
-- The process page: counter and identity tags suggested from WarLink (MES_ members marked, live values), identity derive/override/none, station counters and each position's Counted at
-- The process strip names a station counter stopped while the line produces, one not clicking once per part, an unreadable counter tag, and a bound position turned A/B pair
-- processes.auto_cutover_enabled is dropped (v42), and the boot that re-added it every time no longer does
-- A station stroke under an off-plan or unmapped part holds its share per position, as the cell counter's does; a held station share is charged at its position
-- A changeover's start (plan to insert) and its cancel run under the door's mutex: neither interleaves with a completion or a switch
-- A CATID pin (one-click, Confirm, the style save) pokes the monitor; a counted stroke pokes only when it is news; the switch's prompt or line comes once per value
-- A hold's release (landing or Charge) lands a share only on its part's cart, charges what it latched, and is refused, the hold left open, when nothing would land
-- The strip names the style a wrong part counts as, goes stale at 5 s and refreshes every 10 s; a switch records its start CATID and clears a flag on its style; an unchanged pin saves; the fire reports no cutover it did not make
-- The counter save asks WarLink before the door's lock; a member listed with no type is checked by its read, and a refused read unpublishes it; only a save marks an identity tag the Edge's
-- catid_holds (v40) and line_counters (v41) have one home, the versioned chain: the baseline DDL no longer carries them
-- The Charge says when its preview fails; Mark as running on the style being left says to Cancel; the station's Confirm says it pins the CATID
-- An automatic cutover or switch re-reads the mode and the pin under the door's mutex before it acts
-- Station counters: one silent since boot is stopped; the ratio ignores run-outs and changeovers; a held stroke holds where the running or target style claims; a process delete takes its counters; a PLC move waits for them; an outage counts, a rollback re-seeds at the next boot
-- The poll reads one point per process, the one on its counter tag (any other enabled point is named at boot), and raises a read error for a point whose PLC WarLink lacks
-- The Charge's preview is POST /api/catid-holds/{id}/charge?mode=preview; the one-click and Confirm check a pin as the save does
-- The MES sibling slots are watched once a minute, off the tick: the PLC counting on a slot the process does not is a red strip item whose click (POST /api/processes/{id}/counter) re-points the counter; a slot rising with it is an info line
-- A station counter's card lists the process's positions as boxes, each through the binding's dry run (GET /api/process-nodes/{id}/countable), refused ones greyed with the sentence; the only station counter pre-ticks the unbound ones; nothing binds until its save
-- The station counter's tag combo suggests each station struct's Prod_Tool_1_CNT.ACC by the family's convention (operator-load stations first, no live read), never a gun, tip, timer, cycle, index, FIFO, management or marker tag; a member of the process's own MES struct is refused
-- The parts in the line (v43): a production-counter reset read fresh within 10 s of a confirmed CATID change anchors each station counter, any other reset unanchors; the card shows ≈N in the line beside the clicks per part and the deepest run-out (now stored), the binding's log and confirm name N, and nothing charges by it
-- The end-of-line sentence on the setup page and the station tile: about N parts sit between the cart and the counter, N measured at changeovers whose landing preceded the counter's reset (a dated range, GET /api/processes/{id}/end-of-line) or typed (by whom, when; PUT …/line-depth); the history row says what each changeover ran out after the cutover; N decides nothing
-- The process page's Counting block, each line labelled: the MES slots (each slot's CATID, count, rising or not, discovered; the slot counted on, confirmed; carried by GET /api/processes/{id}/end-of-line), the station cards (the tag discovered until read, then confirmed; positions confirmed; clicks per part, in the line, deepest run-out and stopped, measured) and the end of the line (measured or typed)
+- One door completes every changeover; start and cancel run under its mutex
+- A press counting the incoming part a minute past its CATID change completes the changeover
+- With no changeover open, a part one other style runs switches the process (auto-catid-flip)
+- A part standing since before a landing is run-out: it prepays the new cart, never switches back
+- Mark as running completes an open changeover past its gate and records the switch
+- 0 and negative CATIDs name no part; a CATID both styles run never fires
+- A counted tick carries the PLC's part and its style; walk, hourly and Core count it there (v39)
+- An unmapped or off-plan part's draw is held (v40) until a landing, a Charge or a Write off
+- One CATID names one style: the pin, the one-click and Confirm refuse a taken value
+- A changeover records the CATID at its start and at its watch's close (v38)
+- An A/B pair is two positions naming each other; one lit side is charged per tick
+- The reporting point follows its tag (v37); the poll reads one point per process
+- A counter or identity edit is refused mid-changeover and re-primes the CATID monitor
+- A counter tag WarLink does not list (a struct member) is enabled and read
+- Station counters (v41) charge the positions bound to them, where the part leaves the cart
+- A station stroke on an off-plan part holds its share at each position
+- The MES sibling slots are watched once a minute; a slot the PLC counts on is a strip item
+- The strip's click re-points the counter to that slot
+- A station counter's card owns its positions; the only station pre-ticks the unbound ones
+- Station tags are suggested by the family's convention; the process's own MES slot is refused
+- The parts in the line are anchored at a program-change reset and shown, never charged (v43)
+- The end-of-line sentence: N measured at changeovers or typed (v43); history shows each run-out
+- The process page's Counting block labels each line discovered, confirmed, measured or typed
+- The CATID health strip: per process, Edge-wide, and a list on Processes
+- The Charge's preview is POST /api/catid-holds/{id}/charge?mode=preview
+- processes.auto_cutover_enabled is dropped (v42); catid_holds and line_counters live in the chain
+- plants/master.yaml is the one sim plant; the old specs are its named sections
+- The fake PLC runs a line with program changes; the 4x2-shaped cell's scenarios run S1-S8
+- scripts/sim-4x2.sh runs one shape on the dev stack (make dev-sim-4x2 SHAPE=S1..S8)
 
 ## 2026-11-03 — An order's carts are its rows
 
