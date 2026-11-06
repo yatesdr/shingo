@@ -21,6 +21,24 @@ cd shingo-edge
 go test -v -run "TestChangeover|TestWiring_ABCycling|TestSequential|TestCanAcceptOrders|TestDiffStyleClaims|TestBuildSwapChangeover|TestBuildEvacuateChangeover|TestBuildStage|TestBuildRelease|TestBuildRestore" ./engine/ -timeout 60s
 ```
 
+## The 4x2-shaped cell, end to end
+
+`integration/scenarios/catid_4x2_*_test.go` (`-tags docker`) run Core and an Edge in one process on a
+five-position, two-style weld (RUN and ALT share three parts and differ at two mirror positions, CATIDs
+1001/1002 pinned) whose PLC is `simwarlink.Line`, turned one machine cycle and one Edge poll pass at a
+time. Each shape checks the carts against the line's loads, the holds ledger, and the production record
+(counter_snapshots, hourly, what Core received), and that every order lands confirmed: S1 a steady run on
+the load station's counter and on the cell counter, S2 the late cutover (the declaration on a green gate,
+the counted-part force on a red one), S3 the early cutover, S4 a jump with no changeover and the automatic
+switch, S5 an unmapped part (Charge and Write off), S6 a mixed cell, S7 a restart. `make dev-sim-4x2
+SHAPE=S3` (`scripts/sim-4x2.sh`) runs one shape on the dev stack for a person to watch and prints the same
+ledger line.
+
+```bash
+cd integration
+go test -tags docker -count=1 -run Catid4x2 ./scenarios/
+```
+
 The TC-61…TC-108 case ledger that used to sit below this line was a test report —
 what was run on a date and what it found — not reference, so it now lives outside
 the repo with the other reports. The tests themselves are the live record; the
