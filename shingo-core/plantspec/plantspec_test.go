@@ -270,12 +270,12 @@ func TestValidate_KanbanDoesNotRefuseWarnings(t *testing.T) {
 // The shipped demo stages a kanban, because phase 2's soak needs the
 // shape and a seed nobody exercises is a seed that rots.
 func TestShippedDemoPlantHasKanban(t *testing.T) {
-	p, err := Load("../../plants/demo.yaml")
+	p, err := Load("../../plants/master.yaml")
 	if err != nil {
-		t.Fatalf("load plants/demo.yaml: %v", err)
+		t.Fatalf("load plants/master.yaml: %v", err)
 	}
 	if len(p.Kanbans) == 0 {
-		t.Fatal("plants/demo.yaml declares no kanban; phase 2's soak has no shape to run against")
+		t.Fatal("plants/master.yaml declares no kanban; phase 2's soak has no shape to run against")
 	}
 	mg := p.Kanbans[0]
 	var zone *Zone

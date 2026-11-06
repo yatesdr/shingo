@@ -5,6 +5,6 @@
     "bin_type": "STANDARD"
   },
   "decision": {
-    "node": "PEB_007"
+    "error": true
   }
 }

@@ -2,7 +2,7 @@
   "need": {
     "door": "level keeper",
     "group": "SYN_PRESS_EMPTIES",
-    "setup": "BIN-PEB-01..03 moved out to PLN_005, PLN_006 and SLN_010, so STANDARD is 1 of 4 wanted"
+    "setup": "BIN-PEB-01..03 moved out to PLN_005, PLN_006 and SLN_010: STANDARD stands 3 of the 6 it wants, its family 7 of its pool of 8"
   },
   "decision": {
     "events": null,
@@ -12,30 +12,6 @@
         "blocks": [
           "SLN_010 JackLoad",
           "PEB_001 JackUnload"
-        ]
-      },
-      {
-        "external": "order 2 of this case",
-        "blocks": [
-          "Lane_03-WAIT Wait"
-        ]
-      },
-      {
-        "external": "order 3 of this case",
-        "blocks": [
-          "Lane_04-WAIT Wait"
-        ]
-      },
-      {
-        "external": "order 4 of this case",
-        "blocks": [
-          "Lane_05-WAIT Wait"
-        ]
-      },
-      {
-        "external": "order 5 of this case",
-        "blocks": [
-          "Lane_06-WAIT Wait"
         ]
       }
     ],
@@ -58,126 +34,10 @@
           "slot:confirmed:PEB_001"
         ],
         "to_fleet": true
-      },
-      {
-        "index": 2,
-        "type": "retrieve_empty",
-        "status": "in_transit",
-        "source": "UTN_001",
-        "delivery": "PEB_002",
-        "bin": "BIN-MT-01",
-        "steps": [
-          "wait Lane_03-WAIT",
-          "pickup UTN_001 (empty)",
-          "dropoff PEB_002"
-        ],
-        "hard_bins": [
-          "BIN-MT-01"
-        ],
-        "hard_slots": [
-          "PEB_002"
-        ],
-        "reservations": [
-          "bin:confirmed:BIN-MT-01",
-          "mouth:confirmed:Lane_11",
-          "occupancy:confirmed:Lane_11",
-          "slot:confirmed:PEB_002"
-        ],
-        "to_fleet": true
-      },
-      {
-        "index": 3,
-        "type": "retrieve_empty",
-        "status": "in_transit",
-        "source": "UTN_004",
-        "delivery": "PEB_003",
-        "bin": "BIN-MT-04",
-        "steps": [
-          "wait Lane_04-WAIT",
-          "pickup UTN_004 (empty)",
-          "dropoff PEB_003"
-        ],
-        "hard_bins": [
-          "BIN-MT-04"
-        ],
-        "hard_slots": [
-          "PEB_003"
-        ],
-        "reservations": [
-          "bin:confirmed:BIN-MT-04",
-          "mouth:confirmed:Lane_12",
-          "occupancy:confirmed:Lane_12",
-          "slot:confirmed:PEB_003"
-        ],
-        "to_fleet": true
-      },
-      {
-        "index": 4,
-        "type": "retrieve_empty",
-        "status": "in_transit",
-        "source": "UTN_013",
-        "delivery": "PEB_007",
-        "bin": "BIN-MT-13",
-        "steps": [
-          "wait Lane_05-WAIT",
-          "pickup UTN_013 (empty)",
-          "dropoff PEB_007"
-        ],
-        "hard_bins": [
-          "BIN-MT-13"
-        ],
-        "hard_slots": [
-          "PEB_007"
-        ],
-        "reservations": [
-          "bin:confirmed:BIN-MT-13",
-          "mouth:confirmed:Lane_19",
-          "occupancy:confirmed:Lane_19",
-          "slot:confirmed:PEB_007"
-        ],
-        "to_fleet": true
-      },
-      {
-        "index": 5,
-        "type": "retrieve_empty",
-        "status": "in_transit",
-        "source": "SMN_035",
-        "delivery": "PEB_008",
-        "bin": "BIN-MT-16",
-        "steps": [
-          "wait Lane_06-WAIT",
-          "pickup SMN_035 (empty)",
-          "dropoff PEB_008"
-        ],
-        "hard_bins": [
-          "BIN-MT-16"
-        ],
-        "hard_slots": [
-          "PEB_008"
-        ],
-        "reservations": [
-          "bin:confirmed:BIN-MT-16",
-          "mouth:confirmed:Lane_16",
-          "occupancy:confirmed:Lane_16",
-          "slot:confirmed:PEB_008"
-        ],
-        "to_fleet": true
       }
     ],
     "refusals": null,
     "replies": [
-      "data.order.projected status=pending",
-      "order.ack",
-      "order.waybill",
-      "data.order.projected status=pending",
-      "order.ack",
-      "order.waybill",
-      "data.order.projected status=pending",
-      "order.ack",
-      "order.waybill",
-      "data.order.projected status=pending",
-      "order.ack",
-      "order.waybill",
       "data.order.projected status=pending",
       "order.ack",
       "order.waybill"

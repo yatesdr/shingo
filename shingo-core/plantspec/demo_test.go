@@ -2,15 +2,15 @@ package plantspec
 
 import "testing"
 
-// The shipped demo plant must always load + validate — guards plants/demo.yaml
-// against drift (a dangling ref or missing staging would break `make dev-seed`).
+// The shipped plant must always load + validate — guards plants/master.yaml (its
+// [demo] section is what these tests read) against drift (a dangling ref or missing staging would break `make dev-seed`).
 func TestShippedDemoPlantValid(t *testing.T) {
-	p, err := Load("../../plants/demo.yaml")
+	p, err := Load("../../plants/master.yaml")
 	if err != nil {
-		t.Fatalf("load plants/demo.yaml: %v", err)
+		t.Fatalf("load plants/master.yaml: %v", err)
 	}
 	if err := p.Validate(); err != nil {
-		t.Fatalf("plants/demo.yaml invalid: %v", err)
+		t.Fatalf("plants/master.yaml invalid: %v", err)
 	}
 }
 
@@ -22,9 +22,9 @@ func TestShippedDemoPlantValid(t *testing.T) {
 // loader coverage. Assertions are SHAPE-based (each type present), not count-based, so
 // tuning the demo (window counts, adding/dropping a leg) doesn't trip it.
 func TestShippedDemoPlantLoaderTypes(t *testing.T) {
-	p, err := Load("../../plants/demo.yaml")
+	p, err := Load("../../plants/master.yaml")
 	if err != nil {
-		t.Fatalf("load plants/demo.yaml: %v", err)
+		t.Fatalf("load plants/master.yaml: %v", err)
 	}
 
 	byNode := map[string]Claim{}
@@ -81,9 +81,9 @@ func TestShippedDemoPlantLoaderTypes(t *testing.T) {
 // Shape-based, not value-based: it does not care WHICH bin types or WHICH
 // nodes, only that the relationships hold.
 func TestShippedDemoPlantKeepsBothToolingShapesReachable(t *testing.T) {
-	p, err := Load("../../plants/demo.yaml")
+	p, err := Load("../../plants/master.yaml")
 	if err != nil {
-		t.Fatalf("load plants/demo.yaml: %v", err)
+		t.Fatalf("load plants/master.yaml: %v", err)
 	}
 
 	binTypeOf := map[string]string{}
@@ -206,9 +206,9 @@ func TestShippedDemoPlantKeepsBothToolingShapesReachable(t *testing.T) {
 //     fixture that names the disposition and omits the node ships a plant that
 //     its own editor would reject.
 func TestShippedDemoPlantKeepsCarryoverDriveable(t *testing.T) {
-	p, err := Load("../../plants/demo.yaml")
+	p, err := Load("../../plants/master.yaml")
 	if err != nil {
-		t.Fatalf("load plants/demo.yaml: %v", err)
+		t.Fatalf("load plants/master.yaml: %v", err)
 	}
 	claimFor := func(style string) *Claim {
 		for i := range p.Claims {

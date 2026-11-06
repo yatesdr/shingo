@@ -96,6 +96,138 @@
       "go_unavailable_reason": "at synthetic node \"_TRANSIT\", not at a place"
     },
     {
+      "bin": "BIN-C1-01",
+      "payload": "COMMON-1",
+      "node": "LSD_001",
+      "sourceable_sql": true
+    },
+    {
+      "bin": "BIN-C1-02",
+      "payload": "COMMON-1",
+      "node": "LSD_002",
+      "sourceable_sql": true
+    },
+    {
+      "bin": "BIN-C1-03",
+      "payload": "COMMON-1",
+      "node": "LSD_003",
+      "sourceable_sql": true
+    },
+    {
+      "bin": "BIN-C1-04",
+      "payload": "COMMON-1",
+      "node": "LSD_004",
+      "sourceable_sql": true
+    },
+    {
+      "bin": "BIN-C1-05",
+      "payload": "COMMON-1",
+      "node": "LSD_005",
+      "sourceable_sql": true
+    },
+    {
+      "bin": "BIN-C1-06",
+      "payload": "COMMON-1",
+      "node": "LSD_011",
+      "sourceable_sql": true
+    },
+    {
+      "bin": "BIN-C1-07",
+      "payload": "COMMON-1",
+      "node": "LSD_012",
+      "sourceable_sql": true
+    },
+    {
+      "bin": "BIN-C1-08",
+      "payload": "COMMON-1",
+      "node": "LSD_013",
+      "sourceable_sql": true
+    },
+    {
+      "bin": "BIN-C1-09",
+      "payload": "COMMON-1",
+      "node": "LSD_014",
+      "sourceable_sql": true
+    },
+    {
+      "bin": "BIN-C1-10",
+      "payload": "COMMON-1",
+      "node": "LSD_015",
+      "sourceable_sql": true
+    },
+    {
+      "bin": "BIN-C2-01",
+      "payload": "COMMON-2",
+      "node": "LSD_021",
+      "sourceable_sql": true
+    },
+    {
+      "bin": "BIN-C2-02",
+      "payload": "COMMON-2",
+      "node": "LSD_022",
+      "sourceable_sql": true
+    },
+    {
+      "bin": "BIN-C2-03",
+      "payload": "COMMON-2",
+      "node": "LSD_023",
+      "sourceable_sql": true
+    },
+    {
+      "bin": "BIN-C2-04",
+      "payload": "COMMON-2",
+      "node": "LSD_024",
+      "sourceable_sql": true
+    },
+    {
+      "bin": "BIN-C2-05",
+      "payload": "COMMON-2",
+      "node": "LSD_025",
+      "sourceable_sql": true
+    },
+    {
+      "bin": "BIN-C2-06",
+      "payload": "COMMON-2",
+      "node": "LSD_026",
+      "sourceable_sql": true
+    },
+    {
+      "bin": "BIN-C2-07",
+      "payload": "COMMON-2",
+      "node": "LSD_010",
+      "sourceable_sql": true
+    },
+    {
+      "bin": "BIN-C2-08",
+      "payload": "COMMON-2",
+      "node": "LSD_009",
+      "sourceable_sql": true
+    },
+    {
+      "bin": "BIN-C3-01",
+      "payload": "COMMON-3",
+      "node": "LSC_001",
+      "sourceable_sql": true
+    },
+    {
+      "bin": "BIN-C3-02",
+      "payload": "COMMON-3",
+      "node": "LSC_002",
+      "sourceable_sql": true
+    },
+    {
+      "bin": "BIN-C3-03",
+      "payload": "COMMON-3",
+      "node": "LSC_003",
+      "sourceable_sql": true
+    },
+    {
+      "bin": "BIN-C3-04",
+      "payload": "COMMON-3",
+      "node": "LSC_004",
+      "sourceable_sql": true
+    },
+    {
       "bin": "BIN-CLIP-01",
       "payload": "CLIP",
       "node": "SMN_013",
@@ -112,6 +244,185 @@
       "bin": "BIN-CLIP-03",
       "payload": "CLIP",
       "node": "SMN_015",
+      "sourceable_sql": true
+    },
+    {
+      "bin": "BIN-CMT-C1",
+      "node": "LSC_020",
+      "sourceable_sql": false
+    },
+    {
+      "bin": "BIN-CMT-C10",
+      "node": "LSC_029",
+      "sourceable_sql": false
+    },
+    {
+      "bin": "BIN-CMT-C11",
+      "node": "LSC_030",
+      "sourceable_sql": false
+    },
+    {
+      "bin": "BIN-CMT-C12",
+      "node": "LSC_031",
+      "sourceable_sql": false
+    },
+    {
+      "bin": "BIN-CMT-C13",
+      "node": "LSC_034",
+      "sourceable_sql": false
+    },
+    {
+      "bin": "BIN-CMT-C14",
+      "node": "LSC_035",
+      "sourceable_sql": false
+    },
+    {
+      "bin": "BIN-CMT-C15",
+      "node": "LSC_036",
+      "sourceable_sql": false
+    },
+    {
+      "bin": "BIN-CMT-C16",
+      "node": "LSC_037",
+      "sourceable_sql": false
+    },
+    {
+      "bin": "BIN-CMT-C2",
+      "node": "LSC_021",
+      "sourceable_sql": false
+    },
+    {
+      "bin": "BIN-CMT-C3",
+      "node": "LSC_022",
+      "sourceable_sql": false
+    },
+    {
+      "bin": "BIN-CMT-C4",
+      "node": "LSC_023",
+      "sourceable_sql": false
+    },
+    {
+      "bin": "BIN-CMT-C5",
+      "node": "LSC_024",
+      "sourceable_sql": false
+    },
+    {
+      "bin": "BIN-CMT-C6",
+      "node": "LSC_025",
+      "sourceable_sql": false
+    },
+    {
+      "bin": "BIN-CMT-C7",
+      "node": "LSC_026",
+      "sourceable_sql": false
+    },
+    {
+      "bin": "BIN-CMT-C8",
+      "node": "LSC_027",
+      "sourceable_sql": false
+    },
+    {
+      "bin": "BIN-CMT-C9",
+      "node": "LSC_028",
+      "sourceable_sql": false
+    },
+    {
+      "bin": "BIN-CMT-S1",
+      "node": "LSD_027",
+      "sourceable_sql": false
+    },
+    {
+      "bin": "BIN-CMT-S2",
+      "node": "LSD_028",
+      "sourceable_sql": false
+    },
+    {
+      "bin": "BIN-CMT-S3",
+      "node": "LSD_029",
+      "sourceable_sql": false
+    },
+    {
+      "bin": "BIN-CMT-S4",
+      "node": "LSD_033",
+      "sourceable_sql": false
+    },
+    {
+      "bin": "BIN-CMT-S5",
+      "node": "LSD_034",
+      "sourceable_sql": false
+    },
+    {
+      "bin": "BIN-CMT-S6",
+      "node": "LSD_035",
+      "sourceable_sql": false
+    },
+    {
+      "bin": "BIN-CMT-S7",
+      "node": "LSD_036",
+      "sourceable_sql": false
+    },
+    {
+      "bin": "BIN-CMT-S8",
+      "node": "LSD_037",
+      "sourceable_sql": false
+    },
+    {
+      "bin": "BIN-CMT-S9",
+      "node": "LSD_038",
+      "sourceable_sql": false
+    },
+    {
+      "bin": "BIN-ML-01",
+      "payload": "MIRROR-L",
+      "node": "LSC_005",
+      "sourceable_sql": true
+    },
+    {
+      "bin": "BIN-ML-02",
+      "payload": "MIRROR-L",
+      "node": "LSC_006",
+      "sourceable_sql": true
+    },
+    {
+      "bin": "BIN-ML-03",
+      "payload": "MIRROR-L",
+      "node": "LSC_007",
+      "sourceable_sql": true
+    },
+    {
+      "bin": "BIN-ML-04",
+      "payload": "MIRROR-L",
+      "node": "LSC_008",
+      "sourceable_sql": true
+    },
+    {
+      "bin": "BIN-ML-05",
+      "payload": "MIRROR-L",
+      "node": "LSC_018",
+      "sourceable_sql": true
+    },
+    {
+      "bin": "BIN-ML-06",
+      "payload": "MIRROR-L",
+      "node": "LSC_019",
+      "sourceable_sql": true
+    },
+    {
+      "bin": "BIN-MR-01",
+      "payload": "MIRROR-R",
+      "node": "LSC_010",
+      "sourceable_sql": true
+    },
+    {
+      "bin": "BIN-MR-02",
+      "payload": "MIRROR-R",
+      "node": "LSC_011",
+      "sourceable_sql": true
+    },
+    {
+      "bin": "BIN-MR-03",
+      "payload": "MIRROR-R",
+      "node": "LSC_012",
       "sourceable_sql": true
     },
     {
@@ -238,6 +549,36 @@
       "sourceable_sql": true
     },
     {
+      "bin": "BIN-PB-S1",
+      "payload": "PANEL-B",
+      "node": "SMN_021",
+      "sourceable_sql": true
+    },
+    {
+      "bin": "BIN-PB-S2",
+      "payload": "PANEL-B",
+      "node": "SMN_020",
+      "sourceable_sql": true
+    },
+    {
+      "bin": "BIN-PB-S3",
+      "payload": "PANEL-B",
+      "node": "SMN_019",
+      "sourceable_sql": true
+    },
+    {
+      "bin": "BIN-PB-S4",
+      "payload": "PANEL-B",
+      "node": "SMN_009",
+      "sourceable_sql": true
+    },
+    {
+      "bin": "BIN-PB-S5",
+      "payload": "PANEL-B",
+      "node": "SMN_008",
+      "sourceable_sql": true
+    },
+    {
       "bin": "BIN-PEB-01",
       "node": "PEB_001",
       "sourceable_sql": false
@@ -265,6 +606,26 @@
     {
       "bin": "BIN-PEB-06",
       "node": "PEB_006",
+      "sourceable_sql": false
+    },
+    {
+      "bin": "BIN-PEB-07",
+      "node": "PEB_007",
+      "sourceable_sql": false
+    },
+    {
+      "bin": "BIN-PEB-08",
+      "node": "PEB_008",
+      "sourceable_sql": false
+    },
+    {
+      "bin": "BIN-PEB-09",
+      "node": "PEB_009",
+      "sourceable_sql": false
+    },
+    {
+      "bin": "BIN-PEB-10",
+      "node": "PEB_010",
       "sourceable_sql": false
     },
     {
@@ -296,6 +657,491 @@
       "payload": "STUD",
       "node": "SMN_018",
       "sourceable_sql": true
+    },
+    {
+      "bin": "BIN-W6-P1",
+      "payload": "COMMON-1",
+      "node": "ALN_061",
+      "sourceable_sql": true
+    },
+    {
+      "bin": "BIN-W6-P2",
+      "payload": "COMMON-2",
+      "node": "ALN_062",
+      "sourceable_sql": true
+    },
+    {
+      "bin": "BIN-W6-P3",
+      "payload": "COMMON-3",
+      "node": "ALN_063",
+      "sourceable_sql": true
+    },
+    {
+      "bin": "BIN-W6-P4",
+      "payload": "MIRROR-L",
+      "node": "ALN_064",
+      "sourceable_sql": true
+    },
+    {
+      "bin": "BIN-W6-P5",
+      "payload": "MIRROR-L",
+      "node": "ALN_065",
+      "sourceable_sql": true
+    },
+    {
+      "bin": "KB-K-B1",
+      "node": "PKB_003",
+      "sourceable_sql": false
+    },
+    {
+      "bin": "KB-K-B2",
+      "node": "PKB_004",
+      "sourceable_sql": false
+    },
+    {
+      "bin": "KB-K-C1",
+      "node": "PKB_011",
+      "sourceable_sql": false
+    },
+    {
+      "bin": "KB-K-C2",
+      "node": "PKB_012",
+      "sourceable_sql": false
+    },
+    {
+      "bin": "KB-K-C3",
+      "node": "PKB_013",
+      "sourceable_sql": false
+    },
+    {
+      "bin": "KB-K-C4",
+      "node": "PKB_014",
+      "sourceable_sql": false
+    },
+    {
+      "bin": "KB-K-C5",
+      "node": "PKB_015",
+      "sourceable_sql": false
+    },
+    {
+      "bin": "KB-K-C6",
+      "node": "PKB_016",
+      "sourceable_sql": false
+    },
+    {
+      "bin": "KB-K-S1",
+      "node": "PKB_001",
+      "sourceable_sql": false
+    },
+    {
+      "bin": "KB-K-S2",
+      "node": "PKB_002",
+      "sourceable_sql": false
+    },
+    {
+      "bin": "KB-K-T1",
+      "node": "PKB_005",
+      "sourceable_sql": false
+    },
+    {
+      "bin": "KB-K-T2",
+      "node": "PKB_006",
+      "sourceable_sql": false
+    },
+    {
+      "bin": "KB-K2-S1",
+      "node": "WKB_001",
+      "sourceable_sql": false
+    },
+    {
+      "bin": "KB-K2-S2",
+      "node": "WKB_002",
+      "sourceable_sql": false
+    },
+    {
+      "bin": "KB-P-LB",
+      "node": "PLN_022",
+      "sourceable_sql": false
+    },
+    {
+      "bin": "KB-P-LF",
+      "node": "PLN_021",
+      "sourceable_sql": false
+    },
+    {
+      "bin": "KB-P-RB",
+      "node": "PLN_024",
+      "sourceable_sql": false
+    },
+    {
+      "bin": "KB-P-RF",
+      "node": "PLN_023",
+      "sourceable_sql": false
+    },
+    {
+      "bin": "KB-SM-B1",
+      "node": "KSM_006",
+      "sourceable_sql": false
+    },
+    {
+      "bin": "KB-SM-B2",
+      "node": "KSM_008",
+      "sourceable_sql": false
+    },
+    {
+      "bin": "KB-SM-S1",
+      "node": "KSM_002",
+      "sourceable_sql": false
+    },
+    {
+      "bin": "KB-SM-S2",
+      "node": "KSM_004",
+      "sourceable_sql": false
+    },
+    {
+      "bin": "KB-W-F",
+      "node": "ALN_021",
+      "sourceable_sql": false
+    },
+    {
+      "bin": "L2-AT-P10",
+      "payload": "PART-W",
+      "node": "PRS_010",
+      "sourceable_sql": true
+    },
+    {
+      "bin": "L2-AT-P10B",
+      "payload": "PART-W",
+      "node": "PRS_010B",
+      "sourceable_sql": true
+    },
+    {
+      "bin": "L2-AT-P11",
+      "payload": "PART-W",
+      "node": "PRS_011",
+      "sourceable_sql": true
+    },
+    {
+      "bin": "L2-AT-W10",
+      "node": "WLD_010",
+      "sourceable_sql": false
+    },
+    {
+      "bin": "L2-BW-01",
+      "payload": "PART-W",
+      "node": "SMN_L2_002",
+      "sourceable_sql": true
+    },
+    {
+      "bin": "L2-BW-02",
+      "payload": "PART-W",
+      "node": "SMN_L2_004",
+      "sourceable_sql": true
+    },
+    {
+      "bin": "L2-BX-01",
+      "payload": "PART-X",
+      "node": "SMN_L2_006",
+      "sourceable_sql": true
+    },
+    {
+      "bin": "L2-BX-02",
+      "payload": "PART-X",
+      "node": "SMN_L2_008",
+      "sourceable_sql": true
+    },
+    {
+      "bin": "L2-BX-03",
+      "payload": "PART-X",
+      "node": "SMN_L2_017",
+      "sourceable_sql": true
+    },
+    {
+      "bin": "L2-BX-04",
+      "payload": "PART-X",
+      "node": "SMN_L2_021",
+      "sourceable_sql": true
+    },
+    {
+      "bin": "L2-BY-01",
+      "payload": "PART-Y",
+      "node": "SMN_L2_010",
+      "sourceable_sql": true
+    },
+    {
+      "bin": "L2-MT-01",
+      "node": "SMN_L2_012",
+      "sourceable_sql": false
+    },
+    {
+      "bin": "L2-MT-02",
+      "node": "SMN_L2_014",
+      "sourceable_sql": false
+    },
+    {
+      "bin": "L2-MT-03",
+      "node": "SMN_L2_019",
+      "sourceable_sql": false
+    },
+    {
+      "bin": "L2-MT-04",
+      "node": "SMN_L2_022",
+      "sourceable_sql": false
+    },
+    {
+      "bin": "L2-MT-05",
+      "node": "SMN_L2_023",
+      "sourceable_sql": false
+    },
+    {
+      "bin": "L2-MT-06",
+      "node": "SMN_L2_024",
+      "sourceable_sql": false
+    },
+    {
+      "bin": "L2-MT-07",
+      "node": "SMN_L2_025",
+      "sourceable_sql": false
+    },
+    {
+      "bin": "P5-K-01",
+      "node": "P5B_001",
+      "sourceable_sql": false
+    },
+    {
+      "bin": "P5-K-02",
+      "node": "P5B_002",
+      "sourceable_sql": false
+    },
+    {
+      "bin": "P5-K-03",
+      "node": "P5B_003",
+      "sourceable_sql": false
+    },
+    {
+      "bin": "P5-K-04",
+      "node": "P5B_004",
+      "sourceable_sql": false
+    },
+    {
+      "bin": "P5-K-05",
+      "node": "P5B_005",
+      "sourceable_sql": false
+    },
+    {
+      "bin": "P5-K-06",
+      "node": "P5B_006",
+      "sourceable_sql": false
+    },
+    {
+      "bin": "P5-K-27",
+      "node": "P5B_027",
+      "sourceable_sql": false
+    },
+    {
+      "bin": "P5-K-28",
+      "node": "P5B_028",
+      "sourceable_sql": false
+    },
+    {
+      "bin": "P5-K-29",
+      "node": "P5B_029",
+      "sourceable_sql": false
+    },
+    {
+      "bin": "P5-K-30",
+      "node": "P5B_030",
+      "sourceable_sql": false
+    },
+    {
+      "bin": "P5-K-31",
+      "node": "P5B_031",
+      "sourceable_sql": false
+    },
+    {
+      "bin": "P5-K-32",
+      "node": "P5B_032",
+      "sourceable_sql": false
+    },
+    {
+      "bin": "P5-K-33",
+      "node": "P5B_033",
+      "sourceable_sql": false
+    },
+    {
+      "bin": "P5-K-34",
+      "node": "P5B_034",
+      "sourceable_sql": false
+    },
+    {
+      "bin": "P5-K-35",
+      "node": "P5B_035",
+      "sourceable_sql": false
+    },
+    {
+      "bin": "P5-K-36",
+      "node": "P5B_036",
+      "sourceable_sql": false
+    },
+    {
+      "bin": "P5-K-37",
+      "node": "P5B_037",
+      "sourceable_sql": false
+    },
+    {
+      "bin": "P5-K-38",
+      "node": "P5B_038",
+      "sourceable_sql": false
+    },
+    {
+      "bin": "P5-K-39",
+      "node": "P5B_039",
+      "sourceable_sql": false
+    },
+    {
+      "bin": "P5-K-40",
+      "node": "P5B_040",
+      "sourceable_sql": false
+    },
+    {
+      "bin": "P5-K-41",
+      "node": "P5B_041",
+      "sourceable_sql": false
+    },
+    {
+      "bin": "P5-K-42",
+      "node": "P5B_042",
+      "sourceable_sql": false
+    },
+    {
+      "bin": "P5-K-43",
+      "node": "P5B_043",
+      "sourceable_sql": false
+    },
+    {
+      "bin": "P5-K-44",
+      "node": "P5B_044",
+      "sourceable_sql": false
+    },
+    {
+      "bin": "P5-K-45",
+      "node": "P5B_045",
+      "sourceable_sql": false
+    },
+    {
+      "bin": "P5-K-46",
+      "node": "P5B_046",
+      "sourceable_sql": false
+    },
+    {
+      "bin": "P5-K-47",
+      "node": "P5B_047",
+      "sourceable_sql": false
+    },
+    {
+      "bin": "P5-K-48",
+      "node": "P5B_048",
+      "sourceable_sql": false
+    },
+    {
+      "bin": "P5-L-11",
+      "node": "PLN_511",
+      "sourceable_sql": false
+    },
+    {
+      "bin": "P5-L-12",
+      "node": "PLN_512",
+      "sourceable_sql": false
+    },
+    {
+      "bin": "P5-L-13",
+      "node": "PLN_513",
+      "sourceable_sql": false
+    },
+    {
+      "bin": "P5-L-14",
+      "node": "PLN_514",
+      "sourceable_sql": false
+    },
+    {
+      "bin": "P5-L-21",
+      "node": "PLN_521",
+      "sourceable_sql": false
+    },
+    {
+      "bin": "P5-L-22",
+      "node": "PLN_522",
+      "sourceable_sql": false
+    },
+    {
+      "bin": "P5-L-23",
+      "node": "PLN_523",
+      "sourceable_sql": false
+    },
+    {
+      "bin": "P5-L-24",
+      "node": "PLN_524",
+      "sourceable_sql": false
+    },
+    {
+      "bin": "P5-L-31",
+      "node": "PLN_531",
+      "sourceable_sql": false
+    },
+    {
+      "bin": "P5-L-32",
+      "node": "PLN_532",
+      "sourceable_sql": false
+    },
+    {
+      "bin": "P5-L-33",
+      "node": "PLN_533",
+      "sourceable_sql": false
+    },
+    {
+      "bin": "P5-L-34",
+      "node": "PLN_534",
+      "sourceable_sql": false
+    },
+    {
+      "bin": "P5-L-41",
+      "node": "PLN_541",
+      "sourceable_sql": false
+    },
+    {
+      "bin": "P5-L-42",
+      "node": "PLN_542",
+      "sourceable_sql": false
+    },
+    {
+      "bin": "P5-L-43",
+      "node": "PLN_543",
+      "sourceable_sql": false
+    },
+    {
+      "bin": "P5-L-44",
+      "node": "PLN_544",
+      "sourceable_sql": false
+    },
+    {
+      "bin": "P5-L-51",
+      "node": "PLN_551",
+      "sourceable_sql": false
+    },
+    {
+      "bin": "P5-L-52",
+      "node": "PLN_552",
+      "sourceable_sql": false
+    },
+    {
+      "bin": "P5-L-53",
+      "node": "PLN_553",
+      "sourceable_sql": false
+    },
+    {
+      "bin": "P5-L-54",
+      "node": "PLN_554",
+      "sourceable_sql": false
     }
   ]
 }

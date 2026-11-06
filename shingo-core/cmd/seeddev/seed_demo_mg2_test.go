@@ -16,11 +16,11 @@ import (
 // seed_demo_mg2_test.go — the kanban LOOP, asserted against the plant
 // the campaign actually runs on.
 //
-// WHY THIS ONE READS plants/demo.yaml when every other seed test reads a pinned
+// WHY THIS ONE READS plants/master.yaml when every other seed test reads a pinned
 // fixture. The fixture exists so ordinary seeding tests do not break every time
 // the dev plant grows — a good rule, and it does not apply here. MG2-0's whole
-// deliverable IS plants/demo.yaml: the proving loop every sim scenario runs
-// against. A fixture copy of it would let the shipped file rot while this test
+// deliverable is the master's [demo] loop (plants/master.yaml): the proving loop
+// every sim scenario runs against. A fixture copy of it would let the shipped file rot while this test
 // stayed green, which is the exact failure the file is supposed to prevent.
 //
 // SO IT ASSERTS THE LOOP, NOT THE PLANT. No row counts, no totals, nothing that
@@ -31,18 +31,18 @@ import (
 
 func demoPlant(t *testing.T) *plantspec.Plant {
 	t.Helper()
-	p, err := plantspec.Load(filepath.Join("..", "..", "..", "plants", "demo.yaml"))
+	p, err := plantspec.Load(filepath.Join("..", "..", "..", "plants", "master.yaml"))
 	if err != nil {
-		t.Fatalf("load plants/demo.yaml: %v", err)
+		t.Fatalf("load plants/master.yaml: %v", err)
 	}
 	if err := p.Validate(); err != nil {
-		t.Fatalf("validate plants/demo.yaml: %v", err)
+		t.Fatalf("validate plants/master.yaml: %v", err)
 	}
 	return p
 }
 
-// The Core half: the group, its positions, its carriers and its levels.
-func TestSeedDemo_KanbanIsSeededAtItsLevel(t *testing.T) {
+// The Core half: the group, its positions, its carriers, its levels and its pools.
+func TestSeedDemo_KanbanIsSeededAtItsPools(t *testing.T) {
 	t.Parallel()
 
 	db := testdb.Open(t)
@@ -96,25 +96,89 @@ func TestSeedDemo_KanbanIsSeededAtItsLevel(t *testing.T) {
 			"is bounded by free positions", total, len(children))
 	}
 
-	resident := map[string]int{}
+	// SETTLED is the keeper having nothing to ask at birth: each type's carts, in
+	// the group and on the supported presses' positions, are its family's pool.
+	// The demo declares no pools, so each stands at its minimum: the level plus,
+	// for each supported press, the most positions any of its styles runs on that
+	// type (store's KanbanPictureSQL, simcalc's FAMILIES). Seeded at the level
+	// alone, both families were born two short and the first tick borrowed.
+	payloadType := map[string]string{}
+	for _, pl := range plant.Payloads {
+		payloadType[pl.Code] = pl.BinType
+	}
+	styleProc := map[string]string{}
+	for _, st := range plant.Styles {
+		styleProc[st.Name] = st.Process
+	}
+	var mg plantspec.Kanban
+	for _, k := range plant.Kanbans {
+		if k.Group == grp.Name {
+			mg = k
+		}
+	}
+	supported := map[string]bool{}
+	for _, pr := range mg.Supports {
+		supported[pr] = true
+	}
+	places := map[int64]bool{}
 	for _, c := range children {
-		bs, berr := db.ListBinsByNode(c.ID)
+		places[c.ID] = true
+	}
+	pool := map[string]int{}
+	for code, n := range want {
+		pool[code] = n
+	}
+	for _, pr := range mg.Supports {
+		most := map[string]int{}
+		perStyle := map[string]map[string]map[string]bool{} // style → type → positions
+		for _, c := range plant.Claims {
+			if styleProc[c.Style] != pr {
+				continue
+			}
+			if perStyle[c.Style] == nil {
+				perStyle[c.Style] = map[string]map[string]bool{}
+			}
+			bt := payloadType[c.Payload]
+			if perStyle[c.Style][bt] == nil {
+				perStyle[c.Style][bt] = map[string]bool{}
+			}
+			for _, node := range c.Positions() {
+				n, nerr := db.GetNodeByName(node)
+				if nerr != nil || n == nil {
+					t.Fatalf("position %s: %v", node, nerr)
+				}
+				places[n.ID] = true
+				perStyle[c.Style][bt][node] = true
+			}
+		}
+		for _, byType := range perStyle {
+			for code, nodes := range byType {
+				most[code] = max(most[code], len(nodes))
+			}
+		}
+		for code := range want {
+			pool[code] += most[code]
+		}
+	}
+	carts := map[string]int{}
+	for id := range places {
+		bs, berr := db.ListBinsByNode(id)
 		if berr != nil {
-			t.Fatalf("bins at %s: %v", c.Name, berr)
+			t.Fatalf("bins at node %d: %v", id, berr)
 		}
 		for _, b := range bs {
 			bt, terr := db.GetBinType(b.BinTypeID)
 			if terr != nil || bt == nil {
 				t.Fatalf("bin type %d: %v", b.BinTypeID, terr)
 			}
-			resident[bt.Code]++
+			carts[bt.Code]++
 		}
 	}
-	for code, n := range want {
-		if resident[code] != n {
-			t.Errorf("seeded %d %s carrier(s) against a level of %d. The group must start "+
-				"SETTLED, or every scenario opens on a cold-start refill it did not ask for",
-				resident[code], code, n)
+	for code, n := range pool {
+		if carts[code] != n {
+			t.Errorf("seeded %d %s carrier(s) in the group and on its presses against a pool of %d. The "+
+				"group must start SETTLED, or every scenario opens on a cold-start refill it did not ask for",
+				carts[code], code, n)
 		}
 	}
 }

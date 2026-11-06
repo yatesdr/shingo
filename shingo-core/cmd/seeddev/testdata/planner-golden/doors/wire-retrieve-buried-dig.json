@@ -3,7 +3,7 @@
     "delivery": "SLN_003",
     "door": "edge wire intake",
     "payload": "PANEL-A",
-    "setup": "BIN-PA-01 and BIN-PA-02 claimed; BIN-PA-03 moved to the back of Lane_03 with BIN-CLIP-03 in front of it",
+    "setup": "BIN-PA-01 and BIN-PA-02 claimed; BIN-PA-03 moved to the back of Lane_15 with BIN-CLIP-03 in front of it",
     "source": "SYN_MARKET",
     "type": "retrieve"
   },
@@ -29,7 +29,7 @@
         "source": "SYN_MARKET",
         "delivery": "SLN_003",
         "reservations": [
-          "mouth:confirmed:Lane_03"
+          "mouth:confirmed:Lane_15"
         ]
       },
       {
@@ -38,20 +38,20 @@
         "type": "move",
         "status": "in_transit",
         "payload": "CLIP",
-        "source": "SMN_007",
+        "source": "SMN_031",
         "bin": "BIN-CLIP-03",
         "steps": [
           "wait Lane_04-WAIT",
-          "pickup SMN_007",
-          "wait SMN_007"
+          "pickup SMN_031",
+          "wait SMN_031"
         ],
         "hard_bins": [
           "BIN-CLIP-03"
         ],
         "reservations": [
           "bin:confirmed:BIN-CLIP-03",
-          "occupancy:confirmed:Lane_03",
-          "slot:pending:SMN_021"
+          "occupancy:confirmed:Lane_15",
+          "slot:pending:SMN_007"
         ],
         "to_fleet": true
       },
@@ -61,7 +61,7 @@
         "type": "move",
         "status": "pending",
         "payload": "PANEL-A",
-        "source": "SMN_009",
+        "source": "SMN_033",
         "delivery": "SLN_003",
         "bin": "BIN-PA-03",
         "queue_code": "storage_rearranging",

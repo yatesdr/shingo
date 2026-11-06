@@ -56,7 +56,7 @@
         "reservations": [
           "bin:confirmed:BIN-PA-01",
           "occupancy:confirmed:Lane_01",
-          "slot:pending:SMN_009"
+          "slot:pending:SMN_007"
         ],
         "to_fleet": true
       },
@@ -71,7 +71,7 @@
         "queue_code": "storage_rearranging",
         "queue_cause": "dig-leg-turn",
         "reservations": [
-          "slot:pending:SMN_008"
+          "slot:pending:SMN_024"
         ]
       }
     ],

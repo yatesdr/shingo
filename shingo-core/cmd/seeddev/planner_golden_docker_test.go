@@ -46,12 +46,14 @@ import (
 //
 // ── WHY IT LIVES IN THE SEEDER ────────────────────────────────────────────
 //
-// The plant is plants/demo.yaml, seeded by seedCore: the production seeder,
+// The plant is plants/master.yaml, seeded by seedCore: the production seeder,
 // which is in this package and nowhere importable. A hand-built plant would pin
-// the deciders against a shape the sim never runs; the demo plant is the one
-// every sim pair runs, and it has what the golden needs to be wide — a shared
-// multi-payload market of depth-3 lanes, empties in their own lanes, a
-// kanban, loaders and an unloader, stations of every kind.
+// the deciders against a shape the sim never runs; the master is the one every
+// sim runs, and its [demo] section, which the cases name, has what the golden
+// needs to be wide — a shared multi-payload market of depth-3 lanes, empties in
+// their own lanes, a kanban, loaders and an unloader, stations of every kind.
+// The other sections ride their own carriers, so a case on [demo]'s payloads
+// answers from [demo]'s storage; sourceable/every-bin lists every bin of all.
 //
 // ── WHY THE ENGINE IS STARTED AND STOPPED ─────────────────────────────────
 //
@@ -101,9 +103,9 @@ type goldenPlant struct {
 func newGoldenPlant(t *testing.T) *goldenPlant {
 	t.Helper()
 	db, dbcfg := testdb.OpenWithConfig(t)
-	plant, err := plantspec.Load("../../../plants/demo.yaml")
-	testutil.MustNoErr(t, err, "load plants/demo.yaml")
-	testutil.MustNoErr(t, plant.Validate(), "validate plants/demo.yaml")
+	plant, err := plantspec.Load("../../../plants/master.yaml")
+	testutil.MustNoErr(t, err, "load plants/master.yaml")
+	testutil.MustNoErr(t, plant.Validate(), "validate plants/master.yaml")
 	testutil.MustNoErr(t, seedCore(db, plant, map[string]int64{}), "seed the demo plant")
 	seedClaimsMirror(t, db, plant)
 
@@ -1010,15 +1012,16 @@ func TestPlannerGolden_Doors(t *testing.T) {
 		{
 			name: "wire-retrieve-buried-dig",
 			need: map[string]any{"door": "edge wire intake", "type": "retrieve", "payload": "PANEL-A", "source": "SYN_MARKET", "delivery": "SLN_003",
-				"setup": "BIN-PA-01 and BIN-PA-02 claimed; BIN-PA-03 moved to the back of Lane_03 with BIN-CLIP-03 in front of it"},
+				"setup": "BIN-PA-01 and BIN-PA-02 claimed; BIN-PA-03 moved to the back of Lane_15 with BIN-CLIP-03 in front of it"},
 			run: func(g *goldenPlant) {
 				h := g.holder("golden-holder-1")
 				g.claimBin("BIN-PA-01", h)
 				g.claimBin("BIN-PA-02", h)
 				// Put a free PANEL-A behind a blocker so the only answer is a dig: move
-				// BIN-PA-03 to the back of Lane_03 and a CLIP in front of it.
-				g.exec(`UPDATE bins SET node_id = (SELECT id FROM nodes WHERE name = 'SMN_009') WHERE label = 'BIN-PA-03'`)
-				g.exec(`UPDATE bins SET node_id = (SELECT id FROM nodes WHERE name = 'SMN_007') WHERE label = 'BIN-CLIP-03'`)
+				// BIN-PA-03 to the back of an empty lane and a CLIP to its mouth. Lane_15,
+				// the plant's one empty depth-3 lane: Lane_03 holds the +5 PANEL-B stock.
+				g.exec(`UPDATE bins SET node_id = (SELECT id FROM nodes WHERE name = 'SMN_033') WHERE label = 'BIN-PA-03'`)
+				g.exec(`UPDATE bins SET node_id = (SELECT id FROM nodes WHERE name = 'SMN_031') WHERE label = 'BIN-CLIP-03'`)
 				wire(g, protocol.OrderRequest{OrderUUID: "g-dig", OrderType: protocol.OrderTypeRetrieve,
 					PayloadCode: "PANEL-A", SourceNode: "SYN_MARKET", DeliveryNode: "SLN_003", Quantity: 1})
 			},
@@ -1160,7 +1163,7 @@ func TestPlannerGolden_Doors(t *testing.T) {
 		{
 			name: "level-keeper-press-empties",
 			need: map[string]any{"door": "level keeper", "group": "SYN_PRESS_EMPTIES",
-				"setup": "BIN-PEB-01..03 moved out to PLN_005, PLN_006 and SLN_010, so STANDARD is 1 of 4 wanted"},
+				"setup": "BIN-PEB-01..03 moved out to PLN_005, PLN_006 and SLN_010: STANDARD stands 3 of the 6 it wants, its family 7 of its pool of 8"},
 			run: func(g *goldenPlant) {
 				if k, err := g.db.GetKanban(g.node("SYN_PRESS_EMPTIES").ID); err != nil || k == nil || k.StationID == "" {
 					g.t.Fatalf("fixture: the demo seeds SYN_PRESS_EMPTIES as a kanban with a station; got %+v (%v)", k, err)

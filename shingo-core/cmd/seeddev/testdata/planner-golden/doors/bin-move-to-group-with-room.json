@@ -22,23 +22,23 @@
         "type": "move",
         "status": "in_transit",
         "source": "PLN_001",
-        "delivery": "SMN_009",
+        "delivery": "SMN_024",
         "bin": "BIN-ACT-P1F",
         "steps": [
           "pickup PLN_001",
           "wait Lane_02-WAIT",
-          "dropoff SMN_009"
+          "dropoff SMN_024"
         ],
         "hard_bins": [
           "BIN-ACT-P1F"
         ],
         "hard_slots": [
-          "SMN_009"
+          "SMN_024"
         ],
         "reservations": [
           "bin:confirmed:BIN-ACT-P1F",
-          "occupancy:confirmed:Lane_03",
-          "slot:confirmed:SMN_009"
+          "occupancy:confirmed:Lane_08",
+          "slot:confirmed:SMN_024"
         ],
         "to_fleet": true
       }

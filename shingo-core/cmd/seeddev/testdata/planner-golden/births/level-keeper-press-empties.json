@@ -2,7 +2,7 @@
   "need": {
     "door": "level keeper",
     "group": "SYN_PRESS_EMPTIES",
-    "setup": "BIN-PEB-01..03 moved out to PLN_005, PLN_006 and SLN_010, so STANDARD is 1 of 4 wanted"
+    "setup": "BIN-PEB-01..03 moved out to PLN_005, PLN_006 and SLN_010: STANDARD stands 3 of the 6 it wants, its family 7 of its pool of 8"
   },
   "decision": [
     {
@@ -15,54 +15,6 @@
       "source_intent": "empty",
       "origin_class": "attached",
       "origin_id": "episode 1 of this case",
-      "projected": "pending"
-    },
-    {
-      "index": 2,
-      "type": "retrieve_empty",
-      "status": "pending",
-      "station": "edge1.line1",
-      "quantity": 1,
-      "delivery": "PEB_002",
-      "source_intent": "empty",
-      "origin_class": "attached",
-      "origin_id": "episode 1 of this case",
-      "projected": "pending"
-    },
-    {
-      "index": 3,
-      "type": "retrieve_empty",
-      "status": "pending",
-      "station": "edge1.line1",
-      "quantity": 1,
-      "delivery": "PEB_003",
-      "source_intent": "empty",
-      "origin_class": "attached",
-      "origin_id": "episode 1 of this case",
-      "projected": "pending"
-    },
-    {
-      "index": 4,
-      "type": "retrieve_empty",
-      "status": "pending",
-      "station": "edge1.line1",
-      "quantity": 1,
-      "delivery": "PEB_007",
-      "source_intent": "empty",
-      "origin_class": "attached",
-      "origin_id": "episode 2 of this case",
-      "projected": "pending"
-    },
-    {
-      "index": 5,
-      "type": "retrieve_empty",
-      "status": "pending",
-      "station": "edge1.line1",
-      "quantity": 1,
-      "delivery": "PEB_008",
-      "source_intent": "empty",
-      "origin_class": "attached",
-      "origin_id": "episode 2 of this case",
       "projected": "pending"
     }
   ]

@@ -6,37 +6,11 @@
   },
   "decision": {
     "events": null,
-    "fleet": [
-      {
-        "external": "order 1 of this case",
-        "blocks": [
-          "PLN_001 JackLoad",
-          "PEB_007 JackUnload"
-        ]
-      }
+    "fleet": null,
+    "orders": null,
+    "refusals": [
+      "*engine.BinMoveError conflict"
     ],
-    "orders": [
-      {
-        "index": 1,
-        "type": "move",
-        "status": "dispatched",
-        "source": "PLN_001",
-        "delivery": "PEB_007",
-        "bin": "BIN-ACT-P1F",
-        "hard_bins": [
-          "BIN-ACT-P1F"
-        ],
-        "hard_slots": [
-          "PEB_007"
-        ],
-        "reservations": [
-          "bin:confirmed:BIN-ACT-P1F",
-          "slot:confirmed:PEB_007"
-        ],
-        "to_fleet": true
-      }
-    ],
-    "refusals": null,
     "replies": null
   }
 }
