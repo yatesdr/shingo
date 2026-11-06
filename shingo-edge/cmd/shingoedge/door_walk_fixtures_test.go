@@ -264,9 +264,9 @@ func routeFixtures() map[string]routeFixture {
 		"PUT /api/process-nodes/{id}/counted-at": {want: 200, req: on(func(w *walk) (string, any) {
 			return pn(w) + "/counted-at", map[string]any{"line_counter_id": nil}
 		})},
-		// A hold's release latches it; the walk's hold is on a CATID only a
-		// claimless style runs, so the Charge draws from no cart.
-		"POST /api/catid-holds/{id}/charge": {want: 200, req: on(func(w *walk) (string, any) {
+		// The walk's hold is on a CATID only a claimless style runs: the Charge
+		// would land on no cart, so it is refused and the hold stays open.
+		"POST /api/catid-holds/{id}/charge": {want: 400, req: on(func(w *walk) (string, any) {
 			return "/api/catid-holds/" + id(w.freshHold()) + "/charge", map[string]any{}
 		})},
 		"POST /api/catid-holds/{id}/write-off": {want: 200, req: on(func(w *walk) (string, any) {

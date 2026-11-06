@@ -132,9 +132,9 @@ type tickScope struct {
 	// counted at (countedAt).
 	counter int64
 	// catid and kind are how the tick was attributed (attributeTick). A held
-	// tick draws no cart: its draw goes to the holds ledger. An off-plan tick
-	// charges only a node whose bound carrier is the tick's style's part; the
-	// other shares go to the ledger.
+	// tick draws no cart: its draw goes to the holds ledger. An off-plan tick,
+	// or a hold's release (tickRelease), charges only a node whose bound
+	// carrier is the tick's style's part; the other shares go to the ledger.
 	catid string
 	kind  plc.TickKind
 }
@@ -144,9 +144,10 @@ type tickScope struct {
 // is charged under its claim, a node it does not claim is not — whichever
 // style is active. With the tick's style the active one this is what the
 // active-first resolution and its style-mismatch drop did. A tick no node took
-// is logged as unattributed, naming why each node declined it.
+// is logged as unattributed, naming why each node declined it. Returns the
+// walk's account.
 func (e *Engine) walkTick(process *processes.Process, nodes []processes.Node, claims *store.NodeClaimSet,
-	runtimes map[int64]*processes.RuntimeState, tick tickScope) {
+	runtimes map[int64]*processes.RuntimeState, tick tickScope) tickAttribution {
 	// Why this tick did or did not land. A counter tick that matches no
 	// node used to fall off the end of this function in silence: the
 	// consume path has the A/B fallthrough net below, produce has none,
@@ -156,7 +157,7 @@ func (e *Engine) walkTick(process *processes.Process, nodes []processes.Node, cl
 	attr := tickAttribution{nodesWalked: len(nodes)}
 	if tick.kind == plc.TickHeld {
 		e.holdHeldTick(process, nodes, claims, tick)
-		return
+		return attr
 	}
 	// THE A/B PAIRS, EACH ON ITS OWN. A pair is two claims that name each other
 	// (abPairOf); a claim naming a partner that does not name it back is no
@@ -204,12 +205,10 @@ func (e *Engine) walkTick(process *processes.Process, nodes []processes.Node, cl
 			attr.otherCounter++
 			continue
 		}
-		if tick.kind == plc.TickOffPlan && !carrierIsPart(process, &node, runtime, claim, claims) {
-			e.holdCatidDraw(tick, node.ID, claim.PayloadCode, tick.delta)
-			attr.heldShares++
-			continue
-		}
 
+		// An off-plan or release share is decided where the tick would be
+		// charged: after a pair's dark side and its second lit side are
+		// skipped, so a pair holds one share, not two.
 		pair := abPairOf(process, &node, claim, claims, ab.byCore, tick.styleID)
 		switch claim.Role {
 		case protocol.ClaimRoleConsume:
@@ -228,6 +227,10 @@ func (e *Engine) walkTick(process *processes.Process, nodes []processes.Node, cl
 				attr.secondLit++
 				continue
 			}
+			if e.heldForItsPart(tick, process, &node, runtime, claim, claims) {
+				attr.heldShares++
+				continue
+			}
 			nodeCopy := node
 			attr.consumeTicks++
 			e.handleConsumeTick(&nodeCopy, runtime, claim, holdPartFor(process, &nodeCopy, claim, claims), tick.delta)
@@ -243,6 +246,10 @@ func (e *Engine) walkTick(process *processes.Process, nodes []processes.Node, cl
 				attr.secondLit++
 				continue
 			}
+			if e.heldForItsPart(tick, process, &node, runtime, claim, claims) {
+				attr.heldShares++
+				continue
+			}
 			nodeCopy := node
 			attr.produceTicks++
 			e.handleProduceTick(&nodeCopy, runtime, claim, tick.delta)
@@ -254,7 +261,7 @@ func (e *Engine) walkTick(process *processes.Process, nodes []processes.Node, cl
 
 	// A/B fallthrough, per pair: a pair with no lit side charges its first
 	// dark side, the "count to lineside storage" safety net.
-	attr.fallthroughTicks += e.fallThrough(tick, ab)
+	e.fallThrough(process, claims, tick, ab, &attr)
 
 	if !attr.landed() {
 		log.Printf("ERROR: counter delta unattributed: process=%d style=%d delta=%d %s %s — the cell counted and no node took it",
@@ -265,6 +272,20 @@ func (e *Engine) walkTick(process *processes.Process, nodes []processes.Node, cl
 		e.debugFn("counter delta unattributed: process=%d style=%d delta=%d %s %s",
 			tick.processID, tick.styleID, tick.delta, tick.source, attr.skipReport())
 	}
+	return attr
+}
+
+// heldForItsPart holds the share of an off-plan tick or a hold's release at a
+// node whose cart is not the tick's style's part, or that has no cart: such a
+// tick charges only a cart of its part (and never the seat hold). Reports
+// whether it held the share.
+func (e *Engine) heldForItsPart(tick tickScope, process *processes.Process, node *processes.Node,
+	runtime *processes.RuntimeState, claim *processes.NodeClaim, claims *store.NodeClaimSet) bool {
+	if (tick.kind != plc.TickOffPlan && tick.kind != tickRelease) || carrierIsPart(process, node, runtime, claim, claims) {
+		return false
+	}
+	e.holdCatidDraw(tick, node.ID, claim.PayloadCode, tick.delta)
+	return true
 }
 
 // tickAttribution is the running account of one counter tick's walk over a
@@ -293,8 +314,14 @@ type tickAttribution struct {
 	consumeTicks     int
 	produceTicks     int
 	fallthroughTicks int
-	// heldShares: an off-plan tick's shares held in the ledger.
+	// heldShares: an off-plan tick's or a release's shares held in the
+	// ledger.
 	heldShares int
+}
+
+// charged is how many positions the tick was charged to.
+func (a tickAttribution) charged() int {
+	return a.consumeTicks + a.produceTicks + a.fallthroughTicks
 }
 
 // landed reports whether any node — or the A/B safety net — took the tick.
@@ -446,20 +473,23 @@ func (a *abPairs) noteDark(key string, node processes.Node, runtime *processes.R
 	}
 }
 
-// fallThrough charges each pair with no lit side to its first dark side, and
-// reports how many it charged.
-func (e *Engine) fallThrough(tick tickScope, a *abPairs) int {
-	n := 0
+// fallThrough charges each pair with no lit side to its first dark side, on
+// the walk's account; an off-plan or release share there is held instead when
+// the cart is not its part (heldForItsPart).
+func (e *Engine) fallThrough(process *processes.Process, claims *store.NodeClaimSet, tick tickScope, a *abPairs, attr *tickAttribution) {
 	for _, key := range a.order {
 		p := a.pairs[key]
 		if p.lit || p.fallback == nil {
 			continue
 		}
 		f := p.fallback
+		if e.heldForItsPart(tick, process, f.node, f.runtime, f.claim, claims) {
+			attr.heldShares++
+			continue
+		}
 		e.handleABFallthrough(tick.processID, f.node, f.runtime, f.claim, f.hold, tick.delta)
-		n++
+		attr.fallthroughTicks++
 	}
-	return n
 }
 
 // abPairTick is one A/B pair's account in one tick's walk: whether a lit side

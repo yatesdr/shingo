@@ -5,14 +5,17 @@ package engine
 import (
 	"errors"
 	"fmt"
+	"sync"
 	"testing"
 	"time"
 
+	"shingo/protocol"
 	"shingo/protocol/testutil"
 	"shingoedge/plc"
 	"shingoedge/store"
 	"shingoedge/store/counters"
 	"shingoedge/store/processes"
+	"shingoedge/uop"
 )
 
 // holdRig is attributeRig with A proven (1001 observed), the event handlers
@@ -442,12 +445,12 @@ func TestHold_AResolvedHoldTakesNoMoreStrokes(t *testing.T) {
 		t.Error("the first stroke did not report opening the hold")
 	}
 	first := mustOneHold(t, db, pid)
-	ok, err := db.ResolveCatidHold(first.ID, holdWrittenOff, "engineer", time.Now())
+	qty, ok, err := db.ResolveCatidHold(first.ID, holdWrittenOff, "engineer", time.Now())
 	testutil.MustNoErr(t, err, "resolve")
-	if !ok {
-		t.Fatal("resolve wrote nothing")
+	if !ok || qty != 2 {
+		t.Fatalf("resolve = %d, %t; want the 2 it latched", qty, ok)
 	}
-	ok, err = db.ResolveCatidHold(first.ID, holdCharged, "engineer", time.Now())
+	_, ok, err = db.ResolveCatidHold(first.ID, holdCharged, "engineer", time.Now())
 	testutil.MustNoErr(t, err, "second resolve")
 	if ok {
 		t.Error("a second resolve wrote")
@@ -464,6 +467,195 @@ func TestHold_AResolvedHoldTakesNoMoreStrokes(t *testing.T) {
 	testutil.MustNoErr(t, err, "released row")
 	if released.Qty != 2 || released.Resolution != holdWrittenOff {
 		t.Errorf("released row = %+v, want 2, written off", released)
+	}
+}
+
+// TestHold_LandingReleaseNeverDrawsAWrongPartCart: a held draw on B's part, B's
+// positions holding a cart of B's part and a cart of another. "Mark as running"
+// B lands it: the cart of B's part is charged, the other is not, and its share
+// stays open for a person. Before, the landing release charged both carts.
+func TestHold_LandingReleaseNeverDrawsAWrongPartCart(t *testing.T) {
+	t.Parallel()
+	eng, pid, _, b, _ := holdRig(t, "1001")
+	same := cartNode(t, eng, pid, b, "B-SAME", "PART-B", "PART-B", 9741)
+	other := cartNode(t, eng, pid, b, "B-OTHER", "PART-B", "PART-A", 9742)
+	_, err := eng.db.HoldCatidDraw(pid, "1002", 0, "", holdReasonHeld, 1, time.Now().Add(-time.Minute))
+	testutil.MustNoErr(t, err, "a held draw on 1002")
+	testutil.MustNoErr(t, eng.SetProcessActiveStyle(pid, &b), "mark B as running")
+	if got := runtimeOf(t, eng, same).RemainingUOPCached; got != 39 {
+		t.Errorf("B's cart of B's part = %d, want 39", got)
+	}
+	if got := runtimeOf(t, eng, other).RemainingUOPCached; got != 40 {
+		t.Errorf("B's cart of another part = %d, want 40: a release never draws it", got)
+	}
+	hs := openHolds(t, eng, pid)
+	if len(hs) != 1 || hs[0].ProcessNodeID != other || hs[0].Qty != 1 || hs[0].PayloadCode != "PART-B" {
+		t.Errorf("open holds = %+v, want the other cart's share of 1 left for a person", hs)
+	}
+}
+
+// TestHold_ChargeWalkNeverDrawsAWrongPartCart: the release's walk reads each
+// cart itself: a cart of another part bound since the preview read it is not
+// charged, and its share stays open. Before, the walk charged whatever cart
+// was bound.
+func TestHold_ChargeWalkNeverDrawsAWrongPartCart(t *testing.T) {
+	t.Parallel()
+	eng, pid, _, b, _ := holdRig(t, "1001")
+	n := cartNode(t, eng, pid, b, "B-NODE", "PART-B", "PART-B", 9751)
+	_, err := eng.db.HoldCatidDraw(pid, "1002", 0, "", holdReasonHeld, 2, time.Now())
+	testutil.MustNoErr(t, err, "a held draw on 1002")
+	h := mustOneHold(t, eng.db, pid)
+	testutil.MustNoErr(t, eng.db.SetProcessNodeRuntimeLinesidePayload(n, "PART-A", true, "test"), "another part's cart")
+	eng.chargeHold(&h, b)
+	if got := runtimeOf(t, eng, n).RemainingUOPCached; got != 40 {
+		t.Errorf("the other part's cart = %d, want 40", got)
+	}
+	shares := 0
+	for _, o := range openHolds(t, eng, pid) {
+		if o.ProcessNodeID == n && o.Qty == 2 && o.PayloadCode == "PART-B" {
+			shares++
+		}
+	}
+	if shares != 1 {
+		t.Errorf("open holds = %+v, want the share of 2 at B-NODE left for a person", openHolds(t, eng, pid))
+	}
+}
+
+// offPlanShareAt takes one off-plan stroke of 2 on 1003, S's part, with S's
+// position X holding another part's cart: one share at X. Returns the share.
+func offPlanShareAt(t *testing.T, eng *Engine, pid, a int64) (s, x int64, share store.CatidHold) {
+	t.Helper()
+	s = pinnedStyle(t, eng, pid, "STYLE-S", "1003")
+	x = cartNode(t, eng, pid, s, "S-OTHER", "PART-S", "PART-A", 9761)
+	if id := strokeAt(eng, pid, a, 2); id.Kind != plc.TickOffPlan {
+		t.Fatalf("attribution = %+v, want off-plan", id)
+	}
+	share = mustOneHold(t, eng.db, pid)
+	if share.ProcessNodeID != x {
+		t.Fatalf("hold = %+v, want the share at S-OTHER", share)
+	}
+	return s, x, share
+}
+
+// TestHold_ShareTheChargeStyleDoesNotClaimStaysOpen: the CATID's share was
+// taken at S's position; the CATID is then pinned to C, which does not claim
+// it. The preview refuses naming the position, the Charge is refused and a
+// landing on C leaves the share open. Before, both resolved it with nothing
+// drawn.
+func TestHold_ShareTheChargeStyleDoesNotClaimStaysOpen(t *testing.T) {
+	t.Parallel()
+	eng, pid, a, _, _ := holdRig(t, "1003")
+	s, _, share := offPlanShareAt(t, eng, pid, a)
+	testutil.MustNoErr(t, eng.db.SetStyleExpectedCATID(s, ""), "unpin S")
+	c := pinnedStyle(t, eng, pid, "STYLE-C", "1003")
+	cartNode(t, eng, pid, c, "C-NODE", "PART-C", "PART-C", 9762)
+	p, err := eng.PreviewCatidHold(share.ID)
+	testutil.MustNoErr(t, err, "preview")
+	if p.Refusal == "" {
+		t.Errorf("preview = %+v, want a refusal naming the position C does not claim", p)
+	}
+	if err := eng.ChargeCatidHold(share.ID, "engineer"); err == nil {
+		t.Error("a Charge drawing nothing succeeded")
+	}
+	landOn(t, eng, pid, a, c)
+	h, err := eng.db.GetCatidHold(share.ID)
+	testutil.MustNoErr(t, err, "hold")
+	if h.ResolvedAt != nil {
+		t.Errorf("hold = %+v, want it open: nothing landed", h)
+	}
+}
+
+// TestHold_ShareAtADeletedPositionIsRefused: a share whose position was
+// deleted is refused in the preview and by the Charge; Write off is the way
+// out. Before, the preview showed nothing and the Charge resolved it with
+// nothing drawn.
+func TestHold_ShareAtADeletedPositionIsRefused(t *testing.T) {
+	t.Parallel()
+	eng, pid, a, _, _ := holdRig(t, "1003")
+	_, x, share := offPlanShareAt(t, eng, pid, a)
+	testutil.MustNoErr(t, eng.db.DeleteProcessNode(x), "delete the position")
+	p, err := eng.PreviewCatidHold(share.ID)
+	testutil.MustNoErr(t, err, "preview")
+	if p.Refusal == "" {
+		t.Errorf("preview = %+v, want a refusal naming the deleted position", p)
+	}
+	if err := eng.ChargeCatidHold(share.ID, "engineer"); err == nil {
+		t.Error("a Charge of a deleted position's share succeeded")
+	}
+	if len(openHolds(t, eng, pid)) != 1 {
+		t.Error("a refused Charge closed the hold")
+	}
+}
+
+// strokeOnConsume is the test's counter sink with one stroke's draw arriving
+// the first time a walk charges a cart: a poll stroke landing between a
+// release's read of a hold and its latch.
+type strokeOnConsume struct {
+	*fakeDeltaSink
+	once   sync.Once
+	stroke func()
+}
+
+func (s *strokeOnConsume) Consumed(ev uop.TickEvent) error {
+	s.once.Do(s.stroke)
+	return s.fakeDeltaSink.Consumed(ev)
+}
+
+// TestHold_ReleaseChargesWhatItLatched: two holds released on one landing; a
+// stroke grows the second while the first is charged, after the release read
+// it. The second is charged the quantity its latch resolved. Before, it was
+// charged the quantity read, and the stroke's draw was resolved and never
+// charged.
+func TestHold_ReleaseChargesWhatItLatched(t *testing.T) {
+	t.Parallel()
+	eng, pid, _, _, _ := holdRig(t, "1003")
+	c := pinnedStyle(t, eng, pid, "STYLE-C", "1003,1004")
+	cNode := cartNode(t, eng, pid, c, "C-NODE", "PART-C", "PART-C", 9781)
+	at := time.Now().Add(-time.Minute)
+	for _, v := range []string{"1003", "1004"} {
+		_, err := eng.db.HoldCatidDraw(pid, v, 0, "", holdReasonHeld, 2, at)
+		testutil.MustNoErr(t, err, "hold "+v)
+	}
+	holds := openHolds(t, eng, pid)
+	eng.SetInventoryDeltaSink(&strokeOnConsume{fakeDeltaSink: eng.inventoryDelta.(*fakeDeltaSink), stroke: func() {
+		_, err := eng.db.HoldCatidDraw(pid, "1004", 0, "", holdReasonHeld, 2, time.Now())
+		testutil.MustNoErr(t, err, "a stroke on 1004")
+	}})
+	testutil.MustNoErr(t, eng.SetProcessActiveStyle(pid, &c), "mark C as running")
+	var resolved int64
+	for _, h := range holds {
+		got, err := eng.db.GetCatidHold(h.ID)
+		testutil.MustNoErr(t, err, "hold")
+		if got.ResolvedAt == nil {
+			t.Fatalf("hold %+v was not released", got)
+		}
+		resolved += got.Qty
+	}
+	if got := runtimeOf(t, eng, cNode).RemainingUOPCached; got != 40-int(resolved) {
+		t.Errorf("C's cart = %d, want %d: every resolved unit charged", got, 40-int(resolved))
+	}
+}
+
+// TestHold_OffPlanStrokeAtAnABPairHoldsOneShare: an off-plan stroke at an A/B
+// pair whose carts are not its style's part holds one share, the lit side's:
+// the dark side is skipped first, as for any stroke. Before, both sides held
+// one.
+func TestHold_OffPlanStrokeAtAnABPairHoldsOneShare(t *testing.T) {
+	t.Parallel()
+	r := newPairRig(t)
+	lit := r.consume("O-A", "O-B", protocol.SwapModeSequential, true)
+	r.consume("O-B", "O-A", protocol.SwapModeSequential, false)
+	s, err := r.db.CreateStyle("OFF-STYLE", "", r.pid)
+	testutil.MustNoErr(t, err, "style")
+	for _, side := range [][2]string{{"O-A", "O-B"}, {"O-B", "O-A"}} {
+		_, err := upsertClaimRetiredMode(r.db, processes.NodeClaimInput{StyleID: s, CoreNodeName: side[0], Role: "consume",
+			SwapMode: protocol.SwapModeSequential, PayloadCode: "PART-S", UOPCapacity: 100, InboundSource: "SRC",
+			PairedCoreNode: side[1]})
+		testutil.MustNoErr(t, err, "claim "+side[0])
+	}
+	r.eng.handleCounterDelta(CounterDeltaEvent{ProcessID: r.pid, StyleID: s, Delta: 2, CATID: "1003", Kind: plc.TickOffPlan})
+	if hs := openHolds(t, r.eng, r.pid); len(hs) != 1 || hs[0].ProcessNodeID != lit || hs[0].Qty != 2 {
+		t.Errorf("holds = %+v, want one share of 2 at the lit side", hs)
 	}
 }
 

@@ -98,15 +98,20 @@ func (db *DB) GetCatidHold(id int64) (*CatidHold, error) {
 }
 
 // ResolveCatidHold latches a hold's release: written only while it is open.
-// Reports whether this call resolved it; a second release writes nothing.
-func (db *DB) ResolveCatidHold(id int64, resolution, by string, at time.Time) (bool, error) {
-	res, err := db.Exec(`UPDATE catid_holds SET resolved_at = ?, resolution = ?, resolved_by = ?
-		WHERE id = ? AND resolved_at IS NULL`, at.UTC().Format(helpers.TimeLayout), resolution, by, id)
-	if err != nil {
-		return false, err
+// Returns the quantity it latched — a stroke may have grown the row since the
+// release read it, and the release charges what it resolved — and whether
+// this call resolved it; a second release writes nothing.
+func (db *DB) ResolveCatidHold(id int64, resolution, by string, at time.Time) (int64, bool, error) {
+	var qty int64
+	err := db.QueryRow(`UPDATE catid_holds SET resolved_at = ?, resolution = ?, resolved_by = ?
+		WHERE id = ? AND resolved_at IS NULL RETURNING qty`, at.UTC().Format(helpers.TimeLayout), resolution, by, id).Scan(&qty)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, false, nil
 	}
-	n, err := res.RowsAffected()
-	return n == 1, err
+	if err != nil {
+		return 0, false, err
+	}
+	return qty, true, nil
 }
 
 // ListCatidHoldsReleasedSince returns the process's holds the Edge released by

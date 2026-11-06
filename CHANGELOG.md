@@ -36,6 +36,7 @@ Edge only, v37-v42 (the dev seeder learns station counters). Ship after a restor
 - A station stroke under an off-plan or unmapped part holds its share per position, as the cell counter's does; a held station share is charged at its position
 - A changeover's start (plan to insert) and its cancel run under the door's mutex: neither interleaves with a completion or a switch
 - A CATID pin (one-click, Confirm, the style save) pokes the monitor; a counted stroke pokes only when it is news; the switch's prompt or line comes once per value
+- A hold's release (landing or Charge) lands a share only on its part's cart, charges what it latched, and is refused, the hold left open, when nothing would land
 
 ## 2026-11-03 — An order's carts are its rows
 
