@@ -75,6 +75,62 @@ func TestPoke_PredicateFalseHasNoClock(t *testing.T) {
 	}
 }
 
+// TestPoke_APinRedecidesADecidedFalseValue: the PLC settled on a part neither
+// style's set holds, so the decision was inert; the engineer pins the target to
+// it from the strip, and the next tick cuts over. Before, a pin never poked:
+// the value was not decided again until something else poked.
+func TestPoke_APinRedecidesADecidedFalseValue(t *testing.T) {
+	t.Parallel()
+	mon, st, processID, targetStyleID, calls := setupAutoCutover(t, "auto", "", "", true)
+	mon.eng.cutoverPokes = make(chan int64, 16)
+	t0 := time.Unix(0, 0)
+	for i := 0; i < 3; i++ {
+		tickAutoCutover(mon, processID, st, "1003", true, t0.Add(time.Duration(i)*30*time.Second))
+	}
+	if len(*calls) != 0 {
+		t.Fatalf("both sets empty: %d door calls, want 0", len(*calls))
+	}
+	testutil.MustNoErr(t, mon.eng.AddStyleCATID(processID, targetStyleID, "1003", "engineer", "the strip"), "pin the target")
+	drainPokes(mon.eng, mon)
+	tickAutoCutover(mon, processID, st, "1003", true, t0.Add(91*time.Second))
+	if len(*calls) != 1 {
+		t.Fatalf("the tick after the pin: %d door calls, want 1", len(*calls))
+	}
+}
+
+// TestPoke_ARefusedGateRerunsOnTheMinuteNotPerStroke: a changeover whose part
+// stood before it opened (never forced), its gate red. The declaration is
+// refused; the first counted stroke on the part is decided again (it is new),
+// the next five are not, and the refusal is retried a minute after the last.
+// Before, every counted stroke poked and ran the door again.
+func TestPoke_ARefusedGateRerunsOnTheMinuteNotPerStroke(t *testing.T) {
+	t.Parallel()
+	eng, _, pid, from, _, _, cm := forceRig(t, "auto")
+	doorCalls := 0
+	cm.completeCutover = func(_, _ int64, _ string, _ CutoverMode) ([]domain.Blocker, error) {
+		doorCalls++
+		return nil, errors.New("cannot cutover: task at node N1 in staging_requested")
+	}
+	st := changedTo(cm, pid, "1002", time.Now().Add(-20*time.Minute))
+	start := time.Now()
+	settle(cm, pid, st, "1002", start)
+	if doorCalls != 1 {
+		t.Fatalf("the declaration: %d door calls, want 1", doorCalls)
+	}
+	for i := 0; i < 6; i++ {
+		countedStroke(eng, pid, from)
+		drainPokes(eng, cm)
+		tickAutoCutover(cm, pid, st, "1002", true, start.Add(time.Duration(61+i)*time.Second))
+	}
+	if doorCalls != 2 {
+		t.Fatalf("after six counted strokes: %d door calls, want 2 (the declaration, the first stroke)", doorCalls)
+	}
+	tickAutoCutover(cm, pid, st, "1002", true, start.Add(121*time.Second))
+	if doorCalls != 3 {
+		t.Errorf("a minute after the last refusal: %d door calls, want 3", doorCalls)
+	}
+}
+
 // TestPrompt_OnlyWhenNoChangeoverOpen: the change prompt offers to start a
 // changeover, so it is not raised while one is open (the start would refuse).
 func TestPrompt_OnlyWhenNoChangeoverOpen(t *testing.T) {

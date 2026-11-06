@@ -209,6 +209,65 @@ func TestAutoSwitch_AmbiguousPrompts(t *testing.T) {
 	}
 }
 
+// sixStrokes counts six strokes the way the poll and the monitor take them,
+// each stroke's pokes handed over and a tick after it, then one more poke (a
+// landing or a terminal transition elsewhere on the process) and its tick.
+func sixStrokes(eng *Engine, cm *catidMonitor, pid, pointStyle int64, st *catidState, v string, start time.Time) {
+	for i := 0; i < 6; i++ {
+		countedStroke(eng, pid, pointStyle)
+		drainPokes(eng, cm)
+		tickAutoCutover(cm, pid, st, v, true, start.Add(time.Duration(61+i)*time.Second))
+	}
+	cm.notePoke(pid)
+	tickAutoCutover(cm, pid, st, v, true, start.Add(70*time.Second))
+}
+
+// TestAutoSwitch_SixHeldStrokesRaiseOnePrompt: a part two styles run, counted
+// six times, raises the change prompt once, and another poke on the same
+// value raises nothing more. Before, every held stroke poked the monitor and
+// every decision raised the prompt again.
+func TestAutoSwitch_SixHeldStrokesRaiseOnePrompt(t *testing.T) {
+	t.Parallel()
+	eng, _, pid, a, _, cm := switchRig(t, "auto")
+	eng.cutoverPokes = make(chan int64, 64)
+	pinnedStyle(t, eng, pid, "STYLE-C", "1002")
+	prompts := 0
+	eng.Events.SubscribeTypes(func(evt Event) {
+		if _, ok := evt.Payload.(CATIDChangePromptEvent); ok {
+			prompts++
+		}
+	}, EventCATIDChangePrompt)
+	st := changedTo(cm, pid, "1002", time.Now().Add(-5*time.Minute))
+	start := time.Now()
+	settle(cm, pid, st, "1002", start)
+	sixStrokes(eng, cm, pid, a, st, "1002", start)
+	if prompts != 1 {
+		t.Errorf("prompts after six held strokes and another poke = %d, want 1", prompts)
+	}
+}
+
+// TestAutoSwitch_SixOffPlanStrokesLogOneLine: in prompt mode a part only B
+// runs, counted six times, is logged "would have switched" once, and another
+// poke logs nothing more. Before, the line came once per stroke.
+func TestAutoSwitch_SixOffPlanStrokesLogOneLine(t *testing.T) {
+	t.Parallel()
+	eng, _, pid, a, _, cm := switchRig(t, "prompt")
+	eng.cutoverPokes = make(chan int64, 64)
+	lines := 0
+	eng.logFn = func(format string, _ ...any) {
+		if strings.Contains(format, "would have switched") {
+			lines++
+		}
+	}
+	st := changedTo(cm, pid, "1002", time.Now().Add(-5*time.Minute))
+	start := time.Now()
+	settle(cm, pid, st, "1002", start)
+	sixStrokes(eng, cm, pid, a, st, "1002", start)
+	if lines != 1 {
+		t.Errorf("would-have-switched lines after six off-plan strokes and another poke = %d, want 1", lines)
+	}
+}
+
 // TestAutoSwitch_PromptAndOffNeverSwitch: only auto switches.
 func TestAutoSwitch_PromptAndOffNeverSwitch(t *testing.T) {
 	t.Parallel()

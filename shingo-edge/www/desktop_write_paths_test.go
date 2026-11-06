@@ -353,6 +353,9 @@ func TestDesktopWritePaths_EveryBodyNamesEveryColumnItsHandlerWrites(t *testing.
 		if got.ExpectedCATID != "CAT-OLD" {
 			t.Errorf("expected_catid = %q, want CAT-OLD — a rename moved the PLC's match", got.ExpectedCATID)
 		}
+		if n := h.orchestration.(*stubEngine).pinSavedCalls; n != 0 {
+			t.Errorf("a rename told the CATID monitor of a pin change %d time(s), want 0", n)
+		}
 	})
 
 	t.Run("expected CATID keeps the name and the description", func(t *testing.T) {
@@ -362,6 +365,9 @@ func TestDesktopWritePaths_EveryBodyNamesEveryColumnItsHandlerWrites(t *testing.
 		testutil.MustNoErr(t, err, "db.GetStyle")
 		if got.ExpectedCATID != "CAT-NEW" {
 			t.Errorf("expected_catid = %q, want CAT-NEW", got.ExpectedCATID)
+		}
+		if n := h.orchestration.(*stubEngine).pinSavedCalls; n != 1 {
+			t.Errorf("the pin change told the CATID monitor %d time(s), want once", n)
 		}
 		if got.Description != style.Description || got.ProcessID != pid {
 			t.Errorf("a column nobody edited moved: %+v", got)

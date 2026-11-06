@@ -141,6 +141,7 @@ type stubEngine struct {
 	flowFingerprintErr error
 	startCalls         int
 	clearFlagCalls     int
+	pinSavedCalls      int
 
 	// The containment feed as the containment page reads it: the held copy
 	// (nil = nothing held), and what the last heartbeat ack said about Core
@@ -366,6 +367,7 @@ func (s *stubEngine) CheckStyleCATIDPin(int64, int64, string) error { return nil
 func (s *stubEngine) AddStyleCATID(_, styleID int64, catid, _, _ string) error {
 	return s.db.SetStyleExpectedCATID(styleID, catid)
 }
+func (s *stubEngine) StyleCATIDPinSaved(int64) { s.pinSavedCalls++ }
 
 // The holds verbs: canned. Hold 1 is open and charges cleanly; any other
 // is already released. The rules are pinned against the real engine.

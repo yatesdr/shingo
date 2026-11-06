@@ -177,6 +177,9 @@ func TestEngineOrchestrationWidth(t *testing.T) {
 		"PreviewCatidHold",
 		"WriteOffCatidHold",
 		"CheckStyleCATIDPin",
+		// Added 2026-11-06 (trim F-C): the style save's pin change pokes the
+		// CATID monitor; the style write itself is the service's.
+		"StyleCATIDPinSaved",
 		"ChangeoverGateStatus",
 		"ChangeoverService",
 		"ClearBin",

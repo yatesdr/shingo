@@ -217,6 +217,9 @@ type EngineOrchestration interface {
 	// one-click, which writes the style's set plus the value.
 	CheckStyleCATIDPin(processID, styleID int64, pin string) error
 	AddStyleCATID(processID, styleID int64, catid, by, evidence string) error
+	// StyleCATIDPinSaved tells the CATID monitor the style save changed a
+	// typed pin, so a value it already decided is decided again.
+	StyleCATIDPinSaved(processID int64)
 	// The holds ledger's verbs: what a Charge would draw, the Charge (under
 	// the one style that runs the CATID), and the Write off (nothing charged).
 	PreviewCatidHold(id int64) (*engine.CatidHoldPreview, error)

@@ -35,6 +35,7 @@ Edge only, v37-v42 (the dev seeder learns station counters). Ship after a restor
 - processes.auto_cutover_enabled is dropped (v42), and the boot that re-added it every time no longer does
 - A station stroke under an off-plan or unmapped part holds its share per position, as the cell counter's does; a held station share is charged at its position
 - A changeover's start (plan to insert) and its cancel run under the door's mutex: neither interleaves with a completion or a switch
+- A CATID pin (one-click, Confirm, the style save) pokes the monitor; a counted stroke pokes only when it is news; the switch's prompt or line comes once per value
 
 ## 2026-11-03 — An order's carts are its rows
 

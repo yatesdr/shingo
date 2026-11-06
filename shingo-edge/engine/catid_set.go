@@ -232,7 +232,9 @@ func (e *Engine) CheckStyleCATIDPin(processID, styleID int64, pin string) error 
 // as it stands (its pin, or the catalog-derived set) plus v — a bare {v} would
 // evict a catalog set, since a pin IS the set. Refused when v names no part or
 // another live style holds it. The strip's one-click and the post-cutover
-// flag's Confirm write through it; by and evidence go to the log.
+// flag's Confirm write through it; by and evidence go to the log. A write
+// pokes the CATID monitor: the pin may make a value it already ruled inert
+// cut over or switch.
 func (e *Engine) AddStyleCATID(processID, styleID int64, v, by, evidence string) error {
 	v = strings.TrimSpace(v)
 	if !isIdentity(v) {
@@ -260,7 +262,16 @@ func (e *Engine) AddStyleCATID(processID, styleID int64, v, by, evidence string)
 	}
 	log.Printf("catid pin: style %s (%d) on process %d now %s — added %s by %s: %s", style.Name, styleID, processID, pin, v, by, evidence)
 	e.catidHealthChanged(processID)
+	e.pokeCutover(processID)
 	return nil
+}
+
+// StyleCATIDPinSaved is the style save telling the CATID monitor a typed pin
+// changed. The cutover and the switch decide over the styles' sets, and a
+// value already decided is decided again only on a poke
+// (TestPoke_APinRedecidesADecidedFalseValue is the one-click's twin).
+func (e *Engine) StyleCATIDPinSaved(processID int64) {
+	e.pokeCutover(processID)
 }
 
 // otherStyleHolding names a live style other than styleID whose set holds v.

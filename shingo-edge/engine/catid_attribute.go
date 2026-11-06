@@ -103,7 +103,10 @@ func attributeCATID(v string, pointStyleID int64, sets []styleCATIDEntry, observ
 // the open changeover's target, off-plan to another style, or held — and
 // pokes the monitor, which decides on its own goroutine (the counted-part
 // force, the automatic switch, the ambiguity prompt): the poll never enters
-// the door. No lock.
+// the door. It pokes only on news: a tick of another kind or CATID than the
+// last, or the first since the value's confirm. A stroke like the last one
+// changes no decision, and a refused cutover is retried on the minute, not per
+// stroke (TestPoke_ARefusedGateRerunsOnTheMinuteNotPerStroke). No lock.
 func (e *Engine) noteCountedTick(processID int64, id plc.TickIdentity) {
 	if id.Kind == plc.TickToday {
 		return
@@ -112,7 +115,15 @@ func (e *Engine) noteCountedTick(processID int64, id plc.TickIdentity) {
 	if cm == nil {
 		return
 	}
+	last := cm.lastCountedTick(processID)
 	cm.countedTicks.Store(processID, countedTick{catid: id.CATID, kind: id.Kind, at: clock.Now()})
+	var confirmedAt time.Time
+	if snap, ok := cm.snapshot(processID); ok {
+		confirmedAt = snap.confirmedAt
+	}
+	if last.kind == id.Kind && last.catid == id.CATID && !last.at.Before(confirmedAt) {
+		return
+	}
 	e.pokeCutover(processID)
 }
 

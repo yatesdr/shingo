@@ -151,6 +151,20 @@ type catidState struct {
 	armDecided   bool
 	armRefusedAt time.Time
 	poked        bool
+	// raisedFor is the confirm (its confirmedAt) the switch last answered
+	// without switching — the ambiguity prompt, or a line that it would have
+	// switched or did not: once per confirmed value, not per poke.
+	raisedFor time.Time
+}
+
+// raiseOnce reports whether the switch's answer on the confirmed value is yet
+// to be raised, and marks it raised.
+func (st *catidState) raiseOnce() bool {
+	if st.raisedFor.Equal(st.confirmedAt) {
+		return false
+	}
+	st.raisedFor = st.confirmedAt
+	return true
 }
 
 // stableAt reports whether the confirmed value has held for the declaration's
@@ -882,8 +896,10 @@ func (cm *catidMonitor) decideAutoArm(processID int64, st *catidState, v string,
 // landing left (or a mismatch the cell already ran with), not the cell
 // running another style (TestAutoSwitch_RunOutAfterAnEarlyCutoverNeverSwitchesBack,
 // TestAutoSwitch_BaselineNeverSwitches). The declaration alone does nothing:
-// a part no stroke was counted on moves nothing. Called with cm.mu held; light
-// DB reads only.
+// a part no stroke was counted on moves nothing. An answer that switches
+// nothing — the prompt, the derived-set line, prompt and off's "would have
+// switched" — is raised once per confirmed value (raiseOnce), however often a
+// poke decides it again. Called with cm.mu held; light DB reads only.
 func (cm *catidMonitor) decideAutoSwitch(proc *processes.Process, st *catidState, v string, now time.Time) *autoCutoverIntent {
 	f := st.forceFacts(now)
 	if f.baseline || !f.confirmedAt.After(cm.landedAt(proc.ID)) {
@@ -894,7 +910,7 @@ func (cm *catidMonitor) decideAutoSwitch(proc *processes.Process, st *catidState
 	switch {
 	case countedSince(f, plc.TickOffPlan):
 	case countedSince(f, plc.TickHeld):
-		if mode == domain.ChangeoverAutoArmAuto && len(cm.eng.stylesForCATID(proc.ID, v)) > 1 {
+		if mode == domain.ChangeoverAutoArmAuto && len(cm.eng.stylesForCATID(proc.ID, v)) > 1 && st.raiseOnce() {
 			cm.raiseCATIDChangePrompt(proc.ID, st)
 		}
 		return nil
@@ -918,8 +934,13 @@ func (cm *catidMonitor) decideAutoSwitch(proc *processes.Process, st *catidState
 		return nil
 	}
 	if !to.Pinned {
-		cm.eng.logFn("plc-catid: process %s: CATID %s counted on %s, whose set is derived from the catalog — not switching",
-			st.processName, v, to.Name)
+		if st.raiseOnce() {
+			cm.eng.logFn("plc-catid: process %s: CATID %s counted on %s, whose set is derived from the catalog — not switching",
+				st.processName, v, to.Name)
+		}
+		return nil
+	}
+	if mode != domain.ChangeoverAutoArmAuto && !st.raiseOnce() {
 		return nil
 	}
 	return &autoCutoverIntent{processID: proc.ID, processName: st.processName, catid: v, mode: mode,

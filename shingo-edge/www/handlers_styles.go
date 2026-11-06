@@ -194,6 +194,9 @@ func (h *Handlers) apiUpdateStyle(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	if prev == nil || strings.TrimSpace(prev.ExpectedCATID) != strings.TrimSpace(req.ExpectedCATID) {
+		h.orchestration.StyleCATIDPinSaved(req.ProcessID)
+	}
 	h.requestBackup("style-updated")
 	// Same as apiCreateStyle: the style NAME is what rides the wire as
 	// PlantClaimsStyle.StyleID, so a rename that never republishes leaves Core
