@@ -6,6 +6,7 @@ package engine
 
 import (
 	"errors"
+	"fmt"
 	"go/ast"
 	"go/parser"
 	"go/token"
@@ -150,6 +151,100 @@ func TestDoor_SerializesOperatorAndMonitor(t *testing.T) {
 	}
 	if p := mustProcess(t, db, processID); p.ActiveStyleID == nil || *p.ActiveStyleID != toID {
 		t.Errorf("active style = %v, want the target %d", p.ActiveStyleID, toID)
+	}
+}
+
+// styleOf renders an active-style pointer for a failure line.
+func styleOf(p *int64) string {
+	if p == nil {
+		return "none"
+	}
+	return fmt.Sprint(*p)
+}
+
+// TestCancel_InsideTheDoorsFlipWaitsForTheDoor: a Cancel started while the door
+// is flipping (from the plant-claims publish inside the flip) waits for the
+// door: the changeover completes on its target and the Cancel finds nothing
+// open, so the style and the row agree. Before, the Cancel ran inside the
+// flip: the row ended cancelled with the process on the cancelled target.
+func TestCancel_InsideTheDoorsFlipWaitsForTheDoor(t *testing.T) {
+	t.Parallel()
+	db := testEngineDB(t)
+	eng := testEngine(t, db)
+	processID, fromID, toID, coID := openGreenChangeover(t, eng, "")
+	cancelled := make(chan error, 1)
+	var once sync.Once
+	eng.SetPlantClaimsFunc(func(int64) {
+		once.Do(func() {
+			go func() { cancelled <- eng.CancelProcessChangeover(processID) }()
+			select {
+			case err := <-cancelled: // the Cancel ran inside the flip
+				cancelled <- err
+			case <-time.After(time.Second): // it waits on the door
+			}
+		})
+	})
+	doorErr := eng.CompleteProcessProductionCutover(processID)
+	cancelErr := <-cancelled
+	co := changeoverRow(t, db, coID)
+	active := mustProcess(t, db, processID).ActiveStyleID
+	agree := (co.State == domain.ChangeoverCompleted && styleOf(active) == fmt.Sprint(toID)) ||
+		(co.State == domain.ChangeoverCancelled && styleOf(active) == fmt.Sprint(fromID))
+	if !agree {
+		t.Fatalf("row %s with the process on style %s (from %d, to %d): the style and the row disagree (door: %v, cancel: %v)",
+			co.State, styleOf(active), fromID, toID, doorErr, cancelErr)
+	}
+	if doorErr != nil || co.State != domain.ChangeoverCompleted {
+		t.Errorf("door = %v, row %s: the door, already inside its flip, completes", doorErr, co.State)
+	}
+	if cancelErr == nil {
+		t.Error("the Cancel after the completion found a changeover to cancel")
+	}
+}
+
+// TestStart_RacingTheSwitchNeverInsertsAFromStyleNoLongerActive: an automatic
+// switch fired while a start is planning (from the planner's log line, after
+// its read of the active style) waits for the start, which inserts its row
+// from the style still running; the switch then finds a changeover open and
+// does nothing. Before, the switch ran inside the start, and the row from A to
+// S was inserted with S already running: a changeover no predicate completes.
+func TestStart_RacingTheSwitchNeverInsertsAFromStyleNoLongerActive(t *testing.T) {
+	t.Parallel()
+	db := testEngineDB(t)
+	eng := testEngine(t, db)
+	pid, _, from, to, _, _ := seedChangeoverScenario(t, db)
+	// The incoming claim asks for an evacuation the outgoing one does not: the
+	// planner logs it.
+	_, err := upsertClaimRetiredMode(db, processes.NodeClaimInput{StyleID: to, CoreNodeName: "CO-NODE", Role: "consume",
+		SwapMode: "simple", PayloadCode: "PART-NEW", UOPCapacity: 200, InboundSource: "SOURCE-NEW",
+		InboundStaging: "IN-STAGING", EvacuateOnChangeover: true})
+	testutil.MustNoErr(t, err, "the incoming claim evacuates")
+	switched := make(chan error, 1)
+	var once sync.Once
+	logFn := eng.logFn
+	eng.logFn = func(format string, args ...any) {
+		if strings.HasPrefix(format, "changeover: node") {
+			once.Do(func() {
+				go func() { switched <- eng.autoSwitchStyle(pid, from, to, "1002") }()
+				select {
+				case err := <-switched: // the switch ran inside the start
+					switched <- err
+				case <-time.After(time.Second): // it waits on the start
+				}
+			})
+		}
+		logFn(format, args...)
+	}
+	_, startErr := eng.StartProcessChangeover(pid, to, "test", "")
+	switchErr := <-switched
+	p := mustProcess(t, db, pid)
+	if open, err := db.GetActiveProcessChangeover(pid); err == nil && styleOf(open.FromStyleID) != styleOf(p.ActiveStyleID) {
+		t.Fatalf("changeover %d from style %s is open while style %s runs (start: %v, switch: %v)",
+			open.ID, styleOf(open.FromStyleID), styleOf(p.ActiveStyleID), startErr, switchErr)
+	}
+	if startErr != nil || styleOf(p.ActiveStyleID) != fmt.Sprint(from) {
+		t.Errorf("start = %v, active style %s: the start, already planning, inserts and the switch stands down",
+			startErr, styleOf(p.ActiveStyleID))
 	}
 }
 

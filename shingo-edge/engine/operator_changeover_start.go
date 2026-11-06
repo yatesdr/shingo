@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"log"
 	"strings"
+	"sync"
 
 	"shingo/protocol"
 	"shingoedge/domain"
@@ -477,6 +478,14 @@ func (e *Engine) StartProcessChangeover(processID, toStyleID int64, calledBy, no
 	}
 
 	e.changeoverStockAdvisory(processID, toStyleID)
+	// Plan to insert under the door's mutex: the plan reads the active style and
+	// the insert records it as the from-style, so a switch or a completion in
+	// between would open a changeover from a style no longer running, which no
+	// predicate completes (TestStart_RacingTheSwitchNeverInsertsAFromStyleNoLongerActive).
+	// Rank 8 is outer to the cells' locks taken below; nothing here calls the door.
+	e.cutoverMu.Lock()
+	unlockDoor := sync.OnceFunc(e.cutoverMu.Unlock)
+	defer unlockDoor()
 	plan, err := e.planChangeover(processID, toStyleID, true)
 	if err != nil {
 		return nil, err
@@ -568,6 +577,7 @@ func (e *Engine) StartProcessChangeover(processID, toStyleID int64, calledBy, no
 		calledBy, notes, plan.stationIDs, plan.nodeTasks, plan.participants, plan.nodes); err != nil {
 		return nil, err
 	}
+	unlockDoor()
 	// The row is committed: once the start returns, the CATID monitor re-decides.
 	// A program that settled before the changeover opened is cut over on this
 	// poke rather than never (the decision is not re-taken on a clock).

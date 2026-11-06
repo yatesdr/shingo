@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log"
 	"strings"
+	"sync"
 
 	"shingo/protocol"
 	"shingoedge/domain"
@@ -25,7 +26,17 @@ func (e *Engine) CancelProcessChangeoverRedirect(processID int64, nextStyleID *i
 	return e.cancelProcessChangeoverInternal(processID, nextStyleID)
 }
 
+// cancelProcessChangeoverInternal runs under the door's mutex up to a
+// redirect's start (which takes it itself): a Cancel and a completion never
+// interleave, so the style and the row agree — a Cancel arriving while the
+// door flips waits and then finds nothing open, and a door arriving mid-cancel
+// finds the row ended (TestCancel_InsideTheDoorsFlipWaitsForTheDoor). Rank 8
+// is outer to the cells' locks the cancel takes, and nothing here calls the
+// door.
 func (e *Engine) cancelProcessChangeoverInternal(processID int64, nextStyleID *int64) error {
+	e.cutoverMu.Lock()
+	unlockDoor := sync.OnceFunc(e.cutoverMu.Unlock)
+	defer unlockDoor()
 	changeover, err := e.db.GetActiveProcessChangeover(processID)
 	if err != nil {
 		return err
@@ -140,6 +151,7 @@ func (e *Engine) cancelProcessChangeoverInternal(processID int64, nextStyleID *i
 	// After the spots' locks are let go: a park is decided under its own line's
 	// lock, which the spots may already have held.
 	e.finishParkedTrips(parks, parkRows, origin)
+	unlockDoor()
 
 	if nextStyleID != nil && *nextStyleID != 0 {
 		_, err := e.StartProcessChangeover(processID, *nextStyleID,

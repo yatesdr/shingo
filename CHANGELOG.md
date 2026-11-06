@@ -34,6 +34,7 @@ Edge only, v37-v42 (the dev seeder learns station counters). Ship after a restor
 - The process strip names a station counter stopped while the line produces, one not clicking once per part, an unreadable counter tag, and a bound position turned A/B pair
 - processes.auto_cutover_enabled is dropped (v42), and the boot that re-added it every time no longer does
 - A station stroke under an off-plan or unmapped part holds its share per position, as the cell counter's does; a held station share is charged at its position
+- A changeover's start (plan to insert) and its cancel run under the door's mutex: neither interleaves with a completion or a switch
 
 ## 2026-11-03 — An order's carts are its rows
 
