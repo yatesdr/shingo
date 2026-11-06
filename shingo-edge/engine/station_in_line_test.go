@@ -66,3 +66,34 @@ func TestDeepest_SurvivesRestart(t *testing.T) {
 		t.Fatalf("after the restart, 25 strokes inside a 30-deep run-out read %q", it.Detail)
 	}
 }
+
+// TestStationCard_SaysStoppedPastTheDeepestRunOut: the card carries the
+// production strokes since the station's last click and, past the deepest
+// run-out seen (at least the floor), stopped: the strip's own measure, so the
+// card and the strip agree. A click clears it.
+func TestStationCard_SaysStoppedPastTheDeepestRunOut(t *testing.T) {
+	t.Parallel()
+	r, _, lc := healthStation(t)
+	card := func() StationCounterCard {
+		t.Helper()
+		cards, err := r.eng.ListStationCounters(r.pid)
+		testutil.MustNoErr(t, err, "the cards")
+		if len(cards) != 1 {
+			t.Fatalf("cards = %+v, want one", cards)
+		}
+		return cards[0]
+	}
+	r.stationClick(lc, 1)
+	r.prodStroke(stationStopFloor + 5)
+	c := card()
+	_, strip := healthKinds(t, r.eng, r.pid)[stationKindStopped]
+	if c.StrokesSinceClick != stationStopFloor+5 || !c.Stopped || !strip {
+		t.Fatalf("after %d strokes with no click: card strokes %d, stopped %v; strip stopped %v; want stopped on both",
+			stationStopFloor+5, c.StrokesSinceClick, c.Stopped, strip)
+	}
+	r.stationClick(lc, 1)
+	r.prodStroke(3)
+	if c := card(); c.StrokesSinceClick != 3 || c.Stopped {
+		t.Errorf("3 strokes after a click: card strokes %d, stopped %v; want 3, not stopped", c.StrokesSinceClick, c.Stopped)
+	}
+}

@@ -50,6 +50,7 @@ Edge only, v37-v42 (the dev seeder learns station counters). Ship after a restor
 - The station counter's tag combo suggests each station struct's Prod_Tool_1_CNT.ACC by the family's convention (operator-load stations first, no live read), never a gun, tip, timer, cycle, index, FIFO, management or marker tag; a member of the process's own MES struct is refused
 - The parts in the line (v43): a production-counter reset read fresh within 10 s of a confirmed CATID change anchors each station counter, any other reset unanchors; the card shows ≈N in the line beside the clicks per part and the deepest run-out (now stored), the binding's log and confirm name N, and nothing charges by it
 - The end-of-line sentence on the setup page and the station tile: about N parts sit between the cart and the counter, N measured at changeovers whose landing preceded the counter's reset (a dated range, GET /api/processes/{id}/end-of-line) or typed (by whom, when; PUT …/line-depth); the history row says what each changeover ran out after the cutover; N decides nothing
+- The process page's Counting block, each line labelled: the MES slots (each slot's CATID, count, rising or not, discovered; the slot counted on, confirmed; carried by GET /api/processes/{id}/end-of-line), the station cards (the tag discovered until read, then confirmed; positions confirmed; clicks per part, in the line, deepest run-out and stopped, measured) and the end of the line (measured or typed)
 
 ## 2026-11-03 — An order's carts are its rows
 

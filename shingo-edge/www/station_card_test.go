@@ -34,3 +34,11 @@ func TestStationCard_PreTicksOnlyCountableUnboundPositionsWhenItIsTheOnlyStation
 func TestStationCard_ShowsLeadBesideRatio(t *testing.T) {
 	runStationCardJS(t, "the lead")
 }
+
+// TestCountingBlock_EachLineLabelledInThreeGroups renders the process page's
+// Counting block from a fixture: the MES slots, the station counters' cards
+// and the end of the line, in that order, each line labelled discovered,
+// confirmed, measured or typed.
+func TestCountingBlock_EachLineLabelledInThreeGroups(t *testing.T) {
+	runStationCardJS(t, "the counting block")
+}

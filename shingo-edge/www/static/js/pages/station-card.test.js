@@ -89,5 +89,98 @@ check('the lead: the binding confirm names the parts in the line', () => {
     assert.ok(C.inLineSentence({ in_line: null }).indexOf('not anchored yet') >= 0);
 });
 
+// The Counting block, rendered from a fixture: a cell counted on its MES
+// struct's first slot, two station counters (one read, one not; one stopped)
+// and an end of the line measured at a changeover.
+const block = {
+    process: { id: 3, counter_plc_name: 'PLC_01', counter_tag_name: 'MES_WELD_6.Prod_Counter_01' },
+    end: {
+        applies: true, has_n: true, typed: { n: null, by: '' },
+        measured: [{ changeover_id: 4, parts: 8, completed_at: '2026-11-01T10:00:00Z' }],
+        sentence: 'Counted at the end of the line: carts are charged when the part is made. About 8 parts sit ' +
+            'between the cart and the counter (measured at changeovers #4 on 2026-11-01).',
+        slots: [
+            { slot: 1, tag: 'MES_WELD_6.Prod_Counter_01', catid: '1001', part: true, count: 5234, read: true,
+                rising: true, rose_at: '2026-11-06T10:00:00Z', counted: true, label: 'discovered' },
+            { slot: 2, tag: 'MES_WELD_6.Prod_Counter_02', catid: '-1', part: false, count: 0, read: true,
+                rising: false, counted: false, label: 'discovered' },
+            { slot: 3, tag: 'MES_WELD_6.Prod_Counter_03', catid: '', part: false, count: 0, read: false,
+                rising: false, counted: false, label: 'discovered' },
+        ],
+    },
+    counters: [
+        { id: 7, label: 'load station', tag_name: 'STATION_01', last_poll_at: '2026-11-06T10:00:00Z', ratio: 1.02,
+            ratio_intervals: 20, in_line: 8, anchor_at: 'x', deepest_runout: 9, strokes_since_click: 2, stopped: false },
+        { id: 8, label: '', tag_name: 'STATION_02', ratio: null, ratio_intervals: 0, in_line: null,
+            deepest_runout: null, strokes_since_click: 40, stopped: true },
+    ],
+    positions: [
+        { id: 1, name: 'POS-1', line_counter_id: 7 },
+        { id: 2, name: 'POS-2', line_counter_id: null },
+    ],
+    verdicts: { 1: { countable: true, refusal: '' }, 2: { countable: true, refusal: '' } },
+    fmt: fmt,
+};
+
+// groupsOf splits the block's HTML into its groups, in order, each with its
+// labelled lines: { group, lines: [{ src, text }] }.
+function groupsOf(html) {
+    return html.split('data-group="').slice(1).map(part => {
+        const lines = [];
+        const re = /data-src="([^"]+)"><span class="pd-tag">([^<]*)<\/span> <span>([^<]*)<\/span>/g;
+        let m;
+        while ((m = re.exec(part)) !== null) {
+            assert.strictEqual(m[1], m[2], 'a line shows the label it carries');
+            lines.push({ src: m[1], text: m[3] });
+        }
+        return { group: part.slice(0, part.indexOf('"')), lines: lines };
+    });
+}
+
+// labelOf is the label of the one line whose text starts with prefix.
+function labelOf(lines, prefix) {
+    const hit = lines.filter(l => l.text.indexOf(prefix) === 0);
+    assert.strictEqual(hit.length, 1, 'one line starting "' + prefix + '" in ' + JSON.stringify(lines));
+    return hit[0].src;
+}
+
+check('the counting block: three groups, the MES slots discovered and the slot counted on confirmed', () => {
+    const g = groupsOf(C.countingHTML(block));
+    assert.deepStrictEqual(g.map(x => x.group), ['slots', 'stations', 'end']);
+    const s = g[0].lines;
+    assert.strictEqual(labelOf(s, 'counts on Prod_Counter_01'), 'confirmed');
+    assert.strictEqual(labelOf(s, 'Prod_Counter_01 · CATID 1001 · count 5234 · rising'), 'discovered');
+    assert.strictEqual(labelOf(s, 'Prod_Counter_02 · CATID -1, no part · count 0 · not rising'), 'discovered');
+    assert.strictEqual(labelOf(s, 'Prod_Counter_03 · not read at the last pass'), 'discovered');
+    assert.strictEqual(s.length, 4);
+});
+
+check('the counting block: a station tag discovered until read, then confirmed; positions confirmed; the rest measured', () => {
+    const s = groupsOf(C.countingHTML(block))[1].lines;
+    assert.strictEqual(labelOf(s, 'tag STATION_01: saved and read'), 'confirmed');
+    assert.strictEqual(labelOf(s, 'tag STATION_02: saved, not read yet'), 'discovered');
+    assert.strictEqual(labelOf(s, 'counts POS-1'), 'confirmed');
+    assert.strictEqual(labelOf(s, 'counts no position yet'), 'confirmed');
+    assert.strictEqual(labelOf(s, '≈1.0 clicks per part over 20 strokes'), 'measured');
+    assert.strictEqual(labelOf(s, '≈8 in the line since the program change at T (measured)'), 'measured');
+    assert.strictEqual(labelOf(s, 'deepest run-out seen: 9'), 'measured');
+    assert.strictEqual(labelOf(s, 'last click 2 production strokes ago'), 'measured');
+    assert.strictEqual(labelOf(s, 'stopped: no click for 40 production strokes'), 'measured');
+    assert.strictEqual(s.length, 12, 'two cards of six lines');
+});
+
+check('the counting block: the end of the line measured, or typed', () => {
+    let e = groupsOf(C.countingHTML(block))[2].lines;
+    assert.strictEqual(labelOf(e, 'Counted at the end of the line'), 'measured');
+    assert.strictEqual(labelOf(e, 'parts between the cart and the counter: none typed'), 'typed');
+    const typed = Object.assign({}, block, { end: Object.assign({}, block.end, {
+        measured: [], typed: { n: 12, by: 'engineer', at: '2026-11-02T08:00:00Z' },
+        sentence: 'Counted at the end of the line: carts are charged when the part is made. About 12 parts sit ' +
+            'between the cart and the counter (typed by engineer on 2026-11-02).' }) });
+    e = groupsOf(C.countingHTML(typed))[2].lines;
+    assert.strictEqual(labelOf(e, 'Counted at the end of the line'), 'typed');
+    assert.strictEqual(labelOf(e, 'parts between the cart and the counter: typed 12 by engineer on 2026-11-02'), 'typed');
+});
+
 if (failed) { console.log('FAILED: ' + failed); process.exit(1); }
 console.log('station card: all passed');

@@ -30,13 +30,17 @@ func (e *Engine) identityChangedAt(processID int64) time.Time {
 
 // StationCounterCard is a station counter as its card reads it: the row, its
 // deepest run-out the deeper of the stored one and this boot's; the parts in
-// the line (nil: not anchored); and the median clicks per production stroke
-// over the intervals read so far (nil before the first).
+// the line (nil: not anchored); the median clicks per production stroke over
+// the intervals read so far (nil before the first); and the production
+// strokes since its last click, Stopped past the deepest run-out (the strip's
+// measure, stationStopped).
 type StationCounterCard struct {
 	counters.LineCounter
-	InLine         *int64   `json:"in_line"`
-	Ratio          *float64 `json:"ratio"`
-	RatioIntervals int      `json:"ratio_intervals"`
+	InLine            *int64   `json:"in_line"`
+	Ratio             *float64 `json:"ratio"`
+	RatioIntervals    int      `json:"ratio_intervals"`
+	StrokesSinceClick int64    `json:"strokes_since_click"`
+	Stopped           bool     `json:"stopped"`
 }
 
 // ListStationCounters returns a process's station counters as their cards
@@ -53,8 +57,9 @@ func (e *Engine) ListStationCounters(processID int64) ([]StationCounterCard, err
 	point := e.pointCount(processID)
 	for _, lc := range list {
 		s := e.stationHealth.snapshot(lc.ID, processID)
-		c := StationCounterCard{LineCounter: lc, RatioIntervals: len(s.ratios)}
 		d := deepestOf(lc, s)
+		c := StationCounterCard{LineCounter: lc, RatioIntervals: len(s.ratios), StrokesSinceClick: s.prodSinceClick,
+			Stopped: stationStopped(s.prodSinceClick, d)}
 		c.DeepestRunout = &d
 		if n, ok := inLine(lc, point); ok {
 			c.InLine = &n

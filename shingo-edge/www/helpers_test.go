@@ -310,10 +310,21 @@ func (s *stubEngine) ListStationCounters(processID int64) ([]engine.StationCount
 		return []engine.StationCounterCard{}, nil
 	}
 	return []engine.StationCounterCard{{LineCounter: counters.LineCounter{ID: 7, ProcessID: 1, Label: "load station",
-		PLCName: "plc", TagName: "STATION_01"}}}, nil
+		PLCName: "plc", TagName: "STATION_01"}, StrokesSinceClick: 25, Stopped: true}}, nil
 }
-func (s *stubEngine) EndOfLine(int64) (*engine.EndOfLine, error) {
-	return &engine.EndOfLine{Measured: []engine.RunOut{}}, nil
+
+// EndOfLine: process 1's counter struct has two slots read, the first counted
+// and rising; any other process has none.
+func (s *stubEngine) EndOfLine(processID int64) (*engine.EndOfLine, error) {
+	eol := &engine.EndOfLine{Measured: []engine.RunOut{}, Slots: []engine.MESSlot{}}
+	if processID == 1 {
+		eol.Slots = []engine.MESSlot{
+			{Slot: 1, Tag: "MES_WELD_6.Prod_Counter_01", CATID: "1001", Part: true, Count: 53, Read: true, Rising: true,
+				Counted: true, Label: "discovered"},
+			{Slot: 2, Tag: "MES_WELD_6.Prod_Counter_02", CATID: "-1", Count: 0, Read: true, Label: "discovered"},
+		}
+	}
+	return eol, nil
 }
 func (s *stubEngine) CreateStationCounter(processID int64, label, tagName string) (*counters.LineCounter, error) {
 	if processID != 1 {

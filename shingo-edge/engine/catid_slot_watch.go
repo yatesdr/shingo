@@ -51,6 +51,10 @@ type slotState struct {
 	ledSince time.Time
 	// lockstep: the last time this slot rose, the counted slot rose too.
 	lockstep bool
+	// rising: it rose at the last pass; roseAt: the last pass it rose at,
+	// zero when the watch has not seen it rise (the setup page shows both).
+	rising bool
+	roseAt time.Time
 }
 
 // slotFacts is one process's slots as the watch published them, for the
@@ -60,6 +64,23 @@ type slotFacts struct {
 	counterTag string
 	counted    int // the counted slot's index, 0-based
 	slots      [mesSlots]slotState
+}
+
+// MESSlot is one slot of a process's MES struct as the watch last read it,
+// for the setup page: its CATID (Part: it names one), its count, whether it
+// rose at the last pass and when it last did, whether the process counts on
+// it, and the reading's label (the watch's reading: discovered).
+type MESSlot struct {
+	Slot    int        `json:"slot"`
+	Tag     string     `json:"tag"`
+	CATID   string     `json:"catid"`
+	Part    bool       `json:"part"`
+	Count   int64      `json:"count"`
+	Read    bool       `json:"read"`
+	Rising  bool       `json:"rising"`
+	RoseAt  *time.Time `json:"rose_at,omitempty"`
+	Counted bool       `json:"counted"`
+	Label   string     `json:"label"`
 }
 
 // slotSuffix is a slot's two-digit member index, 1-based.
@@ -194,8 +215,8 @@ func memberOf(members map[string]any, name string) any {
 // advanceSlots carries a process's slots one pass forward (pure): a slot that
 // rose at a pass where the counted slot was read twice and did not rise leads
 // from then until the counted slot rises; a slot that rose with it is in
-// lockstep. A reading against another counter tag (a re-point since) starts
-// over.
+// lockstep; each slot that rose is rising, and remembers the pass. A reading
+// against another counter tag (a re-point since) starts over.
 func advanceSlots(prev *slotFacts, counterTag string, counted int, read [mesSlots]slotState, now time.Time) *slotFacts {
 	f := &slotFacts{counterTag: counterTag, counted: counted, slots: read}
 	if prev == nil || prev.counterTag != counterTag {
@@ -205,8 +226,11 @@ func advanceSlots(prev *slotFacts, counterTag string, counted int, read [mesSlot
 	countedRose := rose(prev.slots[counted], read[counted])
 	for i := range f.slots {
 		s, p := &f.slots[i], prev.slots[i]
-		s.ledSince, s.lockstep = p.ledSince, p.lockstep
-		if i != counted && countedRead && rose(p, *s) {
+		s.ledSince, s.lockstep, s.roseAt = p.ledSince, p.lockstep, p.roseAt
+		if s.rising = rose(p, *s); s.rising {
+			s.roseAt = now
+		}
+		if i != counted && countedRead && s.rising {
 			s.lockstep = countedRose
 			if !countedRose && s.ledSince.IsZero() {
 				s.ledSince = now
@@ -233,6 +257,30 @@ func (cm *catidMonitor) slotFactsOf(processID int64) *slotFacts {
 		return nil
 	}
 	return (*m)[processID]
+}
+
+// mesSlots is a process's slots as the watch last published them, for the
+// setup page ([] when it has none, or read them against another counter tag):
+// one load of the published pointer, no statement, no lock.
+func (e *Engine) mesSlots(proc *processes.Process) []MESSlot {
+	out := []MESSlot{}
+	if e.catidMon == nil {
+		return out
+	}
+	f := e.catidMon.slotFactsOf(proc.ID)
+	if f == nil || f.counterTag != proc.CounterTagName {
+		return out
+	}
+	for i, s := range f.slots {
+		m := MESSlot{Slot: i + 1, Tag: s.tag, CATID: s.catid, Part: s.read && isIdentity(s.catid), Count: s.count,
+			Read: s.read, Rising: s.rising, Counted: i == f.counted, Label: "discovered"}
+		if !s.roseAt.IsZero() {
+			t := s.roseAt
+			m.RoseAt = &t
+		}
+		out = append(out, m)
+	}
+	return out
 }
 
 // slotItems: the PLC counts on a sibling slot whose CATID names a part while

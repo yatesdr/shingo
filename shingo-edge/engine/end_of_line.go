@@ -42,13 +42,16 @@ type RunOut struct {
 // consumes at is counted there, not at a station counter (the sentence is
 // shown only then). Measured: the run-outs, oldest first, wherever the process
 // has a production counter (the changeover history shows them whatever
-// counts the positions). HasN: Sentence carries an N.
+// counts the positions). HasN: Sentence carries an N. Slots: the process's
+// MES slots as the slot watch last read them, which the setup page's Counting
+// block shows beside the sentence ([] when it has none).
 type EndOfLine struct {
 	Applies  bool                `json:"applies"`
 	Measured []RunOut            `json:"measured"`
 	Typed    processes.LineDepth `json:"typed"`
 	Sentence string              `json:"sentence"`
 	HasN     bool                `json:"has_n"`
+	Slots    []MESSlot           `json:"slots"`
 }
 
 // endOfLineMemo is each process's last computed sentence for the station
@@ -72,7 +75,7 @@ func (e *Engine) EndOfLine(processID int64) (*EndOfLine, error) {
 	if err != nil {
 		return nil, err
 	}
-	out := &EndOfLine{Measured: []RunOut{}}
+	out := &EndOfLine{Measured: []RunOut{}, Slots: e.mesSlots(proc)}
 	if out.Typed, err = e.db.GetLineDepth(processID); err != nil {
 		return nil, err
 	}

@@ -215,11 +215,7 @@ func (e *Engine) stationHealthItems(processID int64) []CatidHealthItem {
 		}
 		s := e.stationHealth.snapshot(lc.ID, processID)
 		deepest := deepestOf(lc, s)
-		limit := deepest
-		if limit < stationStopFloor {
-			limit = stationStopFloor
-		}
-		if !changeoverOpen && activeBound && s.prodSinceClick > limit {
+		if !changeoverOpen && activeBound && stationStopped(s.prodSinceClick, deepest) {
 			items = append(items, CatidHealthItem{Kind: stationKindStopped, Severity: CatidHealthAmber,
 				Headline: fmt.Sprintf("Station counter %s stopped while the line produces", name),
 				Detail:   fmt.Sprintf("%d strokes since its last click; the deepest run-out seen is %d", s.prodSinceClick, deepest),
@@ -239,6 +235,12 @@ func (e *Engine) stationHealthItems(processID int64) []CatidHealthItem {
 		}
 	}
 	return items
+}
+
+// stationStopped: more production strokes since the station's last click than
+// the deepest run-out seen, and than stationStopFloor.
+func stationStopped(strokes, deepest int64) bool {
+	return strokes > max(deepest, stationStopFloor)
 }
 
 // pairedBinding is a position bound to a station counter whose claim under a

@@ -4646,58 +4646,15 @@ function identityField() {
             : '');
 }
 
-// The applicability rule, said where a station counter is made and bound.
-const STATION_RULE = 'A station counter clicks where the part leaves the cart, once per assembly, under every ' +
-    'style that uses the positions counted at it. It reads the cell’s own PLC; there is no ratio.';
-
-// stationCountersField lists the process's station counters, each a card with
-// its verbs, what it measures (stationMeasures) and its positions
-// (stationPositions).
-function stationCountersField(p) {
-    const rows = (S.stationCounters || []).map(c =>
-        '<div class="pd-row"><span>' + esc(c.label || 'station counter ' + c.id) + ' <span class="pd-dim">' +
-        esc(c.tag_name) + (c.last_poll_at ? '' : ' · not read yet') + '</span></span>' +
-        '<span><button class="pd-dimlink" data-act="sc-edit" data-sc="' + c.id + '">Edit</button>' +
-        '<button class="pd-dimlink" data-act="sc-delete" data-sc="' + c.id + '">Delete</button></span></div>' +
-        stationMeasures(c) + stationPositions(c)).join('');
-    const wired = !!(p.counter_plc_name && p.counter_tag_name);
-    return stBlock('Station counters', wired ? STATION_RULE : 'wire the production counter first; a station counter reads beside it',
-        rows + (wired ? '<button class="pd-btn" data-act="sc-new">New station counter</button>' : ''));
-}
-
-// stationMeasures is what a station counter's card measures, on one line:
-// the clicks per part, the parts in the line since the program change beside
-// it, and the deepest run-out (station-card.js measures).
-function stationMeasures(c) {
+// countingSection is the process's Counting block (station-card.js): the MES
+// slots, carried by the end-of-line read; the station counters' cards with
+// their positions; and the end of the line, each line labelled discovered,
+// confirmed, measured or typed.
+function countingSection(p) {
     const card = window.StationCard;
     if (!card) return '';
-    const m = card.measures(c);
-    return '<div class="pd-dim">' + esc(m.ratio) + ' · ' + esc(m.lead) + ' · ' + esc(m.deepest) + '</div>';
-}
-
-// stationPositions is a station counter's positions, one box each
-// (station-card.js): a refused one greyed with its sentence, one counted at
-// another counter named so. The boxes start as the bindings stand, the only
-// station counter's countable unbound positions ticked; nothing binds until
-// Save positions.
-function stationPositions(c) {
-    const card = window.StationCard;
-    if (!card) return '';
-    const counters = S.stationCounters || [];
-    const other = id => {
-        const o = counters.find(x => x.id === id);
-        return o ? (o.label || o.tag_name) : 'station counter ' + id;
-    };
-    const boxes = card.rows(c.id, counters.length, S.curtainNodes || [], S.stationVerdicts).map(r =>
-        '<label class="pd-row' + (r.disabled ? ' pd-dim' : '') + '"' + (r.refusal ? ' title="' + esc(r.refusal) + '"' : '') + '>' +
-        '<span><input type="checkbox" data-scpos="' + r.id + '" data-sc="' + c.id + '"' + (r.checked ? ' checked' : '') +
-        (r.disabled ? ' disabled' : '') + '> ' + esc(r.name) + '</span>' +
-        (r.refusal ? '<span class="pd-dim">' + esc(r.refusal) + '</span>'
-            : r.at && r.at !== c.id ? '<span class="pd-dim">counted at ' + esc(other(r.at)) + '</span>' : '') +
-        '</label>').join('');
-    if (!boxes) return '';
-    return '<div class="pd-dim">Count positions here</div>' + boxes +
-        '<button class="pd-btn" data-act="sc-positions" data-sc="' + c.id + '">Save positions</button>';
+    return card.countingHTML({ process: p, end: S.endOfLine, counters: S.stationCounters || [],
+        positions: S.curtainNodes || [], verdicts: S.stationVerdicts });
 }
 
 // loadStationVerdicts reads the binding's dry run for each of the process's
@@ -4749,24 +4706,8 @@ function saveStationPositions(id) {
         });
 }
 
-// endOfLineField is the end of the line, on a process whose carts are charged
-// at its production counter: the server's sentence (N measured at changeovers
-// whose landing preceded the counter's reset, else typed, else neither) and
-// the typed depth with who typed it and when. N decides nothing.
-function endOfLineField() {
-    const e = S.endOfLine;
-    if (!e || !e.applies) return '';
-    const t = e.typed || {};
-    const typed = t.n == null ? 'none typed'
-        : 'typed ' + t.n + (t.by ? ' by ' + t.by : '') + (t.at ? ' on ' + String(t.at).slice(0, 10) : '');
-    return stBlock('End of the line', 'what a cart reads against what has left it; it decides nothing',
-        '<div>' + esc(e.sentence) + '</div>' +
-        '<div class="pd-row"><span>Parts between the cart and the counter <span class="pd-dim">' + esc(typed) + '</span></span>' +
-        '<span><input class="pd-inp" id="eol-depth" type="number" min="0" value="' + esc(t.n == null ? '' : String(t.n)) + '">' +
-        '<button class="pd-dimlink" data-act="eol-save">Save</button></span></div>');
-}
-
-// loadEndOfLine reads the process's end-of-line block (none on a failed read).
+// loadEndOfLine reads the process's end-of-line block and its MES slots (none
+// on a failed read).
 async function loadEndOfLine() {
     try {
         const res = await fetch('/api/processes/' + S.processID + '/end-of-line', { cache: 'no-store' });
@@ -4799,7 +4740,7 @@ async function loadStationCounters() {
 function openStationCounter(id, bindNode) {
     const p = process() || {};
     const c = (S.stationCounters || []).find(x => x.id === id) || { label: '', tag_name: '' };
-    openSheet(id ? 'Edit station counter' : 'New station counter', STATION_RULE,
+    openSheet(id ? 'Edit station counter' : 'New station counter', window.StationCard.RULE,
         '<label class="pd-lbl">Label</label><input class="pd-inp wide" id="sc-label" value="' + esc(c.label) + '">' +
         '<label class="pd-lbl">Tag on ' + esc(p.counter_plc_name || '') + '</label>' +
         // The station kind: each station struct's count member by the family's
@@ -5062,7 +5003,8 @@ function drawSettings() {
         stField('Enabled',
             'a press-index position keeps a drained same-part bin at changeover only while this counts (a sequential press reuses its parked empty either way)',
             stToggle('counter_enabled')) +
-        identityField() + stationCountersField(p) + endOfLineField();
+        identityField();
+    const countingBlock = countingSection(p);
 
     if (!S.curtain) S.curtain = curtainDraft();
     const positions = positionsSection();
@@ -5136,7 +5078,7 @@ function drawSettings() {
     // sheet twice the viewport — back off the top of the screen.
     const wasAt = (() => { const b = root().querySelector('.pd-sheet'); return b ? b.scrollTop : 0; })();
     root().innerHTML = appbar() + '<div class="pd-sheet pd-settings">' +
-        general + counter + positions + changeover + hmi + partsSect + hold + routingSection() + stylesSect + danger +
+        general + counter + countingBlock + positions + changeover + hmi + partsSect + hold + routingSection() + stylesSect + danger +
         '<div class="pd-savebar"><span class="prov' + (settingsDirty() ? ' dirty' : '') + '">' +
         (settingsDirty() ? 'Unsaved changes' : 'No unsaved changes') + '</span>' +
         '<button class="pd-btn" data-act="st-discard">Discard</button>' +

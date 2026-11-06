@@ -237,3 +237,57 @@ func TestSlotWatch_OneStatementAPass(t *testing.T) {
 		t.Errorf("published %v, want the three processes' slots", m)
 	}
 }
+
+// TestCounting_EndOfLineCarriesTheWatchedSlots: the setup page's read carries
+// the five slots as the watch last published them, each a discovered reading
+// (its CATID and whether that names a part, its count, rising at the last pass
+// or not, when it last rose), the counted one marked. The read is the
+// published pointer: it finishes while the monitor's lock is held.
+func TestCounting_EndOfLineCarriesTheWatchedSlots(t *testing.T) {
+	t.Parallel()
+	eng, _, pid, cm, _ := primedRig(t)
+	t0 := time.Now()
+	setSlots(eng, [mesSlots]int64{1001, 1002, -1, 0, -1}, [mesSlots]int64{50, 10, 0, 0, 0})
+	cm.watchSlots(t0)
+	setSlots(eng, [mesSlots]int64{1001, 1002, -1, 0, -1}, [mesSlots]int64{53, 10, 0, 0, 0})
+	cm.watchSlots(t0.Add(time.Minute))
+
+	type read struct {
+		eol *EndOfLine
+		err error
+	}
+	got := make(chan read, 1)
+	cm.mu.Lock()
+	go func() {
+		eol, err := eng.EndOfLine(pid)
+		got <- read{eol, err}
+	}()
+	var r read
+	select {
+	case r = <-got:
+		cm.mu.Unlock()
+	case <-time.After(5 * time.Second):
+		cm.mu.Unlock()
+		t.Fatal("the setup page's read waited on the monitor's lock")
+	}
+	testutil.MustNoErr(t, r.err, "end of line")
+	s := r.eol.Slots
+	if len(s) != mesSlots {
+		t.Fatalf("slots = %+v, want the struct's %d", s, mesSlots)
+	}
+	for i, x := range s {
+		if x.Slot != i+1 || x.Label != "discovered" || !x.Read || x.Counted != (i == 0) {
+			t.Errorf("slot %d = %+v, want slot %d, read, labelled discovered, counted only on _01", i+1, x, i+1)
+		}
+	}
+	if c := s[0]; c.Tag != "MES_Cell.Prod_Counter_01" || c.CATID != "1001" || !c.Part || c.Count != 53 ||
+		!c.Rising || c.RoseAt == nil || !c.RoseAt.Equal(t0.Add(time.Minute)) {
+		t.Errorf("the counted slot = %+v, want CATID 1001 (a part), count 53, rising since the last pass", c)
+	}
+	if c := s[1]; c.CATID != "1002" || c.Count != 10 || c.Rising || c.RoseAt != nil {
+		t.Errorf("slot 2 = %+v, want CATID 1002, count 10, not rising, never seen rising", c)
+	}
+	if s[2].Part || s[3].Part {
+		t.Errorf("slots 3 and 4 read -1 and 0, which name no part: %+v %+v", s[2], s[3])
+	}
+}
