@@ -8,7 +8,7 @@ EDGES := ../shingo-edge/shingoedge.dev.yaml,../shingo-edge/shingoedge.edge2.yaml
 # A 40-minute run at the rig's 10x: what the plant is sized to hold.
 RUN ?= 400m
 
-.PHONY: dev-build dev dev-down dev-reset dev-seed dev-logs dev-rates dev-carriers dev-rates-solve
+.PHONY: dev-build dev dev-down dev-reset dev-seed dev-logs dev-rates dev-carriers dev-rates-solve dev-sim-4x2
 
 dev-build: ## Build the sim binaries into images (INCLUDING the tools profile)
 	# --profile tools is load-bearing, not thoroughness. `compose build` without it
@@ -106,6 +106,12 @@ dev-rates-solve: ## Derive balanced tick rates. Override: make dev-rates-solve A
 
 dev-fleet: ## Estimate the AMR fleet the plant needs. Override: make dev-fleet ARGS="-transit 15m -util 0.7"
 	cd shingo-core && go run ./cmd/simcalc -fleet -plant ../$(PLANT) -edge $(EDGES) $(ARGS)
+
+dev-sim-4x2: ## One shape of the 4x2 cell on a fresh stack, left up to watch: make dev-sim-4x2 SHAPE=S1..S7 [VARIANT=red]
+	# No default shape: the run starts with `down -v`, so it runs only when named.
+	# SIM_4X2_REPLACE=1 drops a shingo-dev stack already running (scripts/sim-4x2.sh).
+	@test -n "$(SHAPE)" || { echo "usage: make dev-sim-4x2 SHAPE=S1..S7 [VARIANT=red]  (scripts/sim-4x2.sh says what each shows)" >&2; exit 2; }
+	bash scripts/sim-4x2.sh $(SHAPE) $(VARIANT)
 
 # ── The pre-push gate ────────────────────────────────────────────────
 #
