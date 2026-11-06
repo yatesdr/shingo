@@ -139,7 +139,7 @@ type carrierPlan struct {
 // ── AND WHY THE OBVIOUS FIX IS NOT ONE ───────────────────────────────────────
 //
 // The fixture's own answer to the last occurrence was three more carriers
-// (plants/demo.yaml, BIN-MT-13..15: "these three make the SM pool eleven"). More
+// (plants/master.yaml [demo], BIN-MT-13..15: "these three make the SM pool eleven"). More
 // carriers buy TIME proportional to the pool; they do not slow a drain. That is
 // the whole reason this section reports an hours-to-jam rather than a verdict:
 // the question a coupled loop poses is not "are there enough carriers" but "how
@@ -248,7 +248,7 @@ func computeCarriers(plant *plantspec.Plant, rate map[string]float64, loaderCap,
 		// slots directly, with no lane between — that is the shape a KANBAN
 		//  must be in, because the save-time rules refuse a group with lanes
 		// — and demo.yaml's SYN_PRESS_EMPTIES is exactly that: EIGHT POSITIONS,
-		// SIX OF THEM SEEDED, two left free (plants/demo.yaml, BIN-PEB-01..06 on
+		// SIX OF THEM SEEDED, two left free (plants/master.yaml [demo], BIN-PEB-01..06 on
 		// PEB_001..006; PEB_007/008 stay open as the spare positions the
 		// pre-resolve loop needs). Walking only z.Lanes counted its slot capacity
 		// as zero and attributed its seeded empties to no pool, so the tool

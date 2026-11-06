@@ -1,4 +1,4 @@
-# demo.yaml v3 — press-driven plant, real swap modes (G3).
+# The seeder's stable fixture (the demo plant as of its v3) — press-driven, real swap modes (G3).
 # LOCAL DEV / SIMULATION ONLY. NOT FOR PRODUCTION.
 #
 # Consumed by cmd/seeddev (loaded + validated via shingo-core/plantspec).

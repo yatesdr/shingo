@@ -1,6 +1,6 @@
 # Designing a Sim Plant
 
-Reference for building a `plants/*.yaml` plant spec that **flows end-to-end in the
+Reference for building a section of `plants/master.yaml`, the one plant spec, so it **flows end-to-end in the
 local-dev simulator** (the dockerized `shingo-dev` stack + `//go:build sim`
 fleet/operator). Read this before authoring or editing a sim plant — most of it is
 non-obvious and was paid for in debugging.

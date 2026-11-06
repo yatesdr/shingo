@@ -15,9 +15,11 @@ Companion doc: [`sim.md`](sim.md) — the sim itself.
 
 ## 1. From spec to plant
 
-A plant is described declaratively in a single YAML file (e.g.
-`plants/demo.yaml`), loaded + validated by `shingo-core/plantspec`, and written to
-both stores by the seed tool (`shingo-core/cmd/seeddev`):
+A plant is described declaratively in a single YAML file (the dev stack's is
+`plants/master.yaml`), loaded + validated by `shingo-core/plantspec`, and written to
+both stores by the seed tool (`shingo-core/cmd/seeddev`). A process may name the Edge
+it runs on (`edge: edge2.line1`); Core is seeded from the whole file and each Edge
+from its own processes (`seeddev --edge`):
 
 - **`seedCore`** → Postgres: node types, payloads + bin types, the storage
   hierarchy (zone → lane → slot), stations, bins (+ manifests), node↔payload

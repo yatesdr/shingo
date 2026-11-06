@@ -184,7 +184,7 @@ sim:
       tag_name: WELD-4_COUNTER
       tick_interval: 12s
       uop_per_tick: 1
-    # WELD-5 is the home-return rig's drain (see plants/demo.yaml, PLK_HOMES).
+    # WELD-5 is the home-return rig's drain (see plants/master.yaml, [demo] PLK_HOMES).
     # Faster than the other component legs on purpose: the rig is here to turn
     # swap cycles over quickly so the park decision is observed many times in a
     # short run, not to be rate-balanced against anything.
@@ -205,7 +205,7 @@ sim:
       station_tag: STA_W6_LOAD.Load_Count
       line_depth: 16
       identity_tag: MES_WELD_6.CATID_01
-    # The Kanban rig's two cells (plants/kanban-press.yaml, whose head has the arithmetic).
+    # The Kanban rig's two cells (plants/master.yaml [kanban], whose intro has the arithmetic).
     # Nothing reports these counters under any other plant: a tick with no reporting point
     # counts nothing. The plc_name is the process name, which is how simcalc keys its rates.
     - plc_name: KP-PRESS
@@ -216,7 +216,7 @@ sim:
       tag_name: KW-WELD_COUNTER
       tick_interval: 15s
       uop_per_tick: 1
-    # The five presses of plants/kanban-press5.yaml, each at KP-PRESS's rate.
+    # The five presses of plants/master.yaml [kanban5], each at KP-PRESS's rate.
     - plc_name: P5-PRESS-1
       tag_name: P5-PRESS-1_COUNTER
       tick_interval: 20s

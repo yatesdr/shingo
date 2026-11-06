@@ -1,11 +1,11 @@
 # The Kanban rig
 
-A permanent certification fixture for the Kanban feature: `plants/kanban-press.yaml`, six runs and a walk, one driver. The runs go on the visible dev stack (compose project `shingo-dev`, Core `:8083`, Edge `:8081`), one at a time, so every run can be watched on the pages while it goes.
+A permanent certification fixture for the Kanban feature: the `[kanban]` and `[kanban5]` sections of `plants/master.yaml`, six runs and a walk, one driver. The other sections of the master run beside the loop, and every count a run checks is the loop's own (`kanban-rig.sh` `orders_count`). The runs go on the visible dev stack (compose project `shingo-dev`, Core `:8083`, Edge `:8081`), one at a time, so every run can be watched on the pages while it goes.
 
 Two tiers:
 
-- **On every gate:** R1 and R5's loop, in the docker shards. `shingo-core/cmd/seeddev/kanban_rig_docker_test.go` (`TestKanbanRig_R1_SteadyLoop`, `TestKanbanRig_R5_Repayment`, `TestKanbanRig_R5_SMIsNotRepaid`) seeds this plant file, applies the slots' allowed types and drives the real keeper, doors and walk with no compose stack, in seconds. R1's test also asserts the statement counts: keeper tick 9 with K short, as it runs here, and 4 with nothing short; snapshot build 10, intake door 8, parked arm 8. `TestKanbanRig_WalkCounts` logs them for the walk's states. They run plain moves in place of the press-index legs.
-- **Before a merge to `main`:** `scripts/kanban-rig.sh R1` to `R6` on the stack is the certification pair, as `edge2.yaml`'s runs are.
+- **On every gate:** R1 and R5's loop, in the docker shards. `shingo-core/cmd/seeddev/kanban_rig_docker_test.go` (`TestKanbanRig_R1_SteadyLoop`, `TestKanbanRig_R5_Repayment`, `TestKanbanRig_R5_SMIsNotRepaid`) seeds the master whole, applies the slots' allowed types and drives the real keeper, doors and walk with no compose stack, in seconds. R1's test also asserts the statement counts, on the master as on the rig's own plant before it: keeper tick 3 with nothing short, snapshot build 9, intake door 8, parked arm 8. They hold on the master because every kanban in it is born at its pools. `TestKanbanRig_WalkCounts` logs them for the walk's states. They run plain moves in place of the press-index legs.
+- **Before a merge to `main`:** `scripts/kanban-rig.sh R1` to `R6` on the stack is the certification pair, as line 2's (`[window]`) runs are.
 
 ## The plant
 
@@ -82,7 +82,7 @@ Every run also fails on a stranded order with no releaser (`soakstat -stranded`)
 | **W** | Settle on small 20 sim-min, `STEP1`. START `KP-32`, `STEP2-START`; gate open (15 wall-min at most, else `GATE NEVER OPENED`), `GATE-OPEN`; CUTOVER; 20 sim-min, `STEP3`. START `KP-BIG`, `STEP4-START`; gate open; CUTOVER; 20 sim-min, `END` |
 | **W5** | Settle on small 20 sim-min. START `KP-32`; when two positions hold 32x30, CANCEL; 10 sim-min. START `KP-BIG`; gate open; CUTOVER; 10 sim-min, `END` |
 | **W6** | START `KP-BIG`, CUTOVER, 10 sim-min. Every cart of the family in K set big on the bin page: K B6, C6. START `KP-SMALL`; gate open; CUTOVER; 20 sim-min. K ends S2 B2 T2 C6: 8 re-types, the line's 4 at the windows on their way back, K's 4 through the arm |
-| **P1** | Five presses steady on small, 20 wall-min, on `plants/kanban-press5.yaml` |
+| **P1** | Five presses steady on small, 20 wall-min, on the master's `[kanban5]` |
 | **P2** | Press 3 onto 32x30; then presses 1 and 2 onto 32x30 in one cycle as press 3 returns to small |
 | **P3** | Press 1 onto big, every standing cart set big, back to small |
 | **P4** | A cart carried out by hand: the family one short, one ask brings it home |
@@ -104,7 +104,7 @@ A return always lands: the level governs the keeper's asks, never a cart of the 
 
 ## The five presses
 
-`plants/kanban-press5.yaml`: five presses of this shape, one shared unloader `P5-UNLOAD` of 10 windows, one kanban `P5-KANBAN` over all 20 positions, mix 2/2/2/2, pools 26 and 22, 48 slots admitting by family, a plain `P5-SM` stocked with 45x48. One name in `bin_loaders.outbound_dest` is why sharing the unloader means one kanban.
+The master's `[kanban5]`: five presses of this shape, one shared unloader `P5-UNLOAD` of 10 windows, one kanban `P5-KANBAN` over all 20 positions, mix 2/2/2/2, pools 26 and 22, 48 slots admitting by family. Its plain supermarket is `[kanban]`'s `KP-SM` (the five-press rig plant had its own `P5-SM`, the same four carts; one raid target serves both loops). One name in `bin_loaders.outbound_dest` is why sharing the unloader means one kanban.
 
 Runs: R1 on all five, steady, 20 wall-min; two presses leaving 45x48 in one cycle while a third returns; the all-bigs case on one press; a hand move between positions and the kanban; CANCEL on one press while another changes over; two presses STARTing onto big in one cycle.
 

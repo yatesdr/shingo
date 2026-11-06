@@ -1,13 +1,14 @@
 # shingoedge.edge2.yaml — EDGE 2. LOCAL DEV / SIMULATION ONLY. NOT FOR PRODUCTION.
 #
 # The second edge instance beside EDGE 1 (shingoedge.dev.yaml). Same Core, same
-# Kafka, its own station, its own SQLite, its own plant (plants/edge2.yaml).
+# Kafka, its own station, its own SQLite, its own processes: plants/master.yaml's
+# [window] line, seeded here by seeddev --edge edge2.line1.
 #
 # WHAT MAKES THIS ONE DIFFERENT IS THE PACING, NOT THE CODE. EDGE 1 is rapid-fire
 # and stays that way — it is the regression gate. EDGE 2 exists so a changeover has
 # an observable WINDOW: material landing minutes before the changeover completes,
-# with decisions taken inside the gap. See plants/edge2.yaml for the scenarios and
-# the circularity arithmetic.
+# with decisions taken inside the gap. See plants/master.yaml [window] for the
+# scenarios and the circularity arithmetic.
 #
 # ── THE CLOCK IS SHARED ─────────────────────────────────────────────────────
 #
@@ -66,12 +67,12 @@ sim:
   # read identically by clock.ResolveAnchor. The lockstep this pair existed to hold
   # is kept; the origin is current. See shingocore.dev.yaml for the full note.
 
-  # plc_name/tag_name MUST match the reporting_points in plants/edge2.yaml exactly.
+  # plc_name/tag_name MUST match the [window] reporting_points in plants/master.yaml exactly.
   # A mismatch is SILENT: the tick fans to no node and the cell simply never counts.
   #
   # ONE COUNTER, because LINE-2 is one process and a tick reaches every LINE-2 cell
   # through it, consume and produce alike (see the reporting_points note in
-  # plants/edge2.yaml). So the produce side fills at the rate it is drained and the
+  # plants/master.yaml [window]). So the produce side fills at the rate it is drained and the
   # loop neither starves nor pins full — the same rate-parity rule EDGE 1's config
   # states.
   #

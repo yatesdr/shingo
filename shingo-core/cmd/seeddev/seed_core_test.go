@@ -12,12 +12,12 @@ import (
 // Verifies seedCore writes a plant's core topology into a real Postgres
 // (testcontainers) and is idempotent on re-run.
 //
-// The plant is a STABLE FIXTURE (testdata/seed-fixture.yaml), NOT plants/demo.yaml.
+// The plant is a STABLE FIXTURE (testdata/seed-fixture.yaml), NOT plants/master.yaml.
 // This pins seeddev's behaviour independent of however the demo plant is tuned — the
 // demo is a mutable dev fixture (rates/lanes/bins change as the sim is balanced), so
 // exact-value assertions against it break on every plant edit for no real signal. The
 // fixture freezes the loader/topology shapes seeddev must handle (multi-window,
-// single-window, dedicated-positions, deep-lane ASRS). demo.yaml's own validity is
+// single-window, dedicated-positions, deep-lane ASRS). The master's own validity is
 // guarded separately by plantspec.TestShippedDemoPlantValid.
 func TestSeedCore_DemoPlant(t *testing.T) {
 	t.Parallel()

@@ -74,7 +74,8 @@ services:
         condition: service_healthy
 
   # ── EDGE 1 ──────────────────────────────────────────────────────────────
-  # The rapid-fire regression edge (station edge1.line1, plants/demo-sim.yaml).
+  # The rapid-fire regression edge (station edge1.line1): every process of
+  # plants/master.yaml but line 2's.
   # Renamed from "the dev edge" to EDGE 1 so the pair reads EDGE 1 / EDGE 2.
   # LABEL ONLY: its pacing, plant spec and gates are untouched, and the service
   # key stays `edge` because the seeder, the Makefile and every existing gate
@@ -108,8 +109,9 @@ services:
         condition: service_started
 
   # ── EDGE 2 ──────────────────────────────────────────────────────────────
-  # The observable-window edge (station edge2.line1, plants/edge2.yaml). Same
-  # image and same Core as EDGE 1; it differs in station identity and PACING.
+  # The observable-window edge (station edge2.line1): plants/master.yaml's
+  # [window] line, whose processes name this Edge. Same image and same Core as
+  # EDGE 1; it differs in station identity and PACING.
   # See shingo-edge/shingoedge.edge2.yaml for why the clock is shared and the
   # windows are bought in sim time instead.
   edge2:
@@ -139,19 +141,17 @@ services:
       core:
         condition: service_started
 
-  # EDGE 2's seeder. Separate from `seed` because it carries a different plant
-  # AND a different edge SQLite; the two stations coexist in one Core, which is
-  # the real-world shape (one Core, many edges) rather than a hybrid plant.
-  # Node names do not collide by construction — EDGE 1 owns PRESS-1/2 and
-  # WELD-1..5, EDGE 2 owns PRS_010/011 and WLD_010 — which is what makes seeding
-  # a second spec into the same Core safe here and NOT a counterexample to the
-  # warning on `seed` above.
+  # EDGE 2's seeder. Separate from `seed` because it writes a different edge
+  # SQLite: the same plant file, `--edge edge2.line1`, seeds EDGE 2 with the
+  # processes that name it. Core is seeded from the whole file by both (the second
+  # pass is idempotent per name and enrolls nothing new), which is the real-world
+  # shape: one Core, many edges, one plant. Run after `seed` (make dev-seed).
   seed-edge2:
     build:
       context: .
       dockerfile: Dockerfile.dev
     profiles: ["tools"]
-    command: ["seeddev", "--config", "/etc/shingo/shingocore.dev.yaml", "--edge-db", "/data/shingoedge.db", "--plant", "/plants/edge2.yaml", "--yes"]
+    command: ["seeddev", "--config", "/etc/shingo/shingocore.dev.yaml", "--edge-db", "/data/shingoedge.db", "--plant", "${SHINGO_PLANT:-/plants/master.yaml}", "--edge", "edge2.line1", "--yes"]
     environment:
       SHINGO_ALLOW_SIM: "1"
       # The run's shared sim anchor, minted by scripts/sim-anchor.sh into .env
@@ -177,18 +177,15 @@ services:
       context: .
       dockerfile: Dockerfile.dev
     profiles: ["tools"]
-    # SHINGO_PLANT selects the spec. The default is the rig's demo plant,
-    # plants/demo-sim.yaml: demo.yaml plus the rig's stock and Core's loader
-    # switches (loader_settings). demo.yaml itself is the planner golden's plant
-    # and gives the unloader no Core auto_push, so a sim seeded from it wedges
-    # within a few sim-hours behind full ASSY (2026-10-28). The packed lane-stress
-    # rig sets SHINGO_PLANT=/plants/lane-stress-packed.yaml.
+    # SHINGO_PLANT selects the spec. There is one: plants/master.yaml, every
+    # cell family in tagged sections (plants/README.md). This seeds Core with all
+    # of it and EDGE 1 with its processes; seed-edge2 seeds EDGE 2 with line 2's.
     #
     # SWITCHING PLANTS REQUIRES A CLEAN DATABASE. seeddev is idempotent per node
     # NAME, and --wipe is still a TODO, so seeding a second spec over a first
     # leaves both plants' nodes in the tree — a hybrid that is neither. Use
     # `make dev-reset` (down -v) before changing this value.
-    command: ["seeddev", "--config", "/etc/shingo/shingocore.dev.yaml", "--edge-db", "/data/shingoedge.db", "--plant", "${SHINGO_PLANT:-/plants/demo-sim.yaml}", "--yes"]
+    command: ["seeddev", "--config", "/etc/shingo/shingocore.dev.yaml", "--edge-db", "/data/shingoedge.db", "--plant", "${SHINGO_PLANT:-/plants/master.yaml}", "--yes"]
     environment:
       SHINGO_ALLOW_SIM: "1"
       # The run's shared sim anchor, minted by scripts/sim-anchor.sh into .env

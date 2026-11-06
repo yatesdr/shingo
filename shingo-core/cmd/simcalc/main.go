@@ -2,7 +2,7 @@
 //
 // Two modes:
 //
-//   - CHECK (default): given a plant spec (plants/demo.yaml) and the edge sim tick
+//   - CHECK (default): given a plant spec (plants/master.yaml) and the edge sim tick
 //     rates (shingo-edge/shingoedge.dev.yaml), compute the produce vs consume rate
 //     of every payload and flag imbalances — a payload consumed faster than it's
 //     made STARVES; one made faster than it's drained OVERFILLS. The cheap check
@@ -26,7 +26,7 @@
 //
 //	    make dev-rates-solve      (solve)
 //	    make dev-fleet            (fleet)
-//	or: (cd shingo-core && go run ./cmd/simcalc [-solve] -plant ../plants/demo.yaml \
+//	or: (cd shingo-core && go run ./cmd/simcalc [-solve] -plant ../plants/master.yaml \
 //	                                            -edge ../shingo-edge/shingoedge.dev.yaml)
 //
 // The rate model mirrors the engine: a PLC counter tick is applied to every node
@@ -100,7 +100,7 @@ type procClass struct {
 }
 
 func main() {
-	plantPath := flag.String("plant", "plants/demo.yaml", "path to the plant spec YAML")
+	plantPath := flag.String("plant", "plants/master.yaml", "path to the plant spec YAML")
 	edgePath := flag.String("edge", "shingo-edge/shingoedge.dev.yaml", "path to the edge sim config YAML; several, comma-separated, for a plant on more than one Edge")
 	solve := flag.Bool("solve", false, "derive balanced tick rates instead of checking the configured ones")
 	fleet := flag.Bool("fleet", false, "estimate the AMR fleet the plant's swap cadence needs (robot estimator)")

@@ -1,9 +1,12 @@
 # Local dev environment — SIMULATION ONLY, not for production.
 # Quickstart: make dev && make dev-seed   (see README.dev.md, added in T5.3)
 COMPOSE := docker compose -f docker-compose.dev.yml
-# The plant the simcalc targets read: the rig's, as the seed's default is. Override
-# with PLANT=plants/demo.yaml for the planner golden's plant.
-PLANT ?= plants/demo-sim.yaml
+# The plant the simcalc targets read: the one plant, as the seed's default is. Its
+# processes tick on both Edges, so simcalc reads both Edge configs.
+PLANT ?= plants/master.yaml
+EDGES := ../shingo-edge/shingoedge.dev.yaml,../shingo-edge/shingoedge.edge2.yaml
+# A 40-minute run at the rig's 10x: what the plant is sized to hold.
+RUN ?= 400m
 
 .PHONY: dev-build dev dev-down dev-reset dev-seed dev-logs dev-rates dev-carriers dev-rates-solve
 
@@ -17,12 +20,13 @@ dev-build: ## Build the sim binaries into images (INCLUDING the tools profile)
 	# One build for all five images is what makes that unrepeatable.
 	$(COMPOSE) --profile tools build
 
-dev: dev-build ## Bring up postgres + kafka + core + edge
+dev: dev-build ## Bring up postgres + kafka + core + both edges
 	# Keeps the existing anchor if there is one — restarting a stack must not
 	# re-anchor its clock, because the rows already in the volumes are stamped in
 	# the current frame. Only dev-reset mints a new one. See scripts/sim-anchor.sh.
 	bash scripts/sim-anchor.sh ensure
-	$(COMPOSE) up -d postgres kafka core edge
+	# Both Edges: the one plant runs line 2 on EDGE 2 (plants/master.yaml, [window]).
+	$(COMPOSE) up -d postgres kafka core edge edge2
 	$(COMPOSE) ps
 
 dev-down: ## Stop services (keep data volumes)
@@ -35,7 +39,7 @@ dev-reset: ## Stop and delete volumes (fresh DBs + a fresh sim anchor on next up
 	# without landing before data that already exists.
 	bash scripts/sim-anchor.sh mint
 
-dev-seed: ## Seed the plant (SHINGO_PLANT, default plants/demo-sim.yaml) with Core stopped, then start it
+dev-seed: ## Seed the plant (SHINGO_PLANT, default plants/master.yaml) into Core and both Edges with Core stopped, then start it
 	# --build so an edited seeddev / plant is always picked up (the seed image is
 	# separate from core/edge and easy to leave stale otherwise).
 	#
@@ -49,10 +53,14 @@ dev-seed: ## Seed the plant (SHINGO_PLANT, default plants/demo-sim.yaml) with Co
 	# UNMONITORED until Core restarts (threshold_monitor.go startupSweep / Resync).
 	# Edge stays up (the seed writes its SQLite through the shared volume) and is
 	# restarted because it caches runtime states at startup.
+	#
+	# One plant, two Edges: `seed` writes Core and EDGE 1, `seed-edge2` EDGE 2 from the
+	# same file (seeddev --edge edge2.line1); the second's Core pass is idempotent.
 	$(COMPOSE) stop core
 	$(COMPOSE) run --build --rm --no-deps seed
+	$(COMPOSE) run --build --rm --no-deps seed-edge2
 	$(COMPOSE) start core
-	$(COMPOSE) restart edge
+	$(COMPOSE) restart edge edge2
 
 dev-logs: ## Tail core + edge logs
 	$(COMPOSE) logs -f core edge
@@ -74,27 +82,30 @@ dev-rates: ## Fill/starve AND carrier-deadlock check on $(PLANT) (no Docker need
 	# rig jam was real anyway — the pool DID run dry — and the corrected
 	# checker still names the mechanism that dries it: input coupling, where a
 	# consumer with a second part waits, its producer keeps filling, and that
-	# bin type's empties go to zero. demo-sim.yaml's carrier check reads SUSTAINS
-	# (2026-10-28); that is the floor this target defends, not a law of the plant.
-	# Its rate check reads STARVE on PANEL-A/B and exits non-zero, on demo.yaml
-	# too: it costs WELD-1/2 at their 6/min nameplate, while the presses tick at
-	# the welds' measured swap-cadence draw (23 s / 22 s, set 2026-10-09; the
-	# PRESS-1 block of shingoedge.dev.yaml says why). Re-measure before retuning.
+	# bin type's empties go to zero.
+	#
+	# ON THE MASTER (plants/README.md, "Sized for the run"): every pool, kanban and
+	# family holds $(RUN). Two [demo] lines stay red, demo-sim's: the rate check's
+	# PANEL-A/B STARVE and the carrier check's SYN_MARKET RATE DEFICIT. Both cost
+	# WELD-1/2 at their 6/min nameplate, while the presses tick at the welds' measured
+	# swap-cadence draw (23 s / 22 s, set 2026-10-09; the PRESS-1 block of
+	# shingoedge.dev.yaml says why), and a rate deficit fails whatever the stock.
+	# Re-measure before retuning.
 	#
 	# The carrier check EXITS NON-ZERO on a pool that cannot circulate, so this
 	# target fails on a plant that will deadlock. That is the point — a verdict
 	# nobody runs is a verdict nobody has.
-	cd shingo-core && go run ./cmd/simcalc -plant ../$(PLANT) -edge ../shingo-edge/shingoedge.dev.yaml
-	cd shingo-core && go run ./cmd/simcalc -carriers -plant ../$(PLANT) -edge ../shingo-edge/shingoedge.dev.yaml
+	cd shingo-core && go run ./cmd/simcalc -plant ../$(PLANT) -edge $(EDGES)
+	cd shingo-core && go run ./cmd/simcalc -carriers -run $(RUN) -plant ../$(PLANT) -edge $(EDGES)
 
 dev-carriers: ## Carrier/empty-pool deadlock check alone (the half that exits non-zero)
-	cd shingo-core && go run ./cmd/simcalc -carriers -plant ../$(PLANT) -edge ../shingo-edge/shingoedge.dev.yaml
+	cd shingo-core && go run ./cmd/simcalc -carriers -run $(RUN) -plant ../$(PLANT) -edge $(EDGES)
 
 dev-rates-solve: ## Derive balanced tick rates. Override: make dev-rates-solve ARGS="-line-rate 8 -transit 15m"
 	cd shingo-core && go run ./cmd/simcalc -solve -plant ../$(PLANT) $(ARGS)
 
 dev-fleet: ## Estimate the AMR fleet the plant needs. Override: make dev-fleet ARGS="-transit 15m -util 0.7"
-	cd shingo-core && go run ./cmd/simcalc -fleet -plant ../$(PLANT) -edge ../shingo-edge/shingoedge.dev.yaml $(ARGS)
+	cd shingo-core && go run ./cmd/simcalc -fleet -plant ../$(PLANT) -edge $(EDGES) $(ARGS)
 
 # ── The pre-push gate ────────────────────────────────────────────────
 #

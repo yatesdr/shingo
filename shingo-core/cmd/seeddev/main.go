@@ -28,7 +28,7 @@ func main() {
 
 	configPath := flag.String("config", "", "core config YAML (required)")
 	edgeDBPath := flag.String("edge-db", "", "edge SQLite path (required unless --core-only)")
-	plantPath := flag.String("plant", "plants/demo.yaml", "plant spec file")
+	plantPath := flag.String("plant", "plants/master.yaml", "plant spec file")
 	edgeStation := flag.String("edge", "", "station uid of the Edge to seed (default the plant's own namespace.line_id)")
 	coreOnly := flag.Bool("core-only", false, "seed core (Postgres) only")
 	edgeOnly := flag.Bool("edge-only", false, "seed edge (SQLite) only")

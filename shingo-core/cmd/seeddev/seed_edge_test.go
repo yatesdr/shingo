@@ -126,7 +126,7 @@ func openSeededEdge(t *testing.T) (*sql.DB, string, *plantspec.Plant) {
 	if _, err := db.Exec(edgeDDL); err != nil {
 		t.Fatalf("apply edge DDL: %v", err)
 	}
-	// Stable fixture, not plants/demo.yaml — see TestSeedCore_DemoPlant for the rationale.
+	// Stable fixture, not plants/master.yaml — see TestSeedCore_DemoPlant for the rationale.
 	plant, err := plantspec.Load("testdata/seed-fixture.yaml")
 	if err != nil {
 		t.Fatalf("load seed fixture: %v", err)
@@ -264,7 +264,7 @@ func TestSeedEdge_DemoPlant(t *testing.T) {
 	}
 
 	// Consume node's cached count = its seeded bin's UOP (BIN-ACT-W1-LH, uop:15
-	// in demo.yaml) so it drains to reorder.
+	// in the fixture) so it drains to reorder.
 	var w1LhUOP int
 	if err := db.QueryRow(`SELECT r.remaining_uop_cached FROM process_node_runtime_states r
 		JOIN process_nodes pn ON r.process_node_id=pn.id WHERE pn.core_node_name='ALN_001'`).Scan(&w1LhUOP); err != nil {

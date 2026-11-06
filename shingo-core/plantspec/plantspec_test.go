@@ -134,7 +134,7 @@ stations:
   - {name: LINE1-IN, kind: line_in}
 `
 	dir := t.TempDir()
-	path := filepath.Join(dir, "demo.yaml")
+	path := filepath.Join(dir, "plant.yaml")
 	if err := os.WriteFile(path, []byte(yaml), 0o644); err != nil {
 		t.Fatal(err)
 	}

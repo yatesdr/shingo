@@ -303,9 +303,12 @@ runs on. See `[[sweeps-and-monitors]]` for the three passes and their order.
 
 ## Where the rig evidence lives
 
-Measurements quoted above come from the lane-stress rig, not from a plant:
-`plants/lane-stress.yaml` and `plants/lane-stress-packed.yaml`, driven with
-`soakstat` and `scripts/soak-watch.sh`. See `[[dev-env/sim]]`.
+Measurements quoted above come from the lane-stress rig, not from a plant: its
+frozen seed and its packed re-cut, driven with `soakstat` and
+`scripts/soak-watch.sh` (both in git history). Its storage is now the `[corridor]`
+section of `plants/master.yaml`, slot for slot, and the properties those runs
+certified (the mouth gate, the dig walk, no air bubbles, two digs in one group) are
+asserted on it by `shingo-core/cmd/seeddev` `TestLanesFamily_*`. See `[[dev-env/sim]]`.
 
 One rig caveat worth carrying: its clock ran at two speeds until 2026-08-16, and
 every measurement taken before that fix was against the wrong timeline.

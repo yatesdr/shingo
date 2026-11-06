@@ -17,15 +17,14 @@ banner.
 ## Quickstart
 
 ```sh
-make dev          # build the sim images + bring up postgres, kafka, core, edge
-make dev-seed     # seed the rig plant (plants/demo-sim.yaml) with Core stopped across it
+make dev          # build the sim images + bring up postgres, kafka, core, both edges
+make dev-seed     # seed the one plant (plants/master.yaml) into Core and both edges, Core stopped
 ```
 
 `make` is not installed on the Windows dev host: run the same steps by hand from
-[`docs/dev-env/sim.md`](docs/dev-env/sim.md), "Seed with Core STOPPED". Seed
-`plants/demo-sim.yaml` (compose's default `SHINGO_PLANT`), not `plants/demo.yaml`:
-demo.yaml is the planner golden's plant and gives the unloader no Core `auto_push`,
-so a sim seeded from it wedges within a few sim-hours behind full ASSY.
+[`docs/dev-env/sim.md`](docs/dev-env/sim.md), "Seed with Core STOPPED". There is one
+plant, `plants/master.yaml` (compose's default `SHINGO_PLANT`): `seed` writes Core and
+Edge 1, `seed-edge2` writes Edge 2 from the same file (`seeddev --edge edge2.line1`).
 
 A build from a git worktree works, but its binaries report `version=dev commit=unknown`:
 the worktree's `.git` points outside the build context, so Dockerfile.dev drops it. Build
@@ -37,7 +36,7 @@ Then open the UIs:
 |---|---|---|
 | Core | http://localhost:8083 | set `SHINGO_BIND=0.0.0.0` (or a tailnet IP) before `make dev` |
 | Edge 1 | http://localhost:8081 | same |
-| Edge 2 | http://localhost:8082 | same; only in the two-Edge bring-up (`edge2` + `seed-edge2`, see sim.md) |
+| Edge 2 | http://localhost:8082 | same; the master's line 2 (`[window]`) runs here |
 
 `SHINGO_BIND` only affects the core + edge UIs; Postgres and Kafka stay
 loopback-only. Tip: `echo "SHINGO_BIND=0.0.0.0" >> .env` makes it stick across
@@ -49,9 +48,12 @@ Until you run `make dev-seed`, the UIs come up **empty** — the sim engine is
 alive (driver running, fake PLCs connected, counters ticking) but has no plant
 to act on.
 
-## What the demo plant gives you
+## What the plant gives you
 
-A self-sustaining circle (the full map is the header of `plants/demo-sim.yaml`):
+`plants/master.yaml` is one plant in tagged sections (its header is the map; `plants/README.md`
+says which scenario family proves what): the demo loop, the 4x2-shaped cell WELD-6 and the
+lane-stress corridor it draws from, the kanban press and weld, the same at five presses, and
+line 2 on Edge 2. The demo loop is a self-sustaining circle:
 
 1. **Main circle** — `PRESS-1` (PANEL-A, two_robot_press_index) and `PRESS-2` (PANEL-B,
    A/B sequential) fill carriers into the mixed-fill `SYN_MARKET`; `WELD-1` (PANEL-A) and
@@ -90,7 +92,7 @@ Sim behavior lives in the dev configs (baked into the image — rebuild with
 |---|---|
 | `make dev-down` | stop the stack, keep data volumes |
 | `make dev-reset` | stop + delete volumes → fresh empty DBs on next `make dev` |
-| `make dev-seed` | (re-)seed `SHINGO_PLANT` (default demo-sim.yaml) — idempotent per node name; `dev-reset` first when switching plants |
+| `make dev-seed` | (re-)seed `SHINGO_PLANT` (default master.yaml) into Core and both edges — idempotent per node name; `dev-reset` first when switching plants |
 | `make dev-wipe` | *(planned)* truncate operational data + re-seed, keep topology |
 | `make dev-logs` | tail core + edge logs |
 
@@ -99,7 +101,7 @@ and `edge2-data` for the Edges' SQLite — so they survive `make dev`, an image 
 `make dev-down` alike.** That is deliberate (a rebuild should not cost you the seeded plant),
 and it is also the usual reason a change appears not to have taken: `make dev` rebuilds the
 binary, not the data, so a migration you just wrote runs against a database that already has
-it, and a `plants/demo-sim.yaml` edit does nothing until you reseed. `make dev-reset` (`down -v`)
+it, and a `plants/master.yaml` edit does nothing until you reseed. `make dev-reset` (`down -v`)
 is the only command here that drops either volume.
 
 **Long-run disk:** `cell_part_events` is bounded at 90 days (a partition
@@ -127,7 +129,7 @@ accordingly. `go tool cover -html=cover.out` for the per-line view.)
 |---|---|
 | Core/edge refuse to boot, log "SHINGO_ALLOW_SIM=1 not set" | The compose files set it; if running a binary by hand, `export SHINGO_ALLOW_SIM=1`. |
 | Edge log: no `plc connected` lines | The fake WarLink poller didn't start — check `sim.enabled: true` and that the edge log shows "starting WarLink poller explicitly". |
-| `make dev-seed` fails with "plantspec invalid" | The plant spec has a dangling reference / missing staging — the error lists every problem; fix `plants/demo.yaml`. |
+| `make dev-seed` fails with "plantspec invalid" | The plant spec has a dangling reference / missing staging — the error lists every problem; fix `plants/master.yaml`. |
 | `make dev-seed` fails opening the edge SQLite | The edge container must be up + migrated first (run `make dev` before `make dev-seed`). |
 | Threshold replenishment never fires a demand | Storage isn't under a LANE/NGRP parent — the seed builds this; if you hand-edit nodes, keep the zone → lane → slot hierarchy. |
 | Counters never climb | Reporting-point `plc_name`/`tag_name` must exactly match `shingoedge.dev.yaml`'s `sim.processes`; the seed keeps them aligned. |

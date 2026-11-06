@@ -120,10 +120,10 @@ func TestCensus_HeadroomCanBeWaivedOnPurpose(t *testing.T) {
 //
 // The master is clean. The frozen lane-stress baseline is gone from the tree; its
 // two seeded bubbles are replayed here on the master's corridor, which is that
-// rig's storage slot for slot: SYN_COMP's C3 and C5 filled from the MOUTH, as
-// lane-stress.yaml had them. Frozen, the spec REPORTS and still loads (an A/B is
-// only meaningful against an unchanged seed, so a spec a published number was
-// measured on is not corrected); unfrozen, it is refused. Both defects are named.
+// rig's storage slot for slot: SYN_COMP's C3 and C5 filled from the MOUTH, as the
+// frozen lane-stress plant had them. Frozen, the spec REPORTS and still loads (an
+// A/B is only meaningful against an unchanged seed, so a spec a published number
+// was measured on is not corrected); unfrozen, it is refused. Both defects are named.
 func TestCensus_TheShippedSeeds(t *testing.T) {
 	master, err := Load("../../plants/master.yaml")
 	if err != nil {

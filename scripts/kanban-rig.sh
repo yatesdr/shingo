@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # bash scripts/kanban-rig.sh <R1..R6|W|W5|W6|P1..P6> — one run of the Kanban certification rig
-# on the visible dev stack: compose project shingo-dev, plants/kanban-press.yaml (P1..P6:
-# plants/kanban-press5.yaml), Core :8083, Edge :8081. docs/fleet-simulator/kanban.md says what each run injects and catches.
+# on the visible dev stack: compose project shingo-dev, plants/master.yaml (R and W: its [kanban]
+# section; P1..P6: its [kanban5]), Core :8083, Edge :8081. docs/fleet-simulator/kanban.md says
+# what each run injects and catches. The master's other sections run beside the loop, so every
+# order count below is the loop's own (orders_count).
 #
 # It brings the stack up from nothing, seeds with Core stopped (docs/dev-env/sim.md),
 # presses the run's buttons over Core and Edge HTTP, waits to the event plus settle,
@@ -62,6 +64,9 @@ STYLE_BIG=KP-BIG
 STYLE_TOTES=KP-TOTES
 STYLE_32=KP-32
 POSITIONS="'PLN_021','PLN_022','PLN_023','PLN_024'"
+# The weld's own loop beside the press's, in the [kanban] section: its nodes and its unloader.
+WELD_NODES="'ALN_021','SLN_021'"
+WELD_UNLOAD=WELD-UNLOAD
 LIT_NONE_SHORT='"none_short":true'  # the card's "no group is short", on a tile's assignment
 PARKED_AT_LEVEL=ngrp-at-level       # dispatch.CauseNGRPAtLevel, a stranger refused at a level
 PARKED_NO_SLOT=waiting_for_slot     # the history code of a push no slot admits
@@ -70,17 +75,18 @@ NO_EMPTY=finder-no-empty-of-type    # the queue cause of an ask with nothing to 
 SIM_SPEED=10            # shingo-*/*.dev.yaml sim.speed; 1 sim-minute is 6 wall-seconds
 CORE=http://127.0.0.1:8083
 EDGE=http://127.0.0.1:8081
-PLANT=/plants/kanban-press.yaml
+PLANT=/plants/master.yaml
 PROJECT=shingo-dev
 
 RUN="${1:-}"
 case "$RUN" in
   R1|R2|R3|R4|R5|R6|W|W5|W6) ;;
   P1|P2|P3|P4|P5|P6)
-    PLANT=/plants/kanban-press5.yaml
+    # [kanban5]: the five presses' loop. Its raid supermarket is [kanban]'s KP-SM.
     K=P5-KANBAN
     K2=""
-    SM=P5-SM
+    WELD_NODES="''"
+    WELD_UNLOAD=""
     UNLOAD_GROUP=P5-UNLOAD
     PRESS_OPS=P5-PRESS-1-OPS
     UNLOAD_OPS=P5-UNLOAD-OPS
@@ -432,8 +438,20 @@ collect() {
   check_zero "the press's four windows all held across two samples" "$(cat "$OUT/.full-windows")"
 }
 
-# orders_count <where>: orders matching a condition, since the run began.
-orders_count() { sql "SELECT count(*) FROM orders WHERE $1"; }
+# orders_count <where>: the loop's orders matching a condition, since the run began. The
+# master runs every other section beside the loop, so an order is the loop's when it starts
+# or ends at one of its nodes (loop_nodes).
+orders_count() { sql "SELECT count(*) FROM orders WHERE ($1) AND (source_node IN $(loop_nodes) OR delivery_node IN $(loop_nodes))"; }
+
+# loop_nodes: the SQL list of the loop's nodes: the press's positions, the weld's, and every
+# node of its kanbans, its supermarket and its unloaders, two levels down as in_group reads.
+loop_nodes() {
+  local groups="'$K','$K2','$SM','$UNLOAD_GROUP','$WELD_UNLOAD'"
+  echo "(SELECT unnest(ARRAY[$POSITIONS,$WELD_NODES,$groups])
+         UNION SELECT n.name FROM nodes n JOIN nodes g ON g.id = n.parent_id WHERE g.name IN ($groups)
+         UNION SELECT n.name FROM nodes n JOIN nodes l ON l.id = n.parent_id
+                                          JOIN nodes g ON g.id = l.parent_id WHERE g.name IN ($groups))"
+}
 
 # in_group <group>: the SQL list of a group's own name, its children's and, for a group of
 # lanes, its lanes' slots: SM's orders deliver two levels down.
@@ -603,7 +621,7 @@ on_press() {
        WHERE n.name IN ($POSITIONS) AND t.code = '$1'"
 }
 
-# plant_at_rest: no order moving and none on its way, staged swaps aside. A cart stood on a slot by
+# plant_at_rest: no order of the loop moving and none on its way, staged swaps aside. A cart stood on a slot by
 # hand ahead of a cart already filed to it holds that cart on its robot (STOPS 15).
 plant_at_rest() {
   wait_for 300 "the plant at rest" \

@@ -49,8 +49,8 @@ hardware seams.
 | Fake WarLink PLC | `shingo-edge/plc/simwarlink` | Emits counter ticks per process node; injected at `engine.New`, handshake-verified like a real PLC. |
 | Sim operator | `shingo-edge/engine/sim_operator.go` | Performs the operator's LOAD / CLEAR on a configurable delay when a bin is delivered to a `manual_swap` node. |
 | Plant spec + validator | `shingo-core/plantspec` | Declarative plant schema (zones, stations, processes, styles, claims, bins, demands, …) + validation. |
-| Kanban rig | `plants/kanban-press.yaml`, `scripts/kanban-rig.sh` | The certification plant for Kanban, its six runs and its walk (`docs/fleet-simulator/kanban.md`). Seeded with `SHINGO_PLANT=/plants/kanban-press.yaml`; the operator works its unloaders' panels (`sim.operators.unloader_taps`). |
-| Demo plant | `plants/demo-sim.yaml` | The seeded plant (compose's default `SHINGO_PLANT`): `plants/demo.yaml` plus the rig's stock and Core's loader switches. `demo.yaml` itself is the planner golden's plant and gives the unloader no Core `auto_push`, so a sim seeded from it wedges. |
+| The plant | `plants/master.yaml` | The one plant (compose's default `SHINGO_PLANT`), in tagged sections: the demo loop, the 4x2-shaped cell and the lane-stress corridor, the kanban cells, line 2 on Edge 2. `plants/README.md` maps each section to the scenario family that proves it. |
+| Kanban rig | `plants/master.yaml` `[kanban]`/`[kanban5]`, `scripts/kanban-rig.sh` | The Kanban certification cells, their runs and their walk (`docs/fleet-simulator/kanban.md`), on the master; the operator works their unloaders' panels (`sim.operators.unloader_taps`). |
 | Seed tool | `shingo-core/cmd/seeddev` | Loads + validates a plant spec, seeds core (Postgres, via store accessors) + edge (SQLite, raw SQL), cross-validates. |
 | Dev configs | `shingocore.dev.yaml`, `shingoedge.dev.yaml` | Sim knobs (`sim.enabled`, transit time, jitter, fault rate, per-process tick intervals, operator delays). Separate from prod configs. |
 
@@ -76,9 +76,10 @@ hardware seams.
 - **The injected clock** drives all sim timing (robot transit, counter ticks,
   operator delays), so the whole sim can be sped up or — eventually — stepped
   deterministically.
-- **The seed** (`make dev-seed`) loads `SHINGO_PLANT` (default `plants/demo-sim.yaml`), validates it, writes the
-  core topology (nodes, bins, payloads, demand registry) and the edge topology
-  (processes, styles, claims, runtime states), and cross-checks the two.
+- **The seed** (`make dev-seed`) loads `SHINGO_PLANT` (default `plants/master.yaml`), validates it, writes the
+  core topology (nodes, bins, payloads, demand registry, every Edge it names enrolled) and each
+  Edge's topology (processes, styles, claims, runtime states; `seeddev --edge` picks the Edge),
+  and cross-checks the two.
 - **The material-flow loops** then run on their own: produce → finalize → swap;
   consume → drain → reorder; loader infeed; unloader / customer outfeed.
 - **The data flow** worth validating end-to-end: a fake PLC tick → edge counter
@@ -110,8 +111,9 @@ station service all run against a half-seeded topology and record what they find
 — adopted process nodes, orphaned rows, anomalies — which then sits in the run
 you are about to read as if the plant had produced it.
 
-For a clean run from scratch, with Edge 2 too (no `make` on the Windows host, so
-these are the steps by hand):
+For a clean run from scratch (no `make` on the Windows host, so these are the steps
+by hand). Both Edges: the one plant runs line 2 on Edge 2, and `seed-edge2` seeds it
+from the same file with `--edge edge2.line1`:
 
 ```sh
 docker compose -f docker-compose.dev.yml down -v
@@ -131,7 +133,7 @@ migrated schema; `--no-deps` is what stops `compose run` restarting Core through
 the dependency chain (seed → edge → core). Starting Core at the end runs its
 startup sweeps against the seeded registry, and restarting the Edges reloads the
 runtime states the seed wrote behind their startup cache; `dev-seed` does the
-same for Edge 1.
+same.
 
 **Observed:** 0 orphan/adoption lines across core, edge and edge2 on the
 2026-09-06 bring-up with Core stopped; the run that produced this rule saw 4
