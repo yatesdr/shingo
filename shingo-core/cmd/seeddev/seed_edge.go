@@ -83,9 +83,9 @@ func seedEdgeDB(db sqlExec, p *plantspec.Plant, binIDByNode map[string]int64) er
 			return fmt.Errorf("style %s: process %q not seeded", s.Name, s.Process)
 		}
 		id, err := edgeUpsert(db,
-			`INSERT OR IGNORE INTO styles(process_id, name, description) VALUES(?, ?, ?)`,
+			`INSERT OR IGNORE INTO styles(process_id, name, description, expected_catid) VALUES(?, ?, ?, ?)`,
 			`SELECT id FROM styles WHERE process_id=? AND name=?`,
-			[]any{pid, s.Name, s.Payload}, []any{pid, s.Name})
+			[]any{pid, s.Name, s.Payload, s.ExpectedCATID}, []any{pid, s.Name})
 		if err != nil {
 			return fmt.Errorf("style %s: %w", s.Name, err)
 		}

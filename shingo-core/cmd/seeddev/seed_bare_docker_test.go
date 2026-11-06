@@ -105,3 +105,24 @@ func TestSeedCore_RefusesAnIllegalLoaderSettingsFixture(t *testing.T) {
 		})
 	}
 }
+
+// TestSeedCore_EnrollsEveryEdgeThePlantNames: a plant whose processes run on two
+// Edges seeds one Core both register against. RED while seedCore enrolled the
+// plant's own station only: the second Edge's register was refused.
+func TestSeedCore_EnrollsEveryEdgeThePlantNames(t *testing.T) {
+	t.Parallel()
+	db := testdb.Open(t)
+	plant := loadSeedFixture(t)
+	plant.Processes[len(plant.Processes)-1].Edge = "edge2.line1"
+	if err := plant.Validate(); err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+	if err := seedCore(db, plant, map[string]int64{}); err != nil {
+		t.Fatalf("seedCore: %v", err)
+	}
+	for _, uid := range plant.Edges() {
+		if e, err := db.GetEdgeByUID(uid); err != nil || e == nil {
+			t.Errorf("edge %s is not enrolled: %v", uid, err)
+		}
+	}
+}

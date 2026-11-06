@@ -1,6 +1,8 @@
 package main
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 
 	"shingocore/plantspec"
@@ -86,5 +88,64 @@ func TestVerdicts(t *testing.T) {
 				t.Errorf("verdict = %q, want %q", got, c.want)
 			}
 		})
+	}
+}
+
+// TestLoadEdge_SeveralFilesTickTogether: a plant on two Edges is rated on both
+// Edges' processes, and the cadence is the first file's. RED while -edge read
+// one file, so a process on the second Edge had no rate at all.
+func TestLoadEdge_SeveralFilesTickTogether(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	one, two := filepath.Join(dir, "one.yaml"), filepath.Join(dir, "two.yaml")
+	for path, body := range map[string]string{
+		one: "sim:\n  processes:\n    - {plc_name: A, tag_name: A_C, tick_interval: 10s, uop_per_tick: 1}\n  operators:\n    loader_auto_load: 5s\n",
+		two: "sim:\n  processes:\n    - {plc_name: B, tag_name: B_C, tick_interval: 30s, uop_per_tick: 1}\n  operators:\n    loader_auto_load: 30s\n",
+	} {
+		if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	edge, err := loadEdge(one + "," + two)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	rate := edgeRates(edge)
+	if rate["A"] != 6 || rate["B"] != 2 {
+		t.Errorf("rates = %v, want A 6/min and B 2/min", rate)
+	}
+	if edge.Sim.Operators.LoaderAutoLoad != "5s" {
+		t.Errorf("loader cadence = %q, want the first file's 5s", edge.Sim.Operators.LoaderAutoLoad)
+	}
+}
+
+// TestProcessRates_APLCNamedForTheMachineRatesItsProcess: the claims are walked
+// by process, and a process takes the rate of the PLC its reporting point names.
+// RED while the rate map was keyed by PLC alone: LINE-2, counted by PRESS-10,
+// read as never ticking and its parts as consumed by nothing.
+func TestProcessRates_APLCNamedForTheMachineRatesItsProcess(t *testing.T) {
+	t.Parallel()
+	p := &plantspec.Plant{
+		Styles:          []plantspec.Style{{Name: "L2-A", Process: "LINE-2"}, {Name: "P1", Process: "PRESS-1"}},
+		ReportingPoints: []plantspec.ReportingPoint{{PLCName: "PRESS-10", TagName: "C", Style: "L2-A"}, {PLCName: "PRESS-1", TagName: "C1", Style: "P1"}},
+	}
+	rate := processRates(p, map[string]float64{"PRESS-10": 2, "PRESS-1": 3})
+	if rate["LINE-2"] != 2 || rate["PRESS-1"] != 3 || rate["PRESS-10"] != 2 {
+		t.Errorf("rates = %v, want LINE-2 at PRESS-10's 2/min and PRESS-1 at its own 3", rate)
+	}
+}
+
+// TestVerdict_ALoaderForAnIdleStylesPartIsIdle: a loader whose part only a style
+// not running consumes waits on its threshold; that is not a part with no drain.
+// RED while it read NO-DRAIN, and a two-style cell's alternate loader failed the plant.
+func TestVerdict_ALoaderForAnIdleStylesPartIsIdle(t *testing.T) {
+	t.Parallel()
+	idle := flow{loaders: []string{"LOADER-MIRROR-R"}, idle: []string{"WELD-6"}}
+	if got, healthy, _ := idle.verdict(12, 12); got != "IDLE" || !healthy {
+		t.Errorf("verdict = %s (healthy %v), want a healthy IDLE", got, healthy)
+	}
+	stray := flow{loaders: []string{"LOADER-X"}}
+	if got, healthy, _ := stray.verdict(12, 12); got != "NO-DRAIN" || healthy {
+		t.Errorf("a loader nothing consumes under any style = %s (healthy %v), want NO-DRAIN", got, healthy)
 	}
 }

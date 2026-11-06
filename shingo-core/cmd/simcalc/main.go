@@ -85,6 +85,10 @@ type flow struct {
 	loaders   []string // manual_swap produce claims (C-push supply)
 	unloaders []string // manual_swap consume claims (end-gate drain)
 	bufferUOP int64    // seeded inventory of this payload at t0
+	// idle names the processes that consume this part only under a style not
+	// running now: a loader of such a part fires below its threshold, which
+	// nothing draws down until that style runs.
+	idle []string
 }
 
 // procClass records, per process, what kind of node it is — the basis for the
@@ -97,7 +101,7 @@ type procClass struct {
 
 func main() {
 	plantPath := flag.String("plant", "plants/demo.yaml", "path to the plant spec YAML")
-	edgePath := flag.String("edge", "shingo-edge/shingoedge.dev.yaml", "path to the edge sim config YAML")
+	edgePath := flag.String("edge", "shingo-edge/shingoedge.dev.yaml", "path to the edge sim config YAML; several, comma-separated, for a plant on more than one Edge")
 	solve := flag.Bool("solve", false, "derive balanced tick rates instead of checking the configured ones")
 	fleet := flag.Bool("fleet", false, "estimate the AMR fleet the plant's swap cadence needs (robot estimator)")
 	carriers := flag.Bool("carriers", false, "check the empty-bin pool and shuffle headroom (deadlock check)")
@@ -121,7 +125,7 @@ func main() {
 	if err != nil {
 		fail("load edge config: %v", err)
 	}
-	rate := edgeRates(edge)
+	rate := processRates(plant, edgeRates(edge))
 
 	if *fleet {
 		runFleet(plant, rate, *transit, *util, *plantPath)
@@ -232,6 +236,22 @@ func walkClaims(plant *plantspec.Plant, rate map[string]float64) map[string]*flo
 			}
 		}
 	}
+	activeStyle := map[string]bool{}
+	for _, pr := range plant.Processes {
+		activeStyle[pr.ActiveStyle] = true
+	}
+	styleProcess := map[string]string{}
+	for _, s := range plant.Styles {
+		styleProcess[s.Name] = s.Process
+	}
+	for _, c := range plant.Claims {
+		if c.Role != "consume" || c.IsLoader() || activeStyle[c.Style] {
+			continue
+		}
+		if f := flows[c.Payload]; f != nil {
+			f.idle = appendUniq(f.idle, styleProcess[c.Style])
+		}
+	}
 	for _, b := range plant.Bins {
 		if b.Payload != "" {
 			if f := flows[b.Payload]; f != nil {
@@ -240,6 +260,31 @@ func walkClaims(plant *plantspec.Plant, rate map[string]float64) map[string]*flo
 		}
 	}
 	return flows
+}
+
+// processRates is the rate map keyed the way the claims are walked, by process:
+// the Edge config ticks a PLC, and a process takes its rate from the PLC its
+// reporting point names. A plant that names the PLC after the process (the
+// rule this file assumed) reads the same; one whose PLC is named for the
+// machine (a PRESS-10 counting LINE-2) is no longer read as never ticking.
+func processRates(plant *plantspec.Plant, plcRate map[string]float64) map[string]float64 {
+	out := map[string]float64{}
+	for k, v := range plcRate {
+		out[k] = v
+	}
+	styleProcess := map[string]string{}
+	for _, s := range plant.Styles {
+		styleProcess[s.Name] = s.Process
+	}
+	for _, rp := range plant.ReportingPoints {
+		proc := styleProcess[rp.Style]
+		if r, ok := plcRate[rp.PLCName]; ok && proc != "" {
+			if _, own := plcRate[proc]; !own {
+				out[proc] = r
+			}
+		}
+	}
+	return out
 }
 
 // edgeRates builds the process→rate map from the edge sim config (CHECK mode
@@ -634,6 +679,12 @@ func (f *flow) verdict(loaderClearsPerMin, unloaderClearsPerMin float64) (string
 			return "BALANCED", true, fmt.Sprintf("buffer covers %s", runway(f.bufferUOP, f.consume))
 		}
 	}
+	// A loader whose part only a style not running consumes: it fills below its
+	// threshold, and nothing draws the part down until that style runs.
+	if hasLoader && !hasProd && !hasCons && len(f.idle) > 0 {
+		return "IDLE", true, fmt.Sprintf("loaded for %s under a style not running; the loader waits on its threshold",
+			strings.Join(f.idle, ","))
+	}
 	if hasProd || hasLoader {
 		return "NO-DRAIN", false, "produced/loaded but nothing consumes it"
 	}
@@ -747,16 +798,27 @@ func capacityPerMin(interval string) float64 {
 	return 60.0 / d.Seconds()
 }
 
-func loadEdge(path string) (*edgeSim, error) {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return nil, err
+// loadEdge reads one Edge config, or several separated by commas: a plant whose
+// processes run on two Edges ticks on both, so the rates are every file's
+// processes together. The operator cadence and the speed are the first file's.
+func loadEdge(paths string) (*edgeSim, error) {
+	var out *edgeSim
+	for _, path := range strings.Split(paths, ",") {
+		data, err := os.ReadFile(strings.TrimSpace(path))
+		if err != nil {
+			return nil, err
+		}
+		var e edgeSim
+		if err := yaml.Unmarshal(data, &e); err != nil {
+			return nil, fmt.Errorf("%s: %w", path, err)
+		}
+		if out == nil {
+			out = &e
+			continue
+		}
+		out.Sim.Processes = append(out.Sim.Processes, e.Sim.Processes...)
 	}
-	var e edgeSim
-	if err := yaml.Unmarshal(data, &e); err != nil {
-		return nil, err
-	}
-	return &e, nil
+	return out, nil
 }
 
 func appendUniq(s []string, v string) []string {

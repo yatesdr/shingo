@@ -272,6 +272,24 @@ func (p *Plant) Validate() error {
 				add("process %q parts names unknown payload %q", pr.Name, code)
 			}
 		}
+		// A station uid is namespace.line_id; anything else seeds an Edge nothing
+		// will ever run as.
+		if ns, line := splitStation(pr.Edge); pr.Edge != "" && (ns == "" || line == "") {
+			add("process %q edge %q is not a station uid (namespace.line_id)", pr.Name, pr.Edge)
+		}
+	}
+	// A pin is the CATID values the PLC reports for the style's part: integers,
+	// comma-separated. Anything else never matches a read.
+	for _, s := range p.Styles {
+		if s.ExpectedCATID == "" {
+			continue
+		}
+		for _, v := range strings.Split(s.ExpectedCATID, ",") {
+			if v = strings.TrimSpace(v); v == "" || strings.Trim(v, "0123456789") != "" {
+				add("style %q expected_catid %q is not a comma-separated list of integers", s.Name, s.ExpectedCATID)
+				break
+			}
+		}
 	}
 
 	// --- bins ---

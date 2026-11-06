@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"slices"
 	"strings"
 
 	"shingocore/config"
@@ -28,6 +29,7 @@ func main() {
 	configPath := flag.String("config", "", "core config YAML (required)")
 	edgeDBPath := flag.String("edge-db", "", "edge SQLite path (required unless --core-only)")
 	plantPath := flag.String("plant", "plants/demo.yaml", "plant spec file")
+	edgeStation := flag.String("edge", "", "station uid of the Edge to seed (default the plant's own namespace.line_id)")
 	coreOnly := flag.Bool("core-only", false, "seed core (Postgres) only")
 	edgeOnly := flag.Bool("edge-only", false, "seed edge (SQLite) only")
 	wipe := flag.Bool("wipe", false, "wipe operational data before re-seeding (F3-gated)")
@@ -54,6 +56,17 @@ func main() {
 	}
 	log.Printf("plant %q validated: %d zones, %d stations, %d payloads, %d bins, %d claims",
 		*plantPath, len(plant.Zones), len(plant.Stations), len(plant.Payloads), len(plant.Bins), len(plant.Claims))
+
+	// Core is seeded from the whole plant; the Edge from its own processes. A
+	// station the plant does not name is refused rather than seeded empty.
+	station := *edgeStation
+	if station == "" {
+		station = plant.Station()
+	}
+	if !slices.Contains(plant.Edges(), station) {
+		log.Fatalf("--edge %s: the plant runs no process there (its edges: %s)", station, strings.Join(plant.Edges(), ", "))
+	}
+	edgePlant := plant.ForEdge(station)
 
 	// --wipe safety (F3): destructive, so require sim mode + the env gate, then a
 	// typed confirmation (mirrors core's --reset-db). --yes is the Makefile path.
@@ -90,10 +103,10 @@ func main() {
 		if *edgeDBPath == "" {
 			log.Fatal("--edge-db is required to seed edge (or pass --core-only)")
 		}
-		if err := seedEdge(*edgeDBPath, plant, binIDByNode); err != nil {
+		if err := seedEdge(*edgeDBPath, edgePlant, binIDByNode); err != nil {
 			log.Fatalf("seed edge: %v", err)
 		}
-		log.Printf("edge seeded OK")
+		log.Printf("edge %s seeded OK", station)
 	}
 
 	// Cross-DB validation when both halves were seeded (catches a seeding bug

@@ -365,6 +365,11 @@ type Process struct {
 	// seeder writes the union of these and the claims' payloads into the Edge's
 	// process_payloads; the station's part list reads it.
 	Parts []string `yaml:"parts,omitempty"`
+	// Edge is the station uid ("namespace.line_id") of the Edge the process
+	// runs on. Blank is the plant's own (Plant.Station). One plant file can
+	// describe a Core with two Edges: Core is seeded with all of it, and each
+	// Edge with its own processes (Plant.ForEdge).
+	Edge string `yaml:"edge,omitempty"`
 }
 
 // Style is a per-payload configuration on a process.
@@ -372,6 +377,10 @@ type Style struct {
 	Name    string `yaml:"name"`
 	Process string `yaml:"process"`
 	Payload string `yaml:"payload"`
+	// ExpectedCATID pins the part identity the PLC reports while this style
+	// runs (→ the Edge's styles.expected_catid): one value, or a comma-separated
+	// list. Blank leaves the style unpinned.
+	ExpectedCATID string `yaml:"expected_catid,omitempty"`
 }
 
 // Claim is one style→core-node binding — the full claim row.

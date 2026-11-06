@@ -17,6 +17,7 @@ import (
 	"shingocore/service"
 	"shingocore/store"
 	"shingocore/store/bins"
+	"shingocore/store/demands"
 	"shingocore/store/nodes"
 	"shingocore/store/payloads"
 	"shingocore/store/registry"
@@ -280,8 +281,11 @@ func seedCore(db *store.DB, p *plantspec.Plant, binIDByNode map[string]int64) er
 	// 2026-06-14). Thresholds still flow from the demands block: seedBinLoaders' threshold
 	// map stamps them onto each loader's payload/home UOPThreshold, which the aggregate
 	// derivation reads back. Must run AFTER the loaders exist.
-	stationID := p.Namespace + "." + p.LineID
-
+	//
+	// EVERY EDGE THE PLANT NAMES, not only its own: one plant file can run a
+	// process on a second Edge (plantspec.Process.Edge), and that Edge registers
+	// against this Core, so it is enrolled and given its registry here too.
+	//
 	// ENROLL THE STATION. This is the sim's stand-in for the production
 	// enrollment step, and without it the dev stack is permanently broken after
 	// the enrollment deploy: a register from an unenrolled uid is REFUSED and
@@ -293,21 +297,29 @@ func seedCore(db *store.DB, p *plantspec.Plant, binIDByNode map[string]int64) er
 	// self-asserted-and-mutable was.
 	//
 	// Already-enrolled is the normal case on a re-seed and is not an error.
-	if _, err := db.EnrollEdge(stationID, p.Namespace+" "+p.LineID, stationID); err != nil &&
-		!errors.Is(err, registry.ErrAlreadyEnrolled) {
-		return fmt.Errorf("enroll station %s: %w", stationID, err)
+	for _, stationID := range p.Edges() {
+		if _, err := db.EnrollEdge(stationID, strings.Replace(stationID, ".", " ", 1), stationID); err != nil &&
+			!errors.Is(err, registry.ErrAlreadyEnrolled) {
+			return fmt.Errorf("enroll station %s: %w", stationID, err)
+		}
 	}
 
 	if err := seedBinLoaders(db, p); err != nil {
 		return fmt.Errorf("seed bin loaders: %w", err)
 	}
-	entries, err := db.BuildDemandRegistryFromAggregate(stationID)
-	if err != nil {
-		return fmt.Errorf("build demand registry from aggregate: %w", err)
-	}
-	if len(entries) > 0 {
-		if _, err := db.SyncDemandRegistry(stationID, entries); err != nil {
-			return fmt.Errorf("sync demand registry: %w", err)
+	var entries []demands.RegistryEntry
+	for _, stationID := range p.Edges() {
+		got, err := db.BuildDemandRegistryFromAggregate(stationID)
+		if err != nil {
+			return fmt.Errorf("build demand registry from aggregate for %s: %w", stationID, err)
+		}
+		if len(got) > 0 {
+			if _, err := db.SyncDemandRegistry(stationID, got); err != nil {
+				return fmt.Errorf("sync demand registry for %s: %w", stationID, err)
+			}
+		}
+		if stationID == p.Station() {
+			entries = got
 		}
 	}
 
