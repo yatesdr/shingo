@@ -133,6 +133,7 @@ func wiredLoaderEngine(t *testing.T, db *store.DB) *Engine {
 	eng := testEngine(t, db)
 	eng.loaderStore = newLoaderStore(eng)
 	eng.stationService.SetLoaderResolver(stationLoaderResolver{eng})
+	eng.stationService.SetEndOfLineResolver(eng.endOfLineNote)
 	eng.stationService.SetBinTypeResolver(func(p string) string {
 		return map[string]string{"PART-A": "TOTE-1", "PART-B": "TOTE-2", "PART-C": "KD-1"}[p]
 	})

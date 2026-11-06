@@ -137,6 +137,9 @@ type Engine struct {
 	// the poll goroutine from before the monitor starts: an atomic, so the
 	// poll reads nil until startCatidMonitor stores it.
 	tickMonitor atomic.Pointer[catidMonitor]
+	// endOfLine is the station tile's end-of-line sentence per process, as
+	// last computed (end_of_line.go).
+	endOfLine endOfLineMemo
 	// cutoverMu is the changeover door's mutex (completeCutover): the
 	// operator's CUTOVER, the monitor's fire, the admin switch and the restore
 	// complete one at a time.
@@ -375,6 +378,7 @@ func New(c Config) *Engine {
 	// the live alarm map so the chip renders on load and on every refresh.
 	e.stationService.SetStrandedResolver(e.StrandedAlarmDetail)
 	e.stationService.SetKeepStagedResolver(e.KeepStagedNote)
+	e.stationService.SetEndOfLineResolver(e.endOfLineNote)
 	e.stationService.SetUnloaderAskResolver(e.UnloaderAskNote)
 	// A served row names its part's bin type, and an unloader tile its CLEAR
 	// panels' carriers, both from the payload-to-bin-type catalog Core

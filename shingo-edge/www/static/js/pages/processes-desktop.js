@@ -3775,7 +3775,7 @@ function clearSelected() {
 async function openSettings() {
     S.settings = S.settings || settingsDraft();
     if (!S.routing) await loadRouting();
-    await Promise.all([loadCurtainNodes(), loadPayloadCatalog(), loadPartSet(), loadStationCounters()]);
+    await Promise.all([loadCurtainNodes(), loadPayloadCatalog(), loadPartSet(), loadStationCounters(), loadEndOfLine()]);
     await loadStationVerdicts();
     // THE PART SET'S POST-CREATION EDITOR (pick-a-part U5). The engineer
     // declares which parts a process may run (R-I) and the floor's part list
@@ -4749,6 +4749,42 @@ function saveStationPositions(id) {
         });
 }
 
+// endOfLineField is the end of the line, on a process whose carts are charged
+// at its production counter: the server's sentence (N measured at changeovers
+// whose landing preceded the counter's reset, else typed, else neither) and
+// the typed depth with who typed it and when. N decides nothing.
+function endOfLineField() {
+    const e = S.endOfLine;
+    if (!e || !e.applies) return '';
+    const t = e.typed || {};
+    const typed = t.n == null ? 'none typed'
+        : 'typed ' + t.n + (t.by ? ' by ' + t.by : '') + (t.at ? ' on ' + String(t.at).slice(0, 10) : '');
+    return stBlock('End of the line', 'what a cart reads against what has left it; it decides nothing',
+        '<div>' + esc(e.sentence) + '</div>' +
+        '<div class="pd-row"><span>Parts between the cart and the counter <span class="pd-dim">' + esc(typed) + '</span></span>' +
+        '<span><input class="pd-inp" id="eol-depth" type="number" min="0" value="' + esc(t.n == null ? '' : String(t.n)) + '">' +
+        '<button class="pd-dimlink" data-act="eol-save">Save</button></span></div>');
+}
+
+// loadEndOfLine reads the process's end-of-line block (none on a failed read).
+async function loadEndOfLine() {
+    try {
+        const res = await fetch('/api/processes/' + S.processID + '/end-of-line', { cache: 'no-store' });
+        S.endOfLine = res.ok ? await res.json() : null;
+    } catch (_) { S.endOfLine = null; }
+}
+
+// saveLineDepth types the process's line depth (blank clears it).
+async function saveLineDepth() {
+    const raw = ($('eol-depth') || {}).value;
+    const n = raw === '' || raw == null ? null : Number(raw);
+    const out = await postJSON('PUT', '/api/processes/' + S.processID + '/line-depth', { line_depth: n });
+    S.settingsError = out.ok ? '' : out.error;
+    S.settingsNotice = out.ok ? 'Saved.' : '';
+    await loadEndOfLine();
+    drawSettings();
+}
+
 // loadStationCounters reads the process's station counters ([] on a failed read).
 async function loadStationCounters() {
     try {
@@ -4789,7 +4825,7 @@ function openStationCounter(id, bindNode) {
 
 async function afterStationChange() {
     S._tagCache = {};
-    await Promise.all([loadStationCounters(), loadCurtainNodes()]);
+    await Promise.all([loadStationCounters(), loadCurtainNodes(), loadEndOfLine()]);
     await loadStationVerdicts();
     drawSettings();
 }
@@ -5026,7 +5062,7 @@ function drawSettings() {
         stField('Enabled',
             'a press-index position keeps a drained same-part bin at changeover only while this counts (a sequential press reuses its parked empty either way)',
             stToggle('counter_enabled')) +
-        identityField() + stationCountersField(p);
+        identityField() + stationCountersField(p) + endOfLineField();
 
     if (!S.curtain) S.curtain = curtainDraft();
     const positions = positionsSection();
@@ -8022,6 +8058,7 @@ function onClick(e) {
             case 'sc-new': openStationCounter(0, 0); return;
             case 'sc-edit': openStationCounter(Number(btn.dataset.sc), 0); return;
             case 'sc-positions': saveStationPositions(Number(btn.dataset.sc)); return;
+            case 'eol-save': void saveLineDepth(); return;
             case 'sc-delete': {
                 const id = Number(btn.dataset.sc);
                 openSheet('Delete this station counter?', 'its positions are counted by the production counter again', '',

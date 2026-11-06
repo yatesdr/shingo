@@ -17,7 +17,8 @@ import (
 // RUN's last L parts are still in the line. Those parts are the run-out:
 // attributed today (the point's style, ALT), they prepay the new carts on the
 // cell counter and leave them untouched on the station's; no hold opens, and
-// the process never switches back to RUN.
+// the process never switches back to RUN. The landing preceded the counter's
+// reset, so the changeover's history row says it ran out L after the cutover.
 func TestCatid4x2_S3_EarlyCutover(t *testing.T) {
 	t.Parallel()
 	for _, v := range []struct {
@@ -67,6 +68,19 @@ func TestCatid4x2_S3_EarlyCutover(t *testing.T) {
 					t.Errorf("the parts in the line read %s after the program change, want L = %d (the fake has %d in flight)",
 						got, w6Depth, c.plc.state().InFlight)
 				}
+			}
+			var landed int64
+			for _, co := range c.changeovers() {
+				if co.ToStyleID == c.alt && co.CompletedAt != nil {
+					landed = co.ID
+				}
+			}
+			if n := c.runOut("S3 "+v.name, landed); n == nil || *n != w6Depth {
+				got := "none"
+				if n != nil {
+					got = fmt.Sprint(*n)
+				}
+				t.Errorf("changeover #%d's history row: run-out %s, want L = %d", landed, got, w6Depth)
 			}
 			if h := c.holds(); len(h.rows) != 0 {
 				t.Errorf("the run-out opened %d hold(s), %d held, want none: %+v", len(h.rows), h.open, h.rows)

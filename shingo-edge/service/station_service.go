@@ -156,6 +156,10 @@ type StationService struct {
 	// keepStaged resolves a line's keep-staged keeper sentence; nil leaves
 	// KeepStagedNote empty. The engine injects KeepStagedNote.
 	keepStaged func(coreNodeName string) string
+	// endOfLine resolves a process's end-of-line sentence for its tiles
+	// counted at the production counter; nil leaves EndOfLine empty. The
+	// engine injects its memo's reader (end_of_line.go).
+	endOfLine func(processID int64) string
 	// unloaderAsk resolves an unloader window's pending U1 note (the engine's
 	// UnloaderAskNote); nil leaves AskPending empty.
 	unloaderAsk func(coreNodeName string) string
@@ -458,6 +462,11 @@ func (s *StationService) SetStrandedResolver(r func(coreNodeName string) string)
 // engine's KeepStagedNote) so BuildView can render its chip. Optional; unset
 // leaves KeepStagedNote empty.
 func (s *StationService) SetKeepStagedResolver(r func(coreNodeName string) string) { s.keepStaged = r }
+
+// SetEndOfLineResolver injects the end-of-line sentence per process (the
+// engine's, from its memo) so BuildView can put it on the tiles the production
+// counter counts. Optional; unset leaves EndOfLine empty.
+func (s *StationService) SetEndOfLineResolver(r func(processID int64) string) { s.endOfLine = r }
 
 // SetUnloaderAskResolver injects the pending U1 note per unloader window (the
 // engine's UnloaderAskNote) so BuildView can put it on the window's card.
@@ -1484,6 +1493,12 @@ func (s *StationService) buildNodeTile(
 		nodeView.AskPending = s.unloaderAsk(node.CoreNodeName)
 	}
 	nodeView.CountWaits = countWaits(node.CoreNodeName, nodeView.ActiveClaim, runtime)
+	// The end-of-line sentence, at a consume position the production counter
+	// counts (no station counter, no loader).
+	if s.endOfLine != nil && node.LineCounterID == nil && nodeView.Loader == nil && nodeView.ActiveClaim != nil &&
+		nodeView.ActiveClaim.Role == protocol.ClaimRoleConsume {
+		nodeView.EndOfLine = s.endOfLine(process.ID)
+	}
 	// THE CUSTOMER'S HALF. A call and the part: this node has an outstanding
 	// order for something a loader operator has said they cannot supply.
 	//

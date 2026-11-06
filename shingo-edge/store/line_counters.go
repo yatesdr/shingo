@@ -80,3 +80,18 @@ func (db *DB) SetNodeLineCounter(nodeID int64, counterID *int64) error {
 	}
 	return err
 }
+
+// The end of the line: a changeover's run-out (store/counters/run_out.go) and
+// the typed line depth (store/processes/line_depth.go).
+
+func (db *DB) RunOuts(processID int64, landings []counters.Landing) (map[int64]int64, error) {
+	return counters.RunOuts(db.DB, processID, landings)
+}
+
+func (db *DB) GetLineDepth(processID int64) (processes.LineDepth, error) {
+	return processes.GetLineDepth(db.DB, processID)
+}
+
+func (db *DB) SetLineDepth(processID int64, n *int64, by string, at time.Time) error {
+	return processes.SetLineDepth(db.DB, processID, n, by, at)
+}

@@ -196,6 +196,10 @@ func TestEngineOrchestrationWidth(t *testing.T) {
 		// GET /api/process-nodes/{id}/countable, the binding's rules without
 		// the write.
 		"StationCountable",
+		// Added 2026-11-07 (precise counting P5): the end-of-line read for the
+		// setup page and the changeover history, GET
+		// /api/processes/{id}/end-of-line; it needs the engine's CATID sets.
+		"EndOfLine",
 		"UpdateStationCounter",
 		"ConfigPath",
 		"CoreNodes",

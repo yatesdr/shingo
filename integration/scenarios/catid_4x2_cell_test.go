@@ -805,6 +805,24 @@ func (c *w6Cell) inLine(label string) *int64 {
 	return nil
 }
 
+// runOut reads a changeover's run-out as its history row says it ("ran out
+// N after the cutover", the engine's EndOfLine on read): nil when none is
+// measured. It logs it.
+func (c *w6Cell) runOut(label string, changeoverID int64) *int64 {
+	c.t.Helper()
+	eol, err := c.edge.Engine.EndOfLine(c.processID)
+	mustNil(c.t, err, "the end of the line")
+	for _, ro := range eol.Measured {
+		if ro.ChangeoverID == changeoverID {
+			n := ro.Parts
+			c.t.Logf("RUN-OUT %s: changeover #%d ran out %d after the cutover (L = %d)", label, changeoverID, n, w6Depth)
+			return &n
+		}
+	}
+	c.t.Logf("RUN-OUT %s: changeover #%d: none measured", label, changeoverID)
+	return nil
+}
+
 // ── the carts ───────────────────────────────────────────────────────────────
 
 // noteCarts reads which cart each position holds and opens and closes the

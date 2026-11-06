@@ -921,6 +921,9 @@ function createNodeButton(entry) {
     if (isReplenishing(entry)) btn.classList.add('os-replenishing');
 
     btn.appendChild(el('span', { className: 'os-node-name', textContent: entry.node.name }));
+    // The end-of-line sentence (the server's) on a tile the production counter
+    // counts; the tile's modal shows it too.
+    if (entry.end_of_line) btn.title = entry.end_of_line;
 
     // Parked-ticks attention badge (P2-C8): draws the operator to tap the tile,
     // where the modal chip shows the full "... Record Count on the bin tab."

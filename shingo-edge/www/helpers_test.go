@@ -312,6 +312,9 @@ func (s *stubEngine) ListStationCounters(processID int64) ([]engine.StationCount
 	return []engine.StationCounterCard{{LineCounter: counters.LineCounter{ID: 7, ProcessID: 1, Label: "load station",
 		PLCName: "plc", TagName: "STATION_01"}}}, nil
 }
+func (s *stubEngine) EndOfLine(int64) (*engine.EndOfLine, error) {
+	return &engine.EndOfLine{Measured: []engine.RunOut{}}, nil
+}
 func (s *stubEngine) CreateStationCounter(processID int64, label, tagName string) (*counters.LineCounter, error) {
 	if processID != 1 {
 		return nil, &engine.StationCounterRefused{Sentence: "no production counter wired"}

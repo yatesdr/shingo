@@ -513,6 +513,9 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger, backupSvc *backup.Servi
 				r.Delete("/station-counters/{id}", h.apiDeleteStationCounter)
 				r.Put("/process-nodes/{id}/counted-at", h.apiSetCountedAt)
 				r.Get("/process-nodes/{id}/countable", h.apiStationCountable)
+				// The end of the line: the sentence, the run-outs, the typed depth.
+				r.Get("/processes/{id}/end-of-line", h.apiEndOfLine)
+				r.Put("/processes/{id}/line-depth", h.apiSetLineDepth)
 				r.Get("/styles/{id}/delete-impact", h.apiStyleDeleteImpact)
 				r.Delete("/styles/{id}", h.apiDeleteStyle)
 				r.Post("/styles/{id}/restore", h.apiRestoreStyle)

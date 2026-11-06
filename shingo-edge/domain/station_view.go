@@ -184,6 +184,11 @@ type StationNodeView struct {
 	// <node>'s bin." The count is held (pending_uop_delta) and replays when the
 	// bin binds. Empty otherwise.
 	CountWaits string `json:"count_waits,omitempty"`
+	// EndOfLine is the end-of-line sentence at a consume position the cell's
+	// production counter counts, when the process has an N for it (measured
+	// at a changeover or typed): the cart is charged when the part is made,
+	// about N parts after it leaves the cart. Informational; nothing reads it.
+	EndOfLine string `json:"end_of_line,omitempty"`
 	// ContainmentReleaseTarget marks this node as a QUALITY CONTAINMENT
 	// position: non-empty when some producing claim names this node as its
 	// containment destination, and carries that claim's OutboundDestination —

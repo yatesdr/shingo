@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"shingo/protocol"
+	"shingo/protocol/clock"
 	"shingoedge/domain"
 	"shingoedge/store"
 	"shingoedge/store/lineside"
@@ -159,6 +160,17 @@ func (s *ProcessService) Delete(id int64) error {
 // (auto|prompt|off); unknown/empty ⇒ auto.
 func (s *ProcessService) SetChangeoverAutoArm(processID int64, mode string) error {
 	return s.db.SetChangeoverAutoArm(processID, mode)
+}
+
+// SetLineDepth types the parts that sit between a process's carts and its
+// end-of-line counter, recording who typed it and when (nil clears all
+// three). Shown in the end-of-line sentence where nothing is measured; it
+// decides nothing.
+func (s *ProcessService) SetLineDepth(processID int64, n *int64, by string) error {
+	if n != nil && *n < 0 {
+		return fmt.Errorf("a line depth is a number of parts, 0 or more")
+	}
+	return s.db.SetLineDepth(processID, n, by, clock.Now())
 }
 
 // SetGroupID assigns a process to a group, or unassigns it (pass nil)
