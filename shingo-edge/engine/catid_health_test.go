@@ -3,6 +3,8 @@
 package engine
 
 import (
+	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -194,6 +196,25 @@ func TestCatidHealth_IdentityNoneIsNotAnItem(t *testing.T) {
 		case catidKindIdentity, catidKindWrongPart, catidKindNoCATIDs, catidKindChangeoverWaits:
 			t.Errorf("identity none raised %s", kind)
 		}
+	}
+}
+
+// TestCatidHealth_ChangeoverWaitingNamesTheTargetAndItsGate: the PLC on the
+// open target's part is the changeover waiting, by its target and its id, with
+// the gate's blockers (none: an empty list, not null).
+func TestCatidHealth_ChangeoverWaitingNamesTheTargetAndItsGate(t *testing.T) {
+	t.Parallel()
+	eng, _, pid, a, b, cm := healthRig(t, "1001")
+	co, err := eng.changeoverService.Create(pid, &a, b, "test", "", nil, nil, nil, nil)
+	testutil.MustNoErr(t, err, "open a changeover to B")
+	setLive(cm, pid, "1002")
+	it, ok := healthKinds(t, eng, pid)[catidKindChangeoverWaits]
+	raw, err := json.Marshal(it.Data)
+	testutil.MustNoErr(t, err, "the item's data")
+	want := fmt.Sprintf(`{"catid":"1002","changeover_id":%d,"waiting_on":[]}`, co)
+	if !ok || it.Headline != "Changeover to STYLE-B waiting; the PLC is on its part 1002" || string(raw) != want ||
+		it.Detail != "the gate is green; it cuts over on the declaration" {
+		t.Errorf("item = %+v %s, want STYLE-B's, %s", it, raw, want)
 	}
 }
 

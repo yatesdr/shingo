@@ -68,9 +68,22 @@ func (h *Handlers) apiAddStyleCATID(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]string{"status": "ok"})
 }
 
-// apiPreviewCatidHold names the style, the nodes, the carts and the quantities
-// a Charge of the hold would draw, and why it would be refused.
-func (h *Handlers) apiPreviewCatidHold(w http.ResponseWriter, r *http.Request) {
+// apiChargeCatidHold and apiWriteOffCatidHold release a hold: the Charge draws
+// it from the carts under the CATID's style, the Write off charges nothing.
+// Both are latched; a second release is a conflict. The Charge's mode
+// "preview" writes nothing: it names the style, the nodes, the carts and the
+// quantities the Charge would draw, and why it would be refused; mode
+// "charge" (or none) charges.
+func (h *Handlers) apiChargeCatidHold(w http.ResponseWriter, r *http.Request) {
+	switch r.URL.Query().Get("mode") {
+	case "", "charge":
+		h.releaseCatidHold(w, r, h.orchestration.ChargeCatidHold)
+		return
+	case "preview":
+	default:
+		writeError(w, http.StatusBadRequest, "mode is preview or charge")
+		return
+	}
 	id, err := parseID(r, "id")
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid hold id")
@@ -82,13 +95,6 @@ func (h *Handlers) apiPreviewCatidHold(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, p)
-}
-
-// apiChargeCatidHold and apiWriteOffCatidHold release a hold: the Charge draws
-// it from the carts under the CATID's style, the Write off charges nothing.
-// Both are latched; a second release is a conflict.
-func (h *Handlers) apiChargeCatidHold(w http.ResponseWriter, r *http.Request) {
-	h.releaseCatidHold(w, r, h.orchestration.ChargeCatidHold)
 }
 
 func (h *Handlers) apiWriteOffCatidHold(w http.ResponseWriter, r *http.Request) {

@@ -312,7 +312,8 @@ function catidPin(pid, styleID, catid, name) {
 }
 
 async function catidCharge(holdID) {
-    const res = await fetch('/api/catid-holds/' + holdID + '/preview', { cache: 'no-store' });
+    const charge = '/api/catid-holds/' + holdID + '/charge';
+    const res = await fetch(charge + '?mode=preview', { method: 'POST', cache: 'no-store' });
     let p = null;
     try { p = await res.json(); } catch (_) { /* status only */ }
     // A preview that did not answer is said, not swallowed: the button
@@ -329,7 +330,7 @@ async function catidCharge(holdID) {
     openSheet('Charge ' + p.hold.qty + ' on CATID ' + p.hold.catid + '?',
         p.refusal ? p.refusal : 'charged under ' + p.style_name + ' to the carts below.',
         '<ul class="pd-note">' + rows + '</ul>',
-        'Charge', () => sheetSubmit('POST', '/api/catid-holds/' + holdID + '/charge', {}, refreshCatidHealth));
+        'Charge', () => sheetSubmit('POST', charge + '?mode=charge', {}, refreshCatidHealth));
 }
 
 function catidWriteOff(holdID) {

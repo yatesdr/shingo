@@ -220,8 +220,9 @@ type EngineOrchestration interface {
 	// StyleCATIDPinSaved tells the CATID monitor the style save changed a
 	// typed pin, so a value it already decided is decided again.
 	StyleCATIDPinSaved(processID int64)
-	// The holds ledger's verbs: what a Charge would draw, the Charge (under
-	// the one style that runs the CATID), and the Write off (nothing charged).
+	// The holds ledger's verbs: what a Charge would draw (the Charge route's
+	// preview mode), the Charge (under the one style that runs the CATID), and
+	// the Write off (nothing charged).
 	PreviewCatidHold(id int64) (*engine.CatidHoldPreview, error)
 	ChargeCatidHold(id int64, by string) error
 	WriteOffCatidHold(id int64, by string) error

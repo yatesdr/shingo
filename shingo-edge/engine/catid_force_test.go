@@ -274,21 +274,21 @@ func TestForcedCutover_FiredByTheMonitorNotThePoll(t *testing.T) {
 func TestForceHolds_TheRule(t *testing.T) {
 	t.Parallel()
 	start := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
-	ok := forceFacts{value: "1002", confirmedAt: start.Add(time.Minute), stable: true,
+	ok := catidFacts{value: "1002", confirmedAt: start.Add(time.Minute), stable: true,
 		tick: countedTick{catid: "1002", kind: plc.TickTarget, at: start.Add(2 * time.Minute)}}
 	if !forceHolds(ok, start) {
 		t.Fatal("the full condition does not hold")
 	}
-	for name, mut := range map[string]func(f *forceFacts){
-		"not stable":                      func(f *forceFacts) { f.stable = false },
-		"a baseline":                      func(f *forceFacts) { f.baseline = true },
-		"confirmed before the start":      func(f *forceFacts) { f.confirmedAt = start.Add(-time.Second) },
-		"confirmed in the start's second": func(f *forceFacts) { f.confirmedAt = start.Add(500 * time.Millisecond) },
-		"no counted stroke":               func(f *forceFacts) { f.tick = countedTick{} },
-		"a stroke counted off-plan":       func(f *forceFacts) { f.tick.kind = plc.TickOffPlan },
-		"a stroke on another part":        func(f *forceFacts) { f.tick.catid = "1003" },
-		"a stroke before the confirm":     func(f *forceFacts) { f.tick.at = start.Add(30 * time.Second) },
-		"a value that names no part":      func(f *forceFacts) { f.value, f.tick.catid = "-1", "-1" },
+	for name, mut := range map[string]func(f *catidFacts){
+		"not stable":                      func(f *catidFacts) { f.stable = false },
+		"a baseline":                      func(f *catidFacts) { f.baseline = true },
+		"confirmed before the start":      func(f *catidFacts) { f.confirmedAt = start.Add(-time.Second) },
+		"confirmed in the start's second": func(f *catidFacts) { f.confirmedAt = start.Add(500 * time.Millisecond) },
+		"no counted stroke":               func(f *catidFacts) { f.tick = countedTick{} },
+		"a stroke counted off-plan":       func(f *catidFacts) { f.tick.kind = plc.TickOffPlan },
+		"a stroke on another part":        func(f *catidFacts) { f.tick.catid = "1003" },
+		"a stroke before the confirm":     func(f *catidFacts) { f.tick.at = start.Add(30 * time.Second) },
+		"a value that names no part":      func(f *catidFacts) { f.value, f.tick.catid = "-1", "-1" },
 	} {
 		f := ok
 		mut(&f)

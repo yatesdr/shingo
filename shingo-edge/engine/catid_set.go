@@ -170,24 +170,24 @@ func (e *Engine) cutoverCATIDSets(proc *processes.Process, targetStyleID int64) 
 	return out, in
 }
 
-// plannedChangeoverTo names the open changeover's target style when its CATID
-// set holds v — the program changed ahead of a planned cutover — with the
-// gate's blockers as they stand. ("", nil) when no changeover is open or its
-// target does not run v.
-func (e *Engine) plannedChangeoverTo(processID int64, v string) (string, []string) {
+// plannedChangeoverTo returns the open changeover when its target style's
+// CATID set holds v — the program changed ahead of a planned cutover — with
+// the gate's blockers as they stand: the A5 notice and the strip's waiting
+// item. (nil, nil) when no changeover is open or its target does not run v.
+func (e *Engine) plannedChangeoverTo(processID int64, v string) (*processes.Changeover, []string) {
 	co, err := e.db.GetActiveProcessChangeover(processID)
 	if err != nil || co == nil {
-		return "", nil
+		return nil, nil
 	}
 	style, err := e.db.GetStyle(co.ToStyleID)
 	if err != nil || style == nil || !catidSetHas(e.styleCATIDSet(style), v) {
-		return "", nil
+		return nil, nil
 	}
 	_, blockers, err := e.canCompleteChangeover(co.ID)
 	if err != nil {
-		return style.Name, []string{"the gate could not be read"}
+		return co, []string{"the gate could not be read"}
 	}
-	return style.Name, domain.BlockersToReasons(blockers)
+	return co, domain.BlockersToReasons(blockers)
 }
 
 // suggestCATIDPin is the pin suggestion from a completed changeover's evidence
@@ -242,19 +242,19 @@ func (e *Engine) CheckStyleCATIDPin(processID, styleID int64, pin string) error 
 
 // AddStyleCATID writes v into a style's pin: the pin becomes the style's set
 // as it stands (its pin, or the catalog-derived set) plus v — a bare {v} would
-// evict a catalog set, since a pin IS the set. Refused when v names no part or
-// another live style holds it. The strip's one-click and the post-cutover
-// flag's Confirm write through it; by and evidence go to the log. A write
-// pokes the CATID monitor: the pin may make a value it already ruled inert
-// cut over or switch.
+// evict a catalog set, since a pin IS the set. Refused when v is not one value
+// that names a part, or by the typed pin's check (CheckStyleCATIDPin: another
+// live style holds it). The strip's one-click and the post-cutover flag's
+// Confirm write through it; by and evidence go to the log. A write pokes the
+// CATID monitor: the pin may make a value it already ruled inert cut over or
+// switch.
 func (e *Engine) AddStyleCATID(processID, styleID int64, v, by, evidence string) error {
 	v = strings.TrimSpace(v)
 	if !isIdentity(v) {
 		return fmt.Errorf("CATID %q names no part", v)
 	}
-	sets := e.processStyleCATIDSets(processID)
-	if other, ok := otherStyleHolding(sets, styleID, v); ok {
-		return fmt.Errorf("%w: CATID %s is %s's", ErrCATIDTaken, v, other)
+	if err := e.CheckStyleCATIDPin(processID, styleID, v); err != nil {
+		return err
 	}
 	style, err := e.db.GetStyle(styleID)
 	if err != nil || style == nil || style.ProcessID != processID {

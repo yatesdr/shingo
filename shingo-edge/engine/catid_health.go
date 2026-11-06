@@ -83,17 +83,15 @@ func (e *Engine) CatidHealth(processID int64) ([]CatidHealthItem, error) {
 	}
 	now := clock.Now()
 	sets := e.processStyleCATIDSets(processID)
-	co, _ := e.db.GetActiveProcessChangeover(processID)
 	var items []CatidHealthItem
 	if tag := identityTagOf(proc); tag != "" {
-		var facts identityFacts
+		var facts catidFacts
 		if e.catidMon != nil {
-			facts = e.catidMon.identityFacts(processID)
+			facts = e.catidMon.factsOf(processID, now)
 		}
 		items = append(items, identityItems(proc, tag, facts, now)...)
-		active, target := activeAndTarget(proc, sets, co)
-		items = append(items, e.partItems(proc, facts, sets, active, target, co)...)
-		items = append(items, noCATIDItems(active, target)...)
+		items = append(items, e.partItems(proc, facts, sets)...)
+		items = append(items, noCATIDItems(sets)...)
 		items = append(items, e.unmappedItems(processID, sets, now)...)
 	}
 	items = append(items, e.oneWayPairItems(processID)...)
@@ -140,26 +138,12 @@ func severityRank(s string) int {
 	}
 }
 
-// activeAndTarget picks the active style's and the open changeover's target's
-// entries out of the process-wide sets (nil when absent).
-func activeAndTarget(proc *processes.Process, sets []styleCATIDEntry, co *processes.Changeover) (active, target *styleCATIDEntry) {
-	for i := range sets {
-		if proc.ActiveStyleID != nil && sets[i].ID == *proc.ActiveStyleID {
-			active = &sets[i]
-		}
-		if co != nil && sets[i].ID == co.ToStyleID {
-			target = &sets[i]
-		}
-	}
-	return active, target
-}
-
 // identityItems: the identity tag read is failing — no good read within the
 // age the attribution trusts (tickIdentityFresh), after which a stroke is
 // attributed by today's rule (TestTick_StaleIdentityFallsBackToToday) — or the
 // monitor holds no state for a process that has one (a process given its
 // counter since the last start of a monitor that is not running).
-func identityItems(proc *processes.Process, tag string, f identityFacts, now time.Time) []CatidHealthItem {
+func identityItems(proc *processes.Process, tag string, f catidFacts, now time.Time) []CatidHealthItem {
 	data := map[string]any{"tag": proc.CounterPLCName + "." + tag}
 	if !f.monitored {
 		return []CatidHealthItem{{Kind: catidKindIdentity, Severity: CatidHealthAmber,
@@ -183,51 +167,41 @@ func identityItems(proc *processes.Process, tag string, f identityFacts, now tim
 }
 
 // partItems: the PLC's part is not the active style's — the open changeover's
-// target's (the program changed ahead of the cutover), or nobody's.
-func (e *Engine) partItems(proc *processes.Process, f identityFacts, sets []styleCATIDEntry, active, target *styleCATIDEntry,
-	co *processes.Changeover) []CatidHealthItem {
+// target's (the program changed ahead of the cutover: plannedChangeoverTo), or
+// nobody's.
+func (e *Engine) partItems(proc *processes.Process, f catidFacts, sets []styleCATIDEntry) []CatidHealthItem {
 	v := f.value
 	if !isIdentity(v) {
 		return nil
 	}
-	var out, in map[string]struct{}
-	if active != nil {
-		out = active.Set
+	var active styleCATIDEntry
+	for _, s := range sets {
+		if s.Active {
+			active = s
+		}
 	}
-	if target != nil {
-		in = target.Set
-	}
-	if catidSetHas(out, v) {
+	if catidSetHas(active.Set, v) {
 		return nil
 	}
-	if co != nil && catidSetHas(in, v) {
-		_, blockers, _ := e.canCompleteChangeover(co.ID)
-		waiting := make([]string, 0, len(blockers))
-		for _, b := range blockers {
-			waiting = append(waiting, b.Reason)
-		}
+	if co, waiting := e.plannedChangeoverTo(proc.ID, v); co != nil {
 		detail := "the gate is green; it cuts over on the declaration"
 		if len(waiting) > 0 {
 			detail = "waiting on " + strings.Join(waiting, "; ")
 		}
 		return []CatidHealthItem{{Kind: catidKindChangeoverWaits, Severity: CatidHealthAmber,
 			Headline: fmt.Sprintf("Changeover to %s waiting; the PLC is on its part %s", co.ToStyleName, v),
-			Detail:   detail, Data: map[string]any{"changeover_id": co.ID, "catid": v, "waiting_on": waiting}}}
+			Detail:   detail, Data: map[string]any{"changeover_id": co.ID, "catid": v, "waiting_on": append([]string{}, waiting...)}}}
 	}
-	if len(out) == 0 {
+	if len(active.Set) == 0 {
 		return nil
-	}
-	activeName := ""
-	if active != nil {
-		activeName = active.Name
 	}
 	n, _ := e.db.SumCounterDeltaSince(proc.ID, v, f.confirmedAt.UnixMilli())
 	since := "since restart"
 	countedAs := e.countedAs(proc, v, sets)
 	item := CatidHealthItem{Kind: catidKindWrongPart, Severity: CatidHealthAmber,
-		Headline: fmt.Sprintf("Wrong part: the PLC is on %s; %s runs %s", v, activeName, formatCATIDSet(out)),
+		Headline: fmt.Sprintf("Wrong part: the PLC is on %s; %s runs %s", v, active.Name, formatCATIDSet(active.Set)),
 		Data:     map[string]any{"catid": v, "parts": n, "counting_as": countedAs}}
-	if !f.confirmedBaseline && !f.confirmedAt.IsZero() {
+	if !f.baseline && !f.confirmedAt.IsZero() {
 		t := f.confirmedAt
 		item.Since = &t
 		since = "since " + t.Format("2006-01-02 15:04")
@@ -271,23 +245,23 @@ func (e *Engine) countedAs(proc *processes.Process, v string, sets []styleCATIDE
 
 // noCATIDItems: the active style or the open target has no CATIDs, so the
 // monitor cannot tell its part.
-func noCATIDItems(active, target *styleCATIDEntry) []CatidHealthItem {
+func noCATIDItems(sets []styleCATIDEntry) []CatidHealthItem {
 	var items []CatidHealthItem
-	for _, s := range []struct {
-		e        *styleCATIDEntry
-		role     string
-		severity string
-	}{{active, "running", CatidHealthAmber}, {target, "incoming", CatidHealthInfo}} {
-		if s.e == nil || len(s.e.Set) > 0 {
+	for _, s := range sets {
+		if !(s.Active || s.Target) || len(s.Set) > 0 {
 			continue
 		}
+		role, severity := "running", CatidHealthAmber
+		if !s.Active {
+			role, severity = "incoming", CatidHealthInfo
+		}
 		detail := "its parts have no CATID in the catalog; pin one"
-		if s.e.ProduceClaims == 0 {
+		if s.ProduceClaims == 0 {
 			detail = "the catalog cannot supply this one; confirm one from a changeover"
 		}
-		items = append(items, CatidHealthItem{Kind: catidKindNoCATIDs, Severity: s.severity,
-			Headline: fmt.Sprintf("The %s style %s has no CATIDs", s.role, s.e.Name), Detail: detail,
-			Data: map[string]any{"style_id": s.e.ID}})
+		items = append(items, CatidHealthItem{Kind: catidKindNoCATIDs, Severity: severity,
+			Headline: fmt.Sprintf("The %s style %s has no CATIDs", role, s.Name), Detail: detail,
+			Data: map[string]any{"style_id": s.ID}})
 	}
 	return items
 }

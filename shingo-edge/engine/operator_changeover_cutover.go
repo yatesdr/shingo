@@ -343,8 +343,8 @@ func (e *Engine) CutoverNowOffer(processID int64) (*CutoverOffer, error) {
 	if err != nil {
 		return nil, err
 	}
-	f, ok := cm.forceFactsOf(processID, clock.Now())
-	if !ok {
+	f := cm.factsOf(processID, clock.Now())
+	if !f.monitored {
 		return off, nil
 	}
 	out, in := e.cutoverCATIDSets(proc, changeover.ToStyleID)

@@ -504,8 +504,7 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger, backupSvc *backup.Servi
 				r.Put("/styles/{id}", h.apiUpdateStyle)
 				// The health strip's one-click: a CATID joins a style's set.
 				r.Post("/processes/{id}/styles/{sid}/catid", h.apiAddStyleCATID)
-				// The holds ledger: preview a Charge, Charge, Write off.
-				r.Get("/catid-holds/{id}/preview", h.apiPreviewCatidHold)
+				// The holds ledger: Charge (mode=preview asks first), Write off.
 				r.Post("/catid-holds/{id}/charge", h.apiChargeCatidHold)
 				r.Post("/catid-holds/{id}/write-off", h.apiWriteOffCatidHold)
 				// The station counters, and the position a stroke is counted at.

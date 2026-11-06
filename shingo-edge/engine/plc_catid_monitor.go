@@ -63,13 +63,18 @@ type countedTick struct {
 	at    time.Time
 }
 
-// forceFacts is what the counted-part force reads of a process's tracker.
-type forceFacts struct {
-	value       string // the confirmed value
+// catidFacts is what is read of a process's tracker outside the tick's own
+// state: the counted-part force's condition (forceHolds) and the health
+// strip's identity and part items.
+type catidFacts struct {
+	monitored   bool   // the monitor holds the process
+	value       string // the confirmed value; "" until one is confirmed
 	confirmedAt time.Time
 	baseline    bool // the value was standing at the first read, not a change
 	stable      bool // the declaration's stability: 3 reads over 60 s
 	tick        countedTick
+	lastOK      time.Time // the last good read (the snapshot's)
+	lastErr     string    // the last read's failure, "" after a good read
 }
 
 // forceHolds is the counted-part force's condition on a changeover started at
@@ -80,7 +85,7 @@ type forceFacts struct {
 // at minute zero: every leg just dispatched would become a straggler. started_at
 // is stored to the second, so a change confirmed within the start's second
 // does not count as after it (the gated declaration still applies).
-func forceHolds(f forceFacts, startedAt time.Time) bool {
+func forceHolds(f catidFacts, startedAt time.Time) bool {
 	return f.stable && !f.baseline && isIdentity(f.value) &&
 		!f.confirmedAt.Before(startedAt.Add(time.Second)) &&
 		countedSince(f, plc.TickTarget)
@@ -88,7 +93,7 @@ func forceHolds(f forceFacts, startedAt time.Time) bool {
 
 // countedSince reports whether a tick of kind on the confirmed value has been
 // counted since it was confirmed.
-func countedSince(f forceFacts, kind plc.TickKind) bool {
+func countedSince(f catidFacts, kind plc.TickKind) bool {
 	return f.tick.kind == kind && f.tick.catid == f.value && !f.tick.at.Before(f.confirmedAt)
 }
 
@@ -131,7 +136,7 @@ type catidState struct {
 	// confirmedAt is when lastConfirmed was confirmed; confirmedBaseline marks
 	// the first read after a start, whose value was already standing then.
 	// lastErr is the last read's failure, "" after a good read. The health
-	// strip reads all three (identityFacts).
+	// strip reads all three (catidFacts).
 	confirmedAt       time.Time
 	confirmedBaseline bool
 	lastErr           string
@@ -175,10 +180,11 @@ func (st *catidState) stableAt(now time.Time) bool {
 		st.armCount >= autoArmStableReads && now.Sub(st.armFirstSeen) >= autoArmStableWindow
 }
 
-// forceFacts reads the tracker for the counted-part force at now. Called with
-// cm.mu held.
-func (st *catidState) forceFacts(now time.Time) forceFacts {
-	f := forceFacts{confirmedAt: st.confirmedAt, baseline: st.confirmedBaseline, stable: st.stableAt(now)}
+// facts reads the tracker at now; the tick and the last good read are the
+// caller's (factsOf). Called with cm.mu held.
+func (st *catidState) facts(now time.Time) catidFacts {
+	f := catidFacts{monitored: true, confirmedAt: st.confirmedAt, baseline: st.confirmedBaseline,
+		stable: st.stableAt(now), lastErr: st.lastErr}
 	if st.seenValue {
 		f.value = st.lastConfirmed
 	}
@@ -375,35 +381,6 @@ func (cm *catidMonitor) reprime(processID int64) {
 	}
 	cm.snapshots.Store(processID, &catidSnapshot{observed: observed})
 	log.Printf("plc-catid: monitoring process %d (%s) on %s.%s", p.ID, p.Name, p.CounterPLCName, tag)
-}
-
-// identityFacts is what the health strip reads of the monitor for a process.
-type identityFacts struct {
-	monitored         bool
-	value             string // the confirmed value; "" until one is confirmed
-	confirmedAt       time.Time
-	confirmedBaseline bool
-	lastOK            time.Time
-	lastErr           string
-}
-
-// identityFacts returns the monitor's facts for the process. Takes cm.mu
-// briefly: an HTTP read, never the poll.
-func (cm *catidMonitor) identityFacts(processID int64) identityFacts {
-	cm.mu.Lock()
-	st, ok := cm.states[processID]
-	var f identityFacts
-	if ok {
-		f = identityFacts{monitored: true, confirmedAt: st.confirmedAt, confirmedBaseline: st.confirmedBaseline, lastErr: st.lastErr}
-		if st.seenValue {
-			f.value = st.lastConfirmed
-		}
-	}
-	cm.mu.Unlock()
-	if snap, ok := cm.snapshot(processID); ok {
-		f.lastOK = snap.lastOK
-	}
-	return f
 }
 
 // forget drops a deleted process from the monitor.
@@ -712,7 +689,11 @@ func (cm *catidMonitor) onConfirmedCATID(processID int64, st *catidState, isChan
 	// part is NONE of them (not just != a single value — a two-position style runs
 	// two parts, and either side is fine). Empty set = inert (never alert).
 	if ok && len(set) > 0 && !catidSetHas(set, st.lastConfirmed) {
-		toStyle, waiting := cm.eng.plannedChangeoverTo(processID, st.lastConfirmed)
+		toStyle := ""
+		co, waiting := cm.eng.plannedChangeoverTo(processID, st.lastConfirmed)
+		if co != nil {
+			toStyle = co.ToStyleName
+		}
 		log.Printf("CATID mismatch: process %s (process %d) live CATID %q not among active style %q parts {%s} — outgoing-style relief is blocked",
 			st.processName, processID, st.lastConfirmed, styleName, formatCATIDSet(set))
 		cm.eng.Events.Emit(Event{Type: EventCATIDMismatch, Payload: CATIDMismatchEvent{
@@ -873,7 +854,7 @@ func (cm *catidMonitor) decideAutoArm(processID int64, st *catidState, v string,
 	if !cutoverPredicate(v, out, in) {
 		return nil
 	}
-	f := st.forceFacts(now)
+	f := st.facts(now)
 	f.tick = cm.lastCountedTick(processID)
 	return &autoCutoverIntent{
 		processID:    processID,
@@ -904,7 +885,7 @@ func (cm *catidMonitor) decideAutoArm(processID int64, st *catidState, v string,
 // switched" — is raised once per confirmed value (raiseOnce), however often a
 // poke decides it again. Called with cm.mu held; light DB reads only.
 func (cm *catidMonitor) decideAutoSwitch(proc *processes.Process, st *catidState, v string, now time.Time) *autoCutoverIntent {
-	f := st.forceFacts(now)
+	f := st.facts(now)
 	if f.baseline || !f.confirmedAt.After(cm.landedAt(proc.ID)) {
 		return nil
 	}
@@ -965,18 +946,21 @@ func (cm *catidMonitor) lastCountedTick(processID int64) countedTick {
 	return countedTick{}
 }
 
-// forceFactsOf reads a process's force facts at now for a caller outside the
-// tick (the station's offer). Takes cm.mu briefly.
-func (cm *catidMonitor) forceFactsOf(processID int64, now time.Time) (forceFacts, bool) {
+// factsOf reads a process's facts at now for a caller outside the tick (the
+// strip, the station's offer); the zero value, not monitored, when the
+// monitor does not hold it. Takes cm.mu briefly: an HTTP read, never the poll.
+func (cm *catidMonitor) factsOf(processID int64, now time.Time) catidFacts {
 	cm.mu.Lock()
-	st, ok := cm.states[processID]
-	var f forceFacts
-	if ok {
-		f = st.forceFacts(now)
+	var f catidFacts
+	if st, ok := cm.states[processID]; ok {
+		f = st.facts(now)
 	}
 	cm.mu.Unlock()
 	f.tick = cm.lastCountedTick(processID)
-	return f, ok
+	if snap, ok := cm.snapshot(processID); ok {
+		f.lastOK = snap.lastOK
+	}
+	return f
 }
 
 // cutoverPredicate is the auto-cutover's decision on a stable CATID v: v names

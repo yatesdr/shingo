@@ -57,7 +57,6 @@ func TestCatidHealthRoute_SummaryPerProcess(t *testing.T) {
 func catidHoldDo(t *testing.T, method, path string) (int, []byte) {
 	t.Helper()
 	h, r := newTestHandlers(t)
-	r.Get("/api/catid-holds/{id}/preview", h.apiPreviewCatidHold)
 	r.Post("/api/catid-holds/{id}/charge", h.apiChargeCatidHold)
 	r.Post("/api/catid-holds/{id}/write-off", h.apiWriteOffCatidHold)
 	req := httptest.NewRequest(method, path, nil)
@@ -66,13 +65,21 @@ func catidHoldDo(t *testing.T, method, path string) (int, []byte) {
 	return rec.Code, rec.Body.Bytes()
 }
 
-// TestCatidHoldRoutes: the preview, the Charge and the Write off; a released
-// hold is a conflict, a bad id a bad request.
+// TestCatidHoldRoutes: the Charge's preview, the Charge and the Write off; a
+// released hold is a conflict, a bad id or mode a bad request. The preview
+// charges nothing: a released hold's preview answers its refusal.
 func TestCatidHoldRoutes(t *testing.T) {
-	code, body := catidHoldDo(t, http.MethodGet, "/api/catid-holds/1/preview")
+	code, body := catidHoldDo(t, http.MethodPost, "/api/catid-holds/1/charge?mode=preview")
 	var p map[string]any
 	if code != http.StatusOK || json.Unmarshal(body, &p) != nil || p["style_name"] != "S1" || p["refusal"] != nil {
 		t.Errorf("preview 1: %d %s, want style S1 and no refusal", code, body)
+	}
+	code, body = catidHoldDo(t, http.MethodPost, "/api/catid-holds/2/charge?mode=preview")
+	if code != http.StatusOK || json.Unmarshal(body, &p) != nil || p["refusal"] == nil {
+		t.Errorf("preview 2: %d %s, want its refusal", code, body)
+	}
+	if code, _ := catidHoldDo(t, http.MethodPost, "/api/catid-holds/1/charge?mode=later"); code != http.StatusBadRequest {
+		t.Errorf("an unknown mode: %d, want 400", code)
 	}
 	for _, verb := range []string{"charge", "write-off"} {
 		if code, body := catidHoldDo(t, http.MethodPost, "/api/catid-holds/1/"+verb); code != http.StatusOK {
