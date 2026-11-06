@@ -40,6 +40,20 @@ check('a process with its items lists each with its verbs', () => {
     assert.ok(html.indexOf('data-open="3"') > 0, 'the name opens the process');
 });
 
+check('a slot the PLC counts on carries the click that counts it', () => {
+    const html = H.listHTML([{ process_id: 7, name: 'CELL-C', worst: 'red', count: 2, headline: 'x' }], {
+        7: [
+            { kind: 'counter_slot_idle', severity: 'red', headline: 'The PLC counts on Prod_Counter_02',
+                data: { tag: 'MES_Cell.Prod_Counter_02', slot: 2, catid: '1002' } },
+            { kind: 'counter_slot_lockstep', severity: 'info', headline: 'a second counter of the same stroke',
+                data: { tag: 'MES_Cell.Prod_Counter_03', slot: 3, catid: '1003' } },
+        ],
+    });
+    assert.ok(html.indexOf('data-act="ch-repoint" data-pid="7" data-tag="MES_Cell.Prod_Counter_02"') > 0, html);
+    assert.ok(html.indexOf('Count Prod_Counter_02') > 0, 'the button names the slot');
+    assert.strictEqual(html.split('data-act="ch-repoint"').length, 2, 'the lockstep line suggests nothing');
+});
+
 check('one block per process, toned by its worst item', () => {
     const html = H.listHTML([
         { process_id: 3, name: 'CELL-A', worst: 'red', count: 3, headline: 'Wrong part: the PLC is on 1002' },

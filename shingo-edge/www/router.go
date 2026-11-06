@@ -446,6 +446,9 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger, backupSvc *backup.Servi
 				r.Get("/processes", h.apiListProcesses)
 				r.Post("/processes", h.apiCreateProcess)
 				r.Put("/processes/{id}", h.apiUpdateProcess)
+				// The strip's one click on a slot the PLC counts on: the counter edit
+				// to that tag, everything else kept.
+				r.Post("/processes/{id}/counter", h.apiRepointProcessCounter)
 				r.Delete("/processes/{id}", h.apiDeleteProcess)
 				r.Put("/processes/{id}/active-style", h.apiSetActiveStyle)
 				r.Get("/processes/{id}/styles", h.apiListProcessStyles)

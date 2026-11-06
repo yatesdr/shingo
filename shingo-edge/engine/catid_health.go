@@ -90,6 +90,9 @@ func (e *Engine) CatidHealth(processID int64) ([]CatidHealthItem, error) {
 			facts = e.catidMon.factsOf(processID, now)
 		}
 		items = append(items, identityItems(proc, tag, facts, now)...)
+		if e.catidMon != nil {
+			items = append(items, slotItems(proc, e.catidMon.slotFactsOf(processID))...)
+		}
 		items = append(items, e.partItems(proc, facts, sets)...)
 		items = append(items, noCATIDItems(sets)...)
 		items = append(items, e.unmappedItems(processID, sets, now)...)

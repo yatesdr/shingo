@@ -8,7 +8,7 @@
 // process with any item, toned by its worst one, each item with the verbs
 // that resolve it: pin an
 // unmapped CATID to a style (the suggestion, or a picked one), Charge or Write
-// off a hold. A classic script, like desktop-bodies.js, so its Node test loads
+// off a hold, count the slot the PLC counts on. A classic script, like desktop-bodies.js, so its Node test loads
 // it as CommonJS.
 (function () {
     'use strict';
@@ -39,6 +39,11 @@
                     esc(d.catid) + '">Pin</button>';
             }
             return out;
+        }
+        if (it.kind === 'counter_slot_idle') {
+            const slot = String(d.tag || '').split('.').pop();
+            return '<button class="pd-btn" data-act="ch-repoint" data-pid="' + esc(pid) + '" data-tag="' +
+                esc(d.tag) + '">Count ' + esc(slot) + '</button>';
         }
         if (it.kind === 'held') {
             return '<button class="pd-btn" data-act="ch-charge" data-hold="' + esc(d.hold_id) + '">Charge</button>' +

@@ -5,6 +5,7 @@ package engine
 
 import (
 	"testing"
+	"time"
 
 	"shingo/protocol/testutil"
 	"shingoedge/plc"
@@ -179,5 +180,34 @@ func TestStation_PileDrainsUnderTheTicksStyle(t *testing.T) {
 	}
 	if left != 1 {
 		t.Errorf("outgoing pile = %d, want 1 (4 less the 3 today's strokes drew)", left)
+	}
+}
+
+// TestStationStroke_NeverPokesTheCutover: a station stroke on the incoming
+// part, attributed to the target, never reaches the counted-part force: the
+// station emit records no counted tick and pokes nothing, so the changeover
+// stays open behind its red gate. Only the production counter's stroke forces
+// (TestForcedCutover_CountedIncomingPartCompletesPastARedGate).
+func TestStationStroke_NeverPokesTheCutover(t *testing.T) {
+	t.Parallel()
+	eng, db, pid, from, coID, _, cm := forceRig(t, "auto")
+	st := changedTo(cm, pid, "1002", time.Now().Add(-5*time.Minute))
+	settle(cm, pid, st, "1002", time.Now())
+	lc := stationCounter(t, db, pid)
+	em := &plcEmitter{bus: eng.Events, eng: eng}
+	id := em.AttributeTick(pid, from)
+	if id.Kind != plc.TickTarget {
+		t.Fatalf("attribution = %+v, want the target's", id)
+	}
+	em.EmitLineCounterDelta(lc, pid, 1, "", id)
+	if n := drainPokes(eng, cm); n != 0 {
+		t.Errorf("a station stroke poked the cutover %d time(s)", n)
+	}
+	if got := cm.lastCountedTick(pid); got != (countedTick{}) {
+		t.Errorf("a station stroke was recorded as the counted tick: %+v", got)
+	}
+	tickAutoCutover(cm, pid, st, "1002", true, time.Now().Add(61*time.Second))
+	if co := changeoverRow(t, db, coID); co.State.IsTerminal() {
+		t.Errorf("a station stroke forced the changeover: %s by %q", co.State, co.TriggeredBy)
 	}
 }

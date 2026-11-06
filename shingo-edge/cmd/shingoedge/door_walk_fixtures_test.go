@@ -186,6 +186,11 @@ func routeFixtures() map[string]routeFixture {
 			m := w.api("POST", "/api/processes", map[string]any{"name": w.uniq("WALK-DEL")})
 			return "/api/processes/" + id(num(w, m, "id")), nil
 		})},
+		// The walk's press has no counter PLC: the slot re-point refuses, and
+		// writes nothing.
+		"POST /api/processes/{id}/counter": {want: 400, req: on(func(w *walk) (string, any) {
+			return pr(w) + "/counter", map[string]any{"tag_name": "MES_Walk.Prod_Counter_02"}
+		})},
 		"PUT /api/processes/{id}/active-style": {want: 200, req: on(func(w *walk) (string, any) {
 			return pr(w) + "/active-style", map[string]any{"style_id": w.activeStyle()}
 		})},

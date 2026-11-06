@@ -311,6 +311,15 @@ function catidPin(pid, styleID, catid, name) {
             { catid: catid, evidence: 'the health strip' }, refreshCatidHealth));
 }
 
+// catidRepoint is the slot item's click: the process counts on the slot the
+// PLC counts on, through the counter edit (refused while a changeover is
+// open); its part identity follows to that slot's CATID.
+function catidRepoint(pid, tag) {
+    openSheet('Count ' + tag + '?',
+        'the process counts on this slot from its next read, and its part identity follows to that slot’s CATID.', '',
+        'Count', () => sheetSubmit('POST', '/api/processes/' + pid + '/counter', { tag_name: tag }, refreshCatidHealth));
+}
+
 async function catidCharge(holdID) {
     const charge = '/api/catid-holds/' + holdID + '/charge';
     const res = await fetch(charge + '?mode=preview', { method: 'POST', cache: 'no-store' });
@@ -7853,6 +7862,7 @@ function onClick(e) {
                 if (pick) catidPin(btn.dataset.pid, pick.value, btn.dataset.catid, pick.selectedOptions[0].textContent);
                 return;
             }
+            case 'ch-repoint': catidRepoint(btn.dataset.pid, btn.dataset.tag); return;
             case 'ch-charge': catidCharge(btn.dataset.hold); return;
             case 'ch-writeoff': catidWriteOff(btn.dataset.hold); return;
             case 'save': saveFlow(); return;

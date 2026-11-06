@@ -220,6 +220,63 @@ func (h *Handlers) apiUpdateProcess(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]string{"status": "ok"})
 }
 
+// apiRepointProcessCounter moves the process's counter to tag_name on the
+// same PLC, keeping its enabled flag and its identity settings: the strip's
+// click on a slot the PLC counts on. It is the counter edit (refused while a
+// changeover is open, the tag's read checked, the point re-seeded, the CATID
+// monitor re-primed on the identity derived from the new slot).
+func (h *Handlers) apiRepointProcessCounter(w http.ResponseWriter, r *http.Request) {
+	id, err := parseID(r, "id")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid ID")
+		return
+	}
+	var req struct {
+		TagName string `json:"tag_name"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if strings.TrimSpace(req.TagName) == "" {
+		writeError(w, http.StatusBadRequest, "tag_name is required")
+		return
+	}
+	list, err := h.engine.ProcessService().List()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	found := -1
+	for i := range list {
+		if list[i].ID == id {
+			found = i
+		}
+	}
+	if found < 0 {
+		writeError(w, http.StatusNotFound, "no such process")
+		return
+	}
+	p := list[found]
+	if p.CounterPLCName == "" {
+		writeError(w, http.StatusBadRequest, p.Name+" has no counter PLC; a slot is a tag on the counter's PLC")
+		return
+	}
+	if err := h.orchestration.EditProcessCounter(id, domain.ProcessCounterEdit{
+		PLCName: p.CounterPLCName, TagName: req.TagName, Enabled: p.CounterEnabled,
+		IdentityTagName: p.IdentityTagName, IdentityNone: p.IdentityNone,
+	}); err != nil {
+		status := http.StatusBadRequest
+		if errors.Is(err, engine.ErrChangeoverActive) {
+			status = http.StatusConflict
+		}
+		writeError(w, status, err.Error())
+		return
+	}
+	h.requestBackup("process-counter-repointed")
+	writeJSON(w, map[string]string{"status": "ok"})
+}
+
 func (h *Handlers) apiDeleteProcess(w http.ResponseWriter, r *http.Request) {
 	id, err := parseID(r, "id")
 	if err != nil {

@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"shingo/protocol/lockcheck"
@@ -267,6 +268,10 @@ type catidMonitor struct {
 	// (processID → countedTick), written by the poll with no lock
 	// (noteCountedTick) and read by the decisions.
 	countedTicks sync.Map
+	// slots is the slot watch's last pass (processID → *slotFacts), swapped
+	// whole by the watch's own goroutine and read with no lock
+	// (catid_slot_watch.go). The tick never touches it.
+	slots atomic.Pointer[map[int64]*slotFacts]
 	// completeCutover is the seam for the auto-cutover fire, defaulting to
 	// eng.completeCutoverLocked (wired in startCatidMonitor); tests inject a
 	// spy. Invoked OUTSIDE cm.mu (gate/DB/Core work must not run under the tick
@@ -277,8 +282,8 @@ type catidMonitor struct {
 // startCatidMonitor primes per-process state from the database (every
 // counter-bound process whose CATID tag can be derived), enables WarLink
 // publishing on each CATID tag, stores the monitor on the engine so the guard
-// can query it, and spawns the polling goroutine. Safe to call with no eligible
-// processes — the goroutine just polls an empty map.
+// can query it, and spawns the polling goroutine and the slot watch's. Safe
+// to call with no eligible processes — the goroutine just polls an empty map.
 func (e *Engine) startCatidMonitor() {
 	if e.plcMgr == nil {
 		return
@@ -289,6 +294,7 @@ func (e *Engine) startCatidMonitor() {
 	e.catidMon = cm
 	e.tickMonitor.Store(cm)
 	go cm.run()
+	go cm.runSlotWatch()
 }
 
 // prime enumerates the processes with an identity tag (identityTagOf: none for
