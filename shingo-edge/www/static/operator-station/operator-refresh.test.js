@@ -760,7 +760,8 @@ eq(['order-update', 'bins', 'supply-refusal', 'sourcing', 'containment', 'materi
 
     fire('catid-auto-cutover', { process_id: 1, process_name: 'PRESS-1', changeover_id: 5, new_catid: 'CAT-2' });
     await advance(600);
-    eq(alertTexts(), ['Cutover was pressed automatically.'], 'the auto-cutover notice');
+    eq(alertTexts(), ['Changeover #5 on PRESS-1 was cut over automatically: the process is on CATID CAT-2.'],
+        'the auto-cutover notice names the changeover, the process and the part');
     await tapAlert('Dismiss');
 
     // A board of loader tiles draws none of the three.

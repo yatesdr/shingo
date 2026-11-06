@@ -42,6 +42,7 @@
                     <th>Started</th>
                     <th>Completed</th>
                     <th>Called By</th>
+                    <th>Completed By</th>
                 </tr>
             </thead>
             <tbody>
@@ -53,6 +54,7 @@
                     <td>{{formatTime .StartedAt}}</td>
                     <td>{{formatTimePtr .CompletedAt}}</td>
                     <td>{{if .CalledBy}}{{.CalledBy}}{{else}}--{{end}}</td>
+                    <td title="{{.TriggeredBy}}">{{triggeredByLabel .TriggeredBy}}</td>
                 </tr>
                 {{end}}
             </tbody>

@@ -10,9 +10,9 @@ import (
 // last-seen and a count.
 //
 // NOBODY HAS EVER BEEN ABLE TO SAY WHAT A PLC ACTUALLY SENDS, and every
-// argument about the wrong-part guard has had to work around that. The 144
-// values in Core's payload_manifest were the only persisted cat ids anywhere,
-// and they were typed by people, not read off a line. A live reading was
+// argument about the wrong-part guard has had to work around that. The cat
+// ids persisted anywhere else (Core's parts.catid, the payload catalog the Edge
+// syncs, a style's pin) are typed by people, not read off a line. A live reading was
 // consulted, compared, logged and dropped — the mismatch path stored one on
 // process_changeovers.verify_live_catid, but only when the reading DISAGREED,
 // so the record was of exceptions and never of the norm.
@@ -21,12 +21,14 @@ import (
 // flicker on the wire does not become a fact — including the ones that match,
 // which are the ones that certify the configuration is right.
 //
-// IT DECIDES ONE CONSERVATIVE THING. It is evidence for a person: the health
-// strip lists the values no style holds, with the styles to pin them to. The
-// one decision read from it is whether a style's set is "proven" (holds a value
-// the process has emitted), and that can only suppress a hold, never cause a
-// charge or a switch — a wrong row cannot cause a wrong action. 0 and negative
-// values are recorded as sent; readers filter them (isIdentity).
+// IT DECIDES ONE THING. It is evidence for a person: the health strip lists
+// the values no style holds, with the styles to pin them to. The one decision
+// read from it is whether the running style's set is "proven" (holds a value
+// the process has emitted). Unproven, every stroke stays today's; proven, a
+// stroke on another style's part is attributed off-plan (charged there or
+// held, and it can switch the process to a pinned style) — so a missing row
+// only keeps things as they were. 0 and negative values are recorded as sent;
+// readers filter them (isIdentity).
 func (db *DB) RecordPLCCATIDObservation(processID int64, plcName, catid string) error {
 	if processID <= 0 || catid == "" {
 		return nil

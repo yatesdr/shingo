@@ -24,8 +24,9 @@ import (
 // pile.
 //
 // "Cutover" is every active-style flip on the process: the changeover's
-// (completeCutover) and the admin's (SetProcessActiveStyle). Both route
-// through the one flip verb below (flipActiveStyle). It writes the style and
+// (completeCutover), the admin's (SetProcessActiveStyle) and the automatic
+// switch's (autoSwitchStyle). All route through the one flip verb below
+// (flipActiveStyle). It writes the style and
 // syncs the reporting point, each its own statement; then, in one transaction,
 // strands the piles, clears the departing part's produce holds and points
 // every node the incoming style claims at that claim; then publishes

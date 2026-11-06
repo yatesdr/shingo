@@ -102,9 +102,9 @@ func catidSetFromIdentity(row processes.StylePartIdentity) map[string]struct{} {
 }
 
 // derivedCATIDSetFromIdentity is the batch form of derivedCATIDSet: the union
-// of the row's produce claims' catalog values, ignoring any manual pin. The
-// pin-retirement pass needs the derived set on its own to compare the pin
-// against.
+// of the row's produce claims' catalog values, used when the style has no
+// manual pin. (A pin-retirement pass that would compare a pin against it was
+// planned and never built.)
 func derivedCATIDSetFromIdentity(row processes.StylePartIdentity) map[string]struct{} {
 	set := map[string]struct{}{}
 	for _, v := range row.CatalogCATIDs {
@@ -301,9 +301,10 @@ type styleCATIDMatch struct {
 
 // stylesForCATID returns EVERY style in the process whose part-identity set
 // contains catid. The multiplicity is the point: exactly one = an unambiguous
-// target (auto-arm may arm to it); more than one = ambiguous (auto-arm must NOT
-// guess — it falls back to the prompt); zero = maps to no configured style. This
-// is why the uniqueness assumption is checked in code, not assumed.
+// target (the prompt pre-fills it; the automatic switch moves to it when its set
+// is a pin); more than one = ambiguous (nothing guesses — auto falls back to the
+// prompt, decideAutoSwitch); zero = maps to no configured style. This is why the
+// uniqueness assumption is checked in code, not assumed.
 func (e *Engine) stylesForCATID(processID int64, catid string) []styleCATIDMatch {
 	if catid == "" {
 		return nil

@@ -454,9 +454,24 @@ function handleCatidChangePrompt(data) {
     ]);
 }
 
+// autoCutoverWords is the automatic cutover's notice, from the event's own
+// fields: which changeover, on what part, and — when it completed past its
+// gate — what it left running. Pure; pinned by operator-auto-cutover.test.js,
+// which reads the Go event's JSON.
+function autoCutoverWords(data) {
+    const name = data.process_name || 'the process';
+    let s = 'Changeover ' + (data.changeover_id ? '#' + data.changeover_id + ' ' : '') + 'on ' + name +
+        ' was cut over automatically: the process is on CATID ' + (data.new_catid || 'unknown') + '.';
+    if (data.forced) {
+        const left = (data.blockers || []).map(function (b) { return b.reason; }).filter(Boolean);
+        s += ' It completed past its gate' + (left.length ? '; still running: ' + left.join('; ') : '') + '.';
+    }
+    return s;
+}
+
 function handleCatidAutoCutover(data) {
     if (!forThisStation(data)) return;
-    showAlert('catid-auto-cutover', 'plain', 'Cutover was pressed automatically.', [dismissButton('catid-auto-cutover')]);
+    showAlert('catid-auto-cutover', 'plain', autoCutoverWords(data), [dismissButton('catid-auto-cutover')]);
 }
 
 // ── the post-cutover part-id flag ──

@@ -111,6 +111,10 @@ type Manager struct {
 
 	DebugLog DebugLogFunc
 
+	// nonNumeric marks the reporting points whose last read was not a number
+	// (rpID → struct{}), so the log says it once a streak.
+	nonNumeric sync.Map
+
 	warlinkConnected bool
 	warlinkError     error
 
@@ -729,8 +733,17 @@ func (m *Manager) pollReportingPoint(rp counters.ReportingPoint) bool {
 
 	newCount, ok := toInt64(val)
 	if !ok {
+		// A read that is not a number counts nothing; say so, once a streak,
+		// and raise it as a read error each pass as a failed read is.
+		msg := fmt.Sprintf("counter read is not a number: %T %v", val, val)
+		if _, seen := m.nonNumeric.LoadOrStore(rp.ID, struct{}{}); !seen {
+			log.Printf("read tag %s/%s (rp %d): %s — nothing is counted until it reads a number", rp.PLCName, rp.TagName, rp.ID, msg)
+		}
+		m.DebugLog.Log("tag read not numeric: %s/%s rp=%d: %s", rp.PLCName, rp.TagName, rp.ID, msg)
+		m.emitter.EmitCounterReadError(rp.ID, rp.PLCName, rp.TagName, msg)
 		return false
 	}
+	m.nonNumeric.Delete(rp.ID)
 
 	m.emitter.EmitCounterRead(rp.ID, rp.PLCName, rp.TagName, newCount)
 

@@ -299,8 +299,9 @@ func (e *Engine) guardStyleTransition(node *processes.Node, claim *processes.Nod
 }
 
 // guardCatidMismatch refuses a material request for a line claim when the
-// press's live PLC part identity (WarLink CATID_01) diverges from the active
-// style's expected_catid (A5, hop 2026-07-23). It is a SIBLING trigger to
+// press's live PLC part identity (WarLink CATID_01) is none of the active
+// style's part-identity set — its pin, else its parts' catalog CATIDs (A5,
+// 2026-07-23). It is a SIBLING trigger to
 // guardStyleTransition for the same outcome — block outgoing-style relief — but
 // keyed on ground truth (the physical part on the press) rather than an armed
 // changeover. In the 07-23 incident the press was physically KK21 while shingo
@@ -308,8 +309,9 @@ func (e *Engine) guardStyleTransition(node *processes.Node, claim *processes.Nod
 // and refuses the relief before it can strand the line.
 //
 // Inert by construction unless BOTH sides are known:
-//   - The active style must have expected_catid configured. Empty = never
-//     block (unconfigured guard). This is the documented "inert on empty" rule.
+//   - The active style's set must be non-empty (a pin, or catalog CATIDs on its
+//     produce parts). Empty = never block. This is the documented "inert on
+//     empty" rule.
 //   - A live CATID must have been observed and debounced. No monitor, no
 //     observation yet, or an unreadable tag ⇒ fail-open (no block), matching
 //     guardStyleTransition's read-blip policy: a transient PLC read must not

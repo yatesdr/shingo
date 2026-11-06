@@ -57,27 +57,24 @@ const sseNudgeWindow = 250 * time.Millisecond
 // capacity reserved for state changes.
 //
 // Before the split every topic shared one 64-slot queue and the fan-out
-// dropped whatever arrived once it was full. These two are the bulk of the
-// traffic, so what they evicted was everything else — including order-update,
-// which the operator board rebuilds on at once. The board does not poll: a
-// durable frame a client cannot take evicts the client (fanOut), and its
-// reconnect refetches. Losing one of these costs a gap in a diagnostic view.
+// dropped whatever arrived once it was full. The debug feed is the bulk of the
+// traffic when it is on, so what it evicted was everything else — including
+// order-update, which the operator board rebuilds on at once. The board does
+// not poll: a durable frame a client cannot take evicts the client (fanOut),
+// and its reconnect refetches. Losing one costs a gap in a diagnostic view.
 //
-// Both are safe to shed because neither is authoritative:
-//   - counter-read is the raw PLC poll reading. The count the HMI acts on
-//     arrives as counter-update (EventCounterDelta / EventUOPAdjusted), which
-//     stays on the durable queue.
-//   - debug-log is the debug-console feed, wired from dbg.SetOnEntry in
-//     router.go. It reaches only a client that asked for it (sseDebugTopic);
-//     with --log-debug on it is pure volume, and logging should not be able
-//     to degrade the operator UI.
+// debug-log is safe to shed because it is not authoritative: the debug-console
+// feed, wired from dbg.SetOnEntry in router.go, reaching only a client that
+// asked for it (sseDebugTopic); with --log-debug on it is pure volume, and
+// logging should not be able to degrade the operator UI. (counter-read was the
+// other entry; the raw PLC reading is no longer broadcast at all — no page
+// read it — so it has no topic to shed. See the EventCounterRead arm below.)
 //
 // Do NOT add a state change here to quieten a drop log. Anything the operator
 // or the engine acts on belongs on the durable queue, including the per-PLC
 // plc-status and the plc-health-alert / plc-health-recover pair.
 var lossySSETopics = map[string]bool{
-	"counter-read": true,
-	"debug-log":    true,
+	"debug-log": true,
 }
 
 // sseDebugTopic is delivered only to a client that connects with ?debug=1
@@ -573,8 +570,9 @@ func (h *EventHub) SetupEngineListeners(eng *engine.Engine) {
 			}
 		case engine.EventCATIDMismatch:
 			// A5: wrong physical part on a press vs the active style. Distinct
-			// event so the HMI can raise a sticky station alert naming the
-			// press + both CATID values (outgoing relief is already blocked).
+			// event so the HMI can raise a station alert naming the press and
+			// both CATID values, shown until the operator dismisses it
+			// (outgoing relief is already blocked).
 			if p, ok := evt.Payload.(engine.CATIDMismatchEvent); ok {
 				sseEvt = SSEEvent{Type: "catid-mismatch", Data: p}
 			}

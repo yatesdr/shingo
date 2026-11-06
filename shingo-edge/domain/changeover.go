@@ -17,13 +17,16 @@ type Changeover struct {
 	StartedAt   time.Time       `json:"started_at"`
 	CompletedAt *time.Time      `json:"completed_at,omitempty"`
 	// TriggeredBy records what drove the row to completed. Empty while in
-	// progress and on a cancel. "manual" is the operator's CUTOVER,
-	// "auto-catid" the CATID monitor's declaration, "admin-switch" the
-	// admin's "Mark as running" (including the record row of a switch
-	// with no changeover), "restore" the boot restore of a row flipped
-	// before a stop; a completion past a red gate appends "-forced" and
-	// writes the overridden blockers to Notes. Rows written before
-	// 2026-11 carry "operator-hmi" or "auto-task-terminal". Audit-only.
+	// progress and on a cancel. "manual" is the operator's CUTOVER (and the
+	// station's one-tap "Cut over now"), "auto-catid" the CATID monitor's
+	// declaration (and its counted-part force), "admin-switch" the admin's
+	// "Mark as running" (including the record row of a switch with no
+	// changeover), "auto-catid-flip" the automatic switch with no changeover,
+	// "restore" the boot restore of a row flipped before a stop; a
+	// completion past a red gate appends "-forced" and writes the overridden
+	// blockers to Notes. Rows written before 2026-11 carry "operator-hmi" or
+	// "auto-task-terminal". The history panel labels each (www
+	// triggeredByLabel).
 	TriggeredBy string `json:"triggered_by,omitempty"`
 	// VerifyLiveCATID is the live PLC part id observed disagreeing with this
 	// changeover's new active style within the short window after it completed

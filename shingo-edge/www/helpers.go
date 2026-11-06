@@ -76,6 +76,9 @@ func templateFuncs() template.FuncMap {
 			return ""
 		},
 		"buildVer": func() string { return buildVer },
+		// triggeredByLabel names what completed a changeover in the history
+		// panel (domain.Changeover.TriggeredBy).
+		"triggeredByLabel": triggeredByLabel,
 		// formatTime/formatTimePtr render plant-local via shared/planttime —
 		// the ONE implementation both binaries share, so a core board and an
 		// edge station cannot show the same event on different clocks. First
@@ -133,4 +136,32 @@ func templateFuncs() template.FuncMap {
 			return template.HTML(line.HTML())
 		},
 	}
+}
+
+// triggeredByLabels are the history panel's words for each triggered_by value
+// a completed changeover row carries: the eight written today and the two
+// rows from before 2026-11 carry.
+var triggeredByLabels = map[string]string{
+	"manual":              "CUTOVER",
+	"manual-forced":       "Cut over now, past the gate",
+	"auto-catid":          "Automatic: the PLC's part",
+	"auto-catid-forced":   "Automatic: the PLC's part counted, past the gate",
+	"admin-switch":        "Mark as running",
+	"admin-switch-forced": "Mark as running, past the gate",
+	"auto-catid-flip":     "Automatic switch: the PLC's part, no changeover",
+	"restore":             "Restored at start-up",
+	"operator-hmi":        "CUTOVER (before 2026-11)",
+	"auto-task-terminal":  "Automatic: tasks done (before 2026-11)",
+}
+
+// triggeredByLabel is a triggered_by value's words: "--" for none (in progress
+// or cancelled), the value itself for one this build does not know.
+func triggeredByLabel(v string) string {
+	if v == "" {
+		return "--"
+	}
+	if l, ok := triggeredByLabels[v]; ok {
+		return l
+	}
+	return v
 }

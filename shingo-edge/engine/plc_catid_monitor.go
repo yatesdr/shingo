@@ -253,10 +253,13 @@ func (e *Engine) startCatidMonitor() {
 
 // prime enumerates the processes with an identity tag (identityTagOf: none for
 // a process with no counter PLC or identity "none", the override when typed,
-// else derived from the counter tag), enables WarLink publishing on each, and
-// stores per-process state and its first snapshot. Called once, before the
-// goroutine starts: it writes cm.states with no lock. A process whose tag
-// cannot be derived is skipped and logged — the guard stays inert for it.
+// else derived from the counter tag), enables WarLink publishing on each (a
+// failed toggle is logged and the process is monitored anyway), records that
+// the Edge manages the tag's publishing, and stores per-process state and its
+// first snapshot with every value the process has emitted. Called once, from
+// startCatidMonitor before the goroutine starts: it writes cm.states with no
+// lock. A process with a counter but no derivable tag is skipped and logged —
+// the guard stays inert for it; reprime brings an edited process in later.
 func (cm *catidMonitor) prime() {
 	procs, err := cm.eng.db.ListProcesses()
 	if err != nil {
@@ -665,9 +668,10 @@ func (cm *catidMonitor) onConfirmedCATID(processID int64, st *catidState, isChan
 			WaitingOn:         waiting,
 		}})
 	}
-	// B1: on an actual CHANGE of the physical part (not the first-read baseline),
-	// prompt ONLY when the process is in prompt mode. auto is handled by the
-	// stability tracker; off is silent.
+	// On an actual CHANGE of the physical part (not the first-read baseline),
+	// prompt now only in prompt mode. Auto decides after the stability window
+	// (evaluateAutoArm): the cutover, the switch, or — a part several styles
+	// run — this same prompt (decideAutoSwitch). Off is silent.
 	if isChange && cm.eng.processChangeoverAutoArm(processID) == domain.ChangeoverAutoArmPrompt {
 		cm.raiseCATIDChangePrompt(processID, st)
 	}
@@ -702,8 +706,9 @@ func (cm *catidMonitor) raiseCATIDChangePrompt(processID int64, st *catidState) 
 // emitCATIDPrompt raises EventCATIDChangePrompt for a part change, carrying every
 // candidate style the new part maps to: exactly one pre-fills the target; more
 // than one leaves the operator to pick (naming them); none prompts without a
-// target. Shared by the prompt-mode confirm edge and the auto-arm ambiguity
-// fallback. Called with cm.mu held.
+// target. Shared by the prompt-mode confirm edge and auto's ambiguity
+// fallback (decideAutoSwitch, a counted part several styles run). Called with
+// cm.mu held.
 func (cm *catidMonitor) emitCATIDPrompt(processID int64, st *catidState, newCATID string, matches []styleCATIDMatch) {
 	cands := make([]CATIDCandidate, len(matches))
 	for i, m := range matches {
@@ -770,13 +775,14 @@ func (cm *catidMonitor) evaluateAutoArm(processID int64, st *catidState, ok bool
 	return intent
 }
 
-// decideAutoArm makes the auto-cutover decision once a value is stable: a
-// changeover must be open (the monitor never starts one: when it did, on
-// 2026-07-28, it put four robots on the floor chasing a style with zero stock), and
-// cutoverPredicate must hold over the active style's and the open changeover's
-// target's CATID sets, read in one process-wide query. The predicate is
-// computed before the mode: the intent carries the mode, and only auto calls
-// the door; prompt and off log what auto would have done. Called with cm.mu
+// decideAutoArm makes the decision once a value is stable. With a changeover
+// open, it is the cutover: cutoverPredicate must hold over the active style's
+// and the open changeover's target's CATID sets, read in one process-wide
+// query. With none open, it is decideAutoSwitch: a switch, never a start (the
+// monitor never starts a changeover: when it did, on 2026-07-28, it put four
+// robots on the floor chasing a style with zero stock). The mode is read with
+// the predicate: the intent carries it, and only auto calls the door or
+// switches; prompt and off log what auto would have done. Called with cm.mu
 // held; light DB reads only.
 //
 // With the predicate held, the intent is forced when the counted-part
@@ -1041,7 +1047,7 @@ func (cm *catidMonitor) liveCATID(processID int64) (string, bool) {
 }
 
 // catidToString normalizes a WarLink CATID tag value to a comparison string.
-// CATID is an integer part id at Hopkinsville (eight digits) delivered as
+// CATID is an integer part id (eight digits where it is in use) delivered as
 // float64 over JSON, but a plant could publish it as a string tag — handle
 // both so the value compares cleanly against a hand-entered expected_catid.
 func catidToString(v any) (string, bool) {

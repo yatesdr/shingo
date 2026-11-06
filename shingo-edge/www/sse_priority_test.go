@@ -27,9 +27,11 @@ func waitForType(c *sseClient, typ string, timeout time.Duration) bool {
 
 // TestSSE_LossyFloodDoesNotEvictStateChanges is the regression guard for the
 // queue split. Every topic used to share one 64-slot queue, so a client that
-// fell behind lost whatever arrived next. counter-read and debug-log are the
-// bulk of the traffic — measured at Springfield, 4,512 of 5,929 drops in 24h —
-// so what they evicted was everything else, including order-update.
+// fell behind lost whatever arrived next. counter-read and debug-log were the
+// bulk of the traffic — 4,512 of 5,929 drops in 24 h at one plant — so what
+// they evicted was everything else, including order-update. counter-read is
+// no longer broadcast at all; the flood here is the debug feed, to a client
+// that asked for it.
 func TestSSE_LossyFloodDoesNotEvictStateChanges(t *testing.T) {
 	h := NewEventHub()
 	h.Start()
@@ -38,14 +40,14 @@ func TestSSE_LossyFloodDoesNotEvictStateChanges(t *testing.T) {
 	c := &sseClient{
 		events: make(chan SSEEvent, 64),
 		lossy:  make(chan SSEEvent, 16),
+		debug:  true,
 	}
 	h.register(c)
 	defer h.unregister(c)
 
 	// Well past both queues' capacity, with nothing reading.
-	for i := range 500 {
+	for i := range 1000 {
 		h.Broadcast(SSEEvent{Type: "debug-log", Data: i})
-		h.Broadcast(SSEEvent{Type: "counter-read", Data: i})
 		if i%16 == 0 {
 			time.Sleep(time.Millisecond)
 		}

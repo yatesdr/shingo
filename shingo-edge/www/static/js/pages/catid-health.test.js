@@ -1,5 +1,5 @@
 // catid-health.test.js — the health strip's list renderer.
-// Run by www/catid_health_js_test.go.
+// Run by www/catid_health_list_test.go.
 'use strict';
 
 const path = require('path');

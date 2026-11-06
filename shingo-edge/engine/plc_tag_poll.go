@@ -7,10 +7,10 @@ import "time"
 //
 // These three symbols used to live in plc_cutover_monitor.go. That file
 // implemented PLC-driven changeover completion by subscribing to a
-// Changeover_Active tag; it was REMOVED because no plant ever wired that tag,
-// so the feature could not fire at either Springfield or Hopkinsville
-// (measured: 6 of 6 processes across both plants had auto_cutover_enabled=0).
-// CATID auto-arm replaced it.
+// Changeover_Active tag; it was REMOVED because no process ever enabled it
+// (auto_cutover_enabled was 0 on every process measured). The plants' MES
+// structs do carry Changeover_Active; nothing on the Edge reads it. CATID
+// auto-arm replaced it.
 //
 // The constants are named for what they DO rather than for the removed
 // feature: they were `cutoverPollInterval` and `cutoverDebounce` (renamed), which would

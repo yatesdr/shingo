@@ -26,6 +26,7 @@ Edge only, v37-v40. Ship after a restored-copy migrate.
 - A stroke on an unmapped or off-plan part ships under today's style; its cart draw is held (v40) until a landing, a Charge or a Write off
 - A press that changed to the incoming part mid-changeover, held it a minute and counted it completes the changeover past its gate (auto) or offers Cut over now (prompt)
 - With no changeover open, a counted part only one other style runs by a person's pin switches the process (auto-catid-flip); a part several run asks
+- The history panel names what completed each changeover; the automatic-cutover notice names the changeover, the part and what it left running; a non-numeric counter read is raised
 
 ## 2026-11-03 — An order's carts are its rows
 

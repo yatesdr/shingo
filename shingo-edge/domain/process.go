@@ -48,28 +48,28 @@ type Process struct {
 	// CUTOVER button (operator-render.js), which would have stranded a
 	// changeover with neither an automatic nor a manual way to complete it.
 	// CATID auto-arm below is the mechanism that replaced it. The
-	// processes.auto_cutover_enabled COLUMN is retained and unread: dropping
-	// it means a SQLite table rebuild, and a rebuild is precisely what
-	// generates the dangling REFERENCES clauses the FK repair exists to fix.
+	// processes.auto_cutover_enabled column is unread; SQLite drops a column
+	// in place (ALTER TABLE ... DROP COLUMN, no table rebuild), which is how
+	// the versioned chain retires it.
 	//
 	// ChangeoverAutoArm controls the PLC CATID auto-arm behavior for this
 	// process, a 3-value mode (auto | prompt | off):
 	//   "auto"   — on a STABLE, confirmed CATID change that has left the ACTIVE
 	//              style's part set, automatically CUT OVER a changeover that is
-	//              already in progress. The default everywhere; naturally inert
-	//              where no style has an expected_catid (nothing to match ⇒
-	//              nothing to act on), so default-auto is safe on unconfigured
-	//              plants.
+	//              already in progress (past its gate once a stroke on the
+	//              incoming part is counted); with none open, SWITCH the style
+	//              when a counted part is one other style's by a person's pin.
+	//              The default everywhere. Not inert where no style is pinned:
+	//              styles take their parts' catalog CATIDs, so a plant with a
+	//              synced catalog has sets to act on.
 	//
-	//              IT NEVER STARTS ONE. This said "automatically START the
-	//              changeover" and the code refuses to: with no changeover in
-	//              progress decideAutoArm returns nothing, because starting one
-	//              dispatches robots and nothing at that seam knows whether the
-	//              material exists (plc_catid_monitor.go). The problem the
-	//              feature exists for is the other end — an operator starts the
-	//              changeover, the material moves, and nobody presses CUTOVER, so
-	//              the press stamps the new part while shingo keeps attributing
-	//              it to the old style for hours.
+	//              IT NEVER STARTS ONE. Starting a changeover dispatches robots
+	//              and nothing at that seam knows whether the material exists
+	//              (plc_catid_monitor.go). The problem the feature exists for is
+	//              the other end — an operator starts the changeover, the
+	//              material moves, and nobody presses CUTOVER, so the press
+	//              stamps the new part while shingo keeps attributing it to the
+	//              old style for hours.
 	//   "prompt" — only PROMPT the operator to start the changeover (the round-2
 	//              behavior, raiseCATIDChangePrompt); never auto-start.
 	//   "off"    — neither arm nor prompt; silent.
@@ -91,7 +91,8 @@ type Process struct {
 // Changeover auto-arm modes for Process.ChangeoverAutoArm.
 const (
 	// ChangeoverAutoArmAuto auto-CUTS-OVER a changeover already in progress, on a
-	// stable CATID change that has left the active style. It never starts one.
+	// stable CATID change that has left the active style, and with none open
+	// switches to a style a counted part is pinned to. It never starts one.
 	// The global default.
 	ChangeoverAutoArmAuto = "auto"
 	// ChangeoverAutoArmPrompt only prompts the operator (round-2 behavior).
@@ -101,8 +102,7 @@ const (
 )
 
 // NormalizeChangeoverAutoArm coerces a persisted/submitted auto-arm value to one
-// of the three valid modes. Empty or unknown ⇒ auto (the safe default that is
-// inert without an expected_catid match).
+// of the three valid modes. Empty or unknown ⇒ auto, the default.
 func NormalizeChangeoverAutoArm(mode string) string {
 	switch mode {
 	case ChangeoverAutoArmPrompt:

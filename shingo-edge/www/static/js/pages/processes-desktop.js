@@ -4800,7 +4800,7 @@ function drawSettings() {
         stField('PLC', '', stText('counter_plc_name')) +
         stField('Tag', '', stText('counter_tag_name')) +
         stField('Enabled',
-            'a process that counts can skip a same-part swap at changeover; an unwired one never does',
+            'a press-index position keeps a drained same-part bin at changeover only while this counts (a sequential press reuses its parked empty either way)',
             stToggle('counter_enabled'));
 
     if (!S.curtain) S.curtain = curtainDraft();

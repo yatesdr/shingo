@@ -95,17 +95,12 @@ const (
 	// do neither.
 	EventCATIDChangePrompt
 
-	// EventCATIDAutoArmed is RETIRED. The monitor no longer starts changeovers —
-	// see EventCATIDAutoCutover. Kept only so existing subscribers and stored
-	// events still resolve; nothing emits it.
-	EventCATIDAutoArmed
-
 	// EventCATIDAutoCutover fires when the CATID monitor presses CUTOVER on an
 	// ALREADY-IN-PROGRESS changeover, because the press's live part id stably left
 	// the outgoing style — evidence the press itself already cut over.
 	//
-	// This is the inverse of what EventCATIDAutoArmed used to do, and the
-	// inversion is the point. Operators start a changeover, the material moves,
+	// The monitor used to START changeovers (an event, EventCATIDAutoArmed, now
+	// deleted), and the inversion is the point. Operators start a changeover, the material moves,
 	// and then they forget to press CUTOVER; shingo keeps attributing the new
 	// parts to the old style until someone notices hours later. The monitor now
 	// presses the button they forget, and never starts anything — starting
