@@ -42,11 +42,13 @@ const (
 	holdWrittenOff    = "written-off"
 )
 
-// holdCatidDraw adds a stroke's draw to the ledger: node 0 is a held tick's
-// whole draw, a node an off-plan tick's share there of part.
+// holdCatidDraw adds a stroke's draw to the ledger: node 0 is the cell
+// counter's held stroke's whole draw, a node a share there — an off-plan
+// tick's share of part, or a station's held share (part ”). The reason is
+// the tick's kind.
 func (e *Engine) holdCatidDraw(tick tickScope, nodeID int64, part string, qty int) {
 	reason := holdReasonHeld
-	if nodeID != 0 {
+	if tick.kind == plc.TickOffPlan {
 		reason = holdReasonOffPlan
 	}
 	opened, err := e.db.HoldCatidDraw(tick.processID, tick.catid, nodeID, part, reason, int64(qty), clock.Now())
@@ -98,8 +100,9 @@ func (e *Engine) releaseHoldsOnLanding(processID, landingChangeoverID int64) {
 }
 
 // chargeHold charges a hold's draw under styleID through the walk: every node
-// the style claims for a held tick's draw, the one node for a share. The hold
-// is already latched.
+// the cell counter counts for a node-0 draw, the one node for a share — walked
+// as its own counter's (countedAt), so a share at a station-counted position
+// reaches its cart. The hold is already latched.
 func (e *Engine) chargeHold(h *store.CatidHold, styleID int64) {
 	nodes, err := e.db.ListProcessNodesByProcess(h.ProcessID)
 	if err != nil {
@@ -113,7 +116,22 @@ func (e *Engine) chargeHold(h *store.CatidHold, styleID int64) {
 	e.walkTick(process, nodes, claims, runtimes, tickScope{
 		processID: h.ProcessID, styleID: styleID, delta: int(h.Qty),
 		source: fmt.Sprintf("hold=%d", h.ID), catid: h.CATID, kind: plc.TickToday,
+		counter: holdCounter(h, process, nodes, claims, styleID),
 	})
+}
+
+// holdCounter is the counter a hold's draw is walked as: a share's position's
+// own (countedAt under the charge style's claim), the cell counter for a
+// node-0 draw.
+func holdCounter(h *store.CatidHold, process *processes.Process, nodes []processes.Node, claims *store.NodeClaimSet, styleID int64) int64 {
+	if h.ProcessNodeID == 0 || len(nodes) != 1 {
+		return 0
+	}
+	claim := claims.Resolve(process, &nodes[0], store.ExactStyle(styleID))
+	if claim == nil {
+		return 0
+	}
+	return countedAt(&nodes[0], claim)
 }
 
 func onlyNode(nodes []processes.Node, id int64) []processes.Node {
@@ -192,6 +210,11 @@ func (e *Engine) PreviewCatidHold(id int64) (*CatidHoldPreview, error) {
 		claim := claims.Resolve(process, &nodes[i], store.ExactStyle(p.StyleID))
 		rt := runtimes[nodes[i].ID]
 		if claim == nil || claim.IsLoaderNode() || rt == nil {
+			continue
+		}
+		// The rows the Charge draws (chargeHold): a node-0 draw walks the
+		// cell counter's positions, so a station-counted one is not its.
+		if h.ProcessNodeID == 0 && countedAt(&nodes[i], claim) != 0 {
 			continue
 		}
 		row := CatidHoldChargeRow{Node: nodes[i].Name, ClaimPart: claim.PayloadCode, Qty: h.Qty}

@@ -155,7 +155,7 @@ func (e *Engine) walkTick(process *processes.Process, nodes []processes.Node, cl
 	// Diagnosing that took a database. It should take a log line.
 	attr := tickAttribution{nodesWalked: len(nodes)}
 	if tick.kind == plc.TickHeld {
-		e.holdCatidDraw(tick, 0, "", tick.delta)
+		e.holdHeldTick(process, nodes, claims, tick)
 		return
 	}
 	// THE A/B PAIRS, EACH ON ITS OWN. A pair is two claims that name each other
@@ -343,11 +343,13 @@ func countedAt(node *processes.Node, claim *processes.NodeClaim) int64 {
 }
 
 // handleLineCounterDelta charges a station counter's strokes to the positions
-// counted at it, under the style the PLC's part attributes them to: the
-// target's part is the target's (an incoming-only position is charged once
-// the PLC runs it), and the active style otherwise. A station stroke never
-// opens a hold: an off-plan or held part, or one the PLC does not name, is
-// charged under the active style; the ledger is the production counter's.
+// counted at it, under the attribution the poll gave them, as the production
+// walk takes a cell stroke: today's part under the active style, the target's
+// under the target (an incoming-only position is charged once the PLC runs
+// it), and a part Shingo cannot place by its style held — an off-plan share at
+// a position whose cart is another part, a held stroke's share at every
+// position counted here (walkTick, holdHeldTick). With no identity (no
+// monitor, identity none, a stale read) the stroke is the active style's.
 func (e *Engine) handleLineCounterDelta(ev LineCounterDeltaEvent) {
 	if ev.ProcessID == 0 || ev.CounterID == 0 || ev.Delta <= 0 {
 		log.Printf("ERROR: station counter delta malformed, dropped: counter=%d process=%d delta=%d",
@@ -370,15 +372,15 @@ func (e *Engine) handleLineCounterDelta(ev LineCounterDeltaEvent) {
 		e.debugFn("station counter %d: %d counted, no position counted at it", ev.CounterID, ev.Delta)
 		return
 	}
-	styleID := ev.StyleID
-	if styleID == 0 || (ev.Kind != plc.TickToday && ev.Kind != plc.TickTarget) {
+	styleID, kind := ev.StyleID, ev.Kind
+	if styleID == 0 {
 		p, err := e.db.GetProcess(ev.ProcessID)
 		if err != nil || p == nil || p.ActiveStyleID == nil {
 			log.Printf("ERROR: station counter %d delta dropped, no active style: process=%d delta=%d: %v",
 				ev.CounterID, ev.ProcessID, ev.Delta, err)
 			return
 		}
-		styleID = *p.ActiveStyleID
+		styleID, kind = *p.ActiveStyleID, plc.TickToday
 	}
 	process, claims, runtimes := e.counterDeltaRows(ev.ProcessID, styleID, nodes)
 	e.walkTick(process, nodes, claims, runtimes, tickScope{
@@ -388,8 +390,26 @@ func (e *Engine) handleLineCounterDelta(ev LineCounterDeltaEvent) {
 		source:    fmt.Sprintf("lc=%d", ev.CounterID),
 		counter:   ev.CounterID,
 		catid:     ev.CATID,
-		kind:      plc.TickToday,
+		kind:      kind,
 	})
+}
+
+// holdHeldTick puts a held stroke's draw in the ledger. The cell counter's
+// stroke is the whole draw (node 0); a station's is each position counted at
+// it, its own row (payload ”), never the cell's node-0 row: a release of a
+// node-0 hold walks the cell counter's positions, not the station's.
+func (e *Engine) holdHeldTick(process *processes.Process, nodes []processes.Node, claims *store.NodeClaimSet, tick tickScope) {
+	if tick.counter == 0 {
+		e.holdCatidDraw(tick, 0, "", tick.delta)
+		return
+	}
+	for i := range nodes {
+		claim := claims.Resolve(process, &nodes[i], store.ExactStyle(tick.styleID))
+		if claim == nil || claim.IsLoaderNode() || countedAt(&nodes[i], claim) != tick.counter {
+			continue
+		}
+		e.holdCatidDraw(tick, nodes[i].ID, "", tick.delta)
+	}
 }
 
 // abPairs is one tick's walk's A/B pairs: each pair's account, in the order

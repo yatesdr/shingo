@@ -64,18 +64,19 @@ func TestLineTick_IncomingOnlyNodeChargedOnceThePLCRunsTheIncomingPart(t *testin
 	}
 }
 
-// TestStation_NoIdentityKeepsTheActiveStyle: with no part read — and for an
-// off-plan or held part, which the production counter's ledger takes — a
-// station stroke is charged under the active style; it opens no hold.
+// TestStation_NoIdentityKeepsTheActiveStyle: with no part read (no style in
+// the attribution: no monitor, identity none, a stale read), or today's part, a
+// station stroke is charged under the active style; it opens no hold. (An
+// off-plan or held stroke holds its share: station_holds_test.go.)
 func TestStation_NoIdentityKeepsTheActiveStyle(t *testing.T) {
 	t.Parallel()
 	r := newPairRig(t)
 	n := r.consume("ST-1", "", "simple", true)
 	lc := stationCounter(t, r.db, r.pid, n)
 	for i, id := range []plc.TickIdentity{
+		{},
 		{StyleID: r.style, Kind: plc.TickToday},
-		{StyleID: 999, CATID: "1003", Kind: plc.TickOffPlan},
-		{StyleID: r.style, CATID: "1007", Kind: plc.TickHeld},
+		{StyleID: r.style, CATID: "1001", Kind: plc.TickToday},
 	} {
 		stationTick(r.eng, lc, r.pid, id, 1)
 		if got := r.left(n); got != 49-i {
