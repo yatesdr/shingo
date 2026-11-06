@@ -41,6 +41,7 @@ Edge only, v37-v42 (the dev seeder learns station counters). Ship after a restor
 - The counter save asks WarLink before the door's lock; a member listed with no type is checked by its read, and a refused read unpublishes it; only a save marks an identity tag the Edge's
 - catid_holds (v40) and line_counters (v41) have one home, the versioned chain: the baseline DDL no longer carries them
 - The Charge says when its preview fails; Mark as running on the style being left says to Cancel; the station's Confirm says it pins the CATID; the CUTOVER dialog opens before its offer is read
+- An automatic cutover or switch re-reads the mode and the pin under the door's mutex before it acts
 
 ## 2026-11-03 — An order's carts are its rows
 

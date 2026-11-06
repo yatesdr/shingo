@@ -601,7 +601,7 @@ func TestForceDoor_FourCallers(t *testing.T) {
 	want := []string{
 		"SetProcessActiveStyle", // to the open changeover's target
 		"SetProcessActiveStyle", // to a third style, before the second flip
-		"fireAutoCutover",       // the counted-part force, in auto
+		"callDoor",              // the counted-part force, in auto (the fire, under the re-read)
 		"CutOverNow",            // the station's one-tap, in prompt
 	}
 	var got []string

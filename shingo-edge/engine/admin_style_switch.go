@@ -25,6 +25,7 @@ import (
 	"errors"
 	"fmt"
 
+	"shingoedge/domain"
 	"shingoedge/store/processes"
 )
 
@@ -127,8 +128,10 @@ func (e *Engine) recordSwitch(processID int64, fromStyleID *int64, toStyleID int
 // the holds the new style runs released — and clears the post-cutover flag the
 // part resolves. It never plans a changeover: within a minute the sweep
 // reorders and the keeper stages for the new style, and the request guard
-// admits its requests. Under the door's mutex, re-read: a changeover opened or
-// a style moved since the decision is a no-op.
+// admits its requests. Under the door's mutex, re-read: a changeover opened, a
+// style moved, the process taken out of auto, or the part no longer pinned to
+// toStyleID alone since the decision is a no-op
+// (TestFire_AModeTurnedOffSinceTheDecisionNeverSwitches).
 func (e *Engine) autoSwitchStyle(processID, fromStyleID, toStyleID int64, catid string) error {
 	e.cutoverMu.Lock()
 	defer e.cutoverMu.Unlock()
@@ -145,6 +148,14 @@ func (e *Engine) autoSwitchStyle(processID, fromStyleID, toStyleID int64, catid 
 		return nil
 	} else if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return err
+	}
+	if mode := domain.NormalizeChangeoverAutoArm(proc.ChangeoverAutoArm); mode != domain.ChangeoverAutoArmAuto {
+		e.logFn("plc-catid: process %d is in mode %s since the decision — not switching", processID, mode)
+		return nil
+	}
+	if to := switchTarget(e.processStyleCATIDSets(processID), fromStyleID, catid); to == nil || to.ID != toStyleID || !to.Pinned {
+		e.logFn("plc-catid: process %d: CATID %s is no longer pinned to style %d alone — not switching", processID, catid, toStyleID)
+		return nil
 	}
 	from, _ := e.db.GetStyle(fromStyleID)
 	to, _ := e.db.GetStyle(toStyleID)

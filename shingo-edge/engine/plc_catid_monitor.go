@@ -263,8 +263,9 @@ type catidMonitor struct {
 	// (noteCountedTick) and read by the decisions.
 	countedTicks sync.Map
 	// completeCutover is the seam for the auto-cutover fire, defaulting to
-	// eng.completeCutover (wired in startCatidMonitor); tests inject a spy.
-	// Invoked OUTSIDE cm.mu — gate/DB/Core work must not run under the tick lock.
+	// eng.completeCutoverLocked (wired in startCatidMonitor); tests inject a
+	// spy. Invoked OUTSIDE cm.mu (gate/DB/Core work must not run under the tick
+	// lock) and under cutoverMu, which the fire takes to re-read its decision.
 	completeCutover func(processID, changeoverID int64, by string, mode CutoverMode) ([]domain.Blocker, error)
 }
 
@@ -278,7 +279,7 @@ func (e *Engine) startCatidMonitor() {
 		return
 	}
 	cm := &catidMonitor{eng: e, states: map[int64]*catidState{}}
-	cm.completeCutover = e.completeCutover
+	cm.completeCutover = e.completeCutoverLocked
 	cm.prime()
 	e.catidMon = cm
 	e.tickMonitor.Store(cm)
@@ -922,16 +923,7 @@ func (cm *catidMonitor) decideAutoSwitch(proc *processes.Process, st *catidState
 	if proc.ActiveStyleID == nil {
 		return nil
 	}
-	var to *styleCATIDEntry
-	sets := cm.eng.processStyleCATIDSets(proc.ID)
-	for i := range sets {
-		if sets[i].ID != *proc.ActiveStyleID && catidSetHas(sets[i].Set, v) {
-			if to != nil {
-				return nil
-			}
-			to = &sets[i]
-		}
-	}
+	to := switchTarget(cm.eng.processStyleCATIDSets(proc.ID), *proc.ActiveStyleID, v)
 	if to == nil {
 		return nil
 	}
@@ -947,6 +939,21 @@ func (cm *catidMonitor) decideAutoSwitch(proc *processes.Process, st *catidState
 	}
 	return &autoCutoverIntent{processID: proc.ID, processName: st.processName, catid: v, mode: mode,
 		switchTo: to.ID, switchName: to.Name, fromStyleID: *proc.ActiveStyleID}
+}
+
+// switchTarget is the one live style other than the active one whose set holds
+// v; nil when none or several do. The decision and the switch's re-read.
+func switchTarget(sets []styleCATIDEntry, activeStyleID int64, v string) *styleCATIDEntry {
+	var to *styleCATIDEntry
+	for i := range sets {
+		if sets[i].ID != activeStyleID && catidSetHas(sets[i].Set, v) {
+			if to != nil {
+				return nil
+			}
+			to = &sets[i]
+		}
+	}
+	return to
 }
 
 // lastCountedTick returns the process's last counted tick placed off today,
@@ -1019,22 +1026,11 @@ func (cm *catidMonitor) fireAutoCutover(in autoCutoverIntent) {
 			in.processName, in.changeoverID, in.catid, counted, gate, in.mode)
 		return
 	}
-	complete := cm.completeCutover
-	if complete == nil {
-		complete = cm.eng.completeCutover
-	}
-	// Gated, the door runs canCompleteChangeover first, which refuses while any
-	// node task is non-terminal or an order is still placing a bin at a
-	// participant node: the normal "not finished yet" answer, decided again on
-	// the process's next poke, or within a minute. Forced — the press has made
-	// the incoming part and it was counted — the door completes past what the
-	// gate waits on, writes it in the row's notes, and leaves the legs running.
-	var blockers []domain.Blocker
-	var err error
-	if in.force {
-		blockers, err = complete(in.processID, in.changeoverID, triggeredAutoCATID, CutoverForced)
-	} else {
-		blockers, err = complete(in.processID, in.changeoverID, triggeredAutoCATID, CutoverGated)
+	blockers, moved, err := cm.callDoor(in)
+	if moved != "" {
+		cm.eng.logFn("plc-catid: process %s changeover %d: %s since the decision on CATID %s — not cut over",
+			in.processName, in.changeoverID, moved, in.catid)
+		return
 	}
 	if errors.Is(err, errNotTheOpenChangeover) {
 		// Completed (or cancelled) by someone else since the decision: nothing
@@ -1063,6 +1059,58 @@ func (cm *catidMonitor) fireAutoCutover(in autoCutoverIntent) {
 		Forced:       len(blockers) > 0,
 		Blockers:     blockers,
 	}})
+}
+
+// callDoor calls the door for an auto-mode cutover intent under cutoverMu,
+// after re-reading there what the decision stood on (autoCutoverMoved): moved
+// names what changed since, and the door is then not called. Gated, the door
+// runs canCompleteChangeover first, which refuses while any node task is
+// non-terminal or an order is still placing a bin at a participant node: the
+// normal "not finished yet" answer, decided again on the process's next poke,
+// or within a minute. Forced — the press has made the incoming part and it was
+// counted — the door completes past what the gate waits on, writes it in the
+// row's notes, and leaves the legs running.
+func (cm *catidMonitor) callDoor(in autoCutoverIntent) (blockers []domain.Blocker, moved string, err error) {
+	complete := cm.completeCutover
+	if complete == nil {
+		complete = cm.eng.completeCutoverLocked
+	}
+	cm.eng.cutoverMu.Lock()
+	defer cm.eng.cutoverMu.Unlock()
+	if moved = cm.eng.autoCutoverMoved(in); moved != "" {
+		return nil, moved, nil
+	}
+	if in.force {
+		blockers, err = complete(in.processID, in.changeoverID, triggeredAutoCATID, CutoverForced)
+	} else {
+		blockers, err = complete(in.processID, in.changeoverID, triggeredAutoCATID, CutoverGated)
+	}
+	return blockers, "", err
+}
+
+// autoCutoverMoved re-reads, under cutoverMu, what an automatic cutover was
+// decided on: the process still in auto, and the predicate still holding on
+// the decided value over the CATID sets as they stand now (a pin saved since
+// the decision moves them). "" when the decision stands, else what moved
+// (TestFire_AModeTurnedOffSinceTheDecisionNeverCutsOver,
+// TestFire_APinMovedSinceTheDecisionNeverCutsOver). A changeover no longer
+// open is left to the door, which says so.
+func (e *Engine) autoCutoverMoved(in autoCutoverIntent) string {
+	proc, err := e.db.GetProcess(in.processID)
+	if err != nil || proc == nil {
+		return fmt.Sprintf("the process could not be read (%v)", err)
+	}
+	if mode := domain.NormalizeChangeoverAutoArm(proc.ChangeoverAutoArm); mode != domain.ChangeoverAutoArmAuto {
+		return "the process is in mode " + mode
+	}
+	co, err := e.db.GetActiveProcessChangeover(in.processID)
+	if err != nil || co == nil || co.ID != in.changeoverID {
+		return ""
+	}
+	if out, target := e.cutoverCATIDSets(proc, co.ToStyleID); !cutoverPredicate(in.catid, out, target) {
+		return "the CATID sets no longer cut over on it"
+	}
+	return ""
 }
 
 // fireAutoSwitch acts on an automatic-switch intent OUTSIDE cm.mu: in auto it
