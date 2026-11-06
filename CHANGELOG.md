@@ -5,7 +5,7 @@ belongs in the commit message or in `docs/` — this file is the index.
 
 ## 2026-11-03 — The cutover follows the PLC
 
-Edge only, v37-v40. Ship after a restored-copy migrate.
+Edge only, v37-v41 (the dev seeder learns station counters). Ship after a restored-copy migrate.
 
 - Auto-cutover fires on a CATID the outgoing style does not run, never on one both run or with both sets empty
 - 0 and negative CATIDs name no part: no wrong-part alert, no arm, the request guard stays open
@@ -28,6 +28,7 @@ Edge only, v37-v40. Ship after a restored-copy migrate.
 - With no changeover open, a counted part only one other style runs by a person's pin switches the process (auto-catid-flip); a part several run asks
 - The history panel names what completed each changeover; the automatic-cutover notice names the changeover, the part and what it left running; a non-numeric counter read is raised
 - An A/B pair is two positions that name each other: one lit side charged per tick, each pair its own fallthrough; a save naming a third is refused, a one-way pair is warned
+- Station counters (v41): a tag that clicks where the part leaves the cart charges the positions bound to it, under the PLC's part's style; the production walk leaves them
 
 ## 2026-11-03 — An order's carts are its rows
 

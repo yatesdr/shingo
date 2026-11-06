@@ -402,6 +402,27 @@ func seedEdgeDB(db sqlExec, p *plantspec.Plant, binIDByNode map[string]int64) er
 			return fmt.Errorf("process %s counter %s/%s: %w", proc, cn.plc, cn.tag, err)
 		}
 	}
+	// STATION COUNTERS read the process's own counter PLC, so a process with
+	// no production counter has none to read and is refused by name. The row
+	// is written unread (it seeds at its first poll); its positions are bound.
+	for _, sc := range p.StationCounters {
+		cn, ok := counterByProc[sc.Process]
+		pid, pok := procIDs[sc.Process]
+		if !ok || !pok {
+			return fmt.Errorf("station counter %s: process %s declares no production counter to read it beside", sc.TagName, sc.Process)
+		}
+		if _, err := db.Exec(`INSERT OR IGNORE INTO line_counters(process_id, label, plc_name, tag_name) VALUES(?,?,?,?)`,
+			pid, sc.Label, cn.plc, sc.TagName); err != nil {
+			return fmt.Errorf("station counter %s: %w", sc.TagName, err)
+		}
+		for _, n := range sc.Nodes {
+			if _, err := db.Exec(`UPDATE process_nodes SET line_counter_id =
+				(SELECT id FROM line_counters WHERE plc_name = ? AND tag_name = ?)
+				WHERE process_id = ? AND core_node_name = ?`, cn.plc, sc.TagName, pid, n); err != nil {
+				return fmt.Errorf("station counter %s: bind %s: %w", sc.TagName, n, err)
+			}
+		}
+	}
 
 	// payload_catalog (edge mirror of core payloads). id is explicit; we assign
 	// sequential ids in spec order — on a fresh core DB these match core's serial

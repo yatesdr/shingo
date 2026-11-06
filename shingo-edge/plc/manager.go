@@ -697,6 +697,9 @@ func (m *Manager) pollAllReportingPoints() {
 			(*fn)()
 		}
 	}
+	// The station counters, after the production points: the rollback-gap
+	// check compares each with its process's point as this pass left it.
+	m.pollAllLineCounters()
 }
 
 // pollReportingPointSafe wraps pollReportingPoint with a recover() so a

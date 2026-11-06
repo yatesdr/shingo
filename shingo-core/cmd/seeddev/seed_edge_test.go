@@ -45,7 +45,12 @@ CREATE TABLE process_nodes (
   core_node_name TEXT NOT NULL DEFAULT '', code TEXT NOT NULL, name TEXT NOT NULL,
   sequence INTEGER NOT NULL DEFAULT 0, enabled INTEGER NOT NULL DEFAULT 1,
   created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+  line_counter_id INTEGER,
   UNIQUE(process_id, code));
+CREATE TABLE line_counters (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, process_id INTEGER NOT NULL, label TEXT NOT NULL DEFAULT '',
+  plc_name TEXT NOT NULL, tag_name TEXT NOT NULL, last_count INTEGER NOT NULL DEFAULT 0, last_poll_at TEXT,
+  warlink_managed INTEGER NOT NULL DEFAULT 0, UNIQUE (plc_name, tag_name));
 -- HAND-COPIED FROM THE EDGE SCHEMA, and it drifts. seeddev cannot import the
 -- edge module, so this DDL is maintained by hand against
 -- shingo-edge/store/schema/schema.snapshot.sql; a column the seeder learns to
@@ -388,5 +393,57 @@ func TestSeedEdge_WritesRoutingAndPartSets(t *testing.T) {
 		if n != 1 {
 			t.Errorf("claim %s/%s runs %s and %s's part set lacks it", c.Style, c.CoreNode, c.Payload, proc)
 		}
+	}
+}
+
+// TestSeedEdge_StationCounterBindsItsNodes: a station counter is written on
+// its process's counter PLC, unread, with its positions bound to it.
+func TestSeedEdge_StationCounterBindsItsNodes(t *testing.T) {
+	t.Parallel()
+	db, _, _ := openSeededEdge(t)
+	var plcName string
+	var polled sql.NullString
+	if err := db.QueryRow(`SELECT plc_name, last_poll_at FROM line_counters WHERE tag_name = 'WELD-2_STATION_01'`).Scan(&plcName, &polled); err != nil {
+		t.Fatalf("station counter row: %v", err)
+	}
+	if plcName != "WELD-2" || polled.Valid {
+		t.Errorf("station counter = plc %q, polled %v; want WELD-2, unread", plcName, polled)
+	}
+	rows, err := db.Query(`SELECT n.core_node_name FROM process_nodes n JOIN line_counters lc ON lc.id = n.line_counter_id
+		WHERE lc.tag_name = 'WELD-2_STATION_01' ORDER BY n.core_node_name`)
+	if err != nil {
+		t.Fatalf("bound nodes: %v", err)
+	}
+	defer rows.Close()
+	var bound []string
+	for rows.Next() {
+		var n string
+		if err := rows.Scan(&n); err != nil {
+			t.Fatalf("scan: %v", err)
+		}
+		bound = append(bound, n)
+	}
+	if strings.Join(bound, ",") != "ALN_004" {
+		t.Errorf("bound = %v, want [ALN_004]", bound)
+	}
+}
+
+// TestStationCounterSpec_RefusesAnUnknownNodeAndASharedTag: the spec names a
+// station counter's positions and its tag; a node the plant does not have, or
+// a tag a reporting point already reads, is refused by validation.
+func TestStationCounterSpec_RefusesAnUnknownNodeAndASharedTag(t *testing.T) {
+	t.Parallel()
+	plant, err := plantspec.Load("testdata/seed-fixture.yaml")
+	if err != nil {
+		t.Fatalf("load seed fixture: %v", err)
+	}
+	plant.StationCounters = []plantspec.StationCounter{
+		{Process: "WELD-2", TagName: "WELD-2_STATION_02", Nodes: []string{"NO_SUCH_NODE"}},
+		{Process: "WELD-2", TagName: "WELD-2_COUNTER", Nodes: []string{"ALN_004"}},
+	}
+	err = plant.Validate()
+	if err == nil || !strings.Contains(err.Error(), `unknown node "NO_SUCH_NODE"`) ||
+		!strings.Contains(err.Error(), `"WELD-2_COUNTER" is already read`) {
+		t.Errorf("validate = %v, want both refusals", err)
 	}
 }

@@ -144,6 +144,10 @@ type Style struct {
 // this row's ID. Joined fields (StationName, ProcessName) ride along
 // from the read-path JOIN so callers don't have to look them up.
 type Node struct {
+	// LineCounterID is the station counter this position is counted at; nil =
+	// the process's production counter. A binding to a counter that no longer
+	// exists reads nil (the list LEFT JOINs line_counters).
+	LineCounterID     *int64    `json:"line_counter_id,omitempty"`
 	ID                int64     `json:"id"`
 	ProcessID         int64     `json:"process_id"`
 	OperatorStationID *int64    `json:"operator_station_id,omitempty"`

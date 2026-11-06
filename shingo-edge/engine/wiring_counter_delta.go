@@ -124,8 +124,13 @@ type tickScope struct {
 	processID int64
 	styleID   int64
 	delta     int
-	// source names the counter, "rp=N" for the process's reporting point.
+	// source names the counter, "rp=N" for the process's reporting point,
+	// "lc=N" for a station counter.
 	source string
+	// counter is the station counter the tick is from, 0 for the process's
+	// production counter. A position is charged only by the counter it is
+	// counted at (countedAt).
+	counter int64
 	// catid and kind are how the tick was attributed (attributeTick). A held
 	// tick draws no cart: its draw goes to the holds ledger. An off-plan tick
 	// charges only a node whose bound carrier is the tick's style's part; the
@@ -190,6 +195,13 @@ func (e *Engine) walkTick(process *processes.Process, nodes []processes.Node, cl
 		// doesn't drift from the operator-declared count.
 		if claim.IsLoaderNode() {
 			attr.manualSwap++
+			continue
+		}
+		// A position counted at another counter is that counter's: the
+		// production walk skips a bound position, and counts it as landed —
+		// its station counter takes the stroke.
+		if countedAt(&node, claim) != tick.counter {
+			attr.otherCounter++
 			continue
 		}
 		if tick.kind == plc.TickOffPlan && !carrierIsPart(process, &node, runtime, claim, claims) {
@@ -273,6 +285,9 @@ type tickAttribution struct {
 	unknownRole     int
 	// secondLit: the second lit side of an A/B pair, skipped.
 	secondLit int
+	// otherCounter: positions counted at another counter (a station
+	// counter's, in the production walk). Landed: that counter takes them.
+	otherCounter int
 
 	// Landings.
 	consumeTicks     int
@@ -284,7 +299,7 @@ type tickAttribution struct {
 
 // landed reports whether any node — or the A/B safety net — took the tick.
 func (a tickAttribution) landed() bool {
-	return a.consumeTicks+a.produceTicks+a.fallthroughTicks+a.heldShares > 0
+	return a.consumeTicks+a.produceTicks+a.fallthroughTicks+a.heldShares+a.otherCounter > 0
 }
 
 // skipReport renders the walk for a log line: the node count followed by
@@ -314,6 +329,67 @@ func (a tickAttribution) skipReport() string {
 		b.WriteString(" (process has no nodes)")
 	}
 	return b.String()
+}
+
+// countedAt is the station counter a position is counted at, 0 for the
+// process's production counter. A bound position whose claim names an A/B
+// partner (a pairing made after the binding) counts as unbound: pairs under
+// station counters are deferred, and a pair is charged by the production walk.
+func countedAt(node *processes.Node, claim *processes.NodeClaim) int64 {
+	if node.LineCounterID == nil || (claim.PairedCoreNode != "" && !claim.IsPressIndex()) {
+		return 0
+	}
+	return *node.LineCounterID
+}
+
+// handleLineCounterDelta charges a station counter's strokes to the positions
+// counted at it, under the style the PLC's part attributes them to: the
+// target's part is the target's (an incoming-only position is charged once
+// the PLC runs it), and the active style otherwise. A station stroke never
+// opens a hold: an off-plan or held part, or one the PLC does not name, is
+// charged under the active style; the ledger is the production counter's.
+func (e *Engine) handleLineCounterDelta(ev LineCounterDeltaEvent) {
+	if ev.ProcessID == 0 || ev.CounterID == 0 || ev.Delta <= 0 {
+		log.Printf("ERROR: station counter delta malformed, dropped: counter=%d process=%d delta=%d",
+			ev.CounterID, ev.ProcessID, ev.Delta)
+		return
+	}
+	all, err := e.db.ListProcessNodesByProcess(ev.ProcessID)
+	if err != nil {
+		log.Printf("ERROR: station counter %d delta dropped, cannot list nodes: process=%d delta=%d: %v",
+			ev.CounterID, ev.ProcessID, ev.Delta, err)
+		return
+	}
+	var nodes []processes.Node
+	for _, n := range all {
+		if n.LineCounterID != nil && *n.LineCounterID == ev.CounterID {
+			nodes = append(nodes, n)
+		}
+	}
+	if len(nodes) == 0 {
+		e.debugFn("station counter %d: %d counted, no position counted at it", ev.CounterID, ev.Delta)
+		return
+	}
+	styleID := ev.StyleID
+	if styleID == 0 || (ev.Kind != plc.TickToday && ev.Kind != plc.TickTarget) {
+		p, err := e.db.GetProcess(ev.ProcessID)
+		if err != nil || p == nil || p.ActiveStyleID == nil {
+			log.Printf("ERROR: station counter %d delta dropped, no active style: process=%d delta=%d: %v",
+				ev.CounterID, ev.ProcessID, ev.Delta, err)
+			return
+		}
+		styleID = *p.ActiveStyleID
+	}
+	process, claims, runtimes := e.counterDeltaRows(ev.ProcessID, styleID, nodes)
+	e.walkTick(process, nodes, claims, runtimes, tickScope{
+		processID: ev.ProcessID,
+		styleID:   styleID,
+		delta:     int(ev.Delta),
+		source:    fmt.Sprintf("lc=%d", ev.CounterID),
+		counter:   ev.CounterID,
+		catid:     ev.CATID,
+		kind:      plc.TickToday,
+	})
 }
 
 // abPairs is one tick's walk's A/B pairs: each pair's account, in the order

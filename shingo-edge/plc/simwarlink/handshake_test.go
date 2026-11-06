@@ -18,6 +18,7 @@ type nopEmitter struct{}
 
 func (nopEmitter) EmitCounterRead(int64, string, string, int64)                          {}
 func (nopEmitter) EmitCounterDelta(int64, int64, int64, int64, string, plc.TickIdentity) {}
+func (nopEmitter) EmitLineCounterDelta(int64, int64, int64, string, plc.TickIdentity)    {}
 func (nopEmitter) AttributeTick(_, styleID int64) plc.TickIdentity {
 	return plc.TickIdentity{StyleID: styleID, Kind: plc.TickToday}
 }

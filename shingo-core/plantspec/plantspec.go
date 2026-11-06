@@ -54,6 +54,7 @@ type Plant struct {
 	Claims           []Claim          `yaml:"claims"`
 	Demands          []Demand         `yaml:"demands"`
 	ReportingPoints  []ReportingPoint `yaml:"reporting_points"`
+	StationCounters  []StationCounter `yaml:"station_counters"`
 	CellConfigs      []CellConfig     `yaml:"cell_configs"`
 	// Kanbans declares which zones Core holds an empty-carrier level in.
 	Kanbans []Kanban `yaml:"kanbans,omitempty"`
@@ -567,6 +568,17 @@ type ReportingPoint struct {
 	TagName string `yaml:"tag_name"`
 	Node    string `yaml:"node"`
 	Style   string `yaml:"style,omitempty"`
+}
+
+// StationCounter is an edge station counter (line_counters): a tag on the
+// process's own counter PLC that clicks once per assembly where the part
+// leaves the cart, counting the listed positions (the process's nodes) in
+// place of the production counter.
+type StationCounter struct {
+	Process string   `yaml:"process"`
+	Label   string   `yaml:"label,omitempty"`
+	TagName string   `yaml:"tag_name"`
+	Nodes   []string `yaml:"nodes"`
 }
 
 // CellConfig maps an edge process to its operator station.

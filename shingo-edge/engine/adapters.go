@@ -35,6 +35,13 @@ func (e *plcEmitter) EmitCounterDelta(rpID, processID, delta, newCount int64, an
 	}
 }
 
+func (e *plcEmitter) EmitLineCounterDelta(counterID, processID, delta int64, anomaly string, id plc.TickIdentity) {
+	e.bus.Emit(Event{Type: EventLineCounterDelta, Payload: LineCounterDeltaEvent{
+		CounterID: counterID, ProcessID: processID, StyleID: id.StyleID, CATID: id.CATID, Kind: id.Kind,
+		Delta: delta, Anomaly: anomaly,
+	}})
+}
+
 func (e *plcEmitter) EmitPLCConnected(plcName string) {
 	e.bus.Emit(Event{Type: EventPLCConnected, Payload: PLCEvent{PLCName: plcName}})
 }

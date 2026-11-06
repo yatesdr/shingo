@@ -286,6 +286,18 @@ CREATE TABLE inventory_delta_seq (
     PRIMARY KEY (scope_kind, scope_key, epoch)
 );
 
+CREATE TABLE line_counters (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    process_id      INTEGER NOT NULL,
+    label           TEXT    NOT NULL DEFAULT '',
+    plc_name        TEXT    NOT NULL,
+    tag_name        TEXT    NOT NULL,
+    last_count      INTEGER NOT NULL DEFAULT 0,
+    last_poll_at    TEXT,
+    warlink_managed INTEGER NOT NULL DEFAULT 0,
+    UNIQUE (plc_name, tag_name)
+);
+
 CREATE TABLE node_lineside_bucket (
     id           INTEGER PRIMARY KEY AUTOINCREMENT,
     node_id      INTEGER NOT NULL REFERENCES process_nodes(id) ON DELETE CASCADE,
@@ -652,7 +664,12 @@ CREATE TABLE process_nodes (
     curtain_enabled     INTEGER NOT NULL DEFAULT 0,
     curtain_plc_name    TEXT NOT NULL DEFAULT '',
     curtain_tag_name    TEXT NOT NULL DEFAULT '',
-    curtain_safe_value  INTEGER
+    curtain_safe_value  INTEGER,
+    -- The station counter this position is counted at (line_counters.id);
+    -- NULL = counted by the process's production counter. No FK (the edge
+    -- runs with foreign keys off): every read LEFT JOINs line_counters, so a
+    -- binding to a deleted counter reads as unbound.
+    line_counter_id     INTEGER
 );
 
 CREATE TABLE process_payloads (

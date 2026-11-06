@@ -302,7 +302,7 @@ func SetFlowComposerEnabled(db *sql.DB, processID int64, enabled bool) error {
 const nodeSelect = `n.id, n.process_id, n.operator_station_id, n.core_node_name, n.code, n.name,
 	n.sequence, n.enabled, n.created_at, n.updated_at, n.deleted_at,
 	n.curtain_enabled, n.curtain_plc_name, n.curtain_tag_name, n.curtain_safe_value,
-	COALESCE(s.name, ''), COALESCE(p.name, '')`
+	COALESCE(s.name, ''), COALESCE(p.name, ''), lc.id`
 
 // liveNodes is the WHERE fragment for "process_nodes that still exist as far as
 // the plant is concerned". Applied to the LIST paths, which are pickers and
@@ -312,7 +312,8 @@ const liveNodes = ` n.deleted_at IS NULL`
 
 const nodeJoin = `FROM process_nodes n
 	LEFT JOIN operator_stations s ON s.id = n.operator_station_id
-	LEFT JOIN processes p ON p.id = n.process_id`
+	LEFT JOIN processes p ON p.id = n.process_id
+	LEFT JOIN line_counters lc ON lc.id = n.line_counter_id`
 
 func scanNode(scanner interface{ Scan(...any) error }) (Node, error) {
 	var n Node
@@ -320,11 +321,12 @@ func scanNode(scanner interface{ Scan(...any) error }) (Node, error) {
 	var stationID sql.NullInt64
 	var deletedAt sql.NullString
 	var curtainSafe sql.NullBool
+	var lineCounter sql.NullInt64
 	err := scanner.Scan(
 		&n.ID, &n.ProcessID, &stationID, &n.CoreNodeName, &n.Code, &n.Name,
 		&n.Sequence, &n.Enabled, &createdAt, &updatedAt, &deletedAt,
 		&n.CurtainEnabled, &n.CurtainPLCName, &n.CurtainTagName, &curtainSafe,
-		&n.StationName, &n.ProcessName,
+		&n.StationName, &n.ProcessName, &lineCounter,
 	)
 	if err != nil {
 		return n, err
@@ -339,6 +341,10 @@ func scanNode(scanner interface{ Scan(...any) error }) (Node, error) {
 	if stationID.Valid {
 		id := stationID.Int64
 		n.OperatorStationID = &id
+	}
+	if lineCounter.Valid {
+		id := lineCounter.Int64
+		n.LineCounterID = &id
 	}
 	return n, nil
 }

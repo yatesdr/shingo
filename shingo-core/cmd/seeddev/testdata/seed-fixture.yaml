@@ -783,6 +783,10 @@ reporting_points:
   - {plc_name: WELD-4, tag_name: WELD-4_COUNTER, node: ALN_009, style: WELD-4-RUN}
   - {plc_name: WELD-5, tag_name: WELD-5_COUNTER, node: ALN_012, style: WELD-5-RUN}
 
+# A station counter: WELD-2's BRKT position counted where the part leaves the cart.
+station_counters:
+  - {process: WELD-2, label: BRKT load, tag_name: WELD-2_STATION_01, nodes: [ALN_004]}
+
 cell_configs:
   - {process: PRESS-1, station: PRESS-1-OPS}
   - {process: PRESS-2, station: PRESS-2-OPS}

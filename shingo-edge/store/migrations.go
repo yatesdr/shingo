@@ -2256,6 +2256,46 @@ func edgeMigrations() []migrate.Migration {
 				return err == nil && n == 1
 			},
 		},
+		{
+			// line_counters, the station counters, and the binding of a
+			// position to one (process_nodes.line_counter_id, NULL = the
+			// production counter). A new table (IF NOT EXISTS, as the baseline
+			// CREATE carries it) and a guarded column.
+			Version: 41,
+			Name:    "line_counters",
+			Fn: func(tx *sql.Tx) error {
+				if _, err := tx.Exec(`CREATE TABLE IF NOT EXISTS line_counters (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    process_id      INTEGER NOT NULL,
+    label           TEXT    NOT NULL DEFAULT '',
+    plc_name        TEXT    NOT NULL,
+    tag_name        TEXT    NOT NULL,
+    last_count      INTEGER NOT NULL DEFAULT 0,
+    last_poll_at    TEXT,
+    warlink_managed INTEGER NOT NULL DEFAULT 0,
+    UNIQUE (plc_name, tag_name)
+);`); err != nil {
+					return err
+				}
+				var n int
+				if err := tx.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('process_nodes') WHERE name = 'line_counter_id'`).Scan(&n); err != nil {
+					return err
+				}
+				if n > 0 {
+					return nil
+				}
+				_, err := tx.Exec(`ALTER TABLE process_nodes ADD COLUMN line_counter_id INTEGER`)
+				return err
+			},
+			Verify: func(q migrate.Querier) bool {
+				var t, c int
+				if err := q.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'line_counters'`).Scan(&t); err != nil {
+					return false
+				}
+				err := q.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('process_nodes') WHERE name = 'line_counter_id'`).Scan(&c)
+				return err == nil && t == 1 && c == 1
+			},
+		},
 	}
 }
 

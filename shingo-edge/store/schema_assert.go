@@ -38,6 +38,7 @@ import (
 // requiredTables are tables every migrated edge database must have.
 var requiredTables = []string{
 	"catid_holds",
+	"line_counters",
 	"orders",
 	"processes",
 	"styles",
@@ -121,6 +122,7 @@ var requiredColumns = []requiredColumn{
 	{"processes", "auto_cutover_enabled"},
 	{"processes", "changeover_auto_arm"},
 	{"processes", "identity_tag_name"},
+	{"process_nodes", "line_counter_id"},
 	{"processes", "identity_none"},
 	{"processes", "identity_warlink_managed"},
 	{"process_changeovers", "triggered_by"},

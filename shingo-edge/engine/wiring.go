@@ -48,6 +48,10 @@ func (e *Engine) wireEventHandlers() {
 		e.handleCounterDelta(evt.Payload)
 	}, EventCounterDelta)
 
+	eventbus.SubscribeTyped(e.Events, func(evt eventbus.TypedEvent[EventType, LineCounterDeltaEvent]) {
+		e.handleLineCounterDelta(evt.Payload)
+	}, EventLineCounterDelta)
+
 	eventbus.SubscribeTyped(e.Events, func(evt eventbus.TypedEvent[EventType, OrderCompletedEvent]) {
 		e.handleNodeOrderCompleted(evt.Payload)
 	}, EventOrderCompleted)

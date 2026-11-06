@@ -54,9 +54,10 @@ func TestProductionTick_NoOutboxRow(t *testing.T) {
 }
 
 // TestProductionTick_PollPassStatementBudget pins the Pi cost of a poll pass,
-// counted at the driver seam: the reporting-point list, the snapshot INSERT and
-// the reporting-point UPDATE. Nothing per tick for the heartbeat feed — it was
-// an outbox INSERT here, plus a drain SELECT and an Ack UPDATE behind it.
+// counted at the driver seam: the reporting-point list, the snapshot INSERT,
+// the reporting-point UPDATE, and the station-counter list (one per pass,
+// whether or not the plant has one). Nothing per tick for the heartbeat feed —
+// it was an outbox INSERT here, plus a drain SELECT and an Ack UPDATE behind it.
 func TestProductionTick_PollPassStatementBudget(t *testing.T) {
 	t.Parallel()
 	db, qc, err := store.OpenCounting(filepath.Join(t.TempDir(), "count.db"))
@@ -84,12 +85,12 @@ func TestProductionTick_PollPassStatementBudget(t *testing.T) {
 	r.pass(1)
 	qc.Reset()
 	r.pass(2)
-	if got := qc.Count(); got != 3 {
-		t.Errorf("poll pass with one tick = %d statements, want 3 (list + snapshot INSERT + reporting-point UPDATE)", got)
+	if got := qc.Count(); got != 4 {
+		t.Errorf("poll pass with one tick = %d statements, want 4 (list + snapshot INSERT + reporting-point UPDATE + station list)", got)
 	}
 	qc.Reset()
 	r.pass(2)
-	if got := qc.Count(); got != 1 {
-		t.Errorf("poll pass with no change = %d statements, want 1 (the list)", got)
+	if got := qc.Count(); got != 2 {
+		t.Errorf("poll pass with no change = %d statements, want 2 (the two lists)", got)
 	}
 }

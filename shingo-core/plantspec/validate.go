@@ -512,6 +512,29 @@ func (p *Plant) Validate() error {
 			add("reporting point %s/%s references unknown style %q", rp.PLCName, rp.TagName, rp.Style)
 		}
 	}
+	stationTags := map[string]bool{}
+	for _, rp := range p.ReportingPoints {
+		stationTags[rp.TagName] = true
+	}
+	for _, sc := range p.StationCounters {
+		if !processes[sc.Process] {
+			add("station counter %q references unknown process %q", sc.TagName, sc.Process)
+		}
+		if sc.TagName == "" {
+			add("station counter on process %q needs tag_name", sc.Process)
+		} else if stationTags[sc.TagName] {
+			add("station counter tag %q is already read by a reporting point or another station counter", sc.TagName)
+		}
+		stationTags[sc.TagName] = true
+		if len(sc.Nodes) == 0 {
+			add("station counter %q counts no node", sc.TagName)
+		}
+		for _, n := range sc.Nodes {
+			if !ref(n) {
+				add("station counter %q references unknown node %q", sc.TagName, n)
+			}
+		}
+	}
 	builtStations := map[string]bool{}
 	for _, cc := range p.CellConfigs {
 		if !processes[cc.Process] {

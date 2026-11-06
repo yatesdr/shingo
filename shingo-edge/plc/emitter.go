@@ -32,6 +32,9 @@ type EventEmitter interface {
 	// snapshot INSERT; it must never wait on the CATID monitor.
 	AttributeTick(processID, pointStyleID int64) TickIdentity
 	EmitCounterDelta(rpID, processID, delta, newCount int64, anomaly string, id TickIdentity)
+	// EmitLineCounterDelta is a station counter's counted strokes, with the
+	// identity AttributeTick gave them against the process's active style.
+	EmitLineCounterDelta(counterID, processID, delta int64, anomaly string, id TickIdentity)
 	EmitPLCConnected(plcName string)
 	EmitPLCDisconnected(plcName string, err error)
 	EmitPLCHealthAlert(plcName string, errMsg string)

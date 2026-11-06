@@ -444,10 +444,35 @@ CREATE TABLE IF NOT EXISTS process_nodes (
     curtain_enabled     INTEGER NOT NULL DEFAULT 0,
     curtain_plc_name    TEXT NOT NULL DEFAULT '',
     curtain_tag_name    TEXT NOT NULL DEFAULT '',
-    curtain_safe_value  INTEGER
+    curtain_safe_value  INTEGER,
+    -- The station counter this position is counted at (line_counters.id);
+    -- NULL = counted by the process's production counter. No FK (the edge
+    -- runs with foreign keys off): every read LEFT JOINs line_counters, so a
+    -- binding to a deleted counter reads as unbound.
+    line_counter_id     INTEGER
 );
 -- idx_process_nodes_process_code_live is created in migrations.go — see the
 -- note on idx_styles_process_name_live above.
+
+-- line_counters are the station counters: a PLC tag that clicks once per
+-- assembly where the part leaves the cart, on the process's own PLC, counting
+-- the positions bound to it (process_nodes.line_counter_id) in place of the
+-- production counter. Polled only for a process whose production counter is
+-- wired and enabled. last_count / last_poll_at are the poll's, written only
+-- while the row still reads the tag it listed (the guarded write); a row
+-- never read (last_poll_at NULL) seeds from its first read. No snapshot,
+-- hourly or Core row: the production counter is the cell's record.
+CREATE TABLE IF NOT EXISTS line_counters (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    process_id      INTEGER NOT NULL,
+    label           TEXT    NOT NULL DEFAULT '',
+    plc_name        TEXT    NOT NULL,
+    tag_name        TEXT    NOT NULL,
+    last_count      INTEGER NOT NULL DEFAULT 0,
+    last_poll_at    TEXT,
+    warlink_managed INTEGER NOT NULL DEFAULT 0,
+    UNIQUE (plc_name, tag_name)
+);
 
 -- process_routing_nodes is a process's ROUTING SET: the nodes it may route
 -- material through that are not its own positions — where bins come from

@@ -21,6 +21,7 @@ type mockEmitter struct {
 }
 
 func (e *mockEmitter) EmitCounterRead(rpID int64, plcName, tagName string, value int64) {}
+func (e *mockEmitter) EmitLineCounterDelta(int64, int64, int64, string, TickIdentity)   {}
 func (e *mockEmitter) EmitCounterDelta(rpID, processID, delta, newCount int64, anomaly string, id TickIdentity) {
 }
 

@@ -17,6 +17,10 @@ const (
 	EventCounterRead EventType = iota + 1
 	EventCounterDelta
 	EventCounterReadError
+	// EventLineCounterDelta is a station counter's counted strokes
+	// (LineCounterDeltaEvent): the positions bound to it are charged. It runs
+	// no hourly, snapshot or Core path — the production counter is the record.
+	EventLineCounterDelta
 
 	// Order events
 	EventOrderCreated
@@ -202,6 +206,20 @@ type CounterDeltaEvent struct {
 	// threshold, "reset" backward (Delta is then the new count). A record
 	// only; every consumer counts the delta whatever it says.
 	Anomaly string `json:"anomaly"`
+}
+
+// LineCounterDeltaEvent is one station counter's counted strokes, with the
+// identity the poll attributed them (plc.EventEmitter.AttributeTick against
+// the process's active style).
+type LineCounterDeltaEvent struct {
+	eventbus.PayloadBase
+	CounterID int64        `json:"counter_id"`
+	ProcessID int64        `json:"process_id"`
+	StyleID   int64        `json:"style_id"`
+	CATID     string       `json:"catid,omitempty"`
+	Kind      plc.TickKind `json:"kind,omitempty"`
+	Delta     int64        `json:"delta"`
+	Anomaly   string       `json:"anomaly"`
 }
 
 // OrderCreatedEvent is emitted when a new order is placed.

@@ -528,6 +528,14 @@ func (h *EventHub) SetupEngineListeners(eng *engine.Engine) {
 			if p, ok := evt.Payload.(engine.CounterDeltaEvent); ok {
 				sseEvt = SSEEvent{Type: "counter-update", Data: p}
 			}
+		case engine.EventLineCounterDelta:
+			// A station counter's strokes changed the bound positions' counts:
+			// the same refresh the production tick sends, from its own arm —
+			// never a re-emitted EventCounterDelta, which would run hourly and
+			// the production walk again.
+			if p, ok := evt.Payload.(engine.LineCounterDeltaEvent); ok {
+				sseEvt = SSEEvent{Type: "counter-update", Data: map[string]any{"process_id": p.ProcessID, "counter_id": p.CounterID}}
+			}
 		case engine.EventUOPAdjusted:
 			if p, ok := evt.Payload.(engine.UOPAdjustedEvent); ok {
 				sseEvt = SSEEvent{Type: "counter-update", Data: p}
