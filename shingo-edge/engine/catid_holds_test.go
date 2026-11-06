@@ -328,7 +328,9 @@ func TestHold_WriteOffChargesNothing(t *testing.T) {
 	if got := runtimeOf(t, eng, cNode).RemainingUOPCached; got != 40 {
 		t.Errorf("C's cart = %d, want 40", got)
 	}
-	if h, _ := eng.db.GetCatidHold(id); h == nil || h.Resolution != holdWrittenOff {
+	h, err := eng.db.GetCatidHold(id)
+	testutil.MustNoErr(t, err, "hold")
+	if h == nil || h.Resolution != holdWrittenOff {
 		t.Errorf("hold = %+v, want written off", h)
 	}
 }
@@ -445,7 +447,9 @@ func TestHold_AResolvedHoldTakesNoMoreStrokes(t *testing.T) {
 	if !ok {
 		t.Fatal("resolve wrote nothing")
 	}
-	if ok, _ := db.ResolveCatidHold(first.ID, holdCharged, "engineer", time.Now()); ok {
+	ok, err = db.ResolveCatidHold(first.ID, holdCharged, "engineer", time.Now())
+	testutil.MustNoErr(t, err, "second resolve")
+	if ok {
 		t.Error("a second resolve wrote")
 	}
 	opened, err = db.HoldCatidDraw(pid, "1003", 0, "", holdReasonHeld, 5, time.Now())
@@ -456,8 +460,10 @@ func TestHold_AResolvedHoldTakesNoMoreStrokes(t *testing.T) {
 	if h := mustOneHold(t, db, pid); h.ID == first.ID || h.Qty != 5 {
 		t.Errorf("open hold = %+v, want a new one of 5", h)
 	}
-	if h, _ := db.GetCatidHold(first.ID); h.Qty != 2 || h.Resolution != holdWrittenOff {
-		t.Errorf("released row = %+v, want 2, written off", h)
+	released, err := db.GetCatidHold(first.ID)
+	testutil.MustNoErr(t, err, "released row")
+	if released.Qty != 2 || released.Resolution != holdWrittenOff {
+		t.Errorf("released row = %+v, want 2, written off", released)
 	}
 }
 

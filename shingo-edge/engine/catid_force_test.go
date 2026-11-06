@@ -218,7 +218,9 @@ func TestForcedCutover_PromptModeOffersNotFires(t *testing.T) {
 	assertLegsUntouched(t, db, task)
 
 	testutil.MustNoErr(t, db.SetChangeoverAutoArm(pid, "off"), "off")
-	if off, _ := eng.CutoverNowOffer(pid); off.Offered {
+	off, err = eng.CutoverNowOffer(pid)
+	testutil.MustNoErr(t, err, "offer in off mode")
+	if off.Offered {
 		t.Errorf("off mode offered %+v", off)
 	}
 }
