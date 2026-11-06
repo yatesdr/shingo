@@ -208,9 +208,29 @@ type postCutoverVerify struct {
 // read without cm.mu: the poll attributes a counted tick by it, and must never
 // wait on the monitor. Immutable; a change publishes a new one.
 type catidSnapshot struct {
-	value    string              // the confirmed CATID; "" until one is confirmed
-	lastOK   time.Time           // the last good read of the identity tag
-	observed map[string]struct{} // every value the process has emitted (plc_catid_observations)
+	value       string              // the confirmed CATID; "" until one is confirmed
+	confirmedAt time.Time           // when value was confirmed
+	lastOK      time.Time           // the last good read of the identity tag
+	observed    map[string]struct{} // every value the process has emitted (plc_catid_observations)
+	landing     catidLanding        // the process's latest landing; zero until one
+}
+
+// catidLanding is a process's latest landing — a changeover completed, or a
+// switch — as the snapshot carries it: the style it left and when, on the
+// monitor's clock (the one a confirm is dated by).
+type catidLanding struct {
+	fromStyleID int64
+	at          time.Time
+}
+
+// runningOut is the style whose part the PLC is still running out: the
+// latest landing's from-style while the confirmed value is one confirmed
+// before that landing; 0 otherwise.
+func (s *catidSnapshot) runningOut() int64 {
+	if s.landing.at.IsZero() || !s.confirmedAt.Before(s.landing.at) {
+		return 0
+	}
+	return s.landing.fromStyleID
 }
 
 type catidMonitor struct {
@@ -391,16 +411,16 @@ func (cm *catidMonitor) snapshot(processID int64) (*catidSnapshot, bool) {
 }
 
 // publishRead refreshes the process's snapshot after a good read at now: the
-// confirmed value and the read's time, and, on a confirm edge, the value
-// added to the observed set (copied, never written in place). Called with
-// cm.mu held.
+// confirmed value, its confirm time and the read's time, and, on a confirm
+// edge, the value added to the observed set (copied, never written in place).
+// The latest landing carries over. Called with cm.mu held.
 func (cm *catidMonitor) publishRead(processID int64, st *catidState, now time.Time, confirmed bool) {
 	next := &catidSnapshot{lastOK: now}
 	if old, ok := cm.snapshot(processID); ok {
-		next.observed = old.observed
+		next.observed, next.landing = old.observed, old.landing
 	}
 	if st.seenValue {
-		next.value = st.lastConfirmed
+		next.value, next.confirmedAt = st.lastConfirmed, st.confirmedAt
 	}
 	if confirmed && isIdentity(next.value) && !catidSetHas(next.observed, next.value) {
 		grown := make(map[string]struct{}, len(next.observed)+1)
@@ -411,6 +431,28 @@ func (cm *catidMonitor) publishRead(processID int64, st *catidState, now time.Ti
 		next.observed = grown
 	}
 	cm.snapshots.Store(processID, next)
+}
+
+// noteLanding publishes the process's latest landing on its snapshot. Under
+// cm.mu, so a read's publish (which carries the landing over) cannot drop it.
+func (cm *catidMonitor) noteLanding(processID, fromStyleID int64, at time.Time) {
+	cm.mu.Lock()
+	defer cm.mu.Unlock()
+	old, ok := cm.snapshot(processID)
+	if !ok {
+		return
+	}
+	next := *old
+	next.landing = catidLanding{fromStyleID: fromStyleID, at: at}
+	cm.snapshots.Store(processID, &next)
+}
+
+// landedAt is when the process last landed, zero if never. No lock.
+func (cm *catidMonitor) landedAt(processID int64) time.Time {
+	if s, ok := cm.snapshot(processID); ok {
+		return s.landing.at
+	}
+	return time.Time{}
 }
 
 func (cm *catidMonitor) run() {
@@ -835,10 +877,18 @@ func (cm *catidMonitor) decideAutoArm(processID int64, st *catidState, v string,
 //   - v held because several styles run it: the change prompt, with them as
 //     its candidates, in auto (prompt mode raised it at the change).
 //
-// The declaration alone does nothing: a part no stroke was counted on moves
-// nothing. Called with cm.mu held; light DB reads only.
+// v must be a change, never a baseline, confirmed after the process's latest
+// landing: a part standing from before it is the run-out of the style the
+// landing left (or a mismatch the cell already ran with), not the cell
+// running another style (TestAutoSwitch_RunOutAfterAnEarlyCutoverNeverSwitchesBack,
+// TestAutoSwitch_BaselineNeverSwitches). The declaration alone does nothing:
+// a part no stroke was counted on moves nothing. Called with cm.mu held; light
+// DB reads only.
 func (cm *catidMonitor) decideAutoSwitch(proc *processes.Process, st *catidState, v string, now time.Time) *autoCutoverIntent {
 	f := st.forceFacts(now)
+	if f.baseline || !f.confirmedAt.After(cm.landedAt(proc.ID)) {
+		return nil
+	}
 	f.tick = cm.lastCountedTick(proc.ID)
 	mode := domain.NormalizeChangeoverAutoArm(proc.ChangeoverAutoArm)
 	switch {

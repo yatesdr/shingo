@@ -90,8 +90,11 @@ func (e *Engine) adminSwitchNoChangeover(proc *processes.Process, styleID *int64
 // completed changeover row from fromStyleID (no tasks, orders or episode),
 // then opens the post-cutover watch on it — replacing a watch the door opened
 // for the changeover's own target — and releases the holds the landing style
-// runs, as the door's landing does. The admin switch and the automatic switch.
+// runs, as the door's landing does. The landing is noted on the CATID
+// monitor first, as the door notes its own. The admin switch and the
+// automatic switch.
 func (e *Engine) recordSwitch(processID int64, fromStyleID *int64, toStyleID int64, calledBy, triggeredBy, notes string) error {
+	e.noteLanding(processID, fromStyleID)
 	if err := e.flipActiveStyle(processID, &toStyleID); err != nil {
 		return err
 	}

@@ -26,6 +26,56 @@ func attributeRig(t *testing.T, live string, observed ...string) (eng *Engine, p
 	return eng, pid, a, b, cm
 }
 
+// onPart puts the monitor on v, confirmed as a change at confirmedAt, and
+// publishes it through the monitor's own read, with observed already seen.
+func onPart(cm *catidMonitor, pid int64, v string, confirmedAt time.Time, observed ...string) *catidState {
+	cm.mu.Lock()
+	defer cm.mu.Unlock()
+	st := cm.states[pid]
+	st.seenValue, st.lastConfirmed, st.confirmedAt, st.confirmedBaseline = true, v, confirmedAt, false
+	cm.snapshots.Store(pid, &catidSnapshot{observed: set(observed...)})
+	cm.publishRead(pid, st, time.Now(), true)
+	return st
+}
+
+// TestTick_RunOutAfterAnEarlyCutoverPrepaysTheIncomingCart: A → B is completed
+// by "Mark as running" while the PLC still reports A's part. A run-out stroke
+// after the landing prepays B's bound cart, as the same stroke did before the
+// cutover; nothing is held, and the process stays on B. Before, the stroke
+// after the landing was off-plan to A and its draw went to the holds ledger.
+func TestTick_RunOutAfterAnEarlyCutoverPrepaysTheIncomingCart(t *testing.T) {
+	t.Parallel()
+	eng, db, pid, nodeID, from, to := runOutRig(t)
+	testutil.MustNoErr(t, db.SetStyleExpectedCATID(from, "1001"), "pin A")
+	testutil.MustNoErr(t, db.SetStyleExpectedCATID(to, "1002"), "pin B")
+	cm := &catidMonitor{eng: eng, states: map[int64]*catidState{
+		pid: {processName: "CO-PROC", plcName: "plc", tagName: "MES_Cell.CATID_01"},
+	}}
+	eng.catidMon = cm
+	eng.tickMonitor.Store(cm)
+	onPart(cm, pid, "1001", time.Now().Add(-5*time.Minute), "1001", "1002")
+	testutil.MustNoErr(t, eng.carrierLeft(nodeID, runOutNode), "A's cart lifted")
+	landCart(t, eng, nodeID, 9102, "PART-NEW", 40)
+
+	if id := strokeAt(eng, pid, from, 2); id.Kind != plc.TickToday {
+		t.Fatalf("before the cutover: attribution %+v, want today", id)
+	}
+	if got := runtimeOf(t, eng, nodeID).RemainingUOPCached; got != 38 {
+		t.Fatalf("B's cart before the cutover = %d, want 38", got)
+	}
+	testutil.MustNoErr(t, eng.SetProcessActiveStyle(pid, &to), "mark B as running")
+	id := strokeAt(eng, pid, to, 2)
+	if got := runtimeOf(t, eng, nodeID).RemainingUOPCached; got != 36 {
+		t.Errorf("B's cart after a run-out stroke past the landing = %d (attribution %+v), want 36", got, id)
+	}
+	if hs := openHolds(t, eng, pid); len(hs) != 0 {
+		t.Errorf("holds = %+v, want none: a run-out stroke is today's", hs)
+	}
+	if p := mustProcess(t, db, pid); p.ActiveStyleID == nil || *p.ActiveStyleID != to {
+		t.Errorf("active style = %v, want B (%d)", p.ActiveStyleID, to)
+	}
+}
+
 // TestTick_NoIdentityAttributesAsToday: with no monitor, or a process it does
 // not hold, every tick is its point's style, as before the part was read.
 func TestTick_NoIdentityAttributesAsToday(t *testing.T) {
@@ -102,23 +152,27 @@ func TestAttributeCATID_TheRule(t *testing.T) {
 	}
 	proven := set("1001")
 	for _, c := range []struct {
-		name     string
-		v        string
-		observed map[string]struct{}
-		sets     []styleCATIDEntry
-		want     plc.TickIdentity
+		name       string
+		v          string
+		observed   map[string]struct{}
+		sets       []styleCATIDEntry
+		runningOut int64
+		want       plc.TickIdentity
 	}{
-		{"active's part", "1001", proven, sets, plc.TickIdentity{StyleID: a, CATID: "1001", Kind: plc.TickToday}},
-		{"shared with the target is the active's", "1009", proven, sets, plc.TickIdentity{StyleID: a, CATID: "1009", Kind: plc.TickToday}},
-		{"the target's", "1002", proven, sets, plc.TickIdentity{StyleID: tg, CATID: "1002", Kind: plc.TickTarget}},
-		{"one other style's, proven", "1003", proven, sets, plc.TickIdentity{StyleID: s1, CATID: "1003", Kind: plc.TickOffPlan}},
-		{"several styles', proven", "1005", proven, sets, plc.TickIdentity{StyleID: point, CATID: "1005", Kind: plc.TickHeld}},
-		{"no style's, proven", "1007", proven, sets, plc.TickIdentity{StyleID: point, CATID: "1007", Kind: plc.TickHeld}},
-		{"one other style's, unproven", "1003", set("-1"), sets, plc.TickIdentity{StyleID: point, CATID: "1003", Kind: plc.TickToday}},
-		{"the active's set empty", "1003", proven, []styleCATIDEntry{{ID: a, Active: true}, sets[2]},
+		{"active's part", "1001", proven, sets, 0, plc.TickIdentity{StyleID: a, CATID: "1001", Kind: plc.TickToday}},
+		{"shared with the target is the active's", "1009", proven, sets, 0, plc.TickIdentity{StyleID: a, CATID: "1009", Kind: plc.TickToday}},
+		{"the target's", "1002", proven, sets, 0, plc.TickIdentity{StyleID: tg, CATID: "1002", Kind: plc.TickTarget}},
+		{"one other style's, proven", "1003", proven, sets, 0, plc.TickIdentity{StyleID: s1, CATID: "1003", Kind: plc.TickOffPlan}},
+		{"several styles', proven", "1005", proven, sets, 0, plc.TickIdentity{StyleID: point, CATID: "1005", Kind: plc.TickHeld}},
+		{"no style's, proven", "1007", proven, sets, 0, plc.TickIdentity{StyleID: point, CATID: "1007", Kind: plc.TickHeld}},
+		{"one other style's, unproven", "1003", set("-1"), sets, 0, plc.TickIdentity{StyleID: point, CATID: "1003", Kind: plc.TickToday}},
+		{"the active's set empty", "1003", proven, []styleCATIDEntry{{ID: a, Active: true}, sets[2]}, 0,
 			plc.TickIdentity{StyleID: point, CATID: "1003", Kind: plc.TickToday}},
+		{"the running-out style's part", "1003", proven, sets, s1, plc.TickIdentity{StyleID: point, CATID: "1003", Kind: plc.TickToday}},
+		{"shared by the running-out style", "1005", proven, sets, s2, plc.TickIdentity{StyleID: point, CATID: "1005", Kind: plc.TickToday}},
+		{"another style's, a style running out", "1003", proven, sets, s2, plc.TickIdentity{StyleID: s1, CATID: "1003", Kind: plc.TickOffPlan}},
 	} {
-		if got := attributeCATID(c.v, point, c.sets, c.observed); got != c.want {
+		if got := attributeCATID(c.v, point, c.sets, c.observed, c.runningOut); got != c.want {
 			t.Errorf("%s: %+v, want %+v", c.name, got, c.want)
 		}
 	}

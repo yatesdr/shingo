@@ -429,6 +429,7 @@ func (e *Engine) completeCutoverLocked(processID, changeoverID int64, by string,
 		e.logFn("cutover: process %d changeover %d completed past its gate (%s): %s", processID, changeover.ID, by, reasons)
 	}
 	toStyleID := changeover.ToStyleID
+	e.noteLanding(processID, changeover.FromStyleID)
 	// The flip goes through the shared verb (lineside_strand.go) so it
 	// strands the piles, syncs the reporting point AND publishes plant.claims.
 	// Verb errors are returned: a failed write must not finalize the row.

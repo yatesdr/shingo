@@ -74,6 +74,52 @@ func TestAutoSwitch_CountedPartOnAPinnedStyleSwitchesAndRecords(t *testing.T) {
 	}
 }
 
+// TestAutoSwitch_RunOutAfterAnEarlyCutoverNeverSwitchesBack: A → B completed
+// by "Mark as running" while the PLC still reports A's part; the run-out
+// strokes after the landing never switch the process back to A. Before, the
+// first run-out stroke was off-plan to A and the switch flipped the process
+// back on it.
+func TestAutoSwitch_RunOutAfterAnEarlyCutoverNeverSwitchesBack(t *testing.T) {
+	t.Parallel()
+	eng, db, pid, a, b, cm := switchRig(t, "auto")
+	eng.cutoverPokes = make(chan int64, 64)
+	_, err := eng.changeoverService.Create(pid, &a, b, "test", "", nil, nil, nil, nil)
+	testutil.MustNoErr(t, err, "open A → B")
+	st := onPart(cm, pid, "1001", time.Now().Add(-5*time.Minute), "1001", "1002")
+	settle(cm, pid, st, "1001", time.Now()) // decided while open: A's own part
+	testutil.MustNoErr(t, eng.SetProcessActiveStyle(pid, &b), "mark B as running")
+	for i := 0; i < 2; i++ {
+		countedStroke(eng, pid, b)
+	}
+	drainPokes(eng, cm)
+	tickAutoCutover(cm, pid, st, "1001", true, time.Now().Add(2*time.Minute))
+	if got := runningStyle(t, db, pid); got != b {
+		t.Fatalf("active style = %d, want B (%d): a run-out stroke switched the process back", got, b)
+	}
+	if rows := flipRows(t, db, pid); len(rows) != 0 {
+		t.Errorf("flip rows = %+v, want none", rows)
+	}
+}
+
+// TestAutoSwitch_BaselineNeverSwitches: a part standing at the first read
+// after a start (the baseline) is not a change; a counted stroke on it never
+// switches the process. Before, a baseline switched.
+func TestAutoSwitch_BaselineNeverSwitches(t *testing.T) {
+	t.Parallel()
+	eng, db, pid, a, b, cm := switchRig(t, "auto")
+	st := changedTo(cm, pid, "1002", time.Now().Add(-5*time.Minute))
+	cm.mu.Lock()
+	st.confirmedBaseline = true
+	cm.mu.Unlock()
+	if id := countedStroke(eng, pid, a); id.Kind != plc.TickOffPlan || id.StyleID != b {
+		t.Fatalf("stroke = %+v, want off-plan on B", id)
+	}
+	settle(cm, pid, st, "1002", time.Now())
+	if got := runningStyle(t, db, pid); got != a {
+		t.Fatalf("active style = %d, want A (%d): a baseline read switched the process", got, a)
+	}
+}
+
 // TestAutoSwitch_DeclarationAloneDoesNothing: a part held a minute with no
 // stroke counted on it moves nothing.
 func TestAutoSwitch_DeclarationAloneDoesNothing(t *testing.T) {

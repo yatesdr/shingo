@@ -37,20 +37,25 @@ func (e *Engine) attributeTick(processID, pointStyleID int64) plc.TickIdentity {
 	if !ok || snap.lastOK.IsZero() || clock.Now().Sub(snap.lastOK) > tickIdentityFresh || !isIdentity(snap.value) {
 		return today
 	}
-	return attributeCATID(snap.value, pointStyleID, e.processStyleCATIDSets(processID), snap.observed)
+	return attributeCATID(snap.value, pointStyleID, e.processStyleCATIDSets(processID), snap.observed, snap.runningOut())
 }
 
 // attributeCATID is the attribution rule (pure). A is the active style, T the
 // open changeover's target, proven(A) = A's set holds a value this process has
-// emitted:
+// emitted, R the style running out (runningOut: the latest landing left R
+// while v was already confirmed, 0 when none):
 //
 //	A's set empty                                → today, the point's style
 //	v in A's set (a CATID A shares included)     → today, A
 //	v in T's set (alone or among others)         → target, T
 //	A's set not proven                           → today, the point's style
+//	v in R's set: the run-out after a landing    → today, the point's style
 //	v in exactly one other style's set, S        → off-plan, S
 //	v in no style's set, or several              → held, the point's style
-func attributeCATID(v string, pointStyleID int64, sets []styleCATIDEntry, observed map[string]struct{}) plc.TickIdentity {
+//
+// The run-out is today's, so the incoming cart prepays it after the cutover as
+// it did before (TestTick_RunOutAfterAnEarlyCutoverPrepaysTheIncomingCart).
+func attributeCATID(v string, pointStyleID int64, sets []styleCATIDEntry, observed map[string]struct{}, runningOut int64) plc.TickIdentity {
 	id := plc.TickIdentity{StyleID: pointStyleID, CATID: v, Kind: plc.TickToday}
 	var active, target *styleCATIDEntry
 	for i := range sets {
@@ -78,6 +83,9 @@ func attributeCATID(v string, pointStyleID int64, sets []styleCATIDEntry, observ
 	var only *styleCATIDEntry
 	n := 0
 	for i := range sets {
+		if sets[i].ID == runningOut && catidSetHas(sets[i].Set, v) {
+			return id
+		}
 		if catidSetHas(sets[i].Set, v) {
 			n++
 			only = &sets[i]
@@ -106,6 +114,24 @@ func (e *Engine) noteCountedTick(processID int64, id plc.TickIdentity) {
 	}
 	cm.countedTicks.Store(processID, countedTick{catid: id.CATID, kind: id.Kind, at: clock.Now()})
 	e.pokeCutover(processID)
+}
+
+// noteLanding publishes a landing (the door's completion or a switch) on the
+// monitor's snapshot just before its flip commits the new active style: the
+// poll attributes from that flag, so a run-out stroke read between the flip and
+// a later publish would be off-plan. A flip that then fails leaves the landing
+// noted on an unchanged style, which moves no attribution (a value of the
+// active style's is today's first) and only makes the switch wait for a later
+// change. Dated on the monitor's clock, as a confirm is.
+func (e *Engine) noteLanding(processID int64, fromStyleID *int64) {
+	if e.catidMon == nil {
+		return
+	}
+	var from int64
+	if fromStyleID != nil {
+		from = *fromStyleID
+	}
+	e.catidMon.noteLanding(processID, from, time.Now())
 }
 
 // proven reports whether a set holds a value the process has emitted. Values
