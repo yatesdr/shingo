@@ -6,7 +6,6 @@ import (
 	"net/http"
 
 	"shingoedge/engine"
-	"shingoedge/store/counters"
 )
 
 // handlers_station_counters.go — the station counters and "counted at" (admin).
@@ -37,9 +36,6 @@ func (h *Handlers) apiListStationCounters(w http.ResponseWriter, r *http.Request
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
-	}
-	if list == nil {
-		list = []counters.LineCounter{}
 	}
 	writeJSON(w, list)
 }

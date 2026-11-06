@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"shingoedge/store/internal/helpers"
-	"shingoedge/store/processes"
 )
 
 // LineCounter is one line_counters row. The poll's list also carries the
@@ -171,46 +170,39 @@ func SetLineCounterManaged(db *sql.DB, id int64, managed bool) error {
 }
 
 // DeleteLineCounter deletes a station counter and unbinds its positions, in
-// one transaction: no binding is left to read as unbound by accident.
-func DeleteLineCounter(db *sql.DB, id int64) error {
+// one transaction: no binding is left to read as unbound by accident. It
+// reports how many positions it unbound; the store's wrapper publishes the
+// node generation (processes.BumpNodeGeneration) when that is any.
+func DeleteLineCounter(db *sql.DB, id int64) (int64, error) {
 	tx, err := db.Begin()
 	if err != nil {
-		return err
+		return 0, err
 	}
 	defer tx.Rollback()
 	res, err := tx.Exec(`UPDATE process_nodes SET line_counter_id = NULL WHERE line_counter_id = ?`, id)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	unbound, err := res.RowsAffected()
 	if err != nil {
-		return err
+		return 0, err
 	}
 	if _, err := tx.Exec(`DELETE FROM line_counters WHERE id = ?`, id); err != nil {
-		return err
+		return 0, err
 	}
-	if err := tx.Commit(); err != nil {
-		return err
-	}
-	if unbound > 0 {
-		processes.BumpNodeGeneration()
-	}
-	return nil
+	return unbound, tx.Commit()
 }
 
 // SetNodeLineCounter binds a position to a station counter (nil unbinds it).
-// The rules are the engine's (SetCountedAt); this is the write, which bumps
-// the node generation only when the binding changed.
-func SetNodeLineCounter(db *sql.DB, nodeID int64, counterID *int64) error {
+// The rules are the engine's (SetCountedAt); this is the write. It reports
+// whether the binding changed; the store's wrapper publishes the node
+// generation (processes.BumpNodeGeneration) when it did.
+func SetNodeLineCounter(db *sql.DB, nodeID int64, counterID *int64) (bool, error) {
 	res, err := db.Exec(`UPDATE process_nodes SET line_counter_id = ? WHERE id = ? AND line_counter_id IS NOT ?`,
 		counterID, nodeID, counterID)
 	if err != nil {
-		return err
+		return false, err
 	}
-	if n, err := res.RowsAffected(); err != nil {
-		return err
-	} else if n > 0 {
-		processes.BumpNodeGeneration()
-	}
-	return nil
+	n, err := res.RowsAffected()
+	return n > 0, err
 }

@@ -4,6 +4,7 @@ import (
 	"time"
 
 	"shingoedge/store/counters"
+	"shingoedge/store/processes"
 )
 
 // The station counters (store/counters/line_counters.go).
@@ -48,10 +49,22 @@ func (db *DB) SetLineCounterManaged(id int64, managed bool) error {
 	return counters.SetLineCounterManaged(db.DB, id, managed)
 }
 
+// DeleteLineCounter deletes a station counter, unbinding its positions; the
+// node generation moves when any position was unbound.
 func (db *DB) DeleteLineCounter(id int64) error {
-	return counters.DeleteLineCounter(db.DB, id)
+	unbound, err := counters.DeleteLineCounter(db.DB, id)
+	if err == nil && unbound > 0 {
+		processes.BumpNodeGeneration()
+	}
+	return err
 }
 
+// SetNodeLineCounter binds a position to a station counter (nil unbinds it);
+// the node generation moves when the binding changed.
 func (db *DB) SetNodeLineCounter(nodeID int64, counterID *int64) error {
-	return counters.SetNodeLineCounter(db.DB, nodeID, counterID)
+	changed, err := counters.SetNodeLineCounter(db.DB, nodeID, counterID)
+	if err == nil && changed {
+		processes.BumpNodeGeneration()
+	}
+	return err
 }

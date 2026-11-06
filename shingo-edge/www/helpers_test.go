@@ -322,7 +322,7 @@ func (s *stubEngine) CutOverNow(id int64) error {
 // against the real engine.
 func (s *stubEngine) ListStationCounters(processID int64) ([]counters.LineCounter, error) {
 	if processID != 1 {
-		return nil, nil
+		return []counters.LineCounter{}, nil
 	}
 	return []counters.LineCounter{{ID: 7, ProcessID: 1, Label: "op 10", PLCName: "plc", TagName: "STATION_01"}}, nil
 }

@@ -32,9 +32,13 @@ func refused(format string, args ...any) error {
 	return &StationCounterRefused{Sentence: fmt.Sprintf(format, args...)}
 }
 
-// ListStationCounters returns a process's station counters.
+// ListStationCounters returns a process's station counters ([] for none).
 func (e *Engine) ListStationCounters(processID int64) ([]counters.LineCounter, error) {
-	return e.db.ListLineCounters(processID)
+	list, err := e.db.ListLineCounters(processID)
+	if list == nil && err == nil {
+		list = []counters.LineCounter{}
+	}
+	return list, err
 }
 
 // CreateStationCounter adds a station counter reading tagName on the process's
