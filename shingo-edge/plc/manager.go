@@ -115,6 +115,12 @@ type Manager struct {
 	// (rpID → struct{}), so the log says it once a streak.
 	nonNumeric sync.Map
 
+	// lineBoot is each station counter's rollback verdict for this boot,
+	// taken at its first listing (counter id → string, "" when the run before
+	// this boot read it; consumed by its first good read): the gap is judged
+	// once a boot, never within a run (pollLineCounter).
+	lineBoot sync.Map
+
 	warlinkConnected bool
 	warlinkError     error
 
@@ -683,6 +689,13 @@ func (m *Manager) pollAllReportingPoints() {
 		log.Printf("list reporting points: %v", err)
 		return
 	}
+	// The station counters are listed before the points are read, so a
+	// counter's first listing this boot sees its point as the run before this
+	// boot left it (the rollback check, pollLineCounter).
+	lcs, err := m.db.ListPolledLineCounters()
+	if err != nil {
+		log.Printf("list station counters: %v", err)
+	}
 
 	shipped := false
 	for _, rp := range rps {
@@ -697,9 +710,10 @@ func (m *Manager) pollAllReportingPoints() {
 			(*fn)()
 		}
 	}
-	// The station counters, after the production points: the rollback-gap
-	// check compares each with its process's point as this pass left it.
-	m.pollAllLineCounters()
+	// The station counters are read after the production points.
+	for _, lc := range lcs {
+		m.pollLineCounterSafe(lc)
+	}
 }
 
 // pollReportingPointSafe wraps pollReportingPoint with a recover() so a

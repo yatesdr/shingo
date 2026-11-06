@@ -77,6 +77,7 @@ func (e *Engine) CreateStationCounter(processID int64, label, tagName string) (*
 			e.logFn("station counter %d: record managed publishing: %v", id, err)
 		}
 	}
+	e.stationHealth.startTrack(id, processID)
 	e.logFn("station counter %d on %s: %s/%s created (%q), unread — it seeds at its first poll", id, proc.Name,
 		proc.CounterPLCName, tagName, label)
 	return e.db.GetLineCounter(id)
@@ -109,6 +110,7 @@ func (e *Engine) UpdateStationCounter(id int64, label, tagName string) error {
 		return err
 	}
 	e.unpublishTag(lc.WarlinkManaged, lc.PLCName, lc.TagName)
+	e.stationHealth.startTrack(id, lc.ProcessID)
 	e.logFn("station counter %d: %s/%s → %s/%s, unread — it seeds from the new tag's first poll", id,
 		lc.PLCName, lc.TagName, lc.PLCName, tagName)
 	return nil

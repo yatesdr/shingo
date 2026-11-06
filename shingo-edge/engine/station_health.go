@@ -20,8 +20,8 @@ const (
 	// click before "stopped" can show at all, until a deeper run-out has been
 	// seen: the first run-out is not mistaken for a stop.
 	stationStopFloor = 20
-	// stationRatioWindow is how many production intervals the clicks-per-part
-	// median reads, so a start-up lead lands in one of them.
+	// stationRatioWindow is how many production intervals with a click the
+	// clicks-per-part median reads, so a start-up lead lands in one of them.
 	stationRatioWindow = 20
 
 	stationKindStopped    = "station_stopped"
@@ -40,7 +40,8 @@ type stationTrack struct {
 	// deepest is the most production strokes ever counted between two
 	// clicks: the deepest run-out (a cart's last parts in the line).
 	deepest int64
-	// ratios: clicks per production stroke over the last intervals.
+	// ratios: clicks per production stroke over the last intervals that had a
+	// click; a run-out's strokes with none say nothing about the tag.
 	ratios []float64
 }
 
@@ -55,22 +56,42 @@ type stationHealthTracker struct {
 	mu       sync.Mutex
 	stations map[int64]*stationTrack // counter id → track
 	reads    map[string]*readState   // "plc/tag" → read state
+	// produced is each process's production strokes since boot: the account
+	// of a counter that has not clicked since (snapshot).
+	produced map[int64]int64
 }
 
 func (h *stationHealthTracker) onProductionStroke(processID, delta int64) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	if h.produced == nil {
+		h.produced = map[int64]int64{}
+	}
+	h.produced[processID] += delta
 	for _, s := range h.stations {
 		if s.processID != processID {
 			continue
 		}
 		s.prodSinceClick += delta
-		s.ratios = append(s.ratios, float64(s.clicksSinceProd)/float64(delta))
-		if len(s.ratios) > stationRatioWindow {
-			s.ratios = s.ratios[len(s.ratios)-stationRatioWindow:]
+		if s.clicksSinceProd > 0 {
+			s.ratios = append(s.ratios, float64(s.clicksSinceProd)/float64(delta))
+			if len(s.ratios) > stationRatioWindow {
+				s.ratios = s.ratios[len(s.ratios)-stationRatioWindow:]
+			}
 		}
 		s.clicksSinceProd = 0
 	}
+}
+
+// startTrack begins a counter's account at zero: a counter made or moved to
+// another tag while the line runs counts its strokes from then, not from boot.
+func (h *stationHealthTracker) startTrack(counterID, processID int64) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.stations == nil {
+		h.stations = map[int64]*stationTrack{}
+	}
+	h.stations[counterID] = &stationTrack{processID: processID}
 }
 
 func (h *stationHealthTracker) onStationClick(counterID, processID, delta int64) {
@@ -110,17 +131,19 @@ func (h *stationHealthTracker) onRead(plcName, tagName string, failure string) {
 	r.errAt, r.err = now, failure
 }
 
-// snapshot copies one counter's track and one tag's read state.
-func (h *stationHealthTracker) snapshot(counterID int64) (stationTrack, bool) {
+// snapshot copies one counter's track. A counter with none has not clicked
+// since boot (nor been made or moved since): every production stroke of its
+// process since boot is a stroke since its last click.
+func (h *stationHealthTracker) snapshot(counterID, processID int64) stationTrack {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	s, ok := h.stations[counterID]
 	if !ok {
-		return stationTrack{}, false
+		return stationTrack{processID: processID, prodSinceClick: h.produced[processID]}
 	}
 	c := *s
 	c.ratios = append([]float64(nil), s.ratios...)
-	return c, true
+	return c
 }
 
 func (h *stationHealthTracker) unreadable(plcName, tagName string) (string, time.Time, bool) {
@@ -180,14 +203,11 @@ func (e *Engine) stationHealthItems(processID int64) []CatidHealthItem {
 		activeBound, paired := e.boundPositions(proc, nodes, lc.ID)
 		for _, p := range paired {
 			items = append(items, CatidHealthItem{Kind: stationKindPaired, Severity: CatidHealthAmber,
-				Headline: fmt.Sprintf("%s became an A/B pair — counted at the cell's counter", p),
+				Headline: fmt.Sprintf("%s became an A/B pair under %s — counted at the cell's counter while %s runs", p.node, p.style, p.style),
 				Detail:   fmt.Sprintf("bound to %s; pairs are counted by the production counter", name),
-				Data:     map[string]any{"counter_id": lc.ID, "node": p}})
+				Data:     map[string]any{"counter_id": lc.ID, "node": p.node, "style": p.style}})
 		}
-		s, ok := e.stationHealth.snapshot(lc.ID)
-		if !ok {
-			continue
-		}
+		s := e.stationHealth.snapshot(lc.ID, processID)
 		limit := s.deepest
 		if limit < stationStopFloor {
 			limit = stationStopFloor
@@ -198,7 +218,11 @@ func (e *Engine) stationHealthItems(processID int64) []CatidHealthItem {
 				Detail:   fmt.Sprintf("%d strokes since its last click; the deepest run-out seen is %d", s.prodSinceClick, s.deepest),
 				Data:     map[string]any{"counter_id": lc.ID, "strokes": s.prodSinceClick, "deepest": s.deepest}})
 		}
-		if len(s.ratios) >= stationRatioWindow {
+		// Quiet while a changeover is open (the station and the cell count
+		// different parts' strokes) or a run-out is: more than one stroke
+		// since the last click, one being a pass that read the cell's stroke
+		// before the station's click.
+		if !changeoverOpen && s.prodSinceClick <= 1 && len(s.ratios) >= stationRatioWindow {
 			if m, _ := median(s.ratios); m < 0.75 || m > 1.5 {
 				items = append(items, CatidHealthItem{Kind: stationKindRatio, Severity: CatidHealthAmber,
 					Headline: fmt.Sprintf("Station counter %s: not one click per part", name),
@@ -210,10 +234,17 @@ func (e *Engine) stationHealthItems(processID int64) []CatidHealthItem {
 	return items
 }
 
-// boundPositions reports whether a position counted at the counter is
-// claimed by the active style, and names the bound positions whose claim (any
-// live style) became an A/B pair.
-func (e *Engine) boundPositions(proc *processes.Process, nodes []processes.Node, counterID int64) (activeBound bool, paired []string) {
+// pairedBinding is a position bound to a station counter whose claim under a
+// live style names an A/B partner: while that style runs, the position is
+// counted at the cell's counter (countedAt).
+type pairedBinding struct{ node, style string }
+
+// boundPositions reports whether a position counted at the counter is claimed
+// by the active style unpaired (the station counts it now), and names each
+// bound position and live style whose claim there became an A/B pair. Every
+// style is read at every position: one style's pair says nothing about the
+// active style's claim.
+func (e *Engine) boundPositions(proc *processes.Process, nodes []processes.Node, counterID int64) (activeBound bool, paired []pairedBinding) {
 	styles, _ := e.db.ListStylesByProcess(proc.ID)
 	for _, n := range nodes {
 		if n.LineCounterID == nil || *n.LineCounterID != counterID {
@@ -225,8 +256,8 @@ func (e *Engine) boundPositions(proc *processes.Process, nodes []processes.Node,
 				continue
 			}
 			if c.PairedCoreNode != "" && !c.IsPressIndex() {
-				paired = append(paired, n.Name)
-				break
+				paired = append(paired, pairedBinding{node: n.Name, style: s.Name})
+				continue
 			}
 			if proc.ActiveStyleID != nil && s.ID == *proc.ActiveStyleID {
 				activeBound = true

@@ -121,6 +121,18 @@ func (e *Engine) DeleteProcess(id int64) error {
 			return fmt.Errorf("delete process %d: %w", id, err)
 		}
 	}
+	// Its station counters go with it, their tags unpublished where the Edge
+	// published them: a row left behind keeps its tag refused for every
+	// process (one counter per PLC tag).
+	lcs, err := e.db.ListLineCounters(id)
+	if err != nil {
+		return fmt.Errorf("delete process %d: list station counters: %w", id, err)
+	}
+	for _, lc := range lcs {
+		if err := e.DeleteStationCounter(lc.ID); err != nil {
+			return fmt.Errorf("delete process %d: %w", id, err)
+		}
+	}
 
 	if proc.Name == "" {
 		// An episode key built on an empty process names no place, and a list

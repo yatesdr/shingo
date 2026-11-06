@@ -253,7 +253,7 @@ func TestDeleteProcess_MissingIsSilent(t *testing.T) {
 // The numbers are pinned rather than bounded so that a per-episode read appearing
 // anywhere on this path fails the gate instead of being absorbed.
 func TestDeleteProcess_StatementCount(t *testing.T) {
-	baseline := 14 // 11 in the store's delete (its claims retire with its styles) + the stock precheck, the name, the list
+	baseline := 15 // 11 in the store's delete (its claims retire with its styles) + the stock precheck, the name, the node list, the station counter list
 	perEpisode := 4
 
 	for _, episodes := range []int{0, 1, 5} {

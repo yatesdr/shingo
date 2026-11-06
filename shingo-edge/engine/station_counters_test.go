@@ -60,7 +60,7 @@ func TestStationCounterSave_RefusesATagAnotherCounterReads(t *testing.T) {
 	}
 	_, err = eng.CreateStationCounter(pid, "load station", "MES_Cell.Station_01")
 	testutil.MustNoErr(t, err, "first station counter")
-	_, err = eng.CreateStationCounter(pid, "op 20", "MES_Cell.Station_01")
+	_, err = eng.CreateStationCounter(pid, "second station", "MES_Cell.Station_01")
 	if s := refusedSentence(t, err); !strings.Contains(s, "already station counter") {
 		t.Errorf("another station counter's tag: %q", s)
 	}
@@ -216,4 +216,47 @@ func TestBind_LogsTheTransition(t *testing.T) {
 	if !found {
 		t.Errorf("log = %q, want the transition named", lines)
 	}
+}
+
+// TestProcessDelete_DeletesItsStationCountersAndFreesTheirTags: a deleted
+// process takes its station counters with it, unpublishes the tags the Edge
+// published, and leaves the tag free for another process. Before, the rows
+// stayed and the tag was refused everywhere for good.
+func TestProcessDelete_DeletesItsStationCountersAndFreesTheirTags(t *testing.T) {
+	t.Parallel()
+	eng, pid, _, wl := stationRig(t)
+	lc, err := eng.CreateStationCounter(pid, "load station", "MES_Cell.Station_01")
+	testutil.MustNoErr(t, err, "station counter")
+	testutil.MustNoErr(t, eng.DeleteProcess(pid), "delete the process")
+	if got, err := eng.db.GetLineCounter(lc.ID); err != nil || got != nil {
+		t.Fatalf("station counter after its process's delete = %+v (%v), want gone", got, err)
+	}
+	if toggles := strings.Join(wl.toggles(), ","); !strings.Contains(toggles, "off plc.MES_Cell.Station_01") {
+		t.Errorf("toggles = %s, want the station tag unpublished", toggles)
+	}
+	again, err := eng.db.CreateProcess("CELL-2", "", "plc", "MES_Other.Prod_Counter_01", true)
+	testutil.MustNoErr(t, err, "another process")
+	if _, err := eng.CreateStationCounter(again, "load station", "MES_Cell.Station_01"); err != nil {
+		t.Errorf("the freed tag on another process's station counter: %v", err)
+	}
+}
+
+// TestProcessCounter_PLCEditRefusedWhileStationCountersExist: a station
+// counter reads its process's counter PLC (it is set from the process and not
+// edited after); moving the production counter to another PLC would leave it
+// behind, so the edit is refused while station counters exist.
+func TestProcessCounter_PLCEditRefusedWhileStationCountersExist(t *testing.T) {
+	t.Parallel()
+	eng, pid, _, _ := stationRig(t)
+	_, err := eng.CreateStationCounter(pid, "load station", "MES_Cell.Station_01")
+	testutil.MustNoErr(t, err, "station counter")
+	err = eng.EditProcessCounter(pid, domain.ProcessCounterEdit{PLCName: "plc-2", TagName: "MES_Cell.Prod_Counter_01", Enabled: true})
+	if err == nil || !strings.Contains(err.Error(), "station counter") {
+		t.Fatalf("PLC edit with a station counter = %v, want a refusal naming the station counters", err)
+	}
+	if p := mustProcess(t, eng.db, pid); p.CounterPLCName != "plc" {
+		t.Errorf("a refused edit wrote the PLC: %q", p.CounterPLCName)
+	}
+	testutil.MustNoErr(t, eng.EditProcessCounter(pid, domain.ProcessCounterEdit{PLCName: "plc", TagName: "MES_Other.Prod_Counter_01", Enabled: true}),
+		"a tag edit on the same PLC still saves")
 }

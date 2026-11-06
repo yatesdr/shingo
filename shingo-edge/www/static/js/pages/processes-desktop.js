@@ -4668,7 +4668,9 @@ function openStationCounter(id, bindNode) {
     openSheet(id ? 'Edit station counter' : 'New station counter', STATION_RULE,
         '<label class="pd-lbl">Label</label><input class="pd-inp wide" id="sc-label" value="' + esc(c.label) + '">' +
         '<label class="pd-lbl">Tag on ' + esc(p.counter_plc_name || '') + '</label>' +
-        '<span class="pd-combo" data-combo="tag" data-suggest="counter" data-plcname="' + esc(p.counter_plc_name || '') + '">' +
+        // No kind: the counter kind leads with the MES production counters,
+        // which a station counter may not read (stationTagFree).
+        '<span class="pd-combo" data-combo="tag" data-suggest="" data-plcname="' + esc(p.counter_plc_name || '') + '">' +
         '<input class="pd-inp wide" id="sc-tag" value="' + esc(c.tag_name) + '" autocomplete="off" spellcheck="false">' +
         '<div class="pd-pop pd-combo-list" data-combolist hidden></div></span>',
         'Save', async () => {

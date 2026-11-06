@@ -17,33 +17,26 @@ import (
 	"shingoedge/store/counters"
 )
 
-// lineCounterGap is how far a station counter's last read may trail its
-// process's production point before its next read re-seeds instead of
-// counting: past it the station was not being read (an Edge rolled back to a
-// build without station counters, then forward), and the difference is the
-// whole rollback's clicks, which would land on the bound carts as one jump.
-const lineCounterGap = 15 * time.Minute
+// lineCounterGap is how far a station counter's last poll may trail its
+// process's production point's last counted read, as the run before this boot
+// left them, before the counter's first read of the boot re-seeds instead of
+// counting. While a build that reads stations runs, the row is written at
+// least once a minute (lineCounterTouch, on a failed read too), so it trails
+// its point by under a minute. Past the gap a build that does not read
+// stations counted the point (an Edge rolled back, then forward) and charged
+// the bound positions through the production walk; the station's difference
+// would charge them again. A downtime, with nothing polled, leaves no gap: its
+// clicks are counted, as the point counts its own.
+const lineCounterGap = 2 * lineCounterTouch
 
-// lineCounterTouch is how often an unchanged read rewrites last_poll_at, so a
-// station that is idle while the line runs never trails by the gap.
+// lineCounterTouch is how often an unchanged or failed read rewrites
+// last_poll_at, so a station idle or unreadable while the line runs never
+// trails its point into the next boot's gap.
 const lineCounterTouch = time.Minute
 
 // lineCounterKey keys a station counter in the non-numeric streak map, apart
 // from the reporting points' ids.
 type lineCounterKey int64
-
-// pollAllLineCounters reads every station counter of a live process whose
-// production counter is wired and enabled.
-func (m *Manager) pollAllLineCounters() {
-	lcs, err := m.db.ListPolledLineCounters()
-	if err != nil {
-		log.Printf("list station counters: %v", err)
-		return
-	}
-	for _, lc := range lcs {
-		m.pollLineCounterSafe(lc)
-	}
-}
 
 func (m *Manager) pollLineCounterSafe(lc counters.LineCounter) {
 	defer func() {
@@ -55,21 +48,27 @@ func (m *Manager) pollLineCounterSafe(lc counters.LineCounter) {
 	m.pollLineCounter(lc)
 }
 
-// pollLineCounter reads one station counter. A first read seeds; a read after
-// the rollback gap re-seeds; otherwise the difference is written (only while
-// the row still reads this tag) and emitted with the stroke's identity.
+// pollLineCounter reads one station counter. A first read seeds, as does the
+// first read of a boot that follows a rollback (bootVerdict); otherwise the
+// difference is written (only while the row still reads this tag) and emitted
+// with the stroke's identity. Within a run a gap never re-seeds: a station
+// read that failed for an hour while the line ran was not charged by anything,
+// and its first good read counts the hour.
 func (m *Manager) pollLineCounter(lc counters.LineCounter) {
+	verdict := m.bootVerdict(lc)
 	// A station's reads are raised as the reporting points' are (no point:
 	// id 0), for the health strip's "unreadable"; a PLC the manager does not
 	// hold or is not connected to is one.
 	if !m.IsConnected(lc.PLCName) {
 		m.emitter.EmitCounterReadError(0, lc.PLCName, lc.TagName, "PLC "+lc.PLCName+" is not connected")
+		m.touchLineCounter(lc)
 		return
 	}
 	val, err := m.ReadTag(lc.PLCName, lc.TagName)
 	if err != nil {
 		m.DebugLog.Log("station counter read error: %s/%s lc=%d: %v", lc.PLCName, lc.TagName, lc.ID, err)
 		m.emitter.EmitCounterReadError(0, lc.PLCName, lc.TagName, err.Error())
+		m.touchLineCounter(lc)
 		return
 	}
 	n, ok := toInt64(val)
@@ -79,36 +78,30 @@ func (m *Manager) pollLineCounter(lc counters.LineCounter) {
 				lc.ID, lc.PLCName, lc.TagName, val, val)
 		}
 		m.emitter.EmitCounterReadError(0, lc.PLCName, lc.TagName, fmt.Sprintf("read is not a number: %T %v", val, val))
+		m.touchLineCounter(lc)
 		return
 	}
 	m.nonNumeric.Delete(lineCounterKey(lc.ID))
 	m.emitter.EmitCounterRead(0, lc.PLCName, lc.TagName, n)
 	now := clock.Now()
 
-	seed := ""
-	switch {
-	case lc.LastPollAt == nil:
+	seed := verdict
+	if lc.LastPollAt == nil {
 		seed = "first read"
-	case lc.PointPollAt != nil && lc.PointPollAt.Sub(*lc.LastPollAt) > lineCounterGap:
-		seed = fmt.Sprintf("last read %s before its process's counter (a rollback gap)",
-			lc.PointPollAt.Sub(*lc.LastPollAt).Round(time.Minute))
 	}
 	if seed != "" {
 		if wrote, err := m.db.UpdateLineCounterRead(lc.ID, lc.PLCName, lc.TagName, n, now); err != nil || !wrote {
 			log.Printf("seed station counter %d (%s/%s) at %d: written=%t %v", lc.ID, lc.PLCName, lc.TagName, n, wrote, err)
 			return
 		}
+		m.lineBoot.Store(lc.ID, "")
 		log.Printf("station counter %d (%s/%s): %s, %d — counting from here, nothing charged", lc.ID, lc.PLCName, lc.TagName, seed, n)
 		return
 	}
 
 	delta, anomaly := CalculateDelta(lc.LastCount, n, m.counterJumpThreshold)
 	if delta == 0 && anomaly == "" {
-		if now.Sub(*lc.LastPollAt) >= lineCounterTouch {
-			if _, err := m.db.UpdateLineCounterRead(lc.ID, lc.PLCName, lc.TagName, n, now); err != nil {
-				log.Printf("touch station counter %d: %v", lc.ID, err)
-			}
-		}
+		m.touchLineCounter(lc)
 		return
 	}
 	m.DebugLog.Log("station counter delta: lc=%d %s/%s last=%d new=%d delta=%d anomaly=%s",
@@ -121,5 +114,35 @@ func (m *Manager) pollLineCounter(lc counters.LineCounter) {
 	if delta > 0 {
 		id := m.emitter.AttributeTick(lc.ProcessID, lc.ActiveStyleID)
 		m.emitter.EmitLineCounterDelta(lc.ID, lc.ProcessID, delta, anomaly, id)
+	}
+}
+
+// bootVerdict is the counter's rollback verdict for this boot, taken at its
+// first listing, before this boot has written its point or its row: its last
+// poll trailing its point's last counted read by more than lineCounterGap
+// names the gap; "" counts on. A first read that seeds consumes it.
+func (m *Manager) bootVerdict(lc counters.LineCounter) string {
+	if v, ok := m.lineBoot.Load(lc.ID); ok {
+		return v.(string)
+	}
+	verdict := ""
+	if lc.LastPollAt != nil && lc.PointPollAt != nil && lc.PointPollAt.Sub(*lc.LastPollAt) > lineCounterGap {
+		verdict = fmt.Sprintf("last polled %s before its process's counter was last counted, before this boot (a rollback)",
+			lc.PointPollAt.Sub(*lc.LastPollAt).Round(time.Second))
+	}
+	m.lineBoot.Store(lc.ID, verdict)
+	return verdict
+}
+
+// touchLineCounter rewrites a polled row's last_poll_at, at most once a
+// minute, with the count it holds: an unchanged read, or one that failed while
+// this build ran. A row never read stays unread, so its first good read seeds.
+func (m *Manager) touchLineCounter(lc counters.LineCounter) {
+	now := clock.Now()
+	if lc.LastPollAt == nil || now.Sub(*lc.LastPollAt) < lineCounterTouch {
+		return
+	}
+	if _, err := m.db.UpdateLineCounterRead(lc.ID, lc.PLCName, lc.TagName, lc.LastCount, now); err != nil {
+		log.Printf("touch station counter %d: %v", lc.ID, err)
 	}
 }

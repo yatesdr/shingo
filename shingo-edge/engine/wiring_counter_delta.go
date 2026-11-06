@@ -156,7 +156,8 @@ func (e *Engine) walkTick(process *processes.Process, nodes []processes.Node, cl
 	// Diagnosing that took a database. It should take a log line.
 	attr := tickAttribution{nodesWalked: len(nodes)}
 	if tick.kind == plc.TickHeld {
-		e.holdHeldTick(process, nodes, claims, tick)
+		e.holdHeldTick(process, nodes, claims, tick, &attr)
+		e.logUnattributed(tick, attr)
 		return attr
 	}
 	// THE A/B PAIRS, EACH ON ITS OWN. A pair is two claims that name each other
@@ -262,17 +263,23 @@ func (e *Engine) walkTick(process *processes.Process, nodes []processes.Node, cl
 	// A/B fallthrough, per pair: a pair with no lit side charges its first
 	// dark side, the "count to lineside storage" safety net.
 	e.fallThrough(process, claims, tick, ab, &attr)
-
-	if !attr.landed() {
-		log.Printf("ERROR: counter delta unattributed: process=%d style=%d delta=%d %s %s — the cell counted and no node took it",
-			tick.processID, tick.styleID, tick.delta, tick.source, attr.skipReport())
-		// Also to the debug log, where it lands on the diagnostics page
-		// under the "engine" subsystem. The journal is the record; this
-		// is the copy a technician can reach from the UI without SSH.
-		e.debugFn("counter delta unattributed: process=%d style=%d delta=%d %s %s",
-			tick.processID, tick.styleID, tick.delta, tick.source, attr.skipReport())
-	}
+	e.logUnattributed(tick, attr)
 	return attr
+}
+
+// logUnattributed names a tick no node took, and why each declined it: the
+// cell counted and nothing recorded where.
+func (e *Engine) logUnattributed(tick tickScope, attr tickAttribution) {
+	if attr.landed() {
+		return
+	}
+	log.Printf("ERROR: counter delta unattributed: process=%d style=%d delta=%d %s %s — the cell counted and no node took it",
+		tick.processID, tick.styleID, tick.delta, tick.source, attr.skipReport())
+	// Also to the debug log, where it lands on the diagnostics page under the
+	// "engine" subsystem. The journal is the record; this is the copy a
+	// technician can reach from the UI without SSH.
+	e.debugFn("counter delta unattributed: process=%d style=%d delta=%d %s %s",
+		tick.processID, tick.styleID, tick.delta, tick.source, attr.skipReport())
 }
 
 // heldForItsPart holds the share of an off-plan tick or a hold's release at a
@@ -421,21 +428,37 @@ func (e *Engine) handleLineCounterDelta(ev LineCounterDeltaEvent) {
 	})
 }
 
-// holdHeldTick puts a held stroke's draw in the ledger. The cell counter's
-// stroke is the whole draw (node 0); a station's is each position counted at
-// it, its own row (payload ""), never the cell's node-0 row: a release of a
-// node-0 hold walks the cell counter's positions, not the station's.
-func (e *Engine) holdHeldTick(process *processes.Process, nodes []processes.Node, claims *store.NodeClaimSet, tick tickScope) {
+// holdHeldTick puts a held stroke's draw in the ledger, counted in the walk's
+// account. The cell counter's stroke is the whole draw (node 0); a station's
+// is each position counted at it, its own row (payload ""), never the cell's
+// node-0 row: a release of a node-0 hold walks the cell counter's positions,
+// not the station's. A station position is held under the tick's style's
+// claim, else the running or the target style's: a held stroke's part is no
+// style's, and a position only the target claims (its cart landed early)
+// holds its share like any other. One neither claims holds nothing and is
+// named in the unattributed line.
+func (e *Engine) holdHeldTick(process *processes.Process, nodes []processes.Node, claims *store.NodeClaimSet, tick tickScope, attr *tickAttribution) {
 	if tick.counter == 0 {
 		e.holdCatidDraw(tick, 0, "", tick.delta)
+		attr.heldShares++
 		return
 	}
 	for i := range nodes {
 		claim := claims.Resolve(process, &nodes[i], store.ExactStyle(tick.styleID))
-		if claim == nil || claim.IsLoaderNode() || countedAt(&nodes[i], claim) != tick.counter {
-			continue
+		if claim == nil {
+			claim = claims.Resolve(process, &nodes[i], store.ActiveStyleFirst)
 		}
-		e.holdCatidDraw(tick, nodes[i].ID, "", tick.delta)
+		switch {
+		case claim == nil:
+			attr.noClaim++
+		case claim.IsLoaderNode():
+			attr.manualSwap++
+		case countedAt(&nodes[i], claim) != tick.counter:
+			attr.otherCounter++
+		default:
+			e.holdCatidDraw(tick, nodes[i].ID, "", tick.delta)
+			attr.heldShares++
+		}
 	}
 }
 

@@ -122,6 +122,16 @@ func (e *Engine) counterEditAllowed(old *processes.Process, edit domain.ProcessC
 	if co, err := e.db.GetActiveProcessChangeover(old.ID); err == nil && co != nil {
 		return fmt.Errorf("%w: a changeover to %s is open", ErrChangeoverActive, co.ToStyleName)
 	}
+	// A station counter reads the counter PLC it was made on and keeps it;
+	// moving the production counter off that PLC would leave them apart.
+	if edit.PLCName != old.CounterPLCName {
+		if lcs, err := e.db.ListLineCounters(old.ID); err != nil {
+			return err
+		} else if len(lcs) > 0 {
+			return fmt.Errorf("%s has %d station counter(s) on PLC %s; delete them before moving the production counter to another PLC",
+				old.Name, len(lcs), old.CounterPLCName)
+		}
+	}
 	if edit.PLCName == "" || edit.TagName == "" {
 		return nil
 	}
