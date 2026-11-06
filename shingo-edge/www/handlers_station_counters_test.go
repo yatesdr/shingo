@@ -1,0 +1,54 @@
+package www
+
+import (
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+)
+
+// handlers_station_counters_test.go — the station-counter routes over the stub
+// engine: a refusal is a 400 carrying its sentence.
+
+func stationDo(t *testing.T, method, path, body string) (int, string) {
+	t.Helper()
+	h, r := newTestHandlers(t)
+	r.Get("/api/processes/{id}/station-counters", h.apiListStationCounters)
+	r.Post("/api/processes/{id}/station-counters", h.apiCreateStationCounter)
+	r.Put("/api/station-counters/{id}", h.apiUpdateStationCounter)
+	r.Delete("/api/station-counters/{id}", h.apiDeleteStationCounter)
+	r.Put("/api/process-nodes/{id}/counted-at", h.apiSetCountedAt)
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, httptest.NewRequest(method, path, strings.NewReader(body)))
+	return rec.Code, rec.Body.String()
+}
+
+func TestStationCounterRoutes(t *testing.T) {
+	code, body := stationDo(t, http.MethodGet, "/api/processes/1/station-counters", "")
+	var list []map[string]any
+	if code != http.StatusOK || json.Unmarshal([]byte(body), &list) != nil || len(list) != 1 || list[0]["tag_name"] != "STATION_01" {
+		t.Errorf("list 1: %d %s", code, body)
+	}
+	if code, body := stationDo(t, http.MethodGet, "/api/processes/2/station-counters", ""); code != http.StatusOK || body != "[]\n" {
+		t.Errorf("list 2: %d %q, want []", code, body)
+	}
+	if code, _ := stationDo(t, http.MethodPost, "/api/processes/1/station-counters", `{"label":"op 10","tag_name":"STATION_02"}`); code != http.StatusOK {
+		t.Errorf("create = %d, want 200", code)
+	}
+	if code, body := stationDo(t, http.MethodPost, "/api/processes/2/station-counters", `{"tag_name":"X"}`); code != http.StatusBadRequest || !strings.Contains(body, "no production counter wired") {
+		t.Errorf("create refused = %d %s, want 400 with the sentence", code, body)
+	}
+	if code, _ := stationDo(t, http.MethodPut, "/api/station-counters/7", `{"label":"op 10","tag_name":"STATION_03"}`); code != http.StatusOK {
+		t.Errorf("update = %d", code)
+	}
+	if code, _ := stationDo(t, http.MethodDelete, "/api/station-counters/7", ""); code != http.StatusOK {
+		t.Errorf("delete = %d", code)
+	}
+	if code, _ := stationDo(t, http.MethodPut, "/api/process-nodes/1/counted-at", `{"line_counter_id":7}`); code != http.StatusOK {
+		t.Errorf("bind = %d", code)
+	}
+	if code, body := stationDo(t, http.MethodPut, "/api/process-nodes/2/counted-at", `{"line_counter_id":7}`); code != http.StatusBadRequest || !strings.Contains(body, "no live style consumes") {
+		t.Errorf("bind refused = %d %s", code, body)
+	}
+}

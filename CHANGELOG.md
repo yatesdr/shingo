@@ -29,6 +29,7 @@ Edge only, v37-v41 (the dev seeder learns station counters). Ship after a restor
 - The history panel names what completed each changeover; the automatic-cutover notice names the changeover, the part and what it left running; a non-numeric counter read is raised
 - An A/B pair is two positions that name each other: one lit side charged per tick, each pair its own fallthrough; a save naming a third is refused, a one-way pair is warned
 - Station counters (v41): a tag that clicks where the part leaves the cart charges the positions bound to it, under the PLC's part's style; the production walk leaves them
+- Station counters are created, re-pointed and deleted with their WarLink publishing; a position is counted at one only where a live style consumes, never a loader, producer or A/B pair
 
 ## 2026-11-03 — An order's carts are its rows
 

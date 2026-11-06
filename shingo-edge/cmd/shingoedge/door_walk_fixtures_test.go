@@ -248,6 +248,22 @@ func routeFixtures() map[string]routeFixture {
 		"POST /api/processes/{id}/styles/{sid}/catid": {want: 200, moves: true, req: on(func(w *walk) (string, any) {
 			return pr(w) + "/styles/" + id(w.styleA) + "/catid", map[string]any{"catid": "4242", "evidence": "the walk"}
 		})},
+		// The station counters. A create checks its tag against WarLink, which
+		// the walk has none of: refused, nothing written. A rename and a delete
+		// act on a counter the fixture makes; unbinding a position that is
+		// counted by the production counter writes nothing a view shows.
+		"POST /api/processes/{id}/station-counters": {want: 400, req: on(func(w *walk) (string, any) {
+			return pr(w) + "/station-counters", map[string]any{"label": "walk", "tag_name": w.uniq("WALK_STATION")}
+		})},
+		"PUT /api/station-counters/{id}": {want: 200, req: on(func(w *walk) (string, any) {
+			return "/api/station-counters/" + id(w.freshStationCounter()), map[string]any{"label": "walk renamed"}
+		})},
+		"DELETE /api/station-counters/{id}": {want: 200, req: on(func(w *walk) (string, any) {
+			return "/api/station-counters/" + id(w.freshStationCounter()), nil
+		})},
+		"PUT /api/process-nodes/{id}/counted-at": {want: 200, req: on(func(w *walk) (string, any) {
+			return pn(w) + "/counted-at", map[string]any{"line_counter_id": nil}
+		})},
 		// A hold's release latches it; the walk's hold is on a CATID only a
 		// claimless style runs, so the Charge draws from no cart.
 		"POST /api/catid-holds/{id}/charge": {want: 200, req: on(func(w *walk) (string, any) {
@@ -490,6 +506,17 @@ func (w *walk) freshOrder(status string) string {
 	}
 	w.prepped = true
 	return uuid
+}
+
+// freshStationCounter makes a station counter on the press, bound to nothing.
+func (w *walk) freshStationCounter() int64 {
+	w.t.Helper()
+	lc, err := w.db.CreateLineCounter(w.press, "walk", "plc", w.uniq("WALK_STATION"))
+	if err != nil {
+		w.t.Fatalf("station counter: %v", err)
+	}
+	w.prepped = true
+	return lc
 }
 
 // freshHold opens a held draw on the press for a CATID a fresh, claimless

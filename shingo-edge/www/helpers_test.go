@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"shingoedge/store/counters"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -312,6 +313,30 @@ func (s *stubEngine) CutoverNowOffer(id int64) (*engine.CutoverOffer, error) {
 func (s *stubEngine) CutOverNow(id int64) error {
 	if id != 1 {
 		return engine.ErrCutoverNowNotOffered
+	}
+	return nil
+}
+
+// The station counters: canned. Process 1 has station counter 7; any other
+// process has no counter wired, which refuses a create. The rules are pinned
+// against the real engine.
+func (s *stubEngine) ListStationCounters(processID int64) ([]counters.LineCounter, error) {
+	if processID != 1 {
+		return nil, nil
+	}
+	return []counters.LineCounter{{ID: 7, ProcessID: 1, Label: "op 10", PLCName: "plc", TagName: "STATION_01"}}, nil
+}
+func (s *stubEngine) CreateStationCounter(processID int64, label, tagName string) (*counters.LineCounter, error) {
+	if processID != 1 {
+		return nil, &engine.StationCounterRefused{Sentence: "no production counter wired"}
+	}
+	return &counters.LineCounter{ID: 8, ProcessID: 1, Label: label, PLCName: "plc", TagName: tagName}, nil
+}
+func (s *stubEngine) UpdateStationCounter(int64, string, string) error { return nil }
+func (s *stubEngine) DeleteStationCounter(int64) error                 { return nil }
+func (s *stubEngine) SetCountedAt(nodeID int64, _ *int64) error {
+	if nodeID != 1 {
+		return &engine.StationCounterRefused{Sentence: "no live style consumes there"}
 	}
 	return nil
 }

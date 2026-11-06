@@ -508,6 +508,12 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger, backupSvc *backup.Servi
 				r.Get("/catid-holds/{id}/preview", h.apiPreviewCatidHold)
 				r.Post("/catid-holds/{id}/charge", h.apiChargeCatidHold)
 				r.Post("/catid-holds/{id}/write-off", h.apiWriteOffCatidHold)
+				// The station counters, and the position a stroke is counted at.
+				r.Get("/processes/{id}/station-counters", h.apiListStationCounters)
+				r.Post("/processes/{id}/station-counters", h.apiCreateStationCounter)
+				r.Put("/station-counters/{id}", h.apiUpdateStationCounter)
+				r.Delete("/station-counters/{id}", h.apiDeleteStationCounter)
+				r.Put("/process-nodes/{id}/counted-at", h.apiSetCountedAt)
 				r.Get("/styles/{id}/delete-impact", h.apiStyleDeleteImpact)
 				r.Delete("/styles/{id}", h.apiDeleteStyle)
 				r.Post("/styles/{id}/restore", h.apiRestoreStyle)

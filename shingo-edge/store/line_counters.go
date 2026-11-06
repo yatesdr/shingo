@@ -28,6 +28,26 @@ func (db *DB) UpdateLineCounterRead(id int64, plcName, tagName string, count int
 	return counters.UpdateLineCounterRead(db.DB, id, plcName, tagName, count, at)
 }
 
+func (db *DB) LineCounterByTag(plcName, tagName string) (*counters.LineCounter, error) {
+	return counters.LineCounterByTag(db.DB, plcName, tagName)
+}
+
+func (db *DB) ReportingPointOnTag(plcName, tagName string) (bool, error) {
+	return counters.ReportingPointOnTag(db.DB, plcName, tagName)
+}
+
+func (db *DB) RenameLineCounter(id int64, label string) error {
+	return counters.RenameLineCounter(db.DB, id, label)
+}
+
+func (db *DB) RepointLineCounter(id int64, label, tagName string, managed bool) error {
+	return counters.RepointLineCounter(db.DB, id, label, tagName, managed)
+}
+
+func (db *DB) SetLineCounterManaged(id int64, managed bool) error {
+	return counters.SetLineCounterManaged(db.DB, id, managed)
+}
+
 func (db *DB) DeleteLineCounter(id int64) error {
 	return counters.DeleteLineCounter(db.DB, id)
 }

@@ -2,6 +2,7 @@ package www
 
 import (
 	"context"
+	"shingoedge/store/counters"
 
 	"shingo/protocol"
 	"shingoedge/config"
@@ -191,6 +192,13 @@ type EngineOrchestration interface {
 	// offered (read on each call), and the forced door it runs.
 	CutoverNowOffer(processID int64) (*engine.CutoverOffer, error)
 	CutOverNow(processID int64) error
+	// The station counters and "counted at": a refusal is an
+	// *engine.StationCounterRefused carrying the page's sentence.
+	ListStationCounters(processID int64) ([]counters.LineCounter, error)
+	CreateStationCounter(processID int64, label, tagName string) (*counters.LineCounter, error)
+	UpdateStationCounter(id int64, label, tagName string) error
+	DeleteStationCounter(id int64) error
+	SetCountedAt(nodeID int64, counterID *int64) error
 	CancelProcessChangeover(processID int64) error
 	CancelProcessChangeoverRedirect(processID int64, nextStyleID *int64) error
 	// AbandonChangeoverSupply is the operator exit from awaiting_material:

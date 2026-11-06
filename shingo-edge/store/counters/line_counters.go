@@ -129,6 +129,47 @@ func UpdateLineCounterRead(db *sql.DB, id int64, plcName, tagName string, count 
 	return n == 1, err
 }
 
+// LineCounterByTag returns the station counter reading plc/tag, or nil.
+func LineCounterByTag(db *sql.DB, plcName, tagName string) (*LineCounter, error) {
+	c, err := scanLineCounter(db.QueryRow(`SELECT `+lineCounterCols+` FROM line_counters lc
+		WHERE lc.plc_name = ? AND lc.tag_name = ?`, plcName, tagName))
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &c, nil
+}
+
+// ReportingPointOnTag reports whether a reporting point reads plc/tag.
+func ReportingPointOnTag(db *sql.DB, plcName, tagName string) (bool, error) {
+	var n int
+	err := db.QueryRow(`SELECT COUNT(*) FROM reporting_points WHERE plc_name = ? AND tag_name = ?`, plcName, tagName).Scan(&n)
+	return n > 0, err
+}
+
+// RenameLineCounter sets a station counter's label.
+func RenameLineCounter(db *sql.DB, id int64, label string) error {
+	_, err := db.Exec(`UPDATE line_counters SET label = ? WHERE id = ?`, label, id)
+	return err
+}
+
+// RepointLineCounter moves a station counter to another tag: the row is
+// unread again (last_poll_at NULL) and seeds from the new tag's first read,
+// and its WarLink publishing is recorded as managed or not.
+func RepointLineCounter(db *sql.DB, id int64, label, tagName string, managed bool) error {
+	_, err := db.Exec(`UPDATE line_counters SET label = ?, tag_name = ?, last_count = 0, last_poll_at = NULL,
+		warlink_managed = ? WHERE id = ?`, label, tagName, managed, id)
+	return err
+}
+
+// SetLineCounterManaged records whether the Edge enabled the tag's publishing.
+func SetLineCounterManaged(db *sql.DB, id int64, managed bool) error {
+	_, err := db.Exec(`UPDATE line_counters SET warlink_managed = ? WHERE id = ?`, managed, id)
+	return err
+}
+
 // DeleteLineCounter deletes a station counter and unbinds its positions, in
 // one transaction: no binding is left to read as unbound by accident.
 func DeleteLineCounter(db *sql.DB, id int64) error {
@@ -137,7 +178,12 @@ func DeleteLineCounter(db *sql.DB, id int64) error {
 		return err
 	}
 	defer tx.Rollback()
-	if _, err := tx.Exec(`UPDATE process_nodes SET line_counter_id = NULL WHERE line_counter_id = ?`, id); err != nil {
+	res, err := tx.Exec(`UPDATE process_nodes SET line_counter_id = NULL WHERE line_counter_id = ?`, id)
+	if err != nil {
+		return err
+	}
+	unbound, err := res.RowsAffected()
+	if err != nil {
 		return err
 	}
 	if _, err := tx.Exec(`DELETE FROM line_counters WHERE id = ?`, id); err != nil {
@@ -146,16 +192,25 @@ func DeleteLineCounter(db *sql.DB, id int64) error {
 	if err := tx.Commit(); err != nil {
 		return err
 	}
-	processes.BumpNodeGeneration()
+	if unbound > 0 {
+		processes.BumpNodeGeneration()
+	}
 	return nil
 }
 
 // SetNodeLineCounter binds a position to a station counter (nil unbinds it).
-// The setter's rules (commit 11) are the engine's; this is the write.
+// The rules are the engine's (SetCountedAt); this is the write, which bumps
+// the node generation only when the binding changed.
 func SetNodeLineCounter(db *sql.DB, nodeID int64, counterID *int64) error {
-	if _, err := db.Exec(`UPDATE process_nodes SET line_counter_id = ? WHERE id = ?`, counterID, nodeID); err != nil {
+	res, err := db.Exec(`UPDATE process_nodes SET line_counter_id = ? WHERE id = ? AND line_counter_id IS NOT ?`,
+		counterID, nodeID, counterID)
+	if err != nil {
 		return err
 	}
-	processes.BumpNodeGeneration()
+	if n, err := res.RowsAffected(); err != nil {
+		return err
+	} else if n > 0 {
+		processes.BumpNodeGeneration()
+	}
 	return nil
 }

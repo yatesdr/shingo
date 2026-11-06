@@ -111,6 +111,11 @@ func (e *Engine) counterEditAllowed(old *processes.Process, edit domain.ProcessC
 	} else if owner != 0 {
 		return fmt.Errorf("%s/%s is already the counter of another process (%s)", edit.PLCName, edit.TagName, e.processName(owner))
 	}
+	if lc, err := e.db.LineCounterByTag(edit.PLCName, edit.TagName); err != nil {
+		return err
+	} else if lc != nil {
+		return fmt.Errorf("%w: %s/%s is station counter %d", errStationTagRead, edit.PLCName, edit.TagName, lc.ID)
+	}
 	if edit.PLCName == old.CounterPLCName && edit.TagName == old.CounterTagName {
 		return nil // the counter tag is the one already counting; only the identity moved
 	}
