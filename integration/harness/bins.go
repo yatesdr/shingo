@@ -34,7 +34,14 @@ type BinsPush struct {
 	// asks is the ask kinds the push's ack says Core answers (AnswerAsks):
 	// none until a scenario wires Core's asks (the scenarios' registerAsks).
 	asks []string
+	// stop ends the ticker, once (Stop, and the test's cleanup).
+	stop     func()
+	stopOnce sync.Once
 }
+
+// Stop ends the push's ticker now: a scenario that restarts its Edge stops the
+// push to the Edge it stopped. The test's cleanup stops it otherwise.
+func (p *BinsPush) Stop() { p.stopOnce.Do(p.stop) }
 
 // AnswerAsks makes every later ack say Core answers kinds, as a Core whose
 // ask server answers them does, and acks once now.
@@ -66,7 +73,8 @@ func StartBinsPush(t *testing.T, coreDB *corestore.DB, edge *edgeengine.Engine, 
 			}
 		}
 	}()
-	t.Cleanup(func() { close(stop); <-done })
+	p.stop = func() { close(stop); <-done }
+	t.Cleanup(p.Stop)
 	return p
 }
 
