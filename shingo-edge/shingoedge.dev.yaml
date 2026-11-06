@@ -192,6 +192,19 @@ sim:
       tag_name: WELD-5_COUNTER
       tick_interval: 6s
       uop_per_tick: 1
+    # WELD-6, the 4x2-shaped cell (plants/master.yaml, [4x2]). A line, not a bare counter:
+    # station_tag clicks once per assembly loaded, and the production counter (tag_name,
+    # the MES struct's Prod_Counter_01) ticks line_depth clicks later; a program change
+    # drains the line, sets identity_tag (the CATID_01 the Edge derives from the counter
+    # tag) and resets the counter. 12 s is WELD-3/4's tick, and the cell has no press
+    # upstream, so the demo's press and weld balance does not move.
+    - plc_name: WELD-6
+      tag_name: MES_WELD_6.Prod_Counter_01
+      tick_interval: 12s
+      uop_per_tick: 1
+      station_tag: STA_W6_LOAD.Load_Count
+      line_depth: 16
+      identity_tag: MES_WELD_6.CATID_01
     # The Kanban rig's two cells (plants/kanban-press.yaml, whose head has the arithmetic).
     # Nothing reports these counters under any other plant: a tick with no reporting point
     # counts nothing. The plc_name is the process name, which is how simcalc keys its rates.
