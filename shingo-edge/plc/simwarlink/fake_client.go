@@ -44,6 +44,35 @@ type Overrun bool
 // see it, and only a direct read (plc.Manager.ReadTagDirect) answers it.
 const OverrunTag = "SimOverrun"
 
+// ProgramChange is a program change to this identity, written through
+// WriteTagValue on the counter tag of the process it changes: loading stops,
+// the line drains, then the identity changes and the counter resets
+// (Line.Change). ForcedChange is the same change without the drain
+// (Line.Force). Each is a type of its own so no ordinary integer write can
+// change a program.
+type (
+	ProgramChange int64
+	ForcedChange  int64
+)
+
+// LineTag is the name a PLC's lines are read under: a direct read returns
+// []ProcessLine for the processes counting on that PLC. Like OverrunTag it is
+// never published to the poll.
+const LineTag = "SimLine"
+
+// ProcessLine is one process's line ledger as a read of LineTag returns it.
+type ProcessLine struct {
+	PLCName string `json:"plc_name"`
+	TagName string `json:"tag_name"`
+	LineState
+}
+
+// procLine is one sim process: its line and the tags the line publishes.
+type procLine struct {
+	plcName, counterTag, stationTag, identityTag string
+	line                                         *Line
+}
+
 // ReadinessFunc reports whether the fake PLC should emit a tick for the given
 // plcName. When nil or returns true, the tick proceeds. When it returns false,
 // the tick is suppressed (the machine is not ready — starved input, no output
@@ -56,7 +85,7 @@ type ReadinessFunc func(plcName string) bool
 type FakeClient struct {
 	mu   lockcheck.RWMutex[lockorder.SimPLC]
 	plcs []string                    // distinct PLC names, sorted (stable output)
-	vals map[string]map[string]int64 // plcName → tagName → counter
+	vals map[string]map[string]int64 // plcName → tagName → counter (production and station)
 	// bools are writable BOOL tags: a light curtain's state, standing in for
 	// the cell's bypass button (S7). A bool write creates or sets one; the
 	// counters stay unwritable.
@@ -66,8 +95,11 @@ type FakeClient struct {
 	idents map[string]map[string]int64
 	// overrun holds the PLCs whose overrun switch is on (Overrun).
 	overrun map[string]bool
-	clk     clock.Clock
-	ready   ReadinessFunc // nil = always ready (backward-compatible)
+	// lines are the sim processes by PLC, in config order. Each tick advances
+	// a line and publishes its counter, station clicks and identity.
+	lines map[string][]*procLine
+	clk   clock.Clock
+	ready ReadinessFunc // nil = always ready (backward-compatible)
 }
 
 // NewFakeClient builds the fake from the sim process list and starts one ticker
@@ -84,20 +116,27 @@ func (f *FakeClient) SetReadinessFunc(fn ReadinessFunc) {
 }
 
 func NewFakeClient(ctx context.Context, cfg config.SimConfig, clk clock.Clock) *FakeClient {
-	f := &FakeClient{vals: make(map[string]map[string]int64), bools: make(map[string]map[string]bool), idents: make(map[string]map[string]int64), overrun: make(map[string]bool), clk: clk}
-	seen := make(map[string]bool)
+	f := &FakeClient{vals: make(map[string]map[string]int64), bools: make(map[string]map[string]bool), idents: make(map[string]map[string]int64), overrun: make(map[string]bool), lines: make(map[string][]*procLine), clk: clk}
+	procs := make([]*procLine, 0, len(cfg.Processes))
 	for _, p := range cfg.Processes {
 		if f.vals[p.PLCName] == nil {
 			f.vals[p.PLCName] = make(map[string]int64)
-		}
-		f.vals[p.PLCName][p.TagName] = 0
-		if !seen[p.PLCName] {
-			seen[p.PLCName] = true
 			f.plcs = append(f.plcs, p.PLCName)
 		}
+		per := p.UOPPerTick
+		if per <= 0 {
+			per = 1
+		}
+		pl := &procLine{plcName: p.PLCName, counterTag: p.TagName, stationTag: p.StationTag, identityTag: p.IdentityTag, line: NewLine(p.LineDepth, per)}
+		if pl.identityTag != "" && f.idents[p.PLCName] == nil {
+			f.idents[p.PLCName] = make(map[string]int64)
+		}
+		f.lines[p.PLCName] = append(f.lines[p.PLCName], pl)
+		f.publish(pl)
+		procs = append(procs, pl)
 	}
 	sort.Strings(f.plcs)
-	for _, p := range cfg.Processes {
+	for i, p := range cfg.Processes {
 		interval := p.TickInterval
 		if interval <= 0 {
 			interval = 3 * time.Second
@@ -107,16 +146,12 @@ func NewFakeClient(ctx context.Context, cfg config.SimConfig, clk clock.Clock) *
 		// too would double-count and break the live speed toggle.
 		// Register the ticker synchronously (before returning) so a test using a
 		// manual clock can Advance immediately without racing goroutine startup.
-		go f.tick(ctx, p, f.clk.NewTicker(interval))
+		go f.tick(ctx, procs[i], f.clk.NewTicker(interval))
 	}
 	return f
 }
 
-func (f *FakeClient) tick(ctx context.Context, p config.SimProcessConfig, t clock.Ticker) {
-	per := p.UOPPerTick
-	if per <= 0 {
-		per = 1
-	}
+func (f *FakeClient) tick(ctx context.Context, pl *procLine, t clock.Ticker) {
 	defer t.Stop()
 	for {
 		select {
@@ -125,18 +160,33 @@ func (f *FakeClient) tick(ctx context.Context, p config.SimProcessConfig, t cloc
 		case <-t.C():
 			// Readiness gate (G3): a real PLC stops counting when the machine
 			// isn't ready (starved input, no output bin, off shift). The fake
-			// checks the injected ReadinessFunc and suppresses the tick when
-			// the machine should idle.
+			// checks the injected ReadinessFunc and stalls the line (nothing
+			// loads or counts) when the machine should idle.
 			f.mu.RLock()
 			ready := f.ready
 			f.mu.RUnlock()
-			if ready != nil && !ready(p.PLCName) {
-				continue // suppress tick — machine not ready
-			}
+			cycles := ready == nil || ready(pl.plcName)
 			f.mu.Lock()
-			f.vals[p.PLCName][p.TagName] += per
+			if cycles {
+				pl.line.Tick()
+			} else {
+				pl.line.Stall()
+			}
+			f.publish(pl)
 			f.mu.Unlock()
 		}
+	}
+}
+
+// publish copies a line's counter, station clicks and identity into the tags
+// the poll reads. Caller holds f.mu.
+func (f *FakeClient) publish(pl *procLine) {
+	f.vals[pl.plcName][pl.counterTag] = pl.line.counter
+	if pl.stationTag != "" {
+		f.vals[pl.plcName][pl.stationTag] = pl.line.station
+	}
+	if pl.identityTag != "" {
+		f.idents[pl.plcName][pl.identityTag] = pl.line.identity
 	}
 }
 
@@ -221,6 +271,16 @@ func (f *FakeClient) ReadTagValue(ctx context.Context, plcName, tagName string) 
 		}
 		return f.overrun[plcName], nil
 	}
+	if tagName == LineTag {
+		if f.lines[plcName] == nil {
+			return nil, fmt.Errorf("simwarlink: PLC %q has no line", plcName)
+		}
+		out := make([]ProcessLine, 0, len(f.lines[plcName]))
+		for _, pl := range f.lines[plcName] {
+			out = append(out, ProcessLine{PLCName: plcName, TagName: pl.counterTag, LineState: pl.line.State()})
+		}
+		return out, nil
+	}
 	if b, ok := f.bools[plcName][tagName]; ok {
 		return b, nil
 	}
@@ -238,14 +298,22 @@ func (f *FakeClient) ReadTagValue(ctx context.Context, plcName, tagName string) 
 	return v, nil
 }
 
-// WriteTagValue sets a part-identity tag when the value is an Identity, the
-// PLC's overrun switch when it is an Overrun on OverrunTag, and a BOOL tag when
-// it is a bool (a curtain's state, the sim's bypass button), registering its
-// PLC if new; any other write is discarded (Q4: zone lights / heartbeats have no
-// sim effect) and reports success. A counter is never written.
+// WriteTagValue sets a part-identity tag when the value is an Identity, changes
+// the program of the process counting on tagName when it is a ProgramChange or
+// a ForcedChange, sets the PLC's overrun switch when it is an Overrun on
+// OverrunTag, and a BOOL tag when it is a bool (a curtain's state, the sim's
+// bypass button), registering its PLC if new; any other write is discarded (Q4:
+// zone lights / heartbeats have no sim effect) and reports success. A counter
+// is never written.
 func (f *FakeClient) WriteTagValue(ctx context.Context, plcName, tagName string, value any) error {
 	if id, ok := value.(Identity); ok {
 		return f.setIdentity(plcName, tagName, int64(id))
+	}
+	if to, ok := value.(ProgramChange); ok {
+		return f.changeProgram(plcName, tagName, func(l *Line) { l.Change(int64(to)) })
+	}
+	if to, ok := value.(ForcedChange); ok {
+		return f.changeProgram(plcName, tagName, func(l *Line) { l.Force(int64(to)) })
 	}
 	if o, ok := value.(Overrun); ok || tagName == OverrunTag {
 		if !ok || tagName != OverrunTag {
@@ -296,8 +364,34 @@ func (f *FakeClient) setIdentity(plcName, tagName string, v int64) error {
 			sort.Strings(f.plcs)
 		}
 	}
+	for _, pl := range f.lines[plcName] {
+		if pl.identityTag == tagName {
+			pl.line.SetIdentity(v)
+		}
+	}
 	f.idents[plcName][tagName] = v
 	return nil
+}
+
+// changeProgram applies a program change to the process counting on
+// plcName.tagName and publishes what it moved. The change is to the process's
+// identity tag, so a process without one is refused: the Edge would see a
+// counter reset and no new part.
+func (f *FakeClient) changeProgram(plcName, tagName string, change func(*Line)) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for _, pl := range f.lines[plcName] {
+		if pl.counterTag != tagName {
+			continue
+		}
+		if pl.identityTag == "" {
+			return fmt.Errorf("simwarlink: %s.%s has no identity_tag for a program change to write", plcName, tagName)
+		}
+		change(pl.line)
+		f.publish(pl)
+		return nil
+	}
+	return fmt.Errorf("simwarlink: no sim process counts on %s.%s", plcName, tagName)
 }
 
 // setOverrun sets or clears a PLC's overrun switch. Only a PLC with a counter

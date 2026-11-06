@@ -4,6 +4,7 @@ package simwarlink
 
 import (
 	"context"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -231,5 +232,163 @@ func TestFakeOverrunIsAPerPLCSwitch(t *testing.T) {
 	}
 	if err := f.WriteTagValue(ctx, "PRESS-1", OverrunTag, true); err == nil || f.Overrun("PRESS-1") {
 		t.Error("a plain bool set the overrun switch")
+	}
+}
+
+// lineCfg is one process with a line of the given depth: a station tag that
+// clicks per load and an identity tag a program change writes.
+func lineCfg(depth int) config.SimConfig {
+	return config.SimConfig{Enabled: true, Processes: []config.SimProcessConfig{{
+		PLCName: "WELD-6", TagName: "WELD-6_COUNTER", TickInterval: time.Second, UOPPerTick: 1,
+		StationTag: "WELD-6_STATION", LineDepth: depth, IdentityTag: "WELD-6_CATID",
+	}}}
+}
+
+// readInt reads a published integer tag; -1 when it is not there.
+func readInt(f *FakeClient, plcName, tagName string) int64 {
+	v, err := f.ReadTagValue(context.Background(), plcName, tagName)
+	if n, ok := v.(int64); ok && err == nil {
+		return n
+	}
+	return -1
+}
+
+// lineOf reads the first line of a PLC through LineTag.
+func lineOf(t *testing.T, f *FakeClient, plcName string) ProcessLine {
+	t.Helper()
+	v, err := f.ReadTagValue(context.Background(), plcName, LineTag)
+	lines, ok := v.([]ProcessLine)
+	if err != nil || !ok || len(lines) == 0 {
+		t.Fatalf("read %s line = %v, %v", plcName, v, err)
+	}
+	return lines[0]
+}
+
+// TestFakeLineCountsALoadLClicksAfterItsStation: the counter's n-th tick comes
+// exactly L ticks after the station's n-th click.
+func TestFakeLineCountsALoadLClicksAfterItsStation(t *testing.T) {
+	const depth = 3
+	m := clock.NewManual(fakeStart)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	f := NewFakeClient(ctx, lineCfg(depth), m)
+	for k := int64(1); k <= 6; k++ {
+		m.Advance(time.Second)
+		waitForCounter(t, f, "WELD-6", "WELD-6_STATION", k)
+		if got, want := readInt(f, "WELD-6", "WELD-6_COUNTER"), max(0, k-depth); got != want {
+			t.Fatalf("after click %d the counter reads %d; want %d", k, got, want)
+		}
+	}
+}
+
+// TestFakeProgramChangeDrainsThenResets: after the verb nothing loads, the
+// counter keeps rising until the line is empty, and on the next tick (a stalled
+// one here) the identity changes and the counter reads 0; loading then resumes
+// under the new identity.
+func TestFakeProgramChangeDrainsThenResets(t *testing.T) {
+	m := clock.NewManual(fakeStart)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	f := NewFakeClient(ctx, lineCfg(2), m)
+	var stopped atomic.Bool
+	f.SetReadinessFunc(func(string) bool { return !stopped.Load() })
+	_ = f.WriteTagValue(ctx, "WELD-6", "WELD-6_CATID", Identity(1001))
+	for k := int64(1); k <= 4; k++ {
+		m.Advance(time.Second)
+		waitForCounter(t, f, "WELD-6", "WELD-6_STATION", k)
+	}
+	if err := f.WriteTagValue(ctx, "WELD-6", "WELD-6_COUNTER", ProgramChange(1002)); err != nil {
+		t.Fatalf("program change: %v", err)
+	}
+	for c := int64(3); c <= 4; c++ {
+		m.Advance(time.Second)
+		waitForCounter(t, f, "WELD-6", "WELD-6_COUNTER", c)
+		if s, id := readInt(f, "WELD-6", "WELD-6_STATION"), readInt(f, "WELD-6", "WELD-6_CATID"); s != 4 || id != 1001 {
+			t.Fatalf("draining: station %d, identity %d; want 4 (no loading) and 1001", s, id)
+		}
+	}
+	stopped.Store(true)
+	m.Advance(time.Second)
+	waitForCounter(t, f, "WELD-6", "WELD-6_CATID", 1002)
+	if c := readInt(f, "WELD-6", "WELD-6_COUNTER"); c != 0 {
+		t.Fatalf("the identity changed with the counter at %d; want 0", c)
+	}
+	stopped.Store(false)
+	m.Advance(time.Second)
+	waitForCounter(t, f, "WELD-6", "WELD-6_STATION", 5)
+	if st := lineOf(t, f, "WELD-6"); st.ByIdentity[1001] != 4 || st.ByIdentity[1002] != 1 || st.InFlight != 1 || st.Counter != 0 {
+		t.Errorf("line after the change = %+v; want loads 1001:4 1002:1, one in flight, counter 0", st.LineState)
+	}
+}
+
+// TestFakeForcedChangeLeavesTheLineInFlight: the identity and the reset land at
+// the write, and the L loads still in the line count out on the next L ticks
+// (booked to the identity they were loaded under).
+func TestFakeForcedChangeLeavesTheLineInFlight(t *testing.T) {
+	m := clock.NewManual(fakeStart)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	f := NewFakeClient(ctx, lineCfg(2), m)
+	_ = f.WriteTagValue(ctx, "WELD-6", "WELD-6_CATID", Identity(1001))
+	for k := int64(1); k <= 4; k++ {
+		m.Advance(time.Second)
+		waitForCounter(t, f, "WELD-6", "WELD-6_STATION", k)
+	}
+	if err := f.WriteTagValue(ctx, "WELD-6", "WELD-6_COUNTER", ForcedChange(1002)); err != nil {
+		t.Fatalf("forced change: %v", err)
+	}
+	if id, c := readInt(f, "WELD-6", "WELD-6_CATID"), readInt(f, "WELD-6", "WELD-6_COUNTER"); id != 1002 || c != 0 {
+		t.Fatalf("at the write: identity %d, counter %d; want 1002 and 0", id, c)
+	}
+	for k := int64(5); k <= 6; k++ {
+		m.Advance(time.Second)
+		waitForCounter(t, f, "WELD-6", "WELD-6_STATION", k)
+		if c := readInt(f, "WELD-6", "WELD-6_COUNTER"); c != k-4 {
+			t.Fatalf("tick %d after the forced change: counter %d; want %d", k-4, c, k-4)
+		}
+	}
+	if st := lineOf(t, f, "WELD-6"); st.ByIdentity[1001] != 4 || st.ByIdentity[1002] != 2 || st.InFlight != 2 {
+		t.Errorf("line = %+v; want loads 1001:4 1002:2, two in flight", st.LineState)
+	}
+}
+
+// TestFakeLineDepthZeroIsTodaysCounter: no station tag and depth 0 is the
+// counter of before lines: it ticks on every load, the poll sees it alone, and
+// the line read books one load per tick with nothing in flight.
+func TestFakeLineDepthZeroIsTodaysCounter(t *testing.T) {
+	m := clock.NewManual(fakeStart)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	f := NewFakeClient(ctx, twoProcessCfg(), m)
+	for i := int64(1); i <= 3; i++ {
+		m.Advance(time.Second)
+		waitForCounter(t, f, "PRESS-1", "PRESS-1_COUNTER", i*2)
+	}
+	if tags, _ := f.ListTags(ctx, "PRESS-1"); len(tags) != 1 {
+		t.Errorf("the poll sees %v; want the counter alone", keysOf(tags))
+	}
+	if st := lineOf(t, f, "PRESS-1"); st.Loads != 3 || st.ByIdentity[0] != 3 || st.InFlight != 0 {
+		t.Errorf("line = %+v; want 3 loads, none in flight", st.LineState)
+	}
+}
+
+// TestFakeIntegerWriteIsNoProgramChange: a plain integer on the counter or the
+// identity tag changes no program; the line keeps loading and counting.
+func TestFakeIntegerWriteIsNoProgramChange(t *testing.T) {
+	m := clock.NewManual(fakeStart)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	f := NewFakeClient(ctx, lineCfg(1), m)
+	_ = f.WriteTagValue(ctx, "WELD-6", "WELD-6_CATID", Identity(1001))
+	m.Advance(time.Second)
+	waitForCounter(t, f, "WELD-6", "WELD-6_STATION", 1)
+	for _, v := range []any{int64(1002), 1002, int32(1002)} {
+		_ = f.WriteTagValue(ctx, "WELD-6", "WELD-6_COUNTER", v)
+		_ = f.WriteTagValue(ctx, "WELD-6", "WELD-6_CATID", v)
+	}
+	m.Advance(time.Second)
+	waitForCounter(t, f, "WELD-6", "WELD-6_STATION", 2)
+	if c, id := readInt(f, "WELD-6", "WELD-6_COUNTER"), readInt(f, "WELD-6", "WELD-6_CATID"); c != 1 || id != 1001 {
+		t.Errorf("after integer writes: counter %d, identity %d; want 1 and 1001", c, id)
 	}
 }

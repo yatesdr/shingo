@@ -6,6 +6,8 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+
+	"gopkg.in/yaml.v3"
 )
 
 // TestDevYAMLParses verifies shingoedge.dev.yaml parses with the expected sim
@@ -63,6 +65,28 @@ func TestDevYAMLParses(t *testing.T) {
 	}
 	if cfg.Sim.Operators.LoaderAutoLoad <= 0 {
 		t.Errorf("operators.loader_auto_load = %v, want positive", cfg.Sim.Operators.LoaderAutoLoad)
+	}
+}
+
+// TestSimProcessLineKeys pins the YAML keys a sim process names its line with.
+// Unknown keys are silently ignored, so a renamed tag would leave every dev
+// config's line at depth 0 with no station and no program change.
+func TestSimProcessLineKeys(t *testing.T) {
+	var cfg Config
+	doc := `
+sim:
+  processes:
+    - plc_name: WELD-6
+      tag_name: WELD-6_COUNTER
+      station_tag: WELD-6_STATION
+      line_depth: 4
+      identity_tag: WELD-6_CATID
+`
+	if err := yaml.Unmarshal([]byte(doc), &cfg); err != nil || len(cfg.Sim.Processes) != 1 {
+		t.Fatalf("unmarshal = %v, %d processes", err, len(cfg.Sim.Processes))
+	}
+	if p := cfg.Sim.Processes[0]; p.StationTag != "WELD-6_STATION" || p.LineDepth != 4 || p.IdentityTag != "WELD-6_CATID" {
+		t.Errorf("process = %+v; want station_tag, line_depth 4 and identity_tag read", p)
 	}
 }
 

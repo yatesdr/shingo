@@ -334,11 +334,22 @@ func (s SimConfig) Scaled(d time.Duration) time.Duration {
 
 // SimProcessConfig describes one fake PLC counter the fake WarLink advances.
 // PLCName/TagName must exactly match a reporting_points row the seed tool creates.
+//
+// The line (simwarlink.Line): each tick is one load, which clicks StationTag
+// (a counter on the same PLC, published beside TagName for the Edge's station
+// counter to poll) and is counted on TagName LineDepth loads later. No station
+// tag and depth 0 is a counter that ticks on every load. IdentityTag is the
+// process's part-identity tag (the one the Edge's process reads); it is
+// published from boot and is the tag a program change writes, so a process
+// without one cannot take a program change.
 type SimProcessConfig struct {
 	PLCName      string        `yaml:"plc_name"`
 	TagName      string        `yaml:"tag_name"`
 	TickInterval time.Duration `yaml:"tick_interval"` // default 3s (applied at consumption)
 	UOPPerTick   int64         `yaml:"uop_per_tick"`  // default 1 (applied at consumption)
+	StationTag   string        `yaml:"station_tag"`   // "" = no station counter
+	LineDepth    int           `yaml:"line_depth"`    // loads between station and counter; 0 = none
+	IdentityTag  string        `yaml:"identity_tag"`  // "" = no program change
 }
 
 // SimOperatorsConfig configures the auto-operator (loader auto-LOAD, unloader
