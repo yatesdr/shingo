@@ -123,6 +123,9 @@ type styleCATIDEntry struct {
 	ProduceClaims int
 	// Active and Target: the process's active style, its open target.
 	Active, Target bool
+	// Pinned: the set is the style's expected_catid, which a person
+	// confirmed (N2's verbs), not the catalog's derivation.
+	Pinned bool
 }
 
 // processStyleCATIDSets returns every LIVE style of the process with its
@@ -140,7 +143,7 @@ func (e *Engine) processStyleCATIDSets(processID int64) []styleCATIDEntry {
 	out := make([]styleCATIDEntry, 0, len(rows))
 	for _, r := range rows {
 		out = append(out, styleCATIDEntry{ID: r.StyleID, Name: r.Name, Set: catidSetFromIdentity(r), ProduceClaims: r.ProduceClaims,
-			Active: r.Active, Target: r.Target})
+			Active: r.Active, Target: r.Target, Pinned: strings.TrimSpace(r.ExpectedCATID) != ""})
 	}
 	return out
 }

@@ -420,11 +420,13 @@ func (e *Engine) forcedItems(processID int64) []CatidHealthItem {
 	return []CatidHealthItem{item}
 }
 
-// decisionItems: the switches and cutovers no one pressed CUTOVER for in the
-// last 24 hours.
+// decisionItems: the switches and cutovers no one pressed CUTOVER for, and
+// the holds the Edge released by itself, in the last 24 hours.
 func (e *Engine) decisionItems(processID int64, now time.Time) []CatidHealthItem {
-	rows, err := e.db.ListChangeoversTriggeredSince(processID, automaticTriggers, now.Add(-catidHealthDecisionWindow))
-	if err != nil || len(rows) == 0 {
+	since := now.Add(-catidHealthDecisionWindow)
+	rows, _ := e.db.ListChangeoversTriggeredSince(processID, automaticTriggers, since)
+	holds, _ := e.db.ListCatidHoldsReleasedSince(processID, since)
+	if len(rows) == 0 && len(holds) == 0 {
 		return nil
 	}
 	list := make([]map[string]any, 0, len(rows))
@@ -432,9 +434,22 @@ func (e *Engine) decisionItems(processID int64, now time.Time) []CatidHealthItem
 		list = append(list, map[string]any{"changeover_id": r.ID, "from": r.FromStyleName, "to": r.ToStyleName,
 			"triggered_by": r.TriggeredBy, "completed_at": r.CompletedAt})
 	}
-	latest := rows[0]
+	released := make([]map[string]any, 0, len(holds))
+	for _, h := range holds {
+		released = append(released, map[string]any{"hold_id": h.ID, "catid": h.CATID, "qty": h.Qty, "resolved_at": h.ResolvedAt})
+	}
+	detail := ""
+	if len(rows) > 0 {
+		detail = fmt.Sprintf("latest: %s to %s (%s)", rows[0].FromStyleName, rows[0].ToStyleName, rows[0].TriggeredBy)
+	}
+	if len(holds) > 0 {
+		if detail != "" {
+			detail += "; "
+		}
+		detail += fmt.Sprintf("%d hold(s) released on a landing", len(holds))
+	}
 	return []CatidHealthItem{{Kind: catidKindAutoDecisions, Severity: CatidHealthInfo,
-		Headline: fmt.Sprintf("%d automatic decision(s) in 24 h", len(rows)),
-		Detail:   fmt.Sprintf("latest: %s to %s (%s)", latest.FromStyleName, latest.ToStyleName, latest.TriggeredBy),
-		Data:     map[string]any{"decisions": list}}}
+		Headline: fmt.Sprintf("%d automatic decision(s) in 24 h", len(rows)+len(holds)),
+		Detail:   detail,
+		Data:     map[string]any{"decisions": list, "hold_releases": released}}}
 }

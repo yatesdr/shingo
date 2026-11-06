@@ -67,7 +67,7 @@ func (e *Engine) SetProcessActiveStyle(processID int64, styleID *int64) error {
 			return err
 		}
 		target := changeover.ToStyleID
-		return e.recordAdminSwitch(processID, &target, *styleID)
+		return e.recordSwitch(processID, &target, *styleID, "admin", triggeredAdminSwitch, "")
 	}
 }
 
@@ -83,22 +83,73 @@ func (e *Engine) adminSwitchNoChangeover(proc *processes.Process, styleID *int64
 		a := *proc.ActiveStyleID
 		from = &a
 	}
-	return e.recordAdminSwitch(proc.ID, from, *styleID)
+	return e.recordSwitch(proc.ID, from, *styleID, "admin", triggeredAdminSwitch, "")
 }
 
-// recordAdminSwitch flips the process to toStyleID and records the switch as a
-// completed changeover row from fromStyleID, then opens the post-cutover watch
-// on it — replacing a watch the door opened for the changeover's own target —
-// and releases the holds the landing style runs, as the door's landing does.
-func (e *Engine) recordAdminSwitch(processID int64, fromStyleID *int64, toStyleID int64) error {
+// recordSwitch flips the process to toStyleID and records the switch as a
+// completed changeover row from fromStyleID (no tasks, orders or episode),
+// then opens the post-cutover watch on it — replacing a watch the door opened
+// for the changeover's own target — and releases the holds the landing style
+// runs, as the door's landing does. The admin switch and the automatic switch.
+func (e *Engine) recordSwitch(processID int64, fromStyleID *int64, toStyleID int64, calledBy, triggeredBy, notes string) error {
 	if err := e.flipActiveStyle(processID, &toStyleID); err != nil {
 		return err
 	}
-	id, err := e.db.InsertCompletedChangeover(processID, fromStyleID, toStyleID, "admin", triggeredAdminSwitch, "")
+	id, err := e.db.InsertCompletedChangeover(processID, fromStyleID, toStyleID, calledBy, triggeredBy, notes)
 	if err != nil {
 		return fmt.Errorf("record the switch on process %d: %w", processID, err)
 	}
 	e.openPostCutoverVerify(processID, id)
 	e.releaseHoldsOnLanding(processID, id)
 	return nil
+}
+
+// autoSwitchStyle is the automatic switch (N6): the process counted a part
+// only toStyleID runs, by a person's pin, with no changeover open. It switches
+// as the admin switch records one — the flip (piles stranded, plant claims
+// published, the reporting point synced, every node pointed at the new
+// style's claims), a completed auto-catid-flip row, the post-cutover watch,
+// the holds the new style runs released — and clears the post-cutover flag the
+// part resolves. It never plans a changeover: within a minute the sweep
+// reorders and the keeper stages for the new style, and the request guard
+// admits its requests. Under the door's mutex, re-read: a changeover opened or
+// a style moved since the decision is a no-op.
+func (e *Engine) autoSwitchStyle(processID, fromStyleID, toStyleID int64, catid string) error {
+	e.cutoverMu.Lock()
+	defer e.cutoverMu.Unlock()
+	proc, err := e.db.GetProcess(processID)
+	if err != nil {
+		return err
+	}
+	if proc.ActiveStyleID == nil || *proc.ActiveStyleID != fromStyleID {
+		e.logFn("plc-catid: process %d moved off style %d since the decision — not switching", processID, fromStyleID)
+		return nil
+	}
+	if co, err := e.db.GetActiveProcessChangeover(processID); err == nil && co != nil {
+		e.logFn("plc-catid: process %d: changeover %d opened since the decision — not switching", processID, co.ID)
+		return nil
+	} else if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return err
+	}
+	from, _ := e.db.GetStyle(fromStyleID)
+	to, _ := e.db.GetStyle(toStyleID)
+	notes := fmt.Sprintf("CATID %s counted, which only %s runs: switched from %s with no changeover. Piles stranded and "+
+		"plant claims published; within a minute the sweep reorders and the keeper stages for %s, and the request "+
+		"guard admits its requests.", catid, styleNameOr(to, toStyleID), styleNameOr(from, fromStyleID), styleNameOr(to, toStyleID))
+	if err := e.ClearPostCutoverFlag(processID); err != nil {
+		e.logFn("plc-catid: process %d: clear the post-cutover flag: %v", processID, err)
+	}
+	src := fromStyleID
+	if err := e.recordSwitch(processID, &src, toStyleID, "auto", triggeredAutoCATIDFlip, notes); err != nil {
+		return err
+	}
+	e.logFn("plc-catid: process %s: %s", proc.Name, notes)
+	return nil
+}
+
+func styleNameOr(s *processes.Style, id int64) string {
+	if s != nil && s.Name != "" {
+		return s.Name
+	}
+	return fmt.Sprintf("style %d", id)
 }

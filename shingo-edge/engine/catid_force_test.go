@@ -273,7 +273,7 @@ func TestForceHolds_TheRule(t *testing.T) {
 	t.Parallel()
 	start := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
 	ok := forceFacts{value: "1002", confirmedAt: start.Add(time.Minute), stable: true,
-		tick: targetTick{catid: "1002", at: start.Add(2 * time.Minute)}}
+		tick: countedTick{catid: "1002", kind: plc.TickTarget, at: start.Add(2 * time.Minute)}}
 	if !forceHolds(ok, start) {
 		t.Fatal("the full condition does not hold")
 	}
@@ -282,7 +282,8 @@ func TestForceHolds_TheRule(t *testing.T) {
 		"a baseline":                      func(f *forceFacts) { f.baseline = true },
 		"confirmed before the start":      func(f *forceFacts) { f.confirmedAt = start.Add(-time.Second) },
 		"confirmed in the start's second": func(f *forceFacts) { f.confirmedAt = start.Add(500 * time.Millisecond) },
-		"no counted stroke":               func(f *forceFacts) { f.tick = targetTick{} },
+		"no counted stroke":               func(f *forceFacts) { f.tick = countedTick{} },
+		"a stroke counted off-plan":       func(f *forceFacts) { f.tick.kind = plc.TickOffPlan },
 		"a stroke on another part":        func(f *forceFacts) { f.tick.catid = "1003" },
 		"a stroke before the confirm":     func(f *forceFacts) { f.tick.at = start.Add(30 * time.Second) },
 		"a value that names no part":      func(f *forceFacts) { f.value, f.tick.catid = "-1", "-1" },

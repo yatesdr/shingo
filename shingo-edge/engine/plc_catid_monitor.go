@@ -14,6 +14,8 @@ import (
 	"shingo/protocol/lockcheck"
 	"shingoedge/domain"
 	"shingoedge/internal/lockorder"
+	"shingoedge/plc"
+	"shingoedge/store/processes"
 )
 
 // Auto-arm stability guard (B1). Before the monitor auto-STARTS a changeover on a
@@ -46,12 +48,18 @@ type autoCutoverIntent struct {
 	// force: the counted-part condition holds (forceHolds), so auto completes
 	// past a red gate and prompt offers the station's one-tap.
 	force bool
+	// switchTo is the automatic switch's style (no changeover open), 0 for a
+	// cutover; fromStyleID the style it leaves.
+	switchTo, fromStyleID int64
+	switchName            string
 }
 
-// targetTick is the last counted tick the poll attributed to an open
-// changeover's target, for the counted-part force.
-type targetTick struct {
+// countedTick is the last counted tick the poll attributed off today (to the
+// target, off-plan or held), for the force, the switch and the ambiguity
+// prompt.
+type countedTick struct {
 	catid string
+	kind  plc.TickKind
 	at    time.Time
 }
 
@@ -61,7 +69,7 @@ type forceFacts struct {
 	confirmedAt time.Time
 	baseline    bool // the value was standing at the first read, not a change
 	stable      bool // the declaration's stability: 3 reads over 60 s
-	tick        targetTick
+	tick        countedTick
 }
 
 // forceHolds is the counted-part force's condition on a changeover started at
@@ -75,7 +83,13 @@ type forceFacts struct {
 func forceHolds(f forceFacts, startedAt time.Time) bool {
 	return f.stable && !f.baseline && isIdentity(f.value) &&
 		!f.confirmedAt.Before(startedAt.Add(time.Second)) &&
-		f.tick.catid == f.value && !f.tick.at.Before(f.confirmedAt)
+		countedSince(f, plc.TickTarget)
+}
+
+// countedSince reports whether a tick of kind on the confirmed value has been
+// counted since it was confirmed.
+func countedSince(f forceFacts, kind plc.TickKind) bool {
+	return f.tick.kind == kind && f.tick.catid == f.value && !f.tick.at.Before(f.confirmedAt)
 }
 
 // PLC part-identity (CATID) monitor — the A5 guard's data source.
@@ -210,10 +224,10 @@ type catidMonitor struct {
 	// snapshot). Written under mu, on each good read and each confirm edge, and
 	// swapped by reprime; read with no lock at all.
 	snapshots sync.Map
-	// targetTicks holds each process's last counted target tick (processID →
-	// targetTick), written by the poll with no lock (noteTargetTick) and read
-	// by the force's decision.
-	targetTicks sync.Map
+	// countedTicks holds each process's last counted tick placed off today
+	// (processID → countedTick), written by the poll with no lock
+	// (noteCountedTick) and read by the decisions.
+	countedTicks sync.Map
 	// completeCutover is the seam for the auto-cutover fire, defaulting to
 	// eng.completeCutover (wired in startCatidMonitor); tests inject a spy.
 	// Invoked OUTSIDE cm.mu — gate/DB/Core work must not run under the tick lock.
@@ -788,14 +802,14 @@ func (cm *catidMonitor) decideAutoArm(processID int64, st *catidState, v string,
 		return nil
 	}
 	if err != nil || changeover == nil {
-		return nil
+		return cm.decideAutoSwitch(proc, st, v, now)
 	}
 	out, in := cm.eng.cutoverCATIDSets(proc, changeover.ToStyleID)
 	if !cutoverPredicate(v, out, in) {
 		return nil
 	}
 	f := st.forceFacts(now)
-	f.tick = cm.lastTargetTick(processID)
+	f.tick = cm.lastCountedTick(processID)
 	return &autoCutoverIntent{
 		processID:    processID,
 		processName:  st.processName,
@@ -806,13 +820,63 @@ func (cm *catidMonitor) decideAutoArm(processID int64, st *catidState, v string,
 	}
 }
 
-// lastTargetTick returns the process's last counted target tick, zero if none.
-// No lock.
-func (cm *catidMonitor) lastTargetTick(processID int64) targetTick {
-	if v, ok := cm.targetTicks.Load(processID); ok {
-		return v.(targetTick)
+// decideAutoSwitch is the decision with no changeover open (N6), on a stable
+// part v the process counted a stroke of since it was confirmed:
+//
+//   - v off-plan (A proven, v in exactly one other live style S): switch to S
+//     when S's set is a person's pin; a catalog-derived set may attribute but
+//     never moves a cell.
+//   - v held because several styles run it: the change prompt, with them as
+//     its candidates, in auto (prompt mode raised it at the change).
+//
+// The declaration alone does nothing: a part no stroke was counted on moves
+// nothing. Called with cm.mu held; light DB reads only.
+func (cm *catidMonitor) decideAutoSwitch(proc *processes.Process, st *catidState, v string, now time.Time) *autoCutoverIntent {
+	f := st.forceFacts(now)
+	f.tick = cm.lastCountedTick(proc.ID)
+	mode := domain.NormalizeChangeoverAutoArm(proc.ChangeoverAutoArm)
+	switch {
+	case countedSince(f, plc.TickOffPlan):
+	case countedSince(f, plc.TickHeld):
+		if mode == domain.ChangeoverAutoArmAuto && len(cm.eng.stylesForCATID(proc.ID, v)) > 1 {
+			cm.raiseCATIDChangePrompt(proc.ID, st)
+		}
+		return nil
+	default:
+		return nil
 	}
-	return targetTick{}
+	if proc.ActiveStyleID == nil {
+		return nil
+	}
+	var to *styleCATIDEntry
+	sets := cm.eng.processStyleCATIDSets(proc.ID)
+	for i := range sets {
+		if sets[i].ID != *proc.ActiveStyleID && catidSetHas(sets[i].Set, v) {
+			if to != nil {
+				return nil
+			}
+			to = &sets[i]
+		}
+	}
+	if to == nil {
+		return nil
+	}
+	if !to.Pinned {
+		cm.eng.logFn("plc-catid: process %s: CATID %s counted on %s, whose set is derived from the catalog — not switching",
+			st.processName, v, to.Name)
+		return nil
+	}
+	return &autoCutoverIntent{processID: proc.ID, processName: st.processName, catid: v, mode: mode,
+		switchTo: to.ID, switchName: to.Name, fromStyleID: *proc.ActiveStyleID}
+}
+
+// lastCountedTick returns the process's last counted tick placed off today,
+// zero if none. No lock.
+func (cm *catidMonitor) lastCountedTick(processID int64) countedTick {
+	if v, ok := cm.countedTicks.Load(processID); ok {
+		return v.(countedTick)
+	}
+	return countedTick{}
 }
 
 // forceFactsOf reads a process's force facts at now for a caller outside the
@@ -825,7 +889,7 @@ func (cm *catidMonitor) forceFactsOf(processID int64, now time.Time) (forceFacts
 		f = st.forceFacts(now)
 	}
 	cm.mu.Unlock()
-	f.tick = cm.lastTargetTick(processID)
+	f.tick = cm.lastCountedTick(processID)
 	return f, ok
 }
 
@@ -857,6 +921,10 @@ func isIdentity(v string) bool {
 // offers its one-tap while the condition holds). Every mode logs the decision
 // line. Never starts, cancels or re-plans anything.
 func (cm *catidMonitor) fireAutoCutover(in autoCutoverIntent) {
+	if in.switchTo != 0 {
+		cm.fireAutoSwitch(in)
+		return
+	}
 	counted := ""
 	if in.force {
 		counted = ", counted on the target since the change"
@@ -909,6 +977,20 @@ func (cm *catidMonitor) fireAutoCutover(in autoCutoverIntent) {
 		Forced:       len(blockers) > 0,
 		Blockers:     blockers,
 	}})
+}
+
+// fireAutoSwitch acts on an automatic-switch intent OUTSIDE cm.mu: in auto it
+// switches (autoSwitchStyle); in prompt and off it logs what auto would have
+// done.
+func (cm *catidMonitor) fireAutoSwitch(in autoCutoverIntent) {
+	if in.mode != domain.ChangeoverAutoArmAuto {
+		cm.eng.logFn("plc-catid: process %s: CATID %s counted on %s with no changeover open, mode=%s — would have switched",
+			in.processName, in.catid, in.switchName, in.mode)
+		return
+	}
+	if err := cm.eng.autoSwitchStyle(in.processID, in.fromStyleID, in.switchTo, in.catid); err != nil {
+		cm.eng.logFn("plc-catid: process %s: switch to %s on CATID %s failed: %v", in.processName, in.switchName, in.catid, err)
+	}
 }
 
 // noteRefusal dates the door's refusal of an intent on the process's state,

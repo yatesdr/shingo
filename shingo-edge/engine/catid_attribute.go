@@ -91,15 +91,20 @@ func attributeCATID(v string, pointStyleID int64, sets []styleCATIDEntry, observ
 	return id
 }
 
-// noteTargetTick records a counted tick the poll attributed to the open
-// changeover's target and pokes the monitor, which decides the counted-part
-// force on its own goroutine: the poll never enters the door. No lock.
-func (e *Engine) noteTargetTick(processID int64, catid string) {
+// noteCountedTick records a counted tick the poll attributed off today — to
+// the open changeover's target, off-plan to another style, or held — and
+// pokes the monitor, which decides on its own goroutine (the counted-part
+// force, the automatic switch, the ambiguity prompt): the poll never enters
+// the door. No lock.
+func (e *Engine) noteCountedTick(processID int64, id plc.TickIdentity) {
+	if id.Kind == plc.TickToday {
+		return
+	}
 	cm := e.tickMonitor.Load()
 	if cm == nil {
 		return
 	}
-	cm.targetTicks.Store(processID, targetTick{catid: catid, at: clock.Now()})
+	cm.countedTicks.Store(processID, countedTick{catid: id.CATID, kind: id.Kind, at: clock.Now()})
 	e.pokeCutover(processID)
 }
 
