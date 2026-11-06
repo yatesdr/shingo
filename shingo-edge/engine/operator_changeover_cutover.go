@@ -283,8 +283,13 @@ const (
 	triggeredForced        = "-forced"
 )
 
+// errNotTheOpenChangeover is the door's no-op: the changeover it was asked to
+// complete is not the one open (it ended, or another opened). Nothing moved.
+var errNotTheOpenChangeover = errors.New("the changeover is not the open one")
+
 // CompleteProcessProductionCutover is the operator's CUTOVER: the door, gated,
-// on the changeover open now. With none open it is a logged no-op.
+// on the changeover open now. With none open, or one that ended before the
+// door took it, it is a logged no-op.
 func (e *Engine) CompleteProcessProductionCutover(processID int64) error {
 	changeover, err := e.db.GetActiveProcessChangeover(processID)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -294,7 +299,9 @@ func (e *Engine) CompleteProcessProductionCutover(processID int64) error {
 	if err != nil {
 		return err
 	}
-	_, err = e.completeCutover(processID, changeover.ID, triggeredManual, CutoverGated)
+	if _, err = e.completeCutover(processID, changeover.ID, triggeredManual, CutoverGated); errors.Is(err, errNotTheOpenChangeover) {
+		return nil
+	}
 	return err
 }
 
@@ -366,7 +373,9 @@ func (e *Engine) CutOverNow(processID int64) error {
 	if !off.Offered {
 		return ErrCutoverNowNotOffered
 	}
-	_, err = e.completeCutover(processID, off.ChangeoverID, triggeredManual, CutoverForced)
+	if _, err = e.completeCutover(processID, off.ChangeoverID, triggeredManual, CutoverForced); errors.Is(err, errNotTheOpenChangeover) {
+		return nil
+	}
 	return err
 }
 
@@ -374,7 +383,8 @@ func (e *Engine) CutOverNow(processID int64) error {
 // changeoverID on the process — the delivered-order pre-pass, the gate, the
 // flip, the finalize. A changeover that is no longer open, or is not the open
 // one, is a logged no-op (a decision taken for one changeover must not
-// complete the next). Returns the blockers a CutoverForced completion
+// complete the next), reported as errNotTheOpenChangeover so no caller takes
+// it for a completion. Returns the blockers a CutoverForced completion
 // overrode; nil otherwise.
 //
 // Never called from the completion chain: a call there would take cutoverMu
@@ -392,7 +402,7 @@ func (e *Engine) completeCutoverLocked(processID, changeoverID int64, by string,
 	changeover, err := e.db.GetActiveProcessChangeover(processID)
 	if errors.Is(err, sql.ErrNoRows) {
 		e.logFn("cutover: process %d changeover %d is not open — nothing to do (%s)", processID, changeoverID, by)
-		return nil, nil
+		return nil, errNotTheOpenChangeover
 	}
 	if err != nil {
 		return nil, err
@@ -400,7 +410,7 @@ func (e *Engine) completeCutoverLocked(processID, changeoverID int64, by string,
 	if changeover.ID != changeoverID {
 		e.logFn("cutover: process %d changeover %d is not the open one (%d) — nothing to do (%s)",
 			processID, changeoverID, changeover.ID, by)
-		return nil, nil
+		return nil, errNotTheOpenChangeover
 	}
 	// Auto-confirm any linked order the fleet already delivered, so the gate
 	// below isn't blocked on an operator clerical step for material that is

@@ -1034,6 +1034,13 @@ func (cm *catidMonitor) fireAutoCutover(in autoCutoverIntent) {
 	} else {
 		blockers, err = complete(in.processID, in.changeoverID, triggeredAutoCATID, CutoverGated)
 	}
+	if errors.Is(err, errNotTheOpenChangeover) {
+		// Completed (or cancelled) by someone else since the decision: nothing
+		// was cut over here, so no notice and no retry.
+		cm.eng.logFn("plc-catid: process %s changeover %d: no longer open — nothing to cut over",
+			in.processName, in.changeoverID)
+		return
+	}
 	if err != nil {
 		cm.eng.logFn("plc-catid: process %s changeover %d: predicate held on CATID %s%s, waiting on %v, mode=%s — not cut over",
 			in.processName, in.changeoverID, in.catid, counted, err, in.mode)

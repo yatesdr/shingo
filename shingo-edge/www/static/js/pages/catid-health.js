@@ -2,9 +2,11 @@
 //
 // The Edge computes every item from state on each read (engine/catid_health.go),
 // so the strip only renders what /api/catid-health (one line per process) and
-// /api/processes/{id}/catid-health (its items) answer, and refetches when the
-// 'catid-health' SSE hint names a change. One block per process with any item,
-// toned by its worst one, each item with the verbs that resolve it: pin an
+// /api/processes/{id}/catid-health (its items) answer; the Processes page
+// refetches on its 10 s refresh, which is what clears an item whose condition
+// ended with no hint (a read recovering, a window expiring). One block per
+// process with any item, toned by its worst one, each item with the verbs
+// that resolve it: pin an
 // unmapped CATID to a style (the suggestion, or a picked one), Charge or Write
 // off a hold. A classic script, like desktop-bodies.js, so its Node test loads
 // it as CommonJS.
@@ -71,15 +73,7 @@
         }).join('') + '</div>';
     }
 
-    // onHint calls fn on every 'catid-health' hint, over one stream.
-    let stream = null;
-    function onHint(fn) {
-        if (stream || typeof EventSource === 'undefined') return;
-        stream = new EventSource('/events?topics=catid-health');
-        stream.addEventListener('catid-health', function () { fn(); });
-    }
-
-    const api = { listHTML, itemHTML, onHint };
+    const api = { listHTML, itemHTML };
     if (typeof module !== 'undefined' && module.exports) module.exports = api;
     if (typeof window !== 'undefined') window.CatidHealth = api;
 })();

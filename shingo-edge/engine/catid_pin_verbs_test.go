@@ -113,6 +113,70 @@ func TestSuggest_NeverFromTheActiveStyle(t *testing.T) {
 	}
 }
 
+// TestSuggest_ASwitchRecordsTheStartCATID: an admin switch records the PLC's
+// part as it lands (start_catid), so a part standing before and after it is
+// never suggested for the landed style. Before, the record row had no start
+// CATID and the standing part was suggested.
+func TestSuggest_ASwitchRecordsTheStartCATID(t *testing.T) {
+	t.Parallel()
+	eng, db, pid, _, b, _ := healthRig(t, "1007")
+	testutil.MustNoErr(t, db.RecordPLCCATIDObservation(pid, "plc", "1007"), "observe")
+	testutil.MustNoErr(t, eng.SetProcessActiveStyle(pid, &b), "mark B as running")
+	rows, err := db.ListRecentProcessChangeovers(pid, 1)
+	testutil.MustNoErr(t, err, "rows")
+	if len(rows) != 1 {
+		t.Fatalf("rows = %+v, want the switch's", rows)
+	}
+	testutil.MustNoErr(t, db.SetChangeoverEndCATID(rows[0].ID, "1007"), "the watch closes on 1007")
+	if row := changeoverRow(t, db, rows[0].ID); row.StartCATID != "1007" {
+		t.Errorf("start_catid = %q, want 1007", row.StartCATID)
+	}
+	if sug, has := healthKinds(t, eng, pid)[catidKindUnmapped].Data["suggestion"]; has {
+		t.Errorf("the part standing through the switch was suggested: %v", sug)
+	}
+}
+
+// TestPostCutover_ASwitchOntoTheFlaggedStyleClearsTheFlag: a changeover to B
+// flagged by its watch, the process back on A. A switch onto another style
+// leaves the flag; one landing on B answers it, and it clears. Before, only
+// the automatic switch cleared a flag.
+func TestPostCutover_ASwitchOntoTheFlaggedStyleClearsTheFlag(t *testing.T) {
+	t.Parallel()
+	eng, db, pid, a, b, _ := healthRig(t, "1002")
+	co, err := db.InsertCompletedChangeover(pid, &a, b, "test", triggeredManual, "")
+	testutil.MustNoErr(t, err, "a changeover to B")
+	testutil.MustNoErr(t, db.SetChangeoverVerifyMismatch(co, "1001"), "flagged on A's part")
+	c := pinnedStyle(t, eng, pid, "STYLE-C", "1003")
+	testutil.MustNoErr(t, eng.SetProcessActiveStyle(pid, &c), "mark C as running")
+	if _, ok := eng.PostCutoverFlag(pid); !ok {
+		t.Fatal("a switch onto C cleared the flag on the changeover to B")
+	}
+	testutil.MustNoErr(t, eng.SetProcessActiveStyle(pid, &b), "mark B as running")
+	if f, ok := eng.PostCutoverFlag(pid); ok {
+		t.Errorf("flag after the switch onto B = %+v, want cleared", f)
+	}
+}
+
+// TestCatidPin_TheSaveChecksOnlyValuesNewToThePin: a pin written before one
+// CATID named one style (B's 1001,1002 while A holds 1001) saves unchanged, as
+// a rename re-sends it; a value new to it is still checked. Before, every save
+// checked the whole pin, so the legacy pin blocked renaming either style.
+func TestCatidPin_TheSaveChecksOnlyValuesNewToThePin(t *testing.T) {
+	t.Parallel()
+	eng, db, pid, a, b, _ := healthRig(t, "1001")
+	testutil.MustNoErr(t, db.SetStyleExpectedCATID(b, "1001,1002"), "a legacy shared pin")
+	if err := eng.CheckStyleCATIDPin(pid, b, "1001,1002"); err != nil {
+		t.Errorf("B's unchanged pin = %v, want saved", err)
+	}
+	if err := eng.CheckStyleCATIDPin(pid, a, "1001"); err != nil {
+		t.Errorf("A's unchanged pin = %v, want saved", err)
+	}
+	pinnedStyle(t, eng, pid, "STYLE-C", "1003")
+	if err := eng.CheckStyleCATIDPin(pid, b, "1001,1002,1003"); !errors.Is(err, ErrCATIDTaken) {
+		t.Errorf("a value new to B's pin that C holds = %v, want ErrCATIDTaken", err)
+	}
+}
+
 // TestCatidPin_OneClickKeepsTheCatalogSet: a pin IS the set, so a one-click
 // writes the style's catalog set plus the value, not the value alone.
 func TestCatidPin_OneClickKeepsTheCatalogSet(t *testing.T) {

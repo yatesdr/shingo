@@ -93,8 +93,8 @@ func TestDoor_WrongChangeoverIDIsANoOp(t *testing.T) {
 	eng := testEngine(t, db)
 	processID, fromID, _, coID := openGreenChangeover(t, eng, "")
 
-	if _, err := eng.completeCutover(processID, coID+1, triggeredAutoCATID, CutoverGated); err != nil {
-		t.Fatalf("door with a stale changeover id: %v, want nil", err)
+	if _, err := eng.completeCutover(processID, coID+1, triggeredAutoCATID, CutoverGated); !errors.Is(err, errNotTheOpenChangeover) {
+		t.Fatalf("door with a stale changeover id: %v, want the no-op reported", err)
 	}
 	if co := changeoverRow(t, db, coID); co.State.IsTerminal() {
 		t.Fatalf("a decision for changeover %d completed changeover %d", coID+1, coID)
@@ -107,6 +107,35 @@ func TestDoor_WrongChangeoverIDIsANoOp(t *testing.T) {
 	testutil.MustNoErr(t, err, "create process")
 	if err := eng.CompleteProcessProductionCutover(other); err != nil {
 		t.Errorf("CUTOVER with no changeover open = %v, want a no-op", err)
+	}
+}
+
+// TestFire_ANoOpDoorNeitherLogsCutOverNorNotifies: the monitor decided on a
+// changeover the operator then completed before the fire. The door finds it
+// not open and does nothing; the fire says so and raises no automatic-cutover
+// notice. Before, the door's no-op returned as a completion: the fire logged
+// "cut over" and the station showed an automatic cutover nobody made.
+func TestFire_ANoOpDoorNeitherLogsCutOverNorNotifies(t *testing.T) {
+	t.Parallel()
+	db := testEngineDB(t)
+	eng := testEngine(t, db)
+	processID, _, _, coID := openGreenChangeover(t, eng, "")
+	mon := &catidMonitor{eng: eng, states: map[int64]*catidState{}}
+	eng.catidMon = mon
+	notices := 0
+	eng.Events.SubscribeTypes(func(Event) { notices++ }, EventCATIDAutoCutover)
+	var lines []string
+	eng.logFn = func(format string, args ...any) { lines = append(lines, fmt.Sprintf(format, args...)) }
+	testutil.MustNoErr(t, eng.CompleteProcessProductionCutover(processID), "the operator's CUTOVER")
+	mon.fireAutoCutover(autoCutoverIntent{processID: processID, processName: "CO-PROC", changeoverID: coID,
+		catid: "1002", mode: domain.ChangeoverAutoArmAuto})
+	if notices != 0 {
+		t.Errorf("automatic-cutover notices = %d, want none: the operator completed it", notices)
+	}
+	for _, l := range lines {
+		if strings.HasSuffix(l, "— cut over") {
+			t.Errorf("the fire logged a cutover it did not make: %q", l)
+		}
 	}
 }
 

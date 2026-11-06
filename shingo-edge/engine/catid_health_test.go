@@ -3,6 +3,7 @@
 package engine
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -50,6 +51,38 @@ func healthKinds(t *testing.T, eng *Engine, pid int64) map[string]CatidHealthIte
 		out[it.Kind] = it
 	}
 	return out
+}
+
+// TestCatidHealth_WrongPartNamesTheStyleItIsCountedAs: the wrong-part item
+// names the style the strokes on the part are counted under — the one that
+// runs it, off-plan — and no style for a part no style runs (held). Before, it
+// said they were counting as the running style.
+func TestCatidHealth_WrongPartNamesTheStyleItIsCountedAs(t *testing.T) {
+	t.Parallel()
+	eng, _, pid, _, _, cm := healthRig(t, "1001")
+	onPart(cm, pid, "1002", time.Now().Add(-time.Minute), "1001", "1002")
+	it := healthKinds(t, eng, pid)[catidKindWrongPart]
+	if !strings.Contains(it.Detail, "counted as STYLE-B") || it.Data["counting_as"] != "STYLE-B" {
+		t.Errorf("off-plan: %q %v, want counted as STYLE-B", it.Detail, it.Data)
+	}
+	onPart(cm, pid, "1007", time.Now().Add(-time.Minute), "1001")
+	it = healthKinds(t, eng, pid)[catidKindWrongPart]
+	if strings.Contains(it.Detail, " as ") || it.Data["counting_as"] != "" {
+		t.Errorf("held: %q %v, want no style named", it.Detail, it.Data)
+	}
+}
+
+// TestCatidHealth_IdentityStaleWhenAttributionStopsTrustingIt: the strip calls
+// the part identity unreadable once its last good read is older than the
+// attribution trusts it (5 s). Before, from 5 to 10 s the strip said the read
+// was healthy while every stroke was attributed by today's rule.
+func TestCatidHealth_IdentityStaleWhenAttributionStopsTrustingIt(t *testing.T) {
+	t.Parallel()
+	eng, _, pid, _, _, cm := healthRig(t, "1001")
+	cm.snapshots.Store(pid, &catidSnapshot{value: "1001", lastOK: time.Now().Add(-tickIdentityFresh - time.Second)})
+	if _, ok := healthKinds(t, eng, pid)[catidKindIdentity]; !ok {
+		t.Error("a read the attribution no longer trusts shows no identity item")
+	}
 }
 
 // TestCatidHealth_EveryItemShowsWhileTrueAndClears walks each kind available

@@ -213,11 +213,23 @@ func suggestCATIDPin(co processes.Changeover, toSet, fromSet map[string]struct{}
 var ErrCATIDTaken = errors.New("another style already runs that CATID")
 
 // CheckStyleCATIDPin validates a typed expected_catid for a style of the
-// process: every value must name a part, and none may be in another live
-// style's set. A blank pin (derive from the catalog) passes. styleID 0 is a
-// style about to be created.
+// process: every value new to the style's stored pin must name a part, and
+// none may be in another live style's set. A value already in the pin passes:
+// a rename re-sends the pin unchanged, and a pin written before one CATID
+// named one style would otherwise block every save of either style. A blank
+// pin (derive from the catalog) passes. styleID 0 is a style about to be
+// created.
 func (e *Engine) CheckStyleCATIDPin(processID, styleID int64, pin string) error {
+	var stored map[string]struct{}
+	if styleID != 0 {
+		if style, err := e.db.GetStyle(styleID); err == nil && style != nil {
+			stored = parseCATIDList(style.ExpectedCATID)
+		}
+	}
 	for v := range parseCATIDList(pin) {
+		if catidSetHas(stored, v) {
+			continue
+		}
 		if !isIdentity(v) {
 			return fmt.Errorf("CATID %q names no part (0 and negative values are what an unused slot reads)", v)
 		}

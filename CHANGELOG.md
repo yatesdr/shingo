@@ -37,6 +37,7 @@ Edge only, v37-v42 (the dev seeder learns station counters). Ship after a restor
 - A changeover's start (plan to insert) and its cancel run under the door's mutex: neither interleaves with a completion or a switch
 - A CATID pin (one-click, Confirm, the style save) pokes the monitor; a counted stroke pokes only when it is news; the switch's prompt or line comes once per value
 - A hold's release (landing or Charge) lands a share only on its part's cart, charges what it latched, and is refused, the hold left open, when nothing would land
+- The strip names the style a wrong part counts as, goes stale at 5 s and refreshes every 10 s; a switch records its start CATID and clears a flag on its style; an unchanged pin saves; the fire reports no cutover it did not make
 
 ## 2026-11-03 — An order's carts are its rows
 

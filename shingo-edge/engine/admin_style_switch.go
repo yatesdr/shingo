@@ -87,12 +87,14 @@ func (e *Engine) adminSwitchNoChangeover(proc *processes.Process, styleID *int64
 }
 
 // recordSwitch flips the process to toStyleID and records the switch as a
-// completed changeover row from fromStyleID (no tasks, orders or episode),
-// then opens the post-cutover watch on it — replacing a watch the door opened
-// for the changeover's own target — and releases the holds the landing style
-// runs, as the door's landing does. The landing is noted on the CATID
-// monitor first, as the door notes its own. The admin switch and the
-// automatic switch.
+// completed changeover row from fromStyleID (no tasks, orders or episode)
+// with the PLC's part as it lands (start_catid: a part standing through the
+// switch is never suggested for it), then opens the post-cutover watch on it
+// — replacing a watch the door opened for the changeover's own target — and
+// releases the holds the landing style runs, as the door's landing does. A
+// standing post-cutover flag on a changeover to the style it lands on is
+// answered and cleared. The landing is noted on the CATID monitor first, as
+// the door notes its own. The admin switch and the automatic switch.
 func (e *Engine) recordSwitch(processID int64, fromStyleID *int64, toStyleID int64, calledBy, triggeredBy, notes string) error {
 	e.noteLanding(processID, fromStyleID)
 	if err := e.flipActiveStyle(processID, &toStyleID); err != nil {
@@ -101,6 +103,16 @@ func (e *Engine) recordSwitch(processID int64, fromStyleID *int64, toStyleID int
 	id, err := e.db.InsertCompletedChangeover(processID, fromStyleID, toStyleID, calledBy, triggeredBy, notes)
 	if err != nil {
 		return fmt.Errorf("record the switch on process %d: %w", processID, err)
+	}
+	if v, ok := e.liveIdentity(processID); ok {
+		if err := e.db.SetChangeoverStartCATID(id, v); err != nil {
+			e.logFn("switch: record start CATID on changeover %d: %v", id, err)
+		}
+	}
+	if co, err := e.db.LatestFlaggedChangeover(processID); err == nil && co != nil && co.ToStyleID == toStyleID {
+		if err := e.ClearPostCutoverFlag(processID); err != nil {
+			e.logFn("switch: clear the post-cutover flag on changeover %d: %v", co.ID, err)
+		}
 	}
 	e.openPostCutoverVerify(processID, id)
 	e.releaseHoldsOnLanding(processID, id)

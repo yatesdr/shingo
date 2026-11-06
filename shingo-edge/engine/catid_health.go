@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"shingo/protocol/clock"
+	"shingoedge/plc"
 	"shingoedge/store"
 	"shingoedge/store/processes"
 )
@@ -44,9 +45,6 @@ const (
 	catidKindOneWayPair       = "one_way_pair"
 	catidHealthUnmappedWindow = 14 * 24 * time.Hour
 	catidHealthDecisionWindow = 24 * time.Hour
-	// catidIdentityStale is how old the last good identity read may be before
-	// the identity reads as unreadable.
-	catidIdentityStale = 10 * time.Second
 )
 
 // automaticTriggers are the triggered_by values of a switch or a cutover no
@@ -104,7 +102,7 @@ func (e *Engine) CatidHealth(processID int64) ([]CatidHealthItem, error) {
 		}
 		items = append(items, identityItems(proc, tag, facts, now)...)
 		active, target := activeAndTarget(proc, sets, co)
-		items = append(items, e.partItems(proc, facts, active, target, co)...)
+		items = append(items, e.partItems(proc, facts, sets, active, target, co)...)
 		items = append(items, noCATIDItems(active, target)...)
 		items = append(items, e.unmappedItems(processID, sets, now)...)
 	}
@@ -168,9 +166,11 @@ func activeAndTarget(proc *processes.Process, sets []styleCATIDEntry, co *proces
 	return active, target
 }
 
-// identityItems: the identity tag read is failing, or the monitor holds no
-// state for a process that has one (a process given its counter since the
-// last start of a monitor that is not running).
+// identityItems: the identity tag read is failing — no good read within the
+// age the attribution trusts (tickIdentityFresh), after which a stroke is
+// attributed by today's rule (TestTick_StaleIdentityFallsBackToToday) — or the
+// monitor holds no state for a process that has one (a process given its
+// counter since the last start of a monitor that is not running).
 func identityItems(proc *processes.Process, tag string, f identityFacts, now time.Time) []CatidHealthItem {
 	data := map[string]any{"tag": proc.CounterPLCName + "." + tag}
 	if !f.monitored {
@@ -178,7 +178,7 @@ func identityItems(proc *processes.Process, tag string, f identityFacts, now tim
 			Headline: "Part identity not monitored",
 			Detail:   "nothing reads " + tag + " for this process; it is read from the next start", Data: data}}
 	}
-	if !f.lastOK.IsZero() && now.Sub(f.lastOK) <= catidIdentityStale {
+	if !f.lastOK.IsZero() && now.Sub(f.lastOK) <= tickIdentityFresh {
 		return nil
 	}
 	detail := "no good read of " + tag + " yet"
@@ -196,7 +196,8 @@ func identityItems(proc *processes.Process, tag string, f identityFacts, now tim
 
 // partItems: the PLC's part is not the active style's — the open changeover's
 // target's (the program changed ahead of the cutover), or nobody's.
-func (e *Engine) partItems(proc *processes.Process, f identityFacts, active, target *styleCATIDEntry, co *processes.Changeover) []CatidHealthItem {
+func (e *Engine) partItems(proc *processes.Process, f identityFacts, sets []styleCATIDEntry, active, target *styleCATIDEntry,
+	co *processes.Changeover) []CatidHealthItem {
 	v := f.value
 	if !isIdentity(v) {
 		return nil
@@ -234,9 +235,10 @@ func (e *Engine) partItems(proc *processes.Process, f identityFacts, active, tar
 	}
 	n, _ := e.db.SumCounterDeltaSince(proc.ID, v, f.confirmedAt.UnixMilli())
 	since := "since restart"
+	countedAs := e.countedAs(proc, v, sets)
 	item := CatidHealthItem{Kind: catidKindWrongPart, Severity: CatidHealthAmber,
 		Headline: fmt.Sprintf("Wrong part: the PLC is on %s; %s runs %s", v, activeName, formatCATIDSet(out)),
-		Data:     map[string]any{"catid": v, "parts": n, "counting_as": activeName}}
+		Data:     map[string]any{"catid": v, "parts": n, "counting_as": countedAs}}
 	if !f.confirmedBaseline && !f.confirmedAt.IsZero() {
 		t := f.confirmedAt
 		item.Since = &t
@@ -245,8 +247,38 @@ func (e *Engine) partItems(proc *processes.Process, f identityFacts, active, tar
 	if n > 0 {
 		item.Severity = CatidHealthRed
 	}
-	item.Detail = fmt.Sprintf("%s, %d parts counting as %s", since, n, activeName)
+	item.Detail = fmt.Sprintf("%s, %d parts", since, n)
+	if countedAs != "" {
+		item.Detail += " counted as " + countedAs
+	}
 	return []CatidHealthItem{item}
+}
+
+// countedAs names the style a stroke on v is counted under, as the poll
+// attributes it now (attributeCATID over the monitor's snapshot): the style
+// that runs v off-plan, the running style when the attribution falls back to
+// today's; "" when the stroke is held, counted under no style.
+func (e *Engine) countedAs(proc *processes.Process, v string, sets []styleCATIDEntry) string {
+	var observed map[string]struct{}
+	var runningOut, point int64
+	if e.catidMon != nil {
+		if snap, ok := e.catidMon.snapshot(proc.ID); ok {
+			observed, runningOut = snap.observed, snap.runningOut()
+		}
+	}
+	if proc.ActiveStyleID != nil {
+		point = *proc.ActiveStyleID
+	}
+	id := attributeCATID(v, point, sets, observed, runningOut)
+	if id.Kind == plc.TickHeld {
+		return ""
+	}
+	for _, s := range sets {
+		if s.ID == id.StyleID {
+			return s.Name
+		}
+	}
+	return ""
 }
 
 // noCATIDItems: the active style or the open target has no CATIDs, so the

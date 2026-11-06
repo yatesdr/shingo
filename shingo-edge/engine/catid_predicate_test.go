@@ -56,6 +56,7 @@ func TestPredicate_EveryTracedCaseUnchanged(t *testing.T) {
 		{"run-out on the outgoing part", "auto", "1001", "1002", true, "1001", false},
 		{"the incoming part, both pinned", "auto", "1001", "1002", true, "1002", true},
 		{"a part only the outgoing pin rules out", "auto", "1001", "", true, "1003", true},
+		{"a third part, both pinned", "auto", "1001", "1002", true, "1003", true},
 		{"the incoming part, outgoing unpinned", "auto", "", "1002", true, "1002", true},
 		{"zero is no program", "auto", "1001", "1002", true, "0", false},
 		{"no changeover open", "auto", "1001", "1002", false, "1002", false},

@@ -144,7 +144,10 @@ function boot() {
     document.addEventListener('scroll', syncPosHead, true);
     window.addEventListener('focus', () => { void refreshRail(); });
     document.addEventListener('visibilitychange', () => { if (!document.hidden) void refreshRail(); });
-    setInterval(() => { void refreshRail(); }, 10000);
+    setInterval(() => {
+        void refreshRail();
+        if (!S.processID) void refreshCatidHealth();
+    }, 10000);
     if (S.processID) openProcess(S.processID);
     else drawList();
 }
@@ -279,8 +282,8 @@ function drawList() {
 
 // The part-identity health strip above the list: one block per process with a
 // standing condition (catid-health.js renders /api/catid-health). Advisory —
-// a failed read leaves the strip as it was. Refetched on the 'catid-health'
-// hint while the list is showing.
+// a failed read leaves the strip as it was. Refetched on the page's 10 s
+// refresh while the list is showing.
 async function refreshCatidHealth() {
     const box = $('pd-catid');
     const strip = window.CatidHealth;
@@ -313,8 +316,8 @@ async function catidCharge(holdID) {
     if (!res.ok) return;
     const p = await res.json();
     const rows = (p.rows || []).map(r => '<li>' + esc(r.node) + ': ' + esc(r.qty) + ' from ' +
-        (r.bin_id ? 'cart ' + esc(r.bin_id) + ' (' + esc(r.carrier_part || 'part unknown') + ')' : 'no cart: held for the next') +
-        (r.wrong_part ? ' <b>(another part)</b>' : '') + '</li>').join('');
+        (r.bin_id ? 'cart ' + esc(r.bin_id) + ' (' + esc(r.carrier_part || 'part unknown') + ')' : 'no cart: its share stays held') +
+        (r.wrong_part ? ' <b>(another part: its share stays held)</b>' : '') + '</li>').join('');
     openSheet('Charge ' + p.hold.qty + ' on CATID ' + p.hold.catid + '?',
         p.refusal ? p.refusal : 'charged under ' + p.style_name + ' to the carts below.',
         '<ul class="pd-note">' + rows + '</ul>',
@@ -325,7 +328,6 @@ function catidWriteOff(holdID) {
     openSheet('Write off this hold?', 'nothing is charged; the hold is closed and logged.', '',
         'Write off', () => sheetSubmit('POST', '/api/catid-holds/' + holdID + '/write-off', {}, refreshCatidHealth), true);
 }
-if (window.CatidHealth) window.CatidHealth.onHint(() => { if (!S.processID) refreshCatidHealth(); });
 
 function filterList(text) {
     const needle = String(text || '').trim().toLowerCase();
