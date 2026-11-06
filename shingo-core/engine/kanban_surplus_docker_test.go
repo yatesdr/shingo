@@ -576,7 +576,8 @@ func TestKanbanSurplus_ANonLinesideKanbanNeverFires(t *testing.T) {
 }
 
 // TestKanbanSurplus_R2Shape walks a small-to-totes changeover at the tick on a kanban with a
-// lender (the rig had this shape until plants/kanban-press.yaml went to one lineside kanban):
+// lender (the rig had this shape until its plant, now plants/master.yaml [kanban], went to one
+// lineside kanban):
 // K 8 children under small (5 + 1 + 1, one free), cover 4 moving to totes. One ask fills the free child,
 // three of small's four spare carts go to the windows in the first tick and the last
 // window stays free. Lit totes, they are netted, so the keeper asks no more, and the

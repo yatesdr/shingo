@@ -28,7 +28,7 @@ import (
 // this arm, which shipped with no test at all.
 //
 // The live drain window is FGN_001 / UNLOADER-A: role: consume, payload: ASSY,
-// plants/demo.yaml:1015-1025, the plant's only unloader. requiresFullCarrier
+// plants/master.yaml [demo], the demo loop's only unloader. requiresFullCarrier
 // fires on it, so this is reachable production behaviour and not a hypothetical.
 //
 // ── WHAT A MISSING FILTER COSTS HERE, AND WHY IT IS WORSE THAN A REFUSAL ──

@@ -670,8 +670,8 @@ func shuffleSlotsFrom(db *store.DB, laneID, groupID int64, children []*nodes.Nod
 	//
 	// THE KEY HAS SINCE MOVED, AND THE MARKS WITH IT. No plant spec in this repo
 	// declares a per-lane gate_point any more: the waiting spots belong to the
-	// GROUP (`wait_points` on the NGRP), and all three specs migrated — demo.yaml
-	// included, which lists fifteen for SYN_MARKET at plants/demo.yaml:165. So the
+	// GROUP (`wait_points` on the NGRP), and every spec migrated — the demo loop
+	// included, whose SYN_MARKET lists fifteen (plants/master.yaml [demo]). So the
 	// shipped demo fixture IS gated today; what changed is only which key says so.
 	// The per-lane key still resolves first where a human sets it through the API,
 	// as the documented legacy fallback. store/nodes/lanes.go carries the same
@@ -694,8 +694,9 @@ func shuffleSlotsFrom(db *store.DB, laneID, groupID int64, children []*nodes.Nod
 	// digs, decisive. LANE-HOLD DURATION — the old comment's actual objection —
 	// was never measured, and the all-16-marked demo run is the one fixture shape
 	// that cannot answer it, because when every lane is gated there is no ungated
-	// control to compare against. It runs on plants/lane-stress.yaml, which exists
-	// for exactly this and is already marked.
+	// control to compare against. It runs on the lane-stress corridor
+	// (plants/master.yaml [corridor]), which exists for exactly this and is already
+	// marked.
 	//
 	// So: pool width wins on evidence, because a dig that never starts is
 	// unconditional and a longer hold is conditional on congestion. The trade is

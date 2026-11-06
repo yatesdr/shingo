@@ -61,7 +61,7 @@ type NodeResolver interface {
 // it every time, and nothing ever looks at the next candidate.
 //
 // THE LIVE POPULATION IS FGN_001 / UNLOADER-A — `role: consume`, `payload:
-// ASSY`, plants/demo.yaml:1015-1025. It is the only unloader the plant has, and
+// ASSY`, plants/master.yaml [demo]. It is the only unloader that loop has, and
 // requiresFullCarrier (dispatch/source_finder.go) fires on it, so the deadlock
 // below is reachable today and this filter is load-bearing.
 //

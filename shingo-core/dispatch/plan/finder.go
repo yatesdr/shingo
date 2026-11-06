@@ -381,7 +381,7 @@ func (f *Finder) Pick(need Need) Plan {
 		// FIFO comparison rather than win it and be refused afterwards.
 		//
 		// The live window is FGN_001 / UNLOADER-A — `role: consume`, `payload:
-		// ASSY`, plants/demo.yaml:1015-1025 — the plant's only unloader.
+		// ASSY`, plants/master.yaml [demo] — the demo loop's only unloader.
 		// binresolver.BinFilter carries the 1,715-refusal deadlock that taught
 		// this rule; it was measured on FGN_003, a PANEL-B drain that has since
 		// been deleted, so the rule is what carries forward and not the fixture.

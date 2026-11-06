@@ -27,7 +27,7 @@ import (
 // THE FIXTURE BELOW IS SYNTHETIC AND STAYS THAT WAY — it builds its own nodes
 // and bins, so nothing here depends on a plant spec. The live drain window this
 // rule protects is FGN_001 / UNLOADER-A (`role: consume`, `payload: ASSY`,
-// plants/demo.yaml:1015-1025), the plant's only unloader.
+// plants/master.yaml [demo]), the demo loop's only unloader.
 //
 // MEASURED ON A DELETED FIXTURE — run of 2026-08-30, WALL. The drain was
 // FGN_003 on PANEL-B, an unloader that has since been removed for eating the
