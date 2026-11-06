@@ -185,9 +185,9 @@ func TestEngineOrchestrationWidth(t *testing.T) {
 		"ClearBin",
 		"ClearLoaderHome",
 		"ConfirmPostCutoverFlag",
+		// Removed 2026-11-06: CutOverNow and CutoverNowOffer, with the
+		// station's prompt-mode one-tap and its two routes.
 		"CompleteProcessProductionCutover",
-		"CutOverNow",
-		"CutoverNowOffer",
 		"CreateStationCounter",
 		"DeleteStationCounter",
 		"ListStationCounters",

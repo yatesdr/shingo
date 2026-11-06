@@ -46,7 +46,7 @@ type autoCutoverIntent struct {
 	// decidedAt is the tick the decision was taken on; a refusal is dated by it.
 	decidedAt time.Time
 	// force: the counted-part condition holds (forceHolds), so auto completes
-	// past a red gate and prompt offers the station's one-tap.
+	// past a red gate; prompt and off log it.
 	force bool
 	// switchTo is the automatic switch's style (no changeover open), 0 for a
 	// cutover; fromStyleID the style it leaves.
@@ -63,9 +63,8 @@ type countedTick struct {
 	at    time.Time
 }
 
-// catidFacts is what is read of a process's tracker outside the tick's own
-// state: the counted-part force's condition (forceHolds) and the health
-// strip's identity and part items.
+// catidFacts is what is read of a process's tracker: the counted-part force's
+// condition (forceHolds) and the health strip's identity and part items.
 type catidFacts struct {
 	monitored   bool   // the monitor holds the process
 	value       string // the confirmed value; "" until one is confirmed
@@ -826,8 +825,7 @@ func (cm *catidMonitor) evaluateAutoArm(processID int64, st *catidState, ok bool
 // held; light DB reads only.
 //
 // With the predicate held, the intent is forced when the counted-part
-// condition also holds (forceHolds): auto then completes past a red gate, and
-// prompt offers the station's one-tap (CutoverNowOffer).
+// condition also holds (forceHolds): auto then completes past a red gate.
 //
 // The live part need not be the target's when the outgoing style has parts:
 // a press set up for some third style has still left the outgoing part, and
@@ -947,8 +945,8 @@ func (cm *catidMonitor) lastCountedTick(processID int64) countedTick {
 }
 
 // factsOf reads a process's facts at now for a caller outside the tick (the
-// strip, the station's offer); the zero value, not monitored, when the
-// monitor does not hold it. Takes cm.mu briefly: an HTTP read, never the poll.
+// strip); the zero value, not monitored, when the monitor does not hold it.
+// Takes cm.mu briefly: an HTTP read, never the poll.
 func (cm *catidMonitor) factsOf(processID int64, now time.Time) catidFacts {
 	cm.mu.Lock()
 	var f catidFacts
@@ -987,9 +985,8 @@ func isIdentity(v string) bool {
 // fireAutoCutover acts on a decided intent OUTSIDE cm.mu. In auto mode it calls
 // the door — forced when the counted-part condition holds, gated otherwise —
 // and, on success, raises the station notification; in prompt and off it reads
-// the gate (read-only) and logs what auto would have done (prompt's station
-// offers its one-tap while the condition holds). Every mode logs the decision
-// line. Never starts, cancels or re-plans anything.
+// the gate (read-only) and logs what auto would have done. Every mode logs the
+// decision line. Never starts, cancels or re-plans anything.
 func (cm *catidMonitor) fireAutoCutover(in autoCutoverIntent) {
 	if in.switchTo != 0 {
 		cm.fireAutoSwitch(in)

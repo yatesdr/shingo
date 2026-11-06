@@ -24,7 +24,7 @@ Edge only, v37-v42 (the dev seeder learns station counters). Ship after a restor
 - One CATID names one style: the typed pin, the strip's one-click and the flag's Confirm (which pins the value) refuse a taken one
 - A counted tick is stamped with the PLC's part and the style that runs it; row (v39), walk, hourly and Core count it there
 - A stroke on an unmapped or off-plan part ships under today's style; its cart draw is held (v40) until a landing, a Charge or a Write off
-- A press that changed to the incoming part mid-changeover, held it a minute and counted it completes the changeover past its gate (auto) or offers Cut over now (prompt)
+- A press that changed to the incoming part mid-changeover, held it a minute and counted it completes the changeover past its gate (auto)
 - With no changeover open, a counted part only one other style runs by a person's pin, changed after the last landing, switches the process (auto-catid-flip); a part several run asks; a part standing since before a landing is run-out and prepays the incoming cart
 - The history panel names what completed each changeover; the automatic-cutover notice names the changeover, the part and what it left running; a non-numeric counter read is raised
 - An A/B pair is two positions that name each other: one lit side charged per tick, each pair its own fallthrough; a one-way pair is warned
@@ -40,7 +40,7 @@ Edge only, v37-v42 (the dev seeder learns station counters). Ship after a restor
 - The strip names the style a wrong part counts as, goes stale at 5 s and refreshes every 10 s; a switch records its start CATID and clears a flag on its style; an unchanged pin saves; the fire reports no cutover it did not make
 - The counter save asks WarLink before the door's lock; a member listed with no type is checked by its read, and a refused read unpublishes it; only a save marks an identity tag the Edge's
 - catid_holds (v40) and line_counters (v41) have one home, the versioned chain: the baseline DDL no longer carries them
-- The Charge says when its preview fails; Mark as running on the style being left says to Cancel; the station's Confirm says it pins the CATID; the CUTOVER dialog opens before its offer is read
+- The Charge says when its preview fails; Mark as running on the style being left says to Cancel; the station's Confirm says it pins the CATID
 - An automatic cutover or switch re-reads the mode and the pin under the door's mutex before it acts
 - Station counters: one silent since boot is stopped; the ratio ignores run-outs and changeovers; a held stroke holds where the running or target style claims; a process delete takes its counters; a PLC move waits for them; an outage counts, a rollback re-seeds at the next boot
 - The poll reads one point per process, the one on its counter tag (any other enabled point is named at boot), and raises a read error for a point whose PLC WarLink lacks

@@ -123,11 +123,6 @@ func routeFixtures() map[string]routeFixture {
 		"POST /api/processes/{id}/changeover/cutover": {want: 200, req: on(func(w *walk) (string, any) {
 			return pr(w) + "/changeover/cutover", map[string]any{}
 		})},
-		// The one-tap is offered only on a counted incoming part; the walk's
-		// press has none, so it is refused and nothing moves.
-		"POST /api/processes/{id}/changeover/cutover-now": {want: 409, req: on(func(w *walk) (string, any) {
-			return pr(w) + "/changeover/cutover-now", map[string]any{}
-		})},
 		"POST /api/processes/{id}/changeover/cancel": {want: 400, req: on(func(w *walk) (string, any) {
 			return pr(w) + "/changeover/cancel", map[string]any{}
 		})},

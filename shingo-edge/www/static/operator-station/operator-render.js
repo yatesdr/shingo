@@ -202,36 +202,6 @@ async function confirmCutover() {
     overlay.appendChild(panel);
     overlay.addEventListener('click', evt => { if (evt.target === overlay) overlay.remove(); });
     showOverlay(overlay);
-
-    // "Cut over now" (prompt mode): offered only while the process has counted
-    // the incoming part since it changed. It completes past what the gate
-    // waits on and leaves those legs running; the Edge checks the offer again.
-    // The dialog is on screen before the offer is read (a read can take its
-    // whole timeout), so the answer only adds the button, and a dialog already
-    // closed gets nothing.
-    const offer = await cutoverNowOffer(pid);
-    if (!offer || !offer.offered || !overlay.isConnected) return;
-    const waiting = offer.waiting_on || [];
-    panel.insertBefore(el('div', { className: 'os-co-picker-subtitle',
-        textContent: 'The process is counting ' + (offer.to_style_name || "the new style") + "'s part (CATID " +
-            offer.catid + ').' + (waiting.length ? ' Cut over now leaves running: ' + waiting.join('; ') + '.' : '') }), cancel);
-    const now = el('button', { className: 'os-co-picker-btn', textContent: 'CUT OVER NOW' });
-    now.addEventListener('click', async () => {
-        overlay.remove();
-        const ok = await postAction('/api/processes/' + pid + '/changeover/cutover-now', {}, loadViewRef);
-        if (ok) showToast('Cutover complete', 'success');
-    });
-    panel.insertBefore(now, cancel);
-}
-
-// cutoverNowOffer reads the one-tap's offer; a failed read offers nothing.
-async function cutoverNowOffer(pid) {
-    try {
-        const res = await fetchWithTimeout('/api/processes/' + pid + '/changeover/cutover-now', { credentials: 'same-origin' });
-        return res.ok ? await res.json() : null;
-    } catch (e) {
-        return null;
-    }
 }
 
 // showOverlay puts a confirm or picker on screen in place of any other one

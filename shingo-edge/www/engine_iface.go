@@ -188,10 +188,6 @@ type EngineOrchestration interface {
 	MintStyle(processID int64, req engine.MintRequest) (*engine.MintResult, error)
 	FlowFingerprint(processID, toStyleID int64) (string, error)
 	CompleteProcessProductionCutover(processID int64) error
-	// The station's one-tap "Cut over now" in prompt mode: whether it is
-	// offered (read on each call), and the forced door it runs.
-	CutoverNowOffer(processID int64) (*engine.CutoverOffer, error)
-	CutOverNow(processID int64) error
 	// The station counters and "counted at": a refusal is an
 	// *engine.StationCounterRefused carrying the page's sentence.
 	ListStationCounters(processID int64) ([]counters.LineCounter, error)

@@ -139,8 +139,9 @@ func templateFuncs() template.FuncMap {
 }
 
 // triggeredByLabels are the history panel's words for each triggered_by value
-// a completed changeover row carries: the eight written today and the two
-// rows from before 2026-11 carry.
+// a completed changeover row carries: the seven written today, the two rows
+// from before 2026-11 carry, and manual-forced, the withdrawn prompt-mode
+// one-tap's.
 var triggeredByLabels = map[string]string{
 	"manual":              "CUTOVER",
 	"manual-forced":       "Cut over now, past the gate",

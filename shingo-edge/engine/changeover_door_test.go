@@ -570,16 +570,15 @@ func TestForcedCutover_LeavesLegsRunning(t *testing.T) {
 	}
 }
 
-// TestForceDoor_FourCallers is the census of CutoverForced: every call site
-// that passes it, by enclosing function. Four: the admin switch's two, the
-// counted-part force's auto fire, and its prompt-mode one-tap.
-func TestForceDoor_FourCallers(t *testing.T) {
+// TestForceDoor_ThreeCallers is the census of CutoverForced: every call site
+// that passes it, by enclosing function. Three: the admin switch's two and the
+// counted-part force's auto fire.
+func TestForceDoor_ThreeCallers(t *testing.T) {
 	t.Parallel()
 	want := []string{
 		"SetProcessActiveStyle", // to the open changeover's target
 		"SetProcessActiveStyle", // to a third style, before the second flip
 		"callDoor",              // the counted-part force, in auto (the fire, under the re-read)
-		"CutOverNow",            // the station's one-tap, in prompt
 	}
 	var got []string
 	fset := token.NewFileSet()

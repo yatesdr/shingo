@@ -362,10 +362,6 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger, backupSvc *backup.Servi
 			// floor's one write (pick-a-part U3). Shop floor, beside save.
 			r.Post("/processes/{id}/flow/mint", h.apiMintFlow)
 			r.Post("/processes/{id}/changeover/cutover", h.apiCompleteProcessProductionCutover)
-			// The one-tap "Cut over now" (prompt mode): offered while the
-			// process has counted the incoming part since it changed.
-			r.Get("/processes/{id}/changeover/cutover-now", h.apiCutoverNowOffer)
-			r.Post("/processes/{id}/changeover/cutover-now", h.apiCutOverNow)
 			r.Post("/processes/{id}/changeover/cancel", h.apiCancelProcessChangeover)
 			r.Get("/processes/{id}/post-cutover-flag", h.apiGetPostCutoverFlag)
 			r.Post("/processes/{id}/post-cutover-flag/confirm", h.apiConfirmPostCutoverFlag)

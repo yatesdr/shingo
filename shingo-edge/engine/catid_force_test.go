@@ -1,6 +1,6 @@
 // catid_force_test.go — the counted-part force: a changeover whose press has
 // changed to the incoming part, settled and counted it completes past its red
-// gate (auto), or offers the station's one-tap (prompt).
+// gate (auto); prompt and off never fire it.
 package engine
 
 import (
@@ -167,48 +167,20 @@ func TestForcedCutover_SharedCATIDNeverForces(t *testing.T) {
 	}
 }
 
-// TestForcedCutover_PromptModeOffersNotFires: in prompt mode the monitor never
-// fires; the station's one-tap is offered while the condition holds, and the
-// tap completes the changeover past its gate as manual-forced. Off offers
-// nothing.
-func TestForcedCutover_PromptModeOffersNotFires(t *testing.T) {
+// TestForcedCutover_PromptModeNeverFires: in prompt mode the monitor never
+// fires, though the press changed to the incoming part, held it and counted
+// it: the changeover stays open and its legs run.
+func TestForcedCutover_PromptModeNeverFires(t *testing.T) {
 	t.Parallel()
 	eng, db, pid, from, coID, task, cm := forceRig(t, "prompt")
 	st := changedTo(cm, pid, "1002", time.Now().Add(-5*time.Minute))
-	if off, err := eng.CutoverNowOffer(pid); err != nil || off.Offered {
-		t.Fatalf("offer before a counted stroke = %+v (%v), want none", off, err)
-	}
-	if err := eng.CutOverNow(pid); !errors.Is(err, ErrCutoverNowNotOffered) {
-		t.Fatalf("one-tap before the offer = %v, want ErrCutoverNowNotOffered", err)
-	}
 	countedStroke(eng, pid, from)
 	drainPokes(eng, cm)
-	// The window, against the real clock the offer reads.
-	cm.mu.Lock()
-	st.armCandidate, st.armCount, st.armFirstSeen = "1002", autoArmStableReads, time.Now().Add(-2*time.Minute)
-	cm.mu.Unlock()
-	tickAutoCutover(cm, pid, st, "1002", true, time.Now())
+	settle(cm, pid, st, "1002", time.Now())
 	if co := changeoverRow(t, db, coID); co.State.IsTerminal() {
 		t.Fatalf("prompt mode fired: %s by %q", co.State, co.TriggeredBy)
 	}
-	off, err := eng.CutoverNowOffer(pid)
-	testutil.MustNoErr(t, err, "offer")
-	if !off.Offered || off.ChangeoverID != coID || off.CATID != "1002" || len(off.WaitingOn) == 0 {
-		t.Fatalf("offer = %+v, want changeover %d on 1002 past its blockers", off, coID)
-	}
-	testutil.MustNoErr(t, eng.CutOverNow(pid), "one-tap")
-	co := changeoverRow(t, db, coID)
-	if co.State != domain.ChangeoverCompleted || co.TriggeredBy != triggeredManual+triggeredForced || !strings.Contains(co.Notes, "forced past: ") {
-		t.Fatalf("row = %s by %q (%q), want completed by manual-forced with its blockers", co.State, co.TriggeredBy, co.Notes)
-	}
 	assertLegsUntouched(t, db, task)
-
-	testutil.MustNoErr(t, db.SetChangeoverAutoArm(pid, "off"), "off")
-	off, err = eng.CutoverNowOffer(pid)
-	testutil.MustNoErr(t, err, "offer in off mode")
-	if off.Offered {
-		t.Errorf("off mode offered %+v", off)
-	}
 }
 
 // TestForcedCutover_FiredByTheMonitorNotThePoll (run with -race): the poll's

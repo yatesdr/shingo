@@ -302,22 +302,6 @@ func (s *stubEngine) FlowFingerprint(int64, int64) (string, error) {
 }
 func (s *stubEngine) CompleteProcessProductionCutover(int64) error { return nil }
 
-// The one-tap: canned. Process 1 is offered past one blocker; any other is
-// not. The condition is pinned against the real engine.
-func (s *stubEngine) CutoverNowOffer(id int64) (*engine.CutoverOffer, error) {
-	if id != 1 {
-		return &engine.CutoverOffer{}, nil
-	}
-	return &engine.CutoverOffer{Offered: true, ChangeoverID: 7, CATID: "1002", ToStyleName: "S2",
-		WaitingOn: []string{"task at node N1 in staging_requested"}}, nil
-}
-func (s *stubEngine) CutOverNow(id int64) error {
-	if id != 1 {
-		return engine.ErrCutoverNowNotOffered
-	}
-	return nil
-}
-
 // The station counters: canned. Process 1 has station counter 7; any other
 // process has no counter wired, which refuses a create. The rules are pinned
 // against the real engine.
