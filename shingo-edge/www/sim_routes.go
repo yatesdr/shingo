@@ -27,6 +27,7 @@ func (h *Handlers) registerSimRoutes(r chi.Router) {
 	r.Post("/sim/curtain", h.apiSimCurtain)
 	r.Post("/sim/catid", h.apiSimCATID)
 	r.Post("/sim/program-change", h.apiSimProgramChange)
+	r.Post("/sim/counting-slot", h.apiSimCountingSlot)
 	r.Get("/sim/line", h.apiSimLine)
 	r.Get("/sim/overrun", h.apiSimOverrunList)
 	r.Post("/sim/overrun", h.apiSimOverrun)
@@ -308,9 +309,39 @@ func (h *Handlers) apiSimProgramChange(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]any{"plc_name": body.PLCName, "tag_name": body.TagName, "value": *body.Value, "mode": body.Mode})
 }
 
+// apiSimCountingSlot moves a process's count to another slot of its MES struct
+// in the fake WarLink: the sim's stand-in for a program edit that counts the
+// part on a sibling slot. Body {"plc_name", "tag_name" (the process's counter
+// as the sim config names it), "slot" (1-5)}: that slot's Prod_Counter_0N ticks
+// from then and its CATID_0N reads the part; the slot counted until then
+// stops, its CATID left as is. A process whose counter is not a slot of an MES
+// struct, and a slot outside the struct, are refused by the fake (502).
+func (h *Handlers) apiSimCountingSlot(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		PLCName string `json:"plc_name"`
+		TagName string `json:"tag_name"`
+		Slot    *int   `json:"slot"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.PLCName == "" || body.TagName == "" || body.Slot == nil {
+		http.Error(w, "want {plc_name, tag_name, slot}", http.StatusBadRequest)
+		return
+	}
+	mgr := h.engine.PLCManager()
+	if mgr == nil {
+		http.Error(w, "no PLC manager", http.StatusServiceUnavailable)
+		return
+	}
+	if err := mgr.WriteTagDirect(r.Context(), body.PLCName, body.TagName, simwarlink.CountingSlot(*body.Slot)); err != nil {
+		http.Error(w, err.Error(), http.StatusBadGateway)
+		return
+	}
+	writeJSON(w, map[string]any{"plc_name": body.PLCName, "tag_name": body.TagName, "slot": *body.Slot})
+}
+
 // apiSimLine reads every sim process's line among the PLCs the Edge has
 // discovered: {"lines": [{plc_name, tag_name, loads, loads_by_identity,
-// in_flight, identity, counter}]}, the loads a run checks the carts against.
+// in_flight, identity, counter, slot, slots}]}, the loads a run checks the
+// carts against.
 func (h *Handlers) apiSimLine(w http.ResponseWriter, r *http.Request) {
 	mgr := h.engine.PLCManager()
 	if mgr == nil {

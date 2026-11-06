@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# bash scripts/sim-4x2.sh <S1..S7> [red] — one shape of the 4x2-shaped cell on the visible dev
+# bash scripts/sim-4x2.sh <S1..S8> [red] — one shape of the 4x2-shaped cell on the visible dev
 # stack, for a person to watch: compose project shingo-dev on plants/master.yaml, whose [4x2]
 # section is process WELD-6, five consume positions (ALN_061..065) and two styles, RUN (CATID
 # 1001) and ALT (CATID 1002), sharing COMMON-1..3 and differing at the two mirror positions
@@ -23,6 +23,10 @@
 #   S6        positions 1-3 on the station counter, 4-5 on the cell counter; RUN->ALT
 #   S7        legs held, the Edge restarts mid-changeover; the forced program change; the holds
 #             survive a second restart; the legs land and nothing is charged twice
+#   S8        the PLC moves its count to the sibling slot Prod_Counter_02 (CATID_02 reads 1001;
+#             Prod_Counter_01 stops): the strip's red "counts on Prod_Counter_02" item within the
+#             Edge's slot watch (a pass a WALL minute; two when the move falls mid-pass), the click
+#             re-points the counter; the record lacks what _02 counted before it, the carts nothing
 #
 # It brings the stack up from nothing as scripts/kanban-rig.sh does (down -v, a fresh sim anchor,
 # build, seed with Core stopped), sets the PLC's CATID to 1001, drives the shape over Edge and
@@ -45,6 +49,7 @@ PROC=WELD-6
 PLC=WELD-6
 COUNTER_TAG=MES_WELD_6.Prod_Counter_01
 IDENTITY_TAG=MES_WELD_6.CATID_01
+COUNTER_TAG2=MES_WELD_6.Prod_Counter_02   # the sibling slot S8 moves the count to
 STYLE_RUN=WELD-6-RUN
 STYLE_ALT=WELD-6-ALT
 CATID_RUN=1001
@@ -62,6 +67,7 @@ DRAIN_S=$(( LINE_DEPTH * TICK_S ))  # a drain change lands once the line has cou
 DECLARE_S=60                        # the CATID monitor's stability window before it acts
 RUN_TICKS="${SIM_4X2_TICKS:-40}"    # one S1 window
 LAND_WALL=300                       # wall budget for a changeover's carts to land
+SLOT_WATCH_WALL=60                  # the Edge's slot watch: a pass a WALL minute, not sim-paced
 
 CORE=http://127.0.0.1:8083
 EDGE=http://127.0.0.1:8081
@@ -69,14 +75,14 @@ PLANT=/plants/master.yaml
 PROJECT=shingo-dev
 
 usage() {
-  echo "usage: bash scripts/sim-4x2.sh <S1..S7> [red]   (red: S2 only)" >&2
-  echo "       make dev-sim-4x2 SHAPE=<S1..S7> [VARIANT=red]" >&2
+  echo "usage: bash scripts/sim-4x2.sh <S1..S8> [red]   (red: S2 only)" >&2
+  echo "       make dev-sim-4x2 SHAPE=<S1..S8> [VARIANT=red]" >&2
   echo "The run starts with \`down -v\` of $PROJECT; set SIM_4X2_REPLACE=1 if the stack running now is yours to drop." >&2
   exit 2
 }
 SHAPE="${1:-}"
 VARIANT="${2:-}"
-case "$SHAPE" in S1|S2|S3|S4|S5|S6|S7) ;; *) usage ;; esac
+case "$SHAPE" in S1|S2|S3|S4|S5|S6|S7|S8) ;; *) usage ;; esac
 case "$VARIANT" in "") ;; red) [ "$SHAPE" = S2 ] || usage ;; *) usage ;; esac
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -148,6 +154,20 @@ line_json() {
 }
 line_field() { field "$(line_json)" "$1"; }
 
+# The fake's MES struct for WELD-6's line (its "slots" in GET /api/sim/line): "<n> <CATID_0n>
+# <Prod_Counter_0n>" a line, n = 1..5.
+slots_of() {
+  curl -s -m 10 "$EDGE/api/sim/line" | grep -oE "\"tag_name\":\"${COUNTER_TAG//./[.]}\"[^]]*\]" \
+    | grep -oE '\{"catid":-?[0-9]+,"counter":-?[0-9]+\}' | sed -E 's/.*"catid":(-?[0-9]+),"counter":(-?[0-9]+).*/\1 \2/' \
+    | awk '{print NR, $0}'
+}
+slot_counter() { slots_of | awk -v n="$1" '$1 == n {print $3}'; }
+
+# slot_item <kind>: the catid-health strip's first item of that kind (counter_slot_idle,
+# counter_slot_lockstep), as JSON; empty when there is none.
+slot_item() { edge_get "/api/processes/$PID/catid-health" | sed 's/{"kind":/\n{"kind":/g' | grep "^{\"kind\":\"$1\"" | head -1; }
+counter_tag() { proc_row | grep -oE '"counter_tag_name":"[^"]*"' | head -1 | sed 's/.*:"//; s/"$//'; }
+
 # The holds open on the process: the catid-health strip's "held" items, one "<hold id> <qty>"
 # per line. Its automatic-decisions item names released holds too, so only held items count.
 holds_list() {
@@ -195,6 +215,14 @@ program_change() {
   local code; code="$(edge_send POST /api/sim/program-change "{\"plc_name\":\"$PLC\",\"tag_name\":\"$COUNTER_TAG\",\"value\":$1,\"mode\":\"$2\"}")"
   say "PLC program change to $1 ($2): $code $(last)"
   http_ok "$code" || die "the program change was refused"
+}
+
+# counting_slot <n>: the PLC's program counts the part on slot n of MES_WELD_6, written on the
+# process's configured counter tag: Prod_Counter_0n ticks from here, CATID_0n reads the part.
+counting_slot() {
+  local code; code="$(edge_send POST /api/sim/counting-slot "{\"plc_name\":\"$PLC\",\"tag_name\":\"$COUNTER_TAG\",\"slot\":$1}")"
+  say "PLC counts on slot $1 of MES_WELD_6: $code $(last)"
+  http_ok "$code" || die "the slot move was refused"
 }
 
 # set_catid <value>: the PLC's identity tag set directly; the fake starts every boot at 0.
@@ -560,6 +588,27 @@ shape_S7() {
   say "Look at: the legs land; each hold lands once on ALT's carts (the ledger's carts against its loads)"
   await_no_holds
   run_ticks 4
+}
+
+shape_S8() {
+  local t0 info parts code
+  say "S8 the PLC moves its count from Prod_Counter_01 to Prod_Counter_02 of MES_WELD_6: _02 ticks from here and CATID_02 reads $CATID_RUN; Prod_Counter_01 and CATID_01 stand"
+  counting_slot 2
+  t0=$(date +%s)
+  say "Look at: WELD-6's counter stops. The Edge's slot watch compares two reads a wall minute apart, so the pass that straddles the move can say Prod_Counter_02 rises WITH _01 (info, one pass); the next is red: the PLC counts on Prod_Counter_02"
+  wait_for $(( 2 * SLOT_WATCH_WALL + 30 )) "the strip's red counter_slot_idle item" '[ -n "$(slot_item counter_slot_idle)" ]' \
+    || die "no counter_slot_idle item in two slot-watch passes"
+  info="$(slot_item counter_slot_idle | grep -oE '"headline":"[^"]*"')"
+  say "the item, $(( $(date +%s) - t0 )) wall-s after the move: $info"
+  parts="$(slot_counter 2)"
+  code="$(edge_send POST "/api/processes/$PID/counter" "{\"tag_name\":\"$COUNTER_TAG2\"}")"
+  say "the click, count $COUNTER_TAG2: $code $(last)"
+  http_ok "$code" || die "the re-point was refused"
+  [ "$(counter_tag)" = "$COUNTER_TAG2" ] || die "$PROC counts $(counter_tag) after the click, not $COUNTER_TAG2"
+  say "the record's gap: about ${parts:-?} parts counted on Prod_Counter_02 before the click, $(( $(date +%s) - t0 )) wall-s, read by no point; the carts, at the load station, lack none"
+  say "Look at: the item gone; the record and Core's heartbeat resume under RUN at the next WarLink scan; the first part on _02 carries CATID_02's $CATID_RUN (no HTTP read: S8 in integration/scenarios asserts it)"
+  run_ticks 10
+  status
 }
 
 # ── THE RUN ──────────────────────────────────────────────────────────────────────────────

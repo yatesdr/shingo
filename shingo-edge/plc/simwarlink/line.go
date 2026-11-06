@@ -22,6 +22,11 @@ type Line struct {
 	inFlight int             // loads past the station, not yet counted
 	loads    map[int64]int64 // loads by the identity they were loaded under
 	changeTo *int64          // the identity a drain change lands; nil when none waits
+	// slot is the MES struct slot the line counts on, 0-based: identity and
+	// counter are that slot's CATID and counter. held is every other slot as
+	// the count left it (slots.go).
+	slot int
+	held [MESSlots]Slot
 }
 
 // LineState is a line's ledger at one instant: the loads taken from the carts
@@ -33,6 +38,11 @@ type LineState struct {
 	InFlight   int             `json:"in_flight"`
 	Identity   int64           `json:"identity"`
 	Counter    int64           `json:"counter"`
+	// Slot is the MES struct slot the line counts on (1-based) and Slots the
+	// struct's pairs as the PLC publishes them; Identity and Counter are
+	// Slots[Slot-1]'s.
+	Slot  int            `json:"slot"`
+	Slots [MESSlots]Slot `json:"slots"`
 }
 
 // NewLine returns an empty line of the given depth whose counter ticks by per
@@ -68,8 +78,9 @@ func (l *Line) Tick() {
 // the new identity back.
 func (l *Line) Stall() { l.land() }
 
-// SetIdentity moves the identity and nothing else (no drain, no reset): a run
-// setting the part the line starts on. Later loads are booked to it.
+// SetIdentity moves the identity (the CATID of the slot the line counts on) and
+// nothing else (no drain, no reset): a run setting the part the line starts
+// on. Later loads are booked to it.
 func (l *Line) SetIdentity(v int64) { l.identity = v }
 
 // Change is a program change: loading stops, the in-flight loads count out one
@@ -91,7 +102,8 @@ func (l *Line) State() LineState {
 	for id, n := range l.loads {
 		by[id] = n
 	}
-	return LineState{Loads: l.station, ByIdentity: by, InFlight: l.inFlight, Identity: l.identity, Counter: l.counter}
+	return LineState{Loads: l.station, ByIdentity: by, InFlight: l.inFlight, Identity: l.identity, Counter: l.counter,
+		Slot: l.CountingSlot(), Slots: l.Slots()}
 }
 
 // land lands a drain change once the line is empty and reports whether it did.

@@ -69,6 +69,7 @@ import (
 
 const (
 	w6PLC      = "WELD-6"
+	w6Struct   = "MES_WELD_6" // the cell's MES struct, five CATID_0N / Prod_Counter_0N slots
 	w6Counter  = "MES_WELD_6.Prod_Counter_01"
 	w6Identity = "MES_WELD_6.CATID_01" // the Edge derives it from the counter tag
 	w6Station  = "STA_W6_LOAD.Load_Count"
@@ -227,8 +228,13 @@ func (p *passTicker) pass(t *testing.T, what string) {
 
 // ── the PLC ─────────────────────────────────────────────────────────────────
 
-// w6WarLink is WarLink in front of the cell's PLC, the line: three DINT tags, the
-// production counter, the load station's counter and the part identity.
+// w6WarLink is WarLink in front of the cell's PLC, the line: the MES struct
+// MES_WELD_6 (five CATID_0N / Prod_Counter_0N pairs; the line counts on slot 1
+// until it moves its count) and the load station's counter, DINTs. WarLink
+// publishes the three tags it is configured with (Prod_Counter_01, CATID_01,
+// the station's) and each struct member the Edge enables; a direct read
+// answers any member, and the struct's name reads the whole struct, as WarLink
+// reads a UDT.
 type w6WarLink struct {
 	mu        sync.Mutex
 	line      *simwarlink.Line
@@ -236,6 +242,9 @@ type w6WarLink struct {
 	// counted is every count the line has made, by the identity the counter
 	// read when it counted: what the PLC's own production record says.
 	counted map[int64]int64
+	// structReads are the times the struct was read whole: the Edge's slot
+	// watch reads so the members WarLink does not publish.
+	structReads []time.Time
 }
 
 var _ plc.WarlinkClient = (*w6WarLink)(nil)
@@ -280,9 +289,42 @@ func (f *w6WarLink) countedBy() map[int64]int64 {
 	return out
 }
 
+// members is every tag the PLC has: the struct's ten members and the load
+// station's counter. Caller holds f.mu.
+func (f *w6WarLink) members() map[string]float64 {
+	out := map[string]float64{w6Station: float64(f.line.State().Loads)}
+	for i, s := range f.line.Slots() {
+		out[w6Struct+"."+simwarlink.CATIDMember(i+1)] = float64(s.CATID)
+		out[w6Struct+"."+simwarlink.CounterMember(i+1)] = float64(s.Counter)
+	}
+	return out
+}
+
+// values are the tags WarLink publishes: the three it is configured with and
+// each struct member the Edge enabled.
 func (f *w6WarLink) values() map[string]float64 {
-	st := f.state()
-	return map[string]float64{w6Counter: float64(st.Counter), w6Station: float64(st.Loads), w6Identity: float64(st.Identity)}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := map[string]float64{}
+	for tag, v := range f.members() {
+		if tag == w6Counter || tag == w6Identity || tag == w6Station || f.published[tag] {
+			out[tag] = v
+		}
+	}
+	return out
+}
+
+// structReadAfter is the first read of the whole struct after t, zero when
+// there has been none.
+func (f *w6WarLink) structReadAfter(t time.Time) time.Time {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for _, r := range f.structReads {
+		if r.After(t) {
+			return r
+		}
+	}
+	return time.Time{}
 }
 
 func (f *w6WarLink) ListPLCs(context.Context) ([]plc.WarlinkPLC, error) {
@@ -315,7 +357,20 @@ func (f *w6WarLink) SetTagPublishing(_ context.Context, _, tag string, enabled b
 }
 
 func (f *w6WarLink) ReadTagValue(_ context.Context, _, tag string) (any, error) {
-	v, ok := f.values()[tag]
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	all := f.members()
+	if tag == w6Struct {
+		f.structReads = append(f.structReads, time.Now())
+		out := map[string]any{}
+		for t, v := range all {
+			if m, ok := strings.CutPrefix(t, w6Struct+"."); ok {
+				out[m] = v
+			}
+		}
+		return out, nil
+	}
+	v, ok := all[tag]
 	if !ok {
 		return nil, fmt.Errorf("tag %s not found", tag)
 	}
@@ -450,6 +505,13 @@ type w6Cell struct {
 	unbound  bool // the load station's counter is made, bound to no position
 	tenures  [5][]*w6Tenure
 	reorder  int
+	// lastPublish is when the scenario last wrote the PLC's tags into the
+	// Edge's cache (publish).
+	lastPublish time.Time
+	// unrecorded are counts the PLC made that no reporting point could read,
+	// by CATID: made on a slot the process did not count, before a re-point's
+	// first read (S8). The record is checked against the PLC's less these.
+	unrecorded map[int64]int64
 }
 
 // newW6Cell builds the cell on RUN, each position holding a full RUN cart
@@ -712,13 +774,14 @@ func (c *w6Cell) fill() {
 
 // ── the line ────────────────────────────────────────────────────────────────
 
-// publish writes the PLC's three tags into the Edge's PLC cache, as WarLink's
-// poll would after the scan.
+// publish writes the tags WarLink publishes into the Edge's PLC cache, as
+// WarLink's poll would after the scan.
 func (c *w6Cell) publish() {
 	pm := c.edge.Engine.PLCManager()
 	for tag, v := range c.plc.values() {
 		pm.SetTagValueForTest(w6PLC, tag, v)
 	}
+	c.lastPublish = time.Now()
 }
 
 // cycle turns the line n machine cycles, one Edge poll pass after each. When
@@ -1101,9 +1164,9 @@ func (c *w6Cell) record(label string, l *w6Ledger) {
 		}
 	}
 	for v, n := range c.plc.countedBy() {
-		if got := l.snapByCATID[fmt.Sprint(v)]; got != n {
-			c.t.Fatalf("%s: the record has %d counted under CATID %d, the PLC counted %d (record by CATID %v)",
-				label, got, v, n, l.snapByCATID)
+		if got := l.snapByCATID[fmt.Sprint(v)]; got != n-c.unrecorded[v] {
+			c.t.Fatalf("%s: the record has %d counted under CATID %d, the PLC counted %d, %d of them where no point read (record by CATID %v)",
+				label, got, v, n, c.unrecorded[v], l.snapByCATID)
 		}
 	}
 	for _, s := range []int64{c.run, c.alt} {

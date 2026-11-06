@@ -154,3 +154,64 @@ func TestSimProgramChange_RouteChangesAndReadsLine(t *testing.T) {
 		t.Errorf("a process with no identity_tag = %d; want 502 (refused by the fake)", code)
 	}
 }
+
+// TestSimCountingSlot_RouteMovesTheCountAndTheLineSaysSo pins POST
+// /api/sim/counting-slot over the fake WarLink: the count moves to slot 2 of
+// the process's MES struct (the line read names the slot), a malformed body is
+// refused (400), and a process with no MES struct or a slot past its five is
+// refused by the fake (502).
+func TestSimCountingSlot_RouteMovesTheCountAndTheLineSaysSo(t *testing.T) {
+	h, r := newTestHandlers(t)
+	cfg := config.SimConfig{Enabled: true, Processes: []config.SimProcessConfig{
+		{PLCName: "WELD-6", TagName: "MES_WELD_6.Prod_Counter_01", TickInterval: time.Second,
+			StationTag: "STA_W6_LOAD.Load_Count", LineDepth: 2, IdentityTag: "MES_WELD_6.CATID_01"},
+		{PLCName: "PRESS-1", TagName: "PRESS-1_COUNTER", TickInterval: time.Second},
+	}}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	fake := simwarlink.NewFakeClient(ctx, cfg, clock.NewManual(time.Unix(0, 0)))
+	mgr := plc.NewManager(nil, config.Defaults().WarLink, config.Defaults().PollRate, config.Defaults().Counter.JumpThreshold, nil, fake)
+	mgr.SetTagValueForTest("WELD-6", "MES_WELD_6.Prod_Counter_01", int64(0))
+	h.engine.(*stubEngine).plcMgr = mgr
+	r.Route("/api", func(r chi.Router) { h.registerSimRoutes(r) })
+
+	call := func(method, path, body string) (int, string) {
+		t.Helper()
+		req := httptest.NewRequest(method, path, strings.NewReader(body))
+		rec := httptest.NewRecorder()
+		r.ServeHTTP(rec, req)
+		return rec.Code, rec.Body.String()
+	}
+	const post = "/api/sim/counting-slot"
+
+	if code, body := call(http.MethodPost, post, `{"plc_name":"WELD-6","tag_name":"MES_WELD_6.Prod_Counter_01","slot":2}`); code != http.StatusOK {
+		t.Fatalf("slot 2 = %d %s", code, body)
+	}
+	code, body := call(http.MethodGet, "/api/sim/line", "")
+	var got struct {
+		Lines []simwarlink.ProcessLine `json:"lines"`
+	}
+	if code != http.StatusOK || json.Unmarshal([]byte(body), &got) != nil {
+		t.Fatalf("GET line = %d %s", code, body)
+	}
+	if len(got.Lines) != 1 || got.Lines[0].TagName != "MES_WELD_6.Prod_Counter_01" || got.Lines[0].Slot != 2 {
+		t.Errorf("line read = %s; want WELD-6's line counting on slot 2", body)
+	}
+	for _, bad := range []string{
+		`{"plc_name":"WELD-6","tag_name":"MES_WELD_6.Prod_Counter_01"}`,
+		`{"tag_name":"MES_WELD_6.Prod_Counter_01","slot":2}`,
+		`not json`,
+	} {
+		if code, _ := call(http.MethodPost, post, bad); code != http.StatusBadRequest {
+			t.Errorf("body %s = %d; want 400", bad, code)
+		}
+	}
+	for _, refused := range []string{
+		`{"plc_name":"PRESS-1","tag_name":"PRESS-1_COUNTER","slot":2}`,
+		`{"plc_name":"WELD-6","tag_name":"MES_WELD_6.Prod_Counter_01","slot":6}`,
+	} {
+		if code, _ := call(http.MethodPost, post, refused); code != http.StatusBadGateway {
+			t.Errorf("body %s = %d; want 502 (refused by the fake)", refused, code)
+		}
+	}
+}

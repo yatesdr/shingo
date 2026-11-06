@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"io"
 	"sort"
+	"strings"
 	_ "sync" // the plain lock inlines only where sync is imported (protocol/lockcheck)
 	"time"
 
@@ -55,6 +56,13 @@ type (
 	ForcedChange  int64
 )
 
+// CountingSlot moves the count of the process counting on the tag it is
+// written on (its configured counter) to slot N of its MES struct
+// (Line.CountOn): Prod_Counter_0N ticks from then, the slot counted until
+// then stops, and CATID_0N reads the part. A type of its own, like
+// ProgramChange, so no ordinary integer write moves a count.
+type CountingSlot int
+
 // LineTag is the name a PLC's lines are read under: a direct read returns
 // []ProcessLine for the processes counting on that PLC. Like OverrunTag it is
 // never published to the poll.
@@ -67,9 +75,13 @@ type ProcessLine struct {
 	LineState
 }
 
-// procLine is one sim process: its line and the tags the line publishes.
+// procLine is one sim process: its line and the tags the line publishes. mes
+// is the MES struct the process counts on when its counter is a slot of one
+// and its identity that slot's CATID ("" otherwise): the fake then publishes
+// the struct's members as WarLink does (publishStruct).
 type procLine struct {
 	plcName, counterTag, stationTag, identityTag string
+	mes                                          string
 	line                                         *Line
 }
 
@@ -98,8 +110,12 @@ type FakeClient struct {
 	// lines are the sim processes by PLC, in config order. Each tick advances
 	// a line and publishes its counter, station clicks and identity.
 	lines map[string][]*procLine
-	clk   clock.Clock
-	ready ReadinessFunc // nil = always ready (backward-compatible)
+	// enabled are the MES struct members the Edge asked WarLink to publish
+	// (SetTagPublishing), by PLC: a sibling slot's counter or CATID is
+	// published once enabled, as a member WarLink is not configured with is.
+	enabled map[string]map[string]bool
+	clk     clock.Clock
+	ready   ReadinessFunc // nil = always ready (backward-compatible)
 }
 
 // NewFakeClient builds the fake from the sim process list and starts one ticker
@@ -116,7 +132,7 @@ func (f *FakeClient) SetReadinessFunc(fn ReadinessFunc) {
 }
 
 func NewFakeClient(ctx context.Context, cfg config.SimConfig, clk clock.Clock) *FakeClient {
-	f := &FakeClient{vals: make(map[string]map[string]int64), bools: make(map[string]map[string]bool), idents: make(map[string]map[string]int64), overrun: make(map[string]bool), lines: make(map[string][]*procLine), clk: clk}
+	f := &FakeClient{vals: make(map[string]map[string]int64), bools: make(map[string]map[string]bool), idents: make(map[string]map[string]int64), overrun: make(map[string]bool), lines: make(map[string][]*procLine), enabled: make(map[string]map[string]bool), clk: clk}
 	procs := make([]*procLine, 0, len(cfg.Processes))
 	for _, p := range cfg.Processes {
 		if f.vals[p.PLCName] == nil {
@@ -128,6 +144,10 @@ func NewFakeClient(ctx context.Context, cfg config.SimConfig, clk clock.Clock) *
 			per = 1
 		}
 		pl := &procLine{plcName: p.PLCName, counterTag: p.TagName, stationTag: p.StationTag, identityTag: p.IdentityTag, line: NewLine(p.LineDepth, per)}
+		if s, n, ok := MESSlotOf(p.TagName); ok && p.IdentityTag == s+"."+CATIDMember(n) {
+			pl.mes = s
+			_ = pl.line.CountOn(n) // n is a slot: MESSlotOf says so
+		}
 		if pl.identityTag != "" && f.idents[p.PLCName] == nil {
 			f.idents[p.PLCName] = make(map[string]int64)
 		}
@@ -181,13 +201,70 @@ func (f *FakeClient) tick(ctx context.Context, pl *procLine, t clock.Ticker) {
 // publish copies a line's counter, station clicks and identity into the tags
 // the poll reads. Caller holds f.mu.
 func (f *FakeClient) publish(pl *procLine) {
-	f.vals[pl.plcName][pl.counterTag] = pl.line.counter
 	if pl.stationTag != "" {
 		f.vals[pl.plcName][pl.stationTag] = pl.line.station
 	}
+	if pl.mes != "" {
+		f.publishStruct(pl)
+		return
+	}
+	f.vals[pl.plcName][pl.counterTag] = pl.line.counter
 	if pl.identityTag != "" {
 		f.idents[pl.plcName][pl.identityTag] = pl.line.identity
 	}
+}
+
+// publishStruct publishes the members of a line's MES struct that WarLink
+// publishes: the counter and identity tags it is configured with, and each
+// member the Edge enabled. The other members answer a direct read only
+// (structRead). Caller holds f.mu.
+func (f *FakeClient) publishStruct(pl *procLine) {
+	for i, s := range pl.line.Slots() {
+		if tag := pl.mes + "." + CounterMember(i+1); tag == pl.counterTag || f.enabled[pl.plcName][tag] {
+			f.vals[pl.plcName][tag] = s.Counter
+		}
+		if tag := pl.mes + "." + CATIDMember(i+1); tag == pl.identityTag || f.enabled[pl.plcName][tag] {
+			f.idents[pl.plcName][tag] = s.CATID
+		}
+	}
+}
+
+// structRead answers a direct read of a line's MES struct or of one of its
+// slot members, published or not: the struct reads as its members by name, as
+// WarLink reads a UDT. ok is false when tagName is neither. Caller holds f.mu.
+func (f *FakeClient) structRead(plcName, tagName string) (any, bool) {
+	for _, pl := range f.lines[plcName] {
+		if pl.mes == "" || (tagName != pl.mes && !strings.HasPrefix(tagName, pl.mes+".")) {
+			continue
+		}
+		members := make(map[string]any, 2*MESSlots)
+		for i, s := range pl.line.Slots() {
+			members[CATIDMember(i+1)] = s.CATID
+			members[CounterMember(i+1)] = s.Counter
+		}
+		if tagName == pl.mes {
+			return members, true
+		}
+		v, ok := members[strings.TrimPrefix(tagName, pl.mes+".")]
+		return v, ok
+	}
+	return nil, false
+}
+
+// structOf is the line whose MES struct has tagName as a slot member, nil
+// when none does. Caller holds f.mu.
+func (f *FakeClient) structOf(plcName, tagName string) *procLine {
+	for _, pl := range f.lines[plcName] {
+		if pl.mes == "" {
+			continue
+		}
+		for n := 1; n <= MESSlots; n++ {
+			if tagName == pl.mes+"."+CounterMember(n) || tagName == pl.mes+"."+CATIDMember(n) {
+				return pl
+			}
+		}
+	}
+	return nil
 }
 
 // ListPLCs returns every configured PLC as Connected — the literal status string
@@ -256,8 +333,31 @@ func (f *FakeClient) ListAllTags(ctx context.Context, plcName string) ([]plc.War
 	return out, nil
 }
 
-// SetTagPublishing is a no-op — every sim tag is already "published".
+// SetTagPublishing publishes a member of a process's MES struct the Edge
+// enables (a sibling slot's counter or CATID: a re-point enables both) and
+// stops publishing one it disables, but for the counter and identity tags the
+// process is configured with, which stay published. Every other sim tag is
+// already published: a no-op.
 func (f *FakeClient) SetTagPublishing(ctx context.Context, plcName, tagName string, enabled bool) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	pl := f.structOf(plcName, tagName)
+	if pl == nil {
+		return nil
+	}
+	if enabled {
+		if f.enabled[plcName] == nil {
+			f.enabled[plcName] = make(map[string]bool)
+		}
+		f.enabled[plcName][tagName] = true
+	} else {
+		delete(f.enabled[plcName], tagName)
+		if tagName != pl.counterTag && tagName != pl.identityTag {
+			delete(f.vals[plcName], tagName)
+			delete(f.idents[plcName], tagName)
+		}
+	}
+	f.publish(pl)
 	return nil
 }
 
@@ -281,6 +381,9 @@ func (f *FakeClient) ReadTagValue(ctx context.Context, plcName, tagName string) 
 		}
 		return out, nil
 	}
+	if v, ok := f.structRead(plcName, tagName); ok {
+		return v, nil
+	}
 	if b, ok := f.bools[plcName][tagName]; ok {
 		return b, nil
 	}
@@ -300,7 +403,8 @@ func (f *FakeClient) ReadTagValue(ctx context.Context, plcName, tagName string) 
 
 // WriteTagValue sets a part-identity tag when the value is an Identity, changes
 // the program of the process counting on tagName when it is a ProgramChange or
-// a ForcedChange, sets the PLC's overrun switch when it is an Overrun on
+// a ForcedChange, moves its count to another slot of its MES struct when it is
+// a CountingSlot, sets the PLC's overrun switch when it is an Overrun on
 // OverrunTag, and a BOOL tag when it is a bool (a curtain's state, the sim's
 // bypass button), registering its PLC if new; any other write is discarded (Q4:
 // zone lights / heartbeats have no sim effect) and reports success. A counter
@@ -314,6 +418,9 @@ func (f *FakeClient) WriteTagValue(ctx context.Context, plcName, tagName string,
 	}
 	if to, ok := value.(ForcedChange); ok {
 		return f.changeProgram(plcName, tagName, func(l *Line) { l.Force(int64(to)) })
+	}
+	if n, ok := value.(CountingSlot); ok {
+		return f.moveCount(plcName, tagName, int(n))
 	}
 	if o, ok := value.(Overrun); ok || tagName == OverrunTag {
 		if !ok || tagName != OverrunTag {
@@ -365,12 +472,44 @@ func (f *FakeClient) setIdentity(plcName, tagName string, v int64) error {
 		}
 	}
 	for _, pl := range f.lines[plcName] {
-		if pl.identityTag == tagName {
+		if pl.countingIdentity() == tagName {
 			pl.line.SetIdentity(v)
 		}
 	}
 	f.idents[plcName][tagName] = v
 	return nil
+}
+
+// countingIdentity is the identity tag of the slot the process counts on now:
+// its configured identity tag until its count moves to another slot of its MES
+// struct, that slot's CATID after.
+func (pl *procLine) countingIdentity() string {
+	if pl.mes == "" {
+		return pl.identityTag
+	}
+	return pl.mes + "." + CATIDMember(pl.line.CountingSlot())
+}
+
+// moveCount moves the count of the process counting on plcName.tagName (its
+// configured counter) to slot n of its MES struct and publishes what moved. A
+// process whose counter is not a slot of an MES struct is refused.
+func (f *FakeClient) moveCount(plcName, tagName string, n int) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for _, pl := range f.lines[plcName] {
+		if pl.counterTag != tagName {
+			continue
+		}
+		if pl.mes == "" {
+			return fmt.Errorf("simwarlink: %s.%s is not a slot of an MES struct (<struct>.Prod_Counter_0N, identity_tag its CATID_0N)", plcName, tagName)
+		}
+		if err := pl.line.CountOn(n); err != nil {
+			return err
+		}
+		f.publish(pl)
+		return nil
+	}
+	return fmt.Errorf("simwarlink: no sim process counts on %s.%s", plcName, tagName)
 }
 
 // changeProgram applies a program change to the process counting on

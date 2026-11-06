@@ -392,3 +392,81 @@ func TestFakeIntegerWriteIsNoProgramChange(t *testing.T) {
 		t.Errorf("after integer writes: counter %d, identity %d; want 1 and 1001", c, id)
 	}
 }
+
+// mesCfg is a line counting on slot 1 of an MES struct with that slot's CATID
+// as its identity, and a plain counter beside it.
+func mesCfg() config.SimConfig {
+	return config.SimConfig{Enabled: true, Processes: []config.SimProcessConfig{
+		{PLCName: "WELD-6", TagName: "MES_WELD_6.Prod_Counter_01", TickInterval: time.Second, UOPPerTick: 1,
+			StationTag: "STA_W6_LOAD.Load_Count", IdentityTag: "MES_WELD_6.CATID_01"},
+		{PLCName: "PRESS-1", TagName: "PRESS-1_COUNTER", TickInterval: time.Second, UOPPerTick: 1},
+	}}
+}
+
+// TestFakeCountingSlot_TheSiblingTicksReadByTheStructUntilEnabled: the poll
+// sees the struct's configured members only; after the count moves to slot 2,
+// Prod_Counter_01 stands, Prod_Counter_02 ticks and CATID_02 reads the part,
+// both read through a read of the struct (or of the member) and published once
+// the Edge enables them. A process with no MES struct, a slot past the
+// struct's five and an integer write move nothing.
+func TestFakeCountingSlot_TheSiblingTicksReadByTheStructUntilEnabled(t *testing.T) {
+	m := clock.NewManual(fakeStart)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	f := NewFakeClient(ctx, mesCfg(), m)
+	const c1, c2, id1, id2 = "MES_WELD_6.Prod_Counter_01", "MES_WELD_6.Prod_Counter_02", "MES_WELD_6.CATID_01", "MES_WELD_6.CATID_02"
+	_ = f.WriteTagValue(ctx, "WELD-6", id1, Identity(1001))
+	for k := int64(1); k <= 3; k++ {
+		m.Advance(time.Second)
+		waitForCounter(t, f, "WELD-6", c1, k)
+	}
+	published := func() map[string]plc.WarlinkTag {
+		tags, _ := f.ListTags(ctx, "WELD-6")
+		return tags
+	}
+	if tags := published(); len(tags) != 3 {
+		t.Fatalf("the poll sees %v; want the counter, the CATID and the station only", keysOf(tags))
+	}
+	for _, v := range []any{int64(2), 2} {
+		_ = f.WriteTagValue(ctx, "WELD-6", c1, v)
+	}
+	if err := f.WriteTagValue(ctx, "WELD-6", c1, CountingSlot(2)); err != nil {
+		t.Fatalf("count on slot 2: %v", err)
+	}
+	for k := int64(4); k <= 5; k++ {
+		m.Advance(time.Second)
+		waitForCounter(t, f, "WELD-6", "STA_W6_LOAD.Load_Count", k)
+	}
+	if n := readInt(f, "WELD-6", c1); n != 3 {
+		t.Errorf("Prod_Counter_01 after the move = %d; want it stopped at 3", n)
+	}
+	raw, err := f.ReadTagValue(ctx, "WELD-6", "MES_WELD_6")
+	members, ok := raw.(map[string]any)
+	if err != nil || !ok || members["Prod_Counter_02"] != int64(2) || members["CATID_02"] != int64(1001) ||
+		members["Prod_Counter_01"] != int64(3) || members["CATID_01"] != int64(1001) || members["CATID_03"] != int64(0) {
+		t.Fatalf("the struct read = %v, %v; want slot 2 {1001 2} counting, slot 1 left {1001 3}, slot 3 unused", raw, err)
+	}
+	if n := readInt(f, "WELD-6", c2); n != 2 {
+		t.Errorf("a direct read of Prod_Counter_02 = %d; want 2", n)
+	}
+	if tags := published(); len(tags) != 3 {
+		t.Fatalf("before the Edge enables them the poll sees %v; want slot 2's members unpublished", keysOf(tags))
+	}
+	for _, tag := range []string{c2, id2} {
+		if err := f.SetTagPublishing(ctx, "WELD-6", tag, true); err != nil {
+			t.Fatalf("enable %s: %v", tag, err)
+		}
+	}
+	if tags := published(); tags["WELD-6."+c2].Value != int64(2) || tags["WELD-6."+id2].Value != int64(1001) {
+		t.Fatalf("enabled, the poll sees %v; want Prod_Counter_02 at 2 and CATID_02 at 1001", tags)
+	}
+	if st := lineOf(t, f, "WELD-6"); st.Slot != 2 || st.Counter != 2 || st.Slots[0] != (Slot{1001, 3}) {
+		t.Errorf("the line read = %+v; want counting on slot 2 at 2, slot 1 {1001 3}", st.LineState)
+	}
+	if err := f.WriteTagValue(ctx, "PRESS-1", "PRESS-1_COUNTER", CountingSlot(2)); err == nil {
+		t.Error("a counter with no MES struct moved its count; want refused")
+	}
+	if err := f.WriteTagValue(ctx, "WELD-6", c1, CountingSlot(6)); err == nil {
+		t.Error("a move to slot 6 of a five-slot struct was taken; want refused")
+	}
+}
