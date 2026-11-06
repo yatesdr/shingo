@@ -4754,9 +4754,10 @@ function openStationCounter(id, bindNode) {
     openSheet(id ? 'Edit station counter' : 'New station counter', STATION_RULE,
         '<label class="pd-lbl">Label</label><input class="pd-inp wide" id="sc-label" value="' + esc(c.label) + '">' +
         '<label class="pd-lbl">Tag on ' + esc(p.counter_plc_name || '') + '</label>' +
-        // No kind: the counter kind leads with the MES production counters,
-        // which a station counter may not read (stationTagFree).
-        '<span class="pd-combo" data-combo="tag" data-suggest="" data-plcname="' + esc(p.counter_plc_name || '') + '">' +
+        // The station kind: each station struct's count member by the family's
+        // convention. Not the counter kind, which leads with the MES slots a
+        // station counter may not read (stationTagFree).
+        '<span class="pd-combo" data-combo="tag" data-suggest="station" data-plcname="' + esc(p.counter_plc_name || '') + '">' +
         '<input class="pd-inp wide" id="sc-tag" value="' + esc(c.tag_name) + '" autocomplete="off" spellcheck="false">' +
         '<div class="pd-pop pd-combo-list" data-combolist hidden></div></span>',
         'Save', async () => {
@@ -5122,7 +5123,8 @@ function drawSettings() {
 }
 
 // bindCombos wires the curtain's per-node typeahead fields. The list is FILTERED BY
-// WHAT IS TYPED - substring, case-insensitive, closest-first - and the typed
+// WHAT IS TYPED - substring, case-insensitive, closest-first, then in the
+// options' order - and the typed
 // value remains the saved value: picking an option only saves keystrokes, it
 // never adds state of its own. Tag options key on the PLC currently typed,
 // cached per PLC, so correcting the PLC refetches on the next open. The
@@ -5146,7 +5148,7 @@ function bindCombos(container) {
                 }
                 return (S._plcList || []).map(p => ({
                     name: p.name, note: p.connected ? 'connected' : 'not connected',
-                }));
+                })).sort((a, b) => a.name.localeCompare(b.name));
             }
             // The PLC is a sibling field's (plcsel: the curtain's own PLC input,
             // the counter's) or a fixed one (plcname: the process's counter PLC).
@@ -5166,16 +5168,20 @@ function bindCombos(container) {
             }
             const suggest = wrap.dataset.suggest || '';
             return window.TagSuggest ? window.TagSuggest.options(S._tagCache[plcName], suggest)
-                : S._tagCache[plcName].map(t => ({ name: t.name, note: t.type || '' }));
+                : S._tagCache[plcName].map(t => ({ name: t.name, note: t.type || '' }))
+                    .sort((a, b) => a.name.localeCompare(b.name));
         };
         const render = items => {
             const q = (input.value || '').trim().toLowerCase();
+            // Closest first; among equally close, the options' own order (the
+            // suggestions' ranking, else name order where they load).
             const matches = items
-                .filter(o => o.name && o.name.toLowerCase().includes(q))
+                .map((o, i) => ({ o: o, i: i }))
+                .filter(x => x.o.name && x.o.name.toLowerCase().includes(q))
                 .sort((a, b) =>
-                    (a.name.toLowerCase().indexOf(q) - b.name.toLowerCase().indexOf(q)) ||
-                    a.name.localeCompare(b.name))
-                .slice(0, 60);
+                    (a.o.name.toLowerCase().indexOf(q) - b.o.name.toLowerCase().indexOf(q)) || (a.i - b.i))
+                .slice(0, 60)
+                .map(x => x.o);
             list.innerHTML = matches.length
                 ? matches.map(o => '<button data-comboopt="' + esc(o.name) + '">' + esc(o.name) +
                     '<span class="dim">' + esc(o.note) + '</span></button>').join('')

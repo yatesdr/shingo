@@ -150,7 +150,7 @@ func TestHealth_ANewCounterCountsFromItsCreation(t *testing.T) {
 	}
 	prod(100)
 	node := bindNode(t, eng, pid, style, "NEW-1", "consume", "simple", "")
-	lc, err := eng.CreateStationCounter(pid, "load station", "MES_Cell.Station_01")
+	lc, err := eng.CreateStationCounter(pid, "load station", "Sta010.Prod_Tool_1_CNT.ACC")
 	testutil.MustNoErr(t, err, "station counter")
 	testutil.MustNoErr(t, eng.SetCountedAt(node, &lc.ID), "bind")
 	if it, ok := healthKinds(t, eng, pid)[stationKindStopped]; ok {

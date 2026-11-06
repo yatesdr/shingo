@@ -20,6 +20,7 @@ import (
 
 	"shingo/protocol"
 	"shingoedge/store/counters"
+	"shingoedge/store/processes"
 )
 
 // StationCounterRefused is a station-counter save or binding refused, with
@@ -60,7 +61,7 @@ func (e *Engine) CreateStationCounter(processID int64, label, tagName string) (*
 	if tagName == "" {
 		return nil, refused("a station counter needs its tag")
 	}
-	if err := e.stationTagFree(proc.CounterPLCName, tagName, 0); err != nil {
+	if err := e.stationTagFree(proc, tagName, 0); err != nil {
 		return nil, err
 	}
 	managed, err := e.publishStationTag(proc.CounterPLCName, tagName)
@@ -98,7 +99,11 @@ func (e *Engine) UpdateStationCounter(id int64, label, tagName string) error {
 	if tagName == "" || tagName == lc.TagName {
 		return e.db.RenameLineCounter(id, label)
 	}
-	if err := e.stationTagFree(lc.PLCName, tagName, id); err != nil {
+	proc, err := e.db.GetProcess(lc.ProcessID)
+	if err != nil {
+		return err
+	}
+	if err := e.stationTagFree(proc, tagName, id); err != nil {
 		return err
 	}
 	managed, err := e.publishStationTag(lc.PLCName, tagName)
@@ -220,9 +225,17 @@ func (e *Engine) countableAtAStation(processID int64, coreNode, name string) err
 	return nil
 }
 
-// stationTagFree refuses a tag a reporting point reads, or a station counter
-// other than exceptID.
-func (e *Engine) stationTagFree(plcName, tagName string, exceptID int64) error {
+// stationTagFree refuses, on the process's counter PLC, a member of the
+// process's own MES struct (its counter slots and their identities: a sibling
+// slot would count the cell's strokes again; Logix names are
+// case-insensitive), a tag a reporting point reads, or a station counter other
+// than exceptID.
+func (e *Engine) stationTagFree(proc *processes.Process, tagName string, exceptID int64) error {
+	plcName := proc.CounterPLCName
+	if mes := deriveProcessTagPrefix(proc.CounterTagName); mes != "" &&
+		strings.HasPrefix(strings.ToLower(tagName), strings.ToLower(mes)+".") {
+		return refused("%s is a member of %s, %s's MES struct; a station counter reads the station's own count", tagName, mes, proc.Name)
+	}
 	if on, err := e.db.ReportingPointOnTag(plcName, tagName); err != nil {
 		return err
 	} else if on {

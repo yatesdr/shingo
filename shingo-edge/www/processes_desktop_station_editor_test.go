@@ -7,12 +7,13 @@ import (
 	"testing"
 )
 
-// TestStationEditor_SuggestsEveryTagNotTheCounterKind: the station counter's
-// tag combo asks for no kind. The counter kind puts each MES struct's
-// production counter first, and a station counter may not read a tag a
-// production counter reads (stationTagFree), so its first suggestion was
+// TestStationEditor_SuggestsTheStationKindNotTheCounterKind: the station
+// counter's tag combo asks for the station kind (each station struct's count
+// member by the family's convention). The counter kind puts each MES struct's
+// production counter first, and a station counter may not read a member of
+// the process's MES struct (stationTagFree), so its first suggestion was
 // always a refusal.
-func TestStationEditor_SuggestsEveryTagNotTheCounterKind(t *testing.T) {
+func TestStationEditor_SuggestsTheStationKindNotTheCounterKind(t *testing.T) {
 	src, err := os.ReadFile(filepath.Join("static", "js", "pages", "processes-desktop.js"))
 	if err != nil {
 		t.Fatalf("read processes-desktop.js: %v", err)
@@ -26,7 +27,7 @@ func TestStationEditor_SuggestsEveryTagNotTheCounterKind(t *testing.T) {
 	if end := strings.Index(body, "\n}\n"); end >= 0 {
 		body = body[:end]
 	}
-	if strings.Contains(body, `data-suggest="counter"`) || !strings.Contains(body, `data-suggest=""`) {
-		t.Errorf("the station editor's tag combo must ask for no kind (data-suggest=\"\"); its body:\n%s", body)
+	if strings.Contains(body, `data-suggest="counter"`) || !strings.Contains(body, `data-suggest="station"`) {
+		t.Errorf("the station editor's tag combo must ask for the station kind (data-suggest=\"station\"); its body:\n%s", body)
 	}
 }

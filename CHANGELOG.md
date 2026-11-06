@@ -47,6 +47,7 @@ Edge only, v37-v42 (the dev seeder learns station counters). Ship after a restor
 - The Charge's preview is POST /api/catid-holds/{id}/charge?mode=preview; the one-click and Confirm check a pin as the save does
 - The MES sibling slots are watched once a minute, off the tick: the PLC counting on a slot the process does not is a red strip item whose click (POST /api/processes/{id}/counter) re-points the counter; a slot rising with it is an info line
 - A station counter's card lists the process's positions as boxes, each through the binding's dry run (GET /api/process-nodes/{id}/countable), refused ones greyed with the sentence; the only station counter pre-ticks the unbound ones; nothing binds until its save
+- The station counter's tag combo suggests each station struct's Prod_Tool_1_CNT.ACC by the family's convention (operator-load stations first, no live read), never a gun, tip, timer, cycle, index, FIFO, management or marker tag; a member of the process's own MES struct is refused
 
 ## 2026-11-03 — An order's carts are its rows
 
