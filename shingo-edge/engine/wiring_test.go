@@ -970,12 +970,12 @@ func TestWiring_AB_AsymmetricPair(t *testing.T) {
 	rtA, _ = db.GetProcessNodeRuntime(nodeAID)
 	rtB, _ = db.GetProcessNodeRuntime(nodeBID)
 
-	// Node A: paired + inactive → skipped in main loop, but fallthrough hits it
-	// because pairedConsumeHandled is never set (Node B is unpaired, doesn't set it).
-	// This documents the asymmetric A/B edge case: fallthrough fires on the inactive
-	// paired node when the unpaired partner doesn't set pairedConsumeHandled.
-	if rtA.RemainingUOPCached != 72 {
-		t.Errorf("Asym A after flip (inactive, but fallthrough): RemainingUOP = %d, want 72", rtA.RemainingUOPCached)
+	// Node A: inactive, and NOT a pair — B does not name it back — so it is no
+	// fallback either (SYNTH-round3 finding 8). This test documented the old
+	// double charge here: the fallthrough charged A beside B, two carts per
+	// stroke. TestFallthrough_OneWayPairNeverDoubleCharges pins the rule.
+	if rtA.RemainingUOPCached != 75 {
+		t.Errorf("Asym A after flip (inactive, one-way, no fallthrough): RemainingUOP = %d, want 75", rtA.RemainingUOPCached)
 	}
 	// Node B: unpaired → always decrements
 	if rtB.RemainingUOPCached != 72 {

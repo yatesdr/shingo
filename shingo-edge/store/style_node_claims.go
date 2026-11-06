@@ -72,3 +72,9 @@ func (db *DB) DeleteStyleNodeClaim(id int64) error {
 // desktop composer read. The answer is a fold over rows the caller already
 // holds, and it lives beside the picture it captions:
 // domain.BackPositionNames.
+
+// ListOneWayPairs returns the process's live claims that name an A/B partner
+// whose claim does not name them back (processes.ListOneWayPairs).
+func (db *DB) ListOneWayPairs(processID int64) ([]processes.OneWayPair, error) {
+	return processes.ListOneWayPairs(db.DB, processID)
+}

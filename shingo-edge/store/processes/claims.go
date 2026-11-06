@@ -556,7 +556,10 @@ func UpsertClaimChecked(tx DBTX, kinds domain.CoreNodeKinds, in NodeClaimInput) 
 		before = append(before, *prior)
 	}
 	moved, err := CheckKeepStagedSpots(tx, before)
-	return id, moved, err
+	if err != nil {
+		return id, moved, err
+	}
+	return id, moved, CheckPairPartners(tx)
 }
 
 // upsertClaim is UpsertClaim, also returning the spot the row kept before

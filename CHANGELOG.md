@@ -27,6 +27,7 @@ Edge only, v37-v40. Ship after a restored-copy migrate.
 - A press that changed to the incoming part mid-changeover, held it a minute and counted it completes the changeover past its gate (auto) or offers Cut over now (prompt)
 - With no changeover open, a counted part only one other style runs by a person's pin switches the process (auto-catid-flip); a part several run asks
 - The history panel names what completed each changeover; the automatic-cutover notice names the changeover, the part and what it left running; a non-numeric counter read is raised
+- An A/B pair is two positions that name each other: one lit side charged per tick, each pair its own fallthrough; a save naming a third is refused, a one-way pair is warned
 
 ## 2026-11-03 — An order's carts are its rows
 

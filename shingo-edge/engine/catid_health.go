@@ -29,16 +29,19 @@ const (
 
 // The strip's item kinds.
 const (
-	catidKindWrongPart        = "wrong_part"
-	catidKindChangeoverWaits  = "changeover_waiting"
-	catidKindForcedLegsOpen   = "forced_legs_open"
-	catidKindUnmapped         = "unmapped_catid"
-	catidKindShared           = "shared_catid"
-	catidKindNoCATIDs         = "style_no_catids"
-	catidKindIdentity         = "identity"
-	catidKindPostCutover      = "post_cutover_failed"
-	catidKindAutoDecisions    = "automatic_decisions"
-	catidKindHeld             = "held"
+	catidKindWrongPart       = "wrong_part"
+	catidKindChangeoverWaits = "changeover_waiting"
+	catidKindForcedLegsOpen  = "forced_legs_open"
+	catidKindUnmapped        = "unmapped_catid"
+	catidKindShared          = "shared_catid"
+	catidKindNoCATIDs        = "style_no_catids"
+	catidKindIdentity        = "identity"
+	catidKindPostCutover     = "post_cutover_failed"
+	catidKindAutoDecisions   = "automatic_decisions"
+	catidKindHeld            = "held"
+	// catidKindOneWayPair is not a part-identity condition: it is the page's
+	// warning on a legacy A/B pair, shown in the same strip.
+	catidKindOneWayPair       = "one_way_pair"
 	catidHealthUnmappedWindow = 14 * 24 * time.Hour
 	catidHealthDecisionWindow = 24 * time.Hour
 	// catidIdentityStale is how old the last good identity read may be before
@@ -105,6 +108,7 @@ func (e *Engine) CatidHealth(processID int64) ([]CatidHealthItem, error) {
 		items = append(items, noCATIDItems(active, target)...)
 		items = append(items, e.unmappedItems(processID, sets, now)...)
 	}
+	items = append(items, e.oneWayPairItems(processID)...)
 	holds, _ := e.db.ListOpenCatidHolds(processID)
 	items = append(items, heldItems(holds, now)...)
 	items = markUnmappedHeld(items, holds)
@@ -323,6 +327,23 @@ func suggestionFor(recent []processes.Changeover, sets []styleCATIDEntry, v stri
 		}
 	}
 	return processes.Changeover{}, false
+}
+
+// oneWayPairItems: each claim naming an A/B partner that does not name it
+// back — no pair, so a stroke with neither side lit is charged nowhere.
+func (e *Engine) oneWayPairItems(processID int64) []CatidHealthItem {
+	pairs, err := e.db.ListOneWayPairs(processID)
+	if err != nil {
+		return nil
+	}
+	items := make([]CatidHealthItem, 0, len(pairs))
+	for _, p := range pairs {
+		items = append(items, CatidHealthItem{Kind: catidKindOneWayPair, Severity: CatidHealthAmber,
+			Headline: fmt.Sprintf("%s names %s as its A/B partner; %s does not name it back", p.Node, p.Partner, p.Partner),
+			Detail:   fmt.Sprintf("style %s: not a pair, so it has no fallthrough — set both sides to name each other", p.StyleName),
+			Data:     map[string]any{"style_id": p.StyleID, "node": p.Node, "partner": p.Partner}})
+	}
+	return items
 }
 
 // heldItems: each open hold, red, with its quantity and its age. Charge and

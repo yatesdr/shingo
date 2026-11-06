@@ -153,13 +153,14 @@ func (e *Engine) walkTick(process *processes.Process, nodes []processes.Node, cl
 		e.holdCatidDraw(tick, 0, "", tick.delta)
 		return
 	}
-	// A/B fallthrough tracking: if all paired consume nodes are inactive,
-	// decrement the first one found as a safety net ("count to lineside storage").
-	var pairedFallbackNode *processes.Node
-	var pairedFallbackRuntime *processes.RuntimeState
-	var pairedFallbackClaim *processes.NodeClaim
-	var pairedFallbackHold string
-	pairedConsumeHandled := false
+	// THE A/B PAIRS, EACH ON ITS OWN. A pair is two claims that name each other
+	// (abPairOf); a claim naming a partner that does not name it back is no
+	// pair. Per pair, per tick: one lit side is charged — a second lit side is
+	// skipped, as a new pair is lit on both until its first release — and when
+	// no side is lit, the first dark side is the safety net ("count to lineside
+	// storage"). A press-index front names its back position in the same field
+	// and is never a pair, so it neither arms nor disarms one.
+	ab := newABPairs(nodes)
 
 	for _, node := range nodes {
 		runtime := runtimes[node.ID]
@@ -197,26 +198,23 @@ func (e *Engine) walkTick(process *processes.Process, nodes []processes.Node, cl
 			continue
 		}
 
+		pair := abPairOf(process, &node, claim, claims, ab.byCore, tick.styleID)
 		switch claim.Role {
 		case protocol.ClaimRoleConsume:
 			// A/B cycling: only decrement the active-pull side.
 			// The inactive side holds staged material.
 			if isInactivePairedNode(claim, runtime) {
 				attr.inactiveConsume++
-				// Remember first inactive paired node as fallback
-				if pairedFallbackNode == nil {
-					nodeCopy := node
-					pairedFallbackNode = &nodeCopy
-					pairedFallbackHold = holdPartFor(process, &nodeCopy, claim, claims)
-					pairedFallbackRuntime = runtime
-					// The tick's style's claim, so the fallback emits
-					// against the tick's style, not a re-derived one (R43-1).
-					pairedFallbackClaim = claim
+				// The first dark side of a pair is its fallback, under the
+				// tick's style's claim, not a re-derived one (R43-1).
+				if pair != "" {
+					ab.noteDark(pair, node, runtime, claim, holdPartFor(process, &node, claim, claims))
 				}
 				continue
 			}
-			if claim.PairedCoreNode != "" {
-				pairedConsumeHandled = true
+			if pair != "" && e.secondLitSide(tick, ab.of(pair), &node, pair) {
+				attr.secondLit++
+				continue
 			}
 			nodeCopy := node
 			attr.consumeTicks++
@@ -229,6 +227,10 @@ func (e *Engine) walkTick(process *processes.Process, nodes []processes.Node, cl
 				attr.inactiveProduce++
 				continue
 			}
+			if pair != "" && e.secondLitSide(tick, ab.of(pair), &node, pair) {
+				attr.secondLit++
+				continue
+			}
 			nodeCopy := node
 			attr.produceTicks++
 			e.handleProduceTick(&nodeCopy, runtime, claim, tick.delta)
@@ -238,13 +240,9 @@ func (e *Engine) walkTick(process *processes.Process, nodes []processes.Node, cl
 		}
 	}
 
-	// A/B fallthrough: if no paired consume node was active but we found
-	// an inactive paired node, decrement it as a safety net. This covers
-	// the "count to lineside storage" case when neither A nor B is active.
-	if !pairedConsumeHandled && pairedFallbackNode != nil && pairedFallbackRuntime != nil {
-		attr.fallthroughTicks++
-		e.handleABFallthrough(tick.processID, pairedFallbackNode, pairedFallbackRuntime, pairedFallbackClaim, pairedFallbackHold, tick.delta)
-	}
+	// A/B fallthrough, per pair: a pair with no lit side charges its first
+	// dark side, the "count to lineside storage" safety net.
+	attr.fallthroughTicks += e.fallThrough(tick, ab)
 
 	if !attr.landed() {
 		log.Printf("ERROR: counter delta unattributed: process=%d style=%d delta=%d %s %s — the cell counted and no node took it",
@@ -273,6 +271,8 @@ type tickAttribution struct {
 	inactiveConsume int
 	inactiveProduce int
 	unknownRole     int
+	// secondLit: the second lit side of an A/B pair, skipped.
+	secondLit int
 
 	// Landings.
 	consumeTicks     int
@@ -303,6 +303,7 @@ func (a tickAttribution) skipReport() string {
 		{string(protocol.SwapModeManualSwap), a.manualSwap},
 		{"inactive_consume", a.inactiveConsume},
 		{"inactive_produce", a.inactiveProduce},
+		{"second_lit_side", a.secondLit},
 		{"unknown_role", a.unknownRole},
 	} {
 		if r.n > 0 {
@@ -313,6 +314,108 @@ func (a tickAttribution) skipReport() string {
 		b.WriteString(" (process has no nodes)")
 	}
 	return b.String()
+}
+
+// abPairs is one tick's walk's A/B pairs: each pair's account, in the order
+// the walk first met them, and the process's nodes by core name.
+type abPairs struct {
+	byCore map[string]*processes.Node
+	pairs  map[string]*abPairTick
+	order  []string
+}
+
+func newABPairs(nodes []processes.Node) *abPairs {
+	a := &abPairs{byCore: make(map[string]*processes.Node, len(nodes)), pairs: map[string]*abPairTick{}}
+	for i := range nodes {
+		a.byCore[nodes[i].CoreNodeName] = &nodes[i]
+	}
+	return a
+}
+
+// of returns the pair's account, opening it.
+func (a *abPairs) of(key string) *abPairTick {
+	p := a.pairs[key]
+	if p == nil {
+		p = &abPairTick{}
+		a.pairs[key] = p
+		a.order = append(a.order, key)
+	}
+	return p
+}
+
+// noteDark records a dark side; the first a pair meets is its fallback.
+func (a *abPairs) noteDark(key string, node processes.Node, runtime *processes.RuntimeState, claim *processes.NodeClaim, hold string) {
+	if p := a.of(key); p.fallback == nil {
+		p.fallback = &abFallback{node: &node, runtime: runtime, claim: claim, hold: hold}
+	}
+}
+
+// fallThrough charges each pair with no lit side to its first dark side, and
+// reports how many it charged.
+func (e *Engine) fallThrough(tick tickScope, a *abPairs) int {
+	n := 0
+	for _, key := range a.order {
+		p := a.pairs[key]
+		if p.lit || p.fallback == nil {
+			continue
+		}
+		f := p.fallback
+		e.handleABFallthrough(tick.processID, f.node, f.runtime, f.claim, f.hold, tick.delta)
+		n++
+	}
+	return n
+}
+
+// abPairTick is one A/B pair's account in one tick's walk: whether a lit side
+// took it, and the first dark side seen, its fallback.
+type abPairTick struct {
+	lit      bool
+	fallback *abFallback
+}
+
+type abFallback struct {
+	node    *processes.Node
+	runtime *processes.RuntimeState
+	claim   *processes.NodeClaim
+	hold    string
+}
+
+// abPairOf names the A/B pair a claim belongs to — its node and its partner,
+// sorted — when the partner's claim under the tick's style names it back; ""
+// when it names no partner, is a press-index front (whose field names its
+// back position), or its partner does not name it back.
+func abPairOf(process *processes.Process, node *processes.Node, claim *processes.NodeClaim, claims *store.NodeClaimSet,
+	byCore map[string]*processes.Node, styleID int64) string {
+	if claim.PairedCoreNode == "" || claim.IsPressIndex() {
+		return ""
+	}
+	partner := byCore[claim.PairedCoreNode]
+	if partner == nil {
+		return ""
+	}
+	pc := claims.Resolve(process, partner, store.ExactStyle(styleID))
+	if pc == nil || pc.IsPressIndex() || pc.PairedCoreNode != node.CoreNodeName {
+		return ""
+	}
+	a, b := node.CoreNodeName, partner.CoreNodeName
+	if b < a {
+		a, b = b, a
+	}
+	return a + "|" + b
+}
+
+// secondLitSide marks the pair lit by this side, and reports whether another
+// side already took this tick: then this one is skipped, logged once per pair.
+func (e *Engine) secondLitSide(tick tickScope, p *abPairTick, node *processes.Node, pair string) bool {
+	if !p.lit {
+		p.lit = true
+		return false
+	}
+	if _, seen := e.bothLitLogged.LoadOrStore(fmt.Sprintf("%d|%s", tick.processID, pair), struct{}{}); !seen {
+		log.Printf("A/B pair %s on process %d: both sides lit — charging one per tick; %s skipped (logged once)",
+			pair, tick.processID, node.Name)
+	}
+	return true
 }
 
 // applyHoldAndReplay applies one UOP tick to a process node's cached counter

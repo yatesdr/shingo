@@ -145,6 +145,10 @@ type Engine struct {
 	// which re-decides on its next tick. Made here, before any goroutine runs;
 	// a full buffer or no monitor drops the poke.
 	cutoverPokes chan int64
+
+	// bothLitLogged marks the A/B pairs whose both-lit tick has been logged
+	// (process|pair → struct{}), so the walk says it once.
+	bothLitLogged sync.Map
 	// warlinkClient is the injected WarLink client (sim fake) carried from
 	// Config.Warlink to the NewManager call in Start(). Nil → real HTTP client.
 	warlinkClient plc.WarlinkClient
