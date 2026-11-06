@@ -453,25 +453,8 @@ CREATE TABLE IF NOT EXISTS process_nodes (
 -- idx_process_nodes_process_code_live is created in migrations.go — see the
 -- note on idx_styles_process_name_live above.
 
--- line_counters are the station counters: a PLC tag that clicks once per
--- assembly where the part leaves the cart, on the process's own PLC, counting
--- the positions bound to it (process_nodes.line_counter_id) in place of the
--- production counter. Polled only for a process whose production counter is
--- wired and enabled. last_count / last_poll_at are the poll's, written only
--- while the row still reads the tag it listed (the guarded write); a row
--- never read (last_poll_at NULL) seeds from its first read. No snapshot,
--- hourly or Core row: the production counter is the cell's record.
-CREATE TABLE IF NOT EXISTS line_counters (
-    id              INTEGER PRIMARY KEY AUTOINCREMENT,
-    process_id      INTEGER NOT NULL,
-    label           TEXT    NOT NULL DEFAULT '',
-    plc_name        TEXT    NOT NULL,
-    tag_name        TEXT    NOT NULL,
-    last_count      INTEGER NOT NULL DEFAULT 0,
-    last_poll_at    TEXT,
-    warlink_managed INTEGER NOT NULL DEFAULT 0,
-    UNIQUE (plc_name, tag_name)
-);
+-- line_counters (the station counters) is created by migration v41 in
+-- migrations.go, its one home: this pass runs before the chain.
 
 -- process_routing_nodes is a process's ROUTING SET: the nodes it may route
 -- material through that are not its own positions — where bins come from
@@ -1003,30 +986,8 @@ CREATE TABLE IF NOT EXISTS plc_catid_observations (
     PRIMARY KEY (process_id, catid)
 );
 
--- catid_holds: the cart draw of counted strokes Shingo could not place by the
--- PLC's part — a held tick's whole draw (process_node_id 0), or an off-plan
--- tick's share at a node whose bound carrier is another part. The production
--- record still ships; this holds only what the carts were not charged. One
--- open row per (process, CATID, node, part), grown by each stroke; a release
--- (a landing on its style, a person's Charge or Write off) latches
--- resolved_at before anything moves. Never touches the seat holds.
-CREATE TABLE IF NOT EXISTS catid_holds (
-    id              INTEGER PRIMARY KEY AUTOINCREMENT,
-    process_id      INTEGER NOT NULL,
-    catid           TEXT    NOT NULL,
-    process_node_id INTEGER NOT NULL DEFAULT 0,
-    payload_code    TEXT    NOT NULL DEFAULT '',
-    reason          TEXT    NOT NULL,
-    qty             INTEGER NOT NULL,
-    strokes         INTEGER NOT NULL,
-    first_tick_at   TEXT    NOT NULL,
-    last_tick_at    TEXT    NOT NULL,
-    resolved_at     TEXT,
-    resolution      TEXT    NOT NULL DEFAULT '',
-    resolved_by     TEXT    NOT NULL DEFAULT ''
-);
-CREATE UNIQUE INDEX IF NOT EXISTS idx_catid_holds_open
-    ON catid_holds(process_id, catid, process_node_id, payload_code) WHERE resolved_at IS NULL;
+-- catid_holds (the CATID holds ledger) and its index are created by migration
+-- v40 in migrations.go, their one home: this pass runs before the chain.
 
 CREATE TABLE IF NOT EXISTS process_changeovers (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,

@@ -2216,9 +2216,16 @@ func edgeMigrations() []migrate.Migration {
 			},
 		},
 		{
-			// catid_holds: the ledger of cart draws held per CATID, with its
-			// partial unique index on the open rows. A new table; IF NOT EXISTS
-			// guards it, as the baseline CREATE carries it for a fresh install.
+			// catid_holds: the cart draw of counted strokes Shingo could not
+			// place by the PLC's part — a held tick's whole draw
+			// (process_node_id 0), or a share at a node. The production record
+			// still ships; this holds only what the carts were not charged.
+			// One open row per (process, CATID, node, part) — the partial
+			// unique index — grown by each stroke; a release (a landing on its
+			// style, a person's Charge or Write off) latches resolved_at
+			// before anything moves. Never touches the seat holds. Declared
+			// here and not in the baseline DDL, so the table has one home,
+			// like v5.
 			Version: 40,
 			Name:    "catid_holds",
 			Fn: func(tx *sql.Tx) error {
@@ -2250,10 +2257,17 @@ func edgeMigrations() []migrate.Migration {
 			},
 		},
 		{
-			// line_counters, the station counters, and the binding of a
-			// position to one (process_nodes.line_counter_id, NULL = the
-			// production counter). A new table (IF NOT EXISTS, as the baseline
-			// CREATE carries it) and a guarded column.
+			// line_counters, the station counters: a PLC tag that clicks once
+			// per assembly where the part leaves the cart, on the process's
+			// own PLC, counting the positions bound to it
+			// (process_nodes.line_counter_id, NULL = the production counter)
+			// in place of the production counter. last_count / last_poll_at
+			// are the poll's, written only while the row still reads the tag
+			// it listed; a row never read (last_poll_at NULL) seeds from its
+			// first read. No snapshot, hourly or Core row: the production
+			// counter is the cell's record. The table is declared here and not
+			// in the baseline DDL, so it has one home, like v5; the column is
+			// in both (guarded here), as every added column is.
 			Version: 41,
 			Name:    "line_counters",
 			Fn: func(tx *sql.Tx) error {
