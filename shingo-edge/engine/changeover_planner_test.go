@@ -1112,7 +1112,7 @@ func TestPlanNodeAction_Sequential_IsPerNode(t *testing.T) {
 // payload-matched retrieve, so its order carries the from-payload.
 //
 // The PARKED position holds an ON-DECK EMPTY carrier by steady-state design
-// (plants/demo.yaml: BIN-ACT-P2B, parked, no payload). A from-style full
+// (plants/master.yaml [demo]: BIN-ACT-P2B, parked, no payload). A from-style full
 // retrieve there matches nothing and waits forever on `finder-node-empty` —
 // "Waiting for material: PANEL-B in PLN_004" — which is the second of the two
 // blockers the sim surfaced. Flagging the pickup Empty drops Core's payload

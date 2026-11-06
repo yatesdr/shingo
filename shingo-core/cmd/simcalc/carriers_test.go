@@ -386,7 +386,7 @@ func TestFlatPositionsAreCountedAsSlots(t *testing.T) {
 	}
 }
 
-// dedicatedLoopPlant builds the SHIM shape from demo.yaml: a dedicated-position
+// dedicatedLoopPlant builds the SHIM shape from the demo loop: a dedicated-position
 // loader whose home is refilled by the very cell it feeds.
 //
 //	LOADER (produce, home_of=G, NO outbound) fills a carrier on H1
@@ -472,7 +472,7 @@ func TestCarriers_ClosedDedicatedLoopIsNotADrawOnTheMarket(t *testing.T) {
 	}
 }
 
-// coupledPlant builds demo.yaml's WELD-2 shape: a press feeding a weld cell that
+// coupledPlant builds the demo loop's WELD-2 shape: a press feeding a weld cell that
 // also waits on a second part from somewhere else.
 //
 //	PRESS  ──PANEL──▶ WELD ◀──BRKT── LOADER
@@ -521,7 +521,7 @@ func coupledPlant() *plantspec.Plant {
 }
 
 // TestCoupling_FindsTheConsumerWithMoreWaysToStop pins the shape that drained
-// demo.yaml's STANDARD-SM pool, and the arithmetic that sizes how long it takes.
+// the demo loop's STANDARD-SM pool, and the arithmetic that sizes how long it takes.
 //
 // The rate check passes this plant at every moment: PANEL is filled and emptied
 // at the same configured rate. What it cannot see is that only one side is ABLE

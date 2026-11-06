@@ -189,7 +189,7 @@ func TestEveryChangeoverLegThatLiftsAnOldBinCarriesTheFromPayload(t *testing.T) 
 					// ON-DECK EMPTY carrier rather than an outgoing bin.
 					//
 					// Sequential's PARKED position on a PRODUCE press is exactly that
-					// (plants/demo.yaml: BIN-ACT-P2B, parked, no payload). Demanding
+					// (plants/master.yaml [demo]: BIN-ACT-P2B, parked, no payload). Demanding
 					// the from-payload there is what produced `finder-node-empty` —
 					// "Waiting for material: PANEL-B in PLN_004" — a full retrieve
 					// against a carrier with nothing stamped on it.

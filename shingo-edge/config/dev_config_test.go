@@ -34,8 +34,8 @@ func TestDevYAMLParses(t *testing.T) {
 	// process[0] was PRESS-1 ticking at 10s/1. Both are fixture values, not
 	// invariants: shingoedge.dev.yaml is the mutable dev config for a mutable dev
 	// plant, and its rates get retuned on every rebalance. Adding one leg to
-	// plants/demo.yaml failed this test with no signal about the config loader —
-	// the same busywork the seeddev tests were decoupled from demo.yaml to end.
+	// the demo plant failed this test with no signal about the config loader —
+	// the same busywork the seeddev tests were decoupled from the demo plant to end.
 	// TestHysteresisMargin below already states the rule this now follows.
 	//
 	// The stated purpose — "unknown keys are silently ignored, so assert values,

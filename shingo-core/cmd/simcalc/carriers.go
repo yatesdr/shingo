@@ -247,7 +247,7 @@ func computeCarriers(plant *plantspec.Plant, rate map[string]float64, loaderCap,
 		// FLAT POSITIONS COUNT TOO, and they were invisible. A zone can hold its
 		// slots directly, with no lane between — that is the shape a KANBAN
 		//  must be in, because the save-time rules refuse a group with lanes
-		// — and demo.yaml's SYN_PRESS_EMPTIES is exactly that: EIGHT POSITIONS,
+		// — and the demo loop's SYN_PRESS_EMPTIES is exactly that: EIGHT POSITIONS,
 		// SIX OF THEM SEEDED, two left free (plants/master.yaml [demo], BIN-PEB-01..06 on
 		// PEB_001..006; PEB_007/008 stay open as the spare positions the
 		// pre-resolve loop needs). Walking only z.Lanes counted its slot capacity
@@ -300,7 +300,7 @@ func computeCarriers(plant *plantspec.Plant, rate map[string]float64, loaderCap,
 	// A dedicated-position loader with NO outbound_destination does not push the
 	// carriers it fills anywhere. The carrier stands on its home until the line's
 	// supply leg comes for it, and the line hands the empty back to that same
-	// home — demo.yaml's ALN_008 names PLK_H1 as BOTH its inbound_source and its
+	// home — the demo loop's ALN_008 names PLK_H1 as BOTH its inbound_source and its
 	// outbound_destination, which is what that node block exists to exercise. The
 	// empty the loader fills next is the empty the cell just returned. Nothing
 	// enters the circuit and nothing leaves it.
@@ -468,7 +468,7 @@ func computeCarriers(plant *plantspec.Plant, rate map[string]float64, loaderCap,
 	// difference MOVES, and its counterparty is the pool the config names: the
 	// overflow for a surplus, the first source (else the overflow) for a shortfall.
 	//
-	// Modelling the group as closed strands that difference. demo.yaml's
+	// Modelling the group as closed strands that difference. The demo loop's
 	// SYN_PRESS_EMPTIES takes 0.60 bins/min back from the ASSY unloader and gives
 	// 0.40 to the two presses; the 0.20 surplus does not pile up forever in eight
 	// positions declared to hold six. It overflows to SYN_MARKET — the same
@@ -756,7 +756,7 @@ func reportHeadroom(zones []zoneHeadroom) bool {
 	// with every lane marked, "park in an ungated lane" names no slot in the
 	// plant, so every dig held. Six stuck from the first minute of the run.
 	//
-	// And demo.yaml is that plant. SYN_MARKET carries fifteen wait_points and
+	// And the demo loop is that plant. SYN_MARKET carries fifteen wait_points and
 	// SYN_CLEAR one, so EVERY lane in this fixture is marked and FREE-UNG was
 	// structurally zero — the check reported SYN_MARKET "SHORT — Lane_01 needs 2,
 	// has 0" while thirteen free slots sat in it, ready, and the dispatcher was

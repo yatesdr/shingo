@@ -1052,7 +1052,7 @@ CREATE TABLE IF NOT EXISTS process_changeovers (
 --
 -- WHY A TABLE AND NOT A COLUMN ON style_node_claims (O8, resolved 2026-07-25).
 -- The episode is per PROCESS; claims are per node. A/B sequential puts TWO
--- same-payload claims in one process — plants/demo.yaml PRESS-2, PLN_003 and
+-- same-payload claims in one process — plants/master.yaml [demo] PRESS-2, PLN_003 and
 -- PLN_004, both auto_reorder — and releasing one side flips the pair and
 -- reorders the side that went dark. A current_origin_id column on the claim would hold the open
 -- episode on claim A where claim B cannot see it, so B's fire would mint a

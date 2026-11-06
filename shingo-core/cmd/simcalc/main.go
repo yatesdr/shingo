@@ -650,7 +650,7 @@ func (f *flow) verdict(loaderClearsPerMin, unloaderClearsPerMin float64) (string
 	// "OVERFILL +3.0/min" and PANEL-B "BALANCED, buffer covers 19m" — which is
 	// the blindness being fixed. UNLOADER-B and UNLOADER-C have both since been
 	// deleted for moving material they had no business moving, so the shape is
-	// unreachable on the shipped fixture and this arm is a LINT: demo.yaml now
+	// unreachable on the shipped fixture and this arm is a LINT: the demo loop now
 	// declares a tick consumer plus an unloader on one payload to be invalid as
 	// policy, and the mistake was made twice in three days. An instrument that
 	// detects a configuration the plant forbids is worth keeping.

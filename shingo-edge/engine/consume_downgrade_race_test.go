@@ -20,7 +20,7 @@ import (
 
 // ── W1: THE DOUBLE-SUPPLY RACE ────────────────────────────────────────────
 //
-// One run of plants/demo.yaml on 2026-08-31 lost four cells to the same three
+// One run of the demo plant (plants/master.yaml [demo] today) on 2026-08-31 lost four cells to the same three
 // seconds. The trace at ALN_004, wall clock:
 //
 //	05:51:45  bin_picked_up: bin=24 at=ALN_004         the swap lifts the old carrier
