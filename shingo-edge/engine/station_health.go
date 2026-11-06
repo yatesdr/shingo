@@ -1,7 +1,8 @@
 // station_health.go — the station counters' health lines on the process's
 // strip: stopped while the line produces, not one click per part, unreadable
 // (the production counter's tag too), and a bound position that became an A/B
-// pair. Tracked in memory from the counting events; nothing is stored.
+// pair. Tracked in memory from the counting events; only the deepest run-out
+// is also stored, when it grows (station_in_line.go).
 
 package engine
 
@@ -30,7 +31,8 @@ const (
 	stationKindPaired     = "station_paired"
 )
 
-// stationTrack is one station counter's running account.
+// stationTrack is one station counter's running account. Its deepest run-out
+// is also stored, when it grows (deepestOf reads the deeper of the two).
 type stationTrack struct {
 	processID int64
 	// clicks since the last production stroke, and the production strokes
@@ -94,7 +96,9 @@ func (h *stationHealthTracker) startTrack(counterID, processID int64) {
 	h.stations[counterID] = &stationTrack{processID: processID}
 }
 
-func (h *stationHealthTracker) onStationClick(counterID, processID, delta int64) {
+// onStationClick counts a station counter's clicks; it reports the deepest
+// run-out when this click made it deeper (0 otherwise), for the store.
+func (h *stationHealthTracker) onStationClick(counterID, processID, delta int64) (deeper int64) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	if h.stations == nil {
@@ -107,9 +111,11 @@ func (h *stationHealthTracker) onStationClick(counterID, processID, delta int64)
 	}
 	if s.prodSinceClick > s.deepest {
 		s.deepest = s.prodSinceClick
+		deeper = s.deepest
 	}
 	s.prodSinceClick = 0
 	s.clicksSinceProd += delta
+	return deeper
 }
 
 func (h *stationHealthTracker) onRead(plcName, tagName string, failure string) {
@@ -208,15 +214,16 @@ func (e *Engine) stationHealthItems(processID int64) []CatidHealthItem {
 				Data:     map[string]any{"counter_id": lc.ID, "node": p.node, "style": p.style}})
 		}
 		s := e.stationHealth.snapshot(lc.ID, processID)
-		limit := s.deepest
+		deepest := deepestOf(lc, s)
+		limit := deepest
 		if limit < stationStopFloor {
 			limit = stationStopFloor
 		}
 		if !changeoverOpen && activeBound && s.prodSinceClick > limit {
 			items = append(items, CatidHealthItem{Kind: stationKindStopped, Severity: CatidHealthAmber,
 				Headline: fmt.Sprintf("Station counter %s stopped while the line produces", name),
-				Detail:   fmt.Sprintf("%d strokes since its last click; the deepest run-out seen is %d", s.prodSinceClick, s.deepest),
-				Data:     map[string]any{"counter_id": lc.ID, "strokes": s.prodSinceClick, "deepest": s.deepest}})
+				Detail:   fmt.Sprintf("%d strokes since its last click; the deepest run-out seen is %d", s.prodSinceClick, deepest),
+				Data:     map[string]any{"counter_id": lc.ID, "strokes": s.prodSinceClick, "deepest": deepest}})
 		}
 		// Quiet while a changeover is open (the station and the cell count
 		// different parts' strokes) or a run-out is: more than one stroke

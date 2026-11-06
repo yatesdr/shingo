@@ -2331,7 +2331,60 @@ func edgeMigrations() []migrate.Migration {
 				return err
 			},
 		},
+		{
+			// The parts in the line and the end of the line. On line_counters:
+			// anchor_count / anchor_at, the station counter's count at the last
+			// program change (a production-counter reset that came with a
+			// confirmed CATID change; NULL = unanchored), written by the poll at
+			// a reset and read by the station card, which computes the parts in
+			// the line from it; deepest_runout, the most production strokes
+			// seen between two of its clicks, raised when it grows (NULL = none
+			// seen). On processes: line_depth_typed, the parts a person says sit
+			// between the cart and an end-of-line counter (NULL = none), with
+			// who typed it and when (the per-row called_by / time pattern of
+			// process_changeovers and style_node_claims). No reader decides
+			// anything from any of them. Each column guarded, as v33; the
+			// processes columns are in the baseline too, line_counters' are
+			// the chain's alone (the table is, v41).
+			Version: 43,
+			Name:    "line_counters_anchor_processes_line_depth",
+			Fn: func(tx *sql.Tx) error {
+				for _, c := range v43Columns {
+					var n int
+					if err := tx.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('`+c.table+`') WHERE name = ?`, c.column).Scan(&n); err != nil {
+						return err
+					}
+					if n > 0 {
+						continue
+					}
+					if _, err := tx.Exec(c.add); err != nil {
+						return err
+					}
+				}
+				return nil
+			},
+			Verify: func(q migrate.Querier) bool {
+				var a, b int
+				if err := q.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('line_counters')
+					WHERE name IN ('anchor_count', 'anchor_at', 'deepest_runout')`).Scan(&a); err != nil {
+					return false
+				}
+				err := q.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('processes')
+					WHERE name IN ('line_depth_typed', 'line_depth_typed_by', 'line_depth_typed_at')`).Scan(&b)
+				return err == nil && a == 3 && b == 3
+			},
+		},
 	}
+}
+
+// v43Columns are v43's columns, each with its ADD (run only where missing).
+var v43Columns = []struct{ table, column, add string }{
+	{"line_counters", "anchor_count", "ALTER TABLE line_counters ADD COLUMN anchor_count INTEGER"},
+	{"line_counters", "anchor_at", "ALTER TABLE line_counters ADD COLUMN anchor_at TEXT"},
+	{"line_counters", "deepest_runout", "ALTER TABLE line_counters ADD COLUMN deepest_runout INTEGER"},
+	{"processes", "line_depth_typed", "ALTER TABLE processes ADD COLUMN line_depth_typed INTEGER"},
+	{"processes", "line_depth_typed_by", "ALTER TABLE processes ADD COLUMN line_depth_typed_by TEXT NOT NULL DEFAULT ''"},
+	{"processes", "line_depth_typed_at", "ALTER TABLE processes ADD COLUMN line_depth_typed_at TEXT"},
 }
 
 // collapseRecipeRoutingOnce is the recipe migration's body: every row of

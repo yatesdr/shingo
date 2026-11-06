@@ -432,6 +432,7 @@ func (e *Engine) Start() {
 
 	// Create managers
 	e.plcMgr = plc.NewManager(e.db, e.cfg.WarLink, e.cfg.PollRate, e.cfg.Counter.JumpThreshold, plcEmit, e.warlinkClient)
+	e.plcMgr.SetIdentityChangeSource(e.identityChangedAt)
 	e.orderMgr = orders.NewManager(e.db, orderEmit, e.cfg.StationID())
 
 	// Wire debug logging to subsystems

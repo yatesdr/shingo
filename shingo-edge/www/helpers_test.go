@@ -305,11 +305,12 @@ func (s *stubEngine) CompleteProcessProductionCutover(int64) error { return nil 
 // The station counters: canned. Process 1 has station counter 7; any other
 // process has no counter wired, which refuses a create. The rules are pinned
 // against the real engine.
-func (s *stubEngine) ListStationCounters(processID int64) ([]counters.LineCounter, error) {
+func (s *stubEngine) ListStationCounters(processID int64) ([]engine.StationCounterCard, error) {
 	if processID != 1 {
-		return []counters.LineCounter{}, nil
+		return []engine.StationCounterCard{}, nil
 	}
-	return []counters.LineCounter{{ID: 7, ProcessID: 1, Label: "load station", PLCName: "plc", TagName: "STATION_01"}}, nil
+	return []engine.StationCounterCard{{LineCounter: counters.LineCounter{ID: 7, ProcessID: 1, Label: "load station",
+		PLCName: "plc", TagName: "STATION_01"}}}, nil
 }
 func (s *stubEngine) CreateStationCounter(processID int64, label, tagName string) (*counters.LineCounter, error) {
 	if processID != 1 {

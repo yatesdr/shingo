@@ -230,6 +230,7 @@ type postCutoverVerify struct {
 type catidSnapshot struct {
 	value       string              // the confirmed CATID; "" until one is confirmed
 	confirmedAt time.Time           // when value was confirmed
+	baseline    bool                // value was standing at the first read after a start, not a change
 	lastOK      time.Time           // the last good read of the identity tag
 	observed    map[string]struct{} // every value the process has emitted (plc_catid_observations)
 	landing     catidLanding        // the process's latest landing; zero until one
@@ -416,7 +417,7 @@ func (cm *catidMonitor) publishRead(processID int64, st *catidState, now time.Ti
 		next.observed, next.landing = old.observed, old.landing
 	}
 	if st.seenValue {
-		next.value, next.confirmedAt = st.lastConfirmed, st.confirmedAt
+		next.value, next.confirmedAt, next.baseline = st.lastConfirmed, st.confirmedAt, st.confirmedBaseline
 	}
 	if confirmed && isIdentity(next.value) && !catidSetHas(next.observed, next.value) {
 		grown := make(map[string]struct{}, len(next.observed)+1)

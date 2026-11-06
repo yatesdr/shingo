@@ -48,6 +48,12 @@ CREATE TABLE IF NOT EXISTS processes (
     identity_none       INTEGER NOT NULL DEFAULT 0,
     identity_warlink_managed INTEGER NOT NULL DEFAULT 0,
     changeover_auto_arm TEXT NOT NULL DEFAULT 'auto',
+    -- The parts a person says sit between the cart and an end-of-line
+    -- counter (NULL = none typed), and who typed it and when. Shown in the
+    -- end-of-line sentence beside the measured run-outs; decides nothing.
+    line_depth_typed    INTEGER,
+    line_depth_typed_by TEXT NOT NULL DEFAULT '',
+    line_depth_typed_at TEXT,
     group_id            INTEGER REFERENCES process_groups(id) ON DELETE SET NULL,
     -- flow_composer_enabled gates the HMI flow composer for this process. OFF
     -- until the engineer has reviewed the routing set derived into

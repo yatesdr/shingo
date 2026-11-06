@@ -122,6 +122,14 @@ var requiredColumns = []requiredColumn{
 	{"processes", "changeover_auto_arm"},
 	{"processes", "identity_tag_name"},
 	{"process_nodes", "line_counter_id"},
+	// v43: the station counter's anchor and deepest run-out, the process's
+	// typed line depth.
+	{"line_counters", "anchor_count"},
+	{"line_counters", "anchor_at"},
+	{"line_counters", "deepest_runout"},
+	{"processes", "line_depth_typed"},
+	{"processes", "line_depth_typed_by"},
+	{"processes", "line_depth_typed_at"},
 	{"processes", "identity_none"},
 	{"processes", "identity_warlink_managed"},
 	{"process_changeovers", "triggered_by"},

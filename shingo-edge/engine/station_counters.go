@@ -33,15 +33,6 @@ func refused(format string, args ...any) error {
 	return &StationCounterRefused{Sentence: fmt.Sprintf(format, args...)}
 }
 
-// ListStationCounters returns a process's station counters ([] for none).
-func (e *Engine) ListStationCounters(processID int64) ([]counters.LineCounter, error) {
-	list, err := e.db.ListLineCounters(processID)
-	if list == nil && err == nil {
-		list = []counters.LineCounter{}
-	}
-	return list, err
-}
-
 // CreateStationCounter adds a station counter reading tagName on the process's
 // counter PLC. Refused for a process with no wired counter, a tag a reporting
 // point or another station counter reads, and a tag that is not an integer
@@ -142,9 +133,10 @@ func (e *Engine) DeleteStationCounter(id int64) error {
 // SetCountedAt binds a position to a station counter (nil: back to the
 // production counter). Refused for a counter of another process, and for a
 // position that a loader, a produce claim or an A/B pair holds under any live
-// style, or that no live style claims as consume. The move is logged: the
-// parts already in the line between the cart and the counter change counter,
-// and net against the cart's run-out (TestCountedAt_BindMidRunNetsWithinTheLine).
+// style, or that no live style claims as consume. The move is logged with the
+// parts in the line at the station counter it binds to or leaves (its card's
+// number, ≈ and measured): they change counter, and net against the cart's
+// run-out (TestCountedAt_BindMidRunNetsWithinTheLine).
 func (e *Engine) SetCountedAt(nodeID int64, counterID *int64) error {
 	node, err := e.db.GetProcessNode(nodeID)
 	if err != nil {
@@ -168,14 +160,22 @@ func (e *Engine) SetCountedAt(nodeID int64, counterID *int64) error {
 		to = fmt.Sprintf("station counter %d (%s)", lc.ID, lc.TagName)
 	}
 	from := "the production counter"
+	station := counterID
 	if node.LineCounterID != nil {
 		from = fmt.Sprintf("station counter %d", *node.LineCounterID)
+		if station == nil {
+			station = node.LineCounterID
+		}
 	}
 	if err := e.db.SetNodeLineCounter(nodeID, counterID); err != nil {
 		return err
 	}
-	e.logFn("counted at: %s moves from %s to %s — the parts already in the line between its cart and the counter net against the cart's run-out under the borrowing rule",
-		node.Name, from, to)
+	var n int64
+	var ok bool
+	if station != nil {
+		n, ok = e.stationInLine(*station)
+	}
+	e.logFn("counted at: %s moves from %s to %s — %s", node.Name, from, to, inLineWords(n, ok))
 	return nil
 }
 

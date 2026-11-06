@@ -190,7 +190,7 @@ type EngineOrchestration interface {
 	CompleteProcessProductionCutover(processID int64) error
 	// The station counters and "counted at": a refusal is an
 	// *engine.StationCounterRefused carrying the page's sentence.
-	ListStationCounters(processID int64) ([]counters.LineCounter, error)
+	ListStationCounters(processID int64) ([]engine.StationCounterCard, error)
 	CreateStationCounter(processID int64, label, tagName string) (*counters.LineCounter, error)
 	UpdateStationCounter(id int64, label, tagName string) error
 	DeleteStationCounter(id int64) error

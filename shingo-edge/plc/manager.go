@@ -121,6 +121,13 @@ type Manager struct {
 	// once a boot, never within a run (pollLineCounter).
 	lineBoot sync.Map
 
+	// identityChange answers when a process's confirmed CATID last changed to
+	// a part (SetIdentityChangeSource); pendingAnchors holds each process's
+	// fresh reset awaiting that confirm (line_anchor.go). Both are read by the
+	// poll goroutine alone, the map written by it alone.
+	identityChange atomic.Pointer[func(processID int64) time.Time]
+	pendingAnchors map[int64]pendingAnchor
+
 	warlinkConnected bool
 	warlinkError     error
 
@@ -724,9 +731,14 @@ func (m *Manager) pollAllReportingPoints() {
 	}
 
 	shipped := false
+	var resets []pointReset
 	for _, rp := range rps {
-		if m.pollReportingPointSafe(rp) {
+		ship, reset := m.pollReportingPointSafe(rp)
+		if ship {
 			shipped = true
+		}
+		if reset != nil {
+			resets = append(resets, *reset)
 		}
 	}
 	// One ring per pass, however many reporting points ticked: the shipper
@@ -736,7 +748,9 @@ func (m *Manager) pollAllReportingPoints() {
 			(*fn)()
 		}
 	}
-	// The station counters are read after the production points.
+	// The station counters are read after the production points; the anchors
+	// are written first, from the counts the list read (the previous pass's).
+	m.anchorStationsSafe(lcs, resets)
 	for _, lc := range lcs {
 		m.pollLineCounterSafe(lc)
 	}
@@ -748,9 +762,10 @@ func (m *Manager) pollAllReportingPoints() {
 // entire counter loop with no log of the failure; the loop is started
 // once at edge startup and never restarts.
 //
-// Reports whether the poll wrote a shippable production-tick row; a panic
-// reports false (a row already written still ships on the next ring).
-func (m *Manager) pollReportingPointSafe(rp counters.ReportingPoint) (shippable bool) {
+// Reports whether the poll wrote a shippable production-tick row, and the
+// reset it read, if any; a panic reports false and none (a row already
+// written still ships on the next ring).
+func (m *Manager) pollReportingPointSafe(rp counters.ReportingPoint) (shippable bool, reset *pointReset) {
 	defer func() {
 		if r := recover(); r != nil {
 			log.Printf("plc pollLoop: panic polling reporting point %d (%s/%s): %v\n%s",
@@ -761,20 +776,21 @@ func (m *Manager) pollReportingPointSafe(rp counters.ReportingPoint) (shippable 
 }
 
 // pollReportingPoint reads one counter and records any change. It reports
-// whether the snapshot row it wrote is one the production tick shipper sends.
-func (m *Manager) pollReportingPoint(rp counters.ReportingPoint) bool {
+// whether the snapshot row it wrote is one the production tick shipper sends,
+// and a read that went backwards (a reset) once its count is written.
+func (m *Manager) pollReportingPoint(rp counters.ReportingPoint) (bool, *pointReset) {
 	// Raised each pass as a failed read is, so the strip names a counter whose
 	// PLC WarLink lacks; it is not logged (the journal would get one a pass).
 	if !m.IsConnected(rp.PLCName) {
 		m.emitter.EmitCounterReadError(rp.ID, rp.PLCName, rp.TagName, m.notConnected(rp.PLCName))
-		return false
+		return false, nil
 	}
 	val, err := m.ReadTag(rp.PLCName, rp.TagName)
 	if err != nil {
 		m.DebugLog.Log("tag read error: %s/%s rp=%d: %v", rp.PLCName, rp.TagName, rp.ID, err)
 		log.Printf("read tag %s/%s (rp %d): %v", rp.PLCName, rp.TagName, rp.ID, err)
 		m.emitter.EmitCounterReadError(rp.ID, rp.PLCName, rp.TagName, err.Error())
-		return false
+		return false, nil
 	}
 
 	newCount, ok := toInt64(val)
@@ -787,7 +803,7 @@ func (m *Manager) pollReportingPoint(rp counters.ReportingPoint) bool {
 		}
 		m.DebugLog.Log("tag read not numeric: %s/%s rp=%d: %s", rp.PLCName, rp.TagName, rp.ID, msg)
 		m.emitter.EmitCounterReadError(rp.ID, rp.PLCName, rp.TagName, msg)
-		return false
+		return false, nil
 	}
 	m.nonNumeric.Delete(rp.ID)
 
@@ -805,16 +821,16 @@ func (m *Manager) pollReportingPoint(rp counters.ReportingPoint) bool {
 	if rp.LastPollAt == nil {
 		if wrote, err := m.db.UpdateReportingPointCounter(rp.ID, rp.PLCName, rp.TagName, newCount); err != nil || !wrote {
 			log.Printf("seed reporting point %d (%s/%s) at %d: written=%t %v", rp.ID, rp.PLCName, rp.TagName, newCount, wrote, err)
-			return false
+			return false, nil
 		}
 		m.DebugLog.Log("counter seed: rp=%d %s/%s first read %d, nothing charged", rp.ID, rp.PLCName, rp.TagName, newCount)
 		log.Printf("reporting point %d (%s/%s): first read %d, counting from here", rp.ID, rp.PLCName, rp.TagName, newCount)
-		return false
+		return false, nil
 	}
 
 	delta, anomaly := CalculateDelta(rp.LastCount, newCount, m.counterJumpThreshold)
 	if delta == 0 && anomaly == "" {
-		return false
+		return false, nil
 	}
 
 	m.DebugLog.Log("counter delta: rp=%d %s/%s last=%d new=%d delta=%d anomaly=%s",
@@ -842,7 +858,7 @@ func (m *Manager) pollReportingPoint(rp counters.ReportingPoint) bool {
 	stamp := counters.TickStamp{RecordedAt: clock.Now().UTC(), ProcessID: rp.ProcessID, StyleID: id.StyleID, CATID: id.CATID}
 	if _, err := m.db.InsertCounterSnapshot(rp.ID, newCount, delta, anomaly, stamp); err != nil {
 		log.Printf("insert counter snapshot: %v", err)
-		return false
+		return false, nil
 	}
 
 	// The reporting point's last known count, written only while the point
@@ -852,11 +868,16 @@ func (m *Manager) pollReportingPoint(rp counters.ReportingPoint) bool {
 	// The snapshot above is a real read of the tag the pass listed.
 	if wrote, err := m.db.UpdateReportingPointCounter(rp.ID, rp.PLCName, rp.TagName, newCount); err != nil || !wrote {
 		log.Printf("update reporting point %d (%s/%s) counter: written=%t %v — not emitted", rp.ID, rp.PLCName, rp.TagName, wrote, err)
-		return false
+		return false, nil
 	}
 
+	// The program change's mark (line_anchor.go): the station pass reads it.
+	var reset *pointReset
+	if anomaly == "reset" {
+		reset = &pointReset{processID: rp.ProcessID, count: newCount, at: stamp.RecordedAt}
+	}
 	if rp.StyleID == 0 {
-		return false // no style linked; the shipper's filter (style_id <> 0) skips the row too
+		return false, reset // no style linked; the shipper's filter (style_id <> 0) skips the row too
 	}
 
 	// THE PLC IS THE TRUTH (close-out 2b, owner ruling 2026-09-24). A jump and
@@ -875,7 +896,7 @@ func (m *Manager) pollReportingPoint(rp counters.ReportingPoint) bool {
 	}
 
 	// The shipper's filter in the poll's terms (counters.shippableWhere).
-	return delta > 0
+	return delta > 0, reset
 }
 
 func connectionErrorFromTags(tags map[string]WarlinkTag) string {

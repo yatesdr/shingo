@@ -413,6 +413,9 @@ type w6Opts struct {
 	// station lists the positions (0-4) counted at the load station; the
 	// rest are counted at the cell's production counter.
 	station []int
+	// unbound makes the load station's counter with no position counted at
+	// it, when station lists none: it measures the line and charges nothing.
+	unbound bool
 	// reorder is every claim's reorder point; 0 is 10. The demand sweep runs
 	// only when a scenario fires it (sweep).
 	reorder int
@@ -444,6 +447,7 @@ type w6Cell struct {
 	run, alt int64
 	counter  int64 // the load station's counter, 0 when the cell has none
 	station  [5]bool
+	unbound  bool // the load station's counter is made, bound to no position
 	tenures  [5][]*w6Tenure
 	reorder  int
 }
@@ -458,6 +462,7 @@ func newW6Cell(t *testing.T, o w6Opts) *w6Cell {
 	for _, p := range o.station {
 		c.station[p] = true
 	}
+	c.unbound = o.unbound
 	c.reorder = o.reorder
 	if c.reorder == 0 {
 		c.reorder = 10
@@ -601,7 +606,7 @@ func (c *w6Cell) configureEdge() {
 	c.publish()
 	mustNil(t, eng.EditProcessCounter(c.processID, domain.ProcessCounterEdit{PLCName: w6PLC, TagName: w6Counter, Enabled: true}),
 		"the counter")
-	if !c.anyStation() {
+	if !c.anyStation() && !c.unbound {
 		return
 	}
 	lc, err := eng.CreateStationCounter(c.processID, "load station", w6Station)
@@ -774,6 +779,30 @@ func (c *w6Cell) waitFor(what string, budget time.Duration, ok func() bool) {
 	}
 	c.dump("timed out: " + what)
 	c.t.Fatalf("timed out waiting for: %s", what)
+}
+
+// inLine reads the load station's card as the process page does: the parts
+// in the line it measures since the last program change (nil: not
+// anchored), and logs it.
+func (c *w6Cell) inLine(label string) *int64 {
+	c.t.Helper()
+	cards, err := c.edge.Engine.ListStationCounters(c.processID)
+	mustNil(c.t, err, "the load station's card")
+	for _, card := range cards {
+		if card.ID != c.counter {
+			continue
+		}
+		st := c.plc.state()
+		if card.InLine == nil {
+			c.t.Logf("IN LINE %s: not anchored yet (the fake: %d in flight)", label, st.InFlight)
+		} else {
+			c.t.Logf("IN LINE %s: \u2248%d in the line since the program change at %v (the fake: %d in flight, L = %d)",
+				label, *card.InLine, card.AnchorAt, st.InFlight, w6Depth)
+		}
+		return card.InLine
+	}
+	c.t.Fatalf("%s: no card for the load station's counter %d", label, c.counter)
+	return nil
 }
 
 // ── the carts ───────────────────────────────────────────────────────────────

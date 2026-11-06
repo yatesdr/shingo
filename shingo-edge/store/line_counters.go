@@ -45,6 +45,18 @@ func (db *DB) RepointLineCounter(id int64, label, tagName string, managed bool) 
 	return counters.RepointLineCounter(db.DB, id, label, tagName, managed)
 }
 
+func (db *DB) AnchorLineCounter(id int64, plcName, tagName string, count int64, at time.Time) error {
+	return counters.AnchorLineCounter(db.DB, id, plcName, tagName, count, at)
+}
+
+func (db *DB) ClearLineCounterAnchors(processID int64) error {
+	return counters.ClearLineCounterAnchors(db.DB, processID)
+}
+
+func (db *DB) RaiseLineCounterDeepest(id, deepest int64) error {
+	return counters.RaiseLineCounterDeepest(db.DB, id, deepest)
+}
+
 func (db *DB) SetLineCounterManaged(id int64, managed bool) error {
 	return counters.SetLineCounterManaged(db.DB, id, managed)
 }

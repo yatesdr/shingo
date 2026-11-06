@@ -51,7 +51,9 @@ func (e *Engine) wireEventHandlers() {
 
 	eventbus.SubscribeTyped(e.Events, func(evt eventbus.TypedEvent[EventType, LineCounterDeltaEvent]) {
 		e.handleLineCounterDelta(evt.Payload)
-		e.stationHealth.onStationClick(evt.Payload.CounterID, evt.Payload.ProcessID, evt.Payload.Delta)
+		if d := e.stationHealth.onStationClick(evt.Payload.CounterID, evt.Payload.ProcessID, evt.Payload.Delta); d > 0 {
+			e.raiseDeepest(evt.Payload.CounterID, d)
+		}
 	}, EventLineCounterDelta)
 
 	// A counter tag's reads, for the health strip's "unreadable": the first

@@ -6,6 +6,7 @@
 package scenarios
 
 import (
+	"fmt"
 	"testing"
 	"time"
 )
@@ -52,6 +53,19 @@ func TestCatid4x2_S3_EarlyCutover(t *testing.T) {
 				if co.TriggeredBy == "auto-catid-flip" {
 					t.Errorf("changeover row #%d: an automatic switch (%s -> %d) after an early cutover", co.ID,
 						co.TriggeredBy, co.ToStyleID)
+				}
+			}
+			// The program change anchored the load station: what it has
+			// loaded since, less what the counter has counted, is the line.
+			if v.station != nil {
+				if n := c.inLine("S3 station-counted, after the program change"); n == nil || *n != w6Depth ||
+					*n != int64(c.plc.state().InFlight) {
+					got := "unanchored"
+					if n != nil {
+						got = fmt.Sprint(*n)
+					}
+					t.Errorf("the parts in the line read %s after the program change, want L = %d (the fake has %d in flight)",
+						got, w6Depth, c.plc.state().InFlight)
 				}
 			}
 			if h := c.holds(); len(h.rows) != 0 {

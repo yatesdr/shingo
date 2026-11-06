@@ -23,6 +23,12 @@ type LineCounter struct {
 	LastCount      int64      `json:"last_count"`
 	LastPollAt     *time.Time `json:"last_poll_at,omitempty"`
 	WarlinkManaged bool       `json:"warlink_managed"`
+	// AnchorCount / AnchorAt: the count at the last program change (the poll's
+	// anchor, plc anchorStations), nil when unanchored. DeepestRunout: the most
+	// production strokes seen between two of its clicks, nil when none.
+	AnchorCount   *int64     `json:"anchor_count"`
+	AnchorAt      *time.Time `json:"anchor_at,omitempty"`
+	DeepestRunout *int64     `json:"deepest_runout"`
 
 	// Poll-list only.
 	ActiveStyleID int64      `json:"-"`
@@ -30,16 +36,25 @@ type LineCounter struct {
 }
 
 const lineCounterCols = `lc.id, lc.process_id, lc.label, lc.plc_name, lc.tag_name, lc.last_count,
-	COALESCE(lc.last_poll_at, ''), lc.warlink_managed`
+	COALESCE(lc.last_poll_at, ''), lc.warlink_managed, lc.anchor_count, COALESCE(lc.anchor_at, ''), lc.deepest_runout`
 
 func scanLineCounter(sc interface{ Scan(...any) error }, extra ...any) (LineCounter, error) {
 	var c LineCounter
-	var polled string
-	dest := append([]any{&c.ID, &c.ProcessID, &c.Label, &c.PLCName, &c.TagName, &c.LastCount, &polled, &c.WarlinkManaged}, extra...)
+	var polled, anchoredAt string
+	var anchor, deepest sql.NullInt64
+	dest := append([]any{&c.ID, &c.ProcessID, &c.Label, &c.PLCName, &c.TagName, &c.LastCount, &polled, &c.WarlinkManaged,
+		&anchor, &anchoredAt, &deepest}, extra...)
 	if err := sc.Scan(dest...); err != nil {
 		return c, err
 	}
 	c.LastPollAt = helpers.ScanTimePtr(sql.NullString{String: polled, Valid: polled != ""})
+	c.AnchorAt = helpers.ScanTimePtr(sql.NullString{String: anchoredAt, Valid: anchoredAt != ""})
+	if anchor.Valid {
+		c.AnchorCount = &anchor.Int64
+	}
+	if deepest.Valid {
+		c.DeepestRunout = &deepest.Int64
+	}
 	return c, nil
 }
 
@@ -156,10 +171,35 @@ func RenameLineCounter(db *sql.DB, id int64, label string) error {
 
 // RepointLineCounter moves a station counter to another tag: the row is
 // unread again (last_poll_at NULL) and seeds from the new tag's first read,
-// and its WarLink publishing is recorded as managed or not.
+// its anchor and deepest run-out (the old tag's) are gone, and its WarLink
+// publishing is recorded as managed or not.
 func RepointLineCounter(db *sql.DB, id int64, label, tagName string, managed bool) error {
 	_, err := db.Exec(`UPDATE line_counters SET label = ?, tag_name = ?, last_count = 0, last_poll_at = NULL,
-		warlink_managed = ? WHERE id = ?`, label, tagName, managed, id)
+		anchor_count = NULL, anchor_at = NULL, deepest_runout = NULL, warlink_managed = ? WHERE id = ?`,
+		label, tagName, managed, id)
+	return err
+}
+
+// AnchorLineCounter writes a station counter's anchor, count at at, only while
+// the row still reads the tag the poll listed.
+func AnchorLineCounter(db *sql.DB, id int64, plcName, tagName string, count int64, at time.Time) error {
+	_, err := db.Exec(`UPDATE line_counters SET anchor_count = ?, anchor_at = ? WHERE id = ? AND plc_name = ? AND tag_name = ?`,
+		count, at.UTC().Format(helpers.TimeLayout), id, plcName, tagName)
+	return err
+}
+
+// ClearLineCounterAnchors unanchors every station counter of a process.
+func ClearLineCounterAnchors(db *sql.DB, processID int64) error {
+	_, err := db.Exec(`UPDATE line_counters SET anchor_count = NULL, anchor_at = NULL
+		WHERE process_id = ? AND anchor_count IS NOT NULL`, processID)
+	return err
+}
+
+// RaiseLineCounterDeepest records a deeper run-out; a shallower one writes
+// nothing.
+func RaiseLineCounterDeepest(db *sql.DB, id, deepest int64) error {
+	_, err := db.Exec(`UPDATE line_counters SET deepest_runout = ?
+		WHERE id = ? AND (deepest_runout IS NULL OR deepest_runout < ?)`, deepest, id, deepest)
 	return err
 }
 

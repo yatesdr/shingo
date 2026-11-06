@@ -4651,17 +4651,28 @@ const STATION_RULE = 'A station counter clicks where the part leaves the cart, o
     'style that uses the positions counted at it. It reads the cell’s own PLC; there is no ratio.';
 
 // stationCountersField lists the process's station counters, each a card with
-// its verbs and its positions (stationPositions).
+// its verbs, what it measures (stationMeasures) and its positions
+// (stationPositions).
 function stationCountersField(p) {
     const rows = (S.stationCounters || []).map(c =>
         '<div class="pd-row"><span>' + esc(c.label || 'station counter ' + c.id) + ' <span class="pd-dim">' +
         esc(c.tag_name) + (c.last_poll_at ? '' : ' · not read yet') + '</span></span>' +
         '<span><button class="pd-dimlink" data-act="sc-edit" data-sc="' + c.id + '">Edit</button>' +
         '<button class="pd-dimlink" data-act="sc-delete" data-sc="' + c.id + '">Delete</button></span></div>' +
-        stationPositions(c)).join('');
+        stationMeasures(c) + stationPositions(c)).join('');
     const wired = !!(p.counter_plc_name && p.counter_tag_name);
     return stBlock('Station counters', wired ? STATION_RULE : 'wire the production counter first; a station counter reads beside it',
         rows + (wired ? '<button class="pd-btn" data-act="sc-new">New station counter</button>' : ''));
+}
+
+// stationMeasures is what a station counter's card measures, on one line:
+// the clicks per part, the parts in the line since the program change beside
+// it, and the deepest run-out (station-card.js measures).
+function stationMeasures(c) {
+    const card = window.StationCard;
+    if (!card) return '';
+    const m = card.measures(c);
+    return '<div class="pd-dim">' + esc(m.ratio) + ' · ' + esc(m.lead) + ' · ' + esc(m.deepest) + '</div>';
 }
 
 // stationPositions is a station counter's positions, one box each
@@ -4719,10 +4730,11 @@ function saveStationPositions(id) {
     }
     const here = changes.filter(x => x.line_counter_id).map(x => name(x.id));
     const back = changes.filter(x => !x.line_counter_id).map(x => name(x.id));
+    const counter = (S.stationCounters || []).find(x => x.id === id);
     openSheet('Save this station counter’s positions?',
         (here.length ? 'Counted here: ' + here.join(', ') + '. ' : '') +
         (back.length ? 'Back to the production counter: ' + back.join(', ') + '. ' : '') +
-        'The parts already in the line between each cart and its counter net against the cart’s run-out under the borrowing rule.',
+        window.StationCard.inLineSentence(counter),
         '', 'Save', async () => {
             for (const x of changes) {
                 const out = await postJSON('PUT', '/api/process-nodes/' + x.id + '/counted-at', { line_counter_id: x.line_counter_id });
