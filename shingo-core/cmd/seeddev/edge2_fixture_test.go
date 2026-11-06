@@ -7,8 +7,9 @@ import (
 	"shingocore/plantspec"
 )
 
-// edge2_fixture_test.go — the edge2 plant's demand thresholds against the stock
-// its own cells hold.
+// edge2_fixture_test.go — the master's [window] line (on EDGE 2) and its [4x2]
+// cell: their demand thresholds against the stock their own cells hold, and the
+// window line's loop on its own carriers.
 //
 // WHY. Core's threshold monitor compares a demand's threshold with the
 // plant-wide total of the payload, cells included. A threshold at or below what
@@ -17,8 +18,10 @@ import (
 // counting, and the loader never refires. Edge2's PART-W did exactly that (20
 // against three cells of 20: a stranded swap that nothing was coming for).
 //
-// It reads plants/edge2.yaml itself, not a fixture copy, for the reason
+// It reads plants/master.yaml itself, not a fixture copy, for the reason
 // seed_demo_mg2_test.go gives: the shipped file is the thing under test.
+
+// TestEdge2Fixture_ThresholdCoversSeatStock: each section sized by this rule keeps it.
 //
 // The seats counted are every consume claim of each style a process can change
 // over to, the most any one of its styles holds of the payload, both halves of an
@@ -29,14 +32,17 @@ import (
 // (no loader push) and is skipped.
 func TestEdge2Fixture_ThresholdCoversSeatStock(t *testing.T) {
 	t.Parallel()
+	for name, procs := range map[string][]string{"window": windowLine, "4x2": cell4x2} {
+		p := sectionOf(t, procs...)
+		if len(p.Demands) == 0 {
+			t.Fatalf("[%s] has no demands: its loaders are not in the file", name)
+		}
+		thresholdsCoverSeats(t, p)
+	}
+}
 
-	p, err := plantspec.Load(filepath.Join("..", "..", "..", "plants", "edge2.yaml"))
-	if err != nil {
-		t.Fatalf("load plants/edge2.yaml: %v", err)
-	}
-	if err := p.Validate(); err != nil {
-		t.Fatalf("validate plants/edge2.yaml: %v", err)
-	}
+func thresholdsCoverSeats(t *testing.T, p *plantspec.Plant) {
+	t.Helper()
 
 	processOf := map[string]string{}
 	for _, s := range p.Styles {
@@ -77,8 +83,7 @@ func TestEdge2Fixture_ThresholdCoversSeatStock(t *testing.T) {
 // if no other plant on the same Core draws its carriers. Core's empties keeper
 // sources plant-wide by carrier type (by design), so while both plants named
 // their carrier STANDARD, line 1's press-empties keeper took line 2's empty
-// (TRACE-line2-empties §3). RED while
-// edge2.yaml names STANDARD.
+// (TRACE-line2-empties §3). RED while line 2 rides STANDARD.
 func TestEdge2Fixture_LineTwoCarriesItsOwnCarrierType(t *testing.T) {
 	t.Parallel()
 	load := func(name string) *plantspec.Plant {
@@ -89,13 +94,27 @@ func TestEdge2Fixture_LineTwoCarriesItsOwnCarrierType(t *testing.T) {
 		}
 		return p
 	}
-	demo := map[string]bool{}
-	for _, bt := range load("demo-sim.yaml").BinTypes {
-		demo[bt] = true
+	p := load("master.yaml")
+	typesOf := func(view *plantspec.Plant) map[string]bool {
+		carrier := map[string]string{}
+		for _, pl := range p.Payloads {
+			carrier[pl.Code] = pl.BinType
+		}
+		out := map[string]bool{}
+		for _, c := range view.Claims {
+			if bt := carrier[c.Payload]; bt != "" {
+				out[bt] = true
+			}
+		}
+		return out
 	}
-	for _, bt := range load("edge2.yaml").BinTypes {
-		if demo[bt] {
-			t.Errorf("edge2.yaml's carrier type %q is also demo-sim.yaml's: on one Core the two lines' carriers are one pool", bt)
+	one, two := typesOf(p.ForEdge(p.Station())), typesOf(p.ForEdge("edge2.line1"))
+	if len(two) == 0 {
+		t.Fatal("EDGE 2 runs no claim: the [window] line is not on it")
+	}
+	for bt := range two {
+		if one[bt] {
+			t.Errorf("line 2's carrier type %q is also EDGE 1's: on one Core the two lines' carriers are one pool", bt)
 		}
 	}
 }
@@ -108,10 +127,7 @@ func TestEdge2Fixture_LineTwoCarriesItsOwnCarrierType(t *testing.T) {
 // (RULINGS-D2-run2-and-the-pair §2.6). RED while WLD_010's claims set none.
 func TestEdge2Fixture_ProduceClaimsAskAhead(t *testing.T) {
 	t.Parallel()
-	p, err := plantspec.Load(filepath.Join("..", "..", "..", "plants", "edge2.yaml"))
-	if err != nil {
-		t.Fatalf("load plants/edge2.yaml: %v", err)
-	}
+	p := sectionOf(t, windowLine...)
 	capacity := map[string]int64{}
 	for _, pl := range p.Payloads {
 		capacity[pl.Code] = pl.UOPCapacity
@@ -130,3 +146,43 @@ func TestEdge2Fixture_ProduceClaimsAskAhead(t *testing.T) {
 		}
 	}
 }
+
+// sectionOf is the master narrowed to some processes: their styles and claims, and
+// the demands on the loaders those claims name. The [demo] loop's thresholds are
+// sized as about two carts of the market, not by the cells' stock, so the rule
+// below is the sections' that were sized by it.
+func sectionOf(t *testing.T, procs ...string) *plantspec.Plant {
+	t.Helper()
+	p := kanbanPressPlant(t)
+	in := map[string]bool{}
+	for _, pr := range procs {
+		in[pr] = true
+	}
+	out := *p
+	out.Styles, out.Claims, out.Demands = nil, nil, nil
+	styles := map[string]bool{}
+	for _, st := range p.Styles {
+		if in[st.Process] {
+			styles[st.Name] = true
+			out.Styles = append(out.Styles, st)
+		}
+	}
+	nodes := map[string]bool{}
+	for _, c := range p.Claims {
+		if styles[c.Style] {
+			out.Claims = append(out.Claims, c)
+			nodes[c.CoreNode] = true
+		}
+	}
+	for _, d := range p.Demands {
+		if nodes[d.Node] {
+			out.Demands = append(out.Demands, d)
+		}
+	}
+	return &out
+}
+
+var (
+	windowLine = []string{"LINE-2", "SMN-10-W", "SMN-10-X", "DRAIN-10"}
+	cell4x2    = []string{"WELD-6", "LOADER-COMMON-1", "LOADER-COMMON-2", "LOADER-COMMON-3", "LOADER-MIRROR-L", "LOADER-MIRROR-R"}
+)

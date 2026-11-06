@@ -11,7 +11,7 @@ import (
 	"shingocore/store"
 )
 
-// kanban_press_docker_test.go — what seeding plants/kanban-press.yaml writes through
+// kanban_press_docker_test.go — what seeding the master's [kanban] section writes through
 // store.SaveKanban: the rows the runs stand on, read back as a reader reads them.
 //
 // The fifth part's sentence on the card is the picture's (NothingProcesses), and it

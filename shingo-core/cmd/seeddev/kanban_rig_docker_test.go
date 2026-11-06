@@ -27,10 +27,11 @@ import (
 	"shingocore/www"
 )
 
-// kanban_rig_docker_test.go — the rig's loop on its real plant file in the docker
-// shards, on every gate. plants/kanban-press.yaml seeded by seedCore, the real keeper,
-// doors and walk, with no compose stack: scripts/kanban-rig.sh R1..R6 on the stack is the
-// certification pair before a merge (docs/fleet-simulator/kanban.md).
+// kanban_rig_docker_test.go — the kanban family: the rig's loop on the master in the
+// docker shards, on every gate. plants/master.yaml seeded whole by seedCore, the real
+// keeper, doors and walk, with no compose stack; the runs drive the [kanban] and
+// [kanban5] sections. scripts/kanban-rig.sh R1..R6 on the stack is the certification
+// pair before a merge (docs/fleet-simulator/kanban.md).
 //
 // WHAT IS REAL. The orders come in through the wire's door (HandleOrderRequest) as the
 // Edge sends them. The fleet is the simulator, its orders driven to FINISHED, and each
@@ -920,13 +921,13 @@ func (r *kanbanRig) cardsSaid() string {
 	return strings.Join(out, "; ")
 }
 
-// TestKanbanRig_FivePressSteady: plants/kanban-press5.yaml on its one kanban: steady, each press
+// TestKanbanRig_FivePressSteady: the master's [kanban5] on its one kanban: steady, each press
 // lets a pair go and takes a pair back, the family stays whole, and the counts are the one-press
 // counts whatever the presses.
 func TestKanbanRig_FivePressSteady(t *testing.T) {
 	t.Parallel()
 	windows := []string{"ULN_501", "ULN_502", "ULN_503", "ULN_504", "ULN_505", "ULN_506", "ULN_507", "ULN_508", "ULN_509", "ULN_510"}
-	plant, err := plantspec.Load("../../../plants/kanban-press5.yaml")
+	plant, err := plantspec.Load("../../../plants/master.yaml")
 	testutil.MustNoErr(t, err, "the plant file")
 	r := newKanbanRigOf(t, plant, windows)
 	r.settled()

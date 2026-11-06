@@ -18,11 +18,12 @@ import (
 	"shingocore/store/orders"
 )
 
-// order_carts_fixture_docker_test.go — plants/order-carts.yaml, the multi-cart
-// fixture, seeded and driven end to end: the dispatcher's intake and allocation,
-// the simulator's blocks, the engine's lifts, set-downs, completion and cancel.
+// order_carts_fixture_docker_test.go — the multi-cart family: the master's
+// [multi-cart] shapes, seeded whole and driven end to end: the dispatcher's
+// intake and allocation, the simulator's blocks, the engine's lifts, set-downs,
+// completion and cancel.
 //
-// The cells are the plant's: PRESS-1's press-index swap (R2 lifts the on-deck
+// The cells are the master's [demo] PRESS-1 and WELD-2: PRESS-1's press-index swap (R2 lifts the on-deck
 // cart onto the press and an empty onto the back position: two carts, one order)
 // and WELD-2's single_robot relay (two carts, four lifts, two of them relays).
 // The injected states are the brief's: a CANCEL with the second cart on the
@@ -42,10 +43,10 @@ type ocPlant struct {
 func newOCPlant(t *testing.T) *ocPlant {
 	t.Helper()
 	db := testdb.Open(t)
-	plant, err := plantspec.Load("../../../plants/order-carts.yaml")
-	testutil.MustNoErr(t, err, "load plants/order-carts.yaml")
-	testutil.MustNoErr(t, plant.Validate(), "validate plants/order-carts.yaml")
-	testutil.MustNoErr(t, seedCore(db, plant, map[string]int64{}), "seed the multi-cart fixture")
+	plant, err := plantspec.Load("../../../plants/master.yaml")
+	testutil.MustNoErr(t, err, "load plants/master.yaml")
+	testutil.MustNoErr(t, plant.Validate(), "validate plants/master.yaml")
+	testutil.MustNoErr(t, seedCore(db, plant, map[string]int64{}), "seed the master")
 	seedClaimsMirror(t, db, plant)
 
 	sim := simulator.New()

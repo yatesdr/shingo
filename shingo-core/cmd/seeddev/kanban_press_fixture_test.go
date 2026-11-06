@@ -15,21 +15,29 @@ import (
 	"shingocore/plantspec"
 )
 
-// kanban_press_fixture_test.go — the arithmetic at the head of
-// plants/kanban-press.yaml, against the file, so neither can drift from the other.
-// It reads the shipped file for the reason edge2_fixture_test.go gives.
+// kanban_press_fixture_test.go — the arithmetic at the head of the master's
+// [kanban] section, against plants/master.yaml, so neither can drift from the
+// other. It reads the shipped file for the reason edge2_fixture_test.go gives.
 
+// kanbanPressPlant is the whole master: the kanban family's docker runs seed all
+// of it, so the press's loop runs beside every other section's.
 func kanbanPressPlant(t *testing.T) *plantspec.Plant {
 	t.Helper()
-	p, err := plantspec.Load(filepath.Join("..", "..", "..", "plants", "kanban-press.yaml"))
+	p, err := plantspec.Load(filepath.Join("..", "..", "..", "plants", "master.yaml"))
 	if err != nil {
-		t.Fatalf("load plants/kanban-press.yaml: %v", err)
+		t.Fatalf("load plants/master.yaml: %v", err)
 	}
 	if err := p.Validate(); err != nil {
-		t.Fatalf("validate plants/kanban-press.yaml: %v", err)
+		t.Fatalf("validate plants/master.yaml: %v", err)
 	}
 	return p
 }
+
+// kanbanZones and kanbanCells are the [kanban] section's storage and cells.
+var (
+	kanbanZones = map[string]bool{"PRESS-KANBAN": true, "WELD-KANBAN": true, "KP-SM": true, "PRESS-UNLOAD": true, "WELD-UNLOAD": true}
+	kanbanCells = map[string]bool{"PLN_021": true, "PLN_022": true, "PLN_023": true, "PLN_024": true, "ALN_021": true, "SLN_021": true}
+)
 
 // kanbanPressGroupOf is every position's zone.
 func kanbanPressGroupOf(p *plantspec.Plant) map[string]string {
@@ -59,6 +67,9 @@ func TestKanbanPressFixture_ThePool(t *testing.T) {
 	type place struct{ where, binType string }
 	got := map[place]int{}
 	for _, b := range p.Bins {
+		if !kanbanZones[groupOf[b.Slot]] && !kanbanCells[b.Slot] {
+			continue // another section's cart
+		}
 		if b.Payload != "" {
 			t.Errorf("bin %s is seeded full; the rig's loop starts on empties", b.Name)
 		}
@@ -115,7 +126,7 @@ func TestKanbanPressFixture_ThePool(t *testing.T) {
 }
 
 // rigSlotTypes is what each of K's slots allows, the table plantspec.Slot cannot state:
-// plants/kanban-press.yaml states the same in each slot's admits.
+// the master's [kanban] section states the same in each slot's admits.
 func rigSlotTypes() map[string][]string {
 	out := map[string][]string{}
 	for i := 1; i <= 16; i++ {
@@ -145,43 +156,50 @@ type devSim struct {
 }
 
 // TestKanbanPressFixture_DevConfigMatches: a reporting point whose counter the fake
-// PLC does not tick never counts, with no error anywhere, and a tap setting on a
-// station the plant does not build keeps the plain CLEAR, so the rig would run and
-// light nothing. plc_name is the process name, which is what simcalc keys rates on.
+// PLC of its process's Edge does not tick never counts, with no error anywhere, and a
+// tap setting on a station the plant does not build keeps the plain CLEAR, so the rig
+// would run and light nothing. On the plant's own Edge plc_name is the process name.
 func TestKanbanPressFixture_DevConfigMatches(t *testing.T) {
 	t.Parallel()
 	p := kanbanPressPlant(t)
-	raw, err := os.ReadFile(filepath.Join("..", "..", "..", "shingo-edge", "shingoedge.dev.yaml"))
-	if err != nil {
-		t.Fatalf("read dev config: %v", err)
+	read := func(name string) devSim {
+		raw, err := os.ReadFile(filepath.Join("..", "..", "..", "shingo-edge", name))
+		if err != nil {
+			t.Fatalf("read %s: %v", name, err)
+		}
+		var cfg devSim
+		if err := yaml.Unmarshal(raw, &cfg); err != nil {
+			t.Fatalf("parse %s: %v", name, err)
+		}
+		return cfg
 	}
-	var cfg devSim
-	if err := yaml.Unmarshal(raw, &cfg); err != nil {
-		t.Fatalf("parse dev config: %v", err)
-	}
-	ticks := map[string]bool{}
-	for _, pr := range cfg.Sim.Processes {
-		ticks[pr.PLCName+"/"+pr.TagName] = true
+	cfg := read("shingoedge.dev.yaml")
+	configOf := map[string]string{p.Station(): "shingoedge.dev.yaml", "edge2.line1": "shingoedge.edge2.yaml"}
+	ticks := map[string]map[string]bool{}
+	for station, file := range configOf {
+		ticks[station] = map[string]bool{}
+		for _, pr := range read(file).Sim.Processes {
+			ticks[station][pr.PLCName+"/"+pr.TagName] = true
+		}
 	}
 	processOf := map[string]string{}
 	for _, s := range p.Styles {
 		processOf[s.Name] = s.Process
 	}
 	for _, rp := range p.ReportingPoints {
-		if !ticks[rp.PLCName+"/"+rp.TagName] {
-			t.Errorf("reporting point %s/%s has no tick in shingoedge.dev.yaml", rp.PLCName, rp.TagName)
+		edge := p.EdgeOf(processOf[rp.Style])
+		if !ticks[edge][rp.PLCName+"/"+rp.TagName] {
+			t.Errorf("reporting point %s/%s has no tick in %s", rp.PLCName, rp.TagName, configOf[edge])
 		}
-		if rp.PLCName != processOf[rp.Style] {
-			t.Errorf("reporting point %s is on process %s; simcalc keys rates on the process name", rp.PLCName, processOf[rp.Style])
+		if edge == p.Station() && rp.PLCName != processOf[rp.Style] {
+			t.Errorf("reporting point %s is on process %s; the dev stack names a PLC for its process", rp.PLCName, processOf[rp.Style])
 		}
 	}
+	// The unloaders' windows: a produce loader's windows (PLK_LOADER's) are tapped by
+	// no one.
 	windowStations := map[string]bool{}
-	five, err := plantspec.Load(filepath.Join("..", "..", "..", "plants", "kanban-press5.yaml"))
-	if err != nil {
-		t.Fatalf("the five-press plant: %v", err)
-	}
-	for _, c := range append(append([]plantspec.Claim(nil), p.Claims...), five.Claims...) {
-		if c.WindowOf != "" {
+	for _, c := range p.Claims {
+		if c.WindowOf != "" && c.Role == "consume" {
 			windowStations[c.OperatorStation] = true
 		}
 	}
@@ -214,7 +232,7 @@ func TestSeedKanbanPress_EdgeBuildsTheBoards(t *testing.T) {
 		t.Fatalf("apply edge DDL: %v", err)
 	}
 	plant := kanbanPressPlant(t)
-	if err := seedEdgeInTx(t, db, plant); err != nil {
+	if err := seedEdgeInTx(t, db, plant.ForEdge(plant.Station())); err != nil {
 		t.Fatalf("seedEdgeDB: %v", err)
 	}
 
@@ -250,7 +268,7 @@ func TestSeedKanbanPress_EdgeBuildsTheBoards(t *testing.T) {
 	if windowClaims != 0 {
 		t.Errorf("%d claim rows on the windows; Core owns a loader", windowClaims)
 	}
-	if err := db.QueryRow(`SELECT count(*) FROM style_node_claims WHERE core_node_name LIKE 'PLN_%'`).Scan(&pressClaims); err != nil {
+	if err := db.QueryRow(`SELECT count(*) FROM style_node_claims WHERE core_node_name IN ('PLN_021', 'PLN_022', 'PLN_023', 'PLN_024')`).Scan(&pressClaims); err != nil {
 		t.Fatalf("count press claims: %v", err)
 	}
 	if pressClaims != 10 {

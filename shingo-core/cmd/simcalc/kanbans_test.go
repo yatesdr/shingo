@@ -10,17 +10,27 @@ import (
 // kanbans_test.go — the rig's numbers as simcalc computes them, off the shipped
 // plant and dev config: this is the check `simcalc -carriers` prints, as a test.
 
+// kanbanPress is the master as simcalc reads it, with its kanbans narrowed to the
+// [kanban] section's K and K2: their pools are their own, and the other sections'
+// kanbans have their own pins (the [demo] one reads as demo-sim's did).
 func kanbanPress(t *testing.T) (*plantspec.Plant, map[string]float64) {
 	t.Helper()
-	p, err := plantspec.Load(filepath.Join("..", "..", "..", "plants", "kanban-press.yaml"))
+	p, err := plantspec.Load(filepath.Join("..", "..", "..", "plants", "master.yaml"))
 	if err != nil {
 		t.Fatalf("load: %v", err)
 	}
+	kept := p.Kanbans[:0:0]
+	for _, k := range p.Kanbans {
+		if k.Group == "PRESS-KANBAN" || k.Group == "WELD-KANBAN" {
+			kept = append(kept, k)
+		}
+	}
+	p.Kanbans = kept
 	edge, err := loadEdge(filepath.Join("..", "..", "..", "shingo-edge", "shingoedge.dev.yaml"))
 	if err != nil {
 		t.Fatalf("load edge: %v", err)
 	}
-	return p, edgeRates(edge)
+	return p, processRates(p, edgeRates(edge))
 }
 
 // A loader's allowed list is its parts: each flowing part is drained, one no style
@@ -195,5 +205,26 @@ func TestReportKanbans_FailsBelowWantAndOnADrainInsideTheRun(t *testing.T) {
 	}
 	if !reportKanbans(&whole, plan, rate, 10) {
 		t.Error("a 10 sim-minute run is inside K2's stock and should pass")
+	}
+}
+
+// TestMasterKanbans_EveryKanbanHoldsTheRun: every kanban of the master, [demo]'s
+// press empties included, at its want and every family at its pool for a 40-minute
+// run at 10x. RED while [demo]'s kanban was seeded at its level: its families stood
+// 6 of 8 and 4 of 6.
+func TestMasterKanbans_EveryKanbanHoldsTheRun(t *testing.T) {
+	t.Parallel()
+	p, err := plantspec.Load(filepath.Join("..", "..", "..", "plants", "master.yaml"))
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	edge, err := loadEdge(filepath.Join("..", "..", "..", "shingo-edge", "shingoedge.dev.yaml") + "," +
+		filepath.Join("..", "..", "..", "shingo-edge", "shingoedge.edge2.yaml"))
+	if err != nil {
+		t.Fatalf("load edges: %v", err)
+	}
+	rate := processRates(p, edgeRates(edge))
+	if !reportKanbans(p, computeCarriers(p, rate, 7.5, 7.5), rate, 400) {
+		t.Error("a kanban of the master is under its want or its pool, or drains inside the run")
 	}
 }

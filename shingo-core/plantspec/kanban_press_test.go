@@ -5,15 +5,15 @@ import (
 	"testing"
 )
 
-// kanban_press_test.go — plants/kanban-press.yaml, the Kanban certification rig.
-// SHAPE, not tuning: what each run needs the file to have. Its arithmetic is
-// pinned beside it in cmd/seeddev (TestKanbanPressFixture_*).
+// kanban_press_test.go — the master's [kanban] section, the Kanban certification
+// cells. SHAPE, not tuning: what each run needs the file to have. Its arithmetic
+// is pinned beside it in cmd/seeddev (TestKanbanPressFixture_*).
 
 func loadKanbanPress(t *testing.T) *Plant {
 	t.Helper()
-	p, err := Load("../../plants/kanban-press.yaml")
+	p, err := Load(masterPath)
 	if err != nil {
-		t.Fatalf("load plants/kanban-press.yaml: %v", err)
+		t.Fatalf("load plants/master.yaml: %v", err)
 	}
 	return p
 }
@@ -22,7 +22,7 @@ func TestKanbanPressPlant_ValidAndCleanAtBirth(t *testing.T) {
 	t.Parallel()
 	p := loadKanbanPress(t)
 	if err := p.Validate(); err != nil {
-		t.Fatalf("plants/kanban-press.yaml invalid: %v", err)
+		t.Fatalf("plants/master.yaml invalid: %v", err)
 	}
 	if c := p.CensusAtBirth(); !c.Clean() {
 		t.Errorf("census: %v", c.Findings())
@@ -180,8 +180,13 @@ func TestKanbanPressPlant_TheKanbans(t *testing.T) {
 		byName[g.Group] = g
 	}
 
-	if len(p.Kanbans) != 2 {
-		t.Errorf("kanbans = %d, want K and K2 and no lender", len(p.Kanbans))
+	// K and K2, and no lender: no other kanban supports the section's cells.
+	for _, g := range p.Kanbans {
+		for _, proc := range g.Supports {
+			if (proc == "KP-PRESS" || proc == "KW-WELD") && g.Group != "PRESS-KANBAN" && g.Group != "WELD-KANBAN" {
+				t.Errorf("kanban %s supports %s: K and K2 have a lender", g.Group, proc)
+			}
+		}
 	}
 	k := byName["PRESS-KANBAN"]
 	if k.Pools["45x48"] != 10 || k.Pools["CART-32"] != 6 || k.Strict || len(k.Sources) != 0 ||
@@ -206,8 +211,14 @@ func TestKanbanPressPlant_TheKanbans(t *testing.T) {
 	if _, levelled := byName["KP-SM"]; levelled {
 		t.Error("KP-SM declares a level; R5 needs a plain group that nothing repays")
 	}
+	pressStyles := map[string]bool{}
+	for _, st := range p.Styles {
+		if st.Process == "KP-PRESS" {
+			pressStyles[st.Name] = true
+		}
+	}
 	for _, c := range p.Claims {
-		if c.Role == "produce" && c.Style != "KW-RUN" && c.InboundSource != "PRESS-KANBAN" {
+		if pressStyles[c.Style] && c.Role == "produce" && c.InboundSource != "PRESS-KANBAN" {
 			t.Errorf("claim %s/%s draws from %q, want PRESS-KANBAN", c.CoreNode, c.Style, c.InboundSource)
 		}
 	}

@@ -115,41 +115,57 @@ func TestCensus_HeadroomCanBeWaivedOnPurpose(t *testing.T) {
 	}
 }
 
-// TestCensus_TheShippedSeeds pins both rig seeds, which is the regression this
-// file is really for.
+// TestCensus_TheShippedSeeds pins the shipped seed and the frozen baseline's two
+// defects, which is the regression this file is really for.
 //
-// The frozen baseline REPORTS and still loads: an A/B is only meaningful against
-// an unchanged seed, so a spec a published number was measured on cannot be
-// corrected without deleting the number. Its two defects are named on every load
-// rather than forgotten, which is the whole difference between a known defect
-// and an unknown one.
+// The master is clean. The frozen lane-stress baseline is gone from the tree; its
+// two seeded bubbles are replayed here on the master's corridor, which is that
+// rig's storage slot for slot: SYN_COMP's C3 and C5 filled from the MOUTH, as
+// lane-stress.yaml had them. Frozen, the spec REPORTS and still loads (an A/B is
+// only meaningful against an unchanged seed, so a spec a published number was
+// measured on is not corrected); unfrozen, it is refused. Both defects are named.
 func TestCensus_TheShippedSeeds(t *testing.T) {
-	frozen, err := Load("../../plants/lane-stress.yaml")
+	master, err := Load("../../plants/master.yaml")
 	if err != nil {
-		t.Fatalf("load the frozen baseline: %v", err)
+		t.Fatalf("load the master: %v", err)
 	}
-	if frozen.BaselineFrozenAt == "" {
-		t.Error("lane-stress.yaml no longer declares itself a frozen baseline — it has two known " +
-			"seed defects, so without that declaration it stops loading and the closing run has no seed")
-	}
-	if c := frozen.CensusAtBirth(); len(c.Bubbles) != 2 {
-		t.Errorf("the frozen baseline reports %d bubble(s), want the 2 §R.77 traced by hand "+
-			"(LSC_012 and LSC_019): %v", len(c.Bubbles), c.Findings())
-	}
-	if err := frozen.Validate(); err != nil {
-		t.Errorf("the frozen baseline no longer validates: %v", err)
-	}
-
-	packed, err := Load("../../plants/lane-stress-packed.yaml")
-	if err != nil {
-		t.Fatalf("load the packed re-cut: %v", err)
-	}
-	if packed.BaselineFrozenAt != "" {
-		t.Error("the packed re-cut declares itself frozen. It is the seed new baselines are cut " +
+	if master.BaselineFrozenAt != "" {
+		t.Error("the master declares itself frozen. It is the seed every baseline is cut " +
 			"from and it has nothing to excuse — a waiver here would hide a real regression")
 	}
-	if c := packed.CensusAtBirth(); !c.Clean() {
-		t.Errorf("the packed re-cut is not clean: %v", c.Findings())
+	if c := master.CensusAtBirth(); !c.Clean() {
+		t.Errorf("the master is not clean: %v", c.Findings())
+	}
+
+	frozen := *master
+	frozen.Bins = append([]Bin(nil), master.Bins...)
+	mouthFirst := map[string]string{"LSC_010": "LSC_009", "LSC_011": "LSC_010", "LSC_012": "LSC_011", "LSC_018": "LSC_017", "LSC_019": "LSC_018"}
+	moved := 0
+	for i, b := range frozen.Bins {
+		if to, ok := mouthFirst[b.Slot]; ok {
+			frozen.Bins[i].Slot = to
+			moved++
+		}
+	}
+	if moved != 5 {
+		t.Fatalf("moved %d carts, want C3's three and C5's two: the corridor's seed has changed under the replay", moved)
+	}
+	c := frozen.CensusAtBirth()
+	var at []string
+	for _, b := range c.Bubbles {
+		at = append(at, b.Slot+" behind "+b.BlockedBy)
+	}
+	if got := strings.Join(at, ", "); len(c.Bubbles) != 2 || !strings.Contains(got, "LSC_012 behind LSC_009") ||
+		!strings.Contains(got, "LSC_019 behind LSC_017") {
+		t.Errorf("the replayed baseline reports %q, want the 2 §R.77 traced by hand (LSC_012 behind LSC_009, "+
+			"LSC_019 behind LSC_017)", got)
+	}
+	if err := frozen.Validate(); err == nil || !strings.Contains(err.Error(), "AIR BUBBLE AT BIRTH") {
+		t.Errorf("unfrozen, the replay validated (%v); a seed with an unreachable slot must be refused", err)
+	}
+	frozen.BaselineFrozenAt = "§R.78"
+	if err := frozen.Validate(); err != nil {
+		t.Errorf("frozen, the replay no longer validates: %v — a known defect reports, it does not refuse", err)
 	}
 }
 
