@@ -198,7 +198,7 @@ func scanReportingPoint(rp *ReportingPoint, scanner interface{ Scan(...any) erro
 
 // ListReportingPoints returns every reporting_point row.
 func ListReportingPoints(db *sql.DB) ([]ReportingPoint, error) {
-	// Join styles to resolve process_id (same as ListEnabledReportingPoints).
+	// Join styles to resolve process_id (as ListPolledReportingPoints does).
 	// Without it ProcessID stays 0, and the Q-034 cell catalog (BuildCellCatalog,
 	// fed by this list) reports every cell with process_id=0 — so the auto-derived
 	// heartbeat tiles query process_id=0, match no cell_part_events (keyed by the
@@ -215,14 +215,33 @@ func ListReportingPoints(db *sql.DB) ([]ReportingPoint, error) {
 	return scanReportingPointsWithLine(rows)
 }
 
-// ListEnabledReportingPoints returns every enabled reporting_point,
-// joined to styles so callers get the process_id without a per-poll
-// lookup.
-func ListEnabledReportingPoints(db *sql.DB) ([]ReportingPoint, error) {
-	rows, err := db.Query(`SELECT rp.id, rp.plc_name, rp.tag_name, rp.style_id, rp.last_count, rp.last_poll_at, rp.enabled, rp.warlink_managed, COALESCE(js.process_id, 0)
+// ListPolledReportingPoints returns the points the poll reads: each enabled
+// point on its style's process's counter tag, with that process's id. One per
+// process (UNIQUE(plc_name, tag_name)): the walk has no point filter, so a
+// second enabled point on a process would draw every cart twice.
+func ListPolledReportingPoints(db *sql.DB) ([]ReportingPoint, error) {
+	rows, err := db.Query(`SELECT rp.id, rp.plc_name, rp.tag_name, rp.style_id, rp.last_count, rp.last_poll_at, rp.enabled, rp.warlink_managed, p.id
+		FROM reporting_points rp
+		JOIN styles js ON js.id = rp.style_id
+		JOIN processes p ON p.id = js.process_id AND p.counter_plc_name = rp.plc_name AND p.counter_tag_name = rp.tag_name
+		WHERE rp.enabled = 1
+		ORDER BY rp.plc_name, rp.tag_name`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanReportingPointsWithLine(rows)
+}
+
+// ListStrayReportingPoints returns the enabled points the poll does not read:
+// on no live process, or not on their process's counter tag.
+func ListStrayReportingPoints(db *sql.DB) ([]ReportingPoint, error) {
+	rows, err := db.Query(`SELECT rp.id, rp.plc_name, rp.tag_name, rp.style_id, rp.last_count, rp.last_poll_at, rp.enabled, rp.warlink_managed, COALESCE(p.id, 0)
 		FROM reporting_points rp
 		LEFT JOIN styles js ON js.id = rp.style_id
+		LEFT JOIN processes p ON p.id = js.process_id
 		WHERE rp.enabled = 1
+		  AND (p.id IS NULL OR p.counter_plc_name <> rp.plc_name OR p.counter_tag_name <> rp.tag_name)
 		ORDER BY rp.plc_name, rp.tag_name`)
 	if err != nil {
 		return nil, err

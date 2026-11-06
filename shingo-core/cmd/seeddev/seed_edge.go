@@ -370,7 +370,8 @@ func seedEdgeDB(db sqlExec, p *plantspec.Plant, binIDByNode map[string]int64) er
 		proc := styleProc[rp.Style]
 		if proc == "" {
 			// A styleless point names no process, so there is nothing to declare
-			// it on. It still polls; the columns stay blank, honestly.
+			// it on. The poll reads only a point on its process's counter tag, so
+			// it never polls; the Edge logs it at boot as a point it skips.
 			continue
 		}
 		// ONE PROCESS, ONE COUNTER. The three columns hold exactly one, so two

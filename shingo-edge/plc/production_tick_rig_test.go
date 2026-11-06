@@ -108,7 +108,7 @@ func newUnreadTickRig(t *testing.T, em EventEmitter, pollRate time.Duration) *ti
 	}
 	mgr := newTestManager(db, cfg, em, nil)
 
-	proc, err := db.CreateProcess("PROC-A", "", "", "", false)
+	proc, err := db.CreateProcess("PROC-A", "", rigPLC, rigTag, true)
 	if err != nil {
 		t.Fatalf("create process: %v", err)
 	}
@@ -140,7 +140,7 @@ func (r *tickRig) pass(v int64) {
 
 // rp returns the stored reporting point as the poll pass reads it.
 func (r *tickRig) rp() counters.ReportingPoint {
-	rps, err := r.db.ListEnabledReportingPoints()
+	rps, err := r.db.ListPolledReportingPoints()
 	if err != nil {
 		r.t.Fatalf("list reporting points: %v", err)
 	}

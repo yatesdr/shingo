@@ -538,27 +538,35 @@ func TestReportingPoints_SetManaged(t *testing.T) {
 	}
 }
 
-func TestReportingPoints_ListEnabledAndLookups(t *testing.T) {
+func TestReportingPoints_ListPolledAndLookups(t *testing.T) {
 	t.Parallel()
 	db := coverageDB(t)
-	_, sid := seedProcessStyle(t, db, "P", "S")
+	pid, sid := seedProcessStyle(t, db, "P", "S")
+	testutil.MustNoErr(t, db.SetProcessCounter(pid, "PLC1", "T1", true, "", false), "the process counts on PLC1/T1")
 
 	id1, _ := db.CreateReportingPoint("PLC1", "T1", sid)
 	id2, _ := db.CreateReportingPoint("PLC2", "T2", sid)
+	id3, err := db.CreateReportingPoint("PLC3", "T3", sid)
+	testutil.MustNoErr(t, err, "create the point on a tag its process does not count on")
 
-	// Schema default for `enabled` is 1, so both rows start enabled.
-	// Disable id2 to verify ListEnabledReportingPoints actually filters.
+	// Schema default for `enabled` is 1, so the rows start enabled. Disable
+	// id2: the poll reads neither a disabled point nor id3, enabled on a tag
+	// its process does not count on.
 	testutil.MustNoErr(t, db.UpdateReportingPoint(id2, "PLC2", "T2", sid, false), "disable id2")
 
-	enabled, err := db.ListEnabledReportingPoints()
+	polled, err := db.ListPolledReportingPoints()
 	if err != nil {
-		t.Fatalf("list enabled: %v", err)
+		t.Fatalf("list polled: %v", err)
 	}
-	if len(enabled) != 1 || enabled[0].ID != id1 {
-		t.Errorf("enabled = %+v, want only id1=%d", enabled, id1)
+	if len(polled) != 1 || polled[0].ID != id1 || polled[0].ProcessID != pid {
+		t.Errorf("polled = %+v, want only id1=%d on process %d", polled, id1, pid)
 	}
-	if enabled[0].ProcessID == 0 {
-		t.Error("expected ProcessID joined through style")
+	stray, err := db.ListStrayReportingPoints()
+	if err != nil {
+		t.Fatalf("list stray: %v", err)
+	}
+	if len(stray) != 1 || stray[0].ID != id3 {
+		t.Errorf("stray = %+v, want only id3=%d", stray, id3)
 	}
 
 	byTag, err := db.GetReportingPointByTag("PLC2", "T2")

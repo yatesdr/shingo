@@ -60,7 +60,7 @@ func (m *Manager) pollLineCounter(lc counters.LineCounter) {
 	// id 0), for the health strip's "unreadable"; a PLC the manager does not
 	// hold or is not connected to is one.
 	if !m.IsConnected(lc.PLCName) {
-		m.emitter.EmitCounterReadError(0, lc.PLCName, lc.TagName, "PLC "+lc.PLCName+" is not connected")
+		m.emitter.EmitCounterReadError(0, lc.PLCName, lc.TagName, m.notConnected(lc.PLCName))
 		m.touchLineCounter(lc)
 		return
 	}

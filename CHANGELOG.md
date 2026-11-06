@@ -43,6 +43,7 @@ Edge only, v37-v42 (the dev seeder learns station counters). Ship after a restor
 - The Charge says when its preview fails; Mark as running on the style being left says to Cancel; the station's Confirm says it pins the CATID; the CUTOVER dialog opens before its offer is read
 - An automatic cutover or switch re-reads the mode and the pin under the door's mutex before it acts
 - Station counters: one silent since boot is stopped; the ratio ignores run-outs and changeovers; a held stroke holds where the running or target style claims; a process delete takes its counters; a PLC move waits for them; an outage counts, a rollback re-seeds at the next boot
+- The poll reads one point per process, the one on its counter tag (any other enabled point is named at boot), and raises a read error for a point whose PLC WarLink lacks
 
 ## 2026-11-03 — An order's carts are its rows
 

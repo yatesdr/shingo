@@ -556,6 +556,15 @@ func (m *Manager) PLCStatuses() map[string]string {
 	return statuses
 }
 
+// notConnected says why a counter's PLC cannot be read: WarLink has no PLC of
+// that name, or has it and is not connected to it.
+func (m *Manager) notConnected(plcName string) string {
+	if m.GetPLC(plcName) == nil {
+		return "WarLink has no PLC named " + plcName
+	}
+	return "PLC " + plcName + " is not connected"
+}
+
 // IsConnected returns whether a PLC is currently connected via WarLink.
 func (m *Manager) IsConnected(name string) bool {
 	m.mu.RLock()
@@ -646,10 +655,27 @@ func (m *Manager) DiscoverTags(plcName string) ([]TagInfo, error) {
 	return tags, nil
 }
 
-// StartPolling starts the counter polling loop for all enabled reporting points.
+// StartPolling starts the counter polling loop over each process's counter
+// point, first naming, once, the enabled points it will not read.
 func (m *Manager) StartPolling() {
+	m.logStrayPoints()
 	m.wg.Add(1)
 	go m.pollLoop()
+}
+
+// logStrayPoints names each enabled reporting point the poll skips: one on no
+// live process, or not on its process's counter tag (a re-point's leftover).
+// The poll reads one point per process (ListPolledReportingPoints).
+func (m *Manager) logStrayPoints() {
+	stray, err := m.db.ListStrayReportingPoints()
+	if err != nil {
+		log.Printf("list stray reporting points: %v", err)
+		return
+	}
+	for _, rp := range stray {
+		log.Printf("reporting point %d (%s/%s) is enabled but is not its process's counter tag (process %d) — not read",
+			rp.ID, rp.PLCName, rp.TagName, rp.ProcessID)
+	}
 }
 
 // Stop stops the polling loops and cleans up.
@@ -684,7 +710,7 @@ func (m *Manager) pollLoop() {
 }
 
 func (m *Manager) pollAllReportingPoints() {
-	rps, err := m.db.ListEnabledReportingPoints()
+	rps, err := m.db.ListPolledReportingPoints()
 	if err != nil {
 		log.Printf("list reporting points: %v", err)
 		return
@@ -737,7 +763,10 @@ func (m *Manager) pollReportingPointSafe(rp counters.ReportingPoint) (shippable 
 // pollReportingPoint reads one counter and records any change. It reports
 // whether the snapshot row it wrote is one the production tick shipper sends.
 func (m *Manager) pollReportingPoint(rp counters.ReportingPoint) bool {
+	// Raised each pass as a failed read is, so the strip names a counter whose
+	// PLC WarLink lacks; it is not logged (the journal would get one a pass).
 	if !m.IsConnected(rp.PLCName) {
+		m.emitter.EmitCounterReadError(rp.ID, rp.PLCName, rp.TagName, m.notConnected(rp.PLCName))
 		return false
 	}
 	val, err := m.ReadTag(rp.PLCName, rp.TagName)

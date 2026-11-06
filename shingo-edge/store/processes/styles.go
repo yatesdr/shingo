@@ -224,7 +224,7 @@ func SetStyleExpectedCATID(db *sql.DB, id int64, expectedCATID string) error {
 //
 // Its reporting points are DISABLED in the same transaction. That is the one
 // piece of the old cascade worth keeping: a retired style must stop counting,
-// and rp.enabled is the poll gate (counters.ListEnabledReportingPoints). The
+// and rp.enabled is the poll gate (counters.ListPolledReportingPoints). The
 // rows themselves survive, so their snapshots stay attributable.
 func DeleteStyle(db *sql.DB, id int64) error {
 	tx, err := db.Begin()

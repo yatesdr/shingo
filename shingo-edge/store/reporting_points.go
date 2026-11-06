@@ -11,11 +11,15 @@ func (db *DB) ListReportingPoints() ([]counters.ReportingPoint, error) {
 	return counters.ListReportingPoints(db.DB)
 }
 
-// ListEnabledReportingPoints returns every enabled reporting_point,
-// joined to styles so callers get the process_id without a per-poll
-// lookup.
-func (db *DB) ListEnabledReportingPoints() ([]counters.ReportingPoint, error) {
-	return counters.ListEnabledReportingPoints(db.DB)
+// ListPolledReportingPoints returns the points the poll reads: the enabled
+// point on each process's counter tag (counters.ListPolledReportingPoints).
+func (db *DB) ListPolledReportingPoints() ([]counters.ReportingPoint, error) {
+	return counters.ListPolledReportingPoints(db.DB)
+}
+
+// ListStrayReportingPoints returns the enabled points the poll does not read.
+func (db *DB) ListStrayReportingPoints() ([]counters.ReportingPoint, error) {
+	return counters.ListStrayReportingPoints(db.DB)
 }
 
 // GetReportingPoint returns one reporting_point by id.
