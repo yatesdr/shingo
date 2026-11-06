@@ -955,9 +955,6 @@ func (e *Engine) saveFlowTx(tx *sql.Tx, process *processes.Process, style proces
 	if err != nil {
 		return nil, nil, err
 	}
-	if err := processes.CheckPairPartners(tx); err != nil {
-		return nil, nil, err
-	}
 	// The new fingerprint, computed INSIDE the transaction and returned.
 	//
 	// ONE READ, NOT FOUR. It used to be recomputed after the commit, which

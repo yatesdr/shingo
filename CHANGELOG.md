@@ -27,7 +27,7 @@ Edge only, v37-v42 (the dev seeder learns station counters). Ship after a restor
 - A press that changed to the incoming part mid-changeover, held it a minute and counted it completes the changeover past its gate (auto) or offers Cut over now (prompt)
 - With no changeover open, a counted part only one other style runs by a person's pin, changed after the last landing, switches the process (auto-catid-flip); a part several run asks; a part standing since before a landing is run-out and prepays the incoming cart
 - The history panel names what completed each changeover; the automatic-cutover notice names the changeover, the part and what it left running; a non-numeric counter read is raised
-- An A/B pair is two positions that name each other: one lit side charged per tick, each pair its own fallthrough; a save naming a third is refused, a one-way pair is warned
+- An A/B pair is two positions that name each other: one lit side charged per tick, each pair its own fallthrough; a one-way pair is warned
 - Station counters (v41): a tag that clicks where the part leaves the cart charges the positions bound to it, under the PLC's part's style; the production walk leaves them
 - Station counters are created, re-pointed and deleted with their WarLink publishing; a position is counted at one only where a live style consumes, never a loader, producer or A/B pair
 - The process page: counter and identity tags suggested from WarLink (MES_ members marked, live values), identity derive/override/none, station counters and each position's Counted at

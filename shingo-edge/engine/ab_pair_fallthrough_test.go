@@ -10,7 +10,6 @@ import (
 
 	"shingo/protocol"
 	"shingo/protocol/testutil"
-	"shingoedge/domain"
 	"shingoedge/store"
 	"shingoedge/store/processes"
 )
@@ -130,34 +129,26 @@ func TestFallthrough_OneWayPairNeverDoubleCharges(t *testing.T) {
 	}
 }
 
-// saveClaim writes one claim through the single-claim door, which ends with
-// the store's checks.
-func (r *pairRig) saveClaim(core, partner string) error {
-	r.t.Helper()
-	tx, err := r.db.Begin()
-	testutil.MustNoErr(r.t, err, "begin")
-	_, _, err = processes.UpsertClaimChecked(tx, domain.CoreNodeKinds{}, processes.NodeClaimInput{StyleID: r.style,
-		CoreNodeName: core, Role: "consume", SwapMode: protocol.SwapModeSequential, PayloadCode: "PART-P",
-		UOPCapacity: 100, InboundSource: "SRC", PairedCoreNode: partner})
-	if err != nil {
-		testutil.MustNoErr(r.t, tx.Rollback(), "rollback")
-		return err
-	}
-	return tx.Commit()
-}
-
-// TestPairCheck_RefusesAContradictionAllowsOneSideAtATime: a claim naming a
-// partner whose claim names a third position is refused at save; a pair built
-// one side at a time (the single-claim door) passes through a one-way state.
-func TestPairCheck_RefusesAContradictionAllowsOneSideAtATime(t *testing.T) {
+// TestFallthrough_AContradictionIsNoPairAndIsWarned: C names A (a row from
+// before any check), and A and B name each other. C's claim is no pair: C,
+// lit, is charged as a position of its own, A/B keeps its one fallthrough,
+// and the strip names C.
+func TestFallthrough_AContradictionIsNoPairAndIsWarned(t *testing.T) {
 	t.Parallel()
 	r := newPairRig(t)
-	testutil.MustNoErr(t, r.saveClaim("S-A", "S-B"), "A names B, B not yet claimed")
-	testutil.MustNoErr(t, r.saveClaim("S-B", ""), "B claimed, naming nothing yet")
-	testutil.MustNoErr(t, r.saveClaim("S-B", "S-A"), "B names A: the pair")
-	err := r.saveClaim("S-C", "S-A")
-	if err == nil || !strings.Contains(err.Error(), "S-C names S-A") {
-		t.Fatalf("C naming A, which names B = %v, want refused naming both", err)
+	a := r.consume("K-A", "K-B", protocol.SwapModeSequential, false)
+	b := r.consume("K-B", "K-A", protocol.SwapModeSequential, false)
+	c := r.consume("K-C", "", protocol.SwapModeSequential, true)
+	_, err := r.db.Exec(`UPDATE style_node_claims SET paired_core_node = 'K-A' WHERE core_node_name = 'K-C'`)
+	testutil.MustNoErr(t, err, "C names A")
+	r.tick(2)
+	if got := []int{r.left(a), r.left(b), r.left(c)}; !(got[0] == 48 && got[1] == 50 && got[2] == 48) {
+		t.Errorf("carts = %v, want [48 50 48]: the pair's first dark side and C", got)
+	}
+	pairs, err := r.db.ListOneWayPairs(r.pid)
+	testutil.MustNoErr(t, err, "one-way pairs")
+	if len(pairs) != 1 || pairs[0].Node != "K-C" {
+		t.Errorf("one-way pairs = %+v, want K-C's", pairs)
 	}
 }
 
