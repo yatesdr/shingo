@@ -33,13 +33,13 @@ func TestStationCounterRoutes(t *testing.T) {
 	if code, body := stationDo(t, http.MethodGet, "/api/processes/2/station-counters", ""); code != http.StatusOK || body != "[]\n" {
 		t.Errorf("list 2: %d %q, want []", code, body)
 	}
-	if code, _ := stationDo(t, http.MethodPost, "/api/processes/1/station-counters", `{"label":"op 10","tag_name":"STATION_02"}`); code != http.StatusOK {
+	if code, _ := stationDo(t, http.MethodPost, "/api/processes/1/station-counters", `{"label":"load station","tag_name":"STATION_02"}`); code != http.StatusOK {
 		t.Errorf("create = %d, want 200", code)
 	}
 	if code, body := stationDo(t, http.MethodPost, "/api/processes/2/station-counters", `{"tag_name":"X"}`); code != http.StatusBadRequest || !strings.Contains(body, "no production counter wired") {
 		t.Errorf("create refused = %d %s, want 400 with the sentence", code, body)
 	}
-	if code, _ := stationDo(t, http.MethodPut, "/api/station-counters/7", `{"label":"op 10","tag_name":"STATION_03"}`); code != http.StatusOK {
+	if code, _ := stationDo(t, http.MethodPut, "/api/station-counters/7", `{"label":"load station","tag_name":"STATION_03"}`); code != http.StatusOK {
 		t.Errorf("update = %d", code)
 	}
 	if code, _ := stationDo(t, http.MethodDelete, "/api/station-counters/7", ""); code != http.StatusOK {

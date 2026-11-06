@@ -6,14 +6,14 @@ package store
 
 import "shingoedge/store/counters"
 
-// InsertCounterSnapshot writes one counter_snapshots row, the tick's stamp
-// included.
 // SumCounterDeltaSince sums the strokes the process counted with the PLC on
 // catid at or after sinceMs (counters.SumDeltaSince).
 func (db *DB) SumCounterDeltaSince(processID int64, catid string, sinceMs int64) (int64, error) {
 	return counters.SumDeltaSince(db.DB, processID, catid, sinceMs)
 }
 
+// InsertCounterSnapshot writes one counter_snapshots row, the tick's stamp
+// included.
 func (db *DB) InsertCounterSnapshot(rpID int64, countValue, delta int64, anomaly string, stamp counters.TickStamp) (int64, error) {
 	return counters.InsertSnapshot(db.DB, rpID, countValue, delta, anomaly, stamp)
 }

@@ -262,9 +262,6 @@ func SetChangeoverVerifyMismatch(db *sql.DB, changeoverID int64, liveCATID strin
 	return err
 }
 
-// LatestFlaggedChangeover returns the most recent changeover for a process that
-// carries a post-cutover verification flag (verify_live_catid set), or
-// (nil, nil) when none is flagged.
 // LatestForcedChangeover returns the process's most recent changeover completed
 // past its gate (triggered_by ends "-forced"), or (nil, nil) when none.
 func LatestForcedChangeover(db *sql.DB, processID int64) (*Changeover, error) {
@@ -318,6 +315,9 @@ func ListChangeoversTriggeredSince(db *sql.DB, processID int64, triggers []strin
 	return out, rows.Err()
 }
 
+// LatestFlaggedChangeover returns the most recent changeover for a process that
+// carries a post-cutover verification flag (verify_live_catid set), or
+// (nil, nil) when none is flagged.
 func LatestFlaggedChangeover(db *sql.DB, processID int64) (*Changeover, error) {
 	c, err := scanChangeover(db.QueryRow(`SELECT `+changeoverSelect+`
 		FROM process_changeovers c

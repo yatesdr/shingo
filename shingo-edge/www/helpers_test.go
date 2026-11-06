@@ -325,7 +325,7 @@ func (s *stubEngine) ListStationCounters(processID int64) ([]counters.LineCounte
 	if processID != 1 {
 		return []counters.LineCounter{}, nil
 	}
-	return []counters.LineCounter{{ID: 7, ProcessID: 1, Label: "op 10", PLCName: "plc", TagName: "STATION_01"}}, nil
+	return []counters.LineCounter{{ID: 7, ProcessID: 1, Label: "load station", PLCName: "plc", TagName: "STATION_01"}}, nil
 }
 func (s *stubEngine) CreateStationCounter(processID int64, label, tagName string) (*counters.LineCounter, error) {
 	if processID != 1 {

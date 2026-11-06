@@ -778,7 +778,8 @@ eq(['order-update', 'bins', 'supply-refusal', 'sourcing', 'containment', 'materi
     // only when the changeover state moved).
     served = pressView();
     await settle();
-    cutoverFlag = { message: 'PRESS-1 reports CAT-9 after the cutover to STYLE-1', has_mapped: false };
+    cutoverFlag = { message: 'PRESS-1 reports CAT-9 after the cutover to STYLE-1', has_mapped: false,
+        live_catid: 'CAT-9', expected_style_name: 'STYLE-1' };
     fire('changeover-verify-mismatch', { process_id: 1, process_name: 'PRESS-1', changeover_id: 5, style_id: 11 });
     await advance(600);
     eq(alertTexts(), ['PRESS-1 reports CAT-9 after the cutover to STYLE-1'], 'the post-cutover banner shows on the event');
@@ -798,10 +799,10 @@ eq(['order-update', 'bins', 'supply-refusal', 'sourcing', 'containment', 'materi
         'the next view fetch tries the flag again (a bug fixed: a failed fetch was never retried)');
     // Its buttons come back after a failed POST.
     postFails = 1;
-    await tapAlert('Confirm — process is correct');
-    eq(alertButton('Confirm — process is correct').disabled, false, 'a refused confirm leaves its button live');
+    await tapAlert('Confirm — pin CATID CAT-9 to STYLE-1');
+    eq(alertButton('Confirm — pin CATID CAT-9 to STYLE-1').disabled, false, 'a refused confirm leaves its button live');
     cutoverFlag = null;
-    await tapAlert('Confirm — process is correct');
+    await tapAlert('Confirm — pin CATID CAT-9 to STYLE-1');
     eq(alerts().length, 0, 'a confirm that lands takes the banner down');
 
     // No post-cutover banner on a board of loader tiles.

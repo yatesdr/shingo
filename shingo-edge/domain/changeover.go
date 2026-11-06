@@ -120,11 +120,12 @@ func IsNodeTaskStateTerminal(state NodeTaskState, situation string) bool {
 // Hard is DISPLAY-ONLY. The operator's CUTOVER has no bypass. The door's
 // force mode (engine.CutoverForced) completes past every blocker, hard or not,
 // writes them to the row's notes, and leaves the tasks and orders they name
-// running; its callers are the admin's "Mark as running" to the open
-// changeover's target and to a third style (engine TestForceDoor_FourCallers
-// counts them). The flag exists so the panel can distinguish "this will clear
-// itself" from "this needs you" once the gate grows a soft conjunct; today
-// every blocker is hard. Do not grow a second code path off it.
+// running. Its four callers — the admin's "Mark as running" to the open
+// changeover's target and to a third style, the counted-part force in auto,
+// and the station's one-tap in prompt — are counted by engine
+// TestForceDoor_FourCallers. The flag exists so the panel can distinguish
+// "this will clear itself" from "this needs you" once the gate grows a soft
+// conjunct; today every blocker is hard. Do not grow a second code path off it.
 type Blocker struct {
 	Reason   string `json:"reason"`
 	NodeName string `json:"node_name,omitempty"`

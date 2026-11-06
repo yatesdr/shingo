@@ -43,7 +43,7 @@ func TestStationCounterSave_RefusesWithoutAWiredCounter(t *testing.T) {
 	eng, _, _, _ := stationRig(t)
 	other, err := eng.db.CreateProcess("UNWIRED", "", "", "", false)
 	testutil.MustNoErr(t, err, "process")
-	_, err = eng.CreateStationCounter(other, "op 10", "MES_Cell.Station_01")
+	_, err = eng.CreateStationCounter(other, "load station", "MES_Cell.Station_01")
 	if s := refusedSentence(t, err); !strings.Contains(s, "no production counter wired") {
 		t.Errorf("refusal = %q", s)
 	}
@@ -58,7 +58,7 @@ func TestStationCounterSave_RefusesATagAnotherCounterReads(t *testing.T) {
 	if s := refusedSentence(t, err); !strings.Contains(s, "read by a production counter") {
 		t.Errorf("the production tag: %q", s)
 	}
-	_, err = eng.CreateStationCounter(pid, "op 10", "MES_Cell.Station_01")
+	_, err = eng.CreateStationCounter(pid, "load station", "MES_Cell.Station_01")
 	testutil.MustNoErr(t, err, "first station counter")
 	_, err = eng.CreateStationCounter(pid, "op 20", "MES_Cell.Station_01")
 	if s := refusedSentence(t, err); !strings.Contains(s, "already station counter") {
@@ -87,12 +87,12 @@ func TestStationCounterSave_RealTagRefused(t *testing.T) {
 func TestStationCounter_ManagedLifecycle(t *testing.T) {
 	t.Parallel()
 	eng, pid, _, wl := stationRig(t)
-	lc, err := eng.CreateStationCounter(pid, "op 10", "MES_Cell.Station_01")
+	lc, err := eng.CreateStationCounter(pid, "load station", "MES_Cell.Station_01")
 	testutil.MustNoErr(t, err, "create")
 	if !lc.WarlinkManaged || lc.LastPollAt != nil || lc.PLCName != "plc" {
 		t.Fatalf("created = %+v, want managed, unread, on the process's PLC", lc)
 	}
-	testutil.MustNoErr(t, eng.UpdateStationCounter(lc.ID, "op 10", "MES_Cell.Station_02"), "re-point")
+	testutil.MustNoErr(t, eng.UpdateStationCounter(lc.ID, "load station", "MES_Cell.Station_02"), "re-point")
 	got, err := eng.db.GetLineCounter(lc.ID)
 	testutil.MustNoErr(t, err, "read")
 	if got.TagName != "MES_Cell.Station_02" || got.LastPollAt != nil || !got.WarlinkManaged {
@@ -113,7 +113,7 @@ func TestStationCounter_ManagedLifecycle(t *testing.T) {
 func TestProcessCounter_RefusesAStationCountersTag(t *testing.T) {
 	t.Parallel()
 	eng, pid, _, _ := stationRig(t)
-	_, err := eng.CreateStationCounter(pid, "op 10", "MES_Cell.Station_01")
+	_, err := eng.CreateStationCounter(pid, "load station", "MES_Cell.Station_01")
 	testutil.MustNoErr(t, err, "station counter")
 	err = eng.EditProcessCounter(pid, domain.ProcessCounterEdit{PLCName: "plc", TagName: "MES_Cell.Station_01", Enabled: true})
 	if !errors.Is(err, errStationTagRead) {
@@ -147,7 +147,7 @@ func bindNode(t *testing.T, eng *Engine, pid, style int64, core string, role pro
 func TestBind_Refusals(t *testing.T) {
 	t.Parallel()
 	eng, pid, style, _ := stationRig(t)
-	lc, err := eng.CreateStationCounter(pid, "op 10", "MES_Cell.Station_01")
+	lc, err := eng.CreateStationCounter(pid, "load station", "MES_Cell.Station_01")
 	testutil.MustNoErr(t, err, "station counter")
 	other, err := eng.db.CreateStyle("ALT", "", pid)
 	testutil.MustNoErr(t, err, "second style")
@@ -201,7 +201,7 @@ func TestBind_LogsTheTransition(t *testing.T) {
 		lines = append(lines, fmt.Sprintf(format, args...))
 		mu.Unlock()
 	}
-	lc, err := eng.CreateStationCounter(pid, "op 10", "MES_Cell.Station_01")
+	lc, err := eng.CreateStationCounter(pid, "load station", "MES_Cell.Station_01")
 	testutil.MustNoErr(t, err, "station counter")
 	n := bindNode(t, eng, pid, style, "T-1", "consume", "simple", "")
 	testutil.MustNoErr(t, eng.SetCountedAt(n, &lc.ID), "bind")

@@ -974,8 +974,8 @@ CREATE TABLE IF NOT EXISTS core_loader_payloads (
 -- Every part identity a press's PLC has actually declared, post-debounce.
 -- The plant's first persisted record of what the wire carries — see
 -- store/plc_catid_observations.go for why that did not exist before. The one
--- decision read from it ("is the running style's set proven") can only
--- suppress a hold.
+-- decision read from it ("is the running style's set proven") gates off-plan
+-- attribution, the holds and the switch; a missing row keeps today's rule.
 CREATE TABLE IF NOT EXISTS plc_catid_observations (
     process_id   INTEGER NOT NULL REFERENCES processes(id) ON DELETE CASCADE,
     plc_name     TEXT    NOT NULL DEFAULT '',

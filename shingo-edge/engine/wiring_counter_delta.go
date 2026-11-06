@@ -423,7 +423,7 @@ func (e *Engine) handleLineCounterDelta(ev LineCounterDeltaEvent) {
 
 // holdHeldTick puts a held stroke's draw in the ledger. The cell counter's
 // stroke is the whole draw (node 0); a station's is each position counted at
-// it, its own row (payload ”), never the cell's node-0 row: a release of a
+// it, its own row (payload ""), never the cell's node-0 row: a release of a
 // node-0 hold walks the cell counter's positions, not the station's.
 func (e *Engine) holdHeldTick(process *processes.Process, nodes []processes.Node, claims *store.NodeClaimSet, tick tickScope) {
 	if tick.counter == 0 {

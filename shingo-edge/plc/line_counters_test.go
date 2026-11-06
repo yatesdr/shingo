@@ -65,7 +65,7 @@ func newLineRig(t *testing.T, counterEnabled bool) *lineRig {
 	testutil.MustNoErr(t, db.SetActiveStyle(pid, &sty), "active")
 	_, err = db.CreateReportingPoint(rigPLC, rigTag, sty)
 	testutil.MustNoErr(t, err, "reporting point")
-	lc, err := db.CreateLineCounter(pid, "op 10", rigPLC, rigStationTag)
+	lc, err := db.CreateLineCounter(pid, "load station", rigPLC, rigStationTag)
 	testutil.MustNoErr(t, err, "station counter")
 	mgr.plcs[rigPLC] = &ManagedPLC{Name: rigPLC, Status: "Connected", Values: map[string]TagValue{}}
 	return &lineRig{t: t, db: db, mgr: mgr, em: em, pid: pid, lc: lc}

@@ -501,10 +501,11 @@ func (cm *catidMonitor) tick(now time.Time) {
 		}
 	}
 	cm.mu.Unlock()
-	// Fire auto-arms AFTER releasing cm.mu. StartProcessChangeover does planning,
-	// DB writes, robot aborts and a Core preflight; running it under the tick lock
-	// would block the guard's liveCATID reads and risk lock-ordering trouble with
-	// the changeover path. The intent was fully decided under the lock.
+	// Fire AFTER releasing cm.mu. A fire calls the door (completeCutover) or the
+	// switch (autoSwitchStyle), each under cutoverMu with the gate, the flip and
+	// their DB writes; running that under the tick lock would block the guard's
+	// liveCATID reads, and cutoverMu is outer to cm.mu (lockorder rank 8). The
+	// intent was fully decided under the lock.
 	for _, in := range pending {
 		cm.fireAutoCutover(in)
 	}
@@ -692,7 +693,9 @@ func (cm *catidMonitor) onConfirmedCATID(processID int64, st *catidState, isChan
 	// the plant had no persisted evidence of what a PLC sends — only the values
 	// people typed into Core, and only the readings that DISAGREED (on
 	// process_changeovers.verify_live_catid), which is a record of exceptions
-	// and never of the norm. Nothing reads this to decide anything.
+	// and never of the norm. One decision reads it: whether the running
+	// style's set is proven (catid_attribute.go), which gates off-plan
+	// attribution and the switch.
 	if err := cm.eng.db.RecordPLCCATIDObservation(processID, st.plcName, st.lastConfirmed); err != nil {
 		log.Printf("plc-catid: record observation for process %d: %v", processID, err)
 	}

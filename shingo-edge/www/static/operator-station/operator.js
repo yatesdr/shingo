@@ -558,8 +558,10 @@ function renderPostCutoverFlag(pid, flag) {
     }
     // Resolution 2 — review the style's expected part-id config.
     buttons.push({ label: 'Review part-id config', onClick: function () { window.open('/processes', '_blank'); } });
-    // Confirm the press is correct → clear the flag.
-    buttons.push({ label: 'Confirm — process is correct', onClick: async function (btn) {
+    // Confirm the press is correct: the live CATID is pinned to the style the
+    // changeover set, then the flag clears. A pin lets that part switch the
+    // process to the style, so the button says it pins.
+    buttons.push({ label: 'Confirm — pin CATID ' + flag.live_catid + ' to ' + flag.expected_style_name, onClick: async function (btn) {
         btn.disabled = true;
         const ok = await postAction('/api/processes/' + pid + '/post-cutover-flag/confirm', {}, loadView);
         if (!ok) { btn.disabled = false; return; }

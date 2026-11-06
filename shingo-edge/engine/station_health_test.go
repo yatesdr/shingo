@@ -100,7 +100,7 @@ func TestHealth_UnreadableTagNamed(t *testing.T) {
 	r.eng.Events.Emit(Event{Type: EventCounterReadError, Payload: CounterReadErrorEvent{PLCName: c.PLCName, TagName: c.TagName,
 		Error: "PLC plc is not connected"}})
 	it, ok := healthKinds(t, r.eng, r.pid)[counterKindUnreadable]
-	if !ok || it.Severity != CatidHealthRed || !strings.Contains(it.Headline, "op 10") || !strings.Contains(it.Detail, "not connected") {
+	if !ok || it.Severity != CatidHealthRed || !strings.Contains(it.Headline, "load station") || !strings.Contains(it.Detail, "not connected") {
 		t.Fatalf("unreadable item = %+v", it)
 	}
 	r.eng.Events.Emit(Event{Type: EventCounterRead, Payload: CounterReadEvent{PLCName: c.PLCName, TagName: c.TagName, Value: 3}})

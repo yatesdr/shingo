@@ -313,8 +313,16 @@ function catidPin(pid, styleID, catid, name) {
 
 async function catidCharge(holdID) {
     const res = await fetch('/api/catid-holds/' + holdID + '/preview', { cache: 'no-store' });
-    if (!res.ok) return;
-    const p = await res.json();
+    let p = null;
+    try { p = await res.json(); } catch (_) { /* status only */ }
+    // A preview that did not answer is said, not swallowed: the button
+    // otherwise looked dead.
+    if (!res.ok || !p || !p.hold) {
+        const why = (p && (p.error || p.message)) || ('the server answered ' + res.status);
+        openSheet('Charge this hold?', 'its preview could not be read: ' + why + '. Nothing was charged.', '',
+            'Close', closeSheet);
+        return;
+    }
     const rows = (p.rows || []).map(r => '<li>' + esc(r.node) + ': ' + esc(r.qty) + ' from ' +
         (r.bin_id ? 'cart ' + esc(r.bin_id) + ' (' + esc(r.carrier_part || 'part unknown') + ')' : 'no cart: its share stays held') +
         (r.wrong_part ? ' <b>(another part: its share stays held)</b>' : '') + '</li>').join('');
@@ -5999,9 +6007,14 @@ async function openRunningSheet(st, id) {
         } catch (e) { /* the sheet still says a changeover is open */ }
         const how = id === p.target_style_id ? 'completes it now'
             : 'completes it to ' + target.name + ' and then switches to ' + st.name;
-        inFlight = '<p class="pd-note">A changeover to ' + esc(target.name) + ' is open. Marking ' + esc(st.name) +
-            ' as running ' + esc(how) + (waiting.length ? ', past: ' + esc(waiting.join('; ')) +
-            '. Robots already moving finish their trips' : '') + '.</p>';
+        // The style the changeover leaves is the server's refusal, not a
+        // switch: staying on it is the changeover's Cancel.
+        inFlight = id === p.active_style_id
+            ? '<p class="pd-note">A changeover to ' + esc(target.name) + ' is open, leaving ' + esc(st.name) +
+              '. Marking ' + esc(st.name) + ' as running is refused: use Cancel on the changeover to stay on it.</p>'
+            : '<p class="pd-note">A changeover to ' + esc(target.name) + ' is open. Marking ' + esc(st.name) +
+              ' as running ' + esc(how) + (waiting.length ? ', past: ' + esc(waiting.join('; ')) +
+              '. Robots already moving finish their trips' : '') + '.</p>';
     }
     openSheet('Mark ' + st.name + ' as running?',
         "Robots may move within a minute for the new style's levels and kept spots.",
