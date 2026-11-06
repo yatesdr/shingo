@@ -128,28 +128,6 @@ func (c *ksrCell) seqConfirm(label string, removal, backfill domain.Order) {
 	}
 }
 
-// Two cycles back to back on every button: each removal makes one backfill,
-// each cycle ends with one bin on the line, and the request after a cycle has
-// ended starts the next.
-func TestScenario_SequentialLine_CyclesBackToBack(t *testing.T) {
-	t.Parallel()
-	for _, d := range seqDoors {
-		t.Run(d.name, func(t *testing.T) {
-			t.Parallel()
-			c := newKsrCell(t, ksrOpts{role: d.role, mode: protocol.SwapModeSequential, plain: true})
-			for _, cycle := range []string{"first cycle", "second cycle"} {
-				// Parts counted, as a line asking for its swap has.
-				mustNil(t, c.edge.DB.SetProcessNodeRuntime(c.nodeID, &c.claimA, 30), "count")
-				c.settle()
-				removal := c.seqRemoval(cycle, d.press)
-				backfill := c.seqAtTheLine(cycle, removal)
-				c.seqLand(cycle, removal, backfill)
-				c.seqConfirm(cycle, removal, backfill)
-			}
-		})
-	}
-}
-
 // seqRefused presses the button while the line's swap is in flight: it is
 // refused, and nothing is made.
 func (c *ksrCell) seqRefused(label string, press func(c *ksrCell) error) {
@@ -169,7 +147,8 @@ func (c *ksrCell) seqRefused(label string, press func(c *ksrCell) error) {
 // the removal waits at the line with its backfill on its way, or while the
 // backfill is delivered and not yet confirmed, is refused and makes nothing.
 // Once the operator confirms the backfill, the next request starts the next
-// cycle.
+// cycle: two cycles back to back on every button, each removal making one
+// backfill and each cycle ending with one bin on the line.
 func TestScenario_SequentialLine_SecondRequestWaitsForTheSwap(t *testing.T) {
 	t.Parallel()
 	for _, d := range seqDoors {
