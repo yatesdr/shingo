@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"shingo/protocol/testutil"
-	"shingoedge/domain"
 	"shingoedge/store"
 )
 
@@ -146,15 +145,6 @@ func TestCatidHealth_EveryItemShowsWhileTrueAndClears(t *testing.T) {
 			func(t *testing.T, eng *Engine, db *store.DB, pid, a, b int64, cm *catidMonitor) {
 				testutil.MustNoErr(t, eng.ConfirmPostCutoverFlag(pid), "confirm")
 			}},
-		{catidKindAutoDecisions,
-			func(t *testing.T, eng *Engine, db *store.DB, pid, a, b int64, cm *catidMonitor) {
-				testutil.MustNoErr(t, eng.SetProcessActiveStyle(pid, &b), "admin switch")
-				testutil.MustNoErr(t, eng.SetProcessActiveStyle(pid, &a), "and back")
-			},
-			func(t *testing.T, eng *Engine, db *store.DB, pid, a, b int64, cm *catidMonitor) {
-				_, err := db.Exec(`UPDATE process_changeovers SET completed_at = datetime('now', '-25 hours') WHERE process_id = ?`, pid)
-				testutil.MustNoErr(t, err, "age the rows")
-			}},
 	}
 	for _, c := range cases {
 		c := c
@@ -173,30 +163,6 @@ func TestCatidHealth_EveryItemShowsWhileTrueAndClears(t *testing.T) {
 				t.Errorf("%s still shows after its condition cleared: %+v", c.kind, it)
 			}
 		})
-	}
-}
-
-// TestCatidHealth_ForcedLegsOpenShowsUntilTheLegsEnd: a changeover completed
-// past its gate shows its open legs until they end.
-func TestCatidHealth_ForcedLegsOpenShowsUntilTheLegsEnd(t *testing.T) {
-	t.Parallel()
-	eng, db, processID, _, toID, coID, task := openRedChangeover(t)
-	testutil.MustNoErr(t, eng.SetProcessActiveStyle(processID, &toID), "force")
-	if _, ok := healthKinds(t, eng, processID)[catidKindForcedLegsOpen]; !ok {
-		t.Fatal("a forced changeover with open legs shows nothing")
-	}
-	for _, id := range []*int64{task.NextMaterialOrderID, task.OldMaterialReleaseOrderID} {
-		if id != nil {
-			markOrderTerminal(db, *id)
-		}
-	}
-	tasks, err := db.ListChangeoverNodeTasks(coID)
-	testutil.MustNoErr(t, err, "tasks")
-	for _, tk := range tasks {
-		testutil.MustNoErr(t, db.UpdateChangeoverNodeTaskState(tk.ID, domain.NodeTaskSwitched), "end the task")
-	}
-	if it, ok := healthKinds(t, eng, processID)[catidKindForcedLegsOpen]; ok {
-		t.Errorf("the forced item still shows after its legs ended: %+v", it)
 	}
 }
 

@@ -19,7 +19,7 @@ Edge only, v37-v42 (the dev seeder learns station counters). Ship after a restor
 - The poll writes a counted read only while the point still reads that tag, and emits nothing it did not write
 - The counter walk charges each node under the claim of the tick's own style; one walk body for every counter
 - A counter tag WarLink does not list (a struct member) is enabled and read, and saved when it reads a whole number
-- The CATID health strip: /api/processes/{id}/catid-health, /api/catid-health, a catid-health hint, a list on Processes
+- The CATID health strip, eight kinds: /api/processes/{id}/catid-health, /api/catid-health, a catid-health hint, a list on Processes
 - A changeover records the PLC's CATID at its start and its watch's close (v38); an unmapped CATID shows the suggestion
 - One CATID names one style: the typed pin, the strip's one-click and the flag's Confirm (which pins the value) refuse a taken one
 - A counted tick is stamped with the PLC's part and the style that runs it; row (v39), walk, hourly and Core count it there

@@ -43,7 +43,7 @@ check('a process with its items lists each with its verbs', () => {
 check('one block per process, toned by its worst item', () => {
     const html = H.listHTML([
         { process_id: 3, name: 'CELL-A', worst: 'red', count: 3, headline: 'Wrong part: the PLC is on 1002' },
-        { process_id: 4, name: 'CELL-B', worst: 'info', count: 1, headline: '1 automatic decision(s) in 24 h' },
+        { process_id: 4, name: 'CELL-B', worst: 'info', count: 1, headline: 'The incoming style STYLE-B has no CATIDs' },
     ]);
     assert.ok(html.indexOf('pd-ch-red') > 0 && html.indexOf('data-open="3"') > 0, 'the red block for process 3');
     assert.ok(html.indexOf('and 2 more') > 0, 'the count past the headline');

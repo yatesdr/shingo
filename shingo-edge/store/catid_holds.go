@@ -114,28 +114,6 @@ func (db *DB) ResolveCatidHold(id int64, resolution, by string, at time.Time) (i
 	return qty, true, nil
 }
 
-// ListCatidHoldsReleasedSince returns the process's holds the Edge released by
-// itself (a landing) at or after since, newest first: the strip's automatic
-// decisions.
-func (db *DB) ListCatidHoldsReleasedSince(processID int64, since time.Time) ([]CatidHold, error) {
-	rows, err := db.Query(`SELECT `+catidHoldCols+` FROM catid_holds
-		WHERE process_id = ? AND resolved_by = 'auto' AND resolved_at >= ? ORDER BY resolved_at DESC, id DESC`,
-		processID, since.UTC().Format(helpers.TimeLayout))
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var out []CatidHold
-	for rows.Next() {
-		h, err := scanCatidHold(rows)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, h)
-	}
-	return out, rows.Err()
-}
-
 // CountChangeoversStartedSince counts the process's changeovers started at or
 // after since, other than exceptID.
 func (db *DB) CountChangeoversStartedSince(processID int64, since time.Time, exceptID int64) (int, error) {

@@ -32,27 +32,17 @@ const (
 const (
 	catidKindWrongPart       = "wrong_part"
 	catidKindChangeoverWaits = "changeover_waiting"
-	catidKindForcedLegsOpen  = "forced_legs_open"
 	catidKindUnmapped        = "unmapped_catid"
 	catidKindShared          = "shared_catid"
 	catidKindNoCATIDs        = "style_no_catids"
 	catidKindIdentity        = "identity"
 	catidKindPostCutover     = "post_cutover_failed"
-	catidKindAutoDecisions   = "automatic_decisions"
 	catidKindHeld            = "held"
 	// catidKindOneWayPair is not a part-identity condition: it is the page's
 	// warning on a legacy A/B pair, shown in the same strip.
 	catidKindOneWayPair       = "one_way_pair"
 	catidHealthUnmappedWindow = 14 * 24 * time.Hour
-	catidHealthDecisionWindow = 24 * time.Hour
 )
-
-// automaticTriggers are the triggered_by values of a switch or a cutover no
-// one pressed CUTOVER for: the strip's "automatic decisions".
-var automaticTriggers = []string{
-	triggeredAutoCATID, triggeredAutoCATID + triggeredForced, triggeredAutoCATIDFlip,
-	triggeredAdminSwitch, triggeredAdminSwitch + triggeredForced,
-}
 
 // CatidHealthItem is one standing condition of a process's part identity.
 type CatidHealthItem struct {
@@ -112,13 +102,11 @@ func (e *Engine) CatidHealth(processID int64) ([]CatidHealthItem, error) {
 	items = append(items, heldItems(holds, now)...)
 	items = markUnmappedHeld(items, holds)
 	items = append(items, sharedItems(sets)...)
-	items = append(items, e.forcedItems(processID)...)
 	if flag, ok := e.PostCutoverFlag(processID); ok {
 		items = append(items, CatidHealthItem{Kind: catidKindPostCutover, Severity: CatidHealthRed,
 			Headline: "Post-cutover check failed", Detail: flag.Message,
 			Data: map[string]any{"changeover_id": flag.ChangeoverID, "live_catid": flag.LiveCATID}})
 	}
-	items = append(items, e.decisionItems(processID, now)...)
 	sort.SliceStable(items, func(i, j int) bool { return severityRank(items[i].Severity) < severityRank(items[j].Severity) })
 	return items, nil
 }
@@ -447,63 +435,4 @@ func sharedItems(sets []styleCATIDEntry) []CatidHealthItem {
 			Data:     map[string]any{"catid": v, "styles": by[v]}})
 	}
 	return items
-}
-
-// forcedItems: the latest changeover completed past its gate still has legs
-// open.
-func (e *Engine) forcedItems(processID int64) []CatidHealthItem {
-	co, err := e.db.LatestForcedChangeover(processID)
-	if err != nil || co == nil {
-		return nil
-	}
-	ok, blockers, err := e.canCompleteChangeover(co.ID)
-	if err != nil || ok {
-		return nil
-	}
-	open := make([]string, 0, len(blockers))
-	for _, b := range blockers {
-		open = append(open, b.Reason)
-	}
-	item := CatidHealthItem{Kind: catidKindForcedLegsOpen, Severity: CatidHealthAmber,
-		Headline: fmt.Sprintf("Changeover to %s completed past its gate; %d still open", co.ToStyleName, len(open)),
-		Detail:   strings.Join(open, "; "), Data: map[string]any{"changeover_id": co.ID, "open": open}}
-	if co.CompletedAt != nil {
-		t := *co.CompletedAt
-		item.Since = &t
-	}
-	return []CatidHealthItem{item}
-}
-
-// decisionItems: the switches and cutovers no one pressed CUTOVER for, and
-// the holds the Edge released by itself, in the last 24 hours.
-func (e *Engine) decisionItems(processID int64, now time.Time) []CatidHealthItem {
-	since := now.Add(-catidHealthDecisionWindow)
-	rows, _ := e.db.ListChangeoversTriggeredSince(processID, automaticTriggers, since)
-	holds, _ := e.db.ListCatidHoldsReleasedSince(processID, since)
-	if len(rows) == 0 && len(holds) == 0 {
-		return nil
-	}
-	list := make([]map[string]any, 0, len(rows))
-	for _, r := range rows {
-		list = append(list, map[string]any{"changeover_id": r.ID, "from": r.FromStyleName, "to": r.ToStyleName,
-			"triggered_by": r.TriggeredBy, "completed_at": r.CompletedAt})
-	}
-	released := make([]map[string]any, 0, len(holds))
-	for _, h := range holds {
-		released = append(released, map[string]any{"hold_id": h.ID, "catid": h.CATID, "qty": h.Qty, "resolved_at": h.ResolvedAt})
-	}
-	detail := ""
-	if len(rows) > 0 {
-		detail = fmt.Sprintf("latest: %s to %s (%s)", rows[0].FromStyleName, rows[0].ToStyleName, rows[0].TriggeredBy)
-	}
-	if len(holds) > 0 {
-		if detail != "" {
-			detail += "; "
-		}
-		detail += fmt.Sprintf("%d hold(s) released on a landing", len(holds))
-	}
-	return []CatidHealthItem{{Kind: catidKindAutoDecisions, Severity: CatidHealthInfo,
-		Headline: fmt.Sprintf("%d automatic decision(s) in 24 h", len(rows)+len(holds)),
-		Detail:   detail,
-		Data:     map[string]any{"decisions": list, "hold_releases": released}}}
 }

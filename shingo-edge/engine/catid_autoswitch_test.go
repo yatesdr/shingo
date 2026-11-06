@@ -28,11 +28,17 @@ func switchRig(t *testing.T, mode string) (eng *Engine, db *store.DB, pid, a, b 
 	return eng, db, pid, a, b, cm
 }
 
-// flipRows returns the process's automatic-switch rows.
+// flipRows returns the process's automatic-switch rows, newest first.
 func flipRows(t *testing.T, db *store.DB, pid int64) []processes.Changeover {
 	t.Helper()
-	rows, err := db.ListChangeoversTriggeredSince(pid, []string{triggeredAutoCATIDFlip}, time.Now().Add(-time.Hour))
+	all, err := db.ListRecentProcessChangeovers(pid, 0)
 	testutil.MustNoErr(t, err, "flip rows")
+	var rows []processes.Changeover
+	for _, co := range all {
+		if co.TriggeredBy == triggeredAutoCATIDFlip {
+			rows = append(rows, co)
+		}
+	}
 	return rows
 }
 
@@ -283,8 +289,7 @@ func TestAutoSwitch_PromptAndOffNeverSwitch(t *testing.T) {
 }
 
 // TestAutoSwitch_ReleasesHoldsOnTheNewStyle: a hold on the part the switch
-// lands on is charged under the new style, once, and the strip's automatic
-// decisions list the switch and the release.
+// lands on is charged under the new style, once.
 func TestAutoSwitch_ReleasesHoldsOnTheNewStyle(t *testing.T) {
 	t.Parallel()
 	eng, db, pid, a, b, cm := switchRig(t, "auto")
@@ -302,16 +307,6 @@ func TestAutoSwitch_ReleasesHoldsOnTheNewStyle(t *testing.T) {
 	}
 	if hs := openHolds(t, eng, pid); len(hs) != 0 {
 		t.Errorf("open holds = %+v, want none", hs)
-	}
-	it, ok := healthKinds(t, eng, pid)[catidKindAutoDecisions]
-	if !ok {
-		t.Fatal("no automatic decisions item")
-	}
-	if d, _ := it.Data["decisions"].([]map[string]any); len(d) != 1 {
-		t.Errorf("decisions = %v, want the switch", it.Data["decisions"])
-	}
-	if r, _ := it.Data["hold_releases"].([]map[string]any); len(r) != 1 {
-		t.Errorf("hold releases = %v, want the one", it.Data["hold_releases"])
 	}
 }
 

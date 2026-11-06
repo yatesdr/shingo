@@ -22,7 +22,6 @@ package processes
 import (
 	"database/sql"
 	"errors"
-	"strings"
 
 	"shingo/protocol/clock"
 	"shingoedge/domain"
@@ -260,59 +259,6 @@ func SetChangeoverVerifyMismatch(db *sql.DB, changeoverID int64, liveCATID strin
 	_, err := db.Exec(`UPDATE process_changeovers SET verify_live_catid=?, updated_at=? WHERE id=?`,
 		liveCATID, clock.Now().UTC().Format(helpers.TimeLayout), changeoverID)
 	return err
-}
-
-// LatestForcedChangeover returns the process's most recent changeover completed
-// past its gate (triggered_by ends "-forced"), or (nil, nil) when none.
-func LatestForcedChangeover(db *sql.DB, processID int64) (*Changeover, error) {
-	c, err := scanChangeover(db.QueryRow(`SELECT `+changeoverSelect+`
-		FROM process_changeovers c
-		LEFT JOIN processes p ON p.id = c.process_id
-		LEFT JOIN styles fs ON fs.id = c.from_style_id
-		LEFT JOIN styles ts ON ts.id = c.to_style_id
-		WHERE c.process_id = ? AND c.state = 'completed' AND c.triggered_by LIKE '%-forced'
-		ORDER BY c.id DESC LIMIT 1`, processID))
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, err
-	}
-	return &c, nil
-}
-
-// ListChangeoversTriggeredSince returns the process's changeovers completed at
-// or after since whose triggered_by is one of triggers, newest first.
-func ListChangeoversTriggeredSince(db *sql.DB, processID int64, triggers []string, since string) ([]Changeover, error) {
-	if len(triggers) == 0 {
-		return nil, nil
-	}
-	args := []any{processID, since}
-	marks := make([]string, len(triggers))
-	for i, t := range triggers {
-		marks[i] = "?"
-		args = append(args, t)
-	}
-	rows, err := db.Query(`SELECT `+changeoverSelect+`
-		FROM process_changeovers c
-		LEFT JOIN processes p ON p.id = c.process_id
-		LEFT JOIN styles fs ON fs.id = c.from_style_id
-		LEFT JOIN styles ts ON ts.id = c.to_style_id
-		WHERE c.process_id = ? AND c.completed_at >= ? AND c.triggered_by IN (`+strings.Join(marks, ",")+`)
-		ORDER BY c.id DESC`, args...)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var out []Changeover
-	for rows.Next() {
-		c, err := scanChangeover(rows)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, c)
-	}
-	return out, rows.Err()
 }
 
 // LatestFlaggedChangeover returns the most recent changeover for a process that
