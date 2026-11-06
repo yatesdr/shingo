@@ -325,6 +325,12 @@ func (s *stubEngine) SetCountedAt(nodeID int64, _ *int64) error {
 	}
 	return nil
 }
+func (s *stubEngine) StationCountable(nodeID int64) error {
+	if nodeID != 1 {
+		return &engine.StationCounterRefused{Sentence: "no live style consumes there"}
+	}
+	return nil
+}
 func (s *stubEngine) CancelProcessChangeover(int64) error                   { return nil }
 func (s *stubEngine) CancelProcessChangeoverRedirect(int64, *int64) error   { return nil }
 func (s *stubEngine) PostCutoverFlag(int64) (*engine.PostCutoverFlag, bool) { return nil, false }

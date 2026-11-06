@@ -93,6 +93,26 @@ func (h *Handlers) apiDeleteStationCounter(w http.ResponseWriter, r *http.Reques
 	writeJSON(w, map[string]string{"status": "ok"})
 }
 
+// apiStationCountable is the station card's dry run on one position:
+// {"countable": true}, or false with the refusal's sentence. It binds nothing.
+func (h *Handlers) apiStationCountable(w http.ResponseWriter, r *http.Request) {
+	nodeID, err := parseID(r, "id")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid node id")
+		return
+	}
+	err = h.orchestration.StationCountable(nodeID)
+	var refusal *engine.StationCounterRefused
+	switch {
+	case err == nil:
+		writeJSON(w, map[string]any{"countable": true, "refusal": ""})
+	case errors.As(err, &refusal):
+		writeJSON(w, map[string]any{"countable": false, "refusal": refusal.Sentence})
+	default:
+		writeError(w, http.StatusInternalServerError, err.Error())
+	}
+}
+
 // apiSetCountedAt binds a position to a station counter, or (null) back to the
 // production counter.
 func (h *Handlers) apiSetCountedAt(w http.ResponseWriter, r *http.Request) {

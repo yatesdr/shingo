@@ -3776,6 +3776,7 @@ async function openSettings() {
     S.settings = S.settings || settingsDraft();
     if (!S.routing) await loadRouting();
     await Promise.all([loadCurtainNodes(), loadPayloadCatalog(), loadPartSet(), loadStationCounters()]);
+    await loadStationVerdicts();
     // THE PART SET'S POST-CREATION EDITOR (pick-a-part U5). The engineer
     // declares which parts a process may run (R-I) and the floor's part list
     // reads it; Add-process wrote it once and, until this, the only other
@@ -4649,16 +4650,91 @@ function identityField() {
 const STATION_RULE = 'A station counter clicks where the part leaves the cart, once per assembly, under every ' +
     'style that uses the positions counted at it. It reads the cell’s own PLC; there is no ratio.';
 
-// stationCountersField lists the process's station counters with their verbs.
+// stationCountersField lists the process's station counters, each a card with
+// its verbs and its positions (stationPositions).
 function stationCountersField(p) {
     const rows = (S.stationCounters || []).map(c =>
         '<div class="pd-row"><span>' + esc(c.label || 'station counter ' + c.id) + ' <span class="pd-dim">' +
         esc(c.tag_name) + (c.last_poll_at ? '' : ' · not read yet') + '</span></span>' +
         '<span><button class="pd-dimlink" data-act="sc-edit" data-sc="' + c.id + '">Edit</button>' +
-        '<button class="pd-dimlink" data-act="sc-delete" data-sc="' + c.id + '">Delete</button></span></div>').join('');
+        '<button class="pd-dimlink" data-act="sc-delete" data-sc="' + c.id + '">Delete</button></span></div>' +
+        stationPositions(c)).join('');
     const wired = !!(p.counter_plc_name && p.counter_tag_name);
     return stBlock('Station counters', wired ? STATION_RULE : 'wire the production counter first; a station counter reads beside it',
         rows + (wired ? '<button class="pd-btn" data-act="sc-new">New station counter</button>' : ''));
+}
+
+// stationPositions is a station counter's positions, one box each
+// (station-card.js): a refused one greyed with its sentence, one counted at
+// another counter named so. The boxes start as the bindings stand, the only
+// station counter's countable unbound positions ticked; nothing binds until
+// Save positions.
+function stationPositions(c) {
+    const card = window.StationCard;
+    if (!card) return '';
+    const counters = S.stationCounters || [];
+    const other = id => {
+        const o = counters.find(x => x.id === id);
+        return o ? (o.label || o.tag_name) : 'station counter ' + id;
+    };
+    const boxes = card.rows(c.id, counters.length, S.curtainNodes || [], S.stationVerdicts).map(r =>
+        '<label class="pd-row' + (r.disabled ? ' pd-dim' : '') + '"' + (r.refusal ? ' title="' + esc(r.refusal) + '"' : '') + '>' +
+        '<span><input type="checkbox" data-scpos="' + r.id + '" data-sc="' + c.id + '"' + (r.checked ? ' checked' : '') +
+        (r.disabled ? ' disabled' : '') + '> ' + esc(r.name) + '</span>' +
+        (r.refusal ? '<span class="pd-dim">' + esc(r.refusal) + '</span>'
+            : r.at && r.at !== c.id ? '<span class="pd-dim">counted at ' + esc(other(r.at)) + '</span>' : '') +
+        '</label>').join('');
+    if (!boxes) return '';
+    return '<div class="pd-dim">Count positions here</div>' + boxes +
+        '<button class="pd-btn" data-act="sc-positions" data-sc="' + c.id + '">Save positions</button>';
+}
+
+// loadStationVerdicts reads the binding's dry run for each of the process's
+// positions while it has a station counter; a position whose read failed is
+// greyed as not checked.
+async function loadStationVerdicts() {
+    S.stationVerdicts = {};
+    if (!(S.stationCounters || []).length) return;
+    await Promise.all((S.curtainNodes || []).map(async n => {
+        try {
+            const res = await fetch('/api/process-nodes/' + n.id + '/countable', { cache: 'no-store' });
+            if (res.ok) S.stationVerdicts[n.id] = await res.json();
+        } catch (_) { /* greyed: not checked yet */ }
+    }));
+}
+
+// saveStationPositions is a card's save: one PUT …/counted-at per box that
+// differs from its binding, after a confirm naming them.
+function saveStationPositions(id) {
+    const ticked = {};
+    for (const el of root().querySelectorAll('input[data-scpos][data-sc="' + id + '"]')) {
+        ticked[Number(el.dataset.scpos)] = el.checked;
+    }
+    const changes = window.StationCard.changes(id, S.curtainNodes || [], S.stationVerdicts, ticked);
+    const name = nid => ((S.curtainNodes || []).find(n => n.id === nid) || {}).name || 'position ' + nid;
+    if (!changes.length) {
+        S.settingsNotice = 'No position changed.';
+        drawSettings();
+        return;
+    }
+    const here = changes.filter(x => x.line_counter_id).map(x => name(x.id));
+    const back = changes.filter(x => !x.line_counter_id).map(x => name(x.id));
+    openSheet('Save this station counter’s positions?',
+        (here.length ? 'Counted here: ' + here.join(', ') + '. ' : '') +
+        (back.length ? 'Back to the production counter: ' + back.join(', ') + '. ' : '') +
+        'The parts already in the line between each cart and its counter net against the cart’s run-out under the borrowing rule.',
+        '', 'Save', async () => {
+            for (const x of changes) {
+                const out = await postJSON('PUT', '/api/process-nodes/' + x.id + '/counted-at', { line_counter_id: x.line_counter_id });
+                if (!out.ok) {
+                    sheetStatus(name(x.id) + ': ' + out.error, true);
+                    await afterStationChange();
+                    return;
+                }
+            }
+            closeSheet();
+            await afterStationChange();
+        });
 }
 
 // loadStationCounters reads the process's station counters ([] on a failed read).
@@ -4701,6 +4777,7 @@ function openStationCounter(id, bindNode) {
 async function afterStationChange() {
     S._tagCache = {};
     await Promise.all([loadStationCounters(), loadCurtainNodes()]);
+    await loadStationVerdicts();
     drawSettings();
 }
 
@@ -5211,6 +5288,7 @@ async function saveSettings() {
     if (keepCurtain) S.curtain = keepCurtain;
     S._tagCache = {};
     await loadStationCounters();
+    await loadStationVerdicts();
     await reloadProcesses();
     S.settings = settingsDraft();
     if (!S.settingsError) S.settingsNotice = 'Saved.';
@@ -7925,6 +8003,7 @@ function onClick(e) {
             }
             case 'sc-new': openStationCounter(0, 0); return;
             case 'sc-edit': openStationCounter(Number(btn.dataset.sc), 0); return;
+            case 'sc-positions': saveStationPositions(Number(btn.dataset.sc)); return;
             case 'sc-delete': {
                 const id = Number(btn.dataset.sc);
                 openSheet('Delete this station counter?', 'its positions are counted by the production counter again', '',

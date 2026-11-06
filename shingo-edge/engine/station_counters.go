@@ -138,7 +138,8 @@ func (e *Engine) DeleteStationCounter(id int64) error {
 // production counter). Refused for a counter of another process, and for a
 // position that a loader, a produce claim or an A/B pair holds under any live
 // style, or that no live style claims as consume. The move is logged: the
-// parts already in the line between the cart and the counter change counter.
+// parts already in the line between the cart and the counter change counter,
+// and net against the cart's run-out (TestCountedAt_BindMidRunNetsWithinTheLine).
 func (e *Engine) SetCountedAt(nodeID int64, counterID *int64) error {
 	node, err := e.db.GetProcessNode(nodeID)
 	if err != nil {
@@ -168,9 +169,24 @@ func (e *Engine) SetCountedAt(nodeID int64, counterID *int64) error {
 	if err := e.db.SetNodeLineCounter(nodeID, counterID); err != nil {
 		return err
 	}
-	e.logFn("counted at: %s moves from %s to %s — the parts already in the line between its cart and the counter move counter with it",
+	e.logFn("counted at: %s moves from %s to %s — the parts already in the line between its cart and the counter net against the cart's run-out under the borrowing rule",
 		node.Name, from, to)
 	return nil
+}
+
+// StationCountable applies the binding's rules to a position without binding
+// it: nil when a station counter may count it, else its refusal
+// (*StationCounterRefused). The station card's dry run: it reads, never
+// writes.
+func (e *Engine) StationCountable(nodeID int64) error {
+	node, err := e.db.GetProcessNode(nodeID)
+	if err != nil {
+		return err
+	}
+	if node == nil {
+		return fmt.Errorf("no position %d", nodeID)
+	}
+	return e.countableAtAStation(node.ProcessID, node.CoreNodeName, node.Name)
 }
 
 // countableAtAStation applies the binding's rules to every live style's claim

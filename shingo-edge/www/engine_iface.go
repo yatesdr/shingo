@@ -195,6 +195,10 @@ type EngineOrchestration interface {
 	UpdateStationCounter(id int64, label, tagName string) error
 	DeleteStationCounter(id int64) error
 	SetCountedAt(nodeID int64, counterID *int64) error
+	// StationCountable is the binding's rules on one position, binding
+	// nothing: the station card's dry run greys a refused box with its
+	// sentence.
+	StationCountable(nodeID int64) error
 	CancelProcessChangeover(processID int64) error
 	CancelProcessChangeoverRedirect(processID int64, nextStyleID *int64) error
 	// AbandonChangeoverSupply is the operator exit from awaiting_material:

@@ -19,6 +19,7 @@ func stationDo(t *testing.T, method, path, body string) (int, string) {
 	r.Put("/api/station-counters/{id}", h.apiUpdateStationCounter)
 	r.Delete("/api/station-counters/{id}", h.apiDeleteStationCounter)
 	r.Put("/api/process-nodes/{id}/counted-at", h.apiSetCountedAt)
+	r.Get("/api/process-nodes/{id}/countable", h.apiStationCountable)
 	rec := httptest.NewRecorder()
 	r.ServeHTTP(rec, httptest.NewRequest(method, path, strings.NewReader(body)))
 	return rec.Code, rec.Body.String()
@@ -50,5 +51,12 @@ func TestStationCounterRoutes(t *testing.T) {
 	}
 	if code, body := stationDo(t, http.MethodPut, "/api/process-nodes/2/counted-at", `{"line_counter_id":7}`); code != http.StatusBadRequest || !strings.Contains(body, "no live style consumes") {
 		t.Errorf("bind refused = %d %s", code, body)
+	}
+	if code, body := stationDo(t, http.MethodGet, "/api/process-nodes/1/countable", ""); code != http.StatusOK || body != `{"countable":true,"refusal":""}`+"\n" {
+		t.Errorf("dry run 1 = %d %q", code, body)
+	}
+	if code, body := stationDo(t, http.MethodGet, "/api/process-nodes/2/countable", ""); code != http.StatusOK ||
+		!strings.Contains(body, `"countable":false`) || !strings.Contains(body, "no live style consumes") {
+		t.Errorf("dry run 2 = %d %q, want 200 with the refusal's sentence", code, body)
 	}
 }

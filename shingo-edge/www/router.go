@@ -512,6 +512,7 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger, backupSvc *backup.Servi
 				r.Put("/station-counters/{id}", h.apiUpdateStationCounter)
 				r.Delete("/station-counters/{id}", h.apiDeleteStationCounter)
 				r.Put("/process-nodes/{id}/counted-at", h.apiSetCountedAt)
+				r.Get("/process-nodes/{id}/countable", h.apiStationCountable)
 				r.Get("/styles/{id}/delete-impact", h.apiStyleDeleteImpact)
 				r.Delete("/styles/{id}", h.apiDeleteStyle)
 				r.Post("/styles/{id}/restore", h.apiRestoreStyle)

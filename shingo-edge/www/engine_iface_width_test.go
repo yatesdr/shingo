@@ -192,6 +192,10 @@ func TestEngineOrchestrationWidth(t *testing.T) {
 		"DeleteStationCounter",
 		"ListStationCounters",
 		"SetCountedAt",
+		// Added 2026-11-07 (precise counting P2): the station card's dry run,
+		// GET /api/process-nodes/{id}/countable, the binding's rules without
+		// the write.
+		"StationCountable",
 		"UpdateStationCounter",
 		"ConfigPath",
 		"CoreNodes",

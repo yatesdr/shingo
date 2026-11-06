@@ -46,6 +46,7 @@ Edge only, v37-v42 (the dev seeder learns station counters). Ship after a restor
 - The poll reads one point per process, the one on its counter tag (any other enabled point is named at boot), and raises a read error for a point whose PLC WarLink lacks
 - The Charge's preview is POST /api/catid-holds/{id}/charge?mode=preview; the one-click and Confirm check a pin as the save does
 - The MES sibling slots are watched once a minute, off the tick: the PLC counting on a slot the process does not is a red strip item whose click (POST /api/processes/{id}/counter) re-points the counter; a slot rising with it is an info line
+- A station counter's card lists the process's positions as boxes, each through the binding's dry run (GET /api/process-nodes/{id}/countable), refused ones greyed with the sentence; the only station counter pre-ticks the unbound ones; nothing binds until its save
 
 ## 2026-11-03 — An order's carts are its rows
 
