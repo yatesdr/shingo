@@ -187,6 +187,10 @@ type EngineOrchestration interface {
 	MintStyle(processID int64, req engine.MintRequest) (*engine.MintResult, error)
 	FlowFingerprint(processID, toStyleID int64) (string, error)
 	CompleteProcessProductionCutover(processID int64) error
+	// The station's one-tap "Cut over now" in prompt mode: whether it is
+	// offered (read on each call), and the forced door it runs.
+	CutoverNowOffer(processID int64) (*engine.CutoverOffer, error)
+	CutOverNow(processID int64) error
 	CancelProcessChangeover(processID int64) error
 	CancelProcessChangeoverRedirect(processID int64, nextStyleID *int64) error
 	// AbandonChangeoverSupply is the operator exit from awaiting_material:

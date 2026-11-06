@@ -43,6 +43,39 @@ type autoCutoverIntent struct {
 	mode string
 	// decidedAt is the tick the decision was taken on; a refusal is dated by it.
 	decidedAt time.Time
+	// force: the counted-part condition holds (forceHolds), so auto completes
+	// past a red gate and prompt offers the station's one-tap.
+	force bool
+}
+
+// targetTick is the last counted tick the poll attributed to an open
+// changeover's target, for the counted-part force.
+type targetTick struct {
+	catid string
+	at    time.Time
+}
+
+// forceFacts is what the counted-part force reads of a process's tracker.
+type forceFacts struct {
+	value       string // the confirmed value
+	confirmedAt time.Time
+	baseline    bool // the value was standing at the first read, not a change
+	stable      bool // the declaration's stability: 3 reads over 60 s
+	tick        targetTick
+}
+
+// forceHolds is the counted-part force's condition on a changeover started at
+// startedAt (pure): the monitor confirmed a CHANGE to a part, after the
+// changeover opened, that has been stable for the declaration's window, and a
+// counted tick on it has been attributed to the target since. One tick is
+// enough. A program already standing when the changeover opened never forces
+// at minute zero: every leg just dispatched would become a straggler. started_at
+// is stored to the second, so a change confirmed within the start's second
+// does not count as after it (the gated declaration still applies).
+func forceHolds(f forceFacts, startedAt time.Time) bool {
+	return f.stable && !f.baseline && isIdentity(f.value) &&
+		!f.confirmedAt.Before(startedAt.Add(time.Second)) &&
+		f.tick.catid == f.value && !f.tick.at.Before(f.confirmedAt)
 }
 
 // PLC part-identity (CATID) monitor — the A5 guard's data source.
@@ -106,6 +139,24 @@ type catidState struct {
 	poked        bool
 }
 
+// stableAt reports whether the confirmed value has held for the declaration's
+// window at now: at least autoArmStableReads consecutive reads AND
+// autoArmStableWindow since the tracker first saw it.
+func (st *catidState) stableAt(now time.Time) bool {
+	return st.seenValue && st.armCandidate != "" && st.armCandidate == st.lastConfirmed &&
+		st.armCount >= autoArmStableReads && now.Sub(st.armFirstSeen) >= autoArmStableWindow
+}
+
+// forceFacts reads the tracker for the counted-part force at now. Called with
+// cm.mu held.
+func (st *catidState) forceFacts(now time.Time) forceFacts {
+	f := forceFacts{confirmedAt: st.confirmedAt, baseline: st.confirmedBaseline, stable: st.stableAt(now)}
+	if st.seenValue {
+		f.value = st.lastConfirmed
+	}
+	return f
+}
+
 // resetArm clears the auto-arm stability tracker. Called on any value change,
 // unreadable read, or zero/empty value — a blip can never accumulate toward an arm.
 func (st *catidState) resetArm() {
@@ -159,6 +210,10 @@ type catidMonitor struct {
 	// snapshot). Written under mu, on each good read and each confirm edge, and
 	// swapped by reprime; read with no lock at all.
 	snapshots sync.Map
+	// targetTicks holds each process's last counted target tick (processID →
+	// targetTick), written by the poll with no lock (noteTargetTick) and read
+	// by the force's decision.
+	targetTicks sync.Map
 	// completeCutover is the seam for the auto-cutover fire, defaulting to
 	// eng.completeCutover (wired in startCatidMonitor); tests inject a spy.
 	// Invoked OUTSIDE cm.mu — gate/DB/Core work must not run under the tick lock.
@@ -687,14 +742,14 @@ func (cm *catidMonitor) evaluateAutoArm(processID int64, st *catidState, ok bool
 	}
 	st.armCount++
 	// Require BOTH >=3 consecutive confirmed reads AND >=60s since first seen.
-	if st.armCount < autoArmStableReads || now.Sub(st.armFirstSeen) < autoArmStableWindow {
+	if !st.stableAt(now) {
 		return nil
 	}
 	if !st.redecide(now) {
 		return nil
 	}
 	st.armDecided, st.poked, st.armRefusedAt = true, false, time.Time{}
-	intent := cm.decideAutoArm(processID, st, v)
+	intent := cm.decideAutoArm(processID, st, v, now)
 	if intent != nil {
 		intent.decidedAt = now
 	}
@@ -710,12 +765,16 @@ func (cm *catidMonitor) evaluateAutoArm(processID int64, st *catidState, ok bool
 // the door; prompt and off log what auto would have done. Called with cm.mu
 // held; light DB reads only.
 //
+// With the predicate held, the intent is forced when the counted-part
+// condition also holds (forceHolds): auto then completes past a red gate, and
+// prompt offers the station's one-tap (CutoverNowOffer).
+//
 // The live part need not be the target's when the outgoing style has parts:
 // a press set up for some third style has still left the outgoing part, and
 // leaving the changeover open would block the corrective changeover the
 // operator now needs. The post-cutover verify compares the live part against
 // the new active style and raises the operator flag when they disagree.
-func (cm *catidMonitor) decideAutoArm(processID int64, st *catidState, v string) *autoCutoverIntent {
+func (cm *catidMonitor) decideAutoArm(processID int64, st *catidState, v string, now time.Time) *autoCutoverIntent {
 	proc, err := cm.eng.db.GetProcess(processID)
 	if err != nil || proc == nil {
 		log.Printf("plc-catid: cannot read process %d (%v) — not cutting over", processID, err)
@@ -735,13 +794,39 @@ func (cm *catidMonitor) decideAutoArm(processID int64, st *catidState, v string)
 	if !cutoverPredicate(v, out, in) {
 		return nil
 	}
+	f := st.forceFacts(now)
+	f.tick = cm.lastTargetTick(processID)
 	return &autoCutoverIntent{
 		processID:    processID,
 		processName:  st.processName,
 		changeoverID: changeover.ID,
 		catid:        v,
 		mode:         domain.NormalizeChangeoverAutoArm(proc.ChangeoverAutoArm),
+		force:        forceHolds(f, changeover.StartedAt),
 	}
+}
+
+// lastTargetTick returns the process's last counted target tick, zero if none.
+// No lock.
+func (cm *catidMonitor) lastTargetTick(processID int64) targetTick {
+	if v, ok := cm.targetTicks.Load(processID); ok {
+		return v.(targetTick)
+	}
+	return targetTick{}
+}
+
+// forceFactsOf reads a process's force facts at now for a caller outside the
+// tick (the station's offer). Takes cm.mu briefly.
+func (cm *catidMonitor) forceFactsOf(processID int64, now time.Time) (forceFacts, bool) {
+	cm.mu.Lock()
+	st, ok := cm.states[processID]
+	var f forceFacts
+	if ok {
+		f = st.forceFacts(now)
+	}
+	cm.mu.Unlock()
+	f.tick = cm.lastTargetTick(processID)
+	return f, ok
 }
 
 // cutoverPredicate is the auto-cutover's decision on a stable CATID v: v names
@@ -766,10 +851,16 @@ func isIdentity(v string) bool {
 }
 
 // fireAutoCutover acts on a decided intent OUTSIDE cm.mu. In auto mode it calls
-// the door and, on success, raises the station notification; in prompt and off
-// it reads the gate (read-only) and logs what auto would have done. Every mode
-// logs the decision line. Never starts, cancels or re-plans anything.
+// the door — forced when the counted-part condition holds, gated otherwise —
+// and, on success, raises the station notification; in prompt and off it reads
+// the gate (read-only) and logs what auto would have done (prompt's station
+// offers its one-tap while the condition holds). Every mode logs the decision
+// line. Never starts, cancels or re-plans anything.
 func (cm *catidMonitor) fireAutoCutover(in autoCutoverIntent) {
+	counted := ""
+	if in.force {
+		counted = ", counted on the target since the change"
+	}
 	if in.mode != domain.ChangeoverAutoArmAuto {
 		gate := "gate green"
 		if ok, blockers, err := cm.eng.canCompleteChangeover(in.changeoverID); err != nil {
@@ -777,28 +868,39 @@ func (cm *catidMonitor) fireAutoCutover(in autoCutoverIntent) {
 		} else if !ok {
 			gate = "waiting on " + strings.Join(domain.BlockersToReasons(blockers), "; ")
 		}
-		cm.eng.logFn("plc-catid: process %s changeover %d: predicate held on CATID %s, %s, mode=%s — would have cut over",
-			in.processName, in.changeoverID, in.catid, gate, in.mode)
+		cm.eng.logFn("plc-catid: process %s changeover %d: predicate held on CATID %s%s, %s, mode=%s — would have cut over",
+			in.processName, in.changeoverID, in.catid, counted, gate, in.mode)
 		return
 	}
 	complete := cm.completeCutover
 	if complete == nil {
 		complete = cm.eng.completeCutover
 	}
-	// The door runs canCompleteChangeover first, which refuses while any node
-	// task is non-terminal or an order is still placing a bin at a participant
-	// node. That gate IS the "has the material actually landed" check: a
-	// refusal is the normal "not finished yet" answer, not a fault. It is
-	// decided again on the process's next poke, or within a minute.
-	blockers, err := complete(in.processID, in.changeoverID, triggeredAutoCATID, CutoverGated)
+	// Gated, the door runs canCompleteChangeover first, which refuses while any
+	// node task is non-terminal or an order is still placing a bin at a
+	// participant node: the normal "not finished yet" answer, decided again on
+	// the process's next poke, or within a minute. Forced — the press has made
+	// the incoming part and it was counted — the door completes past what the
+	// gate waits on, writes it in the row's notes, and leaves the legs running.
+	var blockers []domain.Blocker
+	var err error
+	if in.force {
+		blockers, err = complete(in.processID, in.changeoverID, triggeredAutoCATID, CutoverForced)
+	} else {
+		blockers, err = complete(in.processID, in.changeoverID, triggeredAutoCATID, CutoverGated)
+	}
 	if err != nil {
-		cm.eng.logFn("plc-catid: process %s changeover %d: predicate held on CATID %s, waiting on %v, mode=%s — not cut over",
-			in.processName, in.changeoverID, in.catid, err, in.mode)
+		cm.eng.logFn("plc-catid: process %s changeover %d: predicate held on CATID %s%s, waiting on %v, mode=%s — not cut over",
+			in.processName, in.changeoverID, in.catid, counted, err, in.mode)
 		cm.noteRefusal(in)
 		return
 	}
-	cm.eng.logFn("plc-catid: process %s changeover %d: predicate held on CATID %s, gate green, mode=%s — cut over",
-		in.processName, in.changeoverID, in.catid, in.mode)
+	gate := "gate green"
+	if len(blockers) > 0 {
+		gate = "forced past " + strings.Join(domain.BlockersToReasons(blockers), "; ")
+	}
+	cm.eng.logFn("plc-catid: process %s changeover %d: predicate held on CATID %s%s, %s, mode=%s — cut over",
+		in.processName, in.changeoverID, in.catid, counted, gate, in.mode)
 	cm.eng.Events.Emit(Event{Type: EventCATIDAutoCutover, Payload: CATIDAutoCutoverEvent{
 		ProcessID:    in.processID,
 		ProcessName:  in.processName,

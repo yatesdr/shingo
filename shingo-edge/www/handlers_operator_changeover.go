@@ -310,6 +310,43 @@ func (h *Handlers) apiCompleteProcessProductionCutover(w http.ResponseWriter, r 
 	writeJSONWithTrigger(w, r, map[string]string{"status": "ok"}, "refreshChangeover")
 }
 
+// apiCutoverNowOffer answers whether the station offers "Cut over now" on the
+// process (prompt mode, the counted-part condition), and what it would
+// complete past. A pure read.
+func (h *Handlers) apiCutoverNowOffer(w http.ResponseWriter, r *http.Request) {
+	processID, err := parseID(r, "id")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid process id")
+		return
+	}
+	off, err := h.orchestration.CutoverNowOffer(processID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, off)
+}
+
+// apiCutOverNow is the station's one-tap: the forced door, refused (409)
+// when the offer no longer holds.
+func (h *Handlers) apiCutOverNow(w http.ResponseWriter, r *http.Request) {
+	processID, err := parseID(r, "id")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid process id")
+		return
+	}
+	if err := h.orchestration.CutOverNow(processID); err != nil {
+		status := http.StatusBadRequest
+		if errors.Is(err, engine.ErrCutoverNowNotOffered) {
+			status = http.StatusConflict
+		}
+		writeError(w, status, err.Error())
+		return
+	}
+	h.eventHub.Broadcast(SSEEvent{Type: "changeover-update", Data: changeoverAction("cutover-complete", processID)})
+	writeJSON(w, map[string]string{"status": "ok"})
+}
+
 func (h *Handlers) apiStageNodeChangeoverMaterial(w http.ResponseWriter, r *http.Request) {
 	processID, err := parseID(r, "id")
 	if err != nil {

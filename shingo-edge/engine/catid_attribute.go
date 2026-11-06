@@ -91,6 +91,18 @@ func attributeCATID(v string, pointStyleID int64, sets []styleCATIDEntry, observ
 	return id
 }
 
+// noteTargetTick records a counted tick the poll attributed to the open
+// changeover's target and pokes the monitor, which decides the counted-part
+// force on its own goroutine: the poll never enters the door. No lock.
+func (e *Engine) noteTargetTick(processID int64, catid string) {
+	cm := e.tickMonitor.Load()
+	if cm == nil {
+		return
+	}
+	cm.targetTicks.Store(processID, targetTick{catid: catid, at: clock.Now()})
+	e.pokeCutover(processID)
+}
+
 // proven reports whether a set holds a value the process has emitted. Values
 // that name no part are evidence of nothing.
 func proven(set, observed map[string]struct{}) bool {

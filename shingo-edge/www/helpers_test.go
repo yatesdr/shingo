@@ -298,7 +298,23 @@ func (s *stubEngine) MintStyle(_ int64, req engine.MintRequest) (*engine.MintRes
 func (s *stubEngine) FlowFingerprint(int64, int64) (string, error) {
 	return s.flowFingerprint, s.flowFingerprintErr
 }
-func (s *stubEngine) CompleteProcessProductionCutover(int64) error          { return nil }
+func (s *stubEngine) CompleteProcessProductionCutover(int64) error { return nil }
+
+// The one-tap: canned. Process 1 is offered past one blocker; any other is
+// not. The condition is pinned against the real engine.
+func (s *stubEngine) CutoverNowOffer(id int64) (*engine.CutoverOffer, error) {
+	if id != 1 {
+		return &engine.CutoverOffer{}, nil
+	}
+	return &engine.CutoverOffer{Offered: true, ChangeoverID: 7, CATID: "1002", ToStyleName: "S2",
+		WaitingOn: []string{"task at node N1 in staging_requested"}}, nil
+}
+func (s *stubEngine) CutOverNow(id int64) error {
+	if id != 1 {
+		return engine.ErrCutoverNowNotOffered
+	}
+	return nil
+}
 func (s *stubEngine) CancelProcessChangeover(int64) error                   { return nil }
 func (s *stubEngine) CancelProcessChangeoverRedirect(int64, *int64) error   { return nil }
 func (s *stubEngine) PostCutoverFlag(int64) (*engine.PostCutoverFlag, bool) { return nil, false }

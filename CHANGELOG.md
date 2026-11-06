@@ -24,6 +24,7 @@ Edge only, v37-v40. Ship after a restored-copy migrate.
 - One CATID names one style: the typed pin, the strip's one-click and the flag's Confirm (which pins the value) refuse a taken one
 - A counted tick is stamped with the PLC's part and the style that runs it; row (v39), walk, hourly and Core count it there
 - A stroke on an unmapped or off-plan part ships under today's style; its cart draw is held (v40) until a landing, a Charge or a Write off
+- A press that changed to the incoming part mid-changeover, held it a minute and counted it completes the changeover past its gate (auto) or offers Cut over now (prompt)
 
 ## 2026-11-03 — An order's carts are its rows
 

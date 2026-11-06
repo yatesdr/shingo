@@ -25,6 +25,7 @@ import (
 	"strings"
 
 	"shingo/protocol"
+	"shingo/protocol/clock"
 	"shingoedge/domain"
 	"shingoedge/store/processes"
 )
@@ -294,6 +295,78 @@ func (e *Engine) CompleteProcessProductionCutover(processID int64) error {
 		return err
 	}
 	_, err = e.completeCutover(processID, changeover.ID, triggeredManual, CutoverGated)
+	return err
+}
+
+// CutoverOffer is the station's one-tap "Cut over now" in prompt mode: offered
+// only while the counted-part force's condition holds on the open changeover.
+type CutoverOffer struct {
+	Offered      bool   `json:"offered"`
+	ChangeoverID int64  `json:"changeover_id,omitempty"`
+	CATID        string `json:"catid,omitempty"`
+	ToStyleName  string `json:"to_style_name,omitempty"`
+	// WaitingOn is what the gate waits on now: what the one-tap completes past.
+	WaitingOn []string `json:"waiting_on,omitempty"`
+}
+
+// ErrCutoverNowNotOffered is a one-tap with its condition no longer holding.
+var ErrCutoverNowNotOffered = errors.New("cut over now is not offered: the process has not counted the incoming part since it changed")
+
+// CutoverNowOffer reads whether the station offers "Cut over now": the process
+// is in prompt mode, a changeover is open, the predicate holds on the live part
+// and the counted-part condition holds (forceHolds) — the same condition auto
+// completes on by itself. Read on each call; nothing is stored.
+func (e *Engine) CutoverNowOffer(processID int64) (*CutoverOffer, error) {
+	off := &CutoverOffer{}
+	cm := e.catidMon
+	if cm == nil {
+		return off, nil
+	}
+	proc, err := e.db.GetProcess(processID)
+	if err != nil {
+		return nil, err
+	}
+	if proc == nil || domain.NormalizeChangeoverAutoArm(proc.ChangeoverAutoArm) != domain.ChangeoverAutoArmPrompt {
+		return off, nil
+	}
+	changeover, err := e.db.GetActiveProcessChangeover(processID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return off, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	f, ok := cm.forceFactsOf(processID, clock.Now())
+	if !ok {
+		return off, nil
+	}
+	out, in := e.cutoverCATIDSets(proc, changeover.ToStyleID)
+	if !cutoverPredicate(f.value, out, in) || !forceHolds(f, changeover.StartedAt) {
+		return off, nil
+	}
+	gateOK, blockers, err := e.canCompleteChangeover(changeover.ID)
+	if err != nil {
+		return nil, err
+	}
+	off = &CutoverOffer{Offered: true, ChangeoverID: changeover.ID, CATID: f.value, ToStyleName: changeover.ToStyleName}
+	if !gateOK {
+		off.WaitingOn = domain.BlockersToReasons(blockers)
+	}
+	return off, nil
+}
+
+// CutOverNow is the station's one-tap: the door, forced, on the changeover
+// the offer names, refused when the offer no longer holds. The row is
+// manual-forced when the gate was red, with what it overrode in its notes.
+func (e *Engine) CutOverNow(processID int64) error {
+	off, err := e.CutoverNowOffer(processID)
+	if err != nil {
+		return err
+	}
+	if !off.Offered {
+		return ErrCutoverNowNotOffered
+	}
+	_, err = e.completeCutover(processID, off.ChangeoverID, triggeredManual, CutoverForced)
 	return err
 }
 

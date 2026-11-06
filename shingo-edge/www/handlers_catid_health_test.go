@@ -86,3 +86,33 @@ func TestCatidHoldRoutes(t *testing.T) {
 		}
 	}
 }
+
+// TestCutoverNowRoutes: the offer is a read; the one-tap answers 409 once
+// the offer no longer holds.
+func TestCutoverNowRoutes(t *testing.T) {
+	do := func(method, path string) (int, []byte) {
+		h, r := newTestHandlers(t)
+		r.Get("/api/processes/{id}/changeover/cutover-now", h.apiCutoverNowOffer)
+		r.Post("/api/processes/{id}/changeover/cutover-now", h.apiCutOverNow)
+		rec := httptest.NewRecorder()
+		r.ServeHTTP(rec, httptest.NewRequest(method, path, nil))
+		return rec.Code, rec.Body.Bytes()
+	}
+	code, body := do(http.MethodGet, "/api/processes/1/changeover/cutover-now")
+	var off map[string]any
+	if code != http.StatusOK || json.Unmarshal(body, &off) != nil || off["offered"] != true || off["catid"] != "1002" {
+		t.Errorf("offer 1: %d %s", code, body)
+	}
+	if code, body := do(http.MethodGet, "/api/processes/2/changeover/cutover-now"); code != http.StatusOK || string(body) != "{\"offered\":false}\n" {
+		t.Errorf("offer 2: %d %q, want offered false", code, body)
+	}
+	if code, _ := do(http.MethodPost, "/api/processes/1/changeover/cutover-now"); code != http.StatusOK {
+		t.Errorf("one-tap 1 = %d, want 200", code)
+	}
+	if code, _ := do(http.MethodPost, "/api/processes/2/changeover/cutover-now"); code != http.StatusConflict {
+		t.Errorf("one-tap not offered = %d, want 409", code)
+	}
+	if code, _ := do(http.MethodPost, "/api/processes/x/changeover/cutover-now"); code != http.StatusBadRequest {
+		t.Errorf("one-tap bad id = %d, want 400", code)
+	}
+}

@@ -183,6 +183,8 @@ func TestEngineOrchestrationWidth(t *testing.T) {
 		"ClearLoaderHome",
 		"ConfirmPostCutoverFlag",
 		"CompleteProcessProductionCutover",
+		"CutOverNow",
+		"CutoverNowOffer",
 		"ConfigPath",
 		"CoreNodes",
 		"CoreSync",

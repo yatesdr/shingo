@@ -30,6 +30,9 @@ func (e *plcEmitter) EmitCounterDelta(rpID, processID, delta, newCount int64, an
 		ReportingPointID: rpID, ProcessID: processID, StyleID: id.StyleID, Delta: delta, NewCount: newCount, Anomaly: anomaly,
 		CATID: id.CATID, Kind: id.Kind,
 	}})
+	if id.Kind == plc.TickTarget && e.eng != nil {
+		e.eng.noteTargetTick(processID, id.CATID)
+	}
 }
 
 func (e *plcEmitter) EmitPLCConnected(plcName string) {
