@@ -59,12 +59,17 @@ func (m *Manager) pollLineCounterSafe(lc counters.LineCounter) {
 // the rollback gap re-seeds; otherwise the difference is written (only while
 // the row still reads this tag) and emitted with the stroke's identity.
 func (m *Manager) pollLineCounter(lc counters.LineCounter) {
+	// A station's reads are raised as the reporting points' are (no point:
+	// id 0), for the health strip's "unreadable"; a PLC the manager does not
+	// hold or is not connected to is one.
 	if !m.IsConnected(lc.PLCName) {
+		m.emitter.EmitCounterReadError(0, lc.PLCName, lc.TagName, "PLC "+lc.PLCName+" is not connected")
 		return
 	}
 	val, err := m.ReadTag(lc.PLCName, lc.TagName)
 	if err != nil {
 		m.DebugLog.Log("station counter read error: %s/%s lc=%d: %v", lc.PLCName, lc.TagName, lc.ID, err)
+		m.emitter.EmitCounterReadError(0, lc.PLCName, lc.TagName, err.Error())
 		return
 	}
 	n, ok := toInt64(val)
@@ -73,9 +78,11 @@ func (m *Manager) pollLineCounter(lc counters.LineCounter) {
 			log.Printf("station counter %d (%s/%s): read is not a number (%T %v) — nothing is counted until it reads a number",
 				lc.ID, lc.PLCName, lc.TagName, val, val)
 		}
+		m.emitter.EmitCounterReadError(0, lc.PLCName, lc.TagName, fmt.Sprintf("read is not a number: %T %v", val, val))
 		return
 	}
 	m.nonNumeric.Delete(lineCounterKey(lc.ID))
+	m.emitter.EmitCounterRead(0, lc.PLCName, lc.TagName, n)
 	now := clock.Now()
 
 	seed := ""

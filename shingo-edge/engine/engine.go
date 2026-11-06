@@ -149,6 +149,10 @@ type Engine struct {
 	// bothLitLogged marks the A/B pairs whose both-lit tick has been logged
 	// (process|pair → struct{}), so the walk says it once.
 	bothLitLogged sync.Map
+
+	// stationHealth is the station counters' health account (station_health.go),
+	// fed by the counting events.
+	stationHealth stationHealthTracker
 	// warlinkClient is the injected WarLink client (sim fake) carried from
 	// Config.Warlink to the NewManager call in Start(). Nil → real HTTP client.
 	warlinkClient plc.WarlinkClient

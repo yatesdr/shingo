@@ -109,6 +109,7 @@ func (e *Engine) CatidHealth(processID int64) ([]CatidHealthItem, error) {
 		items = append(items, e.unmappedItems(processID, sets, now)...)
 	}
 	items = append(items, e.oneWayPairItems(processID)...)
+	items = append(items, e.stationHealthItems(processID)...)
 	holds, _ := e.db.ListOpenCatidHolds(processID)
 	items = append(items, heldItems(holds, now)...)
 	items = markUnmappedHeld(items, holds)

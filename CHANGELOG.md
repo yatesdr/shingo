@@ -31,6 +31,7 @@ Edge only, v37-v41 (the dev seeder learns station counters). Ship after a restor
 - Station counters (v41): a tag that clicks where the part leaves the cart charges the positions bound to it, under the PLC's part's style; the production walk leaves them
 - Station counters are created, re-pointed and deleted with their WarLink publishing; a position is counted at one only where a live style consumes, never a loader, producer or A/B pair
 - The process page: counter and identity tags suggested from WarLink (MES_ members marked, live values), identity derive/override/none, station counters and each position's Counted at
+- The process strip names a station counter stopped while the line produces, one not clicking once per part, an unreadable counter tag, and a bound position turned A/B pair
 
 ## 2026-11-03 — An order's carts are its rows
 

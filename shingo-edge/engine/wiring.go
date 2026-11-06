@@ -46,11 +46,22 @@ func (e *Engine) wireEventHandlers() {
 	eventbus.SubscribeTyped(e.Events, func(evt eventbus.TypedEvent[EventType, CounterDeltaEvent]) {
 		e.hourlyTracker.HandleDelta(evt.Payload)
 		e.handleCounterDelta(evt.Payload)
+		e.stationHealth.onProductionStroke(evt.Payload.ProcessID, evt.Payload.Delta)
 	}, EventCounterDelta)
 
 	eventbus.SubscribeTyped(e.Events, func(evt eventbus.TypedEvent[EventType, LineCounterDeltaEvent]) {
 		e.handleLineCounterDelta(evt.Payload)
+		e.stationHealth.onStationClick(evt.Payload.CounterID, evt.Payload.ProcessID, evt.Payload.Delta)
 	}, EventLineCounterDelta)
+
+	// A counter tag's reads, for the health strip's "unreadable": the first
+	// subscriber of the read error.
+	eventbus.SubscribeTyped(e.Events, func(evt eventbus.TypedEvent[EventType, CounterReadEvent]) {
+		e.stationHealth.onRead(evt.Payload.PLCName, evt.Payload.TagName, "")
+	}, EventCounterRead)
+	eventbus.SubscribeTyped(e.Events, func(evt eventbus.TypedEvent[EventType, CounterReadErrorEvent]) {
+		e.stationHealth.onRead(evt.Payload.PLCName, evt.Payload.TagName, evt.Payload.Error)
+	}, EventCounterReadError)
 
 	eventbus.SubscribeTyped(e.Events, func(evt eventbus.TypedEvent[EventType, OrderCompletedEvent]) {
 		e.handleNodeOrderCompleted(evt.Payload)
