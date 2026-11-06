@@ -1133,12 +1133,14 @@ function shapeDraftMain() {
 const GROUP_FIELDS = ['paired_core_node', 'second_paired_core_node', 'inbound_staging', 'outbound_staging'];
 const DECK_FIELDS = ['paired_core_node', 'second_paired_core_node'];
 
-// What a group's Advanced may say: FlowAdvanced less the part fields, the press
-// hardware, the loader board's order and the reorder point's source (row 4,
-// domain.RecipeAdvanced), in that type's order.
+// What a group's Advanced may say: FlowAdvanced less the part fields, the
+// loader board's order and the reorder point's source (row 4,
+// domain.RecipeAdvanced), in that type's order. The press hardware — which
+// robot fetches the empty — is IN (2026-11-05): without it every style the
+// floor built from a recipe minted Robot 1.
 const GROUP_ADV_KEYS = ['reorder_point', 'auto_reorder', 'lineside_soft_threshold', 'auto_push',
-    'evacuate_on_changeover', 'changeover_carryover_disposition', 'keep_staged_node', 'auto_confirm',
-    'curtain_required', 'strict_pack', 'pack_tolerance_pct'];
+    'evacuate_on_changeover', 'changeover_carryover_disposition', 'keep_staged_node', 'index_robot_supplies',
+    'auto_confirm', 'curtain_required', 'strict_pack', 'pack_tolerance_pct'];
 
 // listWords is a list's column heading, its add chip and the noun "On the
 // floor" and the running-style line say it with, per mode.
@@ -1531,6 +1533,8 @@ function groupAdvSummary(g) {
     const out = Object.keys(a).map(key => {
         const v = a[key];
         if (key === 'changeover_carryover_disposition') return W(key) + ' ' + (CARRYOVER[v] || v);
+        // The sheet says it as a choice of robot, so the card does too.
+        if (key === 'index_robot_supplies') return 'Robot 2 supplies';
         if (typeof v === 'boolean') return W(key) + ' on';
         return W(key) + ' ' + v;
     });
@@ -3840,9 +3844,9 @@ function openAdvanced(node) {
 // drawn as flowspec draws them for the group's ★ cell — the server refuses a
 // field that cell's mode and role forbid (D26) — and Apply writes the group's
 // `advanced`, which the mint lays on every claim it makes from the group. The
-// part rows, the press hardware, the board order and the cell's own
-// evacuation and partial-home fields are not here: a recipe carries no part,
-// and the others are the cell's.
+// part rows, the board order and the cell's own evacuation and partial-home
+// fields are not here: a recipe carries no part, and the others are the
+// cell's. The press hardware IS here — a recipe is one press's choreography.
 function openGroupAdvanced(i) {
     const g = S.shapeDraft && S.shapeDraft.groups && S.shapeDraft.groups[i];
     if (!g || !S.model.cells[g.of]) return;

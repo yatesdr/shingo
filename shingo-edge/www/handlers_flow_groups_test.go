@@ -127,6 +127,32 @@ func TestFlowPresets_AGroupsAdvancedRoundTrips(t *testing.T) {
 	}
 }
 
+// TestFlowPresets_TheStationReadsAGroupsRobotAndNothingElse: the station's
+// card names which robot fetches the empty (composer-model CARDLINE), so the
+// one Advanced field it keeps is Robot 2 — a group that says nothing else
+// still says nothing, and the reorder policy beside it stays the desktop's.
+func TestFlowPresets_TheStationReadsAGroupsRobotAndNothingElse(t *testing.T) {
+	f := newPress6(t)
+	cookie := f.engineer(t)
+	groups := press6Groups()
+	groups[1]["advanced"] = map[string]any{"reorder_point": 1, "auto_reorder": true, "index_robot_supplies": true}
+	resp := f.saveRecipe(t, cookie, "Two spot press index", press6TwoSpotCells, groups)
+	assertStatus(t, resp, http.StatusOK)
+	id := int64(decodeBody(t, resp)["id"].(float64))
+	got, err := json.Marshal(f.card(t, id)["groups"])
+	must(t, err, "marshal the station's groups")
+	const station = `[{"of":"PLN_006","name":"Left Hand","spots":[` +
+		`{"core_node_name":"PLN_006","paired_core_node":["PLN_005"]},` +
+		`{"core_node_name":"PLN_010","paired_core_node":["PLN_005"]}]},` +
+		`{"of":"PLN_007","name":"Right Hand","spots":[` +
+		`{"core_node_name":"PLN_007","paired_core_node":["PLN_008"]},` +
+		`{"core_node_name":"PLN_012","paired_core_node":["PLN_008"]}],` +
+		`"advanced":{"index_robot_supplies":true}}]`
+	if !sameJSON(t, string(got), station) {
+		t.Errorf("the station reads groups %s, want %s (Right Hand's robot and nothing else)", got, station)
+	}
+}
+
 // TestFlowPresets_AGroupThatBreaksTheOwnersRuleIsRefusedByName: the save's
 // refusal reaches the engineer in the server's words, and nothing is written.
 func TestFlowPresets_AGroupThatBreaksTheOwnersRuleIsRefusedByName(t *testing.T) {

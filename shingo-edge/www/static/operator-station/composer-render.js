@@ -515,7 +515,7 @@ function drawNone() {
 // cells and the picks on their slots, and the board's own renderer, by
 // relation (relationOpts).
 function recipePicture(p, opts) {
-    const s = pictureState(renamedCells(p, moves));
+    const s = pictureState(renamedCells(p, moves), recipeAdvanced(p, moves));
     // The picks on their slots, in slot order — what Go's placement will say
     // unless a part's own history puts it elsewhere. One Part, Two Spots puts
     // the one part on both.
@@ -533,20 +533,45 @@ function recipePicture(p, opts) {
 // cellsPicture draws a flow given as cells with their parts on — what the
 // mint preview says the changeover goes to.
 function cellsPicture(cells, opts) {
-    const s = pictureState(cells);
+    const s = pictureState(cells, cellsAdvanced(cells));
     for (const c of cells) {
         if (c.payload_code && s.cells[c.core_node_name]) s.cells[c.core_node_name].part = c.payload_code;
     }
     return drawPicture(s, opts);
 }
 
-function pictureState(cells) {
+// pictureState is the composer model a picture is drawn from. advanced is
+// node → Advanced as the cards' lines read it (cellAdvanced): the only thing
+// on the station that reads one is which robot fetches the empty. Absent, the
+// lines say the minted default.
+function pictureState(cells, advanced) {
     const model = M().init({
         styleId: 0, styleName: '', shape: true, flowspec: window.FLOWSPEC || null,
         positions: (cell().positions || []).map(x => ({ core_node_name: x.core_node_name, kind: x.kind, sequence: x.sequence })),
         routing: [], claims: [], parts: [], processClaims: [], groups: cell().groups || {},
+        advanced: advanced || {},
     });
     return M().reduce(model, { type: 'applyPreset', preset: { cells: cells } });
+}
+
+// cellsAdvanced is the Advanced each cell carries, by node: the mint
+// preview's cells (a minted style's laid on by its recipe, a saved style's
+// robot from its claims).
+function cellsAdvanced(cells) {
+    const out = {};
+    for (const c of cells || []) if (c.advanced) out[c.core_node_name] = c.advanced;
+    return out;
+}
+
+// recipeAdvanced is a recipe card's robot, by node after the moves: the
+// station's read keeps one Advanced field on a group, Robot 2 fetching the
+// empty (service cardGroups), and it is the group's ★ spot's.
+function recipeAdvanced(p, mv) {
+    const out = {};
+    for (const g of (p && p.groups) || []) {
+        if (g.advanced && g.advanced.index_robot_supplies) out[(mv && mv[g.of]) || g.of] = { index_robot_supplies: true };
+    }
+    return out;
 }
 
 // drawPicture returns the picture's markup and the size it reports: the
@@ -722,7 +747,7 @@ function placeOf(node) { return ((recipe && recipe.spots) || []).find(s => s.nod
 function jobWords(s) {
     const at = n => moves[n] || n;
     if (s.job === 'spot') return 'where this part runs';
-    const st = pictureState(renamedCells(recipe, moves));
+    const st = pictureState(renamedCells(recipe, moves), recipeAdvanced(recipe, moves));
     const words = M().cardLines(st, at(s.node)).join(' ');
     if (s.of && words.indexOf(at(s.of)) >= 0) return words;
     const row = (recipe.cells || {})[s.of] || {};

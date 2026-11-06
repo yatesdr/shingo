@@ -597,6 +597,24 @@ test('cardLines are the reference CARDLINE, verbatim', () => {
     assert.deepStrictEqual(M.cardLines(one, 'PLN_01'), ['Robot 1 moves in', 'Robot 1 clears old']);
 });
 
+// THE PRESS INDEX NAMES THE ROBOT THE SWAP SENDS (SPR Press 6, 2026-11-05):
+// the line said Robot 1 supplies on a press set to Robot 2. The stored claim's
+// flag, then a drafted Advanced over it, then a state built with no Advanced
+// at all (the board's read-only picture) reading the minted default.
+test('cardLines on a press index say which robot fetches the empty', () => {
+    const stored = initStyle(7);
+    stored.priorAdvanced = { PLN_01: { index_robot_supplies: true } };
+    assert.deepStrictEqual(M.cardLines(stored, 'PLN_01'), ['Robot 2 indexes', 'Robot 2 supplies PLN_02'],
+        'the stored claim says Robot 2');
+    const drafted = M.reduce(stored, { type: 'setAdvanced', node: 'PLN_01',
+        advanced: Object.assign(advancedDefaults(), { index_robot_supplies: false }) });
+    assert.deepStrictEqual(M.cardLines(drafted, 'PLN_01'), ['Robot 1 supplies PLN_02', 'Robot 2 indexes'],
+        'a drafted Advanced beats the stored claim');
+    const bare = Object.assign({}, initStyle(7), { priorAdvanced: undefined });
+    assert.deepStrictEqual(M.cardLines(bare, 'PLN_01'), ['Robot 1 supplies PLN_02', 'Robot 2 indexes'],
+        'no Advanced anywhere: the minted default');
+});
+
 test('legs(style 7) is one Robot 2 index leg per paired position', () => {
     const l = M.legs(initStyle(7));
     assert.strictEqual(l.length, 2);

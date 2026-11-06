@@ -62,10 +62,18 @@ type RecipeGroup struct {
 // RecipeAdvanced is a group's Advanced: FlowAdvanced less what a recipe may
 // not say (SYNTH-round2 row 4). The part fields go, because a recipe carries
 // no part (ValidateRecipeGroups refuses them off the raw JSON, since this type
-// cannot hold them); so do the press hardware (index_robot_supplies is the
-// cell's, the same for every part), the loader board's order, and the reorder
-// point's source, which the mint writes. The keys are FlowAdvanced's, so the
+// cannot hold them); so do the loader board's order and the reorder point's
+// source, which the mint writes. The keys are FlowAdvanced's, so the
 // desktop's Advanced sheet reads and writes one shape in either scope.
+//
+// THE PRESS HARDWARE IS HERE NOW (index_robot_supplies, 2026-11-05). It was
+// left out as "the cell's, the same for every part" — but a recipe IS one
+// cell's choreography, and leaving it out left the flag nowhere a minted
+// style could get it from: every style the floor built minted Robot 1 fetches
+// the empty. SPR Press 6 minted two that way on one day, against every
+// admin-built style on the press saying Robot 2, and the first swap of one ran
+// the wrong robot to the supermarket. The engineer says it once, on the recipe,
+// and the mint lays it on every claim the group makes.
 //
 // EVERY FIELD IS OMITTED AT ITS ZERO, the carry-over disposition included:
 // zero is the minted default for each of them (blank reads as replace), and a
@@ -78,6 +86,7 @@ type RecipeAdvanced struct {
 	EvacuateOnChangeover  bool                 `json:"evacuate_on_changeover,omitempty"`
 	CarryoverDisposition  CarryoverDisposition `json:"changeover_carryover_disposition,omitempty"`
 	KeepStagedNode        string               `json:"keep_staged_node,omitempty"`
+	IndexRobotSupplies    bool                 `json:"index_robot_supplies,omitempty"`
 	AutoConfirm           bool                 `json:"auto_confirm,omitempty"`
 	CurtainRequired       bool                 `json:"curtain_required,omitempty"`
 	StrictPack            bool                 `json:"strict_pack,omitempty"`
@@ -210,6 +219,7 @@ func (g RecipeAdvanced) LayOver(a *FlowAdvanced) {
 	a.ReorderPoint, a.AutoReorder = g.ReorderPoint, g.AutoReorder
 	a.LinesideSoftThreshold, a.AutoPush = g.LinesideSoftThreshold, g.AutoPush
 	a.EvacuateOnChangeover, a.KeepStagedNode = g.EvacuateOnChangeover, g.KeepStagedNode
+	a.IndexRobotSupplies = g.IndexRobotSupplies
 	a.AutoConfirm, a.CurtainRequired, a.StrictPack = g.AutoConfirm, g.CurtainRequired, g.StrictPack
 	a.PackTolerancePct = g.PackTolerancePct
 	if g.CarryoverDisposition != "" {
@@ -445,6 +455,7 @@ var advancedFields = []struct {
 		return a.CarryoverDisposition != "" && a.CarryoverDisposition != CarryoverReplace
 	}},
 	{flowspec.KeepStagedNode, func(a RecipeAdvanced) bool { return a.KeepStagedNode != "" }},
+	{flowspec.IndexRobotSupplies, func(a RecipeAdvanced) bool { return a.IndexRobotSupplies }},
 	{flowspec.AutoConfirm, func(a RecipeAdvanced) bool { return a.AutoConfirm }},
 	{flowspec.CurtainRequired, func(a RecipeAdvanced) bool { return a.CurtainRequired }},
 	{flowspec.StrictPack, func(a RecipeAdvanced) bool { return a.StrictPack }},

@@ -3222,10 +3222,12 @@ async function recipeGroupPins(h) {
         click(ctx.main, ctx.doc, { act: 'gadv', g: '1' });
         const sheet = ctx.scrim.innerHTML;
         if (sheet.indexOf('<h2>Right Hand · Advanced</h2>') < 0) throw new Error('the sheet is not Right Hand\'s: ' + plain(sheet).slice(0, 200));
-        for (const key of ['allowed_payload_codes', 'auto_request_payload', 'index_robot_supplies', 'sequence', 'evac_nodes', 'evac_dest', 'partial_dest']) {
+        for (const key of ['allowed_payload_codes', 'auto_request_payload', 'sequence', 'evac_nodes', 'evac_dest', 'partial_dest']) {
             if (sheet.indexOf('data-adv="' + key + '"') >= 0) throw new Error('group scope draws ' + key + ', which a recipe may not say');
         }
-        for (const key of ['reorder_point', 'auto_reorder', 'keep_staged_node', 'strict_pack', 'curtain_required']) {
+        // index_robot_supplies joined the list 2026-11-05: a recipe that cannot
+        // say which robot fetches the empty minted every floor style Robot 1.
+        for (const key of ['reorder_point', 'auto_reorder', 'keep_staged_node', 'index_robot_supplies', 'strict_pack', 'curtain_required']) {
             if (sheet.indexOf('data-adv="' + key + '"') < 0) throw new Error('group scope hides ' + key);
         }
         const live = ctx.live();
@@ -3247,6 +3249,38 @@ async function recipeGroupPins(h) {
         if (JSON.stringify(adv) !== '{"reorder_point":1,"auto_reorder":true}') throw new Error('Right Hand\'s Advanced sent: ' + JSON.stringify(adv));
         if (body.groups[0].advanced) throw new Error('Left Hand sent an Advanced nobody set: ' + JSON.stringify(body.groups[0].advanced));
         if ((body.cells || []).some(c => c.advanced)) throw new Error('a cell carries an Advanced the save would drop');
+    });
+
+    // SPR Press 6, 2026-11-05: the floor's styles minted Robot 1 because the
+    // recipe had nowhere to say Robot 2. The engineer picks it once, on the
+    // group, and the save carries it.
+    await pin('Advanced in group scope picks which robot fetches the empty, and the save sends it', async () => {
+        const ctx = p6Page(press6Composer(), { extraIds: { 'pd-advpop': Object.assign(makeElement('pd-advpop'), { hidden: true }) } });
+        await settle();
+        await openRecipe(ctx);
+        click(ctx.main, ctx.doc, { act: 'groups-setup' });
+        await settle();
+        click(ctx.main, ctx.doc, { act: 'gadv', g: '1' });
+        const advpop = ctx.doc.getElementById('pd-advpop');
+        const opts = wireOptions(advpop);
+        click(ctx.scrim, ctx.doc, { advkind: 'pick', adv: 'index_robot_supplies' });
+        await settle();
+        if (advpop.innerHTML !== '<button data-opt="0" class="on">Robot 1</button><button data-opt="1" class="">Robot 2</button>') {
+            throw new Error('the robot picker is not Robot 1 (on) / Robot 2: ' + advpop.innerHTML);
+        }
+        bubble(opts[1], 'click', ctx.doc);
+        click(ctx.scrim, ctx.doc, { act: 'adv-apply' });
+        await settle();
+        const right = between(groupsHTML(ctx.root), 'data-gcard="1"', '<div class="pd-floor"');
+        if (plain(right).indexOf('Robot 2 supplies') < 0) throw new Error('Right Hand\'s card says ' + plain(right));
+        click(ctx.main, ctx.doc, { act: 'shape-save' });
+        wireSheet(ctx.scrim, 'Two spot press index');
+        click(ctx.scrim, ctx.doc, { act: 'sheet-ok' });
+        await settle();
+        const posted = ctx.posts.find(p => /\/presets$/.test(p.url));
+        if (!posted) throw new Error('the save posted nothing');
+        const adv = JSON.parse(posted.body).groups[1].advanced;
+        if (JSON.stringify(adv) !== '{"index_robot_supplies":true}') throw new Error('Right Hand\'s Advanced sent: ' + JSON.stringify(adv));
     });
 
     // THE DEPLOY NOTE, CLICK BY CLICK: the body is SYNTH-round2 §2's recipe,

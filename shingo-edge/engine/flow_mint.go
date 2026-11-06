@@ -725,6 +725,23 @@ type MintFacts struct {
 	Cells []domain.FlowCell `json:"cells,omitempty"`
 }
 
+// cellsWithRobot is a resolved style's cells as the Go screen draws them: the
+// claims collapsed, and on a claim whose Robot 2 fetches the empty that one
+// Advanced field, so the card's line names the robot the swap will send
+// (composer-model CARDLINE). Display only — the plan reads pr.Cells, which
+// carry no Advanced, and the station never sends cells back.
+func cellsWithRobot(claims []processes.NodeClaim) []domain.FlowCell {
+	out := make([]domain.FlowCell, 0, len(claims))
+	for _, c := range claims {
+		cell := domain.Collapse(c)
+		if c.IndexRobotSupplies {
+			cell.Advanced = &domain.FlowAdvanced{IndexRobotSupplies: true}
+		}
+		out = append(out, cell)
+	}
+	return out
+}
+
 // previewMint plans the mint and previews it (PreviewFlow with req.Mint set).
 // Nothing is written: a resolved style is previewed as stored; a style to be
 // minted is previewed as style 0, which planChangeoverFrom reads as "the style
@@ -747,11 +764,12 @@ func (e *Engine) previewMint(ctx context.Context, processID int64, req FlowPrevi
 		for _, c := range claims {
 			pr.Cells = append(pr.Cells, domain.Collapse(c))
 		}
+		facts.Cells = cellsWithRobot(claims)
 	} else {
 		facts.Minted = true
 		pr.Cells = plan.cells
+		facts.Cells = pr.Cells
 	}
-	facts.Cells = pr.Cells
 	preview, err := e.PreviewFlow(ctx, processID, pr)
 	if preview != nil {
 		preview.Mint = facts

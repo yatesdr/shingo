@@ -110,8 +110,17 @@ function fieldWord(state, field) {
 // through it. Each ' · ' is a line break, which is why a mode gets two
 // segments and never three. At 12 px in a 188 px card that is about 27
 // characters a line.
+//
+// THE PRESS INDEX NAMES THE ROBOT THE SWAP WILL SEND (2026-11-05). It said
+// `Robot 1 supplies` whatever index_robot_supplies said, so a press set to
+// Robot 2 read Robot 1 on every card, and a style minted Robot 1 by mistake
+// looked no different from one set that way on purpose. `a` is the cell's
+// Advanced as stored or drafted (cellAdvanced); absent reads as Robot 1, the
+// minted default.
 const CARDLINE = {
-    two_robot_press_index: c => 'Robot 1 supplies ' + (c.paired || '?') + ' · Robot 2 indexes',
+    two_robot_press_index: (c, a) => (a && a.index_robot_supplies)
+        ? 'Robot 2 indexes · Robot 2 supplies ' + (c.paired || '?')
+        : 'Robot 1 supplies ' + (c.paired || '?') + ' · Robot 2 indexes',
     two_robot: c => 'Robot 1 stages at ' + (c.staging || '?') + ' · Robot 2 pulls old',
     single_robot: c => ((c.staging || c.parkOld)
         ? [c.staging && 'Robot 1 moves in', c.parkOld && 'Robot 1 clears old'].filter(Boolean).join(' · ')
@@ -1478,6 +1487,15 @@ function dockNotes(state) {
     };
 }
 
+// cellAdvanced is the Advanced a card line reads: the draft's if Apply has
+// been pressed, else the stored claim's — advancedFor's source without its
+// defaults or its copy, and safe on a state built without priorAdvanced (the
+// board's read-only picture). Nothing reads it but the line.
+function cellAdvanced(state, node) {
+    const cell = state.cells[node];
+    return (cell && cell.advanced) || (state.priorAdvanced || {})[node] || null;
+}
+
 // cardLines is a position card's caption, line by line. relation says the card
 // is drawn on the relation picture (operator-flow's relationPlacement).
 function cardLines(state, node, relation) {
@@ -1494,7 +1512,7 @@ function cardLines(state, node, relation) {
     // than a guess at what the legacy row means.
     if (c.on && c.mode) {
         const line = CARDLINE[c.mode];
-        return line ? line(c).split(' · ') : [String(c.mode)];
+        return line ? line(c, cellAdvanced(state, node)).split(' · ') : [String(c.mode)];
     }
     // A BACK POSITION DOING SOMEBODY'S WORK SAYS WHOSE — and now says WHICH
     // work. "PLN_05 is feeding PLN_06 — should it show PLN_05 with inbound

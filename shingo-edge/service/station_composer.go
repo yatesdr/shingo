@@ -713,8 +713,10 @@ func (s *StationService) composerPresets(processID int64, claims map[int64][]pro
 }
 
 // cardGroups is a recipe's groups as its card carries them: whole on the
-// desktop's scope, and on the station's without Advanced, which nothing there
-// reads. A copy either way; the parsed groups are the caller's.
+// desktop's scope, and on the station's with only the one Advanced field the
+// station reads — which robot fetches the empty, which the card's line says
+// (composer-model CARDLINE). A copy either way; the parsed groups are the
+// caller's.
 func cardGroups(groups []domain.RecipeGroup, scope composerScope) []domain.RecipeGroup {
 	if len(groups) == 0 {
 		return nil
@@ -722,10 +724,19 @@ func cardGroups(groups []domain.RecipeGroup, scope composerScope) []domain.Recip
 	out := append([]domain.RecipeGroup(nil), groups...)
 	if scope != composerDesktop {
 		for i := range out {
-			out[i].Advanced = nil
+			out[i].Advanced = stationAdvanced(out[i].Advanced)
 		}
 	}
 	return out
+}
+
+// stationAdvanced is a group's Advanced as the station reads it: the robot
+// that fetches the empty when the group says Robot 2, and nothing otherwise.
+func stationAdvanced(a *domain.RecipeAdvanced) *domain.RecipeAdvanced {
+	if a == nil || !a.IndexRobotSupplies {
+		return nil
+	}
+	return &domain.RecipeAdvanced{IndexRobotSupplies: true}
 }
 
 // presetMemberCounts is how many of the process's parts run each preset: the

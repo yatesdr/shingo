@@ -401,6 +401,52 @@ func TestFlowMint_ARecipeCarryingGroupsMintsItsCells(t *testing.T) {
 	}
 }
 
+// TestFlowMint_ARecipeGroupSaysWhichRobotFetchesTheEmpty is SPR Press 6 on
+// 2026-11-05: two styles minted at the station both came out Robot 1 fetches
+// the empty, against every admin-built style on the press, because a recipe
+// had nowhere to say it. A group that says Robot 2 mints Robot 2 on every
+// claim it makes; a group that says nothing mints the default, Robot 1.
+func TestFlowMint_ARecipeGroupSaysWhichRobotFetchesTheEmpty(t *testing.T) {
+	f := newPress6(t)
+	flow := strings.Replace(press6GroupedJSON, `"advanced":{"reorder_point":1,"auto_reorder":true}`,
+		`"advanced":{"reorder_point":1,"auto_reorder":true,"index_robot_supplies":true}`, 1)
+	id, err := f.db.CreateFlowPreset(processes.FlowPresetInput{ProcessID: f.processID, Name: "Two spot, Robot 2 supplies",
+		FlowJSON: flow, CreatedBy: "test"})
+	must(t, err, "store the grouped recipe")
+	bodies := mintBodies(t, f.station, map[string]mintArgs{"unmoved": {id, press6Pair, nil}})
+	resp := doRequest(t, f.router, "POST", "/api/processes/"+itoa(f.processID)+"/flow/mint", bodies["unmoved"], nil)
+	assertStatus(t, resp, http.StatusOK)
+	got := flowBody(t, resp)
+	if got["minted"] != true {
+		t.Fatalf("mint = %v, want a minted style", got)
+	}
+	claims, err := f.db.ListStyleNodeClaims(int64(got["style_id"].(float64)))
+	must(t, err, "claims")
+	robot := map[string]bool{}
+	for _, c := range claims {
+		robot[c.CoreNodeName] = c.IndexRobotSupplies
+	}
+	if want := map[string]bool{"PLN_006": false, "PLN_007": true}; !maps.Equal(robot, want) {
+		t.Errorf("index_robot_supplies by node = %v, want Right Hand's Robot 2 on PLN_007 and the default on PLN_006 %v", robot, want)
+	}
+
+	// The Go screen draws a saved style from the preview's cells, and its card
+	// line names the robot: the saved style's cells say Robot 2 where its claim
+	// does, and nothing where it does not.
+	_, pv := f.preview(t, map[string]any{"style_id": got["style_id"], "station_id": f.station})
+	mint, _ := pv["mint"].(map[string]any)
+	cells, _ := mint["cells"].([]any)
+	shown := map[string]bool{}
+	for _, c := range cells {
+		m, _ := c.(map[string]any)
+		adv, _ := m["advanced"].(map[string]any)
+		shown[m["core_node_name"].(string)] = adv["index_robot_supplies"] == true
+	}
+	if want := map[string]bool{"PLN_006": false, "PLN_007": true}; !maps.Equal(shown, want) {
+		t.Errorf("the saved style's preview cells say Robot 2 at %v, want %v", shown, want)
+	}
+}
+
 // An archived version is not an enabled recipe: its pairings are no longer
 // known, so a spot that only it paired is refused.
 func TestFlowMint_AnArchivedRecipeGrantsNothing(t *testing.T) {
