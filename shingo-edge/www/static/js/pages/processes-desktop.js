@@ -3755,7 +3755,7 @@ function clearSelected() {
 async function openSettings() {
     S.settings = S.settings || settingsDraft();
     if (!S.routing) await loadRouting();
-    await Promise.all([loadCurtainNodes(), loadPayloadCatalog(), loadPartSet()]);
+    await Promise.all([loadCurtainNodes(), loadPayloadCatalog(), loadPartSet(), loadStationCounters()]);
     // THE PART SET'S POST-CREATION EDITOR (pick-a-part U5). The engineer
     // declares which parts a process may run (R-I) and the floor's part list
     // reads it; Add-process wrote it once and, until this, the only other
@@ -4584,16 +4584,127 @@ function stText(key, wide) {
 // matches. Picking writes through the same binding a keystroke would, so the
 // dropdown saves keystrokes and adds no state of its own.
 function cuCombo(nodeID, field, kind) {
-    return '<span class="pd-combo" data-combo="' + kind + '" data-cn="' + nodeID + '">' +
+    return '<span class="pd-combo" data-combo="' + kind + '" data-cn="' + nodeID + '"' +
+        (kind === 'tag' ? ' data-plcsel="[data-cn=&quot;' + nodeID + '&quot;][data-cf=&quot;plc&quot;]"' : '') + '>' +
         '<input class="pd-inp" type="text" data-cn="' + nodeID + '" data-cf="' + field + '" value="' +
         esc(S.curtain[nodeID][field]) + '" autocomplete="off" spellcheck="false">' +
         '<div class="pd-pop pd-combo-list" data-combolist hidden></div>' +
         '</span>';
 }
 
+// stCombo is a settings field (data-st) with the tag combo: its PLC from the
+// input plcsel names (or the fixed plcname), its options the suggestions of
+// kind (tag-suggest.js: counter, identity, or every tag).
+function stCombo(key, kind, plcsel, plcname) {
+    return '<span class="pd-combo" data-combo="tag" data-suggest="' + kind + '"' +
+        (plcsel ? ' data-plcsel="' + esc(plcsel) + '"' : '') + (plcname ? ' data-plcname="' + esc(plcname) + '"' : '') + '>' +
+        '<input class="pd-inp" type="text" data-st="' + key + '" value="' + esc(S.settings[key]) +
+        '" autocomplete="off" spellcheck="false">' +
+        '<div class="pd-pop pd-combo-list" data-combolist hidden></div></span>';
+}
+
 function stToggle(key) {
     return '<button class="pd-chk' + (S.settings[key] ? ' on' : '') + '" data-act="st-toggle" data-st="' + key +
         '" role="switch" aria-checked="' + (S.settings[key] ? 'true' : 'false') + '"></button>';
+}
+
+// identityField is the part-identity tag: derived from the counter tag (the
+// default), typed over it, or none (the process has no identity tag).
+function identityField() {
+    const mode = S.settings.identity_none ? 'none' : (S.settings.identity_tag_name ? 'override' : 'derive');
+    const seg = [['derive', 'Derive'], ['override', 'Override'], ['none', 'None']].map(m =>
+        '<button class="' + (mode === m[0] ? 'on' : '') + '" data-act="st-ident" data-mode="' + m[0] + '">' +
+        esc(m[1]) + '</button>').join('');
+    const derived = window.TagSuggest ? window.TagSuggest.derivedIdentity(S.settings.counter_tag_name) : '';
+    const sub = mode === 'none' ? 'no part identity: no wrong-part alert, no automatic cutover or switch'
+        : mode === 'derive' ? (derived ? 'reads ' + derived : 'the counter tag names no struct member to derive from')
+            : 'the CATID tag this cell publishes';
+    return stField('Part identity (CATID)', sub, '<div class="pd-seg">' + seg + '</div>') +
+        (mode === 'override' || S.identityOverride
+            ? stField('Identity tag', '', stCombo('identity_tag_name', 'identity', '[data-st="counter_plc_name"]', ''))
+            : '');
+}
+
+// The applicability rule, said where a station counter is made and bound.
+const STATION_RULE = 'A station counter clicks where the part leaves the cart, once per assembly, under every ' +
+    'style that uses the positions counted at it. It reads the cell’s own PLC; there is no ratio.';
+
+// stationCountersField lists the process's station counters with their verbs.
+function stationCountersField(p) {
+    const rows = (S.stationCounters || []).map(c =>
+        '<div class="pd-row"><span>' + esc(c.label || 'station counter ' + c.id) + ' <span class="pd-dim">' +
+        esc(c.tag_name) + (c.last_poll_at ? '' : ' · not read yet') + '</span></span>' +
+        '<span><button class="pd-dimlink" data-act="sc-edit" data-sc="' + c.id + '">Edit</button>' +
+        '<button class="pd-dimlink" data-act="sc-delete" data-sc="' + c.id + '">Delete</button></span></div>').join('');
+    const wired = !!(p.counter_plc_name && p.counter_tag_name);
+    return stBlock('Station counters', wired ? STATION_RULE : 'wire the production counter first; a station counter reads beside it',
+        rows + (wired ? '<button class="pd-btn" data-act="sc-new">New station counter</button>' : ''));
+}
+
+// loadStationCounters reads the process's station counters ([] on a failed read).
+async function loadStationCounters() {
+    try {
+        const res = await fetch('/api/processes/' + S.processID + '/station-counters', { cache: 'no-store' });
+        S.stationCounters = res.ok ? (await res.json()) || [] : [];
+    } catch (_) { S.stationCounters = []; }
+}
+
+// openStationCounter is the station counter's editor: its label and its tag
+// (the process's counter PLC), with the rule. bindNode, when given, is a
+// position counted at the new counter once it saves.
+function openStationCounter(id, bindNode) {
+    const p = process() || {};
+    const c = (S.stationCounters || []).find(x => x.id === id) || { label: '', tag_name: '' };
+    openSheet(id ? 'Edit station counter' : 'New station counter', STATION_RULE,
+        '<label class="pd-lbl">Label</label><input class="pd-inp wide" id="sc-label" value="' + esc(c.label) + '">' +
+        '<label class="pd-lbl">Tag on ' + esc(p.counter_plc_name || '') + '</label>' +
+        '<span class="pd-combo" data-combo="tag" data-suggest="counter" data-plcname="' + esc(p.counter_plc_name || '') + '">' +
+        '<input class="pd-inp wide" id="sc-tag" value="' + esc(c.tag_name) + '" autocomplete="off" spellcheck="false">' +
+        '<div class="pd-pop pd-combo-list" data-combolist hidden></div></span>',
+        'Save', async () => {
+            const body = { label: $('sc-label').value, tag_name: $('sc-tag').value };
+            const url = id ? '/api/station-counters/' + id : '/api/processes/' + S.processID + '/station-counters';
+            const out = await postJSON(id ? 'PUT' : 'POST', url, body);
+            if (!out.ok) { sheetStatus(out.error, true); return; }
+            if (!id && bindNode && out.body && out.body.id) {
+                const b = await postJSON('PUT', '/api/process-nodes/' + bindNode + '/counted-at', { line_counter_id: out.body.id });
+                if (!b.ok) { sheetStatus(b.error, true); return; }
+            }
+            closeSheet();
+            await afterStationChange();
+        });
+    bindCombos($('pd-scrim'));
+}
+
+async function afterStationChange() {
+    S._tagCache = {};
+    await Promise.all([loadStationCounters(), loadCurtainNodes()]);
+    drawSettings();
+}
+
+// setCountedAt binds a position to a station counter ('' = the production
+// counter, 'new' = make one and bind it).
+async function setCountedAt(nodeID, value) {
+    if (value === 'new') {
+        openStationCounter(0, nodeID);
+        return;
+    }
+    const out = await postJSON('PUT', '/api/process-nodes/' + nodeID + '/counted-at',
+        { line_counter_id: value ? Number(value) : null });
+    S.settingsError = out.ok ? '' : out.error;
+    await afterStationChange();
+}
+
+// countedAtField is a position's "Counted at": the production counter, one of
+// the process's station counters, or a new one.
+function countedAtField(n) {
+    const at = n.line_counter_id || 0;
+    const opts = '<option value=""' + (at ? '' : ' selected') + '>Production counter</option>' +
+        (S.stationCounters || []).map(c => '<option value="' + c.id + '"' + (at === c.id ? ' selected' : '') + '>' +
+            esc(c.label || c.tag_name) + '</option>').join('') +
+        '<option value="new">New station counter…</option>';
+    return '<span class="pd-poscu"><span class="pd-dim">Counted at</span>' +
+        '<select class="pd-inp" data-countedat="' + n.id + '">' + opts + '</select></span>';
 }
 
 // ── Settings · Positions ─────────────────────────────────────────────────────
@@ -4652,7 +4763,7 @@ function positionRow(n) {
     return stField(n.name + (n.core_node_name && n.core_node_name !== n.name ? ' (' + n.core_node_name + ')' : ''), sub,
         '<span class="pd-poscu"><span class="pd-dim">Light curtain</span>' +
         '<button class="pd-chk' + (on ? ' on' : '') + '" data-act="cu-toggle" data-node="' + n.id +
-        '" role="switch" aria-checked="' + (on ? 'true' : 'false') + '"></button></span>' + remove) +
+        '" role="switch" aria-checked="' + (on ? 'true' : 'false') + '"></button></span>' + countedAtField(n) + remove) +
         (on
             ? stField('PLC', 'the WarLink PLC the curtain button writes - type to filter the live list', cuCombo(n.id, 'plc', 'plc')) +
               stField('Tag', 'the BOOL tag the button flips - type to filter; published tags are readable, unpublished ones are not', cuCombo(n.id, 'tag', 'tag')) +
@@ -4798,10 +4909,12 @@ function drawSettings() {
         '<span class="pd-cnt' + (counting ? ' ok' : '') + '"><i></i>' +
         esc(counting ? 'counting' : 'not wired') + '</span></div>' +
         stField('PLC', '', stText('counter_plc_name')) +
-        stField('Tag', '', stText('counter_tag_name')) +
+        stField('Tag', 'type to filter WarLink’s tags; a MES_ struct offers its counter member',
+            stCombo('counter_tag_name', 'counter', '[data-st="counter_plc_name"]', '')) +
         stField('Enabled',
             'a press-index position keeps a drained same-part bin at changeover only while this counts (a sequential press reuses its parked empty either way)',
-            stToggle('counter_enabled'));
+            stToggle('counter_enabled')) +
+        identityField() + stationCountersField(p);
 
     if (!S.curtain) S.curtain = curtainDraft();
     const positions = positionsSection();
@@ -4898,8 +5011,11 @@ function drawSettings() {
             markSettingsBar();
         });
     }
+    for (const el of root().querySelectorAll('select[data-countedat]')) {
+        el.addEventListener('change', () => setCountedAt(Number(el.dataset.countedat), el.value));
+    }
     bindPickers();
-    bindCombos();
+    bindCombos(root());
     if (wasAt) {
         const box = root().querySelector('.pd-sheet');
         if (box) box.scrollTop = wasAt;
@@ -4913,8 +5029,10 @@ function drawSettings() {
 // cached per PLC, so correcting the PLC refetches on the next open. The
 // dropdown closes on blur with a grace period so a click on an option (which
 // fires before blur) still lands.
-function bindCombos() {
-    for (const wrap of root().querySelectorAll('[data-combo]')) {
+function bindCombos(container) {
+    for (const wrap of (container || root()).querySelectorAll('[data-combo]')) {
+        if (wrap.dataset.bound) continue;
+        wrap.dataset.bound = '1';
         const input = wrap.querySelector('input');
         const list = wrap.querySelector('[data-combolist]');
         let opts = null;
@@ -4931,19 +5049,25 @@ function bindCombos() {
                     name: p.name, note: p.connected ? 'connected' : 'not connected',
                 }));
             }
-            const plcName = ((S.curtain[wrap.dataset.cn] || {}).plc || '').trim();
+            // The PLC is a sibling field's (plcsel: the curtain's own PLC input,
+            // the counter's) or a fixed one (plcname: the process's counter PLC).
+            const src = wrap.dataset.plcsel ? document.querySelector(wrap.dataset.plcsel) : null;
+            const plcName = (wrap.dataset.plcname || (src ? src.value : '') || '').trim();
             if (!plcName) return [{ name: '', note: 'pick a PLC first' }];
             S._tagCache = S._tagCache || {};
             if (!S._tagCache[plcName]) {
+                // A failed read is not cached: the next open asks again.
                 try {
                     const res = await fetch('/api/plcs/all-tags/' + encodeURIComponent(plcName));
-                    S._tagCache[plcName] = res.ok ? await res.json() : [];
-                } catch (_) { S._tagCache[plcName] = []; }
+                    if (!res.ok) return [{ name: '', note: 'WarLink did not answer — the typed value is kept' }];
+                    S._tagCache[plcName] = (await res.json()) || [];
+                } catch (_) {
+                    return [{ name: '', note: 'WarLink did not answer — the typed value is kept' }];
+                }
             }
-            return (S._tagCache[plcName] || []).map(t => ({
-                name: t.name,
-                note: (t.type || '') + (t.enabled ? ' · published' : ' · NOT published'),
-            }));
+            const suggest = wrap.dataset.suggest || '';
+            return window.TagSuggest ? window.TagSuggest.options(S._tagCache[plcName], suggest)
+                : S._tagCache[plcName].map(t => ({ name: t.name, note: t.type || '' }));
         };
         const render = items => {
             const q = (input.value || '').trim().toLowerCase();
@@ -4976,8 +5100,8 @@ function bindCombos() {
             if (!b || !b.dataset.comboopt) return;
             ev.preventDefault();
             input.value = b.dataset.comboopt;
-            S.curtain[input.dataset.cn][input.dataset.cf] = input.value;
-            markSettingsBar();
+            // Through the input's own binding, as a keystroke goes.
+            input.dispatchEvent(new Event('input', { bubbles: true }));
         });
     }
 }
@@ -5063,6 +5187,8 @@ async function saveSettings() {
     const keepCurtain = S.settingsError ? S.curtain : null;
     await loadCurtainNodes();
     if (keepCurtain) S.curtain = keepCurtain;
+    S._tagCache = {};
+    await loadStationCounters();
     await reloadProcesses();
     S.settings = settingsDraft();
     if (!S.settingsError) S.settingsNotice = 'Saved.';
@@ -7761,6 +7887,22 @@ function onClick(e) {
         case 'st-holddest': openContainmentPicker(btn); return;
             case 'st-discard': S.settings = settingsDraft(); S.curtain = curtainDraft(); S.settingsError = ''; drawSettings(); return;
             case 'st-save': saveSettings(); return;
+            case 'st-ident': {
+                const mode = btn.dataset.mode;
+                S.settings.identity_none = mode === 'none';
+                S.identityOverride = mode === 'override';
+                if (mode !== 'override') S.settings.identity_tag_name = '';
+                drawSettings();
+                return;
+            }
+            case 'sc-new': openStationCounter(0, 0); return;
+            case 'sc-edit': openStationCounter(Number(btn.dataset.sc), 0); return;
+            case 'sc-delete': {
+                const id = Number(btn.dataset.sc);
+                openSheet('Delete this station counter?', 'its positions are counted by the production counter again', '',
+                    'Delete', () => sheetSubmit('DELETE', '/api/station-counters/' + id, undefined, afterStationChange), true);
+                return;
+            }
             case 'st-sync': syncCatalog(); return;
             case 'st-delete': openDeleteProcess(); return;
             case 'pos-add': void openAddPositions(''); return;
