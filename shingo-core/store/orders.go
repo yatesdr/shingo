@@ -1478,6 +1478,11 @@ func (db *DB) ListReleasedOpenVendorOrderIDs() ([]string, error) {
 	return orders.ListReleasedOpenVendorOrderIDs(db.DB)
 }
 
+// ListEndedWithLiveVendorState: see orders.ListEndedWithLiveVendorState.
+func (db *DB) ListEndedWithLiveVendorState(since, settled time.Time, limit int) ([]*orders.Order, error) {
+	return orders.ListEndedWithLiveVendorState(db.DB, since, settled, limit)
+}
+
 func (db *DB) ListTrackedVendorOrderIDs() ([]string, error) {
 	return orders.ListTrackedVendorOrderIDs(db.DB)
 }

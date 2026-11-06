@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -172,6 +173,11 @@ func TestChangeover_OrphanCancelStampsTask(t *testing.T) {
 	// operator-cancelled order goes through StatusSubmitted → StatusCancelled).
 	db.UpdateOrderStatus(orderID, string(orders.StatusSubmitted))
 	db.UpdateOrderStatus(orderID, string(orders.StatusCancelled))
+	// Core's reason, as the mirror records it (HK 2026-11-04: RDS stopped it).
+	const why = "fleet order stopped — RDS error 60009: Cannot find path to new block target [PLN_05]"
+	if err := db.InsertOrderHistory(orderID, string(orders.StatusSubmitted), string(orders.StatusCancelled), why); err != nil {
+		t.Fatalf("seed cancel history: %v", err)
+	}
 
 	order, _ := db.GetOrder(orderID)
 	emitOrderCompleted(eng, orderID, order.UUID, order.OrderType, &nodeID)
@@ -179,6 +185,11 @@ func TestChangeover_OrphanCancelStampsTask(t *testing.T) {
 	updated, err := db.GetChangeoverNodeTaskByNode(changeover.ID, nodeID)
 	if err != nil {
 		t.Fatalf("get task after orphan cancel: %v", err)
+	}
+	// The note says WHO from the order's own reason — never "by operator" for a
+	// cancel the fleet made (2026-11-05).
+	if want := fmt.Sprintf("order %d cancelled: %s", orderID, why); updated.SkipNote != want {
+		t.Errorf("skip note = %q, want %q", updated.SkipNote, want)
 	}
 	if updated.State != domain.NodeTaskAbandoned {
 		t.Errorf("expected task state abandoned, got %s", updated.State)

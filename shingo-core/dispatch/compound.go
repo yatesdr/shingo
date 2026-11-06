@@ -339,6 +339,33 @@ func chapterEndedInFailure(children []*orders.Order) bool {
 	return !(newest.Status == StatusCancelled && newest.ErrorDetail == reshuffleDissolveDetail)
 }
 
+// legFailedDemandDetail is the demand's restart row when a leg ended its chapter:
+// the leg-failed sentence, naming the leg whose own failure did it and that
+// leg's reason — "reshuffle dissolved: dig leg 3201 failed (RDS error 60009: …);
+// the demand re-plans". Before 2026-11-05 it was the bare sentence and the cause
+// sat one order over on a leg the station never sees (the swap partner's
+// problem, deadLegWhy, one family up).
+//
+// THE PARENT'S ROW ONLY. The siblings cancelled with it keep the bare marker:
+// IsChapterEndCancel matches it exactly, and so does soakstat's count. This row
+// is a history line read by people, not matched by anything.
+//
+// The leg named is the newest FAILED child. A sibling cancelled by the cascade
+// carries the marker and says nothing new; a swept leg's reason went to the
+// recovery ledger (reconciliation_service.go). No failed leg → the bare sentence.
+func legFailedDemandDetail(children []*orders.Order) string {
+	var dead *orders.Order
+	for _, c := range children {
+		if c.Status == StatusFailed && !dplan.IsConfigFailure(c.ErrorDetail) && (dead == nil || c.ID > dead.ID) {
+			dead = c
+		}
+	}
+	if dead == nil {
+		return reshuffleLegFailedDetail
+	}
+	return fmt.Sprintf("reshuffle dissolved: dig leg %d failed%s; the demand re-plans", dead.ID, deadLegWhy(dead))
+}
+
 // CreateCompoundOrder creates a parent order with child orders for a reshuffle plan.
 // All children and bin claims are created in a single transaction. The parent
 // is transitioned into StatusReshuffling via lifecycle.BeginReshuffle, so the
@@ -2588,7 +2615,7 @@ func (d *Dispatcher) chapterStoppedShort(
 		// board. One path, one disposition, two vocabularies.
 		demandDetail := reshuffleDissolveDetail
 		if chapterEndedInFailure(children) {
-			demandDetail = reshuffleLegFailedDetail
+			demandDetail = legFailedDemandDetail(children)
 		}
 		// ── A STAGED PARENT HAS NO DISPOSITION TO TAKE (§R.104/§R.104a) ──
 		//

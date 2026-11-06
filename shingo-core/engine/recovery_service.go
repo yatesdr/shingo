@@ -226,17 +226,27 @@ func (s *RecoveryService) RecoverFaultedOrder(orderID int64, actor string) error
 	return nil
 }
 
-// ReissueTerminate re-fires /terminate for orders that grace-expired but the
-// original best-effort terminate failed. Returns the error from the fleet
-// adapter (NOT log-and-continue; the operator is asking to retry).
+// ReissueTerminate re-fires /terminate for an order Core has ENDED — failed or
+// cancelled — whose fleet order may still be running because the original
+// terminate failed. Returns the error from the fleet adapter (NOT
+// log-and-continue; the operator is asking to retry).
+//
+// Cancelled was added 2026-11-05: every cancel terminates at the fleet
+// (LifecycleService.CancelOrder) and only logs a refusal, so a cancelled order
+// is the commonest one this is for. The order page offers it when the fleet
+// still reports the order live (can_reissue_terminate); the automatic re-sends
+// are engine.chaseUnterminatedOrders.
 func (s *RecoveryService) ReissueTerminate(orderID int64, actor string) error {
 	e := s.engine
 	order, err := s.db.GetOrder(orderID)
 	if err != nil {
 		return fmt.Errorf("order not found")
 	}
-	if order.Status != protocol.StatusFailed {
-		return fmt.Errorf("order %d is not failed (status: %s)", orderID, order.Status)
+	if order.Status != protocol.StatusFailed && order.Status != protocol.StatusCancelled {
+		return fmt.Errorf("order %d has not ended (status: %s)", orderID, order.Status)
+	}
+	if order.VendorOrderID == "" {
+		return fmt.Errorf("order %d has no fleet order", orderID)
 	}
 
 	if err := e.fleet.CancelOrder(order.VendorOrderID); err != nil {

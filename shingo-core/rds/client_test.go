@@ -2,10 +2,12 @@ package rds
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"shingo/protocol/testutil"
+	"shingocore/fleet"
 	"strings"
 	"sync"
 	"testing"
@@ -235,6 +237,44 @@ func TestHTTPError(t *testing.T) {
 	err := client.CreateJoinOrder(&SetJoinOrderRequest{ID: "fail"})
 	if err == nil {
 		t.Fatal("expected error for HTTP 500")
+	}
+}
+
+// TestAPIError pins that a refusal RDS ANSWERED is typed — dispatch tells "the
+// fleet refused" from "the fleet is not responding" by it (fleet.VendorError) —
+// while Error() stays the exact text these paths produced as plain strings, so
+// log lines and anything matching on them read the same.
+func TestAPIError(t *testing.T) {
+	t.Parallel()
+
+	envelope := checkResponse(&Response{Code: 60009, Msg: "Cannot find path to [SMN_011]"})
+	httpEnv := httpError(400, []byte(`{"code":60009,"msg":"Cannot find path to [SMN_011]"}`))
+	httpRaw := httpError(500, []byte("server error"))
+	httpEmpty := httpError(503, nil)
+
+	for _, c := range []struct {
+		name              string
+		err               error
+		wantErr, wantText string
+		wantCode          int
+	}{
+		{"envelope code", envelope, "rds error 60009: Cannot find path to [SMN_011]", "Cannot find path to [SMN_011]", 60009},
+		{"HTTP with an envelope body", httpEnv, `rds HTTP 400: {"code":60009,"msg":"Cannot find path to [SMN_011]"}`, "Cannot find path to [SMN_011]", 60009},
+		{"HTTP with a raw body", httpRaw, "rds HTTP 500: server error", "HTTP 500: server error", 0},
+		{"HTTP with no body", httpEmpty, "rds HTTP 503: ", "HTTP 503", 0},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			if got := c.err.Error(); got != c.wantErr {
+				t.Errorf("Error() = %q, want %q", got, c.wantErr)
+			}
+			var ve fleet.VendorError
+			if !errors.As(fmt.Errorf("wrapped: %w", c.err), &ve) {
+				t.Fatalf("%v is not a fleet.VendorError through %%w", c.err)
+			}
+			if ve.VendorCode() != c.wantCode || ve.VendorText() != c.wantText {
+				t.Errorf("vendor = (%d, %q), want (%d, %q)", ve.VendorCode(), ve.VendorText(), c.wantCode, c.wantText)
+			}
+		})
 	}
 }
 

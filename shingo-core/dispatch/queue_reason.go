@@ -30,7 +30,7 @@ import (
 //   - QueueStorageRearranging: Lane + Payload + DigOrderID + HolderOrderID + StoppedOrderID (+ Step)
 //   - QueueWaitingForPartner:  Sibling (+ SiblingStatus), or Destination for a
 //     leg parked at a station wait (no sibling)
-//   - QueueFleetUnavailable:   none
+//   - QueueFleetUnavailable:   FleetReason (when the fleet answered)
 type QueueParams struct {
 	// Payload is the part code the order is waiting on material for. Empty for
 	// an empty-carrier wait, and empty when the capacity shape could not be
@@ -187,6 +187,11 @@ type QueueParams struct {
 	// VacateLifterGone marks a vacate hold whose lifter has ended without
 	// lifting the bin (CauseVacateLifterGone): nothing scheduled will move it.
 	VacateLifterGone bool
+	// FleetReason is the fleet's own refusal, already rendered
+	// (fleet.FormatVendorError — "RDS error 60009: …"), when the fleet ANSWERED
+	// with one (QueueFleetUnavailable). Empty means it did not answer, which is
+	// the only case "not responding" is true of. Set by FleetRefusalCause.
+	FleetReason string
 }
 
 // withHolder returns p with the holder named. A fluent setter rather than a
@@ -230,7 +235,7 @@ func FormatQueueSentence(code protocol.QueueCode, p QueueParams) string {
 	case protocol.QueueWaitingForPartner:
 		s = partnerSentence(p)
 	case protocol.QueueFleetUnavailable:
-		s = "Robot system not responding — retrying"
+		s = fleetSentence(p)
 	case protocol.QueueWaitingForOutside:
 		s = outsideSentence(p)
 	default:
@@ -327,6 +332,13 @@ func materialSentence(p QueueParams) string {
 // carrying them here is what makes "go clear it" and "wait, one is coming"
 // distinguishable without reading queue_cause (which no surface renders).
 func slotSentence(p QueueParams) string {
+	// A HELD RELEASE THE FLEET REFUSED says so: the bin has left and the append
+	// was refused (vacate_hold.go). It keeps the slot code and the vacate cause —
+	// those are read back as state (chapter_floor.go, clear_home.go) — and says
+	// what is actually true.
+	if p.FleetReason != "" {
+		return fleetSentence(p)
+	}
 	// A VACATE HOLD names the bin, because that bin leaving is the whole wait.
 	if p.VacateBin != "" {
 		s := fmt.Sprintf("Waiting for %s to leave %s", p.VacateBin, p.Destination)
@@ -484,6 +496,18 @@ func partnerSentence(p QueueParams) string {
 	default:
 		return fmt.Sprintf("Waiting for partner order %s — the two legs go together", ref)
 	}
+}
+
+// fleetSentence is the fleet-unavailable wait. "Not responding" only when the
+// fleet did not answer: a refusal it answered with names its own code, which is
+// what a person searches RDS for (HK, 2026-11-04 — every refusal read "not
+// responding" while RDS's reason sat in Core's log alone). Short, because the
+// station shows it on the order: the verdict and the code, nothing else.
+func fleetSentence(p QueueParams) string {
+	if p.FleetReason != "" {
+		return "Fleet refused: " + p.FleetReason + " — retrying"
+	}
+	return "Robot system not responding — retrying"
 }
 
 // withStep prefixes the failing step of a multi-step order. A five-step complex

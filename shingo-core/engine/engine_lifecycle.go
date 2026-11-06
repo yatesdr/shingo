@@ -29,7 +29,7 @@ import (
 func (e *Engine) Start() {
 	// Create emitter adapters
 	de := &dispatchEmitter{bus: e.Events, engine: e}
-	pe := &pollerEmitter{bus: e.Events}
+	pe := &pollerEmitter{bus: e.Events, audit: e.auditOrderNote}
 
 	// Create dispatcher with synthetic node resolver
 	resolver := &dispatch.DefaultResolver{DB: e.db, DebugLog: e.debugLog}
@@ -144,8 +144,9 @@ func (e *Engine) Start() {
 	// Start robot status refresh loop (2s), and the loops that read its poll.
 	e.startRobotPollLoops()
 
-	// Start the orphaned-claim sweep.
-	go e.claimSweepLoop()
+	// Start the orphaned-claim sweep, and the chase of orders shingo ended that
+	// the fleet may still be running (fleet_terminate_chase.go).
+	e.startClaimAndTerminateSweeps()
 
 	// Map + scene sync gates. Deliberately NO boot pass, unlike the confidence
 	// roll-up: both gates read the robot cache, which robotRefreshLoop above

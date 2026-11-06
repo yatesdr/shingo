@@ -54,10 +54,15 @@ type Poller struct {
 	// awaitingWait holds, per RDS order, the last block a release appended
 	// while leaving the order open (ExpectNextWait). Map: rdsOrderID ->
 	// blockID. Cleared by the next committed transition.
-	awaitingWait  map[string]string
-	graceDuration time.Duration
-	stopChan      chan struct{}
-	stopOnce      sync.Once
+	awaitingWait map[string]string
+	// unreadable holds the orders whose reads are failing, since when and why
+	// (poller_unreadable.go). Lazily made; cleared by a good read or Untrack.
+	unreadable map[string]*unreadableOrder
+	// unreadableAfter overrides UnreadableAfter (tests); 0 means the constant.
+	unreadableAfter time.Duration
+	graceDuration   time.Duration
+	stopChan        chan struct{}
+	stopOnce        sync.Once
 	// doneChan closes when run() returns, which is what makes Stop
 	// synchronous. started gates the wait: Stop is documented as safe
 	// before Start, and waiting on a loop that was never launched would
@@ -138,6 +143,7 @@ func (p *Poller) Untrack(rdsOrderID string) {
 	delete(p.blockStates, rdsOrderID)
 	delete(p.faultedDeadline, rdsOrderID)
 	delete(p.awaitingWait, rdsOrderID)
+	delete(p.unreadable, rdsOrderID)
 }
 
 // ExpectNextWait records that a release appended blocks to rdsOrderID and left
@@ -280,13 +286,18 @@ func (p *Poller) poll() {
 
 	p.checkGraceExpiry()
 
+	failed := 0
+	defer func() { p.reportUnreadable(failed, len(ids)) }()
 	for _, rdsID := range ids {
 		detail, err := p.client.GetOrderDetails(rdsID)
 		if err != nil {
 			log.Printf("poller: get order %s: %v", rdsID, err)
 			p.dbg("poll error: GetOrderDetails(%s): %v", rdsID, err)
+			failed++
+			p.noteUnreadable(rdsID, err)
 			continue
 		}
+		p.noteReadable(rdsID)
 
 		p.mu.Lock()
 		oldState, exists := p.active[rdsID]

@@ -585,11 +585,14 @@ func TestReissueTerminate_RejectsNonFailed(t *testing.T) {
 		t.Fatalf("seed order: %v", err)
 	}
 
+	// A LIVE order is refused. Since 2026-11-05 an ended order of either kind —
+	// failed or cancelled — is accepted (a cancel's terminate can be refused by
+	// the fleet as well), so the refusal names "has not ended", not "not failed".
 	err = eng.ReissueTerminate(res.OrderID, "op")
 	if err == nil {
-		t.Fatal("expected error for non-failed order")
+		t.Fatal("expected error for a live order")
 	}
-	if !strings.Contains(err.Error(), "not failed") {
-		t.Errorf("err = %v, want 'not failed'", err)
+	if !strings.Contains(err.Error(), "has not ended") {
+		t.Errorf("err = %v, want 'has not ended'", err)
 	}
 }

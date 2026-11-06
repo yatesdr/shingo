@@ -2,6 +2,7 @@ package service
 
 import (
 	"log"
+	"strings"
 	"time"
 
 	"shingo/protocol"
@@ -110,6 +111,44 @@ func (s *OrderService) WaitSince(list []orders.Order) map[int64]string {
 		}
 		for id, at := range times {
 			out[id] = at.UTC().Format(time.RFC3339)
+		}
+	}
+	return out
+}
+
+// endReasonMax bounds the line the orders page shows under an ended order.
+const endReasonMax = 160
+
+// EndReasons answers "why did this order end" for every cancelled, failed or
+// skipped order in the list: its newest history row into that status — Core's
+// reason as mirrored, e.g. "fleet order stopped — RDS error 60009: …". Before
+// 2026-11-05 the Edge wrote these reasons and nothing read them back; the page
+// showed a bare "cancelled". One read per status; one short line per order.
+func (s *OrderService) EndReasons(list []orders.Order) map[int64]string {
+	byStatus := map[protocol.Status][]int64{}
+	for _, o := range list {
+		switch o.Status {
+		case protocol.StatusCancelled, protocol.StatusFailed, protocol.StatusSkipped:
+			byStatus[o.Status] = append(byStatus[o.Status], o.ID)
+		}
+	}
+	if len(byStatus) == 0 {
+		return nil
+	}
+	out := make(map[int64]string)
+	for status, ids := range byStatus {
+		details, err := s.db.LatestOrderHistoryDetailsForStatus(ids, string(status))
+		if err != nil {
+			log.Printf("orders board: end reasons for %d %s order(s): %v", len(ids), status, err)
+			continue
+		}
+		for id, d := range details {
+			if r := []rune(strings.TrimSpace(d)); len(r) > endReasonMax {
+				d = string(r[:endReasonMax]) + "…"
+			}
+			if d = strings.TrimSpace(d); d != "" {
+				out[id] = d
+			}
 		}
 	}
 	return out

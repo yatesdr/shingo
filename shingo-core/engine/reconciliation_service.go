@@ -612,6 +612,10 @@ func (s *ReconciliationService) AbandonStuckOrders(timeout, operatorGatedTimeout
 			effective = operatorGatedTimeout
 			reason = fmt.Sprintf("abandoned: operator-gated staging past %s", operatorGatedTimeout)
 		}
+		// AND WHAT IT WAS STUCK ON: the fleet's last state, the robot, and the
+		// wait it last stood under — the handles a person looks up. Short, after
+		// the "abandoned:" opening the classifiers key on (2026-11-05).
+		reason += stuckContext(order)
 		// Selected on the shorter cutoff but not yet past its own bound. Logged
 		// rather than silent: a held order is a robot parked holding a bin, and
 		// an exemption nobody can see trades a destructive failure for an
@@ -647,4 +651,28 @@ func (s *ReconciliationService) AbandonStuckOrders(timeout, operatorGatedTimeout
 	}
 
 	return abandoned, nil
+}
+
+// stuckContext is the parenthesis a stuck-sweep abandon adds to its reason:
+// " (RDS WAITING, AMR-06; last wait: Waiting for a slot)", whichever parts the
+// row has, or "" when it has none.
+func stuckContext(o *orders.Order) string {
+	var parts []string
+	if o.VendorState != "" {
+		parts = append(parts, "RDS "+o.VendorState)
+	}
+	if o.RobotID != "" {
+		parts = append(parts, o.RobotID)
+	}
+	s := strings.Join(parts, ", ")
+	if o.QueueReason != "" {
+		if s != "" {
+			s += "; "
+		}
+		s += "last wait: " + o.QueueReason
+	}
+	if s == "" {
+		return ""
+	}
+	return " (" + s + ")"
 }

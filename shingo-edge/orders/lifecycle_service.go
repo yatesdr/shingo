@@ -332,6 +332,14 @@ func (s *LifecycleService) ApplyCoreStatusSnapshot(snapshot protocol.OrderStatus
 	}
 
 	detail := "startup reconciliation with core"
+	// AN ENDING CARRIES CORE'S REASON. The snapshot has carried ErrorDetail all
+	// along and this wrote the line above instead — so the one case where the
+	// live cancel/failure message was missed (the Edge was down) is the one
+	// that lost its reason, and the failed toast read "startup reconciliation
+	// with core" (2026-11-05). Non-endings keep the reconciliation note.
+	if snapshot.ErrorDetail != "" && (snapStatus == StatusCancelled || snapStatus == StatusFailed || snapStatus == StatusSkipped) {
+		detail = snapshot.ErrorDetail
+	}
 	switch snapStatus {
 	case StatusConfirmed:
 		if order.Status == StatusDelivered {

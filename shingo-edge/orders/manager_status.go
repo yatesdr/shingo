@@ -113,10 +113,46 @@ func (m *Manager) HandleDispatchReply(orderUUID, replyType, waybillID, eta, stat
 	case ReplyStaged:
 		return m.mirrorTransition(order.ID, StatusStaged, statusDetail)
 	case ReplyCancelled:
-		return m.mirrorTransition(order.ID, StatusCancelled, statusDetail)
+		// A CANCEL THIS STATION DID NOT ASK FOR IS ANNOUNCED. Core's reason
+		// used to land in order_history and nowhere an operator looks: no
+		// toast, no board text — the order simply left its tile. HK 400t,
+		// 2026-11-04: seven swaps stopped by RDS (60009, no path to PLN_05)
+		// and the press heard nothing.
+		//
+		// "Did not ask for" is read off the status BEFORE the mirror moves it:
+		// AbortOrderWithReason transitions this order to cancelled before Core
+		// can echo the cancel, so an operator's own abort arrives here already
+		// terminal and is not toasted back at them.
+		//
+		// ONE TOAST PER DEAD SWAP. A swap's partner is cancelled because its
+		// sibling died, and that cancel lands here just after the sibling's
+		// (Core sends them in that order). Its sibling already ended, so the
+		// station has been told — by the dead leg's toast, or by the operator's
+		// own abort of it — and a second sticky toast says the same thing
+		// longer. Stickies are not capped (operator-util.js makeRoomForToast);
+		// HK 2026-11-04 would have stacked fourteen (owner, 2026-11-05).
+		wasLive := !IsTerminal(order.Status)
+		if err := m.mirrorTransition(order.ID, StatusCancelled, statusDetail); err != nil {
+			return err
+		}
+		if wasLive && !m.siblingAlreadyEnded(order) {
+			m.emitter.EmitOrderCancelledByCore(order.ID, order.UUID, order.OrderType, statusDetail)
+		}
+		return nil
 	default:
 		return fmt.Errorf("unknown reply type: %s", replyType)
 	}
+}
+
+// siblingAlreadyEnded reports whether the order's swap sibling (the Edge's own
+// link) had already reached a terminal status. No link, or an unreadable
+// sibling, is false: the station is told, as it would be with no pair at all.
+func (m *Manager) siblingAlreadyEnded(order *orders.Order) bool {
+	if order.SiblingOrderID == nil {
+		return false
+	}
+	sib, err := m.db.GetOrder(*order.SiblingOrderID)
+	return err == nil && sib != nil && IsTerminal(sib.Status)
 }
 
 // mirrorJumpDetail prefixes the order_history detail written when the mirror had
@@ -314,7 +350,7 @@ func (m *Manager) HandleSkipped(orderUUID, errorCode, detail string) error {
 	if err := m.db.UpdateChangeoverNodeTaskState(task.ID, postState); err != nil {
 		log.Printf("orders: advance node task %d to %s on skip: %v", task.ID, postState, err)
 	}
-	note := formatSkipNote(task, errorCode, detail)
+	note := formatSkipNote(task, order.ID, errorCode, detail)
 	if err := m.db.SetChangeoverNodeTaskSkipNote(task.ID, note); err != nil {
 		log.Printf("orders: set skip_note on node task %d: %v", task.ID, err)
 	}
@@ -339,15 +375,24 @@ func skippedTerminalState(task *processes.NodeTask, orderID int64) domain.NodeTa
 // formatSkipNote builds the operator-facing chip text. Keep it short —
 // the HMI renders it on a small chip; the full Detail string is logged
 // elsewhere for forensics.
-func formatSkipNote(task *processes.NodeTask, errorCode, detail string) string {
+//
+// THE LEG IS THE ONE THAT WAS SKIPPED. It used to be "evac" whenever the task
+// HAD an evac order (`!= nil`), so a skipped supply on a task with both legs
+// read "evac skipped" (2026-11-05). And "bin missing at <node>" is only true of
+// the evac, whose bin is the line's; a supply's missing bin is at its source.
+func formatSkipNote(task *processes.NodeTask, orderID int64, errorCode, detail string) string {
 	leg := "order"
-	if task.OldMaterialReleaseOrderID != nil {
+	switch {
+	case task.OldMaterialReleaseOrderID != nil && *task.OldMaterialReleaseOrderID == orderID:
 		leg = "evac"
-	} else if task.NextMaterialOrderID != nil {
+	case task.NextMaterialOrderID != nil && *task.NextMaterialOrderID == orderID:
 		leg = "supply"
 	}
 	if errorCode == "no_source_bin" {
-		return leg + " skipped: bin missing at " + task.NodeName
+		if leg == "evac" {
+			return "evac skipped: bin missing at " + task.NodeName
+		}
+		return leg + " skipped: no bin at its source"
 	}
 	return leg + " skipped: " + detail
 }

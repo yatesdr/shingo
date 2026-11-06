@@ -115,6 +115,7 @@ export function eventConcerns(view, type, data) {
     case 'changeover-verify-mismatch':
         return data.process_id == null || ownProcess(data.process_id);
     case 'order-failed':
+    case 'order-cancelled':
     case 'order-faulted':
         return ownOrder(data.order_id);
     case 'uop-stranded-alarm':

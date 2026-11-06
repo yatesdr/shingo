@@ -434,6 +434,13 @@ func (d *Dispatcher) redriveVacateOrder(o *orders.Order, binID int64) bool {
 	if err := d.appendSegmentAndAdvance(o, segment, moreWaits, blockOffset, "vacate release"); err != nil {
 		if !errors.Is(err, ErrAppendNotOwed) {
 			log.Printf("dispatch: vacate release: order %d: %v (still held; the next event or the floor retries)", o.ID, err)
+			// The bin HAS left, so "Waiting for <bin> to leave" is no longer
+			// true. A refusal the fleet answered goes on the row in its words,
+			// under the same code and cause (both are read back as state).
+			if ans := FleetAnswer(err); ans != "" && !IsAppendLanded(err) && o.QueueCode != "" {
+				d.setQueueReason(o, protocol.QueueCode(o.QueueCode), QueueCause(o.QueueCause),
+					QueueParams{FleetReason: ans})
+			}
 		}
 		return IsAppendLanded(err)
 	}

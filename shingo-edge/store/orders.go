@@ -195,6 +195,11 @@ func (db *DB) LatestOrderHistoryTimesForStatus(orderIDs []int64, status string) 
 	return orders.LatestHistoryTimesForStatus(db.DB, orderIDs, status)
 }
 
+// LatestOrderHistoryDetailsForStatus: see orders.LatestHistoryDetailsForStatus.
+func (db *DB) LatestOrderHistoryDetailsForStatus(orderIDs []int64, status string) (map[int64]string, error) {
+	return orders.LatestHistoryDetailsForStatus(db.DB, orderIDs, status)
+}
+
 // ListStagedOrdersByProcessNode returns staged orders linked to a
 // specific process_node.
 func (db *DB) ListStagedOrdersByProcessNode(processNodeID int64) ([]orders.Order, error) {

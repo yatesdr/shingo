@@ -7,7 +7,9 @@ import (
 	"testing"
 
 	"shingo/protocol"
+	"shingo/protocol/testutil"
 	"shingocore/dispatch"
+	"shingocore/fleet"
 	"shingocore/fleet/simulator"
 	"shingocore/internal/testdb"
 	"shingocore/store"
@@ -190,6 +192,63 @@ func TestVendorStatus_StoppedCancels(t *testing.T) {
 		t.Error("cancelled event should have non-empty PreviousStatus")
 	}
 	t.Logf("PreviousStatus captured: %q (characterization)", cancelledEvt.PreviousStatus)
+}
+
+// STOPPED with the fleet's errors[] on the snapshot → the cancel carries the
+// fleet's code and text, on the order row, the history row and the event the
+// Edge's OrderCancelled is built from.
+//
+// The snapshot is HK core order 3166's (2026-11-04, the 400t press). The
+// simulator emits no snapshot, so the poller's event is driven directly — the
+// same call the bus makes. MUTATION: pass nil instead of ev.Snapshot to
+// handleFleetOrderCancelled and all three assertions fail.
+func TestVendorStatus_StoppedCarriesFleetReason(t *testing.T) {
+	t.Parallel()
+	db, eng, sim, order, _, _ := dispatchRetrieveOrder(t)
+
+	var cancelledEvt *OrderCancelledEvent
+	var mu sync.Mutex
+	eng.Events.SubscribeTypes(func(e Event) {
+		mu.Lock()
+		defer mu.Unlock()
+		if payload, ok := e.Payload.(OrderCancelledEvent); ok {
+			cancelledEvt = &payload
+		}
+	}, EventOrderCancelled)
+
+	sim.DriveState(order.VendorOrderID, "RUNNING")
+	eng.handleVendorStatusChange(OrderStatusChangedEvent{
+		OrderID: order.ID, VendorOrderID: order.VendorOrderID,
+		OldStatus: "RUNNING", NewStatus: "STOPPED", RobotID: "AMR-06",
+		Detail: "fleet state: RUNNING -> STOPPED",
+		Snapshot: &fleet.OrderSnapshot{
+			VendorOrderID: order.VendorOrderID, State: "STOPPED", Vehicle: "AMR-06",
+			Errors: []fleet.OrderMessage{{
+				Code: 60009, Desc: "Cannot find path to new block target [PLN_05]",
+				Times: 1, Timestamp: 1793802602,
+			}},
+		},
+	})
+
+	const want = "fleet order stopped — RDS error 60009: Cannot find path to new block target [PLN_05]"
+	got, err := db.GetOrder(order.ID)
+	testutil.MustNoErr(t, err, "reload order")
+	if got.Status != dispatch.StatusCancelled {
+		t.Fatalf("status = %q, want cancelled", got.Status)
+	}
+	if got.ErrorDetail != want {
+		t.Errorf("error_detail = %q, want %q", got.ErrorDetail, want)
+	}
+	h, err := db.LatestOrderHistoryForStatus(order.ID, dispatch.StatusCancelled)
+	testutil.MustNoErr(t, err, "read cancelled history row")
+	if h == nil || h.Detail != want {
+		t.Errorf("cancelled history row = %+v, want detail %q", h, want)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if cancelledEvt == nil || cancelledEvt.Reason != want {
+		t.Errorf("cancelled event = %+v, want Reason %q (it is what the Edge is sent)", cancelledEvt, want)
+	}
 }
 
 // Non-existent order — handleVendorStatusChange logs and returns gracefully.

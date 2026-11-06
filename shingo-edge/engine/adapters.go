@@ -115,6 +115,12 @@ func (e *plcEmitter) EmitCurtainChanged() { e.bus.Emit(Event{Type: EventBoardNud
 // nudgeBoards says a station view's input changed with no scoped event.
 func (e *Engine) nudgeBoards() { e.Events.Emit(Event{Type: EventBoardNudge}) }
 
+func (e *orderEmitter) EmitOrderCancelledByCore(orderID int64, orderUUID string, orderType protocol.OrderType, reason string) {
+	e.bus.Emit(Event{Type: EventOrderCancelledByCore, Payload: OrderCancelledByCoreEvent{
+		OrderID: orderID, OrderUUID: orderUUID, OrderType: orderType, Reason: reason,
+	}})
+}
+
 func (e *orderEmitter) EmitOrderFaulted(orderID int64, orderUUID, reason string) {
 	e.bus.Emit(Event{Type: EventOrderFaulted, Payload: OrderFaultedEvent{
 		OrderID: orderID, OrderUUID: orderUUID, Reason: reason,

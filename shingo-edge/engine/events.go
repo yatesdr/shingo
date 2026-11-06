@@ -153,6 +153,15 @@ const (
 	// which only a board drawing that node or that order rebuilds on
 	// (operator-state.js eventConcerns), the answer every order-update gets.
 	EventBoardNudge
+
+	// EventOrderCancelledByCore fires when Core cancels an order that was still
+	// live on this Edge — one this station did not ask to cancel. The fleet
+	// stopping it, an admin terminating it on Core, a swap partner's death:
+	// Core's reason rides along, and the station board toasts it (SSE
+	// "order-cancelled"). A cancel this station sent is already terminal here
+	// when Core's echo arrives (orders.Manager.AbortOrderWithReason transitions
+	// locally first), so it never fires this.
+	EventOrderCancelledByCore
 )
 
 // Event is the envelope emitted by the Engine's EventBus.
@@ -303,6 +312,17 @@ type CounterReadErrorEvent struct {
 
 // OrderFailedEvent is emitted when an order transitions to failed state.
 type OrderFailedEvent struct {
+	eventbus.PayloadBase
+	OrderID   int64              `json:"order_id"`
+	OrderUUID string             `json:"order_uuid"`
+	OrderType protocol.OrderType `json:"order_type"`
+	Reason    string             `json:"reason"`
+}
+
+// OrderCancelledByCoreEvent is EventOrderCancelledByCore's payload. Same shape
+// as OrderFailedEvent on purpose: the station's event filter and its toast read
+// order_id and reason from both. Reason is Core's OrderCancelled.Reason as sent.
+type OrderCancelledByCoreEvent struct {
 	eventbus.PayloadBase
 	OrderID   int64              `json:"order_id"`
 	OrderUUID string             `json:"order_uuid"`

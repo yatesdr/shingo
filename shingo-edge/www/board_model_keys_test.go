@@ -234,7 +234,7 @@ func fullOrder() domain.Order {
 // operator-util.js). The rest of domain.Order stays on the Go tile for the
 // engine and the Production page's template.
 var stationOrderKeys = []string{
-	"auto_confirm", "created_at", "delivery_node", "departed", "eta", "id", "lane_held", "order_type",
+	"auto_confirm", "created_at", "delivery_node", "departed", "eta", "fault_line", "id", "lane_held", "order_type",
 	"payload_code", "queue_code", "queue_reason", "sibling_order_id", "source_node", "status",
 }
 

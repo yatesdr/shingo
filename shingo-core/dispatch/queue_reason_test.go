@@ -1,10 +1,14 @@
 package dispatch
 
 import (
+	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
 	"shingo/protocol"
+	"shingocore/rds"
+	"shingocore/store/orders"
 )
 
 // TestFormatQueueSentence_Snapshot pins the operator-visible wording for each
@@ -291,6 +295,22 @@ func TestFormatQueueSentence_Snapshot(t *testing.T) {
 			params: QueueParams{Step: 2, HasStep: true},
 			want:   "Robot system not responding — retrying",
 		},
+		{
+			// The fleet ANSWERED: its code and text, not "not responding" (2026-11-04).
+			name:   "fleet refused with its own reason",
+			code:   protocol.QueueFleetUnavailable,
+			params: QueueParams{FleetReason: "RDS error 60009: Cannot find path to [SMN_011]"},
+			want:   "Fleet refused: RDS error 60009: Cannot find path to [SMN_011] — retrying",
+		},
+		{
+			// A held release the fleet refused after the bin left: the vacate
+			// sentence ("waiting for it to leave") is no longer true.
+			name: "vacate hold refused by the fleet",
+			code: protocol.QueueWaitingForSlot,
+			params: QueueParams{VacateBin: "CARRIER-0005", Destination: "PLN_04",
+				FleetReason: "RDS error 60009: Cannot find path to new block target [PLN_05]"},
+			want: "Fleet refused: RDS error 60009: Cannot find path to new block target [PLN_05] — retrying",
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -378,4 +398,65 @@ func TestQueueParamsForCapacity_LocationRule(t *testing.T) {
 			t.Errorf("unclassified sentence = %q, want the unspecific form", got)
 		}
 	})
+}
+
+// TestFleetRefusalCause_CarriesTheFleetsAnswer pins the split between a fleet
+// that ANSWERED with a refusal and one that did not answer. HK, 2026-11-04:
+// every create refusal read "Robot system not responding — retrying" while RDS's
+// code sat in Core's log alone.
+func TestFleetRefusalCause_CarriesTheFleetsAnswer(t *testing.T) {
+	t.Parallel()
+	answered := fmt.Errorf("create: %w", &rds.APIError{Code: 60009, Msg: "Cannot find path to [SMN_011]"})
+	code, cause, params := FleetRefusalCause(answered, "PLN_05")
+	if code != protocol.QueueFleetUnavailable || cause != CauseFleetRefusedCreate {
+		t.Fatalf("answered refusal parks as (%s, %s), want (%s, %s)", code, cause,
+			protocol.QueueFleetUnavailable, CauseFleetRefusedCreate)
+	}
+	if got, want := FormatQueueSentence(code, params), "Fleet refused: RDS error 60009: Cannot find path to [SMN_011] — retrying"; got != want {
+		t.Errorf("answered refusal reads %q, want %q", got, want)
+	}
+
+	silent := errors.New("rds POST /setOrder: dial tcp 192.0.2.1:8088: i/o timeout")
+	code, _, params = FleetRefusalCause(silent, "PLN_05")
+	if got, want := FormatQueueSentence(code, params), "Robot system not responding — retrying"; got != want {
+		t.Errorf("transport failure reads %q, want %q", got, want)
+	}
+}
+
+// TestDeadLegWhy pins the partner's parenthesis: the dead leg's reason, with a
+// fleet stop's repeated prefix dropped when the fleet's words follow it (the
+// owner's short-text rule for the order page).
+func TestDeadLegWhy(t *testing.T) {
+	t.Parallel()
+	for _, c := range []struct{ detail, want string }{
+		{"fleet order stopped — RDS error 60009: Cannot find path to new block target [PLN_05]",
+			" (RDS error 60009: Cannot find path to new block target [PLN_05])"},
+		{"fleet order stopped", " (fleet order stopped)"},
+		{"cancelled by admin", " (cancelled by admin)"},
+		{"", ""},
+	} {
+		if got := deadLegWhy(&orders.Order{ErrorDetail: c.detail}); got != c.want {
+			t.Errorf("deadLegWhy(%q) = %q, want %q", c.detail, got, c.want)
+		}
+	}
+}
+
+// TestLegFailedDemandDetail pins the demand's restart row after a leg ended its
+// chapter: it names the newest FAILED leg and that leg's reason, while a
+// cascade-cancelled sibling (which carries the bare marker) names nothing.
+func TestLegFailedDemandDetail(t *testing.T) {
+	t.Parallel()
+	children := []*orders.Order{
+		{ID: 3200, Status: StatusFailed, ErrorDetail: "Gave up after 45m · cannot replan (60011)"},
+		{ID: 3201, Status: StatusFailed, ErrorDetail: "fleet order stopped — RDS error 60009: Cannot find path to new block target [PLN_05]"},
+		{ID: 3202, Status: StatusCancelled, ErrorDetail: reshuffleLegFailedDetail},
+	}
+	want := "reshuffle dissolved: dig leg 3201 failed (RDS error 60009: Cannot find path to new block target [PLN_05]); the demand re-plans"
+	if got := legFailedDemandDetail(children); got != want {
+		t.Errorf("legFailedDemandDetail = %q, want %q", got, want)
+	}
+	// No failed leg (a swept one carries the marker): the bare sentence.
+	if got := legFailedDemandDetail(children[2:]); got != reshuffleLegFailedDetail {
+		t.Errorf("no failed leg: %q, want the bare %q", got, reshuffleLegFailedDetail)
+	}
 }

@@ -1,6 +1,9 @@
 package engine
 
 import (
+	"fmt"
+	"time"
+
 	"shingo/protocol"
 	"shingocore/fleet"
 	"shingocore/store"
@@ -132,9 +135,36 @@ func (e *dispatchEmitter) EmitOrderFaultedRecovered(orderID int64, edgeUUID, sta
 func (e *dispatchEmitter) EmitBinHeld(int64) { e.engine.notifyContainmentChanged() }
 
 // pollerEmitter bridges the fleet tracker's status change events to the EventBus.
+//
+// audit, when set, records the fleet's unreadable/readable reports on the
+// order's audit trail (fleet.UnreadableEmitter), which the Core order page's
+// timeline shows. Nil (tests) records nothing.
 type pollerEmitter struct {
-	bus *EventBus
+	bus   *EventBus
+	audit func(orderID int64, action, detail string)
 }
+
+// EmitOrderUnreadable: one order's fleet reads have failed for a while as
+// others read fine (rds.UnreadableAfter). Its status on every screen is the
+// last one the fleet reported, so the order page says the fleet has gone quiet
+// about it. Short, with the fleet's own reason (owner's rule for this page).
+func (e *pollerEmitter) EmitOrderUnreadable(orderID int64, vendorOrderID string, since time.Time, reason string) {
+	if e.audit == nil {
+		return
+	}
+	mins := int(time.Since(since).Minutes())
+	e.audit(orderID, "fleet_unreadable", fmt.Sprintf("RDS can't report this order (%dm): %s", mins, reason))
+}
+
+// EmitOrderReadable: the fleet is reporting the order again.
+func (e *pollerEmitter) EmitOrderReadable(orderID int64, vendorOrderID string) {
+	if e.audit == nil {
+		return
+	}
+	e.audit(orderID, "fleet_readable", "RDS reporting this order again")
+}
+
+var _ fleet.UnreadableEmitter = (*pollerEmitter)(nil)
 
 func (e *pollerEmitter) EmitOrderStatusChanged(orderID int64, vendorOrderID, oldStatus, newStatus, robotID, detail string, snapshot *fleet.OrderSnapshot) {
 	e.bus.Emit(Event{Type: EventOrderStatusChanged, Payload: OrderStatusChangedEvent{

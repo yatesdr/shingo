@@ -125,7 +125,7 @@ func (c *Client) post(path string, body any, result any) error {
 
 func (c *Client) decodeBytes(data []byte, statusCode int, result any) error {
 	if statusCode >= 400 {
-		return fmt.Errorf("rds HTTP %d: %s", statusCode, string(data))
+		return httpError(statusCode, data)
 	}
 	if result != nil {
 		if err := json.Unmarshal(data, result); err != nil {
@@ -153,7 +153,7 @@ func (c *Client) getRaw(path string) ([]byte, error) {
 	c.logResponse("GET", path, resp.StatusCode, time.Since(start), data)
 
 	if resp.StatusCode >= 400 {
-		return nil, fmt.Errorf("rds HTTP %d: %s", resp.StatusCode, string(data))
+		return nil, httpError(resp.StatusCode, data)
 	}
 	return data, nil
 }
@@ -197,7 +197,7 @@ func (c *Client) Reconfigure(baseURL string, timeout time.Duration) {
 // checkResponse validates the RDS response envelope code.
 func checkResponse(r *Response) error {
 	if r.Code != 0 {
-		return fmt.Errorf("rds error %d: %s", r.Code, r.Msg)
+		return &APIError{Code: r.Code, Msg: r.Msg}
 	}
 	return nil
 }

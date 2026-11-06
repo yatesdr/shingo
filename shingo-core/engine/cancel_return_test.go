@@ -50,3 +50,23 @@ func TestReturnEligible_TheProducers(t *testing.T) {
 		}
 	}
 }
+
+// TestStuckContext pins what a stuck-sweep abandon adds after "abandoned: …":
+// the fleet's last state, the robot, the wait it stood under — or nothing.
+func TestStuckContext(t *testing.T) {
+	t.Parallel()
+	for _, c := range []struct {
+		o    orders.Order
+		want string
+	}{
+		{orders.Order{VendorState: "WAITING", RobotID: "AMR-06", QueueReason: "Waiting for a slot"},
+			" (RDS WAITING, AMR-06; last wait: Waiting for a slot)"},
+		{orders.Order{VendorState: "CREATED"}, " (RDS CREATED)"},
+		{orders.Order{QueueReason: "Waiting for a slot"}, " (last wait: Waiting for a slot)"},
+		{orders.Order{}, ""},
+	} {
+		if got := stuckContext(&c.o); got != c.want {
+			t.Errorf("stuckContext(%+v) = %q, want %q", c.o, got, c.want)
+		}
+	}
+}

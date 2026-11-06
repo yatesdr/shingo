@@ -285,7 +285,7 @@ func (e *Engine) handleVendorStatusChange(ev OrderStatusChangedEvent) {
 	case dispatch.StatusFailed:
 		e.handleFleetOrderFailed(order, ev.Detail)
 	case dispatch.StatusCancelled:
-		e.handleFleetOrderCancelled(order)
+		e.handleFleetOrderCancelled(order, ev.Snapshot)
 	}
 }
 
@@ -297,18 +297,21 @@ func (e *Engine) handleVendorStatusChange(ev OrderStatusChangedEvent) {
 // vendor code would otherwise record why and silently lose where — and where is
 // the field that has been carried on 87% of faulted rows all along.
 //
-// Only the first error is taken. RDS reports errors[] as a list but the live
-// data is one entry when there is any at all (22 orders in 30 days, one code);
-// a second entry would be a new shape worth looking at before it is rendered
-// into a sentence on the floor.
+// The NEWEST error is taken, by the same rule as a stop's reason
+// (newestDistinctErrors): RDS keeps errors[] for the order's whole life, so a
+// second fault on one order used to inherit the first fault's reason, and so did
+// its grace-expiry sentence. It took Errors[0] until 2026-11-05, on the reading
+// that live data has one entry; one entry is the case where both rules agree.
 func faultRefFrom(snap *fleet.OrderSnapshot, ord *orders.Order) protocol.TermRef {
 	ref := protocol.TermRef{Node: ord.ProcessNode, Payload: ord.PayloadCode}
 	if ref.Node == "" {
 		ref.Node = ord.DeliveryNode
 	}
-	if snap != nil && len(snap.Errors) > 0 {
-		ref.VendorCode = snap.Errors[0].Code
-		ref.VendorDesc = snap.Errors[0].Desc
+	if snap != nil {
+		if errs := newestDistinctErrors(snap.Errors); len(errs) > 0 {
+			ref.VendorCode = errs[0].Code
+			ref.VendorDesc = errs[0].Desc
+		}
 	}
 	return ref
 }
@@ -374,13 +377,17 @@ func (e *Engine) handleFleetOrderFailed(order *orders.Order, fleetDetail string)
 	}
 }
 
-func (e *Engine) handleFleetOrderCancelled(order *orders.Order) {
+func (e *Engine) handleFleetOrderCancelled(order *orders.Order, snap *fleet.OrderSnapshot) {
 	// lifecycle.CancelOrder handles fleet-cancel + atomic transition + emit.
 	// PreviousStatus is captured by transition() before the status flip and
 	// passed through to emitCancelled via the Event.
 	// Uncoded: the fleet stopping a vendor order reads as cancelled today and
 	// every code that describes it honestly buckets as failed. See CancelCause.
-	e.dispatcher.Lifecycle().CancelOrder(order, order.StationID, "fleet order stopped",
+	//
+	// The reason carries what the fleet said (fleetStopReason). It is the one
+	// string that reaches orders.error_detail, the history row, the Edge's
+	// OrderCancelled and — through swap_peer.go — the partner leg's sentence.
+	e.dispatcher.Lifecycle().CancelOrder(order, order.StationID, fleetStopReason(snap),
 		dispatch.CancelCause{})
 }
 func (e *Engine) handleGraceExpired(ev GraceExpiredEvent) {

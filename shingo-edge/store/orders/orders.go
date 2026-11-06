@@ -798,6 +798,40 @@ func InsertHistory(db *sql.DB, orderID int64, oldStatus, newStatus, detail strin
 // value for a status is the start of the episode the order is in now.
 //
 // An empty id list is a nil map and no query.
+// LatestHistoryDetailsForStatus is LatestHistoryTimesForStatus for the DETAIL:
+// each order's newest history row into status, keyed by order id — for an
+// ended order, the reason it ended (Core's, as mirrored). One read for the list.
+func LatestHistoryDetailsForStatus(db *sql.DB, orderIDs []int64, status string) (map[int64]string, error) {
+	if len(orderIDs) == 0 {
+		return nil, nil
+	}
+	ph := make([]string, len(orderIDs))
+	args := make([]any, 0, len(orderIDs)+1)
+	for i, id := range orderIDs {
+		ph[i] = "?"
+		args = append(args, id)
+	}
+	args = append(args, status)
+	rows, err := db.Query(`SELECT order_id, detail FROM order_history WHERE id IN (
+		SELECT MAX(id) FROM order_history
+		WHERE order_id IN (`+strings.Join(ph, ",")+`) AND new_status = ?
+		GROUP BY order_id)`, args...)
+	if err != nil {
+		return nil, fmt.Errorf("latest %s detail for %d orders: %w", status, len(orderIDs), err)
+	}
+	defer rows.Close()
+	out := make(map[int64]string, len(orderIDs))
+	for rows.Next() {
+		var id int64
+		var detail string
+		if err := rows.Scan(&id, &detail); err != nil {
+			return nil, err
+		}
+		out[id] = detail
+	}
+	return out, rows.Err()
+}
+
 func LatestHistoryTimesForStatus(db *sql.DB, orderIDs []int64, status string) (map[int64]time.Time, error) {
 	if len(orderIDs) == 0 {
 		return nil, nil

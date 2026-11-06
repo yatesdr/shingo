@@ -941,11 +941,25 @@ func (d *Dispatcher) DemoteAfterFleetRefusal(order *orders.Order, told QueueWait
 // It is a function rather than a comment repeated at each park because it WAS a
 // comment repeated at each park — the two scanner arms carried the carve-out
 // separately, and the door's other two callers carried neither.
+//
+// A fleet that ANSWERED with its own refusal (fleet.VendorError) has its words
+// carried onto the wait — "Fleet refused: RDS error N: … — retrying" — because
+// "not responding" is false of a system that just responded.
 func FleetRefusalCause(err error, destination string) (protocol.QueueCode, QueueCause, QueueParams) {
 	if IsSyntheticLocation(err) {
 		return protocol.QueueWaitingForSlot, CauseNGRPResolve, QueueParams{Destination: destination}
 	}
-	return protocol.QueueFleetUnavailable, CauseFleetRefusedCreate, QueueParams{}
+	return protocol.QueueFleetUnavailable, CauseFleetRefusedCreate, QueueParams{FleetReason: FleetAnswer(err)}
+}
+
+// FleetAnswer is the fleet's own refusal in err, rendered for a screen, or ""
+// when err carries none (a transport failure: nothing answered).
+func FleetAnswer(err error) string {
+	var ve fleet.VendorError
+	if !errors.As(err, &ve) {
+		return ""
+	}
+	return fleet.FormatVendorError(ve.VendorCode(), ve.VendorText())
 }
 
 // Callers reach this function with the order `pending` (its first hand) or

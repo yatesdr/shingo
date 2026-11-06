@@ -3,8 +3,10 @@ package dispatch
 import (
 	"fmt"
 	"log"
+	"strings"
 
 	"shingo/protocol"
+	"shingocore/domain"
 	"shingocore/store/orders"
 )
 
@@ -211,14 +213,44 @@ func (d *Dispatcher) HandleSwapPeerTerminal(deadOrderID int64, terminalKind stri
 		hazard = "cancelling supply so it cannot drop onto an un-cleared line"
 		role = "evac"
 	}
-	reason := fmt.Sprintf("coordinated swap %s (order %d) %s; %s", role, dead.ID, terminalKind, hazard)
+	why := deadLegWhy(dead)
+	reason := fmt.Sprintf("coordinated swap %s (order %d) %s%s; %s", role, dead.ID, terminalKind, why, hazard)
 	if holdsAfterLift(dead) {
 		// A home clear's trade leg: the same action, its own sentence — there is
 		// no line, and the partner's drop waits on a lift that will not come.
-		reason = fmt.Sprintf("the other leg of this trade (order %d) %s; cancelling this one, whose drop waits on that leg's lift",
-			dead.ID, terminalKind)
+		reason = fmt.Sprintf("the other leg of this trade (order %d) %s%s; cancelling this one, whose drop waits on that leg's lift",
+			dead.ID, terminalKind, why)
 	}
 	d.resolveSwapPeer(peer, dead, reason)
+}
+
+// deadLegWhy is the dead leg's own terminal reason, in parentheses, for the
+// partner's sentence — or "" when the dead leg's row carries none.
+//
+// The partner is the leg an operator is most likely to open: it is the one that
+// was standing at the line, and its row said only that its sibling had died.
+// HK 400t, 2026-11-04: every supply read "coordinated swap evac (order 3166)
+// cancelled; cancelling supply…" while the evac's row held the cause (RDS 60009,
+// no path to PLN_05), and nobody went one order over to read it. The dead leg is
+// re-read from the DB by HandleSwapPeerTerminal after its terminal write
+// commits, so ErrorDetail is the reason that write stored.
+//
+// A fleet stop's "fleet order stopped — " is dropped when the fleet's words
+// follow it: "cancelled (RDS error 60009: …)" already says who stopped it, and
+// this sentence is shown on the order page, where the owner's rule is short.
+//
+// The sentence still opens "coordinated swap " (domain.coreCancelPrefixes keys
+// pre-code rows on it) and the peer row is coded peer_terminal, so nothing in
+// the parentheses classifies anything.
+func deadLegWhy(dead *orders.Order) string {
+	why := dead.ErrorDetail
+	if rest, ok := strings.CutPrefix(why, domain.FleetStopDetail+" — "); ok && rest != "" {
+		why = rest
+	}
+	if why == "" {
+		return ""
+	}
+	return " (" + why + ")"
 }
 
 // resolveSwapPeer cancels the peer if it is still live, or surfaces the

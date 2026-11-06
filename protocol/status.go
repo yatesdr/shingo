@@ -440,15 +440,20 @@ func FormatFaultSentence(phase FaultPhase, ref TermRef, since, now time.Time, no
 }
 
 // vendorReason renders the fleet's own words for the fault, or "" when it gave
-// none — which is the common case. Lower-cased as received and never
-// translated: the two live values ("cannot replan", "Robot Suspended") are
-// already sentences, and a mapping table built on one code over 22 events would
-// be a vocabulary invented ahead of its data.
+// none — which is the common case. As received and never translated: the live
+// values ("cannot replan", "Robot Suspended") are already sentences, and a
+// mapping table built on one code over 22 events would be a vocabulary invented
+// ahead of its data.
+//
+// NOT LOWER-CASED (since 2026-11-05). It was, and RDS text carries node names:
+// "Cannot find path to new block target [PLN_05]" rendered "[pln_05]", which a
+// case-sensitive search for the node misses and which disagreed with the stop
+// reason's spelling of the same RDS text (engine.fleetStopReason).
 //
 // The code rides in parentheses because it is the thing a plant quotes to the
 // vendor, and the description alone is not searchable in RDS.
 func vendorReason(ref TermRef) string {
-	desc := strings.ToLower(strings.TrimSpace(ref.VendorDesc))
+	desc := strings.TrimSpace(ref.VendorDesc)
 	switch {
 	case desc != "" && ref.VendorCode != 0:
 		return desc + " (" + strconv.Itoa(ref.VendorCode) + ")"

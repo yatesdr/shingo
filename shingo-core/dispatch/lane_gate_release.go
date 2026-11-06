@@ -629,8 +629,7 @@ func (d *Dispatcher) releaseAdmittedCandidate(c gateCandidate, lane *nodes.Node)
 		// It stays a candidate — the set is durable order state, never a verdict
 		// — so the next pass retries, which is what the cause's releaser says.
 		log.Printf("lane gate: release order %d into lane %s: %v", c.order.ID, lane.Name, rErr)
-		d.setQueueReason(c.order, protocol.QueueWaitingForSlot, CauseGateReleaseFailed,
-			QueueParams{Lane: lane.Name})
+		d.setGateReleaseFailed(c.order, lane.Name, rErr)
 		return false, next, true
 	}
 	// CLEARED ON ENTRY. The cause described a wait that is over; leaving it
@@ -1203,7 +1202,7 @@ func (d *Dispatcher) releaseGatedRetrieve(order *orders.Order, lane *nodes.Node,
 
 	if err := d.appendGateTail(fresh, "lane gate release (retrieve)"); err != nil {
 		if !errors.Is(err, ErrAppendNotOwed) {
-			d.noteGateAppendFailure(fresh, lane)
+			d.noteGateAppendFailure(fresh, lane, err)
 		}
 		return 0, err
 	}
@@ -1282,7 +1281,11 @@ func nodeName(n *nodes.Node) string {
 // a fact. Losing it on restart re-arms the debounce, which is the safe direction:
 // the order is still staged, still retried, and still visible once the failures
 // repeat. Nothing about recovery depends on it.
-func (d *Dispatcher) noteGateAppendFailure(order *orders.Order, lane *nodes.Node) {
+//
+// err is the append's own error: past the threshold the sentence carries the
+// fleet's refusal when it answered with one, rather than overwriting it with
+// "not responding" (setGateReleaseFailed may already have written it).
+func (d *Dispatcher) noteGateAppendFailure(order *orders.Order, lane *nodes.Node, err error) {
 	d.gateFailMu.Lock()
 	d.gateAppendFails[order.ID]++
 	n := d.gateAppendFails[order.ID]
@@ -1291,7 +1294,24 @@ func (d *Dispatcher) noteGateAppendFailure(order *orders.Order, lane *nodes.Node
 		return
 	}
 	d.setQueueReason(order, protocol.QueueFleetUnavailable, CauseGateAppendFailed,
-		QueueParams{Destination: lane.Name})
+		QueueParams{Destination: lane.Name, FleetReason: FleetAnswer(err)})
+}
+
+// setGateReleaseFailed is the wait a failed gate release is left under. A
+// failure the FLEET answered is a fleet wait in the fleet's words — "Fleet
+// refused: RDS error N: … — retrying" — not "Waiting for a slot": the slot was
+// found and the robot system said no (HK, 2026-11-04). Anything else (a re-bind
+// with no room, a segment that could not be built) keeps the slot sentence.
+//
+// The cause on the row is display only here: the heal proposal is handed
+// CauseGateReleaseFailed by its caller, not read back off the row.
+func (d *Dispatcher) setGateReleaseFailed(order *orders.Order, lane string, err error) {
+	if ans := FleetAnswer(err); ans != "" {
+		d.setQueueReason(order, protocol.QueueFleetUnavailable, CauseGateAppendFailed,
+			QueueParams{FleetReason: ans})
+		return
+	}
+	d.setQueueReason(order, protocol.QueueWaitingForSlot, CauseGateReleaseFailed, QueueParams{Lane: lane})
 }
 
 func (d *Dispatcher) clearGateAppendFailures(orderID int64) {
@@ -1559,8 +1579,7 @@ func (d *Dispatcher) releaseDweller(c gateCandidate, lane *nodes.Node) (freed bo
 		// The leg ended while it dwelled; nothing is written on it.
 	case rErr != nil:
 		log.Printf("lane gate: release dwelling leg %d in lane %s: %v", c.order.ID, lane.Name, rErr)
-		d.setQueueReason(c.order, protocol.QueueWaitingForSlot, CauseGateReleaseFailed,
-			QueueParams{Lane: lane.Name})
+		d.setGateReleaseFailed(c.order, lane.Name, rErr)
 	case !v.Admitted():
 		// THE LANE THAT HAS TO FREE, NOT THE ONE THE ROBOT IS IN. This passed
 		// QueueParams{Lane: lane.Name}, which is wrong twice: QueueWaitingForSlot

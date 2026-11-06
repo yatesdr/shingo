@@ -1,5 +1,7 @@
 package fleet
 
+import "time"
+
 // OrderTracker tracks active vendor orders and emits status change events.
 type OrderTracker interface {
 	Track(vendorOrderID string)
@@ -20,6 +22,15 @@ type TrackerEmitter interface {
 	EmitOrderStatusChanged(orderID int64, vendorOrderID, oldStatus, newStatus, robotID, detail string, snapshot *OrderSnapshot)
 	EmitBlockCompleted(orderID int64, vendorOrderID, blockID, location, binTask string, startTime, terminateTime int64)
 	EmitGraceExpired(orderID int64, vendorOrderID string)
+}
+
+// UnreadableEmitter is the OPTIONAL half of TrackerEmitter: an order the
+// fleet cannot report on — one order's reads failing for a while as others read
+// fine (rds.UnreadableAfter) — and the read coming back. Optional so emitters
+// that do not care need not grow it.
+type UnreadableEmitter interface {
+	EmitOrderUnreadable(orderID int64, vendorOrderID string, since time.Time, reason string)
+	EmitOrderReadable(orderID int64, vendorOrderID string)
 }
 
 // OrderIDResolver maps vendor order IDs back to ShinGo order IDs.

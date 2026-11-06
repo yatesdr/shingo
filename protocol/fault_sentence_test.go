@@ -97,10 +97,17 @@ func TestFormatFaultSentence(t *testing.T) {
 			want: "Fault · fleet code 54018",
 		},
 		{
-			name:  "fleet text is lower-cased as received, never translated",
+			name:  "fleet text is as received, never translated",
 			phase: FaultPhaseLive, ref: TermRef{VendorCode: 60011, VendorDesc: "Robot Suspended"},
 			since: faultBase, now: faultBase.Add(2 * time.Minute), notice: true,
-			want: "Fault · robot suspended (60011)",
+			want: "Fault · Robot Suspended (60011)",
+		},
+		{
+			// Node names keep the map's spelling (HK 2026-11-04's 60009 text).
+			name:  "fleet text keeps its node names' case",
+			phase: FaultPhaseGaveUp, ref: TermRef{VendorCode: 60009, VendorDesc: "Cannot find path to new block target [PLN_05]"},
+			since: faultBase, now: faultBase.Add(45 * time.Minute), notice: true,
+			want: "Gave up after 45m · Cannot find path to new block target [PLN_05] (60009)",
 		},
 		{
 			name:  "an unknown phase renders nothing rather than guessing",
@@ -152,7 +159,7 @@ func TestFormatFaultSentence_NeverSaysFailAboutALiveOrder(t *testing.T) {
 						// the one place the substring may legitimately appear,
 						// and it is attributed to the fleet by the code beside
 						// it. Assert the shape rather than exempting it.
-						if !strings.HasPrefix(got, "Fault · task failed (999)") {
+						if !strings.HasPrefix(got, "Fault · Task Failed (999)") {
 							t.Errorf("quoted fleet text changed shape: %q", got)
 						}
 						continue

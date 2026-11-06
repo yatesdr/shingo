@@ -804,8 +804,20 @@ func (e *Engine) handleOrphanedTaskOrderCompleted(order *storeorders.Order) {
 	// A FAILED order still lands NodeTaskError, which stays non-terminal on
 	// purpose — "operator retry is expected" — a different situation from a
 	// deliberate cancel.
+	//
+	// THE NOTE SAYS WHO, NOT "BY OPERATOR". This read "cancelled by operator"
+	// for every cancel — a fleet stop, a Core terminate, a swap partner's death,
+	// the stuck sweep — so the chip contradicted the toast that carried the real
+	// reason (2026-11-05). It is the order's own cancel reason as mirrored from
+	// Core, one line, behind the chip's "Auto-skipped:".
+	//
+	// A failed leg keeps no note: the chip reads "Auto-skipped", and a failed
+	// leg is not skipped — it waits on a retry.
 	newState := domain.NodeTaskAbandoned
-	note := fmt.Sprintf("order %d cancelled by operator — changeover continues without this node", order.ID)
+	note := fmt.Sprintf("order %d cancelled", order.ID)
+	if why := e.orderEndReason(order.ID, orders.StatusCancelled); why != "" {
+		note += ": " + why
+	}
 	if order.Status == orders.StatusFailed {
 		newState = domain.NodeTaskError
 		note = ""
@@ -827,6 +839,30 @@ func (e *Engine) handleOrphanedTaskOrderCompleted(order *storeorders.Order) {
 	if err := e.tryCompleteProcessChangeover(node.ProcessID); err != nil {
 		log.Printf("orphan: try-complete after stamp for process %d: %v", node.ProcessID, err)
 	}
+}
+
+// orderEndReasonMax bounds the reason a chip line carries.
+const orderEndReasonMax = 140
+
+// orderEndReason is the detail of the order's newest history row into status —
+// for a cancel Core sent, Core's OrderCancelled.Reason as mirrored — or "" when
+// none is recorded. Bounded, because it is rendered as one line.
+func (e *Engine) orderEndReason(orderID int64, status protocol.Status) string {
+	hist, err := e.db.ListOrderHistory(orderID)
+	if err != nil {
+		return ""
+	}
+	for i := len(hist) - 1; i >= 0; i-- {
+		if hist[i].NewStatus != status {
+			continue
+		}
+		why := strings.TrimSpace(hist[i].Detail)
+		if r := []rune(why); len(r) > orderEndReasonMax {
+			why = string(r[:orderEndReasonMax]) + "…"
+		}
+		return why
+	}
+	return ""
 }
 
 // ── Order failure ───────────────────────────────────────────────────

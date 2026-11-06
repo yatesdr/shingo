@@ -513,6 +513,14 @@ func (h *EventHub) SetupEngineListeners(eng *engine.Engine) {
 			if p, ok := evt.Payload.(engine.OrderFailedEvent); ok {
 				sseEvt = SSEEvent{Type: "order-failed", Data: p}
 			}
+		case engine.EventOrderCancelledByCore:
+			// The cancel counterpart: Core ended an order this station did not
+			// cancel (the fleet stopped it, an admin terminated it, its swap
+			// partner died). The station toasts Core's reason, which carries the
+			// fleet's own code and text when there is one.
+			if p, ok := evt.Payload.(engine.OrderCancelledByCoreEvent); ok {
+				sseEvt = SSEEvent{Type: "order-cancelled", Data: p}
+			}
 		case engine.EventOrderFaulted:
 			if p, ok := evt.Payload.(engine.OrderFaultedEvent); ok {
 				sseEvt = SSEEvent{Type: "order-faulted", Data: p}

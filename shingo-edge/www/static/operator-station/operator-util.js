@@ -52,8 +52,9 @@ export function fillColor(pct, remaining) {
 }
 
 // Extracts the operator-facing message from a raw error detail string.
-//   1. "rds HTTP NNN: {json}"  → returns json.msg
-//   2. "{json}"                → returns json.msg if present
+//   1. "rds HTTP NNN: {json}"  → "RDS error <json.code>: <json.msg>" (code kept:
+//      it is what RDS is searched by), or json.msg when there is no code
+//   2. "{json}"                → the same, from the bare envelope
 //   3. anything else           → returns the raw string
 export function friendlyOrderError(detail) {
     if (!detail) return 'Order failed';
@@ -67,7 +68,7 @@ export function friendlyOrderError(detail) {
         try {
             const parsed = JSON.parse(trimmed);
             if (parsed && typeof parsed.msg === 'string' && parsed.msg.length > 0) {
-                return parsed.msg;
+                return parsed.code ? 'RDS error ' + parsed.code + ': ' + parsed.msg : parsed.msg;
             }
         } catch (err) {
             console.error('friendlyOrderError JSON parse', err);

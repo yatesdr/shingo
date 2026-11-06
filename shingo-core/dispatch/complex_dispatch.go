@@ -814,8 +814,19 @@ func (d *Dispatcher) afterComplexCreate(c *complexCommit) {
 		// The gap it moves across is two database statements, and nothing reads
 		// the vendor's completion flag in between; the create is Complete:false
 		// either way, so the fleet cannot finish the order early in that window.
+		//
+		// ONE RETRY, THEN IT GOES ON THE ORDER. This call is the "no more steps"
+		// half of a two-call create; if the fleet never takes it, the fleet holds
+		// the order open after its last block — the robot waits there for steps
+		// that never come, which shingo reads as staged. It used to be a log line
+		// alone (2026-11-05).
 		if err := d.backend.ReleaseOrder(c.req.OrderID, nil, true); err != nil {
-			log.Printf("dispatch: fleet mark complete failed: %v", err)
+			log.Printf("dispatch: fleet mark complete failed for order %d: %v (retrying once)", order.ID, err)
+			if err2 := d.backend.ReleaseOrder(c.req.OrderID, nil, true); err2 != nil {
+				log.Printf("dispatch: fleet mark complete failed again for order %d: %v", order.ID, err2)
+				d.db.AppendAudit("order", order.ID, "fleet_mark_complete_failed", "",
+					"RDS didn't take \"no more steps\" — robot may hold at its last stop: "+err2.Error(), "system")
+			}
 		}
 	}
 

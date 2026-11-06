@@ -1122,6 +1122,11 @@ function appendETAPills(btn, inboundOrders, binState) {
     inboundOrders.forEach(o => {
         if (o.status === 'staged') {
             pills.push({ text: 'Arrived', overdue: false });
+        } else if (o.status === 'faulted') {
+            // The pill is one word ("Fault" / "Replanning"); the reason is in
+            // the node's panel. Red once it is a fault, not a replan.
+            const word = (o.fault_line || 'Replanning').split(' · ')[0];
+            pills.push({ text: word, overdue: word !== 'Replanning' });
         } else if (o.status === 'in_transit' && !binAtNode) {
             const d = formatETA(o.eta);
             if (!d.empty) pills.push(d);

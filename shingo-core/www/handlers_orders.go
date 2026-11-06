@@ -528,6 +528,72 @@ func (h *Handlers) apiTerminateOrder(w http.ResponseWriter, r *http.Request) {
 	h.jsonSuccess(w)
 }
 
+// orderNote is one line of an order's Notes: when, and what was decided.
+type orderNote struct {
+	At   time.Time `json:"at"`
+	Text string    `json:"text"`
+}
+
+// auditDuplicatesHistory are the order audit actions that restate a status the
+// history timeline already shows; they are left out of Notes.
+var auditDuplicatesHistory = map[string]bool{
+	"received": true, "cancelled": true, "failed": true, "skipped": true, "completed": true,
+}
+
+// recoveryNoteLabels name the engineer recovery verbs, whose audit rows carry an
+// actor rather than a sentence.
+var recoveryNoteLabels = map[string]string{
+	"recovery.reapply_completion":      "Completion re-applied",
+	"recovery.force_confirm_delivered": "Force-confirmed",
+	"recovery.release_claim":           "Bin claim released",
+	"recovery.recover_faulted":         "Recovered from fault",
+	"recovery.reissue_terminate":       "Terminate re-sent",
+}
+
+// orderNotes turns an order's audit rows into its Notes, oldest first: each
+// row's own sentence, or a recovery verb's label and who did it. Short by
+// construction — the writers keep their sentences to one line.
+func orderNotes(entries []*domain.AuditEntry) []orderNote {
+	var out []orderNote
+	for i := len(entries) - 1; i >= 0; i-- { // the store lists newest first
+		e := entries[i]
+		if auditDuplicatesHistory[e.Action] {
+			continue
+		}
+		text := e.NewValue
+		if label, ok := recoveryNoteLabels[e.Action]; ok {
+			text = label
+			if e.Actor != "" && e.Actor != "system" {
+				text += " (by " + e.Actor + ")"
+			}
+		}
+		if text == "" {
+			text = strings.ReplaceAll(e.Action, "_", " ")
+		}
+		out = append(out, orderNote{At: e.CreatedAt, Text: text})
+	}
+	return out
+}
+
+// apiReissueTerminate re-sends the fleet terminate for an order Core ended that
+// the fleet still runs — the order page's Re-send Terminate, offered when
+// can_reissue_terminate. Same guards and group as /orders/terminate. Reached
+// through the recovery service (it is a recovery verb), not by widening
+// EngineOrchestration (TestEngineOrchestrationWidth).
+func (h *Handlers) apiReissueTerminate(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		OrderID int64 `json:"order_id"`
+	}
+	if !h.parseJSON(w, r, &req) {
+		return
+	}
+	if err := h.engine.Recovery().ReissueTerminate(req.OrderID, h.getUsername(r)); err != nil {
+		h.jsonError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	h.jsonSuccess(w)
+}
+
 // apiHardReleaseOrder is W3's door: advance a dwelling order past its wait when
 // the mechanism that should have done it is wedged.
 //
@@ -622,6 +688,15 @@ func (h *Handlers) apiGetOrderEnriched(w http.ResponseWriter, r *http.Request) {
 		// station-owned wait belongs to the station's board, and the handler
 		// refuses it too.
 		CanHardRelease bool `json:"can_hard_release"`
+		// CanReissueTerminate drives Re-send Terminate: Core ended the order and
+		// the fleet, asked live just now, still reports it running — a terminate
+		// it did not take (engine.chaseUnterminatedOrders re-sends on its own).
+		CanReissueTerminate bool `json:"can_reissue_terminate"`
+		// Notes are the order's audit rows that record a DECISION its history
+		// does not — a half-swap, a re-sent terminate, the fleet going quiet about
+		// it — one short line each (orderNotes). They were written to the audit
+		// log and read by nothing (2026-11-05).
+		Notes []orderNote `json:"notes,omitempty"`
 		// FaultLine is the rendered fault sentence with its live-clock spans,
 		// for a faulted order. Server-rendered for the same reason CanCancel is
 		// computed here: the threshold is Core's, and the modal must say what
@@ -651,6 +726,9 @@ func (h *Handlers) apiGetOrderEnriched(w http.ResponseWriter, r *http.Request) {
 	}
 
 	result.History, _ = svc.ListOrderHistory(id)
+	if entries, err := h.engine.AuditService().ListForEntity("order", id); err == nil {
+		result.Notes = orderNotes(entries)
+	}
 
 	if order.Status == protocol.StatusFaulted {
 		if lines, _ := h.faultLinesFor([]*domain.Order{order}); lines != nil {
@@ -687,6 +765,8 @@ func (h *Handlers) apiGetOrderEnriched(w http.ResponseWriter, r *http.Request) {
 			result.VendorDetail, _ = vc.GetVendorOrderDetail(order.VendorOrderID)
 		}
 	}
+	result.CanReissueTerminate = (order.Status == protocol.StatusCancelled || order.Status == protocol.StatusFailed) &&
+		result.VendorDetail != nil && !result.VendorDetail.IsTerminal
 	// A finished order has no live robot. The robot's status is where it is
 	// NOW: on an order that finished hours ago it described the robot's next
 	// job, under this order's name.

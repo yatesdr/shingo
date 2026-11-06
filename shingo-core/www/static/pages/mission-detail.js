@@ -472,7 +472,13 @@ import { relevantNotices } from '/static/pages/fleet-notices.js';
       html += '<div style="margin-bottom:.5rem;padding:.5rem;border:1px solid var(--border);border-radius:4px">';
       html += '<span class="badge ' + badgeClass + '">' + item.type + '</span> ';
       html += '<strong>Code ' + item.msg.code + '</strong>: ' + escapeHtml(item.msg.desc || '');
-      if (item.msg.timestamp) html += ' <span style="color:var(--text-muted);font-size:.85em">' + formatTime(new Date(item.msg.timestamp)) + '</span>';
+      // RDS stamps these in epoch SECONDS (HK 2026-11-04: 1793802602) and
+      // new Date wants milliseconds, so they rendered in January 1970. A value
+      // already in milliseconds is left alone.
+      if (item.msg.timestamp) {
+        var ts = item.msg.timestamp < 1e12 ? item.msg.timestamp * 1000 : item.msg.timestamp;
+        html += ' <span style="color:var(--text-muted);font-size:.85em">' + formatTime(new Date(ts)) + '</span>';
+      }
       if (item.msg.times > 1) html += ' <span style="color:var(--text-muted)">(x' + item.msg.times + ')</span>';
       html += '</div>';
     }

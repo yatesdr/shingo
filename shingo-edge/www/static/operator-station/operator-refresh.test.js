@@ -444,6 +444,8 @@ eq(['order-update', 'bins', 'supply-refusal', 'sourcing', 'containment', 'materi
         ['changeover-verify-mismatch', { process_id: 9 }, 0, 'a part-id flag on another process'],
         ['order-failed', { order_id: 501, reason: 'x' }, 1, 'a failed order on one of its tiles'],
         ['order-failed', { order_id: 9, reason: 'x' }, 0, 'another station\'s failed order'],
+        ['order-cancelled', { order_id: 501, reason: 'x' }, 1, 'a Core-cancelled order on one of its tiles'],
+        ['order-cancelled', { order_id: 9, reason: 'x' }, 0, 'another station\'s Core-cancelled order'],
         ['order-faulted', { order_id: 501, reason: 'x' }, 1, 'a faulted order on one of its tiles'],
         ['order-faulted', { order_id: 9, reason: 'x' }, 0, 'another station\'s faulted order'],
         ['uop-stranded-alarm', { core_node_name: 'PLN_2', detail: 'counts wait' }, 1, 'a stranded count at one of its tiles'],
@@ -489,6 +491,26 @@ eq(['order-update', 'bins', 'supply-refusal', 'sourcing', 'containment', 'materi
     fire('order-failed', { order_id: 501, order_type: 'retrieve', reason: 'no robot' });
     await advance(600);
     eq(toastTexts().length, 1, 'order-failed for its own order: the toast');
+    // A cancel Core made (HK 400t, 2026-11-04: RDS stopped the swap) is toasted
+    // with Core's reason verbatim — the fleet's code and node name intact.
+    await settle();
+    fire('order-cancelled', { order_id: 9, order_type: 'complex', reason: 'fleet order stopped' });
+    await advance(600);
+    eq(toastTexts(), [], 'order-cancelled for another station\'s order: no toast here');
+    await settle();
+    fire('order-cancelled', { order_id: 501, order_type: 'complex',
+        reason: 'fleet order stopped — RDS error 60009: Cannot find path to new block target [PLN_05]' });
+    await advance(600);
+    eq(toastTexts(), ['Complex cancelled: fleet order stopped — RDS error 60009: Cannot find path to new block target [PLN_05] (#501)×'],
+        'order-cancelled for its own order: a sticky toast with Core\'s reason');
+    // A failure carrying RDS's raw HTTP envelope keeps the code, which is what
+    // RDS is searched by (friendlyOrderError).
+    await settle();
+    fire('order-failed', { order_id: 501, order_type: 'retrieve',
+        reason: 'rds HTTP 400: {"code":60009,"msg":"Cannot find path to [SMN_011]"}' });
+    await advance(600);
+    eq(toastTexts(), ['retrieve: RDS error 60009: Cannot find path to [SMN_011] (#501)×'],
+        'order-failed with an RDS envelope: the code and message, not the raw JSON');
     await settle();
     fire('uop-stranded-alarm', { core_node_name: 'PLN_9', detail: 'counts wait at PLN_9', needs_action: true });
     await advance(600);

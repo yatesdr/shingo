@@ -904,6 +904,12 @@ function cellCardAction(entry, claim, remaining) {
             // robot is in transit.
             return { label: 'ACKNOWLEDGED', cls: 'close', enabled: false, action: '' };
         }
+        // A FAULTED robot is not in transit. Core's own sentence — "Replanning",
+        // or "Fault · <RDS reason> (<code>)" once it has lasted — so the press
+        // says what the board says (fault_line, built server-side).
+        if (inFlight.status === 'faulted') {
+            return { label: inFlight.fault_line || 'Replanning', cls: 'close', enabled: false, action: '' };
+        }
         // ROBOT IN TRANSIT is a cell WAITING on a delivery. Its opposite
         // number is TO MARKET — a cell already balanced, with a robot taking
         // the old bin away — and a departed leg can never reach this arm.
@@ -1047,7 +1053,7 @@ function blockerPhrase(blocker) {
     if (blocker.queue_reason) return blocker.queue_reason;
     switch (blocker.status) {
         case 'faulted':
-            return 'faulted, recovering';
+            return blocker.fault_line || 'faulted, recovering';
         case 'queued':
             return 'queued';
         case 'acknowledged':

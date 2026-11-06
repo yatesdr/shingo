@@ -329,6 +329,24 @@ function handleOrderFailed(data) {
     showToast(msg, 'error', { sticky: true });
 }
 
+// handleOrderCancelled toasts a cancel this station did not ask for, in Core's
+// words — which carry the fleet's own code and text when the fleet stopped it:
+// "complex cancelled: fleet order stopped — RDS error 60009: Cannot find path to
+// new block target [PLN_05] (#3751)". The Edge emits it only for an order still
+// live here, so an operator's own abort is never toasted back at them.
+//
+// Sticky and red, like order-failed: the order is gone from the tile either
+// way, and before this the board said nothing at all about why (HK 400t,
+// 2026-11-04 — seven swaps stopped by RDS, the press heard nothing).
+function handleOrderCancelled(data) {
+    const reason = data && (data.reason || data.Reason);
+    let msg = (data && data.order_type ? data.order_type + ' ' : '') + 'cancelled';
+    msg = msg.charAt(0).toUpperCase() + msg.slice(1);
+    if (reason) msg += ': ' + reason;
+    if (data && data.order_id) msg += ' (#' + data.order_id + ')';
+    showToast(msg, 'error', { sticky: true });
+}
+
 function handleUopStranded(data) {
     // One toast per window (the engine emits once per window). The detail is the
     // operator sentence, rendered verbatim.
@@ -579,6 +597,10 @@ const stationEvents = {
     // failure even if they have looked away (fleet failure, admin terminate,
     // a structural resolver error), not only on the next view refresh.
     'order-failed': onEvent('order-failed', handleOrderFailed),
+    // order-cancelled is Core ending an order this station did not cancel (the
+    // fleet stopped it, an admin terminated it, its swap partner died): the same
+    // sticky toast, with Core's reason.
+    'order-cancelled': onEvent('order-cancelled', handleOrderCancelled),
     // Parked ticks piling up on an unbound node: refresh so the tile's chip
     // appears now, and one toast per alarm window with the instruction.
     'uop-stranded-alarm': onEvent('uop-stranded-alarm', handleUopStranded),

@@ -596,6 +596,12 @@ func ClassifyTermination(terminalState, detail string) string {
 // 100% of failures as "Robot blocked"; it survives here only because deleting
 // it would silently reclassify years of existing rows.
 func classifyCancelByDetail(detail string) string {
+	// A fleet stop stays a cancel whatever the fleet's own words say (Q-030).
+	// Its detail carries those words since 2026-11-04, and an RDS description
+	// containing "timeout" must not move it into the failure rate.
+	if IsFleetStopDetail(detail) {
+		return OutcomeCancelled
+	}
 	d := strings.ToLower(detail)
 	// Actor-attributed cancels are deliberate (Q-030), even when the detail
 	// also mentions a failure-ish word — attribution wins.
@@ -661,6 +667,22 @@ func SystemStopReason(detail string) string {
 	}
 }
 
+// FleetStopDetail opens the reason Core writes when the fleet stops an order
+// Core did not ask it to stop (engine.fleetStopReason). The fleet's own code
+// and text follow it — "fleet order stopped — RDS error 60009: Cannot find path
+// to new block target [PLN_05]" — so the classifiers below key on the PREFIX:
+// what comes after it is vendor prose and must not be read for attribution or
+// failure words. Rows before 2026-11-04 are the bare prefix.
+const FleetStopDetail = "fleet order stopped"
+
+// IsFleetStopDetail reports whether a terminal detail is a fleet stop's. One
+// predicate, used by the writer's test and both cancel classifiers, so the
+// sentence and the readers cannot drift apart (pinned by
+// TestFleetStopReason_StaysRDSOrigin and TestClassifyCancelOrigin).
+func IsFleetStopDetail(detail string) bool {
+	return strings.HasPrefix(strings.ToLower(strings.TrimSpace(detail)), FleetStopDetail)
+}
+
 // Cancel-origin buckets for the v2 stats split (Q-030). Only meaningful for
 // rows ClassifyTermination placed in the cancelled bucket.
 const (
@@ -719,6 +741,11 @@ func cancelCodeOrigin(code protocol.TermCode) string {
 func ClassifyCancelOrigin(code protocol.TermCode, detail string) string {
 	if code != "" {
 		return cancelCodeOrigin(code)
+	}
+	// Before the attribution words: the fleet's text after the prefix is the
+	// vendor's, and "cancelled by …" inside it is not a person in shingo.
+	if IsFleetStopDetail(detail) {
+		return CancelOriginRDS
 	}
 	d := strings.ToLower(detail)
 	switch {

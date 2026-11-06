@@ -34,6 +34,10 @@ type EventEmitter interface {
 	// Core that does not send one, and records as an UNKNOWN carrier.
 	EmitOrderDeliveredFallback(binID int64, binUOP *int, binPayloadCode *string, binEpoch int64, deliveryNode string, landingSent bool)
 	EmitOrderFailed(orderID int64, orderUUID string, orderType protocol.OrderType, reason string)
+	// EmitOrderCancelledByCore says Core cancelled an order that was still live
+	// here, with Core's reason (Manager.HandleDispatchReply). Not emitted for a
+	// cancel this station sent: that order is terminal before Core's echo lands.
+	EmitOrderCancelledByCore(orderID int64, orderUUID string, orderType protocol.OrderType, reason string)
 	EmitOrderFaulted(orderID int64, orderUUID, reason string)
 	// EmitOrderTouched says an order's fields were written and no scoped event
 	// announced them (Manager.AnnounceOrder): the boards that draw the order

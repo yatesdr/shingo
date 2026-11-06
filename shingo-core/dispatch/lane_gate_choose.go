@@ -526,14 +526,14 @@ func (d *Dispatcher) releaseChosenDrop(order *orders.Order, c gateCandidate, ste
 		// the wait becomes operator-visible as a fleet wait (noteGateAppendFailure),
 		// and that sentence must be the one left on the row.
 		log.Printf("lane gate: release order %d into %s: %v", order.ID, into, err)
-		d.setQueueReason(order, protocol.QueueWaitingForSlot, CauseGateReleaseFailed, QueueParams{Lane: waitsAt.Name})
+		d.setGateReleaseFailed(order, waitsAt.Name, err)
 		if !IsAppendLanded(err) {
 			// THE ROBOT IS STILL AT THE SPOT: the occupancy was refused, or the
 			// fleet never took the segment. The slot this release took goes back
 			// to paper, so the order waits holding what it held before.
 			d.giveBackRelease(order, choice.Slot, took, reads)
 		}
-		d.noteGateAppendFailure(order, waitsAt)
+		d.noteGateAppendFailure(order, waitsAt, err)
 		return false, 0, true
 	}
 	d.clearGateAppendFailures(order.ID)

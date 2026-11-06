@@ -52,6 +52,9 @@ type capturingEmitter struct {
 	status    []string // "oldStatus→newStatus"
 	completed []string
 	failed    []string
+	// cancelledByCore records "orderType:reason" for each cancel Core sent for
+	// an order that was still live here.
+	cancelledByCore []string
 	// fallbackPayloads records what the no-Edge-row delivery path was told the
 	// carrier is. nil entries are an older Core that sends no payload.
 	fallbackPayloads []*string
@@ -78,6 +81,9 @@ func (e *capturingEmitter) EmitOrderDeliveredFallback(binID int64, binUOP *int, 
 
 func (e *capturingEmitter) EmitOrderFailed(orderID int64, orderUUID string, orderType protocol.OrderType, reason string) {
 	e.failed = append(e.failed, string(orderType)+":"+reason)
+}
+func (e *capturingEmitter) EmitOrderCancelledByCore(orderID int64, orderUUID string, orderType protocol.OrderType, reason string) {
+	e.cancelledByCore = append(e.cancelledByCore, string(orderType)+":"+reason)
 }
 func (e *capturingEmitter) EmitOrderFaulted(orderID int64, orderUUID, reason string) {
 }
@@ -565,15 +571,69 @@ func TestHandleDispatchReply_Staged(t *testing.T) {
 func TestHandleDispatchReply_Cancelled(t *testing.T) {
 	t.Parallel()
 	db := testManagerDB(t)
-	mgr := NewManager(db, testEmitter{}, "edge")
+	emitter := &capturingEmitter{}
+	mgr := NewManager(db, emitter, "edge")
 
 	oid, _ := db.CreateOrder("uuid-can", TypeRetrieve, nil, false, 1, "X", "", "", protocol.Height{}, false, "", "", "")
 	_ = db.UpdateOrderStatus(oid, string(StatusSubmitted))
 
-	testutil.MustNoErr(t, mgr.HandleDispatchReply("uuid-can", ReplyCancelled, "", "", "stopped"), "HandleDispatchReply")
+	const reason = "fleet order stopped — RDS error 60009: Cannot find path to new block target [PLN_05]"
+	testutil.MustNoErr(t, mgr.HandleDispatchReply("uuid-can", ReplyCancelled, "", "", reason), "HandleDispatchReply")
 	o, _ := db.GetOrder(oid)
 	if o.Status != StatusCancelled {
 		t.Errorf("Status: got %q, want cancelled", o.Status)
+	}
+	// Core cancelled an order still live here: the station is told, in Core's
+	// words (the board toasts it — SSE order-cancelled).
+	if want := []string{"retrieve:" + reason}; fmt.Sprint(emitter.cancelledByCore) != fmt.Sprint(want) {
+		t.Errorf("cancelled-by-Core emits = %q, want %q", emitter.cancelledByCore, want)
+	}
+}
+
+// TestHandleDispatchReply_OneToastPerDeadSwap pins that a swap partner cancelled
+// after its sibling died is not toasted a second time: the dead leg's cancel
+// announces, the partner's (its sibling already terminal) does not.
+func TestHandleDispatchReply_OneToastPerDeadSwap(t *testing.T) {
+	t.Parallel()
+	db := testManagerDB(t)
+	emitter := &capturingEmitter{}
+	mgr := NewManager(db, emitter, "edge")
+	evac, err := db.CreateOrder("uuid-evac", TypeComplex, nil, false, 1, "PLN_04", "", "", protocol.Height{}, false, "", "", "")
+	evac = testutil.Must(t, evac, err, "create evac")
+	supply, err := db.CreateOrder("uuid-supply", TypeComplex, nil, false, 1, "PLN_04", "", "", protocol.Height{}, false, "", "", "")
+	supply = testutil.Must(t, supply, err, "create supply")
+	testutil.MustNoErr(t, db.LinkOrderSiblings(evac, supply), "link siblings")
+	testutil.MustNoErr(t, db.UpdateOrderStatus(evac, string(StatusInTransit)), "evac in transit")
+	testutil.MustNoErr(t, db.UpdateOrderStatus(supply, string(StatusInTransit)), "supply in transit")
+
+	testutil.MustNoErr(t, mgr.HandleDispatchReply("uuid-evac", ReplyCancelled, "", "",
+		"fleet order stopped — RDS error 60009: Cannot find path to new block target [PLN_05]"), "evac cancel")
+	testutil.MustNoErr(t, mgr.HandleDispatchReply("uuid-supply", ReplyCancelled, "", "",
+		"coordinated swap evac (order 3166) cancelled (RDS error 60009: …); cancelling supply"), "supply cancel")
+
+	if len(emitter.cancelledByCore) != 1 || !strings.Contains(emitter.cancelledByCore[0], "60009") {
+		t.Errorf("cancelled-by-Core emits = %q, want exactly the dead leg's one", emitter.cancelledByCore)
+	}
+}
+
+// TestHandleDispatchReply_CancelledEchoOfOwnAbort pins the other half: a cancel
+// this station sent is already terminal here when Core echoes it, so the
+// operator who pressed it is not toasted back. AbortOrder is the real door.
+func TestHandleDispatchReply_CancelledEchoOfOwnAbort(t *testing.T) {
+	t.Parallel()
+	db := testManagerDB(t)
+	emitter := &capturingEmitter{}
+	mgr := NewManager(db, emitter, "edge")
+
+	oid, err := db.CreateOrder("uuid-own", TypeRetrieve, nil, false, 1, "X", "", "", protocol.Height{}, false, "", "", "")
+	oid = testutil.Must(t, oid, err, "CreateOrder")
+	testutil.MustNoErr(t, db.UpdateOrderStatus(oid, string(StatusSubmitted)), "UpdateOrderStatus")
+	testutil.MustNoErr(t, mgr.AbortOrder(oid), "AbortOrder")
+
+	_ = mgr.HandleDispatchReply("uuid-own", ReplyCancelled, "", "", "aborted by operator")
+	if len(emitter.cancelledByCore) != 0 {
+		t.Errorf("cancelled-by-Core emits = %q, want none for the echo of this station's own abort",
+			emitter.cancelledByCore)
 	}
 }
 
@@ -721,6 +781,34 @@ func TestApplyCoreStatusSnapshot_AllForcedStatusPaths(t *testing.T) {
 				t.Errorf("Status: got %q, want %q", o.Status, tc.target)
 			}
 		})
+	}
+}
+
+// TestApplyCoreStatusSnapshot_AnEndingCarriesCoresReason pins that a boot
+// reconcile's ending records the reason Core sent (ErrorDetail) — the failed
+// toast and the history row both — rather than "startup reconciliation with
+// core", which said nothing about why in exactly the case the live message was
+// missed (2026-11-05).
+func TestApplyCoreStatusSnapshot_AnEndingCarriesCoresReason(t *testing.T) {
+	t.Parallel()
+	db := testManagerDB(t)
+	emitter := &capturingEmitter{}
+	mgr := NewManager(db, emitter, "edge")
+	oid, err := db.CreateOrder("uuid-boot-fail", TypeRetrieve, nil, false, 1, "X", "", "", protocol.Height{}, false, "", "", "")
+	oid = testutil.Must(t, oid, err, "CreateOrder")
+
+	const why = "Gave up after 45m · Cannot find path to new block target [PLN_05] (60009)"
+	testutil.MustNoErr(t, mgr.ApplyCoreStatusSnapshot(protocol.OrderStatusSnapshot{
+		OrderUUID: "uuid-boot-fail", Found: true, Status: string(StatusFailed), ErrorDetail: why,
+	}), "ApplyCoreStatusSnapshot")
+
+	if want := []string{"retrieve:" + why}; fmt.Sprint(emitter.failed) != fmt.Sprint(want) {
+		t.Errorf("failed emits = %q, want %q", emitter.failed, want)
+	}
+	hist, err := db.ListOrderHistory(oid)
+	hist = testutil.Must(t, hist, err, "ListOrderHistory")
+	if len(hist) == 0 || hist[len(hist)-1].Detail != why {
+		t.Errorf("last history row = %+v, want detail %q", hist, why)
 	}
 }
 

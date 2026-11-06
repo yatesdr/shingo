@@ -9,6 +9,7 @@ import (
 	"shingo/protocol"
 	"shingo/protocol/testutil"
 	"shingoedge/store"
+	"shingoedge/store/processes"
 )
 
 type testEmitter struct{}
@@ -265,6 +266,8 @@ func TestRegression_FailedToFailedIdempotent(t *testing.T) {
 	}
 }
 func (testEmitter) EmitOrderFaulted(orderID int64, orderUUID, reason string) {}
+func (testEmitter) EmitOrderCancelledByCore(orderID int64, orderUUID string, orderType protocol.OrderType, reason string) {
+}
 
 // TestHoldDroppedEnvelope_IsAnOutboxRowForCore pins the Edge half of the
 // hold-drop message (strict pack, lane P0) that the hold lanes enqueue inside
@@ -351,3 +354,29 @@ func TestIngestEnvelope_CarriesTheDeclaration(t *testing.T) {
 	t.Logf("bytes: plain %d, stamped %d (+%d)", len(plain), len(stamped), len(stamped)-len(plain))
 }
 func (testEmitter) EmitOrderTouched(int64, string, *int64) {}
+
+// TestFormatSkipNote pins the chip: the leg named is the one that was skipped
+// (not whichever leg the task happens to have), and "bin missing at <node>" is
+// said only of the evac, whose bin is the line's.
+func TestFormatSkipNote(t *testing.T) {
+	t.Parallel()
+	evac, supply := int64(10), int64(11)
+	task := &processes.NodeTask{NodeName: "PLN_04", OldMaterialReleaseOrderID: &evac, NextMaterialOrderID: &supply}
+	for _, c := range []struct {
+		order      int64
+		code, want string
+	}{
+		{evac, "no_source_bin", "evac skipped: bin missing at PLN_04"},
+		{supply, "no_source_bin", "supply skipped: no bin at its source"},
+		{supply, "not_needed", "supply skipped: line already full"},
+		{99, "no_source_bin", "order skipped: no bin at its source"},
+	} {
+		detail := ""
+		if c.code == "not_needed" {
+			detail = "line already full"
+		}
+		if got := formatSkipNote(task, c.order, c.code, detail); got != c.want {
+			t.Errorf("formatSkipNote(order %d, %s) = %q, want %q", c.order, c.code, got, c.want)
+		}
+	}
+}

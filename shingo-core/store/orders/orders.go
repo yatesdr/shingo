@@ -1690,6 +1690,27 @@ func ListReleasedOpenVendorOrderIDs(db *sql.DB) ([]string, error) {
 	return ids, rows.Err()
 }
 
+// ListEndedWithLiveVendorState returns orders Core has ENDED (cancelled or
+// failed) whose last-seen fleet state is still a live one, last touched between
+// since and settled — the candidates for "shingo ended it, the fleet may still be
+// running it" (engine.chaseUnterminatedOrders). A fleet that took the terminate
+// reports STOPPED within a poll and the row drops out; a grace-expired order
+// stays FAILED because the poller untracked it, which is why the caller asks the
+// fleet rather than trusting this column. Bounded by limit.
+func ListEndedWithLiveVendorState(db *sql.DB, since, settled time.Time, limit int) ([]*Order, error) {
+	rows, err := db.Query(fmt.Sprintf(`SELECT %s FROM orders
+		WHERE status IN ($1, $2) AND vendor_order_id <> ''
+		  AND vendor_state NOT IN ('', 'FINISHED', 'STOPPED')
+		  AND updated_at BETWEEN $3 AND $4
+		ORDER BY id LIMIT $5`, SelectCols),
+		string(protocol.StatusCancelled), string(protocol.StatusFailed), since.UTC(), settled.UTC(), limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return ScanOrders(rows)
+}
+
 func ListTrackedVendorOrderIDs(db *sql.DB) ([]string, error) {
 	rows, err := db.Query(fmt.Sprintf(`SELECT vendor_order_id FROM orders WHERE vendor_order_id != '' AND status IN (%s)`, protocol.VendorTrackedStatusSQLList()))
 	if err != nil {

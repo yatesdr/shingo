@@ -88,7 +88,8 @@
           "queue_code": "",
           "lane_held": false,
           "departed": false,
-          "created_at": "<ts>"
+          "created_at": "<ts>",
+          "fault_line": ""
         }
       ]
     },

@@ -50,6 +50,8 @@ func (h *Handlers) handleOrders(w http.ResponseWriter, r *http.Request) {
 		// What became of the bin a cancelled order left on a robot — one line
 		// under the status, only where Core sent a notice (bin_returns).
 		"BinReturns": h.engine.OrderService().BinReturnLines(orders),
+		// Why each ended order ended — Core's reason, one line.
+		"EndReasons": h.engine.OrderService().EndReasons(orders),
 	}
 
 	h.renderTemplate(w, r, "orders.html", data)
@@ -73,6 +75,7 @@ func (h *Handlers) handleOrdersPartial(w http.ResponseWriter, r *http.Request) {
 		// refresh that dropped the clock would blank it every three seconds.
 		"WaitSince":  h.engine.OrderService().WaitSince(orders),
 		"BinReturns": h.engine.OrderService().BinReturnLines(orders),
+		"EndReasons": h.engine.OrderService().EndReasons(orders),
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := h.tmpl.ExecuteTemplate(w, "orders-body", data); err != nil {

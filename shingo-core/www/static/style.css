@@ -989,6 +989,8 @@ th.sort-desc::after { content: ' \2193'; color: var(--primary); }
 }
 .orders-subtext { font-size:var(--font-xs); color:var(--text-muted); }
 .orders-reason { max-width:22rem; white-space:normal; }
+/* An ended order's reason: one line on the board, the whole of it on hover. */
+.orders-reason-clip { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 .orders-actions { white-space:nowrap; }
 
 .manifest-footer {

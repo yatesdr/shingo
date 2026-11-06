@@ -605,22 +605,49 @@ type stationOrder struct {
 	LaneHeld       bool               `json:"lane_held"`
 	Departed       bool               `json:"departed"`
 	CreatedAt      time.Time          `json:"created_at"`
+	// FaultLine is a faulted order's sentence — "Replanning", or "Fault · <the
+	// fleet's reason> (<code>)" once Core's notice threshold has passed — built
+	// by protocol.BuildFaultLine, the same builder Core's board and the Edge's
+	// orders page use. "" for any other status. Before 2026-11-05 the press read
+	// a faulted order as "ROBOT IN TRANSIT" for the whole grace window.
+	FaultLine string `json:"fault_line"`
 }
 
 func stationOrders(orders []Order) []stationOrder {
 	if orders == nil {
 		return nil
 	}
+	now := time.Now().UTC()
 	out := make([]stationOrder, len(orders))
 	for i, o := range orders {
 		out[i] = stationOrder{
 			ID: o.ID, OrderType: o.OrderType, Status: o.Status, PayloadCode: o.PayloadCode,
 			SourceNode: o.SourceNode, DeliveryNode: o.DeliveryNode, ETA: o.ETA, AutoConfirm: o.AutoConfirm,
 			QueueReason: o.QueueReason, QueueCode: o.QueueCode, SiblingOrderID: o.SiblingOrderID, LaneHeld: o.LaneHeld,
-			Departed: o.Departed, CreatedAt: o.CreatedAt,
+			Departed: o.Departed, CreatedAt: o.CreatedAt, FaultLine: stationFaultLine(o, now),
 		}
 	}
 	return out
+}
+
+// stationFaultLine is the sentence a faulted order shows on the station, or "".
+func stationFaultLine(o Order, now time.Time) string {
+	if o.Status != protocol.StatusFaulted {
+		return ""
+	}
+	var ref protocol.TermRef
+	if o.FaultRef != nil {
+		ref = *o.FaultRef
+	}
+	var since, deadline time.Time
+	if o.FaultSince != nil {
+		since = *o.FaultSince
+	}
+	if o.FaultDeadline != nil {
+		deadline = *o.FaultDeadline
+	}
+	return protocol.BuildFaultLine(ref, since, deadline, now,
+		time.Duration(o.FaultNoticeAfterS)*time.Second).Sentence()
 }
 
 // MarshalJSON is the station's JSON for a tile: a loader tile carries no

@@ -3,6 +3,7 @@
 package engine
 
 import (
+	"strings"
 	"testing"
 
 	"shingo/protocol"
@@ -99,6 +100,17 @@ func TestSwapDeathRule_ARealTerminalEventReachesThePartner(t *testing.T) {
 				t.Fatalf("%s is %q after %s went %s through the engine's event, want cancelled. The handler "+
 					"is pinned; what makes it run in a plant is this subscriber, and it did not unwind the pair",
 					live.EdgeUUID, got.Status, dead.EdgeUUID, tc.deadStatus)
+			}
+			// The partner says WHY its sibling died, not only that it did (HK 400t,
+			// 2026-11-04: the supply's row read "evac … cancelled" while the RDS
+			// reason sat on the evac's). The dead row's detail is the seeded one.
+			if want := "(died in the test)"; !strings.Contains(got.ErrorDetail, want) {
+				t.Errorf("partner %s error_detail = %q, want it to carry the dead leg's reason %q",
+					live.EdgeUUID, got.ErrorDetail, want)
+			}
+			if !strings.HasPrefix(got.ErrorDetail, "coordinated swap ") {
+				t.Errorf("partner %s error_detail = %q, want the \"coordinated swap \" opening the "+
+					"pre-code classifier keys on (domain.coreCancelPrefixes)", live.EdgeUUID, got.ErrorDetail)
 			}
 		})
 	}

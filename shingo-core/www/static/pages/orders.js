@@ -106,6 +106,13 @@ async function forceConfirmDelivered(id, el) {
   orderControlPost('/api/recovery/repair', {action: 'force_confirm_delivered', order_id: oid, bin_id: 0}, el);
 }
 
+// Re-send the fleet terminate for an order shingo ended that RDS still runs.
+async function reissueTerminate(id, el) {
+  var oid = parseInt(id, 10);
+  if (!await uiConfirm('Re-send terminate to RDS for order #' + oid + '?')) return;
+  orderControlPost('/api/orders/reissue-terminate', {order_id: oid}, el);
+}
+
 // Hard-release a dwelling order past its wait, whoever owns that wait (W3).
 //
 // This is the ESCAPE HATCH, not the ordinary release. The station's board is
@@ -322,7 +329,8 @@ function timelineExtra(ev, next) {
   if (ev.status === 'faulted' || ev.code === 'grace_timeout') {
     if (ref.vendor_desc || ref.vendor_code) {
       var reason = ref.vendor_desc
-        ? String(ref.vendor_desc).toLowerCase() + (ref.vendor_code ? ' (' + ref.vendor_code + ')' : '')
+        // As received, like protocol's vendorReason: RDS text carries node names.
+        ? String(ref.vendor_desc) + (ref.vendor_code ? ' (' + ref.vendor_code + ')' : '')
         : 'fleet code ' + ref.vendor_code;
       parts += h`<span class="tl-detail">${'· ' + reason}</span>`;
     }
@@ -466,6 +474,18 @@ function buildManifest(data, opts) {
     out += '</div>';
     if (rb.Emergency) out += '<div class="manifest-alert manifest-alert-danger">EMERGENCY STOP ACTIVE</div>';
     if (rb.Blocked) out += '<div class="manifest-alert manifest-alert-warn">Robot is blocked</div>';
+    // The robot's own alarms (RDS robotsStatus), beside the order they may be
+    // stopping — "52702 path plan failed" was visible nowhere live before
+    // 2026-11-05. Up to three, worst first; notices left out. One line each:
+    // the code is what RDS is searched by.
+    var rank = {fatal: 0, error: 1, warning: 2};
+    var alarms = (rb.Alarms || []).filter(function(a) { return a && rank[a.severity] !== undefined; })
+      .sort(function(a, b) { return rank[a.severity] - rank[b.severity]; });
+    alarms.slice(0, 3).forEach(function(a) {
+      var cls = a.severity === 'warning' ? 'manifest-alert-warn' : 'manifest-alert-danger';
+      out += h`<div class="manifest-alert ${cls}">${'RDS ' + a.code + ': ' + (a.desc || '') + ' (' + a.severity + ')'}</div>`;
+    });
+    if (alarms.length > 3) out += '<div class="text-muted text-sm">+' + (alarms.length - 3) + ' more alarms</div>';
   }
 
   // ── RDS LIVE DETAIL ──
@@ -582,6 +602,21 @@ function buildManifest(data, opts) {
     }</ul>`;
   }
 
+  // Decisions the history does not show (a half-swap, a re-sent terminate, the
+  // fleet gone quiet about this order) — one line each, from its audit rows
+  // (www.orderNotes). Oldest first, like the history.
+  if (data.notes && data.notes.length > 0) {
+    out += '<div class="manifest-section">Notes</div>';
+    out += h`<ul class="timeline-list">${
+      data.notes.map(function(n) {
+        return h`<li>
+          <span class="tl-time tnum" title="${formatTime(n.at)}">${formatClockSeconds(n.at)}</span>
+          <span class="tl-detail">${n.text}</span>
+        </li>`;
+      })
+    }</ul>`;
+  }
+
   // ── CONTROLS ──
   // Rendered here rather than only on the detail page, so the modal and the
   // permalink are identical in what they can DO, not just what they show.
@@ -605,6 +640,12 @@ function buildManifest(data, opts) {
     // can see the cell.
     if (data.can_hard_release) {
       out += '<button class="btn btn-warning btn-sm" data-action="hardReleaseOrder:' + o.id + '">Hard Release</button>';
+    }
+    // Shingo ended this order and RDS, asked just now, still runs it: a
+    // terminate it did not take. Core re-sends on its own (3 tries); this is the
+    // manual one. can_reissue_terminate comes from the server, like can_cancel.
+    if (data.can_reissue_terminate) {
+      out += '<button class="btn btn-danger btn-sm" data-action="reissueTerminate:' + o.id + '">Re-send Terminate</button>';
     }
     if (o.status === 'delivered') {
       out += '<button class="btn btn-warning btn-sm" data-action="forceConfirmDelivered:' + o.id + '">Force Confirm</button>';
@@ -1151,6 +1192,7 @@ delegateActions(document.body, {
     openManualOrderModal,
     openOrderModal,
     cancelOrderFromRow,
+    reissueTerminate,
     setOrderPriority,
     stagedSourceChanged,
     submitManualOrder,

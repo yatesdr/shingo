@@ -35,6 +35,9 @@ func (NoOpOrderEmitter) EmitOrderDeliveredFallback(binID int64, binUOP *int, bin
 func (NoOpOrderEmitter) EmitOrderFailed(orderID int64, orderUUID string, orderType protocol.OrderType, reason string) {
 }
 
+func (NoOpOrderEmitter) EmitOrderCancelledByCore(orderID int64, orderUUID string, orderType protocol.OrderType, reason string) {
+}
+
 func (NoOpOrderEmitter) EmitOrderFaulted(orderID int64, orderUUID, reason string) {}
 
 // EmitOrderTouched implements orders.EventEmitter.

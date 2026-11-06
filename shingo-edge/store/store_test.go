@@ -2102,3 +2102,28 @@ func TestOrders_LatestHistoryTimesForStatus(t *testing.T) {
 		t.Errorf("empty id list = %v,%v, want nil,nil — no ids is no query", empty, err)
 	}
 }
+
+// TestOrders_LatestHistoryDetailsForStatus pins the orders page's end reason:
+// the detail of each order's NEWEST row into the status (row id order, so the
+// within-one-second tie the clock test above cannot settle is settled here).
+func TestOrders_LatestHistoryDetailsForStatus(t *testing.T) {
+	t.Parallel()
+	db := coverageDB(t)
+	ended, err := db.CreateOrder("ld-ended", "complex", nil, false, 1, "", "", "", protocol.Height{}, false, "", "", "")
+	ended = testutil.Must(t, ended, err, "create ended")
+	live, err := db.CreateOrder("ld-live", "complex", nil, false, 1, "", "", "", protocol.Height{}, false, "", "", "")
+	live = testutil.Must(t, live, err, "create live")
+
+	testutil.MustNoErr(t, db.InsertOrderHistory(ended, "in_transit", "cancelled", "an earlier word"), "hist 1")
+	testutil.MustNoErr(t, db.InsertOrderHistory(ended, "in_transit", "cancelled", "fleet order stopped — RDS error 60009: x"), "hist 2")
+	testutil.MustNoErr(t, db.InsertOrderHistory(live, "pending", "queued", "waiting"), "hist 3")
+
+	got, err := db.LatestOrderHistoryDetailsForStatus([]int64{ended, live}, "cancelled")
+	got = testutil.Must(t, got, err, "LatestOrderHistoryDetailsForStatus")
+	if got[ended] != "fleet order stopped — RDS error 60009: x" {
+		t.Errorf("ended order's reason = %q, want the newest cancelled row's detail", got[ended])
+	}
+	if _, ok := got[live]; ok {
+		t.Errorf("an order that never reached cancelled was given a reason: %v", got)
+	}
+}

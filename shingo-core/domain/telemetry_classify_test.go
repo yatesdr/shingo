@@ -49,6 +49,8 @@ func TestClassifyTermination(t *testing.T) {
 		{"cancelled", "aborted by operator (timeout while staging)", OutcomeCancelled},
 		// "fleet order stopped" (RDS-origin) stays a cancel — no failure pattern.
 		{"STOPPED", "fleet order stopped", OutcomeCancelled},
+		// ...including when the fleet's own words after it carry one (2026-11-04).
+		{"cancelled", "fleet order stopped — RDS error 60012: wait timeout", OutcomeCancelled},
 
 		// Anything else.
 		{"weird-state", "", OutcomeOther},
@@ -105,6 +107,9 @@ func TestClassifyCancelOrigin(t *testing.T) {
 		{"Cancelled By Operator", CancelOriginShingo}, // case-insensitive
 		{"fleet order stopped", CancelOriginRDS},
 		{"FLEET ORDER STOPPED", CancelOriginRDS},
+		// The fleet's words follow the prefix since 2026-11-04 and are not read.
+		{"fleet order stopped — RDS error 60009: Cannot find path to new block target [PLN_05]", CancelOriginRDS},
+		{"fleet order stopped — RDS: cancelled by dispatcher", CancelOriginRDS},
 		// Core tearing down its own work (R4) — one per writer in coreCancelPrefixes.
 		{"reshuffle dissolved: the dig's plan went stale; re-planning", CancelOriginShingo},
 		{"reshuffle dissolved: a dig leg failed; the demand re-plans", CancelOriginShingo},
