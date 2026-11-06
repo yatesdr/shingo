@@ -26,6 +26,8 @@ func (h *Handlers) registerSimRoutes(r chi.Router) {
 	r.Post("/sim/clear-hourly-counts", h.apiSimClearHourlyCounts)
 	r.Post("/sim/curtain", h.apiSimCurtain)
 	r.Post("/sim/catid", h.apiSimCATID)
+	r.Post("/sim/program-change", h.apiSimProgramChange)
+	r.Get("/sim/line", h.apiSimLine)
 	r.Get("/sim/overrun", h.apiSimOverrunList)
 	r.Post("/sim/overrun", h.apiSimOverrun)
 }
@@ -265,6 +267,64 @@ func (h *Handlers) apiSimCATID(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, map[string]any{"plc_name": body.PLCName, "tag_name": body.TagName, "value": *body.Value})
+}
+
+// apiSimProgramChange changes the program of a process in the fake WarLink:
+// the sim's stand-in for a cell switching parts. Body {"plc_name", "tag_name"
+// (the process's counter), "value" (the new identity), "mode"}. "drain" stops
+// loading, lets the line count out, then sets the identity and resets the
+// counter; "forced" does both at once and leaves the loads in flight to count
+// out under the new identity. A process with no identity_tag is refused.
+func (h *Handlers) apiSimProgramChange(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		PLCName string `json:"plc_name"`
+		TagName string `json:"tag_name"`
+		Value   *int64 `json:"value"`
+		Mode    string `json:"mode"`
+	}
+	err := json.NewDecoder(r.Body).Decode(&body)
+	var change any
+	if err == nil && body.Value != nil {
+		switch body.Mode {
+		case "drain":
+			change = simwarlink.ProgramChange(*body.Value)
+		case "forced":
+			change = simwarlink.ForcedChange(*body.Value)
+		}
+	}
+	if change == nil || body.PLCName == "" || body.TagName == "" {
+		http.Error(w, `want {plc_name, tag_name, value, mode: "drain"|"forced"}`, http.StatusBadRequest)
+		return
+	}
+	mgr := h.engine.PLCManager()
+	if mgr == nil {
+		http.Error(w, "no PLC manager", http.StatusServiceUnavailable)
+		return
+	}
+	if err := mgr.WriteTagDirect(r.Context(), body.PLCName, body.TagName, change); err != nil {
+		http.Error(w, err.Error(), http.StatusBadGateway)
+		return
+	}
+	writeJSON(w, map[string]any{"plc_name": body.PLCName, "tag_name": body.TagName, "value": *body.Value, "mode": body.Mode})
+}
+
+// apiSimLine reads every sim process's line among the PLCs the Edge has
+// discovered: {"lines": [{plc_name, tag_name, loads, loads_by_identity,
+// in_flight, identity, counter}]}, the loads a run checks the carts against.
+func (h *Handlers) apiSimLine(w http.ResponseWriter, r *http.Request) {
+	mgr := h.engine.PLCManager()
+	if mgr == nil {
+		http.Error(w, "no PLC manager", http.StatusServiceUnavailable)
+		return
+	}
+	lines := []simwarlink.ProcessLine{}
+	for _, name := range mgr.PLCNames() {
+		if v, err := mgr.ReadTagDirect(r.Context(), name, simwarlink.LineTag); err == nil {
+			pl, _ := v.([]simwarlink.ProcessLine)
+			lines = append(lines, pl...)
+		}
+	}
+	writeJSON(w, map[string]any{"lines": lines})
 }
 
 // apiSimOverrun sets or clears a PLC's overrun switch in the fake WarLink: with

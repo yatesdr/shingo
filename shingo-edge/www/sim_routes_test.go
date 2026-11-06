@@ -86,3 +86,71 @@ func TestSimOverrun_RouteSetsListsAndClears(t *testing.T) {
 		t.Errorf("an unknown PLC = %d; want 502 (refused by the fake)", code)
 	}
 }
+
+// TestSimProgramChange_RouteChangesAndReadsLine pins POST /api/sim/program-change
+// and GET /api/sim/line over the fake WarLink: a forced change sets the identity
+// and resets the counter at once, a drain change is taken, the line read names
+// the process with its identity, and a malformed body or mode (400), a process
+// the fake does not count and one with no identity tag (502) are refused.
+func TestSimProgramChange_RouteChangesAndReadsLine(t *testing.T) {
+	h, r := newTestHandlers(t)
+	cfg := config.SimConfig{Enabled: true, Processes: []config.SimProcessConfig{
+		{PLCName: "WELD-6", TagName: "WELD-6_COUNTER", TickInterval: time.Second,
+			StationTag: "WELD-6_STATION", LineDepth: 2, IdentityTag: "WELD-6_CATID"},
+		{PLCName: "PRESS-1", TagName: "PRESS-1_COUNTER", TickInterval: time.Second},
+	}}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	fake := simwarlink.NewFakeClient(ctx, cfg, clock.NewManual(time.Unix(0, 0)))
+	mgr := plc.NewManager(nil, config.Defaults().WarLink, config.Defaults().PollRate, config.Defaults().Counter.JumpThreshold, nil, fake)
+	mgr.SetTagValueForTest("WELD-6", "WELD-6_COUNTER", int64(0))
+	h.engine.(*stubEngine).plcMgr = mgr
+	r.Route("/api", func(r chi.Router) { h.registerSimRoutes(r) })
+
+	call := func(method, path, body string) (int, string) {
+		t.Helper()
+		req := httptest.NewRequest(method, path, strings.NewReader(body))
+		rec := httptest.NewRecorder()
+		r.ServeHTTP(rec, req)
+		return rec.Code, rec.Body.String()
+	}
+	const post = "/api/sim/program-change"
+
+	if code, body := call(http.MethodPost, post, `{"plc_name":"WELD-6","tag_name":"WELD-6_COUNTER","value":1002,"mode":"forced"}`); code != http.StatusOK {
+		t.Fatalf("forced = %d %s", code, body)
+	}
+	if v, _ := fake.ReadTagValue(ctx, "WELD-6", "WELD-6_CATID"); v != int64(1002) {
+		t.Errorf("identity after the forced change = %v; want 1002", v)
+	}
+	if code, body := call(http.MethodPost, post, `{"plc_name":"WELD-6","tag_name":"WELD-6_COUNTER","value":1003,"mode":"drain"}`); code != http.StatusOK {
+		t.Fatalf("drain = %d %s", code, body)
+	}
+	code, body := call(http.MethodGet, "/api/sim/line", "")
+	var got struct {
+		Lines []simwarlink.ProcessLine `json:"lines"`
+	}
+	if code != http.StatusOK || json.Unmarshal([]byte(body), &got) != nil {
+		t.Fatalf("GET line = %d %s", code, body)
+	}
+	if len(got.Lines) != 1 || got.Lines[0].PLCName != "WELD-6" || got.Lines[0].TagName != "WELD-6_COUNTER" || got.Lines[0].Identity != 1002 {
+		t.Errorf("line read = %s; want WELD-6/WELD-6_COUNTER at 1002 (the drain lands on a tick)", body)
+	}
+
+	for _, bad := range []string{
+		`{"plc_name":"WELD-6","tag_name":"WELD-6_COUNTER","value":1002}`,
+		`{"plc_name":"WELD-6","tag_name":"WELD-6_COUNTER","value":1002,"mode":"later"}`,
+		`{"plc_name":"WELD-6","tag_name":"WELD-6_COUNTER","mode":"drain"}`,
+		`{"tag_name":"WELD-6_COUNTER","value":1002,"mode":"drain"}`,
+		`not json`,
+	} {
+		if code, _ := call(http.MethodPost, post, bad); code != http.StatusBadRequest {
+			t.Errorf("body %s = %d; want 400", bad, code)
+		}
+	}
+	if code, _ := call(http.MethodPost, post, `{"plc_name":"WELD-6","tag_name":"NO_SUCH_COUNTER","value":1002,"mode":"drain"}`); code != http.StatusBadGateway {
+		t.Errorf("an unknown process = %d; want 502 (refused by the fake)", code)
+	}
+	if code, _ := call(http.MethodPost, post, `{"plc_name":"PRESS-1","tag_name":"PRESS-1_COUNTER","value":1002,"mode":"forced"}`); code != http.StatusBadGateway {
+		t.Errorf("a process with no identity_tag = %d; want 502 (refused by the fake)", code)
+	}
+}
