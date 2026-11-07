@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"shingo/protocol"
+	"shingo/protocol/clock"
 	"shingo/protocol/testutil"
 )
 
@@ -74,6 +75,7 @@ func TestReleasePointsAsker_TheReadAsk(t *testing.T) {
 	}); err == nil {
 		t.Error("a refusal from Core decoded as an answer")
 	}
+	setAskClock(e, waitRunOut{clock.Real()}) // no answer comes, and the wait runs out
 	if _, err := ask(nil); !errors.Is(err, ErrAskPending) {
 		t.Errorf("no answer within the wait: err = %v, want ErrAskPending", err)
 	}

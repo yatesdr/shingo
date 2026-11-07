@@ -67,6 +67,24 @@ func TestAskWait_TheDefault(t *testing.T) {
 	}
 }
 
+// setAskClock makes c the clock e's taps wait on, from its next ask.
+func setAskClock(e *Engine, c clock.Clock) {
+	e.asks.mu.Lock()
+	e.asks.waitClock = c
+	e.asks.mu.Unlock()
+}
+
+// waitRunOut is an ask clock on which every wait has already run out: an ask
+// with no answer in by the time it waits returns ErrAskPending at once, as it
+// does after AskWait on the wall clock.
+type waitRunOut struct{ clock.Clock }
+
+func (waitRunOut) After(time.Duration) <-chan time.Time {
+	ch := make(chan time.Time, 1)
+	ch <- time.Time{}
+	return ch
+}
+
 // TestAsk_AnsweredInTime: an ask rides the outbox as an edge.ask with its kind
 // and body, expiring after AskTTL; Core's answer, matched by CorID, comes back
 // to the tap already applied (its rows written into the bins copy), and the
@@ -240,7 +258,8 @@ func TestAskLateOrRefuse_TheFollowUpRunsOnALateAnswer(t *testing.T) {
 	var gotErr error
 	runs := 0
 	followUp := func(c *BinClearResponse, err error) { runs++; got, gotErr = c, err }
-	// AskWait is 2 s; a tap that is answered after it pends.
+	// The wait runs out before Core answers: the tap pends.
+	setAskClock(e, waitRunOut{clock.Real()})
 	done := make(chan error, 1)
 	go func() {
 		_, err := askLateOrRefuse(e, protocol.AskBinClear, protocol.BinClearRequest{NodeName: "N1"}, followUp)
@@ -318,6 +337,7 @@ func TestPreflightAsker_TheReadAsk(t *testing.T) {
 	}); err == nil {
 		t.Error("a refusal read as an answer")
 	}
+	setAskClock(e, waitRunOut{clock.Real()}) // no answer comes, and the wait runs out
 	if _, err := ask(nil); !errors.Is(err, ErrAskPending) {
 		t.Errorf("no answer within the wait: err = %v, want ErrAskPending", err)
 	}
@@ -381,6 +401,7 @@ func TestHeldPartials_TheReadAsk(t *testing.T) {
 	}); err == nil {
 		t.Error("a refusal read as a list")
 	}
+	setAskClock(e, waitRunOut{clock.Real()}) // no answer comes, and the wait runs out
 	if _, err := ask(nil); !errors.Is(err, ErrAskPending) {
 		t.Errorf("no answer within the wait: err = %v, want ErrAskPending", err)
 	}

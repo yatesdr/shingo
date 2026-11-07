@@ -90,3 +90,22 @@ present at the merge base is absent at the tip without a row here.
 - coverage Δ: lead (Phase 1 baseline → certification diff)
 - citations rewritten: none
 - verified at: `5d73ed29`
+### TIMING — `TestReleaseU1_TheAskAddsNoWaitToTheRelease`
+- test: `TestReleaseU1_TheAskAddsNoWaitToTheRelease` · pkg `shingoedge/engine` · run `-run '^TestReleaseU1_TheAskAddsNoWaitToTheRelease$'` · `shingo-edge/engine/unloader_ask_pending_test.go:79` @ `22c81558` · tags `none`
+- code: TIMING
+- assertion map:
+  - `unloader_ask_pending_test.go:92-95` (median of 5 releases with Core silent, minus the median of 5 with no U1, under AskWait/2) → `unloader_ask_pending_test.go:87-101`: one release with Core silent and the ask's wait on a stopped `clock.Manual`; it must return. Any positive wait on the ask never runs out there, so the bound is now "no wait at all", where it was "under 1 s".
+  - `:39-41` (each release's outcome string) → `:32-37` `wantReleased`, the same string, at `:93`.
+  - added witness `:102-111`: the U1's `loader.retrieve` ask is on the outbox, Core answered none, the window shows it pending (the old form passed with no U1 asked at all).
+  - `:90-91` `t.Logf` of the three medians: dropped because it asserted nothing; the Core-answering arm and the no-U1 baseline existed only to feed it and the subtraction. Base medians (solo, N=3): no U1 25.6/26.1/25.9 ms; Core silent 18.2/18.2/22.0 ms; Core answering 22.5/25.3/34.1 ms.
+- mutation: `shingo-edge/engine/operator_demand_unloader.go`, `askUnloaderFulls`:
+  ```diff
+  -	a, err := e.AskLate(protocol.AskLoaderRetrieve, req, 0, func(a *protocol.EdgeAnswer) {
+  +	a, err := e.AskLate(protocol.AskLoaderRetrieve, req, AskWait*3/4, func(a *protocol.EdgeAnswer) {
+  ```
+  · old test red at base: `go test -count=1 -tags lockcheck -run '^TestReleaseU1_TheAskAddsNoWaitToTheRelease$' ./engine/` → `unloader_ask_pending_test.go:93: release with Core not answering took 1.5184054s, 1.4942143s over the baseline 24.1911ms, want under 1s more: the U1's ask must not be waited for`
+  · survivor red at tip: same command → `unloader_ask_pending_test.go:100: the release did not return within 30s with Core not answering its U1: it waits on the ask`
+  · with `AskWait/4` in place of `AskWait*3/4`: old test GREEN at base (`median ... Core not answering 519.4563ms`, `--- PASS`), survivor red at tip (the same `:100` line). With `e.askUnloaderFulls(loader, window, served)` removed: survivor red at tip (`:103: no ask on the outbox`).
+- coverage Δ: lead (Phase 1 baseline → certification diff)
+- citations rewritten: none (`git grep -n 'TheAskAddsNoWaitToTheRelease\|timedRelease'` over the five modules: the test's own file only)
+- verified at: `cb19739f` with this commit's test diff applied

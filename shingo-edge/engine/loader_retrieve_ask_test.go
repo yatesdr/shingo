@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"shingo/protocol"
+	"shingo/protocol/clock"
 	"shingo/protocol/testutil"
 	"shingoedge/domain"
 	"shingoedge/orders"
@@ -143,6 +144,7 @@ func TestLoaderEmpties_APendingAnswerIsSent(t *testing.T) {
 	nodeID := seedCapManualSwap(t, db, "LEW-PROC", "LEW-W1", protocol.ClaimRoleProduce, []string{"PART-LE"}, 0, false)
 	seedCoreLoader(t, eng, sharedLoaderInfo("LEW-W1", "produce", "operator", "PART-LE", 0, 0))
 
+	setAskClock(eng, waitRunOut{clock.Real()}) // no answer comes, and the wait runs out
 	_, err := eng.RequestEmptyBin(nodeID, "")
 	if !errors.Is(err, ErrAskPending) {
 		t.Errorf("unanswered REQUEST EMPTY: %v, want ErrAskPending", err)
