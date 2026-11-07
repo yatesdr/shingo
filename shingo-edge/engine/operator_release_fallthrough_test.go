@@ -1,16 +1,20 @@
 // operator_release_fallthrough_test.go — tests that exercise the
 // disposition-skip log lines added during the release-flow cleanup.
 //
-// Background: ReleaseOrderWithLineside has four code paths that legitimately
-// skip the manifest-sync step (no process node, no active claim, produce
-// role, supply-bin guard). Pre-cleanup, two of them returned silently —
-// which meant a "the prompt didn't fire" investigation that landed on one
-// of those paths had no breadcrumb to grep for. Post-cleanup, every skip
-// site emits a structured log line with a stable suffix that names the
-// skip reason.
+// Background: a release leg legitimately skips the manifest-sync step on four
+// paths, and each writes a release log line with a stable suffix that names
+// the skip reason: no process node and a produce-role node (Engine.applyLeg,
+// release_commit.go), the supply bin of a two-robot swap
+// (Engine.releaseOrderWithFullLineside), and no active claim (release.PlanLeg,
+// the pure plan, whose lines the act writes through emitLogs). Before the
+// cleanup two of them returned silently, so a "the prompt didn't fire"
+// investigation that landed on one of those paths had no breadcrumb to grep
+// for.
 //
-// These tests assert the breadcrumbs exist and contain enough context to
-// diagnose the next 04-27-style incident without re-reading the engine.
+// These tests drive ReleaseOrderWithLineside, the station order's door over
+// runAct, through three of the four paths, and assert the breadcrumbs exist
+// and contain enough context to diagnose the next 04-27-style incident
+// without re-reading the engine.
 package engine
 
 import (
@@ -194,7 +198,7 @@ func TestReleaseOrderWithLineside_NoActiveClaim_LogsSkip(t *testing.T) {
 	}
 	testutil.MustNoErr(t, eng.ReleaseOrderWithLineside(orderID, disp), "ReleaseOrderWithLineside")
 
-	// Existing log line shape (pre-cleanup): "toClaim is nil ... disposition %q dropped"
+	// The line release.PlanLeg writes: "toClaim is nil ... disposition %q dropped"
 	logs := getLogs()
 	line := findLogLine(logs, "toClaim is nil", "capture_lineside",
 		fmt.Sprintf("%d", orderID))
@@ -204,11 +208,11 @@ func TestReleaseOrderWithLineside_NoActiveClaim_LogsSkip(t *testing.T) {
 	}
 }
 
-// Sanity check: ensure every fall-through log line from this PR carries
-// both an order ID and the disposition mode. A breadcrumb without those
-// two facts isn't grep-able to a specific incident — the whole point of
-// the cleanup. If a future edit to operator_release.go drops one, this
-// test catches it before review.
+// Sanity check: every release log line the no-process-node path writes
+// carries both an order ID and the disposition mode. A breadcrumb without
+// those two facts isn't grep-able to a specific incident — the whole point of
+// the cleanup. If a future edit to a skip site (Engine.applyLeg) drops one,
+// this test catches it before review.
 func TestReleaseOrderWithLineside_FallthroughLogShape_IncludesOrderAndDisposition(t *testing.T) {
 	t.Parallel()
 	db := testEngineDB(t)

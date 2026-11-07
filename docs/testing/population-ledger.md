@@ -191,3 +191,26 @@ present at the merge base is absent at the tip without a row here.
 - coverage Δ: lead (Phase 1 baseline → certification diff)
 - citations rewritten: none (`git grep -n 'TestHandlePayloadCatalog_StoresCATID'` over the five modules: its own file only)
 - verified at: `d36d1a07` with this commit's test diff applied
+
+### STALE — `TestReleaseOrderWithLineside_FallthroughLogShape_IncludesOrderAndDisposition`
+- test: `TestReleaseOrderWithLineside_FallthroughLogShape_IncludesOrderAndDisposition` · pkg `shingoedge/engine` · run `-run '^TestReleaseOrderWithLineside_FallthroughLogShape_IncludesOrderAndDisposition$'` · `shingo-edge/engine/operator_release_fallthrough_test.go:212` @ `22c81558` · tags `none`
+- code: STALE
+- assertion map: no assertion change. The file header (`:3-11`) said `ReleaseOrderWithLineside` "has four code paths" that skip the manifest sync; at the tip it is a wrapper over `runAct` (`release_doors.go:80-86`) and the skips are in `Engine.applyLeg` (`release_commit.go:92,122`), `Engine.releaseOrderWithFullLineside` (`:254`) and `release.PlanLeg` (`release/plan.go:135`). The header now names those. The test's doc (`:207-211`) named `operator_release.go`, which does not exist; it now names `Engine.applyLeg`.
+- mutation: `shingo-edge/engine/release_commit.go:92`:
+  ```diff
+  -		e.logRelease("order=%d disposition=%q — skipping manifest sync: no_process_node",
+  +		e.logRelease("order=%d mode=%q — skipping manifest sync: no_process_node",
+  ```
+  · survivor red at tip: `go test -count=1 -tags lockcheck -run '^TestReleaseOrderWithLineside_FallthroughLogShape_IncludesOrderAndDisposition$' ./engine/` → `operator_release_fallthrough_test.go:243: log line missing disposition= field: "order=1 mode=\"capture_lineside\" — skipping manifest sync: no_process_node"`
+- coverage Δ: lead (Phase 1 baseline → certification diff)
+- citations rewritten: none
+- verified at: `e217c1ff` with this commit's test diff applied
+
+### STALE — `TestReleaseOrderWithLineside_NoActiveClaim_LogsSkip`
+- test: `TestReleaseOrderWithLineside_NoActiveClaim_LogsSkip` · pkg `shingoedge/engine` · run `-run '^TestReleaseOrderWithLineside_NoActiveClaim_LogsSkip$'` · `shingo-edge/engine/operator_release_fallthrough_test.go:155` @ `22c81558` · tags `none`
+- code: STALE
+- assertion map: no assertion change. `:197` called the `toClaim is nil` line the "existing log line shape (pre-cleanup)"; the string is in no `engine/*.go` at the tip (a grep scoped to `engine/` reads the test as dead), it is written by `release.PlanLeg` (`release/plan.go:135`), which the comment now says.
+- mutation: `shingo-edge/release/plan.go:135`, `toClaim is nil (runtime` → `toClaim is missing (runtime` · survivor red at tip: `go test -count=1 -tags lockcheck -run '^TestReleaseOrderWithLineside_NoActiveClaim_LogsSkip$' ./engine/` → `operator_release_fallthrough_test.go:206: toClaim==nil log line not found.`
+- coverage Δ: lead (Phase 1 baseline → certification diff)
+- citations rewritten: none
+- verified at: `e217c1ff` with this commit's test diff applied
