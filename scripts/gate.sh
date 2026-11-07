@@ -44,8 +44,8 @@
 #                                         ./www/... (borrows WSL's cgo on Windows;
 #                                         needs docker for its Postgres)
 #   bash scripts/gate.sh docker           run the docker suites (no -race)
-#   bash scripts/gate.sh sim              -tags sim tests (edge sim operator, core
-#                                         fleet simulator, simwarlink), with -race
+#   bash scripts/gate.sh sim              the sim-only tests (-tags sim, with -race),
+#                                         in every package that holds one
 #   bash scripts/gate.sh full [BASE]      the bare gate, then docker if scope says
 #                                         so, with race and sim
 #   bash scripts/gate.sh scripts          the scripts/check-*.sh guards
@@ -127,9 +127,6 @@ done
 gate_scope=""
 [ "$(echo $MODULES)" = "$ALL_MODULES" ] || gate_scope="$(echo $MODULES)"
 rc=0
-# Set by `full` alone (see unit_packages); never read from the environment, so
-# an exported SIM_TAKES cannot shrink a unit run that no sim step follows.
-SIM_TAKES=""
 
 # Which modules actually carry docker-tagged tests. COMPUTED, not listed,
 # and computed in ONE place because two copies of this answer is exactly the
@@ -450,50 +447,6 @@ harness_verdict() {
   fi
 }
 
-# unit_packages <module> — what the unit step runs in a module: ./..., less the
-# packages the sim step will run, when this gate runs the sim step.
-#
-# `-race -tags sim` OVER A PACKAGE RUNS EVERY UNTAGGED TEST IN IT, because the
-# tag adds files and removes none — unless a file in that package says
-# `//go:build !sim`, which the sim build then leaves out. So a package is left
-# to the sim step only when no file under it carries that constraint: checked
-# per package directory on every run, and failing safe, the same way
-# untagged_only_modules guards its `!docker` skip. Today that leaves the edge's
-# engine packages to the sim step (182s of race-detected tests that already
-# include all ~56s of their untagged ones), and keeps shingo-core's
-# fleet/simulator in the unit run, because a stub in it is `!sim`.
-#
-# Only `full` sets SIM_TAKES, because only `full` runs the sim step; the bare
-# gate and `gate.sh test` run ./... whole. If the sim step then fails to run
-# at all it says FAIL, so nothing left to it goes silently untested.
-unit_packages() {
-  local m="$1" pats p d mod skip=""
-  case "$m" in
-    shingo-core) pats="$SIM_PKGS_CORE" ;;
-    shingo-edge) pats="$SIM_PKGS_EDGE" ;;
-    *) pats="" ;;
-  esac
-  if [ -z "${SIM_TAKES:-}" ] || [ -z "$pats" ]; then
-    printf '%s' "./..."
-    return
-  fi
-  for p in $pats; do
-    d="${p#./}"; d="${d%/...}"
-    [ -d "$ROOT/$m/$d" ] || continue
-    grep -rlq 'go:build.*!sim' --include='*.go' "$ROOT/$m/$d" 2>/dev/null && continue
-    skip="$skip $d"
-  done
-  if [ -z "$skip" ]; then
-    printf '%s' "./..."
-    return
-  fi
-  mod="$(sed -n 's/^module[[:space:]]*//p' "$ROOT/$m/go.mod" | tr -d '
-')"
-  go list ./... 2>/dev/null | awk -v mod="$mod" -v skip="$skip" '
-    BEGIN { n = split(skip, s, " ") }
-    { for (i = 1; i <= n; i++) { d = mod "/" s[i]; if ($0 == d || index($0, d "/") == 1) next }; print }'
-}
-
 step_test() {
   local m failed=0 logdir mods
   mods="${1:-$MODULES}"
@@ -527,7 +480,7 @@ step_test() {
   for m in $mods; do
     # -tags lockcheck: every lock goes through protocol/lockcheck's guard, which fails a
     # re-entry or a backwards take loudly (LOCKS.md). The docker and race steps carry it too.
-    ( cd "$ROOT/$m" && go test -tags lockcheck -count=1 $(unit_packages "$m") >"$logdir/test-$m.log" 2>&1
+    ( cd "$ROOT/$m" && go test -tags lockcheck -count=1 ./... >"$logdir/test-$m.log" 2>&1
       echo $? >"$logdir/test-$m.rc" ) &
   done
   wait
@@ -558,35 +511,124 @@ step_test() {
 # THE RACE DETECTOR IS THE POINT, not just compilation. The sim operator is
 # goroutine-driven by construction — timers firing against shared maps — so a
 # plain `go test -tags sim` would have compiled the bug and passed. This runs
-# the detector where cgo is available and falls back to a plain tagged run
-# where it is not, saying which it did rather than reporting a pass it did not
-# earn.
+# the detector where cgo is available, borrows WSL's where it is not, and FAILS
+# where neither is, rather than reporting a pass it did not earn.
 #
-# PACKAGES, NOT ./... — a tagged run over the whole module re-runs every
-# untagged test with it, which the unit step already did. These are the two
-# packages that carry `//go:build sim` tests.
-SIM_PKGS_CORE="./fleet/simulator/..."
-SIM_PKGS_EDGE="./engine/... ./plc/simwarlink/..."
+# THE SIM-ONLY TESTS, NOT THE PACKAGES THAT HOLD THEM. `-tags sim` adds files
+# and removes none, so a tagged run over a package re-runs every untagged test
+# in it, which the unit and docker steps already ran. That was where this
+# step's time went: the edge engine's ~1,400 untagged tests under the detector
+# were ~185s of a ~200s step, around ~50 sim tests. So per package the step
+# runs, anchored, exactly the tests `go test -list` names under `-tags sim` and
+# not under `-tags lockcheck` (the unit step's build). What that trades away is
+# a local -race run of the edge engine's untagged suite; CI's edge docker-race
+# shards race the whole edge module on every PR (.github/workflows/edge.yml).
+#
+# THE PACKAGES ARE DERIVED FROM THE TREE, as docker_modules is: every package
+# holding a _test.go whose //go:build names sim. A hard-coded list sat here
+# called "the two packages that carry sim tests" while five sim test files in
+# three more packages (core and edge www, edge cmd/shingoedge) ran nowhere.
 
-# sim_cmd builds the two tagged runs for a given root. The root is INLINED
-# rather than passed as a shell variable: this string also crosses the
-# wsl.exe boundary, where an outer `R=...` assignment does not reliably
-# survive Windows argument splitting (it silently produced `cd /shingo-core`).
+# sim_test_dirs <module> — ./dir of every package in <module> holding a
+# _test.go whose //go:build expression names sim positively (`sim`,
+# `lockcheck || sim`; not `!sim`). Prints `OS <file>` for one that also names
+# an OS: the listing below runs on this host while the run may be in WSL, so
+# such a file could be listed on one side and built on the other.
+sim_test_dirs() {
+  ( cd "$ROOT/$1" && grep -rE --include='*_test.go' --exclude-dir=node_modules -m1 '^//go:build ' . 2>/dev/null ) \
+    | awk '{
+        i = index($0, ":"); f = substr($0, 1, i - 1); e = substr($0, i + 1); sub(/^\/\/go:build /, "", e)
+        if (e !~ /(^|[^!A-Za-z0-9_])sim([^A-Za-z0-9_]|$)/) next
+        if (e ~ /(^|[^A-Za-z0-9_])(unix|linux|windows|darwin|freebsd)([^A-Za-z0-9_]|$)/) { print "OS " f; next }
+        sub(/\/[^\/]*$/, "", f); print f }' \
+    | LC_ALL=C sort -u
+}
+
+# test_names <tags> <pkg...> — `importpath<TAB>Name` for every test, example,
+# fuzz target and benchmark `go test -list` finds. Run from inside the module.
+# A package that does not build fails the call, and its compiler output goes to
+# stderr: a listing that silently lost a package would run none of its tests.
+test_names() {
+  local tags="$1" out
+  shift
+  out="$(go test -list '.' -tags "$tags" "$@" 2>&1)" || { printf '%s\n' "$out" >&2; return 1; }
+  printf '%s\n' "$out" | awk '
+    /^(Test|Example|Fuzz|Benchmark)[A-Za-z0-9_]*$/ { names[++n] = $0; next }
+    /^ok[ \t]/ { for (i = 1; i <= n; i++) print $2 "\t" names[i]; n = 0 }'
+}
+
+# sim_plan — one line per module with sim-only tests:
+# `module<TAB>pkg pkg ...<TAB>^(Name|Name|...)$`. Fails when a listing fails,
+# when a sim test file names an OS, or when the whole tree yields no sim-only
+# test (a discovery that finds nothing is broken, not finished).
+sim_plan() {
+  local m dirs d with without only total=0 os=""
+  for m in $MODULES; do
+    dirs="$(sim_test_dirs "$m")"
+    [ -n "$dirs" ] || continue
+    os="$os$(printf '%s\n' "$dirs" | sed -n "s#^OS \./#$m/#p")"
+    dirs="$(printf '%s\n' "$dirs" | grep -v '^OS ')"
+    [ -n "$dirs" ] || continue
+    # shellcheck disable=SC2086 # dirs is a list of package directories
+    with="$(cd "$ROOT/$m" && test_names sim $dirs)" || return 1
+    # A package whose every file is sim-tagged (plc/simwarlink) does not build
+    # untagged at all: it has no tests there, and listing it would fail.
+    # shellcheck disable=SC2086
+    d="$(cd "$ROOT/$m" && go list -e -tags lockcheck \
+          -f '{{if or .GoFiles .TestGoFiles .XTestGoFiles}}{{.ImportPath}}{{end}}' $dirs)" || return 1
+    without=""
+    # shellcheck disable=SC2086
+    [ -z "$d" ] || without="$(cd "$ROOT/$m" && test_names lockcheck $d)" || return 1
+    only="$(LC_ALL=C comm -23 <(printf '%s\n' "$with" | LC_ALL=C sort -u) \
+                              <(printf '%s\n' "$without" | LC_ALL=C sort -u) | sed '/^$/d')"
+    [ -n "$only" ] || continue
+    total=$((total + $(printf '%s\n' "$only" | wc -l)))
+    printf '%s\t%s\t^(%s)$\n' "$m" \
+      "$(printf '%s\n' "$only" | cut -f1 | LC_ALL=C sort -u | tr '\n' ' ' | sed 's/ $//')" \
+      "$(printf '%s\n' "$only" | cut -f2 | LC_ALL=C sort -u | paste -sd'|' -)"
+  done
+  if [ -n "$os" ]; then
+    echo "sim: these sim test files also constrain the OS, which the host-side listing cannot see past:" >&2
+    printf '%s\n' "$os" | sed 's/^/    /' >&2
+    return 1
+  fi
+  [ "$total" -gt 0 ] || { echo "sim: no sim-only test found anywhere; the discovery is broken" >&2; return 1; }
+}
+
+# sim_cmd <root> <plan> — the tagged runs, one `go test` per module, each with
+# the module's sim-only tests as its -run. Every module runs even after one
+# fails, and the string exits non-zero if any did. The root is INLINED rather
+# than passed as a shell variable: this string also crosses the wsl.exe
+# boundary, where an outer `R=...` assignment does not reliably survive Windows
+# argument splitting (it silently produced `cd /shingo-core`). The -run pattern
+# is single-quoted: it is names, `^`, `(`, `|`, `)` and `$`, none of which a
+# single-quoted word expands.
 sim_cmd() {
-  local r="$1"
-  printf '%s' "cd '$r/shingo-core' && CGO_ENABLED=1 go test -race -count=1 -timeout=15m -tags sim $SIM_PKGS_CORE && cd '$r/shingo-edge' && CGO_ENABLED=1 go test -race -count=1 -timeout=15m -tags sim $SIM_PKGS_EDGE"
+  local r="$1" plan="$2" m pkgs re s="rc=0;"
+  while IFS=$'\t' read -r m pkgs re; do
+    [ -n "$m" ] || continue
+    s="$s ( cd '$r/$m' && CGO_ENABLED=1 go test -race -count=1 -timeout=15m -tags sim -run '$re' $pkgs ) || rc=1;"
+  done <<< "$plan"
+  printf '%s' "$s exit \$rc"
 }
 
 step_sim() {
-  local logdir rrc how
+  local logdir rrc how plan ntests npkgs
   logdir="$ROOT/.gate"
   mkdir -p "$logdir" || { echo "FAIL sim — cannot create $logdir"; return 1; }
+  if ! plan="$(sim_plan 2>"$logdir/sim-plan.err")"; then
+    echo "FAIL sim — could not work out which tests are sim-only:"
+    sed 's/^/  /' "$logdir/sim-plan.err" | head -30
+    return 1
+  fi
+  ntests="$(printf '%s\n' "$plan" | cut -f3 | tr -cd '|\n' | awk '{ n += length($0) + 1 } END { print n }')"
+  npkgs="$(printf '%s\n' "$plan" | cut -f2 | wc -w | tr -d ' ')"
 
   if [ -n "${WSL_DISTRO_NAME:-}" ]; then
-    ( eval "$(sim_cmd "$ROOT")" >"$logdir/sim.log" 2>&1 ); rrc=$?
+    ( eval "$(sim_cmd "$ROOT" "$plan")" >"$logdir/sim.log" 2>&1 ); rrc=$?
     how="-race"
   elif command -v go >/dev/null 2>&1 && [ "${CGO_ENABLED:-}" = "1" ] && command -v gcc >/dev/null 2>&1; then
-    ( eval "$(sim_cmd "$ROOT")" >"$logdir/sim.log" 2>&1 ); rrc=$?
+    ( eval "$(sim_cmd "$ROOT" "$plan")" >"$logdir/sim.log" 2>&1 ); rrc=$?
     how="-race"
   elif command -v wsl.exe >/dev/null 2>&1; then
     # Windows: borrow WSL's cgo, exactly as step_race does, and translate the
@@ -597,7 +639,7 @@ step_sim() {
       echo "FAIL sim — could not translate $ROOT into a WSL path"
       return 1
     fi
-    ( wsl.exe -d Ubuntu -- bash -lc "$(sim_cmd "$wslroot")" >"$logdir/sim.log" 2>&1 ); rrc=$?
+    ( wsl.exe -d Ubuntu -- bash -lc "$(sim_cmd "$wslroot" "$plan")" >"$logdir/sim.log" 2>&1 ); rrc=$?
     how="-race, via WSL"
   else
     # NO SILENT DOWNGRADE. A plain `-tags sim` run compiles the sim files and
@@ -610,7 +652,7 @@ step_sim() {
   fi
 
   if [ "$rrc" -eq 0 ]; then
-    echo "ok   sim ($how)"
+    echo "ok   sim ($how; $ntests sim-only tests in $npkgs packages)"
     return 0
   fi
   echo "FAIL sim"
@@ -1203,13 +1245,10 @@ case "${1:-all}" in
     # not reach need their own run. See untagged_only_modules. When docker is
     # out of scope nothing else covers them and every module runs, which is
     # what `all` does too.
-    # The sim step runs below in every `full`, so the unit step leaves its
-    # packages to it. See unit_packages.
-    SIM_TAKES=1
     # The sim step rides with `full` and not with the bare gate, for the same
     # reason -race does: it is the slow, thorough half. It is NOT scoped away
-    # with the docker suites — a sim-tagged file is invisible to every other
-    # step, so skipping it is how the hole reopens.
+    # with the docker suites: the bare gate compiles the sim files
+    # (check-tagged-vet) but only this step runs a sim-only test.
     if timed step_scope "${2:-}"; then
       if timed step_test "$(untagged_only_modules)"; then note_step unit; else rc=1; fi
       # RACE AND SIM RUN BESIDE THE DOCKER STEP, NOT AFTER IT. Neither uses the

@@ -1,14 +1,20 @@
 #!/usr/bin/env bash
-# check-tagged-vet.sh — vet the Go files behind build tags no gate step builds.
+# check-tagged-vet.sh — vet the Go files behind build tags the gate's test
+# steps do not build.
 #
 # A file behind a build tag is compiled only when something passes that tag.
-# The gate passes three: docker and lockcheck (lint, the docker step, the unit
-# tests) and sim (the sim step). Everything else — today explain
+# The gate's steps pass two everywhere: docker and lockcheck (lint, the docker
+# step, the unit tests). sim is passed only by the sim step, and only to the
+# packages holding a sim test file, and only in `full`; so sim is vetted here
+# too, which is what compiles every sim file — tests and the non-test files of
+# packages with no sim test (shingo-core/engine, shingo-edge/service) — in the
+# bare gate. Before sim was vetted here, five sim test files in four packages
+# were compiled by nothing. The other tags — today explain
 # (store/bins/explain_plan_test.go), shots (the screenshot tests in both www
 # packages), deps (shingo-core/deps.go) and race (plc/race_on_test.go, which
-# only the -race run in WSL compiles, and only on the packages it names) — was
-# compiled by nothing. A rename or a signature change in the code they call
-# broke them silently, and the next person to run them found out.
+# only the -race run in WSL compiles, and only on the packages it names) — are
+# compiled by nothing else at all. A rename or a signature change in the code
+# they call broke them silently, and the next person to run them found out.
 #
 # So each such tag is vetted here, one tag at a time (race and !race cannot be
 # vetted together) and only over the packages that hold a file naming it, so
@@ -23,9 +29,9 @@ set -uo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 MODULES="protocol shared shingo-core shingo-edge integration"
 
-# Tags a gate step already builds, and platform or toolchain words that are
+# Tags every gate step already builds, and platform or toolchain words that are
 # not tags anyone passes by hand.
-SKIP=" docker lockcheck sim ignore cgo unix windows linux darwin freebsd amd64 arm64 arm 386 "
+SKIP=" docker lockcheck ignore cgo unix windows linux darwin freebsd amd64 arm64 arm 386 "
 
 failed=0
 vetted=0
