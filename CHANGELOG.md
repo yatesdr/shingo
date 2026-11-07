@@ -41,7 +41,7 @@ Edge v37-v43; Core changes only dev tooling (plantspec, seeddev, simcalc). Migra
 - A seeded cart's seat knows its part (source seed); a bin with no part seeds one that cannot say
 - The fake PLC runs a line with program changes; the 4x2-shaped cell's scenarios run S1-S8
 - The fake PLC's line pauses its loading and drains (POST /api/sim/pause-loading)
-- scripts/sim-4x2.sh runs one shape on the dev stack (make dev-sim-4x2 SHAPE=S1..S8)
+- scripts/sim-4x2.sh runs one shape on the dev stack (make dev-sim-4x2 SHAPE=S1..S9)
 
 ## 2026-11-03 — An order's carts are its rows
 
