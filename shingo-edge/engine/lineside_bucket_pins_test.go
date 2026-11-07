@@ -3,6 +3,7 @@ package engine
 import (
 	"encoding/json"
 	"testing"
+	"time"
 
 	"shingo/protocol"
 	"shingo/protocol/testutil"
@@ -554,7 +555,7 @@ func TestCutover_ClearsTheDepartingPartsHoldWithARow(t *testing.T) {
 				bin := int64(7601)
 				testutil.MustNoErr(t, eng.db.SetProcessNodeActiveBinID(nodeID, &bin), "a bin at its pack")
 			}
-			flip := eng.flipActiveStyle
+			flip := func(pid int64, to *int64) error { return eng.flipActiveStyle(pid, to, time.Time{}) }
 			if tc.admin {
 				flip = eng.SetProcessActiveStyle
 			}
@@ -571,7 +572,7 @@ func TestCutover_SamePartKeepsItsHold(t *testing.T) {
 	t.Parallel()
 	eng, _, processID, nodeID, _, _ := p2Seat(t, 5, "WIDGET-A")
 	to := cutoverStyle(t, eng.db, processID, "SYN-TO-A2", "WIDGET-A")
-	testutil.MustNoErr(t, eng.flipActiveStyle(processID, &to), "cutover")
+	testutil.MustNoErr(t, eng.flipActiveStyle(processID, &to, time.Time{}), "cutover")
 	assertSeat(t, eng, nodeID, 0, 5, "WIDGET-A")
 	assertDrops(t, eng.db)
 }
@@ -582,7 +583,7 @@ func TestCutover_ABlankHoldIsCleared(t *testing.T) {
 	t.Parallel()
 	eng, _, processID, nodeID, _, _ := p2Seat(t, 5, "")
 	to := cutoverStyle(t, eng.db, processID, "SYN-TO-A2", "WIDGET-A")
-	testutil.MustNoErr(t, eng.flipActiveStyle(processID, &to), "cutover")
+	testutil.MustNoErr(t, eng.flipActiveStyle(processID, &to, time.Time{}), "cutover")
 	assertSeat(t, eng, nodeID, 0, 0, "")
 	blank := cutoverDrop
 	blank.PayloadCode = ""
@@ -597,7 +598,7 @@ func TestCutover_TheIncomingPartsFirstTickIsHeld(t *testing.T) {
 	eng, sink, processID, nodeID, _, claimID := p2Seat(t, 5, "WIDGET-A")
 	p2Supply(t, eng, claimID)
 	to := cutoverStyle(t, eng.db, processID, "SYN-TO-B", "WIDGET-B")
-	testutil.MustNoErr(t, eng.flipActiveStyle(processID, &to), "cutover")
+	testutil.MustNoErr(t, eng.flipActiveStyle(processID, &to, time.Time{}), "cutover")
 
 	charSPTick(eng, processID, to, 2)
 	assertSeat(t, eng, nodeID, 0, 2, "WIDGET-B")

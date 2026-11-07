@@ -334,5 +334,5 @@ func (e *Engine) HandleUOPAdjustment(adj protocol.UOPAdjustment) {
 func (e *Engine) bindAdjustmentFromCore(node *processes.Node, adj protocol.UOPAdjustment) {
 	e.landCarrier(node, processes.LandingBind{
 		BinID: adj.BinID, Epoch: adj.Epoch, Count: adj.NewRemaining, MayDisplace: true,
-	}, domain.UnknownCarrier(), "an older Core's Bound, actor "+adj.Actor)
+	}, domain.UnknownCarrier(), domain.CarrierFromLanding, "an older Core's Bound, actor "+adj.Actor)
 }

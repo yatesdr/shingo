@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"shingo/protocol"
+	"shingo/protocol/clock"
 	"shingoedge/domain"
 	"shingoedge/store/processes"
 )
@@ -15,7 +16,9 @@ import (
 // outranks Core's occupancy reading the cell empty: long enough for Core's bins
 // feed to catch up with the landing it announced, short enough that a carrier
 // moved off by hand in Core (which records no lift at the node it leaves, so the
-// Edge sees no departure) stops holding the cell occupied soon after.
+// Edge sees no departure) stops holding the cell occupied soon after. Wall
+// seconds: Core's feed keeps the wall's pace, so a sim running fast reads it
+// through clock.ScaleTTL against the landing's process-clock stamp.
 const landingSettle = 30 * time.Second
 
 // heldByItsOwnLanding is W1's leftover (the double-supply race, round 4's §4):
@@ -33,7 +36,7 @@ const landingSettle = 30 * time.Second
 func heldByItsOwnLanding(node *processes.Node, runtime *processes.RuntimeState, claim *processes.NodeClaim,
 	occupancy map[string]bool, now time.Time) (map[string]bool, bool) {
 	if runtime == nil || runtime.ActiveBinID == nil || runtime.LinesideSource != string(domain.CarrierFromLanding) ||
-		now.Sub(runtime.LinesideAt) > landingSettle || isOccupied(occupancy, claim.CoreNodeName) {
+		now.Sub(runtime.LinesideAt) > clock.ScaleTTL(landingSettle) || isOccupied(occupancy, claim.CoreNodeName) {
 		return occupancy, false
 	}
 	held := make(map[string]bool, len(occupancy)+1)

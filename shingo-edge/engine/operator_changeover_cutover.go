@@ -366,7 +366,7 @@ func (e *Engine) completeCutoverLocked(processID, changeoverID int64, by string,
 	// The flip goes through the shared verb (lineside_strand.go) so it
 	// strands the piles, syncs the reporting point AND publishes plant.claims.
 	// Verb errors are returned: a failed write must not finalize the row.
-	if err := e.flipActiveStyle(processID, &toStyleID); err != nil {
+	if err := e.flipActiveStyle(processID, &toStyleID, changeover.StartedAt); err != nil {
 		return nil, err
 	}
 	return blockers, e.finalizeChangeoverRow(processID, changeover.ID, triggeredBy, notes)

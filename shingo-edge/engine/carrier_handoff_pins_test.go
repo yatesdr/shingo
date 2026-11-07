@@ -770,17 +770,17 @@ func TestPinChangeover_CancelRetagsToTheStayingPart(t *testing.T) {
 
 // TestPinChangeover_PayloadUnknownLanding — a landing that did not carry the
 // cart's part reads as the matched claim's part, the outgoing one before the
-// cutover, so the incoming-tagged hold waits and the cart takes its own ticks.
-// The cutover records what it leaves: a seat that could not say is the
-// departing style's part (source flip), so after it the cart reads the
-// outgoing part, which the incoming style does not draw: its strokes are held
-// with the hold until a person names the cart, and the next stroke replays
-// them all. Named behaviour (attribution SYNTH-round1 §5 F-known), not a fix:
-// a cart that landed unnamed during the changeover is taken for the cart it
-// replaced until someone says otherwise.
+// cutover, so the incoming-tagged hold waits: the cart takes its own ticks
+// until the cutover makes the claim the incoming one, and then the hold. The
+// cutover's flip leaves the seat as the landing left it: the cart landed
+// after the changeover started, so it is the incoming part, not the one the
+// departing style ran. Named behaviour (attribution SYNTH-round1 §5 F-known).
 func TestPinChangeover_PayloadUnknownLanding(t *testing.T) {
 	t.Parallel()
-	eng, _, pid, nodeID, from, to := runOutRig(t)
+	eng, db, pid, nodeID, from, to := runOutRig(t)
+	co, err := db.GetActiveProcessChangeover(pid)
+	testutil.MustNoErr(t, err, "the open changeover")
+	openedBefore(t, eng, co.ID)
 	runOutToGap(t, eng, pid, nodeID, from)
 	landCart(t, eng, nodeID, 9106, "", 53)
 	tickConsume(eng, pid, from, 1)
@@ -789,22 +789,13 @@ func TestPinChangeover_PayloadUnknownLanding(t *testing.T) {
 		t.Fatalf("before the cutover = %d, hold %d; want 52, hold 3 waiting", rt.RemainingUOPCached, rt.PendingUOPDelta)
 	}
 	testutil.MustNoErr(t, eng.SetProcessActiveStyle(pid, &to), "cut over")
-	rt = runtimeOf(t, eng, nodeID)
-	if !rt.LinesidePayloadKnown || rt.LinesidePayloadCode != "PART-OLD" || rt.LinesideSource != string(domain.CarrierFromFlip) {
-		t.Fatalf("after the cutover the seat reads %q known %t from %q, want PART-OLD from the flip",
-			rt.LinesidePayloadCode, rt.LinesidePayloadKnown, rt.LinesideSource)
+	if rt := runtimeOf(t, eng, nodeID); rt.LinesidePayloadKnown {
+		t.Fatalf("after the cutover the seat reads %q known from %q, want it left unknown: its cart came with the changeover",
+			rt.LinesidePayloadCode, rt.LinesideSource)
 	}
 	tickConsume(eng, pid, to, 1)
-	if rt := runtimeOf(t, eng, nodeID); rt.RemainingUOPCached != 52 || rt.PendingUOPDelta != 4 {
-		t.Fatalf("after the cutover, one tick = %d, hold %d; want 52, hold 4 waiting for a PART-NEW cart",
-			rt.RemainingUOPCached, rt.PendingUOPDelta)
-	}
-	eng.HandleUOPAdjustment(protocol.UOPAdjustment{CoreNodeName: runOutNode, BinID: 9106, Epoch: 1, NewRemaining: 52,
-		Actor: "admin", PayloadCode: "PART-NEW", PayloadKnown: true})
-	tickConsume(eng, pid, to, 1)
-	if rt := runtimeOf(t, eng, nodeID); rt.RemainingUOPCached != 47 || rt.PendingUOPDelta != 0 {
-		t.Errorf("after a person names the cart PART-NEW, one tick = %d, hold %d; want 47 (the 4 held and the 1), hold 0",
-			rt.RemainingUOPCached, rt.PendingUOPDelta)
+	if got := runtimeOf(t, eng, nodeID).RemainingUOPCached; got != 48 {
+		t.Errorf("after the cutover, one tick = %d, want 48 (the hold replays)", got)
 	}
 }
 

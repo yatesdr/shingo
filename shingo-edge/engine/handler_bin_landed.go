@@ -26,7 +26,9 @@ import (
 //
 // The landing's part, with its known flag, is the seat's identity (H.1): a
 // carrier Core does not know is recorded UNKNOWN, never as the previous
-// occupant's part.
+// occupant's part. A landing that names no part but names its order records
+// the part that order delivered there (orderedPart, source delivery): the
+// order knows what it brought.
 //
 // A landing then releases the holds waiting for it at its position
 // (releaseHoldsOnArrival): the shares held for a cart of the part that
@@ -46,22 +48,39 @@ func (e *Engine) HandleBinLanded(l protocol.BinLanded) {
 		return
 	}
 	seq := l.PlacedSeq
-	carrier := domain.UnknownCarrier()
+	carrier, src := domain.UnknownCarrier(), domain.CarrierFromLanding
 	if l.PayloadKnown {
 		carrier = domain.KnownCarrier(domain.LinesidePayloadCode(l.PayloadCode))
+	} else if part := e.orderedPart(l); part != "" {
+		carrier, src = domain.KnownCarrier(domain.LinesidePayloadCode(part)), domain.CarrierFromDelivery
 	}
 	if e.landCarrier(node, processes.LandingBind{
 		BinID: l.BinID, Epoch: l.Epoch, Count: l.Count, PlacedSeq: &seq,
-	}, carrier, "landing "+l.OrderUUID) {
+	}, carrier, src, "landing "+l.OrderUUID) {
 		e.releaseHoldsOnArrival(node)
 	}
+}
+
+// orderedPart is the part the landing's order delivered to the node it
+// landed at; "" when the landing names no order, the order is not this
+// Edge's, it delivers elsewhere (the evacuation leg of a swap) or it brought
+// an empty.
+func (e *Engine) orderedPart(l protocol.BinLanded) string {
+	if l.OrderUUID == "" {
+		return ""
+	}
+	o, err := e.db.GetOrderByUUID(l.OrderUUID)
+	if err != nil || o == nil || o.RetrieveEmpty || o.DeliveryNode != l.CoreNodeName {
+		return ""
+	}
+	return o.PayloadCode
 }
 
 // landCarrier is the landing verb's engine half: the bind (uop.Mutator.Land,
 // whose refusals are its WHERE), then, only if it landed, the relight of a
 // dark sequential pair (lightDarkSequentialPair, on a seat the bind left
-// dark), the identity through the lineside doorway and the placement's
-// settle. Reports whether it landed.
+// dark), the identity through the lineside doorway (source src) and the
+// placement's settle. Reports whether it landed.
 //
 // THE SETTLE IS LOAD-BEARING. A bind here is the record that a bin is on the
 // cell, which a leg that has already left the cell's nodes waits on; whichever
@@ -71,7 +90,8 @@ func (e *Engine) HandleBinLanded(l protocol.BinLanded) {
 // Callers: HandleBinLanded (stamped), and for one release an older Core's
 // Bound (bindAdjustmentFromCore) and delivered (landFromOldCore), unstamped
 // (H.7).
-func (e *Engine) landCarrier(node *processes.Node, l processes.LandingBind, carrier domain.LinesideCarrier, why string) bool {
+func (e *Engine) landCarrier(node *processes.Node, l processes.LandingBind, carrier domain.LinesideCarrier,
+	src domain.CarrierSource, why string) bool {
 	if e.inventoryDelta == nil {
 		return false
 	}
@@ -99,7 +119,7 @@ func (e *Engine) landCarrier(node *processes.Node, l processes.LandingBind, carr
 			l.BinID, node.CoreNodeName, l.Epoch, why)
 		return false
 	}
-	e.recordLinesideCarrier(node.ID, node.CoreNodeName, carrier, domain.CarrierFromLanding)
+	e.recordLinesideCarrier(node.ID, node.CoreNodeName, carrier, src)
 	// Debug, not info: the landing itself is the record, and one line per
 	// carrier at every seat was the Pi's only log-line rise under Lane H
 	// (RULINGS-C2c-run-through §3.4; DECISIONS D35). Refusals stay at info.

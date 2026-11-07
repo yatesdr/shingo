@@ -3,9 +3,9 @@ package engine
 import (
 	"fmt"
 	"log"
-	"time"
 
 	"shingo/protocol"
+	"shingo/protocol/clock"
 	"shingoedge/domain"
 	"shingoedge/orders"
 	storeorders "shingoedge/store/orders"
@@ -228,10 +228,9 @@ func (e *Engine) requestNodeFromClaim(node *processes.Node, runtime *processes.R
 	// answers a node it does not have as present and empty, and a head or paired
 	// position named wrong would read vacant on every request.
 	cell := e.claimOccupancy(claim)
-	// The wall clock, not clock.Now: the landing's lineside_at is SQLite's
-	// datetime('now'), and the sim clock runs ahead of it.
+	// The process clock, the landing's lineside_at's.
 	occupancy, heldByLanding := heldByItsOwnLanding(node, runtime, claim,
-		e.occupancyKnownNodesOnly(cell.occupancy, node.Name), time.Now())
+		e.occupancyKnownNodesOnly(cell.occupancy, node.Name), clock.Now())
 	deck := Deck{Rows: cell.deck, Coming: coming}
 
 	// The evac leg lifts whatever is ON the cell, which is not always the style

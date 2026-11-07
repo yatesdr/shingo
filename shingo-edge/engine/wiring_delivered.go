@@ -255,7 +255,7 @@ func (e *Engine) landFromOldCore(node *processes.Node, delivered OrderDeliveredE
 	}
 	if e.landCarrier(node, processes.LandingBind{
 		BinID: *delivered.BinID, Epoch: delivered.BinEpoch, Count: *delivered.BinUOP,
-	}, carrier, "an older Core's delivered, order "+delivered.OrderUUID) {
+	}, carrier, domain.CarrierFromLanding, "an older Core's delivered, order "+delivered.OrderUUID) {
 		return true
 	}
 	e.checkDeliveredCarrier(node, delivered)

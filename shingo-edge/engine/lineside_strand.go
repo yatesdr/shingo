@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"fmt"
 	"log"
+	"time"
 
 	"shingo/protocol"
 	"shingoedge/domain"
@@ -50,11 +51,12 @@ import (
 // In the same transaction it points each node the incoming style claims at
 // that claim (pointNodesAtStyle), and records what the flip leaves
 // (flipCarrierStamps): a consume seat of the departing style's whose bound
-// carrier could not say its part is recorded as that style's part there.
+// carrier could not say its part, bound before the changeover the flip
+// completes started (openedAt), is recorded as that style's part there.
 //
 // proc is the process as read before the flip, so its active style is the
 // departing one; styleID is the incoming style.
-func (e *Engine) strandLinesidePiles(proc *processes.Process, styleID *int64) error {
+func (e *Engine) strandLinesidePiles(proc *processes.Process, styleID *int64, openedAt time.Time) error {
 	// The write and the mark are one change to the seat for the lineside
 	// report (countMu); PilesChanged takes the flush lock inside it.
 	e.countMu.Lock()
@@ -76,7 +78,7 @@ func (e *Engine) strandLinesidePiles(proc *processes.Process, styleID *int64) er
 	if err != nil {
 		return fmt.Errorf("cutover claim pointers for process %d: %w", processID, err)
 	}
-	stamps, err := e.flipCarrierStamps(proc, nodes, runtimes)
+	stamps, err := e.flipCarrierStamps(proc, nodes, runtimes, openedAt)
 	if err != nil {
 		return fmt.Errorf("cutover carriers for process %d: %w", processID, err)
 	}
@@ -120,7 +122,9 @@ func (e *Engine) strandLinesidePiles(proc *processes.Process, styleID *int64) er
 //
 // Both doors route here — the admin switch (admin_style_switch.go) and the
 // changeover's completeCutover — so a flip cannot reach the DB without its
-// consequences.
+// consequences. openedAt is when the changeover the flip completes started
+// (the door's, and the admin switch's that completes one); zero for a switch
+// with no changeover open.
 //
 // THE SYNC CREATES THE POINT. It sits after the style write and before the
 // same-style return, so the first active style of a new process gets its
@@ -133,7 +137,7 @@ func (e *Engine) strandLinesidePiles(proc *processes.Process, styleID *int64) er
 // active and the holds stand until the next flip (an unbound seat's hold with
 // no carrier coming is still dropped by the tick or the sweep); the snapshot
 // is the publish's safety net.
-func (e *Engine) flipActiveStyle(processID int64, styleID *int64) error {
+func (e *Engine) flipActiveStyle(processID int64, styleID *int64, openedAt time.Time) error {
 	proc, err := e.db.GetProcess(processID)
 	if err != nil {
 		return fmt.Errorf("get process %d: %w", processID, err)
@@ -147,7 +151,7 @@ func (e *Engine) flipActiveStyle(processID int64, styleID *int64) error {
 	if sameStyle(proc.ActiveStyleID, styleID) {
 		return nil
 	}
-	if err := e.strandLinesidePiles(proc, styleID); err != nil {
+	if err := e.strandLinesidePiles(proc, styleID, openedAt); err != nil {
 		log.Printf("lineside: style flip on process %d: %v", processID, err)
 	}
 	e.publishPlantClaims(processID)
@@ -221,18 +225,29 @@ type flipStamp struct {
 // say so, and the readers that fall back to the active style's part
 // (binAtNode, carrierIsPart) would name the incoming one. A seat still unknown
 // after a flip was bound since it, and the fallback is right for it by
-// construction. The claims are read only when such a seat exists: +0
-// statements on a flip that leaves none.
+// construction.
+//
+// A seat bound since the changeover the flip completes started (lineside_at
+// after openedAt: the doorway stamps it at a landing even when the carrier
+// could not say) is left alone: its cart came with the changeover, the
+// incoming part, and the fallback is right for it too. A switch with no
+// changeover open (openedAt zero) stamps every such seat. The claims are read
+// only when a seat to stamp exists: +0 statements on a flip that leaves none.
 func (e *Engine) flipCarrierStamps(proc *processes.Process, nodes []processes.Node,
-	runtimes map[int64]*processes.RuntimeState) (flipStamps, error) {
+	runtimes map[int64]*processes.RuntimeState, openedAt time.Time) (flipStamps, error) {
 	if proc == nil || proc.ActiveStyleID == nil {
 		return nil, nil
 	}
 	var unsaid []*processes.Node
 	for i := range nodes {
-		if rt := runtimes[nodes[i].ID]; rt != nil && rt.ActiveBinID != nil && !rt.LinesidePayloadKnown {
-			unsaid = append(unsaid, &nodes[i])
+		rt := runtimes[nodes[i].ID]
+		if rt == nil || rt.ActiveBinID == nil || rt.LinesidePayloadKnown {
+			continue
 		}
+		if !openedAt.IsZero() && rt.LinesideAt.After(openedAt) {
+			continue
+		}
+		unsaid = append(unsaid, &nodes[i])
 	}
 	if len(unsaid) == 0 {
 		return nil, nil

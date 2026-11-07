@@ -17,6 +17,7 @@ import (
 	"log"
 	"strings"
 
+	"shingo/protocol/clock"
 	"shingoedge/domain"
 	"shingoedge/store/internal/helpers"
 )
@@ -1220,13 +1221,15 @@ func SetActiveBinIDAndEpoch(db *sql.DB, processNodeID int64, activeBinID *int64,
 // as told by Core on the delivery envelope. Pass "" to forget it — which the
 // carrier leaving must do, or the next occupant inherits its identity. db is a
 // transaction when the write must land with a seat write (the produce hold's
-// drop at the pack, Engine.recordLinesideCarrierIn).
+// drop at the pack, Engine.recordLinesideCarrierIn). lineside_at is the
+// process clock's, as a changeover's started_at is: the flip compares the two
+// (a seat bound since the changeover it completes started).
 func SetRuntimeLinesidePayload(db DBTX, processNodeID int64, payloadCode string, known bool, source string) error {
 	_, err := db.Exec(`UPDATE process_node_runtime_states SET
-		lineside_payload_code=?, lineside_payload_known=?, lineside_source=?, lineside_at=datetime('now'),
+		lineside_payload_code=?, lineside_payload_known=?, lineside_source=?, lineside_at=?,
 		updated_at=datetime('now')
 		WHERE process_node_id=?`,
-		payloadCode, known, source, processNodeID)
+		payloadCode, known, source, clock.Now().UTC().Format(helpers.TimeLayout), processNodeID)
 	return err
 }
 
