@@ -319,19 +319,6 @@ func TestEveryStagingDropoffIsDeclared(t *testing.T) {
 	}
 }
 
-// TestWaitKindStation_MatchesCore pins the cross-module constant. Edge cannot
-// import Core, so the value is duplicated; if Core renames its side, the stamp
-// silently stops matching the fence that reads it and every station wait becomes
-// unowned. The literal here is the contract, spelled out so a rename has to
-// touch both.
-func TestWaitKindStation_MatchesCore(t *testing.T) {
-	t.Parallel()
-	if waitKindStation != "station" {
-		t.Errorf("waitKindStation = %q, want %q — this must equal dispatch.WaitKindStation, which is "+
-			"what Core's release fence and its population partition read", waitKindStation, "station")
-	}
-}
-
 // TestPressIndexSteadyState_IndexLegPicksUpEmpty is the hop A3 regression
 // (2026-07-23): the steady-state press-index index leg (R2) fetches the on-deck
 // carrier as an EMPTY, so a wrong-part stamp on that empty — the half-cutover

@@ -92,8 +92,8 @@ func IsTerminalSuccess(status protocol.Status) bool {
 	return status == StatusConfirmed
 }
 
-// WaitKindStation mirrors Core's dispatch.WaitKindStation: the wait kind a
-// station wait carries, which Core's release fence and population partition
-// read. Derived from protocol.WaitKindStation, the one definition;
+// WaitKindStation is protocol.WaitKindStation, the one definition, which
+// Core's dispatch.WaitKindStation aliases too: the wait kind a station wait
+// carries, which Core's release fence and population partition read.
 // engine/material_orders.go derives its constant from this.
 const WaitKindStation = protocol.WaitKindStation

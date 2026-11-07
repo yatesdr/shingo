@@ -2,6 +2,19 @@ package protocol
 
 import "testing"
 
+// TestWaitKindStation_TheWireValue pins the station wait kind's value, not its
+// name. The Edge stamps it on the steps it authors (wait_kind) and Core's
+// fence reads it off them, and the two run different builds: every reader
+// compares through the constant (TestWaitOwnershipIsDeclaredOnce), so a
+// changed value agrees with itself in each build and with nothing across them.
+func TestWaitKindStation_TheWireValue(t *testing.T) {
+	t.Parallel()
+	if WaitKindStation != "station" {
+		t.Errorf("WaitKindStation = %q, want %q: the value crosses the wire between an Edge and a Core of other builds",
+			WaitKindStation, "station")
+	}
+}
+
 // TestWaitKindsPartition: every wait kind is exactly one side's, and a kind
 // this build does not know is Core's — never station-releasable. A newer Core
 // can send a kind an older Edge has never heard of; the Edge must wait for

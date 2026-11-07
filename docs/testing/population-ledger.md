@@ -151,3 +151,27 @@ present at the merge base is absent at the tip without a row here.
 - coverage Δ: lead (Phase 1 baseline → certification diff)
 - citations rewritten: the phantom citation above (`release_census_test.go` `phantomCitations` entry dropped)
 - verified at: `004c6f8e` with this commit's test diff applied
+
+### DUP — `TestWaitKindStation_MatchesCore`
+- test: `TestWaitKindStation_MatchesCore` · pkg `shingoedge/orders` · run `-run '^TestWaitKindStation_MatchesCore$'` · `shingo-edge/orders/waitkind_test.go:11` @ `22c81558` · tags `none`
+- code: DUP
+- assertion map: `orders/waitkind_test.go:13-15` (`orders.WaitKindStation == "station"`) → `protocol/waitkind_test.go:11-14` `TestWaitKindStation_TheWireValue` (`protocol.WaitKindStation == "station"`). Its premise ("Edge cannot import Core, so the literal here is the contract") is gone: `orders.WaitKindStation = protocol.WaitKindStation` (`orders/types.go:99`), as is Core's (`dispatch/complex.go:21` → `dispatch/plan/legs.go:125` → `protocol/waitkind.go:11`). Nothing in protocol pinned the value before this row (`TestWaitKindsPartition` reads the constant). The file held only this test and is deleted.
+- mutation: `protocol/waitkind.go:11`:
+  ```diff
+  -const WaitKindStation = "station"
+  +const WaitKindStation = "stations"
+  ```
+  · removed test red at base: `go test -count=1 -tags lockcheck -run '^TestWaitKindStation_MatchesCore$' ./orders/` (shingo-edge) → `waitkind_test.go:14: orders.WaitKindStation = "stations", want "station" (dispatch.WaitKindStation)`
+  · survivor red at tip: `go test -count=1 -run '^TestWaitKindStation_TheWireValue$' .` (protocol) → `waitkind_test.go:13: WaitKindStation = "stations", want "station": the value crosses the wire between an Edge and a Core of other builds`
+- coverage Δ: lead (Phase 1 baseline → certification diff)
+- citations rewritten: `shingo-edge/engine/material_orders.go:50-52` (cited `TestWaitKindStation_MatchesCore`; now `TestWaitKindStation_TheWireValue`, and "mirrors Core's dispatch.WaitKindStation" corrected to the protocol alias); `shingo-edge/orders/types.go:95-98` (same correction)
+- verified at: `b47a96c7` with this commit's diff applied
+
+### DUP — `TestWaitKindStation_MatchesCore`
+- test: `TestWaitKindStation_MatchesCore` · pkg `shingoedge/engine` · run `-run '^TestWaitKindStation_MatchesCore$'` · `shingo-edge/engine/material_orders_invariant_test.go:327` @ `22c81558` · tags `none`
+- code: DUP
+- assertion map: `engine/material_orders_invariant_test.go:329-332` (`waitKindStation == "station"`; `waitKindStation = orders.WaitKindStation`, `material_orders.go:53` at the tip) → `protocol/waitkind_test.go:11-14` `TestWaitKindStation_TheWireValue`. Its premise ("Edge cannot import Core, so the value is duplicated") is false at the tip: one definition, `protocol/waitkind.go:11`, and `TestWaitOwnershipIsDeclaredOnce` forbids a second spelling in either module.
+- mutation: the row above's `protocol/waitkind.go:11` `"stations"` · removed test red at base: `go test -count=1 -tags lockcheck -run '^TestWaitKindStation_MatchesCore$' ./engine/` (shingo-edge) → `material_orders_invariant_test.go:330: waitKindStation = "stations", want "station" — this must equal dispatch.WaitKindStation, which is what Core's release fence and its population partition read` · survivor red at tip: as above → `waitkind_test.go:13: WaitKindStation = "stations", want "station": ...`
+- coverage Δ: lead (Phase 1 baseline → certification diff)
+- citations rewritten: as the row above (`git grep -n 'TestWaitKindStation_MatchesCore'` over the five modules is empty at the tip)
+- verified at: `b47a96c7` with this commit's diff applied

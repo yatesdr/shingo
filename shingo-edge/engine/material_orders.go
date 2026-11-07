@@ -47,10 +47,9 @@ func stationWait(node string, purpose release.Purpose) protocol.ComplexOrderStep
 	}
 }
 
-// waitKindStation is the Edge's one definition, orders.WaitKindStation (which
-// mirrors Core's dispatch.WaitKindStation). Pinned here as well by
-// TestWaitKindStation_MatchesCore, so a rename at the source fails in both
-// packages.
+// waitKindStation is orders.WaitKindStation, which is protocol.WaitKindStation:
+// the one definition, which Core's dispatch.WaitKindStation aliases too. Its
+// wire value is pinned by TestWaitKindStation_TheWireValue (protocol).
 const waitKindStation = orders.WaitKindStation
 
 // stagingDropoff builds a dropoff at a STAGING node — one that holds a single
