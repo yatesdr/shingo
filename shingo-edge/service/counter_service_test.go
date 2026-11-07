@@ -12,7 +12,7 @@ import (
 
 func seedCounterFixture(t *testing.T, db *store.DB) (procID, styleID, rpID int64) {
 	t.Helper()
-	procID, styleID = seedProcessStyle(t, db, "PressLine", "StyleA")
+	procID, styleID = testdb.SeedProcessStyle(t, db, "PressLine", "StyleA")
 	rpID, err := db.CreateReportingPoint("PLC1", "P42_SNF3", styleID)
 	if err != nil {
 		t.Fatalf("create reporting point: %v", err)

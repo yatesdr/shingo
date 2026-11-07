@@ -25,11 +25,11 @@ import (
 
 // coverageDB hands out a fresh migrated DB from a once-per-binary template.
 //
-// The migration-chain Open cost ~70ms per call (inflated further under
-// parallelism), and the ~50 coverage tests in this file paid it each. The
-// migrations_* test files still call Open directly — they are ABOUT the chain
-// — so this template pool is deliberately scoped to coverage tests that just
-// need a migrated database.
+// It is the same pool as shingo-edge/internal/testdb.Open, kept here because
+// this package's in-package tests cannot import internal/testdb: testdb
+// imports store, so the import would be a cycle. testDB (outbox_test.go) is
+// this pool too. The migration test files still call Open directly — they are
+// ABOUT the chain.
 var (
 	coverageTplOnce sync.Once
 	coverageTplPath string
@@ -76,8 +76,9 @@ func coverageDB(t *testing.T) *DB {
 	return db
 }
 
-// seedProcessStyle inserts a process + style and returns their ids.
-// Used throughout this file where a minimal parent hierarchy is needed.
+// seedProcessStyle inserts a process + style and returns their ids, where a
+// minimal parent hierarchy is needed. A copy of testdb.SeedProcessStyle, for
+// the same import-cycle reason as coverageDB.
 func seedProcessStyle(t *testing.T, db *DB, procName, styleName string) (int64, int64) {
 	t.Helper()
 	pid, err := db.CreateProcess(procName, "desc", "", "", false)

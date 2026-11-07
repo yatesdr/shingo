@@ -10,6 +10,7 @@ import (
 
 	"shingo/protocol"
 	"shingo/protocol/testutil"
+	"shingoedge/internal/testdb"
 )
 
 // homeClearCore is a Core that answers the home clear with status and body,
@@ -73,7 +74,7 @@ func TestClearLoaderHome_OneRequestRecordsTheZeroAndCreatesNothing(t *testing.T)
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			t.Parallel()
-			db := openIntentDB(t, copyEngineDBTemplate(t))
+			db := openIntentDB(t, testdb.Path(t))
 			defer db.Close()
 			nodeID := seedIntentNode(t, db, "CLH-PROC", "CLH-HOME")
 			binID := int64(41)
@@ -131,7 +132,7 @@ func TestClearLoaderHome_OneRequestRecordsTheZeroAndCreatesNothing(t *testing.T)
 // refusal's sentence returns.
 func TestClearLoaderHome_ARefusalRedrawsTheHomeFromCoresRow(t *testing.T) {
 	t.Parallel()
-	db := openIntentDB(t, copyEngineDBTemplate(t))
+	db := openIntentDB(t, testdb.Path(t))
 	defer db.Close()
 	nodeID := seedIntentNode(t, db, "CLR-PROC", "CLR-HOME")
 	cores := protocol.NodeBinsRow{Node: "CLR-HOME", State: protocol.BinsStateOccupied, Occupied: true, BinID: 52, Epoch: 4}

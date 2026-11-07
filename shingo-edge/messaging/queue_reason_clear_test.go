@@ -1,10 +1,10 @@
 package messaging
 
 import (
-	"path/filepath"
 	"testing"
 
 	"shingo/protocol"
+	"shingoedge/internal/testdb"
 	"shingoedge/orders"
 	"shingoedge/store"
 )
@@ -30,12 +30,7 @@ import (
 
 func testHandlerDB(t *testing.T) *store.DB {
 	t.Helper()
-	db, err := store.Open(filepath.Join(t.TempDir(), "handler.db"))
-	if err != nil {
-		t.Fatalf("open test db: %v", err)
-	}
-	t.Cleanup(func() { db.Close() })
-	return db
+	return testdb.Open(t)
 }
 
 // noopEmitter satisfies orders.EventEmitter. These tests assert on the stored

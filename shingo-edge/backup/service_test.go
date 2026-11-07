@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"shingoedge/config"
-	"shingoedge/store"
+	"shingoedge/internal/testdb"
 )
 
 // logBuffer is a race-safe strings.Builder: logf fires on the service's loop
@@ -35,11 +35,7 @@ func (l *logBuffer) String() string {
 // set BEFORE Start so the loop goroutine never observes a torn write.
 func newTestService(t *testing.T, b config.BackupConfig) (*Service, *logBuffer) {
 	t.Helper()
-	db, err := store.Open(t.TempDir() + "/edge.db")
-	if err != nil {
-		t.Fatalf("open store: %v", err)
-	}
-	t.Cleanup(func() { db.Close() })
+	db := testdb.Open(t)
 
 	cfg := &config.Config{}
 	cfg.Backup = b

@@ -7,27 +7,9 @@ import (
 	"shingo/protocol/testutil"
 	"shingoedge/domain"
 	"shingoedge/internal/testdb"
-	"shingoedge/store"
 	"shingoedge/store/processes"
 	"shingoedge/store/stations"
 )
-
-// seedProcessStyle is a local helper for changeover tests — inserts a
-// process and one style and returns their ids. Inlined here (not
-// imported from store/store_coverage_test.go) because that helper is
-// package-private to package store.
-func seedProcessStyle(t *testing.T, db *store.DB, procName, styleName string) (int64, int64) {
-	t.Helper()
-	pid, err := db.CreateProcess(procName, "desc", "", "", false)
-	if err != nil {
-		t.Fatalf("create process: %v", err)
-	}
-	sid, err := db.CreateStyle(styleName, "style desc", pid)
-	if err != nil {
-		t.Fatalf("create style: %v", err)
-	}
-	return pid, sid
-}
 
 // TestChangeover_CreateAtomic exercises ChangeoverService.Create in
 // the full-fixture path: existing process node reused, new node auto-
@@ -44,7 +26,7 @@ func TestChangeover_CreateAtomic(t *testing.T) {
 	db := testdb.Open(t)
 	svc := NewChangeoverService(db)
 
-	pid, fromStyle := seedProcessStyle(t, db, "P", "S-FROM")
+	pid, fromStyle := testdb.SeedProcessStyle(t, db, "P", "S-FROM")
 	toStyle, _ := db.CreateStyle("S-TO", "", pid)
 	sid, _ := db.CreateOperatorStation(stations.Input{ProcessID: pid, Name: "S"})
 	// Seed an existing process node (the atomic create should reuse it
@@ -141,7 +123,7 @@ func TestChangeover_ListingExclusionByCompletedState(t *testing.T) {
 	db := testdb.Open(t)
 	svc := NewChangeoverService(db)
 
-	pid, fromStyle := seedProcessStyle(t, db, "P", "F")
+	pid, fromStyle := testdb.SeedProcessStyle(t, db, "P", "F")
 	toStyle, _ := db.CreateStyle("T", "", pid)
 
 	cid, err := svc.Create(pid, &fromStyle, toStyle, "x", "", nil, nil, nil, nil)
@@ -194,7 +176,7 @@ func TestChangeover_ListingExclusionByCancelledState(t *testing.T) {
 	db := testdb.Open(t)
 	svc := NewChangeoverService(db)
 
-	pid, fromStyle := seedProcessStyle(t, db, "PC", "FC")
+	pid, fromStyle := testdb.SeedProcessStyle(t, db, "PC", "FC")
 	toStyle, _ := db.CreateStyle("TC", "", pid)
 
 	cid, err := svc.Create(pid, &fromStyle, toStyle, "x", "", nil, nil, nil, nil)
@@ -234,7 +216,7 @@ func TestChangeover_NodeAndStationTaskMutations(t *testing.T) {
 	db := testdb.Open(t)
 	svc := NewChangeoverService(db)
 
-	pid, fromStyle := seedProcessStyle(t, db, "P", "F")
+	pid, fromStyle := testdb.SeedProcessStyle(t, db, "P", "F")
 	toStyle, _ := db.CreateStyle("T", "", pid)
 	sid, _ := db.CreateOperatorStation(stations.Input{ProcessID: pid, Name: "S"})
 

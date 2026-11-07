@@ -2,7 +2,6 @@ package uop
 
 import (
 	"encoding/json"
-	"path/filepath"
 	"strconv"
 	"sync"
 	"testing"
@@ -10,17 +9,13 @@ import (
 
 	"shingo/protocol"
 	"shingo/protocol/testutil"
+	"shingoedge/internal/testdb"
 	"shingoedge/store"
 )
 
 func newReporterTestDB(t *testing.T) *store.DB {
 	t.Helper()
-	db, err := store.Open(filepath.Join(t.TempDir(), "rep.db"))
-	if err != nil {
-		t.Fatalf("open db: %v", err)
-	}
-	t.Cleanup(func() { db.Close() })
-	return db
+	return testdb.Open(t)
 }
 
 // pendingOutboxByType returns enqueued outbox payloads matching the

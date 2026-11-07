@@ -1,101 +1,32 @@
 package engine
 
 import (
-	"os"
-	"path/filepath"
-	"sync"
 	"testing"
 
 	"shingo/protocol"
 	"shingoedge/domain"
+	"shingoedge/internal/testdb"
 	"shingoedge/orders"
 	"shingoedge/service"
 	"shingoedge/store"
 	"shingoedge/store/processes"
 )
 
-// testEngineDB hands out a fresh SQLite database with the full schema applied.
-//
-// The schema comes from a TEMPLATE built once per test binary, not from running
-// the migration chain per call. A migration-chain Open costs ~70ms solo and
-// 350-400ms under this package's parallelism (119 DDL statements, and the
-// Windows file I/O under parallel open inflates 5x+); this package opens
-// hundreds of test databases, so that was most of its wall time. Copying a
-// pre-migrated file is pure sequential I/O.
-//
-// The template is built with the real store.Open (so migrations AND the
-// post-migration schema verification run for real, once) and closed cleanly —
-// SQLite in WAL mode leaves the data in the main file after the last
-// connection closes, so copying the single file is complete.
-var (
-	engineDBTemplateOnce sync.Once
-	engineDBTemplatePath string
-	engineDBTemplateErr  error
-)
-
-func buildEngineDBTemplate() error {
-	dir, err := os.MkdirTemp("", "shingo-edge-engine-tpl-*")
-	if err != nil {
-		return err
-	}
-	db, err := store.Open(filepath.Join(dir, "template.db"))
-	if err != nil {
-		os.RemoveAll(dir)
-		return err
-	}
-	if err := db.Close(); err != nil {
-		os.RemoveAll(dir)
-		return err
-	}
-	engineDBTemplatePath = filepath.Join(dir, "template.db")
-	return nil
-}
-
+// testEngineDB hands out a fresh SQLite database with the full schema applied:
+// a copy of the template internal/testdb migrates once per test binary
+// (testdb.Open). Kept as this package's name for it; 700-odd call sites read it.
 func testEngineDB(t *testing.T) *store.DB {
 	t.Helper()
-	// OpenMigrated, not Open: the copy already carries the template's schema,
-	// and re-running the migration chain per test was the cost this pool exists
-	// to remove. verifySchema still runs inside, so a bad template fails loudly.
-	db, err := store.OpenMigrated(copyEngineDBTemplate(t))
-	if err != nil {
-		t.Fatalf("open copied db: %v", err)
-	}
-	t.Cleanup(func() { db.Close() })
-	return db
+	return testdb.Open(t)
 }
 
 // testEngineDBCounting is testEngineDB with every statement counted, for the
-// tests that pin a path to a constant number of queries. It pays one
-// migration pass on the copy (OpenCounting mirrors Open, which migrates); the
-// counter is reset after the open, so the fixture's own statements are not in
-// the caller's count.
+// tests that pin a path to a constant number of queries (testdb.OpenCounting).
+// It pays one migration pass on the copy (OpenCounting mirrors Open, which
+// migrates); callers reset the counter before the statements they count.
 func testEngineDBCounting(t *testing.T) (*store.DB, *store.QueryCounter) {
 	t.Helper()
-	db, counter, err := store.OpenCounting(copyEngineDBTemplate(t))
-	if err != nil {
-		t.Fatalf("open counting db: %v", err)
-	}
-	t.Cleanup(func() { db.Close() })
-	return db, counter
-}
-
-// copyEngineDBTemplate copies the pre-migrated template into the test's temp
-// dir and returns the copy's path.
-func copyEngineDBTemplate(t *testing.T) string {
-	t.Helper()
-	engineDBTemplateOnce.Do(func() { engineDBTemplateErr = buildEngineDBTemplate() })
-	if engineDBTemplateErr != nil {
-		t.Fatalf("build db template: %v", engineDBTemplateErr)
-	}
-	dst := filepath.Join(t.TempDir(), "test.db")
-	src, err := os.ReadFile(engineDBTemplatePath)
-	if err != nil {
-		t.Fatalf("read db template: %v", err)
-	}
-	if err := os.WriteFile(dst, src, 0o600); err != nil {
-		t.Fatalf("copy db template: %v", err)
-	}
-	return dst
+	return testdb.OpenCounting(t)
 }
 
 // seedProcessNode creates a minimal process + node for testing.

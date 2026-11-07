@@ -7,7 +7,6 @@
 package testharness
 
 import (
-	"path/filepath"
 	"testing"
 
 	"shingo/protocol"
@@ -16,22 +15,18 @@ import (
 	"shingoedge/config"
 	"shingoedge/engine"
 	"shingoedge/engine/releasefake"
+	"shingoedge/internal/testdb"
 	"shingoedge/messaging"
 	"shingoedge/service"
 	"shingoedge/store"
 )
 
-// OpenDB opens a fresh SQLite DB in a t.TempDir() with all migrations
-// applied. The database is closed and removed via t.Cleanup. Mirrors
-// the per-test isolation Core gets from testcontainers.
+// OpenDB is testdb.Open across the module boundary: a fresh copy of the
+// migrated template in t.TempDir(), closed via t.Cleanup. Mirrors core's
+// testharness.OpenDB, which delegates to its internal/testdb the same way.
 func OpenDB(t *testing.T) *store.DB {
 	t.Helper()
-	db, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
-	if err != nil {
-		t.Fatalf("open test db: %v", err)
-	}
-	t.Cleanup(func() { db.Close() })
-	return db
+	return testdb.Open(t)
 }
 
 // Edge bundles a running Edge engine with the message-handler and

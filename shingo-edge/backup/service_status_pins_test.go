@@ -6,7 +6,7 @@ import (
 	"time"
 
 	"shingoedge/config"
-	"shingoedge/store"
+	"shingoedge/internal/testdb"
 )
 
 // U0 pin (ui-cleanup, 2026-10-07), re-pointed by U3: what /api/backups/status
@@ -20,11 +20,7 @@ import (
 // whatever Enabled says — so the page can list and restore with automatic
 // backups off.
 func TestPinEdgeConfig_BackupStatusDisabled(t *testing.T) {
-	db, err := store.Open(t.TempDir() + "/edge.db")
-	if err != nil {
-		t.Fatalf("open store: %v", err)
-	}
-	t.Cleanup(func() { db.Close() })
+	db := testdb.Open(t)
 
 	cfg := &config.Config{}
 	cfg.Backup.Enabled = false

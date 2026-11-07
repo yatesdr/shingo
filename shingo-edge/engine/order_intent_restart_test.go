@@ -10,6 +10,7 @@ import (
 
 	"shingo/protocol"
 	"shingo/protocol/testutil"
+	"shingoedge/internal/testdb"
 	"shingoedge/store"
 	storeorders "shingoedge/store/orders"
 	"shingoedge/store/processes"
@@ -97,7 +98,7 @@ type pullbackFixture struct {
 
 func armPullback(t *testing.T) *pullbackFixture {
 	t.Helper()
-	f := &pullbackFixture{path: copyEngineDBTemplate(t)}
+	f := &pullbackFixture{path: testdb.Path(t)}
 	f.srv, f.clears = intentCoreServer(t,
 		[]protocol.NodeBinInfo{{NodeName: "PB-MKT-1", BinID: 88, Occupied: true, PayloadCode: "PB-PART", UOPRemaining: 40}})
 

@@ -1,8 +1,6 @@
 package store
 
 import (
-	"os"
-	"path/filepath"
 	"testing"
 	"time"
 
@@ -10,19 +8,10 @@ import (
 	"shingo/protocol/testutil"
 )
 
+// testDB is a fresh migrated database: coverageDB's template copy.
 func testDB(t *testing.T) *DB {
 	t.Helper()
-	dir := t.TempDir()
-	dbPath := filepath.Join(dir, "test.db")
-	db, err := Open(dbPath)
-	if err != nil {
-		t.Fatalf("open test db: %v", err)
-	}
-	t.Cleanup(func() {
-		db.Close()
-		os.Remove(dbPath)
-	})
-	return db
+	return coverageDB(t)
 }
 
 func TestOutbox_EnqueueAndList(t *testing.T) {

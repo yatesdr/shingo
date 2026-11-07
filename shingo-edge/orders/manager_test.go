@@ -2,12 +2,12 @@ package orders
 
 import (
 	"encoding/json"
-	"path/filepath"
 	"testing"
 	"time"
 
 	"shingo/protocol"
 	"shingo/protocol/testutil"
+	"shingoedge/internal/testdb"
 	"shingoedge/store"
 	"shingoedge/store/processes"
 )
@@ -29,12 +29,7 @@ func (testEmitter) EmitOrderFailed(orderID int64, orderUUID string, orderType pr
 
 func testManagerDB(t *testing.T) *store.DB {
 	t.Helper()
-	db, err := store.Open(filepath.Join(t.TempDir(), "orders.db"))
-	if err != nil {
-		t.Fatalf("open test db: %v", err)
-	}
-	t.Cleanup(func() { db.Close() })
-	return db
+	return testdb.Open(t)
 }
 
 func TestConfirmDeliveryDoesNotTransitionWhenReceiptEnqueueFails(t *testing.T) {

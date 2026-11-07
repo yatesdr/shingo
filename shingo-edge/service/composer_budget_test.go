@@ -55,8 +55,10 @@ type budgetFixture struct {
 // package's 15s and most of what the branch added to the gate. The rows are
 // identical every time, so the expensive half is a pure function of the
 // constants above: seed it into a file on the first call, copy the file
-// afterwards. Same pool as engine/operator_stations_test.go's
-// copyEngineDBTemplate, which is where this pattern is written down.
+// afterwards. The pattern is internal/testdb's (Open copies a migrated
+// template); this one is SEEDED, and it stays here because it is the only
+// seeded template and what it captures with the file (the ids below, the
+// sentinel) is this fixture's own.
 //
 // THE IDS ARE CAPTURED WITH THE TEMPLATE, not re-derived: a copy is the same
 // bytes, so the process and station a test wants are the ones the seed made.

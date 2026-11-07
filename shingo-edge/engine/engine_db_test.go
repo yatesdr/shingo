@@ -3,7 +3,6 @@ package engine
 import (
 	"encoding/json"
 	"fmt"
-	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -12,6 +11,7 @@ import (
 	"shingo/protocol"
 	"shingo/protocol/testutil"
 	"shingoedge/config"
+	"shingoedge/internal/testdb"
 	"shingoedge/orders"
 	ordertestutil "shingoedge/orders/testutil"
 	"shingoedge/service"
@@ -22,15 +22,10 @@ import (
 
 // ── Shared fixtures ─────────────────────────────────────────────────
 
-// newCoverageDB opens a fresh SQLite DB for one test.
+// newCoverageDB opens a fresh migrated SQLite DB for one test (testdb.Open).
 func newCoverageDB(t *testing.T) *store.DB {
 	t.Helper()
-	db, err := store.Open(filepath.Join(t.TempDir(), "engine-cov.db"))
-	if err != nil {
-		t.Fatalf("open store: %v", err)
-	}
-	t.Cleanup(func() { db.Close() })
-	return db
+	return testdb.Open(t)
 }
 
 // newCoverageEngine builds an Engine wired with the minimum set of
