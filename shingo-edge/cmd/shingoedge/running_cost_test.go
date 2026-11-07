@@ -12,7 +12,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 
 	"shingo/protocol"
 	"shingo/protocol/debuglog"
@@ -79,7 +78,7 @@ func TestRunningCost_ABoardRebuildsOnlyForItsOrders(t *testing.T) {
 	if err != nil {
 		t.Fatalf("debuglog: %v", err)
 	}
-	_, handler, stop := www.NewRouter(eng, dbg, nil)
+	_, handler, stop := www.NewRouter(eng, dbg, nil, www.WithCoalescingWindows(walkNudgeWindow, walkNudgeWindow))
 	t.Cleanup(stop)
 	srv := httptest.NewServer(handler)
 	t.Cleanup(srv.Close)
@@ -95,7 +94,9 @@ func TestRunningCost_ABoardRebuildsOnlyForItsOrders(t *testing.T) {
 		runningView(t, srv.URL, sid, etag)
 		perBuild[name] = counter.Count()
 	}
-	drainFrames(frames, 300*time.Millisecond)
+	// The router runs the walk's windows (door_walk_test.go), so an update's
+	// frames are all in within walkWindow, as a door's are.
+	collectFrames(frames, walkWindow)
 
 	// Each update: a new reason on a queued order (the status does not move),
 	// then a move to in transit (it does): the two shapes Core sends.
@@ -115,7 +116,7 @@ func TestRunningCost_ABoardRebuildsOnlyForItsOrders(t *testing.T) {
 				t.Fatalf("envelope: %v", err)
 			}
 			inbound.Dispatch(env, env.Type)
-			got := drainFrames(frames, 450*time.Millisecond)
+			got := collectFrames(frames, walkWindow)
 			for name, sid := range boards {
 				cases = append(cases, walkCase{Door: o.uuid + " " + u.Status, Station: sid, View: views[name], Frames: got})
 				drawer = append(drawer, o.board)
@@ -233,18 +234,4 @@ func runningStream(t *testing.T, base string) <-chan sseFrameW {
 		}
 	}()
 	return out
-}
-
-// drainFrames collects every frame that arrives within d.
-func drainFrames(ch <-chan sseFrameW, d time.Duration) []sseFrameW {
-	var out []sseFrameW
-	deadline := time.After(d)
-	for {
-		select {
-		case f := <-ch:
-			out = append(out, f)
-		case <-deadline:
-			return out
-		}
-	}
 }

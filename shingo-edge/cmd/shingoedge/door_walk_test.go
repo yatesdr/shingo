@@ -59,6 +59,34 @@ import (
 // station view, so a fixture that stops reaching its write fails rather than
 // passing on nothing.
 
+// The walk's router runs both of its coalescing windows at walkNudgeWindow
+// (www.WithCoalescingWindows) instead of the shipped 250 ms, and every wait
+// below is a multiple of it. What a door can send, and when:
+//
+//   - every frame its act broadcasts is in the hub's queue when the act
+//     returns: the handlers, the inbound dispatch and the engine's bus are
+//     synchronous, and the hub's queue, its fan-out and the one stream are
+//     first in, first out, so those frames arrive in the order sent;
+//   - a nudge is broadcast a window after the FIRST Nudge of its burst, so an
+//     act whose nudges are more than a window apart sends two (a node list
+//     nudges once for the loaders and again for the bin types). The last is
+//     broadcast at most walkNudgeWindow after the act returned.
+//
+// So walkNudgeWindow after the act, everything the door sent is on its way and
+// what is left is delivery: a few milliseconds here, measured with the rest of
+// the Edge's unit tests running beside the walk. A door that nudged stops
+// collecting once its nudge is in and walkSettle has passed (two windows of
+// delivery for a second burst); a door that did not is waited walkWindow (four
+// windows past the nudge's, the margin a nudge that never came would have had).
+// The shipped windows had the same shape: a 250 ms nudge and a 450 ms wait.
+// The plant-claims window sends no frame here (its hooks are unwired); it is
+// short so that no loop the router runs outlasts a door.
+const (
+	walkNudgeWindow = 10 * time.Millisecond
+	walkSettle      = 3 * walkNudgeWindow
+	walkWindow      = 5 * walkNudgeWindow
+)
+
 // fileServerRoutes are mounted with r.Handle, so chi lists them under every
 // method; each serves embedded files and writes nothing.
 var fileServerRoutes = map[string]bool{"/favicon.ico": true, "/static/*": true, "/static/shared/*": true}
@@ -134,6 +162,15 @@ func TestDoorWalk_EveryWriteToAStationViewIsAnnounced(t *testing.T) {
 	// An idle Edge says nothing: the walk attributes each frame to the door
 	// that ran, so a background frame would be credited to a door that sent
 	// none. (It is also the board's idle cost: no frame, no fetch.)
+	//
+	// An absence, so the wait is set by what could speak, not by the walk's
+	// windows: the engine's shortest loops are the CATID monitor's 500 ms poll
+	// (plcPollInterval) and the PLC counter poll (cfg.PollRate, 1 s by
+	// default), and 1.5 s sees each of them tick at least once. The router's
+	// nudge loop speaks only after a Nudge, within walkNudgeWindow. The
+	// release intent floor (15 s) and the 60 s lineside, stranded and demand
+	// loops are longer than any wait a walk can afford; a frame from one of
+	// them would be credited to the door it lands in.
 	if got := w.collect(1500 * time.Millisecond); len(got) != 0 {
 		t.Fatalf("the idle Edge sent %d frames in 1.5 s (%v): the walk cannot attribute frames", len(got), got)
 	}
@@ -223,12 +260,12 @@ func (w *walk) door(name string, wantMoves bool, want int, prep func() func() in
 	w.prepped = false
 	act := prep()
 	if w.prepped {
-		w.collect(450 * time.Millisecond)
+		w.collect(walkWindow)
 	}
 	w.collect(0) // drop anything left from the door before
 	before := w.views()
 	status := act()
-	frames := w.collect(450 * time.Millisecond) // the nudge's 250 ms window, and margin
+	frames := w.collect(walkWindow)
 	after := w.views()
 	if want != 0 && status != want {
 		w.t.Errorf("%s answered %d, its fixture says %d: the fixture no longer reaches what it walked", name, status, want)
@@ -279,29 +316,37 @@ func (w *walk) views() map[int64]viewSnap {
 	return out
 }
 
-// collect returns every frame that arrives within d (0: only those already
-// waiting), ending early once the hub's nudge has arrived: the nudge is sent a
-// coalescing window after the last write that asked for one, so it is the last
-// frame a door causes.
-func (w *walk) collect(d time.Duration) []sseFrameW {
+func (w *walk) collect(d time.Duration) []sseFrameW { return collectFrames(w.frames, d) }
+
+// collectFrames returns every frame that arrives on ch within d of the call
+// (0: only those already waiting). It ends early once a nudge has arrived and
+// walkSettle has passed: the last nudge an act asked for is broadcast at most
+// walkNudgeWindow after the act returned, and everything the act broadcast
+// precedes it on the stream, so past both there is nothing more to come from
+// that act. d is a door's or an update's wait (walkWindow) and must exceed
+// walkSettle.
+func collectFrames(ch <-chan sseFrameW, d time.Duration) []sseFrameW {
 	var out []sseFrameW
 	deadline := time.After(d)
-	nudged := false
+	settle := time.After(walkSettle)
+	nudged, settled := false, false
 	for {
 		select {
-		case f := <-w.frames:
+		case f := <-ch:
 			out = append(out, f)
 			nudged = nudged || f.Type == "material-refresh"
 			continue
 		default:
 		}
-		if d == 0 || nudged {
+		if d == 0 || (nudged && settled) {
 			return out
 		}
 		select {
-		case f := <-w.frames:
+		case f := <-ch:
 			out = append(out, f)
 			nudged = nudged || f.Type == "material-refresh"
+		case <-settle:
+			settled = true
 		case <-deadline:
 			return out
 		}
@@ -543,7 +588,7 @@ func newWalk(t *testing.T) *walk {
 	if err != nil {
 		t.Fatalf("debuglog: %v", err)
 	}
-	_, handler, stop := www.NewRouter(eng, dbg, nil)
+	_, handler, stop := www.NewRouter(eng, dbg, nil, www.WithCoalescingWindows(walkNudgeWindow, walkNudgeWindow))
 	t.Cleanup(stop)
 	mux, ok := handler.(*chi.Mux)
 	if !ok {
@@ -601,7 +646,9 @@ func newWalk(t *testing.T) *walk {
 	case <-time.After(5 * time.Second):
 		t.Fatal("the stream never connected")
 	}
-	time.Sleep(400 * time.Millisecond)
+	// Let what the setup sent land, then drop it; a frame that lands later is
+	// the idle check's to find.
+	time.Sleep(walkWindow)
 	w.collect(0)
 	return w
 }
