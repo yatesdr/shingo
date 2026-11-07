@@ -63,6 +63,13 @@ type (
 // ProgramChange, so no ordinary integer write moves a count.
 type CountingSlot int
 
+// PauseLoading pauses (true) or resumes (false) the loading of the process
+// counting on the tag it is written on (its configured counter): paused, no
+// load enters and the line counts out until it is empty (Line.Pause). A type
+// of its own, like ProgramChange, so no ordinary bool write (a curtain) can
+// pause a line.
+type PauseLoading bool
+
 // LineTag is the name a PLC's lines are read under: a direct read returns
 // []ProcessLine for the processes counting on that PLC. Like OverrunTag it is
 // never published to the poll.
@@ -404,7 +411,8 @@ func (f *FakeClient) ReadTagValue(ctx context.Context, plcName, tagName string) 
 // WriteTagValue sets a part-identity tag when the value is an Identity, changes
 // the program of the process counting on tagName when it is a ProgramChange or
 // a ForcedChange, moves its count to another slot of its MES struct when it is
-// a CountingSlot, sets the PLC's overrun switch when it is an Overrun on
+// a CountingSlot, pauses or resumes its loading when it is a PauseLoading,
+// sets the PLC's overrun switch when it is an Overrun on
 // OverrunTag, and a BOOL tag when it is a bool (a curtain's state, the sim's
 // bypass button), registering its PLC if new; any other write is discarded (Q4:
 // zone lights / heartbeats have no sim effect) and reports success. A counter
@@ -421,6 +429,9 @@ func (f *FakeClient) WriteTagValue(ctx context.Context, plcName, tagName string,
 	}
 	if n, ok := value.(CountingSlot); ok {
 		return f.moveCount(plcName, tagName, int(n))
+	}
+	if p, ok := value.(PauseLoading); ok {
+		return f.pauseLoading(plcName, tagName, bool(p))
 	}
 	if o, ok := value.(Overrun); ok || tagName == OverrunTag {
 		if !ok || tagName != OverrunTag {
@@ -496,20 +507,46 @@ func (pl *procLine) countingIdentity() string {
 func (f *FakeClient) moveCount(plcName, tagName string, n int) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	for _, pl := range f.lines[plcName] {
-		if pl.counterTag != tagName {
-			continue
-		}
-		if pl.mes == "" {
-			return fmt.Errorf("simwarlink: %s.%s is not a slot of an MES struct (<struct>.Prod_Counter_0N, identity_tag its CATID_0N)", plcName, tagName)
-		}
-		if err := pl.line.CountOn(n); err != nil {
-			return err
-		}
-		f.publish(pl)
-		return nil
+	pl, err := f.countingOn(plcName, tagName)
+	if err != nil {
+		return err
 	}
-	return fmt.Errorf("simwarlink: no sim process counts on %s.%s", plcName, tagName)
+	if pl.mes == "" {
+		return fmt.Errorf("simwarlink: %s.%s is not a slot of an MES struct (<struct>.Prod_Counter_0N, identity_tag its CATID_0N)", plcName, tagName)
+	}
+	if err := pl.line.CountOn(n); err != nil {
+		return err
+	}
+	f.publish(pl)
+	return nil
+}
+
+// pauseLoading pauses or resumes the loading of the process counting on
+// plcName.tagName. It publishes nothing: the tags move as the line ticks.
+func (f *FakeClient) pauseLoading(plcName, tagName string, paused bool) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	pl, err := f.countingOn(plcName, tagName)
+	if err != nil {
+		return err
+	}
+	if paused {
+		pl.line.Pause()
+	} else {
+		pl.line.Resume()
+	}
+	return nil
+}
+
+// countingOn is the sim process whose configured counter is plcName.tagName.
+// Caller holds f.mu.
+func (f *FakeClient) countingOn(plcName, tagName string) (*procLine, error) {
+	for _, pl := range f.lines[plcName] {
+		if pl.counterTag == tagName {
+			return pl, nil
+		}
+	}
+	return nil, fmt.Errorf("simwarlink: no sim process counts on %s.%s", plcName, tagName)
 }
 
 // changeProgram applies a program change to the process counting on
@@ -519,18 +556,16 @@ func (f *FakeClient) moveCount(plcName, tagName string, n int) error {
 func (f *FakeClient) changeProgram(plcName, tagName string, change func(*Line)) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	for _, pl := range f.lines[plcName] {
-		if pl.counterTag != tagName {
-			continue
-		}
-		if pl.identityTag == "" {
-			return fmt.Errorf("simwarlink: %s.%s has no identity_tag for a program change to write", plcName, tagName)
-		}
-		change(pl.line)
-		f.publish(pl)
-		return nil
+	pl, err := f.countingOn(plcName, tagName)
+	if err != nil {
+		return err
 	}
-	return fmt.Errorf("simwarlink: no sim process counts on %s.%s", plcName, tagName)
+	if pl.identityTag == "" {
+		return fmt.Errorf("simwarlink: %s.%s has no identity_tag for a program change to write", plcName, tagName)
+	}
+	change(pl.line)
+	f.publish(pl)
+	return nil
 }
 
 // setOverrun sets or clears a PLC's overrun switch. Only a PLC with a counter

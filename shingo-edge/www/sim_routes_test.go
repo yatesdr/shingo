@@ -215,3 +215,68 @@ func TestSimCountingSlot_RouteMovesTheCountAndTheLineSaysSo(t *testing.T) {
 		}
 	}
 }
+
+// TestSimPauseLoading_RoutePausesAndResumesTheLine pins POST
+// /api/sim/pause-loading over the fake WarLink: paused true pauses the line's
+// loading and the line read says so, false loads again; a malformed body is
+// refused (400), and a tag no process counts on by the fake (502).
+func TestSimPauseLoading_RoutePausesAndResumesTheLine(t *testing.T) {
+	h, r := newTestHandlers(t)
+	cfg := config.SimConfig{Enabled: true, Processes: []config.SimProcessConfig{
+		{PLCName: "WELD-6", TagName: "WELD-6_COUNTER", TickInterval: time.Second,
+			StationTag: "WELD-6_STATION", LineDepth: 2, IdentityTag: "WELD-6_CATID"},
+	}}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	fake := simwarlink.NewFakeClient(ctx, cfg, clock.NewManual(time.Unix(0, 0)))
+	mgr := plc.NewManager(nil, config.Defaults().WarLink, config.Defaults().PollRate, config.Defaults().Counter.JumpThreshold, nil, fake)
+	mgr.SetTagValueForTest("WELD-6", "WELD-6_COUNTER", int64(0))
+	h.engine.(*stubEngine).plcMgr = mgr
+	r.Route("/api", func(r chi.Router) { h.registerSimRoutes(r) })
+
+	call := func(method, path, body string) (int, string) {
+		t.Helper()
+		req := httptest.NewRequest(method, path, strings.NewReader(body))
+		rec := httptest.NewRecorder()
+		r.ServeHTTP(rec, req)
+		return rec.Code, rec.Body.String()
+	}
+	line := func() simwarlink.ProcessLine {
+		t.Helper()
+		code, body := call(http.MethodGet, "/api/sim/line", "")
+		var got struct {
+			Lines []simwarlink.ProcessLine `json:"lines"`
+		}
+		if code != http.StatusOK || json.Unmarshal([]byte(body), &got) != nil || len(got.Lines) != 1 {
+			t.Fatalf("GET line = %d %s", code, body)
+		}
+		return got.Lines[0]
+	}
+	const post = "/api/sim/pause-loading"
+
+	if code, body := call(http.MethodPost, post, `{"plc_name":"WELD-6","tag_name":"WELD-6_COUNTER","paused":true}`); code != http.StatusOK {
+		t.Fatalf("pause = %d %s", code, body)
+	}
+	if l := line(); !l.Paused {
+		t.Fatalf("the line read after the pause = %+v; want paused", l.LineState)
+	}
+	if code, body := call(http.MethodPost, post, `{"plc_name":"WELD-6","tag_name":"WELD-6_COUNTER","paused":false}`); code != http.StatusOK {
+		t.Fatalf("resume = %d %s", code, body)
+	}
+	if l := line(); l.Paused {
+		t.Errorf("the line read after the resume = %+v; want loading", l.LineState)
+	}
+	for _, bad := range []string{
+		`{"plc_name":"WELD-6","tag_name":"WELD-6_COUNTER"}`,
+		`{"tag_name":"WELD-6_COUNTER","paused":true}`,
+		`{"plc_name":"WELD-6","paused":true}`,
+		`not json`,
+	} {
+		if code, _ := call(http.MethodPost, post, bad); code != http.StatusBadRequest {
+			t.Errorf("body %s = %d; want 400", bad, code)
+		}
+	}
+	if code, _ := call(http.MethodPost, post, `{"plc_name":"WELD-6","tag_name":"NO_SUCH_COUNTER","paused":true}`); code != http.StatusBadGateway {
+		t.Errorf("a tag no process counts on = %d; want 502 (refused by the fake)", code)
+	}
+}

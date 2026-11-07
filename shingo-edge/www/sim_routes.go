@@ -28,6 +28,7 @@ func (h *Handlers) registerSimRoutes(r chi.Router) {
 	r.Post("/sim/catid", h.apiSimCATID)
 	r.Post("/sim/program-change", h.apiSimProgramChange)
 	r.Post("/sim/counting-slot", h.apiSimCountingSlot)
+	r.Post("/sim/pause-loading", h.apiSimPauseLoading)
 	r.Get("/sim/line", h.apiSimLine)
 	r.Get("/sim/overrun", h.apiSimOverrunList)
 	r.Post("/sim/overrun", h.apiSimOverrun)
@@ -338,10 +339,38 @@ func (h *Handlers) apiSimCountingSlot(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]any{"plc_name": body.PLCName, "tag_name": body.TagName, "slot": *body.Slot})
 }
 
+// apiSimPauseLoading pauses or resumes the loading of a process's line in the
+// fake WarLink: the sim's stand-in for the cell's loading stopping while the
+// line runs on. Body {"plc_name", "tag_name" (the process's counter as the sim
+// config names it), "paused"}: paused, no load enters, the line counts out
+// until it is empty and the counter then stands; resumed, loading goes on. A
+// tag no sim process counts on is refused by the fake (502).
+func (h *Handlers) apiSimPauseLoading(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		PLCName string `json:"plc_name"`
+		TagName string `json:"tag_name"`
+		Paused  *bool  `json:"paused"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.PLCName == "" || body.TagName == "" || body.Paused == nil {
+		http.Error(w, "want {plc_name, tag_name, paused}", http.StatusBadRequest)
+		return
+	}
+	mgr := h.engine.PLCManager()
+	if mgr == nil {
+		http.Error(w, "no PLC manager", http.StatusServiceUnavailable)
+		return
+	}
+	if err := mgr.WriteTagDirect(r.Context(), body.PLCName, body.TagName, simwarlink.PauseLoading(*body.Paused)); err != nil {
+		http.Error(w, err.Error(), http.StatusBadGateway)
+		return
+	}
+	writeJSON(w, map[string]any{"plc_name": body.PLCName, "tag_name": body.TagName, "paused": *body.Paused})
+}
+
 // apiSimLine reads every sim process's line among the PLCs the Edge has
 // discovered: {"lines": [{plc_name, tag_name, loads, loads_by_identity,
-// in_flight, identity, counter, slot, slots}]}, the loads a run checks the
-// carts against.
+// in_flight, identity, counter, slot, slots, paused}]}, the loads a run checks
+// the carts against.
 func (h *Handlers) apiSimLine(w http.ResponseWriter, r *http.Request) {
 	mgr := h.engine.PLCManager()
 	if mgr == nil {

@@ -393,6 +393,48 @@ func TestFakeIntegerWriteIsNoProgramChange(t *testing.T) {
 	}
 }
 
+// TestFakePauseLoading_TheLineDrainsUntilResumed: a PauseLoading written on a
+// process's counter tag stops its loads (the station stands) while the
+// counter ticks the line out, and the line read says paused; false loads
+// again. A plain bool on the counter pauses nothing, and a tag no process
+// counts on is refused.
+func TestFakePauseLoading_TheLineDrainsUntilResumed(t *testing.T) {
+	m := clock.NewManual(fakeStart)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	f := NewFakeClient(ctx, lineCfg(2), m)
+	_ = f.WriteTagValue(ctx, "WELD-6", "WELD-6_CATID", Identity(1001))
+	_ = f.WriteTagValue(ctx, "WELD-6", "WELD-6_COUNTER", true)
+	for k := int64(1); k <= 3; k++ {
+		m.Advance(time.Second)
+		waitForCounter(t, f, "WELD-6", "WELD-6_STATION", k)
+	}
+	if err := f.WriteTagValue(ctx, "WELD-6", "WELD-6_COUNTER", PauseLoading(true)); err != nil {
+		t.Fatalf("pause: %v", err)
+	}
+	for c := int64(2); c <= 3; c++ {
+		m.Advance(time.Second)
+		waitForCounter(t, f, "WELD-6", "WELD-6_COUNTER", c)
+		if s := readInt(f, "WELD-6", "WELD-6_STATION"); s != 3 {
+			t.Fatalf("paused: the station clicked to %d; want it standing at 3", s)
+		}
+	}
+	if st := lineOf(t, f, "WELD-6"); !st.Paused || st.InFlight != 0 || st.Loads != 3 || st.Identity != 1001 {
+		t.Fatalf("the line read, drained = %+v; want paused, empty, 3 loads, identity 1001", st.LineState)
+	}
+	if err := f.WriteTagValue(ctx, "WELD-6", "WELD-6_COUNTER", PauseLoading(false)); err != nil {
+		t.Fatalf("resume: %v", err)
+	}
+	m.Advance(time.Second)
+	waitForCounter(t, f, "WELD-6", "WELD-6_STATION", 4)
+	if st := lineOf(t, f, "WELD-6"); st.Paused || st.Counter != 3 || st.InFlight != 1 {
+		t.Errorf("resumed = %+v; want loading, counter 3, one in flight", st.LineState)
+	}
+	if err := f.WriteTagValue(ctx, "WELD-6", "NO_SUCH_COUNTER", PauseLoading(true)); err == nil {
+		t.Error("a pause on a tag no process counts on was taken; want refused")
+	}
+}
+
 // mesCfg is a line counting on slot 1 of an MES struct with that slot's CATID
 // as its identity, and a plain counter beside it.
 func mesCfg() config.SimConfig {
