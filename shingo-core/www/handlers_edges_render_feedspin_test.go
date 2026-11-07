@@ -13,11 +13,11 @@ import (
 )
 
 // TestFeedsPin_EdgesPageRow pins what one claimed, registered station's row on
-// /edges renders today: the text of each cell in order.
+// /edges renders: the text of each cell in order.
 //
-// after (F1): a row may also carry plain-text feed flags from
-// EdgeFeedFlags(station) — keys sent three times running, process conflicts.
-// With no flags, which is this fixture: same, cell for cell.
+// The Status cell also carries the station's plain-text feed flags from
+// EdgeFeedFlags (handlers_edges.go's FeedFlags); this fixture has none, so the
+// cell is the status alone. No www test renders a flagged row.
 func TestFeedsPin_EdgesPageRow(t *testing.T) {
 	t.Parallel()
 	h, db := testHandlersForRendering(t)
@@ -42,17 +42,14 @@ func TestFeedsPin_EdgesPageRow(t *testing.T) {
 	}
 
 	// Name (display name defaults to the uid), uid, host, schema, status,
-	// zone, clock, conflicts, action.
-	//
-	// CONVERTED (D1 Lane 0, item 12): the row gained the Clock cell, the
-	// station's clock offset from its last heartbeat; "-" here, where no
-	// heartbeat has carried one. Every other cell is as it was.
+	// zone, clock, conflicts, action. The Clock cell is the station's clock
+	// offset from its last heartbeat: "-" here, where no heartbeat has carried
+	// one (TestEdgesPage_FlagsAClockOffsetAboveTheFlushWindow pins a reading).
 	want := []string{"edge.test", "edge.test", "edge-host-a", "v3", "active", "America/Chicago", "-", "0", "Rename"}
-	after := want // F1: same when EdgeFeedFlags(uid) is empty
 	if !reflect.DeepEqual(cells, want) {
-		t.Errorf("edges row cells = %q, want %q (after F1 with no flags: %q)", cells, want, after)
+		t.Errorf("edges row cells = %q, want %q", cells, want)
 	}
 	if strings.Contains(row, "edge-unclaimed") {
-		t.Error("an enrolled station rendered as unclaimed (after: same)")
+		t.Error("an enrolled station rendered as unclaimed")
 	}
 }

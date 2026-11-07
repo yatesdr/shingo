@@ -19,11 +19,22 @@ import (
 	"shingocore/store/payloads"
 )
 
-// core_data_service_feedspin_test.go — behaviour pins for the Core request
-// handlers the versioned-feeds change touches: the heartbeat, the node-list
-// sync and the catalog sync. Each case asserts what the code does at the base
-// and carries the predicted post-change value beside it with the brief label
-// that moves it. A label commit flips want to after for its own cases only.
+// core_data_service_feedspin_test.go — behaviour pins for three Core request
+// handlers: the heartbeat (HandleEdgeHeartbeat), the node-list sync
+// (HandleNodeListRequest) and the catalog sync (HandleCatalogPayloadsRequest).
+//
+// They were written before the versioned-feeds change, each case carrying the
+// value it predicted beside the value it asserted. Those changes have landed —
+// the feeds and claims keys on the ack in "feat(core,edge): one feed digest
+// rule for Core and Edge, the wire and the plumbing", the reply digests in
+// "perf(core,edge): node list, scene and catalog sent when the digest differs,
+// not every two minutes", and the ack on a registry failure and the node list
+// with no plant-wide fallback in "fix(core,edge): ack on a registry failure,
+// no plant-wide list on a read error, reconcile after an ack gap, uptime and
+// order count off the heartbeat" — so every case asserts that behaviour alone.
+//
+// The recorder and helpers below (feedsPinResponder, jsonKeys, feedsPinEnv,
+// hideTable, seedFeedsPinNodes) are shared with the package's feeds tests.
 
 // feedsPinResponder records replyData AND sendData in one ordered trace. The
 // shared captureResponder drops sendData, and the heartbeat's register request
@@ -99,14 +110,14 @@ func hideTable(t *testing.T, db *store.DB, table string) {
 // ── HandleEdgeHeartbeat ────────────────────────────────────────────────────
 
 // TestFeedsPin_HandleEdgeHeartbeat pins the heartbeat handler: the registry
-// write, the ack and its body, the register request for an unenrolled station,
-// and the error path (UpdateHeartbeat fails: today nothing at all is sent).
+// write, the ack and its key set, the register request for an unenrolled
+// station, and the registry-write failure, which still acks and sends no
+// register request (no request goes out on a row Core could not check).
 //
-// Every heartbeat here has no Feeds field, which is what an old Edge sends
-// after F1. The brief: nil Feeds gets today's behaviour only, and a new Core
-// always sends feeds as at least {}; Claims is filled only on the feeds path
-// and is nil when Core could not read it, so an old Edge's ack carries
-// "claims": null.
+// Every heartbeat here has no Feeds field, which is what an older Edge sends.
+// Its ack carries feeds as {} and claims as null (claimsFor is nil for an Edge
+// that does not speak feeds); bin_watch and asks are left off; timezone is
+// there only when a plant zone is configured.
 func TestFeedsPin_HandleEdgeHeartbeat(t *testing.T) {
 	t.Parallel()
 
@@ -120,47 +131,32 @@ func TestFeedsPin_HandleEdgeHeartbeat(t *testing.T) {
 		breakRegistry bool
 		plantTZ       string
 
-		wantTrace   []string // base
-		wantAckKeys []string // base; nil when no ack is sent
-
-		afterTrace   []string // predicted
-		afterAckKeys []string // predicted
-		label        string
+		wantTrace   []string
+		wantAckKeys []string // nil when no ack is sent
 	}{
 		{
 			name: "enrolled station, plant zone configured", enroll: true, plantTZ: "America/Chicago",
-			wantTrace:    []string{ack},
-			wantAckKeys:  []string{"claims", "feeds", "server_ts", "station_id", "timezone"}, // F1: feeds={}, claims=null
-			afterTrace:   []string{ack},
-			afterAckKeys: []string{"claims", "feeds", "server_ts", "station_id", "timezone"}, // feeds={}, claims=null
-			label:        "F1, F5",
+			wantTrace:   []string{ack},
+			wantAckKeys: []string{"claims", "feeds", "server_ts", "station_id", "timezone"}, // feeds={}, claims=null
 		},
 		{
 			name: "enrolled station, plant zone unset", enroll: true, plantTZ: "",
-			wantTrace:    []string{ack},
-			wantAckKeys:  []string{"claims", "feeds", "server_ts", "station_id"}, // F1
-			afterTrace:   []string{ack},
-			afterAckKeys: []string{"claims", "feeds", "server_ts", "station_id"}, // feeds={}, claims=null
-			label:        "F1, F5",
+			wantTrace:   []string{ack},
+			wantAckKeys: []string{"claims", "feeds", "server_ts", "station_id"},
 		},
 		{
 			name: "unenrolled station gets the ack and a register request", enroll: false, plantTZ: "America/Chicago",
-			wantTrace:    []string{ack, regReq},
-			wantAckKeys:  []string{"claims", "feeds", "server_ts", "station_id", "timezone"}, // F1
-			afterTrace:   []string{ack, regReq},
-			afterAckKeys: []string{"claims", "feeds", "server_ts", "station_id", "timezone"},
-			label:        "F1, F5",
+			wantTrace:   []string{ack, regReq},
+			wantAckKeys: []string{"claims", "feeds", "server_ts", "station_id", "timezone"},
 		},
 		{
-			// X8: was no ack at all (trace empty).
+			// Core acks anyway, with only the feed keys it could read (none
+			// for an older Edge) and claims null; still no register request.
+			// Before the registry-failure ack (see the file header) nothing
+			// was sent at all.
 			name: "registry write fails: ack, no register request", enroll: true, breakRegistry: true, plantTZ: "America/Chicago",
 			wantTrace:   []string{ack},
 			wantAckKeys: []string{"claims", "feeds", "server_ts", "station_id", "timezone"},
-			// X8: Core acks anyway, with only the feed keys it could read (none
-			// for an old Edge) and Claims nil; still no register request.
-			afterTrace:   []string{ack},
-			afterAckKeys: []string{"claims", "feeds", "server_ts", "station_id", "timezone"},
-			label:        "X8, F1",
 		},
 	}
 
@@ -187,7 +183,7 @@ func TestFeedsPin_HandleEdgeHeartbeat(t *testing.T) {
 			afterCall := time.Now().UTC().Add(time.Second)
 
 			if got := resp.trace(); !reflect.DeepEqual(got, tc.wantTrace) {
-				t.Fatalf("trace = %v, want %v (after %s: %v)", got, tc.wantTrace, tc.label, tc.afterTrace)
+				t.Fatalf("trace = %v, want %v", got, tc.wantTrace)
 			}
 
 			var gotAck *protocol.EdgeHeartbeatAck
@@ -197,13 +193,13 @@ func TestFeedsPin_HandleEdgeHeartbeat(t *testing.T) {
 					gotAck = p
 				case *protocol.EdgeRegisterRequest:
 					if p.StationID != st || p.Reason != "station not enrolled" {
-						t.Errorf("register request = %+v, want station %s, reason \"station not enrolled\" (after: same)", p, st)
+						t.Errorf("register request = %+v, want station %s, reason \"station not enrolled\"", p, st)
 					}
 				}
 			}
 			if tc.wantAckKeys == nil {
 				if gotAck != nil {
-					t.Errorf("an ack was sent: %+v (after %s: keys %v)", gotAck, tc.label, tc.afterAckKeys)
+					t.Errorf("an ack was sent: %+v, want none", gotAck)
 				}
 				return
 			}
@@ -211,30 +207,30 @@ func TestFeedsPin_HandleEdgeHeartbeat(t *testing.T) {
 				t.Fatal("no ack payload recorded")
 			}
 			if keys := jsonKeys(t, gotAck); !reflect.DeepEqual(keys, tc.wantAckKeys) {
-				t.Errorf("ack keys = %v, want %v (after %s: %v)", keys, tc.wantAckKeys, tc.label, tc.afterAckKeys)
+				t.Errorf("ack keys = %v, want %v", keys, tc.wantAckKeys)
 			}
 			if gotAck.StationID != st {
-				t.Errorf("ack station_id = %q, want %q (after: same)", gotAck.StationID, st)
+				t.Errorf("ack station_id = %q, want %q", gotAck.StationID, st)
 			}
 			if gotAck.Timezone != tc.plantTZ {
-				t.Errorf("ack timezone = %q, want the configured plant zone %q (after: same)", gotAck.Timezone, tc.plantTZ)
+				t.Errorf("ack timezone = %q, want the configured plant zone %q", gotAck.Timezone, tc.plantTZ)
 			}
 			if gotAck.ServerTS.Before(before) || gotAck.ServerTS.After(afterCall) || gotAck.ServerTS.Location() != time.UTC {
-				t.Errorf("ack server_ts = %v, want UTC now (after: same)", gotAck.ServerTS)
+				t.Errorf("ack server_ts = %v, want UTC now", gotAck.ServerTS)
 			}
 
 			if !tc.enroll || tc.breakRegistry {
 				return
 			}
 			// The registry write: status promoted, the Edge's own zone and tick
-			// lag stored, last_heartbeat stamped. After: same.
+			// lag stored, last_heartbeat stamped.
 			var status, tz string
 			var tick sql.NullInt64
 			var beat bool
 			testutil.MustNoErr(t, db.QueryRow(`SELECT status, COALESCE(timezone, ''), tick_pending, last_heartbeat IS NOT NULL
 				FROM edge_registry WHERE station_uid = $1`, st).Scan(&status, &tz, &tick, &beat), "read registry row")
 			if status != "active" || tz != "America/New_York" || !tick.Valid || tick.Int64 != 4 || !beat {
-				t.Errorf("registry row = status %q tz %q tick_pending %v heartbeat %v; want active, America/New_York, 4, stamped (after: same)",
+				t.Errorf("registry row = status %q tz %q tick_pending %v heartbeat %v; want active, America/New_York, 4, stamped",
 					status, tz, tick, beat)
 			}
 		})
@@ -255,9 +251,10 @@ func seedFeedsPinNodes(t *testing.T, db *store.DB) {
 }
 
 // TestFeedsPin_HandleNodeListRequest_Scope pins which list a station gets:
-// its own when it has one, the plant-wide list when its own is empty, and —
-// today — the plant-wide list too when its own could not be READ. X6 makes
-// that last one a failed read: nothing sent.
+// its own when it has one, the plant-wide list when its own is empty, and
+// nothing at all when its own could not be READ (buildNodeList returns the
+// error, and falling back would hand the station every node in the plant as
+// though they were its own).
 func TestFeedsPin_HandleNodeListRequest_Scope(t *testing.T) {
 	t.Parallel()
 
@@ -269,25 +266,20 @@ func TestFeedsPin_HandleNodeListRequest_Scope(t *testing.T) {
 		wantReplies int
 		wantExact   []string // the exact node names, when set
 		wantHas     []string // names that must be present
-
-		afterReplies int
-		label        string
 	}{
 		{
 			name: "station-scoped list", station: "edge.test",
 			wantReplies: 1, wantExact: []string{"LN-1"},
-			afterReplies: 1, label: "same",
 		},
 		{
 			name: "empty station list falls back to the plant-wide list", station: "edge.other",
 			wantReplies: 1, wantHas: []string{"LN-1", "LN-9"},
-			afterReplies: 1, label: "same",
 		},
 		{
-			// X6: was one reply with the plant-wide list.
+			// Before the no-fallback node list (see the file header) this was
+			// one reply with the plant-wide list.
 			name: "station-list read error is a failed read: nothing sent", station: "edge.test", breakStationRead: true,
-			wantReplies:  0,
-			afterReplies: 0, label: "X6",
+			wantReplies: 0,
 		},
 	}
 
@@ -307,7 +299,7 @@ func TestFeedsPin_HandleNodeListRequest_Scope(t *testing.T) {
 			svc.HandleNodeListRequest(feedsPinEnv(tc.station), &protocol.NodeListRequest{})
 
 			if len(resp.events) != tc.wantReplies {
-				t.Fatalf("replies = %d, want %d (after %s: %d)", len(resp.events), tc.wantReplies, tc.label, tc.afterReplies)
+				t.Fatalf("replies = %d, want %d", len(resp.events), tc.wantReplies)
 			}
 			if tc.wantReplies == 0 {
 				return
@@ -321,7 +313,7 @@ func TestFeedsPin_HandleNodeListRequest_Scope(t *testing.T) {
 				names = append(names, n.Name)
 			}
 			if tc.wantExact != nil && !reflect.DeepEqual(names, tc.wantExact) {
-				t.Errorf("nodes = %v, want exactly %v (after: same)", names, tc.wantExact)
+				t.Errorf("nodes = %v, want exactly %v", names, tc.wantExact)
 			}
 			have := map[string]bool{}
 			for _, n := range names {
@@ -329,7 +321,7 @@ func TestFeedsPin_HandleNodeListRequest_Scope(t *testing.T) {
 			}
 			for _, w := range tc.wantHas {
 				if !have[w] {
-					t.Errorf("nodes = %v, want %s present (after %s: %d replies)", names, w, tc.label, tc.afterReplies)
+					t.Errorf("nodes = %v, want %s present", names, w)
 				}
 			}
 		})
@@ -337,10 +329,10 @@ func TestFeedsPin_HandleNodeListRequest_Scope(t *testing.T) {
 }
 
 // TestFeedsPin_HandleNodeListRequest_GeometryAndDigest pins geometry only on a
-// scene-revision mismatch (after: same — F4 keeps the short-circuit) and the
-// reply's key set: no digest today. After F4 every reply carries
-// digest = protocol.Digest(struct{Nodes, Loaders, PayloadBinTypes}) as the
-// reply carries them, the scene excluded (scene has its own key).
+// scene-revision mismatch, the current scene revision on every reply, and the
+// reply's digest: protocol.NodesDigest of the Nodes, Loaders, PayloadBinTypes
+// and Family the reply carries, the scene excluded (the scene has its own
+// feed key), so it is the same on all three replies.
 func TestFeedsPin_HandleNodeListRequest_GeometryAndDigest(t *testing.T) {
 	t.Parallel()
 	db := testdb.Open(t)
@@ -367,26 +359,24 @@ func TestFeedsPin_HandleNodeListRequest_GeometryAndDigest(t *testing.T) {
 		name         string
 		heldRevision string
 		wantGeometry bool
-		after        string
-		label        string
 	}{
-		{name: "no revision held", heldRevision: "", wantGeometry: true, after: "same", label: "-"},
-		{name: "current revision held", heldRevision: current, wantGeometry: false, after: "same", label: "-"},
-		{name: "stale revision held", heldRevision: "not-the-revision", wantGeometry: true, after: "same", label: "-"},
+		{name: "no revision held", heldRevision: "", wantGeometry: true},
+		{name: "current revision held", heldRevision: current, wantGeometry: false},
+		{name: "stale revision held", heldRevision: "not-the-revision", wantGeometry: true},
 	}
 	firstDigest := ""
 	for _, tc := range cases {
 		r := ask(tc.heldRevision)
 		if got := hasGeometry(r); got != tc.wantGeometry {
-			t.Errorf("%s: geometry = %v, want %v (after: %s)", tc.name, got, tc.wantGeometry, tc.after)
+			t.Errorf("%s: geometry = %v, want %v", tc.name, got, tc.wantGeometry)
 		}
 		if r.SceneRevision != current {
-			t.Errorf("%s: scene_revision = %q, want the current %q on every reply (after: same)", tc.name, r.SceneRevision, current)
+			t.Errorf("%s: scene_revision = %q, want the current %q on every reply", tc.name, r.SceneRevision, current)
 		}
-		// F4: "digest" present and equal to the FeedNodes digest of
-		// {Nodes, Loaders, PayloadBinTypes, Family} (protocol.NodesDigest — the pin
-		// predicted protocol.Digest; the canonical-copy function is the one
-		// both paths use), identical across these three replies because only
+		// "digest" present and equal to the FeedNodes digest of
+		// {Nodes, Loaders, PayloadBinTypes, Family} (protocol.NodesDigest, the
+		// function the reply path and the feed path both use), identical
+		// across these three replies because only
 		// the held scene revision differs.
 		wantDigest, err := protocol.NodesDigest(r.Nodes, r.Loaders, r.PayloadBinTypes, r.Family)
 		testutil.MustNoErr(t, err, "digest")
@@ -405,9 +395,9 @@ func TestFeedsPin_HandleNodeListRequest_GeometryAndDigest(t *testing.T) {
 
 // TestFeedsPin_HandleCatalogPayloadsRequest pins the catalog reply: one reply,
 // payloads in the order the store returns them (by code), each row's fields,
-// and the body's key set — "payloads" only. After F4: keys digest, payloads,
-// with digest = protocol.Digest of the payload list; rows and order unchanged.
-// A row carries its payload's manifest lines (PC-A's one line); a payload with
+// and the body's key set — digest and payloads. The digest's value is not
+// pinned here; TestNodeFeed_ReplyDigestIsTheFeedDigest pins it equal to the
+// FeedCatalog digest the heartbeat ack quotes. A row carries its payload's manifest lines (PC-A's one line); a payload with
 // none carries no key (PC-B).
 func TestFeedsPin_HandleCatalogPayloadsRequest(t *testing.T) {
 	t.Parallel()
@@ -427,15 +417,14 @@ func TestFeedsPin_HandleCatalogPayloadsRequest(t *testing.T) {
 	svc.HandleCatalogPayloadsRequest(feedsPinEnv("edge.test"))
 
 	if got, want := resp.trace(), []string{"reply " + protocol.SubjectCatalogPayloadsResponse}; !reflect.DeepEqual(got, want) {
-		t.Fatalf("trace = %v, want %v (after: same)", got, want)
+		t.Fatalf("trace = %v, want %v", got, want)
 	}
 	r := resp.events[0].payload.(*protocol.CatalogPayloadsResponse)
 
 	keys := jsonKeys(t, r)
-	wantKeys := []string{"digest", "payloads"}  // F4: was payloads only
-	afterKeys := []string{"digest", "payloads"} // F4
+	wantKeys := []string{"digest", "payloads"}
 	if !reflect.DeepEqual(keys, wantKeys) {
-		t.Errorf("catalog reply keys = %v, want %v (after F4: %v)", keys, wantKeys, afterKeys)
+		t.Errorf("catalog reply keys = %v, want %v", keys, wantKeys)
 	}
 
 	var mine []protocol.CatalogPayloadInfo
@@ -450,12 +439,12 @@ func TestFeedsPin_HandleCatalogPayloadsRequest(t *testing.T) {
 		{ID: pb.ID, Name: "PC-B", Code: "PC-B", Description: "synthetic B", UOPCapacity: 24},
 	}
 	if !reflect.DeepEqual(mine, want) {
-		t.Errorf("catalog rows = %+v, want %+v in code order (after: same)", mine, want)
+		t.Errorf("catalog rows = %+v, want %+v in code order", mine, want)
 	}
 	// Order across the whole reply is the store's (ORDER BY code).
 	for i := 1; i < len(r.Payloads); i++ {
 		if r.Payloads[i-1].Code > r.Payloads[i].Code {
-			t.Errorf("catalog not in code order at %d: %q before %q (after: same)", i, r.Payloads[i-1].Code, r.Payloads[i].Code)
+			t.Errorf("catalog not in code order at %d: %q before %q", i, r.Payloads[i-1].Code, r.Payloads[i].Code)
 		}
 	}
 }

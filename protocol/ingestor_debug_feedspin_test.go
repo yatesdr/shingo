@@ -6,15 +6,20 @@ import (
 	"testing"
 )
 
-// ingestor_debug_feedspin_test.go — which debug lines HandleRaw writes for a
-// message addressed to this station and for one addressed to another.
+// ingestor_debug_feedspin_test.go — which debug lines Ingestor.HandleRaw
+// writes for a message addressed to this station, to every station, and to
+// another station.
 //
-// Today the header line is written before the station filter, so an Edge logs
-// a header line for every message on the shared topic, most of them for other
-// stations. The raw preview line is written before the filter too.
+// The raw preview line is written for every message, before the signature
+// check and the station filter. The header line is written only for a message
+// the filter keeps, so an Edge on the shared topic does not log a header line
+// for each message it drops. A message for another station gets the raw line
+// alone and is not dispatched.
 //
-// after (C1): the header line moves after the station filter; the raw line
-// stays where it is (C1 names only the header line).
+// It forbids moving the header line back above the filter. Until "perf(edge):
+// sourcing writes only what changed, status shows the Core link, one stream
+// per page" it sat there, and every Edge logged a header line for every other
+// station's traffic.
 func TestIngestor_HeaderDebugLineVsStationFilter_FeedsPin(t *testing.T) {
 	const self = "edge.test"
 	build := func(dst string) []byte {
@@ -38,12 +43,10 @@ func TestIngestor_HeaderDebugLineVsStationFilter_FeedsPin(t *testing.T) {
 		dst        string
 		wantPrefix []string // the debug line prefixes, in order
 		dispatched bool
-		after      string
-		label      string
 	}{
-		{"this station", self, []string{"raw:", "header:"}, true, "same", "C1"},
-		{"broadcast", StationBroadcast, []string{"raw:", "header:"}, true, "same", "C1"},
-		{"another station", "edge.other", []string{"raw:"}, false, "raw: only (no header line)", "C1"}, // C1: was raw:,header:
+		{"this station", self, []string{"raw:", "header:"}, true},
+		{"broadcast", StationBroadcast, []string{"raw:", "header:"}, true},
+		{"another station", "edge.other", []string{"raw:"}, false}, // no header line
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -66,10 +69,10 @@ func TestIngestor_HeaderDebugLineVsStationFilter_FeedsPin(t *testing.T) {
 			got := strings.Join(lines, ",")
 			mu.Unlock()
 			if want := strings.Join(tc.wantPrefix, ","); got != want {
-				t.Errorf("debug lines = %q, want %q (after: %s, %s)", got, want, tc.after, tc.label)
+				t.Errorf("debug lines = %q, want %q", got, want)
 			}
 			if dispatched != tc.dispatched {
-				t.Errorf("dispatched = %v, want %v (after: same, %s)", dispatched, tc.dispatched, tc.label)
+				t.Errorf("dispatched = %v, want %v", dispatched, tc.dispatched)
 			}
 		})
 	}

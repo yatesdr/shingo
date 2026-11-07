@@ -15,18 +15,22 @@ import (
 	"shingocore/store"
 )
 
-// supply_refusal_plant_claims_feedspin_test.go — behaviour pins for the two
-// Edge → Core state handlers the versioned-feeds change touches: the supply
-// refusal router and the plant-claims mirror. Base value asserted; the
-// predicted post-change value and its label sit beside it.
+// supply_refusal_plant_claims_feedspin_test.go — behaviour pins for two
+// Edge → Core state handlers: the supply refusal router (HandleSupplyRefusal)
+// and the plant-claims mirror (HandlePlantClaims). They were written before
+// the versioned-feeds change, each case carrying the value it predicted beside
+// the value it asserted; those changes have landed, and each case asserts the
+// behaviour as it now stands.
 
 // ── HandleSupplyRefusal ────────────────────────────────────────────────────
 
 // TestFeedsPin_HandleSupplyRefusal pins store-then-broadcast: a stored refusal
-// goes to every Edge (StationBroadcast) as the same state; a store failure
-// broadcasts nothing; a message with no loader/payload is dropped before the
-// store. F3 leaves this handler alone (it adds a digest and a snapshot on the
-// heartbeat path, and fixes a comment), so every case is "after: same".
+// goes to every Edge (StationBroadcast) as the same state, with the station
+// taken from the envelope; a store failure broadcasts nothing; a message with
+// no loader/payload is dropped before the store. "fix(core,edge): a lost supply
+// refusal message heals from Core's open set" left all of that as it was (it
+// added only the FeedRefusals memo drop after the store, not asserted here);
+// the repair it added is on the heartbeat path (buildRefusalsFeed).
 func TestFeedsPin_HandleSupplyRefusal(t *testing.T) {
 	t.Parallel()
 
@@ -41,27 +45,21 @@ func TestFeedsPin_HandleSupplyRefusal(t *testing.T) {
 
 		wantTrace  []string
 		wantStored int // open rows for LN-1/PC-A after the call
-
-		after string
-		label string
 	}{
 		{
 			name:      "stored, then broadcast to every Edge",
 			state:     &protocol.SupplyRefusalState{Action: protocol.SupplyRefusalOpened, LoaderNode: "LN-1", PayloadCode: "PC-A", RefusedAt: refusedAt, RefusedBy: "op-1"},
 			wantTrace: []string{broadcast}, wantStored: 1,
-			after: "same", label: "-",
 		},
 		{
 			name: "store fails: nothing broadcast", breakStore: true,
 			state:     &protocol.SupplyRefusalState{Action: protocol.SupplyRefusalOpened, LoaderNode: "LN-1", PayloadCode: "PC-A", RefusedAt: refusedAt, RefusedBy: "op-1"},
 			wantTrace: []string{}, wantStored: -1, // table hidden; not read
-			after: "same", label: "-",
 		},
 		{
 			name:      "no loader node: dropped before the store",
 			state:     &protocol.SupplyRefusalState{Action: protocol.SupplyRefusalOpened, PayloadCode: "PC-A", RefusedAt: refusedAt},
 			wantTrace: []string{}, wantStored: 0,
-			after: "same", label: "-",
 		},
 	}
 
@@ -77,10 +75,10 @@ func TestFeedsPin_HandleSupplyRefusal(t *testing.T) {
 			svc.HandleSupplyRefusal(feedsPinEnv(st), tc.state)
 
 			if got := resp.trace(); !reflect.DeepEqual(got, tc.wantTrace) {
-				t.Fatalf("trace = %v, want %v (after: %s)", got, tc.wantTrace, tc.after)
+				t.Fatalf("trace = %v, want %v", got, tc.wantTrace)
 			}
 			if len(resp.events) == 1 && resp.events[0].payload != tc.state {
-				t.Errorf("broadcast payload = %+v, want the received state unchanged (after: same)", resp.events[0].payload)
+				t.Errorf("broadcast payload = %+v, want the received state unchanged", resp.events[0].payload)
 			}
 			if tc.wantStored < 0 {
 				return
@@ -89,14 +87,14 @@ func TestFeedsPin_HandleSupplyRefusal(t *testing.T) {
 			testutil.MustNoErr(t, db.QueryRow(`SELECT COUNT(*) FROM supply_refusals
 				WHERE loader_node = 'LN-1' AND payload_code = 'PC-A' AND closed_at IS NULL`).Scan(&n), "count open refusals")
 			if n != tc.wantStored {
-				t.Errorf("open rows = %d, want %d (after: same)", n, tc.wantStored)
+				t.Errorf("open rows = %d, want %d", n, tc.wantStored)
 			}
 			if n == 1 {
 				var station, by string
 				testutil.MustNoErr(t, db.QueryRow(`SELECT station_id, refused_by FROM supply_refusals
 					WHERE loader_node = 'LN-1' AND payload_code = 'PC-A'`).Scan(&station, &by), "read refusal row")
 				if station != st || by != "op-1" {
-					t.Errorf("stored row station %q refused_by %q, want %q / op-1 — the station comes from the envelope (after: same)", station, by, st)
+					t.Errorf("stored row station %q refused_by %q, want %q / op-1 — the station comes from the envelope", station, by, st)
 				}
 			}
 		})
@@ -125,9 +123,10 @@ func mirrorStyles(t *testing.T, db *store.DB, process string) []string {
 // TestFeedsPin_HandlePlantClaims pins the mirror's write rules: each report
 // replaces its process wholesale and leaves other processes alone; an older
 // ConfigGen than the mirror holds is ignored; zero ConfigGen always applies;
-// a report with no styles clears the process. F5 keeps all of that and adds a
-// plant_claims_reports row per process (station_id from the envelope, the
-// report's digest), deleted with the process on an empty report.
+// a report with no styles clears the process. Each report also leaves a
+// plant_claims_reports row for its process (station_id from the envelope),
+// deleted with the process on an empty report; TestHandlePlantClaims_ReportRow
+// pins the row's digest.
 func TestFeedsPin_HandlePlantClaims(t *testing.T) {
 	t.Parallel()
 
@@ -148,9 +147,6 @@ func TestFeedsPin_HandlePlantClaims(t *testing.T) {
 		// wantRows is plant_claims_reports as "process@station", sorted; nil
 		// where the case does not assert it.
 		wantRows []string
-
-		after string
-		label string
 	}{
 		{
 			name: "per-process replace drops a removed style, leaves other processes",
@@ -160,8 +156,7 @@ func TestFeedsPin_HandlePlantClaims(t *testing.T) {
 				plantClaimsReport("P1", 2, one("A", "PC-A")),
 			},
 			wantP1: []string{"A@2"}, wantP2: []string{"X@1"},
-			wantRows: []string{"P1@edge.test", "P2@edge.test"}, // F5
-			after:    "same, plus a report row per process (F5)", label: "F5",
+			wantRows: []string{"P1@edge.test", "P2@edge.test"},
 		},
 		{
 			name: "older ConfigGen is ignored",
@@ -170,7 +165,6 @@ func TestFeedsPin_HandlePlantClaims(t *testing.T) {
 				plantClaimsReport("P1", 3, one("OLD", "PC-O")),
 			},
 			wantP1: []string{"NEW@5"}, wantP2: []string{},
-			after: "same", label: "-",
 		},
 		{
 			name: "zero ConfigGen always applies",
@@ -179,7 +173,6 @@ func TestFeedsPin_HandlePlantClaims(t *testing.T) {
 				plantClaimsReport("P1", 0, one("ZERO", "PC-Z")),
 			},
 			wantP1: []string{"ZERO@0"}, wantP2: []string{},
-			after: "same", label: "-",
 		},
 		{
 			name: "empty styles clears that process's mirror only",
@@ -189,8 +182,7 @@ func TestFeedsPin_HandlePlantClaims(t *testing.T) {
 				plantClaimsReport("P1", 2, nil),
 			},
 			wantP1: []string{}, wantP2: []string{"X@1"},
-			wantRows: []string{"P2@edge.test"}, // F5
-			after:    "same, and P1's plant_claims_reports row is deleted too", label: "F5",
+			wantRows: []string{"P2@edge.test"}, // P1's row deleted with its mirror
 		},
 	}
 
@@ -203,14 +195,14 @@ func TestFeedsPin_HandlePlantClaims(t *testing.T) {
 				svc.HandlePlantClaims(feedsPinEnv("edge.test"), r)
 			}
 			if got := mirrorStyles(t, db, "P1"); !reflect.DeepEqual(got, tc.wantP1) {
-				t.Errorf("P1 mirror = %v, want %v (after %s: %s)", got, tc.wantP1, tc.label, tc.after)
+				t.Errorf("P1 mirror = %v, want %v", got, tc.wantP1)
 			}
 			if got := mirrorStyles(t, db, "P2"); !reflect.DeepEqual(got, tc.wantP2) {
-				t.Errorf("P2 mirror = %v, want %v (after: same)", got, tc.wantP2)
+				t.Errorf("P2 mirror = %v, want %v", got, tc.wantP2)
 			}
 			if tc.wantRows != nil {
 				if got := reportRows(t, db); !reflect.DeepEqual(got, tc.wantRows) {
-					t.Errorf("report rows = %v, want %v (%s)", got, tc.wantRows, tc.label)
+					t.Errorf("report rows = %v, want %v", got, tc.wantRows)
 				}
 			}
 		})
@@ -231,32 +223,4 @@ func reportRows(t *testing.T, db *store.DB) []string {
 	}
 	testutil.MustNoErr(t, rows.Err(), "iterate plant_claims_reports")
 	return out
-}
-
-// TestFeedsPin_HandlePlantClaims_ReportRecord pins the per-process record F5
-// adds. At the base there was no plant_claims_reports table (Core kept no
-// record of who reported a process or what digest it carried); after F5 one
-// report from edge.test for P1 leaves exactly one row: process_id P1,
-// station_id edge.test, the report's Digest, received_at set. The ack's
-// Claims is read from it.
-func TestFeedsPin_HandlePlantClaims_ReportRecord(t *testing.T) {
-	t.Parallel()
-	db := testdb.Open(t)
-	svc := NewCoreDataService(db, &feedsPinResponder{}, service.EpochAnnounce{})
-	report := plantClaimsReport("P1", 1, []styleSpec{
-		{name: "A", claims: []claimSpec{{node: "LN-1", payload: "PC-A", allowed: []string{"PC-A"}}}},
-	})
-	report.Digest = "0123456789abcdef"
-	svc.HandlePlantClaims(feedsPinEnv("edge.test"), report)
-
-	// F5: the table exists and holds the one row (base: no table).
-	var n int
-	var station, digest string
-	var stamped bool
-	testutil.MustNoErr(t, db.QueryRow(`SELECT COUNT(*) OVER (), station_id, digest, received_at IS NOT NULL
-		FROM plant_claims_reports WHERE process_id = 'P1'`).Scan(&n, &station, &digest, &stamped), "read plant_claims_reports")
-	if n != 1 || station != "edge.test" || digest != report.Digest || !stamped {
-		t.Errorf("report row = (%d rows, station %q, digest %q, stamped %v), want 1 row from edge.test with digest %q, stamped (F5)",
-			n, station, digest, stamped, report.Digest)
-	}
 }

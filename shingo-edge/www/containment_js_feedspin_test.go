@@ -7,11 +7,12 @@ import (
 )
 
 // TestContainmentJS_FeedsPin runs the containment page's refresh pins under
-// node (static/js/pages/containment.feedspin.test.js). Flipped by F2: no poll,
-// a reload on the SSE `containment` event, and a reload that arrives while a
-// dialog is open held and applied when it closes. Each check carries its base
-// value (the 5 s poll, the baseline first poll, the modal that swallowed the
-// change) beside it.
+// node (static/js/pages/containment.feedspin.test.js): no poll, a reload on
+// the SSE `containment` event, and a reload that arrives while a dialog is
+// open held and applied when it closes. Each check carries beside it, as a
+// comment, the value before "feat(core,edge): Core sends containment, the Edge
+// reads its own copy" (the 5 s poll, the baseline first poll, the modal that
+// swallowed the change). It is the only runner of that script.
 func TestContainmentJS_FeedsPin(t *testing.T) {
 	nodePath, err := exec.LookPath("node")
 	if err != nil {

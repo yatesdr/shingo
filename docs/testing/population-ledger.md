@@ -270,3 +270,317 @@ present at the merge base is absent at the tip without a row here.
 - coverage Δ: lead (Phase 1 baseline → certification diff)
 - citations rewritten: none (the name is cited nowhere)
 - verified at: `ba1931d9` (working tree)
+
+### DUP — `TestFeedsPin_HeartbeatAndAckTTL`
+- test: `TestFeedsPin_HeartbeatAndAckTTL` · pkg `shingo/protocol` · run `-run '^TestFeedsPin_HeartbeatAndAckTTL$'` · `protocol/expiry_feedspin_test.go:18` @ `22c81558` · tags `none`
+- code: DUP (the TTL-table arm only; the test stays, rewritten)
+- assertion map: `DataTTLFor(subject) == 5m` for heartbeat, ack, register, registered (`expiry_feedspin_test.go:34-36`) → `protocol/protocol_test.go:304-307` (`TestDataTTLForSubjects`, the same four subjects at 5m, asserted `:320-321`); stamped lifetime `ExpiresAt - Timestamp == 5m` (`:42-44`) → kept, `expiry_feedspin_test.go:31-33`; a copy 2 minutes late is dispatched (`:45-47`) → kept, `:34-36`; the `ttlAfter`, `dispatchedLateAft` and `label` columns → dropped because every row's after equals its want (the TTL change landed) and only the failure messages read them. Not a whole-test DUP: the mutation `return clock.Now().UTC().After(hdr.ExpiresAt.Add(-4 * time.Minute))` in `IsExpiredHeader` reds this test alone in protocol (`expiry_feedspin_test.go:46: edge.heartbeat 2m0s late dispatched = false, want true (after F1: true)` at base, `:35` at tip); `TestDataTTLForSubjects` stays green under it.
+- mutation:
+  ```diff
+   func DataTTLFor(subject string) time.Duration {
+  +	if subject == SubjectEdgeHeartbeat {
+  +		return 90 * time.Second
+  +	}
+  ```
+  · old test red at base: `cd protocol && go test -count=1 .` → `expiry_feedspin_test.go:36: DataTTLFor(edge.heartbeat) = 1m30s, want 5m0s (after F1: 5m0s)` · survivor red at tip: same command → `protocol_test.go:321: DataTTLFor("edge.heartbeat") = 1m30s, want 5m0s` (the rewritten test also goes red: `expiry_feedspin_test.go:32: edge.heartbeat stamped lifetime = 1m30s, want 5m0s`)
+- coverage Δ: lead (Phase 1 baseline → certification diff)
+- citations rewritten: none (header rewritten; the name is cited nowhere else)
+- verified at: `d912452e` (working tree)
+
+### DUP — `TestFormatDuration_Ladder`
+- test: `TestFormatDuration_Ladder` · pkg `shingo/protocol` · run `-run '^TestFormatDuration_Ladder$'` · `protocol/fault_sentence_test.go:180` @ `22c81558` · tags `none`
+- code: DUP
+- assertion map: its ten rows (`fault_sentence_test.go:185-194`, asserted `:197-199`) → `protocol/duration_test.go` `TestFormatDuration_TheLadder`: -5s → the -3s floor `:48-49`; 0 → `:24`; 18s → `:27`; 59s → `:28` (59.999s, same band and truncation); 1m → `:29`; 3m12s and 4m07s → `:30` (247s, the zero-padded seconds) and `:31`; 45m → `:33-34` (23m, 59m, same band); 1h30m → `:35-36` (1h 00m, 2h 05m); 25h → `:38-39` (1d 00h, 3d 04h); all asserted `:42-43`.
+- mutation: a 13-mutation sweep over `FormatDuration`'s band edges and format strings: every mutation that reds the removed test reds the survivor (9 of 13); the other 4 (`<` → `<=` at 10m, 1h, 24h, and `%02dm` → `%dm`) red only the survivor. Quoted arm:
+  ```diff
+  -		return fmt.Sprintf("%dh %02dm", int(d.Hours()), int(d.Minutes())%60)
+  +		return fmt.Sprintf("%dh %02dm", int(d.Hours()), int(d.Minutes()))
+  ```
+  · old test red at base: `cd protocol && go test -count=1 -run '^(TestFormatDuration_Ladder|TestFormatDuration_TheLadder)$' .` → `fault_sentence_test.go:198: FormatDuration(1h30m0s) = "1h 90m", want "1h 30m"` · survivor red at tip: `go test -count=1 -run '^TestFormatDuration_TheLadder$' .` → `duration_test.go:43: FormatDuration(1h0m0s) = "1h 60m", want "1h 00m"`
+- coverage Δ: lead (Phase 1 baseline → certification diff)
+- citations rewritten: none (the name is cited nowhere)
+- verified at: `d912452e` (working tree)
+
+### STALE — `TestIngestor_HeaderDebugLineVsStationFilter_FeedsPin`
+- test: `TestIngestor_HeaderDebugLineVsStationFilter_FeedsPin` · pkg `shingo/protocol` · run `-run '^TestIngestor_HeaderDebugLineVsStationFilter_FeedsPin$'` · `protocol/ingestor_debug_feedspin_test.go:18` @ `22c81558` · tags `none`
+- code: STALE
+- assertion map: debug-line prefixes (`:68`) → the same comparison, `:71`, message trimmed; dispatched (`:71`) → the same, `:74`. The header said the header line is written before the station filter; at the tip `Ingestor.HandleRaw` writes it after.
+- mutation: no assertion change; header diff (the `after`/`label` columns had no reader but the messages)
+- coverage Δ: lead (Phase 1 baseline → certification diff)
+- citations rewritten: none
+- verified at: `d912452e` (working tree)
+
+### STALE — `TestFeedsPin_HandleEdgeHeartbeat`
+- test: `TestFeedsPin_HandleEdgeHeartbeat` · pkg `shingocore/messaging` · run `-run '^TestFeedsPin_HandleEdgeHeartbeat$'` · `shingo-core/messaging/core_data_service_feedspin_test.go:110` @ `22c81558` · tags `docker`
+- code: STALE
+- assertion map: every comparison kept unchanged (trace, register request, the no-ack branch, ack keys, station_id, timezone, server_ts, registry row); only the `afterTrace`/`afterAckKeys`/`label` fields, identical to the `want*` fields in every row, and the message text that printed them are gone. The doc's "today nothing at all is sent" on the error path is false: the handler acks.
+- mutation: no assertion change; header diff
+- coverage Δ: lead (Phase 1 baseline → certification diff)
+- citations rewritten: none
+- verified at: `d912452e` (working tree)
+
+### STALE — `TestFeedsPin_HandleNodeListRequest_Scope`
+- test: `TestFeedsPin_HandleNodeListRequest_Scope` · pkg `shingocore/messaging` · run `-run '^TestFeedsPin_HandleNodeListRequest_Scope$'` · `shingo-core/messaging/core_data_service_feedspin_test.go:261` @ `22c81558` · tags `docker`
+- code: STALE
+- assertion map: replies count, event subject, wantExact and wantHas kept unchanged; only the `afterReplies`/`label` fields (identical in every row) and their message text are gone.
+- mutation: no assertion change; header diff
+- coverage Δ: lead (Phase 1 baseline → certification diff)
+- citations rewritten: none
+- verified at: `d912452e` (working tree)
+
+### STALE — `TestFeedsPin_HandleNodeListRequest_GeometryAndDigest`
+- test: `TestFeedsPin_HandleNodeListRequest_GeometryAndDigest` · pkg `shingocore/messaging` · run `-run '^TestFeedsPin_HandleNodeListRequest_GeometryAndDigest$'` · `shingo-core/messaging/core_data_service_feedspin_test.go:344` @ `22c81558` · tags `docker`
+- code: STALE
+- assertion map: geometry, scene_revision, digest equals `NodesDigest`, digest stable across replies: kept unchanged. The doc's "no digest today" and `protocol.Digest` are replaced by the `NodesDigest(Nodes, Loaders, PayloadBinTypes, Family)` it asserts.
+- mutation: no assertion change; header diff
+- coverage Δ: lead (Phase 1 baseline → certification diff)
+- citations rewritten: none
+- verified at: `d912452e` (working tree)
+
+### STALE — `TestFeedsPin_HandleCatalogPayloadsRequest`
+- test: `TestFeedsPin_HandleCatalogPayloadsRequest` · pkg `shingocore/messaging` · run `-run '^TestFeedsPin_HandleCatalogPayloadsRequest$'` · `shingo-core/messaging/core_data_service_feedspin_test.go:412` @ `22c81558` · tags `docker`
+- code: STALE
+- assertion map: trace, key set {digest, payloads}, rows and code order kept unchanged; `afterKeys`, identical to `wantKeys`, is gone. The doc's "payloads only" key set is corrected.
+- mutation: no assertion change; header diff
+- coverage Δ: lead (Phase 1 baseline → certification diff)
+- citations rewritten: none
+- verified at: `d912452e` (working tree)
+
+### STALE — `TestFeedsPin_ListOpenSupplyRefusalsCallers`
+- test: `TestFeedsPin_ListOpenSupplyRefusalsCallers` · pkg `shingocore/messaging` · run `-run '^TestFeedsPin_ListOpenSupplyRefusalsCallers$'` · `shingo-core/messaging/supply_refusal_callers_feedspin_test.go:22` @ `22c81558` · tags `none`
+- code: STALE
+- assertion map: callers == `["../messaging/feeds.go"]` (`:51`) → the same comparison (`:55`), message trimmed; the header now names `buildRefusalsFeed` as the one non-test caller.
+- mutation: no assertion change; header diff
+- coverage Δ: lead (Phase 1 baseline → certification diff)
+- citations rewritten: none
+- verified at: `d912452e` (working tree)
+
+### STALE — `TestFeedsPin_HandleSupplyRefusal`
+- test: `TestFeedsPin_HandleSupplyRefusal` · pkg `shingocore/messaging` · run `-run '^TestFeedsPin_HandleSupplyRefusal$'` · `shingo-core/messaging/supply_refusal_plant_claims_feedspin_test.go:30` @ `22c81558` · tags `docker`
+- code: STALE
+- assertion map: trace, payload identity, open rows, stored station/refused_by kept unchanged; the `after`/`label` columns and four "(after: same)" message suffixes are gone.
+- mutation: no assertion change; header diff
+- coverage Δ: lead (Phase 1 baseline → certification diff)
+- citations rewritten: none
+- verified at: `d912452e` (working tree)
+
+### STALE — `TestFeedsPin_HandlePlantClaims`
+- test: `TestFeedsPin_HandlePlantClaims` · pkg `shingocore/messaging` · run `-run '^TestFeedsPin_HandlePlantClaims$'` · `shingo-core/messaging/supply_refusal_plant_claims_feedspin_test.go:131` @ `22c81558` · tags `docker`
+- code: STALE
+- assertion map: P1 mirror, P2 mirror and wantRows kept unchanged; the `after`/`label` columns and the "F5" message suffixes are gone.
+- mutation: no assertion change; header diff
+- coverage Δ: lead (Phase 1 baseline → certification diff)
+- citations rewritten: none
+- verified at: `d912452e` (working tree)
+
+### DUP — `TestFeedsPin_HandlePlantClaims_ReportRecord`
+- test: `TestFeedsPin_HandlePlantClaims_ReportRecord` · pkg `shingocore/messaging` · run `-run '^TestFeedsPin_HandlePlantClaims_ReportRecord$'` · `shingo-core/messaging/supply_refusal_plant_claims_feedspin_test.go:242` @ `22c81558` · tags `docker`
+- code: DUP
+- assertion map (one condition, `:258`): the row exists, once (the Scan at `:256-257`) → `shingo-core/messaging/plant_claims_reports_test.go:58` (`TestHandlePlantClaims_ReportRow` step 0, P1 row `edge.test/d1`; `reportRow` returns "" with no row; more than one cannot happen, `process_id` is the primary key); station == edge.test → `:58`; digest == report.Digest → `:58`; `received_at IS NOT NULL` → dropped because the column is `NOT NULL` and `RecordPlantClaimsReport` writes it on insert and update, so a row that exists has it.
+- mutation:
+  ```diff
+  -	prev, err := s.db.RecordPlantClaimsReport(report.ProcessID, station, report.Digest, clock.Now().UTC())
+  +	prev, err := s.db.RecordPlantClaimsReport(report.ProcessID, station, "", clock.Now().UTC())
+  ```
+  (`shingo-core/messaging/plant_claims_reports.go`) · old test red at base: `cd shingo-core && go test -tags docker,lockcheck -count=1 -run '^TestFeedsPin_HandlePlantClaims_ReportRecord$' ./messaging/` → `supply_refusal_plant_claims_feedspin_test.go:259: report row = (1 rows, station "edge.test", digest "", stamped true), want 1 row from edge.test with digest "0123456789abcdef", stamped (F5)` · survivor red at tip: `-run '^TestHandlePlantClaims_ReportRow$' ./messaging/` → `plant_claims_reports_test.go:59: step 0: P1 row = "edge.test/", want "edge.test/d1"`
+- coverage Δ: lead (Phase 1 baseline → certification diff)
+- citations rewritten: none (the name is cited nowhere)
+- verified at: `d912452e` (working tree)
+
+### STALE — `TestFeedsPin_EdgesPageRow`
+- test: `TestFeedsPin_EdgesPageRow` · pkg `shingocore/www` · run `-run '^TestFeedsPin_EdgesPageRow$'` · `shingo-core/www/handlers_edges_render_feedspin_test.go:21` @ `22c81558` · tags `docker`
+- code: STALE
+- assertion map: cells == want (`:52`) → the same (`:49`); no edge-unclaimed (`:55`) → the same (`:52`); `after := want` had no reader but the message.
+- mutation: no assertion change; header diff
+- coverage Δ: lead (Phase 1 baseline → certification diff)
+- citations rewritten: none
+- verified at: `d912452e` (working tree)
+
+### STALE — `TestFeedsPin_NodeListReplyApply`
+- test: `TestFeedsPin_NodeListReplyApply` · pkg `shingoedge/engine` · run `-run '^TestFeedsPin_NodeListReplyApply$'` · `shingo-edge/engine/node_list_apply_feedspin_test.go:81` @ `22c81558` · tags `none`
+- code: STALE
+- assertion map: unchanged, comments only: `:146`→`:154`, `:164`→`:172`, `:169`→`:177`, `:172`→`:180`, `:175`→`:183`
+- mutation: no assertion change; header diff
+- coverage Δ: lead (Phase 1 baseline → certification diff)
+- citations rewritten: none
+- verified at: `d912452e` (working tree)
+
+### STALE — `TestFeedsPin_EmptyLoaderSet`
+- test: `TestFeedsPin_EmptyLoaderSet` · pkg `shingoedge/engine` · run `-run '^TestFeedsPin_EmptyLoaderSet$'` · `shingo-edge/engine/node_list_apply_feedspin_test.go:185` @ `22c81558` · tags `none`
+- code: STALE
+- assertion map: unchanged, comments only: `:212`→`:220`
+- mutation: no assertion change; header diff
+- coverage Δ: lead (Phase 1 baseline → certification diff)
+- citations rewritten: none
+- verified at: `d912452e` (working tree)
+
+### STALE — `TestFeedsPin_CatalogApplyUnchangedWritesNothing`
+- test: `TestFeedsPin_CatalogApplyUnchangedWritesNothing` · pkg `shingoedge/engine` · run `-run '^TestFeedsPin_CatalogApplyUnchangedWritesNothing$'` · `shingo-edge/engine/node_list_apply_feedspin_test.go:220` @ `22c81558` · tags `none`
+- code: STALE
+- assertion map: unchanged, comments only: `:240`→`:248`
+- mutation: no assertion change; header diff
+- coverage Δ: lead (Phase 1 baseline → certification diff)
+- citations rewritten: none
+- verified at: `d912452e` (working tree)
+
+### STALE — `TestHandleSupplyRefusalState_Arms_FeedsPin`
+- test: `TestHandleSupplyRefusalState_Arms_FeedsPin` · pkg `shingoedge/engine` · run `-run '^TestHandleSupplyRefusalState_Arms_FeedsPin$'` · `shingo-edge/engine/supply_refusal_feedspin_test.go:67` @ `22c81558` · tags `none`
+- code: STALE
+- assertion map: unchanged, comments only: `:148`→`:157`, `:154`→`:163`. The header's promised GetContainment non-200 pin went with GetContainment; the header now says so.
+- mutation: no assertion change; header diff
+- coverage Δ: lead (Phase 1 baseline → certification diff)
+- citations rewritten: none
+- verified at: `d912452e` (working tree)
+
+### STALE — `TestSupplyRefusal_Emit_FeedsPin`
+- test: `TestSupplyRefusal_Emit_FeedsPin` · pkg `shingoedge/engine` · run `-run '^TestSupplyRefusal_Emit_FeedsPin$'` · `shingo-edge/engine/supply_refusal_feedspin_test.go:168` @ `22c81558` · tags `none`
+- code: STALE
+- assertion map: unchanged, comments only: `:206`→`:215`
+- mutation: no assertion change; header diff
+- coverage Δ: lead (Phase 1 baseline → certification diff)
+- citations rewritten: none
+- verified at: `d912452e` (working tree)
+
+### STALE — `TestClearOnLoad_FeedsPin`
+- test: `TestClearOnLoad_FeedsPin` · pkg `shingoedge/engine` · run `-run '^TestClearOnLoad_FeedsPin$'` · `shingo-edge/engine/supply_refusal_feedspin_test.go:220` @ `22c81558` · tags `none`
+- code: STALE
+- assertion map: unchanged, comments only: `:270`→`:279`, `:277`→`:286`
+- mutation: no assertion change; header diff
+- coverage Δ: lead (Phase 1 baseline → certification diff)
+- citations rewritten: none
+- verified at: `d912452e` (working tree)
+
+### STALE — `TestSupplyRefusal_LostAckNeverReachesLoaderEdge_FeedsPin`
+- test: `TestSupplyRefusal_LostAckNeverReachesLoaderEdge_FeedsPin` · pkg `shingoedge/engine` · run `-run '^TestSupplyRefusal_LostAckNeverReachesLoaderEdge_FeedsPin$'` · `shingo-edge/engine/supply_refusal_feedspin_test.go:296` @ `22c81558` · tags `none`
+- code: STALE (the doc now says the lost ack heals; the name, which says the opposite, is kept)
+- assertion map: unchanged, comments only: `:314`→`:326`, `:337`→`:349`, `:342`→`:354`, `:359`→`:371`
+- mutation: no assertion change; header diff
+- coverage Δ: lead (Phase 1 baseline → certification diff)
+- citations rewritten: none
+- verified at: `d912452e` (working tree)
+
+### STALE — `TestFeedsPin_HeartbeatBodyBytes`
+- test: `TestFeedsPin_HeartbeatBodyBytes` · pkg `shingoedge/messaging` · run `-run '^TestFeedsPin_HeartbeatBodyBytes$'` · `shingo-edge/messaging/heartbeat_feedspin_test.go:19` @ `22c81558` · tags `none`
+- code: STALE
+- assertion map: `:55`→`:54`, `:58`→`:57` (comparison kept; `after`/`label` columns, equal to want in every row, and their message args dropped); want literal `:31`→`:34`
+- mutation: no assertion change; header diff
+- coverage Δ: lead (Phase 1 baseline → certification diff)
+- citations rewritten: none
+- verified at: `d912452e` (working tree)
+
+### STALE — `TestFeedsPin_HeartbeatCountsActiveOrdersEveryBeat`
+- test: `TestFeedsPin_HeartbeatCountsActiveOrdersEveryBeat` · pkg `shingoedge/messaging` · run `-run '^TestFeedsPin_HeartbeatCountsActiveOrdersEveryBeat$'` · `shingo-edge/messaging/heartbeat_feedspin_test.go:68` @ `22c81558` · tags `none`
+- code: STALE
+- assertion map: `:82`→`:80`, `:89`→`:87` (comparison kept; `after`/`label` dropped); the active_orders case another lane cites as a survivor moved `:79-85`→`:77-83`
+- mutation: no assertion change; header diff
+- coverage Δ: lead (Phase 1 baseline → certification diff)
+- citations rewritten: none
+- verified at: `d912452e` (working tree)
+
+### STALE — `TestFeedsPin_NodeAndCatalogRequestBodies`
+- test: `TestFeedsPin_NodeAndCatalogRequestBodies` · pkg `shingoedge/messaging` · run `-run '^TestFeedsPin_NodeAndCatalogRequestBodies$'` · `shingo-edge/messaging/heartbeat_feedspin_test.go:97` @ `22c81558` · tags `none`
+- code: STALE
+- assertion map: `:115`→`:113`, `:118`→`:116` (comparison kept; `after`/`label` dropped). The doc now says the catalog request body is not pinned here, which has been true since the pin was written.
+- mutation: no assertion change; header diff
+- coverage Δ: lead (Phase 1 baseline → certification diff)
+- citations rewritten: none
+- verified at: `d912452e` (working tree)
+
+### STALE — `TestFeedsPin_HeartbeatLoopReasksEverySecondTick`
+- test: `TestFeedsPin_HeartbeatLoopReasksEverySecondTick` · pkg `shingoedge/messaging` · run `-run '^TestFeedsPin_HeartbeatLoopReasksEverySecondTick$'` · `shingo-edge/messaging/heartbeat_feedspin_test.go:130` @ `22c81558` · tags `none`
+- code: STALE
+- assertion map: `:134`→`:134`, `:160`→`:154` (comparison kept; `after`/`label` dropped)
+- mutation: no assertion change; header diff
+- coverage Δ: lead (Phase 1 baseline → certification diff)
+- citations rewritten: none (`messaging/heartbeat_test.go:103` cites it by its unchanged name)
+- verified at: `d912452e` (working tree)
+
+### STALE — `TestFeedsPin_PlantClaimsReportBytes`
+- test: `TestFeedsPin_PlantClaimsReportBytes` · pkg `shingoedge/messaging` · run `-run '^TestFeedsPin_PlantClaimsReportBytes$'` · `shingo-edge/messaging/plant_claims_feedspin_test.go:35` @ `22c81558` · tags `none`
+- code: STALE
+- assertion map: `:59`→`:61`, `:64`→`:66`, `:68`→`:70`, `:72`→`:74`, `:75`→`:77` (comparison kept; `label` dropped); the digest comment now names `protocol.ClaimsDigest`
+- mutation: no assertion change; header diff
+- coverage Δ: lead (Phase 1 baseline → certification diff)
+- citations rewritten: none
+- verified at: `d912452e` (working tree)
+
+### STALE — `TestFeedsPin_PlantClaimsHourlyLoop`
+- test: `TestFeedsPin_PlantClaimsHourlyLoop` · pkg `shingoedge/messaging` · run `-run '^TestFeedsPin_PlantClaimsHourlyLoop$'` · `shingo-edge/messaging/plant_claims_feedspin_test.go:88` @ `22c81558` · tags `none`
+- code: STALE
+- assertion map: `:92`→`:95`, `:107`→`:108` (comparison kept; `after`/`label` dropped)
+- mutation: no assertion change; header diff
+- coverage Δ: lead (Phase 1 baseline → certification diff)
+- citations rewritten: none
+- verified at: `d912452e` (working tree)
+
+### STALE — `TestFeedsPin_SourcingSnapshotRewrites`
+- test: `TestFeedsPin_SourcingSnapshotRewrites` · pkg `shingoedge/store` · run `-run '^TestFeedsPin_SourcingSnapshotRewrites$'` · `shingo-edge/store/sourcing_state_feedspin_test.go:26` @ `22c81558` · tags `none`
+- code: STALE
+- assertion map: `:83`→`:82`, `:87`→`:86`, `:90`→`:89`, `:94`→`:93`, `:97`→`:96`, `:101`→`:100`, `:104`→`:103` (comparison kept; `after*`/`label` collapsed into `want*`, "was N" kept as row comments)
+- mutation: no assertion change; header diff
+- coverage Δ: lead (Phase 1 baseline → certification diff)
+- citations rewritten: none
+- verified at: `d912452e` (working tree)
+
+### STALE — `TestContainmentJS_FeedsPin`
+- test: `TestContainmentJS_FeedsPin` · pkg `shingoedge/www` · run `-run '^TestContainmentJS_FeedsPin$'` · `shingo-edge/www/containment_js_feedspin_test.go:15` @ `22c81558` · tags `none`
+- code: STALE
+- assertion map: `:23`→`:24` (unchanged; doc only)
+- mutation: no assertion change; header diff
+- coverage Δ: lead (Phase 1 baseline → certification diff)
+- citations rewritten: none
+- verified at: `d912452e` (working tree)
+
+### STALE — `TestStatus_Keys_FeedsPin`
+- test: `TestStatus_Keys_FeedsPin` · pkg `shingoedge/www` · run `-run '^TestStatus_Keys_FeedsPin$'` · `shingo-edge/www/handler_status_feedspin_test.go:19` @ `22c81558` · tags `none`
+- code: STALE
+- assertion map: `:55`→`:51`, `:62`→`:56` (comparison kept; the spent prediction prose dropped from the messages)
+- mutation: no assertion change; header diff
+- coverage Δ: lead (Phase 1 baseline → certification diff)
+- citations rewritten: none
+- verified at: `d912452e` (working tree)
+
+### STALE — `TestContainmentState_FeedsPin`
+- test: `TestContainmentState_FeedsPin` · pkg `shingoedge/www` · run `-run '^TestContainmentState_FeedsPin$'` · `shingo-edge/www/handlers_containment_feedspin_test.go:214` @ `22c81558` · tags `none`
+- code: STALE
+- assertion map: `:219`→`:228`, `:223`→`:232`, `:260`→`:270` (all 11 rows' got/want kept; `base`/`label` dropped)
+- mutation: no assertion change; header diff
+- coverage Δ: lead (Phase 1 baseline → certification diff)
+- citations rewritten: none
+- verified at: `d912452e` (working tree)
+
+### STALE — `TestContainmentPage_FeedsPin`
+- test: `TestContainmentPage_FeedsPin` · pkg `shingoedge/www` · run `-run '^TestContainmentPage_FeedsPin$'` · `shingo-edge/www/handlers_containment_feedspin_test.go:268` @ `22c81558` · tags `none`
+- code: STALE
+- assertion map: `:274`→`:284`, `:295`→`:304`, `:300`→`:309` (needles/want kept; `base`/`label` dropped)
+- mutation: no assertion change; header diff
+- coverage Δ: lead (Phase 1 baseline → certification diff)
+- citations rewritten: none
+- verified at: `d912452e` (working tree)
+
+### STALE — `TestContainmentState_CoreDown_FeedsPin`
+- test: `TestContainmentState_CoreDown_FeedsPin` · pkg `shingoedge/www` · run `-run '^TestContainmentState_CoreDown_FeedsPin$'` · `shingo-edge/www/handlers_containment_feedspin_test.go:310` @ `22c81558` · tags `none`
+- code: STALE (not a DUP: the empty-containment JSON check `:318` and its section check `:322` have no survivor)
+- assertion map: `:319`→`:331`, `:323`→`:335`, `:330`→`:342`, `:345`→`:356`, `:348`→`:359`, `:351`→`:362` (conditions kept; base prose dropped from messages)
+- mutation: no assertion change; header diff
+- coverage Δ: lead (Phase 1 baseline → certification diff)
+- citations rewritten: none
+- verified at: `d912452e` (working tree)
+
+### STALE — `TestProductionRefreshTriggers_FeedsPin`
+- test: `TestProductionRefreshTriggers_FeedsPin` · pkg `shingoedge/www` · run `-run '^TestProductionRefreshTriggers_FeedsPin$'` · `shingo-edge/www/production_refresh_feedspin_test.go:37` @ `22c81558` · tags `none`
+- code: STALE (not a DUP of `TestProductionRefresh_OneStream`: the trigger list with throttles, the non-sse triggers, the handler names and the per-page rows have no survivor there)
+- assertion map: `:43`→`:44`, `:48`→`:49`, `:70`→`:68`, `:104`→`:99` (comparison kept; `after`/`label` dropped)
+- mutation: no assertion change; header diff
+- coverage Δ: lead (Phase 1 baseline → certification diff)
+- citations rewritten: none
+- verified at: `d912452e` (working tree)
+
+### STALE — `TestSSE_DebugLogReachesEveryClient_FeedsPin`
+- test: `TestSSE_DebugLogReachesEveryClient_FeedsPin` · pkg `shingoedge/www` · run `-run '^TestSSE_DebugLogReachesEveryClient_FeedsPin$'` · `shingo-edge/www/sse_debuglog_feedspin_test.go:70` @ `22c81558` · tags `none`
+- code: STALE (the name, which says the opposite of what it asserts, is kept)
+- assertion map: `:85`→`:86`, `:104`→`:103`, `:111`→`:110` (comparison kept; `after`/`label` dropped)
+- mutation: no assertion change; header diff
+- coverage Δ: lead (Phase 1 baseline → certification diff)
+- citations rewritten: none
+- verified at: `d912452e` (working tree)

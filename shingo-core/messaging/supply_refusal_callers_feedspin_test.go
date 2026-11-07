@@ -11,14 +11,17 @@ import (
 )
 
 // TestFeedsPin_ListOpenSupplyRefusalsCallers pins who calls Core's open-refusal
-// read. At the base nothing in shingo-core did: the "set Core broadcasts to the
-// edges" its comment names was never built, so a lost refusal message was never
+// read (store.DB.ListOpenSupplyRefusals): exactly one non-test caller,
+// buildRefusalsFeed in messaging/feeds.go, the FeedRefusals build whose digest
+// the heartbeat ack quotes and whose snapshot goes to an Edge that differs.
+//
+// Until "fix(core,edge): a lost supply refusal message heals from Core's open
+// set" nothing in shingo-core called it, so a lost refusal message was never
 // repaired from Core's record.
 //
-// A source-shape pin, because "who calls it" has no behaviour to drive.
-//
-// F3 (flipped): exactly one non-test caller, the refusals digest/snapshot
-// builder on the heartbeat path (messaging/feeds.go).
+// A source-shape pin, because "who calls it" has no behaviour to drive. A
+// second caller turns it red: add it to want once it is meant to read the
+// same open set.
 func TestFeedsPin_ListOpenSupplyRefusalsCallers(t *testing.T) {
 	call := regexp.MustCompile(`\.ListOpenSupplyRefusals\(`)
 	var callers []string
@@ -47,8 +50,8 @@ func TestFeedsPin_ListOpenSupplyRefusalsCallers(t *testing.T) {
 	if err != nil {
 		t.Fatalf("walk shingo-core: %v", err)
 	}
-	want := []string{"../messaging/feeds.go"} // F3; base: none
+	want := []string{"../messaging/feeds.go"} // buildRefusalsFeed
 	if !reflect.DeepEqual(callers, want) {
-		t.Errorf("ListOpenSupplyRefusals callers = %v, want %v (base: none)", callers, want)
+		t.Errorf("ListOpenSupplyRefusals callers = %v, want %v", callers, want)
 	}
 }

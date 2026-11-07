@@ -7,15 +7,14 @@ import (
 	"time"
 )
 
-// handler_status_feedspin_test.go — the key set GET /status returns today, with
+// handler_status_feedspin_test.go — the exact key set GET /status returns, with
 // a publish recorded and no read errors (the *_error keys are omitempty and
 // absent).
 //
-// after (X7): the same keys plus the approximate Core clock offset from the
-// last ack's ServerTS, seconds since the last ack, the expired-drop count
-// (protocol.ExpiredDrops), each feed's confirmedAt age, and the flagged feed
-// keys. The exact key names are X7's to choose; the pin flips to the new list
-// in X7's commit.
+// The five Core-link keys (core_clock_offset_ms, seconds_since_last_ack,
+// expired_drops, feed_confirmed_age_seconds, feed_flags) joined in
+// "perf(edge): sourcing writes only what changed, status shows the Core link,
+// one stream per page"; their values are core_link_status_test.go's.
 func TestStatus_Keys_FeedsPin(t *testing.T) {
 	h, r := newTestHandlers(t)
 	eng := h.orchestration.(*stubEngine)
@@ -30,7 +29,6 @@ func TestStatus_Keys_FeedsPin(t *testing.T) {
 	}
 	sort.Strings(got)
 
-	// X7: the five Core-link keys joined the base list.
 	want := []string{
 		"core_clock_offset_ms",
 		"dead_letters",
@@ -49,17 +47,13 @@ func TestStatus_Keys_FeedsPin(t *testing.T) {
 		"subscribers_wired",
 		"uptime_seconds",
 	}
-	// after: want + {core clock offset, seconds since last ack, expired drops,
-	// per-feed confirmedAt age, flagged keys}   (label X7)
 	if strings.Join(got, ",") != strings.Join(want, ",") {
-		t.Errorf("/status keys:\n got  %v\n want %v\n(after: plus clock offset, seconds since last ack, expired drops, "+
-			"per-feed confirmedAt age, flagged keys — X7)", got, want)
+		t.Errorf("/status keys:\n got  %v\n want %v", got, want)
 	}
-	// X7: the per-feed ages are under "feed_confirmed_age_seconds" (the pin
-	// guessed "feeds"); the other three names held.
+	// Four of the Core-link keys, by name.
 	for _, k := range []string{"expired_drops", "core_clock_offset_ms", "seconds_since_last_ack", "feed_confirmed_age_seconds"} {
 		if _, ok := body[k]; !ok {
-			t.Errorf("/status lacks %q (base: absent; X7: present)", k)
+			t.Errorf("/status lacks %q", k)
 		}
 	}
 }

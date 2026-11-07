@@ -12,13 +12,19 @@ import (
 	"shingoedge/store/processes"
 )
 
-// supply_refusal_feedspin_test.go — what the Edge does with supply refusals
-// today: the three apply arms of Core's broadcast, the message each operator
-// verb puts on the outbox, clear-on-LOAD, and the lost-ack sequence nothing
-// heals. Also GetContainment's handling of a non-200.
+// supply_refusal_feedspin_test.go — what the Edge does with supply refusals:
+// the three apply arms of Core's broadcast at another Edge's window, the
+// message each operator verb puts on the outbox, clear-on-LOAD on both LOAD
+// paths, and a lost ack healing through the refusals digest. The snapshot
+// merge's ownership rules are supply_refusal_feed_test.go's.
 //
-// Each case asserts the base value; `after` is the predicted value and `label`
-// the brief label that moves it ("same" where the label keeps it).
+// The pins were written as predictions before "fix(core,edge): a lost supply
+// refusal message heals from Core's open set" and each case now asserts the
+// landed value. The `after` and `label` columns are that prediction, read only
+// by the failure messages. The GetContainment non-200 pin this file also held
+// went with GetContainment in "refactor(engine,www): a REQUEST reads its line's
+// occupancy from the table, and the station view and the containment stamp
+// read the copies only".
 
 // refusalOutbox decodes every supply.refusal message on the outbox, in enqueue
 // order.
@@ -63,7 +69,10 @@ func refusalRow(t *testing.T, db *store.DB, loader, payload string) string {
 // keyed (loader, payload); Opened never writes ack fields even when the message
 // carries them, Acked answers only an open unanswered row, Closed deletes.
 //
-// after: every arm the same; F3 adds a separate snapshot apply beside it.
+// The loader is not one of this Edge's windows (testEngine holds no claims).
+// At its own window Opened and Closed do not apply, which is
+// TestHandleSupplyRefusalState_OwnWindowExistenceIsLocal's; the snapshot apply
+// beside these arms is ApplySupplyRefusalSnapshot.
 func TestHandleSupplyRefusalState_Arms_FeedsPin(t *testing.T) {
 	t.Parallel()
 	const loader, payload = "FP-SMN-1", "FP-PART"
@@ -148,8 +157,8 @@ func TestHandleSupplyRefusalState_Arms_FeedsPin(t *testing.T) {
 				t.Errorf("row = %q, want %q (after: %s, %s)", got, tc.want, tc.after, tc.label)
 			}
 			// An apply never writes to the outbox: the Edge does not answer Core.
-			// after: same for these arms (F3's re-emits come from the snapshot
-			// apply, not from this function)
+			// Re-emits come from ApplySupplyRefusalSnapshot, not from this
+			// function.
 			if out := refusalOutbox(t, db); len(out) != 0 {
 				t.Errorf("apply enqueued %d supply.refusal messages, want 0 (after: same, F3)", len(out))
 			}
@@ -160,11 +169,11 @@ func TestHandleSupplyRefusalState_Arms_FeedsPin(t *testing.T) {
 // TestSupplyRefusal_Emit_FeedsPin pins the message each operator verb puts on
 // the outbox: one supply.refusal row per verb, carrying the action and the
 // fields that action owns. A repeated refuse emits again (the write is
-// idempotent, the emit is not guarded); a repeated ack emits nothing.
-//
-// X1 (flipped): an undo that deleted no row emits nothing — Closed only when a
-// row went; at the base the second undo emitted Closed again. F3 keeps the
-// per-verb messages; healing rides the heartbeat.
+// idempotent, the emit is not guarded); a repeated ack emits nothing; an undo
+// that deleted no row emits nothing (Closed only when a row went). Before
+// "fix(core,edge): a lost supply refusal message heals from Core's open set"
+// the second undo emitted Closed again. A lost per-verb message heals on the
+// heartbeat, not by a re-send here.
 func TestSupplyRefusal_Emit_FeedsPin(t *testing.T) {
 	t.Parallel()
 	f := seedLoaderCard(t)
@@ -178,7 +187,7 @@ func TestSupplyRefusal_Emit_FeedsPin(t *testing.T) {
 	testutil.MustNoErr(t, f.eng.AckSupplyRefusal(f.nodeID, f.core, "PART-A", protocol.SupplyRefusalChoiceWait), "ack")
 	testutil.MustNoErr(t, f.eng.AckSupplyRefusal(f.nodeID, f.core, "PART-A", protocol.SupplyRefusalChoiceChangeover), "ack again")
 	testutil.MustNoErr(t, f.eng.UndoSupplyRefusal(f.nodeID, "PART-A"), "undo")
-	// Undo with no row emits nothing (X1; at the base it emitted Closed again).
+	// Undo with no row emits nothing (it once emitted Closed again).
 	testutil.MustNoErr(t, f.eng.UndoSupplyRefusal(f.nodeID, "PART-A"), "undo again")
 
 	out := refusalOutbox(t, f.db)
@@ -197,7 +206,7 @@ func TestSupplyRefusal_Emit_FeedsPin(t *testing.T) {
 		"opened " + f.core + " PART-A by=Bin Loader at=true",
 		"acked " + f.core + " PART-A wait " + procName + " at=true",
 		"closed " + f.core + " PART-A",
-	} // X1: the second closed is gone
+	} // one closed: the second undo deleted nothing
 	var got []string
 	for _, s := range out {
 		got = append(got, render(s))
@@ -208,15 +217,15 @@ func TestSupplyRefusal_Emit_FeedsPin(t *testing.T) {
 	}
 }
 
-// TestClearOnLoad_FeedsPin pins clear-on-LOAD (operator_bin_ops.go, the
-// DeleteSupplyRefusal after the fallback outbound): a LOAD with no L1 in
-// flight deletes the card's refusal and, since X1, emits Closed so every other
-// Edge and Core close it too (before X1 it emitted nothing). A LOAD at an
+// TestClearOnLoad_FeedsPin pins clear-on-LOAD (clearRefusalOnLoad, on both
+// LOAD paths: the fallback outbound with no L1 in flight, and the side cycle
+// confirming a delivered L1). A LOAD at a refused card deletes the refusal and
+// emits Closed so every other Edge and Core close it too; a LOAD at an
 // unrefused card emits nothing.
 //
-// The normal side cycle — LOAD confirming a delivered L1 — returned before that
-// line at the base, so the refusal survived the LOAD and nothing was emitted.
-// X1 (flipped) runs the clear on both paths.
+// Before "fix(core,edge): a lost supply refusal message heals from Core's open
+// set" the fallback deleted the refusal and emitted nothing, and the side
+// cycle returned before the clear, so the refusal survived the LOAD.
 func TestClearOnLoad_FeedsPin(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
@@ -231,7 +240,7 @@ func TestClearOnLoad_FeedsPin(t *testing.T) {
 	}{
 		{
 			name: "fallback LOAD at a refused card", refused: true,
-			wantRow: "none", wantMsgs: "closed", // X1
+			wantRow: "none", wantMsgs: "closed",
 			afterRow: "none", afterMsgs: "closed", label: "X1",
 		},
 		{
@@ -241,7 +250,7 @@ func TestClearOnLoad_FeedsPin(t *testing.T) {
 		},
 		{
 			name: "LOAD confirming a delivered L1 at a refused card", refused: true, l1: true,
-			wantRow: "none", wantMsgs: "closed", // X1
+			wantRow: "none", wantMsgs: "closed",
 			afterRow: "none", afterMsgs: "closed", label: "X1",
 		},
 	}
@@ -281,18 +290,21 @@ func TestClearOnLoad_FeedsPin(t *testing.T) {
 }
 
 // TestSupplyRefusal_LostAckNeverReachesLoaderEdge_FeedsPin pins the sequence
-// "Edge B's ack is lost, then the loader Edge receives Core's state".
+// "Edge B's ack is lost, then the loader Edge receives Core's state", and that
+// it heals: the lost ack DOES reach the loader Edge. The name is the behaviour
+// it was written to pin before "fix(core,edge): a lost supply refusal message
+// heals from Core's open set".
 //
 // Edge A owns the loader window and refuses. Core relays A's Opened to Edge B
-// (and back to A). An operator on B answers; B's Acked is enqueued on B's
-// outbox and never delivered. At the base, what Core then sent A was all it
-// had: the Opened again, so A's row never showed the answer and nothing
-// re-sent it.
+// (and back to A, where its own window's table stands). An operator on B
+// answers; B's Acked is enqueued on B's outbox and never delivered. Before the
+// heal, what Core then sent A was the Opened again, so A's row never showed the
+// answer and nothing re-sent it.
 //
-// F3 (flipped): B's heartbeat carries its refusals digest; Core's differs, B
-// re-emits Acked (it owns the ack fields while Core has the row open), and the
-// next supply.refusal_snapshot to A carries the ack, so A's row reads answered
-// and every digest converges.
+// Now B's heartbeat carries its refusals digest; Core's differs, so Core sends
+// B its open set and B re-emits Acked (it owns the ack fields while Core has
+// the row open); the next supply.refusal_snapshot to A carries the ack, so A's
+// row reads answered and every digest converges.
 func TestSupplyRefusal_LostAckNeverReachesLoaderEdge_FeedsPin(t *testing.T) {
 	t.Parallel()
 	a := seedLoaderCard(t) // the loader Edge
@@ -320,7 +332,7 @@ func TestSupplyRefusal_LostAckNeverReachesLoaderEdge_FeedsPin(t *testing.T) {
 	testutil.MustNoErr(t, engB.AckSupplyRefusal(nodeB, a.core, "PART-A", protocol.SupplyRefusalChoiceWait), "B answers")
 	lost := refusalOutbox(t, dbB)
 
-	// F3: Core holds A's refusal, unanswered. B's heartbeat quotes the digest of
+	// Core holds A's refusal, unanswered. B's heartbeat quotes the digest of
 	// its own table, which carries the answer, so it differs from Core's and
 	// Core sends B its open set; B owns the ack while Core holds the row open
 	// and re-emits Acked. Core applies it, and A's digest now differs, so Core
@@ -349,7 +361,7 @@ func TestSupplyRefusal_LostAckNeverReachesLoaderEdge_FeedsPin(t *testing.T) {
 	}{
 		{"B's row", refusalRow(t, dbB, a.core, "PART-A"), "open by=Bin Loader ack=wait/FP-CELL-B", "same", "F3"},
 		{"B's Acked enqueued once", itoa(int64(len(lost))), "1", "same; re-emitted on a refusals digest mismatch", "F3"},
-		{"A's row after Core's state", refusalRow(t, a.db, a.core, "PART-A"), "open by=Bin Loader ack=wait/FP-CELL-B", "open by=Bin Loader ack=wait/FP-CELL-B (from supply.refusal_snapshot)", "F3"}, // F3
+		{"A's row after Core's state", refusalRow(t, a.db, a.core, "PART-A"), "open by=Bin Loader ack=wait/FP-CELL-B", "open by=Bin Loader ack=wait/FP-CELL-B (from supply.refusal_snapshot)", "F3"},
 		{"A emits nothing on apply", itoa(int64(len(refusalOutbox(t, a.db)) - 1)), "0", "same", "F3"},
 		{"A's digest equals Core's", feedsPinBool(a.eng.FeedDigests()[protocol.FeedRefusals] == coreDigest()), "true", "same", "F3"},
 		{"B's digest equals Core's", feedsPinBool(engB.FeedDigests()[protocol.FeedRefusals] == coreDigest()), "true", "same", "F3"},

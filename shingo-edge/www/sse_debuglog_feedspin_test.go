@@ -10,14 +10,15 @@ import (
 	"time"
 )
 
-// sse_debuglog_feedspin_test.go — who receives a debug-log frame on /events.
+// sse_debuglog_feedspin_test.go — who receives a debug-log frame on /events:
+// only a client that connected with ?debug=1 (HandleSSE sets sseClient.debug
+// from the query); durable topics still reach every client.
 //
-// Today every connected client does: the topic is lossy (its own shallow
-// queue) but not opt-in, so every page holding /events open — Production,
-// Manual Order, Diagnostics, the station boards — receives every debug line.
-//
-// after (C1): only a client that connected with ?debug=1 receives debug-log;
-// durable topics still reach every client.
+// Before "perf(edge): sourcing writes only what changed, status shows the Core
+// link, one stream per page" the topic was lossy (its own shallow queue) but
+// not opt-in, so every page holding /events open — Production, Manual Order,
+// Diagnostics, the station boards — received every debug line. The test's name
+// is that behaviour, which it was written to pin.
 
 // sseEventNames opens /events on srv and streams the `event:` names it
 // receives until ctx ends.
@@ -93,22 +94,20 @@ func TestSSE_DebugLogReachesEveryClient_FeedsPin(t *testing.T) {
 		ch     <-chan string
 		event  string
 		want   bool
-		after  bool
-		label  string
 	}{
-		{"/events", plain, "debug-log", false, false, "C1"}, // C1: was true
-		{"/events?debug=1", debug, "debug-log", true, true, "C1"},
+		{"/events", plain, "debug-log", false}, // was true
+		{"/events?debug=1", debug, "debug-log", true},
 	}
 	for _, c := range cases {
 		if got := waitEvent(c.ch, c.event, 2*time.Second); got != c.want {
-			t.Errorf("%s received %s = %v, want %v (after: %v, %s)", c.client, c.event, got, c.want, c.after, c.label)
+			t.Errorf("%s received %s = %v, want %v", c.client, c.event, got, c.want)
 		}
 	}
-	// Durable topics reach both clients, before and after C1.
+	// Durable topics reach both clients.
 	hub.Broadcast(SSEEvent{Type: "order-update", Data: map[string]int{"id": 1}})
 	for name, ch := range map[string]<-chan string{"plain": plain, "debug": debug} {
 		if !waitEvent(ch, "order-update", 2*time.Second) {
-			t.Errorf("%s client did not receive order-update (after: same, C1)", name)
+			t.Errorf("%s client did not receive order-update", name)
 		}
 	}
 }

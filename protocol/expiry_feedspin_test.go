@@ -5,45 +5,34 @@ import (
 	"time"
 )
 
-// expiry_feedspin_test.go — the heartbeat and ack lifetime, pinned before the
-// versioned feeds lengthen it. TestDataTTLForSubjects keeps its own assertion
-// until the label that moves it rewrites it; this file carries the prediction.
+// expiry_feedspin_test.go — the heartbeat and ack lifetime on the wire. It was
+// written as a prediction before the versioned feeds lengthened the heartbeat
+// pair's TTL from 90 s to 5 minutes; that change has landed, and the TTL table
+// itself is TestDataTTLForSubjects'. What this file still pins, and nothing else
+// in protocol does, is the envelope end of it.
 
-// TestFeedsPin_HeartbeatAndAckTTL pins the TTL table entry, the expiry the
-// sender stamps on the envelope, and what the ingestor does with a copy two
-// minutes late — inside the predicted 5-minute budget, outside today's 90 s.
+// TestFeedsPin_HeartbeatAndAckTTL pins, for the heartbeat and register pairs,
+// the lifetime the sender stamps on the envelope and what the ingestor does with
+// a copy two minutes late: inside the 5-minute budget, so it is dispatched. A
+// copy that late was dropped while the heartbeat pair carried 90 s.
 //
 // Not parallel: a drop bumps the process-wide ExpiredDrops counter that
 // TestIngestor_ExpiredDropIsCounted measures by difference.
 func TestFeedsPin_HeartbeatAndAckTTL(t *testing.T) {
 	const late = 2 * time.Minute
-	cases := []struct {
-		subject string
-
-		ttl, ttlAfter                     time.Duration
-		dispatchedLate, dispatchedLateAft bool
-		label                             string
-	}{
-		// F1: was 90 s, and a copy 2 minutes late was dropped.
-		{SubjectEdgeHeartbeat, 5 * time.Minute, 5 * time.Minute, true, true, "F1"},
-		{SubjectEdgeHeartbeatAck, 5 * time.Minute, 5 * time.Minute, true, true, "F1"},
-		// The register pair already carries 5 minutes and does not move.
-		{SubjectEdgeRegister, 5 * time.Minute, 5 * time.Minute, true, true, "same"},
-		{SubjectEdgeRegistered, 5 * time.Minute, 5 * time.Minute, true, true, "same"},
-	}
-	for _, tc := range cases {
-		if got := DataTTLFor(tc.subject); got != tc.ttl {
-			t.Errorf("DataTTLFor(%s) = %v, want %v (after %s: %v)", tc.subject, got, tc.ttl, tc.label, tc.ttlAfter)
-		}
-		env, err := NewDataEnvelope(tc.subject, Address{Role: RoleEdge, Station: "edge.test"}, Address{Role: RoleCore}, struct{}{})
+	for _, subject := range []string{
+		SubjectEdgeHeartbeat, SubjectEdgeHeartbeatAck, SubjectEdgeRegister, SubjectEdgeRegistered,
+	} {
+		const ttl = 5 * time.Minute
+		env, err := NewDataEnvelope(subject, Address{Role: RoleEdge, Station: "edge.test"}, Address{Role: RoleCore}, struct{}{})
 		if err != nil {
-			t.Fatalf("NewDataEnvelope(%s): %v", tc.subject, err)
+			t.Fatalf("NewDataEnvelope(%s): %v", subject, err)
 		}
-		if got := env.ExpiresAt.Sub(env.Timestamp); got != tc.ttl {
-			t.Errorf("%s stamped lifetime = %v, want %v (after %s: %v)", tc.subject, got, tc.ttl, tc.label, tc.ttlAfter)
+		if got := env.ExpiresAt.Sub(env.Timestamp); got != ttl {
+			t.Errorf("%s stamped lifetime = %v, want %v", subject, got, ttl)
 		}
-		if got := dispatchedAfter(t, tc.subject, late); got != tc.dispatchedLate {
-			t.Errorf("%s %v late dispatched = %v, want %v (after %s: %v)", tc.subject, late, got, tc.dispatchedLate, tc.label, tc.dispatchedLateAft)
+		if !dispatchedAfter(t, subject, late) {
+			t.Errorf("%s %v late was not dispatched; its %v lifetime covers it", subject, late, ttl)
 		}
 	}
 }

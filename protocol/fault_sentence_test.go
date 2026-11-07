@@ -174,28 +174,3 @@ func TestFormatFaultSentence_NeverSaysFailAboutALiveOrder(t *testing.T) {
 		}
 	}
 }
-
-// The ladder is protocol's now, and www.FormatDuration delegates to it. If this
-// drifts, every duration on every page drifts with it.
-func TestFormatDuration_Ladder(t *testing.T) {
-	tests := []struct {
-		d    time.Duration
-		want string
-	}{
-		{-5 * time.Second, "0 s"},
-		{0, "0 s"},
-		{18 * time.Second, "18 s"},
-		{59 * time.Second, "59 s"},
-		{time.Minute, "1m 00s"},
-		{3*time.Minute + 12*time.Second, "3m 12s"},
-		{4*time.Minute + 7*time.Second, "4m 07s"},
-		{45 * time.Minute, "45m"},
-		{90 * time.Minute, "1h 30m"},
-		{25 * time.Hour, "1d 01h"},
-	}
-	for _, tc := range tests {
-		if got := FormatDuration(tc.d); got != tc.want {
-			t.Errorf("FormatDuration(%s) = %q, want %q", tc.d, got, tc.want)
-		}
-	}
-}

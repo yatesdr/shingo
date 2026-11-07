@@ -9,21 +9,22 @@ import (
 )
 
 // production_refresh_feedspin_test.go — which event refreshes what on the
-// Production page, and which page opens /events with which URL.
+// Production page, and which page opens /events with which URL. A source-shape
+// pin: the page's script runs too much DOM at load to drive under node without
+// a browser, so the triggers are read from the markup and the script.
 //
-// Production holds two /events streams today: htmx's sse extension
-// (sse-connect on #production-content) drives the content refresh through
-// hx-trigger, and production.js's createSSE('/events') drives the shift chart
-// and the manual-order node lists. A source-shape pin: the page's script runs
-// too much DOM at load to drive under node without a browser, so the triggers
-// are read from the markup and the script.
+// Production holds one /events stream: production.js's createSSE('/events')
+// drives the shift chart and the manual-order node lists, and fires the
+// hx-trigger events on #production-content (htmx.trigger, through
+// productionStreamHandlers in production-refresh.js). production.html opens no
+// stream of its own (no sse-connect, no hx-ext="sse"). Diagnostics opens
+// /events?debug=1; Manual Order keeps /events.
 //
-// after (C2): one stream. No sse-connect or hx-ext="sse" on production.html;
-// production.js's createSSE dispatches the events the hx-trigger lists
-// (htmx.trigger), so the same refreshes fire from it. The hx-trigger list
-// itself is unchanged in meaning.
-//
-// after (C1): Diagnostics opens /events?debug=1; the other pages keep /events.
+// Before "perf(edge): sourcing writes only what changed, status shows the Core
+// link, one stream per page" htmx's sse extension opened a second stream for
+// the content refresh and Diagnostics opened plain /events. That the
+// hx-trigger's sse: names match the forwarded events is
+// TestProductionRefresh_OneStream's.
 
 func readWWWFile(t *testing.T, parts ...string) string {
 	t.Helper()
@@ -52,10 +53,10 @@ func TestProductionRefreshTriggers_FeedsPin(t *testing.T) {
 		triggers = append(triggers, strings.TrimSpace(p))
 	}
 
-	// What the content refresh listens for. The base also listed
+	// What the content refresh listens for. The list once also held
 	// sse:order-completed, which nothing sends: the Edge broadcasts
-	// EventOrderCompleted as order-update (www/sse.go). It is gone (flipped in
-	// the edge costs commit); a completion refreshes through order-update.
+	// EventOrderCompleted as order-update (www/sse.go). It went in the change
+	// the header names; a completion refreshes through order-update.
 	wantTriggers := []string{
 		"refreshProduction from:body",
 		"refreshMaterial from:body",
@@ -63,11 +64,8 @@ func TestProductionRefreshTriggers_FeedsPin(t *testing.T) {
 		"sse:order-failed",
 		"sse:counter-update throttle:10s",
 	}
-	// after: the same refreshes, fed from production.js's one stream (C2). If
-	// C2 renames the sse: prefixed triggers to plain events dispatched by
-	// htmx.trigger, the list changes in spelling only.
 	if strings.Join(triggers, "|") != strings.Join(wantTriggers, "|") {
-		t.Errorf("hx-trigger = %q\nwant %q (after: same refreshes from one stream, C2)", triggers, wantTriggers)
+		t.Errorf("hx-trigger = %q\nwant %q", triggers, wantTriggers)
 	}
 
 	createSSEHandlers := regexp.MustCompile(`\n    (on[A-Z][A-Za-z]*): function`).FindAllStringSubmatch(js, -1)
@@ -77,31 +75,28 @@ func TestProductionRefreshTriggers_FeedsPin(t *testing.T) {
 	}
 
 	cases := []struct {
-		name  string
-		got   any
-		want  any
-		after any
-		label string
+		name string
+		got  any
+		want any
 	}{
-		// C2: the next two were true.
-		{"production.html sse-connect=\"/events\"", strings.Contains(attrs, `sse-connect="/events"`), false, false, "C2"},
-		{"production.html hx-ext=\"sse\"", strings.Contains(attrs, `hx-ext="sse"`), false, false, "C2"},
-		{"production.js createSSE('/events'", strings.Count(js, "createSSE('/events'"), 1, 1, "C2"},
-		// C2, prediction corrected: the page's own handlers are unchanged; the
-		// order-update / order-failed / counter-update
-		// forwarding is added around them by productionStreamHandlers
-		// (production-refresh.js, tested in production-refresh.test.js).
-		{"production.js createSSE handlers", strings.Join(handlers, ","), "onCounterUpdate,onCoreNodes",
-			"onCounterUpdate,onCoreNodes (forwarding wrapped around them by production-refresh.js)", "C2"},
-		// C2: was false.
-		{"production.js calls htmx.trigger", strings.Contains(js, "htmx.trigger("), true, true, "C2"},
-		// C1: was true.
-		{"diagnostics.js opens /events (no debug)", strings.Contains(readWWWFile(t, "static", "js", "pages", "diagnostics.js"), "createSSE('/events',"), false, false, "C1 (opens /events?debug=1)"},
-		{"manual-order.js opens /events", strings.Contains(readWWWFile(t, "static", "js", "pages", "manual-order.js"), "createSSE('/events',"), true, true, "C1"},
+		// The next two were true.
+		{"production.html sse-connect=\"/events\"", strings.Contains(attrs, `sse-connect="/events"`), false},
+		{"production.html hx-ext=\"sse\"", strings.Contains(attrs, `hx-ext="sse"`), false},
+		{"production.js createSSE('/events'", strings.Count(js, "createSSE('/events'"), 1},
+		// The page's own handlers; the order-update / order-failed /
+		// counter-update forwarding is wrapped around them by
+		// productionStreamHandlers (production-refresh.js, tested in
+		// production-refresh.test.js).
+		{"production.js createSSE handlers", strings.Join(handlers, ","), "onCounterUpdate,onCoreNodes"},
+		// Was false.
+		{"production.js calls htmx.trigger", strings.Contains(js, "htmx.trigger("), true},
+		// Was true: Diagnostics opens /events?debug=1.
+		{"diagnostics.js opens /events (no debug)", strings.Contains(readWWWFile(t, "static", "js", "pages", "diagnostics.js"), "createSSE('/events',"), false},
+		{"manual-order.js opens /events", strings.Contains(readWWWFile(t, "static", "js", "pages", "manual-order.js"), "createSSE('/events',"), true},
 	}
 	for _, c := range cases {
 		if c.got != c.want {
-			t.Errorf("%s = %v, want %v (after: %v, %s)", c.name, c.got, c.want, c.after, c.label)
+			t.Errorf("%s = %v, want %v", c.name, c.got, c.want)
 		}
 	}
 }

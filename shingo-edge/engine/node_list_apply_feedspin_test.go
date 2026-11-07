@@ -8,12 +8,20 @@ import (
 	"shingoedge/store"
 )
 
-// node_list_apply_feedspin_test.go — what a node-list reply and a catalog
-// reply do to the Edge, pinned before the versioned feeds make an identical
-// reply a no-op.
+// node_list_apply_feedspin_test.go — what a second node-list reply and a
+// repeated catalog reply write on the Edge: the plant generation, the
+// EventCoreNodesUpdated count, the rows touched (total_changes) and the scene
+// held. A reply carrying the digest the Edge holds moves only the scene; one
+// with no digest (an older Core) applies whole.
+//
+// The pins were written as predictions before "perf(core,edge): node list,
+// scene and catalog sent when the digest differs, not every two minutes" and
+// each case now asserts the landed value. The `after` and `label` columns are
+// that prediction, read only by the failure messages.
 //
 // applyNodeListReply is what the SubjectNodeListResponse closure in
-// cmd/shingoedge/main.go does (pinned there): since F4, eng.ApplyNodeList.
+// cmd/shingoedge/main.go does (TestFeedsPin_SubjectClosureSteps pins it):
+// eng.ApplyNodeList.
 
 func applyNodeListReply(e *Engine, resp *protocol.NodeListResponse) {
 	e.ApplyNodeList(resp)
@@ -76,8 +84,8 @@ func namesOnly() ([]protocol.ScenePointInfo, []protocol.SceneEdgeInfo) {
 
 // TestFeedsPin_NodeListReplyApply applies a first full reply, then a second
 // reply, and measures what the second one moved. The two "identical repeat"
-// cases are the same input today; after F4 the first carries a Digest equal to
-// the held one and the second (an old Core) carries none.
+// cases differ only in the digest: the first carries the one the Edge holds and
+// moves nothing; the second (an older Core) carries none and applies whole.
 func TestFeedsPin_NodeListReplyApply(t *testing.T) {
 	t.Parallel()
 	type moved struct {
@@ -95,7 +103,7 @@ func TestFeedsPin_NodeListReplyApply(t *testing.T) {
 	digest := feedspinDigest(t)
 	cases := []struct {
 		name   string
-		digest string // on both replies (F4); "" is an older Core
+		digest string // on both replies; "" is an older Core
 		second protocol.NodeListResponse
 		want   moved
 		after  moved
@@ -106,10 +114,10 @@ func TestFeedsPin_NodeListReplyApply(t *testing.T) {
 			digest: digest,
 			second: protocol.NodeListResponse{Nodes: feedspinNodes(), Loaders: feedspinLoaders(),
 				PayloadBinTypes: feedspinBinTypes(), ScenePoints: np, SceneEdges: ne, SceneRevision: "rev-1"},
-			// Before F4: SetCoreNodes bumped and emitted on every call and
-			// ReplaceCoreLoaders deleted and re-inserted every loader row
-			// (genBump 1, events 1, rowsHit true).
-			want:  moved{genBump: 0, events: 0, rowsHit: false, revision: "rev-1", pln01X: -16.929}, // F4
+			// Before the digest skip, SetCoreNodes bumped and emitted on every
+			// call and ReplaceCoreLoaders deleted and re-inserted every loader
+			// row (genBump 1, events 1, rowsHit true).
+			want:  moved{genBump: 0, events: 0, rowsHit: false, revision: "rev-1", pln01X: -16.929},
 			after: moved{genBump: 0, events: 0, rowsHit: false, revision: "rev-1", pln01X: -16.929},
 			label: "F4 (B16)",
 		},
@@ -128,8 +136,8 @@ func TestFeedsPin_NodeListReplyApply(t *testing.T) {
 			digest: digest,
 			second: protocol.NodeListResponse{Nodes: feedspinNodes(), Loaders: feedspinLoaders(),
 				PayloadBinTypes: feedspinBinTypes(), ScenePoints: pts2, SceneEdges: eds2, SceneRevision: "rev-2"},
-			// Before F4: genBump 2, events 1.
-			want:  moved{genBump: 1, events: 0, rowsHit: true, revision: "rev-2", pln01X: -16.5}, // F4
+			// Before the digest skip: genBump 2, events 1.
+			want:  moved{genBump: 1, events: 0, rowsHit: true, revision: "rev-2", pln01X: -16.5},
 			after: moved{genBump: 1, events: 0, rowsHit: true, revision: "rev-2", pln01X: -16.5},
 			label: "F4 (the scene applies; with a matching nodes digest only SetSceneGeometry bumps)",
 		},
@@ -164,7 +172,7 @@ func TestFeedsPin_NodeListReplyApply(t *testing.T) {
 				t.Errorf("second reply moved %+v, want %+v (after %s: %+v)", got, tc.want, tc.label, tc.after)
 			}
 			// The node set, the loader cache and the bin types hold the reply's
-			// values in every case, before and after.
+			// values in every case.
 			if n := e.CoreNodes(); len(n) != 2 || n["LN-2"].Name != "LN-2" {
 				t.Errorf("core nodes = %+v, want LN-1 and the bare LN-2", n)
 			}
@@ -180,8 +188,8 @@ func TestFeedsPin_NodeListReplyApply(t *testing.T) {
 
 // TestFeedsPin_EmptyLoaderSet: a reply with no loaders truncates the loader
 // cache, and the claim reconcile declines to quarantine the stored manual_swap
-// claim. after (F1): the same apply; SetCoreLoaders returns an error value
-// (nil here) and, the apply having succeeded, the empty set's digest is stored.
+// claim. That the empty set's digest is then held is
+// TestApplyNodeList_HoldsTheDigestItApplied's.
 func TestFeedsPin_EmptyLoaderSet(t *testing.T) {
 	t.Parallel()
 	db := testEngineDB(t)
@@ -215,8 +223,8 @@ func TestFeedsPin_EmptyLoaderSet(t *testing.T) {
 }
 
 // TestFeedsPin_CatalogApplyUnchangedWritesNothing: the catalog sync writes
-// its rows on first sight and nothing when the same catalog comes again.
-// after: same (F4 adds a digest beside it; the conditional upsert is kept).
+// its rows on first sight and nothing when the same catalog comes again. The
+// catalog digest held beside it is TestApplyCatalog_HoldsTheDigest's.
 func TestFeedsPin_CatalogApplyUnchangedWritesNothing(t *testing.T) {
 	t.Parallel()
 	db := testEngineDB(t)
