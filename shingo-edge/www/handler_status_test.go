@@ -8,27 +8,24 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+
+	"shingoedge/internal/testdb"
+	"shingoedge/store"
 )
 
 // seedOutboxRow enqueues one row and, when exhausted is true, drives it past
-// the retry cap so it lands in the dead-letter state. Rows are removed again on
-// cleanup because testDB is shared across this package.
-func seedOutboxRow(t *testing.T, msgType string, exhausted bool) int64 {
+// the retry cap so it lands in the dead-letter state.
+func seedOutboxRow(t *testing.T, db *store.DB, msgType string, exhausted bool) int64 {
 	t.Helper()
-	id, err := testDB.EnqueueOutbox([]byte(`{"x":1}`), msgType)
+	id, err := db.EnqueueOutbox([]byte(`{"x":1}`), msgType)
 	if err != nil {
 		t.Fatalf("enqueue outbox: %v", err)
 	}
 	if exhausted {
-		if err := testDB.MarkOutboxExhausted(id, "seeded by test"); err != nil {
+		if err := db.MarkOutboxExhausted(id, "seeded by test"); err != nil {
 			t.Fatalf("mark exhausted: %v", err)
 		}
 	}
-	t.Cleanup(func() {
-		if _, err := testDB.Exec(`DELETE FROM outbox WHERE id = ?`, id); err != nil {
-			t.Errorf("cleanup outbox row %d: %v", id, err)
-		}
-	})
 	return id
 }
 
@@ -60,13 +57,17 @@ func getStatus(t *testing.T, h *Handlers, r *chi.Mux) map[string]any {
 // permanently lost while every field on this endpoint read healthy.
 func TestStatus_ReportsDeadLettersAndLastPublish(t *testing.T) {
 	h, r := newTestHandlers(t)
+	// A database of its own: outbox_depth and dead_letters count the whole
+	// outbox, so on the package's shared one they counted every row an earlier
+	// test left pending (-shuffle 1794089637840861400: depth 17, want 1).
+	eng := h.orchestration.(*stubEngine)
+	eng.db = testdb.Open(t)
 
-	seedOutboxRow(t, "test.pending", false)
-	seedOutboxRow(t, "test.dead", true)
-	seedOutboxRow(t, "test.dead", true)
+	seedOutboxRow(t, eng.db, "test.pending", false)
+	seedOutboxRow(t, eng.db, "test.dead", true)
+	seedOutboxRow(t, eng.db, "test.dead", true)
 
 	publishedAt := time.Date(2026, 8, 21, 19, 41, 10, 0, time.UTC)
-	eng := h.orchestration.(*stubEngine)
 	eng.statusKafkaConnected = true
 	eng.statusLastPublishOK = false
 	eng.statusLastPublishAt = publishedAt
