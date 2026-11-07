@@ -92,7 +92,8 @@ type Handlers struct {
 	// goroutine reads it — a data race `gate.sh race` covers (www is one of its
 	// two packages) and a cross-test one, since the www suite runs parallel
 	// siblings. A test that wants a short window builds its own Handlers and
-	// sets this before starting the loop.
+	// sets this before starting the loop, or passes WithCoalescingWindows to
+	// NewRouter.
 	specChangeWindow time.Duration
 
 	// onPlantSpecChange is the plant-claims publisher's per-process hook and
@@ -103,6 +104,24 @@ type Handlers struct {
 	// case the loop drains the set and does nothing.
 	onPlantSpecChange    func(processID int64)
 	onPlantSpecChangeAll func()
+}
+
+// RouterOption changes the router NewRouter builds. The shipped Edge passes
+// none.
+type RouterOption func(*Handlers)
+
+// WithCoalescingWindows sets the router's two coalescing windows: how long the
+// boards' nudge waits for the rest of its burst (EventHub.nudgeWindow, shipped
+// as sseNudgeWindow) and how long a plant-claims publish does
+// (specChangeWindow, shipped as defaultSpecChangeWindow). NewRouter applies it
+// before either loop starts. A test that walks the real router's doors sets
+// both short, so it waits a multiple of them per door rather than a multiple
+// of the shipped windows. Pinned by TestNewRouter_CoalescesAQuarterSecond.
+func WithCoalescingWindows(nudge, specChange time.Duration) RouterOption {
+	return func(h *Handlers) {
+		h.eventHub.nudgeWindow = nudge
+		h.specChangeWindow = specChange
+	}
 }
 
 // NewRouter registers all HTTP endpoints for shingo-edge.
@@ -120,7 +139,7 @@ type Handlers struct {
 //
 // Auth boundary: h.adminMiddleware. Public = shop floor operator access (no login).
 // Handlers live in handlers_*.go files grouped by domain.
-func NewRouter(eng *engine.Engine, dbg *debuglog.Logger, backupSvc *backup.Service) (*Handlers, http.Handler, func()) {
+func NewRouter(eng *engine.Engine, dbg *debuglog.Logger, backupSvc *backup.Service, opts ...RouterOption) (*Handlers, http.Handler, func()) {
 	h := &Handlers{
 		engine:         eng, // ServiceAccess — narrow surface for CRUD handlers
 		orchestration:  eng, // EngineOrchestration — wide surface for flow handlers
@@ -134,6 +153,9 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger, backupSvc *backup.Servi
 		specChangeStop: make(chan struct{}),
 
 		specChangeWindow: defaultSpecChangeWindow,
+	}
+	for _, opt := range opts {
+		opt(h)
 	}
 	go h.specChangeLoop()
 

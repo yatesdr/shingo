@@ -151,8 +151,10 @@ type EventHub struct {
 	// nudge is nudgeLoop's doorbell (Nudge).
 	nudge chan struct{}
 
-	// keepalive and nudgeWindow are set by NewEventHub; a test may shorten
-	// them on its own hub before Start.
+	// keepalive and nudgeWindow are set by NewEventHub. An in-package test
+	// shortens either on a hub it built, before Start; the hub NewRouter
+	// builds takes its nudge window from WithCoalescingWindows, and its
+	// keepalive is not reachable from outside the package.
 	keepalive   time.Duration
 	nudgeWindow time.Duration
 	// toucher marks a station's screen online (StationService.Touch). Set
