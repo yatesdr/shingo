@@ -31,15 +31,27 @@ func moduleRoot(t *testing.T) string {
 // build is created empty and named uniquely — nothing crosses between them.
 var sharedInst *schemadump.Instance
 
+// startErr is why sharedInst is nil: the tests that need Postgres skip on it.
+var startErr error
+
+// TestMain starts the one Postgres. When it cannot, the binary still runs: the
+// package's untagged tests (baseline_test.go) need no database, and in the
+// gate's docker step this binary is the only place they run, so exiting here
+// would drop them along with the snapshot tests. The line printed carries the
+// SHINGO-DOCKER-DOWN prefix scripts/gate.sh greps for, and under
+// SHINGO_TEST_REQUIRE_DOCKER a failed start is a failure, as it is in testdb.
 func TestMain(m *testing.M) {
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Minute)
 	defer cancel()
 	inst, err := schemadump.Start(ctx)
 	if err != nil {
-		// Not a failure of the schema — no docker. Same verdict the per-test
-		// start() helper gives, stated once for the whole binary.
-		fmt.Fprintf(os.Stderr, "schemadump: skipping (cannot start postgres): %v\n", err)
-		os.Exit(0)
+		if os.Getenv("SHINGO_TEST_REQUIRE_DOCKER") != "" {
+			fmt.Fprintf(os.Stderr, "SHINGO-DOCKER-DOWN (required): schemadump: start postgres: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Fprintf(os.Stderr, "SHINGO-DOCKER-DOWN: skipping integration tests: schemadump: start postgres: %v\n", err)
+		startErr = err
+		os.Exit(m.Run())
 	}
 	sharedInst = inst
 	code := m.Run()
@@ -163,6 +175,9 @@ func TestSchemaConvergesAcrossVintages(t *testing.T) {
 
 func start(ctx context.Context, t *testing.T) *schemadump.Instance {
 	t.Helper()
+	if startErr != nil {
+		t.Skipf("no postgres: %v", startErr)
+	}
 	if sharedInst == nil {
 		t.Fatal("TestMain did not start the shared instance")
 	}

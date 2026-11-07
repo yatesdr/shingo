@@ -291,16 +291,19 @@ step_lint() {
 # constraint — so `go test -tags=docker ./...` runs every test the untagged run
 # would, plus the docker ones.
 #
-# VERIFIED against `go test -list` rather than reasoned about: shingo-core's
-# engine lists 37 tests untagged and 264 with the tag, rds 154 and 154,
-# store/orders 1 and 28 — and in each, zero tests present untagged and absent
-# with the tag. No docker-tagged file defines TestMain or init() either, so the
-# tag does not change how the untagged tests get set up.
+# The property is structural, so no count proves it: `go test -list` per
+# package shows every untagged test again under the tag (shingo-core's engine:
+# 87 untagged, 738 tagged), and the `!docker` search below keeps it true.
 #
-# So running both duplicates 1,929 tests, and cold it duplicates a whole second
-# compile of shingo-core — 21s on this host against 43s for the docker-tagged
-# one. protocol and shared carry no docker tests and are still run here; they
-# are 185 tests and about two seconds.
+# A docker-tagged TestMain can still break it, by deciding whether the untagged
+# tests run at all. internal/schemadump has one: when its Postgres will not
+# start it runs the binary anyway (Postgres tests skipped) and prints the
+# SHINGO-DOCKER-DOWN line step_docker refuses, rather than exiting 0 with its
+# untagged tests unrun. A new one must do the same.
+#
+# So running both duplicates every untagged test in shingo-core and
+# integration, and cold it duplicates a whole second compile of shingo-core.
+# protocol, shared and shingo-edge carry no docker tests and run here.
 #
 # THE `!docker` SEARCH IS THE ENTIRE SAFETY OF THIS. The moment one file
 # excludes itself from the docker build, the superset property is false and
