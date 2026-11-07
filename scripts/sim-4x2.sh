@@ -12,7 +12,8 @@
 #             counter: the prepay profile (a landed cart reads L low until the line refills)
 #   S2 [red]  changeover RUN->ALT; the carts land; the drain program change to 1002 before anyone
 #             cuts over: the declaration completes it on a green gate within ~60 sim-s. `red`
-#             holds the legs back, so the gate is red and the first counted ALT part forces it
+#             starts it with the legs held back (as S7 does), so the gate is red and the first
+#             counted ALT part forces it
 #   S3        changeover RUN->ALT; "Mark as running" ALT at the landing while the PLC still says
 #             1001; then the drain program change: no switch back to RUN, no hold
 #   S4        no changeover, both styles pinned: the FORCED program change to 1002 under RUN;
@@ -21,12 +22,16 @@
 #   S5        the forced program change to 1003, which no style pins: every stroke's draw held;
 #             Charge one (preview first), Write off another
 #   S6        positions 1-3 on the station counter, 4-5 on the cell counter; RUN->ALT
-#   S7        legs held, the Edge restarts mid-changeover; the forced program change; the holds
-#             survive a second restart; the legs land and nothing is charged twice
+#   S7        the forced program change to 1003 holds its draws, then back to 1001; Core holds
+#             every create from a gap between the mirror positions' swaps, the line pauses its
+#             loading and drains, and START goes in with its legs held; the Edge restarts
+#             mid-changeover and loading resumes; the forced program change to 1002; the holds
+#             survive both restarts; the legs land and nothing is charged twice
 #   S8        the PLC moves its count to the sibling slot Prod_Counter_02 (CATID_02 reads 1001;
 #             Prod_Counter_01 stops): the strip's red "counts on Prod_Counter_02" item within the
-#             Edge's slot watch (a pass a WALL minute; two when the move falls mid-pass), the click
-#             re-points the counter; the record lacks what _02 counted before it, the carts nothing
+#             Edge's slot watch (a pass every 60 sim-s; two when the move falls mid-pass), the
+#             click re-points the counter from _02's count before it rose: the record equals the
+#             parts the line counted out (no gap), the carts lack nothing
 #
 # It brings the stack up from nothing as scripts/kanban-rig.sh does (down -v, a fresh sim anchor,
 # build, seed with Core stopped), sets the PLC's CATID to 1001, drives the shape over Edge and
@@ -37,7 +42,9 @@
 #
 # A run owns the stack: it refuses while shingo-dev has containers running, because its first
 # act is `down -v`. SIM_4X2_REPLACE=1 says the running stack is yours to drop. It takes the gate
-# lock (scripts/gate-lock.sh), so a gate and a run never overlap.
+# lock (scripts/gate-lock.sh), so a gate and a run never overlap. INT, TERM or HUP stops the run:
+# it kills what it started (its docker compose included), releases the lock and leaves the stack
+# up.
 #
 # Env: SIM_4X2_REPLACE, SIM_4X2_NO_BUILD=1 (reuse the images), SIM_4X2_OUT (default
 #      ../sim-4x2-runs/<shape>-<stamp>), SIM_4X2_TICKS (one S1 window, default 40), SHINGO_BIND.
@@ -67,7 +74,7 @@ DRAIN_S=$(( LINE_DEPTH * TICK_S ))  # a drain change lands once the line has cou
 DECLARE_S=60                        # the CATID monitor's stability window before it acts
 RUN_TICKS="${SIM_4X2_TICKS:-40}"    # one S1 window
 LAND_WALL=300                       # wall budget for a changeover's carts to land
-SLOT_WATCH_WALL=60                  # the Edge's slot watch: a pass a WALL minute, not sim-paced
+SLOT_WATCH_S=60                     # the Edge's slot watch: a pass every 60 sim-s
 
 CORE=http://127.0.0.1:8083
 EDGE=http://127.0.0.1:8081
@@ -100,7 +107,36 @@ dc() { docker compose -p "$PROJECT" -f docker-compose.dev.yml "$@"; }
 say() { echo "$(date -u +%H:%M:%SZ) +$(( $(date +%s) - ${START_S:-$(date +%s)} ))s $*" | tee -a "$OUT/log.txt"; }
 die() { say "STOP: $*"; exit 3; }
 wall() { echo $(( ($1 + SIM_SPEED - 1) / SIM_SPEED )); }
-sim_s() { sleep "$(wall "$1")"; }
+sim_s() { nap "$(wall "$1")"; }
+
+# ── ITS CHILDREN ─────────────────────────────────────────────────────────────────────────
+# bash runs a trap only between commands, so a foreground `sleep 120` or `docker compose build`
+# holds a TERM until it ends. A long command runs as a job the shell waits on (bg): `wait`
+# returns at the signal, and the trap (THE RUN, below) kills the job.
+CHILD=""
+bg() { "$@" & CHILD=$!; wait "$CHILD"; local rc=$?; CHILD=""; return "$rc"; }
+nap() { bg sleep "$1"; }
+# descendants <pid>: its children and theirs, off `ps -ef` (pid and ppid are its second and
+# third columns in Git Bash and on Linux alike).
+descendants() {
+  ps -ef | awk -v root="$1" 'NR > 1 { kids[$3] = kids[$3] " " $2 }
+    END { n = 1; q[1] = root; while (n) { p = q[n--]; m = split(kids[p], c, " "); for (i = 1; i <= m; i++) { print c[i]; q[++n] = c[i] } } }'
+}
+# kill_tree <pid>: a job and everything under it, listed before any is killed. In Git Bash
+# `docker` is Docker Desktop's sh shim, which starts docker.exe, which starts docker-compose.exe;
+# a native child outlives a kill of its MSYS parent, so on Windows each process's own Windows
+# tree also goes with taskkill.
+kill_tree() {
+  local p wp
+  # shellcheck disable=SC2046 # pids, one word each
+  for p in "$1" $(descendants "$1"); do
+    wp="$(cat "/proc/$p/winpid" 2>/dev/null)"
+    [ -n "$wp" ] && command -v taskkill >/dev/null 2>&1 && taskkill /F /T /PID "$wp" >/dev/null 2>&1
+    kill -TERM "$p" 2>/dev/null
+  done
+}
+# shellcheck disable=SC2046 # pids, one word each
+stop_children() { local p; for p in $CHILD $(jobs -p); do kill_tree "$p"; done; }
 
 # wait_for <wall seconds> <what> <predicate...>: polls every second; false, saying what it
 # waited for, on timeout.
@@ -109,7 +145,7 @@ wait_for() {
   shift 2
   while [ "$(date +%s)" -lt "$deadline" ]; do
     if eval "$*"; then say "ok: $what"; return 0; fi
-    sleep 1
+    nap 1
   done
   say "TIMED OUT after ${budget}s waiting for: $what"
   return 1
@@ -148,11 +184,14 @@ gate_word() {
 }
 
 # The fake PLC's own ledger of the line (GET /api/sim/line): loads entered, per identity, in
-# flight, the identity, the counter. It lives in the Edge process and starts empty at its boot.
+# flight, the identity, the counter, its MES struct's slots, and whether its loading is paused.
+# It lives in the Edge process and starts empty, and loading, at its boot.
 line_json() {
-  curl -s -m 10 "$EDGE/api/sim/line" | grep -oE "\"plc_name\":\"$PLC\",\"tag_name\":\"${COUNTER_TAG//./[.]}\",\"loads\":[0-9]+,\"loads_by_identity\":(null|\{[^}]*\}),\"in_flight\":[0-9]+,\"identity\":-?[0-9]+,\"counter\":-?[0-9]+"
+  curl -s -m 10 "$EDGE/api/sim/line" | grep -oE "\"plc_name\":\"$PLC\",\"tag_name\":\"${COUNTER_TAG//./[.]}\",\"loads\":[0-9]+,\"loads_by_identity\":(null|\{[^}]*\}),\"in_flight\":[0-9]+,\"identity\":-?[0-9]+,\"counter\":-?[0-9]+,\"slot\":[0-9]+,\"slots\":\[[^]]*\],\"paused\":(true|false)"
 }
 line_field() { field "$(line_json)" "$1"; }
+# line_idle: loading paused and nothing in flight, so no stroke moves the line.
+line_idle() { case "$(line_json)" in *'"in_flight":0,'*'"paused":true') return 0 ;; *) return 1 ;; esac; }
 
 # The fake's MES struct for WELD-6's line (its "slots" in GET /api/sim/line): "<n> <CATID_0n>
 # <Prod_Counter_0n>" a line, n = 1..5.
@@ -181,6 +220,13 @@ hold_ids() { holds_list | cut -d' ' -f1 | tr '\n' ' ' | sed 's/ $//'; }
 orders_at_positions() {
   edge_get /api/orders/active | grep -oE '"process_node_id":[0-9]+' | grep -cE ":($NODE_RE)\$"
 }
+# fleet_orders_at <position...>: orders at those positions already with the fleet (dispatched,
+# in transit, staged at their wait, faulted): the ones that refuse START, which cancels the rest.
+fleet_orders_at() {
+  local re="" p
+  for p in "$@"; do re="${re:+$re|}${NODE_ID[$p]}"; done
+  edge_get /api/orders/active | sed 's/},{/}\n{/g' | grep -E "\"process_node_id\":($re)," | grep -cE '"status":"(dispatched|in_transit|staged|faulted)"'
+}
 
 status() {
   local lj co=""; lj="$(line_json)"
@@ -198,7 +244,7 @@ start_changeover() {
     say "START $(style_name "$1"): $code $(last)"
     http_ok "$code" && return 0
     [ "$(date +%s)" -lt "$deadline" ] || die "START refused for 180 s"
-    sleep 5
+    nap 5
   done
 }
 
@@ -215,6 +261,18 @@ program_change() {
   local code; code="$(edge_send POST /api/sim/program-change "{\"plc_name\":\"$PLC\",\"tag_name\":\"$COUNTER_TAG\",\"value\":$1,\"mode\":\"$2\"}")"
   say "PLC program change to $1 ($2): $code $(last)"
   http_ok "$code" || die "the program change was refused"
+}
+
+# pause_loading <true|false>, written on the process's COUNTER tag: true stops the loads, the
+# line drains and its counter ticks until it is empty; false loads again. cleanup resumes a line
+# the run left paused.
+PAUSED=0
+pause_loading() {
+  local code; code="$(edge_send POST /api/sim/pause-loading "{\"plc_name\":\"$PLC\",\"tag_name\":\"$COUNTER_TAG\",\"paused\":$1}")"
+  say "PLC loading $([ "$1" = true ] && echo paused || echo resumed): $code $(last)"
+  http_ok "$code" || return 1
+  PAUSED=0; [ "$1" = true ] && PAUSED=1
+  return 0
 }
 
 # counting_slot <n>: the PLC's program counts the part on slot n of MES_WELD_6, written on the
@@ -270,7 +328,8 @@ plc_on() { [ "$(line_field identity)" = "$1" ]; }
 closed_on() { ! co_open && [ "$(active)" = "$1" ]; }
 holds_at_least() { [ "$(holds_n)" -ge "$1" ]; }
 no_holds() { [ "$(holds_n)" -eq 0 ]; }
-no_orders_at_positions() { [ "$(orders_at_positions)" -eq 0 ]; }
+# shellcheck disable=SC2086 # MIRRORS is a list of positions
+mirrors_quiet() { [ "$(fleet_orders_at $MIRRORS)" -eq 0 ]; }
 line_live() { [ "${1:-0}" -lt "$(line_field loads)" ] 2>/dev/null; }
 sim_epoch() { date -u -d "$(curl -s -m 5 "$EDGE/api/sim/status" | sed -n 's/.*"sim_now":"\([^"]*\)".*/\1/p')" +%s; }
 
@@ -289,8 +348,9 @@ sim_epoch() { date -u -d "$(curl -s -m 5 "$EDGE/api/sim/status" | sed -n 's/.*"s
 #             process, so it is read from the table. The Edge's own per-style split has no HTTP
 #             read (its /api/hourly-counts sums styles), so the Edge's T is that read: what it
 #             counted, against what Core received.
-# A window's edges are read between strokes (settle): at 10x a load reaches Core's ledger a
-# few wall seconds after the PLC counts it, longer than one of the line's ticks.
+# A window's edges are read at 1x between strokes, once Core has caught up (settle): at 10x a
+# load reaches Core's ledger a few wall seconds after the PLC counts it, longer than one of the
+# line's ticks, and after a re-point Core has been seen applying a backlog for 40 wall seconds.
 BANK_LOADS=0
 BANK_COUNTED=0
 days_around() { local o; for o in -1 0 1; do date -u -d "$1 $o day" +%Y-%m-%d; done; }
@@ -314,20 +374,64 @@ sim_speed() {
   curl -s -m 5 -X POST "$EDGE/api/sim/speed?speed=$1" >/dev/null
   curl -s -m 5 -X POST "$CORE/api/sim/speed?speed=$1" >/dev/null
 }
-# settle: both clocks to 1x (one line tick per TICK_S wall seconds), wait for the line's next
-# stroke, give the Edge's poll and Core's consumer SETTLE_WALL seconds, and return with the
-# clocks at 1x; resume puts the run's speed back once the edge is read.
-SETTLE_WALL=4
-settle() {
+# settle: both clocks to 1x (one line tick per TICK_S wall seconds), and the edge is read in a
+# gap between strokes once Core has caught up: after the line's next stroke, once SETTLE_MIN_MS
+# have passed (at 1x the Edge hands a stroke's draws to its outbox up to ~5 s after its poll
+# reads it), the five positions' applied draws in Core (their bin_uop_delta rows) and the line
+# have stood still for SETTLE_QUIET_MS, and the Edge's /status has nothing waiting to go
+# (outbox_depth 0, production_ticks_pending 0). A gap ends SETTLE_BY wall seconds after its
+# stroke, before the next stroke's draws can reach Core; one that does not settle passes to the
+# next, up to SETTLE_GAPS, and the log says so. It returns with the clocks at 1x; resume puts the
+# run's speed back once the edge is read.
+SETTLE_QUIET_MS=2000
+SETTLE_MIN_MS=7000
+SETTLE_BY=$(( TICK_S - 2 ))
+SETTLE_GAPS=5
+ms() { date +%s%3N; }
+draw_rows() {
+  sql "SELECT count(*) FROM bin_uop_ledger l JOIN nodes n ON n.id = l.node_id WHERE l.op = 'bin_uop_delta' AND n.name IN ($POS_SQL)"
+}
+edge_backlog() {
+  local s; s="$(curl -s -m 5 "$EDGE/status")"
+  echo "outbox $(field "$s" outbox_depth), ticks pending $(field "$s" production_ticks_pending)"
+}
+# next_stroke: returns at the line's next stroke, or after TICK_S + 8 wall seconds of none (a
+# stalled machine); at once when the line is idle, whose state no stroke moves.
+next_stroke() {
   local before deadline
-  sim_speed 1
+  line_idle && return 0
   before="$(line_json)"
   deadline=$(( $(date +%s) + TICK_S + 8 ))
-  while [ "$(date +%s)" -lt "$deadline" ] && [ "$(line_json)" = "$before" ]; do sleep 0.3; done
-  sleep "$SETTLE_WALL"
+  while [ "$(date +%s)" -lt "$deadline" ] && [ "$(line_json)" = "$before" ]; do nap 0.3; done
+}
+settle() {
+  local gap stroke sig last since backlog el
+  sim_speed 1
+  for (( gap = 1; gap <= SETTLE_GAPS; gap++ )); do
+    next_stroke
+    stroke=$(ms) last="" since=0 backlog=""
+    while :; do
+      sig="$(line_json) $(draw_rows)"
+      backlog="$(edge_backlog)"
+      el=$(( $(ms) - stroke ))
+      [ "$el" -le $(( SETTLE_BY * 1000 )) ] || break
+      [ "$sig" = "$last" ] || { last=$sig; since=$(ms); }
+      if [ "$el" -ge "$SETTLE_MIN_MS" ] && [ "$backlog" = "outbox 0, ticks pending 0" ] \
+          && [ $(( $(ms) - since )) -ge "$SETTLE_QUIET_MS" ]; then
+        say "the edge is read at 1x, settled $(( el / 1000 )).$(( el % 1000 / 100 )) s after a stroke$([ "$gap" -eq 1 ] || echo " (gap $gap)")"
+        return 0
+      fi
+      nap 0.3
+    done
+    say "not settled ${SETTLE_BY} s after a stroke ($backlog; Core's draw rows at the positions $(draw_rows)): the next gap"
+  done
+  say "NOT SETTLED in $SETTLE_GAPS gaps: this edge is read as it stands"
 }
 resume() { sim_speed "$SIM_SPEED"; }
 part_events() { sql "SELECT COALESCE(max(id), 0) FROM cell_part_events"; }
+# record <cell_part_events id>: the production ticks Core received for WELD-6 past that row,
+# "<style id> <parts>" a style.
+record() { sql "SELECT style_id, sum(delta) FROM cell_part_events WHERE process_id = $PID AND id > ${1:-0} GROUP BY style_id" | tr '|' ' '; }
 
 mark() {
   local lj; settle; lj="$(line_json)"
@@ -372,7 +476,7 @@ ledger() {
   carts=$(( ${drawn:-0} - (${piles:-0} - ${W_PILES:-0}) ))
   n="$(holds_n)"
   q="$(holds_list | awk '{s += $2} END {print s + 0}')"
-  core="$(sql "SELECT style_id, sum(delta) FROM cell_part_events WHERE process_id = $PID AND id > ${W_PARTS:-0} GROUP BY style_id" | tr '|' ' ')"
+  core="$(record "${W_PARTS:-0}")"
   a="$(printf '%s\n' "$core" | awk -v id="$RUN_ID" '$1 == id {print $2}')"
   b="$(printf '%s\n' "$core" | awk -v id="$ALT_ID" '$1 == id {print $2}')"
   other="$(printf '%s\n' "$core" | awk -v r="$RUN_ID" -v x="$ALT_ID" '$1 != r && $1 != x {s += $2} END {print s + 0}')"
@@ -382,6 +486,7 @@ ledger() {
   t=$(( $(edge_total $dates) - W_EDGE ))
   say "draws at the five positions: carts $carts (Core's deltas $drawn, piles +$(( ${piles:-0} - ${W_PILES:-0} ))); expected $expect = $ns station-counted x $dl loads + $nc cell-counted x $counted counted out; $n holds open, qty $q"
   [ "$other" -eq 0 ] || say "Core received $other more under neither style"
+  say "the record: $(( ${a:-0} + ${b:-0} + other )) parts against the $counted the line counted out"
   echo "carts Σ $carts = loads Σ $expect; holds open $n; record RUN ${a:-0} / ALT ${b:-0}; Core received ${a:-0}+${b:-0} of the Edge's $t" | tee -a "$OUT/log.txt"
   resume
 }
@@ -393,32 +498,33 @@ bring_up() {
     echo "Set SIM_4X2_REPLACE=1 if that stack is yours to drop." >&2
     exit 3
   fi
-  dc --profile tools down -v --remove-orphans >"$OUT/down.log" 2>&1
+  bg dc --profile tools down -v --remove-orphans >"$OUT/down.log" 2>&1
   bash scripts/sim-anchor.sh mint >>"$OUT/log.txt"
   if [ "${SIM_4X2_NO_BUILD:-0}" != 1 ]; then
     say "build core edge seed"
-    dc --profile tools build core edge seed >"$OUT/build.log" 2>&1 || die "build failed, see build.log"
+    bg dc --profile tools build core edge seed >"$OUT/build.log" 2>&1 || die "build failed, see build.log"
   fi
   say "up postgres kafka core edge"
-  SHINGO_BIND="${SHINGO_BIND:-127.0.0.1}" dc up -d postgres kafka core edge >"$OUT/up.log" 2>&1 || die "up failed, see up.log"
+  SHINGO_BIND="${SHINGO_BIND:-127.0.0.1}" bg dc up -d postgres kafka core edge >"$OUT/up.log" 2>&1 || die "up failed, see up.log"
   # Core stopped across the seed: Edge migrates its database at boot and the seeder writes into
   # a migrated schema. docs/dev-env/sim.md, "Seed with Core STOPPED".
   wait_for 120 "Edge up" "curl -s -m 3 $EDGE/status >/dev/null" || die "Edge did not come up"
-  dc stop core >>"$OUT/up.log" 2>&1
+  bg dc stop core >>"$OUT/up.log" 2>&1
   say "seed $PLANT"
-  dc run --no-deps --rm seed >"$OUT/seed.log" 2>&1 || die "seed failed, see seed.log"
-  dc start core >>"$OUT/up.log" 2>&1
-  dc restart edge >>"$OUT/up.log" 2>&1
+  bg dc run --no-deps --rm seed >"$OUT/seed.log" 2>&1 || die "seed failed, see seed.log"
+  bg dc start core >>"$OUT/up.log" 2>&1
+  bg dc restart edge >>"$OUT/up.log" 2>&1
   wait_for 120 "Core up" "curl -s -m 3 $CORE/login >/dev/null" || die "Core did not come up"
   wait_for 120 "Edge up" "curl -s -m 3 $EDGE/status >/dev/null" || die "Edge did not come up"
 }
 
 # restart_edge <catid>: docker compose restart of WELD-6's Edge mid-run. The fake PLC lives in
-# it and boots at CATID 0, so the PLC's program is set back once it is up.
+# it and boots at CATID 0 with an empty line, loading, so the PLC's program is set back once it
+# is up.
 restart_edge() {
   bank
   say "restart the Edge. Look at: the changeover, its legs and the holds when it is back"
-  dc restart edge >>"$OUT/up.log" 2>&1 || die "edge restart failed, see up.log"
+  bg dc restart edge >>"$OUT/up.log" 2>&1 || die "edge restart failed, see up.log"
   wait_for 120 "Edge back" "curl -s -m 3 $EDGE/status >/dev/null" || die "Edge did not come back"
   edge_login
   wait_for 60 "WELD-6's line on the fake PLC" "[ -n \"\$(line_json)\" ]" || die "no WELD-6 line after the restart"
@@ -469,11 +575,25 @@ await_no_holds() { wait_for "$LAND_WALL" "no hold open" no_holds; }
 await_on_alt() { wait_for $(( $(wall $(( $1 + 6 * TICK_S ))) + 30 )) "$2" closed_on "$ALT_ID"; }
 
 # start_held: START to ALT with Core refusing creates, so its legs stay unlanded and its gate red.
-# A reorder in flight at a position refuses START, and holding it would hold START with it, so
-# the positions go quiet first.
+# A swap with the fleet at a mirror position refuses START, and each position keeps one staged
+# that the operator releases only once its cart is done; Core holding creates holds every cart's
+# next swap too. So Core's creates are held in a gap between the mirrors' swaps on the running
+# line (their next swaps park at Core, and START cancels those), the loading pauses at once so
+# the carts keep their parts while nothing is delivered, the line drains, and START goes in.
+# The line stays paused; the caller resumes it.
 start_held() {
-  wait_for "$LAND_WALL" "no order live at the positions" no_orders_at_positions || die "the positions never went quiet"
-  legs_held on
+  local try
+  for (( try = 1; ; try++ )); do
+    wait_for "$LAND_WALL" "no swap with the fleet at the mirror positions" mirrors_quiet || die "the mirror positions never had a gap between swaps"
+    legs_held on
+    mirrors_quiet && break
+    [ "$try" -lt 3 ] || die "a mirror position's swap reached the fleet as Core's creates were held, $try times"
+    say "a mirror position's swap reached the fleet as Core's creates were held; Core takes them again until the next gap"
+    legs_held off
+  done
+  pause_loading true || die "the pause was refused"
+  wait_for $(( $(wall "$DRAIN_S") + 10 )) "the line drained" line_idle \
+    || say "LOOK: the line stands with $(line_field in_flight) in flight: a position ran dry while Core holds creates"
   start_changeover "$ALT_ID"
   wait_for 60 "ALT's legs held back, the gate red" held_red || die "the gate did not read red"
 }
@@ -494,6 +614,7 @@ shape_S2() {
   local t0
   if [ "$VARIANT" = red ]; then
     start_held
+    pause_loading false || die "the resume was refused"
   else
     start_changeover "$ALT_ID"
     say "Look at: the legs to the mirror positions; the sim operator releases them, nobody cuts over"
@@ -540,7 +661,7 @@ watch_stays() {
     s="$(active)"; h="$(holds_n)"
     [ "$s" = "$1" ] || { say "SWITCHED to $(style_name "$s") ($3)"; status; return 1; }
     [ "$h" -gt "$most" ] && { most=$h; say "a hold opened ($3): $(hold_ids)"; }
-    sleep 2
+    nap 2
   done
   say "held $(style_name "$1") for $2 s ($3), $most holds at most"
 }
@@ -596,32 +717,53 @@ shape_S6() {
 }
 
 shape_S7() {
-  local before after id lost=""
+  say "S7 the forced change to $CATID_NONE, which no style pins: its strokes' draws are held; then back to $CATID_RUN"
+  program_change "$CATID_NONE" forced
+  await_holds 1 "holds on $CATID_NONE" || die "no hold opened"
+  program_change "$CATID_RUN" forced
+  say "the monitor confirms $CATID_RUN again"
+  sim_s $(( DECLARE_S + 2 * TICK_S ))
+  say "Core holds every create from a gap between the mirror positions' swaps; the line pauses its loading and drains; START to ALT with its legs held; then the Edge restarts mid-changeover"
   start_held
-  restart_edge "$CATID_RUN"
+  restart_kept "$CATID_RUN"
+  say "the fake PLC booted with the Edge, loading; the pause is lifted all the same"
+  pause_loading false || die "the resume was refused"
   status
   program_change "$CATID_ALT" forced
-  say "Look at: ALT parts count; the mirror positions still hold MIRROR-L, so their draws are held"
-  await_holds 1 "holds at the mirror positions" || die "no hold opened"
-  before="$(hold_ids)"
-  restart_edge "$CATID_ALT"
-  after="$(hold_ids)"
-  for id in $before; do case " $after " in *" $id "*) ;; *) lost="$lost $id" ;; esac; done
-  if [ -z "$lost" ]; then say "the holds survived the restart: [$before] now [$after]"; else say "LOOK: holds$lost gone after the restart: [$before] now [$after]"; fi
-  legs_held off
-  await_on_alt "$DECLARE_S" "the changeover onto ALT completed"
-  say "Look at: the legs land; each hold lands once on ALT's carts (the ledger's carts against its loads)"
-  await_no_holds
+  say "Look at: ALT parts count; with the changeover open to ALT the mirror positions' MIRROR-L carts are charged, not held; the holds on $CATID_NONE stand"
   run_ticks 4
+  restart_kept "$CATID_ALT"
+  legs_held off
+  say "Look at: Core takes the held legs and they land; the changeover completes onto ALT"
+  wait_for $(( LAND_WALL + $(wall $(( DECLARE_S + 6 * TICK_S ))) )) "the changeover onto ALT completed" closed_on "$ALT_ID"
+  say "Look at: the holds on $CATID_NONE stay open (no style runs it: a person's Charge or Write off); nothing is charged twice (the ledger's carts against its loads)"
+  run_ticks 4
+}
+
+# restart_kept <catid>: restart_edge, and the holds open before it are the ones open after it.
+restart_kept() {
+  local before after id lost=""
+  before="$(holds_list | tr '\n' ';')"
+  restart_edge "$1"
+  after="$(holds_list | tr '\n' ';')"
+  for id in $(printf '%s' "$before" | tr ';' '\n' | cut -d' ' -f1); do
+    case ";$after" in *";$id "*) ;; *) lost="$lost $id" ;; esac
+  done
+  if [ -z "$lost" ]; then say "the holds survived the restart (id qty): [$before] now [$after]"; else say "LOOK: holds$lost gone after the restart (id qty): [$before] now [$after]"; fi
 }
 
 shape_S8() {
   local t0 info parts code
   say "S8 the PLC moves its count from Prod_Counter_01 to Prod_Counter_02 of MES_WELD_6: _02 ticks from here and CATID_02 reads $CATID_RUN; Prod_Counter_01 and CATID_01 stand"
+  # A sim ticker arms each cycle at the speed of the moment, so the slot watch's pass armed while
+  # the window's edge was read at 1x comes up to SLOT_WATCH_S wall seconds later. The move waits
+  # it out; from here the watch passes at the run's speed.
+  say "the slot watch's pass armed during the 1x read takes up to $SLOT_WATCH_S wall-s; the move waits it out"
+  nap "$SLOT_WATCH_S"
   counting_slot 2
   t0=$(date +%s)
-  say "Look at: WELD-6's counter stops. The Edge's slot watch compares two reads a wall minute apart, so the pass that straddles the move can say Prod_Counter_02 rises WITH _01 (info, one pass); the next is red: the PLC counts on Prod_Counter_02"
-  wait_for $(( 2 * SLOT_WATCH_WALL + 30 )) "the strip's red counter_slot_idle item" '[ -n "$(slot_item counter_slot_idle)" ]' \
+  say "Look at: WELD-6's counter stops. The Edge's slot watch compares two reads $SLOT_WATCH_S sim-s ($(wall "$SLOT_WATCH_S") wall-s) apart, so the pass that straddles the move can say Prod_Counter_02 rises WITH _01 (info, one pass); the next is red: the PLC counts on Prod_Counter_02"
+  wait_for $(( 2 * $(wall "$SLOT_WATCH_S") + 10 )) "the strip's red counter_slot_idle item" '[ -n "$(slot_item counter_slot_idle)" ]' \
     || die "no counter_slot_idle item in two slot-watch passes"
   info="$(slot_item counter_slot_idle | grep -oE '"headline":"[^"]*"')"
   say "the item, $(( $(date +%s) - t0 )) wall-s after the move: $info"
@@ -630,8 +772,8 @@ shape_S8() {
   say "the click, count $COUNTER_TAG2: $code $(last)"
   http_ok "$code" || die "the re-point was refused"
   [ "$(counter_tag)" = "$COUNTER_TAG2" ] || die "$PROC counts $(counter_tag) after the click, not $COUNTER_TAG2"
-  say "the record's gap: about ${parts:-?} parts counted on Prod_Counter_02 before the click, $(( $(date +%s) - t0 )) wall-s, read by no point; the carts, at the load station, lack none"
-  say "Look at: the item gone; the record and Core's heartbeat resume under RUN at the next WarLink scan; the first part on _02 carries CATID_02's $CATID_RUN (no HTTP read: S8 in integration/scenarios asserts it)"
+  say "the click came $(( $(date +%s) - t0 )) wall-s after the move, with about ${parts:-?} parts on Prod_Counter_02: the re-point counts from _02's count before it rose, so the record keeps them; the carts, at the load station, lack none"
+  say "Look at: the item gone; the record and Core's heartbeat resume under RUN at the next WarLink scan; the first part on _02 carries CATID_02's $CATID_RUN (no HTTP read: S8 in integration/scenarios asserts it); the ledger's record equals the parts the line counted out"
   run_ticks 10
   status
 }
@@ -640,11 +782,25 @@ shape_S8() {
 . scripts/gate-lock.sh
 gate_lock_acquire "sim-4x2 $SHAPE $VARIANT" || { echo "no gate lock" >&2; exit 3; }
 cleanup() {
+  stop_children
   [ "$LEGS_HELD" = 1 ] && legs_held off
+  [ "$PAUSED" = 1 ] && pause_loading false
   rm -f "$EDGE_COOKIES" "$OUT/.last"
   gate_lock_release
 }
+# on_signal <name> <status>: the run stops at INT, TERM or HUP (a person's Ctrl-C, a driver
+# stopping it, a closed terminal). Its jobs are killed and exit runs cleanup (Core's creates and
+# the line's loading back on); the stack stays up. A Windows TerminateProcess runs no trap.
+on_signal() {
+  trap '' INT TERM HUP
+  say "SIG$1: the run stops; its children are killed and the gate lock released"
+  stop_children
+  exit "$2"
+}
 trap cleanup EXIT
+trap 'on_signal INT 130' INT
+trap 'on_signal TERM 143' TERM
+trap 'on_signal HUP 129' HUP
 
 bring_up
 edge_login
