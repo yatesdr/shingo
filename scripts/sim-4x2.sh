@@ -16,11 +16,12 @@
 #             counted ALT part forces it
 #   S3        changeover RUN->ALT; "Mark as running" ALT at the landing while the PLC still says
 #             1001; then the drain program change: no switch back to RUN, no hold
-#   S4        no changeover, both styles pinned: the FORCED program change to 1002 under RUN;
-#             holds at the mirror positions, the automatic switch to ALT after ~60 s and a
-#             counted part, the holds released onto ALT's carts, the reorders
+#   S4        no changeover, both styles pinned, from landed carts at the mirror positions: the
+#             FORCED program change to 1002 under RUN; holds at the mirror positions, the
+#             automatic switch to ALT after ~60 sim-s and a counted part; the mirror shares stay
+#             held (no MIRROR-R cart stood there at the switch: a person's Charge lands them)
 #   S5        the forced program change to 1003, which no style pins: every stroke's draw held;
-#             Charge one (preview first), Write off another
+#             Charge one position's hold (preview first), Write off another's
 #   S6        positions 1-3 on the station counter, 4-5 on the cell counter; RUN->ALT
 #   S7        the forced program change to 1003 holds its draws, then back to 1001; Core holds
 #             every create from a gap between the mirror positions' swaps, the line pauses its
@@ -207,11 +208,13 @@ slot_counter() { slots_of | awk -v n="$1" '$1 == n {print $3}'; }
 slot_item() { edge_get "/api/processes/$PID/catid-health" | sed 's/{"kind":/\n{"kind":/g' | grep "^{\"kind\":\"$1\"" | head -1; }
 counter_tag() { proc_row | grep -oE '"counter_tag_name":"[^"]*"' | head -1 | sed 's/.*:"//; s/"$//'; }
 
-# The holds open on the process: the catid-health strip's "held" items, one "<hold id> <qty>"
-# per line. Its automatic-decisions item names released holds too, so only held items count.
+# The holds open on the process: the catid-health strip's "held" items, one "<hold id> <qty>
+# <process node id>" per line. Its automatic-decisions item names released holds too, so only
+# held items count. Node 0 is the production counter's held stroke, whole: a release draws it
+# at every position counted there, so it holds one share per cell-counted position.
 holds_list() {
   edge_get "/api/processes/$PID/catid-health" | sed 's/{"kind":/\n{"kind":/g' | grep '^{"kind":"held"' \
-    | sed -E 's/.*"hold_id":([0-9]+).*"qty":(-?[0-9]+).*/\1 \2/'
+    | sed -E 's/.*"hold_id":([0-9]+).*"process_node_id":([0-9]+).*"qty":(-?[0-9]+).*/\1 \3 \2/'
 }
 holds_n() { holds_list | grep -c . ; }
 hold_ids() { holds_list | cut -d' ' -f1 | tr '\n' ' ' | sed 's/ $//'; }
@@ -304,9 +307,8 @@ pin() {
   http_ok "$code"
 }
 
-# The hold verbs, one function each. The Preview is being folded into POST .../charge with a
-# mode value, so a route rename is a one-line change here and nowhere else.
-hold_preview() { edge_get "/api/catid-holds/$1/preview"; }
+# The hold verbs, one function each. The Preview is POST .../charge?mode=preview.
+hold_preview() { edge_send POST "/api/catid-holds/$1/charge?mode=preview" '{}' >/dev/null; cat "$OUT/.last"; }
 hold_charge() { edge_send POST "/api/catid-holds/$1/charge" '{}'; }
 hold_write_off() { edge_send POST "/api/catid-holds/$1/write-off" '{}'; }
 
@@ -353,6 +355,7 @@ sim_epoch() { date -u -d "$(curl -s -m 5 "$EDGE/api/sim/status" | sed -n 's/.*"s
 # line's ticks, and after a re-point Core has been seen applying a backlog for 40 wall seconds.
 BANK_LOADS=0
 BANK_COUNTED=0
+WRITTEN_OFF=0
 days_around() { local o; for o in -1 0 1; do date -u -d "$1 $o day" +%Y-%m-%d; done; }
 sim_date() { curl -s -m 5 "$EDGE/api/sim/status" | sed -n 's/.*"sim_now":"\([0-9-]*\)T.*/\1/p'; }
 edge_total() {
@@ -377,8 +380,9 @@ sim_speed() {
 # settle: both clocks to 1x (one line tick per TICK_S wall seconds), and the edge is read in a
 # gap between strokes once Core has caught up: after the line's next stroke, once SETTLE_MIN_MS
 # have passed (at 1x the Edge hands a stroke's draws to its outbox up to ~5 s after its poll
-# reads it), the five positions' applied draws in Core (their bin_uop_delta rows) and the line
-# have stood still for SETTLE_QUIET_MS, and the Edge's /status has nothing waiting to go
+# reads it), the five positions' applied draws in Core (their bin_uop_delta rows), Core's part
+# records for the process (cell_part_events) and the line have stood still for SETTLE_QUIET_MS,
+# and the Edge's /status has nothing waiting to go
 # (outbox_depth 0, production_ticks_pending 0). A gap ends SETTLE_BY wall seconds after its
 # stroke, before the next stroke's draws can reach Core; one that does not settle passes to the
 # next, up to SETTLE_GAPS, and the log says so. It returns with the clocks at 1x; resume puts the
@@ -391,6 +395,7 @@ ms() { date +%s%3N; }
 draw_rows() {
   sql "SELECT count(*) FROM bin_uop_ledger l JOIN nodes n ON n.id = l.node_id WHERE l.op = 'bin_uop_delta' AND n.name IN ($POS_SQL)"
 }
+part_rows() { sql "SELECT count(*) FROM cell_part_events WHERE process_id = ${PID:-0}"; }
 edge_backlog() {
   local s; s="$(curl -s -m 5 "$EDGE/status")"
   echo "outbox $(field "$s" outbox_depth), ticks pending $(field "$s" production_ticks_pending)"
@@ -411,7 +416,7 @@ settle() {
     next_stroke
     stroke=$(ms) last="" since=0 backlog=""
     while :; do
-      sig="$(line_json) $(draw_rows)"
+      sig="$(line_json) $(draw_rows) $(part_rows)"
       backlog="$(edge_backlog)"
       el=$(( $(ms) - stroke ))
       [ "$el" -le $(( SETTLE_BY * 1000 )) ] || break
@@ -444,10 +449,13 @@ mark() {
   W_EDGE="$(edge_total $W_DATES)"
   BANK_LOADS=0
   BANK_COUNTED=0
+  WRITTEN_OFF=0
   resume
 }
 
 # bank: the PLC's line restarts empty with the Edge, so the window's loads so far are kept here.
+# It returns with the clocks at 1x, so no stroke falls between its read and the restart; the
+# restart puts the run's speed back.
 bank() {
   local lj loads flight; settle; lj="$(line_json)"
   loads="$(field "$lj" loads)"; flight="$(field "$lj" in_flight)"
@@ -455,7 +463,6 @@ bank() {
   BANK_COUNTED=$(( BANK_COUNTED + ${loads:-0} - ${W_LOADS:-0} - (${flight:-0} - ${W_FLIGHT:-0}) ))
   W_LOADS=0
   W_FLIGHT=0
-  resume
 }
 
 ledger() {
@@ -475,7 +482,7 @@ ledger() {
   drawn="$(cart_draws "$W_LEDGER")"; piles="$(pile_stock)"
   carts=$(( ${drawn:-0} - (${piles:-0} - ${W_PILES:-0}) ))
   n="$(holds_n)"
-  q="$(holds_list | awk '{s += $2} END {print s + 0}')"
+  q="$(holds_list | awk -v nc="$nc" '{ if ($3 == 0) s += $2 * nc; else s += $2 } END {print s + 0}')"
   core="$(record "${W_PARTS:-0}")"
   a="$(printf '%s\n' "$core" | awk -v id="$RUN_ID" '$1 == id {print $2}')"
   b="$(printf '%s\n' "$core" | awk -v id="$ALT_ID" '$1 == id {print $2}')"
@@ -484,10 +491,10 @@ ledger() {
   dates="$(printf '%s\n' $W_DATES $(days_around "$(sim_date)") | sort -u)"
   # shellcheck disable=SC2086
   t=$(( $(edge_total $dates) - W_EDGE ))
-  say "draws at the five positions: carts $carts (Core's deltas $drawn, piles +$(( ${piles:-0} - ${W_PILES:-0} ))); expected $expect = $ns station-counted x $dl loads + $nc cell-counted x $counted counted out; $n holds open, qty $q"
+  say "draws at the five positions: carts $carts (Core's deltas $drawn, piles +$(( ${piles:-0} - ${W_PILES:-0} ))); expected $expect = $ns station-counted x $dl loads + $nc cell-counted x $counted counted out; $n holds open, $q held at the positions, $WRITTEN_OFF written off"
   [ "$other" -eq 0 ] || say "Core received $other more under neither style"
   say "the record: $(( ${a:-0} + ${b:-0} + other )) parts against the $counted the line counted out"
-  echo "carts Σ $carts = loads Σ $expect; holds open $n; record RUN ${a:-0} / ALT ${b:-0}; Core received ${a:-0}+${b:-0} of the Edge's $t" | tee -a "$OUT/log.txt"
+  echo "carts Σ $carts + held $q + written off $WRITTEN_OFF = loads Σ $expect; holds open $n; record RUN ${a:-0} / ALT ${b:-0}; Core received ${a:-0}+${b:-0} of the Edge's $t" | tee -a "$OUT/log.txt"
   resume
 }
 
@@ -529,6 +536,7 @@ restart_edge() {
   edge_login
   wait_for 60 "WELD-6's line on the fake PLC" "[ -n \"\$(line_json)\" ]" || die "no WELD-6 line after the restart"
   set_catid "$1"
+  resume
 }
 
 declare -A NODE_ID
@@ -666,7 +674,29 @@ watch_stays() {
   say "held $(style_name "$1") for $2 s ($3), $most holds at most"
 }
 
+# mirror_bins: the carts standing at the mirror positions, as Core places them (bin ids).
+mirror_bins() {
+  local p in=""
+  for p in $MIRRORS; do in="$in${in:+,}'$p'"; done
+  sql "SELECT b.id FROM bins b JOIN nodes n ON n.id = b.node_id WHERE n.name IN ($in) ORDER BY b.id" | tr '\n' ' '
+}
+# mirrors_landed: a cart stands at each mirror position and none is one of SEEDED_MIRRORS.
+mirrors_landed() {
+  local b n=0
+  for b in $(mirror_bins); do
+    case " $SEEDED_MIRRORS " in *" $b "*) return 1 ;; esac
+    n=$(( n + 1 ))
+  done
+  [ "$n" -eq "$(wc -w <<<"$MIRRORS")" ]
+}
 shape_S4() {
+  # The scenario's carts all arrive by delivery, so each seat knows its cart's part. The stack's
+  # first carts are seeded, and a seat learns its cart's part at a landing: S4 starts once each
+  # mirror position has had one.
+  SEEDED_MIRRORS="$(mirror_bins)"
+  say "S4 waits for a landed cart at each mirror position (seeded: bins $SEEDED_MIRRORS)"
+  wait_for "$LAND_WALL" "a landed cart at each mirror position" mirrors_landed \
+    || die "a mirror position still holds its seeded cart"
   say "S4 no changeover, RUN active, both styles pinned: the FORCED program change to $CATID_ALT"
   program_change "$CATID_ALT" forced
   say "Look at: the loads in flight count out as $CATID_ALT; the mirror positions' draws are held (their carts are MIRROR-L)"
@@ -674,8 +704,8 @@ shape_S4() {
   status
   await_on_alt "$DECLARE_S" "the automatic switch to ALT"
   status
-  say "Look at: reorders at the mirror positions fetching MIRROR-R; the holds land on those carts"
-  await_no_holds
+  say "Look at: the mirror shares stay held: the switch's release found no MIRROR-R cart at those positions, and a later landing releases nothing (a person's Charge does)"
+  say "holds open (id qty node): $(holds_list | tr '\n' ';')"
   status
 }
 
@@ -686,7 +716,8 @@ shape_S5() {
   await_holds 2 "two holds open on $CATID_NONE" || die "fewer than two holds opened"
   status
   say "holds open (id qty): $(holds_list | tr '\n' ';')"
-  first="$(holds_list | sed -n 1p | cut -d' ' -f1)"; second="$(holds_list | sed -n 2p | cut -d' ' -f1)"
+  first="$(holds_list | awk '$3 != 0' | sed -n 1p | cut -d' ' -f1)"
+  second="$(holds_list | awk '$3 != 0' | sed -n 2p | cut -d' ' -f1)"
   preview="$(hold_preview "$first")"
   say "Preview Charge of hold $first: $(printf '%s' "$preview" | cut -c1-400)"
   case "$preview" in
@@ -697,7 +728,10 @@ shape_S5() {
       ;;
   esac
   code="$(hold_charge "$first")"; say "Charge hold $first: $code $(last)"
-  code="$(hold_write_off "$second")"; say "Write off hold $second: $code $(last)"
+  local wq
+  wq="$(holds_list | awk -v id="$second" '$1 == id {print $2}')"
+  code="$(hold_write_off "$second")"; say "Write off hold $second ($wq): $code $(last)"
+  http_ok "$code" && WRITTEN_OFF=$(( WRITTEN_OFF + ${wq:-0} ))
   say "Look at: the charged hold's quantity off RUN's carts; the written-off one charges nothing"
   status
 }
