@@ -34,13 +34,18 @@ jobs:
   scripts:
     runs-on: ubuntu-latest
     steps:
+      # Full history: check-test-ledger.sh compares the tip with its merge base
+      # on origin/main, which a depth-1 checkout does not have.
       - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
 
       - uses: actions/setup-go@v7
         with:
           go-version: '1.25.0'
-          # check-dead-identifiers runs a Go tool over the repo; every other
-          # guard is grep/awk. go.sum-keyed cache as in core.yml.
+          # Some guards run a Go tool over the repo (shared/scripts: deadident,
+          # buildconstraints, testcite, testledger). go.sum-keyed cache as in
+          # core.yml.
           cache-dependency-path: "**/go.sum"
 
       # check-test-error-discard-ratchet.sh runs golangci-lint and FAILS when
