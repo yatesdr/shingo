@@ -214,3 +214,27 @@ present at the merge base is absent at the tip without a row here.
 - coverage Δ: lead (Phase 1 baseline → certification diff)
 - citations rewritten: none
 - verified at: `e217c1ff` with this commit's test diff applied
+
+### FOLD — `TestFindCMSBoundary_StoreErrorPropagates`
+- test: `TestFindCMSBoundary_StoreErrorPropagates` · pkg `shingocore/engine` · run `-run '^TestFindCMSBoundary_StoreErrorPropagates$'` · `shingo-core/engine/cms_transactions_test.go:135` @ `22c81558` · tags `docker`
+- code: FOLD
+- assertion map: the test called `material.FindCMSBoundary` (the `*Engine` method it once covered was deleted in "feat(cms): a bin crossing a storeroom boundary reaches the ledger"; the engine package holds no boundary walk) against real Postgres for node 99999. Split by what each half pins:
+  - `cms_transactions_test.go:141-144` (`err != nil` for a missing node) → `shingo-core/store/material_store_docker_test.go:37-40,52-54`, case `FindCMSBoundary_StoreErrorPropagates` of `TestMaterialStore_AMissingRowIsAnError`: the real `*store.DB`, through `material.Store`, answers `GetNode` of a missing id with an error and no node. That is the assumption `material`'s fake encodes (`material/fake_store_test.go` `GetNode`), and it was checked nowhere else at the `*store.DB` layer (the mutation below leaves `store/nodes` `TestNodeCRUD` and `TestNodeGetByName` green).
+  - `:145-147` (nil node and empty code alongside the error) → `material/material_test.go:191-202` `TestFindCMSBoundary_StoreErrorPropagates` (same name, fake store, untagged): the walk propagates the store's error with a nil node and an empty code.
+  - The table's other cases (`GetBin`, `GetPayloadByCode` with `sql.ErrNoRows`) are the fake's other missing-row answers, same fixture (one test DB), tag (`docker`) and shape. The scar comment moves verbatim above the case.
+- mutation: `shingo-core/store/nodes.go`, `(*DB).GetNode`:
+  ```diff
+  -func (db *DB) GetNode(id int64) (*nodes.Node, error) { return nodes.Get(db.DB, id) }
+  +func (db *DB) GetNode(id int64) (*nodes.Node, error) {
+  +	n, err := nodes.Get(db.DB, id)
+  +	if err == sql.ErrNoRows {
+  +		return &nodes.Node{ID: id}, nil
+  +	}
+  +	return n, err
+  +}
+  ```
+  · removed test red at base: `go test -count=1 -tags docker,lockcheck -run '^TestFindCMSBoundary_StoreErrorPropagates$' ./engine/` (shingo-core) → `cms_transactions_test.go:142: expected error for missing node, got nil (node <nil>)`
+  · survivor red at tip: `go test -count=1 -tags docker,lockcheck -run '^TestMaterialStore_AMissingRowIsAnError$' ./store/` → `material_store_docker_test.go:53: a missing row: found=true err=<nil>, want no value and an error` (subtest `FindCMSBoundary_StoreErrorPropagates`)
+- coverage Δ: lead (Phase 1 baseline → certification diff)
+- citations rewritten: none needed. `git grep -n 'FindCMSBoundary_StoreErrorPropagates'` over the five modules at the tip: `shingo-core/material/material_test.go:186,191` (the material test of the same name, which stays) and the moved scar comment, which now resolves to that test.
+- verified at: `37cf21bb` with this commit's diff applied

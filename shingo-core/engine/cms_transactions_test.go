@@ -128,24 +128,6 @@ func TestFindCMSBoundary_NoBoundary_NonSyntheticChain(t *testing.T) {
 	}
 }
 
-// TestFindCMSBoundary_StoreErrorPropagates is the inverse of the test
-// this replaces. A store failure must reach the caller: "the lookup
-// failed" and "there is no boundary here" are different answers, and
-// collapsing them emitted zero CMS rows for real physical moves.
-func TestFindCMSBoundary_StoreErrorPropagates(t *testing.T) {
-	t.Parallel()
-	db := testDB(t)
-
-	// Non-existent node — the store's "not found" must come back as an error.
-	got, code, err := material.FindCMSBoundary(db, 99999)
-	if err == nil {
-		t.Fatalf("expected error for missing node, got nil (node %+v)", got)
-	}
-	if got != nil || code != "" {
-		t.Errorf("expected nil node and empty code alongside the error, got %+v / %q", got, code)
-	}
-}
-
 // ── RecordMovementTransactions ──────────────────────────────────────
 
 // TestRecordMovementTransactions_PersistsAndEmits drives a real bin move
