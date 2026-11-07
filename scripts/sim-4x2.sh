@@ -258,7 +258,7 @@ hold_write_off() { edge_send POST "/api/catid-holds/$1/write-off" '{}'; }
 LEGS_HELD=0
 legs_held() {
   local on=0; [ "$1" = on ] && on=1
-  curl -s -m 10 -o /dev/null -X POST "$CORE/api/sim/create-fails?on=$on"
+  curl -s -m 10 -X POST "$CORE/api/sim/create-fails?on=$on" >/dev/null
   LEGS_HELD=$on
   say "Core's sim fleet refuses creates: $1"
 }
@@ -283,10 +283,14 @@ sim_epoch() { date -u -d "$(curl -s -m 5 "$EDGE/api/sim/status" | sed -n 's/.*"s
 #   loads Σ   what the draws should be: a station-counted position draws once per load and a
 #             cell-counted one once per load counted out (loads less the rise in flight), off
 #             the PLC's line. Held draws are in it and not in the carts; the holds say how many.
-#   record    the production ticks Core received for WELD-6 (GET /api/cells/<station>/heartbeat),
-#             summed per style: the style the Edge attributed each tick to, as shipped. The
-#             Edge's own per-style split has no HTTP read (its /api/hourly-counts sums styles),
-#             so the Edge's T is that read: what it counted, against what Core received.
+#   record    the production ticks Core received for WELD-6 (cell_part_events, by the Edge's
+#             process and style ids), summed per style: the style the Edge attributed each tick
+#             to, as shipped. Core's cell heartbeat lists only a configured cell's primary
+#             process, so it is read from the table. The Edge's own per-style split has no HTTP
+#             read (its /api/hourly-counts sums styles), so the Edge's T is that read: what it
+#             counted, against what Core received.
+# A window's edges are read between strokes (settle): at 10x a load reaches Core's ledger a
+# few wall seconds after the PLC counts it, longer than one of the line's ticks.
 BANK_LOADS=0
 BANK_COUNTED=0
 days_around() { local o; for o in -1 0 1; do date -u -d "$1 $o day" +%Y-%m-%d; done; }
@@ -305,32 +309,54 @@ cart_draws() {
 }
 pile_stock() { sql "SELECT COALESCE(sum(qty), 0) FROM lineside_buckets WHERE state = 'active' AND core_node_name IN ($POS_SQL)"; }
 
+# sim_speed <n>: both clocks, so Core's and the Edge's sim times stay together.
+sim_speed() {
+  curl -s -m 5 -X POST "$EDGE/api/sim/speed?speed=$1" >/dev/null
+  curl -s -m 5 -X POST "$CORE/api/sim/speed?speed=$1" >/dev/null
+}
+# settle: both clocks to 1x (one line tick per TICK_S wall seconds), wait for the line's next
+# stroke, give the Edge's poll and Core's consumer SETTLE_WALL seconds, and return with the
+# clocks at 1x; resume puts the run's speed back once the edge is read.
+SETTLE_WALL=4
+settle() {
+  local before deadline
+  sim_speed 1
+  before="$(line_json)"
+  deadline=$(( $(date +%s) + TICK_S + 8 ))
+  while [ "$(date +%s)" -lt "$deadline" ] && [ "$(line_json)" = "$before" ]; do sleep 0.3; done
+  sleep "$SETTLE_WALL"
+}
+resume() { sim_speed "$SIM_SPEED"; }
+part_events() { sql "SELECT COALESCE(max(id), 0) FROM cell_part_events"; }
+
 mark() {
-  local lj; lj="$(line_json)"
+  local lj; settle; lj="$(line_json)"
   W_LOADS="$(field "$lj" loads)"; W_FLIGHT="$(field "$lj" in_flight)"
   W_LEDGER="$(sql 'SELECT COALESCE(max(id), 0) FROM bin_uop_ledger')"
   W_PILES="$(pile_stock)"
-  W_SINCE="$(curl -s -m 5 "$CORE/api/sim/status" | sed -n 's/.*"sim_now":"\([^"]*\)".*/\1/p')"
+  W_PARTS="$(part_events)"
   W_DATES="$(days_around "$(sim_date)")"
   # shellcheck disable=SC2086
   W_EDGE="$(edge_total $W_DATES)"
   BANK_LOADS=0
   BANK_COUNTED=0
+  resume
 }
 
 # bank: the PLC's line restarts empty with the Edge, so the window's loads so far are kept here.
 bank() {
-  local lj loads flight; lj="$(line_json)"
+  local lj loads flight; settle; lj="$(line_json)"
   loads="$(field "$lj" loads)"; flight="$(field "$lj" in_flight)"
   BANK_LOADS=$(( BANK_LOADS + ${loads:-0} - ${W_LOADS:-0} ))
   BANK_COUNTED=$(( BANK_COUNTED + ${loads:-0} - ${W_LOADS:-0} - (${flight:-0} - ${W_FLIGHT:-0}) ))
   W_LOADS=0
   W_FLIGHT=0
+  resume
 }
 
 ledger() {
   local lj loads flight dl counted nodes p ns=0 nc=0 expect drawn piles carts n q core a b other dates t
-  lj="$(line_json)"
+  settle; lj="$(line_json)"
   loads="$(field "$lj" loads)"; flight="$(field "$lj" in_flight)"
   dl=$(( BANK_LOADS + ${loads:-0} - W_LOADS ))
   counted=$(( BANK_COUNTED + ${loads:-0} - W_LOADS - (${flight:-0} - W_FLIGHT) ))
@@ -346,9 +372,7 @@ ledger() {
   carts=$(( ${drawn:-0} - (${piles:-0} - ${W_PILES:-0}) ))
   n="$(holds_n)"
   q="$(holds_list | awk '{s += $2} END {print s + 0}')"
-  core="$(curl -s -m 60 "$CORE/api/cells/$STATION/heartbeat?since=$W_SINCE" | tr '{' '\n' | grep '"delta":' \
-    | grep "\"process_id\":$PID,\"style_id\":" | sed -E 's/.*"delta":(-?[0-9]+).*"style_id":([0-9]+).*/\2 \1/' \
-    | awk '{s[$1] += $2} END {for (k in s) print k, s[k]}')"
+  core="$(sql "SELECT style_id, sum(delta) FROM cell_part_events WHERE process_id = $PID AND id > ${W_PARTS:-0} GROUP BY style_id" | tr '|' ' ')"
   a="$(printf '%s\n' "$core" | awk -v id="$RUN_ID" '$1 == id {print $2}')"
   b="$(printf '%s\n' "$core" | awk -v id="$ALT_ID" '$1 == id {print $2}')"
   other="$(printf '%s\n' "$core" | awk -v r="$RUN_ID" -v x="$ALT_ID" '$1 != r && $1 != x {s += $2} END {print s + 0}')"
@@ -359,6 +383,7 @@ ledger() {
   say "draws at the five positions: carts $carts (Core's deltas $drawn, piles +$(( ${piles:-0} - ${W_PILES:-0} ))); expected $expect = $ns station-counted x $dl loads + $nc cell-counted x $counted counted out; $n holds open, qty $q"
   [ "$other" -eq 0 ] || say "Core received $other more under neither style"
   echo "carts Σ $carts = loads Σ $expect; holds open $n; record RUN ${a:-0} / ALT ${b:-0}; Core received ${a:-0}+${b:-0} of the Edge's $t" | tee -a "$OUT/log.txt"
+  resume
 }
 
 # ── THE STACK ────────────────────────────────────────────────────────────────────────────
