@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"log"
 
+	"shingo/protocol"
+	"shingoedge/domain"
 	"shingoedge/store"
 	"shingoedge/store/lineside"
 	"shingoedge/store/processes"
@@ -28,8 +30,9 @@ import (
 // switch's (autoSwitchStyle). All route through the one flip verb below
 // (flipActiveStyle). It writes the style and
 // syncs the reporting point, each its own statement; then, in one transaction,
-// strands the piles, clears the departing part's produce holds and points
-// every node the incoming style claims at that claim; then publishes
+// strands the piles, clears the departing part's produce holds, points every
+// node the incoming style claims at that claim and records the carrier it
+// leaves at every seat that could not say; then publishes
 // plant.claims. A node the changeover does not touch is stranded too.
 
 // strandLinesidePiles folds every active pile at the process's nodes into its
@@ -45,7 +48,9 @@ import (
 // carrier of its part (pending_uop_payload, Lane H R2, DECISIONS D12).
 //
 // In the same transaction it points each node the incoming style claims at
-// that claim (pointNodesAtStyle).
+// that claim (pointNodesAtStyle), and records what the flip leaves
+// (flipCarrierStamps): a consume seat of the departing style's whose bound
+// carrier could not say its part is recorded as that style's part there.
 //
 // proc is the process as read before the flip, so its active style is the
 // departing one; styleID is the incoming style.
@@ -71,8 +76,15 @@ func (e *Engine) strandLinesidePiles(proc *processes.Process, styleID *int64) er
 	if err != nil {
 		return fmt.Errorf("cutover claim pointers for process %d: %w", processID, err)
 	}
+	stamps, err := e.flipCarrierStamps(proc, nodes, runtimes)
+	if err != nil {
+		return fmt.Errorf("cutover carriers for process %d: %w", processID, err)
+	}
 	stranded, err := e.db.StrandLinesidePiles(processID, func(tx *sql.Tx) error {
 		if err := clears.writeIn(tx); err != nil {
+			return err
+		}
+		if err := e.writeFlipStamps(tx, stamps); err != nil {
 			return err
 		}
 		return pointers.writeIn(tx)
@@ -81,6 +93,7 @@ func (e *Engine) strandLinesidePiles(proc *processes.Process, styleID *int64) er
 		return fmt.Errorf("strand lineside piles for process %d: %w", processID, err)
 	}
 	clears.queued()
+	e.logFlipStamps(proc, stamps)
 	keys := make([]lineside.Key, 0, 2*len(stranded))
 	for _, s := range stranded {
 		log.Printf("lineside: count anomaly at cutover: node=%d core_node=%s payload=%s qty=%d stranded (process %d)",
@@ -98,11 +111,12 @@ func (e *Engine) strandLinesidePiles(proc *processes.Process, styleID *int64) er
 // flipActiveStyle is THE active-style flip: db.SetActiveStyle, the reporting
 // point's sync, and, when the style actually changed, what every flip owes —
 // in one transaction, strand the process's lineside piles, clear its departing
-// produce holds and point its nodes at the incoming style's claims
-// (strandLinesidePiles); then publish the process's plant.claims report so
+// produce holds, point its nodes at the incoming style's claims and record the
+// carrier it leaves at every seat that could not say (strandLinesidePiles);
+// then publish the process's plant.claims report so
 // Core's mirror marks the new running style within one message instead of up
 // to the next snapshot. Re-setting the style a process already runs is not a
-// flip: no strand, no pointers, no publish.
+// flip: no strand, no pointers, no stamp, no publish.
 //
 // Both doors route here — the admin switch (admin_style_switch.go) and the
 // changeover's completeCutover — so a flip cannot reach the DB without its
@@ -187,6 +201,85 @@ func (p claimPointers) writeIn(ex processes.DBTX) error {
 		}
 	}
 	return nil
+}
+
+// flipStamps is what a flip records it leaves: each seat's carrier, by the
+// departing style's part there.
+type flipStamps []flipStamp
+
+type flipStamp struct {
+	nodeID int64
+	node   string
+	part   string
+}
+
+// flipCarrierStamps reads what the flip records it leaves: every node whose
+// bound carrier could not say its part (!LinesidePayloadKnown) and whose
+// departing-style claim (proc's active style, exactly) is consume, not a
+// loader, and names a part. The cart standing there was bound under that
+// style, so it is that style's part there; after the flip nothing else can
+// say so, and the readers that fall back to the active style's part
+// (binAtNode, carrierIsPart) would name the incoming one. A seat still unknown
+// after a flip was bound since it, and the fallback is right for it by
+// construction. The claims are read only when such a seat exists: +0
+// statements on a flip that leaves none.
+func (e *Engine) flipCarrierStamps(proc *processes.Process, nodes []processes.Node,
+	runtimes map[int64]*processes.RuntimeState) (flipStamps, error) {
+	if proc == nil || proc.ActiveStyleID == nil {
+		return nil, nil
+	}
+	var unsaid []*processes.Node
+	for i := range nodes {
+		if rt := runtimes[nodes[i].ID]; rt != nil && rt.ActiveBinID != nil && !rt.LinesidePayloadKnown {
+			unsaid = append(unsaid, &nodes[i])
+		}
+	}
+	if len(unsaid) == 0 {
+		return nil, nil
+	}
+	departing := *proc.ActiveStyleID
+	claims, err := e.db.NodeClaimsForStyles([]int64{departing})
+	if err != nil {
+		return nil, err
+	}
+	var out flipStamps
+	for _, node := range unsaid {
+		claim := claims.Resolve(proc, node, store.ExactStyle(departing))
+		if claim == nil || claim.Role != protocol.ClaimRoleConsume || claim.IsLoaderNode() || claim.PayloadCode == "" {
+			continue
+		}
+		out = append(out, flipStamp{nodeID: node.ID, node: node.CoreNodeName, part: claim.PayloadCode})
+	}
+	return out, nil
+}
+
+// writeFlipStamps records each seat's carrier through the lineside doorway, on
+// the strand's transaction.
+func (e *Engine) writeFlipStamps(tx *sql.Tx, stamps flipStamps) error {
+	for _, s := range stamps {
+		carrier := domain.KnownCarrier(domain.LinesidePayloadCode(s.part))
+		if err := e.recordLinesideCarrierIn(tx, s.nodeID, carrier, domain.CarrierFromFlip); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// logFlipStamps names each recorded seat once, after the strand's commit: the
+// process, the node, the part and the style the flip left.
+func (e *Engine) logFlipStamps(proc *processes.Process, stamps flipStamps) {
+	if len(stamps) == 0 {
+		return
+	}
+	departing := fmt.Sprintf("style %d", *proc.ActiveStyleID)
+	if s, err := e.db.GetStyle(*proc.ActiveStyleID); err == nil && s != nil && s.Name != "" {
+		departing = s.Name
+	}
+	for _, s := range stamps {
+		log.Printf("lineside carrier: process %s node %s: recorded as %s at the switch off %s, the style its cart "+
+			"was bound under; the cart could not say its part (source %s)", proc.Name, s.node, s.part, departing,
+			domain.CarrierFromFlip)
+	}
 }
 
 // pointProcessAtStyle is the pointer verb on its own, for the cancel: the

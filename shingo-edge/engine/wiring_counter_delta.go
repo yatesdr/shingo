@@ -766,9 +766,12 @@ type tickParts struct {
 }
 
 // carrierIsPart reports whether the node's bound carrier is the claim's part:
-// the resident payload when the landing carried it, else the ACTIVE style's
-// claim's part there (never the tick's own claim's, which would always match).
-// An empty seat has no carrier of any part.
+// the resident payload when it is recorded (a landing, a person, the flip that
+// left it), else the ACTIVE style's claim's part there (never the tick's own
+// claim's, which would always match). The fallback is right because a seat
+// that cannot say was bound since the last flip: a flip records the departing
+// style's part at every such seat (flipCarrierStamps), so the active style is
+// the one the cart was bound under. An empty seat has no carrier of any part.
 func carrierIsPart(process *processes.Process, node *processes.Node, rt *processes.RuntimeState,
 	claim *processes.NodeClaim, claims *store.NodeClaimSet) bool {
 	if rt == nil || rt.ActiveBinID == nil {
@@ -1306,6 +1309,11 @@ func (e *Engine) emitFallthroughDeltas(node *processes.Node, runtime *processes.
 // the cross product this pair was split to end. Rows written before the known
 // bit existed read as not-established and take the fallback, which is the
 // behaviour they already had.
+//
+// THE FALLBACK IS RIGHT FOR A SEAT THAT CANNOT SAY because such a seat was
+// bound since the last flip: a flip records the departing style's part at every
+// consume seat whose carrier could not say (flipCarrierStamps), so a cart bound
+// under one style is not read as the next style's part after it.
 func (e *Engine) binAtNode(runtime *processes.RuntimeState, claim *processes.NodeClaim) (int64, string, int64) {
 	if runtime == nil || runtime.ActiveBinID == nil {
 		return 0, "", 0

@@ -141,6 +141,15 @@ const (
 	// next occupant inherits it and it is read as a fact about them.
 	CarrierDeparted CarrierSource = "departed"
 
+	// CarrierFromFlip: the style that was running when this cart was bound
+	// left; the cart is that style's part here, by inference, named at the
+	// only moment the inference is still good (the flip, for a consume seat
+	// whose carrier could not say: engine.flipCarrierStamps). The known bit
+	// is true after it; any later source (a landing, an operator, a
+	// departure, a count correction's unknown) writes over it as it would
+	// over any other.
+	CarrierFromFlip CarrierSource = "flip"
+
 	// CarrierNotSeen: no source has spoken; the column's default, what a seat
 	// that never saw a carrier reads. Written over a departure that no longer
 	// describes the seat: an unbound produce seat whose strokes passed a whole

@@ -770,9 +770,12 @@ func TestPinChangeover_CancelRetagsToTheStayingPart(t *testing.T) {
 
 // TestPinChangeover_PayloadUnknownLanding — a landing that did not carry the
 // cart's part reads as the matched claim's part, the outgoing one before the
-// cutover, so the incoming-tagged hold waits: the cart takes its own ticks
-// until the cutover makes the claim the incoming one, and then the hold.
-// Named behaviour (attribution SYNTH-round1 §5 F-known), not a fix.
+// cutover, so the incoming-tagged hold waits and the cart takes its own ticks.
+// The cutover records what it leaves: a seat that could not say is the
+// departing style's part (source flip), so the cart still reads the outgoing
+// part after it and the hold keeps waiting for a cart of its part. Named
+// behaviour (attribution SYNTH-round1 §5 F-known), not a fix: a cart that
+// landed unnamed during the changeover is taken for the cart it replaced.
 func TestPinChangeover_PayloadUnknownLanding(t *testing.T) {
 	t.Parallel()
 	eng, _, pid, nodeID, from, to := runOutRig(t)
@@ -784,9 +787,15 @@ func TestPinChangeover_PayloadUnknownLanding(t *testing.T) {
 		t.Fatalf("before the cutover = %d, hold %d; want 52, hold 3 waiting", rt.RemainingUOPCached, rt.PendingUOPDelta)
 	}
 	testutil.MustNoErr(t, eng.SetProcessActiveStyle(pid, &to), "cut over")
+	rt = runtimeOf(t, eng, nodeID)
+	if !rt.LinesidePayloadKnown || rt.LinesidePayloadCode != "PART-OLD" || rt.LinesideSource != string(domain.CarrierFromFlip) {
+		t.Fatalf("after the cutover the seat reads %q known %t from %q, want PART-OLD from the flip",
+			rt.LinesidePayloadCode, rt.LinesidePayloadKnown, rt.LinesideSource)
+	}
 	tickConsume(eng, pid, to, 1)
-	if got := runtimeOf(t, eng, nodeID).RemainingUOPCached; got != 48 {
-		t.Errorf("after the cutover, one tick = %d, want 48 (the hold replays)", got)
+	if rt := runtimeOf(t, eng, nodeID); rt.RemainingUOPCached != 51 || rt.PendingUOPDelta != 3 {
+		t.Errorf("after the cutover, one tick = %d, hold %d; want 51, hold 3 waiting for a PART-NEW cart",
+			rt.RemainingUOPCached, rt.PendingUOPDelta)
 	}
 }
 
