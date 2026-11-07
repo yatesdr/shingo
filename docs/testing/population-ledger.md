@@ -109,3 +109,45 @@ present at the merge base is absent at the tip without a row here.
 - coverage Δ: lead (Phase 1 baseline → certification diff)
 - citations rewritten: none (`git grep -n 'TheAskAddsNoWaitToTheRelease\|timedRelease'` over the five modules: the test's own file only)
 - verified at: `cb19739f` with this commit's test diff applied
+
+### STRENGTHEN — `TestRegression_RemovalOrderClearsBinPointer`
+- test: `TestRegression_RemovalOrderClearsBinPointer` · pkg `shingoedge/engine` · run `-run '^TestRegression_RemovalOrderClearsBinPointer$'` · `shingo-edge/engine/uop_regression_test.go:24` @ `22c81558` · tags `none`
+- code: STRENGTHEN
+- assertion map:
+  - `uop_regression_test.go:55-60` (the test nulled `active_bin_id` itself, "simulate pickup clear", then asserted it nil) → `uop_regression_test.go:49-53`: `HandleBinPickedUp` at the line's slot for the bound bin, then `ActiveBinID == nil`. The old comment's reason for not driving it ("needs inventoryDelta wired, which test contexts don't") was false: `testEngine` wires `fakeDeltaSink{db}` (`produce_swap_test.go:130`).
+  - the same `:58-60` read after the completion → `:55-59`: still nil after `emitOrderCompleted` (a removal binds nothing).
+  - fixture `seedReconcilerNode` (named for the reconciler deleted in "refactor: flip bin UOP authority to Edge, delete reconciler"; its only user) → `seedConsumeNode`, the same graph; `test_node_seed_test.go` deleted.
+- mutation: `shingo-edge/engine/handler_bin_picked_up.go:230`, the leave at pickup:
+  ```diff
+  -	if bound {
+  +	if false && bound {
+  ```
+  · old test GREEN at base: `go test -count=1 -tags lockcheck -run '^TestRegression_RemovalOrderClearsBinPointer$' ./engine/` → `ok  shingoedge/engine` (it set the pointer it asserted)
+  · survivor red at tip: same command → `uop_regression_test.go:52: after the pickup ActiveBinID = 99, want nil (the bound bin left the slot)`
+- coverage Δ: lead (Phase 1 baseline → certification diff)
+- citations rewritten: `shingo-edge/engine/uop_regression_test.go` T3's header cited the phantom `TestRegression_RemovalOrderClearsBinAndZeroesUOP`; it now cites this test, and the phantom's allow-list entry is dropped from `shingo-edge/engine/release_census_test.go` `phantomCitations`
+- verified at: `004c6f8e` with this commit's test diff applied
+
+### DUP — `TestRegression_11_DeliveryOrderStillResetsLineUOP`
+- test: `TestRegression_11_DeliveryOrderStillResetsLineUOP` · pkg `shingoedge/engine` · run `-run '^TestRegression_11_DeliveryOrderStillResetsLineUOP$'` · `shingo-edge/engine/uop_regression_test.go:69` @ `22c81558` · tags `none`
+- code: DUP
+- assertion map: `uop_regression_test.go:106-110` (`RemainingUOPCached == 200` after a delivery of bin 202 to the line, Core's count 200 on the landing) → `uop_regression_test.go:104-107` @ tip in `TestRegression_DeliveryResetsToCapacityWithBin`: the same assertion, verbatim, on the same fixture shape (`seedConsumeNode` cap 200, runtime 50, complex order with steps to the node, confirmed, bin set, `emitOrderCompletedWithBinUOP(..., 200)`), which also asserts the bind (`:108-111`). The header's "positive counterpart" reason moves to the survivor's header; its `binArrivingAt`/`resolveReplenishUOP` lines (both deleted in "refactor(uop): bind runtime cache to release-click + delivered, not confirm") go with it.
+- mutation: `shingo-edge/engine/handler_bin_landed.go:50`, the landing's count:
+  ```diff
+  -		BinID: l.BinID, Epoch: l.Epoch, Count: l.Count, PlacedSeq: &seq,
+  +		BinID: l.BinID, Epoch: l.Epoch, Count: 0, PlacedSeq: &seq,
+  ```
+  · removed test red at base: `go test -count=1 -tags lockcheck -run '^TestRegression_11_DeliveryOrderStillResetsLineUOP$' ./engine/` → `uop_regression_test.go:108: RemainingUOP = 0, want 200 (the count Core stamped on the delivery envelope)`
+  · survivor red at tip: `go test -count=1 -tags lockcheck -run '^TestRegression_DeliveryResetsToCapacityWithBin$' ./engine/` → `uop_regression_test.go:105: RemainingUOP = 0, want 200 (the count Core stamped on the delivery envelope)`
+- coverage Δ: lead (Phase 1 baseline → certification diff)
+- citations rewritten: none (`git grep -n 'TestRegression_11_DeliveryOrderStillResetsLineUOP'` over the five modules: its own file only)
+- verified at: `004c6f8e` with this commit's test diff applied
+
+### STALE — `TestRegression_DeliveryResetsToCapacityWithBin`
+- test: `TestRegression_DeliveryResetsToCapacityWithBin` · pkg `shingoedge/engine` · run `-run '^TestRegression_DeliveryResetsToCapacityWithBin$'` · `shingo-edge/engine/uop_regression_test.go:122` @ `22c81558` · tags `none`
+- code: STALE
+- assertion map: no assertion change. Header: "delivery completion ... seats the count Core stamped on the envelope" → the landing seats it (`emitOrderCompletedWithBinUOP` sends landing, delivered, completion); "Companion to TestRegression_RemovalOrderClearsBinAndZeroesUOP" (no such test) → `TestRegression_RemovalOrderClearsBinPointer`, plus the removed DUP's reason (a removal filter that swallowed deliveries).
+- mutation: the DUP row's `handler_bin_landed.go:50` `Count: 0` · survivor red at tip → `uop_regression_test.go:105: RemainingUOP = 0, want 200 (the count Core stamped on the delivery envelope)`
+- coverage Δ: lead (Phase 1 baseline → certification diff)
+- citations rewritten: the phantom citation above (`release_census_test.go` `phantomCitations` entry dropped)
+- verified at: `004c6f8e` with this commit's test diff applied

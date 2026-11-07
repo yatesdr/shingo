@@ -8,28 +8,24 @@ import (
 	"shingoedge/orders"
 )
 
-// TestRegression_RemovalOrderClearsBinPointer pins the bin-ownership
-// flip behavior at removal completion.
-//
-// Setup: a complex order whose process_node IS the line, but whose
-// DeliveryNode is OUTBOUND-DEST (the bin is being evacuated). Drain
-// the runtime to a partial value, fire EventOrderCompleted, assert
-// the runtime ends with active_bin_id=nil so subsequent PLC ticks
-// don't silently mis-attribute to a bin that's no longer at the slot.
-//
-// The cached UOP value briefly reads as capacity post-removal; that's
-// harmless because binAtNode returns 0 (active_bin_id nil) and no
-// PLC tick attribution happens to an empty slot. UI may want to
-// surface "no bin" when active_bin_id is nil.
+// TestRegression_RemovalOrderClearsBinPointer pins the bin pointer through a
+// removal: a complex order whose process_node IS the line, but whose
+// DeliveryNode is OUTBOUND-DEST (the bin is being evacuated). The robot's lift
+// at the line's slot clears active_bin_id (HandleBinPickedUp: the bound bin
+// left), and the removal's completion does not bind it again, so later PLC
+// ticks are held rather than charged to a bin no longer at the slot
+// (binAtNode returns 0 for a nil pointer).
 func TestRegression_RemovalOrderClearsBinPointer(t *testing.T) {
 	t.Parallel()
 	db := testEngineDB(t)
-	nodeID, _, claimID := seedReconcilerNode(t, db, "REG11", "PART-R11")
+	_, nodeID, _, claimID := seedConsumeNode(t, db, consumeNodeConfig{
+		Prefix: "REG11", PayloadCode: "PART-R11", UOPCapacity: 100,
+	})
 
 	// Drain runtime to a partial value — simulates a half-consumed bin.
 	const partialUOP = 137
 	testutil.MustNoErr(t, db.SetProcessNodeRuntime(nodeID, &claimID, partialUOP), "seed runtime")
-	// Seed a fake bin pointer so we can prove the completion clears it.
+	// The half-consumed bin is the one bound at the slot.
 	priorBin := int64(99)
 	testutil.MustNoErr(t, db.SetProcessNodeActiveBinID(nodeID, &priorBin), "seed active_bin_id")
 
@@ -46,79 +42,35 @@ func TestRegression_RemovalOrderClearsBinPointer(t *testing.T) {
 	testutil.MustNoErr(t, db.UpdateOrderStatus(orderID, string(orders.StatusConfirmed)), "set order confirmed")
 	db.UpdateProcessNodeRuntimeOrders(nodeID, &orderID, nil)
 
-	eng := testEngine(t, db)
+	eng := testEngine(t, db) // its delta sink writes the slot verbs through to db
 	eng.wireEventHandlers()
 
-	// Under the new contract the bin pointer clears at pickup, not at
-	// completion. Simulate the pickup directly (HandleBinPickedUp's full
-	// path needs inventoryDelta wired, which test contexts don't).
-	testutil.MustNoErr(t, db.SetProcessNodeActiveBinID(nodeID, nil), "simulate pickup clear")
-	emitOrderCompleted(eng, orderID, "uuid-reg11-removal", orders.TypeComplex, &nodeID)
-
+	// The robot lifts the half-consumed bin at the line's slot.
+	eng.HandleBinPickedUp("uuid-reg11-removal", priorBin, "REG11-NODE")
 	rt, _ := db.GetProcessNodeRuntime(nodeID)
 	if rt.ActiveBinID != nil {
-		t.Errorf("ActiveBinID = %v, want nil (pickup clears the bin pointer for removal flow)", *rt.ActiveBinID)
+		t.Fatalf("after the pickup ActiveBinID = %v, want nil (the bound bin left the slot)", *rt.ActiveBinID)
 	}
-}
 
-// TestRegression_11_DeliveryOrderStillResetsLineUOP is the positive
-// counterpart: orders that DO deliver to the line still trigger the
-// reset. Without this paired test, a future predicate that always
-// returns false would silently disable replenishment without any
-// regression visible.
-func TestRegression_11_DeliveryOrderStillResetsLineUOP(t *testing.T) {
-	t.Parallel()
-	db := testEngineDB(t)
-	_, nodeID, _, claimID := seedConsumeNode(t, db, consumeNodeConfig{
-		Prefix: "REG11D", PayloadCode: "PART-R11D", UOPCapacity: 200, InitialUOP: 200,
-	})
-
-	// Drained runtime — simulates a half-consumed bin about to be
-	// replaced by the incoming delivery.
-	testutil.MustNoErr(t, db.SetProcessNodeRuntime(nodeID, &claimID, 50), "seed runtime")
-
-	// Delivery order: DeliveryNode IS the process node — Order A in
-	// two-robot consume, R2 in press-index, the delivery step in
-	// sequential. BinID set so binArrivingAt threads through and
-	// resolveReplenishUOP returns claim capacity.
-	orderID, err := db.CreateOrder("uuid-reg11-delivery", orders.TypeComplex,
-		&nodeID, false, 1,
-		"REG11D-NODE", // DeliveryNode == process_node CoreNodeName
-		"", "", protocol.Height{}, false, "", "", "")
-	if err != nil {
-		t.Fatalf("create order: %v", err)
-	}
-	// A complex order's destination lives in its steps, not delivery_node —
-	// createComplexOrder always persists them, so a fixture without them isn't a
-	// real order. The delivered gate resolves the final dropoff from here.
-	testutil.MustNoErr(t, db.UpdateOrderStepsJSON(orderID,
-		`[{"action":"pickup","node":"SRC"},{"action":"dropoff","node":"REG11D-NODE"}]`), "set steps")
-	testutil.MustNoErr(t, db.UpdateOrderStatus(orderID, string(orders.StatusConfirmed)), "set order confirmed")
-	deliveredBin := int64(202)
-	db.UpdateOrderBinID(orderID, &deliveredBin)
-	db.UpdateProcessNodeRuntimeOrders(nodeID, &orderID, nil)
-
-	eng := testEngine(t, db)
-	eng.wireEventHandlers()
-
-	emitOrderCompletedWithBinUOP(eng, orderID, "uuid-reg11-delivery", orders.TypeComplex, &nodeID, 200)
-
-	rt, _ := db.GetProcessNodeRuntime(nodeID)
-	if rt.RemainingUOPCached != 200 {
-		t.Errorf("RemainingUOP = %d, want 200 (the count Core stamped on the delivery envelope)",
-			rt.RemainingUOPCached)
+	emitOrderCompleted(eng, orderID, "uuid-reg11-removal", orders.TypeComplex, &nodeID)
+	rt, _ = db.GetProcessNodeRuntime(nodeID)
+	if rt.ActiveBinID != nil {
+		t.Errorf("after the completion ActiveBinID = %v, want nil (a removal binds nothing at the line)", *rt.ActiveBinID)
 	}
 }
 
 // TestRegression_DeliveryResetsToCapacityWithBin pins the bin-ownership flip
-// contract: delivery completion with a bin attached rebinds the slot and seats
-// the count Core stamped on the envelope. PLC ticks then decrement against that
-// number; deltas ship to Core via the outbox. No reconciler heal — Edge owns
-// the count for the bin at lineside, which is exactly why the seat must be
-// Core's measurement and not a local assumption about a full carrier.
+// contract: a delivery to the line with a bin attached rebinds the slot to the
+// order's bin and seats the count Core stamped on its landing
+// (emitOrderCompletedWithBinUOP sends the landing, the delivered and the
+// completion). PLC ticks then decrement against that number; deltas ship to
+// Core via the outbox. No reconciler heal — Edge owns the count for the bin at
+// lineside, which is exactly why the seat must be Core's measurement and not a
+// local assumption about a full carrier.
 //
-// Companion to TestRegression_RemovalOrderClearsBinAndZeroesUOP which
-// pins the empty-slot path.
+// The delivery arm of TestRegression_RemovalOrderClearsBinPointer, which pins
+// the removal: a removal filter that also swallowed deliveries would leave the
+// line unbound and never replenished.
 func TestRegression_DeliveryResetsToCapacityWithBin(t *testing.T) {
 	t.Parallel()
 	db := testEngineDB(t)

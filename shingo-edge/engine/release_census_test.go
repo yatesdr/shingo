@@ -325,7 +325,6 @@ var phantomCitations = map[string]string{
 	"TestRegression_CaptureDeltaRejectedOnTrueMismatch @ engine/wiring_release_test.go":                            "outside the release layer: reported, not fixed here",
 	"TestRegression_NegativeRuntimeFromOverpack @ engine/wiring_counter_delta_test.go":                             "outside the release layer: reported, not fixed here",
 	"TestRegression_ReconciliationSelfHeal @ engine/wiring_concurrent_tick_test.go":                                "outside the release layer: reported, not fixed here",
-	"TestRegression_RemovalOrderClearsBinAndZeroesUOP @ engine/uop_regression_test.go":                             "outside the release layer: reported, not fixed here",
 	"TestRegression_RuntimeUOPNegativeNoReorderRefire @ engine/wiring_counter_delta_test.go":                       "outside the release layer: reported, not fixed here",
 	"TestShapeFieldWordsAreTheClaimsOwnNames @ domain/flow_preset_word_drift_test.go":                              "outside the release layer: reported, not fixed here",
 	"TestShapeFieldWordsMatchTheModel @ domain/flow_preset_word_drift_test.go":                                     "outside the release layer: reported, not fixed here",
