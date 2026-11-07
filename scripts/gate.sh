@@ -190,9 +190,11 @@ step_fmt() {
 # entry — shingo-edge was also short a go.sum line for klauspost/compress, via
 # minio-go, which only the workspace build was covering.
 step_modbuild() {
-  local m failed=0
+  local m failed=0 t0
   for m in $MODULES; do
+    t0="$EPOCHREALTIME"
     ( cd "$ROOT/$m" && GOWORK=off go build ./... ) || { echo "  FAIL $m — does not build standalone (GOWORK=off)"; failed=1; }
+    steps_log "modbuild:$m" "$(_secs "$t0")"
   done
   [ "$failed" -eq 0 ] && echo "ok   modbuild" || echo "FAIL modbuild"
   return $failed
@@ -260,10 +262,12 @@ step_lint() {
   # invocation and this loop makes five short ones per module set rather than
   # one long one. The thing being bought is that the gate's verdict is about
   # the code. A gate that can fail for a reason outside the diff is not a gate.
-  local m failed=0
+  local m failed=0 t0
   for m in $MODULES; do
+    t0="$EPOCHREALTIME"
     ( cd "$ROOT/$m" && golangci-lint run --allow-serial-runners --build-tags docker,lockcheck \
         --config="$ROOT/.golangci.yml" --issues-exit-code=1 ./... ) || failed=1
+    steps_log "lint:$m" "$(_secs "$t0")"
   done
   [ "$failed" -eq 0 ] && echo "ok   lint" || echo "FAIL lint"
   return $failed
@@ -785,7 +789,9 @@ step_scope() {
   return 1
 }
 
-# No -race: see the header. CI runs the race variant.
+# No -race here. step_race runs the detector over core's engine and www with
+# their docker tests, beside this step in `full`; the rest of docker+race is
+# CI's (the docker-race shards).
 #
 # The module list is docker_modules(), the SAME derivation `scope` uses. A
 # module that starts carrying docker-tagged tests is picked up by both at
@@ -1025,11 +1031,11 @@ step_docker() {
   # failures and teach people to ignore the gate.
   export SHINGO_TEST_REQUIRE_DOCKER=1
   # THE MODULES RUN AT ONCE, NOT ONE AFTER ANOTHER. integration is one package,
-  # integration/scenarios, that spends most of its minutes waiting on its bus
-  # between ticks rather than computing, so in series the 4-core gate box sat
-  # half idle through it while shingo-core's suite waited its turn. Each module
-  # keeps its own -p, its own log and its own exit code, and the excerpts are
-  # printed afterwards in module order, so a red run reads as it always did.
+  # integration/scenarios, which no -p can split and which is most of the
+  # step's length on its own; in series shingo-core's suite waited out all of
+  # it. Each module keeps its own -p, its own log and its own exit code, and
+  # the excerpts are printed afterwards in module order, so a red run reads as
+  # it always did.
   for m in $mods; do
     echo "  docker: $m"
     rm -f "$logdir/docker-$m.rc"
@@ -1221,13 +1227,67 @@ gate_docker=""   # "" = not attempted | "ran" | "skipped"
 scope_against=""  # set by step_scope: "BASE @ sha"
 gate_unscoped=""  # 1 = `full --unscoped`
 
-# timed <step_fn> — runs one step and prints how long it took. The log had no
-# per-step times at all, so "why is the gate slow" could only be answered by
-# re-timing each step by hand on another machine.
+# ── The steps log ────────────────────────────────────────────────────────
+#
+# Every timed step appends `sha mode step seconds run` to .gate/steps.log, and
+# each step that runs tests adds a `step:pkg` line per package, read from go
+# test's own `ok pkg Ns` lines in the logs that step wrote — the format
+# shingo-core/scripts/shardplan's rePkgTime parses. lint and modbuild add a
+# `step:module` line each. `run` is the gate's start (UTC) and groups one
+# invocation's lines; a sha ending `+` had uncommitted changes. A log for
+# measuring the schedule, read by people, never by a test. In-gate package
+# times overlap one another, so they attribute nothing on their own: a
+# package's cost is measured solo, and a step's wall judges the schedule.
+GATE_MODE="${1:-all}"
+[ "$GATE_MODE" = full ] && [ "${2:-}" = "--unscoped" ] && GATE_MODE="full-unscoped"
+GATE_RUN="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+GATE_SHA="$(git rev-parse --short HEAD 2>/dev/null || echo nogit)"
+git diff --quiet HEAD 2>/dev/null || GATE_SHA="$GATE_SHA+"
+STEPS_LOG="$ROOT/.gate/steps.log"
+GATE_T0="$EPOCHREALTIME"
+
+# _secs <from> — seconds since an $EPOCHREALTIME reading, to 0.1s.
+_secs() {
+  awk -v a="$1" -v b="$EPOCHREALTIME" 'BEGIN { printf "%.1f", b - a }'
+}
+
+# steps_log <step> <seconds> — one line, appended.
+steps_log() {
+  printf '%s %s %s %s %s\n' "$GATE_SHA" "$GATE_MODE" "$1" "$2" "$GATE_RUN" >>"$STEPS_LOG"
+}
+
+# The logs each test-running step writes, under .gate/.
+step_logs() {
+  case "$1" in
+    step_test) echo "test-*.log" ;;
+    step_docker) echo "docker-*.log" ;;
+    step_race) echo "race.log" ;;
+    step_sim) echo "sim.log" ;;
+  esac
+}
+
+# timed <step_fn> — runs one step, prints how long it took, and logs it with
+# its packages. Only logs the step itself rewrote are read (newer than a mark
+# made as it started): a module's log from an earlier, wider run can still be
+# lying in .gate/.
 timed() {
-  local t0=$SECONDS r
+  local t0="$EPOCHREALTIME" r mark pat f name="${1#step_}" s
+  mark="$ROOT/.gate/.timed.$BASHPID.$1"
+  : >"$mark"
   "$@"; r=$?
-  echo "     ($1: $((SECONDS - t0))s)"
+  s="$(_secs "$t0")"
+  echo "     ($1: ${s}s)"
+  steps_log "$name" "$s"
+  pat="$(step_logs "$1")"
+  if [ -n "$pat" ]; then
+    for f in "$ROOT"/.gate/$pat; do
+      { [ -e "$f" ] && [ "$f" -nt "$mark" ]; } || continue
+      awk -v sha="$GATE_SHA" -v mode="$GATE_MODE" -v step="$name" -v run="$GATE_RUN" '
+        /^(ok|FAIL)[ \t]+[^ \t]+[ \t]+[0-9.]+s/ {
+          t = $3; sub(/s$/, "", t); print sha, mode, step ":" $2, t, run }' "$f" >>"$STEPS_LOG"
+    done
+  fi
+  rm -f "$mark"
   return $r
 }
 note_step() { gate_steps="${gate_steps:+$gate_steps, }$1"; }
@@ -1257,20 +1317,20 @@ gate_sentence() {
 
 case "${1:-all}" in
   fmt)   if step_fmt;  then note_step fmt;  else rc=1; fi ;;
-  vet)   if step_vet;  then note_step vet;  else rc=1; fi ;;
-  modbuild) if step_modbuild; then note_step modbuild; else rc=1; fi ;;
-  lint)  if step_lint; then note_step lint; else rc=1; fi ;;
-  scripts) if step_scripts; then note_step scripts; else rc=1; fi ;;
-  test)  if step_test; then note_step unit; else rc=1; fi ;;
-  race)  if step_race; then note_step race; else rc=1; fi ;;
-  sim)   if step_sim;  then note_step sim;  else rc=1; fi ;;
+  vet)   if timed step_vet;  then note_step vet;  else rc=1; fi ;;
+  modbuild) if timed step_modbuild; then note_step modbuild; else rc=1; fi ;;
+  lint)  if timed step_lint; then note_step lint; else rc=1; fi ;;
+  scripts) if timed step_scripts; then note_step scripts; else rc=1; fi ;;
+  test)  if timed step_test; then note_step unit; else rc=1; fi ;;
+  race)  if timed step_race; then note_step race; else rc=1; fi ;;
+  sim)   if timed step_sim;  then note_step sim;  else rc=1; fi ;;
   # EXIT CODE IS THE VERDICT: 0 = docker needed, 1 = not needed. It used to
   # `exit 0` unconditionally, which made the answer readable only by a human
   # reading the text — so nothing could gate on it. `if bash scripts/gate.sh
   # scope; then ...` now works, and matches step_scope's own return
   # convention, which `full` has always branched on.
   scope) step_scope "${2:-}"; exit $? ;;
-  docker) if step_docker; then gate_docker=ran; else rc=1; fi ;;
+  docker) if timed step_docker; then gate_docker=ran; else rc=1; fi ;;
   full)
     if timed step_fmt;  then note_step fmt;  else rc=1; fi
     if timed step_modbuild; then note_step modbuild; else rc=1; fi
@@ -1344,6 +1404,12 @@ case "${1:-all}" in
   *) usage ;;
 esac
 
+# The run's wall, marked when it failed: a red run is not a measurement. fmt
+# is the pre-push hook's step and is left out.
+if [ "$GATE_MODE" != fmt ]; then
+  if [ "$rc" -eq 0 ]; then steps_log total "$(_secs "$GATE_T0")"
+  else steps_log total-FAILED "$(_secs "$GATE_T0")"; fi
+fi
 if [ "$rc" -eq 0 ]; then echo "gate: clean"; else echo "gate: FAILED"; fi
 # Printed on PASS only: there is no sentence to paste for a gate that failed, and
 # emitting one would be the same hand-waving this replaces.
