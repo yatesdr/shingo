@@ -23,6 +23,12 @@ type S3Storage struct {
 }
 
 func NewS3Storage(cfg config.BackupS3Config) (*S3Storage, error) {
+	return newS3Storage(cfg, 0)
+}
+
+// newS3Storage is NewS3Storage with each request tried attempts times (the
+// client's MaxRetries; 0 is its default, 10 with backoff).
+func newS3Storage(cfg config.BackupS3Config, attempts int) (*S3Storage, error) {
 	if strings.TrimSpace(cfg.Endpoint) == "" {
 		return nil, fmt.Errorf("backup endpoint is required")
 	}
@@ -65,6 +71,7 @@ func NewS3Storage(cfg config.BackupS3Config) (*S3Storage, error) {
 		Region:       region,
 		Transport:    httpClient.Transport,
 		BucketLookup: minio.BucketLookupAuto,
+		MaxRetries:   attempts,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("create s3 client: %w", err)
@@ -76,6 +83,7 @@ func NewS3Storage(cfg config.BackupS3Config) (*S3Storage, error) {
 			Region:       region,
 			Transport:    httpClient.Transport,
 			BucketLookup: minio.BucketLookupPath,
+			MaxRetries:   attempts,
 		})
 		if err != nil {
 			return nil, fmt.Errorf("create path-style s3 client: %w", err)

@@ -31,7 +31,11 @@ type Service struct {
 	stopCh         chan struct{}
 	wg             sync.WaitGroup
 	storageFactory func(config.BackupS3Config) (Storage, error)
-	runFlag        atomic.Bool
+	// s3Attempts is how many times the default storage tries each S3 request
+	// (the client's MaxRetries). 0 is the client's own default: 10 tries with
+	// backoff. Set through SetS3Attempts.
+	s3Attempts int
+	runFlag    atomic.Bool
 	// debounceDelay is how long triggered requests wait for siblings before
 	// running. A field only so tests can shorten it; production value is 10s.
 	debounceDelay time.Duration
@@ -42,17 +46,17 @@ func NewService(db *store.DB, cfg *config.Config, configPath, appVersion string,
 		logf = log.Printf
 	}
 	svc := &Service{
-		db:         db,
-		cfg:        cfg,
-		configPath: configPath,
-		appVersion: appVersion,
-		logf:       logf,
-		triggerCh:  make(chan string, 64),
-		stopCh:     make(chan struct{}),
-		storageFactory: func(cfg config.BackupS3Config) (Storage, error) {
-			return NewS3Storage(cfg)
-		},
+		db:            db,
+		cfg:           cfg,
+		configPath:    configPath,
+		appVersion:    appVersion,
+		logf:          logf,
+		triggerCh:     make(chan string, 64),
+		stopCh:        make(chan struct{}),
 		debounceDelay: 10 * time.Second,
+	}
+	svc.storageFactory = func(cfg config.BackupS3Config) (Storage, error) {
+		return newS3Storage(cfg, svc.s3Attempts)
 	}
 	svc.refreshStaticStatus()
 	if marker, err := PendingRestore(configPath); err == nil && marker != nil {
@@ -64,6 +68,12 @@ func NewService(db *store.DB, cfg *config.Config, configPath, appVersion string,
 	}
 	return svc
 }
+
+// SetS3Attempts sets how many times each S3 request this service makes is
+// tried; 0 (the default) is the client's own, 10 with backoff. For a test whose
+// storage fails on purpose, so the failure costs one request and not ten
+// backoffs. Call it before Start.
+func (s *Service) SetS3Attempts(n int) { s.s3Attempts = n }
 
 func (s *Service) Start() {
 	s.wg.Add(1)
