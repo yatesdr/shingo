@@ -39,7 +39,8 @@ Edge v37-v43; Core changes only dev tooling (plantspec, seeddev, simcalc). Migra
 - processes.auto_cutover_enabled is dropped (v42); catid_holds and line_counters live in the chain
 - plants/master.yaml is the one sim plant; the old specs are its named sections
 - A seeded cart's seat knows its part (source seed); a bin with no part seeds one that cannot say
-- The fake PLC runs a line with program changes; the 4x2-shaped cell's scenarios run S1-S8
+- The sim operator sends back a cart recorded as another part: its strokes are held, so it never runs down
+- The fake PLC runs a line with program changes; the 4x2-shaped cell's scenarios run S1-S9
 - The fake PLC's line pauses its loading and drains (POST /api/sim/pause-loading)
 - scripts/sim-4x2.sh runs one shape on the dev stack (make dev-sim-4x2 SHAPE=S1..S9)
 

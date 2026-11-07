@@ -29,6 +29,12 @@ func (op *simOperator) binNotDone(nodeID int64) string {
 	}
 	switch claim.Role {
 	case protocol.ClaimRoleConsume:
+		// A cart recorded as a part the claim does not take is never drawn (the
+		// walk holds the seat's strokes for a cart of the claim's part), so it
+		// never runs down: a person sends it back on the parked-ticks notice.
+		if recordedOtherPart(rt, claim) {
+			return ""
+		}
 		// The count consumeDisposition will declare from: the parts a person
 		// counts in the bin, an oracle read of the simulated floor
 		// (readSimFloorBins), as consumeDisposition reads it.

@@ -166,3 +166,30 @@ func produceClaimID(t *testing.T, f *machineFixture) int64 {
 		"produce claim id")
 	return id
 }
+
+// A cart recorded as a part its claim does not take is never drawn: the walk
+// holds the seat's strokes for a cart of the claim's part. It never runs down,
+// so the operator sends it back when the swap stages, parts or not, as a person
+// does on the parked-ticks notice. A cart of the claim's own part still waits.
+func TestSimOperator_ReleasesACartOfAnotherPartWithPartsLeft(t *testing.T) {
+	t.Parallel()
+	for _, c := range []struct {
+		name, part string
+		want       bool
+	}{
+		{name: "a cart recorded as another part goes", part: "PANEL-X", want: true},
+		{name: "a cart recorded as the claim's part waits", part: "PANEL-B", want: false},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			w := newBinDoneWorld(t, 15, false)
+			_, err := w.f.db.Exec(`UPDATE process_node_runtime_states SET active_bin_id = 38,
+				lineside_payload_code = ?, lineside_payload_known = 1, lineside_source = 'flip'
+				WHERE process_node_id = ?`, c.part, w.f.consumeID)
+			testutil.MustNoErr(t, err, "record the seat's cart")
+			if got := w.pressed(t); got != c.want {
+				t.Errorf("15 left on a cart recorded as %s: pressed RELEASE = %v, want %v", c.part, got, c.want)
+			}
+		})
+	}
+}
