@@ -263,10 +263,10 @@ func (w *walk) door(name string, wantMoves bool, want int, prep func() func() in
 		w.collect(walkWindow)
 	}
 	w.collect(0) // drop anything left from the door before
-	before := w.views()
+	before := w.views(nil)
 	status := act()
 	frames := w.collect(walkWindow)
-	after := w.views()
+	after := w.views(before)
 	if want != 0 && status != want {
 		w.t.Errorf("%s answered %d, its fixture says %d: the fixture no longer reaches what it walked", name, status, want)
 	}
@@ -292,11 +292,25 @@ type viewSnap struct {
 	body json.RawMessage
 }
 
-func (w *walk) views() map[int64]viewSnap {
+// views reads every station's view. With prev, each read quotes the ETag prev
+// holds, as the board's refetch does (operator.js): a view the door did not
+// move must answer 304 with that ETag (and keeps prev's body), one it moved
+// 200 with a new ETag. So every door that moves nothing also pins, on these
+// populated boards and through the real router, that an unchanged board's
+// refetch costs it no body.
+func (w *walk) views(prev map[int64]viewSnap) map[int64]viewSnap {
 	w.t.Helper()
 	out := map[int64]viewSnap{}
 	for _, sid := range w.stations {
-		res, err := http.Get(fmt.Sprintf("%s/api/operator-stations/%d/view", w.srv.URL, sid))
+		req, err := http.NewRequest(http.MethodGet, fmt.Sprintf("%s/api/operator-stations/%d/view", w.srv.URL, sid), nil)
+		if err != nil {
+			w.t.Fatalf("view %d request: %v", sid, err)
+		}
+		held, conditional := prev[sid]
+		if conditional {
+			req.Header.Set("If-None-Match", held.etag)
+		}
+		res, err := http.DefaultClient.Do(req)
 		if err != nil {
 			w.t.Fatalf("view %d: %v", sid, err)
 		}
@@ -305,13 +319,23 @@ func (w *walk) views() map[int64]viewSnap {
 			w.t.Fatalf("read view %d: %v", sid, err)
 		}
 		res.Body.Close()
-		if res.StatusCode == http.StatusNotFound {
+		etag := res.Header.Get("ETag")
+		switch {
+		case res.StatusCode == http.StatusNotFound:
 			continue // a station a door deleted
-		}
-		if res.StatusCode != http.StatusOK {
+		case res.StatusCode == http.StatusNotModified && conditional:
+			if etag != held.etag || len(body) != 0 {
+				w.t.Errorf("view %d answered 304 with ETag %q and %d bytes to If-None-Match %q", sid, etag, len(body), held.etag)
+			}
+			out[sid] = held
+		case res.StatusCode == http.StatusOK:
+			if conditional && etag == held.etag {
+				w.t.Errorf("view %d answered 200 and a full body to If-None-Match of its own ETag %q", sid, etag)
+			}
+			out[sid] = viewSnap{etag: etag, body: body}
+		default:
 			w.t.Fatalf("view %d: %d %s", sid, res.StatusCode, body)
 		}
-		out[sid] = viewSnap{etag: res.Header.Get("ETag"), body: body}
 	}
 	return out
 }

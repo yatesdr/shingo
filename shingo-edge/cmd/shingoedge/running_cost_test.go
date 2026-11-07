@@ -17,10 +17,13 @@ import (
 	"shingo/protocol/debuglog"
 	"shingo/shared/scenefixtures"
 	"shingoedge/config"
+	"shingoedge/domain"
 	"shingoedge/engine"
 	"shingoedge/internal/testdb"
 	"shingoedge/messaging"
 	"shingoedge/store"
+	"shingoedge/store/processes"
+	"shingoedge/store/stations"
 	"shingoedge/www"
 )
 
@@ -88,11 +91,16 @@ func TestRunningCost_ABoardRebuildsOnlyForItsOrders(t *testing.T) {
 	views := map[string]json.RawMessage{}
 	perBuild := map[string]int64{}
 	for name, sid := range boards {
-		body, etag := runningView(t, srv.URL, sid, "")
+		body, etag, _ := runningView(t, srv.URL, sid, "")
 		views[name] = body
 		counter.Reset()
-		runningView(t, srv.URL, sid, etag)
+		_, _, status := runningView(t, srv.URL, sid, etag)
 		perBuild[name] = counter.Count()
+		// What a rebuild costs is what the refetch of an unchanged board costs:
+		// a 304, the build run and no body sent.
+		if status != http.StatusNotModified || perBuild[name] == 0 {
+			t.Fatalf("the %s board's conditional view answered %d with %d statements: the cost measures no 304", name, status, perBuild[name])
+		}
 	}
 	// The router runs the walk's windows (door_walk_test.go), so an update's
 	// frames are all in within walkWindow, as a door's are.
@@ -173,8 +181,9 @@ func runningOrder(t *testing.T, db *store.DB, station int64, coreNode string, i 
 	return uuid
 }
 
-// runningView GETs a station's view, conditional when etag is set.
-func runningView(t *testing.T, base string, sid int64, etag string) (json.RawMessage, string) {
+// runningView GETs a station's view, conditional when etag is set, and answers
+// its body, ETag and status.
+func runningView(t *testing.T, base string, sid int64, etag string) (json.RawMessage, string, int) {
 	t.Helper()
 	req, err := http.NewRequest(http.MethodGet, fmt.Sprintf("%s/api/operator-stations/%d/view", base, sid), nil)
 	if err != nil {
@@ -195,7 +204,7 @@ func runningView(t *testing.T, base string, sid int64, etag string) (json.RawMes
 	if etag == "" && res.StatusCode != http.StatusOK {
 		t.Fatalf("view %d: %d %s", sid, res.StatusCode, body)
 	}
-	return body, res.Header.Get("ETag")
+	return body, res.Header.Get("ETag"), res.StatusCode
 }
 
 // runningStream opens /events with every topic and streams its frames.
@@ -234,4 +243,89 @@ func runningStream(t *testing.T, base string) <-chan sseFrameW {
 		}
 	}()
 	return out
+}
+
+// twentyTwoHomeBoard is engine's buildTwentyTwoHomeBoard
+// (station_view_loader_golden_test.go) through the same exported doors: 22
+// homes, each pinned to its own part, 9 buffer spots, five served cells of four
+// or five parts, one home's clear in flight. Made-up names.
+func twentyTwoHomeBoard(t *testing.T, db *store.DB, eng *engine.Engine) int64 {
+	t.Helper()
+	procID, err := db.CreateProcess("LDR-22", "", "", "", false)
+	if err != nil {
+		t.Fatalf("create process: %v", err)
+	}
+	sid, err := db.CreateOperatorStation(stations.Input{ProcessID: procID, Code: "LDR-22-ST", Name: "LDR-22 Station", Sequence: 1, Enabled: true})
+	if err != nil {
+		t.Fatalf("create station: %v", err)
+	}
+	var positions []protocol.LoaderPosition
+	ids := map[string]int64{}
+	for i := 1; i <= 22; i++ {
+		home := fmt.Sprintf("SMN_H%02d", i)
+		id, err := db.CreateProcessNode(processes.NodeInput{ProcessID: procID, OperatorStationID: &sid, CoreNodeName: home,
+			Code: home, Name: home, Sequence: i, Enabled: true})
+		if err != nil {
+			t.Fatalf("create node: %v", err)
+		}
+		ids[home] = id
+		positions = append(positions, protocol.LoaderPosition{CoreNodeName: home,
+			PayloadCode: fmt.Sprintf("PART-%02d", i), HomeKind: protocol.LoaderHomeKindHome, Ordinal: i})
+	}
+	for i := 1; i <= 9; i++ {
+		positions = append(positions, protocol.LoaderPosition{CoreNodeName: fmt.Sprintf("SMN_F%d", i),
+			HomeKind: protocol.LoaderHomeKindBuffer, Ordinal: 22 + i})
+	}
+	for c := 0; c < 5; c++ {
+		var parts []string
+		for i := c*5 + 1; i <= c*5+5 && i <= 22; i++ {
+			parts = append(parts, fmt.Sprintf("PART-%02d", i))
+		}
+		cell := fmt.Sprintf("CELL-%d", c+1)
+		node := fmt.Sprintf("WLN_%d", c+1)
+		cp, err := db.CreateProcess(cell, "", "", "", false)
+		if err != nil {
+			t.Fatalf("create cell: %v", err)
+		}
+		style, err := db.CreateStyle(cell+"-RUN", "", cp)
+		if err != nil {
+			t.Fatalf("create style: %v", err)
+		}
+		if err := db.SetActiveStyle(cp, &style); err != nil {
+			t.Fatalf("activate style: %v", err)
+		}
+		nid, err := db.CreateProcessNode(processes.NodeInput{ProcessID: cp, CoreNodeName: node, Code: node, Name: node, Sequence: 1, Enabled: true})
+		if err != nil {
+			t.Fatalf("create cell node: %v", err)
+		}
+		if _, err := db.UpsertStyleNodeClaim(domain.CoreNodeKinds{}, processes.NodeClaimInput{
+			StyleID: style, CoreNodeName: node, Role: protocol.ClaimRoleConsume,
+			SwapMode: protocol.SwapModeSingleRobot, PayloadCode: parts[0], AllowedPayloadCodes: parts,
+			UOPCapacity: 100, InboundSource: "MARKET", OutboundDestination: "MARKET",
+			InboundStaging: node + "-IN", OutboundStaging: node + "-OUT",
+		}); err != nil {
+			t.Fatalf("cell claim: %v", err)
+		}
+		if _, err := db.EnsureProcessNodeRuntime(nid); err != nil {
+			t.Fatalf("cell runtime: %v", err)
+		}
+		if err := db.SetProcessNodeRuntime(nid, nil, 10*(c+1)); err != nil {
+			t.Fatalf("cell runtime: %v", err)
+		}
+	}
+	if err := eng.SetCoreLoaders([]protocol.LoaderInfo{{
+		Name: "Homes-22", LoaderKey: "loader:22", Role: "produce", Layout: "dedicated_positions",
+		Replenishment: "operator", OutboundDest: "FG-MARKET", InboundSource: "EMPTY-SUPER", Positions: positions,
+	}}); err != nil {
+		t.Fatalf("SetCoreLoaders: %v", err)
+	}
+	h03 := ids["SMN_H03"]
+	oid, err := db.CreateOrder("homes22-order-a", protocol.OrderTypeMove, &h03, false, 1, "SMN_F2", "", "SMN_H03", protocol.Height{}, false, "", "", "")
+	if err != nil {
+		t.Fatalf("create order: %v", err)
+	}
+	if _, err := db.Exec(`UPDATE orders SET status='queued' WHERE id=?`, oid); err != nil {
+		t.Fatalf("queue order: %v", err)
+	}
+	return sid
 }
