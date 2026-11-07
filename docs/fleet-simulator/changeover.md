@@ -31,7 +31,7 @@ time. Each shape checks the carts against the line's loads, the holds ledger, an
 the load station's counter and on the cell counter, S2 the late cutover (the declaration on a green gate,
 the counted-part force on a red one), S3 the early cutover, S4 a jump with no changeover and the automatic
 switch, S5 an unmapped part (Charge and Write off), S6 a mixed cell, S7 a restart, S8 the PLC moving its
-count to a sibling MES slot (the slot watch's item, the click that re-points, the record's gap). `make dev-sim-4x2
+count to a sibling MES slot (the slot watch's item, the click that re-points and counts the strokes since the move). `make dev-sim-4x2
 SHAPE=S3` (`scripts/sim-4x2.sh`) runs one shape on the dev stack for a person to watch and prints the same
 ledger line.
 

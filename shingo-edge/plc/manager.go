@@ -127,6 +127,9 @@ type Manager struct {
 	// poll goroutine alone, the map written by it alone.
 	identityChange atomic.Pointer[func(processID int64) time.Time]
 	pendingAnchors map[int64]pendingAnchor
+	// pointHold answers whether a point's count waits this pass
+	// (SetPointHold).
+	pointHold atomic.Pointer[func(plcName, tagName string) bool]
 
 	warlinkConnected bool
 	warlinkError     error
@@ -808,6 +811,13 @@ func (m *Manager) pollReportingPoint(rp counters.ReportingPoint) (bool, *pointRe
 	m.nonNumeric.Delete(rp.ID)
 
 	m.emitter.EmitCounterRead(rp.ID, rp.PLCName, rp.TagName, newCount)
+
+	// A held point writes nothing this pass: its strokes stay in the counter
+	// for a later pass to count (a re-point's catch-up waiting for the new
+	// slot's part identity, SetPointHold).
+	if m.pointHeld(rp.PLCName, rp.TagName) {
+		return false, nil
+	}
 
 	// A REPORTING POINT NEVER READ SEEDS FROM ITS FIRST READ. The PLC's counter
 	// is a running total this point has never seen, so its first read is where

@@ -137,6 +137,10 @@ type Engine struct {
 	// the poll goroutine from before the monitor starts: an atomic, so the
 	// poll reads nil until startCatidMonitor stores it.
 	tickMonitor atomic.Pointer[catidMonitor]
+	// catchUps holds each re-pointed point waiting for its new identity's
+	// first read (by the point's PLC and tag, a *catchUp:
+	// repoint_catch_up.go): the poll asks catchUpHeld, with no lock.
+	catchUps sync.Map
 	// endOfLine is the station tile's end-of-line sentence per process, as
 	// last computed (end_of_line.go).
 	endOfLine endOfLineMemo
@@ -437,6 +441,7 @@ func (e *Engine) Start() {
 	// Create managers
 	e.plcMgr = plc.NewManager(e.db, e.cfg.WarLink, e.cfg.PollRate, e.cfg.Counter.JumpThreshold, plcEmit, e.warlinkClient)
 	e.plcMgr.SetIdentityChangeSource(e.identityChangedAt)
+	e.plcMgr.SetPointHold(e.catchUpHeld)
 	e.orderMgr = orders.NewManager(e.db, orderEmit, e.cfg.StationID())
 
 	// Wire debug logging to subsystems

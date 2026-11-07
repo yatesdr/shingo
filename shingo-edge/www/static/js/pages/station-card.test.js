@@ -155,6 +155,17 @@ check('the counting block: three groups, the MES slots discovered and the slot c
     assert.strictEqual(s.length, 4);
 });
 
+check('the counting block: a slot the PLC counts on, with no reading from before it rose, says the record lacks its strokes', () => {
+    const b = JSON.parse(JSON.stringify(block));
+    b.fmt = fmt;
+    b.end.slots[1] = { slot: 2, tag: 'MES_WELD_6.Prod_Counter_02', catid: '1001', part: true, count: 14, read: true,
+        rising: true, rose_at: '2026-11-06T10:01:00Z', counted: false, label: 'discovered',
+        not_recorded_since: '2026-11-06T09:50:00Z' };
+    const s = groupsOf(C.countingHTML(b))[0].lines;
+    assert.strictEqual(labelOf(s, 'Prod_Counter_02 · CATID 1001 · count 14 · rising · strokes since T are not in the record'),
+        'discovered');
+});
+
 check('the counting block: a station tag discovered until read, then confirmed; positions confirmed; the rest measured', () => {
     const s = groupsOf(C.countingHTML(block))[1].lines;
     assert.strictEqual(labelOf(s, 'tag STATION_01: saved and read'), 'confirmed');

@@ -508,10 +508,6 @@ type w6Cell struct {
 	// lastPublish is when the scenario last wrote the PLC's tags into the
 	// Edge's cache (publish).
 	lastPublish time.Time
-	// unrecorded are counts the PLC made that no reporting point could read,
-	// by CATID: made on a slot the process did not count, before a re-point's
-	// first read (S8). The record is checked against the PLC's less these.
-	unrecorded map[int64]int64
 }
 
 // newW6Cell builds the cell on RUN, each position holding a full RUN cart
@@ -1164,9 +1160,9 @@ func (c *w6Cell) record(label string, l *w6Ledger) {
 		}
 	}
 	for v, n := range c.plc.countedBy() {
-		if got := l.snapByCATID[fmt.Sprint(v)]; got != n-c.unrecorded[v] {
-			c.t.Fatalf("%s: the record has %d counted under CATID %d, the PLC counted %d, %d of them where no point read (record by CATID %v)",
-				label, got, v, n, c.unrecorded[v], l.snapByCATID)
+		if got := l.snapByCATID[fmt.Sprint(v)]; got != n {
+			c.t.Fatalf("%s: the record has %d counted under CATID %d, the PLC counted %d (record by CATID %v)",
+				label, got, v, n, l.snapByCATID)
 		}
 	}
 	for _, s := range []int64{c.run, c.alt} {

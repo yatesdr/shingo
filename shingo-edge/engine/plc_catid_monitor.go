@@ -229,6 +229,7 @@ type postCutoverVerify struct {
 // read without cm.mu: the poll attributes a counted tick by it, and must never
 // wait on the monitor. Immutable; a change publishes a new one.
 type catidSnapshot struct {
+	tag         string              // the identity tag the monitor reads for the process
 	value       string              // the confirmed CATID; "" until one is confirmed
 	confirmedAt time.Time           // when value was confirmed
 	baseline    bool                // value was standing at the first read after a start, not a change
@@ -338,7 +339,7 @@ func (cm *catidMonitor) prime() {
 		cancel()
 		log.Printf("plc-catid: monitoring process %d (%s) on %s.%s", p.ID, p.Name, p.CounterPLCName, tag)
 		cm.states[p.ID] = &catidState{plcName: p.CounterPLCName, tagName: tag, processName: p.Name}
-		cm.snapshots.Store(p.ID, &catidSnapshot{observed: observed[p.ID]})
+		cm.snapshots.Store(p.ID, &catidSnapshot{tag: tag, observed: observed[p.ID]})
 	}
 }
 
@@ -386,7 +387,7 @@ func (cm *catidMonitor) reprime(processID int64) {
 	if old, ok := cm.snapshot(processID); ok {
 		observed = old.observed
 	}
-	cm.snapshots.Store(processID, &catidSnapshot{observed: observed})
+	cm.snapshots.Store(processID, &catidSnapshot{tag: tag, observed: observed})
 	log.Printf("plc-catid: monitoring process %d (%s) on %s.%s", p.ID, p.Name, p.CounterPLCName, tag)
 }
 
@@ -413,7 +414,7 @@ func (cm *catidMonitor) snapshot(processID int64) (*catidSnapshot, bool) {
 // edge, the value added to the observed set (copied, never written in place).
 // The latest landing carries over. Called with cm.mu held.
 func (cm *catidMonitor) publishRead(processID int64, st *catidState, now time.Time, confirmed bool) {
-	next := &catidSnapshot{lastOK: now}
+	next := &catidSnapshot{tag: st.tagName, lastOK: now}
 	if old, ok := cm.snapshot(processID); ok {
 		next.observed, next.landing = old.observed, old.landing
 	}

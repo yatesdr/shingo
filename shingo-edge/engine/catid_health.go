@@ -91,7 +91,8 @@ func (e *Engine) CatidHealth(processID int64) ([]CatidHealthItem, error) {
 		}
 		items = append(items, identityItems(proc, tag, facts, now)...)
 		if e.catidMon != nil {
-			items = append(items, slotItems(proc, e.catidMon.slotFactsOf(processID))...)
+			items = append(items, slotItems(proc, e.catidMon.slotFactsOf(processID),
+				func() time.Time { return e.lastCountedAt(processID) })...)
 		}
 		items = append(items, e.partItems(proc, facts, sets)...)
 		items = append(items, noCATIDItems(sets)...)

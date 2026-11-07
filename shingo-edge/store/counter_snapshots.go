@@ -4,12 +4,26 @@ package store
 // store/counters/. This file preserves the *store.DB method surface so
 // external callers do not need to change.
 
-import "shingoedge/store/counters"
+import (
+	"time"
+
+	"shingoedge/store/counters"
+)
 
 // SumCounterDeltaSince sums the strokes the process counted with the PLC on
 // catid at or after sinceMs (counters.SumDeltaSince).
 func (db *DB) SumCounterDeltaSince(processID int64, catid string, sinceMs int64) (int64, error) {
 	return counters.SumDeltaSince(db.DB, processID, catid, sinceMs)
+}
+
+// LastCountedAt is when the process's latest counted row was read, zero when
+// it has none (counters.LastCountedMs).
+func (db *DB) LastCountedAt(processID int64) (time.Time, error) {
+	ms, err := counters.LastCountedMs(db.DB, processID)
+	if err != nil || ms == 0 {
+		return time.Time{}, err
+	}
+	return time.UnixMilli(ms), nil
 }
 
 // InsertCounterSnapshot writes one counter_snapshots row, the tick's stamp

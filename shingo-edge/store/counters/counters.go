@@ -12,6 +12,7 @@ package counters
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
 	"time"
 
@@ -86,6 +87,18 @@ func InsertSnapshot(db *sql.DB, rpID int64, countValue, delta int64, anomaly str
 // still holding dates in this shape is hourly_counts_local_legacy, the parked
 // pre-2026-09 hours, which nothing reads or writes.
 const DateLayout = "2006-01-02"
+
+// LastCountedMs is the unix ms (the row's own clock) of the process's latest
+// counted row, 0 when it has none.
+func LastCountedMs(db *sql.DB, processID int64) (int64, error) {
+	var ms sql.NullInt64
+	err := db.QueryRow(`SELECT recorded_ms FROM counter_snapshots WHERE process_id = ? AND delta > 0
+		ORDER BY id DESC LIMIT 1`, processID).Scan(&ms)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, nil
+	}
+	return ms.Int64, err
+}
 
 // SumDeltaSince sums the strokes the process's reporting points counted with
 // the PLC on catid at or after sinceMs (unix ms, the row's own clock).

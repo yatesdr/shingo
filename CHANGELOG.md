@@ -26,6 +26,7 @@ Edge v37-v43; Core changes only dev tooling (plantspec, seeddev, simcalc). Migra
 - A station stroke on an off-plan part holds its share at each position
 - The MES sibling slots are watched once a minute; a slot the PLC counts on is a strip item
 - The strip's click re-points the counter to that slot
+- The click seeds the new slot at its count when the PLC moved: the strokes since count
 - A station counter's card owns its positions; the only station pre-ticks the unbound ones
 - Station tags are suggested by the family's convention; the process's own MES slot is refused
 - The parts in the line are anchored at a program-change reset and shown, never charged (v43)

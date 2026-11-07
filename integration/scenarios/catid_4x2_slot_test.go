@@ -1,5 +1,5 @@
 // S8, the counted slot stops and a sibling moves: the slot watch's item, the
-// click that re-points the counter, and the record's gap.
+// click that re-points the counter, and the strokes since the move counted.
 //
 //go:build docker
 
@@ -25,50 +25,136 @@ const (
 	// w6Cadence is the line's machine cycle while S8 waits on the watch.
 	w6Cadence = 10 * time.Second
 	// slotSlack is the scheduling slack on the watch's minute (its ticker and
-	// the scenario's read of the strip); clickSlack is the click, the hold
-	// before WarLink publishes the new slot, and the scan that publishes it.
-	slotSlack  = 2 * time.Second
-	clickSlack = 5 * time.Second
+	// the scenario's read of the strip).
+	slotSlack = 2 * time.Second
 )
 
 // TestCatid4x2_S8_CountedSlotStopsASiblingMoves: WELD-6 counts on
-// Prod_Counter_01, the five positions at the load station, the line running a
-// cycle every 10 s. Right after a pass of the Edge's slot watch the PLC's
-// program moves the count to Prod_Counter_02: it ticks from then and CATID_02
-// reads the part; Prod_Counter_01 stops, CATID_01 stays. Within one watch
-// interval the strip carries the red counter_slot_idle item naming
-// Prod_Counter_02, and its click (the counter edit POST
-// /api/processes/{id}/counter makes) re-points the counter: the item goes,
-// the identity follows to CATID_02 (nothing is confirmed while WarLink does
-// not publish it, though CATID_01 names the same part), the point's first
-// read of Prod_Counter_02 seeds, and the first tick on it is recorded under
-// CATID_02's part and RUN. The record lacks exactly the parts counted on _02
-// before that first read, a gap of one watch interval and the click; the
-// carts, counted at the station, lack nothing, and every order is confirmed.
+// Prod_Counter_01, the line running a cycle every 10 s, its positions counted
+// at the load station in one half and at the production counter in the other.
+// Once the Edge's slot watch has read the struct twice (the counter rising
+// between the reads, standing from the second), the PLC's program moves the
+// count to Prod_Counter_02: it ticks from then and CATID_02 reads the part;
+// Prod_Counter_01 stops, CATID_01 stays. Within one watch interval the strip
+// carries the red counter_slot_idle item naming Prod_Counter_02, and its click
+// (the counter edit POST /api/processes/{id}/counter makes) re-points the
+// counter: the item goes, the identity follows to CATID_02 (nothing is
+// confirmed while WarLink does not publish it, though CATID_01 names the same
+// part), and the point is seeded at _02's count when the PLC moved. Its first
+// counted read waits for the monitor's read of CATID_02 and counts every part
+// made on _02 since the move, under CATID_02's part and RUN: the record has
+// every part, the carts equal the loads inside the window, and every order is
+// confirmed.
 func TestCatid4x2_S8_CountedSlotStopsASiblingMoves(t *testing.T) {
 	t.Parallel()
-	c := newW6Cell(t, w6Opts{station: []int{0, 1, 2, 3, 4}})
-	c.unrecorded = map[int64]int64{}
-	c.cycle(w6Depth + 2) // the line full: the counter counts
-	c.ledger("S8 steady", true)
-	c.noSlotItem("S8 steady")
+	t.Run("station-counted", func(t *testing.T) {
+		t.Parallel()
+		s8(t, "S8 station-counted", w6Opts{station: []int{0, 1, 2, 3, 4}})
+	})
+	t.Run("cell-counted", func(t *testing.T) {
+		t.Parallel()
+		s8(t, "S8 cell-counted", w6Opts{})
+	})
+}
 
-	// The line runs until a pass of the watch has read the struct after the
-	// line's last count reached the cache: Prod_Counter_01 stands from that
-	// read to the move. (Before the watch existed nothing reads the struct:
-	// the move comes after the budget instead.)
-	if !c.runUntil(slotWatch+slotSlack, func() bool {
-		return !c.plc.structReadAfter(c.lastPublish.Add(50 * time.Millisecond)).IsZero()
-	}) {
-		t.Logf("S8: no read of %s in %v; the count moves anyway", w6Struct, slotWatch+slotSlack)
-	}
-	c.noSlotItem("S8 the watch's pass before the move")
-	recorded, _ := c.countedRows()
+// s8 is one half of S8, on a cell counted as o says.
+func s8(t *testing.T, label string, o w6Opts) {
+	c := newW6Cell(t, o)
+	c.cycle(w6Depth + 2) // the line full: the counter counts
+	c.ledger(label+" steady", true)
+	c.noSlotItem(label + " steady")
+	c.twoPasses(label)
+	c.noSlotItem(label + " the watch's pass before the move")
+	_, before := c.countedRows()
+	base := c.plc.state().Slots[1].Counter
 	c.plc.do(func(l *simwarlink.Line) { mustNil(t, l.CountOn(2), "the count to slot 2") })
 	moved := time.Now()
 	stood := c.plc.state().Slots[0]
 	c.cycle(1) // the first part counted on Prod_Counter_02, which no point reads
+	item := c.awaitSlotIdle(label, moved)
+	shown := time.Since(moved)
+	if item.Severity != edgeengine.CatidHealthRed || item.Data["tag"] != w6Counter2 || item.Data["catid"] != fmt.Sprint(catRUN) ||
+		item.Data["counted_tag"] != w6Counter {
+		t.Fatalf("%s: the item %+v; want red, naming %s (CATID %d) against the counted %s", label, item, w6Counter2, catRUN, w6Counter)
+	}
+	t.Logf("%s: %.1fs after the move: %q (%s)", label, shown.Seconds(), item.Headline, item.Detail)
 
+	seen := c.click(label, item)
+	// WarLink's scan publishes the two members, the poll reads _02 (its strokes
+	// wait for the part identity), the monitor reads CATID_02, the poll again.
+	c.publish()
+	c.tickers.poll.pass(t, "the poll")
+	c.awaitConfirm("CATID_02 after the re-point", catRUN, seen)
+	c.cycle(0)
+	caught := time.Since(moved)
+	since := c.plc.state().Slots[1].Counter - base
+	l := c.ledger(label+", inside the window", true)
+	c.wantRecord(label+", inside the window", l, c.counted(), 0)
+	c.line(label+", inside the window", l)
+	n, rows := c.rowsAfter(before)
+	if n != since {
+		t.Fatalf("%s: the record has %d parts counted since the move in %d rows, want the %d made on %s", label, n, len(rows),
+			since, w6Counter2)
+	}
+	for _, r := range rows {
+		if r.catid != fmt.Sprint(catRUN) || r.style != c.run {
+			t.Fatalf("%s: a row since the move %+v; want CATID_02's %d under RUN (%d)", label, r, catRUN, c.run)
+		}
+	}
+
+	// The next tick on Prod_Counter_02.
+	_, last := c.countedRows()
+	c.cycle(1)
+	want := c.plc.state().Slots[1]
+	if tick := c.rowAfter(last); tick.count != want.Counter || tick.delta != 1 || tick.catid != fmt.Sprint(want.CATID) ||
+		tick.style != c.run {
+		t.Fatalf("%s: the next tick on %s: %+v; want it reading %d, one part, CATID_02's %d, RUN (%d)",
+			label, w6Counter2, tick, want.Counter, want.CATID, c.run)
+	}
+	c.cycle(4)
+	l = c.ledger(label, true)
+	c.wantRecord(label, l, c.counted(), 0)
+	if l.holdsOpen != 0 {
+		t.Fatalf("%s: %d held, want none", label, l.holdsOpen)
+	}
+	if s := c.plc.state().Slots[0]; s != stood {
+		t.Fatalf("%s: Prod_Counter_01 / CATID_01 moved after the count left them: %+v -> %+v", label, stood, s)
+	}
+	c.confirmedAll(label)
+	c.line(label, l)
+	t.Logf("CATCH-UP %s: the item %.1fs after the move (watch interval %v); the %d parts counted on %s in the %.1fs to the "+
+		"monitor's read of CATID_02 are in the record, in %d row(s) under CATID %d and RUN", label, shown.Seconds(), slotWatch,
+		since, w6Counter2, caught.Seconds(), len(rows), catRUN)
+}
+
+// twoPasses runs the line until the slot watch has read the struct twice,
+// the second time after the line's last count reached the cache: the counted
+// slot rose between the two reads, so the watch saw it counting, and it
+// stands from the second to the move.
+func (c *w6Cell) twoPasses(label string) {
+	c.t.Helper()
+	var first time.Time
+	if !c.runUntil(slotWatch+slotSlack, func() bool {
+		first = c.plc.structReadAfter(time.Time{})
+		return !first.IsZero()
+	}) {
+		c.t.Fatalf("%s: no read of %s in %v", label, w6Struct, slotWatch+slotSlack)
+	}
+	if !c.runUntil(slotWatch+slotSlack, func() bool {
+		after := c.lastPublish.Add(50 * time.Millisecond)
+		if first.After(after) {
+			after = first
+		}
+		return !c.plc.structReadAfter(after).IsZero()
+	}) {
+		c.t.Fatalf("%s: no second read of %s in %v", label, w6Struct, slotWatch+slotSlack)
+	}
+}
+
+// awaitSlotIdle runs the line until the strip carries the red
+// counter_slot_idle item, within one watch interval of the move.
+func (c *w6Cell) awaitSlotIdle(label string, moved time.Time) edgeengine.CatidHealthItem {
+	c.t.Helper()
 	var item edgeengine.CatidHealthItem
 	if !c.runUntil(slotWatch+slotSlack-time.Since(moved), func() bool {
 		for _, it := range c.slotItems() {
@@ -79,35 +165,33 @@ func TestCatid4x2_S8_CountedSlotStopsASiblingMoves(t *testing.T) {
 		}
 		return false
 	}) {
-		c.dump("S8: no slot item")
-		t.Fatalf("S8: no counter_slot_idle item within one watch interval (%v) of the move to Prod_Counter_02; slot items %+v",
-			slotWatch+slotSlack, c.slotItems())
+		c.dump(label + ": no slot item")
+		c.t.Fatalf("%s: no counter_slot_idle item within one watch interval (%v) of the move to Prod_Counter_02; slot items %+v",
+			label, slotWatch+slotSlack, c.slotItems())
 	}
-	shown := time.Since(moved)
-	if item.Severity != edgeengine.CatidHealthRed || item.Data["tag"] != w6Counter2 || item.Data["catid"] != fmt.Sprint(catRUN) ||
-		item.Data["counted_tag"] != w6Counter {
-		t.Fatalf("S8: the item %+v; want red, naming %s (CATID %d) against the counted %s", item, w6Counter2, catRUN, w6Counter)
-	}
-	t.Logf("S8: %.1fs after the move: %q", shown.Seconds(), item.Headline)
+	return item
+}
 
-	// The click: the counter edit to the item's tag, everything else as the
-	// process has it, as the route makes it.
+// click is the item's click: the counter edit to the item's tag, everything
+// else as the process has it, as the route makes it. It checks the re-point
+// (the process on _02, the item gone, both _02 members asked of WarLink, no
+// confirm while WarLink does not publish CATID_02) and returns the part's
+// observations before it.
+func (c *w6Cell) click(label string, item edgeengine.CatidHealthItem) int64 {
+	c.t.Helper()
 	seen := c.observations(catRUN)
 	p, err := c.edge.DB.GetProcess(c.processID)
-	mustNil(t, err, "the process")
+	mustNil(c.t, err, "the process")
 	tag, _ := item.Data["tag"].(string)
-	mustNil(t, c.edge.Engine.EditProcessCounter(c.processID, domain.ProcessCounterEdit{PLCName: p.CounterPLCName, TagName: tag,
+	mustNil(c.t, c.edge.Engine.EditProcessCounter(c.processID, domain.ProcessCounterEdit{PLCName: p.CounterPLCName, TagName: tag,
 		Enabled: p.CounterEnabled, IdentityTagName: p.IdentityTagName, IdentityNone: p.IdentityNone}), "the click")
 	if p, err = c.edge.DB.GetProcess(c.processID); err != nil || p.CounterTagName != w6Counter2 {
-		t.Fatalf("S8: after the click the process counts %v (%v), want %s", p, err, w6Counter2)
+		c.t.Fatalf("%s: after the click the process counts %v (%v), want %s", label, p, err, w6Counter2)
 	}
-	if rp, err := c.edge.DB.GetReportingPointByTag(w6PLC, w6Counter2); err != nil || rp == nil || !rp.Enabled || rp.LastPollAt != nil {
-		t.Fatalf("S8: the reporting point on %s after the click: %+v (%v); want it enabled and unread", w6Counter2, rp, err)
-	}
-	c.noSlotItem("S8 after the click")
+	c.noSlotItem(label + " after the click")
 	for _, tag := range []string{w6Counter2, w6Identity2} {
 		if !c.plc.isPublished(tag) {
-			t.Fatalf("S8: the click did not ask WarLink to publish %s", tag)
+			c.t.Fatalf("%s: the click did not ask WarLink to publish %s", label, tag)
 		}
 	}
 	// WarLink publishes the two members at its next scan. Until then the
@@ -116,53 +200,10 @@ func TestCatid4x2_S8_CountedSlotStopsASiblingMoves(t *testing.T) {
 	// same part.
 	time.Sleep(1500 * time.Millisecond)
 	if n := c.observations(catRUN); n != seen {
-		t.Fatalf("S8: the monitor confirmed %d before WarLink published %s (observations %d -> %d): it reads %s",
-			catRUN, w6Identity2, seen, n, w6Identity)
+		c.t.Fatalf("%s: the monitor confirmed %d before WarLink published %s (observations %d -> %d): it reads %s",
+			label, catRUN, w6Identity2, seen, n, w6Identity)
 	}
-
-	// WarLink's scan, and the point's first read of Prod_Counter_02: it seeds.
-	c.publish()
-	c.tickers.poll.pass(t, "the poll")
-	seeded := time.Now()
-	gapParts := c.plc.state().Slots[1].Counter
-	rp, err := c.edge.DB.GetReportingPointByTag(w6PLC, w6Counter2)
-	if err != nil || rp == nil || rp.LastPollAt == nil || rp.LastCount != gapParts {
-		t.Fatalf("S8: the point's first read of %s: %+v (%v); want it seeded at %d", w6Counter2, rp, err, gapParts)
-	}
-	c.unrecorded[catRUN] += gapParts
-	if n, _ := c.countedRows(); n != recorded {
-		t.Fatalf("S8: %d counted rows recorded between the move and the point's first read of %s, want none", n-recorded, w6Counter2)
-	}
-	gap := seeded.Sub(moved)
-	if gap > slotWatch+clickSlack {
-		t.Fatalf("S8: the record's gap is %.1fs (%d parts counted on %s before the point read it); want at most the watch interval %v and the click %v",
-			gap.Seconds(), gapParts, w6Counter2, slotWatch, clickSlack)
-	}
-	c.awaitConfirm("CATID_02 after the re-point", catRUN, seen)
-
-	// The first tick on Prod_Counter_02.
-	_, last := c.countedRows()
-	c.cycle(1)
-	tick := c.rowAfter(last)
-	want := c.plc.state().Slots[1]
-	if tick.rp != rp.ID || tick.count != want.Counter || tick.delta != 1 || tick.catid != fmt.Sprint(want.CATID) || tick.style != c.run {
-		t.Fatalf("S8: the first tick on %s: %+v; want point %d reading %d, one part, CATID_02's %d, RUN (%d)",
-			w6Counter2, tick, rp.ID, want.Counter, want.CATID, c.run)
-	}
-
-	c.cycle(4)
-	l := c.ledger("S8", true)
-	c.wantRecord("S8", l, c.counted()-gapParts, 0)
-	if l.holdsOpen != 0 {
-		t.Fatalf("S8: %d held, want none", l.holdsOpen)
-	}
-	if s := c.plc.state().Slots[0]; s != stood {
-		t.Fatalf("S8: Prod_Counter_01 / CATID_01 moved after the count left them: %+v -> %+v", stood, s)
-	}
-	c.confirmedAll("S8")
-	c.line("S8", l)
-	t.Logf("GAP S8: the item %.1fs after the move (watch interval %v); the record lacks the %d parts counted on %s in the %.1fs to the point's first read of it",
-		shown.Seconds(), slotWatch, gapParts, w6Counter2, gap.Seconds())
+	return seen
 }
 
 // runUntil runs the line a machine cycle every w6Cadence until ok holds,
@@ -229,6 +270,23 @@ func (c *w6Cell) rowAfter(id int64) w6Row {
 		FROM counter_snapshots WHERE process_id = ? AND delta > 0 AND id > ? ORDER BY id LIMIT 1`, c.processID, id).
 		Scan(&r.rp, &r.count, &r.delta, &r.style, &r.catid), "the first counted row after "+fmt.Sprint(id))
 	return r
+}
+
+// rowsAfter is the process's counted rows after id, and their parts.
+func (c *w6Cell) rowsAfter(id int64) (parts int64, rows []w6Row) {
+	c.t.Helper()
+	q, err := c.edge.DB.Query(`SELECT reporting_point_id, count_value, delta, COALESCE(style_id, 0), COALESCE(catid, '')
+		FROM counter_snapshots WHERE process_id = ? AND delta > 0 AND id > ? ORDER BY id`, c.processID, id)
+	mustNil(c.t, err, "the counted rows after "+fmt.Sprint(id))
+	defer q.Close()
+	for q.Next() {
+		var r w6Row
+		mustNil(c.t, q.Scan(&r.rp, &r.count, &r.delta, &r.style, &r.catid), "a counted row")
+		parts += r.delta
+		rows = append(rows, r)
+	}
+	mustNil(c.t, q.Err(), "the counted rows")
+	return parts, rows
 }
 
 // isPublished reports whether the Edge asked WarLink to publish tag.

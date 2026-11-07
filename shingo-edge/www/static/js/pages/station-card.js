@@ -146,7 +146,8 @@
             if (!s.read) return line(s.label, leaf(s.tag) + ' · not read at the last pass');
             const moving = s.rising ? 'rising' : 'not rising' + (s.rose_at ? ', last rose ' + f(s.rose_at) : '');
             return line(s.label, leaf(s.tag) + ' · CATID ' + s.catid + (s.part ? '' : ', no part') + ' · count ' +
-                s.count + ' · ' + moving + (s.counted ? ' · counted' : ''));
+                s.count + ' · ' + moving + (s.counted ? ' · counted' : '') +
+                (s.not_recorded_since ? ' · strokes since ' + f(s.not_recorded_since) + ' are not in the record' : ''));
         }).join('');
         return group('slots', 'MES slots', 'the counter’s struct, read once a minute',
             line('confirmed', 'counts on ' + leaf(p.counter_tag_name)) +

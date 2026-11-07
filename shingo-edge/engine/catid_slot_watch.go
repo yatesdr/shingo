@@ -9,7 +9,8 @@
 // struct — and keeps what the last two readings say in memory. The strip reads
 // it (slotItems). It decides nothing: the count, the identity, the cutover and
 // the switch read the configured slot only, and a re-point is a person's click
-// through the counter edit.
+// through the counter edit, which seeds the new slot's point at the count the
+// watch kept for it when the PLC moved (base; repoint_catch_up.go).
 
 package engine
 
@@ -55,6 +56,22 @@ type slotState struct {
 	// zero when the watch has not seen it rise (the setup page shows both).
 	rising bool
 	roseAt time.Time
+	// at is the pass that took this reading; flat: the slot was read at the
+	// pass before too and did not rise.
+	at   time.Time
+	flat bool
+	// base is this slot's count at the counted slot's last rise, read at
+	// baseAt: its reading at that pass, or, when it rose at that same pass
+	// having stood before (the move fell inside the pass), its reading at the
+	// pass before. The PLC moved the count after the counted slot's last
+	// rise, so base is a sibling's count when the count moved to it, to
+	// within a pass (a slot already rising with the counted one, a second
+	// counter of the same stroke, gives that pass's count: it counts no
+	// stroke twice). baseOK is false until the watch has seen the counted
+	// slot rise: after a start it cannot say when the PLC moved.
+	base   int64
+	baseAt time.Time
+	baseOK bool
 }
 
 // slotFacts is one process's slots as the watch published them, for the
@@ -81,6 +98,9 @@ type MESSlot struct {
 	RoseAt  *time.Time `json:"rose_at,omitempty"`
 	Counted bool       `json:"counted"`
 	Label   string     `json:"label"`
+	// NotRecordedSince: the slot leads and the watch has no base for it (the
+	// strip's item says the same): the strokes since are not in the record.
+	NotRecordedSince *time.Time `json:"not_recorded_since,omitempty"`
 }
 
 // slotSuffix is a slot's two-digit member index, 1-based.
@@ -215,10 +235,14 @@ func memberOf(members map[string]any, name string) any {
 // advanceSlots carries a process's slots one pass forward (pure): a slot that
 // rose at a pass where the counted slot was read twice and did not rise leads
 // from then until the counted slot rises; a slot that rose with it is in
-// lockstep; each slot that rose is rising, and remembers the pass. A reading
-// against another counter tag (a re-point since) starts over.
+// lockstep; each slot that rose is rising, and remembers the pass; at a pass
+// the counted slot rose, each other slot takes its base. A reading against
+// another counter tag (a re-point since) starts over.
 func advanceSlots(prev *slotFacts, counterTag string, counted int, read [mesSlots]slotState, now time.Time) *slotFacts {
 	f := &slotFacts{counterTag: counterTag, counted: counted, slots: read}
+	for i := range f.slots {
+		f.slots[i].at = now
+	}
 	if prev == nil || prev.counterTag != counterTag {
 		return f
 	}
@@ -227,8 +251,16 @@ func advanceSlots(prev *slotFacts, counterTag string, counted int, read [mesSlot
 	for i := range f.slots {
 		s, p := &f.slots[i], prev.slots[i]
 		s.ledSince, s.lockstep, s.roseAt = p.ledSince, p.lockstep, p.roseAt
+		s.base, s.baseAt, s.baseOK = p.base, p.baseAt, p.baseOK
 		if s.rising = rose(p, *s); s.rising {
 			s.roseAt = now
+		}
+		s.flat = p.read && s.read && !s.rising
+		if countedRose && i != counted {
+			s.base, s.baseAt, s.baseOK = s.count, now, s.read
+			if s.rising && p.flat {
+				s.base, s.baseAt = p.count, p.at
+			}
 		}
 		if i != counted && countedRead && s.rising {
 			s.lockstep = countedRose
@@ -261,7 +293,8 @@ func (cm *catidMonitor) slotFactsOf(processID int64) *slotFacts {
 
 // mesSlots is a process's slots as the watch last published them, for the
 // setup page ([] when it has none, or read them against another counter tag):
-// one load of the published pointer, no statement, no lock.
+// one load of the published pointer, no lock, and no statement unless a slot
+// leads with no base (the record's last count, for its line).
 func (e *Engine) mesSlots(proc *processes.Process) []MESSlot {
 	out := []MESSlot{}
 	if e.catidMon == nil {
@@ -278,6 +311,11 @@ func (e *Engine) mesSlots(proc *processes.Process) []MESSlot {
 			t := s.roseAt
 			m.RoseAt = &t
 		}
+		if i != f.counted && !s.ledSince.IsZero() && !s.baseOK {
+			if t := e.lastCountedAt(proc.ID); !t.IsZero() {
+				m.NotRecordedSince = &t
+			}
+		}
 		out = append(out, m)
 	}
 	return out
@@ -287,8 +325,11 @@ func (e *Engine) mesSlots(proc *processes.Process) []MESSlot {
 // the counted slot is flat (red, with the click that re-points the counter),
 // or a sibling naming a part rises with the counted slot (info: a second
 // counter of the same stroke, counted once). A slot reading -1 or 0 names no
-// part and raises nothing.
-func slotItems(proc *processes.Process, f *slotFacts) []CatidHealthItem {
+// part and raises nothing. When the watch has no base for the leading slot
+// (it never saw the counted slot rise since its start), the click counts from
+// the slot's next read, and the item says the strokes since the record's last
+// count (lastCounted) are not in it.
+func slotItems(proc *processes.Process, f *slotFacts, lastCounted func() time.Time) []CatidHealthItem {
 	if f == nil || f.counterTag != proc.CounterTagName {
 		return nil
 	}
@@ -303,10 +344,13 @@ func slotItems(proc *processes.Process, f *slotFacts) []CatidHealthItem {
 		switch {
 		case !s.ledSince.IsZero():
 			t := s.ledSince
+			detail := fmt.Sprintf("count %s: the part identity follows to CATID_%s", slot, slotSuffix(i+1))
+			if !s.baseOK {
+				detail += "; " + notRecorded(lastCounted(), data)
+			}
 			items = append(items, CatidHealthItem{Kind: catidKindSlotIdle, Severity: CatidHealthRed,
 				Headline: fmt.Sprintf("The PLC counts on %s (CATID %s); this process counts %s, which has not moved", slot, s.catid, counted),
-				Detail:   fmt.Sprintf("count %s: the part identity follows to CATID_%s", slot, slotSuffix(i+1)),
-				Since:    &t, Data: data})
+				Detail:   detail, Since: &t, Data: data})
 		case s.lockstep:
 			items = append(items, CatidHealthItem{Kind: catidKindSlotLockstep, Severity: CatidHealthInfo,
 				Headline: fmt.Sprintf("%s (CATID %s) rises with %s: a second counter of the same stroke", slot, s.catid, counted),
@@ -314,6 +358,33 @@ func slotItems(proc *processes.Process, f *slotFacts) []CatidHealthItem {
 		}
 	}
 	return items
+}
+
+// notRecorded is the item's sentence when the click cannot catch up: the
+// strokes since the record's last count (since, zero when it has none) are
+// not in it. It adds since to data as not_recorded_since.
+func notRecorded(since time.Time, data map[string]any) string {
+	if since.IsZero() {
+		return "strokes before the click are not in the record"
+	}
+	data["not_recorded_since"] = since
+	return "strokes since " + since.Format("2006-01-02 15:04") + " are not in the record"
+}
+
+// leadingSlot is the slot read as tag in the process's published slots when
+// the watch read them against the process's counter as it stands and has the
+// slot leading (the PLC counts on it while the counted slot is flat).
+func (cm *catidMonitor) leadingSlot(p *processes.Process, tag string) (slotState, bool) {
+	f := cm.slotFactsOf(p.ID)
+	if f == nil || f.counterTag != p.CounterTagName {
+		return slotState{}, false
+	}
+	for i, s := range f.slots {
+		if i != f.counted && s.tag == tag && !s.ledSince.IsZero() {
+			return s, true
+		}
+	}
+	return slotState{}, false
 }
 
 // leafOf is a tag's member name, after its struct.

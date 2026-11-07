@@ -10,7 +10,9 @@
 //   - refuses a counter tag that does not read as an integer (the poll
 //     truncates a REAL's JSON float), asking WarLink before the door's lock;
 //   - under the door's lock, refuses again and writes the process and its
-//     reporting point's rows (syncPointRows);
+//     reporting point's rows (syncPointRows), the point seeded at the new
+//     slot's count when the PLC moved when the slot watch has the slot
+//     leading (beginCatchUp, repoint_catch_up.go);
 //   - after the unlock, moves the point's WarLink publishing and, when the
 //     identity tag changed, the identity's, and re-primes the monitor's state
 //     for the process.
@@ -89,7 +91,9 @@ func (e *Engine) EditProcessCounter(processID int64, edit domain.ProcessCounterE
 		e.cutoverMu.Unlock()
 		return err
 	}
+	seed := e.beginCatchUp(old, edit)
 	publish, syncErr := e.syncPointRows(processID, old.CounterPLCName, old.CounterTagName)
+	seed(syncErr == nil)
 	e.cutoverMu.Unlock()
 	publish()
 	if syncErr != nil {
