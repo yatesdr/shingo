@@ -8,6 +8,8 @@ import (
 	"time"
 
 	"shingo/protocol"
+	"shingo/protocol/clock"
+	"shingoedge/config"
 	"shingoedge/service"
 )
 
@@ -43,6 +45,26 @@ func askSent(t *testing.T, e *Engine) (*protocol.Envelope, *protocol.EdgeAsk) {
 // answerTo is Core's reply to the ask in env.
 func answerTo(env *protocol.Envelope) *protocol.Envelope {
 	return &protocol.Envelope{Type: protocol.TypeData, CorID: env.ID}
+}
+
+// TestAskWait_TheDefault pins the tap's wait as an Edge runs it: AskWait is
+// 2 s (its comment carries the measurement), on the wall clock, for an engine
+// built by New and for one built bare. A test that sets the ask clock leans on
+// both: what it shortens is this.
+func TestAskWait_TheDefault(t *testing.T) {
+	t.Parallel()
+	if AskWait != 2*time.Second {
+		t.Errorf("AskWait = %v, want 2s", AskWait)
+	}
+	built := New(Config{AppConfig: &config.Config{Namespace: "test", LineID: "test-line"}, DB: testEngineDB(t)})
+	for name, e := range map[string]*Engine{"New": built, "bare": {}} {
+		e.asks.mu.Lock()
+		got := e.asks.waitsOn()
+		e.asks.mu.Unlock()
+		if got != clock.Real() {
+			t.Errorf("%s engine: a tap waits on %T, want the wall clock (clock.Real)", name, got)
+		}
+	}
 }
 
 // TestAsk_AnsweredInTime: an ask rides the outbox as an edge.ask with its kind

@@ -84,6 +84,19 @@ type askBook struct {
 	mu      lockcheck.Mutex[lockorder.Asks]
 	pending map[string]*pendingAsk
 	kinds   map[string]bool
+	// waitClock is what a tap's wait for its answer runs on (waitsOn): nil is
+	// the wall clock, as every Edge runs it. A test sets one to say when a
+	// wait has run out instead of waiting AskWait out.
+	waitClock clock.Clock
+}
+
+// waitsOn is the clock a tap's wait runs on: the wall clock unless a test set
+// another (pinned by TestAskWait_TheDefault). Caller holds b.mu.
+func (b *askBook) waitsOn() clock.Clock {
+	if b.waitClock == nil {
+		return clock.Real()
+	}
+	return b.waitClock
 }
 
 // askAppliers is what each kind's answer does on this Edge beyond its rows,
@@ -142,6 +155,7 @@ func (e *Engine) ask(kind string, body any, wait time.Duration, late func(*proto
 	}
 	e.forgetExpiredLocked(clock.Now())
 	e.asks.pending[env.ID] = p
+	waitOn := e.asks.waitsOn()
 	e.asks.mu.Unlock()
 	// The pending entry is in before the row: an answer cannot beat its entry.
 	if _, err := e.db.EnqueueOutbox(data, protocol.SubjectEdgeAsk); err != nil {
@@ -153,7 +167,7 @@ func (e *Engine) ask(kind string, body any, wait time.Duration, late func(*proto
 	select {
 	case a := <-p.done:
 		return a, nil
-	case <-time.After(wait):
+	case <-waitOn.After(wait):
 		e.asks.mu.Lock()
 		done := p.done
 		p.done = nil
@@ -224,7 +238,8 @@ func (e *Engine) PendingAsks() int {
 // rig (laptop, the case plant, 2026-10-20): over 55 LOAD/count/CLEAR taps that
 // Core answered, the tap's round trip was p50 155 ms, p95 201 ms, max 218 ms,
 // five times under the one-second bar. 2 s keeps headroom for a busy broker;
-// re-measured at a plant after deploy, beside the bins push cost.
+// re-measured at a plant after deploy, beside the bins push cost. The wait
+// runs on the ask book's clock (askBook.waitsOn), the wall clock in production.
 const AskWait = 2 * time.Second
 
 // askInto turns an answer into the kind's response: decoded into T when Core
