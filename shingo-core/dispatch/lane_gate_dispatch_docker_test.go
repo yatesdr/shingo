@@ -201,9 +201,10 @@ func TestGateChoreo_ContendedCreatesUnsealedAndHolds(t *testing.T) {
 // and the right answer was to fail the dispatch loudly rather than silently ship
 // the sealed shape onto a lane an operator had asked to be gated.
 //
-// The mark ruling collapses the two facts into one. A lane with no wait point is
-// simply not gated, which is the ordinary configuration of every lane at both
-// plants; there is no second setting left to contradict it. The behaviour that
-// replaced the error — an unmarked lane is invisible to the valve — is pinned by
-// TestGateChoreo_NonGatedLaneIsUnchanged below and by
-// TestLaneGate_MarkIsTheEnablement.
+// The mark ruling collapses the two facts into one. The behaviour that first
+// replaced the error — an unmarked lane is invisible to the valve — was pinned
+// by what was TestGateChoreo_NonGatedLaneIsUnchanged, and
+// TestLaneGate_MarkIsTheEnablement was deleted with it in "fix(core,www): a
+// lane is never without a waiting spot": a lane with no wait point cannot be
+// written any more (store/nodes TestLane_NeverWithoutAMark), so there is no
+// second setting left to contradict the mark.

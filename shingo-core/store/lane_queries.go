@@ -936,15 +936,21 @@ func (db *DB) OrderIsCompoundLeg(orderID int64) (bool, error) {
 // The PREDICATE is not shared, and the A batch's plan assumed it would be. Re-key
 // the dig side onto "the hard-claim predicate the store side already uses" turned
 // out to be wrong twice, and both times an existing test said so rather than a
-// review catching it:
+// review catching it. Both times it was the cross-flow race test, which was
+// TestCrossFlow_TwoDigsOneLane_BsLegWinsTheRace then:
 //
-//  1. ANY claimed bin — TestCrossFlow_TwoDigsOneLane_BsLegWinsTheRace failed. A
+//  1. ANY claimed bin — the test failed. A
 //     lane whose own dig is RUNNING has a claimed target, and excluding every
 //     slot in front of it removes that lane from the shuffle pool for the whole
 //     excavation, starving a dig that had somewhere to go.
 //  2. Any claimed AND REACHABLE bin — the same test failed again, for a sharper
 //     reason: dig B's claim is on the BLOCKER it is about to carry OUT, which is
 //     reachable and claimed and yet completely safe to park in front of.
+//
+// Right of way has since inverted that test in place, as
+// TestCrossFlow_TwoDigsOneLane_ANeverStarts, and it still catches the second:
+// drop `holder.parent_order_id IS NULL` and dig A is refused as no_shuffle_slot
+// instead of by right of way.
 //
 // The distinction the bridge actually carried is COLLECTOR versus MOVER. A
 // pending_lane_extensions row existed only for a bin a FINISHED dig had uncovered
@@ -1021,10 +1027,13 @@ func (db *DB) OrderIsCompoundLeg(orderID int64) (bool, error) {
 // robot can get to it. Protecting it anyway is not merely redundant, it starves
 // the plant — a lane whose own dig is still RUNNING has a claimed, buried target,
 // and excluding every slot in front of it removes that lane from the shuffle pool
-// for the whole excavation. TestCrossFlow_TwoDigsOneLane_BsLegWinsTheRace is that
-// case exactly, and it caught this: the first version of this query protected any
-// claimed bin, and dig A was refused with nowhere to park while lane B's mouth
-// slot sat free and reachable.
+// for the whole excavation. The cross-flow race test is that case exactly, and
+// it caught this when it was TestCrossFlow_TwoDigsOneLane_BsLegWinsTheRace: the
+// first version of this query protected any claimed bin, and dig A was refused
+// with nowhere to park while lane B's mouth slot sat free and reachable. Its
+// inversion, TestCrossFlow_TwoDigsOneLane_ANeverStarts, refuses lane B by right
+// of way before this exclusion is read, so nothing pins the reachability term
+// now: with it dropped, the core docker suite and integration stay green.
 //
 // So the term is helpers.ReachableSQL, which is the same "is anything occupied in
 // front of it" predicate the rest of the system asks. That also makes the

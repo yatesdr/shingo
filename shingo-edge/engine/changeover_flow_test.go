@@ -305,12 +305,13 @@ func TestChangeoverFlow_MultiNode(t *testing.T) {
 	}
 }
 
-// TestChangeoverFlow_ChangeoverRole and seedChangeoverRoleScenario
-// covered the legacy "changeover" claim role removed during the UI
-// consistency refactor. The equivalent evacuate-during-changeover
+// TestChangeoverFlow_ChangeoverRole was deleted, with
+// seedChangeoverRoleScenario, in `refactor(edge,core): UI consistency
+// overhaul`: they covered the legacy "changeover" claim role that
+// refactor removed. The equivalent evacuate-during-changeover
 // behavior is now exercised through claims with
-// EvacuateOnChangeover=true and is covered by the multi-node diff
-// test and the evacuate scenario tests elsewhere in this file.
+// EvacuateOnChangeover=true and is covered by TestDiffStyleClaims_MultiNode
+// and TestDiffStyleClaims_Evacuate in changeover_diff_test.go.
 
 // Double changeover — complete one, start another, verify clean state.
 func TestChangeoverFlow_DoubleChangeover(t *testing.T) {

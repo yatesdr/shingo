@@ -217,9 +217,11 @@ func (p *Poller) Start() {
 // SYNCHRONOUS BECAUSE "STOPPED" SHOULD MEAN STOPPED. Asynchronously, Stop only
 // asked: the loop returned at its own pace and a poll already running carried
 // on to completion, so a caller had no way to know when the polling actually
-// ceased. TestPollerStopHaltsPolling asserted exactly that property against a
-// 30ms wall-clock window, and failed about one run in eight on a loaded box —
-// the test was right and the contract was wrong.
+// ceased. The test that was TestPollerStopHaltsPolling asserted exactly that
+// property against a 30ms wall-clock window, and failed about one run in eight
+// on a loaded box — the test was right and the contract was wrong. It was
+// deleted in `test(rds): retire the wall-clock Stop duplicate`;
+// TestPollerStop_IsSynchronous pins the contract without a clock.
 //
 // Safe to call before Start, and safe to call twice: stopOnce guards the close,
 // and started gates the wait so a loop that never launched is never waited on.
@@ -251,9 +253,9 @@ func (p *Poller) run() {
 			// select alone gives a stopped poller a coin-flip chance of
 			// polling once more on every tick — and it keeps flipping for as
 			// long as ticks keep arriving, so "one last poll" is the expected
-			// case rather than the bound. TestPollerStopHaltsPolling caught
-			// this at roughly one run in six, reporting two and three polls
-			// after Stop, not one.
+			// case rather than the bound. The wall-clock test that was
+			// TestPollerStopHaltsPolling caught this at roughly one run in
+			// six, reporting two and three polls after Stop, not one.
 			//
 			// Re-checking here stops a NEW poll from starting once Stop has been
 			// asked for. Stop then waits for this loop to return, so between the

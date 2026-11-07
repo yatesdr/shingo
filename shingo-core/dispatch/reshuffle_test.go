@@ -298,7 +298,7 @@ func TestCompoundOrderCreation(t *testing.T) {
 			// again, which is the commitment the dwell exists to remove.
 			//
 			// Where the blocker actually goes is pinned at the moment it is chosen,
-			// by TestDwell_ChoosesItsDestinationAtRelease and the two D83a tests.
+			// by TestDwell_OpenDestinationReleasesOnArrival and the two D83a tests.
 			if child.SourceNode == "" {
 				t.Error("child seq 1 (unbury) has empty source node")
 			}

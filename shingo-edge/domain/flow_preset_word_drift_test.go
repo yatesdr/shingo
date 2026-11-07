@@ -81,8 +81,9 @@ func TestSwapModeWordsAreTitleCase(t *testing.T) {
 	}
 }
 
-// TestShapeFieldWordsMatchTheModel holds shapeFields to composer-model.js's
-// SHAPE_FIELDS — the same eleven fields, the same words, in the same order.
+// TestShapeFieldsMatchTheModel, below, holds shapeFields to composer-model.js's
+// SHAPE_FIELDS — the same fields in the same order; both look the words up in
+// flowspec's labels.
 //
 // BOTH SIDES WORD A DIFF FOR THE SAME ENGINEER. The server words a drifted
 // member's field list (`PLN_04 · outbound destination`) on the Presets tab's rows; the
@@ -92,9 +93,9 @@ func TestSwapModeWordsAreTitleCase(t *testing.T) {
 // the wrong word beside the right value.
 //
 // The words themselves are THE CLAIM'S OWN FIELD NAMES since owner ruling F3
-// (2026-09-12) — see TestShapeFieldWordsAreTheClaimsOwnNames below, which is
-// the half of this that says WHICH words rather than only that the two lists
-// agree on them.
+// (2026-09-12) — TestShapeFieldsAreRealClaimFields, which follows, is the
+// half of this that says WHICH words rather than only that the two lists agree
+// on them.
 // TestShapeFieldsAreRealClaimFields is owner ruling F3 (2026-09-12):
 // A FIELD IS CALLED WHAT THE CLAIM CALLS IT; INVENT NO SECOND NAME.
 //
@@ -143,7 +144,7 @@ func TestShapeFieldsAreRealClaimFields(t *testing.T) {
 	}
 }
 
-// TestShapeFieldsMatchTheModel holds the two LISTS together: the same eleven
+// TestShapeFieldsMatchTheModel holds the two LISTS together: the same
 // fields, in the same order, on both surfaces. The WORDS are no longer either
 // list's business — both look them up — so this compares field names.
 func TestShapeFieldsMatchTheModel(t *testing.T) {

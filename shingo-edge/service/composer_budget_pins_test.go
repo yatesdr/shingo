@@ -320,7 +320,7 @@ const stationSteadyPollQueryBudget = 17
 // what it is. What it catches is a field arriving on the poll.
 const stationViewByteBudget = 40 * 1024
 
-// TestStationView_ByteBudget is P4, and TestStationView_CarriesNoCellPicture
+// TestStationView_ByteBudget is P4, and TestStationView_CarriesAVersionAndNoPicture
 // below is the specific thing it exists to keep off.
 func TestStationView_ByteBudget(t *testing.T) {
 	fx := seedBudgetFixture(t)

@@ -50,8 +50,9 @@ import (
 // form. Inside it, only the branch that carried it was space-tolerant: with
 // the \s* attached to window.location alone, `location.href = "/x"` stopped
 // matching, because the space after = was left for ["']? to eat and it
-// cannot. TestPageLinkRe_ReadsEveryNavigationForm/location.href_member is
-// that case, and it goes red if the \s* is pushed back inside.
+// cannot. The "location.href member" case of
+// TestPageLinkRe_ReadsEveryNavigationForm is that case, and it goes red if the
+// \s* is pushed back inside.
 var pageLinkRe = regexp.MustCompile(
 	`(?:href=|action=|window\.open\(|location\.(?:href|assign|replace)\s*[=(]|window\.location\s*=)\s*["']?(/[^"'` + "`" + `\s>]*)`)
 

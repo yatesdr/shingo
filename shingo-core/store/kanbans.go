@@ -96,9 +96,10 @@ func (db *DB) TopsAndBottomsWant(groupNodeID, binTypeID int64) (int, bool, error
 // the plant to them: the resolver's cap, the capacity gate, the pass memo, the lift
 // divert, the keeper's arithmetic. It answers through the picture, so Want is the
 // effective want (kanban.Level.Want) and Base the declared number. Pins:
-// TestKanbanPin_ALevelZeroRowLiftedByCover,
-// TestKanbanArm_TheGapReadsTheEffectiveWant. The settings modal reads
-// ListDeclaredLevels: a save writes a declared number and nothing else.
+// TestKanbanPin_ALevelZeroRowLiftedByCover and
+// TestKanbanSave_TheModalReadsAndWritesTheBase, both red when this answers the
+// declared levels. The settings modal reads ListDeclaredLevels: a save writes a
+// declared number and nothing else.
 func (db *DB) ListKanbanLevels(groupNodeID int64) ([]KanbanLevel, error) {
 	rows, err := db.ListKanbanPicture([]int64{groupNodeID})
 	if err != nil {

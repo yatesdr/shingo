@@ -380,7 +380,7 @@ func TestApiConfig_ListPayloadCatalog(t *testing.T) {
 
 // ═══════════════════════════════════════════════════════════════════════
 // PLC / WarLink — ListPLCs, WarLinkStatus, SyncCoreNodes, SyncPayloadCatalog
-// TestKafka (validation)
+// apiTestKafka (validation)
 // ═══════════════════════════════════════════════════════════════════════
 
 func TestApiConfig_SyncCoreNodes(t *testing.T) {

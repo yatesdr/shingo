@@ -47,8 +47,8 @@ func mkSlotNode(t *testing.T, sdb *sql.DB, name string) int64 {
 	return n.ID
 }
 
-// TestClaimSlot_CASSemantics and TestClaimSlot_RefusesOccupiedSlot were
-// deleted with nodes.ClaimSlot: the CAS/owner-idempotency/occupied-refusal behavior
+// TestClaimSlot_CASSemantics was deleted with nodes.ClaimSlot, and so was
+// TestClaimSlot_RefusesOccupiedSlot: the CAS/owner-idempotency/occupied-refusal behavior
 // now lives on the seatbelted path and is covered by TestConfirmSlotClaim_* below
 // (owner-idempotent heal, refuses-without-reservation, refuses-occupied, one-tx).
 

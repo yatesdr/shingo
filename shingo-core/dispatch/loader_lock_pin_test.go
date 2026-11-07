@@ -10,11 +10,12 @@ import (
 )
 
 // TestLoaderLock_OnePerLoaderAndNoSecondUnderOne ports
-// TestWithLoaderBudget_ASecondLoaderLockUnderOneIsRefused and the per-loader
-// half of TestUnloaderSweep_LockHeldAtDecisionPerLoader: each loader has one
-// decision lock, a held lock on one loader leaves another's free, and a second
-// loader's lock taken under one is refused by the lock order (two loaders' locks
-// in no fixed order are two goroutines away from waiting on each other).
+// TestWithLoaderBudget_ASecondLoaderLockUnderOneIsRefused, and the per-loader
+// half of what was TestUnloaderSweep_LockHeldAtDecisionPerLoader: each loader
+// has one decision lock, a held lock on one loader leaves another's free, and a
+// second loader's lock taken under one is refused by the lock order (two
+// loaders' locks in no fixed order are two goroutines away from waiting on each
+// other).
 func TestLoaderLock_OnePerLoaderAndNoSecondUnderOne(t *testing.T) {
 	t.Parallel()
 	d := &Dispatcher{}

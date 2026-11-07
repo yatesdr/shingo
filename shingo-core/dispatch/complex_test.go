@@ -98,8 +98,8 @@ func TestClassifyResolutionError_AllShapes(t *testing.T) {
 	}
 }
 
-// TestClassifyResolutionError_ChainWalking replaces the v5-era
-// TestErrorsIs_ErrBuried_ThroughWrapping. Locks in that the
+// TestClassifyResolutionError_ChainWalking replaces
+// TestErrorsIs_ErrBuried_ThroughWrapping (v5-era). Locks in that the
 // classifier walks any number of fmt.Errorf wraps (resolveComplexSteps
 // adds "step N:" and resolveStepNode adds "cannot resolve group X:").
 // The buried payload extracted from the wrapped error must carry the

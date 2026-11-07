@@ -34,9 +34,11 @@ import (
 // Named moves (DESIGN-C2c §5.2): TestWiden_ClaimedBlockerWithAFreeSiblingWidens,
 // TestWiden_ConcurrentRebindsDoNotDoubleAppend and
 // TestWiden_ATierTwoWallIsAReasonToReAim keep their outcome (the sibling).
-// TestWiden_ADigThatWouldHelpIsPreferredToWidening (D13 F3) and
-// TestWiden_ATransientRefusalIsNotReAimed (D13 F4) FLIP and are renamed for what
-// they now pin; their old names are in their comments.
+// TestWiden_ADigIsSummonedOnlyWhenNoLaneOfTheGroupCanTakeTheDrop (D13 F3) was
+// TestWiden_ADigThatWouldHelpIsPreferredToWidening, and
+// TestWiden_ATransientRefusalIsReAimedWhileTheGroupHasRoom (D13 F4) was
+// TestWiden_ATransientRefusalIsNotReAimed: both FLIP and are renamed for what
+// they now pin.
 
 // c2cWidenWall puts a bin at slot claimed by a live order, so no dig would help
 // (acceptanceDigNeeded's rule 3: a hard claim is a robot in motion).

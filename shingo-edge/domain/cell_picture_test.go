@@ -312,10 +312,11 @@ func TestCellPicture_NoGeometryIsTheSchematicNeverBlank(t *testing.T) {
 // THE BIN WORD IS GONE, AND SO IS THE TEST THAT PINNED IT. Owner ruling R2
 // (2026-09-12) removed "totes"/"bins" from every surface, and with its one
 // reader gone CellPicture.BinWord, CellClaim.BinTypeCode and
-// CellPictureInput.BinTypeFor were removed too. What the test asserted —
-// TestCellPicture_BinWordComesFromTheBinType: a press-index claim on a KD bin
-// says bins, a two-robot claim on a tote says totes, "" is unknown and not
-// tote — was right about a question nothing asks any more.
+// CellPictureInput.BinTypeFor were removed too. The test was
+// TestCellPicture_BinWordComesFromTheBinType, and what it asserted — a
+// press-index claim on a KD bin says bins, a two-robot claim on a tote says
+// totes, "" is unknown and not tote — was right about a question nothing asks
+// any more.
 
 // TestCellPicture_EveryPositionSaysItsStation: a position bound to a station
 // carries that station's id, a stationless one carries none. It is what lets

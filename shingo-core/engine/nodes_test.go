@@ -180,11 +180,11 @@ func TestGetNodeOccupancy_FleetError(t *testing.T) {
 	}
 }
 
-// TestGetNodeOccupancy_ListNodesError_PathExists exercises the second
-// error-return: when the fleet succeeds but db.ListNodes is unreachable.
-// We can't easily trigger ListNodes failure in-process, so this test
-// instead asserts the empty-empty case (no fleet locations + no nodes
-// in DB) returns an empty slice without error — characterizes the
+// TestGetNodeOccupancy_EmptyFleetEmptyDB stands where a test of the second
+// error-return would go: the fleet succeeds but db.ListNodes is unreachable.
+// We can't easily trigger ListNodes failure in-process, so nothing pins that
+// path; this test instead asserts the empty-empty case (no fleet locations +
+// no nodes in DB) returns an empty slice without error — characterizes the
 // happy-but-empty branch.
 func TestGetNodeOccupancy_EmptyFleetEmptyDB(t *testing.T) {
 	t.Parallel()

@@ -11,7 +11,8 @@ import (
 // TestPollerStop_IsSynchronous asserts the contract directly rather than by
 // waiting and hoping.
 //
-// TestPollerStopHaltsPolling proves the same property THROUGH wall-clock
+// It replaces TestPollerStopHaltsPolling, deleted in `test(rds): retire the
+// wall-clock Stop duplicate`, which proved the same property THROUGH wall-clock
 // sleeps: stop, wait, and check nothing arrived. That is a fair thing to
 // assert, but on a loaded box the sleeps were the flakiest part of the suite
 // — about one run in eight — because an in-flight poll could outlast the

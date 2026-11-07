@@ -105,8 +105,8 @@ func laneOf(t *testing.T, db *store.DB, nodeName string) *nodes.Node {
 // dig takes that lane. Every one of them re-enters through the door the scanner
 // uses on every dispatch attempt, and they must come out aimed at five DIFFERENT
 // slots in the sibling — a re-selection that is correct for one order and hands
-// the same slot to all five would pass TestStoreRedirect_DugLaneWithAFreeSibling
-// exactly as it stands.
+// the same slot to all five would pass
+// TestStoreRedirect_DugLaneWithAFreeSibling_ReSelects exactly as it stands.
 //
 // MUTATION 1 (verified): delete the redirectStoreOffDugLane call from
 // ReserveStorageDropoff (store_slot.go). All five keep destinations inside the dug

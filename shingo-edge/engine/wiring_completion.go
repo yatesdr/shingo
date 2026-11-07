@@ -645,8 +645,8 @@ func (e *Engine) rePushOwnUnloader(node *processes.Node) {
 //     A single-window unloader is therefore always covered at the tap, so the
 //     tap asks nothing; the pickup gate pulls the next full once the carrier
 //     leaves. A two-window unloader with a free peer is not covered, and the gate
-//     asks Core (TestPinAutoPushGate_ClearIsTheOnlyTrigger…,
-//     TestPinAutoPushGate_PushEmptyFillsASibling…).
+//     asks Core (TestPinAutoPushGate_ClearIsTheOnlyTriggerWhileAPeerFullIsUnconfirmed,
+//     TestPinAutoPushGate_PushEmptyFillsASiblingNothingElseTriggered).
 //   - U2-landed (held = ""): the fallback for a pickup the Edge never heard of, or
 //     whose re-pull ask was not answered. In the normal cycle the pickup's pull is in flight
 //     and this returns locally. Without the fallback that window idles until the

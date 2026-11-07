@@ -1157,11 +1157,11 @@ func TestDispatchPreparedComplex_NoSourceBinSkipsNotFails(t *testing.T) {
 	}
 }
 
-// TestDispatchPreparedComplex_BinClaimedElsewhereFails complements the test
-// above: when bins ARE at the source but every one is rejected (claimed
-// by another order, payload mismatch, etc.), the order still terminates
-// as Failed — that's an alarm, not a no-op. Pins the gate so a future
-// refactor can't accidentally collapse the two cases.
+// TestDispatchPreparedComplex_BinClaimedElsewhereHolds complements the test
+// above: when a bin IS at the source but claimed by another order, the
+// order neither Skips nor Fails — it holds `pending` for the retry, because
+// the contested bin frees when the other order completes. Pins the gate so
+// a future refactor can't accidentally collapse the two cases.
 func TestDispatchPreparedComplex_BinClaimedElsewhereHolds(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)

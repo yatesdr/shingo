@@ -212,7 +212,7 @@ func AdvancedOf(c *NodeClaim) *FlowAdvanced {
 // every live claim at both plants, and reorder_point locked nineteen more at
 // Springfield. Ruled 2026-09-09: the guarantee stands on its own, pinned
 // directly on the plant rows by
-// TestFlowCarryThrough_UnlockedSaveLeavesEveryUnspokenColumnAlone in
+// TestFlowCarryThrough_SaveLeavesEveryUnspokenColumnAlone in
 // store/, and the composer's surface is bounded by what a cell carries rather
 // than by a refusal.
 //

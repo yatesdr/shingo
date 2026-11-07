@@ -13,9 +13,11 @@ import (
 	"shingoedge/store/processes"
 )
 
-// TestWiring_IngestCompletion_ResetsProduceUOP verifies that when an ingest
-// order completes for a produce node, the runtime UOP is reset to 0, order
-// IDs are cleared, and the node is ready for the next empty bin.
+// TestWiring_IngestCompletion_ResetsProduceUOP was deleted in
+// `refactor(ingest): make produce ingest manifest-only and atomic`: a produce
+// finalize mints no local ingest order now, so no ingest completion reaches a
+// produce node (TestProduceSwap_FinalizeSendsIngestNoLocalOrder).
+//
 // TestWiring_RetrieveCompletion_ProduceResetsToZero verifies that when a
 // retrieve/complex order completes for a produce node, UOP resets to 0
 // (not to capacity, which is the consume-node behavior).
@@ -203,8 +205,10 @@ func TestWiring_CounterDelta_ConsumeDecrementsUOP(t *testing.T) {
 	}
 }
 
-// TestWiring_CounterDelta_ConsumeFloorsAtZero verifies that consume node UOP
-// never goes negative when delta exceeds remaining.
+// TestWiring_CounterDelta_ConsumeAllowsNegative inverts
+// TestWiring_CounterDelta_ConsumeFloorsAtZero, which it replaced in `feat:
+// UOP bin-as-truth refactor`: that test pinned that consume node UOP never
+// went negative when delta exceeded remaining.
 // Item 5.6 changed the contract: consume ticks past the runtime's
 // remaining count drive into negative territory rather than flooring
 // at zero. Real bins overpack — operator runs an extra cycle before

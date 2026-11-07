@@ -16,13 +16,17 @@ import (
 
 // ── census 24: the single-robot changeover pair is a relay ──────────────────
 
-// singleRobotChangeoverLegs are buildSingleRobotChangeoverSwap's two legs: a
-// stage leg that brings the new carrier to inbound staging, and a swap leg that
-// lifts the old one, collects the staged one, sets it down, and takes the old
-// one away. The swap leg's source for the new carrier IS the stage leg's
-// delivery, which makes the two a relay rather than a pair: the Edge sends them
-// to Core unpaired (TestChangeoverApplier_ARelayPairGoesOutUnpairedAtCore), and
-// Core runs them one after the other.
+// singleRobotChangeoverLegs are the two legs buildSingleRobotChangeoverSwap used
+// to make: a stage leg that brings the new carrier to inbound staging, and a
+// swap leg that lifts the old one, collects the staged one, sets it down, and
+// takes the old one away. The swap leg's source for the new carrier IS the stage
+// leg's delivery, which makes the two a relay rather than a pair: the Edge sent
+// them to Core unpaired, and Core runs them one after the other. That changeover
+// is one order since "fix(edge): a single-robot changeover collects the carrier
+// it parked, never a stray", and the Edge's pin of the unpaired send,
+// TestChangeoverApplier_ARelayPairGoesOutUnpairedAtCore, was deleted with it; no
+// Edge builder makes a relay now (shingo-edge/engine
+// TestRelayPair_NoBuilderMakesOne).
 func singleRobotChangeoverLegs(src, inStage, line, outStage, outDest string) (stage, swap []protocol.ComplexOrderStep) {
 	stage = []protocol.ComplexOrderStep{prPick(src), prDropExcl(inStage)}
 	swap = []protocol.ComplexOrderStep{

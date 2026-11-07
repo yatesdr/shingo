@@ -468,7 +468,8 @@ func TestKanbanPin_TheClearRefusesAnotherFamily(t *testing.T) {
 }
 
 // TestKanbanPin_AnAdminReTypeCrossesTheFamily: the CLEAR refusal is the floor rule. The
-// admin re-type stays; the handler ledgers it (www TestBinsUpdate, requireAudit "updated").
+// admin re-type stays; the handler ledgers it (www TestExecuteBinAction_Update,
+// requireAudit "updated").
 func TestKanbanPin_AnAdminReTypeCrossesTheFamily(t *testing.T) {
 	t.Parallel()
 	r := newKanbanRig(t)

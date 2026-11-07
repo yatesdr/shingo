@@ -64,10 +64,10 @@ import (
 //     pgx-version subtlety in jsonb_build_object would surface here)
 //
 // Round 2 of the loop (Core → Edge: bin returns as a partial supply
-// for the next cycle, BinUOPRemaining snapshot survives the wire) is
-// covered in shingo-edge/engine/uop_regression_test.go's
-// TestRegression_11_DeliveryOfPartialBinResetsToBinUOP, which validates
-// the Edge-side handling of the snapshot. Wiring that into the harness
+// for the next cycle, Core's count of it survives the wire) is
+// covered in shingo-edge/engine/runtime_uop_binding_test.go's
+// TestRuntimeBinding_DeliveredFlipsCacheAndPointers, which validates
+// the Edge seating that partial count. Wiring that into the harness
 // scenario is the next layer of integration testing — see SHINGO_TODO.md
 // for the open work.
 func TestScenario_PartialReleaseLandsBinWithCorrectManifest(t *testing.T) {

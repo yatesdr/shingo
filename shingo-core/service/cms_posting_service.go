@@ -124,8 +124,8 @@ func (h *FeedHealth) Verdict() {
 // ORDERED WORST FIRST, because a page that reports the mildest of several
 // problems sends someone to fix the wrong one. A muted poster with a growing
 // backlog should say "muted", not "backlog". The order below is the whole
-// ranking and it is deliberate at every step; TestVerdict_Ranking pins it, so
-// changing one of these cases means changing that test on purpose.
+// ranking and it is deliberate at every step; TestVerdict_RankingIsPinnedInOrder
+// pins it, so changing one of these cases means changing that test on purpose.
 //
 //	BuildFailures        a move that reached no table at all. Invisible
 //	                     everywhere else, so nothing may rank above it.

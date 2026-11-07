@@ -976,8 +976,9 @@ func ReleaseAcquiringOrphanClaims(db *sql.DB) (int, error) {
 // Queue causes this package must recognise by VALUE, because it cannot import
 // the package that declares them: dispatch imports store, so store importing
 // dispatch is a cycle. Same shape as every other cross-module constant in this
-// repo, and pinned the same way — TestStationWaitCauseLiteralsMatchDispatch
-// fails if either string drifts from its dispatch constant.
+// repo, and pinned the same way — TestStationDwellCauseLiteralsMatchDispatch
+// fails if either string drifts, and TestQueueCause_ValuesAreUnchanged holds
+// the dispatch constants to the same strings.
 const (
 	causeStationWaitLiteral         = "station-wait"
 	causeSwapPartnerFinishedLiteral = "swap-partner-finished"

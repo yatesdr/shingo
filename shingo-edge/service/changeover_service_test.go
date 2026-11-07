@@ -185,9 +185,10 @@ func TestChangeover_ListingExclusionByCompletedState(t *testing.T) {
 // sibling for the other terminal state. Cancelled is the second terminal
 // in the ChangeoverState enum; GetActiveProcessChangeover excludes it at
 // the SQL layer via the same NOT IN clause, and completed_at populates
-// on the same transition path. Restores the coverage that was lost when
-// the typed-state-machine migration deleted the pre-refactor "phase_3"
-// CRUD fixture from TestChangeover_StateTransitionsAndListing.
+// on the same transition path. Restores the coverage the typed-state-machine
+// migration lost when TestChangeover_StateTransitionsAndListing was deleted,
+// with its pre-refactor "phase_3" CRUD fixture, in `Typed state machines,
+// test closures, stale comment cleanup`.
 func TestChangeover_ListingExclusionByCancelledState(t *testing.T) {
 	t.Parallel()
 	db := testdb.Open(t)

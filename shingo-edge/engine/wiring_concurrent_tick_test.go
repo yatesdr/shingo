@@ -514,11 +514,12 @@ func TestRegression_ChangeoverDoesNotCarryUOPAcrossStyles(t *testing.T) {
 // the post-Item-8 partial-return shape across a style cycle: original
 // X bin returns (e.g. SEND PARTIAL BACK then re-deliver). Pre-Item-8
 // the runtime read OrderDelivered.BinUOPRemaining (since removed) and reset to the
-// bin's actual partial value; post-Item-8 the snapshot is gone and
-// the runtime resets to claim.UOPCapacity unconditionally. The
-// reconciler heals to Core's authoritative bin value within ~60s
-// (covered by TestRegression_ReconciliationSelfHeal in
-// uop_reconciler_test.go).
+// bin's actual partial value; Item 8 reset it to claim.UOPCapacity and left
+// the reconciler to heal it to Core's bin value. The reconciler is gone, and
+// TestRegression_ReconciliationSelfHeal was deleted with
+// uop_reconciler_test.go in `refactor: flip bin UOP authority to Edge, delete
+// reconciler`. The runtime now seats the count Core stamped on the delivery
+// envelope, which this test stamps as the claim's capacity.
 func TestRegression_ChangeoverBackToStyle_ResetsToCapacityPostItem8(t *testing.T) {
 	t.Parallel()
 	db := testEngineDB(t)

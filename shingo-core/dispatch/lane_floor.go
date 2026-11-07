@@ -489,7 +489,7 @@ const floorReleaseAction = "lane_floor_release"
 // same thing an alarm that cannot fire destroys — the next reader's ability to
 // believe it — and it is arguably worse, because somebody will eventually count
 // these." Somebody is going to count these. On a healthy plant this function is
-// never called, and TestFloorIsSilentWhenItFreesNobody is what keeps that true.
+// never called, and TestFloor_IsSilentWhenItFreesNobody is what keeps that true.
 //
 // ── ONE CAUSE IS EXPECTED RATHER THAN A DEFECT ────────────────────────────
 //

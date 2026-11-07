@@ -6,9 +6,10 @@ import (
 	"shingocore/store/nodes"
 )
 
-// TestPreviewDropoffCapacity_GreenPath verifies the preview wraps the
-// gate's "not blocked" branch into the JSON-friendly shape the UI
-// needs.
+// TestPreviewDropoffCapacity_PassThroughGate pins the gate the preview
+// passes through, CheckDropoffCapacity, on its blocked and not-blocked
+// branches. It does not reach the wrapper's JSON-friendly shape (the
+// fake cannot stand in for d.db), so nothing here pins that.
 func TestPreviewDropoffCapacity_PassThroughGate(t *testing.T) {
 	t.Parallel()
 	cases := []struct {

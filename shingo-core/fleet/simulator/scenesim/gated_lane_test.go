@@ -141,8 +141,8 @@ func TestGateChoreo_OpenValveIsInvisible(t *testing.T) {
 	}
 }
 
-// TestGateChoreo_ContendedStagesAndDwells pins increment 3's KNOWN-INCOMPLETE
-// behavior as expected, rather than working around it.
+// TestGateChoreo_ContendedStagesThenReleases pins the contended path from the
+// dwell through to its release.
 //
 // When the classifier says the lane is contended, the valve creates the unsealed
 // waybill and appends nothing — the robot drives to the wait point and holds. The

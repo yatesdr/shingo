@@ -18,7 +18,7 @@ import (
 // neither reads as the other's outside position. The shape decides this, never
 // a swap-mode string (Core reads none). A second paired position
 // (second_paired_core_node) is never the outside position here.
-// Pins: TestToteWant_TheShape, TestToteLift_SequentialPartnerIsNoOutside.
+// Pins: TestToteWant_TheShape, TestToteLift_ASequentialPartnerIsNoOutside.
 func FedClaimSQL(alias string) string {
 	return alias + `.paired_core_node <> ''
 	  AND NOT EXISTS (SELECT 1 FROM style_claims pc

@@ -60,7 +60,7 @@ func TestEveryComposerWritableFieldHasAFlowspecRow(t *testing.T) {
 	}
 }
 
-// TestFlowspecHasNoFieldTheComposerCannotWrite is the other direction, and it
+// TestFlowspecFieldsAreClaimColumns is the other direction, and it
 // is a WARNING SHAPE rather than a ban: flowspec also covers columns the
 // composer never shows (the ones Expand carries through from the prior claim),
 // and that is correct. What it must not have is a field that is not a claim

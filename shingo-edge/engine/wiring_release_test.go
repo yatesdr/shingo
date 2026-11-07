@@ -17,15 +17,16 @@ import (
 // reassignment scenarios the two diverge: the bin physically holds the
 // old style's parts while the node has already swapped its active claim
 // to the new style. Sending the claim's payload tripped Core's
-// payload-mismatch validation in inventory_delta_service.ApplyBinUOPDelta
+// payload-mismatch validation in InventoryDeltaService.ApplyBinUOPDelta
 // and the delta was silently rejected — the bin's authoritative
 // uop_remaining never moved on Core, leaving the count stale.
 //
 // Core-side rejection is already pinned by
-// shingo-core/service/inventory_delta_service_test.go
-// TestInventoryDelta_BinUOPDelta_RejectsMismatchedPayload — the doc's
-// proposed TestRegression_CaptureDeltaRejectedOnTrueMismatch would
-// duplicate that coverage, so this Edge-side pin is sufficient.
+// shingo-core/uop/applier_test.go
+// TestInventoryDelta_BinUOPDelta_RejectsMismatchedPayload — the test
+// the doc proposed, called TestRegression_CaptureDeltaRejectedOnTrueMismatch,
+// would duplicate that coverage and was never written, so this Edge-side
+// pin is sufficient.
 func TestRegression_CaptureDeltaUsesActualBinPayload(t *testing.T) {
 	t.Parallel()
 	db := testEngineDB(t)

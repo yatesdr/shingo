@@ -249,11 +249,9 @@ func TestCarriers_ManualPointIsNotChargedAtItsCeiling(t *testing.T) {
 	}
 }
 
-// TestHeadroom_GatedFreeSlotsDoNotCount — a dig cannot park a blocker in a gated
-// lane it is not allowed to enter, so gated free space is not headroom. Counting
-// it is how a plant reads as roomy and then waits constantly.
 // TestHeadroom_GatedFreeSlotsDoCount pins the rule the DISPATCHER now applies,
-// which is the opposite of what this test used to assert.
+// which is the opposite of what this test used to assert: that a dig cannot
+// park a blocker in a gated lane, so gated free space is not headroom.
 //
 // It was TestHeadroom_GatedFreeSlotsDoNotCount, and it was right when it was
 // written: shuffleSlotsFrom excluded gated lanes from the shuffle pool. That

@@ -362,10 +362,13 @@ func (s *fakeDeltaSink) ResendLevels() (int, error) { return 0, nil }
 // ping-pong forever (heal Edge negative → next tick clamps to 0 →
 // reconciler heals negative again).
 //
-// The auto-reorder gate keeps its > 0 guard intentionally — the
-// reorder fires on the threshold cross from above; subsequent ticks
-// past zero must not refire (the reorder is already in flight).
-// See TestRegression_RuntimeUOPNegativeNoReorderRefire.
+// The tick no longer orders at all: the auto-reorder is the level
+// sweep (demand_reconciler.go), which reads a negative count as
+// breached like any other and asks nothing while an order already
+// works the cell, so ticks past zero do not refire. That dedup is
+// pinned at zero by TestLevelSweep_AsksOnceForAWedgedCell; the
+// negative-count test this paragraph once named, called
+// TestRegression_RuntimeUOPNegativeNoReorderRefire, was never written.
 func TestRegression_RuntimeUOPGoesNegativeOnOverpack(t *testing.T) {
 	t.Parallel()
 	db := testEngineDB(t)
@@ -420,7 +423,7 @@ func TestRegression_RuntimeUOPGoesNegativeOnOverpack(t *testing.T) {
 // Reconciler ping-pong test removed alongside the reconciler deletion
 // (bin-ownership flip). With no Core→Edge heal path, there is no loop
 // to test against. The signed-cache invariant is still pinned by
-// TestRegression_NegativeRuntimeFromOverpack above.
+// TestRegression_RuntimeUOPGoesNegativeOnOverpack above.
 
 // TestRegression_DrainLinesideAttribution pins the Phase 1 invariant:
 // when a consume tick fires against a node that has a non-empty

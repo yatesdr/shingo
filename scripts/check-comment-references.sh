@@ -22,24 +22,24 @@
 #
 #   1. A file:line CITATION must name a file that exists, at a line inside it.
 #      "See foo.go:900" against an 800-line file is unambiguously rotten.
-#   2. A declared "PIN: TestFoo" marker must resolve to a real test. This is what
-#      makes "a scar without a pin is a hypothesis" enforceable rather than
-#      aspirational: delete the pin and the scar that leans on it fails the
-#      build, instead of quietly becoming a claim with nothing behind it.
+#   2. (moved) A declared "PIN: Test..." marker must resolve to a real test.
+#      That is what makes "a scar without a pin is a hypothesis" enforceable.
+#      check-test-citations.sh owns it now, with subtest paths, beside every
+#      other test a comment names; it was checked here first.
 #
 # WHAT IT DOES NOT CHECK, on purpose:
 #
 #   - whether a still-valid line number is the RIGHT line. Not catchable; cite a
 #     SYMBOL for anything you expect to survive (AGENTS.md).
-#   - bare mentions of a file or a test in prose. Tried first, not viable: the
-#     tree names ~30 tests in comments and most of those are correct precisely
-#     BECAUSE the test is gone ("pre-refactor this was TestChangeover_State...",
-#     "TestBinManifestService_SyncUOP_PreservesManifest deleted in D8"). Failing
-#     on those asks the codebase to stop recording its own history. Globs
-#     (TestClearBin_FiresEmptyOut_*) and TYPES that begin with Test
-#     (domain.TestCommand) make it worse. The same held for bare ".go" mentions:
-#     twenty hits, nearly all prose about a filename-suffix rule or a vendored
-#     library file.
+#   - bare mentions of a test in prose: check-test-citations.sh reads them. A
+#     blanket check was tried here first and was not viable, because many such
+#     mentions are right precisely BECAUSE the test is gone ("pre-refactor this
+#     was TestChangeover_State...", "...PreservesManifest deleted in D8");
+#     failing on those asks the codebase to stop recording its own history.
+#     That check exempts them by the words touching the name, and reads globs
+#     and types spelled Test... as what they are.
+#   - bare mentions of a file in prose: twenty hits, nearly all prose about a
+#     filename-suffix rule or a vendored library file.
 #   - arbitrary identifiers. Too noisy to be read, and a check nobody reads is a
 #     check nobody keeps.
 #
@@ -135,35 +135,7 @@ if [ -n "${bad_cites//[$'\n' ]/}" ]; then
   FAIL=1
 fi
 
-# --- 2. PIN: markers ------------------------------------------------------
-# The name must LOOK like a test -- Test/Fuzz/Benchmark -- which disambiguates
-# the marker from ordinary prose ("THE PIN: the slot is held as a RESERVATION...",
-# a sentence rather than a citation) and costs nothing, since a Go test cannot be
-# named anything else.
-all_tests=$(grep -RhoE --include='*_test.go' '^func (Test|Fuzz|Benchmark)[A-Za-z0-9_]*' $MODULES 2>/dev/null |
-  sed 's/^func //' | sort -u)
-pinned=$(grep -RhoE --include='*.go' 'PIN:[[:space:]]*(Test|Fuzz|Benchmark)[A-Za-z0-9_]*' $MODULES 2>/dev/null |
-  sed -E 's/PIN:[[:space:]]*//' | sort -u)
-
-missing_pins=""
-while IFS= read -r t; do
-  [ -z "$t" ] && continue
-  grep -qx "$t" <<< "$all_tests" || missing_pins+="$t"$'\n'
-done <<< "$pinned"
-
-if [ -n "${missing_pins//[$'\n' ]/}" ]; then
-  echo "Comments declare PIN: markers naming tests that do not exist:"
-  while IFS= read -r t; do
-    [ -z "$t" ] && continue
-    echo "  $t"
-    grep -RnE --include='*.go' "PIN:[[:space:]]*$t" $MODULES 2>/dev/null | head -2 | sed 's/^/      /'
-  done <<< "$missing_pins"
-  echo "  A scar without a pin is a hypothesis. Either the test was renamed and the marker"
-  echo "  should follow it, or the pin is gone and the claim is now unguarded -- say so."
-  FAIL=1
-fi
-
 if [ "$FAIL" -eq 0 ]; then
-  echo "ok   comment references (file:line citations and PIN: markers resolve)"
+  echo "ok   comment references (file:line citations resolve)"
 fi
 exit $FAIL

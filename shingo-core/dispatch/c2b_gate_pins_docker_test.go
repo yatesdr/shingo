@@ -42,8 +42,8 @@ func c2bDeeperPending(t *testing.T, prefix string) (*Dispatcher, *orders.Order, 
 		}
 	}
 	// The deeper store is waiting to be dispatched: a store bound to a deeper
-	// slot of the lane, not yet sent, still blocks a shallower entrant
-	// (TestLaneEntryTiers_ReleasesOnPlacement's last case).
+	// slot of the lane, not yet sent, still blocks a shallower entrant (the
+	// second half of TestLaneEntry_ADeeperStoreThatHoldsNothingIsAPlanNotAPresence).
 	deep := testdb.CreateOrder(t, db, func(o *orders.Order) {
 		o.EdgeUUID = strings.ToLower(prefix) + "-deep"
 		o.SourceNode = line.Name

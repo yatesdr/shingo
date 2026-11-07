@@ -44,9 +44,10 @@ import (
 // offers the slot in front again — the rig's own burial, reproduced.
 //
 // MUTATION: keep the aim term but drop its source_node half. This one passes
-// here and breaks TestStoreBurst_DivertedOntoAMarkedLane instead: a store's
-// bin_id goes on pointing at its bin after it has PLACED it, so a bare aim lets
-// an order close a lane behind itself and the dwellers behind it never enter.
+// here and breaks TestStoreBurst_DivertedOntoAMarkedLane_StagesInsteadOfParking
+// instead: a store's bin_id goes on pointing at its bin after it has PLACED it,
+// so a bare aim lets an order close a lane behind itself and the dwellers
+// behind it never enter.
 func TestBurialGuard_RefusesInFrontOfABinAnOrderHasResolvedOnto(t *testing.T) {
 	t.Parallel()
 	db := testdb.Open(t)

@@ -52,8 +52,10 @@ import (
 // cannot recur: ExcludedBy answers it in Go, DigExclusionSQL answers it in
 // SQL, and the SQL is RENDERED rather than written, so a query cannot spell it
 // differently without deleting the renderer. TestDigExclusionHasExactlyOneSQLSpelling
-// fails if a second spelling appears; TestDigExclusion_AllThreeReadersAgree
-// fails if the readers ever disagree about a concrete case.
+// fails if a second spelling appears; TestDigExclusion_GoAndSQLAgree (store)
+// fails if the Go answer and the rendered SQL, as admission and sourcing ask
+// them, disagree about a concrete case. It runs those two readers only: dig
+// planning, the empty finders and the acquire are not in its matrix.
 //
 // This mirrors what store/internal/helpers/lane_reachability.go already did for
 // the reachability predicate, and for the same reason: the copies of a shared

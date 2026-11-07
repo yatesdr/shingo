@@ -279,8 +279,8 @@ func consumeFixture(t *testing.T, db *store.DB, prefix string, c loadervectors.C
 }
 
 // TestConsumeVectors_Core runs shared/loadervectors' consume cases through
-// ReplenishLoader's side-cycle origin: the Edge's U1 answers (TestConsumeVectors_Edge),
-// asked of Core.
+// ReplenishLoader's side-cycle origin: the Edge's U1 answers, asked of Core (it
+// ports TestConsumeVectors_Edge).
 func TestConsumeVectors_Core(t *testing.T) {
 	t.Parallel()
 	for i, c := range loadervectors.MustLoad().Consume {
@@ -433,10 +433,10 @@ func TestPortedBudget_SideCycleFailsClosed(t *testing.T) {
 }
 
 // TestPortedBudget_OneDecisionAtATimePerLoader ports the lock the Edge's seam
-// tests pin (TestUnloaderSweep_LockHeldAtDecisionPerLoader,
-// TestWithLoaderBudget_PropNeverExceedsBudget's serial count->fire): eight asks
-// for three empties each, all at once, at a three-window loader, make three
-// orders, one per window. Without one decision at a time per loader each ask
+// tests pinned. It ports TestUnloaderSweep_LockHeldAtDecisionPerLoader, and the
+// serial count->fire of what was TestWithLoaderBudget_PropNeverExceedsBudget:
+// eight asks for three empties each, all at once, at a three-window loader, make
+// three orders, one per window. Without one decision at a time per loader each ask
 // reads three free windows before any inserts.
 func TestPortedBudget_OneDecisionAtATimePerLoader(t *testing.T) {
 	t.Parallel()

@@ -52,14 +52,14 @@ func consumeDelta(binID, epoch, seq int64, delta int) *protocol.BinUOPDelta {
 
 // TestRecordCount_SameEpochDeltaAfterTheCountAppliesOnTop pins P0f, the Core
 // half of the in-flight-delta race. The Edge half is shingo-edge engine
-// TestPin_P0f_EdgeTakesCoresNumberOverItsInFlightTicks; what Core tells the
-// station in between is www TestPin_AdminCount_BroadcastsCoresNumberUnfenced.
+// TestP0f_EdgeRebasesOnCoresCursor; what Core tells the station in between is
+// www TestAdminCount_BroadcastsCoresNumberFenced.
 //
 // The Edge has a -5 delta in flight when an operator counts N at Core.
 // RecordCount writes N absolutely and does NOT bump delta_epoch, so the delta
 // (stamped with the same epoch) is not stale when it arrives and applies on
-// top: Core ends at N-5. The Edge, which takes N from the broadcast, ends at N.
-// Both sides believe their number.
+// top: Core ends at N-5. Before the fence the Edge, which took N from the
+// broadcast, ended at N, and both sides believed their number.
 //
 // The record-count fence (SYNTH-round2 S7, second half) keeps Core's number
 // here (N-5 is right: the -5 happened after the count was read) and moves the

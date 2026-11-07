@@ -894,7 +894,7 @@ func TestFlowPreview_DraftEqualsSavedPreview(t *testing.T) {
 // of a guarantee Expand provides on its own — the unspoken columns are copied
 // from the prior claim, or left alone by a nil pointer — which is pinned
 // directly, on the real plant rows, by
-// TestFlowCarryThrough_UnlockedSaveLeavesEveryUnspokenColumnAlone.
+// TestFlowCarryThrough_SaveLeavesEveryUnspokenColumnAlone.
 //
 // So the cell is written now, and the engineer's settings survive it. Both
 // halves matter: writing without preserving would be the flattening the lock

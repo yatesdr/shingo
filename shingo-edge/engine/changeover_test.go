@@ -1957,7 +1957,7 @@ func TestSequentialReuseSkip_LeavesPressIndexAlone(t *testing.T) {
 	}
 }
 
-// TestFlipGuard_ConsumeWantsTheINCOMINGStylesMaterial is the second half of
+// TestFlipGuard_ConsumeWantsTheIncomingStylesMaterial is the second half of
 // consume's conjunct, and it is a different question from the first.
 //
 // "The order finished" and "there is material on the position" can both be true

@@ -53,12 +53,14 @@ import (
 //   3. Commit test removal-of-skip + fix together.
 // =============================================================================
 
-// NOTE: The #11 regression test lives in shingo-edge/engine/
-// uop_regression_test.go (TestRegression_11_RemovalOrderDoesNotResetLineUOP).
-// handleNormalReplenishment is an Edge-side function; testing the
-// predicate flip from Core would require the full Edge↔Core harness
-// (see integration/harness/). The Edge-local test runs against a
-// SQLite test DB and exercises the predicate directly.
+// NOTE: #11 is the Edge's, and so is its pin. The #11 regression test
+// was TestRegression_11_RemovalOrderDoesNotResetLineUOP, deleted in
+// "feat: UOP bin-as-truth refactor"; handleNormalReplenishment no longer
+// touches the line's UOP at all, and a removal order's delivery is gated
+// out on the Edge's delivered side. shingo-edge/engine
+// TestRuntimeBinding_RemovalOnlyOrderDoesNotResetCache pins that, against
+// a SQLite test DB. Pinning it from Core would require the full Edge↔Core
+// harness (see integration/harness/).
 
 // payloadWithDistinctPart creates a payload whose CODE and whose one template
 // PART NUMBER are deliberately different strings.

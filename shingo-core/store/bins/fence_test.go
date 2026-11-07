@@ -32,9 +32,10 @@ import (
 // from any kanban; a supported press reaches its own group through
 // the supports list.
 //
-// THIS FILE CARRIES MG2-11's TESTS. TestFindEmptyOfTypeOutsideGroup asserted
-// rule (ii) against a finder that no longer exists — the rule survived, its
-// spelling did not. Behaviour preserved, assertions carried, one spelling.
+// THIS FILE CARRIES MG2-11's TESTS. The test that was
+// TestFindEmptyOfTypeOutsideGroup asserted rule (ii) against a finder that no
+// longer exists — the rule survived, its spelling did not. Behaviour
+// preserved, assertions carried, one spelling.
 
 // fenceFixture builds a kanban holding one empty carrier of `code`,
 // plus an identical carrier OUTSIDE it. Returns the two bin ids.
@@ -183,12 +184,12 @@ func TestFence_StrictWithNoSupportsFencesEveryone(t *testing.T) {
 
 // A TOP-OFF ASK MAY NOT SOURCE FROM THE GROUP IT IS FILLING.
 //
-// Carried from TestFindEmptyOfTypeOutsideGroup, which asserted this against a
-// finder MG3-1 deleted. The measured behaviour it protects: a six-position
-// group standing at 2 of a level of 4 dispatched both its top-off asks against
-// its OWN carriers, moving them between its own positions. The claims dropped
-// `resident`, which re-opened the gap, which asked again — the group shuffled
-// itself and never reached its level.
+// Carried from what was TestFindEmptyOfTypeOutsideGroup, which asserted this
+// against a finder MG3-1 deleted. The measured behaviour it protects: a
+// six-position group standing at 2 of a level of 4 dispatched both its top-off
+// asks against its OWN carriers, moving them between its own positions. The
+// claims dropped `resident`, which re-opened the gap, which asked again — the
+// group shuffled itself and never reached its level.
 func TestFence_KeeperNeverSourcesFromTheGroupItIsFilling(t *testing.T) {
 	t.Parallel()
 	db := testdb.Open(t)

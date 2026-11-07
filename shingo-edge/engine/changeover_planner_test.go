@@ -755,7 +755,7 @@ func TestPlanNodeAction_PressIndex_WithStaging_SlotContent(t *testing.T) {
 // sees the diff list. Tests for that fan-out live in
 // changeover_diff_test.go; the synthesized per-position diffs that the
 // fan-out produces route through the planner via the
-// TestPlanNodeAction_PressPosition tests below.
+// TestPlanNodeAction_PressPosition_* tests below.
 
 // A synthesized per-position diff (SwapMode = pressPositionSwapMode)
 // routes through BuildSwapChangeoverSteps' per-position case: single-

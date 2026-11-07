@@ -10,8 +10,9 @@ import (
 	"shingocore/messaging/middleware"
 )
 
-// TestInboxDedup_DuplicateReplay_DroppedSecondCall mirrors the legacy
-// TestInboxDedup_HandleOrderRequest_GatedByDedup: when the same
+// TestInboxDedup_DuplicateReplay_DroppedSecondCall replaces
+// TestInboxDedup_HandleOrderRequest_GatedByDedup, deleted in
+// `refactor(protocol): Phase 3 router cutover (3.2–3.5)`: when the same
 // envelope ID hits the middleware twice, the second call is dropped
 // and next() is not invoked. RecordInboundMessage's UNIQUE-on-id
 // constraint is the gate.

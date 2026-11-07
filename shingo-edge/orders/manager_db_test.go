@@ -970,7 +970,7 @@ func TestApplyCoreStatus_Dispatched_TransitionsRow(t *testing.T) {
 	}
 }
 
-// TestApplyCoreStatus_Queued_UnchangedBehavior pins that the queued arm keeps
+// TestApplyCoreStatus_Queued_TransitionsRow pins that the queued arm keeps
 // its existing behavior under the new mapping (the one status Edge branched on
 // before this mapping existed).
 func TestApplyCoreStatus_Queued_TransitionsRow(t *testing.T) {

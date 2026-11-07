@@ -271,7 +271,7 @@ func findStoreSlot(db *sql.DB, laneID, excludeOrderID int64, guard bool) (*Node,
 		// aim term lets a store close the lane behind itself: four dwellers in
 		// one burst stalled at the mark with the corridor empty, because the one
 		// that had just placed was still "aiming" at what it had put down
-		// (TestStoreBurst_DivertedOntoAMarkedLane).
+		// (TestStoreBurst_DivertedOntoAMarkedLane_StagesInsteadOfParking).
 		//
 		// The row's pick step is what makes it a direction. An order coming to
 		// collect a bin lifts it at the slot that bin is standing in; an order

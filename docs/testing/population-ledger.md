@@ -256,3 +256,17 @@ present at the merge base is absent at the tip without a row here.
 - coverage Δ: lead (Phase 1 baseline → certification diff)
 - citations rewritten: none in the five modules (the only mentions were the test's own); the survivor's header names it as replaced
 - verified at: `e93355f1` + this commit
+
+### DUP — `TestCitedTestsExist`
+- test: `TestCitedTestsExist` · pkg `shingoedge/engine` · run `-run '^TestCitedTestsExist$'` · `shingo-edge/engine/release_census_test.go:343` @ `22c81558` · tags `none`
+- code: DUP
+- assertion map: every `Test…` named in a shingo-edge comment is a `func Test…` in the repo, `phantomCitations` excepted (`release_census_test.go:392-395`) → `shared/scripts/testcite` `Scan`, run by `scripts/check-test-citations.sh` over all five modules with no allow-list (`shared/scripts/testcite/main_test.go` `TestScan_Fixture`); the 49 `phantomCitations` rows were rewritten to the live test or to a gravestone, so the allow-list is gone with the test. A phantom whose test now exists must leave the list (`:396-401`) → dropped because there is no list. Narrower than the old reading in one place, on purpose: a name the words touching it mark as history ("it was TestX", "TestX was deleted") is a gravestone, not a pin, and is exempt (`TestCitations_Gravestones`); the old test allow-listed such lines by hand.
+- mutation: `shingo-edge/domain/flow.go`, a comment citing a test that does not exist:
+  ```diff
+  +// Pinned by TestFlowMutation_NoSuchTest.
+   package domain
+  ```
+  · old test red at base: `cd shingo-edge && go test -count=1 -run '^TestCitedTestsExist$' ./engine` (a `git archive 22c81558` extract) → `release_census_test.go:394: a comment cites a test that does not exist: TestFlowMutation_NoSuchTest @ domain/flow.go` · survivor red at tip: `bash scripts/check-test-citations.sh` → `shingo-edge/domain/flow.go:1: TestFlowMutation_NoSuchTest is cited but no such test exists`
+- coverage Δ: lead (Phase 1 baseline → certification diff)
+- citations rewritten: none (the name is cited nowhere)
+- verified at: `ba1931d9` (working tree)

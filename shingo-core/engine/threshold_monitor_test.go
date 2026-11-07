@@ -18,9 +18,9 @@ func newTestMonitor() *ThresholdMonitor {
 	}
 }
 
-// The Snapshot read model is pinned against a real database in
-// threshold_readthrough_test.go (TestReadThrough_SnapshotReadsTheRegistry): it
-// reads demand_registry on every call and has nothing to show without one.
+// The Snapshot read model was deleted in `feat(core): /inventory is positions
+// and lines, opening on what needs a look`, and its pin went with it: that was
+// TestReadThrough_SnapshotReadsTheRegistry, in threshold_readthrough_test.go.
 
 func TestThresholdMonitor_DebounceWindow(t *testing.T) {
 	t.Parallel()
@@ -113,9 +113,10 @@ func TestThresholdMonitor_OnBucketApplied_SkipsEmptyPayload(t *testing.T) {
 // The fire decision needs a database now — every edge reads the place's open
 // episode from demand_origins, and a fire without one is refused — so the
 // checkBindings cases that used to run against the nil-engine harness live in
-// threshold_readthrough_test.go: the negative total still fires
-// (TestReadThrough_FireGateBelowAtAbove/negative), and its log throttle does
-// not gate ordering (TestReadThrough_NegativeLogThrottleDoesNotGateOrdering).
+// threshold_readthrough_test.go: the negative total still fires (the
+// "negative" case of TestReadThrough_FireGateBelowAtAbove), and its log
+// throttle does not gate ordering
+// (TestReadThrough_NegativeLogThrottleDoesNotGateOrdering).
 
 // TestThresholdMonitor_NegativeLogThrottle pins the log-volume control on the
 // broken-ledger refusal.

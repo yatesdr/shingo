@@ -405,7 +405,7 @@ func (e *Engine) clearRefusalOnLoad(loaderNode, payloadCode string) {
 // The lookup matches either spelling of the empty-in's type — Core's echo
 // rewrites retrieve to retrieve_empty (see ListDeliveredRetrieveByDeliveryNode).
 // Pinned by TestPinConfirmL1_OldestDeliveredAtTheCoreNode_WithTheSeatedCount,
-// TestPinConfirmL1_FindsTheEchoedTypeSpelling and the TestConfirmUnloaderU1OnClear
+// TestPinConfirmL1_FindsTheEchoedTypeSpelling and the TestConfirmUnloaderU1OnClear_*
 // family.
 func (e *Engine) confirmDeliveredAt(coreNodeName string, retrieveEmpty bool, finalCount int64) (int64, bool) {
 	what, tap := "full-ins", "clear"

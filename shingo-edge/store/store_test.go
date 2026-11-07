@@ -1577,11 +1577,13 @@ func TestStyleNodeClaims_Delete(t *testing.T) {
 // process_changeovers.go
 // ============================================================================
 
-// TestProcessChangeovers_CreateAtomic / StateTransitionsAndListing /
-// NodeAndStationTaskMutations moved to
-// service/changeover_service_test.go in Phase 6.4a after the
-// (db *DB).CreateChangeover method was retired in favor of
-// ChangeoverService.Create.
+// The changeover tests moved to service/changeover_service_test.go in
+// Phase 6.4a after the (db *DB).CreateChangeover method was retired in
+// favor of ChangeoverService.Create: TestProcessChangeovers_CreateAtomic
+// was renamed TestChangeover_CreateAtomic, NodeAndStationTaskMutations is
+// TestChangeover_NodeAndStationTaskMutations, and StateTransitionsAndListing
+// gave way to TestChangeover_ListingExclusionByCompletedState and
+// TestChangeover_ListingExclusionByCancelledState.
 
 // TestUpsertClaim_EnforcesFlowspec — D4 resolved for single_robot. The store
 // used to have arms for manual_swap, two_robot and two_robot_press_index

@@ -1245,11 +1245,13 @@ func TestDispatchDirect_FleetFailure(t *testing.T) {
 	// caller can act on. It does not undo its own move (C1): the hand CAS'd the
 	// order into `dispatched` before the create, and it is left there, with no
 	// vendor id, for the caller to dispose of. The scanner parks it under
-	// fleet_unavailable (dispatched → queued) and retries; the bin-move door,
-	// which has a person waiting, fails the row itself — see
-	// engine.CreateBinMove, and
-	// TestSubmitSpotRetrieveSpecific_DispatchFailureRollsBackClaim, which still
-	// pins `failed` for that door.
+	// fleet_unavailable (dispatched → queued) and retries. The bin-move door,
+	// which has a person waiting, used to fail the row itself (that pin was
+	// TestSubmitSpotRetrieveSpecific_DispatchFailureRollsBackClaim); since
+	// "refactor(core): every Core door births its order through the planner and
+	// one builder" it waits under fleet_unavailable too — see engine.CreateBinMove,
+	// TestCreateBinMove_FleetRefusalQueues and
+	// TestSubmitSpotRetrieveSpecific_FleetRefusalWaits.
 	persisted, _ := db.GetOrder(order.ID)
 	if protocol.IsTerminal(persisted.Status) {
 		t.Errorf("status = %q — DispatchDirect terminalized, so no caller can dispose of the order "+

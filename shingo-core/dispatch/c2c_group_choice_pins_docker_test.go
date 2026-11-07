@@ -301,8 +301,9 @@ func TestC2cPin_TheReleaseChoosesAcrossTheGroupNotInsideThePencilledLane(t *test
 // acceptanceDigNeeded answers "a dig would help" (A0's bin is unclaimed, A1 is
 // empty, nobody is inside A), the release refuses under
 // gate-rebind-unavailable, and the pass summons the swap's own dig out of A.
-// It is the inverse of TestWiden_ADigThatWouldHelpIsPreferredToWidening, which
-// D13 F3 converts with this source.
+// It inverts TestWiden_ADigThatWouldHelpIsPreferredToWidening, which D13 F3
+// converts with this source into
+// TestWiden_ADigIsSummonedOnlyWhenNoLaneOfTheGroupCanTakeTheDrop.
 func TestC2cPin_ADropPlannedOnAFullLaneLandsInASiblingWithNoWait(t *testing.T) {
 	t.Parallel()
 	db := testdb.Open(t)

@@ -288,8 +288,8 @@ func TestTerminateOrder_MissingOrder(t *testing.T) {
 
 // ── failOrderAndEmit (indirect) ─────────────────────────────────────
 
-// TestFailOrderAndEmit_Direct exercises the helper directly — package
-// privacy lets the test call it. This path covers the success branch
+// TestFailOrderAndEmit_PopulatesEventFromDB exercises the helper directly —
+// package privacy lets the test call it. This path covers the success branch
 // (fail + emit) plus the GetOrder lookup that populates the event
 // envelope so Edge knows which station to notify.
 func TestFailOrderAndEmit_PopulatesEventFromDB(t *testing.T) {

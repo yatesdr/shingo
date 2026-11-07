@@ -318,8 +318,9 @@ func TestRegression_LinesideStagingPreventsFifoPoach(t *testing.T) {
 	}
 }
 
-// Note: TC-CO-6 (TestOrderCompleted_RetrieveEmptyOverride) and TC-CO-7
-// (TestOrderCompleted_ComplexWaitOverride) deleted 2026-04-14 along with
+// Note: TC-CO-6 and TC-CO-7 were TestOrderCompleted_RetrieveEmptyOverride
+// and TestOrderCompleted_ComplexWaitOverride, deleted in `fix: remove staging
+// overrides so lineside bins are protected from poaching` along with
 // the staging overrides they validated. The overrides at applyBinArrivalForOrder
 // (and three other sites in wiring.go) forced staged=false for complex orders
 // with WaitIndex > 0 and for retrieve_empty deliveries. They allowed lineside

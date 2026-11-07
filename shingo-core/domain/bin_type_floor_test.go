@@ -2,7 +2,7 @@ package domain
 
 import "testing"
 
-// TestFootprint_StringEqualsExactlyWhenTheSizesDo: the wire spelling keeps the
+// TestFloorSize_StringEqualsExactlyWhenTheSizesDo: the wire spelling keeps the
 // floor rule's comparison, orientation-blind and with no rounding.
 func TestFloorSize_StringEqualsExactlyWhenTheSizesDo(t *testing.T) {
 	t.Parallel()

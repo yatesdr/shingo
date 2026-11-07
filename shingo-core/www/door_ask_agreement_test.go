@@ -25,7 +25,7 @@ import (
 // (runDoorArms) is driven again, on a world of its own, through the ask
 // server with a recording reply, and checked against the same expected
 // answer and the same writes: the same status, the same sentence and rows,
-// and the body the HTTP adapter writes byte for byte. TestHeldPartialsDoor's
+// and the body the HTTP adapter writes byte for byte. TestHeldPartialsDoor_Arms'
 // arms, which are a GET and do not ride runDoorArms, are
 // TestDoorAsk_HeldPartialsAgrees.
 

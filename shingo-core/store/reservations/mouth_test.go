@@ -268,8 +268,6 @@ func TestMouth_ReleaseIsOwnerScoped(t *testing.T) {
 	}
 }
 
-// TestMouth_Depth1Exempt: a single-slot lane takes NO mouth row, so even
-// conflicting modes both "succeed" (the slot reservation serializes it).
 // TestMouth_Depth1IsGatedLikeAnyOtherLane INVERTS TestMouth_Depth1Exempt, which
 // asserted that a single-slot lane took no mouth row and admitted opposing modes
 // freely: "B acquire opposite mode on depth-1 lane must be exempt (no

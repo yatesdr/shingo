@@ -311,8 +311,8 @@ func TestComputeSwapReady_TaskFallbackWhenRuntimePointersNil(t *testing.T) {
 	t.Parallel()
 	db, claim, _, aID, bID := seedSwapReadyFixture(t)
 	testutil.MustNoErr(t, db.UpdateOrderStatus(bID, "staged"), "mark B staged")
-	// The supply leg must also be releasable — see
-	// TestComputeSwapReady_SupplyMustBeReleasable. In the SNF2 incident both
+	// The supply leg's status does not gate the button — see
+	// TestComputeSwapReady_SupplyStatusIrrelevant. In the SNF2 incident both
 	// robots were present; only the runtime POINTERS were lost.
 	testutil.MustNoErr(t, db.UpdateOrderStatus(aID, "in_transit"), "mark A in_transit")
 	// Runtime with no tracked orders — simulates handler_bin_picked_up or

@@ -128,7 +128,8 @@ func TestFlowShape_KeyIgnoresThePart(t *testing.T) {
 	}
 }
 
-// TestFlowShape_StripPayloadLeavesEverythingElse: what a preset is saved as.
+// TestFlowShape_StripPayload: what a preset is saved as, the shape without
+// its part or its Advanced block.
 func TestFlowShape_StripPayload(t *testing.T) {
 	t.Parallel()
 	in := []FlowCell{shapeCell("PLN_01", protocol.SwapModeTwoRobotPressIndex)}

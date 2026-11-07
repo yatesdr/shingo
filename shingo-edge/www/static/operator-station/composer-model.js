@@ -50,7 +50,7 @@ const MODES = {
 // a shape — a preset carrying one would apply a policy along with a shape
 // without saying so.
 //
-// domain.shapeFields names the same eleven fields in the same order and is
+// domain.shapeFields names the same fields in the same order and is
 // held to this list by TestShapeFieldsMatchTheModel. The server words a
 // drifted member's field list and this file words an apply's diff; both look
 // the word up, so neither can spell it differently.
@@ -2419,10 +2419,10 @@ function presetMoved(preset, moves) {
 // write — `PLN_04 · old bins to: Supermarket Area → Empty Tote Return` is.
 //
 // It is the same comparison domain.CompareFlowShape makes, over the same
-// eleven fields in the same order (SHAPE_FIELDS, held to Go by
-// TestShapeFieldWordsMatchTheModel). A position one side names and the other
+// fields in the same order (SHAPE_FIELDS, held to Go by
+// TestShapeFieldsMatchTheModel). A position one side names and the other
 // does not is reported as the whole position arriving or leaving, because that
-// is what it is — not as eleven fields each going blank.
+// is what it is — not as each of its fields going blank.
 function shapeDiff(state, preset) {
     const want = presetCells(preset);
     const out = [];

@@ -246,7 +246,7 @@ func TestReadCSVRows_StripsBOM(t *testing.T) {
 	}
 }
 
-// TestReadCSVRows_ToleratesRaggedRows: a row with fewer cells than the
+// TestReadCSVRows_RaggedRows: a row with fewer cells than the
 // header is blank trailing cells, not a file-fatal parse error.
 func TestReadCSVRows_RaggedRows(t *testing.T) {
 	t.Parallel()
@@ -307,7 +307,7 @@ func TestImportPayloadGroups_UoPFromLaterRow(t *testing.T) {
 	}
 }
 
-// TestImportPayloadGroups_FailureNamesItsOwnLine: a bad quantity on a
+// TestImportPayloadGroups_FailureNamesItsRow: a bad quantity on a
 // group's SECOND row must report that row's line, and one payload yields
 // ONE failed row — not one per bad cell, all pointing at the first line.
 //

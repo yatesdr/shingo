@@ -27,7 +27,9 @@ import (
 //     → Core: SyncUOPAndKeepClaim, manifest preserved, uop_remaining set to
 //     the count Edge tracked at release time.
 //
-// Combined with TestHandleOrderRelease_RemainingUOPZero/Positive/Nil... on the
+// Combined with TestHandleOrderRelease_RemainingUOPZeroClearsManifest,
+// TestHandleOrderRelease_RemainingUOPPositiveSyncsUOP and
+// TestHandleOrderRelease_RemainingUOPNilLeavesManifestAlone on the
 // Core side, this proves the full plant-visible chain: operator click →
 // disposition → envelope → bin row UOP. If a future refactor silently changes
 // the wire shape (e.g. defaulting empty Mode to capture, or dropping the

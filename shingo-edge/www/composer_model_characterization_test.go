@@ -19,8 +19,10 @@ import (
 
 // composer_model_characterization_test.go — the Flow Composer model's pins.
 //
-// Same shape as TestProcessesJSClaimEditorCharacterization: a self-contained
-// Node script, no npm, skipped when node is absent. What this one adds is the
+// Same shape as the claim editor's pin, which was
+// TestProcessesJSClaimEditorCharacterization until `feat(edge): the composer's
+// routes and handlers` deleted it: a self-contained Node script, no npm,
+// skipped when node is absent. What this one adds is the
 // FIXTURE: the expected FlowCell JSON is produced HERE, by the real
 // domain.Collapse over a whole plant's claims, and written next to the
 // script before it runs.

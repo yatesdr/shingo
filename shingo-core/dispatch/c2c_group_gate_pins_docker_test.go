@@ -46,8 +46,9 @@ func c2cPickout(d *Dispatcher, fromNodeID int64) {
 // (EvaluateDwellersSharingGroupWith) does evaluate lane A, W is refused
 // lane-occupied again, and the old widen arm (deleted with C2c) refused to re-aim it — the widen
 // re-aims only lane-deeper-pending / lane-dig-active / lane-held-dig — so W
-// stays at the spot until A's occupant leaves. D13 F4 (the flip of
-// TestWiden_ATransientRefusalIsNotReAimed) is this pin's twin.
+// stays at the spot until A's occupant leaves. D13 F4,
+// TestWiden_ATransientRefusalIsReAimedWhileTheGroupHasRoom (it inverts
+// TestWiden_ATransientRefusalIsNotReAimed), is this pin's twin.
 func TestC2cPin_AWaiterIsReleasedByABinLeavingAnotherLaneOfItsGroup(t *testing.T) {
 	t.Parallel()
 	db := testdb.Open(t)

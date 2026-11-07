@@ -579,10 +579,10 @@ var ErrNothingInTheWay = errors.New("nothing is in front of the target slot")
 // ability to put its OWN next blocker down — which is the precise shape both
 // halves of the rig specimen took.
 //
-// TestCrossFlow_TwoDigsOneLane_BsLegWinsTheRace is the test that recorded the
-// rejection, and it is not silently re-pointed: it is inverted in place, under
-// the name TestCrossFlow_TwoDigsOneLane_ANeverStarts, with the premise it used to
-// assert quoted in its own header.
+// TestCrossFlow_TwoDigsOneLane_ANeverStarts is the test that recorded the
+// rejection, and it was not silently re-pointed: it was
+// TestCrossFlow_TwoDigsOneLane_BsLegWinsTheRace, inverted in place, with the
+// premise it used to assert quoted in its own header.
 func findShuffleSlots(db *store.DB, laneID, groupID int64, count int, asker reservations.DigAsker, claimant int64, exclude map[int64]bool) ([]*nodes.Node, error) {
 	return findShuffleSlotsFor(db, laneID, groupID, count, asker, asker.OrderID, claimant, exclude, nil)
 }
@@ -733,7 +733,8 @@ func shuffleSlotsFrom(db *store.DB, laneID, groupID int64, children []*nodes.Nod
 	// per-slot and owner-blind. They are two facts and the header says why folding
 	// them is still wrong.
 	//
-	// The blunt rule was tried first and TestCrossFlow_TwoDigsOneLane caught it.
+	// The blunt rule was tried first and the cross-flow race test caught it, when
+	// it was TestCrossFlow_TwoDigsOneLane_BsLegWinsTheRace.
 	// A lane whose dig is still RUNNING is a legitimate place to park: its target
 	// is buried anyway, the mouth slot is genuinely free, and refusing it starves a
 	// dig that had somewhere to go — wait-not-fail broken in the other direction.
@@ -766,10 +767,12 @@ func shuffleSlotsFrom(db *store.DB, laneID, groupID int64, children []*nodes.Nod
 	// this one must not, per the paragraph above. Unifying them would hand the
 	// exemption to exactly the caller the exemption breaks.
 	//
-	// And the blunt version was already tried and reverted:
-	// TestCrossFlow_TwoDigsOneLane_BsLegWinsTheRace fails if a lane whose dig is
-	// still RUNNING is refused as parking, because that lane's target is buried
-	// anyway and refusing it starves a dig that had somewhere to go.
+	// And the blunt version was tried and reverted here: the cross-flow race test,
+	// when it was TestCrossFlow_TwoDigsOneLane_BsLegWinsTheRace, failed when a lane
+	// whose dig was still RUNNING was refused as parking. Right of way has since
+	// made that refusal the rule at the lane level (the right-of-way block), and the test
+	// is inverted in place as TestCrossFlow_TwoDigsOneLane_ANeverStarts; what still
+	// holds is that THIS reader stays per-slot and owner-blind.
 	// WHAT A DIG MAY NOT BURY, asked of the claims rather than of the bridge.
 	//
 	// This used to read pending_lane_extensions — a row an expose-mode dig left
