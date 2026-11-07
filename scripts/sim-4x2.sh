@@ -504,9 +504,18 @@ refused() {
        WHERE op = 'payload_mismatch_dropped' AND id > ${1:-0}" | tr '|' ' '
 }
 
+# seat_holds: the strokes the five positions' seats hold for a cart of their part (the station
+# view's runtime pending_uop_delta): a stroke no cart of its part was there to take, the third
+# term of a position's draws beside the carts and the holds ledger.
+seat_holds() {
+  edge_get "/api/operator-stations/$OPS_ID/view" | sed 's/{"node":{/\n{"node":{/g' \
+    | grep -E "^\{\"node\":\{[^}]*\"core_node_name\":\"($POS_RE)\"" \
+    | grep -oE '"pending_uop_delta":-?[0-9]+' | sed 's/.*://' | awk '{s += $1} END {print s + 0}'
+}
 mark_read() {
   local lj
   lj="$(line_json)"
+  W_SEAT="$(seat_holds)"
   W_LOADS="$(field "$lj" loads)"; W_FLIGHT="$(field "$lj" in_flight)"
   W_DATES="$(days_around "$(sim_date)")"
   # shellcheck disable=SC2086
@@ -615,6 +624,7 @@ ledger_read() {
     WHERE l.op = 'bin_uop_delta' AND l.id > $W_LEDGER AND n.name IN ($POS_SQL)), ($PILES_SQL)")
   L_REFUSED="$(refused "$W_LEDGER")"
   L_HOLDS="$(holds_list)"
+  L_SEAT="$(seat_holds)"
   L_CORE="$(record "${W_PARTS:-0}")"
 }
 
@@ -622,7 +632,7 @@ ledger_read() {
 # carts + held + written off = loads, the record = the parts the line counted out, Core received
 # = the Edge's. A mid-run ledger is read on the running line and says so.
 ledger() {
-  local kind="${1:-final}" carts expect n q a b other got miss="" line
+  local kind="${1:-final}" carts expect n q seat a b other got miss="" line
   if [ "$kind" = final ]; then
     at_rest "the final ledger is read at rest"
     rest_read ledger_read
@@ -633,20 +643,21 @@ ledger() {
   carts=$(( ${L_DRAWN:-0} - (${L_PILES:-0} - ${W_PILES:-0}) ))
   n="$(printf '%s\n' "$L_HOLDS" | grep -c .)"
   q="$(printf '%s\n' "$L_HOLDS" | awk -v nc="$L_NC" 'NF { if ($3 == 0) s += $2 * nc; else s += $2 } END {print s + 0}')"
+  seat=$(( ${L_SEAT:-0} - ${W_SEAT:-0} ))
   a="$(printf '%s\n' "$L_CORE" | awk -v id="$RUN_ID" '$1 == id {print $2}')"
   b="$(printf '%s\n' "$L_CORE" | awk -v id="$ALT_ID" '$1 == id {print $2}')"
   other="$(printf '%s\n' "$L_CORE" | awk -v r="$RUN_ID" -v x="$ALT_ID" 'NF && $1 != r && $1 != x {s += $2} END {print s + 0}')"
   got=$(( ${a:-0} + ${b:-0} + other ))
-  say "draws at the five positions: carts $carts (Core's deltas $L_DRAWN, piles +$(( ${L_PILES:-0} - ${W_PILES:-0} ))); expected $expect = $L_NS station-counted x $L_DL loads + $L_NC cell-counted x $L_COUNTED counted out; $n holds open, $q held at the positions, $WRITTEN_OFF written off"
+  say "draws at the five positions: carts $carts (Core's deltas $L_DRAWN, piles +$(( ${L_PILES:-0} - ${W_PILES:-0} ))); expected $expect = $L_NS station-counted x $L_DL loads + $L_NC cell-counted x $L_COUNTED counted out; $n holds open, $q held at the positions, $seat held at the seats, $WRITTEN_OFF written off"
   say "Core refused as the wrong part in the window (deltas parts): $L_REFUSED"
   [ "$other" -eq 0 ] || say "Core received $other more under neither style"
   say "the record: $got parts against the $L_COUNTED the line counted out"
-  line="carts Σ $carts + held $q + written off $WRITTEN_OFF = loads Σ $expect; holds open $n; record RUN ${a:-0} / ALT ${b:-0}; Core received ${a:-0}+${b:-0} of the Edge's $L_T"
+  line="carts Σ $carts + held $q + at the seats $seat + written off $WRITTEN_OFF = loads Σ $expect; holds open $n; record RUN ${a:-0} / ALT ${b:-0}; Core received ${a:-0}+${b:-0} of the Edge's $L_T"
   if [ "$kind" = mid ]; then
     echo "$line (mid-run: the line runs, a read may carry one part in flight)" | tee -a "$OUT/log.txt"
   else
     echo "$line" | tee -a "$OUT/log.txt"
-    [ $(( carts + q + WRITTEN_OFF )) -eq "$expect" ] || miss="$miss; carts + held + written off $(( carts + q + WRITTEN_OFF )) against loads $expect"
+    [ $(( carts + q + seat + WRITTEN_OFF )) -eq "$expect" ] || miss="$miss; carts + held + at the seats + written off $(( carts + q + seat + WRITTEN_OFF )) against loads $expect"
     [ "$got" -eq "$L_COUNTED" ] || miss="$miss; the record $got against the $L_COUNTED counted out"
     [ "$got" -eq "$L_T" ] || miss="$miss; Core received $got against the Edge's $L_T"
     if [ -z "$miss" ]; then say "at rest: EXACT"; else say "at rest: NOT EXACT$miss"; LEDGER_EXACT=0; fi
@@ -733,6 +744,10 @@ resolve() {
     NODE_RE="${NODE_RE:+$NODE_RE|}${NODE_ID[$p]}"
   done
   COUNTER_ID="$(edge_get "/api/processes/$PID/station-counters" | grep -oE '"id":[0-9]+' | head -1 | sed 's/.*://')"
+  OPS_ID="$(edge_get /api/process-nodes | tr '{' '\n' | grep "\"core_node_name\":\"${POSITIONS%% *}\"" \
+    | grep -oE '"operator_station_id":[0-9]+' | head -1 | sed 's/.*://')"
+  [ -n "$OPS_ID" ] || die "no operator station for ${POSITIONS%% *}"
+  POS_RE="${POSITIONS// /|}"
   STATION="$(curl -s -m 5 "$EDGE/status" | sed -n 's/.*"station_id":"\([^"]*\)".*/\1/p')"
   say "$PROC is Edge process $PID (RUN $RUN_ID, ALT $ALT_ID, station counter ${COUNTER_ID:-none}), station $STATION"
   # Both styles carry their pins from the seed (expected_catid); pinned here if a seed did not.
@@ -826,11 +841,35 @@ shape_S2() {
   fi
 }
 
+# commons_fresh: each common position's cart (Core's count) has S3_NEED parts or more.
+S3_NEED=$(( (DECLARE_S + 6 * TICK_S) / TICK_S + LINE_DEPTH + 4 ))
+commons_fresh() {
+  local p in=""
+  for p in $POSITIONS; do case " $MIRRORS " in *" $p "*) ;; *) in="$in${in:+,}'$p'" ;; esac; done
+  [ "$(sql "SELECT count(*) FROM bins b JOIN nodes n ON n.id = b.node_id
+            WHERE n.name IN ($in) AND b.uop_remaining >= $S3_NEED")" -eq 3 ]
+}
+# s3_ready: fresh common carts and no swap staged at any position (START refuses a staged one).
+s3_ready() {
+  local p
+  commons_fresh || return 1
+  for p in $POSITIONS; do staged_at "$p" && return 1; done
+  return 0
+}
 shape_S3() {
+  # From Mark as running until the PLC reports ALT's part the process reports a part its style
+  # does not run, and the demand sweep asks for nothing ("the wrong part is on the process"); the
+  # common positions are not resupplied while the changeover is open either. A common cart that
+  # runs out stops the line, and the drain needs the line. So S3 starts its changeover with fresh
+  # common carts and nothing staged, and the line stands paused until the landing (the carts keep
+  # their parts while nothing is delivered); it loads again at Mark as running.
+  wait_for "$LAND_WALL" "fresh common carts ($S3_NEED or more) and no swap staged" s3_ready     || say "LOOK: the commons were not fresh with nothing staged: the line may stop before the drain lands"
+  pause_loading true || die "the pause was refused"
   start_changeover "$ALT_ID"
   await_landing
   say "S3 Mark as running ALT at the landing, the PLC still on $CATID_RUN"
   mark_running "$ALT_ID" || die "the admin switch was refused"
+  pause_loading false || die "the resume was refused"
   status
   watch_stays "$ALT_ID" "$(wall $(( DECLARE_S + 6 * TICK_S )))" "the PLC still on $CATID_RUN"
   program_change "$CATID_ALT" drain
@@ -1021,7 +1060,8 @@ s9_read() {
 # orders_at <position>: the Edge's active orders there, "<id> <status> <part>" a line.
 orders_at() {
   edge_get /api/orders/active | sed 's/},{/}\n{/g' | grep "\"process_node_id\":${NODE_ID[$1]}," \
-    | while IFS= read -r o; do echo "$(field "$o" id) $(jstr "$o" status) $(jstr "$o" payload_code)"; done
+    | while IFS= read -r o; do echo "$(field "$o" id) $(jstr "$o" status) $(jstr "$o" payload_code)"; done \
+    | awk '$2 !~ /^(confirmed|cancelled|failed|completed)$/'
 }
 staged_at() { [ "$(orders_at "$1" | grep -c ' staged ')" -gt 0 ]; }
 # request_at <position>: the station's REQUEST, unless an order is live there already.
@@ -1057,9 +1097,6 @@ mirrors_on_alt() {
 shape_S9() {
   local p
   for p in $MIRRORS; do MIRROR_NODE_RE="${MIRROR_NODE_RE:+$MIRROR_NODE_RE|}${NODE_ID[$p]}"; done
-  OPS_ID="$(edge_get /api/process-nodes | tr '{' '\n' | grep "\"core_node_name\":\"${MIRRORS%% *}\"" \
-    | grep -oE '"operator_station_id":[0-9]+' | head -1 | sed 's/.*://')"
-  [ -n "$OPS_ID" ] || die "no operator station for ${MIRRORS%% *}"
   say "S9 the hand-placed cart: Core's carts at the mirror positions are $MIRROR_RUN, and their seats cannot say what they are (seeded with no part)"
   s9_read "at the start"
   for p in $MIRRORS; do
@@ -1069,6 +1106,9 @@ shape_S9() {
   pause_loading false || die "the resume was refused"
   sim_s $(( S9_RUN_TICKS * TICK_S ))
   s9_read "under RUN"
+  for p in $MIRRORS; do
+    case "$(seat "$p")" in *" known false "*) ;; *) say "LOOK: the seat at $p knows its cart before the switch (a swap under RUN): $(seat "$p")" ;; esac
+  done
   say "S9 no changeover, RUN active, both styles pinned: the FORCED program change to $CATID_ALT"
   program_change "$CATID_ALT" forced
   say "Look at: the strokes count as $CATID_ALT under RUN; the mirror positions' draws are held"
@@ -1117,12 +1157,17 @@ trap 'on_signal HUP 129' HUP
 
 bring_up
 edge_login
-resolve
-wait_for 120 "WELD-6's line loading" line_live 0 || die "WELD-6's line never loaded"
-set_catid "$CATID_RUN"
 # S9's seeded mirror carts are its hand-placed carts, and the line draws a cart's 40 parts in under
-# a minute at 10x: it stands paused from here until the shape starts, so they are still there.
-if [ "$SHAPE" = S9 ]; then pause_loading true || die "the pause was refused"; fi
+# a minute at 10x: it stands paused from the fake PLC's first answer until the shape starts.
+if [ "$SHAPE" = S9 ]; then
+  wait_for 60 "WELD-6's line on the fake PLC" "[ -n \"\$(line_json)\" ]" || die "no WELD-6 line"
+  pause_loading true || die "the pause was refused"
+fi
+resolve
+if [ "$SHAPE" != S9 ]; then
+  wait_for 120 "WELD-6's line loading" line_live 0 || die "WELD-6's line never loaded"
+fi
+set_catid "$CATID_RUN"
 say "settle: the monitor confirms $CATID_RUN under RUN"
 sim_s $(( DECLARE_S + 2 * TICK_S ))
 START_S=$(date +%s)
