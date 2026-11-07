@@ -56,16 +56,26 @@ func TestExpectedCATIDPin_SurvivesACatalogSync(t *testing.T) {
 	}
 }
 
-// TestHandlePayloadCatalog_StoresCATID confirms the sync carries the CATID onto
-// the local catalog row.
+// TestHandlePayloadCatalog_StoresCATID: Core's payload-catalog sync carries
+// each payload's CATID onto the local catalog row, for a payload new to this
+// Edge and for one whose CATID Core changed. The derived CATID set
+// (derivedCATIDSet) reads it from there.
 func TestHandlePayloadCatalog_StoresCATID(t *testing.T) {
 	t.Parallel()
 	db := testEngineDB(t)
-	putCatalog(t, db, 7, "PL-7", "40012345")
+	eng := testEngine(t, db)
+	putCatalog(t, db, 7, "PL-7", "40000000") // the CATID Core sent last time
 
-	ce, err := db.GetPayloadCatalogByCode("PL-7")
-	testutil.MustNoErr(t, err, "get catalog by code")
-	if ce.CATID != "40012345" {
-		t.Errorf("catalog CATID = %q, want 40012345 (stored + read back)", ce.CATID)
+	testutil.MustNoErr(t, eng.HandlePayloadCatalog([]protocol.CatalogPayloadInfo{
+		{ID: 7, Name: "PL-7", Code: "PL-7", CATID: "40012345"},
+		{ID: 8, Name: "PL-8", Code: "PL-8", CATID: "40054321"},
+	}), "sync the payload catalog")
+
+	for code, want := range map[string]string{"PL-7": "40012345", "PL-8": "40054321"} {
+		ce, err := db.GetPayloadCatalogByCode(code)
+		testutil.MustNoErr(t, err, "get catalog "+code)
+		if ce.CATID != want {
+			t.Errorf("catalog %s CATID = %q after the sync, want %q (Core's)", code, ce.CATID, want)
+		}
 	}
 }

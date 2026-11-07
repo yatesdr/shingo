@@ -175,3 +175,19 @@ present at the merge base is absent at the tip without a row here.
 - coverage Δ: lead (Phase 1 baseline → certification diff)
 - citations rewritten: as the row above (`git grep -n 'TestWaitKindStation_MatchesCore'` over the five modules is empty at the tip)
 - verified at: `b47a96c7` with this commit's diff applied
+
+### STRENGTHEN — `TestHandlePayloadCatalog_StoresCATID`
+- test: `TestHandlePayloadCatalog_StoresCATID` · pkg `shingoedge/engine` · run `-run '^TestHandlePayloadCatalog_StoresCATID$'` · `shingo-edge/engine/catid_pin_test.go:61` @ `22c81558` · tags `none`
+- code: STRENGTHEN
+- assertion map: `catid_pin_test.go:66-70` (a row written by the test's own `putCatalog` reads back its CATID; `HandlePayloadCatalog` never called, despite the name and doc) → `catid_pin_test.go:69-80`: `Engine.HandlePayloadCatalog` with two payloads, one replacing an older CATID on an existing row and one new; each row's CATID is Core's afterwards. The store's own read-back stays pinned by `store/payload_catalog_sync_test.go` `TestSyncPayloadCatalog_OneTxConditionalUpsertAndPrune`.
+- mutation: `shingo-edge/engine/engine.go:821`, `HandlePayloadCatalog`'s row build:
+  ```diff
+   			UOPCapacity: b.UOPCapacity,
+  -			CATID:       b.CATID,
+   			Manifest:    b.Manifest,
+  ```
+  · old test GREEN at base, and so is every engine test matching `-run 'CATID|Catid|Catalog'` (28 pass): `go test -count=1 -tags lockcheck -run 'CATID|Catid|Catalog' ./engine/` → `ok  shingoedge/engine`
+  · survivor red at tip: `go test -count=1 -tags lockcheck -run '^TestHandlePayloadCatalog_StoresCATID$' ./engine/` → `catid_pin_test.go:78: catalog PL-7 CATID = "" after the sync, want "40012345" (Core's)`
+- coverage Δ: lead (Phase 1 baseline → certification diff)
+- citations rewritten: none (`git grep -n 'TestHandlePayloadCatalog_StoresCATID'` over the five modules: its own file only)
+- verified at: `d36d1a07` with this commit's test diff applied
