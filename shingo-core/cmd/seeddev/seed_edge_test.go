@@ -95,6 +95,8 @@ CREATE TABLE process_node_runtime_states (
   process_node_id INTEGER NOT NULL UNIQUE REFERENCES process_nodes(id) ON DELETE CASCADE,
   active_claim_id INTEGER REFERENCES style_node_claims(id) ON DELETE SET NULL,
   active_bin_id INTEGER, active_bin_epoch INTEGER NOT NULL DEFAULT 0,
+  lineside_payload_code TEXT NOT NULL DEFAULT '', lineside_payload_known INTEGER NOT NULL DEFAULT 0,
+  lineside_source TEXT NOT NULL DEFAULT '', lineside_at TEXT NOT NULL DEFAULT '',
   remaining_uop_cached INTEGER NOT NULL DEFAULT 0, pending_uop_delta INTEGER NOT NULL DEFAULT 0,
   active_order_id INTEGER, staged_order_id INTEGER, active_pull INTEGER NOT NULL DEFAULT 1,
   updated_at TEXT NOT NULL DEFAULT (datetime('now')));
@@ -281,6 +283,62 @@ func TestSeedEdge_DemoPlant(t *testing.T) {
 	}
 	if p1LhUOP != 0 {
 		t.Fatalf("PLN_001 remaining_uop_cached: want 0, got %d", p1LhUOP)
+	}
+}
+
+// TestSeedEdge_ASeededCartsSeatKnowsItsPart: the spec names a seeded cart's
+// part, Core's bin carries it, and the seat the cart binds knows it too,
+// recorded as the seed's word. A bin the spec names no part for seeds a seat
+// that cannot say what stands on it: the hand-placed cart's shape, the one a
+// switch with no changeover has to handle. Before this the seeder wrote no
+// identity at all, so every seeded seat read as one that could not say.
+func TestSeedEdge_ASeededCartsSeatKnowsItsPart(t *testing.T) {
+	t.Parallel()
+	plant, err := plantspec.Load("testdata/seed-fixture.yaml")
+	if err != nil {
+		t.Fatalf("load seed fixture: %v", err)
+	}
+	// The hand-placed row: WELD-1's consume cart with its part taken off the spec.
+	for i := range plant.Bins {
+		if plant.Bins[i].Name == "BIN-ACT-W1-LH" {
+			plant.Bins[i].Payload = ""
+		}
+	}
+	if err := plant.Validate(); err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+	db, err := sql.Open("sqlite", filepath.Join(t.TempDir(), "edge.db")+"?_foreign_keys=on")
+	if err != nil {
+		t.Fatalf("open edge sqlite: %v", err)
+	}
+	t.Cleanup(func() { db.Close() })
+	if _, err := db.Exec(edgeDDL); err != nil {
+		t.Fatalf("apply edge DDL: %v", err)
+	}
+	if err := seedEdgeInTx(t, db, plant); err != nil {
+		t.Fatalf("seedEdgeDB: %v", err)
+	}
+
+	for _, row := range []struct {
+		node, what   string
+		code, source string
+		known        bool
+	}{
+		{node: "ALN_003", what: "a consume cart of PANEL-RH", code: "PANEL-RH", source: "seed", known: true},
+		{node: "ALN_001", what: "a consume cart the spec names no part for", code: "", source: "", known: false},
+		{node: "PLN_001", what: "a produce seat's empty carrier, no part named", code: "", source: "", known: false},
+	} {
+		var code, source, at string
+		var known bool
+		if err := db.QueryRow(`SELECT r.lineside_payload_code, r.lineside_payload_known, r.lineside_source, r.lineside_at
+			FROM process_node_runtime_states r JOIN process_nodes pn ON r.process_node_id = pn.id
+			WHERE pn.core_node_name = ?`, row.node).Scan(&code, &known, &source, &at); err != nil {
+			t.Fatalf("%s seat: %v", row.node, err)
+		}
+		if code != row.code || known != row.known || source != row.source || (at != "") != row.known {
+			t.Errorf("%s (%s): seat reads part %q known %v source %q at %q; want part %q known %v source %q, stamped only when known",
+				row.node, row.what, code, known, source, at, row.code, row.known, row.source)
+		}
 	}
 }
 

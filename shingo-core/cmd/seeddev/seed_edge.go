@@ -444,9 +444,19 @@ func seedEdgeDB(db sqlExec, p *plantspec.Plant, binIDByNode map[string]int64) er
 	// they're left to the edge's lazy EnsureRuntime. The A/B parked side gets
 	// active_pull=0 so ticks skip it. INSERT OR REPLACE overwrites any lazily-
 	// created row (process_node_id is UNIQUE), resetting runtime on re-seed.
+	//
+	// THE SEAT KNOWS ITS CART'S PART when the spec names one: Core's bin carries
+	// that part, so the seat records it, known, as the seed's word (source
+	// "seed", stamped as the Edge's own identity writes are). A bin with no
+	// payload seeds a seat that cannot say what stands on it, which is the
+	// hand-placed cart's shape: a cart nobody told the station about. That is on
+	// purpose, the sim's tool for that shape. A produce seat's empty carrier
+	// names no part, so it seeds unknown as before.
 	binUOPByNode := make(map[string]int64)
+	binPartByNode := make(map[string]string)
 	for _, b := range p.Bins {
 		binUOPByNode[b.Slot] = b.UOP
+		binPartByNode[b.Slot] = b.Payload
 	}
 	runtimeSeeded := 0
 	for _, c := range p.Claims {
@@ -462,11 +472,18 @@ func seedEdgeDB(db sqlExec, p *plantspec.Plant, binIDByNode map[string]int64) er
 		if !hasBin || !hasPN || !hasClaim {
 			continue
 		}
+		part := binPartByNode[c.CoreNode]
+		known, source := 0, ""
+		if part != "" {
+			known, source = 1, "seed"
+		}
 		if _, err := db.Exec(
 			`INSERT OR REPLACE INTO process_node_runtime_states
-			  (process_node_id, active_claim_id, active_bin_id, active_bin_epoch, remaining_uop_cached, active_pull)
-			  VALUES (?,?,?,1,?,?)`,
-			pnID, claimID, binID, binUOPByNode[c.CoreNode], b2i(c.IsActivePull())); err != nil {
+			  (process_node_id, active_claim_id, active_bin_id, active_bin_epoch, remaining_uop_cached, active_pull,
+			   lineside_payload_code, lineside_payload_known, lineside_source, lineside_at)
+			  VALUES (?,?,?,1,?,?,?,?,?, CASE WHEN ? = 1 THEN datetime('now') ELSE '' END)`,
+			pnID, claimID, binID, binUOPByNode[c.CoreNode], b2i(c.IsActivePull()),
+			part, known, source, known); err != nil {
 			return fmt.Errorf("runtime state for %s: %w", c.CoreNode, err)
 		}
 		runtimeSeeded++
