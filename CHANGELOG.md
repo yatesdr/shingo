@@ -14,6 +14,7 @@ Edge v37-v43; Core changes only dev tooling (plantspec, seeddev, simcalc). Migra
 - Mark as running completes an open changeover past its gate and records the switch
 - 0 and negative CATIDs name no part; a CATID both styles run never fires
 - A counted tick carries the PLC's part and its style; walk, hourly and Core count it there (v39)
+- The CATID monitor reads, confirms and times its windows on the engine's clock
 - An unmapped or off-plan part's draw is held (v40) until a landing, a Charge or a Write off
 - One CATID names one style: the pin, the one-click and Confirm refuse a taken value
 - A changeover records the CATID at its start and at its watch's close (v38)

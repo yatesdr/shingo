@@ -16,7 +16,7 @@
 // later. The scenario turns the line one machine cycle at a time and runs one
 // Edge poll pass per cycle (w6Clock hands the scenario the poll's ticker), so
 // it knows every load and every count; the CATID monitor and its windows run
-// on the wall clock, as they do at a plant.
+// on the process clock, which reads the wall here, as at a plant.
 //
 // Each scenario asserts three ledgers against the line: the carts (every
 // cart's count is its stated count less what was drawn from it, and per

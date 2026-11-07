@@ -133,7 +133,7 @@ func (e *Engine) noteCountedTick(processID int64, id plc.TickIdentity) {
 // a later publish would be off-plan. A flip that then fails leaves the landing
 // noted on an unchanged style, which moves no attribution (a value of the
 // active style's is today's first) and only makes the switch wait for a later
-// change. Dated on the monitor's clock, as a confirm is.
+// change. Dated on the process clock, as a confirm is.
 func (e *Engine) noteLanding(processID int64, fromStyleID *int64) {
 	if e.catidMon == nil {
 		return
@@ -142,7 +142,7 @@ func (e *Engine) noteLanding(processID int64, fromStyleID *int64) {
 	if fromStyleID != nil {
 		from = *fromStyleID
 	}
-	e.catidMon.noteLanding(processID, from, time.Now())
+	e.catidMon.noteLanding(processID, from, clock.Now())
 }
 
 // proven reports whether a set holds a value the process has emitted. Values

@@ -83,8 +83,8 @@ func TestCatid4x2_S2_LateCutover(t *testing.T) {
 	}
 }
 
-// autoSwitchWindow is the CATID monitor's 60 s stability window (wall clock),
-// and a read past it.
+// autoSwitchWindow is the CATID monitor's 60 s stability window (the process
+// clock, the wall's here), and a read past it.
 const autoSwitchWindow = 62 * time.Second
 
 // startChangeover is the operator's START to style to.

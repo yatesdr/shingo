@@ -12,6 +12,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"shingo/protocol/clock"
 	"shingo/protocol/lockcheck"
 	"shingoedge/domain"
 	"shingoedge/internal/lockorder"
@@ -238,7 +239,7 @@ type catidSnapshot struct {
 
 // catidLanding is a process's latest landing — a changeover completed, or a
 // switch — as the snapshot carries it: the style it left and when, on the
-// monitor's clock (the one a confirm is dated by).
+// process clock a confirm is dated by.
 type catidLanding struct {
 	fromStyleID int64
 	at          time.Time
@@ -452,15 +453,19 @@ func (cm *catidMonitor) landedAt(processID int64) time.Time {
 	return time.Time{}
 }
 
+// run is the monitor's goroutine: a read every plcPollInterval on the process
+// clock, each stamped with it, so every time the monitor writes (a read, a
+// confirm, the declaration's window, a refusal, the verify deadline) is on
+// the clock the engine stamps its rows and changeovers with.
 func (cm *catidMonitor) run() {
-	ticker := time.NewTicker(plcPollInterval)
+	ticker := clock.Default().NewTicker(plcPollInterval)
 	defer ticker.Stop()
 	for {
 		select {
 		case <-cm.eng.stopChan:
 			return
-		case <-ticker.C:
-			cm.tick(time.Now())
+		case <-ticker.C():
+			cm.tick(clock.Now())
 		case pid := <-cm.eng.cutoverPokes:
 			cm.notePoke(pid)
 		}

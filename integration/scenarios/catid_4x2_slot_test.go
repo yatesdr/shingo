@@ -20,7 +20,7 @@ const (
 	w6Counter2  = "MES_WELD_6.Prod_Counter_02"
 	w6Identity2 = "MES_WELD_6.CATID_02"
 	// slotWatch is the Edge's slot watch interval (engine.slotWatchInterval):
-	// a pass a minute on the wall clock, with no knob.
+	// a pass a minute of the process clock (the wall's here), with no knob.
 	slotWatch = time.Minute
 	// w6Cadence is the line's machine cycle while S8 waits on the watch.
 	w6Cadence = 10 * time.Second

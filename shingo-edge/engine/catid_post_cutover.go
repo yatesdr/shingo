@@ -13,6 +13,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"shingo/protocol/clock"
 )
 
 // postCutoverVerifyWindow is how long after a cutover completes the monitor
@@ -38,7 +40,7 @@ func (e *Engine) openPostCutoverVerify(processID, changeoverID int64) {
 		return
 	}
 	e.catidMon.openPostCutoverVerify(processID, changeoverID, style.ID, e.styleCATIDSet(style),
-		time.Now().Add(postCutoverVerifyWindow))
+		clock.Now().Add(postCutoverVerifyWindow))
 }
 
 // liveIdentity is the monitor's confirmed CATID for the process when it names
