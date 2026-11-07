@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 #
-# The pre-push gate: what CI enforces, minus the docker suites.
+# The pre-push gate: what CI enforces, run locally. The bare run is the fast
+# loop; `full` adds the docker suites (scoped by diff unless --unscoped), -race
+# over core's engine and www, and the sim-only tests. Module-wide -race is CI's.
 #
 # A script rather than a checklist, because a gate re-derived by hand from
 # `git diff --name-only` is a gate a step can quietly go missing from.
@@ -46,8 +48,13 @@
 #   bash scripts/gate.sh docker           run the docker suites (no -race)
 #   bash scripts/gate.sh sim              the sim-only tests (-tags sim, with -race),
 #                                         in every package that holds one
-#   bash scripts/gate.sh full [BASE]      the bare gate, then docker if scope says
-#                                         so, with race and sim
+#   bash scripts/gate.sh full [BASE]      the bare gate, then docker if scope against
+#                                         BASE (default: upstream) says so, with race
+#                                         and sim. The sentence names the base and its sha.
+#   bash scripts/gate.sh full --unscoped  the same with the docker suites whatever the
+#                                         diff: the certification run. On a pushed tip
+#                                         or a merged one the diff is empty and scope
+#                                         skips docker, so certify with this.
 #   bash scripts/gate.sh scripts          the scripts/check-*.sh guards
 #   bash scripts/gate.sh modbuild         GOWORK=off go build, per module
 #   bash scripts/gate.sh fmt|vet|modbuild|lint|scripts|test|race|sim  one step
@@ -88,7 +95,8 @@ ROOT="$(pwd)"
 # Windows-native is within ~2x of Linux-native, so the repo does NOT want
 # moving to ext4 — the penalty is not where the files live, it is the
 # crossing. The only reason to be in WSL at all is `-race` (Windows has no
-# gcc), and the local gate deliberately does not run -race; see below.
+# gcc): step_race and step_sim borrow its cgo for their runs and nothing else
+# crosses.
 #
 # Docker Desktop serves Windows directly, so the docker suites do not need
 # WSL either.
@@ -102,6 +110,7 @@ fi
 ALL_MODULES="protocol shared shingo-core shingo-edge integration"
 usage() {
   echo "usage: bash scripts/gate.sh [fmt|vet|modbuild|lint|scripts|test|race|sim|scope|docker|full|lock-status] [BASE]" >&2
+  echo "       bash scripts/gate.sh full --unscoped                 docker whatever the diff (certification)" >&2
   echo "       bash scripts/gate.sh lint|test [MODULE...]   MODULE in: $ALL_MODULES" >&2
   exit 2
 }
@@ -705,6 +714,9 @@ step_scope() {
     base="$(git rev-parse --abbrev-ref --symbolic-full-name '@{upstream}' 2>/dev/null)" || base=""
   fi
   [ -z "$base" ] && base="origin/main"
+  # What the gate sentence names: the base as given, and the commit it was.
+  scope_against="$base"
+  [ "$base" = "-" ] || scope_against="$base @ $(git rev-parse --short "$base" 2>/dev/null || echo '?')"
 
   local files
   if [ "$base" = "-" ]; then
@@ -716,7 +728,8 @@ step_scope() {
     files="$(git diff --name-only "$base"...HEAD 2>/dev/null)"
   fi
   if [ -z "$files" ]; then
-    echo "scope: no diff against $base — docker NOT needed"
+    echo "scope: no diff against $scope_against — docker NOT needed"
+    [ "$base" = "-" ] || echo '  (an empty diff is what a pushed or merged tip has: certify with `full --unscoped`)'
     return 1
   fi
 
@@ -1195,7 +1208,9 @@ esac
 # the docker suites had not run: `gate.sh` with no argument is the four, and
 # `gate.sh full` SKIPS docker whenever scope finds no diff — which is always true
 # for work already pushed. CI found the break the docker suites would have caught
-# (a test asserting a contract two commits had already changed).
+# (a test asserting a contract two commits had already changed). So the sentence
+# also names what decided docker: "(unscoped)" for `full --unscoped`, "(scoped
+# against BASE @ sha)" otherwise, and the base again when scope skipped them.
 #
 # So the sentence is fact-carried, per standing law 4: accumulated by the steps
 # themselves as they pass, never assembled from what the invocation was supposed
@@ -1203,6 +1218,8 @@ esac
 # output is now a visible contradiction rather than an invisible one.
 gate_steps=""
 gate_docker=""   # "" = not attempted | "ran" | "skipped"
+scope_against=""  # set by step_scope: "BASE @ sha"
+gate_unscoped=""  # 1 = `full --unscoped`
 
 # timed <step_fn> — runs one step and prints how long it took. The log had no
 # per-step times at all, so "why is the gate slow" could only be answered by
@@ -1221,7 +1238,11 @@ gate_sentence() {
     # "AND" only joins something to something. `gate.sh docker` runs the suites
     # alone, and the first version of this printed a dangling "Gate: AND the
     # docker suites." — caught by the mutation this rider was specified with.
-    ran)     if [ -n "$s" ]; then s="$s AND the docker suites"; else s="the docker suites"; fi ;;
+    ran)     if [ -n "$s" ]; then s="$s AND the docker suites"; else s="the docker suites"; fi
+             # `full` says what put them in scope; `gate.sh docker` runs them
+             # by name and needs no qualifier.
+             if [ -n "$gate_unscoped" ]; then s="$s (unscoped)"
+             elif [ -n "$scope_against" ]; then s="$s (scoped against $scope_against)"; fi ;;
     skipped) : ;;
   esac
   [ -n "$s" ] || { echo "Gate sentence: (nothing ran)"; return; }
@@ -1230,7 +1251,7 @@ gate_sentence() {
   [ -n "$gate_scope" ] && s="$s (scoped to: $gate_scope)"
   # Capitalised the way it lands in a commit message, ready to paste.
   local out="Gate: $s."
-  [ "$gate_docker" = skipped ] && out="$out Docker suites SKIPPED by scope (nothing in this diff can reach one)."
+  [ "$gate_docker" = skipped ] && out="$out Docker suites SKIPPED by scope against $scope_against (nothing in this diff can reach one)."
   echo "$out"
 }
 
@@ -1265,13 +1286,29 @@ case "${1:-all}" in
     # reason -race does: it is the slow, thorough half. It is NOT scoped away
     # with the docker suites: the bare gate compiles the sim files
     # (check-tagged-vet) but only this step runs a sim-only test.
-    if timed step_scope "${2:-}"; then
+    #
+    # --unscoped puts docker in scope whatever the diff says. A tip that is
+    # level with its base (pushed, or merged) has an empty diff, and a scoped
+    # run then skips the docker suites; certification is that tip, so it
+    # certifies unscoped, and the sentence says which ran.
+    full_base="${2:-}"
+    if [ "$full_base" = "--unscoped" ]; then
+      gate_unscoped=1
+      full_base=""
+    fi
+    docker_in=0
+    if [ -n "$gate_unscoped" ]; then
+      echo "scope: --unscoped — the docker suites run whatever the diff"
+      docker_in=1
+    elif timed step_scope "$full_base"; then
+      docker_in=1
+    fi
+    if [ "$docker_in" -eq 1 ]; then
       if timed step_test "$(untagged_only_modules)"; then note_step unit; else rc=1; fi
       # RACE AND SIM RUN BESIDE THE DOCKER STEP, NOT AFTER IT. Neither uses the
       # docker step's Postgres (race starts its own, sim is -tags sim, the edge
-      # is SQLite), and the docker step's longest stretch is
-      # integration/scenarios, one package that spends most of its time waiting
-      # on the bus rather than computing.
+      # is SQLite), and the docker step's long pole is integration/scenarios,
+      # one package, which no -p can split.
       # In series the two added ~3.5 min to every full gate on the 4-core box.
       # Their output is held in files and printed after the docker step's, in
       # the order it always had, so the log reads the same as a serial run.
