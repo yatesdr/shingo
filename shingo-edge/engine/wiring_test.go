@@ -893,6 +893,13 @@ func TestWiring_ABPairsAcrossStyles(t *testing.T) {
 		db.UpdateChangeoverNodeTaskState(task.ID, domain.NodeTaskReleased)
 	}
 	testutil.MustNoErr(t, eng.CompleteProcessProductionCutover(processID), "cutover")
+	// The changeover's carts landed: both positions hold style 2's part (a
+	// stroke never draws a cart of another part).
+	for _, n := range []string{"AB-NODE-A", "AB-NODE-B"} {
+		node, err := db.GetProcessNodeByCoreNodeName(n)
+		testutil.MustNoErr(t, err, "node "+n)
+		testutil.MustNoErr(t, db.SetProcessNodeRuntimeLinesidePayload(node.ID, "PART-X", true, "landing"), "PART-X at "+n)
+	}
 
 	// After cutover, active style is style2. Claims have no PairedCoreNode.
 	// Counter delta should decrement BOTH nodes (unpaired behavior).

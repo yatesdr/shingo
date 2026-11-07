@@ -4,7 +4,10 @@
 package engine
 
 import (
+	"fmt"
+
 	"shingoedge/domain"
+	"shingoedge/store"
 	"shingoedge/store/processes"
 )
 
@@ -72,4 +75,72 @@ func (e *Engine) recordLinesideCarrier(nodeID int64, nodeName string, carrier do
 func (e *Engine) recordLinesideCarrierIn(ex processes.DBTX, nodeID int64, carrier domain.LinesideCarrier, src domain.CarrierSource) error {
 	payload, known := carrier.Payload()
 	return processes.SetRuntimeLinesidePayload(ex, nodeID, string(payload), known, string(src))
+}
+
+// carrierRecordSaid says where a seat's recorded carrier came from, in the
+// words of the act that recorded it: "from the switch off RUN", "from the
+// delivery", "by the operator", "from Core's record of the bin"; "" for a
+// source no person would recognise. For the flip it names the style that ran:
+// the one style of the node's process, other than except, whose claim there
+// takes the recorded part ("from a style switch" when none or several do).
+// Reads the process's styles and their claims only for a flip.
+func (e *Engine) carrierRecordSaid(node *processes.Node, rt *processes.RuntimeState, except int64) string {
+	switch domain.CarrierSource(rt.LinesideSource) {
+	case domain.CarrierFromFlip:
+		if name := e.styleThatRan(node, string(rt.LinesidePayloadCode), except); name != "" {
+			return "from the switch off " + name
+		}
+		return "from a style switch"
+	case domain.CarrierFromLanding, domain.CarrierFromDelivery:
+		return "from the delivery"
+	case domain.CarrierFromOperator:
+		return "by the operator"
+	case domain.CarrierFromReconcile:
+		return "from Core's record of the bin"
+	}
+	return ""
+}
+
+// styleThatRan is the one style of the node's process, other than except,
+// whose claim at the node takes part; "" when none or several do.
+func (e *Engine) styleThatRan(node *processes.Node, part string, except int64) string {
+	styles, err := e.db.ListStylesByProcess(node.ProcessID)
+	if err != nil {
+		return ""
+	}
+	var ids []int64
+	for _, s := range styles {
+		if s.ID != except {
+			ids = append(ids, s.ID)
+		}
+	}
+	claims, err := e.db.NodeClaimsForStyles(ids)
+	if err != nil {
+		return ""
+	}
+	proc := &processes.Process{ID: node.ProcessID}
+	name := ""
+	for _, s := range styles {
+		if s.ID == except || !claimTakes(claims.Resolve(proc, node, store.ExactStyle(s.ID)), part) {
+			continue
+		}
+		if name != "" {
+			return ""
+		}
+		name = s.Name
+	}
+	return name
+}
+
+// recordedAs is "recorded as P (said)": what a seat's known carrier is recorded
+// as, an empty one as empty, and where the record came from when said names it.
+func recordedAs(rt *processes.RuntimeState, said string) string {
+	part := string(rt.LinesidePayloadCode)
+	if part == "" {
+		part = "empty"
+	}
+	if said == "" {
+		return "recorded as " + part
+	}
+	return fmt.Sprintf("recorded as %s (%s)", part, said)
 }

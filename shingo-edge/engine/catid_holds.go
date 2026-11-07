@@ -176,14 +176,17 @@ type CatidHoldPreview struct {
 	Refusal string `json:"refusal,omitempty"`
 }
 
-// CatidHoldChargeRow is one node a Charge draws from.
+// CatidHoldChargeRow is one node a Charge draws from. CarrierSource is who
+// recorded CarrierPart (domain.CarrierSource: delivery, landing, operator,
+// flip, ...), "" when nobody could say.
 type CatidHoldChargeRow struct {
-	Node        string `json:"node"`
-	BinID       int64  `json:"bin_id,omitempty"`
-	CarrierPart string `json:"carrier_part"`
-	ClaimPart   string `json:"claim_part"`
-	Qty         int64  `json:"qty"`
-	WrongPart   bool   `json:"wrong_part"`
+	Node          string `json:"node"`
+	BinID         int64  `json:"bin_id,omitempty"`
+	CarrierPart   string `json:"carrier_part"`
+	CarrierSource string `json:"carrier_source,omitempty"`
+	ClaimPart     string `json:"claim_part"`
+	Qty           int64  `json:"qty"`
+	WrongPart     bool   `json:"wrong_part"`
 }
 
 // ErrHoldResolved is a release of a hold already released.
@@ -264,12 +267,12 @@ func (e *Engine) holdRows(h *store.CatidHold, styleID int64, styleName string) (
 				refusal = fmt.Sprintf("no cart at %s", nodes[i].Name)
 			}
 		case !carrierIsPart(process, &nodes[i], rt, claim, claims):
-			row.BinID, row.CarrierPart, row.WrongPart = *rt.ActiveBinID, string(rt.LinesidePayloadCode), true
+			row.BinID, row.CarrierPart, row.CarrierSource, row.WrongPart = *rt.ActiveBinID, string(rt.LinesidePayloadCode), recordedBy(rt), true
 			if refusal == "" {
-				refusal = fmt.Sprintf("the cart at %s is not %s's part", nodes[i].Name, styleName)
+				refusal = e.wrongCartRefusal(&nodes[i], rt, styleID, styleName)
 			}
 		default:
-			row.BinID, row.CarrierPart = *rt.ActiveBinID, string(rt.LinesidePayloadCode)
+			row.BinID, row.CarrierPart, row.CarrierSource = *rt.ActiveBinID, string(rt.LinesidePayloadCode), recordedBy(rt)
 			lands = true
 		}
 		rows = append(rows, row)
@@ -281,6 +284,25 @@ func (e *Engine) holdRows(h *store.CatidHold, styleID int64, styleName string) (
 		refusal = fmt.Sprintf("%s has no position this hold draws from", styleName)
 	}
 	return rows, refusal, nil
+}
+
+// recordedBy is who recorded the seat's carrier, "" when it could not say.
+func recordedBy(rt *processes.RuntimeState) string {
+	if !rt.LinesidePayloadKnown {
+		return ""
+	}
+	return rt.LinesideSource
+}
+
+// wrongCartRefusal is the refusal for a share at a cart that is not the
+// style's part, naming what a person can fix: "the cart at X is recorded as P
+// (from the switch off RUN), not S's part" — name the cart, or land one of the
+// part. A cart that could not say is taken as the running style's part.
+func (e *Engine) wrongCartRefusal(node *processes.Node, rt *processes.RuntimeState, styleID int64, styleName string) string {
+	if !rt.LinesidePayloadKnown {
+		return fmt.Sprintf("the cart at %s is not %s's part", node.Name, styleName)
+	}
+	return fmt.Sprintf("the cart at %s is %s, not %s's part", node.Name, recordedAs(rt, e.carrierRecordSaid(node, rt, styleID)), styleName)
 }
 
 // ChargeCatidHold is a person's Charge: the hold's draw is charged under the

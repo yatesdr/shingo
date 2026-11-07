@@ -155,7 +155,8 @@ func TestLineTick_GapTickHeldUnderTheIncomingPart(t *testing.T) {
 // drains the lineside pile of its style's part at the position before the cart.
 // While the PLC runs today's part, the outgoing part's pile drains first; once
 // it runs the incoming part, the stroke is the target's and the outgoing pile
-// is left (it strands at the cutover).
+// is left (it strands at the cutover), as is the outgoing cart: the stroke is
+// held for the incoming one.
 func TestStation_PileDrainsUnderTheTicksStyle(t *testing.T) {
 	t.Parallel()
 	eng, db, pid, nodeID, from, to := runOutRig(t)
@@ -167,8 +168,9 @@ func TestStation_PileDrainsUnderTheTicksStyle(t *testing.T) {
 		t.Errorf("cart after 3 on today's part = %d, want 17: the pile pays first", got)
 	}
 	stationTick(eng, lc, pid, plc.TickIdentity{StyleID: to, Kind: plc.TickTarget}, 2)
-	if got := runtimeOf(t, eng, nodeID).RemainingUOPCached; got != 15 {
-		t.Errorf("cart after 2 on the incoming part = %d, want 15: the outgoing pile is not the target's", got)
+	if rt := runtimeOf(t, eng, nodeID); rt.RemainingUOPCached != 17 || rt.PendingUOPDelta != 2 || rt.PendingUOPPayload != "PART-NEW" {
+		t.Errorf("cart after 2 on the incoming part = %d, hold %d of %q; want 17 and 2 of PART-NEW held: the outgoing "+
+			"pile is not the target's, nor is the outgoing cart", rt.RemainingUOPCached, rt.PendingUOPDelta, rt.PendingUOPPayload)
 	}
 	buckets, err := db.ListLinesideBuckets(nodeID)
 	testutil.MustNoErr(t, err, "piles")

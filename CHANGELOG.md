@@ -17,6 +17,7 @@ Edge v37-v43; Core changes only dev tooling (plantspec, seeddev, simcalc). Migra
 - The CATID monitor reads, confirms and times its windows on the engine's clock
 - An unmapped or off-plan part's draw is held (v40) until a landing, a Charge or a Write off
 - A flip records each consume seat's cart that could not say its part as the departing style's part (source flip)
+- A consume stroke never draws a cart recorded as another part: it is held for a cart of its part, and the parked-ticks notice names the seat
 - One CATID names one style: the pin, the one-click and Confirm refuse a taken value
 - A changeover records the CATID at its start and at its watch's close (v38)
 - An A/B pair is two positions naming each other; one lit side is charged per tick

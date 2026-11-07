@@ -772,10 +772,12 @@ func TestPinChangeover_CancelRetagsToTheStayingPart(t *testing.T) {
 // cart's part reads as the matched claim's part, the outgoing one before the
 // cutover, so the incoming-tagged hold waits and the cart takes its own ticks.
 // The cutover records what it leaves: a seat that could not say is the
-// departing style's part (source flip), so the cart still reads the outgoing
-// part after it and the hold keeps waiting for a cart of its part. Named
-// behaviour (attribution SYNTH-round1 §5 F-known), not a fix: a cart that
-// landed unnamed during the changeover is taken for the cart it replaced.
+// departing style's part (source flip), so after it the cart reads the
+// outgoing part, which the incoming style does not draw: its strokes are held
+// with the hold until a person names the cart, and the next stroke replays
+// them all. Named behaviour (attribution SYNTH-round1 §5 F-known), not a fix:
+// a cart that landed unnamed during the changeover is taken for the cart it
+// replaced until someone says otherwise.
 func TestPinChangeover_PayloadUnknownLanding(t *testing.T) {
 	t.Parallel()
 	eng, _, pid, nodeID, from, to := runOutRig(t)
@@ -793,8 +795,15 @@ func TestPinChangeover_PayloadUnknownLanding(t *testing.T) {
 			rt.LinesidePayloadCode, rt.LinesidePayloadKnown, rt.LinesideSource)
 	}
 	tickConsume(eng, pid, to, 1)
-	if rt := runtimeOf(t, eng, nodeID); rt.RemainingUOPCached != 51 || rt.PendingUOPDelta != 3 {
-		t.Errorf("after the cutover, one tick = %d, hold %d; want 51, hold 3 waiting for a PART-NEW cart",
+	if rt := runtimeOf(t, eng, nodeID); rt.RemainingUOPCached != 52 || rt.PendingUOPDelta != 4 {
+		t.Fatalf("after the cutover, one tick = %d, hold %d; want 52, hold 4 waiting for a PART-NEW cart",
+			rt.RemainingUOPCached, rt.PendingUOPDelta)
+	}
+	eng.HandleUOPAdjustment(protocol.UOPAdjustment{CoreNodeName: runOutNode, BinID: 9106, Epoch: 1, NewRemaining: 52,
+		Actor: "admin", PayloadCode: "PART-NEW", PayloadKnown: true})
+	tickConsume(eng, pid, to, 1)
+	if rt := runtimeOf(t, eng, nodeID); rt.RemainingUOPCached != 47 || rt.PendingUOPDelta != 0 {
+		t.Errorf("after a person names the cart PART-NEW, one tick = %d, hold %d; want 47 (the 4 held and the 1), hold 0",
 			rt.RemainingUOPCached, rt.PendingUOPDelta)
 	}
 }

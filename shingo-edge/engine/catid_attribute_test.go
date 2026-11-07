@@ -184,23 +184,26 @@ func TestTick_TargetCATIDChargesAnIncomingOnlyNode(t *testing.T) {
 	}
 }
 
-// TestWalk_TargetTickBeforeTheLiftChargesTheBoundCart — named behaviour, read
-// with TestRegression_TickDuringChangeoverRunout and
+// TestWalk_TargetTickBeforeTheLiftIsHeldForTheIncomingCart — read with
+// TestRegression_TickDuringChangeoverRunout and
 // TestRegression_ChangeoverDoesNotCarryUOPAcrossStyles: at a node both styles
-// claim, a stroke attributed to the target before the outgoing cart's lift is
-// charged to that cart, as R1 charges it for the running style's strokes, and
-// stamped with its resident part.
-func TestWalk_TargetTickBeforeTheLiftChargesTheBoundCart(t *testing.T) {
+// claim, a stroke attributed to the target before the outgoing cart's lift
+// draws the target's part, which that cart is not: it is held at the seat
+// under the incoming part, and the outgoing cart and Core's record of it are
+// untouched. Before, it was charged to the outgoing cart, stamped with its
+// resident part, and Core accepted it.
+func TestWalk_TargetTickBeforeTheLiftIsHeldForTheIncomingCart(t *testing.T) {
 	t.Parallel()
 	eng, _, pid, nodeID, _, to := runOutRig(t)
 	sink := eng.inventoryDelta.(*fakeDeltaSink)
 	mark := len(sink.binCalls)
 	tickConsume(eng, pid, to, 1)
-	if got := runtimeOf(t, eng, nodeID).RemainingUOPCached; got != 16 {
-		t.Errorf("outgoing cart after a target stroke = %d, want 16", got)
+	if rt := runtimeOf(t, eng, nodeID); rt.RemainingUOPCached != 17 || rt.PendingUOPDelta != 1 || rt.PendingUOPPayload != "PART-NEW" {
+		t.Errorf("outgoing cart after a target stroke = %d, hold %d of %q; want 17, hold 1 of PART-NEW",
+			rt.RemainingUOPCached, rt.PendingUOPDelta, rt.PendingUOPPayload)
 	}
-	if len(sink.binCalls) <= mark || sink.binCalls[mark].BinID != 9101 || sink.binCalls[mark].PayloadCode != "PART-OLD" {
-		t.Errorf("delta = %+v, want -1 on the outgoing bin 9101 stamped PART-OLD", sink.binCalls[mark:])
+	if len(sink.binCalls) != mark {
+		t.Errorf("deltas = %+v, want none: the outgoing cart is not drawn", sink.binCalls[mark:])
 	}
 }
 

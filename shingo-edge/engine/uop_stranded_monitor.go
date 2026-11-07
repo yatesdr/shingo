@@ -4,7 +4,10 @@
 // class: pending_uop_delta growing across consecutive scan intervals while no
 // bin is bound. That is consume ticks piling up unattributed because the
 // physical carrier at the line was never bound (F1b's residual / no-match
-// backstop, or any producer of a staged-but-unbound node). It is a GROWTH
+// backstop, or any producer of a staged-but-unbound node). A seat bound to a
+// carrier recorded as a part its claim does not take is watched the same way:
+// a consume stroke never draws such a cart, so its strokes pile up in the hold
+// until a cart of the part lands or a person names the cart. It is a GROWTH
 // condition, NOT a fixed threshold — an idle line (pending flat) never alarms,
 // and it clears the moment a bin binds. Detection only: it raises an alarm
 // (log + EventUOPStranded + tile chip) and NEVER binds, moves, cancels, or
@@ -53,6 +56,10 @@ type strandedNodeState struct {
 	alarmed bool
 	since   time.Time
 	carrier string
+	// beside says, while the seat is bound to a carrier of another part, what
+	// that carrier is recorded as and what the style draws there
+	// (heldBesideSaid); "" otherwise. Read once per such window.
+	beside string
 }
 
 // evalStrandedGrowth advances one node's detector by a single sample and reports
@@ -124,6 +131,27 @@ func formatStrandedDetail(carrier string, unbound, ctaAfter time.Duration, coreN
 	}
 	return fmt.Sprintf("Binding in progress — UOP accumulating. %s at %s, %s and not bound — Record Count on the bin tab.",
 		carrier, coreNodeName, humanizeUnbound(unbound))
+}
+
+// formatHeldBesideDetail is the operator sentence for a hold beside a cart of
+// another part: the position, what the cart is recorded as and by what, the
+// part the style draws there (said, from heldBesideSaid), and the count held,
+// with the two ways out.
+func formatHeldBesideDetail(coreNodeName, said string, pending int, part string) string {
+	return fmt.Sprintf("Strokes held at %s — %s. %d held for the next %s cart: land one, or name this cart with Load Payload.",
+		coreNodeName, said, pending, part)
+}
+
+// heldBesideSaid is the middle of formatHeldBesideDetail: "the cart there is
+// recorded as P (from the switch off S); T draws Q here", T the claim's style.
+// Reads the style's name and, for a flip, the style that ran.
+func (e *Engine) heldBesideSaid(node *processes.Node, claim *processes.NodeClaim, rt *processes.RuntimeState) string {
+	style := fmt.Sprintf("style %d", claim.StyleID)
+	if s, err := e.db.GetStyle(claim.StyleID); err == nil && s != nil && s.Name != "" {
+		style = s.Name
+	}
+	return fmt.Sprintf("the cart there is %s; %s draws %s here",
+		recordedAs(rt, e.carrierRecordSaid(node, rt, claim.StyleID)), style, claim.PayloadCode)
 }
 
 // humanizeUnbound renders how long a node has been waiting to bind, in the
@@ -289,8 +317,13 @@ func (sm *strandedMonitor) evaluate(node *processes.Node, claim *processes.NodeC
 		sm.states[node.ID] = st
 	}
 
-	fire, active := evalStrandedGrowth(st, int(runtime.PendingUOPDelta), runtime.ActiveBinID != nil, now)
+	// Bound is bound to a carrier the claim takes: a hold beside a carrier
+	// recorded as another part grows as an unbound seat's does (no stroke
+	// draws that cart), and is watched the same way.
+	other := recordedOtherPart(runtime, claim)
+	fire, active := evalStrandedGrowth(st, int(runtime.PendingUOPDelta), runtime.ActiveBinID != nil && !other, now)
 	if !active {
+		st.beside = ""
 		sm.clear(node.CoreNodeName)
 		return
 	}
@@ -300,14 +333,25 @@ func (sm *strandedMonitor) evaluate(node *processes.Node, claim *processes.NodeC
 		// for the per-scan detail refreshes.
 		st.carrier = sm.resolveCarrier(node.CoreNodeName)
 	}
+	switch {
+	case !other:
+		st.beside = ""
+	case st.beside == "":
+		st.beside = e.heldBesideSaid(node, claim, runtime)
+	}
 	unbound := now.Sub(st.since)
 	ctaAfter := e.cfg.UOPAccumulatingCTADelay()
 	detail := formatStrandedDetail(st.carrier, unbound, ctaAfter, node.CoreNodeName)
+	why := "no bin bound"
+	if st.beside != "" {
+		detail = formatHeldBesideDetail(node.CoreNodeName, st.beside, int(runtime.PendingUOPDelta), claim.PayloadCode)
+		why = "beside a cart of another part"
+	}
 	e.strandedAlarms.Store(node.CoreNodeName, detail)
 
 	if fire {
 		// One log/audit line per alarm window (P2-C8) — greppable "parked ticks:".
-		log.Printf("parked ticks: %s (pending=%d held, no bin bound)", detail, int(runtime.PendingUOPDelta))
+		log.Printf("parked ticks: %s (pending=%d held, %s)", detail, int(runtime.PendingUOPDelta), why)
 		e.Events.Emit(Event{Type: EventUOPStranded, Payload: UOPStrandedEvent{
 			CoreNodeName: node.CoreNodeName,
 			Carrier:      st.carrier,

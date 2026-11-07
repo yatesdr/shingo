@@ -607,19 +607,22 @@ func (e *Engine) secondLitSide(tick tickScope, p *abPairTick, node *processes.No
 // TestPinR2_HeldTicksAreNotReplayedOntoADifferentPart).
 //
 //   - A bound, chargeable carrier of the held part takes the tick plus the
-//     hold, and the hold (and its part) clears. A carrier of another part
-//     takes the tick alone; the hold is kept for its own part's carrier.
-//   - A carrier released as empty (parts.notCharged, R3) is not charged: the
-//     tick is held, exactly as if the seat were empty.
+//     hold, and the hold (and its part) clears. A chargeable carrier of
+//     another part than the hold's takes the tick alone; the hold is kept for
+//     its own part's carrier.
+//   - A carrier that takes no tick (parts.notCharged: one released as empty,
+//     R3, or on a consume seat one recorded as a part the tick may not draw,
+//     tickParts) is not charged: the tick is held, exactly as if the seat were
+//     empty.
 //   - With nothing chargeable, the tick is held when the hold is empty or
 //     already of its part. When the seat holds ANOTHER part's ticks, that hold
 //     is kept and this tick is neither held nor charged: its own pile has
 //     already drained what it could (drainLinesideFirst runs first), and the
 //     rest is logged once per episode, by part, and not charged (D12: no new
 //     anomaly rows for an over-pull). The stranded monitor (EventUOPStranded)
-//     watches a consume seat's hold only while the seat is unbound and the
-//     hold rises (uop_stranded_monitor.go); a hold kept beside a bound
-//     carrier of another part has no watcher.
+//     watches a consume seat's hold while the seat is unbound, or bound to a
+//     carrier recorded as a part its claim does not take, and the hold rises
+//     (uop_stranded_monitor.go).
 //
 // A hold written before the part existed reads "" and replays as it always
 // did.
@@ -737,6 +740,18 @@ func (e *Engine) chargeOrHold(node *processes.Node, rt *processes.RuntimeState, 
 }
 
 // tickParts is what applyHoldAndReplay compares for one tick (D12).
+//
+// A CONSUME STROKE NEVER DRAWS A CART OF ANOTHER PART. On a consume seat a
+// bound carrier recorded (known: a landing, a person, the flip that left it) as
+// a part the tick's claim does not take (claimTakes: its part or an allowed
+// alternate) takes no tick, unless it is the part the tick is held under
+// (hold: B v1's incoming part mid-changeover, onto which the hold would replay
+// anyway). The tick is held as if the seat were empty (notCharged), under
+// hold, and replays onto the next carrier of that part: a landing, or a person
+// naming the standing cart, and the next stroke. A carrier that cannot say is
+// charged as the claim's part. A produce seat is unchanged: a changeover lifts
+// its cart, and a same-part changeover's strokes are the next bin's
+// (cutoverHoldClears).
 type tickParts struct {
 	// tick is the part the tick is of: the matched claim's part, for the
 	// log line.
@@ -749,8 +764,9 @@ type tickParts struct {
 	// stamped (binAtNode for a draw, the claim's part for a fill). A hold
 	// replays onto the carrier only when it is of this part.
 	carrier string
-	// notCharged: the bound carrier was released as empty and takes no tick
-	// (R3); the tick is held as if the seat were empty.
+	// notCharged: the bound carrier takes no tick, the tick is held as if the
+	// seat were empty: it was released as empty (R3), or on a consume seat it
+	// is recorded as a part the tick may not draw (drawsAnotherPart).
 	notCharged bool
 	// pack is the bound bin's cap when the strict arm applies to the seat as
 	// read (strictPackFor), else 0. Carried per attempt like the parts, so a
@@ -786,7 +802,27 @@ func carrierIsPart(process *processes.Process, node *processes.Node, rt *process
 			}
 		}
 	}
-	return part != "" && part == claim.PayloadCode
+	return part != "" && claimTakes(claim, part)
+}
+
+// claimTakes reports whether a carrier of part is the claim's part: its
+// primary or an allowed alternate (AllowedPayloads).
+func claimTakes(claim *processes.NodeClaim, part string) bool {
+	return claim != nil && (part == claim.PayloadCode || slices.Contains(claim.AllowedPayloads(), part))
+}
+
+// recordedOtherPart reports whether the seat's bound carrier is recorded (its
+// identity known) as a part the claim does not take, a known-empty carrier
+// included. A carrier that cannot say is not: it is taken as the claim's part.
+func recordedOtherPart(rt *processes.RuntimeState, claim *processes.NodeClaim) bool {
+	return rt != nil && rt.ActiveBinID != nil && rt.LinesidePayloadKnown && !claimTakes(claim, string(rt.LinesidePayloadCode))
+}
+
+// drawsAnotherPart is the consume tick's rule (tickParts): the bound carrier is
+// recorded as a part the claim does not take and is not the part the tick is
+// held under, so it takes no tick.
+func drawsAnotherPart(rt *processes.RuntimeState, claim *processes.NodeClaim, hold string) bool {
+	return recordedOtherPart(rt, claim) && string(rt.LinesidePayloadCode) != hold
 }
 
 // holdPartFor is the part a consume tick is held under when no carrier takes
@@ -898,10 +934,12 @@ func (e *Engine) handleConsumeTick(node *processes.Node, runtime *processes.Runt
 	// is held for the next carrier of the part (Lane H R3, DECISIONS D12; pin
 	// TestPinR3_ReleasedEmptyIsNotChargedThenTheNextBinOfThePartTakesTheHold).
 	// A count release leaves the flag clear and keeps charging until the
-	// lift (R1).
+	// lift (R1). Nor is a carrier recorded as a part the claim does not take:
+	// the stroke is held under hold for a carrier of its part (tickParts).
 	runtime, _, binAttributed := e.applyHoldAndReplay(node, runtime, binRemainder, -1, func(rt *processes.RuntimeState) tickParts {
 		_, carrierPart, _ := e.binAtNode(rt, claim)
-		return tickParts{tick: claim.PayloadCode, hold: hold, carrier: carrierPart, notCharged: rt.ReleasedEmpty}
+		return tickParts{tick: claim.PayloadCode, hold: hold, carrier: carrierPart,
+			notCharged: rt.ReleasedEmpty || drawsAnotherPart(rt, claim, hold)}
 	})
 
 	// emitConsumeTickDeltas marks the drained piles always, and records a
@@ -934,7 +972,8 @@ func (e *Engine) handleProduceTick(node *processes.Node, runtime *processes.Runt
 	e.countMu.Lock()
 	// A fill's carrier is the part it is being filled with, the claim's
 	// (producedPayload): an empty arrives known-empty, so its resident part
-	// would never match the hold.
+	// would never match the hold. The consume seat's other-part rule is not a
+	// produce seat's (tickParts).
 	part, pack := producedPayload(claim), strictPackFor(claim)
 	binPack := 0
 	if claim != nil {

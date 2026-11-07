@@ -355,7 +355,8 @@ func TestReportLinesideLevels_TicksRacingReportsNeverMoveTheStatedCount(t *testi
 	claim, err := db.GetStyleNodeClaim(fromClaimID)
 	testutil.MustNoErr(t, err, "read claim")
 	testutil.MustNoErr(t, db.SetProcessNodeRuntimeWithBinAndEpoch(nodeID, &fromClaimID, binPtr(15), 1, 7032), "bind carrier")
-	eng.recordLinesideCarrier(nodeID, "ALN_007", domain.KnownCarrier("PART-A"), domain.CarrierFromDelivery)
+	// A cart of the claim's part: the ticks draw it.
+	eng.recordLinesideCarrier(nodeID, "ALN_007", domain.KnownCarrier(domain.LinesidePayloadCode(claim.PayloadCode)), domain.CarrierFromDelivery)
 
 	const ticks = 200
 	done := make(chan struct{})
@@ -405,7 +406,8 @@ func TestReportLinesideLevels_FlushesRacingReportsStateTheNetAtFlushedSeq(t *tes
 	claim, err := db.GetStyleNodeClaim(fromClaimID)
 	testutil.MustNoErr(t, err, "read claim")
 	testutil.MustNoErr(t, db.SetProcessNodeRuntimeWithBinAndEpoch(nodeID, &fromClaimID, binPtr(15), 1, 7032), "bind carrier")
-	eng.recordLinesideCarrier(nodeID, "ALN_007", domain.KnownCarrier("PART-A"), domain.CarrierFromDelivery)
+	// A cart of the claim's part: the ticks draw it.
+	eng.recordLinesideCarrier(nodeID, "ALN_007", domain.KnownCarrier(domain.LinesidePayloadCode(claim.PayloadCode)), domain.CarrierFromDelivery)
 
 	const ticks = 200
 	done := make(chan struct{})

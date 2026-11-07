@@ -21,7 +21,8 @@
 // Each scenario asserts three ledgers against the line: the carts (every
 // cart's count is its stated count less what was drawn from it, and per
 // position the draws, the seat's hold and the holds ledger add up to the parts
-// counted at the position's counter), the holds, and the production record
+// counted at the position's counter; a cart is drawn for the strokes made
+// under its own part, share), the holds, and the production record
 // (counter_snapshots by CATID is what the PLC made; by style it agrees with
 // hourly and with what Core received). Every order the run placed lands and is
 // confirmed.
@@ -242,6 +243,10 @@ type w6WarLink struct {
 	// counted is every count the line has made, by the identity the counter
 	// read when it counted: what the PLC's own production record says.
 	counted map[int64]int64
+	// loadIDs and countIDs are the identity of each load the line has taken
+	// (the one it was loaded under, LineState.ByIdentity) and of each count it
+	// has made (the one the counter read), in order: load k is loadIDs[k].
+	loadIDs, countIDs []int64
 	// structReads are the times the struct was read whole: the Edge's slot
 	// watch reads so the members WarLink does not publish.
 	structReads []time.Time
@@ -261,16 +266,32 @@ func (f *w6WarLink) state() simwarlink.LineState {
 	return f.line.State()
 }
 
-// cycle is one machine cycle, its count booked to the identity it read.
+// cycle is one machine cycle, its count booked to the identity it read and
+// each load and count to the identity it was made under.
 func (f *w6WarLink) cycle() {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	before := f.line.State()
 	f.line.Tick()
 	after := f.line.State()
+	for id, n := range after.ByIdentity {
+		for k := before.ByIdentity[id]; k < n; k++ {
+			f.loadIDs = append(f.loadIDs, id)
+		}
+	}
 	if n := (after.Loads - int64(after.InFlight)) - (before.Loads - int64(before.InFlight)); n > 0 {
 		f.counted[after.Identity] += n
+		for k := int64(0); k < n; k++ {
+			f.countIDs = append(f.countIDs, after.Identity)
+		}
 	}
+}
+
+// strokes are the identities of the loads and the counts made so far.
+func (f *w6WarLink) strokes() (loads, counts []int64) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]int64(nil), f.loadIDs...), append([]int64(nil), f.countIDs...)
 }
 
 func (f *w6WarLink) do(fn func(l *simwarlink.Line)) {
@@ -481,6 +502,7 @@ type w6Opts struct {
 type w6Tenure struct {
 	bin                 int64
 	label               string
+	part                string // the cart's part at Core when it landed
 	pos                 int
 	loadsIn, loadsOut   int64
 	countsIn, countsOut int64
@@ -908,8 +930,8 @@ func (c *w6Cell) noteCarts() {
 		if bin != 0 {
 			b, err := c.core.eng.DB().GetBin(bin)
 			mustNil(c.t, err, "cart")
-			c.tenures[i] = append(c.tenures[i], &w6Tenure{bin: bin, label: b.Label, pos: i, loadsIn: st.Loads,
-				countsIn: counts, open: true})
+			c.tenures[i] = append(c.tenures[i], &w6Tenure{bin: bin, label: b.Label, part: b.PayloadCode, pos: i,
+				loadsIn: st.Loads, countsIn: counts, open: true})
 		}
 	}
 }
@@ -922,23 +944,70 @@ func (c *w6Cell) cart(i int) *w6Tenure {
 	return nil
 }
 
-// truth is what was taken from a cart: the loads during its stay.
+// truth is what was taken from a cart: the loads made under its own part
+// during its stay, and the loads of its part held for it before it landed
+// (share).
 func (c *w6Cell) truth(tn *w6Tenure) int64 {
-	if tn.open {
-		return c.plc.state().Loads - tn.loadsIn
-	}
-	return tn.loadsOut - tn.loadsIn
+	loads, _ := c.plc.strokes()
+	return c.share(tn, loads, func(t *w6Tenure) (int64, int64) {
+		if t.open {
+			return t.loadsIn, int64(len(loads))
+		}
+		return t.loadsIn, t.loadsOut
+	})
 }
 
-// counts are the counter's counts during a cart's stay: what the cell counter
-// charges it under B v1 (a count the seat holds between carts goes to the
-// next cart; the scenarios land carts between cycles, so none is held).
+// counts are the counter's counts a cart is charged under B v1 (a count the
+// seat holds between carts goes to the next cart; the scenarios land carts
+// between cycles, so none is held between them): the counts made under its
+// own part during its stay, and those of its part held for it (share).
 func (c *w6Cell) counts(tn *w6Tenure) int64 {
-	if tn.open {
-		st := c.plc.state()
-		return st.Loads - int64(st.InFlight) - tn.countsIn
+	_, counts := c.plc.strokes()
+	return c.share(tn, counts, func(t *w6Tenure) (int64, int64) {
+		if t.open {
+			return t.countsIn, int64(len(counts))
+		}
+		return t.countsIn, t.countsOut
+	})
+}
+
+// share is a cart's strokes: the position's carts in the order they stood,
+// over ids (the identity each stroke at the position was made under, its loads
+// or its counts) and each cart's span of them. A stroke is the standing cart's,
+// except a stroke under ALT's identity at a cart of RUN's part where the two
+// differ (a mirror position): a stroke never draws a cart of another part, so
+// it is held for the next cart of ALT's part there, which takes every such
+// stroke when it lands. A stroke of RUN's part at a cart of ALT's is the
+// run-out, the incoming cart's (B v1's prepay), and a part no style pins is
+// the standing cart's (its draw is the holds ledger's, read apart).
+func (c *w6Cell) share(tn *w6Tenure, ids []int64, span func(*w6Tenure) (int64, int64)) int64 {
+	held := map[string]int64{}
+	for _, t := range c.tenures[tn.pos] {
+		in, out := span(t)
+		got := held[t.part]
+		held[t.part] = 0
+		for k := in; k < out && k < int64(len(ids)); k++ {
+			if p := heldFor(t.pos, t.part, ids[k]); p != "" {
+				held[p]++
+				continue
+			}
+			got++
+		}
+		if t == tn {
+			return got
+		}
 	}
-	return tn.countsOut - tn.countsIn
+	return 0
+}
+
+// heldFor is the part a stroke made under identity v at position i is held for
+// while a cart of part stands there, "" when it is that cart's: ALT's part,
+// for an ALT stroke at a cart of RUN's part where the two differ.
+func heldFor(i int, part string, v int64) string {
+	if v == catALT && part == w6RunParts[i] && part != w6AltParts[i] {
+		return w6AltParts[i]
+	}
+	return ""
 }
 
 // count is a cart's count as Core holds it, and as the Edge's seat holds it
@@ -1107,9 +1176,13 @@ func (c *w6Cell) ledger(label string, checkCarts bool) w6Ledger {
 			if !c.station[i] {
 				want = c.counts(tn)
 			}
-			if got := w6Full - c.count(tn); got != want {
+			got := w6Full - c.count(tn)
+			if tn.open && rt.PendingUOPPayload == tn.part {
+				got += rt.PendingUOPDelta // held for this cart: its next stroke takes it
+			}
+			if got != want {
 				c.dump(label)
-				c.t.Fatalf("%s: cart %s at %s drew %d, want %d (%d loads from it, %d counts while it stood there)",
+				c.t.Fatalf("%s: cart %s at %s drew %d, want %d (%d loads of its part, %d counts of its part)",
 					label, tn.label, w6Pos[i], got, want, c.truth(tn), c.counts(tn))
 			}
 		}
