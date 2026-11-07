@@ -9,10 +9,15 @@ import (
 	"testing"
 )
 
-// main_feedspin_test.go — source-shape pins of the setupKafkaSubscribers
-// closures the versioned feeds change. The closures are registered on a
-// router inside a function that needs a live Kafka client and engine, so there
-// is no seam to drive them; what each one calls is pinned as written.
+// main_feedspin_test.go — source-shape pins of the inbound subject closures
+// the versioned feeds change: which steps each one calls, in order, as main.go
+// writes them. The closures are built by buildInboundRouter, which needs the
+// engine, its order handler and a heartbeater but no Kafka client; the door
+// walk dispatches every inbound key through it (door_walk_test.go). The walk
+// asserts that a closure's writes reach the boards, not which calls it makes,
+// so the call lists are pinned here as written. What main.go hands
+// messaging.NewHeartbeater is the compiler's to check (its arity and types);
+// what the heartbeat carries is pinned in messaging/heartbeat_feedspin_test.go.
 
 // subjectClosures parses main.go and returns, for each subject registered with
 // router.RegisterSubject, the closure's body.
@@ -150,46 +155,5 @@ func TestFeedsPin_PublishOnRegister(t *testing.T) {
 		if !calls[callee] { // after: same
 			t.Errorf("registered closure no longer calls %s — publish-on-register is kept by F5", callee)
 		}
-	}
-}
-
-// TestFeedsPin_HeartbeaterCountsActiveOrders: main.go hands NewHeartbeater a
-// closure over db.CountActiveOrders, read on every heartbeat (once a minute).
-// after (X5): NewHeartbeater takes no order-count func and nothing in main.go
-// passes db.CountActiveOrders to it.
-func TestFeedsPin_HeartbeaterCountsActiveOrders(t *testing.T) {
-	t.Parallel()
-	f, err := parser.ParseFile(token.NewFileSet(), "main.go", nil, 0)
-	if err != nil {
-		t.Fatalf("parse main.go: %v", err)
-	}
-	var args []ast.Expr
-	ast.Inspect(f, func(n ast.Node) bool {
-		if call, ok := n.(*ast.CallExpr); ok && types.ExprString(call.Fun) == "messaging.NewHeartbeater" {
-			args = call.Args
-		}
-		return true
-	})
-	cases := []struct {
-		name        string
-		got         func() any
-		want, after any
-		label       string
-	}{
-		{"NewHeartbeater argument count", func() any { return len(args) }, 5, 5, "X5"}, // X5: was 6
-		{"last argument reads db.CountActiveOrders", func() any {
-			if len(args) == 0 {
-				return false
-			}
-			return allCalls(args[len(args)-1])["db.CountActiveOrders"]
-		}, false, false, "X5"}, // X5: was true
-	}
-	for _, tc := range cases {
-		if got := tc.got(); got != tc.want {
-			t.Errorf("%s = %v, want %v (after %s: %v)", tc.name, got, tc.want, tc.label, tc.after)
-		}
-	}
-	if len(args) == 0 {
-		t.Fatal("no messaging.NewHeartbeater call in main.go")
 	}
 }

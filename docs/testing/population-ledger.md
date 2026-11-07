@@ -44,3 +44,49 @@ present at the merge base is absent at the tip without a row here.
 - coverage Δ: lead (Phase 1 baseline → certification diff)
 - citations rewritten: none
 - verified at: `f4ea3b2c`
+
+### DUP — `TestFeedsPin_HeartbeaterCountsActiveOrders`
+- test: `TestFeedsPin_HeartbeaterCountsActiveOrders` · pkg `shingoedge/cmd/shingoedge` · run `-run '^TestFeedsPin_HeartbeaterCountsActiveOrders$'` · `shingo-edge/cmd/shingoedge/main_feedspin_test.go:160` @ `22c81558` · tags `none`
+- code: DUP
+- assertion map: main.go's `messaging.NewHeartbeater` call has 5 arguments (`main_feedspin_test.go:179`) → the compiler: the constructor takes 5 (`messaging/heartbeat.go:83`) and its seven test callers pass 5 (`messaging/heartbeat_feedspin_test.go:51,70,111`, `messaging/heartbeat_test.go:18,43,64,92`); the last argument reads no `db.CountActiveOrders` (`:180-185`) → the compiler (the fifth parameter is `ordersTopic string`) and, for the per-beat count it stands for, `messaging/heartbeat_feedspin_test.go:79-85` (the body carries no `active_orders`); no call found (`:192-194`) dropped because `hb` is used at `main.go:295-343` and passed to `buildInboundRouter`, so a missing construction does not compile, and a renamed constructor is not a regression.
+- mutation: X5's order count put back (constructor, call site, wire field):
+  ```diff
+  --- a/protocol/payloads.go
+  +++ b/protocol/payloads.go
+   type EdgeHeartbeat struct {
+   	StationID string `json:"station_id"`
+  +	Orders    int    `json:"active_orders"`
+  --- a/shingo-edge/messaging/heartbeat.go
+  +++ b/shingo-edge/messaging/heartbeat.go
+  +// ActiveOrderCountFunc returns the number of active (non-terminal) orders.
+  +type ActiveOrderCountFunc func() int
+  +
+   type Heartbeater struct {
+  +	orderCountFn ActiveOrderCountFunc
+  -func NewHeartbeater(client *Client, stationID, version, instance string, ordersTopic string) *Heartbeater {
+  +func NewHeartbeater(client *Client, stationID, version, instance string, ordersTopic string, orderCountFn ActiveOrderCountFunc) *Heartbeater {
+  +		orderCountFn: orderCountFn,
+   	b := &protocol.EdgeHeartbeat{StationID: h.stationID}
+  +	if h.orderCountFn != nil {
+  +		b.Orders = h.orderCountFn()
+  +	}
+  --- a/shingo-edge/cmd/shingoedge/main.go
+  +++ b/shingo-edge/cmd/shingoedge/main.go
+  -	hb := messaging.NewHeartbeater(msgClient, stationID, Version, instanceID, cfg.Messaging.OrdersTopic)
+  +	hb := messaging.NewHeartbeater(msgClient, stationID, Version, instanceID, cfg.Messaging.OrdersTopic, func() int {
+  +		return db.CountActiveOrders()
+  +	})
+  ```
+  · old test red at base: `go test -count=1 -tags lockcheck -run '^TestFeedsPin_HeartbeaterCountsActiveOrders$' ./cmd/shingoedge/` → `main_feedspin_test.go:189: NewHeartbeater argument count = 6, want 5 (after X5: 5)` and `main_feedspin_test.go:189: last argument reads db.CountActiveOrders = true, want false (after X5: false)` · survivor red at tip, arity arm: `go test -count=1 -tags lockcheck -run '^TestFeedsPin_HeartbeatCountsActiveOrdersEveryBeat$' ./messaging/` → `messaging\heartbeat_feedspin_test.go:51:62: not enough arguments in call to NewHeartbeater` (have 5, want 6); with those callers given `nil` for the new parameter → `heartbeat_feedspin_test.go:89: active_orders on the heartbeat body = true, want false (after X5 (was 1 order count per body): false)` and `--- FAIL: TestFeedsPin_HeartbeatBodyBytes`. Last-argument arm at arity 5 (the closure in place of `cfg.Messaging.OrdersTopic`): `go build ./cmd/shingoedge/` → `cmd\shingoedge\main.go:294:76: cannot use func() int {…} (value of type func() int) as string value in argument to messaging.NewHeartbeater`
+- coverage Δ: lead (Phase 1 baseline → certification diff)
+- citations rewritten: none
+- verified at: `5d73ed29`
+
+### STALE — `TestFeedsPin_SubjectClosureSteps`
+- test: `TestFeedsPin_SubjectClosureSteps` · pkg `shingoedge/cmd/shingoedge` · run `-run '^TestFeedsPin_(SubjectClosureSteps|AckDoesNotReconcile|PublishOnRegister)$'` · `shingo-edge/cmd/shingoedge/main_feedspin_test.go:68` @ `22c81558` · tags `none` (the file header, shared with `TestFeedsPin_AckDoesNotReconcile` and `TestFeedsPin_PublishOnRegister`)
+- code: STALE
+- assertion map: no assertion change. The header (`main_feedspin_test.go:12-15`) said the closures sit inside a function that needs a live Kafka client, "so there is no seam to drive them". They are built by `buildInboundRouter` (`main.go:1112`, from "feat(www,edge): the boards are told, not polled, rebuild only what changed, and say what they know and how old it is (floor-visible)"), which needs no Kafka client, and the door walk dispatches every inbound key through it. The new header says so, says why the call lists stay source-shape pins (the walk asserts the board effect, not the calls), and says where the deleted heartbeater pin's assertions live.
+- mutation: no assertion change; the header diff is the change
+- coverage Δ: lead (Phase 1 baseline → certification diff)
+- citations rewritten: none
+- verified at: `5d73ed29`
