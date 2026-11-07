@@ -28,6 +28,10 @@ import (
 // carrier Core does not know is recorded UNKNOWN, never as the previous
 // occupant's part.
 //
+// A landing then releases the holds waiting for it at its position
+// (releaseHoldsOnArrival): the shares held for a cart of the part that
+// landed, under the guards the cutover's release applies.
+//
 // Pi cost per landing at a seat: the node read, the runtime row's ensure, the
 // bind, the identity write and the placement settle (settleCellPlacement's
 // reads), the same reads the Bound arm and the delivered bind paid for the
@@ -46,9 +50,11 @@ func (e *Engine) HandleBinLanded(l protocol.BinLanded) {
 	if l.PayloadKnown {
 		carrier = domain.KnownCarrier(domain.LinesidePayloadCode(l.PayloadCode))
 	}
-	e.landCarrier(node, processes.LandingBind{
+	if e.landCarrier(node, processes.LandingBind{
 		BinID: l.BinID, Epoch: l.Epoch, Count: l.Count, PlacedSeq: &seq,
-	}, carrier, "landing "+l.OrderUUID)
+	}, carrier, "landing "+l.OrderUUID) {
+		e.releaseHoldsOnArrival(node)
+	}
 }
 
 // landCarrier is the landing verb's engine half: the bind (uop.Mutator.Land,

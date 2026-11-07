@@ -16,6 +16,7 @@ Edge v37-v43; Core changes only dev tooling (plantspec, seeddev, simcalc). Migra
 - A counted tick carries the PLC's part and its style; walk, hourly and Core count it there (v39)
 - The CATID monitor reads, confirms and times its windows on the engine's clock
 - An unmapped or off-plan part's draw is held (v40) until a landing, a Charge or a Write off
+- A cart landing at a hold's position, the active style running its CATID, releases the hold onto it
 - A flip records each consume seat's cart that could not say its part as the departing style's part (source flip)
 - A consume stroke never draws a cart recorded as another part: it is held for a cart of its part, and the parked-ticks notice names the seat
 - One CATID names one style: the pin, the one-click and Confirm refuse a taken value

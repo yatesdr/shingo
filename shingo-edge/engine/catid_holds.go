@@ -7,17 +7,21 @@
 // node whose bound carrier is not the tick's style's part. Nothing here ever
 // writes a seat hold (pending_uop_*), D12's one slot.
 //
-// A hold is released three ways, each latched before anything moves (a second
+// A hold is released four ways, each latched before anything moves (a second
 // release writes nothing) and each charging through the walk directly — never
 // a re-emitted counter delta, which would count the hour twice:
 //
 //   - automatically, when a cutover or a switch lands the process on a style
 //     whose set holds the CATID and no other changeover has started since the
 //     hold opened;
+//   - automatically, when a cart lands at the hold's position (any position,
+//     for a whole draw) while the active style runs the CATID, under the same
+//     guards: the cart a forced cutover went ahead of, or the one a person
+//     brought. Landing what waited, not ordering;
 //   - a person's Charge, under the one style that runs the CATID;
 //   - a person's Write off, which charges nothing.
 //
-// The landing and the Charge apply one rule. A share lands only on a cart of
+// The landings and the Charge apply one rule. A share lands only on a cart of
 // the style's part (tickRelease); a share at a cart of another part, or at no
 // cart, is held again for a person. A release that would land nothing — the
 // share's position deleted or not the style's, no cart of its part — is
@@ -34,6 +38,7 @@ import (
 	"log"
 
 	"shingo/protocol/clock"
+	"shingoedge/domain"
 	"shingoedge/plc"
 	"shingoedge/store"
 	"shingoedge/store/processes"
@@ -75,18 +80,48 @@ func (e *Engine) holdCatidDraw(tick tickScope, nodeID int64, part string, qty in
 }
 
 // releaseHoldsOnLanding releases the process's open holds whose CATID the style
-// a changeover just landed it on runs, when no other changeover has started
-// since the hold opened and something would land (holdRows); a hold that would
-// land nothing waits for a person. The changeover's own completion is the
-// landing.
+// a changeover just landed it on runs (releaseHolds, every position). The
+// changeover's own completion is the landing.
 func (e *Engine) releaseHoldsOnLanding(processID, landingChangeoverID int64) {
+	e.releaseHolds(processID, landingChangeoverID, nil)
+}
+
+// releaseHoldsOnArrival releases what a cart that just landed at node lands:
+// the open holds at that position and the process's whole draws (node 0),
+// whose CATID the active style runs (releaseHolds). A share there lands only
+// on a cart of its part, so a landing of another part leaves it waiting; a
+// whole draw lands what lands and is held again at its other positions
+// (chargeHold). The landing changeover the guard excepts is the one that put
+// the process on the style it runs (landedActiveBy): a cart that lands after
+// a completion went ahead of it lands what that completion would have. +1
+// statement per landing (the open holds); the rest only when one waits.
+// Latched, so a release racing the door's charges once.
+func (e *Engine) releaseHoldsOnArrival(node *processes.Node) {
+	e.releaseHolds(node.ProcessID, 0, node)
+}
+
+// releaseHolds releases the process's open holds whose CATID its active style
+// runs — those at node and the whole draws, when node is given — when no
+// changeover has started since the hold opened (the landing changeover itself
+// excepted) and something would land (holdRows); a hold that would land
+// nothing waits for a person.
+func (e *Engine) releaseHolds(processID, landingChangeoverID int64, node *processes.Node) {
 	holds, err := e.db.ListOpenCatidHolds(processID)
-	if err != nil || len(holds) == 0 {
+	if err != nil {
+		return
+	}
+	if node != nil {
+		holds = holdsLandingAt(holds, node.ID)
+	}
+	if len(holds) == 0 {
 		return
 	}
 	proc, err := e.db.GetProcess(processID)
 	if err != nil || proc == nil || proc.ActiveStyleID == nil {
 		return
+	}
+	if node != nil {
+		landingChangeoverID = e.landedActiveBy(processID, *proc.ActiveStyleID)
 	}
 	var landed styleCATIDEntry
 	for _, s := range e.processStyleCATIDSets(processID) {
@@ -94,6 +129,11 @@ func (e *Engine) releaseHoldsOnLanding(processID, landingChangeoverID int64) {
 			landed = s
 		}
 	}
+	on := "the landing on " + landed.Name
+	if node != nil {
+		on = "the cart that landed at " + node.Name
+	}
+	released := 0
 	for i := range holds {
 		h := &holds[i]
 		if !catidSetHas(landed.Set, h.CATID) {
@@ -104,7 +144,7 @@ func (e *Engine) releaseHoldsOnLanding(processID, landingChangeoverID int64) {
 			continue
 		}
 		if _, refusal, err := e.holdRows(h, landed.ID, landed.Name); err != nil || refusal != "" {
-			log.Printf("catid hold %d: not released on the landing on %s — it waits for a person: %s%v", h.ID, landed.Name, refusal, err)
+			log.Printf("catid hold %d: not released on %s — it waits for a person: %s%v", h.ID, on, refusal, err)
 			continue
 		}
 		qty, ok, err := e.db.ResolveCatidHold(h.ID, holdReleased, "auto", clock.Now())
@@ -113,9 +153,40 @@ func (e *Engine) releaseHoldsOnLanding(processID, landingChangeoverID int64) {
 		}
 		h.Qty = qty
 		n := e.chargeHold(h, landed.ID)
-		log.Printf("catid hold %d: released on the landing on %s: %d of CATID %s charged at %d position(s)", h.ID, landed.Name, qty, h.CATID, n)
+		released++
+		log.Printf("catid hold %d: released on %s: %d of CATID %s charged at %d position(s)", h.ID, on, qty, h.CATID, n)
 	}
-	e.catidHealthChanged(processID)
+	if node == nil || released > 0 {
+		e.catidHealthChanged(processID)
+	}
+}
+
+// landedActiveBy is the changeover that landed the process on styleID, the
+// newest completed row to it among the latest; 0 when none is.
+func (e *Engine) landedActiveBy(processID, styleID int64) int64 {
+	rows, err := e.db.ListRecentProcessChangeovers(processID, 10)
+	if err != nil {
+		return 0
+	}
+	var id int64
+	for _, co := range rows {
+		if co.State == domain.ChangeoverCompleted && co.ToStyleID == styleID && co.ID > id {
+			id = co.ID
+		}
+	}
+	return id
+}
+
+// holdsLandingAt is the holds a landing at nodeID can release: the shares
+// taken there and the whole draws.
+func holdsLandingAt(holds []store.CatidHold, nodeID int64) []store.CatidHold {
+	var out []store.CatidHold
+	for _, h := range holds {
+		if h.ProcessNodeID == 0 || h.ProcessNodeID == nodeID {
+			out = append(out, h)
+		}
+	}
+	return out
 }
 
 // chargeHold charges a hold's latched draw under styleID through the walk, as

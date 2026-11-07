@@ -11,6 +11,7 @@ import (
 
 	"shingo/protocol"
 	"shingo/protocol/testutil"
+	"shingoedge/domain"
 	"shingoedge/plc"
 	"shingoedge/store"
 	"shingoedge/store/counters"
@@ -266,6 +267,69 @@ func TestHold_ChangeoverStartedSinceHoldWaitsForAPerson(t *testing.T) {
 	}
 	if hs := openHolds(t, eng, pid); len(hs) != 1 {
 		t.Errorf("holds = %+v, want the one still open", hs)
+	}
+}
+
+// TestHold_ReleasesOnTheLandingOfItsPart: a share of B's part held at a
+// position, after a forced cutover onto B went ahead of the cart it waited for
+// (the MIRROR-L cart still standing, so the cutover's release left it open):
+// a cart of MIRROR-R landing there with no changeover started since the hold
+// opened, the one that landed B excepted, is charged the share; a cart of
+// MIRROR-L landing there leaves it open; a changeover started since makes it
+// wait for a person. Before, nothing released a hold at a cart's landing.
+func TestHold_ReleasesOnTheLandingOfItsPart(t *testing.T) {
+	t.Parallel()
+	for _, row := range []struct {
+		name       string
+		lands      string
+		movedOn    bool
+		released   bool
+		wantOnCart int
+	}{
+		{name: "a cart of its part", lands: "MIRROR-R", released: true, wantOnCart: 37},
+		{name: "a cart of another part", lands: "MIRROR-L", wantOnCart: 40},
+		{name: "a changeover started since", lands: "MIRROR-R", movedOn: true, wantOnCart: 40},
+	} {
+		t.Run(row.name, func(t *testing.T) {
+			t.Parallel()
+			eng, pid, a, b, _ := holdRig(t, "1002")
+			node := mirrorNode(t, eng, pid, a, b, "N-MIRROR", "MIRROR-L", "MIRROR-R", 9751)
+			_, err := eng.db.HoldCatidDraw(pid, "1002", node, "MIRROR-R", holdReasonOffPlan, 3, time.Now().Add(-time.Minute))
+			testutil.MustNoErr(t, err, "B's share held at N-MIRROR a minute ago")
+			_, err = eng.changeoverService.Create(pid, &a, b, "test", "", nil, nil, nil, nil)
+			testutil.MustNoErr(t, err, "the changeover onto B, after the hold opened")
+			testutil.MustNoErr(t, eng.SetProcessActiveStyle(pid, &b), "the cutover onto B, forced, the MIRROR-L cart still there")
+			open := openHolds(t, eng, pid)
+			if len(open) != 1 {
+				t.Fatalf("after the cutover: open holds %+v, want the share still open (no MIRROR-R cart stood there)", open)
+			}
+			if row.movedOn {
+				later, err := eng.changeoverService.Create(pid, &b, a, "test", "", nil, nil, nil, nil)
+				testutil.MustNoErr(t, err, "another changeover")
+				testutil.MustNoErr(t, eng.db.UpdateProcessChangeoverState(later, domain.ChangeoverCancelled), "cancelled")
+			}
+			testutil.MustNoErr(t, eng.carrierLeft(node, "N-MIRROR"), "the MIRROR-L cart lifted")
+			eng.HandleBinLanded(protocol.BinLanded{BinID: 9752, CoreNodeName: "N-MIRROR", Count: 40, Epoch: 1,
+				PayloadCode: row.lands, PayloadKnown: true, PlacedSeq: 1 << 40})
+			rt := runtimeOf(t, eng, node)
+			if rt.ActiveBinID == nil || *rt.ActiveBinID != 9752 {
+				t.Fatalf("the landing bound %v, want bin 9752", rt.ActiveBinID)
+			}
+			if rt.RemainingUOPCached != row.wantOnCart {
+				t.Errorf("the %s cart = %d, want %d", row.lands, rt.RemainingUOPCached, row.wantOnCart)
+			}
+			hs := openHolds(t, eng, pid)
+			if row.released != (len(hs) == 0) {
+				t.Errorf("open holds after the landing %+v, released %t wanted", hs, row.released)
+			}
+			if row.released {
+				h, err := eng.db.GetCatidHold(open[0].ID)
+				testutil.MustNoErr(t, err, "the hold")
+				if h == nil || h.Resolution != holdReleased || h.ResolvedBy != "auto" {
+					t.Errorf("hold = %+v, want released by auto", h)
+				}
+			}
+		})
 	}
 }
 
