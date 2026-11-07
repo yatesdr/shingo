@@ -6,7 +6,9 @@
 package scenarios
 
 import (
+	"cmp"
 	"fmt"
+	"slices"
 	"testing"
 	"time"
 
@@ -97,13 +99,17 @@ func (c *w6Cell) force(v int64) {
 }
 
 // sweep is one pass of the demand reconciler (its level sweep), as its
-// minute ticker would run it; it returns the orders the pass made.
+// minute ticker would run it; it returns the orders the pass made, oldest
+// first (the rows come newest first by the second they were made in, so two
+// made in different seconds put the later ones first).
 func (c *w6Cell) sweep() []domain.Order {
 	c.t.Helper()
 	before := c.lastID()
 	c.tickers.sweep.pass(c.t, "the demand sweep")
 	c.tick()
-	return c.newRows(before)
+	orders := c.newRows(before)
+	slices.SortFunc(orders, func(a, b domain.Order) int { return cmp.Compare(a.ID, b.ID) })
+	return orders
 }
 
 // afterTheDoor returns once the changeover door is free: a Settings save that

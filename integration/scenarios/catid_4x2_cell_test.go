@@ -95,8 +95,10 @@ var (
 // ── the clock ───────────────────────────────────────────────────────────────
 
 // w6Clock is the process clock while the catid_4x2 scenarios run: the real
-// clock in every respect but two tickers of each Edge a cell starts, the PLC
-// poll's and the demand reconciler's, which it hands to that cell. The
+// clock in every respect but three tickers of each Edge a cell starts, the PLC
+// poll's, the demand reconciler's and the parked-ticks monitor's, which it
+// hands to that cell (each is taken inside the Edge's start, so a loop that
+// takes its ticker late cannot take another cell's). The
 // scenarios run in parallel with each other and after every sequential
 // scenario of the package (t.Parallel), so it is installed once and left; a
 // ticker no cell is waiting for is a real one.
@@ -106,9 +108,10 @@ type w6Clock struct {
 	starting sync.Mutex
 }
 
-// w6Tickers are one Edge's two driven tickers.
+// w6Tickers are one Edge's driven tickers: the poll's, the reconciler's and
+// the parked-ticks monitor's (stranded).
 type w6Tickers struct {
-	poll, sweep *passTicker
+	poll, sweep, stranded *passTicker
 }
 
 var (
@@ -124,7 +127,8 @@ func (k *w6Clock) After(d time.Duration) <-chan time.Time { return time.After(d)
 func (k *w6Clock) NewTicker(d time.Duration) clock.Ticker {
 	poll := calledFrom("shingoedge/plc.(*Manager).pollLoop")
 	sweep := !poll && calledFrom("shingoedge/engine.(*Engine).runDemandReconciler")
-	if poll || sweep {
+	stranded := !poll && !sweep && calledFrom("shingoedge/engine.(*strandedMonitor).run")
+	if poll || sweep || stranded {
 		k.mu.Lock()
 		defer k.mu.Unlock()
 		if c := k.claim; c != nil {
@@ -135,14 +139,18 @@ func (k *w6Clock) NewTicker(d time.Duration) clock.Ticker {
 			case sweep && c.sweep == nil:
 				c.sweep = &passTicker{}
 				return c.sweep
+			case stranded && c.stranded == nil:
+				c.stranded = &passTicker{}
+				return c.stranded
 			}
 		}
 	}
 	return clock.Real().NewTicker(d)
 }
 
-// startWith runs start (an Edge's Start) with the clock handing the Edge's two
-// tickers to the caller, and returns them once both loops have taken theirs.
+// startWith runs start (an Edge's Start) with the clock handing the Edge's
+// three tickers to the caller, and returns them once each loop has taken its
+// own.
 func (k *w6Clock) startWith(t *testing.T, start func()) *w6Tickers {
 	t.Helper()
 	k.starting.Lock()
@@ -159,13 +167,13 @@ func (k *w6Clock) startWith(t *testing.T, start func()) *w6Tickers {
 	start()
 	for deadline := time.Now().Add(10 * time.Second); ; time.Sleep(5 * time.Millisecond) {
 		k.mu.Lock()
-		ok := c.poll != nil && c.sweep != nil
+		ok := c.poll != nil && c.sweep != nil && c.stranded != nil
 		k.mu.Unlock()
 		if ok {
 			return c
 		}
 		if time.Now().After(deadline) {
-			t.Fatal("the Edge's poll and reconciler never took their tickers")
+			t.Fatal("the Edge's poll, reconciler or parked-ticks monitor never took its ticker")
 		}
 	}
 }
