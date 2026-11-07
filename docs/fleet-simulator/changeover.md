@@ -29,11 +29,13 @@ five-position, two-style weld (RUN and ALT share three parts and differ at two m
 time. Each shape checks the carts against the line's loads, the holds ledger, and the production record
 (counter_snapshots, hourly, what Core received), and that every order lands confirmed: S1 a steady run on
 the load station's counter and on the cell counter, S2 the late cutover (the declaration on a green gate,
-the counted-part force on a red one), S3 the early cutover, S4 a jump with no changeover and the automatic
-switch, S5 an unmapped part (Charge and Write off), S6 a mixed cell, S7 a restart, S8 the PLC moving its
-count to a sibling MES slot (the slot watch's item, the click that re-points and counts the strokes since the move). `make dev-sim-4x2
-SHAPE=S3` (`scripts/sim-4x2.sh`) runs one shape on the dev stack for a person to watch and prints the same
-ledger line.
+the counted-part force on a red one), S3 the early cutover, S4 a jump with no changeover (nothing moves; the
+wrong-part item offers the changeover, untapped and tapped), S5 an unmapped part (Charge and Write off), S6
+a mixed cell, S7 a restart, S8 the PLC moving its count to a sibling MES slot (the slot watch's item, the
+click that re-points and counts the strokes since the move), S9 the hand-placed cart; and
+`TestPinChangeover_ACommonPositionIsResuppliedWhileOpen` a common position supplied through an open
+changeover. `make dev-sim-4x2 SHAPE=S3` (`scripts/sim-4x2.sh`; `VARIANT=tap` taps S4's and S9's item) runs
+one shape on the dev stack for a person to watch and prints the same ledger line.
 
 ```bash
 cd integration

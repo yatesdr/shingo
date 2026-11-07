@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# bash scripts/sim-4x2.sh <S1..S9> [red] — one shape of the 4x2-shaped cell on the visible dev
+# bash scripts/sim-4x2.sh <S1..S9> [red|tap] — one shape of the 4x2-shaped cell on the visible dev
 # stack, for a person to watch: compose project shingo-dev on plants/master.yaml, whose [4x2]
 # section is process WELD-6, five consume positions (ALN_061..065) and two styles, RUN (CATID
 # 1001) and ALT (CATID 1002), sharing COMMON-1..3 and differing at the two mirror positions
@@ -10,19 +10,24 @@
 #
 #   S1        steady RUN, the five positions on the station counter; then all five on the cell
 #             counter: the prepay profile (a landed cart reads L low until the line refills)
-#   S2 [red]  changeover RUN->ALT; the carts land; the drain program change to 1002 before anyone
-#             cuts over: the declaration completes it on a green gate within ~60 sim-s. `red`
-#             starts it with the legs held back (as S7 does), so the gate is red and the first
-#             counted ALT part forces it
-#   S3        changeover RUN->ALT; "Mark as running" ALT at the landing while the PLC still says
-#             1001; then the drain program change: no switch back to RUN, no hold
-#   S4        no changeover, both styles pinned, from landed carts at the mirror positions: the
-#             FORCED program change to 1002 under RUN; holds at the mirror positions, the
-#             automatic switch to ALT after ~60 sim-s and a counted part; the mirror shares stay
-#             held (no MIRROR-R cart stood there at the switch: a person's Charge lands them)
+#   S2 [red]  changeover RUN->ALT on the running line; the carts land; the drain program change to
+#             1002 before anyone cuts over: the declaration completes it on a green gate within
+#             ~60 sim-s. `red` starts it with the legs held back (as S7 does), so the gate is red
+#             and the first counted ALT part forces it
+#   S3        changeover RUN->ALT on the running line; "Mark as running" ALT at the landing while
+#             the PLC still says 1001; then the drain program change: no hold, and the common
+#             positions supplied throughout (the request guards refuse by position)
+#   S4 [tap]  no changeover, both styles pinned, from landed carts at the mirror positions: the
+#             FORCED program change to 1002 under RUN; holds at the mirror positions; past the
+#             ~60 sim-s window nothing has moved (RUN active, no changeover, no order at the
+#             mirror positions) and the strip's red wrong-part item offers the changeover to ALT.
+#             Untapped, the mirror holds grow and the record is ALT's by CATID. `tap` presses the
+#             item's Start changeover: the legs land, the monitor completes it, and the completion
+#             lands the held shares on the MIRROR-R carts
 #   S5        the forced program change to 1003, which no style pins: every stroke's draw held;
 #             Charge one position's hold (preview first), Write off another's
-#   S6        positions 1-3 on the station counter, 4-5 on the cell counter; RUN->ALT
+#   S6        positions 1-3 on the station counter, 4-5 on the cell counter; RUN->ALT on the
+#             running line
 #   S7        the forced program change to 1003 holds its draws, then back to 1001; Core holds
 #             every create from a gap between the mirror positions' swaps, the line pauses its
 #             loading and drains, and START goes in with its legs held; the Edge restarts
@@ -33,14 +38,15 @@
 #             Edge's slot watch (a pass every 60 sim-s; two when the move falls mid-pass), the
 #             click re-points the counter from _02's count before it rose: the record equals the
 #             parts the line counted out (no gap), the carts lack nothing
-#   S9        the hand-placed cart: the mirror positions' carts are MIRROR-L in Core and their
+#   S9 [tap]  the hand-placed cart: the mirror positions' carts are MIRROR-L in Core and their
 #             seats could not say what they are (seeded with no part; the line stands paused from
 #             boot until the shape, so those carts are still there); RUN draws; the FORCED
-#             program change to 1002; the automatic switch to ALT; ALT strokes; then a MIRROR-R
-#             cart lands at each mirror position (REQUEST, and RELEASE by hand: the sim operator
-#             waits for a cart with parts left). It prints what the seats record (part, known,
-#             source, held at the seat), the mirror holds, Core's mirror carts and the deltas Core
-#             refused as the wrong part
+#             program change to 1002; nothing moves and the item offers the changeover, as in S4.
+#             Untapped, ALT strokes and the holds grow; `tap` starts the changeover, the person sends
+#             the hand-placed carts back (RELEASE: nobody named them, so the sim operator waits),
+#             and it completes and lands the holds (no Charge). It prints what the
+#             seats record (part, known, source, held at the seat), the mirror holds, Core's mirror
+#             carts and the deltas Core refused as the wrong part
 #
 # It brings the stack up from nothing as scripts/kanban-rig.sh does (down -v, a fresh sim anchor,
 # build, seed with Core stopped), sets the PLC's CATID to 1001, drives the shape over Edge and
@@ -83,6 +89,7 @@ MIRRORS="ALN_064 ALN_065"
 MIRROR_RUN=MIRROR-L   # the mirror positions' part under RUN
 MIRROR_ALT=MIRROR-R   # and under ALT
 POS_SQL="'ALN_061','ALN_062','ALN_063','ALN_064','ALN_065'"
+PARTS_SQL="'COMMON-1','COMMON-2','COMMON-3','MIRROR-L','MIRROR-R'"   # the cell's parts, its alone
 MIRROR_SQL="'ALN_064','ALN_065'"
 
 # ── TIMING: sim seconds unless named wall ───────────────────────────────────────────────
@@ -102,15 +109,20 @@ PLANT=/plants/master.yaml
 PROJECT=shingo-dev
 
 usage() {
-  echo "usage: bash scripts/sim-4x2.sh <S1..S9> [red]   (red: S2 only)" >&2
-  echo "       make dev-sim-4x2 SHAPE=<S1..S9> [VARIANT=red]" >&2
+  echo "usage: bash scripts/sim-4x2.sh <S1..S9> [red|tap]   (red: S2 only; tap: S4 and S9)" >&2
+  echo "       make dev-sim-4x2 SHAPE=<S1..S9> [VARIANT=red|tap]" >&2
   echo "The run starts with \`down -v\` of $PROJECT; set SIM_4X2_REPLACE=1 if the stack running now is yours to drop." >&2
   exit 2
 }
 SHAPE="${1:-}"
 VARIANT="${2:-}"
 case "$SHAPE" in S1|S2|S3|S4|S5|S6|S7|S8|S9) ;; *) usage ;; esac
-case "$VARIANT" in "") ;; red) [ "$SHAPE" = S2 ] || usage ;; *) usage ;; esac
+case "$VARIANT" in
+  "") ;;
+  red) [ "$SHAPE" = S2 ] || usage ;;
+  tap) case "$SHAPE" in S4|S9) ;; *) usage ;; esac ;;
+  *) usage ;;
+esac
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT" || exit 1
@@ -257,13 +269,13 @@ status() {
 }
 
 # ── THE BUTTONS ──────────────────────────────────────────────────────────────────────────
-# start_changeover <style id>: the station's START, pressed again while the screen refuses it
-# ("a carrier is on its way" clears on its own).
+# start_changeover <style id> [called by]: the station's START, pressed again while the screen
+# refuses it ("a carrier is on its way" clears on its own).
 start_changeover() {
   local code deadline=$(( $(date +%s) + 180 ))
   while :; do
-    code="$(edge_send POST "/api/processes/$PID/changeover/start" "{\"to_style_id\":$1,\"called_by\":\"sim-4x2\"}")"
-    say "START $(style_name "$1"): $code $(last)"
+    code="$(edge_send POST "/api/processes/$PID/changeover/start" "{\"to_style_id\":$1,\"called_by\":\"${2:-sim-4x2}\"}")"
+    say "START $(style_name "$1")${2:+ ($2)}: $code $(last)"
     http_ok "$code" && return 0
     [ "$(date +%s)" -lt "$deadline" ] || die "START refused for 180 s"
     nap 5
@@ -357,8 +369,9 @@ sim_epoch() { date -u -d "$(curl -s -m 5 "$EDGE/api/sim/status" | sed -n 's/.*"s
 # ── THE LEDGER ───────────────────────────────────────────────────────────────────────────
 # mark opens a window and ledger closes it:
 #   carts Σ   the units the five positions drew in the window: Core's applied count deltas
-#             there (bin_uop_ledger, op bin_uop_delta, node-stamped) less the rise in their
-#             lineside piles. No HTTP read sums a position's draws, so this one number is read
+#             there (bin_uop_ledger, op bin_uop_delta, node-stamped), and those on the cell's
+#             parts Core booked at _TRANSIT (a draw that reaches Core after its cart's lift is
+#             stamped with the node the cart is at then), less the rise in their lineside piles. No HTTP read sums a position's draws, so this one number is read
 #             from Core's database, as kanban-rig.sh reads Core.
 #   loads Σ   what the draws should be: a station-counted position draws once per load and a
 #             cell-counted one once per load counted out (loads less the rise in flight), off
@@ -621,11 +634,45 @@ ledger_read() {
   L_T=$(( $(edge_total $dates) - W_EDGE ))
   IFS='|' read -r L_DRAWN L_PILES < <(sql "SELECT (SELECT COALESCE(sum(COALESCE(l.before_uop, l.after_uop) - l.after_uop), 0)
     FROM bin_uop_ledger l JOIN nodes n ON n.id = l.node_id
-    WHERE l.op = 'bin_uop_delta' AND l.id > $W_LEDGER AND n.name IN ($POS_SQL)), ($PILES_SQL)")
+    WHERE l.op = 'bin_uop_delta' AND l.id > $W_LEDGER
+      AND (n.name IN ($POS_SQL) OR (n.name = '_TRANSIT' AND l.payload_code IN ($PARTS_SQL)))), ($PILES_SQL)")
+  L_TRANSIT="$(sql "SELECT COALESCE(sum(COALESCE(l.before_uop, l.after_uop) - l.after_uop), 0)
+    FROM bin_uop_ledger l JOIN nodes n ON n.id = l.node_id
+    WHERE l.op = 'bin_uop_delta' AND l.id > $W_LEDGER AND n.name = '_TRANSIT' AND l.payload_code IN ($PARTS_SQL)")"
   L_REFUSED="$(refused "$W_LEDGER")"
   L_HOLDS="$(holds_list)"
   L_SEAT="$(seat_holds)"
   L_CORE="$(record "${W_PARTS:-0}")"
+}
+
+# forensics: what a final ledger that is not exact is made of, read on the stack it stands on:
+# Core's draws in the window by position and by op at the positions, draws Core booked at a node
+# that is not a position, the positions' piles by state, the cart counts at the Edge and at Core,
+# and the Edge's lines on captures, stranded piles and refused or clamped draws.
+forensics() {
+  say "FORENSICS draws in the window by position (node deltas parts): $(sql "SELECT n.name, count(*), sum(COALESCE(l.before_uop, l.after_uop) - l.after_uop)
+    FROM bin_uop_ledger l JOIN nodes n ON n.id = l.node_id WHERE l.op = 'bin_uop_delta' AND l.id > $W_LEDGER AND n.name IN ($POS_SQL)
+    GROUP BY n.name ORDER BY n.name" | tr '\n' ';')"
+  say "FORENSICS ops at the positions in the window (op rows parts): $(sql "SELECT l.op, count(*), sum(COALESCE(l.before_uop, l.after_uop) - l.after_uop)
+    FROM bin_uop_ledger l JOIN nodes n ON n.id = l.node_id WHERE l.id > $W_LEDGER AND n.name IN ($POS_SQL)
+    GROUP BY l.op ORDER BY l.op" | tr '\n' ';')"
+  say "FORENSICS draws booked away from the positions (node deltas parts): $(sql "SELECT COALESCE(n.name, '(none)'), count(*), sum(COALESCE(l.before_uop, l.after_uop) - l.after_uop)
+    FROM bin_uop_ledger l LEFT JOIN nodes n ON n.id = l.node_id WHERE l.op = 'bin_uop_delta' AND l.id > $W_LEDGER
+    AND (n.name IS NULL OR n.name NOT IN ($POS_SQL)) GROUP BY n.name ORDER BY n.name" | tr '\n' ';')"
+  say "FORENSICS draws that ended at 0 (id bin node before after detail): $(sql "SELECT l.id, l.bin_id, n.name, l.before_uop, l.after_uop, COALESCE(l.detail::text, '')
+    FROM bin_uop_ledger l JOIN nodes n ON n.id = l.node_id WHERE l.op = 'bin_uop_delta' AND l.id > $W_LEDGER AND l.after_uop <= 0
+    ORDER BY l.id LIMIT 12" | tr '\n' ';' | cut -c1-900)"
+  say "FORENSICS releases that raised a cart's count, draws the release's count undid (node bin before after op): $(sql "SELECT n.name, l.bin_id, l.before_uop, l.after_uop, l.op
+    FROM bin_uop_ledger l JOIN nodes n ON n.id = l.node_id WHERE l.id > $W_LEDGER AND n.name IN ($POS_SQL)
+    AND l.op LIKE 'released%' AND l.after_uop > COALESCE(l.before_uop, l.after_uop) ORDER BY l.id" | tr '
+' ';')"
+  say "FORENSICS Core's stale drops, a draw that reached a cart after its release (last 8): $(dc logs --no-log-prefix core 2>/dev/null | grep -a 'stale epoch DROPPED' | tail -8 | cut -c1-160 | tr '
+' ';')"
+  say "FORENSICS the positions' piles (node part state qty): $(sql "SELECT core_node_name, payload_code, state, qty FROM lineside_buckets
+    WHERE core_node_name IN ($POS_SQL) ORDER BY core_node_name, state" | tr '\n' ';')"
+  say "FORENSICS Core's carts at the positions (node bin part count): $(sql "SELECT n.name, b.id, b.payload_code, b.uop_remaining FROM bins b JOIN nodes n ON n.id = b.node_id
+    WHERE n.name IN ($POS_SQL) ORDER BY n.name" | tr '\n' ';')"
+  say "FORENSICS the Edge's lines (captures, strands, clamps, refusals): $(dc logs --no-log-prefix edge 2>/dev/null | grep -aiE 'capture|stranded|count anomaly|clamp|payload mismatch|below zero|negative' | tail -12 | cut -c1-220 | tr '\n' ';')"
 }
 
 # ledger [mid]: closes the window. The final ledger (no argument) is read at rest and checked:
@@ -648,7 +695,7 @@ ledger() {
   b="$(printf '%s\n' "$L_CORE" | awk -v id="$ALT_ID" '$1 == id {print $2}')"
   other="$(printf '%s\n' "$L_CORE" | awk -v r="$RUN_ID" -v x="$ALT_ID" 'NF && $1 != r && $1 != x {s += $2} END {print s + 0}')"
   got=$(( ${a:-0} + ${b:-0} + other ))
-  say "draws at the five positions: carts $carts (Core's deltas $L_DRAWN, piles +$(( ${L_PILES:-0} - ${W_PILES:-0} ))); expected $expect = $L_NS station-counted x $L_DL loads + $L_NC cell-counted x $L_COUNTED counted out; $n holds open, $q held at the positions, $seat held at the seats, $WRITTEN_OFF written off"
+  say "draws at the five positions: carts $carts (Core's deltas $L_DRAWN, ${L_TRANSIT:-0} of them booked at _TRANSIT, piles +$(( ${L_PILES:-0} - ${W_PILES:-0} ))); expected $expect = $L_NS station-counted x $L_DL loads + $L_NC cell-counted x $L_COUNTED counted out; $n holds open, $q held at the positions, $seat held at the seats, $WRITTEN_OFF written off"
   say "Core refused as the wrong part in the window (deltas parts): $L_REFUSED"
   [ "$other" -eq 0 ] || say "Core received $other more under neither style"
   say "the record: $got parts against the $L_COUNTED the line counted out"
@@ -660,7 +707,7 @@ ledger() {
     [ $(( carts + q + seat + WRITTEN_OFF )) -eq "$expect" ] || miss="$miss; carts + held + at the seats + written off $(( carts + q + seat + WRITTEN_OFF )) against loads $expect"
     [ "$got" -eq "$L_COUNTED" ] || miss="$miss; the record $got against the $L_COUNTED counted out"
     [ "$got" -eq "$L_T" ] || miss="$miss; Core received $got against the Edge's $L_T"
-    if [ -z "$miss" ]; then say "at rest: EXACT"; else say "at rest: NOT EXACT$miss"; LEDGER_EXACT=0; fi
+    if [ -z "$miss" ]; then say "at rest: EXACT"; else say "at rest: NOT EXACT$miss"; LEDGER_EXACT=0; forensics; fi
   fi
   resume
 }
@@ -816,8 +863,9 @@ shape_S2() {
     start_held
     pause_loading false || die "the resume was refused"
   else
-    say "Look at: the legs to the mirror positions; the sim operator releases them, nobody cuts over"
-    change_over_paused
+    start_changeover "$ALT_ID"
+    say "Look at: the legs to the mirror positions; the sim operator releases them, nobody cuts over; the common positions are asked for and supplied as they run down"
+    await_landing
   fi
   status
   program_change "$CATID_ALT" drain
@@ -840,45 +888,14 @@ shape_S2() {
   fi
 }
 
-# commons_fresh: each common position's cart (Core's count) has S3_NEED parts or more.
-S3_NEED=$(( (DECLARE_S + 6 * TICK_S) / TICK_S + LINE_DEPTH + 4 ))
-commons_fresh() {
-  local p in=""
-  for p in $POSITIONS; do case " $MIRRORS " in *" $p "*) ;; *) in="$in${in:+,}'$p'" ;; esac; done
-  [ "$(sql "SELECT count(*) FROM bins b JOIN nodes n ON n.id = b.node_id
-            WHERE n.name IN ($in) AND b.uop_remaining >= $S3_NEED")" -eq 3 ]
-}
-# s3_ready: fresh common carts and no swap staged at any position (START refuses a staged one).
-s3_ready() {
-  local p
-  commons_fresh || return 1
-  for p in $POSITIONS; do staged_at "$p" && return 1; done
-  return 0
-}
-# change_over_paused: START to ALT from fresh common carts with nothing staged, the line standing
-# paused until ALT's carts land (the common positions are not resupplied while a changeover is
-# open, and a long landing would empty them before the drain), then loading again.
-change_over_paused() {
-  wait_for "$LAND_WALL" "fresh common carts ($S3_NEED or more) and no swap staged" s3_ready     || say "LOOK: the commons were not fresh with nothing staged: the line may stop before the drain lands"
-  pause_loading true || die "the pause was refused"
-  start_changeover "$ALT_ID"
-  await_landing
-  pause_loading false || die "the resume was refused"
-}
 shape_S3() {
-  # From Mark as running until the PLC reports ALT's part the process reports a part its style
-  # does not run, and the demand sweep asks for nothing ("the wrong part is on the process"); the
-  # common positions are not resupplied while the changeover is open either. A common cart that
-  # runs out stops the line, and the drain needs the line. So S3 starts its changeover with fresh
-  # common carts and nothing staged, and the line stands paused until the landing (the carts keep
-  # their parts while nothing is delivered); it loads again at Mark as running.
-  wait_for "$LAND_WALL" "fresh common carts ($S3_NEED or more) and no swap staged" s3_ready     || say "LOOK: the commons were not fresh with nothing staged: the line may stop before the drain lands"
-  pause_loading true || die "the pause was refused"
+  # From the START until the PLC reports ALT's part, the common positions are asked for and
+  # supplied as they run down: the request guards refuse only where the part differs (the mirror
+  # positions), so the line runs, and drains for the program change, on the running line.
   start_changeover "$ALT_ID"
   await_landing
   say "S3 Mark as running ALT at the landing, the PLC still on $CATID_RUN"
   mark_running "$ALT_ID" || die "the admin switch was refused"
-  pause_loading false || die "the resume was refused"
   status
   watch_stays "$ALT_ID" "$(wall $(( DECLARE_S + 6 * TICK_S )))" "the PLC still on $CATID_RUN"
   program_change "$CATID_ALT" drain
@@ -923,14 +940,77 @@ shape_S4() {
   wait_for "$LAND_WALL" "a landed cart at each mirror position" mirrors_landed \
     || die "a mirror position still holds its seeded cart"
   say "S4 no changeover, RUN active, both styles pinned: the FORCED program change to $CATID_ALT"
-  program_change "$CATID_ALT" forced
+  jump
   say "Look at: the loads in flight count out as $CATID_ALT; the mirror positions' draws are held (their carts are MIRROR-L)"
   await_holds 1 "holds open"
   status
-  await_on_alt "$DECLARE_S" "the automatic switch to ALT"
+  asks_and_moves_nothing
+  if [ "$VARIANT" = tap ]; then tap_and_land; return; fi
+  say "S4 untapped, 10 ticks. Look at: the style stays RUN, the mirror holds grow every stroke, the common positions draw, nothing is ordered at the mirror positions, the item stays red"
+  run_ticks 10
+  untapped_read
+}
+
+# jump: the FORCED program change to ALT's part with no changeover open, Core's last order id
+# noted first (orders_since).
+JUMP_ORDER=0
+jump() {
+  JUMP_ORDER="$(sql "SELECT COALESCE(max(id), 0) FROM orders")"
+  program_change "$CATID_ALT" forced
+}
+# mirror_orders_since [part]: Core's orders made since the jump that deliver to a mirror position,
+# of that part when one is named, "<id> <node> <part> <status>" a line.
+mirror_orders_since() {
+  sql "SELECT id || ' ' || delivery_node || ' ' || payload_code || ' ' || status FROM orders
+       WHERE id > ${JUMP_ORDER:-0} AND delivery_node IN ($MIRROR_SQL) ${1:+AND payload_code = '$1'} ORDER BY id" | tr '\n' ';'
+}
+# item_action: the wrong-part item's action, off the strip's raw JSON (slot_item splits on {"kind":,
+# which the action object begins with too); empty when the item offers none.
+item_action() { edge_get "/api/processes/$PID/catid-health" | grep -oE '"action":\{"kind":"start_changeover"[^}]*\}' | head -1; }
+# item_line: the strip's wrong-part item, its severity, headline, detail and action.
+item_line() {
+  local it act; it="$(slot_item wrong_part)"; act="$(item_action)"
+  echo "[$(jstr "$it" severity)] $(jstr "$it" headline) ($(jstr "$it" detail)); ${act:-no action}"
+}
+item_action_style() { field "$(item_action)" to_style_id; }
+# asks_and_moves_nothing: waits out the declaration window the automatic switch once acted after,
+# then reads that nothing moved (RUN active, no changeover open, no order for ALT's part at a
+# mirror position since the jump: RUN's own resupply goes on, and a sweep in the seconds before the
+# monitor confirms the new part may ask one) and that the strip's red item offers the changeover.
+asks_and_moves_nothing() {
+  say "Look at, $(wall $(( DECLARE_S + 2 * TICK_S ))) s: nothing moves (no switch, no changeover, no order for ALT's part); the strip's item turns red and offers the changeover"
+  watch_stays "$RUN_ID" "$(wall $(( DECLARE_S + 2 * TICK_S )))" "the PLC on $CATID_ALT, no changeover" || die "the style moved with no changeover"
+  co_open && die "a changeover opened with nobody tapping"
+  [ -z "$(mirror_orders_since "$MIRROR_ALT")" ] || die "orders for $MIRROR_ALT at the mirror positions since the jump: $(mirror_orders_since "$MIRROR_ALT")"
+  say "orders at the mirror positions since the jump (RUN's own resupply): $(mirror_orders_since)"
+  say "the item: $(item_line)"
+  [ "$(item_action_style)" = "$ALT_ID" ] || die "the wrong-part item offers no changeover to ALT: $(slot_item wrong_part | cut -c1-400)"
   status
-  say "Look at: the mirror shares stay held: the switch's release found no MIRROR-R cart at those positions, and a later landing releases nothing (a person's Charge does)"
-  say "holds open (id qty node): $(holds_list | tr '\n' ';')"
+}
+# untapped_read: the untapped half's end: nothing has moved still.
+untapped_read() {
+  [ "$(active)" = "$RUN_ID" ] || die "the style moved, nobody tapping"
+  co_open && die "a changeover opened, nobody tapping"
+  say "the mirror holds open (id qty node): $(holds_list | tr '\n' ';')"
+  say "orders at the mirror positions since the jump (RUN's own resupply): $(mirror_orders_since)"
+  [ -z "$(mirror_orders_since "$MIRROR_ALT")" ] || die "orders for $MIRROR_ALT at the mirror positions since the jump: $(mirror_orders_since "$MIRROR_ALT")"
+  say "the item: $(item_line)"
+  status
+}
+# tap_and_land [hook]: the strip's one tap on the item's action (the start verb, as the page calls
+# it), the hook (what a person does at the station before the legs can land), then the legs land,
+# the monitor completes the changeover, and the completion lands the holds.
+tap_and_land() {
+  local to
+  to="$(item_action_style)"
+  say "TAP the item's Start changeover to $(style_name "$to")"
+  start_changeover "$to" engineer
+  [ -n "${1:-}" ] && "$1"
+  # The monitor may complete it while the hook runs: landed, or already closed on ALT.
+  wait_for "$LAND_WALL" "ALT's carts landed (the gate green, or the changeover already completed)" "landed || closed_on $ALT_ID"     || die "the carts did not land"
+  await_on_alt "$DECLARE_S" "the monitor completes the changeover onto ALT"
+  say "the monitor: $(dc logs --since 30m edge 2>/dev/null | grep 'predicate held' | grep -- '— cut over' | tail -1 | sed 's/^[^|]*| //' | cut -c1-300)"
+  wait_for "$LAND_WALL" "the completion lands the held shares (no hold open)" no_holds || say "LOOK: holds still open (id qty node): $(holds_list | tr '\n' ';')"
   status
 }
 
@@ -943,6 +1023,10 @@ shape_S5() {
   say "holds open (id qty): $(holds_list | tr '\n' ';')"
   first="$(holds_list | awk '$3 != 0' | sed -n 1p | cut -d' ' -f1)"
   second="$(holds_list | awk '$3 != 0' | sed -n 2p | cut -d' ' -f1)"
+  local wq
+  wq="$(holds_list | awk -v id="$second" '$1 == id {print $2}')"
+  code="$(hold_write_off "$second")"; say "Write off hold $second ($wq): $code $(last)"
+  http_ok "$code" && WRITTEN_OFF=$(( WRITTEN_OFF + ${wq:-0} ))
   preview="$(hold_preview "$first")"
   say "Preview Charge of hold $first: $(printf '%s' "$preview" | cut -c1-400)"
   case "$preview" in
@@ -952,11 +1036,9 @@ shape_S5() {
       say "Preview Charge of hold $first: $(hold_preview "$first" | cut -c1-400)"
       ;;
   esac
+  # Once 1003 is RUN's, a cart landing at the held position lands the hold too (the landing
+  # release): a 409 here says it was released first.
   code="$(hold_charge "$first")"; say "Charge hold $first: $code $(last)"
-  local wq
-  wq="$(holds_list | awk -v id="$second" '$1 == id {print $2}')"
-  code="$(hold_write_off "$second")"; say "Write off hold $second ($wq): $code $(last)"
-  http_ok "$code" && WRITTEN_OFF=$(( WRITTEN_OFF + ${wq:-0} ))
   say "Look at: the charged hold's quantity off RUN's carts; the written-off one charges nothing"
   status
 }
@@ -965,8 +1047,9 @@ shape_S6() {
   local p
   for p in $MIRRORS; do counted_at "$p" null; done
   mark
-  say "S6 positions 1-3 on the station counter, 4-5 on the cell counter: changeover RUN->ALT"
-  change_over_paused
+  say "S6 positions 1-3 on the station counter, 4-5 on the cell counter: changeover RUN->ALT on the running line"
+  start_changeover "$ALT_ID"
+  await_landing
   program_change "$CATID_ALT" drain
   await_plc "$CATID_ALT"
   await_on_alt "$DECLARE_S" "the declaration completes the changeover onto ALT"
@@ -1098,6 +1181,16 @@ release_at() {
     nap 5
   done
 }
+# release_hand_placed: the person at the station sends each hand-placed cart back once the
+# changeover's swap there is staged (the sim operator waits for a cart that is done or recorded as
+# another part, and nobody named these).
+release_hand_placed() {
+  local p
+  say "S9 the hand-placed carts are the person's: RELEASE at each mirror position once the changeover's swap is staged"
+  for p in $MIRRORS; do
+    wait_for "$LAND_WALL" "the changeover's swap at $p staged" "staged_at $p" && release_at "$p"
+  done
+}
 mirrors_on_alt() {
   [ "$(sql "SELECT count(*) FROM bins b JOIN nodes n ON n.id = b.node_id
             WHERE n.name IN ($MIRROR_SQL) AND b.payload_code = '$MIRROR_ALT'")" -eq "$(wc -w <<<"$MIRRORS")" ]
@@ -1118,25 +1211,34 @@ shape_S9() {
     case "$(seat "$p")" in *" known false "*) ;; *) say "LOOK: the seat at $p knows its cart before the switch (a swap under RUN): $(seat "$p")" ;; esac
   done
   say "S9 no changeover, RUN active, both styles pinned: the FORCED program change to $CATID_ALT"
-  program_change "$CATID_ALT" forced
+  jump
   say "Look at: the strokes count as $CATID_ALT under RUN; the mirror positions' draws are held"
   await_holds 1 "holds open"
   status
-  await_on_alt "$DECLARE_S" "the automatic switch to ALT"
-  status
-  s9_read "at the switch"
-  say "S9 ALT strokes, 10 ticks. Look at: what each mirror seat records and who said so, the mirror holds, the strokes held at each seat, the mirror carts' counts in Core, the deltas Core refused"
+  asks_and_moves_nothing
+  s9_read "past the window"
+  if [ "$VARIANT" = tap ]; then
+    # A swap of RUN's part staged at a mirror position (RUN's own resupply) refuses START until its
+    # wait is released, as START's refusal says; the sim operator leaves it (the hand-placed cart is
+    # never drawn down), so the person releases it first.
+    for p in $MIRRORS; do
+      [ -n "$(orders_at "$p")" ] || continue
+      say "S9 RUN's swap at $p is live: the person releases it once staged, before the tap, as START would say"
+      wait_for "$LAND_WALL" "RUN's swap at $p staged" "staged_at $p" && release_at "$p"
+    done
+    tap_and_land release_hand_placed
+    wait_for "$LAND_WALL" "a $MIRROR_ALT cart at each mirror position" mirrors_on_alt \
+      || say "LOOK: Core's mirror carts (node bin part count): $(mirror_carts)"
+    s9_read "after the changeover"
+    return
+  fi
+  say "S9 untapped, 10 ticks. Look at: what each mirror seat records (nothing flips), the mirror holds growing, the mirror carts' counts in Core standing, the deltas Core refused"
   run_ticks 10
-  s9_read "after 10 ALT ticks"
-  say "S9 a $MIRROR_ALT cart to each mirror position: REQUEST, and RELEASE once its swap is staged (the sim operator leaves a cart with parts left standing)"
-  for p in $MIRRORS; do request_at "$p"; done
   for p in $MIRRORS; do
-    wait_for "$LAND_WALL" "the swap at $p staged" "staged_at $p" && release_at "$p"
+    case "$(seat "$p")" in *" known false "*) ;; *) say "LOOK: the seat at $p knows its cart, nobody tapping: $(seat "$p")" ;; esac
   done
-  wait_for "$LAND_WALL" "a $MIRROR_ALT cart at each mirror position" mirrors_on_alt \
-    || say "LOOK: Core's mirror carts (node bin part count): $(mirror_carts)"
-  status
-  s9_read "after the $MIRROR_ALT carts landed"
+  untapped_read
+  s9_read "after 10 ALT ticks, untapped"
 }
 
 # ── THE RUN ──────────────────────────────────────────────────────────────────────────────
