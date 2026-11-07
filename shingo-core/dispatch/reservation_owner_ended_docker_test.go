@@ -39,7 +39,7 @@ func (f *endedOwnerFixture) binID(t *testing.T) int64 { t.Helper(); return f.bin
 func seedEndedOwner(t *testing.T, prefix string) *endedOwnerFixture {
 	t.Helper()
 	db := testDB(t)
-	_, _, bp := setupTestData(t, db)
+	_, _, bp := testdb.SetupTestData(t, db)
 	backend := testdb.NewTrackingBackend()
 	d, _ := newTestDispatcher(t, db, backend)
 	grpType, err := db.GetNodeTypeByCode("NGRP")

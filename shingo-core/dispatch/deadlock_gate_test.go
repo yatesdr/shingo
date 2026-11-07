@@ -26,7 +26,7 @@ import (
 func TestDeadlockGate_CoordinatedToOccupiedLine_NotGated(t *testing.T) {
 	t.Parallel()
 	db := testDBShared(t)
-	storageNode, lineNode, bp := setupTestData(t, db)
+	storageNode, lineNode, bp := testdb.SetupTestData(t, db)
 	bt, _ := db.GetBinTypeByCode("DEFAULT")
 	db.SetPayloadBinTypes(bp.ID, []int64{bt.ID})
 
@@ -78,7 +78,7 @@ func TestDeadlockGate_CoordinatedToOccupiedLine_NotGated(t *testing.T) {
 func TestDeadlockGate_PlainRetrieveToOccupiedLine_Gated(t *testing.T) {
 	t.Parallel()
 	db := testDBShared(t)
-	storageNode, lineNode, bp := setupTestData(t, db)
+	storageNode, lineNode, bp := testdb.SetupTestData(t, db)
 	bt, _ := db.GetBinTypeByCode("DEFAULT")
 	db.SetPayloadBinTypes(bp.ID, []int64{bt.ID})
 

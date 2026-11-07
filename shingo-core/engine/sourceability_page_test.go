@@ -7,6 +7,7 @@ import (
 
 	"shingo/protocol/testutil"
 	"shingocore/fleet/simulator"
+	"shingocore/internal/testdb"
 	"shingocore/store/plantclaims"
 )
 
@@ -17,7 +18,7 @@ import (
 func TestSourceabilityPage_GridClaimsAndQueue(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	storageNode, _, _ := setupTestData(t, db)
+	storageNode, _, _ := testdb.SetupTestData(t, db)
 
 	// Pool for BIN-A: one available bin (free) + one claimed bin (held).
 	createTestBinAtNode(t, db, "BIN-A", storageNode.ID, "free-a")
@@ -102,7 +103,7 @@ func TestSourceabilityPage_GridClaimsAndQueue(t *testing.T) {
 func TestSourceabilityPage_DropsClaimlessDefault(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	storageNode, _, _ := setupTestData(t, db)
+	storageNode, _, _ := testdb.SetupTestData(t, db)
 	createTestBinAtNode(t, db, "BIN-A", storageNode.ID, "free-a")
 
 	// SNF2: a real style A (has a claim), a claimless "Default", and a claimless

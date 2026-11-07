@@ -150,7 +150,7 @@ func TestProducePartialsPin_Fetch(t *testing.T) {
 		t.Run(r.name, func(t *testing.T) {
 			t.Parallel()
 			db := testDB(t)
-			_, lineNode, _ := setupTestData(t, db)
+			_, lineNode, _ := testdb.SetupTestData(t, db)
 			if err := db.CreatePayload(&payloads.Payload{Code: "PART-X", UOPCapacity: 10}); err != nil {
 				t.Fatalf("PART-X payload: %v", err)
 			}
@@ -205,7 +205,7 @@ func TestProducePartialsPin_Fetch(t *testing.T) {
 func TestProducePartialsPin_OldestHeldComesBackFirst(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	_, lineNode, _ := setupTestData(t, db)
+	_, lineNode, _ := testdb.SetupTestData(t, db)
 	if err := db.CreatePayload(&payloads.Payload{Code: "PART-X", UOPCapacity: 10}); err != nil {
 		t.Fatalf("PART-X payload: %v", err)
 	}

@@ -32,7 +32,7 @@ func mkPlainOrder(t *testing.T, db interface {
 func TestStage3_IsStorageDropoff(t *testing.T) {
 	t.Parallel()
 	db := testDBShared(t)
-	_, lineNode, _ := setupTestData(t, db) // lineNode is a top-level, untyped consume node
+	_, lineNode, _ := testdb.SetupTestData(t, db) // lineNode is a top-level, untyped consume node
 	storType, err := db.GetNodeTypeByCode("STOR")
 	testutil.MustNoErr(t, err, "get STOR type")
 	laneType, err := db.GetNodeTypeByCode("LANE")
@@ -73,7 +73,7 @@ func TestStage3_IsStorageDropoff(t *testing.T) {
 func TestStage3_MoveToStorageRace_ExactlyOneWins(t *testing.T) {
 	t.Parallel()
 	db := testDBShared(t)
-	_, _, bp := setupTestData(t, db)
+	_, _, bp := testdb.SetupTestData(t, db)
 	storType, err := db.GetNodeTypeByCode("STOR")
 	testutil.MustNoErr(t, err, "db.GetNodeTypeByCode(\"STOR\")")
 	dest := &nodes.Node{Name: "S3-MV-DEST", Enabled: true, NodeTypeID: &storType.ID}
@@ -103,7 +103,7 @@ func TestStage3_MoveToStorageRace_ExactlyOneWins(t *testing.T) {
 func TestStage3_MoveVsStore_ExactlyOneWins(t *testing.T) {
 	t.Parallel()
 	db := testDBShared(t)
-	_, _, bp := setupTestData(t, db)
+	_, _, bp := testdb.SetupTestData(t, db)
 	storType, err := db.GetNodeTypeByCode("STOR")
 	testutil.MustNoErr(t, err, "db.GetNodeTypeByCode(\"STOR\")")
 	dest := &nodes.Node{Name: "S3-MVST-DEST", Enabled: true, NodeTypeID: &storType.ID}
@@ -142,7 +142,7 @@ func TestStage3_ALoaderWindowIsHeldAtAcquire(t *testing.T) {
 	db := testDB(t)
 	f := newDrainFixture(t, db, "S3LW", 1, 0)
 	w := f.windows[0]
-	_, line, bp := setupTestData(t, db)
+	_, line, bp := testdb.SetupTestData(t, db)
 
 	m1 := mkPlainOrder(t, db, "s3lw-1", OrderTypeMove, bp.Code, w.Name)
 	m2 := mkPlainOrder(t, db, "s3lw-2", OrderTypeMove, bp.Code, w.Name)

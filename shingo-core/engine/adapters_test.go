@@ -8,6 +8,7 @@ import (
 
 	"shingo/protocol/testutil"
 	"shingocore/fleet"
+	"shingocore/internal/testdb"
 	"shingocore/store/orders"
 )
 
@@ -231,7 +232,7 @@ func TestPollerEmitter_EmitOrderStatusChanged_NilSnapshot(t *testing.T) {
 func TestOrderResolver_ResolveVendorOrderID_Found(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	setupTestData(t, db)
+	testdb.SetupTestData(t, db)
 
 	// Seed an order carrying a known vendor_order_id.
 	order := &orders.Order{
@@ -259,7 +260,7 @@ func TestOrderResolver_ResolveVendorOrderID_Found(t *testing.T) {
 func TestOrderResolver_ResolveVendorOrderID_NotFound(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	setupTestData(t, db)
+	testdb.SetupTestData(t, db)
 
 	r := &orderResolver{db: db}
 	id, err := r.ResolveVendorOrderID("V-DOES-NOT-EXIST")

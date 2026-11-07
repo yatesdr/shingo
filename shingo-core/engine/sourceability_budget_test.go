@@ -96,7 +96,7 @@ func seedBudgetFixture(t *testing.T, running bool) (*store.DB, *store.QueryCount
 	t.Helper()
 
 	db, cfg := testdb.OpenWithConfig(t)
-	storageNode, _, _ := setupTestData(t, db)
+	storageNode, _, _ := testdb.SetupTestData(t, db)
 	createTestBinAtNode(t, db, "BIN-BUD", storageNode.ID, "src")
 
 	testutil.MustNoErr(t, plantclaims.ReplaceProcess(db.DB, "SNFB",

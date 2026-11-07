@@ -28,7 +28,7 @@ import (
 func TestRedirect_ReleasesTheOldDestinationsSlot(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	srcNode, _, bp := setupTestData(t, db)
+	srcNode, _, bp := testdb.SetupTestData(t, db)
 	d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
 
 	oldDest := &nodes.Node{Name: "REDIR-OLD", Enabled: true}
@@ -84,7 +84,7 @@ func TestRedirect_ReleasesTheOldDestinationsSlot(t *testing.T) {
 func TestRedirect_ToTheSameNodeKeepsItsSlot(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	srcNode, _, bp := setupTestData(t, db)
+	srcNode, _, bp := testdb.SetupTestData(t, db)
 	d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
 
 	dest := &nodes.Node{Name: "REDIR-SAME", Enabled: true}

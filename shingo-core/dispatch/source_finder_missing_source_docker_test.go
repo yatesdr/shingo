@@ -19,7 +19,7 @@ import (
 func TestIntake_MissingSource_WaitsNamingIt(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	storage, line, bp := setupTestData(t, db)
+	storage, line, bp := testdb.SetupTestData(t, db)
 	createTestBinAtNode(t, db, bp.Code, storage.ID, "MISSING-SRC-FULL") // a full elsewhere it must not take
 
 	d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())

@@ -18,7 +18,7 @@ import (
 func TestSimulator_FullLifecycle(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	storageNode, lineNode, bp := setupTestData(t, db)
+	storageNode, lineNode, bp := testdb.SetupTestData(t, db)
 	createTestBinAtNode(t, db, bp.Code, storageNode.ID, "BIN-LC")
 
 	sim := simulator.New()
@@ -71,7 +71,7 @@ func TestSimulator_FullLifecycle(t *testing.T) {
 func TestSimulator_StagedComplexOrderRelease(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	storageNode, lineNode, bp := setupTestData(t, db)
+	storageNode, lineNode, bp := testdb.SetupTestData(t, db)
 	createTestBinAtNode(t, db, bp.Code, storageNode.ID, "BIN-TC2")
 
 	sim := simulator.New()

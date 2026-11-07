@@ -1165,6 +1165,14 @@ func SetupStandardData(t *testing.T, db *store.DB) *StandardData {
 	}
 }
 
+// SetupTestData is SetupStandardData as the dispatch and engine suites read it:
+// the storage node, the line node and the payload.
+func SetupTestData(t *testing.T, db *store.DB) (storageNode *nodes.Node, lineNode *nodes.Node, bp *payloads.Payload) {
+	t.Helper()
+	sd := SetupStandardData(t, db)
+	return sd.StorageNode, sd.LineNode, sd.Payload
+}
+
 // getOrCreateNode reads a node by name, creating it with applyToNew applied
 // when absent. When present, applyToNew is NOT applied — the first creator's
 // shape wins and later callers see the same row.

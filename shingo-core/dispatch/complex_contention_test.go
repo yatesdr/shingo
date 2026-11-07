@@ -25,7 +25,7 @@ import (
 func TestReserveComplexPlan_ConcurrentContention(t *testing.T) {
 	t.Parallel()
 	db := testDBShared(t)
-	_, lineNode, bp := setupTestData(t, db)
+	_, lineNode, bp := testdb.SetupTestData(t, db)
 
 	// Source node with a single bin — the contested resource.
 	srcNode := &nodes.Node{Name: "CONC-SRC", Enabled: true}

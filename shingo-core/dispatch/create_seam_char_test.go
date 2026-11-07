@@ -52,7 +52,7 @@ func seamLane(t *testing.T, db *store.DB, prefix string) (laneID int64, mouth *n
 func TestCharSeam_PlainStore_TakesOccupancyBeforeTheCreate(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	srcNode, _, bp := setupTestData(t, db)
+	srcNode, _, bp := testdb.SetupTestData(t, db)
 	laneID, mouth := seamLane(t, db, "CSEAM-PLAIN")
 	d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
 
@@ -95,7 +95,7 @@ func TestCharSeam_PlainStore_TakesOccupancyBeforeTheCreate(t *testing.T) {
 func TestCharSeam_PlainStore_ReleasesOccupancyWhenTheCreateFails(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	srcNode, _, bp := setupTestData(t, db)
+	srcNode, _, bp := testdb.SetupTestData(t, db)
 	laneID, mouth := seamLane(t, db, "CSEAM-FAIL")
 	d, _ := newTestDispatcher(t, db, testdb.NewFailingBackend())
 
@@ -167,7 +167,7 @@ func TestCharSeam_CompoundLeg_TakesOccupancyAtTheAdvance(t *testing.T) {
 func TestCharSeam_GatedCreate_TakesNoOccupancyUntilTheTail(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	srcNode, _, bp := setupTestData(t, db)
+	srcNode, _, bp := testdb.SetupTestData(t, db)
 	_, laneID, mouth := gatedLane(t, db, "CSEAM-GATED", "CSEAM-GATED-WAIT")
 	d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
 
@@ -219,7 +219,7 @@ func TestCharSeam_GatedCreate_TakesNoOccupancyUntilTheTail(t *testing.T) {
 func TestCharSeam_ComplexUngated_TakesItsOccupancyRow(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	srcNode, _, bp := setupTestData(t, db)
+	srcNode, _, bp := testdb.SetupTestData(t, db)
 	laneID, mouth := seamLane(t, db, "CSEAM-CPLX")
 	d, _ := newTestDispatcher(t, db, testdb.NewTrackingBackend())
 
@@ -264,7 +264,7 @@ func TestCharSeam_ComplexUngated_TakesItsOccupancyRow(t *testing.T) {
 func TestCharSeam_ComplexIsRefusedByAnotherOrdersOccupancy(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	srcNode, _, bp := setupTestData(t, db)
+	srcNode, _, bp := testdb.SetupTestData(t, db)
 	_, mouth := seamLane(t, db, "CSEAM-CREAD")
 	d, _ := newTestDispatcher(t, db, testdb.NewTrackingBackend())
 

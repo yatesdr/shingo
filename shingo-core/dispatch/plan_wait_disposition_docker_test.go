@@ -22,7 +22,7 @@ import (
 func TestSimpleRetrieve_UnsourceableWaits_NeverSkipped(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	storageNode, lineNode, bp := setupTestData(t, db)
+	storageNode, lineNode, bp := testdb.SetupTestData(t, db)
 	bt, err := db.GetBinTypeByCode("DEFAULT")
 	testutil.MustNoErr(t, err, "db.GetBinTypeByCode(\"DEFAULT\")")
 	db.SetPayloadBinTypes(bp.ID, []int64{bt.ID})
@@ -77,7 +77,7 @@ func TestSimpleRetrieve_UnsourceableWaits_NeverSkipped(t *testing.T) {
 func TestSimpleMove_OccupiedDest_Waits(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	_, _, bp := setupTestData(t, db)
+	_, _, bp := testdb.SetupTestData(t, db)
 	bt, err := db.GetBinTypeByCode("DEFAULT")
 	testutil.MustNoErr(t, err, "db.GetBinTypeByCode(\"DEFAULT\")")
 	db.SetPayloadBinTypes(bp.ID, []int64{bt.ID})

@@ -782,7 +782,7 @@ func TestReplenishLoader_FailsClosedWhenAnyReadDies(t *testing.T) {
 // It returns the window, the market and the two slots.
 func carrierRuleLoader(t *testing.T, db *store.DB, prefix string) (window, market *nodes.Node, slots [2]*nodes.Node, std, sm *bins.BinType) {
 	t.Helper()
-	setupTestData(t, db)
+	testdb.SetupTestData(t, db)
 	grpType, err := db.GetNodeTypeByCode("NGRP")
 	testutil.MustNoErr(t, err, "NGRP type")
 	market = &nodes.Node{Name: prefix + "-MKT", IsSynthetic: true, NodeTypeID: &grpType.ID, Enabled: true}

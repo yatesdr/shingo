@@ -131,7 +131,7 @@ var engDriftChoosers = []engDriftChooser{
 // pending- and confirmed-reservation rows fail.
 func TestEngineSlotChoosers_NeverOfferWhatTheClaimDoorRefuses(t *testing.T) {
 	db := testDB(t)
-	_, _, p := setupTestData(t, db)
+	_, _, p := testdb.SetupTestData(t, db)
 	// Started, because the claim door is the dispatcher's and Start builds it.
 	eng := newTestEngine(t, db, simulator.New())
 

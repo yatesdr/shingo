@@ -30,7 +30,7 @@ import (
 func TestRegression_BinMovesOnDelivered(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	storageNode, lineNode, bp := setupTestData(t, db)
+	storageNode, lineNode, bp := testdb.SetupTestData(t, db)
 	createTestBinAtNode(t, db, bp.Code, storageNode.ID, "BIN-REGR-DELIVER")
 
 	sim := simulator.New()
@@ -148,7 +148,7 @@ func TestRegression_OrderFailedSkipsEmptyEdgeUUID(t *testing.T) {
 func TestRegression_CancelEmptyEdgeUUID(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	storageNode, lineNode, bp := setupTestData(t, db)
+	storageNode, lineNode, bp := testdb.SetupTestData(t, db)
 
 	sim := simulator.New()
 	eng := newTestEngine(t, db, sim)
@@ -284,7 +284,7 @@ func TestRegression_MultiBinMovesOnDelivered(t *testing.T) {
 func TestRegression_CompletionIdempotentAfterDelivery(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	storageNode, lineNode, bp := setupTestData(t, db)
+	storageNode, lineNode, bp := testdb.SetupTestData(t, db)
 	createTestBinAtNode(t, db, bp.Code, storageNode.ID, "BIN-REGR-IDEMP")
 
 	sim := simulator.New()

@@ -54,7 +54,7 @@ func junctionRows(t *testing.T, db *store.DB, orderID int64) int {
 // hard-claimed, its bin reservation confirmed. That is what a fleet refusal has to undo.
 func armedOrderAwaitingFleet(t *testing.T, db *store.DB, d *Dispatcher, uuid string) (*orders.Order, int64) {
 	t.Helper()
-	srcNode, lineNode, bp := setupTestData(t, db)
+	srcNode, lineNode, bp := testdb.SetupTestData(t, db)
 	bin := testdb.CreateBinAtNode(t, db, bp.Code, srcNode.ID, "DEMOTE-"+uuid)
 	order := testdb.CreateOrder(t, db, func(o *orders.Order) {
 		o.EdgeUUID = uuid
@@ -103,7 +103,7 @@ func TestFleetRefusal_TheOrderKeepsItsPaperAndRetries(t *testing.T) {
 			"not armed and the rest of this test proves nothing", before)
 	}
 
-	srcNode, lineNode, _ := setupTestData(t, db)
+	srcNode, lineNode, _ := testdb.SetupTestData(t, db)
 	derr := func() error {
 		_, err := refusing.DispatchDirect(order, srcNode, lineNode)
 		return err
@@ -171,7 +171,7 @@ func TestFleetRefusal_TheJunctionRowsSurvive(t *testing.T) {
 	order, binID := armedOrderAwaitingFleet(t, db, d, "demote-junction")
 	testdb.SeedCartRow(t, db, order.ID, binID, 0, 1) // its cart's row
 
-	srcNode, lineNode, _ := setupTestData(t, db)
+	srcNode, lineNode, _ := testdb.SetupTestData(t, db)
 	if _, err := d.DispatchDirect(order, srcNode, lineNode); err == nil {
 		t.Fatal("the fleet refused the create; DispatchDirect must report it")
 	}
@@ -258,7 +258,7 @@ func TestFleetRefusal_ASecondRefusalStillNamesItsWait(t *testing.T) {
 	db := testDB(t)
 	d, _ := newTestDispatcher(t, db, testdb.NewFailingBackend())
 	order, _ := armedOrderAwaitingFleet(t, db, d, "refused-twice")
-	srcNode, lineNode, _ := setupTestData(t, db)
+	srcNode, lineNode, _ := testdb.SetupTestData(t, db)
 
 	// The first refusal's wait, as the scanner left it.
 	d.SetQueueReason(order, protocol.QueueFleetUnavailable, CauseFleetRefusedCreate, QueueParams{})
@@ -296,7 +296,7 @@ func TestFleetRefusal_TheDoubleInvocationIsANoOp(t *testing.T) {
 	d, _ := newTestDispatcher(t, db, testdb.NewFailingBackend())
 	order, _ := armedOrderAwaitingFleet(t, db, d, "demote-twice")
 
-	srcNode, lineNode, _ := setupTestData(t, db)
+	srcNode, lineNode, _ := testdb.SetupTestData(t, db)
 	// The refused create leaves the order `dispatched` for its caller...
 	if _, err := d.DispatchDirect(order, srcNode, lineNode); err == nil {
 		t.Fatal("the fleet refused the create; DispatchDirect must report it")

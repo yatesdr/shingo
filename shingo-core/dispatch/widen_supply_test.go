@@ -63,7 +63,7 @@ func mkWidenOrder(t *testing.T, db interface {
 func TestWiden_AprilLegacyDryNodeParks(t *testing.T) {
 	t.Parallel()
 	db := testDBShared(t)
-	setupTestData(t, db)
+	testdb.SetupTestData(t, db)
 	d, _ := newTestDispatcher(t, db, testdb.NewTrackingBackend())
 
 	widenNode(t, db, "WPARK-SRC", false)
@@ -101,7 +101,7 @@ func TestWiden_AprilLegacyDryNodeParks(t *testing.T) {
 func TestWiden_RewriteReanchorsToGroupNode(t *testing.T) {
 	t.Parallel()
 	db := testDBShared(t)
-	setupTestData(t, db)
+	testdb.SetupTestData(t, db)
 	d, _ := newTestDispatcher(t, db, testdb.NewTrackingBackend())
 
 	widenNode(t, db, "WID-A", false)
@@ -146,7 +146,7 @@ func TestWiden_RewriteReanchorsToGroupNode(t *testing.T) {
 func TestWidenSupplyPickups_ScopeMatrix(t *testing.T) {
 	t.Parallel()
 	db := testDBShared(t)
-	setupTestData(t, db)
+	testdb.SetupTestData(t, db)
 	d, _ := newTestDispatcher(t, db, testdb.NewTrackingBackend())
 
 	widenNode(t, db, "WEV-LINE", false) // dry on purpose
@@ -199,7 +199,7 @@ func TestWidenSupplyPickups_ScopeMatrix(t *testing.T) {
 func TestWidenSupplyPickups_StopsAtWait(t *testing.T) {
 	t.Parallel()
 	db := testDBShared(t)
-	setupTestData(t, db)
+	testdb.SetupTestData(t, db)
 	d, _ := newTestDispatcher(t, db, testdb.NewTrackingBackend())
 
 	widenNode(t, db, "WWAIT-SRC", false)
@@ -239,7 +239,7 @@ func TestWidenSupplyPickups_StopsAtWait(t *testing.T) {
 func TestWidenSupplyPickups_OwnHoldSkipsFinder(t *testing.T) {
 	t.Parallel()
 	db := testDBShared(t)
-	setupTestData(t, db)
+	testdb.SetupTestData(t, db)
 	d, _ := newTestDispatcher(t, db, testdb.NewTrackingBackend())
 
 	widenNode(t, db, "WHOLD-A", false)

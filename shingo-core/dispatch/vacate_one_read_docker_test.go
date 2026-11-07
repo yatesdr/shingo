@@ -32,7 +32,7 @@ import (
 func TestVacate_ALiftIsOneReadAndNoRowWhenNothingWaits(t *testing.T) {
 	t.Parallel()
 	db, cfg := testdb.OpenWithConfig(t)
-	setupTestData(t, db)
+	testdb.SetupTestData(t, db)
 	mk := func(name string) *nodes.Node {
 		n := &nodes.Node{Name: name, Enabled: true}
 		testutil.MustNoErr(t, db.CreateNode(n), "node "+name)
@@ -90,7 +90,7 @@ func TestVacate_ALiftIsOneReadAndNoRowWhenNothingWaits(t *testing.T) {
 func TestVacate_TheLiftAsksItsOwnTradeLegInTheSameRead(t *testing.T) {
 	t.Parallel()
 	db, cfg := testdb.OpenWithConfig(t)
-	setupTestData(t, db)
+	testdb.SetupTestData(t, db)
 	mk := func(name string) *nodes.Node {
 		n := &nodes.Node{Name: name, Enabled: true}
 		testutil.MustNoErr(t, db.CreateNode(n), "node "+name)

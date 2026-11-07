@@ -50,7 +50,7 @@ func assertFleetEquivalent(t *testing.T, plan []resolvedStep, req fleet.CreateOr
 func TestStage2_RetrieveEmptyPlanDifferential_Dispatch(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	_, lineNode, bp := setupTestData(t, db)
+	_, lineNode, bp := testdb.SetupTestData(t, db)
 	bt, _ := db.GetBinTypeByCode("DEFAULT")
 	db.SetPayloadBinTypes(bp.ID, []int64{bt.ID})
 
@@ -106,7 +106,7 @@ func TestStage2_RetrieveEmptyPlanDifferential_Dispatch(t *testing.T) {
 func TestStage2_MovePlanDifferential_Dispatch(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	_, _, bp := setupTestData(t, db)
+	_, _, bp := testdb.SetupTestData(t, db)
 	bt, _ := db.GetBinTypeByCode("DEFAULT")
 	db.SetPayloadBinTypes(bp.ID, []int64{bt.ID})
 
@@ -162,7 +162,7 @@ func TestStage2_MovePlanDifferential_Dispatch(t *testing.T) {
 func TestStage2_MovePlanDifferential_SameNode(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	_, lineNode, bp := setupTestData(t, db)
+	_, lineNode, bp := testdb.SetupTestData(t, db)
 	d, _ := newTestDispatcher(t, db, testdb.NewTrackingBackend())
 
 	order := &orders.Order{
@@ -189,7 +189,7 @@ func TestStage2_MovePlanDifferential_SameNode(t *testing.T) {
 func TestStage2_MovePlanDifferential_NGRPDest(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	_, _, bp := setupTestData(t, db)
+	_, _, bp := testdb.SetupTestData(t, db)
 	bt, _ := db.GetBinTypeByCode("DEFAULT")
 	db.SetPayloadBinTypes(bp.ID, []int64{bt.ID})
 
@@ -255,7 +255,7 @@ func TestStage2_MovePlanDifferential_NGRPDest(t *testing.T) {
 func TestStage2_MovePlanDifferential_MissingSource(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	_, lineNode, bp := setupTestData(t, db)
+	_, lineNode, bp := testdb.SetupTestData(t, db)
 	d, _ := newTestDispatcher(t, db, testdb.NewTrackingBackend())
 
 	order := &orders.Order{

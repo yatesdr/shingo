@@ -27,7 +27,7 @@ func TestStaging_ABinDeliveredToALinesideNodeNeverExpires(t *testing.T) {
 		t.Run(fmt.Sprintf("ttl=%s", ttl), func(t *testing.T) {
 			t.Parallel()
 			db := testDB(t)
-			storageNode, lineNode, bp := setupTestData(t, db)
+			storageNode, lineNode, bp := testdb.SetupTestData(t, db)
 			createTestBinAtNode(t, db, bp.Code, storageNode.ID, fmt.Sprintf("BIN-NOEXP-%d", ttl))
 			sim := simulator.New()
 			eng := newUnstartedEngineWith(t, db, sim, func(c *config.Config) { c.Staging.TTL = ttl })

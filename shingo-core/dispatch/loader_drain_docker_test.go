@@ -41,7 +41,7 @@ type drainFixture struct {
 // `windows` windows draining the given states from the group.
 func newDrainFixture(t *testing.T, db *store.DB, prefix string, windows, slots int, drains ...protocol.CarrierState) *drainFixture {
 	t.Helper()
-	setupTestData(t, db)
+	testdb.SetupTestData(t, db)
 	d, _ := newTestDispatcher(t, db, nil)
 	f := &drainFixture{db: db, d: d}
 	grp, err := db.CreateNodeGroup(prefix + "-PRESS-OUT")
@@ -278,7 +278,7 @@ func TestDrain_AFullAskFirstKeepsTheWindow(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
 	f := newDrainFixture(t, db, "DRF", 1, 1, protocol.CarrierLeftover)
-	_, _, part := setupTestData(t, db)
+	_, _, part := testdb.SetupTestData(t, db)
 	testutil.MustNoErr(t, db.UpsertLoaderPayload(loaders.Payload{LoaderID: f.loader, PayloadCode: part.Code}), "the part it serves")
 	f.cart(t, f.slots[0].ID, f.tote, totes(13))
 	cfg, ok, err := f.d.LoadReplenishConfig(f.loader)
@@ -308,7 +308,7 @@ func TestDrain_ADrainFirstSendsAFullAskToAnotherWindow(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
 	f := newDrainFixture(t, db, "DRA", 2, 1, protocol.CarrierLeftover)
-	_, _, part := setupTestData(t, db)
+	_, _, part := testdb.SetupTestData(t, db)
 	testutil.MustNoErr(t, db.UpsertLoaderPayload(loaders.Payload{LoaderID: f.loader, PayloadCode: part.Code}), "the part it serves")
 	f.cart(t, f.slots[0].ID, f.tote, totes(13))
 	n, err := f.d.DrainLoader(f.loader)
@@ -356,7 +356,7 @@ func TestDrain_ADrainFirstSendsAFullAskToAnotherWindow(t *testing.T) {
 func TestStage2_AMoveFirstSendsAFullAskToAnotherWindow(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	_, _, part := setupTestData(t, db)
+	_, _, part := testdb.SetupTestData(t, db)
 	d, _ := newTestDispatcher(t, db, nil)
 	ls := service.NewLoaderService(db, nil)
 	grp, err := db.CreateNodeGroup("S2F-WAIT")

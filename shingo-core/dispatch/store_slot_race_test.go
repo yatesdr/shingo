@@ -37,7 +37,7 @@ func mkStoreOrder(t *testing.T, db *store.DB, uuid, payload, destName string) *o
 func TestStoreDestinationSlot_ExactlyOneWins(t *testing.T) {
 	t.Parallel()
 	db := testDBShared(t)
-	_, _, bp := setupTestData(t, db)
+	_, _, bp := testdb.SetupTestData(t, db)
 	storType, _ := db.GetNodeTypeByCode("STOR")
 
 	dest := &nodes.Node{Name: "STORE-RACE-DEST", Zone: "A", Enabled: true, NodeTypeID: &storType.ID}
@@ -90,7 +90,7 @@ func TestStoreDestinationSlot_ExactlyOneWins(t *testing.T) {
 func TestStoreDestinationSlot_ConcurrentExactlyOneWins(t *testing.T) {
 	t.Parallel()
 	db := testDBShared(t)
-	_, _, bp := setupTestData(t, db)
+	_, _, bp := testdb.SetupTestData(t, db)
 	storType, _ := db.GetNodeTypeByCode("STOR")
 
 	dest := &nodes.Node{Name: "STORE-CRACE-DEST", Zone: "A", Enabled: true, NodeTypeID: &storType.ID}

@@ -136,7 +136,7 @@ func TestFindCMSBoundary_NoBoundary_NonSyntheticChain(t *testing.T) {
 func TestRecordMovementTransactions_PersistsAndEmits(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	_, _, bp := setupTestData(t, db)
+	_, _, bp := testdb.SetupTestData(t, db)
 	eng := newTestEngine(t, db, simulator.New())
 
 	srcRoot, srcSlot := makeCMSBoundary(t, db, "SRC")
@@ -201,7 +201,7 @@ func TestRecordMovementTransactions_PersistsAndEmits(t *testing.T) {
 func TestRecordMovementTransactions_SkipsReplay(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	_, _, bp := setupTestData(t, db)
+	_, _, bp := testdb.SetupTestData(t, db)
 	eng := newTestEngine(t, db, simulator.New())
 
 	srcRoot, srcSlot := makeCMSBoundary(t, db, "RSK-SRC")
@@ -251,7 +251,7 @@ func TestRecordMovementTransactions_SkipsReplay(t *testing.T) {
 func TestRecordMovementTransactions_NoOpWhenSameBoundary(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	_, _, bp := setupTestData(t, db)
+	_, _, bp := testdb.SetupTestData(t, db)
 	eng := newTestEngine(t, db, simulator.New())
 
 	root, slotA := makeCMSBoundary(t, db, "ONE")
@@ -293,7 +293,7 @@ func TestRecordMovementTransactions_NoOpWhenSameBoundary(t *testing.T) {
 func TestOrdinaryDelivery_StampsRobotAndOrder(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	_, _, bp := setupTestData(t, db)
+	_, _, bp := testdb.SetupTestData(t, db)
 	eng := newTestEngine(t, db, simulator.New())
 
 	srcRoot, srcSlot := makeCMSBoundary(t, db, "MOVER-SRC")
@@ -367,7 +367,7 @@ func TestOrdinaryDelivery_StampsRobotAndOrder(t *testing.T) {
 func TestCMSPostingSubscriber_QueuesMovementsAndFiltersCorrections(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	_, _, bp := setupTestData(t, db)
+	_, _, bp := testdb.SetupTestData(t, db)
 
 	// The block goes in BEFORE New: the poster is built there now, so a cfg
 	// edited afterwards is a value nothing will read again.

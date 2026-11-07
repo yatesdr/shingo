@@ -8,6 +8,7 @@ import (
 	"shingo/protocol"
 	"shingo/protocol/testutil"
 	"shingocore/fleet/simulator"
+	"shingocore/internal/testdb"
 )
 
 // =============================================================================
@@ -28,7 +29,7 @@ import (
 func TestSimulator_ComplexOrderBinTasks(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	storageNode, lineNode, bp := setupTestData(t, db)
+	storageNode, lineNode, bp := testdb.SetupTestData(t, db)
 
 	// Create a bin at storage with a confirmed manifest
 	createTestBinAtNode(t, db, bp.Code, storageNode.ID, "BIN-TC1")
@@ -92,7 +93,7 @@ func TestSimulator_ComplexOrderBinTasks(t *testing.T) {
 func TestSimulator_StagedComplexOrder(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	storageNode, lineNode, bp := setupTestData(t, db)
+	storageNode, lineNode, bp := testdb.SetupTestData(t, db)
 	createTestBinAtNode(t, db, bp.Code, storageNode.ID, "BIN-TC2")
 
 	sim := simulator.New()
@@ -173,7 +174,7 @@ func TestSimulator_StagedComplexOrder(t *testing.T) {
 func TestSimulator_SimpleRetrieveOrder(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	storageNode, lineNode, bp := setupTestData(t, db)
+	storageNode, lineNode, bp := testdb.SetupTestData(t, db)
 	createTestBinAtNode(t, db, bp.Code, storageNode.ID, "BIN-TC3")
 
 	sim := simulator.New()
@@ -271,7 +272,7 @@ func TestSimulator_StateMapping(t *testing.T) {
 func TestSimulator_FleetFailure_NoVendorOrderID(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	storageNode, lineNode, bp := setupTestData(t, db)
+	storageNode, lineNode, bp := testdb.SetupTestData(t, db)
 	createTestBinAtNode(t, db, bp.Code, storageNode.ID, "BIN-TC5")
 
 	sim := simulator.New(simulator.WithCreateFailure())

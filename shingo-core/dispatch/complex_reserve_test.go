@@ -73,7 +73,7 @@ type complexOrderStore interface {
 func TestReserveReconcileKeepsOwnHolds(t *testing.T) {
 	t.Parallel()
 	db := testDBShared(t)
-	_, lineNode, bp := setupTestData(t, db)
+	_, lineNode, bp := testdb.SetupTestData(t, db)
 	d, _ := newTestDispatcher(t, db, testdb.NewTrackingBackend())
 
 	nodeA := &nodes.Node{Name: "SRC-A", Enabled: true}
@@ -136,7 +136,7 @@ func TestReserveReconcileKeepsOwnHolds(t *testing.T) {
 func TestPartialHoldRetriesToComplete(t *testing.T) {
 	t.Parallel()
 	db := testDBShared(t)
-	_, lineNode, bp := setupTestData(t, db)
+	_, lineNode, bp := testdb.SetupTestData(t, db)
 	d, _ := newTestDispatcher(t, db, testdb.NewTrackingBackend())
 
 	nodeA := &nodes.Node{Name: "PH-A", Enabled: true}
@@ -196,7 +196,7 @@ func TestPartialHoldRetriesToComplete(t *testing.T) {
 func TestConfirmZeroRowsSurfacesClaimFailed(t *testing.T) {
 	t.Parallel()
 	db := testDBShared(t)
-	_, lineNode, bp := setupTestData(t, db)
+	_, lineNode, bp := testdb.SetupTestData(t, db)
 	d, _ := newTestDispatcher(t, db, testdb.NewTrackingBackend())
 
 	nodeA := &nodes.Node{Name: "CZ-A", Enabled: true}
@@ -256,7 +256,7 @@ func TestConfirmZeroRowsSurfacesClaimFailed(t *testing.T) {
 func TestConfirmHealsClaimedButPendingBin(t *testing.T) {
 	t.Parallel()
 	db := testDBShared(t)
-	_, lineNode, bp := setupTestData(t, db)
+	_, lineNode, bp := testdb.SetupTestData(t, db)
 	d, _ := newTestDispatcher(t, db, testdb.NewTrackingBackend())
 
 	nodeA := &nodes.Node{Name: "HEAL-SRC", Enabled: true}
@@ -314,7 +314,7 @@ func TestConfirmHealsClaimedButPendingBin(t *testing.T) {
 func TestConfirmPartialFailureConverges(t *testing.T) {
 	t.Parallel()
 	db := testDBShared(t)
-	_, lineNode, bp := setupTestData(t, db)
+	_, lineNode, bp := testdb.SetupTestData(t, db)
 	d, _ := newTestDispatcher(t, db, testdb.NewTrackingBackend())
 
 	nodeA := &nodes.Node{Name: "PF-A", Enabled: true}
@@ -410,7 +410,7 @@ func TestConfirmPartialFailureConverges(t *testing.T) {
 func TestReserveMootWhenAllSourcesEmpty(t *testing.T) {
 	t.Parallel()
 	db := testDBShared(t)
-	_, lineNode, bp := setupTestData(t, db)
+	_, lineNode, bp := testdb.SetupTestData(t, db)
 	d, _ := newTestDispatcher(t, db, testdb.NewTrackingBackend())
 
 	empty := &nodes.Node{Name: "MOOT-SRC", Enabled: true}
@@ -447,7 +447,7 @@ func TestReserveMootWhenAllSourcesEmpty(t *testing.T) {
 func TestReserveFillerLegWithEmptySourceHoldsNotMoot(t *testing.T) {
 	t.Parallel()
 	db := testDBShared(t)
-	_, lineNode, bp := setupTestData(t, db)
+	_, lineNode, bp := testdb.SetupTestData(t, db)
 	d, _ := newTestDispatcher(t, db, testdb.NewTrackingBackend())
 
 	// The index/staging position the filler collects from — created empty, i.e.
@@ -488,7 +488,7 @@ func TestReserveFillerLegWithEmptySourceHoldsNotMoot(t *testing.T) {
 func TestReservePresentButTakenHoldsNotMoot(t *testing.T) {
 	t.Parallel()
 	db := testDBShared(t)
-	_, lineNode, bp := setupTestData(t, db)
+	_, lineNode, bp := testdb.SetupTestData(t, db)
 	d, _ := newTestDispatcher(t, db, testdb.NewTrackingBackend())
 
 	nodeA := &nodes.Node{Name: "PBT-SRC", Enabled: true}
@@ -529,7 +529,7 @@ func TestReservePresentButTakenHoldsNotMoot(t *testing.T) {
 func TestStagingRegrabsNotTreatedAsMissing(t *testing.T) {
 	t.Parallel()
 	db := testDBShared(t)
-	_, lineNode, bp := setupTestData(t, db)
+	_, lineNode, bp := testdb.SetupTestData(t, db)
 	d, _ := newTestDispatcher(t, db, testdb.NewTrackingBackend())
 
 	src := &nodes.Node{Name: "RG-SRC", Enabled: true}
@@ -570,7 +570,7 @@ func TestStagingRegrabsNotTreatedAsMissing(t *testing.T) {
 func TestComplexHoldingSlotsAsReservationsAcrossTicks(t *testing.T) {
 	t.Parallel()
 	db := testDBShared(t)
-	_, _, bp := setupTestData(t, db)
+	_, _, bp := testdb.SetupTestData(t, db)
 	d, _ := newTestDispatcher(t, db, testdb.NewTrackingBackend())
 
 	// A concrete storage-dropoff slot (child of an NGRP) and an EMPTY source node.
@@ -659,7 +659,7 @@ func TestDeclaredStagingDropoffIsReserved(t *testing.T) {
 	run := func(t *testing.T, tag string, declared bool) bool {
 		t.Helper()
 		db := testDBShared(t)
-		_, _, bp := setupTestData(t, db)
+		_, _, bp := testdb.SetupTestData(t, db)
 		d, _ := newTestDispatcher(t, db, testdb.NewTrackingBackend())
 
 		// A STAGING node, built the way the seeder builds one: a station with NO
@@ -727,7 +727,7 @@ func TestDeclaredStagingDropoffIsReserved(t *testing.T) {
 func TestDeclaredStagingSlotConflictHolds(t *testing.T) {
 	t.Parallel()
 	db := testDBShared(t)
-	_, _, bp := setupTestData(t, db)
+	_, _, bp := testdb.SetupTestData(t, db)
 	d, _ := newTestDispatcher(t, db, testdb.NewTrackingBackend())
 
 	staging := &nodes.Node{Name: "CONF-STAGING", Enabled: true}
@@ -795,7 +795,7 @@ func TestDeclaredStagingSlotConflictHolds(t *testing.T) {
 func TestDeclaredStagingOccupiedByABinQueues(t *testing.T) {
 	t.Parallel()
 	db := testDBShared(t)
-	_, _, bp := setupTestData(t, db)
+	_, _, bp := testdb.SetupTestData(t, db)
 	d, _ := newTestDispatcher(t, db, testdb.NewTrackingBackend())
 
 	staging := &nodes.Node{Name: "OCC-STAGING", Enabled: true}
@@ -871,7 +871,7 @@ func TestDeclaredStagingOccupiedByABinQueues(t *testing.T) {
 func TestChoreographyRefillsANodeItEmptiesItself(t *testing.T) {
 	t.Parallel()
 	db := testDBShared(t)
-	_, _, bp := setupTestData(t, db)
+	_, _, bp := testdb.SetupTestData(t, db)
 	d, _ := newTestDispatcher(t, db, testdb.NewTrackingBackend())
 
 	staging := &nodes.Node{Name: "CHOREO-STAGING", Enabled: true}
@@ -929,7 +929,7 @@ func TestChoreographyRefillsANodeItEmptiesItself(t *testing.T) {
 func TestSlotConflictRevertsToNGRP(t *testing.T) {
 	t.Parallel()
 	db := testDBShared(t)
-	_, _, bp := setupTestData(t, db)
+	_, _, bp := testdb.SetupTestData(t, db)
 	d, _ := newTestDispatcher(t, db, testdb.NewTrackingBackend())
 
 	grpType, err := db.GetNodeTypeByCode("NGRP")
@@ -995,7 +995,7 @@ func TestSlotConflictRevertsToNGRP(t *testing.T) {
 func TestEvacMismatchedPressBin_DispatchesCompleteAndSurfaces(t *testing.T) {
 	t.Parallel()
 	db := testDBShared(t)
-	_, lineNode, bp := setupTestData(t, db)
+	_, lineNode, bp := testdb.SetupTestData(t, db)
 	d, _ := newTestDispatcher(t, db, testdb.NewTrackingBackend())
 
 	// The press (process node) and the market.
@@ -1095,7 +1095,7 @@ func TestEvacMismatchedPressBin_DispatchesCompleteAndSurfaces(t *testing.T) {
 func TestReserveHonoursTheStepsOwnPayload(t *testing.T) {
 	t.Parallel()
 	db := testDBShared(t)
-	_, lineNode, outgoing := setupTestData(t, db)
+	_, lineNode, outgoing := testdb.SetupTestData(t, db)
 	d, _ := newTestDispatcher(t, db, testdb.NewTrackingBackend())
 
 	incoming := &payloads.Payload{Code: "INCOMING-STYLE", UOPCapacity: 20}
@@ -1147,7 +1147,7 @@ func TestReserveHonoursTheStepsOwnPayload(t *testing.T) {
 func TestComplexDropOnAStandaloneStorNodeIsHeldAsAPlainDropThereIs(t *testing.T) {
 	t.Parallel()
 	db := testDBShared(t)
-	_, _, bp := setupTestData(t, db)
+	_, _, bp := testdb.SetupTestData(t, db)
 	d, _ := newTestDispatcher(t, db, testdb.NewTrackingBackend())
 	stor, err := db.GetNodeTypeByCode("STOR")
 	testutil.MustNoErr(t, err, "the STOR type")

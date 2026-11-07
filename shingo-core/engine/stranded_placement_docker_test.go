@@ -17,7 +17,6 @@ import (
 	"shingocore/store/bins"
 	"shingocore/store/nodes"
 	"shingocore/store/orders"
-	"shingocore/store/scene"
 )
 
 // stranded_placement_docker_test.go — the 2026-08-24 incident, pinned.
@@ -32,16 +31,6 @@ import (
 // Two things had to be true for that: the point never resolved (identity only,
 // and no live Springfield robot_station value has ever been a node name), and
 // the answer was re-sampled rather than frozen.
-
-// seedScenePoint writes one scene row — a GeneralLocation carries the station in
-// instance_name and the point the robot reports in point_name.
-func seedScenePoint(t *testing.T, db *store.DB, area, instance, class, point string) {
-	t.Helper()
-	testutil.MustNoErr(t, db.UpsertScenePoint(&scene.Point{
-		AreaName: area, InstanceName: instance, ClassName: class, PointName: point,
-		PropertiesJSON: "[]",
-	}), "seed scene point "+instance)
-}
 
 // atPoint is a parked robot with an empty deck, reporting one point.
 //
@@ -88,7 +77,7 @@ func TestCarriedBin_PlacementSurvivesTheStationFieldDecaying(t *testing.T) {
 
 	dest := &nodes.Node{Name: "SMN_007", Enabled: true}
 	testutil.MustNoErr(t, db.CreateNode(dest), "create SMN_007")
-	seedScenePoint(t, db, "Area-01", "SMN_007", "GeneralLocation", "AP102")
+	testdb.SeedScenePoint(t, db, "Area-01", "SMN_007", "GeneralLocation", "AP102")
 	stale := &bins.Bin{BinTypeID: mustBinType(t, db, "DECAY"), Label: "stale-decay",
 		NodeID: &dest.ID, Status: "available"}
 	testutil.MustNoErr(t, db.CreateBin(stale), "create the stale record")
@@ -133,7 +122,7 @@ func TestCarriedBin_FrozenReadingSurvivesTheDeckReloading(t *testing.T) {
 
 	dest := &nodes.Node{Name: "SMN_014", Enabled: true}
 	testutil.MustNoErr(t, db.CreateNode(dest), "create dest")
-	seedScenePoint(t, db, "Area-01", "SMN_014", "GeneralLocation", "AP204")
+	testdb.SeedScenePoint(t, db, "Area-01", "SMN_014", "GeneralLocation", "AP204")
 	blocker := &bins.Bin{BinTypeID: mustBinType(t, db, "RELOAD"), Label: "resident-reload",
 		NodeID: &dest.ID, Status: "available"}
 	testutil.MustNoErr(t, db.CreateBin(blocker), "create blocking bin")
@@ -189,7 +178,7 @@ func TestCarriedBin_LateSceneSyncResolvesAFrozenReading(t *testing.T) {
 
 	// The scene arrives. The robot has long since driven away, and it does not
 	// matter.
-	seedScenePoint(t, db, "Area-01", "SMN_020", "GeneralLocation", "AP233")
+	testdb.SeedScenePoint(t, db, "Area-01", "SMN_020", "GeneralLocation", "AP233")
 	cacheRobot(eng, atPoint("AMR-LATE", "PP224", 60.0, 60.0))
 	eng.sweepStrandedBins()
 
@@ -214,7 +203,7 @@ func TestCarriedBin_UnwitnessedUnloadAfterARestartIsNeverPlaced(t *testing.T) {
 
 	dest := &nodes.Node{Name: "SMN_021", Enabled: true}
 	testutil.MustNoErr(t, db.CreateNode(dest), "create dest")
-	seedScenePoint(t, db, "Area-01", "SMN_021", "GeneralLocation", "AP198")
+	testdb.SeedScenePoint(t, db, "Area-01", "SMN_021", "GeneralLocation", "AP198")
 
 	// The state a restart leaves: the bin is on the carrier node already, and
 	// this Engine has never seen the deck loaded.
@@ -273,7 +262,7 @@ func TestCarriedBin_ARestartWithTheDeckStillLoadedStillPlacesTheBin(t *testing.T
 
 	dest := &nodes.Node{Name: "SMN_022", Enabled: true}
 	testutil.MustNoErr(t, db.CreateNode(dest), "create dest")
-	seedScenePoint(t, db, "Area-01", "SMN_022", "GeneralLocation", "AP199")
+	testdb.SeedScenePoint(t, db, "Area-01", "SMN_022", "GeneralLocation", "AP199")
 
 	carrier := &nodes.Node{Name: "_ROBOT:AMR-LOADED", IsSynthetic: true, Enabled: true}
 	testutil.MustNoErr(t, db.CreateNode(carrier), "create carrier node")
@@ -306,7 +295,7 @@ func TestCarriedBin_PlacedRecordsTheIntentItDidNotConsult(t *testing.T) {
 
 	dest := &nodes.Node{Name: "SMN_007", Enabled: true}
 	testutil.MustNoErr(t, db.CreateNode(dest), "create dest")
-	seedScenePoint(t, db, "Area-01", "SMN_007", "GeneralLocation", "AP102")
+	testdb.SeedScenePoint(t, db, "Area-01", "SMN_007", "GeneralLocation", "AP102")
 
 	bin, ord := seedStranded(t, db, "AMR-INTENT")
 	// The cancelled order was taking it to SMN_007 — the same answer, which is
@@ -350,7 +339,7 @@ func TestCarriedBin_ObservationBeatsADisagreeingIntent(t *testing.T) {
 	testutil.MustNoErr(t, db.CreateNode(observed), "create observed node")
 	intended := &nodes.Node{Name: "SMN_033", Enabled: true}
 	testutil.MustNoErr(t, db.CreateNode(intended), "create intended node")
-	seedScenePoint(t, db, "Area-01", "SMN_023", "GeneralLocation", "AP200")
+	testdb.SeedScenePoint(t, db, "Area-01", "SMN_023", "GeneralLocation", "AP200")
 
 	bin, ord := seedStranded(t, db, "AMR-DISAGREE")
 	_, err := db.DB.Exec(`UPDATE orders SET delivery_node='SMN_033' WHERE id=$1`, ord.ID)
@@ -380,9 +369,9 @@ func TestCarriedBin_ChargePointDeclinesWithItsClassAndNoGeometry(t *testing.T) {
 	testutil.MustNoErr(t, db.CreateNode(near), "create nearby station")
 	intended := &nodes.Node{Name: "SMN_033", Enabled: true}
 	testutil.MustNoErr(t, db.CreateNode(intended), "create intended station")
-	seedScenePoint(t, db, "Area-01", "SMN_007", "GeneralLocation", "AP102")
-	seedScenePoint(t, db, "Area-01", "SMN_033", "GeneralLocation", "AP234")
-	seedScenePoint(t, db, "Area-01", "CP37", "ChargePoint", "")
+	testdb.SeedScenePoint(t, db, "Area-01", "SMN_007", "GeneralLocation", "AP102")
+	testdb.SeedScenePoint(t, db, "Area-01", "SMN_033", "GeneralLocation", "AP234")
+	testdb.SeedScenePoint(t, db, "Area-01", "CP37", "ChargePoint", "")
 
 	bin, ord := seedStranded(t, db, "AMR-11")
 	_, err := db.DB.Exec(`UPDATE orders SET delivery_node='SMN_033' WHERE id=$1`, ord.ID)
@@ -427,7 +416,7 @@ func TestCarriedBin_BinTypeMismatchDeclinesNamingBoth(t *testing.T) {
 
 	dest := &nodes.Node{Name: "SMN_024", Enabled: true}
 	testutil.MustNoErr(t, db.CreateNode(dest), "create dest")
-	seedScenePoint(t, db, "Area-01", "SMN_024", "GeneralLocation", "AP201")
+	testdb.SeedScenePoint(t, db, "Area-01", "SMN_024", "GeneralLocation", "AP201")
 
 	other := &bins.BinType{Code: "48x45x34", Description: "knockdown"}
 	testutil.MustNoErr(t, db.CreateBinType(other), "create other bin type")
@@ -463,7 +452,7 @@ func TestCarriedBin_AllAndEmptyInheritAreUnrestricted(t *testing.T) {
 	for i, mode := range []string{"all", "inherit", ""} {
 		node := &nodes.Node{Name: "SMN_UNR" + string(rune('A'+i)), Enabled: true}
 		testutil.MustNoErr(t, db.CreateNode(node), "create dest")
-		seedScenePoint(t, db, "Area-01", node.Name, "GeneralLocation", "APU"+string(rune('A'+i)))
+		testdb.SeedScenePoint(t, db, "Area-01", node.Name, "GeneralLocation", "APU"+string(rune('A'+i)))
 		if mode != "" {
 			testutil.MustNoErr(t, db.SetNodeProperty(node.ID, "bin_type_mode", mode), "set mode")
 		}
@@ -493,7 +482,7 @@ func TestCarriedBin_SpecificWithNoTypesDeclinesNamingTheConfig(t *testing.T) {
 
 	dest := &nodes.Node{Name: "SMN_025", Enabled: true}
 	testutil.MustNoErr(t, db.CreateNode(dest), "create dest")
-	seedScenePoint(t, db, "Area-01", "SMN_025", "GeneralLocation", "AP206")
+	testdb.SeedScenePoint(t, db, "Area-01", "SMN_025", "GeneralLocation", "AP206")
 	testutil.MustNoErr(t, db.SetNodeProperty(dest.ID, "bin_type_mode", "specific"), "set mode")
 
 	bin, ord := seedStranded(t, db, "AMR-SNF2")
@@ -523,7 +512,7 @@ func TestBranchA_DeclinesAStalePickupThatTheTerminalWindowWouldHaveAllowed(t *te
 
 	dest := &nodes.Node{Name: "SMN_026", Enabled: true}
 	testutil.MustNoErr(t, db.CreateNode(dest), "create dest")
-	seedScenePoint(t, db, "Area-01", "SMN_026", "GeneralLocation", "AP225")
+	testdb.SeedScenePoint(t, db, "Area-01", "SMN_026", "GeneralLocation", "AP225")
 
 	bin, ord := seedStranded(t, db, "AMR-STALE-PICKUP")
 	// The order ended just now — so the terminal window passes, exactly as it
@@ -562,7 +551,7 @@ func TestBranchA_FreshPickupStillPlaces(t *testing.T) {
 
 	dest := &nodes.Node{Name: "SMN_027", Enabled: true}
 	testutil.MustNoErr(t, db.CreateNode(dest), "create dest")
-	seedScenePoint(t, db, "Area-01", "SMN_027", "GeneralLocation", "AP227")
+	testdb.SeedScenePoint(t, db, "Area-01", "SMN_027", "GeneralLocation", "AP227")
 
 	bin, ord := seedStranded(t, db, "AMR-FRESH")
 	cacheRobot(eng, atPoint("AMR-FRESH", "AP227", -2.2, -18.7))
@@ -586,7 +575,7 @@ func TestBranchA_MissingPickupRowFailsClosed(t *testing.T) {
 
 	dest := &nodes.Node{Name: "SMN_028", Enabled: true}
 	testutil.MustNoErr(t, db.CreateNode(dest), "create dest")
-	seedScenePoint(t, db, "Area-01", "SMN_028", "GeneralLocation", "AP226")
+	testdb.SeedScenePoint(t, db, "Area-01", "SMN_028", "GeneralLocation", "AP226")
 
 	parked, parkedOrd := seedStranded(t, db, "AMR-NOPICKUP")
 	loaded, loadedOrd := seedStranded(t, db, "AMR-NOPICKUP-LOADED")
@@ -653,7 +642,7 @@ func TestCarriedBin_PickupAgeDoesNotGateTheJackWatch(t *testing.T) {
 
 	dest := &nodes.Node{Name: "SMN_029", Enabled: true}
 	testutil.MustNoErr(t, db.CreateNode(dest), "create dest")
-	seedScenePoint(t, db, "Area-01", "SMN_029", "GeneralLocation", "AP228")
+	testdb.SeedScenePoint(t, db, "Area-01", "SMN_029", "GeneralLocation", "AP228")
 
 	bin, ord := seedStranded(t, db, "AMR-LONGRIDE")
 	cacheRobot(eng, loadedDeck("AMR-LONGRIDE"))
@@ -684,8 +673,8 @@ func TestDeclinedBin_UnchangedNoteDoesNotTouchUpdatedAt(t *testing.T) {
 	db := testdb.Open(t)
 	eng := newUnstartedEngine(t, db, simulator.New())
 
-	seedScenePoint(t, db, "Area-01", "SMN_030", "GeneralLocation", "AP229")
-	seedScenePoint(t, db, "Area-01", "CP41", "ChargePoint", "")
+	testdb.SeedScenePoint(t, db, "Area-01", "SMN_030", "GeneralLocation", "AP229")
+	testdb.SeedScenePoint(t, db, "Area-01", "CP41", "ChargePoint", "")
 
 	bin, ord := seedStranded(t, db, "AMR-CHURN")
 	cacheRobot(eng, loadedDeck("AMR-CHURN"))
@@ -719,7 +708,7 @@ func TestCarriedBin_PlacementDiscardsTheFrozenSampleAndTheCarrierNode(t *testing
 
 	dest := &nodes.Node{Name: "SMN_031", Enabled: true}
 	testutil.MustNoErr(t, db.CreateNode(dest), "create dest")
-	seedScenePoint(t, db, "Area-01", "SMN_031", "GeneralLocation", "AP230")
+	testdb.SeedScenePoint(t, db, "Area-01", "SMN_031", "GeneralLocation", "AP230")
 
 	bin, ord := seedStranded(t, db, "AMR-PRUNE")
 	cacheRobot(eng, loadedDeck("AMR-PRUNE"))

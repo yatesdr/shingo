@@ -21,7 +21,7 @@ import (
 func TestDispatchDirect_CarriesTheOrdersKeyRoute(t *testing.T) {
 	t.Parallel()
 	db := testDBShared(t)
-	storageNode, lineNode, payload := setupTestData(t, db)
+	storageNode, lineNode, payload := testdb.SetupTestData(t, db)
 
 	backend := testdb.NewTrackingBackend()
 	d, _ := newTestDispatcher(t, db, backend)
@@ -76,7 +76,7 @@ func TestDispatchDirect_CarriesTheOrdersKeyRoute(t *testing.T) {
 func TestDispatchDirect_NoRouteStaysEmpty(t *testing.T) {
 	t.Parallel()
 	db := testDBShared(t)
-	storageNode, lineNode, payload := setupTestData(t, db)
+	storageNode, lineNode, payload := testdb.SetupTestData(t, db)
 
 	backend := testdb.NewTrackingBackend()
 	d, _ := newTestDispatcher(t, db, backend)

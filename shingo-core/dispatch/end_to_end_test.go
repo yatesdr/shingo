@@ -35,7 +35,7 @@ import (
 func TestDispatcher_RetrieveOrder_FullLifecycle(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	storageNode, lineNode, bp := setupTestData(t, db)
+	storageNode, lineNode, bp := testdb.SetupTestData(t, db)
 
 	// Create a bin at the storage node with a manifest
 	bin := testdb.CreateBinAtNode(t, db, bp.Code, storageNode.ID, "BIN-RET-1")
@@ -119,7 +119,7 @@ func TestDispatcher_RetrieveOrder_FullLifecycle(t *testing.T) {
 func TestDispatcher_MoveOrder_FullLifecycle(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	storageNode, lineNode, bp := setupTestData(t, db)
+	storageNode, lineNode, bp := testdb.SetupTestData(t, db)
 
 	// Create a bin at storage node with a manifest
 	testdb.CreateBinAtNode(t, db, bp.Code, storageNode.ID, "BIN-MOV-1")
@@ -178,7 +178,7 @@ func TestDispatcher_MoveOrder_FullLifecycle(t *testing.T) {
 func TestDispatcher_MoveOrder_QueuesOnSaturatedNGRP(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	_, lineNode, bp := setupTestData(t, db)
+	_, lineNode, bp := testdb.SetupTestData(t, db)
 
 	syntheticType, err := db.GetNodeTypeByCode("NGRP")
 	if err != nil {
@@ -280,7 +280,7 @@ func TestDispatcher_MoveOrder_QueuesOnSaturatedNGRP(t *testing.T) {
 func TestDispatcher_ComplexOrder_QueuesOnSaturatedNGRP(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	_, lineNode, bp := setupTestData(t, db)
+	_, lineNode, bp := testdb.SetupTestData(t, db)
 
 	syntheticType, err := db.GetNodeTypeByCode("NGRP")
 	if err != nil {
@@ -380,7 +380,7 @@ func TestDispatcher_ComplexOrder_QueuesOnSaturatedNGRP(t *testing.T) {
 func TestDispatcher_CancelOrder(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	storageNode, lineNode, bp := setupTestData(t, db)
+	storageNode, lineNode, bp := testdb.SetupTestData(t, db)
 
 	// Create a bin with a manifest
 	bin := &bins.Bin{BinTypeID: 1, Label: "BIN-CAN-1", NodeID: &storageNode.ID, Status: "available"}
@@ -438,7 +438,7 @@ func TestDispatcher_CancelOrder(t *testing.T) {
 func TestDispatcher_RedirectOrder(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	storageNode, lineNode, bp := setupTestData(t, db)
+	storageNode, lineNode, bp := testdb.SetupTestData(t, db)
 
 	// Create another line node
 	lineNode2 := &nodes.Node{Name: "LINE2-IN", Enabled: true}
@@ -481,7 +481,7 @@ func TestDispatcher_RedirectOrder(t *testing.T) {
 func TestDispatcher_SyntheticNodeResolution(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	_, _, bp := setupTestData(t, db)
+	_, _, bp := testdb.SetupTestData(t, db)
 
 	// Look up the seeded synthetic node type (NGRP)
 	syntheticType, err := db.GetNodeTypeByCode("NGRP")
@@ -560,7 +560,7 @@ func TestDispatcher_SyntheticNodeResolution(t *testing.T) {
 func TestDispatcher_MultiOrderToSyntheticNGRP(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	_, _, _ = setupTestData(t, db)
+	_, _, _ = testdb.SetupTestData(t, db)
 
 	syntheticType, err := db.GetNodeTypeByCode("NGRP")
 	if err != nil {
@@ -689,7 +689,7 @@ func TestDispatcher_MultiOrderToSyntheticNGRP(t *testing.T) {
 func TestDispatcher_RetrieveEmptyToSyntheticNGRP(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	_, _, _ = setupTestData(t, db)
+	_, _, _ = testdb.SetupTestData(t, db)
 
 	syntheticType, _ := db.GetNodeTypeByCode("NGRP")
 
@@ -758,7 +758,7 @@ func TestDispatcher_RetrieveEmptyToSyntheticNGRP(t *testing.T) {
 func TestRetrieveEmpty_LaneSourceScopesToLane(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	_, _, _ = setupTestData(t, db)
+	_, _, _ = testdb.SetupTestData(t, db)
 
 	grpType, _ := db.GetNodeTypeByCode("NGRP")
 	lanType, _ := db.GetNodeTypeByCode("LANE")
@@ -822,7 +822,7 @@ func TestRetrieveEmpty_LaneSourceScopesToLane(t *testing.T) {
 func TestRetrieveEmpty_BuriedTriggersReshuffle(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	_, _, _ = setupTestData(t, db)
+	_, _, _ = testdb.SetupTestData(t, db)
 
 	grpType, _ := db.GetNodeTypeByCode("NGRP")
 	lanType, _ := db.GetNodeTypeByCode("LANE")
@@ -935,7 +935,7 @@ func TestRetrieveEmpty_BuriedTriggersReshuffle(t *testing.T) {
 func TestComplex_BuriedSourceTriggersReshuffle(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	_, _, _ = setupTestData(t, db)
+	_, _, _ = testdb.SetupTestData(t, db)
 
 	grpType, _ := db.GetNodeTypeByCode("NGRP")
 	lanType, _ := db.GetNodeTypeByCode("LANE")
@@ -1096,7 +1096,7 @@ func TestComplex_BuriedSourceTriggersReshuffle(t *testing.T) {
 func TestDispatcher_DotNotationBypassesResolver(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	_, _, bp := setupTestData(t, db)
+	_, _, bp := testdb.SetupTestData(t, db)
 
 	syntheticType, _ := db.GetNodeTypeByCode("NGRP")
 	zone := &nodes.Node{Name: "DOT-ZONE", IsSynthetic: true, NodeTypeID: &syntheticType.ID, Enabled: true}
@@ -1147,7 +1147,7 @@ func TestDispatcher_DotNotationBypassesResolver(t *testing.T) {
 func TestDispatcher_FleetFailure(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	storageNode, lineNode, bp := setupTestData(t, db)
+	storageNode, lineNode, bp := testdb.SetupTestData(t, db)
 
 	// Create a bin with a manifest
 	bin := &bins.Bin{BinTypeID: 1, Label: "BIN-FF-1", NodeID: &storageNode.ID, Status: "available"}
@@ -1198,7 +1198,7 @@ func TestDispatcher_FleetFailure(t *testing.T) {
 func TestDispatcher_PriorityHandling(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	storageNode, lineNode, bp := setupTestData(t, db)
+	storageNode, lineNode, bp := testdb.SetupTestData(t, db)
 
 	// Create bins with manifests
 	bin1 := &bins.Bin{BinTypeID: 1, Label: "BIN-PRI-1", NodeID: &storageNode.ID, Status: "available"}
@@ -1251,7 +1251,7 @@ func TestDispatcher_PriorityHandling(t *testing.T) {
 func TestHandleRetrieve_BinTracking(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	storageNode, lineNode, bp := setupTestData(t, db)
+	storageNode, lineNode, bp := testdb.SetupTestData(t, db)
 
 	// Create bin with manifest
 	bin := &bins.Bin{BinTypeID: 1, Label: "BIN-BT-1", NodeID: &storageNode.ID, Status: "available"}
@@ -1295,7 +1295,7 @@ func TestHandleRetrieve_BinTracking(t *testing.T) {
 func TestHandleOrderIngest(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	storageNode, _, bp := setupTestData(t, db)
+	storageNode, _, bp := testdb.SetupTestData(t, db)
 
 	// Set up payload_bin_types for compatible empty bin
 	bt, _ := db.GetBinTypeByCode("DEFAULT")
@@ -1598,7 +1598,7 @@ func TestDispatcher_MoveOrder_NGRPSource_BuriedBin(t *testing.T) {
 func TestDispatcher_MoveOrder_SameNode(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	storageNode, _, bp := setupTestData(t, db)
+	storageNode, _, bp := testdb.SetupTestData(t, db)
 
 	testdb.CreateBinAtNode(t, db, bp.Code, storageNode.ID, "BIN-SAME-1")
 

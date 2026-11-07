@@ -37,7 +37,7 @@ func TestLoaderOutbound_CoreAcceptsBothEdges(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			db := testDB(t)
-			_, lineNode, bp := setupTestData(t, db)
+			_, lineNode, bp := testdb.SetupTestData(t, db)
 			bp.RobotGroup = "HEAVY-1500"
 			testutil.MustNoErr(t, db.UpdatePayload(bp), "set robot group")
 			window := &nodes.Node{Name: "PLK-WIN-" + tc.name, Enabled: true}
@@ -85,7 +85,7 @@ func TestLoaderOutbound_CoreAcceptsBothEdges(t *testing.T) {
 func TestPayloadForDispatch_ReadsTheBinOnlyForABlankNeed(t *testing.T) {
 	t.Parallel()
 	db, cfg := testdb.OpenWithConfig(t)
-	storageNode, lineNode, bp := setupTestData(t, db)
+	storageNode, lineNode, bp := testdb.SetupTestData(t, db)
 
 	cdb, counter, err := store.OpenCounting(cfg)
 	testutil.MustNoErr(t, err, "open counting db")

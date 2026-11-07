@@ -21,7 +21,7 @@ import (
 func TestComplexDispatch_ApplyEndState(t *testing.T) {
 	t.Parallel()
 	db := testDBShared(t)
-	setupTestData(t, db)
+	testdb.SetupTestData(t, db)
 	d, _ := newTestDispatcher(t, db, testdb.NewTrackingBackend())
 
 	// Two independent pickup->dropoff pairs so each bin's destination is

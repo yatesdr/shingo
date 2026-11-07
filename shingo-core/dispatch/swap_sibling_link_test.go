@@ -41,7 +41,7 @@ import (
 func TestSwapRemovalLeg_DurableLinkSurvivesFailedIntakeLink(t *testing.T) {
 	t.Parallel()
 	db := testDBShared(t)
-	_, lineNode, bp := setupTestData(t, db)
+	_, lineNode, bp := testdb.SetupTestData(t, db)
 
 	superNode := &nodes.Node{Name: "SWAP-SUPER-DL", Enabled: true}
 	testutil.MustNoErr(t, db.CreateNode(superNode), "create super node")
@@ -121,7 +121,7 @@ func twoRobotEvacSteps(t *testing.T, lineName, destName string) string {
 func TestSwapSibling_ReverseBacklinkRepairedOnRead(t *testing.T) {
 	t.Parallel()
 	db := testDBShared(t)
-	_, lineNode, bp := setupTestData(t, db)
+	_, lineNode, bp := testdb.SetupTestData(t, db)
 
 	superNode := &nodes.Node{Name: "SWAP-SUPER-RB", Enabled: true}
 	testutil.MustNoErr(t, db.CreateNode(superNode), "create super node")
@@ -176,7 +176,7 @@ func TestSwapSibling_ReverseBacklinkRepairedOnRead(t *testing.T) {
 func TestSwapPeerTerminalRace_LiveLegResolvesDeadSibling(t *testing.T) {
 	t.Parallel()
 	db := testDBShared(t)
-	_, lineNode, bp := setupTestData(t, db)
+	_, lineNode, bp := testdb.SetupTestData(t, db)
 
 	superNode := &nodes.Node{Name: "SWAP-SUPER-RACE", Enabled: true}
 	testutil.MustNoErr(t, db.CreateNode(superNode), "create super node")

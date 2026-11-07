@@ -26,7 +26,7 @@ import (
 func TestHoldsAtRest_ComplexLaneWaitIsHeldAtTheMarkWithItsCause(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	_, _, bp := setupTestData(t, db)
+	_, _, bp := testdb.SetupTestData(t, db)
 	laneID, mouth := seamLane(t, db, "HAR-CPLX")
 	line := lineNode(t, db, "HAR-CPLX-LINE")
 	d, _ := newTestDispatcher(t, db, testdb.NewTrackingBackend())

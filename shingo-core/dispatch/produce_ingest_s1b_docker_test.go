@@ -24,7 +24,7 @@ import (
 func s1bIngestFixture(t *testing.T) (*Dispatcher, *bins.Bin, *payloads.Payload) {
 	t.Helper()
 	db := testDB(t)
-	_, _, bp := setupTestData(t, db)
+	_, _, bp := testdb.SetupTestData(t, db)
 	bp.UOPCapacity = 100
 	testutil.MustNoErr(t, db.UpdatePayload(bp), "payload capacity")
 	testutil.MustNoErr(t, db.CreatePayloadManifestItem(&payloads.ManifestItem{

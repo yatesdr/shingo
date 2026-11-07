@@ -18,7 +18,7 @@ import (
 func TestHandleOrderRelease_SecondReleasePastTheWaitDeclaresNothing(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	_, lineNode, bp := setupTestData(t, db)
+	_, lineNode, bp := testdb.SetupTestData(t, db)
 
 	d, _ := newTestDispatcher(t, db, testdb.NewTrackingBackend())
 	order, bin := stageComplexOrderWithLineBin(t, db, d, lineNode, bp, "uuid-second-release", "BIN-SECOND-RELEASE")

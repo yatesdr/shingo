@@ -28,7 +28,7 @@ import (
 func windowHeldBy(t *testing.T, prefix string, confirmed bool) (*store.DB, *nodes.Node, int64, []protocol.OrderError) {
 	t.Helper()
 	db := testdb.IssueCensusDB(t)
-	storage, _, bp := setupTestData(t, db)
+	storage, _, bp := testdb.SetupTestData(t, db)
 	drop := &nodes.Node{Name: prefix + "-DROP", Enabled: true, NodeTypeID: storage.NodeTypeID}
 	testutil.MustNoErr(t, db.CreateNode(drop), "the move's drop")
 	cart := testdb.CreateBinAtNode(t, db, bp.Code, storage.ID, prefix+"-CART")

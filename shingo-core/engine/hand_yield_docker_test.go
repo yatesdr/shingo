@@ -10,6 +10,7 @@ import (
 	"shingo/protocol/testutil"
 	"shingocore/dispatch"
 	"shingocore/fleet/simulator"
+	"shingocore/internal/testdb"
 	"shingocore/store"
 	"shingocore/store/orders"
 	"shingocore/store/reservations"
@@ -64,7 +65,7 @@ func assertDispatchedWithItsClaim(t *testing.T, db *store.DB, sim *simulator.Sim
 func TestBinMove_APassCannotRunInsideTheDoorsAcquire(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	storageNode, lineNode, _ := setupTestData(t, db)
+	storageNode, lineNode, _ := testdb.SetupTestData(t, db)
 	bin := createTestBinAtNode(t, db, "PART-A", storageNode.ID, "BIN-HAND-LOSES")
 	sim := simulator.New()
 	eng := newTestEngine(t, db, sim)
@@ -119,7 +120,7 @@ func TestBinMove_APassCannotRunInsideTheDoorsAcquire(t *testing.T) {
 func TestScanner_LosingTheCASToAHandYields(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	storageNode, lineNode, _ := setupTestData(t, db)
+	storageNode, lineNode, _ := testdb.SetupTestData(t, db)
 	bin := createTestBinAtNode(t, db, "PART-A", storageNode.ID, "BIN-SCANNER-LOSES")
 	sim := simulator.New()
 	eng := newTestEngine(t, db, sim)

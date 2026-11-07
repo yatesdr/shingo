@@ -74,7 +74,7 @@ func hasSwapHalfAudit(t *testing.T, db *store.DB, orderID int64) bool {
 func TestSwapPeerTerminal_SupplyFails_CancelsLiveEvac(t *testing.T) {
 	t.Parallel()
 	db := testDBShared(t)
-	_, lineNode, bp := setupTestData(t, db)
+	_, lineNode, bp := testdb.SetupTestData(t, db)
 	store1 := &nodes.Node{Name: "SWAP-STORE-1", Enabled: true}
 	testutil.MustNoErr(t, db.CreateNode(store1), "create store node")
 	d, _ := newTestDispatcher(t, db, testdb.NewTrackingBackend())
@@ -97,7 +97,7 @@ func TestSwapPeerTerminal_SupplyFails_CancelsLiveEvac(t *testing.T) {
 func TestSwapPeerTerminal_EvacFails_CancelsLiveSupply(t *testing.T) {
 	t.Parallel()
 	db := testDBShared(t)
-	_, lineNode, bp := setupTestData(t, db)
+	_, lineNode, bp := testdb.SetupTestData(t, db)
 	store1 := &nodes.Node{Name: "SWAP-STORE-2", Enabled: true}
 	testutil.MustNoErr(t, db.CreateNode(store1), "create store node")
 	d, _ := newTestDispatcher(t, db, testdb.NewTrackingBackend())
@@ -122,7 +122,7 @@ func TestSwapPeerTerminal_EvacFails_CancelsLiveSupply(t *testing.T) {
 func TestSwapPeerTerminal_SupplyFails_EvacDelivered_Surfaces(t *testing.T) {
 	t.Parallel()
 	db := testDBShared(t)
-	_, lineNode, bp := setupTestData(t, db)
+	_, lineNode, bp := testdb.SetupTestData(t, db)
 	store1 := &nodes.Node{Name: "SWAP-STORE-3", Enabled: true}
 	testutil.MustNoErr(t, db.CreateNode(store1), "create store node")
 	d, _ := newTestDispatcher(t, db, testdb.NewTrackingBackend())
@@ -148,7 +148,7 @@ func TestSwapPeerTerminal_SupplyFails_EvacDelivered_Surfaces(t *testing.T) {
 func TestSwapPeerTerminal_DoubleTerminal_NoAction(t *testing.T) {
 	t.Parallel()
 	db := testDBShared(t)
-	_, lineNode, bp := setupTestData(t, db)
+	_, lineNode, bp := testdb.SetupTestData(t, db)
 	store1 := &nodes.Node{Name: "SWAP-STORE-4", Enabled: true}
 	testutil.MustNoErr(t, db.CreateNode(store1), "create store node")
 	d, _ := newTestDispatcher(t, db, testdb.NewTrackingBackend())
@@ -174,7 +174,7 @@ func TestSwapPeerTerminal_DoubleTerminal_NoAction(t *testing.T) {
 func TestSwapPeerTerminal_EvacSkipped_LeavesSupply(t *testing.T) {
 	t.Parallel()
 	db := testDBShared(t)
-	_, lineNode, bp := setupTestData(t, db)
+	_, lineNode, bp := testdb.SetupTestData(t, db)
 	store1 := &nodes.Node{Name: "SWAP-STORE-5", Enabled: true}
 	testutil.MustNoErr(t, db.CreateNode(store1), "create store node")
 	d, _ := newTestDispatcher(t, db, testdb.NewTrackingBackend())
@@ -203,7 +203,7 @@ func TestSwapPeerTerminal_EvacSkipped_LeavesSupply(t *testing.T) {
 func TestSwapPeerTerminal_PressIndexR2Skipped_CancelsEvac(t *testing.T) {
 	t.Parallel()
 	db := testDBShared(t)
-	_, press, bp := setupTestData(t, db)
+	_, press, bp := testdb.SetupTestData(t, db)
 	market := &nodes.Node{Name: "SWAP-STORE-6", Enabled: true}
 	testutil.MustNoErr(t, db.CreateNode(market), "create market node")
 	d, _ := newTestDispatcher(t, db, testdb.NewTrackingBackend())
@@ -247,7 +247,7 @@ func TestSwapPeerTerminal_PressIndexR2Skipped_CancelsEvac(t *testing.T) {
 func TestSwapPeerTerminal_Abandoned_LeavesPartner(t *testing.T) {
 	t.Parallel()
 	db := testDBShared(t)
-	_, lineNode, bp := setupTestData(t, db)
+	_, lineNode, bp := testdb.SetupTestData(t, db)
 	store1 := &nodes.Node{Name: "SWAP-STORE-AB", Enabled: true}
 	testutil.MustNoErr(t, db.CreateNode(store1), "create store node")
 	d, _ := newTestDispatcher(t, db, testdb.NewTrackingBackend())
@@ -322,7 +322,7 @@ func TestSwapPeerTerminal_PressIndex2_EachDeathTakesThePartner(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			db := testDBShared(t)
-			_, press, bp := setupTestData(t, db)
+			_, press, bp := testdb.SetupTestData(t, db)
 			d, _ := newTestDispatcher(t, db, testdb.NewTrackingBackend())
 			r1Steps, r2Steps := pressIndex2(press.Name, tc.prefix+"-BACK", tc.prefix+"-OUT", tc.prefix+"-IN")
 			r1 := mkSwapLegWithSteps(t, db, tc.prefix+"-r1", tc.prefix+"-r2", tc.r1Status, press.Name,
@@ -357,7 +357,7 @@ func TestSwapPeerTerminal_PressIndex2_EachDeathTakesThePartner(t *testing.T) {
 func TestSwapPeerTerminal_PressIndex2_R1SkippedLeavesR2(t *testing.T) {
 	t.Parallel()
 	db := testDBShared(t)
-	_, press, bp := setupTestData(t, db)
+	_, press, bp := testdb.SetupTestData(t, db)
 	d, _ := newTestDispatcher(t, db, testdb.NewTrackingBackend())
 	r1Steps, r2Steps := pressIndex2(press.Name, "PI2S-BACK", "PI2S-OUT", "PI2S-IN")
 	r1 := mkSwapLegWithSteps(t, db, "PI2S-r1", "PI2S-r2", StatusSkipped, press.Name, "PI2S-BACK", bp.Code, r1Steps)

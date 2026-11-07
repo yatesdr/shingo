@@ -98,7 +98,7 @@ func occupiedStorageDropoff(t *testing.T, db *store.DB, d *Dispatcher, lineNode 
 func TestDispatchPreparedComplex_DropoffOccupiedQueuesThenReleases(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	_, lineNode, bp := setupTestData(t, db)
+	_, lineNode, bp := testdb.SetupTestData(t, db)
 	d, _ := newTestDispatcher(t, db, testdb.NewTrackingBackend())
 
 	slot, occupant, orderUUID := occupiedStorageDropoff(t, db, d, lineNode, bp)

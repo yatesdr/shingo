@@ -27,7 +27,7 @@ import (
 func TestSlotClaim_NoABBADeadlock(t *testing.T) {
 	t.Parallel()
 	db := testDBShared(t)
-	_, lineNode, bp := setupTestData(t, db)
+	_, lineNode, bp := testdb.SetupTestData(t, db)
 	d, _ := newTestDispatcher(t, db, testdb.NewTrackingBackend())
 
 	// Two fixed-concrete storage slots under one NGRP.

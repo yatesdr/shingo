@@ -27,7 +27,7 @@ import (
 func TestFinderPin_LoaderPoolFillTakesAnEmptyOnItsOwnHome(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	_, lineNode, _ := setupTestData(t, db)
+	_, lineNode, _ := testdb.SetupTestData(t, db)
 	pos, _ := dedicatedLoaderFixture(t, db, "produce")
 	empty := makeEmptyBin(t, db, pos.ID, "pool-home-empty")
 
@@ -52,7 +52,7 @@ func TestFinderPin_LoaderPoolFillTakesAnEmptyOnItsOwnHome(t *testing.T) {
 func TestFinderPin_HomeRefillFromGroupTakesItsLoadersBufferEmpty(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	setupTestData(t, db)
+	testdb.SetupTestData(t, db)
 	grpID, err := nodes.CreateGroup(db.DB, "SPR-SMKT")
 	testutil.MustNoErr(t, err, "create group")
 	testdb.MarkGroup(t, db, grpID)
@@ -88,7 +88,7 @@ func TestFinderPin_HomeRefillFromGroupTakesItsLoadersBufferEmpty(t *testing.T) {
 func TestFinderPin_MoveTakesTheEmptyOnALoaderWindow(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	_, lineNode, _ := setupTestData(t, db)
+	_, lineNode, _ := testdb.SetupTestData(t, db)
 
 	window := &nodes.Node{Name: "POOLPIN-WIN-1", Enabled: true}
 	testutil.MustNoErr(t, db.CreateNode(window), "create window")

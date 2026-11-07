@@ -37,7 +37,7 @@ import (
 func TestC2aPin_AFullOnACarrierItsPartMayNotRideIsStoredHeld(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	setupTestData(t, db)
+	testdb.SetupTestData(t, db)
 	grpType, err := db.GetNodeTypeByCode("NGRP")
 	testutil.MustNoErr(t, err, "NGRP type")
 

@@ -28,7 +28,7 @@ import (
 func TestCreateBinMove_Success_PersistsAndDispatches(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	storageNode, lineNode, _ := setupTestData(t, db)
+	storageNode, lineNode, _ := testdb.SetupTestData(t, db)
 	createTestBinAtNode(t, db, "PART-A", storageNode.ID, "BIN-DIRECT-OK")
 	eng := newTestEngine(t, db, simulator.New())
 
@@ -92,7 +92,7 @@ func TestCreateBinMove_Success_PersistsAndDispatches(t *testing.T) {
 func TestCreateBinMove_SameSourceAndDest(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	storageNode, _, _ := setupTestData(t, db)
+	storageNode, _, _ := testdb.SetupTestData(t, db)
 	eng := newTestEngine(t, db, simulator.New())
 
 	res, err := eng.CreateBinMove(BinMoveRequest{Selection: BinSelectionAuto,
@@ -114,7 +114,7 @@ func TestCreateBinMove_SameSourceAndDest(t *testing.T) {
 func TestCreateBinMove_MissingSourceNode(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	_, lineNode, _ := setupTestData(t, db)
+	_, lineNode, _ := testdb.SetupTestData(t, db)
 	eng := newTestEngine(t, db, simulator.New())
 
 	_, err := eng.CreateBinMove(BinMoveRequest{Selection: BinSelectionAuto,
@@ -133,7 +133,7 @@ func TestCreateBinMove_MissingSourceNode(t *testing.T) {
 func TestCreateBinMove_MissingDestNode(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	storageNode, _, _ := setupTestData(t, db)
+	storageNode, _, _ := testdb.SetupTestData(t, db)
 	eng := newTestEngine(t, db, simulator.New())
 
 	_, err := eng.CreateBinMove(BinMoveRequest{Selection: BinSelectionAuto,
@@ -156,7 +156,7 @@ func TestCreateBinMove_MissingDestNode(t *testing.T) {
 func TestCreateBinMove_FleetRefusalQueues(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	storageNode, lineNode, _ := setupTestData(t, db)
+	storageNode, lineNode, _ := testdb.SetupTestData(t, db)
 	bin := createTestBinAtNode(t, db, "PART-A", storageNode.ID, "BIN-DIRECT-FAIL")
 	sim := simulator.New(simulator.WithCreateFailure())
 	eng := newTestEngine(t, db, sim)
@@ -203,7 +203,7 @@ func TestCreateBinMove_FleetRefusalQueues(t *testing.T) {
 func TestTerminateOrder_CancelsActiveOrder(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	storageNode, lineNode, _ := setupTestData(t, db)
+	storageNode, lineNode, _ := testdb.SetupTestData(t, db)
 	createTestBinAtNode(t, db, "PART-A", storageNode.ID, "BIN-TERMINATE")
 	eng := newTestEngine(t, db, simulator.New())
 
@@ -252,7 +252,7 @@ func TestTerminateOrder_CancelsActiveOrder(t *testing.T) {
 func TestTerminateOrder_RejectsTerminalStatus(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	setupTestData(t, db)
+	testdb.SetupTestData(t, db)
 	eng := newTestEngine(t, db, simulator.New())
 
 	order := &orders.Order{
@@ -295,7 +295,7 @@ func TestTerminateOrder_MissingOrder(t *testing.T) {
 func TestFailOrderAndEmit_PopulatesEventFromDB(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	setupTestData(t, db)
+	testdb.SetupTestData(t, db)
 	eng := newTestEngine(t, db, simulator.New())
 
 	order := &orders.Order{

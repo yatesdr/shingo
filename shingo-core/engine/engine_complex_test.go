@@ -35,7 +35,7 @@ import (
 func TestComplexOrder_CancelMidTransit(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	storageNode, lineNode, bp := setupTestData(t, db)
+	storageNode, lineNode, bp := testdb.SetupTestData(t, db)
 	bin := createTestBinAtNode(t, db, bp.Code, storageNode.ID, "BIN-CXCANCEL")
 
 	sim := simulator.New()
@@ -128,7 +128,7 @@ func TestComplexOrder_CancelMidTransit(t *testing.T) {
 func TestComplexOrder_FleetFailureMidTransit(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	storageNode, lineNode, bp := setupTestData(t, db)
+	storageNode, lineNode, bp := testdb.SetupTestData(t, db)
 	bin := createTestBinAtNode(t, db, bp.Code, storageNode.ID, "BIN-CXFAIL")
 
 	sim := simulator.New()
@@ -192,7 +192,7 @@ func TestComplexOrder_FleetFailureMidTransit(t *testing.T) {
 func TestComplexOrder_EmptyPostWaitRelease(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	storageNode, lineNode, bp := setupTestData(t, db)
+	storageNode, lineNode, bp := testdb.SetupTestData(t, db)
 	bin := createTestBinAtNode(t, db, bp.Code, storageNode.ID, "BIN-EPWAIT")
 
 	sim := simulator.New()
@@ -277,7 +277,7 @@ func TestComplexOrder_EmptyPostWaitRelease(t *testing.T) {
 func TestComplexOrder_RedirectStaleStepsJSON(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	storageNode, lineNode, bp := setupTestData(t, db)
+	storageNode, lineNode, bp := testdb.SetupTestData(t, db)
 	_ = createTestBinAtNode(t, db, bp.Code, storageNode.ID, "BIN-REDIR")
 
 	// Create a third node to be the redirect target
@@ -357,7 +357,7 @@ func TestComplexOrder_RedirectStaleStepsJSON(t *testing.T) {
 func TestComplexOrder_GhostRobotNoBin(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	_, lineNode, bp := setupTestData(t, db)
+	_, lineNode, bp := testdb.SetupTestData(t, db)
 
 	// Create an empty pickup node — no bins at all
 	emptyNode := &nodes.Node{Name: "EMPTY-PICKUP", Enabled: true}
@@ -423,7 +423,7 @@ func TestComplexOrder_GhostRobotNoBin(t *testing.T) {
 func TestComplexOrder_ConcurrentSameNodeDoubleClaimRace(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	storageNode, lineNode, bp := setupTestData(t, db)
+	storageNode, lineNode, bp := testdb.SetupTestData(t, db)
 	bin := createTestBinAtNode(t, db, bp.Code, storageNode.ID, "BIN-RACE")
 
 	sim := simulator.New()
@@ -494,7 +494,7 @@ func TestComplexOrder_ConcurrentSameNodeDoubleClaimRace(t *testing.T) {
 // and bin movement for a real-world order flow.
 // =============================================================================
 
-// setupProductionNodes extends setupTestData with three additional nodes needed
+// setupProductionNodes extends testdb.SetupTestData with three additional nodes needed
 // by production cycle patterns: INBOUND-STAGING, OUTBOUND-STAGING, OUTBOUND-DEST.
 func setupProductionNodes(t *testing.T, db *store.DB) (
 	storageNode, lineNode *nodes.Node,
@@ -502,7 +502,7 @@ func setupProductionNodes(t *testing.T, db *store.DB) (
 	bp *payloads.Payload,
 ) {
 	t.Helper()
-	storageNode, lineNode, bp = setupTestData(t, db)
+	storageNode, lineNode, bp = testdb.SetupTestData(t, db)
 
 	inboundStaging = &nodes.Node{Name: "INBOUND-STAGING", Enabled: true}
 	testutil.MustNoErr(t, db.CreateNode(inboundStaging), "create inbound staging node")
@@ -1243,7 +1243,7 @@ func TestComplexOrder_SingleRobotSwap(t *testing.T) {
 func TestComplexOrder_DoubleWait(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	_, lineNode, bp := setupTestData(t, db)
+	_, lineNode, bp := testdb.SetupTestData(t, db)
 	// A store holding two bins, so not a STOR slot: a STOR node is one
 	// carrier's at a time for a complex step as for a plain order (2026-10-25),
 	// and a drop there while the second bin still stands would wait.

@@ -29,7 +29,7 @@ import (
 func TestEvacBindsResidentOffStyleBin(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	_, lineNode, bp := setupTestData(t, db)
+	_, lineNode, bp := testdb.SetupTestData(t, db)
 
 	superNode := &nodes.Node{Name: "EVAC-OFFSTYLE-SUPER", Enabled: true}
 	testutil.MustNoErr(t, db.CreateNode(superNode), "create super node")
@@ -79,7 +79,7 @@ func TestEvacBindsResidentOffStyleBin(t *testing.T) {
 func TestFullDepletion_ClearsManifest(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	_, lineNode, bp := setupTestData(t, db)
+	_, lineNode, bp := testdb.SetupTestData(t, db)
 
 	// Create a line node (process node) and a filled bin there
 	processNode := &nodes.Node{Name: "LINE1-CONSUME", Enabled: true}
@@ -141,7 +141,7 @@ func TestFullDepletion_ClearsManifest(t *testing.T) {
 func TestPartialConsumption_SyncsUOP(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	_, lineNode, bp := setupTestData(t, db)
+	_, lineNode, bp := testdb.SetupTestData(t, db)
 
 	processNode := &nodes.Node{Name: "LINE1-PARTIAL", Enabled: true}
 	db.CreateNode(processNode)
@@ -224,7 +224,7 @@ func TestPartialConsumption_SyncsUOP(t *testing.T) {
 func TestConcurrentRetrieveEmpty_BothClaimed_NoOverlap(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	_, _, _ = setupTestData(t, db)
+	_, _, _ = testdb.SetupTestData(t, db)
 
 	// Create a payload with bin type compatibility
 	bp := &payloads.Payload{Code: "RACE-BP"}
@@ -335,7 +335,7 @@ func TestComplexOrder_RemainingUOP_ProcessNodeOnly(t *testing.T) {
 	t.Parallel()
 	t.Skip("Phase 4b: RemainingUOP-at-intake deferred until persisted on order row")
 	db := testDB(t)
-	_, _, bp := setupTestData(t, db)
+	_, _, bp := testdb.SetupTestData(t, db)
 
 	processNode := &nodes.Node{Name: "COMPLEX-LINE1", Enabled: true}
 	db.CreateNode(processNode)
@@ -478,7 +478,7 @@ func stageComplexOrderWithLineBin(t *testing.T, db *store.DB, d *Dispatcher, lin
 func TestHandleOrderRelease_RemainingUOPZeroClearsManifest(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	_, lineNode, bp := setupTestData(t, db)
+	_, lineNode, bp := testdb.SetupTestData(t, db)
 
 	d, _ := newTestDispatcher(t, db, testdb.NewTrackingBackend())
 	_, bin := stageComplexOrderWithLineBin(t, db, d, lineNode, bp, "uuid-rel-zero", "BIN-REL-ZERO")
@@ -509,7 +509,7 @@ func TestHandleOrderRelease_RemainingUOPZeroClearsManifest(t *testing.T) {
 func TestHandleOrderRelease_RemainingUOPPositiveSyncsUOP(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	_, lineNode, bp := setupTestData(t, db)
+	_, lineNode, bp := testdb.SetupTestData(t, db)
 
 	d, _ := newTestDispatcher(t, db, testdb.NewTrackingBackend())
 	_, bin := stageComplexOrderWithLineBin(t, db, d, lineNode, bp, "uuid-rel-pos", "BIN-REL-POS")
@@ -541,7 +541,7 @@ func TestHandleOrderRelease_RemainingUOPPositiveSyncsUOP(t *testing.T) {
 func TestHandleOrderRelease_RemainingUOPNilLeavesManifestAlone(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	_, lineNode, bp := setupTestData(t, db)
+	_, lineNode, bp := testdb.SetupTestData(t, db)
 
 	d, _ := newTestDispatcher(t, db, testdb.NewTrackingBackend())
 	_, bin := stageComplexOrderWithLineBin(t, db, d, lineNode, bp, "uuid-rel-nil", "BIN-REL-NIL")
@@ -602,7 +602,7 @@ func TestHandleOrderRelease_ACountLandsOnlyOnTheCartAtTheLine(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			t.Parallel()
 			db := testDB(t)
-			_, lineNode, bp := setupTestData(t, db)
+			_, lineNode, bp := testdb.SetupTestData(t, db)
 			at := map[string]*nodes.Node{}
 			for _, n := range []string{"G-IN", "G-STG", "G-OUT"} {
 				at[n] = &nodes.Node{Name: n, Enabled: true}
@@ -661,7 +661,7 @@ func TestHandleOrderRelease_ACountLandsOnlyOnTheCartAtTheLine(t *testing.T) {
 func TestHandleOrderRelease_BinIDNilFallbackClearsManifest(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	_, lineNode, bp := setupTestData(t, db)
+	_, lineNode, bp := testdb.SetupTestData(t, db)
 
 	// Bin physically at the line with manifest intact (the OLD bin
 	// the line consumed down to zero — Edge knows it's empty, Core
@@ -728,7 +728,7 @@ func TestHandleOrderRelease_BinIDNilFallbackClearsManifest(t *testing.T) {
 func TestDispatchPreparedComplex_QueuesOnFullConcreteStorageDropoff(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	_, lineNode, bp := setupTestData(t, db)
+	_, lineNode, bp := testdb.SetupTestData(t, db)
 
 	// Concrete storage slot under an NGRP, occupied → CheckDropoffCapacity blocks.
 	grpType, err := db.GetNodeTypeByCode("NGRP")
@@ -788,7 +788,7 @@ func TestDispatchPreparedComplex_QueuesOnFullConcreteStorageDropoff(t *testing.T
 func TestStorageDropoff_RoleGate(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	storage, lineNode, _ := setupTestData(t, db)
+	storage, lineNode, _ := testdb.SetupTestData(t, db)
 	d, _ := newTestDispatcher(t, db, testdb.NewTrackingBackend())
 
 	grpType, err := db.GetNodeTypeByCode("NGRP")
@@ -834,7 +834,7 @@ func TestStorageDropoff_RoleGate(t *testing.T) {
 func TestHandleOrderRelease_BinIDNilFallbackPrefersClaim(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	_, lineNode, bp := setupTestData(t, db)
+	_, lineNode, bp := testdb.SetupTestData(t, db)
 
 	// Set up a "transit" node so the bin can sit somewhere other than
 	// the line. Doesn't have to be the synthetic _TRANSIT — any non-
@@ -893,7 +893,7 @@ func TestHandleOrderRelease_BinIDNilFallbackPrefersClaim(t *testing.T) {
 func TestHandleOrderRelease_BinIDNilFallbackSyncsPartial(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	_, lineNode, bp := setupTestData(t, db)
+	_, lineNode, bp := testdb.SetupTestData(t, db)
 
 	bin := &bins.Bin{BinTypeID: 1, Label: "BIN-FALLBACK-PART", NodeID: &lineNode.ID, Status: "staged"}
 	testutil.MustNoErr(t, db.CreateBin(bin), "create bin")
@@ -951,7 +951,7 @@ func TestHandleOrderRelease_BinIDNilFallbackSyncsPartial(t *testing.T) {
 func TestHandleOrderRelease_InTransitWithNoMoreSegmentsIsNoOp(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	_, lineNode, bp := setupTestData(t, db)
+	_, lineNode, bp := testdb.SetupTestData(t, db)
 
 	d, _ := newTestDispatcher(t, db, testdb.NewTrackingBackend())
 	order, _ := stageComplexOrderWithLineBin(t, db, d, lineNode, bp, "uuid-in-transit-noop", "BIN-IN-TRANSIT-NOOP")
@@ -998,7 +998,7 @@ func TestHandleOrderRelease_InTransitWithNoMoreSegmentsIsNoOp(t *testing.T) {
 func TestHandleOrderRelease_FaultedLegIsNoOp(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	_, lineNode, bp := setupTestData(t, db)
+	_, lineNode, bp := testdb.SetupTestData(t, db)
 
 	d, _ := newTestDispatcher(t, db, testdb.NewTrackingBackend())
 	order, _ := stageComplexOrderWithLineBin(t, db, d, lineNode, bp, "uuid-faulted-noop", "BIN-FAULTED-NOOP")
@@ -1042,7 +1042,7 @@ func TestHandleOrderRelease_FaultedLegIsNoOp(t *testing.T) {
 func TestHandleOrderRelease_InTransitPastAStationWaitIsANoOp(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	_, lineNode, bp := setupTestData(t, db)
+	_, lineNode, bp := testdb.SetupTestData(t, db)
 
 	destNode := &nodes.Node{Name: "MULTI-WAIT-DEST", Enabled: true}
 	testutil.MustNoErr(t, db.CreateNode(destNode), "create dest node")
@@ -1105,7 +1105,7 @@ func TestHandleOrderRelease_InTransitPastAStationWaitIsANoOp(t *testing.T) {
 func TestDispatchPreparedComplex_NoSourceBinSkipsNotFails(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	_, lineNode, bp := setupTestData(t, db)
+	_, lineNode, bp := testdb.SetupTestData(t, db)
 
 	// Source and destination nodes exist; source has NO bin (the bin was
 	// pulled to quality hold before this dispatch tick).
@@ -1165,7 +1165,7 @@ func TestDispatchPreparedComplex_NoSourceBinSkipsNotFails(t *testing.T) {
 func TestDispatchPreparedComplex_BinClaimedElsewhereHolds(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	_, _, bp := setupTestData(t, db)
+	_, _, bp := testdb.SetupTestData(t, db)
 
 	sourceNode := &nodes.Node{Name: "ALN-CLAIMED-1", Enabled: true}
 	testutil.MustNoErr(t, db.CreateNode(sourceNode), "create source node")

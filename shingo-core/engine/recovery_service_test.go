@@ -44,7 +44,7 @@ func TestNewRecoveryService_WiresEngine(t *testing.T) {
 func TestReapplyOrderCompletion_Success(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	storageNode, lineNode, bp := setupTestData(t, db)
+	storageNode, lineNode, bp := testdb.SetupTestData(t, db)
 	eng := newTestEngine(t, db, simulator.New())
 
 	bin := createTestBinAtNode(t, db, bp.Code, storageNode.ID, "BIN-REAPPLY")
@@ -113,7 +113,7 @@ func TestReapplyOrderCompletion_Success(t *testing.T) {
 func TestReapplyOrderCompletion_SkipsCMSBuildForReplay(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	_, _, bp := setupTestData(t, db)
+	_, _, bp := testdb.SetupTestData(t, db)
 	eng := newTestEngine(t, db, simulator.New())
 
 	srcRoot, srcSlot := makeCMSBoundary(t, db, "RPL-SRC")
@@ -177,7 +177,7 @@ func TestReapplyOrderCompletion_SkipsCMSBuildForReplay(t *testing.T) {
 func TestReapplyOrderCompletion_RejectsAlreadyCompleted(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	storageNode, lineNode, bp := setupTestData(t, db)
+	storageNode, lineNode, bp := testdb.SetupTestData(t, db)
 	eng := newTestEngine(t, db, simulator.New())
 
 	bin := createTestBinAtNode(t, db, bp.Code, storageNode.ID, "BIN-REAPPLY-DONE")
@@ -224,7 +224,7 @@ func TestReapplyOrderCompletion_RejectsMissingOrder(t *testing.T) {
 func TestReapplyOrderCompletion_RejectsNoBin(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	setupTestData(t, db)
+	testdb.SetupTestData(t, db)
 	eng := newTestEngine(t, db, simulator.New())
 
 	order := &orders.Order{
@@ -253,7 +253,7 @@ func TestReapplyOrderCompletion_RejectsNoBin(t *testing.T) {
 func TestReleaseTerminalBinClaim_Success(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	storageNode, _, bp := setupTestData(t, db)
+	storageNode, _, bp := testdb.SetupTestData(t, db)
 	eng := newTestEngine(t, db, simulator.New())
 
 	bin := createTestBinAtNode(t, db, bp.Code, storageNode.ID, "BIN-RELEASE-TERM")
@@ -290,7 +290,7 @@ func TestReleaseTerminalBinClaim_Success(t *testing.T) {
 func TestReleaseTerminalBinClaim_RefusesActiveClaim(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	storageNode, _, bp := setupTestData(t, db)
+	storageNode, _, bp := testdb.SetupTestData(t, db)
 	eng := newTestEngine(t, db, simulator.New())
 
 	bin := createTestBinAtNode(t, db, bp.Code, storageNode.ID, "BIN-ACTIVE")
@@ -319,7 +319,7 @@ func TestReleaseTerminalBinClaim_RefusesActiveClaim(t *testing.T) {
 func TestReleaseStagedBin_Success(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	storageNode, _, bp := setupTestData(t, db)
+	storageNode, _, bp := testdb.SetupTestData(t, db)
 	eng := newTestEngine(t, db, simulator.New())
 
 	bin := createTestBinAtNode(t, db, bp.Code, storageNode.ID, "BIN-STAGED")
@@ -349,7 +349,7 @@ func TestReleaseStagedBin_Success(t *testing.T) {
 func TestReleaseStagedBin_RejectsNonStaged(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	storageNode, _, bp := setupTestData(t, db)
+	storageNode, _, bp := testdb.SetupTestData(t, db)
 	eng := newTestEngine(t, db, simulator.New())
 
 	bin := createTestBinAtNode(t, db, bp.Code, storageNode.ID, "BIN-NOT-STAGED")
@@ -380,7 +380,7 @@ func TestReleaseStagedBin_MissingBin(t *testing.T) {
 func TestCancelStuckOrder_Success(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	storageNode, lineNode, _ := setupTestData(t, db)
+	storageNode, lineNode, _ := testdb.SetupTestData(t, db)
 	createTestBinAtNode(t, db, "PART-A", storageNode.ID, "BIN-STUCK")
 	eng := newTestEngine(t, db, simulator.New())
 
@@ -420,7 +420,7 @@ func TestCancelStuckOrder_Success(t *testing.T) {
 func TestCancelStuckOrder_RejectsTerminal(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	setupTestData(t, db)
+	testdb.SetupTestData(t, db)
 	eng := newTestEngine(t, db, simulator.New())
 
 	order := &orders.Order{
@@ -456,7 +456,7 @@ func TestCancelStuckOrder_MissingOrder(t *testing.T) {
 func TestRecoverFaultedOrder_Success(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	storageNode, lineNode, _ := setupTestData(t, db)
+	storageNode, lineNode, _ := testdb.SetupTestData(t, db)
 	createTestBinAtNode(t, db, "PART-FT", storageNode.ID, "BIN-FT-1")
 	eng := newTestEngine(t, db, simulator.New())
 
@@ -503,7 +503,7 @@ func TestRecoverFaultedOrder_Success(t *testing.T) {
 func TestRecoverFaultedOrder_RejectsNonFaulted(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	storageNode, lineNode, _ := setupTestData(t, db)
+	storageNode, lineNode, _ := testdb.SetupTestData(t, db)
 	createTestBinAtNode(t, db, "PART-FT2", storageNode.ID, "BIN-FT-2")
 	eng := newTestEngine(t, db, simulator.New())
 
@@ -531,7 +531,7 @@ func TestRecoverFaultedOrder_RejectsNonFaulted(t *testing.T) {
 func TestReissueTerminate_Success(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	storageNode, lineNode, _ := setupTestData(t, db)
+	storageNode, lineNode, _ := testdb.SetupTestData(t, db)
 	createTestBinAtNode(t, db, "PART-RT", storageNode.ID, "BIN-RT-1")
 	eng := newTestEngine(t, db, simulator.New())
 
@@ -571,7 +571,7 @@ func TestReissueTerminate_Success(t *testing.T) {
 func TestReissueTerminate_RejectsNonFailed(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	storageNode, lineNode, _ := setupTestData(t, db)
+	storageNode, lineNode, _ := testdb.SetupTestData(t, db)
 	createTestBinAtNode(t, db, "PART-RT2", storageNode.ID, "BIN-RT-2")
 	eng := newTestEngine(t, db, simulator.New())
 

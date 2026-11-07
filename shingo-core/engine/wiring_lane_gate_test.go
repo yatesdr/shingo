@@ -68,7 +68,7 @@ func TestLaneGateWiring_HeldCompoundLegResumesOnLaneClearingEvent(t *testing.T) 
 	t.Parallel()
 
 	db := testDB(t)
-	_, lineNode, _ := setupTestData(t, db)
+	_, lineNode, _ := testdb.SetupTestData(t, db)
 	lane, slots := laneWithSlots(t, db, "WIRED-LANE", 3)
 
 	parent := &orders.Order{

@@ -98,7 +98,7 @@ func payloadWithDistinctPart(t *testing.T, db *store.DB, tag string) (*payloads.
 func TestRegression_15_PartialBackReconstructsManifest(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	_, lineNode, _ := setupTestData(t, db)
+	_, lineNode, _ := testdb.SetupTestData(t, db)
 	bp, wantPart := payloadWithDistinctPart(t, db, "REG15-POS")
 
 	d, _ := newTestDispatcher(t, db, testdb.NewTrackingBackend())
@@ -152,7 +152,7 @@ func TestRegression_15_PartialBackReconstructsManifest(t *testing.T) {
 func TestRegression_15_PartialBackFallbackReconstructsManifest(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	_, lineNode, _ := setupTestData(t, db)
+	_, lineNode, _ := testdb.SetupTestData(t, db)
 	bp, wantPart := payloadWithDistinctPart(t, db, "REG15-FB")
 
 	bin := &bins.Bin{BinTypeID: 1, Label: "BIN-REG15-FB-PART", NodeID: &lineNode.ID, Status: "staged"}
@@ -225,7 +225,7 @@ func TestRegression_15_PartialBackFallbackReconstructsManifest(t *testing.T) {
 func TestRegression_ProduceIngestUsesRuntimeNotTemplate(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	_, _, bp := setupTestData(t, db)
+	_, _, bp := testdb.SetupTestData(t, db)
 
 	bp.UOPCapacity = 100
 	testutil.MustNoErr(t, db.UpdatePayload(bp), "update payload uop capacity")

@@ -11,6 +11,7 @@ import (
 	"shingo/protocol/testutil"
 	"shingocore/dispatch"
 	"shingocore/fleet/simulator"
+	"shingocore/internal/testdb"
 	"shingocore/store"
 	"shingocore/store/nodes"
 )
@@ -100,7 +101,7 @@ func TestReleaseLayer_Order112_EveryStationWaitStages(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			t.Parallel()
 			db := testDB(t)
-			_, lineNode, bp := setupTestData(t, db)
+			_, lineNode, bp := testdb.SetupTestData(t, db)
 			// A store holding two bins, so not a STOR slot: a STOR node is one
 			// carrier's at a time for a complex step as for a plain order
 			// (2026-10-25), and a drop there while the second bin stands would wait.

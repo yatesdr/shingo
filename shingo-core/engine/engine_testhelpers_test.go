@@ -11,8 +11,6 @@ import (
 	"shingocore/internal/testdb"
 	"shingocore/store"
 	"shingocore/store/bins"
-	"shingocore/store/nodes"
-	"shingocore/store/payloads"
 )
 
 // Test scaffolding for the engine package.
@@ -26,12 +24,6 @@ import (
 
 func testDB(t *testing.T) *store.DB {
 	return testdb.Open(t)
-}
-
-func setupTestData(t *testing.T, db *store.DB) (storageNode *nodes.Node, lineNode *nodes.Node, bp *payloads.Payload) {
-	t.Helper()
-	sd := testdb.SetupStandardData(t, db)
-	return sd.StorageNode, sd.LineNode, sd.Payload
 }
 
 func createTestBinAtNode(t *testing.T, db *store.DB, payloadCode string, nodeID int64, label string) *bins.Bin {

@@ -40,7 +40,7 @@ import (
 func TestPhase0_DispositionTriad_ClaimFailed(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	storageNode, lineNode, bp := setupTestData(t, db)
+	storageNode, lineNode, bp := testdb.SetupTestData(t, db)
 	bin := testdb.CreateBinAtNode(t, db, bp.Code, storageNode.ID, "BIN-CHAR-RACE")
 
 	// A dummy order exists only so we have a valid orderID to steal the bin with.
@@ -98,7 +98,7 @@ func TestPhase0_DispositionTriad_ClaimFailed(t *testing.T) {
 func TestPhase0_DispositionTriad_NoSourceBin_Complex(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	setupTestData(t, db) // create STOR type + nodes + payload
+	testdb.SetupTestData(t, db) // create STOR type + nodes + payload
 
 	// Two concrete nodes: pickup source (deliberately empty) and delivery.
 	srcNode := &nodes.Node{Name: "CHAR-EMPTY-SRC", Enabled: true}
@@ -179,7 +179,7 @@ func TestPhase0_UOPBranch_PostState(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			db := testDB(t)
-			storageNode, lineNode, bp := setupTestData(t, db)
+			storageNode, lineNode, bp := testdb.SetupTestData(t, db)
 			bin := testdb.CreateBinAtNode(t, db, bp.Code, storageNode.ID, "BIN-UOP-"+tc.name)
 
 			d, _ := newTestDispatcher(t, db, testdb.NewTrackingBackend())
@@ -271,7 +271,7 @@ func TestPhase0_StatusAtClaimTime(t *testing.T) {
 	t.Run("simple_retrieve_sourcing_before_claim", func(t *testing.T) {
 		t.Parallel()
 		db := testDB(t)
-		storageNode, lineNode, bp := setupTestData(t, db)
+		storageNode, lineNode, bp := testdb.SetupTestData(t, db)
 		testdb.CreateBinAtNode(t, db, bp.Code, storageNode.ID, "BIN-STAT-SIMPLE")
 
 		const uuid = "char-status-simple"
@@ -321,7 +321,7 @@ func TestPhase0_StatusAtClaimTime(t *testing.T) {
 	t.Run("complex_queued_at_claim_time", func(t *testing.T) {
 		t.Parallel()
 		db := testDB(t)
-		setupTestData(t, db)
+		testdb.SetupTestData(t, db)
 
 		srcNode := &nodes.Node{Name: "CHAR-STAT-SRC", Enabled: true}
 		testutil.MustNoErr(t, db.CreateNode(srcNode), "create src node")

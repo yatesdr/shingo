@@ -23,7 +23,7 @@ import (
 func TestDigLegs_OneBinTwoLegs_BothIssued(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	_, line, bp := setupTestData(t, db)
+	_, line, bp := testdb.SetupTestData(t, db)
 	_, _, slots, shuffles, _ := setupNodeGroupWithShuffle(t, db)
 	bin := createTestBinAtNode(t, db, bp.Code, slots[0].ID, "DL2-BIN")
 	parent := &orders.Order{EdgeUUID: "dl2-dig", StationID: "line-1", OrderType: OrderTypeComplex,

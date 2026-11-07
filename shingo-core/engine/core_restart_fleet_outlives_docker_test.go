@@ -26,7 +26,7 @@ import (
 func TestCoreRestart_AnOrderInFlightFinishesAgainstTheFleetThatOutlivedIt(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	storageNode, lineNode, _ := setupTestData(t, db)
+	storageNode, lineNode, _ := testdb.SetupTestData(t, db)
 	bin := createTestBinAtNode(t, db, "PART-A", storageNode.ID, "RESTART-BIN")
 	sim := &attachCountingFleet{SimulatorBackend: simulator.New()}
 

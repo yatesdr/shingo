@@ -33,7 +33,7 @@ import (
 func intakeEdgeU1(t *testing.T, uuid string, acceptPartials bool) (*orders.Order, *bins.Bin) {
 	t.Helper()
 	db := testDB(t)
-	storage, _, bp := setupTestData(t, db)
+	storage, _, bp := testdb.SetupTestData(t, db)
 
 	window := &nodes.Node{Name: "D1-SMN_001", Enabled: true}
 	testutil.MustNoErr(t, db.CreateNode(window), "create window")

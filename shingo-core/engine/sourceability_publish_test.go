@@ -10,6 +10,7 @@ import (
 	"shingo/protocol/eventbus"
 	"shingo/protocol/testutil"
 	"shingocore/fleet/simulator"
+	"shingocore/internal/testdb"
 	"shingocore/store/plantclaims"
 )
 
@@ -21,7 +22,7 @@ import (
 func TestSourceabilityMonitor_PublishOnChangeOnly(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	storageNode, _, _ := setupTestData(t, db)
+	storageNode, _, _ := testdb.SetupTestData(t, db)
 	bin := createTestBinAtNode(t, db, "BIN-A", storageNode.ID, "src")
 
 	testutil.MustNoErr(t, plantclaims.ReplaceProcess(db.DB, "SNF2",
@@ -115,7 +116,7 @@ func findWireState(states []protocol.SourcingState, process, style string) (prot
 func TestSourceabilityMonitor_SSEOnVerdictChangeOnly(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	storageNode, _, _ := setupTestData(t, db)
+	storageNode, _, _ := testdb.SetupTestData(t, db)
 	bin := createTestBinAtNode(t, db, "BIN-A", storageNode.ID, "src")
 
 	testutil.MustNoErr(t, plantclaims.ReplaceProcess(db.DB, "SNF2",

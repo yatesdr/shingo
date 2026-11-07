@@ -23,7 +23,7 @@ import (
 func TestStage1_RetrievePlanDifferential_Dispatch(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	storageNode, lineNode, bp := setupTestData(t, db)
+	storageNode, lineNode, bp := testdb.SetupTestData(t, db)
 	backend := testdb.NewTrackingBackend()
 	d, _ := newTestDispatcher(t, db, backend)
 
@@ -104,7 +104,7 @@ func TestStage1_RetrievePlanDifferential_Dispatch(t *testing.T) {
 func TestStage1_RetrievePlanDifferential_GatedNoPlan(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	storageNode, lineNode, bp := setupTestData(t, db)
+	storageNode, lineNode, bp := testdb.SetupTestData(t, db)
 	d, _ := newTestDispatcher(t, db, testdb.NewTrackingBackend())
 
 	// Occupy the delivery node so the capacity gate fires.

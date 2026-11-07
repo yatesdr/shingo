@@ -33,7 +33,7 @@ type stbLoader struct {
 
 func stbFixture(t *testing.T, db *store.DB) stbLoader {
 	t.Helper()
-	setupTestData(t, db)
+	testdb.SetupTestData(t, db)
 	for _, code := range []string{"PART-IN", "PART-OUT", "PART-Z"} {
 		testutil.MustNoErr(t, db.CreatePayload(&payloads.Payload{Code: code, Description: code, UOPCapacity: 100}), "payload "+code)
 	}

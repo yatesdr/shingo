@@ -156,8 +156,8 @@ func TestDeltaIntegrity_SilentWhenNothingDropped(t *testing.T) {
 
 	binID := seedBinWithUOP(t, db, "DI-QUIET", "PART-QUIET", 400)
 	// Ordinary applied deltas, not drops.
-	seedAudit(t, db, binID, 400, 380, "bin_uop_delta", "PART-QUIET", base)
-	seedAudit(t, db, binID, 380, 360, "bin_uop_delta", "PART-QUIET", base.Add(time.Minute))
+	testdb.SeedAudit(t, db, binID, 400, 380, "bin_uop_delta", "PART-QUIET", base)
+	testdb.SeedAudit(t, db, binID, 380, 360, "bin_uop_delta", "PART-QUIET", base.Add(time.Minute))
 
 	got, err := db.DeltaIntegrityByPayload(base.Add(-time.Hour))
 	testutil.MustNoErr(t, err, "DeltaIntegrityByPayload")
@@ -183,16 +183,4 @@ func TestDeltaIntegrity_RespectsTheWindow(t *testing.T) {
 			t.Fatalf("a drop 48h ago must not appear in a 1h window, got %+v", r)
 		}
 	}
-}
-
-// seedAudit writes one ordinary bin_uop_ledger row — a delta that APPLIED, so
-// before != after. The quiet case needs these to prove the panel stays silent
-// on activity that is not a drop.
-func seedAudit(t *testing.T, db *store.DB, binID int64, before, after int, op, payload string, at time.Time) {
-	t.Helper()
-	_, err := db.Exec(`INSERT INTO bin_uop_ledger
-		(bin_id, before_uop, after_uop, op, source, payload_code, actor, metadata, applied_at)
-		VALUES ($1,$2,$3,$4,'test',$5,'test','{"reason":"consume_tick"}',$6)`,
-		binID, before, after, op, payload, at)
-	testutil.MustNoErr(t, err, "seed audit row")
 }

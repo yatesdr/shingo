@@ -32,7 +32,7 @@ import (
 func r10Fixture(t *testing.T, prefix string) (db *store.DB, storage, line *nodes.Node, bin *bins.Bin, o *orders.Order) {
 	t.Helper()
 	db = testDB(t)
-	storage, line, bp := setupTestData(t, db)
+	storage, line, bp := testdb.SetupTestData(t, db)
 	bin = createTestBinAtNode(t, db, bp.Code, line.ID, prefix+"-BIN")
 	o = testdb.CreateOrder(t, db, func(o *orders.Order) {
 		o.EdgeUUID, o.StationID, o.Status = strings.ToLower(prefix), "line-1", "in_transit"

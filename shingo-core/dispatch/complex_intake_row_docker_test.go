@@ -11,6 +11,7 @@ import (
 
 	"shingo/protocol"
 	"shingo/protocol/testutil"
+	"shingocore/internal/testdb"
 	"shingocore/store/orders"
 )
 
@@ -23,7 +24,7 @@ import (
 func TestComplexIntake_TheRowAsWritten(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	storage, line, bp := setupTestData(t, db)
+	storage, line, bp := testdb.SetupTestData(t, db)
 	d, _ := newTestDispatcher(t, db, nil)
 	origin := uuid.New().String()
 	steps := []protocol.ComplexOrderStep{

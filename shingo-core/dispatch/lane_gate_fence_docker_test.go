@@ -168,7 +168,7 @@ func TestStationWait_ReleaseStillWorks(t *testing.T) {
 	backend := testdb.NewSuccessBackend()
 	d, _ := newTestDispatcher(t, db, backend)
 
-	storageNode, lineNode, bp := setupTestData(t, db)
+	storageNode, lineNode, bp := testdb.SetupTestData(t, db)
 	createTestBinAtNode(t, db, bp.Code, storageNode.ID, "FENCE-STATION-BIN")
 
 	env := testEnvelope()

@@ -75,7 +75,7 @@ func strangerOn(stranger bool, cart func(*clearRig) int64) func(*clearRig) int64
 var engineIssueDrivers = map[string]testdb.IssueDriver{
 	"person's bin move": func(t *testing.T, stranger bool) (*store.DB, int64) {
 		db := testdb.IssueCensusDB(t)
-		storage, line, bp := setupTestData(t, db)
+		storage, line, bp := testdb.SetupTestData(t, db)
 		cart := createTestBinAtNode(t, db, bp.Code, storage.ID, "IC-MOVE")
 		if stranger {
 			testdb.StrangerHolds(t, db, cart.ID)

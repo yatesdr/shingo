@@ -32,7 +32,7 @@ func TestPinDispatch_ChildOrderRefusal(t *testing.T) {
 		t.Run(door, func(t *testing.T) {
 			t.Parallel()
 			db := testDB(t)
-			_, lineNode, _ := setupTestData(t, db)
+			_, lineNode, _ := testdb.SetupTestData(t, db)
 			d, _ := newTestDispatcher(t, db, testdb.NewFailingBackend())
 
 			var mu sync.Mutex
@@ -106,7 +106,7 @@ func TestPinDispatch_ChildOrderRefusal(t *testing.T) {
 func TestPinDispatch_ForeignStationRefusal(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	setupTestData(t, db)
+	testdb.SetupTestData(t, db)
 	d, _ := newTestDispatcher(t, db, testdb.NewFailingBackend())
 
 	var mu sync.Mutex

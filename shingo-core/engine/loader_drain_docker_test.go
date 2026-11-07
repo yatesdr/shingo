@@ -41,7 +41,7 @@ type drainRig struct {
 // the loader service (so the save's checks pass it), with the given boxes.
 func newDrainRig(t *testing.T, db *store.DB, prefix string, windows, slots int, drains ...protocol.CarrierState) *drainRig {
 	t.Helper()
-	setupTestData(t, db)
+	testdb.SetupTestData(t, db)
 	r := &drainRig{db: db}
 	grp, err := db.CreateNodeGroup(prefix + "-PRESS-OUT")
 	testutil.MustNoErr(t, err, "the press's outbound group")
@@ -147,7 +147,7 @@ func TestDrain_FiresOnPickupOnArrivalAndAtStartup(t *testing.T) {
 	t.Run("pickup frees a window", func(t *testing.T) {
 		t.Parallel()
 		db := testDB(t)
-		storage, _, _ := setupTestData(t, db)
+		storage, _, _ := testdb.SetupTestData(t, db)
 		r := newDrainRig(t, db, "DRT2", 1, 1, protocol.CarrierLeftover)
 		sitting := createTestBinAtNode(t, db, "", r.windows[0].ID, "BIN-DRT2-SITTING")
 		r.leftover(t, r.slots[0].ID)
@@ -250,7 +250,7 @@ func TestDrain_SendBackLeftoverCartReachesAWindow(t *testing.T) {
 func TestDrain_AndAFullAskNeverShareAWindow(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	storage, _, part := setupTestData(t, db)
+	storage, _, part := testdb.SetupTestData(t, db)
 	r := newDrainRig(t, db, "DRW", 1, 1, protocol.CarrierLeftover)
 	testutil.MustNoErr(t, db.UpsertLoaderPayload(loaders.Payload{LoaderID: r.loader, PayloadCode: part.Code}), "the part it serves")
 	sim := simulator.New()

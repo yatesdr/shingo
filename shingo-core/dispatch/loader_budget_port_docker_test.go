@@ -241,7 +241,7 @@ func sideCycleParts(d *Dispatcher, req ReplenishRequest, cfg LoaderReplenishConf
 // map from a real window name back to the vector's.
 func consumeFixture(t *testing.T, db *store.DB, prefix string, c loadervectors.ConsumeCase) (ReplenishRequest, LoaderReplenishConfig, map[string]string) {
 	t.Helper()
-	setupTestData(t, db)
+	testdb.SetupTestData(t, db)
 	market := &nodes.Node{Name: prefix + "-FG-MARKET", Enabled: true}
 	testutil.MustNoErr(t, db.CreateNode(market), "create the FG market")
 	cfg := LoaderReplenishConfig{

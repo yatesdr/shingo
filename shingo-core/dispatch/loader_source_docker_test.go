@@ -107,7 +107,7 @@ func dedicatedLoaderFixture(t *testing.T, db *store.DB, role string) (pos *nodes
 func TestPlanRetrieve_DedicatedLoaderPool_DrainsBufferedPartialOldestFirst(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	_, lineNode, _ := setupTestData(t, db)
+	_, lineNode, _ := testdb.SetupTestData(t, db)
 	pos, buffer := dedicatedLoaderFixture(t, db, "consume")
 
 	now := time.Now().UTC()
@@ -138,7 +138,7 @@ func TestPlanRetrieve_DedicatedLoaderPool_DrainsBufferedPartialOldestFirst(t *te
 func TestPlanMove_DedicatedLoaderPool_DrainsBufferedPartialOldestFirst(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	_, lineNode, _ := setupTestData(t, db)
+	_, lineNode, _ := testdb.SetupTestData(t, db)
 	pos, buffer := dedicatedLoaderFixture(t, db, "consume")
 
 	now := time.Now().UTC()
@@ -176,7 +176,7 @@ func TestPlanMove_DedicatedLoaderPool_DrainsBufferedPartialOldestFirst(t *testin
 func TestPlanMove_DedicatedLoaderPosition_EmptyPayload_ClaimsPhysicalBin(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	_, lineNode, _ := setupTestData(t, db)
+	_, lineNode, _ := testdb.SetupTestData(t, db)
 	pos, _ := dedicatedLoaderFixture(t, db, "produce")
 
 	// A true-empty carrier sits on the home position (payload "", 0 UOP).
@@ -211,7 +211,7 @@ func TestPlanMove_DedicatedLoaderPosition_EmptyPayload_ClaimsPhysicalBin(t *test
 func TestPlanRetrieveEmpty_DedicatedLoaderPool_FillPrefersPartialOverEmpty(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	_, lineNode, _ := setupTestData(t, db)
+	_, lineNode, _ := testdb.SetupTestData(t, db)
 	pos, buffer := dedicatedLoaderFixture(t, db, "produce")
 
 	emptyBin := makeEmptyBin(t, db, pos.ID, "fill-empty-fresh")
@@ -245,7 +245,7 @@ func TestPlanRetrieveEmpty_DedicatedLoaderPool_FillPrefersPartialOverEmpty(t *te
 func TestPlanRetrieveEmpty_DedicatedLoaderPool_FillFallsBackToEmpty(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	_, lineNode, _ := setupTestData(t, db)
+	_, lineNode, _ := testdb.SetupTestData(t, db)
 	pos, buffer := dedicatedLoaderFixture(t, db, "produce")
 
 	empty := makeEmptyBin(t, db, buffer.ID, "fill-only-empty")
@@ -272,7 +272,7 @@ func TestPlanRetrieveEmpty_DedicatedLoaderPool_FillFallsBackToEmpty(t *testing.T
 func TestPlanRetrieve_DedicatedLoaderPool_NoPartInPoolQueues(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	storageNode, lineNode, _ := setupTestData(t, db)
+	storageNode, lineNode, _ := testdb.SetupTestData(t, db)
 	pos, _ := dedicatedLoaderFixture(t, db, "consume")
 
 	// A PART-X bin sits at an unrelated storage node — NOT in the loader pool.

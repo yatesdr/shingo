@@ -9,6 +9,7 @@ import (
 
 	"shingocore/fleet"
 	"shingocore/fleet/simulator"
+	"shingocore/internal/testdb"
 )
 
 // nodes_test.go — coverage for nodes.go.
@@ -96,7 +97,7 @@ func TestGetNodeOccupancy_Unsupported_SimulatorBackend(t *testing.T) {
 func TestGetNodeOccupancy_DiscrepancyClassification(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	storageNode, _, _ := setupTestData(t, db)
+	storageNode, _, _ := testdb.SetupTestData(t, db)
 	// "STORAGE-A1" is the standard storage node; pretend the fleet sees it
 	// plus an extra location ShinGo doesn't know about. ShinGo also has
 	// LINE1-IN, which the fleet doesn't report → classified as shingo_only.
@@ -144,7 +145,7 @@ func TestGetNodeOccupancy_DiscrepancyClassification(t *testing.T) {
 		t.Errorf("Discrepancy = %q, want fleet_only", fleetOnly.Discrepancy)
 	}
 
-	// LINE1-IN comes from setupTestData — fleet doesn't report it.
+	// LINE1-IN comes from testdb.SetupTestData — fleet doesn't report it.
 	shinGoOnly, ok := byID["LINE1-IN"]
 	if !ok {
 		t.Fatalf("LINE1-IN missing from results: %+v", results)

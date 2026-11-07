@@ -39,7 +39,7 @@ import (
 func TestChar_HandleComplexOrderRequest_EmptySteps_RejectsAtIntake(t *testing.T) {
 	t.Parallel()
 	db := testDBShared(t)
-	setupTestData(t, db)
+	testdb.SetupTestData(t, db)
 	d, emitter := newTestDispatcher(t, db, testdb.NewTrackingBackend())
 
 	d.HandleComplexOrderRequest(testEnvelope(), &protocol.ComplexOrderRequest{
@@ -65,7 +65,7 @@ func TestChar_HandleComplexOrderRequest_EmptySteps_RejectsAtIntake(t *testing.T)
 func TestChar_HandleComplexOrderRequest_UnresolvableNode_RejectsAtIntake(t *testing.T) {
 	t.Parallel()
 	db := testDBShared(t)
-	setupTestData(t, db)
+	testdb.SetupTestData(t, db)
 	d, emitter := newTestDispatcher(t, db, testdb.NewTrackingBackend())
 
 	d.HandleComplexOrderRequest(testEnvelope(), &protocol.ComplexOrderRequest{
@@ -100,7 +100,7 @@ func TestChar_HandleComplexOrderRequest_UnresolvableNode_RejectsAtIntake(t *test
 func TestComplexIntake_RefusesAPayloadCoreDoesNotHave(t *testing.T) {
 	t.Parallel()
 	db := testDBShared(t)
-	_, lineNode, _ := setupTestData(t, db)
+	_, lineNode, _ := testdb.SetupTestData(t, db)
 	d, emitter := newTestDispatcher(t, db, testdb.NewTrackingBackend())
 
 	d.HandleComplexOrderRequest(testEnvelope(), &protocol.ComplexOrderRequest{
@@ -130,7 +130,7 @@ func TestComplexIntake_RefusesAPayloadCoreDoesNotHave(t *testing.T) {
 func TestChar_DispatchPreparedComplex_NonAcquiringStatus_NoOp(t *testing.T) {
 	t.Parallel()
 	db := testDBShared(t)
-	setupTestData(t, db)
+	testdb.SetupTestData(t, db)
 	d, emitter := newTestDispatcher(t, db, testdb.NewTrackingBackend())
 
 	// In-memory order only: the guard returns before touching the DB.
@@ -161,7 +161,7 @@ func TestChar_DispatchPreparedComplex_NonAcquiringStatus_NoOp(t *testing.T) {
 func TestChar_DispatchPreparedComplex_InvalidStoredSteps_Fails(t *testing.T) {
 	t.Parallel()
 	db := testDBShared(t)
-	setupTestData(t, db)
+	testdb.SetupTestData(t, db)
 	d, emitter := newTestDispatcher(t, db, testdb.NewTrackingBackend())
 
 	order := &orders.Order{
@@ -209,7 +209,7 @@ func TestChar_DispatchPreparedComplex_InvalidStoredSteps_Fails(t *testing.T) {
 func TestChar_FailOrderInternal_ARefusedFailTellsTheEdgeNothing(t *testing.T) {
 	t.Parallel()
 	db := testDBShared(t)
-	setupTestData(t, db)
+	testdb.SetupTestData(t, db)
 	for _, st := range []protocol.Status{StatusConfirmed, StatusCancelled, StatusFailed} {
 		d, emitter := newTestDispatcher(t, db, testdb.NewTrackingBackend())
 		// In-memory order only: Fail's IsTerminal guard returns before touching the DB.
@@ -226,7 +226,7 @@ func TestChar_FailOrderInternal_ARefusedFailTellsTheEdgeNothing(t *testing.T) {
 func TestChar_SkipOrderInternal_ARefusedSkipTellsTheEdgeNothing(t *testing.T) {
 	t.Parallel()
 	db := testDBShared(t)
-	setupTestData(t, db)
+	testdb.SetupTestData(t, db)
 	for _, st := range []protocol.Status{StatusConfirmed, StatusCancelled, StatusSkipped} {
 		d, emitter := newTestDispatcher(t, db, testdb.NewTrackingBackend())
 		order := &orders.Order{EdgeUUID: "char-skip-refused-" + string(st), StationID: "line-1", OrderType: OrderTypeComplex, Status: st}
@@ -251,7 +251,7 @@ func TestChar_SkipOrderInternal_ARefusedSkipTellsTheEdgeNothing(t *testing.T) {
 func TestC2bPin_AComplexOrderTheFleetRefusesRequeues(t *testing.T) {
 	t.Parallel()
 	db := testDBShared(t)
-	storageNode, lineNode, bp := setupTestData(t, db)
+	storageNode, lineNode, bp := testdb.SetupTestData(t, db)
 	// Failing backend: everything before CreateOrder (reserve/confirm/claim) is
 	// DB-only and succeeds; the fleet CreateOrder call is the failure point.
 	d, emitter := newTestDispatcher(t, db, testdb.NewFailingBackend())
@@ -302,7 +302,7 @@ func TestC2bPin_AComplexOrderTheFleetRefusesRequeues(t *testing.T) {
 func TestChar_DispatchPreparedComplex_ContendedConcreteSlot_QueuesWaitingForSlot(t *testing.T) {
 	t.Parallel()
 	db := testDBShared(t)
-	srcNode, _, bp := setupTestData(t, db)
+	srcNode, _, bp := testdb.SetupTestData(t, db)
 	d, _ := newTestDispatcher(t, db, testdb.NewTrackingBackend())
 
 	// A concrete storage slot: a direct child of an NGRP (the storageDropoffOf

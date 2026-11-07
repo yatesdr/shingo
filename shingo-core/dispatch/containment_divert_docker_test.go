@@ -22,7 +22,7 @@ import (
 // FG outbound the claim diverts FROM, and the containment flag on.
 func containmentFixture(t *testing.T, db *store.DB) (prod, fgn, hold *nodes.Node) {
 	t.Helper()
-	setupTestData(t, db)
+	testdb.SetupTestData(t, db)
 
 	prod = &nodes.Node{Name: "PROD-QC", Enabled: true}
 	testutil.MustNoErr(t, db.CreateNode(prod), "create process node")
@@ -209,7 +209,7 @@ func TestPlaceForContainment_FlagOff_NoDivert(t *testing.T) {
 func TestPartialHome_GroupHomeTakesAFreeWindowOrKeepsTheDrop(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	setupTestData(t, db)
+	testdb.SetupTestData(t, db)
 	d, _ := newTestDispatcherWithResolver(t, db)
 	testutil.MustNoErr(t, db.CreatePayload(&payloads.Payload{Code: "PART-PH", UOPCapacity: 10}), "create the part")
 	fgn := &nodes.Node{Name: "FGN-PH", Enabled: true}

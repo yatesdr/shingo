@@ -27,7 +27,7 @@ import (
 func TestClaimBin_SilentOverwrite(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	storageNode, _, bp := setupTestData(t, db)
+	storageNode, _, bp := testdb.SetupTestData(t, db)
 	bin := createTestBinAtNode(t, db, bp.Code, storageNode.ID, "BIN-CLAIM")
 	// (C1.5: the first claimant is dispatched; a hard claim is a committed robot's.)
 	order1 := testdb.CreateOrder(t, db, func(o *orders.Order) { o.Status = protocol.StatusDispatched })
@@ -72,7 +72,7 @@ func TestComplexOrder_BinPoachingPrevention(t *testing.T) {
 	t.Parallel()
 	// complex orders now claim bins at dispatch, preventing poaching.
 	db := testDB(t)
-	storageNode, lineNode, bp := setupTestData(t, db)
+	storageNode, lineNode, bp := testdb.SetupTestData(t, db)
 
 	// Single bin at storage — this is the one the complex order will move
 	bin := createTestBinAtNode(t, db, bp.Code, storageNode.ID, "BIN-POACH-1")
@@ -154,7 +154,7 @@ func TestComplexOrder_StaleBinLocation(t *testing.T) {
 	// complex orders now set BinID, so BinService.ApplyArrival fires on
 	// completion and moves the bin to the delivery node in the DB.
 	db := testDB(t)
-	storageNode, lineNode, bp := setupTestData(t, db)
+	storageNode, lineNode, bp := testdb.SetupTestData(t, db)
 	bin := createTestBinAtNode(t, db, bp.Code, storageNode.ID, "BIN-STALE-24b")
 
 	sim := simulator.New()
@@ -226,7 +226,7 @@ func TestComplexOrder_PhantomInventoryRetrieve(t *testing.T) {
 	// completion, moving the bin to the line node. A subsequent retrieve
 	// targeting storage will NOT find a phantom bin at the old location.
 	db := testDB(t)
-	storageNode, lineNode, bp := setupTestData(t, db)
+	storageNode, lineNode, bp := testdb.SetupTestData(t, db)
 	bin := createTestBinAtNode(t, db, bp.Code, storageNode.ID, "BIN-PHANTOM-24c")
 
 	sim := simulator.New()

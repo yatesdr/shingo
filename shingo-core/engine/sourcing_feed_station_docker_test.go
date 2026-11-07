@@ -11,6 +11,7 @@ import (
 	"shingo/protocol"
 	"shingo/protocol/testutil"
 	"shingocore/fleet/simulator"
+	"shingocore/internal/testdb"
 	"shingocore/store"
 	"shingocore/store/plantclaims"
 )
@@ -73,7 +74,7 @@ func outboxMax(t *testing.T, db *store.DB) int64 {
 // republishes after the migration, and as an older Edge's always are).
 func seedStationPlant(t *testing.T, db *store.DB) (binID int64) {
 	t.Helper()
-	storageNode, _, _ := setupTestData(t, db)
+	storageNode, _, _ := testdb.SetupTestData(t, db)
 	bin := createTestBinAtNode(t, db, "BIN-A", storageNode.ID, "feed-a")
 	for _, p := range []struct{ process, station string }{
 		{"PRESS-A", "edge-a"}, {"PRESS-B", "edge-b"}, {"PRESS-C", ""},

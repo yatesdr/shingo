@@ -39,7 +39,7 @@ import (
 func TestCreateBinMove_StampsItsSourceIntent(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	storageNode, lineNode, _ := setupTestData(t, db)
+	storageNode, lineNode, _ := testdb.SetupTestData(t, db)
 	createTestBinAtNode(t, db, "PART-A", storageNode.ID, "BIN-INTENT")
 	eng := newTestEngine(t, db, simulator.New())
 

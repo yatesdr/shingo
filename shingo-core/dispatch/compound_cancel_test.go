@@ -37,7 +37,7 @@ import (
 func TestAdvanceCompoundOrder_CancelledChildRequeuesParent(t *testing.T) {
 	t.Parallel()
 	db := testDBShared(t)
-	_, lineNode, bp := setupTestData(t, db)
+	_, lineNode, bp := testdb.SetupTestData(t, db)
 	d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
 
 	parent := &orders.Order{
@@ -85,7 +85,7 @@ func TestAdvanceCompoundOrder_CancelledChildRequeuesParent(t *testing.T) {
 func TestAdvanceCompoundOrder_AllChildrenConfirmed_Completes(t *testing.T) {
 	t.Parallel()
 	db := testDBShared(t)
-	_, lineNode, bp := setupTestData(t, db)
+	_, lineNode, bp := testdb.SetupTestData(t, db)
 	d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
 
 	parent := &orders.Order{
@@ -151,7 +151,7 @@ func TestAdvanceCompoundOrder_AllChildrenConfirmed_Completes(t *testing.T) {
 func TestGate1_TheDemandSurvivesItsDigsFailure(t *testing.T) {
 	t.Parallel()
 	db := testDBShared(t)
-	_, lineNode, bp := setupTestData(t, db)
+	_, lineNode, bp := testdb.SetupTestData(t, db)
 	d, emitter := newTestDispatcher(t, db, testdb.NewSuccessBackend())
 
 	// THE DEMAND, wearing `reshuffling` because it re-parented onto its own dig.

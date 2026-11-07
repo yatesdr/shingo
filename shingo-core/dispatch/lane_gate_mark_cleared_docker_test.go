@@ -37,7 +37,7 @@ import (
 func TestGateDwell_CarriesItsCauseAndClearsItOnEntry(t *testing.T) {
 	t.Parallel()
 	db := testDBShared(t)
-	srcNode, _, bp := setupTestData(t, db)
+	srcNode, _, bp := testdb.SetupTestData(t, db)
 	_, laneID, mouth := gatedLane(t, db, "DWELLCAUSE", "DWELLCAUSE-WAIT")
 	d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
 

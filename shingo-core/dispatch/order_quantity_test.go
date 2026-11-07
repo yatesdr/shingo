@@ -30,7 +30,7 @@ import (
 func TestMoveOrder_CountsOneBin(t *testing.T) {
 	t.Parallel()
 	db := testDBShared(t)
-	_, lineNode, bp := setupTestData(t, db)
+	_, lineNode, bp := testdb.SetupTestData(t, db)
 	d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
 
 	// The Edge asks for four of something that cannot come in fours.
@@ -59,7 +59,7 @@ func TestMoveOrder_CountsOneBin(t *testing.T) {
 func TestRetrieveOrder_KeepsTheCountItWasAskedFor(t *testing.T) {
 	t.Parallel()
 	db := testDBShared(t)
-	_, lineNode, bp := setupTestData(t, db)
+	_, lineNode, bp := testdb.SetupTestData(t, db)
 	d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
 
 	d.HandleOrderRequest(testEnvelope(), &protocol.OrderRequest{

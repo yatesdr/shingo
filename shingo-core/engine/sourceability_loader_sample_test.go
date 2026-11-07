@@ -9,6 +9,7 @@ import (
 	"shingo/protocol"
 	"shingo/protocol/testutil"
 	"shingocore/fleet/simulator"
+	"shingocore/internal/testdb"
 	"shingocore/store"
 	"shingocore/store/demands"
 	"shingocore/store/plantclaims"
@@ -49,7 +50,7 @@ func seedRateFor(t *testing.T, db *store.DB, binID int64, payload string, consum
 func TestLoaderSample_ThresholdEpisodeAtALoaderNodeIsScoreable(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	storageNode, _, _ := setupTestData(t, db)
+	storageNode, _, _ := testdb.SetupTestData(t, db)
 
 	const payload = "BIN-LS"
 	const loaderNode = "LOADER-LS" // deliberately NOT the claim's node
@@ -121,7 +122,7 @@ func TestLoaderSample_ThresholdEpisodeAtALoaderNodeIsScoreable(t *testing.T) {
 func TestLoaderSample_DebouncedVerdictSurvivesAnUnreadableActiveStyle(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	storageNode, _, _ := setupTestData(t, db)
+	storageNode, _, _ := testdb.SetupTestData(t, db)
 	createTestBinAtNode(t, db, "BIN-DV", storageNode.ID, "src")
 
 	testutil.MustNoErr(t, plantclaims.ReplaceProcess(db.DB, "SNFD",

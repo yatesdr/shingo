@@ -27,7 +27,7 @@ import (
 func TestReserveConfirm_EmptyLegClaimsEmptyCarrier(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	storeNode, lineNode, bp := setupTestData(t, db)
+	storeNode, lineNode, bp := testdb.SetupTestData(t, db)
 
 	// Supermarket the press pulls empties from — holds a full AND an empty.
 	src := &nodes.Node{Name: "EMPTY-SRC", Enabled: true}
@@ -123,7 +123,7 @@ func TestReserveConfirm_EmptyLegClaimsEmptyCarrier(t *testing.T) {
 func TestDispatcher_ComplexOrder_QueuesOnDryEmptyPool(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	storeNode, lineNode, bp := setupTestData(t, db)
+	storeNode, lineNode, bp := testdb.SetupTestData(t, db)
 
 	syntheticType, err := db.GetNodeTypeByCode("NGRP")
 	if err != nil {

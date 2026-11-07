@@ -134,7 +134,7 @@ func terminalStatusArray() []string {
 // proxy for it.
 func TestCollision_PlainStoreIsRefusedFromACorridorAComplexOrderOccupies(t *testing.T) {
 	db := testDBShared(t)
-	srcNode, _, bp := setupTestData(t, db)
+	srcNode, _, bp := testdb.SetupTestData(t, db)
 	laneID, mouth := seamLane(t, db, "COLL-A")
 	d, _ := newTestDispatcher(t, db, testdb.NewTrackingBackend())
 
@@ -194,7 +194,7 @@ func TestCollision_PlainStoreIsRefusedFromACorridorAComplexOrderOccupies(t *test
 // arrive together and the shape is obvious.
 func TestCollision_ComplexIsRefusedFromACorridorAPlainStoreOccupies(t *testing.T) {
 	db := testDBShared(t)
-	srcNode, _, bp := setupTestData(t, db)
+	srcNode, _, bp := testdb.SetupTestData(t, db)
 	laneID, mouth := seamLane(t, db, "COLL-B")
 	// C2c: the valve is a release and asks the chooser (D13, P0's premise
 	// correction 2), which places a store at its lane's DEEPEST reachable slot.
@@ -293,7 +293,7 @@ func TestCollision_ComplexIsRefusedFromACorridorAPlainStoreOccupies(t *testing.T
 // are covered by the collision pair above.
 func TestSeamGuard_UnderDeclaringALaneRefusesTheDispatch(t *testing.T) {
 	db := testDBShared(t)
-	srcNode, _, bp := setupTestData(t, db)
+	srcNode, _, bp := testdb.SetupTestData(t, db)
 	_, mouth := seamLane(t, db, "SEAMGUARD")
 	d, _ := newTestDispatcher(t, db, testdb.NewTrackingBackend())
 
@@ -361,7 +361,7 @@ func mouthLaneOf(t *testing.T, db *store.DB, slot *nodes.Node) int64 {
 // an error after the create is a report.
 func TestSeamGuard_ASyntheticDestinationNeverReachesTheFleet(t *testing.T) {
 	db := testDBShared(t)
-	srcNode, _, bp := setupTestData(t, db)
+	srcNode, _, bp := testdb.SetupTestData(t, db)
 	d, _ := newTestDispatcher(t, db, testdb.NewTrackingBackend())
 
 	// The shape of Hopkinsville's "Supermarket Empty Totes".
@@ -419,7 +419,7 @@ func TestSeamGuard_ASyntheticDestinationNeverReachesTheFleet(t *testing.T) {
 // succeeded. Other arms refuse for their own reasons and have their own tests.
 func TestSeamGuard_AConcreteDestinationIsUntouched(t *testing.T) {
 	db := testDBShared(t)
-	srcNode, lineNode, bp := setupTestData(t, db)
+	srcNode, lineNode, bp := testdb.SetupTestData(t, db)
 	d, _ := newTestDispatcher(t, db, testdb.NewTrackingBackend())
 
 	bin := testdb.CreateBinAtNode(t, db, bp.Code, srcNode.ID, "SYNGUARD-OK-BIN")

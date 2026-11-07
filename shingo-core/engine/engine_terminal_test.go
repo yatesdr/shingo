@@ -32,7 +32,7 @@ import (
 func TestCancelDeliveredOrder_NoReturnCreated(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	storageNode, lineNode, bp := setupTestData(t, db)
+	storageNode, lineNode, bp := testdb.SetupTestData(t, db)
 	createTestBinAtNode(t, db, bp.Code, storageNode.ID, "BIN-TC38")
 
 	sim := simulator.New()
@@ -124,7 +124,7 @@ func TestCancelDeliveredOrder_NoReturnCreated(t *testing.T) {
 func TestTerminateOrder_RejectsConfirmedStatus_FullLifecycle(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	storageNode, lineNode, bp := setupTestData(t, db)
+	storageNode, lineNode, bp := testdb.SetupTestData(t, db)
 	createTestBinAtNode(t, db, bp.Code, storageNode.ID, "BIN-TC39")
 
 	sim := simulator.New()

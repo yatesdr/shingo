@@ -34,7 +34,7 @@ func orderIDByUUID(t *testing.T, db *store.DB, uuid string) int64 {
 var dispatchIssueDrivers = map[string]testdb.IssueDriver{
 	"wire plain order": func(t *testing.T, _ bool) (*store.DB, int64) {
 		db := testdb.IssueCensusDB(t)
-		_, line, bp := setupTestData(t, db)
+		_, line, bp := testdb.SetupTestData(t, db)
 		d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
 		d.HandleOrderRequest(testEnvelope(), &protocol.OrderRequest{OrderUUID: "ic-plain",
 			OrderType: OrderTypeRetrieve, PayloadCode: bp.Code, Quantity: 1, DeliveryNode: line.Name})
@@ -42,7 +42,7 @@ var dispatchIssueDrivers = map[string]testdb.IssueDriver{
 	},
 	"wire named move": func(t *testing.T, stranger bool) (*store.DB, int64) {
 		db := testdb.IssueCensusDB(t)
-		storage, _, bp := setupTestData(t, db)
+		storage, _, bp := testdb.SetupTestData(t, db)
 		// The drop is a storage node, one carrier's at a time, so the move
 		// holds it from its issue (a plain drop holds nothing:
 		// TestNamedBinMove_HoldsAnExclusiveDropFromItsIssue).
@@ -60,7 +60,7 @@ var dispatchIssueDrivers = map[string]testdb.IssueDriver{
 	},
 	"complex intake": func(t *testing.T, _ bool) (*store.DB, int64) {
 		db := testdb.IssueCensusDB(t)
-		storage, line, bp := setupTestData(t, db)
+		storage, line, bp := testdb.SetupTestData(t, db)
 		testdb.CreateBinAtNode(t, db, bp.Code, storage.ID, "IC-CPX")
 		d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
 		d.HandleComplexOrderRequest(testEnvelope(), &protocol.ComplexOrderRequest{OrderUUID: "ic-complex",

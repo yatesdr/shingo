@@ -15,7 +15,6 @@ import (
 	"shingocore/store/bins"
 	"shingocore/store/nodes"
 	"shingocore/store/orders"
-	"shingocore/store/payloads"
 )
 
 // --- Mock emitter ---
@@ -122,16 +121,10 @@ func testDBShared(t *testing.T) *store.DB {
 	return testdb.OpenShared(t, testdb.FileKey(t))
 }
 
-func setupTestData(t *testing.T, db *store.DB) (storageNode *nodes.Node, lineNode *nodes.Node, bp *payloads.Payload) {
-	t.Helper()
-	sd := testdb.SetupStandardData(t, db)
-	return sd.StorageNode, sd.LineNode, sd.Payload
-}
-
 func TestHandleOrderReceipt_DuplicateCompletedOrderIgnored(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	_, lineNode, _ := setupTestData(t, db)
+	_, lineNode, _ := testdb.SetupTestData(t, db)
 
 	order := &orders.Order{
 		EdgeUUID:     "dup-receipt",
@@ -346,7 +339,7 @@ func testEnvelope() *protocol.Envelope {
 func TestHandleOrderRequest_Retrieve_NoSource(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	_, lineNode, _ := setupTestData(t, db)
+	_, lineNode, _ := testdb.SetupTestData(t, db)
 
 	// No fleet backend needed since it should fail before dispatch
 	d, emitter := newTestDispatcher(t, db, testdb.NewFailingBackend())
@@ -378,7 +371,7 @@ func TestHandleOrderRequest_Retrieve_NoSource(t *testing.T) {
 func TestHandleOrderRequest_Retrieve_InvalidDeliveryNode(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	setupTestData(t, db)
+	testdb.SetupTestData(t, db)
 
 	d, emitter := newTestDispatcher(t, db, testdb.NewFailingBackend())
 
@@ -400,7 +393,7 @@ func TestHandleOrderRequest_Retrieve_InvalidDeliveryNode(t *testing.T) {
 func TestHandleOrderRequest_Move_MissingPickup(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	_, lineNode, _ := setupTestData(t, db)
+	_, lineNode, _ := testdb.SetupTestData(t, db)
 
 	d, emitter := newTestDispatcher(t, db, testdb.NewFailingBackend())
 
@@ -425,7 +418,7 @@ func TestHandleOrderRequest_Move_MissingPickup(t *testing.T) {
 func TestHandleOrderRequest_Move_NoPayloadAtPickup(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	storageNode, lineNode, _ := setupTestData(t, db)
+	storageNode, lineNode, _ := testdb.SetupTestData(t, db)
 
 	d, emitter := newTestDispatcher(t, db, testdb.NewFailingBackend())
 
@@ -475,7 +468,7 @@ func TestHandleOrderRequest_Move_NoPayloadAtPickup(t *testing.T) {
 func TestHandleOrderRequest_UnknownType(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	_, lineNode, _ := setupTestData(t, db)
+	_, lineNode, _ := testdb.SetupTestData(t, db)
 
 	d, emitter := newTestDispatcher(t, db, testdb.NewFailingBackend())
 
@@ -512,7 +505,7 @@ func TestHandleOrderRequest_UnknownType(t *testing.T) {
 func TestHandleOrderRequest_StoreIsNotAKindOfOrder(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	_, lineNode, _ := setupTestData(t, db)
+	_, lineNode, _ := testdb.SetupTestData(t, db)
 
 	d, emitter := newTestDispatcher(t, db, testdb.NewFailingBackend())
 
@@ -534,7 +527,7 @@ func TestHandleOrderRequest_StoreIsNotAKindOfOrder(t *testing.T) {
 func TestHandleOrderRequest_UsesRegisteredPlanner(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	storageNode, lineNode, _ := setupTestData(t, db)
+	storageNode, lineNode, _ := testdb.SetupTestData(t, db)
 
 	d, emitter := newTestDispatcher(t, db, testdb.NewFailingBackend())
 	d.RegisterPlanner("custom_transfer", func(order *orders.Order, env *protocol.Envelope, payloadCode string) (*PlanningResult, *planningError) {
@@ -579,7 +572,7 @@ func TestHandleOrderRequest_UsesRegisteredPlanner(t *testing.T) {
 func TestHandleOrderRequest_UnknownStyle(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	_, lineNode, _ := setupTestData(t, db)
+	_, lineNode, _ := testdb.SetupTestData(t, db)
 
 	d, emitter := newTestDispatcher(t, db, testdb.NewFailingBackend())
 
@@ -638,7 +631,7 @@ func TestHandleOrderCancel(t *testing.T) {
 func TestHandleOrderCancel_UnclaimsPayloads(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	storageNode, _, bp := setupTestData(t, db)
+	storageNode, _, bp := testdb.SetupTestData(t, db)
 
 	order := &orders.Order{EdgeUUID: "uuid-unclaim", StationID: "line-1", Status: StatusDispatched}
 	db.CreateOrder(order)
@@ -901,7 +894,7 @@ func TestHandleOrderReceipt_RejectsWrongStation(t *testing.T) {
 func TestHandleOrderRedirect_RejectsWrongStation(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	_, lineNode, _ := setupTestData(t, db)
+	_, lineNode, _ := testdb.SetupTestData(t, db)
 
 	order := &orders.Order{EdgeUUID: "uuid-redir-own", StationID: "line-1", Status: StatusDispatched, SourceNode: lineNode.Name}
 	db.CreateOrder(order)
@@ -923,7 +916,7 @@ func TestHandleOrderRedirect_RejectsWrongStation(t *testing.T) {
 func TestFIFOPayloadSourceSelection(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	storageNode, _, bp := setupTestData(t, db)
+	storageNode, _, bp := testdb.SetupTestData(t, db)
 
 	// Create another storage node
 	s2 := &nodes.Node{Name: "STORAGE-B1", Enabled: true}
@@ -991,7 +984,7 @@ func TestOrderTypeConstants(t *testing.T) {
 func TestRegression_HandleOrderReceipt_ReturnsOnError(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	_, lineNode, _ := setupTestData(t, db)
+	_, lineNode, _ := testdb.SetupTestData(t, db)
 
 	d, emitter := newTestDispatcher(t, db, testdb.NewFailingBackend())
 
@@ -1046,7 +1039,7 @@ func TestRegression_HandleOrderReceipt_ReturnsOnError(t *testing.T) {
 func TestDispatchToFleet_ConcurrentTerminal_CancelsVendorOrder(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	storageNode, lineNode, _ := setupTestData(t, db)
+	storageNode, lineNode, _ := testdb.SetupTestData(t, db)
 
 	backend := testdb.NewTrackingBackend()
 	d, emitter := newTestDispatcher(t, db, backend)
@@ -1113,7 +1106,7 @@ func TestDispatchToFleet_ConcurrentTerminal_CancelsVendorOrder(t *testing.T) {
 func TestDispatchToFleet_AlreadyTerminal_NeverCreatesFleetOrder(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	storageNode, lineNode, _ := setupTestData(t, db)
+	storageNode, lineNode, _ := testdb.SetupTestData(t, db)
 
 	backend := testdb.NewTrackingBackend()
 	d, emitter := newTestDispatcher(t, db, backend)
@@ -1149,7 +1142,7 @@ func TestDispatchToFleet_AlreadyTerminal_NeverCreatesFleetOrder(t *testing.T) {
 func TestDispatchDirect_Retrieve(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	storageNode, lineNode, _ := setupTestData(t, db)
+	storageNode, lineNode, _ := testdb.SetupTestData(t, db)
 
 	backend := testdb.NewTrackingBackend()
 	d, emitter := newTestDispatcher(t, db, backend)
@@ -1206,7 +1199,7 @@ func TestDispatchDirect_Retrieve(t *testing.T) {
 func TestDispatchDirect_FleetFailure(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	storageNode, lineNode, _ := setupTestData(t, db)
+	storageNode, lineNode, _ := testdb.SetupTestData(t, db)
 
 	// Use failing backend to simulate fleet error
 	d, emitter := newTestDispatcher(t, db, testdb.NewFailingBackend())
@@ -1292,7 +1285,7 @@ func TestDispatchDirect_FleetFailure(t *testing.T) {
 func TestDemoteAfterFleetRefusal_RepeatedRefusalTellsOnce(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	storageNode, lineNode, _ := setupTestData(t, db)
+	storageNode, lineNode, _ := testdb.SetupTestData(t, db)
 	d, emitter := newTestDispatcher(t, db, testdb.NewFailingBackend())
 
 	order := &orders.Order{
@@ -1333,7 +1326,7 @@ func TestDemoteAfterFleetRefusal_RepeatedRefusalTellsOnce(t *testing.T) {
 func TestHandleOrderRedirect_NonexistentDestNode(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	_, lineNode, _ := setupTestData(t, db)
+	_, lineNode, _ := testdb.SetupTestData(t, db)
 
 	order := &orders.Order{
 		EdgeUUID:      "redir-noexist",
@@ -1374,7 +1367,7 @@ func TestHandleOrderRedirect_NonexistentDestNode(t *testing.T) {
 func TestHandleOrderRedirect_NoSourceNode(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	_, lineNode, _ := setupTestData(t, db)
+	_, lineNode, _ := testdb.SetupTestData(t, db)
 
 	// Order with no source node set — redirect should fail
 	order := &orders.Order{
@@ -1417,7 +1410,7 @@ func TestHandleOrderRedirect_NoSourceNode(t *testing.T) {
 func TestAllocator_ConstructedAndWired(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	setupTestData(t, db)
+	testdb.SetupTestData(t, db)
 	d, _ := newTestDispatcher(t, db, testdb.NewTrackingBackend())
 
 	if d.allocator == nil {

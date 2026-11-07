@@ -51,7 +51,7 @@ func TestFleetRefusal_ADemotedOrderIsOutOfTheDestructiveSweep(t *testing.T) {
 	d, _ := newTestDispatcher(t, db, testdb.NewFailingBackend())
 	order, _ := armedOrderAwaitingFleet(t, db, d, "demote-sweep")
 
-	srcNode, lineNode, _ := setupTestData(t, db)
+	srcNode, lineNode, _ := testdb.SetupTestData(t, db)
 	derr := func() error {
 		_, err := d.DispatchDirect(order, srcNode, lineNode)
 		return err

@@ -42,7 +42,7 @@ func historyPairs(t *testing.T, db *store.DB, orderID int64) [][2]string {
 func TestComplexPark_TheWaitLandsOnItsOwnEpisode(t *testing.T) {
 	t.Parallel()
 	db := testDBShared(t)
-	_, lineNode, bp := setupTestData(t, db)
+	_, lineNode, bp := testdb.SetupTestData(t, db)
 	d, _ := newTestDispatcher(t, db, testdb.NewTrackingBackend())
 
 	nodeA := &nodes.Node{Name: "QEH-A", Enabled: true}
@@ -109,7 +109,7 @@ func TestComplexPark_TheWaitLandsOnItsOwnEpisode(t *testing.T) {
 func TestOrders_ASecondWaitDoesNotRewriteTheFirst(t *testing.T) {
 	t.Parallel()
 	db := testDBShared(t)
-	setupTestData(t, db)
+	testdb.SetupTestData(t, db)
 
 	o := &orders.Order{
 		EdgeUUID: "qeh-two-waits", StationID: "line-1", OrderType: protocol.OrderTypeRetrieve,
@@ -150,7 +150,7 @@ func TestOrders_ASecondWaitDoesNotRewriteTheFirst(t *testing.T) {
 func TestPark_ASameCauseWrittenAgainAddsNoRow(t *testing.T) {
 	t.Parallel()
 	db := testDBShared(t)
-	setupTestData(t, db)
+	testdb.SetupTestData(t, db)
 
 	o := &orders.Order{
 		EdgeUUID: "park-no-chatter", StationID: "line-1", OrderType: protocol.OrderTypeRetrieve,

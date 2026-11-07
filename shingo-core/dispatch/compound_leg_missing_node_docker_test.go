@@ -75,7 +75,7 @@ func legWithNodeNames(t *testing.T, db *store.DB, prefix, sourceNode, deliveryNo
 func TestCompoundLeg_SourceNodeDoesNotExist_TerminalWithTheConfigMessage(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	_, lineNode, _ := setupTestData(t, db)
+	_, lineNode, _ := testdb.SetupTestData(t, db)
 
 	d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
 	parent, child := legWithNodeNames(t, db, "LEGSRC", "SHUF-NOBODY-CONFIGURED", lineNode.Name)
@@ -125,7 +125,7 @@ func TestCompoundLeg_SourceNodeDoesNotExist_TerminalWithTheConfigMessage(t *test
 func TestCompoundLeg_DeliveryNodeDoesNotExist_TerminalWithTheConfigMessage(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	storageNode, _, _ := setupTestData(t, db)
+	storageNode, _, _ := testdb.SetupTestData(t, db)
 
 	d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
 	parent, child := legWithNodeNames(t, db, "LEGDST", storageNode.Name, "LINE-NOBODY-CONFIGURED")
@@ -177,7 +177,7 @@ func TestCompoundLeg_DeliveryNodeDoesNotExist_TerminalWithTheConfigMessage(t *te
 func TestCompoundLeg_UnreadableNode_HoldsTheLegInsteadOfFailingIt(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	storageNode, lineNode, _ := setupTestData(t, db)
+	storageNode, lineNode, _ := testdb.SetupTestData(t, db)
 
 	d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
 	parent, child := legWithNodeNames(t, db, "LEGREAD", storageNode.Name, lineNode.Name)

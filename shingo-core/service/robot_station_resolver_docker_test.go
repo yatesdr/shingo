@@ -10,7 +10,6 @@ import (
 	"shingocore/internal/testdb"
 	"shingocore/store"
 	"shingocore/store/nodes"
-	"shingocore/store/scene"
 )
 
 // A robot reports the point it is standing at. At Springfield that has NEVER
@@ -18,20 +17,6 @@ import (
 // branch A's identity lookup missed every time and 69 log lines said the deck
 // emptied somewhere Core could not name. These pin the alias that answers it,
 // and every refusal it must still make.
-
-// seedScenePoint writes one scene row. A GeneralLocation carries the station in
-// instance_name and the point the robot reports in point_name; every other
-// class carries only its instance name, exactly as the sync writes them.
-func seedScenePoint(t *testing.T, db *store.DB, area, instance, class, point string) {
-	t.Helper()
-	testutil.MustNoErr(t, db.UpsertScenePoint(&scene.Point{
-		AreaName: area, InstanceName: instance, ClassName: class, PointName: point,
-		// The column is jsonb and NOT NULL; the sync always writes the point's
-		// property array. Empty is not valid json, and an empty ARRAY is what a
-		// point with no properties actually has.
-		PropertiesJSON: "[]",
-	}), "seed scene point "+instance)
-}
 
 func mustNode(t *testing.T, db *store.DB, name string, enabled bool) *nodes.Node {
 	t.Helper()
@@ -48,7 +33,7 @@ func TestResolveReportedPoints_ResolvesAnActionPointThroughTheSceneAlias(t *test
 	svc := NewNodeService(db)
 
 	dest := mustNode(t, db, "SMN_007", true)
-	seedScenePoint(t, db, "Area-01", "SMN_007", "GeneralLocation", "AP102")
+	testdb.SeedScenePoint(t, db, "Area-01", "SMN_007", "GeneralLocation", "AP102")
 
 	node, point, ok := ResolveReportedPoints(svc, "AP102", "")
 	if !ok || node == nil {
@@ -71,8 +56,8 @@ func TestResolveReportedPoints_BareActionPointIsNotAStation(t *testing.T) {
 	svc := NewNodeService(db)
 
 	mustNode(t, db, "SMN_007", true)
-	seedScenePoint(t, db, "Area-01", "SMN_007", "GeneralLocation", "AP102")
-	seedScenePoint(t, db, "Area-01", "AP350", "ActionPoint", "")
+	testdb.SeedScenePoint(t, db, "Area-01", "SMN_007", "GeneralLocation", "AP102")
+	testdb.SeedScenePoint(t, db, "Area-01", "AP350", "ActionPoint", "")
 
 	if _, _, ok := ResolveReportedPoints(svc, "AP350", ""); ok {
 		t.Fatal("AP350 resolved — it is an ActionPoint with no station bound to it, and " +
@@ -93,10 +78,10 @@ func TestResolveReportedPoints_NonStationClassesDeclineByName(t *testing.T) {
 	svc := NewNodeService(db)
 
 	mustNode(t, db, "SMN_007", true)
-	seedScenePoint(t, db, "Area-01", "SMN_007", "GeneralLocation", "AP102")
-	seedScenePoint(t, db, "Area-01", "CP37", "ChargePoint", "")
-	seedScenePoint(t, db, "Area-01", "PP95", "ParkPoint", "")
-	seedScenePoint(t, db, "Area-01", "LM100", "LocationMark", "")
+	testdb.SeedScenePoint(t, db, "Area-01", "SMN_007", "GeneralLocation", "AP102")
+	testdb.SeedScenePoint(t, db, "Area-01", "CP37", "ChargePoint", "")
+	testdb.SeedScenePoint(t, db, "Area-01", "PP95", "ParkPoint", "")
+	testdb.SeedScenePoint(t, db, "Area-01", "LM100", "LocationMark", "")
 
 	for point, want := range map[string]string{
 		"CP37":  "charge point",
@@ -122,7 +107,7 @@ func TestResolveReportedPoints_CurrentStationWinsEvenWhenOnlyTheAliasReadsIt(t *
 
 	current := mustNode(t, db, "SMN_007", true)
 	mustNode(t, db, "DROP-EARLIER", true)
-	seedScenePoint(t, db, "Area-01", "SMN_007", "GeneralLocation", "AP102")
+	testdb.SeedScenePoint(t, db, "Area-01", "SMN_007", "GeneralLocation", "AP102")
 
 	node, _, ok := ResolveReportedPoints(svc, "AP102", "DROP-EARLIER")
 	if !ok {
@@ -144,8 +129,8 @@ func TestResolveReportedPoints_AmbiguousAcrossAreasDeclinesNamingBoth(t *testing
 
 	mustNode(t, db, "SMN_007", true)
 	mustNode(t, db, "SMN_112", true)
-	seedScenePoint(t, db, "Area-01", "SMN_007", "GeneralLocation", "AP102")
-	seedScenePoint(t, db, "Area-02", "SMN_112", "GeneralLocation", "AP102")
+	testdb.SeedScenePoint(t, db, "Area-01", "SMN_007", "GeneralLocation", "AP102")
+	testdb.SeedScenePoint(t, db, "Area-02", "SMN_112", "GeneralLocation", "AP102")
 
 	if _, _, ok := ResolveReportedPoints(svc, "AP102", ""); ok {
 		t.Fatal("an AP102 that names two stations resolved to one of them")
@@ -166,7 +151,7 @@ func TestResolveReportedPoints_RefusesADisabledNode(t *testing.T) {
 	svc := NewNodeService(db)
 
 	mustNode(t, db, "SMN_001", false)
-	seedScenePoint(t, db, "Area-01", "SMN_001", "GeneralLocation", "AP51")
+	testdb.SeedScenePoint(t, db, "Area-01", "SMN_001", "GeneralLocation", "AP51")
 
 	if _, _, ok := ResolveReportedPoints(svc, "AP51", ""); ok {
 		t.Fatal("AP51 resolved onto a disabled node")
@@ -186,7 +171,7 @@ func TestResolveReportedPoints_RefusesASyntheticNodeThroughTheAlias(t *testing.T
 
 	group := &nodes.Node{Name: "SNF2 Lineside Market", IsSynthetic: true, Enabled: true}
 	testutil.MustNoErr(t, db.CreateNode(group), "create synthetic node")
-	seedScenePoint(t, db, "Area-01", "SNF2 Lineside Market", "GeneralLocation", "AP900")
+	testdb.SeedScenePoint(t, db, "Area-01", "SNF2 Lineside Market", "GeneralLocation", "AP900")
 
 	if _, _, ok := ResolveReportedPoints(svc, "AP900", ""); ok {
 		t.Fatal("the alias placed a station onto a synthetic node")
@@ -225,8 +210,8 @@ func TestDescribeUnresolvedPoints_CarriesNoDistanceFigure(t *testing.T) {
 	svc := NewNodeService(db)
 
 	mustNode(t, db, "SMN_007", true)
-	seedScenePoint(t, db, "Area-01", "SMN_007", "GeneralLocation", "AP102")
-	seedScenePoint(t, db, "Area-01", "CP37", "ChargePoint", "")
+	testdb.SeedScenePoint(t, db, "Area-01", "SMN_007", "GeneralLocation", "AP102")
+	testdb.SeedScenePoint(t, db, "Area-01", "CP37", "ChargePoint", "")
 
 	why := DescribeUnresolvedPoints(svc, "CP37", "")
 	for _, banned := range []string{" m from", "metres", "meters", "nearest"} {

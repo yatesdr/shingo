@@ -19,7 +19,7 @@ import (
 func TestCreateBinMove_CountsOneBin(t *testing.T) {
 	t.Parallel()
 	db := testdb.Open(t)
-	storageNode, lineNode, bp := setupTestData(t, db)
+	storageNode, lineNode, bp := testdb.SetupTestData(t, db)
 	createTestBinAtNode(t, db, bp.Code, storageNode.ID, "BIN-QTY-DIRECT")
 	eng := newTestEngine(t, db, simulator.New())
 

@@ -26,7 +26,7 @@ import (
 func TestOrphanedBinClaim_ReconciliationDetectsAndFixes(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	storageNode, lineNode, bp := setupTestData(t, db)
+	storageNode, lineNode, bp := testdb.SetupTestData(t, db)
 	// createTestBinAtNode's returned bin is refetched below (line ~62 via
 	// testdb.RequireBin), so its initial value is never read.
 	createTestBinAtNode(t, db, bp.Code, storageNode.ID, "BIN-TC80")

@@ -24,7 +24,7 @@ import (
 func TestReserveReconcile_AHeldBinIsKeptByTheRuleThatAcquiredIt(t *testing.T) {
 	t.Parallel()
 	db := testDBShared(t)
-	_, lineNode, bp := setupTestData(t, db)
+	_, lineNode, bp := testdb.SetupTestData(t, db)
 	d, _ := newTestDispatcher(t, db, testdb.NewTrackingBackend())
 
 	spot := &nodes.Node{Name: "HM-SPOT", Enabled: true}
@@ -68,7 +68,7 @@ func TestReserveReconcile_AHeldBinIsKeptByTheRuleThatAcquiredIt(t *testing.T) {
 func TestReserveReconcile_AStockPickupKeepsNoHeldEmpty(t *testing.T) {
 	t.Parallel()
 	db := testDBShared(t)
-	_, lineNode, bp := setupTestData(t, db)
+	_, lineNode, bp := testdb.SetupTestData(t, db)
 	d, _ := newTestDispatcher(t, db, testdb.NewTrackingBackend())
 
 	spot := &nodes.Node{Name: "HM2-SPOT", Enabled: true}

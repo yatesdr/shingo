@@ -30,7 +30,7 @@ import (
 func TestIntake_ClaimsNothingOnAnyPath(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	storage, line, bp := setupTestData(t, db)
+	storage, line, bp := testdb.SetupTestData(t, db)
 	testdb.CreateBinAtNode(t, db, bp.Code, storage.ID, "INC-FULL")
 	sc := testdb.SetupCompound(t, db, testdb.CompoundConfig{
 		Prefix: "INCB", NumSlots: 2, TargetSlot: 2, TargetAge: 2 * time.Hour,

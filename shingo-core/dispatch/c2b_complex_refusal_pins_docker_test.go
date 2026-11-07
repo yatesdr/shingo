@@ -24,7 +24,7 @@ import (
 func c2bComplexOrder(t *testing.T, uuid string) (*Dispatcher, *mockEmitter, *orders.Order, func() *orders.Order) {
 	t.Helper()
 	db := testDB(t)
-	storageNode, lineNode, bp := setupTestData(t, db)
+	storageNode, lineNode, bp := testdb.SetupTestData(t, db)
 	d, emitter := newTestDispatcher(t, db, testdb.NewTrackingBackend())
 	testdb.CreateBinAtNode(t, db, bp.Code, storageNode.ID, "BIN-"+uuid)
 	order := &orders.Order{

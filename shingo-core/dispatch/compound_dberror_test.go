@@ -18,7 +18,7 @@ import (
 func TestAdvanceCompoundOrder_SurfacesDBError(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	_, lineNode, bp := setupTestData(t, db)
+	_, lineNode, bp := testdb.SetupTestData(t, db)
 	d, _ := newTestDispatcher(t, db, testdb.NewFailingBackend())
 
 	parent := &orders.Order{
@@ -78,7 +78,7 @@ func TestAdvanceCompoundOrder_SurfacesDBError(t *testing.T) {
 func TestAdvanceCompoundChapterEnd_UnreadableChildListDoesNotComplete(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	_, lineNode, bp := setupTestData(t, db)
+	_, lineNode, bp := testdb.SetupTestData(t, db)
 	d, _ := newTestDispatcher(t, db, testdb.NewFailingBackend())
 
 	parent := &orders.Order{
@@ -141,7 +141,7 @@ func TestAdvanceCompoundChapterEnd_UnreadableChildListDoesNotComplete(t *testing
 func TestAdvanceCompoundChapterEnd_MissingParentDoesNotWedge(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	setupTestData(t, db)
+	testdb.SetupTestData(t, db)
 	d, _ := newTestDispatcher(t, db, testdb.NewFailingBackend())
 
 	// No parent row, no children: ListChildOrders succeeds and returns empty,

@@ -40,7 +40,7 @@ func ngrpWithFreeSlot(t *testing.T, db *store.DB, group, child string) (*nodes.N
 func TestPlanTransport_EmptyToAGroupLeavesWithAConcreteSlot(t *testing.T) {
 	t.Parallel()
 	db := testDBShared(t)
-	storageNode, _, _ := setupTestData(t, db)
+	storageNode, _, _ := testdb.SetupTestData(t, db)
 	bt, err := db.GetBinTypeByCode("DEFAULT")
 	testutil.MustNoErr(t, err, "bin type")
 
@@ -97,7 +97,7 @@ func TestPlanTransport_EmptyToAGroupLeavesWithAConcreteSlot(t *testing.T) {
 func TestPlanTransport_SameNodeRefusalStaysMoveOnly(t *testing.T) {
 	t.Parallel()
 	db := testDBShared(t)
-	_, _, _ = setupTestData(t, db)
+	_, _, _ = testdb.SetupTestData(t, db)
 	bt, err := db.GetBinTypeByCode("DEFAULT")
 	testutil.MustNoErr(t, err, "bin type")
 

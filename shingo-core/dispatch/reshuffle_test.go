@@ -614,7 +614,7 @@ func TestHandleChildOrderFailure_InFlightSibling(t *testing.T) {
 func TestAdvanceCompoundOrder_FailedParentEmitsOrderFailed(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	_, lineNode, bp := setupTestData(t, db)
+	_, lineNode, bp := testdb.SetupTestData(t, db)
 
 	d, emitter := newTestDispatcher(t, db, testdb.NewFailingBackend())
 

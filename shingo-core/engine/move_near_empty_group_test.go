@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"shingocore/fleet/simulator"
+	"shingocore/internal/testdb"
 	"shingocore/store"
 	"shingocore/store/payloads"
 )
@@ -76,7 +77,7 @@ func groupAskedFor(t *testing.T, db *store.DB, label string, remaining int, dest
 func TestMove_FullBinStaysOnTheHeavyGroup(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	storageNode, lineNode, payload := setupTestData(t, db)
+	storageNode, lineNode, payload := testdb.SetupTestData(t, db)
 	configureRelaxable(t, db, payload)
 
 	bin := createTestBinAtNode(t, db, payload.Code, storageNode.ID, "BIN-NE-FULL")
@@ -93,7 +94,7 @@ func TestMove_FullBinStaysOnTheHeavyGroup(t *testing.T) {
 func TestMove_DrainedBinRelaxesToTheNearEmptyGroup(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	storageNode, lineNode, payload := setupTestData(t, db)
+	storageNode, lineNode, payload := testdb.SetupTestData(t, db)
 	configureRelaxable(t, db, payload)
 
 	bin := createTestBinAtNode(t, db, payload.Code, storageNode.ID, "BIN-NE-DRAINED")
@@ -117,7 +118,7 @@ func TestMove_DrainedBinRelaxesToTheNearEmptyGroup(t *testing.T) {
 func TestMove_CarrierRefusesTheRelaxation(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	storageNode, lineNode, payload := setupTestData(t, db)
+	storageNode, lineNode, payload := testdb.SetupTestData(t, db)
 	configureRelaxable(t, db, payload)
 
 	bin := createTestBinAtNode(t, db, payload.Code, storageNode.ID, "BIN-NE-RACK")

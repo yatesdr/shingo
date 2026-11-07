@@ -76,7 +76,7 @@ func TestBinMove_ToAGroupWithRoomDispatches(t *testing.T) {
 func TestBinMove_GoesFromPendingStraightToDispatched(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	storageNode, lineNode, _ := setupTestData(t, db)
+	storageNode, lineNode, _ := testdb.SetupTestData(t, db)
 	createTestBinAtNode(t, db, "PART-A", storageNode.ID, "B2-EDGE")
 	eng := newTestEngine(t, db, testdb.NewTrackingBackend())
 
@@ -98,7 +98,7 @@ func TestBinMove_GoesFromPendingStraightToDispatched(t *testing.T) {
 func TestBinMove_ACoreBornMoveSendsItsStationNothing(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	storageNode, lineNode, _ := setupTestData(t, db)
+	storageNode, lineNode, _ := testdb.SetupTestData(t, db)
 	createTestBinAtNode(t, db, "PART-A", storageNode.ID, "B2-QUIET")
 	eng := newTestEngine(t, db, testdb.NewTrackingBackend())
 
@@ -173,7 +173,7 @@ func TestBinMove_ProjectionDecidesWhoHearsTheDelivery(t *testing.T) {
 	t.Run("projects to its window's Edge", func(t *testing.T) {
 		t.Parallel()
 		db := testDB(t)
-		storageNode, lineNode, _ := setupTestData(t, db)
+		storageNode, lineNode, _ := testdb.SetupTestData(t, db)
 		createTestBinAtNode(t, db, "PART-A", storageNode.ID, "B2-WINDOW")
 		eng := newTestEngine(t, db, testdb.NewTrackingBackend())
 
@@ -188,7 +188,7 @@ func TestBinMove_ProjectionDecidesWhoHearsTheDelivery(t *testing.T) {
 	t.Run("projects to nobody", func(t *testing.T) {
 		t.Parallel()
 		db := testDB(t)
-		storageNode, lineNode, _ := setupTestData(t, db)
+		storageNode, lineNode, _ := testdb.SetupTestData(t, db)
 		createTestBinAtNode(t, db, "PART-A", storageNode.ID, "B2-NOBODY")
 		eng := newTestEngine(t, db, testdb.NewTrackingBackend())
 
@@ -206,7 +206,7 @@ func TestBinMove_ProjectionDecidesWhoHearsTheDelivery(t *testing.T) {
 func TestAcquire_AStationKnownOrderKeepsItsAckAndWalksPendingToDispatched(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	storageNode, lineNode, _ := setupTestData(t, db)
+	storageNode, lineNode, _ := testdb.SetupTestData(t, db)
 	bin := createTestBinAtNode(t, db, "PART-A", storageNode.ID, "B2-KNOWN")
 	eng := newTestEngine(t, db, testdb.NewTrackingBackend())
 
@@ -251,7 +251,7 @@ func TestAcquire_AStationKnownOrderKeepsItsAckAndWalksPendingToDispatched(t *tes
 func TestAcquireOne_TriesOneOrderAndNotTheWaitingSet(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	storageNode, lineNode, _ := setupTestData(t, db)
+	storageNode, lineNode, _ := testdb.SetupTestData(t, db)
 	createTestBinAtNode(t, db, "PART-A", storageNode.ID, "B2-ONE")
 	eng := newTestEngine(t, db, testdb.NewTrackingBackend())
 

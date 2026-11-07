@@ -28,7 +28,7 @@ import (
 func TestComplexIntake_IsBornSourcing(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	_, lineNode, bp := setupTestData(t, db)
+	_, lineNode, bp := testdb.SetupTestData(t, db)
 	d, _ := newTestDispatcher(t, db, testdb.NewTrackingBackend())
 
 	// A step list Core can resolve but that the scanner is NOT going to be able
@@ -65,7 +65,7 @@ func TestComplexIntake_IsBornSourcing(t *testing.T) {
 func TestComplexIntake_BornSourcingIsScannedAllocatedAndDispatched(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	storage, lineNode, bp := setupTestData(t, db)
+	storage, lineNode, bp := testdb.SetupTestData(t, db)
 	d, _ := newTestDispatcher(t, db, testdb.NewTrackingBackend())
 
 	// Material on the shelf, so the hunt can actually succeed.
@@ -121,7 +121,7 @@ func TestComplexIntake_BornSourcingIsScannedAllocatedAndDispatched(t *testing.T)
 func TestComplexIntake_TheBirthRowIsTheEpisodeTheCauseLandsOn(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	_, lineNode, bp := setupTestData(t, db)
+	_, lineNode, bp := testdb.SetupTestData(t, db)
 	d, _ := newTestDispatcher(t, db, testdb.NewTrackingBackend())
 
 	d.HandleComplexOrderRequest(testEnvelope(), &protocol.ComplexOrderRequest{

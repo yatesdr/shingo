@@ -116,7 +116,7 @@ func historyLine(rows []*orders.History) []string {
 func TestBinMove_NowhereToParkABlockerIsRefusedAtOnce(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	_, lineNode, _ := setupTestData(t, db)
+	_, lineNode, _ := testdb.SetupTestData(t, db)
 	eng := newTestEngine(t, db, simulator.New())
 
 	ordersFor := func(binID int64) int {

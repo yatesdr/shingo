@@ -9,6 +9,7 @@ import (
 
 	"shingocore/fleet"
 	"shingocore/fleet/simulator"
+	"shingocore/internal/testdb"
 	"shingocore/store/payloads"
 )
 
@@ -79,7 +80,7 @@ func TestValidateAdvancedLoadSequence_Empty(t *testing.T) {
 func TestValidateAdvancedLoadSequence_UnknownName(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	storageNode, _, _ := setupTestData(t, db)
+	storageNode, _, _ := testdb.SetupTestData(t, db)
 	p := assignedCartPayload(t, db, storageNode.ID)
 
 	full := map[string][]string{"STORAGE-A1": {"Go_AP1", "Spin_90", "load", "Spin_inverse_90"}}
@@ -102,7 +103,7 @@ func TestValidateAdvancedLoadSequence_UnknownName(t *testing.T) {
 func TestValidateAdvancedLoadSequence_MissingKey(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	storageNode, _, _ := setupTestData(t, db)
+	storageNode, _, _ := testdb.SetupTestData(t, db)
 	p := assignedCartPayload(t, db, storageNode.ID)
 
 	// STORAGE-A1 exists but has only two of the four keys.
@@ -129,7 +130,7 @@ func TestValidateAdvancedLoadSequence_MissingKey(t *testing.T) {
 func TestValidateAdvancedLoadSequence_AllPresent(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	storageNode, _, _ := setupTestData(t, db)
+	storageNode, _, _ := testdb.SetupTestData(t, db)
 	p := assignedCartPayload(t, db, storageNode.ID)
 
 	full := map[string][]string{"STORAGE-A1": {"Go_AP1", "Spin_90", "load", "Spin_inverse_90", "extra"}}
@@ -150,7 +151,7 @@ func TestValidateAdvancedLoadSequence_AllPresent(t *testing.T) {
 func TestValidateAdvancedLoadSequence_NoCheckerDegrades(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	storageNode, _, _ := setupTestData(t, db)
+	storageNode, _, _ := testdb.SetupTestData(t, db)
 	p := assignedCartPayload(t, db, storageNode.ID)
 
 	eng := newTestEngine(t, db, simulator.New()) // plain sim: not a BinTaskChecker
@@ -172,7 +173,7 @@ func TestValidateAdvancedLoadSequence_NoCheckerDegrades(t *testing.T) {
 func TestValidateAdvancedLoadSequence_RDSErrorDegrades(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	storageNode, _, _ := setupTestData(t, db)
+	storageNode, _, _ := testdb.SetupTestData(t, db)
 	p := assignedCartPayload(t, db, storageNode.ID)
 
 	eng := newTestEngine(t, db, &fakeBinCheckBackend{

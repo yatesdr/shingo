@@ -10,6 +10,7 @@ import (
 	"shingo/protocol/testutil"
 	"shingocore/dispatch"
 	"shingocore/fleet/simulator"
+	"shingocore/internal/testdb"
 	"shingocore/store"
 	"shingocore/store/nodes"
 	"shingocore/store/orders"
@@ -24,7 +25,7 @@ import (
 func TestStage2Pull_LandedMoveConfirmsAndFreesItsClaim(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	storageNode, _, _ := setupTestData(t, db)
+	storageNode, _, _ := testdb.SetupTestData(t, db)
 	win := &nodes.Node{Name: "S2L-WIN", Enabled: true}
 	testutil.MustNoErr(t, db.CreateNode(win), "window")
 	bin := createTestBinAtNode(t, db, "", storageNode.ID, "BIN-S2L")

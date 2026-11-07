@@ -63,7 +63,7 @@ func envelopeWithUOP(t *testing.T, uop int) *protocol.Envelope {
 func TestScanner_NeverAcquiresAHalfAppliedBirth(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	storage, line, bp := setupTestData(t, db)
+	storage, line, bp := testdb.SetupTestData(t, db)
 	bin := createTestBinAtNode(t, db, bp.Code, storage.ID, "HALF-BIRTH-BIN")
 	sim := simulator.New()
 	eng := newTestEngine(t, db, sim)
@@ -128,7 +128,7 @@ func TestScanner_NeverAcquiresAHalfAppliedBirth(t *testing.T) {
 func TestLadder_WalkPath(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	storage, line, bp := setupTestData(t, db)
+	storage, line, bp := testdb.SetupTestData(t, db)
 	bin := createTestBinAtNode(t, db, bp.Code, storage.ID, "WALK-BIN")
 	holder := testdb.CreateOrder(t, db, func(o *orders.Order) {
 		o.EdgeUUID = "walk-holder"

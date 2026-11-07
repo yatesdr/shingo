@@ -22,7 +22,7 @@ import (
 func TestDispatch_QualityHoldBin_QueuedNotFailed(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	storageNode, lineNode, bp := setupTestData(t, db)
+	storageNode, lineNode, bp := testdb.SetupTestData(t, db)
 
 	// Create a single bin at storage, then put it in quality hold
 	bin := createTestBinAtNode(t, db, bp.Code, storageNode.ID, "BIN-QH")

@@ -23,7 +23,7 @@ import (
 func TestDispatchDirect_ConfiguredPayload_ExpandsLoadAndKeepsKeyRouteEmpty(t *testing.T) {
 	t.Parallel()
 	db := testDBShared(t)
-	storageNode, lineNode, payload := setupTestData(t, db)
+	storageNode, lineNode, payload := testdb.SetupTestData(t, db)
 
 	// Configure the payload with the seeded child-cart sequence.
 	payload.AdvancedLoadSequence = "Child cart interlock"
@@ -94,7 +94,7 @@ func TestDispatchDirect_ConfiguredPayload_ExpandsLoadAndKeepsKeyRouteEmpty(t *te
 func TestDispatchDirect_UnconfiguredPayload_SingleLoadBlock(t *testing.T) {
 	t.Parallel()
 	db := testDBShared(t)
-	storageNode, lineNode, _ := setupTestData(t, db)
+	storageNode, lineNode, _ := testdb.SetupTestData(t, db)
 
 	// Own payload, not PART-A: this file's other test configures PART-A's
 	// AdvancedLoadSequence and persists it, and both tests share this file's

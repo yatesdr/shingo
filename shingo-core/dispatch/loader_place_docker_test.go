@@ -24,9 +24,9 @@ import (
 // dedicatedLoaderFixture but adds the outbound node the evac drains to.
 func parkFixture(t *testing.T, db *store.DB) (home, buffer, outbound *nodes.Node, loaderID int64) {
 	t.Helper()
-	// setupTestData seeds the DEFAULT bin type (needed by makeLoaderBin);
+	// testdb.SetupTestData seeds the DEFAULT bin type (needed by makeLoaderBin);
 	// dedicatedLoaderFixture creates the PART-X payload + the loader (home + buffer).
-	setupTestData(t, db)
+	testdb.SetupTestData(t, db)
 	home, buffer = dedicatedLoaderFixture(t, db, "consume")
 	h, err := db.GetLoaderHomeByPositionNode(home.ID)
 	if err != nil || h == nil {
@@ -652,7 +652,7 @@ func stageSwapAtHome(t *testing.T, db *store.DB, home, line string) (ret *orders
 // blank inbound means it pulls no carriers ("it is fed directly").
 func springfieldLoaderFixture(t *testing.T, db *store.DB) (home, buffer, market *nodes.Node, loaderID int64) {
 	t.Helper()
-	setupTestData(t, db)
+	testdb.SetupTestData(t, db)
 	if err := db.CreatePayload(&payloads.Payload{Code: "PART-X", Description: "X", UOPCapacity: 10}); err != nil {
 		t.Fatalf("create payload: %v", err)
 	}

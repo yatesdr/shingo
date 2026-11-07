@@ -55,7 +55,7 @@ func emptyIntentMoveOrder(t *testing.T, db *store.DB, binID int64, source, deliv
 func TestMove_DispatchesAgainstTheBinsPayload(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	storageNode, lineNode, payload := setupTestData(t, db)
+	storageNode, lineNode, payload := testdb.SetupTestData(t, db)
 
 	// The part in the bin needs a heavy robot.
 	payload.RobotGroup = "HEAVY-1500"
@@ -116,7 +116,7 @@ func TestMove_DispatchesAgainstTheBinsPayload(t *testing.T) {
 func TestRetrieveEmpty_StaysPayloadAgnostic(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	storageNode, lineNode, payload := setupTestData(t, db)
+	storageNode, lineNode, payload := testdb.SetupTestData(t, db)
 
 	payload.RobotGroup = "HEAVY-1500"
 	if err := db.UpdatePayload(payload); err != nil {

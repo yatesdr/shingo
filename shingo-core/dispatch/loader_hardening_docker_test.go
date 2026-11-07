@@ -50,7 +50,7 @@ func dedicatedHome(t *testing.T, db *store.DB, role string, names []string, payl
 func TestPlanRetrieve_DedicatedLoaderPool_HomeFullNoBuffer_SourcesHome(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	_, lineNode, _ := setupTestData(t, db)
+	_, lineNode, _ := testdb.SetupTestData(t, db)
 	if err := db.CreatePayload(&payloads.Payload{Code: "PART-X", Description: "X", UOPCapacity: 10}); err != nil {
 		t.Fatalf("create payload: %v", err)
 	}
@@ -78,7 +78,7 @@ func TestPlanRetrieve_DedicatedLoaderPool_HomeFullNoBuffer_SourcesHome(t *testin
 func TestPlanRetrieve_DedicatedLoaderPool_OlderFullBeatsNewerPartial(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	_, lineNode, _ := setupTestData(t, db)
+	_, lineNode, _ := testdb.SetupTestData(t, db)
 	pos, buffer := dedicatedLoaderFixture(t, db, "consume")
 
 	now := time.Now().UTC()
@@ -105,7 +105,7 @@ func TestPlanRetrieve_DedicatedLoaderPool_OlderFullBeatsNewerPartial(t *testing.
 func TestPlanRetrieve_DedicatedLoaderPool_MultiHomeSamePayload(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	_, lineNode, _ := setupTestData(t, db)
+	_, lineNode, _ := testdb.SetupTestData(t, db)
 	if err := db.CreatePayload(&payloads.Payload{Code: "PART-X", Description: "X", UOPCapacity: 10}); err != nil {
 		t.Fatalf("create payload: %v", err)
 	}
@@ -139,7 +139,7 @@ func TestPlanRetrieve_DedicatedLoaderPool_MultiHomeSamePayload(t *testing.T) {
 func TestPlanRetrieve_SharedWindowLoader_LayoutGatedFromPool(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	storageNode, lineNode, _ := setupTestData(t, db)
+	storageNode, lineNode, _ := testdb.SetupTestData(t, db)
 	if err := db.CreatePayload(&payloads.Payload{Code: "PART-X", Description: "X", UOPCapacity: 10}); err != nil {
 		t.Fatalf("create payload: %v", err)
 	}

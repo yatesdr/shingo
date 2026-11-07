@@ -208,7 +208,7 @@ func TestAdvanceStuckReshuffleParents_RescuesADigThatNamesATarget(t *testing.T) 
 	t.Parallel()
 	db := testDB(t)
 	svc := newReconService(t, db)
-	_, _, bp := setupTestData(t, db)
+	_, _, bp := testdb.SetupTestData(t, db)
 
 	var advanced []int64
 	svc.advanceCompound = func(parentID int64) error {
@@ -279,7 +279,7 @@ func TestReconciliationService_Summary_StuckOrderDegrades(t *testing.T) {
 	t.Parallel()
 	testdb.DisableWedgeSweep(t, "this fixture BACKDATES a `dispatched` order with no vendor id on purpose — that state is what the sweep under test is for, so the crash-sliver clause is correctly reporting the thing being arranged")
 	db := testDB(t)
-	setupTestData(t, db)
+	testdb.SetupTestData(t, db)
 	svc := newReconService(t, db)
 
 	// Seed a dispatched order and backdate it past the stuck-age threshold (30
@@ -336,7 +336,7 @@ func TestAbandonStuckOrders(t *testing.T) {
 	t.Parallel()
 	testdb.DisableWedgeSweep(t, "this fixture BACKDATES a `dispatched` order with no vendor id on purpose — that state is what the sweep under test is for, so the crash-sliver clause is correctly reporting the thing being arranged")
 	db := testDB(t)
-	setupTestData(t, db)
+	testdb.SetupTestData(t, db)
 	svc := newReconService(t, db)
 
 	mk := func(uuid string, status protocol.Status) *orders.Order {
@@ -399,7 +399,7 @@ func TestAbandonStuckOrders(t *testing.T) {
 func TestAbandonStuckOperatorGatedStaging(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	setupTestData(t, db)
+	testdb.SetupTestData(t, db)
 	svc := newReconService(t, db)
 
 	mk := func(uuid string, coordinated bool, ageHours int) *orders.Order {
@@ -471,7 +471,7 @@ func TestPreDispatchNotSwept(t *testing.T) {
 	t.Parallel()
 	testdb.DisableWedgeSweep(t, "this fixture BACKDATES a `dispatched` order with no vendor id on purpose — that state is what the sweep under test is for, so the crash-sliver clause is correctly reporting the thing being arranged")
 	db := testDB(t)
-	setupTestData(t, db)
+	testdb.SetupTestData(t, db)
 	svc := newReconService(t, db)
 
 	mk := func(uuid string, status protocol.Status) *orders.Order {
@@ -540,7 +540,7 @@ func TestPreDispatchNotSwept(t *testing.T) {
 func TestGateStagedNotSwept(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	setupTestData(t, db)
+	testdb.SetupTestData(t, db)
 	svc := newReconService(t, db)
 
 	mk := func(uuid string, apply func(*orders.Order)) *orders.Order {
@@ -618,7 +618,7 @@ func TestGateStagedNotSwept(t *testing.T) {
 func TestAbandonSweep_ExemptsVacateWait(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	setupTestData(t, db)
+	testdb.SetupTestData(t, db)
 	svc := newReconService(t, db)
 
 	mk := func(uuid, steps string) *orders.Order {
@@ -713,7 +713,7 @@ func TestReconciliationService_ListAnomalies_StuckOrder(t *testing.T) {
 	t.Parallel()
 	testdb.DisableWedgeSweep(t, "this fixture BACKDATES a `dispatched` order with no vendor id on purpose — that state is what the sweep under test is for, so the crash-sliver clause is correctly reporting the thing being arranged")
 	db := testDB(t)
-	setupTestData(t, db)
+	testdb.SetupTestData(t, db)
 	svc := newReconService(t, db)
 
 	order := &orders.Order{
@@ -776,7 +776,7 @@ func TestReconciliationService_ListAnomalies_StuckOrder(t *testing.T) {
 func TestReconciliationService_ListAnomalies_ExpiredStagedBin(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	storageNode, _, bp := setupTestData(t, db)
+	storageNode, _, bp := testdb.SetupTestData(t, db)
 	svc := newReconService(t, db)
 
 	bin := createTestBinAtNode(t, db, bp.Code, storageNode.ID, "STAGED-1")
@@ -933,7 +933,7 @@ func TestReconciliationService_AutoConfirm_NothingDelivered(t *testing.T) {
 func TestReconciliationService_AutoConfirm_ConfirmsStuckDelivered(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	setupTestData(t, db)
+	testdb.SetupTestData(t, db)
 	svc := newReconService(t, db)
 
 	// Seed a delivered order with updated_at well past the timeout.
@@ -1013,7 +1013,7 @@ func TestReconciliationService_AutoConfirm_ConfirmsStuckDelivered(t *testing.T) 
 func TestReconciliationService_AutoConfirm_SkipsFreshDelivered(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	setupTestData(t, db)
+	testdb.SetupTestData(t, db)
 	svc := newReconService(t, db)
 
 	// A delivered order updated moments ago — too fresh for auto-confirm.
@@ -1050,7 +1050,7 @@ func TestReconciliationService_AutoConfirm_SkipsFreshDelivered(t *testing.T) {
 func TestReconciliationService_AutoConfirm_SkipsNonDelivered(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	setupTestData(t, db)
+	testdb.SetupTestData(t, db)
 	svc := newReconService(t, db)
 
 	// A stuck but not-delivered order — query only matches status='delivered'.
@@ -1085,7 +1085,7 @@ func TestReconciliationService_AutoConfirm_NoHookIsSafe(t *testing.T) {
 	// completes (the Loop is itself started inside Start, but the
 	// invariant is still worth guarding).
 	db := testDB(t)
-	setupTestData(t, db)
+	testdb.SetupTestData(t, db)
 	svc := newReconService(t, db)
 	if svc.confirmDelivered != nil {
 		t.Fatal("confirmDelivered should default to nil on a bare service")

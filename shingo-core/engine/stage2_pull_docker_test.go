@@ -240,7 +240,7 @@ func TestStage2Pull_FiresOnPickupOnArrivalAndAtStartup(t *testing.T) {
 	t.Run("pickup frees a window", func(t *testing.T) {
 		t.Parallel()
 		db := testDB(t)
-		storage, _, _ := setupTestData(t, db)
+		storage, _, _ := testdb.SetupTestData(t, db)
 		f := newS2Fixture(t, db, "S2T2", 1)
 		p := f.pair(t, "S2T2", 1)
 		sitting := createTestBinAtNode(t, db, "", p.windows[0].ID, "BIN-S2T2-SITTING")
@@ -415,7 +415,7 @@ func TestStage2Pull_CycleTwoWindowsThreeCarts(t *testing.T) {
 func TestStage2Pull_PulledDirectlyRefillsWhenALineTakesTheCart(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	storage, _, _ := setupTestData(t, db)
+	storage, _, _ := testdb.SetupTestData(t, db)
 	f := newS2Fixture(t, db, "S2PD", 1)
 	p := f.pair(t, "S2PD", 1)
 	two, err := f.loaders.Get(p.stage2)

@@ -35,7 +35,7 @@ import (
 func TestCompoundChild_PersistsEveryFieldSetOnIt(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	_, lineNode, bp := setupTestData(t, db)
+	_, lineNode, bp := testdb.SetupTestData(t, db)
 	src := &nodes.Node{Name: "CCC-SRC", Enabled: true}
 	testutil.MustNoErr(t, db.CreateNode(src), "create src")
 	childBin := testdb.CreateBinAtNode(t, db, bp.Code, src.ID, "CCC-BIN")

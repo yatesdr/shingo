@@ -8,6 +8,7 @@ import (
 
 	"shingo/protocol/testutil"
 	"shingocore/fleet/simulator"
+	"shingocore/internal/testdb"
 	"shingocore/store/plantclaims"
 )
 
@@ -23,7 +24,7 @@ import (
 func TestSourceabilityEvents_OneRowPerTransitionNotPerTick(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	storageNode, _, _ := setupTestData(t, db)
+	storageNode, _, _ := testdb.SetupTestData(t, db)
 	bin := createTestBinAtNode(t, db, "BIN-EV", storageNode.ID, "src")
 
 	testutil.MustNoErr(t, plantclaims.ReplaceProcess(db.DB, "SNF9",

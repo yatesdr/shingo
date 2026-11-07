@@ -44,7 +44,7 @@ func TestConcurrent_ClaimSerialized_NoDoubleClaim(t *testing.T) {
 	t.Parallel()
 
 	db := testDB(t)
-	storageNode, lineNode, bp := setupTestData(t, db)
+	storageNode, lineNode, bp := testdb.SetupTestData(t, db)
 	createTestBinAtNode(t, db, bp.Code, storageNode.ID, "BIN-RACE")
 
 	sim := simulator.New()
@@ -105,7 +105,7 @@ func TestConcurrent_DispatchStress(t *testing.T) {
 	t.Cleanup(func() { runtime.GOMAXPROCS(old) })
 
 	db := testDB(t)
-	storageNode, lineNode, bp := setupTestData(t, db)
+	storageNode, lineNode, bp := testdb.SetupTestData(t, db)
 
 	// Create 10 bins at storage
 	for i := 0; i < 10; i++ {
@@ -171,7 +171,7 @@ func TestConcurrent_DispatchStress(t *testing.T) {
 func TestComplexOrder_ZeroSteps(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	_, _, bp := setupTestData(t, db)
+	_, _, bp := testdb.SetupTestData(t, db)
 
 	sim := simulator.New()
 	eng := newTestEngine(t, db, sim)
@@ -212,7 +212,7 @@ func TestComplexOrder_ZeroSteps(t *testing.T) {
 func TestComplexOrder_NonexistentDeliveryNode(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	storageNode, _, bp := setupTestData(t, db)
+	storageNode, _, bp := testdb.SetupTestData(t, db)
 	createTestBinAtNode(t, db, bp.Code, storageNode.ID, "BIN-TC10")
 
 	sim := simulator.New()
@@ -250,7 +250,7 @@ func TestComplexOrder_NonexistentDeliveryNode(t *testing.T) {
 func TestComplexOrder_ZeroQuantity(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	storageNode, lineNode, bp := setupTestData(t, db)
+	storageNode, lineNode, bp := testdb.SetupTestData(t, db)
 	createTestBinAtNode(t, db, bp.Code, storageNode.ID, "BIN-TC12")
 
 	sim := simulator.New()
@@ -298,7 +298,7 @@ func TestComplexOrder_ZeroQuantity(t *testing.T) {
 func TestRedirect_MidTransit(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	storageNode, lineNode1, bp := setupTestData(t, db)
+	storageNode, lineNode1, bp := testdb.SetupTestData(t, db)
 
 	// Create second line node for redirect destination
 	lineNode2 := &nodes.Node{Name: "LINE2-IN", Enabled: true}
@@ -385,7 +385,7 @@ func TestRedirect_MidTransit(t *testing.T) {
 func TestFulfillmentScanner_QueueToDispatch(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	storageNode, lineNode, bp := setupTestData(t, db)
+	storageNode, lineNode, bp := testdb.SetupTestData(t, db)
 	// NO bins created — order should queue
 
 	sim := simulator.New()
@@ -578,7 +578,7 @@ func TestConcurrentRetrieve_SamePart(t *testing.T) {
 func TestRetrieveClaimFailure_QueueSurvives(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	storageNode, lineNode, bp := setupTestData(t, db)
+	storageNode, lineNode, bp := testdb.SetupTestData(t, db)
 
 	// Single bin — both orders compete for the same bin
 	createTestBinAtNode(t, db, bp.Code, storageNode.ID, "BIN-TC36")

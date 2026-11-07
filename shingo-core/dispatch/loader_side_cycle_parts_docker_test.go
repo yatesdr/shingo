@@ -110,7 +110,7 @@ func TestSideCycleParts_TwentyPartsAtOneWindowIsOneAsk(t *testing.T) {
 	}
 	cost := func(asks [][]string) (int64, int) {
 		db, cfgDB := testdb.OpenWithConfig(t)
-		setupTestData(t, db)
+		testdb.SetupTestData(t, db)
 		market := &nodes.Node{Name: "TPW-FG", Enabled: true}
 		testutil.MustNoErr(t, db.CreateNode(market), "FG market")
 		id, err := db.CreateLoader(loaders.Loader{Name: "TPW", Role: loaders.RoleConsume, Layout: loaders.LayoutSharedWindow,

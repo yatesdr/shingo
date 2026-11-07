@@ -35,7 +35,7 @@ import (
 func TestSpotPickup_HowTheStepFlagJudgesTheBin(t *testing.T) {
 	t.Parallel()
 	db := testDBShared(t)
-	setupTestData(t, db)
+	testdb.SetupTestData(t, db)
 	d, _ := newTestDispatcher(t, db, testdb.NewTrackingBackend())
 
 	newT := &bins.BinType{Code: "SPK-NEWT"}

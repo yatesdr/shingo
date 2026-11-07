@@ -31,7 +31,7 @@ import (
 func TestNamedBinMove_ARobotsBinIsRefusedNamingTheHolder(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	_, lineNode, _ := setupTestData(t, db)
+	_, lineNode, _ := testdb.SetupTestData(t, db)
 	spot := &nodes.Node{Name: "NB-SPOT", Enabled: true}
 	back := &nodes.Node{Name: "NB-BACK", Enabled: true}
 	for _, n := range []*nodes.Node{spot, back} {
@@ -85,7 +85,7 @@ func TestNamedBinMove_ARobotsBinIsRefusedNamingTheHolder(t *testing.T) {
 func TestNamedBinMove_LiftsNothingOnceItsBinHasLeft(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	setupTestData(t, db)
+	testdb.SetupTestData(t, db)
 	spot := &nodes.Node{Name: "NBP-SPOT", Enabled: true}
 	back := &nodes.Node{Name: "NBP-BACK", Enabled: true}
 	aside := &nodes.Node{Name: "NBP-ASIDE", Enabled: true}
@@ -143,7 +143,7 @@ func TestNamedBinMove_LiftsNothingOnceItsBinHasLeft(t *testing.T) {
 func TestNamedBinMove_TwoBinsOnTheSourceLiftsItsOwn(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	setupTestData(t, db)
+	testdb.SetupTestData(t, db)
 	spot := &nodes.Node{Name: "NB2B-SPOT", Enabled: true}
 	back := &nodes.Node{Name: "NB2B-BACK", Enabled: true}
 	for _, n := range []*nodes.Node{spot, back} {
@@ -170,7 +170,7 @@ func TestNamedBinMove_TwoBinsOnTheSourceLiftsItsOwn(t *testing.T) {
 func TestNamedBinMove_LiftsItsBinWhenItStands(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	setupTestData(t, db)
+	testdb.SetupTestData(t, db)
 	spot := &nodes.Node{Name: "NB2-SPOT", Enabled: true}
 	back := &nodes.Node{Name: "NB2-BACK", Enabled: true}
 	for _, n := range []*nodes.Node{spot, back} {
@@ -208,7 +208,7 @@ func holdOfBin(t *testing.T, db interface {
 func TestNamedBinMove_HoldMarksTheBinAtBirth(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	setupTestData(t, db)
+	testdb.SetupTestData(t, db)
 	spot := &nodes.Node{Name: "QH1-SPOT", Enabled: true}
 	hold := &nodes.Node{Name: "QH1-HOLD", Enabled: true}
 	for _, n := range []*nodes.Node{spot, hold} {
@@ -248,7 +248,7 @@ func TestNamedBinMove_HoldMarksTheBinAtBirth(t *testing.T) {
 func TestNamedBinMove_HoldOfABinNotAtTheSourceIsRefused(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	setupTestData(t, db)
+	testdb.SetupTestData(t, db)
 	spot := &nodes.Node{Name: "QH2-SPOT", Enabled: true}
 	hold := &nodes.Node{Name: "QH2-HOLD", Enabled: true}
 	away := &nodes.Node{Name: "QH2-AWAY", Enabled: true}
@@ -285,7 +285,7 @@ func TestNamedBinMove_HoldOfABinNotAtTheSourceIsRefused(t *testing.T) {
 func TestNamedBinMove_ABinNotAtTheSourceIsRefusedAtBirth(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	setupTestData(t, db)
+	testdb.SetupTestData(t, db)
 	spot := &nodes.Node{Name: "NB3-SPOT", Enabled: true}
 	back := &nodes.Node{Name: "NB3-BACK", Enabled: true}
 	away := &nodes.Node{Name: "NB3-AWAY", Enabled: true}
@@ -324,7 +324,7 @@ func TestNamedBinMove_ABinNotAtTheSourceIsRefusedAtBirth(t *testing.T) {
 func TestNamedBinMove_ALockedBinIsRefused(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	setupTestData(t, db)
+	testdb.SetupTestData(t, db)
 	spot := &nodes.Node{Name: "NBL-SPOT", Enabled: true}
 	back := &nodes.Node{Name: "NBL-BACK", Enabled: true}
 	for _, n := range []*nodes.Node{spot, back} {
@@ -363,7 +363,7 @@ func TestNamedBinMove_HoldsAnExclusiveDropFromItsIssue(t *testing.T) {
 	issue := func(t *testing.T, prefix string, storage bool, held bool) (*store.DB, *nodes.Node, []protocol.OrderError) {
 		t.Helper()
 		db := testdb.IssueCensusDB(t)
-		setupTestData(t, db)
+		testdb.SetupTestData(t, db)
 		stor, err := db.GetNodeTypeByCode("STOR")
 		testutil.MustNoErr(t, err, "the STOR type")
 		spot := &nodes.Node{Name: prefix + "-SPOT", Enabled: true}

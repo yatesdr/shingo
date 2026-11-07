@@ -85,7 +85,7 @@ func TestOriginStamp_SurvivesTheRoundTrip(t *testing.T) {
 func TestOriginIntake_SimpleOrderStampsFromTheEnvelope(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	_, lineNode, bp := setupTestData(t, db)
+	_, lineNode, bp := testdb.SetupTestData(t, db)
 	d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
 
 	cases := []struct {
@@ -124,7 +124,7 @@ func TestOriginIntake_SimpleOrderStampsFromTheEnvelope(t *testing.T) {
 func TestOriginIntake_ComplexOrderStampsFromTheEnvelope(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	storageNode, lineNode, bp := setupTestData(t, db)
+	storageNode, lineNode, bp := testdb.SetupTestData(t, db)
 	createTestBinAtNode(t, db, bp.Code, storageNode.ID, "BIN-ORIGIN-CPX")
 	d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
 

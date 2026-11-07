@@ -131,12 +131,12 @@ func TestCarriedBin_AnExpiredObservationDeclinesAndIsNeverRetaken(t *testing.T) 
 	eng := newUnstartedEngine(t, db, simulator.New())
 
 	// Where the deck actually empties: a park point, which never resolves.
-	seedScenePoint(t, db, "Area-01", "PP41", "ParkPoint", "")
+	testdb.SeedScenePoint(t, db, "Area-01", "PP41", "ParkPoint", "")
 	// Where the robot is standing three hours later: a real station, empty and
 	// resolvable — everything a placement needs except a reason to believe it.
 	later := &nodes.Node{Name: "SMN_041", Enabled: true}
 	testutil.MustNoErr(t, db.CreateNode(later), "create the later station")
-	seedScenePoint(t, db, "Area-01", "SMN_041", "GeneralLocation", "AP241")
+	testdb.SeedScenePoint(t, db, "Area-01", "SMN_041", "GeneralLocation", "AP241")
 
 	bin, ord := seedStranded(t, db, "AMR-EXPIRE")
 	cacheRobot(eng, loadedDeck("AMR-EXPIRE"))
@@ -199,7 +199,7 @@ func TestCarriedBin_ATelemetryGapIsNotAWitnessedDrop(t *testing.T) {
 
 	dest := &nodes.Node{Name: "SMN_042", Enabled: true}
 	testutil.MustNoErr(t, db.CreateNode(dest), "create dest")
-	seedScenePoint(t, db, "Area-01", "SMN_042", "GeneralLocation", "AP242")
+	testdb.SeedScenePoint(t, db, "Area-01", "SMN_042", "GeneralLocation", "AP242")
 
 	bin, ord := seedStranded(t, db, "AMR-GAP")
 	cacheRobot(eng, loadedDeck("AMR-GAP"))
@@ -252,7 +252,7 @@ func TestStrandedBin_TransitDeclineIsByteStableAcrossPasses(t *testing.T) {
 	db := testdb.Open(t)
 	eng := newUnstartedEngine(t, db, simulator.New())
 
-	seedScenePoint(t, db, "Area-01", "CP44", "ChargePoint", "")
+	testdb.SeedScenePoint(t, db, "Area-01", "CP44", "ChargePoint", "")
 
 	bin, ord := seedStranded(t, db, "AMR-CHURN2")
 	// PARKED, at a point that will not resolve. Nothing about this robot
@@ -319,7 +319,7 @@ func TestStrandedBin_ReStrandAfterAnOperatorRecoveryIsStampedAndLogged(t *testin
 
 	home := &nodes.Node{Name: "SMN_045", Enabled: true}
 	testutil.MustNoErr(t, db.CreateNode(home), "create the node the operator found it at")
-	seedScenePoint(t, db, "Area-01", "CP45", "ChargePoint", "")
+	testdb.SeedScenePoint(t, db, "Area-01", "CP45", "ChargePoint", "")
 
 	bin, ord := seedStranded(t, db, "AMR-REFIND")
 	cacheRobot(eng, atPoint("AMR-REFIND", "CP45", 5.0, 6.0))
@@ -406,7 +406,7 @@ func TestBranchA_AReplanDoesNotLaunderAStalePickup(t *testing.T) {
 
 	dest := &nodes.Node{Name: "SMN_047", Enabled: true}
 	testutil.MustNoErr(t, db.CreateNode(dest), "create dest")
-	seedScenePoint(t, db, "Area-01", "SMN_047", "GeneralLocation", "AP247")
+	testdb.SeedScenePoint(t, db, "Area-01", "SMN_047", "GeneralLocation", "AP247")
 
 	bin, ord := seedStranded(t, db, "AMR-REPLAN")
 	// The pickup: twenty-one hours ago.
@@ -449,7 +449,7 @@ func TestCarriedBin_ADisconnectedRobotDoesNotRefreshTheWitness(t *testing.T) {
 
 	dest := &nodes.Node{Name: "SMN_101", Enabled: true}
 	testutil.MustNoErr(t, db.CreateNode(dest), "create dest")
-	seedScenePoint(t, db, "Area-01", "SMN_101", "GeneralLocation", "AP301")
+	testdb.SeedScenePoint(t, db, "Area-01", "SMN_101", "GeneralLocation", "AP301")
 
 	bin, ord := seedStranded(t, db, "AMR-OFFLINE")
 	cacheRobot(eng, loadedDeck("AMR-OFFLINE"))

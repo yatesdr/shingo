@@ -182,7 +182,7 @@ func TestBlockFinished_EveryBlockSentReachesTheSubscriber(t *testing.T) {
 	t.Run("a plain order's advanced load sequence, the order finished inside one poll gap", func(t *testing.T) {
 		t.Parallel()
 		db := testDB(t)
-		storageNode, lineNode, bp := setupTestData(t, db)
+		storageNode, lineNode, bp := testdb.SetupTestData(t, db)
 		createTestBinAtNode(t, db, bp.Code, storageNode.ID, "BIN-REACH-SEQ")
 		mustExec(t, db, `UPDATE payloads SET advanced_load_sequence = 'Child cart interlock' WHERE code = $1`, bp.Code)
 		vendor, url := newStubVendor(t)
@@ -229,7 +229,7 @@ func TestBlockFinished_EveryBlockSentReachesTheSubscriber(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			t.Parallel()
 			db := testDB(t)
-			storageNode, lineNode, bp := setupTestData(t, db)
+			storageNode, lineNode, bp := testdb.SetupTestData(t, db)
 			if c.wait.Node != "" && c.wait.Node != lineNode.Name {
 				t.Fatalf("fixture: the line is %s, not %s", lineNode.Name, c.wait.Node)
 			}

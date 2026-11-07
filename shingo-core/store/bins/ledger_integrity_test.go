@@ -8,7 +8,6 @@ import (
 
 	"shingo/protocol/testutil"
 	"shingocore/internal/testdb"
-	"shingocore/store"
 	"shingocore/store/audit"
 	"shingocore/store/bins"
 	"shingocore/store/payloads"
@@ -18,26 +17,16 @@ import (
 // negative is LOUDLY wrong, a clamp would be SILENTLY wrong. These pin the
 // reads that find the wrongness, not a guard that hides it.
 
-// seedAudit writes one bin_uop_ledger row directly — the applier's shape.
-func seedAudit(t *testing.T, db *store.DB, binID int64, before, after int, op, payload string, at time.Time) {
-	t.Helper()
-	_, err := db.Exec(`INSERT INTO bin_uop_ledger
-		(bin_id, before_uop, after_uop, op, source, payload_code, actor, metadata, applied_at)
-		VALUES ($1,$2,$3,$4,'test',$5,'test','{"reason":"consume_tick"}',$6)`,
-		binID, before, after, op, payload, at)
-	testutil.MustNoErr(t, err, "seed audit row")
-}
-
 func TestNegativeExcursions_FindsCrossingNotContinuation(t *testing.T) {
 	db := testdb.Open(t)
 	base := time.Now().UTC().Add(-time.Hour)
 
 	// 40 → 10 (fine), 10 → -5 (CROSSING), -5 → -20 (continuation, deeper),
 	// -20 → 30 (recovery).
-	seedAudit(t, db, 1, 40, 10, "bin_uop_delta", "PART-A", base)
-	seedAudit(t, db, 1, 10, -5, "bin_uop_delta", "PART-A", base.Add(time.Minute))
-	seedAudit(t, db, 1, -5, -20, "bin_uop_delta", "PART-A", base.Add(2*time.Minute))
-	seedAudit(t, db, 1, -20, 30, "manifest_set", "PART-A", base.Add(3*time.Minute))
+	testdb.SeedAudit(t, db, 1, 40, 10, "bin_uop_delta", "PART-A", base)
+	testdb.SeedAudit(t, db, 1, 10, -5, "bin_uop_delta", "PART-A", base.Add(time.Minute))
+	testdb.SeedAudit(t, db, 1, -5, -20, "bin_uop_delta", "PART-A", base.Add(2*time.Minute))
+	testdb.SeedAudit(t, db, 1, -20, 30, "manifest_set", "PART-A", base.Add(3*time.Minute))
 
 	got, err := bins.NegativeExcursions(db.DB, base.Add(-time.Hour), 5*time.Minute, 50)
 	testutil.MustNoErr(t, err, "NegativeExcursions")
@@ -67,8 +56,8 @@ func TestNegativeExcursions_OpenExcursionHasNoRecovery(t *testing.T) {
 	db := testdb.Open(t)
 	base := time.Now().UTC().Add(-time.Hour)
 
-	seedAudit(t, db, 2, 5, -3, "bin_uop_delta", "PART-B", base)
-	seedAudit(t, db, 2, -3, -9, "bin_uop_delta", "PART-B", base.Add(time.Minute))
+	testdb.SeedAudit(t, db, 2, 5, -3, "bin_uop_delta", "PART-B", base)
+	testdb.SeedAudit(t, db, 2, -3, -9, "bin_uop_delta", "PART-B", base.Add(time.Minute))
 
 	got, err := bins.NegativeExcursions(db.DB, base.Add(-time.Hour), 5*time.Minute, 50)
 	testutil.MustNoErr(t, err, "NegativeExcursions")
@@ -92,11 +81,11 @@ func TestNegativeExcursions_PrecededByRelease(t *testing.T) {
 	base := time.Now().UTC().Add(-time.Hour)
 
 	// Bin 3: released (60 → 0), then a late consume delta debits from zero.
-	seedAudit(t, db, 3, 60, 0, "manifest_clear", "PART-C", base)
-	seedAudit(t, db, 3, 0, -12, "bin_uop_delta", "PART-C", base.Add(30*time.Second))
+	testdb.SeedAudit(t, db, 3, 60, 0, "manifest_clear", "PART-C", base)
+	testdb.SeedAudit(t, db, 3, 0, -12, "bin_uop_delta", "PART-C", base.Add(30*time.Second))
 
 	// Bin 4: no release anywhere near it — just drifted under.
-	seedAudit(t, db, 4, 3, -2, "bin_uop_delta", "PART-D", base.Add(time.Minute))
+	testdb.SeedAudit(t, db, 4, 3, -2, "bin_uop_delta", "PART-D", base.Add(time.Minute))
 
 	got, err := bins.NegativeExcursions(db.DB, base.Add(-time.Hour), 5*time.Minute, 50)
 	testutil.MustNoErr(t, err, "NegativeExcursions")
@@ -196,14 +185,14 @@ func TestCarrierBindings_BoundAtIsTheNewestEpochBumpOnly(t *testing.T) {
 	// RecordCount does not bump delta_epoch, so a recount corrects the count
 	// INSIDE the binding. Treating it as a boundary would report 20 days here
 	// and would have hidden the longest binding in the dump.
-	seedAudit(t, db, b.ID, 0, 2000, "set_for_production", "PART-A", base)
-	seedAudit(t, db, b.ID, 2000, 2000, "manifest_confirmed", "PART-A", base.Add(time.Minute))
-	seedAudit(t, db, b.ID, -700, 4500, "cycle_count", "PART-A", base.Add(10*24*time.Hour))
-	seedAudit(t, db, b.ID, 40, -40, "bin_uop_delta", "PART-A", base.Add(20*24*time.Hour))
+	testdb.SeedAudit(t, db, b.ID, 0, 2000, "set_for_production", "PART-A", base)
+	testdb.SeedAudit(t, db, b.ID, 2000, 2000, "manifest_confirmed", "PART-A", base.Add(time.Minute))
+	testdb.SeedAudit(t, db, b.ID, -700, 4500, "cycle_count", "PART-A", base.Add(10*24*time.Hour))
+	testdb.SeedAudit(t, db, b.ID, 40, -40, "bin_uop_delta", "PART-A", base.Add(20*24*time.Hour))
 	// Two applier observation rows. Neither bumps the epoch (uop/applier.go says
 	// so in as many words), so neither may move bound_at.
-	seedAudit(t, db, b.ID, -40, -40, "stale_epoch_dropped", "PART-A", base.Add(25*24*time.Hour))
-	seedAudit(t, db, b.ID, -40, -40, "payload_mismatch_dropped", "PART-A", base.Add(26*24*time.Hour))
+	testdb.SeedAudit(t, db, b.ID, -40, -40, "stale_epoch_dropped", "PART-A", base.Add(25*24*time.Hour))
+	testdb.SeedAudit(t, db, b.ID, -40, -40, "payload_mismatch_dropped", "PART-A", base.Add(26*24*time.Hour))
 
 	got, err := bins.CarrierBindings(db.DB, audit.EpochBumpOps)
 	testutil.MustNoErr(t, err, "CarrierBindings")
@@ -240,9 +229,9 @@ func TestCarrierBindings_BoundAtIsTheNewestEpochBumpOnly(t *testing.T) {
 	// and the generation ends at the lift, which writes `lifted`. So the release
 	// row leaves bound_at where it was, and the lift row moves it.
 	later := base.Add(28 * 24 * time.Hour)
-	seedAudit(t, db, b.ID, -40, 0, "released_underpack", "PART-A", later)
+	testdb.SeedAudit(t, db, b.ID, -40, 0, "released_underpack", "PART-A", later)
 	lifted := later.Add(10 * time.Minute)
-	seedAudit(t, db, b.ID, 0, 0, "lifted", "PART-A", lifted)
+	testdb.SeedAudit(t, db, b.ID, 0, 0, "lifted", "PART-A", lifted)
 	got2, err := bins.CarrierBindings(db.DB, audit.EpochBumpOps)
 	testutil.MustNoErr(t, err, "CarrierBindings after release")
 	for _, r := range got2 {
