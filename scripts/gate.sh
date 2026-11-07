@@ -666,32 +666,39 @@ step_sim() {
 # workflow triggers, which is a different question and a narrower one. It is
 # "can this diff reach a Postgres-backed test at all".
 #
-# The rule below is derived from the tree, not assumed:
+# NEEDED IS THE DEFAULT. A file is out of scope only if it is on the allow-list
+# below, each entry with the reason no docker-tagged test can reach it. The
+# rule used to run the other way: anything not named as NEEDED was skipped, on
+# a comment that said no docker-tagged test reads a .css, .js or .svg. Docker
+# tests in shingo-core read their own package's static/pages/*.js, templates,
+# testdata goldens and ../kanban/testdata JSON (some through filepath.Join, so
+# the comment's own grep could not see them), and a JS- or golden-only diff
+# skipped the only tests that read the file. Every new kind of file is now
+# NEEDED until someone argues it onto the list. scripts/check-docker-scope.sh
+# pins the rule through `scope -`.
 #
-#   *.go / *.sql / go.mod / go.sum   NEEDED. Any Go change in any module can
-#                                    be compiled into one of the three that
-#                                    carry docker tests -- shared/ has zero
-#                                    docker tests of its own but shingo-core
-#                                    compiles it.
-#   templates/**.html                NEEDED, and this one is the reason to
-#                                    check rather than guess. It looks like an
-#                                    asset. It is not:
-#                                    shingo-core/www/handlers_payloads_test.go
-#                                    is //go:build docker and does
-#                                    `base.ParseFS(templateFS,
-#                                    "templates/layout.html", ...)` plus a glob
-#                                    over templates/*.html, so a malformed
-#                                    template fails a Postgres-backed test.
-#   everything else                  NOT NEEDED. Verified: no docker-tagged
-#                                    test anywhere reads a .css, .js or .svg,
-#                                    and none touches shared.Files. Re-check
-#                                    with:
-#                                      grep -rl 'go:build docker' --include='*_test.go' . \
-#                                        | xargs grep -lE 'shared\.Files|static/|\.css|\.svg'
-#
-# Conservative on purpose: it says NEEDED for anything it is not sure about.
-# The win is not that it skips often, it is that a docs-and-CSS round stops
-# costing 35 minutes.
+#   *_test.go                        NEEDED only in a module that carries
+#                                    docker tests: a _test.go is compiled into
+#                                    its own package's test binary alone.
+#   *.go *.sql go.mod go.sum go.work NEEDED. Any Go change in any module can
+#                                    be compiled into a docker test binary
+#                                    (shared/ has none of its own; core links it).
+#   allow-list (NOT NEEDED):
+#     *.md, outside static/, templates/ and testdata/ dirs
+#                                    no docker test reads one, and none sits in
+#                                    an embedded directory
+#     shingo-edge/www/static/*, shingo-edge/www/templates/*
+#                                    embedded by shingoedge/www alone, which no
+#                                    docker test binary links (integration
+#                                    links shingocore/www and shared, not it),
+#                                    and no docker test reads an edge path
+#     docs/ .github/ deploy/, the root's launch and install scripts, Makefile,
+#     Dockerfile.dev, docker-compose.dev.yml, .golangci.yml, LICENSE, .git*
+#                                    outside every module; no test reads them
+#   everything else                  NEEDED -- shingo-core's static, templates
+#                                    and testdata, shared's embedded assets and
+#                                    vectors, plants/*.yaml (the planner golden
+#                                    and the Kanban rig seed them), scripts/.
 step_scope() {
   local base="${1:-}"
   if [ -z "$base" ]; then
@@ -720,16 +727,6 @@ step_scope() {
   while IFS= read -r f; do
     [ -z "$f" ] && continue
     case "$f" in
-      *.sql|go.mod|go.sum|*/go.mod|*/go.sum) reaching="$reaching$f"$'\n' ; continue ;;
-    esac
-    case "$f" in
-      */templates/*.html) reaching="$reaching$f"$'\n' ; continue ;;
-    esac
-    case "$f" in
-      # The planner golden and the Kanban rig's loop test seed these files.
-      plants/*.yaml) reaching="$reaching$f"$'\n' ; continue ;;
-    esac
-    case "$f" in
       *_test.go)
         # A _test.go file is compiled ONLY into its own package's test
         # binary -- it is not part of any importable surface -- so it can
@@ -740,14 +737,33 @@ step_scope() {
           case "$f" in "$m"/*) reaching="$reaching$f"$'\n' ;; esac
         done
         continue ;;
-      *.go) reaching="$reaching$f"$'\n' ; continue ;;
+      *.go|*.sql|go.mod|go.sum|*/go.mod|*/go.sum|go.work|go.work.sum)
+        reaching="$reaching$f"$'\n'; continue ;;
     esac
+    # The allow-list (see the table above). Anything it does not name reaches.
+    case "$f" in
+      */static/*|*/templates/*|*/testdata/*) ;;
+      *.md) continue ;;
+    esac
+    case "$f" in
+      shingo-edge/www/static/*|shingo-edge/www/templates/*) continue ;;
+      docs/*|.github/*|deploy/*) continue ;;
+      install-*.sh|start-*.sh|Makefile|Dockerfile.dev|docker-compose.dev.yml) continue ;;
+      .golangci.yml|LICENSE|.gitignore|.gitattributes) continue ;;
+    esac
+    reaching="$reaching$f"$'\n'
   done <<< "$files"
   reaching="$(printf '%s' "$reaching" | sed '/^$/d')"
   if [ -n "$reaching" ]; then
     echo "scope: docker NEEDED — $(echo "$reaching" | wc -l | tr -d ' ') of $(echo "$files" | wc -l | tr -d ' ') changed files can reach a Postgres-backed test:"
-    echo "$reaching" | head -8 | sed 's/^/    /'
-    [ "$(echo "$reaching" | wc -l)" -gt 8 ] && echo "    ..."
+    # A list on stdin is being exercised, not gated: name every file that
+    # reaches, so check-docker-scope.sh can classify its rows in one call.
+    if [ "$base" = "-" ]; then
+      echo "$reaching" | sed 's/^/    /'
+    else
+      echo "$reaching" | head -8 | sed 's/^/    /'
+      [ "$(echo "$reaching" | wc -l)" -gt 8 ] && echo "    ..."
+    fi
     return 0
   fi
   echo "scope: docker NOT needed — none of the $(echo "$files" | wc -l | tr -d ' ') changed files can reach a Postgres-backed test:"
