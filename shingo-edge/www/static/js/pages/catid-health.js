@@ -8,7 +8,8 @@
 // process with any item, toned by its worst one, each item with the verbs
 // that resolve it: pin an
 // unmapped CATID to a style (the suggestion, or a picked one), Charge or Write
-// off a hold, count the slot the PLC counts on. A classic script, like desktop-bodies.js, so its Node test loads
+// off a hold, count the slot the PLC counts on, start the changeover a wrong
+// part offers (its action). A classic script, like desktop-bodies.js, so its Node test loads
 // it as CommonJS.
 (function () {
     'use strict';
@@ -24,6 +25,12 @@
     // click handler runs.
     function actionsHTML(pid, it) {
         const d = it.data || {};
+        const a = it.action;
+        if (a && a.kind === 'start_changeover') {
+            return '<button class="pd-btn primary" data-act="ch-start" data-pid="' + esc(pid) + '" data-style="' +
+                esc(a.to_style_id) + '" data-name="' + esc(a.to_style_name) + '">Start changeover to ' +
+                esc(a.to_style_name) + '</button>';
+        }
         if (it.kind === 'unmapped_catid') {
             let out = '';
             if (d.suggestion) {

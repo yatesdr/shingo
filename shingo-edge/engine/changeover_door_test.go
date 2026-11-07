@@ -231,12 +231,13 @@ func TestCancel_InsideTheDoorsFlipWaitsForTheDoor(t *testing.T) {
 	}
 }
 
-// TestStart_RacingTheSwitchNeverInsertsAFromStyleNoLongerActive: an automatic
-// switch fired while a start is planning (from the planner's log line, after
-// its read of the active style) waits for the start, which inserts its row
-// from the style still running; the switch then finds a changeover open and
-// does nothing. Before, the switch ran inside the start, and the row from A to
-// S was inserted with S already running: a changeover no predicate completes.
+// TestStart_RacingTheSwitchNeverInsertsAFromStyleNoLongerActive: an admin
+// switch (here clearing the running style) fired while a start is planning
+// (from the planner's log line, after its read of the active style) waits for
+// the start, which inserts its row from the style still running; the switch
+// then finds a changeover open and is refused. Before, a switch ran inside the
+// start, and the row from A was inserted with A no longer running: a
+// changeover no predicate completes.
 func TestStart_RacingTheSwitchNeverInsertsAFromStyleNoLongerActive(t *testing.T) {
 	t.Parallel()
 	db := testEngineDB(t)
@@ -254,7 +255,7 @@ func TestStart_RacingTheSwitchNeverInsertsAFromStyleNoLongerActive(t *testing.T)
 	eng.logFn = func(format string, args ...any) {
 		if strings.HasPrefix(format, "changeover: node") {
 			once.Do(func() {
-				go func() { switched <- eng.autoSwitchStyle(pid, from, to, "1002") }()
+				go func() { switched <- eng.SetProcessActiveStyle(pid, nil) }()
 				select {
 				case err := <-switched: // the switch ran inside the start
 					switched <- err
@@ -271,9 +272,10 @@ func TestStart_RacingTheSwitchNeverInsertsAFromStyleNoLongerActive(t *testing.T)
 		t.Fatalf("changeover %d from style %s is open while style %s runs (start: %v, switch: %v)",
 			open.ID, styleOf(open.FromStyleID), styleOf(p.ActiveStyleID), startErr, switchErr)
 	}
-	if startErr != nil || styleOf(p.ActiveStyleID) != fmt.Sprint(from) {
-		t.Errorf("start = %v, active style %s: the start, already planning, inserts and the switch stands down",
-			startErr, styleOf(p.ActiveStyleID))
+	var refused *SwitchRefused
+	if startErr != nil || styleOf(p.ActiveStyleID) != fmt.Sprint(from) || !errors.As(switchErr, &refused) {
+		t.Errorf("start = %v, active style %s, switch = %v: the start, already planning, inserts and the switch is refused",
+			startErr, styleOf(p.ActiveStyleID), switchErr)
 	}
 }
 

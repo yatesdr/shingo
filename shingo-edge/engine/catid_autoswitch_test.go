@@ -1,13 +1,13 @@
-// catid_autoswitch_test.go — the automatic switch: with no changeover open, a
-// part only one other style runs, by a person's pin, held a minute and
-// counted, switches the process and records it; a part several styles run
-// asks the operator instead.
+// catid_autoswitch_test.go — no switch without a changeover: with none open,
+// a part only one other style runs, by a person's pin, held a minute and
+// counted, moves nothing, and the wrong-part item offers the changeover to
+// that style; a part several styles run asks the operator instead.
 package engine
 
 import (
-	"database/sql"
-	"errors"
+	"fmt"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -28,20 +28,6 @@ func switchRig(t *testing.T, mode string) (eng *Engine, db *store.DB, pid, a, b 
 	return eng, db, pid, a, b, cm
 }
 
-// flipRows returns the process's automatic-switch rows, newest first.
-func flipRows(t *testing.T, db *store.DB, pid int64) []processes.Changeover {
-	t.Helper()
-	all, err := db.ListRecentProcessChangeovers(pid, 0)
-	testutil.MustNoErr(t, err, "flip rows")
-	var rows []processes.Changeover
-	for _, co := range all {
-		if co.TriggeredBy == triggeredAutoCATIDFlip {
-			rows = append(rows, co)
-		}
-	}
-	return rows
-}
-
 func runningStyle(t *testing.T, db *store.DB, pid int64) int64 {
 	t.Helper()
 	p := mustProcess(t, db, pid)
@@ -51,141 +37,141 @@ func runningStyle(t *testing.T, db *store.DB, pid int64) int64 {
 	return *p.ActiveStyleID
 }
 
-// TestAutoSwitch_CountedPartOnAPinnedStyleSwitchesAndRecords: the press runs
-// B's pinned part, held it a minute and a stroke on it was counted: the
-// process is switched to B and a completed auto-catid-flip row records it
-// with what follows. Before, with no changeover open, the monitor did nothing.
-func TestAutoSwitch_CountedPartOnAPinnedStyleSwitchesAndRecords(t *testing.T) {
+// mirrorNode adds a consume position whose part differs between the styles:
+// A claims partA there, B partB, and a cart of partA (known) holds 40.
+func mirrorNode(t *testing.T, eng *Engine, pid, a, b int64, name, partA, partB string, bin int64) int64 {
+	t.Helper()
+	node := cartNode(t, eng, pid, a, name, partA, partA, bin)
+	_, err := upsertClaimRetiredMode(eng.db, processes.NodeClaimInput{StyleID: b, CoreNodeName: name, Role: "consume",
+		SwapMode: "simple", PayloadCode: partB, UOPCapacity: 100, InboundSource: "SRC"})
+	testutil.MustNoErr(t, err, "B's claim at "+name)
+	return node
+}
+
+// TestAutoSwitch_NeverSwitchesWithoutAChangeover: the press runs B's pinned
+// part with no changeover open, held past the window and counted, in every
+// mode: the process stays on A, no changeover row is written and none opens,
+// no order is made, the stroke's share at the position whose part differs is
+// held there, the wrong-part item offers the changeover to B, and the monitor
+// says so once however often it decides again. Before, auto switched the
+// process to B and wrote an auto-catid-flip row.
+func TestAutoSwitch_NeverSwitchesWithoutAChangeover(t *testing.T) {
 	t.Parallel()
-	eng, db, pid, a, b, cm := switchRig(t, "auto")
-	st := changedTo(cm, pid, "1002", time.Now().Add(-5*time.Minute))
-	if id := countedStroke(eng, pid, a); id.Kind != plc.TickOffPlan || id.StyleID != b {
-		t.Fatalf("stroke = %+v, want off-plan on B", id)
-	}
-	settle(cm, pid, st, "1002", time.Now())
-	if got := runningStyle(t, db, pid); got != b {
-		t.Fatalf("active style = %d, want B (%d)", got, b)
-	}
-	rows := flipRows(t, db, pid)
-	if len(rows) != 1 || rows[0].FromStyleID == nil || *rows[0].FromStyleID != a || rows[0].ToStyleID != b || rows[0].CalledBy != "auto" {
-		t.Fatalf("flip rows = %+v, want one completed A → B by auto", rows)
-	}
-	if !strings.Contains(rows[0].Notes, "switched from") || !strings.Contains(rows[0].Notes, "request guard") {
-		t.Errorf("notes = %q, want the consequences named", rows[0].Notes)
-	}
-	// Decided once: the next tick on the same part does not switch again.
-	tickAutoCutover(cm, pid, st, "1002", true, time.Now().Add(2*time.Minute))
-	if n := len(flipRows(t, db, pid)); n != 1 {
-		t.Errorf("flip rows after another tick = %d, want 1", n)
+	for _, mode := range []string{"auto", "prompt", "off"} {
+		eng, db, pid, a, b, cm := switchRig(t, mode)
+		var mu sync.Mutex
+		said := 0
+		eng.logFn = func(format string, args ...any) {
+			if strings.Contains(fmt.Sprintf(format, args...), "nothing moves") {
+				mu.Lock()
+				said++
+				mu.Unlock()
+			}
+		}
+		node := mirrorNode(t, eng, pid, a, b, "N-MIRROR", "PART-A1", "PART-B1", 9731)
+		st := changedTo(cm, pid, "1002", time.Now().Add(-5*time.Minute))
+		if id := countedStroke(eng, pid, a); id.Kind != plc.TickOffPlan || id.StyleID != b {
+			t.Fatalf("%s: stroke = %+v, want off-plan on B", mode, id)
+		}
+		settle(cm, pid, st, "1002", time.Now())
+		tickAutoCutover(cm, pid, st, "1002", true, time.Now().Add(2*time.Minute))
+		if got := runningStyle(t, db, pid); got != a {
+			t.Errorf("%s: active style = %d, want A (%d): nothing switches without a changeover", mode, got, a)
+		}
+		rows, err := db.ListRecentProcessChangeovers(pid, 0)
+		testutil.MustNoErr(t, err, "changeover rows")
+		if len(rows) != 0 {
+			t.Errorf("%s: changeover rows %+v, want none", mode, rows)
+		}
+		orders, err := db.ListActiveOrders()
+		testutil.MustNoErr(t, err, "orders")
+		if len(orders) != 0 {
+			t.Errorf("%s: %d orders, want none: the part change orders nothing", mode, len(orders))
+		}
+		if got := runtimeOf(t, eng, node).RemainingUOPCached; got != 40 {
+			t.Errorf("%s: the PART-A1 cart = %d, want 40: B's stroke is held there, not drawn", mode, got)
+		}
+		if hs := openHolds(t, eng, pid); len(hs) != 1 || hs[0].ProcessNodeID != node || hs[0].PayloadCode != "PART-B1" {
+			t.Errorf("%s: open holds %+v, want B's share held at N-MIRROR", mode, hs)
+		}
+		it := healthKinds(t, eng, pid)[catidKindWrongPart]
+		if it.Action == nil || it.Action.Kind != catidActionStartChangeover || it.Action.ToStyleID != b {
+			t.Errorf("%s: the wrong-part item %+v (action %+v), want the changeover to B", mode, it, it.Action)
+		}
+		mu.Lock()
+		if said != 1 {
+			t.Errorf("%s: the monitor said %d times that nothing moves, want once", mode, said)
+		}
+		mu.Unlock()
 	}
 }
 
-// TestAutoSwitch_RunOutAfterAnEarlyCutoverNeverSwitchesBack: A → B completed
-// by "Mark as running" while the PLC still reports A's part; the run-out
-// strokes after the landing never switch the process back to A. Before, the
-// first run-out stroke was off-plan to A and the switch flipped the process
-// back on it.
-func TestAutoSwitch_RunOutAfterAnEarlyCutoverNeverSwitchesBack(t *testing.T) {
+// TestWrongPartItem_OffersTheChangeover: the wrong-part item offers the
+// changeover to the one style whose pin holds the PLC's part, with the
+// sentence that says what to do and what waits; every other wrong part keeps
+// the item as it was, with no action.
+func TestWrongPartItem_OffersTheChangeover(t *testing.T) {
 	t.Parallel()
-	eng, db, pid, a, b, cm := switchRig(t, "auto")
-	eng.cutoverPokes = make(chan int64, 64)
-	_, err := eng.changeoverService.Create(pid, &a, b, "test", "", nil, nil, nil, nil)
-	testutil.MustNoErr(t, err, "open A → B")
-	st := onPart(cm, pid, "1001", time.Now().Add(-5*time.Minute), "1001", "1002")
-	settle(cm, pid, st, "1001", time.Now()) // decided while open: A's own part
-	testutil.MustNoErr(t, eng.SetProcessActiveStyle(pid, &b), "mark B as running")
-	for i := 0; i < 2; i++ {
-		countedStroke(eng, pid, b)
-	}
-	drainPokes(eng, cm)
-	tickAutoCutover(cm, pid, st, "1001", true, time.Now().Add(2*time.Minute))
-	if got := runningStyle(t, db, pid); got != b {
-		t.Fatalf("active style = %d, want B (%d): a run-out stroke switched the process back", got, b)
-	}
-	if rows := flipRows(t, db, pid); len(rows) != 0 {
-		t.Errorf("flip rows = %+v, want none", rows)
-	}
-}
-
-// TestAutoSwitch_BaselineNeverSwitches: a part standing at the first read
-// after a start (the baseline) is not a change; a counted stroke on it never
-// switches the process. Before, a baseline switched.
-func TestAutoSwitch_BaselineNeverSwitches(t *testing.T) {
-	t.Parallel()
-	eng, db, pid, a, b, cm := switchRig(t, "auto")
-	st := changedTo(cm, pid, "1002", time.Now().Add(-5*time.Minute))
-	cm.mu.Lock()
-	st.confirmedBaseline = true
-	cm.mu.Unlock()
-	if id := countedStroke(eng, pid, a); id.Kind != plc.TickOffPlan || id.StyleID != b {
-		t.Fatalf("stroke = %+v, want off-plan on B", id)
-	}
-	settle(cm, pid, st, "1002", time.Now())
-	if got := runningStyle(t, db, pid); got != a {
-		t.Fatalf("active style = %d, want A (%d): a baseline read switched the process", got, a)
-	}
-}
-
-// TestAutoSwitch_DeclarationAloneDoesNothing: a part held a minute with no
-// stroke counted on it moves nothing.
-func TestAutoSwitch_DeclarationAloneDoesNothing(t *testing.T) {
-	t.Parallel()
-	_, db, pid, a, _, cm := switchRig(t, "auto")
-	st := changedTo(cm, pid, "1002", time.Now().Add(-5*time.Minute))
-	settle(cm, pid, st, "1002", time.Now())
-	tickAutoCutover(cm, pid, st, "1002", true, time.Now().Add(5*time.Minute))
-	if got := runningStyle(t, db, pid); got != a {
-		t.Fatalf("active style = %d, want A (%d): nothing was counted", got, a)
-	}
-	if rows := flipRows(t, db, pid); len(rows) != 0 {
-		t.Errorf("flip rows = %+v, want none", rows)
-	}
-}
-
-// TestAutoSwitch_NeverOnADerivedSet: a style whose set the catalog derived
-// may have the stroke attributed to it, but never moves the cell.
-func TestAutoSwitch_NeverOnADerivedSet(t *testing.T) {
-	t.Parallel()
-	eng, db, pid, a, b, cm := switchRig(t, "auto")
-	testutil.MustNoErr(t, db.SetStyleExpectedCATID(b, ""), "unpin B")
-	seedProduceClaim(t, db, b, "N-B", "PART-B2")
-	putCatalog(t, db, 91, "PART-B2", "1002")
-	st := changedTo(cm, pid, "1002", time.Now().Add(-5*time.Minute))
-	if id := countedStroke(eng, pid, a); id.Kind != plc.TickOffPlan || id.StyleID != b {
-		t.Fatalf("stroke = %+v, want off-plan on B by its derived set", id)
-	}
-	settle(cm, pid, st, "1002", time.Now())
-	if got := runningStyle(t, db, pid); got != a {
-		t.Fatalf("active style = %d, want A: B's set is the catalog's, not a person's", got)
-	}
-}
-
-// TestAutoSwitch_NeverPlansAChangeover: the switch opens no changeover, plans
-// no node task and creates or ends no order.
-func TestAutoSwitch_NeverPlansAChangeover(t *testing.T) {
-	t.Parallel()
-	eng, db, pid, a, b, cm := switchRig(t, "auto")
-	before, err := db.ListActiveOrders()
-	testutil.MustNoErr(t, err, "orders")
-	st := changedTo(cm, pid, "1002", time.Now().Add(-5*time.Minute))
-	countedStroke(eng, pid, a)
-	settle(cm, pid, st, "1002", time.Now())
-	if got := runningStyle(t, db, pid); got != b {
-		t.Fatalf("active style = %d, want B", got)
-	}
-	if co, err := db.GetActiveProcessChangeover(pid); !errors.Is(err, sql.ErrNoRows) {
-		t.Errorf("a changeover is open after the switch: %+v (%v)", co, err)
-	}
-	rows := flipRows(t, db, pid)
-	tasks, err := db.ListChangeoverNodeTasks(rows[0].ID)
-	testutil.MustNoErr(t, err, "tasks")
-	if len(tasks) != 0 {
-		t.Errorf("the switch row has %d node tasks, want none", len(tasks))
-	}
-	after, err := db.ListActiveOrders()
-	testutil.MustNoErr(t, err, "orders")
-	if len(after) != len(before) {
-		t.Errorf("live orders %d → %d; the switch creates and ends none", len(before), len(after))
+	for _, row := range []struct {
+		name  string
+		v     string
+		setup func(t *testing.T, eng *Engine, db *store.DB, pid, a, b int64, st *catidState)
+		count bool
+		offer bool
+	}{
+		{name: "one pinned target", v: "1002", count: true, offer: true},
+		{name: "two styles run it", v: "1002", count: true, setup: func(t *testing.T, eng *Engine, _ *store.DB, pid, _, _ int64, _ *catidState) {
+			pinnedStyle(t, eng, pid, "STYLE-C", "1002")
+		}},
+		{name: "no style runs it", v: "1007", count: true},
+		{name: "a set the catalog derived", v: "1002", count: true, setup: func(t *testing.T, _ *Engine, db *store.DB, _, _, b int64, _ *catidState) {
+			testutil.MustNoErr(t, db.SetStyleExpectedCATID(b, ""), "unpin B")
+			seedProduceClaim(t, db, b, "N-B", "PART-B2")
+			putCatalog(t, db, 91, "PART-B2", "1002")
+		}},
+		{name: "a baseline", v: "1002", count: true, setup: func(_ *testing.T, _ *Engine, _ *store.DB, _, _, _ int64, st *catidState) {
+			st.confirmedBaseline = true
+		}},
+		{name: "nothing counted on it", v: "1002"},
+		{name: "confirmed before the latest landing", v: "1002", count: true, setup: func(_ *testing.T, eng *Engine, _ *store.DB, pid, a, _ int64, _ *catidState) {
+			eng.noteLanding(pid, &a)
+		}},
+		{name: "a changeover open", v: "1002", count: true, setup: func(t *testing.T, eng *Engine, _ *store.DB, pid, a, _ int64, _ *catidState) {
+			c := pinnedStyle(t, eng, pid, "STYLE-C", "1003")
+			_, err := eng.changeoverService.Create(pid, &a, c, "test", "", nil, nil, nil, nil)
+			testutil.MustNoErr(t, err, "open A -> C")
+		}},
+	} {
+		t.Run(row.name, func(t *testing.T) {
+			t.Parallel()
+			eng, db, pid, a, b, cm := switchRig(t, "auto")
+			mirrorNode(t, eng, pid, a, b, "N-MIRROR", "PART-A1", "PART-B1", 9741)
+			st := changedTo(cm, pid, row.v, time.Now().Add(-5*time.Minute))
+			if row.setup != nil {
+				row.setup(t, eng, db, pid, a, b, st)
+			}
+			if row.count {
+				countedStroke(eng, pid, a)
+				countedStroke(eng, pid, a)
+			}
+			it, ok := healthKinds(t, eng, pid)[catidKindWrongPart]
+			if !ok {
+				t.Fatal("no wrong-part item")
+			}
+			if !row.offer {
+				if it.Action != nil || strings.Contains(it.Headline, "Start a changeover") {
+					t.Errorf("the item offers %+v (%q), want no action", it.Action, it.Headline)
+				}
+				return
+			}
+			want := "The PLC is on 1002 (STYLE-B); PROD-STYLE is active. Start a changeover to STYLE-B — 2 strokes held at N-MIRROR."
+			if it.Headline != want {
+				t.Errorf("headline %q, want %q", it.Headline, want)
+			}
+			if it.Action == nil || *it.Action != (CatidHealthAction{Kind: catidActionStartChangeover, ToStyleID: b, ToStyleName: "STYLE-B"}) {
+				t.Errorf("action %+v, want the changeover to STYLE-B", it.Action)
+			}
+		})
 	}
 }
 
@@ -249,83 +235,5 @@ func TestAutoSwitch_SixHeldStrokesRaiseOnePrompt(t *testing.T) {
 	sixStrokes(eng, cm, pid, a, st, "1002", start)
 	if prompts != 1 {
 		t.Errorf("prompts after six held strokes and another poke = %d, want 1", prompts)
-	}
-}
-
-// TestAutoSwitch_SixOffPlanStrokesLogOneLine: in prompt mode a part only B
-// runs, counted six times, is logged "would have switched" once, and another
-// poke logs nothing more. Before, the line came once per stroke.
-func TestAutoSwitch_SixOffPlanStrokesLogOneLine(t *testing.T) {
-	t.Parallel()
-	eng, _, pid, a, _, cm := switchRig(t, "prompt")
-	eng.cutoverPokes = make(chan int64, 64)
-	lines := 0
-	eng.logFn = func(format string, _ ...any) {
-		if strings.Contains(format, "would have switched") {
-			lines++
-		}
-	}
-	st := changedTo(cm, pid, "1002", time.Now().Add(-5*time.Minute))
-	start := time.Now()
-	settle(cm, pid, st, "1002", start)
-	sixStrokes(eng, cm, pid, a, st, "1002", start)
-	if lines != 1 {
-		t.Errorf("would-have-switched lines after six off-plan strokes and another poke = %d, want 1", lines)
-	}
-}
-
-// TestAutoSwitch_PromptAndOffNeverSwitch: only auto switches.
-func TestAutoSwitch_PromptAndOffNeverSwitch(t *testing.T) {
-	t.Parallel()
-	for _, mode := range []string{"prompt", "off"} {
-		eng, db, pid, a, _, cm := switchRig(t, mode)
-		st := changedTo(cm, pid, "1002", time.Now().Add(-5*time.Minute))
-		countedStroke(eng, pid, a)
-		settle(cm, pid, st, "1002", time.Now())
-		if got := runningStyle(t, db, pid); got != a {
-			t.Errorf("%s: active style = %d, want A", mode, got)
-		}
-	}
-}
-
-// TestAutoSwitch_ReleasesHoldsOnTheNewStyle: a hold on the part the switch
-// lands on is charged under the new style, once.
-func TestAutoSwitch_ReleasesHoldsOnTheNewStyle(t *testing.T) {
-	t.Parallel()
-	eng, db, pid, a, b, cm := switchRig(t, "auto")
-	node := cartNode(t, eng, pid, b, "B-NODE", "PART-B", "PART-B", 9711)
-	_, err := db.HoldCatidDraw(pid, "1002", 0, "", holdReasonHeld, 2, time.Now().Add(-time.Minute))
-	testutil.MustNoErr(t, err, "an older hold on 1002")
-	st := changedTo(cm, pid, "1002", time.Now().Add(-5*time.Minute))
-	countedStroke(eng, pid, a) // off-plan on B: B's cart, of B's part, is charged 1
-	settle(cm, pid, st, "1002", time.Now())
-	if got := runningStyle(t, db, pid); got != b {
-		t.Fatalf("active style = %d, want B", got)
-	}
-	if got := runtimeOf(t, eng, node).RemainingUOPCached; got != 37 {
-		t.Errorf("B's cart = %d, want 37: the stroke and the released hold of 2", got)
-	}
-	if hs := openHolds(t, eng, pid); len(hs) != 0 {
-		t.Errorf("open holds = %+v, want none", hs)
-	}
-}
-
-// TestAutoSwitch_OpensTheVerifyWatch: the switch row gets the post-cutover
-// watch on the new style, like any completion.
-func TestAutoSwitch_OpensTheVerifyWatch(t *testing.T) {
-	t.Parallel()
-	eng, db, pid, a, b, cm := switchRig(t, "auto")
-	st := changedTo(cm, pid, "1002", time.Now().Add(-5*time.Minute))
-	countedStroke(eng, pid, a)
-	settle(cm, pid, st, "1002", time.Now())
-	rows := flipRows(t, db, pid)
-	if len(rows) != 1 {
-		t.Fatalf("flip rows = %+v", rows)
-	}
-	cm.mu.Lock()
-	pv := cm.verify[pid]
-	cm.mu.Unlock()
-	if pv == nil || pv.changeoverID != rows[0].ID || pv.styleID != b {
-		t.Fatalf("verify watch = %+v, want one on changeover %d for B", pv, rows[0].ID)
 	}
 }

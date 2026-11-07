@@ -57,7 +57,7 @@ func TestCatid4x2_S2_LateCutover(t *testing.T) {
 				t.Fatalf("the changeover completed before its window: %s", describeChangeovers(c.changeovers()))
 			}
 			c.cycle(w6Depth + 4) // ALT refills the line and its first parts are counted
-			c.waitFor("the changeover completed by the monitor", autoSwitchWindow+10*time.Second, func() bool {
+			c.waitFor("the changeover completed by the monitor", declareWindow+10*time.Second, func() bool {
 				return c.open() == nil
 			})
 			took := time.Since(changed)
@@ -145,9 +145,9 @@ func (c *w6Cell) tookTheHold(label string, i int, at, n int64) {
 		drew, n, drew-n)
 }
 
-// autoSwitchWindow is the CATID monitor's 60 s stability window (the process
+// declareWindow is the CATID monitor's 60 s stability window (the process
 // clock, the wall's here), and a read past it.
-const autoSwitchWindow = 62 * time.Second
+const declareWindow = 62 * time.Second
 
 // startChangeover is the operator's START to style to.
 func (c *w6Cell) startChangeover(to int64) int64 {

@@ -277,9 +277,7 @@ const (
 	triggeredAutoCATID   = "auto-catid"
 	triggeredAdminSwitch = "admin-switch"
 	triggeredRestore     = "restore"
-	// triggeredAutoCATIDFlip is the automatic switch with no changeover open.
-	triggeredAutoCATIDFlip = "auto-catid-flip"
-	triggeredForced        = "-forced"
+	triggeredForced      = "-forced"
 )
 
 // errNotTheOpenChangeover is the door's no-op: the changeover it was asked to

@@ -10,6 +10,8 @@
 package engine
 
 import (
+	"database/sql"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -52,7 +54,21 @@ type CatidHealthItem struct {
 	Detail   string         `json:"detail"`
 	Since    *time.Time     `json:"since,omitempty"`
 	Data     map[string]any `json:"data,omitempty"`
+	// Action is the one verb that resolves the item, when it has one: the
+	// strip renders it as a button that calls the verb's endpoint.
+	Action *CatidHealthAction `json:"action,omitempty"`
 }
+
+// CatidHealthAction is an item's verb. Kind start_changeover starts a
+// changeover to ToStyleID through the start verb (StartProcessChangeover).
+type CatidHealthAction struct {
+	Kind        string `json:"kind"`
+	ToStyleID   int64  `json:"to_style_id"`
+	ToStyleName string `json:"to_style_name"`
+}
+
+// catidActionStartChangeover is the wrong-part item's verb.
+const catidActionStartChangeover = "start_changeover"
 
 // CatidHealthSummary is one process's line on the homepage: its worst item.
 type CatidHealthSummary struct {
@@ -83,6 +99,7 @@ func (e *Engine) CatidHealth(processID int64) ([]CatidHealthItem, error) {
 	}
 	now := clock.Now()
 	sets := e.processStyleCATIDSets(processID)
+	holds, _ := e.db.ListOpenCatidHolds(processID)
 	var items []CatidHealthItem
 	if tag := identityTagOf(proc); tag != "" {
 		var facts catidFacts
@@ -94,13 +111,12 @@ func (e *Engine) CatidHealth(processID int64) ([]CatidHealthItem, error) {
 			items = append(items, slotItems(proc, e.catidMon.slotFactsOf(processID),
 				func() time.Time { return e.lastCountedAt(processID) })...)
 		}
-		items = append(items, e.partItems(proc, facts, sets)...)
+		items = append(items, e.partItems(proc, facts, sets, holds)...)
 		items = append(items, noCATIDItems(sets)...)
 		items = append(items, e.unmappedItems(processID, sets, now)...)
 	}
 	items = append(items, e.oneWayPairItems(processID)...)
 	items = append(items, e.stationHealthItems(processID)...)
-	holds, _ := e.db.ListOpenCatidHolds(processID)
 	items = append(items, heldItems(holds, now)...)
 	items = markUnmappedHeld(items, holds)
 	items = append(items, sharedItems(sets)...)
@@ -172,8 +188,10 @@ func identityItems(proc *processes.Process, tag string, f catidFacts, now time.T
 
 // partItems: the PLC's part is not the active style's — the open changeover's
 // target's (the program changed ahead of the cutover: plannedChangeoverTo), or
-// nobody's.
-func (e *Engine) partItems(proc *processes.Process, f catidFacts, sets []styleCATIDEntry) []CatidHealthItem {
+// nobody's. The wrong-part item offers the changeover to the one style that
+// runs the part when changeoverOffer names it, and says what to do; nothing
+// moves until a person starts it.
+func (e *Engine) partItems(proc *processes.Process, f catidFacts, sets []styleCATIDEntry, holds []store.CatidHold) []CatidHealthItem {
 	v := f.value
 	if !isIdentity(v) {
 		return nil
@@ -217,7 +235,81 @@ func (e *Engine) partItems(proc *processes.Process, f catidFacts, sets []styleCA
 	if countedAs != "" {
 		item.Detail += " counted as " + countedAs
 	}
+	if to := e.changeoverOffer(proc, f, sets); to != nil {
+		item.Headline = fmt.Sprintf("The PLC is on %s (%s); %s is active. Start a changeover to %s%s.", v, to.Name,
+			active.Name, to.Name, e.heldAtPositions(proc.ID, v, holds))
+		item.Action = &CatidHealthAction{Kind: catidActionStartChangeover, ToStyleID: to.ID, ToStyleName: to.Name}
+	}
 	return []CatidHealthItem{item}
+}
+
+// changeoverOffer is the style the wrong-part item offers a changeover to, nil
+// when it offers none: the PLC's part is a change, not a baseline, confirmed
+// after the process's latest landing (a part standing from before it is the
+// run-out of the style the landing left), a stroke has been counted on it off
+// another style's plan, that style is the only live one whose set holds it and
+// its set is a person's pin, and no changeover is open (the start would refuse
+// it). A read that fails offers nothing.
+func (e *Engine) changeoverOffer(proc *processes.Process, f catidFacts, sets []styleCATIDEntry) *styleCATIDEntry {
+	if e.catidMon == nil || proc.ActiveStyleID == nil || f.baseline || !countedSince(f, plc.TickOffPlan) ||
+		!f.confirmedAt.After(e.catidMon.landedAt(proc.ID)) {
+		return nil
+	}
+	to := switchTarget(sets, *proc.ActiveStyleID, f.value)
+	if to == nil || !to.Pinned {
+		return nil
+	}
+	if co, err := e.db.GetActiveProcessChangeover(proc.ID); co != nil || (err != nil && !errors.Is(err, sql.ErrNoRows)) {
+		return nil
+	}
+	return to
+}
+
+// heldAtPositions is the offer's clause on what waits for it: " — N strokes
+// held at A and B", the open holds of CATID v at the positions whose part
+// differs (an off-plan stroke's share there; N the most strokes one holds);
+// "" when none is open.
+func (e *Engine) heldAtPositions(processID int64, v string, holds []store.CatidHold) string {
+	var at []int64
+	strokes := int64(0)
+	for _, h := range holds {
+		if h.CATID != v || h.ProcessNodeID == 0 {
+			continue
+		}
+		at = append(at, h.ProcessNodeID)
+		strokes = max(strokes, h.Strokes)
+	}
+	if len(at) == 0 {
+		return ""
+	}
+	nodes, err := e.db.ListProcessNodesByProcess(processID)
+	if err != nil {
+		return ""
+	}
+	names := map[int64]string{}
+	for _, n := range nodes {
+		names[n.ID] = n.Name
+	}
+	var where []string
+	for _, id := range at {
+		if names[id] != "" {
+			where = append(where, names[id])
+		}
+	}
+	sort.Strings(where)
+	noun := "strokes"
+	if strokes == 1 {
+		noun = "stroke"
+	}
+	return fmt.Sprintf(" — %d %s held at %s", strokes, noun, joinAnd(where))
+}
+
+// joinAnd is a list as a sentence names it: "A", "A and B", "A, B and C".
+func joinAnd(xs []string) string {
+	if len(xs) <= 1 {
+		return strings.Join(xs, "")
+	}
+	return strings.Join(xs[:len(xs)-1], ", ") + " and " + xs[len(xs)-1]
 }
 
 // countedAs names the style a stroke on v is counted under, as the poll

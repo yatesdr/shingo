@@ -20,13 +20,13 @@ type Changeover struct {
 	// progress and on a cancel. "manual" is the operator's CUTOVER,
 	// "auto-catid" the CATID monitor's declaration (and its counted-part
 	// force), "admin-switch" the admin's "Mark as running" (including the
-	// record row of a switch with no changeover), "auto-catid-flip" the
-	// automatic switch with no changeover, "restore" the boot restore of a row
+	// record row of a switch with no changeover), "restore" the boot restore of a row
 	// flipped before a stop; a completion past a red gate (the force and Mark
 	// as running) appends "-forced" and writes the overridden blockers to
 	// Notes. Rows written before 2026-11 carry "operator-hmi" or
 	// "auto-task-terminal"; "manual-forced" is the withdrawn prompt-mode
-	// one-tap's. The history panel labels each (www triggeredByLabel).
+	// one-tap's, "auto-catid-flip" the withdrawn automatic switch's. The
+	// history panel labels each (www triggeredByLabel).
 	TriggeredBy string `json:"triggered_by,omitempty"`
 	// VerifyLiveCATID is the live PLC part id observed disagreeing with this
 	// changeover's new active style within the short window after it completed

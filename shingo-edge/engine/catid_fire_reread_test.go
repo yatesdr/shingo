@@ -1,5 +1,5 @@
-// catid_fire_reread_test.go — the fire acts on what still stands: a decision
-// taken in auto is re-read under the door's mutex, the mode and the pin with
+// catid_fire_reread_test.go — the fire acts on what still stands: a cutover
+// decided in auto is re-read under the door's mutex, the mode and the pin with
 // it, so a process set off or a pin moved since the decision moves nothing.
 package engine
 
@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"shingo/protocol/testutil"
-	"shingoedge/plc"
 )
 
 // decided takes the monitor's decision on v as its tick does, under cm.mu.
@@ -70,45 +69,4 @@ func TestFire_APinMovedSinceTheDecisionNeverCutsOver(t *testing.T) {
 	testutil.MustNoErr(t, eng.db.SetStyleExpectedCATID(*co.FromStyleID, "1001,1002"), "pin the outgoing style to the part")
 	cm.fireAutoCutover(in)
 	stillOpen(t, eng, pid, coID, "the fire cut over on a part the outgoing style now runs")
-}
-
-// switchDecided is switchRig with B's pinned part counted off-plan and the
-// switch to B decided in auto.
-func switchDecided(t *testing.T) (eng *Engine, pid, a, b int64, cm *catidMonitor, in autoCutoverIntent) {
-	t.Helper()
-	eng, _, pid, a, b, cm = switchRig(t, "auto")
-	st := changedTo(cm, pid, "1002", time.Now().Add(-5*time.Minute))
-	if id := countedStroke(eng, pid, a); id.Kind != plc.TickOffPlan || id.StyleID != b {
-		t.Fatalf("fixture: stroke = %+v, want off-plan on B", id)
-	}
-	in = decided(t, cm, pid, st, "1002", time.Now())
-	if in.switchTo != b || in.mode != "auto" {
-		t.Fatalf("fixture: decision = %+v, want the switch to B in auto", in)
-	}
-	return eng, pid, a, b, cm, in
-}
-
-// TestFire_AModeTurnedOffSinceTheDecisionNeverSwitches: decided in auto, the
-// process set off before the fire: it stays on A.
-func TestFire_AModeTurnedOffSinceTheDecisionNeverSwitches(t *testing.T) {
-	t.Parallel()
-	eng, pid, a, _, cm, in := switchDecided(t)
-	testutil.MustNoErr(t, eng.db.SetChangeoverAutoArm(pid, "off"), "mode off")
-	cm.fireAutoCutover(in)
-	if got := runningStyle(t, eng.db, pid); got != a {
-		t.Fatalf("active style = %d, want A (%d): the switch fired after the mode went off", got, a)
-	}
-}
-
-// TestFire_APinBlankedSinceTheDecisionNeverSwitches: decided in auto on B's
-// pin, the pin blanked before the fire: no person's pin names B for the part
-// any more, and the process stays on A.
-func TestFire_APinBlankedSinceTheDecisionNeverSwitches(t *testing.T) {
-	t.Parallel()
-	eng, pid, a, b, cm, in := switchDecided(t)
-	testutil.MustNoErr(t, eng.db.SetStyleExpectedCATID(b, ""), "blank B's pin")
-	cm.fireAutoCutover(in)
-	if got := runningStyle(t, eng.db, pid); got != a {
-		t.Fatalf("active style = %d, want A (%d): the switch fired on a pin blanked since the decision", got, a)
-	}
 }

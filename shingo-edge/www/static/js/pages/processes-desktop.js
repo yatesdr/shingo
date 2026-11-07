@@ -10,7 +10,9 @@
 // operator looking at one part are looking at one flow, and that is only true
 // while there is one model and one drawing behind both.
 //
-// THE DESKTOP VERB IS SAVE (SPEC §0.5). This page never calls changeover/start.
+// THE DESKTOP VERB IS SAVE (SPEC §0.5). The flow editor never calls
+// changeover/start; the one start on this page is the health strip's, the
+// changeover a wrong part offers (catidStartChangeover).
 
 import { renderFlowPicture, pictureRows, relationPlacement, sentencesFromModel, moduleOf } from '/static/operator-station/operator-flow.js';
 import { esc } from '/static/shared/esc.js';
@@ -340,6 +342,21 @@ async function catidCharge(holdID) {
         p.refusal ? p.refusal : 'charged under ' + p.style_name + ' to the carts below.',
         '<ul class="pd-note">' + rows + '</ul>',
         'Charge', () => sheetSubmit('POST', charge + '?mode=charge', {}, refreshCatidHealth));
+}
+
+// catidStartChangeover is the wrong-part item's one tap: the PLC changed parts
+// with no changeover open, and the strip offers the changeover to the style
+// that runs the part. The tap starts it through the start verb, as the
+// changeover page does; the changeover orders its legs and the CATID monitor
+// completes it. A refusal is shown in the sheet, by name.
+async function catidStartChangeover(pid, styleID, name) {
+    const out = await postJSON('POST', '/api/processes/' + pid + '/changeover/start',
+        { to_style_id: Number(styleID), called_by: 'engineer', notes: 'from the health strip: the PLC is on its part' });
+    if (!out.ok) {
+        openSheet('The changeover to ' + (name || 'style ' + styleID) + ' did not start', out.error, '', 'Close', closeSheet);
+        return;
+    }
+    await refreshCatidHealth();
 }
 
 function catidWriteOff(holdID) {
@@ -7939,6 +7956,7 @@ function onClick(e) {
             case 'ch-repoint': catidRepoint(btn.dataset.pid, btn.dataset.tag); return;
             case 'ch-charge': catidCharge(btn.dataset.hold); return;
             case 'ch-writeoff': catidWriteOff(btn.dataset.hold); return;
+            case 'ch-start': catidStartChangeover(btn.dataset.pid, btn.dataset.style, btn.dataset.name); return;
             case 'save': saveFlow(); return;
             case 'discard': selectStyle(S.styleID); return;
             case 'advanced': openAdvanced(btn.dataset.node); return;

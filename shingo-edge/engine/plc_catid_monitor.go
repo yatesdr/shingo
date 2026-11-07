@@ -50,15 +50,11 @@ type autoCutoverIntent struct {
 	// force: the counted-part condition holds (forceHolds), so auto completes
 	// past a red gate; prompt and off log it.
 	force bool
-	// switchTo is the automatic switch's style (no changeover open), 0 for a
-	// cutover; fromStyleID the style it leaves.
-	switchTo, fromStyleID int64
-	switchName            string
 }
 
 // countedTick is the last counted tick the poll attributed off today (to the
-// target, off-plan or held), for the force, the switch and the ambiguity
-// prompt.
+// target, off-plan or held), for the force, the wrong-part item's offer of a
+// changeover and the ambiguity prompt.
 type countedTick struct {
 	catid string
 	kind  plc.TickKind
@@ -491,9 +487,9 @@ func (cm *catidMonitor) tick(now time.Time) {
 		}
 	}
 	cm.mu.Unlock()
-	// Fire AFTER releasing cm.mu. A fire calls the door (completeCutover) or the
-	// switch (autoSwitchStyle), each under cutoverMu with the gate, the flip and
-	// their DB writes; running that under the tick lock would block the guard's
+	// Fire AFTER releasing cm.mu. A fire calls the door (completeCutover) under
+	// cutoverMu with the gate, the flip and their DB writes; running that under
+	// the tick lock would block the guard's
 	// liveCATID reads, and cutoverMu is outer to cm.mu (lockorder rank 8). The
 	// intent was fully decided under the lock.
 	for _, in := range pending {
@@ -722,8 +718,8 @@ func (cm *catidMonitor) onConfirmedCATID(processID int64, st *catidState, isChan
 	}
 	// On an actual CHANGE of the physical part (not the first-read baseline),
 	// prompt now only in prompt mode. Auto decides after the stability window
-	// (evaluateAutoArm): the cutover, the switch, or — a part several styles
-	// run — this same prompt (decideAutoSwitch). Off is silent.
+	// (evaluateAutoArm): the cutover, or — a part several styles run — this
+	// same prompt (decideWithNoChangeover). Off is silent.
 	if isChange && cm.eng.processChangeoverAutoArm(processID) == domain.ChangeoverAutoArmPrompt {
 		cm.raiseCATIDChangePrompt(processID, st)
 	}
@@ -759,7 +755,7 @@ func (cm *catidMonitor) raiseCATIDChangePrompt(processID int64, st *catidState) 
 // candidate style the new part maps to: exactly one pre-fills the target; more
 // than one leaves the operator to pick (naming them); none prompts without a
 // target. Shared by the prompt-mode confirm edge and auto's ambiguity
-// fallback (decideAutoSwitch, a counted part several styles run). Called with
+// fallback (decideWithNoChangeover, a counted part several styles run). Called with
 // cm.mu held.
 func (cm *catidMonitor) emitCATIDPrompt(processID int64, st *catidState, newCATID string, matches []styleCATIDMatch) {
 	cands := make([]CATIDCandidate, len(matches))
@@ -830,12 +826,12 @@ func (cm *catidMonitor) evaluateAutoArm(processID int64, st *catidState, ok bool
 // decideAutoArm makes the decision once a value is stable. With a changeover
 // open, it is the cutover: cutoverPredicate must hold over the active style's
 // and the open changeover's target's CATID sets, read in one process-wide
-// query. With none open, it is decideAutoSwitch: a switch, never a start (the
-// monitor never starts a changeover: when it did, on 2026-07-28, it put four
-// robots on the floor chasing a style with zero stock). The mode is read with
-// the predicate: the intent carries it, and only auto calls the door or
-// switches; prompt and off log what auto would have done. Called with cm.mu
-// held; light DB reads only.
+// query. With none open, it is decideWithNoChangeover, which moves nothing
+// (the monitor never starts a changeover: when it did, on 2026-07-28, it put
+// four robots on the floor chasing a style with zero stock). The mode is read
+// with the predicate: the intent carries it, and only auto calls the door;
+// prompt and off log what auto would have done. Called with cm.mu held; light
+// DB reads only.
 //
 // With the predicate held, the intent is forced when the counted-part
 // condition also holds (forceHolds): auto then completes past a red gate.
@@ -859,7 +855,8 @@ func (cm *catidMonitor) decideAutoArm(processID int64, st *catidState, v string,
 		return nil
 	}
 	if err != nil || changeover == nil {
-		return cm.decideAutoSwitch(proc, st, v, now)
+		cm.decideWithNoChangeover(proc, st, v, now)
+		return nil
 	}
 	out, in := cm.eng.cutoverCATIDSets(proc, changeover.ToStyleID)
 	if !cutoverPredicate(v, out, in) {
@@ -877,64 +874,50 @@ func (cm *catidMonitor) decideAutoArm(processID int64, st *catidState, v string,
 	}
 }
 
-// decideAutoSwitch is the decision with no changeover open (N6), on a stable
-// part v the process counted a stroke of since it was confirmed:
+// decideWithNoChangeover is the decision with no changeover open, on a stable
+// part v the process counted a stroke of since it was confirmed. It never
+// switches the process and never starts a changeover: Shingo does not move a
+// cart because the PLC changed parts.
 //
-//   - v off-plan (A proven, v in exactly one other live style S): switch to S
-//     when S's set is a person's pin; a catalog-derived set may attribute but
-//     never moves a cell.
+//   - v off-plan (v in exactly one other live style S, by a person's pin): the
+//     health strip's wrong-part item offers the changeover to S
+//     (changeoverOffer) and a person starts it, or does not; untapped, the
+//     strokes stay held at the positions whose part differs. Logged once.
 //   - v held because several styles run it: the change prompt, with them as
 //     its candidates, in auto (prompt mode raised it at the change).
 //
 // v must be a change, never a baseline, confirmed after the process's latest
 // landing: a part standing from before it is the run-out of the style the
 // landing left (or a mismatch the cell already ran with), not the cell
-// running another style (TestAutoSwitch_RunOutAfterAnEarlyCutoverNeverSwitchesBack,
-// TestAutoSwitch_BaselineNeverSwitches). The declaration alone does nothing:
-// a part no stroke was counted on moves nothing. An answer that switches
-// nothing — the prompt, the derived-set line, prompt and off's "would have
-// switched" — is raised once per confirmed value (raiseOnce), however often a
-// poke decides it again. Called with cm.mu held; light DB reads only.
-func (cm *catidMonitor) decideAutoSwitch(proc *processes.Process, st *catidState, v string, now time.Time) *autoCutoverIntent {
+// running another style. Each answer is raised once per confirmed value
+// (raiseOnce), however often a poke decides it again. Called with cm.mu held;
+// light DB reads only.
+func (cm *catidMonitor) decideWithNoChangeover(proc *processes.Process, st *catidState, v string, now time.Time) {
 	f := st.facts(now)
 	if f.baseline || !f.confirmedAt.After(cm.landedAt(proc.ID)) {
-		return nil
+		return
 	}
 	f.tick = cm.lastCountedTick(proc.ID)
-	mode := domain.NormalizeChangeoverAutoArm(proc.ChangeoverAutoArm)
 	switch {
 	case countedSince(f, plc.TickOffPlan):
+		if proc.ActiveStyleID == nil {
+			return
+		}
+		if to := switchTarget(cm.eng.processStyleCATIDSets(proc.ID), *proc.ActiveStyleID, v); to != nil && to.Pinned && st.raiseOnce() {
+			cm.eng.logFn("plc-catid: process %s: CATID %s counted, which only %s runs, with no changeover open — nothing moves; "+
+				"the health strip offers the changeover to %s", st.processName, v, to.Name, to.Name)
+			cm.eng.catidHealthChanged(proc.ID)
+		}
 	case countedSince(f, plc.TickHeld):
-		if mode == domain.ChangeoverAutoArmAuto && len(cm.eng.stylesForCATID(proc.ID, v)) > 1 && st.raiseOnce() {
+		if domain.NormalizeChangeoverAutoArm(proc.ChangeoverAutoArm) == domain.ChangeoverAutoArmAuto &&
+			len(cm.eng.stylesForCATID(proc.ID, v)) > 1 && st.raiseOnce() {
 			cm.raiseCATIDChangePrompt(proc.ID, st)
 		}
-		return nil
-	default:
-		return nil
 	}
-	if proc.ActiveStyleID == nil {
-		return nil
-	}
-	to := switchTarget(cm.eng.processStyleCATIDSets(proc.ID), *proc.ActiveStyleID, v)
-	if to == nil {
-		return nil
-	}
-	if !to.Pinned {
-		if st.raiseOnce() {
-			cm.eng.logFn("plc-catid: process %s: CATID %s counted on %s, whose set is derived from the catalog — not switching",
-				st.processName, v, to.Name)
-		}
-		return nil
-	}
-	if mode != domain.ChangeoverAutoArmAuto && !st.raiseOnce() {
-		return nil
-	}
-	return &autoCutoverIntent{processID: proc.ID, processName: st.processName, catid: v, mode: mode,
-		switchTo: to.ID, switchName: to.Name, fromStyleID: *proc.ActiveStyleID}
 }
 
 // switchTarget is the one live style other than the active one whose set holds
-// v; nil when none or several do. The decision and the switch's re-read.
+// v; nil when none or several do: the style the wrong-part item offers.
 func switchTarget(sets []styleCATIDEntry, activeStyleID int64, v string) *styleCATIDEntry {
 	var to *styleCATIDEntry
 	for i := range sets {
@@ -1001,10 +984,6 @@ func isIdentity(v string) bool {
 // the gate (read-only) and logs what auto would have done. Every mode logs the
 // decision line. Never starts, cancels or re-plans anything.
 func (cm *catidMonitor) fireAutoCutover(in autoCutoverIntent) {
-	if in.switchTo != 0 {
-		cm.fireAutoSwitch(in)
-		return
-	}
 	counted := ""
 	if in.force {
 		counted = ", counted on the target since the change"
@@ -1105,20 +1084,6 @@ func (e *Engine) autoCutoverMoved(in autoCutoverIntent) string {
 		return "the CATID sets no longer cut over on it"
 	}
 	return ""
-}
-
-// fireAutoSwitch acts on an automatic-switch intent OUTSIDE cm.mu: in auto it
-// switches (autoSwitchStyle); in prompt and off it logs what auto would have
-// done.
-func (cm *catidMonitor) fireAutoSwitch(in autoCutoverIntent) {
-	if in.mode != domain.ChangeoverAutoArmAuto {
-		cm.eng.logFn("plc-catid: process %s: CATID %s counted on %s with no changeover open, mode=%s — would have switched",
-			in.processName, in.catid, in.switchName, in.mode)
-		return
-	}
-	if err := cm.eng.autoSwitchStyle(in.processID, in.fromStyleID, in.switchTo, in.catid); err != nil {
-		cm.eng.logFn("plc-catid: process %s: switch to %s on CATID %s failed: %v", in.processName, in.switchName, in.catid, err)
-	}
 }
 
 // noteRefusal dates the door's refusal of an intent on the process's state,

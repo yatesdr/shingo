@@ -324,9 +324,9 @@ type styleCATIDMatch struct {
 
 // stylesForCATID returns EVERY style in the process whose part-identity set
 // contains catid. The multiplicity is the point: exactly one = an unambiguous
-// target (the prompt pre-fills it; the automatic switch moves to it when its set
-// is a pin); more than one = ambiguous (nothing guesses — auto falls back to the
-// prompt, decideAutoSwitch); zero = maps to no configured style. This is why the
+// target (the prompt pre-fills it; the wrong-part item offers a changeover to it
+// when its set is a pin); more than one = ambiguous (nothing guesses — auto falls
+// back to the prompt, decideWithNoChangeover); zero = maps to no configured style. This is why the
 // uniqueness assumption is checked in code, not assumed.
 func (e *Engine) stylesForCATID(processID int64, catid string) []styleCATIDMatch {
 	if catid == "" {

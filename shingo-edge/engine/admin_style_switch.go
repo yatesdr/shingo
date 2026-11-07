@@ -25,7 +25,6 @@ import (
 	"errors"
 	"fmt"
 
-	"shingoedge/domain"
 	"shingoedge/store/processes"
 )
 
@@ -95,7 +94,7 @@ func (e *Engine) adminSwitchNoChangeover(proc *processes.Process, styleID *int64
 // releases the holds the landing style runs, as the door's landing does. A
 // standing post-cutover flag on a changeover to the style it lands on is
 // answered and cleared. The landing is noted on the CATID monitor first, as
-// the door notes its own. The admin switch and the automatic switch.
+// the door notes its own.
 func (e *Engine) recordSwitch(processID int64, fromStyleID *int64, toStyleID int64, calledBy, triggeredBy, notes string) error {
 	e.noteLanding(processID, fromStyleID)
 	if err := e.flipActiveStyle(processID, &toStyleID); err != nil {
@@ -118,64 +117,4 @@ func (e *Engine) recordSwitch(processID int64, fromStyleID *int64, toStyleID int
 	e.openPostCutoverVerify(processID, id)
 	e.releaseHoldsOnLanding(processID, id)
 	return nil
-}
-
-// autoSwitchStyle is the automatic switch (N6): the process counted a part
-// only toStyleID runs, by a person's pin, with no changeover open. It switches
-// as the admin switch records one — the flip (piles stranded, plant claims
-// published, the reporting point synced, every node pointed at the new
-// style's claims), a completed auto-catid-flip row, the post-cutover watch,
-// the holds the new style runs released — and clears the post-cutover flag the
-// part resolves. It never plans a changeover: within a minute the sweep
-// reorders and the keeper stages for the new style, and the request guard
-// admits its requests. Under the door's mutex, re-read: a changeover opened, a
-// style moved, the process taken out of auto, or the part no longer pinned to
-// toStyleID alone since the decision is a no-op
-// (TestFire_AModeTurnedOffSinceTheDecisionNeverSwitches).
-func (e *Engine) autoSwitchStyle(processID, fromStyleID, toStyleID int64, catid string) error {
-	e.cutoverMu.Lock()
-	defer e.cutoverMu.Unlock()
-	proc, err := e.db.GetProcess(processID)
-	if err != nil {
-		return err
-	}
-	if proc.ActiveStyleID == nil || *proc.ActiveStyleID != fromStyleID {
-		e.logFn("plc-catid: process %d moved off style %d since the decision — not switching", processID, fromStyleID)
-		return nil
-	}
-	if co, err := e.db.GetActiveProcessChangeover(processID); err == nil && co != nil {
-		e.logFn("plc-catid: process %d: changeover %d opened since the decision — not switching", processID, co.ID)
-		return nil
-	} else if err != nil && !errors.Is(err, sql.ErrNoRows) {
-		return err
-	}
-	if mode := domain.NormalizeChangeoverAutoArm(proc.ChangeoverAutoArm); mode != domain.ChangeoverAutoArmAuto {
-		e.logFn("plc-catid: process %d is in mode %s since the decision — not switching", processID, mode)
-		return nil
-	}
-	if to := switchTarget(e.processStyleCATIDSets(processID), fromStyleID, catid); to == nil || to.ID != toStyleID || !to.Pinned {
-		e.logFn("plc-catid: process %d: CATID %s is no longer pinned to style %d alone — not switching", processID, catid, toStyleID)
-		return nil
-	}
-	from, _ := e.db.GetStyle(fromStyleID)
-	to, _ := e.db.GetStyle(toStyleID)
-	notes := fmt.Sprintf("CATID %s counted, which only %s runs: switched from %s with no changeover. Piles stranded and "+
-		"plant claims published; within a minute the sweep reorders and the keeper stages for %s, and the request "+
-		"guard admits its requests.", catid, styleNameOr(to, toStyleID), styleNameOr(from, fromStyleID), styleNameOr(to, toStyleID))
-	if err := e.ClearPostCutoverFlag(processID); err != nil {
-		e.logFn("plc-catid: process %d: clear the post-cutover flag: %v", processID, err)
-	}
-	src := fromStyleID
-	if err := e.recordSwitch(processID, &src, toStyleID, "auto", triggeredAutoCATIDFlip, notes); err != nil {
-		return err
-	}
-	e.logFn("plc-catid: process %s: %s", proc.Name, notes)
-	return nil
-}
-
-func styleNameOr(s *processes.Style, id int64) string {
-	if s != nil && s.Name != "" {
-		return s.Name
-	}
-	return fmt.Sprintf("style %d", id)
 }

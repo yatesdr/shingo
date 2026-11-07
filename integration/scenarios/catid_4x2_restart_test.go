@@ -44,14 +44,14 @@ func TestCatid4x2_S7_Restart(t *testing.T) {
 	c.restart("mid-changeover")
 	c.cycle(3) // and after it
 	c.ledger("S7 after the restart mid-changeover", false)
-	time.Sleep(autoSwitchWindow)
+	time.Sleep(declareWindow)
 	if co := c.open(); co == nil {
 		t.Fatalf("the changeover completed on the part standing at the restart, with its gate red: %s",
 			describeChangeovers(c.changeovers()))
 	}
 
 	c.carryAll("the held legs", after, nil)
-	c.waitFor("the gated declaration completes the changeover", autoSwitchWindow+10*time.Second, func() bool {
+	c.waitFor("the gated declaration completes the changeover", declareWindow+10*time.Second, func() bool {
 		return c.open() == nil
 	})
 	if co := c.changeovers()[0]; co.TriggeredBy != "auto-catid" || c.active() != c.alt {

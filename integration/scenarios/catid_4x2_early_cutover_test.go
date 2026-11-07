@@ -11,14 +11,15 @@ import (
 	"time"
 )
 
-// TestCatid4x2_S3_EarlyCutover: the cell has run RUN past the switch's
-// window; a changeover to ALT starts; the mirror carts are swapped as the
-// station stops loading, and the person marks ALT running at the landing while
-// RUN's last L parts are still in the line. Those parts are the run-out:
-// attributed today (the point's style, ALT), they prepay the new carts on the
-// cell counter and leave them untouched on the station's; no hold opens, and
-// the process never switches back to RUN. The landing preceded the counter's
-// reset, so the changeover's history row says it ran out L after the cutover.
+// TestCatid4x2_S3_EarlyCutover: a changeover to ALT starts; the mirror carts
+// are swapped as the station stops loading, and the person marks ALT running
+// at the landing while RUN's last L parts are still in the line. Those parts
+// are the run-out: attributed today (the point's style, ALT), they prepay the
+// new carts on the cell counter and leave them untouched on the station's; no
+// hold opens, the process stays on ALT, and the wrong-part item offers no
+// changeover back to RUN (the PLC's part stood from before the landing). The
+// landing preceded the counter's reset, so the changeover's history row says
+// it ran out L after the cutover.
 func TestCatid4x2_S3_EarlyCutover(t *testing.T) {
 	t.Parallel()
 	for _, v := range []struct {
@@ -28,12 +29,7 @@ func TestCatid4x2_S3_EarlyCutover(t *testing.T) {
 		t.Run(v.name, func(t *testing.T) {
 			t.Parallel()
 			c := newW6Cell(t, w6Opts{station: v.station})
-			booted := time.Now()
-			c.cycle(14)
-			// RUN's part has stood past the switch's window: a stroke the
-			// monitor took for another style's would switch the cell now.
-			time.Sleep(time.Until(booted.Add(autoSwitchWindow)))
-			c.cycle(2)
+			c.cycle(16)
 
 			after := c.startChangeover(c.alt)
 			c.change(catALT) // the station stops loading RUN; the line runs out
@@ -43,18 +39,16 @@ func TestCatid4x2_S3_EarlyCutover(t *testing.T) {
 				t.Fatalf("Mark as running: %v", err)
 			}
 			c.cycle(w6Depth) // the run-out: RUN's part, ALT running
+			if it := c.wrongPart("S3 " + v.name + " run-out"); it.Action != nil {
+				t.Errorf("during the run-out the wrong-part item offers %+v (%q), want nothing: RUN's part stood from "+
+					"before the landing", it.Action, it.Headline)
+			}
 			time.Sleep(3 * time.Second)
 			c.cycle(w6Depth + 7) // the change lands; ALT refills the line and runs
 
 			if a := c.active(); a != c.alt {
-				t.Errorf("the process runs style %d after the run-out, want ALT (%d): it switched back; changeovers %s",
+				t.Errorf("the process runs style %d after the run-out, want ALT (%d); changeovers %s",
 					a, c.alt, describeChangeovers(c.changeovers()))
-			}
-			for _, co := range c.changeovers() {
-				if co.TriggeredBy == "auto-catid-flip" {
-					t.Errorf("changeover row #%d: an automatic switch (%s -> %d) after an early cutover", co.ID,
-						co.TriggeredBy, co.ToStyleID)
-				}
 			}
 			// The program change anchored the load station: what it has
 			// loaded since, less what the counter has counted, is the line.

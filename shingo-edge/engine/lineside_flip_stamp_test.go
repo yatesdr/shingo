@@ -141,10 +141,6 @@ func TestFlip_RecordsTheCarrierItLeaves(t *testing.T) {
 		{"SetProcessActiveStyle", true, func(t *testing.T, eng *Engine, pid, _, to int64, _ map[string]int64) {
 			testutil.MustNoErr(t, eng.SetProcessActiveStyle(pid, &to), "Mark as running")
 		}},
-		{"autoSwitchStyle", true, func(t *testing.T, eng *Engine, pid, from, to int64, _ map[string]int64) {
-			testutil.MustNoErr(t, eng.db.SetChangeoverAutoArm(pid, "auto"), "auto")
-			testutil.MustNoErr(t, eng.autoSwitchStyle(pid, from, to, "1002"), "the automatic switch")
-		}},
 		{"the same style re-set", false, func(t *testing.T, eng *Engine, pid, from, _ int64, _ map[string]int64) {
 			testutil.MustNoErr(t, eng.SetProcessActiveStyle(pid, &from), "re-set the running style")
 		}},

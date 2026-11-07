@@ -102,7 +102,7 @@ func attributeCATID(v string, pointStyleID int64, sets []styleCATIDEntry, observ
 // noteCountedTick records a counted tick the poll attributed off today — to
 // the open changeover's target, off-plan to another style, or held — and
 // pokes the monitor, which decides on its own goroutine (the counted-part
-// force, the automatic switch, the ambiguity prompt): the poll never enters
+// force, the wrong-part item's offer, the ambiguity prompt): the poll never enters
 // the door. It pokes only on news: a tick of another kind or CATID than the
 // last, or the first since the value's confirm. A stroke like the last one
 // changes no decision, and a refused cutover is retried on the minute, not per

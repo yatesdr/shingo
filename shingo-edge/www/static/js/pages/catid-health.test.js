@@ -54,6 +54,21 @@ check('a slot the PLC counts on carries the click that counts it', () => {
     assert.strictEqual(html.split('data-act="ch-repoint"').length, 2, 'the lockstep line suggests nothing');
 });
 
+check('a wrong part with its changeover carries the one tap that starts it', () => {
+    const html = H.listHTML([{ process_id: 9, name: 'CELL-D', worst: 'red', count: 1, headline: 'x' }], {
+        9: [
+            { kind: 'wrong_part', severity: 'red',
+                headline: 'The PLC is on 1002 (ALT); RUN is active. Start a changeover to ALT — 6 strokes held at P4 and P5.',
+                detail: 'since 2026-11-07 10:00, 6 parts counted as ALT', data: { catid: '1002' },
+                action: { kind: 'start_changeover', to_style_id: 20, to_style_name: '<ALT>' } },
+            { kind: 'wrong_part', severity: 'amber', headline: 'Wrong part: the PLC is on 1007', data: { catid: '1007' } },
+        ],
+    });
+    assert.ok(html.indexOf('data-act="ch-start" data-pid="9" data-style="20" data-name="&lt;ALT&gt;"') > 0, html);
+    assert.ok(html.indexOf('Start changeover to &lt;ALT&gt;') > 0, 'the button names the style, escaped');
+    assert.strictEqual(html.split('data-act="ch-start"').length, 2, 'an item with no action offers nothing');
+});
+
 check('one block per process, toned by its worst item', () => {
     const html = H.listHTML([
         { process_id: 3, name: 'CELL-A', worst: 'red', count: 3, headline: 'Wrong part: the PLC is on 1002' },
