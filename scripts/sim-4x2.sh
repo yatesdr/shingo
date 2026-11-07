@@ -816,9 +816,8 @@ shape_S2() {
     start_held
     pause_loading false || die "the resume was refused"
   else
-    start_changeover "$ALT_ID"
     say "Look at: the legs to the mirror positions; the sim operator releases them, nobody cuts over"
-    await_landing
+    change_over_paused
   fi
   status
   program_change "$CATID_ALT" drain
@@ -855,6 +854,16 @@ s3_ready() {
   commons_fresh || return 1
   for p in $POSITIONS; do staged_at "$p" && return 1; done
   return 0
+}
+# change_over_paused: START to ALT from fresh common carts with nothing staged, the line standing
+# paused until ALT's carts land (the common positions are not resupplied while a changeover is
+# open, and a long landing would empty them before the drain), then loading again.
+change_over_paused() {
+  wait_for "$LAND_WALL" "fresh common carts ($S3_NEED or more) and no swap staged" s3_ready     || say "LOOK: the commons were not fresh with nothing staged: the line may stop before the drain lands"
+  pause_loading true || die "the pause was refused"
+  start_changeover "$ALT_ID"
+  await_landing
+  pause_loading false || die "the resume was refused"
 }
 shape_S3() {
   # From Mark as running until the PLC reports ALT's part the process reports a part its style
@@ -957,8 +966,7 @@ shape_S6() {
   for p in $MIRRORS; do counted_at "$p" null; done
   mark
   say "S6 positions 1-3 on the station counter, 4-5 on the cell counter: changeover RUN->ALT"
-  start_changeover "$ALT_ID"
-  await_landing
+  change_over_paused
   program_change "$CATID_ALT" drain
   await_plc "$CATID_ALT"
   await_on_alt "$DECLARE_S" "the declaration completes the changeover onto ALT"
