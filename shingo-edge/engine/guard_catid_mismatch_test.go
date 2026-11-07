@@ -232,3 +232,25 @@ func TestGuardCatidMismatch_EmptyDerivedInert(t *testing.T) {
 		t.Errorf("empty derived set (no catalog CATID) must be inert, got: %v", err)
 	}
 }
+
+// TestGuardCatidMismatch_CommonPositionStaysSupplied: after "Mark as running"
+// B while the PLC still makes A's part, a request at the position both styles
+// claim for the same part passes; at the position whose part differs it is
+// refused until the PLC reports B's part, and then passes. Before, every
+// request at the process was refused until the PLC changed.
+func TestGuardCatidMismatch_CommonPositionStaysSupplied(t *testing.T) {
+	t.Parallel()
+	eng, pid, _, b, nodes, cm := commonCellRig(t)
+	testutil.MustNoErr(t, eng.SetProcessActiveStyle(pid, &b), "Mark as running B, the PLC on 1001")
+	if err := eng.guardCatidMismatch(nodes["N-COMMON"], claimOf(t, eng, b, "N-COMMON")); err != nil {
+		t.Errorf("the common position under B, the PLC on A's part: %v, want it supplied", err)
+	}
+	err := eng.guardCatidMismatch(nodes["N-MIRROR"], claimOf(t, eng, b, "N-MIRROR"))
+	if err == nil || !strings.Contains(err.Error(), "the wrong part is on the process") {
+		t.Errorf("the mirror position under B, the PLC on A's part: %v, want the refusal", err)
+	}
+	setLive(cm, pid, "1002")
+	if err := eng.guardCatidMismatch(nodes["N-MIRROR"], claimOf(t, eng, b, "N-MIRROR")); err != nil {
+		t.Errorf("the mirror position under B, the PLC on B's part: %v, want it supplied", err)
+	}
+}

@@ -1,11 +1,15 @@
 package engine
 
 import (
+	"database/sql"
+	"errors"
 	"fmt"
 	"log"
+	"maps"
 
 	"shingoedge/domain"
 	"shingoedge/orders"
+	"shingoedge/store"
 	storeorders "shingoedge/store/orders"
 	"shingoedge/store/processes"
 )
@@ -240,6 +244,14 @@ func positionWorkedBy(node *processes.Node, claim *processes.NodeClaim, rows []d
 // Springfield regression (see CanAcceptOrders). Only line produce/consume relief
 // is transition-sensitive.
 //
+// It refuses by position: a position the changeover changes nothing at — the
+// outgoing and incoming styles' claims there name the same parts, and the
+// changeover's task there, if any, is "unchanged" — is not refused
+// (changesNothingAt). Its part is the same under both styles, so relief there
+// is the next style's supply as much as this one's; refused, a common
+// position that runs out while a changeover stands open for hours got no cart
+// from Shingo at all, and the cell ran on carts nobody told it about.
+//
 // Edge-DB only, like guardNoActiveSwap — no Core round-trip. A read error is
 // treated as "no changeover" (fail-open): a transient read blip must not shut
 // down the line, and the changeover machinery has its own preflight/cutover gates.
@@ -287,6 +299,9 @@ func (e *Engine) guardStyleTransition(node *processes.Node, claim *processes.Nod
 	// the outgoing one, so any line relief here is outgoing by construction (once
 	// the cutover completes the changeover is no longer active and this passes).
 	if co.FromStyleID == nil || claim.StyleID == *co.FromStyleID {
+		if co.FromStyleID != nil && e.changesNothingAt(co, node) {
+			return nil
+		}
 		toName := e.styleName(co.ToStyleID)
 		outName := e.styleName(claim.StyleID)
 		return &ChangeoverArmedError{
@@ -321,6 +336,13 @@ func (e *Engine) guardStyleTransition(node *processes.Node, claim *processes.Nod
 // and must stay available (the Springfield regression), same as
 // guardStyleTransition. Only line produce/consume relief is part-sensitive.
 //
+// It refuses by position, as guardStyleTransition does: a position whose claim
+// names the same parts under the style the PLC's part belongs to as under the
+// request's (samePartUnder, every style whose set holds the live CATID) is
+// not refused — after "Mark as running" onto a part the PLC is not making
+// yet, a common position is supplied and a position whose part differs waits
+// for the PLC. A live part no style runs refuses everywhere, as before.
+//
 // Edge-DB + in-memory monitor only; no Core round-trip. Never cancels an
 // existing order — it only refuses to START new outgoing-style relief.
 func (e *Engine) guardCatidMismatch(node *processes.Node, claim *processes.NodeClaim) error {
@@ -349,11 +371,79 @@ func (e *Engine) guardCatidMismatch(node *processes.Node, claim *processes.NodeC
 	}
 	// The live part must be ONE OF the style's parts — whichever side the press is
 	// reporting. It only blocks when the live part belongs to none of them.
-	if !catidSetHas(set, live) {
+	if !catidSetHas(set, live) && !e.sameUnderTheLivePart(node, claim.StyleID, live) {
 		return fmt.Errorf("The process reports CATID %s; active style is %s (runs CATID %s) — the wrong part is on the process. %s",
 			live, style.Name, formatCATIDSet(set), e.catidResolutionHint(node.ProcessID))
 	}
 	return nil
+}
+
+// changesNothingAt reports whether the open changeover co changes nothing at
+// node: the outgoing and incoming styles' claims there name the same parts,
+// and the changeover's task there, if it has one, is "unchanged" (a same-part
+// position the incoming claim evacuates keeps the guard). A read that fails
+// reads as a change.
+func (e *Engine) changesNothingAt(co *processes.Changeover, node *processes.Node) bool {
+	if !e.samePartUnder(node, *co.FromStyleID, co.ToStyleID) {
+		return false
+	}
+	task, err := e.db.GetChangeoverNodeTaskByNode(co.ID, node.ID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return true
+	}
+	return err == nil && (task == nil || task.Situation == string(SituationUnchanged))
+}
+
+// sameUnderTheLivePart reports whether node's claim names the same parts
+// under every style whose set holds the live CATID as under styleID; false
+// when no style's does.
+func (e *Engine) sameUnderTheLivePart(node *processes.Node, styleID int64, live string) bool {
+	matches := e.stylesForCATID(node.ProcessID, live)
+	if len(matches) == 0 {
+		return false
+	}
+	for _, m := range matches {
+		if !e.samePartUnder(node, styleID, m.ID) {
+			return false
+		}
+	}
+	return true
+}
+
+// samePartUnder reports whether node's claims under styles a and b name the
+// same parts: each style claims the node exactly (claims.Resolve, ExactStyle)
+// and their AllowedPayloads() hold the same codes. A read that fails, or a
+// claim that names no part, is not the same part.
+func (e *Engine) samePartUnder(node *processes.Node, a, b int64) bool {
+	proc, err := e.db.GetProcess(node.ProcessID)
+	if err != nil || proc == nil {
+		return false
+	}
+	claims, err := e.db.NodeClaimsForStyles([]int64{a, b})
+	if err != nil {
+		return false
+	}
+	x := claims.Resolve(proc, node, store.ExactStyle(a))
+	y := claims.Resolve(proc, node, store.ExactStyle(b))
+	if x == nil || y == nil {
+		return false
+	}
+	return sameCodes(x.AllowedPayloads(), y.AllowedPayloads())
+}
+
+// sameCodes reports whether two part lists hold the same codes, neither empty.
+func sameCodes(x, y []string) bool {
+	if len(x) == 0 || len(y) == 0 {
+		return false
+	}
+	xs, ys := map[string]bool{}, map[string]bool{}
+	for _, c := range x {
+		xs[c] = true
+	}
+	for _, c := range y {
+		ys[c] = true
+	}
+	return maps.Equal(xs, ys)
 }
 
 // catidResolutionHint tells the operator where the fix for a CATID mismatch is

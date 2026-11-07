@@ -38,7 +38,6 @@
 package scenarios
 
 import (
-	"errors"
 	"fmt"
 	"reflect"
 	"slices"
@@ -933,9 +932,11 @@ func pmChangeoverIntoVacant(p *pmCell) {
 
 // pmUnchanged: style B claims the press exactly as A does (sameB), and the
 // paired position is vacant. START plans the press Unchanged and makes no
-// order at it; a tap while the changeover is armed is refused as every
-// request against an armed changeover is (guardStyleTransition); CUTOVER;
-// then one tap behaves as case 1, on B's claim.
+// order at it. The press runs the same part under both styles, so a tap while
+// the changeover is armed is taken (the request guard refuses by position:
+// guardStyleTransition, changesNothingAt) and behaves as case 1 on A's claim,
+// which leaves the next carrier on the paired position; CUTOVER; then one tap,
+// on B's claim, swaps that carrier onto the line.
 func pmUnchanged(p *pmCell) {
 	label := "START, the press Unchanged"
 	before := p.lastID()
@@ -962,21 +963,15 @@ func pmUnchanged(p *pmCell) {
 		p.t.Errorf("%s: the line's task is %q, want %q", label, situation, edgeengine.SituationUnchanged)
 	}
 
-	_, err = p.tap()
-	var armed *edgeengine.ChangeoverArmedError
-	if !errors.As(err, &armed) {
-		p.dump(label)
-		p.t.Fatalf("a tap with the changeover armed: err=%v, want the changeover-armed refusal", err)
-	}
-	if made := p.newRows(before); len(made) != 0 {
-		p.t.Fatalf("a tap with the changeover armed made %d orders, want none", len(made))
-	}
+	p.vacantDeckSwap("one tap with the changeover armed, the press unchanged")
 
 	p.runChangeover(label, before)
 	claimB, err := p.edge.DB.GetStyleNodeClaimByNode(p.styleB, ksrLine)
 	mustNil(p.t, err, "B's claim at the line")
 	mustNil(p.t, p.edge.DB.SetProcessNodeRuntime(p.nodeID, &claimB.ID, 30), "B's claim, parts counted")
 	p.settle()
-	p.vacantDeckSwap("one tap after CUTOVER, the paired position vacant")
+	after := "one tap after CUTOVER, on B's claim, a carrier on the paired position"
+	p.swap(after, func() { p.mustTap(after) })
+	p.lineBinOut(after)
 	p.settled("the end")
 }

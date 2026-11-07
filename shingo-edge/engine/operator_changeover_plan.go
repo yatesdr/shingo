@@ -495,7 +495,9 @@ func (e *Engine) activePullSnapshot(nodes []processes.Node) map[string]bool {
 // TASK ROLE IS THE FULL DIFF SLICE, including SituationUnchanged. That is a
 // strict widening and it is deliberate: unchanged diffs mint task rows today,
 // so scoping participants to "changed only" would silently UNGATE a node the
-// current gate blocks. Springfield-safe regardless — a loader that isn't in the
+// current gate blocks. (The gate itself admits an unchanged participant whose
+// part both styles run — CanAcceptOrders, changesNothingAt — and START's
+// in-flight check still sees it.) Springfield-safe regardless — a loader that isn't in the
 // changeover produces no diff at all, so it never becomes a participant and
 // never gets gated (that regression is what forced the gate to be scoped in the
 // first place).

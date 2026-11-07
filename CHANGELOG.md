@@ -21,6 +21,7 @@ Edge v37-v43; Core changes only dev tooling (plantspec, seeddev, simcalc). Migra
 - A landing that names no part takes the part its order delivered (source delivery); lineside_at keeps the engine's clock
 - A consume stroke never draws a cart recorded as another part: it is held for a cart of its part, and the parked-ticks notice names the seat
 - One CATID names one style: the pin, the one-click and Confirm refuse a taken value
+- The request guards and the changeover's participant gate refuse by position: a position whose part both styles run is supplied through a changeover
 - A changeover records the CATID at its start and at its watch's close (v38)
 - An A/B pair is two positions naming each other; one lit side is charged per tick
 - The reporting point follows its tag (v37); the poll reads one point per process

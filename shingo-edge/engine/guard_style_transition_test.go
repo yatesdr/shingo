@@ -9,6 +9,7 @@ import (
 
 	"shingo/protocol"
 	"shingo/protocol/testutil"
+	"shingoedge/domain"
 	"shingoedge/store/processes"
 )
 
@@ -125,5 +126,76 @@ func TestChangeoverAbandonThenRequest_Succeeds(t *testing.T) {
 			t.Fatalf("request still blocked by the changeover after abandon: %v", err)
 		}
 		t.Fatalf("request should proceed after abandon, got: %v", err)
+	}
+}
+
+// commonCellRig is healthRig (A active, pinned 1001; B pinned 1002; the PLC on
+// 1001) with three consume positions, each with a cart of A's part: N-COMMON,
+// which both styles claim for PART-C; N-EVAC, the same, B's claim evacuating
+// on a changeover; and N-MIRROR, whose part differs (A PART-L, B PART-R).
+func commonCellRig(t *testing.T) (eng *Engine, pid, a, b int64, nodes map[string]*processes.Node, cm *catidMonitor) {
+	t.Helper()
+	eng, db, pid, a, b, cm := healthRig(t, "1001")
+	cartNode(t, eng, pid, a, "N-COMMON", "PART-C", "PART-C", 9761)
+	_, err := upsertClaimRetiredMode(db, processes.NodeClaimInput{StyleID: b, CoreNodeName: "N-COMMON", Role: "consume",
+		SwapMode: "simple", PayloadCode: "PART-C", UOPCapacity: 100, InboundSource: "SRC"})
+	testutil.MustNoErr(t, err, "B's claim at N-COMMON")
+	cartNode(t, eng, pid, a, "N-EVAC", "PART-E", "PART-E", 9762)
+	_, err = upsertClaimRetiredMode(db, processes.NodeClaimInput{StyleID: b, CoreNodeName: "N-EVAC", Role: "consume",
+		SwapMode: "simple", PayloadCode: "PART-E", UOPCapacity: 100, InboundSource: "SRC", EvacuateOnChangeover: true})
+	testutil.MustNoErr(t, err, "B's claim at N-EVAC")
+	mirrorNode(t, eng, pid, a, b, "N-MIRROR", "PART-L", "PART-R", 9763)
+	ns, err := db.ListProcessNodesByProcess(pid)
+	testutil.MustNoErr(t, err, "nodes")
+	nodes = map[string]*processes.Node{}
+	for i := range ns {
+		nodes[ns[i].CoreNodeName] = &ns[i]
+	}
+	return eng, pid, a, b, nodes, cm
+}
+
+func claimOf(t *testing.T, eng *Engine, styleID int64, node string) *processes.NodeClaim {
+	t.Helper()
+	c, err := eng.db.GetStyleNodeClaimByNode(styleID, node)
+	testutil.MustNoErr(t, err, "the claim at "+node)
+	return c
+}
+
+// TestGuardStyleTransition_RefusesByPosition: with a changeover A -> B open, a
+// request under A at a position both styles claim for the same part, which the
+// changeover leaves unchanged, passes the request guard and the participant
+// gate (CanAcceptOrders, the sweep's); at the position whose part differs both
+// refuse as before, and at a same-part position the changeover evacuates too.
+// Before, every outgoing-style request at the process was refused, every
+// participant was closed to the sweep, and a common position that ran out
+// during a changeover got no cart.
+func TestGuardStyleTransition_RefusesByPosition(t *testing.T) {
+	t.Parallel()
+	eng, pid, a, b, nodes, _ := commonCellRig(t)
+	ns, err := eng.db.ListProcessNodesByProcess(pid)
+	testutil.MustNoErr(t, err, "nodes")
+	var participants []domain.ParticipantInput
+	for _, n := range []string{"N-COMMON", "N-EVAC", "N-MIRROR"} {
+		participants = append(participants, domain.ParticipantInput{CoreNodeName: n, Role: domain.ParticipantRoleTask})
+	}
+	_, err = eng.changeoverService.Create(pid, &a, b, "test", "", nil, []processes.NodeTaskInput{
+		{ProcessID: pid, CoreNodeName: "N-COMMON", Situation: string(SituationUnchanged), State: "unchanged"},
+		{ProcessID: pid, CoreNodeName: "N-EVAC", Situation: string(SituationEvacuate), State: "swap_required"},
+		{ProcessID: pid, CoreNodeName: "N-MIRROR", Situation: string(SituationSwap), State: "swap_required"},
+	}, participants, ns)
+	testutil.MustNoErr(t, err, "the changeover A -> B")
+	for _, row := range []struct {
+		node    string
+		refused bool
+	}{{"N-COMMON", false}, {"N-EVAC", true}, {"N-MIRROR", true}} {
+		err := eng.guardStyleTransition(nodes[row.node], claimOf(t, eng, a, row.node))
+		var armed *ChangeoverArmedError
+		if row.refused != errors.As(err, &armed) {
+			t.Errorf("%s under A with the changeover open: %v, refused %t wanted", row.node, err, row.refused)
+		}
+		if ok, why := eng.CanAcceptOrders(nodes[row.node].ID); ok == row.refused {
+			t.Errorf("%s with the changeover open: the participant gate accepts %t (%s), refused %t wanted", row.node, ok,
+				why, row.refused)
+		}
 	}
 }

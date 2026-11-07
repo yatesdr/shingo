@@ -482,6 +482,15 @@ func (e *Engine) CanAcceptOrders(nodeID int64) (bool, string) {
 	//     point query against a table written at plan time, so an error means
 	//     the Edge DB is failing — not a state in which to admit robot traffic
 	//     to a node that may be about to receive a bin.
+	//
+	// A TASK PARTICIPANT THE CHANGEOVER CHANGES NOTHING AT IS ADMITTED: the
+	// same parts under both styles and its task "unchanged" (changesNothingAt,
+	// the request guard's own test). No leg of the changeover moves a bin
+	// there, so nothing can land on it but its own supply, which is the
+	// incoming style's as much as the outgoing one's. Gated, a common position
+	// that ran out while a changeover stood open for hours got no cart from
+	// Shingo at all. An indexed-over position stays gated: the index moves a
+	// bin across it.
 	node, err := e.db.GetProcessNode(nodeID)
 	if err == nil {
 		if co, coErr := e.db.GetActiveProcessChangeover(node.ProcessID); coErr == nil && co != nil {
@@ -498,7 +507,9 @@ func (e *Engine) CanAcceptOrders(nodeID int64) (bool, string) {
 					// no idea why it is refusing.
 					return false, "changeover in progress (indexed-over position)"
 				}
-				return false, "changeover in progress"
+				if co.FromStyleID == nil || !e.changesNothingAt(co, node) {
+					return false, "changeover in progress"
+				}
 			}
 		}
 		// A window/position of a Core-owned loader uses the multi-order queue even

@@ -1329,10 +1329,12 @@ func (c *w6Cell) carryAll(label string, after int64, hold map[int]bool) {
 	c.noteCarts()
 }
 
-// release releases a staged leg: at its node while a changeover is open (the
-// tile's RELEASE on a changeover leg), by its own RELEASE otherwise.
+// release releases a staged leg as the station's tile does: at its node while
+// a changeover open changes that node (the tile's RELEASE on a changeover
+// leg), by its own RELEASE otherwise — a position the changeover leaves
+// unchanged shows the ordinary RELEASE.
 func (c *w6Cell) release(label string, o domain.Order, nodeID int64, disp edgeengine.ReleaseDisposition) {
-	if co, err := c.edge.DB.GetActiveProcessChangeover(c.processID); err == nil && co != nil {
+	if c.changingOver(nodeID) {
 		if _, err := c.edge.Engine.ReleaseChangeoverWaitForNode(c.processID, nodeID, disp); err != nil {
 			c.t.Logf("%s: release at node %d: %v", label, nodeID, err)
 		}
@@ -1340,6 +1342,17 @@ func (c *w6Cell) release(label string, o domain.Order, nodeID int64, disp edgeen
 		c.t.Logf("%s: release of order %d: %v", label, o.ID, err)
 	}
 	c.settle()
+}
+
+// changingOver reports whether the open changeover has a task at the node
+// that is not "unchanged".
+func (c *w6Cell) changingOver(nodeID int64) bool {
+	co, err := c.edge.DB.GetActiveProcessChangeover(c.processID)
+	if err != nil || co == nil {
+		return false
+	}
+	task, err := c.edge.DB.GetChangeoverNodeTaskByNode(co.ID, nodeID)
+	return err == nil && task != nil && task.Situation != "unchanged"
 }
 
 func (c *w6Cell) posOf(nodeID int64) int {
