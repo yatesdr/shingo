@@ -92,6 +92,11 @@ type ManifestClearer interface {
 	// NotifyBinChanged tells the Edges watching the bin, after the transaction
 	// that bumped its generation committed (the bins feed's push).
 	NotifyBinChanged(binID int64)
+
+	// AnnounceLateDrawTx tells the station holding the bin its count after a
+	// late draw (the E-1 arm), fenced at the bin's current generation, when the
+	// bin stands at a seat; it reports whether it does.
+	AnnounceLateDrawTx(tx *sql.Tx, binID, epoch int64, count int) (bool, error)
 }
 
 // InventoryDeltaService applies BinUOPDelta envelopes against the
@@ -730,10 +735,25 @@ func (s *InventoryDeltaService) ApplyBinUOPDelta(station string, d *protocol.Bin
 		}
 	}
 
+	// A LATE DRAW AT ANOTHER SEAT IS TOLD TO IT. A window of the generation
+	// the lift ended, applied after the cart landed at a seat, changed a count
+	// that seat's Edge bound from the landing before the draw: the station is
+	// sent Core's count, fenced at the current generation, in this transaction
+	// (AnnounceLateDrawTx), and the bins feed is pushed after the commit. In
+	// the air or in storage there is no station to tell.
+	lateAtSeat := false
+	if liftEnded && !clearedAtZero && s.binManifest != nil {
+		at, err := s.binManifest.AnnounceLateDrawTx(tx, d.BinID, currentEpoch, newValue)
+		if err != nil {
+			return err
+		}
+		lateAtSeat = at
+	}
+
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("commit BinUOPDelta bin=%d: %w", d.BinID, err)
 	}
-	if clearedAtZero {
+	if clearedAtZero || lateAtSeat {
 		s.binManifest.NotifyBinChanged(d.BinID)
 	}
 	return nil
