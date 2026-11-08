@@ -277,25 +277,45 @@ func TestHold_ChangeoverStartedSinceHoldWaitsForAPerson(t *testing.T) {
 // opened, the one that landed B excepted, is charged the share; a cart of
 // MIRROR-L landing there leaves it open; a changeover started since makes it
 // wait for a person. Before, nothing released a hold at a cart's landing.
+//
+// A cancelled changeover is not counted (decision 47): one cancelled since the
+// landing, and the wrong tap cancelled before the right one (tap → cancel →
+// tap → complete), both release. A share bigger than the cart does not land
+// (decision 46): it stays open for a person and the cart is unchanged.
 func TestHold_ReleasesOnTheLandingOfItsPart(t *testing.T) {
 	t.Parallel()
 	for _, row := range []struct {
 		name       string
 		lands      string
-		movedOn    bool
+		qty        int64
+		tapCancel  bool   // a changeover onto B started and cancelled before the one that lands
+		later      string // a changeover started after the landing: "open" or "cancelled"
 		released   bool
 		wantOnCart int
 	}{
 		{name: "a cart of its part", lands: "MIRROR-R", released: true, wantOnCart: 37},
 		{name: "a cart of another part", lands: "MIRROR-L", wantOnCart: 40},
-		{name: "a changeover started since", lands: "MIRROR-R", movedOn: true, wantOnCart: 40},
+		{name: "a changeover started since", lands: "MIRROR-R", later: "open", wantOnCart: 40},
+		{name: "a changeover cancelled since", lands: "MIRROR-R", later: "cancelled", released: true, wantOnCart: 37},
+		{name: "tap, cancel, tap", lands: "MIRROR-R", tapCancel: true, released: true, wantOnCart: 37},
+		{name: "a share bigger than the cart", lands: "MIRROR-R", qty: 56, wantOnCart: 40},
 	} {
 		t.Run(row.name, func(t *testing.T) {
 			t.Parallel()
 			eng, pid, a, b, _ := holdRig(t, "1002")
 			node := mirrorNode(t, eng, pid, a, b, "N-MIRROR", "MIRROR-L", "MIRROR-R", 9751)
-			_, err := eng.db.HoldCatidDraw(pid, "1002", node, "MIRROR-R", holdReasonOffPlan, 3, time.Now().Add(-time.Minute))
+			qty := row.qty
+			if qty == 0 {
+				qty = 3
+			}
+			_, err := eng.db.HoldCatidDraw(pid, "1002", node, "MIRROR-R", holdReasonOffPlan, qty, time.Now().Add(-time.Minute))
 			testutil.MustNoErr(t, err, "B's share held at N-MIRROR a minute ago")
+			if row.tapCancel {
+				wrong, err := eng.changeoverService.Create(pid, &a, b, "test", "", nil, nil, nil, nil)
+				testutil.MustNoErr(t, err, "the first tap")
+				testutil.MustNoErr(t, eng.db.UpdateProcessChangeoverState(wrong, domain.ChangeoverCancelled), "cancelled")
+				testutil.MustNoErr(t, eng.db.SetTargetStyle(pid, nil), "the cancel clears the target")
+			}
 			_, err = eng.changeoverService.Create(pid, &a, b, "test", "", nil, nil, nil, nil)
 			testutil.MustNoErr(t, err, "the changeover onto B, after the hold opened")
 			testutil.MustNoErr(t, eng.SetProcessActiveStyle(pid, &b), "the cutover onto B, forced, the MIRROR-L cart still there")
@@ -303,10 +323,13 @@ func TestHold_ReleasesOnTheLandingOfItsPart(t *testing.T) {
 			if len(open) != 1 {
 				t.Fatalf("after the cutover: open holds %+v, want the share still open (no MIRROR-R cart stood there)", open)
 			}
-			if row.movedOn {
+			if row.later != "" {
 				later, err := eng.changeoverService.Create(pid, &b, a, "test", "", nil, nil, nil, nil)
 				testutil.MustNoErr(t, err, "another changeover")
-				testutil.MustNoErr(t, eng.db.UpdateProcessChangeoverState(later, domain.ChangeoverCancelled), "cancelled")
+				if row.later == "cancelled" {
+					testutil.MustNoErr(t, eng.db.UpdateProcessChangeoverState(later, domain.ChangeoverCancelled), "cancelled")
+					testutil.MustNoErr(t, eng.db.SetTargetStyle(pid, nil), "the cancel clears the target")
+				}
 			}
 			testutil.MustNoErr(t, eng.carrierLeft(node, "N-MIRROR"), "the MIRROR-L cart lifted")
 			eng.HandleBinLanded(protocol.BinLanded{BinID: 9752, CoreNodeName: "N-MIRROR", Count: 40, Epoch: 1,

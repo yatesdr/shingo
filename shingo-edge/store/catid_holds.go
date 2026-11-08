@@ -10,6 +10,7 @@ import (
 	"errors"
 	"time"
 
+	"shingoedge/domain"
 	"shingoedge/store/internal/helpers"
 )
 
@@ -115,11 +116,25 @@ func (db *DB) ResolveCatidHold(id int64, resolution, by string, at time.Time) (i
 }
 
 // CountChangeoversStartedSince counts the process's changeovers started at or
-// after since, other than exceptID.
+// after since, other than exceptID and other than a cancelled one: a tap of
+// the wrong style, cancelled, changed nothing a hold waits for (decision 47).
 func (db *DB) CountChangeoversStartedSince(processID int64, since time.Time, exceptID int64) (int, error) {
 	var n int
 	err := db.QueryRow(`SELECT COUNT(*) FROM process_changeovers
-		WHERE process_id = ? AND started_at >= ? AND id <> ?`,
-		processID, since.UTC().Format(helpers.TimeLayout), exceptID).Scan(&n)
+		WHERE process_id = ? AND started_at >= ? AND id <> ? AND state <> ?`,
+		processID, since.UTC().Format(helpers.TimeLayout), exceptID, string(domain.ChangeoverCancelled)).Scan(&n)
 	return n, err
+}
+
+// LatestCompletedChangeoverTo is the newest completed changeover of the
+// process to styleID, 0 when there is none. One read on the process's index.
+func (db *DB) LatestCompletedChangeoverTo(processID, styleID int64) (int64, error) {
+	var id int64
+	err := db.QueryRow(`SELECT id FROM process_changeovers
+		WHERE process_id = ? AND to_style_id = ? AND state = ? ORDER BY id DESC LIMIT 1`,
+		processID, styleID, string(domain.ChangeoverCompleted)).Scan(&id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, nil
+	}
+	return id, err
 }

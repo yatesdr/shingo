@@ -20,8 +20,9 @@ import (
 // wrong-part item, red, offers the changeover to ALT. Untapped, the seats stay
 // as they were, the holds grow and nothing is ordered. Tapped, the changeover
 // swaps the hand-placed carts for MIRROR-R carts, the monitor completes it, the
-// completion lands the held shares on them, and the ledger is exact with no
-// Charge. Core refuses nothing in either half (no payload_mismatch_dropped row).
+// completion lands each held share that fits its cart and leaves a bigger one
+// open for a person (no cart below 0), and the ledger is exact with no Charge.
+// Core refuses nothing in either half (no payload_mismatch_dropped row).
 func TestCatid4x2_S9_HandPlacedCart(t *testing.T) {
 	t.Parallel()
 	for _, half := range []string{"untapped", "tapped"} {
@@ -54,7 +55,7 @@ func TestCatid4x2_S9_HandPlacedCart(t *testing.T) {
 					}
 				}
 			} else {
-				c.tapped("S9", item, run)
+				c.tapped("S9", item, run, true)
 			}
 			if n := c.refusedAtCore(); n != 0 {
 				t.Errorf("Core's ledger has %d payload_mismatch_dropped row(s) for the run, want none", n)

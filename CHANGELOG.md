@@ -20,6 +20,7 @@ Edge v37-v43; Core changes the lift's stamp (no schema) and dev tooling (plantsp
 - The CATID monitor reads, confirms and times its windows on the engine's clock
 - An unmapped or off-plan part's draw is held (v40) until a landing, a Charge or a Write off
 - A cart landing at a hold's position, the active style running its CATID, releases the hold onto it
+- An automatic release lands a share only when it fits the cart ("N held, the cart at X holds M" waits for a person); a cancelled changeover strands no hold
 - A flip records each consume seat's cart that could not say its part as the departing style's part (source flip); a changeover's flip leaves alone the seats bound since it started
 - A landing that names no part takes the part its order delivered (source delivery); lineside_at keeps the engine's clock
 - A consume stroke never draws a cart recorded as another part: it is held for a cart of its part, and the parked-ticks notice names the seat

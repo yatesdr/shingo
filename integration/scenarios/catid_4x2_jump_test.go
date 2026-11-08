@@ -50,7 +50,7 @@ func TestCatid4x2_S4_JumpWithNoChangeover(t *testing.T) {
 				c.untapped("S4", run, before)
 				return
 			}
-			c.tapped("S4", item, run)
+			c.tapped("S4", item, run, false)
 		})
 	}
 }
@@ -163,7 +163,13 @@ func (c *w6Cell) untapped(label string, run, before int64) {
 // it; the changeover's legs land, the monitor completes it, and the
 // completion lands the held shares on the MIRROR-R carts. Every ledger is
 // exact, no hold is left and every order lands confirmed.
-func (c *w6Cell) tapped(label string, item edgeengine.CatidHealthItem, run int64) {
+//
+// overCartsMayStay: S9's shares grew at the hand-placed carts for the whole
+// untapped stretch, and a share bigger than the MIRROR-R cart that lands for
+// it did not come from that cart, so the completion leaves it open for a
+// person (decision 46). The ledger is still exact — held is a term — and the
+// assertion is that no cart went below 0, not that no hold is open.
+func (c *w6Cell) tapped(label string, item edgeengine.CatidHealthItem, run int64, overCartsMayStay bool) {
 	c.t.Helper()
 	before := c.lastID()
 	if _, err := c.edge.Engine.StartProcessChangeover(c.processID, item.Action.ToStyleID, "engineer",
@@ -192,7 +198,18 @@ func (c *w6Cell) tapped(label string, item edgeengine.CatidHealthItem, run int64
 	c.cycle(5)
 	l := c.ledger(label+" tapped", true)
 	c.wantRecord(label+" tapped", l, run, c.counted()-run)
-	if l.holdsOpen != 0 {
+	switch {
+	case overCartsMayStay:
+		for i := range w6Pos {
+			for _, tn := range c.tenures[i] {
+				if n := c.count(tn); n < 0 {
+					c.dump(label)
+					c.t.Fatalf("%s tapped: a cart at %s reads %d: a release landed more than it held", label, w6Pos[i], n)
+				}
+			}
+		}
+		c.t.Logf("%s tapped: %d hold(s) open, each over its cart", label, l.holdsOpen)
+	case l.holdsOpen != 0:
 		c.t.Fatalf("%s tapped: %d held open, want none: the completion lands the held shares", label, l.holdsOpen)
 	}
 	c.confirmedAll(label + " tapped")

@@ -13,7 +13,7 @@
 //
 //   - automatically, when a cutover or a switch lands the process on a style
 //     whose set holds the CATID and no other changeover has started since the
-//     hold opened;
+//     hold opened (a cancelled one is not counted);
 //   - automatically, when a cart lands at the hold's position (any position,
 //     for a whole draw) while the active style runs the CATID, under the same
 //     guards: the cart a forced cutover went ahead of, or the one a person
@@ -28,6 +28,13 @@
 // refused and the hold stays open, naming why (holdRows). The quantity
 // charged is the quantity the latch resolved.
 //
+// The automatic releases add one rule a person's Charge does not: a share
+// lands only when it fits the cart (decision 46). A share bigger than the
+// cart's count did not come from that cart; the hold stays open for a person,
+// its line saying "N held, the cart at X holds M", and Charge (with its
+// preview) and Write off apply as before (decision 25: the quantity charged is
+// the quantity latched).
+//
 // A hold that never resolves stays, with its age and its quantity.
 
 package engine
@@ -38,7 +45,6 @@ import (
 	"log"
 
 	"shingo/protocol/clock"
-	"shingoedge/domain"
 	"shingoedge/plc"
 	"shingoedge/store"
 	"shingoedge/store/processes"
@@ -81,9 +87,10 @@ func (e *Engine) holdCatidDraw(tick tickScope, nodeID int64, part string, qty in
 
 // releaseHoldsOnLanding releases the process's open holds whose CATID the style
 // a changeover just landed it on runs (releaseHolds, every position). The
-// changeover's own completion is the landing.
-func (e *Engine) releaseHoldsOnLanding(processID, landingChangeoverID int64) {
-	e.releaseHolds(processID, landingChangeoverID, nil)
+// changeover's own completion is the landing; its row is written completed
+// first, so releaseHolds reads it as the newest completed one to the style.
+func (e *Engine) releaseHoldsOnLanding(processID int64) {
+	e.releaseHolds(processID, nil)
 }
 
 // releaseHoldsOnArrival releases what a cart that just landed at node lands:
@@ -97,15 +104,16 @@ func (e *Engine) releaseHoldsOnLanding(processID, landingChangeoverID int64) {
 // statement per landing (the open holds); the rest only when one waits.
 // Latched, so a release racing the door's charges once.
 func (e *Engine) releaseHoldsOnArrival(node *processes.Node) {
-	e.releaseHolds(node.ProcessID, 0, node)
+	e.releaseHolds(node.ProcessID, node)
 }
 
 // releaseHolds releases the process's open holds whose CATID its active style
 // runs — those at node and the whole draws, when node is given — when no
-// changeover has started since the hold opened (the landing changeover itself
-// excepted) and something would land (holdRows); a hold that would land
-// nothing waits for a person.
-func (e *Engine) releaseHolds(processID, landingChangeoverID int64, node *processes.Node) {
+// changeover has started since the hold opened (the one that landed the active
+// style excepted, landedActiveBy, and a cancelled one not counted), something
+// would land (holdRows), and every share fits its cart (overTheCart); a hold
+// that would land nothing, or more than a cart holds, waits for a person.
+func (e *Engine) releaseHolds(processID int64, node *processes.Node) {
 	holds, err := e.db.ListOpenCatidHolds(processID)
 	if err != nil {
 		return
@@ -120,9 +128,7 @@ func (e *Engine) releaseHolds(processID, landingChangeoverID int64, node *proces
 	if err != nil || proc == nil || proc.ActiveStyleID == nil {
 		return
 	}
-	if node != nil {
-		landingChangeoverID = e.landedActiveBy(processID, *proc.ActiveStyleID)
-	}
+	landing := e.landedActiveBy(processID, *proc.ActiveStyleID)
 	var landed styleCATIDEntry
 	for _, s := range e.processStyleCATIDSets(processID) {
 		if s.ID == *proc.ActiveStyleID {
@@ -139,11 +145,15 @@ func (e *Engine) releaseHolds(processID, landingChangeoverID int64, node *proces
 		if !catidSetHas(landed.Set, h.CATID) {
 			continue
 		}
-		if n, err := e.db.CountChangeoversStartedSince(processID, h.FirstTickAt, landingChangeoverID); err != nil || n > 0 {
+		if n, err := e.db.CountChangeoversStartedSince(processID, h.FirstTickAt, landing); err != nil || n > 0 {
 			log.Printf("catid hold %d: a changeover started since it opened — it waits for a person", h.ID)
 			continue
 		}
-		if _, refusal, err := e.holdRows(h, landed.ID, landed.Name); err != nil || refusal != "" {
+		rows, refusal, err := e.holdRows(h, landed.ID, landed.Name)
+		if err == nil && refusal == "" {
+			refusal = overTheCart(rows)
+		}
+		if err != nil || refusal != "" {
 			log.Printf("catid hold %d: not released on %s — it waits for a person: %s%v", h.ID, on, refusal, err)
 			continue
 		}
@@ -161,20 +171,30 @@ func (e *Engine) releaseHolds(processID, landingChangeoverID int64, node *proces
 	}
 }
 
-// landedActiveBy is the changeover that landed the process on styleID, the
-// newest completed row to it among the latest; 0 when none is.
+// landedActiveBy is the changeover that landed the process on styleID: the
+// newest completed row to it, one read; 0 when none is (or the read fails,
+// which excepts nothing). The completion's own row and the row a later
+// arrival finds are the same once the completed row is written.
 func (e *Engine) landedActiveBy(processID, styleID int64) int64 {
-	rows, err := e.db.ListRecentProcessChangeovers(processID, 10)
+	id, err := e.db.LatestCompletedChangeoverTo(processID, styleID)
 	if err != nil {
+		log.Printf("catid holds: process %d: the changeover that landed style %d: %v", processID, styleID, err)
 		return 0
 	}
-	var id int64
-	for _, co := range rows {
-		if co.State == domain.ChangeoverCompleted && co.ToStyleID == styleID && co.ID > id {
-			id = co.ID
+	return id
+}
+
+// overTheCart is why an automatic release refuses a share bigger than the
+// cart it would land on (decision 46): "N held, the cart at X holds M"; ""
+// when every share fits. As holdRows read the carts: a stroke between the read
+// and the latch can still add one.
+func overTheCart(rows []CatidHoldChargeRow) string {
+	for _, r := range rows {
+		if r.BinID != 0 && !r.WrongPart && r.Qty > int64(r.CartCount) {
+			return fmt.Sprintf("%d held, the cart at %s holds %d", r.Qty, r.Node, r.CartCount)
 		}
 	}
-	return id
+	return ""
 }
 
 // holdsLandingAt is the holds a landing at nodeID can release: the shares
@@ -258,6 +278,8 @@ type CatidHoldChargeRow struct {
 	ClaimPart     string `json:"claim_part"`
 	Qty           int64  `json:"qty"`
 	WrongPart     bool   `json:"wrong_part"`
+	// CartCount is the cart's count as the seat reads it (0 for no cart).
+	CartCount int `json:"cart_count"`
 }
 
 // ErrHoldResolved is a release of a hold already released.
@@ -339,11 +361,13 @@ func (e *Engine) holdRows(h *store.CatidHold, styleID int64, styleName string) (
 			}
 		case !carrierIsPart(process, &nodes[i], rt, claim, claims):
 			row.BinID, row.CarrierPart, row.CarrierSource, row.WrongPart = *rt.ActiveBinID, string(rt.LinesidePayloadCode), recordedBy(rt), true
+			row.CartCount = rt.RemainingUOPCached
 			if refusal == "" {
 				refusal = e.wrongCartRefusal(&nodes[i], rt, styleID, styleName)
 			}
 		default:
 			row.BinID, row.CarrierPart, row.CarrierSource = *rt.ActiveBinID, string(rt.LinesidePayloadCode), recordedBy(rt)
+			row.CartCount = rt.RemainingUOPCached
 			lands = true
 		}
 		rows = append(rows, row)
