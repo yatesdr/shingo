@@ -160,9 +160,10 @@ func (c *w6Cell) untapped(label string, run, before int64) {
 }
 
 // tapped is the person's tap on the item: the start verb, as the strip calls
-// it; the changeover's legs land, the monitor completes it, and the
-// completion lands the held shares on the MIRROR-R carts. Every ledger is
-// exact, no hold is left and every order lands confirmed.
+// it; the line strokes once before the person releases, the changeover's legs
+// land, the monitor completes it, and the completion lands the held shares on
+// the MIRROR-R carts. Every ledger is exact, no hold is left and every order
+// lands confirmed.
 //
 // overCartsMayStay: S9's shares grew at the hand-placed carts for the whole
 // untapped stretch, and a share bigger than the MIRROR-R cart that lands for
@@ -178,6 +179,11 @@ func (c *w6Cell) tapped(label string, item edgeengine.CatidHealthItem, run int64
 		c.t.Fatalf("%s: the tap's start: %v", label, err)
 	}
 	c.tick()
+	// The line strokes between the tap and the person's release, as a running
+	// cell does: an incoming count at a mirror position is held under MIRROR-R
+	// for the incoming cart, whatever the cart standing there can say (S9's
+	// cannot), and Core is sent nothing to refuse.
+	c.cycle(1)
 	c.carryAll(label+" the changeover's legs", before, nil)
 	c.waitFor(label+" the changeover completed by the monitor", declareWindow+10*time.Second, func() bool {
 		return c.open() == nil

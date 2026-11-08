@@ -48,7 +48,8 @@
 #             operator waits), and it completes and lands each hold that fits its cart (no Charge;
 #             a share bigger than its cart stays for a person, and no cart goes below 0). It prints what the
 #             seats record (part, known, source, held at the seat), the mirror holds, Core's mirror
-#             carts and the deltas Core refused as the wrong part
+#             carts and the deltas Core refused as the wrong part (none: the strokes between the
+#             tap and the release are held at the seats for the MIRROR-R carts)
 #
 # It brings the stack up from nothing as scripts/kanban-rig.sh does (down -v, a fresh sim anchor,
 # build, seed with Core stopped), sets the PLC's CATID to 1001, drives the shape over Edge and
@@ -719,9 +720,10 @@ forensics() {
 
 # ledger [mid]: closes the window. The final ledger (no argument) is read at rest and checked:
 # carts + held + written off = loads, the record = the parts the line counted out, Core received
-# = the Edge's. A mid-run ledger is read on the running line and says so.
+# = the Edge's, nothing lost at the lift, and Core refused no draw as the wrong part. A mid-run
+# ledger is read on the running line and says so.
 ledger() {
-  local kind="${1:-final}" carts expect n q seat a b other got miss="" line
+  local kind="${1:-final}" carts expect n q seat a b other got miss="" line refused_n
   if [ "$kind" = final ]; then
     at_rest "the final ledger is read at rest"
     rest_read ledger_read
@@ -751,6 +753,8 @@ ledger() {
     echo "$line" | tee -a "$OUT/log.txt"
     echo "lost at the lift ${L_LOST:-0}" | tee -a "$OUT/log.txt"
     [ "${L_LOST:-0}" -eq 0 ] || miss="$miss; lost at the lift ${L_LOST}"
+    refused_n="${L_REFUSED%% *}"
+    [ "${refused_n:-0}" -eq 0 ] || miss="$miss; Core refused $refused_n draw(s) as the wrong part"
     [ $(( ${L_EDGE_UNFENCED:-0} + ${L_CORE_UNFENCED:-0} )) -eq 0 ] || miss="$miss; unfenced partial releases (the Edge's ${L_EDGE_UNFENCED}, Core's ${L_CORE_UNFENCED})"
     [ $(( carts + q + seat + WRITTEN_OFF )) -eq "$expect" ] || miss="$miss; carts + held + at the seats + written off $(( carts + q + seat + WRITTEN_OFF )) against loads $expect"
     [ "$got" -eq "$L_COUNTED" ] || miss="$miss; the record $got against the $L_COUNTED counted out"
@@ -779,6 +783,10 @@ bring_up() {
   # a migrated schema. docs/dev-env/sim.md, "Seed with Core STOPPED".
   wait_for 120 "Edge up" "curl -s -m 3 $EDGE/status >/dev/null" || die "Edge did not come up"
   bg dc stop core >>"$OUT/up.log" 2>&1
+  # S9 seeds twice, the second time rewinding the mirror seats to the plant's counts. The Edge
+  # stands stopped across both: a stroke it counted between them would reach Core from its outbox
+  # after the second seed had put the seat's count back, and the seat would read one high.
+  [ "$SHAPE" = S9 ] && bg dc stop edge >>"$OUT/up.log" 2>&1
   say "seed $PLANT"
   bg dc run --no-deps --rm seed >"$OUT/seed.log" 2>&1 || die "seed failed, see seed.log"
   [ "$SHAPE" = S9 ] && seed_unknown_mirrors

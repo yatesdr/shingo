@@ -168,6 +168,9 @@ func (e *Engine) walkTick(process *processes.Process, nodes []processes.Node, cl
 	// storage"). A press-index front names its back position in the same field
 	// and is never a pair, so it neither arms nor disarms one.
 	ab := newABPairs(nodes)
+	// When the open changeover started, for a consume seat whose cart cannot
+	// say its part (unsaidCarrier): read at most once for the walk.
+	start := &changeoverStart{db: e.db, processID: tick.processID}
 
 	for _, node := range nodes {
 		runtime := runtimes[node.ID]
@@ -234,7 +237,8 @@ func (e *Engine) walkTick(process *processes.Process, nodes []processes.Node, cl
 			}
 			nodeCopy := node
 			attr.consumeTicks++
-			e.handleConsumeTick(&nodeCopy, runtime, claim, holdPartFor(process, &nodeCopy, claim, claims), tick.delta)
+			e.handleConsumeTick(&nodeCopy, runtime, claim, holdPartFor(process, &nodeCopy, claim, claims), tick.delta,
+				unsaidCarrier{departing: departingPartAt(process, &nodeCopy, claims), start: start})
 
 		case protocol.ClaimRoleProduce:
 			// A/B cycling: only increment the active-pull side.
@@ -749,7 +753,9 @@ func (e *Engine) chargeOrHold(node *processes.Node, rt *processes.RuntimeState, 
 // anyway). The tick is held as if the seat were empty (notCharged), under
 // hold, and replays onto the next carrier of that part: a landing, or a person
 // naming the standing cart, and the next stroke. A carrier that cannot say is
-// charged as the claim's part. A produce seat is unchanged: a changeover lifts
+// charged as the claim's part, except one an open changeover finds standing
+// at a position whose part changes, which is the departing part
+// (unsaidCarrier). A produce seat is unchanged: a changeover lifts
 // its cart, and a same-part changeover's strokes are the next bin's
 // (cutoverHoldClears).
 type tickParts struct {
@@ -819,10 +825,106 @@ func recordedOtherPart(rt *processes.RuntimeState, claim *processes.NodeClaim) b
 }
 
 // drawsAnotherPart is the consume tick's rule (tickParts): the bound carrier is
-// recorded as a part the claim does not take and is not the part the tick is
-// held under, so it takes no tick.
-func drawsAnotherPart(rt *processes.RuntimeState, claim *processes.NodeClaim, hold string) bool {
-	return recordedOtherPart(rt, claim) && string(rt.LinesidePayloadCode) != hold
+// a part the claim does not take and is not the part the tick is held under,
+// so it takes no tick. The carrier's part is the recorded one, or for a cart
+// that cannot say, unsaid (unsaidCarrier.partOf); with unsaid "" such a cart
+// is taken as the claim's part and charged.
+func drawsAnotherPart(rt *processes.RuntimeState, claim *processes.NodeClaim, hold, unsaid string) bool {
+	if recordedOtherPart(rt, claim) {
+		return string(rt.LinesidePayloadCode) != hold
+	}
+	return unsaid != "" && !claimTakes(claim, unsaid) && unsaid != hold
+}
+
+// unsaidCarrier reads a consume seat whose bound cart cannot say its part
+// while a changeover is open. At a position whose part changes
+// (departingPartAt), a cart bound before the changeover started (lineside_at
+// not after started_at, the flip's own test in flipCarrierStamps) was bound
+// under the departing style, so it is the departing part, as the flip will
+// record it. Core knows that cart, so an incoming stroke charged to it is
+// refused as another part's. Taken as the departing part, the cart takes no
+// incoming stroke: the stroke is held under the incoming part as if the seat
+// were empty, and the incoming cart absorbs it when it lands, as it absorbs a
+// run-out (holdPartFor). The departing style's own strokes still draw the cart.
+//
+// A cart bound since the start came with the changeover, so it is the incoming
+// part and the claim's-part fallback is right for it (decision 40's reading).
+// The fallback also stands at a known seat, a same-part position, a loader, a
+// produce seat (handleProduceTick never asks), and with no changeover open.
+// carrierIsPart needs no change: its fallback, the active style's part, is
+// already the departing part for such a cart.
+//
+// departing is "" where the rule cannot apply; start is the walk's read of
+// the changeover's start.
+type unsaidCarrier struct {
+	departing string
+	start     *changeoverStart
+}
+
+// partOf is the part rt's bound cart is taken as under the rule, or "" when
+// the rule does not apply: the cart is known, the seat empty, the cart bound
+// since the start, or no changeover is open. Decided per attempt
+// (applyHoldAndReplay re-reads a seat that changed), on the walk's one read
+// of the start.
+func (u unsaidCarrier) partOf(rt *processes.RuntimeState) string {
+	if u.departing == "" || rt == nil || rt.ActiveBinID == nil || rt.LinesidePayloadKnown {
+		return ""
+	}
+	if at, open := u.start.at(); !open || rt.LinesideAt.After(at) {
+		return ""
+	}
+	return u.departing
+}
+
+// departingPartAt is the departing style's part at a consume position whose
+// part changes under the open changeover. The active style's claim there and
+// the target's are both consume, neither is a loader, and they name different
+// parts. Otherwise it is "". Read from the claim set the walk loaded for both
+// styles (counterDeltaRows): +0 statements.
+func departingPartAt(process *processes.Process, node *processes.Node, claims *store.NodeClaimSet) string {
+	if process == nil || process.ActiveStyleID == nil || process.TargetStyleID == nil {
+		return ""
+	}
+	out := claims.Resolve(process, node, store.ExactStyle(*process.ActiveStyleID))
+	in := claims.Resolve(process, node, store.ExactStyle(*process.TargetStyleID))
+	if out == nil || in == nil || out.Role != protocol.ClaimRoleConsume || in.Role != protocol.ClaimRoleConsume ||
+		out.IsLoaderNode() || in.IsLoaderNode() || out.PayloadCode == "" || in.PayloadCode == out.PayloadCode {
+		return ""
+	}
+	return out.PayloadCode
+}
+
+// changeoverStart is when the process's open changeover started, read for
+// one walk. The read is made once, the first time a seat needs it
+// (unsaidCarrier.partOf): +0 statements on a walk that meets no cart that
+// cannot say at a position whose part changes (every walk with no changeover
+// open, since departingPartAt answers "" without one), and +1 on a walk that
+// does, however many such seats it has. No changeover open, or a failed read,
+// leaves the fallback.
+type changeoverStart struct {
+	db        *store.DB
+	processID int64
+	read      bool
+	startedAt time.Time
+	open      bool
+}
+
+func (c *changeoverStart) at() (time.Time, bool) {
+	if c == nil {
+		return time.Time{}, false
+	}
+	if !c.read {
+		c.read = true
+		co, err := c.db.GetActiveProcessChangeover(c.processID)
+		switch {
+		case err == nil && co != nil:
+			c.startedAt, c.open = co.StartedAt, true
+		case err != nil && !errors.Is(err, sql.ErrNoRows):
+			log.Printf("counter delta: process %d: the open changeover cannot be read (%v); a cart that cannot say "+
+				"its part is charged as the claim's", c.processID, err)
+		}
+	}
+	return c.startedAt, c.open
 }
 
 // holdPartFor is the part a consume tick is held under when no carrier takes
@@ -909,7 +1011,8 @@ func (e *Engine) endUnheldEpisode(nodeID int64) {
 // must mirror this; clamping at zero would force a permanent drift
 // against Core (which doesn't clamp) and noisy reconciliation logs
 // as the heal/clamp/heal/clamp loop ping-pongs forever.
-func (e *Engine) handleConsumeTick(node *processes.Node, runtime *processes.RuntimeState, claim *processes.NodeClaim, hold string, delta int) {
+func (e *Engine) handleConsumeTick(node *processes.Node, runtime *processes.RuntimeState, claim *processes.NodeClaim, hold string, delta int,
+	unsaid unsaidCarrier) {
 	// The drain, the count write and the record are one change to the seat;
 	// the lineside report must see all of it or none (countMu).
 	e.countMu.Lock()
@@ -934,12 +1037,14 @@ func (e *Engine) handleConsumeTick(node *processes.Node, runtime *processes.Runt
 	// is held for the next carrier of the part (Lane H R3, DECISIONS D12; pin
 	// TestPinR3_ReleasedEmptyIsNotChargedThenTheNextBinOfThePartTakesTheHold).
 	// A count release leaves the flag clear and keeps charging until the
-	// lift (R1). Nor is a carrier recorded as a part the claim does not take:
-	// the stroke is held under hold for a carrier of its part (tickParts).
+	// lift (R1). Nor is a carrier recorded as a part the claim does not take,
+	// or a cart that cannot say that the open changeover found standing at a
+	// position whose part changes (unsaid): the stroke is held under hold for a
+	// carrier of its part (tickParts).
 	runtime, _, binAttributed := e.applyHoldAndReplay(node, runtime, binRemainder, -1, func(rt *processes.RuntimeState) tickParts {
 		_, carrierPart, _ := e.binAtNode(rt, claim)
 		return tickParts{tick: claim.PayloadCode, hold: hold, carrier: carrierPart,
-			notCharged: rt.ReleasedEmpty || drawsAnotherPart(rt, claim, hold)}
+			notCharged: rt.ReleasedEmpty || drawsAnotherPart(rt, claim, hold, unsaid.partOf(rt))}
 	})
 
 	// emitConsumeTickDeltas marks the drained piles always, and records a

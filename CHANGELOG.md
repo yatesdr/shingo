@@ -25,6 +25,7 @@ Edge v37-v43; Core changes the lift's stamp (no schema) and dev tooling (plantsp
 - A flip records each consume seat's cart that could not say its part as the departing style's part (source flip); a changeover's flip leaves alone the seats bound since it started
 - A landing that names no part takes the part its order delivered (source delivery); lineside_at keeps the engine's clock
 - A consume stroke never draws a cart recorded as another part: it is held for a cart of its part, and the parked-ticks notice names the seat
+- With a changeover open, a cart that cannot say its part, bound before the start at a position whose part changes, is the departing part: the incoming strokes are held for the incoming cart, not refused by Core
 - One CATID names one style: the pin, the one-click and Confirm refuse a taken value
 - The request guards and the changeover's participant gate refuse by position: a position whose part both styles run is supplied through a changeover
 - The guards read a door call's changeover, claims and task once (21 statements to 12 at a common position); a position with no task is a change, and a failed read that turns a request away is logged
