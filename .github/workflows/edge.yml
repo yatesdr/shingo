@@ -14,6 +14,9 @@ on:
       # exactly this gap that let a restructuring of the jobs below sit
       # unverified, because nothing in the diff matched any other path.
       - ".github/workflows/edge.yml"
+      # The sim job runs scripts/gate.sh, so the gate's own edits run it.
+      - "scripts/gate.sh"
+      - "scripts/gate-lock.sh"
       # The shared workflow and actions these jobs call. Without them a
       # change to sharded-suite.yml or shared-postgres — the code that
       # actually runs the tests — triggers nothing, which is the same
@@ -26,6 +29,8 @@ on:
       - "protocol/**"
       - "shared/**"
       - ".github/workflows/edge.yml"
+      - "scripts/gate.sh"
+      - "scripts/gate-lock.sh"
       # The shared workflow and actions these jobs call. Without them a
       # change to sharded-suite.yml or shared-postgres — the code that
       # actually runs the tests — triggers nothing, which is the same
@@ -142,6 +147,27 @@ jobs:
       - name: Test (Docker integration)
         working-directory: shingo-edge
         run: go test -tags=docker,lockcheck -timeout=10m -count=1 ./...
+
+  # THE SIM-ONLY TESTS, UNDER THE DETECTOR (core.yml carries the reasoning):
+  # the sim operator, the simwarlink fake, cmd/shingoedge's sim callers and www's
+  # overrun route, which ran on one laptop's gate and nowhere else.
+  sim:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version: "1.25.0"
+          cache-dependency-path: |
+            shingo-edge/go.sum
+            protocol/go.sum
+
+      - name: Test (sim-only tests, -race)
+        env:
+          CGO_ENABLED: "1"
+          GATE_MODULES: shingo-edge
+        run: bash scripts/gate.sh sim
 
   docker-race:
     uses: ./.github/workflows/sharded-suite.yml

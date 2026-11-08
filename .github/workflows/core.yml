@@ -17,6 +17,9 @@ on:
       # The planner golden and the Kanban rig's loop test seed these files.
       - "plants/**"
       - ".github/workflows/core.yml"
+      # The sim job runs scripts/gate.sh, so the gate's own edits run it.
+      - "scripts/gate.sh"
+      - "scripts/gate-lock.sh"
       # The shared workflow and actions these jobs call. Without them a
       # change to sharded-suite.yml or shared-postgres — the code that
       # actually runs the tests — triggers nothing, which is the same
@@ -30,6 +33,8 @@ on:
       - "shared/**"
       - "plants/**"
       - ".github/workflows/core.yml"
+      - "scripts/gate.sh"
+      - "scripts/gate-lock.sh"
       # The shared workflow and actions these jobs call. Without them a
       # change to sharded-suite.yml or shared-postgres — the code that
       # actually runs the tests — triggers nothing, which is the same
@@ -208,6 +213,31 @@ jobs:
         # -p 1: the runner has 2-4 cores and in-package parallelism already
         # uses them. On a 20-core dev host the best setting measured nproc/4.
         run: go test -tags=docker,lockcheck -timeout=10m -count=1 -p 1 ./...
+
+  # THE SIM-ONLY TESTS, UNDER THE DETECTOR. The build job's `go build -tags
+  # sim` compiles the sim files and runs none of their tests, so the sim-tagged
+  # tests (the fleet simulator's, www's injection routes) ran on one laptop's
+  # gate and nowhere else. `gate.sh sim` derives which tests are sim-only from
+  # the tree (its sim_plan), so no package list is kept here; GATE_MODULES
+  # keeps it to this workflow's module. CGO_ENABLED=1 because the step runs
+  # -race and refuses to report a pass without the detector.
+  sim:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version: "1.25.0"
+          cache-dependency-path: |
+            shingo-core/go.sum
+            protocol/go.sum
+
+      - name: Test (sim-only tests, -race)
+        env:
+          CGO_ENABLED: "1"
+          GATE_MODULES: shingo-core
+        run: bash scripts/gate.sh sim
 
   docker-race:
     uses: ./.github/workflows/sharded-suite.yml

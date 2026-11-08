@@ -27,8 +27,10 @@ import (
 // testHandlers creates a Handlers struct backed by a real Postgres database and a
 // real Engine (with background goroutines). This is heavier than strictly needed for
 // DB+audit tests, but follows the shingo-core convention: real DB via testdb.Open,
-// simulator for fleet, no handrolled mocks. A future engine interface (engine_iface.go)
-// would allow lighter stubs.
+// simulator for fleet, no handrolled mocks. The interface a lighter stub would
+// implement already exists — Handlers holds ServiceAccess and EngineOrchestration
+// (engine_iface.go; router.go's engine and orchestration fields) — and these tests
+// use the real Engine behind it by choice, not for want of a seam.
 func testHandlers(t *testing.T) (*Handlers, *store.DB) {
 	t.Helper()
 

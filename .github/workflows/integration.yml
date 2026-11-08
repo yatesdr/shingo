@@ -13,6 +13,9 @@ on:
       - "shingo-core/**"
       - "shingo-edge/**"
       - "protocol/**"
+      # shared/** too: the scenarios link five shingo/shared packages, so a
+      # shared-only change could break them with this workflow never running.
+      - "shared/**"
       # Trigger on this file too. core.yml carries the reasoning: "a gate
       # whose own edits do not run it cannot report on them" — and it was
       # exactly this gap that let a restructuring of the jobs below sit
@@ -24,6 +27,7 @@ on:
       - "shingo-core/**"
       - "shingo-edge/**"
       - "protocol/**"
+      - "shared/**"
       - ".github/workflows/integration.yml"
   workflow_call:
 
