@@ -126,6 +126,36 @@ type styleCATIDEntry struct {
 	// Pinned: the set is the style's expected_catid, which a person
 	// confirmed (N2's verbs), not the catalog's derivation.
 	Pinned bool
+	// Assumed: the set holds a value no live style's set did, taken as this
+	// style's because the process runs exactly two live styles and the other
+	// one is pinned (withAssumed, decision 56); the strip asks for the pin.
+	Assumed bool
+}
+
+// withAssumed is the process's sets with a confirmed value v that no live
+// style's set holds taken as the unpinned style's part (decision 56), when
+// the process runs exactly two live styles and exactly one of them is pinned:
+// the attribution, the declaration and the force, and the one-tap then read v
+// as that style's, its entry marked Assumed. Anything else — three or more
+// live styles, none or both pinned, a value a set already holds or that names
+// no part — is the sets as they are (the pin suggestion, decision 17).
+// Nothing is pinned. Pure, over sets already in hand: +0 statements.
+func withAssumed(sets []styleCATIDEntry, v string) []styleCATIDEntry {
+	if !isIdentity(v) || len(sets) != 2 || sets[0].Pinned == sets[1].Pinned || anySetHas(sets, v) {
+		return sets
+	}
+	out := append([]styleCATIDEntry(nil), sets...)
+	i := 0
+	if out[0].Pinned {
+		i = 1
+	}
+	set := make(map[string]struct{}, len(out[i].Set)+1)
+	for k := range out[i].Set {
+		set[k] = struct{}{}
+	}
+	set[v] = struct{}{}
+	out[i].Set, out[i].Assumed = set, true
+	return out
 }
 
 // processStyleCATIDSets returns every LIVE style of the process with its
@@ -148,13 +178,15 @@ func (e *Engine) processStyleCATIDSets(processID int64) []styleCATIDEntry {
 	return out
 }
 
-// cutoverCATIDSets returns the CATID sets the auto-cutover decides over: out,
-// the active style's, and in, the open changeover's target's, from the one
-// process-wide read. An active style missing from the live styles (retired
-// but still running) is read on its own, as activeStyleCATIDSet does.
-func (e *Engine) cutoverCATIDSets(proc *processes.Process, targetStyleID int64) (out, in map[string]struct{}) {
+// cutoverCATIDSets returns the CATID sets the auto-cutover decides over for
+// the PLC's value v: out, the active style's, and in, the open changeover's
+// target's, from the one process-wide read, v taken as the unpinned style's
+// where decision 56 assumes it (withAssumed). An active style missing from
+// the live styles (retired but still running) is read on its own, as
+// activeStyleCATIDSet does.
+func (e *Engine) cutoverCATIDSets(proc *processes.Process, targetStyleID int64, v string) (out, in map[string]struct{}) {
 	foundActive := proc.ActiveStyleID == nil
-	for _, st := range e.processStyleCATIDSets(proc.ID) {
+	for _, st := range withAssumed(e.processStyleCATIDSets(proc.ID), v) {
 		if proc.ActiveStyleID != nil && st.ID == *proc.ActiveStyleID {
 			out, foundActive = st.Set, true
 		}
@@ -174,13 +206,12 @@ func (e *Engine) cutoverCATIDSets(proc *processes.Process, targetStyleID int64) 
 // CATID set holds v — the program changed ahead of a planned cutover — with
 // the gate's blockers as they stand: the A5 notice and the strip's waiting
 // item. (nil, nil) when no changeover is open or its target does not run v.
-func (e *Engine) plannedChangeoverTo(processID int64, v string) (*processes.Changeover, []string) {
+func (e *Engine) plannedChangeoverTo(processID int64, v string, sets []styleCATIDEntry) (*processes.Changeover, []string) {
 	co, err := e.db.GetActiveProcessChangeover(processID)
 	if err != nil || co == nil {
 		return nil, nil
 	}
-	style, err := e.db.GetStyle(co.ToStyleID)
-	if err != nil || style == nil || !catidSetHas(e.styleCATIDSet(style), v) {
+	if !targetHolds(e, co.ToStyleID, v, sets) {
 		return nil, nil
 	}
 	_, blockers, err := e.canCompleteChangeover(co.ID)
@@ -188,6 +219,19 @@ func (e *Engine) plannedChangeoverTo(processID int64, v string) (*processes.Chan
 		return co, []string{"the gate could not be read"}
 	}
 	return co, domain.BlockersToReasons(blockers)
+}
+
+// targetHolds reports whether the changeover's target runs v: its entry in
+// sets (the caller's, decision 56's assumption applied), else its own set read
+// (a target outside the live styles, or no sets given).
+func targetHolds(e *Engine, toStyleID int64, v string, sets []styleCATIDEntry) bool {
+	for _, st := range sets {
+		if st.ID == toStyleID {
+			return catidSetHas(st.Set, v)
+		}
+	}
+	style, err := e.db.GetStyle(toStyleID)
+	return err == nil && style != nil && catidSetHas(e.styleCATIDSet(style), v)
 }
 
 // suggestCATIDPin is the pin suggestion from a completed changeover's evidence

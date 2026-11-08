@@ -698,7 +698,7 @@ func (cm *catidMonitor) onConfirmedCATID(processID int64, st *catidState, isChan
 	// two parts, and either side is fine). Empty set = inert (never alert).
 	if ok && len(set) > 0 && !catidSetHas(set, st.lastConfirmed) {
 		toStyle := ""
-		co, waiting := cm.eng.plannedChangeoverTo(processID, st.lastConfirmed)
+		co, waiting := cm.eng.plannedChangeoverTo(processID, st.lastConfirmed, nil)
 		if co != nil {
 			toStyle = co.ToStyleName
 		}
@@ -858,7 +858,7 @@ func (cm *catidMonitor) decideAutoArm(processID int64, st *catidState, v string,
 		cm.decideWithNoChangeover(proc, st, v, now)
 		return nil
 	}
-	out, in := cm.eng.cutoverCATIDSets(proc, changeover.ToStyleID)
+	out, in := cm.eng.cutoverCATIDSets(proc, changeover.ToStyleID, v)
 	if !cutoverPredicate(v, out, in) {
 		return nil
 	}
@@ -903,7 +903,8 @@ func (cm *catidMonitor) decideWithNoChangeover(proc *processes.Process, st *cati
 		if proc.ActiveStyleID == nil {
 			return
 		}
-		if to := switchTarget(cm.eng.processStyleCATIDSets(proc.ID), *proc.ActiveStyleID, v); to != nil && to.Pinned && st.raiseOnce() {
+		if to := switchTarget(withAssumed(cm.eng.processStyleCATIDSets(proc.ID), v), *proc.ActiveStyleID, v); to != nil &&
+			(to.Pinned || to.Assumed) && st.raiseOnce() {
 			cm.eng.logFn("plc-catid: process %s: CATID %s counted, which only %s runs, with no changeover open — nothing moves; "+
 				"the health strip offers the changeover to %s", st.processName, v, to.Name, to.Name)
 			cm.eng.catidHealthChanged(proc.ID)
@@ -1080,7 +1081,7 @@ func (e *Engine) autoCutoverMoved(in autoCutoverIntent) string {
 	if err != nil || co == nil || co.ID != in.changeoverID {
 		return ""
 	}
-	if out, target := e.cutoverCATIDSets(proc, co.ToStyleID); !cutoverPredicate(in.catid, out, target) {
+	if out, target := e.cutoverCATIDSets(proc, co.ToStyleID, in.catid); !cutoverPredicate(in.catid, out, target) {
 		return "the CATID sets no longer cut over on it"
 	}
 	return ""

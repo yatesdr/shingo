@@ -26,6 +26,7 @@ Edge v37-v43; Core changes the lift's stamp (no schema) and dev tooling (plantsp
 - A consume stroke charges the cart of its part standing at the position, into the negative if the count goes there (the release records it); with none there it is logged against the position and the part with the last cart released there (v43), a count on the strip; nothing is held, replayed or pre-paid, and the next cart lands at its full count
 - The parts in the line, the end-of-line sentence and the parked-ticks notice are gone; the Counting block keeps the MES slots and the station cards
 - One CATID names one style: the pin, the one-click and Confirm refuse a taken value
+- With two live styles and one pinned, a CATID outside the pin is taken as the other style's part (attribution, the declaration and force, the one-tap); the strip asks for the pin, yellow; nothing is pinned for you
 - The request guards and the changeover's participant gate refuse by position: a position whose part both styles run is supplied through a changeover
 - The guards read a door call's changeover, claims and task once (21 statements to 12 at a common position); a position with no task is a change, and a failed read that turns a request away is logged
 - One changeover gate at every door (REQUEST, the produce door, the sweep): REQUEST refuses an indexed-over position too, a failed participant lookup refuses everywhere, and the re-ask under the cell's lock is for every claim

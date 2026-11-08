@@ -40,6 +40,9 @@ const (
 	catidKindIdentity        = "identity"
 	catidKindPostCutover     = "post_cutover_failed"
 	catidKindHeld            = "held"
+	// catidKindAssumed: the PLC's part taken as the unpinned style's
+	// (decision 56), its pin asked for.
+	catidKindAssumed = "assumed_catid"
 	// catidKindOneWayPair is not a part-identity condition: it is the page's
 	// warning on a legacy A/B pair, shown in the same strip.
 	catidKindOneWayPair       = "one_way_pair"
@@ -111,7 +114,14 @@ func (e *Engine) CatidHealth(processID int64) ([]CatidHealthItem, error) {
 			items = append(items, slotItems(proc, e.catidMon.slotFactsOf(processID),
 				func() time.Time { return e.lastCountedAt(processID) })...)
 		}
-		items = append(items, e.partItems(proc, facts, sets, holds)...)
+		// The wrong-part item reads what the attribution reads: the PLC's
+		// part taken as the unpinned style's where decision 56 assumes it.
+		// The items that say what is configured (no CATIDs, unmapped and its
+		// pin verbs, the suggestion of decision 17) read the pins as they are.
+		assumed := withAssumed(sets, facts.value)
+		parts := e.partItems(proc, facts, assumed, holds)
+		items = append(items, parts...)
+		items = append(items, assumedItems(assumed, facts.value, parts)...)
 		items = append(items, noCATIDItems(sets)...)
 		items = append(items, e.unmappedItems(processID, sets, now)...)
 	}
@@ -205,7 +215,7 @@ func (e *Engine) partItems(proc *processes.Process, f catidFacts, sets []styleCA
 	if catidSetHas(active.Set, v) {
 		return nil
 	}
-	if co, waiting := e.plannedChangeoverTo(proc.ID, v); co != nil {
+	if co, waiting := e.plannedChangeoverTo(proc.ID, v, sets); co != nil {
 		detail := "the gate is green; it cuts over on the declaration"
 		if len(waiting) > 0 {
 			detail = "waiting on " + strings.Join(waiting, "; ")
@@ -236,6 +246,12 @@ func (e *Engine) partItems(proc *processes.Process, f catidFacts, sets []styleCA
 		item.Detail += " counted as " + countedAs
 	}
 	switch to := e.changeoverOffer(proc, f, sets); {
+	case to != nil && to.Assumed:
+		// Decision 56: the part taken as the unpinned style's; the offer
+		// stands, and the item asks for the pin, yellow.
+		item.Severity = CatidHealthAmber
+		item.Headline = assumedHeadline(v, to.Name)
+		item.Action = &CatidHealthAction{Kind: catidActionStartChangeover, ToStyleID: to.ID, ToStyleName: to.Name}
 	case to != nil && !to.Pinned:
 		// No pin, no offer: the one-tap needs a person's pin to start from. The
 		// headline says which style to pin.
@@ -249,14 +265,40 @@ func (e *Engine) partItems(proc *processes.Process, f catidFacts, sets []styleCA
 	return []CatidHealthItem{item}
 }
 
+// assumedHeadline is the strip's words for a part taken as the unpinned
+// style's (decision 56).
+func assumedHeadline(v, style string) string {
+	return fmt.Sprintf("The PLC is on %s, taken as %s — %s's CATID is not pinned; pin it.", v, style, style)
+}
+
+// assumedItems: the PLC's part taken as the unpinned style's (decision 56),
+// when the wrong-part item does not already say so — the style running it, or
+// the changeover open to it. Yellow, the pin asked for; nothing moves.
+func assumedItems(sets []styleCATIDEntry, v string, parts []CatidHealthItem) []CatidHealthItem {
+	for _, it := range parts {
+		if it.Kind == catidKindWrongPart && it.Action != nil {
+			return nil
+		}
+	}
+	for _, s := range sets {
+		if s.Assumed {
+			return []CatidHealthItem{{Kind: catidKindAssumed, Severity: CatidHealthAmber, Headline: assumedHeadline(v, s.Name),
+				Detail: "the process runs two styles and only the other is pinned; pin " + v + " on " + s.Name + " to confirm it",
+				Data:   map[string]any{"catid": v, "style_id": s.ID}}}
+		}
+	}
+	return nil
+}
+
 // changeoverOffer is the style the wrong-part item offers a changeover to, nil
 // when it offers none: the PLC's part is a change, not a baseline, confirmed
 // after the process's latest landing (a part standing from before it is the
 // run-out of the style the landing left), a stroke has been counted on it off
 // another style's plan, that style is the only live one whose set holds it,
 // and no changeover is open (the start would refuse it). A read that fails
-// offers nothing. The item offers the one-tap only when the style's set is a
-// person's pin (to.Pinned); unpinned, its headline names the style to pin.
+// offers nothing. The item offers the one-tap when the style's set is a
+// person's pin (to.Pinned), or the part is taken as its (to.Assumed, decision
+// 56); else its headline names the style to pin.
 func (e *Engine) changeoverOffer(proc *processes.Process, f catidFacts, sets []styleCATIDEntry) *styleCATIDEntry {
 	if e.catidMon == nil || proc.ActiveStyleID == nil || f.baseline || !countedSince(f, plc.TickOffPlan) ||
 		!f.confirmedAt.After(e.catidMon.landedAt(proc.ID)) {

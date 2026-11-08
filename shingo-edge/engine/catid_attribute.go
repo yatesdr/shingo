@@ -37,7 +37,7 @@ func (e *Engine) attributeTick(processID, pointStyleID int64) plc.TickIdentity {
 	if !ok || snap.lastOK.IsZero() || clock.Now().Sub(snap.lastOK) > tickIdentityFresh || !isIdentity(snap.value) {
 		return today
 	}
-	return attributeCATID(snap.value, pointStyleID, e.processStyleCATIDSets(processID), snap.observed, snap.runningOut())
+	return attributeCATID(snap.value, pointStyleID, withAssumed(e.processStyleCATIDSets(processID), snap.value), snap.observed, snap.runningOut())
 }
 
 // attributeCATID is the attribution rule (pure). A is the active style, T the
