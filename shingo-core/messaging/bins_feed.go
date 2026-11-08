@@ -86,6 +86,10 @@ type binsFeed struct {
 	// restart is not in it; its end is healed by the heartbeat.
 	orders map[int64][]string
 	delay  time.Duration
+	// running counts pushes between pushStarted and pushDone: an Edge leaves
+	// pending as its push begins, so "nothing pending" alone does not say its
+	// snapshot has been built and sent.
+	running int
 }
 
 func newBinsFeed() *binsFeed {
@@ -205,10 +209,18 @@ func (b *binsFeed) markDirty(stations []string, push func(station string)) {
 }
 
 // pushStarted takes an Edge out of the pending set as its push begins, so a
-// change from here on arms another.
+// change from here on arms another, and counts the push as running.
 func (b *binsFeed) pushStarted(station string) {
 	b.mu.Lock()
 	delete(b.pending, station)
+	b.running++
+	b.mu.Unlock()
+}
+
+// pushDone ends a push pushStarted began, whether or not it sent.
+func (b *binsFeed) pushDone() {
+	b.mu.Lock()
+	b.running--
 	b.mu.Unlock()
 }
 
@@ -634,6 +646,7 @@ func (s *CoreDataService) BinsOrderEnded(orderID int64) {
 // nothing; the heartbeat retries.
 func (s *CoreDataService) pushBins(station string) {
 	s.bins.pushStarted(station)
+	defer s.bins.pushDone()
 	s.feeds.dropStation(station, protocol.FeedBins)
 	now := clock.Now()
 	e, ok := s.feedCurrent(station, protocol.FeedBins, now)

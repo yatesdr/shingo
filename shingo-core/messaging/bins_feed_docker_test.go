@@ -408,21 +408,25 @@ func (r *syncSends) count(station string) int {
 
 // settle waits out every armed push: well past the delay, and until no Edge is
 // pending.
+// settle waits until no push is armed and none is running: every push a change
+// armed has built its snapshot and sent it (or found it unchanged). It used to
+// sleep 4x the delay once nothing was pending, on the belief that a push that
+// had started was done by then; under a loaded run (coverage, -p 4 beside
+// integration) the build outlasted it and a count read 0 sends.
 func settle(t *testing.T, svc *CoreDataService) {
 	t.Helper()
 	deadline := time.Now().Add(5 * time.Second)
 	for {
-		time.Sleep(4 * svc.bins.delay)
 		svc.bins.mu.Lock()
-		n := len(svc.bins.pending)
+		n, running := len(svc.bins.pending), svc.bins.running
 		svc.bins.mu.Unlock()
-		if n == 0 {
-			time.Sleep(4 * svc.bins.delay) // a push that started is now done
+		if n == 0 && running == 0 {
 			return
 		}
 		if time.Now().After(deadline) {
-			t.Fatal("pushes still pending after 5 s")
+			t.Fatalf("pushes still pending (%d) or running (%d) after 5 s", n, running)
 		}
+		time.Sleep(svc.bins.delay / 4)
 	}
 }
 
