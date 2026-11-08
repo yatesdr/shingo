@@ -182,8 +182,13 @@ func TestV93_IdempotentOnReapply(t *testing.T) {
 // v93 backfill rightly keeps them as historical boundaries; the migration's
 // copy is history and is not edited. lifted started bumping after v93, so it
 // joins bumpedAfterV93.
+//
+// bornAfterV93 are release-declaration ops that did not exist when v93 ran:
+// they never bumped, so they have no historical boundary to backfill.
+// released_overpack (decision 55's record half) is the one.
 func TestV93BackfillOpsMatchEpochBumpOps(t *testing.T) {
 	bumpedAfterV93 := map[string]bool{audit.OpSyncUOPAndClaim: true, audit.OpLifted: true}
+	bornAfterV93 := map[string]bool{audit.OpReleasedOverpack: true}
 	want := map[string]bool{}
 	for _, op := range audit.EpochBumpOps {
 		if !bumpedAfterV93[op] {
@@ -191,7 +196,9 @@ func TestV93BackfillOpsMatchEpochBumpOps(t *testing.T) {
 		}
 	}
 	for _, op := range audit.ReleaseDeclarationOps {
-		want[op] = true // stopped bumping after v93; historical rows are boundaries
+		if !bornAfterV93[op] {
+			want[op] = true // stopped bumping after v93; historical rows are boundaries
+		}
 	}
 	got := map[string]bool{}
 	for _, op := range store.BumpOpsForBackfill {

@@ -24,6 +24,7 @@ Edge v37-v43; Core changes the lift's stamp (no schema) and dev tooling (plantsp
 - A consume stroke never draws a cart recorded as another part: it is logged
 - With a changeover open, a cart that cannot say its part, bound before the start at a position whose part changes, is the departing part: the incoming strokes are logged, not refused
 - A consume stroke charges the cart of its part standing at the position, into the negative if the count goes there (the release records it); with none there it is logged against the position and the part with the last cart released there (v43), a count on the strip; nothing is held, replayed or pre-paid, and the next cart lands at its full count
+- Core: a release declaring a count below 0, or releasing empty a cart Core reads below 0, is written as 0 and recorded as `released_overpack` with the declared count and the overpack (the bins page: "released at 0 (overpack N)"), a note only; the Edge sends the count unclamped, and a Core from before refuses a negative with `manifest_sync_failed`, as it did
 - The parts in the line, the end-of-line sentence and the parked-ticks notice are gone; the Counting block keeps the MES slots and the station cards
 - One CATID names one style: the pin, the one-click and Confirm refuse a taken value
 - With two live styles and one pinned, a CATID outside the pin is taken as the other style's part (attribution, the declaration and force, the one-tap); the strip asks for the pin, yellow; nothing is pinned for you

@@ -1783,12 +1783,17 @@ func (s *BinManifestService) syncOrClearForReleased(binID, orderID int64, remain
 	if actor == "" {
 		actor = "system"
 	}
-	// Defense in depth: Edge's computeReleaseRemainingUOP guards against
-	// non-positive values reaching this branch, but a direct Core caller
-	// (test, automation, future bypass) could still hand us a negative
-	// pointer. Reject loudly rather than corrupt the bin row.
+	// A count below 0 is a cart the line drew past its count (decision 55):
+	// the Edge declares what the seat reads. It is an empty cart here, as 0
+	// is, written as 0 by the empty branch below, and its row says what the
+	// release declared (OpReleasedOverpack, detail {"declared": -N,
+	// "overpack": N}). So is a cart released empty while this bin reads below
+	// 0 (the overpack is -before): a note on the row, nothing else differs.
+	// The fence and its cursor move as for any count; the drift is the empty
+	// branch's (not taken: a cart released empty is not charged after).
+	overpack := 0
 	if *remainingUOP < 0 {
-		return fmt.Errorf("remainingUOP must be nil, 0, or positive; got %d", *remainingUOP)
+		overpack = -*remainingUOP
 	}
 
 	// Per-variant strings — these are the differences enumerated in
@@ -1838,7 +1843,7 @@ func (s *BinManifestService) syncOrClearForReleased(binID, orderID int64, remain
 		}
 	}
 
-	if *remainingUOP == 0 {
+	if *remainingUOP <= 0 {
 		// Clear manifest, preserve claim (if applicable). The claimed_by guard
 		// is added only for the owner variant.
 		clearSQL := `
@@ -1877,14 +1882,24 @@ func (s *BinManifestService) syncOrClearForReleased(binID, orderID int64, remain
 		}
 		op := audit.OpReleasedEmpty
 		legacyTag := "released_empty"
+		timeline := fmt.Sprintf("order=%d%s", orderID, finalMsgSuffix)
+		var detail json.RawMessage
+		if overpack == 0 && before != nil && *before < 0 {
+			overpack = -*before
+		}
 		switch {
+		case overpack > 0:
+			op = audit.OpReleasedOverpack
+			legacyTag = "released_overpack"
+			timeline = fmt.Sprintf("released at 0 (overpack %d) order=%d%s", overpack, orderID, finalMsgSuffix)
+			detail = json.RawMessage(fmt.Sprintf(`{"declared":%d,"overpack":%d}`, *remainingUOP, overpack))
 		case sourceNodeFallback:
 			op = audit.OpReleasedEmptyFallback
 		case kind == protocol.DispositionReleaseUnderpack:
 			op = audit.OpReleasedUnderpack
 			legacyTag = "released_underpack"
 		}
-		uopCtx, err := resolveBinUOPContext(tx, binID, nil)
+		uopCtx, err := resolveBinUOPContext(tx, binID, detail)
 		if err != nil {
 			return err
 		}
@@ -1896,12 +1911,11 @@ func (s *BinManifestService) syncOrClearForReleased(binID, orderID int64, remain
 		if err := tx.Commit(); err != nil {
 			return fmt.Errorf("commit clear-for-released bin %d%s: %w", binID, errSuffix, err)
 		}
-		logRelease(binID, orderID, currentEpoch, fenced, 0, 0, 0)
+		logRelease(binID, orderID, currentEpoch, fenced, *remainingUOP, 0, 0)
 		if !fenced {
 			s.notifyBinChanged(binID)
 		}
-		s.db.AppendAudit("bin", binID, legacyTag+tagSuffix,
-			"", fmt.Sprintf("order=%d%s", orderID, finalMsgSuffix), actor)
+		s.db.AppendAudit("bin", binID, legacyTag+tagSuffix, "", timeline, actor)
 		return nil
 	}
 	// Positive: sync UOP AND reconstruct manifest, preserve claim.

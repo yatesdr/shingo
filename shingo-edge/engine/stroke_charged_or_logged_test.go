@@ -110,9 +110,10 @@ func TestPinNoCart_AnIncomingStrokeAtAnUnknownCartBoundBeforeTheStartIsLogged(t 
 
 // TestPinNoCart_AStrokePastZeroAndTheReleaseRecordsIt: a stroke at the cart
 // standing at 0 takes it to -1 and draws it; the release from the seat
-// declares -1 there (no floor), marks it released empty, and the envelope
-// carries 0, the count Core takes. The next stroke is logged, its row naming
-// the cart released and its -1.
+// declares -1 there (no floor), marks it released empty, and the envelope and
+// the disposition carry -1 (decision 55's record half: Core records the
+// overpack; before it the wire was clamped to 0). The next stroke is logged,
+// its row naming the cart released and its -1.
 func TestPinNoCart_AStrokePastZeroAndTheReleaseRecordsIt(t *testing.T) {
 	t.Parallel()
 	eng, nodeID, acc, binID := fenceFixture(t, "NC-NEG")
@@ -135,8 +136,8 @@ func TestPinNoCart_AStrokePastZeroAndTheReleaseRecordsIt(t *testing.T) {
 		t.Errorf("after the release: seat %d released_empty %t, want -1 and true (the release records what the cart reads)",
 			rt.RemainingUOPCached, rt.ReleasedEmpty)
 	}
-	if sent == nil || *sent != 0 || wire.Count != 0 {
-		t.Errorf("the envelope's count %v, the disposition's %d; want 0 both: Core takes 0 or more", sent, wire.Count)
+	if sent == nil || *sent != -1 || wire.Count != -1 {
+		t.Errorf("the envelope's count %v, the disposition's %d; want -1 both: the release sends what the cart reads", sent, wire.Count)
 	}
 	eng.handleConsumeTick(node, rt, claim, tick, unsaidCarrier{})
 	rows := noCartRows(t, eng, node.ProcessID, nodeID)

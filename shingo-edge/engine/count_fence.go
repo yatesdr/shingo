@@ -190,20 +190,19 @@ func (e *Engine) writeReleaseCount(node *processes.Node, rt *processes.RuntimeSt
 // count keeps the screen's pre-fill as its suggestion, and Core audits the
 // difference as before.
 //
-// A cart drawn below 0 declares what it reads, on the seat and in the
-// release's log line (decision 55); Core takes a release's count as 0 or more,
-// and a count at or below 0 is an empty cart there, so the envelope carries 0
-// and Core's ledger keeps the overpack as the release's before-count.
+// A cart drawn below 0 declares what it reads, on the seat, in the release's
+// log line and on the wire (decision 55): Core writes 0 for it and records the
+// overpack (released_overpack, the declared count in the row). A Core from
+// before that refuses the negative, as it did, with manifest_sync_failed.
 func (e *Engine) declareReleaseCount(node *processes.Node, rt *processes.RuntimeState, binID int64, count int, disp ReleaseDisposition, wire *protocol.UOPDisposition) (*int, *protocol.ReleaseFence) {
 	fromSeat := disp.CountFromSeat()
 	fence, written := e.writeReleaseCount(node, rt, binID, count, fromSeat)
-	sent := max(written, 0)
 	if fromSeat && wire != nil && wire.Kind == protocol.DispositionReleasePartial {
-		wire.Count = sent
+		wire.Count = written
 		if wire.CountSuggested != nil {
-			suggested := sent
+			suggested := written
 			wire.CountSuggested = &suggested
 		}
 	}
-	return &sent, fence
+	return &written, fence
 }

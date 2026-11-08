@@ -62,7 +62,7 @@ var (
 	// carrier go. clear_for_reuse (a clear) and released_capture_empty (a
 	// pull-parts count reaching zero) are not a seat letting a carrier go.
 	handoffReleaseOps = []string{audit.OpReleasedEmpty, audit.OpReleasedPartial,
-		audit.OpReleasedEmptyFallback, audit.OpReleasedPartialFallback, audit.OpReleasedUnderpack}
+		audit.OpReleasedEmptyFallback, audit.OpReleasedPartialFallback, audit.OpReleasedUnderpack, audit.OpReleasedOverpack}
 )
 
 // nodeCount is a count at one node, with the node's class.

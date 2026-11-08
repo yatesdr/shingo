@@ -72,6 +72,17 @@ const (
 	// (before_uop - after_uop) is the missing-inventory delta.
 	OpReleasedUnderpack = "released_underpack"
 
+	// OpReleasedOverpack tags a release of a cart the line drew past its
+	// count (an overpack, or parts came off after it read 0, decision 55):
+	// one that declared a count below 0 (the Edge declares what the seat
+	// reads), or one released empty while Core read the bin below 0. Core
+	// writes 0, as for any count at or below 0; the op is the note, nothing
+	// else differs. The row: before_uop the bin's count, after_uop 0, detail
+	// {"declared": D, "overpack": N}. The bins page's timeline reads
+	// "released at 0 (overpack N)". A release declaration like
+	// released_empty: it fences the stream and bumps only unfenced.
+	OpReleasedOverpack = "released_overpack"
+
 	// Phase 0b — operator override observations at release time. These
 	// are not bin writes; they record that the operator submitted a
 	// value different from what the system would have suggested at
@@ -213,6 +224,7 @@ var ReleaseFamilyOps = []string{
 	OpReleasedPartialFallback,
 	OpReleasedCaptureEmpty,
 	OpReleasedUnderpack,
+	OpReleasedOverpack,
 }
 
 // EpochBumpOps is the canonical set of ops whose write also bumps the bin's
@@ -299,6 +311,7 @@ var ReleaseDeclarationOps = []string{
 	OpReleasedEmptyFallback,
 	OpReleasedPartialFallback,
 	OpReleasedUnderpack,
+	OpReleasedOverpack,
 }
 
 // BinUOPExecer is the minimal interface satisfied by *sql.Tx and *sql.DB.
