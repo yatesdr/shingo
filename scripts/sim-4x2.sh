@@ -59,6 +59,8 @@
 #   carts Σ C + logged G + written off W = loads Σ E; rows open N; record RUN a / ALT b; Core received a+b of the Edge's T
 #   lost at the lift L
 #   minimum cart M (node bin)
+#   strip: <each no-cart row as the strip renders it>
+#   overpack: <each release Core recorded below 0, and its timeline line>
 #
 # The loss is its own line, never a term of the sum (a sum that included it would be exact by
 # construction): Core's stale drops of the cell's parts on a cart released in the window, and the
@@ -72,6 +74,14 @@
 # parts the line counted out; Core received = the Edge's), and it says EXACT or NOT EXACT; a run
 # whose final ledger is not exact exits 5. A mid-run ledger (S1's first window) is read on the
 # running line and says so: it may carry one part in flight.
+#
+# A wait's budget is a floor, not a verdict: one that runs out while the cell still moved (the
+# line's loads or counter, Core's ledger at the five positions, the orders there) waits its
+# budget again, up to four times, and says so, so a slow host (on battery, throttled) is slow
+# rather than stopped. The sim clock cannot do this: it is the wall clock times the speed. A wait
+# that runs out on a cell that stood still stops the run, and the STOP writes the forensics a
+# ledger that is not exact writes (the Edge's and Core's logs for the window, the line with the
+# readiness gate's answer, the gate) before it exits.
 #
 # A run owns the stack: it refuses while shingo-dev has containers running, because its first
 # act is `down -v`. SIM_4X2_REPLACE=1 says the running stack is yours to drop. It takes the gate
@@ -148,7 +158,11 @@ PID="" RUN_ID="" ALT_ID="" NODE_RE="" STATION=""   # resolve fills these off the
 dc() { docker compose -p "$PROJECT" -f docker-compose.dev.yml "$@"; }
 
 say() { echo "$(date -u +%H:%M:%SZ) +$(( $(date +%s) - ${START_S:-$(date +%s)} ))s $*" | tee -a "$OUT/log.txt"; }
-die() { say "STOP: $*"; exit 3; }
+die() {
+  say "STOP: $*"
+  [ -n "${WAIT_TIMED_OUT:-}" ] && forensics
+  exit 3
+}
 wall() { echo $(( ($1 + SIM_SPEED - 1) / SIM_SPEED )); }
 sim_s() { nap "$(wall "$1")"; }
 
@@ -182,16 +196,39 @@ kill_tree() {
 stop_children() { local p; for p in $CHILD $(jobs -p); do kill_tree "$p"; done; }
 
 # wait_for <wall seconds> <what> <predicate...>: polls every second; false, saying what it
-# waited for, on timeout.
+# waited for, on timeout. At the deadline a cell that moved since the wait began (or last
+# stretched) gets the budget again, up to WAIT_STRETCHES times: the host is slow, not stuck.
+# A timeout marks the run (WAIT_TIMED_OUT) so a die after it writes the forensics.
+WAIT_STRETCHES=4
 wait_for() {
-  local budget=$1 what=$2 deadline=$(( $(date +%s) + $1 ))
+  local budget=$1 what=$2 deadline=$(( $(date +%s) + $1 )) began=$(date +%s) stretched=0 seen now
   shift 2
-  while [ "$(date +%s)" -lt "$deadline" ]; do
-    if eval "$*"; then say "ok: $what"; return 0; fi
-    nap 1
+  seen="$(cell_moves)"
+  while :; do
+    while [ "$(date +%s)" -lt "$deadline" ]; do
+      if eval "$*"; then say "ok: $what"; return 0; fi
+      nap 1
+    done
+    now="$(cell_moves)"
+    [ "$stretched" -lt "$WAIT_STRETCHES" ] && [ "$now" != "$seen" ] || break
+    stretched=$(( stretched + 1 )); seen="$now"; deadline=$(( $(date +%s) + budget ))
+    say "LOOK: ${budget}s passed waiting for: $what; the cell is still moving, waiting ${budget}s more ($stretched of $WAIT_STRETCHES)"
   done
-  say "TIMED OUT after ${budget}s waiting for: $what"
+  local why="the cell stood still for the last ${budget}s"
+  [ "$now" != "$seen" ] && why="the cell still moving at the last of them"
+  say "TIMED OUT after $(( $(date +%s) - began ))s waiting for: $what ($stretched stretch(es); $why)"
+  WAIT_TIMED_OUT=1
   return 1
+}
+
+# cell_moves: one word that changes while the cell does work: the fake line's loads and
+# counter, Core's last ledger row at the five positions, and the orders live there with their
+# states. The rest of the sim plant is not in it.
+cell_moves() {
+  printf '%s|%s|%s' "$(line_field loads):$(line_field counter):$(line_field in_flight)" \
+    "$(sql "SELECT COALESCE(max(l.id), 0) FROM bin_uop_ledger l JOIN nodes n ON n.id = l.node_id WHERE n.name IN ($POS_SQL)" 2>/dev/null)" \
+    "$(sql "SELECT COALESCE(string_agg(id || status, ',' ORDER BY id), '') FROM orders
+      WHERE delivery_node IN ($POS_SQL) AND status NOT IN ('confirmed', 'cancelled', 'failed')" 2>/dev/null)"
 }
 
 # ── HTTP ─────────────────────────────────────────────────────────────────────────────────
@@ -233,6 +270,8 @@ line_json() {
   curl -s -m 10 "$EDGE/api/sim/line" | grep -oE "\"plc_name\":\"$PLC\",\"tag_name\":\"${COUNTER_TAG//./[.]}\",\"loads\":[0-9]+,\"loads_by_identity\":(null|\{[^}]*\}),\"in_flight\":[0-9]+,\"identity\":-?[0-9]+,\"counter\":-?[0-9]+,\"slot\":[0-9]+,\"slots\":\[[^]]*\],\"paused\":(true|false)"
 }
 line_field() { field "$(line_json)" "$1"; }
+# line_raw: WELD-6's line as GET /api/sim/line has it, the readiness gate's answer ("ready") with it.
+line_raw() { curl -s -m 10 "$EDGE/api/sim/line" | sed 's/},{"plc_name"/}\n{"plc_name"/g' | grep -a "\"plc_name\":\"$PLC\"" | cut -c1-600; }
 # line_idle: loading paused and nothing in flight, so no stroke moves the line.
 line_idle() { case "$(line_json)" in *'"in_flight":0,'*'"paused":true') return 0 ;; *) return 1 ;; esac; }
 
@@ -533,6 +572,17 @@ strip_logged() {
   edge_get "/api/processes/$PID/catid-health" | sed 's/{"kind":/\n{"kind":/g' | grep '^{"kind":"held"' \
     | grep '"reason":"no-cart"' | grep -oE '"headline":"[^"]*"' | sed 's/^"headline":"//; s/"$//'
 }
+# overpacks: each release at the five positions in the window that declared a count below 0, as
+# Core recorded it (op released_overpack, decision 55's record half), "<node> bin <id> <before>
+# -> 0 declared <N> | <the bins page's timeline line>".
+overpacks() {
+  sql "SELECT n.name || ' bin ' || l.bin_id || ' ' || COALESCE(l.before_uop::text, '?') || ' -> ' || l.after_uop
+         || ' declared ' || COALESCE(l.detail->>'declared', '?') || ' | ' || COALESCE((SELECT a.action || ': ' || a.new_value
+           FROM audit_log a WHERE a.entity_type = 'bin' AND a.entity_id = l.bin_id AND a.action LIKE 'released_overpack%'
+           ORDER BY a.id DESC LIMIT 1), '(no timeline row)')
+       FROM bin_uop_ledger l JOIN nodes n ON n.id = l.node_id
+       WHERE l.id > ${W_LEDGER:-0} AND n.name IN ($POS_SQL) AND l.op = 'released_overpack' ORDER BY l.id"
+}
 # min_cart: the lowest count a cart at the five positions reached in the window, as Core's ledger
 # records each draw, "<count> <node> <bin>"; negatives allowed (a stroke charges the cart standing
 # there into the negative, decision 55).
@@ -661,6 +711,7 @@ ledger_read() {
   L_HOLDS="$(holds_list)"
   L_MIN="$(min_cart)"
   L_STRIP="$(strip_logged)"
+  L_OVERPACK="$(overpacks)"
   L_CORE="$(record "${W_PARTS:-0}")"
 }
 
@@ -702,19 +753,19 @@ count_in() { printf '%s\n' "$1" | grep -acF -- "$2"; }
 # and the Edge's lines on captures, stranded piles and refused or clamped draws.
 forensics() {
   say "FORENSICS draws in the window by position (node deltas parts): $(sql "SELECT n.name, count(*), sum(COALESCE(l.before_uop, l.after_uop) - l.after_uop)
-    FROM bin_uop_ledger l JOIN nodes n ON n.id = l.node_id WHERE l.op = 'bin_uop_delta' AND l.id > $W_LEDGER AND n.name IN ($POS_SQL)
+    FROM bin_uop_ledger l JOIN nodes n ON n.id = l.node_id WHERE l.op = 'bin_uop_delta' AND l.id > ${W_LEDGER:-0} AND n.name IN ($POS_SQL)
     GROUP BY n.name ORDER BY n.name" | tr '\n' ';')"
   say "FORENSICS ops at the positions in the window (op rows parts): $(sql "SELECT l.op, count(*), sum(COALESCE(l.before_uop, l.after_uop) - l.after_uop)
-    FROM bin_uop_ledger l JOIN nodes n ON n.id = l.node_id WHERE l.id > $W_LEDGER AND n.name IN ($POS_SQL)
+    FROM bin_uop_ledger l JOIN nodes n ON n.id = l.node_id WHERE l.id > ${W_LEDGER:-0} AND n.name IN ($POS_SQL)
     GROUP BY l.op ORDER BY l.op" | tr '\n' ';')"
   say "FORENSICS draws booked away from the positions (node deltas parts): $(sql "SELECT COALESCE(n.name, '(none)'), count(*), sum(COALESCE(l.before_uop, l.after_uop) - l.after_uop)
-    FROM bin_uop_ledger l LEFT JOIN nodes n ON n.id = l.node_id WHERE l.op = 'bin_uop_delta' AND l.id > $W_LEDGER
+    FROM bin_uop_ledger l LEFT JOIN nodes n ON n.id = l.node_id WHERE l.op = 'bin_uop_delta' AND l.id > ${W_LEDGER:-0}
     AND (n.name IS NULL OR n.name NOT IN ($POS_SQL)) GROUP BY n.name ORDER BY n.name" | tr '\n' ';')"
   say "FORENSICS draws that ended at 0 (id bin node before after detail): $(sql "SELECT l.id, l.bin_id, n.name, l.before_uop, l.after_uop, COALESCE(l.detail::text, '')
-    FROM bin_uop_ledger l JOIN nodes n ON n.id = l.node_id WHERE l.op = 'bin_uop_delta' AND l.id > $W_LEDGER AND l.after_uop <= 0
+    FROM bin_uop_ledger l JOIN nodes n ON n.id = l.node_id WHERE l.op = 'bin_uop_delta' AND l.id > ${W_LEDGER:-0} AND l.after_uop <= 0
     ORDER BY l.id LIMIT 12" | tr '\n' ';' | cut -c1-900)"
   say "FORENSICS releases that raised a cart's count, draws the release's count undid (node bin before after op): $(sql "SELECT n.name, l.bin_id, l.before_uop, l.after_uop, l.op
-    FROM bin_uop_ledger l JOIN nodes n ON n.id = l.node_id WHERE l.id > $W_LEDGER AND n.name IN ($POS_SQL)
+    FROM bin_uop_ledger l JOIN nodes n ON n.id = l.node_id WHERE l.id > ${W_LEDGER:-0} AND n.name IN ($POS_SQL)
     AND l.op LIKE 'released%' AND l.after_uop > COALESCE(l.before_uop, l.after_uop) ORDER BY l.id" | tr '\n' ';')"
   say "FORENSICS Core's stale drops, a draw that reached Core after the cart's arrival (last 8): $(dc logs --no-log-prefix core 2>/dev/null | grep -a 'stale epoch DROPPED' | tail -8 | cut -c1-160 | tr '\n' ';')"
   say "FORENSICS the positions' piles (node part state qty): $(sql "SELECT core_node_name, payload_code, state, qty FROM lineside_buckets
@@ -722,6 +773,12 @@ forensics() {
   say "FORENSICS Core's carts at the positions (node bin part count): $(sql "SELECT n.name, b.id, b.payload_code, b.uop_remaining FROM bins b JOIN nodes n ON n.id = b.node_id
     WHERE n.name IN ($POS_SQL) ORDER BY n.name" | tr '\n' ';')"
   say "FORENSICS the Edge's lines (captures, strands, clamps, refusals): $(dc logs --no-log-prefix edge 2>/dev/null | grep -aiE 'capture|stranded|count anomaly|clamp|payload mismatch|below zero|negative' | tail -12 | cut -c1-220 | tr '\n' ';')"
+  say "FORENSICS the line (the readiness gate's answer is \"ready\"): $(line_raw)"
+  say "FORENSICS the gate: $(gate_json | cut -c1-600)"
+  local since=$(( $(date +%s) - ${W_SINCE:-${START_S:-$(date +%s)}} + 2 ))
+  dc logs --no-log-prefix --since "${since}s" edge > "$OUT/forensics-edge.log" 2>&1
+  dc logs --no-log-prefix --since "${since}s" core > "$OUT/forensics-core.log" 2>&1
+  say "FORENSICS the Edge's and Core's logs for the window (${since}s): $OUT/forensics-edge.log, $OUT/forensics-core.log"
 }
 
 # ledger [mid]: closes the window. The final ledger (no argument) is read at rest and checked:
@@ -760,6 +817,9 @@ ledger() {
     echo "minimum cart ${L_MIN:-none}" | tee -a "$OUT/log.txt"
     if [ -n "$L_STRIP" ]; then
       printf '%s\n' "$L_STRIP" | sed 's/^/strip: /' | tee -a "$OUT/log.txt"
+    fi
+    if [ -n "$L_OVERPACK" ]; then
+      printf '%s\n' "$L_OVERPACK" | sed 's/^/overpack: /' | tee -a "$OUT/log.txt"
     fi
     [ "${L_LOST:-0}" -eq 0 ] || miss="$miss; lost at the lift ${L_LOST}"
     refused_n="${L_REFUSED%% *}"

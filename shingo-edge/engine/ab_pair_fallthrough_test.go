@@ -129,6 +129,26 @@ func TestFallthrough_OneWayPairNeverDoubleCharges(t *testing.T) {
 	}
 }
 
+// TestFallthrough_NeitherLitChargesTheFirstSideInTheProcessOrder: both sides
+// of a pair hold a cart of the tick's part and neither is lit. The stroke
+// charges the side the walk meets first, the process's node order (sequence,
+// then name), and leaves the other cart alone, whichever was created first.
+// The same choice as before decision 55; only what happens at that side moved
+// (its cart of the part charged, else the ledger).
+func TestFallthrough_NeitherLitChargesTheFirstSideInTheProcessOrder(t *testing.T) {
+	t.Parallel()
+	r := newPairRig(t)
+	a := r.consume("N-A", "N-B", protocol.SwapModeSequential, false)
+	b := r.consume("N-B", "N-A", protocol.SwapModeSequential, false)
+	// B is created second; put it first in the process's order.
+	_, err := r.db.Exec(`UPDATE process_nodes SET sequence = 0 WHERE id = ?`, b)
+	testutil.MustNoErr(t, err, "B first")
+	r.tick(3)
+	if got := []int{r.left(a), r.left(b)}; !(got[0] == 50 && got[1] == 47) {
+		t.Errorf("carts = %v, want [50 47]: the first side in the process's order, B", got)
+	}
+}
+
 // TestFallthrough_AContradictionIsNoPairAndIsWarned: C names A (a row from
 // before any check), and A and B name each other. C's claim is no pair: C,
 // lit, is charged as a position of its own, A/B keeps its one fallthrough,

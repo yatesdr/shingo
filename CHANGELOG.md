@@ -25,6 +25,7 @@ Edge v37-v43; Core changes the lift's stamp (no schema) and dev tooling (plantsp
 - With a changeover open, a cart that cannot say its part, bound before the start at a position whose part changes, is the departing part: the incoming strokes are logged, not refused
 - A consume stroke charges the cart of its part standing at the position, into the negative if the count goes there (the release records it); with none there it is logged against the position and the part with the last cart released there (v43), a count on the strip; nothing is held, replayed or pre-paid, and the next cart lands at its full count
 - Core: a release declaring a count below 0, or releasing empty a cart Core reads below 0, is written as 0 and recorded as `released_overpack` with the declared count and the overpack (the bins page: "released at 0 (overpack N)"), a note only; the Edge sends the count unclamped, and a Core from before refuses a negative with `manifest_sync_failed`, as it did
+- Every row of the ledger reads info on the strip, a share ("N held on CATID V") as a no-cart row; red stays the wrong-part item's
 - The parts in the line, the end-of-line sentence and the parked-ticks notice are gone; the Counting block keeps the MES slots and the station cards
 - One CATID names one style: the pin, the one-click and Confirm refuse a taken value
 - With two live styles and one pinned, a CATID outside the pin is taken as the other style's part (attribution, the declaration and force, the one-tap); the strip asks for the pin, yellow; nothing is pinned for you
@@ -56,6 +57,7 @@ Edge v37-v43; Core changes the lift's stamp (no schema) and dev tooling (plantsp
 - The fake PLC's line pauses its loading and drains (POST /api/sim/pause-loading)
 - scripts/sim-4x2.sh runs one shape on the dev stack (make dev-sim-4x2 SHAPE=S1..S9)
 - Its ledger is carts + logged + written off = loads; it prints lost at the lift (asserted 0, never summed), every partial release fenced and the lowest cart; its person releases with the pre-fill and cancels a staged swap of the replaced part
+- A wait in scripts/sim-4x2.sh takes its budget again while the cell still moves (a slow host is slow, not stopped); a STOP on a wait that ran out writes the forensics, the Edge's and Core's logs, the line with its readiness answer (GET /api/sim/line "ready") and the gate; the final ledger quotes each overpack Core recorded
 
 ## 2026-11-03 — An order's carts are its rows
 

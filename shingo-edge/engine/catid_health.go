@@ -506,8 +506,10 @@ func (e *Engine) heldItems(processID int64, holds []store.CatidHold, now time.Ti
 		if h.ProcessNodeID != 0 {
 			where = fmt.Sprintf("node %d's share of %s", h.ProcessNodeID, h.PayloadCode)
 		}
+		// A share is a ledger row like a no-cart row: a count a person
+		// clears (Charge or Write off), info. Red is the wrong-part item's.
 		t := h.FirstTickAt
-		items = append(items, CatidHealthItem{Kind: catidKindHeld, Severity: CatidHealthRed,
+		items = append(items, CatidHealthItem{Kind: catidKindHeld, Severity: CatidHealthInfo,
 			Headline: fmt.Sprintf("%d held on CATID %s", h.Qty, h.CATID),
 			Detail: fmt.Sprintf("%s, %d strokes over %s (%s)", where, h.Strokes,
 				now.Sub(t).Round(time.Minute), h.Reason),

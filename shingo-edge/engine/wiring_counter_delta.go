@@ -494,7 +494,13 @@ func (a *abPairs) of(key string) *abPairTick {
 	return p
 }
 
-// noteDark records a dark side; the first a pair meets is its fallback.
+// noteDark records a dark side; the first a pair meets is its fallback. With
+// neither side lit and both holding a cart of the tick's part, the stroke
+// therefore charges the side the walk meets first, the process's node order
+// (sequence, then name), and leaves the other cart alone: there is no
+// active-pull side to prefer. The choice is the one from before decision 55;
+// what happens at that side is the consume rule (handleABFallthrough).
+// Pinned by TestFallthrough_NeitherLitChargesTheFirstSideInTheProcessOrder.
 func (a *abPairs) noteDark(key string, node processes.Node, runtime *processes.RuntimeState, claim *processes.NodeClaim) {
 	if p := a.of(key); p.fallback == nil {
 		p.fallback = &abFallback{node: &node, runtime: runtime, claim: claim}

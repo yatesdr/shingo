@@ -80,6 +80,10 @@ type ProcessLine struct {
 	PLCName string `json:"plc_name"`
 	TagName string `json:"tag_name"`
 	LineState
+	// Ready is the readiness gate's answer for the PLC at the read (the
+	// machine can cycle), absent with no gate: what the rig's forensics
+	// print beside the line when a wait runs out.
+	Ready *bool `json:"ready,omitempty"`
 }
 
 // procLine is one sim process: its line and the tags the line publishes. mes
@@ -176,6 +180,30 @@ func NewFakeClient(ctx context.Context, cfg config.SimConfig, clk clock.Clock) *
 		go f.tick(ctx, procs[i], f.clk.NewTicker(interval))
 	}
 	return f
+}
+
+// readLines is a read of LineTag: the PLC's lines, each with the readiness
+// gate's answer. The gate reads the store, so it is asked after the lock is
+// let go, as the tick asks it.
+func (f *FakeClient) readLines(plcName string) ([]ProcessLine, error) {
+	f.mu.RLock()
+	if f.lines[plcName] == nil {
+		f.mu.RUnlock()
+		return nil, fmt.Errorf("simwarlink: PLC %q has no line", plcName)
+	}
+	out := make([]ProcessLine, 0, len(f.lines[plcName]))
+	for _, pl := range f.lines[plcName] {
+		out = append(out, ProcessLine{PLCName: plcName, TagName: pl.counterTag, LineState: pl.line.State()})
+	}
+	ready := f.ready
+	f.mu.RUnlock()
+	if ready != nil {
+		r := ready(plcName)
+		for i := range out {
+			out[i].Ready = &r
+		}
+	}
+	return out, nil
 }
 
 func (f *FakeClient) tick(ctx context.Context, pl *procLine, t clock.Ticker) {
@@ -370,6 +398,9 @@ func (f *FakeClient) SetTagPublishing(ctx context.Context, plcName, tagName stri
 
 // ReadTagValue returns the current counter for a single tag (HMI convenience).
 func (f *FakeClient) ReadTagValue(ctx context.Context, plcName, tagName string) (any, error) {
+	if tagName == LineTag {
+		return f.readLines(plcName)
+	}
 	f.mu.RLock()
 	defer f.mu.RUnlock()
 	if tagName == OverrunTag {
@@ -377,16 +408,6 @@ func (f *FakeClient) ReadTagValue(ctx context.Context, plcName, tagName string) 
 			return nil, fmt.Errorf("simwarlink: PLC %q has no counter to overrun", plcName)
 		}
 		return f.overrun[plcName], nil
-	}
-	if tagName == LineTag {
-		if f.lines[plcName] == nil {
-			return nil, fmt.Errorf("simwarlink: PLC %q has no line", plcName)
-		}
-		out := make([]ProcessLine, 0, len(f.lines[plcName]))
-		for _, pl := range f.lines[plcName] {
-			out = append(out, ProcessLine{PLCName: plcName, TagName: pl.counterTag, LineState: pl.line.State()})
-		}
-		return out, nil
 	}
 	if v, ok := f.structRead(plcName, tagName); ok {
 		return v, nil

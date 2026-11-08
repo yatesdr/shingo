@@ -264,6 +264,29 @@ func lineOf(t *testing.T, f *FakeClient, plcName string) ProcessLine {
 	return lines[0]
 }
 
+// TestFakeLineReadCarriesTheReadinessAnswer: a read of the line says whether
+// the readiness gate lets the machine cycle at the read, so the rig's STOP can
+// print why a line stood still; no gate, no answer. RED before: the read
+// carried no answer.
+func TestFakeLineReadCarriesTheReadinessAnswer(t *testing.T) {
+	m := clock.NewManual(fakeStart)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	f := NewFakeClient(ctx, lineCfg(2), m)
+	if st := lineOf(t, f, "WELD-6"); st.Ready != nil {
+		t.Errorf("no gate: ready = %v, want absent", *st.Ready)
+	}
+	var stopped atomic.Bool
+	f.SetReadinessFunc(func(string) bool { return !stopped.Load() })
+	if st := lineOf(t, f, "WELD-6"); st.Ready == nil || !*st.Ready {
+		t.Errorf("a ready machine: ready = %v, want true", st.Ready)
+	}
+	stopped.Store(true)
+	if st := lineOf(t, f, "WELD-6"); st.Ready == nil || *st.Ready {
+		t.Errorf("a stopped machine: ready = %v, want false", st.Ready)
+	}
+}
+
 // TestFakeLineCountsALoadLClicksAfterItsStation: the counter's n-th tick comes
 // exactly L ticks after the station's n-th click.
 func TestFakeLineCountsALoadLClicksAfterItsStation(t *testing.T) {

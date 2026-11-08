@@ -114,8 +114,11 @@ func TestHold_HeldTickStillShipsUnderTodaysStyle(t *testing.T) {
 	if len(hs) != 1 || hs[0].CATID != "1007" || hs[0].ProcessNodeID != 0 || hs[0].Qty != 4 || hs[0].Strokes != 2 || hs[0].Reason != holdReasonHeld {
 		t.Fatalf("holds = %+v, want one held draw of 4 over 2 strokes on 1007", hs)
 	}
-	if it, ok := healthKinds(t, eng, pid)[catidKindHeld]; !ok || it.Severity != CatidHealthRed {
-		t.Errorf("health: %+v, want a red held item", it)
+	// Info, not red (decision 55, the strip): a share is a ledger row, a count
+	// a person clears; it was red while a landing was to clear it, and
+	// nothing lands it now.
+	if it, ok := healthKinds(t, eng, pid)[catidKindHeld]; !ok || it.Severity != CatidHealthInfo {
+		t.Errorf("health: %+v, want an info held item", it)
 	}
 }
 
