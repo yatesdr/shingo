@@ -10,6 +10,7 @@ Core v175; Edge v44 (a backfill, no schema change). Deploy Core first, then the 
 - A cart's part is recorded at its bind: the order's, else Core's, else the claim's part assumed (v44); a flip changes no seat
 - Core: a late draw is booked at the node its cart was lifted from (v175), never at _TRANSIT
 - Core: a late draw applied after its cart landed at another seat sends that seat's Edge the count, fenced
+- START reads its own row back under the door and by its id: a switch in between leaves it its row
 
 ## 2026-11-03 — The cutover follows the PLC
 

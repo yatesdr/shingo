@@ -596,22 +596,15 @@ func (e *Engine) StartProcessChangeover(processID, toStyleID int64, calledBy, no
 		cancelled = append(cancelled, lifts...)
 	}
 
-	if _, err := e.changeoverService.Create(processID, plan.process.ActiveStyleID, toStyleID,
-		calledBy, notes, plan.stationIDs, plan.nodeTasks, plan.participants, plan.nodes); err != nil {
+	changeover, err := e.insertStartedChangeover(plan, toStyleID, calledBy, notes, unlockDoor)
+	if err != nil {
 		return nil, err
 	}
-	unlockDoor()
 	// The row is committed: once the start returns, the CATID monitor re-decides.
 	// A program that settled before the changeover opened is cut over on this
 	// poke rather than never (the decision is not re-taken on a clock).
 	defer e.pokeCutover(processID)
 	defer e.catidHealthChanged(processID)
-
-	// Retrieve the changeover we just created so we can link node tasks.
-	changeover, err := e.db.GetActiveProcessChangeover(processID)
-	if err != nil {
-		return nil, err
-	}
 	// The PLC's part as the changeover starts: the evidence a pin is later
 	// suggested from never suggests the value the cell was already on.
 	if v, ok := e.liveIdentity(processID); ok {
@@ -647,7 +640,10 @@ func (e *Engine) StartProcessChangeover(processID, toStyleID int64, calledBy, no
 	e.applyChangeoverPlan(changeover, orderPlan)
 	e.applyChangeoverSpots(returns, spotReads, e.changeoverOrigin(changeover.ID))
 
-	final, err := e.db.GetActiveProcessChangeover(processID)
+	final, err := e.db.GetProcessChangeoverByID(changeover.ID)
+	if err == nil && final == nil {
+		err = fmt.Errorf("changeover %d is gone after its legs were ordered", changeover.ID)
+	}
 	if err != nil {
 		// The changeover row stands and its orders are out, so the episode stays
 		// open: this read failing says nothing about the changeover, and closing
@@ -665,6 +661,27 @@ func (e *Engine) StartProcessChangeover(processID, toStyleID int64, calledBy, no
 			processID, toStyleID, len(plan.unresolvedParticipants), plan.unresolvedParticipants)
 	}
 	return final, nil
+}
+
+// insertStartedChangeover inserts the start's changeover row and reads it back
+// under the door, by its id, then opens the door (row 10): an admin switch
+// waiting on the door meets the open row and acts on it only after the start
+// holds it, so the start never reads "no rows" for a changeover it created.
+// The start's later read is by the id too: a switch that completes the
+// changeover while its legs are ordered leaves the start its row.
+func (e *Engine) insertStartedChangeover(plan *changeoverPlan, toStyleID int64, calledBy, notes string,
+	unlockDoor func()) (*processes.Changeover, error) {
+	defer unlockDoor()
+	coID, err := e.changeoverService.Create(plan.process.ID, plan.process.ActiveStyleID, toStyleID,
+		calledBy, notes, plan.stationIDs, plan.nodeTasks, plan.participants, plan.nodes)
+	if err != nil {
+		return nil, err
+	}
+	changeover, err := e.db.GetProcessChangeoverByID(coID)
+	if err == nil && changeover == nil {
+		err = fmt.Errorf("changeover %d is gone after its insert", coID)
+	}
+	return changeover, err
 }
 
 // binDrainedAtCoreNode returns a closure that reports whether the physical bin

@@ -380,12 +380,13 @@ func TestKanbanPin_AChangeoverClosedBeforeItsOpenWasSentConverges(t *testing.T) 
 
 // TestKanbanPin_StartWhoseRereadFailsLeavesTheEpisodeOpen: the one error return
 // after the open reports a read, not the changeover. Its orders are out, so the
-// episode stays open and nothing tells Core otherwise.
+// episode stays open and nothing tells Core otherwise. The start re-reads its
+// row by id (row 10), so the failure is the row gone under it.
 func TestKanbanPin_StartWhoseRereadFailsLeavesTheEpisodeOpen(t *testing.T) {
 	t.Parallel()
 	p := seedKPPress(t)
 	_, err := p.db.Exec(`CREATE TRIGGER kp_end AFTER INSERT ON orders
-		BEGIN UPDATE process_changeovers SET state = 'cancelled'; END`)
+		BEGIN DELETE FROM process_changeovers; END`)
 	testutil.MustNoErr(t, err, "arm the failure")
 	if _, err := p.eng.StartProcessChangeover(p.processID, p.toStyle, "test", "kanban pin"); err == nil {
 		t.Fatal("START returned no error; want the re-read's")

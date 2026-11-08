@@ -279,6 +279,50 @@ func TestStart_RacingTheSwitchNeverInsertsAFromStyleNoLongerActive(t *testing.T)
 	}
 }
 
+// TestStart_RacingTheSwitchLeavesTheStartItsRow: row 10. An admin switch to
+// the target style fired once the start's row is in (from the first leg the
+// start orders, with the door open again) completes the changeover, and the
+// start still returns its row, completed, rather than "sql: no rows". Before,
+// the start read its row back as the process's open changeover, after the door
+// unlocked, so a switch in between left it nothing to read.
+func TestStart_RacingTheSwitchLeavesTheStartItsRow(t *testing.T) {
+	t.Parallel()
+	db := testEngineDB(t)
+	eng := testEngine(t, db)
+	eng.orderMgr = orders.NewManager(db, &orderEmitter{bus: eng.Events}, "test.station")
+	pid, _, _, to := seedPhase3SwapScenario(t, db)
+	switched := make(chan error, 1)
+	ranInside := false
+	var once sync.Once
+	eng.Events.SubscribeTypes(func(Event) {
+		once.Do(func() {
+			go func() { switched <- eng.SetProcessActiveStyle(pid, &to) }()
+			select {
+			case err := <-switched: // the switch ran while the start ordered its legs
+				ranInside = true
+				switched <- err
+			case <-time.After(2 * time.Second): // it waits on the start
+			}
+		})
+	}, EventOrderCreated)
+	co, startErr := eng.StartProcessChangeover(pid, to, "test", "")
+	var switchErr error
+	select {
+	case switchErr = <-switched:
+	case <-time.After(5 * time.Second):
+		t.Fatalf("the start (%+v, %v) ordered no leg, so no switch was fired", co, startErr)
+	}
+	if !ranInside {
+		t.Fatalf("the switch did not run while the start ordered its legs (switch: %v): the race is not exercised", switchErr)
+	}
+	if switchErr != nil {
+		t.Fatalf("the switch to the target: %v", switchErr)
+	}
+	if startErr != nil || co == nil || co.ToStyleID != to || co.State != domain.ChangeoverCompleted {
+		t.Errorf("start = %+v, %v; want its own row back, completed by the switch", co, startErr)
+	}
+}
+
 // TestDoor_TerminalWriteLatchedForCompleteAndCancel: an ended row stays as it
 // ended. A second completion does not rewrite completed_at or triggered_by,
 // and a cancel does not overwrite a completion.
