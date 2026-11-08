@@ -24,6 +24,7 @@ import (
 //
 // Self-contained: no npm, skipped when node is absent.
 func TestComposerFieldsCharacterization(t *testing.T) {
+	t.Parallel()
 	nodePath, err := exec.LookPath("node")
 	if err != nil {
 		t.Skipf("node not on PATH; skipping the composer field characterization")
@@ -60,6 +61,7 @@ var updateFlowspec = flag.Bool("update", false, "regenerate the station's flowsp
 //
 //	go test ./www -run TestStationFlowspecFileMatchesGo -update
 func TestStationFlowspecFileMatchesGo(t *testing.T) {
+	t.Parallel()
 	path := filepath.Join("static", "operator-station", "flowspec-data.js")
 	want, err := flowspec.ExportJSON()
 	if err != nil {

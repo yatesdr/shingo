@@ -75,6 +75,7 @@ func pageData(t *testing.T, out, attr string, into any) {
 // handler already read them for the old panel and a second round trip would
 // buy nothing.
 func TestProcessesPage_CarriesLoaderBoardGaps(t *testing.T) {
+	t.Parallel()
 	out := renderProcessesPage(t, map[string]any{
 		"Page":            "processes",
 		"ActiveProcess":   &domain.Process{ID: 15, Name: "Press 4"},
@@ -106,6 +107,7 @@ func TestProcessesPage_CarriesLoaderBoardGaps(t *testing.T) {
 // Nothing to say, nothing carried. D4 then prints the one sentence that says
 // so, rather than an empty box that trains people to stop reading.
 func TestProcessesPage_NoGapsCarriesAnEmptyList(t *testing.T) {
+	t.Parallel()
 	out := renderProcessesPage(t, map[string]any{
 		"Page":            "processes",
 		"ActiveProcess":   &domain.Process{ID: 15, Name: "Press 4"},
@@ -128,6 +130,7 @@ func TestProcessesPage_NoGapsCarriesAnEmptyList(t *testing.T) {
 // that shipped it wrong would show an engineer a press whose operators can edit
 // flows as one whose operators cannot.
 func TestProcessesPage_CarriesTheGateInBothStates(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name    string
 		enabled bool
@@ -159,6 +162,7 @@ func TestProcessesPage_CarriesTheGateInBothStates(t *testing.T) {
 // the four files the composer is. A page that lost the module tag would render
 // the noscript list and look, from the server, exactly as healthy.
 func TestProcessesPage_BootsTheDesktop(t *testing.T) {
+	t.Parallel()
 	out := renderProcessesPage(t, map[string]any{
 		"Page":            "processes",
 		"ActiveProcess":   &domain.Process{ID: 15, Name: "Press 4"},

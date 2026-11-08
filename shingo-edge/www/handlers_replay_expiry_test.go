@@ -27,7 +27,7 @@ const outboxMaxRetries = store.MaxOutboxRetries
 // recovery that had not happened, and the only trace was one line in Core's
 // journal carrying an envelope UUID.
 
-func seedReplayRow(t *testing.T, subject string, ttl time.Duration) int64 {
+func seedReplayRow(t *testing.T, db *store.DB, subject string, ttl time.Duration) int64 {
 	t.Helper()
 	env, err := protocol.NewDataEnvelope(subject,
 		protocol.Address{Role: protocol.RoleEdge, Station: "plant-a.line-1"},
@@ -45,15 +45,15 @@ func seedReplayRow(t *testing.T, subject string, ttl time.Duration) int64 {
 	if err != nil {
 		t.Fatalf("encode: %v", err)
 	}
-	id, err := testDB.EnqueueOutbox(data, subject)
+	id, err := db.EnqueueOutbox(data, subject)
 	if err != nil {
 		t.Fatalf("enqueue: %v", err)
 	}
-	if err := testDB.MarkOutboxExhausted(id, "seeded by test"); err != nil {
+	if err := db.MarkOutboxExhausted(id, "seeded by test"); err != nil {
 		t.Fatalf("mark exhausted: %v", err)
 	}
 	t.Cleanup(func() {
-		if _, err := testDB.Exec(`DELETE FROM outbox WHERE id = ?`, id); err != nil {
+		if _, err := db.Exec(`DELETE FROM outbox WHERE id = ?`, id); err != nil {
 			t.Errorf("cleanup row %d: %v", id, err)
 		}
 	})
@@ -70,20 +70,22 @@ func postReplay(t *testing.T, h *Handlers, r *chi.Mux, id int64) *httptest.Respo
 	return rec
 }
 
-func rowRetries(t *testing.T, id int64) int {
+func rowRetries(t *testing.T, db *store.DB, id int64) int {
 	t.Helper()
 	var n int
-	if err := testDB.QueryRow(`SELECT retries FROM outbox WHERE id = ?`, id).Scan(&n); err != nil {
+	if err := db.QueryRow(`SELECT retries FROM outbox WHERE id = ?`, id).Scan(&n); err != nil {
 		t.Fatalf("read retries: %v", err)
 	}
 	return n
 }
 
 func TestReplayOutbox_RefusesExpiredEnvelope(t *testing.T) {
+	t.Parallel()
 	h, r := newTestHandlers(t)
+	db := dbOf(h)
 
 	// plant.claims keeps its 5-minute TTL; back-date it so it has lapsed.
-	id := seedReplayRow(t, protocol.SubjectPlantClaims, -time.Hour)
+	id := seedReplayRow(t, db, protocol.SubjectPlantClaims, -time.Hour)
 
 	rec := postReplay(t, h, r, id)
 
@@ -99,7 +101,7 @@ func TestReplayOutbox_RefusesExpiredEnvelope(t *testing.T) {
 		t.Error("409 carried no reason — the operator has to be told WHY, or the " +
 			"button just looks broken")
 	}
-	if got := rowRetries(t, id); got != outboxMaxRetries {
+	if got := rowRetries(t, db, id); got != outboxMaxRetries {
 		t.Errorf("retries = %d, want %d unchanged — a refused replay must not "+
 			"reset the counter and re-arm the row", got, outboxMaxRetries)
 	}
@@ -109,16 +111,18 @@ func TestReplayOutbox_RefusesExpiredEnvelope(t *testing.T) {
 // replayable — which is the case that most needed to work, since a lost delta
 // is a permanently wrong count.
 func TestReplayOutbox_NoExpirySubjectIsAlwaysReplayable(t *testing.T) {
+	t.Parallel()
 	h, r := newTestHandlers(t)
+	db := dbOf(h)
 
-	id := seedReplayRow(t, protocol.SubjectBinUOPDelta, 0)
+	id := seedReplayRow(t, db, protocol.SubjectBinUOPDelta, 0)
 
 	rec := postReplay(t, h, r, id)
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("replay of a NoExpiry delta = %d, want 200 (%s)", rec.Code, rec.Body.String())
 	}
-	if got := rowRetries(t, id); got != 0 {
+	if got := rowRetries(t, db, id); got != 0 {
 		t.Errorf("retries = %d, want 0 — an accepted replay re-arms the row", got)
 	}
 }

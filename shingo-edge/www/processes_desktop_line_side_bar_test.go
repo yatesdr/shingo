@@ -18,6 +18,7 @@ import (
 // rule reads --os-station first: the desktop maps it to --text-strong (themed),
 // the station maps it to --station itself, so the station is unchanged.
 func TestLineSideBarIsThemedOnTheDesktop(t *testing.T) {
+	t.Parallel()
 	b, err := os.ReadFile(filepath.Join("static", "operator-station", "flow-picture.css"))
 	if err != nil {
 		t.Fatalf("read flow-picture.css: %v", err)

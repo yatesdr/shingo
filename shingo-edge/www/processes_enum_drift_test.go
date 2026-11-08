@@ -46,6 +46,7 @@ import (
 // no hidden options: a cell in a retired mode draws with the empty glyph and
 // its mode reads through, and the picker offers the four a save can accept.
 func TestComposerModesMatchProtocol(t *testing.T) {
+	t.Parallel()
 	got := readComposerModes(t)
 	want := []string{}
 	for _, m := range protocol.ConfigurableSwapModes() {
@@ -63,6 +64,7 @@ func TestComposerModesMatchProtocol(t *testing.T) {
 // when the press does the other thing (setRole). The drift guard is that
 // protocol still has exactly the two roles both paths know how to answer with.
 func TestComposerRolesDerivedThenSettable(t *testing.T) {
+	t.Parallel()
 	roles := []string{string(protocol.ClaimRoleConsume), string(protocol.ClaimRoleProduce)}
 	if len(roles) != 2 {
 		t.Fatalf("protocol carries %d claim roles; deriveRole and setRole in composer-model.js answer with two", len(roles))

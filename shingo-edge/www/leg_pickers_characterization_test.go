@@ -14,6 +14,7 @@ import (
 // desktop-bodies.js. The script pins the predicate and that every picker asks
 // it.
 func TestLegPickersOfferNoLane(t *testing.T) {
+	t.Parallel()
 	nodePath, err := exec.LookPath("node")
 	if err != nil {
 		t.Skipf("node not on PATH; skipping the leg-picker test")

@@ -61,6 +61,7 @@ func configPageBody(t *testing.T, html string) string {
 // header's <title> untouched, the seven sections in order, the neutral .set-
 // classes only, no inline style, no native <select>, no hex colour.
 func TestConfigPage_Shape(t *testing.T) {
+	t.Parallel()
 	html := renderConfigPage(t, nil, false)
 	if !strings.Contains(html, "<title>Shingo Edge</title>") {
 		t.Error("<title> changed; it is the shared header's")
@@ -102,6 +103,7 @@ func TestConfigPage_Shape(t *testing.T) {
 // TestConfigPage_SecretNeverRendered: E8, R3 — the saved secret is not in the
 // page; the box says "saved".
 func TestConfigPage_SecretNeverRendered(t *testing.T) {
+	t.Parallel()
 	html := renderConfigPage(t, func(c *config.Config) {
 		c.Backup.S3 = config.BackupS3Config{Endpoint: "http://s3.test", Bucket: "b", AccessKey: "AK", SecretKey: "TOPSECRET-1234"}
 	}, false)
@@ -116,6 +118,7 @@ func TestConfigPage_SecretNeverRendered(t *testing.T) {
 // TestConfigPage_LiveWords: the warning when this Edge's own zone is blank,
 // and E4's "simulated" PLC title in sim.
 func TestConfigPage_LiveWords(t *testing.T) {
+	t.Parallel()
 	html := renderConfigPage(t, func(c *config.Config) { c.Timezone = ""; c.Sim.Enabled = true }, false)
 	if !strings.Contains(html, "no timezone set · showing") {
 		t.Error("blank timezone: no warning in the Station title")
@@ -132,6 +135,7 @@ func TestConfigPage_LiveWords(t *testing.T) {
 // TestConfigPage_RestartNoticeRendered: the notice is computed server-side at
 // render from the boot snapshot (the page hands it to settingsPage).
 func TestConfigPage_RestartNoticeRendered(t *testing.T) {
+	t.Parallel()
 	html := renderConfigPage(t, func(c *config.Config) { c.Timezone = "America/Chicago" }, true)
 	if !strings.Contains(html, `data-restart="[]"`) {
 		t.Errorf("fresh boot: restart notice not empty")
@@ -147,6 +151,7 @@ func TestConfigPage_RestartNoticeRendered(t *testing.T) {
 // the page's data (not a field), for the station body to carry; an Edge with
 // a UID has none.
 func TestConfigPage_LegacyStationIDCarried(t *testing.T) {
+	t.Parallel()
 	html := renderConfigPage(t, func(c *config.Config) { c.StationUID = ""; c.Messaging.StationID = "plant-a.line-1" }, false)
 	if !strings.Contains(html, `data-legacy-station-id="plant-a.line-1"`) {
 		t.Error("legacy-only: the legacy station_id is not in the page data")

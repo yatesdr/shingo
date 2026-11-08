@@ -31,6 +31,7 @@ func (f catalogFeedFake) FeedTimes(key string) (time.Time, time.Time) {
 func (f catalogFeedFake) CoreSpeaksFeeds() bool { return f.speaks }
 
 func TestStationCatalog_SaysAsOfAndNotKnown(t *testing.T) {
+	t.Parallel()
 	now := time.Date(2026, 10, 17, 12, 0, 0, 0, time.UTC)
 	old := now.Add(-engine.FeedAsOfAfter - time.Second)
 	cases := []struct {

@@ -12,6 +12,7 @@ import (
 // clear show the station's notice on a 202 pending answer, hold the act as the
 // station does, and never show a success over an act Core has not answered.
 func TestDesktopPagesSayAnAskIsPending(t *testing.T) {
+	t.Parallel()
 	nodePath, err := exec.LookPath("node")
 	if err != nil {
 		t.Skipf("node not on PATH; skipping the desktop pages' pending-ask test")

@@ -21,6 +21,7 @@ import (
 // status and reason, and only the button goes. Skipped if `node` is not on PATH
 // (matches the other JS test wrappers).
 func TestOperatorModalLaneHeldJS(t *testing.T) {
+	t.Parallel()
 	nodePath, err := exec.LookPath("node")
 	if err != nil {
 		t.Skipf("node not on PATH; skipping JS unit tests")

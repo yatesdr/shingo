@@ -11,6 +11,7 @@ import (
 // 2 s apart (LC4), and a reload that keeps the chosen target style and its
 // open preview (lane F).
 func TestChangeoverRefreshJS(t *testing.T) {
+	t.Parallel()
 	nodePath, err := exec.LookPath("node")
 	if err != nil {
 		t.Skipf("node not on PATH; skipping changeover refresh test")

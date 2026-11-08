@@ -12,6 +12,7 @@ import (
 // TestNoRawZIndexInEdgeAssets holds Edge's stylesheets, page scripts and
 // templates to the layer scale in shared/tokens.css (D19).
 func TestNoRawZIndexInEdgeAssets(t *testing.T) {
+	t.Parallel()
 	var scanned int
 
 	scan := func(fsys fs.FS, root, label string) {
@@ -70,6 +71,7 @@ func TestNoRawZIndexInEdgeAssets(t *testing.T) {
 // and not to the station would leave the station silently one rung short, and
 // a rung the station has invented would be a private ordering.
 func TestOperatorStationZLayerScaleMatchesShared(t *testing.T) {
+	t.Parallel()
 	sharedCSS, err := fs.ReadFile(shared.Files, "tokens.css")
 	if err != nil {
 		t.Fatalf("read shared/tokens.css: %v", err)

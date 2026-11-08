@@ -69,6 +69,7 @@ func cssPx(t *testing.T, css, what string, re *regexp.Regexp) []int {
 }
 
 func TestDesktopSheetFitsItsWideField(t *testing.T) {
+	t.Parallel()
 	css := desktopCSS(t)
 	label := cssPx(t, css, ".pd-fld label column",
 		regexp.MustCompile(`(?s)\.pd-fld \{[^}]*grid-template-columns:\s*(\d+)px 1fr;[^}]*gap:\s*\d+px (\d+)px;`))

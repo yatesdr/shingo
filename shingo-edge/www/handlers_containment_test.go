@@ -26,6 +26,7 @@ func (s *stubEngine) CoreSpeaksFeeds() bool { return s.speaksFeeds }
 // FeedAsOfAfter. Nothing blanks for age: the old copy renders whole, with the
 // time beside it.
 func TestContainmentPage_FeedStates(t *testing.T) {
+	t.Parallel()
 	old := time.Now().Add(-engine.FeedAsOfAfter - time.Minute)
 	oldText := old.In(plantLocation).Format("15:04")
 	cases := []struct {
@@ -93,6 +94,7 @@ func TestContainmentPage_FeedStates(t *testing.T) {
 // The JSON twin carries the same notice and "as of", and only when set, so a
 // current copy serves the keys it always did.
 func TestContainmentState_NoticeAndAsOfKeys(t *testing.T) {
+	t.Parallel()
 	h, _ := newContainmentPinHandlers(t)
 	stub := h.engine.(*containmentPinEngine).stubEngine
 

@@ -13,6 +13,7 @@ import (
 // 400 response. This is the exact silent-payload fingerprint c56ceb9 was
 // written to close.
 func TestParseReleaseRequest_RejectsBareBody(t *testing.T) {
+	t.Parallel()
 	r := httptest.NewRequest(http.MethodPost, "/release", nil)
 	// httptest.NewRequest with nil body sets ContentLength = 0.
 
@@ -33,6 +34,7 @@ func TestParseReleaseRequest_RejectsBareBody(t *testing.T) {
 // process_node and station_id), and blocking the operator's RELEASE click
 // in production is the worse outcome.
 func TestParseReleaseRequest_DefaultsEmptyCalledBy(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name string
 		body string
@@ -64,6 +66,7 @@ func TestParseReleaseRequest_DefaultsEmptyCalledBy(t *testing.T) {
 // expose the raw message or sanitize it; current callers pass it through
 // to writeError.
 func TestParseReleaseRequest_RejectsMalformedJSON(t *testing.T) {
+	t.Parallel()
 	body := `{"called_by": "ok", "qty_by_part": 123}` // qty_by_part should be a map
 	r := httptest.NewRequest(http.MethodPost, "/release", bytes.NewBufferString(body))
 	r.ContentLength = int64(len(body))
@@ -78,6 +81,7 @@ func TestParseReleaseRequest_RejectsMalformedJSON(t *testing.T) {
 // a body with called_by and any combination of disposition + qty_by_part
 // is accepted, and every field flows through to the returned struct.
 func TestParseReleaseRequest_AcceptsWellFormedBody(t *testing.T) {
+	t.Parallel()
 	body := `{"disposition": "capture_lineside", "qty_by_part": {"PART-A": 5}, "called_by": "stephen-station-7"}`
 	r := httptest.NewRequest(http.MethodPost, "/release", bytes.NewBufferString(body))
 	r.ContentLength = int64(len(body))
@@ -103,6 +107,7 @@ func TestParseReleaseRequest_AcceptsWellFormedBody(t *testing.T) {
 // chosen disposition — the engine maps it to the zero-value
 // ReleaseDisposition (no manifest action at Core).
 func TestParseReleaseRequest_AcceptsMinimalBody(t *testing.T) {
+	t.Parallel()
 	body := `{"called_by": "orders-page"}`
 	r := httptest.NewRequest(http.MethodPost, "/release", bytes.NewBufferString(body))
 	r.ContentLength = int64(len(body))

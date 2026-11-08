@@ -32,6 +32,7 @@ import (
 // .Runtime.<Name> in every template must name a real field or method on
 // domain.RuntimeState.
 func TestTemplateRuntimeFieldsExistOnDomainType(t *testing.T) {
+	t.Parallel()
 	ref := regexp.MustCompile(`\.Runtime\.([A-Za-z_][A-Za-z0-9_]*)`)
 
 	rt := reflect.TypeOf(domain.RuntimeState{})

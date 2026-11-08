@@ -39,6 +39,7 @@ func renderOrdersBody(t *testing.T, data map[string]any) string {
 // transition it applies, so nothing needs to be added to the wire to answer it.
 // (The fixture was a `sourcing` row until C1; the Edge never stores the word.)
 func TestEdgeOrders_ASourcingOrderSaysWhyAndForHowLong(t *testing.T) {
+	t.Parallel()
 	since := time.Date(2026, 8, 29, 9, 0, 0, 0, time.UTC)
 	orders := []domain.Order{{
 		ID: 7, UUID: "edge-sourcing-1", OrderType: protocol.OrderTypeRetrieve,
@@ -69,6 +70,7 @@ func TestEdgeOrders_ASourcingOrderSaysWhyAndForHowLong(t *testing.T) {
 // clock belongs to a wait, and a ticking duration on an order the fleet is
 // carrying reads as a stall.
 func TestEdgeOrders_AnOrderNotWaitingCarriesNoClock(t *testing.T) {
+	t.Parallel()
 	orders := []domain.Order{{
 		ID: 8, UUID: "edge-moving-1", OrderType: protocol.OrderTypeRetrieve,
 		Status: protocol.StatusInTransit, DeliveryNode: "ALN_001",

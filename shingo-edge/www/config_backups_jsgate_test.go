@@ -13,6 +13,7 @@ import (
 // built into the action string and arrived wrapped in quotes with a stray
 // bracket.
 func TestConfigBackupsJS(t *testing.T) {
+	t.Parallel()
 	nodePath, err := exec.LookPath("node")
 	if err != nil {
 		t.Skipf("node not on PATH; skipping the config backups JS test")

@@ -31,6 +31,7 @@ import (
 // way: silently passing on unread JS is the failure mode that shipped the
 // stray brace in the first place.
 func TestOperatorBootWatchdogJS(t *testing.T) {
+	t.Parallel()
 	nodePath, err := exec.LookPath("node")
 	if err != nil {
 		t.Skipf("node not on PATH; skipping JS unit tests")

@@ -26,6 +26,7 @@ import (
 // ═══════════════════════════════════════════════════════════════════════
 
 func TestBuildChangeoverViewData_NilProcess(t *testing.T) {
+	t.Parallel()
 	h, _ := newTestHandlers(t)
 
 	d := h.buildChangeoverViewData(nil)
@@ -41,11 +42,13 @@ func TestBuildChangeoverViewData_NilProcess(t *testing.T) {
 }
 
 func TestBuildChangeoverViewData_ProcessWithoutActiveChangeover(t *testing.T) {
+	t.Parallel()
 	h, _ := newTestHandlers(t)
+	db := dbOf(h)
 
-	pid := seedProcess(t, "ChangeoverNoActive")
-	_ = seedStyle(t, "S-A", pid)
-	_ = seedStyle(t, "S-B", pid)
+	pid := seedProcess(t, db, "ChangeoverNoActive")
+	_ = seedStyle(t, db, "S-A", pid)
+	_ = seedStyle(t, db, "S-B", pid)
 	process := &processes.Process{ID: pid}
 
 	d := h.buildChangeoverViewData(process)
@@ -63,29 +66,31 @@ func TestBuildChangeoverViewData_ProcessWithoutActiveChangeover(t *testing.T) {
 }
 
 func TestBuildChangeoverViewData_ActiveChangeoverWithPendingNodeTasks(t *testing.T) {
+	t.Parallel()
 	h, _ := newTestHandlers(t)
+	db := dbOf(h)
 
-	pid := seedProcess(t, "ChangeoverActive")
-	fromStyleID := seedStyle(t, "From-Style", pid)
-	toStyleID := seedStyle(t, "To-Style", pid)
+	pid := seedProcess(t, db, "ChangeoverActive")
+	fromStyleID := seedStyle(t, db, "From-Style", pid)
+	toStyleID := seedStyle(t, db, "To-Style", pid)
 
 	// Set the active style on the process so CurrentStyleName populates.
 	activeStyle := fromStyleID
-	testutil.MustNoErr(t, testDB.SetActiveStyle(pid, &activeStyle), "SetActiveStyle")
+	testutil.MustNoErr(t, db.SetActiveStyle(pid, &activeStyle), "SetActiveStyle")
 
 	// Seed a station + process node so the node task can attach to a station.
-	stationID := seedOperatorStation(t, pid, "CO-CODE-1", "ChangeoverStation")
-	_ = seedProcessNode(t, pid, stationID, "CO-NODE-A")
+	stationID := seedOperatorStation(t, db, pid, "CO-CODE-1", "ChangeoverStation")
+	_ = seedProcessNode(t, db, pid, stationID, "CO-NODE-A")
 
 	// Create the changeover with one pending node task referencing the same
 	// core node that we just seeded as a process node — CreateChangeover
 	// matches by core_node_name and reuses the existing process_node row.
-	existing, err := testDB.ListProcessNodesByProcess(pid)
+	existing, err := db.ListProcessNodesByProcess(pid)
 	if err != nil {
 		t.Fatalf("ListProcessNodesByProcess: %v", err)
 	}
 	from := fromStyleID
-	_, err = service.NewChangeoverService(testDB).Create(
+	_, err = service.NewChangeoverService(db).Create(
 		pid,
 		&from,
 		toStyleID,
@@ -130,19 +135,21 @@ func TestBuildChangeoverViewData_ActiveChangeoverWithPendingNodeTasks(t *testing
 }
 
 func TestBuildChangeoverViewData_AllSwitchedTasksMarkComplete(t *testing.T) {
+	t.Parallel()
 	h, _ := newTestHandlers(t)
+	db := dbOf(h)
 
-	pid := seedProcess(t, "ChangeoverAllSwitched")
-	from := seedStyle(t, "From2", pid)
-	to := seedStyle(t, "To2", pid)
+	pid := seedProcess(t, db, "ChangeoverAllSwitched")
+	from := seedStyle(t, db, "From2", pid)
+	to := seedStyle(t, db, "To2", pid)
 	activeStyle := from
-	testutil.MustNoErr(t, testDB.SetActiveStyle(pid, &activeStyle), "SetActiveStyle")
-	stationID := seedOperatorStation(t, pid, "CO-CODE-2", "Station2")
-	_ = seedProcessNode(t, pid, stationID, "CO-NODE-B")
+	testutil.MustNoErr(t, db.SetActiveStyle(pid, &activeStyle), "SetActiveStyle")
+	stationID := seedOperatorStation(t, db, pid, "CO-CODE-2", "Station2")
+	_ = seedProcessNode(t, db, pid, stationID, "CO-NODE-B")
 
-	existing, _ := testDB.ListProcessNodesByProcess(pid)
+	existing, _ := db.ListProcessNodesByProcess(pid)
 	fromCopy := from
-	cid, err := service.NewChangeoverService(testDB).Create(
+	cid, err := service.NewChangeoverService(db).Create(
 		pid, &fromCopy, to, "tester", "",
 		[]int64{stationID},
 		[]processes.NodeTaskInput{{
@@ -172,19 +179,21 @@ func TestBuildChangeoverViewData_AllSwitchedTasksMarkComplete(t *testing.T) {
 // ═══════════════════════════════════════════════════════════════════════
 
 func TestBuildChangeoverViewData_CentralNodeTasksWhenNoStation(t *testing.T) {
+	t.Parallel()
 	h, _ := newTestHandlers(t)
+	db := dbOf(h)
 
-	pid := seedProcess(t, "ChangeoverCentral")
-	from := seedStyle(t, "FromC", pid)
-	to := seedStyle(t, "ToC", pid)
+	pid := seedProcess(t, db, "ChangeoverCentral")
+	from := seedStyle(t, db, "FromC", pid)
+	to := seedStyle(t, db, "ToC", pid)
 	activeStyle := from
-	testutil.MustNoErr(t, testDB.SetActiveStyle(pid, &activeStyle), "SetActiveStyle")
+	testutil.MustNoErr(t, db.SetActiveStyle(pid, &activeStyle), "SetActiveStyle")
 	// Process node with stationID=0 → OperatorStationID nil.
-	_ = seedProcessNode(t, pid, 0, "CO-CENTRAL-A")
+	_ = seedProcessNode(t, db, pid, 0, "CO-CENTRAL-A")
 
-	existing, _ := testDB.ListProcessNodesByProcess(pid)
+	existing, _ := db.ListProcessNodesByProcess(pid)
 	fromCopy := from
-	if _, err := service.NewChangeoverService(testDB).Create(
+	if _, err := service.NewChangeoverService(db).Create(
 		pid, &fromCopy, to, "tester", "",
 		nil, // no station tasks
 		[]processes.NodeTaskInput{{

@@ -23,6 +23,7 @@ import (
 
 // TestMintGuard_RefusesANameCoreDoesNotHave is the guard.
 func TestMintGuard_RefusesANameCoreDoesNotHave(t *testing.T) {
+	t.Parallel()
 	h, _ := newTestHandlers(t)
 	h.engine.(*stubEngine).core = map[string]protocol.NodeInfo{
 		"ALN_001": {},
@@ -42,6 +43,7 @@ func TestMintGuard_RefusesANameCoreDoesNotHave(t *testing.T) {
 // TestMintGuard_AcceptsAKnownName is the regression half: the guard must not
 // refuse the ordinary case, which is every legitimate configuration write.
 func TestMintGuard_AcceptsAKnownName(t *testing.T) {
+	t.Parallel()
 	h, _ := newTestHandlers(t)
 	h.engine.(*stubEngine).core = map[string]protocol.NodeInfo{"ALN_001": {}}
 
@@ -58,6 +60,7 @@ func TestMintGuard_AcceptsAKnownName(t *testing.T) {
 // would refuse every group-child node — which is most of a supermarket — and the
 // refusal would look like a Core sync problem rather than a spelling rule.
 func TestMintGuard_AcceptsAGroupChildByItsBareName(t *testing.T) {
+	t.Parallel()
 	h, _ := newTestHandlers(t)
 	h.engine.(*stubEngine).core = map[string]protocol.NodeInfo{"SM_A.W1": {}}
 
@@ -80,6 +83,7 @@ func TestMintGuard_AcceptsAGroupChildByItsBareName(t *testing.T) {
 // MUTATION (verified): drop the len(known) == 0 arm and this fails — every
 // configuration write on an Edge that has not yet heard from Core is refused.
 func TestMintGuard_EmptyCoreListDoesNotRefuse(t *testing.T) {
+	t.Parallel()
 	h, _ := newTestHandlers(t)
 	h.engine.(*stubEngine).core = map[string]protocol.NodeInfo{}
 

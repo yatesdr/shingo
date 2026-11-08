@@ -13,6 +13,7 @@ import (
 // survivors send read the same before and after. If a body must change, that
 // is a ruling to write down, not a silent edit.
 func TestDesktopBodiesCharacterization(t *testing.T) {
+	t.Parallel()
 	nodePath, err := exec.LookPath("node")
 	if err != nil {
 		t.Skipf("node not on PATH; skipping the desktop-bodies characterisation")

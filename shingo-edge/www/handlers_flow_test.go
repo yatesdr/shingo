@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"shingo/protocol/testutil"
+	"shingoedge/store"
 
 	"shingoedge/domain"
 	"shingoedge/engine"
@@ -30,9 +31,9 @@ func flowBody(t *testing.T, resp *http.Response) map[string]any {
 	return out
 }
 
-func flowStation(t *testing.T, processID int64) int64 {
+func flowStation(t *testing.T, db *store.DB, processID int64) int64 {
 	t.Helper()
-	id, err := testDB.CreateOperatorStation(stations.Input{ProcessID: processID, Code: "flow-" + flowItoa(int(processID)), Name: "Press 400", Sequence: 1, Enabled: true})
+	id, err := db.CreateOperatorStation(stations.Input{ProcessID: processID, Code: "flow-" + flowItoa(int(processID)), Name: "Press 400", Sequence: 1, Enabled: true})
 	if err != nil {
 		t.Fatalf("create station: %v", err)
 	}
@@ -123,9 +124,10 @@ func TestFlowPreview_StatusMapping(t *testing.T) {
 // none on any refusal.
 func TestFlowSave_StatusMappingAndOnePublish(t *testing.T) {
 	h, router := newOperatorStationsRouter(t)
+	db := dbOf(h)
 	stub := h.orchestration.(*stubEngine)
 	rec := recordSpecChangePublishes(t, h)
-	stationID := flowStation(t, 1)
+	stationID := flowStation(t, db, 1)
 	body := func(extra map[string]any) map[string]any {
 		out := map[string]any{"to_style_id": 7, "cells": []any{}, "fingerprint": "abc", "station_id": stationID}
 		for k, v := range extra {
@@ -197,11 +199,12 @@ func TestFlowSave_StatusMappingAndOnePublish(t *testing.T) {
 // call, a `source` argument.
 func TestFlowSave_TheHandlerChoosesTheSourceFromTheCaller(t *testing.T) {
 	h, router := newOperatorStationsRouter(t)
+	db := dbOf(h)
 	stub := h.orchestration.(*stubEngine)
 	stub.flowSaveResult = &engine.FlowSaveResult{Fingerprint: "def", Written: 1}
 	// Its own process, because flowStation's code is unique per process and
 	// TestFlowSave_StatusMappingAndOnePublish already took process 1's.
-	stationID, err := testDB.CreateOperatorStation(stations.Input{
+	stationID, err := db.CreateOperatorStation(stations.Input{
 		ProcessID: 1, Code: "flow-source", Name: "Press 400", Sequence: 2, Enabled: true,
 	})
 	if err != nil {
@@ -260,9 +263,10 @@ func TestFlowSave_TheHandlerChoosesTheSourceFromTheCaller(t *testing.T) {
 // computable at all.
 func TestFlowSave_CarriesPresetProvenanceWhenTheBodyHasIt(t *testing.T) {
 	h, router := newOperatorStationsRouter(t)
+	db := dbOf(h)
 	stub := h.orchestration.(*stubEngine)
 	stub.flowSaveResult = &engine.FlowSaveResult{Fingerprint: "def", Written: 1}
-	stationID, err := testDB.CreateOperatorStation(stations.Input{
+	stationID, err := db.CreateOperatorStation(stations.Input{
 		ProcessID: 1, Code: "flow-preset", Name: "Press 400", Sequence: 3, Enabled: true,
 	})
 	if err != nil {

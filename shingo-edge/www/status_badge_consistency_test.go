@@ -24,6 +24,7 @@ import (
 // same green-pill on Core's /orders and Edge's /orders. The drift test
 // here pins that promise at CI time.
 func TestEdgeStatusBadgesUseSharedClasses(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		path  string
 		want  string // substring required to be present

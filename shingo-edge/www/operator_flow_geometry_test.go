@@ -19,6 +19,7 @@ import (
 // database: the cells are built in the script, on invented coordinates, so
 // the pin can ask for shapes no seeded plant carries.
 func TestOperatorFlowGeometryPins(t *testing.T) {
+	t.Parallel()
 	nodePath, err := exec.LookPath("node")
 	if err != nil {
 		t.Skipf("node not on PATH; skipping geometry pins")

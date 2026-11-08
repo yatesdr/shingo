@@ -54,6 +54,7 @@ func newAdminPagesRouter(t *testing.T) (*Handlers, *chi.Mux) {
 // ═══════════════════════════════════════════════════════════════════════
 
 func TestAdminPages_AdminGate_Redirects(t *testing.T) {
+	t.Parallel()
 	_, router := newAdminPagesRouter(t)
 
 	paths := []string{
@@ -82,12 +83,14 @@ func TestAdminPages_AdminGate_Redirects(t *testing.T) {
 // /login?next=<path> → POST /login with credentials → final 303 lands
 // on the original target, not /config.
 func TestAdminGate_LoginRoundTripPreservesNext(t *testing.T) {
-	_, router := newAdminPagesRouter(t)
+	t.Parallel()
+	h, router := newAdminPagesRouter(t)
+	db := dbOf(h)
 
 	// Seed a known user.
 	hash := testHash(t, "rt-pw")
-	testDB.Exec("DELETE FROM admin_users WHERE username = 'roundtripuser'")
-	if _, err := testDB.CreateAdminUser("roundtripuser", hash); err != nil {
+	db.Exec("DELETE FROM admin_users WHERE username = 'roundtripuser'")
+	if _, err := db.CreateAdminUser("roundtripuser", hash); err != nil {
 		t.Fatalf("seed admin user: %v", err)
 	}
 
@@ -120,11 +123,13 @@ func TestAdminGate_LoginRoundTripPreservesNext(t *testing.T) {
 // supplied off-origin next value must not turn the login into an open
 // redirect.
 func TestLogin_NextOpenRedirectRejected(t *testing.T) {
-	_, router := newAdminPagesRouter(t)
+	t.Parallel()
+	h, router := newAdminPagesRouter(t)
+	db := dbOf(h)
 
 	hash := testHash(t, "safe-pw")
-	testDB.Exec("DELETE FROM admin_users WHERE username = 'safelogin'")
-	if _, err := testDB.CreateAdminUser("safelogin", hash); err != nil {
+	db.Exec("DELETE FROM admin_users WHERE username = 'safelogin'")
+	if _, err := db.CreateAdminUser("safelogin", hash); err != nil {
 		t.Fatalf("seed admin user: %v", err)
 	}
 
@@ -156,6 +161,7 @@ func TestLogin_NextOpenRedirectRejected(t *testing.T) {
 // ═══════════════════════════════════════════════════════════════════════
 
 func TestLoginPage_AuthenticatedRedirectsToConfig(t *testing.T) {
+	t.Parallel()
 	h, router := newAdminPagesRouter(t)
 	cookie := authCookie(t, h)
 
@@ -188,11 +194,13 @@ func postForm(t *testing.T, router *chi.Mux, path string, form url.Values, cooki
 }
 
 func TestLogin_BootstrapsFirstAdminUser(t *testing.T) {
-	_, router := newAdminPagesRouter(t)
+	t.Parallel()
+	h, router := newAdminPagesRouter(t)
+	db := dbOf(h)
 
 	// Start from a clean admin_users table so AdminUserExists returns false
 	// and the handler bootstraps a user from the form values.
-	if _, err := testDB.Exec("DELETE FROM admin_users"); err != nil {
+	if _, err := db.Exec("DELETE FROM admin_users"); err != nil {
 		t.Fatalf("clear admin_users: %v", err)
 	}
 
@@ -209,7 +217,7 @@ func TestLogin_BootstrapsFirstAdminUser(t *testing.T) {
 	}
 
 	// DB state: user was created and its password is stored hashed.
-	user, err := testDB.GetAdminUser("bootstrapuser")
+	user, err := db.GetAdminUser("bootstrapuser")
 	if err != nil {
 		t.Fatalf("GetAdminUser: %v", err)
 	}
@@ -222,12 +230,14 @@ func TestLogin_BootstrapsFirstAdminUser(t *testing.T) {
 }
 
 func TestLogin_ValidCredentialsRedirects(t *testing.T) {
-	_, router := newAdminPagesRouter(t)
+	t.Parallel()
+	h, router := newAdminPagesRouter(t)
+	db := dbOf(h)
 
 	// Seed a known user (separate from bootstrap test to avoid interleaving).
 	hash := testHash(t, "good-pw")
-	testDB.Exec("DELETE FROM admin_users WHERE username = 'validlogin'")
-	if _, err := testDB.CreateAdminUser("validlogin", hash); err != nil {
+	db.Exec("DELETE FROM admin_users WHERE username = 'validlogin'")
+	if _, err := db.CreateAdminUser("validlogin", hash); err != nil {
 		t.Fatalf("seed admin user: %v", err)
 	}
 
@@ -260,6 +270,7 @@ func TestLogin_ValidCredentialsRedirects(t *testing.T) {
 // ═══════════════════════════════════════════════════════════════════════
 
 func TestLogout_ClearsSessionAndRedirects(t *testing.T) {
+	t.Parallel()
 	h, router := newAdminPagesRouter(t)
 	cookie := authCookie(t, h)
 

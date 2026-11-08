@@ -12,6 +12,7 @@ import (
 // "No part running" from the same fields, and an empty grid says why in plain
 // words. Skipped if `node` is not on PATH (matches the other JS test wrappers).
 func TestOperatorRenderStateWordsJS(t *testing.T) {
+	t.Parallel()
 	nodePath, err := exec.LookPath("node")
 	if err != nil {
 		t.Skipf("node not on PATH; skipping JS unit tests")

@@ -42,6 +42,7 @@ func gateStatusGet(t *testing.T, r http.Handler, path string) (*httptest.Respons
 // panel iterates blockers; `null` would force every consumer to nil-check
 // before ranging, so an unblocked gate must encode as [].
 func TestGateStatus_OpenGate_ReturnsEmptyArrayNotNull(t *testing.T) {
+	t.Parallel()
 	eng, r := newGateStatusRouter(t)
 	eng.gateCanComplete = true
 	eng.gateBlockers = nil
@@ -65,6 +66,7 @@ func TestGateStatus_OpenGate_ReturnsEmptyArrayNotNull(t *testing.T) {
 // TestGateStatus_BlockedGate_SurfacesEveryBlocker checks the panel gets both
 // the sentence and the structured identity it links from.
 func TestGateStatus_BlockedGate_SurfacesEveryBlocker(t *testing.T) {
+	t.Parallel()
 	eng, r := newGateStatusRouter(t)
 	eng.gateCanComplete = false
 	eng.gateBlockers = []domain.Blocker{
@@ -111,6 +113,7 @@ func TestGateStatus_BlockedGate_SurfacesEveryBlocker(t *testing.T) {
 // up as an open gate, which would tell the operator "nothing pending" while
 // the truth is unknown.
 func TestGateStatus_EngineError_Is500(t *testing.T) {
+	t.Parallel()
 	eng, r := newGateStatusRouter(t)
 	eng.gateErr = errors.New("db exploded")
 
@@ -122,6 +125,7 @@ func TestGateStatus_EngineError_Is500(t *testing.T) {
 
 // TestGateStatus_InvalidProcessID_Is400 covers the parse guard.
 func TestGateStatus_InvalidProcessID_Is400(t *testing.T) {
+	t.Parallel()
 	_, r := newGateStatusRouter(t)
 	rec, _ := gateStatusGet(t, r, "/api/processes/not-a-number/changeover/gate-status")
 	if rec.Code != http.StatusBadRequest {
@@ -133,6 +137,7 @@ func TestGateStatus_InvalidProcessID_Is400(t *testing.T) {
 // advertised as safe to poll; a mutating verb sharing the path would undo that
 // guarantee for anything that discovers the route by pattern.
 func TestGateStatus_IsGetOnly(t *testing.T) {
+	t.Parallel()
 	_, r := newGateStatusRouter(t)
 	req := httptest.NewRequest(http.MethodPost, "/api/processes/1/changeover/gate-status", nil)
 	rec := httptest.NewRecorder()

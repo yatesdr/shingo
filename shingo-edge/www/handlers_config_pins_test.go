@@ -33,6 +33,8 @@ import (
 	"path/filepath"
 	"reflect"
 	"shingo/protocol/testutil"
+	"shingoedge/internal/testdb"
+	"shingoedge/store"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -84,6 +86,7 @@ func (l *pinBackupLog) got() []string {
 type pinRig struct {
 	h       *Handlers
 	r       *chi.Mux
+	db      *store.DB // the rig's own database (newTestHandlers)
 	spy     *pinSpyEngine
 	cfg     *config.Config
 	cfgPath string
@@ -102,9 +105,14 @@ func newPinRig(t *testing.T, withBackup bool) *pinRig {
 	h.engine = spy
 	h.orchestration = spy
 
-	rig := &pinRig{h: h, r: r, spy: spy, cfg: stub.cfg, cfgPath: stub.cfgPath, backups: &pinBackupLog{}}
+	rig := &pinRig{h: h, r: r, db: stub.db, spy: spy, cfg: stub.cfg, cfgPath: stub.cfgPath, backups: &pinBackupLog{}}
 	if withBackup {
-		svc := backup.NewService(testDB, stub.cfg, stub.cfgPath, "pin", rig.backups.logf)
+		svc := backup.NewService(rig.db, stub.cfg, stub.cfgPath, "pin", rig.backups.logf)
+		// The pins' storage fails on purpose (s3.pin.invalid, a server that
+		// answers 500): one attempt, so the failure is one request and not the
+		// client's ten backoffs. The default is pinned in the backup package
+		// (TestPinS3Attempts_TheDefaultRetriesAFailedRequest).
+		svc.SetS3Attempts(1)
 		for i := 0; i < 64; i++ {
 			svc.RequestBackup("prefill")
 		}
@@ -297,6 +305,7 @@ func seedPinUID(c *config.Config) { c.StationUID = "pin.uid" }
 // ── Messaging (brokers) ──────────────────────────────────────────────────
 
 func TestPinEdgeConfig_Messaging(t *testing.T) {
+	t.Parallel()
 	runPinCases(t, []pinCase{
 		{
 			name:   "set_two",
@@ -351,6 +360,7 @@ func TestPinEdgeConfig_Messaging(t *testing.T) {
 // ── Station UID (E1) ─────────────────────────────────────────────────────
 
 func TestPinEdgeConfig_StationID(t *testing.T) {
+	t.Parallel()
 	seedUID := func(c *config.Config) { c.StationUID = "seed.uid"; c.Messaging.StationID = "seed.legacy" }
 	runPinCases(t, []pinCase{
 		{
@@ -410,6 +420,7 @@ func TestPinEdgeConfig_StationID(t *testing.T) {
 // ── Plant timezone ───────────────────────────────────────────────────────
 
 func TestPinEdgeConfig_Timezone(t *testing.T) {
+	t.Parallel()
 	runPinCases(t, []pinCase{
 		{
 			name:   "valid",
@@ -452,6 +463,7 @@ func TestPinEdgeConfig_Timezone(t *testing.T) {
 // ── Auto-confirm (the Station section) ───────────────────────────────────
 
 func TestPinEdgeConfig_AutoConfirm(t *testing.T) {
+	t.Parallel()
 	runPinCases(t, []pinCase{
 		{
 			name:   "on",
@@ -476,6 +488,7 @@ func TestPinEdgeConfig_AutoConfirm(t *testing.T) {
 // ── PLC link (WarLink) ───────────────────────────────────────────────────
 
 func TestPinEdgeConfig_WarLink(t *testing.T) {
+	t.Parallel()
 	seed := func(c *config.Config) {
 		c.WarLink.Host = "old.host"
 		c.WarLink.Port = 8080
@@ -544,6 +557,8 @@ func TestPinEdgeConfig_WarLink(t *testing.T) {
 // outside sim the apply would dereference the PLC manager Start creates and
 // panic, so reaching the log line is the proof that it returned early.
 func TestPinEdgeConfig_WarLinkSim(t *testing.T) {
+	t.Parallel()
+	db := testdb.Open(t)
 	dir := t.TempDir()
 	cfgPath := filepath.Join(dir, "shingoedge.yaml")
 	cfg := config.Defaults()
@@ -551,7 +566,7 @@ func TestPinEdgeConfig_WarLinkSim(t *testing.T) {
 	cfg.StationUID = "pin.sim"
 	var logs []string
 	var mu sync.Mutex
-	eng := engine.New(engine.Config{AppConfig: cfg, ConfigPath: cfgPath, DB: testDB,
+	eng := engine.New(engine.Config{AppConfig: cfg, ConfigPath: cfgPath, DB: db,
 		LogFunc: func(f string, a ...any) { mu.Lock(); logs = append(logs, fmt.Sprintf(f, a...)); mu.Unlock() }})
 	h := &Handlers{engine: eng, orchestration: eng, sessions: newSessionStore(""), eventHub: NewEventHub(),
 		stationViews: newStationViewGroup()}
@@ -598,6 +613,7 @@ func seedStorage(c *config.Config) {
 }
 
 func TestPinEdgeConfig_BackupConfig(t *testing.T) {
+	t.Parallel()
 	storageBody := func(enabled bool, secret string) map[string]any {
 		return map[string]any{"backups": map[string]any{"enabled": enabled, "schedule_interval": "1h",
 			"endpoint": "http://s3.pin.invalid", "bucket": "pin-bucket", "region": "us-east-1",
@@ -694,6 +710,7 @@ func TestPinEdgeConfig_BackupConfig(t *testing.T) {
 // that counts every request and answers 500, so the test fails: 400, nothing
 // written, no backup requested.
 func TestPinEdgeConfig_BackupEnableChangedStorage(t *testing.T) {
+	t.Parallel()
 	var hits atomic.Int64
 	s3 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		hits.Add(1)
@@ -737,6 +754,7 @@ func TestPinEdgeConfig_BackupEnableChangedStorage(t *testing.T) {
 // is opened (and /api/backups/status carries `configured`, pinned in the
 // backup package).
 func TestPinEdgeConfig_ListBackupsNoEndpoint(t *testing.T) {
+	t.Parallel()
 	rig := newPinRig(t, true)
 	resp := doRequest(t, rig.r, "GET", "/api/backups", nil, rig.cookie)
 	assertStatus(t, resp, http.StatusBadRequest)
@@ -749,21 +767,22 @@ func TestPinEdgeConfig_ListBackupsNoEndpoint(t *testing.T) {
 // ── Shifts (database, not the config file) — unchanged ───────────────────
 
 func TestPinEdgeConfig_Shifts(t *testing.T) {
+	t.Parallel()
 	type row = map[string]any
-	reset := func(t *testing.T) {
+	reset := func(t *testing.T, db *store.DB) {
 		t.Helper()
-		if _, err := testDB.Exec("DELETE FROM shifts"); err != nil {
+		if _, err := db.Exec("DELETE FROM shifts"); err != nil {
 			t.Fatalf("clear shifts: %v", err)
 		}
 		for n, s := range [][3]string{{"Day", "06:00", "14:00"}, {"Swing", "14:00", "22:00"}, {"Night", "22:00", "06:00"}} {
-			if err := testDB.UpsertShift(n+1, s[0], s[1], s[2]); err != nil {
+			if err := db.UpsertShift(n+1, s[0], s[1], s[2]); err != nil {
 				t.Fatalf("seed shift %d: %v", n+1, err)
 			}
 		}
 	}
-	numbers := func(t *testing.T) []int {
+	numbers := func(t *testing.T, db *store.DB) []int {
 		t.Helper()
-		got, err := testDB.ListShifts()
+		got, err := db.ListShifts()
 		if err != nil {
 			t.Fatalf("ListShifts: %v", err)
 		}
@@ -773,7 +792,6 @@ func TestPinEdgeConfig_Shifts(t *testing.T) {
 		}
 		return ns
 	}
-	t.Cleanup(func() { testDB.Exec("DELETE FROM shifts") })
 
 	cases := []struct {
 		name string
@@ -800,8 +818,8 @@ func TestPinEdgeConfig_Shifts(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			reset(t)
 			rig := newPinRig(t, true)
+			reset(t, rig.db)
 			resp := doRequest(t, rig.r, "PUT", "/api/shifts", tc.body, rig.cookie)
 			assertStatus(t, resp, 200)
 			body, err := io.ReadAll(resp.Body)
@@ -810,7 +828,7 @@ func TestPinEdgeConfig_Shifts(t *testing.T) {
 			if string(body) != "{\"ok\":true}\n" && string(body) != `{"ok":true}` {
 				t.Errorf("response = %s, want {\"ok\":true}", body)
 			}
-			if got := numbers(t); !reflect.DeepEqual(got, tc.want) {
+			if got := numbers(t, rig.db); !reflect.DeepEqual(got, tc.want) {
 				t.Errorf("shifts left = %v, want %v", got, tc.want)
 			}
 			if _, wrote := rig.saved(t); wrote {
@@ -825,15 +843,15 @@ func TestPinEdgeConfig_Shifts(t *testing.T) {
 	// written (extra, ui-cleanup 2026-10-07). It used to delete every shift,
 	// against the handler's own comment (out_of_range_only_deletes_all).
 	t.Run("out_of_range_only_refused", func(t *testing.T) {
-		reset(t)
 		rig := newPinRig(t, true)
+		reset(t, rig.db)
 		resp := doRequest(t, rig.r, "PUT", "/api/shifts", []row{
 			{"shift_number": 4, "name": "X", "start_time": "00:00", "end_time": "06:00"},
 			{"shift_number": 0, "name": "Y", "start_time": "", "end_time": ""},
 		}, rig.cookie)
 		assertStatus(t, resp, 400)
 		resp.Body.Close()
-		if got := numbers(t); !reflect.DeepEqual(got, []int{1, 2, 3}) {
+		if got := numbers(t, rig.db); !reflect.DeepEqual(got, []int{1, 2, 3}) {
 			t.Errorf("shifts left = %v, want untouched", got)
 		}
 		if got := rig.backups.got(); len(got) != 0 {
@@ -841,12 +859,12 @@ func TestPinEdgeConfig_Shifts(t *testing.T) {
 		}
 	})
 	t.Run("not_an_array", func(t *testing.T) {
-		reset(t)
 		rig := newPinRig(t, true)
+		reset(t, rig.db)
 		resp := doRequest(t, rig.r, "PUT", "/api/shifts", map[string]string{"not": "an array"}, rig.cookie)
 		assertStatus(t, resp, 400)
 		resp.Body.Close()
-		if got := numbers(t); !reflect.DeepEqual(got, []int{1, 2, 3}) {
+		if got := numbers(t, rig.db); !reflect.DeepEqual(got, []int{1, 2, 3}) {
 			t.Errorf("shifts left = %v, want untouched", got)
 		}
 		if got := rig.backups.got(); len(got) != 0 {
@@ -858,6 +876,7 @@ func TestPinEdgeConfig_Shifts(t *testing.T) {
 // ── Change password (the door that stays) ────────────────────────────────
 
 func TestPinEdgeConfig_ChangePassword(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name      string
 		old, next string
@@ -887,7 +906,7 @@ func TestPinEdgeConfig_ChangePassword(t *testing.T) {
 					t.Errorf("response %q = %v, want %v", k, got[k], v)
 				}
 			}
-			u, err := testDB.GetAdminUser("testadmin")
+			u, err := rig.db.GetAdminUser("testadmin")
 			if err != nil {
 				t.Fatalf("GetAdminUser: %v", err)
 			}
@@ -918,6 +937,7 @@ func TestPinEdgeConfig_ChangePassword(t *testing.T) {
 // each live apply fires once. The restart notice names every restart-only
 // field that moved.
 func TestPinEdgeConfig_OneSaveManySections(t *testing.T) {
+	t.Parallel()
 	rig := newPinRig(t, true)
 	rig.cfg.Lock()
 	seedPinUID(rig.cfg)
@@ -959,6 +979,7 @@ func TestPinEdgeConfig_OneSaveManySections(t *testing.T) {
 // TestPinEdgeConfig_ErrorAnywhereWritesNothing: one bad section refuses the
 // whole save; the good sections beside it are not applied either.
 func TestPinEdgeConfig_ErrorAnywhereWritesNothing(t *testing.T) {
+	t.Parallel()
 	rig := newPinRig(t, true)
 	rig.cfg.Lock()
 	rig.cfg.Timezone = "America/Chicago"
@@ -985,6 +1006,7 @@ func TestPinEdgeConfig_ErrorAnywhereWritesNothing(t *testing.T) {
 // TestPinEdgeConfig_UnknownSection: a section the door does not know is a
 // 400 naming it, not a silent drop.
 func TestPinEdgeConfig_UnknownSection(t *testing.T) {
+	t.Parallel()
 	rig := newPinRig(t, true)
 	resp := doRequest(t, rig.r, "PUT", "/api/config", map[string]any{"fleet": map[string]any{}}, rig.cookie)
 	assertStatus(t, resp, 400)
@@ -998,6 +1020,7 @@ func TestPinEdgeConfig_UnknownSection(t *testing.T) {
 // once at boot. The save's copy is made in Go, so a save keeps it; a yaml
 // clone would have emptied the consumer group at the next ReconnectKafka.
 func TestPinEdgeConfig_GroupIDSurvivesSave(t *testing.T) {
+	t.Parallel()
 	rig := newPinRig(t, true)
 	rig.cfg.Lock()
 	rig.cfg.Messaging.Kafka.GroupID = "shingo-edge-pin"
@@ -1052,6 +1075,7 @@ func TestPinEdgeConfig_SaveWaitsForSaveMutex(t *testing.T) {
 // correct (the display stays on the boot zone) and is not filtered out. No
 // snapshot (a Handlers built without NewRouter): no notice.
 func TestPinEdgeConfig_RestartNoticeAdoptedZone(t *testing.T) {
+	t.Parallel()
 	rig := newPinRig(t, false)
 	if got := rig.h.restartPending(); len(got) != 0 {
 		t.Errorf("no snapshot: notice = %q, want none", got)
@@ -1074,6 +1098,7 @@ func TestPinEdgeConfig_RestartNoticeAdoptedZone(t *testing.T) {
 // it (lead ruling on E1, 2026-10-07): 200, the legacy id untouched, no UID
 // invented.
 func TestPinEdgeConfig_LegacyOnlyStationSaves(t *testing.T) {
+	t.Parallel()
 	runPinCases(t, []pinCase{{
 		name: "timezone_with_legacy_id",
 		seed: func(c *config.Config) { c.StationUID = ""; c.Messaging.StationID = "plant-a.line-1" },
@@ -1103,6 +1128,7 @@ func TestPinEdgeConfig_LegacyOnlyStationSaves(t *testing.T) {
 // writer wrote and -race failed. That is the pin doing its job: it is a test
 // of unchanged leaves, so it reads unchanged leaves.
 func TestRace_ConfigSaveLeavesUnchangedFieldsAlone(t *testing.T) {
+	t.Parallel()
 	rig := newPinRig(t, false)
 	rig.cfg.Lock()
 	rig.cfg.StationUID = "pin.uid"

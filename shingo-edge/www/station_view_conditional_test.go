@@ -13,9 +13,11 @@ import (
 // moved on every throttled Touch (15 s), so an idle board's JSON changed four
 // times a minute and the board rebuilt itself for nothing.
 func TestStationView_CarriesNoStationClock(t *testing.T) {
-	_, router := newOperatorStationsRouter(t)
-	pid := seedProcess(t, "ClockLine")
-	sid := seedOperatorStation(t, pid, "OS-CLOCK-1", "ClockStation")
+	t.Parallel()
+	h, router := newOperatorStationsRouter(t)
+	db := dbOf(h)
+	pid := seedProcess(t, db, "ClockLine")
+	sid := seedOperatorStation(t, db, pid, "OS-CLOCK-1", "ClockStation")
 	doRequest(t, router, "GET", "/api/operator-stations/"+itoa(sid)+"/view", nil, nil)
 	resp := doRequest(t, router, "GET", "/api/operator-stations/"+itoa(sid)+"/view", nil, nil)
 	assertStatus(t, resp, http.StatusOK)
@@ -40,9 +42,13 @@ func TestStationView_CarriesNoStationClock(t *testing.T) {
 // that moves the station's clock included. A change to what the view carries
 // gets the new body and a new ETag.
 func TestStationView_AnswersAConditionalGet(t *testing.T) {
-	_, router := newOperatorStationsRouter(t)
-	pid := seedProcess(t, "EtagLine")
-	sid := seedOperatorStation(t, pid, "OS-ETAG-1", "EtagStation")
+	// Not parallel: the view's cell_version reads processes.NodeGeneration, a
+	// process-wide counter every process-node write bumps, so another test's
+	// write between two reads here would move the view this test says stays.
+	h, router := newOperatorStationsRouter(t)
+	db := dbOf(h)
+	pid := seedProcess(t, db, "EtagLine")
+	sid := seedOperatorStation(t, db, pid, "OS-ETAG-1", "EtagStation")
 	path := "/api/operator-stations/" + itoa(sid) + "/view"
 	get := func(etag string) *http.Response {
 		req := httptest.NewRequest("GET", path, nil)
@@ -68,14 +74,14 @@ func TestStationView_AnswersAConditionalGet(t *testing.T) {
 		t.Fatalf("unchanged view with its ETag: status %d, %d bytes; want 304 and no body", again.StatusCode, len(body))
 	}
 	// Touch's clock moves; the view's body does not.
-	if _, err := testDB.Exec(`UPDATE operator_stations SET last_seen_at=datetime('now','+1 hour'),
+	if _, err := db.Exec(`UPDATE operator_stations SET last_seen_at=datetime('now','+1 hour'),
 		updated_at=datetime('now','+1 hour') WHERE id=?`, sid); err != nil {
 		t.Fatalf("move the station's clock: %v", err)
 	}
 	if r := get(etag); r.StatusCode != http.StatusNotModified {
 		t.Errorf("after the station's clock moved: status %d, want 304", r.StatusCode)
 	}
-	if _, err := testDB.Exec(`UPDATE operator_stations SET name='EtagStation-2' WHERE id=?`, sid); err != nil {
+	if _, err := db.Exec(`UPDATE operator_stations SET name='EtagStation-2' WHERE id=?`, sid); err != nil {
 		t.Fatalf("rename: %v", err)
 	}
 	changed := get(etag)

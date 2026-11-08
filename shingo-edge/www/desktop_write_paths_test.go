@@ -119,35 +119,37 @@ process.stdout.write(JSON.stringify({
 // TestDesktopWritePaths_EveryBodyNamesEveryColumnItsHandlerWrites is the whole
 // point: each write, sent as the page sends it, then the row read back.
 func TestDesktopWritePaths_EveryBodyNamesEveryColumnItsHandlerWrites(t *testing.T) {
+	t.Parallel()
 	h, router := newAdminRouter(t)
+	db := dbOf(h)
 	cookie := authCookie(t, h)
 
-	groupID, err := testDB.CreateProcessGroup("WP-Group", "a group")
+	groupID, err := db.CreateProcessGroup("WP-Group", "a group")
 	if err != nil {
 		t.Fatalf("create group: %v", err)
 	}
-	pid := seedProcess(t, "WP-Press")
-	sid := seedStyle(t, "WP-Style", pid)
-	stationID := seedOperatorStation(t, pid, "WP-CODE", "WP Screen")
+	pid := seedProcess(t, db, "WP-Press")
+	sid := seedStyle(t, db, "WP-Style", pid)
+	stationID := seedOperatorStation(t, db, pid, "WP-CODE", "WP Screen")
 
 	// The rows are given every column a value, because a column that is
 	// already zero cannot show that a write zeroed it. This is the single
 	// biggest reason the original four bugs went unseen.
-	if err := testDB.UpdateProcess(pid, "WP-Press", "the description", "PLC-1", "TAG-1", true); err != nil {
+	if err := db.UpdateProcess(pid, "WP-Press", "the description", "PLC-1", "TAG-1", true); err != nil {
 		t.Fatalf("seed process columns: %v", err)
 	}
-	if err := testDB.SetProcessGroupID(pid, &groupID); err != nil {
+	if err := db.SetProcessGroupID(pid, &groupID); err != nil {
 		t.Fatalf("seed process group: %v", err)
 	}
-	if err := testDB.UpdateStyle(sid, "WP-Style", "the style description", pid); err != nil {
+	if err := db.UpdateStyle(sid, "WP-Style", "the style description", pid); err != nil {
 		t.Fatalf("seed style: %v", err)
 	}
-	if err := testDB.SetStyleExpectedCATID(sid, "CAT-OLD"); err != nil {
+	if err := db.SetStyleExpectedCATID(sid, "CAT-OLD"); err != nil {
 		t.Fatalf("seed expected catid: %v", err)
 	}
 	// Every station column given a value, so a write that zeroes one shows.
 	// (No device_mode: the column retired with migration v16.)
-	if err := testDB.UpdateOperatorStation(stationID, domain.StationInput{
+	if err := db.UpdateOperatorStation(stationID, domain.StationInput{
 		ProcessID: pid, Code: "WP-CODE", Name: "WP Screen", Note: "the original note",
 		AreaLabel: "Cell 4", Sequence: 3, ControllerNodeID: "CTRL-9",
 		Enabled: true,
@@ -155,21 +157,21 @@ func TestDesktopWritePaths_EveryBodyNamesEveryColumnItsHandlerWrites(t *testing.
 		t.Fatalf("seed station columns: %v", err)
 	}
 
-	proc, err := testDB.GetProcess(pid)
+	proc, err := db.GetProcess(pid)
 	if err != nil {
 		t.Fatalf("read process: %v", err)
 	}
-	style, err := testDB.GetStyle(sid)
+	style, err := db.GetStyle(sid)
 	if err != nil {
 		t.Fatalf("read style: %v", err)
 	}
-	station, err := testDB.GetOperatorStation(stationID)
+	station, err := db.GetOperatorStation(stationID)
 	if err != nil {
 		t.Fatalf("read station: %v", err)
 	}
 
 	// A backfilled routing row for the adopt case.
-	rowID, err := testDB.UpsertRoutingNode(domain.CoreNodeKinds{}, domain.RoutingNodeInput{
+	rowID, err := db.UpsertRoutingNode(domain.CoreNodeKinds{}, domain.RoutingNodeInput{
 		ProcessID: pid, CoreNodeName: "WP-SOURCE", Role: domain.RoutingRoleSource,
 		Origin: domain.RoutingOriginBackfill, Enabled: false,
 	})
@@ -227,7 +229,7 @@ func TestDesktopWritePaths_EveryBodyNamesEveryColumnItsHandlerWrites(t *testing.
 	t.Run("a created process arrives grouped, in production, with no counter", func(t *testing.T) {
 		resp := doRequest(t, router, "POST", "/api/processes", bodies["process create"], cookie)
 		assertStatus(t, resp, http.StatusOK)
-		rows, err := testDB.ListProcesses()
+		rows, err := db.ListProcesses()
 		if err != nil {
 			t.Fatalf("list processes: %v", err)
 		}
@@ -265,7 +267,7 @@ func TestDesktopWritePaths_EveryBodyNamesEveryColumnItsHandlerWrites(t *testing.
 		resp := doRequest(t, router, "PUT", "/api/operator-stations/"+itoa(stationID)+"/claimed-nodes",
 			bodies["claimed nodes"], cookie)
 		assertStatus(t, resp, http.StatusOK)
-		nodes, err := testDB.ListProcessNodesByStation(stationID)
+		nodes, err := db.ListProcessNodesByStation(stationID)
 		if err != nil {
 			t.Fatalf("list process nodes: %v", err)
 		}
@@ -284,7 +286,7 @@ func TestDesktopWritePaths_EveryBodyNamesEveryColumnItsHandlerWrites(t *testing.
 	t.Run("settings save keeps the group and every unedited column", func(t *testing.T) {
 		resp := doRequest(t, router, "PUT", "/api/processes/"+itoa(pid), bodies["settings save"], cookie)
 		assertStatus(t, resp, http.StatusOK)
-		got, err := testDB.GetProcess(pid)
+		got, err := db.GetProcess(pid)
 		if err != nil {
 			t.Fatalf("read back: %v", err)
 		}
@@ -312,12 +314,12 @@ func TestDesktopWritePaths_EveryBodyNamesEveryColumnItsHandlerWrites(t *testing.
 
 	// ── the gate ─────────────────────────────────────────────────────────────
 	t.Run("the gate flips on its own and touches nothing else", func(t *testing.T) {
-		before, err := testDB.GetProcess(pid)
-		testutil.MustNoErr(t, err, "testDB.GetProcess")
+		before, err := db.GetProcess(pid)
+		testutil.MustNoErr(t, err, "db.GetProcess")
 		resp := doRequest(t, router, "PATCH", "/api/processes/"+itoa(pid), bodies["gate"], cookie)
 		assertStatus(t, resp, http.StatusOK)
-		got, err := testDB.GetProcess(pid)
-		testutil.MustNoErr(t, err, "testDB.GetProcess")
+		got, err := db.GetProcess(pid)
+		testutil.MustNoErr(t, err, "db.GetProcess")
 		if !got.FlowComposerEnabled {
 			t.Error("flow_composer_enabled did not read back")
 		}
@@ -330,7 +332,7 @@ func TestDesktopWritePaths_EveryBodyNamesEveryColumnItsHandlerWrites(t *testing.
 	t.Run("rename keeps the description and the process", func(t *testing.T) {
 		resp := doRequest(t, router, "PUT", "/api/styles/"+itoa(sid), bodies["rename"], cookie)
 		assertStatus(t, resp, http.StatusOK)
-		got, err := testDB.GetStyle(sid)
+		got, err := db.GetStyle(sid)
 		if err != nil {
 			t.Fatalf("read back: %v", err)
 		}
@@ -351,8 +353,8 @@ func TestDesktopWritePaths_EveryBodyNamesEveryColumnItsHandlerWrites(t *testing.
 	t.Run("expected CATID keeps the name and the description", func(t *testing.T) {
 		resp := doRequest(t, router, "PUT", "/api/styles/"+itoa(sid), bodies["expected catid"], cookie)
 		assertStatus(t, resp, http.StatusOK)
-		got, err := testDB.GetStyle(sid)
-		testutil.MustNoErr(t, err, "testDB.GetStyle")
+		got, err := db.GetStyle(sid)
+		testutil.MustNoErr(t, err, "db.GetStyle")
 		if got.ExpectedCATID != "CAT-NEW" {
 			t.Errorf("expected_catid = %q, want CAT-NEW", got.ExpectedCATID)
 		}
@@ -365,7 +367,7 @@ func TestDesktopWritePaths_EveryBodyNamesEveryColumnItsHandlerWrites(t *testing.
 	t.Run("a new style lands on this process with its CATID", func(t *testing.T) {
 		resp := doRequest(t, router, "POST", "/api/styles", bodies["new style"], cookie)
 		assertStatus(t, resp, http.StatusOK)
-		rows, err := testDB.ListStylesByProcess(pid)
+		rows, err := db.ListStylesByProcess(pid)
 		if err != nil {
 			t.Fatalf("list styles: %v", err)
 		}
@@ -392,7 +394,7 @@ func TestDesktopWritePaths_EveryBodyNamesEveryColumnItsHandlerWrites(t *testing.
 	t.Run("a new group takes its name and description", func(t *testing.T) {
 		resp := doRequest(t, router, "POST", "/api/process-groups", bodies["new group"], cookie)
 		assertStatus(t, resp, http.StatusOK)
-		groups, err := testDB.ListProcessGroups()
+		groups, err := db.ListProcessGroups()
 		if err != nil {
 			t.Fatalf("list groups: %v", err)
 		}
@@ -414,7 +416,7 @@ func TestDesktopWritePaths_EveryBodyNamesEveryColumnItsHandlerWrites(t *testing.
 	t.Run("clone takes the name and copies the rest", func(t *testing.T) {
 		resp := doRequest(t, router, "POST", "/api/styles/"+itoa(sid)+"/clone", bodies["clone"], cookie)
 		assertStatus(t, resp, http.StatusOK)
-		styles, err := testDB.ListStylesByProcess(pid)
+		styles, err := db.ListStylesByProcess(pid)
 		if err != nil {
 			t.Fatalf("list styles: %v", err)
 		}
@@ -433,12 +435,12 @@ func TestDesktopWritePaths_EveryBodyNamesEveryColumnItsHandlerWrites(t *testing.
 	})
 
 	t.Run("mark as running sets the active style and nothing else", func(t *testing.T) {
-		before, err := testDB.GetProcess(pid)
-		testutil.MustNoErr(t, err, "testDB.GetProcess")
+		before, err := db.GetProcess(pid)
+		testutil.MustNoErr(t, err, "db.GetProcess")
 		resp := doRequest(t, router, "PUT", "/api/processes/"+itoa(pid)+"/active-style", bodies["mark as running"], cookie)
 		assertStatus(t, resp, http.StatusOK)
-		got, err := testDB.GetProcess(pid)
-		testutil.MustNoErr(t, err, "testDB.GetProcess")
+		got, err := db.GetProcess(pid)
+		testutil.MustNoErr(t, err, "db.GetProcess")
 		if got.ActiveStyleID == nil || *got.ActiveStyleID != sid {
 			t.Errorf("active_style_id = %v, want %d", got.ActiveStyleID, sid)
 		}
@@ -451,7 +453,7 @@ func TestDesktopWritePaths_EveryBodyNamesEveryColumnItsHandlerWrites(t *testing.
 	t.Run("a screen edit keeps the five columns the sheet does not show", func(t *testing.T) {
 		resp := doRequest(t, router, "PUT", "/api/operator-stations/"+itoa(stationID), bodies["operator-screen edit"], cookie)
 		assertStatus(t, resp, http.StatusOK)
-		got, err := testDB.GetOperatorStation(stationID)
+		got, err := db.GetOperatorStation(stationID)
 		if err != nil {
 			t.Fatalf("read back: %v", err)
 		}
@@ -478,7 +480,7 @@ func TestDesktopWritePaths_EveryBodyNamesEveryColumnItsHandlerWrites(t *testing.
 	t.Run("a new screen arrives enabled, on this process", func(t *testing.T) {
 		resp := doRequest(t, router, "POST", "/api/operator-stations", bodies["operator-screen add"], cookie)
 		assertStatus(t, resp, http.StatusOK)
-		rows, err := testDB.ListOperatorStationsByProcess(pid)
+		rows, err := db.ListOperatorStationsByProcess(pid)
 		if err != nil {
 			t.Fatalf("list stations: %v", err)
 		}
@@ -500,7 +502,7 @@ func TestDesktopWritePaths_EveryBodyNamesEveryColumnItsHandlerWrites(t *testing.
 	t.Run("adopting a backfill enables it and records the engineer", func(t *testing.T) {
 		resp := doRequest(t, router, "PATCH", "/api/processes/"+itoa(pid)+"/routing-nodes/"+itoa(rowID), bodies["adopt"], cookie)
 		assertStatus(t, resp, http.StatusOK)
-		rows, err := testDB.ListRoutingNodes(pid)
+		rows, err := db.ListRoutingNodes(pid)
 		if err != nil {
 			t.Fatalf("list routing: %v", err)
 		}
@@ -523,8 +525,8 @@ func TestDesktopWritePaths_EveryBodyNamesEveryColumnItsHandlerWrites(t *testing.
 	t.Run("add-to-set stamps the origin server-side", func(t *testing.T) {
 		resp := doRequest(t, router, "POST", "/api/processes/"+itoa(pid)+"/routing-nodes", bodies["add-to-set"], cookie)
 		assertStatus(t, resp, http.StatusOK)
-		rows, err := testDB.ListRoutingNodes(pid)
-		testutil.MustNoErr(t, err, "testDB.ListRoutingNodes")
+		rows, err := db.ListRoutingNodes(pid)
+		testutil.MustNoErr(t, err, "db.ListRoutingNodes")
 		var found *domain.RoutingNode
 		for i := range rows {
 			if rows[i].CoreNodeName == "Supermarket Area" && rows[i].Role == domain.RoutingRoleDestination {
@@ -549,8 +551,8 @@ func TestDesktopWritePaths_EveryBodyNamesEveryColumnItsHandlerWrites(t *testing.
 	// Neither takes a body, so there is no builder and nothing to drift. What
 	// is worth pinning is that the URL the page uses is the one that works.
 	t.Run("the two deletes take no body", func(t *testing.T) {
-		rows, err := testDB.ListRoutingNodes(pid)
-		testutil.MustNoErr(t, err, "testDB.ListRoutingNodes")
+		rows, err := db.ListRoutingNodes(pid)
+		testutil.MustNoErr(t, err, "db.ListRoutingNodes")
 		var target int64
 		for _, r := range rows {
 			if r.CoreNodeName == "Supermarket Area" {
@@ -560,7 +562,7 @@ func TestDesktopWritePaths_EveryBodyNamesEveryColumnItsHandlerWrites(t *testing.
 		resp := doRequest(t, router, "DELETE", "/api/processes/"+itoa(pid)+"/routing-nodes/"+itoa(target), nil, cookie)
 		assertStatus(t, resp, http.StatusOK)
 
-		doomed := seedStyle(t, "WP-Doomed", pid)
+		doomed := seedStyle(t, db, "WP-Doomed", pid)
 		resp = doRequest(t, router, "DELETE", "/api/styles/"+itoa(doomed), nil, cookie)
 		assertStatus(t, resp, http.StatusOK)
 	})

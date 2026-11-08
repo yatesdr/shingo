@@ -36,6 +36,7 @@ import (
 // instrument is a headless Chrome measurement of the rendered modal, not a
 // cleverer regex.
 func TestModalDeclaresScrollContainment(t *testing.T) {
+	t.Parallel()
 	body, err := os.ReadFile("static/css/shingoedge.css")
 	if err != nil {
 		t.Fatalf("read shingoedge.css: %v", err)

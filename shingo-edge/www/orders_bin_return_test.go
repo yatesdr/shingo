@@ -11,6 +11,7 @@ import (
 // A cancelled order with a bin-return notice prints the one line; an order
 // without one prints nothing extra, and a page built without the map renders.
 func TestEdgeOrders_CancelledOrderShowsItsBinReturnLine(t *testing.T) {
+	t.Parallel()
 	orders := []domain.Order{
 		{ID: 3, UUID: "edge-cancelled-3", OrderType: protocol.OrderTypeRetrieve, Status: protocol.StatusCancelled},
 		{ID: 4, UUID: "edge-cancelled-4", OrderType: protocol.OrderTypeRetrieve, Status: protocol.StatusCancelled},
@@ -32,6 +33,7 @@ func TestEdgeOrders_CancelledOrderShowsItsBinReturnLine(t *testing.T) {
 // An ended order prints why it ended — Core's reason, one line — and an order
 // with none prints nothing extra; a page built without the map renders.
 func TestEdgeOrders_AnEndedOrderShowsWhyItEnded(t *testing.T) {
+	t.Parallel()
 	const why = "fleet order stopped — RDS error 60009: Cannot find path to new block target [PLN_05]"
 	orders := []domain.Order{
 		{ID: 5, UUID: "edge-cancelled-5", OrderType: protocol.OrderTypeComplex, Status: protocol.StatusCancelled},

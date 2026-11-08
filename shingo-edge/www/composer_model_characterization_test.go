@@ -34,6 +34,7 @@ import (
 // shape the server no longer speaks. Generating it means the pin fails the day
 // the cell changes, which is the day it should.
 func TestComposerModelCharacterization(t *testing.T) {
+	t.Parallel()
 	nodePath, err := exec.LookPath("node")
 	if err != nil {
 		t.Skipf("node not on PATH; skipping composer model characterization")

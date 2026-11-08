@@ -25,6 +25,7 @@ import (
 //
 // A new render helper that forgets shared.SetHTMLContentType fails here.
 func TestRenderTemplateIsCompressed(t *testing.T) {
+	t.Parallel()
 	// Long enough that gzip has something to work with; the real pages are
 	// tens to hundreds of KB.
 	body := strings.Repeat("<tr><td>row</td></tr>", 2000)

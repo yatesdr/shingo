@@ -14,6 +14,7 @@ import (
 // reads its own copy" (the 5 s poll, the baseline first poll, the modal that
 // swallowed the change). It is the only runner of that script.
 func TestContainmentJS_FeedsPin(t *testing.T) {
+	t.Parallel()
 	nodePath, err := exec.LookPath("node")
 	if err != nil {
 		t.Skipf("node not on PATH; skipping the containment JS pins")

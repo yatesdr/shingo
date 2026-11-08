@@ -19,6 +19,7 @@ import (
 // "templates/operator-display.html loads /static/operator-station/operator.js,
 // which reads the plant clock, but the page carries no clock globals."
 func TestEveryClockPageCarriesGlobals(t *testing.T) {
+	t.Parallel()
 	// Edge spells inclusion two ways: the partial directly (the operator
 	// kiosk, which has its own header) or the shared header that carries it.
 	carriers := []string{

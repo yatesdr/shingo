@@ -44,6 +44,7 @@ import (
 // outbound lane. WELD-2 itself is covered at the sim gate, not here: the Edge
 // module does not depend on the core plantspec that loads that yaml.
 func TestOperatorFlowPerModeCharacterisation(t *testing.T) {
+	t.Parallel()
 	nodePath, err := exec.LookPath("node")
 	if err != nil {
 		t.Skipf("node not on PATH; skipping per-mode characterisation")
@@ -218,6 +219,7 @@ var updateFlowPictureGolden = flag.Bool("update-flow-picture-golden", false,
 //
 // and read the diff: a regenerated golden pins nothing unless someone read it.
 func TestFlowPicture_PlantAGolden(t *testing.T) {
+	t.Parallel()
 	nodePath, err := exec.LookPath("node")
 	if err != nil {
 		t.Skipf("node not on PATH; skipping the picture golden")

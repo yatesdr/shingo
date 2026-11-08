@@ -16,22 +16,24 @@ import (
 // changeover heading for a style with no claims. Both are 409 with the reason.
 // An idle style retires as before.
 func TestApiDeleteStyle_RefusesActiveAndChangeoverTarget(t *testing.T) {
+	t.Parallel()
 	h, router := newAdminRouter(t)
+	db := dbOf(h)
 	cookie := authCookie(t, h)
-	pid := seedProcess(t, "StyleDeleteGuardLine")
+	pid := seedProcess(t, db, "StyleDeleteGuardLine")
 
 	mk := func(name string) int64 {
-		id, err := testDB.CreateStyle(name, "", pid)
+		id, err := db.CreateStyle(name, "", pid)
 		if err != nil {
 			t.Fatalf("CreateStyle %s: %v", name, err)
 		}
 		return id
 	}
 	active, target, idle := mk("SDG-Active"), mk("SDG-Target"), mk("SDG-Idle")
-	if err := testDB.SetActiveStyle(pid, &active); err != nil {
+	if err := db.SetActiveStyle(pid, &active); err != nil {
 		t.Fatalf("SetActiveStyle: %v", err)
 	}
-	if _, err := testDB.Exec(`INSERT INTO process_changeovers (process_id, from_style_id, to_style_id, state, called_by)
+	if _, err := db.Exec(`INSERT INTO process_changeovers (process_id, from_style_id, to_style_id, state, called_by)
 		VALUES (?, ?, ?, 'in_progress', 'test')`, pid, active, target); err != nil {
 		t.Fatalf("seed changeover: %v", err)
 	}
@@ -44,7 +46,7 @@ func TestApiDeleteStyle_RefusesActiveAndChangeoverTarget(t *testing.T) {
 	assertStatus(t, del(idle), http.StatusOK)
 
 	for _, id := range []int64{active, target} {
-		s, err := testDB.GetStyle(id)
+		s, err := db.GetStyle(id)
 		if err != nil {
 			t.Fatalf("GetStyle %d: %v", id, err)
 		}
@@ -52,7 +54,7 @@ func TestApiDeleteStyle_RefusesActiveAndChangeoverTarget(t *testing.T) {
 			t.Errorf("style %d was retired by a refused delete", id)
 		}
 	}
-	if s, _ := testDB.GetStyle(idle); s == nil || s.DeletedAt == nil {
+	if s, _ := db.GetStyle(idle); s == nil || s.DeletedAt == nil {
 		t.Errorf("idle style was not retired")
 	}
 }

@@ -12,6 +12,7 @@ import (
 // keeps it. The server refuses the pull too (release gate G9); this pins what
 // the operator is offered.
 func TestOperatorReleaseChangeover(t *testing.T) {
+	t.Parallel()
 	nodePath, err := exec.LookPath("node")
 	if err != nil {
 		t.Skipf("node not on PATH; skipping release changeover test")

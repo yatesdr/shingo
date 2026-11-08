@@ -38,10 +38,12 @@ func laneLegsCore() map[string]protocol.NodeInfo {
 // refused too (owner, 2026-10-04): a staging node is the spot a robot waits
 // at, and a lane has no bin of its own to answer for it.
 func TestRoutingNodes_RefusesALaneAsASourceOrDestination(t *testing.T) {
+	t.Parallel()
 	h, router := newAdminRouter(t)
+	db := dbOf(h)
 	cookie := authCookie(t, h)
 	h.engine.(*stubEngine).core = laneLegsCore()
-	pid := seedProcess(t, "LL-Routing")
+	pid := seedProcess(t, db, "LL-Routing")
 	url := "/api/processes/" + itoa(pid) + "/routing-nodes"
 
 	for role, sentence := range map[string]string{
@@ -61,7 +63,7 @@ func TestRoutingNodes_RefusesALaneAsASourceOrDestination(t *testing.T) {
 			t.Errorf("PUT %s: error = %q, want it to start %q", role, msg, sentence)
 		}
 	}
-	rows, err := testDB.ListRoutingNodes(pid)
+	rows, err := db.ListRoutingNodes(pid)
 	testutil.MustNoErr(t, err, "list routing nodes")
 	if len(rows) != 0 {
 		t.Fatalf("a refused body landed: %+v", rows)
@@ -75,14 +77,16 @@ func TestRoutingNodes_RefusesALaneAsASourceOrDestination(t *testing.T) {
 // a staging leg refuses a lane too; the group rows stay. Both composer reads,
 // the desktop's and the station's, go through the same filter.
 func TestComposer_OffersNoLaneChipOnASourceOrDestination(t *testing.T) {
+	t.Parallel()
 	h, _ := newAdminRouter(t)
-	pid := seedProcess(t, "LL-Composer")
+	db := dbOf(h)
+	pid := seedProcess(t, db, "LL-Composer")
 	for _, row := range []struct{ name, role string }{
 		{"LL-LANE", "source"}, {"LL-SUP", "source"},
 		{"LL-LANE", "destination"}, {"LL-SUP", "destination"},
 		{"LL-LANE", "staging"},
 	} {
-		_, err := testDB.UpsertRoutingNode(domain.CoreNodeKinds{}, processes.RoutingNodeInput{
+		_, err := db.UpsertRoutingNode(domain.CoreNodeKinds{}, processes.RoutingNodeInput{
 			ProcessID: pid, CoreNodeName: row.name, Role: row.role, Enabled: true,
 			Origin: domain.RoutingOriginEngineer,
 		})

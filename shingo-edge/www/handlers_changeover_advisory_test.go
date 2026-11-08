@@ -14,6 +14,7 @@ import (
 // assertion answers a narrower question that reads identically when the element
 // is hidden, the list is empty, or the node names never make it in.
 func TestChangeoverAdvisoryRenders(t *testing.T) {
+	t.Parallel()
 	nodePath, err := exec.LookPath("node")
 	if err != nil {
 		t.Skipf("node not on PATH; skipping changeover advisory render test")

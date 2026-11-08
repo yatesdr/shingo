@@ -12,6 +12,7 @@ import (
 // modal it came from, and one tap sends one request. Skipped if `node` is
 // not on PATH (matches the other JS test wrappers).
 func TestOperatorSafeTapsJS(t *testing.T) {
+	t.Parallel()
 	nodePath, err := exec.LookPath("node")
 	if err != nil {
 		t.Skipf("node not on PATH; skipping JS unit tests")

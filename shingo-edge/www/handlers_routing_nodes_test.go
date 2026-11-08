@@ -8,6 +8,7 @@ import (
 	"shingo/protocol"
 	"shingo/protocol/testutil"
 	"shingoedge/domain"
+	"shingoedge/store"
 	"shingoedge/store/processes"
 )
 
@@ -25,10 +26,10 @@ type routingSetResponse struct {
 	Rows []domain.RoutingNode `json:"rows"`
 }
 
-func seedRoutingClaim(t *testing.T, pid int64, styleName string) int64 {
+func seedRoutingClaim(t *testing.T, db *store.DB, pid int64, styleName string) int64 {
 	t.Helper()
-	sid := seedStyle(t, styleName, pid)
-	if _, err := testDB.UpsertStyleNodeClaim(domain.CoreNodeKinds{}, processes.NodeClaimInput{
+	sid := seedStyle(t, db, styleName, pid)
+	if _, err := db.UpsertStyleNodeClaim(domain.CoreNodeKinds{}, processes.NodeClaimInput{
 		StyleID: sid, CoreNodeName: "RT-PRESS", Role: "consume", SwapMode: "two_robot",
 		PayloadCode: "RAW", InboundStaging: "RT_STG_01", InboundSource: "SMN_BUF_100",
 		OutboundDestination: "Supermarket Area",
@@ -40,14 +41,14 @@ func seedRoutingClaim(t *testing.T, pid int64, styleName string) int64 {
 
 // seedBackfilledRows writes the rows the one-time backfill (migration v25)
 // would have written for seedRoutingClaim's claim: origin backfill, enabled.
-func seedBackfilledRows(t *testing.T, pid int64) {
+func seedBackfilledRows(t *testing.T, db *store.DB, pid int64) {
 	t.Helper()
 	for _, r := range []struct{ name, role string }{
 		{"SMN_BUF_100", domain.RoutingRoleSource},
 		{"RT_STG_01", domain.RoutingRoleStaging},
 		{"Supermarket Area", domain.RoutingRoleDestination},
 	} {
-		if _, err := testDB.UpsertRoutingNode(domain.CoreNodeKinds{}, domain.RoutingNodeInput{
+		if _, err := db.UpsertRoutingNode(domain.CoreNodeKinds{}, domain.RoutingNodeInput{
 			ProcessID: pid, CoreNodeName: r.name, Role: r.role, Enabled: true, Origin: domain.RoutingOriginBackfill,
 		}); err != nil {
 			t.Fatalf("seed backfilled row %s: %v", r.name, err)
@@ -59,11 +60,13 @@ func seedBackfilledRows(t *testing.T, pid int64) {
 // rows in the set, and POST …/derive — the re-derive no screen ever called —
 // is no longer routed (pick-a-part unit A).
 func TestRoutingNodes_GetIsTheRowsAndTheDeriveRouteIsGone(t *testing.T) {
+	t.Parallel()
 	h, router := newAdminRouter(t)
+	db := dbOf(h)
 	cookie := authCookie(t, h)
-	pid := seedProcess(t, "RT-Derive")
-	seedRoutingClaim(t, pid, "RT-Derive-Style")
-	seedBackfilledRows(t, pid)
+	pid := seedProcess(t, db, "RT-Derive")
+	seedRoutingClaim(t, db, pid, "RT-Derive-Style")
+	seedBackfilledRows(t, db, pid)
 
 	resp := doRequest(t, router, "GET", "/api/processes/"+itoa(pid)+"/routing-nodes", nil, cookie)
 	assertStatus(t, resp, http.StatusOK)
@@ -91,10 +94,12 @@ func TestRoutingNodes_GetIsTheRowsAndTheDeriveRouteIsGone(t *testing.T) {
 // otherwise. The Core-name guard applies exactly as it does to a
 // process_node write, and a position is refused.
 func TestRoutingNodes_PostStampsEngineerAndSessionUser(t *testing.T) {
+	t.Parallel()
 	h, router := newAdminRouter(t)
+	db := dbOf(h)
 	cookie := authCookie(t, h)
-	pid := seedProcess(t, "RT-Post")
-	seedProcessNode(t, pid, 0, "RT-POS-01")
+	pid := seedProcess(t, db, "RT-Post")
+	seedProcessNode(t, db, pid, 0, "RT-POS-01")
 	h.engine.(*stubEngine).core = map[string]protocol.NodeInfo{"Supermarket Area": {}, "RT-POS-01": {}}
 
 	resp := doRequest(t, router, "POST", "/api/processes/"+itoa(pid)+"/routing-nodes", map[string]any{
@@ -102,8 +107,8 @@ func TestRoutingNodes_PostStampsEngineerAndSessionUser(t *testing.T) {
 		"origin": "backfill", "called_by": "mallory",
 	}, cookie)
 	assertStatus(t, resp, http.StatusOK)
-	rows, err := testDB.ListRoutingNodes(pid)
-	testutil.MustNoErr(t, err, "testDB.ListRoutingNodes")
+	rows, err := db.ListRoutingNodes(pid)
+	testutil.MustNoErr(t, err, "db.ListRoutingNodes")
 	if len(rows) != 1 {
 		t.Fatalf("rows = %+v, want one", rows)
 	}
@@ -141,13 +146,15 @@ func TestRoutingNodes_PostStampsEngineerAndSessionUser(t *testing.T) {
 // and stamps the user; DELETE is refused with 409 and the style's name while
 // a live claim routes through the node, and succeeds once nothing does.
 func TestRoutingNodes_AdoptAndDelete(t *testing.T) {
+	t.Parallel()
 	h, router := newAdminRouter(t)
+	db := dbOf(h)
 	cookie := authCookie(t, h)
-	pid := seedProcess(t, "RT-Adopt")
-	seedRoutingClaim(t, pid, "RT-Adopt-Style")
-	seedBackfilledRows(t, pid)
-	rows, err := testDB.ListRoutingNodes(pid)
-	testutil.MustNoErr(t, err, "testDB.ListRoutingNodes")
+	pid := seedProcess(t, db, "RT-Adopt")
+	seedRoutingClaim(t, db, pid, "RT-Adopt-Style")
+	seedBackfilledRows(t, db, pid)
+	rows, err := db.ListRoutingNodes(pid)
+	testutil.MustNoErr(t, err, "db.ListRoutingNodes")
 	var source, staging domain.RoutingNode
 	for _, r := range rows {
 		switch r.Role {
@@ -165,8 +172,8 @@ func TestRoutingNodes_AdoptAndDelete(t *testing.T) {
 	// name from one still waiting, and the summary line counting it forever.
 	resp := doRequest(t, router, "PATCH", "/api/processes/"+itoa(pid)+"/routing-nodes/"+itoa(source.ID), map[string]any{"enabled": true}, cookie)
 	assertStatus(t, resp, http.StatusOK)
-	rows, err = testDB.ListRoutingNodes(pid)
-	testutil.MustNoErr(t, err, "testDB.ListRoutingNodes")
+	rows, err = db.ListRoutingNodes(pid)
+	testutil.MustNoErr(t, err, "db.ListRoutingNodes")
 	for _, r := range rows {
 		if r.ID == source.ID && (!r.Enabled || r.CalledBy != "testadmin" || r.Origin != domain.RoutingOriginEngineer) {
 			t.Fatalf("adopted row = %+v, want enabled, called_by testadmin, origin engineer", r)
@@ -175,8 +182,8 @@ func TestRoutingNodes_AdoptAndDelete(t *testing.T) {
 	// And the evidence the panel shows came back with it: the live styles whose
 	// claim names this node in THIS role. Off the PANEL's read, which is the
 	// only one that counts — the hot reads take the plain list.
-	rows, err = testDB.ListRoutingNodesWithCounts(pid)
-	testutil.MustNoErr(t, err, "testDB.ListRoutingNodesWithCounts")
+	rows, err = db.ListRoutingNodesWithCounts(pid)
+	testutil.MustNoErr(t, err, "db.ListRoutingNodesWithCounts")
 	for _, r := range rows {
 		if r.ID == source.ID && r.StyleCount != 1 {
 			t.Errorf("adopted row style_count = %d, want 1 — the panel has no evidence to show under the name", r.StyleCount)
@@ -197,7 +204,7 @@ func TestRoutingNodes_AdoptAndDelete(t *testing.T) {
 		t.Errorf("status = %v, want ok", body["status"])
 	}
 	// And a row of another process is not reachable through this one.
-	other := seedProcess(t, "RT-Adopt-Other")
+	other := seedProcess(t, db, "RT-Adopt-Other")
 	resp = doRequest(t, router, "DELETE", "/api/processes/"+itoa(other)+"/routing-nodes/"+itoa(source.ID), nil, cookie)
 	assertStatus(t, resp, http.StatusNotFound)
 }
@@ -205,26 +212,28 @@ func TestRoutingNodes_AdoptAndDelete(t *testing.T) {
 // TestProcess_PatchFlowComposerEnabled: the gate is its own PATCH on the
 // process, and it persists both ways.
 func TestProcess_PatchFlowComposerEnabled(t *testing.T) {
+	t.Parallel()
 	h, router := newAdminRouter(t)
+	db := dbOf(h)
 	cookie := authCookie(t, h)
-	pid := seedProcess(t, "RT-Gate")
-	seedRoutingClaim(t, pid, "RT-Gate-Style")
+	pid := seedProcess(t, db, "RT-Gate")
+	seedRoutingClaim(t, db, pid, "RT-Gate-Style")
 
 	resp := doRequest(t, router, "PATCH", "/api/processes/"+itoa(pid), map[string]any{}, cookie)
 	assertStatus(t, resp, http.StatusBadRequest)
 
 	resp = doRequest(t, router, "PATCH", "/api/processes/"+itoa(pid), map[string]any{"flow_composer_enabled": true}, cookie)
 	assertStatus(t, resp, http.StatusOK)
-	p, err := testDB.GetProcess(pid)
-	testutil.MustNoErr(t, err, "testDB.GetProcess")
+	p, err := db.GetProcess(pid)
+	testutil.MustNoErr(t, err, "db.GetProcess")
 	if !p.FlowComposerEnabled {
 		t.Fatal("PATCH flow_composer_enabled=true did not persist")
 	}
 
 	resp = doRequest(t, router, "PATCH", "/api/processes/"+itoa(pid), map[string]any{"flow_composer_enabled": false}, cookie)
 	assertStatus(t, resp, http.StatusOK)
-	p, err = testDB.GetProcess(pid)
-	testutil.MustNoErr(t, err, "testDB.GetProcess")
+	p, err = db.GetProcess(pid)
+	testutil.MustNoErr(t, err, "db.GetProcess")
 	if p.FlowComposerEnabled {
 		t.Fatal("PATCH flow_composer_enabled=false did not persist")
 	}

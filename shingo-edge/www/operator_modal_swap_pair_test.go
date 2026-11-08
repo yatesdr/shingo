@@ -21,6 +21,7 @@ import (
 //
 // Skipped if `node` is not on PATH (matches the other JS test wrappers).
 func TestOperatorModalSwapPairJS(t *testing.T) {
+	t.Parallel()
 	nodePath, err := exec.LookPath("node")
 	if err != nil {
 		t.Skipf("node not on PATH; skipping JS unit tests")

@@ -195,6 +195,9 @@ func realFlowRouter(t *testing.T, db *store.DB) (*Handlers, *chi.Mux) {
 
 // realFlowRouterEngine is realFlowRouter with the engine behind it, for a test
 // that holds Core's bins copy on it.
+//
+// A test that builds one is not parallel: NewRouter sets plantLocation, the
+// package variable every template render reads, so a parallel render races it.
 func realFlowRouterEngine(t *testing.T, db *store.DB) (*Handlers, *chi.Mux, *engine.Engine) {
 	t.Helper()
 	cfg := config.Defaults()

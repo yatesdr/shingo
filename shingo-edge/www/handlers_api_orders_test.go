@@ -67,6 +67,7 @@ func newApiOrdersRouter(t *testing.T) (*Handlers, *chi.Mux) {
 // different authorities. Both directions are asserted so a later "tidy the
 // routes" pass cannot move one without noticing the other.
 func TestApiOrders_CreationRequiresAuth_LifecycleDoesNot(t *testing.T) {
+	t.Parallel()
 	h, r := newTestHandlers(t)
 	r.Route("/api", func(r chi.Router) {
 		r.Post("/orders/{orderID}/release", h.apiReleaseOrder)
@@ -129,7 +130,9 @@ func TestApiOrders_CreationRequiresAuth_LifecycleDoesNot(t *testing.T) {
 // ═══════════════════════════════════════════════════════════════════════
 
 func TestApiOrders_CreateRetrieveOrder_Success(t *testing.T) {
-	_, router := newApiOrdersRouter(t)
+	t.Parallel()
+	h, router := newApiOrdersRouter(t)
+	db := dbOf(h)
 
 	body := map[string]any{
 		"payload_code":  "BIN-RET-1",
@@ -152,7 +155,7 @@ func TestApiOrders_CreateRetrieveOrder_Success(t *testing.T) {
 	}
 
 	// Verify DB state: auto-submit transitioned pending → submitted.
-	stored, err := testDB.GetOrder(order.ID)
+	stored, err := db.GetOrder(order.ID)
 	if err != nil {
 		t.Fatalf("GetOrder: %v", err)
 	}
@@ -163,12 +166,14 @@ func TestApiOrders_CreateRetrieveOrder_Success(t *testing.T) {
 }
 
 func TestApiOrders_CreateRetrieveOrder_ResolvesDeliveryFromNode(t *testing.T) {
-	_, router := newApiOrdersRouter(t)
+	t.Parallel()
+	h, router := newApiOrdersRouter(t)
+	db := dbOf(h)
 
 	// Seed a process node so the handler's GetProcessNode lookup succeeds
 	// and fills DeliveryNode from node.CoreNodeName.
-	pid := seedProcess(t, "RetResolveLine")
-	nodeID := seedProcessNode(t, pid, 0, "core-node-ret-x")
+	pid := seedProcess(t, db, "RetResolveLine")
+	nodeID := seedProcessNode(t, db, pid, 0, "core-node-ret-x")
 
 	body := map[string]any{
 		"process_node_id": nodeID,
@@ -188,6 +193,7 @@ func TestApiOrders_CreateRetrieveOrder_ResolvesDeliveryFromNode(t *testing.T) {
 }
 
 func TestApiOrders_CreateRetrieveOrder_BatchSuccess(t *testing.T) {
+	t.Parallel()
 	_, router := newApiOrdersRouter(t)
 
 	body := map[string]any{
@@ -226,6 +232,7 @@ func TestApiOrders_CreateRetrieveOrder_BatchSuccess(t *testing.T) {
 }
 
 func TestApiOrders_CreateRetrieveOrder_BatchExceedsMax(t *testing.T) {
+	t.Parallel()
 	_, router := newApiOrdersRouter(t)
 
 	body := map[string]any{
@@ -239,6 +246,7 @@ func TestApiOrders_CreateRetrieveOrder_BatchExceedsMax(t *testing.T) {
 }
 
 func TestApiOrders_CreateRetrieveOrder_BatchMissingFields(t *testing.T) {
+	t.Parallel()
 	_, router := newApiOrdersRouter(t)
 
 	// count > 1 but no payload_code or delivery_node → rejected.
@@ -249,7 +257,9 @@ func TestApiOrders_CreateRetrieveOrder_BatchMissingFields(t *testing.T) {
 }
 
 func TestApiOrders_CreateMoveOrder_Success(t *testing.T) {
-	_, router := newApiOrdersRouter(t)
+	t.Parallel()
+	h, router := newApiOrdersRouter(t)
+	db := dbOf(h)
 
 	body := map[string]any{
 		"quantity":      4,
@@ -269,7 +279,7 @@ func TestApiOrders_CreateMoveOrder_Success(t *testing.T) {
 			order.SourceNode, order.DeliveryNode)
 	}
 
-	stored, _ := testDB.GetOrder(order.ID)
+	stored, _ := db.GetOrder(order.ID)
 	if stored.Status != orders.StatusSubmitted {
 		t.Errorf("status: got %q, want %q (auto-submit)",
 			stored.Status, orders.StatusSubmitted)
@@ -277,7 +287,9 @@ func TestApiOrders_CreateMoveOrder_Success(t *testing.T) {
 }
 
 func TestApiOrders_CreateComplexOrder_Success(t *testing.T) {
-	_, router := newApiOrdersRouter(t)
+	t.Parallel()
+	h, router := newApiOrdersRouter(t)
+	db := dbOf(h)
 
 	body := map[string]any{
 		"quantity": 2,
@@ -297,13 +309,14 @@ func TestApiOrders_CreateComplexOrder_Success(t *testing.T) {
 
 	// Verify DB state: steps_json should be populated.
 	var stepsJSON string
-	testDB.QueryRow("SELECT COALESCE(steps_json,'') FROM orders WHERE id=?", order.ID).Scan(&stepsJSON)
+	db.QueryRow("SELECT COALESCE(steps_json,'') FROM orders WHERE id=?", order.ID).Scan(&stepsJSON)
 	if stepsJSON == "" {
 		t.Error("expected steps_json to be populated for complex order")
 	}
 }
 
 func TestApiOrders_CreateComplexOrder_MissingSteps(t *testing.T) {
+	t.Parallel()
 	_, router := newApiOrdersRouter(t)
 
 	body := map[string]any{"quantity": 1}
@@ -313,6 +326,7 @@ func TestApiOrders_CreateComplexOrder_MissingSteps(t *testing.T) {
 }
 
 func TestApiOrders_CreateIngestOrder_Success(t *testing.T) {
+	t.Parallel()
 	_, router := newApiOrdersRouter(t)
 
 	body := map[string]any{
@@ -340,6 +354,7 @@ func TestApiOrders_CreateIngestOrder_Success(t *testing.T) {
 }
 
 func TestApiOrders_CreateIngestOrder_MissingPayloadCode(t *testing.T) {
+	t.Parallel()
 	_, router := newApiOrdersRouter(t)
 
 	body := map[string]any{
@@ -353,6 +368,7 @@ func TestApiOrders_CreateIngestOrder_MissingPayloadCode(t *testing.T) {
 }
 
 func TestApiOrders_CreateIngestOrder_MissingBinLabel(t *testing.T) {
+	t.Parallel()
 	_, router := newApiOrdersRouter(t)
 
 	body := map[string]any{
@@ -369,6 +385,7 @@ func TestApiOrders_CreateIngestOrder_MissingBinLabel(t *testing.T) {
 // a syntactically valid body whose field has the wrong type, forcing the
 // json.Decoder to fail. Each handler returns 400.
 func TestApiOrders_CreateOrder_InvalidJSON(t *testing.T) {
+	t.Parallel()
 	_, router := newApiOrdersRouter(t)
 
 	// quantity is int64 on every create-order request struct, so a string
@@ -400,9 +417,11 @@ func TestApiOrders_CreateOrder_InvalidJSON(t *testing.T) {
 // ═══════════════════════════════════════════════════════════════════════
 
 func TestApiOrders_ConfirmDelivery_Success(t *testing.T) {
-	_, router := newApiOrdersRouter(t)
+	t.Parallel()
+	h, router := newApiOrdersRouter(t)
+	db := dbOf(h)
 
-	orderID := seedOrder(t, orders.TypeRetrieve, orders.StatusDelivered)
+	orderID := seedOrder(t, db, orders.TypeRetrieve, orders.StatusDelivered)
 
 	body := map[string]int64{"final_count": 42}
 	resp := doRequest(t, router, "POST", "/api/confirm-delivery/"+itoa(orderID), body, nil)
@@ -410,7 +429,7 @@ func TestApiOrders_ConfirmDelivery_Success(t *testing.T) {
 	assertJSONPath(t, resp, "status", "ok")
 
 	// Verify DB state: transitioned to confirmed with final_count=42.
-	stored, err := testDB.GetOrder(orderID)
+	stored, err := db.GetOrder(orderID)
 	if err != nil {
 		t.Fatalf("GetOrder: %v", err)
 	}
@@ -423,6 +442,7 @@ func TestApiOrders_ConfirmDelivery_Success(t *testing.T) {
 }
 
 func TestApiOrders_ConfirmDelivery_InvalidID(t *testing.T) {
+	t.Parallel()
 	_, router := newApiOrdersRouter(t)
 
 	body := map[string]int64{"final_count": 1}
@@ -432,9 +452,11 @@ func TestApiOrders_ConfirmDelivery_InvalidID(t *testing.T) {
 }
 
 func TestApiOrders_ConfirmDelivery_InvalidJSON(t *testing.T) {
-	_, router := newApiOrdersRouter(t)
+	t.Parallel()
+	h, router := newApiOrdersRouter(t)
+	db := dbOf(h)
 
-	orderID := seedOrder(t, orders.TypeRetrieve, orders.StatusDelivered)
+	orderID := seedOrder(t, db, orders.TypeRetrieve, orders.StatusDelivered)
 
 	body := map[string]any{"final_count": "nope"}
 	resp := doRequest(t, router, "POST", "/api/confirm-delivery/"+itoa(orderID), body, nil)
@@ -442,10 +464,12 @@ func TestApiOrders_ConfirmDelivery_InvalidJSON(t *testing.T) {
 }
 
 func TestApiOrders_ConfirmDelivery_WrongStatus(t *testing.T) {
-	_, router := newApiOrdersRouter(t)
+	t.Parallel()
+	h, router := newApiOrdersRouter(t)
+	db := dbOf(h)
 
 	// Pending orders cannot be confirmed — must be delivered first.
-	orderID := seedOrder(t, orders.TypeRetrieve, orders.StatusPending)
+	orderID := seedOrder(t, db, orders.TypeRetrieve, orders.StatusPending)
 
 	body := map[string]int64{"final_count": 1}
 	resp := doRequest(t, router, "POST", "/api/confirm-delivery/"+itoa(orderID), body, nil)
@@ -466,9 +490,11 @@ func TestApiOrders_ConfirmDelivery_WrongStatus(t *testing.T) {
 // ═══════════════════════════════════════════════════════════════════════
 
 func TestApiOrders_ReleaseOrder_Success(t *testing.T) {
-	_, router := newApiOrdersRouter(t)
+	t.Parallel()
+	h, router := newApiOrdersRouter(t)
+	db := dbOf(h)
 
-	orderID := seedOrder(t, orders.TypeRetrieve, orders.StatusStaged)
+	orderID := seedOrder(t, db, orders.TypeRetrieve, orders.StatusStaged)
 
 	body := map[string]any{
 		"called_by": "test-station",
@@ -477,7 +503,7 @@ func TestApiOrders_ReleaseOrder_Success(t *testing.T) {
 	assertStatus(t, resp, http.StatusOK)
 	assertJSONPath(t, resp, "status", "ok")
 
-	stored, _ := testDB.GetOrder(orderID)
+	stored, _ := db.GetOrder(orderID)
 	if stored.Status != orders.StatusInTransit {
 		t.Errorf("status after release: got %q, want %q",
 			stored.Status, orders.StatusInTransit)
@@ -489,15 +515,18 @@ func TestApiOrders_ReleaseOrder_Success(t *testing.T) {
 // 400. Empty called_by is now defaulted (2026-04-29 hotfix) instead of
 // rejected — the audit trail remains attributable.
 func TestApiOrders_ReleaseOrder_RejectsBareBody(t *testing.T) {
-	_, router := newApiOrdersRouter(t)
+	t.Parallel()
+	h, router := newApiOrdersRouter(t)
+	db := dbOf(h)
 
-	orderID := seedOrder(t, orders.TypeRetrieve, orders.StatusStaged)
+	orderID := seedOrder(t, db, orders.TypeRetrieve, orders.StatusStaged)
 
 	resp := doRequest(t, router, "POST", "/api/orders/"+itoa(orderID)+"/release", nil, nil)
 	assertStatus(t, resp, http.StatusBadRequest)
 }
 
 func TestApiOrders_ReleaseOrder_InvalidID(t *testing.T) {
+	t.Parallel()
 	_, router := newApiOrdersRouter(t)
 
 	resp := doRequest(t, router, "POST", "/api/orders/bad/release", nil, nil)
@@ -506,11 +535,13 @@ func TestApiOrders_ReleaseOrder_InvalidID(t *testing.T) {
 }
 
 func TestApiOrders_ReleaseOrder_WrongStatus(t *testing.T) {
-	_, router := newApiOrdersRouter(t)
+	t.Parallel()
+	h, router := newApiOrdersRouter(t)
+	db := dbOf(h)
 
 	// A terminal order cannot be released: the per-order act skips it, and
 	// the click names that one order, so the API answers with an error.
-	orderID := seedOrder(t, orders.TypeRetrieve, orders.StatusConfirmed)
+	orderID := seedOrder(t, db, orders.TypeRetrieve, orders.StatusConfirmed)
 
 	body := map[string]any{
 		"called_by": "test-station",
@@ -527,8 +558,10 @@ func TestApiOrders_ReleaseOrder_WrongStatus(t *testing.T) {
 // downgraded. CalledBy still flows for audit. Pairs with the log.Printf
 // in buildReleaseDisposition that catches typos.
 func TestApiOrders_ReleaseOrder_UnknownDispositionFallsBackToNoOp(t *testing.T) {
+	t.Parallel()
 	h, router := newApiOrdersRouter(t)
-	orderID := seedOrder(t, orders.TypeRetrieve, orders.StatusStaged)
+	db := dbOf(h)
+	orderID := seedOrder(t, db, orders.TypeRetrieve, orders.StatusStaged)
 
 	body := map[string]any{
 		"disposition": "send_partial_bak", // deliberate typo
@@ -555,8 +588,10 @@ func TestApiOrders_ReleaseOrder_UnknownDispositionFallsBackToNoOp(t *testing.T) 
 // the explicit capture_lineside disposition from the NOTHING PULLED button
 // or per-part qty submission is correctly mapped to the engine.
 func TestApiOrders_ReleaseOrder_CaptureLinesideDispositionFlows(t *testing.T) {
+	t.Parallel()
 	h, router := newApiOrdersRouter(t)
-	orderID := seedOrder(t, orders.TypeRetrieve, orders.StatusStaged)
+	db := dbOf(h)
+	orderID := seedOrder(t, db, orders.TypeRetrieve, orders.StatusStaged)
 
 	body := map[string]any{
 		"disposition": "capture_lineside",
@@ -584,8 +619,10 @@ func TestApiOrders_ReleaseOrder_CaptureLinesideDispositionFlows(t *testing.T) {
 // engine, qty_by_part is dropped (no capture for partial-back), CalledBy
 // flows through.
 func TestApiOrders_ReleaseOrder_SendPartialBackDispositionFlows(t *testing.T) {
+	t.Parallel()
 	h, router := newApiOrdersRouter(t)
-	orderID := seedOrder(t, orders.TypeRetrieve, orders.StatusStaged)
+	db := dbOf(h)
+	orderID := seedOrder(t, db, orders.TypeRetrieve, orders.StatusStaged)
 
 	body := map[string]any{
 		"disposition": "send_partial_back",
@@ -615,16 +652,18 @@ func TestApiOrders_ReleaseOrder_SendPartialBackDispositionFlows(t *testing.T) {
 // ═══════════════════════════════════════════════════════════════════════
 
 func TestApiOrders_SubmitOrder_Success(t *testing.T) {
-	_, router := newApiOrdersRouter(t)
+	t.Parallel()
+	h, router := newApiOrdersRouter(t)
+	db := dbOf(h)
 
 	// Use a retrieve order — a straightforward pending → submitted transition.
-	orderID := seedOrder(t, orders.TypeRetrieve, orders.StatusPending)
+	orderID := seedOrder(t, db, orders.TypeRetrieve, orders.StatusPending)
 
 	resp := doRequest(t, router, "POST", "/api/orders/"+itoa(orderID)+"/submit", nil, nil)
 	assertStatus(t, resp, http.StatusOK)
 	assertJSONPath(t, resp, "status", "ok")
 
-	stored, _ := testDB.GetOrder(orderID)
+	stored, _ := db.GetOrder(orderID)
 	if stored.Status != orders.StatusSubmitted {
 		t.Errorf("status after submit: got %q, want %q",
 			stored.Status, orders.StatusSubmitted)
@@ -632,6 +671,7 @@ func TestApiOrders_SubmitOrder_Success(t *testing.T) {
 }
 
 func TestApiOrders_SubmitOrder_InvalidID(t *testing.T) {
+	t.Parallel()
 	_, router := newApiOrdersRouter(t)
 
 	resp := doRequest(t, router, "POST", "/api/orders/bad/submit", nil, nil)
@@ -640,9 +680,10 @@ func TestApiOrders_SubmitOrder_InvalidID(t *testing.T) {
 }
 
 func TestApiOrders_SubmitOrder_MissingOrder(t *testing.T) {
+	t.Parallel()
 	_, router := newApiOrdersRouter(t)
 
-	// Order ID 99999999 should not exist in testDB.
+	// Order ID 99999999 should not exist in the test's database.
 	resp := doRequest(t, router, "POST", "/api/orders/99999999/submit", nil, nil)
 	assertStatus(t, resp, http.StatusBadRequest)
 }
@@ -655,14 +696,16 @@ func TestApiOrders_SubmitOrder_MissingOrder(t *testing.T) {
 // ═══════════════════════════════════════════════════════════════════════
 
 func TestApiOrders_AbortOrder_Success(t *testing.T) {
-	_, router := newApiOrdersRouter(t)
+	t.Parallel()
+	h, router := newApiOrdersRouter(t)
+	db := dbOf(h)
 
-	orderID := seedOrder(t, orders.TypeRetrieve, orders.StatusSubmitted)
+	orderID := seedOrder(t, db, orders.TypeRetrieve, orders.StatusSubmitted)
 
 	resp := doRequest(t, router, "POST", "/api/orders/"+itoa(orderID)+"/abort", nil, nil)
 	assertStatus(t, resp, http.StatusOK)
 
-	stored, _ := testDB.GetOrder(orderID)
+	stored, _ := db.GetOrder(orderID)
 	if stored.Status != orders.StatusCancelled {
 		t.Errorf("status after abort: got %q, want %q",
 			stored.Status, orders.StatusCancelled)
@@ -670,6 +713,7 @@ func TestApiOrders_AbortOrder_Success(t *testing.T) {
 }
 
 func TestApiOrders_AbortOrder_InvalidID(t *testing.T) {
+	t.Parallel()
 	_, router := newApiOrdersRouter(t)
 
 	resp := doRequest(t, router, "POST", "/api/orders/bad/abort", nil, nil)
@@ -678,10 +722,12 @@ func TestApiOrders_AbortOrder_InvalidID(t *testing.T) {
 }
 
 func TestApiOrders_AbortOrder_AlreadyTerminal(t *testing.T) {
-	_, router := newApiOrdersRouter(t)
+	t.Parallel()
+	h, router := newApiOrdersRouter(t)
+	db := dbOf(h)
 
 	// Cancelled (terminal) orders cannot be aborted again.
-	orderID := seedOrder(t, orders.TypeRetrieve, orders.StatusCancelled)
+	orderID := seedOrder(t, db, orders.TypeRetrieve, orders.StatusCancelled)
 
 	resp := doRequest(t, router, "POST", "/api/orders/"+itoa(orderID)+"/abort", nil, nil)
 	assertStatus(t, resp, http.StatusBadRequest)
@@ -696,6 +742,7 @@ func TestApiOrders_AbortOrder_AlreadyTerminal(t *testing.T) {
 // ═══════════════════════════════════════════════════════════════════════
 
 func TestApiOrders_DecodeHelper_StringInsteadOfInt(t *testing.T) {
+	t.Parallel()
 	// Sanity: {"quantity":"x"} is syntactically valid JSON — it fails at
 	// decode-time, not marshal-time.
 	b, err := json.Marshal(map[string]any{"quantity": "x"})

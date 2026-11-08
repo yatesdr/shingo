@@ -16,6 +16,7 @@ import (
 // for three rounds. The pin walks a real bubbling click through the page's own
 // listeners and asserts the menu is still open after the bubble ends.
 func TestProcessesDesktopPopoverActs(t *testing.T) {
+	t.Parallel()
 	nodePath, err := exec.LookPath("node")
 	if err != nil {
 		t.Skipf("node not on PATH; skipping the popover-acts pin")

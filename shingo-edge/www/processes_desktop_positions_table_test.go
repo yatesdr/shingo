@@ -42,6 +42,7 @@ func hasDecl(decls, prop, val string) bool {
 // headings are their own strip (.pd-poshead), outside that box, sticky against
 // the column.
 func TestPositionsHeaderStaysAboveTheRows(t *testing.T) {
+	t.Parallel()
 	decls := cssRule(t, desktopCSS(t), ".pd-poshead")
 	for _, want := range [][2]string{
 		{"position", "sticky"},
@@ -62,6 +63,7 @@ func TestPositionsHeaderStaysAboveTheRows(t *testing.T) {
 // shrink and ellipsise; the dash after a word keeps its size, because the
 // dash is what says the field is empty. The full label is in the title.
 func TestEmptyFieldPlaceholderEllipsises(t *testing.T) {
+	t.Parallel()
 	css := desktopCSS(t)
 	part := cssRule(t, css, ".pd-blank > *")
 	for _, want := range [][2]string{
@@ -89,6 +91,7 @@ func TestEmptyFieldPlaceholderEllipsises(t *testing.T) {
 // size, which is the narrowest table column a desktop gets, and the scroller
 // may be carrying a vertical scrollbar.
 func TestPositionsTableKeepsAReadableWidth(t *testing.T) {
+	t.Parallel()
 	css := desktopCSS(t)
 	floor := cssPx(t, css, ".pd-postbl table min-width",
 		regexp.MustCompile(`(?m)^\.pd-postbl table \{[^}]*min-width:\s*(\d+)px;`))[0]
@@ -131,6 +134,7 @@ const roleChipNeed = 79 + 2*4
 // 1281 and drew `co…`; the role is one word and the column exists to show it.
 // Below fullSizeWindow the table's min-width floor applies instead.
 func TestRoleColumnHoldsItsWord(t *testing.T) {
+	t.Parallel()
 	css := desktopCSS(t)
 	m := regexp.MustCompile(`\.pd-postbl col\.c-role \{ width: ([\d.]+)%; \}`).FindStringSubmatch(css)
 	if m == nil {
@@ -149,6 +153,7 @@ func TestRoleColumnHoldsItsWord(t *testing.T) {
 
 // The column shares are written out, one per column, and add to 100.
 func TestPositionsColumnSharesAddTo100(t *testing.T) {
+	t.Parallel()
 	sum := 0.0
 	ms := regexp.MustCompile(`\.pd-postbl col\.c-[\w-]+ \{ width: ([\d.]+)%; \}`).FindAllStringSubmatch(desktopCSS(t), -1)
 	if len(ms) != 10 {

@@ -28,6 +28,7 @@ import (
 // broader rule here would be a style opinion wearing a correctness test's
 // clothes.
 func TestTemplatesHaveNoDuplicateAttributes(t *testing.T) {
+	t.Parallel()
 	// '<name', then anything that is not an angle bracket outside quotes, then
 	// '>'. Quoted runs are consumed whole so an attribute value containing '>'
 	// cannot end the tag early.

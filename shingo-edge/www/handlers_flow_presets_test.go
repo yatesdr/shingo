@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"shingo/protocol/testutil"
+	"shingoedge/store"
 
 	"shingoedge/domain"
 	"shingoedge/store/processes"
@@ -20,26 +21,26 @@ import (
 // are the handler's rather than the service's: the session is the author, and
 // a body has to name exactly one source for the shape.
 
-func presetProcess(t *testing.T, name string) (int64, int64) {
+func presetProcess(t *testing.T, db *store.DB, name string) (int64, int64) {
 	t.Helper()
-	pid := seedProcess(t, name)
-	if _, err := testDB.CreateProcessNode(processes.NodeInput{
+	pid := seedProcess(t, db, name)
+	if _, err := db.CreateProcessNode(processes.NodeInput{
 		ProcessID: pid, CoreNodeName: "PP_01", Name: "PP_01", Enabled: true,
 	}); err != nil {
 		t.Fatalf("create position: %v", err)
 	}
-	if _, err := testDB.UpsertRoutingNode(domain.CoreNodeKinds{}, domain.RoutingNodeInput{
+	if _, err := db.UpsertRoutingNode(domain.CoreNodeKinds{}, domain.RoutingNodeInput{
 		ProcessID: pid, CoreNodeName: "PP-SRC", Role: domain.RoutingRoleSource, Enabled: true,
 	}); err != nil {
 		t.Fatalf("routing source: %v", err)
 	}
-	if _, err := testDB.UpsertRoutingNode(domain.CoreNodeKinds{}, domain.RoutingNodeInput{
+	if _, err := db.UpsertRoutingNode(domain.CoreNodeKinds{}, domain.RoutingNodeInput{
 		ProcessID: pid, CoreNodeName: "PP-DST", Role: domain.RoutingRoleDestination, Enabled: true,
 	}); err != nil {
 		t.Fatalf("routing destination: %v", err)
 	}
-	sid := seedStyle(t, name+"-style", pid)
-	if _, err := testDB.UpsertStyleNodeClaim(domain.CoreNodeKinds{}, processes.NodeClaimInput{
+	sid := seedStyle(t, db, name+"-style", pid)
+	if _, err := db.UpsertStyleNodeClaim(domain.CoreNodeKinds{}, processes.NodeClaimInput{
 		StyleID: sid, CoreNodeName: "PP_01", Role: "consume", SwapMode: "two_robot",
 		PayloadCode: "PP-PART", InboundStaging: "PP_01",
 		InboundSource: "PP-SRC", OutboundDestination: "PP-DST",
@@ -66,18 +67,20 @@ func presetProcess(t *testing.T, name string) (int64, int64) {
 // press index" could not be re-saved with ULN_005 for a deleted ULN_003
 // under its own name, and every fix restarted the pre-fill's lineage.
 func TestFlowPresets_ARepeatedNameIsAVersionOnlyOfTheSameShape(t *testing.T) {
+	t.Parallel()
 	h, router := newAdminRouter(t)
+	db := dbOf(h)
 	cookie := authCookie(t, h)
-	pid, sameShape := presetProcess(t, "PRESET-NAME")
+	pid, sameShape := presetProcess(t, db, "PRESET-NAME")
 
 	// A SECOND STYLE, THE SAME STRUCTURE ON A SECOND POSITION.
-	if _, err := testDB.CreateProcessNode(processes.NodeInput{
+	if _, err := db.CreateProcessNode(processes.NodeInput{
 		ProcessID: pid, CoreNodeName: "PP_02", Name: "PP_02", Enabled: true,
 	}); err != nil {
 		t.Fatalf("create the second position: %v", err)
 	}
-	otherNodes := seedStyle(t, "PRESET-NAME-other", pid)
-	if _, err := testDB.UpsertStyleNodeClaim(domain.CoreNodeKinds{}, processes.NodeClaimInput{
+	otherNodes := seedStyle(t, db, "PRESET-NAME-other", pid)
+	if _, err := db.UpsertStyleNodeClaim(domain.CoreNodeKinds{}, processes.NodeClaimInput{
 		StyleID: otherNodes, CoreNodeName: "PP_02", Role: "consume", SwapMode: "two_robot",
 		PayloadCode: "PP-PART-2", InboundStaging: "PP_02",
 		InboundSource: "PP-SRC", OutboundDestination: "PP-DST",
@@ -85,9 +88,9 @@ func TestFlowPresets_ARepeatedNameIsAVersionOnlyOfTheSameShape(t *testing.T) {
 		t.Fatalf("seed the second claim: %v", err)
 	}
 	// A THIRD STYLE OF ANOTHER STRUCTURE: both positions, two slots.
-	twoSlots := seedStyle(t, "PRESET-NAME-pair", pid)
+	twoSlots := seedStyle(t, db, "PRESET-NAME-pair", pid)
 	for _, n := range []string{"PP_01", "PP_02"} {
-		if _, err := testDB.UpsertStyleNodeClaim(domain.CoreNodeKinds{}, processes.NodeClaimInput{
+		if _, err := db.UpsertStyleNodeClaim(domain.CoreNodeKinds{}, processes.NodeClaimInput{
 			StyleID: twoSlots, CoreNodeName: n, Role: "consume", SwapMode: "two_robot",
 			PayloadCode: "PP-PAIR-" + n, InboundStaging: n,
 			InboundSource: "PP-SRC", OutboundDestination: "PP-DST",
@@ -102,7 +105,7 @@ func TestFlowPresets_ARepeatedNameIsAVersionOnlyOfTheSameShape(t *testing.T) {
 	}
 	versions := func() []int {
 		t.Helper()
-		rows, err := testDB.ListFlowPresets(pid, true)
+		rows, err := db.ListFlowPresets(pid, true)
 		if err != nil {
 			t.Fatalf("list: %v", err)
 		}
@@ -149,9 +152,11 @@ func TestFlowPresets_ARepeatedNameIsAVersionOnlyOfTheSameShape(t *testing.T) {
 
 // TestFlowPresets_CreateReadArchive walks the three endpoints as the tab does.
 func TestFlowPresets_CreateReadArchive(t *testing.T) {
+	t.Parallel()
 	h, router := newAdminRouter(t)
+	db := dbOf(h)
 	cookie := authCookie(t, h)
-	pid, sid := presetProcess(t, "PRESET-CRUD")
+	pid, sid := presetProcess(t, db, "PRESET-CRUD")
 
 	// The read on a press with no presets still offers its shape.
 	resp := doRequest(t, router, "GET", "/api/processes/"+itoa(pid)+"/presets", nil, cookie)
@@ -186,7 +191,7 @@ func TestFlowPresets_CreateReadArchive(t *testing.T) {
 	assertStatus(t, resp, http.StatusOK)
 	newID := int64(decodeBody(t, resp)["id"].(float64))
 
-	p, err := testDB.GetFlowPreset(newID)
+	p, err := db.GetFlowPreset(newID)
 	if err != nil {
 		t.Fatalf("GetFlowPreset: %v", err)
 	}
@@ -224,8 +229,8 @@ func TestFlowPresets_CreateReadArchive(t *testing.T) {
 	resp = doRequest(t, router, "POST", "/api/processes/"+itoa(pid)+"/presets",
 		map[string]any{"name": "The one shape", "from_style_id": sid}, cookie)
 	assertStatus(t, resp, http.StatusOK)
-	p2, err := testDB.GetFlowPreset(int64(decodeBody(t, resp)["id"].(float64)))
-	testutil.MustNoErr(t, err, "testDB.GetFlowPreset")
+	p2, err := db.GetFlowPreset(int64(decodeBody(t, resp)["id"].(float64)))
+	testutil.MustNoErr(t, err, "db.GetFlowPreset")
 	if p2.Version != 2 {
 		t.Errorf("second preset of that name is v%d, want v2", p2.Version)
 	}
@@ -234,8 +239,8 @@ func TestFlowPresets_CreateReadArchive(t *testing.T) {
 	resp = doRequest(t, router, "POST",
 		"/api/processes/"+itoa(pid)+"/presets/"+itoa(newID)+"/archive", nil, cookie)
 	assertStatus(t, resp, http.StatusOK)
-	after, err := testDB.GetFlowPreset(newID)
-	testutil.MustNoErr(t, err, "testDB.GetFlowPreset")
+	after, err := db.GetFlowPreset(newID)
+	testutil.MustNoErr(t, err, "db.GetFlowPreset")
 	if after.ArchivedAt == nil {
 		t.Error("archived_at was not stamped")
 	}
@@ -250,9 +255,11 @@ func TestFlowPresets_CreateReadArchive(t *testing.T) {
 // TestFlowPresets_CreateRefusals: the body has to name exactly one source, and
 // a name is required. Both are the handler's, not the service's.
 func TestFlowPresets_CreateRefusals(t *testing.T) {
+	t.Parallel()
 	h, router := newAdminRouter(t)
+	db := dbOf(h)
 	cookie := authCookie(t, h)
-	pid, sid := presetProcess(t, "PRESET-REFUSE")
+	pid, sid := presetProcess(t, db, "PRESET-REFUSE")
 
 	for _, tc := range []struct {
 		name string
@@ -270,7 +277,7 @@ func TestFlowPresets_CreateRefusals(t *testing.T) {
 
 	// A style with no flow has no shape to name — a 400 that says so, not a
 	// preset with no cells.
-	empty := seedStyle(t, "PRESET-REFUSE-empty", pid)
+	empty := seedStyle(t, db, "PRESET-REFUSE-empty", pid)
 	resp := doRequest(t, router, "POST", "/api/processes/"+itoa(pid)+"/presets",
 		map[string]any{"name": "nothing", "from_style_id": empty}, cookie)
 	assertStatus(t, resp, http.StatusBadRequest)
@@ -287,10 +294,12 @@ func TestFlowPresets_CreateRefusals(t *testing.T) {
 // cannot run without a preview's fingerprint. An apply endpoint would be a
 // second way to write claims, and the one that skipped the diff.
 func TestFlowPresets_ThereIsNoApplyEndpoint(t *testing.T) {
-	_, router := newAdminRouter(t)
+	t.Parallel()
+	h, router := newAdminRouter(t)
+	db := dbOf(h)
 	h2, _ := newAdminRouter(t)
 	cookie := authCookie(t, h2)
-	pid, _ := presetProcess(t, "PRESET-NOAPPLY")
+	pid, _ := presetProcess(t, db, "PRESET-NOAPPLY")
 	for _, path := range []string{
 		"/api/processes/" + itoa(pid) + "/presets/1/apply",
 		"/api/processes/" + itoa(pid) + "/presets/apply",
@@ -338,10 +347,12 @@ func desktopBuilder(t *testing.T, expr string, fixture map[string]any) map[strin
 // own create body — built by the page's builder — and stored as drawn,
 // authored by the session.
 func TestFlowPresets_AHandBuiltDraftIsNamedFromThePage(t *testing.T) {
+	t.Parallel()
 	h, router := newAdminRouter(t)
+	db := dbOf(h)
 	cookie := authCookie(t, h)
-	pid, _ := presetProcess(t, "PRESET-NEW")
-	if _, err := testDB.UpsertRoutingNode(domain.CoreNodeKinds{}, domain.RoutingNodeInput{
+	pid, _ := presetProcess(t, db, "PRESET-NEW")
+	if _, err := db.UpsertRoutingNode(domain.CoreNodeKinds{}, domain.RoutingNodeInput{
 		ProcessID: pid, CoreNodeName: "PP-STG", Role: domain.RoutingRoleStaging, Enabled: true,
 	}); err != nil {
 		t.Fatalf("routing staging: %v", err)

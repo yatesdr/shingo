@@ -13,6 +13,7 @@ import (
 // #production-content's sse: triggers and still reaches the page's own
 // handlers (C2).
 func TestProductionRefreshJS(t *testing.T) {
+	t.Parallel()
 	nodePath, err := exec.LookPath("node")
 	if err != nil {
 		t.Skipf("node not on PATH; skipping the production refresh JS tests")
@@ -31,6 +32,7 @@ func TestProductionRefreshJS(t *testing.T) {
 // productionStreamHandlers, and the element opens no stream of its own. If the
 // lists drift, a refresh silently stops.
 func TestProductionRefresh_OneStream(t *testing.T) {
+	t.Parallel()
 	html := readWWWFile(t, "templates", "production.html")
 	js := readWWWFile(t, "static", "js", "pages", "production.js")
 	mod := readWWWFile(t, "static", "js", "pages", "production-refresh.js")

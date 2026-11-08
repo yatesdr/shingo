@@ -14,6 +14,7 @@ import (
 	"shingo/protocol/testutil"
 	"shingoedge/domain"
 	"shingoedge/engine"
+	"shingoedge/store"
 	"shingoedge/store/processes"
 )
 
@@ -100,21 +101,18 @@ type containmentPinEngine struct {
 
 // seedContainmentPinClaims declares two containment destinations on produce
 // claims: FP-GRP (a group node in the Edge's Core node map) releasing to
-// FP-OUT-1, and FP-PLAIN (a concrete node) releasing to FP-OUT-2. The style is
-// retired on cleanup so the rows leave ListAllContainmentClaims for the rest of
-// the package (testDB is shared).
-func seedContainmentPinClaims(t *testing.T) {
+// FP-OUT-1, and FP-PLAIN (a concrete node) releasing to FP-OUT-2.
+func seedContainmentPinClaims(t *testing.T, db *store.DB) {
 	t.Helper()
-	pid, err := testDB.CreateProcess("FeedsPinContProc-"+t.Name(), "", "", "", false)
+	pid, err := db.CreateProcess("FeedsPinContProc-"+t.Name(), "", "", "", false)
 	testutil.MustNoErr(t, err, "create process")
-	styleID, err := testDB.CreateStyle("FEEDSPIN-CONT-"+t.Name(), "", pid)
+	styleID, err := db.CreateStyle("FEEDSPIN-CONT-"+t.Name(), "", pid)
 	testutil.MustNoErr(t, err, "create style")
-	t.Cleanup(func() { _ = testDB.DeleteStyle(styleID) })
 	for _, c := range []struct{ node, out, dest string }{
 		{"FP-PLN-1", "FP-OUT-1", "FP-GRP"},
 		{"FP-PLN-2", "FP-OUT-2", "FP-PLAIN"},
 	} {
-		_, err := testDB.UpsertStyleNodeClaim(domain.CoreNodeKinds{}, processes.NodeClaimInput{
+		_, err := db.UpsertStyleNodeClaim(domain.CoreNodeKinds{}, processes.NodeClaimInput{
 			StyleID: styleID, CoreNodeName: c.node, Role: "produce",
 			SwapMode: "two_robot_press_index", PayloadCode: "FP-PART", UOPCapacity: 10,
 			PairedCoreNode: c.node + "-B", OutboundDestination: c.out,
@@ -158,7 +156,7 @@ func containmentPinHeld(t *testing.T) *engine.ContainmentState {
 	}
 }
 
-// newContainmentPinHandlers wires Handlers over the shared stub with the held
+// newContainmentPinHandlers wires Handlers over the test's stub with the held
 // copy in the stub engine, the claims seeded, the group node in the Edge's Core
 // node map, and the real templates, and returns a fresh Core stub answering as
 // Core did. No client is aimed at the stub (the Edge has none), so its counts
@@ -180,7 +178,7 @@ func newContainmentPinHandlers(t *testing.T) (*Handlers, *containmentCoreStub) {
 	h.engine = &containmentPinEngine{stubEngine: stub}
 	h.tmpl = template.Must(template.New("").Funcs(templateFuncs()).
 		ParseFS(templatesFS, "templates/*.html", "templates/partials/*.html"))
-	seedContainmentPinClaims(t)
+	seedContainmentPinClaims(t, stub.db)
 	return h, core
 }
 
@@ -221,6 +219,7 @@ func getContainmentPinState(t *testing.T, h *Handlers) (int, containmentPinState
 // children, occupied bins) is Core's snapshot's choice; the fixture is built
 // that way. No call reaches Core.
 func TestContainmentState_FeedsPin(t *testing.T) {
+	t.Parallel()
 	h, core := newContainmentPinHandlers(t)
 
 	code, st, raw := getContainmentPinState(t, h)
@@ -276,6 +275,7 @@ func TestContainmentState_FeedsPin(t *testing.T) {
 // picture: the active flag with its Recall verb, the group destination with
 // its children, the bin with its Verify Good verb, and the held bin.
 func TestContainmentPage_FeedsPin(t *testing.T) {
+	t.Parallel()
 	h, core := newContainmentPinHandlers(t)
 
 	rec := httptest.NewRecorder()
@@ -320,6 +320,7 @@ func TestContainmentPage_FeedsPin(t *testing.T) {
 // unreachable Core was a 500 on both, and a Core answering non-200 rendered as
 // "nothing contained" because the Edge decoded the error body as state.
 func TestContainmentState_CoreDown_FeedsPin(t *testing.T) {
+	t.Parallel()
 	t.Run("unreachable, nothing held", func(t *testing.T) {
 		h, core := newContainmentPinHandlers(t)
 		core.srv.Close()

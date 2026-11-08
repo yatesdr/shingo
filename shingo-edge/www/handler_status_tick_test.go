@@ -6,6 +6,7 @@ import "testing"
 // shippable rows past the cursor and the age of the oldest — because the
 // shipper is a goroutine that can stall with nothing else saying so.
 func TestStatus_ReportsProductionTickLag(t *testing.T) {
+	t.Parallel()
 	h, r := newTestHandlers(t)
 	eng := h.orchestration.(*stubEngine)
 	eng.statusTickPending, eng.statusTickOldestMS = 7, 12500

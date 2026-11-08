@@ -14,6 +14,7 @@ import (
 // substitutes for the status, so a later simplification that normalised the two
 // parked lifecycles into one label fails here.
 func TestOperatorQueueCause(t *testing.T) {
+	t.Parallel()
 	nodePath, err := exec.LookPath("node")
 	if err != nil {
 		t.Skipf("node not on PATH; skipping queue-cause test")

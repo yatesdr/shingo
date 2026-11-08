@@ -12,6 +12,7 @@ import (
 // unchanged node keeping its glow during another node's changeover (L10).
 // Skipped if `node` is not on PATH (matches the other JS test wrappers).
 func TestOperatorReleasePurposeJS(t *testing.T) {
+	t.Parallel()
 	nodePath, err := exec.LookPath("node")
 	if err != nil {
 		t.Skipf("node not on PATH; skipping JS unit tests")

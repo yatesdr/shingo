@@ -9,7 +9,6 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	"shingoedge/internal/testdb"
 	"shingoedge/store"
 )
 
@@ -56,12 +55,9 @@ func getStatus(t *testing.T, h *Handlers, r *chi.Mux) map[string]any {
 // and a depth returning to zero looked like recovery. 120 messages were
 // permanently lost while every field on this endpoint read healthy.
 func TestStatus_ReportsDeadLettersAndLastPublish(t *testing.T) {
+	t.Parallel()
 	h, r := newTestHandlers(t)
-	// A database of its own: outbox_depth and dead_letters count the whole
-	// outbox, so on the package's shared one they counted every row an earlier
-	// test left pending (-shuffle 1794089637840861400: depth 17, want 1).
 	eng := h.orchestration.(*stubEngine)
-	eng.db = testdb.Open(t)
 
 	seedOutboxRow(t, eng.db, "test.pending", false)
 	seedOutboxRow(t, eng.db, "test.dead", true)
@@ -117,6 +113,7 @@ func TestStatus_ReportsDeadLettersAndLastPublish(t *testing.T) {
 // TestStatus_NoPublishYetOmitsTimestamp pins the freshly-booted case: an Edge
 // that has not published anything must not report a failure it never had.
 func TestStatus_NoPublishYetOmitsTimestamp(t *testing.T) {
+	t.Parallel()
 	h, r := newTestHandlers(t)
 
 	eng := h.orchestration.(*stubEngine)

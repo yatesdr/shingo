@@ -109,6 +109,9 @@ func clearRefusedBy(status int, sentence string) clearAnswer {
 //   - a node Core cannot clear: 400 with Core's sentence (Core is the one
 //     validator), nothing recorded.
 func TestClearLoaderHome_TheDoorPerCoresArm(t *testing.T) {
+	// Not parallel: the view's cell_version reads processes.NodeGeneration, a
+	// process-wide counter every process-node write bumps, so another test's
+	// write between two reads here would move the view this test says stays.
 	cases := []struct {
 		name   string
 		core   clearAnswer
@@ -183,6 +186,7 @@ func TestClearLoaderHome_TheDoorPerCoresArm(t *testing.T) {
 // TestClearLoaderHome_CoreUnreachableIs502: a failure reaching Core is not a
 // refusal: 502 with the reason, and the door called the engine once.
 func TestClearLoaderHome_CoreUnreachableIs502(t *testing.T) {
+	t.Parallel()
 	h, router := newTestHandlers(t)
 	stub := h.engine.(*stubEngine)
 	stub.clearLoaderHomeErr = errors.New("clear-home request failed: connection refused")

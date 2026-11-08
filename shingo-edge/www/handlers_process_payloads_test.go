@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"shingoedge/domain"
+	"shingoedge/store"
 	"shingoedge/store/processes"
 )
 
@@ -20,10 +21,10 @@ import (
 // Neither broadcasts anything of its own: the boards' nudge after every /api
 // write is router.go's nudgeAfterWrite.
 
-func payloadProcess(t *testing.T, name string) int64 {
+func payloadProcess(t *testing.T, db *store.DB, name string) int64 {
 	t.Helper()
-	pid := seedProcess(t, name)
-	if _, err := testDB.CreateProcessNode(processes.NodeInput{
+	pid := seedProcess(t, db, name)
+	if _, err := db.CreateProcessNode(processes.NodeInput{
 		ProcessID: pid, CoreNodeName: "PY_01", Name: "PY_01", Enabled: true,
 	}); err != nil {
 		t.Fatalf("create position: %v", err)
@@ -32,15 +33,17 @@ func payloadProcess(t *testing.T, name string) int64 {
 }
 
 func TestProcessPayloads_PutIsASetToInOneTrip(t *testing.T) {
+	t.Parallel()
 	h, router := newAdminRouter(t)
+	db := dbOf(h)
 	cookie := authCookie(t, h)
-	pid := payloadProcess(t, "PAYLOAD-PUT")
+	pid := payloadProcess(t, db, "PAYLOAD-PUT")
 
 	resp := doRequest(t, router, "PUT", "/api/processes/"+itoa(pid)+"/payloads",
 		map[string]any{"payloads": []string{"PY-A", "PY-B", "PY-C"}}, cookie)
 	assertStatus(t, resp, http.StatusOK)
 
-	got, err := testDB.ListProcessPayloads(pid)
+	got, err := db.ListProcessPayloads(pid)
 	if err != nil {
 		t.Fatalf("ListProcessPayloads: %v", err)
 	}
@@ -52,7 +55,7 @@ func TestProcessPayloads_PutIsASetToInOneTrip(t *testing.T) {
 	resp = doRequest(t, router, "PUT", "/api/processes/"+itoa(pid)+"/payloads",
 		map[string]any{"payloads": []string{"PY-B"}}, cookie)
 	assertStatus(t, resp, http.StatusOK)
-	got, err = testDB.ListProcessPayloads(pid)
+	got, err = db.ListProcessPayloads(pid)
 	if err != nil {
 		t.Fatalf("ListProcessPayloads: %v", err)
 	}
@@ -65,7 +68,7 @@ func TestProcessPayloads_PutIsASetToInOneTrip(t *testing.T) {
 	resp = doRequest(t, router, "PUT", "/api/processes/"+itoa(pid)+"/payloads",
 		map[string]any{"payloads": []string{}}, cookie)
 	assertStatus(t, resp, http.StatusOK)
-	got, err = testDB.ListProcessPayloads(pid)
+	got, err = db.ListProcessPayloads(pid)
 	if err != nil {
 		t.Fatalf("ListProcessPayloads: %v", err)
 	}
@@ -80,24 +83,26 @@ func TestProcessPayloads_PutIsASetToInOneTrip(t *testing.T) {
 // touched and warning about it. Add Process only ever adds, and the Edit sheet
 // keeps its diff, where a removal is a DELETE the engineer sees the warning of.
 func TestProcessRoutingNodes_PutAddsAndAdoptsAndNeverDeletes(t *testing.T) {
+	t.Parallel()
 	h, router := newAdminRouter(t)
+	db := dbOf(h)
 	cookie := authCookie(t, h)
-	pid := payloadProcess(t, "ROUTING-PUT")
+	pid := payloadProcess(t, db, "ROUTING-PUT")
 
 	// A row that already exists and is switched OFF: the array write adopts it
 	// rather than minting a second one.
-	offID, err := testDB.UpsertRoutingNode(domain.CoreNodeKinds{}, domain.RoutingNodeInput{
+	offID, err := db.UpsertRoutingNode(domain.CoreNodeKinds{}, domain.RoutingNodeInput{
 		ProcessID: pid, CoreNodeName: "RS-OFF", Role: domain.RoutingRoleSource,
 		Origin: domain.RoutingOriginBackfill,
 	})
 	if err != nil {
 		t.Fatalf("seed the disabled row: %v", err)
 	}
-	if err := testDB.SetRoutingNodeEnabled(domain.CoreNodeKinds{}, pid, offID, false, "seed"); err != nil {
+	if err := db.SetRoutingNodeEnabled(domain.CoreNodeKinds{}, pid, offID, false, "seed"); err != nil {
 		t.Fatalf("switch it off: %v", err)
 	}
 	// And a row the body does NOT name, which must survive.
-	if _, err := testDB.UpsertRoutingNode(domain.CoreNodeKinds{}, domain.RoutingNodeInput{
+	if _, err := db.UpsertRoutingNode(domain.CoreNodeKinds{}, domain.RoutingNodeInput{
 		ProcessID: pid, CoreNodeName: "RS-KEEP", Role: domain.RoutingRoleDestination, Enabled: true,
 	}); err != nil {
 		t.Fatalf("seed the untouched row: %v", err)
@@ -111,7 +116,7 @@ func TestProcessRoutingNodes_PutAddsAndAdoptsAndNeverDeletes(t *testing.T) {
 		}}, cookie)
 	assertStatus(t, resp, http.StatusOK)
 
-	rows, err := testDB.ListRoutingNodes(pid)
+	rows, err := db.ListRoutingNodes(pid)
 	if err != nil {
 		t.Fatalf("ListRoutingNodes: %v", err)
 	}
@@ -160,7 +165,7 @@ func TestProcessRoutingNodes_PutAddsAndAdoptsAndNeverDeletes(t *testing.T) {
 			{"core_node_name": "RS-BAD", "role": "waypoint"},
 		}}, cookie)
 	assertStatus(t, resp, http.StatusBadRequest)
-	rows, err = testDB.ListRoutingNodes(pid)
+	rows, err = db.ListRoutingNodes(pid)
 	if err != nil {
 		t.Fatalf("ListRoutingNodes: %v", err)
 	}
@@ -175,9 +180,11 @@ func TestProcessRoutingNodes_PutAddsAndAdoptsAndNeverDeletes(t *testing.T) {
 // it: the store refuses one (ErrRoutingNodeIsPosition) and a 409 with the
 // node's name in it is what the sheet puts in front of the engineer.
 func TestProcessRoutingNodes_PutRefusesAPositionByName(t *testing.T) {
+	t.Parallel()
 	h, router := newAdminRouter(t)
+	db := dbOf(h)
 	cookie := authCookie(t, h)
-	pid := payloadProcess(t, "ROUTING-PUT-POS")
+	pid := payloadProcess(t, db, "ROUTING-PUT-POS")
 
 	resp := doRequest(t, router, "PUT", "/api/processes/"+itoa(pid)+"/routing-nodes",
 		map[string]any{"nodes": []map[string]any{

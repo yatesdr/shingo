@@ -45,6 +45,7 @@ func (s *stubEngine) FeedFlags() []string { return s.statusCoreLink.flags }
 // TestStatus_CoreLink_BeforeAck: before Core has answered, the keys are
 // there and say "never" (null), not zero.
 func TestStatus_CoreLink_BeforeAck(t *testing.T) {
+	t.Parallel()
 	h, r := newTestHandlers(t)
 	body := getStatus(t, h, r)
 	for _, k := range []string{"core_clock_offset_ms", "seconds_since_last_ack"} {
@@ -73,6 +74,7 @@ func TestStatus_CoreLink_BeforeAck(t *testing.T) {
 // TestStatus_CoreLink_AfterAck: an ack 10 s ago stamped 3 s ahead of this
 // Edge's clock, containment confirmed 20 s ago, one flag.
 func TestStatus_CoreLink_AfterAck(t *testing.T) {
+	t.Parallel()
 	h, r := newTestHandlers(t)
 	eng := h.orchestration.(*stubEngine)
 	now := time.Now()
@@ -110,6 +112,7 @@ func TestStatus_CoreLink_AfterAck(t *testing.T) {
 // clock runs `shift` from Core's (the engine stamps ackLocal from it, see
 // engine TestOnCoreAck_StampsTheEdgeClock).
 func TestCoreLink_OffsetFollowsTheEdgeClock(t *testing.T) {
+	t.Parallel()
 	h, _ := newTestHandlers(t)
 	eng := h.orchestration.(*stubEngine)
 	coreAt := time.Date(2026, 10, 10, 9, 0, 0, 0, time.UTC)
@@ -198,6 +201,7 @@ func TestDiagnostics_CoreLinkNotes(t *testing.T) {
 
 // TestCoreLinkSummary_BeforeAck: no ack yet says so, and still shows drops.
 func TestCoreLinkSummary_BeforeAck(t *testing.T) {
+	t.Parallel()
 	got := coreLinkSummary(coreLinkStatus{ExpiredDrops: 4})
 	if got != "No heartbeat ack from Core yet | expired drops 4" {
 		t.Errorf("summary = %q", got)

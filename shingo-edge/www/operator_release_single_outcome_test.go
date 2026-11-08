@@ -19,6 +19,7 @@ import (
 // between a partial return and an under-count declaration, and collapsing that
 // would fabricate a missing-inventory record.
 func TestOperatorReleaseSingleOutcome(t *testing.T) {
+	t.Parallel()
 	nodePath, err := exec.LookPath("node")
 	if err != nil {
 		t.Skipf("node not on PATH; skipping release single-outcome test")

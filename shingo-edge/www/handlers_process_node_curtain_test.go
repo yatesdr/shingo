@@ -14,17 +14,19 @@ import (
 // and the polarity (a re-enable is a toggle-flip, not a re-typing); and the
 // polarity rides through as sent.
 func TestApiProcessNodeCurtainSetting(t *testing.T) {
+	t.Parallel()
 	h, router := newAdminRouter(t)
+	db := dbOf(h)
 	cookie := authCookie(t, h)
 
-	pid, err := testDB.CreateProcess("SYN-CurtainNodeProc", "", "", "", false)
+	pid, err := db.CreateProcess("SYN-CurtainNodeProc", "", "", "", false)
 	testutil.MustNoErr(t, err, "create process")
-	nid, err := testDB.CreateProcessNode(processes.NodeInput{ProcessID: pid, CoreNodeName: "SYN-FG-CUR-1", Name: "SYN-FG-CUR-1", Enabled: true})
+	nid, err := db.CreateProcessNode(processes.NodeInput{ProcessID: pid, CoreNodeName: "SYN-FG-CUR-1", Name: "SYN-FG-CUR-1", Enabled: true})
 	testutil.MustNoErr(t, err, "create node")
 	url := "/api/process-nodes/" + itoa(nid) + "/curtain-setting"
 	untouched := func(why string) {
 		t.Helper()
-		n, err := testDB.GetProcessNode(nid)
+		n, err := db.GetProcessNode(nid)
 		testutil.MustNoErr(t, err, "get node")
 		if n.CurtainEnabled || n.CurtainPLCName != "" || n.CurtainTagName != "" || n.CurtainSafeValue != nil {
 			t.Errorf("%s: node = %+v, want nothing stamped", why, n)
@@ -51,7 +53,7 @@ func TestApiProcessNodeCurtainSetting(t *testing.T) {
 	resp = doRequest(t, router, "POST", url,
 		map[string]any{"enabled": true, "plc_name": "PRESS-PLC", "tag_name": "FG_CURTAIN", "safe_value": false}, cookie)
 	assertStatus(t, resp, http.StatusOK)
-	n, err := testDB.GetProcessNode(nid)
+	n, err := db.GetProcessNode(nid)
 	testutil.MustNoErr(t, err, "get node")
 	if !n.CurtainEnabled || n.CurtainPLCName != "PRESS-PLC" || n.CurtainTagName != "FG_CURTAIN" ||
 		n.CurtainSafeValue == nil || *n.CurtainSafeValue {
@@ -62,7 +64,7 @@ func TestApiProcessNodeCurtainSetting(t *testing.T) {
 	resp = doRequest(t, router, "POST", url,
 		map[string]any{"enabled": false, "plc_name": "PRESS-PLC", "tag_name": "FG_CURTAIN", "safe_value": false}, cookie)
 	assertStatus(t, resp, http.StatusOK)
-	n, err = testDB.GetProcessNode(nid)
+	n, err = db.GetProcessNode(nid)
 	testutil.MustNoErr(t, err, "get node after disable")
 	if n.CurtainEnabled || n.CurtainPLCName != "PRESS-PLC" || n.CurtainTagName != "FG_CURTAIN" ||
 		n.CurtainSafeValue == nil || *n.CurtainSafeValue {

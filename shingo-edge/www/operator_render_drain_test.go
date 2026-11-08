@@ -12,6 +12,7 @@ import (
 // mapping). These drive the unloader's slot-only tap + colors. Skipped if `node` is not
 // on PATH (matches the other JS test wrappers).
 func TestOperatorRenderDrainJS(t *testing.T) {
+	t.Parallel()
 	nodePath, err := exec.LookPath("node")
 	if err != nil {
 		t.Skipf("node not on PATH; skipping JS unit tests")

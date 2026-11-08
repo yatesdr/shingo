@@ -95,12 +95,14 @@ func newOperatorStationsRouter(t *testing.T) (*Handlers, *chi.Mux) {
 // ═══════════════════════════════════════════════════════════════════════
 
 func TestOperatorStations_ListStations_Success(t *testing.T) {
+	t.Parallel()
 	h, router := newOperatorStationsRouter(t)
+	db := dbOf(h)
 	cookie := authCookie(t, h)
 
-	pid := seedProcess(t, "ListStationsLine")
-	seedOperatorStation(t, pid, "OS-LS-1", "ListStation-Alpha")
-	seedOperatorStation(t, pid, "OS-LS-2", "ListStation-Bravo")
+	pid := seedProcess(t, db, "ListStationsLine")
+	seedOperatorStation(t, db, pid, "OS-LS-1", "ListStation-Alpha")
+	seedOperatorStation(t, db, pid, "OS-LS-2", "ListStation-Bravo")
 
 	resp := doRequest(t, router, "GET", "/api/operator-stations", nil, cookie)
 	assertStatus(t, resp, http.StatusOK)
@@ -118,10 +120,12 @@ func TestOperatorStations_ListStations_Success(t *testing.T) {
 }
 
 func TestOperatorStations_CreateStation_Success(t *testing.T) {
+	t.Parallel()
 	h, router := newOperatorStationsRouter(t)
+	db := dbOf(h)
 	cookie := authCookie(t, h)
 
-	pid := seedProcess(t, "CreateStationLine")
+	pid := seedProcess(t, db, "CreateStationLine")
 	body := stations.Input{
 		ProcessID: pid,
 		Code:      "OS-CREATE-1",
@@ -141,7 +145,7 @@ func TestOperatorStations_CreateStation_Success(t *testing.T) {
 	}
 
 	// Verify DB state
-	station, err := testDB.GetOperatorStation(stationID)
+	station, err := db.GetOperatorStation(stationID)
 	if err != nil {
 		t.Fatalf("GetOperatorStation: %v", err)
 	}
@@ -157,6 +161,7 @@ func TestOperatorStations_CreateStation_Success(t *testing.T) {
 }
 
 func TestOperatorStations_CreateStation_InvalidJSON(t *testing.T) {
+	t.Parallel()
 	h, router := newOperatorStationsRouter(t)
 	cookie := authCookie(t, h)
 
@@ -168,11 +173,13 @@ func TestOperatorStations_CreateStation_InvalidJSON(t *testing.T) {
 }
 
 func TestOperatorStations_UpdateStation_Success(t *testing.T) {
+	t.Parallel()
 	h, router := newOperatorStationsRouter(t)
+	db := dbOf(h)
 	cookie := authCookie(t, h)
 
-	pid := seedProcess(t, "UpdateStationLine")
-	sid := seedOperatorStation(t, pid, "OS-UPD-1", "OriginalName")
+	pid := seedProcess(t, db, "UpdateStationLine")
+	sid := seedOperatorStation(t, db, pid, "OS-UPD-1", "OriginalName")
 
 	body := stations.Input{
 		ProcessID: pid,
@@ -187,7 +194,7 @@ func TestOperatorStations_UpdateStation_Success(t *testing.T) {
 	assertJSONPath(t, resp, "status", "ok")
 
 	// Verify DB state
-	station, err := testDB.GetOperatorStation(sid)
+	station, err := db.GetOperatorStation(sid)
 	if err != nil {
 		t.Fatalf("GetOperatorStation: %v", err)
 	}
@@ -200,6 +207,7 @@ func TestOperatorStations_UpdateStation_Success(t *testing.T) {
 }
 
 func TestOperatorStations_UpdateStation_InvalidID(t *testing.T) {
+	t.Parallel()
 	h, router := newOperatorStationsRouter(t)
 	cookie := authCookie(t, h)
 
@@ -210,29 +218,33 @@ func TestOperatorStations_UpdateStation_InvalidID(t *testing.T) {
 }
 
 func TestOperatorStations_DeleteStation_Success(t *testing.T) {
+	t.Parallel()
 	h, router := newOperatorStationsRouter(t)
+	db := dbOf(h)
 	cookie := authCookie(t, h)
 
-	pid := seedProcess(t, "DeleteStationLine")
-	sid := seedOperatorStation(t, pid, "OS-DEL-1", "DoomedStation")
+	pid := seedProcess(t, db, "DeleteStationLine")
+	sid := seedOperatorStation(t, db, pid, "OS-DEL-1", "DoomedStation")
 
 	resp := doRequest(t, router, "DELETE", "/api/operator-stations/"+itoa(sid), nil, cookie)
 	assertStatus(t, resp, http.StatusOK)
 	assertJSONPath(t, resp, "status", "ok")
 
 	// Verify DB state: station is gone
-	if _, err := testDB.GetOperatorStation(sid); err == nil {
+	if _, err := db.GetOperatorStation(sid); err == nil {
 		t.Error("expected error getting deleted station")
 	}
 }
 
 func TestOperatorStations_MoveStation_Up(t *testing.T) {
+	t.Parallel()
 	h, router := newOperatorStationsRouter(t)
+	db := dbOf(h)
 	cookie := authCookie(t, h)
 
-	pid := seedProcess(t, "MoveStationLine")
-	first := seedOperatorStation(t, pid, "OS-MV-1", "First")   // sequence=1
-	second := seedOperatorStation(t, pid, "OS-MV-2", "Second") // sequence=2
+	pid := seedProcess(t, db, "MoveStationLine")
+	first := seedOperatorStation(t, db, pid, "OS-MV-1", "First")   // sequence=1
+	second := seedOperatorStation(t, db, pid, "OS-MV-2", "Second") // sequence=2
 
 	body := map[string]string{"direction": "up"}
 	resp := doRequest(t, router, "POST", "/api/operator-stations/"+itoa(second)+"/move", body, cookie)
@@ -240,11 +252,11 @@ func TestOperatorStations_MoveStation_Up(t *testing.T) {
 	assertJSONPath(t, resp, "status", "ok")
 
 	// Verify DB state: sequences swapped
-	firstStation, err := testDB.GetOperatorStation(first)
+	firstStation, err := db.GetOperatorStation(first)
 	if err != nil {
 		t.Fatalf("GetOperatorStation(first): %v", err)
 	}
-	secondStation, err := testDB.GetOperatorStation(second)
+	secondStation, err := db.GetOperatorStation(second)
 	if err != nil {
 		t.Fatalf("GetOperatorStation(second): %v", err)
 	}
@@ -255,11 +267,13 @@ func TestOperatorStations_MoveStation_Up(t *testing.T) {
 }
 
 func TestOperatorStations_MoveStation_InvalidDirection(t *testing.T) {
+	t.Parallel()
 	h, router := newOperatorStationsRouter(t)
+	db := dbOf(h)
 	cookie := authCookie(t, h)
 
-	pid := seedProcess(t, "MoveBadDirLine")
-	sid := seedOperatorStation(t, pid, "OS-MVD-1", "Single")
+	pid := seedProcess(t, db, "MoveBadDirLine")
+	sid := seedOperatorStation(t, db, pid, "OS-MVD-1", "Single")
 
 	body := map[string]string{"direction": "sideways"}
 	resp := doRequest(t, router, "POST", "/api/operator-stations/"+itoa(sid)+"/move", body, cookie)
@@ -268,6 +282,7 @@ func TestOperatorStations_MoveStation_InvalidDirection(t *testing.T) {
 }
 
 func TestOperatorStations_MoveStation_InvalidID(t *testing.T) {
+	t.Parallel()
 	h, router := newOperatorStationsRouter(t)
 	cookie := authCookie(t, h)
 
@@ -283,10 +298,12 @@ func TestOperatorStations_MoveStation_InvalidID(t *testing.T) {
 // ═══════════════════════════════════════════════════════════════════════
 
 func TestOperatorStations_GetOperatorStationView_Success(t *testing.T) {
-	_, router := newOperatorStationsRouter(t)
+	t.Parallel()
+	h, router := newOperatorStationsRouter(t)
+	db := dbOf(h)
 
-	pid := seedProcess(t, "ViewLine")
-	sid := seedOperatorStation(t, pid, "OS-VIEW-1", "ViewStation")
+	pid := seedProcess(t, db, "ViewLine")
+	sid := seedOperatorStation(t, db, pid, "OS-VIEW-1", "ViewStation")
 
 	resp := doRequest(t, router, "GET", "/api/operator-stations/"+itoa(sid)+"/view", nil, nil)
 	assertStatus(t, resp, http.StatusOK)
@@ -306,7 +323,7 @@ func TestOperatorStations_GetOperatorStationView_Success(t *testing.T) {
 	// A view request writes nothing: the screen's "online" is its stream's
 	// (EventHub touches on connect and heartbeat), since an idle board makes
 	// no view request.
-	station, err := testDB.GetOperatorStation(sid)
+	station, err := db.GetOperatorStation(sid)
 	if err != nil {
 		t.Fatalf("GetOperatorStation after view: %v", err)
 	}
@@ -316,6 +333,7 @@ func TestOperatorStations_GetOperatorStationView_Success(t *testing.T) {
 }
 
 func TestOperatorStations_GetOperatorStationView_InvalidID(t *testing.T) {
+	t.Parallel()
 	_, router := newOperatorStationsRouter(t)
 
 	resp := doRequest(t, router, "GET", "/api/operator-stations/bad/view", nil, nil)
@@ -324,6 +342,7 @@ func TestOperatorStations_GetOperatorStationView_InvalidID(t *testing.T) {
 }
 
 func TestOperatorStations_GetOperatorStationView_NotFound(t *testing.T) {
+	t.Parallel()
 	_, router := newOperatorStationsRouter(t)
 
 	resp := doRequest(t, router, "GET", "/api/operator-stations/999999/view", nil, nil)
@@ -338,6 +357,7 @@ func TestOperatorStations_GetOperatorStationView_NotFound(t *testing.T) {
 // ═══════════════════════════════════════════════════════════════════════
 
 func TestOperatorStations_Display_InvalidID(t *testing.T) {
+	t.Parallel()
 	_, router := newOperatorStationsRouter(t)
 
 	resp := doRequest(t, router, "GET", "/operator/station/bad", nil, nil)
@@ -345,6 +365,7 @@ func TestOperatorStations_Display_InvalidID(t *testing.T) {
 }
 
 func TestOperatorStations_Display_NotFound(t *testing.T) {
+	t.Parallel()
 	_, router := newOperatorStationsRouter(t)
 
 	resp := doRequest(t, router, "GET", "/operator/station/999999", nil, nil)
@@ -357,6 +378,7 @@ func TestOperatorStations_Display_NotFound(t *testing.T) {
 // ═══════════════════════════════════════════════════════════════════════
 
 func TestOperatorStations_ListActiveOrders_Success(t *testing.T) {
+	t.Parallel()
 	_, router := newOperatorStationsRouter(t)
 
 	resp := doRequest(t, router, "GET", "/api/orders/active", nil, nil)
@@ -373,13 +395,15 @@ func TestOperatorStations_ListActiveOrders_Success(t *testing.T) {
 // ═══════════════════════════════════════════════════════════════════════
 
 func TestOperatorStations_GetStationClaimedNodes_Success(t *testing.T) {
+	t.Parallel()
 	h, router := newOperatorStationsRouter(t)
+	db := dbOf(h)
 	cookie := authCookie(t, h)
 
-	pid := seedProcess(t, "ClaimedNodesLine")
-	sid := seedOperatorStation(t, pid, "OS-CN-1", "ClaimedNodesStation")
-	seedProcessNode(t, pid, sid, "core-node-alpha")
-	seedProcessNode(t, pid, sid, "core-node-bravo")
+	pid := seedProcess(t, db, "ClaimedNodesLine")
+	sid := seedOperatorStation(t, db, pid, "OS-CN-1", "ClaimedNodesStation")
+	seedProcessNode(t, db, pid, sid, "core-node-alpha")
+	seedProcessNode(t, db, pid, sid, "core-node-bravo")
 
 	resp := doRequest(t, router, "GET", "/api/operator-stations/"+itoa(sid)+"/claimed-nodes", nil, cookie)
 	assertStatus(t, resp, http.StatusOK)
@@ -399,11 +423,13 @@ func TestOperatorStations_GetStationClaimedNodes_Success(t *testing.T) {
 }
 
 func TestOperatorStations_SetStationClaimedNodes_Success(t *testing.T) {
+	t.Parallel()
 	h, router := newOperatorStationsRouter(t)
+	db := dbOf(h)
 	cookie := authCookie(t, h)
 
-	pid := seedProcess(t, "SetClaimedNodesLine")
-	sid := seedOperatorStation(t, pid, "OS-SCN-1", "SetClaimedStation")
+	pid := seedProcess(t, db, "SetClaimedNodesLine")
+	sid := seedOperatorStation(t, db, pid, "OS-SCN-1", "SetClaimedStation")
 
 	body := map[string]any{
 		"nodes": []string{"set-node-a", "set-node-b", "set-node-c"},
@@ -413,7 +439,7 @@ func TestOperatorStations_SetStationClaimedNodes_Success(t *testing.T) {
 	assertJSONPath(t, resp, "status", "ok")
 
 	// Verify DB state: three process nodes created
-	names, err := testDB.GetStationNodeNames(sid)
+	names, err := db.GetStationNodeNames(sid)
 	if err != nil {
 		t.Fatalf("GetStationNodeNames: %v", err)
 	}
@@ -426,11 +452,13 @@ func TestOperatorStations_SetStationClaimedNodes_Success(t *testing.T) {
 // off a position nothing names gets an empty warning, and the position stays
 // until the save itself.
 func TestOperatorStations_StationRemovalImpact_WritesNothing(t *testing.T) {
+	t.Parallel()
 	h, router := newOperatorStationsRouter(t)
+	db := dbOf(h)
 	cookie := authCookie(t, h)
 
-	pid := seedProcess(t, "RemovalImpactLine")
-	sid := seedOperatorStation(t, pid, "OS-RI-1", "RemovalImpactStation")
+	pid := seedProcess(t, db, "RemovalImpactLine")
+	sid := seedOperatorStation(t, db, pid, "OS-RI-1", "RemovalImpactStation")
 	set := map[string]any{"nodes": []string{"impact-node-a", "impact-node-b"}}
 	assertStatus(t, doRequest(t, router, "PUT", "/api/operator-stations/"+itoa(sid)+"/claimed-nodes", set, cookie), http.StatusOK)
 
@@ -439,7 +467,7 @@ func TestOperatorStations_StationRemovalImpact_WritesNothing(t *testing.T) {
 	assertStatus(t, resp, http.StatusOK)
 	assertJSONPath(t, resp, "warning", "")
 
-	names, err := testDB.GetStationNodeNames(sid)
+	names, err := db.GetStationNodeNames(sid)
 	if err != nil {
 		t.Fatalf("GetStationNodeNames: %v", err)
 	}
@@ -451,14 +479,16 @@ func TestOperatorStations_StationRemovalImpact_WritesNothing(t *testing.T) {
 // A removed position with an active order is only disabled, so the reply
 // names it: the page has to say it stayed rather than report a clean save.
 func TestOperatorStations_SetStationClaimedNodes_NamesPositionsKeptByAnActiveOrder(t *testing.T) {
+	t.Parallel()
 	h, router := newOperatorStationsRouter(t)
+	db := dbOf(h)
 	cookie := authCookie(t, h)
 
-	pid := seedProcess(t, "KeptPositionsLine")
-	sid := seedOperatorStation(t, pid, "OS-KEPT-1", "KeptPositionsStation")
-	busyID := seedProcessNode(t, pid, sid, "kept-node-busy")
-	seedProcessNode(t, pid, sid, "kept-node-idle")
-	if _, err := testDB.CreateOrder("kept-node-busy-order", "retrieve", &busyID, false, 1, "", "", "", protocol.Height{}, false, "", "", ""); err != nil {
+	pid := seedProcess(t, db, "KeptPositionsLine")
+	sid := seedOperatorStation(t, db, pid, "OS-KEPT-1", "KeptPositionsStation")
+	busyID := seedProcessNode(t, db, pid, sid, "kept-node-busy")
+	seedProcessNode(t, db, pid, sid, "kept-node-idle")
+	if _, err := db.CreateOrder("kept-node-busy-order", "retrieve", &busyID, false, 1, "", "", "", protocol.Height{}, false, "", "", ""); err != nil {
 		t.Fatalf("create order: %v", err)
 	}
 
@@ -481,13 +511,15 @@ func TestOperatorStations_SetStationClaimedNodes_NamesPositionsKeptByAnActiveOrd
 // A name that is already a live position of another process is bad input,
 // like a name Core does not have: 400, naming the other process.
 func TestOperatorStations_SetStationClaimedNodes_OtherProcessPositionIsBadRequest(t *testing.T) {
+	t.Parallel()
 	h, router := newOperatorStationsRouter(t)
+	db := dbOf(h)
 	cookie := authCookie(t, h)
 
-	pidOther := seedProcess(t, "CrossProcessOwnerLine")
-	seedProcessNode(t, pidOther, 0, "cross-process-slot")
-	pid := seedProcess(t, "CrossProcessClaimantLine")
-	sid := seedOperatorStation(t, pid, "OS-XPROC-1", "CrossProcessStation")
+	pidOther := seedProcess(t, db, "CrossProcessOwnerLine")
+	seedProcessNode(t, db, pidOther, 0, "cross-process-slot")
+	pid := seedProcess(t, db, "CrossProcessClaimantLine")
+	sid := seedOperatorStation(t, db, pid, "OS-XPROC-1", "CrossProcessStation")
 
 	body := map[string]any{"nodes": []string{"cross-process-slot"}}
 	resp := doRequest(t, router, "PUT", "/api/operator-stations/"+itoa(sid)+"/claimed-nodes", body, cookie)
@@ -502,6 +534,7 @@ func TestOperatorStations_SetStationClaimedNodes_OtherProcessPositionIsBadReques
 }
 
 func TestOperatorStations_SetStationClaimedNodes_InvalidID(t *testing.T) {
+	t.Parallel()
 	h, router := newOperatorStationsRouter(t)
 	cookie := authCookie(t, h)
 
@@ -520,12 +553,14 @@ func TestOperatorStations_SetStationClaimedNodes_InvalidID(t *testing.T) {
 // ═══════════════════════════════════════════════════════════════════════
 
 func TestOperatorStations_ListProcessNodes_Success(t *testing.T) {
+	t.Parallel()
 	h, router := newOperatorStationsRouter(t)
+	db := dbOf(h)
 	cookie := authCookie(t, h)
 
-	pid := seedProcess(t, "ListPNLine")
-	sid := seedOperatorStation(t, pid, "OS-LPN-1", "ListPNStation")
-	nodeID := seedProcessNode(t, pid, sid, "pn-list-alpha")
+	pid := seedProcess(t, db, "ListPNLine")
+	sid := seedOperatorStation(t, db, pid, "OS-LPN-1", "ListPNStation")
+	nodeID := seedProcessNode(t, db, pid, sid, "pn-list-alpha")
 
 	resp := doRequest(t, router, "GET", "/api/process-nodes", nil, cookie)
 	assertStatus(t, resp, http.StatusOK)
@@ -544,13 +579,15 @@ func TestOperatorStations_ListProcessNodes_Success(t *testing.T) {
 }
 
 func TestOperatorStations_ListProcessNodesByStation_Success(t *testing.T) {
+	t.Parallel()
 	h, router := newOperatorStationsRouter(t)
+	db := dbOf(h)
 	cookie := authCookie(t, h)
 
-	pid := seedProcess(t, "ListPNByStationLine")
-	sid := seedOperatorStation(t, pid, "OS-LPNB-1", "ListPNByStation")
-	seedProcessNode(t, pid, sid, "pn-bystation-alpha")
-	seedProcessNode(t, pid, sid, "pn-bystation-bravo")
+	pid := seedProcess(t, db, "ListPNByStationLine")
+	sid := seedOperatorStation(t, db, pid, "OS-LPNB-1", "ListPNByStation")
+	seedProcessNode(t, db, pid, sid, "pn-bystation-alpha")
+	seedProcessNode(t, db, pid, sid, "pn-bystation-bravo")
 
 	resp := doRequest(t, router, "GET", "/api/process-nodes/station/"+itoa(sid), nil, cookie)
 	assertStatus(t, resp, http.StatusOK)
@@ -563,6 +600,7 @@ func TestOperatorStations_ListProcessNodesByStation_Success(t *testing.T) {
 }
 
 func TestOperatorStations_ListProcessNodesByStation_InvalidID(t *testing.T) {
+	t.Parallel()
 	h, router := newOperatorStationsRouter(t)
 	cookie := authCookie(t, h)
 
@@ -572,11 +610,13 @@ func TestOperatorStations_ListProcessNodesByStation_InvalidID(t *testing.T) {
 }
 
 func TestOperatorStations_CreateProcessNode_Success(t *testing.T) {
+	t.Parallel()
 	h, router := newOperatorStationsRouter(t)
+	db := dbOf(h)
 	cookie := authCookie(t, h)
 
-	pid := seedProcess(t, "CreatePNLine")
-	sid := seedOperatorStation(t, pid, "OS-CPN-1", "CreatePNStation")
+	pid := seedProcess(t, db, "CreatePNLine")
+	sid := seedOperatorStation(t, db, pid, "OS-CPN-1", "CreatePNStation")
 
 	body := processes.NodeInput{
 		ProcessID:         pid,
@@ -596,7 +636,7 @@ func TestOperatorStations_CreateProcessNode_Success(t *testing.T) {
 	}
 
 	// Verify DB state: node exists
-	node, err := testDB.GetProcessNode(nodeID)
+	node, err := db.GetProcessNode(nodeID)
 	if err != nil {
 		t.Fatalf("GetProcessNode: %v", err)
 	}
@@ -605,7 +645,7 @@ func TestOperatorStations_CreateProcessNode_Success(t *testing.T) {
 	}
 
 	// Verify DB state: runtime row was ensured
-	rt, err := testDB.GetProcessNodeRuntime(nodeID)
+	rt, err := db.GetProcessNodeRuntime(nodeID)
 	if err != nil {
 		t.Fatalf("GetProcessNodeRuntime after create: %v", err)
 	}
@@ -615,6 +655,7 @@ func TestOperatorStations_CreateProcessNode_Success(t *testing.T) {
 }
 
 func TestOperatorStations_CreateProcessNode_InvalidJSON(t *testing.T) {
+	t.Parallel()
 	h, router := newOperatorStationsRouter(t)
 	cookie := authCookie(t, h)
 
@@ -625,12 +666,14 @@ func TestOperatorStations_CreateProcessNode_InvalidJSON(t *testing.T) {
 }
 
 func TestOperatorStations_UpdateProcessNode_Success(t *testing.T) {
+	t.Parallel()
 	h, router := newOperatorStationsRouter(t)
+	db := dbOf(h)
 	cookie := authCookie(t, h)
 
-	pid := seedProcess(t, "UpdatePNLine")
-	sid := seedOperatorStation(t, pid, "OS-UPN-1", "UpdatePNStation")
-	nodeID := seedProcessNode(t, pid, sid, "pn-upd-orig")
+	pid := seedProcess(t, db, "UpdatePNLine")
+	sid := seedOperatorStation(t, db, pid, "OS-UPN-1", "UpdatePNStation")
+	nodeID := seedProcessNode(t, db, pid, sid, "pn-upd-orig")
 
 	body := processes.NodeInput{
 		ProcessID:         pid,
@@ -644,7 +687,7 @@ func TestOperatorStations_UpdateProcessNode_Success(t *testing.T) {
 	assertJSONPath(t, resp, "status", "ok")
 
 	// Verify DB state
-	node, err := testDB.GetProcessNode(nodeID)
+	node, err := db.GetProcessNode(nodeID)
 	if err != nil {
 		t.Fatalf("GetProcessNode: %v", err)
 	}
@@ -660,6 +703,7 @@ func TestOperatorStations_UpdateProcessNode_Success(t *testing.T) {
 }
 
 func TestOperatorStations_UpdateProcessNode_InvalidID(t *testing.T) {
+	t.Parallel()
 	h, router := newOperatorStationsRouter(t)
 	cookie := authCookie(t, h)
 
@@ -670,25 +714,27 @@ func TestOperatorStations_UpdateProcessNode_InvalidID(t *testing.T) {
 }
 
 func TestOperatorStations_ClearNodeOrders_Success(t *testing.T) {
-	_, router := newOperatorStationsRouter(t)
+	t.Parallel()
+	h, router := newOperatorStationsRouter(t)
+	db := dbOf(h)
 
-	pid := seedProcess(t, "ClearOrdersLine")
-	sid := seedOperatorStation(t, pid, "OS-CO-1", "ClearOrdersStation")
-	nodeID := seedProcessNode(t, pid, sid, "pn-clear-orders")
+	pid := seedProcess(t, db, "ClearOrdersLine")
+	sid := seedOperatorStation(t, db, pid, "OS-CO-1", "ClearOrdersStation")
+	nodeID := seedProcessNode(t, db, pid, sid, "pn-clear-orders")
 
 	// Seed a runtime row with a stub active order id, then clear it.
-	if _, err := testDB.EnsureProcessNodeRuntime(nodeID); err != nil {
+	if _, err := db.EnsureProcessNodeRuntime(nodeID); err != nil {
 		t.Fatalf("EnsureProcessNodeRuntime: %v", err)
 	}
 	stubOrder := int64(42)
-	testutil.MustNoErr(t, testDB.UpdateProcessNodeRuntimeOrders(nodeID, &stubOrder, nil), "seed active order")
+	testutil.MustNoErr(t, db.UpdateProcessNodeRuntimeOrders(nodeID, &stubOrder, nil), "seed active order")
 
 	resp := doRequest(t, router, "POST", "/api/process-nodes/"+itoa(nodeID)+"/clear-orders", nil, nil)
 	assertStatus(t, resp, http.StatusOK)
 	assertJSONPath(t, resp, "status", "ok")
 
 	// Verify DB state: active_order_id is cleared
-	rt, err := testDB.GetProcessNodeRuntime(nodeID)
+	rt, err := db.GetProcessNodeRuntime(nodeID)
 	if err != nil {
 		t.Fatalf("GetProcessNodeRuntime: %v", err)
 	}
@@ -698,6 +744,7 @@ func TestOperatorStations_ClearNodeOrders_Success(t *testing.T) {
 }
 
 func TestOperatorStations_ClearNodeOrders_InvalidID(t *testing.T) {
+	t.Parallel()
 	_, router := newOperatorStationsRouter(t)
 
 	resp := doRequest(t, router, "POST", "/api/process-nodes/bad/clear-orders", nil, nil)
@@ -713,6 +760,7 @@ func TestOperatorStations_ClearNodeOrders_InvalidID(t *testing.T) {
 // ═══════════════════════════════════════════════════════════════════════
 
 func TestOperatorStations_RequestNodeMaterial_Success(t *testing.T) {
+	t.Parallel()
 	_, router := newOperatorStationsRouter(t)
 
 	resp := doRequest(t, router, "POST", "/api/process-nodes/1/request", nil, nil)
@@ -720,6 +768,7 @@ func TestOperatorStations_RequestNodeMaterial_Success(t *testing.T) {
 }
 
 func TestOperatorStations_RequestNodeMaterial_InvalidID(t *testing.T) {
+	t.Parallel()
 	_, router := newOperatorStationsRouter(t)
 
 	resp := doRequest(t, router, "POST", "/api/process-nodes/bad/request", nil, nil)
@@ -733,6 +782,7 @@ func TestOperatorStations_RequestNodeMaterial_InvalidID(t *testing.T) {
 // with the process's cancel URL and a labelled button, so the station can offer
 // recovery instead of a dead-end toast (2026-07-24).
 func TestOperatorStations_RequestProduceSwap_ArmedChangeoverOffersExit(t *testing.T) {
+	t.Parallel()
 	h, router := newOperatorStationsRouter(t)
 	h.orchestration.(*stubEngine).requestProduceSwapErr = &engine.ChangeoverArmedError{
 		ProcessID: 7, ToStyleName: "KK21", OutgoingStyle: "LK41",
@@ -767,6 +817,7 @@ func TestOperatorStations_RequestProduceSwap_ArmedChangeoverOffersExit(t *testin
 }
 
 func TestOperatorStations_ReleaseNodeEmpty_Success(t *testing.T) {
+	t.Parallel()
 	_, router := newOperatorStationsRouter(t)
 
 	resp := doRequest(t, router, "POST", "/api/process-nodes/1/release-empty", nil, nil)
@@ -774,6 +825,7 @@ func TestOperatorStations_ReleaseNodeEmpty_Success(t *testing.T) {
 }
 
 func TestOperatorStations_ReleaseNodePartial_Success(t *testing.T) {
+	t.Parallel()
 	_, router := newOperatorStationsRouter(t)
 
 	body := map[string]int64{"qty": 5}
@@ -782,6 +834,7 @@ func TestOperatorStations_ReleaseNodePartial_Success(t *testing.T) {
 }
 
 func TestOperatorStations_ReleaseNodePartial_InvalidJSON(t *testing.T) {
+	t.Parallel()
 	_, router := newOperatorStationsRouter(t)
 
 	// qty must be int64; sending a string triggers a decode error.
@@ -791,6 +844,7 @@ func TestOperatorStations_ReleaseNodePartial_InvalidJSON(t *testing.T) {
 }
 
 func TestOperatorStations_ReleaseStagedOrders_Success(t *testing.T) {
+	t.Parallel()
 	_, router := newOperatorStationsRouter(t)
 
 	body := map[string]any{"called_by": "test-station"}
@@ -800,6 +854,7 @@ func TestOperatorStations_ReleaseStagedOrders_Success(t *testing.T) {
 }
 
 func TestOperatorStations_ReleaseStagedOrders_InvalidID(t *testing.T) {
+	t.Parallel()
 	_, router := newOperatorStationsRouter(t)
 
 	body := map[string]any{"called_by": "test-station"}
@@ -812,6 +867,7 @@ func TestOperatorStations_ReleaseStagedOrders_InvalidID(t *testing.T) {
 // body so the two-robot HMI button can forward lineside captures like the
 // single-order path does. A well-formed body should decode and succeed.
 func TestOperatorStations_ReleaseStagedOrders_AcceptsQtyByPart(t *testing.T) {
+	t.Parallel()
 	_, router := newOperatorStationsRouter(t)
 
 	body := map[string]any{
@@ -826,6 +882,7 @@ func TestOperatorStations_ReleaseStagedOrders_AcceptsQtyByPart(t *testing.T) {
 // A malformed body is rejected with a 400 — the handler defends against bad
 // JSON rather than silently falling through to a no-op release.
 func TestOperatorStations_ReleaseStagedOrders_BadBody(t *testing.T) {
+	t.Parallel()
 	_, router := newOperatorStationsRouter(t)
 
 	// qty_by_part must be a map; sending an int triggers a decode error.
@@ -838,6 +895,7 @@ func TestOperatorStations_ReleaseStagedOrders_BadBody(t *testing.T) {
 // (ContentLength == 0). Empty called_by is now defaulted to
 // "operator_station" (2026-04-29 hotfix) rather than rejected.
 func TestOperatorStations_ReleaseStagedOrders_RejectsBareBody(t *testing.T) {
+	t.Parallel()
 	_, router := newOperatorStationsRouter(t)
 
 	resp := doRequest(t, router, "POST", "/api/process-nodes/1/release-staged", nil, nil)
@@ -845,6 +903,7 @@ func TestOperatorStations_ReleaseStagedOrders_RejectsBareBody(t *testing.T) {
 }
 
 func TestOperatorStations_FinalizeProduceNode_Success(t *testing.T) {
+	t.Parallel()
 	_, router := newOperatorStationsRouter(t)
 
 	resp := doRequest(t, router, "POST", "/api/process-nodes/1/finalize", nil, nil)
@@ -852,6 +911,7 @@ func TestOperatorStations_FinalizeProduceNode_Success(t *testing.T) {
 }
 
 func TestOperatorStations_LoadBin_Success(t *testing.T) {
+	t.Parallel()
 	_, router := newOperatorStationsRouter(t)
 
 	body := map[string]any{
@@ -864,6 +924,7 @@ func TestOperatorStations_LoadBin_Success(t *testing.T) {
 }
 
 func TestOperatorStations_LoadBin_InvalidJSON(t *testing.T) {
+	t.Parallel()
 	_, router := newOperatorStationsRouter(t)
 
 	// uop_count must be int64; sending a string triggers a decode error.
@@ -873,6 +934,7 @@ func TestOperatorStations_LoadBin_InvalidJSON(t *testing.T) {
 }
 
 func TestOperatorStations_RequestEmptyBin_Success(t *testing.T) {
+	t.Parallel()
 	_, router := newOperatorStationsRouter(t)
 
 	body := map[string]string{"payload_code": "BIN-E"}
@@ -881,6 +943,7 @@ func TestOperatorStations_RequestEmptyBin_Success(t *testing.T) {
 }
 
 func TestOperatorStations_RequestFullBin_Success(t *testing.T) {
+	t.Parallel()
 	_, router := newOperatorStationsRouter(t)
 
 	body := map[string]string{"payload_code": "BIN-F"}
@@ -889,6 +952,7 @@ func TestOperatorStations_RequestFullBin_Success(t *testing.T) {
 }
 
 func TestOperatorStations_ClearBin_Success(t *testing.T) {
+	t.Parallel()
 	_, router := newOperatorStationsRouter(t)
 
 	resp := doRequest(t, router, "POST", "/api/process-nodes/1/clear-bin", nil, nil)
@@ -901,6 +965,7 @@ func TestOperatorStations_ClearBin_Success(t *testing.T) {
 // ═══════════════════════════════════════════════════════════════════════
 
 func TestOperatorStations_PreviewChangeover_Success(t *testing.T) {
+	t.Parallel()
 	_, router := newOperatorStationsRouter(t)
 
 	body := map[string]any{"to_style_id": 1}
@@ -909,6 +974,7 @@ func TestOperatorStations_PreviewChangeover_Success(t *testing.T) {
 }
 
 func TestOperatorStations_PreviewChangeover_InvalidID(t *testing.T) {
+	t.Parallel()
 	_, router := newOperatorStationsRouter(t)
 
 	resp := doRequest(t, router, "POST", "/api/processes/bad/changeover/preview", nil, nil)
@@ -917,6 +983,7 @@ func TestOperatorStations_PreviewChangeover_InvalidID(t *testing.T) {
 }
 
 func TestOperatorStations_StartChangeover_Success(t *testing.T) {
+	t.Parallel()
 	_, router := newOperatorStationsRouter(t)
 
 	body := map[string]any{
@@ -929,6 +996,7 @@ func TestOperatorStations_StartChangeover_Success(t *testing.T) {
 }
 
 func TestOperatorStations_StartChangeover_InvalidID(t *testing.T) {
+	t.Parallel()
 	_, router := newOperatorStationsRouter(t)
 
 	resp := doRequest(t, router, "POST", "/api/processes/bad/changeover/start", nil, nil)
@@ -937,6 +1005,7 @@ func TestOperatorStations_StartChangeover_InvalidID(t *testing.T) {
 }
 
 func TestOperatorStations_CancelChangeover_Success(t *testing.T) {
+	t.Parallel()
 	_, router := newOperatorStationsRouter(t)
 
 	resp := doRequest(t, router, "POST", "/api/processes/1/changeover/cancel", nil, nil)
@@ -945,6 +1014,7 @@ func TestOperatorStations_CancelChangeover_Success(t *testing.T) {
 }
 
 func TestOperatorStations_CancelChangeover_AsRedirect(t *testing.T) {
+	t.Parallel()
 	_, router := newOperatorStationsRouter(t)
 
 	nextStyle := int64(7)
@@ -955,6 +1025,7 @@ func TestOperatorStations_CancelChangeover_AsRedirect(t *testing.T) {
 }
 
 func TestOperatorStations_CompleteProductionCutover_Success(t *testing.T) {
+	t.Parallel()
 	_, router := newOperatorStationsRouter(t)
 
 	resp := doRequest(t, router, "POST", "/api/processes/1/changeover/cutover", nil, nil)
@@ -963,6 +1034,7 @@ func TestOperatorStations_CompleteProductionCutover_Success(t *testing.T) {
 }
 
 func TestOperatorStations_StageNodeChangeoverMaterial_Success(t *testing.T) {
+	t.Parallel()
 	_, router := newOperatorStationsRouter(t)
 
 	resp := doRequest(t, router, "POST", "/api/processes/1/changeover/stage-node/2", nil, nil)
@@ -970,6 +1042,7 @@ func TestOperatorStations_StageNodeChangeoverMaterial_Success(t *testing.T) {
 }
 
 func TestOperatorStations_StageNodeChangeoverMaterial_InvalidNodeID(t *testing.T) {
+	t.Parallel()
 	_, router := newOperatorStationsRouter(t)
 
 	resp := doRequest(t, router, "POST", "/api/processes/1/changeover/stage-node/bad", nil, nil)
@@ -978,6 +1051,7 @@ func TestOperatorStations_StageNodeChangeoverMaterial_InvalidNodeID(t *testing.T
 }
 
 func TestOperatorStations_EvacuateNode_Success(t *testing.T) {
+	t.Parallel()
 	_, router := newOperatorStationsRouter(t)
 
 	body := map[string]int64{"qty": 3}
@@ -986,6 +1060,7 @@ func TestOperatorStations_EvacuateNode_Success(t *testing.T) {
 }
 
 func TestOperatorStations_DeliverNewMaterialForChangeover_Success(t *testing.T) {
+	t.Parallel()
 	_, router := newOperatorStationsRouter(t)
 
 	resp := doRequest(t, router, "POST", "/api/processes/1/changeover/deliver-material/2", nil, nil)
@@ -993,6 +1068,7 @@ func TestOperatorStations_DeliverNewMaterialForChangeover_Success(t *testing.T) 
 }
 
 func TestOperatorStations_SwitchNodeToTarget_Success(t *testing.T) {
+	t.Parallel()
 	_, router := newOperatorStationsRouter(t)
 
 	resp := doRequest(t, router, "POST", "/api/processes/1/changeover/switch-node/2", nil, nil)
@@ -1001,6 +1077,7 @@ func TestOperatorStations_SwitchNodeToTarget_Success(t *testing.T) {
 }
 
 func TestOperatorStations_SwitchOperatorStationToTarget_Success(t *testing.T) {
+	t.Parallel()
 	_, router := newOperatorStationsRouter(t)
 
 	resp := doRequest(t, router, "POST", "/api/processes/1/changeover/switch-station/2", nil, nil)
@@ -1009,6 +1086,7 @@ func TestOperatorStations_SwitchOperatorStationToTarget_Success(t *testing.T) {
 }
 
 func TestOperatorStations_SwitchOperatorStationToTarget_InvalidStationID(t *testing.T) {
+	t.Parallel()
 	_, router := newOperatorStationsRouter(t)
 
 	resp := doRequest(t, router, "POST", "/api/processes/1/changeover/switch-station/bad", nil, nil)
@@ -1021,6 +1099,7 @@ func TestOperatorStations_SwitchOperatorStationToTarget_InvalidStationID(t *test
 // ═══════════════════════════════════════════════════════════════════════
 
 func TestOperatorStations_AdminAuth_RequiresLogin(t *testing.T) {
+	t.Parallel()
 	_, router := newOperatorStationsRouter(t)
 
 	endpoints := []struct {
@@ -1058,6 +1137,7 @@ func TestOperatorStations_AdminAuth_RequiresLogin(t *testing.T) {
 // display name is process_nodes.name, editable and free; the core name is the
 // identity every routing decision and the composer's picture are keyed by.
 func TestOperatorStations_PreviewChangeover_ActionsCarryCoreNodeName(t *testing.T) {
+	t.Parallel()
 	h, router := newOperatorStationsRouter(t)
 	stub := h.orchestration.(*stubEngine)
 	stub.previewPlan = changeover.Plan{Actions: []changeover.NodeAction{{
@@ -1087,6 +1167,7 @@ func TestOperatorStations_PreviewChangeover_ActionsCarryCoreNodeName(t *testing.
 // TestClearBin_PassesTheDeclaredLayers: the clear-bin door hands the engine
 // the height the panel's button posted, and none when the body carries none.
 func TestClearBin_PassesTheDeclaredLayers(t *testing.T) {
+	t.Parallel()
 	h, router := newTestHandlers(t)
 	router.Post("/api/process-nodes/{id}/clear-bin", h.apiClearBin)
 	stub := h.orchestration.(*stubEngine)

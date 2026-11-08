@@ -12,6 +12,7 @@ import (
 // tooltip on a cut name, and how the station hosts a picture taller than its
 // panel. No database: the cells are synthetic.
 func TestOperatorFlowSurfacePins(t *testing.T) {
+	t.Parallel()
 	nodePath, err := exec.LookPath("node")
 	if err != nil {
 		t.Skipf("node not on PATH; skipping surface pins")

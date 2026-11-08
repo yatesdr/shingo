@@ -150,6 +150,7 @@ var knownDead = map[string]string{
 //
 // The rule for any file BOTH surfaces load: never a bare --os-* token.
 func TestSharedRendererNamesBothSurfacesTokens(t *testing.T) {
+	t.Parallel()
 	// Files the station and the desktop both load.
 	shared := []string{
 		filepath.Join("static", "operator-station", "operator-flow.js"),
@@ -195,6 +196,7 @@ func TestSharedRendererNamesBothSurfacesTokens(t *testing.T) {
 // surfaces have to declare them. A literal fallback is not a declaration; it is
 // one theme's answer to a question the other theme also asks.
 func TestBothSurfacesDeclareTheGlyphFilesTokens(t *testing.T) {
+	t.Parallel()
 	glyphs := filepath.Join("static", "operator-station", "composer-glyphs.css")
 	body, err := os.ReadFile(glyphs)
 	if err != nil {
@@ -237,6 +239,7 @@ func TestBothSurfacesDeclareTheGlyphFilesTokens(t *testing.T) {
 }
 
 func TestNoCSSVarChainIsEntirelyUndeclared(t *testing.T) {
+	t.Parallel()
 	files := cssFiles(t)
 	declared := map[string]bool{}
 	for _, f := range files {

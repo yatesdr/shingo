@@ -11,6 +11,7 @@ import (
 // rendered from the server's send_back object, deciding nothing. Skipped if
 // `node` is not on PATH (matches the other JS test wrappers).
 func TestOperatorModalSendBackJS(t *testing.T) {
+	t.Parallel()
 	nodePath, err := exec.LookPath("node")
 	if err != nil {
 		t.Skipf("node not on PATH; skipping JS unit tests")

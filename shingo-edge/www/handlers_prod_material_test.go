@@ -38,10 +38,12 @@ func newProdMaterialRouter(t *testing.T) (*Handlers, *chi.Mux) {
 // ═══════════════════════════════════════════════════════════════════════
 
 func TestApiListShifts_EmptyByDefault(t *testing.T) {
-	_, router := newProdMaterialRouter(t)
+	t.Parallel()
+	h, router := newProdMaterialRouter(t)
+	db := dbOf(h)
 
 	// Clean slate so the response shape is predictable across runs.
-	if _, err := testDB.Exec("DELETE FROM shifts"); err != nil {
+	if _, err := db.Exec("DELETE FROM shifts"); err != nil {
 		t.Fatalf("clear shifts: %v", err)
 	}
 
@@ -50,12 +52,14 @@ func TestApiListShifts_EmptyByDefault(t *testing.T) {
 }
 
 func TestApiListShifts_ReturnsSeededShift(t *testing.T) {
-	_, router := newProdMaterialRouter(t)
+	t.Parallel()
+	h, router := newProdMaterialRouter(t)
+	db := dbOf(h)
 
-	if _, err := testDB.Exec("DELETE FROM shifts"); err != nil {
+	if _, err := db.Exec("DELETE FROM shifts"); err != nil {
 		t.Fatalf("clear shifts: %v", err)
 	}
-	testutil.MustNoErr(t, testDB.UpsertShift(1, "Day", "06:00", "14:00"), "seed shift")
+	testutil.MustNoErr(t, db.UpsertShift(1, "Day", "06:00", "14:00"), "seed shift")
 
 	resp := doRequest(t, router, "GET", "/api/shifts", nil, nil)
 	assertStatus(t, resp, http.StatusOK)
@@ -76,13 +80,15 @@ func TestApiListShifts_ReturnsSeededShift(t *testing.T) {
 // ═══════════════════════════════════════════════════════════════════════
 
 func TestApiSaveShifts_UpsertAndDelete(t *testing.T) {
-	_, router := newProdMaterialRouter(t)
+	t.Parallel()
+	h, router := newProdMaterialRouter(t)
+	db := dbOf(h)
 
-	if _, err := testDB.Exec("DELETE FROM shifts"); err != nil {
+	if _, err := db.Exec("DELETE FROM shifts"); err != nil {
 		t.Fatalf("clear shifts: %v", err)
 	}
 	// Seed a shift that we'll delete via empty start/end times.
-	testutil.MustNoErr(t, testDB.UpsertShift(2, "ToBeDeleted", "14:00", "22:00"), "seed shift")
+	testutil.MustNoErr(t, db.UpsertShift(2, "ToBeDeleted", "14:00", "22:00"), "seed shift")
 
 	body := []map[string]any{
 		{"shift_number": 1, "name": "Day", "start_time": "06:00", "end_time": "14:00"},
@@ -92,7 +98,7 @@ func TestApiSaveShifts_UpsertAndDelete(t *testing.T) {
 	resp := doRequest(t, router, "PUT", "/api/shifts", body, nil)
 	assertStatus(t, resp, http.StatusOK)
 
-	shifts, err := testDB.ListShifts()
+	shifts, err := db.ListShifts()
 	if err != nil {
 		t.Fatalf("ListShifts: %v", err)
 	}
@@ -105,6 +111,7 @@ func TestApiSaveShifts_UpsertAndDelete(t *testing.T) {
 }
 
 func TestApiSaveShifts_InvalidJSON(t *testing.T) {
+	t.Parallel()
 	_, router := newProdMaterialRouter(t)
 
 	// Top level should be an array; sending an object decodes into the
@@ -120,15 +127,17 @@ func TestApiSaveShifts_InvalidJSON(t *testing.T) {
 // existing rows and delete the absent one — otherwise a removed shift sat
 // in the DB forever.
 func TestApiSaveShifts_AbsentShiftIsDeleted(t *testing.T) {
-	_, router := newProdMaterialRouter(t)
+	t.Parallel()
+	h, router := newProdMaterialRouter(t)
+	db := dbOf(h)
 
-	if _, err := testDB.Exec("DELETE FROM shifts"); err != nil {
+	if _, err := db.Exec("DELETE FROM shifts"); err != nil {
 		t.Fatalf("clear shifts: %v", err)
 	}
 	// Seed two shifts; the operator removes shift 2 in the UI, so only
 	// shift 1 is sent. Shift 2 must be deleted from the DB.
-	testutil.MustNoErr(t, testDB.UpsertShift(1, "Day", "06:00", "14:00"), "seed shift 1")
-	testutil.MustNoErr(t, testDB.UpsertShift(2, "Swing", "14:00", "22:00"), "seed shift 2")
+	testutil.MustNoErr(t, db.UpsertShift(1, "Day", "06:00", "14:00"), "seed shift 1")
+	testutil.MustNoErr(t, db.UpsertShift(2, "Swing", "14:00", "22:00"), "seed shift 2")
 
 	body := []map[string]any{
 		{"shift_number": 1, "name": "Day", "start_time": "06:00", "end_time": "14:00"},
@@ -136,7 +145,7 @@ func TestApiSaveShifts_AbsentShiftIsDeleted(t *testing.T) {
 	resp := doRequest(t, router, "PUT", "/api/shifts", body, nil)
 	assertStatus(t, resp, http.StatusOK)
 
-	got, err := testDB.ListShifts()
+	got, err := db.ListShifts()
 	if err != nil {
 		t.Fatalf("ListShifts: %v", err)
 	}
@@ -153,6 +162,7 @@ func TestApiSaveShifts_AbsentShiftIsDeleted(t *testing.T) {
 // ═══════════════════════════════════════════════════════════════════════
 
 func TestApiGetHourlyCounts_NoProcessReturnsEmpty(t *testing.T) {
+	t.Parallel()
 	_, router := newProdMaterialRouter(t)
 
 	resp := doRequest(t, router, "GET", "/api/hourly-counts", nil, nil)
@@ -166,9 +176,11 @@ func TestApiGetHourlyCounts_NoProcessReturnsEmpty(t *testing.T) {
 }
 
 func TestApiGetHourlyCounts_WithProcessIDReturnsMap(t *testing.T) {
-	_, router := newProdMaterialRouter(t)
+	t.Parallel()
+	h, router := newProdMaterialRouter(t)
+	db := dbOf(h)
 
-	pid := seedProcess(t, "ProdHourlyProc")
+	pid := seedProcess(t, db, "ProdHourlyProc")
 
 	resp := doRequest(t, router, "GET", "/api/hourly-counts?process_id="+itoa(pid), nil, nil)
 	assertStatus(t, resp, http.StatusOK)
@@ -180,6 +192,7 @@ func TestApiGetHourlyCounts_WithProcessIDReturnsMap(t *testing.T) {
 // ═══════════════════════════════════════════════════════════════════════
 
 func TestBuildStationViews_NilProcessReturnsNil(t *testing.T) {
+	t.Parallel()
 	h, _ := newTestHandlers(t)
 	views := buildStationViews(context.Background(), h.engine, nil)
 	if views != nil {
@@ -188,8 +201,10 @@ func TestBuildStationViews_NilProcessReturnsNil(t *testing.T) {
 }
 
 func TestBuildStationViews_ProcessWithoutStations(t *testing.T) {
+	t.Parallel()
 	h, _ := newTestHandlers(t)
-	pid := seedProcess(t, "MaterialNoStations")
+	db := dbOf(h)
+	pid := seedProcess(t, db, "MaterialNoStations")
 	process := &processes.Process{ID: pid}
 
 	views := buildStationViews(context.Background(), h.engine, process)
@@ -199,9 +214,11 @@ func TestBuildStationViews_ProcessWithoutStations(t *testing.T) {
 }
 
 func TestBuildStationViews_ProcessWithStation(t *testing.T) {
+	t.Parallel()
 	h, _ := newTestHandlers(t)
-	pid := seedProcess(t, "MaterialOneStation")
-	_ = seedOperatorStation(t, pid, "MAT-CODE-1", "MaterialStation1")
+	db := dbOf(h)
+	pid := seedProcess(t, db, "MaterialOneStation")
+	_ = seedOperatorStation(t, db, pid, "MAT-CODE-1", "MaterialStation1")
 	process := &processes.Process{ID: pid}
 
 	views := buildStationViews(context.Background(), h.engine, process)

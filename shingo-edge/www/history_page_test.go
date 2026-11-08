@@ -16,6 +16,7 @@ import (
 // TestPinEdgeLogs_PageNewestHundred: the Logs page shows the newest 100 lines
 // of the ring, oldest of those first, and pages back through the rest.
 func TestPinEdgeLogs_PageNewestHundred(t *testing.T) {
+	t.Parallel()
 	base := time.Date(2026, 10, 7, 0, 0, 0, 0, time.UTC)
 	all := make([]debuglog.Entry, 1000)
 	for i := range all {
@@ -63,6 +64,7 @@ func TestPinEdgeLogs_PageNewestHundred(t *testing.T) {
 // TestPinOrders_PagerLinksAndLine: the Orders pager keeps the view's status and
 // process on its links and says which rows of how many.
 func TestPinOrders_PagerLinksAndLine(t *testing.T) {
+	t.Parallel()
 	q := url.Values{}
 	q.Set("status", "confirmed")
 	q.Set("process", "3")
@@ -83,6 +85,7 @@ func TestPinOrders_PagerLinksAndLine(t *testing.T) {
 // #orders-table tbody tr) still filters only orders. The Active tab has no
 // pager.
 func TestPinOrders_PagerSitsOutsideTheTable(t *testing.T) {
+	t.Parallel()
 	q := url.Values{}
 	q.Set("status", "all")
 	q.Set("process", "0")

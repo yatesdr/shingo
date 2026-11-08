@@ -42,12 +42,14 @@ func newDiagnosticsManualRouter(t *testing.T) (*Handlers, *chi.Mux) {
 // ═══════════════════════════════════════════════════════════════════════
 
 func TestApiReplayOutbox_MissingID(t *testing.T) {
+	t.Parallel()
 	_, router := newDiagnosticsManualRouter(t)
 	resp := doRequest(t, router, "POST", "/api/replay-outbox", nil, nil)
 	assertStatus(t, resp, http.StatusBadRequest)
 }
 
 func TestApiReplayOutbox_InvalidID(t *testing.T) {
+	t.Parallel()
 	_, router := newDiagnosticsManualRouter(t)
 	resp := doRequest(t, router, "POST", "/api/replay-outbox?id=notanumber", nil, nil)
 	assertStatus(t, resp, http.StatusBadRequest)
@@ -74,6 +76,7 @@ func sendManualPayload(t *testing.T, router *chi.Mux, msgType string, payload an
 }
 
 func TestApiSendManualMessage_EdgeRegister_Success(t *testing.T) {
+	t.Parallel()
 	_, router := newDiagnosticsManualRouter(t)
 
 	resp := sendManualPayload(t, router, "edge.register", map[string]any{
@@ -85,6 +88,7 @@ func TestApiSendManualMessage_EdgeRegister_Success(t *testing.T) {
 }
 
 func TestApiSendManualMessage_EdgeHeartbeat_Success(t *testing.T) {
+	t.Parallel()
 	_, router := newDiagnosticsManualRouter(t)
 
 	// The heartbeat carries no hand-set field since uptime left the wire.
@@ -93,6 +97,7 @@ func TestApiSendManualMessage_EdgeHeartbeat_Success(t *testing.T) {
 }
 
 func TestApiSendManualMessage_NodeListRequest_Success(t *testing.T) {
+	t.Parallel()
 	_, router := newDiagnosticsManualRouter(t)
 
 	// node.list_request ignores the payload entirely.
@@ -101,6 +106,7 @@ func TestApiSendManualMessage_NodeListRequest_Success(t *testing.T) {
 }
 
 func TestApiSendManualMessage_OrderRequest_Success(t *testing.T) {
+	t.Parallel()
 	_, router := newDiagnosticsManualRouter(t)
 
 	resp := sendManualPayload(t, router, "order.request", protocol.OrderRequest{
@@ -113,6 +119,7 @@ func TestApiSendManualMessage_OrderRequest_Success(t *testing.T) {
 }
 
 func TestApiSendManualMessage_OrderCancel_Success(t *testing.T) {
+	t.Parallel()
 	_, router := newDiagnosticsManualRouter(t)
 
 	resp := sendManualPayload(t, router, "order.cancel", protocol.OrderCancel{
@@ -123,6 +130,7 @@ func TestApiSendManualMessage_OrderCancel_Success(t *testing.T) {
 }
 
 func TestApiSendManualMessage_OrderReceipt_Success(t *testing.T) {
+	t.Parallel()
 	_, router := newDiagnosticsManualRouter(t)
 
 	resp := sendManualPayload(t, router, "order.receipt", protocol.OrderReceipt{
@@ -134,6 +142,7 @@ func TestApiSendManualMessage_OrderReceipt_Success(t *testing.T) {
 }
 
 func TestApiSendManualMessage_OrderRedirect_Success(t *testing.T) {
+	t.Parallel()
 	_, router := newDiagnosticsManualRouter(t)
 
 	resp := sendManualPayload(t, router, "order.redirect", protocol.OrderRedirect{
@@ -144,6 +153,7 @@ func TestApiSendManualMessage_OrderRedirect_Success(t *testing.T) {
 }
 
 func TestApiSendManualMessage_UnknownType(t *testing.T) {
+	t.Parallel()
 	_, router := newDiagnosticsManualRouter(t)
 	resp := sendManualPayload(t, router, "does.not.exist", map[string]any{})
 	assertStatus(t, resp, http.StatusBadRequest)
@@ -151,6 +161,7 @@ func TestApiSendManualMessage_UnknownType(t *testing.T) {
 }
 
 func TestApiSendManualMessage_InvalidOuterJSON(t *testing.T) {
+	t.Parallel()
 	_, router := newDiagnosticsManualRouter(t)
 
 	// type must be a string; sending an int breaks decoding the outer struct.
@@ -160,6 +171,7 @@ func TestApiSendManualMessage_InvalidOuterJSON(t *testing.T) {
 }
 
 func TestApiSendManualMessage_InvalidInnerPayload(t *testing.T) {
+	t.Parallel()
 	_, router := newDiagnosticsManualRouter(t)
 
 	// edge.register requires version to unmarshal as a string. Sending a

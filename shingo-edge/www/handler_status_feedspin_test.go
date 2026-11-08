@@ -16,6 +16,7 @@ import (
 // "perf(edge): sourcing writes only what changed, status shows the Core link,
 // one stream per page"; their values are core_link_status_test.go's.
 func TestStatus_Keys_FeedsPin(t *testing.T) {
+	t.Parallel()
 	h, r := newTestHandlers(t)
 	eng := h.orchestration.(*stubEngine)
 	eng.statusLastPublishEver = true

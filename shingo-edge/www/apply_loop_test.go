@@ -19,6 +19,7 @@ import (
 // fingerprint's from-side under every row after it and 409-cascaded through
 // them; and a 409 re-previewed and then stopped, leaving the row unwritten.
 func TestPresetApplyLoop(t *testing.T) {
+	t.Parallel()
 	nodePath, err := exec.LookPath("node")
 	if err != nil {
 		t.Skipf("node not on PATH; skipping the apply-loop test")

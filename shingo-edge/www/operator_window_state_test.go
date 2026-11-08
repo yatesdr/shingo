@@ -13,6 +13,7 @@ import (
 // refactor can't silently change what the board shows or which tap fires. Skipped if
 // `node` is not on PATH (matches the other JS test wrappers).
 func TestOperatorWindowStateJS(t *testing.T) {
+	t.Parallel()
 	nodePath, err := exec.LookPath("node")
 	if err != nil {
 		t.Skipf("node not on PATH; skipping JS unit tests")

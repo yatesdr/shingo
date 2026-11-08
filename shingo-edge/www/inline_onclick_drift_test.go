@@ -31,6 +31,7 @@ import (
 // exists so a future justified exception has a single place to
 // land with a comment).
 func TestNoInlineEventHandlersInTemplates(t *testing.T) {
+	t.Parallel()
 	eventRe := regexp.MustCompile(`(?i)\bon(click|change|input|blur|keydown|submit|focus|keyup|mousedown|mouseup)\s*=`)
 	allowlist := []string{
 		// (empty — see comment above)

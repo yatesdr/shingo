@@ -125,6 +125,7 @@ func objectKeys(t *testing.T, raw json.RawMessage) map[string]json.RawMessage {
 // makes of a loader tile is a key of the station's JSON, the loader tile
 // carries no claim, and its bin carries stocked and no count.
 func TestStationView_ModelReadsAreWireKeys(t *testing.T) {
+	t.Parallel()
 	raw, err := json.Marshal(boardFixture())
 	if err != nil {
 		t.Fatalf("marshal view: %v", err)
@@ -189,6 +190,7 @@ func TestStationView_ModelReadsAreWireKeys(t *testing.T) {
 // read of bin_state.uop_remaining in any of the board's modules would read a
 // key the station's JSON no longer carries (the board asks stocked).
 func TestGlass_ReadsNoBinCount(t *testing.T) {
+	t.Parallel()
 	files, err := filepath.Glob(filepath.Join("static", "operator-station", "operator*.js"))
 	if err != nil {
 		t.Fatalf("glob: %v", err)
@@ -242,6 +244,7 @@ var stationOrderKeys = []string{
 // station's JSON carries exactly stationOrderKeys, and every read the glass
 // makes of an order is one of them.
 func TestStationView_OrderRowsCarryTheKeysTheGlassReads(t *testing.T) {
+	t.Parallel()
 	raw, err := json.Marshal(boardFixture())
 	if err != nil {
 		t.Fatalf("marshal view: %v", err)

@@ -10,6 +10,7 @@ import (
 // red is shown-but-blocked with the missing payloads, yellow is selectable with
 // a running-low hint, green is clean and selectable.
 func TestStyleSourcingViewFrom(t *testing.T) {
+	t.Parallel()
 	red := styleSourcingViewFrom(protocol.SourcingState{Status: "red", Missing: []string{"BIN-B", "BIN-C"}})
 	if !red.Blocked {
 		t.Error("red style must be blocked (shown but not selectable)")
@@ -41,6 +42,7 @@ func TestStyleSourcingViewFrom(t *testing.T) {
 // change over to). The picker must block it and say why, without naming
 // payloads — none are configured to name.
 func TestStyleSourcingViewFrom_NotConfigured(t *testing.T) {
+	t.Parallel()
 	v := styleSourcingViewFrom(protocol.SourcingState{Status: "not_configured"})
 	if !v.Blocked {
 		t.Error("an unconfigured style must not be selectable — there is no verdict for it")
@@ -64,6 +66,7 @@ func TestStyleSourcingViewFrom_NotConfigured(t *testing.T) {
 // Core can receive a verdict it does not know. The default arm must fail
 // CLOSED — an unrecognised verdict is not permission to change over.
 func TestStyleSourcingViewFrom_UnknownStatusIsNotSelectable(t *testing.T) {
+	t.Parallel()
 	v := styleSourcingViewFrom(protocol.SourcingState{Status: "some_future_verdict"})
 	if !v.Blocked {
 		t.Errorf("unknown verdict %q must block, not fall through to selectable", v.Status)
@@ -77,6 +80,7 @@ func TestStyleSourcingViewFrom_UnknownStatusIsNotSelectable(t *testing.T) {
 // proceeds on it (engine changeoverStockAdvisory). The feed's next verdict
 // makes the copy current and redraws it.
 func TestStyleSourcingViews_AStaleCopyIsStockNotChecked(t *testing.T) {
+	t.Parallel()
 	states := []protocol.SourcingState{
 		{StyleID: "S-RED", Status: "red", Missing: []string{"BIN-B"}},
 		{StyleID: "S-GREEN", Status: "green"},

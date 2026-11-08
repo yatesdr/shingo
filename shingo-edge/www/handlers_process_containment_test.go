@@ -14,14 +14,16 @@ import (
 // A refusal (enable with no destination) is a 400, and the composer's draft
 // round-trips through the derived read.
 func TestApiProcessContainmentSetting(t *testing.T) {
+	t.Parallel()
 	h, router := newAdminRouter(t)
+	db := dbOf(h)
 	cookie := authCookie(t, h)
 
-	pid, err := testDB.CreateProcess("HoldProc", "", "", "", false)
+	pid, err := db.CreateProcess("HoldProc", "", "", "", false)
 	testutil.MustNoErr(t, err, "create process")
-	styleID, err := testDB.CreateStyle("HOLD-STYLE", "", pid)
+	styleID, err := db.CreateStyle("HOLD-STYLE", "", pid)
 	testutil.MustNoErr(t, err, "create style")
-	_, err = processes.UpsertClaim(testDB.DB, domain.CoreNodeKinds{}, processes.NodeClaimInput{
+	_, err = processes.UpsertClaim(db.DB, domain.CoreNodeKinds{}, processes.NodeClaimInput{
 		StyleID: styleID, CoreNodeName: "PLN-1", Role: "produce",
 		SwapMode: "two_robot", PayloadCode: "PART-H",
 		InboundStaging: "STG-1", OutboundDestination: "FG-9",
@@ -52,7 +54,7 @@ func TestApiProcessContainmentSetting(t *testing.T) {
 	resp = doRequest(t, router, "POST", "/api/processes/"+itoa(pid)+"/containment-setting",
 		map[string]any{"enabled": true, "destination": "HOLD-2"}, cookie)
 	assertStatus(t, resp, http.StatusOK)
-	claims, err := testDB.ListStyleNodeClaims(styleID)
+	claims, err := db.ListStyleNodeClaims(styleID)
 	testutil.MustNoErr(t, err, "list claims")
 	if len(claims) != 1 || claims[0].ContainmentDestination != "HOLD-2" {
 		t.Errorf("claims = %+v, want the containment route stamped", claims)
@@ -72,7 +74,7 @@ func TestApiProcessContainmentSetting(t *testing.T) {
 	resp = doRequest(t, router, "POST", "/api/processes/"+itoa(pid)+"/containment-setting",
 		map[string]any{"enabled": false, "destination": ""}, cookie)
 	assertStatus(t, resp, http.StatusOK)
-	claims, err = testDB.ListStyleNodeClaims(styleID)
+	claims, err = db.ListStyleNodeClaims(styleID)
 	testutil.MustNoErr(t, err, "list claims after clear")
 	if len(claims) != 1 || claims[0].ContainmentDestination != "" {
 		t.Errorf("claims = %+v, want the route cleared", claims)

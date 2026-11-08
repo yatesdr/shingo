@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -17,6 +16,7 @@ import (
 	"shingoedge/config"
 	"shingoedge/domain"
 	"shingoedge/engine"
+	"shingoedge/internal/testdb"
 	"shingoedge/store"
 	"shingoedge/store/processes"
 	"shingoedge/store/stations"
@@ -120,6 +120,9 @@ func (s *coreStub) take() map[string]int {
 
 // binsRig is a real engine over a counting store, its Core API pointed at a
 // stub, and the router the Edge serves.
+//
+// A test that builds one is not parallel: NewRouter sets plantLocation, the
+// package variable every template render reads, so a parallel render races it.
 type binsRig struct {
 	eng     *engine.Engine
 	db      *store.DB
@@ -144,11 +147,7 @@ var binsRigRows = map[string]protocol.NodeBinInfo{
 
 func newBinsRig(t *testing.T) *binsRig {
 	t.Helper()
-	db, counter, err := store.OpenCounting(filepath.Join(t.TempDir(), "bins.db"))
-	if err != nil {
-		t.Fatalf("open store: %v", err)
-	}
-	t.Cleanup(func() { _ = db.Close() })
+	db, counter := testdb.OpenCounting(t)
 	core, srv := newCoreStub(t, binsRigRows)
 	cfg := config.Defaults()
 	eng := engine.New(engine.Config{AppConfig: cfg, DB: db, LogFunc: t.Logf})

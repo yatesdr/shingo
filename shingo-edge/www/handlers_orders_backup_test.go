@@ -53,6 +53,7 @@ func newOrdersBackupRouter(t *testing.T) (*Handlers, *chi.Mux) {
 // ═══════════════════════════════════════════════════════════════════════
 
 func TestApiBackup_NilService_ReturnsNotImplemented(t *testing.T) {
+	t.Parallel()
 	_, router := newOrdersBackupRouter(t)
 
 	cases := []struct {
@@ -81,6 +82,7 @@ func TestApiBackup_NilService_ReturnsNotImplemented(t *testing.T) {
 // ═══════════════════════════════════════════════════════════════════════
 
 func TestApiUpdateBackupConfig_DisabledDefaults(t *testing.T) {
+	t.Parallel()
 	h, router := newOrdersBackupRouter(t)
 
 	// Disabled path skips the required-fields validation; interval can still
@@ -123,6 +125,7 @@ func TestApiUpdateBackupConfig_DisabledDefaults(t *testing.T) {
 // nothing. The trim assertions are kept, on the same body saved disabled
 // (disabling needs no service).
 func TestApiUpdateBackupConfig_EnabledTrimsAndPersists(t *testing.T) {
+	t.Parallel()
 	h, router := newOrdersBackupRouter(t)
 
 	body := map[string]any{
@@ -187,6 +190,7 @@ func TestApiUpdateBackupConfig_EnabledTrimsAndPersists(t *testing.T) {
 }
 
 func TestApiUpdateBackupConfig_EnabledRequiresEndpoint(t *testing.T) {
+	t.Parallel()
 	_, router := newOrdersBackupRouter(t)
 
 	body := map[string]any{
@@ -202,6 +206,7 @@ func TestApiUpdateBackupConfig_EnabledRequiresEndpoint(t *testing.T) {
 }
 
 func TestApiUpdateBackupConfig_EnabledRequiresBucket(t *testing.T) {
+	t.Parallel()
 	_, router := newOrdersBackupRouter(t)
 
 	body := map[string]any{
@@ -217,6 +222,7 @@ func TestApiUpdateBackupConfig_EnabledRequiresBucket(t *testing.T) {
 }
 
 func TestApiUpdateBackupConfig_EnabledRequiresAccessAndSecret(t *testing.T) {
+	t.Parallel()
 	_, router := newOrdersBackupRouter(t)
 
 	cases := []struct {
@@ -249,6 +255,7 @@ func TestApiUpdateBackupConfig_EnabledRequiresAccessAndSecret(t *testing.T) {
 }
 
 func TestApiUpdateBackupConfig_InvalidScheduleInterval(t *testing.T) {
+	t.Parallel()
 	_, router := newOrdersBackupRouter(t)
 
 	body := map[string]any{
@@ -260,6 +267,7 @@ func TestApiUpdateBackupConfig_InvalidScheduleInterval(t *testing.T) {
 }
 
 func TestApiUpdateBackupConfig_EnabledZeroInterval(t *testing.T) {
+	t.Parallel()
 	_, router := newOrdersBackupRouter(t)
 
 	// When ScheduleInterval string is empty, the handler defaults to 1h —
@@ -277,6 +285,7 @@ func TestApiUpdateBackupConfig_EnabledZeroInterval(t *testing.T) {
 }
 
 func TestApiUpdateBackupConfig_InvalidJSON(t *testing.T) {
+	t.Parallel()
 	_, router := newOrdersBackupRouter(t)
 
 	// enabled must be bool; sending a string breaks the outer decode.
@@ -293,6 +302,7 @@ func TestApiUpdateBackupConfig_InvalidJSON(t *testing.T) {
 // ═══════════════════════════════════════════════════════════════════════
 
 func TestRequestBackup_NilServiceIsSafe(t *testing.T) {
+	t.Parallel()
 	h, _ := newOrdersBackupRouter(t)
 	// Must not panic.
 	h.requestBackup("unit-test")

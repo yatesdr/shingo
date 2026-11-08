@@ -14,6 +14,7 @@ import (
 // on the Edge. The start broadcasts the changeover row, which carries
 // process_id; every other site goes through changeoverAction.
 func TestChangeoverUpdate_NamesItsProcess(t *testing.T) {
+	t.Parallel()
 	src, err := os.ReadFile("handlers_operator_changeover.go")
 	if err != nil {
 		t.Fatalf("read: %v", err)

@@ -22,6 +22,7 @@ var assetAttrRe = regexp.MustCompile(`(?i)\b(?:src|href)\s*=\s*(?:"([^"]*)"|'([^
 // ETag already makes a bare URL fresh across a restart (router.go), so a
 // query buys nothing and costs the whole file each time.
 func TestTemplates_NoCacheBustQuery(t *testing.T) {
+	t.Parallel()
 	assertNoAssetQuery(t, templatesFS, nil)
 }
 

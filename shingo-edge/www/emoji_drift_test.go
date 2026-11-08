@@ -17,6 +17,7 @@ import (
 // geometric glyphs (arrows, chevrons, bullets, check/cross, the bare warning
 // sign) are allowed; see shared.IsEmoji for the exact boundary.
 func TestNoEmojiInTemplatesAndPageJS(t *testing.T) {
+	t.Parallel()
 	scanForEmoji(t, templatesFS, "templates")
 	scanForEmoji(t, staticFS, "static")
 }

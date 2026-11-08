@@ -94,6 +94,7 @@ func pinContains(keys []string, k string) bool {
 // data-action="hideModal:<id>" buttons in production.html (view-bin and
 // request-empty modals: × and Close/Cancel) close their modal.
 func TestPinWire_W1_EdgeProductionHideModalMapped(t *testing.T) {
+	t.Parallel()
 	js := pinReadFile(t, "static/js/pages/production.js")
 	maps := pinDelegateActionsKeys(t, js)
 	if len(maps) != 1 {
@@ -120,7 +121,9 @@ func TestPinWire_W1_EdgeProductionHideModalMapped(t *testing.T) {
 // (partials/changeover-body.html, {{if .GateBlockers}}) renders on the full
 // page and on the SSE partial when blockers are present.
 func TestPinWire_W2_ChangeoverGateBlockersRendered(t *testing.T) {
+	t.Parallel()
 	h, _ := newTestHandlers(t)
+	db := dbOf(h)
 	h.tmpl = template.Must(template.New("").Funcs(templateFuncs()).
 		ParseFS(templatesFS, "templates/*.html", "templates/partials/*.html"))
 	eng := h.engine.(*stubEngine)
@@ -130,19 +133,19 @@ func TestPinWire_W2_ChangeoverGateBlockersRendered(t *testing.T) {
 		{Reason: "order 703 in in_transit", OrderID: 703, Hard: true},
 	}
 
-	pid := seedProcess(t, "PinW2Gate")
-	fromStyleID := seedStyle(t, "PinW2-From", pid)
-	toStyleID := seedStyle(t, "PinW2-To", pid)
+	pid := seedProcess(t, db, "PinW2Gate")
+	fromStyleID := seedStyle(t, db, "PinW2-From", pid)
+	toStyleID := seedStyle(t, db, "PinW2-To", pid)
 	active := fromStyleID
-	testutil.MustNoErr(t, testDB.SetActiveStyle(pid, &active), "SetActiveStyle")
-	stationID := seedOperatorStation(t, pid, "PIN-W2-ST", "PinW2Station")
-	_ = seedProcessNode(t, pid, stationID, "PIN-W2-NODE")
-	existing, err := testDB.ListProcessNodesByProcess(pid)
+	testutil.MustNoErr(t, db.SetActiveStyle(pid, &active), "SetActiveStyle")
+	stationID := seedOperatorStation(t, db, pid, "PIN-W2-ST", "PinW2Station")
+	_ = seedProcessNode(t, db, pid, stationID, "PIN-W2-NODE")
+	existing, err := db.ListProcessNodesByProcess(pid)
 	if err != nil {
 		t.Fatalf("ListProcessNodesByProcess: %v", err)
 	}
 	from := fromStyleID
-	if _, err := service.NewChangeoverService(testDB).Create(pid, &from, toStyleID, "test", "pin W2",
+	if _, err := service.NewChangeoverService(db).Create(pid, &from, toStyleID, "test", "pin W2",
 		[]int64{stationID},
 		[]processes.NodeTaskInput{{ProcessID: pid, CoreNodeName: "PIN-W2-NODE", Situation: "switch", State: "pending"}},
 		nil, existing); err != nil {
@@ -200,6 +203,7 @@ func TestPinWire_W2_ChangeoverGateBlockersRendered(t *testing.T) {
 // for it: #production-content's hx-trigger (templates/production.html :14)
 // carries "refreshMaterial from:body". That template and nothing else names it.
 func TestPinWire_W3_RefreshMaterialHeardOnProduction(t *testing.T) {
+	t.Parallel()
 	tmpl := pinReadFile(t, "templates/production.html")
 	m := regexp.MustCompile(`(?s)id="production-content"\s+hx-get="[^"]*"\s+hx-trigger="([^"]*)"`).FindStringSubmatch(tmpl)
 	if m == nil {

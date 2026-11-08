@@ -23,6 +23,7 @@ import (
 // equivalent. We don't run a JS engine — the JS arrays are required to
 // be plain string literals, no computation, so a regex pin is enough.
 func TestOrderStatusJSAgreesWithProtocol(t *testing.T) {
+	t.Parallel()
 	path := filepath.Join("static", "operator-station", "order-status.js")
 	body, err := os.ReadFile(path)
 	if err != nil {
@@ -72,6 +73,7 @@ func TestOrderStatusJSAgreesWithProtocol(t *testing.T) {
 // vanished from window cards (fell to NO DEMAND) while the operator modal still
 // counted them. This test keeps the inlined copy from silently drifting again.
 func TestWindowStateActiveStatusesAgreeWithProtocol(t *testing.T) {
+	t.Parallel()
 	path := filepath.Join("static", "operator-station", "operator-window-state.js")
 	body, err := os.ReadFile(path)
 	if err != nil {

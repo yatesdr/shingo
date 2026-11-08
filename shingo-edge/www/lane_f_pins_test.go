@@ -22,6 +22,7 @@ import (
 // TestPinEdgeLogs_ReplayUnknownRowAnswersNotFound: an id that matches no row.
 // AFTER: 404 {"error":"no outbox message N"}.
 func TestPinEdgeLogs_ReplayUnknownRowAnswersNotFound(t *testing.T) {
+	t.Parallel()
 	h, _ := newTestHandlers(t)
 	rec := postReplay(t, h, chi.NewRouter(), 987654321)
 	want := "{\"error\":\"no outbox message 987654321\"}\n"
@@ -33,9 +34,11 @@ func TestPinEdgeLogs_ReplayUnknownRowAnswersNotFound(t *testing.T) {
 // TestPinEdgeLogs_ReplaySentRowAnswersConflict: a row already delivered.
 // AFTER: 409 "already sent at … — nothing to replay"; retries unchanged.
 func TestPinEdgeLogs_ReplaySentRowAnswersConflict(t *testing.T) {
+	t.Parallel()
 	h, _ := newTestHandlers(t)
-	id := seedReplayRow(t, protocol.SubjectBinUOPDelta, time.Duration(0))
-	if _, err := testDB.Exec(`UPDATE outbox SET sent_at = datetime('now') WHERE id = ?`, id); err != nil {
+	db := dbOf(h)
+	id := seedReplayRow(t, db, protocol.SubjectBinUOPDelta, time.Duration(0))
+	if _, err := db.Exec(`UPDATE outbox SET sent_at = datetime('now') WHERE id = ?`, id); err != nil {
 		t.Fatalf("mark sent: %v", err)
 	}
 	rec := postReplay(t, h, chi.NewRouter(), id)
@@ -43,7 +46,7 @@ func TestPinEdgeLogs_ReplaySentRowAnswersConflict(t *testing.T) {
 		!strings.Contains(rec.Body.String(), "nothing to replay") {
 		t.Errorf("replay of a sent row = %d %q, want 409 already sent … nothing to replay", rec.Code, rec.Body.String())
 	}
-	if got := rowRetries(t, id); got != outboxMaxRetries {
+	if got := rowRetries(t, db, id); got != outboxMaxRetries {
 		t.Errorf("retries = %d, want %d unchanged (the replay did nothing)", got, outboxMaxRetries)
 	}
 }

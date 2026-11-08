@@ -42,6 +42,7 @@ import (
 // changeover /start and /preview bodies are read by changeover.js. None of
 // those are acknowledgements and none belong here.
 func TestOperatorActionsAnswerWithAnAcknowledgement(t *testing.T) {
+	t.Parallel()
 	// handler name -> the file it lives in.
 	handlers := map[string]string{
 		"apiReleaseNodeEmpty":                "handlers_operator_actions.go",
@@ -101,6 +102,7 @@ func TestOperatorActionsAnswerWithAnAcknowledgement(t *testing.T) {
 // the discrimination it looks like it offers is one it cannot make: a reader
 // keys on the swap legs instead.
 func TestNodeOrderResultHasNoCycleMode(t *testing.T) {
+	t.Parallel()
 	b, err := os.ReadFile("../engine/operator_stations.go")
 	if err != nil {
 		t.Fatalf("read operator_stations.go: %v", err)

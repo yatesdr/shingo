@@ -17,6 +17,7 @@ import (
 
 // The frame takes the picture's whole height and never scrolls it.
 func TestDesktopPictureIsNeverClipped(t *testing.T) {
+	t.Parallel()
 	decls := cssRule(t, desktopCSS(t), ".pd-pic")
 	if regexp.MustCompile(`(^|[;\s])min-height:`).MatchString(decls) {
 		t.Errorf(".pd-pic sets a min-height; a floor is only there for a frame that shrinks, and this one must not")
@@ -32,6 +33,7 @@ func TestDesktopPictureIsNeverClipped(t *testing.T) {
 // One vertical scroll: the main column. Nothing in it shrinks to make room,
 // so nothing in it needs a scroller of its own.
 func TestDesktopMainColumnIsTheOneVerticalScroller(t *testing.T) {
+	t.Parallel()
 	css := desktopCSS(t)
 	if !hasDecl(cssRule(t, css, ".pd-main"), "overflow-y", "auto") {
 		t.Errorf(".pd-main must be the vertical scroller (overflow-y: auto) at every window height")

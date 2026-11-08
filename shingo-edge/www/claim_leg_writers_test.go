@@ -57,8 +57,8 @@ func writersCore() map[string]protocol.NodeInfo {
 // THE PAYLOAD IS THE STYLE'S OWN. Every claim here declares a containment
 // destination, and the station view reads every such claim in the database
 // keyed by (destination, payload); rows that shared one payload and differed
-// on the outbound destination would read as a conflict in other tests of this
-// package, which share the database.
+// on the outbound destination would read as a conflict in the census's other
+// cases, which share the test's database.
 func cleanLegClaim(sid int64) processes.NodeClaimInput {
 	evac := "LL-SUP"
 	return processes.NodeClaimInput{
@@ -121,25 +121,25 @@ func legValue(c processes.NodeClaim, leg string) string {
 // written before the refusal sits in a plant's database: through the store,
 // with no node list to check it against.
 //
-// A keep-staged node is written behind the store's back: other rows in this
-// package's shared database name the lane on their staging, so the store's
-// dedicated-spot check would refuse the seed for a reason that is not the
-// lane.
-func seedLegacyLaneClaim(t *testing.T, sid int64, leg string) {
+// A keep-staged node is written behind the store's back: other rows in the
+// test's database (the census's other cases) name the lane on their
+// staging, so the store's dedicated-spot check would refuse the seed for a
+// reason that is not the lane.
+func seedLegacyLaneClaim(t *testing.T, db *store.DB, sid int64, leg string) {
 	t.Helper()
 	in := withLaneOn(cleanLegClaim(sid), leg)
 	if leg == "keep_staged_node" {
 		in = cleanLegClaim(sid)
 	}
-	_, err := testDB.UpsertStyleNodeClaim(domain.CoreNodeKinds{}, in)
+	_, err := db.UpsertStyleNodeClaim(domain.CoreNodeKinds{}, in)
 	testutil.MustNoErr(t, err, "seed a stored claim naming a lane on "+leg)
 	if leg == "keep_staged_node" {
-		_, err := testDB.Exec(`UPDATE style_node_claims SET keep_staged_node = 'LL-LANE' WHERE style_id = ?`, sid)
+		_, err := db.Exec(`UPDATE style_node_claims SET keep_staged_node = 'LL-LANE' WHERE style_id = ?`, sid)
 		testutil.MustNoErr(t, err, "name the lane as the keep-staged node")
 		// Taken back after the row: left standing, it is a kept spot every
-		// later write in the shared database meets.
+		// later write in the test's database meets.
 		t.Cleanup(func() {
-			if _, err := testDB.Exec(`UPDATE style_node_claims SET keep_staged_node = '' WHERE keep_staged_node = 'LL-LANE'`); err != nil {
+			if _, err := db.Exec(`UPDATE style_node_claims SET keep_staged_node = '' WHERE keep_staged_node = 'LL-LANE'`); err != nil {
 				t.Errorf("take the lane back off the keep-staged node: %v", err)
 			}
 		})
@@ -147,9 +147,9 @@ func seedLegacyLaneClaim(t *testing.T, sid int64, leg string) {
 }
 
 // storedLane reports whether any live claim of the style names the lane on leg.
-func storedLane(t *testing.T, sid int64, leg string) bool {
+func storedLane(t *testing.T, db *store.DB, sid int64, leg string) bool {
 	t.Helper()
-	claims, err := testDB.ListStyleNodeClaims(sid)
+	claims, err := db.ListStyleNodeClaims(sid)
 	testutil.MustNoErr(t, err, "list claims")
 	for _, c := range claims {
 		if legValue(c, leg) == "LL-LANE" {
@@ -200,25 +200,27 @@ var claimWriterCensus = []legCensusRow{
 
 // TestClaimLegWriters_ALaneOnEachLeg is the census of claim writers.
 func TestClaimLegWriters_ALaneOnEachLeg(t *testing.T) {
+	t.Parallel()
 	h, router := newAdminRouter(t)
+	db := dbOf(h)
 	h.engine.(*stubEngine).core = writersCore()
 	cookie := authCookie(t, h)
 
 	for i, row := range claimWriterCensus {
 		t.Run(row.writer+"/"+row.leg, func(t *testing.T) {
 			tag := fmt.Sprintf("CW%02d", i)
-			pid := seedProcess(t, tag+"-Line")
-			sid := seedStyle(t, tag+"-Src", pid)
+			pid := seedProcess(t, db, tag+"-Line")
+			sid := seedStyle(t, db, tag+"-Src", pid)
 			var got string
 			switch row.writer {
 			case "containment stamp":
-				got = containmentOutcome(t, router, cookie, pid, sid)
+				got = containmentOutcome(t, db, router, cookie, pid, sid)
 			case "containment stamp, echo":
-				got = containmentEchoOutcome(t, router, cookie, pid, sid, row.leg)
+				got = containmentEchoOutcome(t, db, router, cookie, pid, sid, row.leg)
 			case "containment stamp, two styles":
-				got = containmentTwoStylesOutcome(t, router, cookie, pid, sid, row.leg)
+				got = containmentTwoStylesOutcome(t, db, router, cookie, pid, sid, row.leg)
 			case "clone":
-				got = cloneOutcome(t, router, cookie, sid, row.leg)
+				got = cloneOutcome(t, db, router, cookie, sid, row.leg)
 			default:
 				t.Fatalf("no driver for writer %q", row.writer)
 			}
@@ -229,16 +231,16 @@ func TestClaimLegWriters_ALaneOnEachLeg(t *testing.T) {
 	}
 }
 
-func containmentOutcome(t *testing.T, router *chi.Mux, cookie *http.Cookie, pid, sid int64) string {
+func containmentOutcome(t *testing.T, db *store.DB, router *chi.Mux, cookie *http.Cookie, pid, sid int64) string {
 	t.Helper()
-	_, err := testDB.UpsertStyleNodeClaim(domain.CoreNodeKinds{}, cleanLegClaim(sid))
+	_, err := db.UpsertStyleNodeClaim(domain.CoreNodeKinds{}, cleanLegClaim(sid))
 	testutil.MustNoErr(t, err, "seed a clean claim")
 	resp := doRequest(t, router, "POST", "/api/processes/"+itoa(pid)+"/containment-setting",
 		map[string]any{"enabled": true, "destination": "LL-LANE"}, cookie)
 	switch {
-	case resp.StatusCode == http.StatusOK && storedLane(t, sid, "containment_destination"):
+	case resp.StatusCode == http.StatusOK && storedLane(t, db, sid, "containment_destination"):
 		return legSaved
-	case resp.StatusCode == http.StatusBadRequest && !storedLane(t, sid, "containment_destination"):
+	case resp.StatusCode == http.StatusBadRequest && !storedLane(t, db, sid, "containment_destination"):
 		return legRefused
 	}
 	t.Fatalf("containment stamp: status %d, body %+v", resp.StatusCode, decodeBody(t, resp))
@@ -247,9 +249,9 @@ func containmentOutcome(t *testing.T, router *chi.Mux, cookie *http.Cookie, pid,
 
 // stampedHold reports whether the style's claim carries the plain containment
 // destination the echo rows stamp.
-func stampedHold(t *testing.T, sid int64) bool {
+func stampedHold(t *testing.T, db *store.DB, sid int64) bool {
 	t.Helper()
-	claims, err := testDB.ListStyleNodeClaims(sid)
+	claims, err := db.ListStyleNodeClaims(sid)
 	testutil.MustNoErr(t, err, "list claims")
 	return len(claims) == 1 && claims[0].ContainmentDestination == "LL-SUP"
 }
@@ -260,48 +262,48 @@ func stampHold(t *testing.T, router *chi.Mux, cookie *http.Cookie, pid int64) in
 		map[string]any{"enabled": true, "destination": "LL-SUP"}, cookie).StatusCode
 }
 
-func containmentEchoOutcome(t *testing.T, router *chi.Mux, cookie *http.Cookie, pid, sid int64, leg string) string {
+func containmentEchoOutcome(t *testing.T, db *store.DB, router *chi.Mux, cookie *http.Cookie, pid, sid int64, leg string) string {
 	t.Helper()
-	seedLegacyLaneClaim(t, sid, leg)
+	seedLegacyLaneClaim(t, db, sid, leg)
 	status := stampHold(t, router, cookie, pid)
 	switch {
-	case status == http.StatusOK && stampedHold(t, sid):
+	case status == http.StatusOK && stampedHold(t, db, sid):
 		return legSaved
-	case status == http.StatusBadRequest && !stampedHold(t, sid):
+	case status == http.StatusBadRequest && !stampedHold(t, db, sid):
 		return legRefused
 	}
-	t.Fatalf("containment echo: status %d, stamped %v", status, stampedHold(t, sid))
+	t.Fatalf("containment echo: status %d, stamped %v", status, stampedHold(t, db, sid))
 	return ""
 }
 
 // containmentTwoStylesOutcome: sid is the source style ("…-Src"); a second
 // style sorted after it names the lane.
-func containmentTwoStylesOutcome(t *testing.T, router *chi.Mux, cookie *http.Cookie, pid, sid int64, leg string) string {
+func containmentTwoStylesOutcome(t *testing.T, db *store.DB, router *chi.Mux, cookie *http.Cookie, pid, sid int64, leg string) string {
 	t.Helper()
-	_, err := testDB.UpsertStyleNodeClaim(domain.CoreNodeKinds{}, cleanLegClaim(sid))
+	_, err := db.UpsertStyleNodeClaim(domain.CoreNodeKinds{}, cleanLegClaim(sid))
 	testutil.MustNoErr(t, err, "seed the clean style")
-	second := seedStyle(t, fmt.Sprintf("CW-zz-%d", sid), pid)
-	seedLegacyLaneClaim(t, second, leg)
+	second := seedStyle(t, db, fmt.Sprintf("CW-zz-%d", sid), pid)
+	seedLegacyLaneClaim(t, db, second, leg)
 	status := stampHold(t, router, cookie, pid)
 	switch {
-	case status == http.StatusOK && stampedHold(t, sid) && stampedHold(t, second):
+	case status == http.StatusOK && stampedHold(t, db, sid) && stampedHold(t, db, second):
 		return legSaved
-	case status == http.StatusBadRequest && !stampedHold(t, sid) && !stampedHold(t, second):
+	case status == http.StatusBadRequest && !stampedHold(t, db, sid) && !stampedHold(t, db, second):
 		return legRefused
 	}
 	t.Fatalf("containment over two styles: status %d, first stamped %v, second stamped %v",
-		status, stampedHold(t, sid), stampedHold(t, second))
+		status, stampedHold(t, db, sid), stampedHold(t, db, second))
 	return ""
 }
 
-func cloneOutcome(t *testing.T, router *chi.Mux, cookie *http.Cookie, sid int64, leg string) string {
+func cloneOutcome(t *testing.T, db *store.DB, router *chi.Mux, cookie *http.Cookie, sid int64, leg string) string {
 	t.Helper()
-	seedLegacyLaneClaim(t, sid, leg)
+	seedLegacyLaneClaim(t, db, sid, leg)
 	resp := doRequest(t, router, "POST", "/api/styles/"+itoa(sid)+"/clone",
 		map[string]any{"name": fmt.Sprintf("CW-clone-%d", sid)}, cookie)
 	body := decodeBody(t, resp)
 	if resp.StatusCode == http.StatusOK {
-		if storedLane(t, int64(body["id"].(float64)), leg) {
+		if storedLane(t, db, int64(body["id"].(float64)), leg) {
 			return legSaved
 		}
 	} else if resp.StatusCode == http.StatusBadRequest {
@@ -328,13 +330,15 @@ var routingWriterCensus = []legCensusRow{
 // TestRoutingWriters_ALaneInEachRole is the census of routing-row writers
 // driven by a person.
 func TestRoutingWriters_ALaneInEachRole(t *testing.T) {
+	t.Parallel()
 	h, router := newAdminRouter(t)
+	db := dbOf(h)
 	h.engine.(*stubEngine).core = writersCore()
 	cookie := authCookie(t, h)
 
 	for i, row := range routingWriterCensus {
 		t.Run(row.writer+"/"+row.leg, func(t *testing.T) {
-			pid := seedProcess(t, fmt.Sprintf("RW%02d-Line", i))
+			pid := seedProcess(t, db, fmt.Sprintf("RW%02d-Line", i))
 			url := "/api/processes/" + itoa(pid) + "/routing-nodes"
 			var status int
 			switch row.writer {
@@ -345,7 +349,7 @@ func TestRoutingWriters_ALaneInEachRole(t *testing.T) {
 				status = doRequest(t, router, "PUT", url, map[string]any{"nodes": []map[string]string{
 					{"core_node_name": "LL-LANE", "role": row.leg}}}, cookie).StatusCode
 			case "routing PATCH enable":
-				id, err := testDB.UpsertRoutingNode(domain.CoreNodeKinds{}, processes.RoutingNodeInput{
+				id, err := db.UpsertRoutingNode(domain.CoreNodeKinds{}, processes.RoutingNodeInput{
 					ProcessID: pid, CoreNodeName: "LL-LANE", Role: row.leg,
 					Origin: domain.RoutingOriginBackfill,
 				})
@@ -354,7 +358,7 @@ func TestRoutingWriters_ALaneInEachRole(t *testing.T) {
 			default:
 				t.Fatalf("no driver for writer %q", row.writer)
 			}
-			rows, err := testDB.ListRoutingNodes(pid)
+			rows, err := db.ListRoutingNodes(pid)
 			testutil.MustNoErr(t, err, "list routing rows")
 			enabled := false
 			for _, r := range rows {
@@ -396,6 +400,7 @@ var deriveWriterCensus = []legCensusRow{
 // ran, and opening it again — which is what an aged plant DB looks like to the
 // migration runner.
 func TestRoutingDerive_ALaneOnEachLeg(t *testing.T) {
+	t.Parallel()
 	for _, row := range deriveWriterCensus {
 		t.Run(row.writer+"/"+row.leg, func(t *testing.T) {
 			path := filepath.Join(t.TempDir(), "aged.db")
@@ -428,14 +433,16 @@ func TestRoutingDerive_ALaneOnEachLeg(t *testing.T) {
 // when a lane is refused: the clone and containment answers name the style,
 // the claim's node and the leg so the one claim to fix can be found.
 func TestLaneLegRefusals_NameTheStyleNodeAndLeg(t *testing.T) {
+	t.Parallel()
 	h, router := newAdminRouter(t)
+	db := dbOf(h)
 	h.engine.(*stubEngine).core = writersCore()
 	cookie := authCookie(t, h)
 	staging := protocol.MsgLaneIsNotAStagingNode + `: "LL-LANE"`
 
-	pid := seedProcess(t, "LT-Line")
-	sid := seedStyle(t, "LT-Src", pid)
-	seedLegacyLaneClaim(t, sid, "inbound_staging")
+	pid := seedProcess(t, db, "LT-Line")
+	sid := seedStyle(t, db, "LT-Src", pid)
+	seedLegacyLaneClaim(t, db, sid, "inbound_staging")
 
 	resp := doRequest(t, router, "POST", "/api/styles/"+itoa(sid)+"/clone", map[string]any{"name": "LT-Clone"}, cookie)
 	assertStatus(t, resp, http.StatusBadRequest)

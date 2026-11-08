@@ -22,6 +22,7 @@ import (
 // side owns the data so the JS cannot be right against a shape the server
 // never produces.
 func TestOperatorFlowRendersAWholePlantCell(t *testing.T) {
+	t.Parallel()
 	nodePath, err := exec.LookPath("node")
 	if err != nil {
 		t.Skipf("node not on PATH; skipping cell picture render test")

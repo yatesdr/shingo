@@ -33,24 +33,26 @@ func decodeBody(t *testing.T, resp *http.Response) map[string]any {
 // changeover's node task came FROM retires it, and the changeover view still
 // renders the from-part label from the retired row — never blank.
 func TestChangeoverView_ResolvesRetiredFromClaim(t *testing.T) {
+	t.Parallel()
 	h, _ := newAdminRouter(t)
-	pid := seedProcess(t, "RetireLabelLine")
-	sid := seedStyle(t, "RetireLabelStyle", pid)
-	nodeID := seedProcessNode(t, pid, 0, "RETIRE-NODE")
-	claimID, err := testDB.UpsertStyleNodeClaim(domain.CoreNodeKinds{}, processes.NodeClaimInput{
+	db := dbOf(h)
+	pid := seedProcess(t, db, "RetireLabelLine")
+	sid := seedStyle(t, db, "RetireLabelStyle", pid)
+	nodeID := seedProcessNode(t, db, pid, 0, "RETIRE-NODE")
+	claimID, err := db.UpsertStyleNodeClaim(domain.CoreNodeKinds{}, processes.NodeClaimInput{
 		StyleID: sid, CoreNodeName: "RETIRE-NODE", Role: "consume", SwapMode: "two_robot",
 		PayloadCode: "PART-OLD", InboundStaging: "RETIRE-STG", OutboundDestination: "RETIRE-DST",
 	})
 	if err != nil {
 		t.Fatalf("seed claim: %v", err)
 	}
-	res, err := testDB.Exec(`INSERT INTO process_changeovers (process_id, to_style_id, state) VALUES (?, ?, 'active')`, pid, sid)
+	res, err := db.Exec(`INSERT INTO process_changeovers (process_id, to_style_id, state) VALUES (?, ?, 'active')`, pid, sid)
 	if err != nil {
 		t.Fatalf("insert changeover: %v", err)
 	}
 	coID, err := res.LastInsertId()
 	testutil.MustNoErr(t, err, "res.LastInsertId")
-	if _, err := testDB.Exec(`INSERT INTO changeover_node_tasks (process_changeover_id, process_node_id, from_claim_id, situation, state)
+	if _, err := db.Exec(`INSERT INTO changeover_node_tasks (process_changeover_id, process_node_id, from_claim_id, situation, state)
 		VALUES (?, ?, ?, 'changed', 'pending')`, coID, nodeID, claimID); err != nil {
 		t.Fatalf("insert node task: %v", err)
 	}
@@ -58,14 +60,14 @@ func TestChangeoverView_ResolvesRetiredFromClaim(t *testing.T) {
 	// The claim is retired through the store's delete — the one a flow save
 	// that drops the position calls (the single-claim DELETE endpoint went in
 	// pick-a-part U6).
-	testutil.MustNoErr(t, testDB.DeleteStyleNodeClaim(claimID), "delete claim")
-	claims, err := testDB.ListStyleNodeClaims(sid)
-	testutil.MustNoErr(t, err, "testDB.ListStyleNodeClaims")
+	testutil.MustNoErr(t, db.DeleteStyleNodeClaim(claimID), "delete claim")
+	claims, err := db.ListStyleNodeClaims(sid)
+	testutil.MustNoErr(t, err, "db.ListStyleNodeClaims")
 	if len(claims) != 0 {
 		t.Fatalf("retired claim still listed: %+v", claims)
 	}
 
-	process, err := testDB.GetProcess(pid)
+	process, err := db.GetProcess(pid)
 	if err != nil {
 		t.Fatalf("get process: %v", err)
 	}

@@ -18,12 +18,14 @@ import (
 // ═══════════════════════════════════════════════════════════════════════
 
 func TestApiConfig_ListProcesses(t *testing.T) {
+	t.Parallel()
 	h, router := newAdminRouter(t)
+	db := dbOf(h)
 	cookie := authCookie(t, h)
 
 	// Seed two processes
-	seedProcess(t, "Assembly")
-	seedProcess(t, "Paint")
+	seedProcess(t, db, "Assembly")
+	seedProcess(t, db, "Paint")
 
 	resp := doRequest(t, router, "GET", "/api/processes", nil, cookie)
 	assertStatus(t, resp, http.StatusOK)
@@ -43,7 +45,9 @@ func TestApiConfig_ListProcesses(t *testing.T) {
 }
 
 func TestApiConfig_CreateProcess(t *testing.T) {
+	t.Parallel()
 	h, router := newAdminRouter(t)
+	db := dbOf(h)
 	cookie := authCookie(t, h)
 
 	body := map[string]any{
@@ -60,7 +64,7 @@ func TestApiConfig_CreateProcess(t *testing.T) {
 	}
 
 	// Verify DB state
-	p, err := testDB.GetProcess(result["id"])
+	p, err := db.GetProcess(result["id"])
 	if err != nil {
 		t.Fatalf("GetProcess: %v", err)
 	}
@@ -70,6 +74,7 @@ func TestApiConfig_CreateProcess(t *testing.T) {
 }
 
 func TestApiConfig_CreateProcess_MissingName(t *testing.T) {
+	t.Parallel()
 	h, router := newAdminRouter(t)
 	cookie := authCookie(t, h)
 
@@ -80,10 +85,12 @@ func TestApiConfig_CreateProcess_MissingName(t *testing.T) {
 }
 
 func TestApiConfig_UpdateProcess(t *testing.T) {
+	t.Parallel()
 	h, router := newAdminRouter(t)
+	db := dbOf(h)
 	cookie := authCookie(t, h)
 
-	pid := seedProcess(t, "ToUpdate")
+	pid := seedProcess(t, db, "ToUpdate")
 
 	body := map[string]any{
 		"name":        "Updated",
@@ -94,7 +101,7 @@ func TestApiConfig_UpdateProcess(t *testing.T) {
 	assertJSONPath(t, resp, "status", "ok")
 
 	// Verify DB state
-	p, err := testDB.GetProcess(pid)
+	p, err := db.GetProcess(pid)
 	if err != nil {
 		t.Fatalf("GetProcess: %v", err)
 	}
@@ -104,28 +111,32 @@ func TestApiConfig_UpdateProcess(t *testing.T) {
 }
 
 func TestApiConfig_DeleteProcess(t *testing.T) {
+	t.Parallel()
 	h, router := newAdminRouter(t)
+	db := dbOf(h)
 	cookie := authCookie(t, h)
 
-	pid := seedProcess(t, "ToDelete")
+	pid := seedProcess(t, db, "ToDelete")
 
 	resp := doRequest(t, router, "DELETE", "/api/processes/"+itoa(pid), nil, cookie)
 	assertStatus(t, resp, http.StatusOK)
 	assertJSONPath(t, resp, "status", "ok")
 
 	// Verify DB state
-	_, err := testDB.GetProcess(pid)
+	_, err := db.GetProcess(pid)
 	if err == nil {
 		t.Error("expected error getting deleted process")
 	}
 }
 
 func TestApiConfig_SetActiveStyle(t *testing.T) {
+	t.Parallel()
 	h, router := newAdminRouter(t)
+	db := dbOf(h)
 	cookie := authCookie(t, h)
 
-	pid := seedProcess(t, "ActiveStyleLine")
-	sid := seedStyle(t, "ActiveStyle", pid)
+	pid := seedProcess(t, db, "ActiveStyleLine")
+	sid := seedStyle(t, db, "ActiveStyle", pid)
 
 	body := map[string]any{"style_id": sid}
 	resp := doRequest(t, router, "PUT", "/api/processes/"+itoa(pid)+"/active-style", body, cookie)
@@ -133,7 +144,7 @@ func TestApiConfig_SetActiveStyle(t *testing.T) {
 	assertJSONPath(t, resp, "status", "ok")
 
 	// Verify DB state
-	activeID, err := testDB.GetActiveStyleID(pid)
+	activeID, err := db.GetActiveStyleID(pid)
 	if err != nil {
 		t.Fatalf("GetActiveStyleID: %v", err)
 	}
@@ -147,30 +158,32 @@ func TestApiConfig_SetActiveStyle(t *testing.T) {
 // Flipped under change #2: the flip used to leave the pile active, still
 // stamped with the outgoing style.
 func TestApiConfig_SetActiveStyleStrandsThePiles(t *testing.T) {
+	t.Parallel()
 	h, router := newAdminRouter(t)
+	db := dbOf(h)
 	cookie := authCookie(t, h)
 
-	pid := seedProcess(t, "PileFlipLine")
-	fromID := seedStyle(t, "PileFlipFrom", pid)
-	toID := seedStyle(t, "PileFlipTo", pid)
-	if err := testDB.SetActiveStyle(pid, &fromID); err != nil {
+	pid := seedProcess(t, db, "PileFlipLine")
+	fromID := seedStyle(t, db, "PileFlipFrom", pid)
+	toID := seedStyle(t, db, "PileFlipTo", pid)
+	if err := db.SetActiveStyle(pid, &fromID); err != nil {
 		t.Fatalf("SetActiveStyle: %v", err)
 	}
-	nodeID, err := testDB.CreateProcessNode(processes.NodeInput{
+	nodeID, err := db.CreateProcessNode(processes.NodeInput{
 		ProcessID: pid, CoreNodeName: "PILE-FLIP-SEAT", Code: "PF1",
 		Name: "PILE-FLIP-SEAT", Sequence: 1, Enabled: true,
 	})
 	if err != nil {
 		t.Fatalf("CreateProcessNode: %v", err)
 	}
-	if _, err := testDB.CaptureLinesideBucket(nodeID, "SYN-PART-1", 9); err != nil {
+	if _, err := db.CaptureLinesideBucket(nodeID, "SYN-PART-1", 9); err != nil {
 		t.Fatalf("CaptureLinesideBucket: %v", err)
 	}
 
 	resp := doRequest(t, router, "PUT", "/api/processes/"+itoa(pid)+"/active-style", map[string]any{"style_id": toID}, cookie)
 	assertStatus(t, resp, http.StatusOK)
 
-	rows, err := testDB.ListLinesideBuckets(nodeID)
+	rows, err := db.ListLinesideBuckets(nodeID)
 	if err != nil {
 		t.Fatalf("ListLinesideBuckets: %v", err)
 	}
@@ -180,12 +193,14 @@ func TestApiConfig_SetActiveStyleStrandsThePiles(t *testing.T) {
 }
 
 func TestApiConfig_ListProcessStyles(t *testing.T) {
+	t.Parallel()
 	h, router := newAdminRouter(t)
+	db := dbOf(h)
 	cookie := authCookie(t, h)
 
-	pid := seedProcess(t, "StyleListLine")
-	seedStyle(t, "S1", pid)
-	seedStyle(t, "S2", pid)
+	pid := seedProcess(t, db, "StyleListLine")
+	seedStyle(t, db, "S1", pid)
+	seedStyle(t, db, "S2", pid)
 
 	resp := doRequest(t, router, "GET", "/api/processes/"+itoa(pid)+"/styles", nil, cookie)
 	assertStatus(t, resp, http.StatusOK)
@@ -210,9 +225,11 @@ func TestApiConfig_ListProcessStyles(t *testing.T) {
 // ═══════════════════════════════════════════════════════════════════════
 
 func TestApiConfig_StylesCRUD(t *testing.T) {
+	t.Parallel()
 	h, router := newAdminRouter(t)
+	db := dbOf(h)
 	cookie := authCookie(t, h)
-	pid := seedProcess(t, "StyleCRUDLine")
+	pid := seedProcess(t, db, "StyleCRUDLine")
 
 	// --- List (empty) ---
 	resp := doRequest(t, router, "GET", "/api/styles", nil, cookie)
@@ -236,7 +253,7 @@ func TestApiConfig_StylesCRUD(t *testing.T) {
 	}
 
 	// Verify DB
-	s, err := testDB.GetStyle(styleID)
+	s, err := db.GetStyle(styleID)
 	if err != nil {
 		t.Fatalf("GetStyle: %v", err)
 	}
@@ -271,7 +288,7 @@ func TestApiConfig_StylesCRUD(t *testing.T) {
 	assertStatus(t, resp, http.StatusOK)
 	assertJSONPath(t, resp, "status", "ok")
 
-	s, _ = testDB.GetStyle(styleID)
+	s, _ = db.GetStyle(styleID)
 	if s.Name != "Blue Widget" {
 		t.Errorf("updated style name: got %q, want %q", s.Name, "Blue Widget")
 	}
@@ -287,7 +304,7 @@ func TestApiConfig_StylesCRUD(t *testing.T) {
 	// The row must SURVIVE: GetStyle is how a changeover row, an hourly count
 	// and a reporting point resolve a name they already hold an id for, and a
 	// hard delete is what made those render blank.
-	s, err = testDB.GetStyle(styleID)
+	s, err = db.GetStyle(styleID)
 	if err != nil {
 		t.Fatalf("retired style must still resolve by id (display joins depend on it): %v", err)
 	}
@@ -296,7 +313,7 @@ func TestApiConfig_StylesCRUD(t *testing.T) {
 	}
 
 	// And it must LEAVE the picker.
-	live, err := testDB.ListStyles()
+	live, err := db.ListStyles()
 	if err != nil {
 		t.Fatalf("ListStyles: %v", err)
 	}
@@ -316,6 +333,7 @@ func TestApiConfig_StylesCRUD(t *testing.T) {
 }
 
 func TestApiConfig_CreateStyle_MissingProcessID(t *testing.T) {
+	t.Parallel()
 	h, router := newAdminRouter(t)
 	cookie := authCookie(t, h)
 
@@ -326,11 +344,13 @@ func TestApiConfig_CreateStyle_MissingProcessID(t *testing.T) {
 }
 
 func TestApiConfig_UpdateStyle_MissingProcessID(t *testing.T) {
+	t.Parallel()
 	h, router := newAdminRouter(t)
+	db := dbOf(h)
 	cookie := authCookie(t, h)
 
-	pid := seedProcess(t, "StyleUpdateLine")
-	sid := seedStyle(t, "NeedsPID", pid)
+	pid := seedProcess(t, db, "StyleUpdateLine")
+	sid := seedStyle(t, db, "NeedsPID", pid)
 
 	body := map[string]any{"name": "X"}
 	resp := doRequest(t, router, "PUT", "/api/styles/"+itoa(sid), body, cookie)
@@ -350,14 +370,16 @@ func TestApiConfig_UpdateStyle_MissingProcessID(t *testing.T) {
 // ═══════════════════════════════════════════════════════════════════════
 
 func TestApiConfig_ListPayloadCatalog(t *testing.T) {
+	t.Parallel()
 	h, router := newAdminRouter(t)
+	db := dbOf(h)
 	cookie := authCookie(t, h)
 
 	// Seed catalog entries
-	testDB.UpsertPayloadCatalog(&catalog.CatalogEntry{
+	db.UpsertPayloadCatalog(&catalog.CatalogEntry{
 		ID: 1, Name: "Bin S", Code: "BIN-S", Description: "Small bin", UOPCapacity: 24,
 	})
-	testDB.UpsertPayloadCatalog(&catalog.CatalogEntry{
+	db.UpsertPayloadCatalog(&catalog.CatalogEntry{
 		ID: 2, Name: "Bin L", Code: "BIN-L", Description: "Large bin", UOPCapacity: 48,
 	})
 
@@ -384,6 +406,7 @@ func TestApiConfig_ListPayloadCatalog(t *testing.T) {
 // ═══════════════════════════════════════════════════════════════════════
 
 func TestApiConfig_SyncCoreNodes(t *testing.T) {
+	t.Parallel()
 	h, router := newAdminRouter(t)
 	cookie := authCookie(t, h)
 
@@ -393,6 +416,7 @@ func TestApiConfig_SyncCoreNodes(t *testing.T) {
 }
 
 func TestApiConfig_SyncPayloadCatalog(t *testing.T) {
+	t.Parallel()
 	h, router := newAdminRouter(t)
 	cookie := authCookie(t, h)
 
@@ -402,6 +426,7 @@ func TestApiConfig_SyncPayloadCatalog(t *testing.T) {
 }
 
 func TestApiConfig_TestKafka_EmptyBroker(t *testing.T) {
+	t.Parallel()
 	h, router := newAdminRouter(t)
 	cookie := authCookie(t, h)
 
@@ -417,6 +442,7 @@ func TestApiConfig_TestKafka_EmptyBroker(t *testing.T) {
 // ═══════════════════════════════════════════════════════════════════════
 
 func TestApiConfig_GetCoreNodes(t *testing.T) {
+	t.Parallel()
 	h, router := newAdminRouter(t)
 	cookie := authCookie(t, h)
 
@@ -437,6 +463,7 @@ func TestApiConfig_GetCoreNodes(t *testing.T) {
 // A group carries its members, so the positions picker can take a group as its
 // nodes when it is picked; a plain node carries none.
 func TestApiConfig_GetCoreNodes_GroupCarriesMembers(t *testing.T) {
+	t.Parallel()
 	h, router := newAdminRouter(t)
 	cookie := authCookie(t, h)
 
@@ -481,6 +508,7 @@ func (o oneLoader) LoaderForNode(n domain.NodeID) (*domain.Loader, error) {
 // offers it even when another process holds it (SetNodes accepts a loader's
 // node on several processes) and greys out every other held node.
 func TestApiConfig_GetCoreNodes_LoaderWindowIsShared(t *testing.T) {
+	t.Parallel()
 	h, router := newAdminRouter(t)
 	cookie := authCookie(t, h)
 
@@ -522,6 +550,7 @@ func TestApiConfig_GetCoreNodes_LoaderWindowIsShared(t *testing.T) {
 // ═══════════════════════════════════════════════════════════════════════
 
 func TestApiConfig_UpdateMessaging(t *testing.T) {
+	t.Parallel()
 	h, router := newAdminRouter(t)
 	cookie := authCookie(t, h)
 
@@ -534,6 +563,7 @@ func TestApiConfig_UpdateMessaging(t *testing.T) {
 }
 
 func TestApiConfig_UpdateStationID(t *testing.T) {
+	t.Parallel()
 	h, router := newAdminRouter(t)
 	cookie := authCookie(t, h)
 
@@ -545,6 +575,7 @@ func TestApiConfig_UpdateStationID(t *testing.T) {
 }
 
 func TestApiConfig_UpdateAutoConfirm(t *testing.T) {
+	t.Parallel()
 	h, router := newAdminRouter(t)
 	cookie := authCookie(t, h)
 
@@ -557,6 +588,7 @@ func TestApiConfig_UpdateAutoConfirm(t *testing.T) {
 }
 
 func TestApiConfig_UpdateWarLink(t *testing.T) {
+	t.Parallel()
 	h, router := newAdminRouter(t)
 	cookie := authCookie(t, h)
 
@@ -573,6 +605,7 @@ func TestApiConfig_UpdateWarLink(t *testing.T) {
 }
 
 func TestApiConfig_UpdateWarLink_InvalidMode(t *testing.T) {
+	t.Parallel()
 	h, router := newAdminRouter(t)
 	cookie := authCookie(t, h)
 
@@ -583,6 +616,7 @@ func TestApiConfig_UpdateWarLink_InvalidMode(t *testing.T) {
 }
 
 func TestApiConfig_UpdateWarLink_InvalidPollRate(t *testing.T) {
+	t.Parallel()
 	h, router := newAdminRouter(t)
 	cookie := authCookie(t, h)
 
@@ -597,7 +631,9 @@ func TestApiConfig_UpdateWarLink_InvalidPollRate(t *testing.T) {
 // ═══════════════════════════════════════════════════════════════════════
 
 func TestApiConfig_ChangePassword(t *testing.T) {
+	t.Parallel()
 	h, router := newAdminRouter(t)
+	db := dbOf(h)
 	cookie := authCookie(t, h)
 
 	body := map[string]string{
@@ -609,7 +645,7 @@ func TestApiConfig_ChangePassword(t *testing.T) {
 	assertJSONPath(t, resp, "status", "ok")
 
 	// Verify DB: hash should have changed
-	u, err := testDB.GetAdminUser("testadmin")
+	u, err := db.GetAdminUser("testadmin")
 	if err != nil {
 		t.Fatalf("GetAdminUser: %v", err)
 	}
@@ -619,6 +655,7 @@ func TestApiConfig_ChangePassword(t *testing.T) {
 }
 
 func TestApiConfig_ChangePassword_WrongOldPassword(t *testing.T) {
+	t.Parallel()
 	h, router := newAdminRouter(t)
 	cookie := authCookie(t, h)
 
@@ -636,6 +673,7 @@ func TestApiConfig_ChangePassword_WrongOldPassword(t *testing.T) {
 // ═══════════════════════════════════════════════════════════════════════
 
 func TestApiConfig_AdminAuth_RequiresLogin(t *testing.T) {
+	t.Parallel()
 	_, router := newAdminRouter(t)
 
 	endpoints := []struct {
@@ -664,6 +702,7 @@ func TestApiConfig_AdminAuth_RequiresLogin(t *testing.T) {
 // ═══════════════════════════════════════════════════════════════════════
 
 func TestApiConfig_BadPathParams(t *testing.T) {
+	t.Parallel()
 	h, router := newAdminRouter(t)
 	cookie := authCookie(t, h)
 

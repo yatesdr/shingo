@@ -36,6 +36,7 @@ func readWWWFile(t *testing.T, parts ...string) string {
 }
 
 func TestProductionRefreshTriggers_FeedsPin(t *testing.T) {
+	t.Parallel()
 	html := readWWWFile(t, "templates", "production.html")
 	js := readWWWFile(t, "static", "js", "pages", "production.js")
 

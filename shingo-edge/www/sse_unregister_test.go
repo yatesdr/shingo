@@ -8,6 +8,7 @@ import "testing"
 // second call must be a no-op rather than panicking with "close of closed
 // channel".
 func TestUnregister_Idempotent_NoDoubleClosePanic(t *testing.T) {
+	t.Parallel()
 	h := NewEventHub()
 	// Both queues, as HandleSSE builds them: unregister closes each, and a
 	// nil channel would panic there rather than exercising the double-close

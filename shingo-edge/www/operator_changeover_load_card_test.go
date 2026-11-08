@@ -15,6 +15,7 @@ import (
 // round 2's modal geometry both passed review and failed the moment they were
 // put on a screen.
 func TestOperatorChangeoverLoadCard(t *testing.T) {
+	t.Parallel()
 	nodePath, err := exec.LookPath("node")
 	if err != nil {
 		t.Skipf("node not on PATH; skipping changeover load-card render test")

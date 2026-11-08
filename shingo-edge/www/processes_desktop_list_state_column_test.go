@@ -20,6 +20,7 @@ import (
 // own table, so the State heading carries every running name, unseen, and
 // every group's column is the same width.
 func TestProcessListStateColumnSizesToTheName(t *testing.T) {
+	t.Parallel()
 	b, err := os.ReadFile(filepath.Join("static", "js", "pages", "processes-desktop.js"))
 	if err != nil {
 		t.Fatalf("read processes-desktop.js: %v", err)

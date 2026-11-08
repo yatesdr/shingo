@@ -20,19 +20,21 @@ import (
 // paired positions of its configured claim, and a paired position that has
 // no station of its own - a press-index back position - still counts.
 func TestOperatorStationView_CarriesCurtainState(t *testing.T) {
+	t.Parallel()
 	h, router := newOperatorStationsRouter(t)
+	db := dbOf(h)
 	stub := h.engine.(*stubEngine)
 
-	pid := seedProcess(t, "SYN-CurtainViewLine")
-	sid := seedOperatorStation(t, pid, "OS-SYN-CV-1", "SYN Curtain View")
-	styleID, err := testDB.CreateStyle("SYN-CV-STYLE", "", pid)
+	pid := seedProcess(t, db, "SYN-CurtainViewLine")
+	sid := seedOperatorStation(t, db, pid, "OS-SYN-CV-1", "SYN Curtain View")
+	styleID, err := db.CreateStyle("SYN-CV-STYLE", "", pid)
 	testutil.MustNoErr(t, err, "create style")
-	testutil.MustNoErr(t, testDB.SetActiveStyle(pid, &styleID), "set active style")
+	testutil.MustNoErr(t, db.SetActiveStyle(pid, &styleID), "set active style")
 
 	claim := func(in processes.NodeClaimInput) {
 		t.Helper()
 		in.StyleID, in.Role, in.PayloadCode, in.OutboundDestination = styleID, protocol.ClaimRoleProduce, "PART-X", "SYN-FG-OUT"
-		_, err := processes.UpsertClaim(testDB.DB, domain.CoreNodeKinds{}, in)
+		_, err := processes.UpsertClaim(db.DB, domain.CoreNodeKinds{}, in)
 		testutil.MustNoErr(t, err, "seed claim "+in.CoreNodeName)
 	}
 	// A press-index front whose back position has its own curtain and no
@@ -42,13 +44,13 @@ func TestOperatorStationView_CarriesCurtainState(t *testing.T) {
 	// the styles whose exits wait for them.
 	claim(processes.NodeClaimInput{CoreNodeName: "SYN-CV-PLN-1", SwapMode: protocol.SwapModeTwoRobotPressIndex, PairedCoreNode: "SYN-CV-PLN-2", CurtainRequired: true})
 	claim(processes.NodeClaimInput{CoreNodeName: "SYN-CV-PLN-3", SwapMode: protocol.SwapModeTwoRobot, InboundStaging: "SYN-STG-1", CurtainRequired: true})
-	front := seedProcessNode(t, pid, sid, "SYN-CV-PLN-1")
-	back := seedProcessNode(t, pid, 0, "SYN-CV-PLN-2")
-	own := seedProcessNode(t, pid, sid, "SYN-CV-PLN-3")
-	plain := seedProcessNode(t, pid, sid, "SYN-CV-PLN-4")
+	front := seedProcessNode(t, db, pid, sid, "SYN-CV-PLN-1")
+	back := seedProcessNode(t, db, pid, 0, "SYN-CV-PLN-2")
+	own := seedProcessNode(t, db, pid, sid, "SYN-CV-PLN-3")
+	plain := seedProcessNode(t, db, pid, sid, "SYN-CV-PLN-4")
 	f := false
-	testutil.MustNoErr(t, testDB.SetProcessNodeCurtain(back, true, "SYN-PLC", "CUR_BACK", &f), "curtain the back position")
-	testutil.MustNoErr(t, testDB.SetProcessNodeCurtain(own, true, "SYN-PLC", "CUR_OWN", &f), "curtain the FG node")
+	testutil.MustNoErr(t, db.SetProcessNodeCurtain(back, true, "SYN-PLC", "CUR_BACK", &f), "curtain the back position")
+	testutil.MustNoErr(t, db.SetProcessNodeCurtain(own, true, "SYN-PLC", "CUR_OWN", &f), "curtain the FG node")
 
 	curtainOK := func() map[int64]*bool {
 		t.Helper()

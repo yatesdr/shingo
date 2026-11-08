@@ -8,7 +8,6 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"path/filepath"
 	"sync"
 	"sync/atomic"
@@ -24,6 +23,7 @@ import (
 	"shingoedge/domain"
 	"shingoedge/engine"
 	"shingoedge/engine/changeover"
+	"shingoedge/internal/testdb"
 	"shingoedge/orders"
 	ordertestutil "shingoedge/orders/testutil"
 	"shingoedge/plc"
@@ -34,33 +34,6 @@ import (
 	"shingoedge/store/processes"
 	"shingoedge/store/stations"
 )
-
-// testDB is the shared SQLite database initialised by TestMain.
-var testDB *store.DB
-
-// TestMain creates an ephemeral SQLite database, runs migrations, and makes
-// it available to all tests in this package via the testDB variable.
-//
-// It returns rather than calling os.Exit, so the deferred Close and RemoveAll
-// run; the test binary still exits with m.Run's code. os.Exit skips deferred
-// calls, and every run of this package used to leave its database directory
-// behind in the OS temp dir.
-func TestMain(m *testing.M) {
-	dir, err := os.MkdirTemp("", "shingo-edge-test-*")
-	if err != nil {
-		panic(err)
-	}
-	defer os.RemoveAll(dir)
-
-	dbPath := filepath.Join(dir, "test.db")
-	testDB, err = store.Open(dbPath)
-	if err != nil {
-		panic(err)
-	}
-	defer testDB.Close()
-
-	m.Run()
-}
 
 // --- Stub engine ---
 
@@ -75,9 +48,9 @@ func TestMain(m *testing.M) {
 // panic with a clear stack. We don't ship that helper today; add it
 // when a test needs the discipline.
 //
-// orderMgr is a real *orders.Manager backed by testDB so handlers in
+// orderMgr is a real *orders.Manager backed by the stub's db so handlers in
 // handlers_api_orders.go can exercise the full create/transition flow
-// against the ephemeral SQLite database. Tests that don't touch order
+// against the test's SQLite database. Tests that don't touch order
 // endpoints can ignore it.
 type stubEngine struct {
 	// sourcingStale makes SourcingStateForProcess report the feed's copy as
@@ -182,7 +155,7 @@ func (s *stubEngine) LocalNodeBins() engine.NodeBinsState { return s.nodeBins }
 func (s *stubEngine) PLCManager() *plc.Manager            { return s.plcMgr }
 func (s *stubEngine) OrderManager() *orders.Manager       { return s.orderMgr }
 
-// A REAL reconciliation service over testDB. It used to return nil, which made
+// A REAL reconciliation service over the stub's db. It used to return nil, which made
 // every handler that touches it untestable — apiReplayOutbox panicked on the
 // first call, so it shipped with no coverage at all.
 func (s *stubEngine) Reconciliation() *engine.ReconciliationService {
@@ -430,20 +403,22 @@ func (s *stubEngine) SourcingStateForProcess(process string) ([]protocol.Sourcin
 	return states, !s.sourcingStale
 }
 
-// newTestHandlers builds *Handlers backed by the test DB, returning it along
-// with a fresh chi.Router that has the config-group routes registered.
+// newTestHandlers builds *Handlers backed by a database of the test's own (a
+// copy of the migrated template, testdb.Open), returning it along with a
+// fresh chi.Router. dbOf(h) is that database.
 func newTestHandlers(t *testing.T) (*Handlers, *chi.Mux) {
 	t.Helper()
+	db := testdb.Open(t)
 
 	dir := t.TempDir()
 	cfgPath := filepath.Join(dir, "config.yaml")
 	cfg := config.Defaults()
 
 	eng := &stubEngine{
-		db:       testDB,
+		db:       db,
 		cfg:      cfg,
 		cfgPath:  cfgPath,
-		orderMgr: orders.NewManager(testDB, ordertestutil.NoOpOrderEmitter{}, "test.station"),
+		orderMgr: orders.NewManager(db, ordertestutil.NoOpOrderEmitter{}, "test.station"),
 	}
 
 	h := &Handlers{
@@ -459,6 +434,16 @@ func newTestHandlers(t *testing.T) (*Handlers, *chi.Mux) {
 	r := chi.NewRouter()
 	return h, r
 }
+
+// dbOf is the database the engine behind h runs on: the stub's own
+// (newTestHandlers), or a real engine's. Through DB() so a rig that wraps the
+// stub (pinSpyEngine embeds it) answers the same.
+func dbOf(h *Handlers) *store.DB {
+	return h.engine.(interface{ DB() *store.DB }).DB()
+}
+
+// DB is the stub's database, as engine.Engine.DB is the real one's.
+func (s *stubEngine) DB() *store.DB { return s.db }
 
 // newAdminRouter creates a test handler + chi.Router with config API routes
 // registered under /api (matching the production layout).
@@ -599,8 +584,9 @@ func testHash(t *testing.T, password string) string {
 // authCookie creates an admin user and returns a valid session cookie.
 func authCookie(t *testing.T, h *Handlers) *http.Cookie {
 	t.Helper()
-	testDB.Exec("DELETE FROM admin_users WHERE username = 'testadmin'")
-	testDB.Exec("INSERT INTO admin_users (username, password_hash) VALUES ('testadmin', ?)", testHash(t, "password"))
+	db := dbOf(h)
+	db.Exec("DELETE FROM admin_users WHERE username = 'testadmin'")
+	db.Exec("INSERT INTO admin_users (username, password_hash) VALUES ('testadmin', ?)", testHash(t, "password"))
 
 	req := httptest.NewRequest("POST", "/api/login-dummy", nil)
 	req.Header.Set("Content-Type", "application/json")
@@ -649,9 +635,9 @@ func assertJSONPath(t *testing.T, resp *http.Response, path string, want any) {
 }
 
 // seedProcess creates a process and returns its ID.
-func seedProcess(t *testing.T, name string) int64 {
+func seedProcess(t *testing.T, db *store.DB, name string) int64 {
 	t.Helper()
-	id, err := testDB.CreateProcess(name, "test process", "", "", false)
+	id, err := db.CreateProcess(name, "test process", "", "", false)
 	if err != nil {
 		t.Fatalf("seed process %q: %v", name, err)
 	}
@@ -659,9 +645,9 @@ func seedProcess(t *testing.T, name string) int64 {
 }
 
 // seedStyle creates a style under the given process and returns its ID.
-func seedStyle(t *testing.T, name string, processID int64) int64 {
+func seedStyle(t *testing.T, db *store.DB, name string, processID int64) int64 {
 	t.Helper()
-	id, err := testDB.CreateStyle(name, "test style", processID)
+	id, err := db.CreateStyle(name, "test style", processID)
 	if err != nil {
 		t.Fatalf("seed style %q: %v", name, err)
 	}
@@ -669,11 +655,10 @@ func seedStyle(t *testing.T, name string, processID int64) int64 {
 }
 
 // seedOperatorStation creates a bare operator station attached to the given
-// process and returns its ID. Callers pass a unique code to avoid collisions
-// across tests sharing testDB.
-func seedOperatorStation(t *testing.T, processID int64, code, name string) int64 {
+// process and returns its ID. Codes are unique within a process.
+func seedOperatorStation(t *testing.T, db *store.DB, processID int64, code, name string) int64 {
 	t.Helper()
-	id, err := testDB.CreateOperatorStation(stations.Input{
+	id, err := db.CreateOperatorStation(stations.Input{
 		ProcessID: processID,
 		Code:      code,
 		Name:      name,
@@ -687,7 +672,7 @@ func seedOperatorStation(t *testing.T, processID int64, code, name string) int64
 
 // seedProcessNode creates a process node under the given station (optional)
 // and returns its ID. Pass stationID=0 to leave OperatorStationID nil.
-func seedProcessNode(t *testing.T, processID, stationID int64, coreNodeName string) int64 {
+func seedProcessNode(t *testing.T, db *store.DB, processID, stationID int64, coreNodeName string) int64 {
 	t.Helper()
 	in := processes.NodeInput{
 		ProcessID:    processID,
@@ -699,32 +684,31 @@ func seedProcessNode(t *testing.T, processID, stationID int64, coreNodeName stri
 		sid := stationID
 		in.OperatorStationID = &sid
 	}
-	id, err := testDB.CreateProcessNode(in)
+	id, err := db.CreateProcessNode(in)
 	if err != nil {
 		t.Fatalf("seed process node %q: %v", coreNodeName, err)
 	}
 	return id
 }
 
-// orderUUIDCounter generates unique UUID-like strings for seeded test orders.
-// testDB.orders.uuid is UNIQUE, so callers must avoid collisions across tests
-// sharing the package-level testDB.
+// orderUUIDCounter generates unique UUID-like strings for seeded test orders:
+// orders.uuid is UNIQUE, and a test may seed several.
 var orderUUIDCounter int64
 
 // seedOrder inserts an order row directly via store.CreateOrder and (if status
 // differs from the schema default of "pending") flips its status with
 // UpdateOrderStatus. Returns the new order ID. Used by handlers_api_orders
 // tests that need an existing order in a specific lifecycle state.
-func seedOrder(t *testing.T, orderType protocol.OrderType, status protocol.Status) int64 {
+func seedOrder(t *testing.T, db *store.DB, orderType protocol.OrderType, status protocol.Status) int64 {
 	t.Helper()
 	n := atomic.AddInt64(&orderUUIDCounter, 1)
 	uuid := fmt.Sprintf("test-uuid-%s-%d", string(orderType), n)
-	id, err := testDB.CreateOrder(uuid, orderType, nil, false, 10, "DELIVERY", "", "", protocol.Height{}, false, "", "", "")
+	id, err := db.CreateOrder(uuid, orderType, nil, false, 10, "DELIVERY", "", "", protocol.Height{}, false, "", "", "")
 	if err != nil {
 		t.Fatalf("seed order: %v", err)
 	}
 	if status != "" && status != protocol.StatusPending {
-		if err := testDB.UpdateOrderStatus(id, string(status)); err != nil {
+		if err := db.UpdateOrderStatus(id, string(status)); err != nil {
 			t.Fatalf("update seeded order status to %q: %v", status, err)
 		}
 	}
