@@ -51,7 +51,8 @@ import { escapeHtml, formatClock, onSSE, serverNow, setSSEReloadOnBuild } from '
 // viewport, comets and SSE wiring. Promoted from components/ when the Edge's
 // station cell picture became its second consumer (docs/shared-layer-promotion.md).
 import {
-  makeProjector, turnedProjector, mapTurn, headingDeg, dist2, isCoord, cubicLength, cubicPathD, laneKey
+  makeProjector, turnedProjector, mapTurn, headingDeg, dist2, isCoord, cubicLength, cubicPathD, laneKey,
+  cubicPoint, CUBIC_SAMPLES
 } from '/static/shared/scene-geom.js';
 
 (function () {
@@ -855,15 +856,40 @@ import {
 
   // World-space route polyline robot -> aisle network -> destination, or null
   // if the graph can't connect them (caller falls back to a straight line).
+  //
+  // A CURVED HOP IS SAMPLED ALONG ITS BEZIER, with the same handles the aisle
+  // under it is drawn with. Joining the vertices alone drew the chord, so a
+  // comet, a frozen lane or an intent line cut straight across every bowed
+  // lane while the network beneath it curved away.
   function routeWorld(rx, ry, dest) {
     if (tnodes.length < 2) return null;
     var s = nearestTNode(rx, ry), d = nearestTNode(dest.x, dest.y);
     var seq = shortestPath(s, d);
     if (!seq) return null;
     var pts = [[rx, ry]];
-    for (var i = 0; i < seq.length; i++) pts.push([tnodes[seq[i]].x, tnodes[seq[i]].y]);
+    for (var i = 0; i < seq.length; i++) {
+      var to = tnodes[seq[i]];
+      var c = i > 0 ? hopHandles(seq[i - 1], seq[i]) : null;
+      if (c) {
+        var from = tnodes[seq[i - 1]];
+        for (var k = 1; k < CUBIC_SAMPLES; k++) {
+          var q = cubicPoint(from, c, to, k / CUBIC_SAMPLES);
+          pts.push([q.x, q.y]);
+        }
+      }
+      pts.push([to.x, to.y]);
+    }
     pts.push([dest.x, dest.y]);
     return pts;
+  }
+
+  // hopHandles returns the handles of the graph edge a -> b, oriented a to b
+  // (buildGraph stores the reverse entry with its pair swapped), or null for a
+  // straight segment.
+  function hopHandles(a, b) {
+    var edges = tadj[a] || [];
+    for (var i = 0; i < edges.length; i++) if (edges[i].n === b) return edges[i].c;
+    return null;
   }
 
   // ── leg-aware routing helpers ──────────────────────────────────────

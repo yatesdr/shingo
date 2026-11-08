@@ -111,7 +111,7 @@ function load() {
     // parse — a failure that reads as a syntax error, not as a stale harness.
     const stripped = raw.replace(/^import[^;]+;\s*/mg, '');
     const INJECT = '  __export({ buildGraph: buildGraph, drawAisles: drawAisles,' +
-        ' computeView: computeView,' +
+        ' computeView: computeView, routeWorld: routeWorld,' +
         ' setEdges: function (v) { sceneEdges = v; },' +
         ' setPoints: function (v) { points = v; },' +
         ' proj: function (x, y) { return proj(x, y); },' +
@@ -485,6 +485,60 @@ console.log('projection');
     });
     check('the rotated branch is exactly 90° CW of the unrotated image',
         worst < 1e-12, 'max separation ' + worst);
+})();
+
+// --- routes ride the lane ------------------------------------------------
+// The comet, the frozen lane and the intent line all draw routeWorld's
+// polyline. It used to join the graph's VERTICES, so a route over LM10-LM113
+// drew the 7.17 m chord while the aisle beneath it bowed 1.30 m away.
+
+console.log('routes');
+
+(function aRouteOverACurveFollowsTheCurve() {
+    const m = load();
+    m.setEdges([CURVED, STRAIGHT, ONE_WAY]);
+    m.buildGraph();
+    const from = { x: CURVED.from_x, y: CURVED.from_y };
+    const to = { x: CURVED.to_x, y: CURVED.to_y };
+    const c = [CURVED.ctrl1_x, CURVED.ctrl1_y, CURVED.ctrl2_x, CURVED.ctrl2_y];
+
+    const fwd = m.routeWorld(from.x, from.y, to);
+    // Every point but the robot and destination ends is on the authored cubic.
+    let worst = 0;
+    for (let i = 1; i < fwd.length - 1; i++) {
+        let best = Infinity;
+        for (let k = 0; k <= 200; k++) {
+            const p = m.cubicPoint(from, c, to, k / 200);
+            best = Math.min(best, Math.hypot(fwd[i][0] - p.x, fwd[i][1] - p.y));
+        }
+        worst = Math.max(worst, best);
+    }
+    check('a route over a curved lane has interior points, not just the chord',
+        fwd.length > 4, 'points ' + fwd.length);
+    check('every route point over a curved lane lies on the authored cubic',
+        worst < 0.02, 'worst off-curve ' + worst.toFixed(4) + ' m');
+    // The bow is where the chord was wrong: the route must pass through it.
+    const bow = m.cubicPoint(from, c, to, 0.5);
+    const reach = Math.min.apply(null, fwd.map(function (p) { return Math.hypot(p[0] - bow.x, p[1] - bow.y); }));
+    check('the route passes through the lane\'s bow, not across its chord',
+        reach < 1e-9, 'closest ' + reach);
+
+    // Driven the other way, the same lane: the reversed handle pair, so the
+    // quarter point going back is the three-quarter point going out.
+    const back = m.routeWorld(to.x, to.y, from);
+    const q3 = m.cubicPoint(from, c, to, 0.75);
+    const reachBack = Math.min.apply(null, back.map(function (p) { return Math.hypot(p[0] - q3.x, p[1] - q3.y); }));
+    check('a route driven against the stored direction rides the same curve',
+        reachBack < 1e-9, 'closest ' + reachBack);
+})();
+
+(function aStraightLaneAddsNoPoints() {
+    const m = load();
+    m.setEdges([CURVED, STRAIGHT, ONE_WAY]);
+    m.buildGraph();
+    const r = m.routeWorld(STRAIGHT.from_x, STRAIGHT.from_y, { x: STRAIGHT.to_x, y: STRAIGHT.to_y });
+    // robot, LM100, AP102, destination — nothing sampled on a straight segment.
+    check('a route over a straight lane is its vertices only', r.length === 4, 'points ' + r.length);
 })();
 
 // --- helpers -------------------------------------------------------------
