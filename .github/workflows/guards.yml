@@ -44,8 +44,9 @@ jobs:
         with:
           go-version: '1.25.0'
           # Some guards run a Go tool over the repo (shared/scripts: deadident,
-          # buildconstraints, testcite, testledger). go.sum-keyed cache as in
-          # core.yml.
+          # buildconstraints, testcite, testledger, repolint). go.sum-keyed
+          # cache as in core.yml. repolint's js-parse rule needs node, which
+          # ubuntu-latest ships.
           cache-dependency-path: "**/go.sum"
 
       # check-test-error-discard-ratchet.sh runs golangci-lint and FAILS when

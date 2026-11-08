@@ -27,7 +27,7 @@ import (
 // that drifts from the page fails here.
 //
 // Skipped if `node` is not on PATH, matching the other JS test wrappers. Note
-// the parse gate scripts/check-js-parses.sh deliberately does NOT skip that
+// the parse gate (the repolint's js-parse rule) deliberately does NOT skip that
 // way: silently passing on unread JS is the failure mode that shipped the
 // stray brace in the first place.
 func TestOperatorBootWatchdogJS(t *testing.T) {

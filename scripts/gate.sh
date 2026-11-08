@@ -442,7 +442,8 @@ guard_header() {
 
 # THE GREP-BASED GUARDS, WHICH RAN ONLY IN CI UNTIL 2026-08-19.
 #
-# scripts/check-swap-mode-literals.sh had a job of its own in lint.yml and no
+# The swap-mode-literals guard (then scripts/check-swap-mode-literals.sh, now a
+# rule of shared/scripts/repolint) had a job of its own in lint.yml and no
 # call anywhere in this file, so `gate.sh full` could go green on a change that
 # CI then rejected. A pre-push gate that does not run a CI gate is not telling
 # you what CI will say, which is the only thing it is for.

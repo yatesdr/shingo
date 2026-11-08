@@ -2,7 +2,7 @@
 # tier: dev
 # check-dead-identifiers.sh — an identifier a Go comment cites must still exist.
 #
-# The half check-comment-references.sh leaves out on purpose ("arbitrary
+# The half the repolint's comment-references rule leaves out on purpose ("arbitrary
 # identifiers. Too noisy to be read"), done narrowly enough to be read: only
 # code-shaped citations (`Foo(`, `x.Foo`, backticked), at least 8 characters and
 # mixed case, plus a short list of retired names read even as bare words.

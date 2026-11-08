@@ -8,7 +8,7 @@ import (
 	"testing"
 )
 
-// privateIPv4Re is the Go twin of scripts/check-plant-addresses.sh, with the
+// privateIPv4Re is the Go twin of the repolint's plant-addresses rule, with the
 // same generic rule: any RFC 1918 address (10/8, 172.16/12, 192.168/16). It
 // names no network in particular, because a guard that listed the networks it
 // protects would itself be the leak. Fixtures here use TEST-NET (RFC 5737).
@@ -78,7 +78,7 @@ func TestScanFixturesForPrivateAddresses(t *testing.T) {
 		if h := privateHits(string(data)); len(h) != 0 {
 			t.Errorf("%s carries private IPv4 addresses %q — derive fixtures with "+
 				"shared/scripts/anonymiserobotsstatus (TEST-NET only); this scan is the CI twin "+
-				"of scripts/check-plant-addresses.sh", filepath.Base(f), h)
+				"of the repolint's plant-addresses rule", filepath.Base(f), h)
 		}
 	}
 }

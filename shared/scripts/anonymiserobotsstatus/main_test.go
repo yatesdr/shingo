@@ -51,7 +51,7 @@ func TestDerive_TheCommittedFixturesAreFixedPoints(t *testing.T) {
 
 // Keys are kept verbatim, so a private address used as a key survives the
 // rename and must fail the run. Built here rather than committed: no tracked
-// file may carry a private address (scripts/check-plant-addresses.sh).
+// file may carry a private address (the repolint's plant-addresses rule).
 func TestDerive_APrivateAddressRefuses(t *testing.T) {
 	addr := strings.Join([]string{"10", "1", "2", "3"}, ".")
 	_, err := derive([]byte(`{"peers": {"` + addr + `": {"rtt": 4}}}`))
