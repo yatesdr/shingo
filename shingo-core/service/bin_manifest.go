@@ -370,6 +370,16 @@ func (s *BinManifestService) ClearForReuseTx(tx *sql.Tx, binID int64, binTypeID 
 			"dunnage_to":   toCode,
 		})
 	}
+	// A PULL-PARTS CLEAR OF A CART BELOW ZERO IS AN OVERPACK TOO, as a release
+	// of one is (decision 55's record half): the row is released_overpack,
+	// detail {"declared": -N, "overpack": N}, the bin read at -N. A note only:
+	// the clear, its bump, its announcement and its boundary row on the
+	// exceptions ledger (Boundary) are the same.
+	if op == audit.OpReleasedCaptureEmpty && before != nil && *before < 0 {
+		op = audit.OpReleasedOverpack
+		uopCtx.Detail = json.RawMessage(fmt.Sprintf(`{"declared":%d,"overpack":%d}`, *before, -*before))
+		uopCtx.Boundary = true
+	}
 	if err := audit.AppendBinUOP(tx, binID, before, 0, op, source, nil, "", "", uopCtx); err != nil {
 		return 0, err
 	}

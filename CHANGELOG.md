@@ -11,6 +11,7 @@ Core v175; Edge v44 (a backfill, no schema change). Deploy Core first, then the 
 - Core: a late draw is booked at the node its cart was lifted from (v175), never at _TRANSIT
 - Core: a late draw applied after its cart landed at another seat sends that seat's Edge the count, fenced
 - START reads its own row back under the door and by its id: a switch in between leaves it its row
+- Core: a pull-parts clear of a cart below 0 is recorded `released_overpack` with the declared count and the overpack
 
 ## 2026-11-03 — The cutover follows the PLC
 

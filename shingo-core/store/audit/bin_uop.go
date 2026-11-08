@@ -290,7 +290,12 @@ var ReleaseFamilyOps = []string{
 //     carrier has a later boundary.
 //
 // released_capture_empty and clear_for_reuse stay: they reach the clear site,
-// which still bumps.
+// which still bumps. A third residual: a capture clear of a bin below zero is
+// labelled released_overpack (a note, decision 55's record half). Its boundary
+// row on the exceptions ledger is kept (BinUOPContext.Boundary), but a reader
+// of this set over the raw ledger (CarrierBindings, the daily roll-up) reads
+// that carrier's binding on to its next boundary, the lift that takes the
+// emptied cart away or its next load.
 var EpochBumpOps = []string{
 	OpSetForProduction,
 	OpClearAndClaim,
@@ -337,6 +342,10 @@ type BinUOPContext struct {
 	LoaderID *int64
 	Station  string
 	Detail   json.RawMessage
+	// Boundary: the write ends a binding though its op is not an EpochBumpOps
+	// op, so its boundary row is written as a bump op's is. One writer: a
+	// pull-parts clear of a bin below zero, labelled released_overpack.
+	Boundary bool
 }
 
 // AppendBinUOP records a single write to bins.uop_remaining. Called from
@@ -391,7 +400,7 @@ func AppendBinUOP(execer BinUOPExecer, binID int64, beforeUOP *int, afterUOP int
 	// site from silently missing its boundary row. Same tx, same before/
 	// after, detail verbatim.
 	for _, bump := range EpochBumpOps {
-		if bump == op {
+		if bump == op || ctx.Boundary {
 			seq, err := NextBinUOPEpochSeq(execer, binID)
 			if err != nil {
 				return err

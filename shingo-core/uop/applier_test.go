@@ -382,7 +382,8 @@ func TestApplyBinUOPDelta_CaptureReductionOverpackToNegativeFiresClear(t *testin
 	}
 
 	// Audit trail: must contain both the bin_uop_delta row with after_uop=-1
-	// AND the released_capture_empty row with after_uop=0.
+	// AND the clear's row with after_uop=0, labelled released_overpack: the
+	// bin read below zero (decision 55's record half).
 	var deltaCount int
 	if err := db.QueryRow(`SELECT COUNT(*) FROM bin_uop_ledger
 		WHERE bin_id=$1 AND op='bin_uop_delta' AND after_uop=-1`, bin.ID).Scan(&deltaCount); err != nil {
@@ -394,11 +395,72 @@ func TestApplyBinUOPDelta_CaptureReductionOverpackToNegativeFiresClear(t *testin
 	var clearCount int
 	if err := db.QueryRow(`SELECT COUNT(*) FROM bin_uop_ledger
 		WHERE bin_id=$1 AND op=$2 AND after_uop=0`,
-		bin.ID, audit.OpReleasedCaptureEmpty).Scan(&clearCount); err != nil {
+		bin.ID, "released_overpack").Scan(&clearCount); err != nil {
 		t.Fatalf("read clear audit: %v", err)
 	}
 	if clearCount != 1 {
-		t.Errorf("released_capture_empty audit rows with after_uop=0 = %d, want 1", clearCount)
+		t.Errorf("released_overpack audit rows with after_uop=0 = %d, want 1", clearCount)
+	}
+}
+
+// TestApplyBinUOPDelta_APullPartsClearBelowZeroIsAnOverpack: a cart Core reads
+// at 3 that the operator's pull-parts capture takes 5 from reads -2 and is
+// cleared; the clear's row is released_overpack, -2 -> 0, detail {"declared":
+// -2, "overpack": 2}, as a release of a cart below zero is. A capture that
+// lands at exactly 0 keeps released_capture_empty. Either way the clear writes
+// its boundary row on the exceptions ledger. Before, every capture clear
+// was released_capture_empty, the -2 only the row's before count.
+func TestApplyBinUOPDelta_APullPartsClearBelowZeroIsAnOverpack(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	sd := testdb.SetupStandardData(t, db)
+	svc := uop.NewInventoryDeltaService(db, service.NewBinManifestService(db, service.EpochAnnounce{}), service.EpochAnnounce{})
+	type overpack struct {
+		Declared *int `json:"declared"`
+		Overpack *int `json:"overpack"`
+	}
+	for _, tc := range []struct {
+		label              string
+		count, taken       int
+		op                 string
+		declared, overpack int // 0, 0: no detail
+	}{
+		{"BIN-PULL-NEG-2", 3, 5, "released_overpack", -2, 2},
+		{"BIN-PULL-ZERO", 3, 3, "released_capture_empty", 0, 0},
+	} {
+		bin := createTestBin(t, db, sd.StorageNode.ID, tc.label, "PART-PULL", tc.count)
+		boundaries := func() int {
+			var n int
+			testutil.MustNoErr(t, db.QueryRow(`SELECT COUNT(*) FROM bin_uop_exception WHERE bin_id=$1 AND kind='boundary'`,
+				bin.ID).Scan(&n), "the boundary rows")
+			return n
+		}
+		boundariesBefore := boundaries()
+		testutil.MustNoErr(t, svc.ApplyBinUOPDelta(testStation,
+			makeBinDelta(bin.ID, "PART-PULL", -tc.taken, 1, protocol.ReasonCaptureReduction)), "the pull-parts capture")
+		if got := boundaries() - boundariesBefore; got != 1 {
+			t.Errorf("%s: the clear wrote %d boundary row(s) on the exceptions ledger, want 1: it ended the binding", tc.label, got)
+		}
+		var (
+			op            string
+			before, after int
+			raw           []byte
+		)
+		testutil.MustNoErr(t, db.QueryRow(`SELECT op, before_uop, after_uop, detail FROM bin_uop_ledger
+			WHERE bin_id=$1 AND op LIKE 'released%' ORDER BY id DESC LIMIT 1`, bin.ID).Scan(&op, &before, &after, &raw),
+			"the clear's row")
+		var d overpack
+		if len(raw) > 0 {
+			testutil.MustNoErr(t, json.Unmarshal(raw, &d), "the row's detail")
+		}
+		declared, over := 0, 0
+		if d.Declared != nil && d.Overpack != nil {
+			declared, over = *d.Declared, *d.Overpack
+		}
+		if op != tc.op || before != tc.count-tc.taken || after != 0 || declared != tc.declared || over != tc.overpack {
+			t.Errorf("%s: the clear's row is %s %d -> %d declared %d overpack %d; want %s %d -> 0 declared %d overpack %d",
+				tc.label, op, before, after, declared, over, tc.op, tc.count-tc.taken, tc.declared, tc.overpack)
+		}
 	}
 }
 
@@ -513,12 +575,12 @@ func TestApplyBinUOPDelta_CaptureReductionReplayShortCircuits(t *testing.T) {
 
 	var clearCount int
 	if err := db.QueryRow(`SELECT COUNT(*) FROM bin_uop_ledger
-		WHERE bin_id=$1 AND op=$2`,
+		WHERE bin_id=$1 AND op IN ($2, 'released_overpack')`,
 		bin.ID, audit.OpReleasedCaptureEmpty).Scan(&clearCount); err != nil {
 		t.Fatalf("read clear audit: %v", err)
 	}
 	if clearCount != 1 {
-		t.Errorf("released_capture_empty rows after replay = %d, want 1 (no double-write)", clearCount)
+		t.Errorf("the clear's rows after replay = %d, want 1 (no double-write; the bin read -5, so it is released_overpack)", clearCount)
 	}
 }
 
