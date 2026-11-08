@@ -292,6 +292,56 @@ func TestApplier_APreLiftWindowAppliesAfterTheLanding(t *testing.T) {
 	}
 }
 
+// TestApplier_ALateDrawIsBookedAtTheLiftsNode — v175. A window of the
+// generation a seat lift ended, started before the lift, is booked on the
+// ledger at the node the cart was lifted from, whether it reaches Core while
+// the cart is in the air or after it is set down elsewhere. Before, its row
+// named where the bin stood when the window applied: _TRANSIT, or the node it
+// landed at.
+func TestApplier_ALateDrawIsBookedAtTheLiftsNode(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	sd := testdb.SetupStandardData(t, db)
+	manifest := announcingService(db)
+	binSvc := NewBinService(db, manifest)
+	deltas := NewInventoryDeltaService(db, manifest, EpochAnnounce{Topic: announceTopic, CoreStation: "core.test"})
+
+	bin := createTestBin(t, db, sd.LineNode.ID, "BIN-LATE-NODE", "PART-A", 60)
+	order := createTestOrder(t, db, sd.StorageNode.ID)
+	claimBinForTest(t, db, bin.ID, order.ID)
+	e := binEpoch(t, db, bin.ID)
+	beforeLift := time.Now().UTC().Add(-time.Second)
+	testutil.MustNoErr(t, deltas.ApplyBinUOPDelta(pinStation, liftNetDelta(bin.ID, e, 1, -1, -1, beforeLift)), "seq 1")
+	if _, err := binSvc.Lift(bin.ID, PickupNotice{Station: pinStation, OrderUUID: "late-node-pin", OrderID: order.ID, Location: sd.LineNode.Name}); err != nil {
+		t.Fatalf("lift: %v", err)
+	}
+	testutil.MustNoErr(t, deltas.ApplyBinUOPDelta(pinStation, liftNetDelta(bin.ID, e, 2, -2, -3, beforeLift.Add(300*time.Millisecond))),
+		"a pre-lift window while the cart is in the air")
+	if _, err := binSvc.ApplyArrival(bin.ID, sd.StorageNode.ID, false, nil, order.ID); err != nil {
+		t.Fatalf("arrival in storage: %v", err)
+	}
+	testutil.MustNoErr(t, deltas.ApplyBinUOPDelta(pinStation, liftNetDelta(bin.ID, e, 3, -3, -6, beforeLift.Add(600*time.Millisecond))),
+		"a pre-lift window after the landing")
+
+	rows, err := db.DB.Query(`SELECT COALESCE(node_id, 0) FROM bin_uop_ledger WHERE bin_id=$1 AND op='bin_uop_delta' ORDER BY id`, bin.ID)
+	testutil.MustNoErr(t, err, "the delta rows")
+	defer rows.Close()
+	var got []int64
+	for rows.Next() {
+		var n int64
+		testutil.MustNoErr(t, rows.Scan(&n), "scan")
+		got = append(got, n)
+	}
+	want := []int64{sd.LineNode.ID, sd.LineNode.ID, sd.LineNode.ID}
+	if len(got) != len(want) || got[0] != want[0] || got[1] != want[1] || got[2] != want[2] {
+		t.Errorf("the three draws were booked at nodes %v, want %v: every one at the node the cart was lifted from (%d)",
+			got, want, sd.LineNode.ID)
+	}
+	if got := binRemaining(t, db, bin.ID); got != 54 {
+		t.Errorf("uop_remaining = %d, want 54: the late draws are the lifted cart's", got)
+	}
+}
+
 // TestApplier_AfterAResetAtTheNextSeatALateWindowDrops — decision 44b. Any bump
 // other than a lift clears the stamp (bumpEpochRaw): after the cart lands at
 // the next seat and a reset there starts another generation, a late window of

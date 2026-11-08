@@ -283,6 +283,7 @@ CREATE TABLE public.bins (
     lifted_at timestamp with time zone,
     totes_on_cart integer,
     last_lift_at timestamp with time zone,
+    lifted_from_node_id bigint,
     anomaly_note text DEFAULT ''::text NOT NULL,
     undeclared_carrier_at timestamp with time zone,
     held_since timestamp with time zone,
@@ -2189,6 +2190,9 @@ ALTER TABLE ONLY public.bin_types
 
 ALTER TABLE ONLY public.bins
     ADD CONSTRAINT bins_bin_type_id_fkey FOREIGN KEY (bin_type_id) REFERENCES public.bin_types(id);
+
+ALTER TABLE ONLY public.bins
+    ADD CONSTRAINT bins_lifted_from_node_id_fkey FOREIGN KEY (lifted_from_node_id) REFERENCES public.nodes(id) ON DELETE SET NULL;
 
 ALTER TABLE ONLY public.bins
     ADD CONSTRAINT bins_node_id_fkey FOREIGN KEY (node_id) REFERENCES public.nodes(id);

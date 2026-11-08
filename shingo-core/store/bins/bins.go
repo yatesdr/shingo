@@ -2010,6 +2010,11 @@ type Lift struct {
 // been set down in storage and lifted again. Bumped is whether THIS statement
 // wrote the stamp (lifted_at equal to its own now), not whether one is set.
 //
+// THE STAMP NAMES WHERE (v175): lifted_from_node_id is the node the bin stood
+// at as the streamed generation ended (the old node_id, read in the same SET),
+// written and kept exactly as lifted_at is, so the applier books a late draw
+// of that generation at the position it was counted at (+0 statements).
+//
 // Idempotent like MoveToTransit: a bin already at the transit node is left
 // alone (Moved false). The anomaly note goes, as MoveToTransit's comment says.
 //
@@ -2030,6 +2035,7 @@ func LiftToTransitTx(tx *sql.Tx, binID, transitNodeID int64, station string, now
 	err := tx.QueryRow(`UPDATE bins SET node_id=$1, anomaly_note='', updated_at=$3::timestamptz,
 			delta_epoch = delta_epoch + CASE WHEN `+streamed+` THEN 1 ELSE 0 END,
 			lifted_at = CASE WHEN `+streamed+` THEN $3::timestamptz ELSE lifted_at END,
+			lifted_from_node_id = CASE WHEN `+streamed+` THEN node_id ELSE lifted_from_node_id END,
 			last_lift_at = $3::timestamptz
 		WHERE id=$2 AND (node_id IS NULL OR node_id != $1)
 		RETURNING delta_epoch, lifted_at, lifted_at IS NOT DISTINCT FROM $3::timestamptz, uop_remaining, payload_code`,

@@ -489,9 +489,10 @@ func (s *InventoryDeltaService) ApplyBinUOPDelta(station string, d *protocol.Bin
 		valueBefore     int
 		anomalyFlagged  bool
 		binNodeID       sql.NullInt64
+		liftedFrom      sql.NullInt64
 	)
-	err = tx.QueryRow(`SELECT payload_code, uop_remaining, anomaly_at IS NOT NULL, node_id FROM bins WHERE id=$1`,
-		d.BinID).Scan(&havePayloadCode, &valueBefore, &anomalyFlagged, &binNodeID)
+	err = tx.QueryRow(`SELECT payload_code, uop_remaining, anomaly_at IS NOT NULL, node_id, lifted_from_node_id FROM bins WHERE id=$1`,
+		d.BinID).Scan(&havePayloadCode, &valueBefore, &anomalyFlagged, &binNodeID, &liftedFrom)
 	if err == sql.ErrNoRows {
 		return fmt.Errorf("BinUOPDelta target bin %d does not exist", d.BinID)
 	}
@@ -651,6 +652,16 @@ func (s *InventoryDeltaService) ApplyBinUOPDelta(station string, d *protocol.Bin
 	// reason is a real column since v119 so the consumption rate can filter on
 	// it without a JSON path no index covers. metadata keeps the same key — it
 	// is the audit record; the column is what a WHERE clause sees.
+	//
+	// A LATE DRAW IS BOOKED WHERE IT WAS COUNTED (v175): a window of the
+	// generation that ended at the lift (liftEnded, the E-1 arm) was counted at
+	// the position the cart was lifted from, so its row names that node
+	// (lifted_from_node_id, read in the statement above), not _TRANSIT or the
+	// seat the cart has landed at since. A lift from before v175 names none,
+	// and the row keeps the bin's node, as before.
+	if liftEnded && liftedFrom.Valid {
+		binNodeID = liftedFrom
+	}
 	if _, err := tx.Exec(`INSERT INTO bin_uop_ledger
 		(bin_id, before_uop, after_uop, op, source, payload_code, actor, metadata, node_id, reason)
 		VALUES ($1, $2, $3, 'bin_uop_delta', 'service/inventory_delta_service.go', $4, $5, $6, $7, $8)`,

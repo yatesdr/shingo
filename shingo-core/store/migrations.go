@@ -4561,7 +4561,25 @@ func migrationList() []migration {
 				return schema.ColumnAbsent(q, "orders", "bin_id") && schema.ColumnAbsent(q, "order_bins", "dest_node") &&
 					schema.ColumnAbsent(q, "order_bins", "node_name") && schema.ColumnAbsent(q, "order_bins", "action")
 			}},
+		{175, "bins.lifted_from_node_id - the node a streamed carrier was lifted from, written with lifted_at: a late draw is booked there",
+			v175BinLiftedFromNode,
+			func(q schema.Querier) bool { return schema.ColumnExists(q, "bins", "lifted_from_node_id") }},
 	}
+}
+
+// v175BinLiftedFromNode adds bins.lifted_from_node_id. The lift of a streamed
+// carrier writes it with lifted_at, in the UPDATE that bumps and stamps
+// (bins.LiftToTransitTx, +0 statements): the node the carrier stood at as its
+// generation ended. The delta applier books a late draw of that generation
+// (the E-1 arm) at it, not at the node the bin stands at when the draw arrives.
+// NULL on every existing row: a carrier lifted before this migration books its
+// late draws where it stands, as before. ON DELETE SET NULL: a deleted node
+// leaves no dangling pointer. The baseline DDL declares the same column.
+func v175BinLiftedFromNode(tx *sql.Tx) error {
+	if _, err := tx.Exec(`ALTER TABLE bins ADD COLUMN IF NOT EXISTS lifted_from_node_id BIGINT REFERENCES nodes(id) ON DELETE SET NULL`); err != nil {
+		return fmt.Errorf("v175 bins.lifted_from_node_id: %w", err)
+	}
+	return nil
 }
 
 // v171KanbanEpisodeKind rewrites the kind on every episode row, open and closed, so

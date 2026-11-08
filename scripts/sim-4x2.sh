@@ -420,8 +420,9 @@ sim_epoch() { date -u -d "$(curl -s -m 5 "$EDGE/api/sim/status" | sed -n 's/.*"s
 # mark opens a window and ledger closes it:
 #   carts Σ   the units the five positions drew in the window: Core's applied count deltas
 #             there (bin_uop_ledger, op bin_uop_delta, node-stamped), and those on the cell's
-#             parts Core booked at _TRANSIT (a draw that reaches Core after its cart's lift is
-#             stamped with the node the cart is at then), less the rise in their lineside piles. No HTTP read sums a position's draws, so this one number is read
+#             parts Core booked at _TRANSIT, which must read 0 (a draw that reaches Core after its
+#             cart's lift is booked at the node it was lifted from, v175), less the rise in their
+#             lineside piles. No HTTP read sums a position's draws, so this one number is read
 #             from Core's database, as kanban-rig.sh reads Core.
 #   loads Σ   what the draws should be: a station-counted position draws once per load and a
 #             cell-counted one once per load counted out (loads less the rise in flight), off
@@ -803,7 +804,6 @@ ledger() {
   other="$(printf '%s\n' "$L_CORE" | awk -v r="$RUN_ID" -v x="$ALT_ID" 'NF && $1 != r && $1 != x {s += $2} END {print s + 0}')"
   got=$(( ${a:-0} + ${b:-0} + other ))
   say "draws at the five positions: carts $carts (Core's deltas $L_DRAWN, ${L_TRANSIT:-0} of them booked at _TRANSIT, piles +$(( ${L_PILES:-0} - ${W_PILES:-0} ))); expected $expect = $L_NS station-counted x $L_DL loads + $L_NC cell-counted x $L_COUNTED counted out; $n rows open, $q logged at the positions, $WRITTEN_OFF written off"
-  [ "${L_TRANSIT:-0}" -eq 0 ] || say "LOOK: $L_TRANSIT of the cell's draws Core booked at _TRANSIT (they stay in the sum: Core booked them there)"
   say "partial releases in the window: the Edge's $L_EDGE_FENCED fenced, $L_EDGE_UNFENCED unfenced; Core's $L_CORE_FENCED fenced, $L_CORE_UNFENCED unfenced"
   say "Core refused as the wrong part in the window (deltas parts): $L_REFUSED"
   [ "$other" -eq 0 ] || say "Core received $other more under neither style"
@@ -815,6 +815,7 @@ ledger() {
   else
     echo "$line" | tee -a "$OUT/log.txt"
     echo "lost at the lift ${L_LOST:-0}" | tee -a "$OUT/log.txt"
+    echo "_TRANSIT ${L_TRANSIT:-0}" | tee -a "$OUT/log.txt"
     echo "minimum cart ${L_MIN:-none}" | tee -a "$OUT/log.txt"
     if [ -n "$L_STRIP" ]; then
       printf '%s\n' "$L_STRIP" | sed 's/^/strip: /' | tee -a "$OUT/log.txt"
@@ -823,6 +824,7 @@ ledger() {
       printf '%s\n' "$L_OVERPACK" | sed 's/^/overpack: /' | tee -a "$OUT/log.txt"
     fi
     [ "${L_LOST:-0}" -eq 0 ] || miss="$miss; lost at the lift ${L_LOST}"
+    [ "${L_TRANSIT:-0}" -eq 0 ] || miss="$miss; ${L_TRANSIT} of the cell's draws booked at _TRANSIT (a late draw is booked at the node its cart was lifted from)"
     refused_n="${L_REFUSED%% *}"
     [ "${refused_n:-0}" -eq 0 ] || miss="$miss; Core refused $refused_n draw(s) as the wrong part"
     [ $(( ${L_EDGE_UNFENCED:-0} + ${L_CORE_UNFENCED:-0} )) -eq 0 ] || miss="$miss; unfenced partial releases (the Edge's ${L_EDGE_UNFENCED}, Core's ${L_CORE_UNFENCED})"

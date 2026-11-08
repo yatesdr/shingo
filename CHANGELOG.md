@@ -5,9 +5,10 @@ belongs in the commit message or in `docs/` — this file is the index.
 
 ## 2026-11-08 — Post-merge tidy
 
-Edge v44 (a backfill, no schema change). Deploy Core first, then the Edge.
+Core v175; Edge v44 (a backfill, no schema change). Deploy Core first, then the Edge.
 
 - A cart's part is recorded at its bind: the order's, else Core's, else the claim's part assumed (v44); a flip changes no seat
+- Core: a late draw is booked at the node its cart was lifted from (v175), never at _TRANSIT
 
 ## 2026-11-03 — The cutover follows the PLC
 

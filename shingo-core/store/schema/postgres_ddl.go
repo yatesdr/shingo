@@ -134,7 +134,10 @@ CREATE TABLE IF NOT EXISTS bins (
     totes_on_cart      INTEGER CHECK (totes_on_cart >= 0),
     -- v162: when a robot last lifted the bin. Every lift writes it, in the
     -- lift's own UPDATE; nothing clears it. The vacate hold's floor.
-    last_lift_at       TIMESTAMPTZ
+    last_lift_at       TIMESTAMPTZ,
+    -- v175: the node a streamed carrier was lifted from, written with
+    -- lifted_at. A late draw of the generation the lift ended is booked there.
+    lifted_from_node_id BIGINT REFERENCES nodes(id) ON DELETE SET NULL
 );
 CREATE INDEX IF NOT EXISTS idx_bins_type ON bins(bin_type_id);
 CREATE INDEX IF NOT EXISTS idx_bins_node ON bins(node_id);
