@@ -85,7 +85,7 @@ func TestSimStatementName_RealEdgeStatements(t *testing.T) {
 			return err
 		}, "SELECT styles"},
 		{"DB.ReleaseCountWithCursor", func() error {
-			_, _, _, err := db.ReleaseCountWithCursor(1, 0, "node", "N", 1)
+			_, _, _, _, err := db.ReleaseCountWithCursor(1, nil, "node", "N", 1)
 			return err
 		}, "UPDATE process_node_runtime_states"},
 		{"orders.KeptSpotRowsQuery", func() error {

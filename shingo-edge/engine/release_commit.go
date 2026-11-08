@@ -205,7 +205,7 @@ func (e *Engine) releaseOrderDropFastPath(orderID int64, node *processes.Node, r
 	wireDisposition := buildProtocolDisposition(disp, runtime)
 	var fence *protocol.ReleaseFence
 	if manifestUOP != nil {
-		fence = e.writeReleaseCount(node.ID, runtime, 0, *manifestUOP)
+		manifestUOP, fence = e.declareReleaseCount(node, runtime, 0, *manifestUOP, disp, wireDisposition)
 	}
 	e.logRelease("order=%d node=%s disposition=%q — drop release: passing manifest sync through, skipping toClaim-dependent bookkeeping",
 		orderID, node.Name, string(disp.Mode))
@@ -319,10 +319,11 @@ func (e *Engine) releaseOrderWithFullLineside(order *storeorders.Order, node *pr
 	// carries where in the carrier's delta stream the declared count stands,
 	// read in the same instant as the write (writeReleaseCount), so Core declares
 	// it with no generation bump and the ticks until the lift stay the carrier's
-	// in both books (R1).
+	// in both books (R1). With no typed count the count is the seat's in that
+	// instant too, not the leg's plan-time read (decision 44a).
 	var fence *protocol.ReleaseFence
 	if manifestUOP != nil {
-		fence = e.writeReleaseCount(node.ID, runtime, resolvedBinID, *manifestUOP)
+		manifestUOP, fence = e.declareReleaseCount(node, runtime, resolvedBinID, *manifestUOP, disp, wireDisposition)
 	}
 	if nodeTask != nil {
 		if err := e.db.UpdateChangeoverNodeTaskState(nodeTask.ID, domain.NodeTaskReleased); err != nil {

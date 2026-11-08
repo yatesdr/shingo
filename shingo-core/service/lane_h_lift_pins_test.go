@@ -84,11 +84,12 @@ func TestRelease_FencedReleaseSkipsALatePreReleaseDelta(t *testing.T) {
 	}
 }
 
-// TestRelease_UnfencedReleaseStillBumps — D11 (i), mixed-version safety. A
-// release from an Edge that predates the fence carries none, and Core keeps
-// today's bump and announcement in the release's transaction: that Edge has
-// no other way to stop its pre-release deltas landing on the declaration.
-// A fence for a generation the bin is no longer at counts as none.
+// TestRelease_UnfencedReleaseStillBumps — D11 (i). A release the Edge could
+// not fence (no carrier bound, the bound carrier not the released one, a
+// failed statement) carries none, and Core keeps the bump and announcement in
+// the release's transaction: with no fence there is no other way to stop the
+// pre-release deltas landing on the declaration a second time. A fence for a
+// generation the bin is no longer at counts as none.
 func TestRelease_UnfencedReleaseStillBumps(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)

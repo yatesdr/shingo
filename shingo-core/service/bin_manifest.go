@@ -1675,7 +1675,9 @@ type ReleaseFence struct {
 // and delivered after it is at or below high water and skipped. The
 // generation ends at the lift (BinService.Lift). A fence for another bin or
 // another generation than the bin's current one cannot fence anything, and
-// the release bumps as an unfenced one does.
+// the release bumps as an unfenced one does: the answer for a release the
+// Edge could not fence, where a no-bump write would apply the in-flight
+// windows on top of the declaration a second time.
 func (s *BinManifestService) SyncOrClearForReleasedFenced(binID, orderID int64, remainingUOP *int, kind protocol.UOPDispositionKind, actor string, fence *ReleaseFence) error {
 	return s.syncOrClearForReleased(binID, orderID, remainingUOP, kind, actor, false, fence)
 }
@@ -1758,10 +1760,14 @@ func (s *BinManifestService) SyncOrClearForReleasedNoOwner(binID, orderID int64,
 //
 // fence (Lane H, DECISIONS D11 (i)): a release that fences the stream writes
 // the declared count with no bump and moves the dedup cursor; the generation
-// ends at the lift. A nil fence, or one naming another bin or generation, is
-// a release from an Edge that predates it, and keeps today's bump in the
-// release's transaction (mixed-version safety; pin
-// TestRelease_UnfencedReleaseStillBumps).
+// ends at the lift. Every deployed Edge carries the fence; a nil fence, or one
+// naming another bin or generation, is a release the Edge could not fence (no
+// carrier bound at the seat, the bound carrier is not the released one, no
+// accumulator, no runtime row, a failed statement), and it keeps the bump in
+// the release's transaction: with no fence, a write with no bump would apply
+// the windows in flight at the release on top of the declaration a second
+// time (pin TestRelease_UnfencedReleaseStillBumps). Every release logs which
+// it was, with the drift and the count written.
 func (s *BinManifestService) syncOrClearForReleased(binID, orderID int64, remainingUOP *int, kind protocol.UOPDispositionKind, actor string, sourceNodeFallback bool, fence *ReleaseFence) error {
 	if remainingUOP == nil {
 		return nil
@@ -1882,6 +1888,7 @@ func (s *BinManifestService) syncOrClearForReleased(binID, orderID int64, remain
 		if err := tx.Commit(); err != nil {
 			return fmt.Errorf("commit clear-for-released bin %d%s: %w", binID, errSuffix, err)
 		}
+		logRelease(binID, orderID, currentEpoch, fenced, 0, 0, 0)
 		if !fenced {
 			s.notifyBinChanged(binID)
 		}
@@ -1989,12 +1996,27 @@ func (s *BinManifestService) syncOrClearForReleased(binID, orderID int64, remain
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("commit sync-for-released bin %d%s: %w", binID, errSuffix, err)
 	}
+	logRelease(binID, orderID, currentEpoch, fenced, *remainingUOP, drift, written)
 	if !fenced {
 		s.notifyBinChanged(binID)
 	}
 	s.db.AppendAudit("bin", binID, "released_partial"+tagSuffix,
 		"", fmt.Sprintf("uop=%d order=%d%s", *remainingUOP, orderID, finalMsgSuffix), actor)
 	return nil
+}
+
+// logRelease is the release's one line, fenced or not (decision 44a): the
+// bin, its generation at the release, the count declared, the drift applied
+// past the fence, and the count written. An unfenced release bumped the
+// generation in its transaction.
+func logRelease(binID, orderID, epoch int64, fenced bool, declared, drift, written int) {
+	if fenced {
+		log.Printf("bin_manifest: release of bin %d (order %d) fenced at epoch %d: declared %d, drift %+d, written %d",
+			binID, orderID, epoch, declared, drift, written)
+		return
+	}
+	log.Printf("bin_manifest: release of bin %d (order %d) unfenced at epoch %d: declared %d, written %d, the generation bumped",
+		binID, orderID, epoch, declared, written)
 }
 
 // AuditReleaseOverride records operator-override observations for a

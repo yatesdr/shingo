@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"fmt"
 	"log"
 	"strconv"
 
@@ -96,51 +97,107 @@ func (e *Engine) fencedCount(nodeID int64, rt *processes.RuntimeState, adj proto
 
 // writeReleaseCount writes the old carrier's count at a release and reads the
 // stream fence the release carries (Lane H, DECISIONS D11 (i)): the count the
-// operator declared is as of THIS point in the carrier's (bin, epoch) delta
+// release declares is as of THIS point in the carrier's (bin, epoch) delta
 // stream — the last seq allocated and the flushed net plus what the
 // accumulator holds unflushed. Core writes the declared count with no
 // generation bump and moves its dedup cursor to the fence, so a delta flushed
 // before the release and delivered after it is skipped (its count is in the
 // declaration) and every later window applies only the ticks after it.
 //
-// ONE INSTANT, as fencedCount reads it: under countMu, which every tick holds
-// across its runtime write and its record, and the accumulator's flush lock
-// (WithPending), with the count write inside both. A tick is either before
-// the write and in the fence, or after both and charged on top of the
-// declaration, in both books. Cost: one statement, the count write, with the
-// cursor read in its RETURNING (store.ReleaseCountWithCursor).
+// ONE INSTANT, as fencedCount reads it, and it holds for the count too: under
+// countMu, which every tick holds across its runtime write and its record, and
+// the accumulator's flush lock (WithPending), with the count write inside
+// both. A tick is either before the write and in the fence, or after both and
+// charged on top of the declaration, in both books. With no count a person
+// typed (fromSeat, ReleaseDisposition.CountFromSeat) the declared count is the
+// seat's as the statement finds it, not the leg's plan-time read: a stroke
+// between the plan and the commit — across the act's Core round trip for the
+// release point — is in the count and in AsOfNet together (decision 44a). A
+// typed count is the person's and is written as is. Cost: one statement, the
+// count write, with the cursor read in its RETURNING
+// (store.ReleaseCountWithCursor).
 //
-// Returns nil — no fence, and Core bumps at the release as before — when no
-// carrier is bound at the seat, the bound carrier is not the released one, no
-// accumulator is wired, the seat has no runtime row, or the statement fails.
-func (e *Engine) writeReleaseCount(nodeID int64, rt *processes.RuntimeState, binID int64, count int) *protocol.ReleaseFence {
-	plain := func() *protocol.ReleaseFence {
-		if err := e.db.SetProcessNodeReleaseCount(nodeID, count); err != nil {
-			log.Printf("release: finalize old-bin count for node %d: %v", nodeID, err)
-		}
-		return nil
+// Returns the fence and the count written, which goes on the envelope. The
+// fence is nil — Core bumps at the release, as for an Edge that cannot fence —
+// when no accumulator is wired, the leg read no runtime row, no carrier is
+// bound at the seat, the bound carrier is not the released one, the seat has
+// no runtime row, or the statement fails; the count written is then the
+// leg's own. Every release logs its declaration and its fence, or which of
+// those arms it took.
+func (e *Engine) writeReleaseCount(node *processes.Node, rt *processes.RuntimeState, binID int64, count int, fromSeat bool) (*protocol.ReleaseFence, int) {
+	source, declared := "typed", &count
+	if fromSeat {
+		source, declared = "seat", nil
 	}
-	if e.inventoryDelta == nil || rt == nil || rt.ActiveBinID == nil || (binID != 0 && *rt.ActiveBinID != binID) {
-		return plain()
+	unfenced := func(why string, write bool) (*protocol.ReleaseFence, int) {
+		if write {
+			if err := e.db.SetProcessNodeReleaseCount(node.ID, count); err != nil {
+				log.Printf("release: finalize old-bin count for node %s: %v", node.CoreNodeName, err)
+			}
+		}
+		log.Printf("release: node %s declared %d (%s, as the leg read it) — unfenced: %s", node.CoreNodeName, count, source, why)
+		return nil, count
+	}
+	switch {
+	case e.inventoryDelta == nil:
+		return unfenced("no accumulator", true)
+	case rt == nil:
+		return unfenced("the leg read no runtime row", true)
+	case rt.ActiveBinID == nil:
+		return unfenced("no carrier bound at the seat", true)
+	case binID != 0 && *rt.ActiveBinID != binID:
+		return unfenced(fmt.Sprintf("the bound carrier %d is not the released %d", *rt.ActiveBinID, binID), true)
 	}
 	bin, epoch := *rt.ActiveBinID, rt.ActiveBinEpoch
-	var fence *protocol.ReleaseFence
+	var (
+		fence   *protocol.ReleaseFence
+		written int
+		found   bool
+	)
 	e.countMu.Lock()
 	err := e.inventoryDelta.WithPending(func(p uop.Pending) error {
-		seq, net, found, err := e.db.ReleaseCountWithCursor(nodeID, count, protocol.InvDeltaScopeBin, strconv.FormatInt(bin, 10), epoch)
-		if err != nil || !found {
+		w, seq, net, ok, err := e.db.ReleaseCountWithCursor(node.ID, declared, protocol.InvDeltaScopeBin, strconv.FormatInt(bin, 10), epoch)
+		if err != nil || !ok {
 			return err
 		}
+		written, found = w, true
 		fence = &protocol.ReleaseFence{BinID: bin, Epoch: epoch, AsOfSeq: seq, AsOfNet: net + int64(p.Bin(bin, epoch)), AsOfAt: clock.Now().UTC()}
 		return nil
 	})
 	e.countMu.Unlock()
-	if err != nil {
-		log.Printf("release: fence the stream for bin %d at node %d: %v — releasing unfenced (Core bumps at the release)", bin, nodeID, err)
-		if fence == nil {
-			return plain()
-		}
-		return nil
+	switch {
+	case err != nil && fence == nil:
+		return unfenced(fmt.Sprintf("the statement failed: %v", err), true)
+	case err != nil:
+		log.Printf("release: bin %d epoch %d at node %s declared %d (%s) — unfenced: the accumulator's lock: %v", bin, epoch, node.CoreNodeName, written, source, err)
+		return nil, written
+	case !found:
+		return unfenced("the seat has no runtime row", false)
 	}
-	return fence
+	log.Printf("release: bin %d epoch %d at node %s declared %d (%s) as of seq %d net %d — fenced",
+		bin, epoch, node.CoreNodeName, written, source, fence.AsOfSeq, fence.AsOfNet)
+	return fence, written
+}
+
+// declareReleaseCount writes a release's count on the seat with its fence
+// (writeReleaseCount) and returns the count written, for the envelope's
+// RemainingUOP. A count from the seat goes on the wire disposition too, as its
+// Count, and as its CountSuggested when the screen sent a pre-fill: the
+// declaration is Shingo's own number, not a person's override of it, and a
+// suggestion left at the pre-fill beside a count the line has since drawn
+// down would make Core's AuditReleaseOverride write an override row for every
+// release. With no suggestion sent, none goes (Core audits nothing). A typed
+// count keeps the screen's pre-fill as its suggestion, and Core audits the
+// difference as before.
+func (e *Engine) declareReleaseCount(node *processes.Node, rt *processes.RuntimeState, binID int64, count int, disp ReleaseDisposition, wire *protocol.UOPDisposition) (*int, *protocol.ReleaseFence) {
+	fromSeat := disp.CountFromSeat()
+	fence, written := e.writeReleaseCount(node, rt, binID, count, fromSeat)
+	if fromSeat && wire != nil && wire.Kind == protocol.DispositionReleasePartial {
+		wire.Count = written
+		if wire.CountSuggested != nil {
+			suggested := written
+			wire.CountSuggested = &suggested
+		}
+	}
+	return &written, fence
 }

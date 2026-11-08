@@ -85,6 +85,29 @@ func (d ReleaseDisposition) typedEmpty() bool {
 	return d.Mode == DispositionSendPartialBack && d.PartialCount != nil && *d.PartialCount == 0
 }
 
+// TypedCount is the SEND PARTIAL BACK count a person entered, or nil when
+// there is none: no count sent, or the screen's pre-fill sent back as it was
+// (PartialCount equal to PartialCountSuggested). An untouched pre-fill is
+// Shingo's own number, read when the screen opened; the line may have drawn
+// since. A typed 0 is always the person's (ZERO MEANS EMPTY, typedEmpty).
+func (d ReleaseDisposition) TypedCount() *int {
+	if d.PartialCount == nil {
+		return nil
+	}
+	if *d.PartialCount != 0 && d.PartialCountSuggested != nil && *d.PartialCount == *d.PartialCountSuggested {
+		return nil
+	}
+	return d.PartialCount
+}
+
+// CountFromSeat reports a SEND PARTIAL BACK that declares the seat's own
+// count: no typed count (TypedCount). The count is then read at the commit,
+// in the fence's instant (engine writeReleaseCount), so a stroke between the
+// leg's plan and its commit is in the declared count, not lost under it.
+func (d ReleaseDisposition) CountFromSeat() bool {
+	return d.Mode == DispositionSendPartialBack && d.TypedCount() == nil
+}
+
 // ComputeReleaseRemainingUOP returns the *int that should be threaded to
 // orderMgr.ReleaseOrder as the remaining_uop value, based on the disposition.
 //
@@ -107,10 +130,12 @@ func (d ReleaseDisposition) typedEmpty() bool {
 //
 // SendPartialBack source priority (Phase 0b):
 //  0. disp.PartialCount typed as 0: the bin is empty, &0 (typedEmpty).
-//  1. disp.PartialCount (operator-entered via the keypad) when set and >0.
-//     Per the SME contract the operator's count is ground truth.
-//  2. runtime.RemainingUOPCached when >0. Fallback for legacy HTTP clients that
-//     don't ship the override-aware body shape.
+//  1. The typed count (TypedCount) when >0. Per the SME contract the
+//     operator's count is ground truth.
+//  2. runtime.RemainingUOPCached when >0: no typed count. The plan's read; the
+//     commit declares the seat's count as it stands in the fence's instant
+//     (CountFromSeat), and this value stands only when the seat cannot be
+//     fenced.
 //  3. &0 otherwise — no positive baseline to preserve, declare empty.
 func ComputeReleaseRemainingUOP(disp ReleaseDisposition, runtime *processes.RuntimeState, resolvedBinID int64) *int {
 	switch disp.Mode {
@@ -143,8 +168,8 @@ func ComputeReleaseRemainingUOP(disp ReleaseDisposition, runtime *processes.Runt
 			zero := 0
 			return &zero
 		}
-		if disp.PartialCount != nil && *disp.PartialCount > 0 {
-			v := *disp.PartialCount
+		if typed := disp.TypedCount(); typed != nil && *typed > 0 {
+			v := *typed
 			return &v
 		}
 		if runtime != nil && runtime.RemainingUOPCached > 0 {
@@ -179,8 +204,9 @@ func ComputeReleaseRemainingUOP(disp ReleaseDisposition, runtime *processes.Runt
 //     (matches the current "RELEASE EMPTY" UI body shape: capture_lineside
 //     with an empty qty_by_part map)
 //   - DispositionSendPartialBack → DispositionReleasePartial. Count comes
-//     from PartialCount when set, else from runtime.RemainingUOPCached — same
-//     priority as ComputeReleaseRemainingUOP.
+//     from the typed count when set, else from runtime.RemainingUOPCached —
+//     same priority as ComputeReleaseRemainingUOP; a count from the seat is
+//     replaced by the one the commit declared (engine declareSeatCount).
 //   - "" (zero Mode) → nil. Legacy callers ship no Disposition.
 //
 // Returns nil when there's nothing meaningful to ship (preserves the
@@ -202,9 +228,9 @@ func BuildProtocolDisposition(disp ReleaseDisposition, runtime *processes.Runtim
 			return &protocol.UOPDisposition{Kind: protocol.DispositionReleaseEmpty}
 		}
 		d := &protocol.UOPDisposition{Kind: protocol.DispositionReleasePartial}
-		switch {
-		case disp.PartialCount != nil && *disp.PartialCount > 0:
-			d.Count = *disp.PartialCount
+		switch typed := disp.TypedCount(); {
+		case typed != nil && *typed > 0:
+			d.Count = *typed
 		case runtime != nil && runtime.RemainingUOPCached > 0:
 			d.Count = runtime.RemainingUOPCached
 		}

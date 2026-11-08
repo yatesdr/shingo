@@ -958,10 +958,13 @@ func coreNameOf(e *Engine, task processes.NodeTask) string {
 // count (release.PlanChangeover, Slot.Count): on a release that ships a count,
 // the leg that lifts the node's cart (the evac, or a sequential or per-position
 // press's one order); on a produce release, the evac.
-// The operator's override wins; otherwise the line's runtime cache decides:
-// parts left → send_partial_back with that count, drained → release_empty (the
-// ALN_001 fix: a bin can't land at its outbound destination tagged with a
-// stale payload).
+// The operator's override wins; otherwise the line's runtime cache decides the
+// mode: parts left → send_partial_back, drained → release_empty (the ALN_001
+// fix: a bin can't land at its outbound destination tagged with a stale
+// payload). The mode, not the count: send_partial_back carries no count, so
+// the release declares the seat's as it stands at the commit, in the fence's
+// instant (writeReleaseCount, decision 44a), not the count this read saw when
+// the changeover's release was loaded.
 //
 // A FAILED RUNTIME READ REFUSES THE RELEASE. The count is then unknown, and
 // release_empty would clear a carrier that may be full; the read error goes
@@ -975,8 +978,7 @@ func evacDispositionForTask(e *Engine, task processes.NodeTask, override Release
 		return ReleaseDisposition{}, fmt.Errorf("node %s: read its count: %w", task.NodeName, err)
 	}
 	if runtime != nil && runtime.RemainingUOPCached > 0 {
-		count := runtime.RemainingUOPCached
-		return ReleaseDisposition{Mode: DispositionSendPartialBack, PartialCount: &count, CalledBy: override.CalledBy}, nil
+		return ReleaseDisposition{Mode: DispositionSendPartialBack, CalledBy: override.CalledBy}, nil
 	}
 	return ReleaseDisposition{Mode: DispositionCaptureLineside, CalledBy: override.CalledBy}, nil
 }

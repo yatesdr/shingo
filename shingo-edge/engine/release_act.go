@@ -132,7 +132,7 @@ func (e *Engine) writeIntent(act *releaseAct, d release.Decision, ll *legLoad) {
 		Origin:      act.Origin,
 		CalledBy:    act.CalledBy,
 		Choices: release.Choices{
-			Mode: string(ll.disp.Mode), Captures: ll.disp.LinesideCapture, PartialCount: ll.disp.PartialCount,
+			Mode: string(ll.disp.Mode), Captures: ll.disp.LinesideCapture, PartialCount: ll.disp.TypedCount(),
 		},
 	}
 	if old := ll.snap.Intent; old != nil && old.StationWait == in.StationWait {

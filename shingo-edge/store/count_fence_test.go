@@ -22,10 +22,11 @@ func TestReleaseCountWithCursor_WritesTheCountAndReadsTheCursorInOneStatement(t 
 	_, err = db.EnsureProcessNodeRuntime(nodeID)
 	testutil.MustNoErr(t, err, "ensure runtime")
 
-	seq, net, found, err := db.ReleaseCountWithCursor(nodeID, 7, protocol.InvDeltaScopeBin, "4401", 3)
+	seven := 7
+	written, seq, net, found, err := db.ReleaseCountWithCursor(nodeID, &seven, protocol.InvDeltaScopeBin, "4401", 3)
 	testutil.MustNoErr(t, err, "release count, empty scope")
-	if !found || seq != 0 || net != 0 {
-		t.Fatalf("empty scope: found=%t seq=%d net=%d, want true 0 0", found, seq, net)
+	if !found || seq != 0 || net != 0 || written != 7 {
+		t.Fatalf("empty scope: found=%t seq=%d net=%d written=%d, want true 0 0 7", found, seq, net, written)
 	}
 	rt, err := db.GetProcessNodeRuntime(nodeID)
 	testutil.MustNoErr(t, err, "read runtime")
@@ -39,10 +40,11 @@ func TestReleaseCountWithCursor_WritesTheCountAndReadsTheCursorInOneStatement(t 
 	}
 	_, _, err = db.AllocateInventoryDeltaSeq(protocol.InvDeltaScopeBin, "4401", 4, -1) // another generation
 	testutil.MustNoErr(t, err, "allocate in another generation")
-	seq, net, found, err = db.ReleaseCountWithCursor(nodeID, 0, protocol.InvDeltaScopeBin, "4401", 3)
+	zero := 0
+	written, seq, net, found, err = db.ReleaseCountWithCursor(nodeID, &zero, protocol.InvDeltaScopeBin, "4401", 3)
 	testutil.MustNoErr(t, err, "release count, flushed scope")
-	if !found || seq != 2 || net != -10 {
-		t.Fatalf("flushed scope: found=%t seq=%d net=%d, want true 2 -10", found, seq, net)
+	if !found || seq != 2 || net != -10 || written != 0 {
+		t.Fatalf("flushed scope: found=%t seq=%d net=%d written=%d, want true 2 -10 0", found, seq, net, written)
 	}
 	rt, err = db.GetProcessNodeRuntime(nodeID)
 	testutil.MustNoErr(t, err, "read runtime")
@@ -50,7 +52,38 @@ func TestReleaseCountWithCursor_WritesTheCountAndReadsTheCursorInOneStatement(t 
 		t.Fatalf("after a release of 0: count %d released_empty %t, want 0 and true", rt.RemainingUOPCached, rt.ReleasedEmpty)
 	}
 
-	if _, _, found, err := db.ReleaseCountWithCursor(nodeID+999, 5, protocol.InvDeltaScopeBin, "4401", 3); err != nil || found {
+	five := 5
+	if _, _, _, found, err := db.ReleaseCountWithCursor(nodeID+999, &five, protocol.InvDeltaScopeBin, "4401", 3); err != nil || found {
 		t.Fatalf("a node with no runtime row: found=%t err=%v, want false nil", found, err)
+	}
+}
+
+// TestReleaseCountWithCursor_NoCountDeclaresTheSeatsOwn: with no declared
+// count the statement writes the seat's count as it stands (decision 44a), so
+// the count and the fence are read in the one instant; floored at 0, with
+// released_empty following the value written.
+func TestReleaseCountWithCursor_NoCountDeclaresTheSeatsOwn(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	pid, err := db.CreateProcess("RCS-PROC", "", "", "", false)
+	testutil.MustNoErr(t, err, "create process")
+	nodeID, err := db.CreateProcessNode(processes.NodeInput{ProcessID: pid, CoreNodeName: "RCS-1", Name: "RCS-1", Enabled: true})
+	testutil.MustNoErr(t, err, "create node")
+	_, err = db.EnsureProcessNodeRuntime(nodeID)
+	testutil.MustNoErr(t, err, "ensure runtime")
+
+	for _, c := range []struct {
+		seat, want int
+		empty      bool
+	}{{seat: 13, want: 13}, {seat: 0, want: 0, empty: true}, {seat: -2, want: 0, empty: true}} {
+		testutil.MustNoErr(t, db.UpdateProcessNodeUOP(nodeID, c.seat), "seat the count")
+		written, _, _, found, err := db.ReleaseCountWithCursor(nodeID, nil, protocol.InvDeltaScopeBin, "4402", 1)
+		testutil.MustNoErr(t, err, "release with the seat's count")
+		rt, err := db.GetProcessNodeRuntime(nodeID)
+		testutil.MustNoErr(t, err, "read runtime")
+		if !found || written != c.want || rt.RemainingUOPCached != c.want || rt.ReleasedEmpty != c.empty {
+			t.Errorf("seat %d: found=%t written=%d seat after=%d released_empty=%t, want true %d %d %t",
+				c.seat, found, written, rt.RemainingUOPCached, rt.ReleasedEmpty, c.want, c.want, c.empty)
+		}
 	}
 }

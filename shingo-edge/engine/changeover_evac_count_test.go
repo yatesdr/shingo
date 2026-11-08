@@ -16,9 +16,12 @@ import (
 
 // TestChangeoverEvac_TheCountIsTheSeatsOrTheReleaseIsRefused: with no
 // operator count, a changeover evac sends back the seat's count (the landing
-// seeds it from Core's, the ticks count it down). When the seat cannot be
-// read the count is unknown: the release is refused rather than sent as
-// release_empty, which would clear a carrier that may be full.
+// seeds it from Core's, the ticks count it down). The door reads the seat for
+// the mode and sends no count: the release declares the seat's count at the
+// commit, in the fence's instant (decision 44a), not the count this read saw
+// when the changeover's release was loaded. When the seat cannot be read the
+// count is unknown: the release is refused rather than sent as release_empty,
+// which would clear a carrier that may be full.
 func TestChangeoverEvac_TheCountIsTheSeatsOrTheReleaseIsRefused(t *testing.T) {
 	t.Parallel()
 	db := testEngineDB(t)
@@ -27,8 +30,8 @@ func TestChangeoverEvac_TheCountIsTheSeatsOrTheReleaseIsRefused(t *testing.T) {
 	eng := testEngine(t, db)
 
 	got, err := evacDispositionForTask(eng, processes.NodeTask{ProcessNodeID: nodeID, NodeName: "EVAC-COUNT"}, ReleaseDisposition{})
-	if err != nil || got.Mode != DispositionSendPartialBack || got.PartialCount == nil || *got.PartialCount != 13 {
-		t.Errorf("a counted seat: %+v (%v), want send_partial_back with its 13", got, err)
+	if err != nil || got.Mode != DispositionSendPartialBack || got.PartialCount != nil || !got.CountFromSeat() {
+		t.Errorf("a counted seat: %+v (%v), want send_partial_back with no count: the seat's, at the commit", got, err)
 	}
 	got, err = evacDispositionForTask(eng, processes.NodeTask{ProcessNodeID: nodeID + 1000, NodeName: "UNREAD"}, ReleaseDisposition{})
 	if err == nil {
