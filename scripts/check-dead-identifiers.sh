@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# tier: dev
 # check-dead-identifiers.sh — an identifier a Go comment cites must still exist.
 #
 # The half check-comment-references.sh leaves out on purpose ("arbitrary

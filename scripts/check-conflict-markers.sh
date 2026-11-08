@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# tier: dev
 # Fail when a tracked text file carries a merge-conflict marker line.
 #
 # WHY THIS EXISTS: a stray diff3 marker line rode 71 commits of one rebase in

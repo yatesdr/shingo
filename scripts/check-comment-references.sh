@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# tier: dev
 # check-comment-references.sh — what a comment CITES must still be there.
 #
 # WHY THIS IS THE HALF THAT LASTS. This codebase reasons in its comments, and it

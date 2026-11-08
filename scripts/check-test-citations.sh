@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# tier: dev
 # check-test-citations.sh — a test a Go comment cites must still exist.
 #
 # A comment that names a test is read as "this is pinned": the scar's PIN

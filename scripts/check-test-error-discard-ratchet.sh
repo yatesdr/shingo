@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# tier: push
+# (a second golangci-lint pass; it queues behind lint on golangci-lint's machine lock)
 # check-test-error-discard-ratchet.sh — a monotonic-decrease ratchet on the
 # number of test lookups that throw their error away and read the value anyway.
 #

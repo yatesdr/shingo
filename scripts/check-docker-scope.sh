@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# tier: dev
+# inputs: scripts/gate.sh scripts/check-docker-scope.sh
 # check-docker-scope.sh — pin `gate.sh scope`'s rule: which changed files can
 # reach a Postgres-backed test.
 #

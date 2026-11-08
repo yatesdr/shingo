@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# tier: dev
 # check-js-parses.sh — every .js file in the repo must actually parse.
 #
 # WHY THIS EXISTS: Go tests never parse JavaScript. The www drift tests

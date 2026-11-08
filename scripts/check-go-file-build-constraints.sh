@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# tier: dev
 # check-go-file-build-constraints.sh — a Go file whose NAME excludes it from
 # the build.
 #

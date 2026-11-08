@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# tier: dev
 # check-test-ledger.sh — a test may leave only with a row in the ledger.
 #
 # A func Test... present at the base and gone at the tip (the working tree) must

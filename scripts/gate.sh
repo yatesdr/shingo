@@ -1,8 +1,33 @@
 #!/usr/bin/env bash
 #
-# The pre-push gate: what CI enforces, run locally. The bare run is the fast
-# loop; `full` adds the docker suites (scoped by diff unless --unscoped), -race
-# over core's engine and www, and the sim-only tests. Module-wide -race is CI's.
+# The gate: what CI enforces, run locally, in three tiers on the three
+# invocations already in use. A run is only as strong as its tier, and the
+# sentence it prints names the tier, so a dev pass cannot be pasted as a cert.
+#
+#   dev  = bash scripts/gate.sh             fmt, then at once: modbuild, lint, the
+#          dev-tier guards (script pins only when their inputs are in the diff),
+#          the sim compile, the unit tests. Seconds to a
+#          minute; run it on every change.
+#   push = bash scripts/gate.sh full        fmt, then at once: modbuild, lint, every
+#          guard but the script pins whose inputs are unchanged, the sim compile,
+#          the unit tests (-count=1), the docker suites (scoped by diff), the
+#          sim-only tests natively without -race. Before a push. race: CI.
+#   cert = bash scripts/gate.sh full --unscoped   push's steps at full strength:
+#          every guard, docker whatever the diff, race over core's engine and
+#          www, the sim-only tests under -race. Certifies a tip.
+#
+# WHERE EACH TAG SET COMPILES AND RUNS (every tag compiles somewhere before a
+# push and runs somewhere before origin):
+#
+#   tag set            dev                 push               cert             CI
+#   untagged+lockcheck run                 run                run              run, and -race
+#   docker,lockcheck   compile (lint)      run (scoped)       run (unscoped)   run, and -race shards
+#   sim                compile (sim vet)   run, no -race      run, -race       build; run -race (sim job)
+#   race (core engine, www, with docker)   —                  —                run       docker-race shards
+#   shots, explain, deps, plc's race file  —   compile (tagged-vet)  compile    compile (guards job)
+#
+# The minor tags compile in push and in CI's guards job, not in dev; the
+# screenshot (shots) and explain tests run by hand.
 #
 # A script rather than a checklist, because a gate re-derived by hand from
 # `git diff --name-only` is a gate a step can quietly go missing from.
@@ -33,13 +58,20 @@
 # Scoped to two packages it is minutes; module-wide it is half an hour. See
 # step_race.
 #
-# It is in `full`, not in `all`. The bare gate stays the fast one.
+# It is in the cert tier and in CI on every PR; the push tier leaves it to CI,
+# whose docker-race shards are a strict superset of it.
 #
 # DOCKER SUITES ARE SCOPED, NOT SKIPPED. See `scope` below.
 #
 # Usage:
-#   bash scripts/gate.sh                  fmt, standalone builds, lint (which
-#                                         carries vet), script guards, unit tests
+#   bash scripts/gate.sh                  the dev tier (above)
+#   bash scripts/gate.sh full [BASE]      the push tier; docker if scope against
+#                                         BASE (default: upstream) says so. The
+#                                         sentence names the base and its sha.
+#   bash scripts/gate.sh full --unscoped  the cert tier: docker whatever the diff.
+#                                         On a pushed tip or a merged one the diff
+#                                         is empty and scope skips docker, so
+#                                         certify with this.
 #   bash scripts/gate.sh scope [BASE]     say whether the docker suites are needed
 #                                         (exit 0 = needed, 1 = not needed)
 #   bash scripts/gate.sh race             -race -tags docker over ./engine/... and
@@ -48,16 +80,11 @@
 #   bash scripts/gate.sh docker           run the docker suites (no -race)
 #   bash scripts/gate.sh sim              the sim-only tests (-tags sim, with -race),
 #                                         in every package that holds one
-#   bash scripts/gate.sh full [BASE]      the bare gate, then docker if scope against
-#                                         BASE (default: upstream) says so, with race
-#                                         and sim. The sentence names the base and its sha.
-#   bash scripts/gate.sh full --unscoped  the same with the docker suites whatever the
-#                                         diff: the certification run. On a pushed tip
-#                                         or a merged one the diff is empty and scope
-#                                         skips docker, so certify with this.
-#   bash scripts/gate.sh scripts          the scripts/check-*.sh guards
+#   bash scripts/gate.sh simvet           the sim compile alone
+#   bash scripts/gate.sh scripts          every scripts/check-*.sh guard, whatever
+#                                         its tier (CI's guards job runs this)
 #   bash scripts/gate.sh modbuild         GOWORK=off go build, per module
-#   bash scripts/gate.sh fmt|vet|modbuild|lint|scripts|test|race|sim  one step
+#   bash scripts/gate.sh fmt|vet|modbuild|lint|scripts|test|race|sim|simvet  one step
 #   bash scripts/gate.sh lint|test [MODULE...]
 #                                         lint or unit-test only the named modules
 #                                         (protocol shared shingo-core shingo-edge
@@ -109,7 +136,7 @@ fi
 
 ALL_MODULES="protocol shared shingo-core shingo-edge integration"
 usage() {
-  echo "usage: bash scripts/gate.sh [fmt|vet|modbuild|lint|scripts|test|race|sim|scope|docker|full|lock-status] [BASE]" >&2
+  echo "usage: bash scripts/gate.sh [fmt|vet|modbuild|lint|scripts|test|race|sim|simvet|scope|docker|full|lock-status] [BASE]" >&2
   echo "       bash scripts/gate.sh full --unscoped                 docker whatever the diff (certification)" >&2
   echo "       bash scripts/gate.sh lint|test [MODULE...]   MODULE in: $ALL_MODULES" >&2
   exit 2
@@ -341,6 +368,53 @@ untagged_only_modules() {
   done
 }
 
+# ── The tiers and the diff ──────────────────────────────────────────────
+#
+# GATE_TIER is dev (the bare gate), push (`full`), cert (`full --unscoped`), or
+# step (one step by name, e.g. CI's `gate.sh scripts` and `gate.sh sim`), which
+# runs at full strength.
+#
+# write_diff records, once per run, the paths this tree changes against its
+# base: `git diff --name-only <merge-base HEAD origin/main>` (commits since the
+# base, staged and unstaged edits, deletions) plus untracked files. With no
+# origin/main it records the single line `*`: every pin runs. A stale
+# origin/main widens the diff, which fails the same safe way.
+DIFF_FILE="$ROOT/.gate/diff.files"
+# ALWAYS origin/main, whatever `full BASE` scopes the docker suites against: the
+# wider diff is the safe one (more pins run).
+write_diff() {
+  local base
+  mkdir -p "$ROOT/.gate"
+  if base="$(git merge-base HEAD origin/main 2>/dev/null)" && [ -n "$base" ]; then
+    { git diff --name-only "$base" 2>/dev/null
+      git ls-files --others --exclude-standard 2>/dev/null
+    } | sed '/^$/d' | LC_ALL=C sort -u >"$DIFF_FILE"
+  else
+    echo '*' >"$DIFF_FILE"
+  fi
+}
+
+# diff_touches <glob...> — true when a path in the diff matches one of the globs
+# (`*` crosses `/`), or when there was no base to diff against.
+diff_touches() {
+  [ -e "$DIFF_FILE" ] || write_diff
+  local p g
+  while IFS= read -r p; do
+    [ "$p" = '*' ] && return 0
+    for g in "$@"; do
+      # shellcheck disable=SC2254 # g is a glob on purpose
+      case "$p" in $g) return 0 ;; esac
+    done
+  done <"$DIFF_FILE"
+  return 1
+}
+
+# guard_header <file> <key> — a guard's `# key: value` header line (first 30
+# lines), or empty.
+guard_header() {
+  sed -n "1,30s/^# $2:[[:space:]]*//p" "$1" | head -1 | tr -d '\r'
+}
+
 # THE GREP-BASED GUARDS, WHICH RAN ONLY IN CI UNTIL 2026-08-19.
 #
 # scripts/check-swap-mode-literals.sh had a job of its own in lint.yml and no
@@ -359,36 +433,67 @@ untagged_only_modules() {
 # each into its own log under .gate/scripts/, and the logs are printed in name
 # order afterwards. In series the step was its guards' sum, which a process
 # spawn per grep makes dear on Windows: ~170 s on the laptop against ~27 s on
-# the Linux box, before the unit tests in both `all` and `full`. Side by side it
+# the Linux box, serially before the unit tests in both `all` and `full`. Side by side it
 # is about its slowest guard. Each guard's seconds go to the steps log as
 # `scripts:<name>`.
+#
+# TIERED BY WHAT CAN CHANGE THEIR ANSWER. Each guard's header names its tier:
+#   # tier: dev    runs in every gate (the default, so a guard that names no
+#                  tier, or misspells it, is slower and never blind)
+#   # tier: push   runs in `full` and `full --unscoped`, not in the bare gate
+#                  (tagged-vet compiles every minor tag; the discard ratchet is a
+#                  second golangci-lint pass, which queues behind lint's own on
+#                  golangci-lint's machine lock, --allow-serial-runners)
+#   # inputs: ...  a script pin: it tests a script, so it can change its answer
+#                  only when those paths change; the bare gate and `full` skip it
+#                  when none is in the diff (write_diff, diff_touches); `full --unscoped` and
+#                  `gate.sh scripts` (CI's guards job) always run it
+# The step writes its account to .gate/scripts.summary for the sentence.
 step_scripts() {
-  local f n failed=0 ran=0 logdir="$ROOT/.gate/scripts" pids="" t0="$EPOCHREALTIME"
+  local f n s failed=0 ran=0 total=0 logdir="$ROOT/.gate/scripts" pids="" names=""
+  local tier="${GATE_TIER:-step}" gtier inputs skipped_inputs="" skipped_push=""
   mkdir -p "$logdir" || { echo "FAIL scripts — cannot create $logdir"; return 1; }
   for f in "$ROOT"/scripts/check-*.sh; do
     [ -e "$f" ] || continue
-    ran=$((ran + 1))
+    total=$((total + 1))
     n="$(basename "$f" .sh)"
+    s="${n#check-}"
+    gtier="$(guard_header "$f" tier | cut -d' ' -f1)"
+    inputs="$(guard_header "$f" inputs)"
+    case "$tier" in
+      dev|push)
+        if [ "$tier" = dev ] && [ "$gtier" = push ]; then
+          skipped_push="${skipped_push:+$skipped_push, }$s"; continue
+        fi
+        # shellcheck disable=SC2086 # inputs is a list of pathspecs
+        if [ -n "$inputs" ] && ! diff_touches $inputs; then
+          skipped_inputs="${skipped_inputs:+$skipped_inputs, }$s"; continue
+        fi ;;
+    esac
+    ran=$((ran + 1))
+    names="$names $n"
     rm -f "$logdir/$n.rc"
     ( t="$EPOCHREALTIME"; bash "$f" >"$logdir/$n.out" 2>&1; echo $? >"$logdir/$n.rc"
       steps_log "scripts:$n" "$(_secs "$t")" ) &
     pids="$pids $!"
   done
-  if [ "$ran" -eq 0 ]; then
+  s="$ran of $total"
+  [ -n "$skipped_inputs" ] && s="$s; skipped: $skipped_inputs — inputs unchanged"
+  [ -n "$skipped_push" ] && s="$s; push-only: $skipped_push"
+  echo "$s" >"$ROOT/.gate/scripts.summary"
+  if [ "$total" -eq 0 ]; then
     echo "ok   scripts (none found)"
     return 0
   fi
   # These jobs by pid: a bare wait would also wait for anything else this
   # shell has started.
   # shellcheck disable=SC2086
-  wait $pids
-  for f in "$ROOT"/scripts/check-*.sh; do
-    [ -e "$f" ] || continue
-    n="$(basename "$f" .sh)"
+  [ -n "$pids" ] && wait $pids
+  for n in $names; do
     cat "$logdir/$n.out"
     [ "$(cat "$logdir/$n.rc" 2>/dev/null)" = 0 ] || failed=1
   done
-  [ "$failed" -eq 0 ] && echo "ok   scripts ($ran)" || echo "FAIL scripts"
+  [ "$failed" -eq 0 ] && echo "ok   scripts ($s)" || echo "FAIL scripts"
   return $failed
 }
 
@@ -646,16 +751,23 @@ sim_plan() {
 # is single-quoted: it is names, `^`, `(`, `|`, `)` and `$`, none of which a
 # single-quoted word expands.
 sim_cmd() {
-  local r="$1" plan="$2" m pkgs re s="rc=0;"
+  local r="$1" plan="$2" mode="${3:-race}" m pkgs re s="rc=0;" flags="CGO_ENABLED=1 go test -race"
+  [ "$mode" = plain ] && flags="go test"
   while IFS=$'\t' read -r m pkgs re; do
     [ -n "$m" ] || continue
-    s="$s ( cd '$r/$m' && CGO_ENABLED=1 go test -race -count=1 -timeout=15m -tags sim -run '$re' $pkgs ) || rc=1;"
+    s="$s ( cd '$r/$m' && $flags -count=1 -timeout=15m -tags sim -run '$re' $pkgs ) || rc=1;"
   done <<< "$plan"
   printf '%s' "$s exit \$rc"
 }
 
+# step_sim [plain] — the sim-only tests. Under the detector by default (cert,
+# CI's sim job, `gate.sh sim`). `plain` is `full`'s run: natively, no -race, no
+# WSL — the tests still run and still fail on a wrong answer, and the detector
+# runs on them in CI's sim job on every PR and in `full --unscoped`. A named
+# choice of the tier, printed in the step's ok line and the sentence, so it is
+# not the silent downgrade the branch below refuses.
 step_sim() {
-  local logdir rrc how plan ntests npkgs
+  local logdir rrc how plan ntests npkgs mode="${1:-race}"
   logdir="$ROOT/.gate"
   mkdir -p "$logdir" || { echo "FAIL sim — cannot create $logdir"; return 1; }
   if ! plan="$(sim_plan 2>"$logdir/sim-plan.err")"; then
@@ -666,7 +778,10 @@ step_sim() {
   ntests="$(printf '%s\n' "$plan" | cut -f3 | tr -cd '|\n' | awk '{ n += length($0) + 1 } END { print n }')"
   npkgs="$(printf '%s\n' "$plan" | cut -f2 | wc -w | tr -d ' ')"
 
-  if [ -n "${WSL_DISTRO_NAME:-}" ]; then
+  if [ "$mode" = plain ]; then
+    ( eval "$(sim_cmd "$ROOT" "$plan" plain)" >"$logdir/sim.log" 2>&1 ); rrc=$?
+    how="no -race: CI's sim job races them"
+  elif [ -n "${WSL_DISTRO_NAME:-}" ]; then
     ( eval "$(sim_cmd "$ROOT" "$plan")" >"$logdir/sim.log" 2>&1 ); rrc=$?
     how="-race"
   elif command -v go >/dev/null 2>&1 && [ "${CGO_ENABLED:-}" = "1" ] && command -v gcc >/dev/null 2>&1; then
@@ -700,6 +815,25 @@ step_sim() {
   echo "FAIL sim"
   excerpt_failures "$logdir/sim.log"
   return 1
+}
+
+# step_simvet — the sim compile: `go vet -tags sim` over every package holding a
+# file whose //go:build line names sim (either way: a `!sim` stub's package is
+# vetted under the tag that replaces it). It is check-tagged-vet's sim half, run
+# on its own so the bare gate, which leaves tagged-vet to `full`, still compiles
+# every sim file and every sim test before a push. Vet's results are cached, so
+# a warm run costs the packages that changed.
+step_simvet() {
+  local m pkgs failed=0
+  for m in $MODULES; do
+    pkgs="$( cd "$ROOT/$m" && grep -rlE --include='*.go' --exclude-dir=node_modules '^//go:build .*\bsim\b' . 2>/dev/null \
+      | sed 's#/[^/]*$##' | LC_ALL=C sort -u )"
+    [ -n "$pkgs" ] || continue
+    # shellcheck disable=SC2086 # pkgs is a list of package directories
+    ( cd "$ROOT/$m" && go vet -tags sim $pkgs ) || { echo "  FAIL $m — go vet -tags sim"; failed=1; }
+  done
+  [ "$failed" -eq 0 ] && echo "ok   sim compile (go vet -tags sim)" || echo "FAIL sim compile"
+  return $failed
 }
 
 # ── Docker scope ─────────────────────────────────────────────────────
@@ -895,7 +1029,8 @@ step_scope() {
 # initdb insists on, while the mount point itself lands world-writable and
 # initdb refuses it. max_connections is raised because every package's pool
 # lands on this one server now.
-sharedPG=""
+sharedPG="shingo-gate-docker-$$"
+SHARED_PG_MARK="$ROOT/.gate/docker-pg.$$"
 
 # pg_up starts one such server as container $1 and prints its address once it
 # answers. NAMED, so gate_on_exit can take it down by name: the race step's
@@ -925,10 +1060,13 @@ pg_up() {
 
 start_shared_pg() {
   local addr
-  # Set before the start, so an interrupted run's gate_on_exit (the script's
+  # Marked before the start, so an interrupted run's gate_on_exit (the script's
   # one EXIT trap, which also releases the gate lock — a second `trap ... EXIT`
-  # here would replace that one and leave the lock behind) removes it.
+  # here would replace that one and leave the lock behind) removes it. A file,
+  # not a variable: in `full` this step runs in a background job, whose
+  # variables the parent's exit trap never sees.
   sharedPG="shingo-gate-docker-$$"
+  : >"$SHARED_PG_MARK"
   addr="$(pg_up "$sharedPG")" || return 1
   export SHINGO_TEST_PG="$addr"
   export SHINGO_TEST_PG_TEMPLATE="template_gate_$$"
@@ -936,9 +1074,9 @@ start_shared_pg() {
 }
 
 stop_shared_pg() {
-  [ -z "$sharedPG" ] && return 0
+  [ -e "$SHARED_PG_MARK" ] || return 0
   docker rm -f "$sharedPG" >/dev/null 2>&1
-  sharedPG=""
+  rm -f "$SHARED_PG_MARK"
 }
 
 # The race step's own server (step_race): not the docker step's, because the
@@ -1212,12 +1350,13 @@ mkdir -p "$ROOT/.gate" 2>/dev/null || true
 # the gate lock. INT and TERM exit explicitly so the EXIT trap runs for them
 # too.
 . "$ROOT/scripts/gate-lock.sh"
-# side_pid is the race-and-sim job `full` runs beside the docker step: an
-# interrupted gate takes it down too, rather than leaving it running against
-# a tree nobody is gating.
-side_pid=""
+# FAN_PIDS are the steps `all` and `full` run at once (fan): an interrupted
+# gate takes them down too, rather than leaving them running against a tree
+# nobody is gating.
+FAN_PIDS=""
 gate_on_exit() {
-  [ -n "$side_pid" ] && kill "$side_pid" 2>/dev/null
+  # shellcheck disable=SC2086 # pids
+  [ -n "${FAN_PIDS:-}" ] && kill $FAN_PIDS 2>/dev/null
   stop_shared_pg; stop_race_pg; gate_lock_release
 }
 trap gate_on_exit EXIT
@@ -1228,7 +1367,7 @@ case "${1:-all}" in
   # fmt: the pre-push hook runs it and must never wait. scope: reads git only.
   fmt|scope) ;;
   lock-status) gate_lock_status; exit 0 ;;
-  vet|modbuild|lint|scripts|test|race|sim|docker|full|all)
+  vet|modbuild|lint|scripts|test|race|sim|simvet|docker|full|all)
     gate_lock_acquire "${*:-all}" || { echo "gate: FAILED (gate lock not acquired)"; exit 1; } ;;
 esac
 
@@ -1269,6 +1408,15 @@ gate_unscoped=""  # 1 = `full --unscoped`
 # package's cost is measured solo, and a step's wall judges the schedule.
 GATE_MODE="${1:-all}"
 [ "$GATE_MODE" = full ] && [ "${2:-}" = "--unscoped" ] && GATE_MODE="full-unscoped"
+# The tier (see "The tiers and the diff"): what the bare gate, `full` and
+# `full --unscoped` are for, which the steps read to decide what they skip.
+case "$GATE_MODE" in
+  all) GATE_TIER=dev ;;
+  full) GATE_TIER=push ;;
+  full-unscoped) GATE_TIER=cert ;;
+  *) GATE_TIER=step ;;
+esac
+export GATE_TIER
 GATE_RUN="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 GATE_SHA="$(git rev-parse --short HEAD 2>/dev/null || echo nogit)"
 git diff --quiet HEAD 2>/dev/null || GATE_SHA="$GATE_SHA+"
@@ -1324,6 +1472,40 @@ timed() {
 }
 note_step() { gate_steps="${gate_steps:+$gate_steps, }$1"; }
 
+# ── Fan-out ──────────────────────────────────────────────────────────────
+#
+# fan <label> <cmd...> runs one step as a background job whose output goes to
+# .gate/fan-<label>.out and whose exit code to .gate/fan-<label>.rc; fan_join
+# waits for those jobs by pid (a bare wait would also wait for the gate lock's
+# heartbeat); fan_print prints a step's held output, so the log reads in the
+# order the steps always printed whatever order they finished in; fan_ok is the
+# step's verdict. A missing rc reads as a failure, so fan_reset clears last
+# run's first.
+fan_reset() {
+  local l
+  for l in "$@"; do rm -f "$ROOT/.gate/fan-$l.rc" "$ROOT/.gate/fan-$l.out"; done
+}
+fan() {
+  local label="$1"
+  shift
+  ( "$@" >"$ROOT/.gate/fan-$label.out" 2>&1; echo $? >"$ROOT/.gate/fan-$label.rc" ) &
+  FAN_PIDS="$FAN_PIDS $!"
+}
+fan_join() {
+  # shellcheck disable=SC2086 # pids
+  [ -n "$FAN_PIDS" ] && wait $FAN_PIDS
+  FAN_PIDS=""
+}
+fan_print() { [ -e "$ROOT/.gate/fan-$1.out" ] && cat "$ROOT/.gate/fan-$1.out"; return 0; }
+fan_ok() { [ "$(cat "$ROOT/.gate/fan-$1.rc" 2>/dev/null)" = 0 ]; }
+
+# cert_side — the cert tier's race then sim, one after the other beside the
+# docker step as `full` always ran them, each with its own verdict file.
+cert_side() {
+  timed step_race; echo $? >"$ROOT/.gate/fan-race.rc"
+  timed step_sim;  echo $? >"$ROOT/.gate/fan-sim.rc"
+}
+
 gate_sentence() {
   local s="$gate_steps"
   case "$gate_docker" in
@@ -1341,9 +1523,19 @@ gate_sentence() {
   # A scoped run says so in the sentence itself, so "Gate: lint." can only
   # ever mean all five modules.
   [ -n "$gate_scope" ] && s="$s (scoped to: $gate_scope)"
-  # Capitalised the way it lands in a commit message, ready to paste.
-  local out="Gate: $s."
+  # Capitalised the way it lands in a commit message, ready to paste. THE TIER
+  # IS IN THE SENTENCE: a dev or push pass reads "Gate (dev)" / "Gate (push)",
+  # names what it skipped or took from the cache, and so cannot be pasted as a
+  # certification, which is the only run that reads plain "Gate:".
+  local label="Gate"
+  case "${GATE_TIER:-}" in
+    dev) label="Gate (dev)" ;;
+    push) label="Gate (push)" ;;
+  esac
+  local out="$label: $s."
   [ "$gate_docker" = skipped ] && out="$out Docker suites SKIPPED by scope against $scope_against (nothing in this diff can reach one)."
+  [ "${GATE_TIER:-}" = push ] && out="$out race: CI (the docker-race shards and the sim job)."
+  [ "${GATE_TIER:-}" = dev ] && out="$out Not run here: the docker suites (compiled by lint), the sim-only tests (compiled), race — \`full\` and CI run them."
   echo "$out"
 }
 
@@ -1356,6 +1548,7 @@ case "${1:-all}" in
   test)  if timed step_test; then note_step unit; else rc=1; fi ;;
   race)  if timed step_race; then note_step race; else rc=1; fi ;;
   sim)   if timed step_sim;  then note_step sim;  else rc=1; fi ;;
+  simvet) if timed step_simvet; then note_step "sim compile"; else rc=1; fi ;;
   # EXIT CODE IS THE VERDICT: 0 = docker needed, 1 = not needed. It used to
   # `exit 0` unconditionally, which made the answer readable only by a human
   # reading the text — so nothing could gate on it. `if bash scripts/gate.sh
@@ -1365,19 +1558,11 @@ case "${1:-all}" in
   docker) if timed step_docker; then gate_docker=ran; else rc=1; fi ;;
   full)
     if timed step_fmt;  then note_step fmt;  else rc=1; fi
-    if timed step_modbuild; then note_step modbuild; else rc=1; fi
-    if timed step_lint; then note_step lint; else rc=1; fi
-    if timed step_scripts; then note_step scripts; else rc=1; fi
-    # Scope is decided BEFORE the tests here, because it decides what the tests
-    # have to cover: when the docker step runs it already runs every untagged
+    # Scope is decided BEFORE the steps start, because it decides what the unit
+    # step has to cover: when the docker step runs it already runs every untagged
     # test in the modules that carry docker tests, so only the modules it does
-    # not reach need their own run. See untagged_only_modules. When docker is
-    # out of scope nothing else covers them and every module runs, which is
-    # what `all` does too.
-    # The sim step rides with `full` and not with the bare gate, for the same
-    # reason -race does: it is the slow, thorough half. It is NOT scoped away
-    # with the docker suites: the bare gate compiles the sim files
-    # (check-tagged-vet) but only this step runs a sim-only test.
+    # not reach need their own run (untagged_only_modules). When docker is out
+    # of scope nothing else covers them and every module runs.
     #
     # --unscoped puts docker in scope whatever the diff says. A tip that is
     # level with its base (pushed, or merged) has an empty diff, and a scoped
@@ -1395,43 +1580,75 @@ case "${1:-all}" in
     elif timed step_scope "$full_base"; then
       docker_in=1
     fi
+    write_diff
+    # EVERY STEP AT ONCE AFTER fmt, printed afterwards in the order the steps
+    # have always printed (fan, fan_print). The push tier (`full`) leaves -race to CI
+    # (the docker-race shards race core and edge on every PR, and the sim job
+    # races the sim tests) and runs the sim-only tests natively; the cert tier
+    # (`full --unscoped`) runs race then sim under the detector, as before.
+    fan_reset modbuild lint scripts simvet unit docker race sim side
+    fan modbuild timed step_modbuild
+    fan lint timed step_lint
+    fan scripts timed step_scripts
+    [ "$GATE_TIER" = push ] && fan simvet timed step_simvet
     if [ "$docker_in" -eq 1 ]; then
-      if timed step_test "$(untagged_only_modules)"; then note_step unit; else rc=1; fi
-      # RACE AND SIM RUN BESIDE THE DOCKER STEP, NOT AFTER IT. Neither uses the
-      # docker step's Postgres (race starts its own, sim is -tags sim, the edge
-      # is SQLite), and the docker step's long pole is integration/scenarios,
-      # one package, which no -p can split.
-      # In series the two added ~3.5 min to every full gate on the 4-core box.
-      # Their output is held in files and printed after the docker step's, in
-      # the order it always had, so the log reads the same as a serial run.
-      # A missing rc file reads as a failure, so last gate's must not survive.
-      rm -f "$ROOT/.gate/side-race.rc" "$ROOT/.gate/side-sim.rc"
-      ( timed step_race; echo $? > "$ROOT/.gate/side-race.rc"
-        timed step_sim;  echo $? > "$ROOT/.gate/side-sim.rc"
-      ) > "$ROOT/.gate/side.out" 2>&1 &
-      side_pid=$!
-      if timed step_docker; then gate_docker=ran; else rc=1; fi
-      wait "$side_pid"
-      side_pid=""
-      cat "$ROOT/.gate/side.out"
-      if [ "$(cat "$ROOT/.gate/side-race.rc" 2>/dev/null)" = 0 ]; then note_step race; else rc=1; fi
-      if [ "$(cat "$ROOT/.gate/side-sim.rc" 2>/dev/null)" = 0 ]; then note_step sim; else rc=1; fi
+      fan unit timed step_test "$(untagged_only_modules)"
+      fan docker timed step_docker
     else
-      if timed step_test; then note_step unit; else rc=1; fi
+      fan unit timed step_test
+    fi
+    if [ "$GATE_TIER" = cert ]; then
+      fan side cert_side
+    else
+      fan sim timed step_sim plain
+    fi
+    fan_join
+    for l in modbuild lint scripts simvet unit docker side sim; do fan_print "$l"; done
+    if fan_ok modbuild; then note_step modbuild; else rc=1; fi
+    if fan_ok lint; then note_step lint; else rc=1; fi
+    if fan_ok scripts; then
+      if [ "$GATE_TIER" = push ]; then note_step "scripts ($(cat "$ROOT/.gate/scripts.summary" 2>/dev/null))"
+      else note_step scripts; fi
+    else rc=1; fi
+    if [ "$GATE_TIER" = push ]; then
+      if fan_ok simvet; then note_step "sim compile"; else rc=1; fi
+    fi
+    if fan_ok unit; then note_step unit; else rc=1; fi
+    if [ "$GATE_TIER" = cert ]; then
+      if fan_ok race; then note_step race; else rc=1; fi
+      if fan_ok sim; then note_step sim; else rc=1; fi
+    else
+      if fan_ok sim; then note_step "sim (no -race)"; else rc=1; fi
+    fi
+    if [ "$docker_in" -eq 1 ]; then
+      if fan_ok docker; then gate_docker=ran; else rc=1; fi
+    else
       gate_docker=skipped
       echo "     (docker suites skipped — nothing in this diff can reach one)"
-      if timed step_race; then note_step race; else rc=1; fi
-      if timed step_sim; then note_step sim; else rc=1; fi
     fi
     ;;
   all)
-    # Every step runs even after one fails: a gate that stops at the first
-    # problem makes you re-run the slow parts once per problem.
+    # THE BARE GATE IS THE DEV TIER: fmt first (cheapest, and the only check that
+    # still answers when the tree does not compile), then modbuild, lint, the
+    # dev-tier guards, the sim compile and the unit tests all at once, printed in
+    # that order afterwards. Every step runs even
+    # after one fails: a gate that stops at the first problem makes you re-run
+    # the slow parts once per problem.
     if timed step_fmt;  then note_step fmt;  else rc=1; fi
-    if timed step_modbuild; then note_step modbuild; else rc=1; fi
-    if timed step_lint; then note_step lint; else rc=1; fi
-    if timed step_scripts; then note_step scripts; else rc=1; fi
-    if timed step_test; then note_step unit; else rc=1; fi
+    write_diff
+    fan_reset modbuild lint scripts simvet unit
+    fan modbuild timed step_modbuild
+    fan lint timed step_lint
+    fan scripts timed step_scripts
+    fan simvet timed step_simvet
+    fan unit timed step_test
+    fan_join
+    for l in modbuild lint scripts simvet unit; do fan_print "$l"; done
+    if fan_ok modbuild; then note_step modbuild; else rc=1; fi
+    if fan_ok lint; then note_step lint; else rc=1; fi
+    if fan_ok scripts; then note_step "scripts ($(cat "$ROOT/.gate/scripts.summary" 2>/dev/null))"; else rc=1; fi
+    if fan_ok simvet; then note_step "sim compile"; else rc=1; fi
+    if fan_ok unit; then note_step unit; else rc=1; fi
     ;;
   *) usage ;;
 esac

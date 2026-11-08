@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# tier: dev
 # check-swap-mode-literals.sh — guards against raw swap-mode strings
 # outside the canonical const definitions.
 #

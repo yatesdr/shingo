@@ -1,15 +1,18 @@
 #!/usr/bin/env bash
+# tier: push
+# (it vets every minor tag; the bare gate compiles sim itself, step_simvet)
 # check-tagged-vet.sh — vet the Go files behind build tags the gate's test
 # steps do not build.
 #
 # A file behind a build tag is compiled only when something passes that tag.
 # The gate's steps pass two everywhere: docker and lockcheck (lint, the docker
 # step, the unit tests). sim is passed only by the sim step, and only to the
-# packages holding a sim test file, and only in `full`; so sim is vetted here
-# too, which is what compiles every sim file — tests and the non-test files of
-# packages with no sim test (shingo-core/engine, shingo-edge/service) — in the
-# bare gate. Before sim was vetted here, five sim test files in four packages
-# were compiled by nothing. The other tags — today explain
+# packages holding a sim test file; so sim is vetted here too, which compiles
+# every sim file — tests and the non-test files of packages with no sim test
+# (shingo-core/engine, shingo-edge/service). Before sim was vetted here, five
+# sim test files in four packages were compiled by nothing. This guard is
+# push-tier; the bare gate runs the same sim vet on its own (gate.sh's
+# step_simvet), so sim compiles in every tier. The other tags — today explain
 # (store/bins/explain_plan_test.go), shots (the screenshot tests in both www
 # packages), deps (shingo-core/deps.go) and race (plc/race_on_test.go, which
 # only the -race run in WSL compiles, and only on the packages it names) — are

@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# tier: dev
 # Fail when a tracked file with the `text` attribute is indexed as non-text.
 #
 # WHY THIS EXISTS: gate.sh:391 once carried literal CR+NUL bytes inside a

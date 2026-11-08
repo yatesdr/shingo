@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# tier: dev
+# inputs: Makefile */Makefile scripts/check-makefile-targets.sh
 # check-makefile-targets.sh — no Makefile recipe runs a whole-module,
 # docker-tagged `go test` at default package parallelism.
 #

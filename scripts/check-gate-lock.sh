@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# tier: dev
+# inputs: scripts/gate.sh scripts/gate-lock.sh scripts/check-gate-lock.sh
 # check-gate-lock.sh — pins scripts/gate-lock.sh, the one-gate-per-machine
 # lock, and its wiring into scripts/gate.sh.
 #

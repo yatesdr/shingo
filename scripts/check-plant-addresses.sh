@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# tier: dev
 # check-plant-addresses.sh — no tracked file carries a private IPv4 address.
 #
 # THE RULE IS GENERIC ON PURPOSE: any RFC 1918 address (10/8, 172.16/12,

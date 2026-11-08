@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# tier: dev
 # check-synthetic-part-numbers.sh — no committed file carries a string shaped
 # like a customer part number.
 #
