@@ -119,7 +119,7 @@ func (e *Engine) Start() {
 	e.startTwoStage()
 
 	// Scan for any orders queued before restart
-	go e.fulfillment.RunOnce()
+	e.startBootScan()
 
 	// Start periodic fulfillment sweep (60s safety net)
 	e.fulfillment.StartPeriodicSweep(60 * time.Second)
@@ -261,6 +261,15 @@ func (e *Engine) startFulfillment(resolver dispatch.NodeResolver) {
 	sourceFinder := dispatch.NewSourceFinder(e.db, resolver, e.debugLog)
 	e.fulfillment = fulfillment.NewScanner(e.db, e.dispatcher, e.dispatcher.Lifecycle(), sourceFinder, e.binManifest, e.sendToEdge, e.failOrderAndEmit, e.logFn, e.debugLog)
 	e.dispatcher.SetAcquirer(e.fulfillment)
+}
+
+// startBootScan scans, on its own goroutine, the orders queued before a restart,
+// and closes bootScanned when the scan has finished.
+func (e *Engine) startBootScan() {
+	go func() {
+		e.fulfillment.RunOnce()
+		close(e.bootScanned)
+	}()
 }
 
 func newCMSPoster(cfg *config.Config, db *store.DB, logFn func(string, ...any)) *poster.Poster {

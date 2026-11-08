@@ -4,6 +4,7 @@ package engine
 
 import (
 	"testing"
+	"time"
 
 	"shingo/protocol"
 	"shingocore/config"
@@ -43,11 +44,22 @@ func testEnvelope() *protocol.Envelope {
 // so test wrappers like fakeOccupancyBackend can be injected at construction
 // — replacing the field after eng.Start() would race the connection-health
 // goroutine that reads e.fleet.
+//
+// It returns once Start's boot scan has finished. That scan runs on its own
+// goroutine and asks every acquiring order it lists, so under load it could
+// otherwise ask an order the test created after Start, on its own schedule:
+// TestAcquireOne_TriesOneOrderAndNotTheWaitingSet read its waiting order as
+// re-asked by a pass it never ran.
 func newTestEngine(t *testing.T, db *store.DB, flt fleet.Backend) *Engine {
 	t.Helper()
 	eng := newUnstartedEngine(t, db, flt)
 	eng.Start()
 	t.Cleanup(func() { eng.Stop() })
+	select {
+	case <-eng.bootScanned:
+	case <-time.After(30 * time.Second):
+		t.Fatal("the engine's boot scan did not finish in 30 s")
+	}
 	return eng
 }
 

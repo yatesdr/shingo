@@ -166,6 +166,11 @@ type Engine struct {
 	// goroutine: acquire an order, or create one that is then acquired
 	// (after.go). Built in New; its goroutine starts in Start.
 	after *afterQueue
+	// bootScanned closes when Start's scan of the orders queued before a
+	// restart has finished. Nothing in production waits on it; a test that
+	// creates an order after Start waits on it first, or that scan can ask
+	// the order on its own schedule.
+	bootScanned chan struct{}
 	// stage2 serializes the two-stage pull per pair and tracks its trigger
 	// goroutines (window_pulls.go).
 	stage2 stage2Puller
@@ -278,6 +283,7 @@ func New(c Config) *Engine {
 		debugLog:    c.DebugLog,
 		stopChan:    make(chan struct{}),
 		after:       newAfterQueue(logFn),
+		bootScanned: make(chan struct{}),
 		robotsCache: make(map[string]fleet.RobotStatus),
 		// Built here, before any goroutine or handler exists. Its LOOP starts
 		// in Start(); see the field's comment.
