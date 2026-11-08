@@ -41,7 +41,10 @@ import (
 func TestSwapRemovalLeg_DurableLinkSurvivesFailedIntakeLink(t *testing.T) {
 	t.Parallel()
 	db := testDBShared(t)
-	_, lineNode, bp := testdb.SetupTestData(t, db)
+	// The bin type by its row, not by id 1: this file shares one database, and
+	// which parallel test created DEFAULT first decides its id.
+	sd := testdb.SetupStandardData(t, db)
+	lineNode, bp := sd.LineNode, sd.Payload
 
 	superNode := &nodes.Node{Name: "SWAP-SUPER-DL", Enabled: true}
 	testutil.MustNoErr(t, db.CreateNode(superNode), "create super node")
@@ -58,7 +61,7 @@ func TestSwapRemovalLeg_DurableLinkSurvivesFailedIntakeLink(t *testing.T) {
 
 	// The line bin the removal leg would pull — present, so only the hold
 	// stops the claim.
-	lineBin := &bins.Bin{BinTypeID: 1, Label: "SWAP-LINE-BIN-DL", NodeID: &lineNode.ID, Status: "staged"}
+	lineBin := &bins.Bin{BinTypeID: sd.BinType.ID, Label: "SWAP-LINE-BIN-DL", NodeID: &lineNode.ID, Status: "staged"}
 	testutil.MustNoErr(t, db.CreateBin(lineBin), "create line bin")
 
 	// Evac leg created via CreateOrder ALONE — the durable INSERT is the ONLY
@@ -176,7 +179,10 @@ func TestSwapSibling_ReverseBacklinkRepairedOnRead(t *testing.T) {
 func TestSwapPeerTerminalRace_LiveLegResolvesDeadSibling(t *testing.T) {
 	t.Parallel()
 	db := testDBShared(t)
-	_, lineNode, bp := testdb.SetupTestData(t, db)
+	// The bin type by its row, not by id 1: this file shares one database, and
+	// which parallel test created DEFAULT first decides its id.
+	sd := testdb.SetupStandardData(t, db)
+	lineNode, bp := sd.LineNode, sd.Payload
 
 	superNode := &nodes.Node{Name: "SWAP-SUPER-RACE", Enabled: true}
 	testutil.MustNoErr(t, db.CreateNode(superNode), "create super node")
@@ -199,7 +205,7 @@ func TestSwapPeerTerminalRace_LiveLegResolvesDeadSibling(t *testing.T) {
 	testutil.MustNoErr(t, db.CreateOrder(supply), "create skipped supply")
 
 	// A line bin is present, so ONLY a sibling gate could hold the evac.
-	lineBin := &bins.Bin{BinTypeID: 1, Label: "RACE-LINE-BIN", NodeID: &lineNode.ID, Status: "staged"}
+	lineBin := &bins.Bin{BinTypeID: sd.BinType.ID, Label: "RACE-LINE-BIN", NodeID: &lineNode.ID, Status: "staged"}
 	testutil.MustNoErr(t, db.CreateBin(lineBin), "create line bin")
 
 	// Evac leg — created AFTER the supply already skipped, carrying only the forward
