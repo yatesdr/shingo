@@ -201,7 +201,7 @@ func sendBackAtStart(plan *changeoverPlan, live []domain.Order) ([]int64, error)
 			switch protocol.ChangeoverStartActionFor(o.Status) {
 			case protocol.ChangeoverStartBlock:
 				if o.Status == protocol.StatusFaulted {
-					return nil, fmt.Errorf("cannot start changeover — %s", changeoverBlockerFor(c.PairedCoreNode, o.ID, o.Status))
+					return nil, fmt.Errorf("cannot start changeover — %s", changeoverBlockerFor(c.PairedCoreNode, o.ID, o.Status, false))
 				}
 				return nil, fmt.Errorf("cannot start changeover — %s: SEND BACK in progress — start the changeover when it finishes",
 					c.PairedCoreNode)

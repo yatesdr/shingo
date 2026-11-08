@@ -1301,6 +1301,37 @@ func TestStartChangeover_PassesNonBlockingStatuses(t *testing.T) {
 	}
 }
 
+// TestStart_AStagedSwapOfTheReplacedPartSaysCancel — decision 49. START at a
+// position whose part changes, with a swap staged there: a swap of the part
+// the changeover replaces (the sweep's, before the new part was confirmed) is
+// refused with "Cancel it, then start the changeover" — released, it would
+// land the outgoing part for the changeover's own leg to take away again; one
+// of the incoming part keeps "Release the wait".
+func TestStart_AStagedSwapOfTheReplacedPartSaysCancel(t *testing.T) {
+	t.Parallel()
+	for _, row := range []struct {
+		part, want string
+	}{
+		{"PART-OLD", "Changeover Node: order %d is staged — a robot is holding a bin there. Cancel it, then start the changeover"},
+		{"PART-NEW", "Changeover Node: order %d is staged — a robot is holding a bin there. Release the wait, then start the changeover"},
+	} {
+		t.Run(row.part, func(t *testing.T) {
+			t.Parallel()
+			db := testEngineDB(t)
+			eng := testEngine(t, db)
+			pid, nodeID, _, to, _, _ := seedChangeoverScenario(t, db)
+			id, err := db.CreateOrder("start-staged-"+row.part, orders.TypeRetrieve, &nodeID, false, 1, "CO-NODE", "", "",
+				protocol.Height{}, false, row.part, "", "")
+			testutil.MustNoErr(t, err, "a swap at CO-NODE")
+			testutil.MustNoErr(t, db.UpdateOrderStatus(id, string(protocol.StatusStaged)), "staged")
+			_, err = eng.StartProcessChangeover(pid, to, "test", "")
+			if err == nil || !strings.Contains(err.Error(), fmt.Sprintf(row.want, id)) {
+				t.Errorf("START with a %s swap staged: %v, want %q", row.part, err, fmt.Sprintf(row.want, id))
+			}
+		})
+	}
+}
+
 // TestChangeoverBlockerNeverSaysInFlightAboutAQueuedOrder is the §6 hygiene
 // assertion. The old string was "%s has order %d in flight (%s)", so a queued
 // order rendered as "has order 4471 in flight (queued)" — a sentence
@@ -1312,7 +1343,7 @@ func TestChangeoverBlockerNeverSaysInFlightAboutAQueuedOrder(t *testing.T) {
 		if !protocol.BlocksChangeoverStart(s) {
 			continue
 		}
-		got := changeoverBlockerFor("ALN_007", 4471, s)
+		got := changeoverBlockerFor("ALN_007", 4471, s, false)
 		if !strings.Contains(got, "ALN_007") || !strings.Contains(got, "4471") {
 			t.Errorf("%s: blocker %q must name the node and the order", s, got)
 		}

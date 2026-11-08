@@ -118,6 +118,8 @@ func TestWrongPartItem_OffersTheChangeover(t *testing.T) {
 		setup func(t *testing.T, eng *Engine, db *store.DB, pid, a, b int64, st *catidState)
 		count bool
 		offer bool
+		// headline is the item's headline when it offers nothing, "" not checked.
+		headline string
 	}{
 		{name: "one pinned target", v: "1002", count: true, offer: true},
 		{name: "two styles run it", v: "1002", count: true, setup: func(t *testing.T, eng *Engine, _ *store.DB, pid, _, _ int64, _ *catidState) {
@@ -128,7 +130,7 @@ func TestWrongPartItem_OffersTheChangeover(t *testing.T) {
 			testutil.MustNoErr(t, db.SetStyleExpectedCATID(b, ""), "unpin B")
 			seedProduceClaim(t, db, b, "N-B", "PART-B2")
 			putCatalog(t, db, 91, "PART-B2", "1002")
-		}},
+		}, headline: "The PLC is on 1002; the style that runs it, STYLE-B, is not pinned — pin it to offer the changeover."},
 		{name: "a baseline", v: "1002", count: true, setup: func(_ *testing.T, _ *Engine, _ *store.DB, _, _, _ int64, st *catidState) {
 			st.confirmedBaseline = true
 		}},
@@ -161,6 +163,9 @@ func TestWrongPartItem_OffersTheChangeover(t *testing.T) {
 			if !row.offer {
 				if it.Action != nil || strings.Contains(it.Headline, "Start a changeover") {
 					t.Errorf("the item offers %+v (%q), want no action", it.Action, it.Headline)
+				}
+				if row.headline != "" && it.Headline != row.headline {
+					t.Errorf("headline %q, want %q", it.Headline, row.headline)
 				}
 				return
 			}

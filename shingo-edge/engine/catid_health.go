@@ -235,7 +235,13 @@ func (e *Engine) partItems(proc *processes.Process, f catidFacts, sets []styleCA
 	if countedAs != "" {
 		item.Detail += " counted as " + countedAs
 	}
-	if to := e.changeoverOffer(proc, f, sets); to != nil {
+	switch to := e.changeoverOffer(proc, f, sets); {
+	case to != nil && !to.Pinned:
+		// No pin, no offer: the one-tap needs a person's pin to start from. The
+		// headline says which style to pin.
+		item.Headline = fmt.Sprintf("The PLC is on %s; the style that runs it, %s, is not pinned — pin it to offer the changeover.",
+			v, to.Name)
+	case to != nil:
 		item.Headline = fmt.Sprintf("The PLC is on %s (%s); %s is active. Start a changeover to %s%s.", v, to.Name,
 			active.Name, to.Name, e.heldAtPositions(proc.ID, v, holds))
 		item.Action = &CatidHealthAction{Kind: catidActionStartChangeover, ToStyleID: to.ID, ToStyleName: to.Name}
@@ -247,16 +253,17 @@ func (e *Engine) partItems(proc *processes.Process, f catidFacts, sets []styleCA
 // when it offers none: the PLC's part is a change, not a baseline, confirmed
 // after the process's latest landing (a part standing from before it is the
 // run-out of the style the landing left), a stroke has been counted on it off
-// another style's plan, that style is the only live one whose set holds it and
-// its set is a person's pin, and no changeover is open (the start would refuse
-// it). A read that fails offers nothing.
+// another style's plan, that style is the only live one whose set holds it,
+// and no changeover is open (the start would refuse it). A read that fails
+// offers nothing. The item offers the one-tap only when the style's set is a
+// person's pin (to.Pinned); unpinned, its headline names the style to pin.
 func (e *Engine) changeoverOffer(proc *processes.Process, f catidFacts, sets []styleCATIDEntry) *styleCATIDEntry {
 	if e.catidMon == nil || proc.ActiveStyleID == nil || f.baseline || !countedSince(f, plc.TickOffPlan) ||
 		!f.confirmedAt.After(e.catidMon.landedAt(proc.ID)) {
 		return nil
 	}
 	to := switchTarget(sets, *proc.ActiveStyleID, f.value)
-	if to == nil || !to.Pinned {
+	if to == nil {
 		return nil
 	}
 	if co, err := e.db.GetActiveProcessChangeover(proc.ID); co != nil || (err != nil && !errors.Is(err, sql.ErrNoRows)) {

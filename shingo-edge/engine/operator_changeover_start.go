@@ -10,6 +10,7 @@ package engine
 import (
 	"fmt"
 	"log"
+	"slices"
 	"strings"
 	"sync"
 
@@ -23,11 +24,21 @@ import (
 // sentence for four different situations and only one of them is "wait, it is
 // coming" — an operator told that about a faulted order waits for a robot that
 // is not on its way.
-func changeoverBlockerFor(nodeName string, orderID int64, status protocol.Status) string {
+//
+// A staged order of a part the changeover replaces (partChanges: the incoming
+// style's claim at the node does not take its part) is a swap of the outgoing
+// part, staged before the new one was confirmed; released, it lands the
+// outgoing part, and the changeover's own leg then takes it away again — two
+// trips per position. Its remedy is Cancel (decision 49).
+func changeoverBlockerFor(nodeName string, orderID int64, status protocol.Status, partChanges bool) string {
 	switch status {
 	case protocol.StatusStaged:
+		remedy := "Release the wait"
+		if partChanges {
+			remedy = "Cancel it"
+		}
 		return fmt.Sprintf("%s: order %d is staged — a robot is holding a bin there. "+
-			"Release the wait, then start the changeover", nodeName, orderID)
+			"%s, then start the changeover", nodeName, orderID, remedy)
 	case protocol.StatusFaulted:
 		return fmt.Sprintf("%s: order %d faulted mid-move and still holds its bin. "+
 			"Needs maintenance or a team lead — it is not clearable from this screen",
@@ -448,7 +459,8 @@ func (e *Engine) nodesWithOrdersInFlight(plan *changeoverPlan) []string {
 			continue
 		}
 		if e.orderPlacesBinAtAny(&o, nodes) {
-			blockers = append(blockers, changeoverBlockerFor(nameOf(o.DeliveryNode), o.ID, o.Status))
+			partChanges := o.PayloadCode != "" && !incomingTakes(plan, o.DeliveryNode, o.PayloadCode)
+			blockers = append(blockers, changeoverBlockerFor(nameOf(o.DeliveryNode), o.ID, o.Status, partChanges))
 			continue
 		}
 		// An order that only lifts a changing node's bin. Released towards the
@@ -460,7 +472,7 @@ func (e *Engine) nodesWithOrdersInFlight(plan *changeoverPlan) []string {
 		switch {
 		case ahead == liftNone:
 		case o.Status == protocol.StatusFaulted:
-			blockers = append(blockers, changeoverBlockerFor(nameOf(at), o.ID, o.Status))
+			blockers = append(blockers, changeoverBlockerFor(nameOf(at), o.ID, o.Status, false))
 		case ahead == liftLeaving:
 			blockers = append(blockers, carrierOnItsWay(nameOf(at), o.ID, o.Status))
 		}
@@ -481,6 +493,17 @@ func (e *Engine) retagRunOutHolds(changeoverID int64) {
 	for _, task := range tasks {
 		e.retagHold(task, true)
 	}
+}
+
+// incomingTakes reports whether the target style's claim at coreNode takes
+// part (its part or an allowed alternate); a node it does not claim takes none.
+func incomingTakes(plan *changeoverPlan, coreNode, part string) bool {
+	for i := range plan.toClaims {
+		if plan.toClaims[i].CoreNodeName == coreNode {
+			return slices.Contains(plan.toClaims[i].AllowedPayloads(), part)
+		}
+	}
+	return false
 }
 
 // Error handling policy: log and continue. Do not add early returns without understanding the caller contract. See 2567plandiscussion.md.

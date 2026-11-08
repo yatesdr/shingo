@@ -12,6 +12,7 @@ Edge v37-v43; Core changes the lift's stamp (no schema) and dev tooling (plantsp
 - Core: the lift's stamp is the generation's close: any other bump clears it, a landing or a storage lift does not, so a pre-lift draw reaching Core after the cart is set down applies; the stale drop records window_start, lifted_at and the node
 - A press counting the incoming part a minute past its CATID change completes the changeover
 - With no changeover open, a part one other style runs moves nothing: its draws at the positions whose part differs are held, and the strip's wrong-part item offers that changeover in one tap
+- The wrong-part item names an unpinned style to pin before it offers the changeover; START refused by a staged swap of the part it replaces says Cancel, not Release
 - A part standing since before a landing is run-out: it prepays the new cart, and nothing offers a changeover back
 - A changeover's start retags a run-out hold of the departing part to the incoming part; the cancel retags it back
 - Mark as running completes an open changeover past its gate and records the switch
