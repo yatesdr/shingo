@@ -18,6 +18,7 @@ import (
 // dispatched. That is the 08:31 shape (SPR ALN_011, 2026-10-15), where the leg
 // lifted the very bin the start had judged wrong and sent back.
 func TestScenario_KeepStagedSingleRobot_TheCollectNeverTakesAStray(t *testing.T) {
+	t.Parallel()
 	c := newKsrCell(t, ksrOpts{role: protocol.ClaimRoleConsume, mode: protocol.SwapModeSingleRobot, strayEmptyB: true})
 	coreDB := c.core.eng.DB()
 	bins, err := coreDB.ListBins()

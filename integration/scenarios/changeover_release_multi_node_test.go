@@ -41,6 +41,7 @@ import (
 //     invocations.
 //   - End-to-end through the wire on both pickup deliveries.
 func TestScenario_MultiNodeChangeover_ReleasesStayOnTheirNode(t *testing.T) {
+	t.Parallel()
 	const stationID = "edge.test"
 	edge := edgeharness.NewEdge(t, stationID)
 

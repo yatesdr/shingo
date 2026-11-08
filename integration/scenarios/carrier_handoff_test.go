@@ -249,6 +249,7 @@ func (w *twoBooks) staleDrops() int {
 //
 // Green at Lane H step 3: the release is fenced (no bump), the lift bumps.
 func TestScenario_H_R1_CountReleaseTicksBeforeTheLiftLandInBothBooks(t *testing.T) {
+	t.Parallel()
 	w := newTwoBooks(t, "SCN-H-R1", 100)
 	w.tick()
 	w.tick()
@@ -296,6 +297,7 @@ func TestScenario_H_R1_CountReleaseTicksBeforeTheLiftLandInBothBooks(t *testing.
 //
 // Green at Lane H step 3: the release is fenced (no bump), the lift bumps.
 func TestScenario_H_R5_ReleaseAtOneThenATickLeavesLabelledAtZero(t *testing.T) {
+	t.Parallel()
 	w := newTwoBooks(t, "SCN-H-R5", 1)
 
 	one := 1

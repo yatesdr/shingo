@@ -117,6 +117,7 @@ func seedStagedPress(t *testing.T, markedNodes []string, toStaging string) stage
 }
 
 func TestScenario_StagedToolingChangeover_EndToEnd(t *testing.T) {
+	t.Parallel()
 	// Front and third marked; the BACK position deliberately unmarked.
 	s := seedStagedPress(t, []string{"PLN-ST-A", "PLN-ST-C"}, "ST-STAGE")
 
@@ -202,6 +203,7 @@ func TestScenario_StagedToolingChangeover_EndToEnd(t *testing.T) {
 // exists — the alternative is a plan whose supply legs have nowhere to go,
 // discovered as robots idling mid-changeover.
 func TestScenario_StagedToolingChangeover_RefusesWithoutStaging(t *testing.T) {
+	t.Parallel()
 	s := seedStagedPress(t, []string{"PLN-ST-A"}, "")
 
 	_, err := s.edge.Engine.StartProcessChangeover(s.processID, s.toStyleID, "test", "no staging")

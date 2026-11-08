@@ -152,6 +152,7 @@ func (f *deckFleet) ForceComplete(string) error         { return nil }
 // the cancel, a fleet that is slow to stop the cancelled order, and the
 // reconciliation sweep's backstop (only the robot poll triggers the return).
 func TestScenario_ChangeoverSwapCancelledMidCarry_BothBinsGoHome(t *testing.T) {
+	t.Parallel()
 	const (
 		stationID = "edge.test"
 		lineName  = "CRS-LINE"

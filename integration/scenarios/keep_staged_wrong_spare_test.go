@@ -33,6 +33,7 @@ import (
 )
 
 func TestScenario_KeepStagedWrongSpare_APersonsMoveIsTheExit(t *testing.T) {
+	t.Parallel()
 	core := startKeepStagedCore(t)
 	coreDB, sim := core.eng.DB(), core.sim
 	const (

@@ -42,6 +42,7 @@ import (
 //     changeover_node_task as evac, so HandleBinPickedUp's deferred-
 //     supply branch is a no-op.
 func TestScenario_ReleaseIsChangeoverIndependent(t *testing.T) {
+	t.Parallel()
 	const stationID = "edge.test"
 	edge := edgeharness.NewEdge(t, stationID)
 

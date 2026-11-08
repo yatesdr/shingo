@@ -78,6 +78,7 @@ func startKeepStagedCore(t *testing.T) kscCore {
 }
 
 func TestScenario_KeepStagedCell_CallChangeoverCancel(t *testing.T) {
+	t.Parallel()
 	core := startKeepStagedCore(t)
 	coreDB, sim := core.eng.DB(), core.sim
 

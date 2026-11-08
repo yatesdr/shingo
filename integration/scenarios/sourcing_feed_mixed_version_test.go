@@ -109,6 +109,7 @@ func oldCoreSnapshot(t *testing.T, eng *coreengine.Engine) {
 }
 
 func TestScenario_SourcingFeed_AWholePlantCacheIsHealedByTheStationsSnapshot(t *testing.T) {
+	t.Parallel()
 	eng, bus, edge := mixedCore(t)
 
 	// The Edge has been fed the whole plant, as every Edge was before.
@@ -161,6 +162,7 @@ func TestScenario_SourcingFeed_AWholePlantCacheIsHealedByTheStationsSnapshot(t *
 }
 
 func TestScenario_SourcingFeed_NewEdgeAppliesAnOldCoresWholePlantSnapshot(t *testing.T) {
+	t.Parallel()
 	eng, bus, edge := mixedCore(t)
 
 	oldCoreSnapshot(t, eng)

@@ -60,6 +60,7 @@ var knownDropped = map[string]string{
 
 // TestOrderProjection_NoFieldDropsSilently is the gate.
 func TestOrderProjection_NoFieldDropsSilently(t *testing.T) {
+	t.Parallel()
 	// A distinct sentinel per field, so "did this value arrive" cannot be
 	// answered by accident from a neighbouring column.
 	order := &coreorders.Order{
@@ -150,6 +151,7 @@ stored row was: %v`, lost, stored)
 // entries, and the fix was to DELETE them — which is exactly the moment somebody
 // should be told an exemption is no longer needed.
 func TestOrderProjection_KnownDroppedAreStillDropped(t *testing.T) {
+	t.Parallel()
 	order := &coreorders.Order{
 		EdgeUUID:     "mg1c-drift-known-uuid",
 		OrderType:    dispatch.OrderTypeRetrieveEmpty,

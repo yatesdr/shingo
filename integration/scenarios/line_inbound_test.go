@@ -77,8 +77,10 @@ func pressAt(c *ksrCell, door string, nodeID int64) error {
 // not yet confirmed) the line holds a bin, and every button makes the swap,
 // which runs to the end with one bin on the line.
 func TestScenario_LineInbound_FromASiblingStation(t *testing.T) {
+	t.Parallel()
 	for _, d := range seqDoors {
 		t.Run(d.name, func(t *testing.T) {
+			t.Parallel()
 			c := newKsrCell(t, ksrOpts{role: d.role, mode: protocol.SwapModeTwoRobot, plain: true})
 			mustNil(t, c.edge.DB.SetProcessNodeRuntime(c.nodeID, &c.claimA, 30), "count")
 			sib := c.sibling()

@@ -28,6 +28,7 @@ import (
 )
 
 func TestScenario_SendBack_TheCartGoesAndTopsAndBottomsComeThenTheSwapIndexesThem(t *testing.T) {
+	t.Parallel()
 	c := newKsrCell(t, ksrOpts{role: protocol.ClaimRoleProduce, mode: protocol.SwapModeTwoRobotPressIndex,
 		plain: true, mirror: true})
 	// The landing binds through the seat's count writer, which the harness

@@ -24,6 +24,7 @@ import (
 // lane row need not outlive the dig (digLaneTake.inTx, handOffDugLane). That is
 // the design, so the moment does not require the lane held.
 func TestScenario_KeepStagedChangeover_CancelledWhileItsOwnFetchDigs(t *testing.T) {
+	t.Parallel()
 	for _, mode := range []protocol.SwapMode{protocol.SwapModeTwoRobot, protocol.SwapModeSingleRobot} {
 		for _, claimC := range []bool{true, false} {
 			name := string(mode) + "/blocker-part-claimed"
@@ -31,6 +32,7 @@ func TestScenario_KeepStagedChangeover_CancelledWhileItsOwnFetchDigs(t *testing.
 				name = string(mode) + "/blocker-part-unclaimed"
 			}
 			t.Run(name, func(t *testing.T) {
+				t.Parallel()
 				c := newKsrCell(t, ksrOpts{role: protocol.ClaimRoleConsume, mode: mode, buriedB: true, claimC: claimC})
 				co := c.startChangeover()
 				ksrDigMomentOf(c, co, false)

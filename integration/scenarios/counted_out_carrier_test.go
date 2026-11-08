@@ -101,6 +101,7 @@ func (c *ksrCell) countOut(node string) *corebins.Bin {
 // holds no material to feed the line". Before G it arrived marked with its
 // part at 0.
 func TestScenario_ACarrierCountedToNothingIsNoFull(t *testing.T) {
+	t.Parallel()
 	c := newKsrCell(t, ksrOpts{role: protocol.ClaimRoleConsume, mode: protocol.SwapModeSequential, plain: true, pair: true})
 	// The Edge's inventory sink, as a plant runs it: a landing binds the seat
 	// and its count, which the release guard reads (the test Edge leaves it

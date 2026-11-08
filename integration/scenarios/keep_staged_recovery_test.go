@@ -28,9 +28,7 @@ import (
 	"cmp"
 	"encoding/json"
 	"fmt"
-	"runtime"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
@@ -64,10 +62,11 @@ import (
 // ── the level keeper's ticker ────────────────────────────────────────────────
 //
 // The level keeper (sweepCellLevels) is unexported, reached only from the
-// demand reconciler's loop on a 60s ticker taken from clock.Default(). The test
-// installs a clock that is the real clock in every respect except that one
-// ticker, which it hands back to the test to fire. The loop and the sweep it
-// runs are the production ones.
+// demand reconciler's loop on a 60s ticker. Each cell builds its Edge with a
+// DemandReconcileClock of its own (kickClock), whose one ticker the test fires.
+// The loop and the sweep it runs are the production ones. The clock is the
+// cell's, not the process default, so cells share no clock and may run side by
+// side.
 
 type kickTicker struct{ c chan time.Time }
 
@@ -75,55 +74,21 @@ func (k *kickTicker) C() <-chan time.Time { return k.c }
 func (k *kickTicker) Stop()               {}
 func (k *kickTicker) Reset(time.Duration) {}
 
+// kickClock is one Edge's demand reconciler clock: the real clock, except that
+// the loop's ticker is handed to took, for the test to fire.
 type kickClock struct {
-	mu      sync.Mutex
-	tickers []*kickTicker
-	// starting is held by a cell from starting its Edge until it has taken
-	// the ticker that Edge's reconciler asked for. Cells that share one clock
-	// (the parallel subtests below) would otherwise each take "the newest
-	// ticker" and could take each other's.
-	starting sync.Mutex
+	clock.Clock
+	took chan *kickTicker
 }
 
-func (k *kickClock) Now() time.Time                         { return time.Now() }
-func (k *kickClock) After(d time.Duration) <-chan time.Time { return time.After(d) }
-func (k *kickClock) NewTicker(d time.Duration) clock.Ticker {
-	// Edge's loop only: Core has a runDemandReconciler of its own.
-	if calledFrom("shingoedge/engine.(*Engine).runDemandReconciler") {
-		kt := &kickTicker{c: make(chan time.Time)}
-		k.mu.Lock()
-		k.tickers = append(k.tickers, kt)
-		k.mu.Unlock()
-		return kt
-	}
-	return clock.Real().NewTicker(d)
+func newKickClock() *kickClock {
+	return &kickClock{Clock: clock.Real(), took: make(chan *kickTicker, 1)}
 }
 
-func (k *kickClock) count() int {
-	k.mu.Lock()
-	defer k.mu.Unlock()
-	return len(k.tickers)
-}
-
-func (k *kickClock) ticker(i int) *kickTicker {
-	k.mu.Lock()
-	defer k.mu.Unlock()
-	return k.tickers[i]
-}
-
-func calledFrom(fn string) bool {
-	pcs := make([]uintptr, 16)
-	n := runtime.Callers(2, pcs)
-	frames := runtime.CallersFrames(pcs[:n])
-	for {
-		f, more := frames.Next()
-		if f.Function == fn {
-			return true
-		}
-		if !more {
-			return false
-		}
-	}
+func (k *kickClock) NewTicker(time.Duration) clock.Ticker {
+	kt := &kickTicker{c: make(chan time.Time)}
+	k.took <- kt
+	return kt
 }
 
 // ── the cell ────────────────────────────────────────────────────────────────
@@ -151,7 +116,6 @@ type ksrCell struct {
 	core      kscCore
 	edge      *edgeharness.Edge
 	bus       *harness.Bus
-	kicks     *kickClock
 	kick      *kickTicker
 	role      protocol.ClaimRole
 	mode      protocol.SwapMode
@@ -224,9 +188,6 @@ type ksrOpts struct {
 	claimC bool
 	// plain: the claims do not keep a staged spare.
 	plain bool
-	// kicks is a clock already installed as the default, shared by cells
-	// running in parallel. Nil: the cell installs its own for its test.
-	kicks *kickClock
 	// pair: a sequential line of two positions, the line and its partner
 	// (KSR-PAIR), each holding an A bin; the line pulls from KSR-LINE.
 	pair bool
@@ -258,14 +219,7 @@ type ksrOpts struct {
 
 func newKsrCell(t *testing.T, o ksrOpts) *ksrCell {
 	t.Helper()
-	kicks := o.kicks
-	if kicks == nil {
-		kicks = &kickClock{}
-		clock.SetDefault(kicks)
-		t.Cleanup(func() { clock.SetDefault(clock.Real()) })
-	}
-
-	c := &ksrCell{t: t, kicks: kicks, role: o.role, mode: o.mode, robots: map[string]string{},
+	c := &ksrCell{t: t, role: o.role, mode: o.mode, robots: map[string]string{},
 		heldBlocker: o.buriedB && !o.claimC}
 	if o.buriedB {
 		c.deck = newDeckFleet()
@@ -397,23 +351,15 @@ func newKsrCell(t *testing.T, o ksrOpts) *ksrCell {
 	}
 
 	// ── Edge ──
-	// Released by defer, so a t.Fatal inside (which exits through
-	// runtime.Goexit) cannot leave every other cell waiting on it.
-	func() {
-		kicks.starting.Lock()
-		defer kicks.starting.Unlock()
-		before := kicks.count()
-		c.edge = edgeharness.NewEdge(t, "edge.test")
-		// The level keeper's loop has started on its own goroutine: wait for
-		// its ticker.
-		for i := 0; kicks.count() == before; i++ {
-			if i > 200 {
-				t.Fatal("the demand reconciler never took its ticker")
-			}
-			time.Sleep(10 * time.Millisecond)
-		}
-		c.kick = kicks.ticker(before)
-	}()
+	kicks := newKickClock()
+	c.edge = edgeharness.NewEdge(t, "edge.test", func(ec *edgeengine.Config) { ec.DemandReconcileClock = kicks })
+	// The level keeper's loop has started on its own goroutine: wait for its
+	// ticker.
+	select {
+	case c.kick = <-kicks.took:
+	case <-time.After(2 * time.Second):
+		t.Fatal("the demand reconciler never took its ticker")
+	}
 	edge := c.edge
 	// The catalog Core would sync: the produce level is the part's capacity.
 	for i, code := range []string{ksrPartA, ksrPartB} {
@@ -599,11 +545,13 @@ func (c *ksrCell) breached() int {
 // settle pumps the bus until both outboxes stay empty.
 //
 // The quiet window is what lets a message that a goroutine is still writing
-// land before settle calls the bus empty. 10ms, not 50: this cell's 66
-// subtests settle thousands of times between them, all in series, and at
-// 50ms the windows alone were most of the package's 7 minutes in the gate.
-// A message missed by a short window is not lost; the next tick pumps it,
-// and every wait on an outcome goes through eventually.
+// land before settle calls the bus empty, and an absence read straight after
+// a settle is only as good as it. Each settle pays it once: a recovery cell
+// settles about seventy times (69 in consume/two_robot/a), so at 10ms the
+// windows are under a second of a cell's several; the rest of a settle is the
+// pumps and the bins push after each (harness.BinsPush). A message the window
+// misses is not lost; the next tick pumps it, and the waits on an outcome go
+// through eventually.
 func (c *ksrCell) settle() {
 	for i := 0; i < 40; i++ {
 		if c.bus.PumpAll() == 0 {
@@ -1696,17 +1644,11 @@ func ksrDigOnTheSpotsRefill(role protocol.ClaimRole, mode protocol.SwapMode) boo
 // for A runs a normal A swap to the end, the level keeper's next ask runs the
 // fast swap from a standing A spare, and nothing of B is left anywhere but B's
 // market.
-// THE SUBTESTS RUN IN PARALLEL. Each builds its own Core, Edge and database,
-// and runs ~3s, nearly all of it waiting on its bus to go quiet; in series
-// the 66 of them were most of integration/scenarios' time in the gate. What
-// they share is the default clock, which must be the kick clock for every
-// Edge's reconciler: one is installed here, before any subtest starts, and
-// removed after the last one ends (a parent's Cleanup runs after its
-// parallel subtests).
+// THE SUBTESTS RUN IN PARALLEL, and the test beside the package's others: each
+// cell builds its own Core, Edge, databases and reconciler clock (kickClock),
+// so no two share anything but the Postgres server.
 func TestScenario_KeepStagedRecovery_AfterCancelledChangeover(t *testing.T) {
-	kicks := &kickClock{}
-	clock.SetDefault(kicks)
-	t.Cleanup(func() { clock.SetDefault(clock.Real()) })
+	t.Parallel()
 	type cell struct {
 		role protocol.ClaimRole
 		mode protocol.SwapMode
@@ -1735,7 +1677,7 @@ func TestScenario_KeepStagedRecovery_AfterCancelledChangeover(t *testing.T) {
 				t.Parallel()
 				started := time.Now()
 				defer func() { t.Logf("case %s ran %s", m.name, time.Since(started).Round(time.Second)) }()
-				c := newKsrCell(t, ksrOpts{role: cl.role, mode: cl.mode, buriedB: m.buriedB, claimC: m.claimC, kicks: kicks})
+				c := newKsrCell(t, ksrOpts{role: cl.role, mode: cl.mode, buriedB: m.buriedB, claimC: m.claimC})
 				co := c.startChangeover()
 				m.at(c, co)
 				c.dump("at the cancel: " + m.what)

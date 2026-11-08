@@ -132,8 +132,10 @@ func (c *ksrCell) seqConfirm(label string, removal, backfill domain.Order) {
 // each cycle ends with one bin on the line, and the request after a cycle has
 // ended starts the next.
 func TestScenario_SequentialLine_CyclesBackToBack(t *testing.T) {
+	t.Parallel()
 	for _, d := range seqDoors {
 		t.Run(d.name, func(t *testing.T) {
+			t.Parallel()
 			c := newKsrCell(t, ksrOpts{role: d.role, mode: protocol.SwapModeSequential, plain: true})
 			for _, cycle := range []string{"first cycle", "second cycle"} {
 				// Parts counted, as a line asking for its swap has.
@@ -169,8 +171,10 @@ func (c *ksrCell) seqRefused(label string, press func(c *ksrCell) error) {
 // Once the operator confirms the backfill, the next request starts the next
 // cycle.
 func TestScenario_SequentialLine_SecondRequestWaitsForTheSwap(t *testing.T) {
+	t.Parallel()
 	for _, d := range seqDoors {
 		t.Run(d.name, func(t *testing.T) {
+			t.Parallel()
 			c := newKsrCell(t, ksrOpts{role: d.role, mode: protocol.SwapModeSequential, plain: true})
 			mustNil(t, c.edge.DB.SetProcessNodeRuntime(c.nodeID, &c.claimA, 30), "count")
 			c.settle()

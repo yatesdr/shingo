@@ -61,6 +61,7 @@ import (
 //   - End-to-end manifest contract on the supply leg through the wire,
 //     not just at the engine boundary.
 func TestScenario_TwoRobotChangeoverRelease_BothLegsOnTheWire(t *testing.T) {
+	t.Parallel()
 	const stationID = "edge.test"
 	edge := edgeharness.NewEdge(t, stationID)
 

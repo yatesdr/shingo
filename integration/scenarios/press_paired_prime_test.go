@@ -23,6 +23,7 @@ import (
 )
 
 func TestScenario_PressBarePairedPosition_EveryButtonPrimesItThenSwaps(t *testing.T) {
+	t.Parallel()
 	type door struct {
 		name  string
 		role  protocol.ClaimRole
@@ -44,6 +45,7 @@ func TestScenario_PressBarePairedPosition_EveryButtonPrimesItThenSwaps(t *testin
 	}
 	for _, d := range doors {
 		t.Run(d.name, func(t *testing.T) {
+			t.Parallel()
 			// The plain press cell: a bin on the head, none on the paired
 			// position. Its claims reach Core's mirror as in the plant: the
 			// hold reads the fed shape there (dispatch dependentSource).

@@ -230,6 +230,7 @@ func (c *ksrCell) runChangeoverTo(label string, after, to int64, bt *corebins.Bi
 // CUTOVER (edge2 run post-edge2c-c8a8cc21: PRS_010B's removal passed START
 // and the changeover's swap waited for its bin for good).
 func TestScenario_ChangeoverStart_CancelsALiftOnlyOrderAtAChangingNode(t *testing.T) {
+	t.Parallel()
 	for _, m := range []struct {
 		name   string
 		states []string
@@ -239,6 +240,7 @@ func TestScenario_ChangeoverStart_CancelsALiftOnlyOrderAtAChangingNode(t *testin
 		{"staged at its wait", []string{"RUNNING", "WAITING"}},
 	} {
 		t.Run(m.name, func(t *testing.T) {
+			t.Parallel()
 			c := newKsrCell(t, ksrOpts{role: protocol.ClaimRoleConsume, mode: protocol.SwapModeSequential, plain: true, pair: true})
 			removal := c.pairRemoval(m.name)
 			if len(m.states) > 0 {
@@ -267,6 +269,7 @@ func TestScenario_ChangeoverStart_CancelsALiftOnlyOrderAtAChangingNode(t *testin
 // lifted before START. The position needs the new style's bin and has nothing
 // to take away, and the changeover runs to CUTOVER with a B bin on it.
 func TestScenario_ChangeoverStart_WithAChangingPositionAlreadyEmpty(t *testing.T) {
+	t.Parallel()
 	for _, m := range []struct {
 		name string
 		opts ksrOpts
@@ -277,6 +280,7 @@ func TestScenario_ChangeoverStart_WithAChangingPositionAlreadyEmpty(t *testing.T
 		{"two_robot_press_index", ksrOpts{mode: protocol.SwapModeTwoRobotPressIndex}},
 	} {
 		t.Run(m.name, func(t *testing.T) {
+			t.Parallel()
 			opts := m.opts
 			opts.role, opts.plain = protocol.ClaimRoleConsume, true
 			c := newKsrCell(t, opts)

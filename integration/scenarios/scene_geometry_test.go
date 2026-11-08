@@ -26,6 +26,7 @@ import (
 func fptr(v float64) *float64 { return &v }
 
 func TestScenario_SceneGeometryRoundTripsAndTheRevisionShortCircuits(t *testing.T) {
+	t.Parallel()
 	const stationID = "edge.geometry"
 
 	// ── Core: a scene with the two shapes that matter, and the real handler ──

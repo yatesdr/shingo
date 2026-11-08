@@ -68,6 +68,7 @@ func (w *twoBooks) shipEdgeDeltas() {
 // hold, with the bin's part). The next bin of the part lands at M; one tick:
 // M − m − 1 in both books.
 func TestScenario_H_R4_ALateLiftMovesTheTicksAfterTheLiftToTheNextBin(t *testing.T) {
+	t.Parallel()
 	w := newTwoBooks(t, "SCN-H-R4", 100)
 	acc := edgeuop.New(w.edge.DB, handoffStation, w.edge.DB, w.edge.DB)
 	w.edge.Engine.SetInventoryDeltaSink(acc)

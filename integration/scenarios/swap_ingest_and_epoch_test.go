@@ -47,6 +47,7 @@ import (
 // Core-side gap the Edge-only finalize test cannot reach: that the manifest-
 // only ingest is a pure stamp with nothing for a later abort to cancel.
 func TestScenario_SwapFinalizeStampsCoreBinWithoutOrderRow(t *testing.T) {
+	t.Parallel()
 	const stationID = "edge.test"
 	const produceNodeName = "PRODUCE-NODE"
 	const producedCount = 50
@@ -203,6 +204,7 @@ func TestScenario_SwapFinalizeStampsCoreBinWithoutOrderRow(t *testing.T) {
 // pre-release epoch must be dropped (count unchanged) and recorded as a single
 // discrepancy row, while a delta on the current epoch still applies.
 func TestScenario_StaleEpochDeltaDroppedAndRecordedAfterRelease(t *testing.T) {
+	t.Parallel()
 	coreDB := coreharness.OpenDB(t)
 	sd := coreharness.SetupStandardData(t, coreDB)
 

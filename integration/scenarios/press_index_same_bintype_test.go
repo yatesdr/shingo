@@ -35,6 +35,7 @@ import (
 )
 
 func TestScenario_V2_SameBinTypePressIndex_EndToEnd(t *testing.T) {
+	t.Parallel()
 	const stationID = "edge.test"
 	edge := edgeharness.NewEdge(t, stationID)
 	// SAME type for both payloads, which is what makes this the same-bin-type

@@ -23,6 +23,7 @@ import (
 )
 
 func TestScenario_BareLine_EveryButtonFillsIt(t *testing.T) {
+	t.Parallel()
 	type door struct {
 		name  string
 		role  protocol.ClaimRole
@@ -45,6 +46,7 @@ func TestScenario_BareLine_EveryButtonFillsIt(t *testing.T) {
 	for _, mode := range protocol.ConfigurableSwapModes() {
 		for _, d := range doors {
 			t.Run(fmt.Sprintf("%s/%s", mode, d.name), func(t *testing.T) {
+				t.Parallel()
 				c := newKsrCell(t, ksrOpts{role: d.role, mode: mode, plain: true})
 				c.takeLineBinOff()
 				c.settle()

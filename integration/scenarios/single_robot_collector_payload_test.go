@@ -32,6 +32,7 @@ import (
 )
 
 func TestScenario_SingleRobotCollectorCollectsTheIncomingPart(t *testing.T) {
+	t.Parallel()
 	coreDB := coreharness.OpenDB(t)
 	coreharness.SetupStandardData(t, coreDB)
 

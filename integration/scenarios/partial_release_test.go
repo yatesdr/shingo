@@ -71,6 +71,7 @@ import (
 // scenario is the next layer of integration testing — see SHINGO_TODO.md
 // for the open work.
 func TestScenario_PartialReleaseLandsBinWithCorrectManifest(t *testing.T) {
+	t.Parallel()
 	// ── Core setup ─────────────────────────────────────────────────
 	coreDB := coreharness.OpenDB(t)
 	sd := coreharness.SetupStandardData(t, coreDB)

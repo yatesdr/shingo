@@ -367,9 +367,11 @@ func ppFinishLaterRows() []ppRow {
 }
 
 func TestProducePartialsPin_LiftDoors(t *testing.T) {
+	t.Parallel()
 	for _, r := range ppRows() {
 		r := r
 		t.Run(r.name(), func(t *testing.T) {
+			t.Parallel()
 			got := ppRun(t, r)
 			t.Logf("PIN %-40s %s", r.name(), got)
 			if got != r.after {
@@ -384,6 +386,7 @@ func TestProducePartialsPin_LiftDoors(t *testing.T) {
 // and the bin landed still holding 40 of its part; after, a count of 0 clears
 // it at its claim.
 func TestProducePartialsPin_MaterialPageCountOnAConsumeLine(t *testing.T) {
+	t.Parallel()
 	c := newKsrCell(t, ksrOpts{role: protocol.ClaimRoleConsume, mode: protocol.SwapModeTwoRobot, plain: true})
 	c.runningCell("setup")
 	lb := c.lineBin()
@@ -466,12 +469,14 @@ func (c *ksrCell) ppHeldPartial(label string, n int) {
 // a fresh empty, and the station counts from that count: the landing's, as the
 // Edge unit pins it too (TestProducePartials_AReturnedPartialCountsFromItsCount).
 func TestProducePartials_TheLineFinishesItsPartial(t *testing.T) {
+	t.Parallel()
 	for _, mode := range protocol.ConfigurableSwapModes() {
 		if mode == protocol.SwapModeManualSwap {
 			continue
 		}
 		mode := mode
 		t.Run(string(mode), func(t *testing.T) {
+			t.Parallel()
 			c := ppCell(t, mode, ppPartial, true)
 			c.ppHeldPartial("KSR-HELD", 22)
 			m := c.ppMark()
@@ -513,10 +518,12 @@ func TestProducePartials_TheLineFinishesItsPartial(t *testing.T) {
 // by the REQUEST and by the changeover: the one door holds on a multi-position
 // cell too, through Core's divert at the leg's release.
 func TestProducePartials_ASequentialPairSendsItsPartialHome(t *testing.T) {
+	t.Parallel()
 	const home17 = "at=KSR-HOME uop=17 part=KSR-PA ledger=set_for_production,manifest_confirmed cms=0"
 	for _, door := range []string{"request", "changeover"} {
 		door := door
 		t.Run(door, func(t *testing.T) {
+			t.Parallel()
 			c := ppCellOf(t, ksrOpts{role: protocol.ClaimRoleProduce, mode: protocol.SwapModeSequential, plain: true, pair: true},
 				ppPartial, true)
 			m := c.ppMark()

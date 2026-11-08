@@ -68,7 +68,10 @@ type Edge struct {
 // derivation and log strings. WarLink stays disabled (default zero-
 // value), so plc.Manager.StartPolling polls an empty reporting-points
 // list — a benign goroutine until eng.Stop closes its stop channel.
-func NewEdge(t *testing.T, stationID string) *Edge {
+//
+// Each configure func edits the engine's Config before engine.New, for what
+// a scenario injects at construction (a DemandReconcileClock).
+func NewEdge(t *testing.T, stationID string, configure ...func(*engine.Config)) *Edge {
 	t.Helper()
 	db := OpenDB(t)
 
@@ -82,11 +85,15 @@ func NewEdge(t *testing.T, stationID string) *Edge {
 			StationID: stationID,
 		},
 	}
-	eng := engine.New(engine.Config{
+	ec := engine.Config{
 		AppConfig: cfg,
 		DB:        db,
 		LogFunc:   t.Logf,
-	})
+	}
+	for _, f := range configure {
+		f(&ec)
+	}
+	eng := engine.New(ec)
 	// No Core answers the read-asks here unless a scenario wires them, so the
 	// release act's point is answered from the Edge's own rows, as Core's rule
 	// reads them.

@@ -36,8 +36,10 @@ import (
 )
 
 func TestScenario_KeepStagedProduceSupplyNeverTakesTheOldCarrier(t *testing.T) {
+	t.Parallel()
 	for _, mode := range []protocol.SwapMode{protocol.SwapModeTwoRobot, protocol.SwapModeSingleRobot} {
 		t.Run(string(mode), func(t *testing.T) {
+			t.Parallel()
 			p := "KSP" + string(mode[0]) // node-name prefix, one per subtest database
 			coreDB := coreharness.OpenDB(t)
 			coreharness.SetupStandardData(t, coreDB)

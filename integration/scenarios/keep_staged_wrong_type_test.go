@@ -32,6 +32,7 @@ import (
 )
 
 func TestScenario_KeepStagedWrongTypeEmpty_CoreMoveIsTheExit(t *testing.T) {
+	t.Parallel()
 	core := startKeepStagedCore(t)
 	coreDB, sim := core.eng.DB(), core.sim
 	const (

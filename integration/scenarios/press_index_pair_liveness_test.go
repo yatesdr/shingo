@@ -126,6 +126,7 @@ func pendingComplexRequests(t *testing.T, edge *edgeharness.Edge) []protocol.Com
 // are run because the flip changes which robot fetches the replacement, and a
 // pairing that depended on leg order would show the difference here.
 func TestScenario_PressIndexSwap_BothLegsGoOutMutuallyPaired(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name    string
 		prefix  string
@@ -135,6 +136,7 @@ func TestScenario_PressIndexSwap_BothLegsGoOutMutuallyPaired(t *testing.T) {
 		{name: "flipped", prefix: "PLF", flipped: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			edge := edgeharness.NewEdge(t, "edge.test")
 			cell := seedPressIndexCell(t, edge, tc.prefix, protocol.ClaimRoleProduce, tc.flipped)
 			drainOutbox(t, edge)
@@ -204,6 +206,7 @@ func TestScenario_PressIndexSwap_BothLegsGoOutMutuallyPaired(t *testing.T) {
 // The routing itself is asserted in the consume scenario below, which is the
 // only role where it is observable.
 func TestScenario_PressIndexRelease_HoldsThenReleasesBothLegs(t *testing.T) {
+	t.Parallel()
 	edge := edgeharness.NewEdge(t, "edge.test")
 	cell := seedPressIndexCell(t, edge, "PRL", protocol.ClaimRoleProduce, false)
 	drainOutbox(t, edge)
@@ -290,6 +293,7 @@ func TestScenario_PressIndexRelease_HoldsThenReleasesBothLegs(t *testing.T) {
 // calls, so the pair is built by the real planner rather than by a fixture that
 // could only restate what its author believed the shapes were.
 func TestScenario_PressIndexConsumeRelease_DispositionRidesTheEvacLeg(t *testing.T) {
+	t.Parallel()
 	edge := edgeharness.NewEdge(t, "edge.test")
 	cell := seedPressIndexCell(t, edge, "PRC", protocol.ClaimRoleConsume, false)
 	drainOutbox(t, edge)

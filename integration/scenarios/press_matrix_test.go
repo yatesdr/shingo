@@ -48,7 +48,6 @@ import (
 	"time"
 
 	"shingo/protocol"
-	"shingo/protocol/clock"
 
 	corebins "shingocore/store/bins"
 
@@ -196,14 +195,10 @@ func pmRows() []pmRow {
 // lists, as a skip with its reason, every one that does not.
 //
 // THE CELLS RUN IN PARALLEL, as the keep-staged recovery cells do and for the
-// same reason: each builds its own Core, Edge and database and spends nearly
-// all its time waiting on its bus. They share the default clock, which must be
-// the kick clock for every Edge's reconciler (kickClock): one is installed
-// here, before any cell starts, and removed after the last one ends.
+// same reason: each builds its own Core, Edge, databases and reconciler clock
+// (kickClock), so no two share anything but the Postgres server.
 func TestScenario_PressMatrix(t *testing.T) {
-	kicks := &kickClock{}
-	clock.SetDefault(kicks)
-	t.Cleanup(func() { clock.SetDefault(clock.Real()) })
+	t.Parallel()
 	for _, r := range pmRows() {
 		t.Run(r.name(), func(t *testing.T) {
 			if why := r.cs.na(r); why != "" {
@@ -212,7 +207,7 @@ func TestScenario_PressMatrix(t *testing.T) {
 			t.Parallel()
 			started := time.Now()
 			defer func() { t.Logf("cell %s ran %s", r.name(), time.Since(started).Round(time.Second)) }()
-			r.cs.run(newPmCell(t, r, kicks))
+			r.cs.run(newPmCell(t, r))
 		})
 	}
 }
@@ -222,6 +217,7 @@ func TestScenario_PressMatrix(t *testing.T) {
 // position (so no on-deck, no wrong carrier or marker on one, no prime), and
 // the flip changes no step of any swap but the press's.
 func TestScenario_PressMatrix_TheCellsThatDoNotExist(t *testing.T) {
+	t.Parallel()
 	node := &processes.Node{Name: ksrLine}
 	for _, mode := range protocol.ConfigurableSwapModes() {
 		for _, role := range []protocol.ClaimRole{protocol.ClaimRoleConsume, protocol.ClaimRoleProduce} {
@@ -274,9 +270,9 @@ type pmCell struct {
 // request will finalize). The dry case's market is stocked with nothing, the
 // Unchanged case's style B claims what A claims, and the changeover case's
 // style B is a press.
-func newPmCell(t *testing.T, r pmRow, kicks *kickClock) *pmCell {
+func newPmCell(t *testing.T, r pmRow) *pmCell {
 	t.Helper()
-	o := ksrOpts{role: r.role, mode: r.mode, plain: true, mirror: true, bareSpot: true, flipped: r.flipped, kicks: kicks}
+	o := ksrOpts{role: r.role, mode: r.mode, plain: true, mirror: true, bareSpot: true, flipped: r.flipped}
 	switch r.cs.name {
 	case "dry":
 		o.dryA = true
