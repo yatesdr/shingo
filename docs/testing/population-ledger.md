@@ -658,3 +658,57 @@ No assertion read any of the twelve.
 - coverage Δ: 0 in each tag set (untagged, docker,lockcheck, sim) beyond the noise floor; see Coverage above
 - citations rewritten: none (`git grep -n 'pinRow\|keepStagedChangeoverPin'` over the five modules: this file only)
 - verified at: `8dc164f9` with this commit's diff applied
+
+### DUP — `TestScenario_SequentialLine_CyclesBackToBack`
+- test: `TestScenario_SequentialLine_CyclesBackToBack` · pkg `shingo/integration/scenarios` · run `-run '^TestScenario_SequentialLine_CyclesBackToBack$'` · `integration/scenarios/sequential_line_test.go:134` @ `818e9d89` · tags `docker`
+- code: DUP
+- assertion map: every assertion is `TestScenario_SequentialLine_SecondRequestWaitsForTheSwap`'s (`integration/scenarios/sequential_line_test.go:152`), which builds the same `newKsrCell(sequential, plain)` per button and runs the same `seqRemoval`, `seqAtTheLine`, `seqLand` and `seqConfirm` for both of its two cycles, plus two refusals asserted to make nothing. removed on the changeover-catid-first branch before this ledger existed, carried by its rebase onto `818e9d89`; the row records the commit that removed it: "test(sim): the sequential line's back-to-back cycles are its refusal scenario's".
+- mutation: none run for this row; the surviving test runs the removed one's helpers on the same cell, line for line
+- coverage Δ: not measured for this row (no assertion or call left the package)
+- citations rewritten: none (`git grep` finds the name only here)
+- verified at: the commit that adds this row
+
+### STALE — `TestSeedDemo_KanbanIsSeededAtItsLevel`
+- test: `TestSeedDemo_KanbanIsSeededAtItsLevel` · pkg `shingocore/cmd/seeddev` · run `-run '^TestSeedDemo_KanbanIsSeededAtItsLevel$'` · `shingo-core/cmd/seeddev/seed_demo_mg2_test.go:45` @ `818e9d89` · tags `docker`
+- code: STALE
+- assertion map: renamed `TestSeedDemo_KanbanIsSeededAtItsPools` (`shingo-core/cmd/seeddev/seed_demo_mg2_test.go:45`) when the seed moved to `plants/master.yaml`: the press-empties kanban is born at its pools (6 STANDARD resident, its want), so the old "at its level" assertion names a seed shape that no longer exists; the new pin reads the pools (red on the unsized seed: 6 of 8, 4 of 6). removed on the changeover-catid-first branch before this ledger existed, carried by its rebase onto `818e9d89`; the row records the commit that removed it: "test(sim): the planner golden is re-cut on the master".
+- mutation: none run for this row; the rename's red-before is in that commit
+- coverage Δ: not measured for this row (the same seed path runs under the new name)
+- citations rewritten: none
+- verified at: the commit that adds this row
+
+### STALE — `TestAutoCutover_UnmappedValue_StillCutsOver`
+- test: `TestAutoCutover_UnmappedValue_StillCutsOver` · pkg `shingoedge/engine` · run `-run '^TestAutoCutover_UnmappedValue_StillCutsOver$'` · `shingo-edge/engine/plc_catid_monitor_test.go:355` @ `818e9d89` · tags `none`
+- code: STALE
+- assertion map: it pinned a defect as intended behaviour (both CATID sets empty cut the process over); the opposite is `TestPredicate_BothSetsEmptyIsInert` (`shingo-edge/engine/catid_predicate_test.go:79`), and the automatic cutover it exercised was later removed outright (a notice and a one-tap instead). removed on the changeover-catid-first branch before this ledger existed, carried by its rebase onto `818e9d89`; the row records the commit that removed it: "fix(edge): the auto-cutover decides on one predicate, and -1 names no part".
+- mutation: none run for this row; the replacing pin's red-before is in that commit
+- coverage Δ: not measured for this row
+- citations rewritten: none
+- verified at: the commit that adds this row
+
+### STALE — `TestChangeover_AutoCompleteFiresOnTerminalTransition`
+- test: `TestChangeover_AutoCompleteFiresOnTerminalTransition` · pkg `shingoedge/engine` · run `-run '^TestChangeover_AutoCompleteFiresOnTerminalTransition$'` · `shingo-edge/engine/changeover_gate_test.go:105` @ `818e9d89` · tags `none`
+- code: STALE
+- assertion map: it pinned `tryCompleteProcessChangeover` completing a changeover from an order's terminal transition; one door now completes a changeover (`completeCutover`) and a terminal transition pokes the cutover monitor instead, so the behaviour it asserted is the defect that commit's red-before list names ("a terminal transition completed a changeover"). The door's latch is `TestDoor_TerminalWriteLatchedForCompleteAndCancel` (`shingo-edge/engine/changeover_door_test.go:285`). removed on the changeover-catid-first branch before this ledger existed, carried by its rebase onto `818e9d89`; the row records the commit that removed it: "feat(edge): one door completes a changeover, and mark as running completes it".
+- mutation: none run for this row
+- coverage Δ: not measured for this row (`tryCompleteProcessChangeover` is gone)
+- citations rewritten: none
+- verified at: the commit that adds this row
+
+### STALE — `TestTryComplete_AutoPathRunsTheConfirmPrePass`
+- test: `TestTryComplete_AutoPathRunsTheConfirmPrePass` · pkg `shingoedge/engine` · run `-run '^TestTryComplete_AutoPathRunsTheConfirmPrePass$'` · `shingo-edge/engine/changeover_gate_2prime_test.go:142` @ `818e9d89` · tags `none`
+- code: STALE
+- assertion map: renamed `TestRestore_FlippedRowRunsTheConfirmPrePass` (`shingo-edge/engine/changeover_gate_2prime_test.go:143`): the automatic path it named (`tryCompleteProcessChangeover`) is gone, and the same pre-pass assertion (a delivered, unconfirmed placing leg does not hang the completion) now runs through the one door, from the restore of a flipped row. removed on the changeover-catid-first branch before this ledger existed, carried by its rebase onto `818e9d89`; the row records the commit that removed it: "feat(edge): one door completes a changeover, and mark as running completes it".
+- mutation: none run for this row
+- coverage Δ: not measured for this row
+- citations rewritten: none
+- verified at: the commit that adds this row
+
+### STALE — `TestReportingPoints_ListEnabledAndLookups`
+- test: `TestReportingPoints_ListEnabledAndLookups` · pkg `shingoedge/store` · run `-run '^TestReportingPoints_ListEnabledAndLookups$'` · `shingo-edge/store/store_test.go:536` @ `818e9d89` · tags `none`
+- code: STALE
+- assertion map: renamed `TestReportingPoints_ListPolledAndLookups` (`shingo-edge/store/store_test.go:541`) when the poll moved from every enabled point to `ListPolledReportingPoints` (the enabled point on its style's process's counter tag, one per process: a second enabled point drew every cart twice); the lookups' assertions are kept under the new list. removed on the changeover-catid-first branch before this ledger existed, carried by its rebase onto `818e9d89`; the row records the commit that removed it: "fix(edge): the poll counts one point per process, and names a point whose PLC WarLink lacks".
+- mutation: none run for this row; that commit's red-before pins are `TestPoll_OnePointPerProcess` and `TestPoll_UnknownPLCRaisesAReadError`
+- coverage Δ: not measured for this row
+- citations rewritten: none
+- verified at: the commit that adds this row

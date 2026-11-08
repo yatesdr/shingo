@@ -37,6 +37,7 @@ import (
 	"fmt"
 	"io"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -120,6 +121,23 @@ var (
 )
 
 func installW6Clock() { w6ClkOnce.Do(func() { clock.SetDefault(w6Clk) }) }
+
+// calledFrom reports whether fn is on the caller's stack: how NewTicker knows
+// which of an Edge's loops asks for a ticker.
+func calledFrom(fn string) bool {
+	pcs := make([]uintptr, 16)
+	n := runtime.Callers(2, pcs)
+	frames := runtime.CallersFrames(pcs[:n])
+	for {
+		f, more := frames.Next()
+		if f.Function == fn {
+			return true
+		}
+		if !more {
+			return false
+		}
+	}
+}
 
 func (k *w6Clock) Now() time.Time                         { return time.Now() }
 func (k *w6Clock) After(d time.Duration) <-chan time.Time { return time.After(d) }
