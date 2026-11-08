@@ -36,9 +36,11 @@ import (
 )
 
 const (
-	// sourceabilityDebounceWindow coalesces a burst of change events into one
-	// recompute. Design range 250–500 ms.
-	sourceabilityDebounceWindow = 300 * time.Millisecond
+	// SourceabilityDebounceWindow coalesces a burst of change events into one
+	// recompute. Design range 250–500 ms. Exported for tests that wait out the
+	// recompute a bin move arms (cmd/seeddev's kanban rig), so they read the
+	// window instead of a copy of it.
+	SourceabilityDebounceWindow = 300 * time.Millisecond
 	// sourceabilityFullInterval is the safety-net full recompute cadence. The
 	// pass takes the samples and publishes what changed; a station whose style
 	// disappeared gets its snapshot at once (a delta cannot say "gone"). Every
@@ -95,7 +97,7 @@ func NewSourceabilityMonitor(e *Engine) *SourceabilityMonitor {
 		eng:            e,
 		cfg:            sourceability.Config{YellowEnabled: sc.EnableAtRisk, Horizon: sc.Horizon},
 		rateWindow:     sc.RateWindow,
-		debounceWindow: sourceabilityDebounceWindow,
+		debounceWindow: SourceabilityDebounceWindow,
 		fullInterval:   sourceabilityFullInterval,
 		dirty:          map[plantclaims.ProcessKey]struct{}{},
 		state:          map[plantclaims.ProcessKey]sourceability.StyleState{},

@@ -504,20 +504,27 @@ func TestKanbanRig_R1_SteadyLoop(t *testing.T) {
 
 // settled waits out what a bin's move arms and Stop does not stop: the sourceability
 // monitor's debounced recompute (engine/sourceability_monitor.go arm, time.AfterFunc at
-// sourceabilityDebounceWindow, 300 ms) reads through the counting store, and landed in a
-// counted window under a loaded package run. The count holding still for a second is the
-// last of it. Nothing in a counted window arms it before the window ends: a tick, a build
-// and a door's reads move no bin.
+// engine.SourceabilityDebounceWindow) reads through the counting store, and landed in a
+// counted window under a loaded package run. The count holding still for twice that window
+// is the last of it: the arm's own statements moved the count, so a still count that long
+// means the timer fired a full window ago and its first read would have moved it since.
+// Polled every 50 ms: the stillness is the wait, not the poll (a 1 s poll made every call
+// cost at least a second). Nothing in a counted window arms it before the window ends: a
+// tick, a build and a door's reads move no bin.
 func (r *kanbanRig) settled() {
 	r.t.Helper()
-	last := int64(-1)
-	for i := 0; i < 30; i++ {
-		n := r.counter.Count()
-		if n == last {
+	quiet := 2 * engine.SourceabilityDebounceWindow
+	deadline := time.Now().Add(30 * time.Second)
+	last, since := r.counter.Count(), time.Now()
+	for time.Now().Before(deadline) {
+		time.Sleep(50 * time.Millisecond)
+		if n := r.counter.Count(); n != last {
+			last, since = n, time.Now()
+			continue
+		}
+		if time.Since(since) >= quiet {
 			return
 		}
-		last = n
-		time.Sleep(time.Second)
 	}
 	r.t.Fatalf("the store did not go quiet in 30 s: %d statements so far", last)
 }
