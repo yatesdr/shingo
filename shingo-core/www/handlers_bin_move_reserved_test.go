@@ -87,7 +87,27 @@ func TestBinMove_TakesABinAnotherOrderOnlyReserved(t *testing.T) {
 }
 
 // TestBinMove_RefusesABinARobotHasClaimed: a hard claim is a robot's, and a
-// person's move is refused with the holder named and no row written.
+// person's move is refused with the bin and the holder named and no row written.
+//
+// It replaces TestBinMove_LosingTheBinIsNotAServerError, which pinned the same
+// operator-visible contract on the same fixture: wanting a bin somebody else
+// already has is a conflict with an actionable message and no wreckage, never a
+// server error.
+//
+// Losing a bin to another order is not a fault. It is two people wanting the
+// same thing at the same time, and the answer a person can act on is "somebody
+// just took it, try again". Both doors returned a 500 instead — the server
+// reporting itself broken because a colleague was quicker.
+//
+// The engineer's door looked like it handled this. It spliced the words
+// "transient reservation conflict, retry" into the error text, with a comment
+// beside it saying that was done "so the caller can retry rather than surface a
+// hard 500". Nothing can read a phrase inside a string, so the caller never did,
+// and it surfaced as a hard 500 with the instruction buried in it.
+//
+// Both doors also left the order row behind. The row is created before the bin
+// is reserved, so the losing request wrote an order that would sit pending
+// forever with nothing to dispatch, fail or clean it up. One per lost race.
 func TestBinMove_RefusesABinARobotHasClaimed(t *testing.T) {
 	t.Parallel()
 	sim := simulator.New()
@@ -106,6 +126,9 @@ func TestBinMove_RefusesABinARobotHasClaimed(t *testing.T) {
 	}
 	if !strings.Contains(resp.Error, fmt.Sprintf("#%d", holder.ID)) {
 		t.Errorf("message %q does not name the holding order #%d", resp.Error, holder.ID)
+	}
+	if !strings.Contains(resp.Error, bin.Label) {
+		t.Errorf("message %q does not name the bin %s", resp.Error, bin.Label)
 	}
 	rows, err := db.ListOrdersByStation("core-operator", 50)
 	if err != nil {

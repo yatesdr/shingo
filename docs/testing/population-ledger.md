@@ -247,3 +247,12 @@ present at the merge base is absent at the tip without a row here.
 - coverage Δ: lead (Phase 1 baseline → certification diff)
 - citations rewritten: none
 - verified at: `8cd5c7ca` + this commit
+
+### FOLD — `TestBinMove_LosingTheBinIsNotAServerError`
+- test: `TestBinMove_LosingTheBinIsNotAServerError` · pkg `shingocore/www` · run `-run '^TestBinMove_LosingTheBinIsNotAServerError$'` · `shingo-core/www/handlers_bin_race_test.go:53` @ `22c81558` · tags `docker`
+- code: FOLD
+- assertion map: same fixture (testHandlersWithSim, SetupStandardData, a bin at storage, an in-transit holder whose hard claim `claimForRobot` writes) and the same request. status != 500 (Fatal, `:70`) → survivor's status == 409 Fatal (`handlers_bin_move_reserved_test.go:125`); status == 409 (`:73`) → same line; message non-empty (`:81`) → survivor's message names `#holder` (`:128`); message names the bin (`:84`) → **added** to the survivor (`:131`); no core-operator row left pending (`:93-97`) → survivor's zero core-operator rows (`:138`, stronger). The scar comment moved verbatim above the survivor; `raceTheBin` had no other caller and went with the file.
+- mutation: `engine/bin_move.go:328` RefusedClaimed's sentence drops the label (`"bin %s is already claimed by order #%d", label, r.Holder` → `"the bin is already claimed by order #%d", r.Holder`) · old test red at base: `handlers_bin_race_test.go:85: message "the bin is already claimed by order #1" does not name the bin` · survivor red at tip: `handlers_bin_move_reserved_test.go:131: message "the bin is already claimed by order #1" does not name the bin BIN-CLAIMED` · the survivor as it stood at base stays green under it (`ok shingocore/www 3.884s`): the label was pinned only by the folded test
+- coverage Δ: lead (Phase 1 baseline → certification diff)
+- citations rewritten: none in the five modules (the only mentions were the test's own); the survivor's header names it as replaced
+- verified at: `e93355f1` + this commit
