@@ -35,12 +35,15 @@ import (
 // The legs are named by tokens (pinLegs): S takes the spare, D sets down on the
 // spot, R collects again what it set down there, M fetches from the market.
 //
-// Each row carries two answers. today is the tree before one refill owner (brief
-// A2: the keeper the only refill owner, requestClaim the one leg door, an unknown
-// spot read refused at START); after is the prediction under it, written before
-// the source changed. The single-robot swap rows' after lost one leg on
-// 2026-10-16, when that changeover became one order (no stage order). The test asserts today until that change lands, and
-// after from then on; every row whose after differs from today is a ruling.
+// Each row is the tree's answer with the keeper the spot's one refill owner
+// (requestClaim the one leg door, an unknown spot read refused at START) and a
+// single-robot changeover one order, as "fix(edge): the keeper is a keep-staged
+// spot's only refill owner, through a changeover too" and "fix(edge): a
+// single-robot changeover collects the carrier it parked, never a stray" made
+// them (2026-10-16). The rows were written as predictions before those changes;
+// what the tree answered before them is in this file's history ("test(edge):
+// pin what a changeover does at a keep-staged spot, every shape"), and 89 of
+// the 101 rows differ from it. KS_PIN_PRINT=1 prints what the tree answers.
 
 const pinSpot = "SPOT"
 
@@ -386,7 +389,7 @@ func TestKeepStagedChangeover_EveryShapePin(t *testing.T) {
 		}
 		return
 	}
-	for name, row := range keepStagedChangeoverPin {
+	for name, want := range keepStagedChangeoverPin {
 		c, ok := cases[name]
 		if !ok {
 			t.Errorf("pin row %q names no case", name)
@@ -394,8 +397,8 @@ func TestKeepStagedChangeover_EveryShapePin(t *testing.T) {
 		}
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			if got := c.observe(t); got != row.after {
-				t.Errorf("\n got  %s\n want %s", got, row.after)
+			if got := c.observe(t); got != want {
+				t.Errorf("\n got  %s\n want %s", got, want)
 			}
 		})
 	}
@@ -410,7 +413,8 @@ func pinExtraCases() []pinCase {
 	out := []pinCase{
 		// SPR ALN_011, 2026-10-15 08:31: a consume incoming claim, an unstamped
 		// empty on the spot, which is the inbound staging. The spare is wrong for
-		// the claim, and today's leg lifts it anyway.
+		// the claim: the start sends it back and the swap stages its own carrier
+		// on the spot (D+R+M). The tree of that morning lifted it anyway (S).
 		{role: protocol.ClaimRoleConsume, mode: protocol.SwapModeTwoRobot, read: "empty-0831", staging: true, spotRow: &empty},
 	}
 	// A START that aborts the keeper's queued refill, every mode: is the keeper
@@ -422,310 +426,107 @@ func pinExtraCases() []pinCase {
 	return out
 }
 
-type pinRow struct{ today, after string }
-
-var keepStagedChangeoverPin = map[string]pinRow{
-	"consume/sequential/bare/spot!=staging/add": {
-		"legs=M ret=0 ref=1 exp=2 n=1 | prev M | cancel ret=0 ref=0 | paused start=n cut=n",
-		"legs=M ret=0 ref=0 exp=1 n=1 | prev M | cancel ret=0 ref=0 | paused start=n cut=n"},
-	"consume/sequential/bare/spot!=staging/swap": {
-		"legs=S ret=0 ref=2 exp=3 n=1 | prev S | cancel ret=0 ref=1 | paused start=n cut=n",
-		"legs=M ret=0 ref=0 exp=1 n=1 | prev M | cancel ret=0 ref=0 | paused start=n cut=n"},
-	"consume/sequential/right/spot!=staging/add": {
-		"legs=M ret=0 ref=0 exp=1 n=1 | prev M | cancel ret=1 ref=0 | paused start=n cut=n",
-		"legs=M ret=0 ref=0 exp=1 n=1 | prev M | cancel ret=1 ref=0 | paused start=n cut=n"},
-	"consume/sequential/right/spot!=staging/swap": {
-		"legs=S ret=0 ref=1 exp=2 n=1 | prev S | cancel ret=1 ref=1 | paused start=n cut=n",
-		"legs=S ret=0 ref=0 exp=1 n=1 | prev S | cancel ret=1 ref=0 | paused start=n cut=n"},
-	"consume/sequential/unknown/spot!=staging/add": {
-		"legs=M ret=0 ref=0 exp=1 n=1 | prev M | cancel ret=0 ref=0 | paused start=n cut=n",
-		"start refused | prev refused"},
-	"consume/sequential/unknown/spot!=staging/swap": {
-		"legs=S ret=0 ref=0 exp=1 n=1 | prev S | cancel ret=0 ref=0 | paused start=n cut=n",
-		"start refused | prev refused"},
-	"consume/sequential/wrong/spot!=staging/add": {
-		"legs=M ret=1 ref=1 exp=3 n=1 | prev M | cancel ret=1 ref=0 | paused start=n cut=n",
-		"legs=M ret=1 ref=0 exp=2 n=1 | prev M | cancel ret=1 ref=0 | paused start=n cut=n"},
-	"consume/sequential/wrong/spot!=staging/swap": {
-		"legs=S ret=1 ref=2 exp=4 n=1 | prev S | cancel ret=0 ref=0 | paused start=n cut=n",
-		"legs=M ret=1 ref=0 exp=2 n=1 | prev M | cancel ret=0 ref=0 | paused start=n cut=n"},
-	"consume/single_robot/bare/spot!=staging/add": {
-		"legs=M ret=0 ref=1 exp=2 n=1 | prev M | cancel ret=0 ref=0 | paused start=n cut=n",
-		"legs=M ret=0 ref=0 exp=1 n=1 | prev M | cancel ret=0 ref=0 | paused start=n cut=n"},
-	"consume/single_robot/bare/spot!=staging/swap": {
-		"legs=S ret=0 ref=2 exp=4 n=2 | prev S | cancel ret=0 ref=1 | paused start=n cut=n",
-		"legs=M ret=0 ref=0 exp=1 n=1 | prev M | cancel ret=0 ref=0 | paused start=n cut=n"},
-	"consume/single_robot/bare/spot==staging/add": {
-		"legs=M ret=0 ref=1 exp=2 n=1 | prev M | cancel ret=0 ref=0 | paused start=n cut=n",
-		"legs=M ret=0 ref=0 exp=1 n=1 | prev M | cancel ret=0 ref=0 | paused start=n cut=n"},
-	"consume/single_robot/bare/spot==staging/swap": {
-		"legs=S ret=0 ref=2 exp=3 n=1 | prev S | cancel ret=0 ref=1 | paused start=n cut=n",
-		"legs=D+R+M ret=0 ref=0 exp=1 n=1 | prev D+R+M | cancel ret=0 ref=0 | paused start=n cut=n"},
-	"consume/single_robot/right/spot!=staging/add": {
-		"legs=M ret=0 ref=0 exp=1 n=1 | prev M | cancel ret=1 ref=0 | paused start=n cut=n",
-		"legs=M ret=0 ref=0 exp=1 n=1 | prev M | cancel ret=1 ref=0 | paused start=n cut=n"},
-	"consume/single_robot/right/spot!=staging/swap": {
-		"legs=S ret=0 ref=1 exp=3 n=2 | prev S | cancel ret=1 ref=1 | paused start=n cut=n",
-		"legs=S ret=0 ref=0 exp=1 n=1 | prev S | cancel ret=1 ref=0 | paused start=n cut=n"},
-	"consume/single_robot/right/spot==staging/add": {
-		"legs=M ret=0 ref=0 exp=1 n=1 | prev M | cancel ret=1 ref=0 | paused start=n cut=n",
-		"legs=M ret=0 ref=0 exp=1 n=1 | prev M | cancel ret=1 ref=0 | paused start=n cut=n"},
-	"consume/single_robot/right/spot==staging/swap": {
-		"legs=S ret=0 ref=1 exp=2 n=1 | prev S | cancel ret=1 ref=1 | paused start=n cut=n",
-		"legs=S ret=0 ref=0 exp=1 n=1 | prev S | cancel ret=1 ref=0 | paused start=n cut=n"},
-	"consume/single_robot/unknown/spot!=staging/add": {
-		"legs=M ret=0 ref=0 exp=1 n=1 | prev M | cancel ret=0 ref=0 | paused start=n cut=n",
-		"start refused | prev refused"},
-	"consume/single_robot/unknown/spot!=staging/swap": {
-		"legs=S ret=0 ref=0 exp=2 n=2 | prev S | cancel ret=0 ref=0 | paused start=n cut=n",
-		"start refused | prev refused"},
-	"consume/single_robot/unknown/spot==staging/add": {
-		"legs=M ret=0 ref=0 exp=1 n=1 | prev M | cancel ret=0 ref=0 | paused start=n cut=n",
-		"start refused | prev refused"},
-	"consume/single_robot/unknown/spot==staging/swap": {
-		"legs=S ret=0 ref=0 exp=1 n=1 | prev S | cancel ret=0 ref=0 | paused start=n cut=n",
-		"start refused | prev refused"},
-	"consume/single_robot/wrong/spot!=staging/add": {
-		"legs=M ret=1 ref=1 exp=3 n=1 | prev M | cancel ret=1 ref=0 | paused start=n cut=n",
-		"legs=M ret=1 ref=0 exp=2 n=1 | prev M | cancel ret=1 ref=0 | paused start=n cut=n"},
-	"consume/single_robot/wrong/spot!=staging/swap": {
-		"legs=S ret=1 ref=2 exp=5 n=2 | prev S | cancel ret=0 ref=0 | paused start=n cut=n",
-		"legs=M ret=1 ref=0 exp=2 n=1 | prev M | cancel ret=0 ref=0 | paused start=n cut=n"},
-	"consume/single_robot/wrong/spot==staging/add": {
-		"legs=M ret=1 ref=1 exp=3 n=1 | prev M | cancel ret=1 ref=0 | paused start=n cut=n",
-		"legs=M ret=1 ref=0 exp=2 n=1 | prev M | cancel ret=1 ref=0 | paused start=n cut=n"},
-	"consume/single_robot/wrong/spot==staging/swap": {
-		"legs=S ret=1 ref=2 exp=4 n=1 | prev S | cancel ret=0 ref=0 | paused start=n cut=n",
-		"legs=D+R+M ret=1 ref=0 exp=2 n=1 | prev D+R+M | cancel ret=0 ref=0 | paused start=n cut=n"},
-	"consume/two_robot/bare/spot!=staging/add": {
-		"legs=M ret=0 ref=1 exp=2 n=1 | prev M | cancel ret=0 ref=0 | paused start=n cut=n",
-		"legs=M ret=0 ref=0 exp=1 n=1 | prev M | cancel ret=0 ref=0 | paused start=n cut=n"},
-	"consume/two_robot/bare/spot!=staging/swap": {
-		"legs=S ret=0 ref=2 exp=4 n=2 | prev S | cancel ret=0 ref=1 | paused start=n cut=n",
-		"legs=M ret=0 ref=0 exp=2 n=2 | prev M | cancel ret=0 ref=0 | paused start=n cut=n"},
-	"consume/two_robot/bare/spot==staging/add": {
-		"legs=M ret=0 ref=1 exp=2 n=1 | prev M | cancel ret=0 ref=0 | paused start=n cut=n",
-		"legs=M ret=0 ref=0 exp=1 n=1 | prev M | cancel ret=0 ref=0 | paused start=n cut=n"},
-	"consume/two_robot/bare/spot==staging/swap": {
-		"legs=S ret=0 ref=2 exp=4 n=2 | prev S | cancel ret=0 ref=1 | paused start=n cut=n",
-		"legs=D+R+M ret=0 ref=0 exp=2 n=2 | prev D+R+M | cancel ret=0 ref=0 | paused start=n cut=n"},
-	"consume/two_robot/empty-0831/spot==staging/swap": {
-		"legs=S ret=1 ref=2 exp=5 n=2 | prev S | cancel ret=1 ref=1 | paused start=n cut=n",
-		"legs=D+R+M ret=1 ref=0 exp=3 n=2 | prev D+R+M | cancel ret=1 ref=0 | paused start=n cut=n"},
-	"consume/two_robot/right/spot!=staging/add": {
-		"legs=M ret=0 ref=0 exp=1 n=1 | prev M | cancel ret=1 ref=0 | paused start=n cut=n",
-		"legs=M ret=0 ref=0 exp=1 n=1 | prev M | cancel ret=1 ref=0 | paused start=n cut=n"},
-	"consume/two_robot/right/spot!=staging/swap": {
-		"legs=S ret=0 ref=1 exp=3 n=2 | prev S | cancel ret=1 ref=1 | paused start=n cut=n",
-		"legs=S ret=0 ref=0 exp=2 n=2 | prev S | cancel ret=1 ref=0 | paused start=n cut=n"},
-	"consume/two_robot/right/spot==staging/add": {
-		"legs=M ret=0 ref=0 exp=1 n=1 | prev M | cancel ret=1 ref=0 | paused start=n cut=n",
-		"legs=M ret=0 ref=0 exp=1 n=1 | prev M | cancel ret=1 ref=0 | paused start=n cut=n"},
-	"consume/two_robot/right/spot==staging/swap": {
-		"legs=S ret=0 ref=1 exp=3 n=2 | prev S | cancel ret=1 ref=1 | paused start=n cut=n",
-		"legs=S ret=0 ref=0 exp=2 n=2 | prev S | cancel ret=1 ref=0 | paused start=n cut=n"},
-	"consume/two_robot/unknown/spot!=staging/add": {
-		"legs=M ret=0 ref=0 exp=1 n=1 | prev M | cancel ret=0 ref=0 | paused start=n cut=n",
-		"start refused | prev refused"},
-	"consume/two_robot/unknown/spot!=staging/swap": {
-		"legs=S ret=0 ref=0 exp=2 n=2 | prev S | cancel ret=0 ref=0 | paused start=n cut=n",
-		"start refused | prev refused"},
-	"consume/two_robot/unknown/spot==staging/add": {
-		"legs=M ret=0 ref=0 exp=1 n=1 | prev M | cancel ret=0 ref=0 | paused start=n cut=n",
-		"start refused | prev refused"},
-	"consume/two_robot/unknown/spot==staging/swap": {
-		"legs=S ret=0 ref=0 exp=2 n=2 | prev S | cancel ret=0 ref=0 | paused start=n cut=n",
-		"start refused | prev refused"},
-	"consume/two_robot/wrong/spot!=staging/add": {
-		"legs=M ret=1 ref=1 exp=3 n=1 | prev M | cancel ret=1 ref=0 | paused start=n cut=n",
-		"legs=M ret=1 ref=0 exp=2 n=1 | prev M | cancel ret=1 ref=0 | paused start=n cut=n"},
-	"consume/two_robot/wrong/spot!=staging/swap": {
-		"legs=S ret=1 ref=2 exp=5 n=2 | prev S | cancel ret=0 ref=0 | paused start=n cut=n",
-		"legs=M ret=1 ref=0 exp=3 n=2 | prev M | cancel ret=0 ref=0 | paused start=n cut=n"},
-	"consume/two_robot/wrong/spot==staging/add": {
-		"legs=M ret=1 ref=1 exp=3 n=1 | prev M | cancel ret=1 ref=0 | paused start=n cut=n",
-		"legs=M ret=1 ref=0 exp=2 n=1 | prev M | cancel ret=1 ref=0 | paused start=n cut=n"},
-	"consume/two_robot/wrong/spot==staging/swap": {
-		"legs=S ret=1 ref=2 exp=5 n=2 | prev S | cancel ret=0 ref=0 | paused start=n cut=n",
-		"legs=D+R+M ret=1 ref=0 exp=3 n=2 | prev D+R+M | cancel ret=0 ref=0 | paused start=n cut=n"},
-	"consume/two_robot_press_index/bare/spot!=staging/add": {
-		"legs=M ret=0 ref=1 exp=3 n=2 | prev M | cancel ret=0 ref=0 | paused start=n cut=n",
-		"legs=M ret=0 ref=0 exp=2 n=2 | prev M | cancel ret=0 ref=0 | paused start=n cut=n"},
-	"consume/two_robot_press_index/bare/spot!=staging/swap": {
-		"legs=S ret=0 ref=2 exp=4 n=2 | prev S | cancel ret=0 ref=1 | paused start=n cut=n",
-		"legs=M ret=0 ref=0 exp=2 n=2 | prev M | cancel ret=0 ref=0 | paused start=n cut=n"},
-	"consume/two_robot_press_index/right/spot!=staging/add": {
-		"legs=M ret=0 ref=0 exp=2 n=2 | prev M | cancel ret=1 ref=0 | paused start=n cut=n",
-		"legs=M ret=0 ref=0 exp=2 n=2 | prev M | cancel ret=1 ref=0 | paused start=n cut=n"},
-	"consume/two_robot_press_index/right/spot!=staging/swap": {
-		"legs=S ret=0 ref=1 exp=3 n=2 | prev S | cancel ret=1 ref=1 | paused start=n cut=n",
-		"legs=S ret=0 ref=0 exp=2 n=2 | prev S | cancel ret=1 ref=0 | paused start=n cut=n"},
-	"consume/two_robot_press_index/unknown/spot!=staging/add": {
-		"legs=M ret=0 ref=0 exp=2 n=2 | prev M | cancel ret=0 ref=0 | paused start=n cut=n",
-		"start refused | prev refused"},
-	"consume/two_robot_press_index/unknown/spot!=staging/swap": {
-		"legs=S ret=0 ref=0 exp=2 n=2 | prev S | cancel ret=0 ref=0 | paused start=n cut=n",
-		"start refused | prev refused"},
-	"consume/two_robot_press_index/wrong/spot!=staging/add": {
-		"legs=M ret=1 ref=1 exp=4 n=2 | prev M | cancel ret=1 ref=0 | paused start=n cut=n",
-		"legs=M ret=1 ref=0 exp=3 n=2 | prev M | cancel ret=1 ref=0 | paused start=n cut=n"},
-	"consume/two_robot_press_index/wrong/spot!=staging/swap": {
-		"legs=S ret=1 ref=2 exp=5 n=2 | prev S | cancel ret=0 ref=0 | paused start=n cut=n",
-		"legs=M ret=1 ref=0 exp=3 n=2 | prev M | cancel ret=0 ref=0 | paused start=n cut=n"},
-	"produce/sequential/bare/spot!=staging/add": {
-		"legs=M ret=0 ref=1 exp=2 n=1 | prev M | cancel ret=0 ref=0 | paused start=n cut=n",
-		"legs=M ret=0 ref=0 exp=1 n=1 | prev M | cancel ret=0 ref=0 | paused start=n cut=n"},
-	"produce/sequential/bare/spot!=staging/swap": {
-		"legs=S ret=0 ref=2 exp=3 n=1 | prev S | cancel ret=0 ref=1 | paused start=n cut=n",
-		"legs=M ret=0 ref=0 exp=1 n=1 | prev M | cancel ret=0 ref=0 | paused start=n cut=n"},
-	"produce/sequential/bare/spot!=staging/swap/queued-refill": {
-		"legs=S ret=0 ref=2 exp=3 n=1 | prev S | cancel ret=0 ref=1 | paused start=n cut=n",
-		"legs=M ret=0 ref=0 exp=1 n=1 | prev M | cancel ret=0 ref=0 | paused start=n cut=n"},
-	"produce/sequential/right/spot!=staging/add": {
-		"legs=M ret=0 ref=0 exp=1 n=1 | prev M | cancel ret=1 ref=0 | paused start=n cut=n",
-		"legs=M ret=0 ref=0 exp=1 n=1 | prev M | cancel ret=1 ref=0 | paused start=n cut=n"},
-	"produce/sequential/right/spot!=staging/swap": {
-		"legs=S ret=0 ref=1 exp=2 n=1 | prev S | cancel ret=0 ref=0 | paused start=n cut=n",
-		"legs=S ret=0 ref=0 exp=1 n=1 | prev S | cancel ret=0 ref=0 | paused start=n cut=n"},
-	"produce/sequential/unknown/spot!=staging/add": {
-		"legs=M ret=0 ref=0 exp=1 n=1 | prev M | cancel ret=0 ref=0 | paused start=n cut=n",
-		"start refused | prev refused"},
-	"produce/sequential/unknown/spot!=staging/swap": {
-		"legs=S ret=0 ref=0 exp=1 n=1 | prev S | cancel ret=0 ref=0 | paused start=n cut=n",
-		"start refused | prev refused"},
-	"produce/sequential/wrong/spot!=staging/add": {
-		"legs=M ret=1 ref=1 exp=3 n=1 | prev M | cancel ret=1 ref=0 | paused start=n cut=n",
-		"legs=M ret=1 ref=0 exp=2 n=1 | prev M | cancel ret=1 ref=0 | paused start=n cut=n"},
-	"produce/sequential/wrong/spot!=staging/swap": {
-		"legs=S ret=1 ref=2 exp=4 n=1 | prev S | cancel ret=1 ref=1 | paused start=n cut=n",
-		"legs=M ret=1 ref=0 exp=2 n=1 | prev M | cancel ret=1 ref=0 | paused start=n cut=n"},
-	"produce/single_robot/bare/spot!=staging/add": {
-		"legs=M ret=0 ref=1 exp=2 n=1 | prev M | cancel ret=0 ref=0 | paused start=n cut=n",
-		"legs=M ret=0 ref=0 exp=1 n=1 | prev M | cancel ret=0 ref=0 | paused start=n cut=n"},
-	"produce/single_robot/bare/spot!=staging/swap": {
-		"legs=S ret=0 ref=2 exp=4 n=2 | prev S | cancel ret=0 ref=1 | paused start=n cut=n",
-		"legs=M ret=0 ref=0 exp=1 n=1 | prev M | cancel ret=0 ref=0 | paused start=n cut=n"},
-	"produce/single_robot/bare/spot==staging/add": {
-		"legs=M ret=0 ref=1 exp=2 n=1 | prev M | cancel ret=0 ref=0 | paused start=n cut=n",
-		"legs=M ret=0 ref=0 exp=1 n=1 | prev M | cancel ret=0 ref=0 | paused start=n cut=n"},
-	"produce/single_robot/bare/spot==staging/swap": {
-		"legs=S ret=0 ref=2 exp=3 n=1 | prev S | cancel ret=0 ref=1 | paused start=n cut=n",
-		"legs=D+R+M ret=0 ref=0 exp=1 n=1 | prev D+R+M | cancel ret=0 ref=0 | paused start=n cut=n"},
-	"produce/single_robot/bare/spot==staging/swap/queued-refill": {
-		"legs=S ret=0 ref=2 exp=3 n=1 | prev S | cancel ret=0 ref=1 | paused start=n cut=n",
-		"legs=D+R+M ret=0 ref=0 exp=1 n=1 | prev D+R+M | cancel ret=0 ref=0 | paused start=n cut=n"},
-	"produce/single_robot/right/spot!=staging/add": {
-		"legs=M ret=0 ref=0 exp=1 n=1 | prev M | cancel ret=1 ref=0 | paused start=n cut=n",
-		"legs=M ret=0 ref=0 exp=1 n=1 | prev M | cancel ret=1 ref=0 | paused start=n cut=n"},
-	"produce/single_robot/right/spot!=staging/swap": {
-		"legs=S ret=0 ref=1 exp=3 n=2 | prev S | cancel ret=0 ref=0 | paused start=n cut=n",
-		"legs=S ret=0 ref=0 exp=1 n=1 | prev S | cancel ret=0 ref=0 | paused start=n cut=n"},
-	"produce/single_robot/right/spot==staging/add": {
-		"legs=M ret=0 ref=0 exp=1 n=1 | prev M | cancel ret=1 ref=0 | paused start=n cut=n",
-		"legs=M ret=0 ref=0 exp=1 n=1 | prev M | cancel ret=1 ref=0 | paused start=n cut=n"},
-	"produce/single_robot/right/spot==staging/swap": {
-		"legs=S ret=0 ref=1 exp=2 n=1 | prev S | cancel ret=0 ref=0 | paused start=n cut=n",
-		"legs=S ret=0 ref=0 exp=1 n=1 | prev S | cancel ret=0 ref=0 | paused start=n cut=n"},
-	"produce/single_robot/unknown/spot!=staging/add": {
-		"legs=M ret=0 ref=0 exp=1 n=1 | prev M | cancel ret=0 ref=0 | paused start=n cut=n",
-		"start refused | prev refused"},
-	"produce/single_robot/unknown/spot!=staging/swap": {
-		"legs=S ret=0 ref=0 exp=2 n=2 | prev S | cancel ret=0 ref=0 | paused start=n cut=n",
-		"start refused | prev refused"},
-	"produce/single_robot/unknown/spot==staging/add": {
-		"legs=M ret=0 ref=0 exp=1 n=1 | prev M | cancel ret=0 ref=0 | paused start=n cut=n",
-		"start refused | prev refused"},
-	"produce/single_robot/unknown/spot==staging/swap": {
-		"legs=S ret=0 ref=0 exp=1 n=1 | prev S | cancel ret=0 ref=0 | paused start=n cut=n",
-		"start refused | prev refused"},
-	"produce/single_robot/wrong/spot!=staging/add": {
-		"legs=M ret=1 ref=1 exp=3 n=1 | prev M | cancel ret=1 ref=0 | paused start=n cut=n",
-		"legs=M ret=1 ref=0 exp=2 n=1 | prev M | cancel ret=1 ref=0 | paused start=n cut=n"},
-	"produce/single_robot/wrong/spot!=staging/swap": {
-		"legs=S ret=1 ref=2 exp=5 n=2 | prev S | cancel ret=1 ref=1 | paused start=n cut=n",
-		"legs=M ret=1 ref=0 exp=2 n=1 | prev M | cancel ret=1 ref=0 | paused start=n cut=n"},
-	"produce/single_robot/wrong/spot==staging/add": {
-		"legs=M ret=1 ref=1 exp=3 n=1 | prev M | cancel ret=1 ref=0 | paused start=n cut=n",
-		"legs=M ret=1 ref=0 exp=2 n=1 | prev M | cancel ret=1 ref=0 | paused start=n cut=n"},
-	"produce/single_robot/wrong/spot==staging/swap": {
-		"legs=S ret=1 ref=2 exp=4 n=1 | prev S | cancel ret=1 ref=1 | paused start=n cut=n",
-		"legs=D+R+M ret=1 ref=0 exp=2 n=1 | prev D+R+M | cancel ret=1 ref=0 | paused start=n cut=n"},
-	"produce/two_robot/bare/spot!=staging/add": {
-		"legs=M ret=0 ref=1 exp=2 n=1 | prev M | cancel ret=0 ref=0 | paused start=n cut=n",
-		"legs=M ret=0 ref=0 exp=1 n=1 | prev M | cancel ret=0 ref=0 | paused start=n cut=n"},
-	"produce/two_robot/bare/spot!=staging/swap": {
-		"legs=S ret=0 ref=2 exp=4 n=2 | prev S | cancel ret=0 ref=1 | paused start=n cut=n",
-		"legs=M ret=0 ref=0 exp=2 n=2 | prev M | cancel ret=0 ref=0 | paused start=n cut=n"},
-	"produce/two_robot/bare/spot==staging/add": {
-		"legs=M ret=0 ref=1 exp=2 n=1 | prev M | cancel ret=0 ref=0 | paused start=n cut=n",
-		"legs=M ret=0 ref=0 exp=1 n=1 | prev M | cancel ret=0 ref=0 | paused start=n cut=n"},
-	"produce/two_robot/bare/spot==staging/swap": {
-		"legs=S ret=0 ref=2 exp=4 n=2 | prev S | cancel ret=0 ref=1 | paused start=n cut=n",
-		"legs=D+R+M ret=0 ref=0 exp=2 n=2 | prev D+R+M | cancel ret=0 ref=0 | paused start=n cut=n"},
-	"produce/two_robot/bare/spot==staging/swap/queued-refill": {
-		"legs=S ret=0 ref=2 exp=4 n=2 | prev S | cancel ret=0 ref=1 | paused start=n cut=n",
-		"legs=D+R+M ret=0 ref=0 exp=2 n=2 | prev D+R+M | cancel ret=0 ref=0 | paused start=n cut=n"},
-	"produce/two_robot/right/spot!=staging/add": {
-		"legs=M ret=0 ref=0 exp=1 n=1 | prev M | cancel ret=1 ref=0 | paused start=n cut=n",
-		"legs=M ret=0 ref=0 exp=1 n=1 | prev M | cancel ret=1 ref=0 | paused start=n cut=n"},
-	"produce/two_robot/right/spot!=staging/swap": {
-		"legs=S ret=0 ref=1 exp=3 n=2 | prev S | cancel ret=0 ref=0 | paused start=n cut=n",
-		"legs=S ret=0 ref=0 exp=2 n=2 | prev S | cancel ret=0 ref=0 | paused start=n cut=n"},
-	"produce/two_robot/right/spot==staging/add": {
-		"legs=M ret=0 ref=0 exp=1 n=1 | prev M | cancel ret=1 ref=0 | paused start=n cut=n",
-		"legs=M ret=0 ref=0 exp=1 n=1 | prev M | cancel ret=1 ref=0 | paused start=n cut=n"},
-	"produce/two_robot/right/spot==staging/swap": {
-		"legs=S ret=0 ref=1 exp=3 n=2 | prev S | cancel ret=0 ref=0 | paused start=n cut=n",
-		"legs=S ret=0 ref=0 exp=2 n=2 | prev S | cancel ret=0 ref=0 | paused start=n cut=n"},
-	"produce/two_robot/unknown/spot!=staging/add": {
-		"legs=M ret=0 ref=0 exp=1 n=1 | prev M | cancel ret=0 ref=0 | paused start=n cut=n",
-		"start refused | prev refused"},
-	"produce/two_robot/unknown/spot!=staging/swap": {
-		"legs=S ret=0 ref=0 exp=2 n=2 | prev S | cancel ret=0 ref=0 | paused start=n cut=n",
-		"start refused | prev refused"},
-	"produce/two_robot/unknown/spot==staging/add": {
-		"legs=M ret=0 ref=0 exp=1 n=1 | prev M | cancel ret=0 ref=0 | paused start=n cut=n",
-		"start refused | prev refused"},
-	"produce/two_robot/unknown/spot==staging/swap": {
-		"legs=S ret=0 ref=0 exp=2 n=2 | prev S | cancel ret=0 ref=0 | paused start=n cut=n",
-		"start refused | prev refused"},
-	"produce/two_robot/wrong/spot!=staging/add": {
-		"legs=M ret=1 ref=1 exp=3 n=1 | prev M | cancel ret=1 ref=0 | paused start=n cut=n",
-		"legs=M ret=1 ref=0 exp=2 n=1 | prev M | cancel ret=1 ref=0 | paused start=n cut=n"},
-	"produce/two_robot/wrong/spot!=staging/swap": {
-		"legs=S ret=1 ref=2 exp=5 n=2 | prev S | cancel ret=1 ref=1 | paused start=n cut=n",
-		"legs=M ret=1 ref=0 exp=3 n=2 | prev M | cancel ret=1 ref=0 | paused start=n cut=n"},
-	"produce/two_robot/wrong/spot==staging/add": {
-		"legs=M ret=1 ref=1 exp=3 n=1 | prev M | cancel ret=1 ref=0 | paused start=n cut=n",
-		"legs=M ret=1 ref=0 exp=2 n=1 | prev M | cancel ret=1 ref=0 | paused start=n cut=n"},
-	"produce/two_robot/wrong/spot==staging/swap": {
-		"legs=S ret=1 ref=2 exp=5 n=2 | prev S | cancel ret=1 ref=1 | paused start=n cut=n",
-		"legs=D+R+M ret=1 ref=0 exp=3 n=2 | prev D+R+M | cancel ret=1 ref=0 | paused start=n cut=n"},
-	"produce/two_robot_press_index/bare/spot!=staging/add": {
-		"legs=M ret=0 ref=1 exp=3 n=2 | prev M | cancel ret=0 ref=0 | paused start=n cut=n",
-		"legs=M ret=0 ref=0 exp=2 n=2 | prev M | cancel ret=0 ref=0 | paused start=n cut=n"},
-	"produce/two_robot_press_index/bare/spot!=staging/swap": {
-		"legs=S ret=0 ref=2 exp=4 n=2 | prev S | cancel ret=0 ref=1 | paused start=n cut=n",
-		"legs=M ret=0 ref=0 exp=2 n=2 | prev M | cancel ret=0 ref=0 | paused start=n cut=n"},
-	"produce/two_robot_press_index/bare/spot!=staging/swap/queued-refill": {
-		"legs=S ret=0 ref=2 exp=4 n=2 | prev S | cancel ret=0 ref=1 | paused start=n cut=n",
-		"legs=M ret=0 ref=0 exp=2 n=2 | prev M | cancel ret=0 ref=0 | paused start=n cut=n"},
-	"produce/two_robot_press_index/right/spot!=staging/add": {
-		"legs=M ret=0 ref=0 exp=2 n=2 | prev M | cancel ret=1 ref=0 | paused start=n cut=n",
-		"legs=M ret=0 ref=0 exp=2 n=2 | prev M | cancel ret=1 ref=0 | paused start=n cut=n"},
-	"produce/two_robot_press_index/right/spot!=staging/swap": {
-		"legs=S ret=0 ref=1 exp=3 n=2 | prev S | cancel ret=0 ref=0 | paused start=n cut=n",
-		"legs=S ret=0 ref=0 exp=2 n=2 | prev S | cancel ret=0 ref=0 | paused start=n cut=n"},
-	"produce/two_robot_press_index/unknown/spot!=staging/add": {
-		"legs=M ret=0 ref=0 exp=2 n=2 | prev M | cancel ret=0 ref=0 | paused start=n cut=n",
-		"start refused | prev refused"},
-	"produce/two_robot_press_index/unknown/spot!=staging/swap": {
-		"legs=S ret=0 ref=0 exp=2 n=2 | prev S | cancel ret=0 ref=0 | paused start=n cut=n",
-		"start refused | prev refused"},
-	"produce/two_robot_press_index/wrong/spot!=staging/add": {
-		"legs=M ret=1 ref=1 exp=4 n=2 | prev M | cancel ret=1 ref=0 | paused start=n cut=n",
-		"legs=M ret=1 ref=0 exp=3 n=2 | prev M | cancel ret=1 ref=0 | paused start=n cut=n"},
-	"produce/two_robot_press_index/wrong/spot!=staging/swap": {
-		"legs=S ret=1 ref=2 exp=5 n=2 | prev S | cancel ret=1 ref=1 | paused start=n cut=n",
-		"legs=M ret=1 ref=0 exp=3 n=2 | prev M | cancel ret=1 ref=0 | paused start=n cut=n"},
+// keepStagedChangeoverPin is each case's row, by case name.
+var keepStagedChangeoverPin = map[string]string{
+	"consume/sequential/bare/spot!=staging/add":                           "legs=M ret=0 ref=0 exp=1 n=1 | prev M | cancel ret=0 ref=0 | paused start=n cut=n",
+	"consume/sequential/bare/spot!=staging/swap":                          "legs=M ret=0 ref=0 exp=1 n=1 | prev M | cancel ret=0 ref=0 | paused start=n cut=n",
+	"consume/sequential/right/spot!=staging/add":                          "legs=M ret=0 ref=0 exp=1 n=1 | prev M | cancel ret=1 ref=0 | paused start=n cut=n",
+	"consume/sequential/right/spot!=staging/swap":                         "legs=S ret=0 ref=0 exp=1 n=1 | prev S | cancel ret=1 ref=0 | paused start=n cut=n",
+	"consume/sequential/unknown/spot!=staging/add":                        "start refused | prev refused",
+	"consume/sequential/unknown/spot!=staging/swap":                       "start refused | prev refused",
+	"consume/sequential/wrong/spot!=staging/add":                          "legs=M ret=1 ref=0 exp=2 n=1 | prev M | cancel ret=1 ref=0 | paused start=n cut=n",
+	"consume/sequential/wrong/spot!=staging/swap":                         "legs=M ret=1 ref=0 exp=2 n=1 | prev M | cancel ret=0 ref=0 | paused start=n cut=n",
+	"consume/single_robot/bare/spot!=staging/add":                         "legs=M ret=0 ref=0 exp=1 n=1 | prev M | cancel ret=0 ref=0 | paused start=n cut=n",
+	"consume/single_robot/bare/spot!=staging/swap":                        "legs=M ret=0 ref=0 exp=1 n=1 | prev M | cancel ret=0 ref=0 | paused start=n cut=n",
+	"consume/single_robot/bare/spot==staging/add":                         "legs=M ret=0 ref=0 exp=1 n=1 | prev M | cancel ret=0 ref=0 | paused start=n cut=n",
+	"consume/single_robot/bare/spot==staging/swap":                        "legs=D+R+M ret=0 ref=0 exp=1 n=1 | prev D+R+M | cancel ret=0 ref=0 | paused start=n cut=n",
+	"consume/single_robot/right/spot!=staging/add":                        "legs=M ret=0 ref=0 exp=1 n=1 | prev M | cancel ret=1 ref=0 | paused start=n cut=n",
+	"consume/single_robot/right/spot!=staging/swap":                       "legs=S ret=0 ref=0 exp=1 n=1 | prev S | cancel ret=1 ref=0 | paused start=n cut=n",
+	"consume/single_robot/right/spot==staging/add":                        "legs=M ret=0 ref=0 exp=1 n=1 | prev M | cancel ret=1 ref=0 | paused start=n cut=n",
+	"consume/single_robot/right/spot==staging/swap":                       "legs=S ret=0 ref=0 exp=1 n=1 | prev S | cancel ret=1 ref=0 | paused start=n cut=n",
+	"consume/single_robot/unknown/spot!=staging/add":                      "start refused | prev refused",
+	"consume/single_robot/unknown/spot!=staging/swap":                     "start refused | prev refused",
+	"consume/single_robot/unknown/spot==staging/add":                      "start refused | prev refused",
+	"consume/single_robot/unknown/spot==staging/swap":                     "start refused | prev refused",
+	"consume/single_robot/wrong/spot!=staging/add":                        "legs=M ret=1 ref=0 exp=2 n=1 | prev M | cancel ret=1 ref=0 | paused start=n cut=n",
+	"consume/single_robot/wrong/spot!=staging/swap":                       "legs=M ret=1 ref=0 exp=2 n=1 | prev M | cancel ret=0 ref=0 | paused start=n cut=n",
+	"consume/single_robot/wrong/spot==staging/add":                        "legs=M ret=1 ref=0 exp=2 n=1 | prev M | cancel ret=1 ref=0 | paused start=n cut=n",
+	"consume/single_robot/wrong/spot==staging/swap":                       "legs=D+R+M ret=1 ref=0 exp=2 n=1 | prev D+R+M | cancel ret=0 ref=0 | paused start=n cut=n",
+	"consume/two_robot/bare/spot!=staging/add":                            "legs=M ret=0 ref=0 exp=1 n=1 | prev M | cancel ret=0 ref=0 | paused start=n cut=n",
+	"consume/two_robot/bare/spot!=staging/swap":                           "legs=M ret=0 ref=0 exp=2 n=2 | prev M | cancel ret=0 ref=0 | paused start=n cut=n",
+	"consume/two_robot/bare/spot==staging/add":                            "legs=M ret=0 ref=0 exp=1 n=1 | prev M | cancel ret=0 ref=0 | paused start=n cut=n",
+	"consume/two_robot/bare/spot==staging/swap":                           "legs=D+R+M ret=0 ref=0 exp=2 n=2 | prev D+R+M | cancel ret=0 ref=0 | paused start=n cut=n",
+	"consume/two_robot/empty-0831/spot==staging/swap":                     "legs=D+R+M ret=1 ref=0 exp=3 n=2 | prev D+R+M | cancel ret=1 ref=0 | paused start=n cut=n",
+	"consume/two_robot/right/spot!=staging/add":                           "legs=M ret=0 ref=0 exp=1 n=1 | prev M | cancel ret=1 ref=0 | paused start=n cut=n",
+	"consume/two_robot/right/spot!=staging/swap":                          "legs=S ret=0 ref=0 exp=2 n=2 | prev S | cancel ret=1 ref=0 | paused start=n cut=n",
+	"consume/two_robot/right/spot==staging/add":                           "legs=M ret=0 ref=0 exp=1 n=1 | prev M | cancel ret=1 ref=0 | paused start=n cut=n",
+	"consume/two_robot/right/spot==staging/swap":                          "legs=S ret=0 ref=0 exp=2 n=2 | prev S | cancel ret=1 ref=0 | paused start=n cut=n",
+	"consume/two_robot/unknown/spot!=staging/add":                         "start refused | prev refused",
+	"consume/two_robot/unknown/spot!=staging/swap":                        "start refused | prev refused",
+	"consume/two_robot/unknown/spot==staging/add":                         "start refused | prev refused",
+	"consume/two_robot/unknown/spot==staging/swap":                        "start refused | prev refused",
+	"consume/two_robot/wrong/spot!=staging/add":                           "legs=M ret=1 ref=0 exp=2 n=1 | prev M | cancel ret=1 ref=0 | paused start=n cut=n",
+	"consume/two_robot/wrong/spot!=staging/swap":                          "legs=M ret=1 ref=0 exp=3 n=2 | prev M | cancel ret=0 ref=0 | paused start=n cut=n",
+	"consume/two_robot/wrong/spot==staging/add":                           "legs=M ret=1 ref=0 exp=2 n=1 | prev M | cancel ret=1 ref=0 | paused start=n cut=n",
+	"consume/two_robot/wrong/spot==staging/swap":                          "legs=D+R+M ret=1 ref=0 exp=3 n=2 | prev D+R+M | cancel ret=0 ref=0 | paused start=n cut=n",
+	"consume/two_robot_press_index/bare/spot!=staging/add":                "legs=M ret=0 ref=0 exp=2 n=2 | prev M | cancel ret=0 ref=0 | paused start=n cut=n",
+	"consume/two_robot_press_index/bare/spot!=staging/swap":               "legs=M ret=0 ref=0 exp=2 n=2 | prev M | cancel ret=0 ref=0 | paused start=n cut=n",
+	"consume/two_robot_press_index/right/spot!=staging/add":               "legs=M ret=0 ref=0 exp=2 n=2 | prev M | cancel ret=1 ref=0 | paused start=n cut=n",
+	"consume/two_robot_press_index/right/spot!=staging/swap":              "legs=S ret=0 ref=0 exp=2 n=2 | prev S | cancel ret=1 ref=0 | paused start=n cut=n",
+	"consume/two_robot_press_index/unknown/spot!=staging/add":             "start refused | prev refused",
+	"consume/two_robot_press_index/unknown/spot!=staging/swap":            "start refused | prev refused",
+	"consume/two_robot_press_index/wrong/spot!=staging/add":               "legs=M ret=1 ref=0 exp=3 n=2 | prev M | cancel ret=1 ref=0 | paused start=n cut=n",
+	"consume/two_robot_press_index/wrong/spot!=staging/swap":              "legs=M ret=1 ref=0 exp=3 n=2 | prev M | cancel ret=0 ref=0 | paused start=n cut=n",
+	"produce/sequential/bare/spot!=staging/add":                           "legs=M ret=0 ref=0 exp=1 n=1 | prev M | cancel ret=0 ref=0 | paused start=n cut=n",
+	"produce/sequential/bare/spot!=staging/swap":                          "legs=M ret=0 ref=0 exp=1 n=1 | prev M | cancel ret=0 ref=0 | paused start=n cut=n",
+	"produce/sequential/bare/spot!=staging/swap/queued-refill":            "legs=M ret=0 ref=0 exp=1 n=1 | prev M | cancel ret=0 ref=0 | paused start=n cut=n",
+	"produce/sequential/right/spot!=staging/add":                          "legs=M ret=0 ref=0 exp=1 n=1 | prev M | cancel ret=1 ref=0 | paused start=n cut=n",
+	"produce/sequential/right/spot!=staging/swap":                         "legs=S ret=0 ref=0 exp=1 n=1 | prev S | cancel ret=0 ref=0 | paused start=n cut=n",
+	"produce/sequential/unknown/spot!=staging/add":                        "start refused | prev refused",
+	"produce/sequential/unknown/spot!=staging/swap":                       "start refused | prev refused",
+	"produce/sequential/wrong/spot!=staging/add":                          "legs=M ret=1 ref=0 exp=2 n=1 | prev M | cancel ret=1 ref=0 | paused start=n cut=n",
+	"produce/sequential/wrong/spot!=staging/swap":                         "legs=M ret=1 ref=0 exp=2 n=1 | prev M | cancel ret=1 ref=0 | paused start=n cut=n",
+	"produce/single_robot/bare/spot!=staging/add":                         "legs=M ret=0 ref=0 exp=1 n=1 | prev M | cancel ret=0 ref=0 | paused start=n cut=n",
+	"produce/single_robot/bare/spot!=staging/swap":                        "legs=M ret=0 ref=0 exp=1 n=1 | prev M | cancel ret=0 ref=0 | paused start=n cut=n",
+	"produce/single_robot/bare/spot==staging/add":                         "legs=M ret=0 ref=0 exp=1 n=1 | prev M | cancel ret=0 ref=0 | paused start=n cut=n",
+	"produce/single_robot/bare/spot==staging/swap":                        "legs=D+R+M ret=0 ref=0 exp=1 n=1 | prev D+R+M | cancel ret=0 ref=0 | paused start=n cut=n",
+	"produce/single_robot/bare/spot==staging/swap/queued-refill":          "legs=D+R+M ret=0 ref=0 exp=1 n=1 | prev D+R+M | cancel ret=0 ref=0 | paused start=n cut=n",
+	"produce/single_robot/right/spot!=staging/add":                        "legs=M ret=0 ref=0 exp=1 n=1 | prev M | cancel ret=1 ref=0 | paused start=n cut=n",
+	"produce/single_robot/right/spot!=staging/swap":                       "legs=S ret=0 ref=0 exp=1 n=1 | prev S | cancel ret=0 ref=0 | paused start=n cut=n",
+	"produce/single_robot/right/spot==staging/add":                        "legs=M ret=0 ref=0 exp=1 n=1 | prev M | cancel ret=1 ref=0 | paused start=n cut=n",
+	"produce/single_robot/right/spot==staging/swap":                       "legs=S ret=0 ref=0 exp=1 n=1 | prev S | cancel ret=0 ref=0 | paused start=n cut=n",
+	"produce/single_robot/unknown/spot!=staging/add":                      "start refused | prev refused",
+	"produce/single_robot/unknown/spot!=staging/swap":                     "start refused | prev refused",
+	"produce/single_robot/unknown/spot==staging/add":                      "start refused | prev refused",
+	"produce/single_robot/unknown/spot==staging/swap":                     "start refused | prev refused",
+	"produce/single_robot/wrong/spot!=staging/add":                        "legs=M ret=1 ref=0 exp=2 n=1 | prev M | cancel ret=1 ref=0 | paused start=n cut=n",
+	"produce/single_robot/wrong/spot!=staging/swap":                       "legs=M ret=1 ref=0 exp=2 n=1 | prev M | cancel ret=1 ref=0 | paused start=n cut=n",
+	"produce/single_robot/wrong/spot==staging/add":                        "legs=M ret=1 ref=0 exp=2 n=1 | prev M | cancel ret=1 ref=0 | paused start=n cut=n",
+	"produce/single_robot/wrong/spot==staging/swap":                       "legs=D+R+M ret=1 ref=0 exp=2 n=1 | prev D+R+M | cancel ret=1 ref=0 | paused start=n cut=n",
+	"produce/two_robot/bare/spot!=staging/add":                            "legs=M ret=0 ref=0 exp=1 n=1 | prev M | cancel ret=0 ref=0 | paused start=n cut=n",
+	"produce/two_robot/bare/spot!=staging/swap":                           "legs=M ret=0 ref=0 exp=2 n=2 | prev M | cancel ret=0 ref=0 | paused start=n cut=n",
+	"produce/two_robot/bare/spot==staging/add":                            "legs=M ret=0 ref=0 exp=1 n=1 | prev M | cancel ret=0 ref=0 | paused start=n cut=n",
+	"produce/two_robot/bare/spot==staging/swap":                           "legs=D+R+M ret=0 ref=0 exp=2 n=2 | prev D+R+M | cancel ret=0 ref=0 | paused start=n cut=n",
+	"produce/two_robot/bare/spot==staging/swap/queued-refill":             "legs=D+R+M ret=0 ref=0 exp=2 n=2 | prev D+R+M | cancel ret=0 ref=0 | paused start=n cut=n",
+	"produce/two_robot/right/spot!=staging/add":                           "legs=M ret=0 ref=0 exp=1 n=1 | prev M | cancel ret=1 ref=0 | paused start=n cut=n",
+	"produce/two_robot/right/spot!=staging/swap":                          "legs=S ret=0 ref=0 exp=2 n=2 | prev S | cancel ret=0 ref=0 | paused start=n cut=n",
+	"produce/two_robot/right/spot==staging/add":                           "legs=M ret=0 ref=0 exp=1 n=1 | prev M | cancel ret=1 ref=0 | paused start=n cut=n",
+	"produce/two_robot/right/spot==staging/swap":                          "legs=S ret=0 ref=0 exp=2 n=2 | prev S | cancel ret=0 ref=0 | paused start=n cut=n",
+	"produce/two_robot/unknown/spot!=staging/add":                         "start refused | prev refused",
+	"produce/two_robot/unknown/spot!=staging/swap":                        "start refused | prev refused",
+	"produce/two_robot/unknown/spot==staging/add":                         "start refused | prev refused",
+	"produce/two_robot/unknown/spot==staging/swap":                        "start refused | prev refused",
+	"produce/two_robot/wrong/spot!=staging/add":                           "legs=M ret=1 ref=0 exp=2 n=1 | prev M | cancel ret=1 ref=0 | paused start=n cut=n",
+	"produce/two_robot/wrong/spot!=staging/swap":                          "legs=M ret=1 ref=0 exp=3 n=2 | prev M | cancel ret=1 ref=0 | paused start=n cut=n",
+	"produce/two_robot/wrong/spot==staging/add":                           "legs=M ret=1 ref=0 exp=2 n=1 | prev M | cancel ret=1 ref=0 | paused start=n cut=n",
+	"produce/two_robot/wrong/spot==staging/swap":                          "legs=D+R+M ret=1 ref=0 exp=3 n=2 | prev D+R+M | cancel ret=1 ref=0 | paused start=n cut=n",
+	"produce/two_robot_press_index/bare/spot!=staging/add":                "legs=M ret=0 ref=0 exp=2 n=2 | prev M | cancel ret=0 ref=0 | paused start=n cut=n",
+	"produce/two_robot_press_index/bare/spot!=staging/swap":               "legs=M ret=0 ref=0 exp=2 n=2 | prev M | cancel ret=0 ref=0 | paused start=n cut=n",
+	"produce/two_robot_press_index/bare/spot!=staging/swap/queued-refill": "legs=M ret=0 ref=0 exp=2 n=2 | prev M | cancel ret=0 ref=0 | paused start=n cut=n",
+	"produce/two_robot_press_index/right/spot!=staging/add":               "legs=M ret=0 ref=0 exp=2 n=2 | prev M | cancel ret=1 ref=0 | paused start=n cut=n",
+	"produce/two_robot_press_index/right/spot!=staging/swap":              "legs=S ret=0 ref=0 exp=2 n=2 | prev S | cancel ret=0 ref=0 | paused start=n cut=n",
+	"produce/two_robot_press_index/unknown/spot!=staging/add":             "start refused | prev refused",
+	"produce/two_robot_press_index/unknown/spot!=staging/swap":            "start refused | prev refused",
+	"produce/two_robot_press_index/wrong/spot!=staging/add":               "legs=M ret=1 ref=0 exp=3 n=2 | prev M | cancel ret=1 ref=0 | paused start=n cut=n",
+	"produce/two_robot_press_index/wrong/spot!=staging/swap":              "legs=M ret=1 ref=0 exp=3 n=2 | prev M | cancel ret=1 ref=0 | paused start=n cut=n",
 }

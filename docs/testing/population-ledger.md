@@ -620,3 +620,20 @@ present at the merge base is absent at the tip without a row here.
 - coverage Δ: lead (Phase 1 baseline → certification diff)
 - citations rewritten: none
 - verified at: `02d36d96` with this commit's diff applied
+
+### DEAD — `TestKeepStagedChangeover_EveryShapePin`
+- test: `TestKeepStagedChangeover_EveryShapePin` · pkg `shingoedge/engine` · run `-run '^TestKeepStagedChangeover_EveryShapePin$'` · `shingo-edge/engine/keep_staged_changeover_pin_test.go:374` @ `22c81558` · tags `none`
+- code: DEAD (the `today` column of `keepStagedChangeoverPin`; the test and its 101 subtests stay). The header `:38-43` was STALE with it and is rewritten in the same commit.
+- assertion map: the one comparison, each subtest's observed row against its pin row (`keep_staged_changeover_pin_test.go:397-398`, `got != row.after`) → `:400-401` (`got != want`), the same 101 strings, unchanged. `pinRow.today` (`:425`, written by all 101 rows `:428-730`) dropped because nothing read it: the assertion arm moved to `row.after` in "fix(edge): the keeper is a keep-staged spot's only refill owner, through a changeover too" and its message in "fix(edge): a single-robot changeover collects the carrier it parked, never a stray" (both 2026-10-16); 89 of the 101 `today` strings differ from `after`. The header said "The test asserts today until that change lands, and after from then on"; both changes landed, so it now says what each row is and where the pre-change answers live (the file's history). The ALN_011 extra case's comment ("today's leg lifts it anyway", `:413`) described the `today` answer (`legs=S`); it now describes the row the test asserts (`legs=D+R+M`, the spare sent back).
+- mutation: the read-by-nothing proof, then one the comparison catches. (1) every `today` string at base replaced with `"scrambled today"` (101 rows): `go test -count=1 -tags lockcheck -run '^TestKeepStagedChangeover_EveryShapePin$' ./engine/` → `ok  shingoedge/engine 7.260s`. (2) a changeover start sends no spare back:
+  ```diff
+  --- a/shingo-edge/engine/keep_staged_changeover.go
+  +++ b/shingo-edge/engine/keep_staged_changeover.go
+  @@ func (e *Engine) applyChangeoverSpots(
+  -			e.returnSpare(n, ch.spot, c.InboundSource, read.payload, read.binID, origin)
+  +			_, _ = read, origin
+  ```
+  · old test red at base: same command → `keep_staged_changeover_pin_test.go:398: got legs=M ret=0 ref=0 exp=2 n=1 | prev M | cancel ret=0 ref=0 | paused start=n cut=n / want legs=M ret=1 ref=0 exp=2 n=1 | prev M | cancel ret=1 ref=0 | paused start=n cut=n` (43 subtests FAIL) · survivor red at tip: same command → `keep_staged_changeover_pin_test.go:401:` the same got/want pair (43 subtests FAIL)
+- coverage Δ: lead (Phase 1 baseline → certification diff)
+- citations rewritten: none (`git grep -n 'pinRow\|keepStagedChangeoverPin'` over the five modules: this file only)
+- verified at: `8dc164f9` with this commit's diff applied
