@@ -318,7 +318,10 @@ func (e *Engine) sweepNodeLevel(node *processes.Node, runtime *processes.Runtime
 			node.Name, o.ID, o.OrderType, o.Status)
 		return
 	}
-	if canAccept, reason := e.CanAcceptOrders(node.ID); !canAccept {
+	// One door call's guard reads, shared by the participant gate and the
+	// request's guards (decision 48).
+	g := newGuardReads(node)
+	if canAccept, reason := e.canAcceptOrdersIn(g, node.ID); !canAccept {
 		e.debugFn("demand_sweep: node %s below its level but not accepting orders: %s", node.Name, reason)
 		return
 	}
@@ -328,9 +331,9 @@ func (e *Engine) sweepNodeLevel(node *processes.Node, runtime *processes.Runtime
 	var askErr error
 	switch claim.Role {
 	case protocol.ClaimRoleConsume:
-		_, askErr = e.requestNodeMaterialFor(node.ID, 1, protocol.EpisodeTriggerAutoreorder)
+		_, askErr = e.requestNodeMaterialIn(g, node.ID, 1, protocol.EpisodeTriggerAutoreorder)
 	case protocol.ClaimRoleProduce:
-		_, askErr = e.requestProduceSwapFor(node.ID, protocol.EpisodeTriggerAutoreorder)
+		_, askErr = e.requestProduceSwapFor(g, node.ID, protocol.EpisodeTriggerAutoreorder)
 	}
 	if askErr != nil {
 		// Not an error state. The guards downstream refuse for good reasons and

@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"shingo/protocol/clock"
 	"shingo/protocol/testutil"
 	"shingoedge/config"
 	"shingoedge/internal/testdb"
@@ -175,6 +176,28 @@ func TestLinePoll_RollbackGapReseeds(t *testing.T) {
 	r.pass(901, 1402)
 	if got := r.em.emitted(); len(got) != 1 || got[0].delta != 2 {
 		t.Errorf("after the re-seed emitted %+v, want one of 2", got)
+	}
+}
+
+// TestLinePoll_ARollbackOnAClockAheadOfTheWall — decision 48, the clocks rule
+// a third time. bootVerdict differences the reporting point's last poll
+// against the station counter's, so both are the engine's clock: with the
+// process clock 15 minutes ahead of the wall (the sim stack's at 10x), a
+// station counter six minutes behind its point re-seeds. Before, the point's
+// stamp was SQLite's wall, the difference read negative, and the verdict
+// never fired. Not parallel: it installs the process clock.
+func TestLinePoll_ARollbackOnAClockAheadOfTheWall(t *testing.T) {
+	prev := clock.Default()
+	clock.SetDefault(clock.NewManual(time.Now().Add(15 * time.Minute)))
+	t.Cleanup(func() { clock.SetDefault(prev) })
+	r := newLineRig(t, true)
+	r.pass(10, 500)
+	_, err := r.db.Exec(`UPDATE line_counters SET last_poll_at = datetime(last_poll_at, '-6 minutes') WHERE id = ?`, r.lc)
+	testutil.MustNoErr(t, err, "the station six minutes behind its point")
+	r.reboot()
+	r.pass(900, 560)
+	if got := r.em.emitted(); len(got) != 0 {
+		t.Fatalf("emitted %+v after a rollback on a clock ahead of the wall, want a re-seed", got)
 	}
 }
 

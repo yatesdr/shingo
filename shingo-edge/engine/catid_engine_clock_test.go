@@ -358,13 +358,15 @@ func anchorOnThePollsClock(t *testing.T, r *clockRig) {
 }
 
 // wallClock is a read of the wall clock or a ticker on it.
-var wallClock = regexp.MustCompile(`\btime\.(Now|NewTicker|Since)\(`)
+var wallClock = regexp.MustCompile(`\btime\.(Now|NewTicker|Since)\(|datetime\('now'`)
 
 // noWallClock: the monitor's files take their times and tickers from the
-// process clock.
+// process clock, and the counters' store stamps its rows with it (its
+// reporting point's last poll is differenced against a station counter's,
+// decision 48): neither Go's wall nor SQLite's datetime('now').
 func noWallClock(t *testing.T) {
 	for _, f := range []string{"plc_catid_monitor.go", "catid_attribute.go", "catid_holds.go", "admin_style_switch.go",
-		"catid_post_cutover.go", "catid_slot_watch.go"} {
+		"catid_post_cutover.go", "catid_slot_watch.go", "../store/counters/counters.go"} {
 		src, err := os.ReadFile(f)
 		testutil.MustNoErr(t, err, f)
 		for i, line := range strings.Split(string(src), "\n") {

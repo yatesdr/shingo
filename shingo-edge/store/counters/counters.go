@@ -16,6 +16,7 @@ import (
 	"fmt"
 	"time"
 
+	"shingo/protocol/clock"
 	"shingoedge/domain"
 	"shingoedge/store/internal/helpers"
 )
@@ -132,14 +133,16 @@ func DayBounds(countDate string, loc *time.Location) (int64, int64, error) {
 	return d.UTC().Unix(), d.AddDate(0, 0, 1).UTC().Unix(), nil
 }
 
-// UpsertHourly adds delta to the UTC hour bucket, or inserts it if new.
+// UpsertHourly adds delta to the UTC hour bucket, or inserts it if new. Its
+// updated_at is the engine's clock, as every stamp in this file is
+// (store/counters joins the wall-clock guard, decision 48).
 func UpsertHourly(db *sql.DB, processID, styleID, bucketStart, delta int64) error {
 	_, err := db.Exec(
 		`INSERT INTO hourly_counts (process_id, style_id, bucket_start, delta)
 		 VALUES (?, ?, ?, ?)
 		 ON CONFLICT(process_id, style_id, bucket_start)
-		 DO UPDATE SET delta = delta + excluded.delta, updated_at = datetime('now')`,
-		processID, styleID, bucketStart, delta,
+		 DO UPDATE SET delta = delta + excluded.delta, updated_at = ?`,
+		processID, styleID, bucketStart, delta, clock.Now().UTC().Format(helpers.TimeLayout),
 	)
 	return err
 }
@@ -317,9 +320,14 @@ func UpdateReportingPoint(db *sql.DB, id int64, plcName, tagName string, styleID
 // write made the point unread, and writing the old tag's count would mark it
 // read, so the next pass charged the new tag's whole running total
 // (TestPoll_RepointMidPassKeepsTheSeed). Reports whether the row was written.
+//
+// last_poll_at is the engine's clock (decision 48): the station counter's
+// rollback verdict (plc bootVerdict) differences it against line_counters'
+// last_poll_at, which is the engine's; SQLite's own now is the wall,
+// and on a clock that runs ahead of it the verdict could never fire.
 func UpdateReportingPointCounter(db *sql.DB, id int64, plcName, tagName string, count int64) (bool, error) {
-	res, err := db.Exec(`UPDATE reporting_points SET last_count=?, last_poll_at=datetime('now')
-		WHERE id=? AND plc_name=? AND tag_name=?`, count, id, plcName, tagName)
+	res, err := db.Exec(`UPDATE reporting_points SET last_count=?, last_poll_at=?
+		WHERE id=? AND plc_name=? AND tag_name=?`, count, clock.Now().UTC().Format(helpers.TimeLayout), id, plcName, tagName)
 	if err != nil {
 		return false, err
 	}

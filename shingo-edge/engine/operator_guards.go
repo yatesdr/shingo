@@ -284,14 +284,21 @@ func (e *Engine) styleName(id int64) string {
 }
 
 func (e *Engine) guardStyleTransition(node *processes.Node, claim *processes.NodeClaim) error {
+	return e.guardStyleTransitionIn(nil, node, claim)
+}
+
+// guardStyleTransitionIn is guardStyleTransition on a door call's reads
+// (guardReads; nil reads afresh).
+func (e *Engine) guardStyleTransitionIn(g *guardReads, node *processes.Node, claim *processes.NodeClaim) error {
 	if node == nil || claim == nil {
 		return nil
 	}
 	if claim.IsLoaderNode() {
 		return nil
 	}
-	co, err := e.db.GetActiveProcessChangeover(node.ProcessID)
-	if err != nil || co == nil {
+	g = readsFor(g, node)
+	co := g.changeover(e)
+	if co == nil {
 		return nil
 	}
 	// Block when the request's claim is the changeover's FROM (outgoing) style.
@@ -299,7 +306,7 @@ func (e *Engine) guardStyleTransition(node *processes.Node, claim *processes.Nod
 	// the outgoing one, so any line relief here is outgoing by construction (once
 	// the cutover completes the changeover is no longer active and this passes).
 	if co.FromStyleID == nil || claim.StyleID == *co.FromStyleID {
-		if co.FromStyleID != nil && e.changesNothingAt(co, node) {
+		if co.FromStyleID != nil && e.changesNothingAt(g, co, node) {
 			return nil
 		}
 		toName := e.styleName(co.ToStyleID)
@@ -346,6 +353,12 @@ func (e *Engine) guardStyleTransition(node *processes.Node, claim *processes.Nod
 // Edge-DB + in-memory monitor only; no Core round-trip. Never cancels an
 // existing order — it only refuses to START new outgoing-style relief.
 func (e *Engine) guardCatidMismatch(node *processes.Node, claim *processes.NodeClaim) error {
+	return e.guardCatidMismatchIn(nil, node, claim)
+}
+
+// guardCatidMismatchIn is guardCatidMismatch on a door call's reads
+// (guardReads; nil reads afresh).
+func (e *Engine) guardCatidMismatchIn(g *guardReads, node *processes.Node, claim *processes.NodeClaim) error {
 	if node == nil || claim == nil {
 		return nil
 	}
@@ -371,7 +384,7 @@ func (e *Engine) guardCatidMismatch(node *processes.Node, claim *processes.NodeC
 	}
 	// The live part must be ONE OF the style's parts — whichever side the press is
 	// reporting. It only blocks when the live part belongs to none of them.
-	if !catidSetHas(set, live) && !e.sameUnderTheLivePart(node, claim.StyleID, live) {
+	if !catidSetHas(set, live) && !e.sameUnderTheLivePart(readsFor(g, node), node, claim.StyleID, live) {
 		return fmt.Errorf("The process reports CATID %s; active style is %s (runs CATID %s) — the wrong part is on the process. %s",
 			live, style.Name, formatCATIDSet(set), e.catidResolutionHint(node.ProcessID))
 	}
@@ -379,31 +392,41 @@ func (e *Engine) guardCatidMismatch(node *processes.Node, claim *processes.NodeC
 }
 
 // changesNothingAt reports whether the open changeover co changes nothing at
-// node: the outgoing and incoming styles' claims there name the same parts,
-// and the changeover's task there, if it has one, is "unchanged" (a same-part
-// position the incoming claim evacuates keeps the guard). A read that fails
-// reads as a change.
-func (e *Engine) changesNothingAt(co *processes.Changeover, node *processes.Node) bool {
-	if !e.samePartUnder(node, *co.FromStyleID, co.ToStyleID) {
+// node, on a door call's reads (guardReads): the outgoing and incoming styles'
+// claims there name the same parts, and the changeover's task there is
+// "unchanged" (a same-part position the incoming claim evacuates keeps the
+// guard). Every diff mints a task row, the unchanged ones included
+// (planChangeover), so a position with no task is one whose claims changed
+// after the changeover was planned: absent reads as a change (decision 48). A
+// read that fails reads as a change, and both are logged: they turn a request
+// away.
+func (e *Engine) changesNothingAt(g *guardReads, co *processes.Changeover, node *processes.Node) bool {
+	if !e.samePartUnder(g, node, *co.FromStyleID, co.ToStyleID) {
 		return false
 	}
-	task, err := e.db.GetChangeoverNodeTaskByNode(co.ID, node.ID)
-	if errors.Is(err, sql.ErrNoRows) {
-		return true
+	task, err := g.taskAt(e, co)
+	switch {
+	case errors.Is(err, sql.ErrNoRows) || (err == nil && task == nil):
+		log.Printf("changeover guard: changeover %d has no task at %s — its claims changed after it was planned; read as a change",
+			co.ID, node.Name)
+		return false
+	case err != nil:
+		log.Printf("changeover guard: read changeover %d's task at %s: %v — read as a change", co.ID, node.Name, err)
+		return false
 	}
-	return err == nil && (task == nil || task.Situation == string(SituationUnchanged))
+	return task.Situation == string(SituationUnchanged)
 }
 
 // sameUnderTheLivePart reports whether node's claim names the same parts
 // under every style whose set holds the live CATID as under styleID; false
 // when no style's does.
-func (e *Engine) sameUnderTheLivePart(node *processes.Node, styleID int64, live string) bool {
+func (e *Engine) sameUnderTheLivePart(g *guardReads, node *processes.Node, styleID int64, live string) bool {
 	matches := e.stylesForCATID(node.ProcessID, live)
 	if len(matches) == 0 {
 		return false
 	}
 	for _, m := range matches {
-		if !e.samePartUnder(node, styleID, m.ID) {
+		if !e.samePartUnder(g, node, styleID, m.ID) {
 			return false
 		}
 	}
@@ -411,16 +434,33 @@ func (e *Engine) sameUnderTheLivePart(node *processes.Node, styleID int64, live 
 }
 
 // samePartUnder reports whether node's claims under styles a and b name the
-// same parts: each style claims the node exactly (claims.Resolve, ExactStyle)
-// and their AllowedPayloads() hold the same codes. A read that fails, or a
-// claim that names no part, is not the same part.
-func (e *Engine) samePartUnder(node *processes.Node, a, b int64) bool {
-	proc, err := e.db.GetProcess(node.ProcessID)
+// same parts, on a door call's reads (the process read once, each pair of
+// styles' claims once): each style claims the node exactly (claims.Resolve,
+// ExactStyle) and their AllowedPayloads() hold the same codes. A read that
+// fails, or a claim that names no part, is not the same part; a failed read is
+// logged.
+func (e *Engine) samePartUnder(g *guardReads, node *processes.Node, a, b int64) bool {
+	key := [2]int64{min(a, b), max(a, b)}
+	if v, ok := g.pairs[key]; ok {
+		return v
+	}
+	v := e.readSamePart(g, node, a, b)
+	if g.pairs == nil {
+		g.pairs = map[[2]int64]bool{}
+	}
+	g.pairs[key] = v
+	return v
+}
+
+func (e *Engine) readSamePart(g *guardReads, node *processes.Node, a, b int64) bool {
+	proc, err := g.process(e)
 	if err != nil || proc == nil {
+		log.Printf("changeover guard: read process %d for %s: %v — not the same part", node.ProcessID, node.Name, err)
 		return false
 	}
 	claims, err := e.db.NodeClaimsForStyles([]int64{a, b})
 	if err != nil {
+		log.Printf("changeover guard: read styles %d and %d's claims at %s: %v — not the same part", a, b, node.Name, err)
 		return false
 	}
 	x := claims.Resolve(proc, node, store.ExactStyle(a))
@@ -429,6 +469,82 @@ func (e *Engine) samePartUnder(node *processes.Node, a, b int64) bool {
 		return false
 	}
 	return sameCodes(x.AllowedPayloads(), y.AllowedPayloads())
+}
+
+// guardReads is one door call's reads for the changeover guards (decision
+// 48): the process's open changeover row, the process, each pair of styles'
+// claims at the node (samePartUnder) and the changeover's task there — each read
+// once however many guards ask: the sweep's participant gate (CanAcceptOrders),
+// A2, A5 and A2's re-ask under the cell's lock. A door makes one
+// (newGuardReads) and passes it down; nil reads afresh at each guard, as
+// before. The re-ask under the lock re-reads only the changeover row
+// (recheck): the same row keeps the rest, another starts over. Not shared
+// across door calls or goroutines.
+type guardReads struct {
+	node *processes.Node
+
+	coRead bool
+	co     *processes.Changeover
+
+	procRead bool
+	proc     *processes.Process
+	procErr  error
+
+	pairs map[[2]int64]bool
+
+	taskFor int64 // the changeover id the task was read under, 0 for none
+	task    *processes.NodeTask
+	taskErr error
+}
+
+func newGuardReads(node *processes.Node) *guardReads { return &guardReads{node: node} }
+
+// readsFor is g when it reads for node, else a fresh one.
+func readsFor(g *guardReads, node *processes.Node) *guardReads {
+	if g == nil || g.node == nil || node == nil || g.node.ID != node.ID {
+		return newGuardReads(node)
+	}
+	return g
+}
+
+// changeover is the process's open changeover, nil for none. A read that
+// fails reads as none (the guards' fail-open on the outer lookup).
+func (g *guardReads) changeover(e *Engine) *processes.Changeover {
+	if !g.coRead {
+		co, err := e.db.GetActiveProcessChangeover(g.node.ProcessID)
+		if err != nil {
+			co = nil
+		}
+		g.co, g.coRead = co, true
+	}
+	return g.co
+}
+
+// recheck re-reads the changeover row, the re-ask under the cell's lock: a
+// changeover may have armed while the request waited for the cell. Another
+// row than the one read drops what was read against it.
+func (g *guardReads) recheck(e *Engine) {
+	was := g.co
+	g.coRead = false
+	if now := g.changeover(e); was == nil || now == nil || was.ID != now.ID {
+		g.taskFor, g.task, g.taskErr = 0, nil, nil
+	}
+}
+
+func (g *guardReads) process(e *Engine) (*processes.Process, error) {
+	if !g.procRead {
+		g.proc, g.procErr = e.db.GetProcess(g.node.ProcessID)
+		g.procRead = true
+	}
+	return g.proc, g.procErr
+}
+
+func (g *guardReads) taskAt(e *Engine, co *processes.Changeover) (*processes.NodeTask, error) {
+	if g.taskFor != co.ID {
+		g.task, g.taskErr = e.db.GetChangeoverNodeTaskByNode(co.ID, g.node.ID)
+		g.taskFor = co.ID
+	}
+	return g.task, g.taskErr
 }
 
 // sameCodes reports whether two part lists hold the same codes, neither empty.

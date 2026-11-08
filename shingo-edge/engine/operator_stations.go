@@ -61,6 +61,12 @@ func (e *Engine) RequestNodeMaterial(nodeID int64, quantity int64) (*NodeOrderRe
 }
 
 func (e *Engine) requestNodeMaterialFor(nodeID int64, quantity int64, trigger string) (*NodeOrderResult, error) {
+	return e.requestNodeMaterialIn(nil, nodeID, quantity, trigger)
+}
+
+// requestNodeMaterialIn is requestNodeMaterialFor on a door call's guard reads
+// (the sweep's, shared with its CanAcceptOrders; nil reads afresh).
+func (e *Engine) requestNodeMaterialIn(g *guardReads, nodeID int64, quantity int64, trigger string) (*NodeOrderResult, error) {
 	node, runtime, claim, err := loadActiveNode(e.db, nodeID)
 	if err != nil {
 		return nil, err
@@ -72,7 +78,7 @@ func (e *Engine) requestNodeMaterialFor(nodeID int64, quantity int64, trigger st
 		quantity = 1
 	}
 
-	return e.requestNodeFromClaim(node, runtime, claim, quantity, trigger)
+	return e.requestNodeFromClaim(g, node, runtime, claim, quantity, trigger)
 }
 
 // cellRead is one bins-table read of a claim's cell (claimOccupancy).
@@ -182,16 +188,19 @@ func (e *Engine) claimOccupancy(claim *processes.NodeClaim) cellRead {
 // If the node is physically empty (no bin per Core telemetry), the planner
 // downgrades any non-simple swap mode to a simple move — there is nothing
 // to swap out.
-func (e *Engine) requestNodeFromClaim(node *processes.Node, runtime *processes.RuntimeState, claim *processes.NodeClaim, quantity int64, trigger string) (*NodeOrderResult, error) {
+func (e *Engine) requestNodeFromClaim(g *guardReads, node *processes.Node, runtime *processes.RuntimeState, claim *processes.NodeClaim, quantity int64, trigger string) (*NodeOrderResult, error) {
+	// The guards read the changeover, the process, the claims and the task once
+	// for the call (guardReads, decision 48).
+	g = readsFor(g, node)
 	// A2 (hop 2026-07-23): refuse outgoing-style relief while a changeover is
 	// armed on this process — don't let a produce/consume swap race the cutover.
-	if err := e.guardStyleTransition(node, claim); err != nil {
+	if err := e.guardStyleTransitionIn(g, node, claim); err != nil {
 		return nil, err
 	}
 	// A5 (hop 2026-07-23): refuse outgoing-style relief when the press's live
 	// CATID says the wrong part is physically on it — the ground-truth sibling
 	// of the changeover guard above.
-	if err := e.guardCatidMismatch(node, claim); err != nil {
+	if err := e.guardCatidMismatchIn(g, node, claim); err != nil {
 		return nil, err
 	}
 
@@ -213,9 +222,11 @@ func (e *Engine) requestNodeFromClaim(node *processes.Node, runtime *processes.R
 	// only after the changeover is armed. Asked again under the lock, it is
 	// refused like any request against an armed changeover instead of building an
 	// outgoing-style swap that no changeover leg owns. The lines a start locks
-	// only (startLocksLine): a keep-staged line or a press.
+	// only (startLocksLine): a keep-staged line or a press. Only the changeover
+	// row is read again (recheck).
 	if startLocksLine(claim) {
-		if err := e.guardStyleTransition(node, claim); err != nil {
+		g.recheck(e)
+		if err := e.guardStyleTransitionIn(g, node, claim); err != nil {
 			return nil, err
 		}
 	}
@@ -453,6 +464,12 @@ func (e *Engine) refreshOrderStation(orderID int64) (*storeorders.Order, error) 
 // is skipped — manual_swap uses a multi-order queue where multiple non-terminal
 // orders are allowed simultaneously. The changeover check still applies.
 func (e *Engine) CanAcceptOrders(nodeID int64) (bool, string) {
+	return e.canAcceptOrdersIn(nil, nodeID)
+}
+
+// canAcceptOrdersIn is CanAcceptOrders on a door call's guard reads (the
+// sweep's, which its request then shares; nil reads afresh).
+func (e *Engine) canAcceptOrdersIn(g *guardReads, nodeID int64) (bool, string) {
 	// Check changeover first — applies regardless of runtime state.
 	//
 	// Scope the gate to nodes actually PARTICIPATING in the changeover. A node
@@ -493,7 +510,8 @@ func (e *Engine) CanAcceptOrders(nodeID int64) (bool, string) {
 	// bin across it.
 	node, err := e.db.GetProcessNode(nodeID)
 	if err == nil {
-		if co, coErr := e.db.GetActiveProcessChangeover(node.ProcessID); coErr == nil && co != nil {
+		g = readsFor(g, node)
+		if co := g.changeover(e); co != nil {
 			isParticipant, role, pErr := e.db.IsChangeoverParticipant(node.ProcessID, node.CoreNodeName)
 			if pErr != nil {
 				log.Printf("WARN CanAcceptOrders: participant lookup failed for node %s during active changeover %d: %v — failing CLOSED",
@@ -507,7 +525,7 @@ func (e *Engine) CanAcceptOrders(nodeID int64) (bool, string) {
 					// no idea why it is refusing.
 					return false, "changeover in progress (indexed-over position)"
 				}
-				if co.FromStyleID == nil || !e.changesNothingAt(co, node) {
+				if co.FromStyleID == nil || !e.changesNothingAt(g, co, node) {
 					return false, "changeover in progress"
 				}
 			}

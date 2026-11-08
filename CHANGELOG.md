@@ -26,6 +26,8 @@ Edge v37-v43; Core changes the lift's stamp (no schema) and dev tooling (plantsp
 - A consume stroke never draws a cart recorded as another part: it is held for a cart of its part, and the parked-ticks notice names the seat
 - One CATID names one style: the pin, the one-click and Confirm refuse a taken value
 - The request guards and the changeover's participant gate refuse by position: a position whose part both styles run is supplied through a changeover
+- The guards read a door call's changeover, claims and task once (21 statements to 12 at a common position); a position with no task is a change, and a failed read that turns a request away is logged
+- The reporting point's last poll is stamped on the engine's clock, so a station counter's rollback verdict fires on the sim's clock too
 - A changeover records the CATID at its start and at its watch's close (v38)
 - An A/B pair is two positions naming each other; one lit side is charged per tick
 - The reporting point follows its tag (v37); the poll reads one point per process
